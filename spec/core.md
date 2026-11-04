@@ -3438,7 +3438,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1512` | error | build | under `XO_BACKEND_CACHE=verify`, a build, run, or test the run cache would have served differs from its rebuild, in the binary or in what the build printed: an input the entry does not list, or a build that is not reproducible (decision 0360) |
 | `XO1513` | error | build | a command the WASI build of xo (`xo` built for wasip1/wasm) does not offer: it needs a process, a socket or a system tool that WASI preview1 does not have (`run`, `test`, `serve`, `get`, `build --backend=llvm`, ...); printed as `xo: COMMAND is not available in the WASI build`, exit status 2 (decision 0405) |
 | `XO1514` | error | build | a program that calls `http.serve_component` built for wasip1/wasm, which `--backend=wasm` alone is; it builds with `--targets=wasip2/wasm` (decision 0447) |
-| `XO1515` | error | build | a program built for wasip2/wasm reaches what its world does not have: processes, or files or sockets in a `wasi:http` component (a command has `wasi:filesystem` since 2026-11-02 and `wasi:sockets` since 2026-11-03); the message names the call and how it is reached (decision 0447); on wasip3/wasm also a program that is not a `wasi:http` component or makes outgoing requests (stage 5 step 1) |
+| `XO1515` | error | build | a program built for wasip2/wasm reaches what its world does not have: processes, or files or sockets in a `wasi:http` component (a command has `wasi:filesystem` since 2026-11-02 and `wasi:sockets` since 2026-11-03); the message names the call and how it is reached (decision 0447); on wasip3/wasm also a program that is not a `wasi:http` component (stage 5) |
 | `XO1516` | error | build | a program built for wasip2/wasm whose main never calls `http.serve_component` (decision 0447); no longer reported since stage 3 (2026-11-02), when such a program became a `wasi:cli/command` component |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
@@ -3699,16 +3699,19 @@ the host's output-stream as it is written, and its trailers through
 
 `--targets=wasip3/wasm`, not part of `all` and named alone, builds a
 program that calls `http.serve_component` as a WASI 0.3 `wasi:http`
-component (decision 0447 stage 5, step 1, 2026-11-03): it exports
-`wasi:http/handler@0.3.0`'s `handle`, an async function lifted with a
-callback, and imports `wasi:http/types@0.3.0`; its output and clocks are
-the `@0.2.0` interfaces a wasip2/wasm component imports. The request's body
-is read whole before main runs (a `handle_stream` route reads it in pieces
-of what was read, and its trailers are empty), and the response's body,
-with its trailers, is written to the host after main returns; one request
-runs at a time in an instance (`backpressure`), and a host may start the
-next on the same instance. On wasip3/wasm, a program that does not call
-`http.serve_component`, or one that makes outgoing requests, is XO1515.
+component (decision 0447 stage 5, steps 1 and 2, 2026-11-03): it
+exports `wasi:http/handler@0.3.0`'s `handle`, an async function lifted
+with a callback, and imports `wasi:http/types@0.3.0`, and
+`wasi:http/client@0.3.0` when it makes outgoing requests; its output and
+clocks are the `@0.2.0` interfaces a wasip2/wasm component imports. Main
+runs inside `handle`. A `handle_stream` route reads the request body as
+it arrives (`stream<u8>`), with its trailers (a future); a response's
+body goes to the host as main writes it, then its trailers. `http.Client`
+sends through `client.send`, lowered async, writing the request body
+while the call runs. One request runs at a time in an instance
+(`backpressure`), and a host may start the next on the same instance.
+On wasip3/wasm, a program that does not call `http.serve_component` is
+XO1515.
 
 Binaries are static and builds are reproducible: the same source in the
 same directory, lockfile, and toolchain version produce byte identical

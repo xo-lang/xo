@@ -8,8 +8,9 @@
 const WASI_P3 = "@0.3.0"
 
 /// wasi:http/types@0.3.0: the types of a request and a response and the
-/// functions rt10.xo calls (WASI 0.3.0's http.wit; error-code is 0.2's).
-fn ity_http_types_p3() -> InstTy {
+/// functions rt10.xo calls (WASI 0.3.0's http.wit; error-code is 0.2's);
+/// with client, also those of an outgoing request and its response.
+fn ity_http_types_p3(client: Bool) -> InstTy {
   var i = InstTy{}
   let m0 = i.def(dt_variant([("get", NO_TYPE), ("head", NO_TYPE), ("post", NO_TYPE), ("put", NO_TYPE), ("delete", NO_TYPE), ("connect", NO_TYPE), ("options", NO_TYPE), ("trace", NO_TYPE), ("patch", NO_TYPE), ("other", VT_STRING)]))
   let method = i.eq("method", m0)
@@ -106,6 +107,48 @@ fn ity_http_types_p3() -> InstTy {
   let b_resp = i.def(dt_borrow(response))
   let r_unit = i.def(dt_result(NO_TYPE, NO_TYPE))
   i.fun("[method]response.set-status-code", [("self", b_resp), ("status-code", VT_U16)], r_unit)
+  if client {
+    let sc0 = i.def(dt_variant([("HTTP", NO_TYPE), ("HTTPS", NO_TYPE), ("other", VT_STRING)]))
+    let scheme = i.eq("scheme", sc0)
+    let roe0 = i.def(dt_variant([("not-supported", NO_TYPE), ("immutable", NO_TYPE), ("other", opt_s)]))
+    let roe = i.eq("request-options-error", roe0)
+    let ropt = i.res("request-options")
+    let own_ropt = i.def(dt_own(ropt))
+    let opt_ropt = i.def(dt_option(own_ropt))
+    let made_req = i.def(dt_tuple([own_req, fut_done]))
+    i.fun("[static]request.new", [("headers", own_headers), ("contents", opt_body), ("trailers", fut_tr), ("options", opt_ropt)], made_req)
+    i.fun("[method]request.set-method", [("self", b_req), ("method", method)], r_unit)
+    let opt_scheme = i.def(dt_option(scheme))
+    i.fun("[method]request.set-scheme", [("self", b_req), ("scheme", opt_scheme)], r_unit)
+    i.fun("[method]request.set-authority", [("self", b_req), ("authority", opt_s)], r_unit)
+    i.fun("[method]request.set-path-with-query", [("self", b_req), ("path-with-query", opt_s)], r_unit)
+    i.fun("[constructor]request-options", [], own_ropt)
+    let b_ropt = i.def(dt_borrow(ropt))
+    let r_roe = i.def(dt_result(NO_TYPE, roe))
+    for t in ["connect", "first-byte", "between-bytes"] {
+      i.fun("[method]request-options.set-${t}-timeout", [("self", b_ropt), ("duration", opt_u64)], r_roe)
+    }
+    i.fun("[method]response.get-status-code", [("self", b_resp)], VT_U16)
+    i.fun("[method]response.get-headers", [("self", b_resp)], own_headers)
+    i.fun("[static]response.consume-body", [("this", own_resp), ("res", fut_done)], consumed)
+  }
+  i
+}
+
+/// wasi:http/client@0.3.0: send, async, over the types of t_http's
+/// request, response and error-code.
+fn ity_http_client_p3(t_req: Int, t_resp: Int, t_ec: Int) -> InstTy {
+  var i = InstTy{}
+  let q0 = i.outer(t_req)
+  let q = i.eq("request", q0)
+  let r0 = i.outer(t_resp)
+  let r = i.eq("response", r0)
+  let e0 = i.outer(t_ec)
+  let e = i.eq("error-code", e0)
+  let own_q = i.def(dt_own(q))
+  let own_r = i.def(dt_own(r))
+  let res = i.def(dt_result(own_r, e))
+  i.fun("send", [("request", own_q)], res, async: true)
   i
 }
 
@@ -213,6 +256,9 @@ fn p3_canon(name: Str, t: P3Types, realloc: Int) -> List[Int] {
     "[waitable-set-new]" => d.push(0x1f)
     "[waitable-set-drop]" => d.push(0x22)
     "[waitable-join]" => d.push(0x23)
+    "[subtask-drop]" => d.push(0x0d)
+    // cancellable: no; memory 0
+    "[waitable-set-wait]" => extend(d, [0x20, 0x00, 0x00])
     "[backpressure-inc]" => d.push(0x24)
     "[backpressure-dec]" => d.push(0x25)
     _ => {}

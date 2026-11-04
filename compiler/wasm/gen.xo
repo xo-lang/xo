@@ -271,9 +271,6 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
   g.comp = p2 && g.is_component()
   g.cmd = p2 && !g.comp
   g.p3 = p3 && g.comp
-  if g.p3 && g.is_client() {
-    return Program{code: "XO1515", err: "a wasip3/wasm component has no outgoing requests yet (decision 0447 stage 5 step 1): build it with --targets=wasip2/wasm"}
-  }
   if p3 && !g.comp {
     return Program{code: "XO1515", err: "a wasip3/wasm program is a wasi:http component (it calls http.serve_component): commands and the rest of WASI 0.3 are later steps of decision 0447 stage 5"}
   }
@@ -1775,6 +1772,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   }
   if g.comp && g.p3 {
     b.write(rt10_imports())
+    if g.is_client() {
+      b.write(rt10_client_imports())
+    }
     b.write(rt6_imports())
   } else if g.comp {
     b.write(rt5_imports())

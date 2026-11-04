@@ -29,3 +29,14 @@ copies to +8; a raw block (cabi_realloc's, a scratch area) is
 Check: the node stub host (internal/selfhost testdata/wasm_http/host.mjs,
 TestWasmComponentHTTP) runs a component's handle export under Node, with
 an instance per request and one instance for every request.
+
+## Seen again (2026-11-04, decision 0447 stage 5 step 2, rt10.xo)
+
+rt10.xo's WASI 0.3 client passed a Str parameter (its object) straight
+to `[method]request.set-authority` and `set-path-with-query` as the
+string's address. The host read the object's refcount and capacity as
+text and refused both, so every outgoing request failed as "the host
+refused the request". A Str or Bytes parameter of hand-written runtime
+WAT is the object: its bytes, which the canonical ABI wants, are at +8
+(rt5.xo adds 8 before every such call). To find which call failed, a
+temporary build returned a bit per setter as the error-code case.

@@ -252,8 +252,9 @@ fn (var i: InstTy) res(name: Str) -> Int {
 }
 
 /// Exports a function; result NO_TYPE for none.
-fn (var i: InstTy) fun(name: Str, params: List[(Str, Int)], result: Int) {
-  var d: List[Int] = [0x40]
+fn (var i: InstTy) fun(name: Str, params: List[(Str, Int)], result: Int, async: Bool = false) {
+  // an async function's type is 0x43 (WASI 0.3, decision 0447 stage 5)
+  var d: List[Int] = [if async { 0x43 } else { 0x40 }]
   uleb(d, params.len())
   for p in params {
     name_bytes(d, p.0)
@@ -1183,9 +1184,14 @@ pub fn component_of(core: Bytes, run: Bool = false, p3: Bool = false) -> (Bytes,
   }
   var p3t = P3Types{body: 0, trailers: 0, done: 0, result: 0}
   if p3 {
-    let ih = c.import_iface("wasi:http/types${WASI_P3}", ity_http_types_p3())
+    let p3client = wanted("wasi:http/client${WASI_P3}")
+    let ih = c.import_iface("wasi:http/types${WASI_P3}", ity_http_types_p3(p3client))
     for n in ["fields", "request", "response", "trailers", "error-code"] {
       let _t = c.alias_type(ih, n)
+    }
+    if p3client {
+      let _o = c.alias_type(ih, "request-options")
+      let _c = c.import_iface("wasi:http/client${WASI_P3}", ity_http_client_p3(c.res.get_or_fault("request", "aliased above"), c.res.get_or_fault("response", "aliased above"), c.res.get_or_fault("error-code", "aliased above")))
     }
     p3t = c.p3_types()
   }
@@ -1251,15 +1257,20 @@ pub fn component_of(core: Bytes, run: Bool = false, p3: Bool = false) -> (Bytes,
       k += 1
       continue
     }
-    let f = c.alias_func(c.iface.get_or_fault(m.module, "checked above"), m.name)
+    // "[async-lower]NAME": NAME lowered async (WASI 0.3's client.send)
+    let async = m.name.starts_with("[async-lower]")
+    let f = c.alias_func(c.iface.get_or_fault(m.module, "checked above"), m.name.trim_prefix("[async-lower]"))
     var s: List[Int] = [1, 0x01, 0x00]
     uleb(s, f)
-    s.push(3)
+    s.push(if async { 4 } else { 3 })
     s.push(0x00)
     s.push(0x03)
     s.push(0x00)
     s.push(0x04)
     uleb(s, realloc)
+    if async {
+      s.push(0x06)
+    }
     section(c.out, 8, s)
     fills.push(("${k}", 0, c.core_funcs))
     c.core_funcs += 1

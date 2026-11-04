@@ -40,17 +40,29 @@ func TestWasmComponentClient(t *testing.T) {
 			t.Skipf("%s not found", tool)
 		}
 	}
+	// the same program as a WASI 0.2 component and a 0.3 one (decision
+	// 0447 stage 5 step 2)
+	for _, target := range []string{"wasip2/wasm", "wasip3/wasm"} {
+		t.Run(strings.TrimSuffix(target, "/wasm"), func(t *testing.T) {
+			wasmComponentClient(t, host, target)
+		})
+	}
+}
+
+// wasmComponentClient builds testdata/wasm_http_client for target and
+// checks its outgoing requests under host.
+func wasmComponentClient(t *testing.T, host, target string) {
 	xo, err := xotool.Path()
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := repoRoot(t)
 	comp := filepath.Join(t.TempDir(), "client.wasm")
-	build := testtmp.Guard(exec.Command(xo, "build", "--targets=wasip2/wasm", "-o", comp, "."))
+	build := testtmp.Guard(exec.Command(xo, "build", "--targets="+target, "-o", comp, "."))
 	build.Dir = filepath.Join(root, "internal", "selfhost", "testdata", "wasm_http_client")
 	build.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "XO_BIN_CACHE=off")
 	if b, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("xo build --targets=wasip2/wasm: %v\n%s", err, b)
+		t.Fatalf("xo build --targets=%s: %v\n%s", target, err, b)
 	}
 	if b, err := testtmp.Guard(exec.Command("wasm-tools", "validate", comp)).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, b)

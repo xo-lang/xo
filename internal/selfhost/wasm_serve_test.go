@@ -61,11 +61,11 @@ fn main(os: Os) {
 		{"a process", fmt.Sprintf(serve, `let _p = os.proc.run("true", []).ignore_err("test");`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "processes"},
 		{"a socket", fmt.Sprintf(serve, `let _l = os.net.listen("127.0.0.1:0").ignore_err("test");`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "sockets"},
 		{"both wasi targets", fmt.Sprintf(serve, ""), []string{"--targets=wasip1/wasm,wasip2/wasm"}, nil, "", "name it alone"},
-		// WASI 0.3 (decision 0447 stage 5 step 1): a wasi:http component
-		// only, without the client
+		// WASI 0.3 (decision 0447 stage 5): a wasi:http component only,
+		// with the client since step 2
 		{"0.3 component", fmt.Sprintf(serve, ""), []string{"--targets=wasip3/wasm"}, component, "", ""},
 		{"0.3 command", plain, []string{"--targets=wasip3/wasm"}, nil, "XO1515", "wasi:http component"},
-		{"0.3 client", fmt.Sprintf(serve, `let _r = http.client(os.net).send(http.new_request("GET", "http://example.com/")).ignore_err("test");`), []string{"--targets=wasip3/wasm"}, nil, "XO1515", "outgoing requests"},
+		{"0.3 client", fmt.Sprintf(serve, `let _r = http.client(os.net).send(http.new_request("GET", "http://example.com/")).ignore_err("test");`), []string{"--targets=wasip3/wasm"}, component, "", ""},
 		{"0.3 with 0.2", fmt.Sprintf(serve, ""), []string{"--targets=wasip2/wasm,wasip3/wasm"}, nil, "", "name it alone"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -260,15 +260,7 @@ func wasmComponentServe(t *testing.T, host, target string) {
 		resp.Body.Close()
 		var n, reads int
 		var tr string
-		_, err := fmt.Sscanf(string(b), "len %d reads %d trailer %s", &n, &reads, &tr)
-		if target == "wasip3/wasm" {
-			// stage 5 step 1 reads the body whole before main and does
-			// not read the request's trailers (decision 0447): the bytes
-			// arrive, in one read, with no trailer
-			if err != nil || n != 3000 || tr != "-" {
-				t.Errorf("POST /stream, piped: %d %q, want len 3000 and no trailer (wasip3 step 1)", resp.StatusCode, b)
-			}
-		} else if err != nil || n != 3000 || reads < 3 || tr != "t9" {
+		if _, err := fmt.Sscanf(string(b), "len %d reads %d trailer %s", &n, &reads, &tr); err != nil || n != 3000 || reads < 3 || tr != "t9" {
 			t.Errorf("POST /stream, piped: %d %q, want len 3000 in 3 reads or more and trailer t9", resp.StatusCode, b)
 		}
 	}

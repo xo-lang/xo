@@ -1286,3 +1286,38 @@ main writes it, with no task suspension added. The client builds a
 lowered async, writes the body while the call runs, waits for the
 subtask, then reads the response's body stream.
 
+### Stage 5 step 2 results (2026-11-04, Xo Lang 4)
+
+The design above works on both hosts:
+
+- TestWasmComponentServe passes at 0.3 under wasmtime 50.0.1 and Spin
+  4.2.6, including the piped body read in 3 or more pieces with its t9
+  trailer.
+- TestWasmComponentClient builds its program for both targets. At 0.3
+  every case passes on both hosts: GET, POST and PUT with bodies,
+  redirects with and without Authorization, gzip, a refused connection,
+  a timeout through request-options, a whole-body read of 300,000
+  bytes, a piped body, and Spin's denial of an unlisted origin.
+- componentp3.xo adds the client's types (request.new, the setters,
+  request-options, response.get-status-code, get-headers and
+  consume-body), the `wasi:http/client@0.3.0` instance with `send` as
+  an async function (type 0x43), the `[async-lower]` lowering (option
+  0x06), and `subtask.drop`. Encodings were read from wasm-tools'
+  dump of the Rust comparison component.
+
+Measured on the second host alone, wasmtime 50.0.1, three rounds,
+medians (bench/results/wasip3-stream-client-2026-11-04.md):
+
+| component | bytes | echo req/s | echo p99 | proxy req/s | proxy p99 |
+|---|---|---|---|---|---|
+| Xo 0.2 (wasip2) | 531,394 | 21,943 | 3.119 ms | 5,877 | 8.988 ms |
+| Xo 0.3 (wasip3) | 530,701 | 57,056 | 2.527 ms | 17,587 | 10.175 ms |
+| Rust 0.3 (wasip3 0.10.0) | 119,123 | 56,102 | 2.574 ms | 17,788 | 10.711 ms |
+
+The echo route reads a streamed 100,000-byte request body; the proxy
+route sends one outgoing GET per request. At 0.3, Xo serves 1.017x
+Rust's rate on the echo and 0.989x on the proxy, with p99 alike, and
+2.60x and 2.99x its own rate at 0.2. Still later, as their own
+decisions: concurrent requests per instance, commands and sockets at
+0.3, and the component's size (queue item 3).
+
