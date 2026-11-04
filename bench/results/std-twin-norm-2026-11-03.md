@@ -25,3 +25,13 @@ Size, same method as std-idna-size-2026-11-03.md, at 9dbd15044 (darwin/arm64): i
 | nfkc | 127.5 | 89.57 | 0.70 | 0.68-0.71 | 0.77 |
 
 The output Str is built with `rt.cast[Bytes, Str]` (valid UTF-8 by construction), without the validation pass of `to_str`; the Go backend lowers it to `rt.Rt_cast` (std/rt/str.go, a free conversion since Bytes is an immutable string there). NFC, NFD and NFKC are all faster than x/text; `none` and `ascii` are the startup and ASCII scan (about 2.7 ms of fixed setup). Proven per ADR 0461 (at most about 1.05) on nfc, nfd and nfkc.
+
+## After the bench setup fix (c4024eec3; host 1, `--early`, n=6 to 7)
+
+| workload | Go ms | Xo ms | ratio | interval | before |
+|---|---|---|---|---|---|
+| none | 4.175 | 3.864 | 0.93 | 0.88-0.95 | 1.66 |
+| ascii | 7.136 | 5.349 | 0.75 | 0.72-0.81 | 1.25 |
+| nfc | 91.55 | 64.49 | 0.70 | 0.69-0.71 | 0.74 |
+
+`none` and `ascii` were the Xo bench program, not the module: it built its 600,000 character input with one string allocation per character (`b.write("${Rune(...)}")`), the Go twin with `WriteRune`. The program now uses a BytesBuilder and `write_rune`. Every norm workload is at or faster than x/text on this host.
