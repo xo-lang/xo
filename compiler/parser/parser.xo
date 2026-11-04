@@ -1398,8 +1398,17 @@ fn (var p: Parser) parse_derive() -> (List[Ident], List[DeriveArg]) {
         let astart = p.tok.span.start
         let key = p.expect_ident("a derive argument name")
         p.expect(Kind.Colon, "`:` after the derive argument's name")
-        let value = p.expect_ident("a derive argument value")
-        args.push(DeriveArg{span: p.span_from(astart), derive: d, key: key, value: value})
+        if p.at(Kind.String) || p.at(Kind.RawString) {
+          // a string value, `tag: "type"` (decision 0478)
+          let (sv, ssp, ok) = p.plain_string()
+          if !ok {
+            p.fail(UNEXPECTED_TOKEN, ssp, "a derive argument is a plain string literal, without interpolation")
+          }
+          args.push(DeriveArg{span: p.span_from(astart), derive: d, key: key, value: Ident{name: b"", span: ssp}, str: Some(sv)})
+        } else {
+          let value = p.expect_ident("a derive argument value or a string")
+          args.push(DeriveArg{span: p.span_from(astart), derive: d, key: key, value: value})
+        }
         if !p.got(Kind.Comma) {
           break
         }

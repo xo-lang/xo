@@ -81,3 +81,41 @@ enum BadVariantDerive {
 enum UnusedVariantWire {
   A as "a" // ERROR XO0414 "does not derive Json"
 }
+
+// Tagged enums (decision 0478).
+enum TagNotObject {
+  Count(from Int) // ERROR XO0431 "not an object"
+  Ok
+} derive Json(tag: "type")
+
+enum TagCollides {
+  Say(kind: Str) // ERROR XO0411 "has the tag's key `kind`"
+} derive Json(tag: "kind")
+
+struct HasKind {
+  kind: Str
+} derive Json
+
+enum TagCollidesWrapped {
+  Wrapped(from HasKind) // ERROR XO0411 "whose field `kind` has the tag's key"
+} derive Json(tag: "kind")
+
+enum TagContentSame {
+  A(x: Int)
+} derive Json(tag: "k", content: "k") // ERROR XO0411 "both have the key `k`"
+
+enum ContentWithoutTag {
+  A(x: Int)
+} derive Json(content: "c") // ERROR XO0413 "needs `tag:`"
+
+enum TagIdent {
+  A(x: Int)
+} derive Json(tag: kind) // ERROR XO0413 "takes a string"
+
+enum CaseString {
+  A(x: Int)
+} derive Json(case: "snake") // ERROR XO0413 "takes a name, not a string"
+
+enum TagContentPayloadOk {
+  Count(from Int)
+} derive Json(tag: "type", content: "value")

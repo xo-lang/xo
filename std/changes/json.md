@@ -1,5 +1,20 @@
 # std/json changes
 
+## 2026-11-03: feature: tagged enums (`derive Json(tag: "type")`, `content: "data"`)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0478 (the 2026-10-30 backend survey's chat hub), stage 2 of its four
+- Go reference: none in encoding/json (Go services decode a tagged message in two passes through json.RawMessage); serde's `#[serde(tag)]` and `#[serde(tag, content)]`
+- Test: golden json_tagged_enum (arm64, LLVM, Go parity): round trips, a tag after the fields, unknown keys, missing and unknown tags, a non-string tag, a wrapped struct, adjacent tagging; test/errorcheck/wire_names (XO0411, XO0413, XO0431)
+- Timing: decision 0478's plan, item 2 (to come with stage 4)
+- Shipped in: not yet released
+
+An enum with `derive Json(tag: "type")` writes a variant as one object,
+its name under the tag and its fields beside it; `content: "data"` puts
+the payload under its own key. Decoding looks the tag up anywhere in the
+object.
+
 ## 2026-11-03: feature: enum variant names on the wire (`case:` on an enum, `Variant as "name"`)
 
 - Kind: feature

@@ -423,72 +423,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     // Patch field, whether a field needs its comma is known here, so the
     // brace, the comma, and the key are one literal (one append): a
     // User of three fields appends 4 literals, not 7, and tests nothing
-    let av = b.local()
-    let first = b.local()
-    var pend = "{"
-    var fixed = true
-    var any = false
-    for f in b.c.objs[obj].fields {
-      let fi = b.m.field_index(t, check.text(f.name))
-      if fi < 0 {
-        continue
-      }
-      // its key: the field's wire name or its case rule (decision 0277),
-      // escaped for the literal
-      let fname = json_key_text(f.json_key)
-      let ft = b.c.subst(f.ty, sb)
-      let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v]))
-      let patch = b.is_json_patch(ft)
-      // an omitempty field (decision 0309) of a type that can be empty
-      let omit = !patch && f.omit_empty && b.json_can_be_empty(fv, ft)
-      if patch || omit {
-        if fixed {
-          // from here on, whether a field is the first is known only
-          // when the code runs
-          fixed = false
-          b.write_var(av, b.lit(if any { b.read(av) } else { acc }, pend))
-          b.write_var(first, b.cbool(!any))
-        }
-        var keep = -1
-        if patch {
-          let fvt = b.vty(fv)
-          let absent = b.m.variant_index(fvt, "Absent")
-          let tag = b.add(Op.Tag, it, Aux.None, [fv])
-          keep = b.add(Op.Ne, bt, Aux.None, [tag, b.cint(absent)])
-        } else {
-          keep = b.add(Op.Not, bt, Aux.None, [b.json_empty(fv, ft)])
-        }
-        let (no0, join0) = b.if_then_begin(keep)
-        b.json_field(av, first, fname, fv, ft)
-        b.if_then_end(no0, join0)
-        continue
-      }
-      if fixed {
-        let comma = if any { "," } else { "" }
-        let key = "${pend}${comma}\"${fname}\":"
-        let cur = if any { b.read(av) } else { acc }
-        if b.is_prelude_named(ft, ["Str"]) && b.prelude_impl("llrt_rs_append_json_body") >= 0 {
-          // a Str field's quotes go with the literals around it: the
-          // opening one ends the key, the closing one starts the next
-          // literal, and the value is one append when nothing in it
-          // needs escaping (jsontext.append_body)
-          b.write_var(av, b.json_rt("rs_append_json_body", b.str_t(), [b.lit(cur, "${key}\""), fv]))
-          pend = "\""
-          any = true
-          continue
-        }
-        b.write_var(av, b.json_sub(b.lit(cur, key), fv, ft))
-        pend = ""
-        any = true
-        continue
-      }
-      b.json_field(av, first, fname, fv, ft)
-    }
-    if fixed {
-      b.retv(b.lit(if any { b.read(av) } else { acc }, "${pend}}"))
-      return
-    }
-    b.retv(b.lit(b.read(av), "}"))
+    b.retv(b.json_struct_obj(acc, v, t, obj, sb, "{", false))
     return
   }
   if b.tkind(t) == Kind.Struct && tk == "newtype" && b.m.types[t].fields.len() == 1 {
@@ -526,7 +461,12 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
       }
       let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
       let wn = json_key_text(check.variant_json_name(vo))
-      if vo.fields.is_empty() {
+      let jtag = b.c.objs[obj].json_tag
+      if !jtag.is_empty() {
+        // the tagged forms (decision 0478): {"type":"say",...fields} or,
+        // with content:, {"type":"say","data":payload}
+        b.retv(b.json_tagged_variant(acc, v, t, vi, vo, sb, "{\"${json_key_text(jtag)}\":\"${wn}\"", b.c.objs[obj].json_content))
+      } else if vo.fields.is_empty() {
         b.retv(b.lit(acc, "\"${wn}\""))
       } else {
         var a = b.lit(acc, "{\"${wn}\":")
@@ -556,6 +496,125 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
   }
   b.unsupported("JSON for `${b.c.show(ct)}`")
   b.retv(acc)
+}
+
+/// Variant vi (vo) of enum value v in a tagged form appended to acc
+/// (decision 0478): head is `{"type":"say"`; with a content key, the
+/// payload goes under it as the external form writes it, else its fields
+/// go beside the tag (a wrapped struct's fields, the checker made sure it
+/// is one, XO0431).
+fn (var b: Builder) json_tagged_variant(acc: Int, v: Int, t: Int, vi: Int, vo: check.VariantInfo, sb: Map[Int, Int], head: Str, content: Bytes) -> Int {
+  if vo.fields.is_empty() {
+    return b.lit(acc, "${head}}")
+  }
+  let wrapped = vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty())
+  if !content.is_empty() {
+    var a = b.lit(acc, "${head},\"${json_key_text(content)}\":")
+    if wrapped {
+      let p = b.add(Op.Payload, b.m.types[t].variants[vi].fields[0].ty, Aux.P(tag: vi, field: 0), [v])
+      a = b.json_sub(a, p, b.c.subst(vo.fields[0].ty, sb))
+      return b.lit(a, "}")
+    }
+    a = b.lit(a, "{")
+    for (fi, f) in vo.fields.indexed() {
+      if fi > 0 {
+        a = b.lit(a, ",")
+      }
+      let p = b.add(Op.Payload, b.m.types[t].variants[vi].fields[fi].ty, Aux.P(tag: vi, field: fi), [v])
+      a = b.json_sub(b.lit(a, "\"${json_key_text(check.vfield_json_key(f))}\":"), p, b.c.subst(f.ty, sb))
+    }
+    return b.lit(a, "}}")
+  }
+  if wrapped {
+    let ct = b.c.subst(vo.fields[0].ty, sb)
+    let p = b.unbox(b.add(Op.Payload, b.m.types[t].variants[vi].fields[0].ty, Aux.P(tag: vi, field: 0), [v]))
+    let so = b.named_obj(ct)
+    let ssb = b.c.args_subst(b.c.objs[so].tparams, b.ty_args(ct))
+    return b.json_struct_obj(acc, p, b.vty(p), so, ssb, head, true)
+  }
+  var a = acc
+  var pend = head
+  for (fi, f) in vo.fields.indexed() {
+    let p = b.add(Op.Payload, b.m.types[t].variants[vi].fields[fi].ty, Aux.P(tag: vi, field: fi), [v])
+    a = b.json_sub(b.lit(a, "${pend},\"${json_key_text(check.vfield_json_key(f))}\":"), p, b.c.subst(f.ty, sb))
+    pend = ""
+  }
+  b.lit(a, "}")
+}
+
+/// The object of struct v (SSA type t, object obj, substitution sb)
+/// appended to acc, with pend0 written before its first key and any0
+/// whether a member is already in it (a tagged variant's
+/// `{"type":"say"`, decision 0478).
+fn (var b: Builder) json_struct_obj(acc: Int, v: Int, t: Int, obj: Int, sb: Map[Int, Int], pend0: Str, any0: Bool) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let av = b.local()
+  let first = b.local()
+  b.write_var(av, acc)
+  var pend = pend0
+  var fixed = true
+  var any = any0
+  for f in b.c.objs[obj].fields {
+    let fi = b.m.field_index(t, check.text(f.name))
+    if fi < 0 {
+      continue
+    }
+    // its key: the field's wire name or its case rule (decision 0277),
+    // escaped for the literal
+    let fname = json_key_text(f.json_key)
+    let ft = b.c.subst(f.ty, sb)
+    let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v]))
+    let patch = b.is_json_patch(ft)
+    // an omitempty field (decision 0309) of a type that can be empty
+    let omit = !patch && f.omit_empty && b.json_can_be_empty(fv, ft)
+    if patch || omit {
+      if fixed {
+        // from here on, whether a field is the first is known only
+        // when the code runs
+        fixed = false
+        b.write_var(av, b.lit(b.read(av), pend))
+        b.write_var(first, b.cbool(!any))
+      }
+      var keep = -1
+      if patch {
+        let fvt = b.vty(fv)
+        let absent = b.m.variant_index(fvt, "Absent")
+        let tag = b.add(Op.Tag, it, Aux.None, [fv])
+        keep = b.add(Op.Ne, bt, Aux.None, [tag, b.cint(absent)])
+      } else {
+        keep = b.add(Op.Not, bt, Aux.None, [b.json_empty(fv, ft)])
+      }
+      let (no0, join0) = b.if_then_begin(keep)
+      b.json_field(av, first, fname, fv, ft)
+      b.if_then_end(no0, join0)
+      continue
+    }
+    if fixed {
+      let comma = if any { "," } else { "" }
+      let key = "${pend}${comma}\"${fname}\":"
+      let cur = b.read(av)
+      if b.is_prelude_named(ft, ["Str"]) && b.prelude_impl("llrt_rs_append_json_body") >= 0 {
+        // a Str field's quotes go with the literals around it: the
+        // opening one ends the key, the closing one starts the next
+        // literal, and the value is one append when nothing in it
+        // needs escaping (jsontext.append_body)
+        b.write_var(av, b.json_rt("rs_append_json_body", b.str_t(), [b.lit(cur, "${key}\""), fv]))
+        pend = "\""
+        any = true
+        continue
+      }
+      b.write_var(av, b.json_sub(b.lit(cur, key), fv, ft))
+      pend = ""
+      any = true
+      continue
+    }
+    b.json_field(av, first, fname, fv, ft)
+  }
+  if fixed {
+    return b.lit(b.read(av), "${pend}}")
+  }
+  b.lit(b.read(av), "}")
 }
 
 /// key (a field's JSON key, decision 0277) as the text between a JSON
@@ -1102,6 +1161,10 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     b.retv(b.dec_err(d, b.const_str(""), m2))
     return
   }
+  if b.tkind(t) == Kind.Enum && tk == "enum" && !b.c.objs[obj].json_tag.is_empty() {
+    b.dec_tagged(d, t, obj, sb)
+    return
+  }
   if b.tkind(t) == Kind.Enum && tk == "enum" {
     // the variant name and its payload (std/rt JsonVariant)
     let name_v = b.local()
@@ -1141,7 +1204,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       }
       let wn = check.text(check.variant_json_name(vo))
       let (no, join3) = b.if_then_begin(b.call("str.eq", bt, "", [nm, b.const_str(wn)]))
-      b.dec_variant(d, t, vi, wn, vo, sb, pay, has)
+      b.dec_variant(d, t, vi, wn, ".${wn}", vo, sb, pay, has)
       b.if_then_end(no, join3)
     }
     let p = b.const_str("")
@@ -1154,8 +1217,68 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   b.dec_fail(d, "unsupported")
 }
 
+/// The decoder of a tagged enum (decision 0478): the object's tag member,
+/// wherever it is (jsontext's lookup), names the variant; its payload is
+/// the object itself (the fields beside the tag) or, with a content key,
+/// that member, read as the external form reads one.
+fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
+  let bt = b.bool_t()
+  let it = b.int_t()
+  let i = d.i
+  let tag = check.text(b.c.objs[obj].json_tag)
+  let content = check.text(b.c.objs[obj].json_content)
+  let ename = check.text(b.c.objs[obj].name)
+  b.dec_need(d, JK_OBJ, "expected an object with the tag `${tag}` of enum ${ename}")
+  let j = b.json_rt("json_find", it, [d.src, d.tape, i, b.const_str(tag)])
+  let (no1, join1) = b.if_then_begin(b.add(Op.Lt, bt, Aux.None, [j, b.cint(0)]))
+  b.retv(b.dec_err(d, b.const_str(""), b.const_str("missing tag `${tag}` of enum ${ename}")))
+  b.if_then_end(no1, join1)
+  let k = b.call("list.index", it, "", [d.tape, j])
+  let (no2, join2) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [k, b.cint(JK_STR)]))
+  b.retv(b.dec_err(d, b.const_str(".${tag}"), b.const_str("expected a variant name")))
+  b.if_then_end(no2, join2)
+  let nm = b.dec_str(d, j)
+  var pay = i
+  var has = b.cbool(true)
+  if !content.is_empty() {
+    pay = b.json_rt("json_find", it, [d.src, d.tape, i, b.const_str(content)])
+    has = b.add(Op.Ge, bt, Aux.None, [pay, b.cint(0)])
+  }
+  for vo in b.c.objs[obj].variants {
+    let vi = b.m.variant_index(t, check.text(vo.name))
+    if vi < 0 {
+      continue
+    }
+    let wn = check.text(check.variant_json_name(vo))
+    let (no, join3) = b.if_then_begin(b.call("str.eq", bt, "", [nm, b.const_str(wn)]))
+    if !content.is_empty() {
+      b.dec_variant(d, t, vi, wn, ".${content}", vo, sb, pay, has)
+    } else if vo.fields.is_empty() {
+      b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), []))
+    } else if vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty()) {
+      // the wrapped struct's fields are the object's (the tag is an
+      // unknown key to it)
+      let v = b.dec_child(d, b.c.subst(vo.fields[0].ty, sb), i, b.const_str(""))
+      let cv = b.coerce(v, b.m.types[t].variants[vi].fields[0].ty)
+      b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), [cv]))
+    } else {
+      let vfs = b.m.types[t].variants[vi].fields
+      var fs: List[JField] = []
+      for (fi, f) in vo.fields.indexed() {
+        fs.push(JField{name: check.text(f.name), key: check.text(check.vfield_json_key(f)), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
+      }
+      let vals = b.dec_fields(d, i, "", fs, false)
+      b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), vals))
+    }
+    b.if_then_end(no, join3)
+  }
+  let s1 = b.call("str.concat", b.str_t(), "", [b.const_str("unknown variant `"), nm])
+  let s2 = b.call("str.concat", b.str_t(), "", [s1, b.const_str("` of enum ${ename}")])
+  b.retv(b.dec_err(d, b.const_str(".${tag}"), s2))
+}
+
 /// The body of one variant's branch of an enum decoder.
-fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vo: check.VariantInfo, sb: Map[Int, Int], pay: Int, has: Int) {
+fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vseg: Str, vo: check.VariantInfo, sb: Map[Int, Int], pay: Int, has: Int) {
   let bt = b.bool_t()
   let it = b.int_t()
   if vo.fields.is_empty() {
@@ -1167,7 +1290,7 @@ fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vo: check.V
   b.if_then_end(no, join)
   let vfs = b.m.types[t].variants[vi].fields
   if vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty()) {
-    let seg = b.const_str(".${vname}")
+    let seg = b.const_str(vseg)
     let v = b.dec_child(d, b.c.subst(vo.fields[0].ty, sb), pay, seg)
     let cv = b.coerce(v, vfs[0].ty)
     b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), [cv]))
@@ -1175,7 +1298,7 @@ fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vo: check.V
   }
   let k = b.call("list.index", it, "", [d.tape, pay])
   let (no2, join2) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [k, b.cint(JK_OBJ)]))
-  let p = b.const_str(".${vname}")
+  let p = b.const_str(vseg)
   let m = b.const_str("expected object")
   b.retv(b.dec_err(d, p, m))
   b.if_then_end(no2, join2)
@@ -1183,7 +1306,7 @@ fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vo: check.V
   for (fi, f) in vo.fields.indexed() {
     fs.push(JField{name: check.text(f.name), key: check.text(check.vfield_json_key(f)), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
   }
-  let vals = b.dec_fields(d, pay, ".${vname}", fs, false)
+  let vals = b.dec_fields(d, pay, vseg, fs, false)
   b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), vals))
 }
 

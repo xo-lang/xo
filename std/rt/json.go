@@ -75,6 +75,20 @@ func (w *JsonW) Field(k string) {
 	w.b = append(w.b, ':')
 }
 
+// Inline writes the members of v's object into the open object, after
+// those already in it: an internally tagged enum's wrapped struct beside
+// its tag (decision 0478).
+func Inline[T any](tk *Task, w *JsonW, v T) {
+	var t JsonW
+	JsonEnc(tk, &t, v)
+	s := t.b
+	if len(s) <= 2 || s[0] != '{' {
+		return
+	}
+	w.sep()
+	w.b = append(w.b, s[1:len(s)-1]...)
+}
+
 // Str writes a string value.
 func (w *JsonW) Str(s string) { w.str(s) }
 

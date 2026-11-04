@@ -283,7 +283,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
       // variant indexes are declaration positions (duplicates skipped
       // keep their index)
       c.objs[t].derives = c.derives_of(ed.derive)
-      c.objs[t].variants = c.variant_wire_names(ed, vs, c.objs[t].derives)
+      c.objs[t].variants = c.variant_wire_names(t, ed, vs, c.objs[t].derives)
       c.valued_enum(t, ed)
     }
     InterfaceDecl(d: id) => {
@@ -372,6 +372,10 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
       c.error("XO0413", a.key.span, "unknown argument `${k}` of `derive ${d}`; it takes `case: snake | camel | pascal | kebab`")
       continue
     }
+    if a.str != None {
+      c.error("XO0413", a.value.span, "`case:` takes a name, not a string: one of snake, camel, pascal, kebab")
+      continue
+    }
     if !(v is "snake" | "camel" | "pascal" | "kebab") {
       c.error("XO0413", a.value.span, "unknown case `${v}`; `case:` is one of snake, camel, pascal, kebab")
       continue
@@ -424,22 +428,44 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
 /// vs with their JSON names and their fields' keys set (decision 0478):
 /// a variant's `as "name"`, else its name under the enum's `derive
 /// Json(case:)` (`JoinRoom` is `join_room` under snake), else its name;
-/// a field's key is its name under the same rule. Checks the arguments
+/// a field's key is its name under the same rule. Sets the enum's tag and
+/// content keys (`tag: "type"`, `content: "data"`). Checks the arguments
 /// (XO0413), two variants with one name (XO0411), and warns about a wire
 /// name with no `derive Json` (XO0414).
-fn (var c: Checker) variant_wire_names(ed: parser.EnumDecl, vs0: List[VariantInfo], derives: List[Str]) -> List[VariantInfo] {
+fn (var c: Checker) variant_wire_names(t: Int, ed: parser.EnumDecl, vs0: List[VariantInfo], derives: List[Str]) -> List[VariantInfo] {
   var vs = vs0
   var rule = ""
+  var content_span: Span? = None
   for a in ed.derive_args {
     let d = text(a.derive.name)
     let k = text(a.key.name)
     let v = text(a.value.name)
     if d != "Json" {
-      c.error("XO0413", a.span, "`derive ${d}` takes no arguments on an enum; `case:` applies to `derive Json` (decision 0478)")
+      c.error("XO0413", a.span, "`derive ${d}` takes no arguments on an enum; `case:`, `tag:` and `content:` apply to `derive Json` (decision 0478)")
+      continue
+    }
+    if k is "tag" | "content" {
+      match a.str {
+        Some(sv) => {
+          if sv.is_empty() {
+            c.error("XO0413", a.value.span, "`${k}:` takes a non-empty key")
+          } else if k == "tag" {
+            c.objs[t].json_tag = sv
+          } else {
+            c.objs[t].json_content = sv
+            content_span = Some(a.span)
+          }
+        }
+        None => c.error("XO0413", a.value.span, "`${k}:` takes a string, the key: `${k}: \"${v}\"`")
+      }
       continue
     }
     if k != "case" {
-      c.error("XO0413", a.key.span, "unknown argument `${k}` of an enum's `derive Json`; it takes `case: snake | camel | pascal | kebab`")
+      c.error("XO0413", a.key.span, "unknown argument `${k}` of an enum's `derive Json`; it takes `case: snake | camel | pascal | kebab`, `tag: \"KEY\"` and `content: \"KEY\"`")
+      continue
+    }
+    if a.str != None {
+      c.error("XO0413", a.value.span, "`case:` takes a name, not a string: one of snake, camel, pascal, kebab")
       continue
     }
     if !(v is "snake" | "camel" | "pascal" | "kebab") {
@@ -447,6 +473,13 @@ fn (var c: Checker) variant_wire_names(ed: parser.EnumDecl, vs0: List[VariantInf
       continue
     }
     rule = v
+  }
+  if let Some(cs) = content_span {
+    if c.objs[t].json_tag.is_empty() {
+      c.error("XO0413", cs, "`content:` needs `tag:`: the content key holds the payload beside the variant's name under the tag")
+    } else if c.objs[t].json_content == c.objs[t].json_tag {
+      c.error("XO0411", cs, "the tag and the content both have the key `${text(c.objs[t].json_tag)}`")
+    }
   }
   var seen: Map[Bytes, Int] = {}
   for i in 0..vs.len() {

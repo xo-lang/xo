@@ -1,0 +1,72 @@
+// Tagged enums (decision 0478): `derive Json(tag: "type")` puts the
+// variant's name under the tag and its fields beside it, a wrapped
+// struct's fields too; `content: "data"` puts the payload under its own
+// key instead (adjacent tagging). Decoding finds the tag anywhere in the
+// object, reads the fields with the struct rules (unknown keys ignored,
+// `T?` may be missing), and names a missing or unknown tag.
+use std/json
+
+struct Move {
+  dx: Int
+  dy: Int
+  note: Str? = None
+} derive Json
+
+enum Inbound {
+  Join(room: Str)
+  Say(room: Str, text: Str)
+  Moved(from Move)
+  Ping
+  Chat as "chat.message"(body: Str)
+} derive Json(tag: "type", case: snake)
+
+enum Frame {
+  Data(seq: Int, payload: Str)
+  Pos(from Move)
+  Close
+} derive Json(tag: "t", content: "c")
+
+fn show_in(os: Os, s: Str) {
+  match json.decode[Inbound](s.bytes()) {
+    Ok(m) => os.stdio.println("${s} -> ${json.encode_str(m)}")
+    Err(e) => os.stdio.println("${s} -> ${e}")
+  }
+}
+
+fn show_frame(os: Os, s: Str) {
+  match json.decode[Frame](s.bytes()) {
+    Ok(m) => os.stdio.println("${s} -> ${json.encode_str(m)}")
+    Err(e) => os.stdio.println("${s} -> ${e}")
+  }
+}
+
+fn main(os: Os) {
+  let ins = [Inbound.Join(room: "r1"), Inbound.Say(room: "r1", text: "hi \"there\""), Inbound.Moved(Move{dx: 1, dy: -2}), Inbound.Moved(Move{dx: 0, dy: 0, note: Some("n")}), Inbound.Ping, Inbound.Chat(body: "b")]
+  for m in ins {
+    let s = json.encode_str(m)
+    match json.decode[Inbound](s.bytes()) {
+      Ok(back) => os.stdio.println("${s} round trip ${json.encode_str(back) == s}")
+      Err(e) => os.stdio.println("${s} decode failed: ${e}")
+    }
+  }
+  for s in [
+    "{\"room\":\"r2\",\"text\":\"late tag\",\"type\":\"say\"}",
+    "{\"type\":\"join\",\"room\":\"r3\",\"extra\":[1,2]}",
+    "{\"dy\":5,\"type\":\"moved\",\"dx\":4}",
+    "{\"room\":\"r\"}",
+    "{\"type\":\"shout\"}",
+    "{\"type\":7}",
+    "{\"type\":\"say\",\"room\":\"r\"}",
+    "[\"say\"]",
+    "{\"type\":\"Join\",\"room\":\"r\"}",
+  ] {
+    show_in(os, s)
+  }
+  for f in [Frame.Data(seq: 1, payload: "p"), Frame.Pos(Move{dx: 3, dy: 4}), Frame.Close] {
+    os.stdio.println(json.encode_str(f))
+  }
+  for s in ["{\"c\":{\"seq\":2,\"payload\":\"q\"},\"t\":\"Data\"}", "{\"t\":\"Close\"}", "{\"t\":\"Data\"}", "{\"t\":\"Data\",\"c\":{\"seq\":\"x\",\"payload\":\"q\"}}", "{\"t\":\"Pos\",\"c\":{\"dx\":1,\"dy\":2}}"] {
+    show_frame(os, s)
+  }
+  os.stdio.println(json.encode_str([Inbound.Ping, Inbound.Join(room: "a")]))
+}

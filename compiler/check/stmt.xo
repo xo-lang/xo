@@ -168,6 +168,7 @@ fn (var c: Checker) check_module(m: Int) {
         EnumDecl(d: ed) => {
           if c.is_scope_entry(f, i, ed.name.name) {
             c.check_derives(c.files[f].decl_objs[i], ed.derive)
+            c.check_tagged_enum(c.files[f].decl_objs[i], ed)
           }
         }
         TypeDecl(d: td) => {
@@ -753,6 +754,43 @@ fn (var c: Checker) check_newtype_derives(t: Int, ids: List[Ident]) {
     }
     if !c.is_ord(vt) {
       c.error("XO0404", id.span, "`derive Ord` needs the newtype's value to implement `Ord`, but `${text(c.objs[t].name)}` holds `${c.show(vt)}`")
+    }
+  }
+}
+
+/// An internally tagged enum (decision 0478, `derive Json(tag: "type")`
+/// without `content:`): every variant's payload is an object, so its
+/// fields go beside the tag: named fields, or one field that is a struct
+/// (XO0431 otherwise), none of them with the tag's key (XO0411).
+fn (var c: Checker) check_tagged_enum(t: Int, ed: parser.EnumDecl) {
+  let tag = c.objs[t].json_tag
+  if tag.is_empty() || !c.objs[t].json_content.is_empty() {
+    return
+  }
+  if c.objs[t].value_kind != 0 {
+    c.error("XO0413", ed.name.span, "`tag:` applies to an enum whose variants have fields; a valued enum is its variants' values (decision 0269)")
+    return
+  }
+  for v in c.objs[t].variants {
+    let decl = ed.variants[v.index]
+    if v.fields.len() == 1 && (v.fields[0].from || v.fields[0].name.is_empty()) {
+      let r = c.resolve(v.fields[0].ty)
+      let so = if c.tys[r].kind == TyKind.Named { c.tys[r].obj } else { -1 }
+      if so < 0 || c.objs[so].tkind != "struct" || c.objs[so].opaque {
+        c.error("XO0431", decl.name.span, "variant `${text(v.name)}` of a tagged enum holds `${c.show(v.fields[0].ty)}`, which is not an object, so its fields cannot go beside the tag `${text(tag)}`; give it named fields, wrap a struct, or add `content: \"KEY\"` to the derive")
+        continue
+      }
+      for sf in c.objs[so].fields {
+        if sf.json_key == tag {
+          c.error("XO0411", decl.name.span, "variant `${text(v.name)}` holds `${text(c.objs[so].name)}`, whose field `${text(sf.name)}` has the tag's key `${text(tag)}`; rename the tag or the field")
+        }
+      }
+      continue
+    }
+    for f in v.fields {
+      if vfield_json_key(f) == tag {
+        c.error("XO0411", decl.name.span, "variant `${text(v.name)}`'s field `${text(f.name)}` has the tag's key `${text(tag)}`; rename the tag or the field")
+      }
     }
   }
 }

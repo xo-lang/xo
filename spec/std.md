@@ -2304,6 +2304,7 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | valued enum (`enum E: Int` or `enum E: Str`, decision 0269) | the variant's value: a number or a string; decoding refuses a value no variant has (`unknown value 7 of enum Weekday`) |
 | enum unit variant | string `"Variant"` (its wire name: `as "name"` or `case:`, decision 0478, core 2.3) |
 | enum variant with fields | object `{"Variant": {fields}}`, the name and the fields' keys as above |
+| tagged enum, `derive Json(tag: "type")` | object `{"type": "Variant", fields...}`, a wrapped struct's fields beside the tag; with `content: "data"`, `{"type": "Variant", "data": payload}` (decision 0478, core 2.3) |
 | tuple `(A, B, ...)` | array `[a, b, ...]`; decodes only from an array of exactly that length (decision 0088) |
 | `()` | `null` |
 | `Duration` | string `"1.5s"` (any `Duration.parse` form decodes) |

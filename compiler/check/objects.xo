@@ -127,6 +127,11 @@ pub struct Obj {
   /// Alias target or newtype underlying type.
   pub target: Int = -1
   pub derives: List[Str] = []
+  /// An enum's `derive Json(tag: "k", content: "c")` (decision 0478): the
+  /// key of its variant's name (empty: the external form) and of its
+  /// payload (empty: the fields beside the tag).
+  pub json_tag: Bytes = b""
+  pub json_content: Bytes = b""
   /// An empty std struct: an opaque handle.
   pub opaque: Bool = false
   /// Methods and statics (Func objects) by name.

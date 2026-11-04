@@ -172,7 +172,10 @@ pub struct DeriveArg {
   /// the derive it belongs to
   pub derive: Ident
   pub key: Ident
+  /// an identifier value (`case: snake`); its name is empty for a string
   pub value: Ident
+  /// a string value (`tag: "type"`, decision 0478)
+  pub str: Bytes? = None
 }
 
 pub struct Field {

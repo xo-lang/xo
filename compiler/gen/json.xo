@@ -260,9 +260,39 @@ fn (var g: Gen) gen_json_enum(t: Int) {
   }
   g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) {")
   g.pl("\tswitch v.Tag {")
+  let jtag = check.text(g.c.objs[t].json_tag)
+  let jcontent = check.text(g.c.objs[t].json_content)
   for (vi, v) in variants.indexed() {
     g.pl("\tcase ${v.index + 1}:")
     let vname = check.text(check.variant_json_name(v))
+    let wrapped = v.fields.len() == 1 && (v.fields[0].from || v.fields[0].name.is_empty())
+    if !jtag.is_empty() {
+      // the tagged forms (decision 0478)
+      g.pl("\t\tw.ObjStart()\n\t\tw.Field(${jtag.quote()})\n\t\tw.Str(${vname.quote()})")
+      if !v.fields.is_empty() {
+        g.pl("\t\ta := v.P.(${g.local_variant_type(t, vi)}${tuse})")
+        if !jcontent.is_empty() {
+          g.pl("\t\tw.Field(${jcontent.quote()})")
+          if wrapped {
+            g.pl("\t\t${g.json_enc_of(v.fields[0].ty, "a." + g.vfield_name(v.fields[0], 0))}")
+          } else {
+            g.pl("\t\tw.ObjStart()")
+            for (i, f) in v.fields.indexed() {
+              g.pl("\t\tw.Field(${check.text(check.vfield_json_key(f)).quote()})\n\t\t${g.json_enc_of(f.ty, "a." + g.vfield_name(f, i))}")
+            }
+            g.pl("\t\tw.ObjEnd()")
+          }
+        } else if wrapped {
+          g.pl("\t\t${rt}Inline(tk, w, a.${g.vfield_name(v.fields[0], 0)})")
+        } else {
+          for (i, f) in v.fields.indexed() {
+            g.pl("\t\tw.Field(${check.text(check.vfield_json_key(f)).quote()})\n\t\t${g.json_enc_of(f.ty, "a." + g.vfield_name(f, i))}")
+          }
+        }
+      }
+      g.pl("\t\tw.ObjEnd()")
+      continue
+    }
     if v.fields.is_empty() {
       g.pl("\t\tw.Str(${vname.quote()})")
       continue
@@ -282,6 +312,10 @@ fn (var g: Gen) gen_json_enum(t: Int) {
   }
   g.pl("\t}\n}\n")
   g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
+  if !jtag.is_empty() {
+    g.gen_json_tagged_dec(t, self, tuse, jtag, jcontent)
+    return
+  }
   g.pl("\tname, payload, hasPayload, err := ${rt}JsonVariant(x, path)")
   g.pl("\tif err != nil {\n\t\treturn err\n\t}")
   g.pl("\t_, _ = payload, hasPayload")
@@ -311,6 +345,58 @@ fn (var g: Gen) gen_json_enum(t: Int) {
   }
   g.pl("\t}")
   g.pl("\treturn ${rt}JsonErr(path, \"unknown variant `\"+name+\"`\")")
+  g.pl("}\n")
+}
+
+/// The rest of a tagged enum's XoJsonDec (decision 0478): the object's
+/// tag member names the variant; its fields are the object's own, or the
+/// content member's, read as the external form reads a payload.
+fn (var g: Gen) gen_json_tagged_dec(t: Int, self: Str, tuse: Str, jtag: Str, jcontent: Str) {
+  let rt = g.rt()
+  let ename = check.text(g.c.objs[t].name)
+  g.pl("\tobj, err := ${rt}JsonObject(x, path)")
+  g.pl("\tif err != nil {\n\t\treturn ${rt}JsonErr(path, ${"expected an object with the tag `${jtag}` of enum ${ename}".quote()})\n\t}")
+  g.pl("\ttv, ok := obj[${jtag.quote()}]")
+  g.pl("\tif !ok {\n\t\treturn ${rt}JsonErr(path, ${"missing tag `${jtag}` of enum ${ename}".quote()})\n\t}")
+  g.pl("\tname, ok := tv.(string)")
+  g.pl("\tif !ok {\n\t\treturn ${rt}JsonErr(path+${("." + jtag).quote()}, \"expected a variant name\")\n\t}")
+  if !jcontent.is_empty() {
+    g.pl("\tpayload, hasPayload := obj[${jcontent.quote()}]")
+    g.pl("\t_, _ = payload, hasPayload")
+  }
+  g.pl("\tswitch name {")
+  for (vi, v) in g.c.objs[t].variants.indexed() {
+    let vname = check.text(check.variant_json_name(v))
+    g.pl("\tcase ${vname.quote()}:")
+    if v.fields.is_empty() {
+      g.pl("\t\t*v = ${self}{Tag: ${v.index + 1}}\n\t\treturn nil")
+      continue
+    }
+    let pt = g.local_variant_type(t, vi) + tuse
+    let wrapped = v.fields.len() == 1 && (v.fields[0].from || v.fields[0].name.is_empty())
+    g.pl("\t\tvar p ${pt}")
+    var src = "x"
+    var seg = ""
+    if !jcontent.is_empty() {
+      g.pl("\t\tif !hasPayload {\n\t\t\treturn ${rt}JsonErr(path, ${("variant `" + vname + "` needs fields").quote()})\n\t\t}")
+      src = "payload"
+      seg = "." + jcontent
+    }
+    if wrapped {
+      g.pl("\t\tif err := ${rt}JsonDec(tk, &p.${g.vfield_name(v.fields[0], 0)}, ${src}, path+${seg.quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+    } else {
+      g.pl("\t\tobj, err := ${rt}JsonObject(${src}, path+${seg.quote()})")
+      g.pl("\t\tif err != nil {\n\t\t\treturn err\n\t\t}")
+      g.pl("\t\tif err := func(v *${pt}, path string) *${rt}Json_DecodeErr {")
+      for (i, f) in v.fields.indexed() {
+        g.json_field(check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "")
+      }
+      g.pl("\t\t\treturn nil\n\t\t}(&p, path+${seg.quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+    }
+    g.pl("\t\t*v = ${self}{Tag: ${v.index + 1}, P: p}\n\t\treturn nil")
+  }
+  g.pl("\t}")
+  g.pl("\treturn ${rt}JsonErr(path+${("." + jtag).quote()}, \"unknown variant `\"+name+${("` of enum " + ename).quote()})")
   g.pl("}\n")
 }
 

@@ -790,6 +790,23 @@ enum Color: Str { Red, Green, Blue }       // "Red", "Green", "Blue"
   unknown argument or case is `XO0413`, an empty name `XO0412`, two
   variants with one name `XO0411`, and a variant wire name on an enum
   without `derive Json` the warning `XO0414`.
+- Tagged enums (decision 0478): `derive Json(tag: "type")` writes a
+  variant as one object, its wire name under the tag and its fields
+  beside it: `Say(room: "r", text: "hi")` is
+  `{"type":"say","room":"r","text":"hi"}` (with `case: snake`), a unit
+  variant `{"type":"ping"}`, and a variant holding one struct (`from
+  Move`) has that struct's fields beside the tag. Adding `content:
+  "data"` puts the payload under its own key instead, as the external
+  form writes it: `{"type":"say","data":{"room":"r","text":"hi"}}`; a
+  unit variant has no content key. Decoding finds the tag anywhere in the
+  object and reads the fields with the struct rules (unknown keys
+  ignored, `T?` and defaults may be missing); a missing tag, a tag that
+  is not a string and an unknown name are `DecodeErr`s. A variant whose
+  payload is not an object (`Count(from Int)`) without `content:` is
+  `XO0431`; a field, or a wrapped struct's field, with the tag's key,
+  and a content key equal to the tag, are `XO0411`; `content:` without
+  `tag:`, a tag that is not a string, and `tag:` on a valued enum are
+  `XO0413`.
 
 ### 2.4 Interfaces
 
@@ -3285,6 +3302,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0428` | error | checker | two variants of a valued enum have the same value (core 2.3, decision 0269) |
 | `XO0429` | error | checker | an invalid valued enum: a value type other than `Int` or `Str`, a value on an enum with no value type, a variant with fields, type parameters, or a value that is not a constant of the value type (core 2.3, decision 0269) |
 | `XO0430` | error | checker | a pattern name spelled like a constant (upper case) that is neither a `const` in scope nor a variant: a misspelled constant pattern (core 3.5, decision 0269) |
+| `XO0431` | error | checker | a variant of an internally tagged enum (`derive Json(tag: "type")` without `content:`) whose payload is not an object: one field that is not a struct (core 2.3, decision 0478) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |
@@ -3768,7 +3786,8 @@ StructDecl  = "struct" ident [ TypeParams ] "{" { Field } "}" [ Invariant ] [ De
 Field       = { DocComment } [ "pub" ] ident [ "as" ( string | rawstring ) ] ":" Type [ "=" Expr ] .
 Invariant   = "invariant" Expr .
 Derive      = "derive" DeriveItem { "," DeriveItem } .
-DeriveItem  = QualName [ "(" ident ":" ident { "," ident ":" ident } ")" ] .
+DeriveItem  = QualName [ "(" DeriveArg { "," DeriveArg } ")" ] .
+DeriveArg   = ident ":" ( ident | string | rawstring ) .
 EnumDecl    = "enum" ident [ TypeParams ] "{" { Variant } "}" [ Derive ] .
 Variant     = { DocComment } ident [ "as" ( string | rawstring ) ] [ "(" VField { "," VField } ")" ] .
 VField      = ident ":" Type | "from" Type .

@@ -1,0 +1,27 @@
+exit 0
+--- stdout
+{"type":"join","room":"r1"} round trip true
+{"type":"say","room":"r1","text":"hi \"there\""} round trip true
+{"type":"moved","dx":1,"dy":-2,"note":null} round trip true
+{"type":"moved","dx":0,"dy":0,"note":"n"} round trip true
+{"type":"ping"} round trip true
+{"type":"chat.message","body":"b"} round trip true
+{"room":"r2","text":"late tag","type":"say"} -> {"type":"say","room":"r2","text":"late tag"}
+{"type":"join","room":"r3","extra":[1,2]} -> {"type":"join","room":"r3"}
+{"dy":5,"type":"moved","dx":4} -> {"type":"moved","dx":4,"dy":5,"note":null}
+{"room":"r"} -> at $: missing tag `type` of enum Inbound
+{"type":"shout"} -> at $.type: unknown variant `shout` of enum Inbound
+{"type":7} -> at $.type: expected a variant name
+{"type":"say","room":"r"} -> at $: missing field `text`
+["say"] -> at $: expected an object with the tag `type` of enum Inbound
+{"type":"Join","room":"r"} -> at $.type: unknown variant `Join` of enum Inbound
+{"t":"Data","c":{"seq":1,"payload":"p"}}
+{"t":"Pos","c":{"dx":3,"dy":4,"note":null}}
+{"t":"Close"}
+{"c":{"seq":2,"payload":"q"},"t":"Data"} -> {"t":"Data","c":{"seq":2,"payload":"q"}}
+{"t":"Close"} -> {"t":"Close"}
+{"t":"Data"} -> at $: variant `Data` needs fields
+{"t":"Data","c":{"seq":"x","payload":"q"}} -> at $.c.seq: expected integer
+{"t":"Pos","c":{"dx":1,"dy":2}} -> {"t":"Pos","c":{"dx":1,"dy":2,"note":null}}
+[{"type":"ping"},{"type":"join","room":"a"}]
+--- stderr
