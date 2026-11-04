@@ -46,3 +46,16 @@ so; XO0605's note names the rule.
 Recommendation: (c) first (the feedback's case, and the commonest: a
 `display` or `cmp` written by hand), widened to (b) if agents hit it with
 their own interfaces.
+
+## Implementation (2026-11-04)
+
+compiler/check infer.xo prelude_iface_method: at a call of another
+module's non `pub` method, the method is allowed when a prelude
+interface with methods (Display, Error, Debug) has a method of that name
+and the receiver type satisfies it structurally (so a `display(n: Int)`
+is still XO0605). The marker interfaces (Eq, Hash, Ord, Json, ...) have
+no methods, so (c) reduces to these three. No cache change: a file's
+interface text (parser iface.xo) already holds every signature, pub or
+not. Spec 2.4; golden iface_method_cross_module; cmd/xo
+TestNotPubMethodFix.
+

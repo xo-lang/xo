@@ -336,6 +336,28 @@ fn (var c: Checker) implements_name(t: Int, iface: Str, sp: Span) -> Bool {
   c.implements(t, c.named(iface), sp)
 }
 
+/// Whether method m of t implements a method of a prelude interface t
+/// satisfies with the interface's signature (`display` of Display or
+/// Error, `debug` of Debug; not a marker one like Ord, which has none): callable
+/// by name from any module without `pub` (decision 0496 (c); core 2.4).
+fn (var c: Checker) prelude_iface_method(t: Int, m: Int, sp: Span) -> Bool {
+  if c.prelude < 0 {
+    return false
+  }
+  for n in ["Display", "Error", "Debug"] {
+    let io = c.prelude_obj(n)
+    if io < 0 {
+      continue
+    }
+    for im in c.objs[io].iface_meths {
+      if c.objs[im].name == c.objs[m].name && c.structural(c.resolve(t), c.named(n), sp) {
+        return true
+      }
+    }
+  }
+  false
+}
+
 fn (c: Checker) is_display_like(o: Int) -> Bool {
   c.objs[o].module == c.prelude && (c.objs[o].name == b"Display" || c.objs[o].name == b"Error")
 }

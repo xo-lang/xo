@@ -1,0 +1,15 @@
+// Methods that implement a prelude interface's method (Display's
+// display, Debug's debug) without `pub` (decision 0496 (c)).
+
+pub struct Pt {
+  pub x: Int
+  pub y: Int
+}
+
+fn (p: Pt) display() -> Str {
+  "(${p.x}, ${p.y})"
+}
+
+fn (p: Pt) debug() -> Str {
+  "Pt{x: ${p.x}, y: ${p.y}}"
+}

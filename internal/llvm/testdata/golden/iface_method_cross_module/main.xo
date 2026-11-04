@@ -1,0 +1,15 @@
+// decision 0496 (c): a method that implements a prelude interface's
+// method (Display, Error, Debug) is callable by name from another module
+// without `pub`, as it is through the interface; core 2.4.
+use github.com/xo-lang/xo/internal/llvm/testdata/golden/iface_method_cross_module/shapes
+
+fn show(d: Display) -> Str {
+  d.display()
+}
+
+fn main(os: Os) {
+  let p = shapes.Pt{x: 1, y: 2}
+  os.stdio.println(p.display())
+  os.stdio.println(p.debug())
+  os.stdio.println("${p} ${show(p)}")
+}

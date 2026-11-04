@@ -1117,7 +1117,7 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
     c.infer_args(args)
     return c.bad_ty
   }
-  if !c.objs[m].is_pub && c.objs[m].module != c.cur_mod && !c.objs[m].iface {
+  if !c.objs[m].is_pub && c.objs[m].module != c.cur_mod && !c.objs[m].iface && !c.prelude_iface_method(r, m, sel.span) {
     c.pub_fix(c.error("XO0605", sel.span, "method `${text(name)}` of `${text(c.objs[c.objs[m].recv].name)}` is not `pub` in module `${c.mods[c.objs[m].module].path}`"), m)
   }
   var pre: Subst = {}

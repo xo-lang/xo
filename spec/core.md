@@ -848,7 +848,10 @@ pub interface Store {
 - `Never` satisfies every interface.
 - A type satisfies an interface through its methods whether or not they are
   `pub`. Calling a non `pub` method by name from another module is still an
-  error.
+  error (XO0605), except a method that implements a method of a prelude
+  interface with its signature (`display` of `Display` or `Error`, `debug`
+  of `Debug`), which is callable by name wherever the type is (decision
+  0496); other interfaces' methods need `pub`.
 - Every derivable name (`Display`, `Ord`, `Json`, ...) is also an interface and
   may be used as a constraint: `fn reply[T: Json](v: T)`.
 
