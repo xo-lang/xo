@@ -32,7 +32,7 @@ Mutex take the lists' in-place write (Xo Lang 2's l2-cjfix, held) made
 cookiejar 0.66 to 0.71 of its wall time and an HTTP server's 1,000 entry
 session store 1.369 of it (host 1, n=5), the same walk.
 
-## Decision (proposed)
+## Decision
 
 A write to a container whose count is -1 (shared, one holder) does not
 claim it. It writes in place and shares the element it stores (a write

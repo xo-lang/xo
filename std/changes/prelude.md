@@ -137,6 +137,17 @@ borrowed: one retain a record (the returned view), from two retains and
 two releases.
 
 
+## 2026-11-04: perf: a write to a container held in a Mutex stays in place, with no walk of the container at unlock
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 2's cookiejar and httpsession measurements (decision 0488)
+- Go reference: none (Go has no counts; its sync.Mutex guards a value written in place)
+- Test: internal/llvm TestTSanSharedMaps (tsan_maps writes lists in place under the lock and reads their elements on other threads; with the new pass off it fails), TestGoldenTasks under ThreadSanitizer, XO_FREE_CHECK goldens
+- Timing: bench/results/shared-container-in-place-2026-11-04.md (host 1, n=5): cookiejar 0.622 to 0.643 of its wall, httpsession store 0.919, store100k 0.876 (max RSS 0.541), plain within noise; a Mutex[List[Str]] of 100,000 elements, 20,000 writes, 2.55 to 3.28 s to 0.01 s (Mac); the self build within noise
+
+A List, Map or struct shared with one holder (count -1, as `Mutex.with` hands it back) is written in place without being claimed back to thread local, and the element written is shared as it is stored (decision 0488). Before, the unlock that followed shared the whole container again, an O(size) walk per `with`. A Map in a Mutex now takes the same in-place write instead of going to its log form on the second shared write.
+
 ## 2026-11-04: feature: File.read_at on wasm
 
 - Kind: feature

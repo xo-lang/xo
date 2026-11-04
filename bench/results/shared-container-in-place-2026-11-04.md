@@ -3,7 +3,7 @@
 Xo Lang 2. Branch l2-0488m: ShareIn plus rc.hold (l2-0488, 3249e2cb7 and
 7132d35f1) with l2-cjfix's map change (maph_shared takes -1 as held once;
 a callv of a closure literal names its callee) and the httpsession
-bench. Not on main: decision 0488 is Proposed.
+bench. Decision 0488 accepted by the owner on 2026-11-04.
 
 ## Mac (darwin/arm64, single runs, /usr/bin/time; not --ab claims)
 
