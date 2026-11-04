@@ -61,6 +61,31 @@ func main() {
 			rt(c, i)
 		}
 		c.Close()
+	} else if w == "handshake" {
+		go echo(l, 2000)
+		small := make([]byte, 20)
+		for i := range small {
+			small[i] = byte(65 + i%26)
+		}
+		for i := 0; i < 2000; i++ {
+			c, err := net.Dial("tcp", l.Addr().String())
+			if err != nil {
+				panic(err)
+			}
+			for k := 0; k < 11; k++ {
+				c.Write(small)
+				got := 0
+				for got < 20 {
+					n, err := c.Read(buf)
+					if err != nil {
+						panic(err)
+					}
+					got += n
+					sum += n + int(buf[i%n])
+				}
+			}
+			c.Close()
+		}
 	} else if w == "connect" {
 		go echo(l, 4000)
 		for i := 0; i < 4000; i++ {

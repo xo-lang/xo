@@ -1,4 +1,5 @@
-# twincheck: tcpping: three workloads (none is the setup alone), the same names on both sides.
+# twincheck: tcpping: four workloads (none is the setup alone), the same names on both sides.
 - - none
 - - pingpong
 - - connect
+- - handshake

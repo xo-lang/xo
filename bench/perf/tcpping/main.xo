@@ -2,8 +2,8 @@
 // `pingpong` sends 60,000 messages of 64 bytes over one connection, the
 // server task echoing each (the round trip alone); `connect` makes 4,000
 // connections that each send one message, read the echo and close (the
-// connection cost). `none` binds the listener and stops. Usage:
-// `<program> none|pingpong|connect`. Prints `<workload> <checksum>`; the
+// connection cost). `handshake` makes 2,000 connections of 11 request and echo turn arounds of 20 bytes each (the shape of an SMTP session without SMTP); `none` binds the listener and stops. Usage:
+// `<program> none|pingpong|connect|handshake`. Prints `<workload> <checksum>`; the
 // twin prints the same.
 fn echo(l: Listener, conns: Int) -> () ! NetErr uses net {
   for _ in 0..conns {
@@ -41,6 +41,28 @@ fn main(os: Os) ! {
         }
       }
       c.close()
+    }
+  } else if w == "handshake" {
+    scope s {
+      s.spawn(fn() ! NetErr { echo(l, 2000) })
+      var small = BytesBuilder.new()
+      for i in 0..20 {
+        small.write_byte(UInt8(65 + i % 26))
+      }
+      let req = small.freeze()
+      for i in 0..2000 {
+        let c = os.net.dial(l.addr())?
+        for _ in 0..11 {
+          c.write(req)?
+          var got = 0
+          while got < 20 {
+            let b = c.read(4096)? ?? fault("closed")
+            got += b.len()
+            sum += b.len() + Int(b[i % b.len()])
+          }
+        }
+        c.close()
+      }
     }
   } else if w == "connect" {
     scope s {
