@@ -2,8 +2,10 @@
 // and a metrics map behind Mutexes on every request (the shape of a login
 // session or a per path counter), against the same server answering
 // without them. 20,000 requests from one kept-alive client on
-// 127.0.0.1:0, in this process. Usage: `<program> store|plain`. Prints
-// `<workload> <checksum>`. The store's maps are written under Mutex.with
+// 127.0.0.1:0, in this process. Usage: `<program> store|store100k|plain`
+// (store100k: the session store holds 100,000 sessions before the
+// requests, which touch 1,000 of them, so a cost per map entry shows).
+// Prints `<workload> <checksum>`. The store's maps are written under Mutex.with
 // on every request: the case of the 2026-11-04 hybrid map fix (a map kept
 // in a Mutex had gone to the log form on its second write).
 use std/http
@@ -37,11 +39,18 @@ fn routes(sessions: Mutex[Map[Str, Session]], metrics: Mutex[Map[Str, Int]]) -> 
 
 fn main(os: Os) ! uses stdio, env, net {
   let w = os.env.args().get(0) ?? "plain"
-  let sessions: Mutex[Map[Str, Session]] = Mutex.new({})
+  var start: Map[Str, Session] = {}
+  if w == "store100k" {
+    for i in 0..100000 {
+      start["p${i}"] = Session{hits: 0, last: ""}
+    }
+  }
+  let sessions: Mutex[Map[Str, Session]] = Mutex.new(start)
   let metrics: Mutex[Map[Str, Int]] = Mutex.new({})
   let l = os.net.listen("127.0.0.1:0")?
   let srv = http.server(l, routes(sessions, metrics))
-  let base = "http://${srv.addr()}/${w}/"
+  let path = if w == "store100k" { "store" } else { w }
+  let base = "http://${srv.addr()}/${path}/"
   let c = http.client(os.net)
   var sum = 0
   scope s {
