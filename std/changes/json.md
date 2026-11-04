@@ -1,5 +1,23 @@
 # std/json changes
 
+## 2026-11-04: perf: to_value and from_value with no text
+
+- Kind: perf
+- Commit: this push
+- Found by: the lead's queue after decision 0488 (XO_PROF of bench/perf/toml encode on the Mac: json.to_value 76% of it, parse_value 55%, encode_str 21%)
+- Go reference: none (Go has no typed value tree; the twin is Marshal then Unmarshal into `any`)
+- Test: golden json_to_value (each value structurally equal to parse_value(encode_str(v)), the old path: whole Floats as Ints, NaN and the infinities as null, UInt64 above Int's range as a Num, wire keys, omitempty, Patch, via:, newtypes, valued, external and tagged enums, json.Value fields); goldens json_value, json_via, json_tagged_enum
+- Timing: bench/results/json-value-direct-2026-11-04.md (host 1, --ab n=5): jsonvalue to 0.144 (0.138 to 0.145), toml encode 0.411 (0.399 to 0.427), jsonvalue from 0.757 (0.749 to 0.764)
+- Shipped in: not yet released
+
+The native backends generate a codec per type (compiler/ssa jsonval.xo)
+that walks the value as the encoder does and builds the json.Value
+directly; where the text changed a value on its way back, a helper gives
+the same result (a whole Float in Int's range reads as an Int). The Go
+backend keeps the text round trip. from_value writes a tape in jsontext's format from the Value (strings as
+they are, numbers' text) and reads it with the decoder generated for T,
+as decode reads the text, so its values and errors are the same.
+
 ## 2026-11-04: perf: a tagged enum's tag is matched in place
 
 - Kind: perf

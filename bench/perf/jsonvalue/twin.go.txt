@@ -1,0 +1,111 @@
+package main
+
+// jsonvalue's Go twin: Go has no json.Value, so `to` is Marshal then
+// Unmarshal into any (a map[string]any) and `from` is Marshal of that
+// any then Unmarshal into the struct.
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+type Limits struct {
+	MaxConns  int     `json:"max_conns"`
+	TimeoutMs int     `json:"timeout_ms"`
+	Burst     float64 `json:"burst"`
+}
+
+type Config struct {
+	Name     string            `json:"name"`
+	Host     string            `json:"host"`
+	Port     int               `json:"port"`
+	TLS      bool              `json:"tls"`
+	Weight   float64           `json:"weight"`
+	Region   string            `json:"region"`
+	Zone     string            `json:"zone"`
+	Replicas int               `json:"replicas"`
+	Tags     []string          `json:"tags"`
+	Owners   []string          `json:"owners"`
+	Retries  int               `json:"retries"`
+	Backoff  float64           `json:"backoff"`
+	Enabled  bool              `json:"enabled"`
+	Version  string            `json:"version"`
+	Limits   Limits            `json:"limits"`
+	Labels   map[string]string `json:"labels"`
+	Ratio    float64           `json:"ratio"`
+	Shard    int               `json:"shard"`
+	Note     *string           `json:"note"`
+	Path     string            `json:"path"`
+}
+
+const N = 100000
+
+func config(i int) Config {
+	zone := "us-east-1b"
+	if i%3 == 0 {
+		zone = "us-east-1a"
+	}
+	var note *string
+	if i%4 == 0 {
+		s := fmt.Sprintf("n%d", i)
+		note = &s
+	}
+	return Config{
+		Name: fmt.Sprintf("svc-%d", i%97), Host: fmt.Sprintf("10.0.%d.%d", i%250, i%7), Port: 8000 + i%1000, TLS: i%2 == 0,
+		Weight: float64(i%10) / 4.0, Region: "us-east-1", Zone: zone,
+		Replicas: i%5 + 1, Tags: []string{"web", "api", fmt.Sprintf("v%d", i%4)}, Owners: []string{"team-a", "team-b"}, Retries: 3,
+		Backoff: 1.5, Enabled: true, Version: fmt.Sprintf("1.%d.0", i%20), Limits: Limits{MaxConns: 512, TimeoutMs: 3000, Burst: 2.5},
+		Labels: map[string]string{"app": "shop", "tier": "front"}, Ratio: 0.75, Shard: i % 16, Note: note,
+		Path: fmt.Sprintf("/srv/%d/data", i%9),
+	}
+}
+
+func toValue(c Config) any {
+	b, err := json.Marshal(c)
+	if err != nil {
+		panic(err)
+	}
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	cs := make([]Config, 100)
+	vs := make([]any, 100)
+	for i := range cs {
+		cs[i] = config(i)
+		vs[i] = toValue(cs[i])
+	}
+	sum := 0
+	switch w {
+	case "to":
+		for i := 0; i < N; i++ {
+			if m, ok := toValue(cs[i%100]).(map[string]any); ok {
+				sum += len(m)
+			}
+		}
+	case "from":
+		for i := 0; i < N; i++ {
+			b, err := json.Marshal(vs[i%100])
+			if err != nil {
+				panic(err)
+			}
+			var c Config
+			if err := json.Unmarshal(b, &c); err != nil {
+				panic(err)
+			}
+			sum += c.Port + len(c.Tags)
+		}
+	default:
+		sum = len(cs) + len(vs)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

@@ -1,0 +1,56 @@
+exit 0
+--- stdout
+ints same {i=I-7,u=I5,f=I1,f32=N0.10000000149011612,b=Btrue}
+big same {i=I9223372036854775807,u=N1.8446744073709552e+19,f=N1e+20,f32=I3,b=Bfalse}
+exp same {i=I0,u=N9.223372036854776e+18,f=N1e+21,f32=N1.5,b=Bfalse}
+small same {i=I0,u=I0,f=N1e-07,f32=I0,b=Bfalse}
+negz same {i=I0,u=I0,f=I0,f32=I0,b=Bfalse}
+nan same {i=I0,u=I0,f=null,f32=I0,b=Bfalse}
+inf same {i=I0,u=I0,f=null,f32=I0,b=Bfalse}
+huge same {i=I0,u=I0,f=N9.223372036854776e+18,f32=I0,b=Bfalse}
+min same {i=I-9223372036854775808,u=I0,f=N-9.223372036854776e+18,f32=I0,b=Bfalse}
+rec same {userName=S19:ana "q" <&> é😀
+,bytes=S8:AP9oaQ==,took=S4:1.5s,tags=[S1:a,S0:,S1:c],set=[I3,I1,I2],scores={x=I1,y=N2.5},pair=[I4,S4:four],maybe=I3,cents=I250,upper=S2:UP,day=I10,level=S5:wa"rn,shape={box={w=I2,h=I3}},inb={type=S5:moved,dx=I1,dy=I-2,note=S1:n},frame={t=S4:Data,c={seq=I9,payload=S1:p}},raw={a=[I1,N2.5,I1,S1:x],b=null},patch=S3:set,kept=I4}
+rec2 same {userName=S0:,bytes=S0:,took=S2:0s,tags=[],set=[],scores={},pair=[I0,S0:],maybe=null,cents=I0,upper=S0:,day=I1,level=S5:debug,shape=S3:dot,inb={type=S4:ping},frame={t=S5:Close},raw=null,patch=null,gone=I0}
+shapes same [{circle={r=I2}},{moved={dx=I0,dy=I0,note=null}},S3:dot]
+frames same [{t=S3:Pos,c={dx=I5,dy=I6,note=null}},{t=S5:Close},{t=S4:Data,c={seq=I1,payload=S0:}}]
+inbound same [{type=S4:join,room=S1:r},{type=S4:ping}]
+opt same [I1,null]
+map same {k=[N1.5,I2],=[]}
+str same S5:plain
+unit same null
+value same {a=[I1,N2.5,I1,S1:x],b=null}
+rec back same ok {"userName":"ana \"q\" <&> é😀\n","bytes":"AP9oaQ==","took":"1.5s","tags":["a","","c"],"set":[3,1,2],"scores":{"x":1,"y":2.5},"pair":[4,"four"],"maybe":3,"cents":250,"upper":"UP","day":10,"level":"wa\"rn","shape":{"box":{"w":2,"h":3}},"inb":{"type":"moved","dx":1,"dy":-2,"note":"n"},"frame":{"t":"Data","c":{"seq":9,"payload":"p"}},"raw":{"a":[1,2.5,1,"x"],"b":null},"patch":"set","kept":4}
+rec2 back same ok {"userName":"","bytes":"","took":"0s","tags":[],"set":[],"scores":{},"pair":[0,""],"maybe":null,"cents":0,"upper":"","day":1,"level":"debug","shape":"dot","inb":{"type":"ping"},"frame":{"t":"Close"},"raw":null,"patch":null,"gone":0}
+shapes back same ok [{"circle":{"r":2}},{"moved":{"dx":0,"dy":0,"note":null}},"dot"]
+frames back same ok [{"t":"Pos","c":{"dx":5,"dy":6,"note":null}},{"t":"Close"}]
+nums back same err at $.u: expected non negative integer
+bad0 nums back same err at $.i: expected integer
+bad0 inbound back same err at $: missing tag `type` of enum Inbound
+bad0 frame back same err at $: missing tag `t` of enum Frame
+bad1 nums back same err at $.i: expected integer
+bad1 inbound back same err at $: missing tag `type` of enum Inbound
+bad1 frame back same err at $: missing tag `t` of enum Frame
+bad2 nums back same err at $.u: expected non negative integer
+bad2 inbound back same err at $: missing tag `type` of enum Inbound
+bad2 frame back same err at $: missing tag `t` of enum Frame
+bad3 nums back same err at $.f: expected number
+bad3 inbound back same err at $: missing tag `type` of enum Inbound
+bad3 frame back same err at $: missing tag `t` of enum Frame
+bad4 nums back same err at $.b: expected boolean
+bad4 inbound back same err at $: missing tag `type` of enum Inbound
+bad4 frame back same err at $: missing tag `t` of enum Frame
+bad5 nums back same err at $: expected object
+bad5 inbound back same err at $: expected an object with the tag `type` of enum Inbound
+bad5 frame back same err at $: expected an object with the tag `t` of enum Frame
+bad6 nums back same err at $: missing field `i`
+bad6 inbound back same err at $.type: unknown variant `shout` of enum Inbound
+bad6 frame back same err at $: missing tag `t` of enum Frame
+bad7 nums back same err at $: missing field `i`
+bad7 inbound back same err at $: missing tag `type` of enum Inbound
+bad7 frame back same err at $.c.seq: expected integer
+trusted back same ok "<b>"
+nan back same err at $: expected number
+num as int back same ok 3
+deep back same err at $[1]: expected integer
+--- stderr

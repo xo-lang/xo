@@ -9,5 +9,8 @@ use std/json
 
 /// acc + the JSON text of v.
 fn json_enc[T](acc: Str, v: T) -> Str
+/// The json.Value of v's JSON text, as parse_value reads it, built with no
+/// text (to_value).
+fn json_val[T](v: T) -> json.Value
 /// The value of the tape node at i; the error's path is relative to it.
 fn json_dec[T](src: Bytes, tape: List[Int], i: Int) -> T ! json.DecodeErr

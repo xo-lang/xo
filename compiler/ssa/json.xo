@@ -46,6 +46,12 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     let f = b.sql_decode(ct, row_ct, nt)
     return b.call(f, nt, "", [row])
   }
+  if tps.len() == 1 && !ci.subst.is_empty() && name == "json_val" && es.len() == 1 {
+    // to_value with no text (jsonval.xo)
+    let ct = b.intrinsic_targ(ci, 0)
+    let v = b.value_as(es[0] ?? fault("arg"), b.typ(ct))
+    return b.call(b.json_val(ct), b.typ(b.json_value_ct()), "", [v])
+  }
   if tps.len() == 1 && !ci.subst.is_empty() && (name is "json_enc" | "json_dec") {
     let st = b.str_t()
     let it = b.int_t()

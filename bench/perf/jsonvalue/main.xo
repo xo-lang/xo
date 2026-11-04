@@ -1,0 +1,79 @@
+// jsonvalue: json.to_value and json.from_value of a 20 field config
+// record, 100,000 times each: `to` makes the json.Value of the record
+// (a codec per type with no text since 2026-11-04), `from` the record of
+// that Value, `none` is the setup alone. Go's twin (twin.go.txt) has
+// `to` as Marshal then Unmarshal into `any` and `from` as Marshal of the
+// `any` then Unmarshal into the struct, Go's way to the same values.
+// Usage: `<program> none|to|from`. Prints `<workload> <checksum>`.
+use std/json
+
+struct Limits {
+  max_conns: Int
+  timeout_ms: Int
+  burst: Float
+} derive Json
+
+struct Config {
+  name: Str
+  host: Str
+  port: Int
+  tls: Bool
+  weight: Float
+  region: Str
+  zone: Str
+  replicas: Int
+  tags: List[Str]
+  owners: List[Str]
+  retries: Int
+  backoff: Float
+  enabled: Bool
+  version: Str
+  limits: Limits
+  labels: Map[Str, Str]
+  ratio: Float
+  shard: Int
+  note: Str?
+  path: Str
+} derive Json
+
+const N = 100000
+
+fn config(i: Int) -> Config {
+  Config{
+    name: "svc-${i % 97}", host: "10.0.${i % 250}.${i % 7}", port: 8000 + i % 1000, tls: i % 2 == 0,
+    weight: Float(i % 10) / 4.0, region: "us-east-1", zone: "us-east-1${if i % 3 == 0 { "a" } else { "b" }}",
+    replicas: i % 5 + 1, tags: ["web", "api", "v${i % 4}"], owners: ["team-a", "team-b"], retries: 3,
+    backoff: 1.5, enabled: true, version: "1.${i % 20}.0", limits: Limits{max_conns: 512, timeout_ms: 3000, burst: 2.5},
+    labels: {"app": "shop", "tier": "front"}, ratio: 0.75, shard: i % 16, note: if i % 4 == 0 { Some("n${i}") } else { None },
+    path: "/srv/${i % 9}/data",
+  }
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var cs: List[Config] = []
+  var vs: List[json.Value] = []
+  for i in 0..100 {
+    cs.push(config(i))
+    vs.push(json.to_value(cs[i]))
+  }
+  var sum = 0
+  if w == "to" {
+    for i in 0..N {
+      match json.to_value(cs[i % 100]) {
+        Object(fields) => sum += fields.len()
+        _ => {}
+      }
+    }
+  } else if w == "from" {
+    for i in 0..N {
+      match json.from_value[Config](vs[i % 100]) {
+        Ok(c) => sum += c.port + c.tags.len()
+        Err(_) => sum -= 1
+      }
+    }
+  } else {
+    sum = cs.len() + vs.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

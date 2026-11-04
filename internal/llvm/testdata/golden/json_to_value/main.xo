@@ -1,0 +1,175 @@
+// json.to_value builds the Value with no text (a codec per type): each
+// value here is checked against what parse_value gives for its encoder
+// text, the old path, structurally (an Int is not a Num, field order
+// counts): whole Floats read as Ints, NaN as null, a UInt64 above Int's
+// range as a Num, wire keys, omitempty, Patch, via:, newtypes, valued,
+// external and tagged enums. from_value reads a tape written from the
+// Value with no text: each typed value and error is checked against
+// decode of the Value's text, the old path.
+use std/json
+
+type Cents struct(Int)
+type Upper struct(Str) derive Json(via: Str, to: upper_text, from: upper_of)
+
+fn upper_text(u: Upper) -> Str { u.0.to_upper() }
+fn upper_of(s: Str) -> Upper ! Str { Ok(Upper(s.to_lower())) }
+
+enum Weekday: Int { Mon = 1, Tue, Sat = 10 } derive Json
+enum Level: Str { Debug = "debug", Warn = "wa\"rn" } derive Json
+
+struct Move {
+  dx: Int
+  dy: Int
+  note: Str? = None
+} derive Json
+
+enum Shape {
+  Dot
+  Circle(r: Float)
+  Box(w: Int, h: Int)
+  Moved(from Move)
+} derive Json(case: snake)
+
+enum Inbound {
+  Join(room: Str)
+  Moved(from Move)
+  Ping
+} derive Json(tag: "type", case: snake)
+
+enum Frame {
+  Data(seq: Int, payload: Str)
+  Pos(from Move)
+  Close
+} derive Json(tag: "t", content: "c")
+
+struct Nums {
+  i: Int
+  u: UInt64
+  f: Float
+  f32: Float32
+  b: Bool
+} derive Json
+
+struct Rec {
+  user_name: Str
+  bytes: Bytes
+  took: Duration
+  tags: List[Str]
+  set: Set[Int]
+  scores: Map[Str, Float]
+  pair: (Int, Str)
+  maybe: Int?
+  cents: Cents
+  upper: Upper
+  day: Weekday
+  level: Level
+  shape: Shape
+  inb: Inbound
+  frame: Frame
+  raw: json.Value
+  patch: json.Patch[Str]
+  gone: json.Patch[Int]
+  so as "so,omitempty": Str = ""
+  io as "io,omitempty": Int = 0
+  kept as "kept,omitempty": Int = 0
+} derive Json(case: camel)
+
+fn desc(v: json.Value) -> Str {
+  match v {
+    Null => "null"
+    Bool(b) => "B${b}"
+    Int(n) => "I${n}"
+    Num(n) => "N${n}"
+    Str(s) => "S${s.len()}:${s}"
+    Trusted(k, s) => "T${k}:${s}"
+    List(items) => "[" + items.map(fn(x) { desc(x) }).join(",") + "]"
+    Object(fields) => "{" + fields.map(fn(f) { "${f.0}=${desc(f.1)}" }).join(",") + "}"
+  }
+}
+
+fn check[T: Json](os: Os, label: Str, v: T) {
+  let direct = desc(json.to_value(v))
+  let text = desc(json.parse_value(json.encode_str(v)).ok() ?? json.Value.Null)
+  if direct == text {
+    os.stdio.println("${label} same ${direct}")
+  } else {
+    os.stdio.println("${label} DIFFERS\n  direct ${direct}\n  text   ${text}")
+  }
+}
+
+fn back[T: Json](os: Os, label: Str, v: json.Value) {
+  let direct = match json.from_value[T](v) {
+    Ok(x) => "ok ${json.encode_str(x)}"
+    Err(e) => "err ${e}"
+  }
+  let text = match json.decode_str[T](v.encode()) {
+    Ok(x) => "ok ${json.encode_str(x)}"
+    Err(e) => "err ${e}"
+  }
+  if direct == text {
+    os.stdio.println("${label} back same ${direct}")
+  } else {
+    os.stdio.println("${label} back DIFFERS\n  direct ${direct}\n  text   ${text}")
+  }
+}
+
+fn main(os: Os) {
+  let zero = 0.0
+  check(os, "ints", Nums{i: -7, u: UInt64(5), f: 1.0, f32: Float32(0.1), b: true})
+  check(os, "big", Nums{i: 9223372036854775807, u: UInt64.from_bits(-1), f: 1e20, f32: Float32(3.0), b: false})
+  check(os, "exp", Nums{i: 0, u: UInt64.from_bits(-9223372036854775807 - 1), f: 1e21, f32: Float32(1.5), b: false})
+  check(os, "small", Nums{i: 0, u: UInt64(0), f: 1e-7, f32: Float32(-0.0), b: false})
+  check(os, "negz", Nums{i: 0, u: UInt64(0), f: -0.0, f32: Float32(0.0), b: false})
+  check(os, "nan", Nums{i: 0, u: UInt64(0), f: zero / zero, f32: Float32(0.0), b: false})
+  check(os, "inf", Nums{i: 0, u: UInt64(0), f: 1.0 / zero, f32: Float32(0.0), b: false})
+  check(os, "huge", Nums{i: 0, u: UInt64(0), f: 9223372036854775807.0, f32: Float32(0.0), b: false})
+  check(os, "min", Nums{i: -9223372036854775807 - 1, u: UInt64(0), f: -9223372036854775808.0, f32: Float32(0.0), b: false})
+  let raw = json.parse_value("{\"a\":[1,2.5,1.0,\"x\"],\"b\":null}").ok() ?? json.Value.Null
+  let rec = Rec{
+    user_name: "ana \"q\" <&> \u{e9}\u{1f600}\n", bytes: b"\x00\xffhi", took: Duration.from_millis(1500), tags: ["a", "", "c"],
+    set: [3, 1, 2].to_set(), scores: {"x": 1.0, "y": 2.5}, pair: (4, "four"), maybe: Some(3), cents: Cents(250),
+    upper: Upper("up"), day: Weekday.Sat, level: Level.Warn, shape: Shape.Box(w: 2, h: 3),
+    inb: Inbound.Moved(Move{dx: 1, dy: -2, note: Some("n")}), frame: Frame.Data(seq: 9, payload: "p"),
+    raw: raw, patch: json.Patch.Value(v: "set"), gone: json.Patch.Absent, kept: 4,
+  }
+  check(os, "rec", rec)
+  let rec2 = Rec{
+    user_name: "", bytes: b"", took: Duration.from_millis(0), tags: [], set: [].to_set(), scores: {}, pair: (0, ""), maybe: None,
+    cents: Cents(0), upper: Upper(""), day: Weekday.Mon, level: Level.Debug, shape: Shape.Dot, inb: Inbound.Ping,
+    frame: Frame.Close, raw: json.Value.Null, patch: json.Patch.Null, gone: json.Patch.Value(v: 0),
+  }
+  check(os, "rec2", rec2)
+  check(os, "shapes", [Shape.Circle(r: 2.0), Shape.Moved(Move{dx: 0, dy: 0}), Shape.Dot])
+  check(os, "frames", [Frame.Pos(Move{dx: 5, dy: 6}), Frame.Close, Frame.Data(seq: 1, payload: "")])
+  check(os, "inbound", [Inbound.Join(room: "r"), Inbound.Ping])
+  check(os, "opt", Some([Some(1), None]))
+  check(os, "map", {"k": [1.5, 2.0], "": []})
+  check(os, "str", "plain")
+  check(os, "unit", ())
+  check(os, "value", raw)
+  back[Rec](os, "rec", json.to_value(rec))
+  back[Rec](os, "rec2", json.to_value(rec2))
+  back[List[Shape]](os, "shapes", json.to_value([Shape.Circle(r: 2.0), Shape.Moved(Move{dx: 0, dy: 0}), Shape.Dot]))
+  back[List[Frame]](os, "frames", json.to_value([Frame.Pos(Move{dx: 5, dy: 6}), Frame.Close]))
+  back[Nums](os, "nums", json.to_value(Nums{i: -7, u: UInt64.from_bits(-1), f: 1e21, f32: Float32(0.5), b: true}))
+  let bad = [
+    "{\"i\":\"x\",\"u\":1,\"f\":1,\"f32\":1,\"b\":true}",
+    "{\"i\":1.5,\"u\":1,\"f\":1,\"f32\":1,\"b\":true}",
+    "{\"i\":1,\"u\":-1,\"f\":1,\"f32\":1,\"b\":true}",
+    "{\"i\":1,\"u\":1,\"f\":null,\"f32\":1e40,\"b\":true}",
+    "{\"i\":1,\"i\":2,\"u\":1,\"f\":1,\"f32\":1,\"b\":1}",
+    "[1,2]",
+    "{\"type\":\"shout\"}",
+    "{\"t\":\"Data\",\"c\":{\"seq\":\"one\",\"payload\":\"\\u00e9\"}}",
+  ]
+  for (k, t) in bad.indexed() {
+    let v = json.parse_value(t).ok() ?? json.Value.Null
+    back[Nums](os, "bad${k} nums", v)
+    back[Inbound](os, "bad${k} inbound", v)
+    back[Frame](os, "bad${k} frame", v)
+  }
+  back[Str](os, "trusted", json.Value.Trusted(kind: "html", s: "<b>"))
+  back[Float](os, "nan", json.Value.Num(n: zero / zero))
+  back[Int](os, "num as int", json.Value.Num(n: 3.0))
+  back[List[Int]](os, "deep", json.Value.List(items: [json.Value.Int(n: 1), json.Value.Num(n: 2.5)]))
+}

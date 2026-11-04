@@ -149,7 +149,49 @@ fn parse_bytes(src: Bytes) -> json.Value ! json.DecodeErr {
   }
 }
 
-fn to_value[T: Json](v: T) -> json.Value { parse_value(encode_str(v)).ok() ?? json.Value.Null }
+// to_value builds the Value with no text (a codec generated per type,
+// compiler/ssa json_val): parse_value(encode_str(v)) gave the same Value
+// through the text, 55% of toml.encode's time in its parse (2026-11-04).
+// The helpers below give what that parse read from the encoder's text.
+fn to_value[T: Json](v: T) -> json.Value { rtjson.json_val(v) }
+
+/// The Value of a Float field: null for NaN and the infinities (the
+/// encoder's text), an Int for a whole number above Int's minimum and
+/// below 2^63 (its text has no point; the text of -2^63 reads back as a
+/// Num, the parse's own bound), else the Num (the shortest text reads
+/// back exactly).
+fn val_float(f: Float) -> json.Value {
+  let d = f - f
+  if d != d {
+    return json.Value.Null
+  }
+  if f.trunc() == f && f > -9223372036854775808.0 && f < 9223372036854775808.0 {
+    return json.Value.Int(n: Int(f))
+  }
+  json.Value.Num(n: f)
+}
+
+/// The Value of a UInt64 field's word n: an Int up to Int's maximum, above
+/// it the Num its unsigned text reads as (the half with the low bit kept
+/// as a sticky bit rounds as the whole value does, then doubles exactly).
+fn val_u64(n: Int) -> json.Value {
+  if n >= 0 {
+    return json.Value.Int(n: n)
+  }
+  let half = ((n >> 1) & 9223372036854775807) | (n & 1)
+  json.Value.Num(n: Float(half) * 2.0)
+}
+
+/// The Value of a Bytes, Duration or Time field: the Str of the encoder's
+/// text (base64, Go's duration and RFC 3339 forms), read back as parse
+/// reads it.
+fn val_bytes(v: Bytes) -> json.Value { parse_value(encode_str(v)).ok() ?? json.Value.Null }
+fn val_duration(v: Duration) -> json.Value { parse_value(encode_str(v)).ok() ?? json.Value.Null }
+fn val_time(v: Time) -> json.Value { parse_value(encode_str(v)).ok() ?? json.Value.Null }
+
+/// The Value of a json.Value field: its text read back (a Trusted becomes
+/// its Str, a whole Num an Int).
+fn val_value(v: json.Value) -> json.Value { parse_value(value_encode(v)).ok() ?? json.Value.Null }
 
 fn value_append(out: Str, v: json.Value) -> Str {
   match v {
@@ -501,4 +543,70 @@ fn (var d: Decoder) write(data: Bytes) -> List[json.Value] ! json.DecodeErr {
 
 fn (var d: Decoder) finish() -> List[json.Value] ! json.DecodeErr { d.take(true) }
 
-fn from_value[T: Json](v: json.Value) -> T ! json.DecodeErr { decode(value_encode(v).bytes()) }
+// from_value reads v's tape (jsontext's format, written from the Value
+// with its strings placed as they are and its numbers' text) with the
+// decoder generated for T, as decode reads v's text: every decode rule
+// and error is the same, without the escaping and the lexing of a text
+// (it was decode(value_encode(v).bytes())).
+fn from_value[T: Json](v: json.Value) -> T ! json.DecodeErr {
+  var src = BytesBuilder.new()
+  var tape: List[Int] = []
+  value_tape(src, tape, v)
+  match rtjson.json_dec[T](src.freeze(), tape, 0) {
+    Ok(x) => Ok(x)
+    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg})
+  }
+}
+
+/// Appends v's nodes to tape (three words each: kind, a, b; jsontext's
+/// format) and the text they point at to src.
+fn value_tape(var src: BytesBuilder, var tape: List[Int], v: json.Value) {
+  match v {
+    // kinds: 0 null, 1 false, 2 true, 3 number, 4 string, 5 array, 6 object
+    Null => tape_node(tape, 0, 0, 0)
+    Bool(b) => tape_node(tape, if b { 2 } else { 1 }, 0, 0)
+    Int(n) => tape_text(src, tape, 3, "${n}")
+    Num(n) => {
+      // value_append's text: null for NaN and the infinities
+      let s = jsontext.append_float("", n)
+      if s == "null" {
+        tape_node(tape, 0, 0, 0)
+      } else {
+        tape_text(src, tape, 3, s)
+      }
+    }
+    Str(s) => tape_text(src, tape, 4, s)
+    Trusted(_, s) => tape_text(src, tape, 4, s)
+    List(items) => {
+      let at = tape.len()
+      tape_node(tape, 5, items.len(), 0)
+      for x in items {
+        value_tape(src, tape, x)
+      }
+      tape[at + 2] = tape.len()
+    }
+    Object(fields) => {
+      let at = tape.len()
+      tape_node(tape, 6, fields.len(), 0)
+      for f in fields {
+        tape_text(src, tape, 4, f.0)
+        value_tape(src, tape, f.1)
+      }
+      tape[at + 2] = tape.len()
+    }
+  }
+}
+
+fn tape_node(var tape: List[Int], kind: Int, a: Int, b: Int) {
+  tape.push(kind)
+  tape.push(a)
+  tape.push(b)
+}
+
+/// A number (kind 3) or string (kind 4) node whose text s goes at the end
+/// of src, a string's as it is.
+fn tape_text(var src: BytesBuilder, var tape: List[Int], kind: Int, s: Str) {
+  let at = src.len()
+  src.write_str(s)
+  tape_node(tape, kind, at, if kind == 4 { jsontext.plain_str_b(s) } else { s.len() })
+}

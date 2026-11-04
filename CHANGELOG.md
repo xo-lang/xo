@@ -8,6 +8,8 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- json: to_value and from_value convert with no JSON text in between: a converter generated per type for to_value, and a parse tape written straight from the Value for from_value. Same results as the text round trip (golden json_to_value, 52 cases including errors). Host 1 --ab: bench/perf/jsonvalue to 0.144, from 0.757; toml encode 0.411 (it goes through to_value). bench/results/json-value-direct-2026-11-04.md, std/changes/json.md.
+
 - x86: a fault in a Mutex.with closure that compiles to a leaf poisons the mutex on linux/amd64 and darwin/amd64 instead of dying of SIGSEGV: the landing pad's entry now pops the fault stub's frame record (arm64's fix, 3652d1880, did not cover x86; gotchas/arm64-compact-unwind-leaf-fault-frames.md). Found by the 2-hourly check's amd64 goldens (mutex_poison_leaf, now in the amd64 sample). Windows was not affected.
 
 - perf (wasm, size): a wasm module no longer carries Linux's vDSO clock lookup (sysio clock_now and real_ns test the wasm target first, a constant): hello component -4,759 bytes (324,153 to 319,394); std/changes/prelude.md

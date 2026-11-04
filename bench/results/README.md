@@ -307,3 +307,4 @@
 - [inline-str-survey-2026-11-03.md](inline-str-survey-2026-11-03.md): decision 0370 --inline-str on every twin row, http, self build and .text: a put bug made jpeg 5.8x and the self build 40x (fixed fe7a71942); after it 334 rows geomean 1.070, self build 1.073, .text +4 to 9%, slicing short strings the worst (text cut 2.5 to 2.7x), itoa 0.47
 - [std-twin-archive-2026-11-04.md](std-twin-archive-2026-11-04.md): archive zip_reader 1.147 -> about 0.95 of Go after the constant fixed Huffman decoder (host 1 A/B 0.857); unzip 0.995
 - [std-twin-template-2026-11-04.md](std-twin-template-2026-11-04.md): template render 1.355 -> 1.209 of Go after the inline Str and List drops; parse 0.892.
+- [json-value-direct-2026-11-04.md](json-value-direct-2026-11-04.md): json.to_value and from_value with no text (a codec per type; a tape written from the Value): jsonvalue to 0.144, from 0.757, toml encode 0.411, decode unchanged (host 1 --ab)

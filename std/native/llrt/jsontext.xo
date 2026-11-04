@@ -545,6 +545,19 @@ pub fn next(tape: List[Int], i: Int) -> Int {
 /// The value of the string node at i: encoding/json's unquote (escapes
 /// decoded, surrogate pairs combined, a lone surrogate and invalid UTF-8
 /// U+FFFD).
+/// A string node's b for a Str placed in the source as it is (a tape
+/// written from values, json.from_value): no escape flag, and STR_HIGH
+/// only with a byte from 0x80, so an ASCII key is matched in place and an
+/// ASCII value copied without a UTF-8 check (setting it always made
+/// from_value 1.074 of the text path, 2026-11-04: keys_match_slow).
+pub fn plain_str_b(s: Str) -> Int {
+  let n = s.len()
+  if scans.span(s.bytes(), 0, 0) == n {
+    return n
+  }
+  n | STR_HIGH
+}
+
 pub fn str_at(src: Bytes, tape: List[Int], i: Int) -> Str {
   let lo = tape[i + 1]
   let raw = tape[i + 2]

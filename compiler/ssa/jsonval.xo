@@ -1,0 +1,362 @@
+// json.to_value with no text: a codec per type that builds the json.Value
+// the encoder's text would parse to (std/native/json.xo to_value, through
+// native/rtjson's json_val). It walks a type as json_enc_body does and
+// keeps its rules (wire keys, omitempty, Patch, via:, newtypes, valued
+// and tagged enums); where the text changes a value on its way back (a
+// whole Float reads as an Int, a json.Value field's Trusted as its Str),
+// a std/native/json helper gives what the parse gave.
+use github.com/xo-lang/xo/compiler/check
+
+/// The checker type json.Value, or -1.
+fn (var b: Builder) json_value_ct() -> Int {
+  for m in b.c.order {
+    if b.c.mods[m].path == "std/json" {
+      let o = b.member(m, "Value")
+      if o >= 0 && b.c.objs[o].kind == check.ObjKind.Type {
+        return b.c.mk_named(o, [])
+      }
+    }
+  }
+  -1
+}
+
+/// xo.json.val[ct](v: T) -> json.Value, built now.
+fn (var b: Builder) json_val(ct: Int) -> Str {
+  let vct = b.json_value_ct()
+  let vt = b.typ(vct)
+  let t = b.typ(ct)
+  let name = "xo.json.val[${b.type_name(ct)}]"
+  let fi = b.thunk_func(name, [t], [vt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  b.json_val_body(ct, t, vt)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The Value of x (of checker type xt) in a to_value codec.
+fn (var b: Builder) val_sub(x0: Int, xt: Int, vt: Int) -> Int {
+  let x = b.unbox(x0)
+  let f = b.json_val(xt)
+  b.call(f, vt, "", [x])
+}
+
+/// Variant name of json.Value (SSA type vt) with fields args.
+fn (var b: Builder) jv(vt: Int, name: Str, args: List[Int]) -> Int { b.add(Op.Variant, vt, Aux.I(n: b.m.variant_index(vt, name)), args) }
+
+/// The SSA type of an Object's members, (Str, Value).
+fn (var b: Builder) jv_member_t(vt: Int) -> Int { b.m.tuple([b.str_t(), vt]) }
+
+/// Pushes the member (key, val) onto the members list in local lv.
+fn (var b: Builder) jv_push(lv: Int, vt: Int, key: Str, val: Int) {
+  let mt = b.jv_member_t(vt)
+  let lt = b.m.list(mt)
+  let m = b.add(Op.Tuple, mt, Aux.None, [b.const_str(key), val])
+  b.write_var(lv, b.call("list.push", lt, "", [b.read(lv), m]))
+}
+
+/// A new local holding an empty members list.
+fn (var b: Builder) jv_members(vt: Int) -> Int {
+  let lv = b.local()
+  b.write_var(lv, b.call("list.new", b.m.list(b.jv_member_t(vt)), "", []))
+  lv
+}
+
+fn (var b: Builder) json_val_body(ct: Int, t: Int, vt: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let v = b.param(0)
+  if b.is_json_value(ct) {
+    b.retv(b.json_native_call("val_value", vt, [v]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Duration"]) {
+    b.retv(b.json_native_call("val_duration", vt, [v]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Time"]) {
+    b.retv(b.json_native_call("val_time", vt, [v]))
+    return
+  }
+  if b.is_prelude_named(ct, ["Bytes"]) {
+    b.retv(b.json_native_call("val_bytes", vt, [v]))
+    return
+  }
+  match b.tkind(t) {
+    Str => {
+      b.retv(b.jv(vt, "Str", [v]))
+      return
+    }
+    Int => {
+      if b.is_prelude_named(ct, ["UInt64"]) {
+        // its word as an Int
+        b.retv(b.json_native_call("val_u64", vt, [b.coerce(v, it)]))
+        return
+      }
+      b.retv(b.jv(vt, "Int", [v]))
+      return
+    }
+    Float => {
+      // a Float32 is the Float of its value, as the encoder writes it
+      let fv = if b.m.is_f32(t) { b.rt("f32_round", b.float_t(), [v]) } else { v }
+      b.retv(b.json_native_call("val_float", vt, [fv]))
+      return
+    }
+    Bool => {
+      b.retv(b.jv(vt, "Bool", [v]))
+      return
+    }
+    Unit => {
+      b.retv(b.jv(vt, "Null", []))
+      return
+    }
+    Box => {
+      b.retv(b.val_sub(v, ct, vt))
+      return
+    }
+    _ => {}
+  }
+  let lt = b.m.list(vt)
+  let r = b.c.resolve(ct)
+  if b.c.tys[r].kind == check.TyKind.Tuple && b.tkind(t) == Kind.Tuple && b.c.tys[r].args.len() == b.m.types[t].elems.len() {
+    // an array, one element per position (decision 0088)
+    var l = b.call("list.new", lt, "", [])
+    for (k, et) in b.c.tys[r].args.indexed() {
+      let f = b.add(Op.Field, b.m.types[t].elems[k], Aux.I(n: k), [v])
+      l = b.call("list.push", lt, "", [l, b.val_sub(f, et, vt)])
+    }
+    b.retv(b.jv(vt, "List", [l]))
+    return
+  }
+  let obj = b.named_obj(ct)
+  if obj < 0 {
+    b.unsupported("JSON for `${b.c.show(ct)}`")
+    b.retv(b.jv(vt, "Null", []))
+    return
+  }
+  if b.c.objs[obj].json_via >= 0 {
+    // its own form (decision 0478): the Value of the proxy `to` makes
+    let fi = b.declare(b.c.objs[obj].json_to, [])
+    let pv = b.add(Op.Call, b.m.funcs[fi].results[0], Aux.S(s: b.m.funcs[fi].name), [v])
+    b.retv(b.val_sub(pv, b.c.objs[obj].json_via, vt))
+    return
+  }
+  let args = b.ty_args(ct)
+  let om = b.obj_mod(obj)
+  let oname = b.obj_name(obj)
+  if b.is_prelude_mod(om) && oname == "Option" {
+    let some = b.m.variant_index(t, "Some")
+    let tag = b.add(Op.Tag, it, Aux.None, [v])
+    let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(some)]))
+    b.s.cur = yes
+    let p = b.add(Op.Payload, b.m.types[t].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [v])
+    b.retv(b.val_sub(p, args[0], vt))
+    b.s.cur = no
+    b.retv(b.jv(vt, "Null", []))
+    return
+  }
+  if b.is_prelude_mod(om) && oname == "List" {
+    let et = b.m.types[t].elems[0]
+    let lv = b.local()
+    b.write_var(lv, b.call("list.new", lt, "", []))
+    let iv = b.local()
+    let n = b.call("list.len", it, "", [v])
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let el = b.call("list.index", et, "", [v, i])
+    let x = b.val_sub(el, args[0], vt)
+    b.write_var(lv, b.call("list.push", lt, "", [b.read(lv), x]))
+    b.for_up_to_end(i, iv, head, exit)
+    b.retv(b.jv(vt, "List", [b.read(lv)]))
+    return
+  }
+  if b.is_prelude_mod(om) && (oname is "Map" | "Set") {
+    let kt = map_key(b.m, t)
+    let mvt = map_val(b.m, t)
+    if oname == "Map" && b.tkind(kt) != Kind.Str {
+      b.unsupported("JSON for a Map whose keys are not Str")
+    }
+    let (keys, vals, live) = b.map_kvl(t, v)
+    let mt = b.jv_member_t(vt)
+    let lv = b.local()
+    if oname == "Map" {
+      b.write_var(lv, b.call("list.new", b.m.list(mt), "", []))
+    } else {
+      b.write_var(lv, b.call("list.new", lt, "", []))
+    }
+    let iv = b.local()
+    let n = b.call("list.len", it, "", [keys])
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let (no, join) = b.if_then_begin(b.map_live(live, i))
+    let k = b.call("list.index", kt, "", [keys, i])
+    if oname == "Map" {
+      let x = b.call("list.index", mvt, "", [vals, i])
+      let m = b.add(Op.Tuple, mt, Aux.None, [k, b.val_sub(x, args[1], vt)])
+      b.write_var(lv, b.call("list.push", b.m.list(mt), "", [b.read(lv), m]))
+    } else {
+      b.write_var(lv, b.call("list.push", lt, "", [b.read(lv), b.val_sub(k, args[0], vt)]))
+    }
+    b.if_then_end(no, join)
+    b.for_up_to_end(i, iv, head, exit)
+    b.retv(b.jv(vt, if oname == "Map" { "Object" } else { "List" }, [b.read(lv)]))
+    return
+  }
+  let sb = b.c.args_subst(b.c.objs[obj].tparams, args)
+  if b.is_json_patch(ct) {
+    let vi = b.m.variant_index(t, "Value")
+    let tag = b.add(Op.Tag, it, Aux.None, [v])
+    let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
+    b.s.cur = yes
+    let p = b.add(Op.Payload, b.m.types[t].variants[vi].fields[0].ty, Aux.P(tag: vi, field: 0), [v])
+    b.retv(b.val_sub(p, args[0], vt))
+    b.s.cur = no
+    b.retv(b.jv(vt, "Null", []))
+    return
+  }
+  let tk = b.c.objs[obj].tkind
+  if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].opaque {
+    let lv = b.jv_members(vt)
+    b.val_struct_fields(lv, v, t, obj, sb, vt)
+    b.retv(b.jv(vt, "Object", [b.read(lv)]))
+    return
+  }
+  if b.tkind(t) == Kind.Struct && tk == "newtype" && b.m.types[t].fields.len() == 1 {
+    // its underlying value's (core 2.8, decision 0097)
+    let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[0].ty, Aux.I(n: 0), [v]))
+    b.retv(b.val_sub(fv, b.c.subst(b.c.objs[obj].target, sb), vt))
+    return
+  }
+  if b.tkind(t) == Kind.Enum && tk == "enum" && b.c.objs[obj].value_kind != 0 {
+    // a valued enum (decision 0269) is its variant's value
+    let tag = b.add(Op.Tag, it, Aux.None, [v])
+    for vo in b.c.objs[obj].variants {
+      let vi = b.m.variant_index(t, check.text(vo.name))
+      if vi < 0 {
+        continue
+      }
+      let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
+      if b.c.objs[obj].value_kind == 1 {
+        b.retv(b.jv(vt, "Int", [b.cint(vo.ival)]))
+      } else {
+        b.retv(b.jv(vt, "Str", [b.const_str(check.text(vo.sval))]))
+      }
+      b.if_then_end(no, join)
+    }
+    b.retv(b.jv(vt, "Null", []))
+    return
+  }
+  if b.tkind(t) == Kind.Enum && tk == "enum" {
+    let tag = b.add(Op.Tag, it, Aux.None, [v])
+    for vo in b.c.objs[obj].variants {
+      let vname = check.text(vo.name)
+      let vi = b.m.variant_index(t, vname)
+      if vi < 0 {
+        continue
+      }
+      let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
+      let wn = check.text(check.variant_json_name(vo))
+      let jtag = b.c.objs[obj].json_tag
+      if !jtag.is_empty() {
+        // the tagged forms (decision 0478)
+        b.retv(b.val_tagged_variant(v, t, vi, vo, sb, check.text(jtag), wn, b.c.objs[obj].json_content, vt))
+      } else if vo.fields.is_empty() {
+        b.retv(b.jv(vt, "Str", [b.const_str(wn)]))
+      } else {
+        let lv = b.jv_members(vt)
+        if vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty()) {
+          let p = b.add(Op.Payload, b.m.types[t].variants[vi].fields[0].ty, Aux.P(tag: vi, field: 0), [v])
+          b.jv_push(lv, vt, wn, b.val_sub(p, b.c.subst(vo.fields[0].ty, sb), vt))
+        } else {
+          b.jv_push(lv, vt, wn, b.val_variant_fields(v, t, vi, vo, sb, vt))
+        }
+        b.retv(b.jv(vt, "Object", [b.read(lv)]))
+      }
+      b.if_then_end(no, join)
+    }
+    b.retv(b.jv(vt, "Null", []))
+    return
+  }
+  b.unsupported("JSON for `${b.c.show(ct)}`")
+  b.retv(b.jv(vt, "Null", []))
+}
+
+/// The Object of variant vi's named fields.
+fn (var b: Builder) val_variant_fields(v: Int, t: Int, vi: Int, vo: check.VariantInfo, sb: Map[Int, Int], vt: Int) -> Int {
+  let lv = b.jv_members(vt)
+  for (fi, f) in vo.fields.indexed() {
+    let p = b.add(Op.Payload, b.m.types[t].variants[vi].fields[fi].ty, Aux.P(tag: vi, field: fi), [v])
+    b.jv_push(lv, vt, check.text(check.vfield_json_key(f)), b.val_sub(p, b.c.subst(f.ty, sb), vt))
+  }
+  b.jv(vt, "Object", [b.read(lv)])
+}
+
+/// Variant vi (vo) of enum value v in a tagged form (decision 0478): the
+/// tag's member first; with a content key the payload under it, else the
+/// fields beside the tag (a wrapped struct's fields).
+fn (var b: Builder) val_tagged_variant(v: Int, t: Int, vi: Int, vo: check.VariantInfo, sb: Map[Int, Int], jtag: Str, wn: Str, content: Bytes, vt: Int) -> Int {
+  let lv = b.jv_members(vt)
+  b.jv_push(lv, vt, jtag, b.jv(vt, "Str", [b.const_str(wn)]))
+  if vo.fields.is_empty() {
+    return b.jv(vt, "Object", [b.read(lv)])
+  }
+  let wrapped = vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty())
+  if !content.is_empty() {
+    if wrapped {
+      let p = b.add(Op.Payload, b.m.types[t].variants[vi].fields[0].ty, Aux.P(tag: vi, field: 0), [v])
+      b.jv_push(lv, vt, check.text(content), b.val_sub(p, b.c.subst(vo.fields[0].ty, sb), vt))
+    } else {
+      b.jv_push(lv, vt, check.text(content), b.val_variant_fields(v, t, vi, vo, sb, vt))
+    }
+    return b.jv(vt, "Object", [b.read(lv)])
+  }
+  if wrapped {
+    let ct = b.c.subst(vo.fields[0].ty, sb)
+    let p = b.unbox(b.add(Op.Payload, b.m.types[t].variants[vi].fields[0].ty, Aux.P(tag: vi, field: 0), [v]))
+    let so = b.named_obj(ct)
+    let ssb = b.c.args_subst(b.c.objs[so].tparams, b.ty_args(ct))
+    b.val_struct_fields(lv, p, b.vty(p), so, ssb, vt)
+    return b.jv(vt, "Object", [b.read(lv)])
+  }
+  for (fi, f) in vo.fields.indexed() {
+    let p = b.add(Op.Payload, b.m.types[t].variants[vi].fields[fi].ty, Aux.P(tag: vi, field: fi), [v])
+    b.jv_push(lv, vt, check.text(check.vfield_json_key(f)), b.val_sub(p, b.c.subst(f.ty, sb), vt))
+  }
+  b.jv(vt, "Object", [b.read(lv)])
+}
+
+/// Pushes the members of struct v (SSA type t, object obj, substitution
+/// sb) onto the members list in local lv, as json_struct_obj writes them:
+/// an Absent Patch field and an empty omitempty field (decision 0309) are
+/// left out.
+fn (var b: Builder) val_struct_fields(lv: Int, v: Int, t: Int, obj: Int, sb: Map[Int, Int], vt: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  for f in b.c.objs[obj].fields {
+    let fi = b.m.field_index(t, check.text(f.name))
+    if fi < 0 {
+      continue
+    }
+    let key = check.text(f.json_key)
+    let ft = b.c.subst(f.ty, sb)
+    let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v]))
+    let patch = b.is_json_patch(ft)
+    let omit = !patch && f.omit_empty && b.json_can_be_empty(fv, ft)
+    if patch || omit {
+      var keep = -1
+      if patch {
+        let absent = b.m.variant_index(b.vty(fv), "Absent")
+        let tag = b.add(Op.Tag, it, Aux.None, [fv])
+        keep = b.add(Op.Ne, bt, Aux.None, [tag, b.cint(absent)])
+      } else {
+        keep = b.add(Op.Not, bt, Aux.None, [b.json_empty(fv, ft)])
+      }
+      let (no, join) = b.if_then_begin(keep)
+      b.jv_push(lv, vt, key, b.val_sub(fv, ft, vt))
+      b.if_then_end(no, join)
+      continue
+    }
+    b.jv_push(lv, vt, key, b.val_sub(fv, ft, vt))
+  }
+}
