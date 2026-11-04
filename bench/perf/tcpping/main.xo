@@ -1,0 +1,63 @@
+// std/net's TCP against Go's net (twin.go.txt), loopback, in process:
+// `pingpong` sends 60,000 messages of 64 bytes over one connection, the
+// server task echoing each (the round trip alone); `connect` makes 4,000
+// connections that each send one message, read the echo and close (the
+// connection cost). `none` binds the listener and stops. Usage:
+// `<program> none|pingpong|connect`. Prints `<workload> <checksum>`; the
+// twin prints the same.
+fn echo(l: Listener, conns: Int) -> () ! NetErr uses net {
+  for _ in 0..conns {
+    let c = l.accept()?
+    while true {
+      match c.read(4096)? {
+        Some(b) => c.write(b)?
+        None => break
+      }
+    }
+    c.close()
+  }
+}
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "none"
+  let l = os.net.listen("127.0.0.1:0")?
+  var sum = 0
+  var msg = BytesBuilder.new()
+  for i in 0..64 {
+    msg.write_byte(UInt8(65 + i % 26))
+  }
+  let data = msg.freeze()
+  if w == "pingpong" {
+    scope s {
+      s.spawn(fn() ! NetErr { echo(l, 1) })
+      let c = os.net.dial(l.addr())?
+      for i in 0..60000 {
+        c.write(data)?
+        var got = 0
+        while got < 64 {
+          let b = c.read(4096)? ?? fault("closed")
+          got += b.len()
+          sum += b.len() + Int(b[i % b.len()])
+        }
+      }
+      c.close()
+    }
+  } else if w == "connect" {
+    scope s {
+      s.spawn(fn() ! NetErr { echo(l, 4000) })
+      for i in 0..4000 {
+        let c = os.net.dial(l.addr())?
+        c.write(data)?
+        var got = 0
+        while got < 64 {
+          let b = c.read(4096)? ?? fault("closed")
+          got += b.len()
+          sum += b.len() + Int(b[i % b.len()])
+        }
+        c.close()
+      }
+    }
+  }
+  l.close()
+  os.stdio.println("${w} ${sum}")
+}

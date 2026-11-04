@@ -1,0 +1,77 @@
+package main
+
+import (
+	"fmt"
+	"net"
+	"os"
+)
+
+func echo(l net.Listener, conns int) {
+	buf := make([]byte, 4096)
+	for k := 0; k < conns; k++ {
+		c, err := l.Accept()
+		if err != nil {
+			panic(err)
+		}
+		for {
+			n, err := c.Read(buf)
+			if err != nil {
+				break
+			}
+			c.Write(buf[:n])
+		}
+		c.Close()
+	}
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	data := make([]byte, 64)
+	for i := range data {
+		data[i] = byte(65 + i%26)
+	}
+	sum := 0
+	buf := make([]byte, 4096)
+	rt := func(c net.Conn, i int) {
+		c.Write(data)
+		got := 0
+		for got < 64 {
+			n, err := c.Read(buf)
+			if err != nil {
+				panic(err)
+			}
+			got += n
+			sum += n + int(buf[i%n])
+		}
+	}
+	if w == "pingpong" {
+		go echo(l, 1)
+		c, err := net.Dial("tcp", l.Addr().String())
+		if err != nil {
+			panic(err)
+		}
+		for i := 0; i < 60000; i++ {
+			rt(c, i)
+		}
+		c.Close()
+	} else if w == "connect" {
+		go echo(l, 4000)
+		for i := 0; i < 4000; i++ {
+			c, err := net.Dial("tcp", l.Addr().String())
+			if err != nil {
+				panic(err)
+			}
+			rt(c, i)
+			c.Close()
+		}
+	}
+	l.Close()
+	fmt.Println(w, sum)
+}
