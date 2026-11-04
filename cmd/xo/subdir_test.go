@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -218,5 +219,37 @@ func TestNestedModuleRequired(t *testing.T) {
 	r = xo(t, "get", "--json", "--dir", app, "github.com/acme/awsx@v1.0.0").want(0)
 	if strings.Contains(r.out, `"selected"`) {
 		t.Errorf("an unchanged requirement reports a selection:\n%s", r.out)
+	}
+
+	// xo mod graph: Go's edge lines, the cycle included, each once
+	r = xo(t, "mod", "graph", "--dir", app).want(0)
+	lines := strings.Split(strings.TrimSpace(r.out), "\n")
+	want := []string{
+		"example.com/app github.com/acme/awsx@v1.0.0",
+		"example.com/app " + sts + "@v1.1.0",
+		sts + "@v1.1.0 github.com/acme/awsx@v1.1.0",
+		"github.com/acme/awsx@v1.1.0 " + sts + "@v1.0.0",
+		sts + "@v1.0.0 github.com/acme/awsx@v1.0.0",
+	}
+	got := map[string]int{}
+	for _, l := range lines {
+		got[l]++
+	}
+	for _, w := range want {
+		if got[w] != 1 {
+			t.Errorf("mod graph: %q %d times, want once:\n%s", w, got[w], r.out)
+		}
+	}
+	if len(lines) != len(want) || !strings.HasPrefix(lines[0], "example.com/app ") || !strings.HasPrefix(lines[1], "example.com/app ") {
+		t.Errorf("mod graph: want the main module's two edges first and nothing else:\n%s", r.out)
+	}
+	r = xo(t, "mod", "graph", "--json", "--dir", app).want(0)
+	var g struct {
+		OK       bool
+		Edges    []struct{ From, To string }
+		Selected map[string]string
+	}
+	if err := json.Unmarshal([]byte(r.out), &g); err != nil || !g.OK || len(g.Edges) != len(want) || g.Selected["github.com/acme/awsx"] != "v1.1.0" || g.Selected[sts] != "v1.1.0" {
+		t.Errorf("mod graph --json (%v):\n%s", err, r.out)
 	}
 }

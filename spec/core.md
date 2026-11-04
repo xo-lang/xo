@@ -1597,7 +1597,11 @@ note `XO1315` (decision 0155). Any other name stops the check.
   which module version still requires a higher version when the build
   does not select the one set; `xo mod tidy`
   requires every imported module, removes requirements nothing imports
-  (unless they raise a version the graph selects), and rewrites xo.lock.
+  (unless they raise a version the graph selects), and rewrites xo.lock;
+  `xo mod graph` prints the requirement graph as Go's `go mod graph`
+  does, one `<module>[@version] <module>@<version>` edge per line (the
+  main module without a version), and with `--json` the version selected
+  for each module.
 
 **[P1]** Workspaces: an `xo.work` file at or above the main module makes
 the modules it lists build from their directories:

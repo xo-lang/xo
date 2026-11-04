@@ -36,6 +36,9 @@ struct BuildList {
   locked: Map[Str, List[Str]] = {}
   vendor: Bool = false
   problems: List[check.Problem] = []
+  /// Every requirement the walk read, (from, "path@version") in the
+  /// order read: the main module's (and a workspace's) first (xo mod graph).
+  edges: List[(Str, Str)] = []
 }
 
 fn add_problem(var b: BuildList, p: check.Problem) {
@@ -60,6 +63,9 @@ fn require_line(f: check.ModFile, path: Str) -> Int {
 struct Item {
   req: check.Require
   file: Str
+  /// The module requiring it: a root module's path, or "path@version"
+  /// (xo mod graph's left column).
+  from: Str = ""
 }
 
 /// mod.Load: the dependencies of the main module in main_dir.
@@ -113,7 +119,7 @@ fn (var c: ModCtx) load(main_dir0: Str, opts: Options) -> BuildList uses (fs, pr
   var direct: Map[Str, Bool] = {}
   for r in roots {
     for q in r.reqs {
-      queue.push(Item{req: q, file: r.file})
+      queue.push(Item{req: q, file: r.file, from: r.path})
       if r.dir == main.dir {
         direct[q.path] = true
       }
@@ -129,6 +135,7 @@ fn (var c: ModCtx) load(main_dir0: Str, opts: Options) -> BuildList uses (fs, pr
     qi += 1
     let p = it.req.path
     let v = it.req.version
+    b.edges.push((it.from, "${p}@${v}"))
     if local.contains(p) {
       continue
     }
@@ -169,7 +176,7 @@ fn (var c: ModCtx) load(main_dir0: Str, opts: Options) -> BuildList uses (fs, pr
       b.hashes["${key}/xo.mod"] = h
     }
     for q in mf.reqs {
-      queue.push(Item{req: q, file: mf.file})
+      queue.push(Item{req: q, file: mf.file, from: "${p}@${v}"})
     }
   }
   for p in selected.keys() {

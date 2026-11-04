@@ -19,7 +19,7 @@ commands:
   explain   long form explanation of a diagnostic code
   init      write xo.mod for a new module
   get       require, upgrade, or remove a module
-  mod       tidy, accept-effects, clean, proxy serve
+  mod       tidy, graph, accept-effects, clean, proxy serve
   vendor    copy every selected module version into vendor/
   publish   check a release against the previous version tag
   audit     supply chain report of the dependencies
