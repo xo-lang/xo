@@ -8,6 +8,8 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+
+## v0.38.0 (2026-11-04)
 - arm64: a fault in a Mutex.with closure that compiles to a leaf (no calls, such as `fn(var c) { c.n += 1 }` overflowing) poisons the mutex as decision 0482 says instead of crashing with SIGTRAP: the landing pad's entry now undoes the fault stub's frame record, and the stubs get an unwind region of their own with their own call site table (gotchas/arm64-compact-unwind-leaf-fault-frames.md). Found by the full tier's TestNoLeafWithPads; golden mutex_poison_leaf. Not in any release (43b7eba82 came after v0.37.0).
 
 - fix (--inline-str, decision 0370): BytesBuilder.put_le and put_be no longer copy the whole builder on every call (the builder was made an object as "" + cur, a new object each time; now cur + ""): jpeg_decode with --inline-str 0.12 s against 0.10 s plain on the Mac (was 5.8x on linux/arm64), internal/arm64 TestInlineStrPutInPlace; gotchas/inline-str-put-copies-builder.md
