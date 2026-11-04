@@ -1,5 +1,19 @@
 # std/crypto changes
 
+## 2026-11-03: perf: SHA-2 finishes with one append and four words a call
+
+- Kind: perf
+- Commit: this push
+- Found by: the std timing rows (std-twin-rows18: otp sha256 1.327 and sha512 1.376 of Go) and XO_PROF on linux/arm64
+- Go reference: crypto/sha256 and crypto/sha512 checkSum (one padding append, the words put big endian)
+- Test: internal/stdtest corpora otp, crypto, aead and jwt on arm64 and Go; bench/perf/otp twincheck
+- Timing: TIMING
+- Shipped in: not yet released
+
+A SHA-224, SHA-256, SHA-384 or SHA-512 digest pushed its zero padding an
+8 byte word at a time and its digest a word a call, each a capacity
+check; the padding is now one append from a constant and the digest four
+words a call, as SHA-1's since the same day.
 ## 2026-11-03: perf: SHA-512 and SHA-384 with arm64's SHA512 instructions
 
 - Kind: perf
