@@ -332,6 +332,15 @@ fn check_claims(v: json.Value, opts: jwt.Options) -> () ! jwt.JwtErr {
     }
   }
   if let Some(want) = opts.audience {
+    // golang-jwt's ClaimStrings: a string, or a list of only strings
+    if let Some(List(items)) = v.get("aud") {
+      for x in items {
+        match x {
+          Str(_) => {}
+          _ => return Err(jwt.JwtErr.Claim(msg: "aud is not a string or a list of strings"))
+        }
+      }
+    }
     let ok = match v.get("aud") {
       Some(Str(s)) => s == want
       Some(List(items)) => items.any(fn(x) { x == json.Value.Str(s: want) })

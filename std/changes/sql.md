@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-04: fix: pg copy_from stops calling rows once the server refuses the COPY
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.38.1 evaluation: after a refusal the callback kept running for all 100k rows, and never returned with an endless source
+- Go reference: pgx CopyFrom (reads the server's messages while it sends)
+- Test: llrt/pg_test.xo "copy_from stops calling rows once the server refuses the COPY" (arm64, LLVM)
+- Shipped in: not yet released
+
+The Postgres driver reads the server's messages in a task while the rows are sent. An error the server raises mid COPY (a bad row, a constraint) stops the calls to `rows`; the driver sends CopyDone, collects the server's answer and returns its error. An error from `rows` still sends CopyFail and wins.
+
 ## 2026-11-03: feature: copy_from (COPY FROM STDIN) and quote_ident
 
 - Kind: feature (a new required method on DriverConn: breaking for driver authors)

@@ -1,4 +1,5 @@
 use std/jwt
+use std/json
 
 struct Claims {
   sub: Str
@@ -75,4 +76,22 @@ test "dates past 2262 do not overflow (b25)" {
   let edge = jwt.sign(os.rand, jwt.Alg.HS256, key, Dates{exp: 100000000000, nbf: 0, iat: 0}, None)?
   big.leeway = Duration.from_secs_int(9000000000)
   let _ = jwt.verify_with[Dates](edge, key, big)?
+}
+
+struct Aud {
+  exp: Int
+  aud: List[json.Value]
+} derive Json
+
+test "an aud list holding a non string is refused when the audience is checked" {
+  let key = jwt.Key.Hmac(secret: Secret.new(b"a secret of some length"))
+  let tok = jwt.sign(os.rand, jwt.Alg.HS256, key, Aud{exp: 2000, aud: [json.Value.Str(s: "x"), json.Value.Int(n: 1)]}, None)?
+  var o = opts(1000)
+  o.audience = Some("x")
+  match jwt.verify_with[Aud](tok, key, o) {
+    Err(jwt.JwtErr.Claim(_)) => ()
+    _ => fault("expected Claim")
+  }
+  // not checked: the claim is not looked at
+  let _ = jwt.verify_with[Aud](tok, key, opts(1000))?
 }

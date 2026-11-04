@@ -66,7 +66,9 @@ enum JwtErr {
   Issuer
   Audience
   Subject
-  /// a registered claim missing or of the wrong type
+  /// a time claim (`exp`, `nbf`, `iat`) of the wrong type or out of range, `exp` or `iat` required and
+  /// missing, or an `iss`, `sub` or `aud` that is not a string (`aud`: a string or a list of strings) when it
+  /// is checked; a wrong or missing issuer, audience or subject value is Issuer, Audience or Subject
   Claim(msg: Str)
   /// no key for the token's `kid`
   Key(msg: Str)

@@ -799,10 +799,19 @@ fn copy_field(v: sql.SqlValue, var o: BytesBuilder) {
   }
 }
 
+/// What the reader task of copy_from has seen: the server's first error,
+/// a connection failure, the rows affected.
+struct CopyState {
+  failed: sql.SqlErr?
+  n: Int
+  io: sql.SqlErr?
+}
+
 /// COPY table (columns) FROM STDIN in the text format (decision 0479): rows
 /// is called until None, each row sent in CopyData messages of about 64
 /// KiB; an error from rows sends CopyFail (the server rolls the COPY back)
-/// and is returned. The result is the rows copied.
+/// and is returned; an error the server raises while the rows are sent
+/// stops the calls to rows and is returned. The result is the rows copied.
 fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
   if p.broken.get() {
     return Err(conn_err("the connection is broken"))
@@ -832,60 +841,110 @@ fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.
     // no CopyInResponse: the statement failed (or was not a COPY)
     return Err(failed ?? conn_err("COPY FROM STDIN: no CopyInResponse"))
   }
-  var buf = BytesBuilder.with_capacity(65536 + 1024)
+  // the server's messages are read by a task while the rows are sent, as
+  // pgx's CopyFrom does: an error the server raises mid COPY (a bad row, a
+  // constraint) sets `refused` and the row source stops being called (the
+  // server discards the data up to CopyDone or CopyFail, then answers)
+  let st = Mutex.new(CopyState{failed: failed, n: 0, io: None})
+  let refused = Atomic.new(false)
   var err: sql.SqlErr? = None
-  while err.is_none() {
-    match rows() {
-      Ok(o) => {
-        match o {
-          Some(r) => {
-            for (i, v) in r.indexed() {
-              if i > 0 {
-                buf.write_byte(9)
+  var send_err: sql.SqlErr? = None
+  scope s {
+    let reader = s.spawn(fn() {
+      while true {
+        match p.recv() {
+          Ok(m) => {
+            match m {
+              CommandComplete(tag) => st.with(fn(var c) { c.n = pgwire.rows_affected(tag) })
+              Error(f) => {
+                st.with(fn(var c) {
+                  if c.failed.is_none() {
+                    c.failed = Some(server_err(f))
+                  }
+                })
+                refused.set(true)
               }
-              copy_field(v, buf)
-            }
-            buf.write_byte(10)
-            if buf.len() >= 65536 {
-              p.send(pgwire.copy_data(buf.freeze()))?
-              buf = BytesBuilder.with_capacity(65536 + 1024)
+              Ready(_) => break
+              _ => {}
             }
           }
-          None => break
+          Err(e) => {
+            st.with(fn(var c) { c.io = Some(e) })
+            refused.set(true)
+            break
+          }
         }
       }
-      Err(e) => err = Some(e)
+    })
+    var buf = BytesBuilder.with_capacity(65536 + 1024)
+    while err.is_none() && send_err.is_none() && !refused.get() {
+      match rows() {
+        Ok(o) => {
+          match o {
+            Some(r) => {
+              for (i, v) in r.indexed() {
+                if i > 0 {
+                  buf.write_byte(9)
+                }
+                copy_field(v, buf)
+              }
+              buf.write_byte(10)
+              if buf.len() >= 65536 {
+                match p.send(pgwire.copy_data(buf.freeze())) {
+                  Ok(_) => {}
+                  Err(e) => send_err = Some(e)
+                }
+                buf = BytesBuilder.with_capacity(65536 + 1024)
+              }
+            }
+            None => break
+          }
+        }
+        Err(e) => err = Some(e)
+      }
     }
-  }
-  if let Some(e) = err {
-    p.send(pgwire.copy_fail("${e}"))?
-  } else {
-    if buf.len() > 0 {
-      p.send(pgwire.copy_data(buf.freeze()))?
-    }
-    p.send(pgwire.copy_done())?
-  }
-  var n = 0
-  while {
-    match p.recv()? {
-      CommandComplete(tag) => n = pgwire.rows_affected(tag)
-      Error(f) => {
-        // a CopyFail comes back as the server's error: the caller's error wins
-        if failed.is_none() && err.is_none() {
-          failed = Some(server_err(f))
+    if send_err.is_none() {
+      if let Some(e) = err {
+        match p.send(pgwire.copy_fail("${e}")) {
+          Ok(_) => {}
+          Err(x) => send_err = Some(x)
+        }
+      } else {
+        if buf.len() > 0 && !refused.get() {
+          match p.send(pgwire.copy_data(buf.freeze())) {
+            Ok(_) => {}
+            Err(x) => send_err = Some(x)
+          }
+        }
+        if send_err.is_none() {
+          match p.send(pgwire.copy_done()) {
+            Ok(_) => {}
+            Err(x) => send_err = Some(x)
+          }
         }
       }
-      Ready(_) => break
-      _ => {}
     }
+    if send_err.is_some() {
+      // the connection is unusable: the reader's recv fails and ends
+      p.broken.set(true)
+    }
+    reader.await
   }
+  let res = st.with(fn(c) { c })
   if let Some(e) = err {
+    // a CopyFail comes back as the server's error: the caller's error wins
     return Err(e)
   }
-  if let Some(e) = failed {
+  if let Some(e) = send_err {
     return Err(e)
   }
-  n
+  if let Some(e) = res.io {
+    return Err(e)
+  }
+  if let Some(e) = res.failed {
+    return Err(e)
+  }
+  res.n
 }
 
 fn (p: PgConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {

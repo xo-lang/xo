@@ -1,5 +1,16 @@
 # std/jwt changes
 
+## 2026-11-04: fix: an aud list holding a non string is refused; docs
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.38.1 evaluation (doc mismatches)
+- Go reference: golang-jwt v5 ClaimStrings (a string or a list of strings; another element is ErrInvalidType)
+- Test: jwt_test.xo "an aud list holding a non string is refused when the audience is checked"
+- Shipped in: not yet released
+
+With `Options.audience` set, an `aud` of `["x", 1]` was accepted for `"x"`; it is now `Claim("aud is not a string or a list of strings")`. The `JwtErr.Claim` description names what it covers, against Issuer, Audience and Subject. spec/std.md 62 no longer says every token is byte for byte Go's: a claim text with `<`, `>` or `&` is written as it is, where Go's encoding/json escapes it (both verify alike).
+
 ## 2026-11-04: fix: exp, nbf and iat past 2262 no longer fault
 
 - Kind: fix

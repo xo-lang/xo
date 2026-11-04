@@ -272,3 +272,56 @@ fn fk_error_server(kind: Str, body: Bytes) -> Bytes {
     _ => fk_complete("SELECT 0") + fk_ready()
   }
 }
+
+/// A server that takes a COPY, refuses its first CopyData with an error and
+/// discards the rest up to CopyDone, as PostgreSQL does for a bad row.
+fn fk_copy_refuse(seen: Atomic[Int]) -> fn(Str, Bytes) -> Bytes {
+  fn(kind: Str, body: Bytes) -> Bytes {
+    if kind == "Q" {
+      if (body.to_str() ?? "").starts_with("COPY") {
+        return fk_m("G", b"\x00" + fk_be16(0))
+      }
+      return fk_complete("") + fk_ready()
+    }
+    if kind == "d" {
+      if seen.add(1) == 1 {
+        return fk_error_resp("22P04", "extra data after last expected column", "")
+      }
+      return b""
+    }
+    if kind == "c" || kind == "f" {
+      return fk_ready()
+    }
+    b""
+  }
+}
+
+test "copy_from stops calling rows once the server refuses the COPY, and returns the server's error (b: pg COPY refusal)" {
+  let l = os.net.listen("db.test:5432")?
+  let seen = Atomic.new(0)
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_hello_trust(), fk_copy_refuse(seen)).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"))?
+    let calls = Atomic.new(0)
+    let total = 400000
+    let r = db.copy_from("t", ["a", "b"], fn() {
+      let i = calls.add(1)
+      if i >= total {
+        return Ok(None)
+      }
+      Ok(Some([sql.int(i), sql.str("some text for row ${i}")]))
+    })
+    match r {
+      Err(e) => {
+        if !"${e}".contains("extra data after last expected column") {
+          fault("expected the server's error, got ${e}")
+        }
+      }
+      Ok(n) => fault("expected an error, copied ${n}")
+    }
+    if calls.get() >= total {
+      fault("rows was called for every row after the server refused")
+    }
+    s.cancel()
+  }
+}
