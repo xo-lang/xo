@@ -23,6 +23,22 @@ the per-store test's cost on xo's own code): wall 1.01 (0.99 to 1.02),
 CPU 1.007 (0.993 to 1.019), max RSS 1.005 (0.991 to 1.03), all within
 noise.
 
+0488 + l2-cjfix against main with the bench (A 77cdfa80c: e622870f9 plus
+bench/perf/httpsession; B 0886ff1af), `ab-host.sh A B NAME --rounds=5 --
+PROG W`, n=5:
+
+| program | workload | A wall ms | B wall ms | ratio | interval | max RSS ratio |
+|---|---|---|---|---|---|---|
+| httpsession | store (1,000 sessions) | 143.4 | 131.7 | 0.919 | 0.893 to 0.937 better | 0.985 |
+| httpsession | store100k | 167.6 | 146.9 | 0.876 | 0.834 to 0.914 better | 0.541 (38,540 to 20,856 KB) better |
+| httpsession | plain | 124.4 | 123.8 | 0.995 | 0.974 to 1.019 within noise | 0.983 |
+| cookiejar | both | 279.4 | 179.7 | 0.643 | 0.633 to 0.652 better | 1.0 |
+| cookiejar | get | 155.0 | 99.34 | 0.641 | 0.633 to 0.651 better | 1.0 |
+| cookiejar | set | 90.52 | 56.32 | 0.622 | 0.616 to 0.632 better | 1.0 |
+
+l2-cjfix alone had store at 1.369 (worse): the unlock's walk, which 0488
+removes.
+
 ## Checks
 
 - TestTSanSharedMaps (tsan_maps now also pushes and sets lists in place
