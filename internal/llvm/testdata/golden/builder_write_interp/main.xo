@@ -1,0 +1,46 @@
+// A builder's write of an interpolation appends its pieces to the builder
+// itself (compiler/ssa string_lit_into, 2026-11-03): Int, Float, Rune,
+// Bool, Str, Display and Debug pieces, literal text around them, and an
+// interpolation that reads the builder it writes to (builders are move
+// only, core 5.3, so the one written to is never shared).
+struct P {
+  x: Int
+  y: Int
+}
+
+fn (self: P) display() -> Str { "(${self.x}, ${self.y})" }
+
+fn main(os: Os) uses stdio {
+  var b = BytesBuilder.new()
+  for i in 0..3 {
+    b.write_str("${i}")
+  }
+  b.write_str("|${-42}|${1.5}|${Rune('z')}|${true}|${"s"}|")
+  b.write_str("${P{x: 1, y: 2}} ${[1, 2]:?}")
+  b.write_str(" more ${7} at ${b.len()}")
+  os.stdio.println(b.freeze().to_str() ?? "?")
+  var s = StrBuilder.new()
+  for c in "héllo".runes() {
+    s.write("${c}")
+  }
+  s.write(" ${s.len()}")
+  os.stdio.println(s.freeze())
+  // `s + "${..}"` and `s += "${..}"`: the old value first in `+`, the
+  // value first in `+=` (decision 0159), an interpolation reading s
+  var t = "a"
+  t += "${t.len()}${t}"
+  let u = t + "|${t.len()}|${'q'}"
+  t += "${2.5}"
+  os.stdio.println("${t} ${u}")
+  var line = ""
+  for i in 0..5 {
+    line = line + "${i}," 
+    line += "${line.len()};"
+  }
+  os.stdio.println(line)
+  var big = BytesBuilder.new()
+  for i in 0..100000 {
+    big.write_str("${i % 10}")
+  }
+  os.stdio.println("${big.len()}")
+}

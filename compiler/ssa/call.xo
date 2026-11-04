@@ -2374,6 +2374,17 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
         b.place_set(p, b.llrt_or_rt("rs_push_rune", st, [cur, a]))
       }
       _ => {
+        // an interpolation written to a builder appends its pieces to the
+        // builder itself, with no Str of its own (string_lit_into); not
+        // with inline Strs, whose builder must stay an object
+        if !b.c.inline_str && fname is "write" | "write_str" {
+          if let Some(Expr.StringLit(lit)) = es[0] {
+            if lit.parts.any(fn(q) { q.expr is Some(_) }) && b.pure_pieces(lit) {
+              b.place_set(p, b.string_lit_into(cur, lit))
+              return Some(b.unit())
+            }
+          }
+        }
         let a = b.io_arg(fo, es, 0, st)
         // a builder stays an object (decision 0370): its pieces are not
         // folded into an inline Str and back

@@ -1214,9 +1214,35 @@ fn (var b: Builder) lower_kind(t: Int) -> Str {
   "int"
 }
 
-fn (var b: Builder) string_lit(x: parser.StringLit) -> Int {
+fn (var b: Builder) string_lit(x: parser.StringLit) -> Int { b.string_lit_into(-1, x) }
+
+/// acc0 + the text of the string literal x (acc0 < 0: the text alone):
+/// each piece appended to acc0 in turn, so a builder's write of an
+/// interpolation (`b.write_str("${n}")`) appends in place with no Str of
+/// its own (2026-11-03: a lone `${Rune}` or `${Int}` allocated a Str per
+/// write). With acc0 every expression is evaluated first, in order, so
+/// one that reads the builder (`${b.len()}`) sees it as it was; the
+/// caller fuses only literals whose pieces run no user code when
+/// appended (pure_pieces).
+fn (var b: Builder) string_lit_into(acc0: Int, x: parser.StringLit) -> Int { b.string_lit_append(acc0, x, if acc0 >= 0 { b.string_lit_pre(x) } else { [] }) }
+
+/// The values of x's interpolated expressions, in order.
+fn (var b: Builder) string_lit_pre(x: parser.StringLit) -> List[Int] {
+  var pre: List[Int] = []
+  for p in x.parts {
+    if let Some(pe) = p.expr {
+      pre.push(b.expr(pe))
+    }
+  }
+  pre
+}
+
+/// acc0 + x's text, its expressions' values pre (string_lit_pre) or, when
+/// pre is empty, each evaluated where its piece is appended.
+fn (var b: Builder) string_lit_append(acc0: Int, x: parser.StringLit, pre: List[Int]) -> Int {
   let st = b.str_t()
-  var acc = -1
+  var acc = acc0
+  var j = 0
   for p in x.parts {
     match p.expr {
       None => {
@@ -1228,7 +1254,8 @@ fn (var b: Builder) string_lit(x: parser.StringLit) -> Int {
       }
       Some(pe) => {
         let ct = b.nat_check(pe)
-        var v = b.expr(pe)
+        var v = if !pre.is_empty() { pre[j] } else { b.expr(pe) }
+        j += 1
         if p.debug {
           // `${x:?}` (decision 0296): as `x.debug()`
           if acc < 0 {
@@ -1264,6 +1291,38 @@ fn (var b: Builder) string_lit(x: parser.StringLit) -> Int {
     return b.const_str("")
   }
   acc
+}
+
+/// y as a string literal whose pieces `l + y` (l of type lt) can append
+/// to l itself: a `+` on Str, an interpolation, pure_pieces.
+fn (var b: Builder) fusable_lit(op: lexer.Kind, lt: Int, y: Expr) -> parser.StringLit? {
+  if op != lexer.Kind.Plus || b.c.inline_str || b.tkind(lt) != Kind.Str || lt != b.str_t() {
+    return None
+  }
+  if let Expr.StringLit(lit) = y {
+    if lit.parts.any(fn(q) { q.expr is Some(_) }) && b.pure_pieces(lit) {
+      return Some(lit)
+    }
+  }
+  None
+}
+
+/// Whether appending x's pieces runs no user code: no `${x:?}` and every
+/// value a builtin kind or one std shows itself (Duration, Time, Bytes,
+/// UInt64, Rune), not a type's own display.
+fn (var b: Builder) pure_pieces(x: parser.StringLit) -> Bool {
+  for p in x.parts {
+    if let Some(pe) = p.expr {
+      if p.debug {
+        return false
+      }
+      let ct = b.nat_check(pe)
+      if !b.is_prelude_named(ct, ["Duration", "Time", "Bytes", "UInt64", "Rune"]) && !b.is_builtin_kind(b.nat_of(pe)) {
+        return false
+      }
+    }
+  }
+  true
 }
 
 fn (var b: Builder) cat(acc: Int, v: Int) -> Int {
@@ -1640,6 +1699,10 @@ fn (var b: Builder) binary(e: Expr) -> Int {
     }
   }
   let l = b.expr(x)
+  if let Some(lit) = b.fusable_lit(op, b.vty(l), y) {
+    // `s + "${n}"`: the pieces appended to s, with no Str of their own
+    return b.string_lit_into(l, lit)
+  }
   var r = -1
   if op == lexer.Kind.Shl || op == lexer.Kind.Shr {
     r = b.shift_count(y, b.vty(l))

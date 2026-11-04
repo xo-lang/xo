@@ -1,0 +1,39 @@
+// Interpolations written to a builder (compiler/ssa string_lit_into,
+// 2026-11-03): `b.write_str("${n}")` for 2,000,000 Ints, the same for
+// 2,000,000 Runes and 500,000 Floats, and a mixed line `"${k}=${v};"`
+// 1,000,000 times; the builder is reset every 4,096 writes. Prints a
+// checksum of the lengths, the same on every backend and revision.
+fn main(os: Os) uses stdio {
+  var sum = 0
+  var b = BytesBuilder.new()
+  for i in 0..2000000 {
+    b.write_str("${i * 7919 % 1000003}")
+    if i % 4096 == 4095 {
+      sum += b.len()
+      b = BytesBuilder.new()
+    }
+  }
+  for i in 0..2000000 {
+    b.write_str("${Rune(97 + i % 26)}")
+    if i % 4096 == 4095 {
+      sum += b.len()
+      b = BytesBuilder.new()
+    }
+  }
+  for i in 0..500000 {
+    b.write_str("${Float(i) / 8.0}")
+    if i % 4096 == 4095 {
+      sum += b.len()
+      b = BytesBuilder.new()
+    }
+  }
+  for i in 0..1000000 {
+    b.write_str("${i % 100}=${i * 31};")
+    if i % 4096 == 4095 {
+      sum += b.len()
+      b = BytesBuilder.new()
+    }
+  }
+  sum += b.len()
+  os.stdio.println("interpwrite ${sum}")
+}

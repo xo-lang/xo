@@ -567,6 +567,14 @@ fn (var b: Builder) assign(span: Span, op: lexer.Kind, target: Expr, value: Expr
   // changes the value makes to the target's binding are kept, as with
   // `=` (decision 0140); only the operation runs between the read and
   // the store, so an element may move out (decision 0169)
+  if let Some(lit) = b.fusable_lit(o, p.t(), value) {
+    // `s += "${n}"`: the pieces' values first, then appended to the old
+    // value itself (string_lit_append), with no Str of their own
+    let pre = b.string_lit_pre(lit)
+    let old = b.place_get(p)
+    b.place_set(p, b.string_lit_append(old, lit, pre))
+    return
+  }
   var r = -1
   if o == lexer.Kind.Shl || o == lexer.Kind.Shr {
     r = b.shift_count(value, p.t())
