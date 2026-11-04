@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+x+ a0=1 c9=10 tags=1 | y++ a0=12 c9=11 tags=2 | z+ a0=3 c9=10 tags=1
+copy z+ a0=3 c9=10 tags=1 now z++ a0=103 c9=11 tags=2
+p++ a0=2 c9=11 tags=2 | q++ a0=4 c9=11 tags=2
+fault: step 5 on g
+--- stderr

@@ -721,6 +721,7 @@ fn (var g: G) isel() {
       }
     }
   }
+  g.find_take_args()
   let ptrs = g.plan_held()
   let idom = dominators_of(g.f, blocks)
   g.proof = new_proof(g.f, blocks)

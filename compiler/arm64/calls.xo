@@ -523,6 +523,15 @@ fn at_base(b: Int) -> ElemAt {
   ElemAt{base: b, off: LIST_HDR}
 }
 
+/// Address a in one register.
+fn (var g: G) elem_ptr(a: ElemAt) -> Int {
+  if a.idx != 0 {
+    let r = g.def1(false, "add $d0, $u0, $u1, lsl #${a.sh}", [a.base, a.idx])
+    return g.addr_at(r, a.off)
+  }
+  g.addr_at(a.base, a.off)
+}
+
 /// The registers of address a.
 fn at_regs(a: ElemAt) -> List[Int] {
   if a.idx != 0 {
@@ -1299,6 +1308,17 @@ fn (var g: G) call_op(v: Int) {
       g.bounds_check(v, l, i, x.args[0], x.args[1])
       let et = g.m.types[ssa.ty_of(x.tb)].elems[1]
       let base = g.elem_addr(l, i, x.args[1], et)
+      if g.take_ptr.contains(v) {
+        // a list element home (byref.xo find_take_args): the call gets
+        // the slot's address, the element stays
+        g.take_ptr[v] = g.elem_ptr(base)
+        var z: List[Int] = [l]
+        for _ in g.layout(et) {
+          z.push(0)
+        }
+        g.set(v, z)
+        return
+      }
       let e = g.load_elem(base, et, false)
       g.store_hole(base, et)
       g.set(v, [l] + e)
@@ -1311,6 +1331,11 @@ fn (var g: G) call_op(v: Int) {
       g.set(v, g.option(ssa.ty_of(x.tb), "cmp $u0, $u1", [i, n], "lo", [], OptSome.Get(l: l, i: i, iv: x.args[1], et: et), []))
     }
     "list.set" => {
+      if g.take_set.contains(v) {
+        // the callee wrote the element at its slot (find_take_args)
+        g.set(v, [g.word(x.args[0])])
+        return
+      }
       let l = g.word(x.args[0])
       let i = g.word(x.args[1])
       let et = g.vty(x.args[2])

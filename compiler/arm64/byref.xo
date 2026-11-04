@@ -187,7 +187,7 @@ fn (var g: G) slot_mems(v: Int, ci: Int) -> List[Int] {
   for (i, a) in g.f.values[v].args.indexed() {
     out.push(-1)
     let t = g.vty(a)
-    if br.is_empty() || !br[i] || !g.is_var_param(ci, i) || used.contains(t) {
+    if br.is_empty() || !br[i] || !g.is_var_param(ci, i) || used.contains(t) || g.take_arg.contains((v, i)) {
       continue
     }
     if g.has_held && g.op(a) == ssa.Op.Field && g.held_mem_of(g.vty(g.f.values[a].args[0])) >= 0 {
@@ -720,7 +720,7 @@ fn (var g: G) frame_homes_of(var mems: List[HMem], var seen: Map[Int, Bool]) {
         continue
       }
       for (i, a) in x.args.indexed() {
-        if i >= cb.len() || !cb[i] || !g.is_var_param(ci, i) {
+        if i >= cb.len() || !cb[i] || !g.is_var_param(ci, i) || g.take_arg.contains((v, i)) {
           continue
         }
         var t = g.vty(a)
@@ -892,6 +892,80 @@ fn (var g: G) plan_held() -> Map[Int, Int] {
   ptrs
 }
 
+/// List element homes: a `var` argument passed by reference that is an
+/// element taken out of a list (`f(c.items[i])`: `t = list.take(l, i)`,
+/// the call, then `list.set(t.0, i, the new element)`) is passed at its
+/// slot in the list, which the take made unique (decision 0169's reuse),
+/// instead of copied to the frame and stored back; the take neither
+/// loads the element nor leaves a hole, and the store back is the
+/// callee's own (tlsio.put's `tls12.send(c.cl12[0], data)`: 240 vector
+/// copies, 2026-11-04).
+fn (var g: G) find_take_args() {
+  for v in 0..g.f.values.len() {
+    let x = g.f.values[v]
+    if x.op != ssa.Op.Call {
+      continue
+    }
+    let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+    if ci < 0 {
+      continue
+    }
+    let br = g.by_ref_of(ci)
+    if br.is_empty() {
+      continue
+    }
+    for (i, a) in x.args.indexed() {
+      if !br[i] || !g.is_var_param(ci, i) || g.nuses[a] != 1 || g.op(a) != ssa.Op.Field || aux_int(g.f.values[a].aux) != 1 {
+        continue
+      }
+      let t = g.f.values[a].args[0]
+      let tx = g.f.values[t]
+      if tx.op != ssa.Op.Call || aux_str(tx.aux) != "list.take" || g.take_ptr.contains(t) {
+        continue
+      }
+      let s = g.take_store(t, v, ci, i)
+      if s < 0 {
+        continue
+      }
+      g.take_arg[(v, i)] = t
+      g.take_ptr[t] = -1
+      g.take_set[s] = true
+    }
+  }
+}
+
+/// The list.set that stores back, at the slot take t emptied, the new
+/// value of `var` argument i of call v to ci and is the only use of both
+/// (else -1).
+fn (g: G) take_store(t: Int, v: Int, ci: Int, i: Int) -> Int {
+  let vps = g.m.funcs[ci].var_params
+  var k = -1
+  for (j, vi) in vps.indexed() {
+    if vi == i {
+      k = 1 + j
+    }
+  }
+  if k < 0 {
+    return -1
+  }
+  for (s, y) in g.f.values.indexed() {
+    if y.op != ssa.Op.Call || aux_str(y.aux) != "list.set" || y.args.len() != 3 || !g.after_take(s) {
+      continue
+    }
+    let l = y.args[0]
+    if g.f.values[l].args[0] != t || g.nuses[l] != 1 {
+      continue
+    }
+    let r = y.args[2]
+    let rx = g.f.values[r]
+    if rx.op != ssa.Op.Field || aux_int(rx.aux) != k || rx.args[0] != v || g.nuses[r] != 1 {
+      return -1
+    }
+    return s
+  }
+  -1
+}
+
 /// Lowers a direct call of callee ci, which takes parameters by
 /// reference.
 fn (var g: G) by_ref_call(v: Int, ci: Int) {
@@ -931,7 +1005,7 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
     }
   }
   for (i, a) in args.indexed() {
-    if (br[i] && sm[i] >= 0 && g.held_at(v, a) == sm[i]) || in_place.contains(i) || g.held.fslot.contains((v, i)) {
+    if (br[i] && sm[i] >= 0 && g.held_at(v, a) == sm[i]) || in_place.contains(i) || g.held.fslot.contains((v, i)) || g.take_arg.contains((v, i)) {
       words.push([])
       has_words.push(false)
       continue
@@ -949,6 +1023,10 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
     }
     if let Some(ptr) = in_place.get(i) {
       srcs.push(rsrc(ptr))
+      continue
+    }
+    if let Some(t) = g.take_arg.get((v, i)) {
+      srcs.push(rsrc(g.take_ptr.get(t) ?? fault("take_ptr")))
       continue
     }
     if let Some((fm, off)) = g.held.fslot.get((v, i)) {
@@ -996,6 +1074,14 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
       continue
     }
     let i = callee.var_params[k - 1]
+    if g.take_arg.contains((v, i)) {
+      // written in place at its slot; read only by the store back, which
+      // is left out
+      for _ in 0..n {
+        out.push(0)
+      }
+      continue
+    }
     if let Some((fm, off)) = g.held.fslot.get((v, i)) {
       // written in place, at a field of a value held in a memory: read
       // only by a set field already done, or loaded there

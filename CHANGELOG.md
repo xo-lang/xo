@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (native, decision 0498): a `var` argument that is a large list element (`tls12.send(c.cl12[0], data)`) is passed at its slot in the list instead of copied out to the frame and back: tlsio.put 2,384 to 944 bytes, the fetch client 16,511 bytes smaller on darwin/arm64. Golden list_elem_homes (a fault mid-update, a kept copy, a list in a field, a local list).
 
 - perf (native and LLVM, decision 0507): a closure literal passed to its own scope's `s.spawn` borrows its captures of `let`s and non-`var` parameters declared before the scope: no retain when the closure is made and no release when its task ends, the scope keeping each alive past its join (a share after each close). bench/perf/micro13 spawn100k (100,000 tasks on one captured Atomic) wall 0.814 (0.744 to 0.975) on linux/arm64, CPU within noise. New golden conc_scope_borrow covers each case the rule leaves owned.
 - changed (prelude, decision 0503, owner 2026-11-04): `Duration.seconds()` is Go's `Duration.Seconds` to the bit (whole seconds plus the rest over 1e9) on every backend, instead of one division, which rounded differently in the last bit for some durations past one second (about 2 in a million random durations under 1000 h). A program printing `seconds()` at full precision can see a different last digit. std/rate drops its private copy of Go's formula. Golden duration_seconds_go (Go's bits), std/changes/prelude.md.

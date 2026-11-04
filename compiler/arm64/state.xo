@@ -478,6 +478,12 @@ struct G {
   tm_notes: List[Str] = []
   /// read only parameters passed by reference: their address
   stable: Map[Int, Int] = {}
+  /// list element homes (byref.xo find_take_args): a `var` argument
+  /// (call, index) that is a taken list element, passed at its slot; the
+  /// take's slot address; the stores back that the callee made
+  take_arg: Map[(Int, Int), Int] = {}
+  take_ptr: Map[Int, Int] = {}
+  take_set: Map[Int, Bool] = {}
 
   // ---- a part's canonical function texts (fcache.xo, decision 0220
   // addendum): the function's labels, strings, positions, and helpers as
@@ -624,6 +630,9 @@ fn (var g: G) begin_func(fi: Int) {
   g.lazy_res = {}
   g.tm_notes = []
   g.stable = {}
+  g.take_arg = {}
+  g.take_ptr = {}
+  g.take_set = {}
 }
 
 // ---------------------------------------------------------------------------

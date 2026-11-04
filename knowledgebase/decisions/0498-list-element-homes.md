@@ -1,7 +1,8 @@
 # 0498: A `var` argument that is a list element is passed at its slot on native
 
-Status: Proposed (xo-lang-4, 2026-11-04). The native follow-up to
-decision 0490, which the owner asked for when accepting it.
+Status: Accepted (owner, 2026-11-04; pushed after the 0.39 cut).
+Proposed by xo-lang-4 the same day, the native follow-up to decision
+0490, which the owner asked for when accepting it.
 
 ## Context
 
