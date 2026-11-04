@@ -37,6 +37,12 @@ fn weak___tsan_java_free(ptr: Int, size: Int)
 /// memory)
 fn weak_malloc(n: Int) -> Int
 fn weak_free(p: Int)
+/// The C library's sigaction(2), which ThreadSanitizer intercepts: a
+/// --race build's SIGPROF handler goes through it, so the sanitizer
+/// defers each sample to a point outside its own runtime instead of
+/// running the handler while a thread holds one of its locks (llrt
+/// prof.xo handler, gotchas/tsan-cpu-profile-stall.md)
+fn weak_sigaction(sig: Int, act: Int, old: Int) -> Int32
 /// Defined (int xo_tsan_runtime) by the runtime's own race tests' builds
 /// (decision 0273 mode 1, sanhook.xo user_mode)
 fn weak_xo_tsan_runtime() -> Int

@@ -15,6 +15,21 @@ into one buffer with its newline and writes it once; the other lines
 keep the two writes. Two writes also let another process's line land
 between a record and its newline.
 
+## 2026-11-04: fix: a --race CPU profile no longer stalls the program
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestGoldenTasks/debug_routes under ThreadSanitizer hanging in its /profile request (4 in 1600 runs on linux/arm64)
+- Go reference: none (Go's race runtime is the Go flavor of ThreadSanitizer, whose signals go through the Go runtime)
+- Test: debug_routes --race 3200 runs on linux/arm64 with no hang (census harness, gotchas/tsan-cpu-profile-stall.md)
+- Speed: none
+
+Under ThreadSanitizer the profiler's SIGPROF handler is installed with
+the C library's sigaction, which the sanitizer intercepts, instead of
+the rt_sigaction system call: a sample that lands inside the
+sanitizer's runtime is deferred to a safe point instead of running on
+the locks the thread holds. Other builds are unchanged.
+
 ## 2026-11-04: perf: one poller wake byte at a time
 
 - Kind: perf

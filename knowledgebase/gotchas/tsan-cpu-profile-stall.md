@@ -1,6 +1,6 @@
 # A `--race` build can stall in a live CPU profile (debug_routes)
 
-Status: Observed (Xo Lang 2, 2026-11-04). Root cause open.
+Status: Observed (Xo Lang 2, 2026-11-04). Fixed: SIGPROF is installed through ThreadSanitizer under `--race`.
 
 ## Symptom
 
@@ -27,17 +27,40 @@ dump (TSan holds an async signal for its next interception point).
 
 ## Cause
 
-Not found. Only `--race` builds stall, so it is ThreadSanitizer's
-signal handling meeting the profiler's SIGPROF (std/native/llrt/prof.xo
-on_signal) and a futex wait: a wakeup lost while TSan defers a
-signal is the leading guess. The plain native and LLVM builds ran
-800 times without a hang, so a release is not shipping this hang.
+On Linux the profiler installed its SIGPROF handler with a raw
+`rt_sigaction` system call (std/native/llrt prof.xo `handler`, through
+linux.sigaction), so ThreadSanitizer never saw it. TSan intercepts
+`sigaction` to wrap each handler: a signal that lands while the thread
+runs inside the sanitizer's own runtime (holding one of its internal
+locks) is deferred to a safe point. The raw handler ran at once instead,
+on whatever the interrupted thread held, and at 500 Hz during the
+/profile request one sample eventually landed inside the runtime: the
+threads then waited on each other's futexes and none ran. The plain
+native and LLVM builds have no such runtime, so only `--race` stalled.
+
+## Fix
+
+Under ThreadSanitizer (sanhook.tsan(), its weak symbols present) the
+handler is installed with the C library's `sigaction` (sys_c
+weak_sigaction), which TSan's interceptor serves; other builds keep the
+system call. With it, debug_routes' --race build ran 3200 times on host 2
+(1600 at XO_THREADS=2 and 1600 at the default, 8 at a time beside 8 busy
+loops) with no hang and no failure, where the same harness had 4 hangs in
+1600 before (about 8 expected at that rate).
+Sampling still works: a CPU burner built with `--race` and run with
+XO_PROF=cpu XO_PROF_HZ=500 took 1247 samples, the plain native build
+1248, over 2.5 s of CPU.
+
+A deferred sample is taken at the safe point with the ucontext saved when
+the signal arrived; the profiler's unwinder only follows frames inside
+[sp, sp + PROF_SPAN) of that stack, so a stale context gives at worst a
+wrong frame, never a wild read.
 
 ## Avoid
 
-- Do not read a debug_routes TSan timeout as a regression of the change
-  under test: it hangs on main too. A TSan round of TestGoldenTasks for
-  another change can skip it:
+- Before the fix, a debug_routes TSan timeout was not a regression of
+  the change under test: it hung on main too, and a TSan round of
+  TestGoldenTasks for another change could skip it:
   `-skip 'TestGoldenTasks/debug_routes'`.
 - To find the cause: rerun the race build on a host with gdb
   (`gdb -p PID -batch -ex 'thread apply all bt'` at the hang), or set

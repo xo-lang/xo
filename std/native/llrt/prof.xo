@@ -46,12 +46,14 @@ use native/llrt/heapos
 use native/llrt/heapprof
 use native/llrt/linux
 use native/llrt/process
+use native/llrt/sanhook
 use native/llrt/raw
 use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/unwind
 use native/llrt/windows
 use native/rt
+use native/sys_c
 use native/sys_darwin
 use native/sys_windows
 
@@ -535,7 +537,21 @@ fn handler(h: Int) {
   match target.os {
     TargetOs.Linux => {
       let flags = if h == 1 { 0 } else { 4 | 268435456 }
-      let _r = linux.sigaction(SIGPROF, h, flags)
+      if sanhook.tsan() {
+        // through ThreadSanitizer's interceptor: a handler installed by
+        // the system call runs while the interrupted thread may hold one
+        // of the sanitizer's locks, and every thread then waits on it
+        // (the C library's struct sigaction: the handler, the mask at 8,
+        // the flags as an int at 136; 152 bytes)
+        let sa = rt.heap_large(152)
+        rt.mem_set(sa, 0, 152)
+        st(sa, 0, h)
+        rt.mem_store(sa, 136, flags, 4)
+        let _r = sys_c.weak_sigaction(SIGPROF, sa, 0)
+        rt.heap_release(sa - 8)
+      } else {
+        let _r = linux.sigaction(SIGPROF, h, flags)
+      }
     }
     TargetOs.Darwin => {
       // struct sigaction: the handler, the mask (4 bytes), the flags
