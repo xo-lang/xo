@@ -17,3 +17,7 @@ per call state; the writer pays a BytesBuilder write and a stack update per
 call and builds each string through append_body. Next experiment: write
 string and key bodies straight into the BytesBuilder (no intermediate Str)
 and keep the container state in two Ints.
+
+Update (same day): plain strings (nothing to escape) are written as they are,
+no intermediate Str: write 2.271 to 1.655 (1.603-1.671), read 0.236. The rest
+is the per call state and the Str built for each Int and Float.
