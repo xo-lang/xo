@@ -33,6 +33,15 @@ which reach the network runtime directly rather than through the
 prelude's Net methods; a call of a std function that declares a network
 effect now counts (ssa/call.xo net_waits; gotchas/conc-count-by-name-lists.md).
 
+Follow up (2026-11-03, Lang 4): with the tick gone, std/dns's one-query
+lookup on the netpoller was measured again (host 1, `xo bench --ab`,
+15 rounds): 0.175x wall against an in-process server, but against a
+server in another process the same wall time at twice the CPU (36 to
+74 ms) for a lone task, with or without concurrency in its code. It
+now uses the netpoller only while pool.others_active (another context
+waits for the network or a timer, or work is queued), and the thread's
+ppoll otherwise; both other-process cases match main (0.997, 0.999).
+
 Check: measure a netpoller change against a peer outside the program as
 well as an in-process one, and with a program that has no concurrency in
 its code: a benchmark whose server is a task of the same program keeps

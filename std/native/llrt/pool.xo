@@ -2363,6 +2363,13 @@ const TW_VEPOCH = twflags.TW_VEPOCH
 /// or a signal, and no queue holds an item. In the test world with a
 /// virtual clock it records the verdict instead, and the clock jumps to
 /// the next timer (xo_testing.c tw_kick, after the lock is released).
+/// Whether another context waits for a timer, the network or a signal, or a
+/// queue holds an item, in pool record p (dl_check's test of the same): a
+/// wait that blocks this thread then delays nothing else (std/dns, lone).
+pub fn others_active(p: Int) -> Bool {
+  rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_UNCOUNTED, SEQ_CST) != 0 || any_work(p) != 0
+}
+
 pub fn dl_check(p: Int) {
   let tw = twflags.vclock()
   // read before the counts: a move of the clock in progress or ended

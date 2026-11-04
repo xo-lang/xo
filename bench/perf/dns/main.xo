@@ -2,8 +2,10 @@
 // DNS server in the program on 127.0.0.1 (a UDP task answering three MX
 // records for mx.test.). mx makes 2,000 lookup_mx calls, one UDP round
 // trip each, and parses and orders the answers; `none` is the server's
-// setup alone. Usage: `<program> none|mx`. Prints `<workload> <sum>`;
-// the twin prints the same.
+// setup alone; `ext ADDR` makes the 2,000 lookups of mx against a server
+// in another process and starts no task (a lone task's lookup, the case
+// a worker's ppoll serves). Usage: `<program> none|mx|ext ADDR`. Prints
+// `<workload> <sum>`; the twin prints the same for none and mx.
 use std/dns
 use std/udp
 
@@ -58,6 +60,16 @@ fn respond(q: Bytes, answers: List[Bytes]) -> Bytes? {
 
 fn main(os: Os) uses stdio, env, net {
   let w = os.env.args().get(0) ?? "none"
+  if w == "ext" {
+    let r = dns.Resolver{server: os.env.args().get(1) ?? "127.0.0.1:18053"}
+    var sum = 0
+    for _ in 0..2000 {
+      let xs = r.lookup_mx(os.net, "mx.test.").or_fault("lookup_mx")
+      sum += xs[0].pref + xs.len() + xs[2].host.len()
+    }
+    os.stdio.println("ext ${sum}")
+    return
+  }
   let srv = udp.listen(os.net, "127.0.0.1:0").or_fault("listen")
   let addr = srv.local_addr()
   let answers = [mx(30, "c.mail.test."), mx(10, "a.mail.test."), mx(20, "b.mail.test.")]

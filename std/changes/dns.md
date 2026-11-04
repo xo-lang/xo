@@ -1,5 +1,24 @@
 # std/dns changes
 
+## 2026-11-03: perf: a one-query lookup waits on the netpoller while other tasks run or wait
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 4, the twin row dns mx at 4.66x Go (bench/results/std-twin-rows2-2026-11-03.md)
+- Go reference: net's dnsclient on the netpoller (Go waits there always)
+- Test: goldens dns_records, dns_no_tasks; `xo bench --ab` of bench/perf/dns mx and ext and a lookup-only program
+- Timing: host 1, 15 rounds, wall B/A: mx 0.175 (103.7 to 18.13 ms), ext 0.997, lone 0.999; against Go's twin mx 0.928 (was 4.657) (bench/results/dns-netpoll-2026-11-03.md)
+- Shipped in: unreleased
+
+A lookup with one query (lookup_mx, lookup_txt, lookup_srv, one address
+family) waits for its reply in the task on the netpoller when another
+task can run or waits for the network or a timer (pool.others_active,
+the deadlock check's own test), and in ppoll on the thread otherwise.
+The netpoller path was tried for every lookup on 2026-11-02 (31ba6938b)
+and reverted (db6eefbfc) when a program with no concurrency waited for
+the poller's tick; that tick is gone, but a lone task's lookup still
+took twice the CPU there for the same wall time, so it keeps the thread.
+
 ## 2026-11-03: port: std/dns in a wasip2/wasm command
 
 - Kind: port

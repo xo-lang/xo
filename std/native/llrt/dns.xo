@@ -52,6 +52,7 @@
 // name neither source finds is EAI_NONAME (the last source's answer).
 // Criteria in brackets ([NOTFOUND=return]) are not honoured: glibc's
 // would stop at dns.
+use native/llrt/ctx
 use native/llrt/darwin
 use native/llrt/host
 use native/llrt/linux
@@ -1493,9 +1494,8 @@ fn new_id() -> Int {
 /// when the calling task is canceled. The poll waits at most
 /// CANCEL_SLICE_NS at a time and looks at the task's cancellation between
 /// (the second signal of core 7.5 unwinds a lookup at once, not at its
-/// timeout), keeping the poll on the thread, which answers a server in
-/// another process sooner than the netpoller (2026-11-03: about 10 us a
-/// lookup).
+/// timeout). A lone task's lookup waits here, on the thread: the netpoller
+/// gave the same wall time at twice the CPU (udp_round, 2026-11-03).
 fn wait(fds: List[Int], events: Int, deadline: Int) -> List[Int]? {
   // standard output reaches its reader before the wait, as at a task's
   // park (tasks.xo park_wait_n): a program blocked in a lookup had not
@@ -1643,6 +1643,18 @@ struct Q {
 /// (dnsPacketRoundTrip, then the meaning); KIND_TRUNC for one to repeat
 /// over TCP.
 fn udp_round(qs: List[Q], name: Str, server: Bytes, deadline: Int) -> List[(Int, List[Addr])] {
+  // the netpoller only while other tasks can run or wait: a lone task's
+  // wait there costs twice the CPU of the thread's ppoll for the same wall
+  // time (bench/perf/dns lone and ext, 2026-11-03), while a server task in
+  // the same program answers about 6x sooner (mx)
+  if qs.len() == 1 && os() != 3 && ctx.svc() != 0 && pool.others_active(ctx.pool()) {
+    return [udp_one(qs[0], name, server, deadline)]
+  }
+  udp_round_wait(qs, name, server, deadline)
+}
+
+/// udp_round in ppoll on the worker thread (several queries, Windows).
+fn udp_round_wait(qs: List[Q], name: Str, server: Bytes, deadline: Int) -> List[(Int, List[Addr])] {
   var out: List[(Int, List[Addr])] = []
   var fds: List[Int] = []
   for q in qs {
@@ -1724,6 +1736,70 @@ fn udp_round(qs: List[Q], name: Str, server: Bytes, deadline: Int) -> List[(Int,
   }
   let _k = sock.keep(buf, 0)
   out
+}
+
+/// udp_round of one query, waiting in the task on the netpoller (as
+/// netconn.udp_read does) instead of in ppoll on the worker thread, used
+/// while other tasks run or wait: a lookup answered by a task of the same
+/// program (bench/perf/dns mx) wakes with a fiber switch, not a thread
+/// sleep and wake, and the thread runs the other tasks meanwhile. The
+/// poller is edge triggered, so the socket is read until EAGAIN before
+/// each wait.
+fn udp_one(q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, List[Addr]) {
+  let fd = open_sock(server, sock.SOCK_DGRAM)
+  if fd < 0 {
+    return (KIND_TEMP, [])
+  }
+  let pd = poll.pd_new(fd, false)
+  if pd == 0 {
+    let _c = sock.close(fd)
+    return udp_round_wait([q], name, server, deadline)[0]
+  }
+  let r = udp_one_pd(pd, fd, q, name, server, deadline)
+  poll.pd_free(pd)
+  r
+}
+
+fn udp_one_pd(pd: Int, fd: Int, q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, List[Addr]) {
+  var c = sock.connect_to(fd, server)
+  while c == -sock.EINTR {
+    c = sock.connect_to(fd, server)
+  }
+  var s = if c < 0 { c } else { sock.send_bytes(fd, q.msg) }
+  while s == -sock.EINTR {
+    s = sock.send_bytes(fd, q.msg)
+  }
+  if s < 0 || !poll.pd_begin(pd) {
+    return (KIND_TEMP, [])
+  }
+  // the poller's clock for the deadline (the test world's may be virtual)
+  let pdl = poll.now() + (deadline - now())
+  let buf = raw.bytes_buf(MAX_PACKET)
+  var res = (KIND_TEMP, [])
+  while true {
+    let r = sock.recv(fd, raw.bytes_addr(buf), MAX_PACKET, 0)
+    if r == -sock.EINTR {
+      continue
+    }
+    if r == -e_again() {
+      if deadline - now() <= 0 || poll.pd_wait(pd, false, if pdl == 0 { 1 } else { pdl }) != poll.READY {
+        break
+      }
+      continue
+    }
+    if r < 0 {
+      // a socket error (ICMP refused): temporary
+      break
+    }
+    let (kind, addrs) = answer(buf[0..r], q.id, name, q.qtype)
+    if kind != KIND_IGNORE {
+      res = (kind, addrs)
+      break
+    }
+  }
+  poll.pd_end(pd)
+  let _k = sock.keep(buf, 0)
+  res
 }
 
 /// The TCP exchange of query q with server until a deadline timeout
