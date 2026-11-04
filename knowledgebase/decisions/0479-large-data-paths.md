@@ -221,6 +221,12 @@ archive/zip), 5 rounds each; Postgres 17 as in scripts/pg-diff.sh.
   and writers) and the prelude (`File.read_at`); spec/std.md 3.1, 10.3,
   10.7, 10.8 and 18; std/changes for sql, archive and prelude.
 - The driver interface changes (only std's drivers implement it).
+- Implementation deviation (2026-11-03, Lead agreed): `ZipWriter.create(path, mode)`
+  returns `()` and `write(data)` feeds the writer's current entry, instead of
+  returning an `EntryWriter`; a separate value cannot report its size to the
+  writer, which needs it for the directory. `ZipWriter` is move only and
+  `close` consumes it. `zip_reader` is built (Bytes); `zip_open` over a File,
+  `File.read_at` and a streaming `EntryReader` follow.
 - A `Rows` holds a connection: a slow consumer holds a pool permit for
   as long as it reads, as in Go.
 
