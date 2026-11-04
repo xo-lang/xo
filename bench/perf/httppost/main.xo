@@ -1,0 +1,43 @@
+// httppost: keep-alive POSTs whose bodies come from a source
+// (Request.with_body_reader), against a std/http server in the same
+// process. Usage: `<program> WORKLOAD N`, WORKLOAD send (Client.send) or
+// open (Client.open, full duplex: decision 0433), N requests (default
+// 2000). Before 2026-11-03 each such request dialed a connection of its
+// own; now they share one, as net/http's Transport does. Prints the
+// workload, the requests and the bytes the server got.
+use std/http
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "send"
+  let n = Int.parse(os.env.args().get(1) ?? "2000") ?? 2000
+  let l = os.net.listen("127.0.0.1:0")?
+  var r = http.router()
+  r.handle("POST /p", fn(req) { http.text(200, "${req.body.len()}") })
+  let srv = http.server(l, r)
+  let url = "http://${srv.addr()}/p"
+  let c = http.client(os.net, timeout: 30s)
+  var total = 0
+  scope s {
+    s.spawn_background(fn() { srv.serve().ignore_err("the bench ends") })
+    for _ in 0..n {
+      let (pw, pr) = http.pipe()
+      s.spawn(fn() {
+        pw.write(b"payload of a streamed request body").ignore_err("the request may have ended")
+        pw.close()
+      })
+      let req = http.new_request("POST", url).with_body_reader(pr)
+      if w == "open" {
+        let st = c.open(req)?
+        while let Some(d) = st.read()? {
+          total += Int.parse(d.to_str() ?? "0") ?? 0
+        }
+        st.close()
+      } else {
+        let resp = c.send(req)?
+        total += Int.parse(resp.text() ?? "0") ?? 0
+      }
+    }
+    s.cancel()
+  }
+  os.stdio.println("${w} ${n} ${total}")
+}
