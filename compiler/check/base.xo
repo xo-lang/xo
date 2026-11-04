@@ -172,6 +172,46 @@ fn (var c: Checker) fix(d: Int, title: Str, edits: List[DEdit]) {
   c.diags[d].fixes.push(DFix{title: title, edits: edits})
 }
 
+/// The fix of an XO0605 d for the declaration o of another module of the
+/// program: `pub ` at the start of its declaration's line (`fn`,
+/// `struct`, `enum`, `interface`, `const`), else a note naming the line;
+/// none for std's (the AWS agent's feedback log, 2026-11-04: a method
+/// `display` called from another module said only "is not `pub`").
+fn (var c: Checker) pub_fix(d: Int, o: Int) {
+  let m = c.objs[o].module
+  if d < 0 || m < 0 || c.mods[m].is_std || c.objs[o].file.is_empty() {
+    return
+  }
+  for f in c.files {
+    if f.path != c.objs[o].file {
+      continue
+    }
+    let lines = (f.src.to_str() ?? "").split("\n")
+    let l = c.objs[o].line - 1
+    if l < 0 || l >= lines.len() {
+      return
+    }
+    let line = lines[l]
+    var ind = 0
+    while ind < line.len() && (line[ind..ind + 1] == " " || line[ind..ind + 1] == "\t") {
+      ind += 1
+    }
+    let rest = line[ind..line.len()]
+    var decl = false
+    for k in ["fn ", "struct ", "enum ", "interface ", "const "] {
+      if rest.starts_with(k) {
+        decl = true
+      }
+    }
+    if decl {
+      c.fix(d, "make `${text(c.objs[o].name)}` pub in ${f.path}", [DEdit{span: JSpan{file: f.path, line: l + 1, col: ind + 1, end_line: l + 1, end_col: ind + 1}, replace: "pub "}])
+    } else {
+      c.note(d, "add `pub` to its declaration at ${f.path}:${l + 1}")
+    }
+    return
+  }
+}
+
 /// An edit replacing sp of the current file with s (check.go
 /// replaceEdit).
 fn (c: Checker) replace_edit(sp: Span, s: Str) -> DEdit {

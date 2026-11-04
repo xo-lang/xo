@@ -424,7 +424,7 @@ fn (var c: Checker) module_member(m: Int, imp_name: Bytes, span: Span, sel: Iden
     return c.bad_ty
   }
   if !c.pub_in(o, m) {
-    c.error("XO0605", sel.span, "`${text(name)}` is not `pub` in module `${c.mods[m].path}`")
+    c.pub_fix(c.error("XO0605", sel.span, "`${text(name)}` is not `pub` in module `${c.mods[m].path}`"), o)
   }
   match c.objs[o].kind {
     Func => {
@@ -1018,7 +1018,7 @@ fn (var c: Checker) call_selector(call: Expr, sspan: Span, x: Expr, sel: Ident, 
           return c.bad_ty
         }
         if !c.pub_in(o, m) {
-          c.error("XO0605", sel.span, "`${text(sel.name)}` is not `pub` in module `${c.mods[m].path}`")
+          c.pub_fix(c.error("XO0605", sel.span, "`${text(sel.name)}` is not `pub` in module `${c.mods[m].path}`"), o)
         }
         c.record(sel, o)
         match c.objs[o].kind {
@@ -1118,7 +1118,7 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
     return c.bad_ty
   }
   if !c.objs[m].is_pub && c.objs[m].module != c.cur_mod && !c.objs[m].iface {
-    c.error("XO0605", sel.span, "method `${text(name)}` of `${text(c.objs[c.objs[m].recv].name)}` is not `pub` in module `${c.mods[c.objs[m].module].path}`")
+    c.pub_fix(c.error("XO0605", sel.span, "method `${text(name)}` of `${text(c.objs[c.objs[m].recv].name)}` is not `pub` in module `${c.mods[c.objs[m].module].path}`"), m)
   }
   var pre: Subst = {}
   if c.objs[m].iface {
