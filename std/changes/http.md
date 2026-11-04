@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-04: fix: the Go backend's "absolute URL required" message keeps a hostless URL as written
+
+- Kind: fix
+- Commit: this push
+- Found by: full tier 46 (TestGoldenGoParity/http_client): the raw path change (dec3975c9) made the Go backend print `not%20a%20url`, the native backends and want.txt `not a url`
+- Go reference: none (Xo's own message)
+- Test: TestGoldenGoParity http_client, http_raw_path, http_server_request
+- Shipped in: not yet released
+
+requestURLString wrote a URL with no host through EscapedPath; it now
+writes the path as given, as the native backends do.
+
 ## 2026-11-04: fix: a server finishes a streamed request body under its lock, so a reverse proxy's body sender no longer races the connection
 
 - Kind: fix

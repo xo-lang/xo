@@ -1438,6 +1438,10 @@ func requestURLString(req Http_Request) string {
 		if p, ok := requestRawPath(req); ok {
 			return urlStringPath(u, p)
 		}
+		if u.F_host == "" {
+			// no host: the text as given, as the native backend keeps it
+			return urlStringPath(u, u.F_path)
+		}
 		// Go's URL.String writes EscapedPath, so a decoded "%" is "%25" again
 		return urlStringPath(u, (&url.URL{Path: u.F_path}).EscapedPath())
 	}
