@@ -5678,6 +5678,21 @@ fn bytebuffer_read_until(var b: ByteBuffer, delim: UInt8) -> Bytes? {
     return None
   }
   bytebuffer_flush(b)
+  // the common case: the delimiter in the head piece, past the unread
+  // start, with no search state further on to resume from
+  if b.delim != d || b.scan_seg == b.head {
+    let s = b.segs[b.head]
+    let lo = b.pos - b.hstart
+    let start = if b.delim == d && b.scan_to > b.pos { b.scan_to - b.hstart } else { lo }
+    let i = scan.find_byte(s, start, s.len(), d)
+    if i >= 0 && i + 1 < s.len() {
+      b.pos = b.hstart + i + 1
+      if b.scan_to < b.pos {
+        b.scan_to = b.pos
+      }
+      return Some(s[lo..i + 1])
+    }
+  }
   var k = b.head
   var ks = b.hstart
   var from = b.pos
