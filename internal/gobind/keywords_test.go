@@ -3,6 +3,7 @@ package gobind
 import (
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -33,5 +34,23 @@ func TestKeywordsMatchLexer(t *testing.T) {
 		if !lex[k] {
 			t.Errorf("xoKeywords has %q, the lexer has no such keyword", k)
 		}
+	}
+}
+
+// TestVersionMatchesChecker keeps Version equal to compiler/check's
+// GOBIND_VERSION, the binding format xo reads: a bump of one alone makes
+// every `use go` binding fail with XO1101 "wrote binding format N, this
+// xo reads M" (2026-11-04, the scope keyword fix bumped only Version).
+func TestVersionMatchesChecker(t *testing.T) {
+	data, err := os.ReadFile("../../compiler/check/goimport.xo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^const GOBIND_VERSION: Int = (\d+)$`).FindStringSubmatch(string(data))
+	if m == nil {
+		t.Fatal("no GOBIND_VERSION in compiler/check/goimport.xo")
+	}
+	if want := strconv.Itoa(Version); m[1] != want {
+		t.Errorf("compiler/check GOBIND_VERSION is %s, gobind.Version is %s: bump both", m[1], want)
 	}
 }

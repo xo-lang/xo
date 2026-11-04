@@ -305,7 +305,7 @@ func xoName(s string) string {
 var xoKeywords = map[string]bool{
 	"as": true, "break": true, "const": true, "continue": true, "defer": true, "else": true, "ensures": true,
 	"enum": true, "fn": true, "for": true, "if": true, "in": true, "interface": true, "invariant": true,
-	"let": true, "match": true, "pub": true, "requires": true, "return": true, "scope": true, "select": true,
+	"let": true, "match": true, "pub": true, "requires": true, "return": true, "select": true,
 	"struct": true, "test": true, "type": true, "use": true, "uses": true, "var": true, "while": true,
 }
 

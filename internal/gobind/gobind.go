@@ -90,7 +90,9 @@ import (
 // rt.T, which do not build.
 // 35 (2026-11-04): embedded struct fields and the fields they promote
 // get accessors (decision 0491 A).
-const Version = 35
+// 36 (2026-11-04): a Go name `scope` is no longer renamed `scope_`:
+// scope is a contextual word since decision 0497.
+const Version = 36
 
 // Binding is one bound Go package.
 type Binding struct {
