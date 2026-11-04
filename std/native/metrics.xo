@@ -101,8 +101,8 @@ fn summary_observe(s: metrics.Summary, v: Float, values: List[Str] = []) {
         st.hot_n.set(i + 1)
       })
     }
-    let _c = x.count.add(1)
-    add_float(x.sum, v)
+    let _c = x.cells[1].add(1)
+    add_float(x.cells[2], v)
   }
 }
 
@@ -339,12 +339,12 @@ fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
     if m.len() >= MAX_SERIES {
       return None
     }
-    var bs: List[Atomic[Int]] = []
+    var cells: List[Atomic[Int]] = [Atomic[Int].new(0), Atomic[Int].new(0), Atomic[Int].new(0)]
     for _ in bounds {
-      bs.push(Atomic[Int].new(0))
+      cells.push(Atomic[Int].new(0))
     }
     let q = if kind == 3 { [Mutex[metrics.QState].new(qstate_new(age_buckets))] } else { [] }
-    let s = metrics.Series{values: values, v: Atomic[Int].new(0), buckets: bs, count: Atomic[Int].new(0), sum: Atomic[Int].new(0), q: q}
+    let s = metrics.Series{values: values, cells: cells, q: q}
     m.put(key, s)
     Some(s)
   })
@@ -379,19 +379,19 @@ fn counter_add(c: metrics.Counter, n: Float, values: List[Str] = []) {
     fault("metrics: a counter cannot decrease")
   }
   if let Some(s) = series_of(c.f, values) {
-    add_float(s.v, n)
+    add_float(s.cells[0], n)
   }
 }
 
 fn gauge_set(g: metrics.Gauge, v: Float, values: List[Str] = []) {
   if let Some(s) = series_of(g.f, values) {
-    s.v.set(v.to_bits())
+    s.cells[0].set(v.to_bits())
   }
 }
 
 fn gauge_add(g: metrics.Gauge, v: Float, values: List[Str] = []) {
   if let Some(s) = series_of(g.f, values) {
-    add_float(s.v, v)
+    add_float(s.cells[0], v)
   }
 }
 
@@ -405,10 +405,10 @@ fn histogram_observe(h: metrics.Histogram, v: Float, values: List[Str] = []) {
       i += 1
     }
     if i < bounds.len() {
-      let _n = s.buckets[i].add(1)
+      let _n = s.cells[3 + i].add(1)
     }
-    let _c = s.count.add(1)
-    add_float(s.sum, v)
+    let _c = s.cells[1].add(1)
+    add_float(s.cells[2], v)
   }
 }
 
@@ -475,7 +475,7 @@ fn expose(f: metrics.Family, now_ms: Int) -> List[Str] {
   for k in keys {
     let s = m.get(k) ?? continue
     if f.kind < 2 {
-      out.push("${head(f.name, f.labels, s.values, "")} ${num(load(s.v))}")
+      out.push("${head(f.name, f.labels, s.values, "")} ${num(load(s.cells[0]))}")
     } else if f.kind == 3 {
       let objs = f.objectives
       if !objs.is_empty() {
@@ -494,17 +494,17 @@ fn expose(f: metrics.Family, now_ms: Int) -> List[Str] {
           out.push("${head(f.name, f.labels, s.values, "quantile=\"${num(q)}\"")} ${num(qs[i])}")
         }
       }
-      out.push("${head("${f.name}_sum", f.labels, s.values, "")} ${num(load(s.sum))}")
-      out.push("${head("${f.name}_count", f.labels, s.values, "")} ${s.count.get()}")
+      out.push("${head("${f.name}_sum", f.labels, s.values, "")} ${num(load(s.cells[2]))}")
+      out.push("${head("${f.name}_count", f.labels, s.values, "")} ${s.cells[1].get()}")
     } else {
       var upto = 0
       for (i, b) in f.bounds.indexed() {
-        upto += s.buckets[i].get()
+        upto += s.cells[3 + i].get()
         out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"${num(b)}\"")} ${upto}")
       }
-      let n = s.count.get()
+      let n = s.cells[1].get()
       out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"+Inf\"")} ${n}")
-      out.push("${head("${f.name}_sum", f.labels, s.values, "")} ${num(load(s.sum))}")
+      out.push("${head("${f.name}_sum", f.labels, s.values, "")} ${num(load(s.cells[2]))}")
       out.push("${head("${f.name}_count", f.labels, s.values, "")} ${n}")
     }
   }

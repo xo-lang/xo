@@ -5,15 +5,15 @@
 // that main makes and passes on.
 use std/http
 
-/// One series of an instrument: its label values, its value (a counter's
-/// or gauge's float, as its bits), and for a histogram the bucket counts,
-/// the count and the sum (bits). Internal: use the instruments.
+/// One series of an instrument: its label values and its cells (atomic
+/// integers in one list, so reading a series out of the registry shares
+/// one object, not one per field): cell 0 a counter's or gauge's float (its
+/// bits), 1 the observation count, 2 the sum (bits), 3 and on a
+/// histogram's bucket counts, one bucket each. Internal: use the
+/// instruments.
 struct Series {
   values: List[Str]
-  v: Atomic[Int]
-  buckets: List[Atomic[Int]]
-  count: Atomic[Int]
-  sum: Atomic[Int]
+  cells: List[Atomic[Int]]
   /// a summary's quantile streams (one Mutex, none for another kind)
   q: List[Mutex[QState]]
 }
