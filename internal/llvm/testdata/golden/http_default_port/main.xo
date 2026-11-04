@@ -1,6 +1,10 @@
 // A client request to http://host/ (https://host/) reaches the listener
 // of host:80 (host:443): the in memory network of a test uses the default
-// port a real dial would (aws-19, 2026-11-04); see main_test.xo.
-fn main(os: Os) {
+// port a real dial would (aws-19, 2026-11-04); see main_test.xo, which
+// `xo test` runs. main only opens a socket (so the wasm backend lists
+// this golden as unsupported).
+fn main(os: Os) ! {
+  let l = os.net.listen("127.0.0.1:0")?
   os.stdio.println("see main_test.xo")
+  l.close()
 }
