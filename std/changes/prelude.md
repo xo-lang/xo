@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-11-04: perf: a TCP connection's socket is made nonblocking by accept4 and socket on Linux
+
+- Kind: perf
+- Commit: this push
+- Found by: the per connection system calls of bench/perf/tcpping against Go's twin (Lang 3's handshake row, decision 0502's investigation)
+- Go reference: internal/poll's accept (accept4 with SOCK_NONBLOCK|SOCK_CLOEXEC) and net's sysSocket
+- Test: the net, http and tls goldens on linux/arm64; xo bench --ab on tcpping, smtp and httpsession
+- Timing: linux/arm64 --ab against main: std/smtp send 0.949 (0.942 to 0.958) of the wall time; tcpping and httpsession within noise
+- Shipped in: not yet released
+
+On Linux, an accepted or dialed TCP connection's socket is created
+nonblocking and close on exec by accept4 or socket itself, as Go's are,
+instead of three fcntl calls after it (get flags, set O_NONBLOCK, set
+FD_CLOEXEC). macOS and Windows keep the calls, since their accept and
+socket take no such flags.
+
 ## 2026-11-04: perf: eprintln writes the line and its newline in one write
 
 - Kind: perf

@@ -143,6 +143,19 @@ fn somaxconn() -> Int { pick(4096, 128, 2147483647) }
 /// FD_CLOEXEC, and Windows sockets are not inherited).
 fn cloexec() -> Int { pick(sock.SOCK_CLOEXEC, 0, 0) }
 
+/// A connection's socket(2) and accept4(2) flags: on Linux nonblocking and
+/// close on exec at once, as Go's sysSocket and accept4, so it needs no
+/// nonblock's three fcntl calls (nonblock_rest); elsewhere none.
+fn conn_flags() -> Int { pick(sock.SOCK_NONBLOCK | sock.SOCK_CLOEXEC, 0, 0) }
+
+/// sock.nonblock where conn_flags could not set it (not Linux).
+fn nonblock_rest(fd: Int) -> Int {
+  if os() == 1 {
+    return 0
+  }
+  sock.nonblock(fd)
+}
+
 /// The size of struct sockaddr_un and of its path.
 fn sun_size() -> Int { pick(110, 106, 110) }
 
@@ -813,12 +826,11 @@ pub fn listener_accept(l: Int) -> Int {
     fail(c, 4, "${what}: ${CLOSED_TEXT}")
     return 0
   }
-  let flags = if os() == 1 { sock.SOCK_CLOEXEC } else { 0 }
   while true {
-    let fd = sock.accept(pd_fd(pd), flags)
+    let fd = sock.accept(pd_fd(pd), conn_flags())
     if fd >= 0 {
       poll.pd_end(pd)
-      let _n = sock.nonblock(fd)
+      let _n = nonblock_rest(fd)
       return conn_new(c, fd, 0)
     }
     if fd == 0 - EINTR || fd == 0 - econnaborted() {
@@ -1036,11 +1048,11 @@ fn next_addr(out: Int, n: Int, from: Int, f: Int, same: Bool) -> Int {
 /// socket closed).
 fn dial_start(sa: Int) -> (Int, Int, Int) {
   let f = family(sa)
-  let fd = sock.socket(f, sock.SOCK_STREAM | cloexec(), 6)
+  let fd = sock.socket(f, sock.SOCK_STREAM | conn_flags(), 6)
   if fd < 0 {
     return (0, 0, fd)
   }
-  let _b = sock.nonblock(fd)
+  let _b = nonblock_rest(fd)
   let pd = poll.pd_open(fd, true)
   if pd < 0 {
     let _c = sock.close(fd)
@@ -1226,12 +1238,12 @@ pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4) -> Int {
     for i in 0..n {
       let sa = out + SA * i
       let f = family(sa)
-      let fd = sock.socket(f, sock.SOCK_STREAM | cloexec(), 6)
+      let fd = sock.socket(f, sock.SOCK_STREAM | conn_flags(), 6)
       if fd < 0 {
         e = fd
         continue
       }
-      let _b = sock.nonblock(fd)
+      let _b = nonblock_rest(fd)
       let pd = poll.pd_open(fd, true)
       if pd < 0 {
         e = pd
