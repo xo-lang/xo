@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-04: perf: crypto.hmac with SHA-256 takes the one shot path
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/otp sha256 1.27 of Go's wall; XO_PROF on the Mac: the compress was 11 percent, the rest setup (Hasher, padded key copies, state lists)
+- Go reference: crypto/hmac (a hash.Hash for each call, the key pads absorbed once)
+- Test: the crypto, otp, jwt, hkdf, tls and x509 corpora (arm64, LLVM, Go backend), `xo test --std-module=native/crypto`
+- Timing: host 1 A/B otp sha256 0.818 of before (0.802-0.826, n=6), about 1.04 of Go's wall
+- Shipped in: not yet released
+
+`crypto.hmac` with `Hash.Sha256` calls digest.xo's `hmac_sha256` (the pad blocks hashed straight into word states, the outer hash of one block), in place of the generic Hasher. HS256 JWTs, TOTP and every other HMAC-SHA256 caller of `crypto.hmac` take it.
+
 ## 2026-11-04: perf: ECDSA verification multiplies with sliding windows
 
 - Kind: perf
