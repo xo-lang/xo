@@ -1,0 +1,25 @@
+offload: /work had 19 GB free; pruned xo cache files idle over 360 min, now 19G
+ab-host l2bbv45: A d5b3deddbb9 B 6a27d411a9e on Linux aarch64, 12 CPUs
+ab-host: xo a built in 1 s (xo 0.37.0 linux/arm64)
+ab-host: xo b built in 0 s (xo 0.37.0 linux/arm64)
+ab-host: quiet wait 0 s, load 0.49 2.11 3.33
+round 1/15: load 0.53 / 0.53
+round 2/15: load 0.53 / 0.53
+round 3/15: load 0.53 / 0.53
+round 4/15: load 0.53 / 0.53
+round 5/15: load 0.53 / 0.53
+round 6/15: load 0.53 / 0.53
+A: /work/abl2bbv45.out/prog-a small_buf 
+B: /work/abl2bbv45.out/prog-b small_buf 
+6 of 6 rounds used (0 loaded), loads A/B per round: 0.53/0.53 0.53/0.53 0.53/0.53 0.53/0.53 0.53/0.53 0.53/0.53
+
+stopped early after 6 of 15 rounds: wall_ms=worse max_rss_kb=same at two looks in a row (per-look alpha 0.005)
+
+metric                A median    B median    spread A/B        B / A   95% interval      verdict
+wall_ms               13.44       15.21       2.284% 2.59%      1.132   1.098 to 1.166    worse (n=6)
+cpu_ms                13.4        15.15       2.42% 2.551%      1.131   1.095 to 1.167    too coarse (n=6)
+max_rss_kb            2204        2204        0% 0%             1.0     1.0 to 1.0        within noise (n=6)
+load: median 0.53 (A) / 0.53 (B); loaded: 0 of 6 rounds (at or above 6.0; baseline 0.53 + 3.0, at least 6.0)
+instructions, cycles, ipc: n/a (only macOS time -l reports them)
+ab-host l2bbv45: ok in 2 s
+OFFLOAD-RC=0

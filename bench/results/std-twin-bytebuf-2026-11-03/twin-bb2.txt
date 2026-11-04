@@ -1,0 +1,42 @@
+offload: /work had 22 GB free; pruned xo cache files idle over 360 min, now 22G
+linux/arm64: /work/l2twin/xoprog
+build env: none
+go go1.26.1; host Linux 7.0.14-linuxkit aarch64; rev 0eee2660a3743bcf0f75228d238401a998220856
+== small_buf: small_buf 1006704 49326864 | small_buf 1006704 49326864
+wall_ms               14.64       17.21       1.713% 1.502%     1.175   1.161 to 1.187    worse (n=15)
+cpu_ms                15.4        17.1        2.663% 1.717%     1.11    1.091 to 1.126    too coarse (n=15)
+max_rss_kb            12068       2204        0.215% 0%         0.183   0.182 to 0.183    better (n=15)
+== small_views: small_views 1006704 49326864 | small_views 1006704 49326864
+wall_ms               14.61       13.66       1.926% 2.932%     0.935   0.922 to 0.94     better (n=15)
+cpu_ms                15.38       13.57       2.679% 3.067%     0.882   0.863 to 0.895    too coarse (n=15)
+max_rss_kb            12072       2204        0.166% 0%         0.183   0.182 to 0.183    better (n=15)
+== large1_buf: large1_buf 1 1048576 | large1_buf 1 1048576
+wall_ms               1.051       0.984       63.5% 62.44%      0.936   0.822 to 1.409    within noise (n=15)
+cpu_ms                1.242       0.881       30.76% 20.54%     0.709   0.605 to 0.791    too coarse (n=15)
+max_rss_kb            9840        1692        10.73% 0%         0.172   0.172 to 0.185    better (n=15)
+== large1_views: large1_views 1 1048576 | large1_views 1 1048576
+wall_ms               2.066       1.444       91.61% 124.3%     0.699   0.543 to 1.108    within noise (n=15)
+cpu_ms                1.993       1.062       36.58% 46.28%     0.533   0.457 to 0.74     too coarse (n=15)
+max_rss_kb            9840        1692        10.63% 0%         0.172   0.172 to 0.217    better (n=15)
+== large64_buf: large64_buf 1 67108864 | large64_buf 1 67108864
+wall_ms               26.22       5.646       40.62% 21.05%     0.215   0.178 to 0.246    better (n=15)
+cpu_ms                41.11       5.498       35.26% 7.512%     0.134   0.119 to 0.207    too coarse (n=15)
+max_rss_kb            270628      67380       0.035% 0%         0.249   0.249 to 0.249    better (n=15)
+== large64_views: large64_views 1 67108864 | large64_views 1 67108864
+wall_ms               23.46       5.285       10.94% 2.272%     0.225   0.215 to 0.237    better (n=15)
+cpu_ms                43.79       5.172       8.857% 2.369%     0.118   0.112 to 0.122    too coarse (n=15)
+max_rss_kb            270656      67380       0.398% 0%         0.249   0.249 to 0.251    better (n=15)
+== B3 views (A) against B1 buf (B): small
+wall_ms               17.56       21.27       28.93% 26.9%      1.212   1.043 to 1.618    worse (n=15)
+cpu_ms                15.56       19.43       26.35% 26.1%      1.249   1.07 to 1.576     too coarse (n=15)
+max_rss_kb            2204        2204        0% 0%             1.0     1.0 to 1.0        within noise (n=15)
+== B3 views (A) against B1 buf (B): large1
+wall_ms               5.173       4.98        25.32% 37.85%     0.963   0.813 to 1.159    within noise (n=15)
+cpu_ms                1.55        1.257       28.13% 24.26%     0.811   0.737 to 1.031    too coarse (n=15)
+max_rss_kb            1692        1692        3.783% 0%         1.0     1.0 to 1.082      within noise (n=15)
+== B3 views (A) against B1 buf (B): large64
+wall_ms               11.17       12.4        23.33% 26.85%     1.111   0.872 to 1.26     within noise (n=15)
+cpu_ms                6.01        6.76        28.69% 40.19%     1.125   0.863 to 1.465    too coarse (n=15)
+max_rss_kb            67380       67380       0.03% 0.03%       1.0     1.0 to 1.0        within noise (n=15)
+twin: ok
+OFFLOAD-RC=0

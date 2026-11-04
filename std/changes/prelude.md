@@ -36,7 +36,7 @@ own it.
 - Found by: the backend survey of 2026-10-30 (std-coverage.md: no cursor to consume Bytes from the front), decided 2026-11-03 as decision 0480 (B1)
 - Go reference: bytes.Buffer (Write, Len, Next, ReadBytes, Bytes); buffer_test.go ported
 - Test: internal/stdtest corpus bytebuffer (Go's TestNewBuffer, TestBasicOperations, TestLargeStringWrites, TestLargeByteWrites, TestMixedReadsAndWrites, TestNext, TestReadBytes, TestReadEmptyAtEOF, TestBufferGrowth, and views after writes) on every backend
-- Timing: TIMING
+- Timing: linux/arm64, 1M 50 byte records 1.007 of Go's bytes.Buffer wall, 1.049 of B3's hand written views (the same work); 64 MiB record 0.208; peak RSS 0.18 to 0.25 of Go's (bench/results/std-twin-bytebuf-2026-11-03.md)
 - Shipped in: not yet released
 
 `ByteBuffer.new()`, `write`, `len`, `peek`, `next`, `read_until`,

@@ -8,7 +8,11 @@ quadratic trap). Gate: bench/perf/bytebuf's `_buf` no slower than B3's
 large1 and large64, Go's buffer_test ported, every backend including the
 Go wrapper with its view copy. B3's numbers below are the bar. An earlier
 status, Accepted on a condition with B3 meeting it, sent the choice back
-to the owner.
+to the owner. Shipped (owner, 2026-11-03): judged against B3 doing the same
+work (`_vrec`, each record made as a view), B1 is 1.049 on 50 byte
+records and equal on large ones, with B3's peak RSS; against `_views`
+(records only counted) it is 1.074. Both bars are in
+bench/results/std-twin-bytebuf-2026-11-03.md.
 
 ## Context
 
