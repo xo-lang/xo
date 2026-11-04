@@ -1,0 +1,57 @@
+// httpsession: an std/http server whose handler updates a session store
+// and a metrics map behind Mutexes on every request (the shape of a login
+// session or a per path counter), against the same server answering
+// without them. 20,000 requests from one kept-alive client on
+// 127.0.0.1:0, in this process. Usage: `<program> store|plain`. Prints
+// `<workload> <checksum>`. The store's maps are written under Mutex.with
+// on every request: the case of the 2026-11-04 hybrid map fix (a map kept
+// in a Mutex had gone to the log form on its second write).
+use std/http
+
+struct Session {
+  hits: Int
+  last: Str
+}
+
+const N = 20000
+const SESSIONS = 1000
+
+fn routes(sessions: Mutex[Map[Str, Session]], metrics: Mutex[Map[Str, Int]]) -> http.Router {
+  var r = http.router()
+  r.handle("GET /store/{sid}", fn(req) {
+    let sid = req.param("sid")
+    let hits = sessions.with(fn(var m: Map[Str, Session]) -> Int {
+      var s = m.remove(sid) ?? Session{hits: 0, last: ""}
+      s.hits += 1
+      s.last = req.path
+      let h = s.hits
+      m[sid] = s
+      h
+    })
+    metrics.with(fn(var m: Map[Str, Int]) { m["store"] = (m.get("store") ?? 0) + 1 })
+    http.text(200, "${hits}")
+  })
+  r.handle("GET /plain/{sid}", fn(req) { http.text(200, "${req.param("sid").len()}") })
+  r
+}
+
+fn main(os: Os) ! uses stdio, env, net {
+  let w = os.env.args().get(0) ?? "plain"
+  let sessions: Mutex[Map[Str, Session]] = Mutex.new({})
+  let metrics: Mutex[Map[Str, Int]] = Mutex.new({})
+  let l = os.net.listen("127.0.0.1:0")?
+  let srv = http.server(l, routes(sessions, metrics))
+  let base = "http://${srv.addr()}/${w}/"
+  let c = http.client(os.net)
+  var sum = 0
+  scope s {
+    s.spawn_background(fn() {
+      srv.serve().ignore_err("the server stops when the scope ends")
+    })
+    for i in 0..N {
+      let r = c.get(base + "s${i % SESSIONS}")?
+      sum += Int.parse(r.text() ?? "0") ?? 0
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
