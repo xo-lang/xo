@@ -2832,6 +2832,31 @@ struct ExecResult { rows_affected: Int, last_insert_id: Int }   // id is 0 when 
 write with a `RETURNING` clause returns rows, so it goes through `query`
 (or `query_one`); through `exec` its rows are dropped.
 
+A result is read as a cursor with `rows` (decision 0479, Go's
+`*sql.Rows`):
+
+```
+fn (d: Db) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
+fn (t: Tx) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
+fn (r: Rows) columns() -> List[Str]
+fn (r: Rows) next() -> Row? ! SqlErr uses net.dial          // None after the last row
+fn (r: Rows) next_as[T: SqlRow]() -> T? ! SqlErr uses net.dial
+fn (r: Rows) close() uses net.dial                          // idempotent
+fn (d: Db) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () ! SqlErr uses net.dial
+```
+
+The Postgres driver reads the rows off the socket as `next` asks, so a
+result larger than memory can be walked (the server waits while the
+client does not read); the in memory database and the Go backend read the
+result whole and hand it out row by row. `rows` holds a pool connection
+from the first row to the end: `next` returning `None` or an error
+releases it, and `close` before the end reads and discards the rest and
+releases it. A `Rows` that is neither read to the end nor closed keeps the
+connection, so use `defer rows.close()` or `each`, which closes in every
+path (an error from `f` ends the walk and is returned). On a `Tx` the
+transaction's connection is busy until the cursor ends or is closed.
+`query` and `query_as` are `rows` read to the end.
+
 ### 10.4 Rows
 
 ```
@@ -2997,7 +3022,12 @@ interface DriverConn {
   fn close(self)
   fn is_broken(self) -> Bool                       // dropped from the pool when true
 }
-struct DriverRows { columns: List[Str], rows: List[List[SqlValue]] }
+struct DriverRows { columns: List[Str], rows: List[List[SqlValue]], cursor: DriverCursor? = None }
+interface DriverCursor {                         // the rest of a result on the connection (decision 0479)
+  fn next(self) -> List[SqlValue]? ! SqlErr uses net.dial   // None after the last row
+  fn rest(self) -> List[List[SqlValue]] ! SqlErr uses net.dial
+  fn close(self) uses net.dial                   // reads and discards the remaining rows
+}
 
 pub fn open_driver(net: Net, d: Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2,
                    max_lifetime: Duration = 30m) -> Db ! SqlErr uses net.dial

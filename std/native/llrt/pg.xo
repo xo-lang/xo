@@ -606,15 +606,7 @@ fn (p: PgConn) collect() -> Results ! sql.SqlErr uses net.dial {
         res.rows = []
       }
       DataRow(vals) => {
-        var row: List[sql.SqlValue] = List.with_capacity(vals.len())
-        for (i, v) in vals.indexed() {
-          let oid = if i < res.oids.len() { res.oids[i] } else { OID_TEXT }
-          row.push(match v {
-            Some(b) => decode_text(oid, b.to_str() ?? "")
-            None => sql.SqlValue.Null
-          })
-        }
-        res.rows.push(row)
+        res.rows.push(decode_row(res.oids, vals))
       }
       CommandComplete(tag) => res.tag = tag
       Error(f) => {
@@ -648,9 +640,126 @@ fn (p: PgConn) run(q: Str, args: List[sql.SqlValue]) -> Results ! sql.SqlErr use
   p.collect()
 }
 
+/// A row's values decoded by the column type oids.
+fn decode_row(oids: List[Int], vals: List[Bytes?]) -> List[sql.SqlValue] {
+  var row: List[sql.SqlValue] = List.with_capacity(vals.len())
+  for (i, v) in vals.indexed() {
+    let oid = if i < oids.len() { oids[i] } else { OID_TEXT }
+    row.push(match v {
+      Some(b) => decode_text(oid, b.to_str() ?? "")
+      None => sql.SqlValue.Null
+    })
+  }
+  row
+}
+
+/// The rest of one statement's result on the connection (decision 0479):
+/// DataRows read off the socket as next asks, to ReadyForQuery.
+pub struct PgCursor {
+  p: PgConn
+  oids: List[Int]
+  st: Mutex[CursorState]
+}
+
+struct CursorState {
+  done: Bool
+  failed: sql.SqlErr? = None
+}
+
+/// The next row, None at ReadyForQuery (or the statement's error there).
+fn (c: PgCursor) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
+  if c.st.with(fn(s) { s.done }) {
+    return None
+  }
+  while {
+    match c.p.recv() {
+      Ok(m) => {
+        match m {
+          DataRow(vals) => return Some(decode_row(c.oids, vals))
+          Error(f) => c.st.with(fn(var s) {
+            if s.failed.is_none() {
+              s.failed = Some(server_err(f))
+            }
+          })
+          Ready(_) => {
+            let failed = c.st.with(fn(var s) {
+              s.done = true
+              s.failed
+            })
+            if let Some(e) = failed {
+              return Err(e)
+            }
+            return None
+          }
+          _ => {}
+        }
+      }
+      Err(e) => {
+        c.st.with(fn(var s) { s.done = true })
+        return Err(e)
+      }
+    }
+  }
+  None
+}
+
+fn (c: PgCursor) rest() -> List[List[sql.SqlValue]] ! sql.SqlErr uses net.dial {
+  var out: List[List[sql.SqlValue]] = []
+  while {
+    match c.next()? {
+      Some(r) => out.push(r)
+      None => break
+    }
+  }
+  out
+}
+
+/// Reads and discards the rest, so the connection is idle again.
+fn (c: PgCursor) close() uses net.dial {
+  while {
+    match c.next() {
+      Ok(o) => {
+        if o.is_none() {
+          break
+        }
+      }
+      Err(_) => break
+    }
+  }
+}
+
 fn (p: PgConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
-  let r = p.run(q, args)?
-  sql.DriverRows{columns: r.cols, rows: r.rows}
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  // a ; separated script runs through the simple protocol, whole
+  if args.is_empty() && q.contains(";") {
+    let r = p.run(q, args)?
+    return sql.DriverRows{columns: r.cols, rows: r.rows}
+  }
+  p.send(pgwire.parse("", q, []) + pgwire.bind("", "", args.map(param_of), [0]) + pgwire.describe("P", "") + pgwire.execute("", 0) + pgwire.sync())?
+  var failed: sql.SqlErr? = None
+  while {
+    match p.recv()? {
+      RowDesc(fs) => {
+        let cur = PgCursor{p: p, oids: fs.map(fn(f) { f.type_oid }), st: Mutex.new(CursorState{done: false})}
+        return sql.DriverRows{columns: fs.map(fn(f) { f.name }), rows: [], cursor: Some(cur)}
+      }
+      Error(f) => {
+        if failed.is_none() {
+          failed = Some(server_err(f))
+        }
+      }
+      Ready(_) => {
+        if let Some(e) = failed {
+          return Err(e)
+        }
+        return sql.DriverRows{columns: [], rows: []}
+      }
+      _ => {}
+    }
+  }
+  sql.DriverRows{columns: [], rows: []}
 }
 
 fn (p: PgConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {

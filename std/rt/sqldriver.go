@@ -83,7 +83,7 @@ func (b *sqlDriverBackend) give(tk *Task, x sqlIdle) {
 	x.c.M_close(tk)
 }
 
-func driverRows(r Result[Sql_DriverRows, Sql_SqlErr]) ([]string, [][]any, error) {
+func driverRows(tk *Task, r Result[Sql_DriverRows, Sql_SqlErr]) ([]string, [][]any, error) {
 	if !r.Ok {
 		return nil, nil, &sqlErrBox{r.E}
 	}
@@ -91,6 +91,16 @@ func driverRows(r Result[Sql_DriverRows, Sql_SqlErr]) ([]string, [][]any, error)
 	var rows [][]any
 	for _, row := range List_Slice(r.V.F_rows) {
 		rows = append(rows, sqlArgs(row))
+	}
+	// a driver's cursor (decision 0479): the Go backend reads the result whole
+	if r.V.F_cursor.Some {
+		rest := r.V.F_cursor.V.M_rest(tk)
+		if !rest.Ok {
+			return nil, nil, &sqlErrBox{rest.E}
+		}
+		for _, row := range List_Slice(rest.V) {
+			rows = append(rows, sqlArgs(row))
+		}
 	}
 	return cols, rows, nil
 }
@@ -115,7 +125,7 @@ func (b *sqlDriverBackend) QueryTk(tk *Task, q string, args []any) ([]string, []
 		return nil, nil, err
 	}
 	defer b.give(tk, x)
-	return driverRows(x.c.M_query(tk, q, sqlValues(args)))
+	return driverRows(tk, x.c.M_query(tk, q, sqlValues(args)))
 }
 
 func (b *sqlDriverBackend) ExecTk(tk *Task, q string, args []any) (int64, int64, error) {
@@ -188,7 +198,7 @@ type sqlDriverTx struct {
 }
 
 func (t *sqlDriverTx) QueryTk(tk *Task, q string, args []any) ([]string, [][]any, error) {
-	return driverRows(t.x.c.M_query(tk, q, sqlValues(args)))
+	return driverRows(tk, t.x.c.M_query(tk, q, sqlValues(args)))
 }
 
 func (t *sqlDriverTx) ExecTk(tk *Task, q string, args []any) (int64, int64, error) {

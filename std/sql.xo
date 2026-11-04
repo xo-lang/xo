@@ -90,6 +90,9 @@ struct ExecResult {
 struct Db {}
 struct Tx {}
 struct Row {}
+/// A result read row by row (decision 0479, Go's *sql.Rows): holds a
+/// connection from `rows` to the last row or `close`.
+struct Rows {}
 
 /// Opens a database: "postgres" (decision 0278; `roots` is PEM for
 /// sslmode verify-ca and verify-full) natively. `max_open` bounds concurrent
@@ -101,6 +104,15 @@ fn open(net: Net, driver: Str, dsn: Str, max_open: Int = 10, max_idle: Int = 2, 
 fn memory(schema: Str = "") -> Db ! SqlErr
 
 fn (d: Db) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
+/// `query` as a cursor: the rows are read from the connection as `next`
+/// asks (the Postgres driver; the in memory database and the Go backend
+/// read the result whole), so a result larger than memory can be walked.
+/// The connection stays taken until `next` returns None or an error, or
+/// `close`; use `each` or `defer rows.close()`.
+fn (d: Db) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
+/// `rows`, calling f on each row and closing in every path; an error from
+/// f ends the walk and is returned.
+fn (d: Db) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () ! SqlErr uses net.dial
 fn (d: Db) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (d: Db) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 /// `query` with every row decoded into `T` (`derive SqlRow`, std.md 10.4).
@@ -117,12 +129,25 @@ fn (d: Db) ping() -> () ! SqlErr uses net.dial
 fn (d: Db) close() -> () ! SqlErr
 
 fn (t: Tx) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
+/// `Db.rows` inside the transaction: the transaction's connection is
+/// busy until the cursor ends or is closed.
+fn (t: Tx) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
+fn (t: Tx) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () ! SqlErr uses net.dial
 fn (t: Tx) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (t: Tx) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 fn (t: Tx) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
 fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
 fn (t: Tx) commit() -> () ! SqlErr uses net.dial
 fn (t: Tx) rollback() -> () ! SqlErr uses net.dial
+
+fn (r: Rows) columns() -> List[Str]
+/// The next row, None after the last (the connection is then released).
+fn (r: Rows) next() -> Row? ! SqlErr uses net.dial
+/// `next` decoded into `T` (`derive SqlRow`).
+fn (r: Rows) next_as[T: SqlRow]() -> T? ! SqlErr uses net.dial
+/// Reads and discards the rest of the result and releases the connection;
+/// idempotent.
+fn (r: Rows) close() uses net.dial
 
 fn (r: Row) columns() -> List[Str]
 /// Decodes the row into a struct with `derive SqlRow`: each field from the
@@ -174,10 +199,24 @@ interface DriverConn {
   fn is_broken(self) -> Bool
 }
 
-/// The result of DriverConn.query: column names and rows of values.
+/// The result of DriverConn.query: column names and rows of values. A
+/// driver may return a few rows (or none) and a cursor for the rest
+/// (decision 0479): Db.rows reads them as asked, Db.query reads them all.
 struct DriverRows {
   columns: List[Str]
   rows: List[List[SqlValue]]
+  cursor: DriverCursor? = None
+}
+
+/// The rest of a result still on the connection. The connection is not
+/// used again until the cursor is read to the end or closed.
+interface DriverCursor {
+  /// The next row, None after the last.
+  fn next(self) -> List[SqlValue]? ! SqlErr uses net.dial
+  /// All the remaining rows.
+  fn rest(self) -> List[List[SqlValue]] ! SqlErr uses net.dial
+  /// Reads and discards the remaining rows.
+  fn close(self) uses net.dial
 }
 
 /// A Db over d: `max_open` connections at most (operations and open

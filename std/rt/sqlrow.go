@@ -1,5 +1,7 @@
 package rt
 
+import "strings"
+
 // Decoding std/sql rows into structs (`derive SqlRow`, std.md 10.4).
 
 // sqlRowDecoder is implemented by the pointer of a struct with
@@ -112,4 +114,100 @@ func Sql_Tx_query_as[T any](tk *Task, t Sql_Tx, q string, args List[Sql_SqlValue
 // Sql_Tx_query_one_as is `tx.query_one_as[T](q, args)`.
 func Sql_Tx_query_one_as[T any](tk *Task, t Sql_Tx, q string, args List[Sql_SqlValue]) Result[T, Sql_SqlErr] {
 	return sqlDecodeOne[T](tk, t.M_query_one(tk, q, args))
+}
+
+// Sql_Rows is `sql.Rows` (decision 0479). The Go backend reads the result
+// whole, then hands it out row by row.
+type Sql_Rows struct{ s *sqlRowsState }
+
+type sqlRowsState struct {
+	cols []string
+	rows []Sql_Row
+	pos  int
+}
+
+// XoDebug implements Debug.
+func (Sql_Rows) XoDebug(b *strings.Builder) { b.WriteString("<rows>") }
+
+func sqlRowsOf(r Result[List[Sql_Row], Sql_SqlErr]) Result[Sql_Rows, Sql_SqlErr] {
+	if !r.Ok {
+		return Err[Sql_Rows](r.E)
+	}
+	rows := List_Slice(r.V)
+	var cols []string
+	if len(rows) > 0 {
+		cols = rows[0].cols
+	}
+	return Ok[Sql_Rows, Sql_SqlErr](Sql_Rows{&sqlRowsState{cols: cols, rows: rows}})
+}
+
+// M_rows is `db.rows(q, args)`.
+func (d Sql_Db) M_rows(tk *Task, q string, args List[Sql_SqlValue]) Result[Sql_Rows, Sql_SqlErr] {
+	return sqlRowsOf(d.M_query(tk, q, args))
+}
+
+// M_rows is `tx.rows(q, args)`.
+func (t Sql_Tx) M_rows(tk *Task, q string, args List[Sql_SqlValue]) Result[Sql_Rows, Sql_SqlErr] {
+	return sqlRowsOf(t.M_query(tk, q, args))
+}
+
+// M_columns is `rows.columns()`.
+func (r Sql_Rows) M_columns(*Task) List[string] { return ListOf(r.s.cols...) }
+
+// M_next is `rows.next()`.
+func (r Sql_Rows) M_next(*Task) Result[Option[Sql_Row], Sql_SqlErr] {
+	if r.s.pos >= len(r.s.rows) {
+		return Ok[Option[Sql_Row], Sql_SqlErr](Option[Sql_Row]{})
+	}
+	row := r.s.rows[r.s.pos]
+	r.s.pos++
+	return Ok[Option[Sql_Row], Sql_SqlErr](Some(row))
+}
+
+// M_close is `rows.close()`.
+func (r Sql_Rows) M_close(*Task) { r.s.pos = len(r.s.rows) }
+
+// Sql_Rows_next_as is `rows.next_as[T]()`.
+func Sql_Rows_next_as[T any](tk *Task, r Sql_Rows) Result[Option[T], Sql_SqlErr] {
+	n := r.M_next(tk)
+	if !n.Ok {
+		return Err[Option[T]](n.E)
+	}
+	if !n.V.Some {
+		return Ok[Option[T], Sql_SqlErr](Option[T]{})
+	}
+	d := sqlDecode[T](tk, n.V.V)
+	if !d.Ok {
+		return Err[Option[T]](d.E)
+	}
+	return Ok[Option[T], Sql_SqlErr](Some(d.V))
+}
+
+func sqlEach(tk *Task, rs Result[Sql_Rows, Sql_SqlErr], f func(*Task, Sql_Row) Result[Unit, Sql_SqlErr]) Result[Unit, Sql_SqlErr] {
+	if !rs.Ok {
+		return Err[Unit](rs.E)
+	}
+	for {
+		n := rs.V.M_next(tk)
+		if !n.Ok {
+			return Err[Unit](n.E)
+		}
+		if !n.V.Some {
+			return Ok[Unit, Sql_SqlErr](Unit{})
+		}
+		if r := f(tk, n.V.V); !r.Ok {
+			rs.V.M_close(tk)
+			return r
+		}
+	}
+}
+
+// M_each is `db.each(q, args, f)`.
+func (d Sql_Db) M_each(tk *Task, q string, args List[Sql_SqlValue], f func(*Task, Sql_Row) Result[Unit, Sql_SqlErr]) Result[Unit, Sql_SqlErr] {
+	return sqlEach(tk, d.M_rows(tk, q, args), f)
+}
+
+// M_each is `tx.each(q, args, f)`.
+func (t Sql_Tx) M_each(tk *Task, q string, args List[Sql_SqlValue], f func(*Task, Sql_Row) Result[Unit, Sql_SqlErr]) Result[Unit, Sql_SqlErr] {
+	return sqlEach(tk, t.M_rows(tk, q, args), f)
 }

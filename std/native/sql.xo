@@ -137,9 +137,32 @@ fn (p: Pool) give(t: Taken) {
 fn (p: Pool) query(q: Str, args: List[sql.SqlValue]) -> List[Row] ! sql.SqlErr uses net.dial {
   let t = p.take()?
   let r = t.c.query(q, args)
+  let all = match r {
+    Ok(x) => drain_rows(x)
+    Err(e) => Err(e)
+  }
   p.give(t)
-  let rows = r?
+  let rows = all?
   to_rows(rows.columns, rows.rows)
+}
+
+/// x with its cursor, if any, read to the end into rows (Db.query reads a
+/// result whole; Db.rows reads it as asked).
+fn drain_rows(x: sql.DriverRows) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  match x.cursor {
+    Some(c) => {
+      let more = c.rest()?
+      if x.rows.is_empty() {
+        return sql.DriverRows{columns: x.columns, rows: more}
+      }
+      var all = x.rows
+      for r in more {
+        all.push(r)
+      }
+      sql.DriverRows{columns: x.columns, rows: all}
+    }
+    None => x
+  }
 }
 
 fn (p: Pool) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
@@ -280,7 +303,7 @@ fn (d: Db) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlEr
   if let Some(p) = d.pool {
     return p.query(q, args)
   }
-  let res = d.st.with(fn(var st) -> Rows ! sql.SqlErr {
+  let res = d.st.with(fn(var st) -> MemRows ! sql.SqlErr {
     var work = st.tables
     let r = mem_run(work, q, args)?
     st.tables = work
@@ -406,11 +429,11 @@ fn (t: Tx) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlEr
       if ts.done {
         return Err(sql.SqlErr.TxDone)
       }
-      tc.c.query(q, args)
+      drain_rows(tc.c.query(q, args)?)
     })?
     return to_rows(rows.columns, rows.rows)
   }
-  let res = t.st.with(fn(var ts) -> Rows ! sql.SqlErr {
+  let res = t.st.with(fn(var ts) -> MemRows ! sql.SqlErr {
     if ts.done {
       return Err(sql.SqlErr.TxDone)
     }
@@ -520,6 +543,186 @@ fn (t: Tx) rollback() -> () ! sql.SqlErr uses net.dial {
 
 // ---------------------------------------------------------------------------
 // Row
+
+/// A result read as asked (decision 0479): the rows already in hand, the
+/// driver's cursor for the rest, and the pool connection held until the end.
+struct Rows {
+  cols: List[Str]
+  st: Mutex[RowsState]
+}
+
+struct RowsState {
+  buf: List[List[sql.SqlValue]]
+  pos: Int
+  cursor: sql.DriverCursor? = None
+  /// The pool connection of a Db.rows, given back at the end.
+  held: Taken? = None
+  pool: Pool? = None
+  done: Bool = false
+}
+
+fn new_rows(cols: List[Str], s: RowsState) -> Rows {
+  Rows{cols: cols, st: Mutex.new(s)}
+}
+
+/// The end of a cursor: the connection goes back to the pool.
+fn rows_finish(var s: RowsState) {
+  s.done = true
+  s.cursor = None
+  s.buf = []
+  if let Some(t) = s.held {
+    if let Some(p) = s.pool {
+      p.give(t)
+    }
+  }
+  s.held = None
+}
+
+/// The Rows of x taken from the pool connection t: a result with no
+/// cursor is whole, so the connection goes back at once.
+fn pool_rows(p: Pool, t: Taken, x: sql.DriverRows) -> Rows {
+  if x.cursor is None {
+    p.give(t)
+    return new_rows(x.columns, RowsState{buf: x.rows, pos: 0})
+  }
+  new_rows(x.columns, RowsState{buf: x.rows, pos: 0, cursor: x.cursor, held: Some(t), pool: Some(p)})
+}
+
+fn (d: Db) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses net.dial {
+  d.ready()?
+  if let Some(p) = d.pool {
+    let t = p.take()?
+    match t.c.query(q, args) {
+      Ok(x) => return pool_rows(p, t, x)
+      Err(e) => {
+        p.give(t)
+        return Err(e)
+      }
+    }
+  }
+  let res = d.st.with(fn(var st) -> MemRows ! sql.SqlErr {
+    var work = st.tables
+    let r = mem_run(work, q, args)?
+    st.tables = work
+    r
+  })?
+  new_rows(res.cols, RowsState{buf: res.rows, pos: 0})
+}
+
+fn (t: Tx) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  if let Some(tc) = t.conn {
+    let x = t.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
+      if ts.done {
+        return Err(sql.SqlErr.TxDone)
+      }
+      tc.c.query(q, args)
+    })?
+    return new_rows(x.columns, RowsState{buf: x.rows, pos: 0, cursor: x.cursor})
+  }
+  let res = t.st.with(fn(var ts) -> MemRows ! sql.SqlErr {
+    if ts.done {
+      return Err(sql.SqlErr.TxDone)
+    }
+    var work = ts.tables
+    let r = mem_run(work, q, args)?
+    ts.tables = work
+    r
+  })?
+  new_rows(res.cols, RowsState{buf: res.rows, pos: 0})
+}
+
+fn (r: Rows) columns() -> List[Str] { r.cols }
+
+fn (r: Rows) next() -> Row? ! sql.SqlErr uses net.dial {
+  r.st.with(fn(var s) -> Row? ! sql.SqlErr {
+    if s.done {
+      return None
+    }
+    if s.pos < s.buf.len() {
+      let v = s.buf[s.pos]
+      s.pos += 1
+      return Some(Row{cols: r.cols, vals: v})
+    }
+    match s.cursor {
+      Some(c) => {
+        match c.next() {
+          Ok(o) => {
+            match o {
+              Some(v) => return Some(Row{cols: r.cols, vals: v})
+              None => {
+                rows_finish(s)
+                return None
+              }
+            }
+          }
+          Err(e) => {
+            rows_finish(s)
+            return Err(e)
+          }
+        }
+      }
+      None => {
+        rows_finish(s)
+        None
+      }
+    }
+  })
+}
+
+fn (r: Rows) next_as[T: SqlRow]() -> T? ! sql.SqlErr uses net.dial {
+  match r.next()? {
+    Some(row) => Some(row.decode[T]()?)
+    None => None
+  }
+}
+
+fn (r: Rows) close() uses net.dial {
+  r.st.with(fn(var s) {
+    if s.done {
+      return
+    }
+    if let Some(c) = s.cursor {
+      c.close()
+    }
+    rows_finish(s)
+  })
+}
+
+fn rows_each(rs: Rows, f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses net.dial {
+  while true {
+    match rs.next() {
+      Ok(o) => {
+        match o {
+          Some(row) => {
+            match f(row) {
+              Ok(_) => {}
+              Err(e) => {
+                rs.close()
+                return Err(e)
+              }
+            }
+          }
+          None => return
+        }
+      }
+      Err(e) => {
+        rs.close()
+        return Err(e)
+      }
+    }
+  }
+}
+
+fn (d: Db) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses net.dial {
+  rows_each(d.rows(q, args)?, f)
+}
+
+fn (t: Tx) each(q: Str, args: List[sql.SqlValue], f: fn(Row) -> () ! sql.SqlErr) -> () ! sql.SqlErr uses net.dial {
+  rows_each(t.rows(q, args)?, f)
+}
 
 fn (r: Row) columns() -> List[Str] { r.cols }
 
@@ -783,7 +986,7 @@ fn (t: Table) index(name: Str) -> Int {
 }
 
 /// The rows of a query.
-struct Rows {
+struct MemRows {
   cols: List[Str]
   rows: List[List[sql.SqlValue]]
 }
@@ -1470,7 +1673,7 @@ const QUERY_NEEDS = "query needs a SELECT statement or a write with RETURNING (u
 
 /// Runs a statement that returns rows: a SELECT, or a write with
 /// RETURNING, on tables (a private copy).
-fn mem_run(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> Rows ! sql.SqlErr {
+fn mem_run(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> MemRows ! sql.SqlErr {
   let stmts = split_statements(lex(q)?)
   if stmts.len() != 1 {
     return Err(syntax("expected one statement"))
@@ -1494,7 +1697,7 @@ fn mem_run(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> Row
   if !w.returning {
     return Err(syntax(QUERY_NEEDS))
   }
-  Rows{cols: w.cols, rows: w.rows}
+  MemRows{cols: w.cols, rows: w.rows}
 }
 
 /// Runs write statements on tables (a private copy).
@@ -2022,7 +2225,7 @@ fn sel_cols(t: Table, items: List[SelItem]) -> (List[Str], Int) {
 }
 
 /// items (without COUNT(*)) evaluated on each row of t.
-fn project(t: Table, items: List[SelItem], rows: List[List[sql.SqlValue]], args: List[sql.SqlValue]) -> Rows ! sql.SqlErr {
+fn project(t: Table, items: List[SelItem], rows: List[List[sql.SqlValue]], args: List[sql.SqlValue]) -> MemRows ! sql.SqlErr {
   let (cols, _) = sel_cols(t, items)
   var out: List[List[sql.SqlValue]] = []
   for row in rows {
@@ -2039,7 +2242,7 @@ fn project(t: Table, items: List[SelItem], rows: List[List[sql.SqlValue]], args:
     }
     out.push(r)
   }
-  Rows{cols: cols, rows: out}
+  MemRows{cols: cols, rows: out}
 }
 
 struct OrderKey {
@@ -2116,7 +2319,7 @@ fn int_arg(n: Node, args: List[sql.SqlValue]) -> Int ! sql.SqlErr {
   }
 }
 
-fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) -> Rows ! sql.SqlErr {
+fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) -> MemRows ! sql.SqlErr {
   p.i += 1
   let items = p.sel_items()?
   p.expect_kw("from")?
@@ -2224,7 +2427,7 @@ fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) 
     for _ in items {
       out.push(sql.SqlValue.Integer(n: rows.len()))
     }
-    return Rows{cols: cols, rows: [out]}
+    return MemRows{cols: cols, rows: [out]}
   }
   project(t, items, rows, args)
 }

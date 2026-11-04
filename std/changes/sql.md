@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-11-03: feature: Rows, a row cursor (Db.rows, Tx.rows, next, next_as, close, each)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-30 backend survey (rank 9): `Db.query` read every row before it returned, where Go's database/sql streams
+- Go reference: database/sql Rows (Next, Scan, Close), pgx
+- Decision: 0479 (Accepted, owner, 2026-11-03)
+- Test: the sql corpus (arm64, LLVM, Go backend), scripts/pg-diff.sh (45 statements through the new query path), Mac memory run below
+- Timing: Mac, Postgres 17 in Docker, 1,000,000 rows of about 100 bytes: `query` max RSS 320 MB, `rows` 3.9 MB (100,000 rows: 34 MB and 3.8 MB); wall time and the Go (pgx) twin row follow on host 1
+
+`Db.rows` and `Tx.rows` return a `Rows` read with `next` or `next_as[T]`, closed with `close`, or walked with `Db.each`. The Postgres driver reads DataRows off the socket as `next` asks; a driver may return a few rows and a `DriverCursor` for the rest (`DriverRows.cursor`, default None, so existing drivers are unchanged), and `query` reads the cursor to the end. The in memory database and the Go backend read the result whole.
+
 ## 2026-11-03: feature: begin takes an isolation level and read_only (Go's TxOptions)
 
 - Kind: feature

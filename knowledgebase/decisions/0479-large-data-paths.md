@@ -2,6 +2,9 @@
 
 Status: Accepted (owner, 2026-11-03, through the lead): the row cursor,
 COPY FROM, and zip by entry. Xo Lang 3 implements it.
+Step 1 (the row cursor) implemented 2026-11-03: the driver interface keeps `query` and
+`DriverRows` gains an optional `cursor: DriverCursor?` (default None) instead of replacing `query`, so
+existing drivers compile unchanged; the Go backend reads the result whole.
 
 ## Context
 

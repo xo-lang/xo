@@ -195,6 +195,128 @@ test "a Driver the program writes drives Db's pool: query, exec, begin, commit, 
   }
 }
 
+struct CurDriver {
+  closed: Mutex[Int]
+}
+
+struct CurConn {
+  closed: Mutex[Int]
+}
+
+/// The rest of a result: ids from next to 5, counting the closes.
+struct Cur {
+  at: Mutex[Int]
+  closed: Mutex[Int]
+}
+
+fn (d: CurDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  Ok(CurConn{closed: d.closed})
+}
+
+fn (c: CurConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  Ok(sql.DriverRows{columns: ["id"], rows: [[sql.int(1)]], cursor: Some(Cur{at: Mutex.new(2), closed: c.closed})})
+}
+
+fn (c: CurConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  Ok(sql.ExecResult{rows_affected: 0, last_insert_id: 0})
+}
+
+fn (c: CurConn) begin() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+fn (c: CurConn) commit() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+fn (c: CurConn) rollback() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+fn (c: CurConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+fn (c: CurConn) close() uses net.dial {}
+fn (c: CurConn) is_broken() -> Bool { false }
+
+fn (c: Cur) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
+  let n = c.at.with(fn(var v) -> Int {
+    let was = v
+    v += 1
+    was
+  })
+  if n > 5 {
+    return Ok(None)
+  }
+  Ok(Some([sql.int(n)]))
+}
+
+fn (c: Cur) rest() -> List[List[sql.SqlValue]] ! sql.SqlErr uses net.dial {
+  var out: List[List[sql.SqlValue]] = []
+  while {
+    match c.next()? {
+      Some(r) => out.push(r)
+      None => break
+    }
+  }
+  Ok(out)
+}
+
+fn (c: Cur) close() uses net.dial {
+  c.closed.with(fn(var v) -> () { v += 1 })
+}
+
+test "a driver's cursor: query reads it whole, rows as asked, and a one connection pool is free again after the end, a close or an error in each" {
+  let closed = Mutex.new(0)
+  let db = sql.open_driver(os.net, CurDriver{closed: closed}, "cur:mem", max_open: 1, max_idle: 1)?
+  let all = db.query("SELECT id")?
+  expect(all.map(fn(r) { r.int("id").ok() ?? -1 })) == [1, 2, 3, 4, 5]
+  // rows: the first row came with the result, the rest from the cursor
+  let rs = db.rows("SELECT id")?
+  expect(rs.columns()) == ["id"]
+  var seen: List[Int] = []
+  while true {
+    match rs.next()? {
+      Some(r) => seen.push(r.int("id")?)
+      None => break
+    }
+  }
+  expect(seen) == [1, 2, 3, 4, 5]
+  // the end released the only connection
+  expect(db.query("SELECT id")?.len()) == 5
+  // close before the end discards the rest and releases it
+  let early = db.rows("SELECT id")?
+  expect(early.next()?.is_some()) == true
+  early.close()
+  early.close()
+  expect(db.query("SELECT id")?.len()) == 5
+  // each: f's error ends the walk, closes the cursor and is the result
+  let r = db.each("SELECT id", [], fn(row) {
+    if row.int("id")? == 2 {
+      return Err(sql.SqlErr.Driver(msg: "stop at 2"))
+    }
+  })
+  expect(match r {
+    Ok(_) => "ok"
+    Err(e) => e.display()
+  }) == "stop at 2"
+  expect(db.query("SELECT id")?.len()) == 5
+  db.close()?
+}
+
+test "rows, next_as and each on the in memory Db" {
+  let db = sql.memory("CREATE TABLE t (id INT, name TEXT)")?
+  for i in 1..4 {
+    db.exec("INSERT INTO t (id, name) VALUES ($1, $2)", [sql.int(i), sql.str("n${i}")])?
+  }
+  let rs = db.rows("SELECT id, name FROM t ORDER BY id")?
+  expect(rs.columns()) == ["id", "name"]
+  expect(rs.next()?.map(fn(r) { r.str("name").ok() ?? "" })) == Some("n1")
+  expect(rs.next()?.map(fn(r) { r.str("name").ok() ?? "" })) == Some("n2")
+  rs.close()
+  // a closed cursor has no more rows
+  expect(rs.next()?.is_none()) == true
+  let total = Atomic.new(0)
+  db.each("SELECT id FROM t", [], fn(row) {
+    total.add(row.int("id")?)
+  })?
+  expect(total.get()) == 6
+  let tx = db.begin()?
+  let trs = tx.rows("SELECT id FROM t ORDER BY id")?
+  expect(trs.next()?.map(fn(r) { r.int("id").ok() ?? 0 })) == Some(1)
+  trs.close()
+  tx.commit()?
+}
+
 test "a transaction on the in memory Db commits one row and rolls another back" {
   let db = sql.memory("CREATE TABLE t (id SERIAL, n INT)")?
   db.ping()?
