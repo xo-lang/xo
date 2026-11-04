@@ -1,6 +1,6 @@
 # 0491: `use go`: embedded struct fields, and a warning for a List or Map Go may change
 
-Status: Proposed (Xo Lang 2, 2026-11-04, from the owner's v0.36.0 evaluation; for the owner to decide, nothing built)
+Status: Accepted (owner, 2026-11-04: A as proposed; B with option (c), XO1107 reported by `xo check` everywhere except calls to a curated allowlist of Go functions known only to read their interface argument; proposed by Xo Lang 2 the same day)
 
 ## Context
 
@@ -117,3 +117,17 @@ gaps in `use go`. The lead asked for one draft covering them:
   copy on write, and Go holding its memory past the call breaks both
   (the same reason decision 0419 copies pointers to basic types).
 - **XO1107 as an error**: refuses correct read-only calls; rejected.
+
+## The owner's choice (2026-11-04)
+
+- A as proposed.
+- B option (c): `xo check` reports XO1107 at every call that gives an Xo
+  List, Map or Set to a Go interface parameter, except a call to a Go
+  function on a curated allowlist of functions known only to read that
+  argument: encoding/json's Marshal and its kin, fmt's print family, the
+  common loggers' field constructors. The allowlist is one reviewed data
+  file with a test. `xo explain XO1107` explains the allowlist and how to
+  silence a call (take the value Go returns, `go.out[T]()`, or
+  `.ignore_copy()`-style acknowledgement as the implementation settles).
+- Spec 4.4 gets the copy rule and the embedded-field accessors.
+
