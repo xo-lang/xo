@@ -1,5 +1,16 @@
 # std/archive changes
 
+## 2026-11-04: feature: zip and zip_writer write zip64 as Go does
+
+- Kind: feature
+- Commit: this push
+- Found by: the zip differential for the owner's v0.38.1 "not tested yet" list; decision 0499 (owner accepted 2026-11-04)
+- Go reference: archive/zip Writer.Close (the zip64 end record and locator past 65,534 entries or 4 GB, the zip64 extra field for an entry past 4 GB or at an offset past it), fileWriter.close and writeDataDescriptor (reader version 45, 64-bit sizes in the data descriptor)
+- Test: golden zip_entry_limit (65,534 to 65,537 entries, native bytes equal to the Go backend's), the zip differential harness against Go's reader
+- Shipped in: not yet released
+
+`zip` and `zip_writer` no longer refuse a 65,536th entry or an archive, entry or offset past 4 GB: they write zip64 records where Go's writer does, and the archive is byte for byte the Go backend's (Go's writer). An archive under the limits is unchanged.
+
 ## 2026-11-04: fix: zip refuses a 65,536th entry instead of writing a wrong count
 
 - Kind: fix

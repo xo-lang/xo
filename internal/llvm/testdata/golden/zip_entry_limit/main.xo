@@ -1,9 +1,12 @@
-// The zip end record's 16-bit entry count (no zip64 written yet): 65,535
-// entries is the most archive.zip and archive.zip_writer write, and the
-// 65,536th is an error on every backend, where native zip() once wrote the
-// count modulo 65,536 (1 for 65,537 entries). Go's archive/zip reads the
-// 65,535 entry archives back (2026-11-04 differential).
+// zip64 writing (decision 0499): past 65,534 entries archive.zip and
+// archive.zip_writer write the zip64 end record and its locator, as Go's
+// writer does (the Go backend's is Go's), so 65,535, 65,536 and 65,537
+// entries read back whole, the classic end record's count is 0xffff, and
+// the native bytes equal the Go backend's (the want below holds a hash of
+// each archive). Before the decision both refused the 65,536th entry, and
+// native zip() before that wrote the count modulo 65,536.
 use std/archive
+use std/crypto
 
 fn entries(n: Int) -> List[archive.Entry] {
   var out: List[archive.Entry] = []
@@ -29,40 +32,31 @@ fn check(os: Os, what: Str, z: Bytes) {
 }
 
 fn main(os: Os) {
-  match archive.zip(entries(65535)) {
-    Ok(z) => check(os, "zip 65535", z)
-    Err(e) => os.stdio.println("zip 65535: ${e}")
+  for n in [65534, 65535, 65536, 65537] {
+    match archive.zip(entries(n)) {
+      Ok(z) => {
+        // the end record's entry count: 0xffff when the zip64 record holds it
+        let k = z.len() - 22
+        let count = Int(z[k + 10]) | (Int(z[k + 11]) << 8)
+        os.stdio.println("zip ${n}: ${z.len()} bytes, end record count ${count}, sha256 ${crypto.sha256(z).to_hex()[0..16]}")
+        check(os, "  read", z)
+      }
+      Err(e) => os.stdio.println("zip ${n}: ${e}")
+    }
   }
-  match archive.zip(entries(65536)) {
-    Ok(z) => os.stdio.println("zip 65536: accepted, ${z.len()} bytes")
-    Err(e) => os.stdio.println("zip 65536: ${e}")
-  }
-  // a directory counts as an entry too
-  var mixed = entries(65534)
-  mixed.push(archive.dir("d"))
-  mixed.push(archive.file("last", b"x"))
-  match archive.zip(mixed) {
-    Ok(z) => os.stdio.println("zip 65534 + dir + file: accepted, ${z.len()} bytes")
-    Err(e) => os.stdio.println("zip 65534 + dir + file: ${e}")
-  }
-
   let p = "zip_entry_limit_tmp.zip"
   os.fs.remove(p).ok()
   let f = os.fs.create(p).or_fault("create")
   var w = archive.zip_writer(f)
-  for e in entries(65535) {
+  for e in entries(65536) {
     w.add(e).or_fault("add")
   }
-  match w.add(archive.file("e65535", b"65535")) {
-    Ok(_) => os.stdio.println("zip_writer entry 65536: accepted")
-    Err(e) => os.stdio.println("zip_writer entry 65536: ${e}")
-  }
-  match w.create("streamed", 0o644) {
-    Ok(_) => os.stdio.println("zip_writer create 65536: accepted")
-    Err(e) => os.stdio.println("zip_writer create 65536: ${e}")
-  }
+  w.create("e65536", 0o644).or_fault("create entry")
+  w.write(b"65536").or_fault("write")
   w.close().or_fault("close writer")
   f.close().or_fault("close")
-  check(os, "zip_writer 65535", os.fs.read(p).or_fault("read"))
+  let z = os.fs.read(p).or_fault("read")
+  os.stdio.println("zip_writer 65537: ${z.len()} bytes, sha256 ${crypto.sha256(z).to_hex()[0..16]}")
+  check(os, "  read", z)
   os.fs.remove(p).or_fault("cleanup")
 }

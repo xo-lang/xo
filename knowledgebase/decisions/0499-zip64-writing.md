@@ -1,8 +1,8 @@
 # 0499: std/archive writes zip64 as Go does
 
-Status: Proposed (Xo Lang 2, 2026-11-04, at the lead's request). Reverses
-the documented "No zip64" write limit of spec/std.md 18; held for the
-owner before any code.
+Status: Accepted (owner, 2026-11-04), built after the 0.39 cut. Proposed
+by Xo Lang 2 the same day at the lead's request; it reverses the
+documented "No zip64" write limit of spec/std.md 18.
 
 ## Context
 

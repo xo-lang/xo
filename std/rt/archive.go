@@ -5,7 +5,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
-	"errors"
 	"io"
 	"io/fs"
 	"path"
@@ -143,17 +142,10 @@ func Archive_untar(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_Arch
 func Archive_zip(_ *Task, entries List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr] {
 	var b bytes.Buffer
 	w := zip.NewWriter(&b)
-	for i, e := range entries.s {
+	for _, e := range entries.s {
 		p, ok := archivePath(e.F_path)
 		if !ok {
 			return Err[Bytes](archiveErr("bad entry path " + strconv.Quote(e.F_path)))
-		}
-		// the native backend writes no zip64 yet, so neither does this one
-		if i >= 65535 {
-			return Err[Bytes](archiveErr("zip: more than 65535 entries (zip64 is not supported)"))
-		}
-		if b.Len() > 4000000000 {
-			return Err[Bytes](archiveErr("zip: archive larger than 4 GB (zip64 is not supported)"))
 		}
 		h := &zip.FileHeader{Name: p, Method: zip.Deflate, Modified: entryTime(e)}
 		h.SetMode(fs.FileMode(e.F_mode & 0o777))
@@ -170,12 +162,6 @@ func Archive_zip(_ *Task, entries List[Archive_Entry]) Result[Bytes, Archive_Arc
 				return Err[Bytes](archiveErr("zip: " + err.Error()))
 			}
 		}
-	}
-	if err := w.Flush(); err != nil {
-		return Err[Bytes](archiveErr("zip: " + err.Error()))
-	}
-	if b.Len() > 4000000000 {
-		return Err[Bytes](archiveErr("zip: archive larger than 4 GB (zip64 is not supported)"))
 	}
 	if err := w.Close(); err != nil {
 		return Err[Bytes](archiveErr("zip: " + err.Error()))
@@ -272,7 +258,6 @@ type Archive_ZipWriter struct {
 	zw  *zip.Writer
 	fw  *zipFileWriter
 	cur io.Writer
-	n   int
 }
 
 type zipFileWriter struct {
@@ -312,16 +297,9 @@ func (x *Archive_ZipWriter) start(tk *Task, name string, mode int64, isDir bool,
 		h.Method = zip.Store
 		h.SetMode(fs.ModeDir | fs.FileMode(mode&0o777))
 	}
-	// the native backend writes no zip64 yet, so neither does this one
-	if x.n >= 65535 {
-		return errors.New("more than 65535 entries (zip64 is not supported)")
-	}
 	x.fw.tk = tk
 	w, err := x.zw.CreateHeader(h)
 	x.cur = w
-	if err == nil {
-		x.n++
-	}
 	return err
 }
 

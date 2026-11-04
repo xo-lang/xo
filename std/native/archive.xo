@@ -63,6 +63,11 @@ fn put_u32(var b: BytesBuilder, v: Int) {
   put_u16(b, (v >> 16) & 65535)
 }
 
+fn put_u64(var b: BytesBuilder, v: Int) {
+  put_u32(b, v & 0xffffffff)
+  put_u32(b, (v >> 32) & 0xffffffff)
+}
+
 fn get_u16(b: Bytes, i: Int) -> Int { byte_of(b, i) | (byte_of(b, i + 1) << 8) }
 
 fn get_u32(b: Bytes, i: Int) -> Int { get_u16(b, i) | (get_u16(b, i + 2) << 16) }
@@ -1241,52 +1246,102 @@ fn zip_local_header(zf: ZipHdr) -> Bytes {
   h.freeze()
 }
 
-/// The data descriptor after a deflated entry's data.
+/// Whether an entry's sizes need the zip64 forms (Go's FileHeader.isZip64).
+fn zip_is64(zf: ZipHdr) -> Bool { zf.csize >= 0xffffffff || zf.usize >= 0xffffffff }
+
+/// The data descriptor after a deflated entry's data, with 64-bit sizes
+/// for a zip64 entry (Go's writeDataDescriptor).
 fn zip_descriptor(zf: ZipHdr) -> Bytes {
-  var d = BytesBuilder.with_capacity(16)
+  var d = BytesBuilder.with_capacity(24)
   put_u32(d, 0x08074b50)
   put_u32(d, zf.crc)
-  put_u32(d, zf.csize)
-  put_u32(d, zf.usize)
+  if zip_is64(zf) {
+    put_u64(d, zf.csize)
+    put_u64(d, zf.usize)
+  } else {
+    put_u32(d, zf.csize)
+    put_u32(d, zf.usize)
+  }
   d.freeze()
 }
 
 /// The central directory and the end record for files, the directory
-/// starting at start.
+/// starting at start (Go's Writer.Close): an entry past the 32-bit sizes
+/// or offset gets the zip64 extra field, and an archive of 65,535 or more
+/// entries, or a directory past the 32-bit size or offset, the zip64 end
+/// record and its locator before the classic end record.
 fn zip_central(files: List[ZipHdr], start: Int) -> Bytes {
   var out = BytesBuilder.new()
   var count = start
   for zf in files {
     let nb = zf.name.bytes()
+    let big = zip_is64(zf)
     put_u32(out, 0x02014b50)
     put_u16(out, zf.creator)
-    put_u16(out, 20)
+    put_u16(out, if big { 45 } else { 20 })
     put_u16(out, zf.flags)
     put_u16(out, zf.method)
     put_u16(out, zf.time)
     put_u16(out, zf.date)
     put_u32(out, zf.crc)
-    put_u32(out, zf.csize)
-    put_u32(out, zf.usize)
+    var extra = zf.extra
+    if big || zf.offset >= 0xffffffff {
+      put_u32(out, 0xffffffff)
+      put_u32(out, 0xffffffff)
+      var x = BytesBuilder.with_capacity(zf.extra.len() + 28)
+      x.write(zf.extra)
+      put_u16(x, 0x0001)
+      put_u16(x, 24)
+      put_u64(x, zf.usize)
+      put_u64(x, zf.csize)
+      put_u64(x, zf.offset)
+      extra = x.freeze()
+    } else {
+      put_u32(out, zf.csize)
+      put_u32(out, zf.usize)
+    }
     put_u16(out, nb.len())
-    put_u16(out, zf.extra.len())
+    put_u16(out, extra.len())
     put_u16(out, 0)
     put_u16(out, 0)
     put_u16(out, 0)
     put_u32(out, zf.attrs)
-    put_u32(out, zf.offset)
+    put_u32(out, if zf.offset > 0xffffffff { 0xffffffff } else { zf.offset })
     out.write(nb)
-    out.write(zf.extra)
-    count += 46 + nb.len() + zf.extra.len()
+    out.write(extra)
+    count += 46 + nb.len() + extra.len()
   }
-  let size = count - start
+  var records = files.len()
+  var size = count - start
+  var offset = start
+  if records >= 0xffff || size >= 0xffffffff || offset >= 0xffffffff {
+    // the zip64 end of central directory record
+    put_u32(out, 0x06064b50)
+    put_u64(out, 44)
+    put_u16(out, 45)
+    put_u16(out, 45)
+    put_u32(out, 0)
+    put_u32(out, 0)
+    put_u64(out, records)
+    put_u64(out, records)
+    put_u64(out, size)
+    put_u64(out, offset)
+    // and its locator: the record starts where the directory ends
+    put_u32(out, 0x07064b50)
+    put_u32(out, 0)
+    put_u64(out, count)
+    put_u32(out, 1)
+    records = 0xffff
+    size = 0xffffffff
+    offset = 0xffffffff
+  }
   put_u32(out, 0x06054b50)
   put_u16(out, 0)
   put_u16(out, 0)
-  put_u16(out, files.len())
-  put_u16(out, files.len())
+  put_u16(out, records)
+  put_u16(out, records)
   put_u32(out, size)
-  put_u32(out, start)
+  put_u32(out, offset)
   put_u16(out, 0)
   out.freeze()
 }
@@ -1302,14 +1357,6 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
       Some(x) => x
       None => return Err(archive_err("bad entry path ${e.path.quote()}"))
     }
-    // the end record's 16-bit count and 32-bit offsets, as zip_writer
-    // (no zip64 yet: past them the count or an offset would wrap)
-    if files.len() >= 65535 {
-      return Err(archive_err("zip: more than 65535 entries (zip64 is not supported)"))
-    }
-    if count > 4000000000 {
-      return Err(archive_err("zip: archive larger than 4 GB (zip64 is not supported)"))
-    }
     var zf = zip_new_header(p, e.mode, e.is_dir, e.modified, count)
     let hdr = zip_local_header(zf)
     out.write(hdr)
@@ -1321,13 +1368,11 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
       zf.crc = flate.crc32(t, 0, e.data)
       zf.csize = comp.len()
       zf.usize = e.data.len()
-      out.write(zip_descriptor(zf))
-      count += 16
+      let dd = zip_descriptor(zf)
+      out.write(dd)
+      count += dd.len()
     }
     files.push(zf)
-  }
-  if count > 4000000000 {
-    return Err(archive_err("zip: archive larger than 4 GB (zip64 is not supported)"))
   }
   out.write(zip_central(files, count))
   out.freeze()
@@ -1388,12 +1433,6 @@ fn (var w: ZipWriter) start(p: Str, mode: Int, is_dir: Bool, modified: Time) -> 
     return Err(archive_err("zip_writer: closed"))
   }
   w.end_entry()?
-  if w.files.len() >= 65535 {
-    return Err(archive_err("zip_writer: more than 65535 entries (zip64 is not supported)"))
-  }
-  if w.pos > 4000000000 {
-    return Err(archive_err("zip_writer: archive larger than 4 GB (zip64 is not supported)"))
-  }
   w.cur = zip_new_header(p, mode, is_dir, modified, w.pos)
   w.put(zip_local_header(w.cur))?
   w.open = true
@@ -1428,9 +1467,6 @@ fn (var w: ZipWriter) write(data: Bytes) -> () ! archive.ArchiveErr uses fs.writ
   if !w.open || w.cur.method != 8 {
     return Err(archive_err("zip_writer: write without create"))
   }
-  if w.cur.usize + data.len() > 4000000000 {
-    return Err(archive_err("zip_writer: entry larger than 4 GB (zip64 is not supported)"))
-  }
   w.sum = flate.crc32(w.t, w.sum, data)
   w.cur.usize += data.len()
   w.s.write(data)
@@ -1445,9 +1481,6 @@ fn (var w: ZipWriter) close() -> () ! archive.ArchiveErr uses fs.write {
   }
   w.end_entry()?
   w.done = true
-  if w.pos > 4000000000 {
-    return Err(archive_err("zip_writer: archive larger than 4 GB (zip64 is not supported)"))
-  }
   w.put(zip_central(w.files, w.pos))
 }
 
