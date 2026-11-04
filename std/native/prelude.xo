@@ -1268,13 +1268,14 @@ fn list_insert[T](var xs: List[T], i: Int, x: T, at: rt.Loc) {
   if i < 0 || i > n {
     rt.fault_at("index ${i} out of range for insert into List of length ${n}", at)
   }
+  // the push makes xs unique; x then moves down by swaps, which count
+  // nothing (a counted move retained and released each element shifted)
   xs.push(x)
   var j = n
   while j > i {
-    xs[j] = xs[j - 1]
+    rt.list_swap(xs, j, j - 1)
     j -= 1
   }
-  xs[i] = x
 }
 
 fn list_remove_at[T](var xs: List[T], i: Int, at: rt.Loc) -> T {
@@ -1282,10 +1283,14 @@ fn list_remove_at[T](var xs: List[T], i: Int, at: rt.Loc) -> T {
   if i < 0 || i >= n {
     rt.fault_at("index ${i} out of range for List of length ${n}", at)
   }
+  // one counted write makes xs unique for the swaps
+  // (gotchas/list-swap-bypasses-copy-on-write.md); element i then moves
+  // to the end by swaps, which count nothing, and the pop releases it
   let x = xs[i]
+  xs[i] = x
   var j = i
   while j + 1 < n {
-    xs[j] = xs[j + 1]
+    rt.list_swap(xs, j, j + 1)
     j += 1
   }
   match xs.pop() {
@@ -1461,7 +1466,12 @@ fn list_group_by[T, K: Hash, E, fx: Effects](xs: List[T], key: fn(T) -> K ! E us
 /// A stable sort of xs: runs of 16 sorted by insertion, then bottom up
 /// merges between two buffers (a pair of runs already in order is copied,
 /// so sorted input costs one pass). Merge order is stable: an element of
-/// the right run goes first only when it is strictly less.
+/// the right run goes first only when it is strictly less. Every move is
+/// a swap (rt.list_swap inside a run, rt.list_swap2 from one buffer into
+/// the other, whose slot is dead for the rest of the pass), so no element
+/// is counted or released after the two copies; a counted move retained
+/// the element and released the one it replaced (netip's compare, a Str
+/// in each Addr, 2026-11-04).
 fn list_sort[T: Ord](xs: List[T]) -> List[T] {
   let n = xs.len()
   if n < 2 {
@@ -1477,7 +1487,12 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
       return r
     }
   }
+  // a counted write each makes a and b unique for the swaps
+  // (gotchas/list-swap-bypasses-copy-on-write.md): a copies the caller's
+  // list, b a's
   var a = xs
+  let a0 = a[0]
+  a[0] = a0
   var lo = 0
   while lo < n {
     let hi = if lo + 16 < n { lo + 16 } else { n }
@@ -1486,15 +1501,19 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
       let x = a[i]
       var j = i
       while j > lo && x < a[j - 1] {
-        a[j] = a[j - 1]
+        rt.list_swap(a, j, j - 1)
         j -= 1
       }
-      a[j] = x
       i += 1
     }
     lo = hi
   }
+  if n <= 16 {
+    return a
+  }
   var b = a
+  let b0 = b[0]
+  b[0] = b0
   var width = 16
   while width < n {
     var lo2 = 0
@@ -1513,22 +1532,22 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
       if mid < hi && a[mid] < a[mid - 1] {
         while i < mid && j < hi {
           if a[j] < a[i] {
-            b[k] = a[j]
+            rt.list_swap2(b, k, a, j)
             j += 1
           } else {
-            b[k] = a[i]
+            rt.list_swap2(b, k, a, i)
             i += 1
           }
           k += 1
         }
       }
       while i < mid {
-        b[k] = a[i]
+        rt.list_swap2(b, k, a, i)
         i += 1
         k += 1
       }
       while j < hi {
-        b[k] = a[j]
+        rt.list_swap2(b, k, a, j)
         j += 1
         k += 1
       }
@@ -1907,10 +1926,9 @@ fn merge_sort_in_place[T](var xs: List[T], less: fn(T, T) -> Bool) {
       let x = xs[i]
       var j = i
       while j > lo && less(x, xs[j - 1]) {
-        xs[j] = xs[j - 1]
+        rt.list_swap(xs, j, j - 1)
         j -= 1
       }
-      xs[j] = x
       i += 1
     }
     lo = hi

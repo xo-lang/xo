@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-04: perf: List.sort, insert and remove_at move elements by swaps
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 3 (netip compare 2.02 of Go, 13% flat in `drop Str`; list_sort's `a[j] = a[j - 1]` a dup and a drop of a Str field per move)
+- Go reference: slices.SortStableFunc and slices.Insert/Delete (go1.26.1) move elements as words
+- Test: TestStdCorpora (the prelude corpus's sort, insert and remove_at rows), every arm64 golden under XO_FREE_CHECK=1, native_list_swap and native_list_swap2
+- Timing: bench/perf/netip compare 0.509 (0.504 to 0.515) on linux/arm64 together with the next commit's derived order (the two measured as one stack); xo's self build 1.001 (0.996 to 1.006, within noise)
+
+`List.sort`'s runs of 16 and its merges between two buffers, and the
+insertion runs of `sort_in_place` and `sort_in_place_by`, move elements with
+`rt.list_swap` and `rt.list_swap2` (decision 0374): a merge's swap leaves the
+destination's old element in the source slot the pass has consumed. The
+two buffers are made unique with one counted write each, as before (the
+first move of each copied). `List.insert` pushes then swaps the new element
+down, and `List.remove_at` swaps the element to the end and pops it, so a
+shift counts nothing where a counted move retained each element and
+released the one it replaced.
 ## 2026-11-04: perf: ByteBuffer.read_until keeps its segment borrowed
 
 - Kind: perf
@@ -14,6 +32,7 @@ read_until's fast path writes scan_to on both paths instead of in an
 kept the segment from b.segs counted; with decision 0487 the segment is
 borrowed: one retain a record (the returned view), from two retains and
 two releases.
+
 
 ## 2026-11-04: feature: File.read_at on wasm
 

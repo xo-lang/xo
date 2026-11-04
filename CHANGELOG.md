@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (native): a struct or tuple whose one heap leaf is a Str or List (netip.Addr's zone) is retained and released through that leaf, with no helper that stores every word in a frame; `List.sort`'s moves (its runs and its merges between two buffers), the insertion runs of `sort_in_place`, `List.insert` and `List.remove_at` move elements by swaps, with no count or release per move. With the derived order change below, bench/perf/netip compare 0.509 (0.504 to 0.515) on linux/arm64; xo's self build 1.001 (0.996 to 1.006, within noise).
 - arm64: a fault in a Mutex.with closure that compiles to a leaf (no calls, such as `fn(var c) { c.n += 1 }` overflowing) poisons the mutex as decision 0482 says instead of crashing with SIGTRAP: the landing pad's entry now undoes the fault stub's frame record, and the stubs get an unwind region of their own with their own call site table (gotchas/arm64-compact-unwind-leaf-fault-frames.md). Found by the full tier's TestNoLeafWithPads; golden mutex_poison_leaf. Not in any release (43b7eba82 came after v0.37.0).
 
 - perf (crypto, native): bigmod.mac_row adds a row as two carry chains across four words (Go's addMulVVW shape: 8 multiplies, 10 adds, 2 stp on arm64, from 16 adds and 4 stores): rs256_verify 0.933, RSA sign2048 0.957, sign4096 0.868 on linux/arm64

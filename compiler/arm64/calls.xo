@@ -235,6 +235,12 @@ fn (var g: G) retain(t: Int, ws: List[Int]) {
       if !g.heap(t) {
         return
       }
+      let one = g.one_leaf(t)
+      if one.t >= 0 {
+        // a struct or tuple with one Str or List: its retain in line
+        g.retain(one.t, [ws[one.off]])
+        return
+      }
       let h = g.rc_helper("dup", t)
       let args = regs(g.to_int(ws, g.layout(t)))
       let _r = g.call(h, args, [])
@@ -258,11 +264,35 @@ fn (var g: G) release(t: Int, ws: List[Int]) {
     Box => g.release_box(t, g.real(ws[0]))
     Func => g.release_func(ws)
     _ => {
+      let one = g.one_leaf(t)
+      if one.t >= 0 {
+        // a struct or tuple with one Str or List: its release in line
+        // (netip.Addr's zone: a call of its helper, which stored the four
+        // words in a frame and called the Str's, per element moved by
+        // list_sort, 2026-11-04)
+        g.release(one.t, [ws[one.off]])
+        return
+      }
       let h = g.rc_helper("drop", t)
       let args = regs(g.to_int(ws, g.layout(t)))
       let _r = g.call(h, args, [])
     }
   }
+}
+
+/// The one heap leaf of a struct or tuple t when it is a Str or a List
+/// (t: -1 otherwise, and for an enum, whose leaves depend on its tag).
+fn (var g: G) one_leaf(t: Int) -> Leaf {
+  let x = g.m.types[t]
+  if !(x.kind is ssa.Kind.Struct | ssa.Kind.Tuple) {
+    return Leaf{off: 0, t: -1}
+  }
+  var all: List[Leaf] = []
+  g.heap_leaves(t, 0, all)
+  if all.len() != 1 || !(g.kind(all[0].t) is ssa.Kind.Str | ssa.Kind.List) {
+    return Leaf{off: 0, t: -1}
+  }
+  all[0]
 }
 
 /// Makes a list unique: the same list when its count is 1, otherwise a
