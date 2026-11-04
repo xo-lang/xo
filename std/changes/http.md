@@ -7,7 +7,7 @@
 - Found by: aws-19 (2026-11-04, docs/reports/xo-issues.md entry 2): `new_request` kept only the decoded path and the client escaped it again, so `/bucket/a%20b%2Bc` went out as `/bucket/a%20b+c` (a SigV4 signature over the first fails on the second), and `%2F` became `/`
 - Cause: url_parts returned the decoded path only; Request.raw_path was set by the server side alone
 - Go reference: net/url URL.setPath (RawPath kept when escaping Path gives something else) and URL.EscapedPath (RawPath returned while validEncoded and it unescapes to Path), which Client.Do writes as the request target
-- Test: golden http_raw_path (arm64, LLVM, Go backend; want.txt is Go's own output through net/http for the ten paths: %2B, %2F, %2f, %20, +, UTF-8 escapes, `//`, `!*'()`, %25, %7E, a raw space); http_server_request's want.txt follows Go (`/esc/a%20b%2B`); golden http_default_port (`xo test`, both backends)
+- Test: golden http_raw_path (arm64, LLVM, Go backend; want.txt is Go's own output through net/http for the ten paths: %2B, %2F, %2f, %20, +, UTF-8 escapes, `//`, `!*'()`, %25, %7E, a raw space); http_server_request's want.txt follows Go (`/esc/a%20b%2B`); golden test_http_default_port (`xo test`, both backends)
 - Timing: none (a path kept as a string; the default form still goes through escape_path)
 - Shipped in: not yet released
 

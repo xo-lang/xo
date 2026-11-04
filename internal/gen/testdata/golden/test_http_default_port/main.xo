@@ -1,0 +1,7 @@
+// A client request to http://host/ (https://host/) reaches the listener
+// of host:80 (host:443): the in memory network of a test uses the default
+// port a real dial would (aws-19, 2026-11-04); main_test.xo, which
+// `xo test` runs, is the check.
+fn main(os: Os) {
+  os.stdio.println("see main_test.xo")
+}
