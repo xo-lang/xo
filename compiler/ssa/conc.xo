@@ -885,6 +885,14 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
       return b.atomic_c(key, fo, es, h, et, span)
     }
     "Mutex.with" | "Mutex.with_read" => return b.mutex_with(x, h, et, fname == "with_read")
+    "Mutex.reset" => {
+      // the new value in a list of one, stored whether or not the mutex
+      // is poisoned (decision 0482)
+      let o = b.one(b.io_arg(fo, es, 0, et))
+      b.rt("mutex_reset", -1, [h, o, b.loc(span)])
+      b.check("")
+      return b.unit()
+    }
     _ => {}
   }
   b.unsupported("the method `${b.c.display_name(fo)}`")
@@ -962,8 +970,9 @@ fn (var b: Builder) atomic_c(key: Str, fo: Int, es: List[Expr?], h: Int, et: Int
 /// `m.with(f)` and `m.with_read(f)` (mutexWith, core 5.4): the value is
 /// taken from the mutex (in a list of one) under the lock and given to f;
 /// with a `var` parameter the closure returns the new value too, which
-/// goes back when f succeeds; otherwise (an error, unwinding, a read) the
-/// old value stays.
+/// goes back when f succeeds; otherwise (an error, a cancellation, a
+/// read) the old value stays, and a fault poisons the mutex (decision
+/// 0482: the closure hands back a zero value, hand_back_zero).
 fn (var b: Builder) mutex_with(x: Expr, h: Int, et: Int, read: Bool) -> Int {
   let (span, _, args) = call_parts(x)
   let nt = b.nat_of(x)
@@ -1024,7 +1033,8 @@ fn (var b: Builder) mutex_with(x: Expr, h: Int, et: Int, read: Bool) -> Int {
     let nv = b.add(Op.Field, et, Aux.I(n: 1), [r])
     let l2 = b.call("list.push", lt, "", [l1, nv])
     b.add(Op.Share, -1, Aux.None, [l2])
-    b.rt(unlock_fn, -1, [h, l2])
+    // a fault that unwound out of f poisons the mutex (decision 0482)
+    b.rt("mutex_unlock_put", -1, [h, l2])
     b.check("")
     return res
   }

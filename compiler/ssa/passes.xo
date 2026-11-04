@@ -217,6 +217,48 @@ pub fn (var b: Builder) prune_unwind() {
     }
     b.drop_check(c.fi, c.u, c.w)
   }
+  for fi in 0..n {
+    if b.m.funcs[fi].catches && !(b.conc && may[fi]) {
+      hand_back_zero(b.m.funcs[fi])
+    }
+  }
+}
+
+/// A `Mutex.with` closure that cannot be canceled hands back a zero value
+/// when a fault unwinds out of it, not the value it was given: the fault
+/// poisons the mutex (decision 0482), so nothing reads what it hands back,
+/// and the value it was given no longer stays alive while the closure
+/// changes it (its first write to a list or map copied it). An `Err`
+/// still hands that value back (packed_value), and so does a cancellation
+/// of a closure that can be canceled. The zero is finish_fn's, the value
+/// of the same type in the unwind exit.
+fn hand_back_zero(var f: Func) {
+  let ex = f.unwind_exit
+  if ex < 0 || f.blocks.is_empty() || f.blocks[0].params.len() < 2 || ex >= f.blocks.len() {
+    return
+  }
+  let orig = f.blocks[0].params[1]
+  let ins = f.blocks[ex].instrs
+  if ins.is_empty() {
+    return
+  }
+  let ret = ins[ins.len() - 1]
+  if f.values[ret].op != Op.Return || f.values[ret].args.len() != 1 {
+    return
+  }
+  let t = f.values[ret].args[0]
+  if f.values[t].op != Op.Tuple || f.values[t].args.len() != 2 || f.values[t].args[1] != orig {
+    return
+  }
+  for v in ins {
+    if v == t {
+      return
+    }
+    if v != orig && ty_of(f.values[v].tb) == ty_of(f.values[orig].tb) {
+      f.values[t].args[1] = v
+      return
+    }
+  }
 }
 
 /// Removes check u of function fi (and w's landing on it): its branch

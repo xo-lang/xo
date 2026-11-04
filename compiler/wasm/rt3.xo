@@ -44,18 +44,18 @@
 //            chosen, 28 has after, 32 after (i64); an arm (64 bytes): 0
 //            channel, 4 send, 8 item, 16 entry
 //   mutex    0 rc, 4 free, 8 writer, 12 readers, 16 waiting writers, 20
-//            value list, 24 its drop
+//            value list, 24 its drop, 28 poisoned (decision 0482)
 //   atomic   0 rc, 4 free, 8 value (i64)
 //   held     0 mutex, 4 location, 8 its length, 12 next
 
 /// The blocking runtime calls: where a task can suspend.
 fn rt3_blocking(name: Str) -> Bool {
-  name is "rt.atomic_get" | "rt.atomic_set" | "rt.atomic_swap" | "rt.atomic_cas" | "rt.atomic_add" | "rt.atomic_max" | "rt.is_canceled" | "rt.chan_send" | "rt.chan_recv" | "rt.task_await" | "rt.scope_close" | "rt.wasi_scope_close" | "rt.wasi_park_wait" | "rt.select_wait" | "rt.mutex_lock" | "rt.mutex_rlock" | "rt.clock_sleep" | "rt.clock_sleep_or_cancel"
+  name is "rt.atomic_get" | "rt.atomic_set" | "rt.atomic_swap" | "rt.atomic_cas" | "rt.atomic_add" | "rt.atomic_max" | "rt.is_canceled" | "rt.chan_send" | "rt.chan_recv" | "rt.task_await" | "rt.scope_close" | "rt.wasi_scope_close" | "rt.wasi_park_wait" | "rt.select_wait" | "rt.mutex_lock" | "rt.mutex_rlock" | "rt.mutex_reset" | "rt.clock_sleep" | "rt.clock_sleep_or_cancel"
 }
 
 /// The runtime functions of rt3.xo called with the operands' leaves.
 fn rt3_direct(name: Str) -> Bool {
-  name is "wasi_mono_ns" | "wasi_park_wait" | "wasi_park_signal" | "wasi_scope_new" | "wasi_scope_group" | "wasi_scope_close" | "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_unlock" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "task_deadline_left" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end" | "task_stopping"
+  name is "wasi_mono_ns" | "wasi_park_wait" | "wasi_park_signal" | "wasi_scope_new" | "wasi_scope_group" | "wasi_scope_close" | "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_unlock" | "mutex_unlock_put" | "mutex_reset" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "task_deadline_left" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end" | "task_stopping"
 }
 
 /// The WASI imports of the task runtime: the clocks and waiting for one.
@@ -131,6 +131,8 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
   let reent2 = g.litp(" called re-entrantly in one task; the mutex is already held from ")
   let w_with = g.raw("with".bytes())
   let w_read = g.raw("with_read".bytes())
+  let pz_with = g.litp("XO-F010: Mutex.with on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value")
+  let pz_read = g.litp("XO-F010: Mutex.with_read on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value")
   let dead = g.litp("fault: XO-F001: deadlock: every task is blocked\n")
   let notasks = g.str_obj(b"os.tasks is not available here")
   let notasks_n = 30
@@ -3510,6 +3512,9 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       local.get $drop
       i32.wrap_i64
       i32.store offset=24
+      local.get $m
+      i32.const 0
+      i32.store offset=28
       local.get $m)
 
     (func $mutex_free (param $m i32)
@@ -3634,7 +3639,15 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
 
     ;; m.with: takes m exclusively and moves its value out (a suspension
     ;; and cancellation point while it waits)
-    (func $mutex_lock (param $m i32) (param $lo i32) (param $ln i32) (result i32) (local $l i32)
+    (func $mutex_lock (param $m i32) (param $lo i32) (param $ln i32) (result i32)
+      local.get $m
+      local.get $lo
+      local.get $ln
+      i32.const 1
+      call $mutex_lock_k)
+
+    ;; mutex_lock; chk: a poisoned m faults (XO-F010), reset passes 0
+    (func $mutex_lock_k (param $m i32) (param $lo i32) (param $ln i32) (param $chk i32) (result i32) (local $l i32)
       call $resumed
       if
         call $ctx_canceled
@@ -3696,6 +3709,27 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
           return
         end
       end
+      local.get $chk
+      local.get $m
+      i32.load offset=28
+      i32.and
+      if
+        local.get $m
+        call $held_del
+        call $wake
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${pz_with}
+        call $sapp
+        local.get $lo
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+        i32.const ${empty}
+        return
+      end
       local.get $m
       i32.const 1
       i32.store offset=8
@@ -3717,6 +3751,54 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       local.get $m
       call $held_del
       call $wake)
+
+    ;; unlock after a `with` closure with a `var` parameter: a fault that
+    ;; unwound out of it poisons m (decision 0482)
+    (func $mutex_unlock_put (param $m i32) (param $l i32)
+      global.get $faulting
+      if
+        local.get $m
+        i32.const 1
+        i32.store offset=28
+      end
+      local.get $m
+      local.get $l
+      call $mutex_unlock)
+
+    ;; m.reset(v): takes m whether or not it is poisoned, stores the value
+    ;; list l and clears the poison (decision 0482); a suspension and
+    ;; cancellation point while it waits, as mutex_lock
+    (func $mutex_reset (param $m i32) (param $l i32) (param $lo i32) (param $ln i32) (local $o i32)
+      local.get $m
+      local.get $lo
+      local.get $ln
+      i32.const 0
+      call $mutex_lock_k
+      local.tee $o
+      i32.eqz
+      if
+        return
+      end
+      local.get $o
+      i32.const ${empty}
+      i32.eq
+      if
+        local.get $l
+        local.get $m
+        i32.load offset=24
+        call $list_release
+        return
+      end
+      local.get $m
+      i32.const 0
+      i32.store offset=28
+      local.get $m
+      local.get $l
+      call $mutex_unlock
+      local.get $o
+      local.get $m
+      i32.load offset=24
+      call $list_release)
 
     ;; m.with_read: takes m shared and returns a reference to its value
     (func $mutex_rlock (param $m i32) (param $lo i32) (param $ln i32) (result i32)
@@ -3750,6 +3832,24 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       if
         call $block
         i32.const 0
+        return
+      end
+      local.get $m
+      i32.load offset=28
+      if
+        local.get $m
+        call $held_del
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${pz_read}
+        call $sapp
+        local.get $lo
+        i32.const 8
+        i32.add
+        local.get $ln
+        call $fault_set
+        i32.const ${empty}
         return
       end
       local.get $m

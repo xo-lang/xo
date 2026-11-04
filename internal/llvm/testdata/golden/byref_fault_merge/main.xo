@@ -2,9 +2,10 @@
 // (decision 0148: the callee's unwind exit writes zero values into the
 // memory; decision 0151: a merge where only one edge passes the memory
 // in place keeps it held, the others store their argument there). The
-// caller sees the value it had before the call: through Mutex.with,
-// which leaves the protected value unchanged when the closure faults
-// (core 5.4), and through a copy kept outside task.isolate. Runs without
+// caller sees the value it had before the call through a copy kept
+// outside task.isolate. Mutex.with poisons the mutex when its closure
+// faults (decision 0482), so each fault below is followed by a reset to a
+// copy read before it, and the runs after it read every field. Runs without
 // a fault read every field after the same merges. Pos.walk is the shape
 // that held merge changes on arm64 (a `var` method inlined into a `var`
 // method of a nested struct, its unwind exit joining its return): its
@@ -133,11 +134,15 @@ fn (b: Big) show() -> Str {
   "${b.name}: log ${b.log.len()} seen ${b.seen.len()} n ${b.n} a ${b.a} h ${b.h} ${b.b}${b.c}${b.d}${b.e}${b.f}${b.g}"
 }
 
+/// Whether m is poisoned: a with_read faults (XO-F010).
+fn poisoned[T](m: Mutex[T]) -> Bool { task.isolate(fn() -> Int ! () { m.with_read(fn(_x) { 0 }) }).is_err() }
+
 fn main(os: Os) {
   let io = os.stdio
   let m = Mutex[Big].new(Big{name: "m"})
   m.with(fn(var b) { b.steps(2) })
   io.println("before: ${m.with(fn(b) { b.show() })}")
+  let m0 = m.with(fn(b) { b })
   match task.isolate(fn() -> Int ! () {
     m.with(fn(var b) -> Int { b.steps(5) })
   }) {
@@ -145,8 +150,11 @@ fn main(os: Os) {
     Err(task.Isolated.Faulted(info)) => io.println("steps: fault ${info.msg}")
     Err(_) => io.println("steps: failed")
   }
+  io.println("poisoned ${poisoned(m)}")
+  m.reset(m0)
   io.println("after: ${m.with(fn(b) { b.show() })}")
   io.println("again: ${m.with(fn(var b) -> Int { b.steps(3) })} ${m.with(fn(b) { b.show() })}")
+  let m1 = m.with(fn(b) { b })
   match task.isolate(fn() -> Int ! () {
     m.with(fn(var b) -> Int { b.labels(5) })
   }) {
@@ -154,11 +162,14 @@ fn main(os: Os) {
     Err(task.Isolated.Faulted(info)) => io.println("labels: fault ${info.msg}")
     Err(_) => io.println("labels: failed")
   }
+  io.println("poisoned ${poisoned(m)}")
+  m.reset(m1)
   io.println("labels after: ${m.with(fn(b) { b.show() })}")
   io.println("labels again: ${m.with(fn(var b) -> Int { b.labels(3) })} ${m.with(fn(b) { b.show() })}")
 
   let pm = Mutex[Pos].new(Pos{})
   io.println("walk: ${pm.with(fn(var p) -> Int { p.walk(2) })} ${pm.with(fn(p) { p.show() })}")
+  let p0 = pm.with(fn(p) { p })
   match task.isolate(fn() -> Int ! () {
     pm.with(fn(var p) -> Int { p.walk(4) })
   }) {
@@ -166,6 +177,8 @@ fn main(os: Os) {
     Err(task.Isolated.Faulted(info)) => io.println("walk: fault ${info.msg}")
     Err(_) => io.println("walk: failed")
   }
+  io.println("poisoned ${poisoned(pm)}")
+  pm.reset(p0)
   io.println("walk after: ${pm.with(fn(p) { p.show() })}")
 
   var sx = Big{name: "x", n: 1}

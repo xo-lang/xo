@@ -39,7 +39,11 @@ const M_WAITERS = 72
 const M_READ = 88
 /// M_READ as a word index (the slot atomics).
 const M_READ_W = 11
-const M_SIZE = 96
+/// Whether a fault unwound out of a `with` closure that changes the value
+/// (1; unlock_put): every later with and with_read faults (XO-F010)
+/// until reset (decision 0482)
+const M_POISON = 96
+const M_SIZE = 104
 /// The most Mutex takes since its last I/O wait a releasing context may
 /// have made and still yield to the writer it woke (wake; ctx.xo
 /// C_LOCKS): a server handler takes one or two between socket waits, a
@@ -253,6 +257,7 @@ pub fn new(l: Int, drop: Int) -> Int {
   st(m, M_SLOT, l)
   st(m, M_DROP, drop)
   st(m, M_READ, 0)
+  st(m, M_POISON, 0)
   m
 }
 
@@ -348,13 +353,20 @@ pub fn lock(m: Int, lp: Int, ln: Int) -> Int {
   if det.built() {
     pool.det_point()
   }
-  let r = lock_body(m, lp, ln)
+  let r = lock_body(m, lp, ln, true)
   // the last unlock happens before the critical section (decision 0273)
   sanhook.acquire(m)
   r
 }
 
-fn lock_body(m: Int, lp: Int, ln: Int) -> Int {
+/// The XO-F010 fault of a with or with_read (what) on a poisoned Mutex,
+/// at the ln bytes at lp (decision 0482).
+fn poisoned(what: Str, lp: Int, ln: Int) {
+  fault.raise_str_at("XO-F010: Mutex.${what} on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value", lp, ln)
+}
+
+/// lock_body for lock (check: a poisoned m faults) and reset (it does not).
+fn lock_body(m: Int, lp: Int, ln: Int, check: Bool) -> Int {
   pool.defer_check()
   let c = ctx.cur()
   let w = "with"
@@ -382,10 +394,18 @@ fn lock_body(m: Int, lp: Int, ln: Int) -> Int {
         pool.unlock(m + M_MU)
         held_del(c, m)
         st4(c, ctx.C_UNWINDING, 1)
-        return tasks.empty_list()
+        // reset (no check) tells a cancellation by 0
+        return if check { tasks.empty_list() } else { 0 }
       }
     }
     st(m, M_WWAIT, ld(m, M_WWAIT) - 1)
+  }
+  if check && ld(m, M_POISON) != 0 {
+    sync_writer(m)
+    let _y = wake(m, false)
+    pool.unlock(m + M_MU)
+    held_del(c, m)
+    poisoned("with", lp, ln)
   }
   st4(m, M_WRITER, 1)
   let l = ld(m, M_SLOT)
@@ -398,12 +418,48 @@ fn lock_body(m: Int, lp: Int, ln: Int) -> Int {
 pub fn unlock(m: Int, l: Int) {
   // the critical section happens before the next lock (decision 0273)
   sanhook.release(m)
-  unlock_body(m, l)
+  unlock_body(m, l, 0)
 }
 
-fn unlock_body(m: Int, l: Int) {
+/// unlock after a `with` closure with a `var` parameter
+/// (xo_mutex_unlock_put): when the task unwinds a fault out of it, l
+/// is not the value (the closure handed back a zero one or the value it
+/// was given) and m is poisoned (decision 0482); a cancellation or an
+/// error handed the value back unchanged.
+pub fn unlock_put(m: Int, l: Int) {
+  sanhook.release(m)
+  let c = ctx.cur()
+  unlock_body(m, l, if c != 0 && ld4(c, ctx.C_FAULTING) != 0 { 1 } else { 0 })
+}
+
+/// `m.reset(v)` (xo_mutex_reset): takes m exclusively whether or not it
+/// is poisoned, stores the value list l (consumed) and clears the poison;
+/// the old value is released. Waiting is a cancellation point.
+pub fn reset(m: Int, l: Int, lp: Int, ln: Int) {
+  if det.built() {
+    pool.det_point()
+  }
+  let old = lock_body(m, lp, ln, false)
+  if old == 0 {
+    // canceled while waiting: unwinding, nothing taken
+    tasks.list_release(l, ld(m, M_DROP))
+    return
+  }
+  sanhook.acquire(m)
+  sanhook.release(m)
+  unlock_body(m, l, 2)
+  tasks.list_release(old, ld(m, M_DROP))
+}
+
+/// unlock's body; poison 1 poisons m, 2 clears its poison, 0 leaves it.
+fn unlock_body(m: Int, l: Int, poison: Int) {
   pool.defer_check()
   pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
+  if poison == 1 {
+    st(m, M_POISON, 1)
+  } else if poison == 2 {
+    st(m, M_POISON, 0)
+  }
   st(m, M_SLOT, l)
   st4(m, M_WRITER, 0)
   sync_writer(m)
@@ -444,7 +500,7 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
   // no writer holds or waits: the share without m's lock (the add's
   // acquire pairs with the last writer's clearing of the bit)
   if (rt.slot_add(m, R_W, 1, ACQ_REL) & R_WRITER) == 0 {
-    return ld(m, M_SLOT)
+    return rchecked(m, c, ld(m, M_SLOT), lp, ln)
   }
   // a writer holds or waits: give the add back (the last out wakes it)
   // and take the locked path
@@ -467,7 +523,7 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
       if rt.slot_load(e, E_WRITER_W, ACQUIRE) == GRANTED {
         // the last writer set the value under m's lock before the grant,
         // and none can change it while this share is held
-        return ld(m, M_SLOT)
+        return rchecked(m, c, ld(m, M_SLOT), lp, ln)
       }
       pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
       if ld4(e, E_GRANTED) != 0 {
@@ -489,6 +545,18 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
   }
   let l = ld(m, M_SLOT)
   pool.unlock(m + M_MU)
+  rchecked(m, c, l, lp, ln)
+}
+
+/// The share's list l of the context c's with_read of m, or its XO-F010
+/// fault when m is poisoned: a writer sets the poison before its release,
+/// which this share's take ordered before it (decision 0482).
+fn rchecked(m: Int, c: Int, l: Int, lp: Int, ln: Int) -> Int {
+  if ld(m, M_POISON) != 0 {
+    reader_out(m)
+    held_del(c, m)
+    poisoned("with_read", lp, ln)
+  }
   l
 }
 

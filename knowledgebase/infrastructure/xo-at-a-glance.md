@@ -76,9 +76,10 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
 
 - Value semantics with copy-on-write; checked moves (XO0510);
   `var` parameters make mutation visible in signatures.
-- Shared state: `Mutex[T]` (`with`, `with_read`; an `Err` from the
-  closure undoes its writes, 5.4, and `XO0540` warns when a write is
-  followed by a path returning `Err`) and `Atomic[T]`.
+- Shared state: `Mutex[T]` (`with`, `with_read`, `reset`; an `Err` from
+  the closure undoes its writes, 5.4, and `XO0540` warns when a write is
+  followed by a path returning `Err`; a fault poisons the mutex, `XO-F010`,
+  until `reset`, decision 0482) and `Atomic[T]`.
 - Structured concurrency: `scope`, tasks, cancellation (7.1-7.2);
   channels `Chan[T]` with `select` (7.3); deterministic scheduling and
   `xo test --explore=N` (7.4); signals and graceful shutdown (7.5).

@@ -954,6 +954,10 @@ fn mutex_lock(m: Int, lp: Int, ln: Int) -> Int { mutex.lock(m, lp, ln) }
 
 fn mutex_unlock(m: Int, l: Int) { mutex.unlock(m, l) }
 
+fn mutex_unlock_put(m: Int, l: Int) { mutex.unlock_put(m, l) }
+
+fn mutex_reset(m: Int, l: Int, lp: Int, ln: Int) { mutex.reset(m, l, lp, ln) }
+
 fn mutex_rlock(m: Int, lp: Int, ln: Int) -> Int { mutex.rlock(m, lp, ln) }
 
 fn mutex_runlock(m: Int, l: Int) { mutex.runlock(m, l) }

@@ -502,6 +502,7 @@ fn (c: Chan[T]) len() -> Int
 Mutex[T].new(v: T) -> Mutex[T]
 fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
 fn (m: Mutex[T]) with_read[R, E, fx: Effects](f: fn(T) -> R ! E uses fx) -> R ! E uses fx
+fn (m: Mutex[T]) reset(v: T)                 // stores v, clears the poison (decision 0482)
 
 Atomic[T].new(v: T) -> Atomic[T]             // T is Int or Bool
 fn (a: Atomic[T]) get() -> T
@@ -557,6 +558,15 @@ write); `peek` and `find` copy when the bytes they cover span pieces. A count `n
 first (`put_le`) or highest first (`put_be`), the rest of `v` dropped. `n` is
 1, 2, 4 or 8 and the range must lie within `len()`; any other `n`, or a range
 outside, is a fault. The length does not change and nothing is copied.
+
+A fault that unwinds out of a `with` closure poisons the mutex (core 5.4,
+decision 0482): from then on `with` and `with_read` fault with `XO-F010`.
+`m.reset(v)` takes the mutex whether or not it is poisoned (waiting is a
+cancellation point), stores `v`, clears the poison, and drops the value it
+held. An `Err` from the closure, or a cancellation while it waits, leaves the
+value unchanged and does not poison. Like Rust's `Mutex` poisoning, it keeps
+a half changed value from being used silently; unlike Go's `sync.Mutex` with
+a deferred `Unlock`, which leaves it in place.
 
 `Mutex.with_read` (decision 0063) is shared read only access: many readers
 or one writer. `f` gets the value read only (mutating it is an error, and
@@ -5172,7 +5182,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-501 declarations.
+502 declarations.
 
 ### Range
 
@@ -5618,6 +5628,7 @@ fn (c: Chan[T]) len() -> Int
 fn (static: Mutex[T]) new(v: T) -> Mutex[T]
 fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
 fn (m: Mutex[T]) with_read[R, E, fx: Effects](f: fn(T) -> R ! E uses fx) -> R ! E uses fx
+fn (m: Mutex[T]) reset(v: T)
 ```
 
 ### Atomic

@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+first: ok 1
+n 1 names a
+fault: fault bad name after 2 names at main.xo:26:7
+with after: fault XO-F010: Mutex.with on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value at main.xo:22
+with_read after: fault XO-F010: Mutex.with_read on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value at main.xo:41
+reset: n 10 names x
+err: too big at 15, then n 10 names x
+cancel: fault stop the waiter at main.xo:70:9
+after cancel: n 10 names x
+with again: ok 11
+--- stderr

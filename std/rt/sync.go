@@ -325,6 +325,33 @@ func (h *heldSet) del(m any) {
 type Mutex[T any] struct {
 	l lock
 	v T
+	// poisoned: a fault unwound out of a `with` closure (decision 0482);
+	// written and read under l
+	poisoned bool
+}
+
+// poisonedFault is the XO-F010 fault of a with or with_read on a
+// poisoned mutex (decision 0482).
+func poisonedFault(what string) {
+	FaultCode("XO-F010", xoLocation(3), "Mutex.%s on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value", what)
+}
+
+// M_reset is `m.reset(v)` (decision 0482): stores v and clears the
+// poison. Waiting is a cancellation point that unwinds.
+func (m *Mutex[T]) M_reset(tk *Task, v T) {
+	tk.Yield()
+	if prev, ok := tk.held.get(m); ok {
+		FaultCode("XO-F004", xoLocation(2), "Mutex.reset called re-entrantly in one task; the mutex is already held from %s", prev.loc())
+	}
+	site := holdSite(tk, m)
+	if !m.l.acquireMode(tk, false, &site) {
+		tk.held.del(m)
+		tk.Unwind()
+	}
+	m.v = v
+	m.poisoned = false
+	tk.held.del(m)
+	m.l.release()
 }
 
 // Mutex_new is `Mutex[T].new(v)`.
@@ -340,9 +367,10 @@ func Mutex_new[T any](_ *Task, v T) *Mutex[T] {
 func (m *Mutex[T]) XoDebug(b *strings.Builder) { b.WriteString("<mutex>") }
 
 // Mutex_with is `m.with(f)` (core 5.4): f gets a copy of the value; the
-// copy is written back only when f returns successfully. Waiting is a
-// cancellation point that unwinds. Re-entrant use in one task faults
-// (XO-F004).
+// copy is written back only when f returns successfully, and a fault in f
+// poisons m (decision 0482: later with and with_read fault, XO-F010,
+// until reset). Waiting is a cancellation point that unwinds. Re-entrant
+// use in one task faults (XO-F004).
 func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, E]) Result[R, E] {
 	tk.Yield()
 	if prev, ok := tk.held.get(m); ok {
@@ -363,7 +391,17 @@ func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, 
 	if lockStatsOn {
 		t1 = time.Now()
 	}
+	done := false
 	defer func() {
+		if !done {
+			// a fault (not a cancellation or an exit) poisons m
+			if r := recover(); r != nil {
+				if _, ok := r.(*exitUnwind); !ok && !IsUnwind(r) {
+					m.poisoned = true
+				}
+				defer panic(r)
+			}
+		}
 		tk.held.del(m)
 		if lockStatsOn {
 			t2 := time.Now()
@@ -373,11 +411,16 @@ func Mutex_with[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, *T) Result[R, 
 		}
 		m.l.release()
 	}()
+	if m.poisoned {
+		done = true
+		poisonedFault("with")
+	}
 	v := m.v
 	// m.v keeps the old value if f fails or faults, so f's writes to
 	// lists in v must copy them (see List)
 	MarkP(&v)
 	r := f(tk, &v)
+	done = true
 	if r.Ok {
 		m.v = v
 	}
@@ -420,6 +463,9 @@ func Mutex_with_read[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, T) Result
 	// readers share m.v: the copy f gets must not write m.v's lists in
 	// place (see List); marking is atomic, so readers may race on it.
 	// Own, not MarkP(&v): that moved v to the heap on every call.
+	if m.poisoned {
+		poisonedFault("with_read")
+	}
 	return f(tk, Own(m.v))
 }
 

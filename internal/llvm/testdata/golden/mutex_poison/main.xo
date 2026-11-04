@@ -1,0 +1,77 @@
+// A fault inside Mutex.with poisons the mutex (decision 0482): later
+// with and with_read fault (XO-F010) until reset stores a new value. An
+// Err from the closure still undoes its writes and does not poison, nor
+// does a cancellation of a closure that waits. The leak check counts
+// every allocation, the zero value a poisoned mutex holds included.
+use std/task
+
+struct Jar {
+  n: Int
+  names: List[Str]
+}
+
+fn show(io: Stdio, label: Str, r: Result[Int, task.Isolated[()]]) uses stdio {
+  match r {
+    Ok(v) => io.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("${label}: fault ${info.msg} at ${info.location}")
+    Err(_) => io.println("${label}: failed")
+  }
+}
+
+fn add(m: Mutex[Jar], name: Str) -> Int {
+  m.with(fn(var j) {
+    j.names.push(name)
+    j.n += 1
+    if name == "bad" {
+      fault("bad name after ${j.names.len()} names")
+    }
+    j.n
+  })
+}
+
+fn state(m: Mutex[Jar]) -> Str { m.with_read(fn(j) { "n ${j.n} names ${j.names.join(",")}" }) }
+
+fn main(os: Os) {
+  let io = os.stdio
+  let m = Mutex.new(Jar{n: 0, names: []})
+  show(io, "first", task.isolate(fn() -> Int ! () { add(m, "a") }))
+  io.println(state(m))
+  show(io, "fault", task.isolate(fn() -> Int ! () { add(m, "bad") }))
+  show(io, "with after", task.isolate(fn() -> Int ! () { add(m, "b") }))
+  show(io, "with_read after", task.isolate(fn() -> Int ! () { m.with_read(fn(j) { j.n }) }))
+  m.reset(Jar{n: 10, names: ["x"]})
+  io.println("reset: ${state(m)}")
+  let r = m.with(fn(var j) -> Int ! Str {
+    j.n += 5
+    j.names.push("y")
+    if j.n > 12 {
+      return Err("too big at ${j.n}")
+    }
+    Ok(j.n)
+  })
+  match r {
+    Ok(v) => io.println("err: ok ${v}")
+    Err(e) => io.println("err: ${e}, then ${state(m)}")
+  }
+  let ready: Chan[Int] = Chan.new(0)
+  let gate: Chan[Int] = Chan.new(0)
+  show(io, "cancel", task.isolate(fn() -> Int ! () {
+    scope s {
+      s.spawn(fn() {
+        m.with(fn(var j) {
+          j.n = 99
+          j.names.push("z")
+          ready.send(1)
+          let _g = gate.recv()
+        })
+      })
+      s.spawn(fn() -> () {
+        let _r = ready.recv()
+        fault("stop the waiter")
+      })
+    }
+    0
+  }))
+  io.println("after cancel: ${state(m)}")
+  show(io, "with again", task.isolate(fn() -> Int ! () { add(m, "c") }))
+}

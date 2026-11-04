@@ -1,6 +1,6 @@
 # 0482: Mutex.with without a copy of the protected value
 
-Status: Proposed (Xo Lang 2, 2026-11-03; for the owner, through the lead)
+Status: Accepted (owner, 2026-11-03, through the lead): A plus C. Implemented 2026-11-03 (Xo Lang 2). Supersedes the rejection of 0431, whose poisoning design C is.
 
 ## Context
 
@@ -78,7 +78,58 @@ A in any case (no semantic change). For the cookiejar class, B, with A
 still applying to closures that can return `Err`; the owner chooses
 between B, C and D, since B and C change core 5.4's promise for faults.
 
-## Consequences (B)
+## Decision (owner, 2026-11-03)
+
+A plus C: "skip the copy when the closure provably cannot fault, and
+Rust-style poisoning otherwise. A fault inside `with` leaves the writes
+and poisons the mutex, a later `with` faults with a new XO code until
+`m.reset(v)`, and an Err return still undoes everything."
+
+As built:
+
+- A fault that unwinds out of a `with` closure with a `var` parameter
+  poisons the mutex (native `M_POISON`, set by `rt.mutex_unlock_put` when
+  the task is faulting; the Go backend's deferred release on a fault
+  panic; wasm's offset 28 when `$faulting`). Every later `with` and
+  `with_read` faults with `XO-F010` at its own location; `m.reset(v)`
+  (new prelude method) takes the mutex without the check, stores `v`,
+  clears the poison and drops the old value.
+- The writes are not undone, and nothing reads them: the value the
+  mutex holds while poisoned is a zero value the closure hands back
+  (ssa passes.xo hand_back_zero), released by reset or by the mutex's
+  drop.
+- The copy: after prune_unwind, a `with` closure that cannot be canceled
+  hands back that zero instead of the value it was given, so nothing
+  keeps the given value alive and the first write changes it in place.
+  This covers A too: a closure that can neither fault nor be canceled
+  has no unwind exit at all. A closure that can be canceled (it waits on
+  a lock, channel, task or I/O) keeps the given value and hands it back
+  on a cancellation, which does not poison (0431 item 2: cancellation is
+  how scopes end). An `Err` still hands the given value back
+  (packed_value), so a closure that can return `Err` keeps it too.
+- The swap happens in two places: an exit made at build time is
+  rewritten after prune_unwind (hand_back_zero), and an exit made later
+  by add_landings (a closure whose only fault points are its own
+  operations) gets the zero from finish_fn, which reads the facts
+  (gotchas/unwind-exit-made-after-prune.md).
+- The Go backend keeps its copy (it is the reference backend; f gets a
+  copy written back on Ok) and adds the poison.
+
+## Consequences
+
+- core 5.4 (the fault bullet and its example), the 5.1 performance note,
+  10.6's `XO-F010` row and the "Changes in 0.10" list; std.md 2.7
+  (`reset` and the poisoning paragraph); `xo explain XO0540`'s detail;
+  xo-at-a-glance.md.
+- Goldens: mutex_poison (new: fault, XO-F010 on with and with_read,
+  reset, an Err that undoes, a cancellation that restores, use after) on
+  arm64, LLVM, the Go backend and wasm; fault_tasks, conc_mutex_move and
+  byref_fault_merge read the poison and reset where they read the rolled
+  back value.
+- A server that keeps state in a `Mutex` and faults inside `with` takes
+  that state down until code calls `reset` (0431's main cost).
+
+## Consequences (B, the proposal)
 
 - core 5.4: "If it returns an error, the protected value is left
   unchanged; if it faults, the writes made before the fault stay (as Go's

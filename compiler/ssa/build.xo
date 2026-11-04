@@ -3398,10 +3398,16 @@ fn (var b: Builder) finish_fn() {
     rs.push(b.fault_zero(t))
   }
   if b.s.pack_orig >= 0 {
-    // a packed closure hands back the value it was given
+    // a packed closure hands back the value it was given; the zero value
+    // beside it is what it hands back instead when it cannot be canceled
+    // (hand_back_zero, decision 0482)
     let pt = b.s.f.results[0]
+    let zv = b.zero(b.m.types[pt].elems[1], [])
     let z = b.zero(b.m.types[pt].elems[0], [])
-    rs = [b.add(Op.Tuple, pt, Aux.None, [z, b.s.pack_orig])]
+    // an exit made after prune_unwind (add_landings) knows the facts
+    let fi = b.s.fi
+    let back = if fi >= 0 && fi < b.unwind_may.len() && !(b.conc && b.unwind_may[fi]) { zv } else { b.s.pack_orig }
+    rs = [b.add(Op.Tuple, pt, Aux.None, [z, back])]
   }
   b.add(Op.Return, -1, Aux.None, rs)
   b.s.cur = saved

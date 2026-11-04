@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-11-03: behavior: a fault inside Mutex.with poisons the mutex; Mutex.reset
+
+- Kind: behavior
+- Commit: this commit
+- Found by: decision 0482 (owner, 2026-11-03): std/cookiejar's jar under Mutex paid a copy of its maps per write to keep the value for a fault
+- Go reference: none in Go (a panic under a deferred Unlock leaves the writes); Rust's Mutex poisoning
+- Test: golden mutex_poison on arm64, LLVM, Go and wasm; fault_tasks, conc_mutex_move, byref_fault_merge updated
+- Timing: bench/results/mutex-poison-2026-11-03.md
+
+A fault that unwinds out of a `with` closure no longer restores the
+value: the mutex is poisoned, and later `with` and `with_read` fault
+with XO-F010 until `m.reset(v)`. An Err and a cancellation still leave
+the value unchanged. A closure that cannot be canceled no longer keeps
+the value it was given, so its writes do not copy it.
 ## 2026-11-03: feature: File.read_at
 
 - Kind: feature

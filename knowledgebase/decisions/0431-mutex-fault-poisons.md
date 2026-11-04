@@ -1,6 +1,7 @@
 # 0431: A fault inside Mutex.with poisons the mutex
 
-Status: Rejected (owner, 2026-10-30). Rollback stays: a fault inside
+Status: Rejected (owner, 2026-10-30); superseded by 0482 (Accepted, owner
+2026-11-03), which adopts this poisoning design. Rollback stays: a fault inside
 Mutex.with leaves the protected value unchanged (core 5.4), and the
 mutex is not poisoned. The Data section below showed no hot path in
 std, compiler/ or bench paying the rollback copy after 02271995b.

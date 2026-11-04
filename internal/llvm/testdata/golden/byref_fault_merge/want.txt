@@ -2,13 +2,16 @@ exit 0
 --- stdout
 before: m: log 2 seen 2 n 1 a a0 h h30 bcdefg
 steps: fault index 3 out of range for List of length 3
+poisoned true
 after: m: log 2 seen 2 n 1 a a0 h h30 bcdefg
 again: 60 m: log 5 seen 3 n 4 a a002 h h30 bcdefg
 labels: fault index 3 out of range for List of length 3
+poisoned true
 labels after: m: log 5 seen 3 n 4 a a002 h h30 bcdefg
 labels again: 6 m: log 8 seen 3 n 7 a a002 h h30 bcdefg
 walk: 23 marks 2 file 1 files 2 p: log 0 seen 0 n 0 a a h h bcdefg
 walk: fault index 2 out of range for List of length 2
+poisoned true
 walk after: marks 2 file 1 files 2 p: log 0 seen 0 n 0 a a h h bcdefg
 swap 3: y: log 0 seen 0 n 0 a a h h bcdefg | x: log 0 seen 0 n 1 a a h h bcdefg
 no swap 3: y: log 0 seen 0 n 0 a a h h bcdefg | x: log 0 seen 0 n 1 a a h h bcdefg

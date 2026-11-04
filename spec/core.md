@@ -109,6 +109,11 @@ programs for any OS with fast, structured, unambiguous feedback.
   and `xo run` neither declare nor check a `test` block, as they read no
   `_test.xo` file (decision 0348); an error in one fails `xo check` and
   `xo test`, not a build.
+- **A fault inside `Mutex.with` poisons the mutex** (5.4, decision 0482):
+  the closure's writes are no longer undone; later `with` and `with_read`
+  fault with `XO-F010` until `m.reset(v)`. An `Err` and a cancellation
+  still leave the value unchanged. A closure that changes a collection no
+  longer copies it to keep the old value for a fault.
 
 ## Changes in 0.9
 
@@ -2096,12 +2101,13 @@ never depend on it, but the time does:
   0169). `xo vet` notes it for collection elements (`XO0536`); the Map
   form has `Map.update` (`XO0532`).
 - A `Mutex.with` body with a `var` parameter gets the value moved out
-  of the mutex, but an error or fault hands the value it was given back
-  (decision 0085), so the body keeps that value alive while a later
-  point can still fail or fault: a write followed by such a point (a
-  call that can fault, an index, `?`) copies the collection it writes,
-  once per `with`. A write after the body's last such point changes the
-  value in place (`m.with(fn(var l) { l.push(x) })` does not copy).
+  of the mutex and changes it in place: a fault poisons the mutex rather
+  than restoring the value (5.4, decision 0482), so nothing keeps the
+  value it was given. An `Err` still hands that value back, and so does a
+  cancellation of a body that waits: in a body that can return `Err` or
+  waits, a write followed by a point that can fail or wait (a `?`, an
+  `Err` return, a call that can be canceled) copies the collection it
+  writes, once per `with`.
 
 ### 5.2 Mutation
 
@@ -2218,8 +2224,20 @@ fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E
 
 - The closure's return value (or error) is the result of `with`.
 - Mutations to the `var` parameter are written back when the closure returns
-  successfully. If it returns an error or faults, the protected value is left
+  successfully. If it returns an error, the protected value is left
   unchanged.
+- If a fault unwinds out of the closure, the mutex is poisoned (decision
+  0482): the writes the closure made are not undone, and no later code sees
+  them, since every later `with` and `with_read` on that mutex faults with
+  `XO-F010` until `m.reset(v)` stores a new value and clears the poison. A
+  cancellation of the task while the closure waits (on a lock, a channel, a
+  task, I/O) leaves the value unchanged and does not poison.
+  ```
+  let r = task.isolate(fn() -> Int ! () { add(cache, entry) })  // add faults inside with
+  if r.is_err() {
+    cache.reset({})                                      // poisoned until here
+  }
+  ```
 - A closure parameter declared without `var` gets a read only view.
 - Warning `XO0540`: the closure writes its `var` value and a later path can
   return `Err` (`return Err(...)`, `?`, or a call that can fail as its
@@ -3437,6 +3455,7 @@ Faults (8) that have a stable code print it in their message:
 | `XO-F007` | a real-time section allocated (6.5, native builds) |
 | `XO-F008` | shielded code under a resource budget ran past twice a ceiling (std.md 7, decision 0173) |
 | `XO-F009` | a constant read during its own initialization, through a function its initializer calls (core 3.1, decision 0332) |
+| `XO-F010` | `Mutex.with` or `with_read` on a mutex poisoned by a fault inside an earlier `with`, until `reset` (5.4, decision 0482) |
 
 ---
 

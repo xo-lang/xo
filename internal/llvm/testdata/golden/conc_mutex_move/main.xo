@@ -1,7 +1,8 @@
 // Mutex.with moves its value into a closure with a `var` parameter
 // (core 5.4), so a push in it does not copy the list (internal/arm64
-// TestMutexWithPushLinear): a fault after a change still hands back the
-// old value, and a value read out earlier stays as it was.
+// TestMutexWithPushLinear): a fault after a change poisons the mutex
+// (decision 0482) until reset gives it a value, and a value read out
+// earlier stays as it was.
 use std/task
 
 fn bad(xs: List[Int], i: Int) -> Int {
@@ -18,7 +19,9 @@ fn main(os: Os) {
       l.push(4)
     })
   })
-  os.stdio.println("fault ${r.is_err()} kept ${m.with(fn(l) { l.len() })} snap ${snap.len()}")
+  let p = task.isolate(fn() { m.with(fn(l) { l.len() }) })
+  m.reset([1, 2])
+  os.stdio.println("fault ${r.is_err()} poisoned ${p.is_err()} reset ${m.with(fn(l) { l.len() })} snap ${snap.len()}")
   for i in 0..1000 {
     m.with(fn(var l) { l.push(i) })
   }
