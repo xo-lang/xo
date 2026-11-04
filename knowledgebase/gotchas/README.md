@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [native-silent-on-freed-llrt-records.md](native-silent-on-freed-llrt-records.md): a use-after-free of a shared llrt record (a client connection) traps on wasip2 and passes silently on native, even under XO_RC_CHECK=1; a poison-and-quarantine debug free is proposed
 - [native-use-not-native.md](native-use-not-native.md): Observed 2026-11-03: norm and idna's `use native/rt` loaded native/rt as an ordinary std module (native false), so stdgen's std_sigs listed its bodyless functions and go vet ./std/rt failed; test the native/ path, not the flag alone.
 - [wasm-blocking-flush-deadlock.md](wasm-blocking-flush-deadlock.md): Observed 2026-11-03: rt9.xo's TCP close used blocking-flush, which stops every task in a wasm instance, so a peer task in the same program never read and websocket_tls_deadline hung 1 in 20; a close now flushes in the background through the scheduler's poll.
 - [shared-list-write-same-value.md](shared-list-write-same-value.md): Observed 2026-11-03: setting a flag that was already set, in a list std's ELF half shares, copied 5.75 MB of section records at link.resolve; test before a write that is often a no-op.

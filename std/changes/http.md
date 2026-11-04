@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-03: fix: the proxy's tunnel keeps the target connection until its client-to-target copy ends
+
+- Kind: fix
+- Commit: this commit
+- Found by: the Lead's review of the entry below (it avoided the path instead of fixing the lifetime)
+- Go reference: net/http/httputil reverseproxy.go handleUpgradeResponse
+- Test: golden http_reverse_proxy_ws (now an upgrade without a body source) as a wasip2 command and on arm64, LLVM and Go parity
+- Timing: none
+
+tunnel marks its client stream shared, so when the target side ends the
+stream closes only the connection's descriptor and the connection is
+freed with the client-to-target task's reference. A proxied upgrade
+goes without a body source again, like any request without a body.
+
 ## 2026-11-03: fix: http.reverse_proxy no longer writes to a freed connection after a proxied upgrade ends
 
 - Kind: fix

@@ -3391,6 +3391,10 @@ struct StreamState {
   /// the request body's source (Request.src), closed with dsrv's close
   /// (close_src)
   src_close: List[fn(Int) -> http1.BodyPart] = []
+  /// a task other than the stream's reader may write on conn (the
+  /// reverse proxy's tunnel after a 101): its end closes only the
+  /// descriptor, like a full duplex sender's (end_conn)
+  shared: Bool = false
   /// the response's trailers (decision 0433), set when its body ends
   trailers: Map[Str, Str] = {}
 }
@@ -3654,10 +3658,11 @@ fn gz_step(var s: StreamState, b: Bytes, last: Bool) -> Result[(), http.ClientEr
 
 /// Ends the stream's HTTP/1.1 exchange on r with s (hclient.CC_*): the
 /// connection to the pool when keep, else closed; with a full duplex
-/// sender (dsrv) only its descriptor closes, since the sender may still
-/// be writing on it, and the rest is freed with r (hclient.end_shared).
+/// sender (dsrv) or another writer (shared) only its descriptor closes,
+/// since the writer may still be writing on it, and the rest is freed
+/// with r's last reference (hclient.end_shared).
 fn end_conn(x: StreamState, r: rthttp.CResp, keep: Bool, s: Int) {
-  if x.dsrv.is_some() {
+  if x.dsrv.is_some() || x.shared {
     hclient.end_shared(r, s, "")
   } else {
     hclient.end_keep(r, keep, x.https, x.addr, x.name, x.roots, s, "")
@@ -4762,7 +4767,12 @@ fn tunnel(st: http.ClientStream, head: http.ResponseHead, req_up: Str) -> http.R
     return http.empty(502)
   }
   let cs = rt.cast[http.ClientStream, ClientStream](st)
-  let up_conn = cs.st.with(fn(var x: StreamState) -> rthttp.CResp? { x.conn })
+  // the client-to-target task below writes on the connection after the
+  // stream's end, which then leaves it to that task's reference (shared)
+  let up_conn = cs.st.with(fn(var x: StreamState) -> rthttp.CResp? {
+    x.shared = true
+    x.conn
+  })
   // the hand-off runs with the request's effects (websocket.xo's rule)
   handoff_response(rt.launder1(fn(h: rthttp.HConn) -> () uses net.dial {
     var text = "HTTP/1.1 101 Switching Protocols\r\n"
@@ -4897,12 +4907,9 @@ fn (p: ReverseProxy) serve(req0: http.Request, body: http.BodyReader) -> http.Re
   // a request without a body goes on without one (httputil: outreq.Body
   // = nil when ContentLength is 0): a GET then stays replayable, so a
   // pooled connection the target closed is retried on a new one
-  // (decision 0303) instead of failing as EOF. An upgrade keeps its
-  // source: the full duplex exchange it makes (dsrv) is what lets tunnel's
-  // client-to-target task write on the connection after the response
-  // ends, since end_conn then closes only its descriptor (end_shared);
-  // without it end_keep freed the connection under that task
-  let sent = if rt.cast[http.BodyReader, BodyReader](body).empty && up.is_empty() { rt.cast[http.Request, Request](out) } else { rt.cast[http.Request, Request](out).with_body_reader(body) }
+  // (decision 0303) instead of failing as EOF; an upgrade too (tunnel
+  // marks its stream shared, so the connection outlives the response)
+  let sent = if rt.cast[http.BodyReader, BodyReader](body).empty { rt.cast[http.Request, Request](out) } else { rt.cast[http.Request, Request](out).with_body_reader(body) }
   match c.open(sent) {
     Err(e) => {
       log.error("http: proxy error", {"error": e.display()})

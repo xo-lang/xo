@@ -40,6 +40,10 @@ end_conn frees the connection (hclient.end_keep) while tunnel's
 client-to-target task still writes on it: a use-after-free that
 trapped on wasip2 ("unknown handle index", http_reverse_proxy_ws as a
 command, 5 of 5) and passed silently on native, XO_RC_CHECK=1
-included. An upgrade now keeps its source. Before dropping a request's
-source, check what else its presence selects (here the duplex path and
-end_shared).
+included. The first repair kept an upgrade's source; the root fix
+(the next commit) has tunnel mark its stream shared (StreamState.shared),
+so the stream's end closes only the descriptor (end_shared) and the
+connection is freed with the task's reference, whatever path the
+request took; an upgrade then goes without a source like any bodiless
+request. Before dropping a request's source, check what else its
+presence selects (here the duplex path and end_shared).
