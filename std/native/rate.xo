@@ -157,12 +157,16 @@ fn allow_at(l: rate.Limiter, t: Time, n: Int) -> Bool {
       return true
     }
     let tokens = advance(s, t) - Float(n)
-    if tokens < 0.0 || n > s.burst {
+    var wait = 0s
+    if tokens < 0.0 {
+      wait = duration_from_tokens(s.limit, -tokens)
+    }
+    if n > s.burst || wait > 0s {
       return false
     }
     s.last = t
     s.tokens = tokens
-    s.last_event = t
+    s.last_event = add_sat(t, wait)
     true
   })
 }
