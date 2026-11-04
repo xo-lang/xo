@@ -53,6 +53,57 @@ fn (var c: Checker) need_go_value(t: Int, sp: Span, what: Str) {
   c.note(d, "a value passed to Go as `any` is a number, Bool, Str, Bytes, Duration, Time, a `use go` handle, a go.Any, or a List, Map or Option of those (decision 0412)")
 }
 
+/// XO1107 (decision 0491 B): a List, Map or Set of type t that the Go
+/// function fo receives as Go's `any` (`go.any(xs)` for an `any`
+/// parameter, or an element of a `...any` list literal) is a copy, so a
+/// change Go makes to it is not seen. Not for a function goreads.xo
+/// lists, nor with `// xo:allow XO1107 <reason>` on the line or the one
+/// above.
+fn (var c: Checker) warn_go_copy(fo: Int, t: Int, sp: Span) {
+  let r = c.resolve(t)
+  if c.is_bad(r) || c.tys[r].kind != TyKind.Named {
+    return
+  }
+  var kind = ""
+  for k in ["List", "Map", "Set"] {
+    if c.is_prelude(r, k) {
+      kind = k
+    }
+  }
+  if kind.is_empty() {
+    return
+  }
+  let key = "${c.mods[c.objs[fo].module].go_path}.${c.display_name(fo)}"
+  if go_reads_only(key) || c.allowed_here(sp, "XO1107") {
+    return
+  }
+  let d = c.warn("XO1107", sp, "Go receives a copy of this ${kind}: a change `${key}` makes to it is not seen here (core 4.4)")
+  c.note(d, "take the value Go returns, or `go.out[T]()` for a function that fills one; a call that only reads its argument: `// xo:allow XO1107 <reason>` on the line or the line above (`xo explain XO1107`)")
+}
+
+/// Whether the line of sp, or the line above it, says `xo:allow CODE
+/// <reason>` (the reason required, as vet's allow comments).
+fn (c: Checker) allowed_here(sp: Span, code: Str) -> Bool {
+  let lines = (c.files[c.cur_file].src.to_str() ?? "").split("\n")
+  let tag = "xo:allow ${code} "
+  for l in [sp.start.line - 1, sp.start.line - 2] {
+    if l < 0 || l >= lines.len() {
+      continue
+    }
+    if let Some(i) = lines[l].find(tag) {
+      if !lines[l][i + tag.len()..].trim().is_empty() {
+        return true
+      }
+    }
+  }
+  false
+}
+
+/// Whether fo is a `use go` binding's function.
+fn (c: Checker) is_go_fn(fo: Int) -> Bool {
+  fo >= 0 && c.objs[fo].module >= 0 && !c.mods[c.objs[fo].module].go_path.is_empty()
+}
+
 /// The implicit conversion: a list literal e written for parameter type
 /// pt of a Go binding's function fo, where pt is `List[go.Any]`; each
 /// element converts as `go.any(x)` would. False when the rule does not
@@ -70,6 +121,7 @@ fn (var c: Checker) go_any_list(fo: Int, e: Expr, pt: Int) -> Bool {
     for x in elems {
       let t = c.infer(x, -1)
       c.need_go_value(t, parser.expr_span(x), "an element of a list passed to Go as `...any`")
+      c.warn_go_copy(fo, t, parser.expr_span(x))
       c.set_type(x, at)
     }
     c.set_type(e, h)

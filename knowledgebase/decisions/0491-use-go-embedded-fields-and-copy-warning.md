@@ -131,3 +131,22 @@ gaps in `use go`. The lead asked for one draft covering them:
   `.ignore_copy()`-style acknowledgement as the implementation settles).
 - Spec 4.4 gets the copy rule and the embedded-field accessors.
 
+## Implementation (2026-11-04)
+
+- A: internal/gobind gen.go boundFields (binding format 35). The
+  promoted names come from a walk of the embedded structs (depth under
+  8), each resolved by types.LookupFieldOrMethod on the outer pointer
+  type, so Go's selector `h.P.Name` is the accessor's body. cmd/xo
+  TestUseGoEmbeddedFields runs a synthetic module (testdata/goproxy
+  example.com/embed): LoggedEntry's shape, a change through `entry()`
+  seen in the outer value, depth two through an unexported type, the
+  ambiguous X not bound, an embedded pointer and interface.
+- B: compiler/check goany.xo warn_go_copy, from the `...any` element
+  conversion and from `go.any(xs)` written as an `any` argument; a
+  `go.any` value made earlier and passed later is not followed. The
+  allowlist is compiler/check/goreads.xo (`PKG.name`, `PKG.Type.method`
+  by the binding's Xo names), reviewed by internal/gobind TestGoReadsList
+  (order, duplicates, and each standard library entry a Go function with
+  an interface parameter). `// xo:allow XO1107 <reason>` silences one
+  call. cmd/xo TestUseGoCopyWarning.
+

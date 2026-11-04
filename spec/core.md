@@ -1861,6 +1861,30 @@ fn main(os: Os) ! {
   `fs.file_mode_is_dir(m: UInt32) -> Bool`. A pointer receiver method is
   not bound (Xo passes a copy), and neither is one whose name a package
   function already has.
+- A Go struct's embedded fields are bound as its other fields are
+  (decision 0491 A): an exported embedded field gets a getter and a
+  setter named after it (observer.LoggedEntry's `le.entry()`,
+  `le.set_entry(v)`); an embedded struct held by value is a handle of the
+  outer value's field, so a change through it is the outer value's, as
+  Go's `&le.Entry` is; an embedded `*T` is `T?`, an embedded interface
+  its interface handle. Every field Go's selector reaches through
+  embedded structs gets accessors on the outer handle (`le.message()`,
+  `le.set_message(s)`), by Go's rules: the shallowest name wins, a name
+  two embedded fields have at one depth is ambiguous and not bound, and
+  a method or a shallower field of the name wins. Promoted methods are
+  bound as the type's own.
+- A List, Map or Set given to Go is a copy: a Go function that changes
+  its argument in place (through `any`, an interface, or a slice
+  parameter) changes the copy, and the Xo value stays as it was; take
+  the result Go returns, or use `go.out[T]()` for a function that fills
+  a value. `xo check` warns `XO1107` where one is given as Go's `any`
+  (`go.any(xs)` for an `any` parameter, or an element of a `...any`
+  list), except in a call of a function known only to read it (the
+  reviewed list in compiler/check/goreads.xo: encoding/json and
+  encoding/xml's encoders, fmt's print family, log, log/slog, zap's
+  field constructors, database/sql's query arguments, the templates'
+  `execute`), or with `// xo:allow XO1107 <reason>` on the line or the
+  line above (decision 0491 B).
 - A named Go map type (`jwt.MapClaims`, `map[string]any`) is a handle
   with `T.of(m)`, which makes one from an Xo Map (copied in), and
   `to_map()`, which copies it out; its methods and the interfaces it
@@ -3398,6 +3422,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1104` | error | checker | C header cannot be bound (not found, clang cannot read it, a `link` file is missing, or an unknown effect in its `uses`) |
 | `XO1105` | error | checker | C function exists in the header but its signature does not map to Xo, so the binding skipped it |
 | `XO1106` | error | checker | a value with no Go value passed to Go as `any`: `go.any(x)`'s argument or an element of a list literal for a `...any` parameter (decision 0412) |
+| `XO1107` | warning | checker | a List, Map or Set given to a Go function as `any` (`go.any(xs)` for an `any` parameter, or an element of a `...any` list): Go receives a copy, so a change it makes is not seen; not for a function compiler/check/goreads.xo lists as only reading, nor with `// xo:allow XO1107 <reason>` (core 4.4, decision 0491) |
 | `XO1201` | error | no GC check, checker (`use c` without `--no-gc`) | construct, std API, or effect not available on the native backends (arm64, amd64, LLVM); planned or impossible |
 | `XO1301` | error | modules | malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3) |
 | `XO1302` | error | modules | module version cannot be fetched from git or a module proxy (XO_PROXY): repository, tag, or version missing, or its xo.mod declares another path |

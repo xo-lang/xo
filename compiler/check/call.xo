@@ -1444,6 +1444,15 @@ fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, 
         if c.is_go_any_fn(ref_fo) {
           c.need_go_value(c.nat_at.get(c.expr_key(e)) ?? c.bad_ty, parser.expr_span(e), "`go.any`'s argument")
         }
+        // `go.any(xs)` written for a Go function's `any` parameter
+        if c.is_go_fn(ref_fo) && c.is_go_any(params[i].ty) {
+          if let CallExpr(args: gargs, ..) = e {
+            let gfo = (c.call_infos.get(c.expr_key(e)) ?? CallInfo{}).fn_obj
+            if gargs.len() == 1 && c.is_go_any_fn(gfo) {
+              c.warn_go_copy(ref_fo, c.nat_at.get(c.expr_key(gargs[0].value)) ?? c.bad_ty, parser.expr_span(gargs[0].value))
+            }
+          }
+        }
       }
       if params[i].is_var {
         c.require_mutable(e, "XO0502", "passing to `var` parameter `${text(params[i].name)}`")

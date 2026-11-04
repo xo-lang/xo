@@ -1,0 +1,74 @@
+// The Go functions known only to read the List, Map or Set an Xo program
+// gives them as Go's `any` (decision 0491 B, the owner's option (c)):
+// XO1107 is not reported for a call of one. A reviewed list: add a
+// function only when its documentation or code shows it never changes
+// its `any` argument in place (an encoder, a formatter, a logger's field
+// constructor, a query's arguments). Each entry is the Go package path,
+// a dot and the binding's Xo name (`Type.method` for a method), in
+// order; internal/gobind TestGoReadsList checks the order and that each
+// standard library entry names a Go function with an interface
+// parameter.
+
+/// Whether the Go function named key (`PKG.name` or `PKG.Type.method`)
+/// only reads its `any` arguments.
+fn go_reads_only(key: Str) -> Bool {
+  key is "database/sql.Conn.exec_context" |
+    "database/sql.Conn.query_context" |
+    "database/sql.Conn.query_row_context" |
+    "database/sql.DB.exec" |
+    "database/sql.DB.exec_context" |
+    "database/sql.DB.query" |
+    "database/sql.DB.query_context" |
+    "database/sql.DB.query_row" |
+    "database/sql.DB.query_row_context" |
+    "database/sql.Tx.exec" |
+    "database/sql.Tx.exec_context" |
+    "database/sql.Tx.query" |
+    "database/sql.Tx.query_context" |
+    "database/sql.Tx.query_row" |
+    "database/sql.Tx.query_row_context" |
+    "encoding/json.Encoder.encode" |
+    "encoding/json.marshal" |
+    "encoding/json.marshal_indent" |
+    "encoding/xml.Encoder.encode" |
+    "encoding/xml.marshal" |
+    "encoding/xml.marshal_indent" |
+    "fmt.append" |
+    "fmt.appendf" |
+    "fmt.appendln" |
+    "fmt.errorf" |
+    "fmt.fprint" |
+    "fmt.fprintf" |
+    "fmt.fprintln" |
+    "fmt.print" |
+    "fmt.printf" |
+    "fmt.println" |
+    "fmt.sprint" |
+    "fmt.sprintf" |
+    "fmt.sprintln" |
+    "go.uber.org/zap.SugaredLogger.debugw" |
+    "go.uber.org/zap.SugaredLogger.errorw" |
+    "go.uber.org/zap.SugaredLogger.infow" |
+    "go.uber.org/zap.SugaredLogger.warnw" |
+    "go.uber.org/zap.any" |
+    "go.uber.org/zap.reflect" |
+    "html/template.Template.execute" |
+    "html/template.Template.execute_template" |
+    "log.Logger.print" |
+    "log.Logger.printf" |
+    "log.Logger.println" |
+    "log.print" |
+    "log.printf" |
+    "log.println" |
+    "log/slog.Logger.debug" |
+    "log/slog.Logger.error" |
+    "log/slog.Logger.info" |
+    "log/slog.Logger.warn" |
+    "log/slog.any" |
+    "log/slog.debug" |
+    "log/slog.error" |
+    "log/slog.info" |
+    "log/slog.warn" |
+    "text/template.Template.execute" |
+    "text/template.Template.execute_template"
+}

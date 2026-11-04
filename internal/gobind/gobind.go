@@ -88,7 +88,9 @@ import (
 // names (xoNew_X) or a generic type's method (its type parameters): the
 // records of 33 made the Go backend write rt.xoNew_Go_io_Reader and
 // rt.T, which do not build.
-const Version = 34
+// 35 (2026-11-04): embedded struct fields and the fields they promote
+// get accessors (decision 0491 A).
+const Version = 35
 
 // Binding is one bound Go package.
 type Binding struct {

@@ -2456,12 +2456,8 @@ func (g *gen) bindHandle(h *handle) {
 		return
 	}
 	// exported fields: getters and setters
-	st := h.named.Underlying().(*types.Struct)
-	for i := 0; i < st.NumFields(); i++ {
-		fv := st.Field(i)
-		if !fv.Exported() || fv.Embedded() {
-			continue
-		}
+	for _, bf := range g.boundFields(h, depth) {
+		fv := bf.v
 		g.stats.Fields++
 		xn := xoName(snake(fv.Name()))
 		qname := h.xo + "." + xn
@@ -2482,6 +2478,22 @@ func (g *gen) bindHandle(h *handle) {
 			h.decls = append(h.decls, fmt.Sprintf("/// Go: field %s %s\nfn (recv: %s) %s() -> %s uses go", fv.Name(), g.display(fv.Type()), h.xoT, xn, c.xo))
 			fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task) %s {\n\tdefer GoBoundary(%q)\n\tv := h.P.%s\n\treturn %s\n}\n\n", h.rtT, xn, c.rt, display, fv.Name(), c.toXo("v"))
 			continue
+		}
+		if bf.alias {
+			// an embedded struct held by value: a handle of the outer
+			// struct's field (Go's &le.Entry), so a change through it is
+			// the outer value's, as Go's selector behaves (decision 0491 A)
+			if c, err := g.mapType(types.NewPointer(fv.Type()), depth); err == nil && c.hnd != nil && !h.names[xn] && !h.names["set_"+snake(fv.Name())] {
+				g.stats.FieldsMapped++
+				h.names[xn] = true
+				h.decls = append(h.decls, fmt.Sprintf("/// Go: embedded field %s (a handle of the outer value's field)\nfn (recv: %s) %s() -> %s uses go", g.display(fv.Type()), h.xoT, xn, c.xo))
+				fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task) %s {\n\tdefer GoBoundary(%q)\n\treturn %s\n}\n\n", h.rtT, xn, c.rt, display, c.toXo("&h.P."+fv.Name()))
+				sn := "set_" + snake(fv.Name())
+				h.names[sn] = true
+				h.decls = append(h.decls, fmt.Sprintf("/// Go: assigns embedded field %s (a copy of v's value)\nfn (recv: %s) %s(v: %s) uses go", fv.Name(), h.xoT, sn, c.xo))
+				fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task, a0 %s) {\n\tdefer GoBoundary(%q)\n\th.P.%s = *%s\n}\n\n", h.rtT, sn, c.rt, display, fv.Name(), c.toGo("a0"))
+				continue
+			}
 		}
 		c, err := g.mapType(fv.Type(), depth)
 		if err == nil && (h.names[xn] || h.names["set_"+snake(fv.Name())]) {
@@ -2516,6 +2528,103 @@ func (g *gen) bindHandle(h *handle) {
 		h.decls = append(h.decls, fmt.Sprintf("/// Go: new(%s), the zero value\nfn (static: %s) new() -> %s uses go", g.display(h.named), h.xo, h.xo))
 		fmt.Fprintf(&g.adapt, "func %s_new(tk *Task) %s {\n\treturn %s{P: new(%s)}\n}\n\n", h.goName, h.goName, h.goName, h.gt)
 	}
+}
+
+// boundField is a field a struct handle gets accessors for: one of its
+// own, an embedded one (alias: a struct held by value, whose getter is a
+// handle of the outer value's field), or one promoted through embedded
+// structs, which Go's selector h.P.Name reaches as it is.
+type boundField struct {
+	v     *types.Var
+	alias bool
+}
+
+// boundFields lists h's fields with accessors (decision 0491 A): its
+// exported fields, then its exported embedded fields, then every field
+// Go's selector reaches through embedded structs, resolved by
+// types.LookupFieldOrMethod so Go's rules decide (the shallowest wins;
+// two at one depth are ambiguous, a skip line; a method of the name
+// wins). A promoted field of an unexported embedded type counts when the
+// field is exported.
+func (g *gen) boundFields(h *handle, depth int) []boundField {
+	st := h.named.Underlying().(*types.Struct)
+	var out []boundField
+	own := map[string]bool{}
+	for i := 0; i < st.NumFields(); i++ {
+		fv := st.Field(i)
+		own[fv.Name()] = true
+		if fv.Exported() && !fv.Embedded() {
+			out = append(out, boundField{v: fv})
+		}
+	}
+	for i := 0; i < st.NumFields(); i++ {
+		fv := st.Field(i)
+		if !fv.Exported() || !fv.Embedded() {
+			continue
+		}
+		_, isPtr := types.Unalias(fv.Type()).(*types.Pointer)
+		_, isStruct := types.Unalias(fv.Type()).Underlying().(*types.Struct)
+		out = append(out, boundField{v: fv, alias: !isPtr && isStruct})
+	}
+	// the names below the embedded structs, in depth order
+	type cand struct {
+		name  string
+		depth int
+	}
+	var cands []cand
+	seen := map[string]bool{}
+	seenT := map[*types.TypeName]bool{}
+	level := []*types.Struct{st}
+	for d := 1; len(level) > 0 && d < 8; d++ {
+		var next []*types.Struct
+		for _, s := range level {
+			for i := 0; i < s.NumFields(); i++ {
+				f := s.Field(i)
+				if !f.Embedded() {
+					continue
+				}
+				t := types.Unalias(f.Type())
+				if p, ok := t.(*types.Pointer); ok {
+					t = types.Unalias(p.Elem())
+				}
+				n, ok := t.(*types.Named)
+				if !ok || seenT[n.Obj()] {
+					continue
+				}
+				seenT[n.Obj()] = true
+				es, ok := n.Underlying().(*types.Struct)
+				if !ok {
+					continue
+				}
+				next = append(next, es)
+				for j := 0; j < es.NumFields(); j++ {
+					ef := es.Field(j)
+					if ef.Exported() && !own[ef.Name()] && !seen[ef.Name()] {
+						seen[ef.Name()] = true
+						cands = append(cands, cand{ef.Name(), d})
+					}
+				}
+			}
+		}
+		level = next
+	}
+	sort.SliceStable(cands, func(i, j int) bool { return cands[i].depth < cands[j].depth })
+	for _, c := range cands {
+		obj, index, _ := types.LookupFieldOrMethod(types.NewPointer(h.named), false, h.named.Obj().Pkg(), c.name)
+		display := g.display(h.named) + "." + c.name
+		qname := h.xo + "." + xoName(snake(c.name))
+		switch v := obj.(type) {
+		case *types.Var:
+			if len(index) > 1 {
+				out = append(out, boundField{v: v})
+			}
+		case nil:
+			if index != nil {
+				g.skip(qname, display, skipf(catCollision, "promoted field %s is ambiguous (two embedded fields at depth %d have it)", c.name, len(index)), false)
+			}
+		}
+	}
+	return out
 }
 
 // bindNamedMap binds a named map type's conversions (jwt.MapClaims, a
