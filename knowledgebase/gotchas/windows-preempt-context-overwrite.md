@@ -44,3 +44,11 @@ match no iteration count of the loop); the loop's integers live partly in
 stack slots above rsp and its floats in xmm registers, and only the integer
 sum is ever wrong. An async-only build (XO_PREEMPT_POLLS=off) had 0 of 128,
 which may be chance at that rate.
+
+An outside data point (the owner's evaluation, 2026-11-03, a 22 CPU Windows 11
+machine, the same setup: 32 copies beside one CPU burner per core): the
+v0.36.0 release got 384 of 384 async_preempt_regs runs right, where the 8 of
+256 rate above predicts about 12 wrong sums, so the wrong sum is much rarer
+there (machine or load dependent); v0.35.0 hung in 3 of 128 runs, which
+confirms the hang fix independently. The wrong sum fix itself shipped in
+v0.38.1 (CHANGELOG v0.38.0 section).
