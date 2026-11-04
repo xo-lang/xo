@@ -1,6 +1,6 @@
 # 0496: A method that implements a visible interface is callable by name across modules
 
-Status: Proposed (Xo Lang 2, 2026-11-04, from the AWS agent's feedback log; for the owner to decide)
+Status: Accepted (owner, 2026-11-04): option (c), the prelude and derivable interfaces only; other interface methods still need `pub`. Proposed by Xo Lang 2 the same day from the AWS agent's feedback log. Implementation to follow with a spec 2.4 update and a golden.
 
 ## Context
 
