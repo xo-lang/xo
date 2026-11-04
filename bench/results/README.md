@@ -313,3 +313,4 @@
 - [json-value-direct-2026-11-04.md](json-value-direct-2026-11-04.md): json.to_value and from_value with no text (a codec per type; a tape written from the Value): jsonvalue to 0.144, from 0.757, toml encode 0.411, decode unchanged (host 1 --ab)
 - [std-twin-toml-2026-11-04.md](std-twin-toml-2026-11-04.md): toml encode 1.323 -> 0.483 of Go after json.to_value without text; decode 1.135.
 - [std-twin-bcrypt-2026-11-04.md](std-twin-bcrypt-2026-11-04.md): bcrypt state as List[UInt32] tried, worse (1.137); raw buffer needs bcrypt out of go_compiled.
+- [struct-field-hoist-2026-11-04.md](struct-field-hoist-2026-11-04.md): hoist_fields for Deflater's fields (find_match, then deflate()'s loop through write_block with a per-callee summary): no zip gain (1.004, 0.993), branches lang1-dfl and lang1-fsum parked
