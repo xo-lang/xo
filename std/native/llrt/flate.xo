@@ -508,57 +508,54 @@ fn bit_counts(freqs: List[Int], max_bits0: Int) -> List[Int] {
   if max_bits > n - 1 {
     max_bits = n - 1
   }
-  var l_level = zeros(17)
-  var l_last = zeros(17)
-  var l_char = zeros(17)
-  var l_pair = zeros(17)
-  var l_needed = zeros(17)
-  var leaf = zeros(17 * 17)
+  // one allocation for the six tables: l_level at 0, l_last at 17, l_char
+  // at 34, l_pair at 51, l_needed at 68 and leaf (17 x 17) at 85
+  var ws = zeros(85 + 17 * 17)
   var level = 1
   while level <= max_bits {
-    l_level[level] = level
-    l_last[level] = list[1]
-    l_char[level] = list[2]
-    l_pair[level] = list[0] + list[1]
-    leaf[level * 17 + level] = 2
+    ws[level] = level
+    ws[17 + level] = list[1]
+    ws[34 + level] = list[2]
+    ws[51 + level] = list[0] + list[1]
+    ws[85 + level * 17 + level] = 2
     if level == 1 {
-      l_pair[level] = MAX_I32
+      ws[51 + level] = MAX_I32
     }
     level += 1
   }
-  l_needed[max_bits] = 2 * n - 4
+  ws[68 + max_bits] = 2 * n - 4
   level = max_bits
   while true {
-    if l_pair[level] == MAX_I32 && l_char[level] == MAX_I32 {
-      l_needed[level] = 0
-      l_pair[level + 1] = MAX_I32
+    if ws[51 + level] == MAX_I32 && ws[34 + level] == MAX_I32 {
+      ws[68 + level] = 0
+      ws[51 + level + 1] = MAX_I32
       level += 1
       continue
     }
-    let prev_freq = l_last[level]
-    if l_char[level] < l_pair[level] {
-      let c = leaf[level * 17 + level] + 1
-      l_last[level] = l_char[level]
-      leaf[level * 17 + level] = c
-      l_char[level] = list[c]
+    let prev_freq = ws[17 + level]
+    if ws[34 + level] < ws[51 + level] {
+      let c = ws[85 + level * 17 + level] + 1
+      ws[17 + level] = ws[34 + level]
+      ws[85 + level * 17 + level] = c
+      ws[34 + level] = list[c]
     } else {
-      l_last[level] = l_pair[level]
+      ws[17 + level] = ws[51 + level]
       var k = 0
       while k < level {
-        leaf[level * 17 + k] = leaf[(level - 1) * 17 + k]
+        ws[85 + level * 17 + k] = ws[85 + (level - 1) * 17 + k]
         k += 1
       }
-      l_needed[l_level[level] - 1] = 2
+      ws[68 + ws[level] - 1] = 2
     }
-    l_needed[level] -= 1
-    if l_needed[level] == 0 {
-      if l_level[level] == max_bits {
+    ws[68 + level] -= 1
+    if ws[68 + level] == 0 {
+      if ws[level] == max_bits {
         break
       }
-      l_pair[l_level[level] + 1] = prev_freq + l_last[level]
+      ws[51 + ws[level] + 1] = prev_freq + ws[17 + level]
       level += 1
     } else {
-      while l_needed[level - 1] > 0 {
+      while ws[68 + level - 1] > 0 {
         level -= 1
       }
     }
@@ -567,7 +564,7 @@ fn bit_counts(freqs: List[Int], max_bits0: Int) -> List[Int] {
   var bits = 1
   var lv = max_bits
   while lv > 0 {
-    bit_count[bits] = leaf[max_bits * 17 + lv] - leaf[max_bits * 17 + lv - 1]
+    bit_count[bits] = ws[85 + max_bits * 17 + lv] - ws[85 + max_bits * 17 + lv - 1]
     bits += 1
     lv -= 1
   }
