@@ -61,3 +61,12 @@ test "CRC_TABLE is hash/crc32's slicing-by-8 table of 0xedb88320" {
   }
   expect(crc_table()) == t
 }
+
+test "the constant fixed decoder is what hdec_init builds" {
+  let a = fixed_decoder()
+  let b = fixed_decoder_built()
+  expect(a.min) == b.min
+  expect(a.chunks) == b.chunks
+  expect(a.links.len()) == b.links.len()
+  expect(a.link_mask) == b.link_mask
+}
