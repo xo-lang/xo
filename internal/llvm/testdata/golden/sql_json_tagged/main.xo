@@ -1,0 +1,52 @@
+// std/sql's `r.json[T]` on a tagged enum and on a type with its own form
+// (decision 0478): a JSONB column written with `sql.json` reads back
+// through the same decoder as `json.decode`, on the in memory driver, the
+// same on every backend.
+use std/json
+use std/sql
+
+struct Cents {
+  n: Int
+} derive Json(via: Str, to: cents_text, from: cents_of)
+
+fn cents_text(c: Cents) -> Str { "${c.n}c" }
+
+fn cents_of(s: Str) -> Cents ! Str {
+  if !s.ends_with("c") {
+    return Err("no unit in \"${s}\"")
+  }
+  let bs = s.bytes()
+  let n = Int.parse(bs[0..bs.len() - 1].to_str() ?? "") ?? return Err("not a number: \"${s}\"")
+  Ok(Cents{n: n})
+}
+
+enum Event {
+  Opened(by: Str)
+  Paid(amount: Cents)
+  Closed
+} derive Json(tag: "type", case: snake)
+
+fn describe(e: Event) -> Str {
+  match e {
+    Opened(by: b) => "opened by ${b}"
+    Paid(amount: a) => "paid ${a.n}"
+    Closed => "closed"
+  }
+}
+
+fn main(os: Os) ! {
+  let db = sql.memory("CREATE TABLE events (id SERIAL, body JSONB, price JSONB)")?
+  let evs = [Event.Opened(by: "ann"), Event.Paid(amount: Cents{n: 250}), Event.Closed]
+  for (i, e) in evs.indexed() {
+    let _r = db.exec("INSERT INTO events (body, price) VALUES ($1, $2)", [sql.json(e), sql.json(Cents{n: i * 100 + 5})])?
+  }
+  for row in db.query("SELECT * FROM events ORDER BY id")? {
+    let e = row.json[Event]("body")?
+    let p = row.json[Cents]("price")?
+    os.stdio.println("${row.int("id")?}: ${row.str("body")?} -> ${describe(e)}, price ${p.n}")
+  }
+  let _b = db.exec("INSERT INTO events (body, price) VALUES ($1, $2)", [sql.json(json.parse_value("{\"type\":\"refunded\"}")?), sql.json(json.parse_value("\"12\"")?)])?
+  let bad = db.query_one("SELECT * FROM events WHERE id = 4", [])?
+  os.stdio.println("unknown tag: ${bad.json[Event]("body").err().map(fn(e) { "${e}" }) ?? "ok"}")
+  os.stdio.println("bad price: ${bad.json[Cents]("price").err().map(fn(e) { "${e}" }) ?? "ok"}")
+}

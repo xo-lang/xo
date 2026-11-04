@@ -2,7 +2,8 @@
 // to: f, from: g)` encodes a T as the P that f makes and decodes a P at
 // the same path, then calls g, whose error's Display text becomes the
 // DecodeErr's message. It works for a struct, an enum and a newtype, and
-// wherever a Json type does: fields, List, Map, T?.
+// wherever a Json type does: fields, List, Map, T?, Patch, and a
+// tagged enum's variants.
 use std/json
 
 struct MoneyErr {
@@ -63,6 +64,18 @@ struct Leg {
   tag: Upper? = None
 } derive Json
 
+/// a partial update: Patch of a via type
+struct LegPatch {
+  amount: json.Patch[Money]
+  tag: json.Patch[Upper]
+} derive Json
+
+/// a tagged enum (stage 2) whose variants hold via values
+enum Event {
+  Paid(amount: Money, level: Level)
+  Tagged(from Upper)
+} derive Json(tag: "kind", content: "data", case: snake)
+
 struct Trip {
   legs: List[Leg]
   totals: Map[Str, Money]
@@ -88,6 +101,27 @@ fn main(os: Os) {
       Ok(v) => os.stdio.println("${s} -> ${json.encode_str(v)}")
       Err(e) => os.stdio.println("${s} -> ${e}")
     }
+  }
+  for s in ["{\"amount\":\"3.10\"}", "{\"amount\":null,\"tag\":\"q\"}", "{}", "{\"amount\":\"3.1\"}"] {
+    match json.decode[LegPatch](s.bytes()) {
+      Ok(p) => {
+        let a = p.amount.apply_to(Money{minor: 1})
+        let t = p.tag.apply_opt(Some(Upper("OLD")))
+        os.stdio.println("patch ${s} -> amount ${money_text(a)} tag ${json.encode_str(t)}")
+      }
+      Err(e) => os.stdio.println("patch ${s} -> ${e}")
+    }
+  }
+  for ev in [Event.Paid(amount: Money{minor: 250}, level: Level.High), Event.Tagged(Upper("Z"))] {
+    let s = json.encode_str(ev)
+    match json.decode[Event](s.bytes()) {
+      Ok(back) => os.stdio.println("${s} round trip ${json.encode_str(back) == s}")
+      Err(e) => os.stdio.println("${s} -> ${e}")
+    }
+  }
+  match json.decode[Event](b"{\"kind\":\"paid\",\"data\":{\"amount\":\"x\",\"level\":1}}") {
+    Ok(v) => os.stdio.println("bad event decoded: ${json.encode_str(v)}")
+    Err(e) => os.stdio.println("bad event: ${e}")
   }
   match json.decode[List[Level]](b"[9,1]") {
     Ok(ls) => os.stdio.println("levels ${json.encode_str(ls)}")

@@ -1,0 +1,126 @@
+// jsonown: decision 0478's own form cost (its measurement plan, item 1):
+// 100,000 ledger entries with two money amounts each, encoded and
+// decoded, ten times. `strfield` is the workaround before 0478 (Str fields and hand
+// conversion), `via` is `derive Json(via: Str, to:, from:)`, `value`
+// decodes json.Value fields and converts them by hand, and `none` is the
+// setup alone. Go's twin (twin.go.txt) has `via` as MarshalJSON and
+// UnmarshalJSON on a decimal type. Usage: `<program>
+// none|strfield|via|value`. Prints `<workload> <checksum>`.
+use std/json
+
+struct MoneyErr {
+  text: Str
+}
+
+fn (e: MoneyErr) display() -> Str { "invalid amount \"${e.text}\"" }
+
+struct Money {
+  minor: Int
+} derive Json(via: Str, to: money_text, from: parse_money)
+
+fn money_text(m: Money) -> Str {
+  let c = m.minor % 100
+  "${m.minor / 100}.${if c < 10 { "0" } else { "" }}${c}"
+}
+
+fn parse_money(s: Str) -> Money ! MoneyErr {
+  let dot = s.find(".") ?? return Err(MoneyErr{text: s})
+  let bs = s.bytes()
+  let w = Int.parse(bs[0..dot].to_str() ?? "") ?? return Err(MoneyErr{text: s})
+  let f = Int.parse(bs[dot + 1..bs.len()].to_str() ?? "") ?? return Err(MoneyErr{text: s})
+  if bs.len() - dot != 3 {
+    return Err(MoneyErr{text: s})
+  }
+  Ok(Money{minor: w * 100 + f})
+}
+
+struct Entry {
+  id: Int
+  account: Str
+  debit: Money
+  credit: Money
+} derive Json
+
+struct StrEntry {
+  id: Int
+  account: Str
+  debit: Str
+  credit: Str
+} derive Json
+
+struct ValEntry {
+  id: Int
+  account: Str
+  debit: json.Value
+  credit: json.Value
+} derive Json
+
+const N = 100000
+
+/// each workload runs ROUNDS times (a run of about 0.3 s)
+const ROUNDS = 10
+
+fn entries() -> List[Entry] {
+  var es: List[Entry] = []
+  for i in 0..N {
+    es.push(Entry{id: i, account: "acct-${i % 97}", debit: Money{minor: i * 7 % 100000}, credit: Money{minor: i * 13 % 100000 + 5}})
+  }
+  es
+}
+
+fn sum(es: List[Entry]) -> Int {
+  var s = 0
+  for e in es {
+    s = s + e.debit.minor + e.credit.minor
+  }
+  s
+}
+
+fn val_money(v: json.Value) -> Money {
+  match v {
+    Str(s: s) => parse_money(s) ?? e => fault("bad amount: ${e}")
+    _ => fault("not a string")
+  }
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let es = entries()
+  var out = 0
+  for _ in 0..ROUNDS {
+    out = out + work(w, es)
+  }
+  os.stdio.println("${w} ${out}")
+}
+
+fn work(w: Str, es: List[Entry]) -> Int {
+  var out = 0
+  if w == "via" {
+    let text = json.encode(es)
+    let back = json.decode[List[Entry]](text) ?? e => fault("decode: ${e}")
+    out = text.len() + sum(back)
+  } else if w == "strfield" {
+    var ss: List[StrEntry] = []
+    for e in es {
+      ss.push(StrEntry{id: e.id, account: e.account, debit: money_text(e.debit), credit: money_text(e.credit)})
+    }
+    let text = json.encode(ss)
+    let back = json.decode[List[StrEntry]](text) ?? e => fault("decode: ${e}")
+    var bs: List[Entry] = []
+    for s in back {
+      bs.push(Entry{id: s.id, account: s.account, debit: parse_money(s.debit) ?? e => fault("debit: ${e}"), credit: parse_money(s.credit) ?? e => fault("credit: ${e}")})
+    }
+    out = text.len() + sum(bs)
+  } else if w == "value" {
+    let text = json.encode(es)
+    let back = json.decode[List[ValEntry]](text) ?? e => fault("decode: ${e}")
+    var bs: List[Entry] = []
+    for v in back {
+      bs.push(Entry{id: v.id, account: v.account, debit: val_money(v.debit), credit: val_money(v.credit)})
+    }
+    out = text.len() + sum(bs)
+  } else {
+    out = es.len()
+  }
+  out
+}

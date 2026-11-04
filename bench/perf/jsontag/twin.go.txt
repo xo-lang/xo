@@ -1,0 +1,175 @@
+package main
+
+// jsontag's Go twin (decision 0478's measurement plan, item 2): the same
+// 1,000 texts decoded 1,000,000 times. encoding/json has no tagged enum:
+// `external` decodes {"say":{...}} through map[string]json.RawMessage,
+// `tagfirst` and `taglast` decode the tag through a struct with only
+// `type` and then the fields (two passes, the usual RawMessage form),
+// and `onepass` decodes once into a struct holding the tag and every
+// variant's fields, then switches on the tag (the one pass form).
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+)
+
+type Join struct {
+	Room string `json:"room"`
+	User string `json:"user"`
+}
+
+type Say struct {
+	Room string `json:"room"`
+	User string `json:"user"`
+	Text string `json:"text"`
+}
+
+type Move struct {
+	Dx   int    `json:"dx"`
+	Dy   int    `json:"dy"`
+	Note string `json:"note"`
+}
+
+type Typing struct {
+	Room  string `json:"room"`
+	User  string `json:"user"`
+	Until int    `json:"until"`
+}
+
+type Leave struct {
+	Room   string `json:"room"`
+	User   string `json:"user"`
+	Reason string `json:"reason"`
+}
+
+// All is the one pass form: every variant's fields and the tag.
+type All struct {
+	Type   string `json:"type"`
+	Room   string `json:"room"`
+	User   string `json:"user"`
+	Text   string `json:"text"`
+	Dx     int    `json:"dx"`
+	Dy     int    `json:"dy"`
+	Note   string `json:"note"`
+	Until  int    `json:"until"`
+	Reason string `json:"reason"`
+}
+
+const n = 1000000
+const distinct = 1000
+
+func fields(i int) (string, string) {
+	room := fmt.Sprintf("room-%d-general-discussion", i%37)
+	user := fmt.Sprintf("user-%d-with-a-longer-handle", i%101)
+	switch i % 5 {
+	case 0:
+		return "join", fmt.Sprintf(`"room":"%s","user":"%s","pad":"%s"`, room, user, strings.Repeat("j", 80))
+	case 1:
+		return "say", fmt.Sprintf(`"room":"%s","user":"%s","text":"message number %d %s"`, room, user, i, strings.Repeat("lorem ipsum ", 8))
+	case 2:
+		return "moved", fmt.Sprintf(`"dx":%d,"dy":%d,"note":"%s"`, i%17, -(i % 13), strings.Repeat("m", 120))
+	case 3:
+		return "typing", fmt.Sprintf(`"room":"%s","user":"%s","until":%d,"pad":"%s"`, room, user, i*1000, strings.Repeat("t", 70))
+	}
+	return "leave", fmt.Sprintf(`"room":"%s","user":"%s","reason":"%s"`, room, user, strings.Repeat("gone for the day ", 5))
+}
+
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func score(name string, raw []byte) int {
+	switch name {
+	case "join":
+		var v Join
+		must(json.Unmarshal(raw, &v))
+		return len(v.Room) + len(v.User)
+	case "say":
+		var v Say
+		must(json.Unmarshal(raw, &v))
+		return len(v.Room) + len(v.User) + len(v.Text)
+	case "moved":
+		var v Move
+		must(json.Unmarshal(raw, &v))
+		return v.Dx + v.Dy + len(v.Note)
+	case "typing":
+		var v Typing
+		must(json.Unmarshal(raw, &v))
+		return len(v.Room) + len(v.User) + v.Until%1000
+	case "leave":
+		var v Leave
+		must(json.Unmarshal(raw, &v))
+		return len(v.Room) + len(v.User) + len(v.Reason)
+	}
+	panic("unknown variant " + name)
+}
+
+func scoreAll(a *All) int {
+	switch a.Type {
+	case "join":
+		return len(a.Room) + len(a.User)
+	case "say":
+		return len(a.Room) + len(a.User) + len(a.Text)
+	case "moved":
+		return a.Dx + a.Dy + len(a.Note)
+	case "typing":
+		return len(a.Room) + len(a.User) + a.Until%1000
+	case "leave":
+		return len(a.Room) + len(a.User) + len(a.Reason)
+	}
+	panic("unknown variant " + a.Type)
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	texts := make([][]byte, 0, distinct)
+	for i := 0; i < distinct; i++ {
+		name, f := fields(i)
+		switch w {
+		case "external":
+			texts = append(texts, []byte(fmt.Sprintf(`{"%s":{%s}}`, name, f)))
+		case "taglast":
+			texts = append(texts, []byte(fmt.Sprintf(`{%s,"type":"%s"}`, f, name)))
+		default:
+			texts = append(texts, []byte(fmt.Sprintf(`{"type":"%s",%s}`, name, f)))
+		}
+	}
+	sum := 0
+	switch w {
+	case "external":
+		for i := 0; i < n; i++ {
+			var m map[string]json.RawMessage
+			must(json.Unmarshal(texts[i%distinct], &m))
+			for k, v := range m {
+				sum += score(k, v)
+			}
+		}
+	case "tagfirst", "taglast":
+		for i := 0; i < n; i++ {
+			t := texts[i%distinct]
+			var h struct {
+				Type string `json:"type"`
+			}
+			must(json.Unmarshal(t, &h))
+			sum += score(h.Type, t)
+		}
+	case "onepass":
+		for i := 0; i < n; i++ {
+			var a All
+			must(json.Unmarshal(texts[i%distinct], &a))
+			sum += scoreAll(&a)
+		}
+	default:
+		for _, t := range texts {
+			sum += len(t)
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

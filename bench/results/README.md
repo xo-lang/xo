@@ -301,3 +301,4 @@
 - [std-twin-netip-2026-11-03.md](std-twin-netip-2026-11-03.md): host rows for std/netip (1.88, 1.79 of Go's wall) before decision 0485.
 - [std-twin-time-2026-11-03.md](std-twin-time-2026-11-03.md): std/time parse after integer field codes: 0.815 of before on host 2 (A/B); the Go row waits for host 1
 - [mutex-poison-2026-11-03.md](mutex-poison-2026-11-03.md): decision 0482, Mutex.with without the copy: a 1M element list written 20,000 times went from about 9 s to 0.00 s (Mac, same checksum); cookiejar --ab within noise on linux/arm64.
+- [json-own-form-tagged-2026-11-03.md](json-own-form-tagged-2026-11-03.md): decision 0478 stage 4: own form (via) and tagged enum cost against the workarounds and Go twins, code size, correctness, identity.

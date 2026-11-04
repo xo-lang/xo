@@ -8,5 +8,12 @@ round trip true
 {"legs":[],"totals":{"usd":"x"}} -> at $.totals.usd: invalid amount "x"
 {"legs":[{"amount":"1.00","level":4}],"totals":{}} -> at $.legs[0].level: no level 4
 {"legs":[{"amount":12}],"totals":{}} -> at $.legs[0].amount: expected string
+patch {"amount":"3.10"} -> amount 3.10 tag "OLD"
+patch {"amount":null,"tag":"q"} -> amount 0.01 tag "Q"
+patch {} -> amount 0.01 tag "OLD"
+patch {"amount":"3.1"} -> at $.amount: invalid amount "3.1"
+{"kind":"paid","data":{"amount":"2.50","level":9}} round trip true
+{"kind":"tagged","data":"Z"} round trip true
+bad event: at $.data.amount: invalid amount "x"
 levels [9,1]
 --- stderr

@@ -1,0 +1,5 @@
+# twincheck: jsonown: four workloads (none is the setup alone), the same names on both sides.
+- - none
+- - strfield
+- - via
+- - value

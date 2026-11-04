@@ -1,0 +1,35 @@
+// jsonsize: decision 0478's code size (its measurement plan, item 3): a
+// 20 variant enum, internally tagged; its twin is ../external20.
+use std/json
+
+enum Msg {
+  V0(a0: Int, b0: Str)
+  V1(a1: Int, b1: Str)
+  V2(a2: Int, b2: Str)
+  V3(a3: Int, b3: Str)
+  V4(a4: Int, b4: Str)
+  V5(a5: Int, b5: Str)
+  V6(a6: Int, b6: Str)
+  V7(a7: Int, b7: Str)
+  V8(a8: Int, b8: Str)
+  V9(a9: Int, b9: Str)
+  V10(a10: Int, b10: Str)
+  V11(a11: Int, b11: Str)
+  V12(a12: Int, b12: Str)
+  V13(a13: Int, b13: Str)
+  V14(a14: Int, b14: Str)
+  V15(a15: Int, b15: Str)
+  V16(a16: Int, b16: Str)
+  V17(a17: Int, b17: Str)
+  V18(a18: Int, b18: Str)
+  V19(a19: Int, b19: Str)
+} derive Json(tag: "type", case: snake)
+
+fn main(os: Os) uses stdio, env {
+  let n = os.env.args().len()
+  let s = json.encode_str(Msg.V3(a3: n, b3: "x"))
+  match json.decode[Msg](s.bytes()) {
+    Ok(m) => os.stdio.println(json.encode_str(m))
+    Err(e) => os.stdio.println("${e}")
+  }
+}

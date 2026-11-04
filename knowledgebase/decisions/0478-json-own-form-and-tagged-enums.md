@@ -8,7 +8,11 @@ item, with its measurement plan. Stage 1, variant wire names (N1 and
 2, the tagged forms (B1, `tag:` and `content:`), shipped 2026-11-03
 (golden json_tagged_enum, XO0431); stage 3, the own form (A1, `via:`
 on a struct, enum or newtype), shipped 2026-11-03 (golden json_via,
-XO0432, XO0433); next the measurements (stage 4).
+XO0432, XO0433); stage 4, the measurements, done 2026-11-04
+(bench/results/json-own-form-tagged-2026-11-03.md: via 0.923 of the
+Str field workaround with 0.68 of its peak memory, Xo/Go 0.21 for via
+and 0.11 to 0.24 for the tagged decodes on host 1; tagged against
+external 1.089, a follow-up; identity 0 of 137 differing).
 
 ## Context
 

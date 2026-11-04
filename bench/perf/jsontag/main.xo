@@ -1,0 +1,100 @@
+// jsontag: decision 0478's tagged decode cost (its measurement plan,
+// item 2): 1,000,000 chat messages of five variants, about 200 bytes
+// each, decoded one message at a time (1,000 distinct texts, cycled), as
+// a hub decodes frames. `external` is the external form
+// (`{"say":{...}}`), `tagfirst` and `taglast` are `derive Json(tag:
+// "type")` with the tag before or after the fields, `onepass` is
+// `tagfirst` again (Xo has one decoder; Go's twin uses it for a one
+// pass decode into a struct of every variant's fields, against its two
+// pass RawMessage form in `tagfirst` and `taglast`), and `none` is the setup alone. Usage:
+// `<program> none|external|tagfirst|taglast|onepass`. Prints `<workload>
+// <checksum>`; the twin prints the same.
+use std/json
+
+struct Move {
+  dx: Int
+  dy: Int
+  note: Str
+} derive Json
+
+enum Ext {
+  Join(room: Str, user: Str)
+  Say(room: Str, user: Str, text: Str)
+  Moved(from Move)
+  Typing(room: Str, user: Str, until: Int)
+  Leave(room: Str, user: Str, reason: Str)
+} derive Json(case: snake)
+
+enum Tag {
+  Join(room: Str, user: Str)
+  Say(room: Str, user: Str, text: Str)
+  Moved(from Move)
+  Typing(room: Str, user: Str, until: Int)
+  Leave(room: Str, user: Str, reason: Str)
+} derive Json(tag: "type", case: snake)
+
+const N = 1000000
+const DISTINCT = 1000
+
+/// message i's variant name and its fields' JSON (without braces)
+fn fields(i: Int) -> (Str, Str) {
+  let room = "room-${i % 37}-general-discussion"
+  let user = "user-${i % 101}-with-a-longer-handle"
+  match i % 5 {
+    0 => ("join", "\"room\":\"${room}\",\"user\":\"${user}\",\"pad\":\"${"j".repeat(80)}\"")
+    1 => ("say", "\"room\":\"${room}\",\"user\":\"${user}\",\"text\":\"message number ${i} ${"lorem ipsum ".repeat(8)}\"")
+    2 => ("moved", "\"dx\":${i % 17},\"dy\":${-(i % 13)},\"note\":\"${"m".repeat(120)}\"")
+    3 => ("typing", "\"room\":\"${room}\",\"user\":\"${user}\",\"until\":${i * 1000},\"pad\":\"${"t".repeat(70)}\"")
+    _ => ("leave", "\"room\":\"${room}\",\"user\":\"${user}\",\"reason\":\"${"gone for the day ".repeat(5)}\"")
+  }
+}
+
+fn score_tag(m: Tag) -> Int {
+  match m {
+    Join(room: r, user: u) => r.len() + u.len()
+    Say(room: r, user: u, text: t) => r.len() + u.len() + t.len()
+    Moved(mv) => mv.dx + mv.dy + mv.note.len()
+    Typing(room: r, user: u, until: n) => r.len() + u.len() + n % 1000
+    Leave(room: r, user: u, reason: x) => r.len() + u.len() + x.len()
+  }
+}
+
+fn score_ext(m: Ext) -> Int {
+  match m {
+    Join(room: r, user: u) => r.len() + u.len()
+    Say(room: r, user: u, text: t) => r.len() + u.len() + t.len()
+    Moved(mv) => mv.dx + mv.dy + mv.note.len()
+    Typing(room: r, user: u, until: n) => r.len() + u.len() + n % 1000
+    Leave(room: r, user: u, reason: x) => r.len() + u.len() + x.len()
+  }
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var texts: List[Bytes] = []
+  for i in 0..DISTINCT {
+    let (name, f) = fields(i)
+    texts.push(match w {
+      "external" => "{\"${name}\":{${f}}}"
+      "taglast" => "{${f},\"type\":\"${name}\"}"
+      _ => "{\"type\":\"${name}\",${f}}"
+    }.bytes())
+  }
+  var sum = 0
+  if w == "external" {
+    for i in 0..N {
+      let m = json.decode[Ext](texts[i % DISTINCT]) ?? e => fault("decode: ${e}")
+      sum = sum + score_ext(m)
+    }
+  } else if w != "none" {
+    for i in 0..N {
+      let m = json.decode[Tag](texts[i % DISTINCT]) ?? e => fault("decode: ${e}")
+      sum = sum + score_tag(m)
+    }
+  } else {
+    for t in texts {
+      sum = sum + t.len()
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

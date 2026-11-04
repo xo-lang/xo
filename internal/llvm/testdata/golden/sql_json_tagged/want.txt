@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+1: {"type":"opened","by":"ann"} -> opened by ann, price 5
+2: {"type":"paid","amount":"250c"} -> paid 250, price 105
+3: {"type":"closed"} -> closed, price 205
+unknown tag: column body: at $.type: unknown variant `refunded` of enum Event
+bad price: column price: at $: no unit in "12"
+--- stderr

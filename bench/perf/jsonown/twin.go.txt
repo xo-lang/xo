@@ -1,0 +1,153 @@
+package main
+
+// jsonown's Go twin (decision 0478's measurement plan, item 1): the same
+// ledger, `via` as MarshalJSON and UnmarshalJSON on a decimal type,
+// `strfield` as string fields converted by hand, `value` as any fields
+// converted by hand.
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
+
+type Money struct{ Minor int }
+
+func moneyText(m Money) string {
+	c := m.Minor % 100
+	z := ""
+	if c < 10 {
+		z = "0"
+	}
+	return fmt.Sprintf("%d.%s%d", m.Minor/100, z, c)
+}
+
+func parseMoney(s string) (Money, error) {
+	dot := strings.Index(s, ".")
+	if dot < 0 || len(s)-dot != 3 {
+		return Money{}, fmt.Errorf("invalid amount %q", s)
+	}
+	w, err := strconv.Atoi(s[:dot])
+	if err != nil {
+		return Money{}, fmt.Errorf("invalid amount %q", s)
+	}
+	f, err := strconv.Atoi(s[dot+1:])
+	if err != nil {
+		return Money{}, fmt.Errorf("invalid amount %q", s)
+	}
+	return Money{Minor: w*100 + f}, nil
+}
+
+func (m Money) MarshalJSON() ([]byte, error) { return json.Marshal(moneyText(m)) }
+
+func (m *Money) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	v, err := parseMoney(s)
+	if err != nil {
+		return err
+	}
+	*m = v
+	return nil
+}
+
+type Entry struct {
+	ID      int    `json:"id"`
+	Account string `json:"account"`
+	Debit   Money  `json:"debit"`
+	Credit  Money  `json:"credit"`
+}
+
+type StrEntry struct {
+	ID      int    `json:"id"`
+	Account string `json:"account"`
+	Debit   string `json:"debit"`
+	Credit  string `json:"credit"`
+}
+
+type ValEntry struct {
+	ID      int    `json:"id"`
+	Account string `json:"account"`
+	Debit   any    `json:"debit"`
+	Credit  any    `json:"credit"`
+}
+
+const n = 100000
+const rounds = 10
+
+func sum(es []Entry) int {
+	s := 0
+	for _, e := range es {
+		s += e.Debit.Minor + e.Credit.Minor
+	}
+	return s
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func valMoney(v any) Money {
+	s, ok := v.(string)
+	if !ok {
+		panic(errors.New("not a string"))
+	}
+	return must(parseMoney(s))
+}
+
+func work(w string, es []Entry) int {
+	switch w {
+	case "via":
+		text := must(json.Marshal(es))
+		var back []Entry
+		must(0, json.Unmarshal(text, &back))
+		return len(text) + sum(back)
+	case "strfield":
+		ss := make([]StrEntry, 0, len(es))
+		for _, e := range es {
+			ss = append(ss, StrEntry{e.ID, e.Account, moneyText(e.Debit), moneyText(e.Credit)})
+		}
+		text := must(json.Marshal(ss))
+		var back []StrEntry
+		must(0, json.Unmarshal(text, &back))
+		bs := make([]Entry, 0, len(back))
+		for _, s := range back {
+			bs = append(bs, Entry{s.ID, s.Account, must(parseMoney(s.Debit)), must(parseMoney(s.Credit))})
+		}
+		return len(text) + sum(bs)
+	case "value":
+		text := must(json.Marshal(es))
+		var back []ValEntry
+		must(0, json.Unmarshal(text, &back))
+		bs := make([]Entry, 0, len(back))
+		for _, v := range back {
+			bs = append(bs, Entry{v.ID, v.Account, valMoney(v.Debit), valMoney(v.Credit)})
+		}
+		return len(text) + sum(bs)
+	}
+	return len(es)
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	var es []Entry
+	for i := 0; i < n; i++ {
+		es = append(es, Entry{i, fmt.Sprintf("acct-%d", i%97), Money{i * 7 % 100000}, Money{i*13%100000 + 5}})
+	}
+	out := 0
+	for r := 0; r < rounds; r++ {
+		out += work(w, es)
+	}
+	fmt.Printf("%s %d\n", w, out)
+}

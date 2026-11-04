@@ -1,0 +1,47 @@
+// jsonsize: the ledger DTO with Str fields converted by hand, the
+// workaround before decision 0478; its twin is ../ledger_via.
+use std/json
+
+struct Money {
+  minor: Int
+}
+
+fn money_text(m: Money) -> Str { "${m.minor / 100}.${m.minor % 100}" }
+
+fn parse_money(s: Str) -> Money ! Str {
+  let dot = s.find(".") ?? return Err("no dot")
+  let bs = s.bytes()
+  let a = Int.parse(bs[0..dot].to_str() ?? "") ?? return Err("whole")
+  let b = Int.parse(bs[dot + 1..bs.len()].to_str() ?? "") ?? return Err("cents")
+  Ok(Money{minor: a * 100 + b})
+}
+
+struct Entry {
+  id: Int
+  debit: Money
+  credit: Money
+}
+
+struct WireEntry {
+  id: Int
+  debit: Str
+  credit: Str
+} derive Json
+
+fn main(os: Os) uses stdio, env {
+  let n = os.env.args().len()
+  let es = [Entry{id: n, debit: Money{minor: 1234}, credit: Money{minor: 5}}]
+  let s = json.encode_str(es.map(fn(e) { WireEntry{id: e.id, debit: money_text(e.debit), credit: money_text(e.credit)} }))
+  match json.decode[List[WireEntry]](s.bytes()) {
+    Ok(ws) => {
+      var back: List[Entry] = []
+      for w in ws {
+        let d = parse_money(w.debit) ?? e => fault(e)
+        let c = parse_money(w.credit) ?? e => fault(e)
+        back.push(Entry{id: w.id, debit: d, credit: c})
+      }
+      os.stdio.println("${back.len()} ${back[0].debit.minor}")
+    }
+    Err(e) => os.stdio.println("${e}")
+  }
+}

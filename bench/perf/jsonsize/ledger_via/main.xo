@@ -1,0 +1,32 @@
+// jsonsize: the ledger DTO with `derive Json(via: Str)` (decision 0478
+// item 3); its twin is ../ledger_str, the Str field workaround.
+use std/json
+
+struct Money {
+  minor: Int
+} derive Json(via: Str, to: money_text, from: parse_money)
+
+fn money_text(m: Money) -> Str { "${m.minor / 100}.${m.minor % 100}" }
+
+fn parse_money(s: Str) -> Money ! Str {
+  let dot = s.find(".") ?? return Err("no dot")
+  let bs = s.bytes()
+  let a = Int.parse(bs[0..dot].to_str() ?? "") ?? return Err("whole")
+  let b = Int.parse(bs[dot + 1..bs.len()].to_str() ?? "") ?? return Err("cents")
+  Ok(Money{minor: a * 100 + b})
+}
+
+struct Entry {
+  id: Int
+  debit: Money
+  credit: Money
+} derive Json
+
+fn main(os: Os) uses stdio, env {
+  let n = os.env.args().len()
+  let s = json.encode_str([Entry{id: n, debit: Money{minor: 1234}, credit: Money{minor: 5}}])
+  match json.decode[List[Entry]](s.bytes()) {
+    Ok(es) => os.stdio.println("${es.len()} ${es[0].debit.minor}")
+    Err(e) => os.stdio.println("${e}")
+  }
+}
