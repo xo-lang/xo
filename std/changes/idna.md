@@ -10,3 +10,12 @@
 - Cost and timing: bench/results/std-idna-size-2026-11-03.md (size beside Go's, verdict) and bench/results/std-twin-rows16-2026-11-03.md (timing)
 
 `idna.to_ascii`, `idna.to_unicode`, `idna.Profile`, `idna.IdnaErr`, `idna.unicode_version` (spec/std.md 61). Plain ASCII names (letters, digits, hyphen, dot) skip the table.
+
+## 2026-11-03: perf: ASCII index, in place decoding, Punycode and plain ASCII fast paths
+
+- Kind: perf
+- Commit: 1e5f98fe6, 45cac086e, f0b7c8596, 277420e69
+- Test: the corpus above, unchanged (arm64, LLVM, Go backend)
+- Timing: host 1, every workload at or faster than x/net/idna (mixed 0.94, long 0.94, map 0.91, enc 0.98, dec 0.96, ascii 0.71): bench/results/std-twin-idna-2026-11-03.md, section "After the ASCII skip and rt.cast"
+
+Runes below U+80 index their range directly (128 bytes), `validate_and_map` and `validate_label` decode UTF-8 in place (no rune list per label), Punycode writes into a BytesBuilder (a string per rune before), its output Str is not revalidated (`rt.cast`), and plain ASCII runes skip the table.

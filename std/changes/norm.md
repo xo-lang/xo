@@ -46,6 +46,6 @@ For NFC and NFKC the segment loop starts a run only at a rune from U+C0 that NFC
 - Kind: perf
 - Commit: this commit
 - Test: the corpus above (arm64, LLVM, Go backend)
-- Timing: Mac iteration (not evidence): NFD 143 to 127 ms (x/text 118), NFC 98 to 85 (89)
+- Timing: host 1 (bench/results/std-twin-norm-2026-11-03.md, section "After rt.cast"): NFC 0.74, NFD 0.925, NFKC 0.70 of x/text, all faster; Mac iteration before: NFD 143 to 127 ms
 
 `normalize` converts its output bytes (valid UTF-8 by construction: normalized runes of valid input) to a Str with `rt.cast[Bytes, Str]`, as html and csv do, without the validation pass `to_str` makes. The Go backend lowers it to `rt.Rt_cast` in std/rt/str.go: Bytes is an immutable string there, so the conversion is free (no copy, no unsafe).

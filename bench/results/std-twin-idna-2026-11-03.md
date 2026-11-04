@@ -42,3 +42,18 @@ Workloads in bench/perf/idna: `map` ToUnicode of 8 composed non-ASCII names (map
 | dec | 14.28 | 14.14 | 0.99 | 0.98-1.00 | 1.29 |
 
 `lookup` was half of the `map` profile (a binary search per rune); runes below U+80 now index their range directly (128 bytes of table). mixed is at 1.05, long and dec are at or faster than Go, enc 1.10 and map 1.20 remain. Against ADR 0461 (at most about 1.05): ascii, long, dec, nfcmap and none are Proven on this set; mixed is at the line (interval 1.04-1.06); enc and map are not.
+
+## After the ASCII skip and rt.cast (277420e69; host 1, n=15)
+
+| workload | Go ms | Xo ms | ratio | interval | before (ab8) |
+|---|---|---|---|---|---|
+| none | 0.666 | 0.371 | 0.56 | 0.52-0.62 | 0.52 |
+| ascii | 26.87 | 19.01 | 0.71 | 0.67-0.71 | 0.75 |
+| mixed | 21.49 | 20.22 | 0.94 | 0.94-0.95 | 1.05 |
+| long | 5.643 | 5.281 | 0.94 | 0.90-0.95 | 0.975 |
+| map | 4.432 | 4.023 | 0.91 | 0.88-0.93 | 1.20 |
+| nfcmap | 15.49 | 6.799 | 0.44 | 0.43-0.45 | 0.57 |
+| enc | 9.712 | 9.526 | 0.98 | 0.94-1.00 | 1.10 |
+| dec | 14.33 | 13.8 | 0.96 | 0.95-0.98 | 0.99 |
+
+Every workload is at or faster than golang.org/x/net/idna (enc is within noise of 1.0): Proven per ADR 0461. Between ab8 and ab10: `rt.cast` for the Punycode output and `validate_and_map` skipping the table for plain ASCII runes.
