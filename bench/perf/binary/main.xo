@@ -1,0 +1,28 @@
+// binary: std/binary against Go's encoding/binary (twin.go.txt): fixed width
+// big and little endian puts and gets, and uvarint/varint round trips, over
+// 1,000,000 values. Usage: `<program> none|fixed|varint`. Prints `<workload>
+// <checksum>`; the twin prints the same.
+use std/binary
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  for i in 0..1000000 {
+    let v = i * 2654435761 % 4294967296
+    if w == "fixed" {
+      let a = binary.u32_be(v)
+      let b = binary.u64_le(v * 3)
+      let c = binary.u16_be(v & 65535)
+      sum += binary.get_u32_be(a, 0) % 1000 + binary.get_u64_le(b, 0) % 1000 + binary.get_u16_be(c, 0) % 1000
+    } else if w == "varint" {
+      let a = binary.uvarint(v)
+      let b = binary.varint(v - 2147483648)
+      let ra = binary.get_uvarint(a, 0) ?? (0, 0)
+      let rb = binary.get_varint(b, 0) ?? (0, 0)
+      sum += ra.0 % 1000 + ra.1 + rb.0 % 1000 + rb.1
+    } else {
+      sum += v % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
