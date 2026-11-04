@@ -1308,7 +1308,9 @@ pub fn free_hold(h: Int) {
 /// that looks valid (descriptor 0 is standard input; on wasm address 0
 /// is memory). Decision 0484.
 pub fn retire(p: Int, n: Int) {
-  let r = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  // the head with acquire, as thp_mode: other threads may push records
+  // (thread_heap's release store; gotchas/heap-list-head-is-newest-record.md)
+  let r = rt.slot_load(rt.static_word(W_HEAPS), 0, ACQUIRE)
   if r == 0 || rt.mem_load(r, H_FQ, 8) == 0 {
     rt.mem_set(p, 0, n)
     return
@@ -1344,7 +1346,9 @@ fn written_after_free() {
 /// XO_FREE_CHECK at the program's end (entry.xo finish): every record's
 /// held blocks checked as an eviction checks one (free_hold).
 pub fn free_check_end() {
-  var r = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  // with acquire: a pool thread still starting may push its record now
+  // (TSan, conc_unwind on linux/arm64, 2026-11-03)
+  var r = rt.slot_load(rt.static_word(W_HEAPS), 0, ACQUIRE)
   while r != 0 {
     let ring = rt.mem_load(r, H_FQ, 8)
     if ring != 0 {

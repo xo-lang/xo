@@ -31,3 +31,10 @@ by `thp_mode` with acquire.
 **Since decision 0469 (2026-11-03):** the main thread's branch in `reserve` is gone (the
 main record opens by halves like every other), so `is_main_record` and its test were
 removed; the lesson stands for any code that picks one record out of the list.
+
+**Third race, 2026-11-03 (Xo Lang 2, linux/arm64 host 2, TSan):**
+`free_check_end`, which `entry.finish` runs at exit (inlined into
+`x.entry.main`), and `retire` read the head with a plain load while a pool
+thread still starting (`pool.defer_wake`) pushed its record:
+TestGoldenTasks/conc_unwind in internal/llvm. Both now load it with acquire,
+as `thp_mode` does; every other reader holds `hlock` or runs at startup.
