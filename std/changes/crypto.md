@@ -14,6 +14,7 @@ A SHA-224, SHA-256, SHA-384 or SHA-512 digest pushed its zero padding an
 8 byte word at a time and its digest a word a call, each a capacity
 check; the padding is now one append from a constant and the digest four
 words a call, as SHA-1's since the same day.
+
 ## 2026-11-03: perf: SHA-512 and SHA-384 with arm64's SHA512 instructions
 
 - Kind: perf
