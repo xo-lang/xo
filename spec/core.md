@@ -781,6 +781,15 @@ enum Color: Str { Red, Green, Blue }       // "Red", "Green", "Blue"
   `Level.Warn` is `"warn"`. A value no variant has is a decode error that
   names the enum and the value. An enum without a value type keeps the
   encoding `"Variant"`.
+- Variant names on the wire (decision 0478): `derive Json(case: snake)`
+  on an enum (also `camel`, `pascal`, `kebab`) converts every variant's
+  name, split into words at its capitals (`JoinRoom` is `join_room`,
+  `HTTPError` `http_error`), and its fields' keys as 2.2's rule does for
+  a struct. A variant may name its own, `Chat as "chat.message"(body:
+  Str)`, which always wins. Decoding reads only the wire names. An
+  unknown argument or case is `XO0413`, an empty name `XO0412`, two
+  variants with one name `XO0411`, and a variant wire name on an enum
+  without `derive Json` the warning `XO0414`.
 
 ### 2.4 Interfaces
 
@@ -3761,7 +3770,7 @@ Invariant   = "invariant" Expr .
 Derive      = "derive" DeriveItem { "," DeriveItem } .
 DeriveItem  = QualName [ "(" ident ":" ident { "," ident ":" ident } ")" ] .
 EnumDecl    = "enum" ident [ TypeParams ] "{" { Variant } "}" [ Derive ] .
-Variant     = { DocComment } ident [ "(" VField { "," VField } ")" ] .
+Variant     = { DocComment } ident [ "as" ( string | rawstring ) ] [ "(" VField { "," VField } ")" ] .
 VField      = ident ":" Type | "from" Type .
 IfaceDecl   = "interface" ident [ TypeParams ] "{" { FnSig } "}" .
 TypeDecl    = "type" ident [ TypeParams ] ( "=" Type | "struct" "(" Type ")" [ Derive ] ) .

@@ -525,10 +525,11 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
         continue
       }
       let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
+      let wn = json_key_text(check.variant_json_name(vo))
       if vo.fields.is_empty() {
-        b.retv(b.lit(acc, "\"${vname}\""))
+        b.retv(b.lit(acc, "\"${wn}\""))
       } else {
-        var a = b.lit(acc, "{\"${vname}\":")
+        var a = b.lit(acc, "{\"${wn}\":")
         if vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty()) {
           let ft = b.m.types[t].variants[vi].fields[0].ty
           let p = b.add(Op.Payload, ft, Aux.P(tag: vi, field: 0), [v])
@@ -541,7 +542,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
               a = b.lit(a, ",")
             }
             let ft = b.m.types[t].variants[vi].fields[fi].ty
-            let l = b.lit(a, "\"${check.text(f.name)}\":")
+            let l = b.lit(a, "\"${json_key_text(check.vfield_json_key(f))}\":")
             let p = b.add(Op.Payload, ft, Aux.P(tag: vi, field: fi), [v])
             a = b.json_sub(l, p, b.c.subst(f.ty, sb))
           }
@@ -1138,8 +1139,9 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       if vi < 0 {
         continue
       }
-      let (no, join3) = b.if_then_begin(b.call("str.eq", bt, "", [nm, b.const_str(vname)]))
-      b.dec_variant(d, t, vi, vname, vo, sb, pay, has)
+      let wn = check.text(check.variant_json_name(vo))
+      let (no, join3) = b.if_then_begin(b.call("str.eq", bt, "", [nm, b.const_str(wn)]))
+      b.dec_variant(d, t, vi, wn, vo, sb, pay, has)
       b.if_then_end(no, join3)
     }
     let p = b.const_str("")
@@ -1179,7 +1181,7 @@ fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vo: check.V
   b.if_then_end(no2, join2)
   var fs: List[JField] = []
   for (fi, f) in vo.fields.indexed() {
-    fs.push(JField{name: check.text(f.name), key: check.text(f.name), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
+    fs.push(JField{name: check.text(f.name), key: check.text(check.vfield_json_key(f)), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
   }
   let vals = b.dec_fields(d, pay, ".${vname}", fs, false)
   b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), vals))

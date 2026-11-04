@@ -3,7 +3,9 @@
 Status: Accepted as proposed (owner, 2026-11-03, through the lead): A1
 (the typed proxy), B1 (`tag:` and `content:`), N1 (variant wire names),
 S2 (SqlRow unchanged). Xo Lang 2 implements it after the HTTP client pool
-item, with its measurement plan.
+item, with its measurement plan. Stage 1, variant wire names (N1 and
+`case:` on enums), shipped 2026-11-03 (golden json_variant_names); next
+the tagged form (B1), then the own form (A1), then the measurements.
 
 ## Context
 

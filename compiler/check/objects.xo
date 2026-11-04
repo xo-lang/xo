@@ -62,6 +62,8 @@ pub struct VFieldInfo {
   pub ty: Int
   pub line: Int = 0
   pub col: Int = 0
+  /// its JSON key under the enum's `case:` (decision 0478)
+  pub json_key: Bytes = b""
 }
 
 /// An enum variant.
@@ -76,6 +78,9 @@ pub struct VariantInfo {
   /// A valued enum's value (decision 0269): ival for `Int`, sval for `Str`.
   pub ival: Int = 0
   pub sval: Bytes = b""
+  /// its JSON name: `as "name"`, else its name under the enum's `case:`
+  /// (decision 0478)
+  pub json_name: Bytes = b""
 }
 
 /// A declared parameter of a function.

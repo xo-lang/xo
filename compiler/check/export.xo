@@ -78,7 +78,7 @@ pub struct StdFileRec {
   pub ranges: List[parser.DeclRange] = []
 }
 
-const EXPORT_VERSION = "xo std export v5 (declaration ranges in the file records, rare object fields as lists)"
+const EXPORT_VERSION = "xo std export v6 (variant JSON names, decision 0478)"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {
@@ -375,10 +375,12 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
       w.sv(vf.ty)
       w.uv(vf.line)
       w.uv(vf.col)
+      w.bytes(vf.json_key)
     }
     w.bool(v.unit)
     w.uv(v.line)
     w.uv(v.col)
+    w.bytes(v.json_name)
   }
   w.ints(x.iface_meths)
   w.sv(x.target)
@@ -499,9 +501,9 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
       if !r.ok {
         break
       }
-      vfs.push(VFieldInfo{name: r.bytes(), from: r.bool(), ty: r.sv(), line: r.uv(), col: r.uv()})
+      vfs.push(VFieldInfo{name: r.bytes(), from: r.bool(), ty: r.sv(), line: r.uv(), col: r.uv(), json_key: r.bytes()})
     }
-    x.variants.push(VariantInfo{name: name, index: index, fields: vfs, unit: r.bool(), line: r.uv(), col: r.uv()})
+    x.variants.push(VariantInfo{name: name, index: index, fields: vfs, unit: r.bool(), line: r.uv(), col: r.uv(), json_name: r.bytes()})
   }
   x.iface_meths = r.ints()
   x.target = r.sv()

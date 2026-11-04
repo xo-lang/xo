@@ -262,7 +262,7 @@ fn (var g: Gen) gen_json_enum(t: Int) {
   g.pl("\tswitch v.Tag {")
   for (vi, v) in variants.indexed() {
     g.pl("\tcase ${v.index + 1}:")
-    let vname = check.text(v.name)
+    let vname = check.text(check.variant_json_name(v))
     if v.fields.is_empty() {
       g.pl("\t\tw.Str(${vname.quote()})")
       continue
@@ -274,7 +274,7 @@ fn (var g: Gen) gen_json_enum(t: Int) {
     } else {
       g.pl("\t\tw.ObjStart()")
       for (i, f) in v.fields.indexed() {
-        g.pl("\t\tw.Field(${check.text(f.name).quote()})\n\t\t${g.json_enc_of(f.ty, "a." + g.vfield_name(f, i))}")
+        g.pl("\t\tw.Field(${check.text(check.vfield_json_key(f)).quote()})\n\t\t${g.json_enc_of(f.ty, "a." + g.vfield_name(f, i))}")
       }
       g.pl("\t\tw.ObjEnd()")
     }
@@ -287,7 +287,7 @@ fn (var g: Gen) gen_json_enum(t: Int) {
   g.pl("\t_, _ = payload, hasPayload")
   g.pl("\tswitch name {")
   for (vi, v) in variants.indexed() {
-    let vname = check.text(v.name)
+    let vname = check.text(check.variant_json_name(v))
     g.pl("\tcase ${vname.quote()}:")
     if v.fields.is_empty() {
       g.pl("\t\t*v = ${self}{Tag: ${v.index + 1}}\n\t\treturn nil")
@@ -303,7 +303,7 @@ fn (var g: Gen) gen_json_enum(t: Int) {
       g.pl("\t\tif err != nil {\n\t\t\treturn err\n\t\t}")
       g.pl("\t\tif err := func(v *${pt}, path string) *${rt}Json_DecodeErr {")
       for (i, f) in v.fields.indexed() {
-        g.json_field(check.text(f.name), g.vfield_name(f, i), f.ty, "")
+        g.json_field(check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "")
       }
       g.pl("\t\t\treturn nil\n\t\t}(&p, path+${("." + vname).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
     }

@@ -282,8 +282,8 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
       }
       // variant indexes are declaration positions (duplicates skipped
       // keep their index)
-      c.objs[t].variants = vs
       c.objs[t].derives = c.derives_of(ed.derive)
+      c.objs[t].variants = c.variant_wire_names(ed, vs, c.objs[t].derives)
       c.valued_enum(t, ed)
     }
     InterfaceDecl(d: id) => {
@@ -419,6 +419,99 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
     }
   }
   fields
+}
+
+/// vs with their JSON names and their fields' keys set (decision 0478):
+/// a variant's `as "name"`, else its name under the enum's `derive
+/// Json(case:)` (`JoinRoom` is `join_room` under snake), else its name;
+/// a field's key is its name under the same rule. Checks the arguments
+/// (XO0413), two variants with one name (XO0411), and warns about a wire
+/// name with no `derive Json` (XO0414).
+fn (var c: Checker) variant_wire_names(ed: parser.EnumDecl, vs0: List[VariantInfo], derives: List[Str]) -> List[VariantInfo] {
+  var vs = vs0
+  var rule = ""
+  for a in ed.derive_args {
+    let d = text(a.derive.name)
+    let k = text(a.key.name)
+    let v = text(a.value.name)
+    if d != "Json" {
+      c.error("XO0413", a.span, "`derive ${d}` takes no arguments on an enum; `case:` applies to `derive Json` (decision 0478)")
+      continue
+    }
+    if k != "case" {
+      c.error("XO0413", a.key.span, "unknown argument `${k}` of an enum's `derive Json`; it takes `case: snake | camel | pascal | kebab`")
+      continue
+    }
+    if !(v is "snake" | "camel" | "pascal" | "kebab") {
+      c.error("XO0413", a.value.span, "unknown case `${v}`; `case:` is one of snake, camel, pascal, kebab")
+      continue
+    }
+    rule = v
+  }
+  var seen: Map[Bytes, Int] = {}
+  for i in 0..vs.len() {
+    // index is the declaration's position (a duplicate is skipped)
+    let v = ed.variants[vs[i].index]
+    vs[i].json_name = match v.wire {
+      Some(w) => {
+        if w.is_empty() {
+          c.error("XO0412", v.wire_span ?? v.name.span, "variant `${text(vs[i].name)}` has an empty wire name; remove `as \"\"` to keep its name")
+        }
+        w
+      }
+      None => if rule.is_empty() { vs[i].name } else { wire_case(snake_of(vs[i].name), rule) }
+    }
+    for j in 0..vs[i].fields.len() {
+      vs[i].fields[j].json_key = wire_case(vs[i].fields[j].name, rule)
+    }
+    if derives.contains("Json") {
+      if let Some(j) = seen.get(vs[i].json_name) {
+        c.error("XO0411", v.wire_span ?? v.name.span, "variants `${text(vs[j].name)}` and `${text(vs[i].name)}` both have the name `${text(vs[i].json_name)}` in `derive Json`; give one of them another wire name")
+      } else {
+        seen[vs[i].json_name] = i
+      }
+    } else if let Some(ws) = v.wire_span {
+      c.warn("XO0414", ws, "the wire name of variant `${text(vs[i].name)}` is unused: `${text(ed.name.name)}` does not derive Json")
+    }
+  }
+  vs
+}
+
+/// A variant's JSON name (decision 0478; its declared name when the
+/// checker set none, as for a builtin enum).
+pub fn variant_json_name(vo: VariantInfo) -> Bytes {
+  if vo.json_name.is_empty() { vo.name } else { vo.json_name }
+}
+
+/// A variant field's JSON key (decision 0478).
+pub fn vfield_json_key(f: VFieldInfo) -> Bytes {
+  if f.json_key.is_empty() { f.name } else { f.json_key }
+}
+
+/// A PascalCase name in snake_case: a word starts at a capital after a
+/// lower case letter or digit, or at the last capital of a run before a
+/// lower case letter (`JoinRoom` is `join_room`, `HTTPError`
+/// `http_error`, `V2` `v2`).
+pub fn snake_of(name: Bytes) -> Bytes {
+  var b = BytesBuilder.new()
+  let n = name.len()
+  for i in 0..n {
+    let ch = name[i]
+    if ch >= 'A' && ch <= 'Z' {
+      if i > 0 {
+        let p = name[i - 1]
+        let lower_or_digit = (p >= 'a' && p <= 'z') || (p >= '0' && p <= '9')
+        let run_end = p >= 'A' && p <= 'Z' && i + 1 < n && name[i + 1] >= 'a' && name[i + 1] <= 'z'
+        if lower_or_digit || run_end {
+          b.write_byte('_')
+        }
+      }
+      b.write_byte(ch + 32)
+    } else {
+      b.write_byte(ch)
+    }
+  }
+  b.freeze()
 }
 
 /// A wire string's key and its comma separated options (Go's struct tag

@@ -210,6 +210,9 @@ pub struct EnumDecl {
   pub value_type: Ident? = None
   pub variants: List[Variant] = []
   pub derive: List[Ident] = []
+  /// `derive Json(case: snake)`: variant names and their fields' keys on
+  /// the wire (decision 0478)
+  pub derive_args: List[DeriveArg] = []
 }
 
 /// An enum variant; fields is None for a unit variant.
@@ -220,6 +223,9 @@ pub struct Variant {
   pub fields: List[VariantField]? = None
   /// `Name = expr` of a valued enum (decision 0269).
   pub value: Expr? = None
+  /// its name on the wire, `Say as "say"(text: Str)` (decision 0478)
+  pub wire: Bytes? = None
+  pub wire_span: Span? = None
 }
 
 /// `name: Type` or `from Type` (name None).

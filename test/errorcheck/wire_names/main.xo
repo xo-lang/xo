@@ -50,3 +50,34 @@ struct Unused {
 fn main(os: Os) {
   os.stdio.println("${Unused{a: 1}.a}")
 }
+
+// Variant wire names (decision 0478).
+enum DupVariant {
+  Say
+  Talk as "Say" // ERROR XO0411 "both have the name `Say`"
+} derive Json
+
+enum DupVariantCase {
+  JoinRoom
+  Other as "join_room" // ERROR XO0411 "both have the name `join_room`"
+} derive Json(case: snake)
+
+enum EmptyVariant {
+  A as "" // ERROR XO0412 "empty wire name"
+} derive Json
+
+enum BadVariantCase {
+  A
+} derive Json(case: shouty) // ERROR XO0413 "unknown case `shouty`"
+
+enum BadVariantKey {
+  A
+} derive Json(style: snake) // ERROR XO0413 "unknown argument `style`"
+
+enum BadVariantDerive {
+  A
+} derive Eq(case: snake) // ERROR XO0413 "takes no arguments"
+
+enum UnusedVariantWire {
+  A as "a" // ERROR XO0414 "does not derive Json"
+}

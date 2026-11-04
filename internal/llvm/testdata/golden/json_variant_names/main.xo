@@ -1,0 +1,56 @@
+// Enum variant names on the wire (decision 0478): `case:` on an enum's
+// `derive Json` converts its variant names (`JoinRoom` to `join_room`,
+// `HTTPError` to `http_error`) and their fields' keys, and `Name as
+// "wire"` names one variant whatever the rule. The external form: a
+// unit variant is its name, a variant with fields an object of one key.
+use std/json
+
+struct Point {
+  x_pos: Int
+  y_pos: Int
+} derive Json
+
+enum Event {
+  JoinRoom(room_id: Str)
+  LeaveRoom(room_id: Str, said_bye: Bool)
+  HTTPError(status_code: Int)
+  Moved(from Point)
+  Ping
+  Chat as "chat.message"(body_text: Str)
+} derive Json(case: snake)
+
+enum Shape {
+  UnitSquare
+  Circle(radius_mm: Int)
+} derive Json(case: camel)
+
+enum Plain {
+  FirstOne
+  Second as "2nd"
+} derive Json
+
+fn main(os: Os) {
+  let evs = [Event.JoinRoom(room_id: "r1"), Event.LeaveRoom(room_id: "r1", said_bye: true), Event.HTTPError(status_code: 503), Event.Moved(Point{x_pos: 1, y_pos: 2}), Event.Ping, Event.Chat(body_text: "hi")]
+  for e in evs {
+    let s = json.encode_str(e)
+    match json.decode[Event](s.bytes()) {
+      Ok(back) => os.stdio.println("${s} round trip ${json.encode_str(back) == s}")
+      Err(err) => os.stdio.println("${s} decode failed: ${err}")
+    }
+  }
+  os.stdio.println(json.encode_str([Shape.UnitSquare, Shape.Circle(radius_mm: 4)]))
+  os.stdio.println(json.encode_str([Plain.FirstOne, Plain.Second]))
+  for s in [b"\"FirstOne\"", b"\"2nd\"", b"\"Second\""] {
+    match json.decode[Plain](s) {
+      Ok(p) => os.stdio.println("${s.to_str() ?? "?"}: ${json.encode_str(p)}")
+      Err(err) => os.stdio.println("${s.to_str() ?? "?"}: ${err}")
+    }
+  }
+  // the declared names are no longer read once case: renames them
+  for s in [b"\"JoinRoom\"", b"{\"JoinRoom\":{\"room_id\":\"r\"}}", b"{\"leave_room\":{\"roomId\":\"r\"}}", b"{\"leave_room\":{\"room_id\":\"r\",\"said_bye\":false}}"] {
+    match json.decode[Event](s) {
+      Ok(e) => os.stdio.println("${s.to_str() ?? "?"}: ${json.encode_str(e)}")
+      Err(err) => os.stdio.println("${s.to_str() ?? "?"}: ${err}")
+    }
+  }
+}

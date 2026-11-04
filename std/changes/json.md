@@ -1,5 +1,21 @@
 # std/json changes
 
+## 2026-11-03: feature: enum variant names on the wire (`case:` on an enum, `Variant as "name"`)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0478 (the 2026-10-30 backend survey's chat hub), stage 1 of its four
+- Go reference: none (Go has no sum types); serde's `rename_all` and `rename` on enum variants
+- Test: golden json_variant_names (arm64, LLVM, Go parity); test/errorcheck/wire_names (XO0411 to XO0414 on enums)
+- Timing: none (the names are constants in the generated codec, as before)
+- Shipped in: not yet released
+
+`derive Json(case: snake)` on an enum converts its variant names
+(`JoinRoom` to `join_room`, `HTTPError` to `http_error`) and their
+fields' keys; `Chat as "chat.message"(body: Str)` names one variant.
+Decoding reads only the wire names. An enum without either is
+unchanged.
+
 ## 2026-11-02: fix: the Go backend's typed decode reads a duplicate key's replaced values, as in Go
 
 - Kind: fix

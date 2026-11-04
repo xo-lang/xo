@@ -9,7 +9,7 @@
 use github.com/xo-lang/xo/compiler/lexer
 
 /// The version of the form: a change to the AST or this file changes it.
-pub const AST_CODEC_VERSION = "xo ast codec v2"
+pub const AST_CODEC_VERSION = "xo ast codec v3"
 
 struct Enc {
   b: BytesBuilder = BytesBuilder.new()
@@ -305,13 +305,7 @@ fn (var e: Enc) decl(d: Decl) {
       }
       e.oexpr(s.inv)
       e.idents(s.derive)
-      e.int(s.derive_args.len())
-      for a in s.derive_args {
-        e.span(a.span)
-        e.ident(a.derive)
-        e.ident(a.key)
-        e.ident(a.value)
-      }
+      e.derive_args(s.derive_args)
     }
     EnumDecl(en) => {
       e.int(2)
@@ -327,6 +321,20 @@ fn (var e: Enc) decl(d: Decl) {
         e.odoc(v.doc)
         e.ident(v.name)
         e.oexpr(v.value)
+        match v.wire {
+          Some(w) => {
+            e.bool(true)
+            e.bytes(w)
+          }
+          None => e.bool(false)
+        }
+        match v.wire_span {
+          Some(ws) => {
+            e.bool(true)
+            e.span(ws)
+          }
+          None => e.bool(false)
+        }
         match v.fields {
           Some(fs) => {
             e.bool(true)
@@ -342,6 +350,7 @@ fn (var e: Enc) decl(d: Decl) {
         }
       }
       e.idents(en.derive)
+      e.derive_args(en.derive_args)
     }
     InterfaceDecl(i) => {
       e.int(3)
@@ -960,6 +969,33 @@ fn (var r: Dec) count() -> Int {
   n
 }
 
+/// A derive's arguments, `derive Json(case: snake)` (decisions 0277, 0478).
+fn (var e: Enc) derive_args(xs: List[DeriveArg]) {
+  e.int(xs.len())
+  for a in xs {
+    e.span(a.span)
+    e.ident(a.derive)
+    e.ident(a.key)
+    e.ident(a.value)
+  }
+}
+
+fn (var r: Dec) derive_args() -> List[DeriveArg] {
+  let na = r.count()
+  var das: List[DeriveArg] = []
+  for _ in 0..na {
+    if r.bad {
+      break
+    }
+    let asp = r.span()
+    let ad = r.ident()
+    let ak = r.ident()
+    let av = r.ident()
+    das.push(DeriveArg{span: asp, derive: ad, key: ak, value: av})
+  }
+  das
+}
+
 fn (var r: Dec) bytes() -> Bytes {
   let n = r.count()
   if r.bad || r.i + n > r.d.len() {
@@ -1278,18 +1314,7 @@ fn (var r: Dec) decl() -> Decl {
       }
       let inv = r.oexpr()
       let dv = r.idents()
-      let na = r.count()
-      var das: List[DeriveArg] = []
-      for _ in 0..na {
-        if r.bad {
-          break
-        }
-        let asp = r.span()
-        let ad = r.ident()
-        let ak = r.ident()
-        let av = r.ident()
-        das.push(DeriveArg{span: asp, derive: ad, key: ak, value: av})
-      }
+      let das = r.derive_args()
       Decl.StructDecl(d: StructDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, fields: fs, inv: inv, derive: dv, derive_args: das})
     }
     2 => {
@@ -1309,6 +1334,8 @@ fn (var r: Dec) decl() -> Decl {
         let vdoc = r.odoc()
         let vname = r.ident()
         let vval = r.oexpr()
+        let vwire: Bytes? = if r.bool() { Some(r.bytes()) } else { None }
+        let vwsp: Span? = if r.bool() { Some(r.span()) } else { None }
         var vfs: List[VariantField]? = None
         if r.bool() {
           let nvf = r.count()
@@ -1325,10 +1352,11 @@ fn (var r: Dec) decl() -> Decl {
           }
           vfs = Some(l)
         }
-        vs.push(Variant{span: vsp, doc: vdoc, name: vname, fields: vfs, value: vval})
+        vs.push(Variant{span: vsp, doc: vdoc, name: vname, fields: vfs, value: vval, wire: vwire, wire_span: vwsp})
       }
       let dv = r.idents()
-      Decl.EnumDecl(d: EnumDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, value_type: vtype, variants: vs, derive: dv})
+      let das = r.derive_args()
+      Decl.EnumDecl(d: EnumDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, value_type: vtype, variants: vs, derive: dv, derive_args: das})
     }
     3 => {
       let s = r.span()

@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+{"join_room":{"room_id":"r1"}} round trip true
+{"leave_room":{"room_id":"r1","said_bye":true}} round trip true
+{"http_error":{"status_code":503}} round trip true
+{"moved":{"x_pos":1,"y_pos":2}} round trip true
+"ping" round trip true
+{"chat.message":{"body_text":"hi"}} round trip true
+["unitSquare",{"circle":{"radiusMm":4}}]
+["FirstOne","2nd"]
+"FirstOne": "FirstOne"
+"2nd": "2nd"
+"Second": at $: unknown variant `Second`
+"JoinRoom": at $: unknown variant `JoinRoom`
+{"JoinRoom":{"room_id":"r"}}: at $: unknown variant `JoinRoom`
+{"leave_room":{"roomId":"r"}}: at $.leave_room: missing field `room_id`
+{"leave_room":{"room_id":"r","said_bye":false}}: {"leave_room":{"room_id":"r","said_bye":false}}
+--- stderr

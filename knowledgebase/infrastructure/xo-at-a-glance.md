@@ -29,7 +29,8 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
   newtypes (2.8); `Secret[T]` (redacted everywhere).
 - Derives (2.9): `derive Debug, Eq, Hash, Ord, Json, SqlRow, Xml` (one
   table, compiler/check/derivables.xo); wire names `as "x"` plus per-format
-  `json "..."`, `sql "..."`, `xml "..."` (0315).
+  `json "..."`, `sql "..."`, `xml "..."` (0315); enum variant wire names
+  `Say as "say"` and `derive Json(case: snake)` on an enum (0478).
 
 ## Statements and expressions (core 3)
 

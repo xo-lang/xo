@@ -1431,6 +1431,21 @@ fn (var p: Parser) parse_enum(doc: Doc?, is_pub: Bool, start: Pos) -> EnumDecl {
       let vstart = p.tok.span.start
       let vdoc = p.doc_for(vstart.line)
       let vname = p.expect_ident("a variant name")
+      // its wire name, `Say as "say"(text: Str)` (decision 0478)
+      var vwire: Bytes? = None
+      var vwire_span: Span? = None
+      if p.got(Kind.As) {
+        if !p.at(Kind.String) && !p.at(Kind.RawString) {
+          p.error_expected("a string literal, the variant's name on the wire")
+        } else {
+          let (w, wsp, ok) = p.plain_string()
+          if !ok {
+            p.fail(UNEXPECTED_TOKEN, wsp, "a wire name is a plain string literal, without interpolation")
+          }
+          vwire = Some(w)
+          vwire_span = Some(wsp)
+        }
+      }
       var fields: List[VariantField]? = None
       if p.at(Kind.LParen) {
         var fs: List[VariantField] = []
@@ -1461,7 +1476,7 @@ fn (var p: Parser) parse_enum(doc: Doc?, is_pub: Bool, start: Pos) -> EnumDecl {
         p.next()
         value = Some(p.parse_expr())
       }
-      e.variants.push(Variant{span: p.span_from(vstart), doc: vdoc, name: vname, fields: fields, value: value})
+      e.variants.push(Variant{span: p.span_from(vstart), doc: vdoc, name: vname, fields: fields, value: value, wire: vwire, wire_span: vwire_span})
       p.member_end("enum variant", before)
     }
     p.braces_close(br)
@@ -1469,9 +1484,7 @@ fn (var p: Parser) parse_enum(doc: Doc?, is_pub: Bool, start: Pos) -> EnumDecl {
   if !p.bad {
     let (ds, args) = p.parse_derive()
     e.derive = ds
-    if !args.is_empty() {
-      p.fail(UNEXPECTED_TOKEN, args[0].span, "derive arguments apply to a struct's fields (decision 0277), not an enum")
-    }
+    e.derive_args = args
   }
   e.span = p.span_from(start)
   e
