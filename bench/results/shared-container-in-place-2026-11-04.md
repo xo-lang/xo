@@ -38,6 +38,7 @@ noise.
 - Combined, Mac: XO_FREE_CHECK=1 goldens (map, mutex, conc, chan, list,
   http server, h2c and client, json) 83 of 83 on arm64; 273 of 273 on
   LLVM with Go parity; wasm goldens (map, mutex, list, conc) pass.
+- xo's native __text (Mac, `size -m bin/xo`): 33,147,308 at e622870f9,
+  33,154,468 with 0488 alone: +7,160 bytes (0.02%).
 - To do before acceptance: TestGoldenTasks under TSan x20 (host), the
-  --ab rows on host 1 for httpsession and cookiejar, code size of xo's
-  __text.
+  --ab rows on host 1 for httpsession and cookiejar.
