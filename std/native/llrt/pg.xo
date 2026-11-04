@@ -6,7 +6,7 @@
 // mapping follow github.com/jackc/pgx/v5 v5.11.0 pgconn (MIT;
 // THIRD_PARTY_NOTICES). TLS through std/tls (decision 0281): SSLRequest,
 // then tls.client with the sslmode's verification. Not yet: CancelRequest (a cancelled wait drops the
-// connection), LISTEN/NOTIFY, COPY.
+// connection), LISTEN/NOTIFY, binary COPY.
 use std/sql
 use std/tls
 use native/llrt/pgwire
@@ -769,6 +769,118 @@ fn (p: PgConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.S
     }
   }
   sql.DriverRows{columns: [], rows: []}
+}
+
+/// A value as one COPY text field: \N for NULL, backslash, tab, newline and
+/// carriage return escaped.
+fn copy_field(v: sql.SqlValue, var o: BytesBuilder) {
+  match text_param(v) {
+    None => o.write_str("\\N")
+    Some(s) => {
+      for c in s.bytes() {
+        if c == 92 {
+          o.write_str("\\\\")
+        } else if c == 9 {
+          o.write_str("\\t")
+        } else if c == 10 {
+          o.write_str("\\n")
+        } else if c == 13 {
+          o.write_str("\\r")
+        } else {
+          o.write_byte(c)
+        }
+      }
+    }
+  }
+}
+
+/// COPY table (columns) FROM STDIN in the text format (decision 0479): rows
+/// is called until None, each row sent in CopyData messages of about 64
+/// KiB; an error from rows sends CopyFail (the server rolls the COPY back)
+/// and is returned. The result is the rows copied.
+fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  if p.broken.get() {
+    return Err(conn_err("the connection is broken"))
+  }
+  let cols = columns.map(sql.quote_ident).join(", ")
+  let head = if columns.is_empty() { sql.quote_ident(table) } else { "${sql.quote_ident(table)} (${cols})" }
+  p.send(pgwire.query("COPY ${head} FROM STDIN"))?
+  var failed: sql.SqlErr? = None
+  var ready = false
+  while !ready {
+    match p.recv()? {
+      Other(kind, _) => {
+        if kind == "G" {
+          break
+        }
+      }
+      Error(f) => {
+        if failed.is_none() {
+          failed = Some(server_err(f))
+        }
+      }
+      Ready(_) => ready = true
+      _ => {}
+    }
+  }
+  if ready {
+    // no CopyInResponse: the statement failed (or was not a COPY)
+    return Err(failed ?? conn_err("COPY FROM STDIN: no CopyInResponse"))
+  }
+  var buf = BytesBuilder.with_capacity(65536 + 1024)
+  var err: sql.SqlErr? = None
+  while err.is_none() {
+    match rows() {
+      Ok(o) => {
+        match o {
+          Some(r) => {
+            for (i, v) in r.indexed() {
+              if i > 0 {
+                buf.write_byte(9)
+              }
+              copy_field(v, buf)
+            }
+            buf.write_byte(10)
+            if buf.len() >= 65536 {
+              p.send(pgwire.copy_data(buf.freeze()))?
+              buf = BytesBuilder.with_capacity(65536 + 1024)
+            }
+          }
+          None => break
+        }
+      }
+      Err(e) => err = Some(e)
+    }
+  }
+  if let Some(e) = err {
+    p.send(pgwire.copy_fail("${e}"))?
+  } else {
+    if buf.len() > 0 {
+      p.send(pgwire.copy_data(buf.freeze()))?
+    }
+    p.send(pgwire.copy_done())?
+  }
+  var n = 0
+  while {
+    match p.recv()? {
+      CommandComplete(tag) => n = pgwire.rows_affected(tag)
+      Error(f) => {
+        // a CopyFail comes back as the server's error: the caller's error wins
+        if failed.is_none() && err.is_none() {
+          failed = Some(server_err(f))
+        }
+      }
+      Ready(_) => break
+      _ => {}
+    }
+  }
+  if let Some(e) = err {
+    return Err(e)
+  }
+  if let Some(e) = failed {
+    return Err(e)
+  }
+  n
 }
 
 fn (p: PgConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {

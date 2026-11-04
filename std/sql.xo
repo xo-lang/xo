@@ -37,6 +37,9 @@ fn bytes(b: Bytes) -> SqlValue
 /// JsonText of `json.encode_str(v)`.
 fn json[T: Json](v: T) -> SqlValue
 fn array(items: List[SqlValue]) -> SqlValue
+/// An SQL identifier in double quotes, a double quote doubled (Postgres's
+/// quote_ident, pgx's Identifier.Sanitize).
+fn quote_ident(name: Str) -> Str
 
 /// A transaction's isolation level (Go's sql.IsolationLevel, the four of
 /// standard SQL); Default is the server's own.
@@ -113,6 +116,15 @@ fn (d: Db) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dia
 /// `rows`, calling f on each row and closing in every path; an error from
 /// f ends the walk and is returned.
 fn (d: Db) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () ! SqlErr uses net.dial
+/// Loads rows with COPY FROM STDIN in the text format (decision 0479, pgx's
+/// CopyFrom): `rows` is called until it returns None, each row a list of
+/// values in the order of `columns`; the result is the number of rows
+/// copied. An error from `rows` cancels the COPY (the server rolls it
+/// back) and is returned. `table` and `columns` are identifiers, quoted by
+/// the driver (`quote_ident`); values are never interpolated. The in
+/// memory database inserts the rows one by one; a driver without COPY
+/// returns Driver.
+fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
 fn (d: Db) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (d: Db) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 /// `query` with every row decoded into `T` (`derive SqlRow`, std.md 10.4).
@@ -133,6 +145,7 @@ fn (t: Tx) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses n
 /// busy until the cursor ends or is closed.
 fn (t: Tx) rows(q: Str, args: List[SqlValue] = []) -> Rows ! SqlErr uses net.dial
 fn (t: Tx) each(q: Str, args: List[SqlValue], f: fn(Row) -> () ! SqlErr) -> () ! SqlErr uses net.dial
+fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
 fn (t: Tx) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (t: Tx) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
 fn (t: Tx) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
@@ -194,6 +207,8 @@ interface DriverConn {
   fn commit(self) -> () ! SqlErr uses net.dial
   fn rollback(self) -> () ! SqlErr uses net.dial
   fn ping(self) -> () ! SqlErr uses net.dial
+  /// COPY FROM STDIN (decision 0479): a driver without it returns Driver.
+  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
   fn close(self) uses net.dial
   /// True once the connection cannot be used again; the pool drops it.
   fn is_broken(self) -> Bool

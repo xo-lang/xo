@@ -1,6 +1,9 @@
 package rt
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // Decoding std/sql rows into structs (`derive SqlRow`, std.md 10.4).
 
@@ -210,4 +213,69 @@ func (d Sql_Db) M_each(tk *Task, q string, args List[Sql_SqlValue], f func(*Task
 // M_each is `tx.each(q, args, f)`.
 func (t Sql_Tx) M_each(tk *Task, q string, args List[Sql_SqlValue], f func(*Task, Sql_Row) Result[Unit, Sql_SqlErr]) Result[Unit, Sql_SqlErr] {
 	return sqlEach(tk, t.M_rows(tk, q, args), f)
+}
+
+// Sql_quote_ident is `sql.quote_ident(name)`: name in double quotes, a
+// double quote doubled.
+func Sql_quote_ident(_ *Task, name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+func sqlCopyInsert(table string, cols []string) string {
+	if len(cols) == 0 {
+		return "INSERT INTO " + table + " VALUES"
+	}
+	ph := make([]string, len(cols))
+	for i := range cols {
+		ph[i] = "$" + strconv.Itoa(i+1)
+	}
+	return "INSERT INTO " + table + " (" + strings.Join(cols, ", ") + ") VALUES (" + strings.Join(ph, ", ") + ")"
+}
+
+// sqlCopy is COPY FROM on the Go backend (decision 0479): an INSERT per
+// row through exec.
+func sqlCopy(tk *Task, table string, cols List[string], rows func(*Task) Result[Option[List[Sql_SqlValue]], Sql_SqlErr], exec func(string, List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr]) Result[int64, Sql_SqlErr] {
+	q := sqlCopyInsert(table, List_Slice(cols))
+	var n int64
+	for {
+		r := rows(tk)
+		if !r.Ok {
+			return Err[int64](r.E)
+		}
+		if !r.V.Some {
+			return Ok[int64, Sql_SqlErr](n)
+		}
+		if e := exec(q, r.V.V); !e.Ok {
+			return Err[int64](e.E)
+		}
+		n++
+	}
+}
+
+// M_copy_from is `db.copy_from(table, columns, rows)`: a driver's own
+// COPY, else an INSERT per row.
+func (d Sql_Db) M_copy_from(tk *Task, table string, cols List[string], rows func(*Task) Result[Option[List[Sql_SqlValue]], Sql_SqlErr]) Result[int64, Sql_SqlErr] {
+	return withConn(tk, d.d, func() Result[int64, Sql_SqlErr] {
+		if b, ok := d.d.be.(*sqlDriverBackend); ok {
+			x, err := b.take(tk)
+			if err != nil {
+				return sqlFailErr[int64](err)
+			}
+			defer b.give(tk, x)
+			return x.c.M_copy_from(tk, table, cols, rows)
+		}
+		return sqlCopy(tk, table, cols, rows, func(q string, a List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr] { return d.M_exec(tk, q, a) })
+	})
+}
+
+// M_copy_from is `tx.copy_from(table, columns, rows)`.
+func (t Sql_Tx) M_copy_from(tk *Task, table string, cols List[string], rows func(*Task) Result[Option[List[Sql_SqlValue]], Sql_SqlErr]) Result[int64, Sql_SqlErr] {
+	return inTx(tk, t, func(be SqlTxBackend) Result[int64, Sql_SqlErr] {
+		if dt, ok := be.(*sqlDriverTx); ok {
+			return dt.x.c.M_copy_from(tk, table, cols, rows)
+		}
+		return sqlCopy(tk, table, cols, rows, func(q string, a List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr] {
+			return sqlExec(tk, be, q, a)
+		})
+	})
 }

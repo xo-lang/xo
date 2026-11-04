@@ -49,6 +49,10 @@ fn (c: FakeConn) commit() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c
 fn (c: FakeConn) rollback() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} ROLLBACK") }
 fn (c: FakeConn) ping() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} ping") }
 fn (c: FakeConn) close() { c.log.add("conn ${c.id} close") }
+fn (c: FakeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
 fn (c: FakeConn) is_broken() -> Bool { c.broken.get() }
 
 fn main(os: Os) ! {

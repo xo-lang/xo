@@ -2857,6 +2857,25 @@ path (an error from `f` ends the walk and is returned). On a `Tx` the
 transaction's connection is busy until the cursor ends or is closed.
 `query` and `query_as` are `rows` read to the end.
 
+`copy_from` (decision 0479, pgx's `CopyFrom`) loads rows with COPY FROM
+STDIN in the text format:
+
+```
+fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
+fn (t: Tx) copy_from(...) -> Int ! SqlErr uses net.dial
+fn quote_ident(name: Str) -> Str                   // "name", a double quote doubled
+```
+
+`rows` is called until it returns `None`; each row is a list of values in
+the order of `columns`, sent in CopyData messages of about 64 KiB; the
+result is the number of rows copied. An error from `rows` sends CopyFail
+(the server rolls the COPY back) and is returned. `table` and `columns`
+are identifiers, quoted by the driver; values are never interpolated. The
+in memory database and the Go backend insert the rows one by one (rows
+copied before an error from `rows` stay; use a transaction). A driver
+without COPY returns `Driver` from `DriverConn.copy_from`, which every
+driver implements since decision 0479.
+
 ### 10.4 Rows
 
 ```
@@ -3019,6 +3038,7 @@ interface DriverConn {
   fn query(self, q: Str, args: List[SqlValue]) -> DriverRows ! SqlErr uses net.dial
   fn exec(self, q: Str, args: List[SqlValue]) -> ExecResult ! SqlErr uses net.dial
   fn begin(self) -> () ! SqlErr uses net.dial      // also commit, rollback, ping
+  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
   fn close(self)
   fn is_broken(self) -> Bool                       // dropped from the pool when true
 }

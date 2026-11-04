@@ -70,6 +70,13 @@ pub fn cancel_request(pid: Int, secret: Bytes) -> Bytes {
 
 pub fn query(sql: Str) -> Bytes { msg("Q", cstr(sql)) }
 
+/// CopyData, CopyDone and CopyFail (COPY FROM STDIN, decision 0479).
+pub fn copy_data(data: Bytes) -> Bytes { msg("d", data) }
+
+pub fn copy_done() -> Bytes { msg("c", b"") }
+
+pub fn copy_fail(why: Str) -> Bytes { msg("f", cstr(why)) }
+
 pub fn password(p: Str) -> Bytes { msg("p", cstr(p)) }
 
 pub fn sasl_initial(mechanism: Str, data: Bytes) -> Bytes {

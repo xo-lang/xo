@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-11-03: feature: copy_from (COPY FROM STDIN) and quote_ident
+
+- Kind: feature (a new required method on DriverConn: breaking for driver authors)
+- Commit: this commit
+- Found by: the 2026-10-30 backend survey (rank 9): bulk loads were an `exec` per row
+- Go reference: pgx Conn.CopyFrom (text format)
+- Decision: 0479 (Accepted, owner, 2026-11-03)
+- Test: the sql corpus (arm64, LLVM, Go backend); against Postgres 17: special characters (tab, newline, backslash, CR, NULL, bytea, arrays, jsonb) read back exactly, an error from `rows` rolls the COPY back and leaves the connection usable, scripts/pg-diff.sh
+- Timing: Mac, Postgres 17 in Docker: 100,000 rows 0.15 s and 1,000,000 rows 3.4 s at 3.8 MB max RSS; the pgx CopyFrom twin and the `exec` per row and multi-VALUES rows on host 1 follow
+
+`Db.copy_from` and `Tx.copy_from` take a row callback, so the rows are never all in memory; the Postgres driver sends them as CopyData messages of about 64 KiB. `DriverConn` gains `copy_from`: a driver without COPY returns `Driver`. `sql.quote_ident` quotes an identifier.
+
 ## 2026-11-03: feature: Rows, a row cursor (Db.rows, Tx.rows, next, next_as, close, each)
 
 - Kind: feature

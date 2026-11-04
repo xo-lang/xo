@@ -634,6 +634,64 @@ fn (t: Tx) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses
   new_rows(res.cols, RowsState{buf: res.rows, pos: 0})
 }
 
+fn quote_ident(name: Str) -> Str { "\"" + name.replace("\"", "\"\"") + "\"" }
+
+/// The INSERT of one COPY row on the in memory database.
+fn copy_insert_sql(table: Str, columns: List[Str]) -> Str {
+  var ph: List[Str] = []
+  for i in 0..columns.len() {
+    ph.push("$${i + 1}")
+  }
+  if columns.is_empty() {
+    return "INSERT INTO ${table} VALUES"
+  }
+  "INSERT INTO ${table} (${columns.join(", ")}) VALUES (${ph.join(", ")})"
+}
+
+fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  d.ready()?
+  if let Some(p) = d.pool {
+    let t = p.take()?
+    let r = t.c.copy_from(table, columns, rows)
+    p.give(t)
+    return r
+  }
+  mem_copy(fn(q, args) { d.exec(q, args) }, table, columns, rows)
+}
+
+fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  if let Some(tc) = t.conn {
+    return t.st.with(fn(var ts) -> Int ! sql.SqlErr {
+      if ts.done {
+        return Err(sql.SqlErr.TxDone)
+      }
+      tc.c.copy_from(table, columns, rows)
+    })
+  }
+  mem_copy(fn(q, args) { t.exec(q, args) }, table, columns, rows)
+}
+
+/// COPY on the in memory database: an INSERT per row. The rows copied
+/// before an error from rows stay, as the in memory driver has no COPY to
+/// roll back (use a transaction).
+fn mem_copy(ins: fn(Str, List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial, table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  let q = copy_insert_sql(table, columns)
+  var n = 0
+  while {
+    match rows()? {
+      Some(r) => {
+        ins(q, r)?
+        n += 1
+      }
+      None => break
+    }
+  }
+  n
+}
+
 fn (r: Rows) columns() -> List[Str] { r.cols }
 
 fn (r: Rows) next() -> Row? ! sql.SqlErr uses net.dial {

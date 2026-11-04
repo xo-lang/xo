@@ -83,6 +83,10 @@ fn (c: FakeConn) close() uses net.dial {
   c.broken.set(true)
 }
 
+fn (c: FakeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
 fn (c: FakeConn) is_broken() -> Bool {
   record(c.log, "is_broken")
   c.broken.get()
@@ -160,6 +164,10 @@ fn (c: CurConn) commit() -> () ! sql.SqlErr uses net.dial { Ok(()) }
 fn (c: CurConn) rollback() -> () ! sql.SqlErr uses net.dial { Ok(()) }
 fn (c: CurConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
 fn (c: CurConn) close() uses net.dial {}
+fn (c: CurConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
+
 fn (c: CurConn) is_broken() -> Bool { false }
 
 fn (c: Cur) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
@@ -254,6 +262,45 @@ test "rows, next_as and each on the in memory Db" {
   tx.commit()?
 }
 
+test "copy_from loads rows on the in memory Db and in a transaction, quote_ident quotes, and a driver without COPY says so" {
+  let db = sql.memory("CREATE TABLE t (id INT, name TEXT)")?
+  let at = Atomic.new(0)
+  let n = db.copy_from("t", ["id", "name"], fn() {
+    let i = at.add(1)
+    if i > 3 {
+      return Ok(None)
+    }
+    Ok(Some([sql.int(i), sql.str("n${i}")]))
+  })?
+  expect(n) == 3
+  let tx = db.begin()?
+  let at2 = Atomic.new(10)
+  expect(tx.copy_from("t", ["id", "name"], fn() {
+    let i = at2.add(1)
+    if i > 11 {
+      return Ok(None)
+    }
+    Ok(Some([sql.int(i), sql.str("m${i}")]))
+  })?) == 1
+  tx.commit()?
+  expect(db.query("SELECT id FROM t")?.len()) == 4
+  // an error from rows is returned
+  let bad = db.copy_from("t", ["id"], fn() { Err(sql.SqlErr.Driver(msg: "boom")) })
+  expect(match bad {
+    Ok(_) => "ok"
+    Err(e) => e.display()
+  }) == "boom"
+  expect(sql.quote_ident("a")) == "\"a\""
+  expect(sql.quote_ident("a\"b")) == "\"a\"\"b\""
+  let log: Mutex[List[Str]] = Mutex.new([])
+  let fake = sql.open_driver(os.net, FakeDriver{n: Mutex.new(0), log: log}, "fake:mem", max_open: 1)?
+  expect(match fake.copy_from("t", ["id"], fn() { Ok(None) }) {
+    Ok(_) => "ok"
+    Err(e) => e.display()
+  }) == "no COPY"
+  fake.close()?
+}
+
 test "a transaction on the in memory Db commits one row and rolls another back" {
   let db = sql.memory("CREATE TABLE t (id SERIAL, n INT)")?
   db.ping()?
@@ -320,6 +367,10 @@ fn (c: ModeConn) rollback() -> () ! sql.SqlErr uses net.dial {
 fn (c: ModeConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
 
 fn (c: ModeConn) close() uses net.dial {}
+
+fn (c: ModeConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+  Err(sql.SqlErr.Driver(msg: "no COPY"))
+}
 
 fn (c: ModeConn) is_broken() -> Bool { false }
 
