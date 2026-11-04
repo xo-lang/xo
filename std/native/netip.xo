@@ -144,7 +144,8 @@ const HEXVAL: Bytes = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff
 
 /// The value of hex digit c, -1 for another byte (one table load).
 fn hexval(c: UInt8) -> Int {
-  let v = Int(HEXVAL[Int(c)])
+  let ci = Int(c)
+  let v = Int(HEXVAL[ci])
   if v == 255 {
     return -1
   }
