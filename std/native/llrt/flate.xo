@@ -608,30 +608,38 @@ fn (var h: Encoder) generate(freq: List[Int], max_bits: Int) {
     lits.push(k % 65536)
   }
   let bit_count = bit_counts(freqs, max_bits)
-  // assignEncodingAndSize
-  var code = 0
+  // assignEncodingAndSize: the rarest literals have the longest codes, so
+  // the sorted literals are cut into runs by bit length from the end; the
+  // codes of a length are then handed out in literal order from the
+  // length's first code, which is what sorting each run did
   var end = lits.len()
-  var n = 0
+  var n = 1
   while n < bit_count.len() {
-    code = code << 1
     let bits = bit_count[n]
-    if n == 0 || bits == 0 {
-      n += 1
-      continue
-    }
-    var chunk: List[Int] = []
     var j = end - bits
     while j < end {
-      chunk.push(lits[j])
+      h.len[lits[j]] = n
       j += 1
-    }
-    for lit in chunk.sort() {
-      h.code[lit] = reverse_bits(code, n)
-      h.len[lit] = n
-      code += 1
     }
     end -= bits
     n += 1
+  }
+  var next = zeros(bit_count.len() + 1)
+  var code = 0
+  n = 1
+  while n < bit_count.len() {
+    code = (code + (if n > 1 { bit_count[n - 1] } else { 0 })) << 1
+    next[n] = code
+    n += 1
+  }
+  i = 0
+  while i < freq.len() {
+    if freq[i] != 0 {
+      let l = h.len[i]
+      h.code[i] = reverse_bits(next[l], l)
+      next[l] += 1
+    }
+    i += 1
   }
 }
 
