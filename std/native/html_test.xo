@@ -39,3 +39,11 @@ test "unescape_string: legacy names, prefixes and a name followed by text" {
   // invalid numeric references: U+FFFD, surrogates, beyond the range
   expect(html.unescape_string("&#0; &#xD800; &#x110000;")) == "\u{FFFD} \u{FFFD} \u{FFFD}"
 }
+
+test "escape_string: adjacent and trailing specials, multi-byte runs" {
+  expect(html.escape_string("&&<>'\"")) == "&amp;&amp;&lt;&gt;&#39;&#34;"
+  expect(html.escape_string("é<ü>日本'語\"")) == "é&lt;ü&gt;日本&#39;語&#34;"
+  expect(html.escape_string("x&")) == "x&amp;"
+  expect(html.escape_string("&x")) == "&amp;x"
+  expect(html.escape_string("")) == ""
+}

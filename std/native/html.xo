@@ -2,6 +2,7 @@
 // ported from escape.go of go1.26.1 (EscapeString's replacer,
 // UnescapeString's unescapeEntity with the entity tables of entity.go,
 // generated at the end of this file). The same results on every input.
+use native/llrt/raw
 use native/rt
 
 /// 0x80 to 0x9F in a numeric reference, as Go's replacementTable
@@ -29,47 +30,53 @@ fn escape_string(s: Str) -> Str {
   if extra == 0 {
     return s
   }
-  var out = BytesBuilder.with_capacity(n + extra)
+  // the output is written through its address: a run is one mem_copy and a
+  // replacement one 4 byte store (and a ';' for the 5 byte ones), where a
+  // builder call a byte was the cost against Go (host 1, 2026-11-04)
+  let ob = raw.bytes_buf(n + extra)
+  let op = raw.bytes_addr(ob)
+  let sp = raw.bytes_addr(b)
+  var o = 0
   var start = 0
   i = 0
   while i < n {
     let c = b[i]
     if c == 38 || c == 60 || c == 62 || c == 39 || c == 34 {
-      if i > start {
-        out.write(b[start..i])
+      let run = i - start
+      if run > 0 {
+        rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), run)
+        o += run
       }
-      out.write_byte(38)
       if c == 38 {
-        out.write_byte(97)
-        out.write_byte(109)
-        out.write_byte(112)
+        // "&amp;"
+        rt.mem_store(op, o, 0x706d6126, 4)
+        rt.mem_store(op, o + 4, 59, 1)
+        o += 5
       } else if c == 60 {
-        out.write_byte(108)
-        out.write_byte(116)
+        // "&lt;"
+        rt.mem_store(op, o, 0x3b746c26, 4)
+        o += 4
       } else if c == 62 {
-        out.write_byte(103)
-        out.write_byte(116)
+        // "&gt;"
+        rt.mem_store(op, o, 0x3b746726, 4)
+        o += 4
       } else {
-        out.write_byte(35)
-        if c == 39 {
-          out.write_byte(51)
-          out.write_byte(57)
-        } else {
-          out.write_byte(51)
-          out.write_byte(52)
-        }
+        // "&#39;" and "&#34;"
+        rt.mem_store(op, o, if c == 39 { 0x39332326 } else { 0x34332326 }, 4)
+        rt.mem_store(op, o + 4, 59, 1)
+        o += 5
       }
-      out.write_byte(59)
       start = i + 1
     }
     i += 1
   }
   if start < n {
-    out.write(b[start..])
+    rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), n - start)
   }
+  raw.alive(b)
   // the replacements are ASCII and the runs between them are cut at ASCII
   // bytes of a valid text: valid, as Go's string result is
-  rt.cast[Bytes, Str](out.freeze())
+  rt.cast[Bytes, Str](ob)
 }
 
 /// The character of entity name, "" for none (a binary search of the
