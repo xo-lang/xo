@@ -1,6 +1,6 @@
-# 0497: `scope` and `select` become contextual words
+# 0497: `scope` becomes a contextual word (`select` stays a keyword)
 
-Status: Proposed (Xo Lang 2, 2026-11-04, from the AWS agent's feedback log; for the owner to decide)
+Status: Accepted (owner, 2026-11-04): option (b), `scope` only: `scope` becomes a contextual word and `select` stays a keyword. Proposed by Xo Lang 2 the same day from the AWS agent's feedback log; the decision section below is the proposal as written, (b) its `scope` half.
 
 ## Context
 
