@@ -537,6 +537,18 @@ func buildLockedForce(root, out string, log io.Writer, force bool) error {
 			return nil
 		}
 	}
+	// XO_BUILD_HOSTLOCK names a file whose lock every xo build on the
+	// machine takes while it builds, so two builds never run at once
+	// (lead, 2026-11-04: the second offload host's 23 GB VM killed three
+	// xo builds in a day when two gates built at the same time; offload.sh
+	// sets it there). Unset, builds of different keys run in parallel.
+	if p := strings.TrimSpace(os.Getenv("XO_BUILD_HOSTLOCK")); p != "" {
+		unhost, err := lockFile(p)
+		if err != nil {
+			return err
+		}
+		defer unhost()
+	}
 	seeds, err := Seeds(root)
 	if err != nil {
 		return err
