@@ -4,7 +4,8 @@
 // write the bytes with Fs.
 
 /// A file or directory of an archive. `path` uses `/`; a directory's
-/// `data` is empty.
+/// `data` is empty (unzip and untar of an entry whose mode says directory
+/// return no data for it, even when the archive stores some, decision 0164).
 struct Entry {
   path: Str
   data: Bytes

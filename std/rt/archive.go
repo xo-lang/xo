@@ -114,7 +114,7 @@ func Archive_untar(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_Arch
 		// a name from the archive: outside bytes (decision 0259)
 		p, ok := archivePath(textOf(h.Name))
 		if !ok {
-			return Err[List[Archive_Entry]](archiveErr("untar: entry path " + strconv.Quote(h.Name) + " leaves the archive"))
+			return Err[List[Archive_Entry]](archiveErr("untar: entry path " + strconv.Quote(h.Name) + archivePathWhy(h.Name)))
 		}
 		e := Archive_Entry{F_path: p, F_data: Bytes(""), F_mode: h.Mode & 0o7777, F_modified: Time(h.ModTime.UnixNano())}
 		switch h.Typeflag {
@@ -180,7 +180,7 @@ func Archive_unzip(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_Arch
 		// a name from the archive: outside bytes (decision 0259)
 		p, ok := archivePath(textOf(f.Name))
 		if !ok {
-			return Err[List[Archive_Entry]](archiveErr("unzip: entry path " + strconv.Quote(f.Name) + " leaves the archive"))
+			return Err[List[Archive_Entry]](archiveErr("unzip: entry path " + strconv.Quote(f.Name) + archivePathWhy(f.Name)))
 		}
 		m := f.Mode()
 		e := Archive_Entry{F_path: p, F_data: Bytes(""), F_mode: int64(m.Perm()), F_modified: Time(f.Modified.UnixNano())}
@@ -218,7 +218,7 @@ func Archive_zip_reader(_ *Task, data Bytes) Result[Archive_ZipReader, Archive_A
 	for i, f := range r.File {
 		p, ok := archivePath(textOf(f.Name))
 		if !ok {
-			return Err[Archive_ZipReader](archiveErr("zip_reader: entry path " + strconv.Quote(f.Name) + " leaves the archive"))
+			return Err[Archive_ZipReader](archiveErr("zip_reader: entry path " + strconv.Quote(f.Name) + archivePathWhy(f.Name)))
 		}
 		m := f.Mode()
 		if !m.IsDir() && !m.IsRegular() {
@@ -369,4 +369,13 @@ func Archive_zip_open(tk *Task, f File, size int64) Result[Archive_ZipReader, Ar
 		return Err[Archive_ZipReader](archiveErr("zip_open:" + strings.TrimPrefix(r.E.F_msg, "zip_reader:")))
 	}
 	return r
+}
+
+// archivePathWhy is the end of an entry path error: a NUL byte is its own
+// reason, every other refused name leaves the archive.
+func archivePathWhy(name string) string {
+	if strings.Contains(name, "\x00") {
+		return " contains a NUL byte"
+	}
+	return " leaves the archive"
 }

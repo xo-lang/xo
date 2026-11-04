@@ -154,6 +154,15 @@ fn archive_path(p0: Str) -> Str? {
   Some(clean)
 }
 
+/// Why archive_path refused a name, for a reader's error: a NUL byte is its
+/// own reason (the name is not a path at all), the rest leave the archive.
+fn path_why(p: Str) -> Str {
+  if p.contains("\u{0}") {
+    return "contains a NUL byte"
+  }
+  "leaves the archive"
+}
+
 fn floor_div(a: Int, b: Int) -> Int {
   if a >= 0 {
     return a / b
@@ -935,7 +944,7 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
           None => ()
         }
         if archive_path(gname).is_none() {
-          return Err("untar: entry path ${gname.quote()} leaves the archive")
+          return Err("untar: entry path ${gname.quote()} ${path_why(gname)}")
         }
       }
       let pad = (512 - nb % 512) % 512
@@ -1063,7 +1072,7 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
     }
     let p = match archive_path(name) {
       Some(x) => x
-      None => return Err("untar: entry path ${name.quote()} leaves the archive")
+      None => return Err("untar: entry path ${name.quote()} ${path_why(name)}")
     }
     var e = archive.Entry{path: p, data: b"", mode: mode & 0o7777, is_dir: false, modified: Time.UNIX_EPOCH + Duration.from_nanos(mtime_ns)}
     if typ == 53 {
@@ -1079,7 +1088,7 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
           if sname != "" {
             e.path = match archive_path(sname) {
               Some(x) => x
-              None => return Err("untar: entry path ${sname.quote()} leaves the archive")
+              None => return Err("untar: entry path ${sname.quote()} ${path_why(sname)}")
             }
           }
           e.data = logical
@@ -1713,7 +1722,7 @@ fn zip_directory_at(data: Bytes, shift: Int) -> List[ZipHdr] ! Str {
 fn zip_meta(zf: ZipHdr) -> (Str, Int, Bool) ! Str {
   let p = match archive_path(zf.name) {
     Some(x) => x
-    None => return Err("entry path ${go_q(zf.raw)} leaves the archive")
+    None => return Err("entry path ${go_q(zf.raw)} ${path_why(zf.name)}")
   }
   let creator = zf.creator >> 8
   var perm = 0

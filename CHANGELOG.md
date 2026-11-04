@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - change (wasm, tls): on wasm a certificate's expiry error shows the current time in UTC (RFC 3339's Z) instead of the local zone, so the zone rules are no longer compiled into a component: an HTTPS client 52 KB smaller; native unchanged.
+- fix (archive): a NUL byte in an entry name is refused as `contains a NUL byte`, not `leaves the archive`; a zip or tar entry whose mode says directory returns no data (documented, std/changes/archive.md).
 - perf (wasm, size, crypto): SHA-256 and SHA-512 on wasm run 16 rounds unrolled in a loop (4 and 5 times) instead of the 64 and 80 unrolled rounds native uses: an HTTPS client component is 61 KB smaller and hashes faster under wasmtime (SHA-256 0.90, SHA-512 0.89 of before); native unchanged.
 - perf (wasm, size, mime): the content sniffing table (net/http's DetectContentType signatures) is decoded once from one Bytes literal instead of built from 51 enum literals: a wasm hello component 3.6 KB smaller; results unchanged.
 

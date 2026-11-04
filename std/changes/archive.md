@@ -1,5 +1,27 @@
 # std/archive changes
 
+## 2026-11-04: fix: a NUL byte in an entry name is named, not "leaves the archive"
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.36.0 evaluation (darwin/amd64)
+- Go reference: archive/zip and archive/tar take the name as it is; Xo's path rules (std.md 18) refuse a name with a NUL byte
+- Test: archive_test.xo "unzip names a NUL byte, not the archive's root"
+- Shipped in: not yet released
+
+`unzip`, `untar` and `zip_reader` refused a name containing a NUL byte with `entry path "..." leaves the archive`. It now says `entry path "..." contains a NUL byte`; every other refused name keeps the old text.
+
+## 2026-11-04: docs: a directory entry's data is empty whatever the archive stores
+
+- Kind: docs
+- Commit: this push
+- Found by: the owner's v0.36.0 evaluation (the fuzz test: a zip entry whose Unix mode says directory but which has data)
+- Go reference: archive/zip's Reader hands the entry's data to the caller
+- Test: archive_test.xo "unzip keeps a directory's contract"
+- Shipped in: not yet released
+
+Decided: `Entry`'s contract stays (a directory's `data` is empty), so `unzip` of such an entry returns a directory with no data where Go would let the caller read the data. An error would refuse archives Go reads, and keeping the data would give a directory a body the writers ignore. The declaration's doc comment says so.
+
 ## 2026-11-04: perf: a ZipReader read no longer builds the fixed Huffman decoder
 
 - Kind: perf

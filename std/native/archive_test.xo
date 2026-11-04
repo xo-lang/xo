@@ -512,3 +512,54 @@ test "untar and unzip of Go's test archives" {
   }
   expect(bad[0..(if bad.len() < 25 { bad.len() } else { 25 })]) == []
 }
+
+/// b with the bytes at at... replaced by vals.
+fn patched(b: Bytes, at: Int, vals: List[Int]) -> Bytes {
+  var out = BytesBuilder.with_capacity(b.len())
+  for i in 0..b.len() {
+    if i >= at && i < at + vals.len() {
+      out.write_byte(UInt8(vals[i - at]))
+    } else {
+      out.write_byte(b[i])
+    }
+  }
+  out.freeze()
+}
+
+/// The offset of the first occurrence of the four bytes sig in b, -1 for none.
+fn find4(b: Bytes, sig: List[Int]) -> Int {
+  var i = 0
+  while i + 4 <= b.len() {
+    if Int(b[i]) == sig[0] && Int(b[i + 1]) == sig[1] && Int(b[i + 2]) == sig[2] && Int(b[i + 3]) == sig[3] {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+test "unzip names a NUL byte, not the archive's root" {
+  let z = archive.zip([archive.Entry{path: "a_b", data: b"hi", mode: 0o644, is_dir: false, modified: Time.UNIX_EPOCH}]) .ok() ?? fault("zip")
+  // the name's second byte is at 31 in the local header; the central one at its signature + 47
+  let c = find4(z, [0x50, 0x4b, 1, 2])
+  let bad = patched(patched(z, 31, [0]), c + 47, [0])
+  match archive.unzip(bad) {
+    Ok(_) => fault("a NUL name was read")
+    Err(e) => {
+      if !e.display().contains("contains a NUL byte") || e.display().contains("leaves the archive") {
+        fault("got " + e.display())
+      }
+    }
+  }
+}
+
+test "unzip keeps a directory's contract: a directory mode with data reads as a directory with no data" {
+  let z = archive.zip([archive.Entry{path: "d/x", data: b"hello", mode: 0o644, is_dir: false, modified: Time.UNIX_EPOCH}]) .ok() ?? fault("zip")
+  let c = find4(z, [0x50, 0x4b, 1, 2])
+  // external attributes: Unix directory mode 0o40755 in the high 16 bits
+  let dirmode = patched(z, c + 38, [0, 0, 0xed, 0x41])
+  let es = archive.unzip(dirmode) .ok() ?? fault("unzip")
+  if es.len() != 1 || !es[0].is_dir || es[0].data.len() != 0 || es[0].path != "d/x" {
+    fault("got ${es.len()} entries")
+  }
+}
