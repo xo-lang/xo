@@ -238,10 +238,18 @@ fn (var b: Builder) maph_prep(t: Int) {
 }
 
 /// Whether the list l is shared with another value (not empty, not held
-/// once).
+/// once). A shared count of one holder (-1: the map was made reachable
+/// from another thread, by a Mutex or a channel, and every other holder
+/// let go) is held once: the lists' write claims it (reuse, rl_copy's
+/// rc.claim, with its acquire) and writes in place, as a list's does.
+/// Testing only a count of 1 sent every write of a map kept in a Mutex to
+/// a copy and the second to the log form, for good (cookiejar's jar,
+/// 2026-11-03).
 fn (var b: Builder) maph_shared(l: Int) -> Int {
   let bt = b.bool_t()
-  b.add(Op.And, bt, Aux.None, [b.bop(Op.Gt, b.call("list.len", b.int_t(), "", [l]), b.cint(0)), b.add(Op.Not, bt, Aux.None, [b.maph_sole(l)])])
+  let c = b.obj_count(l)
+  let once = b.add(Op.Or, bt, Aux.None, [b.bop(Op.Eq, c, b.cint(1)), b.bop(Op.Eq, c, b.cint(-1))])
+  b.add(Op.And, bt, Aux.None, [b.bop(Op.Gt, b.call("list.len", b.int_t(), "", [l]), b.cint(0)), b.add(Op.Not, bt, Aux.None, [once])])
 }
 
 /// Whether the hybrid map mp leaves the lists' put (or remove) for
