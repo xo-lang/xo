@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-11-04: perf: the darwin size class limit is 64 KiB
+
+- Kind: perf
+- Commit: this commit
+- Found by: bisecting the owner's v0.36.0 Intel Mac evaluation (darwin/amd64 map1M 141 to 154 at d3b9a5458)
+- Go reference: none (Go's size classes go to 32 KiB, its large spans stay in the page heap)
+- Test: TestGoldenRun heap goldens; cmd/xo TestHeapMidMaxRange; the 13-perf micro on darwin/amd64; the xo self build on darwin/arm64 (decision 0448 addendum tables)
+- Speed: darwin/amd64 map1M 145 to 138 ms, sort1M 90 to 83
+
+heapos.xo MID_DARWIN 16384 to 65536: a freed block of 16 to 64 KiB stays
+on its class free list instead of being unmapped, so a map's or list's
+regrowth reuses it. The micro's max RSS 55.5 to 58.7 MB; the self
+build's footprint the same, its max RSS 6 to 15% higher.
+
 ## 2026-11-04: fix: an out of range XO_HEAP_MID_MAX is reported at start
 
 - Kind: fix

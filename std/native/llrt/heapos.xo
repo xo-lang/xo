@@ -1216,14 +1216,16 @@ const MAG_BYTES = 65536
 const MID_MAX = alloc.MID_MAX_LIMIT
 /// The size classes' limit at start: blocks above it are mapped from the
 /// system and returned to it by munmap when freed, while a freed class
-/// block stays on its free list. 16 KiB on darwin (2026-10-30, the self
-/// build: the 32 KiB to 256 KiB page block classes held 4.4 GB on their
-/// free lists at exit; peak RSS 9453 to 7473 MB at the same wall; at
-/// 8 KiB the wall grew 15%), MID_MAX elsewhere (linux/arm64, the same
-/// build: wall 1.115 worse and no RSS change at 16 KiB: Linux gives the
-/// freed class blocks' pages back by itself). XO_HEAP_MID_MAX sets it,
-/// up to MID_MAX.
-const MID_DARWIN = 16384
+/// block stays on its free list. 64 KiB on darwin (owner, 2026-11-04,
+/// decision 0448 addendum: 16 KiB, chosen 2026-10-30 when the self build's
+/// 32 KiB to 256 KiB page block classes held 4.4 GB on their free lists
+/// at exit, made map1M 141 to 154 ms on darwin/amd64; with the large
+/// block cache of 0492 its footprint gain was gone, and 64 KiB gives the
+/// speed back for +6 to 15% of the self build's max RSS; 8 KiB had cost
+/// 15% wall), MID_MAX elsewhere (linux/arm64, the same build: wall 1.115
+/// worse and no RSS change at 16 KiB: Linux gives the freed class
+/// blocks' pages back by itself). XO_HEAP_MID_MAX sets it, up to MID_MAX.
+const MID_DARWIN = 65536
 fn mid_default() -> Int {
   match target.os {
     TargetOs.Darwin => MID_DARWIN

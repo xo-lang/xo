@@ -1091,3 +1091,40 @@ with tens of MB to GB in use, keeps its reuse. Against main (3 rounds each):
 
 Pushed as f3f9552ac after the owner accepted the retention change (2026-11-03).
 
+## Addendum: the darwin size class limit is 64 KiB (owner, 2026-11-04)
+
+Bisecting the owner's v0.36.0 Intel Mac evaluation (Xo Lang 1) found
+d3b9a5458, the 16 KiB darwin size class limit of 2026-10-30, as the
+darwin/amd64 map1M step from 141 to 154 ms (its parent 141; its own
+binary with XO_HEAP_MID_MAX=262136, 141). Since then the large block
+cache (decision 0492) and the advice skip for wanted sizes (adb71f90a)
+hold the pages of 16 KiB to 256 KiB blocks either way, so 16 KiB no
+longer lowers the self build's footprint; it still lowers its max RSS.
+
+Intel Mac, the 13-perf micro (darwin/amd64, main adb71f90a, best of 7
+interleaved; 0.35.0: map1M 139):
+
+| limit | json10kx20 | map1M | sort1M | micro max RSS MB |
+|---|---|---|---|---|
+| 16 KiB (was) | 104 | 145 | 90 | 55.5 |
+| 32 KiB | 104 | 140 | 89 | 57.4 |
+| 64 KiB | 106 | 138 | 83 | 58.7 |
+| 128 KiB | 104 | 139 | 84 | 57.7 |
+| 256 KiB | 108 | 138 | 84 | 58.1 |
+
+Mac (darwin/arm64), main's xo building compiler/xo, two runs each
+interleaved, caches off:
+
+| limit | wall s | peak footprint MB | max RSS MB |
+|---|---|---|---|
+| 16 KiB | 45.2 / 41.6 | 3624 / 3611 | 3406 / 3418 |
+| 64 KiB | 43.2 / 38.4 | 3383 / 3597 | 3927 / 3613 |
+| 128 KiB | 45.2 / 36.9 | 3608 / 3369 | 3562 / 4127 |
+| 256 KiB | 41.6 / 36.4 | 3402 / 3468 | 4114 / 4215 |
+
+Decision (owner, 2026-11-04): MID_DARWIN is 64 KiB. It gives back the
+whole map and sort loss at the same footprint, for 6 to 15% more self
+build max RSS than 16 KiB (half of 256 KiB's 22%). Linux and Windows
+keep MID_MAX. XO_HEAP_MID_MAX still sets it (1024 to 262136), and a
+value outside that range is now reported at start.
+
