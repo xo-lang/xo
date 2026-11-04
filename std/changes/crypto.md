@@ -12,6 +12,24 @@
 
 `crypto.hmac` with `Hash.Sha256` calls digest.xo's `hmac_sha256` (the pad blocks hashed straight into word states, the outer hash of one block), in place of the generic Hasher. HS256 JWTs, TOTP and every other HMAC-SHA256 caller of `crypto.hmac` take it.
 
+## 2026-11-04: perf: SHA-256 and SHA-512 on wasm run 16 rounds in a loop
+
+- Kind: perf (size, speed)
+- Commit: this push
+- Found by: the wasm component size breakdown (decision 0447 queue, component size): digest_tables' unrolled
+  sha256_block and sha512_block were 34 KB and 38 KB of every wasm module that hashes (TLS, JWT, Ed25519)
+- Go reference: crypto/internal/fips140/sha256 and sha512 blockGeneric (a loop over the rounds)
+- Test: the crypto, jwt and tls corpora on wasm, TestWasm* goldens; shabench's digests equal before and after
+- Timing: host 1 under wasmtime 50, 1 MiB hashed 64 times, medians of 5: SHA-256 0.90 of before (1,409 -> 1,267 ms),
+  SHA-512 0.89 of before (981 -> 873 ms); Ed25519 signing (2,000) unchanged (1,241 ms both)
+- Size: an HTTPS client (xo-fetch) 2,193,968 -> 2,132,945 bytes (-61,023)
+- Shipped in: not yet released
+
+On wasm, `sha2.block256`, `compress` and digest.xo's Ed25519 hash call `cpu.sha256_block_r16` and
+`cpu.sha512_block_r16`: 16 rounds unrolled in a loop of 4 (5 for SHA-512), the message schedule in 16 locals
+updated in place, the working variables renamed round by round; as digest_tables, the SHA-256 rounds leave the
+bits above 32 unmasked. Native targets keep the CPU instructions and digest_tables' unrolled rounds.
+
 ## 2026-11-04: perf: ECDSA verification multiplies with sliding windows
 
 - Kind: perf

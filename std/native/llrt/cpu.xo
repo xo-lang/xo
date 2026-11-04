@@ -721,6 +721,128 @@ pub fn sha256_block_soft(st: Int, p: Int, k: Int) {
   rt.mem_store(st, 56, add32(rt.mem_load(st, 56, 8), h), 8)
 }
 
+/// SHA-256's compression of the 64 bytes at p into the 8 words at st, with
+/// the round constants at k (K256), for wasm: 16 rounds unrolled in a loop
+/// of 4, the message schedule in 16 locals updated in place before each
+/// later 16, and the working variables renamed round by round instead of
+/// moved (digest_tables' fully unrolled rounds are 34 KB of a module). As
+/// there, the rounds leave the bits above 32 unmasked (adds, ands, xors and
+/// 32 bit rotations never carry them down); the schedule, whose shifts
+/// would, and the final sums are masked.
+pub fn sha256_block_r16(st: Int, p: Int, k: Int) {
+  let x0 = rt.mem_load(p, 0, 8).swap_bytes()
+  var w0 = x0.shr_logical(32)
+  var w1 = x0 & 0xFFFFFFFF
+  let x1 = rt.mem_load(p, 8, 8).swap_bytes()
+  var w2 = x1.shr_logical(32)
+  var w3 = x1 & 0xFFFFFFFF
+  let x2 = rt.mem_load(p, 16, 8).swap_bytes()
+  var w4 = x2.shr_logical(32)
+  var w5 = x2 & 0xFFFFFFFF
+  let x3 = rt.mem_load(p, 24, 8).swap_bytes()
+  var w6 = x3.shr_logical(32)
+  var w7 = x3 & 0xFFFFFFFF
+  let x4 = rt.mem_load(p, 32, 8).swap_bytes()
+  var w8 = x4.shr_logical(32)
+  var w9 = x4 & 0xFFFFFFFF
+  let x5 = rt.mem_load(p, 40, 8).swap_bytes()
+  var w10 = x5.shr_logical(32)
+  var w11 = x5 & 0xFFFFFFFF
+  let x6 = rt.mem_load(p, 48, 8).swap_bytes()
+  var w12 = x6.shr_logical(32)
+  var w13 = x6 & 0xFFFFFFFF
+  let x7 = rt.mem_load(p, 56, 8).swap_bytes()
+  var w14 = x7.shr_logical(32)
+  var w15 = x7 & 0xFFFFFFFF
+  var a = rt.mem_load(st, 0, 8)
+  var b = rt.mem_load(st, 8, 8)
+  var c = rt.mem_load(st, 16, 8)
+  var d = rt.mem_load(st, 24, 8)
+  var e = rt.mem_load(st, 32, 8)
+  var f = rt.mem_load(st, 40, 8)
+  var g = rt.mem_load(st, 48, 8)
+  var h = rt.mem_load(st, 56, 8)
+  for r in 0..4 {
+    if r > 0 {
+      w0 = w0.wrapping_add(w1.rotate_right32(7) ^ w1.rotate_right32(18) ^ (w1 >> 3)).wrapping_add(w9.wrapping_add(w14.rotate_right32(17) ^ w14.rotate_right32(19) ^ (w14 >> 10))) & 0xFFFFFFFF
+      w1 = w1.wrapping_add(w2.rotate_right32(7) ^ w2.rotate_right32(18) ^ (w2 >> 3)).wrapping_add(w10.wrapping_add(w15.rotate_right32(17) ^ w15.rotate_right32(19) ^ (w15 >> 10))) & 0xFFFFFFFF
+      w2 = w2.wrapping_add(w3.rotate_right32(7) ^ w3.rotate_right32(18) ^ (w3 >> 3)).wrapping_add(w11.wrapping_add(w0.rotate_right32(17) ^ w0.rotate_right32(19) ^ (w0 >> 10))) & 0xFFFFFFFF
+      w3 = w3.wrapping_add(w4.rotate_right32(7) ^ w4.rotate_right32(18) ^ (w4 >> 3)).wrapping_add(w12.wrapping_add(w1.rotate_right32(17) ^ w1.rotate_right32(19) ^ (w1 >> 10))) & 0xFFFFFFFF
+      w4 = w4.wrapping_add(w5.rotate_right32(7) ^ w5.rotate_right32(18) ^ (w5 >> 3)).wrapping_add(w13.wrapping_add(w2.rotate_right32(17) ^ w2.rotate_right32(19) ^ (w2 >> 10))) & 0xFFFFFFFF
+      w5 = w5.wrapping_add(w6.rotate_right32(7) ^ w6.rotate_right32(18) ^ (w6 >> 3)).wrapping_add(w14.wrapping_add(w3.rotate_right32(17) ^ w3.rotate_right32(19) ^ (w3 >> 10))) & 0xFFFFFFFF
+      w6 = w6.wrapping_add(w7.rotate_right32(7) ^ w7.rotate_right32(18) ^ (w7 >> 3)).wrapping_add(w15.wrapping_add(w4.rotate_right32(17) ^ w4.rotate_right32(19) ^ (w4 >> 10))) & 0xFFFFFFFF
+      w7 = w7.wrapping_add(w8.rotate_right32(7) ^ w8.rotate_right32(18) ^ (w8 >> 3)).wrapping_add(w0.wrapping_add(w5.rotate_right32(17) ^ w5.rotate_right32(19) ^ (w5 >> 10))) & 0xFFFFFFFF
+      w8 = w8.wrapping_add(w9.rotate_right32(7) ^ w9.rotate_right32(18) ^ (w9 >> 3)).wrapping_add(w1.wrapping_add(w6.rotate_right32(17) ^ w6.rotate_right32(19) ^ (w6 >> 10))) & 0xFFFFFFFF
+      w9 = w9.wrapping_add(w10.rotate_right32(7) ^ w10.rotate_right32(18) ^ (w10 >> 3)).wrapping_add(w2.wrapping_add(w7.rotate_right32(17) ^ w7.rotate_right32(19) ^ (w7 >> 10))) & 0xFFFFFFFF
+      w10 = w10.wrapping_add(w11.rotate_right32(7) ^ w11.rotate_right32(18) ^ (w11 >> 3)).wrapping_add(w3.wrapping_add(w8.rotate_right32(17) ^ w8.rotate_right32(19) ^ (w8 >> 10))) & 0xFFFFFFFF
+      w11 = w11.wrapping_add(w12.rotate_right32(7) ^ w12.rotate_right32(18) ^ (w12 >> 3)).wrapping_add(w4.wrapping_add(w9.rotate_right32(17) ^ w9.rotate_right32(19) ^ (w9 >> 10))) & 0xFFFFFFFF
+      w12 = w12.wrapping_add(w13.rotate_right32(7) ^ w13.rotate_right32(18) ^ (w13 >> 3)).wrapping_add(w5.wrapping_add(w10.rotate_right32(17) ^ w10.rotate_right32(19) ^ (w10 >> 10))) & 0xFFFFFFFF
+      w13 = w13.wrapping_add(w14.rotate_right32(7) ^ w14.rotate_right32(18) ^ (w14 >> 3)).wrapping_add(w6.wrapping_add(w11.rotate_right32(17) ^ w11.rotate_right32(19) ^ (w11 >> 10))) & 0xFFFFFFFF
+      w14 = w14.wrapping_add(w15.rotate_right32(7) ^ w15.rotate_right32(18) ^ (w15 >> 3)).wrapping_add(w7.wrapping_add(w12.rotate_right32(17) ^ w12.rotate_right32(19) ^ (w12 >> 10))) & 0xFFFFFFFF
+      w15 = w15.wrapping_add(w0.rotate_right32(7) ^ w0.rotate_right32(18) ^ (w0 >> 3)).wrapping_add(w8.wrapping_add(w13.rotate_right32(17) ^ w13.rotate_right32(19) ^ (w13 >> 10))) & 0xFFFFFFFF
+    }
+    let ko = 64 * r
+    let t0 = h.wrapping_add(e.rotate_right32(6) ^ e.rotate_right32(11) ^ e.rotate_right32(25)).wrapping_add((g ^ (e & (f ^ g))).wrapping_add(rt.mem_load(k, ko + 0, 4).wrapping_add(w0)))
+    d = d.wrapping_add(t0)
+    h = t0.wrapping_add((a.rotate_right32(2) ^ a.rotate_right32(13) ^ a.rotate_right32(22)).wrapping_add((a & b) | (c & (a | b))))
+    let t1 = g.wrapping_add(d.rotate_right32(6) ^ d.rotate_right32(11) ^ d.rotate_right32(25)).wrapping_add((f ^ (d & (e ^ f))).wrapping_add(rt.mem_load(k, ko + 4, 4).wrapping_add(w1)))
+    c = c.wrapping_add(t1)
+    g = t1.wrapping_add((h.rotate_right32(2) ^ h.rotate_right32(13) ^ h.rotate_right32(22)).wrapping_add((h & a) | (b & (h | a))))
+    let t2 = f.wrapping_add(c.rotate_right32(6) ^ c.rotate_right32(11) ^ c.rotate_right32(25)).wrapping_add((e ^ (c & (d ^ e))).wrapping_add(rt.mem_load(k, ko + 8, 4).wrapping_add(w2)))
+    b = b.wrapping_add(t2)
+    f = t2.wrapping_add((g.rotate_right32(2) ^ g.rotate_right32(13) ^ g.rotate_right32(22)).wrapping_add((g & h) | (a & (g | h))))
+    let t3 = e.wrapping_add(b.rotate_right32(6) ^ b.rotate_right32(11) ^ b.rotate_right32(25)).wrapping_add((d ^ (b & (c ^ d))).wrapping_add(rt.mem_load(k, ko + 12, 4).wrapping_add(w3)))
+    a = a.wrapping_add(t3)
+    e = t3.wrapping_add((f.rotate_right32(2) ^ f.rotate_right32(13) ^ f.rotate_right32(22)).wrapping_add((f & g) | (h & (f | g))))
+    let t4 = d.wrapping_add(a.rotate_right32(6) ^ a.rotate_right32(11) ^ a.rotate_right32(25)).wrapping_add((c ^ (a & (b ^ c))).wrapping_add(rt.mem_load(k, ko + 16, 4).wrapping_add(w4)))
+    h = h.wrapping_add(t4)
+    d = t4.wrapping_add((e.rotate_right32(2) ^ e.rotate_right32(13) ^ e.rotate_right32(22)).wrapping_add((e & f) | (g & (e | f))))
+    let t5 = c.wrapping_add(h.rotate_right32(6) ^ h.rotate_right32(11) ^ h.rotate_right32(25)).wrapping_add((b ^ (h & (a ^ b))).wrapping_add(rt.mem_load(k, ko + 20, 4).wrapping_add(w5)))
+    g = g.wrapping_add(t5)
+    c = t5.wrapping_add((d.rotate_right32(2) ^ d.rotate_right32(13) ^ d.rotate_right32(22)).wrapping_add((d & e) | (f & (d | e))))
+    let t6 = b.wrapping_add(g.rotate_right32(6) ^ g.rotate_right32(11) ^ g.rotate_right32(25)).wrapping_add((a ^ (g & (h ^ a))).wrapping_add(rt.mem_load(k, ko + 24, 4).wrapping_add(w6)))
+    f = f.wrapping_add(t6)
+    b = t6.wrapping_add((c.rotate_right32(2) ^ c.rotate_right32(13) ^ c.rotate_right32(22)).wrapping_add((c & d) | (e & (c | d))))
+    let t7 = a.wrapping_add(f.rotate_right32(6) ^ f.rotate_right32(11) ^ f.rotate_right32(25)).wrapping_add((h ^ (f & (g ^ h))).wrapping_add(rt.mem_load(k, ko + 28, 4).wrapping_add(w7)))
+    e = e.wrapping_add(t7)
+    a = t7.wrapping_add((b.rotate_right32(2) ^ b.rotate_right32(13) ^ b.rotate_right32(22)).wrapping_add((b & c) | (d & (b | c))))
+    let t8 = h.wrapping_add(e.rotate_right32(6) ^ e.rotate_right32(11) ^ e.rotate_right32(25)).wrapping_add((g ^ (e & (f ^ g))).wrapping_add(rt.mem_load(k, ko + 32, 4).wrapping_add(w8)))
+    d = d.wrapping_add(t8)
+    h = t8.wrapping_add((a.rotate_right32(2) ^ a.rotate_right32(13) ^ a.rotate_right32(22)).wrapping_add((a & b) | (c & (a | b))))
+    let t9 = g.wrapping_add(d.rotate_right32(6) ^ d.rotate_right32(11) ^ d.rotate_right32(25)).wrapping_add((f ^ (d & (e ^ f))).wrapping_add(rt.mem_load(k, ko + 36, 4).wrapping_add(w9)))
+    c = c.wrapping_add(t9)
+    g = t9.wrapping_add((h.rotate_right32(2) ^ h.rotate_right32(13) ^ h.rotate_right32(22)).wrapping_add((h & a) | (b & (h | a))))
+    let t10 = f.wrapping_add(c.rotate_right32(6) ^ c.rotate_right32(11) ^ c.rotate_right32(25)).wrapping_add((e ^ (c & (d ^ e))).wrapping_add(rt.mem_load(k, ko + 40, 4).wrapping_add(w10)))
+    b = b.wrapping_add(t10)
+    f = t10.wrapping_add((g.rotate_right32(2) ^ g.rotate_right32(13) ^ g.rotate_right32(22)).wrapping_add((g & h) | (a & (g | h))))
+    let t11 = e.wrapping_add(b.rotate_right32(6) ^ b.rotate_right32(11) ^ b.rotate_right32(25)).wrapping_add((d ^ (b & (c ^ d))).wrapping_add(rt.mem_load(k, ko + 44, 4).wrapping_add(w11)))
+    a = a.wrapping_add(t11)
+    e = t11.wrapping_add((f.rotate_right32(2) ^ f.rotate_right32(13) ^ f.rotate_right32(22)).wrapping_add((f & g) | (h & (f | g))))
+    let t12 = d.wrapping_add(a.rotate_right32(6) ^ a.rotate_right32(11) ^ a.rotate_right32(25)).wrapping_add((c ^ (a & (b ^ c))).wrapping_add(rt.mem_load(k, ko + 48, 4).wrapping_add(w12)))
+    h = h.wrapping_add(t12)
+    d = t12.wrapping_add((e.rotate_right32(2) ^ e.rotate_right32(13) ^ e.rotate_right32(22)).wrapping_add((e & f) | (g & (e | f))))
+    let t13 = c.wrapping_add(h.rotate_right32(6) ^ h.rotate_right32(11) ^ h.rotate_right32(25)).wrapping_add((b ^ (h & (a ^ b))).wrapping_add(rt.mem_load(k, ko + 52, 4).wrapping_add(w13)))
+    g = g.wrapping_add(t13)
+    c = t13.wrapping_add((d.rotate_right32(2) ^ d.rotate_right32(13) ^ d.rotate_right32(22)).wrapping_add((d & e) | (f & (d | e))))
+    let t14 = b.wrapping_add(g.rotate_right32(6) ^ g.rotate_right32(11) ^ g.rotate_right32(25)).wrapping_add((a ^ (g & (h ^ a))).wrapping_add(rt.mem_load(k, ko + 56, 4).wrapping_add(w14)))
+    f = f.wrapping_add(t14)
+    b = t14.wrapping_add((c.rotate_right32(2) ^ c.rotate_right32(13) ^ c.rotate_right32(22)).wrapping_add((c & d) | (e & (c | d))))
+    let t15 = a.wrapping_add(f.rotate_right32(6) ^ f.rotate_right32(11) ^ f.rotate_right32(25)).wrapping_add((h ^ (f & (g ^ h))).wrapping_add(rt.mem_load(k, ko + 60, 4).wrapping_add(w15)))
+    e = e.wrapping_add(t15)
+    a = t15.wrapping_add((b.rotate_right32(2) ^ b.rotate_right32(13) ^ b.rotate_right32(22)).wrapping_add((b & c) | (d & (b | c))))
+  }
+  rt.mem_store(st, 0, (rt.mem_load(st, 0, 8) + (a & 0xFFFFFFFF)) & 0xFFFFFFFF, 8)
+  rt.mem_store(st, 8, (rt.mem_load(st, 8, 8) + (b & 0xFFFFFFFF)) & 0xFFFFFFFF, 8)
+  rt.mem_store(st, 16, (rt.mem_load(st, 16, 8) + (c & 0xFFFFFFFF)) & 0xFFFFFFFF, 8)
+  rt.mem_store(st, 24, (rt.mem_load(st, 24, 8) + (d & 0xFFFFFFFF)) & 0xFFFFFFFF, 8)
+  rt.mem_store(st, 32, (rt.mem_load(st, 32, 8) + (e & 0xFFFFFFFF)) & 0xFFFFFFFF, 8)
+  rt.mem_store(st, 40, (rt.mem_load(st, 40, 8) + (f & 0xFFFFFFFF)) & 0xFFFFFFFF, 8)
+  rt.mem_store(st, 48, (rt.mem_load(st, 48, 8) + (g & 0xFFFFFFFF)) & 0xFFFFFFFF, 8)
+  rt.mem_store(st, 56, (rt.mem_load(st, 56, 8) + (h & 0xFFFFFFFF)) & 0xFFFFFFFF, 8)
+}
+
+
+
 // ---------------------------------------------------------------------------
 // SHA-512's compression (SHA512H, SHA512H2, SHA512SU0, SHA512SU1 on arm64)
 
@@ -775,6 +897,116 @@ pub fn sha512_block_soft(st: Int, p: Int, k: Int) {
     rt.mem_store(st, 8 * i, rt.mem_load(st, 8 * i, 8).wrapping_add(x), 8)
   }
 }
+
+/// SHA-512's compression of the 128 bytes at p into the 8 words at st,
+/// with the round constants at k (K512), for wasm: as sha256_block_r16,
+/// 16 rounds unrolled in a loop of 5, the schedule in 16 locals updated in
+/// place before each later 16, the working variables renamed round by
+/// round (digest_tables' fully unrolled rounds are 38 KB of a module).
+pub fn sha512_block_r16(st: Int, p: Int, k: Int) {
+  var w0 = rt.mem_load(p, 0, 8).swap_bytes()
+  var w1 = rt.mem_load(p, 8, 8).swap_bytes()
+  var w2 = rt.mem_load(p, 16, 8).swap_bytes()
+  var w3 = rt.mem_load(p, 24, 8).swap_bytes()
+  var w4 = rt.mem_load(p, 32, 8).swap_bytes()
+  var w5 = rt.mem_load(p, 40, 8).swap_bytes()
+  var w6 = rt.mem_load(p, 48, 8).swap_bytes()
+  var w7 = rt.mem_load(p, 56, 8).swap_bytes()
+  var w8 = rt.mem_load(p, 64, 8).swap_bytes()
+  var w9 = rt.mem_load(p, 72, 8).swap_bytes()
+  var w10 = rt.mem_load(p, 80, 8).swap_bytes()
+  var w11 = rt.mem_load(p, 88, 8).swap_bytes()
+  var w12 = rt.mem_load(p, 96, 8).swap_bytes()
+  var w13 = rt.mem_load(p, 104, 8).swap_bytes()
+  var w14 = rt.mem_load(p, 112, 8).swap_bytes()
+  var w15 = rt.mem_load(p, 120, 8).swap_bytes()
+  var a = rt.mem_load(st, 0, 8)
+  var b = rt.mem_load(st, 8, 8)
+  var c = rt.mem_load(st, 16, 8)
+  var d = rt.mem_load(st, 24, 8)
+  var e = rt.mem_load(st, 32, 8)
+  var f = rt.mem_load(st, 40, 8)
+  var g = rt.mem_load(st, 48, 8)
+  var h = rt.mem_load(st, 56, 8)
+  for r in 0..5 {
+    if r > 0 {
+      w0 = w0.wrapping_add(w1.rotate_right(1) ^ w1.rotate_right(8) ^ w1.shr_logical(7)).wrapping_add(w9.wrapping_add(w14.rotate_right(19) ^ w14.rotate_right(61) ^ w14.shr_logical(6)))
+      w1 = w1.wrapping_add(w2.rotate_right(1) ^ w2.rotate_right(8) ^ w2.shr_logical(7)).wrapping_add(w10.wrapping_add(w15.rotate_right(19) ^ w15.rotate_right(61) ^ w15.shr_logical(6)))
+      w2 = w2.wrapping_add(w3.rotate_right(1) ^ w3.rotate_right(8) ^ w3.shr_logical(7)).wrapping_add(w11.wrapping_add(w0.rotate_right(19) ^ w0.rotate_right(61) ^ w0.shr_logical(6)))
+      w3 = w3.wrapping_add(w4.rotate_right(1) ^ w4.rotate_right(8) ^ w4.shr_logical(7)).wrapping_add(w12.wrapping_add(w1.rotate_right(19) ^ w1.rotate_right(61) ^ w1.shr_logical(6)))
+      w4 = w4.wrapping_add(w5.rotate_right(1) ^ w5.rotate_right(8) ^ w5.shr_logical(7)).wrapping_add(w13.wrapping_add(w2.rotate_right(19) ^ w2.rotate_right(61) ^ w2.shr_logical(6)))
+      w5 = w5.wrapping_add(w6.rotate_right(1) ^ w6.rotate_right(8) ^ w6.shr_logical(7)).wrapping_add(w14.wrapping_add(w3.rotate_right(19) ^ w3.rotate_right(61) ^ w3.shr_logical(6)))
+      w6 = w6.wrapping_add(w7.rotate_right(1) ^ w7.rotate_right(8) ^ w7.shr_logical(7)).wrapping_add(w15.wrapping_add(w4.rotate_right(19) ^ w4.rotate_right(61) ^ w4.shr_logical(6)))
+      w7 = w7.wrapping_add(w8.rotate_right(1) ^ w8.rotate_right(8) ^ w8.shr_logical(7)).wrapping_add(w0.wrapping_add(w5.rotate_right(19) ^ w5.rotate_right(61) ^ w5.shr_logical(6)))
+      w8 = w8.wrapping_add(w9.rotate_right(1) ^ w9.rotate_right(8) ^ w9.shr_logical(7)).wrapping_add(w1.wrapping_add(w6.rotate_right(19) ^ w6.rotate_right(61) ^ w6.shr_logical(6)))
+      w9 = w9.wrapping_add(w10.rotate_right(1) ^ w10.rotate_right(8) ^ w10.shr_logical(7)).wrapping_add(w2.wrapping_add(w7.rotate_right(19) ^ w7.rotate_right(61) ^ w7.shr_logical(6)))
+      w10 = w10.wrapping_add(w11.rotate_right(1) ^ w11.rotate_right(8) ^ w11.shr_logical(7)).wrapping_add(w3.wrapping_add(w8.rotate_right(19) ^ w8.rotate_right(61) ^ w8.shr_logical(6)))
+      w11 = w11.wrapping_add(w12.rotate_right(1) ^ w12.rotate_right(8) ^ w12.shr_logical(7)).wrapping_add(w4.wrapping_add(w9.rotate_right(19) ^ w9.rotate_right(61) ^ w9.shr_logical(6)))
+      w12 = w12.wrapping_add(w13.rotate_right(1) ^ w13.rotate_right(8) ^ w13.shr_logical(7)).wrapping_add(w5.wrapping_add(w10.rotate_right(19) ^ w10.rotate_right(61) ^ w10.shr_logical(6)))
+      w13 = w13.wrapping_add(w14.rotate_right(1) ^ w14.rotate_right(8) ^ w14.shr_logical(7)).wrapping_add(w6.wrapping_add(w11.rotate_right(19) ^ w11.rotate_right(61) ^ w11.shr_logical(6)))
+      w14 = w14.wrapping_add(w15.rotate_right(1) ^ w15.rotate_right(8) ^ w15.shr_logical(7)).wrapping_add(w7.wrapping_add(w12.rotate_right(19) ^ w12.rotate_right(61) ^ w12.shr_logical(6)))
+      w15 = w15.wrapping_add(w0.rotate_right(1) ^ w0.rotate_right(8) ^ w0.shr_logical(7)).wrapping_add(w8.wrapping_add(w13.rotate_right(19) ^ w13.rotate_right(61) ^ w13.shr_logical(6)))
+    }
+    let ko = 128 * r
+    let t0 = h.wrapping_add(e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41)).wrapping_add((g ^ (e & (f ^ g))).wrapping_add(rt.mem_load(k, ko + 0, 8).wrapping_add(w0)))
+    d = d.wrapping_add(t0)
+    h = t0.wrapping_add((a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39)).wrapping_add((a & b) | (c & (a | b))))
+    let t1 = g.wrapping_add(d.rotate_right(14) ^ d.rotate_right(18) ^ d.rotate_right(41)).wrapping_add((f ^ (d & (e ^ f))).wrapping_add(rt.mem_load(k, ko + 8, 8).wrapping_add(w1)))
+    c = c.wrapping_add(t1)
+    g = t1.wrapping_add((h.rotate_right(28) ^ h.rotate_right(34) ^ h.rotate_right(39)).wrapping_add((h & a) | (b & (h | a))))
+    let t2 = f.wrapping_add(c.rotate_right(14) ^ c.rotate_right(18) ^ c.rotate_right(41)).wrapping_add((e ^ (c & (d ^ e))).wrapping_add(rt.mem_load(k, ko + 16, 8).wrapping_add(w2)))
+    b = b.wrapping_add(t2)
+    f = t2.wrapping_add((g.rotate_right(28) ^ g.rotate_right(34) ^ g.rotate_right(39)).wrapping_add((g & h) | (a & (g | h))))
+    let t3 = e.wrapping_add(b.rotate_right(14) ^ b.rotate_right(18) ^ b.rotate_right(41)).wrapping_add((d ^ (b & (c ^ d))).wrapping_add(rt.mem_load(k, ko + 24, 8).wrapping_add(w3)))
+    a = a.wrapping_add(t3)
+    e = t3.wrapping_add((f.rotate_right(28) ^ f.rotate_right(34) ^ f.rotate_right(39)).wrapping_add((f & g) | (h & (f | g))))
+    let t4 = d.wrapping_add(a.rotate_right(14) ^ a.rotate_right(18) ^ a.rotate_right(41)).wrapping_add((c ^ (a & (b ^ c))).wrapping_add(rt.mem_load(k, ko + 32, 8).wrapping_add(w4)))
+    h = h.wrapping_add(t4)
+    d = t4.wrapping_add((e.rotate_right(28) ^ e.rotate_right(34) ^ e.rotate_right(39)).wrapping_add((e & f) | (g & (e | f))))
+    let t5 = c.wrapping_add(h.rotate_right(14) ^ h.rotate_right(18) ^ h.rotate_right(41)).wrapping_add((b ^ (h & (a ^ b))).wrapping_add(rt.mem_load(k, ko + 40, 8).wrapping_add(w5)))
+    g = g.wrapping_add(t5)
+    c = t5.wrapping_add((d.rotate_right(28) ^ d.rotate_right(34) ^ d.rotate_right(39)).wrapping_add((d & e) | (f & (d | e))))
+    let t6 = b.wrapping_add(g.rotate_right(14) ^ g.rotate_right(18) ^ g.rotate_right(41)).wrapping_add((a ^ (g & (h ^ a))).wrapping_add(rt.mem_load(k, ko + 48, 8).wrapping_add(w6)))
+    f = f.wrapping_add(t6)
+    b = t6.wrapping_add((c.rotate_right(28) ^ c.rotate_right(34) ^ c.rotate_right(39)).wrapping_add((c & d) | (e & (c | d))))
+    let t7 = a.wrapping_add(f.rotate_right(14) ^ f.rotate_right(18) ^ f.rotate_right(41)).wrapping_add((h ^ (f & (g ^ h))).wrapping_add(rt.mem_load(k, ko + 56, 8).wrapping_add(w7)))
+    e = e.wrapping_add(t7)
+    a = t7.wrapping_add((b.rotate_right(28) ^ b.rotate_right(34) ^ b.rotate_right(39)).wrapping_add((b & c) | (d & (b | c))))
+    let t8 = h.wrapping_add(e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41)).wrapping_add((g ^ (e & (f ^ g))).wrapping_add(rt.mem_load(k, ko + 64, 8).wrapping_add(w8)))
+    d = d.wrapping_add(t8)
+    h = t8.wrapping_add((a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39)).wrapping_add((a & b) | (c & (a | b))))
+    let t9 = g.wrapping_add(d.rotate_right(14) ^ d.rotate_right(18) ^ d.rotate_right(41)).wrapping_add((f ^ (d & (e ^ f))).wrapping_add(rt.mem_load(k, ko + 72, 8).wrapping_add(w9)))
+    c = c.wrapping_add(t9)
+    g = t9.wrapping_add((h.rotate_right(28) ^ h.rotate_right(34) ^ h.rotate_right(39)).wrapping_add((h & a) | (b & (h | a))))
+    let t10 = f.wrapping_add(c.rotate_right(14) ^ c.rotate_right(18) ^ c.rotate_right(41)).wrapping_add((e ^ (c & (d ^ e))).wrapping_add(rt.mem_load(k, ko + 80, 8).wrapping_add(w10)))
+    b = b.wrapping_add(t10)
+    f = t10.wrapping_add((g.rotate_right(28) ^ g.rotate_right(34) ^ g.rotate_right(39)).wrapping_add((g & h) | (a & (g | h))))
+    let t11 = e.wrapping_add(b.rotate_right(14) ^ b.rotate_right(18) ^ b.rotate_right(41)).wrapping_add((d ^ (b & (c ^ d))).wrapping_add(rt.mem_load(k, ko + 88, 8).wrapping_add(w11)))
+    a = a.wrapping_add(t11)
+    e = t11.wrapping_add((f.rotate_right(28) ^ f.rotate_right(34) ^ f.rotate_right(39)).wrapping_add((f & g) | (h & (f | g))))
+    let t12 = d.wrapping_add(a.rotate_right(14) ^ a.rotate_right(18) ^ a.rotate_right(41)).wrapping_add((c ^ (a & (b ^ c))).wrapping_add(rt.mem_load(k, ko + 96, 8).wrapping_add(w12)))
+    h = h.wrapping_add(t12)
+    d = t12.wrapping_add((e.rotate_right(28) ^ e.rotate_right(34) ^ e.rotate_right(39)).wrapping_add((e & f) | (g & (e | f))))
+    let t13 = c.wrapping_add(h.rotate_right(14) ^ h.rotate_right(18) ^ h.rotate_right(41)).wrapping_add((b ^ (h & (a ^ b))).wrapping_add(rt.mem_load(k, ko + 104, 8).wrapping_add(w13)))
+    g = g.wrapping_add(t13)
+    c = t13.wrapping_add((d.rotate_right(28) ^ d.rotate_right(34) ^ d.rotate_right(39)).wrapping_add((d & e) | (f & (d | e))))
+    let t14 = b.wrapping_add(g.rotate_right(14) ^ g.rotate_right(18) ^ g.rotate_right(41)).wrapping_add((a ^ (g & (h ^ a))).wrapping_add(rt.mem_load(k, ko + 112, 8).wrapping_add(w14)))
+    f = f.wrapping_add(t14)
+    b = t14.wrapping_add((c.rotate_right(28) ^ c.rotate_right(34) ^ c.rotate_right(39)).wrapping_add((c & d) | (e & (c | d))))
+    let t15 = a.wrapping_add(f.rotate_right(14) ^ f.rotate_right(18) ^ f.rotate_right(41)).wrapping_add((h ^ (f & (g ^ h))).wrapping_add(rt.mem_load(k, ko + 120, 8).wrapping_add(w15)))
+    e = e.wrapping_add(t15)
+    a = t15.wrapping_add((b.rotate_right(28) ^ b.rotate_right(34) ^ b.rotate_right(39)).wrapping_add((b & c) | (d & (b | c))))
+  }
+  rt.mem_store(st, 0, rt.mem_load(st, 0, 8).wrapping_add(a), 8)
+  rt.mem_store(st, 8, rt.mem_load(st, 8, 8).wrapping_add(b), 8)
+  rt.mem_store(st, 16, rt.mem_load(st, 16, 8).wrapping_add(c), 8)
+  rt.mem_store(st, 24, rt.mem_load(st, 24, 8).wrapping_add(d), 8)
+  rt.mem_store(st, 32, rt.mem_load(st, 32, 8).wrapping_add(e), 8)
+  rt.mem_store(st, 40, rt.mem_load(st, 40, 8).wrapping_add(f), 8)
+  rt.mem_store(st, 48, rt.mem_load(st, 48, 8).wrapping_add(g), 8)
+  rt.mem_store(st, 56, rt.mem_load(st, 56, 8).wrapping_add(h), 8)
+}
+
 
 // ---------------------------------------------------------------------------
 // SHA-1's compression (SHA1C, SHA1P, SHA1M, SHA1H, SHA1SU0, SHA1SU1 on

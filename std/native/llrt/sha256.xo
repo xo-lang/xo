@@ -71,6 +71,15 @@ const K512: Bytes = b"\x22\xae\x28\xd7\x98\x2f\x8a\x42\xcd\x65\xef\x23\x91\x44\x
 /// cpu.sha256_block's instructions when the CPU has them (decision 0231,
 /// owner 2026-10-16), else digest_tables.sha256_block.
 pub fn block256(var st: List[Int], b: Bytes, i: Int) {
+  if target.arch == TargetArch.Wasm32 {
+    // 16 rounds in a loop of 4: digest_tables' unrolled 64 are 34 KB of
+    // a wasm module, which its engine compiles at every start
+    st[0] = st[0]
+    cpu.sha256_block_r16(rt.obj_addr(st).wrapping_add(rt.layout(2)), raw.bytes_addr(b).wrapping_add(i), raw.bytes_addr(K256))
+    keep(b)
+    keep_ints(st)
+    return
+  }
   if (cpu.hw() & cpu.HW_SHA256) != 0 {
     // an index store first: it copies st if another value shares its
     // words (a Hasher's sum and clone do), which the raw writes below
@@ -88,7 +97,7 @@ pub fn block256(var st: List[Int], b: Bytes, i: Int) {
 /// digest_tables.sha256_words takes them) into st: with the CPU's
 /// instructions, the words packed big endian first.
 pub fn words256(var st: List[Int], m: List[Int]) {
-  if (cpu.hw() & cpu.HW_SHA256) != 0 {
+  if target.arch == TargetArch.Wasm32 || (cpu.hw() & cpu.HW_SHA256) != 0 {
     var b = rt.rs_with_cap(64)
     for j in 0..8 {
       // two words a 64 bit big endian store: m[2j] first
@@ -98,6 +107,14 @@ pub fn words256(var st: List[Int], m: List[Int]) {
     return
   }
   digest_tables.sha256_words(st, m)
+}
+
+/// SHA-512's compression of the 128 bytes at address p into st with
+/// cpu.sha512_block_r16, for digest.xo's Ed25519 hash on wasm (as compress).
+pub fn block512_at(var st: List[Int], p: Int) {
+  st[0] = st[0]
+  cpu.sha512_block_r16(rt.obj_addr(st).wrapping_add(rt.layout(2)), p, raw.bytes_addr(K512))
+  keep_ints(st)
 }
 
 /// st is known alive up to here (keep).
@@ -111,6 +128,15 @@ fn keep_ints(st: List[Int]) {
 fn compress(hash: Int, var st: List[Int], b: Bytes, i: Int) {
   if is256(hash) {
     block256(st, b, i)
+    return
+  }
+  if target.arch == TargetArch.Wasm32 {
+    // as block256: 16 rounds in a loop of 5 on wasm (digest_tables' 80
+    // unrolled are 38 KB)
+    st[0] = st[0]
+    cpu.sha512_block_r16(rt.obj_addr(st).wrapping_add(rt.layout(2)), raw.bytes_addr(b).wrapping_add(i), raw.bytes_addr(K512))
+    keep(b)
+    keep_ints(st)
     return
   }
   if (cpu.hw() & cpu.HW_SHA512) != 0 {
