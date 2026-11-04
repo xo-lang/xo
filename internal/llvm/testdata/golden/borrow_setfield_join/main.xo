@@ -1,0 +1,81 @@
+// Decision 0487: a List.get payload of a `var` struct stays borrowed
+// across two writes of other fields, with the reader inlined into its
+// caller (the rc verifier followed one write of the chain, so the inlined
+// module did not verify), and across a join that passes an Int field read
+// of the written struct (it moved nothing, but ended the borrow).
+
+struct Segs {
+  segs: List[Bytes] = []
+  head: Int = 0
+  pos: Int = 0
+  end: Int = 0
+  scan_to: Int = 0
+}
+
+struct Rd {
+  segs: List[Bytes] = []
+  head: Int = 0
+  hstart: Int = 0
+  pos: Int = 0
+  end: Int = 0
+  scan_to: Int = 0
+}
+
+fn take(var b: Segs, d: UInt8) -> Bytes? {
+  if b.end > b.pos {
+    if let Some(s) = b.segs.get(b.head) {
+      let lo = b.pos
+      var i = lo
+      while i < s.len() && s[i] != d {
+        i += 1
+      }
+      if i < s.len() {
+        b.pos = i + 1
+        b.scan_to = if b.scan_to < b.pos { b.pos } else { b.scan_to }
+        return Some(s[lo..i + 1])
+      }
+    }
+  }
+  None
+}
+
+fn main(os: Os) uses stdio {
+  var b = Segs{}
+  b.segs.push("ab\ncde\nf".bytes())
+  b.end = 8
+  var n = 0
+  while let Some(r) = take(b, 10) {
+    n += 1
+    os.stdio.println("${n}: ${r.len()} pos ${b.pos} scan ${b.scan_to}")
+  }
+  var out: Bytes? = None
+  if let Some(s) = b.segs.get(0) {
+    b.pos = 0
+    b.scan_to = s.len()
+    out = Some(s[0..2])
+  }
+  if let Some(r) = out {
+    os.stdio.println("again ${r.len()} pos ${b.pos} scan ${b.scan_to} of ${b.segs.len()}")
+  }
+  // the payload read after both writes, its slice checked inline (the
+  // verifier's failing shape)
+  var c = Rd{}
+  c.segs.push("abc\n".bytes())
+  c.end = 4
+  var got: Bytes? = None
+  if c.end > c.pos {
+    if let Some(s) = c.segs.get(c.head) {
+      let lo = c.pos - c.hstart
+      let i = s.len() - 1
+      let e = i + 1
+      if i >= 0 && e <= s.len() {
+        c.pos = c.hstart + e
+        c.scan_to = c.pos
+        got = Some(s[lo..e])
+      }
+    }
+  }
+  if let Some(r) = got {
+    os.stdio.println("inline ${r.len()} pos ${c.pos} scan ${c.scan_to}")
+  }
+}

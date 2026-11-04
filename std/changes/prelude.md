@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-04: perf: ByteBuffer.read_until keeps its segment borrowed
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Lead's Option-of-a-view item (bench/perf/bytebuf buf against views); decision 0487
+- Go reference: none (bufio.Reader.ReadSlice returns a view without counting)
+- Test: goldens borrow_setfield_chain and borrow_setfield_join; every arm64 golden under XO_FREE_CHECK=1
+- Timing: bench/perf/bytebuf small_buf 0.940 (0.934 to 0.976), linux/arm64 host 1, n=3
+
+read_until's fast path writes scan_to on both paths instead of in an
+`if`, whose join passed the ByteBuffer through a block parameter and
+kept the segment from b.segs counted; with decision 0487 the segment is
+borrowed: one retain a record (the returned view), from two retains and
+two releases.
+
 ## 2026-11-04: feature: File.read_at on wasm
 
 - Kind: feature

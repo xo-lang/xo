@@ -455,6 +455,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [ssa-helper-names-unqualified.md](ssa-helper-names-unqualified.md): Observed: SSA helpers named by checker types (`xo.debug[Ctx]`) were shared by two `Ctx` types of different modules; a colliding helper now takes `#2`.
 
 - [borrowed-projection-keeps-owner-alive.md](borrowed-projection-keeps-owner-alive.md): Observed: borrowing a projection that is later consumed kept its dying owner alive and the moved list shared, so the callee copied it (3 more allocations); decision 0186 rule 3 borrows only where the owner is used after each consume.
+- [rc-verifier-models-borrows-separately.md](rc-verifier-models-borrows-separately.md): Observed: a new borrow rule in borrow.xo runs fine but fails every XO_INLINE_STRICT build ("uses vN.k, which is not alive"); verify.xo models borrowed projections itself (alive through the parent leaf), change it in the same commit
 - [ec2-instance-outlived-its-timers.md](ec2-instance-outlived-its-timers.md): Observed, fixed: the remote-full instance outlived its shutdown timer and the script's trap; a systemd timer and a local watchdog now bound it.
 - [list-sort-returns-a-copy.md](list-sort-returns-a-copy.md): Observed: `ks.sort()` alone leaves `ks` unsorted (sort returns a new list) and no diagnostic says so; write `ks = ks.sort()`.
 - [go-json-rawmessage-null-id.md](go-json-rawmessage-null-id.md): Observed: Go's MCP server answers `"id": null` as a request (RawMessage `null`) while its LSP server treats it as a notification; raw ids are echoed compacted; struct keys match without case, map keys exactly.
@@ -1113,3 +1114,5 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [vetcost-std-reach-moves.md](vetcost-std-reach-moves.md): Observed: TestVetCostStd gains or loses notes on unchanged std lines when a bench/perf program starts or stops reaching them; bisect for the reach change, not a codegen one
 - [identity-darwin-target-on-linux-host.md](identity-darwin-target-on-linux-host.md): Observed: scripts/identity on a Linux host fails on the darwin target (objdump cannot read Mach-O); pass --targets=linux/arm64 there.
 - [inline-str-put-copies-builder.md](inline-str-put-copies-builder.md): Observed: --inline-str made every BytesBuilder.put_le/put_be copy the whole builder ("" + cur); jpeg 5.8x, self build 40x
+- [xo-asm-not-the-built-binary.md](xo-asm-not-the-built-binary.md): Observed: xo asm lays code out differently from xo build; read the binary (otool/objdump) and XO_DUMP_FN post-rc dumps
+- [gate-passes-on-inline-fallback.md](gate-passes-on-inline-fallback.md): Observed: a module that fails the rc verifier builds without inlining; goldens run strict but must include the shape inlined into a caller

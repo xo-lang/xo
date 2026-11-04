@@ -5808,9 +5808,10 @@ fn bytebuffer_read_until(var b: ByteBuffer, delim: UInt8) -> Bytes? {
       let e = i.wrapping_add(1)
       if i >= 0 && e < s.len() {
         b.pos = b.hstart.wrapping_add(e)
-        if b.scan_to < b.pos {
-          b.scan_to = b.pos
-        }
+        // written on both paths, not in an `if`: the join's ByteBuffer
+        // would end the borrow of s (decision 0487) and cost a retain
+        // and a release a record
+        b.scan_to = if b.scan_to < b.pos { b.pos } else { b.scan_to }
         // s[lo..e] unchecked (lo <= e <= s.len() by the search): a
         // checked slice would add a landing pad
         return Some(rt.cast[Str, Bytes](rt.str_view(rt.cast[Bytes, Str](s), lo, e)))

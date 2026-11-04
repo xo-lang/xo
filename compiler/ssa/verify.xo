@@ -843,12 +843,35 @@ fn (var r: Rc) alive(f: Func, i: Int) -> Bool {
         return true
       }
       let p = r.parent(f, root)
-      r.alive(f, r.lid(p))
+      if r.alive(f, r.lid(p)) {
+        return true
+      }
+      r.carried_alive(f, p)
     }
     // an immortal value is never counted (rc_ops skips it) and always
     // alive: a constant's list, whose element a read borrows
     Owned => r.cur[i] > 0 || r.imm_id(f, i)
   }
+}
+
+/// Whether leaf p, whose root a setfield of another field consumed,
+/// lives on in such a setfield's value (borrow.xo's owner chain: a
+/// borrowed projection of p outlives the write of another field),
+/// following the chain on: a second write's setfield consumed the
+/// first's value, and the leaf lives on in the second's.
+fn (var r: Rc) carried_alive(f: Func, p: Leaf) -> Bool {
+  if p.path.is_empty() {
+    return false
+  }
+  for (w, x) in f.values.indexed() {
+    if x.op == Op.SetField && !x.args.is_empty() && x.args[0] == p.root && !paths_overlap(".${aux_int(x.aux)}", p.path) {
+      let l = r.leaf(w, p.path)
+      if r.alive(f, r.lid(l)) || r.carried_alive(f, l) {
+        return true
+      }
+    }
+  }
+  false
 }
 
 /// The balance of ownership of f after reference counting (verifyRC).

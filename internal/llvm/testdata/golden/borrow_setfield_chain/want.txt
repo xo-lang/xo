@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+took a0:x pos 1 seen 2
+none at 1 pos 2
+took ccc:z pos 3 seen 3
+none at 3 pos 3
+walk 10 pos 9 head 3
+--- stderr

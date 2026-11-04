@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+1: 3 pos 3 scan 3
+2: 4 pos 7 scan 7
+again 2 pos 0 scan 8 of 1
+inline 4 pos 4 scan 4
+--- stderr

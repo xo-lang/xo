@@ -92,6 +92,14 @@ struct Rc {
   // the borrowed projections of function fi and their owners (decision
   // 0186, borrow.xo)
   bproj: Map[Int, Leaf] = {}
+  /// the borrowed projections whose owner moves on through a setfield of
+  /// another field (borrow.xo owner_chain): the setfield values in
+  /// order, each holding the owner's leaf at the same path from its
+  /// definition on, with the block of each value and its index in it
+  /// (bpos) and the immediate dominators (bidom) of function fi
+  bchain: Map[Int, List[Int]] = {}
+  bpos: List[Int] = []
+  bidom: List[Int] = []
   // the verifier's leaf numbers (verify.xo): of function vfi, by leaf
   // key; the leaves; the counts of the block being checked by leaf
   // number, whether each was touched in it, and those touched; the leaf
@@ -656,7 +664,7 @@ fn (var r: Rc) leaf_uses_fresh(f: Func, v: Int) -> List[Use] {
         out.push(Use{l: l, m: m})
       }
       if out.len() > n0 {
-        r.owner_use(out, f, a)
+        r.owner_use(out, f, a, v)
       }
       continue
     }
@@ -664,21 +672,33 @@ fn (var r: Rc) leaf_uses_fresh(f: Func, v: Int) -> List[Use] {
       out.push(Use{l: l, m: m})
     }
     if !ls.is_empty() {
-      r.owner_use(out, f, a)
+      r.owner_use(out, f, a, v)
     }
   }
   out
 }
 
 /// Appends a borrowing use of the owner of a when a is (a field of) a
-/// borrowed projection (ownerUse, decision 0186).
-fn (var r: Rc) owner_use(var out: List[Use], f: Func, a: Int) {
+/// borrowed projection (ownerUse, decision 0186), by instruction at: the
+/// owner's leaf in the last value of its chain (bchain) defined before
+/// at, which dominates it (borrow.xo checked), else in its first root.
+fn (var r: Rc) owner_use(var out: List[Use], f: Func, a: Int, at: Int) {
   if r.bproj.is_empty() {
     return
   }
   let broot = r.base(f, a).root
   if let Some(o) = r.bproj.get(broot) {
-    out.push(Use{l: o, m: Mode.Borrow})
+    var l = o
+    if let Some(ws) = r.bchain.get(broot) {
+      let ab = block_of(f.values[at].tb)
+      for w in ws {
+        let wb = block_of(f.values[w].tb)
+        if (wb == ab && r.bpos[w] < r.bpos[at]) || (wb != ab && dominates(r.bidom, wb, ab)) {
+          l = r.leaf(w, o.path)
+        }
+      }
+    }
+    out.push(Use{l: l, m: Mode.Borrow})
   }
 }
 
@@ -1327,6 +1347,7 @@ fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], su
       }
     }
     r.bproj = {}
+    r.bchain = {}
     return out
   }
   // chunks of about equal size (values), moved out of the module and

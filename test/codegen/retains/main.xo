@@ -111,6 +111,26 @@ fn copies_big(xs: List[Int], n: Int) -> (List[List[Int]], Int) {
   (out, s)
 }
 
+// An element of a `var` struct's list, matched out of List.get, stays a
+// borrowed projection across a write to another field of the struct
+// (rc borrow.xo owner_chain): no retain of it and no release, so no
+// call at all (the count helpers are calls; 2026-11-03,
+// ByteBuffer.read_until's fast path).
+struct Segs {
+  segs: List[Str]
+  head: Int
+  pos: Int
+}
+
+fn seg_head_len(var b: Segs) -> Int {
+  // arm64: -"tbn?z x[0-9]+, #63" -"\tbl "
+  if let Some(s) = b.segs.get(b.head) {
+    b.pos = b.pos.wrapping_add(1)
+    return s.len()
+  }
+  0
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
   os.stdio.println("${ok_sum(["${n}s", "x"])}")
@@ -118,4 +138,6 @@ fn main(os: Os) {
   os.stdio.println("${a.len() + b.len()} ${copies(a, n).len()}")
   let (c, s) = copies_big(a, n)
   os.stdio.println("${c.len()} ${s}")
+  var g = Segs{segs: ["ab", "${n}"], head: 1, pos: 0}
+  os.stdio.println("${seg_head_len(g)} ${seg_head_len(g)} ${g.pos}")
 }

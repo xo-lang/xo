@@ -1,0 +1,58 @@
+// A projection of a `var` struct's field (List.get's payload, a field of
+// it) stays borrowed across writes to other fields of the struct (rc
+// borrow.xo owner chain, 2026-11-03), including a projection of the
+// projection made after the write, in a loop and on an early return.
+
+struct Item {
+  name: Str
+  tags: List[Str]
+}
+
+struct Box {
+  items: List[Item]
+  head: Int
+  pos: Int
+  seen: Int
+}
+
+fn take(var b: Box) -> Str? {
+  if let Some(it) = b.items.get(b.head) {
+    b.pos = b.pos + 1
+    let t = it.tags
+    b.seen = b.seen + t.len()
+    if t.is_empty() {
+      return None
+    }
+    b.head = b.head + 1
+    return Some("${it.name}:${t[0]}")
+  }
+  None
+}
+
+fn walk(var b: Box) -> Int {
+  var n = 0
+  while b.head < b.items.len() {
+    if let Some(it) = b.items.get(b.head) {
+      b.pos = b.pos + 2
+      n += it.name.len() + it.tags.len()
+    }
+    b.head = b.head + 1
+  }
+  n
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  var b = Box{items: [Item{name: "a${k}", tags: ["x", "y"]}, Item{name: "bb", tags: []}, Item{name: "ccc", tags: ["z"]}], head: 0, pos: 0, seen: 0}
+  for _ in 0..4 {
+    match take(b) {
+      Some(s) => os.stdio.println("took ${s} pos ${b.pos} seen ${b.seen}")
+      None => {
+        os.stdio.println("none at ${b.head} pos ${b.pos}")
+        b.head = b.head + 1
+      }
+    }
+  }
+  b.head = 0
+  os.stdio.println("walk ${walk(b)} pos ${b.pos} head ${b.head}")
+}
