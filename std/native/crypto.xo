@@ -222,6 +222,12 @@ fn (x: Hasher) sum() -> Bytes {
 fn (x: Hasher) written() -> Int { x.total }
 
 fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
+  if h == crypto.Hash.Sha256 {
+    // digest.xo's one shot: no Hasher, no padded key copies, the two
+    // pad blocks hashed straight into word states (otp's HMAC of an
+    // 8 byte counter was setup, 11 percent compress)
+    return dg.hmac_sha256(key, msg)
+  }
   var x = hmac_hasher(h, key)
   x.write(msg)
   x.sum()
