@@ -126,6 +126,20 @@ std's sources become `for` loops with no API change:
   not applied by default).
 - A `Str`, still not iterable (core 3.5), stays so: it has no `next()`.
 
+## Implementation (2026-11-04)
+
+- Parts 1 and 2 are built: the parser reads `for x? in v` (ForStmt's
+  `try_next`; the AST codec is v6), and parser.for_next_alt builds the
+  `while let` that the checker checks and the SSA builder and the Go
+  backend lower, so every backend runs the same loop (golden for_next on
+  native, LLVM, Go and wasm). XO0436 is the code for a `?` that does not
+  match `next()`, or a `next()` that does not return `T?`.
+- Not built yet, as later steps: the prelude interfaces `Next[T]` and
+  `TryNext[T, E]` of part 3 (an interface value cannot hold a `var self`
+  method on the native backends yet, compiler/ssa iface.xo, so they would
+  only work as constraints), and the `xo fix` rewrite of
+  `while let Some(x) = v.next()?` to `for x? in v`.
+
 ## Alternatives
 
 - Bind each step's result (Rust's `for r in reader.lines()` with

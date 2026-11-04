@@ -1261,7 +1261,12 @@ fn (var g: Gen) stmt(s: Stmt) {
       }
       return
     }
-    ForStmt(..) => {
+    ForStmt(span: span, ..) => {
+      if let Some(var_temp) = g.c.next_for_in(g.f.file, span) {
+        // over a type with next() (decision 0494): the checker's `while let`
+        g.stmt(parser.for_next_alt(s, var_temp))
+        return
+      }
       g.f.unit = Node.N
       g.for_stmt(s)
     }

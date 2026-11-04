@@ -1397,7 +1397,7 @@ fn walk_stmt(s: parser.Stmt, var out: List[parser.Expr]) {
         walk_expr(x, out)
       }
     }
-    ForStmt(_, _, pat, iter, bound, body, _) => {
+    ForStmt(_, _, pat, iter, bound, body, _, _) => {
       walk_pat(pat, out)
       walk_expr(iter, out)
       for x in bound {

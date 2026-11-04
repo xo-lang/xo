@@ -1304,12 +1304,33 @@ match code {
 
 - `if` without `else` has type `()`.
 - `for` iterates over a List, Buf, Set, Map (as `(k, v)` tuples), Chan, Range,
-  or Bytes. Over `Bytes` it yields each byte as a `UInt8`, in order
+  Bytes, or a value whose type has a `next()` method (below). Over `Bytes` it yields each byte as a `UInt8`, in order
   (decision 0138); a byte compares with an ASCII rune literal
   (`b >= 'a'`) and converts with `Int(b)`. Index pairs come from
   `xs.indexed()` on a List; for Bytes, loop over `0..data.len()` and
   read `data[i]`. A `Str` is not iterable: choose `.runes()` or
   `.bytes()`.
+- Iterating a user type (decision 0494). A value whose type has a method
+  `next()` with no parameters returning `T?` may be iterated: `for x in v
+  { body }` is `while let Some(x) = v.next() { body }`. v is read again
+  for each call when it is a place (a name or a field path), so a
+  `next(var self)` updates it and it holds the last state after the loop
+  (it must then be a `var`); any other v is evaluated once. Patterns,
+  `bound`, `break` and `continue` work as in any `for`. When `next()`
+  returns `T? ! E`, the loop says where the error goes with `?` after its
+  pattern: `for page? in pages { }` is `while let Some(page) =
+  pages.next()? { }`, so an error from any step propagates as `?` does
+  (2.6). A `?` that does not match `next()` (left out where it can fail,
+  written where it cannot or on a builtin iteration), or a `next()` that
+  does not return an Option, is `XO0436`. To handle the error inside the
+  loop, write `loop { match v.next() { ... } }`.
+
+  ```
+  var pages = s3.ListObjectsV2Paginator.new(client, req)
+  for page? in pages bound 10000 {
+    for obj in page.contents { os.stdio.println(obj.key ?? "") }
+  }
+  ```
 - `while let pattern = value { ... }` computes `value` before each
   iteration and runs the body while it matches the pattern, with the
   pattern's names bound in the body; the loop ends at the first value
@@ -3400,6 +3421,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0433` | error | checker | a mistyped `to:` or `from:` of `derive Json(via: ...)`: `to` must be `fn(T) -> P` with no error, `from` `fn(P) -> T ! E` with E implementing Display (core 2.3, decision 0478) |
 | `XO0434` | error | checker | a variant with fields in a valued enum that is not its catch-all: the catch-all is the last variant, with one field of the value type and no value (core 2.3, decision 0493) |
 | `XO0435` | error | checker | a valued enum's catch-all built from a constant that a named variant has (`StorageClass.Unknown("STANDARD")`): a second spelling of that variant, unequal to it (core 2.3, decision 0493) |
+| `XO0436` | error | checker | `for` over a type with `next()` whose `?` does not match it: `for x in v` where `next()` can fail (write `for x? in v`), `for x? in v` where it cannot or over a builtin iteration, or a `next()` that does not return `T?` (core 3.5, decision 0494) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |
@@ -3924,7 +3946,7 @@ Stmt        = "let" Pattern [ ":" Type ] "=" Expr
             | ForStmt | WhileStmt | Expr .
 AssignOp    = "=" | "+=" | "-=" | "*=" | "/=" | "%=" .
 Place       = ident { "." ident | "." int | "[" Expr "]" } .
-ForStmt     = [ ident ":" ] "for" Pattern "in" Expr [ "bound" Expr ] Block .
+ForStmt     = [ ident ":" ] "for" Pattern [ "?" ] "in" Expr [ "bound" Expr ] Block .
 WhileStmt   = [ ident ":" ] "while" [ ( Expr | "let" Pattern "=" Expr ) [ "bound" Expr ] ] Block .
 
 Expr        = IfExpr | MatchExpr | ScopeExpr | SelectExpr | Block | FnLit | Binary

@@ -655,6 +655,37 @@ test "a valued enum's catch-all (decision 0493): a misplaced or mistyped one is 
   expect(ls.filter(fn(l) { l.contains("\"XO0401\"") }).len()) == 0
 }
 
+test "for over a type with next() (decision 0494): a `?` that does not match next() is XO0436, once" {
+  let out = check_files(os, "n", [("n/main.xo", """
+    struct C {
+      n: Int
+    }
+
+    fn (var c: C) next() -> Int? { None }
+
+    struct F {
+      n: Int
+    }
+
+    fn (var f: F) next() -> Int? ! Str { Ok(None) }
+
+    fn g() -> Int ! Str {
+      var total = 0
+      var c = C{n: 1}
+      for x in c { total += x }
+      var f = F{n: 1}
+      for x? in f { total += x }
+      for x? in c { total += x }
+      for x in f { total += x }
+      for x? in [1] { total += x }
+      Ok(total)
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.filter(fn(l) { l.contains("\"XO0436\"") }).len()) == 3
+  expect(ls.filter(fn(l) { l.contains("\"XO0406\"") }).len()) == 0
+}
+
 test "a bare const in a pattern matches by equality and a misspelled one is XO0430 (decision 0269)" {
   let out = check_files(os, "p", [("p/main.xo", """
     const OK = 200

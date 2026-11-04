@@ -1416,13 +1416,22 @@ fn (var c: Checker) stmt(s: Stmt) {
     }
     BreakStmt(span: span, label: label) => c.jump(label, span, true)
     ContinueStmt(span: span, label: label) => c.jump(label, span, false)
-    ForStmt(label: label, pattern: pattern, iter: iter, bound: bound, body: body, go_range: go_range, ..) => {
+    ForStmt(span: span, label: label, pattern: pattern, iter: iter, bound: bound, body: body, go_range: go_range, try_next: try_next) => {
       let it = c.infer(iter, -1)
       var elem = c.bad_ty
       if go_range {
         elem = c.go_range(s, it)
       } else {
-        elem = c.iter_elem(it, iter)
+        let before = c.diags.len()
+        if let Some(var_temp) = c.next_method(it, iter, span, try_next) {
+          // a user type with next() (decision 0494): its `while let`
+          c.next_fors[c.key_of(span, 0)] = var_temp
+          c.stmt(parser.for_next_alt(s, var_temp))
+          return
+        }
+        if c.diags.len() == before {
+          elem = c.iter_elem(it, iter)
+        }
       }
       c.check_loop_bound(bound, [iter])
       c.loop_body(label_name(label), false, body, [pattern], elem, false)
@@ -1507,6 +1516,50 @@ fn (var c: Checker) jump(label: Ident?, sp: Span, is_break: Bool) {
 
 /// The element type of an iterable (List, Set, Map, Range, Chan, Buf,
 /// Bytes).
+/// Whether `for` iterates t through its `next()` method (decision 0494):
+/// Some(next takes `var self`) when t is not a builtin iterable and has a
+/// `next()` with no parameters returning `T?` (or `T? ! E`). The `?` of
+/// `for x? in v` must match: written where next cannot fail, or left out
+/// where it can, is XO0436 (with the fix). None leaves t to iter_elem.
+fn (var c: Checker) next_method(t: Int, e: Expr, span: Span, try_next: Bool) -> Bool? {
+  let r = c.resolve(t)
+  if c.is_bad(r) || c.tys[r].kind != TyKind.Named {
+    if try_next && !c.is_bad(r) {
+      c.error("XO0436", parser.expr_span(e), "`for x? in v` iterates a type with a `next()` that can fail; `${c.show(t)}` has none (decision 0494)")
+    }
+    return None
+  }
+  let o = c.tys[r].obj
+  if c.objs[o].module == c.prelude || c.objs[o].tkind == "interface" {
+    if try_next {
+      c.error("XO0436", parser.expr_span(e), "`${c.show(t)}` is iterated by `for` itself and cannot fail; write `for x in ...` (decision 0494)")
+    }
+    return None
+  }
+  let (fo, _) = c.find_method_any(r, "next")
+  if fo < 0 || c.objs[fo].params.len() != 0 {
+    if try_next {
+      c.error("XO0436", parser.expr_span(e), "`for x? in v` needs a `next()` method without parameters on `${c.show(t)}` (decision 0494)")
+    }
+    return None
+  }
+  let sub = c.args_subst(c.objs[o].tparams, c.tys[r].args)
+  if c.option_elem(c.subst(c.objs[fo].result, sub)) < 0 {
+    c.error("XO0436", parser.expr_span(e), "`${c.show(t)}.next()` returns `${c.show(c.subst(c.objs[fo].result, sub))}`; `for` needs `T?`, with `None` after the last value (decision 0494)")
+    return None
+  }
+  let fails = c.objs[fo].err >= 0
+  if fails && !try_next {
+    c.error("XO0436", parser.expr_span(e), "`${c.show(t)}.next()` can fail, so the loop must say where its error goes: write `for x? in ...`, which propagates it as `?` does (decision 0494)")
+    return None
+  }
+  if !fails && try_next {
+    c.error("XO0436", parser.expr_span(e), "`${c.show(t)}.next()` cannot fail; write `for x in ...` (decision 0494)")
+    return None
+  }
+  Some(c.objs[fo].recv_var)
+}
+
 fn (var c: Checker) iter_elem(t: Int, e: Expr) -> Int {
   let r = c.resolve(t)
   if c.is_bad(r) {
@@ -1528,7 +1581,7 @@ fn (var c: Checker) iter_elem(t: Int, e: Expr) -> Int {
     c.error("XO0405", parser.expr_span(e), "the type of the iterated value must be known here")
     return c.bad_ty
   }
-  c.error("XO0406", parser.expr_span(e), "cannot iterate over `${c.show(t)}`; `for` works on List, Set, Map, Chan, Bytes, and ranges")
+  c.error("XO0406", parser.expr_span(e), "cannot iterate over `${c.show(t)}`; `for` works on List, Set, Map, Chan, Bytes, ranges, and a type with a `next() -> T?` method (decision 0494)")
   c.bad_ty
 }
 

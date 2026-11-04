@@ -222,9 +222,14 @@ fn (var b: Builder) while_let(label: Bytes, p: Pattern, value: Expr, bound: List
 
 /// `for p in a..b`, `a..=b`, a List, `xs.indexed()`, and Bytes (forStmt).
 fn (var b: Builder) for_stmt(st: Stmt) {
-  let (label, p, iter, bound, body) = match st {
-    ForStmt(label: label, pattern: p, iter: iter, bound: bound, body: body, ..) => (label, p, iter, bound, body)
+  let (span, label, p, iter, bound, body) = match st {
+    ForStmt(span: span, label: label, pattern: p, iter: iter, bound: bound, body: body, ..) => (span, label, p, iter, bound, body)
     _ => fault("for")
+  }
+  if let Some(var_temp) = b.c.next_for_in(b.s.file, span) {
+    // over a type with next() (decision 0494): the checker's `while let`
+    b.stmt(parser.for_next_alt(st, var_temp))
+    return
   }
   let it = b.int_t()
   var name = b""

@@ -213,6 +213,12 @@ fn (var p: Parser) parse_for(label: Ident?, start: Pos) -> Stmt {
   }
   p.next() // for
   let pattern = p.parse_pattern()
+  // `for x? in v` (decision 0494)
+  var try_next = false
+  if p.tok.kind == Kind.Question {
+    p.next()
+    try_next = true
+  }
   if p.at_ident(b"of") && !p.bad {
     let d = p.foreign(p.tok.span, "`for x of xs` is TypeScript syntax; Xo writes `for x in xs` (core 3.5)")
     p.add_fix(d, "write `in`", [replace_span(p.tok.span, "in")])
@@ -230,7 +236,7 @@ fn (var p: Parser) parse_for(label: Ident?, start: Pos) -> Stmt {
     last = bx
   }
   let body = p.parse_cond_block(Some(last))
-  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, bound: bound, body: body, go_range: false)
+  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, bound: bound, body: body, go_range: false, try_next: try_next)
 }
 
 /// The tokens between `for` and the `{` of the body on the same line
@@ -331,7 +337,7 @@ fn (var p: Parser) go_range_for(label: Ident?, start: Pos) -> Stmt {
   }
   let iter = p.parse_expr_no_lit()
   let body = p.parse_cond_block(Some(iter))
-  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, bound: [], body: body, go_range: true)
+  Stmt.ForStmt(span: p.span_from(start), label: label, pattern: pattern, iter: iter, bound: [], body: body, go_range: true, try_next: false)
 }
 
 fn (var p: Parser) parse_while(label: Ident?, start: Pos) -> Stmt {

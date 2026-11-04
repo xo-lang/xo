@@ -61,6 +61,13 @@ pub fn (c: Checker) ref_of(f: Int, id: Ident) -> Int {
   -1
 }
 
+/// Whether the `for` statement at sp of file f iterates a type with
+/// `next()` (decision 0494): Some(var_temp) for parser.for_next_alt, else
+/// None.
+pub fn (c: Checker) next_for_in(f: Int, sp: Span) -> Bool? {
+  c.next_fors.get(c.key_in(f, sp, 0))
+}
+
 /// The variant e constructs (Info.Ctor).
 pub fn (c: Checker) ctor_in(f: Int, e: Expr) -> VRef? {
   c.ctor_at.get(c.expr_key_in(f, e))

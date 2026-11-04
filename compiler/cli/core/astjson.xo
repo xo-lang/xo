@@ -383,7 +383,7 @@ fn stmt_json(s: parser.Stmt) -> Str {
       o.opt("label", oident(label))
       o.done()
     }
-    ForStmt(span, label, pattern, iter, bound, body, go_range) => {
+    ForStmt(span, label, pattern, iter, bound, body, go_range, try_next) => {
       var o = node("ForStmt", span)
       o.opt("label", oident(label))
       o.put("pattern", pat_json(pattern))
@@ -393,6 +393,7 @@ fn stmt_json(s: parser.Stmt) -> Str {
       }
       o.put("body", block_json(body))
       o.flag("go_range", go_range)
+      o.flag("try_next", try_next)
       o.done()
     }
     WhileStmt(span, label, cond, pattern, value, bound, body) => {

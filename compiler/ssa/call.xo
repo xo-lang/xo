@@ -606,7 +606,7 @@ fn stmt_has_try(st: Stmt) -> Bool {
     AssignStmt(target: t, value: v, ..) => expr_has_try(t) || expr_has_try(v)
     DeferStmt(body: body, ..) => stmt_has_try(body)
     ReturnStmt(value: v, ..) => opt_has_try(v)
-    ForStmt(iter: iter, bound: bound, body: body, ..) => expr_has_try(iter) || list_has_try(bound) || block_has_try(body)
+    ForStmt(iter: iter, bound: bound, body: body, try_next: tn, ..) => tn || expr_has_try(iter) || list_has_try(bound) || block_has_try(body)
     WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => opt_has_try(cond) || list_has_try(value) || list_has_try(bound) || block_has_try(body)
     ExprStmt(x: x, ..) => expr_has_try(x)
     ConstDecl(d) => expr_has_try(d.value)

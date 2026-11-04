@@ -1,0 +1,44 @@
+// `for` over a user type with a `next()` method (decision 0494).
+
+/// The `while let` that st, `for p in v` (or `for p? in v`) over a value
+/// whose type has `next()`, means:
+///
+///   while let Some(p) = v.next() { body }      // `for p in v`
+///   while let Some(p) = v.next()? { body }     // `for p? in v`
+///
+/// v is read again for each call when it is a place (a name or a field
+/// path), so `next(var self)` updates it and it holds the last state
+/// after the loop; any other v is evaluated once into a hidden local,
+/// `var` when var_temp (next takes `var self`). The checker, the SSA
+/// builder, and the Go backend all build it with this function, so the
+/// nodes it makes have the same spans each time: G, the text between the
+/// pattern and v (` in `), which no expression of the source has. Each
+/// node at G is of a different kind, so their checker keys differ.
+pub fn for_next_alt(st: Stmt, var_temp: Bool) -> Stmt {
+  let (span, label, pattern, iter, bound, body, try_next) = match st {
+    ForStmt(span, label, pattern, iter, bound, body, _, try_next) => (span, label, pattern, iter, bound, body, try_next)
+    _ => fault("for_next_alt: not a for")
+  }
+  let g = Span{start: pattern_span(pattern).end, end: expr_span(iter).start}
+  let place = is_place(iter)
+  let hidden = Ident{span: g, name: "xo_it_${g.start.offset}".bytes()}
+  let recv = if place { iter } else { Expr.Ident(hidden) }
+  let call = Expr.CallExpr(span: g, fun: Expr.SelectorExpr(span: g, x: recv, sel: Ident{span: g, name: b"next"}), args: [])
+  let value = if try_next { Expr.TryExpr(span: g, x: call) } else { call }
+  let some = Pattern.VariantPat(span: g, path: [Ident{span: g, name: b"Some"}], parens: true, fields: [PatField{span: g, name: None, pattern: pattern}], rest: false)
+  let w = Stmt.WhileStmt(span: span, label: label, cond: None, pattern: [some], value: [value], bound: bound, body: body)
+  if place {
+    return w
+  }
+  let decl = Stmt.LetStmt(span: g, pattern: Pattern.BindPat(span: g, name: hidden), typ: None, value: iter, is_var: var_temp)
+  Stmt.ExprStmt(span: span, x: Expr.Block(b: Block{span: span, stmts: [decl, w]}))
+}
+
+/// Whether e is a name or a field path of one (`pages`, `self.pages`).
+fn is_place(e: Expr) -> Bool {
+  match e {
+    Ident(..) => true
+    SelectorExpr(x: x, ..) => is_place(x)
+    _ => false
+  }
+}

@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+5,3 left 1
+sum 10
+1 v1
+2 v2
+3 v3
+k0,k1,k2,k3,k4,k5,calls=3
+err Throttled(page: 1)
+--- stderr

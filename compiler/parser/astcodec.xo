@@ -9,7 +9,7 @@
 use github.com/xo-lang/xo/compiler/lexer
 
 /// The version of the form: a change to the AST or this file changes it.
-pub const AST_CODEC_VERSION = "xo ast codec v5"
+pub const AST_CODEC_VERSION = "xo ast codec v6"
 
 struct Enc {
   b: BytesBuilder = BytesBuilder.new()
@@ -483,7 +483,7 @@ fn (var e: Enc) stmt(s: Stmt) {
       e.span(span)
       e.oident(label)
     }
-    ForStmt(span, label, pattern, iter, bound, body, go_range) => {
+    ForStmt(span, label, pattern, iter, bound, body, go_range, try_next) => {
       e.int(7)
       e.span(span)
       e.oident(label)
@@ -492,6 +492,7 @@ fn (var e: Enc) stmt(s: Stmt) {
       e.exprs(bound)
       e.block(body)
       e.bool(go_range)
+      e.bool(try_next)
     }
     WhileStmt(span, label, cond, pattern, value, bound, body) => {
       e.int(8)
@@ -1507,7 +1508,8 @@ fn (var r: Dec) stmt() -> Stmt {
       let bd = r.exprs()
       let b = r.block()
       let gr = r.bool()
-      Stmt.ForStmt(span: s, label: l, pattern: p, iter: it, bound: bd, body: b, go_range: gr)
+      let tn = r.bool()
+      Stmt.ForStmt(span: s, label: l, pattern: p, iter: it, bound: bd, body: b, go_range: gr, try_next: tn)
     }
     8 => {
       let s = r.span()

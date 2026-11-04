@@ -1,0 +1,104 @@
+// `for` over a user type with next() (decision 0494): a plain iterator,
+// a paginator whose next() can fail (`for x? in v`, the error propagates
+// as `?` does), break, continue, `bound`, a pattern, a temporary
+// iterator, and the iterator's state after the loop.
+
+struct Countdown {
+  n: Int
+}
+
+fn (var c: Countdown) next() -> Int? {
+  if c.n == 0 {
+    return None
+  }
+  c.n -= 1
+  Some(c.n + 1)
+}
+
+enum PageErr {
+  Throttled(page: Int)
+} derive Display
+
+/// ListObjectsV2 in miniature: pages of keys behind a continuation
+/// token, failing at page fail_at (-1 never).
+struct Pages {
+  token: Int?
+  done: Bool
+  fail_at: Int
+  calls: Int
+}
+
+fn list_page(token: Int) -> (List[Str], Int?) {
+  let keys = ["k${token * 2}", "k${token * 2 + 1}"]
+  let next = if token < 2 { Some(token + 1) } else { None }
+  (keys, next)
+}
+
+fn (var p: Pages) next() -> List[Str]? ! PageErr {
+  if p.done {
+    return Ok(None)
+  }
+  let t = p.token ?? 0
+  p.calls += 1
+  if t == p.fail_at {
+    return Err(PageErr.Throttled(page: t))
+  }
+  let (keys, next) = list_page(t)
+  p.done = next == None
+  p.token = next
+  Ok(Some(keys))
+}
+
+fn pages(fail_at: Int) -> Pages { Pages{token: None, done: false, fail_at: fail_at, calls: 0} }
+
+fn all_keys(fail_at: Int) -> List[Str] ! PageErr {
+  var out: List[Str] = []
+  var ps = pages(fail_at)
+  for page? in ps bound 100 {
+    for k in page {
+      out.push(k)
+    }
+  }
+  out.push("calls=${ps.calls}")
+  Ok(out)
+}
+
+struct Pair {
+  i: Int
+}
+
+fn (var p: Pair) next() -> (Int, Str)? {
+  if p.i >= 3 {
+    return None
+  }
+  p.i += 1
+  Some((p.i, "v${p.i}"))
+}
+
+fn main(os: Os) ! {
+  var c = Countdown{n: 5}
+  var seen: List[Int] = []
+  for x in c {
+    if x == 4 {
+      continue
+    }
+    if x == 2 {
+      break
+    }
+    seen.push(x)
+  }
+  os.stdio.println("${seen.map(fn(x: Int) -> Str { "${x}" }).join(",")} left ${c.n}")
+  var sum = 0
+  for x in (Countdown{n: 4}) {
+    sum += x
+  }
+  os.stdio.println("sum ${sum}")
+  for (i, s) in (Pair{i: 0}) {
+    os.stdio.println("${i} ${s}")
+  }
+  os.stdio.println(all_keys(-1)?.join(","))
+  match all_keys(1) {
+    Ok(ks) => os.stdio.println("ok ${ks.join(",")}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+}

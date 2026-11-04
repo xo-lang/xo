@@ -472,6 +472,10 @@ pub struct Checker {
   pub neg_lit: Bool = false
   /// The variant an identifier, selector, or call constructs (Ctor).
   pub ctor_at: Map[Int, VRef] = {}
+  /// The `for` statements over a type with `next()` (decision 0494), by
+  /// their span's key: whether the hidden local of parser.for_next_alt is
+  /// `var` (next takes `var self`).
+  pub next_fors: Map[Int, Bool] = {}
   /// The type of a conversion or newtype construction `T(x)` (TypeCall).
   pub type_call_at: Map[Int, Int] = {}
   /// The type of the value a pattern matches (PatType), the variant a

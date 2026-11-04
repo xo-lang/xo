@@ -73,7 +73,7 @@ fn walk_stmt(var out: List[Node], s: Stmt) {
     }
     DeferStmt(_, body) => walk_stmt(out, body)
     ReturnStmt(_, value) => walk_opt(out, value)
-    ForStmt(_, _, _, iter, bound, body, _) => {
+    ForStmt(_, _, _, iter, bound, body, _, _) => {
       walk_expr(out, iter)
       walk_opt(out, bound.first())
       walk_expr(out, Expr.Block(body))

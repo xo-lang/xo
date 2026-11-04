@@ -1281,10 +1281,13 @@ fn (var p: Printer) stmt(s: Stmt) {
         p.w(" " + name_of(l))
       }
     }
-    ForStmt(_, label, pattern, iter, bound, body, _) => {
+    ForStmt(_, label, pattern, iter, bound, body, _, try_next) => {
       p.label(label)
       p.w("for ")
       p.pattern(pattern)
+      if try_next {
+        p.w("?")
+      }
       p.w(" in ")
       p.expr(iter)
       for bd in bound {

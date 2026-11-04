@@ -50,7 +50,9 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
   capture by value at creation); methods and `var` receivers (3.4).
 - `if`/`else` and `match` are expressions; `match` is exhaustive, takes
   ranges (`'a'..='z'`, `200..=299`), alternatives (`429 | 503`) and
-  **guards** (`Pat if cond =>`); `x is Pattern`; `if let`, `while let`.
+  **guards** (`Pat if cond =>`); `x is Pattern`; `if let`, `while let`;
+  `for x in v` over a type with `next() -> T?`, `for x? in v` when it can
+  fail (0494).
 - Loops: `for x in xs`, `for (k, v) in m`, `for x in ch`, ranges `0..n`
   and `0..=n`, `xs.indexed()`, `while`, `while { }`, labeled loops with
   `break label`, and `bound N` loop contracts.

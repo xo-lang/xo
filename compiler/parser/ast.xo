@@ -347,7 +347,9 @@ pub enum Stmt {
   /// `bound` holds the `bound N` clause or nothing: a List (one word), not
   /// an `Expr?`, which would push MatchArm past the arm64 backend's 4 KiB
   /// reference counting helper frame (gotchas/arm64-rc-helper-frame.md).
-  ForStmt(span: Span, label: Ident?, pattern: Pattern, iter: Expr, bound: List[Expr], body: Block, go_range: Bool)
+  /// try_next marks `for x? in v` (decision 0494): v's `next()` can fail,
+  /// and each step's error propagates as `?` does.
+  ForStmt(span: Span, label: Ident?, pattern: Pattern, iter: Expr, bound: List[Expr], body: Block, go_range: Bool, try_next: Bool)
   /// `while let pattern = value` (decision 0137) holds the pattern and the
   /// value as Lists of zero or one element, like `bound`, and no cond.
   WhileStmt(span: Span, label: Ident?, cond: Expr?, pattern: List[Pattern], value: List[Expr], bound: List[Expr], body: Block)

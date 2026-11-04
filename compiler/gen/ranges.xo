@@ -1478,7 +1478,15 @@ fn (var g: Gen) ra_stmt(s: Stmt) -> (Ival, Bool) {
       }
       g.ra_loop(label_name(label), cond, body, false, -1, full_range())
     }
-    ForStmt(..) => g.ra_for(s)
+    ForStmt(span: span, ..) => {
+      if g.c.next_for_in(g.f.file, span) != None {
+        // over a type with next() (decision 0494): a `while let`, not
+        // analyzed
+        g.ra_havoc(Node.S(s))
+        return (full_range(), false)
+      }
+      g.ra_for(s)
+    }
     DeferStmt(body: body, ..) => g.ra_closure(Node.S(body))
     _ => g.ra_havoc(Node.S(s))
   }

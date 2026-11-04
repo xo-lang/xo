@@ -919,7 +919,7 @@ fn (var c: Enc) stmt(var b: BytesBuilder, s: Stmt) {
       open(b, "ContinueStmt")
       c.use_label(b, label)
     }
-    ForStmt(_, label, pattern, iter, bound, body, go_range) => {
+    ForStmt(_, label, pattern, iter, bound, body, go_range, try_next) => {
       open(b, "ForStmt")
       c.bind(b, label)
       c.pattern(b, pattern)
@@ -927,6 +927,10 @@ fn (var c: Enc) stmt(var b: BytesBuilder, s: Stmt) {
       c.opt_expr(b, bound.first())
       c.block(b, body)
       bool(b, go_range)
+      if try_next {
+        // only when set, so the hash of every other loop is unchanged
+        bool(b, true)
+      }
     }
     WhileStmt(_, label, cond, pattern, value, bound, body) => {
       open(b, "WhileStmt")

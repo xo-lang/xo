@@ -463,9 +463,10 @@ fn dump_stmt(var out: StrBuilder, depth: Int, label: Str, s: Stmt) {
       out.write("\n")
       dump_ident_opt(out, d, "label", lbl)
     }
-    ForStmt(span, lbl, pattern, iter, bound, body, go_range) => {
+    ForStmt(span, lbl, pattern, iter, bound, body, go_range, try_next) => {
       head(out, depth, label, "ForStmt", span)
       flag(out, "go_range", go_range)
+      flag(out, "try_next", try_next)
       out.write("\n")
       dump_ident_opt(out, d, "label", lbl)
       dump_pattern(out, d, "pattern", pattern)
