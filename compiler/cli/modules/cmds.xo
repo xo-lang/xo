@@ -10,6 +10,11 @@ struct Change {
   path: Str
   old: Str = ""
   new: Str = ""
+  /// For xo get: the version the build still selects when it is not new
+  /// (another module requires a higher one; minimal version selection
+  /// keeps the highest), and the module version requiring it.
+  selected: Str = ""
+  by: Str = ""
 }
 
 /// An effect line of xo.lock that changed (mod.EffectChange); old None
@@ -33,7 +38,7 @@ fn is_remote(path: Str) -> Bool {
 /// the requirements its imports need (XO1318).
 fn (c: ModCtx) imports(main_dir: Str, main_path: Str) -> List[Str] ! Str uses fs.read {
   var set: Map[Str, Bool] = {}
-  c.imports_walk(main_dir, main_path, false, set)?
+  c.imports_walk(main_dir, main_dir, main_path, false, set)?
   Ok(set.keys().sort())
 }
 
@@ -42,13 +47,13 @@ fn (c: ModCtx) imports(main_dir: Str, main_path: Str) -> List[Str] ! Str uses fs
 /// sorted.
 fn (c: ModCtx) go_imports(main_dir: Str, main_path: Str) -> List[Str] ! Str uses fs.read {
   var set: Map[Str, Bool] = {}
-  c.imports_walk(main_dir, main_path, true, set)?
+  c.imports_walk(main_dir, main_dir, main_path, true, set)?
   Ok(set.keys().sort())
 }
 
 /// imports_walk collects the remote Xo imports, or with go the
 /// third-party `use go` paths (a first element with a dot).
-fn (c: ModCtx) imports_walk(d: Str, main_path: Str, go: Bool, var set: Map[Str, Bool]) -> () ! Str uses fs.read {
+fn (c: ModCtx) imports_walk(d: Str, main_dir: Str, main_path: Str, go: Bool, var set: Map[Str, Bool]) -> () ! Str uses fs.read {
   let entries = match c.os.fs.read_dir(d) {
     Ok(es) => es
     Err(NotFound(_)) => []
@@ -60,7 +65,7 @@ fn (c: ModCtx) imports_walk(d: Str, main_path: Str, go: Bool, var set: Map[Str, 
       if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") || c.exists("${p}/xo.mod") {
         continue
       }
-      c.imports_walk(p, main_path, go, set)?
+      c.imports_walk(p, main_dir, main_path, go, set)?
       continue
     }
     if !e.name.ends_with(".xo") {
@@ -76,13 +81,32 @@ fn (c: ModCtx) imports_walk(d: Str, main_path: Str, go: Bool, var set: Map[Str, 
         }
         continue
       }
-      if u.go || u.c || path.is_empty() || !is_remote(path) || path == main_path || path.starts_with("${main_path}/") {
+      if u.go || u.c || path.is_empty() || !is_remote(path) || path == main_path {
+        continue
+      }
+      if path.starts_with("${main_path}/") && !c.in_nested(main_dir, path[main_path.len() + 1..]) {
         continue
       }
       set[path] = true
     }
   }
   Ok(())
+}
+
+/// Whether the package at rel (a path below the main module's) is in a
+/// nested module: a directory on its way down from main_dir has its own
+/// xo.mod, and a nested module is never part of the module around it
+/// (core 4.2; aws report entry 7: tidy dropped the require of
+/// service/sts, a nested module its parent's stscreds imports).
+fn (c: ModCtx) in_nested(main_dir: Str, rel: Str) -> Bool uses fs.read {
+  var d = main_dir
+  for el in rel.split("/") {
+    d = "${d}/${el}"
+    if c.exists("${d}/xo.mod") {
+      return true
+    }
+  }
+  false
 }
 
 /// mod.Owner: the module of mods holding the package path (the longest
@@ -201,7 +225,46 @@ fn (var c: ModCtx) get(main_dir: Str, arg: Str, accept: Bool) -> (List[Change], 
     c.write_file(main.file, data.bytes()).ignore_err("restoring xo.mod, as mod.GetAccept")
     return ([], ps)
   }
-  ([Change{path: path, old: old, new: nv}], [])
+  var ch = Change{path: path, old: old, new: nv}
+  if !nv.is_empty() {
+    let (sel, by) = c.selected_by(main_dir, path)
+    if !sel.is_empty() && sel != nv {
+      ch.selected = sel
+      ch.by = by
+    }
+  }
+  ([ch], [])
+}
+
+/// The version of module path the main module at main_dir builds with,
+/// and a dependency ("path@version") whose xo.mod requires that version,
+/// "" when none does (aws report entry 7: `xo get sts@v1.0.0` printed
+/// "v1.1.0 => v1.0.0" while the root's v1.2.0 kept sts at v1.1.0).
+fn (var c: ModCtx) selected_by(main_dir: Str, path: Str) -> (Str, Str) uses (fs, proc, rand, net) {
+  let b = c.load(main_dir, Options{no_workspace: true, no_vendor: true})
+  var sel = ""
+  for m in b.modules {
+    if m.path == path {
+      sel = m.version
+    }
+  }
+  if sel.is_empty() {
+    return ("", "")
+  }
+  for m in b.modules {
+    if m.path == path || m.version.is_empty() {
+      continue
+    }
+    let (mf, _) = c.chk.read_mod_file(m.dir)
+    if let Some(x) = mf {
+      for r in x.reqs {
+        if r.path == path && r.version == sel {
+          return (sel, "${m.path}@${m.version}")
+        }
+      }
+    }
+  }
+  (sel, "")
 }
 
 /// mod writeLockChanges: resolves the main module without workspace or

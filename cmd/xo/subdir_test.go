@@ -126,3 +126,97 @@ func TestSubdirModules(t *testing.T) {
 		t.Errorf("path without the directory: %s", p.codes())
 	}
 }
+
+// TestNestedModuleRequired: a root module importing a package of a module
+// nested in its own repository (service/sts with its own xo.mod) must
+// require it like any other module, and tidy keeps that requirement; a
+// require cycle between the two resolves by minimal version selection,
+// and `xo get` of a version the graph overrides says which module keeps
+// the higher one (aws report entry 7, 2026-11-04).
+func TestNestedModuleRequired(t *testing.T) {
+	t.Parallel()
+	env := modSetup(t, t.TempDir())
+	repo := filepath.Join(env.Repos, "github.com", "acme", "awsx")
+	os.MkdirAll(repo, 0o755)
+	modtest.Git(t, repo, "init", "-q", "-b", "main")
+	commit := func(files map[string]string, tags ...string) {
+		t.Helper()
+		modtest.WriteFiles(t, repo, files)
+		modtest.Git(t, repo, "add", "-A")
+		modtest.Git(t, repo, "commit", "-q", "-m", strings.Join(tags, " "))
+		for _, tg := range tags {
+			modtest.Git(t, repo, "tag", tg)
+		}
+	}
+	const sts = "github.com/acme/awsx/service/sts"
+	commit(map[string]string{
+		"xo.mod":  "module github.com/acme/awsx\nedition preview\n",
+		"awsx.xo": "pub fn base() -> Int { 1 }\n",
+	}, "v1.0.0")
+	commit(map[string]string{
+		"service/sts/xo.mod": "module " + sts + "\nedition preview\n\nrequire github.com/acme/awsx v1.0.0\n",
+		"service/sts/sts.xo": "use github.com/acme/awsx\n\npub fn call() -> Int { awsx.base() + 1 }\n",
+	}, "service/sts/v1.0.0")
+
+	// the root, in a clone, imports the nested module from stscreds
+	work := t.TempDir()
+	modtest.Git(t, work, "clone", "-q", repo, "awsx")
+	root := filepath.Join(work, "awsx")
+	modtest.WriteFiles(t, root, map[string]string{
+		"stscreds/stscreds.xo": "use " + sts + "\n\npub fn creds() -> Int { sts.call() }\n",
+	})
+	xo(t, "mod", "tidy", "--dir", filepath.Join(root, "service", "sts")).want(0)
+	r := xo(t, "check", "--json", root+"/...").want(1)
+	if !strings.Contains(r.out, "XO1306") || !strings.Contains(r.out, "subdirectory with its own xo.mod") {
+		t.Errorf("check with no require of the nested module:\n%s", r.out)
+	}
+	// the same from inside the root module, where its directory is "."
+	// (aws-19 ran `xo check ./...` there)
+	t.Run("in_root", func(t *testing.T) {
+		chdir(t, root)
+		if r := xo(t, "check", "--json", "./...").want(1); !strings.Contains(r.out, "XO1306") {
+			t.Errorf("check ./... in the root module:\n%s", r.out)
+		}
+	})
+	xo(t, "get", "--dir", root, sts+"@v1.0.0").want(0)
+	xo(t, "check", root+"/...").want(0)
+	r = xo(t, "mod", "tidy", "--dir", root).want(0)
+	data, _ := os.ReadFile(filepath.Join(root, "xo.mod"))
+	if !strings.Contains(string(data), "require "+sts+" v1.0.0") || strings.Contains(r.out, "removed") {
+		t.Errorf("tidy dropped the nested module's requirement:\n%s\n%s", r.out, data)
+	}
+	// root v1.1.0 requires sts v1.0.0 (which requires root v1.0.0); sts
+	// v1.1.0 requires root v1.1.0: a cycle
+	modtest.Git(t, root, "add", "-A")
+	modtest.Git(t, root, "commit", "-q", "-m", "stscreds")
+	modtest.Git(t, root, "tag", "v1.1.0")
+	modtest.WriteFiles(t, root, map[string]string{
+		"service/sts/xo.mod": "module " + sts + "\nedition preview\n\nrequire github.com/acme/awsx v1.1.0\n",
+	})
+	modtest.Git(t, root, "commit", "-q", "-am", "sts 1.1")
+	modtest.Git(t, root, "tag", "service/sts/v1.1.0")
+	modtest.Git(t, root, "push", "-q", "origin", "v1.1.0", "service/sts/v1.1.0")
+
+	app := filepath.Join(t.TempDir(), "app")
+	modtest.WriteFiles(t, app, map[string]string{
+		"xo.mod":       "module example.com/app\nedition preview\n",
+		"main/main.xo": "use github.com/acme/awsx/stscreds\nuse " + sts + "\n\nfn main(os: Os) {\n  os.stdio.println(\"${stscreds.creds()} ${sts.call()}\")\n}\n",
+	})
+	xo(t, "get", "--dir", app, sts+"@v1.1.0").want(0)
+	xo(t, "get", "--dir", app, "github.com/acme/awsx@v1.1.0").want(0)
+	r = xo(t, "run", filepath.Join(app, "main")).want(0)
+	if r.out != "2 2\n" {
+		t.Errorf("run: %q", r.out)
+	}
+	// sts v1.1.0 requires awsx v1.1.0, so awsx stays there; going down
+	// to sts v1.0.0 is overridden by nothing, but awsx v1.0.0 is
+	// overridden by sts v1.1.0's requirement
+	r = xo(t, "get", "--dir", app, "github.com/acme/awsx@v1.0.0").want(0)
+	if !strings.Contains(r.out, "the build still selects github.com/acme/awsx v1.1.0: "+sts+"@v1.1.0 requires it") {
+		t.Errorf("get of an overridden version:\n%s", r.out)
+	}
+	r = xo(t, "get", "--json", "--dir", app, "github.com/acme/awsx@v1.0.0").want(0)
+	if strings.Contains(r.out, `"selected"`) {
+		t.Errorf("an unchanged requirement reports a selection:\n%s", r.out)
+	}
+}

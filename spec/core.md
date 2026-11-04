@@ -1505,7 +1505,9 @@ use github.com/acme/billing/invoice
   so `deny` rules (4.2) see every import. A `.` inside a segment is fine
   (`example.com`, `.github`, `v1.2`).
 - Imports are explicit. There is no dot import or glob import.
-- Cyclic module imports are an error.
+- Cyclic package imports are an error (`XO0604`): package a importing b
+  and b importing a, whether the two are in one module or in two.
+  Requirement cycles between modules are allowed (4.2).
 - `std/internal` holds primitives for std's implementation and the Xo
   toolchain's own modules (decision 0214) and is not part of std (std.md
   does not list it): only std modules and modules whose path is
@@ -1550,13 +1552,18 @@ note `XO1315` (decision 0155). Any other name stops the check.
   and bitbucket.org the repository is the first three path elements; on
   other hosts the longest prefix of the path that git answers for is the
   repository. A directory holding its own xo.mod is never part of the
-  module around it (it is not fetched, hashed, or vendored with it).
+  module around it (it is not fetched, hashed, or vendored with it), and
+  the module around it imports its packages only by requiring it, as
+  any other module (`XO1306` without the requirement).
 - There is no `replace`, `exclude`, or `retract` (`XO1301`); local copies
   are reached only through a workspace (below).
 - Minimal version selection: the build uses, for each module, the highest
   version that any reached xo.mod requires (the main module's, then those
   of every required version, transitively). No ranges, no solver; a
-  version changes only when an xo.mod changes.
+  version changes only when an xo.mod changes. Requirement cycles are
+  allowed and resolved the same way, as in Go (a root module requiring a
+  nested one that requires the root back: each module's highest
+  required version is selected, the main module's own path aside).
 - Imports resolve inside the main module, the embedded `std`, and the
   selected module versions (the longest module path that prefixes the
   import path). A module must require every module it imports from:
@@ -1586,7 +1593,9 @@ note `XO1315` (decision 0155). Any other name stops the check.
   with `vendor/modules.txt`. When `vendor/modules.txt` exists, builds use
   only vendor/ (no cache, no network); a requirement it lacks is `XO1307`.
 - Commands: `xo get <path>[@version|@latest|@none]` sets a requirement
-  (latest tag by default) and rewrites xo.mod and xo.lock; `xo mod tidy`
+  (latest tag by default) and rewrites xo.mod and xo.lock, and says
+  which module version still requires a higher version when the build
+  does not select the one set; `xo mod tidy`
   requires every imported module, removes requirements nothing imports
   (unless they raise a version the graph selects), and rewrites xo.lock.
 
@@ -3439,7 +3448,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0601` | error | checker | name does not resolve (core 4.3) |
 | `XO0602` | error | checker | import path does not yield a valid local name (core 4.1) |
 | `XO0603` | error | checker | name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4) |
-| `XO0604` | error | checker | cyclic module imports (core 4.1) |
+| `XO0604` | error | checker | cyclic package imports (core 4.1) |
 | `XO0605` | error | checker | name is not `pub` in its module, a field of a std struct documented `@internal` outside std (decision 0440), or the std type is an opaque handle (core 1.5) |
 | `XO0606` | error | checker | method declared outside the module of its type (core 3.4) |
 | `XO0607` | error | checker | `break` or `continue` outside a loop, or an unknown label (core 3.5) |

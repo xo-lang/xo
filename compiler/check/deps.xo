@@ -115,18 +115,29 @@ fn (var c: Checker) check_required(m: Int, f: Int, u: parser.UseDecl, p: Str) {
     Some(r) => r
     None => return
   }
-  let dm = match c.deps.dep_dirs.get(owner.dir) {
-    Some(x) => x
-    None => return
-  }
-  if dm.workspace {
-    return
-  }
   let from = match c.find_mod_root(c.mods[m].dir) {
     Some(r) => r
     None => return
   }
   if from.dir == owner.dir {
+    return
+  }
+  let dm = match c.deps.dep_dirs.get(owner.dir) {
+    Some(x) => x
+    None => {
+      // a module nested in the importing module's directory (its own
+      // xo.mod below the importer's), found because ./... walked into
+      // it: never part of the module around it (core 4.2), so the
+      // importer must require it like any other module (aws report
+      // entry 7: stscreds used service/sts with no require); dirs are
+      // relative to the working directory when it holds them (".")
+      if owner.path != "" && c.abs(owner.dir).starts_with("${c.abs(from.dir)}/") {
+        c.require_nested(f, u, p, from, owner)
+      }
+      return
+    }
+  }
+  if dm.workspace {
     return
   }
   if !c.deps.req_cache.contains(from.dir) {
@@ -146,6 +157,28 @@ fn (var c: Checker) check_required(m: Int, f: Int, u: parser.UseDecl, p: Str) {
   let by = if from.path == "" { join(from.dir, "xo.mod") } else { "the xo.mod of ${from.path}" }
   let d = c.error_at(f, "XO1306", u.span, "module ${owner.path} of `${p}` is not required by ${by} (it is in the build only because another module requires it)")
   c.note(d, "`xo get ${owner.path}` (or `xo mod tidy`) requires the version the build selects (core 4.2)")
+}
+
+/// XO1306 when module from imports package p of owner, a module nested
+/// in from's directory, and from's xo.mod does not require it.
+fn (var c: Checker) require_nested(f: Int, u: parser.UseDecl, p: Str, from: ModRoot, owner: ModRoot) {
+  if !c.deps.req_cache.contains(from.dir) {
+    var reqs: Map[Str, Bool] = {}
+    let (mf, _) = c.read_mod_file(from.dir)
+    if let Some(x) = mf {
+      for r in x.reqs {
+        reqs[r.path] = true
+      }
+    }
+    c.deps.req_cache[from.dir] = reqs
+  }
+  let reqs = c.deps.req_cache.get(from.dir) ?? {}
+  if reqs.contains(owner.path) {
+    return
+  }
+  let by = if from.path == "" { join(from.dir, "xo.mod") } else { "the xo.mod of ${from.path}" }
+  let d = c.error_at(f, "XO1306", u.span, "module ${owner.path} of `${p}` is not required by ${by} (a module in a subdirectory with its own xo.mod is not part of the module around it)")
+  c.note(d, "`xo get ${owner.path}` (or `xo mod tidy`) requires a version of it (core 4.2)")
 }
 
 /// check deps.go dependencyOf: "<path>@<version>" for a required module

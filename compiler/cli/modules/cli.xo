@@ -281,6 +281,12 @@ fn change_json(ch: Change) -> J {
   if !ch.new.is_empty() {
     fs.push(("new", J.S(s: ch.new)))
   }
+  if !ch.selected.is_empty() {
+    fs.push(("selected", J.S(s: ch.selected)))
+  }
+  if !ch.by.is_empty() {
+    fs.push(("required_by", J.S(s: ch.by)))
+  }
   J.O(fields: fs)
 }
 
@@ -321,6 +327,10 @@ fn (c: ModCtx) report_changes(changes: List[Change], probs: List[check.Problem],
         c.out("removed ${ch.path} ${ch.old}\n")
       } else {
         c.out("${ch.path} ${ch.old} => ${ch.new}\n")
+      }
+      if !ch.selected.is_empty() {
+        let why = if ch.by.is_empty() { "another requirement is higher" } else { "${ch.by} requires it" }
+        c.out("  the build still selects ${ch.path} ${ch.selected}: ${why}, and minimal version selection keeps the highest requirement (core 4.2)\n")
       }
     }
     c.print_api_changes(diffs)
