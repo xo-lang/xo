@@ -51,7 +51,14 @@ fn (var c: Checker) define(id: Ident, o: Int) {
   }
   let m = c.cur_mod
   if !c.mods[m].is_std && is_protected(id.name) {
-    c.error("XO0603", id.span, "`${text(id.name)}` is predeclared and cannot be redefined at top level (core 1.4)")
+    let d = c.error("XO0603", id.span, "`${text(id.name)}` is predeclared and cannot be redefined at top level (core 1.4)")
+    let n = text(id.name)
+    if n == "Err" || n == "Error" || n == "Result" || n == "Option" {
+      // the module's own error type takes its name (std's JwtErr,
+      // IdnaErr; the AWS agent's `pub enum Err`, 2026-11-04)
+      let suf = if n == "Error" { "Err" } else { n }
+      c.note(d, "name it after the module, as std does (`JwtErr`, `IdnaErr`): `${module_prefix(c.mods[m].path)}${suf}`")
+    }
     return
   }
   if let Some(prev) = c.mods[m].members.get(id.name) {
@@ -1418,3 +1425,20 @@ fn (var c: Checker) valued_enum(t: Int, ed: parser.EnumDecl) {
   }
   c.objs[t].variants = vs
 }
+
+/// A module path's last part in PascalCase, the prefix of its own error
+/// type's name: "github.com/me/aws_sig" is "AwsSig", "std/jwt" "Jwt".
+fn module_prefix(path: Str) -> Str {
+  let parts = path.split("/")
+  let last = if parts.is_empty() { path } else { parts[parts.len() - 1] }
+  var b = StrBuilder.new()
+  for w in last.replace("-", "_").replace(".", "_").split("_") {
+    if !w.is_empty() {
+      b.write(w[0..1].to_upper())
+      b.write(w[1..w.len()])
+    }
+  }
+  let out = b.freeze()
+  if out.is_empty() { "Module" } else { out }
+}
+

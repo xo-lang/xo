@@ -1,0 +1,5 @@
+pub enum Err { Bad } // ERROR XO0603 "`Err` is predeclared"
+
+fn main(os: Os) {
+  os.stdio.println("x")
+}
