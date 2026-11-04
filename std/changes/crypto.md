@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-04: perf: ECDSA verification multiplies with sliding windows
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/jwt es256_verify about 1.72 of Go's wall (field arithmetic is the rest)
+- Go reference: crypto/internal/fips140/nistec's variable time multiplication in ECDSA verify
+- Test: the jwt, crypto, x509 and tls corpora (arm64, LLVM, Go backend), internal/repotest
+- Timing: host 1 A/B es256_verify 0.964 of before (0.953-0.970, n=6)
+- Shipped in: not yet released
+
+`pt_mul_vt_public` (public scalars only, verify) reads sliding windows of up to 5 bits over the odd multiples [1]P to [31]P: about 43 additions and 16 table entries, against 60 and 15 for fixed 4 bit windows, and no doublings of the identity before the first set bit.
+
 ## 2026-11-04: perf: bigmod.mac_row as two carry chains (Go's addMulVVW shape on arm64)
 
 - Kind: perf
