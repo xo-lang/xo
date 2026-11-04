@@ -27,8 +27,10 @@ func RequireRunMatch(m *testing.M) {
 	if err != nil {
 		return // the testing package reports a bad pattern itself
 	}
+	// a -skip with a / skips subtests only (-skip A/B leaves A running),
+	// so only a -skip of whole tests can leave a matched name unrun
 	var skip *regexp.Regexp
-	if s := flagValue("test.skip"); s != "" {
+	if s := flagValue("test.skip"); s != "" && !strings.Contains(s, "/") {
 		skip, _ = regexp.Compile(strings.SplitN(s, "/", 2)[0])
 	}
 	var names []string
