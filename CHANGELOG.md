@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- fix (check, use go): `xo check --no-gc` (and a native build) of a `use go` program reports one XO1201 per `use go` line that names the Go types the program uses (`its types jwt.MapClaims, jwt.Token`) and std/go's `go.Error` in a note, instead of one more error per type and one for go.Error: the owner's jwt program goes from 5 errors to 1 (the owner's v0.36.0 evaluation counted 19 for one program; bug 17's leftover). cmd/xo TestUseGoNoGCTypesInOneError.
 - change (wasm, tls): on wasm a certificate's expiry error shows the current time in UTC (RFC 3339's Z) instead of the local zone, so the zone rules are no longer compiled into a component: an HTTPS client 52 KB smaller; native unchanged.
 - fix (archive): a NUL byte in an entry name is refused as `contains a NUL byte`, not `leaves the archive`; a zip or tar entry whose mode says directory returns no data (documented, std/changes/archive.md).
 - perf (url): escape 0.70, parse_query 0.79 and Values.encode 0.89 of before on linux/arm64, with new Go twins bench/perf/url and bench/perf/checksum (crc32, crc64, fnv, adler32 all at or ahead of Go) (std/changes/url.md).

@@ -312,6 +312,29 @@ func TestUseGoNoGCOneErrorPerLine(t *testing.T) {
 	}
 }
 
+// TestUseGoNoGCTypesInOneError: the Go types a program uses (strings.Builder)
+// and std/go's go.Error are named in the package's one XO1201, not reported
+// one each (owner's v0.36.0 evaluation: 19 errors for one program, one per
+// Go package, type and use).
+func TestUseGoNoGCTypesInOneError(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module ex\nedition preview\n",
+		"app/main.xo": "use go \"strings\"\nuse go \"strconv\"\n\nfn main(os: Os) -> () ! Error {\n" +
+			"  let sb = strings.Builder.new()\n  sb.write_string(\"a\")?\n" +
+			"  os.stdio.println(sb.string() + \"${strconv.atoi(\"1\")?}\")\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	code := run(t, []string{"check", "--no-gc", filepath.Join(dir, "app")}, &out, &errOut)
+	got := errOut.String()
+	if n := strings.Count(got, "XO1201"); code != 1 || n != 2 {
+		t.Fatalf("check --no-gc: exit %d, %d XO1201 (want 1 and 2, one per use go line):\n%s", code, n, got)
+	}
+	if !strings.Contains(got, "its types strings.Builder") || !strings.Contains(got, "go.Error") {
+		t.Errorf("the strings diagnostic should name its type and std/go's go.Error:\n%s", got)
+	}
+}
+
 // TestUseGoHelperFormatMismatch: an xo-gobind of another xo writes a
 // binding format this xo does not read; the check says so (XO1101 naming
 // the helper and both formats) instead of reporting a missing binding on

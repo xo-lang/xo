@@ -40,6 +40,13 @@ pub fn nogc_diags(b: Builder) -> List[check.Diag] {
   // `use go` line instead of one per call (0.33.0 tester's bug 17)
   var go_uses: Map[Str, Int] = {}
   var go_order: List[(Str, Str, Str)] = []
+  // a Go package's types (reported with no position) are named in its
+  // diagnostic, and std/go's types (go.Error, go.Any), which only `use
+  // go` code uses, in a note of the first (owner's v0.36.0 evaluation: 19
+  // errors for one program, one per Go package, type and use)
+  var go_types: Map[Str, List[Str]] = {}
+  var go_types_order: List[Str] = []
+  var std_go: List[BuildErr] = []
   for e in b.errs {
     if cascades(e, kept) {
       continue
@@ -49,6 +56,25 @@ pub fn nogc_diags(b: Builder) -> List[check.Diag] {
       continue
     }
     let gp = go_package_of(e)
+    if !gp.is_empty() && e.file.is_empty() {
+      let nm = go_type_name(e)
+      var l = go_types.get(gp) ?? []
+      if l.is_empty() {
+        go_types_order.push(gp)
+      }
+      if !nm.is_empty() && !l.contains(nm) {
+        l.push(nm)
+      }
+      go_types[gp] = l
+      continue
+    }
+    if gp.is_empty() && is_std_go_type(e) {
+      // kept, so what overlaps it (the Debug text of go.Error at the
+      // same `?`) is still its cascade
+      kept.push(e)
+      std_go.push(e)
+      continue
+    }
     if !gp.is_empty() && !e.file.is_empty() {
       let key = "${e.file}\n${gp}"
       if let Some(n) = go_uses.get(key) {
@@ -62,11 +88,55 @@ pub fn nogc_diags(b: Builder) -> List[check.Diag] {
     kept.push(e)
     out.push(nogc_diag(e))
   }
+  var std_note = ""
+  if !std_go.is_empty() && (!go_order.is_empty() || !go_types_order.is_empty()) {
+    var names: List[Str] = []
+    for e in std_go {
+      let nm = go_type_name(e)
+      if !nm.is_empty() && !names.contains(nm) {
+        names.push(nm)
+      }
+    }
+    std_note = "std/go's ${names.join(", ")}, which `use go` code uses, is part of this"
+  } else {
+    for e in std_go {
+      out.push(nogc_diag(e))
+    }
+  }
+  var named: Set[Str] = #{}
   for (key, file, gp) in go_order {
-    out.push(go_use_diag(b, file, gp, go_uses.get(key) ?? 1))
+    // the package's types go with its first diagnostic
+    let types = if named.contains(gp) { [] } else { go_types.get(gp) ?? [] }
+    named.add(gp)
+    out.push(go_use_diag(b, file, gp, go_uses.get(key) ?? 1, types, std_note))
+    std_note = ""
+  }
+  // a package whose only uses are types (no position of its own)
+  for gp in go_types_order {
+    if !named.contains(gp) {
+      out.push(go_use_diag(b, "", gp, 0, go_types.get(gp) ?? [], std_note))
+      std_note = ""
+    }
   }
   out
 }
+
+/// The name in a feature "the type `T` ..." (build.xo's record of a
+/// type), or "".
+fn go_type_name(e: BuildErr) -> Str {
+  let mark = "the type `"
+  if !e.feature.starts_with(mark) {
+    return ""
+  }
+  let rest = e.feature[mark.len()..]
+  let j = rest.find("`") ?? return ""
+  rest[0..j]
+}
+
+/// A construct of std's go module's types (go.Error, go.Any: the type,
+/// its Debug text): planned on the native backends, and used only by
+/// `use go` code.
+fn is_std_go_type(e: BuildErr) -> Bool { e.feature.contains("`go.Error`") || e.feature.contains("`go.Any`") }
 
 /// The Go package a construct of a `use go` package names (the
 /// impossible features of call.xo and build.xo: "... of the Go package
@@ -83,8 +153,10 @@ fn go_package_of(e: BuildErr) -> Str {
 }
 
 /// The one XO1201 of the n uses of Go package gp in file: at its `use go`
-/// declaration when the file has one, else at the first use.
-fn go_use_diag(b: Builder, file: Str, gp: Str, n: Int) -> check.Diag {
+/// declaration when the file has one, else at the first use; types are
+/// the package's types the program uses, and std_note ("" for none) a
+/// note naming std/go's types.
+fn go_use_diag(b: Builder, file: Str, gp: Str, n: Int, types: List[Str], std_note: Str) -> check.Diag {
   var line = 0
   var col = 0
   var end_line = 0
@@ -113,9 +185,19 @@ fn go_use_diag(b: Builder, file: Str, gp: Str, n: Int) -> check.Diag {
       }
     }
   }
-  let count = if n == 1 { "1 use" } else { "${n} uses" }
-  let msg = "not available on the native backends (arm64, amd64, LLVM): the Go package `${gp}` (`use go`, ${count} in this file) (impossible: Go code needs Go's runtime)"
-  check.Diag{code: "XO1201", file: file, line: line, col: col, end_line: end_line, end_col: end_col, message: msg, notes: [check.DNote{message: "support: impossible; build with --backend=go to use it"}]}
+  var what: List[Str] = []
+  if n > 0 {
+    what.push(if n == 1 { "1 use in this file" } else { "${n} uses in this file" })
+  }
+  if !types.is_empty() {
+    what.push("its types ${types.join(", ")}")
+  }
+  let msg = "not available on the native backends (arm64, amd64, LLVM): the Go package `${gp}` (`use go`, ${what.join("; ")}) (impossible: Go code needs Go's runtime)"
+  var notes = [check.DNote{message: "support: impossible; build with --backend=go to use it"}]
+  if !std_note.is_empty() {
+    notes.push(check.DNote{message: std_note})
+  }
+  check.Diag{code: "XO1201", file: file, line: line, col: col, end_line: end_line, end_col: end_col, message: msg, notes: notes}
 }
 
 fn before(al: Int, ac: Int, bl: Int, bc: Int) -> Bool {
