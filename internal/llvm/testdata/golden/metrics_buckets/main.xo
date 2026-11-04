@@ -1,0 +1,15 @@
+// std/metrics histogram buckets (an observation counts one bucket and a
+// scrape adds them up): a value below the first bound, exactly on a bound,
+// between bounds, on the last bound and above it (only the +Inf bucket),
+// with a second series of one label value.
+use std/metrics
+
+fn main(os: Os) {
+  let r = metrics.registry()
+  let h = r.histogram("lat_seconds", "Latency.", ["route"], [0.125, 0.5, 1.0])
+  for v in [-1.0, 0.125, 0.3, 0.5, 1.0, 1.0000001, 7.5] {
+    h.observe(v, ["/a"])
+  }
+  h.observe(0.2, ["/b"])
+  os.stdio.println(r.text())
+}
