@@ -30,3 +30,16 @@ proxy sends such a request with no body, as httputil sets
 same with net/http's NoBody. Golden http_reverse_proxy_retry: a target
 that closes a kept connection on the next request. When a proxy or
 client forwards a body, ask whether an empty one should be none.
+
+## Follow-up (2026-11-03, Observed): an upgrade needs its source
+
+The first fix also dropped the source of a proxied upgrade (a WebSocket
+GET has no body). Without a source the client makes no full duplex
+exchange (no dsrv), so when the 101 tunnel's target side ends,
+end_conn frees the connection (hclient.end_keep) while tunnel's
+client-to-target task still writes on it: a use-after-free that
+trapped on wasip2 ("unknown handle index", http_reverse_proxy_ws as a
+command, 5 of 5) and passed silently on native, XO_RC_CHECK=1
+included. An upgrade now keeps its source. Before dropping a request's
+source, check what else its presence selects (here the duplex path and
+end_shared).

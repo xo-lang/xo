@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-11-03: fix: http.reverse_proxy no longer writes to a freed connection after a proxied upgrade ends
+
+- Kind: fix
+- Commit: this commit
+- Found by: the Lead's wasip2 command run: http_reverse_proxy_ws trapped 5 of 5 ("unknown handle index" in wasi_sock_write) after the previous entry's fix
+- Go reference: net/http/httputil reverseproxy.go handleUpgradeResponse (the backend connection lives until both copies end)
+- Test: golden http_reverse_proxy_ws as a wasip2 command (internal/selfhost TestWasmCommandGoldens), on arm64, LLVM and Go parity
+- Timing: none
+
+The previous fix sent a request without a body source when it had no
+body, which included a WebSocket upgrade. Without a source the client
+made no full duplex exchange, so when the tunnel's target side ended,
+the connection was freed while the tunnel's client-to-target task still
+wrote on it. An upgrade keeps its source again.
+
 ## 2026-11-03: fix: http.reverse_proxy sends a request without a body without one, so a GET is retried on a fresh connection
 
 - Kind: fix

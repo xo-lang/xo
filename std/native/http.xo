@@ -4897,8 +4897,12 @@ fn (p: ReverseProxy) serve(req0: http.Request, body: http.BodyReader) -> http.Re
   // a request without a body goes on without one (httputil: outreq.Body
   // = nil when ContentLength is 0): a GET then stays replayable, so a
   // pooled connection the target closed is retried on a new one
-  // (decision 0303) instead of failing as EOF
-  let sent = if rt.cast[http.BodyReader, BodyReader](body).empty { rt.cast[http.Request, Request](out) } else { rt.cast[http.Request, Request](out).with_body_reader(body) }
+  // (decision 0303) instead of failing as EOF. An upgrade keeps its
+  // source: the full duplex exchange it makes (dsrv) is what lets tunnel's
+  // client-to-target task write on the connection after the response
+  // ends, since end_conn then closes only its descriptor (end_shared);
+  // without it end_keep freed the connection under that task
+  let sent = if rt.cast[http.BodyReader, BodyReader](body).empty && up.is_empty() { rt.cast[http.Request, Request](out) } else { rt.cast[http.Request, Request](out).with_body_reader(body) }
   match c.open(sent) {
     Err(e) => {
       log.error("http: proxy error", {"error": e.display()})
