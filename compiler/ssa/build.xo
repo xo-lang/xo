@@ -3271,6 +3271,17 @@ fn (var b: Builder) check_then(callee: Str, cleanup: Cleanup) {
   b.s.f.land_rest[no] = true
   b.s.cur = yes
   var c = callee
+  if c.is_empty() && w >= 0 && b.vop(w) == Op.CallValue {
+    // a call of a closure literal of this function (Map.update's,
+    // Mutex.with's inside another closure): its function is the callee,
+    // so whether this one may be canceled is the literal's, not assumed
+    // (prune_unwind; cookiejar's with closures kept the value they were
+    // given for an unwind, 2026-11-03)
+    let fv = b.s.f.values[b.s.f.values[w].args[0]]
+    if fv.op == Op.Closure {
+      c = aux_name(fv.aux)
+    }
+  }
   match cleanup {
     None => {}
     Unlock(name, h, l) => {
