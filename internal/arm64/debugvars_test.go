@@ -815,12 +815,15 @@ func TestDebugLoclistsBudget(t *testing.T) {
 	}
 }
 
-// TestNoLeafWithPads fails when the arm64 backend emits a leaf function
-// with fault stubs and landing pads (the `_leafpads` label emit.xo puts
-// after such a function's code): it keeps one unwind region, whose body
-// a compact encoding then gets wrong
-// (gotchas/arm64-compact-unwind-leaf-fault-frames.md); none existed on
-// 2026-10-17, so the fix waits for one to test it on.
+// TestNoLeafWithPads checks the unwind regions of arm64 leaf functions
+// whose fault stubs have landing pads (decision 0482's Mutex.with
+// closures, 2026-11-04): the stubs' region (its `_sbegin` label) names the
+// personality and its own call site table, and no pad entry is at the
+// region's start, where a landing pad offset of 0 means none. Before the
+// fix such a leaf kept one region (the `_leafpads` label after its code),
+// whose body a compact encoding got wrong
+// (gotchas/arm64-compact-unwind-leaf-fault-frames.md), and its pad
+// returned into the stub. mutex_poison_leaf must have such a region.
 func TestNoLeafWithPads(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -851,6 +854,32 @@ func TestNoLeafWithPads(t *testing.T) {
 			}
 			if bytes.Contains(out, []byte("_leafpads:")) {
 				t.Errorf("a leaf with fault stubs and landing pads: give its stubs an unwind region of their own (gotchas/arm64-compact-unwind-leaf-fault-frames.md)")
+			}
+			lines := strings.Split(string(out), "\n")
+			regions := 0
+			for i, l := range lines {
+				if !strings.HasSuffix(l, "_sbegin:") {
+					continue
+				}
+				regions++
+				if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "\t.cfi_personality") {
+					t.Errorf("%s: a leaf's stubs region does not name the personality first", l)
+				}
+				// up to its first instruction: no pad entry at offset 0
+				for _, m := range lines[i+1:] {
+					if strings.HasSuffix(m, ":") {
+						if strings.Contains(m, "_pe") {
+							t.Errorf("%s: pad entry %s at the region's start (offset 0 means no landing pad)", l, m)
+						}
+						continue
+					}
+					if !strings.HasPrefix(m, "\t.") {
+						break
+					}
+				}
+			}
+			if filepath.Base(dir) == "mutex_poison_leaf" && regions == 0 {
+				t.Errorf("mutex_poison_leaf has no leaf stubs region with landing pads (`_sbegin`): the test no longer sees the case")
 			}
 		})
 	}

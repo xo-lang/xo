@@ -451,6 +451,9 @@ struct G {
   /// per landing pad block, its entry for the fault stubs that saved
   /// registers (emit.xo pad_entry)
   pad_entries: Map[Int, Str] = {}
+  /// a leaf's pad entries, placed after its fault stubs (emit.xo
+  /// leaf_pad_entry)
+  leaf_pes: List[Str] = []
   /// large `var` parameters passed by reference (byref.xo)
   held: Held = Held{}
   has_held: Bool = false
@@ -603,6 +606,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.sites = []
   g.stub_sites = []
   g.pad_entries = {}
+  g.leaf_pes = []
   g.held = Held{}
   g.has_held = false
   g.ref_ptr = {}

@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+first: ok 9223372036854775807
+overflow: fault integer overflow: 9223372036854775807 + 1 does not fit Int
+after: fault XO-F010: Mutex.with on a mutex poisoned by a fault inside an earlier Mutex.with; reset gives it a new value
+reset: ok 2
+--- stderr
