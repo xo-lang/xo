@@ -1,6 +1,6 @@
-# 0483: directory walks with lazy entry info (DirEntry, Go's fs.DirEntry) (proposal)
+# 0483: directory walks with lazy entry info (DirEntry, Go's fs.DirEntry)
 
-Status: Proposed (Xo Lang 3, 2026-11-03). The owner decides before any code.
+Status: Accepted (owner, 2026-11-03; proposed by Xo Lang 3). One release, with a migration note in CHANGELOG (Breaking) and spec/std. Implementation follows time and netip.
 
 ## Context
 
