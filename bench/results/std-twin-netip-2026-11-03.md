@@ -21,3 +21,14 @@ The remaining cost is the representation (a heap `Bytes` per address and byte-at
 | compare | 16.1 | 32.58 | 2.023 | 1.907-2.079 |
 
 The mixed row went from 1.79 to 1.31. Host 2 A/B of the representation change: mixed 0.766 of before. Open: display4 and compare (2.0), parse6 (1.7), parse4 (1.38).
+
+## 2026-11-04 (host 1 A/B, n=6 unless noted)
+
+| change | workload | ratio of before | interval |
+|---|---|---|---|
+| string4 packed in two words | display4 | 0.637 | 0.629-0.645 |
+| hex digits from a table | parse6 | 0.901 | 0.884-0.925 |
+| ipv4_fields in place (reverted) | parse4 | 1.03 | 1.006-1.042 (n=15) |
+
+Against Go (rows above): display4 about 1.26, parse6 about 1.50. Left: compare 2.02 and part of display4 are RC drops of the zone Str (Lang 1: inline drop test), parse4 1.38.
+

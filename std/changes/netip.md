@@ -1,5 +1,17 @@
 # std/netip changes
 
+## 2026-11-04: perf: display of an IPv4 address packs its octets in two words; IPv6 hex digits come from a table
+
+- Kind: perf
+- Commit: this push
+- Found by: the host 1 rows after decision 0485 (std-twin-netip-2026-11-03.md): display4 1.98, parse6 1.70 of Go
+- Go reference: net/netip Addr.string4 (appendDecimal into a stack array), parseIPv6's hex loop
+- Test: the netip corpus (arm64, LLVM, Go backend) and `xo test --std-module=netip`
+- Timing: host 1 A/B display4 0.637 of before (0.629-0.645), parse6 0.901 (0.884-0.925), both n=6
+- Shipped in: not yet released
+
+`string4` builds the text in two registers (each octet's digits and dot by shifts and ors), stores them with two `put_le` into a 16 byte builder and cuts the result to its length, in place of up to 15 `write_byte` calls. `parse_ipv6` reads a hex digit with one load from a 256 byte table. An in-place `ipv4_fields` (no slice) was tried and measured worse (parse4 1.03, n=15), so it stays as it was.
+
 ## 2026-11-03: perf, breaking: Addr holds its 16 bytes as two words
 
 - Kind: perf (breaking)
