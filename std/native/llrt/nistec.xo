@@ -2243,6 +2243,75 @@ fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
   copy_pt(r, acc)
 }
 
+/// r = [k]p for a public k (verification, where nothing is secret): the
+/// windows of pt_mul, but a window's table entry is read directly and a zero
+/// digit adds nothing, so no mask select over 16 entries and about a sixteenth
+/// fewer additions. Not constant time in k.
+fn pt_mul_vt(c: Int, r: Int, p: Int, k: Int) {
+  let n = limbs(c)
+  let tab = at(c, TABLE)
+  pt_identity(c, tab)
+  var i = 1
+  while i < 16 {
+    pt_add(c, at(tab, PS * i), at(tab, PS * (i - 1)), p)
+    i += 1
+  }
+  let acc = at(c, ACC)
+  pt_identity(c, acc)
+  var w = 16 * n - 1
+  while w >= 0 {
+    if w != 16 * n - 1 {
+      pt_double(c, acc, acc)
+      pt_double(c, acc, acc)
+      pt_double(c, acc, acc)
+      pt_double(c, acc, acc)
+    }
+    let digit = ld(k, 8 * (w / 16)).shr_logical(4 * (w % 16)) & 15
+    if digit != 0 {
+      pt_add(c, acc, acc, at(tab, PS * digit))
+    }
+    w -= 1
+  }
+  copy_pt(r, acc)
+}
+
+/// r = [k]G for a public k, from the same tables as pt_mul_g and pt_mul_g_n
+/// with the entry of each digit read directly and a zero digit skipped.
+fn pt_mul_base_vt(c: Int, r: Int, k: Int) {
+  let n = limbs(c)
+  var tb = 0
+  var nw = 0
+  if csize(c) == 32 {
+    tb = rt.obj_addr(nistec_g256.G256).wrapping_add(rt.layout(2))
+    nw = 64
+  } else if n == 6 || n == 9 {
+    tb = gtab(c)
+    nw = 2 * csize(c)
+  } else {
+    pt_mul_vt(c, r, at(c, PG), k)
+    return
+  }
+  let es = 16 * n
+  let one = at(at(c, MP), MONE)
+  let acc = at(c, ACC)
+  let sel = at(c, SEL)
+  pt_identity(c, acc)
+  var w = 0
+  while w < nw {
+    let digit = ld(k, 8 * (w / 16)).shr_logical(4 * (w % 16)) & 15
+    if digit != 0 {
+      let e = at(tb, es * (15 * w + digit - 1))
+      rt.mem_set(sel, 0, PS)
+      rt.mem_copy(sel, e, 8 * n)
+      rt.mem_copy(at(sel, ES), at(e, 8 * n), 8 * n)
+      rt.mem_copy(at(sel, 2 * ES), one, 8 * n)
+      pt_add(c, acc, acc, sel)
+    }
+    w += 1
+  }
+  copy_pt(r, acc)
+}
+
 fn copy_pt(r: Int, p: Int) { rt.mem_copy(r, p, PS) }
 
 /// r = [k]G, the curve's base point: P-256's from the compiled in fixed
@@ -2786,8 +2855,8 @@ pub fn verify(curve: Int, pub_key: Bytes, hash: Bytes, sig: Bytes) -> Bool {
   inv(c, s, s, mn)
   mul(c, u1, e, s, mn)
   mul(c, u2, r, s, mn)
-  pt_mul_base(c, at(c, PB), u1)
-  pt_mul(c, at(c, PC), at(c, PA), u2)
+  pt_mul_base_vt(c, at(c, PB), u1)
+  pt_mul_vt(c, at(c, PC), at(c, PA), u2)
   pt_add(c, at(c, PB), at(c, PB), at(c, PC))
   if pt_affine(c, x, u1, at(c, PB)) == 0 {
     keep(w)
