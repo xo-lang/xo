@@ -124,6 +124,8 @@ pub struct Gen {
   /// a wasi:http component (rt5.xo, decision 0447): the program calls
   /// http.serve_component
   comp: Bool = false
+  /// a WASI 0.3 component (wasip3/wasm, rt10.xo, decision 0447 stage 5)
+  p3: Bool = false
   /// a wasip2/wasm command (rt7.xo, decision 0447 stage 3): a program
   /// built for wasip2/wasm that does not serve wasi:http
   cmd: Bool = false
@@ -250,12 +252,13 @@ pub fn generate_tz(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: tzse
   gen_module(m, all, lax, annotate, [tz], false)
 }
 
-/// Lowers module m for wasip2/wasm: a wasi:http component (decision 0447).
-pub fn generate_component(m: ssa.Module, tz: tzsel.TZSel) -> Program {
-  gen_module(m, false, false, false, [tz], true)
+/// Lowers module m for wasip2/wasm: a wasi:http component (decision 0447);
+/// p3: for wasip3/wasm, a WASI 0.3 one (stage 5).
+pub fn generate_component(m: ssa.Module, tz: tzsel.TZSel, p3: Bool = false) -> Program {
+  gen_module(m, false, false, false, [tz], true, p3)
 }
 
-fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzsel.TZSel], p2: Bool) -> Program {
+fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzsel.TZSel], p2: Bool, p3: Bool = false) -> Program {
   var g = Gen{m: atomics_to_runtime(m), all: all, lax: lax, annotate: annotate}
   for _ in 0..m.types.len() {
     g.leaf_memo.push([])
@@ -267,6 +270,13 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
   // the target decides what a build gives, and the program must fit it
   g.comp = p2 && g.is_component()
   g.cmd = p2 && !g.comp
+  g.p3 = p3 && g.comp
+  if g.p3 && g.is_client() {
+    return Program{code: "XO1515", err: "a wasip3/wasm component has no outgoing requests yet (decision 0447 stage 5 step 1): build it with --targets=wasip2/wasm"}
+  }
+  if p3 && !g.comp {
+    return Program{code: "XO1515", err: "a wasip3/wasm program is a wasi:http component (it calls http.serve_component): commands and the rest of WASI 0.3 are later steps of decision 0447 stage 5"}
+  }
   if g.is_component() && !p2 {
     return Program{code: "XO1514", err: "http.serve_component makes a wasi:http component, which a wasip1/wasm module cannot be: build with --targets=wasip2/wasm"}
   }
@@ -299,7 +309,7 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
   }
   if g.comp || g.cmd {
     // a wasip2 program's output is the component around the module
-    let (c, cerr) = component_of(bin, g.cmd)
+    let (c, cerr) = component_of(bin, g.cmd, p3: g.p3)
     if !cerr.is_empty() {
       return Program{wat: wat, err: cerr}
     }
@@ -1697,7 +1707,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     rt = rt + rt4_text(g, tz)
   }
   if g.comp {
-    rt = rt + rt5_text(g) + rt6_text()
+    rt = rt + (if g.p3 { rt10_text(g) } else { rt5_text(g) }) + rt6_text()
   }
   if g.cmd && g.files {
     // a command's files: rt8.xo over wasi:filesystem
@@ -1763,7 +1773,10 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     // rt7_p1_text's wait after EAGAIN (the task runtime imports it too)
     b.write("    (import \"wasi_snapshot_preview1\" \"poll_oneoff\" (func $poll_oneoff (param i32 i32 i32 i32) (result i32)))\n")
   }
-  if g.comp {
+  if g.comp && g.p3 {
+    b.write(rt10_imports())
+    b.write(rt6_imports())
+  } else if g.comp {
     b.write(rt5_imports())
     if g.is_client() {
       b.write(rt5_client_imports())
@@ -1792,6 +1805,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   }
   if g.comp {
     b.write(rt5_globals())
+  }
+  if g.p3 {
+    b.write(rt10_globals())
   }
   if g.cmd {
     b.write(rt7_globals())
@@ -1823,7 +1839,10 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     called_names(s, roots)
   }
   called_names("call $fault_report call $flush_exit0 call $consts_free", roots)
-  if g.comp {
+  if g.p3 {
+    // the handle export and its callback (rt10_handle), after the strip
+    called_names(rt10_handle(start), roots)
+  } else if g.comp {
     // the handle export (rt5_handle) is written after the strip
     called_names("call $handle_end", roots)
   }
@@ -1837,7 +1856,10 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   for f in g.funcs {
     b.write(f)
   }
-  if g.comp {
+  if g.p3 {
+    // a WASI 0.3 component's async handle export (rt10.xo)
+    b.write(rt10_handle(start))
+  } else if g.comp {
     // a wasi:http component's handle export runs main per request
     // (rt5.xo); it has no _start
     b.write(rt5_handle(start))

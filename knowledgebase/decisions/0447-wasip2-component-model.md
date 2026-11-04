@@ -1199,3 +1199,63 @@ above:
   component sizes come from the built files.
 
 The owner decides whether to start it.
+
+## Stage 5 step 1 results (2026-11-03, Xo Lang 4)
+
+`xo build --targets=wasip3/wasm` builds a program that calls
+`http.serve_component` as a WASI 0.3 component (spec/core.md 12.1): it
+exports `wasi:http/handler@0.3.0`'s `handle`, lifted async with a
+callback, and imports `wasi:http/types@0.3.0`. Spin 4.2.6 and wasmtime
+50.0.1 accept the `@0.3.0` names (the release candidate's names only
+Spin), so the component names `@0.3.0`.
+
+How it works:
+
+- compiler/wasm/componentp3.xo writes the 0.3 types (fields, request,
+  response, `stream<u8>`, the trailers and done futures) and the
+  async built-ins: stream and future new, read, write and drop,
+  `task.return`, waitable sets, `waitable.join`, and `backpressure.inc`
+  and `dec`. The encodings were read from wasm-tools 1.263.0's dump
+  of a hand-written component.
+- compiler/wasm/rt10.xo's `handle` keeps the request's method, path,
+  authority and fields (rt5.xo's getters; the 0.3 functions have the
+  same flat forms), consumes the request, reads its body to the end,
+  runs main (the router, as on wasip2), returns the response head
+  through `task.return`, then writes the body, the trailers and the
+  done future. A read or write the host cannot finish at once returns
+  WAIT with the waitable set, and the callback goes on from that
+  phase. Nothing blocks inside the export: Spin answered 500 to a
+  hand-written component that waited inside it.
+- One request runs at a time in an instance (`backpressure.inc` at
+  the start, `dec` at the end), with the state reset per request.
+
+Checks:
+
+- TestWasmComponentServe builds its program for wasip2/wasm and
+  wasip3/wasm and passes under wasmtime serve and Spin. The one
+  exception is the piped body's case: at 0.3 its 3,000 bytes arrive in
+  one read and with no trailer, because step 1 does not stream.
+- TestWasmComponentTargets covers the 0.3 component, and XO1515 for a
+  0.3 command, a 0.3 client and wasip3 named with another target.
+- 50 requests 8 at a time: 50 answers of 200 "hello" on both hosts.
+
+Measured on the second host alone, wasmtime 50.0.1, three rounds,
+medians (bench/results/wasip3-hello-2026-11-03.md):
+
+| component | bytes | first request | req/s | p50 | p99 |
+|---|---|---|---|---|---|
+| Xo 0.2 (wasip2) | 322,996 | 31.3 ms | 95,114 | 0.279 ms | 1.317 ms |
+| Xo 0.3 (wasip3) | 322,838 | 31.3 ms | 114,828 | 0.217 ms | 1.345 ms |
+| Rust 0.3 (wasip3 0.10.0) | 91,295 | 31.8 ms | 121,758 | 0.201 ms | 1.340 ms |
+
+Xo at 0.3 serves 1.21x Xo at 0.2's requests a second and 0.943x Rust's
+at 0.3. First request time and p99 are alike for all three. The size
+is Xo's runtime and std, the same at both versions; Rust's is 3.5x
+smaller.
+
+Not in step 1, for the owner's next decision:
+
+- Streamed bodies both ways, and the request's trailers.
+- The client (XO1515).
+- Sockets and commands at 0.3.
+- One instance serving every request, measured on its own.

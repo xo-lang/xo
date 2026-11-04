@@ -154,3 +154,8 @@ lists the rest.
   roots); std/udp and std/dns's records work in a command too
   (decision 0447 R2h, R2i); `os.proc.request_stop()` starts the
   shutdown on wasm (R2j: stop_requested, stopping, the grace period).
+- `--targets=wasip3/wasm` (decision 0447 stage 5 step 1, 2026-11-03):
+  a program that calls `http.serve_component` as a WASI 0.3 component
+  (async `wasi:http/handler@0.3.0` with a callback; wasmtime serve 50,
+  Spin 4); bodies are read and written whole (no streaming, no request
+  trailers, no client yet: XO1515).

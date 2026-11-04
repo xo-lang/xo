@@ -231,7 +231,8 @@ target links with Xo's own linker, from any host (decision 0243).
 effect the native backends do not support as XO1201 before code
 generation (decision 0083). --backend=wasm builds a WASI preview1 module;
 --targets=wasip2/wasm, named alone, builds a program that calls
-http.serve_component as a wasi:http 0.2 component (decision 0447).
+http.serve_component as a wasi:http 0.2 component (decision 0447);
+--targets=wasip3/wasm builds it as a WASI 0.3 one (stage 5).
 Request scoped arenas for HTTP handlers are on by default (decision
 0066); --no-arenas (also on run and test) turns them off. --ci fails
 before building when a .xo file is not formatted (core 10.5) or dbg(...)

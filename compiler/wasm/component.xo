@@ -1036,8 +1036,11 @@ fn (var c: Comp) core_inline(exports: List[(Str, Int, Int)]) -> Int {
 /// The component of core module core, with the imports it names. Err is an
 /// import no interface below has. run: a command (decision 0447 stage 3),
 /// which exports wasi:cli/run's run where a wasi:http program exports
-/// incoming-handler's handle.
-pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
+/// incoming-handler's handle. p3: a wasip3/wasm component (decision 0447
+/// stage 5), which exports wasi:http/handler@0.3.0's async handle and
+/// imports the async ABI's built-ins under the module "$p3"
+/// (componentp3.xo).
+pub fn component_of(core: Bytes, run: Bool = false, p3: Bool = false) -> (Bytes, Str) {
   let all = core_imports(core)
   // the resource drops need no memory and no shim
   var shimmed: List[CoreImport] = []
@@ -1129,7 +1132,7 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
     return (b"", "a wasi:http client or a handle_stream route needs wasi:io/poll's pollable")
   }
   var ih = -1
-  if !run {
+  if !run && !p3 {
     ih = c.import_iface("wasi:http/types${WASI_V}", ity_http_types(t_in, t_out, t_poll, client, trailers))
     for r in ["fields", "incoming-request", "incoming-body", "outgoing-response", "outgoing-body", "response-outparam"] {
       let _t = c.alias_type(ih, r)
@@ -1178,8 +1181,16 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
   if wanted("wasi:clocks/monotonic-clock${WASI_V}") {
     let _i = c.import_iface("wasi:clocks/monotonic-clock${WASI_V}", ity_monotonic(t_poll))
   }
+  var p3t = P3Types{body: 0, trailers: 0, done: 0, result: 0}
+  if p3 {
+    let ih = c.import_iface("wasi:http/types${WASI_P3}", ity_http_types_p3())
+    for n in ["fields", "request", "response", "trailers", "error-code"] {
+      let _t = c.alias_type(ih, n)
+    }
+    p3t = c.p3_types()
+  }
   for m in all {
-    if !c.iface.contains(m.module) {
+    if m.module != "\$p3" && !c.iface.contains(m.module) {
       return (b"", "the component has no interface ${m.module} for its import ${m.name}")
     }
   }
@@ -1220,12 +1231,26 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
   let main = c.core_instantiate(0, args)
   let _mem = c.alias_core(2, main, "memory")
   let realloc = c.alias_core(0, main, "cabi_realloc")
-  let entry = c.alias_core(0, main, if run { "wasi:cli/run${WASI_V}#run" } else { "wasi:http/incoming-handler${WASI_V}#handle" })
+  let entry = c.alias_core(0, main, if run { "wasi:cli/run${WASI_V}#run" } else if p3 { "[async-lift]wasi:http/handler${WASI_P3}#handle" } else { "wasi:http/incoming-handler${WASI_V}#handle" })
 
   // the lowered functions, and the fixup that puts them in the shim's table
   var fills: List[(Str, Int, Int)] = []
   k = 0
   for m in shimmed {
+    if m.module == "\$p3" {
+      // an async ABI built-in (componentp3.xo)
+      let d = p3_canon(m.name, p3t, realloc)
+      if d.is_empty() {
+        return (b"", "the component has no built-in ${m.name}")
+      }
+      var s: List[Int] = [1]
+      extend(s, d)
+      section(c.out, 8, s)
+      fills.push(("${k}", 0, c.core_funcs))
+      c.core_funcs += 1
+      k += 1
+      continue
+    }
     let f = c.alias_func(c.iface.get_or_fault(m.module, "checked above"), m.name)
     var s: List[Int] = [1, 0x01, 0x00]
     uleb(s, f)
@@ -1267,6 +1292,42 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
     c.insts += 1
     var ex: List[Int] = [1, 0x00]
     name_bytes(ex, "wasi:cli/run${WASI_V}")
+    ex.push(0x05)
+    uleb(ex, exported)
+    ex.push(0x00)
+    section(c.out, 11, ex)
+    return (bytes_of(c.out), "")
+  }
+
+  if p3 {
+    // handle: async func(request) -> result<response, error-code>, lifted
+    // with its callback (rt10.xo)
+    let cb = c.alias_core(0, main, "[callback][async-lift]wasi:http/handler${WASI_P3}#handle")
+    let own_rq = c.deftype(dt_own(c.res.get_or_fault("request", "aliased above")))
+    var d: List[Int] = [0x43]
+    uleb(d, 1)
+    name_bytes(d, "request")
+    sleb(d, own_rq)
+    d.push(0x00)
+    sleb(d, p3t.result)
+    let t_handle = c.deftype(d)
+    var lift: List[Int] = [1, 0x00, 0x00]
+    uleb(lift, entry)
+    extend(lift, [0x03, 0x03, 0x00, 0x06, 0x07])
+    uleb(lift, cb)
+    uleb(lift, t_handle)
+    section(c.out, 8, lift)
+    let f_handle = c.funcs
+    c.funcs += 1
+    var inst: List[Int] = [1, 0x01, 1, 0x00]
+    name_bytes(inst, "handle")
+    inst.push(0x01)
+    uleb(inst, f_handle)
+    section(c.out, 5, inst)
+    let exported = c.insts
+    c.insts += 1
+    var ex: List[Int] = [1, 0x00]
+    name_bytes(ex, "wasi:http/handler${WASI_P3}")
     ex.push(0x05)
     uleb(ex, exported)
     ex.push(0x00)

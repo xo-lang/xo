@@ -1,0 +1,221 @@
+// The WASI 0.3 parts of a wasi:http component (decision 0447 stage 5):
+// wasi:http/types@0.3.0 as the runtime of a wasip3/wasm component calls
+// it (rt10.xo), the async canonical ABI's built-ins it imports from the
+// module "$p3", and the async lift of wasi:http/handler@0.3.0's handle.
+// Their encodings are those wasm-tools 1.263.0 writes for the same WAT
+// (0447's stage 5 notes); wasmtime 50 and Spin 4.2 run them.
+
+const WASI_P3 = "@0.3.0"
+
+/// wasi:http/types@0.3.0: the types of a request and a response and the
+/// functions rt10.xo calls (WASI 0.3.0's http.wit; error-code is 0.2's).
+fn ity_http_types_p3() -> InstTy {
+  var i = InstTy{}
+  let m0 = i.def(dt_variant([("get", NO_TYPE), ("head", NO_TYPE), ("post", NO_TYPE), ("put", NO_TYPE), ("delete", NO_TYPE), ("connect", NO_TYPE), ("options", NO_TYPE), ("trace", NO_TYPE), ("patch", NO_TYPE), ("other", VT_STRING)]))
+  let method = i.eq("method", m0)
+  let opt_s = i.def(dt_option(VT_STRING))
+  let opt_u8 = i.def(dt_option(VT_U8))
+  let opt_u16 = i.def(dt_option(VT_U16))
+  let opt_u32 = i.def(dt_option(VT_U32))
+  let opt_u64 = i.def(dt_option(VT_U64))
+  let dns0 = i.def(dt_record([("rcode", opt_s), ("info-code", opt_u16)]))
+  let dns = i.eq("DNS-error-payload", dns0)
+  let tls0 = i.def(dt_record([("alert-id", opt_u8), ("alert-message", opt_s)]))
+  let tls = i.eq("TLS-alert-received-payload", tls0)
+  let fsz0 = i.def(dt_record([("field-name", opt_s), ("field-size", opt_u32)]))
+  let fsz = i.eq("field-size-payload", fsz0)
+  let opt_fsz = i.def(dt_option(fsz))
+  let ec0 = i.def(dt_variant([
+    ("DNS-timeout", NO_TYPE),
+    ("DNS-error", dns),
+    ("destination-not-found", NO_TYPE),
+    ("destination-unavailable", NO_TYPE),
+    ("destination-IP-prohibited", NO_TYPE),
+    ("destination-IP-unroutable", NO_TYPE),
+    ("connection-refused", NO_TYPE),
+    ("connection-terminated", NO_TYPE),
+    ("connection-timeout", NO_TYPE),
+    ("connection-read-timeout", NO_TYPE),
+    ("connection-write-timeout", NO_TYPE),
+    ("connection-limit-reached", NO_TYPE),
+    ("TLS-protocol-error", NO_TYPE),
+    ("TLS-certificate-error", NO_TYPE),
+    ("TLS-alert-received", tls),
+    ("HTTP-request-denied", NO_TYPE),
+    ("HTTP-request-length-required", NO_TYPE),
+    ("HTTP-request-body-size", opt_u64),
+    ("HTTP-request-method-invalid", NO_TYPE),
+    ("HTTP-request-URI-invalid", NO_TYPE),
+    ("HTTP-request-URI-too-long", NO_TYPE),
+    ("HTTP-request-header-section-size", opt_u32),
+    ("HTTP-request-header-size", opt_fsz),
+    ("HTTP-request-trailer-section-size", opt_u32),
+    ("HTTP-request-trailer-size", fsz),
+    ("HTTP-response-incomplete", NO_TYPE),
+    ("HTTP-response-header-section-size", opt_u32),
+    ("HTTP-response-header-size", fsz),
+    ("HTTP-response-body-size", opt_u64),
+    ("HTTP-response-trailer-section-size", opt_u32),
+    ("HTTP-response-trailer-size", fsz),
+    ("HTTP-response-transfer-coding", opt_s),
+    ("HTTP-response-content-coding", opt_s),
+    ("HTTP-response-timeout", NO_TYPE),
+    ("HTTP-upgrade-failed", NO_TYPE),
+    ("HTTP-protocol-error", NO_TYPE),
+    ("loop-detected", NO_TYPE),
+    ("configuration-error", NO_TYPE),
+    ("internal-error", opt_s),
+  ]))
+  let ec = i.eq("error-code", ec0)
+  let he0 = i.def(dt_variant([("invalid-syntax", NO_TYPE), ("forbidden", NO_TYPE), ("immutable", NO_TYPE), ("size-exceeded", NO_TYPE), ("other", opt_s)]))
+  let he = i.eq("header-error", he0)
+  let fields = i.res("fields")
+  let headers = i.eq("headers", fields)
+  let trailers = i.eq("trailers", fields)
+  let request = i.res("request")
+  let response = i.res("response")
+  let bytes = i.def(dt_list(VT_U8))
+  let own_fields = i.def(dt_own(fields))
+  let b_fields = i.def(dt_borrow(fields))
+  i.fun("[constructor]fields", [], own_fields)
+  let r_he = i.def(dt_result(NO_TYPE, he))
+  i.fun("[method]fields.append", [("self", b_fields), ("name", VT_STRING), ("value", bytes)], r_he)
+  let entry = i.def(dt_tuple([VT_STRING, bytes]))
+  let entries = i.def(dt_list(entry))
+  i.fun("[method]fields.copy-all", [("self", b_fields)], entries)
+  let b_req = i.def(dt_borrow(request))
+  i.fun("[method]request.get-method", [("self", b_req)], method)
+  i.fun("[method]request.get-path-with-query", [("self", b_req)], opt_s)
+  i.fun("[method]request.get-authority", [("self", b_req)], opt_s)
+  let own_headers = i.def(dt_own(headers))
+  i.fun("[method]request.get-headers", [("self", b_req)], own_headers)
+  let body = i.def(dt_stream_u8())
+  let own_tr = i.def(dt_own(trailers))
+  let opt_tr = i.def(dt_option(own_tr))
+  let r_tr = i.def(dt_result(opt_tr, ec))
+  let fut_tr = i.def(dt_future(r_tr))
+  let r_done = i.def(dt_result(NO_TYPE, ec))
+  let fut_done = i.def(dt_future(r_done))
+  let own_req = i.def(dt_own(request))
+  let consumed = i.def(dt_tuple([body, fut_tr]))
+  i.fun("[static]request.consume-body", [("this", own_req), ("res", fut_done)], consumed)
+  let own_resp = i.def(dt_own(response))
+  let opt_body = i.def(dt_option(body))
+  let made = i.def(dt_tuple([own_resp, fut_done]))
+  i.fun("[static]response.new", [("headers", own_headers), ("contents", opt_body), ("trailers", fut_tr)], made)
+  let b_resp = i.def(dt_borrow(response))
+  let r_unit = i.def(dt_result(NO_TYPE, NO_TYPE))
+  i.fun("[method]response.set-status-code", [("self", b_resp), ("status-code", VT_U16)], r_unit)
+  i
+}
+
+/// stream<u8>
+fn dt_stream_u8() -> List[Int] {
+  var d: List[Int] = [0x66, 0x01]
+  sleb(d, VT_U8)
+  d
+}
+
+/// future<v>
+fn dt_future(v: Int) -> List[Int] {
+  var d: List[Int] = [0x65, 0x01]
+  sleb(d, v)
+  d
+}
+
+/// The component types the built-ins of "$p3" name: the body stream, the
+/// trailers future, the done future (consume-body's and response.new's),
+/// and handle's result.
+struct P3Types {
+  body: Int
+  trailers: Int
+  done: Int
+  result: Int
+}
+
+/// The types of P3Types over the imported wasi:http/types@0.3.0's
+/// trailers, response and error-code (c.res, aliased by the caller).
+fn (var c: Comp) p3_types() -> P3Types {
+  let ec = c.res.get_or_fault("error-code", "aliased by component_of")
+  let body = c.deftype(dt_stream_u8())
+  let own_tr = c.deftype(dt_own(c.res.get_or_fault("trailers", "aliased by component_of")))
+  let opt_tr = c.deftype(dt_option(own_tr))
+  let r_tr = c.deftype(dt_result(opt_tr, ec))
+  let trailers = c.deftype(dt_future(r_tr))
+  let r_done = c.deftype(dt_result(NO_TYPE, ec))
+  let done = c.deftype(dt_future(r_done))
+  let own_resp = c.deftype(dt_own(c.res.get_or_fault("response", "aliased by component_of")))
+  let result = c.deftype(dt_result(own_resp, ec))
+  P3Types{body: body, trailers: trailers, done: done, result: result}
+}
+
+/// The canon entry (section 8's body after its count) of built-in name of
+/// the "$p3" module, over types t and the core module's cabi_realloc;
+/// empty for a name it does not know. Memory is the core module's (0).
+fn p3_canon(name: Str, t: P3Types, realloc: Int) -> List[Int] {
+  // options: memory 0 and async; for a read, the realloc too
+  var wr: List[Int] = [0x02, 0x03, 0x00, 0x06]
+  var rd: List[Int] = [0x03, 0x03, 0x00, 0x04]
+  uleb(rd, realloc)
+  rd.push(0x06)
+  var d: List[Int] = []
+  match name {
+    "[stream-new]" => {
+      d.push(0x0e)
+      uleb(d, t.body)
+    }
+    "[stream-read]" => {
+      d.push(0x0f)
+      uleb(d, t.body)
+      extend(d, rd)
+    }
+    "[stream-write]" => {
+      d.push(0x10)
+      uleb(d, t.body)
+      extend(d, wr)
+    }
+    "[stream-drop-readable]" => {
+      d.push(0x13)
+      uleb(d, t.body)
+    }
+    "[stream-drop-writable]" => {
+      d.push(0x14)
+      uleb(d, t.body)
+    }
+    "[future-new-trailers]" | "[future-new-done]" => {
+      d.push(0x15)
+      uleb(d, if name.ends_with("-done]") { t.done } else { t.trailers })
+    }
+    "[future-read-trailers]" | "[future-read-done]" => {
+      d.push(0x16)
+      uleb(d, if name.ends_with("-done]") { t.done } else { t.trailers })
+      extend(d, rd)
+    }
+    "[future-write-trailers]" | "[future-write-done]" => {
+      d.push(0x17)
+      uleb(d, if name.ends_with("-done]") { t.done } else { t.trailers })
+      extend(d, wr)
+    }
+    "[future-drop-readable-trailers]" | "[future-drop-readable-done]" => {
+      d.push(0x1a)
+      uleb(d, if name.ends_with("-done]") { t.done } else { t.trailers })
+    }
+    "[future-drop-writable-trailers]" | "[future-drop-writable-done]" => {
+      d.push(0x1b)
+      uleb(d, if name.ends_with("-done]") { t.done } else { t.trailers })
+    }
+    "[task-return]" => {
+      d.push(0x09)
+      d.push(0x00)
+      uleb(d, t.result)
+      extend(d, [0x01, 0x03, 0x00])
+    }
+    "[waitable-set-new]" => d.push(0x1f)
+    "[waitable-set-drop]" => d.push(0x22)
+    "[waitable-join]" => d.push(0x23)
+    "[backpressure-inc]" => d.push(0x24)
+    "[backpressure-dec]" => d.push(0x25)
+    _ => {}
+  }
+  d
+}

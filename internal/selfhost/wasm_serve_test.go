@@ -61,6 +61,12 @@ fn main(os: Os) {
 		{"a process", fmt.Sprintf(serve, `let _p = os.proc.run("true", []).ignore_err("test");`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "processes"},
 		{"a socket", fmt.Sprintf(serve, `let _l = os.net.listen("127.0.0.1:0").ignore_err("test");`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "sockets"},
 		{"both wasi targets", fmt.Sprintf(serve, ""), []string{"--targets=wasip1/wasm,wasip2/wasm"}, nil, "", "name it alone"},
+		// WASI 0.3 (decision 0447 stage 5 step 1): a wasi:http component
+		// only, without the client
+		{"0.3 component", fmt.Sprintf(serve, ""), []string{"--targets=wasip3/wasm"}, component, "", ""},
+		{"0.3 command", plain, []string{"--targets=wasip3/wasm"}, nil, "XO1515", "wasi:http component"},
+		{"0.3 client", fmt.Sprintf(serve, `let _r = http.client(os.net).send(http.new_request("GET", "http://example.com/")).ignore_err("test");`), []string{"--targets=wasip3/wasm"}, nil, "XO1515", "outgoing requests"},
+		{"0.3 with 0.2", fmt.Sprintf(serve, ""), []string{"--targets=wasip2/wasm,wasip3/wasm"}, nil, "", "name it alone"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -118,6 +124,18 @@ func TestWasmComponentServe(t *testing.T) {
 		t.Fatalf("XO_WASM_HOST=%s: want wasmtime or spin", host)
 	}
 	needWasmTools(t, "wasm-tools", host)
+	// the same program as a WASI 0.2 component and a 0.3 one (decision
+	// 0447 stage 5)
+	for _, target := range []string{"wasip2/wasm", "wasip3/wasm"} {
+		t.Run(strings.TrimSuffix(target, "/wasm"), func(t *testing.T) {
+			wasmComponentServe(t, host, target)
+		})
+	}
+}
+
+// wasmComponentServe builds testdata/wasm_http_serve for target and checks
+// its answers under host.
+func wasmComponentServe(t *testing.T, host, target string) {
 	xo, err := xotool.Path()
 	if err != nil {
 		t.Fatal(err)
@@ -126,11 +144,11 @@ func TestWasmComponentServe(t *testing.T) {
 	dir := filepath.Join(root, "internal", "selfhost", "testdata", "wasm_http_serve")
 	tmp := t.TempDir()
 	comp := filepath.Join(tmp, "serve.wasm")
-	build := testtmp.Guard(exec.Command(xo, "build", "--targets=wasip2/wasm", "-o", comp, "."))
+	build := testtmp.Guard(exec.Command(xo, "build", "--targets="+target, "-o", comp, "."))
 	build.Dir = dir
 	build.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "XO_BIN_CACHE=off")
 	if b, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("xo build --targets=wasip2/wasm: %v\n%s", err, b)
+		t.Fatalf("xo build --targets=%s: %v\n%s", target, err, b)
 	}
 	if b, err := testtmp.Guard(exec.Command("wasm-tools", "validate", comp)).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, b)
@@ -242,7 +260,15 @@ func TestWasmComponentServe(t *testing.T) {
 		resp.Body.Close()
 		var n, reads int
 		var tr string
-		if _, err := fmt.Sscanf(string(b), "len %d reads %d trailer %s", &n, &reads, &tr); err != nil || n != 3000 || reads < 3 || tr != "t9" {
+		_, err := fmt.Sscanf(string(b), "len %d reads %d trailer %s", &n, &reads, &tr)
+		if target == "wasip3/wasm" {
+			// stage 5 step 1 reads the body whole before main and does
+			// not read the request's trailers (decision 0447): the bytes
+			// arrive, in one read, with no trailer
+			if err != nil || n != 3000 || tr != "-" {
+				t.Errorf("POST /stream, piped: %d %q, want len 3000 and no trailer (wasip3 step 1)", resp.StatusCode, b)
+			}
+		} else if err != nil || n != 3000 || reads < 3 || tr != "t9" {
 			t.Errorf("POST /stream, piped: %d %q, want len 3000 in 3 reads or more and trailer t9", resp.StatusCode, b)
 		}
 	}

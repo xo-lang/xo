@@ -1,0 +1,721 @@
+// The runtime of the WebAssembly backend for a WASI 0.3 wasi:http
+// component (wasip3/wasm, decision 0447 stage 5 step 1): the program is the
+// core module of a component exporting `wasi:http/handler@0.3.0`'s async
+// handle, lifted with a callback (componentp3.xo). handle keeps the
+// request's method, path, authority and fields, consumes it, and reads its
+// body to the end; main then runs (it builds its router and calls
+// serve_component, as on wasip2), its response head goes back through
+// task.return, and its body and trailers are written to the stream and
+// future the response was made with. A read or write the host cannot finish
+// at once returns WAIT with the waitable set to the host, and the callback
+// goes on from where it stopped ($p3_go's phases), so the export never
+// blocks the instance (Spin answers 500 to a component that waits inside
+// it, 2026-11-03). Bodies are read and written whole: streaming them, the
+// client and handle_stream routes are later steps of stage 5. The request
+// getters, fields and the 500 are rt5.xo's, whose 0.2 imports rt10's map
+// to their 0.3 functions of the same flat forms.
+
+/// rt10's imports: rt5's names for the 0.3 functions of the same flat
+/// forms, the 0.2 stream functions rt6.xo's output writes with, the rest of wasi:http/types@0.3.0 it calls, and the async ABI's
+/// built-ins (component.xo writes them for the module "$p3").
+fn rt10_imports() -> Str {
+  """
+    (import "wasi:http/types@0.3.0" "[method]request.get-method" (func $ireq_method (param i32 i32)))
+    (import "wasi:http/types@0.3.0" "[method]request.get-path-with-query" (func $ireq_path (param i32 i32)))
+    (import "wasi:http/types@0.3.0" "[method]request.get-authority" (func $ireq_authority (param i32 i32)))
+    (import "wasi:http/types@0.3.0" "[method]request.get-headers" (func $ireq_headers (param i32) (result i32)))
+    (import "wasi:http/types@0.3.0" "[method]fields.copy-all" (func $fields_entries (param i32 i32)))
+    (import "wasi:http/types@0.3.0" "[resource-drop]fields" (func $fields_drop (param i32)))
+    (import "wasi:http/types@0.3.0" "[constructor]fields" (func $fields_new (result i32)))
+    (import "wasi:http/types@0.3.0" "[method]fields.append" (func $fields_append (param i32 i32 i32 i32 i32 i32)))
+    (import "wasi:http/types@0.3.0" "[static]request.consume-body" (func $p3_consume (param i32 i32 i32)))
+    (import "wasi:http/types@0.3.0" "[static]response.new" (func $p3_resp_new (param i32 i32 i32 i32 i32)))
+    (import "wasi:http/types@0.3.0" "[method]response.set-status-code" (func $p3_resp_status (param i32 i32) (result i32)))
+    (import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush" (func $ostream_write (param i32 i32 i32 i32)))
+    (import "wasi:io/streams@0.2.0" "[resource-drop]output-stream" (func $ostream_drop (param i32)))
+    (import "wasi:io/error@0.2.0" "[resource-drop]error" (func $ioerr_drop (param i32)))
+    (import "$p3" "[stream-new]" (func $p3_snew (result i64)))
+    (import "$p3" "[stream-read]" (func $p3_sread (param i32 i32 i32) (result i32)))
+    (import "$p3" "[stream-write]" (func $p3_swrite (param i32 i32 i32) (result i32)))
+    (import "$p3" "[stream-drop-readable]" (func $p3_sdrop_r (param i32)))
+    (import "$p3" "[stream-drop-writable]" (func $p3_sdrop_w (param i32)))
+    (import "$p3" "[future-new-trailers]" (func $p3_tnew (result i64)))
+    (import "$p3" "[future-write-trailers]" (func $p3_twrite (param i32 i32) (result i32)))
+    (import "$p3" "[future-drop-readable-trailers]" (func $p3_tdrop_r (param i32)))
+    (import "$p3" "[future-drop-writable-trailers]" (func $p3_tdrop_w (param i32)))
+    (import "$p3" "[future-new-done]" (func $p3_dnew (result i64)))
+    (import "$p3" "[future-write-done]" (func $p3_dwrite (param i32 i32) (result i32)))
+    (import "$p3" "[future-drop-readable-done]" (func $p3_ddrop_r (param i32)))
+    (import "$p3" "[future-drop-writable-done]" (func $p3_ddrop_w (param i32)))
+    (import "$p3" "[task-return]" (func $p3_return (param i32 i32 i32 i64 i32 i32 i32 i32)))
+    (import "$p3" "[waitable-set-new]" (func $p3_wsnew (result i32)))
+    (import "$p3" "[waitable-join]" (func $p3_join (param i32 i32)))
+    (import "$p3" "[backpressure-inc]" (func $p3_bp_inc))
+    (import "$p3" "[backpressure-dec]" (func $p3_bp_dec))
+
+  """
+}
+
+/// The globals of rt10.xo (with rt5.xo's).
+fn rt10_globals() -> Str {
+  """
+    ;; the phase $p3_go is in (0 the request body, 1 main, 2 the response
+    ;; body, 3 its trailers, 4 the request's done future, 5 done), the
+    ;; waitable set, and 1 when the wait of the phase ended (the callback)
+    (global $p3ph (mut i32) (i32.const 0))
+    (global $p3ws (mut i32) (i32.const 0))
+    (global $p3pend (mut i32) (i32.const 0))
+    ;; the request: its fields as rt5's getters returned them, kept for
+    ;; main (taken once; consume-body ends the request)
+    (global $p3m (mut i32) (i32.const 0))
+    (global $p3mn (mut i32) (i32.const 0))
+    (global $p3p (mut i32) (i32.const 0))
+    (global $p3pn (mut i32) (i32.const 0))
+    (global $p3a (mut i32) (i32.const 0))
+    (global $p3an (mut i32) (i32.const 0))
+    (global $p3h (mut i32) (i32.const 0))
+    (global $p3hn (mut i32) (i32.const 0))
+    ;; its body: the stream, 1 at its end, the bytes read ({len, cap} of a
+    ;; runtime block), and the done future's writable end
+    (global $p3rx (mut i32) (i32.const 0))
+    (global $p3eof (mut i32) (i32.const 0))
+    (global $p3buf (mut i32) (i32.const 0))
+    (global $p3len (mut i32) (i32.const 0))
+    (global $p3cap (mut i32) (i32.const 0))
+    ;; what a handle_stream route read of it ($wasi_http_body_read)
+    (global $p3rd (mut i32) (i32.const 0))
+    (global $p3dtx (mut i32) (i32.const 0))
+    ;; the response: its body stream's and trailers future's writable ends,
+    ;; the body (a runtime block), the bytes written, 1 when the host dropped
+    ;; the stream, and the trailers value (32 bytes: ok(none) zeroed,
+    ;; ok(some(fields)) when there are trailers)
+    (global $p3tx (mut i32) (i32.const 0))
+    (global $p3ftx (mut i32) (i32.const 0))
+    (global $p3out (mut i32) (i32.const 0))
+    (global $p3outn (mut i32) (i32.const 0))
+    (global $p3outc (mut i32) (i32.const 0))
+    (global $p3off (mut i32) (i32.const 0))
+    (global $p3wdrop (mut i32) (i32.const 0))
+    (global $p3tr (mut i32) (i32.const 0))
+
+  """
+}
+
+/// rt5.xo's functions that rt10.xo replaces: their definitions renamed
+/// (strip_runtime drops them), so the calls of the rest bind to rt10's.
+fn rt10_rt5(var g: Gen) -> Str {
+  var t = rt5_text(g)
+  for n in ["wasi_http_method", "wasi_http_path", "wasi_http_authority", "wasi_http_headers", "wasi_http_body", "wasi_http_body_read", "wasi_http_body_trailers", "wasi_http_head", "wasi_http_write", "wasi_http_end", "handle_end"] {
+    let o = "(func \$${n} "
+    let o2 = "(func \$${n}\n"
+    if !t.contains(o) && !t.contains(o2) {
+      fault("rt10_rt5: rt5.xo has no ${n}")
+    }
+    t = t.replace(o, "(func \$rt5_${n} ").replace(o2, "(func \$rt5_${n}\n")
+  }
+  t
+}
+
+/// The functions of rt10.xo (with rt10_rt5's text).
+fn rt10_text(var g: Gen) -> Str {
+  let e500 = g.str_obj("internal error".bytes())
+  // the 500's fields in wasi_http_respond's form (rt5_text's)
+  var hb = BytesBuilder.new()
+  hb.write("content-type".bytes())
+  hb.write_byte(0)
+  hb.write("text/plain; charset=utf-8".bytes())
+  hb.write_byte(0)
+  let h500b = hb.freeze()
+  let h500 = g.str_obj(h500b)
+  rt10_rt5(g) + """
+    ;; the request's getters: what handle kept, given to the first caller
+    ;; (serve_component calls each once), else empty
+    (func $wasi_http_method (result i32 i32)
+      global.get $p3m
+      i32.eqz
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      global.get $p3m
+      global.get $p3mn
+      i32.const 0
+      global.set $p3m)
+
+    (func $wasi_http_path (result i32 i32)
+      global.get $p3p
+      i32.eqz
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      global.get $p3p
+      global.get $p3pn
+      i32.const 0
+      global.set $p3p)
+
+    (func $wasi_http_authority (result i32 i32)
+      global.get $p3a
+      i32.eqz
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      global.get $p3a
+      global.get $p3an
+      i32.const 0
+      global.set $p3a)
+
+    (func $wasi_http_headers (result i32 i32)
+      global.get $p3h
+      i32.eqz
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      global.get $p3h
+      global.get $p3hn
+      i32.const 0
+      global.set $p3h)
+
+    ;; the request's body: a Bytes object of what handle read
+    (func $wasi_http_body (result i32 i32) (local $o i32)
+      global.get $p3len
+      call $rs_new
+      local.tee $o
+      i32.const 8
+      i32.add
+      global.get $p3buf
+      global.get $p3len
+      memory.copy
+      local.get $o
+      global.get $p3len)
+
+    ;; a handle_stream route's next read of the request body: at most max
+    ;; bytes of what handle read, empty at its end (the body is not
+    ;; streamed yet)
+    (func $wasi_http_body_read (param $max i64) (result i32 i32) (local $n i32) (local $o i32)
+      global.get $p3len
+      global.get $p3rd
+      i32.sub
+      local.tee $n
+      i64.extend_i32_u
+      local.get $max
+      i64.gt_u
+      if
+        local.get $max
+        i32.wrap_i64
+        local.set $n
+      end
+      local.get $n
+      call $rs_new
+      local.tee $o
+      i32.const 8
+      i32.add
+      global.get $p3buf
+      global.get $p3rd
+      i32.add
+      local.get $n
+      memory.copy
+      global.get $p3rd
+      local.get $n
+      i32.add
+      global.set $p3rd
+      local.get $o
+      local.get $n)
+
+    ;; the request's trailers (in the headers' form): none (handle does
+    ;; not read their future yet)
+    (func $wasi_http_body_trailers (result i32 i32)
+      i32.const 0
+      call $rs_new
+      i32.const 0)
+
+    ;; the response's head: made with a body stream and a trailers future,
+    ;; its status set, and given to the host (task.return(ok(response)))
+    (func $wasi_http_head (param $status i64) (param $h i32) (param $hn i32) (local $f i32) (local $s i64) (local $t i64) (local $r i32)
+      local.get $h
+      local.get $hn
+      call $fields_of
+      local.set $f
+      call $p3_snew
+      local.tee $s
+      i64.const 32
+      i64.shr_u
+      i32.wrap_i64
+      global.set $p3tx
+      call $p3_tnew
+      local.tee $t
+      i64.const 32
+      i64.shr_u
+      i32.wrap_i64
+      global.set $p3ftx
+      call $hret_at
+      local.set $r
+      ;; response.new(headers, some(body), trailers) -> (response, done)
+      local.get $f
+      i32.const 1
+      local.get $s
+      i32.wrap_i64
+      local.get $t
+      i32.wrap_i64
+      local.get $r
+      call $p3_resp_new
+      local.get $r
+      i32.load offset=4
+      call $p3_ddrop_r
+      local.get $r
+      i32.load
+      local.get $status
+      i32.wrap_i64
+      call $p3_resp_status
+      drop
+      ;; result<own<response>, error-code>: ok (0), the response, then
+      ;; error-code's joined payload slots, zero
+      i32.const 0
+      local.get $r
+      i32.load
+      i32.const 0
+      i64.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      call $p3_return
+      ;; answered: a fault after this point ends the body, not a 500
+      i32.const 1
+      global.set $hdone)
+
+    ;; Bytes object b's bn bytes of the response body, kept until main returns ($p3_go writes
+    ;; them)
+    (func $wasi_http_write (param $b i32) (param $bn i32) (local $c i32) (local $n i32)
+      global.get $p3outn
+      local.get $bn
+      i32.add
+      local.tee $n
+      global.get $p3outc
+      i32.gt_u
+      if
+        local.get $n
+        global.get $p3outc
+        i32.const 1
+        i32.shl
+        local.tee $c
+        local.get $n
+        local.get $c
+        i32.gt_u
+        select
+        local.tee $c
+        call $alloc
+        local.tee $n
+        global.get $p3out
+        global.get $p3outn
+        memory.copy
+        global.get $p3out
+        if
+          global.get $p3out
+          call $free
+        end
+        local.get $n
+        global.set $p3out
+        local.get $c
+        global.set $p3outc
+      end
+      global.get $p3out
+      global.get $p3outn
+      i32.add
+      local.get $b
+      i32.const 8
+      i32.add
+      local.get $bn
+      memory.copy
+      global.get $p3outn
+      local.get $bn
+      i32.add
+      global.set $p3outn)
+
+    ;; the body's end: the trailers (in the headers' form), ok(some(fields))
+    ;; when there are any, for $p3_go to write to their future
+    (func $wasi_http_end (param $t i32) (param $tn i32)
+      local.get $tn
+      i32.eqz
+      if
+        return
+      end
+      global.get $p3tr
+      i32.const 1
+      i32.store8 offset=8
+      global.get $p3tr
+      local.get $t
+      local.get $tn
+      call $fields_of
+      i32.store offset=12)
+
+    ;; after main: a fault is reported, and a request main did not answer
+    ;; gets 500 (rt5.xo's)
+    (func $handle_end
+      global.get $faulting
+      if
+        call $fault_report
+      end
+      global.get $hdone
+      i32.eqz
+      if
+        i64.const 500
+        i32.const ${h500}
+        i32.const ${h500b.len()}
+        i32.const ${e500}
+        i32.const 14
+        i32.const 0
+        i32.const 0
+        call $wasi_http_respond
+      end)
+
+    ;; room for 16 KiB more of the request body
+    (func $p3_grow (local $c i32) (local $p i32)
+      global.get $p3cap
+      i32.const 1
+      i32.shl
+      local.tee $c
+      global.get $p3len
+      i32.const 16384
+      i32.add
+      local.tee $p
+      local.get $c
+      local.get $p
+      i32.gt_u
+      select
+      local.tee $c
+      call $alloc
+      local.tee $p
+      global.get $p3buf
+      global.get $p3len
+      memory.copy
+      global.get $p3buf
+      if
+        global.get $p3buf
+        call $free
+      end
+      local.get $p
+      global.set $p3buf
+      local.get $c
+      global.set $p3cap)
+
+    ;; a read's outcome r (count << 4 | status): the bytes counted, $p3eof
+    ;; set when the host dropped its end (status 1)
+    (func $p3_read_done (param $r i32)
+      global.get $p3len
+      local.get $r
+      i32.const 4
+      i32.shr_u
+      i32.add
+      global.set $p3len
+      local.get $r
+      i32.const 15
+      i32.and
+      i32.const 1
+      i32.eq
+      if
+        i32.const 1
+        global.set $p3eof
+      end)
+
+    ;; the code handle and its callback return: 2 (WAIT) with the set
+    (func $p3_wait (param $w i32) (result i32)
+      local.get $w
+      global.get $p3ws
+      call $p3_join
+      global.get $p3ws
+      i32.const 4
+      i32.shl
+      i32.const 2
+      i32.or)
+
+    ;; goes on from phase $p3ph until a wait (its code) or the end (0)
+    (func $p3_go (result i32) (local $r i32)
+      global.get $p3ph
+      i32.eqz
+      if
+        ;; the request body, read to its end
+        block $end
+          loop $more
+            global.get $p3eof
+            br_if $end
+            global.get $p3cap
+            global.get $p3len
+            i32.sub
+            i32.const 16384
+            i32.lt_u
+            if
+              call $p3_grow
+            end
+            global.get $p3rx
+            global.get $p3buf
+            global.get $p3len
+            i32.add
+            global.get $p3cap
+            global.get $p3len
+            i32.sub
+            call $p3_sread
+            local.tee $r
+            i32.const -1
+            i32.eq
+            if
+              global.get $p3rx
+              call $p3_wait
+              return
+            end
+            local.get $r
+            call $p3_read_done
+            br $more
+          end
+        end
+        global.get $p3rx
+        call $p3_sdrop_r
+        i32.const 1
+        global.set $p3ph
+      end
+      global.get $p3ph
+      i32.const 1
+      i32.eq
+      if
+        i32.const 2
+        global.set $p3ph
+        call $p3_main
+      end
+      global.get $p3ph
+      i32.const 2
+      i32.eq
+      if
+        ;; the response body
+        block $done
+          loop $more
+            global.get $p3wdrop
+            br_if $done
+            global.get $p3off
+            global.get $p3outn
+            i32.ge_u
+            br_if $done
+            global.get $p3tx
+            global.get $p3out
+            global.get $p3off
+            i32.add
+            global.get $p3outn
+            global.get $p3off
+            i32.sub
+            call $p3_swrite
+            local.tee $r
+            i32.const -1
+            i32.eq
+            if
+              global.get $p3tx
+              call $p3_wait
+              return
+            end
+            local.get $r
+            call $p3_wrote
+            br $more
+          end
+        end
+        global.get $p3tx
+        call $p3_sdrop_w
+        i32.const 3
+        global.set $p3ph
+      end
+      global.get $p3ph
+      i32.const 3
+      i32.eq
+      if
+        ;; the trailers
+        global.get $p3pend
+        i32.eqz
+        if
+          global.get $p3ftx
+          global.get $p3tr
+          call $p3_twrite
+          i32.const -1
+          i32.eq
+          if
+            global.get $p3ftx
+            call $p3_wait
+            return
+          end
+        end
+        i32.const 0
+        global.set $p3pend
+        global.get $p3ftx
+        call $p3_tdrop_w
+        i32.const 4
+        global.set $p3ph
+      end
+      global.get $p3ph
+      i32.const 4
+      i32.eq
+      if
+        ;; the request's done future: its body was consumed without error
+        global.get $p3pend
+        i32.eqz
+        if
+          global.get $p3dtx
+          global.get $p3tr
+          i32.const 16
+          i32.add
+          call $p3_dwrite
+          i32.const -1
+          i32.eq
+          if
+            global.get $p3dtx
+            call $p3_wait
+            return
+          end
+        end
+        i32.const 0
+        global.set $p3pend
+        global.get $p3dtx
+        call $p3_ddrop_w
+        i32.const 5
+        global.set $p3ph
+        global.get $p3tr
+        call $free
+        call $p3_bp_dec
+      end
+      i32.const 0)
+
+    ;; a write's outcome r (count << 4 | status): the bytes counted,
+    ;; $p3wdrop set when the host dropped its end
+    (func $p3_wrote (param $r i32)
+      global.get $p3off
+      local.get $r
+      i32.const 4
+      i32.shr_u
+      i32.add
+      global.set $p3off
+      local.get $r
+      i32.const 15
+      i32.and
+      i32.const 1
+      i32.eq
+      if
+        i32.const 1
+        global.set $p3wdrop
+      end)
+
+  """
+}
+
+/// The handle export and its callback, and $p3_main: main run (the start
+/// sequence), then handle_end.
+fn rt10_handle(start: List[Str]) -> Str {
+  var b = StrBuilder.new()
+  b.write("  (func $p3_main\n")
+  for s in start {
+    b.write("    ${s}\n")
+  }
+  b.write("    call $handle_end)\n")
+  b.write("""
+  (func $p3_handle (export "[async-lift]wasi:http/handler@0.3.0#handle") (param $req i32) (result i32) (local $d i64) (local $r i32)
+    ;; one request at a time in an instance: the host starts the next
+    ;; handle when this one ends ($p3_go lowers it), on a fresh state
+    call $p3_bp_inc
+    local.get $req
+    global.set $hreq
+    i32.const 0
+    global.set $hdone
+    i32.const 0
+    global.set $p3ph
+    i32.const 0
+    global.set $p3pend
+    i32.const 0
+    global.set $p3eof
+    i32.const 0
+    global.set $p3len
+    i32.const 0
+    global.set $p3rd
+    i32.const 0
+    global.set $p3outn
+    i32.const 0
+    global.set $p3off
+    i32.const 0
+    global.set $p3wdrop
+    ;; what main reads of the request, before consume-body ends it
+    call $rt5_wasi_http_method
+    global.set $p3mn
+    global.set $p3m
+    call $rt5_wasi_http_path
+    global.set $p3pn
+    global.set $p3p
+    call $rt5_wasi_http_authority
+    global.set $p3an
+    global.set $p3a
+    call $rt5_wasi_http_headers
+    global.set $p3hn
+    global.set $p3h
+    ;; the trailers value and the done future's ok(()): zeroed
+    i32.const 32
+    call $alloc
+    global.set $p3tr
+    global.get $p3tr
+    i32.const 0
+    i32.const 32
+    memory.fill
+    call $p3_wsnew
+    global.set $p3ws
+    ;; consume-body(request, done) -> (body, trailers): the request's
+    ;; trailers are not read
+    call $p3_dnew
+    local.tee $d
+    i64.const 32
+    i64.shr_u
+    i32.wrap_i64
+    global.set $p3dtx
+    call $hret_at
+    local.set $r
+    global.get $hreq
+    local.get $d
+    i32.wrap_i64
+    local.get $r
+    call $p3_consume
+    local.get $r
+    i32.load
+    global.set $p3rx
+    local.get $r
+    i32.load offset=4
+    call $p3_tdrop_r
+    i32.const 0
+    global.set $hreq
+    call $p3_go)
+
+  (func $p3_callback (export "[callback][async-lift]wasi:http/handler@0.3.0#handle") (param $ev i32) (param $w i32) (param $code i32) (result i32)
+    local.get $w
+    i32.const 0
+    call $p3_join
+    global.get $p3ph
+    i32.eqz
+    if
+      local.get $code
+      call $p3_read_done
+    else
+      global.get $p3ph
+      i32.const 2
+      i32.eq
+      if
+        local.get $code
+        call $p3_wrote
+      else
+        i32.const 1
+        global.set $p3pend
+      end
+    end
+    call $p3_go)
+
+""")
+  b.freeze()
+}
