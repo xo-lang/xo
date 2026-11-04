@@ -59,3 +59,13 @@ removes.
 - Host 2 (linux/arm64), 0488 + l2-cjfix: gate-self (prelude corpora,
   repotest) passes; TestGoldenTasks under TSan x20: map_log_stress 20 of
   20, mutex_poison 20 of 20 (the task goldens the filter matched).
+- Host 2 (linux/arm64), full TestGoldenTasks under TSan, 2026-11-04,
+  alternating with base e622870f9: 0488 raced in 2 of 4 rounds
+  (http_reverse_proxy_retry: http1.body_next against serve_h1's body
+  finish closure), base never reached it in 3 of 4 (debug_routes hangs
+  under TSan on main, gotchas/tsan-cpu-profile-stall.md). The race is
+  not 0488's: 0488 without a fix raced again in 1 of 4 rounds (the same
+  pair, in http_reverse_proxy and _ws), and with 8bf809aba (std/http:
+  stream_finish under the body's lock) 0488 ran 4 of 4 rounds clean,
+  127 of 127 each (debug_routes skipped). The pre-existing race is fixed
+  on main by 8bf809aba, which this push is rebased on.
