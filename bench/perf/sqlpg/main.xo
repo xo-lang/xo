@@ -1,0 +1,37 @@
+// std/sql's Postgres driver against pgx (twin.go.txt): 1,000 rows of five
+// columns (an id, a name, a score, a flag and a count) read whole 300 times
+// with query_as, summing the fields. Needs PG_URL (a postgres:// URL with
+// sslmode=disable); not a twincheck case (it needs a server, decision 0278's
+// driver against pgx v5): run by hand, see
+// bench/results/std-sql-pg-2026-11-04.md. Usage: `<program> setup|scan`.
+// `setup` creates and fills the table. Prints `<workload> <checksum>`; the
+// twin prints the same.
+use std/sql
+
+struct Item {
+  id: Int
+  name: Str
+  score: Float
+  active: Bool
+  n: Int
+} derive SqlRow
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "scan"
+  let url = os.env.get("PG_URL") ?? fault("PG_URL not set")
+  let db = sql.open(os.net, "postgres", url)?
+  var sum = 0
+  if w == "setup" {
+    db.exec("DROP TABLE IF EXISTS items")?
+    db.exec("CREATE TABLE items (id INT, name TEXT, score DOUBLE PRECISION, active BOOL, n INT)")?
+    db.exec("INSERT INTO items SELECT i, 'item-' || i, i * 0.5, i % 3 = 0, i * 7 % 101 FROM generate_series(0, 999) AS i")?
+  } else {
+    for _ in 0..300 {
+      let rows = db.query_as[Item]("SELECT id, name, score, active, n FROM items ORDER BY id")?
+      for r in rows {
+        sum += r.id + r.name.len() + Int(r.score) + (if r.active { 1 } else { 0 }) + r.n
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
