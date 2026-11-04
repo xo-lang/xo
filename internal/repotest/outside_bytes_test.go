@@ -96,7 +96,7 @@ func TestOutsideBytesValidated(t *testing.T) {
 		"std/native/html.xo":         1, // escape_string: the Str text with ASCII replacements between its own runs, valid as the text is
 		"std/native/archive.xo":      1, // parse_pax: records parsed on raw bytes, keys and values validated
 		"std/native/testing.xo":      3, // test fakes: the program's own text
-		"std/native/time.xo":         1, // format_items: ASCII digits and names and the layout's own text
+		"std/native/time.xo":         2, // format_items and format_stream: ASCII digits and names and the layout's own text
 		"std/native/llrt/netconn.xo": 1,
 		"std/native/llrt/netwasi.xo": 1, // conn_read on wasm: a read's bytes are the program's data, as netconn's read_list
 		"std/native/llrt/raw.xo":     2, // the conversion helpers themselves
