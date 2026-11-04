@@ -28,6 +28,33 @@ fn is_token_char(c: UInt8) -> Bool {
   TOKEN_CHARS[i] == 1
 }
 
+/// -1 when s is not a token, else 1 when it has an upper case letter and 0
+/// when not: is_token and the lower case test in one pass.
+fn token_case(s: Str) -> Int {
+  if s.is_empty() {
+    return -1
+  }
+  var upper = 0
+  for c in s.bytes() {
+    if !is_token_char(c) {
+      return -1
+    }
+    if c >= 65 && c <= 90 {
+      upper = 1
+    }
+  }
+  upper
+}
+
+/// s (a token) in lower case, given its token_case.
+fn write_cased(var b: StrBuilder, s: Str, upper: Int) {
+  if upper == 1 {
+    b.write(s.to_lower())
+  } else {
+    b.write(s)
+  }
+}
+
 fn is_token(s: Str) -> Bool {
   if s.is_empty() {
     return false
@@ -40,62 +67,55 @@ fn is_token(s: Str) -> Bool {
   true
 }
 
-/// mediatype.go needsEncoding: a value with a control or non ASCII byte.
-fn needs_encoding(s: Str) -> Bool {
+/// One scan of a parameter value: 2 when it needs encoding (mediatype.go needsEncoding),
+/// else 1 when it is not a token, else 0.
+fn value_class(s: Str) -> Int {
+  var cls = if s.is_empty() { 1 } else { 0 }
   for c in s.bytes() {
     if (c < 32 || c > 126) && c != 9 {
-      return true
+      return 2
+    }
+    if !is_token_char(c) {
+      cls = 1
     }
   }
-  false
-}
-
-/// s (a token, so ASCII) in lower case: written as it is when it has no
-/// upper case letter, as strings.ToLower returns its argument.
-fn write_lower(var b: StrBuilder, s: Str) {
-  var upper = false
-  for c in s.bytes() {
-    if c >= 65 && c <= 90 {
-      upper = true
-      break
-    }
-  }
-  if upper {
-    b.write(s.to_lower())
-  } else {
-    b.write(s)
-  }
+  cls
 }
 
 fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str {
   var b = StrBuilder.new()
   match kind.find("/") {
     None => {
-      if !is_token(kind) {
+      let kc = token_case(kind)
+      if kc < 0 {
         return ""
       }
-      write_lower(b, kind)
+      write_cased(b, kind, kc)
     }
     Some(i) => {
       let major = kind[0..i]
       let sub = kind[i + 1..]
-      if !is_token(major) || !is_token(sub) {
+      let mc = token_case(major)
+      let sc = token_case(sub)
+      if mc < 0 || sc < 0 {
         return ""
       }
-      write_lower(b, major)
+      write_cased(b, major, mc)
       b.write("/")
-      write_lower(b, sub)
+      write_cased(b, sub, sc)
     }
   }
   let hex = UPPER_HEX.bytes()
   for attr in params.keys().sort() {
     let value = params.get(attr) ?? ""
     b.write("; ")
-    if !is_token(attr) {
+    let ac = token_case(attr)
+    if ac < 0 {
       return ""
     }
-    write_lower(b, attr)
-    if needs_encoding(value) {
+    write_cased(b, attr, ac)
+    let vc = value_class(value)
+    if vc == 2 {
       b.write("*=utf-8''")
       var out = BytesBuilder.new()
       for ch in value.bytes() {
@@ -111,7 +131,7 @@ fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str {
       continue
     }
     b.write("=")
-    if is_token(value) {
+    if vc == 0 {
       b.write(value)
       continue
     }
