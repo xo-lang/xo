@@ -2243,11 +2243,12 @@ fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
   copy_pt(r, acc)
 }
 
+/// VARIABLE TIME: only `verify` may call this (internal/repotest TestVtPublicOnlyInVerify).
 /// r = [k]p for a public k (verification, where nothing is secret): the
 /// windows of pt_mul, but a window's table entry is read directly and a zero
 /// digit adds nothing, so no mask select over 16 entries and about a sixteenth
 /// fewer additions. Not constant time in k.
-fn pt_mul_vt(c: Int, r: Int, p: Int, k: Int) {
+fn pt_mul_vt_public(c: Int, r: Int, p: Int, k: Int) {
   let n = limbs(c)
   let tab = at(c, TABLE)
   pt_identity(c, tab)
@@ -2275,9 +2276,10 @@ fn pt_mul_vt(c: Int, r: Int, p: Int, k: Int) {
   copy_pt(r, acc)
 }
 
+/// VARIABLE TIME: only `verify` may call this (internal/repotest TestVtPublicOnlyInVerify).
 /// r = [k]G for a public k, from the same tables as pt_mul_g and pt_mul_g_n
 /// with the entry of each digit read directly and a zero digit skipped.
-fn pt_mul_base_vt(c: Int, r: Int, k: Int) {
+fn pt_mul_base_vt_public(c: Int, r: Int, k: Int) {
   let n = limbs(c)
   var tb = 0
   var nw = 0
@@ -2288,7 +2290,7 @@ fn pt_mul_base_vt(c: Int, r: Int, k: Int) {
     tb = gtab(c)
     nw = 2 * csize(c)
   } else {
-    pt_mul_vt(c, r, at(c, PG), k)
+    pt_mul_vt_public(c, r, at(c, PG), k)
     return
   }
   let es = 16 * n
@@ -2855,8 +2857,8 @@ pub fn verify(curve: Int, pub_key: Bytes, hash: Bytes, sig: Bytes) -> Bool {
   inv(c, s, s, mn)
   mul(c, u1, e, s, mn)
   mul(c, u2, r, s, mn)
-  pt_mul_base_vt(c, at(c, PB), u1)
-  pt_mul_vt(c, at(c, PC), at(c, PA), u2)
+  pt_mul_base_vt_public(c, at(c, PB), u1)
+  pt_mul_vt_public(c, at(c, PC), at(c, PA), u2)
   pt_add(c, at(c, PB), at(c, PB), at(c, PC))
   if pt_affine(c, x, u1, at(c, PB)) == 0 {
     keep(w)

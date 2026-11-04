@@ -26,7 +26,7 @@ the values, as before.
 - Timing: host 1 A/B es256_verify 0.954 of before (0.944-0.966); the Go row is in bench/results/std-twin-jwt-2026-11-03.md
 - Shipped in: not yet released
 
-`nistec.verify` has only public inputs, so it uses `pt_mul_vt` and `pt_mul_base_vt`: the window's table entry is read directly (no mask select over 16 entries) and a zero digit adds nothing. Signing and ECDH keep the constant time versions. The rest of the gap to Go is field arithmetic (Go's P-256 is assembly): next experiments are a wNAF window for the variable base and mixed (affine) additions for the base table.
+`nistec.verify` has only public inputs, so it uses `pt_mul_vt_public` and `pt_mul_base_vt_public`: the window's table entry is read directly (no mask select over 16 entries) and a zero digit adds nothing. Signing and ECDH keep the constant time versions; the new functions are named `*_vt_public`, carry a VARIABLE TIME comment, and internal/repotest TestVtPublicOnlyInVerify fails when anything but `verify` calls them. The rest of the gap to Go is field arithmetic (Go's P-256 is assembly): next experiments are a wNAF window for the variable base and mixed (affine) additions for the base table.
 
 ## 2026-11-03: perf: PEM decoding compares a block's type and trailer without views
 
