@@ -3657,12 +3657,14 @@ fn gz_step(var s: StreamState, b: Bytes, last: Bool) -> Result[(), http.ClientEr
 }
 
 /// Ends the stream's HTTP/1.1 exchange on r with s (hclient.CC_*): the
-/// connection to the pool when keep, else closed; with a full duplex
-/// sender (dsrv) or another writer (shared) only its descriptor closes,
-/// since the writer may still be writing on it, and the rest is freed
-/// with r's last reference (hclient.end_shared).
+/// connection to the pool when keep, else closed. With another writer
+/// (shared) only its descriptor closes, since the writer may still be
+/// writing on it, and the rest is freed with r's last reference
+/// (hclient.end_shared); with a full duplex sender (dsrv) too, unless the
+/// sender marked the request body sent in full (net/http's wroteRequest),
+/// when a kept connection goes to the pool.
 fn end_conn(x: StreamState, r: rthttp.CResp, keep: Bool, s: Int) {
-  if x.dsrv.is_some() || x.shared {
+  if x.shared || (x.dsrv.is_some() && !(keep && s == hclient.CC_OK && hclient.sent(r))) {
     hclient.end_shared(r, s, "")
   } else {
     hclient.end_keep(r, keep, x.https, x.addr, x.name, x.roots, s, "")

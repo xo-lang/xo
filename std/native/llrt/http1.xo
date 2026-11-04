@@ -4163,18 +4163,20 @@ fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[
   }
   if !src.is_empty() && !duplex.is_empty() {
     // full duplex (decision 0433): the body goes from a task while the
-    // head is read; the connection is not reused (the sender may still
-    // run at the body's end), and a send failure closes it so the read
-    // fails
+    // head is read; a send failure closes the connection so the read
+    // fails. The connection goes back to the pool at the response's end
+    // only when the sender marked the body sent in full (net/http's rule:
+    // a kept alive response, read to its end, and the request written)
     let spawn = duplex[0]
     spawn(fn() {
       let sx = send_src(r, src, hk, tnames, tfn)
       if sx.s != CC_OK {
         hclient.shut_wr(r)
+      } else {
+        hclient.mark_sent(r)
       }
     })
-    var hd = read_head(r, method)
-    hd.b.keep = false
+    let hd = read_head(r, method)
     if hd.x.s != CC_OK {
       // the sender may still be writing: its connection is freed with r
       hclient.end_shared(r, hd.x.s, hd.x.why)

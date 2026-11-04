@@ -1,0 +1,144 @@
+// std/http's client returns a connection to the pool after a request
+// whose body came from a source (Request.with_body_reader), as net/http's
+// Transport does once the response was read to its end and the request
+// written in full (persistConn's wroteRequest; the Go backend is the
+// reference): a raw server counts the connections it accepted. Streamed
+// (Client.open, full duplex: decision 0433) and buffered (Client.send)
+// requests, chunked and with a Content-Length, then a plain GET, all on
+// the first connection.
+use std/http
+
+/// The path of a request head, its Content-Length, and whether it is
+/// chunked.
+fn head_of(h: Str) -> (Str, Int, Bool) {
+  let lines = h.split("\r\n")
+  let parts = lines[0].split(" ")
+  var n = 0
+  var chunked = false
+  for l in lines {
+    let low = l.to_lower()
+    if low.starts_with("content-length:") {
+      n = Int.parse(l.split(":")[1].trim()) ?? 0
+    }
+    if low.starts_with("transfer-encoding:") && low.contains("chunked") {
+      chunked = true
+    }
+  }
+  (if parts.len() > 1 { parts[1] } else { "" }, n, chunked)
+}
+
+/// A body source of the pieces, written from a task of s.
+fn source(s: Scope, pieces: List[Str]) -> http.BodyReader {
+  let (w, r) = http.pipe()
+  s.spawn(fn() {
+    for p in pieces {
+      w.write(p.bytes()).ignore_err("the request may have ended")
+    }
+    w.close()
+  })
+  r
+}
+
+fn main(os: Os) ! {
+  let l = os.net.listen("127.0.0.1:0")?
+  let base = "http://${l.addr()}"
+  let conns = Atomic[Int].new(0)
+  let c = http.client(os.net, timeout: 10s)
+  scope s {
+    s.spawn_background(fn() {
+      while true {
+        match l.accept() {
+          Ok(conn) => {
+            let _n = conns.add(1)
+            s.spawn_background(fn() {
+              var got = ""
+              while true {
+                var at = got.find("\r\n\r\n")
+                while at == None {
+                  match conn.read(4096) {
+                    Ok(Some(b)) => got = got + (b.to_str() ?? "")
+                    _ => {
+                      conn.close()
+                      return
+                    }
+                  }
+                  at = got.find("\r\n\r\n")
+                }
+                let e = (at ?? 0) + 4
+                let (path, blen, chunked) = head_of(got[0..e])
+                // the body: its length, or chunks up to the last one
+                var end = e + blen
+                if chunked {
+                  var z = got[e..got.len()].find("0\r\n\r\n")
+                  while z == None {
+                    match conn.read(4096) {
+                      Ok(Some(b)) => got = got + (b.to_str() ?? "")
+                      _ => {
+                        conn.close()
+                        return
+                      }
+                    }
+                    z = got[e..got.len()].find("0\r\n\r\n")
+                  }
+                  end = e + (z ?? 0) + 5
+                }
+                while got.len() < end {
+                  match conn.read(4096) {
+                    Ok(Some(b)) => got = got + (b.to_str() ?? "")
+                    _ => {
+                      conn.close()
+                      return
+                    }
+                  }
+                }
+                got = got[end..got.len()]
+                let text = path
+                conn.write("HTTP/1.1 200 OK\r\nContent-Length: ${text.len()}\r\n\r\n${text}".bytes()).ignore_err("the client may have gone")
+              }
+            })
+          }
+          Err(_) => return
+        }
+      }
+    })
+    match c.get(base + "/first") {
+      Ok(r) => os.stdio.println("get: ${r.body.to_str() ?? "?"} conns=${conns.get()}")
+      Err(e) => os.stdio.println("get: error ${e}")
+    }
+    for i in 0..3 {
+      var req = http.new_request("POST", base + "/open${i}").with_body_reader(source(s, ["abc", "defg"]))
+      if i == 2 {
+        req = req.with_header("Content-Length", "7")
+      }
+      match c.open(req) {
+        Ok(st) => {
+          var text = ""
+          while true {
+            match st.read() {
+              Ok(Some(d)) => text = text + (d.to_str() ?? "?")
+              Ok(None) => break
+              Err(e) => {
+                text = text + " error ${e}"
+                break
+              }
+            }
+          }
+          st.close()
+          os.stdio.println("open ${i}: ${st.head().status} ${text} conns=${conns.get()}")
+        }
+        Err(e) => os.stdio.println("open ${i}: error ${e}")
+      }
+    }
+    for i in 0..2 {
+      match c.send(http.new_request("POST", base + "/send${i}").with_body_reader(source(s, ["xy", "z"]))) {
+        Ok(r) => os.stdio.println("send ${i}: ${r.body.to_str() ?? "?"} conns=${conns.get()}")
+        Err(e) => os.stdio.println("send ${i}: error ${e}")
+      }
+    }
+    match c.get(base + "/last") {
+      Ok(r) => os.stdio.println("get: ${r.body.to_str() ?? "?"} conns=${conns.get()}")
+      Err(e) => os.stdio.println("get: error ${e}")
+    }
+    s.cancel()
+  }
+}

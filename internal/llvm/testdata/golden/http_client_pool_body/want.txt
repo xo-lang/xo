@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+get: /first conns=1
+open 0: 200 /open0 conns=1
+open 1: 200 /open1 conns=1
+open 2: 200 /open2 conns=1
+send 0: /send0 conns=1
+send 1: /send1 conns=1
+get: /last conns=1
+--- stderr

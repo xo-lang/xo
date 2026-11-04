@@ -1034,6 +1034,15 @@ pub fn end_shared(r: rthttp.CResp, s: Int, why: Str) {
   finish(a, s, why, "")
 }
 
+/// Marks a full duplex request's body as sent in full: the sender task's
+/// last use of r's connection is before this (release order).
+pub fn mark_sent(r: rthttp.CResp) { rt.slot_store[Int](rec(r) + R_SENT, 0, 1, 2) }
+
+/// Whether the sender marked the body sent (acquire order): only then may
+/// the connection go back to the pool, as net/http's persistConn reuses a
+/// connection only once the request was written (wroteRequest).
+pub fn sent(r: rthttp.CResp) -> Bool { rt.slot_load[Int](rec(r) + R_SENT, 0, 1) == 1 }
+
 /// Whether r's connection came from the pool (a failure before the
 /// response is replayed on a new connection for a replayable request).
 pub fn reused(r: rthttp.CResp) -> Bool { ld4(rec(r), R_REUSED) != 0 }
@@ -1285,7 +1294,10 @@ const R_CN = 176
 /// whether r's HTTP/1.1 connection came from the pool (an int; a failure
 /// before any byte of the response is replayed on a new one)
 const R_REUSED = 192
-const R_SIZE = 200
+/// whether a full duplex request's body was sent in full (a word: the
+/// sender task stores 1 with release order after its last write)
+const R_SENT = 200
+const R_SIZE = 208
 
 /// The deadline of a client's timeout (ns, > 0): the timers' clock.
 pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
