@@ -1,6 +1,6 @@
-# 0485: netip.Addr as a 128-bit value, like Go's (proposal)
+# 0485: netip.Addr as a 128-bit value, like Go's
 
-Status: Proposed (Xo Lang 3, 2026-11-03; asked for by the lead). The owner decides before any code.
+Status: Accepted (owner, 2026-11-03; proposed by Xo Lang 3). A CHANGELOG Breaking entry and a migration line in spec/std.md 28 (`.ip` to `.bytes()`) go with the change. Internal readers of `.ip` in std (dns, x509, llrt/dns) change with it.
 
 ## Context
 
