@@ -1314,7 +1314,17 @@ fn digit_text(lo: Int, hi: Int) -> Str {
 }
 
 fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
-  parse_items(layout_or_fault("parse", layout, at), s, layout, z)
+  match parse_stream(s, layout, z) {
+    Ok(t) => Ok(t)
+    Err(e) => {
+      // an error is the input's, unless the layout is not simple: then the
+      // list form reports the layout (a fault) or the same error
+      if layout_simple(layout) {
+        return Err(e)
+      }
+      parse_items(layout_or_fault("parse", layout, at), s, layout, z)
+    }
+  }
 }
 
 fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
@@ -1627,6 +1637,453 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
   }
   Ok(time_of(secs * 1000000000 + nanos))
 }
+
+/// Whether layout is a well formed layout text with no {lbrace} or {rbrace}
+/// and no {hour12} without {ampm}: parse_stream may read it as it parses.
+fn layout_simple(layout: Str) -> Bool {
+  let b = layout.bytes()
+  let n = b.len()
+  var hour12 = false
+  var ampm = false
+  var i = 0
+  while i < n {
+    let c = b[i]
+    if c == 125 {
+      return false
+    }
+    if c != 123 {
+      i += 1
+      continue
+    }
+    var j = i + 1
+    while j < n && b[j] != 123 && b[j] != 125 {
+      j += 1
+    }
+    if j >= n || b[j] == 123 {
+      return false
+    }
+    var colon = -1
+    var cj = i + 1
+    while cj < j {
+      if b[cj] == 58 {
+        colon = cj
+        break
+      }
+      cj += 1
+    }
+    let code = field_code_b(b, i + 1, if colon >= 0 { colon } else { j })
+    var arg = ""
+    if colon >= 0 {
+      match arg_literal(b, colon + 1, j) {
+        Some(a) => arg = a
+        None => return false
+      }
+    }
+    if !field_ok(code, arg, colon >= 0) || code == 13 || code == 14 {
+      return false
+    }
+    if code == 6 {
+      hour12 = true
+    }
+    if code == 7 {
+      ampm = true
+    }
+    i = j + 1
+  }
+  !hour12 || ampm
+}
+
+/// parse_items for a layout_simple text, reading the layout as it parses (Go's
+/// parse loop) with no list of items.
+fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
+  let b = s.bytes()
+  let n = b.len()
+  var pos = 0
+  var year = 1970
+  var month = 1
+  var day = 1
+  var hour = 0
+  var minute = 0
+  var second = 0
+  var nanos = 0
+  var hour12 = 0
+  var off = 0
+  var has_off = false
+  var has12 = false
+  var pm = false
+  var weekday = -1
+  var weekday_at = 0
+  var abbr = ""
+  var abbr_at_pos = -1
+  var day_at = 0
+  let lb_all = layout.bytes()
+  let ln = lb_all.len()
+  var li = 0
+  var field_next = false
+  var saw_h12 = false
+  var saw_ampm = false
+  var fcode = 0
+  var farg = ""
+  while true {
+    var pcode = 0
+    var parg = ""
+    var plit = ""
+    if field_next {
+      pcode = fcode
+      parg = farg
+      field_next = false
+    } else {
+      if li >= ln {
+        break
+      }
+      var q = li
+      while q < ln && lb_all[q] != 123 {
+        if lb_all[q] == 125 {
+          return perr(s, layout, 0, "bad layout")
+        }
+        q += 1
+      }
+      if q > li {
+        plit = layout[li..q]
+      }
+      if q < ln {
+        var j = q + 1
+        while j < ln && lb_all[j] != 125 && lb_all[j] != 123 {
+          j += 1
+        }
+        if j >= ln || lb_all[j] == 123 {
+          return perr(s, layout, 0, "bad layout")
+        }
+        var colon = -1
+        var cj = q + 1
+        while cj < j {
+          if lb_all[cj] == 58 {
+            colon = cj
+            break
+          }
+          cj += 1
+        }
+        let nend = if colon >= 0 { colon } else { j }
+        fcode = field_code_b(lb_all, q + 1, nend)
+        farg = ""
+        if colon >= 0 {
+          match arg_literal(lb_all, colon + 1, j) {
+            Some(x) => farg = x
+            None => return perr(s, layout, 0, "bad layout")
+          }
+        }
+        if !field_ok(fcode, farg, colon >= 0) || fcode == 13 || fcode == 14 {
+          return perr(s, layout, 0, "bad layout")
+        }
+        if fcode == 6 {
+          saw_h12 = true
+        }
+        if fcode == 7 {
+          saw_ampm = true
+        }
+        li = j + 1
+        if !plit.is_empty() {
+          field_next = true
+        } else {
+          pcode = fcode
+          parg = farg
+        }
+      } else {
+        li = ln
+      }
+    }
+    let start = pos
+    if pcode == 0 {
+      let lb = plit.bytes()
+      var k = 0
+      if pos + lb.len() > n {
+        k = -1
+      }
+      while k >= 0 && k < lb.len() && b[pos + k] == lb[k] {
+        k += 1
+      }
+      if k != lb.len() {
+        return perr(s, layout, start, "expected ${plit.quote()}")
+      }
+      pos += lb.len()
+      continue
+    }
+    // a number field: what, digits lo to hi, range min to max
+    var what = 0
+    var lo = 2
+    var hi = 2
+    var min = 0
+    var max = 0
+    match pcode {
+      1 => {
+        what = 1
+        lo = 4
+        hi = 4
+        min = 1
+        max = 9999
+      }
+      2 => {
+        if parg == "" || parg == "1" {
+          what = 2
+          if parg == "1" {
+            lo = 1
+          }
+          min = 1
+          max = 12
+        } else {
+          var i = -1
+          var len = 3
+          if parg == "name" {
+            let (j, l) = read_word(s, pos, month_name())
+            i = j
+            len = l
+          } else {
+            i = read_fixed(b, pos, MONTHS_SHORT.bytes(), 3)
+          }
+          if i < 0 {
+            var first = "Jan"
+            if parg == "name" {
+              first = "January"
+            }
+            return perr(s, layout, start, "expected a month name such as ${first.quote()}")
+          }
+          month = i + 1
+          pos += len
+        }
+      }
+      3 => {
+        day_at = start
+        what = 3
+        if parg == "1" {
+          lo = 1
+        }
+        min = 1
+        max = 31
+      }
+      4 => {
+        var i = -1
+        var len = 3
+        if parg == "name" {
+          let (j, l) = read_word(s, pos, weekday_name())
+          i = j
+          len = l
+        } else {
+          i = read_fixed(b, pos, WEEKDAYS_SHORT.bytes(), 3)
+        }
+        if i < 0 {
+          var first = "Mon"
+          if parg == "name" {
+            first = "Monday"
+          }
+          return perr(s, layout, start, "expected a weekday name such as ${first.quote()}")
+        }
+        weekday = i
+        weekday_at = start
+        pos += len
+      }
+      5 => {
+        what = 5
+        max = 23
+      }
+      6 => {
+        what = 6
+        min = 1
+        max = 12
+      }
+      7 => {
+        let rest = s[pos..]
+        if rest.starts_with("PM") {
+          pm = true
+        } else if !rest.starts_with("AM") {
+          return perr(s, layout, start, "expected AM or PM")
+        }
+        pos += 2
+      }
+      8 => {
+        what = 8
+        max = 59
+      }
+      9 => {
+        what = 9
+        max = 59
+      }
+      10 => {
+        var k = 0
+        if parg != "" {
+          k = Int.parse(parg) ?? 0
+        }
+        if pos >= n || b[pos] != 46 {
+          if k > 0 {
+            return perr(s, layout, start, "expected \".\" and ${k} digit fraction")
+          }
+        } else {
+          pos += 1
+          let fstart = pos
+          var flo = 1
+          var fhi = 9
+          if k > 0 {
+            flo = k
+            fhi = k
+          }
+          let (v, cnt) = read_digits(b, pos, fhi)
+          if cnt < flo {
+            return perr(s, layout, fstart, "expected ${digit_text(flo, fhi)} fraction")
+          }
+          pos += cnt
+          var f = v
+          var c = cnt
+          while c < 9 {
+            f = f * 10
+            c += 1
+          }
+          nanos = f
+        }
+      }
+      11 => {
+        var bad = "expected an offset: +hhmm"
+        if parg == "" {
+          bad = "expected an offset: Z or +hh:mm"
+        }
+        if parg == "" && pos < n && b[pos] == 90 {
+          pos += 1
+          has_off = true
+          off = 0
+        } else {
+          if pos >= n || (b[pos] != 43 && b[pos] != 45) {
+            return perr(s, layout, start, bad)
+          }
+          let neg = b[pos] == 45
+          pos += 1
+          let (h, hn) = read_digits(b, pos, 2)
+          if hn < 2 {
+            return perr(s, layout, start, bad)
+          }
+          pos += 2
+          if parg == "" {
+            if pos >= n || b[pos] != 58 {
+              return perr(s, layout, start, bad)
+            }
+            pos += 1
+          }
+          let (m, mn) = read_digits(b, pos, 2)
+          if mn < 2 || h > 23 || m > 59 {
+            return perr(s, layout, start, bad)
+          }
+          pos += 2
+          off = h * 3600 + m * 60
+          if neg {
+            off = -off
+          }
+          has_off = true
+        }
+      }
+      _ => {
+        // zone
+        var k = 0
+        while pos + k < n && zone_char(b[pos + k]) {
+          k += 1
+        }
+        if k == 0 {
+          return perr(s, layout, start, "expected a zone abbreviation such as \"UTC\"")
+        }
+        abbr = s[pos..pos + k]
+        abbr_at_pos = start
+        pos += k
+      }
+    }
+    if what != 0 {
+      let (v, cnt) = read_digits(b, pos, hi)
+      var name = field_name(what)
+      if cnt < lo {
+        return perr(s, layout, start, "expected ${digit_text(lo, hi)} ${name}")
+      }
+      if v < min || v > max {
+        return perr(s, layout, start, "${name} ${v} out of range ${min} to ${max}")
+      }
+      pos += cnt
+      match what {
+        1 => {
+          year = v
+        }
+        2 => {
+          month = v
+        }
+        3 => {
+          day = v
+        }
+        5 => {
+          hour = v
+        }
+        6 => {
+          hour12 = v
+          has12 = true
+        }
+        8 => {
+          minute = v
+        }
+        _ => {
+          second = v
+        }
+      }
+    }
+  }
+  if saw_h12 && !saw_ampm {
+    return perr(s, layout, 0, "bad layout")
+  }
+  if pos < n {
+    return perr(s, layout, pos, "extra text after the layout: ${s[pos..].quote()}")
+  }
+  if day > days_in(year, month) {
+    return perr(s, layout, day_at, "day ${day} out of range 1 to ${days_in(year, month)} for ${pad(year, 4)}-${pad(month, 2)}")
+  }
+  if has12 {
+    hour = hour12 % 12
+    if pm {
+      hour += 12
+    }
+  }
+  let days = days_from_civil(year, month, day)
+  if weekday >= 0 {
+    let want = weekday_index(days)
+    if want != weekday {
+      return perr(s, layout, weekday_at, "weekday ${weekday_name()[weekday]} does not match ${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}, a ${weekday_name()[want]}")
+    }
+  }
+  let local = days * 86400 + hour * 3600 + minute * 60 + second
+  var secs = local
+  if has_off {
+    secs = local - off
+  } else if abbr != "" {
+    let (early, late, _) = civil_instant(local, z)
+    var found = false
+    for c in [early, late] {
+      if !found && c > MIN_TIME_SECS && c < MAX_TIME_SECS && abbr_at(z, c) == abbr {
+        secs = c
+        found = true
+      }
+    }
+    if !found {
+      if abbr != "UTC" && abbr != "GMT" {
+        return perr(s, layout, abbr_at_pos, "zone abbreviation ${abbr.quote()} is not used by ${z.label} at ${when_text(year, month, day, hour, minute, second)}")
+      }
+      secs = local
+    }
+  } else {
+    let (early, _, kind) = civil_instant(local, z)
+    if kind == 2 {
+      return perr(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} does not exist in ${z.label} (skipped by a daylight saving change); the layout needs {offset}")
+    }
+    if kind == 3 {
+      return perr(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} happens twice in ${z.label} (repeated by a daylight saving change); the layout needs {offset} or {zone}")
+    }
+    secs = early
+  }
+  if secs <= MIN_TIME_SECS || secs >= MAX_TIME_SECS {
+    return perr(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} is outside the range of Time (1678 to 2262)")
+  }
+  Ok(time_of(secs * 1000000000 + nanos))
+}
+
 
 fn perr(s: Str, layout: Str, at: Int, msg: Str) -> Time ! time.ParseErr { Err(time.ParseErr{input: s, layout: layout, at: at, msg: msg}) }
 

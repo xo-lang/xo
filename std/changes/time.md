@@ -1,5 +1,16 @@
 # std/time changes
 
+## 2026-11-03: perf: parse reads the layout as it parses
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/time parse 4.7 of Go's wall on host 1 (std-twin-rows2-2026-11-03.md)
+- Go reference: time/format.go parse (one loop over the layout)
+- Test: the time corpus (arm64, LLVM, Go backend), twincheck bench/perf/time
+- Timing: Mac iteration (not evidence): parse 100 to 86 ms (Go 35), parse_layout unchanged at 50; host row follows in std-twin-time-2026-11-03.md
+
+`time.parse` with a layout text no longer builds a list of items: `parse_stream` reads a literal run and the field after it from the layout as it parses. A malformed layout is not reported by it; `parse` then checks `layout_simple` and, if the layout is not simple, runs the list form so the fault text is unchanged. A parse error on a simple layout is the input's and is returned as is.
+
 ## 2026-11-03: perf: format scans the layout once and writes each field as it is read
 
 - Kind: perf
