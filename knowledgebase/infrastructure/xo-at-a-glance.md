@@ -25,7 +25,10 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
   (`x ?? return v`, `?? break`, `?? continue`), and on a Result names
   the error: `r ?? e => return Err(Wrap(e))`, `r ?? _ => continue`.
 - Tuples `(A, B)` with `t.0`, `t.1`; structs with field defaults; enums
-  (sum types) with payloads; interfaces; generics (2.7); type aliases and
+  (sum types) with payloads; valued enums `enum E: Str { A = "a" }` with
+  `value()`, `E.from(v)`, `E.all()` (0269) and an optional catch-all last
+  variant `Unknown(value: Str)` that keeps unlisted values (0493);
+  interfaces; generics (2.7); type aliases and
   newtypes (2.8); `Secret[T]` (redacted everywhere).
 - Derives (2.9): `derive Debug, Eq, Hash, Ord, Json, SqlRow, Xml` (one
   table, compiler/check/derivables.xo); wire names `as "x"` plus per-format

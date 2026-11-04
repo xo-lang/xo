@@ -455,7 +455,11 @@ fn (var c: Checker) xml_decoder(sd: parser.StructDecl, shapes: List[XmlShape?], 
 /// The methods of a valued enum (decision 0269), as source: one constant
 /// a variant (the declared expression, or the previous plus one, or the
 /// variant's name for a `Str`), `value()`, `E.from(v)`, and `E.all()`.
-/// A faulty enum is left to the checker's own errors (XO0428, XO0429).
+/// A catch-all last variant (decision 0493, `Unknown(value: Str)`) has
+/// no constant: `value()` is its field, `from` returns it for a value no
+/// other variant has (so `E`, not `E?`), `E.known(v)` is the strict
+/// lookup, and `all()` leaves it out. A faulty enum is left to the
+/// checker's own errors (XO0428, XO0429, XO0434).
 fn (var c: Checker) valued_enum_methods(file: Int, ed: parser.EnumDecl, em0: Emit) -> Emit {
   var em = em0
   let vt = match ed.value_type {
@@ -465,16 +469,26 @@ fn (var c: Checker) valued_enum_methods(file: Int, ed: parser.EnumDecl, em0: Emi
   if (vt != "Int" && vt != "Str") || !ed.type_params.is_empty() || ed.variants.is_empty() {
     return em
   }
-  for v in ed.variants {
-    if v.fields != None {
-      return em
+  // the catch-all's name, when the last variant is one
+  var catch = ""
+  for (i, v) in ed.variants.indexed() {
+    if let Some(fs) = v.fields {
+      if i != ed.variants.len() - 1 || fs.len() != 1 || fs[0].from || v.value != None || !names_type(fs[0].typ, vt) {
+        return em
+      }
+      catch = text(v.name.name)
     }
+  }
+  let named = if catch.is_empty() { ed.variants.len() } else { ed.variants.len() - 1 }
+  if named == 0 {
+    return em
   }
   let n = text(ed.name.name)
   let pub_ = if ed.is_pub { "pub " } else { "" }
   let sp = ed.name.span
   let src = c.files[file].src
-  for (i, v) in ed.variants.indexed() {
+  for i in 0..named {
+    let v = ed.variants[i]
     var body = ""
     if let Some(x) = v.value {
       let xs = parser.expr_span(x)
@@ -490,23 +504,41 @@ fn (var c: Checker) valued_enum_methods(file: Int, ed: parser.EnumDecl, em0: Emi
   }
   em.ln("${pub_}fn (e: ${n}) value() -> ${vt} {", sp)
   em.ln("  match e {", sp)
-  for (i, v) in ed.variants.indexed() {
+  for i in 0..named {
+    let v = ed.variants[i]
     em.ln("    ${text(v.name.name)} => ${n}__V${i}", v.name.span)
+  }
+  if !catch.is_empty() {
+    em.ln("    ${catch}(v) => v", ed.variants[named].name.span)
   }
   em.ln("  }", sp)
   em.ln("}", sp)
-  em.ln("${pub_}fn (static: ${n}) from(v: ${vt}) -> ${n}? {", sp)
-  for (i, v) in ed.variants.indexed() {
+  // the strict lookup: `from` of a closed enum, `known` of an open one
+  let strict = if catch.is_empty() { "from" } else { "known" }
+  em.ln("${pub_}fn (static: ${n}) ${strict}(v: ${vt}) -> ${n}? {", sp)
+  for i in 0..named {
+    let v = ed.variants[i]
     em.ln("  if v == ${n}__V${i} { return Some(${n}.${text(v.name.name)}) }", v.name.span)
   }
   em.ln("  None", sp)
   em.ln("}", sp)
+  if !catch.is_empty() {
+    em.ln("${pub_}fn (static: ${n}) from(v: ${vt}) -> ${n} { ${n}.known(v) ?? ${n}.${catch}(v) }", sp)
+  }
   var all: List[Str] = []
-  for v in ed.variants {
-    all.push("${n}.${text(v.name.name)}")
+  for i in 0..named {
+    all.push("${n}.${text(ed.variants[i].name.name)}")
   }
   em.ln("${pub_}fn (static: ${n}) all() -> List[${n}] { [${all.join(", ")}] }", sp)
   em
+}
+
+/// Whether t is the plain type name n (`Str`, no module, no arguments).
+fn names_type(t: parser.Type, n: Str) -> Bool {
+  match t {
+    NamedType(path: p, args: a, ..) => p.len() == 1 && a.is_empty() && text(p[0].name) == n
+    _ => false
+  }
 }
 
 /// The expansion of every `derive Xml` struct of f as one source text,

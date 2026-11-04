@@ -1037,6 +1037,38 @@ fn time_layout_str(c: check.Checker, f: Int, file: Str, span: parser.Span, args:
   Some(d)
 }
 
+/// XO0917 (decision 0493): a valued enum's catch-all built directly from a
+/// value known only at run time, `StorageClass.Unknown(s)`. When s is a
+/// value a named variant has, the result is a second spelling of that
+/// variant and compares unequal to it; `StorageClass.from(s)` picks the
+/// named variant. (A constant that a variant has is the error XO0435.)
+fn catch_all_built(c: check.Checker, f: Int, file: Str, span: parser.Span, call: parser.Expr, fun: parser.Expr, args: List[parser.Arg]) -> Diag? {
+  if file.ends_with("#derive") {
+    // the generated `from` builds it for an unlisted value
+    return None
+  }
+  let r = match c.ctor_in(f, call) {
+    Some(x) => x
+    None => match c.ctor_in(f, fun) {
+      Some(x) => x
+      None => return None
+    }
+  }
+  let ca = c.objs[r.en].catch_all
+  if ca < 0 || args.len() != 1 || c.objs[r.en].variants[r.variant].index != ca {
+    return None
+  }
+  let x = args[0].value
+  let known = if c.objs[r.en].value_kind == 1 { c.const_int(f, x, 0) != None } else { c.const_str(f, x, 0) != None }
+  if known || allowed(c, f, span.start.line, "XO0917") {
+    return None
+  }
+  let en = text_of(c.objs[r.en].name)
+  var d = vdiag("XO0917", false, file, span, "`${en}.${text_of(c.objs[r.en].variants[r.variant].name)}(...)` of a run time value: a value that a named variant has becomes a second spelling of it, unequal to it")
+  d.notes.push(check.DNote{message: "`${en}.from(v)` returns the named variant for a value one has and the catch-all otherwise (decision 0493); keep the direct form with `// xo:allow XO0917 REASON` when the value is known to be new"})
+  Some(d)
+}
+
 /// Whether x is an empty value: `[]`, `{}`, `#{}`, `""`, `b""`, `None`,
 /// `false`, or `0`.
 fn empty_value(x: parser.Expr) -> Bool {
@@ -1117,6 +1149,9 @@ fn verify_none(c: check.Checker, f: Int, file: Str, e: parser.Expr, span: parser
 
 /// XO0208 for `.ignore_err` and XO0901 for `dbg` calls.
 fn vet_call(c: check.Checker, f: Int, file: Str, call: parser.Expr, span: parser.Span, fun: parser.Expr, args: List[parser.Arg]) -> Diag? {
+  if let Some(d) = catch_all_built(c, f, file, span, call, fun, args) {
+    return Some(d)
+  }
   let ci = match c.call_in(f, call) {
     Some(x) => x
     None => return None

@@ -2313,7 +2313,7 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | `Int8`, `Int16`, `Int32`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Float32` | number; decoding refuses a number out of the type's range (`expected integer` for a signed type, `expected non negative integer` for an unsigned one, `cannot unmarshal number 1e39 into Float32` for a Float32 past its largest value, Go's words with Xo's type), on every backend |
 | `List[T]`, `Set[T]` | array |
 | `Map[Str, V]` | object |
-| valued enum (`enum E: Int` or `enum E: Str`, decision 0269) | the variant's value: a number or a string; decoding refuses a value no variant has (`unknown value 7 of enum Weekday`) |
+| valued enum (`enum E: Int` or `enum E: Str`, decision 0269) | the variant's value: a number or a string; decoding refuses a value no variant has (`unknown value 7 of enum Weekday`), or, with a catch-all variant (`Unknown(value: Str)`, decision 0493), keeps it there and writes it back unchanged |
 | enum unit variant | string `"Variant"` (its wire name: `as "name"` or `case:`, decision 0478, core 2.3) |
 | enum variant with fields | object `{"Variant": {fields}}`, the name and the fields' keys as above |
 | tagged enum, `derive Json(tag: "type")` | object `{"type": "Variant", fields...}`, a wrapped struct's fields beside the tag; with `content: "data"`, `{"type": "Variant", "data": payload}` (decision 0478, core 2.3) |

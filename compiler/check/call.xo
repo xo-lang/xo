@@ -1676,7 +1676,35 @@ fn (var c: Checker) construct(en: Int, v: Int, targs: List[Int], has_targs: Bool
     }
   }
   c.check_args(params, call[0], text(vi.name), false, -1, en, v)
+  if vi.index == c.objs[en].catch_all && args.len() == 1 {
+    c.catch_all_constant(en, vi, args[0].value)
+  }
   nt
+}
+
+/// A valued enum's catch-all built from a constant that a named variant
+/// has (`StorageClass.Unknown("STANDARD")`) is XO0435: a second spelling
+/// of that variant, unequal to it (decision 0493).
+fn (var c: Checker) catch_all_constant(en: Int, ca: VariantInfo, x: Expr) {
+  let ik = c.objs[en].value_kind
+  for o in c.objs[en].variants {
+    if o.index == ca.index {
+      continue
+    }
+    var same = false
+    if ik == 1 {
+      if let Some(n) = c.const_int(c.cur_file, x, 0) {
+        same = n == o.ival
+      }
+    } else if let Some(sv) = c.const_str(c.cur_file, x, 0) {
+      same = sv.bytes() == o.sval
+    }
+    if same {
+      let en_name = text(c.objs[en].name)
+      c.error("XO0435", parser.expr_span(x), "`${en_name}.${text(ca.name)}` of a value that `${en_name}.${text(o.name)}` has; write `${en_name}.${text(o.name)}` (the catch-all keeps only values no variant names, decision 0493)")
+      return
+    }
+  }
 }
 
 /// Whether fun is the predeclared `expect` of a test (core 9.2).

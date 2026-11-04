@@ -779,12 +779,36 @@ enum Color: Str { Red, Green, Blue }       // "Red", "Green", "Blue"
 - `e.value()` is the variant's value. `E.from(v)` is `E?`: the variant with
   that value, or `None`. `E.all()` is `List[E]`, the variants in declaration
   order (a list built per call in this implementation).
+- Catch-all (decision 0493). The last variant may keep the values no
+  other variant names, for a set a server owns and grows (AWS adds enum
+  values after a client is built):
+
+  ```
+  enum StorageClass: Str {
+    Standard = "STANDARD"
+    Glacier = "GLACIER"
+    Unknown(value: Str)
+  } derive Json
+  ```
+
+  It has one field of the value type and no value; any other variant
+  with fields in a valued enum is `XO0434`. `E.from(v)` is then `E`, not
+  `E?`: the variant with that value, else `Unknown(v)`. `E.known(v)` is
+  the strict lookup (`E?`, `None` for an unlisted value). `value()` of
+  the catch-all is its field, `all()` leaves it out, and `derive Json`
+  writes it as its value and reads a value no variant has as it, so
+  decoding never fails on an unlisted value (a value of the wrong JSON
+  type still does). A `match` needs an arm for it. Built from a constant
+  that a named variant has (`StorageClass.Unknown("STANDARD")`) it is
+  `XO0435`, since it would be a second spelling of that variant, unequal
+  to it; built from a run time value it is the `xo vet` warning `XO0917`
+  (use `E.from(v)`).
 - The enum stays a closed sum type: `match` is exhaustive by variant, and
   equality, hashing, and `Ord` are by variant in declaration order, not by
   value. Display prints the variant name.
 - `derive Json` writes and reads the value: `Weekday.Mon` is `1`,
   `Level.Warn` is `"warn"`. A value no variant has is a decode error that
-  names the enum and the value. An enum without a value type keeps the
+  names the enum and the value, unless the enum has a catch-all (above). An enum without a value type keeps the
   encoding `"Variant"`.
 - Variant names on the wire (decision 0478): `derive Json(case: snake)`
   on an enum (also `camel`, `pascal`, `kebab`) converts every variant's
@@ -3373,6 +3397,8 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0431` | error | checker | a variant of an internally tagged enum (`derive Json(tag: "type")` without `content:`) whose payload is not an object: one field that is not a struct (core 2.3, decision 0478) |
 | `XO0432` | error | checker | `derive Json(via: P, to: f, from: g)` whose `to:` or `from:` names no non generic, non method function of the type's module (core 2.3, decision 0478) |
 | `XO0433` | error | checker | a mistyped `to:` or `from:` of `derive Json(via: ...)`: `to` must be `fn(T) -> P` with no error, `from` `fn(P) -> T ! E` with E implementing Display (core 2.3, decision 0478) |
+| `XO0434` | error | checker | a variant with fields in a valued enum that is not its catch-all: the catch-all is the last variant, with one field of the value type and no value (core 2.3, decision 0493) |
+| `XO0435` | error | checker | a valued enum's catch-all built from a constant that a named variant has (`StorageClass.Unknown("STANDARD")`): a second spelling of that variant, unequal to it (core 2.3, decision 0493) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |
@@ -3417,6 +3443,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0914` | note | vet --cost | in a loop, a List of at most 8 elements made and only filled and read in the iteration: an allocation and a free every iteration; keep the values in locals or reuse one list made before the loop (knowledgebase/std-performance-guide.md) |
 | `XO0915` | warning | vet --cost | a raw address (`raw.data`, `raw.bytes_addr`, `rt.obj_addr`, std internals) used after its value was released in the same block: a value is released at its last use, even inside the arguments of the call that takes its address, so the call reads freed memory; keep it alive with `raw.alive` or `raw.alive_str` after the last access (gotchas/raw-address-outlives-bytes.md) |
 | `XO0916` | warning | vet | `time.format` or `time.parse` called with a layout that is a compile time string (a literal, a constant, or a `+` of them): each call parses the layout text again (5.4 and 4.7 of Go's wall), where a `const Layout` made with `time.layout` is parsed once (2.0 and 1.9); a layout built at run time is not reported, and `// xo:allow XO0916 REASON` silences a cold call (decision 0464) |
+| `XO0917` | warning | vet | a valued enum's catch-all built directly from a run time value (`StorageClass.Unknown(s)`): a value a named variant has would become a second spelling of it; `E.from(s)` picks the named variant (decision 0493) |
 | `XO0904` | warning | vet | a file an embed constant embeds is ignored or untracked by git, so a build of a clean checkout embeds something else or fails (decision 0304) |
 | `XO1001` | error | reserved | `std/sys/<os>` used outside the matching target arm (core 12.2) |
 | `XO1101` | error | checker | Go package cannot be bound (not found, does not build, main package, or binding error) |

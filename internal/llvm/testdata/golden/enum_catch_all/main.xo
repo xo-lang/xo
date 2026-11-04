@@ -1,0 +1,48 @@
+// A valued enum with a catch-all variant (decision 0493): from, known,
+// value, all, match, equality, and Json for a value no variant names
+// (S3's StorageClass, which grows after a client is built).
+
+use std/json
+
+enum StorageClass: Str {
+  Standard = "STANDARD"
+  Glacier = "GLACIER"
+  DeepArchive = "DEEP_ARCHIVE"
+  Unknown(value: Str)
+} derive Json
+
+enum Code: Int {
+  Ok = 200
+  NotFound = 404
+  Other(value: Int)
+} derive Json
+
+struct Object {
+  key: Str
+  storage_class: StorageClass
+  code: Code
+} derive Json
+
+fn tier(s: StorageClass) -> Str {
+  match s {
+    Standard => "hot"
+    Glacier | DeepArchive => "cold"
+    Unknown(v) => "new class ${v}"
+  }
+}
+
+fn main(os: Os) ! {
+  let a = StorageClass.from("GLACIER")
+  let b = StorageClass.from("EXPRESS_ONEZONE")
+  os.stdio.println("${a.value()} ${tier(a)}")
+  os.stdio.println("${b.value()} ${tier(b)}")
+  os.stdio.println("${StorageClass.known("EXPRESS_ONEZONE") == None} ${StorageClass.known("STANDARD") == Some(StorageClass.Standard)}")
+  os.stdio.println("${StorageClass.all().len()} ${b == StorageClass.Unknown("EXPRESS_ONEZONE")} ${b == a}")
+  os.stdio.println("${Code.from(404).value()} ${Code.from(418).value()} ${Code.all().len()}")
+  let text = "[{\"key\":\"a\",\"storage_class\":\"STANDARD\",\"code\":200},{\"key\":\"b\",\"storage_class\":\"EXPRESS_ONEZONE\",\"code\":418}]"
+  let objs = json.decode[List[Object]](text.bytes())?
+  for o in objs {
+    os.stdio.println("${o.key} ${tier(o.storage_class)} ${o.code.value()}")
+  }
+  os.stdio.println(json.encode(objs).to_str() ?? "")
+}

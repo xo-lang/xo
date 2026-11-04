@@ -454,7 +454,11 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
         continue
       }
       let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
-      if b.c.objs[obj].value_kind == 1 {
+      if vo.index == b.c.objs[obj].catch_all {
+        // the catch-all (decision 0493) is the value it keeps
+        let fv = b.add(Op.Payload, b.m.types[t].variants[vi].fields[0].ty, Aux.P(tag: vi, field: 0), [v])
+        b.retv(b.json_sub(acc, fv, vo.fields[0].ty))
+      } else if b.c.objs[obj].value_kind == 1 {
         b.retv(b.lit(acc, "${vo.ival}"))
       } else {
         b.retv(b.lit(acc, "\"${json_key_text(vo.sval)}\""))
@@ -1150,12 +1154,18 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       let n = b.json_rt("json_int", it, [d.src, d.tape, i])
       for vo in b.c.objs[obj].variants {
         let vi = b.m.variant_index(t, check.text(vo.name))
-        if vi < 0 {
+        if vi < 0 || vo.index == b.c.objs[obj].catch_all {
           continue
         }
         let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [n, b.cint(vo.ival)]))
         b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), []))
         b.if_then_end(no, join)
+      }
+      let ci = b.catch_all_index(t, obj)
+      if ci >= 0 {
+        // a value no variant names is the catch-all's (decision 0493)
+        b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: ci), [n]))
+        return
       }
       let m1 = b.call("str.concat_int", st, "", [b.const_str("unknown value "), n])
       let m2 = b.call("str.concat", st, "", [m1, b.const_str(" of enum ${ename}")])
@@ -1166,12 +1176,17 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     let sv = b.dec_str(d, i)
     for vo in b.c.objs[obj].variants {
       let vi = b.m.variant_index(t, check.text(vo.name))
-      if vi < 0 {
+      if vi < 0 || vo.index == b.c.objs[obj].catch_all {
         continue
       }
       let (no, join) = b.if_then_begin(b.call("str.eq", bt, "", [sv, b.const_str(check.text(vo.sval))]))
       b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), []))
       b.if_then_end(no, join)
+    }
+    let ci = b.catch_all_index(t, obj)
+    if ci >= 0 {
+      b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: ci), [sv]))
+      return
     }
     let m1 = b.call("str.concat", st, "", [b.const_str("unknown value `"), sv])
     let m2 = b.call("str.concat", st, "", [m1, b.const_str("` of enum ${ename}")])
@@ -1631,4 +1646,19 @@ fn (var b: Builder) c_call(x: Expr, ci: check.CallInfo) -> Int {
     _ => {}
   }
   b.rt(sym, rt, args)
+}
+
+/// The SSA variant index of the catch-all of the valued enum obj (lowered
+/// as t, decision 0493), or -1 when it has none.
+fn (b: Builder) catch_all_index(t: Int, obj: Int) -> Int {
+  let ca = b.c.objs[obj].catch_all
+  if ca < 0 {
+    return -1
+  }
+  for vo in b.c.objs[obj].variants {
+    if vo.index == ca {
+      return b.m.variant_index(t, check.text(vo.name))
+    }
+  }
+  -1
 }

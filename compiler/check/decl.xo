@@ -1331,7 +1331,9 @@ fn doc_moves(doc: parser.Doc?) -> Bool {
 /// value type, the variants (field-less, no type parameters), and each
 /// value as a constant of the value type, numbers the variants without
 /// one, and reports a repeated value (XO0428). XO0429 is any other fault
-/// of the declaration.
+/// of the declaration. The last variant may be the catch-all (decision
+/// 0493), `Unknown(value: Str)`: one field of the value type and no
+/// value; a variant with fields that is not one is XO0434.
 fn (var c: Checker) valued_enum(t: Int, ed: parser.EnumDecl) {
   let vt = match ed.value_type {
     Some(x) => x
@@ -1364,9 +1366,22 @@ fn (var c: Checker) valued_enum(t: Int, ed: parser.EnumDecl) {
   var next = 0
   var seen_i: Map[Int, Bytes] = {}
   var seen_s: Map[Bytes, Bytes] = {}
+  let vname = if kind == 1 { "Int" } else { "Str" }
   for (i, v) in ed.variants.indexed() {
-    if v.fields != None {
-      c.error("XO0429", v.name.span, "variant `${text(v.name.name)}` of a valued enum has fields; a valued enum's variants are field-less (decision 0269)")
+    if let Some(fs) = v.fields {
+      let last = i == ed.variants.len() - 1
+      var one = false
+      for vi in vs {
+        if vi.index == i {
+          one = fs.len() == 1 && !fs[0].from && vi.fields.len() == 1 && vi.fields[0].ty == want
+        }
+      }
+      if !last || !one || v.value != None {
+        let why = if !last { "it is not the last variant" } else if !one { "its fields are not one field of type `${vname}`" } else { "it has a value" }
+        c.error("XO0434", v.name.span, "variant `${text(v.name.name)}` of a valued enum has fields, so it must be its catch-all, the last variant with one field of the value type and no value (`${text(v.name.name)}(value: ${vname})`), but ${why} (decisions 0269, 0493)")
+        continue
+      }
+      c.objs[t].catch_all = i
       continue
     }
     var iv = next

@@ -237,7 +237,11 @@ fn (var b: Builder) json_val_body(ct: Int, t: Int, vt: Int) {
         continue
       }
       let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
-      if b.c.objs[obj].value_kind == 1 {
+      if vo.index == b.c.objs[obj].catch_all {
+        // the catch-all (decision 0493) is the value it keeps
+        let fv = b.add(Op.Payload, b.m.types[t].variants[vi].fields[0].ty, Aux.P(tag: vi, field: 0), [v])
+        b.retv(b.jv(vt, if b.c.objs[obj].value_kind == 1 { "Int" } else { "Str" }, [fv]))
+      } else if b.c.objs[obj].value_kind == 1 {
         b.retv(b.jv(vt, "Int", [b.cint(vo.ival)]))
       } else {
         b.retv(b.jv(vt, "Str", [b.const_str(check.text(vo.sval))]))

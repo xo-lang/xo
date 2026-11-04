@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+GLACIER cold
+EXPRESS_ONEZONE new class EXPRESS_ONEZONE
+true true
+3 true false
+404 418 2
+a hot 200
+b new class EXPRESS_ONEZONE 418
+[{"key":"a","storage_class":"STANDARD","code":200},{"key":"b","storage_class":"EXPRESS_ONEZONE","code":418}]
+--- stderr

@@ -634,6 +634,27 @@ test "a valued enum reports a duplicate value (XO0428) and an invalid one (XO042
   expect(ls.filter(fn(l) { l.contains("\"XO0429\"") }).len()) == 1
 }
 
+test "a valued enum's catch-all (decision 0493): a misplaced or mistyped one is XO0434, one built from a named variant's constant XO0435" {
+  let out = check_files(os, "c", [("c/main.xo", """
+    enum NotLast: Str { A = "a", U(value: Str), B = "b" }
+    enum WrongType: Str { A = "a", U(value: Int) }
+    enum HasValue: Str { A = "a", U(value: Str) = "u" }
+    enum Open: Str { A = "a", U(value: Str) }
+
+    fn f(s: Str) -> Open {
+      let _ = Open.U("new")
+      let _ = Open.known(s)
+      let _ = Open.all()
+      let _ = Open.from(s).value()
+      Open.U("a")
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.filter(fn(l) { l.contains("\"XO0434\"") }).len()) == 3
+  expect(ls.filter(fn(l) { l.contains("\"XO0435\"") }).len()) == 1
+  expect(ls.filter(fn(l) { l.contains("\"XO0401\"") }).len()) == 0
+}
+
 test "a bare const in a pattern matches by equality and a misspelled one is XO0430 (decision 0269)" {
   let out = check_files(os, "p", [("p/main.xo", """
     const OK = 200

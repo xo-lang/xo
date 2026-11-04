@@ -25,7 +25,10 @@ exhaustive `match`, and no `Str` form.
 ## Decision
 
 A valued enum may end with one catch-all variant: a variant with exactly
-one field, of the enum's value type, and no value.
+one field, of the enum's value type, and no value. Variant fields are
+named in Xo, so it is written `Unknown(value: Str)` (any field name); it
+is built and matched positionally, `StorageClass.Unknown("X")` and
+`Unknown(v)`.
 
 ```
 pub enum StorageClass: Str {
@@ -35,7 +38,7 @@ pub enum StorageClass: Str {
   StandardIa = "STANDARD_IA"
   IntelligentTiering = "INTELLIGENT_TIERING"
   DeepArchive = "DEEP_ARCHIVE"
-  Unknown(Str)
+  Unknown(value: Str)
 } derive Json
 ```
 
@@ -63,7 +66,7 @@ pub enum StorageClass: Str {
   `Unknown` sorts last, then by its value. Display prints the variant
   name for a named variant and `Unknown(v)` for the catch-all (the
   ordinary display of a variant with a field).
-- `Int` valued enums take the same form (`Unknown(Int)`), for Smithy's
+- `Int` valued enums take the same form (`Unknown(value: Int)`), for Smithy's
   `intEnum`.
 - Errors: a second catch-all, a catch-all that is not last, or one whose
   field is not the value type, each a new code beside `XO0428` and

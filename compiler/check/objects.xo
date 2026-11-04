@@ -122,6 +122,10 @@ pub struct Obj {
   pub variants: List[VariantInfo] = []
   /// A valued enum's value type (decision 0269): 0 none, 1 `Int`, 2 `Str`.
   pub value_kind: Int = 0
+  /// A valued enum's catch-all variant (decision 0493): the declaration
+  /// index of its last variant when that has one field of the value type
+  /// and keeps the values no other variant names; else -1.
+  pub catch_all: Int = -1
   /// Interface methods (Func objects).
   pub iface_meths: List[Int] = []
   /// Alias target or newtype underlying type.
