@@ -223,9 +223,17 @@ fn (v: Values) keys() -> List[Str] { v.ks }
 
 fn (v: Values) encode() -> Str {
   var out = StrBuilder.new()
-  for k in v.ks.sort() {
-    let ek = query_escape(k)
-    for x in v.all(k) {
+  // the keys sorted as indexes: a key's values are read at its index, no
+  // lookup of the key by name for each
+  var order: List[Int] = []
+  for i in 0..v.ks.len() {
+    order.push(i)
+  }
+  let ks = v.ks
+  order = order.sort_by(fn(i) { ks[i] })
+  for i in order {
+    let ek = query_escape(ks[i])
+    for x in v.vs[i] {
       if out.len() > 0 {
         out.write("&")
       }
