@@ -10,7 +10,7 @@
 - Timing: host 1 A/B bench/perf/archive zip 0.922 of before (0.913-0.930, n=6) for the three changes
 - Shipped in: not yet released
 
-`Encoder.generate` hands out the canonical codes in literal order from each length's first code (no list and no sort for each bit length), `bit_counts` keeps its six tables in one allocation, and `hash4` reads the four bytes with one load and a byte swap. The compressed bytes are unchanged. Every gzip, zlib, zip and png writer benefits.
+`Encoder.generate` hands out the canonical codes in literal order from each length's first code (no list and no sort for each bit length), `bit_counts` keeps its six tables in one allocation, and `hash4` reads the four bytes with one load and a byte swap; `find_match` reads the window bytes through one raw pointer (A/B zip 0.983 on its own, 0.977-0.994, n=15). The compressed bytes are unchanged. Every gzip, zlib, zip and png writer benefits.
 
 ## 2026-11-03: perf: the Adler-32 sum takes the modulus once per 5552 bytes
 

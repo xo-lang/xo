@@ -308,3 +308,4 @@
 - [std-twin-archive-2026-11-04.md](std-twin-archive-2026-11-04.md): archive zip_reader 1.147 -> about 0.95 of Go after the constant fixed Huffman decoder (host 1 A/B 0.857); unzip 0.995
 - [std-twin-template-2026-11-04.md](std-twin-template-2026-11-04.md): template render 1.355 -> 1.209 of Go after the inline Str and List drops; parse 0.892.
 - [json-value-direct-2026-11-04.md](json-value-direct-2026-11-04.md): json.to_value and from_value with no text (a codec per type; a tape written from the Value): jsonvalue to 0.144, from 0.757, toml encode 0.411, decode unchanged (host 1 --ab)
+- [std-twin-toml-2026-11-04.md](std-twin-toml-2026-11-04.md): toml encode 1.323 -> 0.483 of Go after json.to_value without text; decode 1.135.
