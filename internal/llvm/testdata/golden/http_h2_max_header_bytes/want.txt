@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+MAX_HEADER_LIST_SIZE 8512
+small: HEADERS; DATA ok
+many fields: HEADERS; DATA <h1>HTTP Error 431</h1>
+one long field: GOAWAY code 9
+--- stderr

@@ -518,8 +518,9 @@ pub fn srv_h2cfg(s: rthttp.Srv, streams: Int, frame: Int, conn_win: Int, stream_
   let a = srec(s)
   var blk = ld(a, hconn.SR_H2CFG)
   if blk == 0 {
-    blk = rt.heap_large(72)
+    blk = rt.heap_large(80)
     st(a, hconn.SR_H2CFG, blk)
+    st(blk, 72, 0)
   }
   st(blk, 0, if streams > 0 { streams } else { 250 })
   st(blk, 8, if frame >= 16384 && frame <= 16777215 { frame } else { 1048576 })
@@ -530,6 +531,17 @@ pub fn srv_h2cfg(s: rthttp.Srv, streams: Int, frame: Int, conn_win: Int, stream_
   st(blk, 48, if ping_wait > 0 { ping_wait } else { 0 })
   st(blk, 56, if write_to > 0 { write_to } else { 0 })
   st(blk, 64, if enc_table > 0 { enc_table } else { 0 })
+}
+
+/// Sets server s's HTTP/2 header list limit (SETTINGS_MAX_HEADER_LIST_SIZE
+/// and the decoder's, Go's maxHeaderListSize: with_max_header_bytes plus
+/// 320), the settings block made with the defaults when there is none.
+pub fn srv_h2_hlist(s: rthttp.Srv, n: Int) {
+  let a = srec(s)
+  if ld(a, hconn.SR_H2CFG) == 0 {
+    srv_h2cfg(s, 0, 0, 0, 0, 0)
+  }
+  st(ld(a, hconn.SR_H2CFG), 72, n)
 }
 
 /// Frees the continuation records of a list linked through word link.

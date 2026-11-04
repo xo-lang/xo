@@ -1,0 +1,143 @@
+// An HTTP/2 server's header list limit follows with_max_header_bytes, as
+// Go's maxHeaderListSize (MaxHeaderBytes plus 320): the server's SETTINGS
+// advertise 8192 + 320, a request whose fields add up past it is 431, a
+// single field longer than it ends the connection (GOAWAY
+// COMPRESSION_ERROR, the HPACK string limit), and one under it is served.
+// The native server once advertised and enforced 1048896 whatever the
+// limit (2026-11-04 differential against Go). Raw h2c frames, so only the
+// server is under test; every backend must agree (the Go backend is
+// net/http).
+use std/http
+
+struct Rd {
+  c: Conn
+  buf: Bytes
+}
+
+fn (var r: Rd) take(n: Int) -> Bytes? uses net {
+  while r.buf.len() < n {
+    match r.c.read(65536) {
+      Ok(Some(b)) => r.buf = r.buf + b
+      _ => return None
+    }
+  }
+  let out = r.buf[0..n]
+  r.buf = r.buf[n..r.buf.len()]
+  Some(out)
+}
+
+fn u8(b: Bytes, i: Int) -> Int { Int(b[i]) }
+
+fn u32(b: Bytes, i: Int) -> Int { (u8(b, i) << 24) | (u8(b, i + 1) << 16) | (u8(b, i + 2) << 8) | u8(b, i + 3) }
+
+fn frame(ty: Int, flags: Int, sid: Int, p: Bytes) -> Bytes {
+  var b = BytesBuilder.new()
+  let n = p.len()
+  for v in [n >> 16, n >> 8, n, ty, flags, sid >> 24, sid >> 16, sid >> 8, sid] {
+    b.write_byte(UInt8(v & 255))
+  }
+  b.write(p)
+  b.freeze()
+}
+
+/// An HPACK integer with a 7-bit prefix.
+fn hint(var b: BytesBuilder, v: Int) {
+  if v < 127 {
+    b.write_byte(UInt8(v))
+    return
+  }
+  b.write_byte(UInt8(127))
+  var r = v - 127
+  while r >= 128 {
+    b.write_byte(UInt8(r % 128 + 128))
+    r = r / 128
+  }
+  b.write_byte(UInt8(r))
+}
+
+/// A header block of literal fields without indexing.
+fn block(fields: List[(Str, Str)]) -> Bytes {
+  var b = BytesBuilder.new()
+  for (k, v) in [(":method", "GET"), (":scheme", "http"), (":authority", "localhost"), (":path", "/")] + fields {
+    b.write_byte(UInt8(0))
+    hint(b, k.len())
+    b.write_str(k)
+    hint(b, v.len())
+    b.write_str(v)
+  }
+  b.freeze()
+}
+
+fn ask(os: Os, addr: Str, what: Str, fields: List[(Str, Str)]) {
+  let c = os.net.dial(addr).or_fault("dial")
+  c.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
+  var r = Rd{c: c, buf: b""}
+  c.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".bytes() + frame(4, 0, 0, b"")).or_fault("preface")
+  var out: List[Str] = []
+  var sent = false
+  while {
+    let h = match r.take(9) {
+      Some(h) => h
+      None => {
+        out.push("EOF")
+        break
+      }
+    }
+    let n = (u8(h, 0) << 16) | (u8(h, 1) << 8) | u8(h, 2)
+    let ty = u8(h, 3)
+    let flags = u8(h, 4)
+    let p = r.take(n) ?? b""
+    if ty == 4 && (flags & 1) == 0 {
+      var i = 0
+      while i + 6 <= p.len() {
+        if ((u8(p, i) << 8) | u8(p, i + 1)) == 6 && what == "small" {
+          os.stdio.println("MAX_HEADER_LIST_SIZE ${u32(p, i + 2)}")
+        }
+        i += 6
+      }
+      c.write(frame(4, 1, 0, b"")).or_fault("ack")
+      if !sent {
+        c.write(frame(1, 5, 1, block(fields))).or_fault("headers")
+        sent = true
+      }
+    } else if ty == 0 {
+      out.push("DATA ${p[0..p.len().min(23)].to_str() ?? "?"}")
+      if (flags & 1) != 0 {
+        break
+      }
+    } else if ty == 7 {
+      out.push("GOAWAY code ${u32(p, 4)}")
+      break
+    } else if ty == 3 {
+      out.push("RST_STREAM code ${u32(p, 0)}")
+      break
+    } else if ty == 1 {
+      out.push("HEADERS")
+    }
+  }
+  c.close()
+  os.stdio.println("${what}: ${out.join("; ")}")
+}
+
+fn main(os: Os) {
+  var rt = http.router()
+  rt.handle("GET /", fn(q: http.Request) -> http.Response { http.text(200, "ok") })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, rt).with_protocols(#{http.Protocol.UnencryptedHttp2}).with_max_header_bytes(8192)
+  let addr = srv.addr()
+  scope s {
+    s.spawn_background(fn() {
+      match srv.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    ask(os, addr, "small", [("x-a", "a".repeat(4000))])
+    var many: List[(Str, Str)] = []
+    for i in 0..20 {
+      many.push(("x-f${i}", "b".repeat(500)))
+    }
+    ask(os, addr, "many fields", many)
+    ask(os, addr, "one long field", [("x-big", "c".repeat(12000))])
+  }
+}

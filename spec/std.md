@@ -1854,7 +1854,7 @@ fn (s: Server) with_tls(certs: List[TlsCert]) -> Server   // HTTPS (4.6)
 fn (s: Server) with_read_timeout(d: Duration) -> Server          // Go's ReadTimeout: a request's head and body, from its first byte
 fn (s: Server) with_read_header_timeout(d: Duration) -> Server   // Go's ReadHeaderTimeout
 fn (s: Server) with_idle_timeout(d: Duration) -> Server          // Go's IdleTimeout: the wait for a kept alive connection's next request
-fn (s: Server) with_max_header_bytes(n: Int) -> Server           // Go's MaxHeaderBytes (plus 4096 of slack; 1 MB when 0): a longer head is 431
+fn (s: Server) with_max_header_bytes(n: Int) -> Server           // Go's MaxHeaderBytes (plus 4096 of slack; 1 MB when 0): a longer head is 431; HTTP/2's header list limit is n plus 320 (Go's maxHeaderListSize)
 fn (s: Server) with_max_body(n: Int) -> Server                   // the body read before a handler (64 MB when 0): a longer one is 413
 fn (s: Server) with_protocols(p: Set[Protocol]) -> Server        // Go's Server.Protocols (4.6, decision 0434)
 fn (s: Server) with_h2_config(c: H2Config) -> Server             // Go's Server.HTTP2 (4.6)

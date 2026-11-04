@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-04: security: an HTTP/2 server's header list limit follows with_max_header_bytes
+
+- Kind: security
+- Commit: this push
+- Found by: an H2Config differential against Go's net/http for the owner's v0.38.1 "not tested yet" list (Xo Lang 2, a raw frame probe on linux/arm64)
+- Go reference: net/http's http2 serverConn.maxHeaderListSize (MaxHeaderBytes plus 10 fields of 32 bytes) for SETTINGS_MAX_HEADER_LIST_SIZE, the header block budget and the HPACK string limit
+- Test: golden http_h2_max_header_bytes (every backend)
+- Shipped in: not yet released
+
+The native HTTP/2 server advertised and enforced a header list of 1,048,896 bytes whatever `with_max_header_bytes` said, so a server limited to 8 KB of headers on HTTP/1.1 took 1 MB per request on HTTP/2. It now uses `with_max_header_bytes` plus 320, as Go: a request whose fields add up past it gets 431, and a single field longer than it ends the connection with GOAWAY COMPRESSION_ERROR. A server with no `with_max_header_bytes` keeps 1,048,896.
+
 ## 2026-11-04: fix: the Go backend's "absolute URL required" message keeps a hostless URL as written
 
 - Kind: fix

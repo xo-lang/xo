@@ -3,7 +3,8 @@
 // is spoken over TLS when ALPN agrees on "h2"; cleartext stays HTTP/1.1.
 // What a peer observes copies net/http's bundled HTTP/2 (Go 1.26,
 // h2_bundle.go): its SETTINGS (MAX_FRAME_SIZE 1 MiB, 250 concurrent
-// streams, MAX_HEADER_LIST_SIZE 1048896, a 4096 byte HPACK table, 1 MiB
+// streams, MAX_HEADER_LIST_SIZE 1048896 (with_max_header_bytes plus 320
+// when set), a 4096 byte HPACK table, 1 MiB
 // stream and connection windows), the request checks and their stream
 // and connection errors, 431 for a header list over the limit and 400
 // for connection specific fields, responses as
@@ -194,12 +195,15 @@ const C_LAST = 672
 const C_PDEAD = 680
 const C_WTO = 688
 const C_ETAB = 696
+/// SETTINGS_MAX_HEADER_LIST_SIZE: the server's with_max_header_bytes plus
+/// 320 (Go's maxHeaderListSize), MAX_HLIST when it set none
+const C_HLIST = 704
 /// wasm only (decision 0447 R2f): the park word the connection's fiber
 /// waits on (wake, the reader task) and the one its reader task waits on
 /// for the fiber to have read; past the native record's end (c_size)
-const C_WPARK = 704
-const C_WREAD = 712
-const C_SIZE = 704 // own: this module\'s connection record, not the context
+const C_WPARK = 712
+const C_WREAD = 720
+const C_SIZE = 712 // own: this module\'s connection record, not the context
 
 /// The connection record's size: wasm's has the park words after it.
 fn c_size() -> Int { if target.arch == TargetArch.Wasm32 { C_SIZE + 16 } else { C_SIZE } }
@@ -823,6 +827,7 @@ pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
   sto(c, C_PTO, if cfg != 0 && ld(cfg, 48) > 0 { ld(cfg, 48) } else { 15000000000 })
   sto(c, C_WTO, if cfg != 0 { ld(cfg, 56) } else { 0 })
   sto(c, C_ETAB, if cfg != 0 { ld(cfg, 64) } else { 0 })
+  sto(c, C_HLIST, if cfg != 0 && ld(cfg, 72) > 0 { ld(cfg, 72) } else { MAX_HLIST })
   sto(c, C_LAST, now())
   sto(c, C_PEER_FRAME, 16384)
   sto(c, C_PEER_WIN, 65535)
@@ -833,7 +838,7 @@ pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
   fh(c, 30, T_SETTINGS, 0, 0)
   put_setting(c, S_MAX_FRAME, ld(c, C_MAXFR))
   put_setting(c, S_MAX_STREAMS, ld(c, C_MAXSTR))
-  put_setting(c, S_MAX_HLIST, MAX_HLIST)
+  put_setting(c, S_MAX_HLIST, ld(c, C_HLIST))
   put_setting(c, S_HEADER_TABLE, ld(c, C_TABLE))
   put_setting(c, S_INITIAL_WINDOW, ld(c, C_WINSTR))
   sto(c, C_UNACKED, 1)
@@ -1652,7 +1657,7 @@ fn (var h: H2Conn) frame(hp: Int, p: Int) {
       sto(c, C_HB_DEP, dep)
       h.names = []
       h.values = []
-      sto(c, C_HF, MAX_HLIST)
+      sto(c, C_HF, ld(c, C_HLIST))
       sto(c, C_HF + 8, 0)
       sto(c, C_HF + 16, 0)
       sto(c, C_HF + 24, 0)
@@ -1683,7 +1688,7 @@ fn (var h: H2Conn) frame(hp: Int, p: Int) {
 /// trailers), and a 100 Continue it asks for.
 fn (var h: H2Conn) fragment() {
   let c = h.c
-  let f = h.dec.decode_part(bstr(c, C_HB), on(c, C_HFIRST), MAX_HLIST)
+  let f = h.dec.decode_part(bstr(c, C_HB), on(c, C_HFIRST), ld(c, C_HLIST))
   let t = http1.h2_target(f.data, f.lens)
   lk(c)
   sto(c, C_DEC_PENDING, 0)
@@ -1750,7 +1755,7 @@ fn (var h: H2Conn) block_end(ok: Bool, used: Int, flags: Int) {
     rt.mem_move(ld(c, C_HB), ld(c, C_HB) + used, hn - used)
   }
   sto(c, C_HB + 8, hn - used)
-  if ld(c, C_HB + 8) > 2 * (MAX_HLIST + 8) {
+  if ld(c, C_HB + 8) > 2 * (ld(c, C_HLIST) + 8) {
     conn_err(c, E_COMPRESSION)
     return
   }

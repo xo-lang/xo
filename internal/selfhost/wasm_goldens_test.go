@@ -131,6 +131,7 @@ var componentGoldensNotRun = map[string]string{
 	"http_duplex":              "reads and writes a stream at once; handle_stream on the input-stream is not decided",
 	"http_duplex_h2tls":        "http_duplex over HTTP/2 on TLS; a component serves neither",
 	"http_h2_config":           "HTTP/2 server settings, which the host owns",
+	"http_h2_max_header_bytes": "HTTP/2 frames on the wire, which the host owns",
 	"http_h2c":                 "HTTP/2 on the wire, which the host owns",
 	"http_h2c_sniff":           "HTTP/2 on the wire, which the host owns",
 	"http_handler_fault":       "its router only faults; http_fault covers that",

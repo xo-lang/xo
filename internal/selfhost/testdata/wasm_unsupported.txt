@@ -43,6 +43,7 @@ tls_mtls # the wasm backend does not support the network (`rt.net_listen`): WASI
 http_h2c # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_h2c_sniff # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_h2_config # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_h2_max_header_bytes # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_tls_state # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_tls_keys # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_pipe # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
