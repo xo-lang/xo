@@ -34,7 +34,7 @@ fn escape_string(s: Str) -> Str {
   i = 0
   while i < n {
     let c = b[i]
-    if c == 38 || c == 60 || c == 62 || c == 39 || c == 34 {
+    if ESC_EXTRA[Int(c)] != 0 {
       if i > start {
         out.write(b[start..i])
       }
