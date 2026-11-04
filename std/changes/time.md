@@ -1,5 +1,16 @@
 # std/time changes
 
+## 2026-11-03: perf: format scans the layout once and writes each field as it is read
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/time format 5.4 of Go's wall on host 1 (std-twin-rows2-2026-11-03.md); the Mac profile put `layout_items` at 49 percent
+- Go reference: time/format.go appendFormat (one pass over the layout, the date fields computed once)
+- Test: the time corpus (arm64, LLVM, Go backend), twincheck bench/perf/time
+- Timing: Mac iteration (not evidence): format 189 to 145 ms (Go 53), format_layout unchanged at 69; host row follows in std-twin-time-2026-11-03.md
+
+`time.format` with a layout text no longer builds a list of items: `format_stream` computes the instant's fields once and, reading the layout, writes literals and fields into one BytesBuilder through the same field switch as `format_items` (kept for `Layout.format`). A layout that is not well formed (unmatched brace, unknown field, bad argument, `{hour12}` without `{ampm}`) falls back to `layout_items`, so the fault text is unchanged. A per-item function with the fields in a struct was tried first and made the const Layout path slower.
+
 ## 2026-11-03: perf: a layout string is parsed with fewer allocations
 
 - Kind: perf
