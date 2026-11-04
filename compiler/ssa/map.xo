@@ -335,30 +335,6 @@ fn (var b: Builder) map_rebuild(t: Int) -> Str {
   let nk = b.local()
   let nv = b.local()
   let nl = b.local()
-  // room for the entries the new table takes before the next rebuild
-  // (it is at least 8 and twice want, rebuilt past 3/4 full, so at most
-  // max(6, 1.5 * table) entries): 2 * want + 6, so the puts until then do
-  // not grow the lists (a 5 field HTTP header Map grew each at the fifth)
-  let twice = b.add(Op.Mul, it, Aux.None, [want, b.cint(2)])
-  let room = b.add(Op.Add, it, Aux.None, [twice, b.cint(6)])
-  b.write_var(nk, b.call("list.new", klt, "", [room]))
-  b.write_var(nv, b.call("list.new", vlt, "", [room]))
-  b.write_var(nl, b.call("list.new", llt, "", [room]))
-  let iv = b.local()
-  let n0 = b.call("list.len", it, "", [keys])
-  let (i, head, exit) = b.for_up_to_begin(n0, iv)
-  let (no, join) = b.if_then_begin(b.map_live(live, i))
-  let ck = b.read(nk)
-  let ek = b.call("list.index", kt, "", [keys, i])
-  b.write_var(nk, b.call("list.push", klt, "", [ck, ek]))
-  let cv0 = b.read(nv)
-  let ev = b.call("list.index", vt, "", [vals, i])
-  b.write_var(nv, b.call("list.push", vlt, "", [cv0, ev]))
-  let cl = b.read(nl)
-  let tr = b.cbool(true)
-  b.write_var(nl, b.call("list.push", llt, "", [cl, tr]))
-  b.if_then_end(no, join)
-  b.for_up_to_end(i, iv, head, exit)
   // the table: a power of two, at least 8, at least twice want
   let cv = b.local()
   b.write_var(cv, b.cint(8))
@@ -378,11 +354,38 @@ fn (var b: Builder) map_rebuild(t: Int) -> Str {
   b.seal(h2)
   b.seal(done)
   b.s.cur = done
+  let capn = b.read(cv)
+  // room for every entry the table takes before the next rebuild (past
+  // 3/4 full: 3/4 of the table, at least 1.5 * want, under 3 * want), so
+  // no put until then grows the lists (a 5 field HTTP header Map grew
+  // each at the fifth; with decision 0452's 1.25x curve a 1M entry Map
+  // grew them twice between rebuilds)
+  let room = b.add(Op.Add, it, Aux.None, [b.add(Op.Shr, it, Aux.None, [b.add(Op.Mul, it, Aux.None, [capn, b.cint(3)]), b.cint(2)]), b.cint(1)])
+  b.write_var(nk, b.call("list.new", klt, "", [room]))
+  b.write_var(nv, b.call("list.new", vlt, "", [room]))
+  b.write_var(nl, b.call("list.new", llt, "", [room]))
+  let iv = b.local()
+  let n0 = b.call("list.len", it, "", [keys])
+  let (i, head, exit) = b.for_up_to_begin(n0, iv)
+  let (no, join) = b.if_then_begin(b.map_live(live, i))
+  let ck = b.read(nk)
+  let ek = b.call("list.index", kt, "", [keys, i])
+  b.write_var(nk, b.call("list.push", klt, "", [ck, ek]))
+  let cv0 = b.read(nv)
+  let ev = b.call("list.index", vt, "", [vals, i])
+  b.write_var(nv, b.call("list.push", vlt, "", [cv0, ev]))
+  let cl = b.read(nl)
+  let tr = b.cbool(true)
+  b.write_var(nl, b.call("list.push", llt, "", [cl, tr]))
+  b.if_then_end(no, join)
+  b.for_up_to_end(i, iv, head, exit)
   let slt = b.m.types[t].fields[3].ty
   let sv = b.local()
-  b.write_var(sv, b.call("list.new", slt, "", []))
+  // the table at its size: pushed into a list with no room, a 2M slot
+  // table grew about 40 times by decision 0452's 1.25x curve (map1M 1.10x
+  // from 0.35.0 to 0.36.0, 2026-11-04)
+  b.write_var(sv, b.call("list.new", slt, "", [capn]))
   let iv2 = b.local()
-  let capn = b.read(cv)
   let (j, head2, exit2) = b.for_up_to_begin(capn, iv2)
   let cs = b.read(sv)
   let z = b.cint(0)

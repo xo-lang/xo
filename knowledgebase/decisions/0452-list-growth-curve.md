@@ -108,3 +108,17 @@ under XO_MAX_MEM=512M (about 1.3 GB reserved) runs on darwin and linux/arm64, an
 stops with the budget's error (617 and 514 MB mapped); golden mem_budget_growth holds a 24 MB list
 under 64 MB. Linux's default overcommit (heuristic, mode 0) and mode 1 allow the reservation; in
 strict mode 2 it counts toward the commit limit (not measured: the hosts run mode 1).
+
+## Addendum (2026-11-04): a Map's rebuild
+
+The owner's v0.36.0 evaluation measured map1M 1.13 times 0.35.0's time.
+A bisect over std's commits with the 0.36.0 xo (linux/amd64, micro13's
+own millis) found this decision's commit 188398ede: the map's rebuild
+filled its new hash table by pushing slots into a list with no room, so
+the slower curve resized a 2M slot table about 40 times per rebuild. A
+list whose final length is known is now made at that length (the slot
+table; the lists path's entry lists sized to the next rebuild): map1M
+0.905 of main's wall, 0.902 of its max RSS (bench --ab, 20 rounds). The
+curve stays; code that knows a length makes the list with it, as Go's
+runtime makes a map's buckets.
+

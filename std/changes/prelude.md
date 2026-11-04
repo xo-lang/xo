@@ -75,6 +75,23 @@ micro +6 MB (linux) and +9 MB (darwin), putget +0.8 and +1.9 MB, push
 40.0 to 29.6 MB (linux) and 29.5 to 30.0 (darwin). arm64 keeps 0448's
 rule (no speed to gain there; its RSS would have risen the same).
 
+## 2026-11-04: perf: a Map's rebuild makes its slot table at its size
+
+- Kind: perf
+- Commit: this commit
+- Found by: the owner's v0.36.0 evaluation (map1M 1.13x of 0.35.0), bisected over std with the 0.36.0 xo to 188398ede (decision 0452's list growth curve)
+- Go reference: runtime/map.go makes a grown map's buckets at their size (makeBucketArray)
+- Test: arm64 TestGoldenRun map goldens, test/codegen; bench/perf/micro13 map1M
+- Timing: linux/amd64, micro13 map1M, xo bench --ab 20 rounds, main against the change: wall 0.905 (0.88 to 0.953), max RSS 0.902; the program's own millis (21 runs) 0.35.0 73/71, main 85/82, the change 76/72 (median/min); darwin unchanged (about 50 ms, 48 MB)
+
+xo.map.rebuildk (and the lists path's xo.map.rebuild) filled the new
+hash table by pushing its slots into a list made with no room. With
+decision 0452's 1.25x growth past 256 elements, a table of 2M slots
+grew about 40 times while it was filled, once per rebuild, where
+doubling grew it about 21 times. The table is now made at its size,
+and the lists path's entry lists get room for every entry until the
+next rebuild (3/4 of the table, not 2 * want + 6).
+
 ## 2026-11-04: perf: wasm modules leave out Linux's vDSO clock lookup
 
 - Kind: perf (size)

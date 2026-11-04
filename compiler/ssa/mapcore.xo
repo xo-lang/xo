@@ -148,7 +148,9 @@ fn (var b: Builder) map_rebuildk(t: Int) -> Str {
   b.seal(done)
   b.s.cur = done
   let sv = b.local()
-  b.write_var(sv, b.call("list.new", slt, "", []))
+  // the table at its size: pushed into a list with no room, a 2M slot
+  // table grew about 40 times by decision 0452's 1.25x curve
+  b.write_var(sv, b.call("list.new", slt, "", [b.read(cv)]))
   let iv2 = b.local()
   let (j, head2, exit2) = b.for_up_to_begin(b.read(cv), iv2)
   b.write_var(sv, b.call("list.push", slt, "", [b.read(sv), b.cint(0)]))
