@@ -2214,7 +2214,8 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   not verify is `Protocol("Get \"https://...\": tls: failed to verify
   certificate: x509: ...")` (`certificate signed by unknown authority`,
   `certificate is valid for a, b, not c`, `certificate has expired or is
-  not yet valid: ...`), a server answering plain HTTP is `Protocol("...:
+  not yet valid: ...`, whose current time is in the local zone, as Go's,
+  and in UTC on wasm), a server answering plain HTTP is `Protocol("...:
   http: server gave HTTP response to HTTPS client")`, and an alert of the
   server (no shared cipher suite, a required client certificate) is
   `Connect("remote error: tls: handshake failure")`.

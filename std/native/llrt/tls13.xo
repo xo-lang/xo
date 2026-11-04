@@ -880,8 +880,13 @@ pub fn zone_of(off: Int, now: Int) -> Int { if off == ZONE_LAZY { local_offset(n
 
 /// Go's time.Local offset from UTC at now: TZ ("" or UTC: UTC; else that
 /// zone from the host's database), else the machine's zone, else UTC.
-/// tzrules.xo, not tz.xo: the program's zone table is std/time's.
+/// tzrules.xo, not tz.xo: the program's zone table is std/time's. On
+/// wasm always UTC (the text says Z): a host rarely preopens a zone
+/// database, and the rules were 26 KB of an HTTPS client component.
 pub fn local_offset(now: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    return 0
+  }
   let tzv = process.env_get("TZ")
   if !tzv.is_empty() {
     let name = tzv[0].trim_prefix(":")

@@ -1,5 +1,22 @@
 # std/tls changes
 
+## 2026-11-04: change: on wasm a certificate's expiry error shows the current time in UTC
+
+- Kind: behavior (wasm only), size
+- Commit: this push
+- Found by: the wasm component size breakdown (decision 0447 queue, component size): tzrules was 26 KB of an HTTPS
+  client component, reached only by this message's zone; approved by the Lead, 2026-11-04
+- Go reference: crypto/x509's CertificateInvalidError text (the current time in time.Local; on wasip1 Go reads the
+  zone database through the WASI file system, usually absent, so UTC)
+- Test: the tls and x509 corpora on wasm, TestWasm* goldens
+- Size: an HTTPS client (xo-fetch) 2,132,945 to 2,081,099 bytes (-51,846; the zone rules, host database reader and TZif parser)
+- Shipped in: not yet released
+
+On wasm, `tls13.local_offset` answers 0 without reading TZ or a zone
+database, so "certificate has expired or is not yet valid: current time
+...Z is after ..." always shows UTC (RFC 3339's Z), and the zone rules are
+no longer compiled into a component. Native targets are unchanged.
+
 ## 2026-11-03: feature: TLS in a wasip2/wasm command
 
 - Kind: feature
