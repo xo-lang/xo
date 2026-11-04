@@ -1,0 +1,34 @@
+// std/sql row decoding against database/sql's Scan (twin.go.txt): a table
+// of 1,000 rows of five columns (an id, a name, a score, a flag and a
+// count) read whole with query_as 300 times, summing the fields. Xo reads
+// std/sql's in memory database, Go a stub driver that serves the same
+// rows, so the row is the unit compared, not an engine. `none` builds the
+// table and stops. Usage: `<program> none|scan`. Prints `<workload>
+// <checksum>`; the twin prints the same.
+use std/sql
+
+struct Item {
+  id: Int
+  name: Str
+  score: Float
+  active: Bool
+  n: Int
+} derive SqlRow
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "none"
+  let db = sql.memory("CREATE TABLE items (id INT, name TEXT, score REAL, active BOOL, n INT)")?
+  for i in 0..1000 {
+    db.exec("INSERT INTO items VALUES ($1, $2, $3, $4, $5)", [sql.int(i), sql.str("item-${i}"), sql.float(Float(i) * 0.5), sql.bool(i % 3 == 0), sql.int(i * 7 % 101)])?
+  }
+  var sum = 0
+  if w == "scan" {
+    for _ in 0..300 {
+      let rows = db.query_as[Item]("SELECT * FROM items ORDER BY id")?
+      for r in rows {
+        sum += r.id + r.name.len() + Int(r.score) + (if r.active { 1 } else { 0 }) + r.n
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

@@ -1,0 +1,81 @@
+package main
+
+import (
+	"database/sql"
+	"database/sql/driver"
+	"fmt"
+	"io"
+	"os"
+)
+
+type drv struct{}
+
+func (drv) Open(string) (driver.Conn, error) { return conn{}, nil }
+
+type conn struct{}
+
+func (conn) Prepare(q string) (driver.Stmt, error) { return stmt{}, nil }
+func (conn) Close() error                          { return nil }
+func (conn) Begin() (driver.Tx, error)             { return nil, nil }
+
+type stmt struct{}
+
+func (stmt) Close() error                               { return nil }
+func (stmt) NumInput() int                              { return -1 }
+func (stmt) Exec([]driver.Value) (driver.Result, error) { return nil, nil }
+func (stmt) Query([]driver.Value) (driver.Rows, error)  { return &rows{}, nil }
+
+type rows struct{ i int }
+
+func (*rows) Columns() []string { return []string{"id", "name", "score", "active", "n"} }
+func (*rows) Close() error      { return nil }
+func (r *rows) Next(dest []driver.Value) error {
+	if r.i >= 1000 {
+		return io.EOF
+	}
+	i := r.i
+	dest[0] = int64(i)
+	dest[1] = fmt.Sprintf("item-%d", i)
+	dest[2] = float64(i) * 0.5
+	dest[3] = i%3 == 0
+	dest[4] = int64(i * 7 % 101)
+	r.i++
+	return nil
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sql.Register("stub", drv{})
+	db, err := sql.Open("stub", "")
+	if err != nil {
+		panic(err)
+	}
+	sum := 0
+	if w == "scan" {
+		for k := 0; k < 300; k++ {
+			rs, err := db.Query("SELECT * FROM items ORDER BY id")
+			if err != nil {
+				panic(err)
+			}
+			for rs.Next() {
+				var id, n int
+				var name string
+				var score float64
+				var active bool
+				if err := rs.Scan(&id, &name, &score, &active, &n); err != nil {
+					panic(err)
+				}
+				a := 0
+				if active {
+					a = 1
+				}
+				sum += id + len(name) + int(score) + a + n
+			}
+			rs.Close()
+		}
+	}
+	fmt.Println(w, sum)
+}
