@@ -194,7 +194,10 @@ fn (var g: G) drop_thunk(t: Int) -> Str {
     b.write("\tb ${sym}_body\n\t.cfi_endproc\n\n")
   }
   let lbl = "${sym}_body"
-  b.write("${g.fn_align()}${lbl}:\n\t.cfi_startproc\n")
+  // the body is a function of its own: with only the entries named, a
+  // split build (an edit build's halves) made it part of the last entry's
+  // atom, and the Mach-O link found no FDE for its DWARF mode entry
+  b.write("${g.fn_align()}${g.alias_sub(key, "body")}${lbl}:\n\t.cfi_startproc\n")
   if inl {
     b.write("\ttbnz x16, #0, ${lbl}_ret\n")
   }

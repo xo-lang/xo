@@ -1118,3 +1118,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [gate-passes-on-inline-fallback.md](gate-passes-on-inline-fallback.md): Observed: a module that fails the rc verifier builds without inlining; goldens run strict but must include the shape inlined into a caller
 - [wasm-parking-rt-call-needs-resume-point.md](wasm-parking-rt-call-needs-resume-point.md): a wasm runtime call that parks its task needs a resume point and suspend check in call.xo and a place in gen.xo's blocks test, or the caller takes its dummy results as real (rt10, 2026-11-04)
 - [wasm-frame-stack-resident.md](wasm-frame-stack-resident.md): the wasm memory-frame stack was one 16 MB resident block per instance; it now grows in chunks (2026-11-04)
+- [helper-body-needs-own-symbol.md](helper-body-needs-own-symbol.md): a helper's shared body without its own symbol joins the last entry's atom in a split build; darwin link fails with no FDE for the DWARF mode function
