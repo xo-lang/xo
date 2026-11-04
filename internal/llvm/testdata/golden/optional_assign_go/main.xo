@@ -1,0 +1,73 @@
+// A non-optional value converted to `T?` where the Go backend wrapped
+// nothing (aws report entry 6, 2026-11-04): an assignment, a field init,
+// an argument and a return of `x ?? return Err(..)`, a comparison, and a
+// Time, into an optional field, local, parameter or result.
+
+struct Out {
+  byte: Int? = None
+  flag: Bool? = None
+  at: Time? = None
+  name: Str? = None
+}
+
+fn show(o: Out) -> Str {
+  "${o.byte ?? -1} ${o.flag ?? false} ${o.at != None} ${o.name ?? "-"}"
+}
+
+fn takes(b: Int?, f: Bool?) -> Str {
+  "${b ?? -1}/${f ?? false}"
+}
+
+fn parse(hv: Str, s: Str) -> Out ! Str {
+  var out = Out{}
+  out.byte = (Int.parse(hv) ?? return Err("bad byte ${hv}"))
+  out.flag = (s == "true")
+  out.at = Time.from_unix(0)
+  out.name = s.trim()
+  Ok(out)
+}
+
+fn init(hv: Str) -> Out ! Str {
+  Ok(Out{byte: (Int.parse(hv) ?? return Err("bad")), flag: (hv == "7"), at: Time.from_unix(1)})
+}
+
+fn result(hv: Str) -> Int? ! Str {
+  Ok(Int.parse(hv) ?? return Err("no"))
+}
+
+fn cmp(a: Int, b: Int) -> Bool? {
+  a < b
+}
+
+fn arg(hv: Str) -> Str ! Str {
+  let r = takes((Int.parse(hv) ?? return Err("x")), (hv == "3"))
+  Ok(r)
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  match parse("12", "true") {
+    Ok(o) => io.println(show(o))
+    Err(e) => io.println("err ${e}")
+  }
+  match parse("zz", "true") {
+    Ok(o) => io.println(show(o))
+    Err(e) => io.println("err ${e}")
+  }
+  match init("7") {
+    Ok(o) => io.println(show(o))
+    Err(e) => io.println("err ${e}")
+  }
+  match result("5") {
+    Ok(v) => io.println("result ${v ?? -1}")
+    Err(e) => io.println("err ${e}")
+  }
+  io.println("cmp ${cmp(1, 2) ?? false} ${cmp(3, 2) ?? true}")
+  match arg("3") {
+    Ok(s) => io.println("arg ${s}")
+    Err(e) => io.println("err ${e}")
+  }
+  var local: Bool? = None
+  local = (1 == 1)
+  io.println("local ${local ?? false}")
+}

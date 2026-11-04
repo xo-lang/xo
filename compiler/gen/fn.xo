@@ -337,6 +337,12 @@ fn (g: Gen) nat(e: Expr) -> Int {
   if t >= 0 {
     return t
   }
+  if let ParenExpr(x: x, ..) = e {
+    // `(x ?? return Err(..))` or `(a == b)` into a `T?`: the checker
+    // records the conversion's type on the parentheses, and the value's
+    // own type on what they hold (aws report entry 6, 2026-11-04)
+    return g.nat(x)
+  }
   g.info_type(e)
 }
 

@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+12 true true true
+err bad byte zz
+7 true true -
+result 5
+cmp true false
+arg 3/true
+local true
+--- stderr
