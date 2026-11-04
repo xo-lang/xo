@@ -3203,6 +3203,68 @@ func TestFrontCacheClosureMadeMapHelper(t *testing.T) {
 	}
 }
 
+// TestFrontCacheTypeNaming: an entry names the types it uses as the
+// program that recorded it did, and a user type two loaded modules both
+// declare is named by its module path (ssa ambiguous_type_names), so a
+// program that loads only one of them names it otherwise and reads
+// other entries (2026-11-04: aws's sigv4 bodies recorded in `xo test
+// ./config`, where config.Options sits beside sigv4.Options, did not
+// replay in `xo test ./credentials/stscreds`; ssa fecache.xo names_key).
+func TestFrontCacheTypeNaming(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fenames-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	files := map[string]string{
+		"xo.mod":       "module fenames\n",
+		"sig/sig.xo":   "pub struct Options {\n  pub region: Str\n  pub service: Str\n}\n\nfn cred_scope(date: Str, opts: Options) -> Str {\n  \"${date}/${opts.region}/${opts.service}\"\n}\n\npub fn sign(date: Str, opts: Options) -> Str {\n  let o = Options{region: opts.region, service: \"${opts.service}!\"}\n  cred_scope(date, o)\n}\n",
+		"conf/conf.xo": "use fenames/sig\n\npub struct Options {\n  pub region: Str\n}\n\npub fn signed(o: Options) -> Str {\n  sig.sign(\"20261104\", sig.Options{region: o.region, service: \"sts\"})\n}\n",
+		// both Options loaded: sig's is named fenames/sig.Options
+		"a/main.xo": "use fenames/conf\n\nfn main(os: Os) {\n  os.stdio.println(conf.signed(conf.Options{region: \"us-east-1\"}))\n}\n",
+		// only sig's: named Options
+		"b/main.xo": "use fenames/sig\n\nfn main(os: Os) {\n  os.stdio.println(sig.sign(\"20261104\", sig.Options{region: \"eu-west-1\", service: \"s3\"}))\n}\n",
+	}
+	for name, text := range files {
+		if err := os.MkdirAll(filepath.Join(src, filepath.Dir(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache := filepath.Join(work, "cache")
+	for _, p := range []struct{ dir, want string }{{"a", "20261104/us-east-1/sts!"}, {"b", "20261104/eu-west-1/s3!"}} {
+		bin := filepath.Join(work, p.dir+".bin")
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", bin, "./"+p.dir))
+		cmd.Dir = src
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_BIN_CACHE=off", "XO_WHOLE_BUILD=off", "XO_SHARED_PACK=off", "XO_FE_KEEP_DIR="+filepath.Join(work, "kept"))
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: xo build: %v\n%s", p.dir, err, log)
+		}
+		if strings.Contains(string(log), "did not replay") {
+			t.Errorf("%s: a front end cache entry did not replay:\n%s", p.dir, log)
+		}
+		out, err := testtmp.Guard(exec.Command(bin)).Output()
+		if err != nil || strings.TrimSpace(string(out)) != p.want {
+			t.Errorf("%s: run: %v: %q, want %q", p.dir, err, out, p.want)
+		}
+	}
+}
+
 // TestFirstEditAfterColdParts: a program of more than PART_PACK_FIRST
 // parts but under PART_PACK_FIRST_BYTES (the HTTP server, 35) packs its
 // parts on its build target's first build, so the first edit after a

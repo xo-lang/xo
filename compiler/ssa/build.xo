@@ -179,6 +179,8 @@ pub struct Builder {
   nclos: Int = 0
   /// The names of types two loaded user modules both declare.
   ambiguous: Map[Str, Bool] = {}
+  /// The front end cache's view of ambiguous (fecache.xo names_key).
+  names_key: Str = ""
   /// The modules whose functions and constants are named by their path,
   /// not their default name, since another module of the program has
   /// that name (mod_prefix).
@@ -529,6 +531,7 @@ fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool,
 pub fn new_builder(c: check.Checker, line_root: Str) -> Builder {
   var b = Builder{c: c, line_root: line_root}
   b.ambiguous = b.ambiguous_type_names()
+  b.names_key = names_key(b.ambiguous)
   b.path_named = b.path_named_mods()
   b
 }
@@ -852,7 +855,8 @@ fn (var b: Builder) run_job_fe(j: Job) {
               // the module is half committed: the driver drops this build
               // and builds again without the entry (xo bcache.xo)
               b.fe.broken = false
-              b.fe.bad.push("${key} (${b.m.funcs[fi].name}, recorded by xo ${b.fe.last_recorder})")
+              b.fe.bad.push("${key} (${b.m.funcs[fi].name}, recorded by xo ${b.fe.last_recorder}: ${b.fe.broken_why})")
+              b.fe.broken_why = ""
             }
             b.fe.hits += 1
             b.fe.body_entries[fi] = e
@@ -939,8 +943,10 @@ fn (var b: Builder) run_job_fe(j: Job) {
       // only where it was recorded)
       b.fe.cur_line = 0
       if !b.fe_replay(d, cf) || b.fe.broken {
+        let why = if b.fe.broken_why.is_empty() { "its entry missed" } else { b.fe.broken_why }
         b.fe.broken = false
-        b.fe.bad.push("${key} (closure ${b.m.funcs[cf].name}, recorded by xo ${b.fe.last_recorder})")
+        b.fe.broken_why = ""
+        b.fe.bad.push("${key} (closure ${b.m.funcs[cf].name}, recorded by xo ${b.fe.last_recorder}: ${why})")
         if b.why.is_empty() {
           b.why = "the front end cache's entry for the closure ${b.m.funcs[cf].name} does not replay (XO_FE_CACHE=off builds without it)"
         }

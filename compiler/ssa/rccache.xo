@@ -984,6 +984,28 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   Some(f)
 }
 
+/// The names of entry d's string table that are neither a type of m nor
+/// an opcode: why a body did not decode (a type the entry needs that
+/// this build has not made), at most four, "" when there are none.
+fn decode_missing(m: Module, d: Bytes, ops: Map[Str, Op]) -> Str {
+  var r = EntryR{d: d}
+  if r.str() != RC_CACHE_VERSION {
+    return "another entry version"
+  }
+  let nt = r.uv()
+  if !r.ok || nt > d.len() {
+    return ""
+  }
+  var out: List[Str] = []
+  for _ in 0..nt {
+    let s = r.str()
+    if m.type_at.get(s) == None && ops.get(s) == None && out.len() < 4 {
+      out.push(s)
+    }
+  }
+  out.join(", ")
+}
+
 /// The opcodes by name.
 fn ops_by_name() -> Map[Str, Op] {
   var out: Map[Str, Op] = {}

@@ -1,6 +1,6 @@
 # A front end cache entry passed its checks and then did not replay
 
-Status: Observed (2026-10-20), open: the root cause fix is in progress
+Status: Observed (2026-10-20, 2026-10-26, 2026-11-04); each cause found is fixed, the driver still rebuilds without an entry that fails
 
 Symptom: `xo build ./compiler/xo` (and scripts/bootstrap-xo.sh at s1)
 failed with "the front end cache's entry for ssa.Builder.unbox_type does
@@ -49,3 +49,23 @@ xo.droplist[] were (fe_const_fn): thunk_func takes one already there by
 its name, so the commit keeps it. The replayed build's __text equals a
 fresh build's. Test: internal/arm64 TestFrontCacheClosureMadeMapHelper.
 The type-read hypothesis above did not apply to this case.
+
+Observed again 2026-11-04, cause found (Xo Lang 2, reported by aws-19):
+during a gate in the aws repository, xo b29cad7a0 printed "the front end
+cache entry ... (sigv4.sign_header, transport.attempt_once, ...) recorded
+by xo b29cad7a0 ... did not replay in xo b29cad7a0", then rebuilt
+without the entries. It reproduced in a fresh private cache with
+`xo test ./config` then `xo test ./credentials/stscreds` (5 entries).
+The warning now says which part of the commit failed; here it was "its
+body did not decode: no github.com/xo-lang/aws/sigv4.Options here". A
+user type two loaded modules both declare is interned under its module
+path (ssa ambiguous_type_names): the config program loads
+config.Options beside sigv4.Options, so sigv4's bodies named the type
+by its path, and the stscreds program, which loads only sigv4, names it
+`Options`. The entry key covered the bodies' modules but not the
+program's type naming. Fix: the own flags in every entry's key
+(fe_own_flags) carry a digest of the program's shared type names
+(names_key, "" when there are none), so the two programs read different
+entries. Test: internal/arm64 TestFrontCacheTypeNaming. The read-logging
+idea above would only have turned these into misses: a type a replayed
+`declare` makes is named the same way and is not a read.
