@@ -28,6 +28,17 @@ fn (var b: Builder) nat_check(e: Expr) -> Int {
 }
 
 /// The SSA type of e in context (typeOf).
+/// The type a Map or Set literal e builds: its own type when the one it
+/// converts to is not a Map or Set (`Map[K, V]?`: the caller makes the
+/// Some, as for a list literal).
+fn (var b: Builder) coll_lit_type(e: Expr) -> Int {
+  let t = b.type_of(e)
+  if b.m.types[t].coll {
+    return t
+  }
+  b.nat_of(e)
+}
+
 fn (var b: Builder) type_of(e: Expr) -> Int {
   var t = b.c.type_in(b.s.file, e)
   if t < 0 {
@@ -411,9 +422,9 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
         ks.push(en.key)
         vs.push(en.value)
       }
-      return b.map_lit(b.type_of(e), ks, vs, false)
+      return b.map_lit(b.coll_lit_type(e), ks, vs, false)
     }
-    SetLit(elems: elems, ..) => return b.map_lit(b.type_of(e), elems, [], true)
+    SetLit(elems: elems, ..) => return b.map_lit(b.coll_lit_type(e), elems, [], true)
     IsExpr(x: x, pattern: p, ..) => {
       let v = b.value(x)
       let join = b.new_block()

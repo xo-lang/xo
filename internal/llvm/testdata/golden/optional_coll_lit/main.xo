@@ -1,0 +1,68 @@
+// A map, set or list literal where an optional collection is expected
+// (`In{a: {"k": "v"}}` for a field `Map[Str, Str]? = None`) converts to
+// Some, as a typed value does (native XO1201 "this literal" before
+// 2026-11-04, aws report entry 4): struct and enum fields, arguments,
+// returns, a typed let, and an empty literal.
+
+struct In {
+  a: Map[Str, Str]? = None
+  s: Set[Int]? = None
+  l: List[Str]? = None
+  m: Map[Str, List[Str]]? = None
+}
+
+enum Ev {
+  Tags(tags: Map[Str, Str]?)
+  Ids(ids: Set[Int]?)
+}
+
+fn count(m: Map[Str, Int]?) -> Int {
+  match m {
+    Some(x) => x.len()
+    None => -1
+  }
+}
+
+fn defaults() -> Map[Str, Int]? {
+  {"a": 1, "b": 2, "c": 3}
+}
+
+fn show(i: In) -> Str {
+  var a = "none"
+  if let Some(x) = i.a {
+    a = "${x.len()}:${x.get("k") ?? "-"}"
+  }
+  var s = "none"
+  if let Some(x) = i.s {
+    s = "${x.len()}:${x.contains(2)}"
+  }
+  var l = "none"
+  if let Some(x) = i.l {
+    l = "${x.len()}"
+  }
+  var m = "none"
+  if let Some(x) = i.m {
+    m = "${(x.get("q") ?? []).len()}"
+  }
+  "a=${a} s=${s} l=${l} m=${m}"
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  io.println(show(In{}))
+  io.println(show(In{a: {"k": "v"}, s: #{1, 2, 3}, l: ["x", "y"], m: {"q": ["v1", "v2"]}}))
+  io.println(show(In{a: {}, l: []}))
+  match Ev.Tags(tags: {"t": "1", "u": "2"}) {
+    Tags(tags: Some(t)) => io.println("tags ${t.len()}")
+    Tags(tags: None) => io.println("tags none")
+    Ids(..) => io.println("ids?")
+  }
+  match Ev.Ids(ids: #{7}) {
+    Ids(ids: Some(s)) => io.println("ids ${s.len()}")
+    Ids(ids: None) => io.println("ids none")
+    Tags(..) => io.println("tags?")
+  }
+  io.println("${count({"x": 1})} ${count(None)} ${count(defaults())}")
+  let o: Map[Str, Str]? = {"k": "w"}
+  io.println((o ?? {}).get("k") ?? "missing")
+}
