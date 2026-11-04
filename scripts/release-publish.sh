@@ -13,7 +13,11 @@
 #   - DIST/SHA256SUMS lists every DIST/*.tar.gz and their sums match;
 #   - every archive's version is TAG (xo-<TAG>-<os>-<arch>.tar.gz);
 #   - the host's archive reports TAG's commit in `xo version --json`;
-#   - no release exists for TAG yet.
+#   - no release exists for TAG yet;
+#   - NOTES.md's breaking section names every CHANGELOG entry marked
+#     breaking since the latest published release
+#     (scripts/release-notes-check.py), and its suspects (entries that read
+#     as breaking but are not marked) are printed for the owner to read.
 #
 # It then shows the files and the notes and asks for the word `release`.
 # gh uses the owner's own login (gh auth status); agents never run this.
@@ -71,6 +75,15 @@ if [ -n "$host" ]; then
 fi
 
 gh release view "$tag" --repo "$repo" >/dev/null 2>&1 && die "$repo already has a release $tag"
+
+# the notes name every CHANGELOG entry marked breaking since the release
+# before (the latest published one), and the suspects are shown (Lead,
+# 2026-11-04: v0.36.0's notes missed the sort change)
+prev=$(gh release view --repo "$repo" --json tagName -q .tagName 2>/dev/null || true)
+if [ -n "$prev" ]; then
+	python3 -I scripts/release-notes-check.py "$notes" "$tag" "$prev" CHANGELOG.md ||
+		die "the notes' breaking section misses a CHANGELOG entry marked breaking (above): add it, or fix the entry's mark"
+fi
 
 echo
 echo "Release $tag on $repo${draft:+ (draft)}, commit $head, files:"
