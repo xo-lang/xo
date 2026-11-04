@@ -1,0 +1,42 @@
+// tlsloop: an std/http server over TLS 1.3 and its client in one
+// process, N requests on one kept-alive connection (default 20,000), so
+// the TLS record path (tlsio.put's tls13.send, the records' encryption
+// and decryption) is the measured work next to HTTP/1.1, with no second
+// process for `xo bench --ab` and ab-host.sh to start. Usage:
+// `<program> [small|big]`: small posts and gets 16 bytes, big 16 KiB
+// (a full record each way). The certificate chain (cert.pem: a P-256
+// leaf for 127.0.0.1 and its CA, ca.pem) and key.pem are test keys made
+// for this benchmark by bench/perf/tls/serve -keys, not secrets. Prints `<workload> <bytes received>`. Written 2026-11-04 for
+// decision 0500 (LLVM var homes), whose TLS 1.3 client send path it times.
+use std/http
+
+const CERT: Bytes = embed("cert.pem")
+const KEY: Bytes = embed("key.pem")
+const CA: Bytes = embed("ca.pem")
+const N = 20000
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "small"
+  let size = if w == "big" { 16384 } else { 16 }
+  let body = "x".repeat(size)
+  var r = http.router()
+  r.handle("POST /echo", fn(req) { http.text(200, req.body.to_str() ?? "") })
+  let tc = http.tls_cert(CERT, KEY).or_fault("tls_cert")
+  let l = os.net.listen("127.0.0.1:0")?
+  let srv = http.server(l, r).with_tls([tc])
+  let url = "https://${srv.addr()}/echo"
+  let c = http.client(os.net).with_roots(CA).or_fault("roots")
+  var total = 0
+  scope s {
+    s.spawn_background(fn() {
+      srv.serve().ignore_err("the server stops when the scope ends")
+    })
+    for _ in 0..N {
+      var q = http.new_request("POST", url)
+      q.body = body.bytes()
+      let resp = c.send(q)?
+      total += resp.body.len()
+    }
+  }
+  os.stdio.println("${w} ${total}")
+}
