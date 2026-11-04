@@ -756,6 +756,35 @@ fn field_ok(code: Int, arg: Str, has_arg: Bool) -> Bool {
   }
 }
 
+/// The argument of a field as a code: 0 none, 1 to 9 a digit, 20 short, 21 name, 22 compact, -1 anything else.
+fn arg_code(b: Bytes, lo: Int, hi: Int) -> Int {
+  if hi == lo + 1 && b[lo] >= 49 && b[lo] <= 57 {
+    return Int(b[lo]) - 48
+  }
+  if eq_range(b, lo, hi, b"short") {
+    return 20
+  }
+  if eq_range(b, lo, hi, b"name") {
+    return 21
+  }
+  if eq_range(b, lo, hi, b"compact") {
+    return 22
+  }
+  -1
+}
+
+fn field_ok_code(code: Int, arg: Int, has_arg: Bool) -> Bool {
+  match code {
+    2 => !has_arg || arg == 1 || arg == 20 || arg == 21
+    3 => !has_arg || arg == 1
+    4 => has_arg && (arg == 20 || arg == 21)
+    10 => !has_arg || (arg >= 1 && arg <= 9)
+    11 => !has_arg || arg == 22
+    1 | 5 | 6 | 7 | 8 | 9 | 12 | 13 | 14 => !has_arg
+    _ => false
+  }
+}
+
 fn args_text(name: Str, args: List[Str]) -> Str {
   if name == "frac" {
     return "the forms are {frac}, {frac:1} to {frac:9}"
@@ -1744,11 +1773,12 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
   var saw_h12 = false
   var saw_ampm = false
   var fcode = 0
-  var farg = ""
+  var farg = 0
   while true {
     var pcode = 0
-    var parg = ""
-    var plit = ""
+    var parg = 0
+    var plit_lo = 0
+    var plit_hi = 0
     if field_next {
       pcode = fcode
       parg = farg
@@ -1765,7 +1795,8 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
         q += 1
       }
       if q > li {
-        plit = layout[li..q]
+        plit_lo = li
+        plit_hi = q
       }
       if q < ln {
         var j = q + 1
@@ -1786,14 +1817,14 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
         }
         let nend = if colon >= 0 { colon } else { j }
         fcode = field_code_b(lb_all, q + 1, nend)
-        farg = ""
+        farg = 0
         if colon >= 0 {
-          match arg_literal(lb_all, colon + 1, j) {
-            Some(x) => farg = x
-            None => return perr(s, layout, 0, "bad layout")
+          farg = arg_code(lb_all, colon + 1, j)
+          if farg < 0 {
+            return perr(s, layout, 0, "bad layout")
           }
         }
-        if !field_ok(fcode, farg, colon >= 0) || fcode == 13 || fcode == 14 {
+        if !field_ok_code(fcode, farg, colon >= 0) || fcode == 13 || fcode == 14 {
           return perr(s, layout, 0, "bad layout")
         }
         if fcode == 6 {
@@ -1803,7 +1834,7 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
           saw_ampm = true
         }
         li = j + 1
-        if !plit.is_empty() {
+        if plit_hi > plit_lo {
           field_next = true
         } else {
           pcode = fcode
@@ -1815,18 +1846,18 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
     }
     let start = pos
     if pcode == 0 {
-      let lb = plit.bytes()
+      let ll = plit_hi - plit_lo
       var k = 0
-      if pos + lb.len() > n {
+      if pos + ll > n {
         k = -1
       }
-      while k >= 0 && k < lb.len() && b[pos + k] == lb[k] {
+      while k >= 0 && k < ll && b[pos + k] == lb_all[plit_lo + k] {
         k += 1
       }
-      if k != lb.len() {
-        return perr(s, layout, start, "expected ${plit.quote()}")
+      if k != ll {
+        return perr(s, layout, start, "expected ${layout[plit_lo..plit_hi].quote()}")
       }
-      pos += lb.len()
+      pos += ll
       continue
     }
     // a number field: what, digits lo to hi, range min to max
@@ -1844,9 +1875,9 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
         max = 9999
       }
       2 => {
-        if parg == "" || parg == "1" {
+        if parg == 0 || parg == 1 {
           what = 2
-          if parg == "1" {
+          if parg == 1 {
             lo = 1
           }
           min = 1
@@ -1854,7 +1885,7 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
         } else {
           var i = -1
           var len = 3
-          if parg == "name" {
+          if parg == 21 {
             let (j, l) = read_word(s, pos, month_name())
             i = j
             len = l
@@ -1863,7 +1894,7 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
           }
           if i < 0 {
             var first = "Jan"
-            if parg == "name" {
+            if parg == 21 {
               first = "January"
             }
             return perr(s, layout, start, "expected a month name such as ${first.quote()}")
@@ -1875,7 +1906,7 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
       3 => {
         day_at = start
         what = 3
-        if parg == "1" {
+        if parg == 1 {
           lo = 1
         }
         min = 1
@@ -1884,7 +1915,7 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
       4 => {
         var i = -1
         var len = 3
-        if parg == "name" {
+        if parg == 21 {
           let (j, l) = read_word(s, pos, weekday_name())
           i = j
           len = l
@@ -1893,7 +1924,7 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
         }
         if i < 0 {
           var first = "Mon"
-          if parg == "name" {
+          if parg == 21 {
             first = "Monday"
           }
           return perr(s, layout, start, "expected a weekday name such as ${first.quote()}")
@@ -1930,8 +1961,8 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
       }
       10 => {
         var k = 0
-        if parg != "" {
-          k = Int.parse(parg) ?? 0
+        if parg != 0 {
+          k = parg
         }
         if pos >= n || b[pos] != 46 {
           if k > 0 {
@@ -1962,10 +1993,10 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
       }
       11 => {
         var bad = "expected an offset: +hhmm"
-        if parg == "" {
+        if parg == 0 {
           bad = "expected an offset: Z or +hh:mm"
         }
-        if parg == "" && pos < n && b[pos] == 90 {
+        if parg == 0 && pos < n && b[pos] == 90 {
           pos += 1
           has_off = true
           off = 0
@@ -1980,7 +2011,7 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
             return perr(s, layout, start, bad)
           }
           pos += 2
-          if parg == "" {
+          if parg == 0 {
             if pos >= n || b[pos] != 58 {
               return perr(s, layout, start, bad)
             }
