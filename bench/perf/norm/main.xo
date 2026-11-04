@@ -9,24 +9,25 @@
 use std/norm
 
 fn text(ascii: Bool) -> Str {
-  var b = StrBuilder.new()
+  var b = BytesBuilder.with_capacity(900000)
   var r = 1
   for _ in 0..600000 {
     r = (r * 1103515245 + 12345) % 2147483648
     let k = (r >> 16) % 40
     if ascii || k < 36 {
-      b.write("${Rune(32 + (r >> 8) % 95)}")
+      b.write_rune(Rune(32 + (r >> 8) % 95))
     } else if k < 37 {
-      b.write("${Rune(0xC0 + (r >> 8) % 64)}")
+      b.write_rune(Rune(0xC0 + (r >> 8) % 64))
     } else if k < 38 {
-      b.write("${Rune(97 + (r >> 8) % 26)}${Rune(0x300 + (r >> 4) % 0x30)}")
+      b.write_rune(Rune(97 + (r >> 8) % 26))
+      b.write_rune(Rune(0x300 + (r >> 4) % 0x30))
     } else if k < 39 {
-      b.write("${Rune(0xAC00 + (r >> 8) % 11172)}")
+      b.write_rune(Rune(0xAC00 + (r >> 8) % 11172))
     } else {
-      b.write("${Rune(0xFB00 + (r >> 8) % 7)}")
+      b.write_rune(Rune(0xFB00 + (r >> 8) % 7))
     }
   }
-  b.freeze()
+  b.freeze().to_str() ?? ""
 }
 
 fn main(os: Os) uses stdio, env {
