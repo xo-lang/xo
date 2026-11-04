@@ -1,5 +1,21 @@
 # std/metrics changes
 
+## 2026-11-04: perf: a one label series key without a copy, one bucket a histogram observation, a closure without the Family
+
+- Kind: perf
+- Commit: this push
+- Found by: the new twin bench/perf/metrics against client_golang (counter 4.38, histogram 3.51 of Go; scrape 0.475)
+- Go reference: client_golang's histogram.findBucket (one bucket counted, the scrape adds up), CounterVec.WithLabelValues
+- Test: goldens metrics_text, metrics_summary and the new metrics_buckets (a value below the first bound, on a bound, between, on the last bound, above; every backend and the Go backend); TestVetCostStd
+- Timing: bench/results/std-twin-metrics-2026-11-04.md (host 1): counter 4.378 to 4.070, histogram 3.508 to 3.256 of Go; Xo's own time 9% and 6% lower
+- Shipped in: not yet released
+
+series_of keys a one label series by the value itself, the histogram's
+cells count one bucket each (the text exposition is unchanged: the scrape
+adds them up), and the closure that makes a series captures the three
+fields it reads, not the Family.
+
+
 ## 2026-10-30: perf: a summary observation writes no collection under its Mutex
 
 - Kind: perf
