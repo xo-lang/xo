@@ -256,6 +256,11 @@ pub fn clock_now() -> Int {
     }
     return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_REALTIME)
   }
+  if target.arch == TargetArch.Wasm32 {
+    // WASI's clock_time_get: a constant test, so Linux's vDSO lookup
+    // (elf_dynsym, about 4 KB) stays out of a wasm module
+    return rt.clock_now()
+  }
   let a = clock_buf()
   if a == 0 {
     return rt.clock_now()
@@ -278,7 +283,7 @@ pub fn clock_now() -> Int {
 /// The wall clock in Unix nanoseconds, never the virtual clock (the C
 /// runtime's xo_clock_now and xo_tz_now through cabi.xo's real_ns).
 pub fn real_ns() -> Int {
-  if layer() == 0 {
+  if target.arch == TargetArch.Wasm32 || layer() == 0 {
     // WebAssembly: WASI's clock_time_get (the wasm runtime's clock_now)
     return rt.clock_now()
   }

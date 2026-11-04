@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-11-04: perf: wasm modules leave out Linux's vDSO clock lookup
+
+- Kind: perf (size)
+- Commit: this commit
+- Found by: the wasm component size breakdown (decision 0447 queue, component size)
+- Go reference: none
+- Test: TestWasmComponentServe, TestWasmCommandGoldens (wasip2, wasip3)
+- Size: hello component 324,153 to 319,394 bytes (-4,759); the 0447 step 2 program 531,365 to 526,612
+
+sysio's clock_now and real_ns answer WASI's clock first under a constant
+`target.arch == TargetArch.Wasm32` test, so clock_read, clock_choose and
+linux.vdso_clock (elf_dynsym, auxval) are no longer compiled into a wasm
+module; the clock read is unchanged on every target.
+
 ## 2026-11-04: perf: List.sort, insert and remove_at move elements by swaps
 
 - Kind: perf
@@ -18,6 +32,7 @@ first move of each copied). `List.insert` pushes then swaps the new element
 down, and `List.remove_at` swaps the element to the end and pops it, so a
 shift counts nothing where a counted move retained each element and
 released the one it replaced.
+
 ## 2026-11-04: perf: ByteBuffer.read_until keeps its segment borrowed
 
 - Kind: perf
