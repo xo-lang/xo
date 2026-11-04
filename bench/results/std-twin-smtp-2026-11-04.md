@@ -17,5 +17,5 @@ makes between the client task and the server task, not by the SMTP code
 two fibers on different workers (a wake through the scheduler's park and
 the poller) against Go's same-P goroutine handoff; the client code itself
 is not the lever. Next experiment: the same run with one worker
-(XO_WORKERS=1 or the scheduler's equivalent) to see the same-thread
+(XO_THREADS=1) to see the same-thread
 handoff, then `xo bench --ab` of any scheduler change on this twin.
