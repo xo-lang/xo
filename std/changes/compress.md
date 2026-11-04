@@ -1,5 +1,17 @@
 # std/compress changes
 
+## 2026-11-04: perf: deflate's Huffman setup and hash read faster
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/archive zip 1.35 of Go's wall; Mac XO_PROF: Deflater.deflate 51 percent, bit_counts, Encoder.generate and index_tokens about 40 percent
+- Go reference: compress/flate huffman_code.go (generate, bitCounts), deflate.go hash4
+- Test: the archive, compress, png, http corpora (arm64, LLVM, Go backend; output bytes equal Go's) and `xo test --std-module=native/llrt/flate`
+- Timing: host 1 A/B bench/perf/archive zip 0.922 of before (0.913-0.930, n=6) for the three changes
+- Shipped in: not yet released
+
+`Encoder.generate` hands out the canonical codes in literal order from each length's first code (no list and no sort for each bit length), `bit_counts` keeps its six tables in one allocation, and `hash4` reads the four bytes with one load and a byte swap. The compressed bytes are unchanged. Every gzip, zlib, zip and png writer benefits.
+
 ## 2026-11-03: perf: the Adler-32 sum takes the modulus once per 5552 bytes
 
 - Kind: perf
