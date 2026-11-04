@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1398,6 +1399,55 @@ func TestAgentRuntimeRefs(t *testing.T) {
 	}
 	if len(where) < 3 {
 		t.Errorf("def park_wait in the runtime directory: %v, want pool.xo, poll.xo, and tasks.xo", where)
+	}
+}
+
+// TestAgentRefsOtherStd: refs run from the root of a tree whose std is
+// not the one xo runs with (a worktree's root, while xo is another
+// checkout's bin/xo, whose std is bin/../std, and XO_STD is unset) lists
+// the qualified calls too (xo-lang-4, 2026-11-04: from a worktree's root,
+// `xo refs --dir=std/native/llrt linux.vdso_clock` listed only the
+// declaration, missing the calls in linux.xo, sysio.xo and prof.xo; from
+// the worktree's cmd/xo, from /tmp, or with XO_STD set to the worktree's
+// std it lists all five). The test copies std into a directory, runs refs
+// there with XO_STD empty, and points --dir into the copy. It runs with
+// XO_TEST_REFS_GAP=1 until the fix (queued with the Lead), which removes
+// the skip.
+func TestAgentRefsOtherStd(t *testing.T) {
+	if os.Getenv("XO_TEST_REFS_GAP") == "" {
+		t.Skip("a known gap of xo refs: set XO_TEST_REFS_GAP=1 to run it")
+	}
+	t.Parallel()
+	root := t.TempDir()
+	other := filepath.Join(root, "std")
+	err := filepath.WalkDir(xoStd(), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(xoStd(), p)
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(other, rel), 0o755)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(other, rel), data, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, root)
+	setenv(t, "XO_STD", "")
+	v := agentJSON(t, 0, "refs", "--dir="+filepath.Join(other, "native", "llrt"), "--json", "linux.vdso_clock")
+	got := map[string]int{}
+	for _, r := range v["references"].([]any) {
+		got[filepath.Base(r.(map[string]any)["file"].(string))]++
+	}
+	// the declaration and the two calls in clock_gettime; clock_choose's
+	// call; the profiler's
+	if got["linux.xo"] < 3 || got["sysio.xo"] < 1 || got["prof.xo"] < 1 {
+		t.Errorf("refs linux.vdso_clock in a copy of std: %v, want linux.xo 3, sysio.xo 1, prof.xo 1", got)
 	}
 }
 
