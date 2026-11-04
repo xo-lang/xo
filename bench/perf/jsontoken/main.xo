@@ -1,0 +1,99 @@
+// std/json's token reader and writer (decision 0495) against encoding/json
+// (twin.go.txt): `read` reads a 40 record listing (strings, numbers, bools,
+// nested arrays, about 6 KB) token by token, 8,000 times, with json.tokens
+// against Decoder.Token (UseNumber); `write` writes the same listing with
+// JsonWriter calls, 8,000 times, against json.Marshal of a struct slice
+// (Go has no writer to compare; this is what its callers do); `none` is
+// the setup alone. Usage: `<program> none|read|write`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/json
+
+struct Rec {
+  key: Str
+  size: Int
+  ratio: Float
+  etag: Str
+  public: Bool
+  tags: List[Str]
+}
+
+fn recs() -> List[Rec] {
+  var out: List[Rec] = []
+  for i in 0..40 {
+    out.push(Rec{key: "photos/2026/img-${i}.jpg", size: i * 7919 % 100003, ratio: Float(i) * 0.25, etag: "d41d8cd98f00b204e9800998ecf8427e${i}", public: i % 3 == 0, tags: ["a${i % 5}", "b<${i % 7}>", "plain"]})
+  }
+  out
+}
+
+fn text(rs: List[Rec]) -> Bytes {
+  var w = json.json_writer()
+  w.array_start()
+  for r in rs {
+    w.object_start()
+    w.key("key")
+    w.str(r.key)
+    w.key("size")
+    w.int(r.size)
+    w.key("ratio")
+    w.float(r.ratio).ok() ?? ()
+    w.key("etag")
+    w.str(r.etag)
+    w.key("public")
+    w.bool(r.public)
+    w.key("tags")
+    w.array_start()
+    for t in r.tags {
+      w.str(t)
+    }
+    w.array_end()
+    w.object_end()
+  }
+  w.array_end()
+  w.finish()
+}
+
+fn weight(t: json.Token) -> Int {
+  match t {
+    ObjectStart => 1
+    ObjectEnd => 2
+    ArrayStart => 3
+    ArrayEnd => 4
+    Key(s) => s.len()
+    Str(s) => s.len()
+    Number(n) => n.len()
+    Bool(b) => if b { 5 } else { 6 }
+    Null => 7
+  }
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let rs = recs()
+  let doc = text(rs)
+  var sum = 0
+  if w == "read" {
+    for i in 0..8000 {
+      var r = json.tokens(doc)
+      while true {
+        match r.next() {
+          Ok(t) => match t {
+            Some(x) => sum += weight(x)
+            None => break
+          }
+          Err(_) => fault("token")
+        }
+      }
+      sum += i % 3
+    }
+  } else if w == "write" {
+    for i in 0..8000 {
+      let out = text(rs)
+      sum += out.len() + Int(out[i % out.len()])
+    }
+  } else {
+    for i in 0..8000 {
+      sum += doc.len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

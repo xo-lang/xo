@@ -1,6 +1,6 @@
 # 0495: std/json token reader and writer
 
-Status: Proposed (Xo Lang 3, 2026-11-04; for the owner: the API below is the question)
+Status: Accepted (owner, 2026-11-04)
 
 ## Context
 
@@ -21,7 +21,7 @@ Go's reference is encoding/json: `Decoder.Token` and `Decoder.More`,
 `Decoder.InputOffset`, `Number`, and the encoder's string and float rules
 (`encodeState.string`, `floatEncoder`).
 
-## Decision (proposed)
+## Decision
 
 ### Reader
 
@@ -97,6 +97,35 @@ unless `escape_html` is false, U+2028 and U+2029 as ` `, ` `,
 invalid UTF-8 as `�`. Floats follow Go's `floatEncoder`: shortest
 representation, exponent form for exponents below -6 or at or above 21,
 `e-09` cleaned to `e-9`.
+
+## aws-19's asks and the cbor questions (2026-11-04)
+
+Taken, as additions to the API above:
+
+- `TokenReader.value() -> json.Value ! DecodeErr`: the value that starts at the
+  next token, as `parse_value` reads it (the same Value and errors), for the
+  fields the SDK keeps whole.
+- `JsonWriter.value(v: json.Value) -> () ! DecodeErr`: writes a Value token by
+  token (a `Num` that is NaN or infinite is refused).
+- `tokens(b"")`, and input of whitespace only, give None at once: no error, no
+  token (Go's `Decoder.Token` returns io.EOF there). An input that ends inside
+  an array or object is `invalid JSON: unexpected EOF` (Go returns io.EOF
+  there too, which callers must tell from a clean end; a DecodeErr cannot be
+  mistaken for one).
+- Floats keep `encode`'s shortest form; NaN and infinities are refused
+  (`json: unsupported value: NaN`); aws-19 passes `escape_html: false`.
+
+Weighed on cbor (std/cbor), for later changes, not part of this build:
+
+- Float width: a `Value.Float32` variant is taken (a float written at 32 bits
+  when the caller says so, kept on reading a half or single), over an encode
+  option, because the width belongs to the value (a Smithy float shape) and a
+  global option cannot say it per field. It is its own change with its own
+  std/changes entry.
+- `Tag(4, [exp, mantissa])` round trip and `to_int()` refusing a Uint above
+  2^63-1 are checks, not designs: they get tests first, and a fix if one fails.
+- A cbor token reader and writer: low priority, after this one is in use, with
+  the same shape if the SDK needs it (it reads cbor whole today).
 
 ## Consequences
 

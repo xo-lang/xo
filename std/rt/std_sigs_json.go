@@ -6,12 +6,36 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Task, string, string, string) Result[string, Json_DecodeErr]         = Json_indent
-	_ func(*Task, string) Result[string, Json_DecodeErr]                         = Json_compact
-	_ func(*Task, string) Result[Json_Value, Json_DecodeErr]                     = Json_parse_value
-	_ func(*Json_Value, *Task) string                                            = (*Json_Value).M_encode
-	_ func(*Json_Value, *Task, string) Option[Json_Value]                        = (*Json_Value).M_get
-	_ func(*Task, int64) Json_Decoder                                            = Json_decoder
-	_ func(*Json_Decoder, *Task, Bytes) Result[List[Json_Value], Json_DecodeErr] = (*Json_Decoder).M_write
-	_ func(*Json_Decoder, *Task) Result[List[Json_Value], Json_DecodeErr]        = (*Json_Decoder).M_finish
+	_ func(*Task, string, string, string) Result[string, Json_DecodeErr]             = Json_indent
+	_ func(*Task, string) Result[string, Json_DecodeErr]                             = Json_compact
+	_ func(*Task, string) Result[Json_Value, Json_DecodeErr]                         = Json_parse_value
+	_ func(*Json_Value, *Task) string                                                = (*Json_Value).M_encode
+	_ func(*Json_Value, *Task, string) Option[Json_Value]                            = (*Json_Value).M_get
+	_ func(*Task, int64) Json_Decoder                                                = Json_decoder
+	_ func(*Json_Decoder, *Task, Bytes) Result[List[Json_Value], Json_DecodeErr]     = (*Json_Decoder).M_write
+	_ func(*Json_Decoder, *Task) Result[List[Json_Value], Json_DecodeErr]            = (*Json_Decoder).M_finish
+	_ func(*Task, int64) Json_TokenReader                                            = Json_token_reader
+	_ func(*Task, Bytes) Json_TokenReader                                            = Json_tokens
+	_ func(*Json_TokenReader, *Task, Bytes) Result[List[Json_Token], Json_DecodeErr] = (*Json_TokenReader).M_write
+	_ func(*Json_TokenReader, *Task) Result[List[Json_Token], Json_DecodeErr]        = (*Json_TokenReader).M_finish
+	_ func(*Json_TokenReader, *Task) Result[Option[Json_Token], Json_DecodeErr]      = (*Json_TokenReader).M_next
+	_ func(*Json_TokenReader, *Task) bool                                            = (*Json_TokenReader).M_more
+	_ func(*Json_TokenReader, *Task) int64                                           = (*Json_TokenReader).M_offset
+	_ func(*Json_TokenReader, *Task) Result[Unit, Json_DecodeErr]                    = (*Json_TokenReader).M_skip
+	_ func(*Json_TokenReader, *Task) Result[Json_Value, Json_DecodeErr]              = (*Json_TokenReader).M_value
+	_ func(*Task, bool) Json_JsonWriter                                              = Json_json_writer
+	_ func(*Json_JsonWriter, *Task)                                                  = (*Json_JsonWriter).M_object_start
+	_ func(*Json_JsonWriter, *Task)                                                  = (*Json_JsonWriter).M_object_end
+	_ func(*Json_JsonWriter, *Task)                                                  = (*Json_JsonWriter).M_array_start
+	_ func(*Json_JsonWriter, *Task)                                                  = (*Json_JsonWriter).M_array_end
+	_ func(*Json_JsonWriter, *Task, string)                                          = (*Json_JsonWriter).M_key
+	_ func(*Json_JsonWriter, *Task, string)                                          = (*Json_JsonWriter).M_str
+	_ func(*Json_JsonWriter, *Task, int64)                                           = (*Json_JsonWriter).M_int
+	_ func(*Json_JsonWriter, *Task, float64) Result[Unit, Json_DecodeErr]            = (*Json_JsonWriter).M_float
+	_ func(*Json_JsonWriter, *Task, string) Result[Unit, Json_DecodeErr]             = (*Json_JsonWriter).M_number
+	_ func(*Json_JsonWriter, *Task, bool)                                            = (*Json_JsonWriter).M_bool
+	_ func(*Json_JsonWriter, *Task)                                                  = (*Json_JsonWriter).M_null
+	_ func(*Json_JsonWriter, *Task, string) Result[Unit, Json_DecodeErr]             = (*Json_JsonWriter).M_raw
+	_ func(*Json_JsonWriter, *Task, Json_Value) Result[Unit, Json_DecodeErr]         = (*Json_JsonWriter).M_value
+	_ func(*Json_JsonWriter, *Task) Bytes                                            = (*Json_JsonWriter).M_finish
 )

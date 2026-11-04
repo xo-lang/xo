@@ -610,3 +610,557 @@ fn tape_text(var src: BytesBuilder, var tape: List[Int], kind: Int, s: Str) {
   src.write_str(s)
   tape_node(tape, kind, at, if kind == 4 { jsontext.plain_str_b(s) } else { s.len() })
 }
+
+// ---------------------------------------------------------------------------
+// The token reader (decision 0495): the state machine of Go's Decoder.Token
+// (stream.go: tokenState, tokenStack, tokenValueAllowed, tokenValueEnd,
+// tokenError). The states are Go's, in its order.
+
+const T_TOP: Int = 0
+const T_ARR_START: Int = 1
+const T_ARR_VALUE: Int = 2
+const T_ARR_COMMA: Int = 3
+const T_OBJ_START: Int = 4
+const T_OBJ_KEY: Int = 5
+const T_OBJ_COLON: Int = 6
+const T_OBJ_VALUE: Int = 7
+const T_OBJ_COMMA: Int = 8
+
+struct TokenReader {
+  buf: Bytes
+  pos: Int
+  /// the bytes dropped from the front of buf (offset)
+  base: Int
+  max: Int
+  state: Int
+  /// the states of the enclosing arrays and objects (Go's tokenStack)
+  stack: List[Int]
+  eof: Bool
+  /// an error found after tokens the same write returned: the next call's
+  err: Str = ""
+}
+
+fn token_reader(max_token: Int) -> TokenReader {
+  TokenReader{buf: b"", pos: 0, base: 0, max: max_token, state: T_TOP, stack: [], eof: false}
+}
+
+fn tokens(data: Bytes) -> TokenReader {
+  TokenReader{buf: data, pos: 0, base: 0, max: data.len(), state: T_TOP, stack: [], eof: true}
+}
+
+fn value_allowed(st: Int) -> Bool { st == T_TOP || st == T_ARR_START || st == T_ARR_VALUE || st == T_OBJ_VALUE }
+
+/// Go's tokenValueEnd: the state after a value.
+fn after_value(st: Int) -> Int {
+  if st == T_ARR_START || st == T_ARR_VALUE {
+    return T_ARR_COMMA
+  }
+  if st == T_OBJ_VALUE {
+    return T_OBJ_COMMA
+  }
+  st
+}
+
+/// Go's tokenError: the byte c where the state st does not allow it (an
+/// object's first key has no context there).
+fn bad_char(st: Int, c: Int) -> json.DecodeErr {
+  let ctx = match st {
+    T_ARR_COMMA => 2
+    T_OBJ_START => 0
+    T_OBJ_KEY => 3
+    T_OBJ_COLON => 4
+    T_OBJ_COMMA => 5
+    _ => 1
+  }
+  stream_err("invalid JSON: " + jsontext.syntax_err(ctx, c))
+}
+
+fn eof_err() -> json.DecodeErr { stream_err("invalid JSON: unexpected EOF") }
+
+/// parse_bytes' error for text the input ended in the middle of.
+fn eof_mapped(e: json.DecodeErr) -> json.DecodeErr {
+  if e.msg == "invalid JSON: EOF" || e.msg.ends_with("unexpected end of JSON input") { eof_err() } else { e }
+}
+
+/// The end of the string whose opening quote is b[i] (exclusive), -1 when
+/// the input ends first; a control byte before the closing quote ends the
+/// scan one past it, so the parse of the slice names it.
+fn string_end(b: Bytes, i: Int) -> Int {
+  let n = b.len()
+  var k = i + 1
+  while k < n {
+    let x = Int(b[k])
+    if x == 34 {
+      return k + 1
+    }
+    if x == 92 {
+      k += 2
+      continue
+    }
+    if x < 32 {
+      return k + 1
+    }
+    k += 1
+  }
+  -1
+}
+
+/// The string at b[lo..hi] (its quotes included), as decode reads it.
+fn string_text(b: Bytes, lo: Int, hi: Int) -> Str ! json.DecodeErr {
+  var plain = hi - lo >= 2 && b[hi - 1] == 34
+  var k = lo + 1
+  while plain && k < hi - 1 {
+    let x = Int(b[k])
+    if x < 32 || x == 92 || x >= 128 {
+      plain = false
+    }
+    k += 1
+  }
+  if plain {
+    return jsontext.slice_str(b, lo + 1, hi - 1)
+  }
+  let v = parse_bytes(b[lo..hi])?
+  match v {
+    Str(s) => s
+    _ => ""
+  }
+}
+
+fn (var r: TokenReader) skip_space() {
+  let b = r.buf
+  let n = b.len()
+  var i = r.pos
+  while i < n && is_space(Int(b[i])) {
+    i += 1
+  }
+  r.pos = i
+}
+
+fn too_big(max: Int) -> json.DecodeErr { stream_err("invalid JSON: token exceeds max_token (${max} bytes)") }
+
+/// The next token (Go's Token): None when the input is used up, or ends in
+/// the middle of a token that the next write may finish.
+fn (var r: TokenReader) pull() -> json.Token? ! json.DecodeErr {
+  let b = r.buf
+  let n = b.len()
+  while true {
+    r.skip_space()
+    let i = r.pos
+    if i >= n {
+      if r.eof && r.stack.len() > 0 {
+        return Err(eof_err())
+      }
+      return None
+    }
+    let c = Int(b[i])
+    let st = r.state
+    if c == 91 || c == 123 {
+      if !value_allowed(st) {
+        return Err(bad_char(st, c))
+      }
+      r.pos = i + 1
+      r.stack.push(st)
+      if c == 91 {
+        r.state = T_ARR_START
+        return Some(json.Token.ArrayStart)
+      }
+      r.state = T_OBJ_START
+      return Some(json.Token.ObjectStart)
+    }
+    if c == 93 {
+      if st != T_ARR_START && st != T_ARR_COMMA {
+        return Err(bad_char(st, c))
+      }
+      r.pos = i + 1
+      r.state = after_value(r.stack.pop() ?? T_TOP)
+      return Some(json.Token.ArrayEnd)
+    }
+    if c == 125 {
+      if st != T_OBJ_START && st != T_OBJ_COMMA {
+        return Err(bad_char(st, c))
+      }
+      r.pos = i + 1
+      r.state = after_value(r.stack.pop() ?? T_TOP)
+      return Some(json.Token.ObjectEnd)
+    }
+    if c == 44 {
+      if st == T_ARR_COMMA {
+        r.pos = i + 1
+        r.state = T_ARR_VALUE
+        continue
+      }
+      if st == T_OBJ_COMMA {
+        r.pos = i + 1
+        r.state = T_OBJ_KEY
+        continue
+      }
+      return Err(bad_char(st, c))
+    }
+    if c == 58 {
+      if st != T_OBJ_COLON {
+        return Err(bad_char(st, c))
+      }
+      r.pos = i + 1
+      r.state = T_OBJ_VALUE
+      continue
+    }
+    if c == 34 {
+      let key = st == T_OBJ_START || st == T_OBJ_KEY
+      if !key && !value_allowed(st) {
+        return Err(bad_char(st, c))
+      }
+      let end = string_end(b, i)
+      if end < 0 {
+        if r.eof {
+          return Err(eof_err())
+        }
+        if n - i > r.max {
+          return Err(too_big(r.max))
+        }
+        return None
+      }
+      let s = string_text(b, i, end)?
+      r.pos = end
+      if key {
+        r.state = T_OBJ_COLON
+        return Some(json.Token.Key(s: s))
+      }
+      r.state = after_value(st)
+      return Some(json.Token.Str(s: s))
+    }
+    let num = c == 45 || digit(c)
+    let lit = c == 116 || c == 102 || c == 110
+    if !num && !lit {
+      return Err(bad_char(st, c))
+    }
+    if !value_allowed(st) {
+      return Err(bad_char(st, c))
+    }
+    var end = if num { number_end(b, i) } else { literal_end(b, i) }
+    if end < 0 {
+      if !r.eof {
+        if n - i > r.max {
+          return Err(too_big(r.max))
+        }
+        return None
+      }
+      end = n
+    }
+    let v = match parse_bytes(b[i..end]) {
+      Ok(v) => v
+      Err(e) => return Err(eof_mapped(e))
+    }
+    r.pos = end
+    r.state = after_value(st)
+    if num {
+      return Some(json.Token.Number(text: jsontext.slice_str(b, i, end)))
+    }
+    return Some(match v {
+      Bool(x) => json.Token.Bool(b: x)
+      _ => json.Token.Null
+    })
+  }
+  None
+}
+
+/// The tokens the buffer holds; an error after some of them is the next
+/// call's.
+fn (var r: TokenReader) drain() -> List[json.Token] ! json.DecodeErr {
+  if !r.err.is_empty() {
+    return Err(stream_err(r.err))
+  }
+  var out: List[json.Token] = []
+  while true {
+    match r.pull() {
+      Ok(t) => {
+        match t {
+          Some(x) => out.push(x)
+          None => break
+        }
+      }
+      Err(e) => {
+        if out.is_empty() {
+          return Err(e)
+        }
+        r.err = e.msg
+        return out
+      }
+    }
+  }
+  out
+}
+
+fn (var r: TokenReader) write(data: Bytes) -> List[json.Token] ! json.DecodeErr {
+  if r.pos > 0 {
+    r.base += r.pos
+    r.buf = r.buf[r.pos..]
+    r.pos = 0
+  }
+  let b0 = r.buf
+  r.buf = b0 + data
+  r.drain()
+}
+
+fn (var r: TokenReader) finish() -> List[json.Token] ! json.DecodeErr {
+  r.eof = true
+  r.drain()
+}
+
+fn (var r: TokenReader) next() -> json.Token? ! json.DecodeErr {
+  if !r.err.is_empty() {
+    return Err(stream_err(r.err))
+  }
+  r.pull()
+}
+
+fn (var r: TokenReader) more() -> Bool {
+  r.skip_space()
+  let b = r.buf
+  r.pos < b.len() && b[r.pos] != 93 && b[r.pos] != 125
+}
+
+fn (r: TokenReader) offset() -> Int { r.base + r.pos }
+
+/// Past the white space, and the colon or comma Go's Token takes before
+/// the value that follows a key or an element.
+fn (var r: TokenReader) to_value() {
+  r.skip_space()
+  let b = r.buf
+  if r.pos < b.len() {
+    let c = Int(b[r.pos])
+    if c == 58 && r.state == T_OBJ_COLON {
+      r.pos += 1
+      r.state = T_OBJ_VALUE
+    } else if c == 44 && r.state == T_ARR_COMMA {
+      r.pos += 1
+      r.state = T_ARR_VALUE
+    } else if c == 44 && r.state == T_OBJ_COMMA {
+      r.pos += 1
+      r.state = T_OBJ_KEY
+    }
+    r.skip_space()
+  }
+}
+
+fn (var r: TokenReader) skip() -> () ! json.DecodeErr {
+  r.to_value()
+  let b = r.buf
+  let n = b.len()
+  let i = r.pos
+  if i < n && (b[i] == 123 || b[i] == 91) && value_allowed(r.state) {
+    // a whole array or object: found by its brackets, then checked
+    let end = value_end(b, i)
+    if end < 0 {
+      return Err(eof_err())
+    }
+    let text = b[i..end]
+    if jsontext.parse(text).is_empty() {
+      return Err(stream_err("invalid JSON: ${jsontext.parse_err(text)}"))
+    }
+    r.pos = end
+    r.state = after_value(r.state)
+    return
+  }
+  match r.pull()? {
+    Some(t) => {
+      match t {
+        Key(_) => return Err(stream_err("invalid JSON: no value to skip, an object key is next"))
+        ObjectEnd => return Err(stream_err("invalid JSON: no value to skip, an object ends"))
+        ArrayEnd => return Err(stream_err("invalid JSON: no value to skip, an array ends"))
+        _ => ()
+      }
+    }
+    None => return Err(eof_err())
+  }
+}
+
+fn (var r: TokenReader) value() -> json.Value ! json.DecodeErr {
+  r.to_value()
+  let start = r.pos
+  r.skip()?
+  parse_bytes(r.buf[start..r.pos])
+}
+
+// ---------------------------------------------------------------------------
+// The writer (decision 0495): encoding/json's string and float forms
+
+struct JsonWriter {
+  out: BytesBuilder
+  /// one entry per open array (1) or object (0): bit 1 set once it holds
+  /// an element, bit 2 set while an object's value is due
+  stack: List[Int]
+  html: Bool
+  /// the values written at the top level
+  top: Int
+}
+
+fn json_writer(escape_html: Bool) -> JsonWriter {
+  JsonWriter{out: BytesBuilder.new(), stack: [], html: escape_html, top: 0}
+}
+
+/// A value starts here: the comma, or the newline between top level values.
+fn (var w: JsonWriter) begin_value() {
+  let n = w.stack.len()
+  if n == 0 {
+    if w.top > 0 {
+      w.out.write_byte(10)
+    }
+    w.top += 1
+    return
+  }
+  let t = w.stack[n - 1]
+  if (t & 1) == 1 {
+    if (t & 2) != 0 {
+      w.out.write_byte(44)
+    }
+    w.stack[n - 1] = t | 2
+    return
+  }
+  if (t & 4) == 0 {
+    fault("json: a value is written where an object key is due")
+  }
+  w.stack[n - 1] = t - 4
+}
+
+fn (var w: JsonWriter) object_start() {
+  w.begin_value()
+  w.out.write_byte(123)
+  w.stack.push(0)
+}
+
+fn (var w: JsonWriter) array_start() {
+  w.begin_value()
+  w.out.write_byte(91)
+  w.stack.push(1)
+}
+
+fn (var w: JsonWriter) object_end() {
+  let n = w.stack.len()
+  if n == 0 || (w.stack[n - 1] & 1) == 1 || (w.stack[n - 1] & 4) != 0 {
+    fault("json: object_end with no open object, or a key without its value")
+  }
+  w.out.write_byte(125)
+  w.stack.pop()
+}
+
+fn (var w: JsonWriter) array_end() {
+  let n = w.stack.len()
+  if n == 0 || (w.stack[n - 1] & 1) == 0 {
+    fault("json: array_end with no open array")
+  }
+  w.out.write_byte(93)
+  w.stack.pop()
+}
+
+/// s as a JSON string, quotes included (Go's encodeState.string).
+fn (var w: JsonWriter) write_string(s: Str) {
+  var body = jsontext.append_body("", s)
+  if w.html {
+    for c in body.bytes() {
+      if c == 60 || c == 62 || c == 38 {
+        body = body.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        break
+      }
+    }
+  }
+  w.out.write_byte(34)
+  w.out.write_str(body)
+  w.out.write_byte(34)
+}
+
+fn (var w: JsonWriter) key(name: Str) {
+  let n = w.stack.len()
+  if n == 0 || (w.stack[n - 1] & 1) == 1 || (w.stack[n - 1] & 4) != 0 {
+    fault("json: a key is written outside an object, or after a key")
+  }
+  let t = w.stack[n - 1]
+  if (t & 2) != 0 {
+    w.out.write_byte(44)
+  }
+  w.write_string(name)
+  w.out.write_byte(58)
+  w.stack[n - 1] = t | 6
+}
+
+fn (var w: JsonWriter) str(s: Str) {
+  w.begin_value()
+  w.write_string(s)
+}
+
+fn (var w: JsonWriter) int(n: Int) {
+  w.begin_value()
+  w.out.write_str("${n}")
+}
+
+fn (var w: JsonWriter) float(f: Float) -> () ! json.DecodeErr {
+  if f != f {
+    return Err(json.DecodeErr{path: "$", msg: "json: unsupported value: NaN"})
+  }
+  if f > 1.7976931348623157e308 || f < -1.7976931348623157e308 {
+    return Err(json.DecodeErr{path: "$", msg: "json: unsupported value: " + (if f > 0.0 { "+Inf" } else { "-Inf" })})
+  }
+  w.begin_value()
+  w.out.write_str(jsontext.append_float("", f))
+}
+
+fn (var w: JsonWriter) number(text: Str) -> () ! json.DecodeErr {
+  let b = text.bytes()
+  let n = b.len()
+  if n == 0 || !(b[0] == 45 || digit(Int(b[0]))) || is_space(Int(b[n - 1])) || jsontext.parse(b).is_empty() {
+    return Err(json.DecodeErr{path: "$", msg: "json: invalid number literal " + "\"" + text + "\""})
+  }
+  w.begin_value()
+  w.out.write_str(text)
+}
+
+fn (var w: JsonWriter) bool(b: Bool) {
+  w.begin_value()
+  w.out.write_str(if b { "true" } else { "false" })
+}
+
+fn (var w: JsonWriter) null() {
+  w.begin_value()
+  w.out.write_str("null")
+}
+
+fn (var w: JsonWriter) raw(text: Str) -> () ! json.DecodeErr {
+  var c = compact(text)?
+  if w.html {
+    c = c.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+  }
+  w.begin_value()
+  w.out.write_str(c)
+}
+
+fn (var w: JsonWriter) value(v: json.Value) -> () ! json.DecodeErr {
+  match v {
+    Null => w.null()
+    Bool(b) => w.bool(b)
+    Int(n) => w.int(n)
+    Num(n) => w.float(n)?
+    Str(s) => w.str(s)
+    Trusted(_, s) => w.str(s)
+    List(items) => {
+      w.array_start()
+      for x in items {
+        w.value(x)?
+      }
+      w.array_end()
+    }
+    Object(fields) => {
+      w.object_start()
+      for f in fields {
+        w.key(f.0)
+        w.value(f.1)?
+      }
+      w.object_end()
+    }
+  }
+}
+
+fn (var w: JsonWriter) finish() -> Bytes {
+  if w.stack.len() > 0 {
+    fault("json: finish with an array or object still open")
+  }
+  w.out.freeze()
+}

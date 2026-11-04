@@ -494,6 +494,15 @@ fn err_text(e: Int) -> Str {
   m + " " + s
 }
 
+/// The text of encoding/json's SyntaxError for the byte c where the
+/// Decoder.Token state is in context ctx (1 looking for beginning of value,
+/// 2 after array element, 3 looking for beginning of object key string, 4
+/// after object key, 5 after object key:value pair).
+pub fn syntax_err(ctx: Int, c: Int) -> Str { err_text((ctx << 8) | c) }
+
+/// The ASCII bytes src[lo..hi] as a Str.
+pub fn slice_str(src: Bytes, lo: Int, hi: Int) -> Str { rt.rs_append_bytes("", src, lo, hi, 0) }
+
 /// encoding/json's quoteChar: the byte c as a rune in single quotes,
 /// escaped like strconv.Quote.
 fn quote_char(c: Int) -> Str {

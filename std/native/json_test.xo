@@ -3193,3 +3193,55 @@ test "parse_value: a number out of range under a duplicate key fails, as Go's Un
   expect(json.parse_value("{\"a\": 1, \"a\": 2}").ok().map(fn(v) { v.encode() })) == Some("{\"a\":2}")
   expect(json.parse_value("{\"a\": 1e400}").is_err()) == true
 }
+
+fn show_tokens(text: Str) -> Str {
+  var out = ""
+  var r = json.tokens(text.bytes())
+  while true {
+    match r.next() {
+      Ok(t) => match t {
+        Some(x) => out = out + show_token(x) + " "
+        None => break
+      }
+      Err(e) => {
+        out = out + "ERR " + e.msg
+        break
+      }
+    }
+  }
+  out
+}
+
+fn show_token(t: json.Token) -> Str {
+  match t {
+    ObjectStart => "{"
+    ObjectEnd => "}"
+    ArrayStart => "["
+    ArrayEnd => "]"
+    Key(s) => "K:${s}"
+    Str(s) => "S:${s}"
+    Number(s) => "N:${s}"
+    Bool(b) => "B:${b}"
+    Null => "null"
+  }
+}
+
+test "token reader smoke" {
+  expect(show_tokens("{\"a\": [1, 2.5e3, \"x\\n\", true, null], \"b\": {}}")) == "{ K:a [ N:1 N:2.5e3 S:x\n B:true null ] K:b { } } "
+  expect(show_tokens("")) == ""
+  expect(show_tokens("[1,}")) == "[ N:1 ERR invalid JSON: invalid character '}' looking for beginning of value"
+  expect(show_tokens("[1")) == "[ N:1 ERR invalid JSON: unexpected EOF"
+}
+
+test "json writer smoke" {
+  var w = json.json_writer()
+  w.object_start()
+  w.key("a<b")
+  w.array_start()
+  w.int(1)
+  w.float(2.5)?
+  w.str("x\n")
+  w.array_end()
+  w.object_end()
+  expect(w.finish().to_str() ?? "") == "{\"a\\u003cb\":[1,2.5,\"x\\n\"]}"
+}

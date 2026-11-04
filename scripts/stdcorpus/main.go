@@ -56,6 +56,7 @@ var generators = map[string]func() string{
 	"json":       jsonCorpus,
 	"jsondecode": jsonDecodeCorpus,
 	"jsonencode": jsonEncodeCorpus,
+	"jsontoken":  jsonTokenCorpus,
 	"mail":       mailCorpus,
 	"metrics":    metricsCorpus,
 	"mime":       mimeCorpus,

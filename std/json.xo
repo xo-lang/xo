@@ -82,3 +82,85 @@ fn (var d: Decoder) write(data: Bytes) -> List[Value] ! DecodeErr
 fn (var d: Decoder) finish() -> List[Value] ! DecodeErr
 /// The typed value of v, as decode reads it from v's text.
 fn from_value[T: Json](v: Value) -> T ! DecodeErr
+
+/// One token of a JSON text (decision 0495; Go's Decoder.Token). An object
+/// member's name is `Key`; a number keeps its text as written.
+enum Token {
+  ObjectStart
+  ObjectEnd
+  ArrayStart
+  ArrayEnd
+  Key(s: Str)
+  Str(s: Str)
+  Number(text: Str)
+  Bool(b: Bool)
+  Null
+}
+
+/// A token at a time reader of a sequence of JSON values (Go's
+/// Decoder.Token, decision 0495): pull style over bytes already in memory
+/// (`tokens`), or push style (`write`), no I/O of its own. Strings are
+/// unescaped as `decode` does (invalid UTF-8 and lone surrogate escapes
+/// become U+FFFD); errors are `DecodeErr` at `$` with `decode`'s texts.
+/// @move_only
+struct TokenReader {}
+
+/// One token may be at most max_token bytes (a string or number waiting
+/// for the rest of its text in push style).
+fn token_reader(max_token: Int = 67108864) -> TokenReader
+/// A reader over a whole text: `next` gives its tokens; the empty text and
+/// white space give None at once.
+fn tokens(data: Bytes) -> TokenReader
+/// The tokens the input so far completes (a number at the very end waits
+/// for what follows it).
+fn (var r: TokenReader) write(data: Bytes) -> List[Token] ! DecodeErr
+/// The rest; input that ends inside an array, an object or a token is
+/// `invalid JSON: unexpected EOF`. An error found after the tokens it
+/// returns is the next call's (of `finish` or `next`).
+fn (var r: TokenReader) finish() -> List[Token] ! DecodeErr
+/// The next token; None at the end of the input (or, in push style, when
+/// the next token is not complete yet).
+fn (var r: TokenReader) next() -> Token? ! DecodeErr
+/// Go's Decoder.More: another element or member follows in the current
+/// array or object (false at the end of the input).
+fn (var r: TokenReader) more() -> Bool
+/// Go's Decoder.InputOffset: the byte offset after the last token.
+fn (r: TokenReader) offset() -> Int
+/// Skips the value that starts at the next token: a scalar, or an array or
+/// object through its end.
+fn (var r: TokenReader) skip() -> () ! DecodeErr
+/// The value that starts at the next token, as `parse_value` reads it.
+fn (var r: TokenReader) value() -> Value ! DecodeErr
+
+/// A writer of one JSON text a token at a time (decision 0495), in
+/// encoding/json's forms: strings escape `"`, `\`, control characters,
+/// U+2028 and U+2029 and invalid UTF-8 as `encode` does, and `<`, `>`, `&`
+/// as `<`, `>`, `&` when escape_html; numbers are the
+/// shortest form of Go's floatEncoder. Commas and colons are inserted. A
+/// call out of order (a value where a key is due, an unclosed array at
+/// `finish`) faults: it is a bug in the caller.
+/// @move_only
+struct JsonWriter {}
+
+fn json_writer(escape_html: Bool = true) -> JsonWriter
+fn (var w: JsonWriter) object_start()
+fn (var w: JsonWriter) object_end()
+fn (var w: JsonWriter) array_start()
+fn (var w: JsonWriter) array_end()
+fn (var w: JsonWriter) key(name: Str)
+fn (var w: JsonWriter) str(s: Str)
+fn (var w: JsonWriter) int(n: Int)
+/// NaN and infinities are refused (Go's UnsupportedValueError).
+fn (var w: JsonWriter) float(f: Float) -> () ! DecodeErr
+/// A number as written, checked against the JSON grammar.
+fn (var w: JsonWriter) number(text: Str) -> () ! DecodeErr
+fn (var w: JsonWriter) bool(b: Bool)
+fn (var w: JsonWriter) null()
+/// Go's RawMessage: a JSON text, written compacted.
+fn (var w: JsonWriter) raw(text: Str) -> () ! DecodeErr
+/// A Value, token by token (a Num that is NaN or infinite is refused).
+fn (var w: JsonWriter) value(v: Value) -> () ! DecodeErr
+/// The text written; every array and object must be closed. Values
+/// written at the top level are separated by a newline (Go's Encoder).
+/// @moves
+fn (var w: JsonWriter) finish() -> Bytes
