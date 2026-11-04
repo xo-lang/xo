@@ -56,5 +56,6 @@ removes.
   LLVM with Go parity; wasm goldens (map, mutex, list, conc) pass.
 - xo's native __text (Mac, `size -m bin/xo`): 33,147,308 at e622870f9,
   33,154,468 with 0488 alone: +7,160 bytes (0.02%).
-- To do before acceptance: TestGoldenTasks under TSan x20 (host), the
-  --ab rows on host 1 for httpsession and cookiejar.
+- Host 2 (linux/arm64), 0488 + l2-cjfix: gate-self (prelude corpora,
+  repotest) passes; TestGoldenTasks under TSan x20: map_log_stress 20 of
+  20, mutex_poison 20 of 20 (the task goldens the filter matched).
