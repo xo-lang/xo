@@ -1,6 +1,6 @@
 # 0484: XO_FREE_CHECK, a native debug mode that poisons freed blocks and retired records
 
-Status: Proposed (Xo Lang 1, 2026-11-03; the Lead asked for it)
+Status: Accepted (owner, 2026-11-03; proposed by Xo Lang 1 the same day at the Lead's request)
 
 ## Context
 
