@@ -1121,3 +1121,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [wasm-frame-stack-resident.md](wasm-frame-stack-resident.md): the wasm memory-frame stack was one 16 MB resident block per instance; it now grows in chunks (2026-11-04)
 - [helper-body-needs-own-symbol.md](helper-body-needs-own-symbol.md): a helper's shared body without its own symbol joins the last entry's atom in a split build; darwin link fails with no FDE for the DWARF mode function
 - [two-full-arm64-suites-one-host.md](two-full-arm64-suites-one-host.md): two full internal/arm64 suites on one 24 GB host fail 13 memory heavy tests (big Str, sepcomp, std record); chain suites per host
+- [tsan-cpu-profile-stall.md](tsan-cpu-profile-stall.md): a `--race` build stalls in debug_routes' live CPU profile (4 in 1600 runs, every thread in a futex); plain native and LLVM 800/800 clean; skip it in TSan rounds of other changes (2026-11-04)
