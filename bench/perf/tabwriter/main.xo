@@ -1,0 +1,30 @@
+// tabwriter: std/tabwriter against Go's text/tabwriter (twin.go.txt): a
+// 40 line, 4 column table of generated cells formatted with padding 2
+// (spaces), then the same table right aligned, 5,000 times each; `none` is
+// the setup alone. Usage: `<program> none|pad|right`. Prints `<workload>
+// <checksum>` (the output's length and a byte sum); the twin prints the same.
+use std/tabwriter
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var tb = BytesBuilder.with_capacity(4096)
+  for r in 0..40 {
+    tb.write(b"row${r}\t")
+    tb.write(b"${r * 7919 % 100003}\t")
+    tb.write(b"name-${r % 7}-${r * r}\t")
+    tb.write(b"${r % 3 == 0}\n")
+  }
+  let table = tb.freeze()
+  var sum = 0
+  for i in 0..5000 {
+    if w == "pad" || w == "right" {
+      var tw = tabwriter.writer(0, 8, 2, 32, if w == "right" { tabwriter.ALIGN_RIGHT } else { 0 })
+      tw.write(table)
+      let out = tw.flush()
+      sum += out.len() + Int(out[i % out.len()])
+    } else {
+      sum += table.len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

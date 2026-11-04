@@ -1,5 +1,16 @@
 # std/jwt changes
 
+## 2026-11-04: fix: exp, nbf and iat past 2262 no longer fault
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.38.1 evaluation (b25): a correctly signed token with `exp` 32503680000 (year 3000) killed the process
+- Go reference: golang-jwt v5 (time.Time holds such dates)
+- Test: jwt_test.xo "dates past 2262 do not overflow (b25)"
+- Shipped in: not yet released
+
+The claims are kept as whole seconds and compared in seconds (leeway and `max_age` added without overflow), where they were multiplied into a nanosecond Duration. The `at` of `Expired` and `NotYetValid` for a date a Time cannot hold is clamped to about the year 2255.
+
 ## 2026-11-03: feature: std/jwt
 
 - Kind: feature

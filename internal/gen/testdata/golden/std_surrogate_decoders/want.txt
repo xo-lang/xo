@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+xn--ib9b lookup err idna: invalid label "�"
+xn--ib9b punycode ok � ok xn--zn7c
+a.xn--ib9b lookup err idna: invalid label "�"
+a.xn--ib9b punycode ok a.� ok a.xn--zn7c
+xn--zca lookup ok ß
+xn--zca punycode ok ß ok xn--zca
+\x{D800} ok false false
+[\x{D800}-\x{DFFF}] ok false false
+\x{D800}abc ok false false
+[^\x{D800}] ok true true
+x110000 err
+--- stderr

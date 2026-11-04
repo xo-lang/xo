@@ -1,5 +1,16 @@
 # std/regexp changes
 
+## 2026-11-04: fix: a pattern with a surrogate literal compiles and matches nothing
+
+- Kind: fix
+- Commit: this push
+- Found by: the surrogate audit after b27 (every Rune conversion of decoded input in std)
+- Go reference: regexp/syntax accepts `\x{D800}` (it matches no text); `\x{110000}` is an error
+- Test: golden std_surrogate_decoders
+- Shipped in: not yet released
+
+`regexp.compile("\\x{D800}")` faulted while computing the literal prefix. The prefix now stops before a surrogate.
+
 ## 2026-10-29: perf: compile sets a class's ASCII bitmap a 32 bit word at a time
 
 - Kind: perf

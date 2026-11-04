@@ -2454,7 +2454,13 @@ fn literal_prefix(g: Prog) -> Str {
   }
   var b = BytesBuilder.new()
   while pc != 0 && g.op[pc] == I_RUNE1 {
-    b.write_rune(Rune(g.rune[pc][0]))
+    // a surrogate (`\x{D800}`) compiles but is no Rune and matches nothing:
+    // the prefix stops before it (it only speeds the search)
+    let c = g.rune[pc][0]
+    if c >= 0xD800 && c <= 0xDFFF {
+      break
+    }
+    b.write_rune(Rune(c))
     pc = g.out[pc]
     while pc != 0 && (g.op[pc] == I_NOP || g.op[pc] == I_CAPTURE) {
       pc = g.out[pc]

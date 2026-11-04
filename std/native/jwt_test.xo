@@ -41,3 +41,38 @@ test "HS256 round trip and the checks" {
     _ => fault("expected Alg for none")
   }
 }
+
+struct Dates {
+  exp: Int
+  nbf: Int
+  iat: Int
+} derive Json
+
+test "dates past 2262 do not overflow (b25)" {
+  let key = jwt.Key.Hmac(secret: Secret.new(b"a secret of some length"))
+  // year 3000: golang-jwt accepts it as not expired, not early
+  let tok = jwt.sign(os.rand, jwt.Alg.HS256, key, Dates{exp: 32503680000, nbf: 0, iat: 0}, None)?
+  var o = opts(1000)
+  o.leeway = Duration.from_secs_int(60)
+  o.check_iat = true
+  o.max_age = Some(Duration.from_secs_int(3000))
+  let _ = jwt.verify_with[Dates](tok, key, o)?
+  // nbf and iat in the far future are not yet valid
+  let early = jwt.sign(os.rand, jwt.Alg.HS256, key, Dates{exp: 32503680000, nbf: 32503680000, iat: 0}, None)?
+  match jwt.verify_with[Dates](early, key, opts(1000)) {
+    Err(jwt.JwtErr.NotYetValid(_)) => ()
+    _ => fault("expected NotYetValid")
+  }
+  // an exp far in the past is expired, with a leeway that would overflow the sum
+  let old = jwt.sign(os.rand, jwt.Alg.HS256, key, Dates{exp: -32503680000, nbf: 0, iat: 0}, None)?
+  var big = opts(1000)
+  big.leeway = Duration.from_secs_int(3000000000)
+  match jwt.verify_with[Dates](old, key, big) {
+    Err(jwt.JwtErr.Expired(_)) => ()
+    _ => fault("expected Expired")
+  }
+  // the largest allowed date with a large leeway
+  let edge = jwt.sign(os.rand, jwt.Alg.HS256, key, Dates{exp: 100000000000, nbf: 0, iat: 0}, None)?
+  big.leeway = Duration.from_secs_int(9000000000)
+  let _ = jwt.verify_with[Dates](edge, key, big)?
+}

@@ -1,5 +1,16 @@
 # std/idna changes
 
+## 2026-11-04: fix: a punycode label that decodes to a surrogate no longer faults
+
+- Kind: fix (security: a denial of service)
+- Commit: this push
+- Found by: the owner's v0.38.1 evaluation (b27): `xn--ib9b` (U+D800) stopped a process, whatever the profile
+- Go reference: x/net/idna (go1.26, v0.60.0): the decoded rune is converted with `string(rune)`, a surrogate becoming U+FFFD, which the Lookup, Display and Registration profiles refuse (`idna: invalid label "\ufffd"`) and the Punycode profile passes
+- Test: golden std_surrogate_decoders (every backend, the Go outputs)
+- Shipped in: not yet released
+
+`idna.to_ascii` and `to_unicode` faulted (`Rune(55296)`) on a name with a label like `xn--ib9b`. The decoded surrogate is now U+FFFD as in Go. The error text also prints a printable non-ASCII rune as it is (Go's %q), where it escaped every one.
+
 ## 2026-11-03: feature: std/idna, internationalised domain names
 
 - Kind: feature

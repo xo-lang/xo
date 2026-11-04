@@ -217,23 +217,59 @@ fn peek_header(token: Str) -> jwt.Header ! jwt.JwtErr {
   header_of(segment_object(parts[0], "header")?)
 }
 
-fn numeric_date(v: json.Value, name: Str) -> Time ! jwt.JwtErr {
+const NS: Int = 1000000000
+
+/// A NumericDate in whole seconds (rounded down, golang-jwt's
+/// TimePrecision). Kept as seconds: a date past 2262 does not fit a Time's
+/// nanoseconds, and every comparison below is done in seconds (b25).
+fn numeric_date(v: json.Value, name: Str) -> Int ! jwt.JwtErr {
   match v {
     Int(n) => {
       if n < -100000000000 || n > 100000000000 {
         return Err(jwt.JwtErr.Claim(msg: "${name} is out of range"))
       }
-      Ok(Time.UNIX_EPOCH + Duration.from_secs_int(n))
+      Ok(n)
     }
     Num(f) => {
       if !(f > -100000000000.0 && f < 100000000000.0) {
         return Err(jwt.JwtErr.Claim(msg: "${name} is out of range"))
       }
-      // whole seconds, rounded down (golang-jwt's TimePrecision)
-      Ok(Time.UNIX_EPOCH + Duration.from_secs_int(Int(f.floor())))
+      Ok(Int(f.floor()))
     }
     _ => Err(jwt.JwtErr.Claim(msg: "${name} is not a number"))
   }
+}
+
+/// secs as a Time for an error's `at`: dates past what a Time holds (about
+/// 2262) report the latest or earliest Time.
+fn date_time(secs: Int) -> Time {
+  let lim = 9000000000
+  let s = if secs > lim { lim } else if secs < 0 - lim { 0 - lim } else { secs }
+  Time.UNIX_EPOCH + Duration.from_secs_int(s)
+}
+
+/// now < the date secs plus a and b, with no overflow: the difference is
+/// taken in whole seconds, the nanosecond remainders only when it is within
+/// a few seconds.
+fn before(now: Time, secs: Int, a: Duration, b: Duration) -> Bool {
+  let n = (now - Time.UNIX_EPOCH).nanos()
+  var ns = n / NS
+  var frac = n - ns * NS
+  if frac < 0 {
+    ns -= 1
+    frac += NS
+  }
+  let an = a.nanos()
+  let bn = b.nanos()
+  let total = (secs - ns) + an / NS + bn / NS
+  let rem = an % NS + bn % NS - frac
+  if total >= 3 {
+    return true
+  }
+  if total <= -3 {
+    return false
+  }
+  total * NS + rem > 0
 }
 
 fn string_claim(v: json.Value, name: Str) -> Str? ! jwt.JwtErr {
@@ -254,15 +290,15 @@ fn check_claims(v: json.Value, opts: jwt.Options) -> () ! jwt.JwtErr {
     }
     Some(x) => {
       let exp = numeric_date(x, "exp")?
-      if !(now < exp + opts.leeway) {
-        return Err(jwt.JwtErr.Expired(at: exp))
+      if !before(now, exp, opts.leeway, Duration.from_nanos(0)) {
+        return Err(jwt.JwtErr.Expired(at: date_time(exp)))
       }
     }
   }
   if let Some(x) = v.get("nbf") {
     let nbf = numeric_date(x, "nbf")?
-    if now < nbf - opts.leeway {
-      return Err(jwt.JwtErr.NotYetValid(at: nbf))
+    if before(now, nbf, Duration.from_nanos(0) - opts.leeway, Duration.from_nanos(0)) {
+      return Err(jwt.JwtErr.NotYetValid(at: date_time(nbf)))
     }
   }
   let iat = match v.get("iat") {
@@ -271,8 +307,8 @@ fn check_claims(v: json.Value, opts: jwt.Options) -> () ! jwt.JwtErr {
   }
   if opts.check_iat {
     if let Some(t) = iat {
-      if now < t - opts.leeway {
-        return Err(jwt.JwtErr.NotYetValid(at: t))
+      if before(now, t, Duration.from_nanos(0) - opts.leeway, Duration.from_nanos(0)) {
+        return Err(jwt.JwtErr.NotYetValid(at: date_time(t)))
       }
     }
   }
@@ -281,8 +317,8 @@ fn check_claims(v: json.Value, opts: jwt.Options) -> () ! jwt.JwtErr {
       Some(t) => t
       None => return Err(jwt.JwtErr.Claim(msg: "iat is required"))
     }
-    if !(now < t + age + opts.leeway) {
-      return Err(jwt.JwtErr.Expired(at: t + age))
+    if !before(now, t, age, opts.leeway) {
+      return Err(jwt.JwtErr.Expired(at: date_time(t + age.nanos() / NS)))
     }
   }
   if let Some(want) = opts.issuer {

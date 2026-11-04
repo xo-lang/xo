@@ -1,0 +1,42 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"text/tabwriter"
+)
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	var tb bytes.Buffer
+	for r := 0; r < 40; r++ {
+		fmt.Fprintf(&tb, "row%d\t", r)
+		fmt.Fprintf(&tb, "%d\t", r*7919%100003)
+		fmt.Fprintf(&tb, "name-%d-%d\t", r%7, r*r)
+		fmt.Fprintf(&tb, "%t\n", r%3 == 0)
+	}
+	table := tb.Bytes()
+	sum := 0
+	for i := 0; i < 5000; i++ {
+		switch w {
+		case "pad", "right":
+			var out bytes.Buffer
+			var flags uint
+			if w == "right" {
+				flags = tabwriter.AlignRight
+			}
+			tw := tabwriter.NewWriter(&out, 0, 8, 2, ' ', flags)
+			tw.Write(table)
+			tw.Flush()
+			b := out.Bytes()
+			sum += len(b) + int(b[i%len(b)])
+		default:
+			sum += len(table) + i%3
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

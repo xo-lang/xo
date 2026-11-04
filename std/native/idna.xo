@@ -66,8 +66,8 @@ fn idnaerr_display(e: idna.IdnaErr) -> Str { e.msg }
 
 fn unicode_version() -> Str { UNICODE_VERSION }
 
-/// label as Go's %q writes it for ASCII, and with \u escapes beyond (every
-/// non ASCII rune is escaped here, so no Unicode printing tables are linked in).
+/// label as Go's %q writes it: a printable rune (strconv.IsPrint) as it is,
+/// any other with a \x, \u or \U escape.
 fn quote_label(label: Str) -> Str {
   var b = StrBuilder.new()
   b.write("\"")
@@ -87,6 +87,8 @@ fn quote_label(label: Str) -> Str {
       b.write("${rr}")
     } else if r < 32 || r == 127 {
       b.write("\\x${hex(r, 2)}")
+    } else if r >= 128 && rr.is_print() {
+      b.write("${rr}")
     } else if r < 0x10000 {
       b.write("\\u${hex(r, 4)}")
     } else {
@@ -457,7 +459,10 @@ fn decode(encoded: Str) -> Str ! idna.IdnaErr {
   }
   var sb = BytesBuilder.with_capacity(output.len() * 3)
   for r in output {
-    sb.write_rune(Rune(r))
+    // a surrogate is a valid code point to the 0..0x10FFFF check but not a
+    // Rune: Go's string(rune) makes it U+FFFD, which the profiles then
+    // refuse or the Punycode profile passes (b27, 2026-11-04)
+    sb.write_rune(Rune(if r >= 0xD800 && r <= 0xDFFF { 0xFFFD } else { r }))
   }
   sb.freeze().to_str() ?? ""
 }

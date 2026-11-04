@@ -1,0 +1,32 @@
+// A lone surrogate in decoded input must not fault (b27, owner's v0.38.1
+// evaluation): the punycode label `xn--ib9b` decodes to U+D800, which Go's
+// x/net/idna turns into U+FFFD (the Lookup, Display and Registration
+// profiles refuse the label, the Punycode profile passes it); a regexp
+// `\x{D800}` compiles and matches nothing, as Go's. Every backend prints
+// the same.
+use std/idna
+use std/regexp
+
+fn show(r: Result[Str, idna.IdnaErr]) -> Str {
+  match r {
+    Ok(s) => "ok ${s}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn main(os: Os) uses stdio {
+  for name in ["xn--ib9b", "a.xn--ib9b", "xn--zca"] {
+    os.stdio.println("${name} lookup ${show(idna.to_unicode(name, idna.Profile.Lookup))}")
+    os.stdio.println("${name} punycode ${show(idna.to_unicode(name, idna.Profile.Punycode))} ${show(idna.to_ascii(name, idna.Profile.Punycode))}")
+  }
+  for p in ["\\x{D800}", "[\\x{D800}-\\x{DFFF}]", "\\x{D800}abc", "[^\\x{D800}]"] {
+    match regexp.compile(p) {
+      Ok(re) => os.stdio.println("${p} ok ${re.is_match("\u{FFFD}abc")} ${re.is_match("abc")}")
+      Err(_) => os.stdio.println("${p} err")
+    }
+  }
+  match regexp.compile("\\x{110000}") {
+    Ok(_) => os.stdio.println("x110000 ok")
+    Err(_) => os.stdio.println("x110000 err")
+  }
+}
