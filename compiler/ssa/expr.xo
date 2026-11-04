@@ -1073,6 +1073,11 @@ fn (var b: Builder) selector(e: Expr) -> Int {
       return b.func_value(impl, e)
     }
   }
+  if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].recv < 0 && b.c.objs[r].recv_ty < 0 && !b.is_std_mod(b.obj_mod(r)) && b.c.type_in(b.s.file, x) < 0 {
+    // another module's function as a value (`apply(m.double, 21)`), as a
+    // bare name of this module's is (ident)
+    return b.func_value(r, e)
+  }
   if r >= 0 && b.c.objs[r].kind == check.ObjKind.Func && b.c.objs[r].recv >= 0 && !b.c.objs[r].is_static && b.c.type_in(b.s.file, x) >= 0 {
     // a method value: a closure over the receiver's value now (decision
     // 0109)

@@ -1,0 +1,5 @@
+pub fn double(n: Int) -> Int { n * 2 }
+
+pub fn label(n: Int) -> Str { "n=${n}" }
+
+pub fn first[T](xs: List[T]) -> T? { xs.first() }
