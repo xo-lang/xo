@@ -1,0 +1,42 @@
+// rate's times saturate as Go's do (2026-11-04): a reservation that waits
+// forever (a limit of 0, or one so small the wait passes Xo's last Time)
+// acts at the latest Time, and cancelling it computed that Time plus the
+// wait again, an integer overflow fault; Go's Time.Add and Time.Sub never
+// fault. The answers are x/time/rate v0.16.0's at one instant.
+use std/rate
+
+/// A clock stopped at one instant, as Go's *At methods take one time: the
+/// answers below are then Go's for the same sequence at that time.
+struct Stopped {
+  at: Time
+}
+
+fn (c: Stopped) now() -> Time uses clock { c.at }
+fn (c: Stopped) sleep(d: Duration) uses clock {}
+fn (c: Stopped) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock { Ok(()) }
+fn (c: Stopped) since(t: Time) -> Duration uses clock { c.at - t }
+
+fn main(os: Os) {
+  let clock = Stopped{at: Time.from_unix(1000000000)}
+  // a limit of 0: the burst once, then a wait of forever
+  let z = rate.new(0.0, 3, clock)
+  let a = z.reserve_n(3)
+  let b = z.reserve_n(1)
+  os.stdio.println("zero: a ok ${a.ok()} delay ${a.delay()}, b ok ${b.ok()} waits forever ${b.delay() == Duration.from_nanos(9223372036854775807)}")
+  os.stdio.println("zero: tokens ${z.tokens()}")
+  b.cancel()
+  os.stdio.println("zero: after cancel tokens ${z.tokens()}")
+  a.cancel()
+  os.stdio.println("zero: after cancelling the first too ${z.tokens()}")
+  let c = z.reserve_n(1)
+  os.stdio.println("zero: again ok ${c.ok()} waits forever ${c.delay() == Duration.from_nanos(9223372036854775807)}")
+  c.cancel()
+  // a tiny limit: the wait for one token is past Xo's last Time
+  let t = rate.new(1e-10, 1, clock)
+  let d = t.reserve_n(1)
+  let e = t.reserve_n(1)
+  os.stdio.println("tiny: ${d.ok()} ${d.delay()} ${e.ok()} waits forever ${e.delay() == Duration.from_nanos(9223372036854775807)}")
+  e.cancel()
+  d.cancel()
+  os.stdio.println("tiny: allow after cancels ${t.allow()}")
+}

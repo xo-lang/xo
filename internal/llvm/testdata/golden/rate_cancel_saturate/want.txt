@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+zero: a ok true delay 0s, b ok true waits forever true
+zero: tokens -1.0
+zero: after cancel tokens 0.0
+zero: after cancelling the first too 3.0
+zero: again ok true waits forever false
+tiny: true 0s true waits forever true
+tiny: allow after cancels false
+--- stderr

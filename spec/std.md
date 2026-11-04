@@ -6607,6 +6607,10 @@ enum RateErr { Exceeds(n: Int, burst: Int), Canceled }
 - `set_limit` and `set_burst` keep the tokens so far. A limit of 0
   allows the burst once and then nothing; `INF` allows everything,
   whatever the burst. `every(d)` is `INF` for d of 0 or less.
+- Answers are x/time/rate's to the bit (a random differential on the
+  virtual clock, 2026-11-04): tokens use Go's `Duration.Seconds`, and a
+  wait of forever acts at Xo's last Time (Go's Time reaches further)
+  while `delay()` counts down from it as Go's does; nothing overflows.
 - Go's API without a Context: Go's `WaitN(ctx, n)` deadline check is the
   task's cancellation; `AllowN(t, n)` and the other `*At` forms are the
   clock's time (a test sets it).

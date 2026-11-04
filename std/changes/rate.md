@@ -1,5 +1,16 @@
 # std/rate changes
 
+## 2026-11-04: fix: cancelling a reservation that waits forever no longer faults
+
+- Kind: fix
+- Commit: this push
+- Found by: a random differential against golang.org/x/time/rate v0.16.0 on the virtual clock (the owner's v0.38.1 "not tested yet" list)
+- Go reference: Reservation.CancelAt (Time.Add and Time.Sub, which never fault), durationFromTokens
+- Test: golden rate_cancel_saturate (Go's answers for the same sequence at one instant), the rate corpus, the differential (200 scenarios; harness in the Xo Lang 2 notes)
+- Shipped in: not yet released
+
+A reservation under a limit of 0 (or one so small the wait passes Xo's last Time) acts at the latest Time; `cancel` added the wait to it again and stopped the program with an integer overflow fault (also a Time before 1970 in the saturating add). The limiter's time arithmetic now saturates at Xo's first and last Time where Go's goes past them (helpers local to rate.xo; prelude Time arithmetic is unchanged), and a wait more negative than the shortest Duration is that Duration. The same differential found two more differences, fixed: the tokens differed from Go's in the last bit (Go's tokensFromDuration uses Duration.Seconds, whole seconds plus the rest over 1e9), and `delay()` of a reservation that waits forever stayed the longest Duration where Go's counts down by the time since it was made (Reservation keeps when it was made and its wait). After the fix: 200 random scenarios (about 6,000 calls), 0 differences, native and Go backend; backoff's 200 scenarios against cenkalti/backoff v4.3.0 had none before.
+
 ## 2026-11-04: perf: Allow and AllowN build no Reservation
 
 - Kind: perf

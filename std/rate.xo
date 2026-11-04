@@ -31,6 +31,10 @@ struct Reservation {
   tokens: Int
   time_to_act: Time
   limit: Float
+  /// When it was made and its wait: Go's time_to_act passes Xo's last
+  /// Time for a wait of forever, and delay counts down from the wait.
+  made: Time
+  wait: Duration
 }
 
 /// Why wait failed.
