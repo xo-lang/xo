@@ -52,9 +52,9 @@ fn limiter_tokens(l: rate.Limiter) -> Float uses clock {
   l.st.with_read(fn(s: rate.LimitState) { advance(s, t) })
 }
 
-fn limiter_allow(l: rate.Limiter) -> Bool uses clock { reserve_at(l, l.clock.now(), 1, 0s).ok }
+fn limiter_allow(l: rate.Limiter) -> Bool uses clock { allow_at(l, l.clock.now(), 1) }
 
-fn limiter_allow_n(l: rate.Limiter, n: Int) -> Bool uses clock { reserve_at(l, l.clock.now(), n, 0s).ok }
+fn limiter_allow_n(l: rate.Limiter, n: Int) -> Bool uses clock { allow_at(l, l.clock.now(), n) }
 
 fn limiter_reserve(l: rate.Limiter) -> rate.Reservation uses clock { reserve_at(l, l.clock.now(), 1, inf_duration()) }
 
@@ -146,6 +146,24 @@ fn cancel_at(r: rate.Reservation, t: Time) {
         s.last_event = prev
       }
     }
+  })
+}
+
+// AllowN: reserveN with no wait, as a Bool: no Reservation is built (it
+// holds the limiter), the common call of a request path.
+fn allow_at(l: rate.Limiter, t: Time, n: Int) -> Bool {
+  l.st.with(fn(var s: rate.LimitState) -> Bool {
+    if s.limit == INF {
+      return true
+    }
+    let tokens = advance(s, t) - Float(n)
+    if tokens < 0.0 || n > s.burst {
+      return false
+    }
+    s.last = t
+    s.tokens = tokens
+    s.last_event = t
+    true
   })
 }
 
