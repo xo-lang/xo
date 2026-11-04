@@ -78,18 +78,30 @@ fn closed(c: Conn) -> Bool { if v12(c) { c.cl12[0].closed } else { c.cl.closed }
 
 fn alpn(c: Conn) -> Str { if v12(c) { c.cl12[0].alpn } else { c.cl.alpn } }
 
+// take_out and take_app empty the client's field in place, as
+// tls13.take and recv do: a call of those passes the whole client (968
+// bytes) and stores each of its words back, 18 KB of a wasm module each.
+
 fn take_out(var c: Conn) -> Bytes {
   if v12(c) {
-    return tls12.take(c.cl12[0])
+    let o = c.cl12[0].out
+    c.cl12[0].out = b""
+    return o
   }
-  tls13.take(c.cl)
+  let o = c.cl.out
+  c.cl.out = b""
+  o
 }
 
 fn take_app(var c: Conn) -> Bytes {
   if v12(c) {
-    return tls12.recv(c.cl12[0])
+    let a = c.cl12[0].app
+    c.cl12[0].app = b""
+    return a
   }
-  tls13.recv(c.cl)
+  let a = c.cl.app
+  c.cl.app = b""
+  a
 }
 
 fn put(var c: Conn, data: Bytes) {

@@ -1,5 +1,20 @@
 # std/tls changes
 
+## 2026-11-04: perf: a TLS connection's output and data are taken in place
+
+- Kind: perf (size)
+- Commit: this push
+- Found by: the wasm component size breakdown (decision 0447 queue, component size): tlsio.take_out and take_app
+  were 18 KB each of an HTTPS client component
+- Go reference: none
+- Test: the tls corpora, TestWasm* goldens (the wasip2 TLS client), arm64 and LLVM https goldens
+- Size: an HTTPS client (xo-fetch) 9,335 bytes smaller on wasm
+- Shipped in: not yet released
+
+tlsio's take_out and take_app read and empty the client's field
+themselves instead of calling tls13.take and recv, which passed the whole
+client (968 bytes) and stored each of its words back.
+
 ## 2026-11-04: change: on wasm a certificate's expiry error shows the current time in UTC
 
 - Kind: behavior (wasm only), size
