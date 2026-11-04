@@ -7,7 +7,7 @@
 - Found by: XO_PROF of the log twin (87% of a text record's time in `write`): eprintln made two write system calls, the text and then "\n", where Go's log and slog make one
 - Go reference: os.Stderr.Write of a whole line (log/slog's handler writes the record with its newline in one Write)
 - Test: twincheck bench/perf/log; the stdio goldens (every backend)
-- Timing: bench/results/std-twin-log-2026-11-04.md (Mac: 100,000 text records 0.1905 s to 0.118 s, 0.62; linux row pending)
+- Timing: bench/results/std-twin-log-2026-11-04.md (host 2: text 0.640 of Go, json 1.094; Mac 0.62 of its old time)
 - Shipped in: not yet released
 
 Stdio.eprintln (and so every log record) copies a line shorter than 64 KiB
