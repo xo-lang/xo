@@ -9,18 +9,24 @@ duplex path (decision 0433) closed it every time.
 Program: bench/perf/httppost, 2000 keep-alive POSTs of a 34-byte body
 source against a std/http server in the same process. `xo bench --ab`
 on the first linux/arm64 offload host (12 CPUs, Linux aarch64, xo 0.37.0),
-3 rounds, A the parent 2daf4f48c and B the change 2b761fc75 (branch
-revisions; the pushed commits carry the same code).
+3 rounds.
 
-`open` (Client.open, the full duplex path):
+`open` (Client.open, the full duplex path), A the parent 1d525c62a and
+B 6ad3d5a9c, the pushed code with the 50 ms wait for the sender's mark:
 
 | metric | A median | B median | B / A | 95% interval | verdict |
 |---|---|---|---|---|---|
-| wall_ms | 113.4 | 28.69 | 0.253 | 0.231 to 0.314 | better |
-| cpu_ms | 189.3 | 30.28 | 0.16 | 0.142 to 0.207 | better |
-| max_rss_kb | 3884 | 2988 | 0.769 | 0.722 to 0.83 | better |
+| wall_ms | 120.8 | 24.04 | 0.199 | 0.194 to 0.225 | better |
+| cpu_ms | 199.8 | 24.72 | 0.124 | 0.119 to 0.143 | better |
+| max_rss_kb | 3888 | 2940 | 0.756 | 0.69 to 0.839 | better |
 
-`send` (Client.send, which already pooled such a connection):
+Before the wait (A 2daf4f48c, B 2b761fc75, before a rebase): wall 0.253
+(0.231 to 0.314), cpu 0.16, RSS 0.769. Without the wait the golden dialed
+a second connection on linux/arm64 when the reader finished the response
+before the sender stored its mark; with it, 30 of 30 runs used one.
+
+`send` (Client.send, which already pooled such a connection; A
+2daf4f48c, B 2b761fc75):
 
 | metric | A median | B median | B / A | 95% interval | verdict |
 |---|---|---|---|---|---|
