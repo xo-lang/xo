@@ -52,3 +52,34 @@ Reading:
   returned EXIT, so no instance was torn down.
 
 Raw output: the lead's notes, xo-lang-4/out/s5m3-2.txt.
+
+## With the frame stack in chunks (c2ae2814c)
+
+Same host, program and method (3 rounds, medians), xo at 79a8d6554 (step 3
+alone) against c2ae2814c (step 3 plus the memory-frame stack in chunks,
+gotchas/wasm-frame-stack-resident.md), with Rust's component:
+
+| proxy | req/s c32 | p99 c32 | req/s c256 | p99 c256 | RSS c32 | RSS c256 |
+|---|---|---|---|---|---|---|
+| Xo, step 3 | 4,919 | 8.689 ms | 14,413 | 78.817 ms | 485,432 KB | 2,570,892 KB |
+| Xo, chunked stack | 4,925 | 8.366 ms | 14,414 | 76.251 ms | 74,344 KB | 169,064 KB |
+| Rust | 4,968 | 8.344 ms | 14,473 | 83.286 ms | 67,976 KB | 152,692 KB |
+
+| hello | req/s c32 | p99 c32 | req/s c256 | p99 c256 | RSS c32 | RSS c256 |
+|---|---|---|---|---|---|---|
+| Xo, step 3 | 116,466 | 1.040 ms | 201,366 | 5.495 ms | 111,164 KB | 181,696 KB |
+| Xo, chunked stack | 115,795 | 1.039 ms | 203,813 | 5.373 ms | 110,816 KB | 191,712 KB |
+| Rust | 131,981 | 1.012 ms | 204,617 | 5.255 ms | 110,052 KB | 163,756 KB |
+
+Reading:
+
+- The proxy's peak memory is 1.09x Rust's at 32 connections and 1.11x at
+  256 (was 7.1x and 16.8x); req/s and p99 are unchanged and within Rust's
+  run to run spread.
+- hello does not reach a framed function, so it is unchanged; its peak at
+  256 connections is 1.17x Rust's (round 1's 167 to 177 MB at c32, for
+  both Xo builds, is the first run's warm up).
+- Component sizes: 554,388 and 549,857 bytes against Rust's 117,271 (the
+  next item, component size).
+
+Raw output: the lead's notes, xo-lang-4/out/mm-1.txt.
