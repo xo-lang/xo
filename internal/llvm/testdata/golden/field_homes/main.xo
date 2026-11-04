@@ -1,0 +1,63 @@
+// A `var` argument that is a field of a `var` parameter's home (decision
+// 0490): take and put update the inner struct through calls, and the
+// outer struct sees each update.
+
+struct Inner {
+  f0: Bytes
+  f1: Bytes
+  f2: Bytes
+  f3: Bytes
+  f4: Bytes
+  f5: Bytes
+  f6: Bytes
+  f7: Bytes
+  f8: Bytes
+  f9: Bytes
+  f10: Bytes
+  f11: Bytes
+  f12: Bytes
+  f13: Bytes
+  f14: Bytes
+  f15: Bytes
+  f16: Bytes
+  f17: Bytes
+  f18: Bytes
+  f19: Bytes
+  out: Bytes
+  n: Int
+}
+
+struct Outer {
+  inner: Inner
+  tag: Str
+  count: Int
+}
+
+fn take(var i: Inner) -> Bytes {
+  let o = i.out
+  i.out = b""
+  o
+}
+
+fn put(var i: Inner, b: Bytes) {
+  i.out = i.out + b
+  i.n += b.len()
+}
+
+fn take_out(var o: Outer) -> Bytes {
+  o.count += 1
+  take(o.inner)
+}
+
+fn put_in(var o: Outer, b: Bytes) {
+  put(o.inner, b)
+}
+
+fn main(os: Os) {
+  var o = Outer{inner: Inner{f0: b"0", f1: b"1", f2: b"2", f3: b"3", f4: b"4", f5: b"5", f6: b"6", f7: b"7", f8: b"8", f9: b"9", f10: b"10", f11: b"11", f12: b"12", f13: b"13", f14: b"14", f15: b"15", f16: b"16", f17: b"17", f18: b"18", f19: b"19", out: b"", n: 0}, tag: "t", count: 0}
+  put_in(o, b"ab")
+  put_in(o, b"cd")
+  let saved = o
+  let t = take_out(o)
+  os.stdio.println("${t.to_str() ?? "?"} ${o.inner.out.len()} ${o.inner.n} ${o.count} ${saved.inner.out.to_str() ?? "?"} ${o.inner.f7.to_str() ?? "?"}")
+}

@@ -711,9 +711,12 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
   var pre: Map[Int, Int] = {}
   if sus {
     var vh0: List[Int] = []
-    for (i, _) in x.args.indexed() {
+    for (i, a) in x.args.indexed() {
       if let Some(h) = g.pass.get(v * 4096 + i) {
         vh0.push(h)
+      }
+      if g.fpass.contains(v * 4096 + i) {
+        vh0.push(g.mfield[a])
       }
     }
     var ns0 = 0
@@ -721,7 +724,7 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
       if !g.homes[ci].contains(i) {
         continue
       }
-      if g.pass.get(v * 4096 + i) != None {
+      if g.pass.get(v * 4096 + i) != None || g.fpass.contains(v * 4096 + i) {
         continue
       }
       if g.rhomes[ci].contains(i) {
@@ -744,9 +747,12 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
   // the homes this call passes for `var` parameters: a read only one must
   // not see the callee's writes, so it gets a copy of a value they hold
   var vhomes: List[Int] = []
-  for (i, _) in x.args.indexed() {
+  for (i, a) in x.args.indexed() {
     if let Some(h) = g.pass.get(v * 4096 + i) {
       vhomes.push(h)
+    }
+    if g.fpass.contains(v * 4096 + i) {
+      vhomes.push(g.mfield[a])
     }
   }
   var frees: List[Int] = []
@@ -759,6 +765,16 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
     }
     if let Some(h) = g.pass.get(v * 4096 + i) {
       g.get(g.hptr[h])
+      continue
+    }
+    if g.fpass.contains(v * 4096 + i) {
+      // a field of a home, updated in place (decision 0490)
+      let (mp, mo) = g.mem_of(a)
+      g.get(mp)
+      if mo > 0 {
+        g.e("i32.const ${mo}")
+        g.e("i32.add")
+      }
       continue
     }
     if g.rhomes[ci].contains(i) {

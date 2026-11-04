@@ -350,6 +350,7 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
   g.livein = {}
   g.hbefore = []
   g.pass = {}
+  g.fpass = {}
   g.users = []
   g.inedge = []
   for _ in 0..nv {
@@ -382,6 +383,7 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
   }
   g.plan_fields(pos)
   g.plan_nested()
+  g.plan_field_calls()
 }
 
 /// The chain of home h; false when it falls back.
@@ -1160,4 +1162,141 @@ fn (var g: Gen) mem_rc(op: Str, t: Int, p: Int, off: Int) {
   }
   g.mem_push(p, off, g.leaves(t))
   g.e("call ${g.rc_fn(op, t)}")
+}
+
+/// A `var` argument that is a field of a value a home holds, whose updated
+/// value the caller stores straight back into that field (decision 0490):
+/// `take(o.inner)` with o a home is a = field i of c, v = call take(.., a,
+/// ..), r = the call's `var` result for it, and u = setfield i of c to r,
+/// which the home holds. The call passes the field's address in the home
+/// (fpass), the callee updates it there, r is a view of it, and u stores
+/// nothing (inhome, as plan_nested's), where before the call passed a
+/// temporary copy of the field and read each of its words back.
+fn (var g: Gen) plan_field_calls() {
+  let f = g.f
+  for v in 0..f.values.len() {
+    let ci = g.home_callee(v)
+    if ci < 0 || g.inedge[v] {
+      continue
+    }
+    let x = f.values[v]
+    for (j, pi) in g.m.funcs[ci].var_params.indexed() {
+      if !g.homes[ci].contains(pi) || g.rhomes[ci].contains(pi) || pi >= x.args.len() {
+        continue
+      }
+      let a = x.args[pi]
+      if a < 0 || g.pass.contains(v * 4096 + pi) || g.mfield[a] < 0 || f.values[a].op != ssa.Op.Field {
+        continue
+      }
+      if g.users[a].len() != 1 || g.users[a][0] != v {
+        continue
+      }
+      let c = f.values[a].args[0]
+      let h = g.mfield[a]
+      if c < 0 || g.held[c] != h {
+        continue
+      }
+      let i = match f.values[a].aux {
+        I(n) => n
+        _ => -1
+      }
+      // the call's only read of this `var` result, and its only use the
+      // update of the same field of c, which the home then holds
+      var r = -1
+      var n = 0
+      for w in g.users[v] {
+        if f.values[w].op == ssa.Op.Field {
+          if let I(k) = f.values[w].aux {
+            if k == j + 1 {
+              r = w
+              n += 1
+            }
+          }
+        }
+      }
+      if r < 0 || n != 1 || g.users[r].len() != 1 {
+        continue
+      }
+      let u = g.users[r][0]
+      let ux = f.values[u]
+      if ux.op != ssa.Op.SetField || ux.args.len() < 2 || ux.args[0] != c || ux.args[1] != r || g.held[u] != h {
+        continue
+      }
+      let ui = match ux.aux {
+        I(k) => k
+        _ => -2
+      }
+      if ui != i || !g.quiet_through(v, r, u, h) || !g.reads_other_fields(c, a, u, v, i) {
+        continue
+      }
+      g.fpass[v * 4096 + pi] = true
+      g.mfield[r] = h
+      g.mroot[r] = g.mroot[a]
+      g.moff[r] = g.moff[a]
+      g.inhome[r] = true
+    }
+  }
+}
+
+/// Whether c's uses but a and u cannot see the callee's writes to its
+/// field i: each runs before call v (not after it, through a loop), or
+/// reads another field of c.
+fn (g: Gen) reads_other_fields(c: Int, a: Int, u: Int, v: Int, i: Int) -> Bool {
+  let f = g.f
+  let reach = g.reach_from(g.blk[v])
+  for w in g.users[c] {
+    if w == a || w == u {
+      continue
+    }
+    let wx = f.values[w]
+    let wi = match wx.aux {
+      I(n) => n
+      _ => -1
+    }
+    if wx.op == ssa.Op.Field && wi != i {
+      continue
+    }
+    let bw = g.blk[w]
+    let before = if bw == g.blk[v] { g.before_in_block(w, v) && !reach[bw] } else { !reach[bw] }
+    if !before {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether nothing between call v and update u (u in v's block or in a
+/// block whose one predecessor is v's) uses a value home h holds or a
+/// field view of it, but r (the call's result read u stores).
+fn (g: Gen) quiet_through(v: Int, r: Int, u: Int, h: Int) -> Bool {
+  let f = g.f
+  let bv = g.blk[v]
+  let bu = g.blk[u]
+  if bu != bv && (f.blocks[bu].preds.len() != 1 || f.edges[f.blocks[bu].preds[0]].from != bv) {
+    return false
+  }
+  // the rest of v's block, then u's block up to u
+  var spans: List[(Int, Int, Int)] = [(bv, v, if bu == bv { u } else { -1 })]
+  if bu != bv {
+    spans.push((bu, -1, u))
+  }
+  for (b, from, to) in spans {
+    var on = from < 0
+    for w in f.blocks[b].instrs {
+      if w == to {
+        break
+      }
+      if on && w != r {
+        for a in f.values[w].args {
+          if a >= 0 && (g.held[a] == h || g.mfield[a] == h) {
+            return false
+          }
+        }
+      }
+      if w == from {
+        on = true
+      }
+    }
+  }
+  true
 }

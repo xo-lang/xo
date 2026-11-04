@@ -219,6 +219,9 @@ pub struct Gen {
   snapdef: Map[Int, Int] = {}
   /// call * 4096 + parameter -> the home whose address the call passes.
   pass: Map[Int, Int] = {}
+  /// The `var` arguments (call * 4096 + index) that are a field of a
+  /// home, passed by the field's address (plan_field_calls, decision 0490).
+  fpass: Map[Int, Bool] = {}
   users: List[List[Int]] = []
   /// live_in, memoized per value.
   livein: Map[Int, List[Bool]] = {}

@@ -1,6 +1,7 @@
 # 0490: A `var` argument that is a field of a home is passed by its address on wasm
 
-Status: Proposed (xo-lang-4, 2026-11-04). Prototype on branch l4-fhome; the code lands only after the owner accepts.
+Status: Accepted (owner, 2026-11-04: wasm only; native and LLVM in a
+follow-up). Proposed by xo-lang-4 the same day.
 
 ## Context
 
