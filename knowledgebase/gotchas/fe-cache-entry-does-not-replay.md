@@ -1,6 +1,6 @@
 # A front end cache entry passed its checks and then did not replay
 
-Status: Observed (2026-10-20, 2026-10-26, 2026-11-04); each cause found is fixed, the driver still rebuilds without an entry that fails
+Status: Observed (2026-10-20, 2026-10-26, 2026-11-04 twice); each cause found is fixed, the driver still rebuilds without an entry that fails
 
 Symptom: `xo build ./compiler/xo` (and scripts/bootstrap-xo.sh at s1)
 failed with "the front end cache's entry for ssa.Builder.unbox_type does
@@ -69,3 +69,29 @@ program's type naming. Fix: the own flags in every entry's key
 entries. Test: internal/arm64 TestFrontCacheTypeNaming. The read-logging
 idea above would only have turned these into misses: a type a replayed
 `declare` makes is named the same way and is not a read.
+
+Observed a second time 2026-11-04, in another form (Xo Lang 1, reported
+by aws-19). The entry replayed, and the backend then failed:
+"protocol/restjson/restjson.xo:31:7: in restjson.error_code (inlined into
+deserialize_greeting_with_errors_error): arm64 backend: runtime call
+restjson.sanitize_code". From an empty cache it is deterministic:
+`xo test ./internal/protocoltest/jsonrpc10`, then
+`xo test ./internal/protocoltest/restjson`. XO_FE_CACHE=off passes, and
+XO_BACKEND_CACHE=verify reports "5 function bodies' SSA differs, the
+first ... restjson.error_code".
+
+Cause: the restjson test program loads two modules named restjson (the
+test package and protocol/restjson). A program module whose default name
+another module has gets its functions named by its path
+(path_named_mods, mod_prefix). So in that program, error_code's call is
+to `github.com/xo-lang/aws/protocol/restjson.sanitize_code`, while the
+entry recorded in jsonrpc10's program calls `restjson.sanitize_code`.
+names_key covered shared type names, not shared module names.
+
+Fix: names_key also digests the paths of the path-named modules, and
+FE_CACHE_VERSION is v15. Test: internal/arm64
+TestFrontCacheRootAndLibrary (a module t/a beside the library a). It
+fails on the xo before the fix, with "runtime call
+ferootlib/a.sanitize_code". This one was loud, a compile error. A body
+whose stale name happened to exist in the program would have called the
+wrong function.

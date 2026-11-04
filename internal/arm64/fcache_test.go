@@ -3265,6 +3265,101 @@ func TestFrontCacheTypeNaming(t *testing.T) {
 	}
 }
 
+// TestFrontCacheRootAndLibrary: one cache across `xo test` of each
+// package (a package root, then a library of the next) and `xo run`,
+// with b declaring an Options and a sanitize_code beside a's (shared
+// names) and inlining a.error_code, and a's error_code switched between
+// a body that calls sanitize_code and one that does not: every build
+// gives its own body's answers (aws-19, 2026-11-04: a replayed
+// restjson.error_code inlined into a test package's function failed
+// "runtime call restjson.sanitize_code" once, on a shared cache since
+// replaced; this pins the root, library and shared name cases), and a
+// second module named a, whose programs name the library's functions by
+// their path (2026-11-04: aws's internal/protocoltest/restjson beside
+// protocol/restjson; jsonrpc10's entries replayed there called
+// `restjson.sanitize_code`, "runtime call", until the front end cache
+// keyed the path named modules).
+func TestFrontCacheRootAndLibrary(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-ferootlib-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	aBody := "pub struct Options {\n  pub n: Int\n}\n\npub fn sanitize_code(raw: Str) -> Str {\n  let head = (raw.cut(\":\") ?? (raw, \"\")).0\n  match head.cut(\"#\") {\n    Some((_, name)) => name.trim()\n    None => head.trim()\n  }\n}\n\nfn field(o: Options) -> Str? {\n  if o.n > 2 { Some(\"n#Big\") } else { None }\n}\n\npub fn error_code(h: Str, o: Options) -> Str {\n  if h != \"\" {\n    return CALL\n  }\n  if let Some(c) = field(o) {\n    return sanitize_code(c)\n  }\n  \"\"\n}\n"
+	files := map[string]string{
+		"xo.mod":      "module ferootlib\n",
+		"a/a_test.xo": "test \"a\" {\n  expect(error_code(\"p#Foo:x\", Options{n: 0})) == WANT\n  expect(error_code(\"\", Options{n: 3})) == \"Big\"\n}\n",
+		"b/b.xo":      "use ferootlib/a\n\npub struct Options {\n  pub s: Str\n}\n\npub fn sanitize_code(raw: Str) -> Str {\n  \"b:${raw}\"\n}\n\npub fn decode(h: Str, o: Options) -> Str {\n  \"${a.error_code(h, a.Options{n: o.s.len()})}/${sanitize_code(o.s)}\"\n}\n",
+		"b/b_test.xo": "test \"b\" {\n  expect(decode(\"p#Foo:x\", Options{s: \"ab\"})) == \"${WANT}/b:ab\"\n  expect(decode(\"\", Options{s: \"abc\"})) == \"Big/b:abc\"\n}\n",
+		"c/c.xo":      "use ferootlib/a\nuse ferootlib/b\n\npub fn both(h: Str) -> Str {\n  \"${a.error_code(h, a.Options{n: 4})}|${b.decode(h, b.Options{s: \"xyz\"})}\"\n}\n",
+		"c/c_test.xo": "test \"c\" {\n  expect(both(\"p#Foo:x\")) == \"${WANT}|${WANT}/b:xyz\"\n}\n",
+		"d/d.xo":      "use ferootlib/a\n\npub fn only(h: Str) -> Str {\n  a.error_code(h, a.Options{n: h.len()})\n}\n",
+		"d/d_test.xo": "test \"d\" {\n  expect(only(\"p#Foo:x\")) == WANT\n}\n",
+		"main.xo":     "use ferootlib/c\nuse ferootlib/d\n\nfn main(os: Os) {\n  os.stdio.println(\"${c.both(\"\")} ${d.only(\"p#Foo:x\")}\")\n}\n",
+		// a second module named a: the library's functions are named by
+		// their path in its programs, and by `a.` in the others
+		"t/a/t.xo":      "use ferootlib/a\n\npub fn via(h: Str) -> Str {\n  a.error_code(h, a.Options{n: 3})\n}\n",
+		"t/a/t_test.xo": "test \"t/a\" {\n  expect(via(\"p#Foo:x\")) == WANT\n  expect(via(\"\")) == \"Big\"\n}\n",
+	}
+	// v2 calls sanitize_code where v1 trims, so each answers differently
+	versions := []struct{ call, want string }{
+		{"h.trim()", `"p#Foo:x"`},
+		{"sanitize_code(h)", `"Foo"`},
+		{"h.trim()", `"p#Foo:x"`},
+		{"sanitize_code(h)", `"Foo"`},
+	}
+	cache := filepath.Join(work, "cache")
+	for i, v := range versions {
+		texts := map[string]string{"a/a.xo": strings.Replace(aBody, "CALL", v.call, 1)}
+		for name, text := range files {
+			texts[name] = strings.ReplaceAll(text, "WANT", v.want)
+		}
+		for name, text := range texts {
+			if err := os.MkdirAll(filepath.Join(src, filepath.Dir(name)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(src, name), []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, p := range []string{"a", "b", "t/a", "c", "d", "."} {
+			args := []string{"test", "--backend=arm64", "./" + p}
+			if p == "." {
+				args = []string{"run", "--backend=arm64", "."}
+			}
+			cmd := testtmp.Guard(exec.Command(xo, args...))
+			cmd.Dir = src
+			cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_BIN_CACHE=off")
+			log, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Errorf("version %d, %s: xo %s: %v\n%s", i+1, p, args[0], err, log)
+				continue
+			}
+			if strings.Contains(string(log), "did not replay") {
+				t.Errorf("version %d, %s: a front end cache entry did not replay:\n%s", i+1, p, log)
+			}
+			if p == "." {
+				want := "Big|Big/b:xyz " + strings.Trim(v.want, `"`)
+				if got := strings.TrimSpace(string(log)); got != want {
+					t.Errorf("version %d: run: %q, want %q", i+1, got, want)
+				}
+			}
+		}
+	}
+}
+
 // TestFirstEditAfterColdParts: a program of more than PART_PACK_FIRST
 // parts but under PART_PACK_FIRST_BYTES (the HTTP server, 35) packs its
 // parts on its build target's first build, so the first edit after a

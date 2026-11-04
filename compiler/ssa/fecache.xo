@@ -9,8 +9,8 @@
 // files with every function body cut out, and the same of every module
 // it imports, transitively, and of the standard library), the body's
 // file, position, and declaration text. The flags only the builder knows
-// (concurrency, budgets, the program's shared type names: names_key)
-// are in the entry and compared.
+// (concurrency, budgets, the program's shared type and module names:
+// names_key) are in the entry and compared.
 //
 // An entry holds no index and no state of the builder (decision 0271):
 // what the body found that was there before it, and what it made in
@@ -23,7 +23,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v14"
+const FE_CACHE_VERSION = "xo front cache v15"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -196,14 +196,25 @@ fn (var b: Builder) fe_own_flags() -> Str {
 /// declaring the same name (aws's config.Options beside sigv4.Options)
 /// names them otherwise, and its entries are other entries (2026-11-04:
 /// sigv4's recorded in `xo test ./config` did not replay in
-/// `xo test ./credentials/stscreds`). "" when no name is shared.
-fn names_key(ambiguous: Map[Str, Bool]) -> Str {
-  if ambiguous.is_empty() {
+/// `xo test ./credentials/stscreds`). The modules whose functions are
+/// named by their path (path_named_mods, mod_prefix) count too: an
+/// entry names its calls into them as the program it was recorded in
+/// did (2026-11-04: restjson.error_code recorded in `xo test
+/// ./internal/protocoltest/jsonrpc10` called `restjson.sanitize_code`,
+/// and in `xo test ./internal/protocoltest/restjson`, a second module
+/// named restjson, that function is named by its path: "runtime call
+/// restjson.sanitize_code"). "" when no name is shared.
+fn names_key(ambiguous: Map[Str, Bool], path_named: List[Str]) -> Str {
+  if ambiguous.is_empty() && path_named.is_empty() {
     return ""
   }
   var h = 1469598103934665603
   for n in ambiguous.keys().sort() {
     h = fe_mix(h, n)
+  }
+  h = fe_mix(h, "\n")
+  for p in path_named.sort() {
+    h = fe_mix(h, p)
   }
   " names=${h}"
 }

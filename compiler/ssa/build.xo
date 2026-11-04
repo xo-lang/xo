@@ -531,8 +531,12 @@ fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool,
 pub fn new_builder(c: check.Checker, line_root: Str) -> Builder {
   var b = Builder{c: c, line_root: line_root}
   b.ambiguous = b.ambiguous_type_names()
-  b.names_key = names_key(b.ambiguous)
   b.path_named = b.path_named_mods()
+  var paths: List[Str] = []
+  for m in b.path_named {
+    paths.push(b.c.mods[m].path)
+  }
+  b.names_key = names_key(b.ambiguous, paths)
   b
 }
 
