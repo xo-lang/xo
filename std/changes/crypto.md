@@ -1,5 +1,16 @@
 # std/crypto changes
 
+## 2026-11-04: feature: crypto.ecdsa_private_key
+
+- Kind: feature
+- Commit: this push
+- Found by: the AWS SDK work (SigV4a derives an ECDSA P-256 key from a scalar)
+- Go reference: crypto/ecdsa ParseRawPrivateKey (go1.26): a wrong length is `invalid scalar length`; zero and a scalar at or above the order are `ecdsa: invalid public key encoding`; a curve other than P-224, P-256, P-384, P-521 is refused
+- Test: crypto_test.xo (Go's public points for 12 scalars on four curves, sign and verify, the refusals) and golden std_ecdsa_private_key (every backend)
+- Shipped in: not yet released
+
+`crypto.ecdsa_private_key(alg, d)` makes the key from its big endian scalar, as long as the curve's order; `public_key()` of it is the public point.
+
 ## 2026-11-04: perf: crypto.hmac with SHA-256 takes the one shot path
 
 - Kind: perf

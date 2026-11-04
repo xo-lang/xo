@@ -1517,6 +1517,24 @@ fn generate_key(r: Rand, alg: crypto.KeyAlg) -> PrivateKey ! crypto.KeyErr uses 
   }
 }
 
+/// Go's ecdsa.ParseRawPrivateKey: d is exactly the curve's size, and a
+/// nonzero scalar below the order (its public point must exist).
+fn ecdsa_private_key(alg: crypto.KeyAlg, d: Bytes) -> PrivateKey ! crypto.KeyErr {
+  match alg {
+    EcdsaP224 | EcdsaP256 | EcdsaP384 | EcdsaP521 => {}
+    _ => return Err(key_err("ecdsa: curve not supported by ParseRawPrivateKey"))
+  }
+  let c = nist_curve(alg)
+  if d.len() != nistec.size(c) {
+    return Err(key_err("invalid scalar length"))
+  }
+  let p = nistec.public_key(c, d)
+  if p.is_empty() {
+    return Err(key_err("ecdsa: invalid public key encoding"))
+  }
+  Ok(PrivateKey{kind: alg, rsa: no_rsa(), d: d, public: PublicKey{kind: alg, n: b"", e: 0, key: p}})
+}
+
 fn nist_shift7(b: Bytes) -> Bytes {
   var out = BytesBuilder.with_capacity(b.len())
   for i in 0..b.len() {

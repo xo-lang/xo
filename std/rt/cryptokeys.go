@@ -328,6 +328,24 @@ func Crypto_generate_key(tk *Task, r Rand, alg Crypto_KeyAlg) Result[Crypto_Priv
 	return Ok[Crypto_PrivateKey, Crypto_KeyErr](Crypto_PrivateKey{k: k, pub: Crypto_PublicKey{k: s.Public(), der: string(m)}})
 }
 
+// Crypto_ecdsa_private_key is `crypto.ecdsa_private_key(alg, d)`: Go's
+// ecdsa.ParseRawPrivateKey.
+func Crypto_ecdsa_private_key(_ *Task, alg Crypto_KeyAlg, d Bytes) Result[Crypto_PrivateKey, Crypto_KeyErr] {
+	if alg.Tag < 2 || alg.Tag > 5 {
+		return Err[Crypto_PrivateKey](keyErr("ecdsa: curve not supported by ParseRawPrivateKey"))
+	}
+	c := []elliptic.Curve{nil, nil, elliptic.P224(), elliptic.P256(), elliptic.P384(), elliptic.P521()}[alg.Tag]
+	k, err := ecdsa.ParseRawPrivateKey(c, []byte(d))
+	if err != nil {
+		return Err[Crypto_PrivateKey](keyErr(err.Error()))
+	}
+	m, err := x509.MarshalPKIXPublicKey(k.Public())
+	if err != nil {
+		return Err[Crypto_PrivateKey](keyErr(err.Error()))
+	}
+	return Ok[Crypto_PrivateKey, Crypto_KeyErr](Crypto_PrivateKey{k: k, pub: Crypto_PublicKey{k: k.Public(), der: string(m)}})
+}
+
 // Crypto_jwk_public_key follows the native code's rules and texts: the
 // members matched exactly (encoding/json alone would match them without
 // case), each a string or null.

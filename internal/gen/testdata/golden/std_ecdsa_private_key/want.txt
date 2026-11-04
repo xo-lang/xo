@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+p256 public true verify true
+p256 public true verify true
+p256 public true verify true
+p521 public true verify true
+p521 public true verify true
+p521 public true verify true
+err ecdsa: invalid public key encoding
+err invalid scalar length
+err invalid scalar length
+err invalid scalar length
+err ecdsa: curve not supported by ParseRawPrivateKey
+--- stderr

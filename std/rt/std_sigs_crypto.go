@@ -46,6 +46,7 @@ var (
 	_ func(*Task, Crypto_PrivateKey) Bytes                                                  = Crypto_marshal_private_key
 	_ func(*Crypto_PrivateKey, *Task) Crypto_KeyAlg                                         = (*Crypto_PrivateKey).M_alg
 	_ func(*Crypto_PrivateKey, *Task) Crypto_PublicKey                                      = (*Crypto_PrivateKey).M_public_key
+	_ func(*Task, Crypto_KeyAlg, Bytes) Result[Crypto_PrivateKey, Crypto_KeyErr]            = Crypto_ecdsa_private_key
 	_ func(*Task, string) List[Crypto_PemBlock]                                             = Crypto_pem_decode
 	_ func(*Task, Crypto_PemBlock) Result[string, Crypto_KeyErr]                            = Crypto_pem_encode
 	_ func(*Task, Crypto_PublicKey, Crypto_Hash, Bytes, Bytes) bool                         = Crypto_verify

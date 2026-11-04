@@ -13,6 +13,7 @@ the text of every entry is unchanged).
 - fix (check, use go): `xo check --no-gc` (and a native build) of a `use go` program reports one XO1201 per `use go` line that names the Go types the program uses (`its types jwt.MapClaims, jwt.Token`) and std/go's `go.Error` in a note, instead of one more error per type and one for go.Error: the owner's jwt program goes from 5 errors to 1 (the owner's v0.36.0 evaluation counted 19 for one program; bug 17's leftover). cmd/xo TestUseGoNoGCTypesInOneError.
 - perf (wasm, size, tls): a TLS connection's output and received data are taken in place instead of through a call that copied the whole client: an HTTPS client component 9 KB smaller.
 - change (wasm, tls): on wasm a certificate's expiry error shows the current time in UTC (RFC 3339's Z) instead of the local zone, so the zone rules are no longer compiled into a component: an HTTPS client 52 KB smaller; native unchanged.
+- feature (crypto): `crypto.ecdsa_private_key(alg, d)`, an ECDSA key from its raw scalar with Go's ParseRawPrivateKey checks (std/changes/crypto.md).
 - feature (crc64): `Poly.Nvme`, CRC-64/NVME (S3's default checksum), slicing-by-8 like ISO and ECMA (std/changes/crc64.md).
 - fix (sql): the Postgres driver's copy_from stops calling rows once the server refuses the COPY and returns the server's error (std/changes/sql.md).
 - fix (jwt): an `aud` list holding a non string is refused when the audience is checked; JwtErr.Claim and spec 62 describe what they cover (std/changes/jwt.md).

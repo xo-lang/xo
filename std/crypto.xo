@@ -177,6 +177,13 @@ fn parse_private_key(der: Bytes) -> PrivateKey ! KeyErr
 fn marshal_private_key(k: PrivateKey) -> Bytes
 fn (k: PrivateKey) alg() -> KeyAlg
 fn (k: PrivateKey) public_key() -> PublicKey
+/// An ECDSA key from its private scalar d, big endian and as long as the
+/// curve's order (32 bytes for EcdsaP256; 66 for EcdsaP521), as Go's
+/// ecdsa.ParseRawPrivateKey: 0 and d at or above the order are KeyErr
+/// (`ecdsa: invalid public key encoding`, Go's text), a wrong length is
+/// `invalid scalar length`, and any other alg is KeyErr. `public_key()` of
+/// the result is the public point (AWS SigV4a derives its key this way).
+fn ecdsa_private_key(alg: KeyAlg, d: Bytes) -> PrivateKey ! KeyErr
 
 /// Every PEM block in text, in order (pem.Decode repeated on the rest);
 /// text outside blocks and malformed blocks are skipped.
