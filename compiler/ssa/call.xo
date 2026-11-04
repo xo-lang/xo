@@ -2355,7 +2355,11 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
         }
         var cb = cur
         if b.c.inline_str {
-          cb = b.call("str.concat_obj", st, "", [b.const_str(""), cur])
+          // cur + "", not "" + cur: an append of nothing keeps a unique
+          // builder's object in place (obj.xo reserve) and makes only an
+          // inline Str an object; "" + cur copied the whole builder on
+          // every put (jpeg_decode 5.8x, 2026-11-04)
+          cb = b.call("str.concat_obj", st, "", [cur, b.const_str("")])
         }
         let be = b.cint(if fname == "put_be" { 1 } else { 0 })
         if let Some(r) = b.llrt_or_none("rs_put", st, [cb, at, v, n, be, b.const_str(pos)]) {
