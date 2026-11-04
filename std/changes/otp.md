@@ -1,5 +1,19 @@
 # std/otp changes
 
+## 2026-11-03: perf: hotp with SHA-512 below Go's time
+
+- Kind: perf
+- Commit: c5fbea698 (Lang 1, SHA-512 instructions) and this push (SHA-2's finish)
+- Found by: the std timing rows (std-twin-rows18: otp sha512 1.376 and sha256 1.327 of Go) and XO_PROF on linux/arm64
+- Go reference: crypto/sha512 sha512block_arm64.s, crypto/sha256 checkSum
+- Test: internal/stdtest corpora otp, crypto, aead and jwt on arm64 and Go; bench/perf/otp twincheck
+- Timing: sha512 0.937 of Go's wall (was 1.376), sha256 1.316 (was 1.327) on linux/arm64 (bench/results/std-twin-otp-2026-11-03.md)
+- Shipped in: not yet released
+
+No change in std/otp itself: its codes come from crypto.hmac, whose
+SHA-512 block now runs on arm64's SHA512 instructions and whose SHA-2
+finish appends its padding at once (std/changes/crypto.md).
+
 ## 2026-11-03: perf: hotp follows crypto's faster HMAC and SHA-1
 
 - Kind: perf

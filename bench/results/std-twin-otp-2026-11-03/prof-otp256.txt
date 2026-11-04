@@ -1,0 +1,102 @@
+offload: /work had 24 GB free; pruned xo cache files idle over 360 min, now 24G
+linux/arm64: /work/l2prof/prog
+sha256 14799384423210
+xo profile: 143 samples in /work/l2prof/out/p.xoraw (`xo prof /work/l2prof/out/p.xoraw` writes the pprof files and summaries)
+xo cpu profile: 143 samples (143ms) in 144ms of wall time at 1000 Hz
+
+top 30 by flat
+      flat  flat%   sum%        cum   cum%  line (the hottest)  function
+      21ms 14.69% 14.69%       21ms 14.69%  -                   drop Str
+      21ms 14.69% 29.37%       27ms 18.88%  sha256.xo:70        sha256.block256
+      15ms 10.49% 39.86%       22ms 15.38%  -                   drop native.crypto.State
+      13ms  9.09% 48.95%       13ms  9.09%  obj.xo:755          obj.heap_word
+       9ms  6.29% 55.24%        9ms  6.29%  obj.xo:345          obj.rl_free_n
+       8ms  5.59% 60.84%        8ms  5.59%  alloc.xo:420        alloc.alloc_fast
+       5ms  3.50% 64.34%       13ms  9.09%  obj.xo:1009         obj.rs_new_n
+       4ms  2.80% 67.13%        4ms  2.80%  cpu.xo:107          cpu.hw
+       4ms  2.80% 69.93%       52ms 36.36%  sha256.xo:165       sha256.Hasher.sum
+       4ms  2.80% 72.73%        4ms  2.80%  prelude.xo:4815     prelude.llrt_rs_put
+       3ms  2.10% 74.83%        3ms  2.10%  obj.xo:1052         obj.reserve
+       3ms  2.10% 76.92%        3ms  2.10%  libcstr.xo:68       libcstr.copy_words
+       3ms  2.10% 79.02%       14ms  9.79%  crypto.xo:186       crypto.padded_key
+       2ms  1.40% 80.42%        2ms  1.40%  alloc.xo:467        alloc.free
+       2ms  1.40% 81.82%        4ms  2.80%  libcstr.xo:129      libcstr.memmove
+       2ms  1.40% 83.22%        3ms  2.10%  libcstr.xo:115      libcstr.memcpy
+       2ms  1.40% 84.62%        2ms  1.40%  obj.xo:276          obj.min_cap
+       2ms  1.40% 86.01%        2ms  1.40%  -                   inc thunk_x27
+       2ms  1.40% 87.41%       94ms 65.73%  otp.xo:38           otp.hotp
+       1ms  0.70% 88.11%        4ms  2.80%  alloc.xo:810        alloc.resize
+       1ms  0.70% 88.81%        1ms  0.70%  libcthr.xo:198      libcthr.thread_join
+       1ms  0.70% 89.51%        3ms  2.10%  obj.xo:825          obj.rl_copy
+       1ms  0.70% 90.21%        1ms  0.70%  sha3.xo:1168        sha3.read
+       1ms  0.70% 90.91%        1ms  0.70%  crypto.xo:99        crypto.block_of
+       1ms  0.70% 91.61%       59ms 41.26%  crypto.xo:219       crypto.Hasher.sum
+       1ms  0.70% 92.31%        1ms  0.70%  text.xo:140         text.parse_int
+       1ms  0.70% 93.01%        1ms  0.70%  -                   drop List[Int]
+       1ms  0.70% 93.71%        1ms  0.70%  -                   obj_rc_free
+       1ms  0.70% 94.41%        5ms  3.50%  obj.xo:201          obj.hresize
+       1ms  0.70% 95.10%       18ms 12.59%  obj.xo:1082         obj.reserve_slow
+
+top 30 by cumulative
+      flat  flat%   sum%        cum   cum%  line (the hottest)  function
+       0ms  0.00%  0.00%       97ms 67.83%  sched.xo:267        sched.fiber_main
+       0ms  0.00%  0.00%       97ms 67.83%  -                   xo_fiber_entry
+       0ms  0.00%  0.00%       97ms 67.83%  -                   main
+       0ms  0.00%  0.00%       97ms 67.83%  entry.xo:222        entry.main_on_fiber
+       0ms  0.00%  0.00%       97ms 67.83%  cabi.xo:732         cabi.fiber_main
+       0ms  0.00%  0.00%       97ms 67.83%  main.xo:14          main
+       2ms  1.40%  1.40%       94ms 65.73%  otp.xo:38           otp.hotp
+       0ms  0.00%  1.40%       83ms 58.04%  crypto.xo:227       crypto.hmac
+       1ms  0.70%  2.10%       59ms 41.26%  crypto.xo:219       crypto.Hasher.sum
+       0ms  0.00%  2.10%       54ms 37.76%  crypto.xo:165       crypto.finish
+       4ms  2.80%  4.90%       52ms 36.36%  sha256.xo:165       sha256.Hasher.sum
+      21ms 14.69% 19.58%       27ms 18.88%  sha256.xo:70        sha256.block256
+       1ms  0.70% 20.28%       23ms 16.08%  obj.xo:1184         obj.rs_push_word
+== lines
+      flat  flat%   sum%        cum   cum%
+      21ms 14.69% 14.69%       21ms 14.69%  drop Str
+      15ms 10.49% 25.17%       22ms 15.38%  drop native.crypto.State
+      13ms  9.09% 34.27%       13ms  9.09%  obj.heap_word std/native/llrt/obj.xo:755 (inline)
+      12ms  8.39% 42.66%       16ms 11.19%  sha256.block256 std/native/llrt/sha256.xo:70
+       9ms  6.29% 48.95%        9ms  6.29%  obj.rl_free_n std/native/llrt/obj.xo:345 (inline)
+       9ms  6.29% 55.24%        9ms  6.29%  sha256.block256 std/native/llrt/sha256.xo:75
+       6ms  4.20% 59.44%        6ms  4.20%  alloc.alloc_fast std/native/llrt/alloc.xo:420 (inline)
+       3ms  2.10% 61.54%        3ms  2.10%  cpu.hw std/native/llrt/cpu.xo:107
+       3ms  2.10% 63.64%        3ms  2.10%  obj.reserve std/native/llrt/obj.xo:1052
+       3ms  2.10% 65.73%        3ms  2.10%  obj.rs_new_n std/native/llrt/obj.xo:1009
+       3ms  2.10% 67.83%       22ms 15.38%  sha256.Hasher.sum std/native/llrt/sha256.xo:182
+       2ms  1.40% 69.23%        2ms  1.40%  alloc.alloc_fast std/native/llrt/alloc.xo:421
+       2ms  1.40% 70.63%        2ms  1.40%  inc thunk_x27
+       2ms  1.40% 72.03%        2ms  1.40%  libcstr.copy_words std/native/llrt/libcstr.xo:68 (inline)
+       2ms  1.40% 73.43%        2ms  1.40%  libcstr.memcpy std/native/llrt/libcstr.xo:115 (inline)
+       2ms  1.40% 74.83%        2ms  1.40%  obj.min_cap std/native/llrt/obj.xo:276
+       2ms  1.40% 76.22%        2ms  1.40%  prelude.llrt_rs_put std/native/prelude.xo:4815
+       1ms   0.7% 76.92%        1ms   0.7%  alloc.free std/native/llrt/alloc.xo:467
+       1ms   0.7% 77.62%        1ms   0.7%  alloc.free std/native/llrt/alloc.xo:480
+       1ms   0.7% 78.32%        1ms   0.7%  alloc.resize std/native/llrt/alloc.xo:810 (inline)
+       1ms   0.7% 79.02%        1ms   0.7%  cabi.obj_rs_append_bytes std/native/llrt/cabi.xo:485
+       1ms   0.7% 79.72%        1ms   0.7%  cabi.obj_rs_with_cap std/native/llrt/cabi.xo:501
+       1ms   0.7% 80.42%        1ms   0.7%  cpu.hw std/native/llrt/cpu.xo:108
+       1ms   0.7% 81.12%       41ms 28.67%  crypto.Hasher.sum std/native/crypto.xo:219
+       1ms   0.7% 81.82%        1ms   0.7%  crypto.block_of std/native/crypto.xo:99
+       1ms   0.7% 82.52%        1ms   0.7%  crypto.fresh std/native/crypto.xo:132
+       1ms   0.7% 83.22%        1ms   0.7%  crypto.padded_key std/native/crypto.xo:186
+       1ms   0.7% 83.92%        1ms   0.7%  crypto.padded_key std/native/crypto.xo:188
+       1ms   0.7% 84.62%        1ms   0.7%  crypto.padded_key std/native/crypto.xo:192
+       1ms   0.7% 85.31%        1ms   0.7%  drop List[Int]
+       1ms   0.7% 86.01%        1ms   0.7%  libcstr.copy_words std/native/llrt/libcstr.xo:70
+       1ms   0.7% 86.71%        1ms   0.7%  libcstr.memmove std/native/llrt/libcstr.xo:129
+       1ms   0.7% 87.41%        1ms   0.7%  libcstr.memmove std/native/llrt/libcstr.xo:171 (inline)
+       1ms   0.7% 88.11%        1ms   0.7%  libcthr.thread_join std/native/llrt/libcthr.xo:198
+       1ms   0.7% 88.81%        1ms   0.7%  num.append_int std/native/llrt/num.xo:104
+       1ms   0.7% 89.51%        1ms   0.7%  obj.hresize std/native/llrt/obj.xo:201
+       1ms   0.7% 90.21%        1ms   0.7%  obj.reserve_slow std/native/llrt/obj.xo:1082
+       1ms   0.7% 90.91%        1ms   0.7%  obj.rl_copy std/native/llrt/obj.xo:825
+       1ms   0.7% 91.61%        1ms   0.7%  obj.rs_append_bytes std/native/llrt/obj.xo:1244
+       1ms   0.7% 92.31%        1ms   0.7%  obj.rs_new_n std/native/llrt/obj.xo:1004
+       1ms   0.7% 93.01%        1ms   0.7%  obj.rs_new_n std/native/llrt/obj.xo:1010
+       1ms   0.7% 93.71%        1ms   0.7%  obj.rs_push_word std/native/llrt/obj.xo:1184
+       1ms   0.7% 94.41%        1ms   0.7%  obj_rc_free
+       1ms   0.7% 95.10%        1ms   0.7%  otp.hotp std/native/otp.xo:38
+       1ms   0.7% 95.80%        1ms   0.7%  otp.hotp std/native/otp.xo:42
+OFFLOAD-RC=0

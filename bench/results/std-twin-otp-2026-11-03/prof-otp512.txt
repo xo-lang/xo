@@ -1,0 +1,102 @@
+offload: /work had 23 GB free; pruned xo cache files idle over 360 min, now 23G
+linux/arm64: /work/l2prof/prog
+sha512 14833619470184
+xo profile: 267 samples in /work/l2prof/out/p.xoraw (`xo prof /work/l2prof/out/p.xoraw` writes the pprof files and summaries)
+xo cpu profile: 267 samples (267ms) in 269ms of wall time at 1000 Hz
+
+top 30 by flat
+      flat  flat%   sum%        cum   cum%  line (the hottest)  function
+     171ms 64.04% 64.04%      191ms 71.54%  digest_tables.xo:942  digest_tables.sha512_block
+      11ms  4.12% 68.16%       11ms  4.12%  libcstr.xo:24       libcstr.subw
+       8ms  3.00% 71.16%       12ms  4.49%  libcstr.xo:129      libcstr.memmove
+       5ms  1.87% 73.03%        5ms  1.87%  -                   drop Str
+       4ms  1.50% 74.53%        4ms  1.50%  alloc.xo:464        alloc.free
+       4ms  1.50% 76.03%        4ms  1.50%  libcstr.xo:68       libcstr.copy_words
+       4ms  1.50% 77.53%        4ms  1.50%  -                   drop List[Int]
+       4ms  1.50% 79.03%        4ms  1.50%  obj.xo:1231         obj.push_slow
+       4ms  1.50% 80.52%        4ms  1.50%  alloc.xo:270        alloc.alloc
+       3ms  1.12% 81.65%        3ms  1.12%  alloc.xo:421        alloc.alloc_fast
+       3ms  1.12% 82.77%       18ms  6.74%  obj.xo:1244         obj.rs_append_bytes
+       3ms  1.12% 83.90%        4ms  1.50%  sha256.xo:108       sha256.compress
+       3ms  1.12% 85.02%        3ms  1.12%  prelude.xo:4816     prelude.llrt_rs_put
+       2ms  0.75% 85.77%        2ms  0.75%  obj.xo:101          obj.addw
+       2ms  0.75% 86.52%        2ms  0.75%  obj.xo:1052         obj.reserve
+       2ms  0.75% 87.27%       16ms  5.99%  obj.xo:1123         obj.move_at
+       2ms  0.75% 88.01%       13ms  4.87%  libcstr.xo:115      libcstr.memcpy
+       2ms  0.75% 88.76%        3ms  1.12%  obj.xo:284          obj.rl_new_n
+       2ms  0.75% 89.51%        2ms  0.75%  obj.xo:345          obj.rl_free_n
+       2ms  0.75% 90.26%        2ms  0.75%  libcstr.xo:84       libcstr.move_small
+       2ms  0.75% 91.01%        5ms  1.87%  obj.xo:1003         obj.rs_new_n
+       2ms  0.75% 91.76%        2ms  0.75%  obj.xo:1221         obj.rs_push_words
+       2ms  0.75% 92.51%        6ms  2.25%  obj.xo:1181         obj.rs_push_word
+       2ms  0.75% 93.26%        5ms  1.87%  sha256.xo:47        sha256.new
+       2ms  0.75% 94.01%      128ms 47.94%  crypto.xo:162       crypto.finish
+       1ms  0.37% 94.38%       19ms  7.12%  obj.xo:825          obj.rl_copy
+       1ms  0.37% 94.76%        1ms  0.37%  obj.xo:757          obj.heap_word
+       1ms  0.37% 95.13%        1ms  0.37%  raw.xo:14           raw.bytes_addr
+       1ms  0.37% 95.51%        1ms  0.37%  sha3.xo:1168        sha3.read
+       1ms  0.37% 95.88%        1ms  0.37%  text.xo:144         text.parse_int
+
+top 30 by cumulative
+      flat  flat%   sum%        cum   cum%  line (the hottest)  function
+       0ms  0.00%  0.00%      256ms 95.88%  sched.xo:267        sched.fiber_main
+       0ms  0.00%  0.00%      256ms 95.88%  -                   xo_fiber_entry
+       0ms  0.00%  0.00%      256ms 95.88%  -                   main
+       0ms  0.00%  0.00%      256ms 95.88%  entry.xo:222        entry.main_on_fiber
+       0ms  0.00%  0.00%      256ms 95.88%  cabi.xo:732         cabi.fiber_main
+       1ms  0.37%  0.37%      256ms 95.88%  main.xo:14          main
+       0ms  0.00%  0.37%      252ms 94.38%  otp.xo:37           otp.hotp
+       0ms  0.00%  0.37%      244ms 91.39%  crypto.xo:227       crypto.hmac
+     171ms 64.04% 64.42%      191ms 71.54%  digest_tables.xo:942  digest_tables.sha512_block
+       0ms  0.00% 64.42%      184ms 68.91%  crypto.xo:219       crypto.Hasher.sum
+       2ms  0.75% 65.17%      128ms 47.94%  crypto.xo:162       crypto.finish
+       1ms  0.37% 65.54%      124ms 46.44%  sha256.xo:163       sha256.Hasher.sum
+       0ms  0.00% 65.54%      100ms 37.45%  crypto.xo:150       crypto.absorb
+== lines
+      flat  flat%   sum%        cum   cum%
+      11ms  4.12%  4.12%       11ms  4.12%  libcstr.subw std/native/llrt/libcstr.xo:24
+       7ms  2.62%  6.74%        7ms  2.62%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:606
+       7ms  2.62%  9.36%        7ms  2.62%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:656
+       6ms  2.25% 11.61%        6ms  2.25%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:942
+       5ms  1.87% 13.48%        5ms  1.87%  drop Str
+       4ms  1.50% 14.98%        4ms  1.50%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:686
+       4ms  1.50% 16.48%        4ms  1.50%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:687
+       4ms  1.50% 17.98%        4ms  1.50%  drop List[Int]
+       4ms  1.50% 19.48%        4ms  1.50%  libcstr.memmove std/native/llrt/libcstr.xo:129
+       4ms  1.50% 20.97%        4ms  1.50%  obj.push_slow std/native/llrt/obj.xo:1231
+       3ms  1.12% 22.10%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:658
+       3ms  1.12% 23.22%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:670
+       3ms  1.12% 24.34%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:683
+       3ms  1.12% 25.47%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:718
+       3ms  1.12% 26.59%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:722
+       3ms  1.12% 27.72%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:787
+       3ms  1.12% 28.84%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:795
+       3ms  1.12% 29.96%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:819
+       3ms  1.12% 31.09%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:858
+       3ms  1.12% 32.21%        3ms  1.12%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:915
+       3ms  1.12% 33.33%        3ms  1.12%  libcstr.copy_words std/native/llrt/libcstr.xo:68
+       3ms  1.12% 34.46%        3ms  1.12%  obj.rs_append_bytes std/native/llrt/obj.xo:1244
+       3ms  1.12% 35.58%        3ms  1.12%  sha256.compress std/native/llrt/sha256.xo:108
+       2ms  0.75% 36.33%        2ms  0.75%  alloc.alloc std/native/llrt/alloc.xo:270
+       2ms  0.75% 37.08%        2ms  0.75%  alloc.alloc_fast std/native/llrt/alloc.xo:421
+       2ms  0.75% 37.83%        2ms  0.75%  alloc.free std/native/llrt/alloc.xo:464
+       2ms  0.75% 38.58%        2ms  0.75%  crypto.finish std/native/crypto.xo:162
+       2ms  0.75% 39.33%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:657
+       2ms  0.75% 40.07%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:672
+       2ms  0.75% 40.82%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:677
+       2ms  0.75% 41.57%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:689
+       2ms  0.75% 42.32%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:691
+       2ms  0.75% 43.07%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:696
+       2ms  0.75% 43.82%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:703
+       2ms  0.75% 44.57%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:741
+       2ms  0.75% 45.32%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:745
+       2ms  0.75% 46.07%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:750
+       2ms  0.75% 46.82%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:774
+       2ms  0.75% 47.57%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:807
+       2ms  0.75% 48.31%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:822
+       2ms  0.75% 49.06%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:827
+       2ms  0.75% 49.81%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:842
+       2ms  0.75% 50.56%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:875
+       2ms  0.75% 51.31%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:878
+       2ms  0.75% 52.06%        2ms  0.75%  digest_tables.sha512_block std/native/llrt/digest_tables.xo:898
+OFFLOAD-RC=0

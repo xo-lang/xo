@@ -7,7 +7,7 @@
 - Found by: the std timing rows (std-twin-rows18: otp sha256 1.327 and sha512 1.376 of Go) and XO_PROF on linux/arm64
 - Go reference: crypto/sha256 and crypto/sha512 checkSum (one padding append, the words put big endian)
 - Test: internal/stdtest corpora otp, crypto, aead and jwt on arm64 and Go; bench/perf/otp twincheck
-- Timing: TIMING
+- Timing: against its parent, otp sha256 0.931 of the wall (sha512 within noise); otp against Go after this and c5fbea698: sha256 1.316 (was 1.327), sha512 0.937 (was 1.376) (bench/results/std-twin-otp-2026-11-03.md)
 - Shipped in: not yet released
 
 A SHA-224, SHA-256, SHA-384 or SHA-512 digest pushed its zero padding an
