@@ -336,6 +336,10 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmod
   // with one per launch the second waited for a later build to miss it,
   // so an edit loop stayed whole program for about 15 builds (2026-11-05,
   // s3 and dynamodb: 1 s edits, 0.3 s once both were built)
+  // The child starts once this build has ended (or after a minute, for
+  // a run whose program keeps going): built beside it, std's variants
+  // took about 0.9 s of the cold build's CPU (2026-11-05, s3 and
+  // dynamodb: 4.4 s with no background build, 5.3 s with one).
   // Then, for a build or run, the same build again with its output
   // thrown away (XO_STD_BG_WARM_OUT, main.xo): it compiles separately
   // and fills the caches such a build reads (std's record, the front
@@ -352,8 +356,8 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmod
   let warm = !tmode && ci < argv.len() && argv[ci] is "build" | "run" && !wd.is_empty() && (os.env.get("XO_STD_BG_WARM") ?? "") != "0"
   // (.busy beside the output while the child runs: tests wait for it)
   let wout = if warm { "${dir}/std/.warm-${os.proc.pid()}" } else { "" }
-  let script = "export XO_STD_BG_CHILD=1 XO_STD=\"$1\" XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT=; C1=\"$2\" T=\"$3\" M=\"$4\" C2=\"$5\" W=\"$6\" O=\"$7\"; shift 7; if [ -n \"$O\" ]; then : > \"$O.busy\"; fi; (nice -n 10 \"$0\" dev stdcache --conc=$C1 --target=$T $M; nice -n 10 \"$0\" dev stdcache --conc=$C2 --target=$T $M; if [ -n \"$O\" ]; then cd \"$W\" && XO_STD_BG_WARM_OUT=\"$O\" XO_SEPCOMP_BG=0 nice -n 10 \"$0\" \"$@\"; rm -f \"$O\" \"$O.busy\"; fi) </dev/null >/dev/null 2>&1 &"
-  os.proc.cmd("/bin/sh", ["-c", script, xo, ctx.std, if conc { "1" } else { "0" }, "${tgoos}/${tgoarch}", if tmode { "--test" } else { "" }, if conc { "0" } else { "1" }, wd, wout] + if warm { argv } else { [] }).run().ignore_err("a build that does not start starts on a later build")
+  let script = "export XO_STD_BG_CHILD=1 XO_STD=\"$1\" XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT=; C1=\"$2\" T=\"$3\" M=\"$4\" C2=\"$5\" W=\"$6\" O=\"$7\"; P=\"$8\"; shift 8; if [ -n \"$O\" ]; then : > \"$O.busy\"; fi; (i=0; while [ $i -lt 600 ] && kill -0 \"$P\" 2>/dev/null; do sleep 0.1; i=$((i+1)); done; nice -n 10 \"$0\" dev stdcache --conc=$C1 --target=$T $M; nice -n 10 \"$0\" dev stdcache --conc=$C2 --target=$T $M; if [ -n \"$O\" ]; then cd \"$W\" && XO_STD_BG_WARM_OUT=\"$O\" XO_SEPCOMP_BG=0 nice -n 10 \"$0\" \"$@\"; rm -f \"$O\" \"$O.busy\"; fi) </dev/null >/dev/null 2>&1 &"
+  os.proc.cmd("/bin/sh", ["-c", script, xo, ctx.std, if conc { "1" } else { "0" }, "${tgoos}/${tgoarch}", if tmode { "--test" } else { "" }, if conc { "0" } else { "1" }, wd, wout, "${os.proc.pid()}"] + if warm { argv } else { [] }).run().ignore_err("a build that does not start starts on a later build")
   say("building in the background, the whole program is built")
   None
 }

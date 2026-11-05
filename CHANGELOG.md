@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- perf (build): a cold build is no longer slowed by the background build of std's variants it starts: the background child now waits until the build has ended (or a minute, for an `xo run` whose program keeps going). s3 + dynamodb on linux/arm64, cold: 4.50 to 4.56 s, was 5.22 to 5.36 s (5 runs each); std's stores and the warm caches are ready about 20 s after the build, and the first edit stays 0.36 s.
 - perf (build): the first edit after a cold build is warm: the background build of std's variants then builds the program once more (niced, its output thrown away), filling std's record and the front end, module check, function and part caches. On s3 + dynamodb (linux/arm64) the first edit takes 0.34 s, was 1.17 s. XO_STD_BG_WARM=0 turns it off.
 - perf (build): the second build after a cold one (the first that loads std's record) reuses the front end and module check caches of the build before it: their keys hashed std's modules in load order, which differs when std comes from its record. On s3 + dynamodb the second edit takes 0.33 s, was 0.58 s. Existing cache entries miss once.
 
