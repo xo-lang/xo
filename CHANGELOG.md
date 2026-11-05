@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (native): `List.sort_by` of a list nothing else holds sorts it in place, stable as before (decision 0508): 8 records 0.871 of main's wall time, 100k records within noise (1.037, 0.971 to 1.271) at 0.863 of its peak memory, on linux/arm64 (bench/perf/listmap). std/changes/prelude.md.
 - perf (native): `List.reverse` of a list nothing else holds reverses it in place, swapping from both ends like Go's slices.Reverse (decision 0508): 0.457 of main's wall time and 0.609 of its peak memory on linux/arm64 (bench/perf/listmap reverse). std/changes/prelude.md.
 - feature (native runtime, diagnostics): `XO_HEAPSTATS=waste` adds to the heap stats, per size class above 1 KiB, the allocations and the bytes asked against handed out (decision 0506's measurement: a cold self build of xo hands out 1.195 bytes per byte asked above 1 KiB). When off, the allocator's counted path tests one more word; the uncounted path is unchanged.
 - perf (native): `List.map` of 256 or more elements to their own element type writes a list nothing else holds in place instead of building a new one (decision 0508); 1M Ints 0.663 of main's wall time and 0.609 of its peak memory on linux/arm64, 32 element lists within noise. compiler/cli's modules.Change is renamed ModChange so the 0.39 seed, which lacks the type_text fix, still builds xo. std/changes/prelude.md.

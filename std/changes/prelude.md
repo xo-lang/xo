@@ -3,6 +3,22 @@
 
 
 
+
+## 2026-11-05: perf: List.sort_by of a list nothing else holds sorts it in place
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0508 step 2
+- Go reference: slices.SortStableFunc (in place, stable)
+- Test: prelude_test.xo "list_sort_by in place: a held list keeps its order, equal keys keep theirs", arm64 and LLVM
+- Timing: linux/arm64 offload host, ab-host.sh, bench/perf/listmap: sortby (100k records) --rounds=15 wall 1.037 (0.971 to 1.271, within noise), max RSS 0.863; sortby_small (8 records) --rounds=7 wall 0.871
+- Shipped in: not yet released
+
+`sort_by` moves its list into a `var` and runs the stable in-place sort on
+it (one key per element, as before), instead of sorting an index list and
+building a new list from it. A list another binding holds is copied by
+the sort's first write, so the holder keeps its order.
+
 ## 2026-11-05: perf: List.reverse of a list nothing else holds reverses it in place
 
 - Kind: perf

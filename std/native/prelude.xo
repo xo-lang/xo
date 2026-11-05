@@ -1453,21 +1453,13 @@ fn list_reverse[T](xs: List[T]) -> List[T] {
 /// self-build's allocation, nearly all of it regalloc's merge_ranges
 /// (2026-10-30, ADR 0448 stage 4).
 fn list_sort_by[T, K: Ord, E, fx: Effects](xs: List[T], key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx {
-  let n = xs.len()
-  var keys: List[K] = List.with_capacity(n)
-  for x in xs {
-    keys.push(key(x)?)
-  }
-  var idx: List[Int] = List.with_capacity(n)
-  for i in 0..n {
-    idx.push(i)
-  }
-  merge_sort_in_place(idx, fn(a, b) { keys[a] < keys[b] })
-  var out: List[T] = List.with_capacity(n)
-  for i in idx {
-    out.push(xs[i])
-  }
-  out
+  // xs's last use (decision 0508): when the caller let go of its list
+  // too, a holds the only reference and is sorted in its own array;
+  // one another binding holds is copied by sort_in_place_by's first
+  // write, so that holder keeps its order
+  var a = xs
+  list_sort_in_place_by(a, key)?
+  a
 }
 
 /// The elements grouped by key, the keys in first appearance order and each

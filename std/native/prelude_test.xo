@@ -3458,6 +3458,29 @@ test "list_reverse in place: a held list keeps its order" {
   expect(back[0].name == "r4" && back[4].kids == [0] && rs[0].name == "r0")
 }
 
+test "list_sort_by in place: a held list keeps its order, equal keys keep theirs" {
+  let rs = [(3, "c"), (1, "a"), (3, "d"), (2, "b"), (1, "e")]
+  let by = rs.sort_by(fn(t) { t.0 })
+  expect(by == [(1, "a"), (1, "e"), (2, "b"), (3, "c"), (3, "d")])
+  expect(rs == [(3, "c"), (1, "a"), (3, "d"), (2, "b"), (1, "e")])
+  expect(map_range(40).map(fn(v) { 39 - v }).sort_by(fn(v) { v }) == map_range(40))
+}
+
+test "list_sort_by in place: a key error leaves a held list unchanged" {
+  let xs = map_range(50)
+  let r = xs.sort_by(fn(v) -> Int ! MapErr {
+    if v == 30 {
+      return Err(MapErr.Stop(at: v))
+    }
+    -v
+  })
+  match r {
+    Ok(_) => expect(false)
+    Err(MapErr.Stop(at)) => expect(at == 30)
+  }
+  expect(xs == map_range(50))
+}
+
 test "list_sort: a list another binding holds keeps its order" {
   // sort writes its parameter's own array when the call is the caller's
   // last use; a list still held elsewhere is copied first
