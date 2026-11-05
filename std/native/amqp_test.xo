@@ -679,6 +679,15 @@ test "interop: a large delivery, keepalive, reject and the dead letter path" use
     expect(small) == Some(amqp.DeliveryState.Accepted)
     let d2 = rcv.receive().or_fault("receive small")
     rcv.reject(d2).or_fault("reject")
+    // modified with delivery-failed: redelivered with the delivery count raised
+    let sent_mod = snd.send(amqp.Message{body: amqp.Body.Data(sections: [b"mod"])}).or_fault("send mod")
+    expect(sent_mod) == Some(amqp.DeliveryState.Accepted)
+    let d3 = rcv.receive().or_fault("receive mod")
+    rcv.modify(d3).or_fault("modify")
+    let d4 = rcv.receive().or_fault("redelivery after modify")
+    expect(d4.message.body) == amqp.Body.Data(sections: [b"mod"])
+    expect(d4.message.header.or_fault("header").delivery_count) == 1
+    rcv.accept(d4).or_fault("accept mod")
     // the keeper runs while the test is idle
     os.clock.sleep(1500ms)
     snd.close().or_fault("close sender")

@@ -34,7 +34,7 @@ receiver exists are dropped and a receive times out; a client must set `target_c
 
 - CBS put-token: Artemis has no `$cbs` node. Microsoft's Service Bus emulator (`mcr.microsoft.com/azure-messaging/servicebus-emulator`)
   does, but needs a SQL Server container (linux/amd64 only), so it runs on the amd64 offload host, not the Mac.
-- Modified outcomes and a second broker (Qpid, RabbitMQ 4).
+- A second broker (Qpid, RabbitMQ 4). The second test also sends a message and settles it `modified` with delivery-failed: Artemis redelivers it with `header.delivery_count` 1.
 
 Second test (same day): a 200 000 byte delivery (several transfer frames at the default 64 KiB frame size) sent,
 received and compared byte for byte; a small message sent and rejected; `keepalive` running over a 1.5 s idle period;
