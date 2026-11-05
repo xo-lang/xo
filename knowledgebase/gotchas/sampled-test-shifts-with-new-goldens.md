@@ -19,3 +19,5 @@ eager in their module's cache entry). To tell a sample shift from a
 regression: run the failing subtest at the bisect's good commit with
 XO_SELFHOST_TIER=full (`-run 'TestModuleCheckAuto$/programs/NAME$'`);
 if it fails there too, the program was failing before.
+
+Since 2026-11-05 the lead's 8-hourly full tier (scripts/lead/tier.sh, step `lead-tierN-mca`) runs TestModuleCheckAuto with XO_SELFHOST_TIER=full over every golden program, so a fallback in an unsampled program shows within one tier instead of when a new golden shifts the sample.
