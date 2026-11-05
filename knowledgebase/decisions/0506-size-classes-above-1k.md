@@ -50,6 +50,19 @@ regardless: size std buffers just under a class (http.xo 32,768 to 32,736).
   25% of those bytes to about 10%: roughly 200 MB of that point's live bytes
   (an estimate from the request histogram, to be confirmed by the `--ab` self
   run's max RSS).
+- Measured with the per-class counter (`XO_HEAPSTATS=waste`, 051dc2417, Xo
+  Lang 2; a cold self build of xo on linux/arm64 host 2, sums over the whole
+  run, not live bytes): above 1 KiB the allocator was asked for
+  201,021,794,503 bytes and handed 240,316,119,040, 1.195 bytes per byte
+  asked (the handed figure counts the 8 byte prefix); per class the ratio
+  runs 1.134 to 1.268 (classes 65 to 72), and page rounded big blocks 1.019.
+  Four classes per doubling can therefore recover at most about 16% of the
+  bytes handed above 1 KiB (1 - 1/1.195), less the finer classes' own
+  rounding. This replaces the live-bytes estimate above as the ceiling;
+  whether it shows in max RSS is the `--ab` self run's job (the counter reads
+  sizes asked over the whole run, so it equals live waste only if lifetimes
+  do not depend on size within a class). Write-up:
+  knowledgebase/infrastructure/memory-footprint.md "Size classes above 1 KiB".
 - More classes mean more partly used runs and a larger free list set: the
   retained free blocks at exit may grow (3,553 MB on the self build now); the
   `--ab` self run and `XO_HEAPSTATS=1` decide.
