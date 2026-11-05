@@ -431,10 +431,9 @@ fn ([var] s: Set[T]) add(x: T)
 fn ([var] s: Set[T]) remove(x: T) -> Bool
 ```
 
-A `Set` has no literal of its own: build one from a list, and an empty
-one from an empty list whose element type the context gives
-(`let seen: Set[Str] = [].to_set()`, `S{tags: [].to_set()}`); `[]`
-alone is a `List`, not a `Set`.
+A `Set` literal is `#{1, 2, 3}`, and `#{}` is an empty one whose element
+type the context gives (`let seen: Set[Str] = #{}`; core 1.6); a list
+converts with `to_set()`. `[]` alone is a `List`, not a `Set`.
 
 Iterating a `var` collection while mutating it iterates the value as it was
 when the loop started.
