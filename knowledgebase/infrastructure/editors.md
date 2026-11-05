@@ -67,8 +67,19 @@ has the same steps.
   gh run watch --repo xo-lang/vscode
   ```
 
-  A version publishes only once per registry: if a run fails after a
-  publish step, fix the cause and release the next patch version.
+  A version publishes only once per registry, and both publish steps
+  pass `--skip-duplicate`. If a run fails partway (v0.1.1's Open VSX
+  step refused the first `OVSX_PAT`, 2026-11-05), fix the cause and
+  publish the same tag again with the current workflow file:
+  `gh workflow run release.yml --repo xo-lang/vscode -f tag=vX.Y.Z`. It
+  checks out the tag, skips each registry that has the version and
+  creates the GitHub release only if it is missing. `gh run rerun` uses
+  the workflow file at the tag's commit, so it works only for tags at or
+  after xo-lang/vscode 323724f.
+- Windows: the extension's tests (the DAP launch test with a Windows
+  `xo.exe` among them) pass on windows/amd64 with the Windows debugger
+  of decision 0253 stage 6 (2026-11-05, Node 22 on the Windows offload
+  host).
 - Secrets: `VSCE_PAT` (an Azure DevOps personal access token) and
   `OVSX_PAT` (an open-vsx.org access token for a member of the `xo-lang`
   namespace), set as the repository's GitHub Actions secrets
