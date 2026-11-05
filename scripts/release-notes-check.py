@@ -21,10 +21,20 @@ VERSION has none yet.
    method) is listed as a suspect, so the notes' author decides; suspects
    fail the check only with --strict.
 
-Exit 0 when every breaking entry is in the notes, 1 when one is missing
-(or, with --strict, a suspect), 2 on a usage error.
+3. An entry in a released section (PREV or older) of the CHANGELOG must be in
+   PREV's own CHANGELOG, as tagged (`git show vPREV:CHANGELOG.md` in the
+   CHANGELOG's checkout), matched by its first 100 characters: one that is
+   not was filed under a release it did not ship in, so the notes would miss
+   it (Xo Lang 2, 2026-11-05: five changes after 0.39.0 sat under v0.39.0 and
+   std/jpeg encode under v0.38.0). Each is printed as MISFILED and fails the
+   check. Skipped, with a note, when the tag cannot be read.
+
+Exit 0 when every breaking entry is in the notes and none is misfiled, 1 when
+one is missing or misfiled (or, with --strict, a suspect), 2 on a usage error.
 """
+import os
 import re
+import subprocess
 import sys
 
 BREAK = re.compile(r"\bbreaking\b", re.I)
@@ -110,14 +120,29 @@ def main(argv):
                 if rx.search(whole):
                     suspects.append((v, why, first))
                     break
-    print(f"release-notes-check: {version} (after {prev}): {sum(len(entries(b)) for _, b in picked)} entries in {', '.join(v for v, _ in picked)}; {marked} marked breaking, {len(missing)} missing from the notes' breaking section, {len(suspects)} suspects")
+    misfiled, tag_note = [], ""
+    ptag = prev if prev.startswith("v") else "v" + prev
+    shipped = subprocess.run(["git", "-C", os.path.dirname(os.path.abspath(cl_path)), "show", f"{ptag}:CHANGELOG.md"],
+                             capture_output=True, text=True)
+    if shipped.returncode != 0:
+        tag_note = f"  (the misfiled check is skipped: {ptag}:CHANGELOG.md cannot be read)"
+    else:
+        keys = {first[:100] for _, b in sections(shipped.stdout) for first, _, _ in entries(b)}
+        for v, b in secs:
+            if v != "Unreleased" and vkey(v) <= lo:
+                misfiled += [(v, first) for first, _, _ in entries(b) if first[:100] not in keys]
+    print(f"release-notes-check: {version} (after {prev}): {sum(len(entries(b)) for _, b in picked)} entries in {', '.join(v for v, _ in picked)}; {marked} marked breaking, {len(missing)} missing from the notes' breaking section, {len(suspects)} suspects, {len(misfiled)} misfiled")
     if not m:
         print("  the notes have no breaking section (a heading with \"Breaking\")" + (" and none is needed" if not marked else ""))
     for v, first in missing:
         print(f"  MISSING ({v}): {first[:200]}")
     for v, why, first in suspects:
         print(f"  suspect, not marked breaking ({v}; {why}): {first[:200]}")
-    if missing or (strict and suspects):
+    for v, first in misfiled:
+        print(f"  MISFILED (under {v}, not in {ptag}'s tagged CHANGELOG): {first[:200]}")
+    if tag_note:
+        print(tag_note)
+    if missing or misfiled or (strict and suspects):
         return 1
     return 0
 
