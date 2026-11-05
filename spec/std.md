@@ -1921,7 +1921,7 @@ fn (c: Client) with_protocols(p: Set[Protocol]) -> Client  // Go's Transport.Pro
 fn (c: Client) with_h2_config(cfg: H2Config) -> Client     // Go's Transport.HTTP2 (4.6)
 fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
 fn (r: Request) with_idle_timeout(d: Duration) -> Request  // decision 0404
-fn (r: Request) with_expect_continue(timeout: Duration = 1s) -> Request  // Go's Transport.ExpectContinueTimeout: sets `Expect: 100-continue`; an HTTP/1.1 client sends the head, waits up to timeout for `100 Continue`, then sends the body; a final response first is the result and the body is never sent (the connection is not reused); other 1xx are skipped. No effect without a body, over HTTP/2 or for Client.open
+fn (r: Request) with_expect_continue(timeout: Duration = 1s) -> Request  // Go's Transport.ExpectContinueTimeout: sets `Expect: 100-continue`; an HTTP/1.1 client sends the head, waits up to timeout for `100 Continue`, then sends the body; a final response first is the result and the body is never sent (the connection is not reused); other 1xx are skipped. A with_body_reader body is not read before the 100. No effect without a body, over HTTP/2 or for Client.open
 fn (r: Request) with_body_reader(b: BodyReader) -> Request // decision 0404
 fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Request   // names declared up front, f's values sent after the body (decision 0433)
 

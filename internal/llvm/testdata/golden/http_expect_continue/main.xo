@@ -18,7 +18,7 @@ fn answer(mode: Int, conn: ServerConn, seen: Chan[Str]) {
   let head = got.to_str() ?? ""
   let has_expect = head.contains("Expect: 100-continue\r\n")
   var extra = 0
-  if mode == 1 {
+  if mode == 1 || mode == 5 {
     // the final response first: the body, if sent at all, follows it
     conn.write(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno").ignore_err("the client may have gone")
     while true {
@@ -31,7 +31,7 @@ fn answer(mode: Int, conn: ServerConn, seen: Chan[Str]) {
     conn.close()
     return
   }
-  if mode == 0 || mode == 3 {
+  if mode == 0 || mode == 3 || mode == 4 {
     if mode == 3 {
       conn.write(b"HTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\n").ignore_err("gone")
     }
@@ -62,18 +62,27 @@ fn main(os: Os) ! {
   let addr = l.addr()
   let c = http.client(os.net, timeout: 5s)
   let seen: Chan[Str] = Chan.new(4)
-  let names = ["100 then 200", "401 before any 100", "no answer: the timeout", "103, 100, then 200"]
+  let names = ["100 then 200", "401 before any 100", "no answer: the timeout", "103, 100, then 200", "a pipe body: 100 then 200", "a pipe body: 401 before any 100"]
   scope s {
     s.spawn_background(fn() {
-      for mode in 0..4 {
+      for mode in 0..6 {
         match l.accept() {
           Ok(conn) => answer(mode, conn, seen)
           Err(_) => return
         }
       }
     })
-    for name in names {
-      let req = http.new_request("POST", "http://${addr}/up", body: BODY).with_expect_continue(300ms)
+    for (i, name) in names.indexed() {
+      var req = http.new_request("POST", "http://${addr}/up", body: BODY).with_expect_continue(300ms)
+      if i >= 4 {
+        // a streamed body (with_body_reader): read only after the 100, never after a final response
+        let (w, rd) = http.pipe()
+        req = http.new_request("POST", "http://${addr}/up", headers: {"Content-Length": "32"}).with_body_reader(rd).with_expect_continue(300ms)
+        s.spawn_background(fn() {
+          w.write(BODY).ignore_err("the request ended")
+          w.close()
+        })
+      }
       os.stdio.println("${name}: ${show(c.send(req), addr)}")
       os.stdio.println("  server: ${seen.recv() ?? "none"}")
     }
