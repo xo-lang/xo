@@ -401,7 +401,7 @@ fn (g: G) shared_def() -> Bool {
 /// Whether function n is one std's object and a program's may both
 /// define (shared_def; x86win.xo's Win64 entry shims follow it).
 fn shared_name(n: Str) -> Bool {
-  n.contains("[") || n.starts_with("xo.") || n.starts_with("zero.")
+  n.contains("[") || n.starts_with("xo.") || n.starts_with("zero.") || n.starts_with("zero_val.")
 }
 
 /// The directive that makes s a weak definition (Module.weak_shared: a

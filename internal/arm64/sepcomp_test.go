@@ -324,6 +324,68 @@ func TestSepcompSharedMade(t *testing.T) {
 	}
 }
 
+// TestSepcompZeroValWeak: std's object defines its zero functions
+// (zero.T) and fault exits' shared zero values (zero_val.T, ssa build.xo
+// zero_val_of) weak, as a separately compiled program does: a program
+// function built before any std function that makes one emits its own,
+// and both copies were strong, so the link failed with `duplicate symbol
+// _xo_f_zero__val_2enative_2ehttp_2eRequest` (aws issue 12, 2026-11-05:
+// an S3 program's first build after std's variants were cached; a
+// rebuild took std's copy). Which build makes it first depends on the
+// program, so this reads std's part objects instead.
+func TestSepcompZeroValWeak(t *testing.T) {
+	t.Parallel()
+	if !native() || runtime.GOOS != "darwin" {
+		t.Skip("reads Mach-O objects with nm -m")
+	}
+	if testing.Short() {
+		t.Skip("builds std's variant")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-sepzero-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
+	paths, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("xo dev stdcache: %v", err)
+	}
+	lines := strings.Fields(string(paths))
+	if len(lines) != 2 {
+		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
+	}
+	objs, err := filepath.Glob(filepath.Join(lines[0]+".parts", "*.o"))
+	if err != nil || len(objs) == 0 {
+		t.Fatalf("no part objects beside std's store %s: %v", lines[0], err)
+	}
+	seen := 0
+	for _, o := range objs {
+		out, err := exec.Command("nm", "-m", "--defined-only", o).Output()
+		if err != nil {
+			t.Fatalf("nm -m %s: %v", o, err)
+		}
+		for _, l := range strings.Split(string(out), "\n") {
+			// the functions, not their local unwind tables ($ui, $ut)
+			if !strings.Contains(l, "(__TEXT,__text)") || strings.Contains(l, "non-external") || (!strings.Contains(l, " _xo_f_zero__val_") && !strings.Contains(l, " _xo_f_zero_2e")) {
+				continue
+			}
+			seen++
+			if !strings.Contains(l, "weak") {
+				t.Errorf("%s: a strong zero definition, which a program's own copy duplicates: %s", filepath.Base(o), strings.TrimSpace(l))
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatalf("std's object defines no zero.T or zero_val.T function: the test no longer sees what it checks")
+	}
+}
+
 // TestSepcompDebugInfo (decision 0388): a separately compiled program's
 // debug information is a whole program's. Its first compile unit is its
 // own (DW_AT_comp_dir the module's directory with --trimpath=off, as
