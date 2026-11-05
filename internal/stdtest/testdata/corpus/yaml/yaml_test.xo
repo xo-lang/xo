@@ -88,6 +88,35 @@ fn show_top_with(text: Str, strict: Bool) -> Str {
   }
 }
 
+struct Rt {
+  d: Duration
+  b: Bytes
+  p: Duration?
+  e yaml ",omitempty": Duration
+  f yaml ",omitempty": Bytes
+} derive Yaml
+
+fn show_rt(text: Str) -> Str {
+  match yaml.decode[Rt](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(r) => {
+      var bs: List[Str] = []
+      for i in 0..r.b.len() {
+        bs.push("${r.b[i]}")
+      }
+      var fs: List[Str] = []
+      for i in 0..r.f.len() {
+        fs.push("${r.f[i]}")
+      }
+      let p = match r.p {
+        Some(v) => "${v.nanos()}"
+        None => "nil"
+      }
+      "d=${r.d.nanos()} b=[${bs.join(" ")}] p=${p} e=${r.e.nanos()} f=[${fs.join(" ")}]"
+    }
+  }
+}
+
 struct Deep {
   d: List[List[List[List[Str]]]]
 } derive Yaml
@@ -661,6 +690,58 @@ const ALL: List[(Str, Str)] = [
 
 const MARSHALED_ALL: Str = "name: a\napiVersion: v1\nport: 1\nratio: 1.5\n\"on\": true\no: null\nnone: null\nitems:\n    - \"n\": 1\n      tags:\n        - t\nm:\n    k: 1\nempty: []\ntext: s\n\"yes\": \"yes\"\nnum: \"1\"\ninner:\n    \"n\": 2\n    tags: []\n---\nname: b\napiVersion: v2\nport: 2\nratio: 0\n\"on\": false\no: x\nnone: null\nitems: []\nm: {}\nempty: []\ntext: |\n    l1\n    l2\n\"yes\": \"no\"\nnum: \"2\"\ninner:\n    \"n\": 0\n    tags: []\n---\nname: c\napiVersion: v3\nport: 3\nratio: 2.5\n\"on\": true\no: null\nnone: null\nitems: []\nm: {}\nempty:\n    - 1\ntext: \"\"\n\"yes\": \"\"\nnum: \"\"\ninner:\n    \"n\": 3\n    tags:\n        - z\n"
 
+/// (a document, what yaml.v3 decodes it into Rt as: a Duration, Bytes, an optional Duration)
+const RT: List[(Str, Str)] = [
+  ("d: 1h30m", "d=5400000000000 b=[] p=nil e=0 f=[]"),
+  ("d: 5", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!int `5` into time.Duration\""),
+  ("d: 1.5", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!float `1.5` into time.Duration\""),
+  ("d: abc", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `abc` into time.Duration\""),
+  ("d: \"10\"", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `10` into time.Duration\""),
+  ("d: ~", "d=0 b=[] p=nil e=0 f=[]"),
+  ("d: 1s\nb: [1, 2]", "d=1000000000 b=[1 2] p=nil e=0 f=[]"),
+  ("d: [1]", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!seq into time.Duration\""),
+  ("d: {a: 1}", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!map into time.Duration\""),
+  ("d: 1h\nd: 2h", "ERR \"yaml: unmarshal errors:\\n  line 2: mapping key \\\"d\\\" already defined at line 1\""),
+  ("d: 100ms", "d=100000000 b=[] p=nil e=0 f=[]"),
+  ("d: 1.5s", "d=1500000000 b=[] p=nil e=0 f=[]"),
+  ("d: -3m", "d=-180000000000 b=[] p=nil e=0 f=[]"),
+  ("d: 0", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!int `0` into time.Duration\""),
+  ("d: 2h45m30.5s", "d=9930500000000 b=[] p=nil e=0 f=[]"),
+  ("d: 1us", "d=1000 b=[] p=nil e=0 f=[]"),
+  ("d: 7ns", "d=7 b=[] p=nil e=0 f=[]"),
+  ("d: 36000h", "d=129600000000000000 b=[] p=nil e=0 f=[]"),
+  ("d: 0.1s", "d=100000000 b=[] p=nil e=0 f=[]"),
+  ("d: 1d", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `1d` into time.Duration\""),
+  ("d: \" 1s\"", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str ` 1s` into time.Duration\""),
+  ("d: 1s ", "d=1000000000 b=[] p=nil e=0 f=[]"),
+  ("d: !!str 5s", "d=5000000000 b=[] p=nil e=0 f=[]"),
+  ("b: hello", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `hello` into []uint8\""),
+  ("b: !!binary aGVsbG8=", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!binary `aGVsbG8=` into []uint8\""),
+  ("b: [1, 2, 255]", "d=0 b=[1 2 255] p=nil e=0 f=[]"),
+  ("b: [256]", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!int `256` into uint8\""),
+  ("b: [-1]", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!int `-1` into uint8\""),
+  ("b: [1.5, 2]", "d=0 b=[1 2] p=nil e=0 f=[]"),
+  ("b: [a, 2]", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `a` into uint8\""),
+  ("b: [~, 3]", "d=0 b=[3] p=nil e=0 f=[]"),
+  ("b: [[1]]", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!seq into uint8\""),
+  ("b: 5", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!int `5` into []uint8\""),
+  ("b: ~", "d=0 b=[] p=nil e=0 f=[]"),
+  ("b: {a: 1}", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!map into []uint8\""),
+  ("b: []", "d=0 b=[] p=nil e=0 f=[]"),
+  ("b: [0x10, 0b11, 1_0]", "d=0 b=[16 3 10] p=nil e=0 f=[]"),
+  ("p: 5s", "d=0 b=[] p=5000000000 e=0 f=[]"),
+  ("p: ~", "d=0 b=[] p=nil e=0 f=[]"),
+  ("p: 5", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!int `5` into time.Duration\""),
+  ("e: 5s\nf: [1]", "d=0 b=[] p=nil e=5000000000 f=[1]"),
+  ("e: 0s", "d=0 b=[] p=nil e=0 f=[]"),
+]
+
+const MARSHALED_RT0: Str = "d: 1h30m0s\nb:\n    - 104\n    - 101\n    - 108\n    - 108\n    - 111\np: 5s\ne: 1.5s\nf:\n    - 0\n    - 255\n"
+const MARSHALED_RT1: Str = "d: 0s\nb: []\np: null\n"
+const MARSHALED_RT2: Str = "d: -1h0m30.5s\nb: []\np: null\ne: 7ns\n"
+const MARSHALED_RT3: Str = "d: 100µs\nb: []\np: null\ne: 1.234567ms\n"
+const MARSHALED_RT4: Str = "d: 25h0m0.000000001s\nb: []\np: null\ne: -1ns\n"
+
 const MARSHALED_TOP: Str = "id: 7\nmeta:\n    name: m\n    tags:\n        - a\nextra: e\n\"n\": 3\n"
 
 const MARSHALED: Str = "name: orders\napiVersion: v1\nport: 8080\nratio: 2.5\n\"on\": true\no: hi\nnone: null\nitems:\n    - \"n\": 1\n      tags:\n        - a\n        - b c\n    - \"n\": 2\n      tags: []\nm:\n    a: 3\n    b9: 2\n    b10: 1\nempty: []\ntext: |\n    l1\n    l2\n\"yes\": \"yes\"\nnum: \"123\"\ninner:\n    \"n\": 7\n    tags:\n        - 'x: y'\n        - '- z'\n        - \"\"\n"
@@ -684,6 +765,23 @@ test "alias expansion is limited as yaml.v3 limits it" {
 test "a strict decode refuses unknown keys as yaml.v3's KnownFields" {
   for (text, want) in STRICT {
     expect(show_top_with(text, true)) == want
+  }
+}
+
+test "Duration and Bytes fields are yaml.v3's" {
+  for (text, want) in RT {
+    expect(show_rt(text)) == want
+  }
+  let rs = [
+    Rt{d: Duration.from_nanos(5400000000000), b: b"hello", p: Some(Duration.from_nanos(5000000000)), e: Duration.from_nanos(1500000000), f: b"\x00\xff"},
+    Rt{d: Duration.from_nanos(0), b: b"", p: None, e: Duration.from_nanos(0), f: b""},
+    Rt{d: Duration.from_nanos(-3630500000000), b: b"", p: None, e: Duration.from_nanos(7), f: b""},
+    Rt{d: Duration.from_nanos(100000), b: b"", p: None, e: Duration.from_nanos(1234567), f: b""},
+    Rt{d: Duration.from_nanos(90000000000001), b: b"", p: None, e: Duration.from_nanos(-1), f: b""},
+  ]
+  let want = [MARSHALED_RT0, MARSHALED_RT1, MARSHALED_RT2, MARSHALED_RT3, MARSHALED_RT4]
+  for (i, r) in rs.indexed() {
+    expect(yaml.encode_value[Rt](r).ok()) == Some(want[i])
   }
 }
 

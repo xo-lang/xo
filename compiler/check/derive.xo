@@ -487,7 +487,7 @@ fn yaml_type_text(t: parser.Type) -> Str? {
           None => None
         }
       }
-      if !args.is_empty() || (path.len() == 1 && (n is "Set" | "Time" | "Bytes" | "Duration")) {
+      if !args.is_empty() || (path.len() == 1 && (n is "Set" | "Time")) {
         return None
       }
       Some("${q}${n}")
@@ -547,6 +547,12 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
           _ => ("yamlcodec.to_bool", "false")
         }
         return Some((fnn, zero, e))
+      }
+      if path.len() == 1 && args.is_empty() && n == "Duration" {
+        return Some(("yamlcodec.to_duration", "Duration.from_nanos(0)", e))
+      }
+      if path.len() == 1 && args.is_empty() && n == "Bytes" {
+        return Some(("yamlcodec.to_bytes", "b\"\"", e))
       }
       if path.len() == 1 && args.len() == 1 && n == "Option" {
         let (inner, _, e2) = c.yaml_reader(args[0], sp, e, done) ?? return None
@@ -689,7 +695,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   var ok = true
   for fl in sd.fields {
     let (rd, zero, e2) = c.yaml_reader(fl.typ, fl.name.span, e, done) ?? {
-      c.error_at(file, "XO0425", fl.name.span, "`derive Yaml` maps a Str, Int, Float, Bool, an Option, a List, a Map[Str, V] of those, or a struct that derives Yaml; field `${text(fl.name.name)}` is another type (decision 0512)")
+      c.error_at(file, "XO0425", fl.name.span, "`derive Yaml` maps a Str, Int, Float, Bool, a Duration, Bytes, an Option, a List, a Map[Str, V] of those, or a struct that derives Yaml; field `${text(fl.name.name)}` is another type (decision 0512)")
       ok = false
       continue
     }
@@ -856,6 +862,12 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
         }
         return Some((h, e))
       }
+      if path.len() == 1 && args.is_empty() && n == "Duration" {
+        return Some(("yamlcodec.put_duration", e))
+      }
+      if path.len() == 1 && args.is_empty() && n == "Bytes" {
+        return Some(("yamlcodec.put_bytes", e))
+      }
       if path.len() == 1 && args.len() == 1 && n == "Option" {
         let (inner, e2) = c.yaml_writer(args[0], sp, e, done) ?? return None
         e = e2
@@ -944,6 +956,8 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
         "Int" => "v.${f} == 0"
         "Float" => "v.${f} == 0.0"
         "Bool" => "!v.${f}"
+        "Duration" => "v.${f}.nanos() == 0"
+        "Bytes" => "v.${f}.len() == 0"
         _ => if tx.starts_with("List[") || tx.starts_with("Map[") {
           "v.${f}.len() == 0"
         } else if tx.ends_with("?") || tx.starts_with("Option[") {
@@ -953,7 +967,7 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
         }
       }
       if zero.is_empty() {
-        c.error_at(file, "XO0425", fl.name.span, "`omitempty` on field `${f}` needs a Str, Int, Float, Bool, Option, List or Map field (decision 0512)")
+        c.error_at(file, "XO0425", fl.name.span, "`omitempty` on field `${f}` needs a Str, Int, Float, Bool, Duration, Bytes, Option, List or Map field (decision 0512)")
         ok = false
       }
     }

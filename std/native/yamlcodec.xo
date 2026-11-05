@@ -4952,3 +4952,160 @@ fn finish_all(ws: List[yamlcodec.Enc], indent: Int) -> Str ! yaml.YamlErr {
   }
   Ok(em.out.freeze().to_str() ?? "")
 }
+
+fn to_duration(d: yamlcodec.Doc, i0: Int, var st: yamlcodec.Dec) -> (Bool, Duration) ! yaml.YamlErr {
+  let entered = tick(d, i0, st)?
+  let r = to_duration_body(d, i0, st)
+  leave(st, entered)
+  r
+}
+
+fn to_duration_body(d: yamlcodec.Doc, i0: Int, var st: yamlcodec.Dec) -> (Bool, Duration) ! yaml.YamlErr {
+  let i = res(d, i0)
+  let n = d.nodes[i]
+  if n.kind != K_SCALAR {
+    st.errs.push(cannot(d, i, "time.Duration"))
+    return Ok((false, Duration.from_nanos(0)))
+  }
+  if let Some(e) = check_tag(d, i) {
+    return Err(e)
+  }
+  if n.tag == "!!null" {
+    return Ok((false, Duration.from_nanos(0)))
+  }
+  if n.tag == "!!str" && n.value.trim() == n.value {
+    if let Ok(v) = Duration.parse(n.value) {
+      return Ok((true, v))
+    }
+  }
+  st.errs.push(cannot(d, i, "time.Duration"))
+  Ok((false, Duration.from_nanos(0)))
+}
+
+fn to_bytes(d: yamlcodec.Doc, i0: Int, var st: yamlcodec.Dec) -> (Bool, Bytes) ! yaml.YamlErr {
+  let entered = tick(d, i0, st)?
+  let r = to_bytes_body(d, i0, st)
+  leave(st, entered)
+  r
+}
+
+fn to_bytes_body(d: yamlcodec.Doc, i0: Int, var st: yamlcodec.Dec) -> (Bool, Bytes) ! yaml.YamlErr {
+  let i = res(d, i0)
+  let n = d.nodes[i]
+  if n.kind == K_SCALAR && n.tag == "!!null" {
+    return Ok((true, b""))
+  }
+  if n.kind != K_SEQUENCE {
+    if n.kind == K_SCALAR {
+      if let Some(e) = check_tag(d, i) {
+        return Err(e)
+      }
+    }
+    st.errs.push(cannot(d, i, "[]uint8"))
+    return Ok((false, b""))
+  }
+  var out = BytesBuilder.new()
+  for c in n.content {
+    let ci = res(d, c)
+    let cn = d.nodes[ci]
+    let entered = tick(d, c, st)?
+    if cn.kind != K_SCALAR {
+      st.errs.push(cannot(d, ci, "uint8"))
+      leave(st, entered)
+      continue
+    }
+    if let Some(e) = check_tag(d, ci) {
+      leave(st, entered)
+      return Err(e)
+    }
+    if cn.tag == "!!null" {
+      leave(st, entered)
+      continue
+    }
+    if let Some(v) = int_of(d, cn) {
+      if v >= 0 && v <= 255 {
+        out.write_byte(UInt8(v))
+        leave(st, entered)
+        continue
+      }
+    }
+    st.errs.push(cannot(d, ci, "uint8"))
+    leave(st, entered)
+  }
+  Ok((true, out.freeze()))
+}
+
+/// Go's Duration.String: `1h30m0s`, `1.5s`, `100ms`, `1µs`, `0s`.
+fn go_duration(ns: Int) -> Str {
+  if ns == 0 {
+    return "0s"
+  }
+  if ns == -9223372036854775807 - 1 {
+    return "-2562047h47m16.854775808s"
+  }
+  let neg = ns < 0
+  var u = if neg { -ns } else { ns }
+  var out = ""
+  if u < 1000000000 {
+    var prec = 6
+    var unit = "ms"
+    if u < 1000 {
+      prec = 0
+      unit = "ns"
+    } else if u < 1000000 {
+      prec = 3
+      unit = "µs"
+    }
+    out = "${go_frac(u, prec)}${unit}"
+  } else {
+    let secs = u / 1000000000
+    let frac = go_frac_digits(u % 1000000000, 9)
+    var m = secs / 60
+    out = "${secs % 60}${frac}s"
+    if m > 0 {
+      let h = m / 60
+      out = "${m % 60}m${out}"
+      if h > 0 {
+        out = "${h}h${out}"
+      }
+    }
+  }
+  if neg { "-${out}" } else { out }
+}
+
+/// u / 10^prec as an integer, then the fraction digits without trailing zeros.
+fn go_frac(u: Int, prec: Int) -> Str {
+  var p = 1
+  for _ in 0..prec {
+    p = p * 10
+  }
+  "${u / p}${go_frac_digits(u % p, prec)}"
+}
+
+/// ".ddd" for the prec digit fraction f, with trailing zeros removed, or "".
+fn go_frac_digits(f: Int, prec: Int) -> Str {
+  if f == 0 || prec == 0 {
+    return ""
+  }
+  var digits = "${f}"
+  while digits.len() < prec {
+    digits = "0${digits}"
+  }
+  var end = digits.len()
+  while end > 0 && digits[end - 1..end] == "0" {
+    end -= 1
+  }
+  ".${digits[0..end]}"
+}
+
+fn put_duration(var w: yamlcodec.Enc, d: Duration) {
+  put_str(w, go_duration(d.nanos()))
+}
+
+fn put_bytes(var w: yamlcodec.Enc, b: Bytes) {
+  seq_start(w)
+  for i in 0..b.len() {
+    put_int(w, Int(b[i]))
+  }
+  seq_end(w)
+}

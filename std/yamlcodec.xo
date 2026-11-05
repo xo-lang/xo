@@ -110,3 +110,13 @@ fn leave(var st: Dec, entered: Bool)
 fn parse_all(text: Str) -> List[Doc] ! yaml.YamlErr
 /// The documents the event lists make, one after another.
 fn finish_all(ws: List[Enc], indent: Int) -> Str ! yaml.YamlErr
+
+/// A Duration field (yaml.v3's time.Duration): a string in `Duration.parse` syntax;
+/// an int or a float is an error there as here.
+fn to_duration(d: Doc, i: Int, var st: Dec) -> (Bool, Duration) ! yaml.YamlErr
+/// A Bytes field, as yaml.v3's []byte: a sequence of ints 0 to 255.
+fn to_bytes(d: Doc, i: Int, var st: Dec) -> (Bool, Bytes) ! yaml.YamlErr
+/// Writes a Duration as Go's Duration.String text (`1h30m0s`).
+fn put_duration(var w: Enc, d: Duration)
+/// Writes Bytes as a sequence of ints, as yaml.v3 writes a []byte.
+fn put_bytes(var w: Enc, b: Bytes)

@@ -1146,7 +1146,7 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
 - `Yaml` (structs only, no type parameters; decision 0512, Accepted 2026-11-05) gives the struct gopkg.in/yaml.v3's
   decoding and encoding through `yaml.decode[T]`, `yaml.decode_all[T]`, `yaml.encode_value[T]` and `yaml.encode_all[T]`
   (spec/std.md 63). A field's key is its `yaml` string, else its `as` string, else its name; the options after a comma are
-  `omitempty`, `flow` and `inline`, and the name `-` leaves the field out. Field types are Str, Int, Float, Bool, a struct that
+  `omitempty`, `flow` and `inline`, and the name `-` leaves the field out. Field types are Str, Int, Float, Bool, Duration, Bytes, a struct that
   derives Yaml, an Option, a List, or a Map[Str, V] of those (`XO0425` for another type). The expansion is ordinary Xo as for
   `Xml` (`yaml_zero__T`, `yaml_merge__T`, `yaml_set__T`, `yaml_known__T`, `yaml_from_node__T`, `yaml_decode__T`,
   `yaml_decode_all__T`, `yaml_write__T`, `yaml_fields__T`, `yaml_encode__T`, `yaml_encode_all__T` and one `yaml_dec__TYPE`

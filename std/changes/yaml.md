@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: feature: Duration and Bytes fields
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (stage 3)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (time.Duration through ParseDuration, `[]byte` as a sequence), encode.go (Duration.String)
+- Test: testdata/corpus/yaml (RT: 50 documents decoded into a struct with Duration, Bytes and optional Duration fields, five Marshal outputs)
+
+A `Duration` field reads a string in Go's duration syntax and writes Go's Duration.String; `Bytes` reads and writes a sequence of ints 0 to 255, as yaml.v3 does for a `[]byte` (it is not base64).
+
 ## 2026-11-05: feature: strict decode, decode_all, encode_all
 
 - Kind: feature

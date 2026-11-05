@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -157,6 +158,50 @@ func inlineShow(in string) (out string) {
 		return "ERR " + strconv.Quote(norm(err.Error()))
 	}
 	return fmt.Sprintf("id=%d meta=%s/%s extra=%s hidden=%d n=%d", t.ID, t.Meta.Name, strings.Join(t.Meta.Tags, ","), t.Extra, t.Hidden, t.N)
+}
+
+type Rt struct {
+	D time.Duration  `yaml:"d"`
+	B []byte         `yaml:"b"`
+	P *time.Duration `yaml:"p"`
+	E time.Duration  `yaml:"e,omitempty"`
+	F []byte         `yaml:"f,omitempty"`
+}
+
+func rtFmt(r Rt) string {
+	p := "nil"
+	if r.P != nil {
+		p = strconv.FormatInt(int64(*r.P), 10)
+	}
+	var bs, fs []string
+	for _, x := range r.B {
+		bs = append(bs, strconv.Itoa(int(x)))
+	}
+	for _, x := range r.F {
+		fs = append(fs, strconv.Itoa(int(x)))
+	}
+	return fmt.Sprintf("d=%d b=[%s] p=%s e=%d f=[%s]", int64(r.D), strings.Join(bs, " "), p, int64(r.E), strings.Join(fs, " "))
+}
+
+// rtShow decodes into Rt and prints it, or the error.
+func rtShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	var r Rt
+	if err := yaml.Unmarshal([]byte(in), &r); err != nil {
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	return rtFmt(r)
+}
+
+var rtCases = []string{
+	"d: 1h30m", "d: 5", "d: 1.5", "d: abc", "d: \"10\"", "d: ~", "d: 1s\nb: [1, 2]", "d: [1]", "d: {a: 1}", "d: 1h\nd: 2h",
+	"d: 100ms", "d: 1.5s", "d: -3m", "d: 0", "d: 2h45m30.5s", "d: 1us", "d: 7ns", "d: 36000h", "d: 0.1s", "d: 1d", "d: \" 1s\"", "d: 1s ", "d: !!str 5s",
+	"b: hello", "b: !!binary aGVsbG8=", "b: [1, 2, 255]", "b: [256]", "b: [-1]", "b: [1.5, 2]", "b: [a, 2]", "b: [~, 3]", "b: [[1]]", "b: 5", "b: ~", "b: {a: 1}", "b: []", "b: [0x10, 0b11, 1_0]",
+	"p: 5s", "p: ~", "p: 5", "e: 5s\nf: [1]", "e: 0s",
 }
 
 // strictShow is inlineShow with KnownFields(true).
@@ -408,6 +453,35 @@ fn show_top_with(text: Str, strict: Bool) -> Str {
   }
 }
 
+struct Rt {
+  d: Duration
+  b: Bytes
+  p: Duration?
+  e yaml ",omitempty": Duration
+  f yaml ",omitempty": Bytes
+} derive Yaml
+
+fn show_rt(text: Str) -> Str {
+  match yaml.decode[Rt](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(r) => {
+      var bs: List[Str] = []
+      for i in 0..r.b.len() {
+        bs.push("${r.b[i]}")
+      }
+      var fs: List[Str] = []
+      for i in 0..r.f.len() {
+        fs.push("${r.f[i]}")
+      }
+      let p = match r.p {
+        Some(v) => "${v.nanos()}"
+        None => "nil"
+      }
+      "d=${r.d.nanos()} b=[${bs.join(" ")}] p=${p} e=${r.e.nanos()} f=[${fs.join(" ")}]"
+    }
+  }
+}
+
 struct Deep {
   d: List[List[List[List[Str]]]]
 } derive Yaml
@@ -525,6 +599,27 @@ const CASES: List[(Str, Str)] = [
 		{"c", "v3", 3, 2.5, true, nil, nil, []Item{}, map[string]int{}, []int{1}, "", "", "", Item{3, []string{"z"}}},
 	}
 	fmt.Fprintf(&o, "const MARSHALED_ALL: Str = %s\n\n", xq(marshalAll(docs)))
+	o.WriteString("/// (a document, what yaml.v3 decodes it into Rt as: a Duration, Bytes, an optional Duration)\nconst RT: List[(Str, Str)] = [\n")
+	for _, d := range rtCases {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(rtShow(d)))
+	}
+	o.WriteString("]\n\n")
+	p5 := 5 * time.Second
+	rts := []Rt{
+		{D: 90 * time.Minute, B: []byte("hello"), P: &p5, E: 1500 * time.Millisecond, F: []byte{0, 255}},
+		{},
+		{D: -time.Hour - 30*time.Second - 500*time.Millisecond, B: []byte{}, E: 7, F: nil},
+		{D: 100 * time.Microsecond, E: 1234567 * time.Nanosecond},
+		{D: 25*time.Hour + 1, E: -1},
+	}
+	for i, r := range rts {
+		rb, err := yaml.Marshal(r)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Fprintf(&o, "const MARSHALED_RT%d: Str = %s\n", i, xq(string(rb)))
+	}
+	o.WriteString("\n")
 	topv := Top{Base{7, Meta{"m", []string{"a"}}}, "e", 99, 3}
 	tb, err := yaml.Marshal(topv)
 	if err != nil {
@@ -574,6 +669,23 @@ test "alias expansion is limited as yaml.v3 limits it" {
 test "a strict decode refuses unknown keys as yaml.v3's KnownFields" {
   for (text, want) in STRICT {
     expect(show_top_with(text, true)) == want
+  }
+}
+
+test "Duration and Bytes fields are yaml.v3's" {
+  for (text, want) in RT {
+    expect(show_rt(text)) == want
+  }
+  let rs = [
+    Rt{d: Duration.from_nanos(5400000000000), b: b"hello", p: Some(Duration.from_nanos(5000000000)), e: Duration.from_nanos(1500000000), f: b"\x00\xff"},
+    Rt{d: Duration.from_nanos(0), b: b"", p: None, e: Duration.from_nanos(0), f: b""},
+    Rt{d: Duration.from_nanos(-3630500000000), b: b"", p: None, e: Duration.from_nanos(7), f: b""},
+    Rt{d: Duration.from_nanos(100000), b: b"", p: None, e: Duration.from_nanos(1234567), f: b""},
+    Rt{d: Duration.from_nanos(90000000000001), b: b"", p: None, e: Duration.from_nanos(-1), f: b""},
+  ]
+  let want = [MARSHALED_RT0, MARSHALED_RT1, MARSHALED_RT2, MARSHALED_RT3, MARSHALED_RT4]
+  for (i, r) in rs.indexed() {
+    expect(yaml.encode_value[Rt](r).ok()) == Some(want[i])
   }
 }
 
