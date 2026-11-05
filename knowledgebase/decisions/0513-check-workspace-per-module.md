@@ -1,6 +1,6 @@
 # 0513: A whole-workspace check holds one member at a time
 
-Status: Proposed (Xo Lang 1, 2026-11-05, at the lead's request; the follow-up decision 0511 names). The prototype is on branch lang1-ws11 behind XO_CHECK_PER_MODULE=1 (not for main).
+Status: Proposed (Xo Lang 1, 2026-11-05, at the lead's request; the follow-up decision 0511 names). The prototypes are on branch lang1-ws11 behind XO_CHECK_PER_MODULE=1 (a fresh checker per member) and XO_CHECK_PER_MODULE_BASE=1 (the shared base; not for main).
 
 ## Context
 
@@ -83,6 +83,34 @@ once, retaining every element that holds heap memory. If that is too
 slow, the base's tables move into a frozen part the member's checker
 reads through, with the member's own entries in a second part (an index
 past the base's length), so nothing is copied.
+
+### The shared base, measured (2026-11-05, same host and workspaces)
+
+The design's form on the branch: the first member is checked in full and
+its checker is the base (Checker.start_member: every module it holds is
+marked checked, so run skips their declare, resolve, body and unused
+import passes, and its diagnostics, root modules and flow bodies start
+empty); each later member is checked from a copy of it
+(`var c = base`), and dropped. Cache off:
+
+| core + N services | whole (one checker) | fresh checker per member | shared base |
+|---|---|---|---|
+| 10 | 1,198 MB, 1.13 s | 908 MB, 8.9 s | 1,048 MB, 1.98 s |
+| 100 | 7,366 MB, 8.3 s | 1,170 MB, 86 s | 1,326 MB, 17.6 s |
+| 435 | over 30 GB | 2,290 MB, 399 s | 2,400 MB, 80.6 s |
+
+Diagnostics: errors planted in a core package that every service imports
+(sigv4) and in two services give the same three diagnostics (code, file,
+line) from the whole check and the shared base, each once.
+
+The first form still ran the flow pass over every body, the base's
+included, for each member (27% of its profile); a member's copy now starts
+with no bodies. What remains of the 2x against a whole check, from a cpu
+profile of core + 100: the copy cost the next paragraph names (Map[Int,
+Int] puts into maps shared with the base are about 10%, set_type's
+records among them), and the passes that still walk the base's tables
+(effects, key types, unused names). Both are next: the frozen base with
+a member overlay, and those passes limited to the member's own modules.
 
 Work, in order:
 
