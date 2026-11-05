@@ -1441,8 +1441,10 @@ fn (var g: Gen) env_drop_fn(fi: Int) -> Str {
   var b: List[Str] = []
   let el = g.env_ll(fi)
   b.push("define internal void ${name}(ptr %e) #1 {\n")
+  let bw = g.m.funcs[fi].cap_borrowed
   for (i, c) in g.m.funcs[fi].captures.indexed() {
-    if !g.heap(c) {
+    // a borrowed capture (decision 0507) is its scope's variable's
+    if !g.heap(c) || (i < bw.len() && bw[i]) {
       continue
     }
     b.push("  %p${i} = getelementptr ${el}, ptr %e, i32 0, i32 ${i + ENV_FIELDS}\n")

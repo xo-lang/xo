@@ -1,0 +1,170 @@
+// Decision 0507: captures a scope's own s.spawn borrows, and each case
+// the rule leaves owned. Every captured value is checked after the
+// scope, so a missed retain shows as freed or reused memory.
+
+
+struct Box {
+  name: Str
+  xs: List[Int]
+}
+
+fn sum(xs: List[Int]) -> Int {
+  var t = 0
+  for x in xs {
+    t += x
+  }
+  t
+}
+
+// a borrowed List and Str whose last use is the spawn
+fn last_use() -> Int {
+  let xs = [1, 2, 3, 4]
+  let s = "borrowed ${xs.len()}"
+  var r = 0
+  scope sc {
+    let t = sc.spawn(fn() -> Int { sum(xs) + s.len() })
+    r = t.await
+  }
+  r
+}
+
+// many tasks on one captured Atomic and one Box (spawn100k's shape)
+fn many(n: Int) -> Int {
+  let total = Atomic[Int].new(0)
+  let b = Box{name: "box", xs: [10, 20, 30]}
+  scope sc {
+    for i in 0..n {
+      sc.spawn(fn() { total.add(sum(b.xs) + i % 7 + b.name.len()) })
+    }
+  }
+  total.get()
+}
+
+// a task sends its borrowed capture through a channel that outlives the scope
+fn escape_chan() -> Str {
+  let ch = Chan[Box].new(1)
+  let b = Box{name: "sent", xs: [7]}
+  scope sc {
+    sc.spawn(fn() { ch.send(b) })
+  }
+  match ch.recv() {
+    Some(x) => "${x.name} ${sum(x.xs)}"
+    None => "none"
+  }
+}
+
+// a task returns its borrowed capture as its result
+fn escape_result() -> Box {
+  let b = Box{name: "returned", xs: [1, 1]}
+  var out = Box{name: "", xs: []}
+  scope sc {
+    let t = sc.spawn(fn() -> Box { b })
+    out = t.await
+  }
+  out
+}
+
+// a var reassigned inside the scope: owned, never borrowed
+fn reassigned() -> Int {
+  var xs = [5, 5]
+  var r = 0
+  scope sc {
+    let t = sc.spawn(fn() -> Int { sum(xs) })
+    xs = [1]
+    r = t.await + sum(xs)
+  }
+  r
+}
+
+// a closure held in a variable and then spawned: owned
+fn held() -> Int {
+  let xs = [3, 3, 3]
+  var r = 0
+  scope sc {
+    let f = fn() -> Int { sum(xs) }
+    let t = sc.spawn(f)
+    r = t.await
+  }
+  r
+}
+
+// a Group's spawn: owned
+fn group() -> Int {
+  let xs = [2, 2]
+  let total = Atomic[Int].new(0)
+  scope sc {
+    let g = sc.group()
+    for _ in 0..10 {
+      g.spawn(fn() { total.add(sum(xs)) })
+    }
+  }
+  total.get()
+}
+
+// the scope inside a loop, the captured variable declared in the loop body
+fn in_loop() -> Int {
+  var t = 0
+  for i in 0..5 {
+    let xs = [i, i, i]
+    scope sc {
+      let a = sc.spawn(fn() -> Int { sum(xs) })
+      let b = sc.spawn(fn() -> Int { xs.len() })
+      t += a.await + b.await
+    }
+  }
+  t
+}
+
+// an early return out of the scope while tasks still run
+fn early(stop: Bool) -> Int {
+  let xs = [9, 9]
+  let total = Atomic[Int].new(0)
+  scope sc {
+    for _ in 0..8 {
+      sc.spawn(fn() { total.add(sum(xs)) })
+    }
+    if stop {
+      return -1
+    }
+  }
+  total.get() + xs.len()
+}
+
+fn stop() -> Int ! Str {
+  Err("stop")
+}
+
+// a `?` out of the scope: the error path closes it too
+fn fails(n: Int) -> Int ! Str {
+  let xs = [4, 4]
+  let total = Atomic[Int].new(0)
+  scope sc {
+    sc.spawn(fn() { total.add(sum(xs)) })
+    if n > 1 {
+      let _ = stop()?
+    }
+  }
+  Ok(total.get() + xs.len())
+}
+
+fn main(os: Os) {
+  os.stdio.println("last use ${last_use()}")
+  os.stdio.println("many ${many(10000)}")
+  os.stdio.println("chan ${escape_chan()}")
+  let r = escape_result()
+  os.stdio.println("result ${r.name} ${sum(r.xs)}")
+  os.stdio.println("reassigned ${reassigned()}")
+  os.stdio.println("held ${held()}")
+  os.stdio.println("group ${group()}")
+  os.stdio.println("loop ${in_loop()}")
+  os.stdio.println("early ${early(true)} ${early(false)}")
+  let f1 = match fails(1) {
+    Ok(v) => v
+    Err(_) => -2
+  }
+  let f2 = match fails(2) {
+    Ok(v) => v
+    Err(_) => -2
+  }
+  os.stdio.println("fails ${f1} ${f2}")
+}

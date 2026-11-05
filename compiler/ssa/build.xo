@@ -69,6 +69,9 @@ struct S {
   /// scope_tab).
   scope_tab: List[ScopeCtx] = []
   scopes: List[Int] = []
+  /// The captures the closure literal being built for a scope's spawn
+  /// borrows (decision 0507; set by spawn, taken by closure).
+  spawn_borrow: List[Int] = []
   /// A `defer` statement was registered or a scope opened in this
   /// function: only then can an operation need a landing of its own
   /// (lexical_cleanup).
@@ -2343,7 +2346,7 @@ fn (var b: Builder) begin(fi: Int, file: Int) -> S {
   for p in ps {
     pvals.push(f.values[p])
   }
-  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, blocks: [Block{params: ps}], values: pvals}
+  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, blocks: [Block{params: ps}], values: pvals}
   var s = S{f: f, fi: fi, file: file}
   if file >= 0 {
     s.f.file = b.file_name(file)

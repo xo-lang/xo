@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+last use 20
+many 659994
+chan sent 7
+result returned 2
+reassigned 11
+held 9
+group 40
+loop 45
+early -1 146
+fails 10 -2
+--- stderr

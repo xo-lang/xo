@@ -321,6 +321,11 @@ pub struct Func {
   /// Called through function values: parameter 0 is the closure.
   pub indirect: Bool = false
   pub captures: List[Int] = []
+  /// Per capture, whether the environment borrows it (decision 0507: a
+  /// closure literal spawned on its own scope, the capture declared
+  /// outside the scope and never assigned): no retain when the closure
+  /// is made, no release when the environment is dropped; empty for none.
+  pub cap_borrowed: List[Bool] = []
   /// Called by the runtime.
   pub entry: Bool = false
   /// The C symbol of a C ABI export (Func.Export, decision 0207), or "".
@@ -395,7 +400,7 @@ pub fn (var f: Func) set_pos(v: Int, pos: Str) {
 }
 
 pub fn (f: Func) shell() -> Func {
-  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, ret_view: f.ret_view, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader}
+  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, ret_view: f.ret_view, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader}
 }
 
 /// A lowered program (ssa.Module).

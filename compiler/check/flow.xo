@@ -835,7 +835,7 @@ fn (var c: Checker) flow_bodies() {
 // ---------------------------------------------------------------------------
 // Moves (core 5.3)
 
-fn (c: Checker) is_move_only(t: Int) -> Bool {
+pub fn (c: Checker) is_move_only(t: Int) -> Bool {
   if t < 0 {
     return false
   }

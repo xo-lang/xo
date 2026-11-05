@@ -23,7 +23,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v16"
+const FE_CACHE_VERSION = "xo front cache v17"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -478,6 +478,11 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
         e.str(b.fe_tname(t))
       }
       e.bool(cf.catches)
+      // which captures it borrows (decision 0507)
+      e.uv(cf.cap_borrowed.len())
+      for x in cf.cap_borrowed {
+        e.bool(x)
+      }
     } else if k == 6 {
       // a constant: its function's name, and whether this body made it
       // (its function is then one of the functions made whole)
@@ -746,6 +751,7 @@ struct FeEv {
   rs: List[Str] = []
   caps: List[Str] = []
   catches: Bool = false
+  cap_b: List[Bool] = []
 }
 
 /// Commits entry d for the body of function fi: true when it was placed,
@@ -868,6 +874,13 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
         x.caps.push(r.str())
       }
       x.catches = r.bool()
+      let nb = r.uv()
+      if !r.ok || nb > x.caps.len() {
+        return b.fe_miss("malformed")
+      }
+      for _ in 0..nb {
+        x.cap_b.push(r.bool())
+      }
       if !r.ok {
         return b.fe_miss("malformed")
       }
@@ -1084,6 +1097,7 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
         b.m.funcs[cf].indirect = true
         b.m.funcs[cf].captures = caps
         b.m.funcs[cf].catches = ev.catches
+        b.m.funcs[cf].cap_borrowed = ev.cap_b
         b.queue.push(Job.ClosureReplay(fi: cf, d: subs[ci], key: b.fe.cur_key))
       }
       ci += 1

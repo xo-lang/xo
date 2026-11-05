@@ -66,6 +66,9 @@ struct Rc {
   heaps: Map[Int, Bool] = {}
   fidx: Map[Str, Int] = {}
   borrowed: List[List[Bool]] = []
+  /// each function's borrowed captures (Func.cap_borrowed, decision 0507):
+  /// a Closure making it borrows those operands
+  capb: List[List[Bool]] = []
   /// each function's parameter 0 type (-1 with none): an indirect
   /// function's closure type, checked against its value calls (0337)
   fparam0: List[Int] = []
@@ -553,6 +556,19 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
   match x.op {
     Struct | Tuple | Variant | Return | Release | Reuse | Closure | Rebind | Box => {
       ms = fill_modes(n, Mode.Consume)
+      if x.op == Op.Closure {
+        // decision 0507: a borrowed capture stays its variable's, which
+        // the scope keeps alive past its join
+        if let Some(ci) = r.fidx.get(aux_name(x.aux)) {
+          if ci < r.capb.len() {
+            for (i, bw) in r.capb[ci].indexed() {
+              if bw && i < n {
+                ms[i] = Mode.Borrow
+              }
+            }
+          }
+        }
+      }
       if x.op == Op.Return && n > 0 && r.fi >= 0 && r.fi < r.rvp.len() && r.rvp[r.fi] >= 0 {
         // decision 0465 step 2: the result, a view of a borrowed
         // parameter, goes back uncounted
@@ -820,7 +836,9 @@ fn (var r: Rc) infer_borrows(funcs: List[Func], jobs: Int) {
 fn (var r: Rc) init_borrows(funcs: List[Func]) {
   r.borrowed = []
   r.fparam0 = []
+  r.capb = []
   for f in funcs {
+    r.capb.push(f.cap_borrowed)
     if let Some((bs, p0)) = r.ext.get(f.name) {
       r.fparam0.push(p0)
       r.borrowed.push(bs)

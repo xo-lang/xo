@@ -182,7 +182,11 @@ fn (var g: G) env_drop(fi: Int) -> Str {
   g.helped[key] = sym
   var b: List[Str] = ["${g.cmt()} envdrop ${g.m.funcs[fi].name}\n${g.fn_align()}${g.alias(key)}${sym}:\n"]
   var ls: List[Leaf] = []
+  let bw = g.m.funcs[fi].cap_borrowed
   for (i, c) in g.m.funcs[fi].captures.indexed() {
+    if i < bw.len() && bw[i] {
+      continue // borrowed (decision 0507): its scope's variable owns it
+    }
     let (off, _) = g.capture_words(fi, i)
     g.heap_leaves(c, off, ls)
   }

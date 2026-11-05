@@ -36,6 +36,11 @@ struct ScopeCtx {
   sites: List[SpawnSite] = []
   unwind_b: Int = -1
   fail_b: Int = -1
+  /// The scope's variable (`scope s`), -1 for none.
+  vo: Int = -1
+  /// The variables its spawns' closures may borrow (decision 0507,
+  /// scope_borrows): each is kept alive past every close of the scope.
+  keep: List[Int] = []
 }
 
 /// A node check.Inspect meets that the scope's bookkeeping reads: a call,
@@ -117,6 +122,7 @@ fn (var b: Builder) close_early(sc: Int) {
   }
   let h = b.s.scope_tab[sc].h
   let st = b.rt("scope_close", b.int_t(), [h, b.cint(1)])
+  b.keep_borrows(sc)
   b.close_status(sc, st)
   b.s.scopes = saved
 }
@@ -166,6 +172,95 @@ fn (var b: Builder) end_scope() {
   b.s.scopes.pop()
 }
 
+/// The variables the closures that body's `s.spawn` calls start may
+/// borrow (decision 0507): captured by a closure literal passed directly
+/// to `s.spawn` on the scope's variable vo, declared before the scope (a
+/// variable the function knows when the scope opens), a `let` or a
+/// parameter that is not `var`, of a heap type that is not move only. A
+/// spawn that is not eligible at its site (another scope innermost there,
+/// or one in a closure) borrows nothing; its variables are only kept.
+fn (var b: Builder) scope_borrows(vo: Int, body: parser.Block) -> List[Int] {
+  var out: List[Int] = []
+  if vo < 0 || b.wasm {
+    return out
+  }
+  var items: List[Walk] = []
+  b.walk_block(body, items)
+  for it in items {
+    if let Call(e) = it {
+      if let Some(lit) = b.scoped_spawn_lit(vo, e) {
+        var caps: List[Int] = []
+        b.capture_block(lit.body, caps)
+        for c in caps {
+          if !out.contains(c) && b.borrowable(c) {
+            out.push(c)
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+/// Whether captured variable vo may be borrowed (scope_borrows).
+fn (var b: Builder) borrowable(vo: Int) -> Bool {
+  let t = b.s.var_type.get(vo) ?? -1
+  if t < 0 || !b.m.heap(t) {
+    return false
+  }
+  let o = b.c.objs[vo]
+  if !(o.local is "let" | "param" | "recv") {
+    return false
+  }
+  !b.c.is_move_only(o.ty)
+}
+
+/// The closure literal of `s.spawn(fn ...)` called on the scope variable
+/// vo (decision 0507), or None.
+fn (var b: Builder) scoped_spawn_lit(vo: Int, e: Expr) -> parser.FnLit? {
+  let (_, _, args) = call_parts(e)
+  if args.len() != 1 {
+    return None
+  }
+  let lit = match strip_parens(args[0].value) {
+    FnLit(l) => l
+    _ => return None
+  }
+  let ci = match b.c.call_in(b.s.file, e) {
+    Some(c) => c
+    None => return None
+  }
+  let fo = ci.fn_obj
+  if fo < 0 || b.obj_name(fo) != "spawn" || ci.recv.len() != 1 {
+    return None
+  }
+  let r = b.c.objs[fo].recv
+  let m = b.obj_mod(fo)
+  if r < 0 || m < 0 || !b.c.mods[m].is_prelude || b.obj_name(r) != "Scope" {
+    return None
+  }
+  let id = match strip_parens(ci.recv[0]) {
+    Ident(i) => i
+    _ => return None
+  }
+  if b.c.var_of(b.s.file, id) != vo {
+    return None
+  }
+  Some(lit)
+}
+
+/// Keeps the variables scope sc's spawns may borrow alive past its close
+/// (decision 0507): a share of each, which reads it after the join (it
+/// was shared by the spawn already, so the share returns at once), so the
+/// reference counting never releases it before the tasks end.
+fn (var b: Builder) keep_borrows(sc: Int) {
+  for vo in b.s.scope_tab[sc].keep {
+    if b.s.var_type.contains(vo) {
+      b.add(Op.Share, -1, Aux.None, [b.read(vo)])
+    }
+  }
+}
+
 /// `scope s { body }` (scopeExpr, core 7.1).
 fn (var b: Builder) scope_expr(e: Expr) -> Int {
   let (name, body) = match e {
@@ -185,10 +280,13 @@ fn (var b: Builder) scope_expr(e: Expr) -> Int {
   }
   let sites = b.failing_spawns(body)
   let sc = b.new_scope(h, sites)
+  b.s.scope_tab[sc].vo = vo
+  b.s.scope_tab[sc].keep = b.scope_borrows(vo, body)
   let v = b.block(body)
   b.end_scope()
   if !b.is_dead() {
     let st = b.rt("scope_close", b.int_t(), [h, b.cint(0)])
+    b.keep_borrows(sc)
     b.close_status(sc, st)
   }
   b.finish_scope(sc, e)
@@ -205,6 +303,7 @@ fn (var b: Builder) finish_scope(sc: Int, e: Expr) {
     b.s.cur = ub
     let h = b.s.scope_tab[sc].h
     let st = b.rt("scope_close", b.int_t(), [h, b.cint(2)])
+    b.keep_borrows(sc)
     b.close_status(sc, st)
     b.unwind()
   }
@@ -537,7 +636,20 @@ fn (var b: Builder) spawn(x: Expr, h: Int, background: Bool, ret: Bool) -> Int {
   let rt = b.typ(b.result_of(res, err_t))
   let ft = b.m.func_type([], rt)
   let tt = b.task_type(res, err_t)
+  // decision 0507: a closure literal spawned on its own scope borrows
+  // the captures the scope keeps alive
+  b.s.spawn_borrow = []
+  if !background && !b.s.scopes.is_empty() {
+    let sc = b.s.scopes[b.s.scopes.len() - 1]
+    let svo = b.s.scope_tab[sc].vo
+    if svo >= 0 && !b.s.scope_tab[sc].keep.is_empty() {
+      if let Some(_) = b.scoped_spawn_lit(svo, x) {
+        b.s.spawn_borrow = b.s.scope_tab[sc].keep
+      }
+    }
+  }
   let f = b.value_as(arg, ft)
+  b.s.spawn_borrow = []
   var fl = f
   if b.wasm {
     fl = b.one(f)

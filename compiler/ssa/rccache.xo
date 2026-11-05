@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v13"
+const RC_CACHE_VERSION = "xo rc cache v14"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -49,7 +49,7 @@ pub struct LazyFn {
 /// inliner must see it without decoding the body (a build without debug
 /// information keeps the readers' stubs this way, 2026-10-25).
 fn lazy_shell(f: Func, key: Str, borrowed: List[Bool], rv: Int) -> Func {
-  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, borrowed: borrowed, ret_view: rv, ckey: "rc ${key}"}
+  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, borrowed: borrowed, ret_view: rv, ckey: "rc ${key}"}
 }
 
 /// Decodes the lazy functions idx of m (all of them for idx []) in
@@ -223,7 +223,9 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
         // and the parameter whose view it returns uncounted (decision
         // 0465 step 2), which makes its calls projections here
         let rv = if ci >= 0 && ci < r.rvp.len() { r.rvp[ci] } else { -1 }
-        b.write_str("callee ${s.len()}:${s} ${bs} ${ir} ${uq} rv=${rv}\n")
+        // and the captures a Closure of it borrows (decision 0507)
+        let cb = if ci >= 0 && ci < r.capb.len() { bools_text(r.capb[ci]) } else { "-" }
+        b.write_str("callee ${s.len()}:${s} ${bs} ${ir} ${uq} rv=${rv} cb=${cb}\n")
       }
     }
   }
@@ -620,6 +622,10 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
   e.uv((if f.indirect { 1 } else { 0 }) + (if f.entry { 2 } else { 0 }) + (if f.catches { 4 } else { 0 }) + (if f.reader { 8 } else { 0 }))
   e.sv(f.unwind_exit)
   e.types(m, f.captures)
+  e.uv(f.cap_borrowed.len())
+  for x in f.cap_borrowed {
+    e.bool(x)
+  }
   e.str(f.export)
   e.str(f.file)
   var lr: List[Int] = []
@@ -865,6 +871,13 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   f.reader = fl & 8 != 0
   f.unwind_exit = r.sv()
   f.captures = r.types()
+  let ncb = r.uv()
+  if !r.ok || ncb > d.len() {
+    return None
+  }
+  for _ in 0..ncb {
+    f.cap_borrowed.push(r.bool())
+  }
   f.export = r.str()
   f.file = r.str()
   for k in r.ints() {

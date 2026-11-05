@@ -361,9 +361,16 @@ fn (var b: Builder) closure(e: Expr, lit: parser.FnLit) -> Int {
     b.unsupported("this closure")
     return b.undef(t)
   }
+  // decision 0507: the captures a scope's spawn of this literal borrows
+  let borrow = b.s.spawn_borrow
+  b.s.spawn_borrow = []
   // captured bindings: used inside, bound outside, in first use order
   var caps: List[Int] = []
   b.capture_block(lit.body, caps)
+  var cap_b: List[Bool] = []
+  for vo in caps {
+    cap_b.push(borrow.contains(vo))
+  }
   let owner = b.frame_owner()
   if owner >= 0 && block_has_try(lit.body) {
     for vo in b.frame_vars(owner) {
@@ -388,6 +395,13 @@ fn (var b: Builder) closure(e: Expr, lit: parser.FnLit) -> Int {
   let fi = b.m.new_func(name, ps, [b.m.types[t].ret])
   b.m.funcs[fi].indirect = true
   b.m.funcs[fi].captures = cap_ts
+  if cap_b.contains(true) {
+    // the frame's variables a `try` adds after caps are owned
+    while cap_b.len() < cap_ts.len() {
+      cap_b.push(false)
+    }
+    b.m.funcs[fi].cap_borrowed = cap_b
+  }
   b.fe_closure_made(fi)
   let x = b.c.tys[ct]
   let err_t = b.fail_err(x.err)
