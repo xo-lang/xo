@@ -1,6 +1,6 @@
 # 0521: std/amqp, a port of github.com/Azure/go-amqp (AMQP 1.0)
 
-Status: Proposed (Xo Lang 3, 2026-11-05, at the lead's request for the Azure SDK; the owner decides)
+Status: Accepted (owner, 2026-11-05), with one condition on stage 4: the real namespace smoke test runs only on the owner's machine, after the owner confirms a test plan through the lead, and never in CI or by an agent. (Proposed by Xo Lang 3, 2026-11-05, for the Azure SDK.)
 
 ## Context
 
@@ -128,5 +128,5 @@ tests is go-amqp itself (the oracle), not a runtime dependency.
    closely (`NewSession`, `Receiver.ReceiveMessage`)?
 2. Order: stage 1 and 2 first and the Azure Service Bus work in parallel, or
    all four stages before any SDK work?
-3. The opt in real namespace smoke test needs a connection string from the
-   owner; it would live outside CI.
+3. Settled by the owner: the real namespace smoke test needs a connection
+   string, runs only on the owner's machine after a confirmed plan, never in CI.
