@@ -548,6 +548,9 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
         }
         return Some((fnn, zero, e))
       }
+      if path.len() == 2 && args.is_empty() && n == "Node" && text(path[0].name) == "yaml" {
+        return Some(("yaml.to_node_field", "yaml.zero_node()", e))
+      }
       if path.len() == 1 && args.is_empty() && n == "Duration" {
         return Some(("yaml.to_duration", "Duration.from_nanos(0)", e))
       }
@@ -695,7 +698,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   var ok = true
   for fl in sd.fields {
     let (rd, zero, e2) = c.yaml_reader(fl.typ, fl.name.span, e, done) ?? {
-      c.error_at(file, "XO0425", fl.name.span, "`derive Yaml` maps a Str, Int, Float, Bool, a Duration, Bytes, an Option, a List, a Map[Str, V] of those, or a struct that derives Yaml; field `${text(fl.name.name)}` is another type (decision 0512)")
+      c.error_at(file, "XO0425", fl.name.span, "`derive Yaml` maps a Str, Int, Float, Bool, a Duration, Bytes, a yaml.Node, an Option, a List, a Map[Str, V] of those, or a struct that derives Yaml; field `${text(fl.name.name)}` is another type (decision 0512)")
       ok = false
       continue
     }
@@ -861,6 +864,9 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
           e.ln("${sig} { ${body} }", sp)
         }
         return Some((h, e))
+      }
+      if path.len() == 2 && args.is_empty() && n == "Node" && text(path[0].name) == "yaml" {
+        return Some(("yaml.put_node", e))
       }
       if path.len() == 1 && args.is_empty() && n == "Duration" {
         return Some(("yaml.put_duration", e))

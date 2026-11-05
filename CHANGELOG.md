@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/yaml: `yaml.Node` fields in `derive Yaml` structs (the node of the key, as yaml.v3).
 - std/yaml: `yaml.Node` has `head_comment`, `line_comment` and `foot_comment` (parse and parse_all fill them, encode_node writes them, as yaml.v3; 466 documents compared).
 - std/yaml: `yaml.to_json` (the first document as JSON text, as yaml.v3 into an any and encoding/json).
 - std/yaml: `yaml.encode_node` writes a Node tree as yaml.v3 does (295 documents compared).

@@ -145,6 +145,8 @@ struct Ev {
   kind: Int
   text: Str
   style: Int
+  /// kind 6: the Node written as it is (a field of type yaml.Node), one element
+  node: List[Node]
 }
 
 /// The events of one document being written.
@@ -152,6 +154,13 @@ struct Enc {
   evs: List[Ev]
   flow: Bool
 }
+
+/// The value of a Node field the document does not hold: a null scalar (yaml.v3 has a Node of kind 0, which it writes as null).
+fn zero_node() -> Node
+/// Writes a Node field as it is (yaml.v3 writes a Node value through its encoder.node).
+fn put_node(var w: Enc, n: Node)
+/// A Node field: the node itself, an alias left an alias (yaml.v3 stops at the Node type before its alias handling).
+fn to_node_field(d: Doc, i: Int, var st: Dec) -> (Bool, Node) ! YamlErr
 
 fn enc_new() -> Enc
 /// Makes the next mapping or sequence started a flow one (yaml.v3's e.flow).

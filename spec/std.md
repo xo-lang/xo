@@ -7307,7 +7307,7 @@ fn encode_node(n: Node, indent: Int = 4) -> Str ! YamlErr
 fn to_json(text: Str) -> Str ! YamlErr
 ```
 
-- `derive Yaml` (structs only, no type parameters) maps Str, Int, Float, Bool, Duration, Bytes, an Option, a List, a Map[Str, V] of those, or a
+- `derive Yaml` (structs only, no type parameters) maps Str, Int, Float, Bool, Duration, Bytes, `yaml.Node`, an Option, a List, a Map[Str, V] of those, or a
   struct that derives Yaml (`XO0425` for another type). A field's key is its `yaml "name,options"` string, else its `as` string
   (shared with Json), else its name. Options are `omitempty` (also in the shared `as "name,omitempty"`), `flow` (only in
   `yaml "name,flow"`) and `inline` (a field that is a struct deriving Yaml, read and written in the enclosing mapping); the name
@@ -7319,6 +7319,9 @@ fn to_json(text: Str) -> Str ! YamlErr
   `strict` refuses a key no field takes (`line N: field K not found in type T`, yaml.v3's KnownFields).
 - Encoding follows yaml.v3's Marshal: keys of a Map sorted as yaml.v3 sorts them, strings quoted where yaml.v3 quotes them
   (`"n"`, `"yes"`, `"1"`), indent 4 by default (decision 0512) and 2 to 9 with `indent`.
+- A `yaml.Node` field holds the node of its key as it is (an alias stays an Alias node, as in yaml.v3, which stops at the Node type
+  before its alias handling), comments included, and is written back through `encode_node`'s rules; a field the document lacks is a
+  null scalar (yaml.v3's zero Node has kind 0 and is written as null).
 - A Duration is a string in `Duration.parse` syntax (`1h30m`), written as Go's Duration.String (`1h30m0s`); yaml.v3 refuses an
   int or a float there (`cannot unmarshal !!int `5` into time.Duration`), and so does Xo. Bytes is, as yaml.v3's `[]byte`, a
   sequence of ints 0 to 255 (a string or `!!binary` value is an error, `into []uint8`), written as such (`[]` when empty).

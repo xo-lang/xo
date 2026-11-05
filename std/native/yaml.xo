@@ -5372,25 +5372,25 @@ fn set_flow(var w: yaml.Enc, flow: Bool) {
 fn map_start(var w: yaml.Enc) {
   let flow = w.flow
   w.flow = false
-  w.evs.push(yaml.Ev{kind: 1, text: "", style: if flow { 2 } else { 1 }})
+  w.evs.push(yaml.Ev{kind: 1, text: "", style: if flow { 2 } else { 1 }, node: []})
 }
 
 fn map_end(var w: yaml.Enc) {
-  w.evs.push(yaml.Ev{kind: 2, text: "", style: 0})
+  w.evs.push(yaml.Ev{kind: 2, text: "", style: 0, node: []})
 }
 
 fn seq_start(var w: yaml.Enc) {
   let flow = w.flow
   w.flow = false
-  w.evs.push(yaml.Ev{kind: 3, text: "", style: if flow { 2 } else { 1 }})
+  w.evs.push(yaml.Ev{kind: 3, text: "", style: if flow { 2 } else { 1 }, node: []})
 }
 
 fn seq_end(var w: yaml.Enc) {
-  w.evs.push(yaml.Ev{kind: 4, text: "", style: 0})
+  w.evs.push(yaml.Ev{kind: 4, text: "", style: 0, node: []})
 }
 
 fn put_raw(var w: yaml.Enc, text: Str, style: Int) {
-  w.evs.push(yaml.Ev{kind: 5, text: text, style: style})
+  w.evs.push(yaml.Ev{kind: 5, text: text, style: style, node: []})
 }
 
 fn put_null(var w: yaml.Enc) {
@@ -5581,6 +5581,8 @@ fn finish_all(ws: List[yaml.Enc], indent: Int) -> Str ! yaml.YamlErr {
         s.implicit = true
         s.style = if x.style == 2 { C_FLOW } else { C_BLOCK }
         ok = emit(em, s)
+      } else if x.kind == 6 {
+        ok = emit_tree(em, x.node[0], "")
       } else if x.kind == 2 {
         ok = emit(em, ev(E_MAPPING_END, mark0(), mark0()))
       } else if x.kind == 4 {
@@ -6050,4 +6052,17 @@ fn to_json(text: Str) -> Str ! yaml.YamlErr {
     return Err(errors(st))
   }
   Ok(v.encode())
+}
+
+fn put_node(var w: yaml.Enc, n: yaml.Node) {
+  w.evs.push(yaml.Ev{kind: 6, text: "", style: 0, node: [n]})
+}
+
+fn to_node_field(d: yaml.Doc, i: Int, var st: yaml.Dec) -> (Bool, yaml.Node) ! yaml.YamlErr {
+  var memo: Map[Int, yaml.Node] = {}
+  Ok((true, to_node(d, i, memo)))
+}
+
+fn zero_node() -> yaml.Node {
+  yaml.Node{kind: yaml.NodeKind.Scalar, style: 0, tag: "!!null", value: "null", anchor: "", alias: [], content: [], line: 0, column: 0, head_comment: "", line_comment: "", foot_comment: ""}
 }

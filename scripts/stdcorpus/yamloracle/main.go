@@ -312,6 +312,48 @@ func emitShow(in string) (out string) {
 	return "OK " + string(b)
 }
 
+type Nd struct {
+	A int       `yaml:"a"`
+	N yaml.Node `yaml:"n"`
+	Z string    `yaml:"z"`
+}
+
+// ndShow decodes into Nd and prints a, z and the Node tree of n, or the error.
+func ndShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	var t Nd
+	if err := yaml.Unmarshal([]byte(in), &t); err != nil {
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "a=%d z=%s\n", t.A, t.Z)
+	if t.N.Kind == 0 {
+		b.WriteString("zero\n")
+	} else {
+		dumpNode(&b, &t.N, 0)
+	}
+	return b.String()
+}
+
+var ndCases = []string{
+	"a: 1\nn: hello\nz: x\n",
+	"n: [1, 2, {a: b}]\n",
+	"n: &x {a: 1}\nz: after\n",
+	"a: 3\n",
+	"n: ~\n",
+	"n: !!str 5\nz: y\n",
+	"n: |\n  text\n  more\n",
+	"x: &a 1\nn: *a\n",
+	"# head\nn: 1 # line\n# foot\nz: q\n",
+	"n:\n  - a\n  - b: c\n",
+	"a: bad\nn: 1\n",
+	"n: {a: 1, a: 2}\n",
+}
+
 // strictShow is inlineShow with KnownFields(true).
 func strictShow(in string) (out string) {
 	defer func() {
@@ -590,6 +632,28 @@ fn show_rt(text: Str) -> Str {
   }
 }
 
+struct Nd {
+  a: Int
+  n: yaml.Node
+  z: Str
+} derive Yaml
+
+fn show_nd(text: Str) -> Str {
+  match yaml.decode[Nd](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => {
+      var out = StrBuilder.new()
+      out.write("a=${t.a} z=${t.z}\n")
+      if t.n.line == 0 && t.n.value == "null" {
+        out.write("zero\n")
+      } else {
+        dump_node(out, t.n, 0)
+      }
+      out.freeze()
+    }
+  }
+}
+
 struct Deep {
   d: List[List[List[List[Str]]]]
 } derive Yaml
@@ -800,6 +864,29 @@ const CASES: List[(Str, Str)] = [
 		fmt.Fprintf(&o, "const MARSHALED_RT%d: Str = %s\n", i, xq(string(rb)))
 	}
 	o.WriteString("\n")
+	o.WriteString("/// (a document, what yaml.v3 decodes it into Nd as: a, z and the Node tree of n)\nconst ND: List[(Str, Str)] = [\n")
+	for _, d := range ndCases {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(ndShow(d)))
+	}
+	o.WriteString("]\n\n")
+	var ndOut strings.Builder
+	for i, d := range ndCases[:10] {
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte(d), &doc); err != nil || len(doc.Content) == 0 {
+			continue
+		}
+		// the value of the document's first key, as a Node field of Nd
+		root := doc.Content[0]
+		if root.Kind != yaml.MappingNode || len(root.Content) < 2 {
+			continue
+		}
+		mb, err := yaml.Marshal(Nd{A: i, N: *root.Content[1], Z: "z"})
+		if err != nil {
+			panic(err)
+		}
+		fmt.Fprintf(&ndOut, "  (%s, %d, %s),\n", xq(d), i, xq(string(mb)))
+	}
+	fmt.Fprintf(&o, "/// (a document, what yaml.v3 writes for an Nd whose n is the value of its first key; a is the index)\nconst ND_MARSHALED: List[(Str, Int, Str)] = [\n%s]\n\n", ndOut.String())
 	topv := Top{Base{7, Meta{"m", []string{"a"}}}, "e", 99, 3}
 	tb, err := yaml.Marshal(topv)
 	if err != nil {
@@ -890,6 +977,17 @@ test "to_json is yaml.v3 decoded into an any and marshaled by encoding/json" {
       continue
     }
     expect(show_json(text)) == want
+  }
+}
+
+test "a yaml.Node field is the node, as yaml.v3's" {
+  for (text, want) in ND {
+    expect(show_nd(text)) == want
+  }
+  for (text, idx, want) in ND_MARSHALED {
+    let doc = yaml.parse(text).ok() ?? fault("parse")
+    let root = doc.content[0]
+    expect(yaml.encode_value[Nd](Nd{a: idx, n: root.content[1], z: "z"}).ok()) == Some(want)
   }
 }
 

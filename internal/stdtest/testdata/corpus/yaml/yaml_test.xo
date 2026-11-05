@@ -117,6 +117,28 @@ fn show_rt(text: Str) -> Str {
   }
 }
 
+struct Nd {
+  a: Int
+  n: yaml.Node
+  z: Str
+} derive Yaml
+
+fn show_nd(text: Str) -> Str {
+  match yaml.decode[Nd](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => {
+      var out = StrBuilder.new()
+      out.write("a=${t.a} z=${t.z}\n")
+      if t.n.line == 0 && t.n.value == "null" {
+        out.write("zero\n")
+      } else {
+        dump_node(out, t.n, 0)
+      }
+      out.freeze()
+    }
+  }
+}
+
 struct Deep {
   d: List[List[List[List[Str]]]]
 } derive Yaml
@@ -2230,6 +2252,36 @@ const MARSHALED_RT2: Str = "d: -1h0m30.5s\nb: []\np: null\ne: 7ns\n"
 const MARSHALED_RT3: Str = "d: 100µs\nb: []\np: null\ne: 1.234567ms\n"
 const MARSHALED_RT4: Str = "d: 25h0m0.000000001s\nb: []\np: null\ne: -1ns\n"
 
+/// (a document, what yaml.v3 decodes it into Nd as: a, z and the Node tree of n)
+const ND: List[(Str, Str)] = [
+  ("a: 1\nn: hello\nz: x\n", "a=1 z=x\n8 !!str 0 \"hello\" \"\" 2:4 ->- \"\" \"\" \"\"\n"),
+  ("n: [1, 2, {a: b}]\n", "a=0 z=\n2 !!seq 32 \"\" \"\" 1:4 ->- \"\" \"\" \"\"\n 8 !!int 0 \"1\" \"\" 1:5 ->- \"\" \"\" \"\"\n 8 !!int 0 \"2\" \"\" 1:8 ->- \"\" \"\" \"\"\n 4 !!map 32 \"\" \"\" 1:11 ->- \"\" \"\" \"\"\n  8 !!str 0 \"a\" \"\" 1:12 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 1:15 ->- \"\" \"\" \"\"\n"),
+  ("n: &x {a: 1}\nz: after\n", "a=0 z=after\n4 !!map 32 \"\" \"x\" 1:4 ->- \"\" \"\" \"\"\n 8 !!str 0 \"a\" \"\" 1:8 ->- \"\" \"\" \"\"\n 8 !!int 0 \"1\" \"\" 1:11 ->- \"\" \"\" \"\"\n"),
+  ("a: 3\n", "a=3 z=\nzero\n"),
+  ("n: ~\n", "a=0 z=\n8 !!null 0 \"~\" \"\" 1:4 ->- \"\" \"\" \"\"\n"),
+  ("n: !!str 5\nz: y\n", "a=0 z=y\n8 !!str 1 \"5\" \"\" 1:4 ->- \"\" \"\" \"\"\n"),
+  ("n: |\n  text\n  more\n", "a=0 z=\n8 !!str 8 \"text\\nmore\\n\" \"\" 1:4 ->- \"\" \"\" \"\"\n"),
+  ("x: &a 1\nn: *a\n", "a=0 z=\n16  0 \"a\" \"\" 2:4 ->a \"\" \"\" \"\"\n"),
+  ("# head\nn: 1 # line\n# foot\nz: q\n", "a=0 z=q\n8 !!int 0 \"1\" \"\" 2:4 ->- \"\" \"# line\" \"\"\n"),
+  ("n:\n  - a\n  - b: c\n", "a=0 z=\n2 !!seq 0 \"\" \"\" 2:3 ->- \"\" \"\" \"\"\n 8 !!str 0 \"a\" \"\" 2:5 ->- \"\" \"\" \"\"\n 4 !!map 0 \"\" \"\" 3:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"b\" \"\" 3:5 ->- \"\" \"\" \"\"\n  8 !!str 0 \"c\" \"\" 3:8 ->- \"\" \"\" \"\"\n"),
+  ("a: bad\nn: 1\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `bad` into int\""),
+  ("n: {a: 1, a: 2}\n", "a=0 z=\n4 !!map 32 \"\" \"\" 1:4 ->- \"\" \"\" \"\"\n 8 !!str 0 \"a\" \"\" 1:5 ->- \"\" \"\" \"\"\n 8 !!int 0 \"1\" \"\" 1:8 ->- \"\" \"\" \"\"\n 8 !!str 0 \"a\" \"\" 1:11 ->- \"\" \"\" \"\"\n 8 !!int 0 \"2\" \"\" 1:14 ->- \"\" \"\" \"\"\n"),
+]
+
+/// (a document, what yaml.v3 writes for an Nd whose n is the value of its first key; a is the index)
+const ND_MARSHALED: List[(Str, Int, Str)] = [
+  ("a: 1\nn: hello\nz: x\n", 0, "a: 0\n\"n\": 1\nz: z\n"),
+  ("n: [1, 2, {a: b}]\n", 1, "a: 1\n\"n\": [1, 2, {a: b}]\nz: z\n"),
+  ("n: &x {a: 1}\nz: after\n", 2, "a: 2\n\"n\": &x {a: 1}\nz: z\n"),
+  ("a: 3\n", 3, "a: 3\n\"n\": 3\nz: z\n"),
+  ("n: ~\n", 4, "a: 4\n\"n\": ~\nz: z\n"),
+  ("n: !!str 5\nz: y\n", 5, "a: 5\n\"n\": !!str 5\nz: z\n"),
+  ("n: |\n  text\n  more\n", 6, "a: 6\n\"n\": |\n    text\n    more\nz: z\n"),
+  ("x: &a 1\nn: *a\n", 7, "a: 7\n\"n\": &a 1\nz: z\n"),
+  ("# head\nn: 1 # line\n# foot\nz: q\n", 8, "a: 8\n\"n\": 1 # line\nz: z\n"),
+  ("n:\n  - a\n  - b: c\n", 9, "a: 9\n\"n\":\n    - a\n    - b: c\nz: z\n"),
+]
+
 const MARSHALED_TOP: Str = "id: 7\nmeta:\n    name: m\n    tags:\n        - a\nextra: e\n\"n\": 3\n"
 
 const MARSHALED: Str = "name: orders\napiVersion: v1\nport: 8080\nratio: 2.5\n\"on\": true\no: hi\nnone: null\nitems:\n    - \"n\": 1\n      tags:\n        - a\n        - b c\n    - \"n\": 2\n      tags: []\nm:\n    a: 3\n    b9: 2\n    b10: 1\nempty: []\ntext: |\n    l1\n    l2\n\"yes\": \"yes\"\nnum: \"123\"\ninner:\n    \"n\": 7\n    tags:\n        - 'x: y'\n        - '- z'\n        - \"\"\n"
@@ -2294,6 +2346,17 @@ test "to_json is yaml.v3 decoded into an any and marshaled by encoding/json" {
       continue
     }
     expect(show_json(text)) == want
+  }
+}
+
+test "a yaml.Node field is the node, as yaml.v3's" {
+  for (text, want) in ND {
+    expect(show_nd(text)) == want
+  }
+  for (text, idx, want) in ND_MARSHALED {
+    let doc = yaml.parse(text).ok() ?? fault("parse")
+    let root = doc.content[0]
+    expect(yaml.encode_value[Nd](Nd{a: idx, n: root.content[1], z: "z"}).ok()) == Some(want)
   }
 }
 

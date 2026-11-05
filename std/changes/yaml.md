@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: feature: Node fields
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (stage 5)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go unmarshal (the nodeType check), encode.go nodev
+- Test: testdata/corpus/yaml (ND: 12 documents decoded into a struct with a `yaml.Node` field; ND_MARSHALED: Marshal of such a struct)
+
+A field of type `yaml.Node` in a struct that derives Yaml reads the node of its key as it is and writes it back with its tags, styles, anchors and comments.
+
 ## 2026-11-05: feature: comments in Node
 
 - Kind: feature
