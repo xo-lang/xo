@@ -7,6 +7,8 @@ Registered names and their roles: [../decisions/0135-domains-and-github-org.md](
 |---|---|
 | GitHub org `xo-lang` | **Ours**: registered 2026-10-10, https://github.com/xo-lang |
 | GitHub org `xolang` | Taken: organization created 2024-05-19, unrelated |
+| VS Code Marketplace publisher `xo-lang` | **Ours**: created by the owner 2026-11-05, display name "Xo language" ("Xo" was taken); the extension `xo-lang.xo` from xo-lang/vscode |
+| Open VSX namespace `xo-lang` | Not registered yet (2026-11-05) |
 | VS Code Marketplace and Open VSX publisher `xo-lang` | Chosen (owner, 2026-11-05) for the extension `xo-lang.xo` (repo xo-lang/vscode); no public publisher page on either on 2026-11-05 (`xolang` neither); not registered yet, the owner registers it |
 | Domain `xolang.dev` | **Ours** (main site), Namecheap, bought 2026-10-10 |
 | Domains `xolang.org`, `xo-lang.org`, `xo-lang.dev`, `xo-lang.com` | **Ours** (redirect to `xolang.dev`), Namecheap, bought 2026-10-10 |
