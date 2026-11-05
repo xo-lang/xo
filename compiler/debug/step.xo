@@ -129,6 +129,24 @@ fn (var s: Session) step_line(into: Bool) -> Str ! Str uses proc {
       c = -1
     }
     if c < 0 && into {
+      // into a function at its entry: on through its prologue to where a
+      // breakpoint on it stops (after_prologue), so its parameters are
+      // where their locations say (Windows' prologue moves them first)
+      for f in s.info.funcs {
+        if f.lo == regs.0 {
+          let end = after_prologue(s.lines, f)
+          var k = 0
+          while regs.0 != end && regs.0 >= f.lo && regs.0 < f.hi && k < 64 {
+            let r = s.step1(th, regs.0)?
+            if !stepped(r, th) {
+              return Ok(s.stopped(r))
+            }
+            regs = s.thread_regs(th)?
+            k += 1
+          }
+          break
+        }
+      }
       return Ok(s.stopped_step(th, "step"))
     }
     if c > 0 {

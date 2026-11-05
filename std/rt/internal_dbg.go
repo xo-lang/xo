@@ -13,6 +13,7 @@ func Internal_dbg_attach(_ *Task, _ int64) Result[int64, string] {
 }
 func Internal_dbg_threads(_ *Task, _ int64) List[int64]      { return ListOf[int64]() }
 func Internal_dbg_pid(_ *Task, _ int64) int64                { return 0 }
+func Internal_dbg_base(_ *Task, _ int64) int64               { return 0 }
 func Internal_dbg_read(_ *Task, _, _, _ int64) Option[Bytes] { return None[Bytes]() }
 func Internal_dbg_write(_ *Task, _, _ int64, _ Bytes) bool   { return false }
 func Internal_dbg_regs(_ *Task, _, _ int64) List[int64]      { return ListOf[int64]() }

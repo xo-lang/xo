@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -161,7 +160,7 @@ func TestDebugDAP(t *testing.T) {
 	if len(fs) < 2 || fs[0]["name"] != "sum" || fs[0]["line"] != float64(9) || fs[1]["name"] != "main" || fs[1]["line"] != float64(17) {
 		t.Fatalf("stack: %v", fs)
 	}
-	if s, _ := fs[0]["source"].(map[string]any); s == nil || !strings.HasSuffix(fmt.Sprint(s["path"]), "/main.xo") || !strings.HasPrefix(fmt.Sprint(s["path"]), "/") {
+	if s, _ := fs[0]["source"].(map[string]any); s == nil || !strings.HasSuffix(filepath.ToSlash(fmt.Sprint(s["path"])), "/main.xo") || !filepath.IsAbs(fmt.Sprint(s["path"])) {
 		t.Errorf("frame 0's source: %v", fs[0]["source"])
 	}
 	c.send("scopes", map[string]any{"frameId": 0})
@@ -239,7 +238,7 @@ func fileExists(p string) bool {
 // disconnect detaches, leaving the program running.
 func TestDebugDAPAttach(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug attaches on macOS arm64 and Linux (decision 0253 stages 4 and 6)")
+		t.Skip("xo debug attaches on macOS arm64, Linux and Windows amd64 (decision 0253 stages 4 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -255,9 +254,11 @@ func TestDebugDAPAttach(t *testing.T) {
 	if err := p.Start(); err != nil {
 		t.Fatal(err)
 	}
+	exited := make(chan error, 1)
+	go func() { exited <- p.Wait() }()
 	defer func() {
 		p.Process.Kill()
-		p.Wait()
+		<-exited
 	}()
 	// past dyld: a thread in the program's code (attach finds the slide
 	// from one), each try detaching
@@ -309,7 +310,10 @@ func TestDebugDAPAttach(t *testing.T) {
 	c.until("response", "stackTrace")
 	c.send("disconnect", nil)
 	c.until("response", "disconnect")
-	if err := p.Process.Signal(syscall.Signal(0)); err != nil {
+	select {
+	case err := <-exited:
 		t.Errorf("the program did not survive the detach: %v", err)
+		exited <- err
+	default:
 	}
 }

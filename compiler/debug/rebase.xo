@@ -154,6 +154,12 @@ pub fn rebase_tables(t: Tables, s: Int) -> Tables {
     syms.push((a + s, n))
   }
   o.syms = syms
+  // .pdata holds RVAs (from base); the sections it points into move
+  var pe: List[(Int, Bytes)] = []
+  for (a, b) in t.pe_data {
+    pe.push((a + s, b))
+  }
+  o.pe_data = pe
   o
 }
 

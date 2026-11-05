@@ -8,8 +8,15 @@
 //   4 stopped), 8 the system call's number, 16 to 56 its six arguments,
 //   64 its result.
 // One session makes one call at a time, so one mailbox needs no lock.
+//
+// Windows has the same rule for its debugging functions (the thread that
+// started or attached to the debuggee waits for and continues its
+// events), so dbgwin.xo uses this thread too, with an operation's number
+// (the OP_ constants) in place of the system call's.
 use native/llrt/pool
+use native/llrt/windows
 use native/rt
+use native/sys_windows
 
 const ST = 0
 const NR = 8
@@ -19,13 +26,51 @@ pub const MB_SIZE = 72
 
 const SEQ_CST = 4
 
+/// Windows' operations (dbgwin.xo): windows.create_at of the arguments
+/// at a (0 or the Win32 error); WaitForDebugEventEx(a, b),
+/// ContinueDebugEvent(a, b, c) and DebugActiveProcessStop(a), each
+/// nonzero on success; DebugActiveProcess(a): 1, or minus the Win32
+/// error.
+pub const OP_CREATE = 1
+pub const OP_WAIT_EVENT = 2
+pub const OP_CONTINUE = 3
+pub const OP_ATTACH = 4
+pub const OP_DETACH = 5
+
+fn op(nr: Int, a: Int, b: Int, c: Int) -> Int {
+  if nr == OP_CREATE {
+    return windows.create_at(a)
+  }
+  if nr == OP_WAIT_EVENT {
+    return Int(sys_windows.WaitForDebugEventEx(a, b))
+  }
+  if nr == OP_CONTINUE {
+    return Int(sys_windows.ContinueDebugEvent(a, b, c))
+  }
+  if nr == OP_ATTACH {
+    // minus the Win32 error when it fails
+    if Int(sys_windows.DebugActiveProcess(a)) != 0 {
+      return 1
+    }
+    return -Int(sys_windows.GetLastError())
+  }
+  if nr == OP_DETACH {
+    return Int(sys_windows.DebugActiveProcessStop(a))
+  }
+  0
+}
+
 /// The tracer thread's loop (cabi_dbg.xo dbg_tracer): each request's
 /// system call made here, until a stop.
 pub fn serve(m: Int) {
   while true {
     let s = rt.slot_load(m, ST / 8, SEQ_CST)
     if s == 1 {
-      let r = rt.sys6(rt.mem_load(m, NR, 8), rt.mem_load(m, ARGS, 8), rt.mem_load(m, ARGS + 8, 8), rt.mem_load(m, ARGS + 16, 8), rt.mem_load(m, ARGS + 24, 8), rt.mem_load(m, ARGS + 32, 8), rt.mem_load(m, ARGS + 40, 8))
+      let r = if target.os == TargetOs.Windows {
+        op(rt.mem_load(m, NR, 8), rt.mem_load(m, ARGS, 8), rt.mem_load(m, ARGS + 8, 8), rt.mem_load(m, ARGS + 16, 8))
+      } else {
+        rt.sys6(rt.mem_load(m, NR, 8), rt.mem_load(m, ARGS, 8), rt.mem_load(m, ARGS + 8, 8), rt.mem_load(m, ARGS + 16, 8), rt.mem_load(m, ARGS + 24, 8), rt.mem_load(m, ARGS + 32, 8), rt.mem_load(m, ARGS + 40, 8))
+      }
       rt.mem_store(m, RES, r, 8)
       rt.slot_store(m, ST / 8, 2, SEQ_CST)
       pool.futex_wake(m)

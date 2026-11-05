@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/mod/modtest"
@@ -48,6 +46,9 @@ func TestCheckWorkspaceImportClosure(t *testing.T) {
 // leaves a one-module check's peak memory where a workspace of only that
 // module puts it (aws issue 11: 435 modules took it past 18 GB).
 func TestCheckWorkspaceSizeMemory(t *testing.T) {
+	if !hasProcPeakRSS {
+		t.Skip("no peak resident set on this OS")
+	}
 	if testing.Short() {
 		t.Skip("checks a 300 module workspace")
 	}
@@ -76,11 +77,7 @@ func TestCheckWorkspaceSizeMemory(t *testing.T) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("check with %s: %v\n%s", workFile, err, out)
 		}
-		rss := cmd.ProcessState.SysUsage().(*syscall.Rusage).Maxrss
-		if runtime.GOOS != "darwin" {
-			rss *= 1024 // kilobytes on Linux
-		}
-		return rss
+		return procPeakRSS(cmd.ProcessState)
 	}
 	// xo check (decision 0511) and xo query type (decision 0515)
 	for _, args := range [][]string{

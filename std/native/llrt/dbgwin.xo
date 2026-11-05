@@ -1,0 +1,645 @@
+// `xo debug`'s process control on Windows amd64 (decision 0253 stage 6,
+// with only the calls its "New OS capabilities" list approves), the
+// interface of dbgmac.xo and dbglinux.xo: a program started with
+// CreateProcessW's DEBUG_ONLY_THIS_PROCESS (std's own windows.spawn, its
+// standard handles as process.run passes them), every change of it
+// reported as a debug event (WaitForDebugEventEx) that stops the whole
+// program until it is continued (ContinueDebugEvent), memory read and
+// written with ReadProcessMemory and WriteProcessMemory (which makes a
+// code page writable for the write) and FlushInstructionCache, a
+// thread's registers through Get/SetThreadContext, its single step with
+// EFlags' trap flag, and a step alone with SuspendThread on the others.
+// A program is stopped at its CREATE_PROCESS event, before its first
+// instruction; the loader's breakpoint after it is passed over. Xo's PE
+// is DYNAMIC_BASE: the image's base (the event's) is the session's slide
+// (dbg_base).
+//
+// Every debugging call that only the debuggee's debugger thread may make
+// (CreateProcessW of it, the waits and continues, attach and detach) goes
+// through the tracer thread of dbgtrace.xo. There is no TerminateProcess:
+// ending that thread ends the program (the system's kill on exit, the
+// default of DebugSetProcessKillOnExit).
+//
+// A debuggee is a record (heap_large) at h:
+//   0 pid, 8 the tracer's mailbox, 16 the selected thread, 24 a reported
+//   event is not continued yet, 32 attached, 40 the threads table, 48 its
+//   count, 56 its capacity, 64 the process handle (the event's), 72 the
+//   reported event's thread, 80 the status it is continued with, 88 the
+//   image's base, 96 the first breakpoint (the loader's, or attach's) is
+//   past, 104 the program ended, 112 the DEBUG_EVENT buffer, 120 the
+//   CONTEXT buffer (16 byte aligned), 128 the block holding it.
+// A thread's entry (TE bytes): 0 tid, 8 its handle, 16 suspended for a
+// step alone, 24 single step at its next resume.
+use native/llrt/cabi_dbg
+use native/llrt/dbgtrace
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/windows
+use native/rt
+use native/sys_windows
+
+const PID = 0
+const MB = 8
+const HTHREAD = 16
+const PENDING = 24
+const ATTACHED = 32
+const TT = 40
+const NT = 48
+const CAP = 56
+const HPROC = 64
+const EV_TID = 72
+const EV_STATUS = 80
+const BASE = 88
+const FIRST_BP = 96
+const EXITED = 104
+const EV = 112
+const CTX = 120
+const CTXB = 128
+const SIZE = 136
+
+const TE = 32
+const E_TID = 0
+const E_HANDLE = 8
+const E_SUSP = 16
+const E_STEP = 24
+
+/// DEBUG_EVENT (176 bytes): the code, process and thread ids, the
+/// union at 16.
+const EV_SIZE = 176
+const CREATE_PROCESS_DEBUG_EVENT = 3
+const CREATE_THREAD_DEBUG_EVENT = 2
+const EXCEPTION_DEBUG_EVENT = 1
+const EXIT_THREAD_DEBUG_EVENT = 4
+const EXIT_PROCESS_DEBUG_EVENT = 5
+const DBG_CONTINUE = 0x00010002
+const DBG_EXCEPTION_NOT_HANDLED = 0x80010001
+const DEBUG_ONLY_THIS_PROCESS = 2
+const INFINITE = 0xffffffff
+
+const EXCEPTION_BREAKPOINT = 0x80000003
+const EXCEPTION_SINGLE_STEP = 0x80000004
+const STATUS_WX86_BREAKPOINT = 0x4000001f
+const EXCEPTION_ACCESS_VIOLATION = 0xc0000005
+const EXCEPTION_IN_PAGE_ERROR = 0xc0000006
+const EXCEPTION_ILLEGAL_INSTRUCTION = 0xc000001d
+const EXCEPTION_PRIV_INSTRUCTION = 0xc0000096
+const EXCEPTION_INT_DIVIDE_BY_ZERO = 0xc0000094
+const EXCEPTION_INT_OVERFLOW = 0xc0000095
+
+/// dbgmac.xo's exception numbers.
+const EXC_BAD_ACCESS = 1
+const EXC_BAD_INSTRUCTION = 2
+const EXC_ARITHMETIC = 3
+const EXC_BREAKPOINT = 6
+
+/// CONTEXT (1232 bytes): ContextFlags at 48 (CONTEXT_AMD64 with
+/// CONTROL and INTEGER), EFlags at 68, rip at 248.
+const CTX_SIZE = 1232
+const CTX_FLAGS = 0x100003
+const CTX_EFLAGS = 68
+const CTX_RIP = 248
+const TRAP_FLAG = 0x100
+
+/// Starts path with args stopped before its first instruction (out not
+/// "": its standard output and error written to the file out, created or
+/// truncated, and its standard input NUL; else xo's own): the debuggee's
+/// record and "", or 0 and why it could not.
+pub fn launch(path: Str, args: List[Str], out: Str) -> (Int, Str) {
+  var parts = [windows.cmd_quote(path)]
+  for a in args {
+    parts.push(windows.cmd_quote(a))
+  }
+  var fds = [-2, -2, -2]
+  var o = -1
+  if !out.is_empty() {
+    o = windows.open_write(out)
+    if o < 0 {
+      return (0, "${out}: cannot be created (errno ${-o})")
+    }
+    // standard input NUL, output and error the file
+    fds = [-1, o, -3]
+  }
+  let h = new_record()
+  if h == 0 {
+    if o >= 0 {
+      let _c = windows.close(o)
+    }
+    return (0, "the debugger's thread could not be started")
+  }
+  let m = rt.mem_load(h, MB, 8)
+  let (_p, e) = windows.spawn_via(path, parts.join(" "), "", [], false, fds, DEBUG_ONLY_THIS_PROCESS, fn(a) { dbgtrace.call(m, dbgtrace.OP_CREATE, a, 0, 0, 0, 0, 0) })
+  if o >= 0 {
+    let _c = windows.close(o)
+  }
+  if e != 0 {
+    close(h)
+    return (0, "${path}: the program could not be started: ${windows.win_text(e)}")
+  }
+  // its first event: the process, its first thread and the image's base
+  if !next_event(h, INFINITE) || ev_code(h) != CREATE_PROCESS_DEBUG_EVENT {
+    close(h)
+    return (0, "${path}: no CREATE_PROCESS debug event")
+  }
+  took_process(h)
+  (h, "")
+}
+
+/// Attaches to process pid: DebugActiveProcess reports the process, each
+/// of its threads, and a breakpoint in a thread of its own, where it
+/// stops (the program's first thread selected).
+pub fn attach(pid: Int) -> (Int, Str) {
+  let h = new_record()
+  if h == 0 {
+    return (0, "the debugger's thread could not be started")
+  }
+  let m = rt.mem_load(h, MB, 8)
+  let r = dbgtrace.call(m, dbgtrace.OP_ATTACH, pid, 0, 0, 0, 0, 0)
+  if r <= 0 {
+    close(h)
+    return (0, "DebugActiveProcess(${pid}): ${windows.win_text(-r)}")
+  }
+  rt.mem_store(h, ATTACHED, 1, 8)
+  while true {
+    if !next_event(h, INFINITE) {
+      close(h)
+      return (0, "process ${pid}: no debug event after the attach")
+    }
+    let c = ev_code(h)
+    if c == CREATE_PROCESS_DEBUG_EVENT {
+      took_process(h)
+      cont(h, DBG_CONTINUE)
+    } else if c == CREATE_THREAD_DEBUG_EVENT {
+      add_thread(h, ev_tid(h), ev_word(h, 16))
+      cont(h, DBG_CONTINUE)
+    } else if c == EXCEPTION_DEBUG_EVENT && is_break(ev_u32(h, 16)) {
+      // the attach's own breakpoint: stopped here, past it when continued
+      past_trap(h, ev_tid(h), ev_word(h, 32))
+      rt.mem_store(h, FIRST_BP, 1, 8)
+      rt.mem_store(h, EV_STATUS, DBG_CONTINUE, 8)
+      return (h, "")
+    } else if c == EXIT_PROCESS_DEBUG_EVENT {
+      cont(h, DBG_CONTINUE)
+      close(h)
+      return (0, "process ${pid} ended while it was attached to")
+    } else {
+      cont(h, DBG_CONTINUE)
+    }
+  }
+  (0, "")
+}
+
+/// The threads of the stopped program, the selected one first.
+pub fn threads(h: Int) -> List[Int] {
+  let th = rt.mem_load(h, HTHREAD, 8)
+  var out = [th]
+  let t = rt.mem_load(h, TT, 8)
+  for i in 0..rt.mem_load(h, NT, 8) {
+    let tid = rt.mem_load(t, TE * i + E_TID, 8)
+    if tid != th {
+      out.push(tid)
+    }
+  }
+  out
+}
+
+/// Leaves an attached program running as it was.
+pub fn detach(h: Int) {
+  if rt.mem_load(h, EXITED, 8) != 0 {
+    return
+  }
+  unsuspend(h)
+  let t = rt.mem_load(h, TT, 8)
+  for i in 0..rt.mem_load(h, NT, 8) {
+    let e = t + TE * i
+    if rt.mem_load(e, E_STEP, 8) != 0 {
+      let _f = trap_flag(h, rt.mem_load(e, E_HANDLE, 8), false)
+      rt.mem_store(e, E_STEP, 0, 8)
+    }
+  }
+  cont(h, DBG_CONTINUE)
+  let _d = dbgtrace.call(rt.mem_load(h, MB, 8), dbgtrace.OP_DETACH, rt.mem_load(h, PID, 8), 0, 0, 0, 0, 0)
+  rt.mem_store(h, NT, 0, 8)
+  rt.mem_store(h, EXITED, 1, 8)
+}
+
+pub fn pid(h: Int) -> Int { rt.mem_load(h, PID, 8) }
+
+/// The address the program's image was loaded at.
+pub fn base(h: Int) -> Int { rt.mem_load(h, BASE, 8) }
+
+/// n bytes at address a, None when they cannot be read.
+pub fn read(h: Int, a: Int, n: Int) -> Bytes? {
+  if n <= 0 {
+    return Some(b"")
+  }
+  let out = raw.bytes_buf(n)
+  let db = raw.bytes_buf(8)
+  let done = raw.bytes_addr(db)
+  rt.mem_store(done, 0, 0, 8)
+  let ok = Int(sys_windows.ReadProcessMemory(rt.mem_load(h, HPROC, 8), a, raw.bytes_addr(out), n, done)) != 0 && rt.mem_load(done, 0, 8) == n
+  raw.alive(db)
+  if !ok {
+    return None
+  }
+  Some(out)
+}
+
+/// Writes data at address a of the program's text or data, its
+/// instruction cache flushed.
+pub fn write(h: Int, a: Int, data: Bytes) -> Bool {
+  let p = rt.mem_load(h, HPROC, 8)
+  let db = raw.bytes_buf(8)
+  let done = raw.bytes_addr(db)
+  rt.mem_store(done, 0, 0, 8)
+  let ok = Int(sys_windows.WriteProcessMemory(p, a, raw.bytes_addr(data), data.len(), done)) != 0 && rt.mem_load(done, 0, 8) == data.len()
+  raw.alive(db)
+  raw.alive(data)
+  if ok {
+    let _f = sys_windows.FlushInstructionCache(p, a, data.len())
+  }
+  ok
+}
+
+/// Where CONTEXT keeps DWARF register k (rax, rdx, rcx, rbx, rsi, rdi,
+/// rbp, rsp, r8 to r15).
+fn ctx_off(k: Int) -> Int {
+  match k {
+    0 => 0x78
+    1 => 0x88
+    2 => 0x80
+    3 => 0x90
+    4 => 0xa8
+    5 => 0xb0
+    6 => 0xa0
+    7 => 0x98
+    _ => 0xb8 + 8 * (k - 8)
+  }
+}
+
+/// Thread th's CONTEXT read into the record's buffer: its address, or 0.
+fn get_ctx(h: Int, th: Int) -> Int {
+  let e = entry(h, th)
+  if e == 0 {
+    return 0
+  }
+  let c = rt.mem_load(h, CTX, 8)
+  rt.mem_store(c, 48, CTX_FLAGS, 4)
+  if Int(sys_windows.GetThreadContext(rt.mem_load(e, E_HANDLE, 8), c)) == 0 {
+    return 0
+  }
+  c
+}
+
+/// Thread th's registers in DWARF numbering, 34 words as dbglinux.xo's
+/// amd64 ones: the 16 registers at 0 to 15 (the rest 0), rip at 32 and
+/// rflags at 33. Empty when they cannot be read.
+pub fn regs(h: Int, th: Int) -> List[Int] {
+  let c = get_ctx(h, th)
+  var out: List[Int] = []
+  if c == 0 {
+    return out
+  }
+  for k in 0..32 {
+    out.push(if k < 16 { rt.mem_load(c, ctx_off(k), 8) } else { 0 })
+  }
+  out.push(rt.mem_load(c, CTX_RIP, 8))
+  out.push(rt.mem_load(c, CTX_EFLAGS, 4))
+  out
+}
+
+/// Sets thread th's pc.
+pub fn set_pc(h: Int, th: Int, pc: Int) -> Bool {
+  let c = get_ctx(h, th)
+  if c == 0 {
+    return false
+  }
+  rt.mem_store(c, CTX_RIP, pc, 8)
+  Int(sys_windows.SetThreadContext(rt.mem_load(entry(h, th), E_HANDLE, 8), c)) != 0
+}
+
+/// Turns thread th's single step on or off: on, its next resume sets
+/// EFlags' trap flag, whose EXCEPTION_SINGLE_STEP wait reports with
+/// subcode 0.
+pub fn set_step(h: Int, th: Int, on: Bool) -> Bool {
+  let e = entry(h, th)
+  if e == 0 {
+    return false
+  }
+  rt.mem_store(e, E_STEP, if on { 1 } else { 0 }, 8)
+  true
+}
+
+/// Thread handle th's trap flag set or cleared.
+fn trap_flag(h: Int, th: Int, on: Bool) -> Bool {
+  let c = rt.mem_load(h, CTX, 8)
+  rt.mem_store(c, 48, CTX_FLAGS, 4)
+  if Int(sys_windows.GetThreadContext(th, c)) == 0 {
+    return false
+  }
+  let f = rt.mem_load(c, CTX_EFLAGS, 4)
+  rt.mem_store(c, CTX_EFLAGS, if on { f | TRAP_FLAG } else { f - (f & TRAP_FLAG) }, 4)
+  Int(sys_windows.SetThreadContext(th, c)) != 0
+}
+
+/// Lets the program run (alone: only the selected thread, the others
+/// suspended until the next stop), its threads to single step with the
+/// trap flag set.
+pub fn resume(h: Int, alone: Bool) -> Bool {
+  if rt.mem_load(h, EXITED, 8) != 0 || rt.mem_load(h, PENDING, 8) == 0 {
+    return false
+  }
+  let th = rt.mem_load(h, HTHREAD, 8)
+  let t = rt.mem_load(h, TT, 8)
+  for i in 0..rt.mem_load(h, NT, 8) {
+    let e = t + TE * i
+    let hd = rt.mem_load(e, E_HANDLE, 8)
+    if alone && rt.mem_load(e, E_TID, 8) != th && rt.mem_load(e, E_SUSP, 8) == 0 {
+      // (DWORD)-1 when it could not
+      if Int(sys_windows.SuspendThread(hd)) != 4294967295 {
+        rt.mem_store(e, E_SUSP, 1, 8)
+      }
+    }
+    if rt.mem_load(e, E_STEP, 8) != 0 {
+      let _f = trap_flag(h, hd, true)
+    }
+  }
+  cont(h, rt.mem_load(h, EV_STATUS, 8))
+  true
+}
+
+/// Waits up to ms milliseconds (0: until something happens) for the
+/// program to stop: [1, thread, exception, code, subcode] as dbgmac.xo's
+/// (EXC_BREAKPOINT 6 for a breakpoint, subcode its address, 0 for a single
+/// step; a fault's exception code as code), [2, status] when it exited,
+/// [0] when the time passed. Exceptions the program handles itself pass
+/// on without a stop; a fault stops at its first chance and is the
+/// program's when it runs on.
+pub fn wait(h: Int, ms: Int) -> List[Int] {
+  if rt.mem_load(h, EXITED, 8) != 0 {
+    return [2, 0]
+  }
+  while true {
+    if !next_event(h, if ms > 0 { ms } else { INFINITE }) {
+      return [0]
+    }
+    let c = ev_code(h)
+    let tid = ev_tid(h)
+    if c == CREATE_THREAD_DEBUG_EVENT {
+      add_thread(h, tid, ev_word(h, 16))
+      cont(h, DBG_CONTINUE)
+      continue
+    }
+    if c == EXIT_THREAD_DEBUG_EVENT {
+      remove_thread(h, tid)
+      cont(h, DBG_CONTINUE)
+      continue
+    }
+    if c == EXIT_PROCESS_DEBUG_EVENT {
+      let code = ev_u32(h, 16)
+      rt.mem_store(h, NT, 0, 8)
+      cont(h, DBG_CONTINUE)
+      rt.mem_store(h, EXITED, 1, 8)
+      return [2, code]
+    }
+    if c != EXCEPTION_DEBUG_EVENT {
+      // a DLL's load or unload, a debug string, another process event
+      cont(h, DBG_CONTINUE)
+      continue
+    }
+    let x = ev_u32(h, 16)
+    let at = ev_word(h, 32)
+    let first = ev_u32(h, 168) != 0
+    if is_break(x) {
+      if rt.mem_load(h, FIRST_BP, 8) == 0 {
+        // the loader's breakpoint (ntdll's, once): past it, on
+        rt.mem_store(h, FIRST_BP, 1, 8)
+        past_trap(h, tid, at)
+        cont(h, DBG_CONTINUE)
+        continue
+      }
+      // the pc back on the trap, as arm64's brk leaves it
+      let rs = regs(h, tid)
+      if rs.len() > 32 && rs[32] == at + 1 {
+        let _p = set_pc(h, tid, at)
+      }
+      clear_step(h, tid)
+      return stop(h, tid, DBG_CONTINUE, [1, tid, EXC_BREAKPOINT, 1, at])
+    }
+    if x == EXCEPTION_SINGLE_STEP {
+      let e = entry(h, tid)
+      if e != 0 && rt.mem_load(e, E_STEP, 8) != 0 {
+        clear_step(h, tid)
+        return stop(h, tid, DBG_CONTINUE, [1, tid, EXC_BREAKPOINT, 1, 0])
+      }
+      cont(h, DBG_EXCEPTION_NOT_HANDLED)
+      continue
+    }
+    let exc = fault_exc(x)
+    if exc == 0 || !first {
+      // the program's own exception, or a fault's last chance: its own
+      cont(h, DBG_EXCEPTION_NOT_HANDLED)
+      continue
+    }
+    clear_step(h, tid)
+    return stop(h, tid, DBG_EXCEPTION_NOT_HANDLED, [1, tid, exc, x, at])
+  }
+  [0]
+}
+
+/// The program stopped at thread tid's event, continued with status when
+/// it runs on: the threads suspended for a step alone resumed (they stay
+/// stopped with the rest until then), r.
+fn stop(h: Int, tid: Int, status: Int, r: List[Int]) -> List[Int] {
+  rt.mem_store(h, HTHREAD, tid, 8)
+  rt.mem_store(h, EV_STATUS, status, 8)
+  unsuspend(h)
+  r
+}
+
+/// The exception number of fault x, 0 when it is not one.
+fn fault_exc(x: Int) -> Int {
+  if x == EXCEPTION_ACCESS_VIOLATION || x == EXCEPTION_IN_PAGE_ERROR {
+    return EXC_BAD_ACCESS
+  }
+  if x == EXCEPTION_ILLEGAL_INSTRUCTION || x == EXCEPTION_PRIV_INSTRUCTION {
+    return EXC_BAD_INSTRUCTION
+  }
+  if x == EXCEPTION_INT_DIVIDE_BY_ZERO || x == EXCEPTION_INT_OVERFLOW {
+    return EXC_ARITHMETIC
+  }
+  0
+}
+
+fn is_break(x: Int) -> Bool { x == EXCEPTION_BREAKPOINT || x == STATUS_WX86_BREAKPOINT }
+
+/// Thread tid past the int3 at at (the loader's or attach's: it runs on
+/// after it), wherever the system left its pc.
+fn past_trap(h: Int, tid: Int, at: Int) {
+  let rs = regs(h, tid)
+  if rs.len() > 32 && rs[32] == at {
+    let _p = set_pc(h, tid, at + 1)
+  }
+}
+
+/// Thread tid's single step done: its trap flag off.
+fn clear_step(h: Int, tid: Int) {
+  let e = entry(h, tid)
+  if e != 0 && rt.mem_load(e, E_STEP, 8) != 0 {
+    let _f = trap_flag(h, rt.mem_load(e, E_HANDLE, 8), false)
+    rt.mem_store(e, E_STEP, 0, 8)
+  }
+}
+
+/// The threads a step alone suspended, resumed.
+fn unsuspend(h: Int) {
+  let t = rt.mem_load(h, TT, 8)
+  for i in 0..rt.mem_load(h, NT, 8) {
+    let e = t + TE * i
+    if rt.mem_load(e, E_SUSP, 8) != 0 {
+      let _r = sys_windows.ResumeThread(rt.mem_load(e, E_HANDLE, 8))
+      rt.mem_store(e, E_SUSP, 0, 8)
+    }
+  }
+}
+
+/// Ends the program: the debugger thread ends, and the system ends the
+/// program it debugs (an attached one is detached from instead).
+pub fn kill(h: Int) {
+  if rt.mem_load(h, ATTACHED, 8) != 0 {
+    detach(h)
+    return
+  }
+  stop_tracer(h)
+  rt.mem_store(h, NT, 0, 8)
+  rt.mem_store(h, EXITED, 1, 8)
+}
+
+/// Frees the record and ends its tracer thread (after kill, or the exit).
+pub fn close(h: Int) {
+  stop_tracer(h)
+  for k in [TT, EV, CTXB] {
+    let a = rt.mem_load(h, k, 8)
+    if a != 0 {
+      rt.heap_release(a - 8)
+    }
+  }
+  rt.heap_release(h - 8)
+}
+
+fn stop_tracer(h: Int) {
+  let m = rt.mem_load(h, MB, 8)
+  if m != 0 {
+    dbgtrace.stop(m)
+    rt.heap_release(m - 8)
+    rt.mem_store(h, MB, 0, 8)
+  }
+}
+
+/// The next debug event into the record's buffer within ms milliseconds:
+/// false when none came.
+fn next_event(h: Int, ms: Int) -> Bool {
+  let r = dbgtrace.call(rt.mem_load(h, MB, 8), dbgtrace.OP_WAIT_EVENT, rt.mem_load(h, EV, 8), ms, 0, 0, 0, 0)
+  if r == 0 {
+    return false
+  }
+  rt.mem_store(h, PENDING, 1, 8)
+  rt.mem_store(h, EV_TID, ev_tid(h), 8)
+  true
+}
+
+/// The reported event continued with status.
+fn cont(h: Int, status: Int) {
+  if rt.mem_load(h, PENDING, 8) == 0 {
+    return
+  }
+  let _c = dbgtrace.call(rt.mem_load(h, MB, 8), dbgtrace.OP_CONTINUE, rt.mem_load(h, PID, 8), rt.mem_load(h, EV_TID, 8), status, 0, 0, 0)
+  rt.mem_store(h, PENDING, 0, 8)
+}
+
+/// CREATE_PROCESS's event taken: the pid, the process handle, the image's
+/// base, the first thread (selected).
+fn took_process(h: Int) {
+  rt.mem_store(h, PID, rt.mem_load(rt.mem_load(h, EV, 8), 4, 4), 8)
+  rt.mem_store(h, HPROC, ev_word(h, 24), 8)
+  rt.mem_store(h, BASE, ev_word(h, 40), 8)
+  rt.mem_store(h, EV_STATUS, DBG_CONTINUE, 8)
+  let tid = ev_tid(h)
+  add_thread(h, tid, ev_word(h, 32))
+  rt.mem_store(h, HTHREAD, tid, 8)
+}
+
+fn ev_code(h: Int) -> Int { rt.mem_load(rt.mem_load(h, EV, 8), 0, 4) }
+
+fn ev_tid(h: Int) -> Int { rt.mem_load(rt.mem_load(h, EV, 8), 8, 4) }
+
+fn ev_u32(h: Int, off: Int) -> Int { rt.mem_load(rt.mem_load(h, EV, 8), off, 4) }
+
+fn ev_word(h: Int, off: Int) -> Int { rt.mem_load(rt.mem_load(h, EV, 8), off, 8) }
+
+/// A zeroed record with its buffers, mailbox and tracer thread, or 0.
+fn new_record() -> Int {
+  let h = rt.heap_large(SIZE)
+  rt.mem_set(h, 0, SIZE)
+  let ev = rt.heap_large(EV_SIZE)
+  rt.mem_set(ev, 0, EV_SIZE)
+  rt.mem_store(h, EV, ev, 8)
+  // CONTEXT is 16 byte aligned: a block 16 bytes larger, its address
+  // rounded up (released at the block's)
+  let cb = rt.heap_large(CTX_SIZE + 16)
+  rt.mem_store(h, CTXB, cb, 8)
+  rt.mem_store(h, CTX, (cb + 15) & -16, 8)
+  let m = rt.heap_large(dbgtrace.MB_SIZE)
+  rt.mem_set(m, 0, dbgtrace.MB_SIZE)
+  if !pool.thread_start(rt.fn_addr("dbg_tracer"), m) {
+    rt.heap_release(m - 8)
+    close(h)
+    return 0
+  }
+  rt.mem_store(h, MB, m, 8)
+  h
+}
+
+/// Thread tid's entry, or 0.
+fn entry(h: Int, tid: Int) -> Int {
+  let t = rt.mem_load(h, TT, 8)
+  for i in 0..rt.mem_load(h, NT, 8) {
+    if rt.mem_load(t, TE * i + E_TID, 8) == tid {
+      return t + TE * i
+    }
+  }
+  0
+}
+
+fn add_thread(h: Int, tid: Int, handle: Int) {
+  let n = rt.mem_load(h, NT, 8)
+  var t = rt.mem_load(h, TT, 8)
+  if n == rt.mem_load(h, CAP, 8) {
+    let cap = if n == 0 { 16 } else { 2 * n }
+    let nt = rt.heap_large(TE * cap)
+    if t != 0 {
+      rt.mem_copy(nt, t, TE * n)
+      rt.heap_release(t - 8)
+    }
+    t = nt
+    rt.mem_store(h, TT, t, 8)
+    rt.mem_store(h, CAP, cap, 8)
+  }
+  rt.mem_set(t + TE * n, 0, TE)
+  rt.mem_store(t, TE * n + E_TID, tid, 8)
+  rt.mem_store(t, TE * n + E_HANDLE, handle, 8)
+  rt.mem_store(h, NT, n + 1, 8)
+}
+
+fn remove_thread(h: Int, tid: Int) {
+  let e = entry(h, tid)
+  if e == 0 {
+    return
+  }
+  let t = rt.mem_load(h, TT, 8)
+  let n = rt.mem_load(h, NT, 8)
+  let last = t + TE * (n - 1)
+  if e != last {
+    rt.mem_copy(e, last, TE)
+  }
+  rt.mem_store(h, NT, n - 1, 8)
+}

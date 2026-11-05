@@ -2,12 +2,12 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -104,11 +104,14 @@ func debugLaunches() bool {
 	if runtime.GOOS == "linux" {
 		return runtime.GOARCH == "arm64" || runtime.GOARCH == "amd64"
 	}
+	if runtime.GOOS == "windows" {
+		return runtime.GOARCH == "amd64"
+	}
 	return runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 }
 
 // debugBackend: the native backend of this machine's programs (xo
-// build --backend: arm64, or amd64 on x86_64 Linux).
+// build --backend: arm64, or amd64 on x86_64 Linux and Windows).
 func debugBackend() string {
 	if runtime.GOARCH == "amd64" {
 		return "amd64"
@@ -271,7 +274,7 @@ func TestDebugTasks(t *testing.T) {
 // the session the program runs on (detached, not killed).
 func TestDebugAttach(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug attaches on macOS arm64 and Linux (decision 0253 stages 4 and 6)")
+		t.Skip("xo debug attaches on macOS arm64, Linux and Windows amd64 (decision 0253 stages 4 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -287,9 +290,11 @@ func TestDebugAttach(t *testing.T) {
 	if err := p.Start(); err != nil {
 		t.Fatal(err)
 	}
+	exited := make(chan error, 1)
+	go func() { exited <- p.Wait() }()
 	defer func() {
 		p.Process.Kill()
-		p.Wait()
+		<-exited
 	}()
 	// attached until both tasks are blocked (its output is buffered in a
 	// pipe, so it cannot say when); each attach leaves it running
@@ -315,7 +320,40 @@ func TestDebugAttach(t *testing.T) {
 		"    task 2 (spawned at main.xo:5): blocked in sleep at main.xo:8\n    task 3 (spawned at main.xo:12): blocked in Mutex.with at main.xo:14\n",
 		"main.fn1.fn4 at main.xo:8\n(xo) print v\nv = 0\n",
 	)
-	if err := p.Process.Signal(syscall.Signal(0)); err != nil {
+	select {
+	case err := <-exited:
 		t.Errorf("the program did not survive the detach: %v", err)
+		exited <- err
+	default:
+	}
+}
+
+// TestDebugWindowsUnwindData: a windows/amd64 program built on any host
+// has .pdata that xo debug's unwinder reads (decision 0253 stage 6: a PE
+// has no .eh_frame): every RUNTIME_FUNCTION in order, its UNWIND_INFO's
+// operations known and inside the prolog, and each function unwinding
+// from the end of its prolog (xo dev debug --unwind-check), so a change
+// to the x86 emitter's unwind codes fails on the Mac, not only on the
+// Windows host.
+func TestDebugWindowsUnwindData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a windows/amd64 program")
+	}
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	dir := writeFiles(t, map[string]string{"main.xo": debugTasks})
+	exe := filepath.Join(t.TempDir(), "prog")
+	var stdout, stderr bytes.Buffer
+	if code := run(t, []string{"build", "--targets=windows/amd64", "-o", exe, dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("xo build --targets=windows/amd64: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code := runXo(t, []string{"dev", "debug", "--unwind-check", exe + ".exe"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("xo dev debug --unwind-check: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	var n, problems int
+	if _, err := fmt.Sscanf(stdout.String(), "%d functions, %d problems", &n, &problems); err != nil || n < 100 {
+		t.Errorf("want at least 100 functions checked, got %q (%v)", stdout.String(), err)
 	}
 }

@@ -37,6 +37,14 @@ pub struct Tables {
   /// an x86_64 executable (ELF e_machine 62, Mach-O CPU_TYPE_X86_64):
   /// arch.xo's register roles, trap and call forms; else arm64
   pub x86: Bool = false
+  /// a Windows (PE) executable: its calling convention also keeps rsi
+  /// and rdi across a call
+  pub win: Bool = false
+  /// a PE's .pdata (RUNTIME_FUNCTIONs, 12 bytes each, sorted) and its
+  /// non executable sections by address, for the UNWIND_INFO they point
+  /// at (winunwind.xo)
+  pub pdata: Bytes = b""
+  pub pe_data: List[(Int, Bytes)] = []
 }
 
 /// The symbol whose address is the greatest at or below pc, with the
@@ -200,11 +208,13 @@ pub fn tables(data: Bytes) -> Tables {
     }
     sort_syms(t)
   } else if is_pe(data) {
-    // PE: the code sections and the COFF symbols (no .eh_frame: the
-    // functions' unwind data is .pdata, which only symbolize's naming
-    // needs none of)
+    // PE: the code sections, the COFF symbols, and .pdata with the
+    // sections its UNWIND_INFO lives in (no .eh_frame)
     if let Ok(img) = pe_image(data) {
       t.base = img.base
+      // the COFF header's machine: IMAGE_FILE_MACHINE_AMD64
+      t.x86 = rd16(data, rd32(data, 60) + 4) == 0x8664
+      t.win = true
       for sc in img.sections {
         if sc.exec && sc.size > 0 {
           t.code.push((sc.addr, sc.addr + sc.size))
@@ -212,6 +222,11 @@ pub fn tables(data: Bytes) -> Tables {
         if sc.name == ".text" {
           t.text = data[sc.off..sc.off + sc.size]
           t.text_addr = sc.addr
+        }
+        if sc.name == ".pdata" {
+          t.pdata = data[sc.off..sc.off + sc.size]
+        } else if !sc.exec && !sc.name.starts_with(".debug") {
+          t.pe_data.push((sc.addr, data[sc.off..sc.off + sc.size]))
         }
       }
       t.syms = pe_syms(data, img)
@@ -605,6 +620,9 @@ pub fn backtrace[T: Target](tab: Tables, regs: Map[Int, Int], t: T, max: Int) ->
 /// return address under 30, its sp under 31), and how they were found;
 /// None at an outermost frame or when nothing says where the caller is.
 fn step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool) -> (Map[Int, Int], Str)? {
+  if tab.win && !tab.pdata.is_empty() {
+    return win_step(tab, pc, regs, t, first)
+  }
   if !tab.eh.is_empty() || !tab.ui.is_empty() {
     let (enc, start) = compact_entry(tab, pc)
     let mode = enc & UNWIND_MODE_MASK

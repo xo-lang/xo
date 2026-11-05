@@ -345,3 +345,20 @@ fn GetModuleFileNameW(m: Int, buf: Int, n: Int) -> UInt32
 /// nonzero on success (moves while it runs, unlike GetThreadTimes' 15.6
 /// ms ticks).
 fn QueryThreadCycleTime(h: Int, c: Int) -> Int32
+/// `xo debug`'s process control (decision 0253 stage 6, std/native/llrt
+/// dbgwin.xo): WaitForDebugEventEx into the DEBUG_EVENT at ev (176
+/// bytes) within ms milliseconds (INFINITE 0xFFFFFFFF), and
+/// ContinueDebugEvent with DBG_CONTINUE or DBG_EXCEPTION_NOT_HANDLED;
+/// only the thread that started (or attached to) the debuggee may call
+/// them. Nonzero on success.
+fn WaitForDebugEventEx(ev: Int, ms: Int) -> Int32
+fn ContinueDebugEvent(pid: Int, tid: Int, status: Int) -> Int32
+fn DebugActiveProcess(pid: Int) -> Int32
+fn DebugActiveProcessStop(pid: Int) -> Int32
+/// Another process's memory: n bytes at addr to or from buf, the count
+/// moved into the word at done (0: none); nonzero on success.
+fn ReadProcessMemory(h: Int, addr: Int, buf: Int, n: Int, done: Int) -> Int32
+fn WriteProcessMemory(h: Int, addr: Int, buf: Int, n: Int, done: Int) -> Int32
+/// FlushInstructionCache of n bytes at addr in process h after a write
+/// of its code: nonzero on success.
+fn FlushInstructionCache(h: Int, addr: Int, n: Int) -> Int32

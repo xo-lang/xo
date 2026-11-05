@@ -1,3 +1,7 @@
+//go:build !windows
+
+// Peak RSS through syscall.Rusage, which Windows does not have.
+
 package main
 
 import (

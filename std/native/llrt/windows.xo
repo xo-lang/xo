@@ -1516,6 +1516,14 @@ fn env_block(env: List[Str]) -> Bytes {
 /// handle list, STARTUPINFOEXW). The process handle and 0, or 0 and the
 /// Win32 error. UNTESTED on windows.
 pub fn spawn(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Bool, fds: List[Int]) -> (Int, Int) {
+  spawn_via(file, cmdline, dir, env, has_env, fds, 0, fn(a) { create_at(a) })
+}
+
+/// spawn with flags added to CreateProcessW's creation flags, the call
+/// itself made by create with the address of its ten arguments (a word
+/// each), which answers create_at's result: `xo debug` (dbgwin.xo) makes
+/// it on its debugger thread, with DEBUG_ONLY_THIS_PROCESS.
+pub fn spawn_via(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Bool, fds: List[Int], flags: Int, create: fn(Int) -> Int) -> (Int, Int) {
   var hs = [0, 0, 0]
   for k in 0..3 {
     let fd = fds[k]
@@ -1577,12 +1585,15 @@ pub fn spawn(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Bool, f
   let wdir = if dir.is_empty() { b"" } else { full_dir(dir) }
   let wenv = if has_env { env_block(env) } else { b"" }
   if ok {
-    let r = sys_windows.CreateProcessW(raw.bytes_addr(wfile), raw.bytes_addr(wcl), 0, 0, if nl > 0 { 1 } else { 0 }, CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT, if has_env { raw.bytes_addr(wenv) } else { 0 }, if wdir.is_empty() { 0 } else { raw.bytes_addr(wdir) }, si, pi)
-    if Int(r) == 0 {
-      e = Int(sys_windows.GetLastError())
-    } else {
-      started = true
+    let ab = raw.bytes_buf(80)
+    let args = raw.bytes_addr(ab)
+    let ws = [raw.bytes_addr(wfile), raw.bytes_addr(wcl), 0, 0, if nl > 0 { 1 } else { 0 }, CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | flags, if has_env { raw.bytes_addr(wenv) } else { 0 }, if wdir.is_empty() { 0 } else { raw.bytes_addr(wdir) }, si, pi]
+    for k in 0..10 {
+      rt.mem_store(args, 8 * k, ws[k], 8)
     }
+    e = create(args)
+    started = e == 0
+    let _a = keep(ab, 0)
   }
   if ok {
     sys_windows.DeleteProcThreadAttributeList(al)
@@ -1602,6 +1613,18 @@ pub fn spawn(file: Str, cmdline: Str, dir: Str, env: List[Str], has_env: Bool, f
   }
   let _t = sys_windows.CloseHandle(thread)
   (proc, 0)
+}
+
+/// CreateProcessW with the ten arguments at a: 0 on success, else the
+/// Win32 error (of the calling thread).
+pub fn create_at(a: Int) -> Int {
+  let r = sys_windows.CreateProcessW(rt.mem_load(a, 0, 8), rt.mem_load(a, 8, 8), rt.mem_load(a, 16, 8), rt.mem_load(a, 24, 8), rt.mem_load(a, 32, 8), rt.mem_load(a, 40, 8), rt.mem_load(a, 48, 8), rt.mem_load(a, 56, 8), rt.mem_load(a, 64, 8), rt.mem_load(a, 72, 8))
+  if Int(r) != 0 {
+    return 0
+  }
+  let e = Int(sys_windows.GetLastError())
+  // ERROR_INVALID_PARAMETER when the call gave no error
+  if e == 0 { 87 } else { e }
 }
 
 /// Whether Win32 error e means the file was not found.

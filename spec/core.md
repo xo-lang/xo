@@ -3095,7 +3095,7 @@ test "retries after 503" {
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments; `xo doc std` lists the std modules this xo ships, a line each |
 | `xo clean -cache [-n]` | Remove every cache under `<user cache>/xo` (build directories, the native back end's cache, GOCACHE, test binaries, watch builds, xo dev outputs, the test infrastructure's caches) and print the bytes freed per cache; `-n` prints what it would remove and removes nothing. Never touches anything outside `<user cache>/xo`; the module cache and the prebuilt seeds stay; an entry whose build lock a running process holds is left. `xo clean` without `-cache` is a usage error |
-| `xo debug [--batch] [--json] [--timeout=DUR] [-c CMD]... PROG [ARGS]`, `xo debug --dap` | Run a native program with its debug information under xo's own debugger (11.5; macOS arm64 and Linux so far): break, run, continue, step, next, finish, print, locals, backtrace, frame, threads, quit; `--json` gives the protocol of 11.5, `--dap` the Debug Adapter Protocol for editors |
+| `xo debug [--batch] [--json] [--timeout=DUR] [-c CMD]... PROG [ARGS]`, `xo debug --dap` | Run a native program with its debug information under xo's own debugger (11.5; macOS arm64, Linux and Windows amd64): break, run, continue, step, next, finish, print, locals, backtrace, frame, threads, quit; `--json` gives the protocol of 11.5, `--dap` the Debug Adapter Protocol for editors |
 | `xo get [--accept-effects] <path>[@version]`, `xo mod tidy`, `xo mod accept-effects [<path>...]`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, record wider effects of dependencies in xo.lock (decision 0156), copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
 | `xo audit [--json] [--no-gc] [<dir>]` | Supply chain report (decision 0156): per dependency its effects, its xo.lock effects line (ok, widened, narrowed, unlocked), its ceiling, and its escape hatches (`use c`, impure `use go`) with the vouches covering them; this module's attenuations (`only`, `sub`, `read_only`, `write_only`, `cwd`) with constant arguments, the capabilities it passes into dependencies and whether each is attenuated, vouches that match nothing, and the check's diagnostics. JSON with `--json` or when stdout is not a terminal (an agent piping it gets JSON), text otherwise. Exit 1 when the check has errors |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
@@ -3776,7 +3776,21 @@ header in memory; `quit` detaches and the program runs on. A security
 module may forbid ptrace: Yama's ptrace_scope 1 (the default of many
 distributions, and of WSL) lets a process attach only to its own
 descendants, so `-p` of an unrelated process fails there (the error
-says so) unless the debugger runs as root or the scope is 0. Windows is later.
+says so) unless the debugger runs as root or the scope is 0.
+
+On Windows (amd64) the debugger uses the system's debugging functions: the
+program is started with CreateProcessW and DEBUG_ONLY_THIS_PROCESS (through
+std's process launch, so its standard handles are set up as `xo run`'s), its
+debug events come from WaitForDebugEventEx, memory through
+Read/WriteProcessMemory with FlushInstructionCache after a trap's write,
+registers and the trap flag (a step) through Get/SetThreadContext, and the
+other threads are suspended at a stop (SuspendThread). The image is loaded
+where ASLR puts it, so the debug information is moved by its load address
+at each run. `attach` and `-p` use DebugActiveProcess, and `quit` detaches
+(DebugActiveProcessStop), leaving the program running. Frames are unwound by
+the image's .pdata and its unwind codes (a PE has no .eh_frame), with an
+epilog's own instructions at the first frame. Breakpoint files match with
+either separator and a drive's path in any case.
 
 `tasks` and `task N [bt]` (stage 4, 2026-11-05) read the stopped
 program's tasks from the runtime's own records in its memory, as `xo
@@ -3824,8 +3838,7 @@ protocol's version 1 below; with no `-c` it reads commands from standard
 input. There `run` and `continue` answer that the session is a recorded
 thread.
 
-**[later]** Not built: a live process on Windows (0253 stage 6),
-conditional
+**[later]** Not built: conditional
 breakpoints, a break on a contract failure, evaluating expressions
 (beyond `print`'s field path), stepping back over a replay (11.3), and
 DAP's `pause`.

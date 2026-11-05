@@ -1,3 +1,7 @@
+//go:build !windows
+
+// Signals (syscall.Kill) that Windows does not have.
+
 package main
 
 import (

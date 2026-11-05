@@ -54,6 +54,8 @@ test "x86_64 calls, traps and system calls" {
   expect(t.ra_reg()) == 16
   expect(t.kept_reg(3)) == true
   expect(t.kept_reg(0)) == false
+  expect(t.kept_reg(4)) == false
+  expect(Tables{x86: true, win: true}.kept_reg(4)) == true
 }
 
 test "a thread's registers become the session's map" {
@@ -71,4 +73,71 @@ test "a thread's registers become the session's map" {
   expect(x.get(16).is_none()) == true
   expect(x.get(-1) ?? 0) == 132
   expect(Tables{}.regs_map([1, 2]).is_empty()) == true
+}
+
+test "a breakpoint's file matches a Windows path in either form" {
+  expect(file_matches("C:/Users/xo/app/main.xo", "C:\\Users\\xo\\app\\main.xo")) == true
+  expect(file_matches("C:\\Users\\xo\\app\\main.xo", "c:/users/xo/app/main.xo")) == true
+  expect(file_matches("C:/Users/xo/app/main.xo", "main.xo")) == true
+  expect(file_matches("C:/Users/xo/app/main.xo", "app\\main.xo")) == true
+  expect(file_matches("/home/xo/Main.xo", "/home/xo/main.xo")) == false
+}
+
+test "a Windows path's case does not matter, a POSIX one's does" {
+  expect(file_matches("C:/Users/xo/App/main.xo", "app\\main.xo")) == true
+  expect(file_matches("/w/App/main.xo", "app/main.xo")) == false
+}
+
+
+fn le32(v: Int) -> Str {
+  var s = ""
+  for k in 0..4 {
+    let b = (v >> (8 * k)) & 255
+    s = s + "0123456789abcdef"[b >> 4..(b >> 4) + 1] + "0123456789abcdef"[b & 15..(b & 15) + 1]
+  }
+  s
+}
+
+test "a Windows frame unwinds by its .pdata's prolog operations" {
+  // a function at rva 0x1000 to 0x1100, its UNWIND_INFO at rva 0x2000:
+  // push rbp (ends at 1), push rbx (2), sub rsp, 0x28 (6), lea rbp,
+  // [rsp + 0x20] (SET_FPREG rbp, offset 2 * 16, 11); codes newest first
+  let base = 0x140000000
+  let pd = hexb(le32(0x1000) + le32(0x1100) + le32(0x2000))
+  // version 1, no flags; prolog 11 bytes; 4 codes; frame rbp (5), offset 2
+  let info = hexb("010b0425" + "0b03" + "0642" + "0230" + "0150")
+  let tab = Tables{x86: true, win: true, base: base, pdata: pd, pe_data: [(base + 0x2000, info)]}
+  // the stack from 0x1000: the body's 0x28 bytes, then rbx, rbp and the
+  // return address
+  let stack = words([0, 0, 0, 0, 0, 77, 55, 0x140001234])
+  let mem = Fake{regs: {}, base: 0x1000, data: stack}
+  match win_step(tab, base + 0x1050, {7: 0x1000, 6: 0x1020, 3: 1}, mem, false) {
+    Some((n, how)) => {
+      expect(how) == "pdata"
+      expect(n.get(16) ?? 0) == 0x140001234
+      expect(n.get(7) ?? 0) == 0x1040
+      expect(n.get(3) ?? 0) == 77
+      expect(n.get(6) ?? 0) == 55
+    }
+    None => expect("unwound") == "none"
+  }
+  // past push rbp only: rsp points at the saved rbp
+  match win_step(tab, base + 0x1001, {7: 0x1030, 6: 9, 3: 1}, mem, false) {
+    Some((n, _)) => {
+      expect(n.get(6) ?? 0) == 55
+      expect(n.get(3) ?? 0) == 1
+      expect(n.get(16) ?? 0) == 0x140001234
+      expect(n.get(7) ?? 0) == 0x1040
+    }
+    None => expect("unwound") == "none"
+  }
+  // a leaf (no .pdata entry): the return address at rsp
+  match win_step(tab, base + 0x3000, {7: 0x1038}, mem, false) {
+    Some((n, how)) => {
+      expect(how) == "leaf"
+      expect(n.get(16) ?? 0) == 0x140001234
+      expect(n.get(7) ?? 0) == 0x1040
+    }
+    None => expect("unwound") == "none"
+  }
 }

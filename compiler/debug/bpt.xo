@@ -31,7 +31,17 @@ pub fn resolve(info: Info, l: Lines, spot: Spot) -> List[Int] ! Str {
         }
       }
       if !known {
-        return Err("no file ${file.quote()} in the program's line tables")
+        // the table's files of the same base name, which a path written
+        // another way (a drive's case, a short name) may mean
+        let base = file.replace("\\", "/").split("/").last() ?? file
+        var like: List[Str] = []
+        for f in l.files {
+          if (f.replace("\\", "/").split("/").last() ?? f) == base && like.len() < 4 {
+            like.push(f.quote())
+          }
+        }
+        let also = if like.is_empty() { "" } else { " (it has ${like.join(", ")})" }
+        return Err("no file ${file.quote()} in the program's line tables${also}")
       }
       let a = l.addrs(file, line)
       if a.is_empty() {
@@ -126,6 +136,20 @@ pub fn (var b: Bpts) add(info: Info, l: Lines, spot: Spot) -> Int ! Str {
 
 /// Removes breakpoint id: its addresses (to clear in the process), or an
 /// error when there is no such breakpoint.
+/// Every breakpoint's addresses moved by d (the program's image loaded
+/// d further, rebase.xo).
+pub fn (var b: Bpts) rebase(d: Int) {
+  var list: List[Bpt] = []
+  for p in b.list {
+    var moved: List[Int] = []
+    for a in p.addrs {
+      moved.push(a + d)
+    }
+    list.push(Bpt{id: p.id, spot: p.spot, addrs: moved})
+  }
+  b.list = list
+}
+
 pub fn (var b: Bpts) delete(id: Int) -> List[Int] ! Str {
   for (i, p) in b.list.indexed() {
     if p.id == id {

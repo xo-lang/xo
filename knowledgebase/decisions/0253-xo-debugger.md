@@ -496,3 +496,39 @@ asked for as the stages found them):
   the program's parent (`sh -c 'prog & exec xo debug -p $!'`).
   Tests: cmd/xo TestDebugBatch, TestDebugStep, TestDebugTasks, TestDebugDAP
   run on linux/arm64 (debugLaunches); compiler/debug arch_test.xo.
+- 2026-11-05 (Xo Lang 2) stage 6, Windows amd64: std/native/llrt
+  dbgwin.xo keeps the same interface with the approved calls (and the
+  owner's 2026-11-05 additions). Launch goes through std's
+  windows.spawn_via, whose CreateProcessW call (DEBUG_ONLY_THIS_PROCESS)
+  runs on the dbgtrace tracer thread, since debug events go to the thread
+  that created the process; the launch stops at CREATE_PROCESS, and the
+  loader's first breakpoint (and attach's) is passed over. Events come
+  from WaitForDebugEventEx (with a timeout for `--timeout`); a
+  breakpoint's pc is moved back over its int3; a step is the trap flag
+  (EFlags 0x100) through Get/SetThreadContext; a stop suspends the other
+  threads (SuspendThread) and resumes them at the next continue. Kill is
+  ending the tracer thread (kill on exit); attach is DebugActiveProcess,
+  whose events give the threads; quit detaches. The image's ASLR load
+  address (a new dbg_base intrinsic) moves the debug information
+  (Session.slide_by). Unwinding: a PE has no .eh_frame, so compiler/debug
+  winunwind.xo reads .pdata's RUNTIME_FUNCTIONs and their UNWIND_INFO
+  (prolog operations undone in order, chained info, SET_FPREG frames, a
+  leaf with no entry) and at the first frame runs an epilog's own
+  instructions, as RtlVirtualUnwind does; the Windows convention also
+  keeps rsi and rdi (arch.xo kept_reg), and the fiber switch frame is
+  x86win.xo's (rtlayout FIBER_SP_WIN). Step into a function runs on
+  through its prologue to where a breakpoint on it stops (Windows'
+  prologue moves the parameters first; every OS gets the same rule).
+  Breakpoint files match with either separator and a drive's path in any
+  case; DAP takes drive paths as absolute. Tests: cmd/xo TestDebugBatch,
+  TestDebugStep, TestDebugTasks, TestDebugDAP, TestDebugAttach,
+  TestDebugDAPAttach, TestDebugTimeout on the Windows offload host (no
+  administrator); compiler/debug arch_test.xo (the .pdata walk, Windows
+  paths); and on any host TestDebugWindowsUnwindData, which cross-builds
+  a windows/amd64 program and runs `xo dev debug --unwind-check` on it
+  (debug.pdata_check: every RUNTIME_FUNCTION in order, its operations
+  known and inside the prolog, its chain ending, and each function
+  unwinding from the end of its prolog; 902 functions in a hello
+  program), so an x86 emitter change to the unwind codes fails in the Mac
+  gate. An unknown unwind operation now stops the unwind (None) instead
+  of being skipped.

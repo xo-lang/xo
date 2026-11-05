@@ -70,3 +70,8 @@ const FIBER_SP = 160
 /// the control words, r15, r14, r13, r12, rbx, rbp, the return address,
 /// the caller's stack at saved + 64.
 const FIBER_SP_X86 = 64
+/// windows/amd64's (compiler/arm64 x86win.xo xo_stack_switch): 192
+/// bytes of control words, saved xmm and TEB stack fields, then r15, r14,
+/// r13, r12, rsi, rdi, rbx, rbp, the return address, the caller's stack at
+/// saved + 264.
+const FIBER_SP_WIN = 264

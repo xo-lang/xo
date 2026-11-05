@@ -25,6 +25,7 @@ var (
 	_ func(*Task, int64) Result[int64, string]                        = Internal_dbg_attach
 	_ func(*Task, int64) List[int64]                                  = Internal_dbg_threads
 	_ func(*Task, int64) int64                                        = Internal_dbg_pid
+	_ func(*Task, int64) int64                                        = Internal_dbg_base
 	_ func(*Task, int64, int64, int64) Option[Bytes]                  = Internal_dbg_read
 	_ func(*Task, int64, int64, Bytes) bool                           = Internal_dbg_write
 	_ func(*Task, int64, int64) List[int64]                           = Internal_dbg_regs

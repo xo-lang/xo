@@ -118,3 +118,23 @@ method or intrinsic added since the newest seed from anything under
 compiler/, build xo with that seed (`XO_SEED=<the seed's xo> go run
 ./scripts/xobuild`), not only the tree's own bin/xo, and if it fails
 hold the change for the next seed.
+
+Observed again, and landed without waiting for a seed (2026-11-05,
+decision 0253 stage 6, Xo Lang 2): std/native/llrt/dbgwin.xo calls seven
+KERNEL32 functions (ContinueDebugEvent, DebugActiveProcess,
+DebugActiveProcessStop, FlushInstructionCache, ReadProcessMemory,
+WaitForDebugEventEx, WriteProcessMemory). Their table rows landed first
+(123e03243). The Windows host's build of the debugger branch with its
+newest earlier xo failed: undefined symbol ContinueDebugEvent. The
+crash.xo route (k32_proc and rt.call_cN) does not fit: Read and
+WriteProcessMemory take five arguments, and rt.call_c4 is the widest.
+The debugger landed before the seed anyway (lead, 2026-11-05), because
+the gap is narrow. dbgwin is linked only into windows/amd64 programs, so
+darwin and linux builds of main with the 0.39.0 seed are unaffected: a
+clean checkout's xobuild with XO_SEED at 0.39.0 and a private
+XO_CHECKOUT_CACHE built xo and ran hello. A seed cut's Windows cross
+builds use the newly built xo, which has the rows. Until the 0.40.0
+release seed is uploaded, a windows/amd64 build of the new std needs an
+xo at or after 123e03243. That means no native bootstrap on the Windows
+host from the 0.39.0 seed or an older cached xo: cross-build xo.exe on
+the Mac with the checkout's bin/xo instead.

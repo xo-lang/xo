@@ -17,10 +17,10 @@ pub fn (t: Tables) ra_reg() -> Int { if t.x86 { 16 } else { 30 } }
 /// Whether a caller keeps register r across a call (its value in a
 /// caller's frame is the callee's own or the unwind's): arm64's x19 to
 /// x30 and sp (AAPCS64), x86_64's rbx, rbp, rsp, r12 to r15 and the
-/// return address column (System V).
+/// return address column (System V; Windows x64 also rsi and rdi).
 pub fn (t: Tables) kept_reg(r: Int) -> Bool {
   if t.x86 {
-    return r == 3 || r == 6 || r == 7 || (r >= 12 && r <= 16)
+    return r == 3 || r == 6 || r == 7 || (r >= 12 && r <= 16) || (t.win && (r == 4 || r == 5))
   }
   r >= 19
 }

@@ -77,7 +77,7 @@ pub fn dap_main(os: Os, args: List[Str]) -> Int uses (stdio, proc, env, fs, cloc
           }
         }
         d.std = check.std_dir(os.env, os.fs)
-        if !d.std.starts_with("/") && !d.std.is_empty() {
+        if !is_abs_path(d.std) && !d.std.is_empty() {
           d.std = "${os.fs.cwd_path().ok() ?? ""}/${d.std}"
         }
         d.cwd = jstr_of(a, "cwd")
@@ -259,7 +259,8 @@ fn (var d: Dap) set_breakpoints(os: Os, var s: debug.Session, m: J, a: J) uses (
     var j = ex(s, "break ${path}:${line}")
     if !jbool_of(j, "ok") {
       // a line table may name the file by a relative or trimmed path
-      let parts = path.split("/")
+      // (a Windows editor's path has backslashes)
+      let parts = path.replace("\\", "/").split("/")
       j = ex(s, "break ${parts[parts.len() - 1]}:${line}")
     }
     if jbool_of(j, "ok") {
@@ -290,7 +291,7 @@ fn (var d: Dap) stack_trace(os: Os, var s: debug.Session, m: J) uses (stdio, pro
     if p.starts_with("std/") && !d.std.is_empty() {
       // std's files are named from std's parent (the build's trimmed path)
       p = "${d.std}/${p[4..]}"
-    } else if !p.is_empty() && !p.starts_with("/") && !d.cwd.is_empty() {
+    } else if !p.is_empty() && !is_abs_path(p) && !d.cwd.is_empty() {
       p = "${d.cwd}/${p}"
     }
     let name = jstr_of(f, "function")
@@ -435,4 +436,10 @@ fn jarr_of(v: J, k: Str) -> List[J] {
     Some(J.Arr(items, _)) => items
     _ => []
   }
+}
+
+/// Whether p is absolute: from the root, or a Windows drive's (C:/ or
+/// C:\) or a UNC path's.
+fn is_abs_path(p: Str) -> Bool {
+  p.starts_with("/") || p.starts_with("\\") || (p.len() >= 3 && p[1..2] == ":" && (p[2..3] == "/" || p[2..3] == "\\"))
 }

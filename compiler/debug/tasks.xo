@@ -237,7 +237,15 @@ fn op_name(why: Int) -> Str {
 pub fn (s: Session) task_frames(t: TaskRec) -> List[VFrame] {
   if t.saved != 0 {
     var regs: Map[Int, Int] = {}
-    if s.tab.x86 {
+    if s.tab.win {
+      // windows/amd64's xo_stack_switch: r15, r14, r13, r12, rsi, rdi,
+      // rbx, rbp above its 192 bytes, then its return address
+      for (k, r) in [(0, 15), (1, 14), (2, 13), (3, 12), (4, 4), (5, 5), (6, 3), (7, 6)] {
+        regs[r] = s.word_at(t.saved + 192 + 8 * k)
+      }
+      regs[7] = t.saved + FIBER_SP_WIN
+      regs[-1] = s.word_at(t.saved + 256)
+    } else if s.tab.x86 {
       // xo_stack_switch's pushes: r15, r14, r13, r12, rbx, rbp above the
       // control words, then its return address
       for (k, r) in [(1, 15), (2, 14), (3, 13), (4, 12), (5, 3), (6, 6)] {

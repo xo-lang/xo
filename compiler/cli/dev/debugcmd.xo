@@ -30,11 +30,15 @@ fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio, proc) {
   fl.str_flag("snap", "", "the recorded thread (reg and mem lines)")
   fl.str_flag("dwarf", "", "the DWARF file (default the executable)")
   fl.bool_flag("json", "one JSON line per command (spec 11.5)")
+  fl.bool_flag("unwind-check", "check a Windows executable's .pdata unwind data and exit")
   if !fl.parse(os, rest) {
     return 2
   }
+  if fl.get_bool("unwind-check") && fl.args.len() == 1 {
+    return unwind_check(os, fl.args[0])
+  }
   if fl.args.len() != 1 || fl.get_str("snap").is_empty() {
-    os.stdio.eprintln("usage: xo dev debug --snap FILE [--dwarf FILE] [--json] [-c CMD]... EXE")
+    os.stdio.eprintln("usage: xo dev debug --snap FILE [--dwarf FILE] [--json] [-c CMD]... EXE, or --unwind-check EXE")
     return 2
   }
   let exe = match os.fs.read(fl.args[0]) {
@@ -88,8 +92,8 @@ fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio, proc) {
 /// native build's default), run under the process control with ARGS; the
 /// commands from -c (--batch: each echoed as `(xo) CMD`, then its
 /// output), else from standard input as `xo dev debug` reads them. The
-/// program is ended at the commands' end or quit. macOS arm64 and Linux
-/// (decision 0253 stage 6) so far.
+/// program is ended at the commands' end or quit. macOS arm64, Linux and
+/// Windows amd64 (decision 0253 stage 6).
 /// usage is the command's help (cmdhelp), printed on a usage error.
 pub fn debug_main(os: Os, args: List[Str], usage: Str) -> Int uses (fs.read, stdio, proc) {
   var cmds: List[Str] = []
@@ -231,4 +235,27 @@ fn prompt_loop(os: Os, var s: debug.Session, json: Bool) -> Int uses (stdio, pro
   }
   let _q = s.exec("quit")
   0
+}
+
+/// xo dev debug --unwind-check EXE: a Windows executable's .pdata checked
+/// (debug.pdata_check); 0 when it has functions and nothing is wrong.
+fn unwind_check(os: Os, path: Str) -> Int uses (fs.read, stdio) {
+  let exe = match os.fs.read(path) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.eprintln("xo dev debug: ${e}")
+      return 1
+    }
+  }
+  let tab = debug.tables(exe)
+  if !tab.win || tab.pdata.is_empty() {
+    os.stdio.eprintln("xo dev debug: ${path}: not a Windows executable with .pdata")
+    return 1
+  }
+  let (n, errs) = debug.pdata_check(tab)
+  for e in errs {
+    os.stdio.eprintln("xo dev debug: ${path}: ${e}")
+  }
+  os.stdio.println("${n} functions, ${errs.len()} problems")
+  if errs.is_empty() { 0 } else { 1 }
 }

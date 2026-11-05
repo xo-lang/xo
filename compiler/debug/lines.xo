@@ -239,8 +239,22 @@ fn intern(name: Str, var at: Map[Str, Int], var out: Lines) -> Int {
 /// Whether file path f is named by name: the same path, or a path that
 /// ends in /name (`main.xo` names `/w/app/main.xo`).
 pub fn file_matches(f: Str, name: Str) -> Bool {
-  f == name || f.ends_with("/${name}")
+  if f == name || f.ends_with("/${name}") {
+    return true
+  }
+  // Windows: either separator, and a drive's path in any case
+  let a = f.replace("\\", "/")
+  let b = name.replace("\\", "/")
+  if !(drive(a) || drive(b)) {
+    return a == b || a.ends_with("/${b}")
+  }
+  let la = a.to_lower()
+  let lb = b.to_lower()
+  la == lb || la.ends_with("/${lb}")
 }
+
+/// Whether p starts with a Windows drive (C:).
+fn drive(p: Str) -> Bool { p.len() >= 2 && p[1..2] == ":" }
 
 /// The file and line of the code at pc (the row at or before it in its
 /// sequence), or None.

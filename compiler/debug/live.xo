@@ -31,7 +31,9 @@ fn (var s: Session) attach(pid: Int) -> Str ! Str uses proc {
     return Err("the program is running already (quit first)")
   }
   let h = internal.dbg_attach(pid)?
-  let slide = match find_slide(h, s.exe, s.tab) {
+  // Windows tells the image's base; elsewhere it is found
+  let base = internal.dbg_base(h)
+  let slide = match if base != 0 { Some(base - s.tab.base) } else { find_slide(h, s.exe, s.tab) } {
     Some(x) => x
     None => {
       internal.dbg_kill(h)
@@ -41,13 +43,7 @@ fn (var s: Session) attach(pid: Int) -> Str ! Str uses proc {
   }
   s.proc = h
   s.attached = true
-  if slide != 0 {
-    s.tab = rebase_tables(s.tab, slide)
-    s.lines = rebase_lines(s.lines, slide)
-    s.info = rebase_info(s.info, slide)
-    s.stmts = {}
-  }
-  s.slide = slide
+  s.slide_by(slide)
   s.traps = {}
   s.plant()?
   let ths = internal.dbg_threads(h)
@@ -55,6 +51,19 @@ fn (var s: Session) attach(pid: Int) -> Str ! Str uses proc {
   let at = if s.frames.is_empty() { "" } else { ": ${s.frame_text(s.frames[0])}" }
   s.stopj = "\"stop\":\"attached\",\"pid\":${pid},\"slide\":\"0x${hex(slide)}\",\"threads\":${ths.len()},\"thread\":${s.thread}${s.top_json()}"
   Ok("attached to process ${pid} (${ths.len()} threads, every one stopped; slide 0x${hex(slide)})${at}")
+}
+
+/// The debug information and the breakpoints moved by d more (an ASLR
+/// slide's change), s.slide the total.
+fn (var s: Session) slide_by(d: Int) {
+  if d != 0 {
+    s.tab = rebase_tables(s.tab, d)
+    s.lines = rebase_lines(s.lines, d)
+    s.info = rebase_info(s.info, d)
+    s.bpts.rebase(d)
+    s.stmts = {}
+  }
+  s.slide += d
 }
 
 /// run: starts the program with every breakpoint planted and waits for
@@ -67,6 +76,12 @@ fn (var s: Session) run() -> Str ! Str uses proc {
     return Err("the attached program ended; run starts ${s.prog} only in a session that did not attach")
   }
   s.proc = internal.dbg_launch(s.prog, s.args, s.out)?
+  // a Windows image is loaded where ASLR puts it (each run's base may
+  // differ): the tables and the breakpoints move with it
+  let base = internal.dbg_base(s.proc)
+  if base != 0 {
+    s.slide_by(base - s.tab.base)
+  }
   s.traps = {}
   s.plant()?
   if !internal.dbg_resume(s.proc, false) {

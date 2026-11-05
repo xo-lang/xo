@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [windows-debug-unwind-needs-pdata.md](windows-debug-unwind-needs-pdata.md): Observed 2026-11-05: on Windows the debugger must unwind by .pdata (no .eh_frame), step into past the prologue, and take drive paths
 - [checker-dirs-relative-to-wd.md](checker-dirs-relative-to-wd.md): Observed 2026-11-04: compiler/check's module dirs are relative to the working directory ("." for the module there), so a prefix test of two dirs needs c.abs on both.
 - [heavy-log-appends.md](heavy-log-appends.md): Observed 2026-11-04: heavy.sh appends to NAME-cmd.log, so reading the first match of a reused NAME reads an older run (two xo binaries' IR compared identical, and a working prototype was reset).
 - [measure-xo-speed-needs-self-built-xo.md](measure-xo-speed-needs-self-built-xo.md): Observed 2026-11-04: a measurement of xo's own speed (cold build or test, self build) with xobuild's seed-built xos misses a codegen or runtime change's effect on xo itself; use bootstrap-xo.sh's s2 on both sides

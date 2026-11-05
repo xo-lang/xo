@@ -4,6 +4,7 @@ use native/llrt/aesgcm
 use native/llrt/chacha
 use native/llrt/cpu
 use native/llrt/dbglinux
+use native/llrt/dbgwin
 use native/llrt/dbgmac
 use native/llrt/ctx
 use native/llrt/fsops
@@ -760,11 +761,19 @@ pub fn uuid_half(s: Bytes, off: Int, dashed: Bool, half: Int) -> Int? {
 }
 
 // `xo debug`'s process control (decision 0253 stages 2 and 6): dbgmac.xo
-// on macOS arm64, dbglinux.xo on Linux arm64 and amd64; elsewhere no
+// on macOS arm64, dbglinux.xo on Linux arm64 and amd64, dbgwin.xo on
+// Windows amd64; elsewhere no
 // debuggee is ever made, so the others are never reached with a handle.
 
 /// Whether this target has dbgmac.xo's (false: dbglinux.xo's).
 fn dbg_mac() -> Bool { target.os == TargetOs.Darwin }
+
+/// Whether this target has dbgwin.xo's.
+fn dbg_win() -> Bool { target.os == TargetOs.Windows }
+
+/// The image's base, which only Windows tells (0 elsewhere: the program
+/// runs at its file's addresses, or attach finds the slide).
+fn dbg_base(h: Int) -> Int { if dbg_win() { dbgwin.base(h) } else { 0 } }
 
 fn dbg_launch(path: Str, args: List[Str], out: Str) -> Int ! Str uses proc {
   if target.os == TargetOs.Darwin && target.arch == TargetArch.Arm64 {
@@ -775,7 +784,11 @@ fn dbg_launch(path: Str, args: List[Str], out: Str) -> Int ! Str uses proc {
     let (h, e) = dbglinux.launch(path, args, out)
     return if h == 0 { Err(e) } else { Ok(h) }
   }
-  Err("xo debug runs programs on macOS arm64 and Linux so far (decision 0253 stages 2 and 6; Windows is next)")
+  if target.os == TargetOs.Windows {
+    let (h, e) = dbgwin.launch(path, args, out)
+    return if h == 0 { Err(e) } else { Ok(h) }
+  }
+  Err("xo debug runs programs on macOS arm64, Linux and Windows (decision 0253 stages 2 and 6)")
 }
 
 fn dbg_attach(pid: Int) -> Int ! Str uses proc {
@@ -787,27 +800,53 @@ fn dbg_attach(pid: Int) -> Int ! Str uses proc {
     let (h, e) = dbglinux.attach(pid)
     return if h == 0 { Err(e) } else { Ok(h) }
   }
-  Err("xo debug attaches on macOS arm64 and Linux so far (decision 0253 stages 4 and 6; Windows is next)")
+  if target.os == TargetOs.Windows {
+    let (h, e) = dbgwin.attach(pid)
+    return if h == 0 { Err(e) } else { Ok(h) }
+  }
+  Err("xo debug attaches on macOS arm64, Linux and Windows so far (decision 0253 stages 4 and 6)")
 }
 
-fn dbg_threads(h: Int) -> List[Int] { if dbg_mac() { dbgmac.threads(h) } else { dbglinux.threads(h) } }
+fn dbg_threads(h: Int) -> List[Int] {
+  if dbg_mac() { dbgmac.threads(h) } else if dbg_win() { dbgwin.threads(h) } else { dbglinux.threads(h) }
+}
 
-fn dbg_pid(h: Int) -> Int { if dbg_mac() { dbgmac.pid(h) } else { dbglinux.pid(h) } }
+fn dbg_pid(h: Int) -> Int {
+  if dbg_mac() { dbgmac.pid(h) } else if dbg_win() { dbgwin.pid(h) } else { dbglinux.pid(h) }
+}
 
-fn dbg_read(h: Int, a: Int, n: Int) -> Bytes? { if dbg_mac() { dbgmac.read(h, a, n) } else { dbglinux.read(h, a, n) } }
+fn dbg_read(h: Int, a: Int, n: Int) -> Bytes? {
+  if dbg_mac() { dbgmac.read(h, a, n) } else if dbg_win() { dbgwin.read(h, a, n) } else { dbglinux.read(h, a, n) }
+}
 
-fn dbg_write(h: Int, a: Int, data: Bytes) -> Bool uses proc { if dbg_mac() { dbgmac.write(h, a, data) } else { dbglinux.write(h, a, data) } }
+fn dbg_write(h: Int, a: Int, data: Bytes) -> Bool uses proc {
+  if dbg_mac() { dbgmac.write(h, a, data) } else if dbg_win() { dbgwin.write(h, a, data) } else { dbglinux.write(h, a, data) }
+}
 
-fn dbg_regs(h: Int, th: Int) -> List[Int] { if dbg_mac() { dbgmac.regs(h, th) } else { dbglinux.regs(h, th) } }
+fn dbg_regs(h: Int, th: Int) -> List[Int] {
+  if dbg_mac() { dbgmac.regs(h, th) } else if dbg_win() { dbgwin.regs(h, th) } else { dbglinux.regs(h, th) }
+}
 
-fn dbg_set_pc(h: Int, th: Int, pc: Int) -> Bool uses proc { if dbg_mac() { dbgmac.set_pc(h, th, pc) } else { dbglinux.set_pc(h, th, pc) } }
+fn dbg_set_pc(h: Int, th: Int, pc: Int) -> Bool uses proc {
+  if dbg_mac() { dbgmac.set_pc(h, th, pc) } else if dbg_win() { dbgwin.set_pc(h, th, pc) } else { dbglinux.set_pc(h, th, pc) }
+}
 
-fn dbg_set_step(h: Int, th: Int, on: Bool) -> Bool uses proc { if dbg_mac() { dbgmac.set_step(h, th, on) } else { dbglinux.set_step(h, th, on) } }
+fn dbg_set_step(h: Int, th: Int, on: Bool) -> Bool uses proc {
+  if dbg_mac() { dbgmac.set_step(h, th, on) } else if dbg_win() { dbgwin.set_step(h, th, on) } else { dbglinux.set_step(h, th, on) }
+}
 
-fn dbg_resume(h: Int, alone: Bool) -> Bool uses proc { if dbg_mac() { dbgmac.resume(h, alone) } else { dbglinux.resume(h, alone) } }
+fn dbg_resume(h: Int, alone: Bool) -> Bool uses proc {
+  if dbg_mac() { dbgmac.resume(h, alone) } else if dbg_win() { dbgwin.resume(h, alone) } else { dbglinux.resume(h, alone) }
+}
 
-fn dbg_wait(h: Int, ms: Int) -> List[Int] uses proc { if dbg_mac() { dbgmac.wait(h, ms) } else { dbglinux.wait(h, ms) } }
+fn dbg_wait(h: Int, ms: Int) -> List[Int] uses proc {
+  if dbg_mac() { dbgmac.wait(h, ms) } else if dbg_win() { dbgwin.wait(h, ms) } else { dbglinux.wait(h, ms) }
+}
 
-fn dbg_kill(h: Int) uses proc { if dbg_mac() { dbgmac.kill(h) } else { dbglinux.kill(h) } }
+fn dbg_kill(h: Int) uses proc {
+  if dbg_mac() { dbgmac.kill(h) } else if dbg_win() { dbgwin.kill(h) } else { dbglinux.kill(h) }
+}
 
-fn dbg_close(h: Int) { if dbg_mac() { dbgmac.close(h) } else { dbglinux.close(h) } }
+fn dbg_close(h: Int) {
+  if dbg_mac() { dbgmac.close(h) } else if dbg_win() { dbgwin.close(h) } else { dbglinux.close(h) }
+}
