@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: feature: inline and skipped fields
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (stage 2)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 getStructInfo (`yaml:",inline"`, `yaml:"-"`)
+- Test: testdata/corpus/yaml (the INLINE cases: seven documents decoded into a struct with an inline struct and a skipped field, with yaml.v3's values and error texts; Marshal bytes)
+
+A field whose `yaml` wire string is `,inline` (a struct that derives Yaml) reads and writes its fields in the enclosing mapping, and a field whose wire name is `-` is left out of both directions.
+
 ## 2026-11-05: port: std/yaml and std/yamlcodec, yaml.v3's typed decode and encode
 
 - Kind: port

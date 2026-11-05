@@ -127,6 +127,47 @@ func deepCases() []string {
 	return out
 }
 
+type Meta struct {
+	Name string   `yaml:"name"`
+	Tags []string `yaml:"tags"`
+}
+
+type Base struct {
+	ID   int  `yaml:"id"`
+	Meta Meta `yaml:"meta"`
+}
+
+type Top struct {
+	Base   `yaml:",inline"`
+	Extra  string `yaml:"extra"`
+	Hidden int    `yaml:"-"`
+	N      int    `yaml:"n"`
+}
+
+// inlineShow decodes into Top and prints it, or the error.
+func inlineShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	var t Top
+	if err := yaml.Unmarshal([]byte(in), &t); err != nil {
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	return fmt.Sprintf("id=%d meta=%s/%s extra=%s hidden=%d n=%d", t.ID, t.Meta.Name, strings.Join(t.Meta.Tags, ","), t.Extra, t.Hidden, t.N)
+}
+
+var inlineCases = []string{
+	"id: 5\nextra: q\nhidden: 4\nn: 8\nmeta: {name: z, tags: [p, q]}\nunknown: 1\n",
+	"id: x\nn: y\nmeta: {name: 1}\n",
+	"n: 1\nid: 2\nid: 3\n",
+	"meta: [1]\nextra: [2]\n",
+	"{id: 1, meta: {tags: [a, b, c]}, extra: e}",
+	"",
+	"id: ~\nmeta: ~\nn: ~\n",
+}
+
 // xq is s as an Xo string literal.
 func xq(s string) string {
 	var b strings.Builder
@@ -259,6 +300,30 @@ struct Cfg {
   inner: Item
 } derive Yaml
 
+struct Meta {
+  name: Str
+  tags: List[Str]
+} derive Yaml
+
+struct Base {
+  id: Int
+  meta: Meta
+} derive Yaml
+
+struct Top {
+  base yaml ",inline": Base
+  extra: Str
+  hidden as "-": Int
+  n: Int
+} derive Yaml
+
+fn show_top(text: Str) -> Str {
+  match yaml.decode[Top](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => "id=${t.base.id} meta=${t.base.meta.name}/${t.base.meta.tags.join(",")} extra=${t.extra} hidden=${t.hidden} n=${t.n}"
+  }
+}
+
 struct Deep {
   d: List[List[List[List[Str]]]]
 } derive Yaml
@@ -339,6 +404,17 @@ const CASES: List[(Str, Str)] = [
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(deepShow(d)))
 	}
 	o.WriteString("]\n\n")
+	o.WriteString("/// (a document, what yaml.v3 decodes it into Top as: an inline struct and a skipped field)\nconst INLINE: List[(Str, Str)] = [\n")
+	for _, d := range inlineCases {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(inlineShow(d)))
+	}
+	o.WriteString("]\n\n")
+	topv := Top{Base{7, Meta{"m", []string{"a"}}}, "e", 99, 3}
+	tb, err := yaml.Marshal(topv)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Fprintf(&o, "const MARSHALED_TOP: Str = %s\n\n", xq(string(tb)))
 	h := "hi"
 	c := Cfg{"orders", "v1", 8080, 2.5, true, &h, nil, []Item{{1, []string{"a", "b c"}}, {2, []string{}}}, map[string]int{"b10": 1, "b9": 2, "a": 3}, []int{}, "l1\nl2\n", "yes", "123", Item{7, []string{"x: y", "- z", ""}}}
 	b, err := yaml.Marshal(c)
@@ -377,6 +453,14 @@ test "alias expansion is limited as yaml.v3 limits it" {
   for (text, want) in DEEP {
     expect(show_deep(text)) == want
   }
+}
+
+test "inline and skipped fields are yaml.v3's" {
+  for (text, want) in INLINE {
+    expect(show_top(text)) == want
+  }
+  let t = Top{base: Base{id: 7, meta: Meta{name: "m", tags: ["a"]}}, extra: "e", hidden: 99, n: 3}
+  expect(yaml.encode_value[Top](t).ok()) == Some(MARSHALED_TOP)
 }
 
 test "encode_value is yaml.v3's Marshal" {

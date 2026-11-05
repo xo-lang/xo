@@ -613,6 +613,70 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
   }
 }
 
+/// A field's yaml.v3 struct tag, from its shared `as "name,options"` wire name or its
+/// own `yaml "name,options"`: the key, and the options omitempty, flow, inline; a
+/// wire name `-` leaves the field out.
+struct YamlOpts {
+  key: Str
+  omit: Bool
+  flow: Bool
+  inline: Bool
+  skip: Bool
+}
+
+/// The qualifier ("" or "pkg.") and name of a field type that is a plain struct name.
+fn yaml_struct_name(t: parser.Type) -> (Str, Str)? {
+  match t {
+    NamedType(_, path, args) => {
+      if args.is_empty() && (path.len() == 1 || path.len() == 2) {
+        let n = text(path[path.len() - 1].name)
+        if is_scalar_name(n) || n is "List" | "Map" | "Option" {
+          return None
+        }
+        let q = if path.len() == 2 { "${text(path[0].name)}." } else { "" }
+        return Some((q, n))
+      }
+      None
+    }
+    _ => None
+  }
+}
+
+fn yaml_opts(fl: parser.Field) -> YamlOpts {
+  var o = YamlOpts{key: text(fl.name.name), omit: false, flow: false, inline: false, skip: false}
+  var wire: Str? = None
+  for fw in fl.formats {
+    if fw.format == b"yaml" {
+      wire = Some(text(fw.wire))
+    }
+  }
+  if wire == None {
+    if let Some(w) = fl.wire {
+      wire = Some(text(w))
+    }
+  }
+  if let Some(w) = wire {
+    if w == "-" {
+      o.skip = true
+      return o
+    }
+    let parts = w.split(",")
+    if !parts[0].is_empty() {
+      o.key = parts[0]
+    }
+    for opt in parts[1..] {
+      if opt == "omitempty" {
+        o.omit = true
+      } else if opt == "flow" {
+        o.flow = true
+      } else if opt == "inline" {
+        o.inline = true
+      }
+    }
+  }
+  o
+}
+
 fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[Str, Bool], file: Int) -> Emit? {
   var e = em
   let sp = sd.name.span
@@ -632,24 +696,8 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     e = e2
     readers.push(rd)
     zeros.push("${text(fl.name.name)}: ${zero}")
-    var key = text(fl.name.name)
-    var wire: Str? = None
-    for fw in fl.formats {
-      if fw.format == b"yaml" {
-        wire = Some(text(fw.wire))
-      }
-    }
-    if wire == None {
-      if let Some(w) = fl.wire {
-        wire = Some(text(w))
-      }
-    }
-    if let Some(w) = wire {
-      let parts = w.split(",")
-      if !parts[0].is_empty() {
-        key = parts[0]
-      }
-    }
+    let yo = yaml_opts(fl)
+    let key = if yo.skip { "-" } else if yo.inline { "<<inline>>" } else { yo.key }
     keys.push(key)
     types.push(yaml_type_text(fl.typ) ?? "Str")
   }
@@ -669,11 +717,35 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   e.ln("      let _ = yamlcodec.bad_key(d, v, st)?", sp)
   e.ln("      continue", sp)
   e.ln("    }", sp)
+  var inl: List[Int] = []
+  var first = true
   for (j, fl) in sd.fields.indexed() {
-    e.ln("    if k == ${quote_str(keys[j])} {", fl.name.span)
+    if keys[j] == "-" {
+      continue
+    }
+    if keys[j] == "<<inline>>" {
+      inl.push(j)
+      continue
+    }
+    e.ln("    ${if first { "" } else { "} else " }}if k == ${quote_str(keys[j])} {", fl.name.span)
+    first = false
     e.ln("      let (ok2, x) = ${readers[j]}(d, v, st)?", fl.name.span)
     e.ln("      if ok2 { f_${text(fl.name.name)} = x }", fl.name.span)
-    e.ln("    }", fl.name.span)
+  }
+  if inl.len() > 0 {
+    // a key no field of its own names goes to each inline struct (yaml.v3 flattens them)
+    e.ln("    ${if first { "{" } else { "} else {" }}", sp)
+    for j in inl {
+      let fl = sd.fields[j]
+      let inner = yaml_struct_name(fl.typ) ?? {
+        c.error_at(file, "XO0425", fl.name.span, "`inline` needs a field that is a struct deriving Yaml; `${text(fl.name.name)}` is not one (decision 0512)")
+        return None
+      }
+      e.ln("      f_${text(fl.name.name)} = ${inner.0}yaml_set__${inner.1}(f_${text(fl.name.name)}, k, v, d, st)?", fl.name.span)
+    }
+    e.ln("    }", sp)
+  } else if !first {
+    e.ln("    }", sp)
   }
   e.ln("  }", sp)
   var inits: List[Str] = []
@@ -681,6 +753,30 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     inits.push("${text(fl.name.name)}: f_${text(fl.name.name)}")
   }
   e.ln("  Ok((true, ${n}{${inits.join(", ")}}))", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn yaml_set__${n}(base: ${n}, k: Str, v: Int, d: yamlcodec.Doc, var st: yamlcodec.Dec) -> ${n} ! yaml.YamlErr {", sp)
+  e.ln("  var b = base", sp)
+  var firstk = true
+  for (j, fl) in sd.fields.indexed() {
+    if keys[j] == "-" || keys[j] == "<<inline>>" {
+      continue
+    }
+    e.ln("  ${if firstk { "" } else { "} else " }}if k == ${quote_str(keys[j])} {", fl.name.span)
+    firstk = false
+    e.ln("    let (ok2, x) = ${readers[j]}(d, v, st)?", fl.name.span)
+    e.ln("    if ok2 { b.${text(fl.name.name)} = x }", fl.name.span)
+  }
+  for j in inl {
+    let fl = sd.fields[j]
+    let inner = yaml_struct_name(fl.typ) ?? return None
+    e.ln("  ${if firstk { "{" } else { "} else {" }}", sp)
+    firstk = false
+    e.ln("    b.${text(fl.name.name)} = ${inner.0}yaml_set__${inner.1}(b.${text(fl.name.name)}, k, v, d, st)?", fl.name.span)
+  }
+  if !firstk {
+    e.ln("  }", sp)
+  }
+  e.ln("  b", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn yaml_from_node__${n}(d: yamlcodec.Doc, i: Int, var st: yamlcodec.Dec) -> (Bool, ${n}) ! yaml.YamlErr { let entered = yamlcodec.tick(d, i, st)?; let r = yaml_merge__${n}(yaml_zero__${n}(), d, i, st); yamlcodec.leave(st, entered); r }", sp)
   e.ln("${pub_}fn yaml_decode__${n}(text: Str) -> ${n} ! yaml.YamlErr {", sp)
@@ -794,36 +890,25 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
   var body: List[Str] = []
   var ok = true
   for fl in sd.fields {
+    let yo = yaml_opts(fl)
+    let f = text(fl.name.name)
+    if yo.skip {
+      continue
+    }
+    if yo.inline {
+      // the fields of an inline struct are written into this mapping
+      let inner = yaml_struct_name(fl.typ) ?? {
+        c.error_at(file, "XO0425", fl.name.span, "`inline` needs a field that is a struct deriving Yaml; `${f}` is not one (decision 0512)")
+        return None
+      }
+      body.push("  ${inner.0}yaml_fields__${inner.1}(w, v.${f})")
+      continue
+    }
     let (wr, e2) = c.yaml_writer(fl.typ, fl.name.span, e, done) ?? return None
     e = e2
-    var key = text(fl.name.name)
-    var wire: Str? = None
-    for fw in fl.formats {
-      if fw.format == b"yaml" {
-        wire = Some(text(fw.wire))
-      }
-    }
-    if wire == None {
-      if let Some(w) = fl.wire {
-        wire = Some(text(w))
-      }
-    }
-    var omit = false
-    var flow = false
-    if let w = wire {
-      let parts = w.split(",")
-      if !parts[0].is_empty() {
-        key = parts[0]
-      }
-      for o in parts[1..] {
-        if o == "omitempty" {
-          omit = true
-        } else if o == "flow" {
-          flow = true
-        }
-      }
-    }
-    let f = text(fl.name.name)
+    let key = yo.key
+    let omit = yo.omit
+    let flow = yo.flow
     let tx = yaml_type_text(fl.typ) ?? "Str"
     var zero = ""
     if omit {
@@ -864,11 +949,14 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
   if !ok {
     return None
   }
-  e.ln("${pub_}fn yaml_write__${n}(var w: yamlcodec.Enc, v: ${n}) {", sp)
-  e.ln("  yamlcodec.map_start(w)", sp)
+  e.ln("${pub_}fn yaml_fields__${n}(var w: yamlcodec.Enc, v: ${n}) {", sp)
   for l in body {
     e.ln(l, sp)
   }
+  e.ln("}", sp)
+  e.ln("${pub_}fn yaml_write__${n}(var w: yamlcodec.Enc, v: ${n}) {", sp)
+  e.ln("  yamlcodec.map_start(w)", sp)
+  e.ln("  yaml_fields__${n}(w, v)", sp)
   e.ln("  yamlcodec.map_end(w)", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn yaml_encode__${n}(v: ${n}, indent: Int = 4) -> Str ! yaml.YamlErr {", sp)

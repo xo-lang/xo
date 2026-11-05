@@ -60,6 +60,30 @@ struct Cfg {
   inner: Item
 } derive Yaml
 
+struct Meta {
+  name: Str
+  tags: List[Str]
+} derive Yaml
+
+struct Base {
+  id: Int
+  meta: Meta
+} derive Yaml
+
+struct Top {
+  base yaml ",inline": Base
+  extra: Str
+  hidden as "-": Int
+  n: Int
+} derive Yaml
+
+fn show_top(text: Str) -> Str {
+  match yaml.decode[Top](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => "id=${t.base.id} meta=${t.base.meta.name}/${t.base.meta.tags.join(",")} extra=${t.extra} hidden=${t.hidden} n=${t.n}"
+  }
+}
+
 struct Deep {
   d: List[List[List[List[Str]]]]
 } derive Yaml
@@ -582,6 +606,19 @@ const DEEP: List[(Str, Str)] = [
   ("x: &a [y]\nd: [[[*a, *a]], [[*a]]]\n", "leaves=3"),
 ]
 
+/// (a document, what yaml.v3 decodes it into Top as: an inline struct and a skipped field)
+const INLINE: List[(Str, Str)] = [
+  ("id: 5\nextra: q\nhidden: 4\nn: 8\nmeta: {name: z, tags: [p, q]}\nunknown: 1\n", "id=5 meta=z/p,q extra=q hidden=0 n=8"),
+  ("id: x\nn: y\nmeta: {name: 1}\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!str `x` into int\\n  line 2: cannot unmarshal !!str `y` into int\""),
+  ("n: 1\nid: 2\nid: 3\n", "ERR \"yaml: unmarshal errors:\\n  line 3: mapping key \\\"id\\\" already defined at line 2\""),
+  ("meta: [1]\nextra: [2]\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!seq into Meta\\n  line 2: cannot unmarshal !!seq into string\""),
+  ("{id: 1, meta: {tags: [a, b, c]}, extra: e}", "id=1 meta=/a,b,c extra=e hidden=0 n=0"),
+  ("", "id=0 meta=/ extra= hidden=0 n=0"),
+  ("id: ~\nmeta: ~\nn: ~\n", "id=0 meta=/ extra= hidden=0 n=0"),
+]
+
+const MARSHALED_TOP: Str = "id: 7\nmeta:\n    name: m\n    tags:\n        - a\nextra: e\n\"n\": 3\n"
+
 const MARSHALED: Str = "name: orders\napiVersion: v1\nport: 8080\nratio: 2.5\n\"on\": true\no: hi\nnone: null\nitems:\n    - \"n\": 1\n      tags:\n        - a\n        - b c\n    - \"n\": 2\n      tags: []\nm:\n    a: 3\n    b9: 2\n    b10: 1\nempty: []\ntext: |\n    l1\n    l2\n\"yes\": \"yes\"\nnum: \"123\"\ninner:\n    \"n\": 7\n    tags:\n        - 'x: y'\n        - '- z'\n        - \"\"\n"
 
 const MARSHALED2: Str = "name: orders\napiVersion: v1\nport: 8080\nratio: 2.5\n\"on\": true\no: hi\nnone: null\nitems:\n  - \"n\": 1\n    tags:\n      - a\n      - b c\n  - \"n\": 2\n    tags: []\nm:\n  a: 3\n  b9: 2\n  b10: 1\nempty: []\ntext: |\n  l1\n  l2\n\"yes\": \"yes\"\nnum: \"123\"\ninner:\n  \"n\": 7\n  tags:\n    - 'x: y'\n    - '- z'\n    - \"\"\n"
@@ -598,6 +635,14 @@ test "alias expansion is limited as yaml.v3 limits it" {
   for (text, want) in DEEP {
     expect(show_deep(text)) == want
   }
+}
+
+test "inline and skipped fields are yaml.v3's" {
+  for (text, want) in INLINE {
+    expect(show_top(text)) == want
+  }
+  let t = Top{base: Base{id: 7, meta: Meta{name: "m", tags: ["a"]}}, extra: "e", hidden: 99, n: 3}
+  expect(yaml.encode_value[Top](t).ok()) == Some(MARSHALED_TOP)
 }
 
 test "encode_value is yaml.v3's Marshal" {
