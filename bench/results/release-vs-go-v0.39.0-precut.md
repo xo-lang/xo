@@ -43,6 +43,18 @@ one XO_PROF of each compiler on the 0.38.1 std's cold json test puts
 arm64.overlaps_sorted (regalloc.xo) at 40 against 130 ms and drop List[Int] at
 40 against 170 ms; program builds (the compile table) are unchanged.
 
+Cause and fix (Xo Lang 1, 2026-11-05): decision 0488's ShareIn (1f648265b)
+asked made_here, which gave up after 1,000 steps, so the later pushes of a
+long list literal (the json test's GO_CASES: 2,059 on linux) all got the
+ShareIn check, which bloated register allocation (overlaps_sorted) and the
+emit phase; fbd8b4d2e memoizes made_here with no limit. It landed after this
+run (main 79bee8d83) and is in the 0.39.0 release (the respin). Cold json
+test, `xo bench --ab`, linux/arm64 offload host, 0.38.1 std, 5 rounds: the
+0.38.1 release against the 0.39.0 release archive, wall 1.01 (1.007 to
+1.014), CPU 1.011 within noise; the 0.39.0 archive against an s2 of main
+ddd2ed554 (0.39.0 std), wall 1.007 and 1.009, CPU 1.002 and 1.006, within
+noise, twice.
+
 HTTP (linux/arm64, 4 pads): main against 0.38.1 is 0.995 to 1.000 of its
 req/s on every row (placement, by the pad sweep).
 
