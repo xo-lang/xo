@@ -12,7 +12,13 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.40
 
-None yet.
+- `xo debug PROG` runs a native program under xo's debugger on macOS
+  arm64 (10.1, 11.5; decision 0253 stages 2 and 3), with `run`,
+  `continue`, `step`, `next` and `finish` and their `stop` fields in the
+  protocol, and `xo debug --dap` for editors (decision 0504); darwin
+  builds with debug
+  information carry `get-task-allow`, and `xo build --entitlement=KEY`
+  adds an entitlement.
 
 ## Changes in 0.10 to 0.39
 
@@ -3087,6 +3093,7 @@ test "retries after 503" {
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments; `xo doc std` lists the std modules this xo ships, a line each |
 | `xo clean -cache [-n]` | Remove every cache under `<user cache>/xo` (build directories, the native back end's cache, GOCACHE, test binaries, watch builds, xo dev outputs, the test infrastructure's caches) and print the bytes freed per cache; `-n` prints what it would remove and removes nothing. Never touches anything outside `<user cache>/xo`; the module cache and the prebuilt seeds stay; an entry whose build lock a running process holds is left. `xo clean` without `-cache` is a usage error |
+| `xo debug [--batch] [--json] [-c CMD]... PROG [ARGS]`, `xo debug --dap` | Run a native program with its debug information under xo's own debugger (11.5; macOS arm64 so far): break, run, continue, step, next, finish, print, locals, backtrace, frame, threads, quit; `--json` gives the protocol of 11.5, `--dap` the Debug Adapter Protocol for editors |
 | `xo get [--accept-effects] <path>[@version]`, `xo mod tidy`, `xo mod accept-effects [<path>...]`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, record wider effects of dependencies in xo.lock (decision 0156), copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
 | `xo audit [--json] [--no-gc] [<dir>]` | Supply chain report (decision 0156): per dependency its effects, its xo.lock effects line (ok, widened, narrowed, unlocked), its ceiling, and its escape hatches (`use c`, impure `use go`) with the vouches covering them; this module's attenuations (`only`, `sub`, `read_only`, `write_only`, `cwd`) with constant arguments, the capabilities it passes into dependencies and whether each is attenuated, vouches that match nothing, and the check's diagnostics. JSON with `--json` or when stdout is not a terminal (an agent piping it gets JSON), text otherwise. Exit 1 when the check has errors |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
@@ -3717,7 +3724,39 @@ call and its result, plus scheduler decisions.
 
 ### 11.5 Debugger protocol
 
-What is built (decision 0253 stages 1 and 5's protocol, 2026-10-17):
+What is built (decision 0253 stage 2, 2026-11-05): `xo debug [--batch]
+[--json] [-c CMD]... PROG [ARGS]` runs PROG, a native executable with its
+debug information, under the debugger on macOS arm64: started stopped
+with ASLR off (its addresses are its file's DWARF addresses), `break`
+plants a trap (`brk #0`) at each of the location's addresses, `run`
+starts it and `continue` resumes it (over the trap it stopped at by one
+single stepped instruction) until a breakpoint, a fault (`stopped by
+exception N`, the Mach exception), or its exit (`the program exited with
+status N`); at a stop every thread of the program is suspended, and
+`backtrace`, `frame`, `locals`, `print` and `threads` read the stopped
+thread and the program's memory. `step` (stage 3) runs the stopped
+thread alone, an instruction at a time, to the start of a statement of
+another line (the line table's `is_stmt` rows), into a call (inlined or
+not; a call into code without line information is run over); `next`
+runs calls over (with every thread, to a temporary trap at the return
+address in the same frame) and calls inlined from the same line, so it
+stops at the frame's next line (a call inlined from another line stops
+it at that call's first statement with the frame selected); `finish`
+runs the selected frame out: an inlined call until its code is left
+(its caller's frame selected), a function to its caller's return
+address in the caller's frame. A frame is told by its canonical frame
+address (the unwinder's) and then its inlined depth, so recursion and a
+tail call are handled. A breakpoint or fault on the way stops them. The commands come from `-c` (`--batch`
+echoes each as `(xo) CMD`), else from standard input; the program is
+ended after the last one or `quit`. The process needs the
+`com.apple.security.cs.debugger` entitlement on xo, or `get-task-allow`
+on the program, and Developer Mode: a darwin build with debug
+information that is not `--release` or `-s` carries `get-task-allow` in
+its ad hoc signature, `xo build --entitlement=KEY` adds others, and the
+checkout's and a release's xo carry the debugger's (decision 0253
+point 5). `tasks` and `task` are stage 4, Linux and Windows stage 6.
+
+Before it (decision 0253 stages 1 and 5's protocol, 2026-10-17):
 `xo dev debug` (hidden) runs the debugger's commands on a recorded,
 stopped thread (`--snap FILE`, as lldb or gdb recorded it): `break`
 resolves a FILE:LINE or a function to its addresses, and `backtrace`
@@ -3725,19 +3764,35 @@ resolves a FILE:LINE or a function to its addresses, and `backtrace`
 `threads` and `quit` read the snapshot through the program's DWARF and
 unwind tables. With `--json` each command gives one JSON line, the
 protocol's version 1 below; with no `-c` it reads commands from standard
-input. `run`, `continue`, `step`, `next` and `finish` answer that
-process control comes with stage 2, `tasks` and `task` with stage 4.
+input. There `run` and `continue` answer that the session is a recorded
+thread.
 
-**[later]** Not built: the `xo debug` command itself (a live process:
-0253 stage 2 on macOS arm64, stage 6 for Linux and Windows), conditional
+**[later]** Not built: a live process on Linux and Windows (0253 stage
+6), attaching to a running process, conditional
 breakpoints, a break on a contract failure, evaluating expressions
-(beyond `print`'s field path), and stepping back over a replay (11.3).
-`xo debug --dap`, the Debug Adapter Protocol for editors, is planned and
-is not a stage of decision 0253 yet.
+(beyond `print`'s field path), stepping back over a replay (11.3), and
+DAP's `attach` and `pause`.
 
-The protocol's version 1 (decision 0253; compiler/debug session.xo; until
-the process control of stage 2 it runs on a recorded thread as `xo dev
-debug --json`): each command (decision 0253 point 4) gives one line, an
+`xo debug --dap` (decision 0504, 0253's stage 7, 2026-11-05) serves the
+Debug Adapter Protocol on standard input and output (Content-Length
+framing) for editors, each request mapped onto the session's commands
+through this protocol: `initialize`; `launch` (`program`, `args`, `cwd`)
+answered and followed by the `initialized` event; `setBreakpoints` (a
+source's lines, by its path, else its base name; `verified` when the line
+has code); `configurationDone` runs the program; `continue`, `next`,
+`stepIn`, `stepOut` are continue, next, step, finish; `threads`,
+`stackTrace` (inlined calls as frames, from the frame the stop selected;
+a source's `path` absolute: relative to `cwd`, std's files in xo's std),
+`scopes` (one, Locals), `variables` (a struct value's fields as children),
+`evaluate` (print's field path); `disconnect`. Stops are `stopped` events
+(`breakpoint`, `step`, `exception`, every thread stopped), the end is
+`exited` then `terminated`, and the program's standard output and error
+(written to a file, since standard output is the protocol) are `output`
+events at each stop. While the program runs, the adapter reads no request
+(no `pause`).
+
+The protocol's version 1 (decision 0253; compiler/debug session.xo;
+`xo debug --json`, and `xo dev debug --json` on a recorded thread): each command (decision 0253 point 4) gives one line, an
 object with `v` (1), `cmd` (the command's long name: `break`, `delete`,
 `run`, `continue`, `step`, `next`, `finish`, `print`, `locals`,
 `backtrace`, `frame`, `tasks`, `task`, `threads`, `quit`; `""` for a line
@@ -3747,8 +3802,14 @@ that is not a command), and `ok`. With `ok` false the object has `error`
 - `break`: `id`, `locations` (each `{pc, file, line}`; `pc` is a `"0x..."`
   string, `file` a base name).
 - `delete`: `id`.
-- `backtrace`: `frames`, each `{index, pc, function, inlined, file, line,
-  selected}`; an inlined call is a frame of its own (`inlined` true) with
+- `run`, `continue`, `step`, `next`, `finish`: `stop`: `"step"` (a
+  step or next that reached its line) or `"finish"` with `thread` and
+  `frame`; `"breakpoint"` with `id`, `thread` and
+  `frame` (the innermost, as in `backtrace`); `"exception"` with
+  `exception`, `code`, `subcode` (the Mach exception's), `thread` and
+  `frame`; `"exited"` with `status`; `"signaled"` with `signal`.
+- `backtrace`: `frames`, each `{index, pc, function, inlined, file, path,
+  line, selected}` (`path` the file as the line table names it); an inlined call is a frame of its own (`inlined` true) with
   its physical frame's `pc`, innermost first.
 - `frame`: `frame`, one frame as in `backtrace`.
 - `locals`: `frame` (the selected frame's index), `vars`, each `{name,

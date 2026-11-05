@@ -329,3 +329,82 @@ programs):
   `(xo) ` on a terminal and an empty line repeating the last command (as
   gdb and lldb); with --json that is the line protocol of spec 11.5 (one
   command in, one JSON line out). TestUnwind drives it through a pipe.
+- Stage 2's process control on macOS arm64 (2026-11-05, Xo Lang 2):
+  std/native/llrt/dbgmac.xo, reached through std/internal's `dbg_*`
+  (Go backend stubs answer that a native xo is needed). It uses the
+  approved calls and two more (below): posix_spawn with START_SUSPENDED and
+  _POSIX_SPAWN_DISABLE_ASLR (lldb's flag; the executable then sits at its
+  file's addresses, so the DWARF needs no slide), task_for_pid,
+  mach_port_allocate and insert_right, task_set_exception_ports
+  (BAD_ACCESS, BAD_INSTRUCTION, ARITHMETIC, SOFTWARE, BREAKPOINT;
+  EXCEPTION_DEFAULT with 64 bit codes), mach_msg (a 50 ms receive loop
+  with waitpid WNOHANG for the exit; the reply id + 100), mach_vm_read,
+  mach_vm_protect (READ, WRITE and COPY: a private copy of the text page;
+  macOS refuses a writable executable page) and mach_vm_write for a
+  trap, thread_get_state and thread_set_state (ARM_THREAD_STATE64;
+  ARM_DEBUG_STATE64's MDSCR_EL1.SS for one step over a trap; the kernel
+  clears the bit before it reports, so the session tracks the step
+  itself), task_resume, and task_threads with thread_suspend (not on the
+  list) and thread_resume: a stop suspends every other thread of the program and
+  continue resumes them (after the step over the trap, which runs the
+  stopped thread alone), since the runtime's other threads otherwise
+  fault executing on the page while a write has it without EXECUTE
+  (EXC_BAD_ACCESS at their pc, seen in the first runs; kill SIGSTOP, on
+  the list, would stop the stepping thread too). PT_ATTACHEXC was not
+  needed. The other call beyond the list:
+  mach_vm_machine_attribute(MATTR_CACHE, MATTR_VAL_CACHE_FLUSH) after each
+  write, as debugserver does: without it a trap planted again after the
+  step was not seen by the CPU in 19 of 20 runs (the program ran to its
+  end), with it 20 of 20 stopped each time. Both wait for the owner's
+  approval (lead, 2026-11-05) on the stage 2 branch.
+  compiler/debug live.xo is the live session: `run` launches, plants and
+  waits; `continue` steps over the trap and resumes; a stop's registers
+  become the snapshot (its memory read from the process, snap.xo
+  Snapshot.proc), so locals, print, backtrace and frame are the recorded
+  thread's code. `xo debug [--batch] [--json] [-c CMD]... PROG [ARGS]`
+  (compiler/cli/dev debugcmd.xo debug_main). Point 5: compiler/macho
+  sign.xo writes entitlements into the ad hoc signature as codesign does
+  (an empty requirements blob, the XML plist and DER blobs, their hashes
+  in special slots 2, 5 and 7, not linker signed; byte for byte
+  codesign's blobs for get-task-allow); a darwin build with debug
+  information that is not --release or -s carries get-task-allow,
+  `xo build --entitlement=KEY` adds others, internal/xotool gives the
+  checkout's bin/xo com.apple.security.cs.debugger (when the seed knows
+  the flag), and scripts/sign-macos.sh signs a release's xo with
+  scripts/xo-entitlements.plist (the debugger's only; notarization
+  refuses get-task-allow). Either entitlement is enough with Developer
+  Mode on: an unentitled xo debugs a get-task-allow program, and the
+  entitled xo a --release one; with neither, task_for_pid fails with 5
+  and `run` says so. Tests: cmd/xo TestDebugBatch (a breakpoint in a
+  loop, locals, a field, the backtrace through the inlined frame, four
+  stops with the loop's values, the exit); 100 of 100 runs clean.
+  Not yet: a multi-threaded program's threads listed (threads shows the
+  stopped one), a thread made while stopped stays running, attach (-p).
+- Stage 3's step, next and finish on the live session (2026-11-05, Xo
+  Lang 2; compiler/debug step.xo): the stopped thread walked an
+  instruction at a time (live.xo step1: the single step bit, the others
+  suspended, a system call stepped with every thread running since it may
+  wait for one; a trap at the pc taken out for it) to the start of a
+  statement row of another line. A frame's depth is its canonical frame
+  address (the unwinder's caller sp; the stack pointer alone failed: a
+  breakpoint on a function's first line is before its prologue, so its
+  whole body looked deeper) and then its inlined depth. next runs a bl or
+  blr over with every thread to a temporary trap at the return address,
+  matched by thread and stack pointer (recursion passes it at other
+  depths), and judges lines at the starting frame's inlined depth: a call
+  inlined from the next line counts as that line (in the arm64 backend's
+  line table main.xo:17 and 18 had no rows of their own, only their
+  inlined calls'), and a tail call (b into another function in the same
+  frame) counts as a call. finish runs an inlined call until the pc
+  leaves that call's ranges (the next code may be another inlined call at
+  the same depth) and a function to its caller's return address in the
+  caller's frame; after a stop in a deeper inlined call the frame the
+  command was about is selected. step stops entering any frame, except a
+  call into code without line information, which it runs over. Tests:
+  cmd/xo TestDebugStep (next 15 to 16 to 17, step into the inlined sum,
+  finish out of it with t = 76 in main, step into fact, next stopped by a
+  breakpoint in the call it runs over, finish out of each recursive call
+  with n and r); 10 of 10 repeated runs pass. Seen, not fixed: after
+  fact returns, main's n prints the result (6): its location list keeps
+  x0 past the call (a DWARF location matter, not the stepping).
+

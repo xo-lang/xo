@@ -1,0 +1,380 @@
+// `xo debug`'s process control on macOS arm64 (decision 0253 stage 2,
+// point 1, with only the calls its "New OS capabilities" list approves):
+// a program started suspended (posix_spawn with START_SUSPENDED and ASLR
+// off, as lldb starts one, so the executable's addresses are its file's),
+// its task port (task_for_pid: xo needs com.apple.security.cs.debugger),
+// an exception port that receives its breakpoint, software and fault
+// exceptions (mach_exception_raise messages, 64 bit codes), memory read
+// and written through the task (a trap planted with mach_vm_protect's
+// copy on write and mach_vm_write; the program never writes its own
+// code), a thread's registers (ARM_THREAD_STATE64) and its single step
+// bit (MDSCR_EL1.SS in ARM_DEBUG_STATE64), and the exit seen by waitpid.
+// Std's internal.xo reaches it for compiler/debug; programs do not.
+//
+// A debuggee is a record (heap_large) at h:
+//   0 pid, 8 task port, 16 exception port, 24 a message awaits its reply,
+//   32 started (the first resume was task_resume), 40 the threads held
+//   at a stop (task_threads' array, or 0), 48 their count, 56 the stopped
+//   thread among them (not suspended: its exception holds it), 64 the
+//   last message received (MSG bytes), 384 the reply.
+//
+// A stop stops the whole program: the other threads are suspended
+// (thread_suspend) while the debugger looks and writes, since a thread
+// running on a page whose protection a trap's write changed would fault.
+use native/llrt/process
+use native/llrt/raw
+use native/rt
+use native/sys_darwin
+
+const PID = 0
+const TASK = 8
+const PORT = 16
+const PENDING = 24
+const STARTED = 32
+const HELD = 40
+const NHELD = 48
+const HTHREAD = 56
+const MSG = 64
+const MSG_SIZE = 256
+const REPLY = 384
+const SIZE = 448
+
+/// ARM_THREAD_STATE64 and its count of 32 bit words: x0 to x28, fp, lr,
+/// sp, pc, cpsr and a pad.
+const THREAD_STATE = 6
+const THREAD_COUNT = 68
+/// ARM_DEBUG_STATE64: bvr, bcr, wvr, wcr (16 words each), mdscr_el1.
+const DEBUG_STATE = 15
+const DEBUG_COUNT = 130
+const MDSCR = 512
+
+/// Starts path with args stopped before its first instruction (out not
+/// "": its standard output and error written to the file out, created or
+/// truncated, and its standard input /dev/null): the debuggee's record
+/// and "", or 0 and why it could not.
+pub fn launch(path: Str, args: List[Str], out: Str) -> (Int, Str) {
+  var all = [path]
+  for a in args {
+    all.push(a)
+  }
+  let argv = c_strs(all)
+  let zpath = path + "\u{0}"
+  let buf = raw.bytes_buf(64)
+  let b = raw.bytes_addr(buf)
+  rt.mem_set(b, 0, 64)
+  let at = b
+  let pidw = b + 8
+  let tw = b + 16
+  let pw = b + 24
+  let fa = b + 32
+  let zout = out + "\u{0}"
+  let devnull = "/dev/null\u{0}"
+  var fap = 0
+  if !out.is_empty() {
+    let _n = sys_darwin.posix_spawn_file_actions_init(fa)
+    let _o = sys_darwin.posix_spawn_file_actions_addopen(fa, 0, raw.data(devnull), 0, 0)
+    // O_WRONLY 1 | O_CREAT 0x200 | O_TRUNC 0x400, mode 0644
+    let _w = sys_darwin.posix_spawn_file_actions_addopen(fa, 1, raw.data(zout), 1 | 0x200 | 0x400, 0x1a4)
+    let _e = sys_darwin.posix_spawn_file_actions_adddup2(fa, 1, 2)
+    fap = fa
+  }
+  let _i = sys_darwin.posix_spawnattr_init(at)
+  // POSIX_SPAWN_START_SUSPENDED 0x80, _POSIX_SPAWN_DISABLE_ASLR 0x100
+  let _f = sys_darwin.posix_spawnattr_setflags(at, 0x80 | 0x100)
+  let e = Int(sys_darwin.posix_spawn(pidw, raw.data(zpath), fap, at, argv, process.environ_addr()))
+  let _d = sys_darwin.posix_spawnattr_destroy(at)
+  if fap != 0 {
+    let _x = sys_darwin.posix_spawn_file_actions_destroy(fa)
+  }
+  let _zs = zout.len() + devnull.len()
+  rt.heap_release(argv - 8)
+  let _z = zpath.len()
+  if e != 0 {
+    let _k = buf.len()
+    return (0, "posix_spawn ${path}: errno ${e}")
+  }
+  let pid = rt.mem_load(pidw, 0, 4)
+  let me = Int(sys_darwin.task_self_trap())
+  let k = Int(sys_darwin.task_for_pid(me, pid, tw))
+  if k != 0 {
+    reap_killed(pid)
+    let _k = buf.len()
+    return (0, "task_for_pid: kern_return ${k} (xo needs the com.apple.security.cs.debugger entitlement, or the program get-task-allow, which an xo build that is not --release or -s gives it; and Developer Mode on; decision 0253 point 5)")
+  }
+  let task = rt.mem_load(tw, 0, 4)
+  // a receive right, and a send right for the kernel's messages
+  let _a = sys_darwin.mach_port_allocate(me, 1, pw)
+  let port = rt.mem_load(pw, 0, 4)
+  let _r = sys_darwin.mach_port_insert_right(me, port, port, 20)
+  // EXC_MASK_BAD_ACCESS 2, BAD_INSTRUCTION 4, ARITHMETIC 8, SOFTWARE 32,
+  // BREAKPOINT 64; EXCEPTION_DEFAULT 1 | MACH_EXCEPTION_CODES; flavor
+  // THREAD_STATE_NONE 5
+  let x = Int(sys_darwin.task_set_exception_ports(task, 2 | 4 | 8 | 32 | 64, port, 1 | 0x80000000, 5))
+  let _k = buf.len()
+  if x != 0 {
+    reap_killed(pid)
+    return (0, "task_set_exception_ports: kern_return ${x}")
+  }
+  let h = rt.heap_large(SIZE)
+  rt.mem_set(h, 0, SIZE)
+  rt.mem_store(h, PID, pid, 8)
+  rt.mem_store(h, TASK, task, 8)
+  rt.mem_store(h, PORT, port, 8)
+  (h, "")
+}
+
+pub fn pid(h: Int) -> Int { rt.mem_load(h, PID, 8) }
+
+/// n bytes at address a, None when they cannot be read.
+pub fn read(h: Int, a: Int, n: Int) -> Bytes? {
+  if n <= 0 {
+    return Some(b"")
+  }
+  let out = raw.bytes_buf(n)
+  let w = raw.bytes_buf(8)
+  let k = Int(sys_darwin.mach_vm_read_overwrite(rt.mem_load(h, TASK, 8), a, n, raw.bytes_addr(out), raw.bytes_addr(w)))
+  let _w = w.len()
+  if k != 0 {
+    return None
+  }
+  Some(out)
+}
+
+/// Writes data at address a of the program's text or data: its page made
+/// a private writable copy first, then executable again (a trap's word).
+pub fn write(h: Int, a: Int, data: Bytes) -> Bool {
+  let task = rt.mem_load(h, TASK, 8)
+  let page = a & (0).wrapping_sub(16384)
+  let pages = ((a + data.len() + 16383) & (0).wrapping_sub(16384)) - page
+  // VM_PROT_READ 1 | WRITE 2 | COPY 16 (not EXECUTE: macOS refuses a
+  // writable executable page; the program's threads are stopped)
+  if Int(sys_darwin.mach_vm_protect(task, page, pages, 0, 1 | 2 | 16)) != 0 {
+    return false
+  }
+  let k = Int(sys_darwin.mach_vm_write(task, a, raw.bytes_addr(data), data.len()))
+  let _d = data.len()
+  // READ | EXECUTE 4: the text's protection again
+  let _p = sys_darwin.mach_vm_protect(task, page, pages, 0, 1 | 4)
+  // the caches flushed, so the CPU runs the word written (lldb's
+  // debugserver does the same after each write)
+  let v = raw.bytes_buf(8)
+  rt.mem_store(raw.bytes_addr(v), 0, 6, 4)
+  let _c = sys_darwin.mach_vm_machine_attribute(task, a, data.len(), 1, raw.bytes_addr(v))
+  let _v = v.len()
+  k == 0
+}
+
+/// Thread th's registers: x0 to x28, fp, lr, sp, pc, cpsr (34 words), or
+/// empty when they cannot be read.
+pub fn regs(h: Int, th: Int) -> List[Int] {
+  let _h = h
+  let st = raw.bytes_buf(THREAD_COUNT * 4 + 8)
+  let a = raw.bytes_addr(st)
+  rt.mem_store(a, THREAD_COUNT * 4, THREAD_COUNT, 4)
+  let k = Int(sys_darwin.thread_get_state(th, THREAD_STATE, a, a + THREAD_COUNT * 4))
+  var out: List[Int] = []
+  if k == 0 {
+    for i in 0..33 {
+      out.push(rt.mem_load(a, 8 * i, 8))
+    }
+    out.push(rt.mem_load(a, 264, 4))
+  }
+  let _s = st.len()
+  out
+}
+
+/// Sets thread th's pc.
+pub fn set_pc(h: Int, th: Int, pc: Int) -> Bool {
+  let _h = h
+  let st = raw.bytes_buf(THREAD_COUNT * 4 + 8)
+  let a = raw.bytes_addr(st)
+  rt.mem_store(a, THREAD_COUNT * 4, THREAD_COUNT, 4)
+  var ok = Int(sys_darwin.thread_get_state(th, THREAD_STATE, a, a + THREAD_COUNT * 4)) == 0
+  if ok {
+    rt.mem_store(a, 256, pc, 8)
+    ok = Int(sys_darwin.thread_set_state(th, THREAD_STATE, a, THREAD_COUNT)) == 0
+  }
+  let _s = st.len()
+  ok
+}
+
+/// Turns thread th's single step on or off: on, its next instruction
+/// ends in an EXC_BREAKPOINT (the kernel clears the bit as it reports).
+pub fn set_step(h: Int, th: Int, on: Bool) -> Bool {
+  let _h = h
+  let st = raw.bytes_buf(DEBUG_COUNT * 4 + 8)
+  let a = raw.bytes_addr(st)
+  rt.mem_store(a, DEBUG_COUNT * 4, DEBUG_COUNT, 4)
+  var ok = Int(sys_darwin.thread_get_state(th, DEBUG_STATE, a, a + DEBUG_COUNT * 4)) == 0
+  if ok {
+    let m = rt.mem_load(a, MDSCR, 8)
+    rt.mem_store(a, MDSCR, if on { m | 1 } else { m & -2 }, 8)
+    ok = Int(sys_darwin.thread_set_state(th, DEBUG_STATE, a, DEBUG_COUNT)) == 0
+  }
+  let _s = st.len()
+  ok
+}
+
+/// Lets the program run: the first time the task's start (task_resume),
+/// then the reply to the exception it stopped on; alone, only the stopped
+/// thread runs (a single step), the others stay suspended.
+pub fn resume(h: Int, alone: Bool) -> Bool {
+  if rt.mem_load(h, STARTED, 8) == 0 {
+    rt.mem_store(h, STARTED, 1, 8)
+    return Int(sys_darwin.task_resume(rt.mem_load(h, TASK, 8))) == 0
+  }
+  if rt.mem_load(h, PENDING, 8) == 0 {
+    return true
+  }
+  if !alone {
+    release(h)
+  }
+  rt.mem_store(h, PENDING, 0, 8)
+  let m = h + MSG
+  let r = h + REPLY
+  rt.mem_set(r, 0, 36)
+  // the request's remote disposition (the send once reply right), its
+  // reply port, id + 100; NDR_record (int_rep 1); KERN_SUCCESS
+  rt.mem_store(r, 0, rt.mem_load(m, 0, 4) & 31, 4)
+  rt.mem_store(r, 4, 36, 4)
+  rt.mem_store(r, 8, rt.mem_load(m, 8, 4), 4)
+  rt.mem_store(r, 20, rt.mem_load(m, 20, 4) + 100, 4)
+  rt.mem_store(r, 28, 1, 1)
+  // MACH_SEND_MSG 1
+  Int(sys_darwin.mach_msg(r, 1, 36, 0, 0, 0, 0)) == 0
+}
+
+/// Waits up to ms milliseconds (0: until something happens) for the
+/// program to stop: [1, thread, exception, code, subcode] for an
+/// exception (EXC_BREAKPOINT 6 with subcode the trap's address; a single
+/// step's subcode is 0), [2, status] when it exited, [3, signal] when a
+/// signal ended it, [0] when the time passed.
+pub fn wait(h: Int, ms: Int) -> List[Int] {
+  let m = h + MSG
+  let port = rt.mem_load(h, PORT, 8)
+  let pid = rt.mem_load(h, PID, 8)
+  let stw = raw.bytes_buf(8)
+  let sa = raw.bytes_addr(stw)
+  var left = ms
+  while true {
+    rt.mem_store(m, 4, MSG_SIZE, 4)
+    // MACH_RCV_MSG 2 | MACH_RCV_TIMEOUT 0x100, 50 ms at a time
+    let k = Int(sys_darwin.mach_msg(m, 2 | 0x100, 0, MSG_SIZE, port, 50, 0))
+    if k == 0 {
+      rt.mem_store(h, PENDING, 1, 8)
+      hold(h, rt.mem_load(m, 28, 4))
+      // the message's task right is not kept
+      let _t = sys_darwin.mach_port_deallocate(Int(sys_darwin.task_self_trap()), rt.mem_load(m, 40, 4))
+      let _s = stw.len()
+      return [1, rt.mem_load(m, 28, 4), rt.mem_load(m, 60, 4), rt.mem_load(m, 68, 8), rt.mem_load(m, 76, 8)]
+    }
+    rt.mem_store(sa, 0, 0, 4)
+    // WNOHANG 1
+    if Int(sys_darwin.waitpid(pid, sa, 1)) == pid {
+      let st = rt.mem_load(sa, 0, 4)
+      let _s = stw.len()
+      if st & 0x7f == 0 {
+        return [2, (st >> 8) & 0xff]
+      }
+      return [3, st & 0x7f]
+    }
+    if ms > 0 {
+      left -= 50
+      if left <= 0 {
+        break
+      }
+    }
+  }
+  let _s = stw.len()
+  [0]
+}
+
+/// Ends the program (SIGKILL) and waits for it.
+pub fn kill(h: Int) {
+  reap_killed(rt.mem_load(h, PID, 8))
+}
+
+/// Frees the record and the exception port (after kill, or the exit).
+pub fn close(h: Int) {
+  let me = Int(sys_darwin.task_self_trap())
+  // MACH_PORT_RIGHT_RECEIVE 1: the receive right's reference
+  let _m = sys_darwin.mach_port_deallocate(me, rt.mem_load(h, PORT, 8))
+  let _t = sys_darwin.mach_port_deallocate(me, rt.mem_load(h, TASK, 8))
+  rt.heap_release(h - 8)
+}
+
+/// Suspends every thread of the program but th (stopped by its exception),
+/// once a stop.
+fn hold(h: Int, th: Int) {
+  if rt.mem_load(h, HELD, 8) != 0 {
+    return
+  }
+  let b = raw.bytes_buf(16)
+  let a = raw.bytes_addr(b)
+  rt.mem_set(a, 0, 16)
+  if Int(sys_darwin.task_threads(rt.mem_load(h, TASK, 8), a, a + 8)) != 0 {
+    let _b = b.len()
+    return
+  }
+  let list = rt.mem_load(a, 0, 8)
+  let n = rt.mem_load(a, 8, 4)
+  let _b = b.len()
+  for i in 0..n {
+    let t = rt.mem_load(list, 4 * i, 4)
+    if t != th {
+      let _s = sys_darwin.thread_suspend(t)
+    }
+  }
+  rt.mem_store(h, HELD, list, 8)
+  rt.mem_store(h, NHELD, n, 8)
+  rt.mem_store(h, HTHREAD, th, 8)
+}
+
+/// Resumes the threads hold suspended and gives back their rights and
+/// array.
+fn release(h: Int) {
+  let list = rt.mem_load(h, HELD, 8)
+  if list == 0 {
+    return
+  }
+  let n = rt.mem_load(h, NHELD, 8)
+  let th = rt.mem_load(h, HTHREAD, 8)
+  let me = Int(sys_darwin.task_self_trap())
+  for i in 0..n {
+    let t = rt.mem_load(list, 4 * i, 4)
+    if t != th {
+      let _r = sys_darwin.thread_resume(t)
+    }
+    let _d = sys_darwin.mach_port_deallocate(me, t)
+  }
+  let _v = sys_darwin.vm_deallocate(me, list, 4 * n)
+  rt.mem_store(h, HELD, 0, 8)
+}
+
+fn reap_killed(pid: Int) {
+  let _k = sys_darwin.kill(pid, 9)
+  let stw = raw.bytes_buf(8)
+  let _w = sys_darwin.waitpid(pid, raw.bytes_addr(stw), 0)
+  let _s = stw.len()
+}
+
+/// A heap_large block (released at its address - 8) holding the NULL ended array of C strings of ss,
+/// then their zero terminated bytes (proc.xo's c_strs).
+fn c_strs(ss: List[Str]) -> Int {
+  let head = 8 * (ss.len() + 1)
+  var size = head
+  for s in ss {
+    size += s.len() + 1
+  }
+  let m = rt.heap_large(size)
+  var p = m + head
+  for k in 0..ss.len() {
+    let s = ss[k]
+    rt.mem_store(m, 8 * k, p, 8)
+    rt.mem_copy(p, raw.data(s), s.len())
+    rt.mem_store(p, s.len(), 0, 1)
+    p += s.len() + 1
+  }
+  rt.mem_store(m, 8 * ss.len(), 0, 8)
+  m
+}

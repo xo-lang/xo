@@ -46,6 +46,7 @@ pub fn commands() -> List[Command] {
     Command{name: "trace", purpose: "Perfetto JSON and a summary of a native execution trace"},
     Command{name: "bench", purpose: "interleaved A/B measurement with a confidence interval (--ab)"},
     Command{name: "clean", purpose: "remove xo's caches under the user cache directory (-cache)"},
+    Command{name: "debug", purpose: "run a native program under the debugger (macOS arm64)"},
     Command{name: "lsp", purpose: "Language Server Protocol server on stdin/stdout"},
     Command{name: "mcp", purpose: "Model Context Protocol server on stdin/stdout"},
     Command{name: "serve", purpose: "keep checked programs in memory for check and query"},
@@ -118,6 +119,7 @@ pub fn usage(name: Str) -> Str {
     "trace" => trace_text()
     "bench" => bench_text()
     "clean" => clean_text()
+    "debug" => debug_text()
     "lsp" => lsp_text()
     "mcp" => mcp_text()
     "serve" => serve_text()
@@ -187,6 +189,40 @@ pub fn no_match_error(cmd: Str, arg: Str) -> Str {
   "xo ${cmd}: ${arg} matched no directory with .xo files"
 }
 
+fn debug_text() -> Str {
+  """
+usage: xo debug [--batch] [--json] [-c CMD]... PROG [ARGS]
+       xo debug --dap
+
+Runs PROG, a native executable with its debug information (a native
+build keeps it unless -s or --release), under xo's own debugger
+(decision 0253) with ARGS. The commands come from -c, in order (--batch
+requires them: each is echoed as `(xo) CMD`, then its output), else one a
+line from standard input, with the prompt `(xo) ` on a terminal and an
+empty line repeating the last command. --json prints one JSON line per
+command instead (spec 11.5). The program is ended after the last command.
+--dap serves the Debug Adapter Protocol on standard input and output for
+an editor (VS Code, Zed, nvim-dap): the editor's launch request names the
+program (decision 0504).
+
+Commands: break (b) FILE:LINE or FUNCTION, delete N, run (r), continue
+(c), step (s: to the next line, into calls), next (n: over calls), finish
+(out of the selected frame, an inlined call's too), print (p)
+NAME[.FIELD]..., locals, backtrace (bt), frame N, threads, quit (q). A
+stop suspends every thread of the program; step and next run the stopped
+thread alone, one instruction at a time, and a call they step over with
+every thread. tasks and task come with decision 0253's stage 4.
+
+macOS arm64 only so far: xo needs the com.apple.security.cs.debugger
+entitlement (ad hoc for development, the release signature for a
+release) and Developer Mode (DevToolsSecurity -enable).
+
+Example:
+  xo build -o sum ./sum
+  xo debug --batch -c 'b main.xo:9' -c run -c locals -c bt sum
+"""
+}
+
 fn clean_text() -> Str {
   """
 usage: xo clean -cache [-n]
@@ -213,7 +249,7 @@ usage: xo build [--targets=all|os/arch,...] [--backend=native|go|llvm|arm64|amd6
                 [--error-args=on|off] [--debug-info=on|off|split]
                 [--profile-support=on|off] [--trace-support=on|off] [--opt=O0..O3]
                 [--trimpath=on|off] [-s] [--dsym] [--ld=macho|cc] [--race]
-                [--stamp NAME=VALUE]... [--hybrid] [--pack-lists=on|off]
+                [--stamp NAME=VALUE]... [--entitlement=KEY]... [--hybrid] [--pack-lists=on|off]
                 [--inline-str] [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
@@ -256,7 +292,11 @@ also writes NAME.dSYM); -s leaves them and the local symbols out.
 linker: macho (Xo's own; the default on darwin/arm64) or cc. --race (also
 on run and test) builds with ThreadSanitizer on the LLVM backend. --stamp (repeatable, also on run)
 sets a `const NAME: Str` of the main module for this build (XO1501
-otherwise). std/time zone data is embedded per use (decision 0094);
+otherwise). A darwin build with debug information that is not --release
+or -s carries the get-task-allow entitlement in its ad hoc signature, so
+xo debug can control it; --entitlement=KEY (repeatable) adds KEY set to
+true (decision 0253; xo itself carries com.apple.security.cs.debugger).
+std/time zone data is embedded per use (decision 0094);
 --tzdata=system (also on run and test) reads the host's database
 instead. --hybrid is deprecated: a plain Go backend build with a
 warning (decision 0084). --pack-lists (on by default, decision 0369)

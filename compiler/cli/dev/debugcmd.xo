@@ -11,7 +11,7 @@
 use github.com/xo-lang/xo/compiler/cli/core
 use github.com/xo-lang/xo/compiler/debug
 
-fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
+fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio, proc) {
   let interactive = !args.contains("-c")
   // -c may repeat: gather them before the flag parser
   var cmds: List[Str] = []
@@ -76,11 +76,71 @@ fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
     }
   }
   var s = debug.session(exe, sections, snap)
-  var failed = false
   let json = fl.get_bool("json")
   if interactive {
     return prompt_loop(os, s, json)
   }
+  run_cmds(os, s, cmds, json)
+}
+
+/// `xo debug [--batch] [--json] [-c CMD]... PROG [ARGS]` (decision 0253
+/// stage 2): PROG, an executable built with its debug information (a
+/// native build's default), run under the process control with ARGS; the
+/// commands from -c (--batch: each echoed as `(xo) CMD`, then its
+/// output), else from standard input as `xo dev debug` reads them. The
+/// program is ended at the commands' end or quit. macOS arm64 so far.
+/// usage is the command's help (cmdhelp), printed on a usage error.
+pub fn debug_main(os: Os, args: List[Str], usage: Str) -> Int uses (fs.read, stdio, proc) {
+  var cmds: List[Str] = []
+  var json = false
+  var batch = false
+  var i = 0
+  while i < args.len() && args[i].starts_with("-") {
+    let a = args[i]
+    if a == "-c" && i + 1 < args.len() {
+      cmds.push(args[i + 1])
+      i += 2
+      continue
+    }
+    if a == "--json" {
+      json = true
+    } else if a == "--batch" {
+      batch = true
+    } else if a == "--" {
+      i += 1
+      break
+    } else {
+      os.stdio.eprint("xo debug: unknown flag ${a.quote()}\n${usage}")
+      return 2
+    }
+    i += 1
+  }
+  if i >= args.len() || (batch && cmds.is_empty()) {
+    os.stdio.eprint(usage)
+    return 2
+  }
+  let prog = args[i]
+  let exe = match os.fs.read(prog) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.eprintln("xo debug: ${e}")
+      return 1
+    }
+  }
+  let sections = match debug.sections(exe) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo debug: ${prog}: ${e} (build it with its debug information: a native xo build keeps it unless -s or --release)")
+      return 1
+    }
+  }
+  var s = debug.live_session(exe, sections, prog, args[i + 1..])
+  if cmds.is_empty() { prompt_loop(os, s, json) } else { run_cmds(os, s, cmds, json) }
+}
+
+/// Runs cmds in order (see the file's comment): 1 when one failed.
+fn run_cmds(os: Os, var s: debug.Session, cmds: List[Str], json: Bool) -> Int uses (stdio, proc) {
+  var failed = false
   for c in cmds {
     if json {
       let out = s.exec_json(c)
@@ -98,12 +158,14 @@ fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
       break
     }
   }
+  // a live program ends with the commands (quit's end, again harmless)
+  let _q = s.exec("quit")
   if failed { 1 } else { 0 }
 }
 
 /// The commands of standard input, a line each (see the file's comment):
 /// 0 at its end or `quit`, 1 when it could not be read.
-fn prompt_loop(os: Os, var s: debug.Session, json: Bool) -> Int uses (stdio) {
+fn prompt_loop(os: Os, var s: debug.Session, json: Bool) -> Int uses (stdio, proc) {
   let tty = os.stdio.stdin_is_tty()
   var last = ""
   while !s.done {
@@ -112,7 +174,10 @@ fn prompt_loop(os: Os, var s: debug.Session, json: Bool) -> Int uses (stdio) {
     }
     let line = match os.stdio.read_line() {
       Ok(Some(l)) => l.trim()
-      Ok(None) => return 0
+      Ok(None) => {
+        let _q = s.exec("quit")
+        return 0
+      }
       Err(e) => {
         os.stdio.eprintln("xo dev debug: ${e}")
         return 1
@@ -135,5 +200,6 @@ fn prompt_loop(os: Os, var s: debug.Session, json: Bool) -> Int uses (stdio) {
       }
     }
   }
+  let _q = s.exec("quit")
   0
 }

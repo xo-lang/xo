@@ -19,6 +19,8 @@ struct Ctx {
   // the text atoms' order for a store link (decision 0403 stage 1b):
   // symbols, hot first; empty for the store's order
   layout_order: List[Str] = []
+  // the entitlements of a darwin program's ad hoc signature (macho_ents)
+  entitlements: List[Str] = []
   // the OS a link targets when it is not goos (an LLVM cross build for
   // Windows, decision 0197); "" for the host
   tgoos: Str = ""
@@ -87,7 +89,7 @@ const DWARF_HEADERPAD = "-Wl,-headerpad,0x1000"
 /// executable, as compiler/macho's link writes it, and the bundle kept
 /// only for --dsym (keep); when embedding fails the bundle stays and a
 /// warning says why.
-fn cc_dsym(os: Os, bin: Str, keep: Bool, split: Bool, oso_prefix: Str) {
+fn cc_dsym(os: Os, bin: Str, keep: Bool, split: Bool, oso_prefix: Str, ents: List[Str]) {
   let d = "${bin}.dSYM"
   os.fs.remove_all(d).ignore_err("none from an earlier link")
   // the object paths in bin are relative to oso_prefix when the link was given
@@ -105,7 +107,7 @@ fn cc_dsym(os: Os, bin: Str, keep: Bool, split: Bool, oso_prefix: Str) {
     // --debug-info=split (decision 0355): the bundle stays beside bin
     return
   }
-  let why = embed_dsym(os, bin)
+  let why = embed_dsym(os, bin, ents)
   if !why.is_empty() {
     os.stdio.eprintln("xo: ${base_name(bin)}'s DWARF stays in its dSYM: ${why}")
   } else if !keep {
@@ -113,9 +115,9 @@ fn cc_dsym(os: Os, bin: Str, keep: Bool, split: Bool, oso_prefix: Str) {
   }
 }
 
-/// Moves the DWARF of bin's dSYM into bin (macho.embed_dwarf); "" or why
-/// not.
-fn embed_dsym(os: Os, bin: Str) -> Str {
+/// Moves the DWARF of bin's dSYM into bin (macho.embed_dwarf), signed with
+/// the entitlements ents (macho_ents); "" or why not.
+fn embed_dsym(os: Os, bin: Str, ents: List[Str]) -> Str {
   let exe = match os.fs.read(bin) {
     Ok(b) => b
     Err(e) => return "reading ${bin}: ${e}"
@@ -124,7 +126,7 @@ fn embed_dsym(os: Os, bin: Str) -> Str {
     Ok(b) => b
     Err(e) => return "reading its dSYM: ${e}"
   }
-  match macho.embed_dwarf(exe, dw, base_name(bin)) {
+  match macho.embed_dwarf(exe, dw, base_name(bin), ents) {
     Ok(out) => write_exe(os, bin, out)
     Err(e) => e
   }
@@ -488,4 +490,21 @@ fn win_amd64_link(os: Os, srcs: List[Str], bin: Str, flags: List[Str]) -> Str {
     return "${clang}: ${err}\n${out}"
   }
   ""
+}
+
+/// The entitlements of a darwin program's ad hoc signature (decision
+/// 0253 point 5): get-task-allow on a development build with debug
+/// information (debug, so xo debug can control it; never a release build
+/// or -s), then each --entitlement.
+fn macho_ents(o: Opts, release: Bool, debug: Bool) -> List[Str] {
+  var out: List[Str] = []
+  if debug && !release && !o.strip {
+    out.push("com.apple.security.get-task-allow")
+  }
+  for e in o.entitlements {
+    if !out.contains(e) {
+      out.push(e)
+    }
+  }
+  out
 }

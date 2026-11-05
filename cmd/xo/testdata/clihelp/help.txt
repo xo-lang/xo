@@ -30,6 +30,7 @@ commands:
   trace     Perfetto JSON and a summary of a native execution trace
   bench     interleaved A/B measurement with a confidence interval (--ab)
   clean     remove xo's caches under the user cache directory (-cache)
+  debug     run a native program under the debugger (macOS arm64)
   lsp       Language Server Protocol server on stdin/stdout
   mcp       Model Context Protocol server on stdin/stdout
   serve     keep checked programs in memory for check and query

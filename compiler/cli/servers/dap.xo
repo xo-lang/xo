@@ -1,0 +1,417 @@
+// `xo debug --dap` (decision 0504, decision 0253's stage 7): the Debug
+// Adapter Protocol on standard input and output, with Content-Length
+// framing as LSP's (lsp.xo Reader, send). Each request becomes commands
+// of compiler/debug's session through its --json protocol (exec_json),
+// so DAP, --json and the batch mode are one implementation:
+// setBreakpoints -> break FILE:LINE, configurationDone -> run, continue,
+// next, stepIn, stepOut -> continue, next, step, finish, stackTrace ->
+// backtrace, scopes and variables -> locals and print with a field path
+// (a variables reference is a frame and a path), evaluate -> print,
+// disconnect -> quit. The program's standard output and error go to a
+// file whose new bytes are sent as output events at each stop (DAP's
+// standard output is the protocol). One thread of control: while the
+// program runs, requests wait (no pause).
+
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/debug
+
+/// The adapter's state besides the session.
+struct Dap {
+  seq: Int = 1
+  /// the program's output file and how much of it was sent
+  out: Str = ""
+  sent: Int = 0
+  /// the launch's working directory: a relative source path is in it
+  cwd: Str = ""
+  /// xo's std directory: a line table's std/... path is in its parent
+  std: Str = ""
+  /// the variables references of this stop: (frame, field path)
+  refs: List[(Int, Str)] = []
+  /// the breakpoint numbers of each source path
+  bpts: Map[Str, List[Int]] = {}
+  /// the frame the stop selected (a step or finish out of an inlined call
+  /// selects the frame it was about): the editor's stack starts there
+  top: Int = 0
+}
+
+/// Serves DAP until disconnect or the input's end: 0, or 1 when the input
+/// could not be read.
+pub fn dap_main(os: Os, args: List[Str]) -> Int uses (stdio, proc, env, fs, clock) {
+  let _a = args
+  var r = Reader{}
+  var d = Dap{}
+  while true {
+    let m = match dap_read(os, r) {
+      Ok(Some(m)) => m
+      Ok(None) => return 0
+      Err(e) => {
+        os.stdio.eprintln("xo debug --dap: ${e}")
+        return 1
+      }
+    }
+    let cmd = jstr_of(m, "command")
+    let a = get(m, "arguments") ?? J.Null
+    match cmd {
+      "initialize" => d.respond(os, m, true, jobj(["supportsConfigurationDoneRequest", "supportsEvaluateForHovers"], [jbool(true), jbool(true)]), "")
+      "launch" => {
+        let prog = jstr_of(a, "program")
+        var pargs: List[Str] = []
+        for x in jarr_of(a, "args") {
+          if let J.Str(v) = x {
+            pargs.push(v)
+          }
+        }
+        d.std = check.std_dir(os.env, os.fs)
+        if !d.std.starts_with("/") && !d.std.is_empty() {
+          d.std = "${os.fs.cwd_path().ok() ?? ""}/${d.std}"
+        }
+        d.cwd = jstr_of(a, "cwd")
+        if d.cwd.is_empty() {
+          d.cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+        }
+        match dap_session(os, prog, pargs) {
+          Ok(s) => {
+            d.out = "${temp_dir(os)}/xo-dap-${os.clock.now().unix_millis()}.out"
+            var live = s
+            live.out = d.out
+            d.respond(os, m, true, J.Null, "")
+            d.event(os, "initialized", J.Null)
+            return d.serve(os, r, live)
+          }
+          Err(e) => d.respond(os, m, false, J.Null, e)
+        }
+      }
+      "disconnect" | "terminate" => {
+        d.respond(os, m, true, J.Null, "")
+        return 0
+      }
+      _ => d.respond(os, m, false, J.Null, "launch the program first (only launch is supported, not attach)")
+    }
+  }
+  0
+}
+
+/// The live session of the executable prog with args.
+fn dap_session(os: Os, prog: Str, args: List[Str]) -> debug.Session ! Str uses fs {
+  if prog.is_empty() {
+    return Err("launch: no program (the executable to debug, built with its debug information)")
+  }
+  let exe = os.fs.read(prog) ?? e => return Err("${prog}: ${e}")
+  let sections = debug.sections(exe) ?? e => return Err("${prog}: ${e} (build it with its debug information: a native xo build keeps it unless -s or --release)")
+  Ok(debug.live_session(exe, sections, prog, args))
+}
+
+/// The requests after launch, until disconnect.
+fn (var d: Dap) serve(os: Os, var r: Reader, var s: debug.Session) -> Int uses (stdio, proc, fs) {
+  while true {
+    let m = match dap_read(os, r) {
+      Ok(Some(m)) => m
+      Ok(None) => {
+        let _q = s.exec_json("quit")
+        d.cleanup(os)
+        return 0
+      }
+      Err(e) => {
+        os.stdio.eprintln("xo debug --dap: ${e}")
+        let _q = s.exec_json("quit")
+        d.cleanup(os)
+        return 1
+      }
+    }
+    let a = get(m, "arguments") ?? J.Null
+    match jstr_of(m, "command") {
+      "setBreakpoints" => d.set_breakpoints(os, s, m, a)
+      "setExceptionBreakpoints" | "setFunctionBreakpoints" => d.respond(os, m, true, jobj(["breakpoints"], [jarr([])]), "")
+      "configurationDone" => {
+        d.respond(os, m, true, J.Null, "")
+        d.go(os, s, "run")
+      }
+      "threads" => {
+        var ts: List[J] = []
+        for t in jarr_of(ex(s, "threads"), "threads") {
+          let id = jint_of(t, "id")
+          ts.push(jobj(["id", "name"], [jint(id), jstr("thread ${id}")]))
+        }
+        if ts.is_empty() {
+          ts.push(jobj(["id", "name"], [jint(1), jstr("main")]))
+        }
+        d.respond(os, m, true, jobj(["threads"], [jarr(ts)]), "")
+      }
+      "stackTrace" => d.stack_trace(os, s, m)
+      "scopes" => {
+        let f = jint_of(a, "frameId")
+        let ref = d.ref_of(f, "")
+        d.respond(os, m, true, jobj(["scopes"], [jarr([jobj(["name", "variablesReference", "expensive"], [jstr("Locals"), jint(ref), jbool(false)])])]), "")
+      }
+      "variables" => d.variables(os, s, m, jint_of(a, "variablesReference"))
+      "evaluate" => {
+        let f = if let Some(J.Num(_)) = get(a, "frameId") { jint_of(a, "frameId") } else { 0 }
+        let _f = ex(s, "frame ${f}")
+        let p = ex(s, "print ${jstr_of(a, "expression")}")
+        if !jbool_of(p, "ok") {
+          d.respond(os, m, false, J.Null, jstr_of(p, "error"))
+        } else {
+          let v = get(p, "value") ?? J.Null
+          let ref = if get(v, "fields").is_some() { d.ref_of(f, jstr_of(p, "path")) } else { 0 }
+          d.respond(os, m, true, jobj(["result", "variablesReference"], [jstr(value_text(p)), jint(ref)]), "")
+        }
+      }
+      "continue" => {
+        d.respond(os, m, true, jobj(["allThreadsContinued"], [jbool(true)]), "")
+        d.go(os, s, "continue")
+      }
+      "next" | "stepIn" | "stepOut" => {
+        d.respond(os, m, true, J.Null, "")
+        let _f = ex(s, "frame ${d.top}")
+        let c = match jstr_of(m, "command") {
+          "next" => "next"
+          "stepIn" => "step"
+          _ => "finish"
+        }
+        d.go(os, s, c)
+      }
+      "pause" => d.respond(os, m, false, J.Null, "pause is not supported: the adapter waits while the program runs (set a breakpoint)")
+      "disconnect" | "terminate" => {
+        let _q = s.exec_json("quit")
+        d.flush(os)
+        d.cleanup(os)
+        d.respond(os, m, true, J.Null, "")
+        return 0
+      }
+      _ => d.respond(os, m, false, J.Null, "unsupported request ${jstr_of(m, "command").quote()}")
+    }
+  }
+  0
+}
+
+/// Runs the session command c (run, continue, next, step, finish) and
+/// reports where the program stopped: output, then stopped, or exited
+/// and terminated.
+fn (var d: Dap) go(os: Os, var s: debug.Session, c: Str) uses (stdio, proc, fs) {
+  let j = ex(s, c)
+  d.refs = []
+  d.top = 0
+  for f in jarr_of(ex(s, "backtrace"), "frames") {
+    if jbool_of(f, "selected") {
+      d.top = jint_of(f, "index")
+    }
+  }
+  d.flush(os)
+  if !jbool_of(j, "ok") {
+    d.event(os, "output", jobj(["category", "output"], [jstr("stderr"), jstr("xo debug: ${jstr_of(j, "error")}\n")]))
+    if c == "run" {
+      d.event(os, "terminated", J.Null)
+    } else {
+      // still stopped where it was
+      d.event(os, "stopped", jobj(["reason", "threadId", "allThreadsStopped"], [jstr("pause"), jint(1), jbool(true)]))
+    }
+    return
+  }
+  let th = jint_of(j, "thread")
+  match jstr_of(j, "stop") {
+    "breakpoint" => d.event(os, "stopped", jobj(["reason", "threadId", "allThreadsStopped", "hitBreakpointIds"], [jstr("breakpoint"), jint(th), jbool(true), jarr([jint(jint_of(j, "id"))])]))
+    "step" | "finish" => d.event(os, "stopped", jobj(["reason", "threadId", "allThreadsStopped"], [jstr("step"), jint(th), jbool(true)]))
+    "exception" => d.event(os, "stopped", jobj(["reason", "threadId", "allThreadsStopped", "description", "text"], [jstr("exception"), jint(th), jbool(true), jstr("Mach exception ${jint_of(j, "exception")}"), jstr("exception ${jint_of(j, "exception")} (code ${jint_of(j, "code")}, subcode ${jint_of(j, "subcode")})")]))
+    "exited" => {
+      d.event(os, "exited", jobj(["exitCode"], [jint(jint_of(j, "status"))]))
+      d.event(os, "terminated", J.Null)
+    }
+    "signaled" => {
+      d.event(os, "exited", jobj(["exitCode"], [jint(128 + jint_of(j, "signal"))]))
+      d.event(os, "terminated", J.Null)
+    }
+    _ => d.event(os, "stopped", jobj(["reason", "threadId", "allThreadsStopped"], [jstr("pause"), jint(if th == 0 { 1 } else { th }), jbool(true)]))
+  }
+}
+
+/// setBreakpoints: the source's breakpoints replaced by its lines'.
+fn (var d: Dap) set_breakpoints(os: Os, var s: debug.Session, m: J, a: J) uses (stdio, proc) {
+  let src = get(a, "source") ?? J.Null
+  let path = jstr_of(src, "path")
+  for id in d.bpts.get(path) ?? [] {
+    let _x = ex(s, "delete ${id}")
+  }
+  var ids: List[Int] = []
+  var out: List[J] = []
+  for b in jarr_of(a, "breakpoints") {
+    let line = jint_of(b, "line")
+    var j = ex(s, "break ${path}:${line}")
+    if !jbool_of(j, "ok") {
+      // a line table may name the file by a relative or trimmed path
+      let parts = path.split("/")
+      j = ex(s, "break ${parts[parts.len() - 1]}:${line}")
+    }
+    if jbool_of(j, "ok") {
+      let id = jint_of(j, "id")
+      ids.push(id)
+      out.push(jobj(["id", "verified", "line"], [jint(id), jbool(true), jint(line)]))
+    } else {
+      out.push(jobj(["verified", "line", "message"], [jbool(false), jint(line), jstr(jstr_of(j, "error"))]))
+    }
+  }
+  d.bpts[path] = ids
+  d.respond(os, m, true, jobj(["breakpoints"], [jarr(out)]), "")
+}
+
+/// stackTrace: the backtrace, inlined calls as frames.
+fn (var d: Dap) stack_trace(os: Os, var s: debug.Session, m: J) uses (stdio, proc) {
+  let j = ex(s, "backtrace")
+  var fs: List[J] = []
+  for f in jarr_of(j, "frames") {
+    if jint_of(f, "index") < d.top {
+      continue
+    }
+    let file = jstr_of(f, "file")
+    var p = jstr_of(f, "path")
+    if p.starts_with("./") {
+      p = p[2..]
+    }
+    if p.starts_with("std/") && !d.std.is_empty() {
+      // std's files are named from std's parent (the build's trimmed path)
+      p = "${d.std}/${p[4..]}"
+    } else if !p.is_empty() && !p.starts_with("/") && !d.cwd.is_empty() {
+      p = "${d.cwd}/${p}"
+    }
+    let name = jstr_of(f, "function")
+    let line = jint_of(f, "line")
+    if file.is_empty() || line <= 0 {
+      fs.push(jobj(["id", "name", "line", "column", "presentationHint", "instructionPointerReference"], [jint(jint_of(f, "index")), jstr(name), jint(0), jint(0), jstr("subtle"), jstr(jstr_of(f, "pc"))]))
+    } else {
+      fs.push(jobj(["id", "name", "source", "line", "column", "instructionPointerReference"], [jint(jint_of(f, "index")), jstr(name), jobj(["name", "path"], [jstr(file), jstr(p)]), jint(line), jint(1), jstr(jstr_of(f, "pc"))]))
+    }
+  }
+  d.respond(os, m, true, jobj(["stackFrames", "totalFrames"], [jarr(fs), jint(fs.len())]), "")
+}
+
+/// variables: a frame's locals (path ""), or the fields of a value at a
+/// field path.
+fn (var d: Dap) variables(os: Os, var s: debug.Session, m: J, ref: Int) uses (stdio, proc) {
+  if ref < 1 || ref > d.refs.len() {
+    d.respond(os, m, false, J.Null, "no variables reference ${ref} at this stop")
+    return
+  }
+  let (f, path) = d.refs[ref - 1]
+  let _f = ex(s, "frame ${f}")
+  var vs: List[J] = []
+  if path.is_empty() {
+    for v in jarr_of(ex(s, "locals"), "vars") {
+      let name = jstr_of(v, "name")
+      let val = get(v, "value") ?? J.Null
+      let r = if get(val, "fields").is_some() { d.ref_of(f, name) } else { 0 }
+      vs.push(jobj(["name", "value", "type", "variablesReference"], [jstr(name), jstr(jstr_of(v, "text")), jstr(jstr_of(v, "type")), jint(r)]))
+    }
+  } else {
+    let p = ex(s, "print ${path}")
+    let val = get(p, "value") ?? J.Null
+    for fl in jarr_of(val, "fields") {
+      let name = jstr_of(fl, "name")
+      let fv = get(fl, "value") ?? J.Null
+      let r = if get(fv, "fields").is_some() { d.ref_of(f, "${path}.${name}") } else { 0 }
+      vs.push(jobj(["name", "value", "variablesReference"], [jstr(name), jstr(short_text(fv)), jint(r)]))
+    }
+    for (i, e) in jarr_of(val, "elements").indexed() {
+      vs.push(jobj(["name", "value", "variablesReference"], [jstr("[${i}]"), jstr(short_text(e)), jint(0)]))
+    }
+  }
+  d.respond(os, m, true, jobj(["variables"], [jarr(vs)]), "")
+}
+
+/// The variables reference of frame f's value at path (made once a stop).
+fn (var d: Dap) ref_of(f: Int, path: Str) -> Int {
+  for (i, (rf, rp)) in d.refs.indexed() {
+    if rf == f && rp == path {
+      return i + 1
+    }
+  }
+  d.refs.push((f, path))
+  d.refs.len()
+}
+
+/// The program's output since the last flush, as an output event.
+fn (var d: Dap) flush(os: Os) uses (stdio, fs) {
+  if d.out.is_empty() {
+    return
+  }
+  let b = os.fs.read(d.out).ok() ?? b""
+  if b.len() > d.sent {
+    let text = b[d.sent..].to_str() ?? ""
+    d.sent = b.len()
+    d.event(os, "output", jobj(["category", "output"], [jstr("stdout"), jstr(text)]))
+  }
+}
+
+fn (d: Dap) cleanup(os: Os) uses fs {
+  if !d.out.is_empty() {
+    os.fs.remove(d.out).ignore_err("the program's output file may not exist")
+  }
+}
+
+fn (var d: Dap) respond(os: Os, req: J, ok: Bool, body: J, msg: Str) uses stdio {
+  var keys = ["seq", "type", "request_seq", "success", "command"]
+  var vals = [jint(d.seq), jstr("response"), jint(jint_of(req, "seq")), jbool(ok), jstr(jstr_of(req, "command"))]
+  if !ok {
+    keys.push("message")
+    vals.push(jstr(msg))
+  }
+  if !(body is J.Null) {
+    keys.push("body")
+    vals.push(body)
+  }
+  d.seq += 1
+  send(os, jobj(keys, vals))
+}
+
+fn (var d: Dap) event(os: Os, name: Str, body: J) uses stdio {
+  var keys = ["seq", "type", "event"]
+  var vals = [jint(d.seq), jstr("event"), jstr(name)]
+  if !(body is J.Null) {
+    keys.push("body")
+    vals.push(body)
+  }
+  d.seq += 1
+  send(os, jobj(keys, vals))
+}
+
+/// One DAP message, parsed.
+fn dap_read(os: Os, var r: Reader) -> J? ! Str uses stdio {
+  match r.message(os)? {
+    Some(text) => Ok(Some(parse(text)?))
+    None => Ok(None)
+  }
+}
+
+/// The session's answer to line (its --json object).
+fn ex(var s: debug.Session, line: Str) -> J uses proc {
+  parse(s.exec_json(line).trim()).ok() ?? J.Null
+}
+
+/// A print's or a variable's text: its value's text, else its type.
+fn value_text(p: J) -> Str {
+  let t = jstr_of(p, "text")
+  if !t.is_empty() { t } else { short_text(get(p, "value") ?? J.Null) }
+}
+
+fn short_text(v: J) -> Str {
+  let t = jstr_of(v, "text")
+  if !t.is_empty() {
+    return t
+  }
+  let ty = jstr_of(v, "type")
+  if ty.is_empty() { "?" } else { "${ty}{...}" }
+}
+
+// jstr_of and jbool_of: replay.xo
+
+fn jint_of(v: J, k: Str) -> Int {
+  match get(v, k) {
+    Some(J.Num(t)) => Int.parse(t) ?? 0
+    _ => 0
+  }
+}
+
+fn jarr_of(v: J, k: Str) -> List[J] {
+  match get(v, k) {
+    Some(J.Arr(items, _)) => items
+    _ => []
+  }
+}

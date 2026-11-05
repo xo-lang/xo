@@ -1,8 +1,13 @@
 // The ad hoc code signature macOS requires of arm64 executables, in the
 // format of Go's linker (cmd/internal/codesign): an embedded signature
 // SuperBlob holding one CodeDirectory, the SHA-256 of every 4 KiB page of
-// the file before the signature, no requirements, no entitlements. All
-// fields are big endian.
+// the file before the signature, no requirements and no entitlements;
+// with entitlements (decision 0253 point 5: get-task-allow on a
+// development build, the debugger's on xo), as codesign writes them: an
+// empty requirements blob, the entitlements as an XML plist and as DER,
+// their hashes in the CodeDirectory's special slots 2, 5 and 7, and not
+// "linker signed" (the kernel ignores a linker signature's entitlements).
+// All fields are big endian.
 
 use std/crypto
 
@@ -13,12 +18,105 @@ const CSMAGIC_CODEDIRECTORY = 0xfade0c02
 const CS_CODEDIRECTORY_SIZE = 88
 const CS_SUPERBLOB_SIZE = 12
 const CS_BLOB_SIZE = 8
+const CSMAGIC_REQUIREMENTS = 0xfade0c01
+const CSMAGIC_EMBEDDED_ENTITLEMENTS = 0xfade7171
+const CSMAGIC_EMBEDDED_DER_ENTITLEMENTS = 0xfade7172
+/// the special slots: 1 info plist to 7 DER entitlements
+const CS_SPECIAL_SLOTS = 7
 
-/// The size of the signature of a file of code_size bytes.
-fn signature_size(code_size: Int, id: Str) -> Int {
+/// The size of the signature of a file of code_size bytes with the
+/// entitlements ents (each a key set to true).
+fn signature_size(code_size: Int, id: Str, ents: List[Str]) -> Int {
   let nhashes = (code_size + CS_PAGE - 1) / CS_PAGE
-  let hash_off = CS_CODEDIRECTORY_SIZE + id.len() + 1
-  CS_SUPERBLOB_SIZE + CS_BLOB_SIZE + hash_off + nhashes * 32
+  if ents.is_empty() {
+    let hash_off = CS_CODEDIRECTORY_SIZE + id.len() + 1
+    return CS_SUPERBLOB_SIZE + CS_BLOB_SIZE + hash_off + nhashes * 32
+  }
+  let hash_off = CS_CODEDIRECTORY_SIZE + id.len() + 1 + CS_SPECIAL_SLOTS * 32
+  CS_SUPERBLOB_SIZE + 4 * CS_BLOB_SIZE + hash_off + nhashes * 32 + req_blob().len() + ents_xml_blob(ents).len() + ents_der_blob(ents).len()
+}
+
+/// The empty requirements blob codesign writes.
+fn req_blob() -> Bytes {
+  var o = new_out(12)
+  o.be32(CSMAGIC_REQUIREMENTS)
+  o.be32(12)
+  o.be32(0)
+  o.done()
+}
+
+/// The entitlements ents (each true) as codesign embeds an XML plist.
+fn ents_xml_blob(ents: List[Str]) -> Bytes {
+  var b = StrBuilder.new()
+  b.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>")
+  for k in sorted_ents(ents) {
+    b.write("<key>${k}</key><true/>")
+  }
+  b.write("</dict></plist>\n")
+  let x = b.freeze().bytes()
+  var o = new_out(8 + x.len())
+  o.be32(CSMAGIC_EMBEDDED_ENTITLEMENTS)
+  o.be32(8 + x.len())
+  o.bytes(x)
+  o.done()
+}
+
+/// The entitlements as DER (what the kernel reads since macOS 12): a
+/// [APPLICATION 16] of the version 1 and a [CONTEXT 16] dictionary of
+/// (UTF8String key, BOOLEAN true) sequences, keys sorted.
+fn ents_der_blob(ents: List[Str]) -> Bytes {
+  var dict: List[Int] = []
+  for k in sorted_ents(ents) {
+    var kv: List[Int] = []
+    var kb: List[Int] = []
+    for c in k.bytes() {
+      kb.push(Int(c))
+    }
+    der_put(kv, 0x0c, kb)
+    der_put(kv, 0x01, [0xff])
+    der_put(dict, 0x30, kv)
+  }
+  var body: List[Int] = []
+  der_put(body, 0x02, [1])
+  der_put(body, 0xb0, dict)
+  var all: List[Int] = []
+  der_put(all, 0x70, body)
+  var o = new_out(8 + all.len())
+  o.be32(CSMAGIC_EMBEDDED_DER_ENTITLEMENTS)
+  o.be32(8 + all.len())
+  for v in all {
+    o.u8(v)
+  }
+  o.done()
+}
+
+fn sorted_ents(ents: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for k in ents {
+    if !out.contains(k) {
+      out.push(k)
+    }
+  }
+  out.sort()
+}
+
+/// Appends tag, the DER length of v, and v to out.
+fn der_put(var out: List[Int], tag: Int, v: List[Int]) {
+  out.push(tag)
+  let n = v.len()
+  if n < 128 {
+    out.push(n)
+  } else if n < 256 {
+    out.push(0x81)
+    out.push(n)
+  } else {
+    out.push(0x82)
+    out.push(n >> 8)
+    out.push(n & 255)
+  }
+  for x in v {
+    out.push(x)
+  }
 }
 
 /// The signature of head + tail (the whole file before it, in two
@@ -57,34 +155,51 @@ fn tail_page_hashes_with(hl: Int, tail: Bytes, hash: (fn(Bytes, List[(Int, Int)]
   out
 }
 
-fn code_signature(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_size: Int) -> Bytes {
-  code_signature_with(head, tail, id, text_off, text_size, [])
+fn code_signature(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_size: Int, ents: List[Str]) -> Bytes {
+  code_signature_with(head, tail, id, text_off, text_size, [], ents)
 }
 
 /// code_signature, with tail_page_hashes(head.len(), tail) already made
-/// (pre; [] to make them here).
-fn code_signature_with(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_size: Int, pre: List[Bytes]) -> Bytes {
+/// (pre; [] to make them here), with the entitlements ents.
+fn code_signature_with(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_size: Int, pre: List[Bytes], ents: List[Str]) -> Bytes {
   let hl = head.len()
   let code_size = hl + tail.len()
   let nhashes = (code_size + CS_PAGE - 1) / CS_PAGE
   let id_off = CS_CODEDIRECTORY_SIZE
-  let hash_off = id_off + id.len() + 1
-  let size = signature_size(code_size, id)
+  let nspecial = if ents.is_empty() { 0 } else { CS_SPECIAL_SLOTS }
+  let hash_off = id_off + id.len() + 1 + nspecial * 32
+  let size = signature_size(code_size, id, ents)
+  let cd_size = hash_off + nhashes * 32
+  let nblobs = if ents.is_empty() { 1 } else { 4 }
+  let req = if ents.is_empty() { b"" } else { req_blob() }
+  let xml = if ents.is_empty() { b"" } else { ents_xml_blob(ents) }
+  let der = if ents.is_empty() { b"" } else { ents_der_blob(ents) }
   var o = new_out(size)
-  // SuperBlob, one blob index entry
+  // SuperBlob and its blob index: the CodeDirectory (slot 0), then the
+  // requirements (2), entitlements (5) and DER entitlements (7)
+  let cd_at = CS_SUPERBLOB_SIZE + nblobs * CS_BLOB_SIZE
   o.be32(CSMAGIC_EMBEDDED_SIGNATURE)
   o.be32(size)
-  o.be32(1)
+  o.be32(nblobs)
   o.be32(0)
-  o.be32(CS_SUPERBLOB_SIZE + CS_BLOB_SIZE)
-  // CodeDirectory
+  o.be32(cd_at)
+  if !ents.is_empty() {
+    o.be32(2)
+    o.be32(cd_at + cd_size)
+    o.be32(5)
+    o.be32(cd_at + cd_size + req.len())
+    o.be32(7)
+    o.be32(cd_at + cd_size + req.len() + xml.len())
+  }
+  // CodeDirectory: version 0x20400; adhoc, and linker signed without
+  // entitlements
   o.be32(CSMAGIC_CODEDIRECTORY)
-  o.be32(size - CS_SUPERBLOB_SIZE - CS_BLOB_SIZE)
+  o.be32(cd_size)
   o.be32(0x20400)
-  o.be32(0x20002)
+  o.be32(if ents.is_empty() { 0x20002 } else { 0x2 })
   o.be32(hash_off)
   o.be32(id_off)
-  o.be32(0)
+  o.be32(nspecial)
   o.be32(nhashes)
   o.be32(code_size)
   // hash size, type SHA-256, pad, page size
@@ -103,6 +218,20 @@ fn code_signature_with(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_si
   o.be64(1)
   o.bytes(id.bytes())
   o.u8(0)
+  if !ents.is_empty() {
+    // the special slots' hashes, slot 7 first (slot n at hash_off - 32n);
+    // 1, 3, 4 and 6 hold nothing
+    var slots: List[Bytes] = [b"", b"", crypto.sha256(req), b"", b"", crypto.sha256(xml), b"", crypto.sha256(der)]
+    var n = CS_SPECIAL_SLOTS
+    while n >= 1 {
+      if slots[n].is_empty() {
+        o.bytes(Bytes.zeroed(32))
+      } else {
+        o.bytes(slots[n])
+      }
+      n -= 1
+    }
+  }
   var p = 0
   var pi = 0
   while p < code_size {
@@ -123,5 +252,8 @@ fn code_signature_with(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_si
     }
     p = end
   }
+  o.bytes(req)
+  o.bytes(xml)
+  o.bytes(der)
   o.done()
 }

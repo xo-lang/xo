@@ -6,7 +6,8 @@
 #     scripts/sign-macos.sh [--notarize] [--zip OUT.zip] FILE...
 #
 # Each FILE is signed in place with the hardened runtime and a secure
-# timestamp (replacing the ad hoc signature Xo's linker writes), then
+# timestamp (replacing the ad hoc signature Xo's linker writes; a file
+# named xo with the entitlements of scripts/xo-entitlements.plist), then
 # checked with codesign --verify --strict. --notarize zips the signed
 # files, submits the zip with notarytool and waits, prints the notary log
 # when the submission is not accepted, and runs spctl on each file.
@@ -40,8 +41,16 @@ if [ -z "${XO_SIGN_IDENTITY:-}" ]; then
   exit 2
 fi
 
+# xo itself gets the debugger entitlement `xo debug` needs (decision 0253
+# point 5, scripts/xo-entitlements.plist); no file keeps the ad hoc
+# signature's get-task-allow, which notarization refuses
+ents="$(cd "$(dirname "$0")" && pwd)/xo-entitlements.plist"
 for f in "$@"; do
-  codesign --force --sign "$XO_SIGN_IDENTITY" --options runtime --timestamp "$f"
+  if [ "$(basename "$f")" = xo ]; then
+    codesign --force --sign "$XO_SIGN_IDENTITY" --options runtime --timestamp --entitlements "$ents" "$f"
+  else
+    codesign --force --sign "$XO_SIGN_IDENTITY" --options runtime --timestamp "$f"
+  fi
   codesign --verify --strict --verbose=2 "$f"
 done
 

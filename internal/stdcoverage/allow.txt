@@ -53,3 +53,10 @@ http.serve_component  a wasi:http component runs under a host, not as a program:
 # (corpus/yaml, corpus/yamlfuzz, golden yaml_derive) reach them through yaml.decode and
 # yaml.encode_value, which the coverage scan does not follow into generated code.
 yamlcodec.*  called only by derive Yaml's generated code
+
+# xo debug's process control (decision 0253): reached only by xo debug,
+# whose cmd/xo tests (TestDebugBatch, TestDebugStep, TestDebugTasks,
+# TestDebugDAP, TestDebugAttach) trace a second process; a golden cannot
+# debug a program. dbg_wait blocks its own thread in mach_msg or wait4
+# with a timeout, not the event loop (compiler/ssa/waits.xo NO_WAIT).
+internal.dbg_*	reached only by xo debug, tested by cmd/xo TestDebug*

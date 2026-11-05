@@ -1,0 +1,29 @@
+usage: xo debug [--batch] [--json] [-c CMD]... PROG [ARGS]
+       xo debug --dap
+
+Runs PROG, a native executable with its debug information (a native
+build keeps it unless -s or --release), under xo's own debugger
+(decision 0253) with ARGS. The commands come from -c, in order (--batch
+requires them: each is echoed as `(xo) CMD`, then its output), else one a
+line from standard input, with the prompt `(xo) ` on a terminal and an
+empty line repeating the last command. --json prints one JSON line per
+command instead (spec 11.5). The program is ended after the last command.
+--dap serves the Debug Adapter Protocol on standard input and output for
+an editor (VS Code, Zed, nvim-dap): the editor's launch request names the
+program (decision 0504).
+
+Commands: break (b) FILE:LINE or FUNCTION, delete N, run (r), continue
+(c), step (s: to the next line, into calls), next (n: over calls), finish
+(out of the selected frame, an inlined call's too), print (p)
+NAME[.FIELD]..., locals, backtrace (bt), frame N, threads, quit (q). A
+stop suspends every thread of the program; step and next run the stopped
+thread alone, one instruction at a time, and a call they step over with
+every thread. tasks and task come with decision 0253's stage 4.
+
+macOS arm64 only so far: xo needs the com.apple.security.cs.debugger
+entitlement (ad hoc for development, the release signature for a
+release) and Developer Mode (DevToolsSecurity -enable).
+
+Example:
+  xo build -o sum ./sum
+  xo debug --batch -c 'b main.xo:9' -c run -c locals -c bt sum

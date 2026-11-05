@@ -113,3 +113,29 @@ fn obj_word[T](x: T) -> Int
 /// them). Native backends only; the Go backend faults.
 fn rt_queued() -> Int uses realtime
 fn rt_allocs() -> Int uses realtime
+
+/// `xo debug`'s process control (decision 0253 stage 2; std/native
+/// llrt/dbgmac.xo): macOS arm64 only so far, elsewhere dbg_launch is an
+/// Err. A debuggee is an Int handle. dbg_launch starts path with args
+/// (out not "": its standard output and error to that file, its input
+/// /dev/null) stopped before its first instruction (ASLR off: the executable's
+/// addresses are its file's); dbg_resume lets it run (first its start,
+/// then the reply to the stop it is in; a stop suspends every thread,
+/// and alone keeps the others suspended for a single step); dbg_wait (ms 0: no limit) gives
+/// [1, thread, exception, code, subcode] at an exception (EXC_BREAKPOINT
+/// 6: subcode the trap's address, 0 after a single step), [2, status] at
+/// its exit, [3, signal] when a signal ended it, [0] when the time
+/// passed. dbg_regs: x0 to x28, fp, lr, sp, pc, cpsr (empty when they
+/// cannot be read). dbg_write makes the page a private copy first (a
+/// trap planted in the program's text).
+fn dbg_launch(path: Str, args: List[Str], out: Str) -> Int ! Str uses proc
+fn dbg_pid(h: Int) -> Int
+fn dbg_read(h: Int, a: Int, n: Int) -> Bytes?
+fn dbg_write(h: Int, a: Int, data: Bytes) -> Bool uses proc
+fn dbg_regs(h: Int, th: Int) -> List[Int]
+fn dbg_set_pc(h: Int, th: Int, pc: Int) -> Bool uses proc
+fn dbg_set_step(h: Int, th: Int, on: Bool) -> Bool uses proc
+fn dbg_resume(h: Int, alone: Bool) -> Bool uses proc
+fn dbg_wait(h: Int, ms: Int) -> List[Int] uses proc
+fn dbg_kill(h: Int) uses proc
+fn dbg_close(h: Int)

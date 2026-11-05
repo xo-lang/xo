@@ -1109,6 +1109,7 @@ func BuildXo(root, seed, out string) error {
 	defer os.Remove(tmp)
 	args := []string{"build", "--backend=" + backend, "--std=" + xoPath(filepath.Join(root, "std")), "-o", xoPath(tmp)}
 	args = append(args, StampArgs(root, seed)...)
+	args = append(args, debuggerArgs(seed)...)
 	args = append(args, xoPath(filepath.Join(root, CompilerDir(root), "xo")))
 	o, err := runIn(root, env, seed, args...)
 	if err != nil {
@@ -1312,4 +1313,19 @@ func shortPath(p string) string {
 		parts = parts[len(parts)-3:]
 	}
 	return strings.Join(parts, "/")
+}
+
+// debuggerArgs is the entitlement `xo debug` needs to control another
+// process on macOS (decision 0253 point 5), for a seed whose build knows
+// --entitlement (its `build -h` names it); none elsewhere or for an older
+// seed, whose xo debug then cannot run programs until the next build.
+func debuggerArgs(seed string) []string {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	out, _ := exec.Command(seed, "build", "-h").CombinedOutput()
+	if !strings.Contains(string(out), "--entitlement=KEY") {
+		return nil
+	}
+	return []string{"--entitlement=com.apple.security.cs.debugger"}
 }

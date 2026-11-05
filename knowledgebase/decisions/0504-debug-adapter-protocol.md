@@ -63,3 +63,26 @@ implementation:
   the Go backend.
 - Drop DAP from the spec and leave editors to the `--json` protocol:
   every editor would need its own adapter.
+
+## Implementation
+
+- 2026-11-05 (Xo Lang 2, with decision 0253 stages 2 and 3):
+  compiler/cli/servers dap.xo, `xo debug --dap`. Requests become session
+  commands through exec_json (the --json protocol), parsed with the
+  servers' JSON reader; framing is LSP's (Reader, send). The
+  `initialized` event follows the launch response, so breakpoints are set
+  on a live session; configurationDone runs the program. A variables
+  reference is (frame, field path), numbered per stop. The program's
+  standard output and error go to a temporary file (std/internal
+  dbg_launch's `out`: posix_spawn file actions, stdin /dev/null), whose
+  new bytes are an output event at each stop, since the adapter's
+  standard output is the protocol. The editor's stack starts at the frame
+  the stop selected (a next or finish out of an inlined call selects the
+  frame it was about; DAP has no selected frame). A relative source path
+  is resolved against launch's cwd, std's (`./std/...`) against xo's std
+  directory. The --json frames gained `path` (spec 11.5). Test: cmd/xo
+  TestDebugDAP, a Go DAP client (breakpoint by full path, stack and
+  source paths, locals and a struct's fields, evaluate, next, stepOut,
+  stepIn into std with a source file that exists, output, exit code). Not
+  yet: attach, pause (one thread of control: requests wait while the
+  program runs), conditional breakpoints, an editor extension.

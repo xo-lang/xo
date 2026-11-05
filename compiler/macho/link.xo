@@ -81,6 +81,10 @@ pub struct LinkOpts {
   /// The DWARF in the executable's own __DWARF segment (decision 0346),
   /// uncompressed, before __LINKEDIT, mapped with no access
   pub embed_dwarf: Bool = true
+  /// The entitlements the ad hoc signature carries, each set to true
+  /// (sign.xo; decision 0253 point 5): get-task-allow on a development
+  /// build, `--entitlement=KEY`'s
+  pub entitlements: List[Str] = []
   /// link_debug also gives the dSYM's DWARF file (`--dsym`)
   pub dsym: Bool = false
   /// A separately compiled program's link through std's store (decision
@@ -1739,7 +1743,7 @@ fn (var l: Linker) write() -> Bytes {
   link.bytes(strtab)
   link.pad(16)
   let sig_off = le_off + link.n
-  let sig_size = signature_size(sig_off, l.opts.name)
+  let sig_size = signature_size(sig_off, l.opts.name, l.opts.entitlements)
   let link_bytes = link.done()
   l.segs[le].filesize = link_bytes.len() + sig_size
   l.segs[le].vmsize = align_up(l.segs[le].filesize, PAGE)
@@ -1969,7 +1973,7 @@ fn (var l: Linker) write() -> Bytes {
   // the header and load commands fill the start of __TEXT's first page
   let head = h.done()
   let text = l.segs[1]
-  let sig = code_signature_with(head, rest, l.opts.name, text.fileoff, text.filesize, pages)
+  let sig = code_signature_with(head, rest, l.opts.name, text.fileoff, text.filesize, pages, l.opts.entitlements)
   var file = BytesBuilder.with_capacity(head.len() + rest.len() + sig.len())
   file.write(head)
   file.write(rest)

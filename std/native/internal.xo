@@ -3,6 +3,7 @@
 use native/llrt/aesgcm
 use native/llrt/chacha
 use native/llrt/cpu
+use native/llrt/dbgmac
 use native/llrt/ctx
 use native/llrt/fsops
 use native/llrt/heapos
@@ -757,3 +758,34 @@ pub fn uuid_half(s: Bytes, off: Int, dashed: Bool, half: Int) -> Int? {
   Some(w)
 }
 
+// `xo debug`'s process control (decision 0253 stage 2): dbgmac.xo on
+// macOS arm64; elsewhere no debuggee is ever made, so the others are never
+// reached with a handle.
+
+fn dbg_launch(path: Str, args: List[Str], out: Str) -> Int ! Str uses proc {
+  if target.os != TargetOs.Darwin || target.arch != TargetArch.Arm64 {
+    return Err("xo debug runs programs on macOS arm64 so far (decision 0253 stage 2; Linux is stage 6)")
+  }
+  let (h, e) = dbgmac.launch(path, args, out)
+  if h == 0 { Err(e) } else { Ok(h) }
+}
+
+fn dbg_pid(h: Int) -> Int { dbgmac.pid(h) }
+
+fn dbg_read(h: Int, a: Int, n: Int) -> Bytes? { dbgmac.read(h, a, n) }
+
+fn dbg_write(h: Int, a: Int, data: Bytes) -> Bool uses proc { dbgmac.write(h, a, data) }
+
+fn dbg_regs(h: Int, th: Int) -> List[Int] { dbgmac.regs(h, th) }
+
+fn dbg_set_pc(h: Int, th: Int, pc: Int) -> Bool uses proc { dbgmac.set_pc(h, th, pc) }
+
+fn dbg_set_step(h: Int, th: Int, on: Bool) -> Bool uses proc { dbgmac.set_step(h, th, on) }
+
+fn dbg_resume(h: Int, alone: Bool) -> Bool uses proc { dbgmac.resume(h, alone) }
+
+fn dbg_wait(h: Int, ms: Int) -> List[Int] uses proc { dbgmac.wait(h, ms) }
+
+fn dbg_kill(h: Int) uses proc { dbgmac.kill(h) }
+
+fn dbg_close(h: Int) { dbgmac.close(h) }

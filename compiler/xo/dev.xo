@@ -284,3 +284,6 @@ fn dump_cmd(os: Os, args: List[Str]) -> Int {
     }
   }
 }
+
+/// `xo debug` (decision 0253 stage 2): compiler/cli/dev debugcmd.xo.
+fn xo_debug_cmd(os: Os, args: List[Str], usage: Str) -> Int { dev.debug_main(os, args, usage) }

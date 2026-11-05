@@ -1,15 +1,21 @@
 // A stopped thread recorded as text (decision 0253): its registers and
 // pieces of its memory, a Target the debugger's parts read like a live
-// process. Tests make one from lldb or gdb at a breakpoint
+// process; with proc set, a live process's stopped thread (live.xo): its
+// registers read at the stop, its memory read when asked. Tests make one from lldb or gdb at a breakpoint
 // (internal/arm64 TestUnwind); later a core file can become one.
 //
 //   reg N 0xVALUE        register N (DWARF numbering; -1 the pc)
 //   mem 0xADDR HEXBYTES  bytes at ADDR
 
+use std/internal
+
 /// A recorded thread.
 pub struct Snapshot {
   pub regs: Map[Int, Int] = {}
   pub chunks: List[(Int, Bytes)] = []
+  /// a live debuggee (std/internal dbg_launch's handle) whose memory the
+  /// reads go to, or 0
+  pub proc: Int = 0
 }
 
 /// The snapshot in text s, or the first line it cannot read.
@@ -64,6 +70,9 @@ fn (s: Snapshot) mem(a: Int, n: Int) -> Bytes? {
     if a >= base && a + n <= base + b.len() {
       return Some(b[a - base..a - base + n])
     }
+  }
+  if s.proc != 0 {
+    return internal.dbg_read(s.proc, a, n)
   }
   None
 }

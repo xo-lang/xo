@@ -91,8 +91,8 @@ fn sig_ident(exe: Bytes, sig_off: Int, dflt: Str) -> Str {
 /// exe (an ld64 linked arm64 executable) with the __DWARF sections of
 /// dsym (its dSYM's DWARF file, whose addresses are exe's) as a segment
 /// before __LINKEDIT, signed again ad hoc (identifier: the signature's,
-/// else name).
-pub fn embed_dwarf(exe: Bytes, dsym: Bytes, name: Str) -> Bytes ! Str {
+/// else name) with the entitlements ents (sign.xo).
+pub fn embed_dwarf(exe: Bytes, dsym: Bytes, name: Str, ents: List[Str]) -> Bytes ! Str {
   if exe.len() < 32 || rd32(exe, 0) != MH_MAGIC_64 {
     return Err("not a 64 bit Mach-O executable")
   }
@@ -159,7 +159,7 @@ pub fn embed_dwarf(exe: Bytes, dsym: Bytes, name: Str) -> Bytes ! Str {
   // __LINKEDIT without its old signature, the new one 16 aligned after
   let le_body = (sig_off - le_off + 15) / 16 * 16
   let code_size = le_off + shift + le_body
-  let sig_size = if sig_cmd >= 0 { signature_size(code_size, ident) } else { 0 }
+  let sig_size = if sig_cmd >= 0 { signature_size(code_size, ident, ents) } else { 0 }
   // the load commands: each copied, its __LINKEDIT offsets moved, the
   // __DWARF segment before __LINKEDIT's
   var lc = new_out(sizeofcmds + seg_size)
@@ -241,5 +241,5 @@ pub fn embed_dwarf(exe: Bytes, dsym: Bytes, name: Str) -> Bytes ! Str {
   if sig_cmd < 0 {
     return Ok(file)
   }
-  Ok(file + code_signature(file, "".bytes(), ident, text_off, text_size))
+  Ok(file + code_signature(file, "".bytes(), ident, text_off, text_size, ents))
 }

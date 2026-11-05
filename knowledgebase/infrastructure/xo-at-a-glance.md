@@ -140,6 +140,10 @@ lists the rest.
   the same block (gotchas/raw-address-outlives-bytes.md). `XO0916` (a
   warning, `xo vet`) `time.format` or `time.parse` with a compile time
   string layout: use a `const Layout` (decision 0464).
+- `xo debug PROG`: xo's own debugger on a live native program, macOS
+  arm64 (decision 0253 stages 2 and 3; spec 11.5): break, run,
+  continue, step, next, finish, locals, print, backtrace, frame,
+  threads; `--batch -c CMD`, `--json`, and `--dap` for editors (0504).
 - `xo prof FILE|URL`: a URL is a running server's std/debug
   `/debug/profile?seconds=N` or `/debug/heap` (0325), fetched then
   summarized like a file; `/debug/sched` is printed.

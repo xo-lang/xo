@@ -1,0 +1,400 @@
+// Stage 3 of decision 0253 on a live session: step, next and finish by
+// source line. Each walks the stopped thread one instruction at a time
+// (step1, the other threads suspended) until it is at the start of a
+// statement row (the line table's is_stmt) of another line, or in
+// another frame: deeper is a call (step stops there, next runs the call
+// to its return), shallower a return. A frame's depth is its canonical
+// frame address (the caller's stack pointer, from the unwinder: the same
+// through the function's prologue and body; a deeper call has a lower
+// one) and then its inlined depth at the pc. A call
+// (bl, blr) next steps over, or step makes into code without line
+// information, runs with every thread to a temporary trap at its return
+// address, as finish runs to its caller's.
+
+use std/internal
+
+/// The most instructions one step, next or finish walks (each a round
+/// trip to the kernel) before it stops where it is.
+const STEP_MAX = 200000
+
+/// A frame's place: its canonical frame address and inlined depth.
+struct Depth {
+  sp: Int
+  inl: Int
+}
+
+/// Thread th's depth at its registers regs (pc, sp, lr).
+fn (s: Session) depth(th: Int, regs: (Int, Int, Int)) -> Depth uses proc {
+  let rs = internal.dbg_regs(s.proc, th)
+  var m: Map[Int, Int] = {}
+  if rs.len() >= 33 {
+    for i in 0..32 {
+      m[i] = rs[i]
+    }
+    m[-1] = rs[32]
+  }
+  let fs = backtrace(s.tab, m, Snapshot{regs: m, proc: s.proc}, 2)
+  let cfa = if fs.len() >= 2 { fs[1].regs.get(31) ?? regs.1 } else { regs.1 }
+  Depth{sp: cfa, inl: s.inl_depth(regs.0)}
+}
+
+/// -1 when a is deeper than b (a call), 1 when shallower (a return), 0
+/// the same frame.
+fn cmp_depth(a: Depth, b: Depth) -> Int {
+  if a.sp < b.sp { return -1 }
+  if a.sp > b.sp { return 1 }
+  if a.inl > b.inl { return -1 }
+  if a.inl < b.inl { return 1 }
+  0
+}
+
+/// The depth of the inlined calls whose code holds pc (0: none).
+fn (s: Session) inl_depth(pc: Int) -> Int {
+  var d = 0
+  if let Some(f) = s.info.func_at(pc) {
+    for c in f.inlined {
+      for (lo, hi) in c.ranges {
+        if pc >= lo && pc < hi && c.depth > d {
+          d = c.depth
+        }
+      }
+    }
+  }
+  d
+}
+
+/// The statement rows by address (the last row at an address: the line
+/// the code there is), made once.
+fn (var s: Session) stmt_rows() {
+  if !s.stmts.is_empty() {
+    return
+  }
+  for (i, r) in s.lines.rows.indexed() {
+    if r.stmt && !r.end && r.file >= 0 {
+      s.stmts[r.addr] = i
+    }
+  }
+  if s.stmts.is_empty() {
+    // no statements: an empty map would be made again each time
+    s.stmts[-1] = -1
+  }
+}
+
+/// The file and line of the statement row starting at pc, or None.
+fn (s: Session) stmt_at(pc: Int) -> (Str, Int)? {
+  let i = s.stmts.get(pc) ?? return None
+  if i < 0 {
+    return None
+  }
+  let r = s.lines.rows[i]
+  Some((s.lines.files[r.file], r.line))
+}
+
+/// step (into: true), next (into: false): to the next line.
+fn (var s: Session) step_line(into: Bool) -> Str ! Str uses proc {
+  if s.proc == 0 || s.thread == 0 {
+    return Err("the program is not stopped (run)")
+  }
+  s.stmt_rows()
+  let th = s.thread
+  // the selected frame's depth: frame 0, or an inlined call it is in
+  let up = s.sel_inline_index()
+  if up != s.sel {
+    return Err("step and next run frame 0 or a call inlined there: select one (frame N), or finish")
+  }
+  var regs = s.thread_regs(th)?
+  let pc0 = regs.0
+  var d0 = s.depth(th, regs)
+  d0.inl -= up
+  let lo0 = s.func_lo(pc0)
+  let at0 = s.line_in(pc0, d0.inl, false)
+  var n = 0
+  while n < STEP_MAX {
+    n += 1
+    let pc = regs.0
+    let w = s.word(pc)
+    if let Some(ret) = s.call_return(pc, w, regs, into) {
+      // over the call: every thread runs until this frame is back at its
+      // return address
+      let r = s.run_to(th, ret, regs.1)?
+      if !r.is_empty() {
+        return Ok(s.stopped(r))
+      }
+    } else {
+      let r = s.step1(th, pc)?
+      if !stepped(r, th) {
+        return Ok(s.stopped(r))
+      }
+    }
+    regs = s.thread_regs(th)?
+    if s.stmt_at(regs.0).is_none() {
+      continue
+    }
+    let d = s.depth(th, regs)
+    var c = cmp_depth(d, d0)
+    if c == 0 && s.func_lo(regs.0) != lo0 {
+      // a tail call (b to another function in this frame): a call
+      c = -1
+    }
+    if c < 0 && into {
+      return Ok(s.stopped_step(th, "step"))
+    }
+    if c > 0 {
+      // returned: the caller's own frame selected, not a call inlined
+      // into it that its next line starts with
+      let t = s.stopped_step(th, "step")
+      return Ok(s.select_inl(regs.0, 0, t))
+    }
+    if d.sp == d0.sp && s.func_lo(regs.0) == lo0 && s.line_in(regs.0, d0.inl, true) != at0 {
+      // another line of the starting frame, or a call inlined into it
+      // from another line (next stops at its first statement, with the
+      // starting frame's depth selected)
+      let t = s.stopped_step(th, "step")
+      return Ok(s.select_inl(regs.0, d0.inl, t))
+    }
+  }
+  Ok("${s.stopped_step(th, "step")} (after ${STEP_MAX} instructions)")
+}
+
+/// finish: runs the selected frame to its return: an inlined call's code
+/// stepped until the thread is out of it, a function's caller run to.
+fn (var s: Session) finish() -> Str ! Str uses proc {
+  if s.proc == 0 || s.thread == 0 || s.frames.is_empty() {
+    return Err("the program is not stopped (run)")
+  }
+  let th = s.thread
+  let f = s.frames[s.sel]
+  if f.inlined {
+    // calls are run over, so the thread leaves the inlined call's
+    // function only by its return: out when its function changes or the
+    // pc leaves the selected inlined call's code (the next code may be
+    // another inlined call at the same depth)
+    let inl = s.inl_depth(f.pc) - s.sel_inline_index()
+    let lo0 = s.func_lo(f.pc)
+    let ranges = s.inlined_ranges(f.pc, inl)
+    var regs = s.thread_regs(th)?
+    var n = 0
+    while n < STEP_MAX {
+      n += 1
+      let pc = regs.0
+      if let Some(ret) = s.call_return(pc, s.word(pc), regs, false) {
+        let r = s.run_to(th, ret, regs.1)?
+        if !r.is_empty() {
+          return Ok(s.stopped(r))
+        }
+      } else {
+        let r = s.step1(th, pc)?
+        if !stepped(r, th) {
+          return Ok(s.stopped(r))
+        }
+      }
+      regs = s.thread_regs(th)?
+      if s.func_lo(regs.0) != lo0 || !in_ranges(ranges, regs.0) {
+        let t = s.stopped_step(th, "finish")
+        return Ok(s.select_inl(regs.0, inl - 1, t))
+      }
+    }
+    return Ok("${s.stopped_step(th, "finish")} (after ${STEP_MAX} instructions)")
+  }
+  // the caller: the next frame that is not inlined into this one
+  var k = s.sel + 1
+  while k < s.frames.len() && s.frames[k - 1].inlined {
+    k += 1
+  }
+  if k >= s.frames.len() {
+    return Err("the outermost frame has no caller to return to")
+  }
+  let ret = s.frames[k].pc
+  let sp = s.frames[k].regs.get(31) ?? 0
+  let r = s.run_to(th, ret, sp)?
+  if !r.is_empty() {
+    return Ok(s.stopped(r))
+  }
+  Ok(s.stopped_step(th, "finish"))
+}
+
+/// The file (base name) and line of the code at pc as a frame at inlined
+/// depth inl sees it: an inlined call deeper than inl is its call's line;
+/// stmt: pc starts a statement row (else the row before it counts).
+fn (s: Session) line_in(pc: Int, inl: Int, stmt: Bool) -> (Str, Int)? {
+  if s.inl_depth(pc) > inl {
+    if let Some(f) = s.info.func_at(pc) {
+      for c in f.inlined {
+        if c.depth != inl + 1 {
+          continue
+        }
+        for (lo, hi) in c.ranges {
+          if pc >= lo && pc < hi {
+            return Some((base_of(s.lines.call_file(c.unit_line, c.call_file)), c.call_line))
+          }
+        }
+      }
+    }
+  }
+  let at = if stmt { s.stmt_at(pc) } else { s.lines.at(pc) }
+  match at {
+    Some((f, l)) => Some((base_of(f), l))
+    None => None
+  }
+}
+
+/// After a stop at pc: the frame at inlined depth inl selected (the
+/// frame a step or finish was about, when the pc is in a call inlined
+/// deeper) and its text, else t.
+fn (var s: Session) select_inl(pc: Int, inl: Int, t: Str) -> Str {
+  let k = s.inl_depth(pc) - inl
+  if k > 0 && k < s.frames.len() {
+    s.sel = k
+    return s.frame_text(s.frames[k])
+  }
+  t
+}
+
+/// The address ranges of the call inlined at depth inl whose code holds
+/// pc.
+fn (s: Session) inlined_ranges(pc: Int, inl: Int) -> List[(Int, Int)] {
+  if let Some(f) = s.info.func_at(pc) {
+    for c in f.inlined {
+      if c.depth == inl && in_ranges(c.ranges, pc) {
+        return c.ranges
+      }
+    }
+  }
+  []
+}
+
+fn in_ranges(rs: List[(Int, Int)], pc: Int) -> Bool {
+  for (lo, hi) in rs {
+    if pc >= lo && pc < hi {
+      return true
+    }
+  }
+  false
+}
+
+/// The start of the function holding pc, -1 for none.
+fn (s: Session) func_lo(pc: Int) -> Int {
+  match s.info.func_at(pc) {
+    Some(f) => f.lo
+    None => -1
+  }
+}
+
+/// How many of the frames above the selected one are inlined into the
+/// same function (the selected inlined call's depth below the pc's).
+fn (s: Session) sel_inline_index() -> Int {
+  var n = 0
+  var i = s.sel
+  while i > 0 && s.frames[i - 1].inlined {
+    n += 1
+    i -= 1
+  }
+  n
+}
+
+/// When the instruction w at pc is a call next steps over (any bl or
+/// blr; for step, only a call into code without line information), its
+/// return address.
+fn (s: Session) call_return(pc: Int, w: Int, regs: (Int, Int, Int), into: Bool) -> Int? {
+  var target = -1
+  if w & 0xfc000000 == 0x94000000 {
+    // bl: a signed 26 bit word offset
+    var off = w & 0x3ffffff
+    if off & 0x2000000 != 0 {
+      off -= 0x4000000
+    }
+    target = pc + off * 4
+  } else if w & 0xfffffc1f == 0xd63f0000 {
+    // blr xN: the target is register N, read when needed
+    target = -2
+  } else {
+    return None
+  }
+  if !into {
+    return Some(pc + 4)
+  }
+  if target == -2 {
+    let rs = internal.dbg_regs(s.proc, s.thread)
+    let n = (w >> 5) & 31
+    target = if n < rs.len() { rs[n] } else { 0 }
+  }
+  if s.info.func_at(target).is_some() {
+    return None
+  }
+  Some(pc + 4)
+}
+
+/// Thread th's pc, sp and lr.
+fn (s: Session) thread_regs(th: Int) -> (Int, Int, Int) ! Str uses proc {
+  let rs = internal.dbg_regs(s.proc, th)
+  if rs.len() < 33 {
+    return Err("cannot read the thread's registers")
+  }
+  Ok((rs[32], rs[31], rs[30]))
+}
+
+/// Runs every thread until thread th is at address a with its stack
+/// pointer sp (a call's return; recursion passes a at other depths), a
+/// temporary trap there taken out after: [] then, else the stop that came
+/// first (a breakpoint, a fault, the end) for the caller to report.
+fn (var s: Session) run_to(th: Int, a: Int, sp: Int) -> List[Int] ! Str uses proc {
+  let temp = !s.traps.contains(a)
+  if temp {
+    let orig = internal.dbg_read(s.proc, a, 4) ?? return Err("cannot read the code at 0x${hex(a)}")
+    if !internal.dbg_write(s.proc, a, brk()) {
+      return Err("cannot plant a trap at 0x${hex(a)}")
+    }
+    s.traps[a] = orig
+  }
+  var cur = th
+  var pc = (s.thread_regs(th)?).0
+  var out: List[Int] = []
+  while true {
+    if s.traps.contains(pc) {
+      let r = s.step1(cur, pc)?
+      if !stepped(r, cur) {
+        out = r
+        break
+      }
+    }
+    if !internal.dbg_resume(s.proc, false) {
+      return Err("the program could not be resumed")
+    }
+    let r = internal.dbg_wait(s.proc, 0)
+    if r.len() < 5 || r[0] != 1 || r[2] != EXC_BREAKPOINT {
+      out = r
+      break
+    }
+    let regs = s.thread_regs(r[1])?
+    if regs.0 != a {
+      out = r
+      break
+    }
+    if r[1] == th && regs.1 == sp {
+      break
+    }
+    if s.bpts.at(a).is_some() {
+      // a breakpoint of the user's own at a, by another thread or depth
+      out = r
+      break
+    }
+    // the temporary trap hit by another thread or a deeper call: on
+    cur = r[1]
+    pc = a
+  }
+  if temp && s.proc != 0 {
+    if let Some(o) = s.traps.get(a) {
+      let _w = internal.dbg_write(s.proc, a, o)
+    }
+    s.traps.remove(a)
+  }
+  Ok(out)
+}
+
+/// The stop after a step, next or finish of thread th, taken in as a
+/// stop (its frames), with its text.
+fn (var s: Session) stopped_step(th: Int, kind: Str) -> Str uses proc {
+  let t = s.stopped([1, th, EXC_BREAKPOINT, 1, 0])
+  s.stopj = "\"stop\":\"${kind}\",\"thread\":${th}${s.top_json()}"
+  if s.frames.is_empty() { t } else { s.frame_text(s.frames[0]) }
+}

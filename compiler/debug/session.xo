@@ -14,6 +14,8 @@ pub struct VFrame {
   pub name: Str
   /// the base name of the file and the line (file "" when unknown)
   pub file: Str
+  /// the file's path as the line table names it (DAP's source path)
+  pub path: Str = ""
   pub line: Int
   pub inlined: Bool
   pub vars: List[Var]
@@ -32,9 +34,11 @@ pub fn vframes(info: Info, l: Lines, tab: Tables, frames: List[UFrame]) -> List[
     // (pc - 1 is inside it on arm64 and x86_64 alike)
     let look = if k == 0 { f.pc } else { f.pc - 1 }
     var file = ""
+    var path = ""
     var line = 0
     if let Some((fl, ln)) = l.at(look) {
       file = base_of(fl)
+      path = fl
       line = ln
     }
     var name = tab.sym_at(f.pc)
@@ -57,14 +61,15 @@ pub fn vframes(info: Info, l: Lines, tab: Tables, frames: List[UFrame]) -> List[
     }
     for (_, i) in order.sort() {
       let c = chain[i]
-      out.push(VFrame{pc: f.pc, name: c.name, file: file, line: line, inlined: true, vars: c.vars, regs: f.regs, how: f.how})
+      out.push(VFrame{pc: f.pc, name: c.name, file: file, path: path, line: line, inlined: true, vars: c.vars, regs: f.regs, how: f.how})
       let cf = l.call_file(c.unit_line, c.call_file)
       if !cf.is_empty() {
         file = base_of(cf)
+        path = cf
       }
       line = c.call_line
     }
-    out.push(VFrame{pc: f.pc, name: name, file: file, line: line, inlined: false, vars: vars, regs: f.regs, how: f.how})
+    out.push(VFrame{pc: f.pc, name: name, file: file, path: path, line: line, inlined: false, vars: vars, regs: f.regs, how: f.how})
   }
   out
 }
@@ -85,6 +90,23 @@ pub struct Session {
   /// the selected frame (`frame N`)
   pub sel: Int = 0
   pub done: Bool = false
+  /// a live session's program and its arguments (live.xo), "" for a
+  /// recorded thread
+  pub prog: Str = ""
+  pub args: List[Str] = []
+  /// the file the program's standard output and error go to ("": this
+  /// process's; DAP's stdout is its protocol)
+  pub out: Str = ""
+  /// the running debuggee (std/internal dbg_launch), 0 before run and
+  /// after its end
+  pub proc: Int = 0
+  /// the thread that stopped, and each planted trap's original word
+  pub thread: Int = 0
+  pub traps: Map[Int, Bytes] = {}
+  /// the last run or continue's JSON fields (live.xo stop_json)
+  pub stopj: Str = ""
+  /// the line table's statement rows by address (step.xo stmt_rows)
+  pub stmts: Map[Int, Int] = {}
 }
 
 /// A session on a recorded stopped thread: exe is the executable (its
@@ -111,7 +133,7 @@ struct Res {
 }
 
 /// Runs command line `line`: its output, or an error's text.
-pub fn (var s: Session) exec(line: Str) -> Str {
+pub fn (var s: Session) exec(line: Str) -> Str uses proc {
   match parse_cmd(line) {
     Ok(c) => match s.run_cmd(c) {
       Ok(r) => r.text
@@ -124,7 +146,7 @@ pub fn (var s: Session) exec(line: Str) -> Str {
 /// Runs command line `line`: one line of JSON, `{"v":1,"cmd":NAME,
 /// "ok":true,...}` with the command's fields, or with "ok":false its
 /// "error" (spec 10.7).
-pub fn (var s: Session) exec_json(line: Str) -> Str {
+pub fn (var s: Session) exec_json(line: Str) -> Str uses proc {
   match parse_cmd(line) {
     Ok(c) => {
       let head = "{\"v\":${JSON_V},\"cmd\":${json_str(cmd_name(c))}"
@@ -158,7 +180,7 @@ pub fn cmd_name(c: Cmd) -> Str {
   }
 }
 
-fn (var s: Session) run_cmd(c: Cmd) -> Res ! Str {
+fn (var s: Session) run_cmd(c: Cmd) -> Res ! Str uses proc {
   match c {
     Cmd.Break(spot) => {
       let id = s.bpts.add(s.info, s.lines, spot)?
@@ -172,10 +194,12 @@ fn (var s: Session) run_cmd(c: Cmd) -> Res ! Str {
           }
         }
       }
+      s.plant()?
       Ok(Res{text: "breakpoint ${id}: ${at.join(", ")}", json: "\"id\":${id},\"locations\":[${js.join(",")}]"})
     }
     Cmd.Delete(id) => {
-      let _a = s.bpts.delete(id)?
+      let gone = s.bpts.delete(id)?
+      s.unplant(gone)
       Ok(Res{text: "deleted breakpoint ${id}", json: "\"id\":${id}"})
     }
     Cmd.Backtrace => {
@@ -218,10 +242,43 @@ fn (var s: Session) run_cmd(c: Cmd) -> Res ! Str {
       }
       Err("no variable ${path[0].quote()} in frame ${s.sel}")
     }
-    Cmd.Run | Cmd.Continue | Cmd.Step | Cmd.Next | Cmd.Finish => Err("this session is a recorded thread: running the program comes with the process control (decision 0253 stage 2)")
+    Cmd.Run => {
+      if s.prog.is_empty() {
+        return Err("this session is a recorded thread: run it with xo debug PROG")
+      }
+      let t = s.run()?
+      Ok(Res{text: t, json: s.stop_json()})
+    }
+    Cmd.Continue => {
+      if s.prog.is_empty() {
+        return Err("this session is a recorded thread: run it with xo debug PROG")
+      }
+      let t = s.cont()?
+      Ok(Res{text: t, json: s.stop_json()})
+    }
+    Cmd.Step | Cmd.Next | Cmd.Finish => {
+      if s.prog.is_empty() {
+        return Err("this session is a recorded thread: run it with xo debug PROG")
+      }
+      let t = match c {
+        Cmd.Step => s.step_line(true)?
+        Cmd.Next => s.step_line(false)?
+        _ => s.finish()?
+      }
+      Ok(Res{text: t, json: s.stop_json()})
+    }
     Cmd.Tasks | Cmd.Task(_, _) => Err("the task views come with decision 0253 stage 4")
-    Cmd.Threads => Ok(Res{text: "* thread 1 (recorded)", json: "\"threads\":[{\"id\":1,\"selected\":true,\"recorded\":true}]"})
+    Cmd.Threads => {
+      if s.prog.is_empty() {
+        return Ok(Res{text: "* thread 1 (recorded)", json: "\"threads\":[{\"id\":1,\"selected\":true,\"recorded\":true}]"})
+      }
+      if s.proc == 0 || s.thread == 0 {
+        return Ok(Res{text: "no threads (the program is not stopped)", json: "\"threads\":[]"})
+      }
+      Ok(Res{text: "* thread ${s.thread}", json: "\"threads\":[{\"id\":${s.thread},\"selected\":true}]"})
+    }
     Cmd.Quit => {
+      s.end()
       s.done = true
       Ok(Res{text: "", json: ""})
     }
@@ -264,7 +321,7 @@ pub fn val_json(v: Val) -> Str {
 }
 
 fn (s: Session) frame_json(i: Int, f: VFrame) -> Str {
-  "{\"index\":${i},\"pc\":\"0x${hex(f.pc)}\",\"function\":${json_str(f.name)},\"inlined\":${f.inlined},\"file\":${json_str(f.file)},\"line\":${f.line},\"selected\":${i == s.sel}}"
+  "{\"index\":${i},\"pc\":\"0x${hex(f.pc)}\",\"function\":${json_str(f.name)},\"inlined\":${f.inlined},\"file\":${json_str(f.file)},\"path\":${json_str(f.path)},\"line\":${f.line},\"selected\":${i == s.sel}}"
 }
 
 fn (s: Session) loc_json(a: Int) -> Str {

@@ -248,3 +248,35 @@ fn dlsym(handle: Int, name: Bytes) -> Int
 /// dlopen(3): the handle of the image at the NUL terminated path (mode
 /// RTLD_LAZY 1 | RTLD_GLOBAL 8), 0 when it cannot be loaded.
 fn dlopen(path: Bytes, mode: Int) -> Int
+
+// The Mach calls of `xo debug`'s process control (decision 0253 stage 2,
+// its approved list; std/native/llrt/dbgmac.xo): ports are 32 bit names in
+// an Int, a result a kern_return_t (0 on success).
+
+/// task_for_pid: the task port of pid into the 32 bit word at t (needs the
+/// com.apple.security.cs.debugger entitlement, or root).
+fn task_for_pid(self_task: Int, pid: Int, t: Int) -> Int32
+/// mach_vm_read_overwrite: n bytes at addr of the task into the buffer at
+/// data, the count read at the word at out.
+fn mach_vm_read_overwrite(task: Int, addr: Int, n: Int, data: Int, out: Int) -> Int32
+/// mach_vm_write: n bytes at data into the task at addr.
+fn mach_vm_write(task: Int, addr: Int, data: Int, n: Int) -> Int32
+/// mach_vm_protect: the protection of n bytes at addr (VM_PROT_COPY 16
+/// makes a private copy of a shared page first).
+fn mach_vm_protect(task: Int, addr: Int, n: Int, set_max: Int, prot: Int) -> Int32
+/// mach_port_allocate: a new port with the right into the 32 bit word at name.
+fn mach_port_allocate(task: Int, right: Int, name: Int) -> Int32
+fn mach_port_insert_right(task: Int, name: Int, poly: Int, disposition: Int) -> Int32
+/// task_set_exception_ports: the exceptions of the mask go to port, as
+/// the behavior's messages.
+fn task_set_exception_ports(task: Int, mask: Int, port: Int, behavior: Int, flavor: Int) -> Int32
+/// mach_msg: sends and or receives the message at msg (MACH_RCV_TIMED_OUT
+/// 0x10004003 when the timeout in ms passed).
+fn mach_msg(msg: Int, option: Int, send_size: Int, rcv_size: Int, rcv_name: Int, timeout: Int, notify: Int) -> Int32
+fn task_resume(task: Int) -> Int32
+/// thread_set_state of the flavor from the words at state (their count n).
+fn thread_set_state(t: Int, flavor: Int, state: Int, n: Int) -> Int32
+/// mach_vm_machine_attribute: the attribute of n bytes at addr (MATTR_CACHE
+/// 1 with the value at val: MATTR_VAL_CACHE_FLUSH 6), as lldb flushes the
+/// caches after it writes a trap.
+fn mach_vm_machine_attribute(task: Int, addr: Int, n: Int, attr: Int, val: Int) -> Int32
