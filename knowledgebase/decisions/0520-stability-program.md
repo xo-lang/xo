@@ -114,6 +114,8 @@ lands with its regression test and, for std, a std/changes entry (decision 0276)
   `fds_open` (the open descriptors); sockets, timers and tasks are not counted apart yet.
 - Native crash bundles, or at least the fault trace written to a file named by an environment variable, so a
   chaos or soak failure on a native build keeps more than stderr.
+  Done 2026-11-05 (Xo Lang 2): `XO_CRASH_FILE=PATH` (std/native/llrt/crashfile.xo), Linux and macOS, the
+  hardware fault report and an uncaught fault's report appended to PATH; the harness's soak sets it.
 
 ### 5. Where it runs and what it costs
 

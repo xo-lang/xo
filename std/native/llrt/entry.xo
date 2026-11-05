@@ -15,6 +15,7 @@ use native/llrt/alloc
 use native/llrt/atexit
 use native/llrt/concflag
 use native/llrt/crash
+use native/llrt/crashfile
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/heapos
@@ -306,6 +307,9 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   if let Some(e) = process.env_real("XO_MAX_MEM").get(0) {
     heapos.set_budget(parse_size(e))
   }
+  // XO_CRASH_FILE (decision 0520): the fault and crash reports go to
+  // this file too, opened now since a signal handler cannot open it
+  crashfile.open()
   // hardware faults (decision 0343): reported, then the default action
   crash.install()
   if process.env_real_at("XO_TEST") != 0 {

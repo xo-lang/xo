@@ -135,6 +135,17 @@ func testCrashReport(t *testing.T, be string) {
 	if strings.Contains(got, "crash: holding") || time.Since(t0) > 900*time.Millisecond {
 		t.Errorf("no XO_CRASH_SLEEP: held %v, stderr:\n%s", time.Since(t0), got)
 	}
+	// XO_CRASH_FILE (decision 0520): the same report appended to the file
+	// as well, both phases; a second crash appends to it
+	cf := filepath.Join(t.TempDir(), "crash.txt")
+	_, got, sig = run("XO_CRASH_KIND=segv", "XO_CRASH_FILE="+cf)
+	if b, err := os.ReadFile(cf); err != nil || sig != syscall.SIGSEGV || string(b) != got || !strings.Contains(got, "\ntraceback:\n") {
+		t.Errorf("XO_CRASH_FILE: signal %v, %v; the file:\n%s\nstderr:\n%s", sig, err, b, got)
+	}
+	_, got2, _ := run("XO_CRASH_KIND=trap", "XO_CRASH_FILE="+cf)
+	if b, _ := os.ReadFile(cf); string(b) != got+got2 {
+		t.Errorf("XO_CRASH_FILE: a second report is not appended:\n%s", b)
+	}
 	// off: no report, the same signal
 	_, got, sig = run("XO_CRASH_KIND=segv", "XO_CRASH_REPORT=0")
 	if got != "" || sig != syscall.SIGSEGV {
@@ -162,5 +173,46 @@ func symbolize(t *testing.T, bin, report string) {
 	out, err := cmd.CombinedOutput()
 	if err != nil || string(out) != want {
 		t.Errorf("xo dev symbolize: %v\n%s\nwant:\n%s", err, out, want)
+	}
+}
+
+// TestCrashFileFault: XO_CRASH_FILE (decision 0520) also takes the
+// report of a fault nothing caught (fault.xo exit): the "fault:" line
+// standard error gets, and with XO_TRACEBACK=1 its frames. Unset, no
+// file is made.
+func TestCrashFileFault(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	res, err := xotool.Build([]string{filepath.Join("..", "llvm", "testdata", "golden", "abs_fault")}, xotool.Options{Backend: "arm64"})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	bin := res.Binaries[xotool.Host()]
+	dir := t.TempDir()
+	run := func(env ...string) string {
+		cmd := testtmp.Guard(exec.Command(bin))
+		cmd.Env = append(os.Environ(), env...)
+		var errb strings.Builder
+		cmd.Stderr = &errb
+		err := cmd.Run()
+		if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 70 {
+			t.Fatalf("%v: want exit 70, got %v\n%s", env, err, errb.String())
+		}
+		return errb.String()
+	}
+	cf := filepath.Join(dir, "fault.txt")
+	got := run("XO_CRASH_FILE="+cf, "XO_TRACEBACK=1")
+	b, err := os.ReadFile(cf)
+	if err != nil || string(b) != got || !strings.HasPrefix(got, "fault: integer overflow: abs(") || !strings.Contains(got, "main (main.xo:") {
+		t.Errorf("XO_CRASH_FILE: %v; the file:\n%s\nstderr:\n%s", err, b, got)
+	}
+	_ = run()
+	if ents, _ := os.ReadDir(dir); len(ents) != 1 {
+		t.Errorf("unset XO_CRASH_FILE made a file: %v", ents)
 	}
 }

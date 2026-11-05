@@ -33,6 +33,7 @@
 //
 // Off with XO_CRASH_REPORT=0, and in sanitizer builds (their runtimes
 // report faults themselves). wasi and windows/arm64 have none.
+use native/llrt/crashfile
 use native/llrt/linux
 use native/llrt/process
 use native/llrt/prof
@@ -466,7 +467,7 @@ pub fn on_alarm(sig: Int) {
     return
   }
   let s = "(the traceback timed out)\n"
-  stdio.write_all(2, raw.data(s), s.len())
+  crashfile.report(raw.data(s), s.len())
   let c = ld(r, R_SIG)
   if darwin() {
     let _k = sys_darwin.kill(Int(sys_darwin.getpid()), c)
@@ -781,7 +782,7 @@ fn phase2(r: Int) {
     pcs.push(if i == 0 { pc + 1 } else { pc })
   }
   let s = prof.trace_text(pcs)
-  stdio.write_all(2, raw.data(s), s.len())
+  crashfile.report(raw.data(s), s.len())
   raw.alive_str(s)
   watch(r, false)
 }
@@ -949,7 +950,7 @@ fn flush(r: Int) {
     // allocate)
     let _w = sys_windows.WriteFile(sys_windows.GetStdHandle(STD_ERROR), r + R_BUF, ld(r, R_POS), r + R_WN, 0)
   } else {
-    stdio.write_all(2, r + R_BUF, ld(r, R_POS))
+    crashfile.report(r + R_BUF, ld(r, R_POS))
   }
   st(r, R_POS, 0)
 }

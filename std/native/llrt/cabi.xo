@@ -21,6 +21,7 @@ use native/llrt/dump
 use native/llrt/chan
 use native/llrt/consts
 use native/llrt/crash
+use native/llrt/crashfile
 use native/llrt/ctx
 use native/llrt/entry
 use native/llrt/fault
@@ -814,11 +815,11 @@ fn fault_traceback(t: Int, now: Int) -> Int {
     return 0
   }
   if rt.mem_load(t, 16, 8) > 0 {
-    stdio.write_all(2, rt.mem_load(t, 16, 8), rt.mem_load(t, 24, 8))
+    crashfile.report(rt.mem_load(t, 16, 8), rt.mem_load(t, 24, 8))
     return 0
   }
   let s = prof.trace_text_at(fault.trace_pcs(t), fault.trace_regs(t))
-  stdio.write_all(2, raw.data(s), s.len())
+  crashfile.report(raw.data(s), s.len())
   raw.alive_str(s)
   0
 }

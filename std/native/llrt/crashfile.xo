@@ -1,0 +1,56 @@
+// XO_CRASH_FILE (decision 0520 section 4): a native program's reports of
+// a fault nothing caught (fault.xo exit, cabi.xo fault_traceback) and of
+// a hardware fault (crash.xo) go to standard error and, when the
+// variable names a file, to that file too, appended, so a soak or chaos
+// run keeps them when standard error is lost. open runs at start
+// (entry.xo), where allocating is safe, and the descriptor stays open
+// for the process's life (close on exec): crash.xo's phase 1 runs in a
+// signal handler, which may not allocate to open it then. Linux and
+// macOS; windows and wasm ignore the variable.
+use native/llrt/darwin
+use native/llrt/linux
+use native/llrt/process
+use native/llrt/raw
+use native/llrt/stdio
+use native/rt
+
+/// rt.static_word: the file's descriptor plus one, 0 when there is none.
+const W_FD = 99
+
+/// Opens the file XO_CRASH_FILE names for appending, creating it with
+/// mode 0644, when the variable is set and not empty. A file that does
+/// not open is skipped, and the reports go to standard error alone.
+pub fn open() {
+  let os = match target.os {
+    TargetOs.Linux => 1
+    TargetOs.Darwin => 2
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+  if os == 0 {
+    return
+  }
+  let p = process.env_real_at("XO_CRASH_FILE")
+  if p == 0 || rt.mem_load(p, 0, 1) == 0 {
+    return
+  }
+  let path = raw.str_at(p, raw.cstr_len(p))
+  let fd = if os == 2 {
+    darwin.open(path, darwin.O_WRONLY | darwin.O_CREAT | darwin.O_APPEND | darwin.O_CLOEXEC, 420)
+  } else {
+    linux.open(path, linux.O_WRONLY | linux.O_CREAT | linux.O_APPEND | linux.O_CLOEXEC, 420)
+  }
+  if fd >= 0 {
+    rt.mem_store(rt.static_word(W_FD), 0, fd + 1, 8)
+  }
+}
+
+/// Writes the n bytes at a to standard error and to the crash file, if
+/// one is open: no allocation and no lock (crash.xo's phase 1 calls it
+/// from a signal handler).
+pub fn report(a: Int, n: Int) {
+  stdio.write_all(2, a, n)
+  let f = rt.mem_load(rt.static_word(W_FD), 0, 8)
+  if f > 0 {
+    stdio.write_all(f - 1, a, n)
+  }
+}

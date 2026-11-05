@@ -171,6 +171,10 @@ func soakMain(args []string) int {
 	}
 	// the leak check counts from the start, which heap_live needs too
 	app.Env["XO_LEAKCHECK"] = "1"
+	// a fault or crash report is kept in OUT/crash.txt as well as the
+	// run's log (XO_CRASH_FILE, decision 0520)
+	crashFile, _ := filepath.Abs(filepath.Join(*out, "crash.txt"))
+	app.Env["XO_CRASH_FILE"] = crashFile
 	p, err := start(app, bin, filepath.Join(*out, "run"), 1)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "harness soak:", err)
@@ -360,6 +364,10 @@ func soakMain(args []string) int {
 			bad = true
 			rep.WriteString("ALERT: more than 0.1% errors\n")
 		}
+	}
+	if b, err := os.ReadFile(crashFile); err == nil && len(b) > 0 {
+		bad = true
+		fmt.Fprintf(&rep, "ALERT: the app wrote a fault or crash report (crash.txt):\n%s", b)
 	}
 	if bad {
 		rep.WriteString("verdict: DRIFT\n")

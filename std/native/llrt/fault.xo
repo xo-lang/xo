@@ -15,6 +15,7 @@
 // xo_rt.c fault_raise and unwind.xo).
 //
 // Nothing here faults.
+use native/llrt/crashfile
 use native/llrt/layout
 use native/llrt/num
 use native/llrt/obj
@@ -263,7 +264,7 @@ pub fn exit(c: Int) {
     o = put_at(b, o, d, dn)
     o = put(b, o, "\n")
   }
-  stdio.write_all(2, b, o)
+  crashfile.report(b, o)
   // XO_TRACEBACK: the frames the fault was raised in, by function and
   // .xo line (cabi.xo fault_traceback, through its address)
   let f = rt.mem_load(rt.static_word(TB), 0, 8)

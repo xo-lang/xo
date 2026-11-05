@@ -7,6 +7,18 @@
 
 
 
+## 2026-11-05: feature: XO_CRASH_FILE keeps a native program's fault and crash reports in a file
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0520 section 4 (a soak or chaos failure on a native build kept only standard error)
+- Go reference: debug.SetCrashOutput (Go 1.23), which copies the fatal error report to a file
+- Test: internal/arm64 TestCrashReport (the SIGSEGV report in the file, equal to standard error, and a second report appended), TestCrashFileFault (an uncaught fault's line and traceback)
+- Timing: none (one environment lookup at start; nothing runs until a report)
+- Shipped in: not yet released
+
+`XO_CRASH_FILE=PATH` on Linux and macOS appends the reports a native program writes on standard error when it ends badly, a hardware fault's (crash.xo, both phases) and an uncaught fault's (`fault:` and its traceback), to PATH as well, creating it with mode 0644. The file is opened at start (std/native/llrt/crashfile.xo, close on exec), since the hardware fault report runs in a signal handler that may not allocate; a path that does not open is skipped. Windows and wasm ignore the variable.
+
 ## 2026-11-05: feature: Int8 to UInt32 wrapping_from and Float32 to_bits and from_bits
 
 - Kind: feature

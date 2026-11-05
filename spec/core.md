@@ -2894,7 +2894,10 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
   and core file as without the report (Windows: the same exit code, the
   NTSTATUS; an exception C code's own handler takes is not reported).
   `XO_CRASH_REPORT=0` turns it off; `XO_CRASH_TIMEOUT` (seconds, 5 by
-  default) bounds the naming of the frames. Sanitizer builds report
+  default) bounds the naming of the frames. `XO_CRASH_FILE=PATH` (Linux
+  and macOS, decision 0520) appends both reports, this one and an uncaught
+  fault's `fault:` line with its traceback, to the file PATH as well as
+  standard error; the file is opened at start and stays open. Sanitizer builds report
   through their own runtimes; windows/arm64 does not report yet.
 
 There is no undefined behavior. Debug and release builds have identical
