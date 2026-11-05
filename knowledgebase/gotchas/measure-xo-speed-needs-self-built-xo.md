@@ -11,15 +11,15 @@ seed-built measurement. With each xo built by itself (bootstrap s2) linux
 still read 1.008, and that was right too: this regression turned out to
 be in the code xo emits (made_here's 1,000 step limit put a ShareIn on
 2,059 pushes of std json's GO_CASES constant, fixed in fbd8b4d2e), which a
-seed-built xo shows as well. What hid it on linux: 0.38.1's linux emit
-phase for that test was already about 580 ms (the Mac's 0.38.1 release:
-390 to 404 ms; at fbd8b4d2e, each xo built by itself, linux 390 and the
-Mac 396 to 406 ms, so the gap is the linux 0.38.1 release binary's or a
-linux only gain since, not found), and
-the regression took main's linux emit from about 390 ms (with the fix) to
-555 to 580 ms, back to 0.38.1's level, so main against 0.38.1 read flat;
-measured against its own parent instead of a release, linux shows it
-(emit 382 to 392 ms fixed, 554 to 579 ms not, 2026-11-04).
+seed-built xo shows as well. What hid it on linux: the base called
+"0.38.1" there was host 1's /work/l4base/bin/xo, which reports 0.38.1 but
+is a WIP commit (a93b009cf) built by a seed chain hop (`xo version -m`:
+XO_BUILT_BY .../xo-hop1), with an emit phase of about 580 ms for that
+test; the published 0.38.1 (370 to 375 ms) and an s2 of v0.38.1 (371 to
+373 ms) are as fast as main with the fix (379 to 383 ms), and the 0.39.0
+candidate, which has the regression, 573 to 575 ms (linux/arm64,
+2026-11-04). Check `xo version -m` (XO_COMMIT, XO_BUILT_BY) of any xo used
+as a release base; a release's archive is checked against its SHA256SUMS.
 
 Cause: `go run ./scripts/xobuild` (and ab-host.sh's own builds) compile
 the xo under test with a seed or an earlier xo. That xo then emits the
