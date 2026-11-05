@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-04: fix: a request to an IPv6 literal host keeps the brackets in its URL text
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19's full duplex repro under `xo test --real` (Url.host holds "::1" without brackets; the client rebuilt `http://::1:45517/echo` and refused it: invalid port)
+- Go reference: net/url's URL.String brackets an IPv6 host
+- Test: golden http_ipv6_url (every backend; a server on [::1], Client.get of its own address)
+- Shipped in: not yet released
+
+`request_url_string` and `url_string_path` (native) and std/rt `urlStringPath` (Go backend) wrote the host as stored. A host containing a colon and no leading bracket is now written in brackets, so `Client.get("http://[::1]:PORT/...")` reaches a listener on `[::1]` instead of failing with `invalid URL`.
+
+
 ## 2026-11-04: security: an HTTP/2 server's header list limit follows with_max_header_bytes
 
 - Kind: security
