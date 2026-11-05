@@ -35,6 +35,6 @@ func TestYamlFuzz(t *testing.T) {
 		t.Skipf("yamloracle cannot run (yaml.v3 not in the module cache?): %v", err)
 	}
 	text := string(out)
-	docs := strings.Count(text, "\n  (\"")
+	docs := strings.Count(text, "\ntest \"") // one passing test a block of cases
 	runFuzzDir(t, "yamlfuzz_test.xo", text, envBackends("XO_YAMLFUZZ_BACKENDS", []string{"arm64", "llvm"}), docs)
 }

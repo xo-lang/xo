@@ -147,6 +147,15 @@ func fuzzMain(seedArg, nArg string) {
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(want))
 	}
 	fmt.Fprintf(os.Stderr, "yamloracle: %d documents skipped (yaml.v3 panics)\n", skipped)
-	o.WriteString("]\n\ntest \"yaml fuzz: decode into a struct that derives Yaml is yaml.v3's Unmarshal\" {\n  for (text, want) in CASES {\n    expect(show(text)) == want\n  }\n}\n")
+	o.WriteString("]\n\n")
+	// the same documents as Node trees, as encode_node text and as JSON
+	o.WriteString("/// (the YAML text, what yaml.v3 parses it into as Node trees, writes back for the first, and decodes into an any then json.Marshal writes)\nconst NODE_CASES: List[(Str, Str, Str, Str)] = [\n")
+	for _, d := range fuzzCases(seed, n) {
+		if _, ok := safeShow([]byte(d)); !ok {
+			continue
+		}
+		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xq(d), xq(nodesShow(d)), xq(emitShow(d)), xq(jsonShow(d)))
+	}
+	o.WriteString("]\n\ntest \"yaml fuzz: decode into a struct that derives Yaml is yaml.v3's Unmarshal\" {\n  for (text, want) in CASES {\n    expect(show(text)) == want\n  }\n}\n\ntest \"yaml fuzz: parse_all, encode_node and to_json are yaml.v3's\" {\n  for (text, nodes, emit, json) in NODE_CASES {\n    expect(show_nodes(text)) == nodes\n    if emit != \"SKIP\" {\n      expect(show_emit(text)) == emit\n    }\n    if json != \"SKIP\" {\n      expect(show_json(text)) == json\n    }\n  }\n}\n")
 	fmt.Print(o.String())
 }
