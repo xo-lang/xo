@@ -60,3 +60,13 @@
 `ConnOptions.clock` and `timeout_ms`, `Connection.keepalive(group)`: i/o timeouts, empty-frame heartbeats at half the peer's idle timeout, and a failure when the peer is silent for `idle_timeout_ms`. All `amqp` calls that block now declare `uses (net.dial, clock)` (spec/std.md 64.2).
 
 An opt-in interop test (`xo test --real` with `XO_AMQP_INTEROP_ADDR`) passes against `apache/activemq-artemis:latest-alpine` (knowledgebase/infrastructure/amqp-interop.md).
+
+## 2026-11-05: behavior: amqp.Value.Float holds a Float32
+
+- Kind: behavior
+- Commit: this push
+- Found by: the std survey follow-up (decision 0521)
+- Test: the amqp corpus (float cases on native, LLVM and the Go backend) and std/native/amqp_test.xo
+- Shipped in: not yet released
+
+`Value.Float(v: Float32)` replaces `Value.Float(bits: UInt32)`; the wire bits still round trip exactly, NaN payloads included (spec/std.md 64).

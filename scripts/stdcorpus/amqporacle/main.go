@@ -427,7 +427,7 @@ fn show(v: amqp.Value) -> Str {
     Short(x) => "short ${x}"
     Int(x) => "int ${x}"
     Long(x) => "long ${x}"
-    Float(bits) => "float ${hexn(Int(bits), 8)}"
+    Float(v) => "float ${hexn(Int(v.to_bits()), 8)}"
     Double(x) => "double ${hexn(x.to_bits(), 16)}"
     Decimal32(b) => "decimal32 ${hexn(Int(b), 8)}"
     Decimal64(b) => "decimal64 ${hexn(b.to_bits(), 16)}"

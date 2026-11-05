@@ -89,7 +89,7 @@ fn put_value(out: BytesBuilder, v: amqp.Value) -> BytesBuilder ! amqp.AmqpErr {
         be(put_code(o, 0x81), n, 8)
       }
     }
-    Float(bits) => be(put_code(o, 0x72), Int(bits), 4)
+    Float(v) => be(put_code(o, 0x72), Int(v.to_bits()), 4)
     Double(x) => be(put_code(o, 0x82), x.to_bits(), 8)
     Decimal32(x) => be(put_code(o, 0x74), Int(x), 4)
     Decimal64(x) => be(put_code(o, 0x84), u64_int(x), 8)
@@ -342,7 +342,7 @@ fn put_int_body(out: BytesBuilder, v: amqp.Value, n: Int) -> BytesBuilder {
     Short(x) => be(out, Int(x), n)
     Int(x) => be(out, Int(x), n)
     Long(x) => be(out, Int(x), n)
-    Float(bits) => be(out, Int(bits), n)
+    Float(v) => be(out, Int(v.to_bits()), n)
     Double(x) => be(out, x.to_bits(), n)
     Decimal32(x) => be(out, Int(x), n)
     Decimal64(x) => be(out, u64_int(x), n)
@@ -608,7 +608,7 @@ fn fixed_value(b: Bytes, c: Int, p: Int) -> amqp.Value {
   if c == 0x61 { return amqp.Value.Short(v: Int16(get_signed(b, p, 2))) }
   if c == 0x70 { return amqp.Value.UInt(v: UInt32(get_be(b, p, 4))) }
   if c == 0x71 { return amqp.Value.Int(v: Int32(get_signed(b, p, 4))) }
-  if c == 0x72 { return amqp.Value.Float(bits: UInt32(get_be(b, p, 4))) }
+  if c == 0x72 { return amqp.Value.Float(v: Float32.from_bits(UInt32(get_be(b, p, 4)))) }
   if c == 0x73 { return amqp.Value.Char(v: Rune.try(get_be(b, p, 4)) ?? Rune.try(0xFFFD) ?? fault("rune")) }
   if c == 0x74 { return amqp.Value.Decimal32(bits: UInt32(get_be(b, p, 4))) }
   if c == 0x80 { return amqp.Value.ULong(v: UInt64.from_bits(get_be(b, p, 8))) }

@@ -7403,7 +7403,7 @@ capability, one source for every backend (std/go_compiled.txt).
 
 ```
 enum Value { Null, Bool(v), UByte(v), UShort(v), UInt(v), ULong(v), Byte(v), Short(v), Int(v), Long(v),
-             Float(bits: UInt32), Double(v: Float), Decimal32(bits), Decimal64(bits), Decimal128(bits: Bytes),
+             Float(v: Float32), Double(v: Float), Decimal32(bits), Decimal64(bits), Decimal128(bits: Bytes),
              Char(v: Rune), Timestamp(ms: Int), Uuid(bytes: Bytes), Binary(v: Bytes), Str(v: Str),
              Symbol(v: Str), List(items), Map(pairs: List[(Value, Value)]), Array(items),
              Described(descriptor: Value, value: Value) }
