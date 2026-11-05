@@ -4,7 +4,7 @@
 use std/http
 
 const CLIENTS = 32
-const REQUESTS = 3000
+const REQUESTS = 30000
 
 fn routes() -> http.Router {
   var r = http.router()
