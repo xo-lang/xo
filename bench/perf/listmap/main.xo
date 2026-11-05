@@ -2,7 +2,8 @@
 // 2 Strs 2M times, `mid` 32 and 31 Ints 300k times (around the in-place
 // threshold), `big` 1M Ints 20 times, each a list nothing else holds;
 // `sortby` sorts 100k (Int, Str) records by their Int 10 times and
-// `sortby_small` 4 records 300k times (List.sort_by in place).
+// `sortby_small` 4 records 300k times (List.sort_by in place); `reverse`
+// reverses 1M Ints 20 times and 8 Strs 1M times.
 fn main(os: Os) {
   let args = os.env.args()
   let mode = if args.is_empty() { "big" } else { args[0] }
@@ -33,6 +34,17 @@ fn main(os: Os) {
       }
       let sorted = rs.sort_by(fn(t) { t.0 })
       total += sorted[50_000].0
+    }
+  } else if mode == "reverse" {
+    // 1M Ints reversed 20 times, and 8 Strs 1M times
+    var xs = (0..1_000_000).to_list()
+    for _ in 0..20 {
+      xs = xs.reverse()
+    }
+    total += xs[0]
+    for i in 0..1_000_000 {
+      let ss = ["a", "b", "c", "d", "e", "f", "g", "${i % 3}"].reverse()
+      total += ss[0].len()
     }
   } else if mode == "sortby_small" {
     for i in 0..300_000 {
