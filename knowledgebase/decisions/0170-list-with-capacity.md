@@ -60,3 +60,10 @@ growing as a `List` does, so it does not help `Module.new_func`.
 - Ignoring the size on native builds (as `Buf.with_capacity` does
   there): the runtime already had `xo_rl_new_n`, so using it costs
   nothing.
+
+## Addendum (2026-11-05)
+
+`Buf.with_capacity` now uses the size too (compiler/ssa call.xo, the same
+`list.new` with a size): the native builds had kept dropping it, and a
+million element Buf grew through about 40 copies, 2.9 ms of micro13
+sort1M's 65 on linux/amd64 (bench/results/buf-with-capacity-2026-11-05.md).

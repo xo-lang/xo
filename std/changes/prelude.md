@@ -7,6 +7,21 @@
 
 
 
+## 2026-11-05: perf: Buf.with_capacity reserves its size on native builds
+
+- Kind: perf
+- Commit: this push
+- Found by: profiling micro13 sort1M on linux/amd64 against Go (xo-lang-4)
+- Go reference: make([]T, 0, n)
+- Test: test/codegen/lists reserved (xo_x_obj_rl_new_n on arm64, amd64 and LLVM); TestGoldenRun native_gaps
+- Timing: micro13 sort1M (fills a Buf.with_capacity(1_000_000), then sorts it) work_ms linux/amd64 65 to 61 (0.938), darwin/amd64 75 to 73 (0.973); wall linux/arm64 0.986 (bench/results/buf-with-capacity-2026-11-05.md)
+- Shipped in: not yet released
+
+`Buf[T].with_capacity(n)` evaluated n and dropped it, so the buffer started
+empty and grew by copying (about 40 copies for a million elements, 2.9 ms
+of sort1M's 65 on linux/amd64). It now allocates room for n elements, as
+`List.with_capacity` has since decision 0170.
+
 ## 2026-11-05: fix: a CPU profile sample in an outline atomic helper has its caller
 
 - Kind: fix

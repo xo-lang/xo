@@ -322,4 +322,5 @@
 - [idle-conn-40k-2026-11-04.md](idle-conn-40k-2026-11-04.md): 40,000 idle HTTP/1.1 and TLS HTTP/2 connections, Xo against Go net/http: memory per connection
 - [jpeg-encode-2026-11-05.md](jpeg-encode-2026-11-05.md): jpeg.encode against Go's Encode on linux/arm64: byte exact, Xo 1.16x to 1.24x slower after two speedups (decision 0510)
 - [worker-own-poll-2026-11-04.md](worker-own-poll-2026-11-04.md): decision 0502 on linux/arm64: tcpping handshake 0.93 of Go (from 1.54), smtp 0.53 of main, HTTP rows unchanged; the variants not taken (open loop p99 141 against 113 us, the busy average, the XO_NPSPIN_NS spin).
+- [buf-with-capacity-2026-11-05.md](buf-with-capacity-2026-11-05.md): Buf.with_capacity reserves its size; micro13 sort1M linux/amd64 0.938, darwin/amd64 0.973
 - [atomic-add-ldadd-2026-11-05.md](atomic-add-ldadd-2026-11-05.md): Atomic[Int].add as one ldadd far from the limits: micro13 spawn100k linux/arm64 wall 0.911, cpu 0.754 of main; darwin/arm64 0.783, cpu 0.477; now 0.77 to 0.81 of Go on arm64; amd64 unchanged; where the CPU went (perf: 84.6% in the CAS loop).

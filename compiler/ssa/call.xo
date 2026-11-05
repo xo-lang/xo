@@ -1978,10 +1978,13 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       }
     }
     "Buf" => {
-      if is_static && (fname is "new" | "with_capacity") && b.tkind(nt) == Kind.List {
-        for a in args {
-          b.value_as(a.value, it)
-        }
+      if is_static && fname == "with_capacity" && args.len() == 1 && b.tkind(nt) == Kind.List {
+        // room for n elements, as List.with_capacity (decision 0170): the
+        // size was evaluated and dropped, so a Buf of 1,000,000 grew from
+        // empty through about 40 copies (micro13 sort1M, 2026-11-05)
+        return b.call("list.new", nt, "", [b.value_as(args[0].value, it)])
+      }
+      if is_static && fname == "new" && b.tkind(nt) == Kind.List {
         return b.call("list.new", nt, "", [])
       }
       if b.c.objs[fo].recv_var && fname == "push" && args.len() == 1 {
