@@ -60,3 +60,6 @@ yaml.*  called only by derive Yaml's generated code
 # debug a program. dbg_wait blocks its own thread in mach_msg or wait4
 # with a timeout, not the event loop (compiler/ssa/waits.xo NO_WAIT).
 internal.dbg_*	reached only by xo debug, tested by cmd/xo TestDebug*
+amqp.Connection.abort	tested by the in-process peer tests of std/native/amqp_test.xo (a loopback listener), not a corpus
+amqp.Connection.end_session	tested by the in-process peer tests of std/native/amqp_test.xo, not a corpus
+amqp.Connection.peer_*	accessors read in the in-process peer tests of std/native/amqp_test.xo, not a corpus
