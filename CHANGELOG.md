@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- cli: `xo run DIR/main.xo` runs the program of DIR (every file of the module) instead of stopping with a usage error that told you to type `xo run DIR` (owner, 2026-11-05). spec/core.md "xo run".
 - fix (http): a native HTTP server (arm64, amd64, LLVM backends) no longer hangs on SIGTERM or a stop request when a kept-alive connection answered a request in the 20 ms before the stop; it hung in 0.36.0 to 0.40.0. Test: golden http_stop_keepalive. std/changes/http.md, gotchas/park-after-stop-check-then-act.md.
 - feature (build, opt in): XO_DEP_LAZY=1 checks a dependency's function bodies only as `xo build` or `xo run` reaches them (decision 0517, accepted; the default after this lands and is measured): a type error in a dependency function the program never calls no longer fails the build, `xo check`, `xo test` and `xo vet` of the dependency stay complete, and a dependency's non-pub Display and Debug methods are checked with its declarations so their inferred effects reach callers (XO0701). s3 + dynamodb on linux/arm64: peak RSS 932 to 631 MB, cold 4.44 to 4.01 s.
 - feature (modules): `xo get` checks each newly required module version in full once (`xo check` of it, offline, recorded in the module cache per version and xo) and prints a warning with its first errors; the requirement is still added. Decision 0517, the owner's choice (b): a build will check a dependency's bodies only as it reaches them. XO_GET_CHECK=0 skips it.

@@ -291,10 +291,11 @@ fn front(os: Os, args: List[Str]) -> Front {
       // the pattern itself: the command walks DIR (decision 0345)
       out.push(os_path(a))
     } else if cmd == "run" && !program && a.ends_with(".xo") && !is_dir(os, abs_in(wd, a)) {
-      // a module is a directory (core 1.1): run the file's directory
+      // a module is a directory (core 1.1): FILE.xo runs the program of
+      // the file's directory, all its files (owner, 2026-11-05: the
+      // usage error only told you to type the directory)
       let d = if a.contains("/") { a[0..(a.rfind("/") ?? 0)] } else { "." }
-      os.stdio.eprintln("xo run: ${a} is a file, not a directory (a module is a directory, core 1.1)\n  fix: xo run ${if d.is_empty() { "/" } else { d }}")
-      return Front{code: 2}
+      out.push(os_path(if d.is_empty() { "/" } else { d }))
     } else {
       out.push(if dirs { os_path(a) } else { a })
     }

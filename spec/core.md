@@ -3153,8 +3153,9 @@ program in exactly that directory: it never looks below it, since
 running code found by walking would run whatever a directory tree
 holds. A directory with no `.xo` file or no `main` is an error, whose
 note lists the subdirectories directly below that declare `main`, as a
-hint; a `.xo` file, `xo run DIR/...`, and any other pattern are errors
-(a module is a directory, 1.1), the file's with the fix `xo run DIR`.
+hint. A `.xo` file names its directory: `xo run DIR/main.xo` runs the
+program of DIR, every file of it (a module is a directory, 1.1).
+`xo run DIR/...` and any other pattern are errors.
 
 **Check and fix.** `xo check` is read only. `xo check --fix` first
 applies every unambiguous machine fix, the same set `xo fix` applies

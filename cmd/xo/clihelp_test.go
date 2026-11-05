@@ -325,7 +325,8 @@ func TestCLIRunNoWalk(t *testing.T) {
 	if code, got := xo("run", "lib"); code != 1 || !strings.Contains(got, "lib has no main function") {
 		t.Errorf("xo run lib: exit %d:\n%s", code, got)
 	}
-	if code, got := xo("run", "a/main.xo"); code != 2 || !strings.Contains(got, "a/main.xo is a file, not a directory") || !strings.Contains(got, "fix: xo run a") {
+	// a file runs its directory's program (owner, 2026-11-05)
+	if code, got := xo("run", "a/main.xo"); code != 0 || got != "ran a\n" {
 		t.Errorf("xo run a/main.xo: exit %d:\n%s", code, got)
 	}
 	if code, got := xo("run", "./..."); code != 2 || strings.Contains(got, "ran ") {
