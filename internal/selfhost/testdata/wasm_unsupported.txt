@@ -96,3 +96,4 @@ http_raw_path # the wasm backend does not support the network (`rt.net_listen`):
 http_proxy_body_next_race # the wasm backend does not support the network
 frame_large_value # the wasm backend passes a value word by word: its rc helper takes 2,000 parameters, past the 1,000 a WebAssembly engine accepts (check_arity)
 rc_large_offsets # the wasm backend passes a value word by word: its rc helper takes 2,000 parameters, past the 1,000 a WebAssembly engine accepts (check_arity)
+http_expect_continue # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
