@@ -1,6 +1,6 @@
 # std/amqp interop against a real broker
 
-Last verified: 2026-11-05
+Last verified: 2026-11-05 (Artemis 2.44.0)
 
 `std/native/amqp_test.xo` ends with an opt-in test, "interop: send, receive and settle against a real
 broker". It runs only with `xo test --real` and `XO_AMQP_INTEROP_ADDR` set, and passes without doing
@@ -34,4 +34,9 @@ receiver exists are dropped and a receive times out; a client must set `target_c
 
 - CBS put-token: Artemis has no `$cbs` node. Microsoft's Service Bus emulator (`mcr.microsoft.com/azure-messaging/servicebus-emulator`)
   does, but needs a SQL Server container (linux/amd64 only), so it runs on the amd64 offload host, not the Mac.
-- Rejected and modified outcomes, large (multi-frame) deliveries and the keepalive task against a real broker.
+- Modified outcomes and a second broker (Qpid, RabbitMQ 4).
+
+Second test (same day): a 200 000 byte delivery (several transfer frames at the default 64 KiB frame size) sent,
+received and compared byte for byte; a small message sent and rejected; `keepalive` running over a 1.5 s idle period;
+closes. Finding: Artemis 2.44.0 closes the connection with `amqp:internal-error` AMQ119008 ("error cancelling message
+AMQPLargeMessage") when a large message is rejected, so the test rejects a small one.

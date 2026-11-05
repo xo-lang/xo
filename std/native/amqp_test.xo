@@ -654,3 +654,36 @@ test "interop: send, receive and settle against a real broker" uses (net, clock,
   c.end_session(sess).or_fault("end")
   c.close().or_fault("close")
 }
+
+test "interop: a large delivery, keepalive, reject and the dead letter path" uses (net, clock, env) {
+  let addr = os.env.get("XO_AMQP_INTEROP_ADDR") ?? ""
+  if addr == "" { return }
+  let queue = "xo-interop-big-${os.clock.now().unix_millis()}"
+  let c = amqp.dial(os.net, addr, interop_opts(os.env, os.clock)).or_fault("dial")
+  scope s {
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, queue, amqp.SenderOptions{target_capabilities: ["queue"]}).or_fault("sender")
+    var payload = BytesBuilder.new()
+    for i in 0..200000 { payload.write_byte(UInt8.wrapping_from(i)) }
+    let big = payload.freeze()
+    let out = snd.send(amqp.Message{body: amqp.Body.Data(sections: [big])}).or_fault("send big")
+    expect(out) == Some(amqp.DeliveryState.Accepted)
+    let rcv = c.new_receiver(sess, queue, amqp.ReceiverOptions{credit: 2, source_capabilities: ["queue"]}).or_fault("receiver")
+    let d = rcv.receive().or_fault("receive big")
+    expect(d.message.body) == amqp.Body.Data(sections: [big])
+    rcv.accept(d).or_fault("accept big")
+    // Artemis 2.44 closes the connection with an internal error when a large message is rejected
+    // (AMQ119008), so the reject goes on a small one
+    let small = snd.send(amqp.Message{body: amqp.Body.Data(sections: [b"small"])}).or_fault("send small")
+    expect(small) == Some(amqp.DeliveryState.Accepted)
+    let d2 = rcv.receive().or_fault("receive small")
+    rcv.reject(d2).or_fault("reject")
+    // the keeper runs while the test is idle
+    os.clock.sleep(1500ms)
+    snd.close().or_fault("close sender")
+    rcv.close().or_fault("close receiver")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}

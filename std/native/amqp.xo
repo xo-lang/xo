@@ -1411,11 +1411,11 @@ fn take(var c: amqp.ConnState, n: Int) -> Bytes ! amqp.AmqpErr uses (net.dial, c
 }
 
 fn st_send(var c: amqp.ConnState, f: amqp.Frame) -> () ! amqp.AmqpErr uses (net.dial, clock) {
-  if c.closed { return Err(proto_err("the connection is closed")) }
   match c.broken {
     Some(e) => return Err(e)
     None => {}
   }
+  if c.closed { return Err(proto_err("the connection is closed")) }
   t_write(c.link, encode_frame(f)?)?
   match c.clock {
     Some(k) => { c.last_send_ms = k.now().unix_millis() }
