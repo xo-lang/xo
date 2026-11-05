@@ -1,6 +1,25 @@
 # prelude changes
 
 
+
+## 2026-11-05: perf: List.map to its own element type writes a list nothing else holds in place
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0508 (the sort1M investigation: a builder can reuse a receiver its caller handed over at a last use)
+- Go reference: none (Go has no map builder; a loop writing xs[i] = f(xs[i]))
+- Test: prelude_test.xo "list_map in place: ..." (a held list keeps its elements; temporaries, 255, 256 and 300 elements, a new element type; counted elements and a closure that captures the list; an error part way), arm64 and LLVM
+- Timing: linux/arm64 offload host, ab-host.sh --rounds=7, bench/perf/listmap: 1M Ints (`big`) wall 0.663 (0.613 to 0.831), max RSS 0.609; lists of 32 and 31 (`mid`) 0.992 (0.958 to 1.045), within noise; four Ints and two Strs (`small`) 0.843 (0.796 to 0.868)
+- Shipped in: not yet released
+
+`map` of a list of 256 or more elements whose result element type is the
+list's own writes each result over its element when nothing else holds
+the list (a temporary, or a binding not read again), instead of building
+a new list. f is seen once as a `fn(T) -> T`, so no element is converted.
+A list another binding holds is copied by the first write, so its holder
+never sees a change. Shorter lists keep the new list: the type test costs
+two small allocations (32 elements in place were 1.07 of main's time).
+
 ## 2026-11-04: perf: List.sort of a list nothing else holds sorts that list's own array
 
 - Kind: perf

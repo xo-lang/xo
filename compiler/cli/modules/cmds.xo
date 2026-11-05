@@ -4,9 +4,15 @@
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/parser
 
+// Named ModChange, not Change, so the 0.39 seed builds xo: its native
+// backend gave a function type over a struct name two modules declare
+// (core.Change is the other) one type, which List.map in place (decision
+// 0508) reaches with fn(T) -> T; fixed in type_text with the regression
+// golden fn_type_same_name_structs, gotchas/fn-type-name-drops-module.md.
+// The name can go back once the seed has that fix.
 /// One requirement changed by xo get or xo mod tidy (mod.Change); old ""
 /// when added, new "" when removed.
-struct Change {
+struct ModChange {
   path: Str
   old: Str = ""
   new: Str = ""
@@ -168,7 +174,7 @@ fn accept_opts(path: Str, accept: Bool) -> Options {
 
 /// mod.GetAccept: `xo get <path>[@version]` in the main module in
 /// main_dir; with accept the module's wider effects are recorded.
-fn (var c: ModCtx) get(main_dir: Str, arg: Str, accept: Bool) -> (List[Change], List[check.Problem]) uses (fs, proc, rand, net) {
+fn (var c: ModCtx) get(main_dir: Str, arg: Str, accept: Bool) -> (List[ModChange], List[check.Problem]) uses (fs, proc, rand, net) {
   let (path0, version0, _) = cut(arg, "@")
   var path = path0
   var version = version0
@@ -225,7 +231,7 @@ fn (var c: ModCtx) get(main_dir: Str, arg: Str, accept: Bool) -> (List[Change], 
     c.write_file(main.file, data.bytes()).ignore_err("restoring xo.mod, as mod.GetAccept")
     return ([], ps)
   }
-  var ch = Change{path: path, old: old, new: nv}
+  var ch = ModChange{path: path, old: old, new: nv}
   if !nv.is_empty() {
     let (sel, by) = c.selected_by(main_dir, path)
     if !sel.is_empty() && sel != nv {
@@ -317,7 +323,7 @@ fn (var c: ModCtx) accept_effects(main_dir: Str, paths: List[Str]) -> (List[Effe
 /// mod.Tidy: requires the latest version of every imported module xo.mod
 /// does not require, drops requirements nothing imports (unless the rest
 /// of the graph needs their version), and rewrites xo.lock.
-fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) uses (fs, proc, rand, net) {
+fn (var c: ModCtx) tidy(main_dir: Str) -> (List[ModChange], List[check.Problem]) uses (fs, proc, rand, net) {
   let (main0, probs) = c.chk.read_mod_file(main_dir)
   if !errs(probs).is_empty() {
     return ([], probs)
@@ -330,7 +336,7 @@ fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) us
     Ok(x) => x
     Err(e) => return ([], [check.Problem{code: "XO1318", file: main.file, msg: "the module's imports cannot be read: ${e}", notes: ["tidy stops rather than drop the requirements of what it could not read; run it again"]}])
   }
-  var changes: List[Change] = []
+  var changes: List[ModChange] = []
   var extra: List[check.Require] = []
   let b = c.load(main_dir, Options{no_workspace: true, no_vendor: true, update: true})
   if !errs(b.problems).is_empty() {
@@ -352,7 +358,7 @@ fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) us
     match c.find_module(imp) {
       Ok((mp, v)) => {
         extra.push(check.Require{path: mp, version: v, line: 0})
-        changes.push(Change{path: mp, new: v})
+        changes.push(ModChange{path: mp, new: v})
       }
       Err(e) => return ([], [check.Problem{code: c.offline_or("XO1302"), module: imp, file: main.file, msg: "no module provides ${imp}: ${e}", notes: ["git location tried: ${c.repo_url(imp)}"]}])
     }
@@ -397,7 +403,7 @@ fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) us
       }
       if !keep {
         drop[r.path] = true
-        changes.push(Change{path: r.path, old: r.version})
+        changes.push(ModChange{path: r.path, old: r.version})
       }
     }
   }
@@ -430,7 +436,7 @@ fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) us
       return ([], [check.Problem{code: "XO1319", file: main.file, msg: "`use go \"${g}\"` has no `require go` line, and no binding records its version yet", notes: ["run `xo check` once (it binds the package with Go), then `xo mod tidy` again, or add `require go <module> <version>` to xo.mod (decision 0356)"]}])
     }
     data = data.trim_suffix("\n") + "\nrequire go ${mp} ${v}\n"
-    changes.push(Change{path: mp, new: v})
+    changes.push(ModChange{path: mp, new: v})
   }
   // each pin's go.sum hashes known, or nothing is written (Intel b17,
   // 0.33.0: in a fresh clone, with no binding workspace yet, tidy wrote

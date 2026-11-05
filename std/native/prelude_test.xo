@@ -3377,6 +3377,68 @@ test "list_sort_in_place: the sizes around the 16 element runs" {
   }
 }
 
+// List.map in place (decision 0508): a list of at least MAP_IN_PLACE_MIN
+// elements mapped to its own element type is written in its own array
+// when nothing else holds it; these check what must not change.
+
+struct MapRec {
+  name: Str
+  kids: List[Int]
+}
+
+enum MapErr {
+  Stop(at: Int)
+}
+
+fn map_range(n: Int) -> List[Int] {
+  (0..n).to_list()
+}
+
+test "list_map in place: a list another binding holds keeps its elements" {
+  let xs = map_range(300)
+  let ys = xs.map(fn(v) { v * 2 })
+  expect(ys[299] == 598 && ys.len() == 300)
+  expect(xs == map_range(300))
+}
+
+test "list_map in place: a temporary, short and long lists, and a new element type" {
+  expect(map_range(300).map(fn(v) { v + 1 }) == (1..301).to_list())
+  expect(map_range(255).map(fn(v) { v + 1 }) == (1..256).to_list())
+  expect(map_range(256).map(fn(v) { v + 1 }) == (1..257).to_list())
+  let strs = map_range(300).map(fn(v) { "n${v}" })
+  expect(strs[299] == "n299")
+  expect(strs.map(fn(s) { s + "!" })[0] == "n0!")
+}
+
+test "list_map in place: counted elements are released once, and a closure sees the originals" {
+  var rs: List[MapRec] = []
+  for i in 0..300 {
+    rs.push(MapRec{name: "r${i}", kids: [i, i + 1]})
+  }
+  let seen = rs
+  let out = rs.map(fn(r) { MapRec{name: r.name + "x", kids: r.kids + [seen.len()]} })
+  expect(out[5].name == "r5x" && out[5].kids == [5, 6, 300])
+  expect(seen[5].name == "r5" && seen[5].kids == [5, 6])
+  let names = map_range(300).map(fn(v) { "s${v}" })
+  let up = names.map(fn(s) { s + s })
+  expect(up[299] == "s299s299" && names[299] == "s299")
+}
+
+test "list_map in place: an error part way leaves a held list unchanged" {
+  let xs = map_range(300)
+  let r = xs.map(fn(v) -> Int ! MapErr {
+    if v == 40 {
+      return Err(MapErr.Stop(at: v))
+    }
+    v * 10
+  })
+  match r {
+    Ok(_) => expect(false)
+    Err(MapErr.Stop(at)) => expect(at == 40)
+  }
+  expect(xs == map_range(300))
+}
+
 test "list_sort: a list another binding holds keeps its order" {
   // sort writes its parameter's own array when the call is the caller's
   // last use; a list still held elsewhere is copied first

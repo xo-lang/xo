@@ -11,7 +11,7 @@ use github.com/xo-lang/xo/compiler/cli/semantic
 /// cmd/xo upgradeDiffs: the API and effect changes of every upgraded or
 /// downgraded requirement of the main module in root, with the exports
 /// whose effects exceed the requirement's ceiling.
-fn (var c: ModCtx) upgrade_diffs(root: Str, changes: List[Change]) -> List[ApiChanges] uses (fs, proc, rand, net) {
+fn (var c: ModCtx) upgrade_diffs(root: Str, changes: List[ModChange]) -> List[ApiChanges] uses (fs, proc, rand, net) {
   var out: List[ApiChanges] = []
   let (f, _) = c.chk.read_mod_file(root)
   for ch in changes {

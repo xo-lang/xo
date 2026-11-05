@@ -102,3 +102,19 @@ and darwin.
   itself; a user who wants it can already write the loop.
 - Leave the builders alone: the sort case was the large one and is fixed.
   The map figures above say there is more to gain on large lists.
+
+## Implementation notes (2026-11-05)
+
+- Step 1 sees f once as a `fn(T) -> T` (`rt.any_get` of `rt.any_of` of
+  f), not each result as a T: converting each element through Any boxed
+  it and ran 10.2 times main's time on 1M Ints.
+- The type test costs two small allocations per call, so the in-place
+  path starts at MAP_IN_PLACE_MIN = 256 elements. With no threshold four
+  Ints ran 2.4 times main's time (Mac); at 32, lists of 32 ran 1.072
+  (1.043 to 1.095) of main's time on linux/arm64 (bench/perf/listmap mid).
+- The fn(T) -> T Option exposed a native compiler bug: ssa type_text
+  named a function type over a struct name two modules declare without
+  the module, so two modules' types became one (XO1201 at build).
+  Fixed with the regression golden fn_type_same_name_structs
+  (gotchas/fn-type-name-drops-module.md); compiler/cli's modules.Change
+  is renamed ModChange so a seed without the fix still builds xo.

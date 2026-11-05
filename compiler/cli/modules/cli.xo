@@ -273,7 +273,7 @@ fn (c: ModCtx) mod_root_of(dir: Str, cmd: Str) -> Str? uses (fs.read, stdio) {
   None
 }
 
-fn change_json(ch: Change) -> J {
+fn change_json(ch: ModChange) -> J {
   var fs: List[(Str, J)] = [("path", J.S(s: ch.path))]
   if !ch.old.is_empty() {
     fs.push(("old", J.S(s: ch.old)))
@@ -310,7 +310,7 @@ fn module_json(m: check.DepModule) -> J {
 
 /// cmd/xo reportChanges: requirement changes as JSON or as lines; diffs
 /// are the API and effect changes of upgraded or downgraded modules.
-fn (c: ModCtx) report_changes(changes: List[Change], probs: List[check.Problem], as_json: Bool, diffs: List[ApiChanges]) -> Int uses stdio {
+fn (c: ModCtx) report_changes(changes: List[ModChange], probs: List[check.Problem], as_json: Bool, diffs: List[ApiChanges]) -> Int uses stdio {
   if as_json {
     var fs: List[(Str, J)] = [("ok", J.B(b: probs.is_empty())), ("changes", J.A(xs: changes.map(change_json)))]
     if !diffs.is_empty() {
@@ -364,7 +364,7 @@ fn (var c: ModCtx) run_get(args: List[Str]) -> Int uses (fs, net, proc, stdio, r
     c.os.stdio.eprintln("xo get: no module path given (xo get <path>[@version], or xo get -u)")
     return 2
   }
-  var changes: List[Change] = []
+  var changes: List[ModChange] = []
   var probs: List[check.Problem] = []
   for a in targets {
     let (cs, ps) = c.get(root, a, fl.on("accept-effects"))

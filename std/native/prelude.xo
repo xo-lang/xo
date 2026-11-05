@@ -1338,9 +1338,33 @@ fn list_index_of[T](xs: List[T], x: T) -> Int? {
   None
 }
 
+/// list_map's in-place path starts at this length (decision 0508).
+const MAP_IN_PLACE_MIN = 256
+
 fn list_map[T, U, E, fx: Effects](xs: List[T], f: fn(T) -> U ! E uses fx) -> List[U] ! E uses fx {
+  // xs's last use (decision 0508): when the caller let go of its list
+  // too, a holds the only reference
+  var a = xs
+  // the type test costs two small allocations, more than a short list's
+  // own build (linux/arm64 --ab: a 32 element list 1.07 of main's time,
+  // four Ints 2.4 times with no threshold; bench/perf/listmap)
+  if a.len() >= MAP_IN_PLACE_MIN {
+    if let Some(g) = rt.any_get[fn(T) -> T ! E uses fx](rt.any_of[fn(T) -> U ! E uses fx](f)) {
+      // U is T: each result is written over its element, so a list nothing
+      // else holds is mapped in its own array; one another binding holds is
+      // copied at the first write, as any var list write copies it. f is
+      // seen as a fn(T) -> T once, so no element is converted, and the type
+      // test takes no reference to a
+      for i in 0..a.len() {
+        a[i] = g(a[i])?
+      }
+      if let Some(r) = rt.any_get[List[U]](rt.any_of[List[T]](a)) {
+        return r
+      }
+    }
+  }
   var out: List[U] = []
-  for x in xs {
+  for x in a {
     out.push(f(x)?)
   }
   out
