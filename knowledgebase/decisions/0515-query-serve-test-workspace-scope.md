@@ -161,3 +161,29 @@ one; one program and the per member run give the same totals (4
 passed, 1 failed) and status 1, and name the failing test. Left for
 main: the children's summaries print one per child (a total line at
 the end), and children could run in parallel within the memory budget.
+
+## Point 2 measured (2026-11-05, branch lang1-qcallers, on lang1-qscope)
+
+Checker.reverse_importers reads every workspace package's `use` lines
+(test files included) and walks the reversed edges from the asked
+directories; `xo query callers` with a `--dir` that holds `.xo` files
+loads those packages and their imports. aws 8fe319e, linux/arm64,
+`XO_CHK_CACHE=off`:
+
+| `xo query callers` | whole workspace (XO_QUERY_WIDE=1) | reverse closure |
+|---|---|---|
+| `github.com/xo-lang/aws/service/s3.new --dir=service/s3` | 6,506 MB, 9.6 s | 738 MB, 1.0 s, the same 10 callers (s3 itself and 9 in integration's tests), byte-identical output |
+| `sigv4.sign_header --dir=sigv4` | 6,501 MB, 9.5 s | 6,493 MB, 9.7 s, same output: nearly every package imports sigv4 through the core |
+
+`callers` survives the wide load (6.5 GB, not 30) because it checks only
+the bodies that spell the name (decision 0261's lookups), so this point
+is a speedup, not a fix. One behavior change: a short name is resolved
+in the loaded packages, so `s3.new --dir=service/s3`, ambiguous across
+the workspace (internal/protocoltest has an s3 module too: exit 1), now
+answers with service/s3's callers. That is the module `--dir` names, so
+the change is kept; a name ambiguous within the reverse closure is still
+an error. TestQueryCallersReverseClosure: a workspace where a package's
+callers are in two other modules (one through an intermediate module)
+and an unrelated module has a type error gives byte-identical JSON both
+ways. A core target such as sigv4 needs 0513's per member merge to
+gain; that is left.
