@@ -1,5 +1,21 @@
 # std/debug changes
 
+## 2026-11-05: feature: /debug/sched reports heap_live
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0520 (the stability program's soak needs the live allocation count while the program runs; XO_LEAKCHECK reports it only at exit)
+- Go reference: runtime.MemStats Mallocs - Frees (runtime.ReadMemStats)
+- Test: cmd/xo TestDebugSchedHeapLive (100,000 blocks held: heap_live rises by at least that and falls back after)
+- Timing: none (read on request; the counting it reads is the existing XO_LEAKCHECK/XO_RTSTATS switch)
+- Shipped in: not yet released
+
+`GET /sched` of `debug.router` on the native backends adds a line
+`heap_live N`: the heap blocks allocated and not yet freed, summed over
+every thread's heap, when the heap counts its allocations from the start
+(`XO_LEAKCHECK`, `XO_HEAPSTATS` or `XO_RTSTATS` set). A soak samples it
+to tell a leak from a resident set that only grows by fragmentation.
+
 ## 2026-11-04: fix: mem_trim gives back freed blocks on Linux and of every thread
 
 - Kind: fix

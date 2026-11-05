@@ -85,6 +85,12 @@ fn sched(req: http.Request) -> http.Response {
       i += 1
     }
   }
+  // the heap's live blocks, when it counts (decision 0520: a soak reads
+  // the growth while the program runs)
+  let live = heapos.live_now()
+  if live >= 0 {
+    lines.push("heap_live ${live}")
+  }
   http.Response{status: 200, headers: {"Content-Type": "text/plain; charset=utf-8"}, body: "${lines.join("\n")}\n".bytes()}
 }
 

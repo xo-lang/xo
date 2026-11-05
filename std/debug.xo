@@ -20,7 +20,9 @@ use std/http
 ///   until the sampler runs (`XO_PROF=heap`, or `heap_start()`).
 /// - `GET /sched`: the scheduler's counters as `name value` lines (the
 ///   counts of `XO_RTSTATS`, zero until they are on: `?on=1` turns them
-///   on).
+///   on), and on the native backends `heap_live`, the blocks allocated
+///   and not yet freed, when the heap counts (`XO_LEAKCHECK`,
+///   `XO_HEAPSTATS` or `XO_RTSTATS` at start).
 ///
 /// A request for which `auth` answers false gets 403.
 fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses clock

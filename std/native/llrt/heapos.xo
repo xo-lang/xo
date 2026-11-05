@@ -1586,6 +1586,27 @@ pub fn live(lp: Int, tp: Int) {
   rt.mem_store(tp, 0, t, 8)
 }
 
+/// The blocks allocated and not yet freed now, over every record (live's
+/// first figure), for a running program's /debug/sched (heap_live,
+/// decision 0520); -1 when the heap does not count. Exact when it has
+/// counted since the start (XO_LEAKCHECK, XO_HEAPSTATS or XO_RTSTATS set
+/// then); counting a budget turned on later misses the frees of blocks
+/// made before it.
+pub fn live_now() -> Int {
+  if rt.mem_load(heaps_head(), H_COUNT, 8) == 0 {
+    return -1
+  }
+  var l = 0
+  hlock_take()
+  var h = heaps_head()
+  while h != 0 {
+    l = l.wrapping_add(rt.mem_load(h, H_ALLOCS, 8).wrapping_sub(rt.mem_load(h, H_FREES, 8)))
+    h = rt.mem_load(h, H_NEXT, 8)
+  }
+  hlock_give()
+  l
+}
+
 /// The blocks on class c's free lists over every record (the heap
 /// statistics): each record's list, its spare magazine, and the central
 /// list's magazines, counted by walking them. The records' NFREE words

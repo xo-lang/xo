@@ -6219,8 +6219,10 @@ fn mem_trim()
   started it runs for the life of the process). The Go backend samples
   always (`heap_start` returns false).
 - `GET /sched`: the scheduler's counters as `name value` lines (native:
-  the `XO_RTSTATS` counts, zero until they are on; `?on=1` turns them on.
-  Go: goroutines, gomaxprocs, threads, heap_inuse_bytes, gc_count).
+  the `XO_RTSTATS` counts, zero until they are on; `?on=1` turns them on;
+  and `heap_live`, the heap blocks allocated and not yet freed, when the
+  heap counts from the start: `XO_LEAKCHECK`, `XO_HEAPSTATS` or
+  `XO_RTSTATS` set, decision 0520. Go: goroutines, gomaxprocs, threads, heap_inuse_bytes, gc_count).
 - A request for which `auth` answers false gets 403; the unmounted
   router costs nothing.
 - A live profile running when the program exits is dropped, with no file
