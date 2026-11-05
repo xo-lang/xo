@@ -23,6 +23,13 @@ possible and decide personally when it is 1.0.
   moves to the next draft with an empty "Changes in 0.N+1" section,
   `CHANGELOG.md` gets an entry, and `main` is tagged `v0.N.0`. Patch
   releases (`v0.N.1`) are fixes with no spec change.
+  Addendum (2026-11-05): nothing moved the header from draft 0.10
+  (2026-10-10) through v0.39.0, so `go run ./scripts/specdraft 0.N.P`
+  now does it, run by the release step (relcommit.sh and relmain.sh)
+  beside the version bump, and internal/repotest
+  TestSpecDraftFollowsVersion (one of pushq's fast checks' package)
+  fails when spec/core.md's or spec/std.md's draft is not std/VERSION's
+  minor plus one, or core.md lacks its "Changes in" section.
 - A breaking change between minors ships an `xo fix --from=draft-0.N`
   rewriter in the same release, as since draft 0.1.
 - The stability work continues as if 1.0 were next: the spec audit sorts

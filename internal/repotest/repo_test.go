@@ -6,6 +6,7 @@
 package repotest
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -418,5 +419,42 @@ func TestRawAddrKeepsBuffer(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSpecDraftFollowsVersion keeps the spec's draft number one minor
+// ahead of the toolchain between releases (decision 0089: a minor release
+// moves spec/core.md's and spec/std.md's "Status: draft 0.N" header to the
+// next draft, with an empty "Changes in 0.N" section in core.md). Nothing
+// did it from 2026-10-10 to v0.39.0, and the headers sat at draft 0.10 and
+// 0.8 through 29 releases (lead, 2026-11-05).
+func TestSpecDraftFollowsVersion(t *testing.T) {
+	v, err := os.ReadFile(filepath.Join(root, "std", "VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`^0\.(\d+)\.\d+\s*$`).FindSubmatch(v)
+	if m == nil {
+		t.Fatalf("std/VERSION is %q, want 0.N.P", v)
+	}
+	minor, _ := strconv.Atoi(string(m[1]))
+	want := minor + 1
+	draft := regexp.MustCompile(`(?m)^Status: draft 0\.(\d+)\b`)
+	for _, f := range []string{"core.md", "std.md"} {
+		b, err := os.ReadFile(filepath.Join(root, "spec", f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := draft.FindSubmatch(b)
+		if d == nil {
+			t.Errorf("spec/%s: no \"Status: draft 0.N\" line", f)
+			continue
+		}
+		if n, _ := strconv.Atoi(string(d[1])); n != want {
+			t.Errorf("spec/%s is draft 0.%d; std/VERSION is %s, so the draft is 0.%d (decision 0089: each minor release moves the draft on)", f, n, strings.TrimSpace(string(v)), want)
+		}
+		if f == "core.md" && !strings.Contains(string(b), fmt.Sprintf("\n## Changes in 0.%d\n", want)) {
+			t.Errorf("spec/core.md has no \"## Changes in 0.%d\" section", want)
+		}
 	}
 }
