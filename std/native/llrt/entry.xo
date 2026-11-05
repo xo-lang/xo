@@ -11,6 +11,7 @@
 // exports through rt.fn_addr (decision 0233 step 2). Nothing here allocates
 // from the program's heap (the leak check counts every block): scratch
 // memory is rt.heap_large's, from malloc.
+use native/llrt/alloc
 use native/llrt/atexit
 use native/llrt/concflag
 use native/llrt/crash
@@ -246,6 +247,13 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     stdio.threads()
   } else if process.env_real_at("XO_LEAKCHECK") == 0 && process.env_real_at("XO_HEAPSTATS") == 0 && process.env_real_at("XO_RTSTATS") == 0 {
     heapos.counting_off()
+  }
+  // XO_HEAPSTATS=waste (a value starting with w): the size classes' asked
+  // and handed bytes above 1 KiB, reported with the heap stats at exit
+  // (alloc.xo waste_on, decision 0506's measurement)
+  let hs = process.env_real_at("XO_HEAPSTATS")
+  if hs != 0 && rt.mem_load(hs, 0, 1) == 119 {
+    alloc.waste_on()
   }
   // XO_CUT=0: the growth of a thread's chunk never cuts a larger class's
   // central magazines into smaller blocks (decision 0383, (a))
@@ -515,6 +523,42 @@ pub fn heapstats() {
       emit(b, at)
     }
     sum += n * (size + 8)
+  }
+  let wt = alloc.waste_table()
+  if wt != 0 {
+    // per class above 1 KiB: allocations, bytes asked, bytes handed out
+    // (block and prefix), and handed per 1000 asked
+    var asked = 0
+    var handed = 0
+    for c in 65..alloc.WASTE_ROWS {
+      let k = rt.mem_load(wt, c * 24, 8)
+      if k > 0 {
+        let a = rt.mem_load(wt, c * 24 + 8, 8)
+        let h = rt.mem_load(wt, c * 24 + 16, 8)
+        asked += a
+        handed += h
+        var at = put(b, 0, "xo heapstats: waste class ")
+        at = if c == alloc.WASTE_BIG { put(b, at, "big") } else { put_int(b, at, c) }
+        at = put(b, at, " allocs ")
+        at = put_int(b, at, k)
+        at = put(b, at, " asked ")
+        at = put_int(b, at, a)
+        at = put(b, at, " handed ")
+        at = put_int(b, at, h)
+        at = put(b, at, " per mille ")
+        at = put_int(b, at, if a > 0 { h * 1000 / a } else { 0 })
+        at = put(b, at, "\n")
+        emit(b, at)
+      }
+    }
+    var at = put(b, 0, "xo heapstats: waste above 1 KiB asked ")
+    at = put_int(b, at, asked)
+    at = put(b, at, " handed ")
+    at = put_int(b, at, handed)
+    at = put(b, at, " per mille ")
+    at = put_int(b, at, if asked > 0 { handed * 1000 / asked } else { 0 })
+    at = put(b, at, "\n")
+    emit(b, at)
   }
   var at = put(b, 0, "xo heapstats: large cache ")
   at = put_int(b, at, heapos.cache_count())

@@ -287,6 +287,9 @@ pub fn alloc(h: Int, n: Int) -> Int {
     if rt.mem_load(h, COUNT, 8) != 0 {
       rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
       rt.mem_store(h, ABYTES, rt.mem_load(h, ABYTES, 8).wrapping_add(n), 8)
+      if rt.mem_load(rt.static_word(W_WASTE), 0, 8) != 0 {
+        waste_add(WASTE_BIG, n, n.wrapping_add(16391) & (0).wrapping_sub(16384))
+      }
     }
     if rt.mem_load(h, RT_DEPTH, 8) != 0 {
       rt.mem_store(h, RT_ALLOCS, rt.mem_load(h, RT_ALLOCS, 8).wrapping_add(1), 8)
@@ -367,6 +370,9 @@ pub fn alloc(h: Int, n: Int) -> Int {
     rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
     let ab = rt.mem_load(h, ABYTES, 8).wrapping_add(n)
     rt.mem_store(h, ABYTES, ab, 8)
+    if n > SMALL_MAX && rt.mem_load(rt.static_word(W_WASTE), 0, 8) != 0 {
+      waste_add(c, n, size.wrapping_add(8))
+    }
     if ab >= rt.mem_load(h, SAMPLE_AT, 8) {
       // the heap profile's next sample (heapprof.xo, cabi.xo heap_grow)
       rt.mem_store(h, PSAMPLE, r, 8)
@@ -374,6 +380,40 @@ pub fn alloc(h: Int, n: Int) -> Int {
     }
   }
   r
+}
+
+/// XO_HEAPSTATS=waste (decision 0506's measurement, ADR 0505 finding 3):
+/// what allocations over SMALL_MAX asked for against what their class
+/// handed out, in a table at static word W_WASTE (0 when off): for class c
+/// (65 to CLASSES - 1, and WASTE_BIG for the blocks heap_big maps) three
+/// words at 24 * c: the allocations, the bytes asked, the bytes handed (the
+/// block with its 8 byte prefix; a big block's rounded to 16 KiB pages, an
+/// estimate). Cumulative over the run (a resize to a new block counts as
+/// an allocation), so a class's asked/handed ratio estimates its live
+/// waste when lifetimes do not depend on the size within a class. Only on
+/// the counted path (heapos.xo counting_on), with atomic adds.
+const W_WASTE = 98
+pub const WASTE_BIG = 73
+pub const WASTE_ROWS = 74
+
+pub fn waste_on() {
+  let t = rt.heap_large(WASTE_ROWS * 24)
+  var i = 0
+  while i < WASTE_ROWS * 3 {
+    rt.mem_store(t, i * 8, 0, 8)
+    i += 1
+  }
+  rt.mem_store(rt.static_word(W_WASTE), 0, t, 8)
+}
+
+/// The table, or 0 when XO_HEAPSTATS=waste is off.
+pub fn waste_table() -> Int { rt.mem_load(rt.static_word(W_WASTE), 0, 8) }
+
+fn waste_add(c: Int, asked: Int, handed: Int) {
+  let t = rt.mem_load(rt.static_word(W_WASTE), 0, 8)
+  let _k = rt.slot_add(t, c * 3, 1, RELAXED)
+  let _a = rt.slot_add(t, c * 3 + 1, asked, RELAXED)
+  let _h = rt.slot_add(t, c * 3 + 2, handed, RELAXED)
 }
 
 /// alloc's magazine take (decision 0207's amendment: a function of this
@@ -840,6 +880,9 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
     rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
     let ab = rt.mem_load(h, ABYTES, 8).wrapping_add(n)
     rt.mem_store(h, ABYTES, ab, 8)
+    if n > SMALL_MAX && rt.mem_load(rt.static_word(W_WASTE), 0, 8) != 0 {
+      waste_add(c, n, size.wrapping_add(8))
+    }
     due = ab >= rt.mem_load(h, SAMPLE_AT, 8)
   }
   if rt.mem_load(h, RT_DEPTH, 8) != 0 {

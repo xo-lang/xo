@@ -53,3 +53,16 @@ decisions that follow. Numbers are max resident set size
   17592186044415 MB).
 - A probe that frees its objects before exit shows the class of a given size;
   `/usr/bin/time -l` max RSS A/B against a Go twin settles the rest.
+
+## Size classes above 1 KiB (2026-11-05)
+
+`XO_HEAPSTATS=waste` (alloc.xo waste_on) sums, per size class above 1 KiB,
+the bytes allocations asked for against the bytes their class handed out
+(block plus its 8 byte prefix). A cold self build of xo on linux/arm64
+(host 2, main at 2026-11-05 with the counter) asked 201,021,794,503 bytes
+in such allocations and was handed 240,316,119,040: 1.195 per byte asked.
+Classes 65 to 72 (2 KiB to 256 KiB blocks) ran 1.134 to 1.268, and the big
+blocks heap_big maps 1.019 (16 KiB page rounding). The sums are over the run, not
+live, so they estimate the live waste only if lifetimes do not depend on
+the size within a class. Decision 0506 weighs classes at four per doubling
+against this figure.
