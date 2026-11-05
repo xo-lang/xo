@@ -10,7 +10,7 @@
 // proven by the guard and j = 3, one past a three element list, so the
 // second index has to fault with the location of the swap, in
 // std/native/internal.xo. Reached through internal.crypto_op, whose
-// std/native/internal.xo probe_list_swap_at takes both indexes in one
+// std/native/llrt/listswap.xo probe_list_swap_at takes both indexes in one
 // Bytes: even positions sum into i, odd into j.
 use std/internal
 

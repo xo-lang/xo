@@ -1,0 +1,37 @@
+// The probe of the golden list_swap_guard, in a file of its own so that edits to
+// std/native/internal.xo never move the fault location its want.txt names.
+use native/rt
+
+/// crypto_op's "rt.list_swap_at": a swap whose first index a branch proves
+/// in range and whose second index it does not, the shape that has to keep
+/// the second index's bounds check (calls.xo bounds_check, 2026-10-26:
+/// reading the index off the operation's own arguments checked j as i and
+/// dropped its check). The golden list_swap_guard passes both indexes in
+/// one Bytes, even positions summed into i and odd into j; both arrive
+/// through a loop, so neither is a constant the compiler can fold away.
+/// The mismatches (0).
+pub fn probe_list_swap_at(a: Bytes) -> Int {
+  var xs: List[Int] = [1, 2, 3]
+  var i = 0
+  var j = 0
+  var k = 0
+  while k < a.len() {
+    if k % 2 == 0 {
+      i += Int(a[k])
+    } else {
+      j += Int(a[k])
+    }
+    k += 1
+  }
+  if i < xs.len() {
+    rt.list_swap(xs, i, j)
+    rt.list_swap(xs, i, j)
+  }
+  var bad = 0
+  for w in 0..3 {
+    if xs[w] != 1 + w {
+      bad += 1
+    }
+  }
+  bad
+}

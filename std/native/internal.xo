@@ -10,6 +10,7 @@ use native/llrt/ctx
 use native/llrt/fsops
 use native/llrt/heapos
 use native/llrt/hkdf
+use native/llrt/listswap
 use native/llrt/hmac
 use native/llrt/libcstr
 use native/llrt/linux
@@ -141,7 +142,7 @@ fn rt_op(what: Str, a: Bytes) -> Bytes? {
   if what == "list_swap_at" {
     // the swap shape of test/codegen/lists: the first index proven, the
     // second not (calls.xo bounds_check, 2026-10-26)
-    return Some("${probe_list_swap_at(a)}".bytes())
+    return Some("${listswap.probe_list_swap_at(a)}".bytes())
   }
   if what == "fn_addr" {
     let buf = rt.heap_large(32)
@@ -484,40 +485,6 @@ pub fn list_swap_both(xs: List[Int], ys: List[Int], zs: List[Int]) {
   if i < xs.len() && j < xs.len() {
     rt.list_swap(xs, i, j)
   }
-}
-
-/// crypto_op's "rt.list_swap_at": a swap whose first index a branch proves
-/// in range and whose second index it does not, the shape that has to keep
-/// the second index's bounds check (calls.xo bounds_check, 2026-10-26:
-/// reading the index off the operation's own arguments checked j as i and
-/// dropped its check). The golden list_swap_guard passes both indexes in
-/// one Bytes, even positions summed into i and odd into j; both arrive
-/// through a loop, so neither is a constant the compiler can fold away.
-/// The mismatches (0).
-fn probe_list_swap_at(a: Bytes) -> Int {
-  var xs: List[Int] = [1, 2, 3]
-  var i = 0
-  var j = 0
-  var k = 0
-  while k < a.len() {
-    if k % 2 == 0 {
-      i += Int(a[k])
-    } else {
-      j += Int(a[k])
-    }
-    k += 1
-  }
-  if i < xs.len() {
-    rt.list_swap(xs, i, j)
-    rt.list_swap(xs, i, j)
-  }
-  var bad = 0
-  for w in 0..3 {
-    if xs[w] != 1 + w {
-      bad += 1
-    }
-  }
-  bad
 }
 
 /// crypto_op's "rt.mem_check": libcstr's memcpy, memmove, and memset against
