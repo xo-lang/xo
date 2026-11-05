@@ -1,0 +1,42 @@
+// The vectors of golang.org/x/crypto/pkcs12/internal/rc2's rc2_test.go (BSD,
+// Copyright 2015 The Go Authors).
+
+fn hex(b: Bytes) -> Str {
+  var s = ""
+  let h = "0123456789abcdef"
+  for x in b {
+    s += h[Int(x) >> 4..(Int(x) >> 4) + 1] + h[Int(x) & 15..(Int(x) & 15) + 1]
+  }
+  s
+}
+
+fn unhex(s: Str) -> Bytes {
+  var out = BytesBuilder.new()
+  let h = "0123456789abcdef"
+  var i = 0
+  while i < s.len() {
+    let a = h.find(s[i..i + 1]) ?? 0
+    let b = h.find(s[i + 1..i + 2]) ?? 0
+    out.write_byte(UInt8(a * 16 + b))
+    i += 2
+  }
+  out.freeze()
+}
+
+test "RC2 matches the Go vectors" {
+  let cases = [
+    ("0000000000000000", "0000000000000000", "ebb773f993278eff", 63),
+    ("ffffffffffffffff", "ffffffffffffffff", "278b27e42e2f0d49", 64),
+    ("3000000000000000", "1000000000000001", "30649edf9be7d2c2", 64),
+    ("88", "0000000000000000", "61a8a244adacccf0", 64),
+    ("88bca90e90875a", "0000000000000000", "6ccf4308974c267f", 64),
+    ("88bca90e90875a7f0f79c384627bafb2", "0000000000000000", "1a807d272bbe5db1", 64),
+    ("88bca90e90875a7f0f79c384627bafb2", "0000000000000000", "2269552ab0f85ca6", 128),
+    ("88bca90e90875a7f0f79c384627bafb216f80a6f85920584c42fceb0be255daf1e", "0000000000000000", "5b78d3a43dfff1f1", 129),
+  ]
+  for (key, plain, cipher, t1) in cases {
+    let c = new_rc2(unhex(key), t1)
+    expect(hex(encrypt_block(c, unhex(plain), 0))) == cipher
+    expect(hex(decrypt_block(c, unhex(cipher), 0))) == plain
+  }
+}

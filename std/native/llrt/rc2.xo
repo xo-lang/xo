@@ -1,0 +1,128 @@
+// RC2 (RFC 2268), for PKCS #12's pbeWithSHAAnd40BitRC2-CBC. A port of
+// golang.org/x/crypto/pkcs12/internal/rc2 (BSD, Copyright 2015 The Go Authors,
+// itself from Damian Gryski's MIT licensed implementation). Broken for
+// security: here only to open old files.
+
+const PI: List[Int] = [217, 120, 249, 196, 25, 221, 181, 237, 40, 233, 253, 121, 74, 160, 216, 157, 198, 126, 55, 131, 43, 118, 83, 142, 98, 76, 100, 136, 68, 139, 251, 162, 23, 154, 89, 245, 135, 179, 79, 19, 97, 69, 109, 141, 9, 129, 125, 50, 189, 143, 64, 235, 134, 183, 123, 11, 240, 149, 33, 34, 92, 107, 78, 130, 84, 214, 101, 147, 206, 96, 178, 28, 115, 86, 192, 20, 167, 140, 241, 220, 18, 117, 202, 31, 59, 190, 228, 209, 66, 61, 212, 48, 163, 60, 182, 38, 111, 191, 14, 218, 70, 105, 7, 87, 39, 242, 29, 155, 188, 148, 67, 3, 248, 17, 199, 246, 144, 239, 62, 231, 6, 195, 213, 47, 200, 102, 30, 215, 8, 232, 234, 222, 128, 82, 238, 247, 132, 170, 114, 172, 53, 77, 106, 42, 150, 26, 210, 113, 90, 21, 73, 116, 75, 159, 208, 94, 4, 24, 164, 236, 194, 224, 65, 110, 15, 81, 203, 204, 36, 145, 175, 80, 161, 244, 112, 57, 153, 124, 58, 133, 35, 184, 180, 122, 252, 2, 54, 91, 37, 85, 151, 49, 45, 93, 250, 152, 227, 138, 146, 174, 5, 223, 41, 16, 103, 108, 186, 201, 211, 0, 230, 207, 225, 158, 168, 44, 99, 22, 1, 63, 88, 226, 137, 169, 13, 56, 52, 27, 171, 51, 255, 176, 187, 72, 12, 95, 185, 177, 205, 46, 197, 243, 219, 71, 229, 165, 156, 119, 10, 166, 32, 104, 254, 127, 193, 173]
+
+const M16: Int = 0xFFFF
+
+pub struct Rc2 {
+  k: List[Int]
+}
+
+/// The cipher of key with effective key length t1 in bits (Go's expandKey).
+pub fn new_rc2(key: Bytes, t1: Int) -> Rc2 {
+  var l: List[Int] = []
+  for i in 0..128 {
+    l.push(if i < key.len() { Int(key[i]) } else { 0 })
+  }
+  let t = key.len()
+  let t8 = (t1 + 7) / 8
+  let tm = 255 % (1 << (8 + t1 - 8 * t8))
+  for i in t..128 {
+    l[i] = PI[(l[i - 1] + l[(i - t) & 255]) & 255]
+  }
+  l[128 - t8] = PI[l[128 - t8] & tm]
+  var i = 127 - t8
+  while i >= 0 {
+    l[i] = PI[l[i + 1] ^ l[i + t8]]
+    i -= 1
+  }
+  var k: List[Int] = []
+  for n in 0..64 {
+    k.push(l[2 * n] + l[2 * n + 1] * 256)
+  }
+  Rc2{k: k}
+}
+
+fn rol(x: Int, n: Int) -> Int { ((x << n) | (x >> (16 - n))) & M16 }
+
+fn nt(x: Int) -> Int { (~x) & M16 }
+
+fn word(b: Bytes, at: Int) -> Int { Int(b[at]) + Int(b[at + 1]) * 256 }
+
+fn mix_round(k: List[Int], j: Int, r: List[Int]) -> List[Int] {
+  let r0 = rol((r[0] + k[j] + (r[3] & r[2]) + (nt(r[3]) & r[1])) & M16, 1)
+  let r1 = rol((r[1] + k[j + 1] + (r0 & r[3]) + (nt(r0) & r[2])) & M16, 2)
+  let r2 = rol((r[2] + k[j + 2] + (r1 & r0) + (nt(r1) & r[3])) & M16, 3)
+  let r3 = rol((r[3] + k[j + 3] + (r2 & r1) + (nt(r2) & r0)) & M16, 5)
+  [r0, r1, r2, r3]
+}
+
+fn mash(k: List[Int], r: List[Int]) -> List[Int] {
+  let r0 = (r[0] + k[r[3] & 63]) & M16
+  let r1 = (r[1] + k[r0 & 63]) & M16
+  let r2 = (r[2] + k[r1 & 63]) & M16
+  let r3 = (r[3] + k[r2 & 63]) & M16
+  [r0, r1, r2, r3]
+}
+
+fn unmix_round(k: List[Int], j: Int, r: List[Int]) -> List[Int] {
+  let r3 = (rol(r[3], 11) - k[j] - (r[2] & r[1]) - (nt(r[2]) & r[0])) & M16
+  let r2 = (rol(r[2], 13) - k[j - 1] - (r[1] & r[0]) - (nt(r[1]) & r3)) & M16
+  let r1 = (rol(r[1], 14) - k[j - 2] - (r[0] & r3) - (nt(r[0]) & r2)) & M16
+  let r0 = (rol(r[0], 15) - k[j - 3] - (r3 & r2) - (nt(r3) & r1)) & M16
+  [r0, r1, r2, r3]
+}
+
+fn unmash(k: List[Int], r: List[Int]) -> List[Int] {
+  let r3 = (r[3] - k[r[2] & 63]) & M16
+  let r2 = (r[2] - k[r[1] & 63]) & M16
+  let r1 = (r[1] - k[r[0] & 63]) & M16
+  let r0 = (r[0] - k[r3 & 63]) & M16
+  [r0, r1, r2, r3]
+}
+
+fn put(r: List[Int]) -> Bytes {
+  var out = BytesBuilder.new()
+  for x in r {
+    out.write_byte(UInt8(x & 255))
+    out.write_byte(UInt8(x >> 8))
+  }
+  out.freeze()
+}
+
+/// One block (the 8 bytes at `at`) encrypted.
+pub fn encrypt_block(c: Rc2, src: Bytes, at: Int) -> Bytes {
+  var r = [word(src, at), word(src, at + 2), word(src, at + 4), word(src, at + 6)]
+  var j = 0
+  while j < 64 {
+    r = mix_round(c.k, j, r)
+    j += 4
+    if j == 20 || j == 44 {
+      r = mash(c.k, r)
+    }
+  }
+  put(r)
+}
+
+/// One block (the 8 bytes at `at`) decrypted.
+pub fn decrypt_block(c: Rc2, src: Bytes, at: Int) -> Bytes {
+  var r = [word(src, at), word(src, at + 2), word(src, at + 4), word(src, at + 6)]
+  var j = 63
+  while j >= 3 {
+    r = unmix_round(c.k, j, r)
+    j -= 4
+    if j == 43 || j == 19 {
+      r = unmash(c.k, r)
+    }
+  }
+  put(r)
+}
+
+/// CBC decryption of data (a multiple of 8 bytes) with the 8 byte iv.
+pub fn cbc_decrypt(c: Rc2, iv: Bytes, data: Bytes) -> Bytes {
+  var out = BytesBuilder.new()
+  var prev = iv
+  var at = 0
+  while at + 8 <= data.len() {
+    let p = decrypt_block(c, data, at)
+    for i in 0..8 {
+      out.write_byte(p[i] ^ prev[i])
+    }
+    prev = data[at..at + 8]
+    at += 8
+  }
+  out.freeze()
+}
