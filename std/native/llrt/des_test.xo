@@ -1,0 +1,22 @@
+fn hex(b: Bytes) -> Str {
+  var s = ""
+  for x in b {
+    let h = "0123456789abcdef"
+    s += h[Int(x) >> 4..(Int(x) >> 4) + 1] + h[Int(x) & 15..(Int(x) & 15) + 1]
+  }
+  s
+}
+
+test "DES encrypts the FIPS 46 example" {
+  // key 133457799BBCDFF1, plaintext 0123456789ABCDEF -> 85E813540F0AB405
+  let c = new_des(b"\x13\x34\x57\x79\x9b\xbc\xdf\xf1")
+  let ct = crypt_block(c, b"\x01\x23\x45\x67\x89\xab\xcd\xef", 0, false)
+  expect(hex(ct)) == "85e813540f0ab405"
+  expect(hex(crypt_block(c, ct, 0, true))) == "0123456789abcdef"
+}
+
+test "Triple DES with equal keys is DES" {
+  let k = b"\x13\x34\x57\x79\x9b\xbc\xdf\xf1"
+  let c3 = new_des3(k + k + k)
+  expect(hex(crypt3(c3, b"\x01\x23\x45\x67\x89\xab\xcd\xef", 0, false))) == "85e813540f0ab405"
+}
