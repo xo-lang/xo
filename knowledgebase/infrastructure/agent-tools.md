@@ -1015,6 +1015,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   also changes, pushq type-checks those directories of the rebased tree
   (`go run ./scripts/xocheck DIRS`, about 2 s; lead, 2026-10-31: a field
   removal rebased over a new use of it broke main's build).
+  After the rebase pushq repairs a decision linked twice in
+  decisions/README.md when one line is Proposed and the other Accepted,
+  Rejected or Superseded: the decided line stays (amended into HEAD,
+  `adr-dedup.py`; lead, 2026-11-05, after six pushes stopped on it); any
+  other duplicate stops the push with the numbers.
   Pushes wait in heavyd's `merge` lane (decision 0451, 2026-10-31), so
   `~/xo-lead/agents/heavy.sh --status` shows the push queue; with no
   daemon pushq queues on its own lock as before.

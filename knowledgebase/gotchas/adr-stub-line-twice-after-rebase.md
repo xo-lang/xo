@@ -13,7 +13,10 @@ own line at a different place in the file, so the rebase merges both
 lines without a conflict. Two held branches (0498, 0500) hit it on the
 same day.
 
-Fix: after rebasing a branch that carries an ADR, run
+Fix: pushq repairs it since 2026-11-05 (scripts/lead/adr-dedup.py):
+when one line is Proposed and the other decided, the decided line stays
+and the commit is amended; two decided lines, two Proposed lines or three
+lines stop the push. By hand: after rebasing a branch that carries an ADR, run
 `grep -c "NNNN-" knowledgebase/decisions/README.md` and keep one line
 (the branch's, which has the current status); or edit main's stub line in
 place on the branch instead of adding a new one.
