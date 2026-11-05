@@ -22,7 +22,7 @@ domains (decision 0135) still show Namecheap's default 302 to `www`; their
 | Build | `.tools/bin/hugo --gc --minify` into `public/` |
 | Pull spec, release notes, and diagnostic code pages from this repo | `python3 scripts/sync-content.py` (default `../xo`, the checkout next to the site in `xolang/`, or `$XO_REPO`; runs that checkout's `bin/xo` for `xo explain --json` unless `$XO` is set; a section added to a release's post after the release goes in the site's `extra/changelog/vX-Y-Z.md`, inserted before the post's first `###` heading, never into the released CHANGELOG section; last verified 2026-11-03) |
 | Re-verify the tour's programs and record their output | `XO=path/to/xo scripts/check-examples.sh` (each `examples/tour/*` must check, run, and pass `xo test`; each `examples/mistakes/*` must fail `xo check`) |
-| Publish | push to `main`; `.github/workflows/pages.yml` deploys to GitHub Pages |
+| Publish | push to `main`; `.github/workflows/pages.yml` deploys to GitHub Pages. A deploy that timed out is retried with `gh workflow run pages.yml -R xo-lang/xolang.dev --ref main`, not `gh run rerun` (gotchas/pages-rerun-cancelled.md) |
 | Rebuild the playground's WebAssembly (after compiler, std/rt, or Go changes) | `python3 scripts/build-playground.py` (infrastructure/playground.md) |
 | Change the orange announcement bar | `params.announcement` in `hugo.toml` |
 | Analytics | Cloudflare Web Analytics (owner, 2026-10-25): the beacon in `layouts/baseof.html`, its public site token in `params.cfBeaconToken` (empty turns it off); no cookies; `/play/` is excluded (its CSP blocks outside scripts); the dashboard is in the owner's Cloudflare account under Web Analytics. Last verified: 2026-10-25 |
