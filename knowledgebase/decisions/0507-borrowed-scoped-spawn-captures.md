@@ -45,11 +45,13 @@ foreground task) is **borrowed** when all of these hold:
    that came from a parameter or a field).
 2. The captured variable is declared outside that scope block (a local
    or parameter of an enclosing block of the same function).
-3. The variable is not assigned anywhere inside the scope block,
-   including inside closures and nested blocks there (a `var` assigned
-   only before or after the block qualifies; any assignment inside, a
-   `var` passed as a `var` argument or used as a `var` receiver inside
-   (`v.push(x)`, which writes the value in place), disqualifies it).
+3. The variable is a `let`, or a parameter or receiver that is not
+   `var`: it cannot be assigned at all, so it holds one value from before
+   the scope until after it. (A `var` never assigned inside the scope
+   would qualify too; the first implementation leaves every `var` owned,
+   since telling the two apart needs an assignment scan over the scope
+   body and its closures, and a `var` receiver such as `v.push(x)`
+   writes in place.)
 4. Its type is not move-only (core 7.1: "Move only values are moved").
 5. The closure literal itself is not stored or copied: it is the spawn's
    argument expression (a closure value held in a variable is not
@@ -64,18 +66,36 @@ A borrowed capture:
 - is shared (marked, decision 0058) at the spawn as today, so a task
   that copies it (stores it in a channel, a Mutex, a struct it returns)
   retains it atomically and owns that copy;
-- keeps its variable alive until the scope block's join: the compiler
-  adds a use of the variable after the block, so a last use inside the
-  block never moves it into the environment (insert_rc's last-use move
-  would otherwise make the environment the owner).
+- keeps its variable alive until the scope block's join: after every
+  close of the scope (scope_close in each of its modes: the body's end
+  (0), an early exit (1: `return`, `?`, `break`) and an unwind (2)) the
+  compiler adds a share of the variable, which reads it after the join
+  (the spawn already shared it, so the share returns at once), so a last
+  use inside the block never moves it into the environment and the
+  variable's release comes after the tasks end. The variables are found
+  when the scope opens (a scan of its body's spawns), so a close path
+  built before the spawn keeps them too.
 
 Anything else captured stays as today (retained and released).
 
 ## Consequences
 
 - A scope whose tasks capture shared values does no count traffic for
-  them per task: spawn100k loses the 20.9% drop and the spawner's retain
-  (the --ab result goes here before acceptance).
+  them per task: spawn100k loses the 20.9% drop and the spawner's retain.
+  The experiment (branch lang1-0507, 2026-11-04; not on main until this
+  is accepted): spawn100k `--ab` on the linux/arm64 offload host, main
+  9e4b86969 against the branch, 3 rounds: wall 0.814 (0.744 to 0.975,
+  better), CPU 0.958 (within noise). The wall interval is wide and the
+  CPU did not move outside noise, so the gain is in waiting time (the
+  spawning thread, the bound, no longer waits on the contended count's
+  cache line), not in total work; the borrowed closure's environment
+  drop is the free alone (it released the Atomic's Handle and each other
+  capture before).
+- Verified on the branch: TSan TestGoldenTasks (linux/arm64, pass); the
+  concurrency goldens on arm64 and LLVM (pass), with a new golden,
+  conc_scope_borrow, of each case below; that program with
+  XO_FREE_CHECK=1 and XO_INLINE_STRICT=1 (the verifier's reference
+  counting check knows the borrowed operands).
 - A missed case in the rule is a use after free. The tests (internal
   arm64 and the conc goldens, plus TSan TestGoldenTasks and
   XO_FREE_CHECK=1) cover each exclusion: a `var` reassigned inside the
