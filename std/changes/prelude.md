@@ -4,6 +4,24 @@
 
 
 
+
+## 2026-11-05: perf: Atomic[Int].add is one fetch and add, not a compare and swap loop
+
+- Kind: perf
+- Commit: this push
+- Found by: micro13 spawn100k against Go (Lead, after the 0.39 precut report)
+- Go reference: sync/atomic Int64.Add (one LDADDAL on arm64)
+- Test: internal/llvm/testdata/golden/atomic_ops (operand bounds, values on both sides of 2^62, an overflow caught by task.isolate stores nothing), arm64, LLVM and Go parity
+- Timing: bench/results/atomic-add-ldadd-2026-11-05.md: spawn100k linux/arm64 ab-host --rounds=15 wall 0.911, cpu 0.754; darwin/arm64 0.783, cpu 0.477; darwin/amd64 unchanged
+- Shipped in: not yet released
+
+`add` loaded the value and retried a compare and swap until it held, so tasks
+adding to one counter failed and retried their swaps against each other (84%
+of spawn100k's CPU on linux/arm64). It now does one fetch and add when the
+operand is under 2^20 and the value within 2^62 of zero, where no overflow is
+possible; larger values and operands keep the checked loop, so a sum that
+does not fit still faults and stores nothing.
+
 ## 2026-11-05: perf: List.sort_by of a list nothing else holds sorts it in place
 
 - Kind: perf

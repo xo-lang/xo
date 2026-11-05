@@ -6,6 +6,9 @@ max 9 40 40 get 40
 add 42 -8 -8
 flag false swap false true cas false true false
 tasks 8000 7999 16000
+step 1048580 2097156 1048580 5
+far 4611686018427387904 4611686018427387905 4611686018427387903
+low true -9223372036854775800 -9223372036854775808
 near 9223372036854775807
 --- stderr
-fault: integer overflow: 9223372036854775807 + 1 does not fit Int at main.xo:6
+fault: integer overflow: 9223372036854775807 + 1 does not fit Int at main.xo:8

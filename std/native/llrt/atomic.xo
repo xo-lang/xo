@@ -12,12 +12,28 @@ use native/rt
 /// The cell of the value in the C runtime's object.
 const SLOT = 13
 /// The orders of rt.slot_load and friends.
+const RELAXED = 0
 const SEQ_CST = 4
+/// add's one instruction path (add): an operand under ADD_ONE_STEP and a
+/// value under ADD_FAR, both in magnitude.
+const ADD_ONE_STEP = 1048576
+const ADD_FAR = 4611686018427387904
 
 /// `a.add(n)`: the new value; a sum that does not fit an Int faults at
 /// the caller and stores nothing (xo_atomic_add).
 pub fn add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int {
-  var old = rt.slot_load(a, SLOT, SEQ_CST)
+  var old = rt.slot_load(a, SLOT, RELAXED)
+  if n < ADD_ONE_STEP && n > -ADD_ONE_STEP && old < ADD_FAR && old > -ADD_FAR {
+    // one fetch and add (ldadd), as Go's Add: a compare and swap loop
+    // retried on every concurrent add, and twelve tasks adding to one
+    // counter spent most of their CPU in it (spawn100k, 2026-11-05). It
+    // cannot overflow: every add that takes this path saw a value within
+    // 2^62 of zero and adds under 2^20, and fewer than 2^36 can be between
+    // their check and their add at once (one per fiber, each with a stack
+    // page of 2^12 bytes in a 2^48 byte address space), under 2^56 in
+    // all; a value past 2^62 takes the checked loop below
+    return rt.slot_add(a, SLOT, n, SEQ_CST).wrapping_add(n)
+  }
   while {
     // the wrapped sum overflowed when its sign differs from both
     // operands' (xo_atomic_add's __builtin_add_overflow)

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (native): `Atomic[Int].add` is one fetch and add (ldadd) instead of a compare and swap loop when the operand is under 2^20 and the value within 2^62 of zero; a sum that does not fit still faults and stores nothing. micro13 spawn100k: linux/arm64 wall 0.911 and CPU 0.754 of main's, darwin/arm64 0.783 and 0.477; now 0.77 to 0.81 of Go's time on arm64 (bench/results/atomic-add-ldadd-2026-11-05.md). std/changes/prelude.md.
 - perf (native): `List.sort_by` of a list nothing else holds sorts it in place, stable as before (decision 0508): 8 records 0.871 of main's wall time, 100k records within noise (1.037, 0.971 to 1.271) at 0.863 of its peak memory, on linux/arm64 (bench/perf/listmap). std/changes/prelude.md.
 - perf (native): `List.reverse` of a list nothing else holds reverses it in place, swapping from both ends like Go's slices.Reverse (decision 0508): 0.457 of main's wall time and 0.609 of its peak memory on linux/arm64 (bench/perf/listmap reverse). std/changes/prelude.md.
 - feature (native runtime, diagnostics): `XO_HEAPSTATS=waste` adds to the heap stats, per size class above 1 KiB, the allocations and the bytes asked against handed out (decision 0506's measurement: a cold self build of xo hands out 1.195 bytes per byte asked above 1 KiB). When off, the allocator's counted path tests one more word; the uncounted path is unchanged.

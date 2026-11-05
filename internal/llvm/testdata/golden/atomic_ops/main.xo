@@ -2,6 +2,8 @@
 // the native backends: get, set, swap, compare_and_swap inline on the
 // value's cell, add and max in std/native/llrt/atomic.xo (decision
 // 0198 deleted the C path). A sum that does not fit an Int faults.
+use std/task
+
 fn bump(a: Atomic[Int], n: Int) -> Int {
   a.add(n)
 }
@@ -33,6 +35,15 @@ fn main(os: Os) {
     }
   }
   os.stdio.println("tasks ${hits.get()} ${top.get()} ${a.get()}")
+  // add's bounds (one ldadd for an operand under 2^20 and a value within
+  // 2^62 of zero, the checked loop otherwise; both give the same values)
+  let edge = Atomic[Int].new(5)
+  os.stdio.println("step ${edge.add(1048575)} ${edge.add(1048576)} ${edge.add(-1048576)} ${edge.add(-1048575)}")
+  let far = Atomic[Int].new(4611686018427387903)
+  os.stdio.println("far ${far.add(1)} ${far.add(1)} ${far.add(-2)}")
+  let low = Atomic[Int].new(-9223372036854775800)
+  let r = task.isolate(fn() -> Int ! () { bump(low, -9) })
+  os.stdio.println("low ${r.is_err()} ${low.get()} ${bump(low, -8)}")
   let big = Atomic[Int].new(9223372036854775800)
   os.stdio.println("near ${bump(big, 7)}")
   os.stdio.println("never ${bump(big, 1)}")
