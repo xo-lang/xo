@@ -321,3 +321,4 @@
 - [size-class-waste-2026-11-04.md](size-class-waste-2026-11-04.md): RSS over payload for 8 to 256 KiB requests, Xo against Go (power of two classes waste up to half), the self build's blocks and its live bytes by request size; input to decision 0506
 - [idle-conn-40k-2026-11-04.md](idle-conn-40k-2026-11-04.md): 40,000 idle HTTP/1.1 and TLS HTTP/2 connections, Xo against Go net/http: memory per connection
 - [jpeg-encode-2026-11-05.md](jpeg-encode-2026-11-05.md): jpeg.encode against Go's Encode on linux/arm64: byte exact, Xo 1.16x to 1.24x slower after two speedups (decision 0510)
+- [worker-own-poll-2026-11-04.md](worker-own-poll-2026-11-04.md): decision 0502 on linux/arm64: tcpping handshake 0.93 of Go (from 1.54), smtp 0.53 of main, HTTP rows unchanged; the variants not taken (open loop p99 141 against 113 us, the busy average, the XO_NPSPIN_NS spin).

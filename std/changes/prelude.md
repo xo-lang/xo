@@ -93,6 +93,24 @@ socket take no such flags.
 
 The native `str_repeat` and `bytes_repeat` (llrt/raw.xo) made one `mem_copy` per repetition, so a short pattern cost a call per byte or three. They now share `fill_repeat`, Go's algorithm. The Go backend already called Go's.
 
+## 2026-11-04: perf: a worker back from its poller wait runs the fibers it readied without waking another
+
+- Kind: perf
+- Commit: this push
+- Found by: XO_RTSTATS of bench/perf/tcpping handshake (1.54x Go, Lang 3): about 11,000 chain wakes in 2,000 connections, 26,000 context switches against Go's few hundred
+- Go reference: runtime.findrunnable (a thread back from a blocking netpoll runs the goroutine on its own P, not spinning; injectglist wakes others only for more)
+- Test: the conc and net goldens (every native backend); xo bench --ab on tcpping, smtp, httpsession, micro13 spawn100k and the HTTP rows
+- Timing: bench/results/worker-own-poll-2026-11-04.md (linux/arm64: tcpping handshake 0.93 of Go's wall, from 1.54; smtp send 0.53 of main, 0.71 of Go; connect 0.78; the HTTP rows unchanged)
+- Shipped in: not yet released
+
+On the native backends, a worker whose wait in the network poller
+(decision 0324) readied fibers on its own ring used to count itself a
+spinner and, on taking its own fiber, wake another worker that found
+nothing: one futex wake and sleep per request and reply between two
+fibers. When at most one other fiber waits on a descriptor it now runs them
+without becoming a spinner (decision 0502); with more (a server's other
+connections) one worker keeps waiting in the poller as before.
+
 ## 2026-11-04: perf: eprintln writes the line and its newline in one write
 
 - Kind: perf

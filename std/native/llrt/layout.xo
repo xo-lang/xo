@@ -251,7 +251,11 @@ pub const W_FAIR_AT = 3568
 /// The trim epoch this worker last trimmed its heap record for (pool.xo
 /// trim_check, decision 0505's addendum).
 pub const W_TRIM_SEEN = 3576
-pub const W_SIZE = 3584
+/// Fibers parked on a descriptor that went to sleep on this worker, less
+/// those woken on it (poll.xo pd_wait_ctx; one worker's word may go below
+/// zero, the sum over workers is the count): pool.xo quiet_peers.
+pub const W_NETWAIT = 3584
+pub const W_SIZE = 3592
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 /// The spawn sites' average run times (pool.xo site_note): 256 words after

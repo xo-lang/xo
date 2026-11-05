@@ -114,6 +114,7 @@ const W_ASYNC = layout.W_ASYNC
 const W_URGSET = layout.W_URGSET
 const W_RUNF = layout.W_RUNF
 const W_SIZE = layout.W_SIZE
+const W_NETWAIT = layout.W_NETWAIT
 const W_IDX = layout.W_IDX
 const MAXW = 4096
 
@@ -1236,13 +1237,16 @@ pub fn grace_begin() {
 
 /// Puts w on the idle list and sleeps until wakep takes it off: 1, or 0
 /// when work showed up meanwhile (w is then off the list again and not
-/// spinning).
+/// spinning), or 3 when its wait in the poller readied fibers on its own
+/// ring and no other descriptor waits (quiet_peers): it runs them without
+/// counting itself a spinner (decision 0502).
 fn go_idle(p: Int, w: Int) -> Int {
   count_main(p)
   // decision 0324: wait in the network poller when no one does
-  if np_block(p, w, 0) >= 0 {
+  let n = np_block(p, w, 0)
+  if n >= 0 {
     stat(ST_IDLE_NPBLOCK)
-    return 0
+    return if n > 0 && quiet_peers(p, n) { 3 } else { 0 }
   }
   stat(ST_IDLE_NOPOLL)
   plock(p)
@@ -1374,7 +1378,18 @@ pub fn worker_main(w: Int) -> Int {
       spinning = 1
       continue
     }
-    if go_idle(p, w) == 0 {
+    let r = go_idle(p, w)
+    if r == 3 {
+      // its own wait in the poller readied fibers on its ring and nothing
+      // else waits on a descriptor: it runs them not spinning, so its find
+      // wakes no worker to wait in the poller for events that only the
+      // fibers it runs can cause (tcpping handshake: 11,000 chain wakes in
+      // 2,000 connections, each worker finding nothing, 2026-11-04;
+      // decision 0502)
+      spinning = 0
+      continue
+    }
+    if r == 0 {
       rt.slot_add(p, P_SPINNING, 1, SEQ_CST)
     }
     // wakep counted it spinning, or it counted itself
@@ -2135,6 +2150,10 @@ pub fn root_main(p: Int, w: Int, mf: Int) {
       continue
     }
     let r = root_idle(p, w, mf)
+    if r == 3 {
+      // its wait in the poller readied fibers on its ring (worker_main)
+      continue
+    }
     if r == 0 {
       // work showed up while it went idle: look for it as a spinner does,
       // stealing (find_work without spinning takes only its own and the
@@ -2187,12 +2206,22 @@ fn count_main(p: Int) {
   }
 }
 
+/// The root's go_idle: 0 when work showed up (it looks as a spinner), 1
+/// after a sleep wakep ended, 2 when main ended, 3 when its wait in the
+/// poller readied fibers on its ring and no other descriptor waits
+/// (decision 0502).
 fn root_idle(p: Int, w: Int, mf: Int) -> Int {
   count_main(p)
   // decision 0324: wait in the network poller when no one does (a
   // program that never spawns has no worker to)
-  if rt.slot_load(mf, F_ENDED_I, ACQUIRE) == 0 && np_block(p, w, mf) >= 0 {
-    return 0
+  if rt.slot_load(mf, F_ENDED_I, ACQUIRE) == 0 {
+    let n = np_block(p, w, mf)
+    if n > 0 && quiet_peers(p, n) {
+      return 3
+    }
+    if n >= 0 {
+      return 0
+    }
   }
   plock(p)
   if rt.slot_load(mf, F_ENDED_I, ACQUIRE) != 0 {
@@ -2223,6 +2252,35 @@ fn root_idle(p: Int, w: Int, mf: Int) -> Int {
   }
   // 1 from wakep (a spinning count), 2 from main_ended
   rt.slot_load(w, W_WAKEW_I, ACQUIRE)
+}
+
+/// Notes a fiber parking on a descriptor (d 1) and waking from it (d -1),
+/// on the worker it runs on (W_NETWAIT).
+pub fn net_wait(d: Int) {
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    rt.slot_add(w, W_NETWAIT / 8, d, RELAXED)
+  }
+}
+
+/// After a wait in the poller readied n fibers: whether at most one other
+/// fiber waits on a descriptor, the peer of a request and reply in the
+/// program. Then another worker waiting in the poller could only be woken
+/// by what the readied fibers do, and the waking worker runs them itself
+/// (decision 0502); with more, a server's other connections, one keeps
+/// waiting in the poller as before, or their requests wait behind the one
+/// running (bench/perf/jitter /alloc c64 at 10,000 req/s: p99 141 against
+/// 113 us when it did not, 2026-11-04).
+fn quiet_peers(p: Int, n: Int) -> Bool {
+  let nw = rt.slot_load(p, P_NW, ACQUIRE)
+  var sum = 0
+  var i = 0
+  while i < nw {
+    let v = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
+    sum = sum.wrapping_add(rt.slot_load(v, W_NETWAIT / 8, RELAXED))
+    i = i.wrapping_add(1)
+  }
+  sum.wrapping_sub(n) <= 1
 }
 
 /// Takes w off the idle list if it is still on it (then whether it was).

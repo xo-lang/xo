@@ -719,7 +719,9 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
       timer_arm(t, deadline, park)
     }
     if !(t != 0 && fired(t)) {
+      pool.net_wait(1)
       wait(c)
+      pool.net_wait(-1)
     }
     lk(addw(pd, D_MU))
     let mine = rt.mem_load(pd, slot, 8) == park
