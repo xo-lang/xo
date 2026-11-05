@@ -1,0 +1,22 @@
+// Eight tasks raise one Atomic's maximum: max is a compare and swap loop
+// (llrt atomic.xo), which on linux/arm64 calls elflink's outline helper
+// __aarch64_cas8_acq_rel, a leaf with no unwind entry. Its CPU samples have
+// raise as their caller (TestProfHelperCaller); they had none.
+
+fn raise(top: Atomic[Int], from: Int) -> Int {
+  var last = 0
+  for k in 0..400_000 {
+    last = top.max(from + k * 8)
+  }
+  last
+}
+
+fn main(os: Os) {
+  let top = Atomic[Int].new(0)
+  scope s {
+    for i in 0..8 {
+      s.spawn(fn() { let _ = raise(top, i) })
+    }
+  }
+  os.stdio.println("max ${top.get()}")
+}

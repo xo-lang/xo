@@ -6,6 +6,24 @@
 
 
 
+
+## 2026-11-05: fix: a CPU profile sample in an outline atomic helper has its caller
+
+- Kind: fix
+- Commit: this push
+- Found by: profiling micro13 spawn100k on linux/arm64 (xo-lang-4)
+- Go reference: none (Go inlines its atomics)
+- Test: internal/llvm TestProfHelperCaller (raise 15.8% against the helper's 84.2% without the fix); TestProf* and the fault goldens unchanged
+- Timing: none
+- Shipped in: not yet released
+
+On linux/arm64 a read modify write atomic calls one of the outline helpers
+(`__aarch64_cas8_acq_rel` and friends) that xo's linker writes; they set up
+no frame and have no unwind entry, so a profile sample in one ended the
+walk there and the profile showed the helper with no caller. A leaf with no
+unwind entry now takes its caller from the link register, as a leaf outside
+the program did.
+
 ## 2026-11-05: fix: XO_PROF=cpu no longer crashes a program whose sample walks off a fiber's stack
 
 - Kind: fix

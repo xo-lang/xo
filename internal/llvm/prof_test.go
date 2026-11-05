@@ -147,6 +147,48 @@ func TestProfHelperNames(t *testing.T) {
 	}
 }
 
+// TestProfHelperCaller: on linux/arm64 a read modify write atomic calls
+// one of elflink's outline helpers (__aarch64_cas8_acq_rel and friends),
+// frameless leaves with no unwind entry; a CPU sample in one takes its
+// caller from the link register, so testdata/prof/casleaf's contended
+// max loop shows raise above the helper (the helper's samples had no
+// caller, and 84% of spawn100k's CPU showed as the helper alone,
+// 2026-11-05). darwin inlines the atomics (no helper).
+func TestProfHelperCaller(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	if runtime.GOARCH != "arm64" || runtime.GOOS != "linux" {
+		t.Skip("elflink's outline atomics (linux/arm64)")
+	}
+	res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "casleaf")}, xotool.Options{Backend: xotool.BackendArm64})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	bin := res.Binaries[xotool.Host()]
+	dir := t.TempDir()
+	raw := filepath.Join(dir, "prof.xoraw")
+	cmd := testtmp.Guard(exec.Command(bin))
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+raw)
+	got, err := runCombined(cmd, 2*time.Minute)
+	if err != nil || !strings.Contains(got, "max 3199999") {
+		t.Fatalf("run: %v\n%s", err, got)
+	}
+	xoProf(t, dir, raw, "--cpu-out="+filepath.Join(dir, "cpu.pprof"))
+	txt, err := os.ReadFile(filepath.Join(dir, "cpu.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := cumPercent(string(txt), "__aarch64_cas8_acq_rel")
+	if h < 5 {
+		t.Skipf("the helper took %.1f%% of the samples; too few to tell (no contention?):\n%s", h, txt)
+	}
+	if c := cumPercent(string(txt), "raise"); c < h {
+		t.Fatalf("raise's cumulative share %.1f%% is below the helper's %.1f%%: the helper's samples have no caller:\n%s", c, h, txt)
+	}
+}
+
 // TestProfLeafCaller: on the arm64 backend a leaf whose frame record is
 // built only in its fault stubs (testdata/prof/leaf's mix, called from
 // outer) has the stubs in an unwind region of their own, so the body's

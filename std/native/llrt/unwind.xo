@@ -2006,7 +2006,7 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
       // a leaf outside the program: its return address
       first = false
       if x64() {
-        if sp == 0 {
+        if sp == 0 || sp > top - 8 {
           break
         }
         rt.mem_store(cur, PC, rt.mem_load(sp, 0, 8), 8)
@@ -2021,7 +2021,25 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
     let key = if first { pc + 1 } else { pc }
     rt.mem_store(s, H_ARGS, 0, 8)
     if !lookup_frame(s, key, darwin) {
-      break
+      if !first {
+        break
+      }
+      // a leaf with no unwind entry (elflink's outline atomic helpers,
+      // __aarch64_cas8_acq_rel and friends, which set up no frame): its
+      // caller from the link register, as a leaf outside the program
+      // (their samples had no caller, and 84% of spawn100k's CPU showed
+      // as the helper alone, 2026-11-05)
+      first = false
+      if x64() {
+        if sp == 0 || sp > top - 8 {
+          break
+        }
+        rt.mem_store(cur, PC, rt.mem_load(sp, 0, 8), 8)
+        rt.mem_store(cur, spo, sp + 8, 8)
+      } else {
+        rt.mem_store(cur, PC, rt.mem_load(cur, 8 * 30, 8) & 281474976710655, 8)
+      }
+      continue
     }
     let enc = rt.mem_load(s, H_ENC, 8)
     if darwin && enc != 0 {

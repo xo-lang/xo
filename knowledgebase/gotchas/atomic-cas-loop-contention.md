@@ -12,7 +12,8 @@ swap fail each round and retry: 84.6% of CPU samples were
 `__aarch64_cas8_acq_rel` from the task body. Go's Add is one LDADDAL. On
 x86 `lock cmpxchg` loops cost about as much as `lock xadd`, so amd64 did not
 show it. xo's profiler cannot attribute samples in the outline helpers
-(frameless, no unwind entry), so the cost looked like generic runtime work.
+(frameless, no unwind entry), so the cost looked like generic runtime work. (Fixed the same day: a leaf with no unwind entry now takes its caller
+from the link register, TestProfHelperCaller.)
 
 Fix: one fetch and add where overflow is provably impossible (operand under
 2^20, value within 2^62 of zero), the checked loop otherwise
