@@ -108,9 +108,8 @@ fn (var s: Session) step1(th: Int, pc: Int) -> List[Int] ! Str uses proc {
       return Err("could not take the breakpoint at 0x${hex(pc)} out")
     }
   }
-  let w = s.word(pc)
-  // svc #0x80 (and any svc): d4000001 with an immediate in bits 5 to 20
-  let svc = w & 0xffe0001f == 0xd4000001
+  // a system call may wait for another thread
+  let svc = s.tab.is_syscall(s.code(pc, 4))
   if !internal.dbg_set_step(s.proc, th, true) || !internal.dbg_resume(s.proc, !svc) {
     return Err("could not step the thread at 0x${hex(pc)}")
   }
@@ -119,21 +118,26 @@ fn (var s: Session) step1(th: Int, pc: Int) -> List[Int] ! Str uses proc {
     let _s = internal.dbg_set_step(s.proc, th, false)
   }
   if orig.is_some() && s.proc != 0 && !(r.len() > 0 && r[0] >= 2) {
-    if !internal.dbg_write(s.proc, pc, brk()) {
+    if !internal.dbg_write(s.proc, pc, s.tab.trap()) {
       return Err("could not plant the breakpoint at 0x${hex(pc)} again")
     }
   }
   Ok(r)
 }
 
-/// The instruction word at pc as the program runs it (a planted trap's
-/// original), 0 when it cannot be read.
-fn (s: Session) word(pc: Int) -> Int {
-  let b = s.traps.get(pc) ?? (internal.dbg_read(s.proc, pc, 4) ?? b"")
-  if b.len() < 4 {
-    return 0
+/// n bytes of code at pc as the program runs them (each planted trap's
+/// original bytes in place of it), fewer when they cannot all be read.
+fn (s: Session) code(pc: Int, n: Int) -> Bytes {
+  var b = internal.dbg_read(s.proc, pc, n) ?? (internal.dbg_read(s.proc, pc, 4) ?? b"")
+  for (a, orig) in s.traps {
+    for k in 0..orig.len() {
+      let i = a + k - pc
+      if i >= 0 && i < b.len() {
+        b = b[..i] + orig[k..k + 1] + b[i + 1..]
+      }
+    }
   }
-  Int(b[0]) | (Int(b[1]) << 8) | (Int(b[2]) << 16) | (Int(b[3]) << 24)
+  b
 }
 
 /// Whether r (dbg_wait's) is thread th's finished single step.
@@ -151,8 +155,10 @@ fn (var s: Session) plant() -> () ! Str uses proc {
     if s.traps.contains(a) {
       continue
     }
-    let orig = internal.dbg_read(s.proc, a, 4) ?? return Err("cannot read the code at 0x${hex(a)}")
-    if !internal.dbg_write(s.proc, a, brk()) {
+    // as many bytes as the trap's (x86_64's int3 is one: two traps may
+    // be a byte apart)
+    let orig = internal.dbg_read(s.proc, a, s.tab.trap().len()) ?? return Err("cannot read the code at 0x${hex(a)}")
+    if !internal.dbg_write(s.proc, a, s.tab.trap()) {
       return Err("cannot plant a breakpoint at 0x${hex(a)}")
     }
     s.traps[a] = orig
@@ -230,15 +236,7 @@ fn (var s: Session) stopped(r: List[Int]) -> Str uses proc {
     return "the program was ended by signal ${r[1]}"
   }
   s.thread = r[1]
-  let rs = internal.dbg_regs(s.proc, s.thread)
-  var regs: Map[Int, Int] = {}
-  if rs.len() >= 33 {
-    // x0 to x28, fp (29), lr (30), sp (31); the pc as -1
-    for i in 0..32 {
-      regs[i] = rs[i]
-    }
-    regs[-1] = rs[32]
-  }
+  let regs = s.tab.regs_map(internal.dbg_regs(s.proc, s.thread))
   s.snap = Snapshot{regs: regs, proc: s.proc}
   let pc = regs.get(-1) ?? 0
   s.frames = vframes(s.info, s.lines, s.tab, backtrace(s.tab, s.snap.regs, s.snap, 64))
@@ -259,6 +257,3 @@ fn (s: Session) top_json() -> Str {
 
 /// The last run or continue's JSON fields.
 fn (s: Session) stop_json() -> Str { s.stopj }
-
-/// The trap's 4 bytes (BRK little endian).
-fn brk() -> Bytes { Bytes.from_hex("000020d4") ?? b"" }

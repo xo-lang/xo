@@ -66,3 +66,7 @@ const F_SIZE = 16 // = pool.F_SIZE
 /// stack_switch_body): x19 to x30 at saved + 0 to 88, the caller's stack
 /// at saved + 160 (std/native/llrt/unwind.xo fiber_walk).
 const FIBER_SP = 160
+/// x86_64's (compiler/arm64 x86rt.xo xo_stack_switch, Linux and macOS):
+/// the control words, r15, r14, r13, r12, rbx, rbp, the return address,
+/// the caller's stack at saved + 64.
+const FIBER_SP_X86 = 64

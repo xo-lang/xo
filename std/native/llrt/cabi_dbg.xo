@@ -1,0 +1,14 @@
+// The C ABI export of `xo debug`'s Linux process control (decisions 0204,
+// 0207, 0253 stage 6): like cabi.xo, every top level function here is
+// xo_x_<name>. std/native/llrt/dbglinux.xo imports this module, so only a
+// program that debugs another (xo) has it.
+use native/llrt/crash
+use native/llrt/dbgtrace
+
+/// The tracer thread (dbglinux.xo's pool.thread_start of its address):
+/// serves the mailbox at m until the debuggee is closed.
+fn dbg_tracer(m: Int) -> Int {
+  crash.thread_init()
+  dbgtrace.serve(m)
+  0
+}

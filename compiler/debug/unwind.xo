@@ -6,7 +6,8 @@
 // frame pointer chain (fp, then lr at fp + 8, both backends keep a frame
 // pointer). A frame whose return address is undefined (DW_CFA_undefined:
 // the outermost frames of threads and fibers, decision 0252) or zero
-// ends the walk, as does an fp of zero. arm64 only, as the per OS layer.
+// ends the walk, as does an fp of zero. arm64 and x86_64 (arch.xo's
+// register roles; Mach-O's compact encodings are read for arm64 only).
 
 /// The executable's unwind tables and the addresses they were made for.
 pub struct Tables {
@@ -33,6 +34,9 @@ pub struct Tables {
   /// the defined function symbols, sorted by address (Mach-O's without
   /// their leading `_`), for frames with no DWARF
   pub syms: List[(Int, Str)] = []
+  /// an x86_64 executable (ELF e_machine 62, Mach-O CPU_TYPE_X86_64):
+  /// arch.xo's register roles, trap and call forms; else arm64
+  pub x86: Bool = false
 }
 
 /// The symbol whose address is the greatest at or below pc, with the
@@ -88,6 +92,7 @@ pub fn tables(data: Bytes) -> Tables {
     return t
   }
   if rd32(data, 0) == 0x464c457f {
+    t.x86 = rd16(data, 18) == 62
     let shoff = rd64(data, 40)
     let shn = rd16(data, 60)
     let shx = rd16(data, 62)
@@ -132,6 +137,7 @@ pub fn tables(data: Bytes) -> Tables {
     }
     sort_syms(t)
   } else if rd32(data, 0) == 0xfeedfacf {
+    t.x86 = rd32(data, 4) == 0x01000007
     var lc = 32
     for _ in 0..rd32(data, 16) {
       if lc + 8 > data.len() {
@@ -565,22 +571,23 @@ pub fn backtrace[T: Target](tab: Tables, regs: Map[Int, Int], t: T, max: Int) ->
     out.push(UFrame{pc: pc, regs: cur, how: how})
     // a caller's pc is a return address: look up the call's own
     // instruction (it may be the function's last)
-    let look = if out.len() == 1 { pc } else { pc - 4 }
+    let look = if out.len() == 1 { pc } else { pc - tab.ret_back() }
     match step(tab, look, cur, t, out.len() == 1) {
       Some((next, h)) => {
-        let npc = next.get(30) ?? 0
-        let nsp = next.get(31) ?? 0
-        let osp = cur.get(31) ?? 0
+        let npc = next.get(tab.ra_reg()) ?? 0
+        let nsp = next.get(tab.sp_reg()) ?? 0
+        let osp = cur.get(tab.sp_reg()) ?? 0
         // the stack grows down: a caller's frame is above; a frame that
         // does not move is a loop to stop
         if npc == 0 || nsp < osp || (nsp == osp && npc == pc) {
           break
         }
-        // a caller's x0 to x18 are not preserved across its call (AAPCS64):
-        // only what the unwind said, the callee saved registers, sp, fp
+        // a caller's argument and scratch registers are not preserved
+        // across its call: only what the unwind said, the callee saved
+        // registers, sp, fp
         var kept: Map[Int, Int] = {}
         for (r, v) in next {
-          if r >= 19 {
+          if tab.kept_reg(r) {
             kept[r] = v
           }
         }
@@ -611,7 +618,7 @@ fn step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool)
         next[30] = regs.get(30) ?? 0
         return Some((next, "leaf"))
       }
-      return Some((frame_step(regs, t, enc)?, "compact"))
+      return Some((frame_step(tab, regs, t, enc)?, "compact"))
     }
     if mode == UNWIND_FRAMELESS {
       // the return address is still in lr; the frame's stack is popped
@@ -626,7 +633,7 @@ fn step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool)
       }
       let cfa = (regs.get(st.cfa_reg) ?? 0) + st.cfa_off
       var next = regs
-      next[31] = cfa
+      next[tab.sp_reg()] = cfa
       // the return address column first: undefined ends the walk
       match st.rules.get(ra) ?? Rule.Same {
         Rule.Undefined => return None
@@ -646,17 +653,17 @@ fn step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool)
           Rule.Reg(r) => next[reg] = regs.get(r) ?? 0
         }
       }
-      if ra != 30 {
-        next[30] = next.get(ra) ?? 0
+      if ra != tab.ra_reg() {
+        next[tab.ra_reg()] = next.get(ra) ?? 0
       }
       return Some((next, "cfi"))
     }
   }
   // no table entry: the frame pointer chain
-  if (regs.get(29) ?? 0) == 0 {
+  if (regs.get(tab.fp_reg()) ?? 0) == 0 {
     return None
   }
-  Some((frame_step(regs, t, 0)?, "fp"))
+  Some((frame_step(tab, regs, t, 0)?, "fp"))
 }
 
 /// Whether the code from start to pc (in tab.text) has an `stp x29,
@@ -685,17 +692,19 @@ fn frame_set_up(tab: Tables, start: Int, pc: Int) -> Bool {
 }
 
 /// A frame with fp and lr saved at its fp (fp at fp, lr at fp + 8, the
-/// CFA fp + 16) and, by a compact frame encoding, its callee saved pairs
+/// CFA fp + 16; x86_64's rbp and return address alike) and, by a compact frame encoding, its callee saved pairs
 /// below fp (x19 and x20 first: x19 at fp - 8, x20 at fp - 16, ...).
-fn frame_step[T: Target](regs: Map[Int, Int], t: T, enc: Int) -> Map[Int, Int]? {
-  let fp = regs.get(29) ?? 0
+fn frame_step[T: Target](tab: Tables, regs: Map[Int, Int], t: T, enc: Int) -> Map[Int, Int]? {
+  // x86_64's frame is the same: the caller's rbp at rbp, the return
+  // address at rbp + 8
+  let fp = regs.get(tab.fp_reg()) ?? 0
   if fp == 0 {
     return None
   }
   var next = regs
-  next[29] = load64(t, fp)?
-  next[30] = load64(t, fp + 8)?
-  next[31] = fp + 16
+  next[tab.fp_reg()] = load64(t, fp)?
+  next[tab.ra_reg()] = load64(t, fp + 8)?
+  next[tab.sp_reg()] = fp + 16
   var at = fp - 8
   for (bit, first) in [(1, 19), (2, 21), (4, 23), (8, 25), (16, 27)] {
     if enc & bit != 0 {

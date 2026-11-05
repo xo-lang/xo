@@ -440,7 +440,7 @@ fn (s: Session) selected_pc() -> Int {
         return f.pc
       }
     }
-    return f.pc - 4
+    return f.pc - s.tab.ret_back()
   }
   // the first physical frame is the one at index 0 and the frames
   // inlined in it
@@ -450,7 +450,7 @@ fn (s: Session) selected_pc() -> Int {
       first = false
     }
   }
-  if first { f.pc } else { f.pc - 4 }
+  if first { f.pc } else { f.pc - s.tab.ret_back() }
 }
 
 /// The registers of the selected frame: none (the thread's own) for the

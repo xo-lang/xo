@@ -237,12 +237,22 @@ fn op_name(why: Int) -> Str {
 pub fn (s: Session) task_frames(t: TaskRec) -> List[VFrame] {
   if t.saved != 0 {
     var regs: Map[Int, Int] = {}
-    for k in 0..12 {
-      regs[19 + k] = s.word_at(t.saved + 8 * k)
+    if s.tab.x86 {
+      // xo_stack_switch's pushes: r15, r14, r13, r12, rbx, rbp above the
+      // control words, then its return address
+      for (k, r) in [(1, 15), (2, 14), (3, 13), (4, 12), (5, 3), (6, 6)] {
+        regs[r] = s.word_at(t.saved + 8 * k)
+      }
+      regs[7] = t.saved + FIBER_SP_X86
+      regs[-1] = s.word_at(t.saved + 56)
+    } else {
+      for k in 0..12 {
+        regs[19 + k] = s.word_at(t.saved + 8 * k)
+      }
+      regs[31] = t.saved + FIBER_SP
+      // the switch's return address (pointer authentication bits off)
+      regs[-1] = s.word_at(t.saved + 88) & 0xffffffffffff
     }
-    regs[31] = t.saved + FIBER_SP
-    // the switch's return address (pointer authentication bits off)
-    regs[-1] = s.word_at(t.saved + 88) & 0xffffffffffff
     return vframes(s.info, s.lines, s.tab, backtrace(s.tab, regs, s.snap, 64))
   }
   if t.fp != 0 {
@@ -253,7 +263,7 @@ pub fn (s: Session) task_frames(t: TaskRec) -> List[VFrame] {
       if pc == 0 {
         break
       }
-      us.push(UFrame{pc: pc, regs: {29: s.word_at(fp), 31: fp + 16}, how: "frame pointer"})
+      us.push(UFrame{pc: pc, regs: {s.tab.fp_reg(): s.word_at(fp), s.tab.sp_reg(): fp + 16}, how: "frame pointer"})
       let next = s.word_at(fp)
       if next <= fp || next - fp > 1048576 {
         break
@@ -294,15 +304,11 @@ pub fn (s: Session) running_frames(t: TaskRec) -> (List[VFrame], Int) {
     let lo = s.word_at(f + F_MEM)
     let hi = lo + s.word_at(f + F_SIZE)
     for th in internal.dbg_threads(s.proc) {
-      let rs = internal.dbg_regs(s.proc, th)
-      if rs.len() < 33 || rs[31] < lo || rs[31] >= hi {
+      let regs = s.tab.regs_map(internal.dbg_regs(s.proc, th))
+      let sp = regs.get(s.tab.sp_reg()) ?? 0
+      if regs.is_empty() || sp < lo || sp >= hi {
         continue
       }
-      var regs: Map[Int, Int] = {}
-      for k in 0..32 {
-        regs[k] = rs[k]
-      }
-      regs[-1] = rs[32]
       return (vframes(s.info, s.lines, s.tab, backtrace(s.tab, regs, s.snap, 64)), th)
     }
   }

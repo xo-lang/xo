@@ -88,7 +88,8 @@ fn debug_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio, proc) {
 /// native build's default), run under the process control with ARGS; the
 /// commands from -c (--batch: each echoed as `(xo) CMD`, then its
 /// output), else from standard input as `xo dev debug` reads them. The
-/// program is ended at the commands' end or quit. macOS arm64 so far.
+/// program is ended at the commands' end or quit. macOS arm64 and Linux
+/// (decision 0253 stage 6) so far.
 /// usage is the command's help (cmdhelp), printed on a usage error.
 pub fn debug_main(os: Os, args: List[Str], usage: Str) -> Int uses (fs.read, stdio, proc) {
   var cmds: List[Str] = []

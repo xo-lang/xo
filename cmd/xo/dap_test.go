@@ -108,15 +108,15 @@ func list(m map[string]any, k string) []map[string]any {
 // paths, a frame's locals and a struct's fields, evaluate, next and
 // stepOut, the program's output as an output event, and its exit.
 func TestDebugDAP(t *testing.T) {
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("xo debug's process control is macOS arm64 so far (decision 0253 stage 2)")
+	if !debugLaunches() {
+		t.Skip("xo debug's process control is macOS arm64 and Linux so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
 	}
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := writeFiles(t, map[string]string{"main.xo": debugProg})
-	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: "arm64", Out: filepath.Join(t.TempDir(), "prog")}))
+	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: debugBackend(), Out: filepath.Join(t.TempDir(), "prog")}))
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %s", err, res.Output)
 	}
@@ -240,14 +240,14 @@ func fileExists(p string) bool {
 // disconnect detaches, leaving the program running.
 func TestDebugDAPAttach(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("xo debug's process control is macOS arm64 so far (decision 0253 stage 2)")
+		t.Skip("xo debug attaches on macOS arm64 so far (decision 0253 stage 4; Linux's needs /proc/PID/task, stage 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
 	}
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := writeFiles(t, map[string]string{"main.xo": debugTasks})
-	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: "arm64", Out: filepath.Join(t.TempDir(), "prog")}))
+	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: debugBackend(), Out: filepath.Join(t.TempDir(), "prog")}))
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %s", err, res.Output)
 	}

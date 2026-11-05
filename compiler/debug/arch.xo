@@ -1,0 +1,139 @@
+// What `xo debug` needs to know of the executable's architecture
+// (decision 0253 stage 6: Linux arm64, then x86_64), from Tables.x86:
+// the registers' roles in DWARF numbering, how far back of a return
+// address its call's last byte is, the trap's bytes, a system call's
+// instruction, and a call's length and target for next and step.
+
+/// The frame pointer's DWARF register: x29, rbp.
+pub fn (t: Tables) fp_reg() -> Int { if t.x86 { 6 } else { 29 } }
+
+/// The stack pointer's DWARF register: sp (31), rsp.
+pub fn (t: Tables) sp_reg() -> Int { if t.x86 { 7 } else { 31 } }
+
+/// The return address's column: lr (x30), and x86_64's return address
+/// column 16 (the CIE's, the caller's rip).
+pub fn (t: Tables) ra_reg() -> Int { if t.x86 { 16 } else { 30 } }
+
+/// Whether a caller keeps register r across a call (its value in a
+/// caller's frame is the callee's own or the unwind's): arm64's x19 to
+/// x30 and sp (AAPCS64), x86_64's rbx, rbp, rsp, r12 to r15 and the
+/// return address column (System V).
+pub fn (t: Tables) kept_reg(r: Int) -> Bool {
+  if t.x86 {
+    return r == 3 || r == 6 || r == 7 || (r >= 12 && r <= 16)
+  }
+  r >= 19
+}
+
+/// How far back of a return address its call instruction is to be
+/// looked up (in it, even when it is the function's last): a whole
+/// arm64 instruction, one byte of x86_64's.
+pub fn (t: Tables) ret_back() -> Int { if t.x86 { 1 } else { 4 } }
+
+/// The trap planted at a breakpoint: arm64's `brk #0`, x86_64's int3.
+pub fn (t: Tables) trap() -> Bytes {
+  Bytes.from_hex(if t.x86 { "cc" } else { "000020d4" }) ?? b""
+}
+
+/// Whether the instruction at the start of code (its first bytes, at
+/// least 4) is a system call, which may wait for another thread: arm64's
+/// svc, x86_64's syscall (0f 05).
+pub fn (t: Tables) is_syscall(code: Bytes) -> Bool {
+  if code.len() < 4 {
+    return false
+  }
+  if t.x86 {
+    return code[0] == 0x0f && code[1] == 0x05
+  }
+  let w = Int(code[0]) | (Int(code[1]) << 8) | (Int(code[2]) << 16) | (Int(code[3]) << 24)
+  w & 0xffe0001f == 0xd4000001
+}
+
+/// The call at pc with bytes code (at least 15 of them, fewer at a
+/// mapping's end): its length and target, the target -2 when it is
+/// register n's value (the third result), -3 when it is read from memory
+/// (not followed), or None when it is not a call.
+pub fn (t: Tables) call_at(pc: Int, code: Bytes) -> (Int, Int, Int)? {
+  if code.len() < (if t.x86 { 2 } else { 4 }) {
+    return None
+  }
+  if !t.x86 {
+    let w = Int(code[0]) | (Int(code[1]) << 8) | (Int(code[2]) << 16) | (Int(code[3]) << 24)
+    if w & 0xfc000000 == 0x94000000 {
+      // bl: a signed 26 bit word offset
+      var off = w & 0x3ffffff
+      if off & 0x2000000 != 0 {
+        off -= 0x4000000
+      }
+      return Some((4, pc + off * 4, 0))
+    }
+    if w & 0xfffffc1f == 0xd63f0000 {
+      // blr xN
+      return Some((4, -2, (w >> 5) & 31))
+    }
+    return None
+  }
+  if code[0] == 0xe8 && code.len() >= 5 {
+    // call rel32
+    var rel = Int(code[1]) | (Int(code[2]) << 8) | (Int(code[3]) << 16) | (Int(code[4]) << 24)
+    if rel & 0x80000000 != 0 {
+      rel -= 0x100000000
+    }
+    return Some((5, pc + 5 + rel, 0))
+  }
+  // [REX] ff /2: call r/m64
+  var i = 0
+  var rex = 0
+  if code[0] & 0xf0 == 0x40 {
+    rex = Int(code[0])
+    i = 1
+  }
+  if code.len() < i + 2 || code[i] != 0xff || (Int(code[i + 1]) >> 3) & 7 != 2 {
+    return None
+  }
+  let modrm = Int(code[i + 1])
+  let md = modrm >> 6
+  let rm = modrm & 7
+  var n = i + 2
+  if md == 3 {
+    // a register: its hardware number to DWARF's
+    let hw = rm + (if rex & 1 != 0 { 8 } else { 0 })
+    let dwarf = [0, 2, 1, 3, 7, 6, 4, 5]
+    return Some((n, -2, if hw < 8 { dwarf[hw] } else { hw }))
+  }
+  if rm == 4 {
+    // a SIB byte; base 5 with mod 0 has a 32 bit displacement
+    if code.len() < n + 1 {
+      return None
+    }
+    let base = Int(code[n]) & 7
+    n += 1
+    if md == 0 && base == 5 {
+      n += 4
+    }
+  } else if md == 0 && rm == 5 {
+    // rip relative
+    n += 4
+  }
+  if md == 1 {
+    n += 1
+  } else if md == 2 {
+    n += 4
+  }
+  Some((n, -3, 0))
+}
+
+/// The session's register map of a thread's registers (dbg_regs' 34
+/// words, DWARF order): arm64's x0 to sp (0 to 31), x86_64's 16
+/// registers, and the pc under -1; empty when there are none.
+pub fn (t: Tables) regs_map(rs: List[Int]) -> Map[Int, Int] {
+  var m: Map[Int, Int] = {}
+  if rs.len() < 33 {
+    return m
+  }
+  for i in 0..(if t.x86 { 16 } else { 32 }) {
+    m[i] = rs[i]
+  }
+  m[-1] = rs[32]
+  m
+}

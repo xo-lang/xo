@@ -60,7 +60,7 @@ func debugBatch(t *testing.T, src string, cmds []string) string {
 	t.Helper()
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := writeFiles(t, map[string]string{"main.xo": src})
-	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: "arm64", Out: filepath.Join(t.TempDir(), "prog")}))
+	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: debugBackend(), Out: filepath.Join(t.TempDir(), "prog")}))
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %s", err, res.Output)
 	}
@@ -97,9 +97,28 @@ func wantAll(t *testing.T, got string, wants ...string) {
 // 0253 stage 2, macOS arm64): a breakpoint in a loop, its locals, a field,
 // the backtrace through the inlined frame, each of the four stops with the
 // loop's values, then the program's exit.
+// debugLaunches: whether xo debug starts programs on this machine
+// (decision 0253: macOS arm64 at stage 2, Linux arm64 and amd64 at
+// stage 6).
+func debugLaunches() bool {
+	if runtime.GOOS == "linux" {
+		return runtime.GOARCH == "arm64" || runtime.GOARCH == "amd64"
+	}
+	return runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
+}
+
+// debugBackend: the native backend of this machine's programs (xo
+// build --backend: arm64, or amd64 on x86_64 Linux).
+func debugBackend() string {
+	if runtime.GOARCH == "amd64" {
+		return "amd64"
+	}
+	return xotool.BackendArm64
+}
+
 func TestDebugBatch(t *testing.T) {
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("xo debug's process control is macOS arm64 so far (decision 0253 stage 2)")
+	if !debugLaunches() {
+		t.Skip("xo debug's process control is macOS arm64 and Linux so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -132,8 +151,8 @@ func TestDebugBatch(t *testing.T) {
 // and out of each recursive call, the stack pointer telling the frames
 // apart.
 func TestDebugStep(t *testing.T) {
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("xo debug's process control is macOS arm64 so far (decision 0253 stage 2)")
+	if !debugLaunches() {
+		t.Skip("xo debug's process control is macOS arm64 and Linux so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs native programs")
@@ -186,8 +205,8 @@ const debugTasks = `fn main(os: Os) {
 // selects a blocked task's frame in the program's code (its fiber's
 // stack), and locals and print read it there.
 func TestDebugTasks(t *testing.T) {
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("xo debug's process control is macOS arm64 so far (decision 0253 stage 2)")
+	if !debugLaunches() {
+		t.Skip("xo debug's process control is macOS arm64 and Linux so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -211,14 +230,14 @@ func TestDebugTasks(t *testing.T) {
 // the session the program runs on (detached, not killed).
 func TestDebugAttach(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("xo debug's process control is macOS arm64 so far (decision 0253 stage 2)")
+		t.Skip("xo debug attaches on macOS arm64 so far (decision 0253 stage 4; Linux's needs /proc/PID/task, stage 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
 	}
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := writeFiles(t, map[string]string{"main.xo": debugTasks})
-	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: "arm64", Out: filepath.Join(t.TempDir(), "prog")}))
+	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: debugBackend(), Out: filepath.Join(t.TempDir(), "prog")}))
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %s", err, res.Output)
 	}

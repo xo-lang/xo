@@ -1,0 +1,701 @@
+// `xo debug`'s process control on Linux (decision 0253 stage 6, with only
+// the calls its "New OS capabilities" list approves), the interface of
+// dbgmac.xo: a program started stopped (fork; the child stops itself with
+// tgkill SIGSTOP; PTRACE_SEIZE with TRACECLONE, TRACEEXEC and EXITKILL in
+// its options, so every thread it makes is traced and it dies with xo;
+// SIGCONT; the child's execve stops at the exec event), memory read with
+// process_vm_readv and a trap written with PTRACE_POKEDATA (the kernel
+// writes a private copy of the text page and flushes the instruction
+// cache), a thread's registers through PTRACE_GETREGSET/SETREGSET with
+// NT_PRSTATUS, its single step with PTRACE_SINGLESTEP, and every stop and
+// exit seen by wait4 with __WALL. Xo's linker makes ET_EXEC files, so the
+// program runs at its file's addresses without turning ASLR off.
+//
+// Every ptrace and wait4 call goes through the debuggee's tracer thread
+// (dbgtrace.xo): ptrace takes requests only from the thread that seized.
+//
+// A debuggee is a record (heap_large) at h:
+//   0 pid, 8 the tracer's mailbox, 16 the selected thread (the last
+//   stop's), 24 a stop was reported (resume answers it), 32 attached (not
+//   used yet: attach needs the thread list), 40 the threads table, 48 its
+//   count, 56 its capacity.
+// A thread's entry (TE bytes): 0 tid, 8 stopped, 16 the signal to deliver
+// at its next resume, 24 single step at its next resume.
+//
+// A stop stops the whole program: the other threads get PTRACE_INTERRUPT
+// and are waited for, as dbgmac.xo suspends them.
+use native/llrt/cabi_dbg
+use native/llrt/dbgtrace
+use native/llrt/pool
+use native/llrt/process
+use native/llrt/raw
+use native/rt
+
+const PID = 0
+const MB = 8
+const HTHREAD = 16
+const PENDING = 24
+const ATTACHED = 32
+const TT = 40
+const NT = 48
+const CAP = 56
+const SIZE = 64
+
+const TE = 32
+const E_TID = 0
+const E_STOPPED = 8
+const E_SIG = 16
+const E_STEP = 24
+
+const PTRACE_POKEDATA = 5
+const PTRACE_CONT = 7
+const PTRACE_SINGLESTEP = 9
+const PTRACE_DETACH = 17
+const PTRACE_GETREGSET = 0x4204
+const PTRACE_SETREGSET = 0x4205
+const PTRACE_SEIZE = 0x4206
+const PTRACE_INTERRUPT = 0x4207
+/// PTRACE_O_TRACECLONE 8, TRACEEXEC 0x10, EXITKILL 0x100000
+const SEIZE_OPTS = 0x100018
+const EVENT_CLONE = 3
+const EVENT_EXEC = 4
+const EVENT_STOP = 128
+const NT_PRSTATUS = 1
+/// wait4's __WALL, WNOHANG, WUNTRACED
+const WALL = 0x40000000
+const WNOHANG = 1
+const WUNTRACED = 2
+const ECHILD = 10
+const SIGTRAP = 5
+const SIGSTOP = 19
+const SIGCONT = 18
+const SIGKILL = 9
+/// dbgmac.xo's exception numbers: EXC_BAD_ACCESS 1, EXC_BAD_INSTRUCTION
+/// 2, EXC_ARITHMETIC 3, EXC_BREAKPOINT 6
+const EXC_BAD_ACCESS = 1
+const EXC_BAD_INSTRUCTION = 2
+const EXC_ARITHMETIC = 3
+const EXC_BREAKPOINT = 6
+
+/// The system call numbers of linux/arm64 and linux/amd64.
+fn nr(arm64: Int, amd64: Int) -> Int {
+  match target.arch {
+    TargetArch.Arm64 => arm64
+    TargetArch.Amd64 => amd64
+    TargetArch.Wasm32 => -1
+  }
+}
+
+fn nr_ptrace() -> Int { nr(117, 101) }
+fn nr_wait4() -> Int { nr(260, 61) }
+fn nr_tgkill() -> Int { nr(131, 234) }
+
+/// ptrace(req, tid, a, d) on h's tracer thread.
+fn ptrace(h: Int, req: Int, tid: Int, a: Int, d: Int) -> Int {
+  dbgtrace.call(rt.mem_load(h, MB, 8), nr_ptrace(), req, tid, a, d, 0, 0)
+}
+
+/// wait4(pid, st, options) on h's tracer thread.
+fn wait4(h: Int, pid: Int, st: Int, options: Int) -> Int {
+  dbgtrace.call(rt.mem_load(h, MB, 8), nr_wait4(), pid, st, options, 0, 0, 0)
+}
+
+/// Starts path with args stopped before its first instruction (out not
+/// "": its standard output and error written to the file out, created or
+/// truncated, and its standard input /dev/null): the debuggee's record
+/// and "", or 0 and why it could not.
+pub fn launch(path: Str, args: List[Str], out: Str) -> (Int, Str) {
+  var all = [path]
+  for a in args {
+    all.push(a)
+  }
+  let argv = c_strs(all)
+  let zpath = path + "\u{0}"
+  let zout = out + "\u{0}"
+  let devnull = "/dev/null\u{0}"
+  let h = new_record()
+  if h == 0 {
+    rt.heap_release(argv - 8)
+    return (0, "the debugger's tracer thread could not be started")
+  }
+  let st = raw.bytes_buf(8)
+  let sa = raw.bytes_addr(st)
+  let cpath = raw.data(zpath)
+  let cenv = process.environ_addr()
+  let cout = if out.is_empty() { 0 } else { raw.data(zout) }
+  let cnull = raw.data(devnull)
+  // forked here, not on the tracer thread (its child would return into
+  // the tracer's loop): the tracer seizes it, a child of the process
+  // either way; the child makes system calls only (clone with SIGCHLD)
+  let pid = rt.sys6(nr(220, 56), 17, 0, 0, 0, 0, 0)
+  if pid == 0 {
+    child(cpath, argv, cenv, cout, cnull)
+  }
+  let _z = zpath.len() + zout.len() + devnull.len()
+  rt.heap_release(argv - 8)
+  if pid < 0 {
+    close(h)
+    return (0, "fork: errno ${-pid}")
+  }
+  rt.mem_store(h, PID, pid, 8)
+  // the child's own SIGSTOP, then the seize, then SIGCONT to its exec
+  let w = wait4(h, pid, sa, WUNTRACED | WALL)
+  if w != pid || rt.mem_load(sa, 0, 4) & 0xff != 0x7f {
+    raw.alive(st)
+    reap(h)
+    close(h)
+    return (0, "${path}: the started program did not stop (wait4 ${w}, status ${rt.mem_load(sa, 0, 4)})")
+  }
+  let s = ptrace(h, PTRACE_SEIZE, pid, 0, SEIZE_OPTS)
+  if s != 0 {
+    raw.alive(st)
+    let _k = rt.sys6(nr_tgkill(), pid, pid, SIGKILL, 0, 0, 0)
+    reap(h)
+    close(h)
+    return (0, "ptrace(PTRACE_SEIZE) ${pid}: errno ${-s} (a security module, such as Yama's ptrace_scope, may forbid it)")
+  }
+  let _c = rt.sys6(nr_tgkill(), pid, pid, SIGCONT, 0, 0, 0)
+  while true {
+    let r = wait4(h, pid, sa, WALL)
+    let v = rt.mem_load(sa, 0, 4)
+    if r != pid {
+      raw.alive(st)
+      close(h)
+      return (0, "${path}: wait4 ${r} before the exec")
+    }
+    if v & 0xff != 0x7f {
+      raw.alive(st)
+      close(h)
+      // the exec failed: the child exited 127
+      return (0, "${path}: the program could not be started (status ${v}: is it an executable file?)")
+    }
+    if v >> 16 == EVENT_EXEC {
+      break
+    }
+    // SIGCONT's delivery, the seize's own stop: on, with no signal
+    let sig = (v >> 8) & 0xff
+    let _p = ptrace(h, PTRACE_CONT, pid, 0, if sig == SIGCONT || sig == SIGSTOP || sig == SIGTRAP { 0 } else { sig })
+  }
+  raw.alive(st)
+  add_thread(h, pid)
+  set_stopped(h, pid, true)
+  rt.mem_store(h, HTHREAD, pid, 8)
+  (h, "")
+}
+
+/// The child of launch: standard input from /dev/null and output to out
+/// (when not 0), stopped for the seize, then execve; exits 127 when the
+/// exec fails. System calls only (the parent has other threads).
+fn child(path: Int, argv: Int, envp: Int, out: Int, devnull: Int) {
+  if out != 0 {
+    // openat(AT_FDCWD, ...): O_RDONLY; O_WRONLY 1 | O_CREAT 0x40 | O_TRUNC 0x200
+    let i = rt.sys6(nr(56, 257), -100, devnull, 0, 0, 0, 0)
+    if i >= 0 {
+      let _d = rt.sys6(nr(24, 292), i, 0, 0, 0, 0, 0)
+    }
+    let o = rt.sys6(nr(56, 257), -100, out, 1 | 0x40 | 0x200, 0x1a4, 0, 0)
+    if o >= 0 {
+      let _a = rt.sys6(nr(24, 292), o, 1, 0, 0, 0, 0)
+      let _b = rt.sys6(nr(24, 292), o, 2, 0, 0, 0, 0)
+    }
+  }
+  // tgkill(getpid(), gettid(), SIGSTOP)
+  let me = rt.sys6(nr(172, 39), 0, 0, 0, 0, 0, 0)
+  let t = rt.sys6(nr(178, 186), 0, 0, 0, 0, 0, 0)
+  let _s = rt.sys6(nr_tgkill(), me, t, SIGSTOP, 0, 0, 0)
+  let _e = rt.sys6(nr(221, 59), path, argv, envp, 0, 0, 0)
+  let _x = rt.sys6(nr(94, 231), 127, 0, 0, 0, 0, 0)
+}
+
+/// Attaching to a running process needs the list of its threads (every
+/// one is seized and stopped), which only /proc/PID/task gives: not on
+/// stage 6's approved list yet.
+pub fn attach(pid: Int) -> (Int, Str) {
+  (0, "attaching to process ${pid} on Linux needs its thread list from /proc/${pid}/task, which is not on decision 0253's approved list yet (stage 6); start the program under xo debug instead")
+}
+
+/// The threads of the stopped program (their tids), the selected one
+/// first.
+pub fn threads(h: Int) -> List[Int] {
+  let th = rt.mem_load(h, HTHREAD, 8)
+  var out = [th]
+  let t = rt.mem_load(h, TT, 8)
+  for i in 0..rt.mem_load(h, NT, 8) {
+    let tid = rt.mem_load(t, TE * i + E_TID, 8)
+    if tid != th {
+      out.push(tid)
+    }
+  }
+  out
+}
+
+/// Leaves an attached program running as it was.
+pub fn detach(h: Int) {
+  let t = rt.mem_load(h, TT, 8)
+  for i in 0..rt.mem_load(h, NT, 8) {
+    let e = t + TE * i
+    let _d = ptrace(h, PTRACE_DETACH, rt.mem_load(e, E_TID, 8), 0, rt.mem_load(e, E_SIG, 8))
+  }
+  rt.mem_store(h, NT, 0, 8)
+}
+
+pub fn pid(h: Int) -> Int { rt.mem_load(h, PID, 8) }
+
+/// n bytes at address a, None when they cannot be read.
+pub fn read(h: Int, a: Int, n: Int) -> Bytes? {
+  if n <= 0 {
+    return Some(b"")
+  }
+  let out = raw.bytes_buf(n)
+  let iov = raw.bytes_buf(32)
+  let v = raw.bytes_addr(iov)
+  rt.mem_store(v, 0, raw.bytes_addr(out), 8)
+  rt.mem_store(v, 8, n, 8)
+  rt.mem_store(v, 16, a, 8)
+  rt.mem_store(v, 24, n, 8)
+  // process_vm_readv(pid, local, 1, remote, 1, 0): any thread may
+  let r = rt.sys6(nr(270, 310), rt.mem_load(h, PID, 8), v, 1, v + 16, 1, 0)
+  raw.alive(iov)
+  if r != n {
+    return None
+  }
+  Some(out)
+}
+
+/// Writes data at address a of the program's text or data, a word at a
+/// time (PTRACE_POKEDATA through a stopped thread).
+pub fn write(h: Int, a: Int, data: Bytes) -> Bool {
+  let tid = stopped_tid(h)
+  if tid == 0 {
+    return false
+  }
+  var w = a & -8
+  while w < a + data.len() {
+    let old = read(h, w, 8) ?? return false
+    var word = 0
+    for k in 0..8 {
+      let at = w + k
+      let byte = if at >= a && at < a + data.len() { Int(data[at - a]) } else { Int(old[k]) }
+      word = word | byte.wrapping_shl(8 * k)
+    }
+    if ptrace(h, PTRACE_POKEDATA, tid, w, word) != 0 {
+      return false
+    }
+    w += 8
+  }
+  true
+}
+
+/// NT_PRSTATUS's size: arm64's user_pt_regs (x0 to x30, sp, pc, pstate),
+/// amd64's user_regs_struct (27 words).
+fn regs_size() -> Int { if target.arch == TargetArch.Amd64 { 27 * 8 } else { 34 * 8 } }
+
+/// The pc's word in NT_PRSTATUS.
+fn pc_word() -> Int { if target.arch == TargetArch.Amd64 { 16 } else { 32 } }
+
+/// Where amd64's user_regs_struct keeps DWARF register k (rax, rdx, rcx,
+/// rbx, rsi, rdi, rbp, rsp, r8 to r15).
+fn amd64_word(k: Int) -> Int {
+  match k {
+    0 => 10
+    1 => 12
+    2 => 11
+    3 => 5
+    4 => 13
+    5 => 14
+    6 => 4
+    7 => 19
+    8 => 9
+    9 => 8
+    10 => 7
+    11 => 6
+    12 => 3
+    13 => 2
+    14 => 1
+    _ => 0
+  }
+}
+
+/// Thread th's registers in DWARF numbering, 34 words as dbgmac.xo's:
+/// arm64's x0 to x28, fp, lr, sp, pc, pstate; amd64's 16 registers at 0
+/// to 15 (the rest 0), rip at 32 and rflags at 33. Empty when they cannot
+/// be read.
+pub fn regs(h: Int, th: Int) -> List[Int] {
+  let n = regs_size()
+  let st = raw.bytes_buf(n + 16)
+  let a = raw.bytes_addr(st)
+  let v = a + n
+  rt.mem_store(v, 0, a, 8)
+  rt.mem_store(v, 8, n, 8)
+  var out: List[Int] = []
+  if ptrace(h, PTRACE_GETREGSET, th, NT_PRSTATUS, v) == 0 {
+    if target.arch == TargetArch.Amd64 {
+      for k in 0..32 {
+        out.push(if k < 16 { rt.mem_load(a, 8 * amd64_word(k), 8) } else { 0 })
+      }
+      out.push(rt.mem_load(a, 8 * 16, 8))
+      out.push(rt.mem_load(a, 8 * 18, 8))
+    } else {
+      for i in 0..34 {
+        out.push(rt.mem_load(a, 8 * i, 8))
+      }
+    }
+  }
+  raw.alive(st)
+  out
+}
+
+/// Sets thread th's pc.
+pub fn set_pc(h: Int, th: Int, pc: Int) -> Bool {
+  let n = regs_size()
+  let st = raw.bytes_buf(n + 16)
+  let a = raw.bytes_addr(st)
+  let v = a + n
+  rt.mem_store(v, 0, a, 8)
+  rt.mem_store(v, 8, n, 8)
+  var ok = ptrace(h, PTRACE_GETREGSET, th, NT_PRSTATUS, v) == 0
+  if ok {
+    rt.mem_store(a, 8 * pc_word(), pc, 8)
+    ok = ptrace(h, PTRACE_SETREGSET, th, NT_PRSTATUS, v) == 0
+  }
+  raw.alive(st)
+  ok
+}
+
+/// Turns thread th's single step on or off: on, its next resume is
+/// PTRACE_SINGLESTEP, whose SIGTRAP wait reports with subcode 0.
+pub fn set_step(h: Int, th: Int, on: Bool) -> Bool {
+  let e = entry(h, th)
+  if e == 0 {
+    return false
+  }
+  rt.mem_store(e, E_STEP, if on { 1 } else { 0 }, 8)
+  true
+}
+
+/// Lets the program run: every stopped thread (alone: only the selected
+/// one, a single step), each with the signal it stopped on when it is to
+/// be delivered.
+pub fn resume(h: Int, alone: Bool) -> Bool {
+  rt.mem_store(h, PENDING, 0, 8)
+  let th = rt.mem_load(h, HTHREAD, 8)
+  let t = rt.mem_load(h, TT, 8)
+  var ok = true
+  for i in 0..rt.mem_load(h, NT, 8) {
+    let e = t + TE * i
+    let tid = rt.mem_load(e, E_TID, 8)
+    if rt.mem_load(e, E_STOPPED, 8) == 0 || (alone && tid != th) {
+      continue
+    }
+    let req = if rt.mem_load(e, E_STEP, 8) != 0 { PTRACE_SINGLESTEP } else { PTRACE_CONT }
+    if ptrace(h, req, tid, 0, rt.mem_load(e, E_SIG, 8)) == 0 {
+      rt.mem_store(e, E_STOPPED, 0, 8)
+      rt.mem_store(e, E_SIG, 0, 8)
+    } else if tid == th {
+      ok = false
+    }
+  }
+  ok
+}
+
+/// Waits up to ms milliseconds (0: until something happens) for the
+/// program to stop: [1, thread, exception, code, subcode] as dbgmac.xo's
+/// (EXC_BREAKPOINT 6 for a SIGTRAP, subcode the trap's address, 0 for a
+/// single step; a fault's signal as code), [2, status] when it exited,
+/// [3, signal] when a signal ended it, [0] when the time passed. Signals
+/// the program handles itself (SIGURG's preemption, SIGCHLD, SIGPIPE) are
+/// passed on without a stop.
+pub fn wait(h: Int, ms: Int) -> List[Int] {
+  let pid = rt.mem_load(h, PID, 8)
+  let st = raw.bytes_buf(8)
+  let sa = raw.bytes_addr(st)
+  let tick = raw.bytes_buf(8)
+  var left = ms
+  while true {
+    rt.mem_store(sa, 0, 0, 4)
+    let r = wait4(h, -1, sa, WALL | (if ms > 0 { WNOHANG } else { 0 }))
+    if r == 0 {
+      // WNOHANG and nothing yet: 10 ms
+      pool.futex_wait_us(raw.bytes_addr(tick), 0, 10000)
+      left -= 10
+      if left <= 0 {
+        break
+      }
+      continue
+    }
+    if r == -ECHILD {
+      // nothing left to wait for
+      raw.alive(st)
+      return [2, 0]
+    }
+    if r < 0 {
+      continue
+    }
+    let v = rt.mem_load(sa, 0, 4)
+    if v & 0xff != 0x7f {
+      // a thread ended (exited, or killed by a signal)
+      if r == pid {
+        // the leader is reaped last: the program is gone
+        rt.mem_store(h, NT, 0, 8)
+        raw.alive(st)
+        if v & 0x7f == 0 {
+          return [2, (v >> 8) & 0xff]
+        }
+        return [3, v & 0x7f]
+      }
+      remove_thread(h, r)
+      continue
+    }
+    let sig = (v >> 8) & 0xff
+    let ev = v >> 16
+    if entry(h, r) == 0 {
+      // a new thread's first stop
+      add_thread(h, r)
+    }
+    set_stopped(h, r, true)
+    if ev != 0 {
+      // a clone, exec or interrupt's stop: on
+      let _c = ptrace(h, PTRACE_CONT, r, 0, 0)
+      set_stopped(h, r, false)
+      continue
+    }
+    var exc = 0
+    var code = sig
+    var sub = 0
+    if sig == SIGTRAP {
+      let e = entry(h, r)
+      exc = EXC_BREAKPOINT
+      code = 1
+      if rt.mem_load(e, E_STEP, 8) == 0 {
+        let rs = regs(h, r)
+        sub = if rs.len() > 32 { rs[32] } else { 0 }
+        if target.arch == TargetArch.Amd64 && sub != 0 {
+          // int3 has run: the pc back on the trap, as arm64's brk leaves it
+          sub -= 1
+          let _p = set_pc(h, r, sub)
+        }
+      }
+      rt.mem_store(e, E_STEP, 0, 8)
+    } else if sig == 11 || sig == 7 {
+      exc = EXC_BAD_ACCESS
+    } else if sig == 4 {
+      exc = EXC_BAD_INSTRUCTION
+    } else if sig == 8 {
+      exc = EXC_ARITHMETIC
+    }
+    if exc == 0 {
+      // the program's own signal: delivered, on
+      let _c = ptrace(h, PTRACE_CONT, r, 0, sig)
+      set_stopped(h, r, false)
+      continue
+    }
+    if exc != EXC_BREAKPOINT {
+      // a fault: delivered when it runs on (its handler, or its end)
+      rt.mem_store(entry(h, r), E_SIG, sig, 8)
+    }
+    rt.mem_store(h, HTHREAD, r, 8)
+    rt.mem_store(h, PENDING, 1, 8)
+    stop_others(h, r, sa)
+    raw.alive(st)
+    raw.alive(tick)
+    return [1, r, exc, code, sub]
+  }
+  raw.alive(st)
+  raw.alive(tick)
+  [0]
+}
+
+/// Stops every running thread but th: PTRACE_INTERRUPT, then its stop
+/// waited for. A thread that stopped for something else first keeps it
+/// as a signal to deliver, or drops a trap's (an arm64 trap's pc stays
+/// at the trap, an amd64 one's is moved back on it, so it traps again
+/// when it runs on).
+fn stop_others(h: Int, th: Int, sa: Int) {
+  let t = rt.mem_load(h, TT, 8)
+  var i = 0
+  while i < rt.mem_load(h, NT, 8) {
+    let e = t + TE * i
+    let tid = rt.mem_load(e, E_TID, 8)
+    if tid == th || rt.mem_load(e, E_STOPPED, 8) != 0 {
+      i += 1
+      continue
+    }
+    let _p = ptrace(h, PTRACE_INTERRUPT, tid, 0, 0)
+    let r = wait4(h, tid, sa, WALL)
+    let v = rt.mem_load(sa, 0, 4)
+    if r != tid || v & 0xff != 0x7f {
+      // it ended
+      remove_thread(h, tid)
+      continue
+    }
+    let sig = (v >> 8) & 0xff
+    if v >> 16 == 0 && sig != SIGTRAP && sig != SIGSTOP && sig != 11 && sig != 7 && sig != 4 && sig != 8 {
+      rt.mem_store(e, E_SIG, sig, 8)
+    }
+    if v >> 16 == 0 && sig == SIGTRAP && target.arch == TargetArch.Amd64 {
+      // its int3 ran: back on the trap, to take it again when it runs on
+      let rs = regs(h, tid)
+      if rs.len() > 32 {
+        let _p = set_pc(h, tid, rs[32] - 1)
+      }
+    }
+    rt.mem_store(e, E_STOPPED, 1, 8)
+    i += 1
+  }
+}
+
+/// Ends the program (SIGKILL) and waits for it.
+pub fn kill(h: Int) {
+  if rt.mem_load(h, ATTACHED, 8) != 0 {
+    detach(h)
+    return
+  }
+  let pid = rt.mem_load(h, PID, 8)
+  if pid > 0 {
+    let _k = rt.sys6(nr_tgkill(), pid, pid, SIGKILL, 0, 0, 0)
+    reap(h)
+  }
+}
+
+/// Frees the record and stops its tracer thread (after kill, or the exit).
+pub fn close(h: Int) {
+  let m = rt.mem_load(h, MB, 8)
+  if m != 0 {
+    dbgtrace.stop(m)
+    rt.heap_release(m - 8)
+  }
+  let t = rt.mem_load(h, TT, 8)
+  if t != 0 {
+    rt.heap_release(t - 8)
+  }
+  rt.heap_release(h - 8)
+}
+
+/// Waits for the ended (or killed) program until its leader is reaped,
+/// which the kernel holds back until every other thread of it is waited
+/// for: so any thread is waited for (wait4 of -1; some may not be in the
+/// table yet), and the wait ends at the leader, since xo has children of
+/// its own (its lifeline) that live on. A stop on the way out runs on.
+fn reap(h: Int) {
+  let st = raw.bytes_buf(8)
+  let sa = raw.bytes_addr(st)
+  let pid = rt.mem_load(h, PID, 8)
+  while true {
+    let r = wait4(h, -1, sa, WALL)
+    if r <= 0 {
+      break
+    }
+    let v = rt.mem_load(sa, 0, 4)
+    if v & 0xff == 0x7f {
+      let _c = ptrace(h, PTRACE_CONT, r, 0, 0)
+    } else if r == pid {
+      break
+    }
+  }
+  raw.alive(st)
+  rt.mem_store(h, NT, 0, 8)
+}
+
+/// A zeroed record with its mailbox and tracer thread, or 0.
+fn new_record() -> Int {
+  let h = rt.heap_large(SIZE)
+  rt.mem_set(h, 0, SIZE)
+  let m = rt.heap_large(dbgtrace.MB_SIZE)
+  rt.mem_set(m, 0, dbgtrace.MB_SIZE)
+  if !pool.thread_start(rt.fn_addr("dbg_tracer"), m) {
+    rt.heap_release(m - 8)
+    rt.heap_release(h - 8)
+    return 0
+  }
+  rt.mem_store(h, MB, m, 8)
+  h
+}
+
+/// Thread tid's entry, or 0.
+fn entry(h: Int, tid: Int) -> Int {
+  let t = rt.mem_load(h, TT, 8)
+  for i in 0..rt.mem_load(h, NT, 8) {
+    if rt.mem_load(t, TE * i + E_TID, 8) == tid {
+      return t + TE * i
+    }
+  }
+  0
+}
+
+fn add_thread(h: Int, tid: Int) {
+  let n = rt.mem_load(h, NT, 8)
+  var t = rt.mem_load(h, TT, 8)
+  if n == rt.mem_load(h, CAP, 8) {
+    let cap = if n == 0 { 16 } else { 2 * n }
+    let nt = rt.heap_large(TE * cap)
+    if t != 0 {
+      rt.mem_copy(nt, t, TE * n)
+      rt.heap_release(t - 8)
+    }
+    t = nt
+    rt.mem_store(h, TT, t, 8)
+    rt.mem_store(h, CAP, cap, 8)
+  }
+  rt.mem_set(t + TE * n, 0, TE)
+  rt.mem_store(t, TE * n + E_TID, tid, 8)
+  rt.mem_store(h, NT, n + 1, 8)
+}
+
+fn remove_thread(h: Int, tid: Int) {
+  let e = entry(h, tid)
+  if e == 0 {
+    return
+  }
+  let t = rt.mem_load(h, TT, 8)
+  let n = rt.mem_load(h, NT, 8)
+  let last = t + TE * (n - 1)
+  if e != last {
+    rt.mem_copy(e, last, TE)
+  }
+  rt.mem_store(h, NT, n - 1, 8)
+}
+
+fn set_stopped(h: Int, tid: Int, on: Bool) {
+  let e = entry(h, tid)
+  if e != 0 {
+    rt.mem_store(e, E_STOPPED, if on { 1 } else { 0 }, 8)
+  }
+}
+
+/// A stopped thread's tid (the selected one when stopped), or 0.
+fn stopped_tid(h: Int) -> Int {
+  let th = rt.mem_load(h, HTHREAD, 8)
+  let e = entry(h, th)
+  if e != 0 && rt.mem_load(e, E_STOPPED, 8) != 0 {
+    return th
+  }
+  let t = rt.mem_load(h, TT, 8)
+  for i in 0..rt.mem_load(h, NT, 8) {
+    if rt.mem_load(t, TE * i + E_STOPPED, 8) != 0 {
+      return rt.mem_load(t, TE * i + E_TID, 8)
+    }
+  }
+  0
+}
+
+/// A heap_large block (released at its address - 8) holding the NULL
+/// ended array of C strings of ss, then their zero terminated bytes
+/// (dbgmac.xo's).
+fn c_strs(ss: List[Str]) -> Int {
+  let head = 8 * (ss.len() + 1)
+  var size = head
+  for s in ss {
+    size += s.len() + 1
+  }
+  let m = rt.heap_large(size)
+  var p = m + head
+  for k in 0..ss.len() {
+    let s = ss[k]
+    rt.mem_store(m, 8 * k, p, 8)
+    rt.mem_copy(p, raw.data(s), s.len())
+    rt.mem_store(p, s.len(), 0, 1)
+    p += s.len() + 1
+  }
+  rt.mem_store(m, 8 * ss.len(), 0, 8)
+  m
+}

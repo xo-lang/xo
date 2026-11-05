@@ -1,0 +1,69 @@
+// The tracer thread of `xo debug` on Linux (decision 0253 stage 6): ptrace
+// takes a request only from the thread that attached (the tracer), and a
+// fiber may run on another worker after any park, so every ptrace and
+// wait4 call of a debuggee is made by one OS thread of its own, started
+// with the debuggee (pool.thread_start of cabi_dbg.xo's dbg_tracer). The
+// caller and that thread meet in a mailbox (heap_large, MB_SIZE bytes):
+//   0 state (a futex word: 0 idle, 1 a request, 2 its result, 3 stop,
+//   4 stopped), 8 the system call's number, 16 to 56 its six arguments,
+//   64 its result.
+// One session makes one call at a time, so one mailbox needs no lock.
+use native/llrt/pool
+use native/rt
+
+const ST = 0
+const NR = 8
+const ARGS = 16
+const RES = 64
+pub const MB_SIZE = 72
+
+const SEQ_CST = 4
+
+/// The tracer thread's loop (cabi_dbg.xo dbg_tracer): each request's
+/// system call made here, until a stop.
+pub fn serve(m: Int) {
+  while true {
+    let s = rt.slot_load(m, ST / 8, SEQ_CST)
+    if s == 1 {
+      let r = rt.sys6(rt.mem_load(m, NR, 8), rt.mem_load(m, ARGS, 8), rt.mem_load(m, ARGS + 8, 8), rt.mem_load(m, ARGS + 16, 8), rt.mem_load(m, ARGS + 24, 8), rt.mem_load(m, ARGS + 32, 8), rt.mem_load(m, ARGS + 40, 8))
+      rt.mem_store(m, RES, r, 8)
+      rt.slot_store(m, ST / 8, 2, SEQ_CST)
+      pool.futex_wake(m)
+    } else if s == 3 {
+      // the mailbox is the caller's again once it reads 4
+      rt.slot_store(m, ST / 8, 4, SEQ_CST)
+      pool.futex_wake(m)
+      return
+    } else {
+      pool.futex_wait(m, s)
+    }
+  }
+}
+
+/// System call nr with a to f on m's tracer thread: its result.
+pub fn call(m: Int, nr: Int, a: Int, b: Int, c: Int, d: Int, e: Int, f: Int) -> Int {
+  rt.mem_store(m, NR, nr, 8)
+  rt.mem_store(m, ARGS, a, 8)
+  rt.mem_store(m, ARGS + 8, b, 8)
+  rt.mem_store(m, ARGS + 16, c, 8)
+  rt.mem_store(m, ARGS + 24, d, 8)
+  rt.mem_store(m, ARGS + 32, e, 8)
+  rt.mem_store(m, ARGS + 40, f, 8)
+  rt.slot_store(m, ST / 8, 1, SEQ_CST)
+  pool.futex_wake(m)
+  while rt.slot_load(m, ST / 8, SEQ_CST) == 1 {
+    pool.futex_wait(m, 1)
+  }
+  let r = rt.mem_load(m, RES, 8)
+  rt.slot_store(m, ST / 8, 0, SEQ_CST)
+  r
+}
+
+/// Ends m's tracer thread and waits until it has left the mailbox.
+pub fn stop(m: Int) {
+  rt.slot_store(m, ST / 8, 3, SEQ_CST)
+  pool.futex_wake(m)
+  while rt.slot_load(m, ST / 8, SEQ_CST) != 4 {
+    pool.futex_wait(m, 3)
+  }
+}

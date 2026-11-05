@@ -1,0 +1,74 @@
+// Tests of arch.xo: the registers' roles, the trap and system call
+// forms, and calls' lengths and targets on arm64 and x86_64.
+
+fn hexb(s: Str) -> Bytes { Bytes.from_hex(s) ?? b"" }
+
+fn call_text(t: Tables, pc: Int, code: Str) -> Str {
+  match t.call_at(pc, hexb(code)) {
+    Some((n, at, r)) => "${n} ${at} ${r}"
+    None => "none"
+  }
+}
+
+test "arm64 calls, traps and system calls" {
+  let t = Tables{}
+  // bl +8 words at 0x1000; bl -1 word
+  expect(call_text(t, 0x1000, "08000094")) == "4 4128 0"
+  expect(call_text(t, 0x1000, "ffffff97")) == "4 4092 0"
+  // blr x3
+  expect(call_text(t, 0x1000, "60003fd6")) == "4 -2 3"
+  // ret is not a call
+  expect(call_text(t, 0x1000, "c0035fd6")) == "none"
+  expect(t.trap()) == hexb("000020d4")
+  expect(t.is_syscall(hexb("010000d4"))) == true
+  expect(t.is_syscall(hexb("011000d4"))) == true
+  expect(t.is_syscall(hexb("1f2003d5"))) == false
+  expect(t.ret_back()) == 4
+  expect(t.kept_reg(19)) == true
+  expect(t.kept_reg(18)) == false
+}
+
+test "x86_64 calls, traps and system calls" {
+  let t = Tables{x86: true}
+  // call rel32 +16 and -5 (to itself)
+  expect(call_text(t, 0x1000, "e810000000")) == "5 4117 0"
+  expect(call_text(t, 0x1000, "e8fbffffff")) == "5 4096 0"
+  // call *%rax, call *%r11 (REX.B): DWARF 0 and 11
+  expect(call_text(t, 0x1000, "ffd0")) == "2 -2 0"
+  expect(call_text(t, 0x1000, "41ffd3")) == "3 -2 11"
+  // call *%rsi: hardware 6, DWARF 4
+  expect(call_text(t, 0x1000, "ffd6")) == "2 -2 4"
+  // call *8(%rax), call *0x10(%rip), call *(%rax,%rcx,8)
+  expect(call_text(t, 0x1000, "ff5008")) == "3 -3 0"
+  expect(call_text(t, 0x1000, "ff1510000000")) == "6 -3 0"
+  expect(call_text(t, 0x1000, "ff14c8")) == "3 -3 0"
+  // jmp *%rax (ff /4) and ret are not calls
+  expect(call_text(t, 0x1000, "ffe0")) == "none"
+  expect(call_text(t, 0x1000, "c3909090")) == "none"
+  expect(t.trap()) == hexb("cc")
+  expect(t.is_syscall(hexb("0f059090"))) == true
+  expect(t.is_syscall(hexb("90909090"))) == false
+  expect(t.ret_back()) == 1
+  expect(t.fp_reg()) == 6
+  expect(t.sp_reg()) == 7
+  expect(t.ra_reg()) == 16
+  expect(t.kept_reg(3)) == true
+  expect(t.kept_reg(0)) == false
+}
+
+test "a thread's registers become the session's map" {
+  var rs: List[Int] = []
+  for i in 0..34 {
+    rs.push(100 + i)
+  }
+  let a = Tables{}.regs_map(rs)
+  expect(a.len()) == 33
+  expect(a.get(31) ?? 0) == 131
+  expect(a.get(-1) ?? 0) == 132
+  let x = Tables{x86: true}.regs_map(rs)
+  expect(x.len()) == 17
+  expect(x.get(7) ?? 0) == 107
+  expect(x.get(16).is_none()) == true
+  expect(x.get(-1) ?? 0) == 132
+  expect(Tables{}.regs_map([1, 2]).is_empty()) == true
+}

@@ -177,6 +177,23 @@ programs):
   FlushInstructionCache, GetThreadContext, SetThreadContext,
   SuspendThread, ResumeThread, OpenProcess, OpenThread.
 
+Owner additions (rule 7b, 2026-11-05, "go with your recommendations",
+asked for as the stages found them):
+
+- macOS: mach_vm_machine_attribute (MATTR_CACHE, the instruction cache
+  flush after a trap is written), thread_suspend (a step alone, and
+  attach), kill(pid, 0) (an attached process's end), proc_pidpath (`-p
+  PID` without PROG).
+- Linux: reading the /proc/PID/task directory (attach's thread list).
+- Windows: the debugger's launch through std's windows.spawn handle set
+  (GetStdHandle, DuplicateHandle, InitializeProcThreadAttributeList,
+  UpdateProcThreadAttribute, DeleteProcThreadAttributeList, CreateFileW
+  of NUL, CloseHandle), CloseHandle of the handles debug events give, and
+  CreateFileW for DAP's capture file.
+- Darwin builds with debug information that are not `--release` or `-s`
+  carry get-task-allow by default, and the released xo is signed with
+  com.apple.security.cs.debugger (point 5).
+
 ## Stages
 
 1. selfhost/debug: the DWARF reader (types, variables, locations) over
@@ -444,3 +461,31 @@ programs):
   whose sp is in the fiber's stack (F_MEM, F_SIZE), and `task N` takes
   that thread's registers, frame 0's pc a live one (no new OS call).
   Not yet: `-p` without PROG.
+- 2026-11-05 (Xo Lang 2) stage 6, Linux: std/native/llrt dbglinux.xo
+  keeps dbgmac.xo's interface with only the approved calls. Launch:
+  fork; the child stops itself (tgkill SIGSTOP), is seized with
+  TRACECLONE, TRACEEXEC and EXITKILL in PTRACE_SEIZE's options (no
+  PTRACE_SETOPTIONS), gets SIGCONT (tgkill) and stops at its exec event.
+  Every ptrace and wait4 call is made by one tracer thread per debuggee
+  (dbgtrace.xo, a futex mailbox; cabi_dbg.xo's xo_x_dbg_tracer started
+  with pool.thread_start), since ptrace takes requests only from the
+  seizing thread and a fiber may move between workers. A new thread's
+  tid comes from wait4 (no GETEVENTMSG); a step and a breakpoint are told
+  apart by the debugger's own step flag (no GETSIGINFO); a stop
+  interrupts the other threads (PTRACE_INTERRUPT) and waits for each;
+  memory is read with process_vm_readv and traps written with
+  PTRACE_POKEDATA (the kernel copies the text page and flushes the
+  instruction cache); registers come through GETREGSET/SETREGSET with
+  NT_PRSTATUS in DWARF order (amd64's user_regs_struct mapped); the end
+  is tgkill SIGKILL and wait4 of the program alone. No personality call:
+  Xo's linker makes ET_EXEC files. x86_64: compiler/debug arch.xo gives
+  the registers' roles (rbp, rsp, return address column 16), int3 (the
+  pc moved back on it), syscall, the call forms next steps over (call
+  rel32, [REX] ff /2), each trap saving only its own bytes, and the
+  x86 fiber switch frame. Attach is not built on Linux: listing a
+  process's threads needs /proc/PID/task, not on the approved list (on
+  the owner's list, 2026-11-05); a fallback through the runtime's worker
+  records would leave the poller and monitor running and was declined
+  by the lead. ptrace_scope: the linux/arm64 offload host has no Yama.
+  Tests: cmd/xo TestDebugBatch, TestDebugStep, TestDebugTasks, TestDebugDAP
+  run on linux/arm64 (debugLaunches); compiler/debug arch_test.xo.

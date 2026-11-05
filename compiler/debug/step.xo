@@ -25,16 +25,9 @@ struct Depth {
 
 /// Thread th's depth at its registers regs (pc, sp, lr).
 fn (s: Session) depth(th: Int, regs: (Int, Int, Int)) -> Depth uses proc {
-  let rs = internal.dbg_regs(s.proc, th)
-  var m: Map[Int, Int] = {}
-  if rs.len() >= 33 {
-    for i in 0..32 {
-      m[i] = rs[i]
-    }
-    m[-1] = rs[32]
-  }
+  let m = s.tab.regs_map(internal.dbg_regs(s.proc, th))
   let fs = backtrace(s.tab, m, Snapshot{regs: m, proc: s.proc}, 2)
-  let cfa = if fs.len() >= 2 { fs[1].regs.get(31) ?? regs.1 } else { regs.1 }
+  let cfa = if fs.len() >= 2 { fs[1].regs.get(s.tab.sp_reg()) ?? regs.1 } else { regs.1 }
   Depth{sp: cfa, inl: s.inl_depth(regs.0)}
 }
 
@@ -112,8 +105,7 @@ fn (var s: Session) step_line(into: Bool) -> Str ! Str uses proc {
   while n < STEP_MAX {
     n += 1
     let pc = regs.0
-    let w = s.word(pc)
-    if let Some(ret) = s.call_return(pc, w, regs, into) {
+    if let Some(ret) = s.call_return(pc, regs, into) {
       // over the call: every thread runs until this frame is back at its
       // return address
       let r = s.run_to(th, ret, regs.1)?
@@ -177,7 +169,7 @@ fn (var s: Session) finish() -> Str ! Str uses proc {
     while n < STEP_MAX {
       n += 1
       let pc = regs.0
-      if let Some(ret) = s.call_return(pc, s.word(pc), regs, false) {
+      if let Some(ret) = s.call_return(pc, regs, false) {
         let r = s.run_to(th, ret, regs.1)?
         if !r.is_empty() {
           return Ok(s.stopped(r))
@@ -205,7 +197,7 @@ fn (var s: Session) finish() -> Str ! Str uses proc {
     return Err("the outermost frame has no caller to return to")
   }
   let ret = s.frames[k].pc
-  let sp = s.frames[k].regs.get(31) ?? 0
+  let sp = s.frames[k].regs.get(s.tab.sp_reg()) ?? 0
   let r = s.run_to(th, ret, sp)?
   if !r.is_empty() {
     return Ok(s.stopped(r))
@@ -292,36 +284,23 @@ fn (s: Session) sel_inline_index() -> Int {
   n
 }
 
-/// When the instruction w at pc is a call next steps over (any bl or
-/// blr; for step, only a call into code without line information), its
-/// return address.
-fn (s: Session) call_return(pc: Int, w: Int, regs: (Int, Int, Int), into: Bool) -> Int? {
-  var target = -1
-  if w & 0xfc000000 == 0x94000000 {
-    // bl: a signed 26 bit word offset
-    var off = w & 0x3ffffff
-    if off & 0x2000000 != 0 {
-      off -= 0x4000000
-    }
-    target = pc + off * 4
-  } else if w & 0xfffffc1f == 0xd63f0000 {
-    // blr xN: the target is register N, read when needed
-    target = -2
-  } else {
-    return None
-  }
+/// When the instruction at pc is a call next steps over (any; for step,
+/// only a call into code without line information), its return address.
+fn (s: Session) call_return(pc: Int, regs: (Int, Int, Int), into: Bool) -> Int? {
+  let _r = regs
+  let (n, at, reg) = s.tab.call_at(pc, s.code(pc, 16))?
   if !into {
-    return Some(pc + 4)
+    return Some(pc + n)
   }
+  var target = at
   if target == -2 {
     let rs = internal.dbg_regs(s.proc, s.thread)
-    let n = (w >> 5) & 31
-    target = if n < rs.len() { rs[n] } else { 0 }
+    target = s.tab.regs_map(rs).get(reg) ?? 0
   }
-  if s.info.func_at(target).is_some() {
+  if target >= 0 && s.info.func_at(target).is_some() {
     return None
   }
-  Some(pc + 4)
+  Some(pc + n)
 }
 
 /// Thread th's pc, sp and lr.
@@ -330,7 +309,7 @@ fn (s: Session) thread_regs(th: Int) -> (Int, Int, Int) ! Str uses proc {
   if rs.len() < 33 {
     return Err("cannot read the thread's registers")
   }
-  Ok((rs[32], rs[31], rs[30]))
+  Ok((rs[32], rs[s.tab.sp_reg()], if s.tab.x86 { 0 } else { rs[30] }))
 }
 
 /// Runs every thread until thread th is at address a with its stack
@@ -340,8 +319,8 @@ fn (s: Session) thread_regs(th: Int) -> (Int, Int, Int) ! Str uses proc {
 fn (var s: Session) run_to(th: Int, a: Int, sp: Int) -> List[Int] ! Str uses proc {
   let temp = !s.traps.contains(a)
   if temp {
-    let orig = internal.dbg_read(s.proc, a, 4) ?? return Err("cannot read the code at 0x${hex(a)}")
-    if !internal.dbg_write(s.proc, a, brk()) {
+    let orig = internal.dbg_read(s.proc, a, s.tab.trap().len()) ?? return Err("cannot read the code at 0x${hex(a)}")
+    if !internal.dbg_write(s.proc, a, s.tab.trap()) {
       return Err("cannot plant a trap at 0x${hex(a)}")
     }
     s.traps[a] = orig
