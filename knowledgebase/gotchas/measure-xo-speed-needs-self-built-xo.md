@@ -12,7 +12,10 @@ still read 1.008, and that was right too: this regression turned out to
 be in the code xo emits (made_here's 1,000 step limit put a ShareIn on
 2,059 pushes of std json's GO_CASES constant, fixed in fbd8b4d2e), which a
 seed-built xo shows as well. What hid it on linux: 0.38.1's linux emit
-phase for that test was already about 580 ms (the Mac's about 420), and
+phase for that test was already about 580 ms (the Mac's 0.38.1 release:
+390 to 404 ms; at fbd8b4d2e, each xo built by itself, linux 390 and the
+Mac 396 to 406 ms, so the gap is the linux 0.38.1 release binary's or a
+linux only gain since, not found), and
 the regression took main's linux emit from about 390 ms (with the fix) to
 555 to 580 ms, back to 0.38.1's level, so main against 0.38.1 read flat;
 measured against its own parent instead of a release, linux shows it
