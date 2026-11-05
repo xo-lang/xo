@@ -1,6 +1,6 @@
 # 0512: std/yaml, a port of gopkg.in/yaml.v3
 
-Status: Proposed (Xo Lang 3, 2026-11-05, at the Lead's request; for the owner).
+Status: Accepted (owner, 2026-11-05), with the answers to the three open questions below ("go with your recommendations").
 
 ## Context
 
@@ -94,7 +94,7 @@ Std follows Go's standard library and, for these, Go's de facto library
 (the port rule of CLAUDE.md: port Go's code and tests, Go's behavior is
 the oracle).
 
-## Decision (proposed)
+## Decision
 
 1. **`std/yaml` is a port of yaml.v3 v3.0.1 into Xo**, pure Xo and
    `go_compiled` (one source, `std/native/yaml.xo`, serving every backend
@@ -203,7 +203,29 @@ the oracle).
   from the full stage 1 port replaces the subset prototype figure above
   when stage 1 lands.
 
-## Open questions for the owner
+## Owner's answers (2026-11-05)
+
+1. **Port yaml.v3's behavior as is, deviations included.** The reference is
+   yaml.v3 v3.0.1, not the yaml-test-suite: where yaml.v3 differs from the
+   suite or from the YAML spec, Xo follows yaml.v3. Known deviations are
+   documented in the module's doc comment and in spec/std.md: it rejects
+   some valid suite documents (33 of the 231 valid ones in the harness), a
+   float scalar decodes into an Int by truncating (1.5 becomes 1; checked
+   against yaml.v3 itself), `yes`/`on` read as booleans only into a Bool,
+   a decode reports every type error together ("unmarshal errors:"), and
+   only the first document of a stream is decoded.
+2. **Indent 4 by default** (as yaml.v3's Marshal), **with an option for 2**
+   (yaml.v3's `SetIndent`): the encode functions take the indent.
+3. **Comments in `Node` later (stage 4)**, not in the first stages;
+   `parse` without comments serves config reading.
+
+Staging: (1) parser, Node and the resolver; (2) typed decode through
+`derive Yaml`; (3) the emitter, `encode` and `derive Yaml` encoding with
+`omitempty`, `flow` and `inline`; (4) comments. Each stage lands with its
+std corpus (scripts/stdcorpus yaml against yaml.v3), a fuzz harness, a
+twin row (bench/perf), the derive goldens, TestDerivableTable and the spec.
+
+## Open questions for the owner (answered above)
 
 1. Port yaml.v3's behavior including its suite failures (recommended for
    v1: exact differential), or target the yaml-test-suite and diverge
