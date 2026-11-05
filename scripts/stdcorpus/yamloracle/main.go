@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -252,6 +254,53 @@ func hasComment(n *yaml.Node) bool {
 		}
 	}
 	return false
+}
+
+// jsonSafe reports whether v (decoded into an any) has only what to_json writes as Go
+// does: string keys, no time.Time, no integer above the int64 range.
+func jsonSafe(v any) bool {
+	switch x := v.(type) {
+	case map[string]any:
+		for _, e := range x {
+			if !jsonSafe(e) {
+				return false
+			}
+		}
+	case []any:
+		for _, e := range x {
+			if !jsonSafe(e) {
+				return false
+			}
+		}
+	case string:
+		return utf8.ValidString(x)
+	case map[any]any, time.Time, uint64:
+		return false
+	}
+	return true
+}
+
+// jsonShow is yaml.v3 decoding into an any then json.Marshal: OK text, ERR, or SKIP.
+func jsonShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "ERR"
+		}
+	}()
+	var v any
+	if err := yaml.Unmarshal([]byte(in), &v); err != nil {
+		return "ERR"
+	}
+	if !jsonSafe(v) {
+		return "SKIP"
+	}
+	var jb bytes.Buffer
+	enc := json.NewEncoder(&jb)
+	enc.SetEscapeHTML(false) // to_json writes < > & as they are, which is valid JSON
+	if err := enc.Encode(v); err != nil {
+		return "ERR"
+	}
+	return "OK " + strings.TrimSuffix(jb.String(), "\n")
 }
 
 // emitShow parses in into a Node and marshals it back, or the error; SKIP for a
@@ -655,6 +704,13 @@ fn show_emit(text: Str) -> Str {
   }
 }
 
+fn show_json(text: Str) -> Str {
+  match yaml.to_json(text) {
+    Ok(t) => "OK ${t}"
+    Err(_) => "ERR"
+  }
+}
+
 fn show_all(text: Str) -> Str {
   match yaml.decode_all[T](text) {
     Err(e) => "ERR ${e.display().quote()}"
@@ -701,6 +757,12 @@ const CASES: List[(Str, Str)] = [
 	for _, e := range ents {
 		in, _ := cases.ReadFile("cases/" + e.Name())
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(string(in)), xq(emitShow(string(in))))
+	}
+	o.WriteString("]\n\n")
+	o.WriteString("/// (the YAML text, what yaml.v3 decoding into an any and json.Marshal write: OK text, ERR, or SKIP)\nconst JSONS: List[(Str, Str)] = [\n")
+	for _, e := range ents {
+		in, _ := cases.ReadFile("cases/" + e.Name())
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(string(in)), xq(jsonShow(string(in))))
 	}
 	o.WriteString("]\n\n")
 	o.WriteString("/// (an alias expansion document, what yaml.v3 decodes it into Deep as)\nconst DEEP: List[(Str, Str)] = [\n")
@@ -832,6 +894,15 @@ test "encode_node writes the Node a document parses into as yaml.v3's Marshal" {
       continue
     }
     expect(show_emit(text)) == want
+  }
+}
+
+test "to_json is yaml.v3 decoded into an any and marshaled by encoding/json" {
+  for (text, want) in JSONS {
+    if want == "SKIP" {
+      continue
+    }
+    expect(show_json(text)) == want
   }
 }
 

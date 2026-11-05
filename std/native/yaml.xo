@@ -24,6 +24,7 @@
 // Version 2.0 (yaml.v3's NOTICE and LICENSE).
 
 use std/yaml
+use std/json as js
 
 struct Mark {
   index: Int
@@ -5272,4 +5273,94 @@ fn encode_node(n: yaml.Node, indent: Int) -> Str ! yaml.YamlErr {
     return Err(yaml.YamlErr{line: 0, msg: em.err})
   }
   Ok(em.out.freeze().to_str() ?? "")
+}
+
+/// The JSON value of node i0 (yaml.v3 decoding into an any, then json.Marshal): a
+/// timestamp is its text, a key is its text, and a NaN or an infinity is an error.
+fn json_of(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> js.Value ! yaml.YamlErr {
+  let entered = tick(d, i0, st)?
+  let r = json_of_body(d, i0, st)
+  leave(st, entered)
+  r
+}
+
+fn json_of_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> js.Value ! yaml.YamlErr {
+  let i = res(d, i0)
+  let n = d.nodes[i]
+  if n.kind == K_SEQUENCE {
+    var items: List[js.Value] = []
+    for c in n.content {
+      items.push(json_of(d, c, st)?)
+    }
+    return Ok(js.Value.List(items: items))
+  }
+  if n.kind == K_MAPPING {
+    let (ok, ps) = pairs(d, i, "map", st)?
+    var m: Map[Str, js.Value] = {}
+    if ok {
+      for (k, v, _) in ps {
+        if v < 0 {
+          let _ = bad_key(d, v, st)?
+          continue
+        }
+        m[k] = json_of(d, v, st)?
+      }
+    }
+    var fields: List[(Str, js.Value)] = []
+    for k in m.keys().sort() {
+      fields.push((k, m.get(k) ?? js.Value.Null))
+    }
+    return Ok(js.Value.Object(fields: fields))
+  }
+  if let Some(e) = check_tag(d, i) {
+    return Err(e)
+  }
+  if n.tag == "!!null" {
+    return Ok(js.Value.Null)
+  }
+  if n.tag == "!!bool" {
+    return Ok(js.Value.Bool(b: n.value == "true" || n.value == "True" || n.value == "TRUE"))
+  }
+  if n.tag == "!!int" {
+    if let Some(v) = int_of(d, n) {
+      return Ok(js.Value.Int(n: v))
+    }
+    if let Some(f) = Float.parse(n.value.replace("_", "")) {
+      return Ok(js.Value.Num(n: f))
+    }
+  }
+  if n.tag == "!!float" {
+    var f = 0.0
+    var ok = false
+    if let Some(x) = Float.parse(n.value.replace("_", "")) {
+      f = x
+      ok = true
+    }
+    let v = n.value
+    if v == ".nan" || v == ".NaN" || v == ".NAN" || v == ".inf" || v == ".Inf" || v == ".INF" || v == "+.inf" || v == "+.Inf" || v == "+.INF" || v == "-.inf" || v == "-.Inf" || v == "-.INF" {
+      return Err(yaml.YamlErr{line: 0, msg: "json: unsupported value: ${v}"})
+    }
+    if ok {
+      return Ok(js.Value.Num(n: f))
+    }
+  }
+  if n.tag == "!!binary" {
+    let (_, t) = to_str_body(d, i, st)?
+    return Ok(js.Value.Str(s: t))
+  }
+  Ok(js.Value.Str(s: n.value))
+}
+
+fn to_json(text: Str) -> Str ! yaml.YamlErr {
+  let d = parse_doc(text)?
+  let r = root(d)
+  if r < 0 {
+    return Ok("null")
+  }
+  var st = dec_new(false)
+  let v = json_of(d, r, st)?
+  if st.errs.len() > 0 {
+    return Err(errors(st))
+  }
+  Ok(v.encode())
 }

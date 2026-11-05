@@ -71,6 +71,10 @@ struct Node {
 fn parse(text: Str) -> Node ! YamlErr
 /// Every document of text.
 fn parse_all(text: Str) -> List[Node] ! YamlErr
+/// The first document of text as JSON text (like toml.to_json): keys sorted, aliases
+/// and merge keys resolved, a timestamp as its text, an empty document `null`; a
+/// NaN or an infinity is an error, as for Go's json.Marshal of yaml.v3's value.
+fn to_json(text: Str) -> Str ! YamlErr
 /// n written as YAML (yaml.v3's Marshal of a Node): a Document node as is, any other
 /// node as a document of its own; a tag is left out when the text resolves to it.
 fn encode_node(n: Node, indent: Int = 4) -> Str ! YamlErr

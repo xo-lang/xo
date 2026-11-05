@@ -7303,6 +7303,7 @@ struct Node { kind: NodeKind, style: Int, tag: Str, value: Str, anchor: Str, ali
 fn parse(text: Str) -> Node ! YamlErr
 fn parse_all(text: Str) -> List[Node] ! YamlErr
 fn encode_node(n: Node, indent: Int = 4) -> Str ! YamlErr
+fn to_json(text: Str) -> Str ! YamlErr
 ```
 
 - `derive Yaml` (structs only, no type parameters) maps Str, Int, Float, Bool, Duration, Bytes, an Option, a List, a Map[Str, V] of those, or a
@@ -7328,4 +7329,8 @@ fn encode_node(n: Node, indent: Int = 4) -> Str ! YamlErr
 - `encode_node` writes a Node as yaml.v3's Marshal of a `yaml.Node` does (a Document node as is, another node as a document
   of its own; a tag is left out when the text resolves to it, except `!!merge`; styles and anchors are kept); equal to yaml.v3 on
   295 documents (the 48 with comments are not compared: Node has no comments yet).
-- Not yet (later stages): Time and Node fields, inline Maps, comments (stage 4), `to_json`.
+- `to_json` is the first document as JSON text, as yaml.v3 decoded into an `any` and written by encoding/json: keys sorted, aliases
+  and merge keys resolved, an empty document `null`, an error for NaN and the infinities. Deviations: `<`, `>` and `&` are
+  written as they are (Go writes `\u003c`, `\u003e`, `\u0026`; both are valid JSON), a timestamp is its text, and compared
+  documents leave out non-string keys, integers above the int64 range and invalid UTF-8.
+- Not yet (later stages): Time and Node fields, inline Maps, comments (stage 4).

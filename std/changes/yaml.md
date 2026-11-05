@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: feature: to_json
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (stage 3)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 Unmarshal into an any, encoding/json Marshal
+- Test: testdata/corpus/yaml (JSONS: the JSON text of 442 documents less those with non-string keys, large integers, timestamps or invalid UTF-8)
+
+`yaml.to_json(text)` converts the first document to JSON text (keys sorted). `<`, `>` and `&` are not escaped.
+
 ## 2026-11-05: feature: encode_node
 
 - Kind: feature
