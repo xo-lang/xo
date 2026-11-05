@@ -40,9 +40,9 @@ fn to_bool(d: Doc, i: Int, var st: Dec) -> (Bool, Bool) ! yaml.YamlErr
 /// The items of a sequence node (what names the target type in the error).
 fn items(d: Doc, i: Int, what: Str, var st: Dec) -> (Bool, List[Int])
 /// The key and value node of each entry of a mapping node, as yaml.v3 decodes
-/// them (its own entries, then its merge key's; a repeated key or a key that is
+/// them as (key, value node, key line) (its own entries, then its merge key's; a repeated key or a key that is
 /// not a scalar is put in st.errs; a bad merge value ends the decode).
-fn pairs(d: Doc, i: Int, what: Str, var st: Dec) -> (Bool, List[(Str, Int)]) ! yaml.YamlErr
+fn pairs(d: Doc, i: Int, what: Str, var st: Dec) -> (Bool, List[(Str, Int, Int)]) ! yaml.YamlErr
 /// Puts in errs the error of a pairs entry for a key that is not a scalar (its
 /// value v is negative) or ends the decode for a bad merge value; the generated
 /// reader calls it for such an entry.
@@ -93,11 +93,20 @@ struct Dec {
   ac: Int
   ad: Int
   active: List[Int]
+  strict: Bool
 }
 
-fn dec_new() -> Dec
+/// strict: an unknown key is an error (yaml.v3's KnownFields).
+fn dec_new(strict: Bool) -> Dec
+/// Puts the unknown key k, on line, of a struct typ in st.errs when the decode is strict.
+fn unknown_field(var st: Dec, k: Str, line: Int, typ: Str)
 /// Counts the read of node i (for an alias, also of its target, and enters it:
 /// leave undoes that); fails on yaml.v3's `document contains excessive aliasing`
 /// or an anchor that contains itself. The generated readers call it first.
 fn tick(d: Doc, i: Int, var st: Dec) -> Bool ! yaml.YamlErr
 fn leave(var st: Dec, entered: Bool)
+
+/// Every document of text (parse reads the first).
+fn parse_all(text: Str) -> List[Doc] ! yaml.YamlErr
+/// The documents the event lists make, one after another.
+fn finish_all(ws: List[Enc], indent: Int) -> Str ! yaml.YamlErr

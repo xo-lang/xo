@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"sort"
@@ -158,6 +159,35 @@ func inlineShow(in string) (out string) {
 	return fmt.Sprintf("id=%d meta=%s/%s extra=%s hidden=%d n=%d", t.ID, t.Meta.Name, strings.Join(t.Meta.Tags, ","), t.Extra, t.Hidden, t.N)
 }
 
+// strictShow is inlineShow with KnownFields(true).
+func strictShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	var t Top
+	dec := yaml.NewDecoder(strings.NewReader(in))
+	dec.KnownFields(true)
+	if err := dec.Decode(&t); err != nil {
+		if err == io.EOF {
+			return "id=0 meta=/ extra= hidden=0 n=0"
+		}
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	return fmt.Sprintf("id=%d meta=%s/%s extra=%s hidden=%d n=%d", t.ID, t.Meta.Name, strings.Join(t.Meta.Tags, ","), t.Extra, t.Hidden, t.N)
+}
+
+var strictCases = []string{
+	"id: 5\nextra: q\nn: 8\n",
+	"id: 5\nunknown: 1\nn: 8\nother: [1]\n",
+	"hidden: 4\nid: 1\n",
+	"meta: {name: z, nope: 1}\n",
+	"x: 1\nid: bad\ny: 2\n",
+	"{id: 1, zz: 2}",
+	"",
+}
+
 var inlineCases = []string{
 	"id: 5\nextra: q\nhidden: 4\nn: 8\nmeta: {name: z, tags: [p, q]}\nunknown: 1\n",
 	"id: x\nn: y\nmeta: {name: 1}\n",
@@ -220,6 +250,10 @@ func show(in []byte) string {
 	if err := yaml.Unmarshal(in, &t); err != nil {
 		return "ERR " + strconv.Quote(norm(err.Error()))
 	}
+	return fmtT(t)
+}
+
+func fmtT(t T) string {
 	o := "nil"
 	if t.O != nil {
 		o = strconv.Quote(*t.O)
@@ -238,6 +272,52 @@ func show(in []byte) string {
 		ms = append(ms, strconv.Quote(k)+"="+strconv.Quote(t.M[k]))
 	}
 	return fmt.Sprintf("n=%d f=%s s=%s b=%v o=%s l=[%s] m={%s} in=%d", t.N, fl(t.F), strconv.Quote(t.S), t.B, o, strings.Join(ls, ","), strings.Join(ms, ","), t.In.X)
+}
+
+// allShow decodes every document (Decoder.Decode until io.EOF), the values joined by " | ".
+func allShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	dec := yaml.NewDecoder(strings.NewReader(in))
+	var parts []string
+	for {
+		var t T
+		err := dec.Decode(&t)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "ERR " + strconv.Quote(norm(err.Error()))
+		}
+		parts = append(parts, fmtT(t))
+	}
+	return fmt.Sprintf("%d docs: %s", len(parts), strings.Join(parts, " | "))
+}
+
+var allCases = []string{
+	"n: 1\n---\nn: 2\n...\n---\ns: three\n",
+	"",
+	"---\n",
+	"n: 1\n---\n---\nn: 3\n",
+	"n: 1\n---\nn: bad\n---\nn: 3\n",
+	"n: 1\n---\n: : :\n",
+	"%YAML 1.1\n---\nn: 4\n...\n%YAML 1.1\n---\nn: 5\n",
+	"- 1\n",
+}
+
+func marshalAll(docs []Cfg) string {
+	var b bytes.Buffer
+	enc := yaml.NewEncoder(&b)
+	for _, d := range docs {
+		if err := enc.Encode(d); err != nil {
+			panic(err)
+		}
+	}
+	enc.Close()
+	return b.String()
 }
 
 const xoPrelude = `use std/yaml
@@ -318,7 +398,11 @@ struct Top {
 } derive Yaml
 
 fn show_top(text: Str) -> Str {
-  match yaml.decode[Top](text) {
+  show_top_with(text, false)
+}
+
+fn show_top_with(text: Str, strict: Bool) -> Str {
+  match yaml.decode[Top](text, strict) {
     Err(e) => "ERR ${e.display().quote()}"
     Ok(t) => "id=${t.base.id} meta=${t.base.meta.name}/${t.base.meta.tags.join(",")} extra=${t.extra} hidden=${t.hidden} n=${t.n}"
   }
@@ -358,20 +442,35 @@ fn fl(f: Float) -> Str {
 fn show(text: Str) -> Str {
   match yaml.decode[T](text) {
     Err(e) => "ERR ${e.display().quote()}"
-    Ok(t) => {
-      var ls: List[Str] = []
-      for x in t.l {
-        ls.push("${x}")
+    Ok(t) => show_t(t)
+  }
+}
+
+fn show_t(t: T) -> Str {
+  var ls: List[Str] = []
+  for x in t.l {
+    ls.push("${x}")
+  }
+  var ms: List[Str] = []
+  for k in t.m.keys().sort() {
+    ms.push("${k.quote()}=${(t.m.get(k) ?? "").quote()}")
+  }
+  let o = match t.o {
+    Some(v) => v.quote()
+    None => "nil"
+  }
+  "n=${t.n} f=${fl(t.f)} s=${t.s.quote()} b=${t.b} o=${o} l=[${ls.join(",")}] m={${ms.join(",")}} in=${t.in_.x}"
+}
+
+fn show_all(text: Str) -> Str {
+  match yaml.decode_all[T](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(ts) => {
+      var parts: List[Str] = []
+      for t in ts {
+        parts.push(show_t(t))
       }
-      var ms: List[Str] = []
-      for k in t.m.keys().sort() {
-        ms.push("${k.quote()}=${(t.m.get(k) ?? "").quote()}")
-      }
-      let o = match t.o {
-        Some(v) => v.quote()
-        None => "nil"
-      }
-      "n=${t.n} f=${fl(t.f)} s=${t.s.quote()} b=${t.b} o=${o} l=[${ls.join(",")}] m={${ms.join(",")}} in=${t.in_.x}"
+      "${ts.len()} docs: ${parts.join(" | ")}"
     }
   }
 }
@@ -409,6 +508,23 @@ const CASES: List[(Str, Str)] = [
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(inlineShow(d)))
 	}
 	o.WriteString("]\n\n")
+	o.WriteString("/// (a document, what yaml.v3 decodes it into Top as with KnownFields(true))\nconst STRICT: List[(Str, Str)] = [\n")
+	for _, d := range strictCases {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(strictShow(d)))
+	}
+	o.WriteString("]\n\n")
+	o.WriteString("/// (a stream of documents, what yaml.v3's Decoder reads from it as T values)\nconst ALL: List[(Str, Str)] = [\n")
+	for _, d := range allCases {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(allShow(d)))
+	}
+	o.WriteString("]\n\n")
+	hh := "x"
+	docs := []Cfg{
+		{"a", "v1", 1, 1.5, true, nil, nil, []Item{{1, []string{"t"}}}, map[string]int{"k": 1}, []int{}, "s", "yes", "1", Item{2, nil}},
+		{"b", "v2", 2, 0, false, &hh, nil, nil, nil, nil, "l1\nl2\n", "no", "2", Item{}},
+		{"c", "v3", 3, 2.5, true, nil, nil, []Item{}, map[string]int{}, []int{1}, "", "", "", Item{3, []string{"z"}}},
+	}
+	fmt.Fprintf(&o, "const MARSHALED_ALL: Str = %s\n\n", xq(marshalAll(docs)))
 	topv := Top{Base{7, Meta{"m", []string{"a"}}}, "e", 99, 3}
 	tb, err := yaml.Marshal(topv)
 	if err != nil {
@@ -453,6 +569,27 @@ test "alias expansion is limited as yaml.v3 limits it" {
   for (text, want) in DEEP {
     expect(show_deep(text)) == want
   }
+}
+
+test "a strict decode refuses unknown keys as yaml.v3's KnownFields" {
+  for (text, want) in STRICT {
+    expect(show_top_with(text, true)) == want
+  }
+}
+
+test "decode_all reads every document as yaml.v3's Decoder does" {
+  for (text, want) in ALL {
+    expect(show_all(text)) == want
+  }
+}
+
+test "encode_all writes the documents as yaml.v3's Encoder does" {
+  let docs = [
+    Cfg{name: "a", api_version: "v1", port: 1, ratio: 1.5, on: true, o: None, none: None, items: [Item{n: 1, tags: ["t"]}], m: {"k": 1}, empty: [], text: "s", yes: "yes", num: "1", inner: Item{n: 2, tags: []}},
+    Cfg{name: "b", api_version: "v2", port: 2, ratio: 0.0, on: false, o: Some("x"), none: None, items: [], m: {}, empty: [], text: "l1\nl2\n", yes: "no", num: "2", inner: Item{n: 0, tags: []}},
+    Cfg{name: "c", api_version: "v3", port: 3, ratio: 2.5, on: true, o: None, none: None, items: [], m: {}, empty: [1], text: "", yes: "", num: "", inner: Item{n: 3, tags: ["z"]}},
+  ]
+  expect(yaml.encode_all[Cfg](docs).ok()) == Some(MARSHALED_ALL)
 }
 
 test "inline and skipped fields are yaml.v3's" {

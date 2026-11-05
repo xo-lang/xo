@@ -78,7 +78,11 @@ struct Top {
 } derive Yaml
 
 fn show_top(text: Str) -> Str {
-  match yaml.decode[Top](text) {
+  show_top_with(text, false)
+}
+
+fn show_top_with(text: Str, strict: Bool) -> Str {
+  match yaml.decode[Top](text, strict) {
     Err(e) => "ERR ${e.display().quote()}"
     Ok(t) => "id=${t.base.id} meta=${t.base.meta.name}/${t.base.meta.tags.join(",")} extra=${t.extra} hidden=${t.hidden} n=${t.n}"
   }
@@ -118,20 +122,35 @@ fn fl(f: Float) -> Str {
 fn show(text: Str) -> Str {
   match yaml.decode[T](text) {
     Err(e) => "ERR ${e.display().quote()}"
-    Ok(t) => {
-      var ls: List[Str] = []
-      for x in t.l {
-        ls.push("${x}")
+    Ok(t) => show_t(t)
+  }
+}
+
+fn show_t(t: T) -> Str {
+  var ls: List[Str] = []
+  for x in t.l {
+    ls.push("${x}")
+  }
+  var ms: List[Str] = []
+  for k in t.m.keys().sort() {
+    ms.push("${k.quote()}=${(t.m.get(k) ?? "").quote()}")
+  }
+  let o = match t.o {
+    Some(v) => v.quote()
+    None => "nil"
+  }
+  "n=${t.n} f=${fl(t.f)} s=${t.s.quote()} b=${t.b} o=${o} l=[${ls.join(",")}] m={${ms.join(",")}} in=${t.in_.x}"
+}
+
+fn show_all(text: Str) -> Str {
+  match yaml.decode_all[T](text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(ts) => {
+      var parts: List[Str] = []
+      for t in ts {
+        parts.push(show_t(t))
       }
-      var ms: List[Str] = []
-      for k in t.m.keys().sort() {
-        ms.push("${k.quote()}=${(t.m.get(k) ?? "").quote()}")
-      }
-      let o = match t.o {
-        Some(v) => v.quote()
-        None => "nil"
-      }
-      "n=${t.n} f=${fl(t.f)} s=${t.s.quote()} b=${t.b} o=${o} l=[${ls.join(",")}] m={${ms.join(",")}} in=${t.in_.x}"
+      "${ts.len()} docs: ${parts.join(" | ")}"
     }
   }
 }
@@ -617,6 +636,31 @@ const INLINE: List[(Str, Str)] = [
   ("id: ~\nmeta: ~\nn: ~\n", "id=0 meta=/ extra= hidden=0 n=0"),
 ]
 
+/// (a document, what yaml.v3 decodes it into Top as with KnownFields(true))
+const STRICT: List[(Str, Str)] = [
+  ("id: 5\nextra: q\nn: 8\n", "id=5 meta=/ extra=q hidden=0 n=8"),
+  ("id: 5\nunknown: 1\nn: 8\nother: [1]\n", "ERR \"yaml: unmarshal errors:\\n  line 2: field unknown not found in type Top\\n  line 4: field other not found in type Top\""),
+  ("hidden: 4\nid: 1\n", "ERR \"yaml: unmarshal errors:\\n  line 1: field hidden not found in type Top\""),
+  ("meta: {name: z, nope: 1}\n", "ERR \"yaml: unmarshal errors:\\n  line 1: field nope not found in type Meta\""),
+  ("x: 1\nid: bad\ny: 2\n", "ERR \"yaml: unmarshal errors:\\n  line 1: field x not found in type Top\\n  line 2: cannot unmarshal !!str `bad` into int\\n  line 3: field y not found in type Top\""),
+  ("{id: 1, zz: 2}", "ERR \"yaml: unmarshal errors:\\n  line 1: field zz not found in type Top\""),
+  ("", "id=0 meta=/ extra= hidden=0 n=0"),
+]
+
+/// (a stream of documents, what yaml.v3's Decoder reads from it as T values)
+const ALL: List[(Str, Str)] = [
+  ("n: 1\n---\nn: 2\n...\n---\ns: three\n", "3 docs: n=1 f=0 s=\"\" b=false o=nil l=[] m={} in=0 | n=2 f=0 s=\"\" b=false o=nil l=[] m={} in=0 | n=0 f=0 s=\"three\" b=false o=nil l=[] m={} in=0"),
+  ("", "0 docs: "),
+  ("---\n", "1 docs: n=0 f=0 s=\"\" b=false o=nil l=[] m={} in=0"),
+  ("n: 1\n---\n---\nn: 3\n", "3 docs: n=1 f=0 s=\"\" b=false o=nil l=[] m={} in=0 | n=0 f=0 s=\"\" b=false o=nil l=[] m={} in=0 | n=3 f=0 s=\"\" b=false o=nil l=[] m={} in=0"),
+  ("n: 1\n---\nn: bad\n---\nn: 3\n", "ERR \"yaml: unmarshal errors:\\n  line 3: cannot unmarshal !!str `bad` into int\""),
+  ("n: 1\n---\n: : :\n", "ERR \"yaml: line 2: did not find expected key\""),
+  ("%YAML 1.1\n---\nn: 4\n...\n%YAML 1.1\n---\nn: 5\n", "2 docs: n=4 f=0 s=\"\" b=false o=nil l=[] m={} in=0 | n=5 f=0 s=\"\" b=false o=nil l=[] m={} in=0"),
+  ("- 1\n", "ERR \"yaml: unmarshal errors:\\n  line 1: cannot unmarshal !!seq into T\""),
+]
+
+const MARSHALED_ALL: Str = "name: a\napiVersion: v1\nport: 1\nratio: 1.5\n\"on\": true\no: null\nnone: null\nitems:\n    - \"n\": 1\n      tags:\n        - t\nm:\n    k: 1\nempty: []\ntext: s\n\"yes\": \"yes\"\nnum: \"1\"\ninner:\n    \"n\": 2\n    tags: []\n---\nname: b\napiVersion: v2\nport: 2\nratio: 0\n\"on\": false\no: x\nnone: null\nitems: []\nm: {}\nempty: []\ntext: |\n    l1\n    l2\n\"yes\": \"no\"\nnum: \"2\"\ninner:\n    \"n\": 0\n    tags: []\n---\nname: c\napiVersion: v3\nport: 3\nratio: 2.5\n\"on\": true\no: null\nnone: null\nitems: []\nm: {}\nempty:\n    - 1\ntext: \"\"\n\"yes\": \"\"\nnum: \"\"\ninner:\n    \"n\": 3\n    tags:\n        - z\n"
+
 const MARSHALED_TOP: Str = "id: 7\nmeta:\n    name: m\n    tags:\n        - a\nextra: e\n\"n\": 3\n"
 
 const MARSHALED: Str = "name: orders\napiVersion: v1\nport: 8080\nratio: 2.5\n\"on\": true\no: hi\nnone: null\nitems:\n    - \"n\": 1\n      tags:\n        - a\n        - b c\n    - \"n\": 2\n      tags: []\nm:\n    a: 3\n    b9: 2\n    b10: 1\nempty: []\ntext: |\n    l1\n    l2\n\"yes\": \"yes\"\nnum: \"123\"\ninner:\n    \"n\": 7\n    tags:\n        - 'x: y'\n        - '- z'\n        - \"\"\n"
@@ -635,6 +679,27 @@ test "alias expansion is limited as yaml.v3 limits it" {
   for (text, want) in DEEP {
     expect(show_deep(text)) == want
   }
+}
+
+test "a strict decode refuses unknown keys as yaml.v3's KnownFields" {
+  for (text, want) in STRICT {
+    expect(show_top_with(text, true)) == want
+  }
+}
+
+test "decode_all reads every document as yaml.v3's Decoder does" {
+  for (text, want) in ALL {
+    expect(show_all(text)) == want
+  }
+}
+
+test "encode_all writes the documents as yaml.v3's Encoder does" {
+  let docs = [
+    Cfg{name: "a", api_version: "v1", port: 1, ratio: 1.5, on: true, o: None, none: None, items: [Item{n: 1, tags: ["t"]}], m: {"k": 1}, empty: [], text: "s", yes: "yes", num: "1", inner: Item{n: 2, tags: []}},
+    Cfg{name: "b", api_version: "v2", port: 2, ratio: 0.0, on: false, o: Some("x"), none: None, items: [], m: {}, empty: [], text: "l1\nl2\n", yes: "no", num: "2", inner: Item{n: 0, tags: []}},
+    Cfg{name: "c", api_version: "v3", port: 3, ratio: 2.5, on: true, o: None, none: None, items: [], m: {}, empty: [1], text: "", yes: "", num: "", inner: Item{n: 3, tags: ["z"]}},
+  ]
+  expect(yaml.encode_all[Cfg](docs).ok()) == Some(MARSHALED_ALL)
 }
 
 test "inline and skipped fields are yaml.v3's" {

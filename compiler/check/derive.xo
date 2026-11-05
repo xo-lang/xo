@@ -593,7 +593,7 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
           e.ln("  if yamlcodec.is_null(d, i) { return Ok((true, out)) }", sp)
           e.ln("  let (ok, ps) = yamlcodec.pairs(d, i, ${quote_str(tx)}, st)?", sp)
           e.ln("  if !ok { return Ok((false, out)) }", sp)
-          e.ln("  for (k, v) in ps {", sp)
+          e.ln("  for (k, v, _) in ps {", sp)
           e.ln("    if v < 0 {", sp)
           e.ln("      let _ = yamlcodec.bad_key(d, v, st)?", sp)
           e.ln("      continue", sp)
@@ -712,7 +712,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   for (j, fl) in sd.fields.indexed() {
     e.ln("  var f_${text(fl.name.name)}: ${types[j]} = base.${text(fl.name.name)}", fl.name.span)
   }
-  e.ln("  for (k, v) in ps {", sp)
+  e.ln("  for (k, v, kl) in ps {", sp)
   e.ln("    if v < 0 {", sp)
   e.ln("      let _ = yamlcodec.bad_key(d, v, st)?", sp)
   e.ln("      continue", sp)
@@ -732,21 +732,19 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     e.ln("      let (ok2, x) = ${readers[j]}(d, v, st)?", fl.name.span)
     e.ln("      if ok2 { f_${text(fl.name.name)} = x }", fl.name.span)
   }
-  if inl.len() > 0 {
-    // a key no field of its own names goes to each inline struct (yaml.v3 flattens them)
-    e.ln("    ${if first { "{" } else { "} else {" }}", sp)
-    for j in inl {
-      let fl = sd.fields[j]
-      let inner = yaml_struct_name(fl.typ) ?? {
-        c.error_at(file, "XO0425", fl.name.span, "`inline` needs a field that is a struct deriving Yaml; `${text(fl.name.name)}` is not one (decision 0512)")
-        return None
-      }
-      e.ln("      f_${text(fl.name.name)} = ${inner.0}yaml_set__${inner.1}(f_${text(fl.name.name)}, k, v, d, st)?", fl.name.span)
+  // a key no field of its own names goes to each inline struct (yaml.v3 flattens
+  // them), and is an error when the decode is strict and no field at all takes it
+  e.ln("    ${if first { "{" } else { "} else {" }}", sp)
+  for j in inl {
+    let fl = sd.fields[j]
+    let inner = yaml_struct_name(fl.typ) ?? {
+      c.error_at(file, "XO0425", fl.name.span, "`inline` needs a field that is a struct deriving Yaml; `${text(fl.name.name)}` is not one (decision 0512)")
+      return None
     }
-    e.ln("    }", sp)
-  } else if !first {
-    e.ln("    }", sp)
+    e.ln("      f_${text(fl.name.name)} = ${inner.0}yaml_set__${inner.1}(f_${text(fl.name.name)}, k, v, d, st)?", fl.name.span)
   }
+  e.ln("      if st.strict && !yaml_known__${n}(k) { yamlcodec.unknown_field(st, k, kl, ${quote_str(n)}) }", sp)
+  e.ln("    }", sp)
   e.ln("  }", sp)
   var inits: List[Str] = []
   for fl in sd.fields {
@@ -754,6 +752,19 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   }
   e.ln("  Ok((true, ${n}{${inits.join(", ")}}))", sp)
   e.ln("}", sp)
+  var known: List[Str] = []
+  for (j, fl) in sd.fields.indexed() {
+    if keys[j] == "-" {
+      continue
+    }
+    if keys[j] == "<<inline>>" {
+      let inner = yaml_struct_name(fl.typ) ?? return None
+      known.push("${inner.0}yaml_known__${inner.1}(k)")
+    } else {
+      known.push("k == ${quote_str(keys[j])}")
+    }
+  }
+  e.ln("${pub_}fn yaml_known__${n}(k: Str) -> Bool { ${if known.is_empty() { "false" } else { known.join(" || ") }} }", sp)
   e.ln("${pub_}fn yaml_set__${n}(base: ${n}, k: Str, v: Int, d: yamlcodec.Doc, var st: yamlcodec.Dec) -> ${n} ! yaml.YamlErr {", sp)
   e.ln("  var b = base", sp)
   var firstk = true
@@ -779,11 +790,27 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   e.ln("  b", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn yaml_from_node__${n}(d: yamlcodec.Doc, i: Int, var st: yamlcodec.Dec) -> (Bool, ${n}) ! yaml.YamlErr { let entered = yamlcodec.tick(d, i, st)?; let r = yaml_merge__${n}(yaml_zero__${n}(), d, i, st); yamlcodec.leave(st, entered); r }", sp)
-  e.ln("${pub_}fn yaml_decode__${n}(text: Str) -> ${n} ! yaml.YamlErr {", sp)
+  e.ln("${pub_}fn yaml_decode_all__${n}(text: Str, strict: Bool = false) -> List[${n}] ! yaml.YamlErr {", sp)
+  e.ln("  let docs = yamlcodec.parse_all(text)?", sp)
+  e.ln("  var out: List[${n}] = []", sp)
+  e.ln("  for d in docs {", sp)
+  e.ln("    let r = yamlcodec.root(d)", sp)
+  e.ln("    if r < 0 {", sp)
+  e.ln("      out.push(yaml_zero__${n}())", sp)
+  e.ln("      continue", sp)
+  e.ln("    }", sp)
+  e.ln("    var st = yamlcodec.dec_new(strict)", sp)
+  e.ln("    let (_, v) = yaml_from_node__${n}(d, r, st)?", sp)
+  e.ln("    if st.errs.len() > 0 { return Err(yamlcodec.errors(st)) }", sp)
+  e.ln("    out.push(v)", sp)
+  e.ln("  }", sp)
+  e.ln("  Ok(out)", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn yaml_decode__${n}(text: Str, strict: Bool = false) -> ${n} ! yaml.YamlErr {", sp)
   e.ln("  let d = yamlcodec.parse(text)?", sp)
   e.ln("  let r = yamlcodec.root(d)", sp)
   e.ln("  if r < 0 { return Ok(yaml_zero__${n}()) }", sp)
-  e.ln("  var st = yamlcodec.dec_new()", sp)
+  e.ln("  var st = yamlcodec.dec_new(strict)", sp)
   e.ln("  let (_, v) = yaml_from_node__${n}(d, r, st)?", sp)
   e.ln("  if st.errs.len() > 0 { return Err(yamlcodec.errors(st)) }", sp)
   e.ln("  Ok(v)", sp)
@@ -958,6 +985,15 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
   e.ln("  yamlcodec.map_start(w)", sp)
   e.ln("  yaml_fields__${n}(w, v)", sp)
   e.ln("  yamlcodec.map_end(w)", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn yaml_encode_all__${n}(docs: List[${n}], indent: Int = 4) -> Str ! yaml.YamlErr {", sp)
+  e.ln("  var ws: List[yamlcodec.Enc] = []", sp)
+  e.ln("  for v in docs {", sp)
+  e.ln("    var w = yamlcodec.enc_new()", sp)
+  e.ln("    yaml_write__${n}(w, v)", sp)
+  e.ln("    ws.push(w)", sp)
+  e.ln("  }", sp)
+  e.ln("  yamlcodec.finish_all(ws, indent)", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn yaml_encode__${n}(v: ${n}, indent: Int = 4) -> Str ! yaml.YamlErr {", sp)
   e.ln("  var w = yamlcodec.enc_new()", sp)
@@ -1233,7 +1269,7 @@ fn (var c: Checker) rewrite_xml_calls(from: Int) {
       continue
     }
     let o = c.tys[t].obj
-    let want = "${dname.to_lower()}_${if fname == "decode" { "decode" } else { "encode" }}__${text(c.objs[o].name)}"
+    let want = "${dname.to_lower()}_${if fname == "decode" { "decode" } else if fname == "decode_all" { "decode_all" } else if fname == "encode_all" { "encode_all" } else { "encode" }}__${text(c.objs[o].name)}"
     let g = c.mods[c.objs[o].module].members.get(want.bytes()) ?? -1
     if g < 0 {
       c.error("XO0427", sp, "DEBUG no generated function ${want}")

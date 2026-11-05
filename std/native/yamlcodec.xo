@@ -3015,8 +3015,8 @@ fn leave(var st: yamlcodec.Dec, entered: Bool) {
   }
 }
 
-fn dec_new() -> yamlcodec.Dec {
-  yamlcodec.Dec{errs: [], dc: 1, ac: 0, ad: 0, active: []}
+fn dec_new(strict: Bool) -> yamlcodec.Dec {
+  yamlcodec.Dec{errs: [], dc: 1, ac: 0, ad: 0, active: [], strict: strict}
 }
 
 /// The error of a decode that collected errs: yaml.v3's "unmarshal errors:" list.
@@ -3037,6 +3037,13 @@ fn parse(text: Str) -> yamlcodec.Doc ! yaml.YamlErr {
       }
       Ok(docs[0])
     }
+  }
+}
+
+fn parse_all(text: Str) -> List[yamlcodec.Doc] ! yaml.YamlErr {
+  match compose_docs(text.bytes(), -1) {
+    Err(m) => Err(yaml.YamlErr{line: 0, msg: m})
+    Ok(docs) => Ok(docs)
   }
 }
 
@@ -3257,7 +3264,7 @@ fn items(d: yamlcodec.Doc, i0: Int, what: Str, var st: yamlcodec.Dec) -> (Bool, 
 /// yaml.v3 decodes nothing of it), else 1. A key that is not a scalar is put in st.errs
 /// and left out. A merge value that is not a mapping, an alias of one, or a sequence
 /// of those ends the decode (yaml.v3's failf).
-fn add_pairs(d: yamlcodec.Doc, i0: Int, var out: List[(Str, Int)], var st: yamlcodec.Dec) -> Int ! yaml.YamlErr {
+fn add_pairs(d: yamlcodec.Doc, i0: Int, var out: List[(Str, Int, Int)], var st: yamlcodec.Dec) -> Int ! yaml.YamlErr {
   let i = res(d, i0)
   let n = d.nodes[i]
   if n.kind != K_MAPPING {
@@ -3297,11 +3304,11 @@ fn add_pairs(d: yamlcodec.Doc, i0: Int, var out: List[(Str, Int)], var st: yamlc
       // a null key reads as no string: yaml.v3 skips the entry
       if kn.tag != "!!null" && !seen.contains(kn.value) {
         seen[kn.value] = true
-        out.push((kn.value, v))
+        out.push((kn.value, v, kn.line))
       }
     } else {
       // reported when the entry is reached, in document order (bad_key)
-      out.push(("", -1 - ki))
+      out.push(("", -1 - ki, 0))
     }
     k += 2
   }
@@ -3313,29 +3320,36 @@ fn add_pairs(d: yamlcodec.Doc, i0: Int, var out: List[(Str, Int)], var st: yamlc
       for it in mn.content {
         if d.nodes[it].kind == K_ALIAS {
           if d.nodes[res(d, it)].kind != K_MAPPING {
-            out.push(("", MERGE_FAIL))
+            out.push(("", MERGE_FAIL, 0))
             return Ok(1)
           }
         } else if d.nodes[it].kind != K_MAPPING {
-          out.push(("", MERGE_FAIL))
+          out.push(("", MERGE_FAIL, 0))
           return Ok(1)
         }
         add_pairs(d, it, out, st)?
       }
     } else if mn.kind == K_ALIAS {
       if d.nodes[res(d, m)].kind != K_MAPPING {
-        out.push(("", MERGE_FAIL))
+        out.push(("", MERGE_FAIL, 0))
         return Ok(1)
       }
       add_pairs(d, m, out, st)?
     } else if mn.kind == K_MAPPING {
       add_pairs(d, m, out, st)?
     } else {
-      out.push(("", MERGE_FAIL))
+      out.push(("", MERGE_FAIL, 0))
       return Ok(1)
     }
   }
   Ok(1)
+}
+
+/// yaml.v3's KnownFields error for a key no field takes (only a strict decode).
+fn unknown_field(var st: yamlcodec.Dec, k: Str, line: Int, typ: Str) {
+  if st.strict {
+    st.errs.push(yaml.YamlErr{line: line, msg: "line ${line}: field ${k} not found in type ${typ}"})
+  }
 }
 
 /// The value of the entry pairs ends a list with for a bad merge value: reached
@@ -3357,9 +3371,9 @@ fn merge_err() -> yaml.YamlErr {
   yaml.YamlErr{line: 0, msg: "map merge requires map or sequence of maps as the value"}
 }
 
-fn pairs(d: yamlcodec.Doc, i0: Int, what: Str, var st: yamlcodec.Dec) -> (Bool, List[(Str, Int)]) ! yaml.YamlErr {
+fn pairs(d: yamlcodec.Doc, i0: Int, what: Str, var st: yamlcodec.Dec) -> (Bool, List[(Str, Int, Int)]) ! yaml.YamlErr {
   let i = res(d, i0)
-  var out: List[(Str, Int)] = []
+  var out: List[(Str, Int, Int)] = []
   let kind = add_pairs(d, i, out, st)?
   if kind == 0 {
     st.errs.push(cannot(d, i, what))
@@ -4898,31 +4912,39 @@ fn scalar_ev(text: Str, style: Int) -> Event {
 
 /// The YAML text of the events w collected (one document, indent 4 as yaml.v3's Marshal).
 fn finish(w: yamlcodec.Enc, indent: Int) -> Str ! yaml.YamlErr {
+  finish_all([w], indent)
+}
+
+/// The documents the event lists make, one after another (a document after the
+/// first starts with `---`, as the emitter writes it).
+fn finish_all(ws: List[yamlcodec.Enc], indent: Int) -> Str ! yaml.YamlErr {
   var em = new_emitter(indent)
   var ok = emit(em, ev(E_STREAM_START, mark0(), mark0()))
-  var ds = ev(E_DOCUMENT_START, mark0(), mark0())
-  ds.implicit = true
-  ok = ok && emit(em, ds)
-  for x in w.evs {
-    if !ok {
-      break
+  for w in ws {
+    var ds = ev(E_DOCUMENT_START, mark0(), mark0())
+    ds.implicit = true
+    ok = ok && emit(em, ds)
+    for x in w.evs {
+      if !ok {
+        break
+      }
+      if x.kind == 1 || x.kind == 3 {
+        var s = ev(if x.kind == 1 { E_MAPPING_START } else { E_SEQUENCE_START }, mark0(), mark0())
+        s.implicit = true
+        s.style = if x.style == 2 { C_FLOW } else { C_BLOCK }
+        ok = emit(em, s)
+      } else if x.kind == 2 {
+        ok = emit(em, ev(E_MAPPING_END, mark0(), mark0()))
+      } else if x.kind == 4 {
+        ok = emit(em, ev(E_SEQUENCE_END, mark0(), mark0()))
+      } else {
+        ok = emit(em, scalar_ev(x.text, x.style))
+      }
     }
-    if x.kind == 1 || x.kind == 3 {
-      var s = ev(if x.kind == 1 { E_MAPPING_START } else { E_SEQUENCE_START }, mark0(), mark0())
-      s.implicit = true
-      s.style = if x.style == 2 { C_FLOW } else { C_BLOCK }
-      ok = emit(em, s)
-    } else if x.kind == 2 {
-      ok = emit(em, ev(E_MAPPING_END, mark0(), mark0()))
-    } else if x.kind == 4 {
-      ok = emit(em, ev(E_SEQUENCE_END, mark0(), mark0()))
-    } else {
-      ok = emit(em, scalar_ev(x.text, x.style))
-    }
+    var de = ev(E_DOCUMENT_END, mark0(), mark0())
+    de.implicit = true
+    ok = ok && emit(em, de)
   }
-  var de = ev(E_DOCUMENT_END, mark0(), mark0())
-  de.implicit = true
-  ok = ok && emit(em, de)
   em.open_ended = false
   ok = ok && emit(em, ev(E_STREAM_END, mark0(), mark0()))
   if !ok {

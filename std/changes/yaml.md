@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: feature: strict decode, decode_all, encode_all
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (stage 2)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 Decoder.KnownFields, Decoder.Decode, Encoder.Encode
+- Test: testdata/corpus/yaml (STRICT, ALL, MARSHALED_ALL: values, error texts and bytes equal yaml.v3's)
+
+`yaml.decode[T](text, strict: true)` reports a key no field takes; `yaml.decode_all[T]` decodes every document of a stream; `yaml.encode_all[T]` writes a list of documents.
+
 ## 2026-11-05: feature: inline and skipped fields
 
 - Kind: feature

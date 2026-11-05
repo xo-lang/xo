@@ -1255,7 +1255,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
   }
   c.fn_calls[c.expr_key(call)] = fo
   c.call_infos[c.expr_key(call)] = CallInfo{fn_obj: fo, recv: recv, subst: sm}
-  if !recv.is_empty() || c.objs[fo].tparams.len() != 1 || !(text(c.objs[fo].name) is "encode_value" | "decode") || c.objs[fo].module < 0 || !(c.mods[c.objs[fo].module].path is "std/xml" | "std/yaml") {
+  if !recv.is_empty() || c.objs[fo].tparams.len() != 1 || !(text(c.objs[fo].name) is "encode_value" | "decode" | "decode_all" | "encode_all") || c.objs[fo].module < 0 || !(c.mods[c.objs[fo].module].path is "std/xml" | "std/yaml") {
     // not one of std/xml's derive Xml calls or std/yaml's derive Yaml calls
   } else {
     c.xml_calls.push((c.expr_key(call), call, fo, c.cur_file))
