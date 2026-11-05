@@ -59,6 +59,26 @@ without a token pipeline and per scalar allocations has a large margin
 over yaml.v3 (28 to 30 MB/s), so the twin row target of beating yaml.v3
 is realistic.
 
+Xo full stage 1 port (2026-11-05, branch `yamlproto`, not pushed; reader,
+scanner, parser, node composer, resolver, timestamps; about 3,100 lines of
+Xo): on the yaml-test-suite it matches yaml.v3's behavior: of the 231
+cases with an expected value 195 match (multi-document cases included), the
+same 33 valid documents are rejected and 3 differ (all three among yaml.v3's
+own 5); of the 78 invalid cases 66 are rejected and the same 12 accepted.
+Twin rows (`bench/perf/yamlfull`, `xo bench --ab` style, 7 rounds, linux/arm64
+host 2, the 920 byte Deployment 20,000 times, checksums equal):
+
+- parse into a node tree against yaml.v3 into a `yaml.Node`: 395 ms against
+  616 ms, ratio 0.642 (0.635 to 0.692), RSS 0.141 of Go's. This replaces
+  the subset prototype's figure as the full port's cost.
+- decode into a typed struct against `yaml.Unmarshal`: 451 ms against
+  679 ms, ratio 0.663 (0.638 to 0.699), RSS 0.146. **This row is the interim
+  route, not the design:** it goes YAML to JSON text to `derive Json`, the
+  route this ADR rejects (`name: 1` into a `Str` and `yes` into a `Bool` need
+  the type-directed rules of `derive Yaml`). It shows the parser's cost with
+  a cheap decode; the row for the type-directed `derive Yaml` decoder replaces
+  it when that exists, and the owner should judge the design on that row.
+
 So "a port of yaml.v3" and "YAML 1.2 conformant" are different goals.
 Std follows Go's standard library and, for these, Go's de facto library
 (the port rule of CLAUDE.md: port Go's code and tests, Go's behavior is
