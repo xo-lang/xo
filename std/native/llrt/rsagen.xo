@@ -162,8 +162,7 @@ fn random_prime(rd: fn(Int) -> Bytes uses rand, bits: Int, ps: List[Int]) -> Lis
   []
 }
 
-/// Miller-Rabin rounds for a prime of this size (BoringSSL's table, as
-/// Go's isPrime).
+/// Miller-Rabin rounds for a prime of this size (the table of Go's isPrime).
 fn rounds(bits: Int) -> Int {
   if bits >= 3747 {
     return 3
