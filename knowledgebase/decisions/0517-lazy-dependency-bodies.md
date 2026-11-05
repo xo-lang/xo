@@ -56,8 +56,15 @@ built; the module check cache (modcache.xo) already holds modules whose
 bodies wait for check_lazy. The parse cache keys lazy and eager parses
 apart (ParseEntry.lazy).
 
-Prototype: XO_DEP_LAZY=1 (branch lang1-lazyp; check/stmt.xo lazy_mod,
-check/load.xo parse_lazy_path), not yet covering the 0496 (c) reads.
+Opt in: XO_DEP_LAZY=1 (check/stmt.xo dep_lazy_mod, check/load.xo
+parse_lazy_path), for `xo build` and `xo run` only. The 0496 (c) reads
+are covered (stmt.xo dep_cross_eager: a dependency's non-pub `display`
+and `debug` methods are checked with the declarations), so a logging
+`display` called from another module's `pub fn` without `uses log` is
+XO0701 lazy or eager (cmd/xo TestDepLazyBodies; with dep_cross_eager off
+the build passed). The module check cache keys dep_lazy (mod_flags): a
+lazily checked dependency's entry has no diagnostics for its unreached
+bodies. The run cache already keys every XO_ variable.
 
 ## Consequences
 

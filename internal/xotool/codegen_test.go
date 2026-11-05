@@ -111,6 +111,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_FE_CACHE":             {"none", ""},
 	"XO_FE_STATS":             {"none", ""},
 	"XO_LAZY_PARSE":           {"none", ""},
+	"XO_DEP_LAZY":             {"none", ""}, // decision 0517: when a dependency's bodies are checked, not what they compile to; the module check cache keys it (mod_flags)
 	"XO_SHARED_PACK":          {"none", ""},
 	"XO_COLD_PACK":            {"none", ""},
 	"XO_CACHE_COMPRESS":       {"none", ""},

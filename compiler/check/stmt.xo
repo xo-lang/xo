@@ -117,7 +117,7 @@ fn (var c: Checker) check_module(m: Int) {
         FnDecl(d: fd) => {
           let fo = c.files[f].decl_objs[i]
           if fo >= 0 && (fd.recv != None || c.is_scope_entry(f, i, fd.name.name)) {
-            if lazy && (eager.is_empty() || !eager.contains(c.eager_name(fo))) {
+            if lazy && (eager.is_empty() || !eager.contains(c.eager_name(fo))) && !c.dep_cross_eager(m, fo) {
               c.lazy_fns[fo] = true
               c.check_fn_defaults(fo)
             } else if c.bodies_filtered() && fd.lazy.is_some() && !c.body_spells(f, fd) {
@@ -232,7 +232,26 @@ fn (var c: Checker) check_fn_decl(fd: parser.FnDecl, fo: Int) {
 /// module of a lazy run, but not the std module under test (std_test),
 /// which is checked in full like any root module.
 fn (c: Checker) lazy_mod(m: Int) -> Bool {
-  (c.lazy && c.mods[m].native && !c.mods[m].root) || c.mod_skip.contains(m)
+  (c.lazy && c.mods[m].native && !c.mods[m].root) || c.mod_skip.contains(m) || c.dep_lazy_mod(m)
+}
+
+/// Whether module m is a dependency whose bodies wait for check_lazy
+/// under decision 0517: a program module the build does not name.
+fn (c: Checker) dep_lazy_mod(m: Int) -> Bool {
+  c.lazy && c.dep_lazy && !c.mods[m].root && !c.mods[m].is_std && !c.mods[m].is_prelude && !c.mods[m].native
+}
+
+/// Whether function fo of a lazy dependency is checked anyway: a method
+/// another module may call without `pub` because it implements a
+/// prelude interface's method (decision 0496 (c): display, debug). Its
+/// effects are inferred from its body, and a caller in another module
+/// reads them before check_lazy would check it (decision 0517).
+fn (c: Checker) dep_cross_eager(m: Int, fo: Int) -> Bool {
+  if !c.dep_lazy_mod(m) || c.objs[fo].recv < 0 || c.objs[fo].is_pub {
+    return false
+  }
+  let n = c.objs[fo].name
+  n == b"display" || n == b"debug"
 }
 
 /// The default values of std module m's function parameters and struct

@@ -157,6 +157,10 @@ pub struct Checker {
   /// XO_LAZY_PARSE=off turns it off):
   /// skipped by their braces, parsed when check_lazy forces them.
   pub lazy_parse: Bool = false
+  /// Decision 0517 (XO_DEP_LAZY=1): a build parses and checks a non-root
+  /// program module's bodies as the SSA builder reaches them, as 0247
+  /// and 0351 do the runtime's.
+  pub dep_lazy: Bool = false
   /// xo refs (2026-10-26): a program file's function bodies are parsed
   /// and checked only when their text spells one of these words (the
   /// names looked for), the others keep their signature only: a body that
@@ -1513,7 +1517,7 @@ pub fn (c: Checker) parse_lazy_path(path: Str) -> Bool {
     // preloads) checks only those that spell a name
     return true
   }
-  c.lazy && c.lazy_parse && path.starts_with("std/native/") && (c.std_test.is_empty() || !path.starts_with("std/${c.std_test}/") && path != "std/${c.std_test}.xo")
+  c.lazy && c.lazy_parse && (path.starts_with("std/native/") || c.dep_lazy && !path.starts_with("std/")) && (c.std_test.is_empty() || !path.starts_with("std/${c.std_test}/") && path != "std/${c.std_test}.xo")
 }
 
 /// A parse of src at path for parse_cache, made ahead of the check (the
