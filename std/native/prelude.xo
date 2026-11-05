@@ -1426,13 +1426,25 @@ fn list_all[T, E, fx: Effects](xs: List[T], f: fn(T) -> Bool ! E uses fx) -> Boo
 }
 
 fn list_reverse[T](xs: List[T]) -> List[T] {
-  var out: List[T] = []
-  var i = xs.len() - 1
-  while i >= 0 {
-    out.push(xs[i])
-    i -= 1
+  // xs's last use (decision 0508): a list nothing else holds is reversed
+  // in its own array; the counted write makes a unique first (a copy when
+  // another binding holds the list), since the swaps write raw words
+  // (gotchas/list-swap-bypasses-copy-on-write.md)
+  var a = xs
+  let n = a.len()
+  if n < 2 {
+    return a
   }
-  out
+  let first = a[0]
+  a[0] = first
+  var i = 0
+  var j = n - 1
+  while i < j {
+    rt.list_swap(a, i, j)
+    i += 1
+    j -= 1
+  }
+  a
 }
 
 /// A stable merge sort of xs by keys (std/rt sorts stably). The index

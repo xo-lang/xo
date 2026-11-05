@@ -2,6 +2,22 @@
 
 
 
+
+## 2026-11-05: perf: List.reverse of a list nothing else holds reverses it in place
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0508 step 4
+- Go reference: slices.Reverse (in place, swapping from both ends)
+- Test: prelude_test.xo "list_reverse in place: a held list keeps its order" (Ints, Strs, structs with lists, 0 and 1 elements), arm64 and LLVM
+- Timing: linux/arm64 offload host, ab-host.sh --rounds=7, bench/perf/listmap reverse (1M Ints 20 times, 8 Strs 1M times): wall 0.457 (0.404 to 0.492), max RSS 0.609
+- Shipped in: not yet released
+
+`reverse` moves its list into a `var`, makes it unique with one counted
+write (a copy when another binding holds the list, so the holder keeps its
+order) and swaps from both ends, instead of pushing every element onto a
+new list.
+
 ## 2026-11-05: perf: List.map to its own element type writes a list nothing else holds in place
 
 - Kind: perf

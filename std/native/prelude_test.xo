@@ -3439,6 +3439,25 @@ test "list_map in place: an error part way leaves a held list unchanged" {
   expect(xs == map_range(300))
 }
 
+test "list_reverse in place: a held list keeps its order" {
+  let xs = map_range(41)
+  let r = xs.reverse()
+  expect(r[0] == 40 && r[40] == 0 && r.len() == 41)
+  expect(xs == map_range(41))
+  expect(map_range(40).reverse().reverse() == map_range(40))
+  expect(["a", "b", "c"].reverse() == ["c", "b", "a"])
+  let one = [7]
+  expect(one.reverse() == [7])
+  let none: List[Str] = []
+  expect(none.reverse() == [])
+  var rs: List[MapRec] = []
+  for i in 0..5 {
+    rs.push(MapRec{name: "r${i}", kids: [i]})
+  }
+  let back = rs.reverse()
+  expect(back[0].name == "r4" && back[4].kids == [0] && rs[0].name == "r0")
+}
+
 test "list_sort: a list another binding holds keeps its order" {
   // sort writes its parameter's own array when the call is the caller's
   // last use; a list still held elsewhere is copied first
