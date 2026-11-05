@@ -80,3 +80,60 @@ test "a ubyte array and the decimals round trip" {
     expect(n) == amqp.encode(v).or_fault("enc").len()
   }
 }
+
+fn rt(f: amqp.Frame) -> amqp.Frame {
+  let b = amqp.encode_frame(f).or_fault("encode")
+  let (g, n) = amqp.decode_frame(b).or_fault("decode")
+  expect(n) == b.len()
+  expect(amqp.encode_frame(g).or_fault("again")) == b
+  g
+}
+
+test "frame headers and the smallest performatives" {
+  expect(amqp.encode_frame(amqp.Frame{channel: UInt16(0), body: amqp.FrameBody.Empty}).or_fault("e")) == hb("0000000802000000")
+  expect(amqp.encode_frame(amqp.Frame{channel: UInt16(3), body: amqp.FrameBody.Close(v: amqp.Close{error: None})}).or_fault("e")) == hb("0000000c02000003005318" + "45")
+  expect(amqp.encode_frame(amqp.Frame{channel: UInt16(0), body: amqp.FrameBody.Open(v: amqp.Open{container_id: "c"})}).or_fault("e")) == hb("0000001702000000005310d00000000700000001a10163")
+}
+
+test "every performative round trips" {
+  let st = amqp.DeliveryState.Rejected(error: Some(amqp.WireError{condition: "amqp:decode-error", description: "bad", info: [("k", amqp.Value.Bool(v: true))]}))
+  let bodies: List[amqp.FrameBody] = [
+    amqp.FrameBody.Open(v: amqp.Open{container_id: "id", hostname: "h", max_frame_size: 65536, channel_max: 255, idle_timeout_ms: 30000, outgoing_locales: ["en", "fr"], offered_capabilities: ["x"], properties: [("p", amqp.Value.Str(v: "v"))]}),
+    amqp.FrameBody.Begin(v: amqp.Begin{remote_channel: Some(UInt16(2)), next_outgoing_id: UInt32(1), incoming_window: UInt32(2048), outgoing_window: UInt32(2048), handle_max: 10}),
+    amqp.FrameBody.Attach(v: amqp.Attach{name: "l", handle: UInt32(0), role: amqp.Role.Sender, sender_settle_mode: Some(amqp.SenderSettleMode.Mixed), receiver_settle_mode: Some(amqp.ReceiverSettleMode.Second), source: Some(amqp.Source{address: "a", durable: 2, filter: [("f", amqp.Value.Str(v: "x"))], outcomes: ["amqp:accepted:list", "amqp:rejected:list"]}), target: Some(amqp.Target{address: "t", dynamic: true}), unsettled: [(b"t1", Some(amqp.DeliveryState.Accepted)), (b"t2", None)], initial_delivery_count: 5, max_message_size: 1000}),
+    amqp.FrameBody.Attach(v: amqp.Attach{name: "r", handle: UInt32(1), role: amqp.Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None, source: None, target: None}),
+    amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(UInt32(1)), incoming_window: UInt32(100), next_outgoing_id: UInt32(7), outgoing_window: UInt32(100), handle: Some(UInt32(0)), delivery_count: Some(UInt32(3)), link_credit: Some(UInt32(50)), available: None, drain: true, echo: true}),
+    amqp.FrameBody.Transfer(v: amqp.Transfer{handle: UInt32(0), delivery_id: Some(UInt32(4)), delivery_tag: b"tag", message_format: Some(UInt32(0)), settled: false, more: true, receiver_settle_mode: Some(amqp.ReceiverSettleMode.First), state: Some(amqp.DeliveryState.Received(section_number: UInt32(1), section_offset: UInt64(9))), payload: hb("0053777b")}),
+    amqp.FrameBody.Disposition(v: amqp.Disposition{role: amqp.Role.Receiver, first: UInt32(1), last: Some(UInt32(3)), settled: true, state: Some(amqp.DeliveryState.Modified(delivery_failed: true, undeliverable_here: false, annotations: [(amqp.Value.Symbol(v: "a"), amqp.Value.Bool(v: true))]))}),
+    amqp.FrameBody.Disposition(v: amqp.Disposition{role: amqp.Role.Sender, first: UInt32(0), last: None, settled: false, state: Some(st)}),
+    amqp.FrameBody.Detach(v: amqp.Detach{handle: UInt32(1), closed: true, error: Some(amqp.WireError{condition: "amqp:link:detach-forced"})}),
+    amqp.FrameBody.End(v: amqp.End{error: None}),
+    amqp.FrameBody.Close(v: amqp.Close{error: Some(amqp.WireError{condition: "amqp:internal-error", description: "x"})}),
+    amqp.FrameBody.SaslMechanisms(v: amqp.SaslMechanisms{mechanisms: ["PLAIN", "ANONYMOUS"]}),
+    amqp.FrameBody.SaslInit(v: amqp.SaslInit{mechanism: "PLAIN", initial_response: hb("00757000"), hostname: "h"}),
+    amqp.FrameBody.SaslChallenge(v: amqp.SaslChallenge{challenge: b"c"}),
+    amqp.FrameBody.SaslResponse(v: amqp.SaslResponse{response: b"r"}),
+    amqp.FrameBody.SaslOutcome(v: amqp.SaslOutcome{code: UInt8(0), additional_data: b"ok"}),
+    amqp.FrameBody.Empty,
+  ]
+  for body in bodies {
+    let f = amqp.Frame{channel: UInt16(1), body: body}
+    expect(rt(f)) == f
+  }
+}
+
+test "a bad frame is refused" {
+  expect(amqp.decode_frame(hb("00000008")).is_err()) == true
+  expect(amqp.decode_frame(hb("0000000802010000")).is_err()) == true
+  expect(amqp.decode_frame(hb("0000000802020000")).is_err()) == true
+  expect(amqp.decode_frame(hb("0000000402000000")).is_err()) == true
+  expect(amqp.decode_frame(hb("0000000c02000000005318"), 8).is_err()) == true
+  expect(amqp.decode_frame(hb("0000001002000000005310" + "45" + "0000")).is_err()) == true
+}
+
+test "an Int field outside its wire range is refused on encode" {
+  let f = amqp.Frame{channel: UInt16(0), body: amqp.FrameBody.Open(v: amqp.Open{container_id: "c", channel_max: 70000})}
+  expect(amqp.encode_frame(f).is_err()) == true
+  let g = amqp.Frame{channel: UInt16(0), body: amqp.FrameBody.Begin(v: amqp.Begin{remote_channel: None, next_outgoing_id: UInt32(0), incoming_window: UInt32(0), outgoing_window: UInt32(0), handle_max: -1})}
+  expect(amqp.encode_frame(g).is_err()) == true
+}

@@ -269,7 +269,44 @@ const TRUNCATED: List[(Int, Int)] = [`)
 	fmt.Println("]")
 	fmt.Println()
 	fmt.Println(tests)
+	fmt.Println()
+	fmt.Println("/// (case, the frame go-amqp's client wrote, in hex): capture over a fake peer")
+	fmt.Println("const FRAMES: List[(Str, Str)] = [")
+	for _, r := range clientFrames() {
+		fmt.Printf("  (%q, \"%x\"),\n", r.name, r.raw)
+	}
+	fmt.Println("]")
+	fmt.Println()
+	fmt.Println(frameTests)
 }
+
+const frameTests = `fn kind(b: amqp.FrameBody) -> Str {
+  match b {
+    Open(_) => "open"
+    Begin(_) => "begin"
+    Attach(_) => "attach"
+    Flow(_) => "flow"
+    Transfer(_) => "transfer"
+    Disposition(_) => "disposition"
+    Detach(_) => "detach"
+    End(_) => "end"
+    Close(_) => "close"
+    SaslInit(_) => "sasl-init"
+    Empty => "empty"
+    _ => "other"
+  }
+}
+
+test "frames go-amqp's client wrote decode and encode back to the same bytes" {
+  for (name, hex) in FRAMES {
+    let b = Bytes.from_hex(hex).or_fault("hex")
+    let (f, n) = amqp.decode_frame(b).or_fault(name)
+    expect(n) == b.len()
+    expect(name.ends_with(kind(f.body))) == true
+    expect(amqp.encode_frame(f).or_fault(name)) == b
+  }
+}
+`
 
 func cuts(n int) []int {
 	set := map[int]bool{}

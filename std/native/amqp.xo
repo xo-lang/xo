@@ -621,3 +621,639 @@ fn fixed_value(b: Bytes, c: Int, p: Int) -> amqp.Value {
 fn decode(b: Bytes) -> (amqp.Value, Int) ! amqp.AmqpErr {
   get_value(b, 0, 0)
 }
+
+// ---------------------------------------------------------------------------
+// Stage 2a: performatives and frames
+
+fn vnull() -> amqp.Value { amqp.Value.Null }
+
+fn vstr(s: Str) -> amqp.Value {
+  if s == "" { amqp.Value.Null } else { amqp.Value.Str(v: s) }
+}
+
+fn vsym(s: Str) -> amqp.Value {
+  if s == "" { amqp.Value.Null } else { amqp.Value.Symbol(v: s) }
+}
+
+fn vu32(x: UInt32) -> amqp.Value { amqp.Value.UInt(v: x) }
+
+/// A uint that is null when it equals its default.
+fn vint32d(x: Int, d: Int) -> amqp.Value {
+  if x == d { amqp.Value.Null } else { amqp.Value.UInt(v: UInt32.wrapping_from(x)) }
+}
+
+fn vu32o(x: UInt32?) -> amqp.Value {
+  match x {
+    Some(v) => amqp.Value.UInt(v: v)
+    None => amqp.Value.Null
+  }
+}
+
+fn vbool(b: Bool) -> amqp.Value {
+  if b { amqp.Value.Bool(v: true) } else { amqp.Value.Null }
+}
+
+fn vbin(b: Bytes) -> amqp.Value {
+  if b.len() == 0 { amqp.Value.Null } else { amqp.Value.Binary(v: b) }
+}
+
+/// go-amqp's MultiSymbol: nothing for none, one symbol for one, else an array.
+fn vsyms(xs: List[Str]) -> amqp.Value {
+  if xs.len() == 0 { return amqp.Value.Null }
+  if xs.len() == 1 { return amqp.Value.Symbol(v: xs[0]) }
+  var items: List[amqp.Value] = []
+  for s in xs { items.push(amqp.Value.Symbol(v: s)) }
+  amqp.Value.Array(items: items)
+}
+
+fn vmap(xs: List[(Str, amqp.Value)], symbol_keys: Bool) -> amqp.Value {
+  if xs.len() == 0 { return amqp.Value.Null }
+  var pairs: List[(amqp.Value, amqp.Value)] = []
+  for (k, v) in xs {
+    let key = if symbol_keys { amqp.Value.Symbol(v: k) } else { amqp.Value.Str(v: k) }
+    pairs.push((key, v))
+  }
+  amqp.Value.Map(pairs: pairs)
+}
+
+/// A described list, trailing nulls trimmed (an empty list is list0).
+fn composite(code: Int, fields: List[amqp.Value]) -> amqp.Value {
+  var n = fields.len()
+  while n > 0 {
+    match fields[n - 1] {
+      Null => { n -= 1 }
+      _ => { break }
+    }
+  }
+  var items: List[amqp.Value] = []
+  for i in 0..n { items.push(fields[i]) }
+  amqp.Value.Described(descriptor: amqp.Value.ULong(v: UInt64.from_bits(code)), value: amqp.Value.List(items: items))
+}
+
+fn error_value(e: amqp.WireError) -> amqp.Value {
+  composite(0x1d, [vsym(e.condition), vstr(e.description), vmap(e.info, false)])
+}
+
+fn error_opt(e: amqp.WireError?) -> amqp.Value {
+  match e {
+    Some(x) => error_value(x)
+    None => amqp.Value.Null
+  }
+}
+
+fn state_value(s: amqp.DeliveryState) -> amqp.Value {
+  match s {
+    Received(n, o) => composite(0x23, [vu32(n), amqp.Value.ULong(v: o)])
+    Accepted => composite(0x24, [])
+    Rejected(e) => composite(0x25, [error_opt(e)])
+    Released => composite(0x26, [])
+    Modified(failed, undeliverable, ann) => {
+      composite(0x27, [vbool(failed), vbool(undeliverable), if ann.len() == 0 { amqp.Value.Null } else { amqp.Value.Map(pairs: ann) }])
+    }
+  }
+}
+
+fn state_opt(s: amqp.DeliveryState?) -> amqp.Value {
+  match s {
+    Some(x) => state_value(x)
+    None => amqp.Value.Null
+  }
+}
+
+fn source_opt(s: amqp.Source?) -> amqp.Value {
+  match s {
+    Some(x) => {
+      composite(0x28, [
+        vstr(x.address), vint32d(x.durable, 0), vsym(x.expiry_policy), vint32d(x.timeout, 0),
+        vbool(x.dynamic), vmap(x.dynamic_node_properties, true), vsym(x.distribution_mode),
+        vmap(x.filter, true), x.default_outcome, vsyms(x.outcomes), vsyms(x.capabilities),
+      ])
+    }
+    None => amqp.Value.Null
+  }
+}
+
+fn target_opt(t: amqp.Target?) -> amqp.Value {
+  match t {
+    Some(x) => {
+      composite(0x29, [
+        vstr(x.address), vint32d(x.durable, 0), vsym(x.expiry_policy), vint32d(x.timeout, 0),
+        vbool(x.dynamic), vmap(x.dynamic_node_properties, true), vsyms(x.capabilities),
+      ])
+    }
+    None => amqp.Value.Null
+  }
+}
+
+fn role_value(r: amqp.Role) -> amqp.Value {
+  match r {
+    Sender => amqp.Value.Bool(v: false)
+    Receiver => amqp.Value.Bool(v: true)
+  }
+}
+
+fn ssm_value(m: amqp.SenderSettleMode?) -> amqp.Value {
+  match m {
+    Some(Unsettled) => amqp.Value.UByte(v: UInt8(0))
+    Some(Settled) => amqp.Value.UByte(v: UInt8(1))
+    Some(Mixed) => amqp.Value.UByte(v: UInt8(2))
+    None => amqp.Value.Null
+  }
+}
+
+fn rsm_value(m: amqp.ReceiverSettleMode?) -> amqp.Value {
+  match m {
+    Some(First) => amqp.Value.UByte(v: UInt8(0))
+    Some(Second) => amqp.Value.UByte(v: UInt8(1))
+    None => amqp.Value.Null
+  }
+}
+
+fn unsettled_value(xs: List[(Bytes, amqp.DeliveryState?)]) -> amqp.Value {
+  if xs.len() == 0 { return amqp.Value.Null }
+  var pairs: List[(amqp.Value, amqp.Value)] = []
+  for (tag, st) in xs { pairs.push((amqp.Value.Binary(v: tag), state_opt(st))) }
+  amqp.Value.Map(pairs: pairs)
+}
+
+fn body_value(b: amqp.FrameBody) -> amqp.Value {
+  match b {
+    Open(o) => {
+      composite(0x10, [
+        amqp.Value.Str(v: o.container_id), vstr(o.hostname), vint32d(o.max_frame_size, 4294967295),
+        if o.channel_max == 65535 { amqp.Value.Null } else { amqp.Value.UShort(v: UInt16.wrapping_from(o.channel_max)) },
+        if o.idle_timeout_ms == 0 { amqp.Value.Null } else { amqp.Value.UInt(v: UInt32(o.idle_timeout_ms)) },
+        vsyms(o.outgoing_locales), vsyms(o.incoming_locales), vsyms(o.offered_capabilities),
+        vsyms(o.desired_capabilities), vmap(o.properties, true),
+      ])
+    }
+    Begin(x) => {
+      composite(0x11, [
+        match x.remote_channel {
+          Some(c) => amqp.Value.UShort(v: c)
+          None => amqp.Value.Null
+        },
+        vu32(x.next_outgoing_id), vu32(x.incoming_window), vu32(x.outgoing_window),
+        vint32d(x.handle_max, 4294967295), vsyms(x.offered_capabilities), vsyms(x.desired_capabilities),
+        vmap(x.properties, true),
+      ])
+    }
+    Attach(x) => {
+      composite(0x12, [
+        amqp.Value.Str(v: x.name), vu32(x.handle), role_value(x.role), ssm_value(x.sender_settle_mode),
+        rsm_value(x.receiver_settle_mode), source_opt(x.source), target_opt(x.target),
+        unsettled_value(x.unsettled), vbool(x.incomplete_unsettled),
+        match x.role {
+          Receiver => amqp.Value.Null
+          Sender => amqp.Value.UInt(v: UInt32.wrapping_from(x.initial_delivery_count))
+        },
+        if x.max_message_size == 0 { amqp.Value.Null } else { amqp.Value.ULong(v: UInt64.from_bits(x.max_message_size)) },
+        vsyms(x.offered_capabilities), vsyms(x.desired_capabilities), vmap(x.properties, true),
+      ])
+    }
+    Flow(x) => {
+      composite(0x13, [
+        vu32o(x.next_incoming_id), vu32(x.incoming_window), vu32(x.next_outgoing_id), vu32(x.outgoing_window),
+        vu32o(x.handle), vu32o(x.delivery_count), vu32o(x.link_credit), vu32o(x.available),
+        vbool(x.drain), vbool(x.echo), vmap(x.properties, true),
+      ])
+    }
+    Transfer(x) => {
+      composite(0x14, [
+        vu32(x.handle), vu32o(x.delivery_id), vbin(x.delivery_tag), vu32o(x.message_format),
+        vbool(x.settled), vbool(x.more), rsm_value(x.receiver_settle_mode), state_opt(x.state),
+        vbool(x.resume), vbool(x.aborted), vbool(x.batchable),
+      ])
+    }
+    Disposition(x) => {
+      composite(0x15, [role_value(x.role), vu32(x.first), vu32o(x.last), vbool(x.settled), state_opt(x.state), vbool(x.batchable)])
+    }
+    Detach(x) => composite(0x16, [vu32(x.handle), vbool(x.closed), error_opt(x.error)])
+    End(x) => composite(0x17, [error_opt(x.error)])
+    Close(x) => composite(0x18, [error_opt(x.error)])
+    SaslMechanisms(x) => composite(0x40, [vsyms(x.mechanisms)])
+    SaslInit(x) => composite(0x41, [amqp.Value.Symbol(v: x.mechanism), vbin(x.initial_response), vstr(x.hostname)])
+    SaslChallenge(x) => composite(0x42, [amqp.Value.Binary(v: x.challenge)])
+    SaslResponse(x) => composite(0x43, [amqp.Value.Binary(v: x.response)])
+    SaslOutcome(x) => composite(0x44, [amqp.Value.UByte(v: x.code), vbin(x.additional_data)])
+    Empty => amqp.Value.Null
+  }
+}
+
+fn is_sasl(b: amqp.FrameBody) -> Bool {
+  match b {
+    SaslMechanisms(_) => true
+    SaslInit(_) => true
+    SaslChallenge(_) => true
+    SaslResponse(_) => true
+    SaslOutcome(_) => true
+    _ => false
+  }
+}
+
+fn in_range(name: Str, x: Int, hi: Int) -> () ! amqp.AmqpErr {
+  if x < 0 || x > hi { return Err(enc_err("${name} is out of range")) }
+  Ok(())
+}
+
+fn check_ranges(b: amqp.FrameBody) -> () ! amqp.AmqpErr {
+  match b {
+    Open(o) => {
+      in_range("max_frame_size", o.max_frame_size, 4294967295)?
+      in_range("channel_max", o.channel_max, 65535)?
+      in_range("idle_timeout_ms", o.idle_timeout_ms, 4294967295)?
+    }
+    Begin(x) => { in_range("handle_max", x.handle_max, 4294967295)? }
+    Attach(x) => {
+      in_range("initial_delivery_count", x.initial_delivery_count, 4294967295)?
+      in_range("max_message_size", x.max_message_size, 9223372036854775807)?
+      match x.source {
+        Some(s) => {
+          in_range("durable", s.durable, 4294967295)?
+          in_range("timeout", s.timeout, 4294967295)?
+        }
+        None => {}
+      }
+      match x.target {
+        Some(t) => {
+          in_range("durable", t.durable, 4294967295)?
+          in_range("timeout", t.timeout, 4294967295)?
+        }
+        None => {}
+      }
+    }
+    _ => {}
+  }
+  Ok(())
+}
+
+fn encode_frame(f: amqp.Frame) -> Bytes ! amqp.AmqpErr {
+  check_ranges(f.body)?
+  var body = BytesBuilder.new()
+  match f.body {
+    Empty => {}
+    _ => {
+      body = put_value(body, body_value(f.body))?
+      match f.body {
+        Transfer(t) => { body.write(t.payload) }
+        _ => {}
+      }
+    }
+  }
+  let total = 8 + body.len()
+  var out = BytesBuilder.new()
+  out = be(out, total, 4)
+  out = be(out, 2, 1)
+  out = be(out, if is_sasl(f.body) { 1 } else { 0 }, 1)
+  out = be(out, Int(f.channel), 2)
+  out.write(body.freeze())
+  Ok(out.freeze())
+}
+
+// Decoding of frames
+
+fn at(items: List[amqp.Value], i: Int) -> amqp.Value {
+  if i < items.len() { items[i] } else { amqp.Value.Null }
+}
+
+fn want_str(v: amqp.Value) -> Str ! amqp.AmqpErr {
+  match v {
+    Null => Ok("")
+    Str(s) => Ok(s)
+    Symbol(s) => Ok(s)
+    _ => Err(dec_err("expected a string"))
+  }
+}
+
+fn want_u32(v: amqp.Value, d: UInt32) -> UInt32 ! amqp.AmqpErr {
+  match v {
+    Null => Ok(d)
+    UInt(x) => Ok(x)
+    UShort(x) => Ok(UInt32(Int(x)))
+    UByte(x) => Ok(UInt32(Int(x)))
+    _ => Err(dec_err("expected a uint"))
+  }
+}
+
+fn want_u32o(v: amqp.Value) -> UInt32? ! amqp.AmqpErr {
+  match v {
+    Null => Ok(None)
+    _ => Ok(Some(want_u32(v, UInt32(0))?))
+  }
+}
+
+fn want_bool(v: amqp.Value) -> Bool ! amqp.AmqpErr {
+  match v {
+    Null => Ok(false)
+    Bool(b) => Ok(b)
+    _ => Err(dec_err("expected a boolean"))
+  }
+}
+
+fn want_bin(v: amqp.Value) -> Bytes ! amqp.AmqpErr {
+  match v {
+    Null => Ok(b"")
+    Binary(x) => Ok(x)
+    _ => Err(dec_err("expected binary"))
+  }
+}
+
+fn want_syms(v: amqp.Value) -> List[Str] ! amqp.AmqpErr {
+  var out: List[Str] = []
+  match v {
+    Null => {}
+    Symbol(s) => { out.push(s) }
+    Str(s) => { out.push(s) }
+    Array(items) => {
+      for x in items { out.push(want_str(x)?) }
+    }
+    List(items) => {
+      for x in items { out.push(want_str(x)?) }
+    }
+    _ => { return Err(dec_err("expected symbols")) }
+  }
+  Ok(out)
+}
+
+fn want_smap(v: amqp.Value) -> List[(Str, amqp.Value)] ! amqp.AmqpErr {
+  var out: List[(Str, amqp.Value)] = []
+  match v {
+    Null => {}
+    Map(pairs) => {
+      for (k, x) in pairs { out.push((want_str(k)?, x)) }
+    }
+    _ => { return Err(dec_err("expected a map")) }
+  }
+  Ok(out)
+}
+
+fn want_role(v: amqp.Value) -> amqp.Role ! amqp.AmqpErr {
+  if want_bool(v)? { Ok(amqp.Role.Receiver) } else { Ok(amqp.Role.Sender) }
+}
+
+fn want_ssm(v: amqp.Value) -> amqp.SenderSettleMode? ! amqp.AmqpErr {
+  match v {
+    Null => Ok(None)
+    UByte(x) => {
+      if Int(x) == 0 { return Ok(Some(amqp.SenderSettleMode.Unsettled)) }
+      if Int(x) == 1 { return Ok(Some(amqp.SenderSettleMode.Settled)) }
+      if Int(x) == 2 { return Ok(Some(amqp.SenderSettleMode.Mixed)) }
+      Err(dec_err("bad sender-settle-mode"))
+    }
+    _ => Err(dec_err("expected a ubyte"))
+  }
+}
+
+fn want_rsm(v: amqp.Value) -> amqp.ReceiverSettleMode? ! amqp.AmqpErr {
+  match v {
+    Null => Ok(None)
+    UByte(x) => {
+      if Int(x) == 0 { return Ok(Some(amqp.ReceiverSettleMode.First)) }
+      if Int(x) == 1 { return Ok(Some(amqp.ReceiverSettleMode.Second)) }
+      Err(dec_err("bad receiver-settle-mode"))
+    }
+    _ => Err(dec_err("expected a ubyte"))
+  }
+}
+
+/// The code and fields of a described list.
+fn parts(v: amqp.Value) -> (Int, List[amqp.Value]) ! amqp.AmqpErr {
+  match v {
+    Described(d, body) => {
+      match (d, body) {
+        (ULong(c), List(items)) => Ok((c.to_bits(), items))
+        _ => Err(dec_err("expected a described list"))
+      }
+    }
+    _ => Err(dec_err("expected a described value"))
+  }
+}
+
+fn want_error(v: amqp.Value) -> amqp.WireError? ! amqp.AmqpErr {
+  match v {
+    Null => Ok(None)
+    _ => {
+      let (c, f) = parts(v)?
+      if c != 0x1d { return Err(dec_err("expected an error")) }
+      Ok(Some(amqp.WireError{condition: want_str(at(f, 0))?, description: want_str(at(f, 1))?, info: want_smap(at(f, 2))?}))
+    }
+  }
+}
+
+fn want_state(v: amqp.Value) -> amqp.DeliveryState? ! amqp.AmqpErr {
+  match v {
+    Null => Ok(None)
+    _ => {
+      let (c, f) = parts(v)?
+      if c == 0x23 {
+        var off = UInt64.from_bits(0)
+        match at(f, 1) {
+          ULong(x) => { off = x }
+          _ => {}
+        }
+        return Ok(Some(amqp.DeliveryState.Received(section_number: want_u32(at(f, 0), UInt32(0))?, section_offset: off)))
+      }
+      if c == 0x24 { return Ok(Some(amqp.DeliveryState.Accepted)) }
+      if c == 0x25 { return Ok(Some(amqp.DeliveryState.Rejected(error: want_error(at(f, 0))?))) }
+      if c == 0x26 { return Ok(Some(amqp.DeliveryState.Released)) }
+      if c == 0x27 {
+        var ann: List[(amqp.Value, amqp.Value)] = []
+        match at(f, 2) {
+          Map(p) => { ann = p }
+          _ => {}
+        }
+        return Ok(Some(amqp.DeliveryState.Modified(delivery_failed: want_bool(at(f, 0))?, undeliverable_here: want_bool(at(f, 1))?, annotations: ann)))
+      }
+      Err(dec_err("unknown delivery state"))
+    }
+  }
+}
+
+fn want_source(v: amqp.Value) -> amqp.Source? ! amqp.AmqpErr {
+  match v {
+    Null => Ok(None)
+    _ => {
+      let (c, f) = parts(v)?
+      if c != 0x28 { return Err(dec_err("expected a source")) }
+      Ok(Some(amqp.Source{
+        address: want_str(at(f, 0))?, durable: want_int(at(f, 1), 0)?,
+        expiry_policy: want_str(at(f, 2))?, timeout: want_int(at(f, 3), 0)?,
+        dynamic: want_bool(at(f, 4))?, dynamic_node_properties: want_smap(at(f, 5))?,
+        distribution_mode: want_str(at(f, 6))?, filter: want_smap(at(f, 7))?,
+        default_outcome: at(f, 8), outcomes: want_syms(at(f, 9))?, capabilities: want_syms(at(f, 10))?}))
+    }
+  }
+}
+
+fn want_target(v: amqp.Value) -> amqp.Target? ! amqp.AmqpErr {
+  match v {
+    Null => Ok(None)
+    _ => {
+      let (c, f) = parts(v)?
+      if c != 0x29 { return Err(dec_err("expected a target")) }
+      Ok(Some(amqp.Target{
+        address: want_str(at(f, 0))?, durable: want_int(at(f, 1), 0)?,
+        expiry_policy: want_str(at(f, 2))?, timeout: want_int(at(f, 3), 0)?,
+        dynamic: want_bool(at(f, 4))?, dynamic_node_properties: want_smap(at(f, 5))?,
+        capabilities: want_syms(at(f, 6))?}))
+    }
+  }
+}
+
+fn want_unsettled(v: amqp.Value) -> List[(Bytes, amqp.DeliveryState?)] ! amqp.AmqpErr {
+  var out: List[(Bytes, amqp.DeliveryState?)] = []
+  match v {
+    Null => {}
+    Map(pairs) => {
+      for (k, x) in pairs { out.push((want_bin(k)?, want_state(x)?)) }
+    }
+    _ => { return Err(dec_err("expected a map")) }
+  }
+  Ok(out)
+}
+
+fn want_ulong(v: amqp.Value) -> UInt64 ! amqp.AmqpErr {
+  match v {
+    Null => Ok(UInt64.from_bits(0))
+    ULong(x) => Ok(x)
+    UInt(x) => Ok(UInt64.from_bits(Int(x)))
+    _ => Err(dec_err("expected a ulong"))
+  }
+}
+
+fn want_ushort(v: amqp.Value, d: UInt16) -> UInt16 ! amqp.AmqpErr {
+  match v {
+    Null => Ok(d)
+    UShort(x) => Ok(x)
+    UByte(x) => Ok(UInt16(Int(x)))
+    _ => Err(dec_err("expected a ushort"))
+  }
+}
+
+/// An unsigned wire integer (ubyte, ushort, uint or ulong) as an Int, d when null.
+fn want_int(v: amqp.Value, d: Int) -> Int ! amqp.AmqpErr {
+  match v {
+    Null => Ok(d)
+    UByte(x) => Ok(Int(x))
+    UShort(x) => Ok(Int(x))
+    UInt(x) => Ok(Int(x))
+    ULong(x) => {
+      let n = x.to_bits()
+      if n < 0 { return Err(dec_err("ulong out of range")) }
+      Ok(n)
+    }
+    _ => Err(dec_err("expected an unsigned integer"))
+  }
+}
+
+fn want_millis(v: amqp.Value) -> Int ! amqp.AmqpErr {
+  match v {
+    Null => Ok(0)
+    UInt(x) => Ok(Int(x))
+    _ => Err(dec_err("expected a uint"))
+  }
+}
+
+fn body_of(c: Int, f: List[amqp.Value], rest: Bytes) -> amqp.FrameBody ! amqp.AmqpErr {
+  if c == 0x10 {
+    return Ok(amqp.FrameBody.Open(v: amqp.Open{
+      container_id: want_str(at(f, 0))?, hostname: want_str(at(f, 1))?,
+      max_frame_size: want_int(at(f, 2), 4294967295)?, channel_max: want_int(at(f, 3), 65535)?,
+      idle_timeout_ms: want_millis(at(f, 4))?, outgoing_locales: want_syms(at(f, 5))?,
+      incoming_locales: want_syms(at(f, 6))?, offered_capabilities: want_syms(at(f, 7))?,
+      desired_capabilities: want_syms(at(f, 8))?, properties: want_smap(at(f, 9))?}))
+  }
+  if c == 0x11 {
+    var rc: UInt16? = None
+    match at(f, 0) {
+      Null => {}
+      _ => { rc = Some(want_ushort(at(f, 0), UInt16(0))?) }
+    }
+    return Ok(amqp.FrameBody.Begin(v: amqp.Begin{
+      remote_channel: rc, next_outgoing_id: want_u32(at(f, 1), UInt32(0))?,
+      incoming_window: want_u32(at(f, 2), UInt32(0))?, outgoing_window: want_u32(at(f, 3), UInt32(0))?,
+      handle_max: want_int(at(f, 4), 4294967295)?, offered_capabilities: want_syms(at(f, 5))?,
+      desired_capabilities: want_syms(at(f, 6))?, properties: want_smap(at(f, 7))?}))
+  }
+  if c == 0x12 {
+    return Ok(amqp.FrameBody.Attach(v: amqp.Attach{
+      name: want_str(at(f, 0))?, handle: want_u32(at(f, 1), UInt32(0))?, role: want_role(at(f, 2))?,
+      sender_settle_mode: want_ssm(at(f, 3))?, receiver_settle_mode: want_rsm(at(f, 4))?,
+      source: want_source(at(f, 5))?, target: want_target(at(f, 6))?, unsettled: want_unsettled(at(f, 7))?,
+      incomplete_unsettled: want_bool(at(f, 8))?, initial_delivery_count: want_int(at(f, 9), 0)?,
+      max_message_size: want_int(at(f, 10), 0)?, offered_capabilities: want_syms(at(f, 11))?,
+      desired_capabilities: want_syms(at(f, 12))?, properties: want_smap(at(f, 13))?}))
+  }
+  if c == 0x13 {
+    return Ok(amqp.FrameBody.Flow(v: amqp.Flow{
+      next_incoming_id: want_u32o(at(f, 0))?, incoming_window: want_u32(at(f, 1), UInt32(0))?,
+      next_outgoing_id: want_u32(at(f, 2), UInt32(0))?, outgoing_window: want_u32(at(f, 3), UInt32(0))?,
+      handle: want_u32o(at(f, 4))?, delivery_count: want_u32o(at(f, 5))?, link_credit: want_u32o(at(f, 6))?,
+      available: want_u32o(at(f, 7))?, drain: want_bool(at(f, 8))?, echo: want_bool(at(f, 9))?,
+      properties: want_smap(at(f, 10))?}))
+  }
+  if c == 0x14 {
+    return Ok(amqp.FrameBody.Transfer(v: amqp.Transfer{
+      handle: want_u32(at(f, 0), UInt32(0))?, delivery_id: want_u32o(at(f, 1))?,
+      delivery_tag: want_bin(at(f, 2))?, message_format: want_u32o(at(f, 3))?,
+      settled: want_bool(at(f, 4))?, more: want_bool(at(f, 5))?, receiver_settle_mode: want_rsm(at(f, 6))?,
+      state: want_state(at(f, 7))?, resume: want_bool(at(f, 8))?, aborted: want_bool(at(f, 9))?,
+      batchable: want_bool(at(f, 10))?, payload: rest}))
+  }
+  if c == 0x15 {
+    return Ok(amqp.FrameBody.Disposition(v: amqp.Disposition{
+      role: want_role(at(f, 0))?, first: want_u32(at(f, 1), UInt32(0))?, last: want_u32o(at(f, 2))?,
+      settled: want_bool(at(f, 3))?, state: want_state(at(f, 4))?, batchable: want_bool(at(f, 5))?}))
+  }
+  if c == 0x16 {
+    return Ok(amqp.FrameBody.Detach(v: amqp.Detach{
+      handle: want_u32(at(f, 0), UInt32(0))?, closed: want_bool(at(f, 1))?, error: want_error(at(f, 2))?}))
+  }
+  if c == 0x17 { return Ok(amqp.FrameBody.End(v: amqp.End{error: want_error(at(f, 0))?})) }
+  if c == 0x18 { return Ok(amqp.FrameBody.Close(v: amqp.Close{error: want_error(at(f, 0))?})) }
+  if c == 0x40 { return Ok(amqp.FrameBody.SaslMechanisms(v: amqp.SaslMechanisms{mechanisms: want_syms(at(f, 0))?})) }
+  if c == 0x41 {
+    return Ok(amqp.FrameBody.SaslInit(v: amqp.SaslInit{
+      mechanism: want_str(at(f, 0))?, initial_response: want_bin(at(f, 1))?, hostname: want_str(at(f, 2))?}))
+  }
+  if c == 0x42 { return Ok(amqp.FrameBody.SaslChallenge(v: amqp.SaslChallenge{challenge: want_bin(at(f, 0))?})) }
+  if c == 0x43 { return Ok(amqp.FrameBody.SaslResponse(v: amqp.SaslResponse{response: want_bin(at(f, 0))?})) }
+  if c == 0x44 {
+    var code = UInt8(0)
+    match at(f, 0) {
+      UByte(x) => { code = x }
+      _ => { return Err(dec_err("expected a ubyte code")) }
+    }
+    return Ok(amqp.FrameBody.SaslOutcome(v: amqp.SaslOutcome{code: code, additional_data: want_bin(at(f, 1))?}))
+  }
+  Err(dec_err("unknown performative"))
+}
+
+fn decode_frame(b: Bytes, max_size: Int = 4294967295) -> (amqp.Frame, Int) ! amqp.AmqpErr {
+  need(b, 0, 8)?
+  let size = get_be(b, 0, 4)
+  let doff = Int(b[4])
+  let ftype = Int(b[5])
+  let channel = get_be(b, 6, 2)
+  if size < 8 || doff < 2 || doff * 4 > size {
+    return Err(dec_err("bad frame header"))
+  }
+  if size > max_size {
+    return Err(dec_err("frame larger than the maximum frame size"))
+  }
+  need(b, 0, size)?
+  if ftype != 0 && ftype != 1 {
+    return Err(dec_err("unknown frame type"))
+  }
+  let start = doff * 4
+  if start == size {
+    if ftype == 1 { return Err(dec_err("an empty SASL frame")) }
+    return Ok((amqp.Frame{channel: UInt16(channel), body: amqp.FrameBody.Empty}, size))
+  }
+  let (v, used) = get_value(b[0..size], start, 0)?
+  let (c, f) = parts(v)?
+  if ftype == 1 && (c < 0x40 || c > 0x44) { return Err(dec_err("not a SASL performative")) }
+  if ftype == 0 && (c < 0x10 || c > 0x18) { return Err(dec_err("not an AMQP performative")) }
+  let body = body_of(c, f, b[used..size])?
+  Ok((amqp.Frame{channel: UInt16(channel), body: body}, size))
+}

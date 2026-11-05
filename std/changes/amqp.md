@@ -11,3 +11,15 @@
 - Shipped in: not yet released
 
 `amqp.encode(Value)` and `amqp.decode(Bytes)` over a `Value` enum of every AMQP 1.0 type (spec/std.md 64). Stages 2 to 4 (connection and sessions, links, CBS) follow.
+
+## 2026-11-05: feature: std/amqp stage 2a, frames and performatives
+
+- Kind: feature (port)
+- Commit: this push
+- Found by: the Azure SDK's Service Bus and Event Hubs needs (decision 0521)
+- Go reference: github.com/Azure/go-amqp v1.7.0 internal/frames and internal/encoding composites (MIT, Copyright 2017 Kale Blankenship and Microsoft)
+- Test: std/native/amqp_test.xo and the amqp corpus FRAMES table (the frames go-amqp's client wrote over a fake peer, on native, LLVM and the Go backend)
+- Timing: none for this stage (it adds no hot path; stage 1's row stands)
+- Shipped in: not yet released
+
+`amqp.encode_frame` and `amqp.decode_frame` over `Frame` and `FrameBody` (spec/std.md 64.1): every AMQP and SASL performative as a typed struct, byte identical to go-amqp's encoder for the frames its client sends. Stage 2b (connection, SASL and sessions) follows.

@@ -52,3 +52,226 @@ fn encode(v: Value) -> Bytes ! AmqpErr
 
 /// The value at the start of b and the number of bytes it took.
 fn decode(b: Bytes) -> (Value, Int) ! AmqpErr
+
+// ---------------------------------------------------------------------------
+// Stage 2a: frames and performatives (go-amqp's internal/frames and the
+// composite types of internal/encoding). Each performative is a described
+// list; a struct holds its fields and `encode_frame` writes go-amqp's bytes
+// (the list32 up to the last field that is set, `list0` when none is).
+
+enum Role {
+  Sender
+  Receiver
+}
+
+/// sender-settle-mode (ubyte)
+enum SenderSettleMode {
+  Unsettled
+  Settled
+  Mixed
+}
+
+/// receiver-settle-mode (ubyte)
+enum ReceiverSettleMode {
+  First
+  Second
+}
+
+/// An AMQP error: a symbolic condition (`amqp:link:detach-forced`), text,
+/// and a map of details.
+struct WireError {
+  condition: Str
+  description: Str = ""
+  info: List[(Str, Value)] = []
+}
+
+/// The outcome or state of a delivery (section 3.4).
+enum DeliveryState {
+  Received(section_number: UInt32, section_offset: UInt64)
+  Accepted
+  Rejected(error: WireError?)
+  Released
+  Modified(delivery_failed: Bool, undeliverable_here: Bool, annotations: List[(Value, Value)])
+}
+
+/// A link's source (section 3.5.3).
+/// Fields typed Int that hold an unsigned wire value (durable, timeout, max_frame_size,
+/// channel_max, handle_max, initial_delivery_count, max_message_size) must be in range
+/// for the wire type (0 to 2^32-1, 2^16-1, 2^63-1); encode_frame refuses one outside it.
+struct Source {
+  address: Str = ""
+  durable: Int = 0
+  expiry_policy: Str = ""
+  timeout: Int = 0
+  dynamic: Bool = false
+  dynamic_node_properties: List[(Str, Value)] = []
+  distribution_mode: Str = ""
+  filter: List[(Str, Value)] = []
+  default_outcome: Value = Value.Null
+  outcomes: List[Str] = []
+  capabilities: List[Str] = []
+}
+
+/// A link's target (section 3.5.4).
+struct Target {
+  address: Str = ""
+  durable: Int = 0
+  expiry_policy: Str = ""
+  timeout: Int = 0
+  dynamic: Bool = false
+  dynamic_node_properties: List[(Str, Value)] = []
+  capabilities: List[Str] = []
+}
+
+struct Open {
+  container_id: Str
+  hostname: Str = ""
+  max_frame_size: Int = 4294967295
+  channel_max: Int = 65535
+  /// milliseconds, 0 for none
+  idle_timeout_ms: Int = 0
+  outgoing_locales: List[Str] = []
+  incoming_locales: List[Str] = []
+  offered_capabilities: List[Str] = []
+  desired_capabilities: List[Str] = []
+  properties: List[(Str, Value)] = []
+}
+
+struct Begin {
+  remote_channel: UInt16?
+  next_outgoing_id: UInt32
+  incoming_window: UInt32
+  outgoing_window: UInt32
+  handle_max: Int = 4294967295
+  offered_capabilities: List[Str] = []
+  desired_capabilities: List[Str] = []
+  properties: List[(Str, Value)] = []
+}
+
+struct Attach {
+  name: Str
+  handle: UInt32
+  role: Role
+  sender_settle_mode: SenderSettleMode?
+  receiver_settle_mode: ReceiverSettleMode?
+  source: Source?
+  target: Target?
+  unsettled: List[(Bytes, DeliveryState?)] = []
+  incomplete_unsettled: Bool = false
+  initial_delivery_count: Int = 0
+  max_message_size: Int = 0
+  offered_capabilities: List[Str] = []
+  desired_capabilities: List[Str] = []
+  properties: List[(Str, Value)] = []
+}
+
+struct Flow {
+  next_incoming_id: UInt32?
+  incoming_window: UInt32
+  next_outgoing_id: UInt32
+  outgoing_window: UInt32
+  handle: UInt32?
+  delivery_count: UInt32?
+  link_credit: UInt32?
+  available: UInt32?
+  drain: Bool = false
+  echo: Bool = false
+  properties: List[(Str, Value)] = []
+}
+
+struct Transfer {
+  handle: UInt32
+  delivery_id: UInt32?
+  delivery_tag: Bytes = b""
+  message_format: UInt32?
+  settled: Bool = false
+  more: Bool = false
+  receiver_settle_mode: ReceiverSettleMode?
+  state: DeliveryState?
+  resume: Bool = false
+  aborted: Bool = false
+  batchable: Bool = false
+  /// the bytes after the performative: a message fragment
+  payload: Bytes = b""
+}
+
+struct Disposition {
+  role: Role
+  first: UInt32
+  last: UInt32?
+  settled: Bool = false
+  state: DeliveryState?
+  batchable: Bool = false
+}
+
+struct Detach {
+  handle: UInt32
+  closed: Bool = false
+  error: WireError?
+}
+
+struct End {
+  error: WireError?
+}
+
+struct Close {
+  error: WireError?
+}
+
+struct SaslMechanisms {
+  mechanisms: List[Str]
+}
+
+struct SaslInit {
+  mechanism: Str
+  initial_response: Bytes = b""
+  hostname: Str = ""
+}
+
+struct SaslChallenge {
+  challenge: Bytes
+}
+
+struct SaslResponse {
+  response: Bytes
+}
+
+/// sasl-code (ubyte): 0 ok, 1 auth, 2 sys, 3 sys-perm, 4 sys-temp
+struct SaslOutcome {
+  code: UInt8
+  additional_data: Bytes = b""
+}
+
+/// The body of a frame.
+enum FrameBody {
+  Open(v: Open)
+  Begin(v: Begin)
+  Attach(v: Attach)
+  Flow(v: Flow)
+  Transfer(v: Transfer)
+  Disposition(v: Disposition)
+  Detach(v: Detach)
+  End(v: End)
+  Close(v: Close)
+  SaslMechanisms(v: SaslMechanisms)
+  SaslInit(v: SaslInit)
+  SaslChallenge(v: SaslChallenge)
+  SaslResponse(v: SaslResponse)
+  SaslOutcome(v: SaslOutcome)
+  /// an empty AMQP frame: a heartbeat
+  Empty
+}
+
+/// A frame: the channel it is for and its body. SASL frames are on channel 0.
+struct Frame {
+  channel: UInt16
+  body: FrameBody
+}
+
+/// The frame as bytes: the 8 byte header (size, data offset 2, type 0 for
+/// AMQP and 1 for SASL, channel) and the body.
+fn encode_frame(f: Frame) -> Bytes ! AmqpErr
+
+/// The frame at the start of b and the bytes it took; `max_size` is the
+/// largest frame size accepted (a larger one is a Decode error).
+fn decode_frame(b: Bytes, max_size: Int = 4294967295) -> (Frame, Int) ! AmqpErr

@@ -7430,3 +7430,41 @@ pub fn decode(b: Bytes) -> (Value, Int) ! AmqpErr   // the value at the start of
 - The corpus (`internal/stdtest/testdata/corpus/amqp`) is go-amqp's encoder run on 148 values and its decoder's
   verdict on each, checked on every backend: Xo decodes each of go-amqp's encodings to the same value and
   encodes it back to the same bytes, and refuses the truncations go-amqp refuses.
+
+### 64.1 Frames and performatives (stage 2a)
+
+```
+enum Role { Sender, Receiver }
+enum SenderSettleMode { Unsettled, Settled, Mixed }
+enum ReceiverSettleMode { First, Second }
+struct WireError { condition: Str, description: Str = "", info: List[(Str, Value)] = [] }
+enum DeliveryState { Received(section_number: UInt32, section_offset: UInt64), Accepted, Rejected(error: WireError?),
+                     Released, Modified(delivery_failed: Bool, undeliverable_here: Bool, annotations: List[(Value, Value)]) }
+struct Source { address, durable, expiry_policy, timeout, dynamic, dynamic_node_properties, distribution_mode,
+                filter, default_outcome, outcomes, capabilities }                 // every field defaulted
+struct Target { address, durable, expiry_policy, timeout, dynamic, dynamic_node_properties, capabilities }
+struct Open, Begin, Attach, Flow, Transfer, Disposition, Detach, End, Close,
+       SaslMechanisms, SaslInit, SaslChallenge, SaslResponse, SaslOutcome   // one field per performative field
+enum FrameBody { Open(v), Begin(v), Attach(v), Flow(v), Transfer(v), Disposition(v), Detach(v), End(v), Close(v),
+                 SaslMechanisms(v), SaslInit(v), SaslChallenge(v), SaslResponse(v), SaslOutcome(v), Empty }
+struct Frame { channel: UInt16, body: FrameBody }
+pub fn encode_frame(f: Frame) -> Bytes ! AmqpErr
+pub fn decode_frame(b: Bytes, max_size: Int = 4294967295) -> (Frame, Int) ! AmqpErr
+```
+
+- A frame is the 8 byte header (size, data offset 2, type 0 for AMQP and 1 for SASL, channel) and a described
+  list; a `Transfer`'s `payload` follows the list. `encode_frame` writes go-amqp's bytes: trailing null fields
+  trimmed, an empty list as `list0`, defaults omitted (`max_frame_size` 2^32-1, `channel_max` 65535,
+  `handle_max` 2^32-1, zero `idle_timeout_ms`), a receiver's `Attach` without `initial_delivery_count`, one
+  symbol for a one element symbol list and an array otherwise.
+- Fields that hold an unsigned wire value with a default (`durable`, `timeout`, `max_frame_size`, `channel_max`,
+  `handle_max`, `initial_delivery_count`, `max_message_size`, `idle_timeout_ms`) are `Int` and must be in the
+  wire type's range, or `encode_frame` returns an `Encode` error. (A `UInt32` field with a literal default would
+  need an Int to UInt32 conversion in the default that the native backends lack, XO1201.)
+- `decode_frame` refuses with a `Decode` error: a short header, a data offset below 2 or past the size, a size
+  past the data or past `max_size`, an unknown frame type, a SASL frame with no body, a performative that does
+  not belong to the frame type, an unknown performative or delivery state, and a field of the wrong type.
+  Unknown extra fields past the performative's last are ignored.
+- The corpus captures the frames go-amqp's client writes (SASL init, open, begin, attach as a sender and as a
+  receiver, transfer, flow, disposition, detach, end, close) against a fake peer over `net.Pipe`; Xo decodes each
+  and encodes it back to the same bytes.
