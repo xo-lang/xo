@@ -1,5 +1,20 @@
 # std/debug changes
 
+## 2026-11-05: feature: /debug/sched reports fds_open
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0520 (the stability program's soak needs the open descriptor count from inside the program, on macOS as well as Linux)
+- Go reference: none in Go's runtime (Go programs read /proc/self/fd themselves)
+- Test: cmd/xo TestDebugSchedFdsOpen (20 more files held open: fds_open rises by at least 20)
+- Timing: none (read on request: one directory listing per GET)
+- Shipped in: not yet released
+
+`GET /sched` of `debug.router` on the native backends adds a line
+`fds_open N`: the open file descriptors of the process, read from
+/proc/self/fd on Linux and /dev/fd on macOS (the descriptor that lists
+the directory is not counted). The wasm backend and Windows omit it.
+
 ## 2026-11-05: feature: /debug/sched reports heap_live
 
 - Kind: feature

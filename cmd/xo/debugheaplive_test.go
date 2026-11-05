@@ -87,3 +87,67 @@ func TestDebugSchedHeapLive(t *testing.T) {
 		}
 	}
 }
+
+// fds_open from /debug/sched counts the program's open descriptors: it rises
+// by the files a program holds open (decision 0520's soak reads it).
+const fdsOpenProg = `use std/debug
+use std/http
+
+fn fds(r: http.Router) -> Int {
+  let text = r.call(http.new_request("GET", "/sched")).text() ?? ""
+  for line in text.split("\n") {
+    if line.starts_with("fds_open ") {
+      return Int.parse(line.trim_prefix("fds_open ")) ?? -2
+    }
+  }
+  -1
+}
+
+fn main(os: Os) {
+  let r = debug.router(os.clock, fn(_) { true })
+  let before = fds(r)
+  var keep: List[File] = []
+  for _ in 0..20 {
+    match os.fs.open("main.xo") {
+      Ok(f) => keep.push(f)
+      Err(_) => {}
+    }
+  }
+  let during = fds(r)
+  os.stdio.println("fds ${before} ${during} ${keep.len()}")
+}
+`
+
+func TestDebugSchedFdsOpen(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	dir := writeFiles(t, map[string]string{
+		"app/xo.mod":  "module app\n",
+		"app/main.xo": fdsOpenProg,
+	})
+	app := filepath.Join(dir, "app")
+	for _, be := range nativeBackends(t) {
+		bin := filepath.Join(t.TempDir(), "app")
+		if code, out := xoOut(t, "build", "--backend="+be, "-o", bin, app); code != 0 {
+			t.Fatalf("%s: build: exit %d\n%s", be, code, out)
+		}
+		cmd := command(t, bin)
+		cmd.Dir = app
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: run: %v\n%s", be, err, out)
+		}
+		f := strings.Fields(strings.TrimSpace(string(out)))
+		if len(f) != 4 || f[0] != "fds" {
+			t.Fatalf("%s: output %q", be, out)
+		}
+		before, _ := strconv.Atoi(f[1])
+		during, _ := strconv.Atoi(f[2])
+		t.Logf("%s: fds_open %d before, %d with 20 more files open", be, before, during)
+		if before < 3 || during-before < 20 {
+			t.Errorf("%s: fds_open %d, %d: want at least 3 before and a rise of at least 20", be, before, during)
+		}
+	}
+}

@@ -22,7 +22,9 @@ use std/http
 ///   counts of `XO_RTSTATS`, zero until they are on: `?on=1` turns them
 ///   on), and on the native backends `heap_live`, the blocks allocated
 ///   and not yet freed, when the heap counts (`XO_LEAKCHECK`,
-///   `XO_HEAPSTATS` or `XO_RTSTATS` at start).
+///   `XO_HEAPSTATS` or `XO_RTSTATS` at start), and on Linux and macOS
+///   `fds_open`, the process's open file descriptors (files, sockets,
+///   pipes, the poller's own).
 ///
 /// A request for which `auth` answers false gets 403.
 fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses clock

@@ -2,7 +2,9 @@
 // over llrt/prof's live profiler and the scheduler's counters.
 use std/http
 use native/rt
+use native/llrt/darwin
 use native/llrt/heapos
+use native/llrt/linux
 use native/llrt/pool
 use native/llrt/prof
 use native/llrt/raw
@@ -69,6 +71,24 @@ fn profile(clock: Clock, busy: Atomic[Bool], req: http.Request) -> http.Response
   resp
 }
 
+/// The process's open file descriptors: the entries of /proc/self/fd on
+/// Linux and /dev/fd on macOS, less the one the listing itself opens; -1
+/// elsewhere (windows, wasm) or when the directory does not list.
+fn fds_open() -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    return -1
+  }
+  let (names, err) = match target.os {
+    TargetOs.Linux => linux.names("/proc/self/fd")
+    TargetOs.Darwin => darwin.names("/dev/fd")
+    TargetOs.Windows | TargetOs.Wasi => return -1
+  }
+  if err != 0 || names.is_empty() {
+    return -1
+  }
+  names.len() - 1
+}
+
 fn sched(req: http.Request) -> http.Response {
   if query_int(req, "on", 0) == 1 {
     rtstats.set(1)
@@ -90,6 +110,12 @@ fn sched(req: http.Request) -> http.Response {
   let live = heapos.live_now()
   if live >= 0 {
     lines.push("heap_live ${live}")
+  }
+  // the open descriptors (decision 0520: files, sockets, pipes, the
+  // poller's), so a soak sees a handle leak while it runs
+  let fds = fds_open()
+  if fds >= 0 {
+    lines.push("fds_open ${fds}")
   }
   http.Response{status: 200, headers: {"Content-Type": "text/plain; charset=utf-8"}, body: "${lines.join("\n")}\n".bytes()}
 }
