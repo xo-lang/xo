@@ -3377,6 +3377,26 @@ test "list_sort_in_place: the sizes around the 16 element runs" {
   }
 }
 
+test "list_sort: a list another binding holds keeps its order" {
+  // sort writes its parameter's own array when the call is the caller's
+  // last use; a list still held elsewhere is copied first
+  let xs = [5, 3, 9, 1]
+  let ys = xs.sort()
+  expect(ys == [1, 3, 5, 9])
+  expect(xs == [5, 3, 9, 1])
+  let ss = ["b", "c", "a"]
+  expect(ss.sort() == ["a", "b", "c"])
+  expect(ss == ["b", "c", "a"])
+  let fs = [2.5, -1.0, 0.5]
+  expect(fs.sort() == [-1.0, 0.5, 2.5])
+  expect(fs == [2.5, -1.0, 0.5])
+  var b = Buf[Int].with_capacity(4)
+  for v in [4, 2, 3, 1] {
+    b.push(v)
+  }
+  expect(b.freeze().sort() == [1, 2, 3, 4])
+}
+
 test "list_sort_in_place: Ints take pdqsort in the receiver, as sort does" {
   // random, sorted runs, few distinct values, and descending: the
   // partitions, the partial insertion, the equal partition and the
@@ -3498,7 +3518,7 @@ test "list_sort_in_place_by: a failing key propagates and leaves the list alone"
 }
 
 
-// list_sort's Int path: Go's pdqsort (list_sort_int), checked against
+// list_sort's Int path: Go's pdqsort (pdq_sort_ints), checked against
 // the stable in-place merge on the inputs its branches handle (insertion
 // below 13, ninther pivots from 50, a sorted run's partial insertion, a
 // decreasing one reversed, many duplicates partitioned by equality,

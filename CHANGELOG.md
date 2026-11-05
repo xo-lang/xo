@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (native): `List.sort` of a list nothing else holds (a temporary such as `xs.freeze().sort()`, or a binding not read again) sorts that list's own array instead of a copy; micro13 sort1M_copy's peak memory 0.59 of main's on darwin/arm64, i7 laptop 78 to 75 ms (Go 75). std/changes/prelude.md, bench/results/sort1M-in-place-2026-11-04.md.
 - perf (native): `List[Int].sort_in_place` runs the pdqsort of `sort` in the receiver's own array instead of the stable merge with a compare closure (0.681 of the old wall time for 1M Ints on linux/amd64). bench/perf/micro13's sort1M now sorts in place, the work of Go's slices.Sort, and its old `sort()` form stays as sort1M_copy for one release-vs-Go report. std/changes/prelude.md, bench/results/sort1M-in-place-2026-11-04.md.
 - perf (std/log): a record's JSON keys are put in order by insertion, not `sort_by` with a closure; same output. std/changes/log.md.
 - perf (native, Linux): an accepted or dialed TCP connection's socket is made nonblocking and close on exec by accept4 or socket (SOCK_NONBLOCK|SOCK_CLOEXEC), as Go's are, not by three fcntl calls after it; std/smtp send 0.949 of main's wall time on linux/arm64, tcpping and httpsession within noise. std/changes/prelude.md.

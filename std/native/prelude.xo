@@ -1482,15 +1482,19 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
       return r
     }
   }
-  if let Some(is) = rt.any_get[List[Int]](rt.any_of[List[T]](xs)) {
-    if let Some(r) = rt.any_get[List[T]](rt.any_of[List[Int]](list_sort_int(is))) {
-      return r
-    }
+  // xs's last use: when the call was the caller's last use of its list
+  // too, a holds the only reference and the sorts below write its array
+  // instead of copying it (micro13 sort1M's xs.freeze().sort(), 2026-11-04)
+  var a = xs
+  if rt.any_get[List[Int]](rt.any_of[List[T]]([])).is_some() {
+    // Ints: pdqsort in a's own array (list_sort_in_place). The type test
+    // is on an empty list, so it takes no reference to a
+    list_sort_in_place(a)
+    return a
   }
   // a counted write each makes a and b unique for the swaps
   // (gotchas/list-swap-bypasses-copy-on-write.md): a copies the caller's
-  // list, b a's
-  var a = xs
+  // list when another binding holds it, b a's
   let a0 = a[0]
   a[0] = a0
   var lo = 0
@@ -1571,18 +1575,16 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
 // in Int range where Go's xorshift wraps; it only moves which elements
 // are swapped, never the result.
 
-/// xs sorted ascending (slices.Sort).
-fn list_sort_int(xs: List[Int]) -> List[Int] {
-  var a = xs
-  let n = a.len()
+/// d sorted ascending in its own array (slices.Sort).
+fn pdq_sort_ints(var d: List[Int]) {
+  let n = d.len()
   var limit = 0
   var m = n
   while m > 0 {
     limit += 1
     m = m / 2
   }
-  pdq_int(a, 0, n, limit)
-  a
+  pdq_int(d, 0, n, limit)
 }
 
 fn pdq_insertion(var d: List[Int], a: Int, b: Int) {
@@ -2133,7 +2135,7 @@ fn list_heapify[T: Ord](var xs: List[T]) {
 /// is the only one the sort writes.
 fn list_sort_in_place[T: Ord](var xs: List[T]) {
   if let Some(v) = rt.any_get[List[Int]](rt.any_of[List[T]](xs)) {
-    // Ints: list_sort_int's pdqsort (slices.Sort), in the receiver's own
+    // Ints: pdq_sort_ints (slices.Sort), in the receiver's own
     // array. The receiver lets go of its reference first, so the Int view
     // is the array's only holder and its swaps copy nothing; the sorted
     // view then goes back. Equal Ints cannot be told apart, so the
@@ -2142,14 +2144,7 @@ fn list_sort_in_place[T: Ord](var xs: List[T]) {
     // 2026-11-04)
     var is = v
     xs = []
-    let n = is.len()
-    var limit = 0
-    var m = n
-    while m > 0 {
-      limit += 1
-      m = m / 2
-    }
-    pdq_int(is, 0, n, limit)
+    pdq_sort_ints(is)
     if let Some(back) = rt.any_get[List[T]](rt.any_of[List[Int]](is)) {
       xs = back
     }

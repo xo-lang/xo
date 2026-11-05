@@ -1,5 +1,25 @@
 # prelude changes
 
+
+## 2026-11-04: perf: List.sort of a list nothing else holds sorts that list's own array
+
+- Kind: perf
+- Commit: this push
+- Found by: micro13 sort1M_copy (`xs.freeze().sort()`): a function taking a list and sorting its own `var` copy made no second list, but `sort` did; list_sort handed its parameter to the Int path through rt.any_of while the merge path still used it, so the count was 2 and pdqsort's first write copied the 8 MB list
+- Go reference: none (Go's slices.Sort has no copying form)
+- Test: prelude_test.xo "list_sort: a list another binding holds keeps its order" and the other list_sort tests, arm64 and LLVM
+- Timing: bench/results/sort1M-in-place-2026-11-04.md (darwin/arm64 --ab of sort1M_copy: max RSS 0.59, wall 0.995 (0.991 to 0.999); linux/amd64 wall within noise, max RSS 0.966; i7 laptop median 78 to 75 ms, Go 75)
+- Shipped in: not yet released
+
+`sort` takes its parameter's reference first and runs the Int sort through
+`sort_in_place` on it, so when the call is the caller's last use of the
+list (a temporary such as `xs.freeze().sort()`, or a binding not read
+again) the sort writes that list's own array. A list another binding still
+holds is copied first, as before, so its holder keeps its order. The
+stable merge for other element types is unchanged (a List[Float] of 1M
+touches the same pages before and after: its one extra list is the
+merge's buffer).
+
 ## 2026-11-04: perf: List[Int].sort_in_place runs pdqsort in the receiver
 
 - Kind: perf
