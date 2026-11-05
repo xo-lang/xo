@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-04: fix: Client.open of a piped request is full duplex under the fake net
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19's issue 9 (a full duplex http.pipe test deadlocked under `xo test`; it passed with `--real`)
+- Go reference: net/http's transport sends the body while it reads the response; Go's httptest servers are real
+- Test: test_http_fake_duplex (native `xo test` and the Go backend: duplex echo, a client that closes early, a body read to its end first)
+- Shipped in: not yet released
+
+Under FakeNet (`os.net.listen` in memory listeners), `Client.open` read the whole request body (`src_whole`) before the handler ran and returned the whole response, so a test whose body writer waits for the response deadlocked. A request with a body source now runs the handler in a task with the source as its request body; the head and a streamed response's writes come back through channels, so the answer to each piece is readable while the pipe stays open. Requests without a body source and FakeNet `handle` handlers are unchanged. On the Go backend `http.pipe` made in a test world is now scheduler visible (its reads and writes wait on a channel instead of a blocking io.Pipe call, which the test scheduler reported as a deadlock), so the exchange stays deterministic under `--seed` and replay.
+
+
 ## 2026-11-04: fix: a request to an IPv6 literal host keeps the brackets in its URL text
 
 - Kind: fix

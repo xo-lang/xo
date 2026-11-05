@@ -290,6 +290,26 @@ struct BodyWriter {
   wt: Mutex[List[Str]]? = None
   /// wasm: the component's response, written as it is made (serve_component)
   wo: Mutex[WasiOut]? = None
+  /// a FakeNet duplex exchange (open_mem): the chunks go to the client's
+  /// stream as they are written
+  wm: MemOut? = None
+}
+
+/// The response of an in-process exchange whose request body is a source
+/// (Client.open under FakeNet, Go's httptest-style duplex): the handler runs
+/// in a task of the test, the head and the body chunks come through channels
+/// (only channels and tasks, so the scheduler's record and replay hold).
+struct MemOut {
+  head: Chan[MemHead]
+  chunks: Chan[Bytes]
+  /// closed when the client's stream closes: a write then fails
+  stop: Chan[Int]
+}
+
+struct MemHead {
+  status: Int
+  headers: Map[Str, Str]
+  err: http.ClientErr?
 }
 
 /// A wasi:http component's streamed response (decision 0447): its head
@@ -2305,6 +2325,9 @@ fn (w: BodyWriter) set_trailer(name: Str, value: Str) {
     }
     return
   }
+  if w.wm is Some(_) {
+    return
+  }
   if let Some(k) = http1.trailer_key(name) {
     hserve.sink_set_trailer(w.sink(), k, value)
   }
@@ -2345,12 +2368,21 @@ fn (w: BodyWriter) put(out: Bytes) -> Bool {
     }
     return true
   }
+  if let Some(m) = w.wm {
+    return select {
+      m.chunks.send(out) => true
+      _v = m.stop.recv() => false
+    }
+  }
   hserve.sink_write(w.sink(), out)
 }
 
 fn (w: BodyWriter) flush() -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
+  }
+  if w.wm is Some(_) {
+    return Ok(())
   }
   if wasiworld.component() {
     if let Some(m) = w.gz {
@@ -3354,6 +3386,8 @@ struct StreamState {
   pending: Bytes
   done: Bool
   idle_ns: Int
+  /// a FakeNet duplex exchange's channels (open_mem), read in place of a connection
+  mem: List[MemOut] = []
   /// the scope of a full duplex request body's sender (decision 0433),
   /// closed with the stream
   dsrv: rthttp.Srv? = None
@@ -3454,6 +3488,9 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     return Err(e)
   }
   if testworld.fake(4) {
+    if !req.src.is_empty() && !wasiworld.component() {
+      return open_mem(c, req, raw)
+    }
     // FakeNet: the whole response, read as a stream
     let resp = send_mem(src_whole(req)?, raw)?
     let st = StreamState{conn: None, h2: None, read: http1.BodyRead{mode: 0, done: true}, https: false, addr: "", name: "", roots: c.roots, buffered: resp.body, off: 0, gz: None, pending: b"", done: false, idle_ns: 0}
@@ -3520,6 +3557,10 @@ fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
   if wasiworld.component() {
     // a wasi:http component's stream is all in buffered (Client.open)
     return Ok(None)
+  }
+  if !s.mem.is_empty() {
+    // the in-process exchange's chunks, None once the handler is done
+    return Ok(s.mem[0].chunks.recv())
   }
   if let Some(x0) = s.h2 {
     var x = x0
@@ -3780,6 +3821,9 @@ fn (s: ClientStream) close() {
       }
       x.conn = None
     }
+    for m in x.mem {
+      m.stop.close()
+    }
     close_src(x.src_close)
     x.src_close = []
     if !wasiworld.component() {
@@ -3934,7 +3978,57 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
 /// first, then the FakeNet.handle handler whose route has the most
 /// literal segments, then the router serving the in memory listener of
 /// the URL's host and port.
-fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
+/// Client.open under FakeNet for a request whose body is a source
+/// (http.pipe): the handler runs in a task with the source as its request
+/// body, so it can answer while the sender still writes; the head and the
+/// body come back through channels (MemOut).
+fn open_mem(c: Client, req: Request, raw: Str) -> http.ClientStream ! http.ClientErr {
+  let m = MemOut{head: Chan[MemHead].new(1), chunks: Chan[Bytes].new(16), stop: Chan[Int].new(1)}
+  let body = BodyReader{st: Mutex[BodyState].new(BodyState{next: req.src, finish: [], data: b"", pos: 0, err: "", end: false})}
+  let q = req with {src: [], values: [ReqValue{name: STREAM_BODY, v: rt.any_of(body)}]}
+  let ds = hserve.srv_new()
+  let g = hserve.srv_group(ds)
+  g.spawn_background(fn() { mem_serve(q, raw, m) })
+  let h = m.head.recv() ?? MemHead{status: 0, headers: {}, err: Some(http.ClientErr.Canceled)}
+  if let Some(e) = h.err {
+    close_src(req.src)
+    hserve.srv_close(ds)
+    return Err(e)
+  }
+  let st = StreamState{conn: None, h2: None, read: http1.BodyRead{mode: 0, done: false}, https: false, addr: "", name: "", roots: c.roots, buffered: b"", off: 0, gz: None, pending: b"", done: false, idle_ns: 0, dsrv: Some(ds), src_close: req.src, mem: [m]}
+  Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: h.status, headers: h.headers}, st: Mutex[StreamState].new(st)}))
+}
+
+/// The handler's side of open_mem: the response head at once, then the
+/// stream function's writes (or the whole body) as chunks, then the end.
+fn mem_serve(req: Request, raw: Str, m: MemOut) {
+  match send_mem(req, raw, true) {
+    Ok(resp0) => {
+      let resp = rt.cast[http.Response, Response](resp0)
+      m.head.send(MemHead{status: resp.status, headers: resp.headers, err: None})
+      var wrote = false
+      if sid(resp) != 0 {
+        let fs = hserve.stream_get(sid(resp), false)
+        if !fs.is_empty() {
+          if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
+            wrote = true
+            f(BodyWriter{wm: Some(m)}).ignore_err("a stream that fails ends its body there, as collect")
+          }
+        }
+      }
+      if !wrote && !resp.body.is_empty() {
+        select {
+          m.chunks.send(resp.body) => ()
+          _v = m.stop.recv() => ()
+        }
+      }
+    }
+    Err(e) => m.head.send(MemHead{status: 0, headers: {}, err: Some(e)})
+  }
+  m.chunks.close()
+}
+
+fn send_mem(req: Request, raw: Str, streamed: Bool = false) -> http.Response ! http.ClientErr {
   testworld.record(rt.any_of(req))
   for i in 0..testworld.fake_count(1) {
     if fake_match(1, i, req, raw) is Some(_) {
@@ -3977,7 +4071,7 @@ fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
   }
   defer twrun.mem_end(hp)
   match rt.any_get[Router](found[0]) {
-    Some(r) => r.call(req)
+    Some(r) => if streamed { call_raw(r, req) } else { r.call(req) }
     None => Err(http.ClientErr.Connect(msg: "no fake handler for ${req.method} ${raw}"))
   }
 }

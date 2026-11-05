@@ -1,0 +1,76 @@
+// Full duplex over the fake net (issue 9, 2026-11-04): Client.open of a
+// request whose body is an http.pipe reaches a served router while the pipe
+// is still open, the handler answers each piece as it arrives, and the
+// client reads the answers before it closes the pipe. Before, the fake path
+// read the whole request body first and the test deadlocked.
+use std/http
+
+fn echo_router() -> http.Router {
+  var r = http.router()
+  r.handle_stream("POST /echo", fn(_req: http.Request, body: http.BodyReader) -> http.Response ! IoErr {
+    Ok(http.stream(200, fn(w: http.BodyWriter) -> () ! IoErr {
+      while let Some(p) = body.read()? {
+        w.write(p)?
+        w.flush()?
+      }
+      Ok(())
+    }).with_full_duplex())
+  })
+  r
+}
+
+test "the server answers each piece while the client still writes" {
+  let l = os.net.listen(":0")?
+  let srv = http.server(l, echo_router())
+  scope s {
+    s.spawn_background(fn() -> () ! http.HttpErr { srv.serve() })
+    let (pw, pr) = http.pipe()
+    pw.write(b"one")?
+    let st = http.client(os.net).open(http.new_request("POST", "http://${srv.addr()}/echo", {}, b"").with_body_reader(pr))?
+    expect(st.read()?) == Some(b"one")
+    pw.write(b"two")?
+    expect(st.read()?) == Some(b"two")
+    pw.close()
+    expect(st.read()?) == None
+    st.close()
+  }
+}
+
+test "the client closes the stream before the pipe ends" {
+  let l = os.net.listen(":0")?
+  let srv = http.server(l, echo_router())
+  scope s {
+    s.spawn_background(fn() -> () ! http.HttpErr { srv.serve() })
+    let (pw, pr) = http.pipe()
+    pw.write(b"one")?
+    let st = http.client(os.net).open(http.new_request("POST", "http://${srv.addr()}/echo", {}, b"").with_body_reader(pr))?
+    expect(st.read()?) == Some(b"one")
+    st.close()
+    pw.close()
+  }
+}
+
+test "a request body read to its end first still works" {
+  let l = os.net.listen(":0")?
+  var r = http.router()
+  r.handle_stream("POST /sum", fn(_req: http.Request, body: http.BodyReader) -> http.Response ! IoErr {
+    let all = body.read_all()?
+    Ok(http.text(200, "got ${all.len()}"))
+  })
+  let srv = http.server(l, r)
+  scope s {
+    s.spawn_background(fn() -> () ! http.HttpErr { srv.serve() })
+    let (pw, pr) = http.pipe()
+    s.spawn(fn() -> () ! IoErr {
+      pw.write(b"abc")?
+      pw.write(b"de")?
+      pw.close()
+      Ok(())
+    })
+    let st = http.client(os.net).open(http.new_request("POST", "http://${srv.addr()}/sum", {}, b"").with_body_reader(pr))?
+    expect(st.head().status) == 200
+    expect(st.read()?) == Some(b"got 5")
+    expect(st.read()?) == None
+    st.close()
+  }
+}

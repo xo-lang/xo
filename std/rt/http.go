@@ -1403,6 +1403,12 @@ func Http_Client_post_json[T any](tk *Task, c Http_Client, rawURL string, v T) R
 // fakeDispatcher is implemented by the fake network of tests.
 type fakeDispatcher interface {
 	dispatch(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr]
+	// dispatchRaw is dispatch without collecting a streamed response
+	// (Client.open's duplex exchange)
+	dispatchRaw(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr]
+	// serveScope is the scope of the served listener a request reaches, nil
+	// when none serves it
+	serveScope(tk *Task, req Http_Request) *Scope
 	isFake() bool
 }
 

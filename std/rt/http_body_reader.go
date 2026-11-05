@@ -78,9 +78,7 @@ func (b Http_BodyReader) M_read(tk *Task, max int64) Result[Option[Bytes], IoErr
 	}
 	buf := make([]byte, min(max, readMax))
 	for {
-		tk.leave()
-		n, err := r.src.Read(buf)
-		tk.enter()
+		n, err := readSrc(tk, r.src, buf)
 		if err == io.EOF {
 			r.eof = true
 		}
@@ -111,9 +109,26 @@ func (b Http_BodyReader) M_read_all(tk *Task) Result[Bytes, IoErr] {
 	if r.eof {
 		return Ok[Bytes, IoErr]("")
 	}
-	tk.leave()
-	data, err := io.ReadAll(r.src)
-	tk.enter()
+	var data []byte
+	var err error
+	if tr, ok := r.src.(tkReader); ok && tk != nil && tk.th != nil && tk.th.sch != nil {
+		// a test world's pipe: read through the task so the scheduler sees the wait
+		buf := make([]byte, 32768)
+		for {
+			n, e := tr.ReadTk(tk, buf)
+			data = append(data, buf[:n]...)
+			if e != nil {
+				if e != io.EOF {
+					err = e
+				}
+				break
+			}
+		}
+	} else {
+		tk.leave()
+		data, err = io.ReadAll(r.src)
+		tk.enter()
+	}
 	if pe, ok := err.(pipeErr); ok {
 		return Err[Bytes](pe.e)
 	}

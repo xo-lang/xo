@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,6 +35,10 @@ type clientStream struct {
 	// trailer: the response's trailers once body has ended (net/http's
 	// Response.Trailer, decision 0433)
 	trailer func() map[string][]string
+	// memch: a duplex FakeNet exchange's chunks (openMem), in place of
+	// body; end runs once when it ends or the stream closes
+	memch *Chan[Bytes]
+	end   func(tk *Task)
 }
 
 // XoDebug implements Debug.
@@ -75,6 +80,23 @@ func (s bodyReaderSrc) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// ReadTk is Read through the task (readSrc).
+func (s bodyReaderSrc) ReadTk(tk *Task, p []byte) (int, error) {
+	s.r.mu.Lock()
+	defer s.r.mu.Unlock()
+	if s.r.eof {
+		return 0, io.EOF
+	}
+	n, err := readSrc(tk, s.r.src, p)
+	if err == io.EOF {
+		s.r.eof = true
+	}
+	return n, err
+}
+
+// CloseTk is Close through the task.
+func (s bodyReaderSrc) CloseTk(tk *Task) { closeSrc(tk, s.r.src) }
+
 // Close closes the BodyReader's source when it has one to close (a pipe's
 // reader, a server request's body): net/http closes a request's body when
 // it is done with the request. It takes no lock: a Read waiting in the
@@ -99,6 +121,9 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 		return Err[Http_ClientStream](e)
 	}
 	if fd, ok := c.net.(fakeDispatcher); ok && fd.isFake() {
+		if req.XSrc != nil {
+			return openMem(tk, fd, req, rawURL)
+		}
 		r := fd.dispatch(tk, req, rawURL)
 		if !r.Ok {
 			return Err[Http_ClientStream](r.E)
@@ -141,6 +166,15 @@ func (s Http_ClientStream) M_read(tk *Task, max int64) Result[Option[Bytes], Htt
 	defer x.mu.Unlock()
 	if x.done {
 		return Ok[Option[Bytes], Http_ClientErr](None[Bytes]())
+	}
+	if x.memch != nil {
+		o := Chan_recv(tk, x.memch)
+		if !o.Some {
+			x.done = true
+			x.endMem(tk)
+			return Ok[Option[Bytes], Http_ClientErr](None[Bytes]())
+		}
+		return Ok[Option[Bytes], Http_ClientErr](Some(o.V))
 	}
 	if x.body == nil {
 		if x.off >= len(x.mem) {
@@ -208,7 +242,7 @@ func (s Http_ClientStream) M_read_all(tk *Task, maxSize int64) Result[Bytes, Htt
 }
 
 // M_close is `s.close()`: idempotent.
-func (s Http_ClientStream) M_close(_ *Task) {
+func (s Http_ClientStream) M_close(tk *Task) {
 	x := s.Xs
 	if x == nil {
 		return
@@ -217,6 +251,15 @@ func (s Http_ClientStream) M_close(_ *Task) {
 	defer x.mu.Unlock()
 	x.done = true
 	x.release()
+	x.endMem(tk)
+}
+
+// endMem ends a duplex FakeNet exchange once (openMem's end).
+func (x *clientStream) endMem(tk *Task) {
+	if f := x.end; f != nil {
+		x.end = nil
+		f(tk)
+	}
 }
 
 // finish ends a body read to its end: the connection goes back to the
@@ -258,4 +301,82 @@ func (x *clientStream) disarm() bool {
 		x.timer = nil
 	}
 	return false
+}
+
+// memHead is the head of a duplex FakeNet exchange, or its failure.
+type memHead struct {
+	resp   Http_Response
+	err    Http_ClientErr
+	failed bool
+}
+
+// memChunkWriter is the response body writer of a duplex FakeNet exchange:
+// each write is a chunk for the client's stream.
+type memChunkWriter struct {
+	tk     *Task
+	ch     *Chan[Bytes]
+	closed *atomic.Bool
+}
+
+func (w memChunkWriter) Write(p []byte) (int, error) {
+	if w.closed.Load() {
+		return 0, io.ErrClosedPipe
+	}
+	Chan_send(w.tk, w.ch, Bytes(append([]byte(nil), p...)))
+	return len(p), nil
+}
+
+// openMem is Client.open under FakeNet for a request whose body is a
+// source (http.pipe): the handler runs in a task with the source as its
+// request body, so it answers while the sender still writes, and the head
+// and the body chunks come back through channels, so the test scheduler's
+// record and replay hold (issue 9, 2026-11-04).
+func openMem(tk *Task, fd fakeDispatcher, req Http_Request, rawURL string) Result[Http_ClientStream, Http_ClientErr] {
+	src := req.XSrc
+	req = withStreamBody(req, src)
+	req.XSrc = nil
+	headCh := Chan_new[memHead](tk, 1)
+	chunks := Chan_new[Bytes](tk, 16)
+	closed := new(atomic.Bool)
+	sc := fd.serveScope(tk, req)
+	own := sc == nil
+	if own {
+		sc = NewScope(tk)
+	}
+	Spawn(tk, sc, func(tk *Task) Result[Unit, IoErr] {
+		r := fd.dispatchRaw(tk, req, rawURL)
+		if !r.Ok {
+			Chan_send(tk, headCh, memHead{failed: true, err: r.E})
+		} else {
+			resp := r.V
+			Chan_send(tk, headCh, memHead{resp: resp})
+			if resp.XStream != nil {
+				resp.XStream(tk, Http_BodyWriter{w: &bodyWriter{w: memChunkWriter{tk: tk, ch: chunks, closed: closed}}})
+			} else if len(resp.F_body) > 0 {
+				Chan_send(tk, chunks, resp.F_body)
+			}
+		}
+		Chan_close(tk, chunks)
+		return Ok[Unit, IoErr](Unit{})
+	}, true, false)
+	end := func(tk *Task) {
+		closed.Store(true)
+		for Chan_try_recv(tk, chunks).Some {
+		}
+		closeSrc(tk, src)
+		if own {
+			sc.Close(nil, true, 0)
+		}
+	}
+	h := Chan_recv(tk, headCh)
+	if !h.Some {
+		end(tk)
+		return Err[Http_ClientStream](clientErr(5, ""))
+	}
+	if h.V.failed {
+		end(tk)
+		return Err[Http_ClientStream](h.V.err)
+	}
+	s := &clientStream{memch: chunks, end: end}
+	return Ok[Http_ClientStream, Http_ClientErr](Http_ClientStream{Xhead: Http_ResponseHead{F_status: h.V.resp.F_status, F_headers: h.V.resp.F_headers}, Xs: s})
 }

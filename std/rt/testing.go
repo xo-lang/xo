@@ -1092,6 +1092,42 @@ func matchFake(method, prefix string, r *route, req Http_Request, rawURL string)
 
 // dispatch serves a client request in process.
 func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
+	return f.dispatchWith(tk, req, rawURL, false)
+}
+
+// dispatchRaw is dispatch whose served router's streamed response is left
+// to the caller to run (Client.open of a duplex request).
+func (f Testing_FakeNet) dispatchRaw(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
+	return f.dispatchWith(tk, req, rawURL, true)
+}
+
+// serveScope is the scope of the listener serving req's address, once its
+// serve has started.
+func (f Testing_FakeNet) serveScope(tk *Task, req Http_Request) *Scope {
+	n := f.n
+	hostport := req.F_url.F_host
+	if req.F_url.F_port.Some {
+		hostport += fmt.Sprint(":", req.F_url.F_port.V)
+	} else if strings.EqualFold(req.F_url.F_scheme, "https") {
+		hostport += ":443"
+	} else {
+		hostport += ":80"
+	}
+	n.mu.Lock()
+	srv := n.listeners[hostport]
+	n.mu.Unlock()
+	if srv == nil {
+		return nil
+	}
+	if !srv.served.isSet() && !srv.served.wait(tk, true, waitAccept, nil) {
+		return nil
+	}
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	return srv.sc
+}
+
+func (f Testing_FakeNet) dispatchWith(tk *Task, req Http_Request, rawURL string, raw bool) Result[Http_Response, Http_ClientErr] {
 	tk.Yield()
 	n := f.n
 	n.mu.Lock()
@@ -1148,6 +1184,9 @@ func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Res
 				// the handler sees the serving program's stop state
 				htk = &Task{node: tk.node, w: tk.w, held: tk.held, shield: tk.shield, stop: st, th: tk.th}
 			}
+			if raw {
+				return Ok[Http_Response, Http_ClientErr](noArenaResp(func(tk *Task, req Http_Request) Http_Response { return r.call(tk, req) })(htk, req))
+			}
 			return Ok[Http_Response, Http_ClientErr](r.M_call(htk, req))
 		}
 	}
@@ -1169,6 +1208,7 @@ type memListener struct {
 	stop     *stopState // of the serving program
 	inflight int
 	drained  *event // fired when inflight drops to 0 while draining
+	sc       *Scope // the serve task's scope: duplex exchanges (openMem) run in it
 }
 
 // close stops the listener's raw connections (decision 0292): a waiting
@@ -1214,7 +1254,10 @@ func (l *memListener) serve(tk *Task, r Http_Router) Result[Unit, Http_HttpErr] 
 	l.mu.Lock()
 	l.r = &r
 	l.stop = tk.stop
+	sc := NewScope(tk)
+	l.sc = sc
 	l.mu.Unlock()
+	defer func() { sc.Close(nil, true, 0) }()
 	l.served.fire()
 	stopped := false
 	if tk.stop != nil {
