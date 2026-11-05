@@ -1844,7 +1844,13 @@ fn (var b: Builder) reaches(t0: Int, owner: Str, seen0: List[Str]) -> (Bool, Lis
         return b.reaches(b.c.subst(b.c.objs[obj].target, b.c.args_subst(b.c.objs[obj].tparams, x.args)), owner, seen)
       }
       if tk == "struct" || tk == "enum" {
-        if tk == "struct" && b.is_std_mod(om) {
+        // a std struct the build represents as a handle (typ's
+        // std_opaque) holds nothing by value; any other is walked as a
+        // user struct is: std/yaml's `Node { alias: Node? }` was never
+        // boxed, and its layout recursed without end (a stack overflow in
+        // arm64 dv_type_ok, a fault in isel's variant; 2026-11-05,
+        // gotchas/recursive-option-struct-debug.md)
+        if tk == "struct" && b.is_std_mod(om) && (b.c.objs[obj].opaque || b.is_prelude_mod(om) && !(oname is "DurationErr" | "FileInfo" | "ProcOutput" | "Target")) {
           return (false, seen)
         }
         let name = b.type_name(t)

@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 - std/yaml: `yaml.Node` fields in `derive Yaml` structs (the node of the key, as yaml.v3).
 - std/yaml: `yaml.Node` has `head_comment`, `line_comment` and `foot_comment` (parse and parse_all fill them, encode_node writes them, as yaml.v3; 466 documents compared).
+- fix (compiler): a std struct that holds itself through an Option (or any value type) is boxed as a program's own struct is: std/yaml's `Node { alias: Node? }` built std's store with a stack overflow in the native backend's debug info or a fault in its variant code, and a program using it failed the same way. The SSA builder's check for a field that reaches its own struct skipped every std struct (gotchas/recursive-option-struct-debug.md).
 - std/yaml: `yaml.to_json` (the first document as JSON text, as yaml.v3 into an any and encoding/json).
 - std/yaml: `yaml.encode_node` writes a Node tree as yaml.v3 does (295 documents compared).
 - std/yaml: `yaml.parse` and `yaml.parse_all` give yaml.v3-equal Node trees (kind, tag, style, value, anchor, line, column, alias; 442 documents); the internal module std/yamlcodec is merged into std/yaml.
