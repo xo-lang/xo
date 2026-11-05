@@ -58,3 +58,5 @@
 - Shipped in: not yet released
 
 `ConnOptions.clock` and `timeout_ms`, `Connection.keepalive(group)`: i/o timeouts, empty-frame heartbeats at half the peer's idle timeout, and a failure when the peer is silent for `idle_timeout_ms`. All `amqp` calls that block now declare `uses (net.dial, clock)` (spec/std.md 64.2).
+
+An opt-in interop test (`xo test --real` with `XO_AMQP_INTEROP_ADDR`) passes against `apache/activemq-artemis:latest-alpine` (knowledgebase/infrastructure/amqp-interop.md).

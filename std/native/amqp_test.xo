@@ -625,16 +625,16 @@ test "interop: send, receive and settle against a real broker" uses (net, clock,
   let c = amqp.dial(os.net, addr, interop_opts(os.env, os.clock)).or_fault("dial")
   expect(c.peer_container_id() != "") == true
   let sess = c.begin().or_fault("begin")
-  let snd = c.new_sender(sess, queue).or_fault("sender")
+  let snd = c.new_sender(sess, queue, amqp.SenderOptions{target_capabilities: ["queue"]}).or_fault("sender")
   for i in 0..3 {
     let m = amqp.Message{
       properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "id-${i}")}),
       app_properties: Some([("n", amqp.Value.Int(v: Int32(i)))]),
-      body: amqp.Body.Data(sections: [b"msg-${i}"])}
+      body: amqp.Body.Data(sections: ["msg-${i}".bytes()])}
     let out = snd.send(m).or_fault("send ${i}")
     expect(out) == Some(amqp.DeliveryState.Accepted)
   }
-  let rcv = c.new_receiver(sess, queue, amqp.ReceiverOptions{credit: 3}).or_fault("receiver")
+  let rcv = c.new_receiver(sess, queue, amqp.ReceiverOptions{credit: 3, source_capabilities: ["queue"]}).or_fault("receiver")
   let d0 = rcv.receive().or_fault("receive 0")
   let d1 = rcv.receive().or_fault("receive 1")
   let d2 = rcv.receive().or_fault("receive 2")
