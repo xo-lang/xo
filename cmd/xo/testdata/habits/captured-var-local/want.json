@@ -1,0 +1,31 @@
+[
+  {
+    "code": "XO0502",
+    "severity": "error",
+    "message": "assignment mutates `n`, which is captured by a closure; closures capture by value (core 3.3)",
+    "span": {
+      "file": "main.xo",
+      "line": 5,
+      "col": 5,
+      "end_line": 5,
+      "end_col": 6
+    },
+    "notes": [
+      {
+        "message": "`n` is declared here, outside the closure",
+        "span": {
+          "file": "main.xo",
+          "line": 3,
+          "col": 7
+        }
+      },
+      {
+        "message": "to share mutable state with a closure, capture a `Mutex` or `Atomic` handle (core 5.4)"
+      },
+      {
+        "message": "or keep the state outside the closure: return the new value from it and assign it here, or use a `for` loop or `fold`"
+      }
+    ],
+    "fixes": []
+  }
+]

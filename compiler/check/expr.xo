@@ -195,6 +195,14 @@ fn (var c: Checker) coerce_to(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int {
     return w.t
   }
   let d = c.mismatch_d(sp, w.t, t, !e.is_empty())
+  if d >= 0 && !e.is_empty() && c.is_result(t) && !c.is_result(w.t) {
+    if let CallExpr(fun: SelectorExpr(sel: sel, ..), ..) = e[0] {
+      if text(sel.name) is "map" | "filter_map" | "flat_map" {
+        // decision 0522: the closure can fail, so the whole map can
+        c.note(d, "`${text(sel.name)}` with a closure that can fail stops at the first error and returns a `Result` of the whole list: add `?` to propagate it (core 2.6)")
+      }
+    }
+  }
   if d >= 0 && !e.is_empty() && c.is_prelude(c.resolve(w.t), "Set") {
     if let MapLit(entries: entries, ..) = e[0] {
       if entries.is_empty() {
@@ -761,7 +769,10 @@ fn (var c: Checker) propagate(et0: Int, sp: Span, code: Str, how: Str) {
       let conv = c.err_converts(et, ref)
       c.eff_track -= 1
       if !conv {
-        c.error(code, sp, "${how} propagates `${c.show(et)}`, which does not convert to `${c.show(ref)}`, the error type of this closure")
+        let d = c.error(code, sp, "${how} propagates `${c.show(et)}`, which does not convert to `${c.show(ref)}`, the error type of this closure")
+        if d >= 0 && code == "XO0202" {
+          c.map_err_note(d, et, ref)
+        }
       }
       c.same_effects(n1, ref, sp)
       return
@@ -810,6 +821,9 @@ fn (var c: Checker) propagate(et0: Int, sp: Span, code: Str, how: Str) {
     c.note(d, "a task error that is not consumed by an `await` propagates out of the scope as if by `?` (core 7.1)")
   }
   c.note(d, "an error converts when it is the same type, when the target is `Error` and it implements `Display`, or when the target enum has a `from ${c.show(et)}` variant (core 2.6)")
+  if code == "XO0202" {
+    c.map_err_note(d, et, ctx.err)
+  }
   let n = c.resolve(ctx.err)
   if c.tys[n].kind == TyKind.Named {
     let o = c.tys[n].obj
@@ -817,6 +831,12 @@ fn (var c: Checker) propagate(et0: Int, sp: Span, code: Str, how: Str) {
       c.note_obj(d, o, "add a variant such as `${to_upper_camel(last_name(c.show(et)).bytes())}(from ${c.show(et)})` to `${text(c.objs[o].name)}`")
     }
   }
+}
+
+/// The note on an XO0202 naming the conversion at the `?` itself
+/// (decision 0522: in a closure the inner error type often differs).
+fn (var c: Checker) map_err_note(d: Int, from: Int, to: Int) {
+  c.note(d, "or convert it where it fails: `.map_err(fn(e: ${c.show(from)}) -> ${c.show(to)} { ... })?` (core 2.6)")
 }
 
 /// Whether e is, or starts with, an optional chain `x?.f` reported as

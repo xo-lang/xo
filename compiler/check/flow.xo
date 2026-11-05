@@ -50,6 +50,8 @@ fn (var c: Checker) require_mutable(e: Expr, code: Str, what: Str) {
     let d = c.error(code, id.span, "${what} mutates `${text(id.name)}`, which is captured by a closure; closures capture by value (core 3.3)")
     c.note_obj(d, v, "`${text(id.name)}` is declared here, outside the closure")
     c.note(d, "to share mutable state with a closure, capture a `Mutex` or `Atomic` handle (core 5.4)")
+    // decision 0522: the local alternatives, for a closure run in place
+    c.note(d, "or keep the state outside the closure: return the new value from it and assign it here, or use a `for` loop or `fold`")
     return
   }
   let kind = match c.objs[v].local {

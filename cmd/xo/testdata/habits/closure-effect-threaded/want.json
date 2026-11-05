@@ -1,0 +1,54 @@
+[
+  {
+    "code": "XO0701",
+    "severity": "error",
+    "message": "the closure declares `uses clock`, but performs `Request.fx`",
+    "span": {
+      "file": "main.xo",
+      "line": 7,
+      "col": 11,
+      "end_line": 7,
+      "end_col": 49
+    },
+    "notes": [
+      {
+        "message": "`Request.fx` is the effect argument left out of `Request` here; an omitted effect argument stays an abstract effect variable of the function (core 6.2), as Rust and TypeScript generics would infer it, so a `uses` list cannot name it: write the effect argument, `Request[..., net.dial]` naming the effects of the value passed in, or let the closure's effects be inferred",
+        "span": {
+          "file": "main.xo",
+          "line": 6,
+          "col": 18
+        }
+      },
+      {
+        "message": "to pass the caller's effects through, name the effect parameter and list it: `fn f[fx: Effects](x: Request[fx]) uses (..., fx)`, with `fx` in the closure's `uses` too (decision 0522)"
+      },
+      {
+        "message": "`function value` uses `Request.fx` here",
+        "span": {
+          "file": "main.xo",
+          "line": 7,
+          "col": 36,
+          "end_line": 7,
+          "end_col": 47
+        }
+      }
+    ],
+    "fixes": [
+      {
+        "title": "remove the closure's `uses` clause so its effects are inferred",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 7,
+              "col": 22,
+              "end_line": 7,
+              "end_col": 33
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,17 @@
+// decision 0522: ? in a closure whose error type differs
+enum E { A }
+enum F { B }
+
+fn inner() -> Int ! F { Err(F.B) }
+
+fn outer() -> Int ! E {
+  let g = fn() -> Int ! E { inner()? }
+  g()
+}
+
+fn main(os: Os) {
+  match outer() {
+    Ok(v) => os.stdio.println("${v}")
+    Err(_) => os.stdio.println("failed")
+  }
+}

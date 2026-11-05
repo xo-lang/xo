@@ -119,3 +119,13 @@ since two of them turned out to work already in the form first described.
   scratchpad q205/main.xo, forms a to e).
 - aws-19's report of 2026-11-05 (xo 842bf3f5c) and docs/reports/xo-feedback.md
   in the aws repository (2026-11-04: upload_file, pager, credential_process).
+
+## Implementation (2026-11-05)
+
+Points 2 to 4 landed together (Xo Lang 1): the five notes (XO0701 elided
+effect argument, both XO0702s, XO0202, XO0401 on map, XO0502) with habits
+goldens, and the guide knowledgebase/guides/effectful-closures.md. Writing
+the guide's example found that the threaded form itself failed the native
+backends (XO1201 "converting `Request[env]` to `Request[fx]`"): lowered
+type names carried effect arguments. They no longer do (compiler/ssa
+build.xo has_effects, type_text); golden effect_threaded.

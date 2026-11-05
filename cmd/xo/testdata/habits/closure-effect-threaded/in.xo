@@ -1,0 +1,14 @@
+// decision 0522: a closure declares its effects, the stored closure's are the elided Request.fx
+pub struct Request[fx: Effects] {
+  pub run: fn() -> Int uses fx
+}
+
+pub fn send(req: Request) -> Int uses clock {
+  let f = fn() -> Int uses clock { (req.run)() }
+  f()
+}
+
+fn main(os: Os) {
+  let r = Request{run: fn() -> Int { 1 }}
+  os.stdio.println("${send(r)}")
+}

@@ -18,6 +18,9 @@
           "line": 9,
           "col": 16
         }
+      },
+      {
+        "message": "to pass the caller's effects through, name the effect parameter and list it: `fn f[fx: Effects](x: Cache[fx]) uses (..., fx)`, with `fx` in the closure's `uses` too (decision 0522)"
       }
     ],
     "fixes": [

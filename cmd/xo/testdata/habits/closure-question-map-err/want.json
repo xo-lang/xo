@@ -1,0 +1,31 @@
+[
+  {
+    "code": "XO0202",
+    "severity": "error",
+    "message": "`?` propagates `F`, which does not convert to `E`, the error type of `closure`",
+    "span": {
+      "file": "main.xo",
+      "line": 8,
+      "col": 29,
+      "end_line": 8,
+      "end_col": 37
+    },
+    "notes": [
+      {
+        "message": "an error converts when it is the same type, when the target is `Error` and it implements `Display`, or when the target enum has a `from F` variant (core 2.6)"
+      },
+      {
+        "message": "or convert it where it fails: `.map_err(fn(e: F) -\u003e E { ... })?` (core 2.6)"
+      },
+      {
+        "message": "add a variant such as `F(from F)` to `E`",
+        "span": {
+          "file": "main.xo",
+          "line": 2,
+          "col": 6
+        }
+      }
+    ],
+    "fixes": []
+  }
+]

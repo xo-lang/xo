@@ -1,0 +1,7 @@
+// decision 0522: map over a closure that can fail
+fn parse(s: Str) -> Int ! Str { Ok(s.len()) }
+
+fn main(os: Os) {
+  let xs: List[Int] = ["a", "bb"].map(fn(s: Str) -> Int ! Str { parse(s) })
+  os.stdio.println("${xs.len()}")
+}

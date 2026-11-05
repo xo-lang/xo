@@ -900,9 +900,16 @@ fn (var c: Checker) resolve_effects(effs: List[parser.Effect], env: TypeEnv) -> 
       let s = nearest(name, cands.sort())
       if !s.is_empty() {
         c.note(d, "did you mean `${s.join("`, `")}`?")
-        c.fix(d, "replace with `${s[0]}`", [c.replace_edit(e.span, s[0])])
+        // a two letter name one edit from an effect (`gx`, `go`) is as
+        // likely an undeclared effect variable: no machine fix
+        if name.len() > 2 {
+          c.fix(d, "replace with `${s[0]}`", [c.replace_edit(e.span, s[0])])
+        }
       } else {
         c.note(d, "effects are net, net.dial, net.listen, fs, fs.read, fs.write, clock, rand, env, proc, stdio, ffi, log, go, or an effect variable declared as `fx: Effects` (core 6.1, 6.2)")
+      }
+      if e.sub == None && is_snake(e.name.name) {
+        c.note(d, "if `${name}` is an effect variable, declare it on the function, after its name: `[${name}: Effects]` (core 6.2, decision 0522)")
       }
     }
   }
@@ -1290,7 +1297,10 @@ fn (var c: Checker) effect_arg(a: Type, var env: TypeEnv, var items: List[EffIte
             return
           }
         }
-        c.error("XO0702", span, "unknown effect `${name}` in an effect argument")
+        let d = c.error("XO0702", span, "unknown effect `${name}` in an effect argument")
+        if d >= 0 && path.len() == 1 && is_snake(path[0].name) {
+          c.note(d, "to take the effects of the value passed in, declare `${name}` on the function, after its name: `fn f[${name}: Effects](x: T[${name}]) uses (..., ${name})` (core 6.2, decision 0522)")
+        }
         return
       }
     }

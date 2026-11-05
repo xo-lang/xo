@@ -1,0 +1,41 @@
+[
+  {
+    "code": "XO0702",
+    "severity": "error",
+    "message": "unknown effect `gx` in an effect argument",
+    "span": {
+      "file": "main.xo",
+      "line": 8,
+      "col": 28,
+      "end_line": 8,
+      "end_col": 30
+    },
+    "notes": [
+      {
+        "message": "to take the effects of the value passed in, declare `gx` on the function, after its name: `fn f[gx: Effects](x: T[gx]) uses (..., gx)` (core 6.2, decision 0522)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0702",
+    "severity": "error",
+    "message": "unknown effect `gx`",
+    "span": {
+      "file": "main.xo",
+      "line": 8,
+      "col": 45,
+      "end_line": 8,
+      "end_col": 47
+    },
+    "notes": [
+      {
+        "message": "did you mean `go`?"
+      },
+      {
+        "message": "if `gx` is an effect variable, declare it on the function, after its name: `[gx: Effects]` (core 6.2, decision 0522)"
+      }
+    ],
+    "fixes": []
+  }
+]

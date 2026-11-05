@@ -1,0 +1,23 @@
+[
+  {
+    "code": "XO0401",
+    "severity": "error",
+    "message": "expected `List[Int]`, found `Result[List[Int], Str]`",
+    "span": {
+      "file": "main.xo",
+      "line": 5,
+      "col": 23,
+      "end_line": 5,
+      "end_col": 76
+    },
+    "notes": [
+      {
+        "message": "the value is a `Result`; propagate the error with `?` or handle it with `match`"
+      },
+      {
+        "message": "`map` with a closure that can fail stops at the first error and returns a `Result` of the whole list: add `?` to propagate it (core 2.6)"
+      }
+    ],
+    "fixes": []
+  }
+]

@@ -1,0 +1,9 @@
+// decision 0522: a closure mutating a captured var
+fn main(os: Os) {
+  var n = 0
+  let ys = [1, 2, 3].map(fn(x: Int) -> Int {
+    n += x
+    x
+  })
+  os.stdio.println("${n} ${ys.len()}")
+}

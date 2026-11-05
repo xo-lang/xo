@@ -1991,10 +1991,35 @@ const RT_HANDLE_NAMES = ["Scope", "Select", "Listener", "Conn"]
 
 /// The name a lowered named type is interned under (typeName).
 fn (var b: Builder) type_name(t: Int) -> Str {
-  if b.ambiguous.is_empty() {
+  if b.ambiguous.is_empty() && !b.has_effects(t, 0) {
     return b.c.show(t)
   }
   b.type_text(t)
+}
+
+/// Whether t names an effect: an effect argument, or a function type's
+/// `uses`. Effects have no run time form, so the lowered name leaves them
+/// out (type_text): `Request[env]` and `Request[fx]` are one type, and a
+/// value passed to a function taking `Request[fx]` needs no conversion
+/// (decision 0522's threaded form was XO1201 "converting `Request[env]`
+/// to `Request[fx]`").
+fn (b: Builder) has_effects(t0: Int, depth: Int) -> Bool {
+  if t0 < 0 || depth > 64 {
+    return false
+  }
+  let t = b.c.resolve(t0)
+  let x = b.c.tys[t]
+  match x.kind {
+    EffArg => true
+    Func => {
+      if x.eff >= 0 && !b.c.eff_text(x.eff).is_empty() {
+        return true
+      }
+      x.args.any(fn(a) { b.has_effects(a, depth + 1) }) || b.has_effects(x.result, depth + 1) || b.has_effects(x.err, depth + 1)
+    }
+    Named | Tuple => x.args.any(fn(a) { b.has_effects(a, depth + 1) })
+    _ => false
+  }
 }
 
 fn (var b: Builder) type_text(t0: Int) -> Str {
@@ -2021,7 +2046,13 @@ fn (var b: Builder) type_text(t0: Int) -> Str {
       }
       var args: List[Str] = []
       for a in x.args {
-        args.push(b.type_text(a))
+        // effect arguments have no run time form (has_effects)
+        if b.c.tys[b.c.resolve(a)].kind != check.TyKind.EffArg {
+          args.push(b.type_text(a))
+        }
+      }
+      if args.is_empty() {
+        return name
       }
       return "${name}[${args.join(", ")}]"
     }
@@ -2057,10 +2088,7 @@ fn (var b: Builder) type_text(t0: Int) -> Str {
       if x.err >= 0 && !b.c.is_never(x.err) {
         s = s + " ! " + b.type_text(x.err)
       }
-      let fx = b.c.eff_text(x.eff)
-      if !fx.is_empty() {
-        s = if fx.contains(",") { s + " uses (" + fx + ")" } else { s + " uses " + fx }
-      }
+      // no `uses`: effects have no run time form (has_effects)
       return s
     }
     _ => {}

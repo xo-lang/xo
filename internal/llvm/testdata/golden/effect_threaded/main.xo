@@ -1,0 +1,46 @@
+// decision 0522: the threaded form builds natively; a request carrying a closure with the caller's effects
+pub struct Request[fx: Effects] {
+  pub name: Str
+  pub sign: fn(Str) -> Str uses fx
+}
+
+// the threaded form: send names the request's effects and performs them
+pub fn send[fx: Effects](req: Request[fx]) -> Str uses (clock, fx) {
+  let attempt = fn() -> Str uses (clock, fx) { (req.sign)(req.name) }
+  attempt()
+}
+
+// an interface with an effect parameter: implementations may perform fx
+pub interface Provider[fx: Effects] {
+  fn token(self) -> Str uses fx
+}
+
+pub struct Fixed {
+  pub value: Str
+}
+
+fn (p: Fixed) token() -> Str { p.value }
+
+pub struct FromEnv {
+  pub key: Str
+  pub env: Env
+}
+
+fn (p: FromEnv) token() -> Str uses env { p.env.get(p.key) ?? "" }
+
+pub fn first_token[fx: Effects](ps: List[Provider[fx]]) -> Str uses fx {
+  for p in ps {
+    let t = p.token()
+    if !t.is_empty() {
+      return t
+    }
+  }
+  ""
+}
+
+fn main(os: Os) {
+  let req = Request{name: "a", sign: fn(s: Str) -> Str uses env { "${s}:${os.env.get("XO_GOLDEN_UNSET_VAR") ?? ""}" }}
+  os.stdio.println(send(req))
+  let ps: List[Provider[env]] = [FromEnv{key: "XO_GUIDE_UNSET", env: os.env}, Fixed{value: "fixed"}]
+  os.stdio.println(first_token(ps))
+}

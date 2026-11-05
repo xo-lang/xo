@@ -153,6 +153,13 @@ fn (var c: Checker) elided_effect_note(d: Int, sub: Flat, sup: Flat, ob: EffOb) 
       tn = text(tn.bytes()[0..i])
     }
     c.diags[d].notes.push(DNote{message: "`${text(o.name)}` is the effect argument left out of `${from.text}` here; an omitted effect argument stays an abstract effect variable of the function (core 6.2), as Rust and TypeScript generics would infer it, so a `uses` list cannot name it: write the effect argument, `${tn}[..., net.dial]` naming the effects of the value passed in, or let the closure's effects be inferred", span: Some(JSpan{file: from.file, line: from.at.start.line, col: from.at.start.col})})
+    // the threaded form (decision 0522): name the effect so the function
+    // and the closure can list it
+    var fx = text(o.name)
+    if let Some(i) = fx.rfind(".") {
+      fx = text(fx.bytes()[i + 1..])
+    }
+    c.note(d, "to pass the caller's effects through, name the effect parameter and list it: `fn f[${fx}: Effects](x: ${tn}[${fx}]) uses (..., ${fx})`, with `${fx}` in the closure's `uses` too (decision 0522)")
     if !ob.uses_file.is_empty() {
       c.fix(d, "remove the closure's `uses` clause so its effects are inferred", [DEdit{span: JSpan{file: ob.uses_file, line: ob.uses_clause.start.line, col: ob.uses_clause.start.col, end_line: ob.uses_clause.end.line, end_col: ob.uses_clause.end.col}, replace: ""}])
     }

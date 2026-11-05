@@ -1,0 +1,15 @@
+// decision 0522: an undeclared effect variable in a method's parameter type
+struct Box[fx: Effects] {
+  f: fn() -> Int uses fx
+}
+
+struct Client {}
+
+fn (c: Client) call(b: Box[gx]) -> Int uses gx {
+  (b.f)()
+}
+
+fn main(os: Os) {
+  let c = Client{}
+  os.stdio.println("${c.call(Box{f: fn() -> Int { 2 }})}")
+}
