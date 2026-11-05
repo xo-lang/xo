@@ -1,6 +1,6 @@
 # 0510: std/jpeg encode, a port of Go's image/jpeg writer
 
-Status: Proposed
+Status: Accepted (owner, 2026-11-05)
 
 ## Context
 

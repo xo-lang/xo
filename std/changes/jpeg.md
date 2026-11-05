@@ -1,5 +1,14 @@
 # std/jpeg changes
 
+## 2026-11-05: perf: encode skips the quantizer for coefficients that round to zero
+
+- Kind: perf
+- Commit: this commit
+- Found by: CPU profile of the encode row (`enc_block` 55%)
+- Test: testdata/corpus/jpegenc, `TestJpegEncFuzz` (unchanged output), bench/perf/jpeg `encode` and `encrgba` (twincheck)
+
+`jpeg.encode` compares each coefficient with half its divisor first (`abs(a) < d - d/2` rounds to 0, exact) and only divides the rest; the Huffman code and its value bits go out in one emit, and a column index table per MCU replaces a min per pixel. Output is unchanged. bench/perf/jpeg on linux/arm64: encode 1.29 to 0.83 of Go's wall, encrgba 1.37 to 0.90 (bench/results/jpeg-encode-2026-11-05.md).
+
 ## 2026-11-05: feature: jpeg.encode, Go's image/jpeg Encode byte for byte
 
 - Kind: feature

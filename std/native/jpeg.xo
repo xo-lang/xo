@@ -2548,9 +2548,12 @@ fn enc_huff_rle(var e: Enc, lut: List[Int], run: Int, value: Int) {
   } else {
     nbits = 8 + ENC_BITCOUNT[a >> 8]
   }
-  enc_huff(e, lut, (run << 4) | nbits)
+  let x = lut[(run << 4) | nbits]
+  let cs = x >> 24
   if nbits > 0 {
-    enc_emit(e, b & ((1 << nbits) - 1), nbits)
+    enc_emit(e, ((x & 16777215) << nbits) | (b & ((1 << nbits) - 1)), cs + nbits)
+  } else {
+    enc_emit(e, x & 16777215, cs)
   }
 }
 
@@ -2566,11 +2569,12 @@ fn enc_div(a: Int, d: Int, m: Int) -> Int {
 
 /// The divisors 8 * quant and their multipliers for enc_div.
 fn enc_divs(quant: List[Int]) -> List[Int] {
-  var out = zlist(128)
+  var out = zlist(192)
   for j in 0..64 {
     let d = 8 * quant[j]
     out[j] = d
     out[64 + j] = (2147483648 + d - 1) / d
+    out[128 + j] = d - (d >> 1)
   }
   out
 }
@@ -2715,10 +2719,12 @@ fn enc_block(var e: Enc, var b: List[Int], off: Int, dv: List[Int], dc_lut: List
   enc_huff_rle(e, dc_lut, 0, dc - prev_dc)
   var run = 0
   for zig in 1..64 {
-    let ac = enc_div(b[off + UNZIG[zig]], dv[zig], dv[64 + zig])
-    if ac == 0 {
+    let a = b[off + UNZIG[zig]]
+    let th = dv[128 + zig]
+    if a < th && a > -th {
       run += 1
     } else {
+      let ac = enc_div(a, dv[zig], dv[64 + zig])
       while run > 15 {
         enc_huff(e, ac_lut, 240)
         run -= 16
@@ -2923,6 +2929,7 @@ fn encode(img: jpeg.Image, quality: Int) -> Bytes ! jpeg.JpegErr {
   let pxs = img.pix
   var b = zlist(64)
   var cbs = zlist(256)
+  var xi = zlist(16)
   var crs = zlist(256)
   var prev_y = 0
   var prev_cb = 0
@@ -2948,13 +2955,16 @@ fn encode(img: jpeg.Image, quality: Int) -> Bytes ! jpeg.JpegErr {
     while y < h {
       var x = 0
       while x < w {
+        for i in 0..16 {
+          xi[i] = min2(x + i, xmax)
+        }
         for blk in 0..4 {
-          let px = x + (blk & 1) * 8
+          let xo = (blk & 1) * 8
           let py = y + ((blk & 2) * 4)
           for j in 0..8 {
             let syy = min2(py + j, ymax)
             for i in 0..8 {
-              let sxx = min2(px + i, xmax)
+              let sxx = xi[xo + i]
               var yv = 0
               var cbv = 0
               var crv = 0
