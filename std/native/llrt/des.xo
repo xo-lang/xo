@@ -26,22 +26,24 @@ fn permute_block(src: UInt64, table: List[Int]) -> UInt64 {
   block
 }
 
-/// feistelBox[s][t]: Go's initFeistelBox.
+/// feistelBox[s][t]: Go's initFeistelBox. The permuted output depends only on the 4 bit S-box
+/// value, so each of the 8 * 16 is permuted once.
 fn feistel_box() -> List[Int] {
   var box: List[Int] = []
   for _ in 0..512 {
     box.push(0)
   }
   for s in 0..8 {
+    var perm: List[Int] = []
+    for v in 0..16 {
+      let f = Int(permute_block(UInt64(v << (4 * (7 - s))), PERM))
+      perm.push(((f << 1) | (f >> 31)) & M32)
+    }
     for i in 0..4 {
       for j in 0..16 {
-        var f = SBOX[s * 64 + i * 16 + j] << (4 * (7 - s))
-        f = Int(permute_block(UInt64(f), PERM))
         let row = ((i & 2) << 4) | (i & 1)
         let col = j << 1
-        let t = row | col
-        f = ((f << 1) | (f >> 31)) & M32
-        box[s * 64 + t] = f
+        box[s * 64 + (row | col)] = perm[SBOX[s * 64 + i * 16 + j]]
       }
     }
   }
