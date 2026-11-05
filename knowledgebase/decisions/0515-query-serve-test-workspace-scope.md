@@ -76,6 +76,18 @@ and the next requests answered (below).
 
 ## Consequences
 
+- **Behavior changes the owner should weigh.** (1) A short name that is
+  ambiguous across the whole workspace but not within the loaded
+  packages now answers instead of failing: in aws, `xo query callers
+  s3.new --dir=service/s3` used to exit 1 ("ambiguous:
+  github.com/xo-lang/aws/service/s3.new,
+  github.com/xo-lang/aws/internal/protocoltest/s3.new") and now lists
+  service/s3's callers, the module `--dir` names. A name ambiguous
+  within the loaded packages is still an error. The same holds for the
+  point queries, which load the `--dir`'s closure. (2) `xo def`, `xo
+  doc` and `xo query def` list several declarations in file and
+  position order; the old order was the checker's module load order.
+  Both are visible to agents' scripts that parse the output.
 - Point queries in a large workspace cost what the asked module costs:
   `xo query type` on s3 should land near `xo type`'s 333 MB.
 - The answer of a point query cannot change. A reverse query's answer
