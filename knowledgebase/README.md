@@ -17,6 +17,8 @@ line per entry.
 
 [positioning.md](positioning.md): why Xo, its measured advantages over and alongside Go, honest costs, and precedents for languages on Go and self-hosting.
 
+[ai-and-ml.md](ai-and-ml.md): what it would take for Xo to replace Python for AI and ML (arrays, GPU, autodiff on effect-checked pure functions, interop, a REPL), and where Xo fits first: inference serving, backends whose effects show what touches the network or disk, and code AI writes (the owner's Q&A, 2026-11-05; exploration, nothing decided).
+
 [wasm-and-jit.md](wasm-and-jit.md): WebAssembly runtimes (V8, wasmtime, wazero), AOT and JIT, and why Xo targets WASI with no runtime of its own and no general JIT (the owner's Q&A, 2026-10-30).
 
 The language itself is specified in [../spec/core.md](../spec/core.md). The
