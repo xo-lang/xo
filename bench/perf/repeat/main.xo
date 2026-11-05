@@ -1,0 +1,24 @@
+// Str.repeat and Bytes.repeat against Go's strings.Repeat and
+// bytes.Repeat (go/): `byte1` repeats a one byte pattern to 160 MiB,
+// `byte3` a three byte one to 150 MB, `byte100` a 100 byte one to 160 MB,
+// each as a Str and as a Bytes, 10 times; `none` stops. Usage:
+// `<program> none|byte1|byte3|byte100`. Prints `<workload> <checksum>`
+// (the bytes made and the last byte's value); the twin prints the same.
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "none"
+  let (p, k) = match w {
+    "byte1" => ("x", 160 << 20)
+    "byte3" => ("xyz", 50000000)
+    "byte100" => ("p".repeat(99) + "q", 1600000)
+    _ => ("", 0)
+  }
+  var sum = 0
+  if k > 0 {
+    for _ in 0..10 {
+      let s = p.repeat(k)
+      let b = p.bytes().repeat(k)
+      sum += s.len() + b.len() + Int(b[b.len() - 1])
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

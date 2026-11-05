@@ -62,6 +62,18 @@ socket take no such flags.
 
 `seconds()` was the nanoseconds over 1e9 as one division (the SSA lowering and the Go backend's `float64(d) / 1e9`); for some durations past one second that rounds differently from Go's whole seconds plus the rest over 1e9 in the last bit. Every backend now computes Go's formula; a port that calls `seconds()` where Go calls `Seconds()` agrees with Go to the bit.
 
+## 2026-11-04: perf: Str.repeat and Bytes.repeat fill as Go's Repeat
+
+- Kind: perf
+- Commit: this push
+- Found by: the mem_trim probe of the untested-features run (decision 0505): re-allocating 160 MB of blocks took 340 ms against Go's 8, all of it in `b"x".repeat(n)`
+- Go reference: strings.Repeat and bytes.Repeat (one copy, then the filled prefix copied after itself, in chunks of at most 8 KiB rounded to whole copies)
+- Test: golden repeat_fill (every backend); twin bench/perf/repeat
+- Timing: linux/arm64 host 2, best of 5: one byte pattern to 160 MiB 354 ms to 4.0 (Go 3.0), three bytes to 150 MB 113 to 4.1 (Go 2.5), 100 bytes to 160 MB 3.8 to 4.2 (Go 3.3); `xo bench --ab` byte1 B/A 0.012 (0.012 to 0.014), byte100 within noise
+- Shipped in: not yet released
+
+The native `str_repeat` and `bytes_repeat` (llrt/raw.xo) made one `mem_copy` per repetition, so a short pattern cost a call per byte or three. They now share `fill_repeat`, Go's algorithm. The Go backend already called Go's.
+
 ## 2026-11-04: perf: eprintln writes the line and its newline in one write
 
 - Kind: perf

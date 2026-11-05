@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+109 cases, 0 differ
+ababababab cdcdcd 100000
+--- stderr

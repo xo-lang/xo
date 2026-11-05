@@ -1,0 +1,5 @@
+# twincheck: repeat: three workloads; Go is strings.Repeat and bytes.Repeat (go/).
+- - none
+- - byte1
+- - byte3
+- - byte100

@@ -1,0 +1,37 @@
+// Str.repeat and Bytes.repeat fill as Go's Repeat does (one copy, then
+// the filled prefix doubled in chunks of about 8 KiB): every pattern
+// length and count around the chunk sizes equals the copies appended one
+// by one.
+fn naive(s: Str, k: Int) -> Str {
+  var b = StrBuilder.new()
+  for _ in 0..k {
+    b.write(s)
+  }
+  b.freeze()
+}
+
+fn main(os: Os) {
+  let pats = ["a", "ab", "xyz", "0123456", "eé\u{1F600}", "p".repeat(4095) + "q", "r".repeat(8191) + "s", "t".repeat(8192), "u".repeat(8193)]
+  let counts = [0, 1, 2, 3, 7, 8, 1023, 1024, 1025, 4097, 8192, 8193, 70001]
+  var bad = 0
+  var cases = 0
+  for p in pats {
+    for k in counts {
+      if p.len() * k > 64 << 20 {
+        continue
+      }
+      cases += 1
+      let want = naive(p, k)
+      if p.repeat(k) != want {
+        bad += 1
+        os.stdio.println("Str ${p.len()} x ${k} differs")
+      }
+      if p.bytes().repeat(k) != want.bytes() {
+        bad += 1
+        os.stdio.println("Bytes ${p.len()} x ${k} differs")
+      }
+    }
+  }
+  os.stdio.println("${cases} cases, ${bad} differ")
+  os.stdio.println("${"ab".repeat(5)} ${b"cd".repeat(3).to_str() ?? ""} ${"x".repeat(100000).len()}")
+}

@@ -398,10 +398,7 @@ pub fn str_join(xs: List[Str], sep: Str) -> Str {
 pub fn str_repeat(s: Str, k: Int) -> Str {
   let n = s.len()
   let out = rt.rs_set_len(rt.rs_with_cap(n * k), n * k)
-  let d = data(out)
-  for i in 0..k {
-    rt.mem_copy(d + i * n, data(s), n)
-  }
+  fill_repeat(data(out), data(s), n, n * k)
   out
 }
 
@@ -410,12 +407,36 @@ pub fn str_repeat(s: Str, k: Int) -> Str {
 pub fn bytes_repeat(b: Bytes, k: Int) -> Bytes {
   let n = b.len()
   let out = bytes_buf(n * k)
-  let d = bytes_addr(out)
-  let src = bytes_addr(b)
-  for i in 0..k {
-    rt.mem_copy(d + i * n, src, n)
-  }
+  fill_repeat(bytes_addr(out), bytes_addr(b), n, n * k)
   out
+}
+
+/// Fills the total bytes at d with copies of the n at src as Go's
+/// strings.Repeat and bytes.Repeat do: one copy, then the filled prefix
+/// copied after itself, doubling up to chunks of about 8 KiB (a whole
+/// number of copies), which stay in the cache. A copy per repetition was
+/// 40 times Go's time for a one byte pattern (160 MB: 340 ms against 8).
+fn fill_repeat(d: Int, src: Int, n: Int, total: Int) {
+  rt.mem_copy(d, src, n)
+  var chunk_max = total
+  if total > 8192 {
+    chunk_max = 8192 / n * n
+    if chunk_max == 0 {
+      chunk_max = n
+    }
+  }
+  var filled = n
+  while filled < total {
+    var chunk = total - filled
+    if chunk > filled {
+      chunk = filled
+    }
+    if chunk > chunk_max {
+      chunk = chunk_max
+    }
+    rt.mem_copy(d + filled, d, chunk)
+    filled += chunk
+  }
 }
 
 /// s + the UTF-8 of r, U+FFFD when r is not a scalar value
