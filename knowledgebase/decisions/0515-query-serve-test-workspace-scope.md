@@ -106,14 +106,17 @@ and the next requests answered (below).
 1. Point 1 in load_session_pc, with the peak RSS test. This is the
    largest win: query type dies today.
 2. Point 5, on 0513's code once the owner accepts 0513.
-3. Points 2 and 3. `api`, `deps` and `imports` take a module argument
-   with `--dir` defaulting to `.`, so at the root they still load the
-   workspace (6.5 GB, decls only); they should default `--dir` to the
-   argument's directory.
+3. Points 2 and 3. `api`, `deps` and `imports` of a directory argument
+   now check that directory (done on the branch, below); a bare name
+   at the root (`def from_config`, 6.5 GB) is point 3's
+   declarations-only pass, still open.
 
 ## Point 1 measured (2026-11-05, branch lang1-qscope)
 
-Every query kind but `callers` goes through Checker.check_workspace_dirs
+`api`, `imports` and `deps` with no `--dir` check the argument's
+directory when it holds `.xo` files (before decision 0437's "not inside
+a module" guard, which then tests that directory). Every query kind but
+`callers` goes through Checker.check_workspace_dirs
 (0511's rule) when every asked directory holds `.xo` files of its own; a
 directory without them (a module or repository root, 0289) still walks
 the modules below it. XO_QUERY_WIDE=1 restores the old load. aws
@@ -125,11 +128,13 @@ the modules below it. XO_QUERY_WIDE=1 restores the old load. aws
 | `def from_config --dir=service/s3` | (whole workspace) | 99 MB, 0.08 s |
 | `effects s3.new --dir=service/s3` | (whole workspace) | 283 MB, 0.20 s |
 | `holes --dir=service/s3` | (whole workspace) | 282 MB, 0.20 s |
-| `api service/s3`, `deps service/s3`, `def from_config` at the root | | 6.5 GB, 8.9 s (unchanged: `--dir` is the root) |
+| `api service/s3`, `imports service/s3`, `deps service/s3` | 6.5 GB, 9.3 s | 99 MB, 0.09 s, byte-identical output (871 KB, 5 KB, 18 KB) |
+| `def from_config` at the root | 6.5 GB, 8.9 s | unchanged (point 3's pass, open) |
 | `type` through `xo serve` | fails, server lives | 286 ms; `check ./service/s3` 1.0 s, cached 2 ms |
 
-TestCheckWorkspaceSizeMemory now also measures `query type` in a 301
-module workspace: 36 MB against 36 MB for one module with the change,
+TestCheckWorkspaceSizeMemory now also measures `query type` and `query
+api` in a 301 module workspace: 36 MB against 35 MB and 30 MB against
+30 MB for one module with the change; `query type`
 1,792 MB without it (XO_QUERY_WIDE=1; the test fails). cmd/xo's
 workspace, TestModules and TestQuery tests pass, and
 TestCodegenInputsClassified.
