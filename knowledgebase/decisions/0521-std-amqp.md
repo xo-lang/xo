@@ -143,6 +143,13 @@ tests is go-amqp itself (the oracle), not a runtime dependency.
   native backends lack in a struct literal (XO1201; reported to Lang 1).
 - A connection that outlives its dial call and runs a reader task needs a `task.Group`; 2b-ii takes it as a
   parameter (`dial(net, tasks, addr, opts)`), as the structured concurrency rule (spec 7.1) requires.
+- Stage 2b-ii as built (2026-11-05): no separate reader task. A read loop that holds the connection lock
+  while it waits cannot be shared with a heartbeat task, so the deadlines live in the read loop itself
+  (`Conn.set_read_deadline`, decision 0430): `timeout_ms`, idle detection and empty-frame heartbeats are
+  done by whichever call is waiting, and `Connection.keepalive(task.Group)` starts the same loop in a task
+  (5 ms polls) for idle periods. `dial` keeps its signature; the clock comes in `ConnOptions.clock`, and every
+  call is `uses (net.dial, clock)`. A truly concurrent reader (waiting without the lock) needs a lock free
+  transport read and is not built. The timeout tests run with `xo test --real` (the test clock is virtual).
 - Stages 3 and 4 as built (2026-11-05): links and CBS follow the synchronous model of 2b-i. `Sender` and `Receiver`
   are handles over the connection (all state lives in `ConnState`, one Mutex), and every blocking call pumps the shared
   read loop, so a background reader task is not needed for correctness, only for concurrent use of the connection from

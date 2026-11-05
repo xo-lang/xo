@@ -7496,7 +7496,7 @@ fn (c: Connection) abort()
   `end_session` read until their reply and queue frames for other channels. A peer Close or End with an error is
   `Peer(error)`; a frame past `max_frame_size` or out of turn is `Protocol`, a transport failure is `Net`.
   `close` sends Close and waits for the peer's Close (a peer error in it is `Peer`).
-- A background reader, heartbeats and the session mux that lets several links share a connection are stage 2b-ii.
+- Timeouts and heartbeats (stage 2b-ii; they need `ConnOptions.clock`, and every call then also `uses clock`): `timeout_ms` bounds the wait for the peer's next bytes inside one call (`Net("i/o timeout")`, the connection stays usable); the Open advertises `idle_timeout_ms / 2`, the connection fails with `Net("idle timeout: ...")` when the peer sends nothing for `idle_timeout_ms`, and a call that waits sends an empty frame at half the peer's idle timeout. `c.keepalive(g)` spawns a task in the task group `g` that does the same while no call is running (and reads and applies arriving frames); it ends when `g` is cancelled or the connection closes, and a failure it finds is returned by later calls. The reader is the calling task's own read loop plus that keeper, not a separate reader per connection, so several tasks still take turns on the lock.
 
 ### 64.3 Messages (stage 2c)
 
@@ -7545,7 +7545,7 @@ fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
 
 - Links share the connection's single read loop: any call that waits (credit, window, an outcome, a delivery) reads frames
   and applies them to every session and link, so a sender and a receiver can be used from one task in turn. A background
-  reader and timeouts come with 2b-ii.
+  reader task is the optional keeper of 64.2.
 - `send` waits for link credit (the peer's Flow: delivery-count + link-credit - ours) and the session's remote incoming
   window, splits the message into transfer frames no larger than the peer's `max_frame_size` (the delivery id and tag only
   on the first, `more` on all but the last), counts the window per frame, and returns the peer's terminal outcome

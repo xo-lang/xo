@@ -47,3 +47,14 @@
 - Shipped in: not yet released
 
 `Connection.new_sender` and `new_receiver`, `Sender.send` (credit, session window, fragmentation, outcome), `Receiver.receive`, `accept`, `reject`, `release`, `modify`, `close`, and `amqp.cbs_put_token` (spec/std.md 64.4, 64.5). Driven by one task; the real namespace smoke test is run by the owner only (decision 0521).
+
+## 2026-11-05: feature: std/amqp stage 2b-ii, timeouts and heartbeats
+
+- Kind: feature (port)
+- Commit: this push
+- Found by: the Azure SDK's Service Bus and Event Hubs needs (decision 0521)
+- Go reference: github.com/Azure/go-amqp v1.7.0 conn.go (idle timeout, keepalive), MIT
+- Test: std/native/amqp_test.xo (three `uses (net, clock)` tests, run with `xo test --real`)
+- Shipped in: not yet released
+
+`ConnOptions.clock` and `timeout_ms`, `Connection.keepalive(group)`: i/o timeouts, empty-frame heartbeats at half the peer's idle timeout, and a failure when the peer is silent for `idle_timeout_ms`. All `amqp` calls that block now declare `uses (net.dial, clock)` (spec/std.md 64.2).

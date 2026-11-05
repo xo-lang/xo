@@ -3,6 +3,7 @@
 // Declaration file. Stage 1: the type system and its encoding (go-amqp's
 // internal/encoding); the connection, sessions and links follow in stages 2
 // and 3 and the CBS helper in stage 4.
+use std/task
 use std/tls
 
 /// An AMQP 1.0 value (section 1.6 of the specification): the primitive
@@ -312,6 +313,10 @@ struct ConnOptions {
   /// amqps only: the trusted roots (None: the system's) and the verification
   tls_roots: tls.Roots? = None
   tls_verify: tls.Verify = tls.Verify.Full
+  /// the clock timeouts and heartbeats run on (None: neither is used)
+  clock: Clock? = None
+  /// the longest wait for the peer's next bytes during a call, in milliseconds, 0 for none (needs `clock`)
+  timeout_ms: Int = 0
 }
 
 /// The transport, plain or TLS (as std/smtp's Link).
@@ -338,6 +343,14 @@ struct ConnState {
   /// frames read while waiting for another and not yet returned by recv
   pending: List[Frame] = []
   closed: Bool = false
+  /// timeouts and heartbeats (see ConnOptions); the times are Unix milliseconds
+  clock: Clock? = None
+  timeout_ms: Int = 0
+  idle_timeout_ms: Int = 0
+  last_recv_ms: Int = 0
+  last_send_ms: Int = 0
+  /// set by the keeper when the connection failed in the background; later calls return it
+  broken: AmqpErr? = None
   /// begun sessions and attached links (stage 3), by channel and by link id
   sess: List[SessState] = []
   links: List[LinkState] = []
@@ -358,20 +371,26 @@ fn (c: Connection) peer_channel_max() -> Int
 fn (c: Connection) peer_idle_timeout_ms() -> Int
 /// The peer's Open properties.
 fn (c: Connection) peer_properties() -> List[(Str, Value)]
+/// Starts a task in `g` that keeps the connection alive while no call is running: it sends an
+/// empty frame at half the peer's idle timeout, reads and applies frames that arrive, and fails
+/// the connection (later calls return the error) when the peer is silent for `idle_timeout_ms`.
+/// It needs `ConnOptions.clock` and ends when `g` is cancelled or the connection is closed.
+/// Calls that are running do the same work themselves while they wait.
+fn (c: Connection) keepalive(g: task.Group) -> () ! AmqpErr uses (net.dial, clock)
 
 /// Connects to `addr` (`host:port`, `amqp://host[:port]` or `amqps://host[:port]`; ports default
 /// to 5672 and 5671; amqps runs TLS first), runs the SASL exchange when `opts.sasl` is not `None`,
 /// and exchanges the Open frames.
-fn dial(net: Net, addr: Str, opts: ConnOptions = ConnOptions{}) -> Connection ! AmqpErr uses net.dial
+fn dial(net: Net, addr: Str, opts: ConnOptions = ConnOptions{}) -> Connection ! AmqpErr uses (net.dial, clock)
 
 /// Writes one frame, as `encode_frame`'s bytes.
-fn (c: Connection) send(f: Frame) -> () ! AmqpErr uses net.dial
+fn (c: Connection) send(f: Frame) -> () ! AmqpErr uses (net.dial, clock)
 
 /// The next frame from the peer (an empty frame is returned as `FrameBody.Empty`).
-fn (c: Connection) recv() -> Frame ! AmqpErr uses net.dial
+fn (c: Connection) recv() -> Frame ! AmqpErr uses (net.dial, clock)
 
 /// Sends Close and waits for the peer's Close; a Close carrying an error is `Peer`.
-fn (c: Connection) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
+fn (c: Connection) close(error: WireError? = None) -> () ! AmqpErr uses (net.dial, clock)
 
 /// Drops the transport without the Close exchange.
 fn (c: Connection) abort()
@@ -397,11 +416,11 @@ struct Session {
 }
 
 /// Begins a session on the lowest free channel and waits for the peer's Begin.
-fn (c: Connection) begin(opts: SessionOptions = SessionOptions{}) -> Session ! AmqpErr uses net.dial
+fn (c: Connection) begin(opts: SessionOptions = SessionOptions{}) -> Session ! AmqpErr uses (net.dial, clock)
 
 /// Ends the session (End, then the peer's End); frames for other channels read while waiting
 /// stay queued for recv.
-fn (c: Connection) end_session(s: Session, error: WireError? = None) -> () ! AmqpErr uses net.dial
+fn (c: Connection) end_session(s: Session, error: WireError? = None) -> () ! AmqpErr uses (net.dial, clock)
 
 // ---------------------------------------------------------------------------
 // Stage 2c: messages (section 3.2 of the specification; go-amqp's message.go)
@@ -572,30 +591,30 @@ struct Receiver {
 
 /// Attaches a sending link on session `s` to `target` and waits for the peer's Attach. A peer that
 /// refuses the link answers with a Detach carrying an error, which is `Peer`.
-fn (c: Connection) new_sender(s: Session, target: Str, opts: SenderOptions = SenderOptions{}) -> Sender ! AmqpErr uses net.dial
+fn (c: Connection) new_sender(s: Session, target: Str, opts: SenderOptions = SenderOptions{}) -> Sender ! AmqpErr uses (net.dial, clock)
 
 /// Attaches a receiving link on session `s` from `source` and grants the initial credit.
-fn (c: Connection) new_receiver(s: Session, source: Str, opts: ReceiverOptions = ReceiverOptions{}) -> Receiver ! AmqpErr uses net.dial
+fn (c: Connection) new_receiver(s: Session, source: Str, opts: ReceiverOptions = ReceiverOptions{}) -> Receiver ! AmqpErr uses (net.dial, clock)
 
 /// Sends the message and returns the peer's outcome for it (`Accepted`, `Rejected`, ...), waiting for
 /// link credit, session window and the settlement. With `settled` true the transfer is sent
 /// pre-settled and the result is `None` right away.
-fn (x: Sender) send(m: Message, settled: Bool = false) -> DeliveryState? ! AmqpErr uses net.dial
+fn (x: Sender) send(m: Message, settled: Bool = false) -> DeliveryState? ! AmqpErr uses (net.dial, clock)
 
 /// Detaches the link (with `closed` set) and waits for the peer's Detach.
-fn (x: Sender) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
+fn (x: Sender) close(error: WireError? = None) -> () ! AmqpErr uses (net.dial, clock)
 
 /// The next complete message, topping up credit as needed.
-fn (r: Receiver) receive() -> Delivery ! AmqpErr uses net.dial
+fn (r: Receiver) receive() -> Delivery ! AmqpErr uses (net.dial, clock)
 
 /// Settles the delivery with the outcome.
-fn (r: Receiver) accept(d: Delivery) -> () ! AmqpErr uses net.dial
-fn (r: Receiver) reject(d: Delivery, error: WireError? = None) -> () ! AmqpErr uses net.dial
-fn (r: Receiver) release(d: Delivery) -> () ! AmqpErr uses net.dial
-fn (r: Receiver) modify(d: Delivery, delivery_failed: Bool = true, undeliverable_here: Bool = false) -> () ! AmqpErr uses net.dial
+fn (r: Receiver) accept(d: Delivery) -> () ! AmqpErr uses (net.dial, clock)
+fn (r: Receiver) reject(d: Delivery, error: WireError? = None) -> () ! AmqpErr uses (net.dial, clock)
+fn (r: Receiver) release(d: Delivery) -> () ! AmqpErr uses (net.dial, clock)
+fn (r: Receiver) modify(d: Delivery, delivery_failed: Bool = true, undeliverable_here: Bool = false) -> () ! AmqpErr uses (net.dial, clock)
 
 /// Detaches the link (with `closed` set) and waits for the peer's Detach.
-fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
+fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses (net.dial, clock)
 
 // ---------------------------------------------------------------------------
 // Stage 4: claims based security (Azure's put-token on the `$cbs` node)
@@ -605,4 +624,4 @@ fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
 /// `servicebus.windows.net:sastoken` for a SAS token and `jwt` for an Entra ID one. A status code
 /// outside 200 to 299 is `Peer` with the condition `amqp:unauthorized-access` and the description the
 /// server gave. `expiry_ms` (milliseconds since the Unix epoch) is sent as `expiration` when not 0.
-fn cbs_put_token(c: Connection, s: Session, audience: Str, token: Str, token_type: Str = "servicebus.windows.net:sastoken", expiry_ms: Int = 0) -> () ! AmqpErr uses net.dial
+fn cbs_put_token(c: Connection, s: Session, audience: Str, token: Str, token_type: Str = "servicebus.windows.net:sastoken", expiry_ms: Int = 0) -> () ! AmqpErr uses (net.dial, clock)

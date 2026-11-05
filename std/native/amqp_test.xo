@@ -510,3 +510,147 @@ test "cbs put-token with a 401 is a Peer error" {
     c.close().or_fault("close")
   }
 }
+
+/// A peer for the timeout tests: opens (advertising `idle_ms`), then by `mode`: 0 counts empty
+/// frames until the Close and requires `want_beats` of them; 1 reads the Begin and stays silent;
+/// 2 stays silent without reading.
+/// Reads and drops everything until the client closes.
+fn peer_drain(sc: ServerConn) {
+  while true {
+    match sc.read(4096) {
+      Ok(Some(_)) => {}
+      _ => return
+    }
+  }
+}
+
+fn serve_quiet(l: Listener, mode: Int, idle_ms: Int, want_beats: Int) {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", b"")
+  let (_o, rest) = peer_frame(sc, buf)
+  buf = rest
+  peer_send(sc, 0, amqp.FrameBody.Open(v: amqp.Open{container_id: "quiet", max_frame_size: 1024, channel_max: 7, idle_timeout_ms: idle_ms}))
+  if mode == 2 {
+    peer_drain(sc)
+    return
+  }
+  var beats = 0
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    match f.body {
+      Empty => { beats += 1 }
+      Begin(_) => {
+        if mode == 1 {
+          peer_drain(sc)
+          return
+        }
+      }
+      Close(_) => {
+        if beats < want_beats { fault("peer saw ${beats} heartbeats, want ${want_beats}") }
+        peer_send(sc, 0, amqp.FrameBody.Close(v: amqp.Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+  }
+}
+
+test "a call that waits longer than timeout_ms fails with an i/o timeout" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_quiet(l, 1, 0, 0) })
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", clock: Some(os.clock), timeout_ms: 100}).or_fault("dial")
+    match c.begin() {
+      Ok(_) => fault("begin should time out")
+      Err(Net(m)) => expect(m) == "i/o timeout"
+      Err(_) => fault("wrong error")
+    }
+    c.abort()
+  }
+}
+
+test "the keeper sends empty frames at half the peer's idle timeout" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_quiet(l, 0, 200, 3) })
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", clock: Some(os.clock)}).or_fault("dial")
+    expect(c.peer_idle_timeout_ms()) == 200
+    c.keepalive(s.group()).or_fault("keepalive")
+    os.clock.sleep(550ms)
+    c.close().or_fault("close")
+  }
+}
+
+test "a silent peer fails the connection after idle_timeout_ms" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_quiet(l, 2, 0, 0) })
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", clock: Some(os.clock), idle_timeout_ms: 200}).or_fault("dial")
+    c.keepalive(s.group()).or_fault("keepalive")
+    os.clock.sleep(500ms)
+    match c.begin() {
+      Ok(_) => fault("begin should fail")
+      Err(Net(m)) => expect(m.starts_with("idle timeout")) == true
+      Err(_) => fault("wrong error")
+    }
+    c.abort()
+  }
+}
+
+// Interop test against a real AMQP 1.0 broker, opt-in: it runs only with `xo test --real` and
+// XO_AMQP_INTEROP_ADDR set (for example localhost:5672), and passes without doing anything otherwise.
+// It is not a gate. XO_AMQP_INTEROP_USER and _PASSWORD default to artemis / artemis, the login of
+// apache/activemq-artemis; knowledgebase/infrastructure/amqp-interop.md has the docker command.
+
+fn interop_opts(os_env: Env, clk: Clock) -> amqp.ConnOptions uses (env, clock) {
+  let user = os_env.get("XO_AMQP_INTEROP_USER") ?? "artemis"
+  let pass = os_env.get("XO_AMQP_INTEROP_PASSWORD") ?? "artemis"
+  amqp.ConnOptions{container_id: "xo-interop", clock: Some(clk), timeout_ms: 10000, idle_timeout_ms: 30000,
+    sasl: amqp.Sasl.Plain(user: user, password: pass)}
+}
+
+fn text(d: amqp.Delivery) -> Str {
+  match d.message.body {
+    Data(sections) => (sections[0]).to_str_lossy()
+    _ => "?"
+  }
+}
+
+test "interop: send, receive and settle against a real broker" uses (net, clock, env) {
+  let addr = os.env.get("XO_AMQP_INTEROP_ADDR") ?? ""
+  if addr == "" { return }
+  let queue = "xo-interop-${os.clock.now().unix_millis()}"
+  let c = amqp.dial(os.net, addr, interop_opts(os.env, os.clock)).or_fault("dial")
+  expect(c.peer_container_id() != "") == true
+  let sess = c.begin().or_fault("begin")
+  let snd = c.new_sender(sess, queue).or_fault("sender")
+  for i in 0..3 {
+    let m = amqp.Message{
+      properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "id-${i}")}),
+      app_properties: Some([("n", amqp.Value.Int(v: Int32(i)))]),
+      body: amqp.Body.Data(sections: [b"msg-${i}"])}
+    let out = snd.send(m).or_fault("send ${i}")
+    expect(out) == Some(amqp.DeliveryState.Accepted)
+  }
+  let rcv = c.new_receiver(sess, queue, amqp.ReceiverOptions{credit: 3}).or_fault("receiver")
+  let d0 = rcv.receive().or_fault("receive 0")
+  let d1 = rcv.receive().or_fault("receive 1")
+  let d2 = rcv.receive().or_fault("receive 2")
+  expect(text(d0)) == "msg-0"
+  expect(text(d1)) == "msg-1"
+  expect(text(d2)) == "msg-2"
+  expect(d0.message.properties.or_fault("properties").message_id) == amqp.Value.Str(v: "id-0")
+  rcv.accept(d0).or_fault("accept")
+  rcv.release(d1).or_fault("release")
+  rcv.accept(d2).or_fault("accept 2")
+  // the released message comes back
+  let again = rcv.receive().or_fault("redelivery")
+  expect(text(again)) == "msg-1"
+  rcv.accept(again).or_fault("accept again")
+  rcv.close().or_fault("close receiver")
+  snd.close().or_fault("close sender")
+  c.end_session(sess).or_fault("end")
+  c.close().or_fault("close")
+}
