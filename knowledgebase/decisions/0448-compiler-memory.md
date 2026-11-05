@@ -1128,3 +1128,40 @@ build max RSS than 16 KiB (half of 256 KiB's 22%). Linux and Windows
 keep MID_MAX. XO_HEAP_MID_MAX still sets it (1024 to 262136), and a
 value outside that range is now reported at start.
 
+
+## Addendum: the front end's trees during fe.build (xo-lang-4, 2026-11-05)
+
+Lang 1 measured the front end half of a cold build of s3 and dynamodb
+(the aws SDK's two services in one program, ~/xo-lead/notes/lang1/buildcmp)
+on the linux/arm64 host: the check ends at about 460 MB, fe.build adds
+about 525 MB of SSA, and the peak (about 1,080 MB RSS) is at the end of
+fe.build, where every parse tree and checker record is still alive. A
+heap profile there (`XO_PROF=heap XO_PROF_HEAP_AT=fe.build`) held
+368 MB under parse_block, 236 MB of it trees that force_body parsed for
+std/native bodies during the build.
+
+Step 1 (5075f64cc): the builder gives each lazily parsed body its span
+back once it built it (Checker.unparse_body), and the checker empties
+Checker.bodies after the flow pass, the list that kept every body
+check_lazy checked alive (gotchas/checker-bodies-list-keeps-trees.md).
+s3 and dynamodb, cold, xo bench --ab n=3: max RSS 0.842 (1,108 to
+932 MB), wall 0.989, cpu 0.986. The self build: within noise.
+
+Step 2: the program's own bodies, parsed in full with their files, are
+given their spans back before the build (Checker.unparse_bodies, called
+by build_native before lower), so the builder parses each again as it
+builds it and lets it go after; every rebuild (the conc guess, the front
+end cache's retries, a missing std tree, another target) starts from the
+same checker and parses on demand. The module scans of uses_os_tasks and
+uses_budgets, which walk every body, run once before (ssa.module_scans,
+Checker.pre_scans), and skip a file that does not spell `tasks` or
+`with_budget`. `XO_KEEP_TREES=1` keeps the trees (the output is the same).
+s3 and dynamodb, cold, --ab n=3 against step 1: max RSS 0.882 (932 to
+822 MB), wall 1.002 and cpu 0.998 (within noise).
+The one-line edit rebuild of s3 and dynamodb (warm caches, n=5): wall
+1.005, cpu 1.012, max RSS 0.997, all within noise. xo's self build
+(ab-host.sh self, n=3) pays wall 1.007 and max RSS 1.014: its peak is
+insert_rc, after link_view freed the trees anyway, so it gains nothing
+and pays the second parse. Shipped default-on (lead, 2026-11-05: on,
+provided the edit loop stays within about 2%). Output identical
+(scripts/identity, 75 programs, 0 differing).

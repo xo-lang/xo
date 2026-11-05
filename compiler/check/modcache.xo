@@ -325,7 +325,7 @@ fn (c: Checker) mod_zones(paths: Map[Str, Bool]) -> List[(Str, Int, Int, Int, St
 /// Whether module m was skipped, and its cached scans.
 pub fn (c: Checker) mod_cached_scan(m: Int) -> Option[(Bool, Bool)] {
   if !c.mod_skip.contains(m) {
-    return None
+    return c.pre_scans.get(m)
   }
   let e = c.mod_entries.get(m) ?? ModEntry{}
   Some((e.tasks, e.budgets))

@@ -228,6 +228,10 @@ pub struct Checker {
   /// builder lets its tree go once it built the body; a later force_body
   /// parses the same tree again.
   pub lazy_parsed: Map[Int, parser.LazyBody] = {}
+  /// The SSA builder's scans of each program module (tasks, budgets),
+  /// made before unparse_bodies took the bodies they walk: by module
+  /// (mod_cached_scan answers from them).
+  pub pre_scans: Map[Int, (Bool, Bool)] = {}
   /// The functions of skipped modules checked before the whole-program
   /// passes (their entries' eager lists, check_module): the builder may
   /// build these from source without the module falling back.

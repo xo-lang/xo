@@ -352,6 +352,42 @@ pub fn (var c: Checker) unparse_body(fo: Int) -> Bool {
   true
 }
 
+/// Gives every checked function body of the program its source span
+/// back (as the lazy parse leaves one, decision 0351), in the declaration
+/// and the file's tree alike, dropping the trees: a build calls it after
+/// the check, once nothing walks every body, so the SSA builder parses
+/// each body again as it builds it (force_body) and lets it go after
+/// (unparse_body) instead of the whole program's trees staying alive to
+/// the end of the build (2026-11-05: about 210 MB of a cold build of s3
+/// and dynamodb). The records the check made are keyed by position, which
+/// the new tree has too. A body the check did not reach (lazy_fns) and a
+/// body that is not its source's own block (a body_words placeholder)
+/// stay. The count of bodies given back.
+pub fn (var c: Checker) unparse_bodies() -> Int {
+  var n = 0
+  for f in 0..c.files.len() {
+    let nd = c.files[f].ast.decls.len()
+    for i in 0..nd {
+      if let parser.Decl.FnDecl(d: fd) = c.files[f].ast.decls[i] {
+        if let Some(bl) = fd.body {
+          let fo = if i < c.files[f].decl_objs.len() { c.files[f].decl_objs[i] } else { -1 }
+          let s = bl.span.start.offset
+          if fo < 0 || c.objs[fo].fn_decl.is_empty() || (c.lazy_fns.get(fo) ?? false) || c.objs[fo].fn_decl[0].body == None || s <= fd.span.start.offset || s >= c.files[f].src.len() || c.files[f].src[s] != '{' {
+            continue
+          }
+          var nf = fd
+          nf.body = None
+          nf.lazy = Some(parser.LazyBody{start: bl.span.start, end: bl.span.end.offset})
+          c.objs[fo].fn_decl = [nf]
+          c.files[f].ast.decls[i] = parser.Decl.FnDecl(d: nf)
+          n += 1
+        }
+      }
+    }
+  }
+  n
+}
+
 /// force_body for a body_words lookup (xo refs): a body with syntax
 /// errors adds them to the diagnostics and becomes an empty block, and
 /// the result is false; true when the body parsed.

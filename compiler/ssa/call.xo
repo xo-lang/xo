@@ -191,7 +191,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     // std function `probe.seven`", as only the std API lowerings above
     // could answer it)
     let fd = b.c.objs[fo].fn_decl
-    if b.c.mods[fm].root && !fd.is_empty() && fd[0].body != None {
+    if b.c.mods[fm].root && !fd.is_empty() && (fd[0].body != None || fd[0].lazy != None) {
       return b.call_as(x, ci, fo)
     }
     return b.std_call(x, ci)

@@ -123,7 +123,7 @@ pub fn fe_keys(c: check.Checker, flags: Str, root: Str, std_sum: Str) -> Map[Int
       continue
     }
     let fd = o.fn_decl[0]
-    if fd.body == None {
+    if fd.body == None && fd.lazy == None {
       continue
     }
     let src = c.files[o.decl_file].src

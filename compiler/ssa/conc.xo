@@ -1812,7 +1812,8 @@ fn (var b: Builder) tasks_main(mf: Int, et: Int) {
   let saved = b.begin(fi, b.decl_file(main_fo))
   var sites: List[SpawnSite] = []
   // only main's body sees os.tasks's origin, so only its spawns can fail
-  // on it (XO0801)
+  // on it (XO0801); a body the build gave its span back is parsed again
+  b.c.force_body(main_fo)
   let decl = b.c.objs[main_fo].fn_decl
   if !decl.is_empty() {
     if let Some(body) = decl[0].body {

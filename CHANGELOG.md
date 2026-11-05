@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (build memory): a build gives the program's checked function bodies their source spans back before the SSA build (Checker.unparse_bodies) and parses each again as it is built, then lets it go, so the program's syntax trees are not all alive through fe.build; the module scans for os.tasks and with_budget run once before and skip files that do not spell those names. A cold build of s3 and dynamodb peaks at 822 MB instead of 932 (--ab 0.882, wall within noise; with the previous step, 1,108 to 822 MB); xo's self build, whose peak is later, pays wall 1.007. `XO_KEEP_TREES=1` keeps the trees (decision 0448 addendum). Output identical (scripts/identity, 75 programs).
 
 - cli: `xo run DIR/main.xo` runs the program of DIR (every file of the module) instead of stopping with a usage error that told you to type `xo run DIR` (owner, 2026-11-05). spec/core.md "xo run".
 - fix (http): a native HTTP server (arm64, amd64, LLVM backends) no longer hangs on SIGTERM or a stop request when a kept-alive connection answered a request in the 20 ms before the stop; it hung in 0.36.0 to 0.40.0. Test: golden http_stop_keepalive. std/changes/http.md, gotchas/park-after-stop-check-then-act.md.

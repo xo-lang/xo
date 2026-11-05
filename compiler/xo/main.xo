@@ -1249,6 +1249,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   if c.mod_skip_auto && c.skip_unsafe && (o.phases || !(os.env.get("XO_CHK_CACHE") ?? "").is_empty()) {
     effect_reads = c.effect_reads_across_modules()
   }
+  // the program's syntax trees go here: each body is parsed again as the
+  // SSA builder builds it and let go after (Checker.unparse_bodies), so
+  // they are not all alive through the build; XO_KEEP_TREES=1 keeps them
+  if (os.env.get("XO_KEEP_TREES") ?? "") != "1" {
+    c.pre_scans = ssa.module_scans(c)
+    t = lap(os, o.phases, "unparse.scans", t)
+    let _n = c.unparse_bodies()
+    t = lap(os, o.phases, "unparse", t)
+  }
   var lo = lower(os, o, c, strip, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
   if c.mod_skip_auto && (!lo.b.skip_src.is_empty() || c.skip_unsafe) {
     // XO_CHK_CACHE=auto skipped a module a body of which was built from

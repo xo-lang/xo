@@ -2533,10 +2533,38 @@ fn (var b: Builder) uses_os_tasks() -> Bool {
   any
 }
 
+/// The scans of uses_os_tasks and uses_budgets of every program module c
+/// checked (Checker.pre_scans), made before Checker.unparse_bodies takes
+/// the bodies they walk.
+pub fn module_scans(c: check.Checker) -> Map[Int, (Bool, Bool)] {
+  var b = new_builder(c, "")
+  var out: Map[Int, (Bool, Bool)] = {}
+  for m in c.order {
+    if c.mods[m].is_std || c.mods[m].native || c.mod_skip.contains(m) {
+      continue
+    }
+    b.scan_budget = false
+    let t = b.mod_uses_tasks(m)
+    b.scan_budget = true
+    let bu = b.mod_uses_tasks(m)
+    out[m] = (t, bu)
+  }
+  out
+}
+
 /// uses_os_tasks of module m alone.
 fn (var b: Builder) mod_uses_tasks(m: Int) -> Bool {
   if !b.c.mods[m].is_std && !b.c.mods[m].native {
+    // what the walk looks for spells its name in the file (a `.tasks`
+    // selector; a call of with_budget, which an import alias renames only
+    // the module of): a file that does not is not walked (2026-11-05: the
+    // two walks took 330 ms of xo's self build)
+    let word = if b.scan_budget { b"with_budget" } else { b"tasks" }
     for f in b.c.mods[m].files {
+      let src = b.c.files[f].src
+      if !src.is_empty() && !src.contains(word) {
+        continue
+      }
       for d in b.c.files[f].ast.decls {
         let found = match d {
           FnDecl(d: fd) => {
