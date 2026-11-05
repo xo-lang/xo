@@ -36,7 +36,7 @@ fn (var s: Session) attach(pid: Int) -> Str ! Str uses proc {
     None => {
       internal.dbg_kill(h)
       internal.dbg_close(h)
-      return Err("process ${pid} does not run ${s.prog} (its header is at none of the slides its threads lead to)")
+      return Err("process ${pid}: no thread is in ${s.prog}'s code (its header is at none of the slides its threads' return addresses lead to): it runs another program, or is still starting (in dyld); try again")
     }
   }
   s.proc = h

@@ -2,14 +2,17 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -229,4 +232,85 @@ func TestDebugDAP(t *testing.T) {
 func fileExists(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && !st.IsDir()
+}
+
+// TestDebugDAPAttach checks DAP's attach request (decision 0504 with 0253
+// stage 4): configurationDone attaches to a running program and reports
+// it stopped (reason pause), its stack and threads are there, and
+// disconnect detaches, leaving the program running.
+func TestDebugDAPAttach(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("xo debug's process control is macOS arm64 so far (decision 0253 stage 2)")
+	}
+	if testing.Short() {
+		t.Skip("builds and debugs a native program")
+	}
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	dir := writeFiles(t, map[string]string{"main.xo": debugTasks})
+	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: "arm64", Out: filepath.Join(t.TempDir(), "prog")}))
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %s", err, res.Output)
+	}
+	prog := res.Binaries[xotool.Host()]
+	p := exec.Command(prog)
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		p.Process.Kill()
+		p.Wait()
+	}()
+	// past dyld: a thread in the program's code (attach finds the slide
+	// from one), each try detaching
+	for try := 0; ; try++ {
+		var o, e bytes.Buffer
+		if runXo(t, []string{"debug", "-p", strconv.Itoa(p.Process.Pid), "--batch", "-c", "threads", prog}, &o, &e) == 0 {
+			break
+		}
+		if strings.Contains(o.String()+e.String(), "task_for_pid") {
+			t.Skipf("this xo cannot control the program:\n%s%s", o.String(), e.String())
+		}
+		if try == 20 {
+			t.Fatalf("xo debug -p never attached:\n%s%s", o.String(), e.String())
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	cmd := command(t, xoBin(t), "debug", "--dap")
+	in, _ := cmd.StdinPipe()
+	outp, _ := cmd.StdoutPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	defer func() {
+		in.Close()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			cmd.Process.Kill()
+		}
+	}()
+	c := &dapClient{t: t, in: in, out: bufio.NewReader(outp)}
+	c.send("initialize", map[string]any{"adapterID": "xo"})
+	c.until("response", "initialize")
+	c.send("attach", map[string]any{"program": prog, "processId": p.Process.Pid})
+	c.until("response", "attach")
+	c.until("event", "initialized")
+	c.send("configurationDone", nil)
+	st := body(c.until("event", "stopped"))
+	if st["reason"] != "pause" || !strings.Contains(fmt.Sprint(st["description"]), "attached to process") {
+		t.Fatalf("stopped: %v\n%s", st, strings.Join(c.log, "\n"))
+	}
+	c.send("threads", nil)
+	if ts := list(body(c.until("response", "threads")), "threads"); len(ts) == 0 {
+		t.Errorf("threads: %v", ts)
+	}
+	c.send("stackTrace", map[string]any{"threadId": st["threadId"]})
+	c.until("response", "stackTrace")
+	c.send("disconnect", nil)
+	c.until("response", "disconnect")
+	if err := p.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Errorf("the program did not survive the detach: %v", err)
+	}
 }

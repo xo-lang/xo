@@ -3806,7 +3806,7 @@ thread.
 6), conditional
 breakpoints, a break on a contract failure, evaluating expressions
 (beyond `print`'s field path), stepping back over a replay (11.3), and
-DAP's `attach` and `pause`.
+DAP's `pause`.
 
 `xo debug --dap` (decision 0504, 0253's stage 7, 2026-11-05) serves the
 Debug Adapter Protocol on standard input and output (Content-Length
@@ -3824,7 +3824,11 @@ a source's `path` absolute: relative to `cwd`, std's files in xo's std),
 `exited` then `terminated`, and the program's standard output and error
 (written to a file, since standard output is the protocol) are `output`
 events at each stop. While the program runs, the adapter reads no request
-(no `pause`).
+(no `pause`). An `attach` request (`processId`, else `pid`, and
+`program`, its executable) takes a running process instead (stage 4's
+`attach PID`): `configurationDone` attaches and reports a `stopped`
+event (`pause`, every thread stopped), and `disconnect` detaches,
+leaving it running; its output is not captured.
 
 The protocol's version 1 (decision 0253; compiler/debug session.xo;
 `xo debug --json`, and `xo dev debug --json` on a recorded thread): each command (decision 0253 point 4) gives one line, an

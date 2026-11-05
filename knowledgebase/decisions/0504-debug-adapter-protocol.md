@@ -86,3 +86,11 @@ implementation:
   stepIn into std with a source file that exists, output, exit code). Not
   yet: attach, pause (one thread of control: requests wait while the
   program runs), conditional breakpoints, an editor extension.
+- 2026-11-05 (Xo Lang 2, with 0253 stage 4): DAP `attach` (processId or
+  pid, and program): configurationDone runs the session's `attach PID`
+  and sends `stopped` (pause, with "attached to process N"); disconnect
+  quits, which detaches. An attached process's output is not captured
+  (no output file). The slide search needs a thread in the program's
+  code, so attaching while the process is still in dyld fails with a
+  message saying to try again. Test cmd/xo TestDebugDAPAttach (threads,
+  stack, the program alive after disconnect).

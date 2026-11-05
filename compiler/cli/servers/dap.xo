@@ -3,11 +3,13 @@
 // framing as LSP's (lsp.xo Reader, send). Each request becomes commands
 // of compiler/debug's session through its --json protocol (exec_json),
 // so DAP, --json and the batch mode are one implementation:
-// setBreakpoints -> break FILE:LINE, configurationDone -> run, continue,
+// setBreakpoints -> break FILE:LINE, configurationDone -> run (after an
+// attach request, attach PID: a stopped event, reason pause), continue,
 // next, stepIn, stepOut -> continue, next, step, finish, stackTrace ->
 // backtrace, scopes and variables -> locals and print with a field path
 // (a variables reference is a frame and a path), evaluate -> print,
-// disconnect -> quit. The program's standard output and error go to a
+// disconnect -> quit (an attached program is detached and runs on). A
+// launched program's standard output and error go to a
 // file whose new bytes are sent as output events at each stop (DAP's
 // standard output is the protocol). One thread of control: while the
 // program runs, requests wait (no pause).
@@ -32,6 +34,8 @@ struct Dap {
   /// the frame the stop selected (a step or finish out of an inlined call
   /// selects the frame it was about): the editor's stack starts there
   top: Int = 0
+  /// an attach request's process (decision 0253 stage 4), 0 for launch
+  pid: Int = 0
 }
 
 /// Serves DAP until disconnect or the input's end: 0, or 1 when the input
@@ -53,12 +57,23 @@ pub fn dap_main(os: Os, args: List[Str]) -> Int uses (stdio, proc, env, fs, cloc
     let a = get(m, "arguments") ?? J.Null
     match cmd {
       "initialize" => d.respond(os, m, true, jobj(["supportsConfigurationDoneRequest", "supportsEvaluateForHovers"], [jbool(true), jbool(true)]), "")
-      "launch" => {
+      "launch" | "attach" => {
         let prog = jstr_of(a, "program")
         var pargs: List[Str] = []
         for x in jarr_of(a, "args") {
           if let J.Str(v) = x {
             pargs.push(v)
+          }
+        }
+        if cmd == "attach" {
+          // processId (VS Code's process picker), else pid
+          d.pid = jint_of(a, "processId")
+          if d.pid <= 0 {
+            d.pid = jint_of(a, "pid")
+          }
+          if d.pid <= 0 {
+            d.respond(os, m, false, J.Null, "attach: no processId (the running process to attach to) and program (its executable)")
+            continue
           }
         }
         d.std = check.std_dir(os.env, os.fs)
@@ -71,9 +86,12 @@ pub fn dap_main(os: Os, args: List[Str]) -> Int uses (stdio, proc, env, fs, cloc
         }
         match dap_session(os, prog, pargs) {
           Ok(s) => {
-            d.out = "${temp_dir(os)}/xo-dap-${os.clock.now().unix_millis()}.out"
             var live = s
-            live.out = d.out
+            if d.pid == 0 {
+              // an attached process's output stays where it goes
+              d.out = "${temp_dir(os)}/xo-dap-${os.clock.now().unix_millis()}.out"
+              live.out = d.out
+            }
             d.respond(os, m, true, J.Null, "")
             d.event(os, "initialized", J.Null)
             return d.serve(os, r, live)
@@ -85,7 +103,7 @@ pub fn dap_main(os: Os, args: List[Str]) -> Int uses (stdio, proc, env, fs, cloc
         d.respond(os, m, true, J.Null, "")
         return 0
       }
-      _ => d.respond(os, m, false, J.Null, "launch the program first (only launch is supported, not attach)")
+      _ => d.respond(os, m, false, J.Null, "launch or attach first")
     }
   }
   0
@@ -124,7 +142,7 @@ fn (var d: Dap) serve(os: Os, var r: Reader, var s: debug.Session) -> Int uses (
       "setExceptionBreakpoints" | "setFunctionBreakpoints" => d.respond(os, m, true, jobj(["breakpoints"], [jarr([])]), "")
       "configurationDone" => {
         d.respond(os, m, true, J.Null, "")
-        d.go(os, s, "run")
+        d.go(os, s, if d.pid > 0 { "attach ${d.pid}" } else { "run" })
       }
       "threads" => {
         var ts: List[J] = []
@@ -199,7 +217,7 @@ fn (var d: Dap) go(os: Os, var s: debug.Session, c: Str) uses (stdio, proc, fs) 
   d.flush(os)
   if !jbool_of(j, "ok") {
     d.event(os, "output", jobj(["category", "output"], [jstr("stderr"), jstr("xo debug: ${jstr_of(j, "error")}\n")]))
-    if c == "run" {
+    if c == "run" || c.starts_with("attach ") {
       d.event(os, "terminated", J.Null)
     } else {
       // still stopped where it was
@@ -220,6 +238,9 @@ fn (var d: Dap) go(os: Os, var s: debug.Session, c: Str) uses (stdio, proc, fs) 
       d.event(os, "exited", jobj(["exitCode"], [jint(128 + jint_of(j, "signal"))]))
       d.event(os, "terminated", J.Null)
     }
+    // an attached program's end: its exit status is its parent's
+    "ended" => d.event(os, "terminated", J.Null)
+    "attached" => d.event(os, "stopped", jobj(["reason", "threadId", "allThreadsStopped", "description"], [jstr("pause"), jint(th), jbool(true), jstr("attached to process ${jint_of(j, "pid")}")]))
     _ => d.event(os, "stopped", jobj(["reason", "threadId", "allThreadsStopped"], [jstr("pause"), jint(if th == 0 { 1 } else { th }), jbool(true)]))
   }
 }
