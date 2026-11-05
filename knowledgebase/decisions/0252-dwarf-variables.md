@@ -322,3 +322,12 @@ What the compiler has to work with:
   `<optimized out>`. Cost (bench/results/llvm-debug-types-2026-10-17.md):
   --release IR byte identical; a debug build's clang -O2 -g +1.2%
   instructions and +1.5% peak memory; xo itself within noise.
+- 2026-11-05 (Xo Lang 2): a range in a caller saved register ends at the
+  return address of the first call it reaches, not after the call
+  instruction (which also makes the result moves: an argument read as
+  the result after a finish). dv_plan's positions became half
+  instructions (2 * k before instruction k, 2 * k + 1 call k's return
+  address), and both emitters label the return address after `bl` or
+  `call`. Code unchanged (TestDebugInfoSameCode,
+  TestAmd64DebugInfoSameCode). Test TestDebugVarsAfterCall;
+  gotchas/dwarf-range-past-call-result.md.

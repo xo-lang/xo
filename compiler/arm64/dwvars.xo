@@ -28,8 +28,10 @@ struct DvBind {
   words: List[List[DvSpan]]
 }
 
-/// The function's variables to describe and the instruction indexes
-/// where a location range starts or ends.
+/// The function's variables to describe and the positions where a
+/// location range starts or ends. A position is in half instructions:
+/// 2 * k is before instruction k, 2 * k + 1 the return address of call k
+/// (right after its `bl` or `call`, before its result moves).
 struct DvPlan {
   binds: List[DvBind] = []
   need: List[Int] = []
@@ -40,7 +42,7 @@ struct DvPlan {
 }
 
 /// A fault stub's range for the variables (2026-10-20): the faulting
-/// instruction's index, the stub's label and the label after its call
+/// instruction's position (DvPlan's half instructions: 2 * its index), the stub's label and the label after its call
 /// (the faulting frame's pc in a traceback returns there), and how far sp
 /// moved in it (16 for a leaf's frame record; -1 when a prologue moved it,
 /// and its slots are then left out).
@@ -381,13 +383,27 @@ fn (var g: G) dv_plan() -> DvPlan {
       copies[r] = l
     }
   }
+  // the calls' instruction indexes: a word in a caller saved register is
+  // not there after a call, so its span ends at the call's return address
+  // (2026-11-05: an argument's register range ends at the call
+  // instruction, which also makes the result moves, so after the call
+  // returned its variable showed the result in x0)
+  var calls: List[Int] = []
+  for blk in g.blocks {
+    for (ik, ins) in blk.insts.indexed() {
+      if ins.kind == K_CALL && !ins.has(IF_TAIL) {
+        calls.push((blk.start + 4 * ik) / 4)
+      }
+    }
+  }
+  calls = calls.sort()
   var symix: Map[Str, Int] = {}
   // the function's last described position, for a binding of constants
   // only (below)
   var fn_end = -1
   for rs in g.vranges {
     for rg in rs {
-      fn_end = fn_end.max(rng_e(rg) / 4 + 1)
+      fn_end = fn_end.max(2 * (rng_e(rg) / 4 + 1))
     }
   }
   for d in g.f.dbinds {
@@ -468,9 +484,18 @@ fn (var g: G) dv_plan() -> DvPlan {
         if op.is_empty() || rr >= g.vranges.len() {
           continue
         }
+        let clobbered = g.dv_caller_saved(op)
         for rg in g.vranges[rr] {
-          let lo = (rng_s(rg) + 3) / 4
-          let hi = rng_e(rg) / 4 + 1
+          let lo = 2 * ((rng_s(rg) + 3) / 4)
+          var hi = 2 * (rng_e(rg) / 4 + 1)
+          if clobbered {
+            for c in calls {
+              if 2 * c >= lo && 2 * c < hi {
+                hi = 2 * c + 1
+                break
+              }
+            }
+          }
           if hi <= lo {
             continue
           }
@@ -504,6 +529,37 @@ fn (var g: G) dv_plan() -> DvPlan {
   }
   p.need = ks.sort()
   p
+}
+
+/// Whether the DWARF location op (dv_op's) is a register a call does not
+/// keep: arm64's x0 to x18 and v0 to v7, v16 to v31; x86_64's rax, rdx,
+/// rcx, rsi, rdi, r8 to r11 and the xmm registers (System V and Xo's own
+/// convention on Windows alike).
+fn (g: G) dv_caller_saved(op: List[Int]) -> Bool {
+  if op.is_empty() {
+    return false
+  }
+  // DW_OP_reg0 to reg31
+  if op[0] >= 0x50 && op[0] <= 0x6f {
+    let n = op[0] - 0x50
+    if g.x86 {
+      return n is 0 | 1 | 2 | 4 | 5 | 8 | 9 | 10 | 11
+    }
+    return n <= 18
+  }
+  // DW_OP_regx n
+  if op[0] == 0x90 && op.len() >= 2 {
+    // its ULEB128 register number (one or two bytes here)
+    var n = op[1] & 127
+    if op[1] & 128 != 0 && op.len() >= 3 {
+      n = n | ((op[2] & 127) << 7)
+    }
+    if g.x86 {
+      return n >= 17
+    }
+    return n >= 64 && n <= 95 && !(n - 64 >= 8 && n - 64 <= 15)
+  }
+  false
 }
 
 /// The words of a literal binding's value as DWARF expressions (an

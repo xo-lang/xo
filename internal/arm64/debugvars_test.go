@@ -110,6 +110,74 @@ func TestDebugVars(t *testing.T) {
 	}
 }
 
+// TestDebugVarsAfterCall checks that a variable in a caller saved
+// register is not described past the call that clobbers it (decision 0252;
+// 2026-11-05): testdata/debugcall's main passes n to fact in x0, and its
+// range ended at the call instruction, which also makes the result moves,
+// so lldb's finish out of fact showed n as fact's result (6). At the
+// return address n is 3 or unavailable, on the arm64 and LLVM backends
+// (LLVM keeps no n).
+func TestDebugVarsAfterCall(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "darwin" || !native() {
+		t.Skip("darwin/arm64 only")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	if _, err := exec.LookPath("lldb"); err != nil {
+		t.Skip("no lldb")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := testtmp.Dir("xo-debugcall-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(out)
+	src, err := filepath.Abs(filepath.Join("testdata", "debugcall"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"arm64", []string{"--backend=arm64"}},
+		{"llvm", []string{"--backend=llvm"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bin := filepath.Join(out, c.name)
+			args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
+			cmd := testtmp.Guard(exec.Command(xo, args...))
+			cmd.Dir = src
+			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+			if b, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("xo %v: %v\n%s", args, err, b)
+			}
+			b, err := lldb(t, true, "-b", "-o", "breakpoint set -n fact", "-o", "run", "-o", "breakpoint delete -f", "-o", "finish", "-o", "frame variable", bin)
+			if err != nil {
+				t.Fatalf("lldb: %v\n%s", err, b)
+			}
+			at := bytes.Index(b, []byte("stop reason = step out"))
+			if at < 0 || !bytes.Contains(b[at:], []byte("`main")) {
+				t.Fatalf("lldb's finish did not return to main:\n%s", b)
+			}
+			v := regexp.MustCompile(`\) n = (\S+)`).FindSubmatch(b[at:])
+			// (LLVM folds n away: no n at all is fine too)
+			if v != nil && string(v[1]) != "3" && string(v[1]) != "<variable" {
+				t.Errorf("main's n after fact returned: want 3 or unavailable:\n%s", b[at:])
+			}
+		})
+	}
+}
+
 var runtimeMods = struct {
 	sync.Once
 	m map[string]bool

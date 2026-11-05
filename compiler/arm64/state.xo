@@ -226,6 +226,11 @@ struct G {
   rel_stored: Bool = false
   dc_cur: Int = 0
   dc_n: Int = 0
+  /// the label the call being emitted writes at its return address, for a
+  /// variable's range that ends there (dwvars.xo dv_plan), and whether it
+  /// did
+  dv_ret: Str = ""
+  dv_ret_used: Bool = false
   dl_last: Int = 0
   dl_last_inl: Int = -1
   dl_rows: List[Str] = []

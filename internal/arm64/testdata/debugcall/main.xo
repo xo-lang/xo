@@ -1,0 +1,13 @@
+fn fact(n: Int) -> Int {
+  if n <= 1 {
+    return 1
+  }
+  let r = fact(n - 1)
+  n * r
+}
+
+fn main(os: Os) {
+  let n = os.env.args().len() + 3
+  let f = fact(n)
+  os.stdio.println("fact ${f}")
+}
