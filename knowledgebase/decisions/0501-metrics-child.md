@@ -1,6 +1,6 @@
 # 0501: std/metrics children (a held series, as WithLabelValues)
 
-Status: Proposed
+Status: Accepted (owner, 2026-11-04)
 
 ## Context
 

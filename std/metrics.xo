@@ -101,6 +101,27 @@ struct Summary {
   f: Family
 }
 
+/// A held series (decision 0501, client_golang's WithLabelValues): made
+/// once with `child(values)` and used in a hot loop with no label list,
+/// key or lookup. A child shares the series' cells; cloning one shares them
+/// again; it is safe from any task. `remove` and `reset` detach the series
+/// from the exposition: a child made before keeps counting into the
+/// detached series (take a new one after a remove), as in client_golang.
+struct CounterChild {
+  s: Series
+}
+struct GaugeChild {
+  s: Series
+}
+struct HistogramChild {
+  s: Series
+  bounds: List[Float]
+}
+struct SummaryChild {
+  s: Series
+  objectives: List[(Float, Float)]
+}
+
 /// The buckets of request latencies in seconds: 0.005 to 10.
 fn latency_buckets() -> List[Float]
 
@@ -123,6 +144,22 @@ fn (c: Counter) add(n: Float, values: List[Str] = [])
 fn (g: Gauge) set(v: Float, values: List[Str] = [])
 fn (g: Gauge) add(v: Float, values: List[Str] = [])
 fn (h: Histogram) observe(v: Float, values: List[Str] = [])
+
+/// The child of the series of the label `values` (one per label name; a
+/// wrong count is a fault): the series is made if it is new. Past
+/// `max_series` the child counts into a series nothing exposes, and the drop
+/// is counted in `xo_metrics_dropped_total` as `inc` counts it.
+fn (c: Counter) child(values: List[Str] = []) -> CounterChild
+fn (g: Gauge) child(values: List[Str] = []) -> GaugeChild
+fn (h: Histogram) child(values: List[Str] = []) -> HistogramChild
+fn (s: Summary) child(values: List[Str] = []) -> SummaryChild
+/// Adds 1 to (or n >= 0 to) the child's series.
+fn (c: CounterChild) inc()
+fn (c: CounterChild) add(n: Float)
+fn (g: GaugeChild) set(v: Float)
+fn (g: GaugeChild) add(v: Float)
+fn (h: HistogramChild) observe(v: Float)
+fn (s: SummaryChild) observe(v: Float)
 
 /// A summary (Prometheus client_golang's Summary, decision 0411): each
 /// objective (quantile, allowed error) is reported as a `quantile` series

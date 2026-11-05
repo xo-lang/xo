@@ -89,21 +89,25 @@ fn registry_summary(r: metrics.Registry, name: Str, help: Str, labels: List[Str]
 
 fn summary_observe(s: metrics.Summary, v: Float, values: List[Str] = []) {
   if let Some(x) = series_of(s.f, values) {
-    let objs = s.f.objectives
-    if !objs.is_empty() {
-      x.q[0].with(fn(var st: metrics.QState) {
-        var i = st.hot_n.get()
-        if i == QBUF {
-          qdrain(st, objs)
-          i = 0
-        }
-        st.hot[i].set(v.to_bits())
-        st.hot_n.set(i + 1)
-      })
-    }
-    let _c = x.cells[1].add(1)
-    add_float(x.cells[2], v)
+    summary_add(x, s.f.objectives, v)
   }
+}
+
+/// One observation into the quantile buffer, the count and the sum of x.
+fn summary_add(x: metrics.Series, objs: List[(Float, Float)], v: Float) {
+  if !objs.is_empty() {
+    x.q[0].with(fn(var st: metrics.QState) {
+      var i = st.hot_n.get()
+      if i == QBUF {
+        qdrain(st, objs)
+        i = 0
+      }
+      st.hot[i].set(v.to_bits())
+      st.hot_n.set(i + 1)
+    })
+  }
+  let _c = x.cells[1].add(1)
+  add_float(x.cells[2], v)
 }
 
 fn registry_gauge_func(r: metrics.Registry, name: Str, help: Str, f: fn() -> Float) {
@@ -316,6 +320,26 @@ fn qrotate(var st: metrics.QState, now_ms: Int, max_age_ms: Int) {
   }
 }
 
+/// A series of the label values with nb buckets (kind 3 gets its quantile
+/// streams).
+fn new_series(values: List[Str], nb: Int, kind: Int, age_buckets: Int) -> metrics.Series {
+  var cells: List[Atomic[Int]] = [Atomic[Int].new(0), Atomic[Int].new(0), Atomic[Int].new(0)]
+  for _ in 0..nb {
+    cells.push(Atomic[Int].new(0))
+  }
+  let q = if kind == 3 { [Mutex[metrics.QState].new(qstate_new(age_buckets))] } else { [] }
+  metrics.Series{values: values, cells: cells, q: q}
+}
+
+/// The series of a child: the registered one, or, past the limit, one
+/// nothing exposes (the drop is counted).
+fn child_series(f: metrics.Family, values: List[Str]) -> metrics.Series {
+  match series_of(f, values) {
+    Some(s) => s
+    None => new_series(values, f.bounds.len(), f.kind, f.age_buckets)
+  }
+}
+
 /// The series of the label values, made on first use; None when the
 /// instrument holds MAX_SERIES already (counted as dropped).
 fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
@@ -339,12 +363,7 @@ fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
     if m.len() >= MAX_SERIES {
       return None
     }
-    var cells: List[Atomic[Int]] = [Atomic[Int].new(0), Atomic[Int].new(0), Atomic[Int].new(0)]
-    for _ in bounds {
-      cells.push(Atomic[Int].new(0))
-    }
-    let q = if kind == 3 { [Mutex[metrics.QState].new(qstate_new(age_buckets))] } else { [] }
-    let s = metrics.Series{values: values, cells: cells, q: q}
+    let s = new_series(values, bounds.len(), kind, age_buckets)
     m.put(key, s)
     Some(s)
   })
@@ -397,19 +416,68 @@ fn gauge_add(g: metrics.Gauge, v: Float, values: List[Str] = []) {
 
 fn histogram_observe(h: metrics.Histogram, v: Float, values: List[Str] = []) {
   if let Some(s) = series_of(h.f, values) {
-    // the first bucket that holds v (client_golang's findBucket): the
-    // cells count one bucket each and a scrape adds them up
-    var i = 0
-    let bounds = h.f.bounds
-    while i < bounds.len() && !(v <= bounds[i]) {
-      i += 1
-    }
-    if i < bounds.len() {
-      let _n = s.cells[3 + i].add(1)
-    }
-    let _c = s.cells[1].add(1)
-    add_float(s.cells[2], v)
+    histogram_add(s, h.f.bounds, v)
   }
+}
+
+/// One observation into the first bucket that holds v (client_golang's
+/// findBucket: the cells count one bucket each and a scrape adds them up),
+/// the count and the sum.
+fn histogram_add(s: metrics.Series, bounds: List[Float], v: Float) {
+  var i = 0
+  while i < bounds.len() && !(v <= bounds[i]) {
+    i += 1
+  }
+  if i < bounds.len() {
+    let _n = s.cells[3 + i].add(1)
+  }
+  let _c = s.cells[1].add(1)
+  add_float(s.cells[2], v)
+}
+
+// ---- children (decision 0501) ----
+
+fn counter_child(c: metrics.Counter, values: List[Str] = []) -> metrics.CounterChild {
+  metrics.CounterChild{s: child_series(c.f, values)}
+}
+
+fn gauge_child(g: metrics.Gauge, values: List[Str] = []) -> metrics.GaugeChild {
+  metrics.GaugeChild{s: child_series(g.f, values)}
+}
+
+fn histogram_child(h: metrics.Histogram, values: List[Str] = []) -> metrics.HistogramChild {
+  metrics.HistogramChild{s: child_series(h.f, values), bounds: h.f.bounds}
+}
+
+fn summary_child(s: metrics.Summary, values: List[Str] = []) -> metrics.SummaryChild {
+  metrics.SummaryChild{s: child_series(s.f, values), objectives: s.f.objectives}
+}
+
+fn counterchild_inc(c: metrics.CounterChild) {
+  add_float(c.s.cells[0], 1.0)
+}
+
+fn counterchild_add(c: metrics.CounterChild, n: Float) {
+  if n < 0.0 {
+    fault("metrics: a counter cannot decrease")
+  }
+  add_float(c.s.cells[0], n)
+}
+
+fn gaugechild_set(g: metrics.GaugeChild, v: Float) {
+  g.s.cells[0].set(v.to_bits())
+}
+
+fn gaugechild_add(g: metrics.GaugeChild, v: Float) {
+  add_float(g.s.cells[0], v)
+}
+
+fn histogramchild_observe(h: metrics.HistogramChild, v: Float) {
+  histogram_add(h.s, h.bounds, v)
+}
+
+fn summarychild_observe(s: metrics.SummaryChild, v: Float) {
+  summary_add(s.s, s.objectives, v)
 }
 
 // ---- exposition ----

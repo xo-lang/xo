@@ -1,0 +1,57 @@
+// std/metrics children (decision 0501): a child shares its series with
+// inc/set/observe by label values, a held child survives remove but
+// counts into a detached series, a wrong label count is a fault, and a
+// child past the series limit counts into nothing (the drop is counted).
+use std/metrics
+
+const B_LINE: Str = "req_total{path=\"/b\"}"
+
+fn main(os: Os) {
+  let r = metrics.registry()
+  let c = r.counter("req_total", "Requests.", ["path"])
+  let a = c.child(["/a"])
+  a.inc()
+  a.add(1.5)
+  c.inc(["/a"])
+  let g = r.gauge("temp", "Temperature.")
+  let gc = g.child()
+  gc.set(4.0)
+  gc.add(-1.5)
+  let h = r.histogram("lat_seconds", "Latency.", ["route"], [0.5, 1.0])
+  let hc = h.child(["/x"])
+  hc.observe(0.2)
+  hc.observe(2.0)
+  h.observe(0.7, ["/x"])
+  let sm = r.summary("size_bytes", "Sizes.", [], [(0.5, 0.05)])
+  let sc = sm.child()
+  sc.observe(1.0)
+  sc.observe(2.0)
+  sc.observe(3.0)
+  os.stdio.print(r.text())
+
+  // remove detaches the series: the held child counts on, unseen
+  let b = c.child(["/b"])
+  b.inc()
+  let _ = c.remove(["/b"])
+  b.inc()
+  let lines = r.text().split("\n").filter(fn(l) { l.starts_with("req_total") })
+  os.stdio.println("after remove: ${lines.join(" | ")}")
+  let b2 = c.child(["/b"])
+  b2.inc()
+  let bl = r.text().split("\n").filter(fn(l) { l.starts_with(B_LINE) }).join("")
+  os.stdio.println("new child: ${bl}")
+
+  // the series limit: the 10,001st series is a child of nothing
+  let many = r.counter("many_total", "Many.", ["id"])
+  var held: List[metrics.CounterChild] = []
+  for i in 0..10001 {
+    held.push(many.child(["s${i}"]))
+  }
+  for ch in held {
+    ch.inc()
+  }
+  let text = r.text()
+  let series = text.split("\n").filter(fn(l) { l.starts_with("many_total{") }).len()
+  let dropped = text.split("\n").filter(fn(l) { l.starts_with("xo_metrics_dropped_total ") }).join("")
+  os.stdio.println("series ${series}, ${dropped}")
+}

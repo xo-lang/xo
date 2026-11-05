@@ -1,0 +1,27 @@
+exit 0
+--- stdout
+# HELP req_total Requests.
+# TYPE req_total counter
+req_total{path="/a"} 3.5
+# HELP temp Temperature.
+# TYPE temp gauge
+temp 2.5
+# HELP lat_seconds Latency.
+# TYPE lat_seconds histogram
+lat_seconds_bucket{route="/x",le="0.5"} 1
+lat_seconds_bucket{route="/x",le="1"} 2
+lat_seconds_bucket{route="/x",le="+Inf"} 3
+lat_seconds_sum{route="/x"} 2.9000000000000004
+lat_seconds_count{route="/x"} 3
+# HELP size_bytes Sizes.
+# TYPE size_bytes summary
+size_bytes{quantile="0.5"} 2
+size_bytes_sum 6
+size_bytes_count 3
+# HELP xo_metrics_dropped_total Series dropped past the per instrument limit.
+# TYPE xo_metrics_dropped_total counter
+xo_metrics_dropped_total 0
+after remove: req_total{path="/a"} 3.5
+new child: req_total{path="/b"} 1
+series 10000, xo_metrics_dropped_total 1
+--- stderr

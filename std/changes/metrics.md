@@ -1,5 +1,21 @@
 # std/metrics changes
 
+## 2026-11-04: feature: child handles (decision 0501)
+
+- Kind: feature
+- Commit: this push
+- Found by: bench/perf/metrics (a labelled increment is 3.7 times client_golang's: the lookup per call is the cost)
+- Go reference: prometheus/client_golang's WithLabelValues (a held Counter or Observer)
+- Test: golden metrics_child (every backend and the Go backend), bench/perf/metrics counterheld and histogramheld
+- Timing: bench/results/std-twin-metrics-2026-11-04.md
+- Shipped in: not yet released
+
+`Counter`, `Gauge`, `Histogram` and `Summary` have `child(values)`, a held
+series: `CounterChild.inc/add`, `GaugeChild.set/add`, `HistogramChild.observe`
+and `SummaryChild.observe` take no label list, key or lookup. `remove` and
+`reset` detach a series; a child made before keeps counting into it.
+
+
 ## 2026-11-04: perf: a Series holds its cells in one list
 
 - Kind: perf

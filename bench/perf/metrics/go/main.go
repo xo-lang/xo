@@ -40,6 +40,26 @@ func main() {
 			h.WithLabelValues(names[i%20]).Observe(float64(x) / 100000.0)
 		}
 		sum = 2000000
+	case "counterheld":
+		kids := make([]prometheus.Counter, 50)
+		for i, n := range names {
+			kids[i] = c.WithLabelValues(n)
+		}
+		for i := 0; i < 3000000; i++ {
+			kids[i%50].Inc()
+		}
+		sum = 3000000
+	case "histogramheld":
+		kids := make([]prometheus.Observer, 20)
+		for i := range kids {
+			kids[i] = h.WithLabelValues(names[i])
+		}
+		x := 1
+		for i := 0; i < 2000000; i++ {
+			x = (x * 7) % 1000003
+			kids[i%20].Observe(float64(x) / 100000.0)
+		}
+		sum = 2000000
 	case "scrape":
 		for i := 0; i < 500; i++ {
 			big.WithLabelValues("s" + strconv.Itoa(i)).Inc()

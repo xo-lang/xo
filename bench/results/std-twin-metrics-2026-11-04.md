@@ -70,3 +70,19 @@ reader_out), closure environment drop 3%, hash 3%. No single piece is left
 to cut: the remaining cost is the shape of the call (a label list, a key, a
 closure, a lock, a lookup and a clone for every increment), which is what
 the child API of decision 0501 removes.
+
+## Held children (decision 0501, host 1, 6 rounds)
+
+`counterheld` and `histogramheld` repeat the counter and histogram workloads
+through `child(values)` handles made once (client_golang: `WithLabelValues`
+held).
+
+| Workload | Go ms | Xo ms | Xo / Go | range |
+|---|---|---|---|---|
+| counter (lookup per call) | 70.71 | 260.8 | 3.688 | 3.51-3.901 |
+| counterheld | 4.508 | 4.53 | 1.005 | 0.95-1.071 |
+| histogram (lookup per call) | 74.0 | 205.4 | 2.775 | 2.621-2.813 |
+| histogramheld | 27.96 | 23.32 | 0.834 | 0.79-0.858 |
+
+A held child is at parity with Go (counter) or faster (histogram); the
+lookup per call is the whole gap.

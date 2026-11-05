@@ -1,5 +1,7 @@
-# twincheck: metrics: four workloads (none is the setup alone); Go is prometheus/client_golang (go/). The scrape checksum is the text length: the expositions differ (Xo adds its own xo_metrics_dropped_total family), so check it by hand.
+# twincheck: metrics: six workloads (none is the setup alone); Go is prometheus/client_golang (go/). The scrape checksum is the text length: the expositions differ (Xo adds its own xo_metrics_dropped_total family), so check it by hand.
 - - none
 - - counter
 - - histogram
+- - counterheld
+- - histogramheld
 - - scrape

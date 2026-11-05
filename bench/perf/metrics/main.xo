@@ -3,7 +3,7 @@
 // observations of a scrambled sequence over 20 series (the default
 // latency buckets), `scrape` renders 1,000 series (a counter of 500 and a
 // histogram of 50 series) 300 times in the text format; `none` registers
-// the instruments and stops. Usage: `<program> none|counter|histogram|scrape`.
+// the instruments and stops; `counterheld` and `histogramheld` repeat the first two through held children (decision 0501). Usage: `<program> none|counter|histogram|counterheld|histogramheld|scrape`.
 // Prints `<workload> <checksum>`; the twin prints the same.
 use std/metrics
 
@@ -28,6 +28,27 @@ fn main(os: Os) {
     for i in 0..2000000 {
       x = (x * 7) % 1000003
       h.observe(Float(x) / 100000.0, [names[i % 20]])
+    }
+    sum = 2000000
+  } else if w == "counterheld" {
+    // the same 3,000,000 increments through held children (decision 0501)
+    var kids: List[metrics.CounterChild] = []
+    for n in names {
+      kids.push(c.child([n]))
+    }
+    for i in 0..3000000 {
+      kids[i % 50].inc()
+    }
+    sum = 3000000
+  } else if w == "histogramheld" {
+    var kids: List[metrics.HistogramChild] = []
+    for i in 0..20 {
+      kids.push(h.child([names[i]]))
+    }
+    var x = 1
+    for i in 0..2000000 {
+      x = (x * 7) % 1000003
+      kids[i % 20].observe(Float(x) / 100000.0)
     }
     sum = 2000000
   } else if w == "scrape" {

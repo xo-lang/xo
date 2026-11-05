@@ -6272,6 +6272,12 @@ struct Sample { values: List[Str], value: Float }
 enum Kind { Counter, Gauge }
 fn (c: Counter) remove(values: List[Str]) -> Bool   // also Gauge, Histogram, Summary
 fn (c: Counter) reset()                             // also Gauge, Histogram, Summary
+fn (c: Counter) child(values: List[Str] = []) -> CounterChild      // also Gauge, Histogram, Summary
+fn (c: CounterChild) inc()
+fn (c: CounterChild) add(n: Float)
+fn (g: GaugeChild) set(v: Float)
+fn (g: GaugeChild) add(v: Float)
+fn (h: HistogramChild) observe(v: Float)                           // also SummaryChild
 fn (r: Registry) text(now: Time? = None) -> Str
 fn (r: Registry) handler() -> fn(http.Request) -> http.Response
 fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Response uses clock
@@ -6287,6 +6293,14 @@ fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(
   order). Calls are safe from any task: a series is found under a read
   lock and updated with atomics; the write lock is taken only to make a
   series the first time.
+- A child (decision 0501, client_golang's WithLabelValues) is a held
+  series: `child(values)` finds or makes it (a wrong count is the same fault
+  as `inc`), and `inc`, `add`, `set` and `observe` on it take no label list,
+  key, lock or lookup. It shares the series' cells, is safe from any task,
+  and past the series limit counts into a series nothing exposes (the drop
+  is counted). `remove` and `reset` detach a series: a child made before
+  keeps counting into the detached series, so take a new child after a
+  remove.
 - An instrument holds at most 10,000 series: later new ones are dropped
   and counted in `xo_metrics_dropped_total`, which `text()` always ends
   with.
