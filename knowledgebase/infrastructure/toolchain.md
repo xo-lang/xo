@@ -257,7 +257,12 @@ and runs `gh release create`. The order:
 2. tag `vX.Y.Z`;
 3. `publish.sh prepare`;
 4. in `../xo-publish`, `scripts/release.sh`, then release-verify.sh per
-   host;
+   host. The release agent runs this step, not the owner. On the Mac it
+   goes through heavy.sh (`HEAVY_CLASS=bulk HEAVY_DARWIN=1
+   HEAVY_MAX_GB=20 ~/xo-lead/agents/heavy.sh release scripts/release.sh
+   VERSION`). Without HEAVY_JOB, release.sh refuses with exit 64 (as
+   `go run ./scripts/xobuild` does), unless it is a dry run or
+   XO_UNGUARDED=1 is set (2026-11-05);
 5. the owner runs `publish.sh push`;
 6. the owner runs `release-publish.sh`;
 6a. the lead runs `~/xo-lead/agents/seed-hosts.sh X.Y.Z`: every offload

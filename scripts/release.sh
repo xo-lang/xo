@@ -116,6 +116,16 @@
 set -euo pipefail
 
 dry="${XO_RELEASE_DRY_RUN:-}"
+# On the development Mac a release build runs under the lead's heavy.sh,
+# which sets HEAVY_JOB (its xo builds take several GB; scripts/xobuild
+# refuses a build outside it there too). A dry run builds nothing.
+# XO_UNGUARDED=1 skips the check.
+if [ "$(uname -s)" = Darwin ] && [ "$dry" != 1 ] && [ -z "${HEAVY_JOB:-}" ] && [ "${XO_UNGUARDED:-}" != 1 ]; then
+	echo "release.sh: not under heavy.sh; run it as:" >&2
+	echo "  HEAVY_CLASS=bulk HEAVY_DARWIN=1 HEAVY_MAX_GB=20 ~/xo-lead/agents/heavy.sh release scripts/release.sh ${1:-}" >&2
+	echo "  (XO_UNGUARDED=1 builds anyway)" >&2
+	exit 64
+fi
 # run CMD...: runs it, or under XO_RELEASE_DRY_RUN=1 prints it
 run() {
 	if [ "$dry" = 1 ]; then
