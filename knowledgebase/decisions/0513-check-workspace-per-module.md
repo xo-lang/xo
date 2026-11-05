@@ -166,9 +166,15 @@ same four warnings. TestCheckWorkspacePerModuleSameDiags covers both the
 workspace's directory and its walk, and asserts the per module path ran
 (XO_CHECK_PER_MODULE_TRACE, a prototype aid).
 
-The walk's peak (3.9 GB) is above the directory form's (2.3 GB) because
-its base holds more: every package of the root module, not only the
-ones two members import.
+The walk's peak (3.9 GB) is above the directory form's (2.3 GB), and
+not because of its base: keeping in the base only the root packages two
+members import (13 of 27; the other 14 checked on their own, unwalked)
+gave 3,703 MB and 49.5 s, the same diagnostics. The peak is the
+integration member, which imports about ten services, ec2 among them:
+`xo check ./integration/realaws/...` alone peaks at 3,415 MB (ec2 alone
+2,260 MB). The directory measurements above covered the services only.
+So the walk's peak is its largest member's own closure plus the base,
+as the design means it to be.
 
 Work, in order:
 

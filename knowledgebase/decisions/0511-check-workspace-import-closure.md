@@ -35,8 +35,13 @@ other ways to ask for the whole workspace.
    reported.
 2. `xo check` takes every workspace module, as 0086 has it, when a named
    directory is the workspace's own directory (the one holding
-   `xo.work`; it must hold a module, decision 0345) or is walked
-   (`DIR/...`, including `./...` at the workspace root).
+   `xo.work`; it must hold a module, decision 0345) or a walk of it or
+   of a directory above it (`./...` at the workspace root). A walk below
+   the workspace's directory (`codegen/...`) checks the modules under
+   it, which the walk finds, and their imports, like point 1 (amended
+   2026-11-05: `xo check ./codegen/...` in the aws repo took every
+   service and stopped at the 30 GB budget; it now takes 0.82 s at
+   857 MB on linux/arm64).
 3. `xo test`, `query`, `edit`, `mcp`, and `serve` keep 0086's rule: an
    atomic cross-module `xo edit` needs every module.
 
@@ -45,7 +50,8 @@ packages, and `./...` asks for everything.
 
 The code is one function: Checker.check_workspace_dirs, which `xo check`
 calls instead of workspace_dirs; it returns the arguments alone unless a
-named directory is the workspace's or a walk.
+named directory is the workspace's, or a walk of it or of a directory
+above it.
 
 ## Consequences
 
