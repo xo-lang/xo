@@ -1,0 +1,45 @@
+// Two modules each define `Provider` and `Fault`; values of both are
+// boxed into one interface, compared, shown, and returned as errors under
+// `!` (aws issue 15, 2026-11-05: the interface's type number and its
+// xo.show[Provider] were keyed by the bare name, so native failed with
+// XO1510 and LLVM printed b's Provider as a's, Provider{n: <address>}).
+use github.com/xo-lang/xo/internal/llvm/testdata/golden/iface_same_name_types/a
+use github.com/xo-lang/xo/internal/llvm/testdata/golden/iface_same_name_types/b
+
+interface Getter {
+  fn get(self) -> Int
+}
+
+fn pick(x: Bool) -> List[Getter] {
+  var l: List[Getter] = []
+  if x {
+    l.push(a.make(1))
+  } else {
+    l.push(b.make("ab"))
+  }
+  l
+}
+
+fn first(n: Int, s: Str) -> Int ! Error {
+  let x = a.check(n)?
+  let y = b.check(s)?
+  x + y
+}
+
+fn main(os: Os) {
+  let both: List[Getter] = [a.make(7), b.make("xyz"), a.make(7)]
+  for g in both {
+    os.stdio.println("${g.get()} ${g:?}")
+  }
+  os.stdio.println("same type, same value: ${both[0] == both[2]}; across modules: ${both[0] == both[1]}")
+  let l = pick(false)
+  os.stdio.println("${l[0].get()} ${l:?}")
+  let r = pick(true)
+  os.stdio.println("${r[0].get()} ${r:?}")
+  for (n, s) in [(1, "ab"), (-2, "ab"), (1, "")] {
+    match first(n, s) {
+      Ok(v) => os.stdio.println("ok ${v}")
+      Err(e) => os.stdio.println("err ${e} ${e:?}")
+    }
+  }
+}

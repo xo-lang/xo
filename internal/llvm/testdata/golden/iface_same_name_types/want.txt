@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+7 Provider{n: 7}
+3 Provider{s: "xyz"}
+7 Provider{n: 7}
+same type, same value: true; across modules: false
+2 [Provider{s: "ab"}]
+1 [Provider{n: 1}]
+ok 3
+err Bad(code: -2) Bad(code: -2)
+err Empty(what: "s") Empty(what: "s")
+--- stderr

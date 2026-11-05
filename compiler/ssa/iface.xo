@@ -121,10 +121,15 @@ fn (var b: Builder) to_iface(v: Int, from0: Int, t: Int, at: Expr?) -> Int {
 
 /// The text of ct with std types named as their implementations
 /// (`implNamed(ct).String()`). impl_named may add a type to the checker's
-/// table, so it runs before the by value read of b.c.
+/// table, so it runs before the by value read of b.c. A program type
+/// whose name another module's type shares is named by its module path
+/// (type_name): with the bare name, two modules' `Provider`s boxed into
+/// one interface shared a type number and xo.show[Provider], so the
+/// interface's dispatch read one's value as the other's (aws issue 15,
+/// 2026-11-05).
 fn (var b: Builder) impl_text(ct: Int) -> Str {
   let it = b.impl_named(ct)
-  b.c.show(it)
+  b.type_name(it)
 }
 
 /// The number of the concrete type ct held by interface values (typeID):

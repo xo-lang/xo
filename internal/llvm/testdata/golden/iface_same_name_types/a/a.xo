@@ -1,0 +1,16 @@
+pub struct Provider {
+  n: Int
+}
+
+pub fn make(n: Int) -> Provider { Provider{n: n} }
+
+pub fn (p: Provider) get() -> Int { p.n }
+
+pub enum Fault { Bad(code: Int) } derive Display
+
+pub fn check(n: Int) -> Int ! Fault {
+  if n < 0 {
+    return Err(Fault.Bad(code: n))
+  }
+  n
+}

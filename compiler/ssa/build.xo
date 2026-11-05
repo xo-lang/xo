@@ -2294,7 +2294,9 @@ fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
     var cs: List[Str] = []
     for t in targs {
       let it = b.impl_named(t)
-      cs.push(b.c.show(it))
+      // by module path when another module's type shares the name
+      // (impl_text)
+      cs.push(b.type_name(it))
     }
     key = "${key}|${cs.join(", ")}"
     if let Some(f) = b.funcs.get(key) {

@@ -559,7 +559,7 @@ fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List
       key.push("${n}: text")
     } else {
       let impl = b.impl_named(cts[i])
-      key.push("${n}: ${b.c.show(impl)}")
+      key.push("${n}: ${b.type_name(impl)}")
     }
     cap_ts.push(b.vty(vals[i]))
   }

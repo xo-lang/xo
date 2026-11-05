@@ -1,0 +1,16 @@
+pub struct Provider {
+  s: Str
+}
+
+pub fn make(s: Str) -> Provider { Provider{s: s} }
+
+pub fn (p: Provider) get() -> Int { p.s.len() }
+
+pub enum Fault { Empty(what: Str) } derive Display
+
+pub fn check(s: Str) -> Int ! Fault {
+  if s.is_empty() {
+    return Err(Fault.Empty(what: "s"))
+  }
+  s.len()
+}
