@@ -437,7 +437,9 @@ func fl(f float64) string {
 func norm(s string) string {
 	s = strings.ReplaceAll(s, "main.", "")
 	s = strings.ReplaceAll(s, "[]int", "List[Int]")
-	return strings.ReplaceAll(s, "map[string]string", "Map[Str, Str]")
+	s = strings.ReplaceAll(s, "map[string]string", "Map[Str, Str]")
+	// yaml.v3 cuts a long value at 7 bytes, maybe inside a rune; an Xo Str is valid text
+	return strings.ToValidUTF8(s, "\ufffd")
 }
 
 func show(in []byte) string {

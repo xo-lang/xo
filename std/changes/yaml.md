@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: fix: an error text cutting a long value inside a UTF-8 sequence faulted
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestYamlFuzz seed 4
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go terror (cuts the value at 7 bytes)
+- Test: testdata/corpus/yamlfuzz (seed 4 document)
+
+`cannot unmarshal !!str `...` into int` cut a value longer than 10 bytes at byte 7 with a Str slice, which faults inside a multi-byte character; it now cuts the bytes and writes an incomplete character as U+FFFD (yaml.v3's text holds the cut bytes; an Xo Str holds only valid text).
+
 ## 2026-11-05: fix: Node.alias is a Node?
 
 - Kind: fix

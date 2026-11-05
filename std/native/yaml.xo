@@ -3399,6 +3399,20 @@ fn kind_tag(n: yaml.RawNode) -> Str {
   }
 }
 
+/// The first 7 bytes of v (yaml.v3's `value[:7]`); a character cut in two is one U+FFFD,
+/// where yaml.v3's text holds the bytes, which an Xo Str cannot.
+fn cut_value(v: Str) -> Str {
+  let b = v.bytes()
+  var s = 7
+  while s > 0 && b[s] >= 128 && b[s] < 192 {
+    s -= 1
+  }
+  if s == 7 {
+    return b[0..7].to_str_lossy()
+  }
+  b[0..s].to_str_lossy() + "\u{FFFD}"
+}
+
 fn cannot(d: yaml.Doc, i: Int, into: Str) -> yaml.YamlErr {
   let n = d.nodes[i]
   if n.kind != K_SCALAR && n.style & NS_TAGGED != 0 && n.tag != "!!seq" && n.tag != "!!map" {
@@ -3408,7 +3422,7 @@ fn cannot(d: yaml.Doc, i: Int, into: Str) -> yaml.YamlErr {
     return yerr(d, i, "cannot unmarshal ${n.tag} into ${into}")
   }
   if n.kind == K_SCALAR {
-    let v = if n.value.len() > 10 { n.value[0..7] + "..." } else { n.value }
+    let v = if n.value.len() > 10 { cut_value(n.value) + "..." } else { n.value }
     yerr(d, i, "cannot unmarshal ${n.tag} `${v}` into ${into}")
   } else {
     yerr(d, i, "cannot unmarshal ${kind_tag(n)} into ${into}")
