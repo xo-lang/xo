@@ -1,0 +1,190 @@
+// The notes on disk (decision 0520 phase 1): restart recovery for the
+// stability program's starter app.
+//
+// - Two files in the data directory: `notes.snap`, one line per live note
+//   when it was written, and `notes.log`, one line per change since then.
+//   A line is `A <note as JSON>` (a note stored) or `D <id>` (a note
+//   deleted); `N <id>` in a snapshot is the next id to hand out.
+// - A change reaches the database first (an insert is how a note gets its
+//   id), then the log, and only then the client: a note the client saw
+//   created was logged. With sync on, each log write is fsynced first.
+// - Loading applies the snapshot, then the log. Applying is idempotent (an
+//   `A` replaces the row with its id, a `D` of a missing id does nothing),
+//   so a crash between writing a snapshot and emptying the log loses
+//   nothing. Text after the log's last newline is a write cut short by a
+//   crash: it is dropped and counted (`torn`), never parsed.
+// - Compaction writes the live notes to a new snapshot (a temporary file,
+//   fsynced, then renamed over the old one) and empties the log. It runs at
+//   load and from the purge loop, under the log's lock, so no change is
+//   written between the two steps.
+use std/json
+use std/sql
+
+const SNAP = "notes.snap"
+const SNAP_TMP = "notes.snap.tmp"
+const LOG = "notes.log"
+
+pub enum JournalErr {
+  Fs(from FsErr)
+  Db(from sql.SqlErr)
+  Corrupt(file: Str, line: Int, msg: Str)
+}
+
+fn (e: JournalErr) display() -> Str {
+  match e {
+    Fs(inner) => "journal: ${inner}"
+    Db(inner) => "journal: database: ${inner}"
+    Corrupt(file, line, msg) => "journal: ${file}:${line}: ${msg}"
+  }
+}
+
+pub struct Journal {
+  fs: Fs
+  db: sql.Db
+  log: Mutex[File]
+  sync: Bool
+}
+
+/// What loading found: the live notes after the expired ones were purged,
+/// and how many log lines a crash had cut short.
+pub struct Loaded {
+  notes: Int
+  torn: Int
+}
+
+/// Opens the journal whose files live at the root of `fs`, loads every note
+/// into `db` (dropping those expired at `now`), and compacts.
+pub fn open_journal(fs: Fs, db: sql.Db, now: Time, sync: Bool) -> (Journal, Loaded) ! JournalErr uses (fs, net.dial) {
+  replay(fs, db, SNAP)?
+  let torn = replay(fs, db, LOG)?
+  purge_expired(db, now)?
+  let j = Journal{fs: fs, db: db, log: Mutex.new(fs.open_append(LOG)?), sync: sync}
+  j.compact()?
+  let live = db.query_one("SELECT COUNT(*) AS n FROM notes")?.int("n")?
+  (j, Loaded{notes: live, torn: torn})
+}
+
+/// Applies one file's lines to `db`; returns how many were cut short (0 or
+/// 1: only text after the last newline can be).
+fn replay(fs: Fs, db: sql.Db, name: Str) -> Int ! JournalErr uses (fs.read, net.dial) {
+  let text = match fs.read_text(name) {
+    Ok(t) => t
+    Err(NotFound(_)) => return 0
+    Err(e) => return Err(JournalErr.Fs(e))
+  }
+  let lines = text.split("\n")
+  // the text after the last newline: empty when the file ends cleanly
+  let last = lines.len() - 1
+  for i in 0..last {
+    if let Some(msg) = apply(db, lines[i])? {
+      return Err(JournalErr.Corrupt(file: name, line: i + 1, msg: msg))
+    }
+  }
+  if lines[last].is_empty() { 0 } else { 1 }
+}
+
+/// Applies one line's change; Some(message) for a line that is not one.
+fn apply(db: sql.Db, line: Str) -> Str? ! sql.SqlErr uses net.dial {
+  if line.starts_with("A ") {
+    let n = json.decode[Note](line[2..].bytes()) ?? e => return Some("bad note: ${e}")
+    put_note(db, n)?
+    return None
+  }
+  if !line.starts_with("D ") && !line.starts_with("N ") {
+    return Some("unknown line: ${line}")
+  }
+  let id = Int.parse(line[2..]) ?? return Some("bad id: ${line[2..]}")
+  if line.starts_with("D ") {
+    db.exec("DELETE FROM notes WHERE id = $1", [sql.int(id)])?
+  } else {
+    advance_ids(db, id)?
+  }
+  None
+}
+
+/// Stores `n` under its own id, replacing a row with that id.
+fn put_note(db: sql.Db, n: Note) -> () ! sql.SqlErr uses net.dial {
+  db.exec("DELETE FROM notes WHERE id = $1", [sql.int(n.id)])?
+  db.exec("INSERT INTO notes (id, owner, body, created, expires) VALUES ($1, $2, $3, $4, $5)", [sql.int(n.id), sql.int(n.owner), sql.str(n.body), sql.time(n.created), sql.time(n.expires)])?
+}
+
+/// Makes the next generated id at least `next`: a key given explicitly moves
+/// the SERIAL counter past it, so a placeholder row is stored and removed.
+fn advance_ids(db: sql.Db, next: Int) -> () ! sql.SqlErr uses net.dial {
+  if next <= 1 {
+    return
+  }
+  let at = sql.time(Time.from_unix(0))
+  db.exec("INSERT INTO notes (id, owner, body, created, expires) VALUES ($1, 0, '', $2, $2)", [sql.int(next - 1), at])?
+  db.exec("DELETE FROM notes WHERE id = $1 AND owner = 0", [sql.int(next - 1)])?
+}
+
+/// An id no note has had or will get before the ones after it: a
+/// placeholder row is stored for its generated id and removed.
+fn next_id(db: sql.Db) -> Int ! sql.SqlErr uses net.dial {
+  let at = sql.time(Time.from_unix(0))
+  let id = db.query_one("INSERT INTO notes (owner, body, created, expires) VALUES (0, '', $1, $1) RETURNING id", [at])?.int("id")?
+  db.exec("DELETE FROM notes WHERE id = $1", [sql.int(id)])?
+  id
+}
+
+fn add_line(n: Note) -> Str {
+  "A ${json.encode(n).to_str_lossy()}"
+}
+
+/// Logs a stored note; the caller removes it from the database if this fails.
+pub fn (j: Journal) added(n: Note) -> () ! FsErr uses fs.write {
+  j.write(add_line(n))
+}
+
+/// Logs a deleted note.
+pub fn (j: Journal) deleted(id: Int) -> () ! FsErr uses fs.write {
+  j.write("D ${id}")
+}
+
+fn (j: Journal) write(line: Str) -> () ! FsErr uses fs.write {
+  let sync = j.sync
+  let outcome = j.log.with(fn(var f) -> Result[(), FsErr] { write_line(f, line, sync) })
+  outcome?
+}
+
+fn write_line(f: File, line: Str, sync: Bool) -> () ! FsErr uses fs.write {
+  f.write("${line}\n".bytes())?
+  if sync {
+    f.sync()?
+  }
+}
+
+/// Writes the live notes as the new snapshot and empties the log.
+pub fn (j: Journal) compact() -> () ! JournalErr uses (fs, net.dial) {
+  let fs = j.fs
+  let db = j.db
+  let outcome = j.log.with(fn(var f) -> Result[(), JournalErr] {
+    match snapshot(fs, db) {
+      Ok(fresh) => {
+        f.close().ignore_err("the old log is replaced; its changes are in the snapshot")
+        f = fresh
+        Ok(())
+      }
+      Err(e) => Err(e)
+    }
+  })
+  outcome?
+}
+
+/// Writes the snapshot (a temporary file, fsynced, renamed over the old
+/// one), then empties the log; returns the new log, open for appending.
+fn snapshot(fs: Fs, db: sql.Db) -> File ! JournalErr uses (fs, net.dial) {
+  let notes = db.query_as[Note]("SELECT * FROM notes ORDER BY id", [])?
+  var text = "N ${next_id(db)?}\n"
+  for n in notes {
+    text += "${add_line(n)}\n"
+  }
+  let tmp = fs.create(SNAP_TMP)?
+  tmp.write(text.bytes())?
+  tmp.sync()?
+  tmp.close()?
+  fs.rename(SNAP_TMP, SNAP)?
+  // the snapshot holds every change the log did; start the log again
+  fs.create(LOG)?
+}

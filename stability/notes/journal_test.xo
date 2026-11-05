@@ -1,0 +1,116 @@
+use std/json
+use std/http
+use std/sql
+
+/// A fresh database, as a restarted process has, with the same two users.
+fn restarted() -> sql.Db ! sql.SqlErr {
+  setup()
+}
+
+fn post(r: http.Router, body: Str) -> Note ! Error {
+  let resp = r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"${body}\",\"ttl_secs\":3600}"))
+  expect(resp.status) == 201
+  resp.decode_json[Note]()?
+}
+
+test "a restart keeps every stored note and drops the deleted ones" {
+  let db = setup()?
+  let (j, first) = open_journal(os.fs, db, os.clock.now(), false)?
+  expect(first) == Loaded{notes: 0, torn: 0}
+  let r = routes(db, os.clock, os.rand, journal: Some(j))
+  let a = post(r, "a")?
+  let b = post(r, "b")?
+  let c = post(r, "c")?
+  expect(r.call(authed("DELETE", "/notes/${b.id}", "tok-ada")).status) == 204
+
+  let db2 = restarted()?
+  let (_, loaded) = open_journal(os.fs, db2, os.clock.now(), false)?
+  expect(loaded) == Loaded{notes: 2, torn: 0}
+  expect(list_notes(db2, 1)?) == [a, c]
+}
+
+test "loading drops notes that expired while the process was down" {
+  let db = setup()?
+  let (j, _) = open_journal(os.fs, db, os.clock.now(), false)?
+  let r = routes(db, os.clock, os.rand, journal: Some(j))
+  r.call(authed("POST", "/notes", "tok-ada", body: "{\"body\":\"short\",\"ttl_secs\":10}"))
+  let long = post(r, "long")?
+  os.clock.sleep(1m)
+  let db2 = restarted()?
+  let (_, loaded) = open_journal(os.fs, db2, os.clock.now(), false)?
+  expect(loaded.notes) == 1
+  expect(list_notes(db2, 1)?) == [long]
+}
+
+test "ids are not handed out again after the newest note is deleted" {
+  let db = setup()?
+  let (j, _) = open_journal(os.fs, db, os.clock.now(), false)?
+  let r = routes(db, os.clock, os.rand, journal: Some(j))
+  post(r, "a")?
+  let b = post(r, "b")?
+  expect(r.call(authed("DELETE", "/notes/${b.id}", "tok-ada")).status) == 204
+  // compaction writes the snapshot without b, so only its N line keeps b's id taken
+  j.compact()?
+  let db2 = restarted()?
+  let (j2, _) = open_journal(os.fs, db2, os.clock.now(), false)?
+  let c = post(routes(db2, os.clock, os.rand, journal: Some(j2)), "c")?
+  expect(c.id > b.id)
+}
+
+test "a log line cut short by a crash is dropped and counted" {
+  let db = setup()?
+  let (j, _) = open_journal(os.fs, db, os.clock.now(), false)?
+  let a = post(routes(db, os.clock, os.rand, journal: Some(j)), "a")?
+  // what a crash in the middle of the next write leaves
+  os.fs.append("notes.log", b"A {\"id\":9,\"own")?
+  let db2 = restarted()?
+  let (_, loaded) = open_journal(os.fs, db2, os.clock.now(), false)?
+  expect(loaded) == Loaded{notes: 1, torn: 1}
+  expect(list_notes(db2, 1)?) == [a]
+  // loading compacted: the torn text is gone from disk
+  expect(os.fs.read_text("notes.log")?) == ""
+}
+
+test "a damaged line before the end is an error, not a guess" {
+  os.fs.write("notes.log", b"D 1\nX what\nD 2\n")?
+  let got = open_journal(os.fs, restarted()?, os.clock.now(), false)
+  expect(got is Err(JournalErr.Corrupt(file: "notes.log", line: 2, msg: _)))
+}
+
+test "replaying a change twice changes nothing" {
+  let db = setup()?
+  let (j, _) = open_journal(os.fs, db, os.clock.now(), false)?
+  let a = post(routes(db, os.clock, os.rand, journal: Some(j)), "a")?
+  // the snapshot was written but the log not yet emptied: both hold `a`
+  j.compact()?
+  os.fs.append("notes.log", "A ${json.encode(a).to_str_lossy()}\n".bytes())?
+  let db2 = restarted()?
+  let (_, loaded) = open_journal(os.fs, db2, os.clock.now(), false)?
+  expect(loaded.notes) == 1
+  expect(list_notes(db2, 1)?) == [a]
+}
+
+test "a failed compaction keeps the log, so nothing is lost" {
+  let db = setup()?
+  let (j, _) = open_journal(os.fs, db, os.clock.now(), false)?
+  let a = post(routes(db, os.clock, os.rand, journal: Some(j)), "a")?
+  os.fs.fail_next(testing.FsOp.Rename, "notes.snap", FsErr.Io(path: "notes.snap", msg: "disk full"))
+  expect(j.compact() is Err(JournalErr.Fs(_)))
+  let db2 = restarted()?
+  let (_, loaded) = open_journal(os.fs, db2, os.clock.now(), false)?
+  expect(loaded.notes) == 1
+  expect(list_notes(db2, 1)?) == [a]
+}
+
+test "with a data directory, main loads the notes and logs what it found" {
+  os.fs.write("data/notes.log", b"D 4\n")?
+  os.env.set("NOTES_TOKEN", "t0p")
+  os.env.set("NOTES_ADDR", ":0")
+  os.env.set("NOTES_DATA", "data")
+  os.proc.signal_after(1s)
+  expect(testing.run_main(main, os)) == 0
+  let rec = testing.logs().find(fn(r) { r.msg == "loaded" }).or_fault("main logged no load")
+  expect(rec.fields.get("notes")) == Some("0")
+  expect(rec.fields.get("torn")) == Some("0")
+  expect(os.fs.read_text("data/notes.snap")?.starts_with("N "))
+}
