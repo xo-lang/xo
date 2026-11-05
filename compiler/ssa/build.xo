@@ -1951,10 +1951,23 @@ fn (var b: Builder) ambiguous_type_names() -> Map[Str, Bool] {
           }
         }
       }
+      // and one named like a runtime handle the compiler interns under
+      // its bare name (Module.handle): `select`'s Select is not a prelude
+      // type, so an aws DynamoDB `enum Select` took its name and
+      // rt.select_new returned the enum (aws issue 10, 2026-11-04;
+      // gotchas/program-type-named-like-runtime-handle.md)
+      if RT_HANDLE_NAMES.contains(n) {
+        out[n] = true
+      }
     }
   }
   out
 }
+
+/// The handles the compiler interns under their bare names
+/// (Module.handle calls in conc.xo, call.xo, net): a program's type of one
+/// of these names is interned under its module path (ambiguous_type_names).
+const RT_HANDLE_NAMES = ["Scope", "Select", "Listener", "Conn"]
 
 /// The name a lowered named type is interned under (typeName).
 fn (var b: Builder) type_name(t: Int) -> Str {
