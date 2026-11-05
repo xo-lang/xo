@@ -130,3 +130,16 @@ tests is go-amqp itself (the oracle), not a runtime dependency.
    all four stages before any SDK work?
 3. Settled by the owner: the real namespace smoke test needs a connection
    string, runs only on the owner's machine after a confirmed plan, never in CI.
+
+## As built (2026-11-05, std owner)
+
+- Stage 2 is split: 2a (frames and performatives, `encode_frame`/`decode_frame`, 0708e6e29), 2b-i (the
+  synchronous connection: `dial`, SASL PLAIN and ANONYMOUS, Open, `begin`, `end_session`, `close`, driven
+  by one task) and 2b-ii (a reader task and a session mux so several links share a connection).
+  Messages (header, properties, annotations, body, footer) land as 2c, before links.
+- Names: the connection type is `amqp.Connection` (not `Conn`, which is the prelude's TCP `Conn`).
+  Fields of the wire structs that hold an unsigned value with a default are `Int` and range checked on
+  encode, because a `UInt32` field with a literal default needs an Int to UInt32 conversion that the
+  native backends lack in a struct literal (XO1201; reported to Lang 1).
+- A connection that outlives its dial call and runs a reader task needs a `task.Group`; 2b-ii takes it as a
+  parameter (`dial(net, tasks, addr, opts)`), as the structured concurrency rule (spec 7.1) requires.

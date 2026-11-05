@@ -3,6 +3,7 @@
 // Declaration file. Stage 1: the type system and its encoding (go-amqp's
 // internal/encoding); the connection, sessions and links follow in stages 2
 // and 3 and the CBS helper in stage 4.
+use std/tls
 
 /// An AMQP 1.0 value (section 1.6 of the specification): the primitive
 /// types, the compound types, and a described value.
@@ -44,6 +45,14 @@ enum AmqpErr {
   Decode(msg: Str)
   /// a value that cannot be encoded (an array of mixed types, an oversized string)
   Encode(msg: Str)
+  /// the transport failed (a refused connection, a reset, a timeout, end of stream)
+  Net(msg: Str)
+  /// the peer broke the protocol (a frame out of turn, a wrong header)
+  Protocol(msg: Str)
+  /// the peer closed the connection, session or link with an error
+  Peer(error: WireError)
+  /// SASL authentication failed: the sasl-code and the server's additional data
+  Auth(code: Int, msg: Str)
 }
 
 /// The encoding of v with the smallest constructors go-amqp's encoder picks
@@ -275,3 +284,179 @@ fn encode_frame(f: Frame) -> Bytes ! AmqpErr
 /// The frame at the start of b and the bytes it took; `max_size` is the
 /// largest frame size accepted (a larger one is a Decode error).
 fn decode_frame(b: Bytes, max_size: Int = 4294967295) -> (Frame, Int) ! AmqpErr
+
+// ---------------------------------------------------------------------------
+// Stage 2b-i: the connection (synchronous: one task drives it; a background
+// reader and the session mux follow in 2b-ii).
+
+/// How to authenticate during the SASL exchange (section 5.3).
+enum Sasl {
+  /// no SASL layer: the AMQP header follows the transport
+  None
+  Plain(user: Str, password: Str)
+  Anonymous
+}
+
+struct ConnOptions {
+  /// empty: a random container id
+  container_id: Str = ""
+  /// the Open's hostname, empty: the host of the address
+  hostname: Str = ""
+  /// the largest frame accepted, in bytes (at least 512)
+  max_frame_size: Int = 65536
+  channel_max: Int = 65535
+  /// advertised idle timeout in milliseconds (the peer sends frames at least that often), 0 for none
+  idle_timeout_ms: Int = 0
+  properties: List[(Str, Value)] = []
+  sasl: Sasl = Sasl.None
+  /// amqps only: the trusted roots (None: the system's) and the verification
+  tls_roots: tls.Roots? = None
+  tls_verify: tls.Verify = tls.Verify.Full
+}
+
+/// The transport, plain or TLS (as std/smtp's Link).
+enum Transport {
+  Plain(c: Conn)
+  Tls(t: tls.TlsConn)
+}
+
+/// A connection's state. Internal: use the methods of `Connection`.
+struct ConnState {
+  link: Transport
+  buf: Bytes = b""
+  max_frame_size: Int = 65536
+  /// the largest frame the peer accepts, in bytes
+  peer_max_frame_size: Int = 65536
+  /// the largest channel number usable (the lower of both sides' channel-max)
+  peer_channel_max: Int = 65535
+  /// the peer's advertised idle timeout in milliseconds, 0 for none
+  peer_idle_timeout_ms: Int = 0
+  peer_container_id: Str = ""
+  peer_properties: List[(Str, Value)] = []
+  /// channels in use by begun sessions
+  channels: List[Int] = []
+  /// frames read while waiting for another and not yet returned by recv
+  pending: List[Frame] = []
+  closed: Bool = false
+}
+
+/// An open AMQP connection. A handle: copies share the connection, and its methods serialize on it.
+struct Connection {
+  st: Mutex[ConnState]
+}
+
+/// The peer's container id from its Open.
+fn (c: Connection) peer_container_id() -> Str
+/// The largest frame the peer accepts, in bytes.
+fn (c: Connection) peer_max_frame_size() -> Int
+/// The largest channel number usable (the lower of both sides' channel-max).
+fn (c: Connection) peer_channel_max() -> Int
+/// The peer's advertised idle timeout in milliseconds, 0 for none.
+fn (c: Connection) peer_idle_timeout_ms() -> Int
+/// The peer's Open properties.
+fn (c: Connection) peer_properties() -> List[(Str, Value)]
+
+/// Connects to `addr` (`host:port`, `amqp://host[:port]` or `amqps://host[:port]`; ports default
+/// to 5672 and 5671; amqps runs TLS first), runs the SASL exchange when `opts.sasl` is not `None`,
+/// and exchanges the Open frames.
+fn dial(net: Net, addr: Str, opts: ConnOptions = ConnOptions{}) -> Connection ! AmqpErr uses net.dial
+
+/// Writes one frame, as `encode_frame`'s bytes.
+fn (c: Connection) send(f: Frame) -> () ! AmqpErr uses net.dial
+
+/// The next frame from the peer (an empty frame is returned as `FrameBody.Empty`).
+fn (c: Connection) recv() -> Frame ! AmqpErr uses net.dial
+
+/// Sends Close and waits for the peer's Close; a Close carrying an error is `Peer`.
+fn (c: Connection) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
+
+/// Drops the transport without the Close exchange.
+fn (c: Connection) abort()
+
+struct SessionOptions {
+  incoming_window: Int = 2048
+  outgoing_window: Int = 2048
+  handle_max: Int = 4294967295
+}
+
+/// A begun session: its channel and the windows both sides announced.
+struct Session {
+  channel: Int
+  remote_channel: Int = 0
+  next_outgoing_id: Int = 0
+  remote_incoming_window: Int = 0
+  remote_outgoing_window: Int = 0
+  remote_next_outgoing_id: Int = 0
+  incoming_window: Int
+  outgoing_window: Int
+  handle_max: Int
+  remote_handle_max: Int = 0
+}
+
+/// Begins a session on the lowest free channel and waits for the peer's Begin.
+fn (c: Connection) begin(opts: SessionOptions = SessionOptions{}) -> Session ! AmqpErr uses net.dial
+
+/// Ends the session (End, then the peer's End); frames for other channels read while waiting
+/// stay queued for recv.
+fn (c: Connection) end_session(s: Session, error: WireError? = None) -> () ! AmqpErr uses net.dial
+
+// ---------------------------------------------------------------------------
+// Stage 2c: messages (section 3.2 of the specification; go-amqp's message.go)
+
+/// The header section: delivery details.
+struct Header {
+  durable: Bool = false
+  /// 0 to 9, default 4 (not written when 4)
+  priority: Int = 4
+  /// time to live in milliseconds, 0 for none
+  ttl_ms: Int = 0
+  first_acquirer: Bool = false
+  delivery_count: Int = 0
+}
+
+/// The properties section: standard properties of the message.
+struct Properties {
+  /// a ulong, uuid, binary or string; Null when absent
+  message_id: Value = Value.Null
+  user_id: Bytes = b""
+  to: Str? = None
+  subject: Str? = None
+  reply_to: Str? = None
+  /// like message_id
+  correlation_id: Value = Value.Null
+  content_type: Str? = None
+  content_encoding: Str? = None
+  /// milliseconds since the Unix epoch
+  absolute_expiry_ms: Int? = None
+  creation_ms: Int? = None
+  group_id: Str? = None
+  group_sequence: Int? = None
+  reply_to_group_id: Str? = None
+}
+
+/// The body: one or more data sections, one or more sequence sections, or one value.
+enum Body {
+  Empty
+  Data(sections: List[Bytes])
+  Sequence(sections: List[List[Value]])
+  Value(v: Value)
+}
+
+/// A message: the sections of the bare and annotated message. A `None` section is not written; a
+/// `Some` section is written even when empty (go-amqp's rule for a non-nil map).
+struct Message {
+  header: Header? = None
+  delivery_annotations: List[(Value, Value)]? = None
+  annotations: List[(Value, Value)]? = None
+  properties: Properties? = None
+  app_properties: List[(Str, Value)]? = None
+  body: Body = Body.Empty
+  footer: List[(Value, Value)]? = None
+}
+
+/// The message as the bytes of a transfer's payload.
+fn encode_message(m: Message) -> Bytes ! AmqpErr
+
+/// The message in b (all of it); a section out of the specification's order is accepted, a repeated
+/// header, properties or annotations section, or mixed body kinds, is a Decode error.
+fn decode_message(b: Bytes) -> Message ! AmqpErr

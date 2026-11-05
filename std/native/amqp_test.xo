@@ -137,3 +137,163 @@ test "an Int field outside its wire range is refused on encode" {
   let g = amqp.Frame{channel: UInt16(0), body: amqp.FrameBody.Begin(v: amqp.Begin{remote_channel: None, next_outgoing_id: UInt32(0), incoming_window: UInt32(0), outgoing_window: UInt32(0), handle_max: -1})}
   expect(amqp.encode_frame(g).is_err()) == true
 }
+
+// ---------------------------------------------------------------------------
+// The connection against an in-process peer
+
+fn peer_frame(sc: ServerConn, buf: Bytes) -> (amqp.Frame, Bytes) {
+  var b = buf
+  while b.len() < 4 {
+    match sc.read(4096).or_fault("peer read") {
+      Some(x) => b = b + x
+      None => fault("peer: eof")
+    }
+  }
+  var size = 0
+  for i in 0..4 { size = size * 256 + Int(b[i]) }
+  while b.len() < size {
+    match sc.read(4096).or_fault("peer read") {
+      Some(x) => b = b + x
+      None => fault("peer: eof")
+    }
+  }
+  let (f, _) = amqp.decode_frame(b[0..size]).or_fault("peer decode")
+  (f, b[size..])
+}
+
+fn peer_send(sc: ServerConn, ch: Int, body: amqp.FrameBody) {
+  sc.write(amqp.encode_frame(amqp.Frame{channel: UInt16.wrapping_from(ch), body: body}).or_fault("peer encode")).or_fault("peer write")
+}
+
+fn peer_header(sc: ServerConn, want: Bytes, buf: Bytes) -> Bytes {
+  var b = buf
+  while b.len() < 8 {
+    match sc.read(4096).or_fault("peer read") {
+      Some(x) => b = b + x
+      None => fault("peer: eof")
+    }
+  }
+  expect(b[0..8]) == want
+  sc.write(want).or_fault("peer write")
+  b[8..]
+}
+
+/// A scripted peer: optional SASL (PLAIN user/pass accepted, or refused), then open, begin, end and close.
+fn serve(l: Listener, sasl: Bool, accept_auth: Bool, peer_error: Bool) {
+  let sc = l.accept().or_fault("accept")
+  var buf = b""
+  if sasl {
+    buf = peer_header(sc, b"AMQP\x03\x01\x00\x00", buf)
+    peer_send(sc, 0, amqp.FrameBody.SaslMechanisms(v: amqp.SaslMechanisms{mechanisms: ["EXTERNAL", "PLAIN"]}))
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    match f.body {
+      SaslInit(i) => {
+        expect(i.mechanism) == "PLAIN"
+        expect(i.initial_response) == b"\x00user\x00pass"
+      }
+      _ => fault("expected sasl-init")
+    }
+    peer_send(sc, 0, amqp.FrameBody.SaslOutcome(v: amqp.SaslOutcome{code: UInt8(if accept_auth { 0 } else { 1 }), additional_data: b""}))
+    if !accept_auth {
+      sc.close()
+      return
+    }
+  }
+  buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", buf)
+  let (o, rest) = peer_frame(sc, buf)
+  buf = rest
+  match o.body {
+    Open(x) => expect(x.container_id) == "tester"
+    _ => fault("expected open")
+  }
+  peer_send(sc, 0, amqp.FrameBody.Open(v: amqp.Open{container_id: "broker", max_frame_size: 1024, channel_max: 7}))
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    match f.body {
+      Begin(_) => {
+        if peer_error {
+          peer_send(sc, Int(f.channel), amqp.FrameBody.End(v: amqp.End{error: Some(amqp.WireError{condition: "amqp:not-allowed", description: "no sessions"})}))
+        } else {
+          peer_send(sc, Int(f.channel), amqp.FrameBody.Begin(v: amqp.Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(5), incoming_window: UInt32(100), outgoing_window: UInt32(200)}))
+        }
+      }
+      End(_) => peer_send(sc, Int(f.channel), amqp.FrameBody.End(v: amqp.End{error: None}))
+      Close(_) => {
+        peer_send(sc, 0, amqp.FrameBody.Close(v: amqp.Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+  }
+}
+
+test "dial opens a connection, begins and ends sessions, and closes" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve(l, false, true, false) })
+    var c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester"}).or_fault("dial")
+    expect(c.peer_container_id()) == "broker"
+    expect(c.peer_max_frame_size()) == 1024
+    expect(c.peer_channel_max()) == 7
+    let a = c.begin().or_fault("begin a")
+    let b = c.begin(amqp.SessionOptions{incoming_window: 10}).or_fault("begin b")
+    expect(a.channel) == 0
+    expect(b.channel) == 1
+    expect(a.remote_incoming_window) == 100
+    expect(a.remote_outgoing_window) == 200
+    expect(a.remote_next_outgoing_id) == 5
+    expect(b.incoming_window) == 10
+    c.end_session(a).or_fault("end a")
+    let again = c.begin().or_fault("begin again")
+    expect(again.channel) == 0
+    c.end_session(b).or_fault("end b")
+    c.end_session(again).or_fault("end again")
+    c.close().or_fault("close")
+  }
+}
+
+test "SASL PLAIN, then open" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve(l, true, true, false) })
+    var c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", sasl: amqp.Sasl.Plain(user: "user", password: "pass")}).or_fault("dial")
+    c.close().or_fault("close")
+  }
+}
+
+test "a refused SASL login is an Auth error" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve(l, true, false, false) })
+    match amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", sasl: amqp.Sasl.Plain(user: "user", password: "pass")}) {
+      Ok(_) => fault("expected an error")
+      Err(amqp.AmqpErr.Auth(code, _)) => expect(code) == 1
+      Err(_) => fault("wrong error")
+    }
+  }
+}
+
+test "a peer's End with an error is a Peer error" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve(l, false, true, true) })
+    var c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester"}).or_fault("dial")
+    match c.begin() {
+      Ok(_) => fault("expected an error")
+      Err(amqp.AmqpErr.Peer(e)) => expect(e.condition) == "amqp:not-allowed"
+      Err(_) => fault("wrong error")
+    }
+    c.close().or_fault("close")
+  }
+}
+
+test "addresses: schemes and default ports" {
+  expect(parse_addr("broker:5673")) == ("broker", "broker:5673", false)
+  expect(parse_addr("amqp://broker")) == ("broker", "broker:5672", false)
+  expect(parse_addr("amqps://b.example.com/")) == ("b.example.com", "b.example.com:5671", true)
+  expect(parse_addr("amqps://[::1]:9")) == ("::1", "[::1]:9", true)
+  expect(parse_addr("[::1]")) == ("::1", "[::1]:5672", false)
+}

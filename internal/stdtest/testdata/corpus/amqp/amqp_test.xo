@@ -171,7 +171,7 @@ const CASES: List[(Str, Str, Str)] = [
   ("map many", "d10000002c0000000aa101615201a10162a10374776fa30163d0000000050000000141550440500582401a000000000000", "{long 4=null,str 61=uint 1,str 62=str 74776f,str 63=[true],ubyte 5=double 401a000000000000}"),
   ("map nested", "d10000002800000002a1056f75746572d10000001800000002a105696e6e6572d0000000080000000254015402", "{str 6f75746572={str 696e6e6572=[int 1,int 2]}}"),
   ("map string keys", "d10000000f00000004a101785501a10179a1017a", "{str 78=long 1,str 79=str 7a}"),
-  ("map symbol keys", "d10000000f00000004a30179a1017aa301785501", "{str 78=long 1,str 79=str 7a}"),
+  ("map symbol keys", "d10000000f00000004a301785501a30179a1017a", "{str 78=long 1,str 79=str 7a}"),
   ("array int8", "e005035101fe03", "array[byte 1,byte -2,byte 3]"),
   ("array uint16", "e008036000010002ffff", "array[ushort 1,ushort 2,ushort 65535]"),
   ("array int16", "e00803610001fffe012c", "array[short 1,short -2,short 300]"),
@@ -1015,6 +1015,102 @@ test "frames go-amqp's client wrote decode and encode back to the same bytes" {
     expect(n) == b.len()
     expect(name.ends_with(kind(f.body))) == true
     expect(amqp.encode_frame(f).or_fault(name)) == b
+  }
+}
+
+
+/// (case, go-amqp's message encoding in hex, go-amqp's decoded message shown)
+const MESSAGES: List[(Str, Str, Str)] = [
+  ("empty body", "", "h=-|da=-|ann=-|p=-|ap=-|body=empty|f=-"),
+  ("data", "005375a00568656c6c6f", "h=-|da=-|ann=-|p=-|ap=-|body=data[68656c6c6f]|f=-"),
+  ("two data sections", "005375a00161005375a000005375a003636363", "h=-|da=-|ann=-|p=-|ap=-|body=data[61,,636363]|f=-"),
+  ("value string", "005377a10474657874", "h=-|da=-|ann=-|p=-|ap=-|body=value str 74657874|f=-"),
+  ("value map", "005377d10000001900000004a1016b5501a1017ad0000000080000000241a10178", "h=-|da=-|ann=-|p=-|ap=-|body=value {str 6b=long 1,str 7a=[true,str 78]}|f=-"),
+  ("sequence", "005376d000000009000000025401a1016100537645005376d000000006000000015007", "h=-|da=-|ann=-|p=-|ap=-|body=seq[[int 1,str 61],[],[ubyte 7]]|f=-"),
+  ("header default", "005370d0000000050000000142005375a00178", "h=false,4,0,false,0|da=-|ann=-|p=-|ap=-|body=data[78]|f=-"),
+  ("header full", "005370d00000000f000000054150097000015f90415203005375a00178", "h=true,9,90000,true,3|da=-|ann=-|p=-|ap=-|body=data[78]|f=-"),
+  ("header priority 0", "005370d00000000700000002425000005375a00178", "h=false,0,0,false,0|da=-|ann=-|p=-|ap=-|body=data[78]|f=-"),
+  ("delivery annotations", "005371d10000000f00000004a301735502a30161a10162005375a00178", "h=-|da={str 61=str 62,str 73=long 2}|ann=-|p=-|ap=-|body=data[78]|f=-"),
+  ("message annotations", "005372d10000001500000004a309782d6f70742d6b6579a10176550541005375a00178", "h=-|da=-|ann={long 5=true,str 782d6f70742d6b6579=str 76}|p=-|ap=-|body=data[78]|f=-"),
+  ("empty annotations", "005372d10000000400000000005375a00178", "h=-|da=-|ann={}|p=-|ap=-|body=data[78]|f=-"),
+  ("properties ids", "005373d00000001000000006a10469642d3140404040534d005375a00178", "h=-|da=-|ann=-|p=str 69642d31;;-;-;-;ulong 77;-;-;-;-;-;-;-|ap=-|body=data[78]|f=-"),
+  ("properties uuid and binary ids", "005373d00000001e0000000698030405060708090a0b0c0d0e0f10111240404040a003010203005375a00178", "h=-|da=-|ann=-|p=uuid 030405060708090a0b0c0d0e0f101112;;-;-;-;bin 010203;-;-;-;-;-;-;-|ap=-|body=data[78]|f=-"),
+  ("properties all", "005373d0000000480000000da1016da00175a102746fa1047375626aa1027274a10163a30a746578742f706c61696ea304677a6970830000018bcfe5687b8300000174876e8000a101675204a1027267005375a00178", "h=-|da=-|ann=-|p=str 6d;75;746f;7375626a;7274;str 63;746578742f706c61696e;677a6970;1700000000123;1600000000000;67;4;7267|ap=-|body=data[78]|f=-"),
+  ("properties empty", "00537345005375a00178", "h=-|da=-|ann=-|p=null;;-;-;-;null;-;-;-;-;-;-;-|ap=-|body=data[78]|f=-"),
+  ("properties only subject", "005373d00000000a00000004404040a10173", "h=-|da=-|ann=-|p=null;;-;73;-;null;-;-;-;-;-;-;-|ap=-|body=empty|f=-"),
+  ("application properties", "005374d10000001500000006a10162a10374776fa1016341a101615401005375a00178", "h=-|da=-|ann=-|p=-|ap={str 61=int 1,str 62=str 74776f,str 63=true}|body=data[78]|f=-"),
+  ("empty application properties", "005374d10000000400000000005375a00178", "h=-|da=-|ann=-|p=-|ap={}|body=data[78]|f=-"),
+  ("footer", "005375a00178005378d10000000e00000002a303736967a103616263", "h=-|da=-|ann=-|p=-|ap=-|body=data[78]|f={str 736967=str 616263}"),
+  ("everything", "005370d0000000050000000141005371d10000000900000002a301645101005372d10000000a00000002a3016da10176005373d00000000b00000003a1017840a10174005374d10000000a00000002a1016ba10176005377a104626f6479005378d10000000900000002a301665001", "h=true,4,0,false,0|da={str 64=byte 1}|ann={str 6d=str 76}|p=str 78;;74;-;-;null;-;-;-;-;-;-;-|ap={str 6b=str 76}|body=value str 626f6479|f={str 66=ubyte 1}"),
+  ("large data", "005375b00000012c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "h=-|da=-|ann=-|p=-|ap=-|body=data[000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000]|f=-"),
+]
+
+fn sstr(p: Str?) -> Str {
+  match p {
+    Some(s) => s.bytes().to_hex()
+    None => "-"
+  }
+}
+
+fn stime(p: Int?) -> Str {
+  match p {
+    Some(t) => "${t}"
+    None => "-"
+  }
+}
+
+fn sann(a: List[(amqp.Value, amqp.Value)]?) -> Str {
+  match a {
+    Some(p) => show(amqp.Value.Map(pairs: p))
+    None => "-"
+  }
+}
+
+fn showm(m: amqp.Message) -> Str {
+  var parts: List[Str] = []
+  match m.header {
+    Some(h) => { parts.push("h=${h.durable},${h.priority},${h.ttl_ms},${h.first_acquirer},${h.delivery_count}") }
+    None => { parts.push("h=-") }
+  }
+  parts.push("da=" + sann(m.delivery_annotations))
+  parts.push("ann=" + sann(m.annotations))
+  match m.properties {
+    Some(p) => {
+      var gs = "-"
+      match p.group_sequence {
+        Some(n) => { gs = "${n}" }
+        None => {}
+      }
+      parts.push("p=" + [show(p.message_id), p.user_id.to_hex(), sstr(p.to), sstr(p.subject), sstr(p.reply_to),
+        show(p.correlation_id), sstr(p.content_type), sstr(p.content_encoding), stime(p.absolute_expiry_ms),
+        stime(p.creation_ms), sstr(p.group_id), gs, sstr(p.reply_to_group_id)].join(";"))
+    }
+    None => { parts.push("p=-") }
+  }
+  match m.app_properties {
+    Some(p) => {
+      var pairs: List[(amqp.Value, amqp.Value)] = []
+      for (k, v) in p { pairs.push((amqp.Value.Str(v: k), v)) }
+      parts.push("ap=" + show(amqp.Value.Map(pairs: pairs)))
+    }
+    None => { parts.push("ap=-") }
+  }
+  match m.body {
+    Empty => { parts.push("body=empty") }
+    Data(ds) => { parts.push("body=data[" + ds.map(fn(d) { d.to_hex() }).join(",") + "]") }
+    Sequence(ss) => { parts.push("body=seq[" + ss.map(fn(s) { show(amqp.Value.List(items: s)) }).join(",") + "]") }
+    Value(v) => { parts.push("body=value " + show(v)) }
+  }
+  parts.push("f=" + sann(m.footer))
+  parts.join("|")
+}
+
+test "go-amqp's messages decode to go-amqp's values and encode back to the same bytes" {
+  for (name, hex, shown) in MESSAGES {
+    let b = Bytes.from_hex(hex).or_fault("hex")
+    let m = amqp.decode_message(b).or_fault(name)
+    expect(showm(m)) == shown
+    expect(amqp.encode_message(m).or_fault(name)) == b
   }
 }
 

@@ -6,6 +6,7 @@
 // (smalluint, smallint, str8 and vbin8 by size, always list32 and map32);
 // the decoder takes every constructor of the specification.
 use std/amqp
+use std/tls
 
 fn enc_err(msg: Str) -> amqp.AmqpErr { amqp.AmqpErr.Encode(msg: msg) }
 
@@ -1256,4 +1257,646 @@ fn decode_frame(b: Bytes, max_size: Int = 4294967295) -> (amqp.Frame, Int) ! amq
   if ftype == 0 && (c < 0x10 || c > 0x18) { return Err(dec_err("not an AMQP performative")) }
   let body = body_of(c, f, b[used..size])?
   Ok((amqp.Frame{channel: UInt16(channel), body: body}, size))
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2b-i: the connection
+
+fn net_err(e: NetErr) -> amqp.AmqpErr { amqp.AmqpErr.Net(msg: "${e}") }
+
+fn proto_err(msg: Str) -> amqp.AmqpErr { amqp.AmqpErr.Protocol(msg: msg) }
+
+fn t_read(l: amqp.Transport, max: Int) -> Bytes? ! amqp.AmqpErr uses net.dial {
+  match l {
+    Plain(c) => c.read(max).map_err(net_err)
+    Tls(t) => t.read(max).map_err(net_err)
+  }
+}
+
+fn t_write(l: amqp.Transport, data: Bytes) -> () ! amqp.AmqpErr uses net.dial {
+  match l {
+    Plain(c) => c.write(data).map_err(net_err)
+    Tls(t) => t.write(data).map_err(net_err)
+  }
+}
+
+fn t_close(l: amqp.Transport) {
+  match l {
+    Plain(c) => c.close()
+    Tls(t) => t.close()
+  }
+}
+
+/// The host, `host:port` and whether TLS is used, from `host:port`, `amqp://...` or `amqps://...`.
+fn parse_addr(addr: Str) -> (Str, Str, Bool) {
+  var rest = addr
+  var secure = false
+  if rest.starts_with("amqps://") {
+    rest = rest[8..]
+    secure = true
+  } else if rest.starts_with("amqp://") {
+    rest = rest[7..]
+  }
+  var end = rest.len()
+  var i = 0
+  while i < rest.len() {
+    if rest[i..i + 1] == "/" {
+      end = i
+      break
+    }
+    i += 1
+  }
+  rest = rest[0..end]
+  let default_port = if secure { "5671" } else { "5672" }
+  if rest.starts_with("[") {
+    var close = -1
+    i = 0
+    while i < rest.len() {
+      if rest[i..i + 1] == "]" { close = i }
+      i += 1
+    }
+    if close > 0 {
+      let h = rest[1..close]
+      if close + 1 < rest.len() && rest[close + 1..close + 2] == ":" { return (h, rest, secure) }
+      return (h, "[" + h + "]:" + default_port, secure)
+    }
+  }
+  var cl = -1
+  i = 0
+  while i < rest.len() {
+    if rest[i..i + 1] == ":" { cl = i }
+    i += 1
+  }
+  if cl < 0 { return (rest, rest + ":" + default_port, secure) }
+  (rest[0..cl], rest, secure)
+}
+
+/// Reads until at least n bytes are buffered.
+fn fill(var c: amqp.ConnState, n: Int) -> () ! amqp.AmqpErr uses net.dial {
+  while c.buf.len() < n {
+    match t_read(c.link, 65536)? {
+      Some(b) => c.buf = c.buf + b
+      None => return Err(amqp.AmqpErr.Net(msg: "unexpected end of stream"))
+    }
+  }
+  Ok(())
+}
+
+fn take(var c: amqp.ConnState, n: Int) -> Bytes ! amqp.AmqpErr uses net.dial {
+  fill(c, n)?
+  let out = c.buf[0..n]
+  c.buf = c.buf[n..]
+  Ok(out)
+}
+
+fn st_send(var c: amqp.ConnState, f: amqp.Frame) -> () ! amqp.AmqpErr uses net.dial {
+  if c.closed { return Err(proto_err("the connection is closed")) }
+  t_write(c.link, encode_frame(f)?)
+}
+
+fn read_frame(var c: amqp.ConnState) -> amqp.Frame ! amqp.AmqpErr uses net.dial {
+  fill(c, 4)?
+  let size = get_be(c.buf, 0, 4)
+  if size < 8 { return Err(dec_err("bad frame header")) }
+  if size > c.max_frame_size { return Err(proto_err("frame of ${size} bytes is larger than the maximum frame size ${c.max_frame_size}")) }
+  let raw = take(c, size)?
+  let (f, _) = decode_frame(raw, c.max_frame_size)?
+  Ok(f)
+}
+
+fn st_recv(var c: amqp.ConnState) -> amqp.Frame ! amqp.AmqpErr uses net.dial {
+  if c.pending.len() > 0 {
+    let f = c.pending[0]
+    c.pending = c.pending[1..]
+    return Ok(f)
+  }
+  read_frame(c)
+}
+
+fn proto_header(kind: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write(b"AMQP")
+  b.write_byte(UInt8(kind))
+  b.write_byte(UInt8(1))
+  b.write_byte(UInt8(0))
+  b.write_byte(UInt8(0))
+  b.freeze()
+}
+
+/// Sends our protocol header and checks the peer answers with the same one.
+fn exchange_header(var c: amqp.ConnState, kind: Int) -> () ! amqp.AmqpErr uses net.dial {
+  t_write(c.link, proto_header(kind))?
+  let got = take(c, 8)?
+  if got != proto_header(kind) {
+    return Err(proto_err("unsupported protocol header ${got.to_hex()}"))
+  }
+  Ok(())
+}
+
+fn run_sasl(var c: amqp.ConnState, sasl: amqp.Sasl, hostname: Str) -> () ! amqp.AmqpErr uses net.dial {
+  var mech = ""
+  var initial = b""
+  match sasl {
+    None => return Ok(())
+    Plain(user, password) => {
+      mech = "PLAIN"
+      var b = BytesBuilder.new()
+      b.write_byte(UInt8(0))
+      b.write(user.bytes())
+      b.write_byte(UInt8(0))
+      b.write(password.bytes())
+      initial = b.freeze()
+    }
+    Anonymous => { mech = "ANONYMOUS" }
+  }
+  exchange_header(c, 3)?
+  let first = read_frame(c)?
+  match first.body {
+    SaslMechanisms(m) => {
+      if !m.mechanisms.contains(mech) {
+        return Err(amqp.AmqpErr.Auth(code: -1, msg: "the server does not offer ${mech} (it offers ${m.mechanisms.join(", ")})"))
+      }
+    }
+    _ => return Err(proto_err("expected sasl-mechanisms"))
+  }
+  st_send(c, amqp.Frame{channel: UInt16(0), body: amqp.FrameBody.SaslInit(v: amqp.SaslInit{mechanism: mech, initial_response: initial, hostname: hostname})})?
+  let out = read_frame(c)?
+  match out.body {
+    SaslOutcome(o) => {
+      if Int(o.code) != 0 {
+        return Err(amqp.AmqpErr.Auth(code: Int(o.code), msg: o.additional_data.to_str() ?? ""))
+      }
+    }
+    SaslChallenge(_) => return Err(amqp.AmqpErr.Auth(code: -1, msg: "the server sent a SASL challenge, which ${mech} does not use"))
+    _ => return Err(proto_err("expected sasl-outcome"))
+  }
+  Ok(())
+}
+
+fn dial(net: Net, addr: Str, opts: amqp.ConnOptions = amqp.ConnOptions{}) -> amqp.Connection ! amqp.AmqpErr uses net.dial {
+  if opts.max_frame_size < 512 { return Err(proto_err("max_frame_size must be at least 512")) }
+  let (host, hostport, secure) = parse_addr(addr)
+  let raw = net.dial(hostport).map_err(net_err)?
+  let link = if secure {
+    amqp.Transport.Tls(t: tls.client(raw, host, roots: opts.tls_roots, verify: opts.tls_verify).map_err(net_err)?)
+  } else {
+    amqp.Transport.Plain(c: raw)
+  }
+  var c = amqp.ConnState{link: link, max_frame_size: opts.max_frame_size}
+  let hostname = if opts.hostname == "" { host } else { opts.hostname }
+  match handshake(c, opts, hostname) {
+    Ok(_) => Ok(amqp.Connection{st: Mutex[amqp.ConnState].new(c)})
+    Err(e) => {
+      t_close(c.link)
+      Err(e)
+    }
+  }
+}
+
+fn handshake(var c: amqp.ConnState, opts: amqp.ConnOptions, hostname: Str) -> () ! amqp.AmqpErr uses net.dial {
+  run_sasl(c, opts.sasl, hostname)?
+  exchange_header(c, 0)?
+  let id = if opts.container_id == "" { "xo-amqp" } else { opts.container_id }
+  st_send(c, amqp.Frame{channel: UInt16(0), body: amqp.FrameBody.Open(v: amqp.Open{
+    container_id: id, hostname: hostname, max_frame_size: opts.max_frame_size,
+    channel_max: opts.channel_max, idle_timeout_ms: opts.idle_timeout_ms / 2, properties: opts.properties})})?
+  let f = read_frame(c)?
+  match f.body {
+    Open(o) => {
+      c.peer_container_id = o.container_id
+      c.peer_properties = o.properties
+      if o.max_frame_size > 0 { c.peer_max_frame_size = o.max_frame_size }
+      if o.channel_max < opts.channel_max { c.peer_channel_max = o.channel_max } else { c.peer_channel_max = opts.channel_max }
+      c.peer_idle_timeout_ms = o.idle_timeout_ms
+      Ok(())
+    }
+    Close(x) => {
+      match x.error {
+        Some(e) => Err(amqp.AmqpErr.Peer(error: e))
+        None => Err(proto_err("the peer closed the connection during open"))
+      }
+    }
+    _ => Err(proto_err("expected open"))
+  }
+}
+
+fn st_close(var c: amqp.ConnState, error: amqp.WireError? = None) -> () ! amqp.AmqpErr uses net.dial {
+  if c.closed { return Ok(()) }
+  st_send(c, amqp.Frame{channel: UInt16(0), body: amqp.FrameBody.Close(v: amqp.Close{error: error})})?
+  c.closed = true
+  var result: amqp.AmqpErr? = None
+  while true {
+    let f = match read_frame(c) {
+      Ok(f) => f
+      Err(_) => break
+    }
+    match f.body {
+      Close(x) => {
+        match x.error {
+          Some(e) => { result = Some(amqp.AmqpErr.Peer(error: e)) }
+          None => {}
+        }
+        break
+      }
+      _ => {}
+    }
+  }
+  t_close(c.link)
+  match result {
+    Some(e) => Err(e)
+    None => Ok(())
+  }
+}
+
+fn st_abort(var c: amqp.ConnState) {
+  c.closed = true
+  t_close(c.link)
+}
+
+fn st_begin(var c: amqp.ConnState, opts: amqp.SessionOptions = amqp.SessionOptions{}) -> amqp.Session ! amqp.AmqpErr uses net.dial {
+  var ch = 0
+  while c.channels.contains(ch) { ch += 1 }
+  if ch > c.peer_channel_max { return Err(proto_err("no free channel (channel-max ${c.peer_channel_max})")) }
+  st_send(c, amqp.Frame{channel: UInt16.wrapping_from(ch), body: amqp.FrameBody.Begin(v: amqp.Begin{
+    remote_channel: None, next_outgoing_id: UInt32(0),
+    incoming_window: UInt32.wrapping_from(opts.incoming_window), outgoing_window: UInt32.wrapping_from(opts.outgoing_window),
+    handle_max: opts.handle_max})})?
+  while true {
+    let f = read_frame(c)?
+    match f.body {
+      Begin(b) => {
+        if Int(f.channel) != ch {
+          c.pending.push(f)
+        } else {
+          c.channels.push(ch)
+          let rc = match b.remote_channel {
+            Some(x) => Int(x)
+            None => 0
+          }
+          return Ok(amqp.Session{channel: ch, remote_channel: rc,
+            remote_incoming_window: Int(b.incoming_window), remote_outgoing_window: Int(b.outgoing_window),
+            remote_next_outgoing_id: Int(b.next_outgoing_id), incoming_window: opts.incoming_window,
+            outgoing_window: opts.outgoing_window, handle_max: opts.handle_max, remote_handle_max: b.handle_max})
+        }
+      }
+      End(x) => {
+        if Int(f.channel) == ch {
+          match x.error {
+            Some(e) => return Err(amqp.AmqpErr.Peer(error: e))
+            None => return Err(proto_err("the peer ended the session during begin"))
+          }
+        }
+        c.pending.push(f)
+      }
+      Close(x) => {
+        match x.error {
+          Some(e) => return Err(amqp.AmqpErr.Peer(error: e))
+          None => return Err(proto_err("the peer closed the connection"))
+        }
+      }
+      Empty => {}
+      _ => { c.pending.push(f) }
+    }
+  }
+  Err(proto_err("unreachable"))
+}
+
+fn st_end_session(var c: amqp.ConnState, s: amqp.Session, error: amqp.WireError? = None) -> () ! amqp.AmqpErr uses net.dial {
+  st_send(c, amqp.Frame{channel: UInt16.wrapping_from(s.channel), body: amqp.FrameBody.End(v: amqp.End{error: error})})?
+  while true {
+    let f = read_frame(c)?
+    match f.body {
+      End(x) => {
+        if Int(f.channel) == s.channel {
+          c.channels = c.channels.filter(fn(n: Int) { n != s.channel })
+          match x.error {
+            Some(e) => return Err(amqp.AmqpErr.Peer(error: e))
+            None => return Ok(())
+          }
+        }
+        c.pending.push(f)
+      }
+      Close(x) => {
+        match x.error {
+          Some(e) => return Err(amqp.AmqpErr.Peer(error: e))
+          None => return Err(proto_err("the peer closed the connection"))
+        }
+      }
+      Empty => {}
+      _ => { c.pending.push(f) }
+    }
+  }
+  Err(proto_err("unreachable"))
+}
+
+// Each call runs on the connection's state under its lock. The state keeps the call's writes when it
+// fails (a failed call has still consumed bytes), so the error travels out of `with` as a value.
+
+fn connection_send(c: amqp.Connection, f: amqp.Frame) -> () ! amqp.AmqpErr uses net.dial {
+  let e = c.st.with(fn(var s: amqp.ConnState) -> amqp.AmqpErr? uses net.dial {
+    match st_send(s, f) {
+      Ok(_) => None
+      Err(x) => Some(x)
+    }
+  })
+  match e {
+    Some(x) => Err(x)
+    None => Ok(())
+  }
+}
+
+fn connection_recv(c: amqp.Connection) -> amqp.Frame ! amqp.AmqpErr uses net.dial {
+  let r = c.st.with(fn(var s: amqp.ConnState) -> (amqp.Frame?, amqp.AmqpErr?) uses net.dial {
+    match st_recv(s) {
+      Ok(f) => (Some(f), None)
+      Err(x) => (None, Some(x))
+    }
+  })
+  match r.1 {
+    Some(x) => Err(x)
+    None => {
+      match r.0 {
+        Some(f) => Ok(f)
+        None => Err(proto_err("no frame"))
+      }
+    }
+  }
+}
+
+fn connection_close(c: amqp.Connection, error: amqp.WireError? = None) -> () ! amqp.AmqpErr uses net.dial {
+  let e = c.st.with(fn(var s: amqp.ConnState) -> amqp.AmqpErr? uses net.dial {
+    match st_close(s, error) {
+      Ok(_) => None
+      Err(x) => Some(x)
+    }
+  })
+  match e {
+    Some(x) => Err(x)
+    None => Ok(())
+  }
+}
+
+fn connection_abort(c: amqp.Connection) {
+  c.st.with(fn(var s: amqp.ConnState) { st_abort(s) })
+}
+
+fn connection_begin(c: amqp.Connection, opts: amqp.SessionOptions = amqp.SessionOptions{}) -> amqp.Session ! amqp.AmqpErr uses net.dial {
+  let r = c.st.with(fn(var s: amqp.ConnState) -> (amqp.Session?, amqp.AmqpErr?) uses net.dial {
+    match st_begin(s, opts) {
+      Ok(x) => (Some(x), None)
+      Err(x) => (None, Some(x))
+    }
+  })
+  match r.1 {
+    Some(x) => Err(x)
+    None => {
+      match r.0 {
+        Some(x) => Ok(x)
+        None => Err(proto_err("no session"))
+      }
+    }
+  }
+}
+
+fn connection_end_session(c: amqp.Connection, sess: amqp.Session, error: amqp.WireError? = None) -> () ! amqp.AmqpErr uses net.dial {
+  let e = c.st.with(fn(var s: amqp.ConnState) -> amqp.AmqpErr? uses net.dial {
+    match st_end_session(s, sess, error) {
+      Ok(_) => None
+      Err(x) => Some(x)
+    }
+  })
+  match e {
+    Some(x) => Err(x)
+    None => Ok(())
+  }
+}
+
+fn connection_peer_container_id(c: amqp.Connection) -> Str { c.st.with_read(fn(s: amqp.ConnState) -> Str { s.peer_container_id }) }
+
+fn connection_peer_max_frame_size(c: amqp.Connection) -> Int { c.st.with_read(fn(s: amqp.ConnState) -> Int { s.peer_max_frame_size }) }
+
+fn connection_peer_channel_max(c: amqp.Connection) -> Int { c.st.with_read(fn(s: amqp.ConnState) -> Int { s.peer_channel_max }) }
+
+fn connection_peer_idle_timeout_ms(c: amqp.Connection) -> Int { c.st.with_read(fn(s: amqp.ConnState) -> Int { s.peer_idle_timeout_ms }) }
+
+fn connection_peer_properties(c: amqp.Connection) -> List[(Str, amqp.Value)] { c.st.with_read(fn(s: amqp.ConnState) -> List[(Str, amqp.Value)] { s.peer_properties }) }
+
+// ---------------------------------------------------------------------------
+// Stage 2c: messages
+
+fn vtext(s: Str?) -> amqp.Value {
+  match s {
+    Some(x) => amqp.Value.Str(v: x)
+    None => amqp.Value.Null
+  }
+}
+
+fn vsymo(s: Str?) -> amqp.Value {
+  match s {
+    Some(x) => amqp.Value.Symbol(v: x)
+    None => amqp.Value.Null
+  }
+}
+
+fn vtime(t: Int?) -> amqp.Value {
+  match t {
+    Some(x) => amqp.Value.Timestamp(ms: x)
+    None => amqp.Value.Null
+  }
+}
+
+fn section(code: Int, v: amqp.Value) -> amqp.Value {
+  amqp.Value.Described(descriptor: amqp.Value.ULong(v: UInt64.from_bits(code)), value: v)
+}
+
+fn put_section(out: BytesBuilder, code: Int, v: amqp.Value) -> BytesBuilder ! amqp.AmqpErr {
+  put_value(out, section(code, v))
+}
+
+fn encode_message(m: amqp.Message) -> Bytes ! amqp.AmqpErr {
+  var out = BytesBuilder.new()
+  match m.header {
+    Some(h) => {
+      out = put_value(out, composite(0x70, [
+        amqp.Value.Bool(v: h.durable),
+        if h.priority == 4 { amqp.Value.Null } else { amqp.Value.UByte(v: UInt8.wrapping_from(h.priority)) },
+        if h.ttl_ms == 0 { amqp.Value.Null } else { amqp.Value.UInt(v: UInt32.wrapping_from(h.ttl_ms)) },
+        vbool(h.first_acquirer),
+        if h.delivery_count == 0 { amqp.Value.Null } else { amqp.Value.UInt(v: UInt32.wrapping_from(h.delivery_count)) },
+      ]))?
+    }
+    None => {}
+  }
+  match m.delivery_annotations {
+    Some(p) => { out = put_section(out, 0x71, amqp.Value.Map(pairs: p))? }
+    None => {}
+  }
+  match m.annotations {
+    Some(p) => { out = put_section(out, 0x72, amqp.Value.Map(pairs: p))? }
+    None => {}
+  }
+  match m.properties {
+    Some(p) => {
+      out = put_value(out, composite(0x73, [
+        p.message_id, vbin(p.user_id), vtext(p.to), vtext(p.subject), vtext(p.reply_to), p.correlation_id,
+        vsymo(p.content_type), vsymo(p.content_encoding), vtime(p.absolute_expiry_ms), vtime(p.creation_ms),
+        vtext(p.group_id),
+        match p.group_sequence {
+          Some(n) => amqp.Value.UInt(v: UInt32.wrapping_from(n))
+          None => amqp.Value.Null
+        },
+        vtext(p.reply_to_group_id),
+      ]))?
+    }
+    None => {}
+  }
+  match m.app_properties {
+    Some(p) => {
+      var pairs: List[(amqp.Value, amqp.Value)] = []
+      for (k, v) in p { pairs.push((amqp.Value.Str(v: k), v)) }
+      out = put_section(out, 0x74, amqp.Value.Map(pairs: pairs))?
+    }
+    None => {}
+  }
+  match m.body {
+    Empty => {}
+    Data(sections) => {
+      for d in sections { out = put_section(out, 0x75, amqp.Value.Binary(v: d))? }
+    }
+    Value(v) => { out = put_section(out, 0x77, v)? }
+    Sequence(sections) => {
+      for s in sections { out = put_section(out, 0x76, amqp.Value.List(items: s))? }
+    }
+  }
+  match m.footer {
+    Some(p) => { out = put_section(out, 0x78, amqp.Value.Map(pairs: p))? }
+    None => {}
+  }
+  Ok(out.freeze())
+}
+
+fn want_pairs(v: amqp.Value) -> List[(amqp.Value, amqp.Value)] ! amqp.AmqpErr {
+  match v {
+    Map(p) => Ok(p)
+    _ => Err(dec_err("expected a map"))
+  }
+}
+
+fn want_strv(v: amqp.Value) -> Str? ! amqp.AmqpErr {
+  match v {
+    Null => Ok(None)
+    Str(s) => Ok(Some(s))
+    Symbol(s) => Ok(Some(s))
+    _ => Err(dec_err("expected a string"))
+  }
+}
+
+fn want_timev(v: amqp.Value) -> Int? ! amqp.AmqpErr {
+  match v {
+    Null => Ok(None)
+    Timestamp(ms) => Ok(Some(ms))
+    _ => Err(dec_err("expected a timestamp"))
+  }
+}
+
+fn decode_message(b: Bytes) -> amqp.Message ! amqp.AmqpErr {
+  var header: amqp.Header? = None
+  var dann: List[(amqp.Value, amqp.Value)]? = None
+  var ann: List[(amqp.Value, amqp.Value)]? = None
+  var props: amqp.Properties? = None
+  var app: List[(Str, amqp.Value)]? = None
+  var footer: List[(amqp.Value, amqp.Value)]? = None
+  var data: List[Bytes] = []
+  var seq: List[List[amqp.Value]] = []
+  var value: amqp.Value? = None
+  var kinds = 0
+  var pos = 0
+  while pos < b.len() {
+    let (v, n) = get_value(b, pos, 0)?
+    pos = n
+    let (c, f) = match v {
+      Described(d, body) => {
+        match d {
+          ULong(x) => (x.to_bits(), body)
+          _ => return Err(dec_err("a section needs a ulong descriptor"))
+        }
+      }
+      _ => return Err(dec_err("a message section must be described"))
+    }
+    if c == 0x70 {
+      if header is Some(..) { return Err(dec_err("a second header section")) }
+      let items = match f {
+        List(i) => i
+        _ => return Err(dec_err("the header must be a list"))
+      }
+      var pri = 4
+      match at(items, 1) {
+        Null => {}
+        x => { pri = want_int(x, 4)? }
+      }
+      header = Some(amqp.Header{durable: want_bool(at(items, 0))?, priority: pri, ttl_ms: want_int(at(items, 2), 0)?,
+        first_acquirer: want_bool(at(items, 3))?, delivery_count: want_int(at(items, 4), 0)?})
+    } else if c == 0x71 {
+      dann = Some(want_pairs(f)?)
+    } else if c == 0x72 {
+      ann = Some(want_pairs(f)?)
+    } else if c == 0x73 {
+      if props is Some(..) { return Err(dec_err("a second properties section")) }
+      let items = match f {
+        List(i) => i
+        _ => return Err(dec_err("the properties must be a list"))
+      }
+      var ub = b""
+      match at(items, 1) {
+        Null => {}
+        Binary(x) => { ub = x }
+        _ => return Err(dec_err("user-id must be binary"))
+      }
+      var gs: Int? = None
+      match at(items, 11) {
+        Null => {}
+        x => { gs = Some(want_int(x, 0)?) }
+      }
+      props = Some(amqp.Properties{message_id: at(items, 0), user_id: ub, to: want_strv(at(items, 2))?,
+        subject: want_strv(at(items, 3))?, reply_to: want_strv(at(items, 4))?, correlation_id: at(items, 5),
+        content_type: want_strv(at(items, 6))?, content_encoding: want_strv(at(items, 7))?,
+        absolute_expiry_ms: want_timev(at(items, 8))?, creation_ms: want_timev(at(items, 9))?,
+        group_id: want_strv(at(items, 10))?, group_sequence: gs, reply_to_group_id: want_strv(at(items, 12))?})
+    } else if c == 0x74 {
+      var out: List[(Str, amqp.Value)] = []
+      for (k, x) in want_pairs(f)? { out.push((want_str(k)?, x)) }
+      app = Some(out)
+    } else if c == 0x75 {
+      if kinds != 0 && kinds != 1 { return Err(dec_err("mixed body sections")) }
+      kinds = 1
+      match f {
+        Binary(x) => { data.push(x) }
+        _ => return Err(dec_err("a data section must be binary"))
+      }
+    } else if c == 0x76 {
+      if kinds != 0 && kinds != 2 { return Err(dec_err("mixed body sections")) }
+      kinds = 2
+      match f {
+        List(i) => { seq.push(i) }
+        _ => return Err(dec_err("a sequence section must be a list"))
+      }
+    } else if c == 0x77 {
+      if kinds != 0 { return Err(dec_err("mixed body sections")) }
+      kinds = 3
+      value = Some(f)
+    } else if c == 0x78 {
+      footer = Some(want_pairs(f)?)
+    } else {
+      return Err(dec_err("unknown message section"))
+    }
+  }
+  var body = amqp.Body.Empty
+  if kinds == 1 { body = amqp.Body.Data(sections: data) }
+  if kinds == 2 { body = amqp.Body.Sequence(sections: seq) }
+  match value {
+    Some(v) => { body = amqp.Body.Value(v: v) }
+    None => {}
+  }
+  Ok(amqp.Message{header: header, delivery_annotations: dann, annotations: ann, properties: props,
+    app_properties: app, body: body, footer: footer})
 }

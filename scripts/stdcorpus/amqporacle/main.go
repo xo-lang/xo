@@ -278,7 +278,86 @@ const TRUNCATED: List[(Int, Int)] = [`)
 	fmt.Println("]")
 	fmt.Println()
 	fmt.Println(frameTests)
+	fmt.Println()
+	fmt.Println("/// (case, go-amqp's message encoding in hex, go-amqp's decoded message shown)")
+	fmt.Println("const MESSAGES: List[(Str, Str, Str)] = [")
+	for _, r := range messageRows() {
+		fmt.Printf("  (%q, \"%x\", %q),\n", r.name, r.bytes, r.shown)
+	}
+	fmt.Println("]")
+	fmt.Println()
+	fmt.Println(messageTests)
 }
+
+const messageTests = `fn sstr(p: Str?) -> Str {
+  match p {
+    Some(s) => s.bytes().to_hex()
+    None => "-"
+  }
+}
+
+fn stime(p: Int?) -> Str {
+  match p {
+    Some(t) => "${t}"
+    None => "-"
+  }
+}
+
+fn sann(a: List[(amqp.Value, amqp.Value)]?) -> Str {
+  match a {
+    Some(p) => show(amqp.Value.Map(pairs: p))
+    None => "-"
+  }
+}
+
+fn showm(m: amqp.Message) -> Str {
+  var parts: List[Str] = []
+  match m.header {
+    Some(h) => { parts.push("h=${h.durable},${h.priority},${h.ttl_ms},${h.first_acquirer},${h.delivery_count}") }
+    None => { parts.push("h=-") }
+  }
+  parts.push("da=" + sann(m.delivery_annotations))
+  parts.push("ann=" + sann(m.annotations))
+  match m.properties {
+    Some(p) => {
+      var gs = "-"
+      match p.group_sequence {
+        Some(n) => { gs = "${n}" }
+        None => {}
+      }
+      parts.push("p=" + [show(p.message_id), p.user_id.to_hex(), sstr(p.to), sstr(p.subject), sstr(p.reply_to),
+        show(p.correlation_id), sstr(p.content_type), sstr(p.content_encoding), stime(p.absolute_expiry_ms),
+        stime(p.creation_ms), sstr(p.group_id), gs, sstr(p.reply_to_group_id)].join(";"))
+    }
+    None => { parts.push("p=-") }
+  }
+  match m.app_properties {
+    Some(p) => {
+      var pairs: List[(amqp.Value, amqp.Value)] = []
+      for (k, v) in p { pairs.push((amqp.Value.Str(v: k), v)) }
+      parts.push("ap=" + show(amqp.Value.Map(pairs: pairs)))
+    }
+    None => { parts.push("ap=-") }
+  }
+  match m.body {
+    Empty => { parts.push("body=empty") }
+    Data(ds) => { parts.push("body=data[" + ds.map(fn(d) { d.to_hex() }).join(",") + "]") }
+    Sequence(ss) => { parts.push("body=seq[" + ss.map(fn(s) { show(amqp.Value.List(items: s)) }).join(",") + "]") }
+    Value(v) => { parts.push("body=value " + show(v)) }
+  }
+  parts.push("f=" + sann(m.footer))
+  parts.join("|")
+}
+
+test "go-amqp's messages decode to go-amqp's values and encode back to the same bytes" {
+  for (name, hex, shown) in MESSAGES {
+    let b = Bytes.from_hex(hex).or_fault("hex")
+    let m = amqp.decode_message(b).or_fault(name)
+    expect(showm(m)) == shown
+    expect(amqp.encode_message(m).or_fault(name)) == b
+  }
+}
+`
 
 const frameTests = `fn kind(b: amqp.FrameBody) -> Str {
   match b {

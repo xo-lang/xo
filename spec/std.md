@@ -7468,3 +7468,57 @@ pub fn decode_frame(b: Bytes, max_size: Int = 4294967295) -> (Frame, Int) ! Amqp
 - The corpus captures the frames go-amqp's client writes (SASL init, open, begin, attach as a sender and as a
   receiver, transfer, flow, disposition, detach, end, close) against a fake peer over `net.Pipe`; Xo decodes each
   and encodes it back to the same bytes.
+
+### 64.2 The connection (stage 2b-i)
+
+```
+enum Sasl { None, Plain(user: Str, password: Str), Anonymous }
+struct ConnOptions { container_id: Str = "", hostname: Str = "", max_frame_size: Int = 65536, channel_max: Int = 65535,
+                     idle_timeout_ms: Int = 0, properties: List[(Str, Value)] = [], sasl: Sasl = Sasl.None,
+                     tls_roots: tls.Roots? = None, tls_verify: tls.Verify = tls.Verify.Full }
+struct Connection { st: Mutex[ConnState] }   // a handle (copies share the connection); peer_container_id(), peer_max_frame_size(), peer_channel_max(), peer_idle_timeout_ms(), peer_properties()
+pub fn dial(net: Net, addr: Str, opts: ConnOptions = ConnOptions{}) -> Connection ! AmqpErr uses net.dial
+fn (c: Connection) send(f: Frame) -> () ! AmqpErr uses net.dial
+fn (c: Connection) recv() -> Frame ! AmqpErr uses net.dial
+fn (c: Connection) begin(opts: SessionOptions = SessionOptions{}) -> Session ! AmqpErr uses net.dial
+fn (c: Connection) end_session(s: Session, error: WireError? = None) -> () ! AmqpErr uses net.dial
+fn (c: Connection) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
+fn (c: Connection) abort()
+```
+
+- `dial` takes `host:port`, `amqp://host[:port]` or `amqps://host[:port]` (ports 5672 and 5671; `[::1]:5671` for
+  IPv6). `amqps` runs TLS first (`tls.client` with `tls_roots` and `tls_verify`). With a SASL layer it sends the
+  `AMQP\x03\x01\x00\x00` header, reads the mechanisms, sends the init (`PLAIN` is `\0user\0password`, `ANONYMOUS`
+  is empty) and needs an outcome with code 0 (`Auth(code, text)` otherwise; a mechanism the server does not offer
+  is `Auth(-1, ...)`); then the `AMQP\x00\x01\x00\x00` header and the two Opens. The advertised idle timeout is
+  half of `idle_timeout_ms`, as go-amqp does. `container_id` defaults to `xo-amqp`.
+- The connection is a handle over a Mutex (the Go backend's go_compiled modules take no `var` receivers); every call holds the lock while it works, so concurrent tasks take turns. It is meant to be driven by one task: `recv` returns the next frame (queued ones first), `begin` and
+  `end_session` read until their reply and queue frames for other channels. A peer Close or End with an error is
+  `Peer(error)`; a frame past `max_frame_size` or out of turn is `Protocol`, a transport failure is `Net`.
+  `close` sends Close and waits for the peer's Close (a peer error in it is `Peer`).
+- A background reader, heartbeats and the session mux that lets several links share a connection are stage 2b-ii.
+
+### 64.3 Messages (stage 2c)
+
+```
+struct Header { durable: Bool = false, priority: Int = 4, ttl_ms: Int = 0, first_acquirer: Bool = false, delivery_count: Int = 0 }
+struct Properties { message_id: Value = Value.Null, user_id: Bytes = b"", to: Str? = None, subject: Str? = None, reply_to: Str? = None,
+                    correlation_id: Value = Value.Null, content_type: Str? = None, content_encoding: Str? = None,
+                    absolute_expiry_ms: Int? = None, creation_ms: Int? = None, group_id: Str? = None,
+                    group_sequence: Int? = None, reply_to_group_id: Str? = None }
+enum Body { Empty, Data(sections: List[Bytes]), Sequence(sections: List[List[Value]]), Value(v: Value) }
+struct Message { header: Header? = None, delivery_annotations: List[(Value, Value)]? = None, annotations: List[(Value, Value)]? = None,
+                 properties: Properties? = None, app_properties: List[(Str, Value)]? = None, body: Body = Body.Empty,
+                 footer: List[(Value, Value)]? = None }
+pub fn encode_message(m: Message) -> Bytes ! AmqpErr
+pub fn decode_message(b: Bytes) -> Message ! AmqpErr
+```
+
+- `encode_message` writes go-amqp's `Message.MarshalBinary` bytes: the sections in the order header, delivery
+  annotations, annotations, properties, application properties, body, footer; a `None` section is not written and
+  a `Some` one is, even when empty; a header always has its durable field, and omits priority 4, zero ttl and
+  delivery count and a false first-acquirer; a properties section omits absent fields and trailing nulls.
+- `decode_message` accepts the sections in any order and refuses a repeated header, properties or body kind mix, a
+  section that is not described, and an unknown section code.
+- The corpus (`MESSAGES`) is go-amqp's encoder on 22 messages and its decoder's values; Xo decodes each to the same
+  message and encodes it back to the same bytes.

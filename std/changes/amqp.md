@@ -23,3 +23,15 @@
 - Shipped in: not yet released
 
 `amqp.encode_frame` and `amqp.decode_frame` over `Frame` and `FrameBody` (spec/std.md 64.1): every AMQP and SASL performative as a typed struct, byte identical to go-amqp's encoder for the frames its client sends. Stage 2b (connection, SASL and sessions) follows.
+
+## 2026-11-05: feature: std/amqp stage 2b-i and 2c, the connection and messages
+
+- Kind: feature (port)
+- Commit: this push
+- Found by: the Azure SDK's Service Bus and Event Hubs needs (decision 0521)
+- Go reference: github.com/Azure/go-amqp v1.7.0 conn.go (the open, SASL and header exchange) and message.go (MIT, Copyright 2017 Kale Blankenship and Microsoft)
+- Test: std/native/amqp_test.xo (an in-process peer over a loopback listener: SASL PLAIN accepted and refused, open, begin, end, close, a peer End with an error) and the amqp corpus MESSAGES table (go-amqp's encoder on 22 messages, on native, LLVM and the Go backend)
+- Timing: none for this stage (stage 1's row stands)
+- Shipped in: not yet released
+
+`amqp.dial`, `Connection` (`send`, `recv`, `begin`, `end_session`, `close`, `abort`) and `amqp.encode_message` / `decode_message` over `Message` (spec/std.md 64.2, 64.3). The connection is driven by one task; a background reader and the session mux are stage 2b-ii.
