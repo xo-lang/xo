@@ -1,7 +1,16 @@
 # 0517: A build checks a dependency's function bodies as the SSA builder reaches them
 
-Status: Proposed (Xo Lang 1, 2026-11-05). The semantic change (below,
-Consequences) is the owner's to accept.
+Status: Accepted (owner, 2026-11-05, through the Xo Lead). The owner
+chose both recommendations: (1) a type error in a dependency function the
+program never reaches no longer fails `xo build` or `xo run` (`xo check`,
+`xo test` and `xo vet` of the dependency stay complete); (2) option (b)
+below: `xo get` checks each newly fetched module version whole once and
+records the result. Condition: XO_DEP_LAZY becomes the default only after
+the remaining soundness piece (inferred effects read across modules,
+decision 0496 (c), checked when first read) is done and tested. The
+default switch is one push that updates spec/core.md with the semantic
+change and runs the touched packages' full suites and a self build (the
+default-change rule); until then XO_DEP_LAZY=1 opts in.
 
 ## Context
 
@@ -69,8 +78,8 @@ check/load.xo parse_lazy_path), not yet covering the 0496 (c) reads.
   check, as for the runtime); (b) `xo get` checks a newly fetched
   module version whole once and records the result beside it in the
   module cache, so an error is reported before use and never again;
-  (c) a flag (`xo build --check-deps`) for a full check. Recommendation:
-  (b), since it costs one check per fetched version.
+  (c) a flag (`xo build --check-deps`) for a full check. Chosen: (b),
+  since it costs one check per fetched version.
 - Diagnostics in a dependency's reached body still stop the build, now
   reported when the SSA builder reaches the body (as 0247's runtime
   errors are), with the same JSON and codes.
