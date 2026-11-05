@@ -1,7 +1,6 @@
 # 0518: On macOS a lone worker still chains for a small site's task
 
-Status: Proposed (xo-lang-4, 2026-11-05; the owner decides). Amends
-decision 0514. The rule is on main since 59ce17584 (std/native/llrt/pool.xo
+Status: Accepted (owner, 2026-11-05). Amends decision 0514. The rule is on main since 59ce17584 (std/native/llrt/pool.xo
 worker_main), landed for 0.40.0 at the lead's request for a rule keeping
 0514's gain without its conc spawn loss.
 
