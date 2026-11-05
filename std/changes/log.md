@@ -1,5 +1,17 @@
 # std/log changes
 
+## 2026-11-04: perf: a record's JSON keys are ordered by insertion, not sort_by
+
+- Kind: perf
+- Commit: this commit
+- Found by: the log twin row (a closure and a second list per record)
+- Go reference: log/slog's JSONHandler writes attributes in order; Xo sorts the keys of a record for stable output (unchanged)
+- Test: internal/llvm/testdata/golden/log_with and the log goldens (same output)
+- Shipped in: not yet released
+
+The keys of a record (a handful) are put in order by insertion into a list of indexes, with no closure and no second list for `sort_by`. The output is the same.
+
+
 ## 2026-10-29: feature: a Logger that carries fields (log.with)
 
 - Kind: feature

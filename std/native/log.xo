@@ -136,11 +136,18 @@ fn format(level: Int, msg: Str, fields: Map[Str, Debug], from: Str) -> Str {
         vals.push(rtjson.json_enc("", from))
       }
     }
-    var idx: List[Int] = []
+    // the keys in order, by insertion (a record has a handful; no
+    // closure or second list for sort_by)
+    var order: List[Int] = []
     for i in 0..keys.len() {
-      idx.push(i)
+      var j = order.len()
+      order.push(i)
+      while j > 0 && keys[order[j - 1]] > keys[i] {
+        order.set(j, order[j - 1])
+        j -= 1
+      }
+      order.set(j, i)
     }
-    let order = idx.sort_by(fn(i) { keys[i] })
     var line = "{"
     for (n, i) in order.indexed() {
       if n > 0 {
