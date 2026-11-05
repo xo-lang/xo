@@ -125,11 +125,13 @@ func Target(s string) string {
 
 // Build builds dirs with the xo binary (Path): `xo build|test
 // [--backend=B] [--no-gc] [flags] -o OUT dirs...`. A missing xo is the
-// error; a failing build is Result.Failed.
+// error; a failing build is Result.Failed. The Result is never nil, so a
+// caller's `t.Fatalf("%v %s", err, res.Output)` reports the error instead
+// of panicking (a stale XO_CLI panicked TestDebugDAP, 2026-11-05).
 func Build(dirs []string, o Options) (*Result, error) {
 	cli, err := Command()
 	if err != nil {
-		return nil, err
+		return &Result{Binaries: map[string]string{}}, err
 	}
 	mode := o.Mode
 	if mode == "" {
@@ -140,7 +142,7 @@ func Build(dirs []string, o Options) (*Result, error) {
 	if out == "" {
 		d, err := TempDir("xo-build-")
 		if err != nil {
-			return nil, err
+			return res, err
 		}
 		res.Dir = d
 		name := "prog"
@@ -215,7 +217,7 @@ func Build(dirs []string, o Options) (*Result, error) {
 	case errors.As(err, &ee):
 		res.Code = ee.ExitCode()
 	default:
-		return nil, fmt.Errorf("%s: %v", cli[0], err)
+		return res, fmt.Errorf("%s: %v", cli[0], err)
 	}
 	// `xo build` prints `os/arch: path` for each target it built
 	for _, l := range strings.Split(res.Output, "\n") {
