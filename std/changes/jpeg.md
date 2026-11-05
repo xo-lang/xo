@@ -1,5 +1,14 @@
 # std/jpeg changes
 
+## 2026-11-05: fix: the decode corpora match JpegErr.Encode
+
+- Kind: fix
+- Commit: this commit
+- Found by: tier 51 (TestStdCorpora jpeg and jpegfuzz: `match on jpeg.JpegErr is not exhaustive: missing Encode(_)`)
+- Test: `go test ./internal/stdtest -run 'TestStdCorpora/.*/jpeg'`
+
+The decode corpora (testdata/corpus/jpeg, jpegfuzz, and their generators scripts/stdcorpus/jpeg.go and internal/stdtest/jpegfuzz_test.go) match every variant of `JpegErr`, so they needed the arm for the variant `jpeg.encode` added. **Breaking for callers:** adding `Encode(msg)` to the public enum `JpegErr` (entry below) makes a user's exhaustive `match` on a `JpegErr` fail to compile with XO0301 until it handles `Encode(_)` (or ends in a catch-all arm); Go's `jpeg.FormatError`/`UnsupportedError` are separate types and cannot break this way. The 2026-11-05 feature entry below is the change that did it.
+
 ## 2026-11-05: perf: encode skips the quantizer for coefficients that round to zero
 
 - Kind: perf

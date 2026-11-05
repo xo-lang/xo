@@ -259,6 +259,7 @@ fn kind(e: jpeg.JpegErr) -> Str {
     jpeg.JpegErr.Format(_) => "err format ${e.display()}"
     jpeg.JpegErr.Unsupported(_) => "err unsupported ${e.display()}"
     jpeg.JpegErr.Truncated => "err truncated"
+    jpeg.JpegErr.Encode(_) => "err encode ${e.display()}"
   }
 }
 
