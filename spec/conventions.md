@@ -1,7 +1,6 @@
 # Xo Conventions
 
-Status: approved by the owner (2026-11-05); drafted by Xo Lang 2 the same day. Mirrored on the website as
-docs/spec/conventions.
+Status: approved (2026-11-05)
 
 How to write Xo that reads like the rest of Xo and runs fast. spec/core.md defines the language; this file
 collects the habits that the compiler, std, the gotchas and the measurements agree on. Every rule names its
