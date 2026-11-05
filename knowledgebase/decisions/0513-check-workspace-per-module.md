@@ -112,6 +112,46 @@ records among them), and the passes that still walk the base's tables
 (effects, key types, unused names). Both are next: the frozen base with
 a member overlay, and those passes limited to the member's own modules.
 
+### Second round (2026-11-05): no base records, shared packages in the base
+
+Three changes on the branch, each measured:
+
+1. A member starts with none of the base's per-node records (each
+   expression's type and each name's object, types/type_at and
+   names/name_at): they serve the tools, not the member's check, and
+   were what the member copied on its first write. core + 100: 17.6 s to
+   15.1 s; all of aws: 80.6 s to 69.1 s.
+2. The base also checks every package that two or more members import
+   and no member holds (scanned from the members' `use` lines and the
+   workspace's modules: the aws core packages such as protocol/restjson,
+   which the root package does not import and each service re-parsed and
+   re-checked): core + 100 to 9.72 s, all of aws to 44.1 s.
+3. A member with no `.xo` file of its own is left out, as one checker
+   leaves it (found by the new test).
+
+| core + N services | one checker | shared base, second round |
+|---|---|---|
+| 10 | 1,198 MB, 1.13 s | 968 MB, 1.30 s |
+| 100 | 7,366 MB, 8.3 s | 1,235 MB, 9.72 s |
+| 435 (all of aws) | over 30 GB, stopped | 2,327 MB, 44.1 s |
+
+At core + 100 the wall is 1.17 times one checker's for a sixth of the
+memory, and the whole aws workspace checks. The planted errors give the
+same three diagnostics both ways. Tests on the branch (cmd/xo
+workcheck_test.go, all pass on linux/arm64):
+TestCheckWorkspacePerModuleSameDiags (errors in a package two members
+import and in two members: the JSON output of one checker and of the
+shared base are equal), TestCheckWorkspaceImportClosure,
+TestCheckWorkspaceSizeMemory, and 0086's TestModules.
+
+Left: the overlay (frozen base tables) is not needed at these numbers;
+the remaining 17% is the members' own parse and check plus the copy of
+the base's other tables, to profile when this is built for main. The
+branch runs the shared base only for the workspace's own directory, not
+yet for a walk (`./...`), and behind XO_CHECK_PER_MODULE=1 with
+XO_CHECK_PER_MODULE_BASE=1; for main it becomes the default for
+whole-workspace checks of more than a few members, with no variable.
+
 Work, in order:
 
 1. Split the base from the members (the import graph of the workspace's
