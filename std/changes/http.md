@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-05: feature: Request.with_expect_continue sends the head, waits for the 100, then sends the body
+
+- Kind: feature
+- Commit: this commit
+- Found by: aws-19 (S3 PutObject over 2 MB needs Expect: 100-continue)
+- Go reference: net/http Transport.ExpectContinueTimeout, transfer.go (expectContinueReader), persistConn.writeLoop
+- Test: internal/llvm/testdata/golden/http_expect_continue (100 then 200, a 401 before any 100 with no body sent, no answer until the timeout, a 103 and a 100; the Go backend, native and LLVM print the same)
+
+`with_expect_continue(timeout = 1s)` sets `Expect: 100-continue` and the wait. The client sends the head alone, then the body after a `100 Continue` or when the timeout passes; a final response first is returned and the body is withheld (the connection closes, as Go does); other 1xx are skipped. Client.send over HTTP/1.1 only: an HTTP/2 request, Client.open and a request without a body send as before. A request that sets the Expect header by hand with with_header still sends its body at once.
+
 ## 2026-11-05: fix: an h2c server installed by two threads at once no longer frees the losing table at a wrong address
 
 - Kind: fix

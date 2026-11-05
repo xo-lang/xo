@@ -19,6 +19,7 @@ var (
 	_ func(*Http_Request, *Task, string) Option[string]                                                                                                 = (*Http_Request).M_header
 	_ func(*Http_Request, *Task, string, string) Http_Request                                                                                           = (*Http_Request).M_with_header
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_timeout
+	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_expect_continue
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_idle_timeout
 	_ func(*Http_Request, *Task, Http_BodyReader) Http_Request                                                                                          = (*Http_Request).M_with_body_reader
 	_ func(*Http_Request, *Task, List[string], func(*Task) Result[Map[string, string], Never]) Http_Request                                             = (*Http_Request).M_with_trailers

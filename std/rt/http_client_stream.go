@@ -53,6 +53,16 @@ func (r Http_Request) M_with_idle_timeout(_ *Task, d Duration) Http_Request {
 	return r
 }
 
+// M_with_expect_continue is `r.with_expect_continue(timeout)`: the Expect
+// header, and the wait for the 100 (Transport.ExpectContinueTimeout).
+func (r Http_Request) M_with_expect_continue(tk *Task, d Duration) Http_Request {
+	if d <= 0 {
+		d = Duration(time.Second)
+	}
+	r.XExpect = d
+	return r.M_with_header(tk, "Expect", "100-continue")
+}
+
 // M_with_body_reader is `r.with_body_reader(b)` (decision 0404 stage C):
 // the body read from b as it is sent, never replayed.
 func (r Http_Request) M_with_body_reader(_ *Task, b Http_BodyReader) Http_Request {

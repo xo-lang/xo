@@ -1,0 +1,82 @@
+// Request.with_expect_continue (net/http Transport.ExpectContinueTimeout):
+// the head goes first and the body after a 100 Continue or the timeout; a
+// final response first (401) is the result and the body is never sent;
+// other 1xx are skipped. A raw listener plays the server.
+use std/http
+
+const BODY: Bytes = b"0123456789abcdef0123456789abcdef"
+
+/// How the server of one case answers after reading the head.
+fn answer(mode: Int, conn: ServerConn, seen: Chan[Str]) {
+  var got = b""
+  while !((got.to_str() ?? "").contains("\r\n\r\n")) {
+    match conn.read(4096) {
+      Ok(Some(b)) => got = got + b
+      _ => break
+    }
+  }
+  let head = got.to_str() ?? ""
+  let has_expect = head.contains("Expect: 100-continue\r\n")
+  var extra = 0
+  if mode == 1 {
+    // the final response first: the body, if sent at all, follows it
+    conn.write(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno").ignore_err("the client may have gone")
+    while true {
+      match conn.read(4096) {
+        Ok(Some(b)) => extra += b.len()
+        _ => break
+      }
+    }
+    seen.send("expect=${has_expect} body bytes after the 401: ${extra}")
+    conn.close()
+    return
+  }
+  if mode == 0 || mode == 3 {
+    if mode == 3 {
+      conn.write(b"HTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\n").ignore_err("gone")
+    }
+    conn.write(b"HTTP/1.1 100 Continue\r\n\r\n").ignore_err("gone")
+  }
+  // mode 2 stays silent: the client's timeout passes, then its body comes
+  var n = 0
+  while n < BODY.len() {
+    match conn.read(4096) {
+      Ok(Some(b)) => n += b.len()
+      _ => break
+    }
+  }
+  conn.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").ignore_err("gone")
+  seen.send("expect=${has_expect} body bytes: ${n}")
+  conn.close()
+}
+
+fn show(r: Result[http.Response, http.ClientErr], addr: Str) -> Str {
+  match r {
+    Ok(resp) => "${resp.status} ${(resp.body.to_str() ?? "?").quote()}"
+    Err(e) => "err ${e}".replace(addr, "ADDR")
+  }
+}
+
+fn main(os: Os) ! {
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  let c = http.client(os.net, timeout: 5s)
+  let seen: Chan[Str] = Chan.new(4)
+  let names = ["100 then 200", "401 before any 100", "no answer: the timeout", "103, 100, then 200"]
+  scope s {
+    s.spawn_background(fn() {
+      for mode in 0..4 {
+        match l.accept() {
+          Ok(conn) => answer(mode, conn, seen)
+          Err(_) => return
+        }
+      }
+    })
+    for name in names {
+      let req = http.new_request("POST", "http://${addr}/up", body: BODY).with_expect_continue(300ms)
+      os.stdio.println("${name}: ${show(c.send(req), addr)}")
+      os.stdio.println("  server: ${seen.recv() ?? "none"}")
+    }
+  }
+  os.stdio.println("done")
+}

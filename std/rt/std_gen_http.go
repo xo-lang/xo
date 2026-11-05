@@ -60,6 +60,7 @@ type Http_Request struct {
 	XFields     []string
 	XTimeout    Duration
 	XIdle       Duration
+	XExpect     Duration
 	XSrc        bodySrc
 	XRawPath    string
 	XHost       string

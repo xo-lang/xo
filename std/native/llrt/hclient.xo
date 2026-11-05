@@ -356,7 +356,7 @@ pub fn reading(r: rthttp.CResp) -> Bool { rt.mem_load(rec(r), R_READING, 4) != 0
 /// five), Accept-Encoding gzip unless the header asks for an encoding or
 /// a Range or the method is HEAD, then the body. A failure ends the
 /// exchange: the connection closes and r has the error.
-pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, chunked: Bool = false, tnames: Str = "") {
+pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, chunked: Bool = false, tnames: Str = "", hold: Bool = false) {
   let a = rec(r)
   let hn = if names.len() < values.len() { names.len() } else { values.len() }
   var head = method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\n"
@@ -410,10 +410,12 @@ pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
   var at = http1w.put(d, 0, head)
   at = http1w.fields(d, at, ha, hn, http1w.X_HOST | http1w.X_USER_AGENT | http1w.X_CONTENT_LENGTH | http1w.X_TRANSFER_ENCODING | http1w.X_TRAILER)
   at = http1w.put(d, at, tail)
-  if bn > 0 {
+  // hold (Expect: 100-continue): the head alone, its Content-Length naming
+  // the body that send_body sends once the server agrees
+  if bn > 0 && !hold {
     rt.mem_copy(d + at, raw.bytes_addr(body), bn)
   }
-  let s = send(a + R_C, d, at + bn)
+  let s = send(a + R_C, d, if hold { at } else { at + bn })
   rt.heap_release(d)
   rt.heap_release(ha)
   if s == CC_OK {
@@ -525,6 +527,20 @@ pub fn read_direct(r: rthttp.CResp, p: Int, n: Int) -> Int {
     }
   }
   0 - CC_ERR
+}
+
+/// Sends the body of a request whose head went alone (request's hold): on
+/// a failure the connection closes and r's error is set, as request's.
+pub fn send_body(r: rthttp.CResp, body: Bytes) {
+  let a = rec(r)
+  let s = send(a + R_C, raw.bytes_addr(body), body.len())
+  raw.alive(body)
+  if s == CC_OK {
+    return
+  }
+  let al = if s != CC_TIMEOUT && s != CC_CANCELED { alert(a) } else { "" }
+  cl_close(r)
+  finish(a, s, "", al)
 }
 
 /// Reads more of the response: CC_OK, CC_EOF (none came), or the failure.

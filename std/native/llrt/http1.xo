@@ -3940,10 +3940,32 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
 /// the request's header does not count, as Transport looks only at
 /// Request.Close), else closed. A request
 /// that could not be written is an exchange with no response byte.
-fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> Exchange {
-  hclient.request(r, method, target, host, hk, hv, body, !src.is_empty(), tnames)
+fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], expect: Int = 0) -> Exchange {
+  // Expect: 100-continue (with_expect_continue): the head first, the body
+  // after a 100 or the timeout, never after a final response (Transport's
+  // ExpectContinueTimeout)
+  let hold = expect > 0 && (body.len() > 0 || !src.is_empty())
+  hclient.request(r, method, target, host, hk, hv, body, !src.is_empty(), tnames, hold)
   if hclient.err(r) != 0 {
     return ex_none(CC_ERR, "")
+  }
+  var withheld = false
+  if hold {
+    withheld = !await_continue(r, method, expect)
+  }
+  if withheld {
+    // the server answered without asking for the body: the response is
+    // the result, and a connection with an unsent body is not reused
+    var x = read_response(r, method)
+    x.keep = false
+    hclient.end_keep(r, false, https, addr, name, roots, x.s, x.why)
+    return x
+  }
+  if hold && src.is_empty() {
+    hclient.send_body(r, body)
+    if hclient.err(r) != 0 {
+      return ex_none(CC_ERR, "")
+    }
   }
   let sx = send_src(r, src, hk, tnames, tfn)
   if sx.s != CC_OK {
@@ -4258,6 +4280,48 @@ fn trailer_text(tnames: Str, tfn: List[fn() -> List[Str]]) -> Str {
   out
 }
 
+/// Waits up to expect ns for the server's answer to a request sent with
+/// Expect: 100-continue: true to send the body (a 100, the timeout, or a
+/// connection that fails, which the write reports), false when a final
+/// response came first (it stays unread in r's input). Other 1xx are
+/// skipped, as Transport does.
+fn await_continue(r: rthttp.CResp, method: Str, expect: Int) -> Bool {
+  let saved = hclient.get_deadline(r)
+  var until = hclient.cl_deadline(expect)
+  if saved != 0 && saved < until {
+    until = saved
+  }
+  hclient.put_deadline(r, until)
+  var send = true
+  while true {
+    var h = parse_response(hclient.input(r, 0), false, method)
+    var failed = false
+    while h.res == NEED {
+      if hclient.more(r) != CC_OK {
+        failed = true
+        break
+      }
+      h = parse_response(hclient.input(r, 0), false, method)
+    }
+    if failed {
+      break
+    }
+    if h.res == OK && h.status == 100 {
+      hclient.skip(r, h.used)
+      break
+    }
+    if h.res == OK && h.status > 100 && h.status < 200 && h.status != 101 {
+      hclient.skip(r, h.used)
+      continue
+    }
+    // a final response, or one that does not parse: read_response has it
+    send = false
+    break
+  }
+  hclient.put_deadline(r, saved)
+  send
+}
+
 /// Sends a streamed request body (decision 0404 stage C) after its head:
 /// chunked unless the request gave its Content-Length. A source's error
 /// fails the request with its text (Go's Client: the body's Read error).
@@ -4445,7 +4509,7 @@ fn valid_method(m: Str) -> Bool {
 /// the attenuation lists of the client's Net (decision 0175), following
 /// redirects as net/http's Client does (redirectBehavior,
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = []) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = [], expect: Int = 0) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -4593,7 +4657,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
           hb = hr.b
           hr.x
         } else {
-          h1_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn)
+          h1_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn, expect)
         }
         if x.none && hclient.reused(r) && replayable(method, hk) && src.is_empty() {
           // the pooled connection was dead (the server closed it): the
@@ -4608,7 +4672,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
             hb = hr.b
             x = hr.x
           } else if h1 {
-            x = h1_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn)
+            x = h1_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn, expect)
           }
         }
         if h1 && hclient.err(r) == 0 {

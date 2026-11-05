@@ -77,6 +77,8 @@ struct Request {
   /// 0404 stage C), its pieces as the server's BodyPart (data the raw
   /// bytes, never shown as text). Hidden from Xo code.
   src: List[fn(Int) -> http1.BodyPart] = []
+  /// with_expect_continue's wait in nanoseconds, 0 for none. Hidden.
+  expect_ns: Int = 0
   /// with_trailers' f (decision 0433), asked once the body is sent; one
   /// entry or none. Hidden from Xo code.
   trailer_fn: List[fn() -> Map[Str, Str]] = []
@@ -3124,6 +3126,9 @@ fn (r: Request) with_timeout(d: Duration) -> Request { r with {timeout_ns: if d.
 /// The request's limit for each read of an opened stream's body (decision
 /// 0404), the client's timeout when unset.
 fn (r: Request) with_idle_timeout(d: Duration) -> Request { r with {idle_ns: if d.nanos() > 0 { d.nanos() } else { 0 }} }
+fn (r: Request) with_expect_continue(timeout: Duration = 1s) -> Request {
+  request_with_header(r with {expect_ns: if timeout.nanos() > 0 { timeout.nanos() } else { 1000000000 }}, "Expect", "100-continue")
+}
 
 /// req with its streamed body read whole (FakeNet's in memory exchange).
 fn src_whole(req: Request) -> Request ! http.ClientErr {
@@ -3953,7 +3958,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
   // a wasi:http component sends a whole body (decision 0447)
   let ta = trailer_args(if wasiworld.component() { src_whole(req)? } else { req })
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c))
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c), expect: req.expect_ns)
   // done with the request: its body's reader closes (net/http closes
   // the request body), so a later write fails instead of waiting
   close_src(req.src)

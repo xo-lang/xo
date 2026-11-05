@@ -140,6 +140,13 @@ fn (r: Request) with_header(name: Str, value: Str) -> Request
 /// whole exchange with the body (Go's Client.Timeout); a client side
 /// builder (decision 0404).
 fn (r: Request) with_timeout(d: Duration) -> Request
+/// The request with `Expect: 100-continue` (Go's Transport.ExpectContinueTimeout,
+/// default 1s): an HTTP/1.1 client sends the head, waits up to timeout for
+/// the server's `100 Continue`, then sends the body; a final response
+/// first (a 401, a 413) is the result and the body is never sent; other
+/// 1xx are skipped. A request without a body, and an HTTP/2 or
+/// Client.open request, send as before.
+fn (r: Request) with_expect_continue(timeout: Duration = 1s) -> Request
 /// The limit for each read of an opened stream's body in place of its
 /// client's timeout; a client side builder (decision 0404).
 fn (r: Request) with_idle_timeout(d: Duration) -> Request

@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+100 then 200: 200 "ok"
+  server: expect=true body bytes: 32
+401 before any 100: 401 "no"
+  server: expect=true body bytes after the 401: 0
+no answer: the timeout: 200 "ok"
+  server: expect=true body bytes: 32
+103, 100, then 200: 200 "ok"
+  server: expect=true body bytes: 32
+done
+--- stderr

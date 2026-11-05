@@ -465,6 +465,9 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 	if c.tr != nil {
 		tr = c.tr.(*http.Transport)
 	}
+	if req.XExpect > 0 && tr.ExpectContinueTimeout != time.Duration(req.XExpect) {
+		tr = expectTransport(tr, time.Duration(req.XExpect))
+	}
 	timeout := c.timeout
 	if req.XTimeout > 0 {
 		// with_timeout (decision 0404)
@@ -569,6 +572,26 @@ func (handshakeLogFilter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	return os.Stderr.Write(p)
+}
+
+// expectTransports caches a transport per (base, ExpectContinueTimeout), so
+// with_expect_continue's own wait keeps its connections pooled.
+var expectTransports sync.Map
+
+type expectKey struct {
+	base *http.Transport
+	d    time.Duration
+}
+
+func expectTransport(base *http.Transport, d time.Duration) *http.Transport {
+	k := expectKey{base, d}
+	if t, ok := expectTransports.Load(k); ok {
+		return t.(*http.Transport)
+	}
+	t := base.Clone()
+	t.ExpectContinueTimeout = d
+	v, _ := expectTransports.LoadOrStore(k, t)
+	return v.(*http.Transport)
 }
 
 // sharedTransport is the transport of clients without with_roots:
