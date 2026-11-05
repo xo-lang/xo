@@ -72,6 +72,53 @@ regardless: size std buffers just under a class (http.xo 32,768 to 32,736).
 - No language or ABI change: block sizes are the allocator's. Lang 2 owns
   the change; this ADR stays Proposed until the owner accepts it.
 
+
+## Implementation (2026-11-05, Xo Lang 2)
+
+- Stage A (5c782c1a2): std's power of two buffers were moved just under a class. These were
+  the TLS and getdents reads (16,352), http's pass-through (32,736) and pg's COPY builder
+  (65,504). Each had taken the class twice its size.
+- Stage B: classes 65 to 76 are blocks of 1280, 1536, 1792 and 2048 bytes, then four a
+  doubling up to 8192. Classes 77 to 81 are 16 KiB to 256 KiB page blocks, powers of two as
+  before (decision 0425), so CLASSES is 82 and PAGE_CLASS is 77.
+  - alloc.xo computes the class in constant time: the block's exponent by comparisons,
+    since rt.clz is not among the heap module's intrinsics (decision 0207), then the
+    quarter from two bits.
+  - class_of and class_size serve heapos.xo, obj.xo and entry.xo, which had five copies of
+    the doubling loop.
+  - The per class arrays (free list, length, spare magazine, magazine size) moved to the
+    heap record's end. Every other word keeps its offset.
+  - cut_for's donors stay below the page class (CUT_MAX_CLASS 76). Above 1 KiB a class takes
+    donors only from the classes 4, 8, ... after it, whose blocks are exactly 2, 4 or 8 of its
+    own. cut_for drops the part of a donor block that does not fill a whole block, and with
+    four classes a doubling most pairs are not exact: the first build, which let every
+    larger class donate, held 282 MB of the self build on no list (XO_HEAPSTATS on the
+    linux/arm64 host: 815 MB of the chunks neither live nor free, against 533 MB on main),
+    and its max RSS was 10% above main (gotchas/size-class-cut-tail-leak.md).
+  - Four a doubling all the way to 16 KiB, with exact cuts, still peaked 3.5% above main
+    (4,346,076 to 4,498,204 KB) though it mapped fewer chunks. Putting 8 to 16 KiB back in
+    the 16 KiB page class brought the peak below main (variant D, shipped). Adding back
+    only a 10 KiB class, so that an 8 KiB buffer takes 1.26 times its payload and not
+    2.01 (variant E), put the peak 2.4% above main again over 5 unloaded rounds: in the
+    self build, 8 to 16 KiB requests cost less at peak as 16 KiB page blocks than as
+    smaller prefixed blocks. So 8 KiB buffers stay at 2.01 (std sizes its own just under
+    a class, stage A), and 8 KiB to 16 KiB is where a later stage would look (why the page
+    blocks peak lower is not measured yet).
+  - Measured (bench/results/size-classes-stage-b-2026-11-05.md), xo bench --ab self on the
+    linux/arm64 host against main a27137842, 5 rounds: max RSS 0.986 (4,341,468 to
+    4,280,256 KB), wall 0.994, cpu 0.993 (4 of 5 rounds loaded by other jobs; a 3 round
+    run: max RSS 0.971, wall 0.993).
+  - Rejected, each by the same --ab self against a27137842:
+    - four a doubling to 16 KiB (classes 65 to 80), every larger class a cut donor: 3
+      rounds, max RSS 1.101 (4,337,788 to 4,777,320 KB), wall 0.985;
+    - the same with exact cuts only: 3 rounds, max RSS 1.035 (4,346,076 to 4,498,204 KB),
+      wall 0.992;
+    - E, the shipped layout plus a 10 KiB class: 5 rounds, none loaded, max RSS 1.024
+      (4,307,140 to 4,409,308 KB), wall 0.981 within noise.
+  - bench/perf/alloc on the linux/arm64 host: small wall 1.015 worse (31.15 to 31.61 ms;
+    classes under 1 KiB are unchanged, so likely the per class words' move to the record's
+    end), mixed max RSS 0.805 and wall 0.988 better. Darwin footprint: xo bench --ab self on the Mac (darwin/arm64), caches off, 3 rounds: max RSS 1.004 within noise (4,473,024 to 4,489,728 KB), wall 1.000, cpu 0.995.
+
 ## Alternatives
 
 - Keep the power-of-two classes and size std buffers just under a class

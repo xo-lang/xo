@@ -639,7 +639,7 @@ pub fn trim_central() {
 /// hold nothing the list needs and all of them can go).
 /// pg: Linux's page size for an explicit trim, else 0 (no advice there).
 fn trim_list(p0: Int, c: Int, pg: Int) {
-  let size = (2048).wrapping_shl(c.wrapping_sub(65))
+  let size = alloc.class_size(c).wrapping_add(8)
   var p = p0
   while p != 0 {
     let cw = pword(p, PT_CLASS)
@@ -783,7 +783,7 @@ const PAGE = 16384
 const PT_CLASS = 0
 const PT_LINK = 2048
 const PT_CLINK = 4096
-const PAGE_CLASS = 68
+const PAGE_CLASS = 77
 const H_PCUR = 10952
 const H_PEND = 10960
 const H_PAGES = 10968
@@ -912,18 +912,20 @@ pub fn chunks() -> Int { rt.slot_load(rt.static_word(W_CHUNKS), 0, RELAXED) }
 
 /// The heap record's per class words this module reads for a cut (alloc.xo
 /// NFREE, MAG_CAP; FREE_LISTS and MAG are H_FREE_LISTS and H_MAG above).
-const H_NFREE = 664
+const H_NFREE = 11696
 
 /// The classes whose central magazines a growing thread may cut into a
-/// smaller class's blocks: 2 KiB and up are the power of two blocks, the
-/// classes below 32 KiB the resident ones (a class of 32 KiB or more is
+/// smaller class's blocks: the classes below the 16 KiB page class (decision
+/// 0506: four a doubling from 1 KiB, so cut_for cuts a class above 1 KiB
+/// only from the classes 4, 8, ... after it, whose blocks are an exact
+/// number of its own), the resident ones (a class of 32 KiB or more is
 /// given back by scavenge, so cutting it saves no footprint); and the
 /// bytes of magazines a growth cuts at most.
-const CUT_MAX_CLASS = 67
+const CUT_MAX_CLASS = 76
 const CUT_BYTES = 1048576
 
 /// The word of the central table that turns the cut off (XO_CUT=0): the
-/// table is a page, its classes' words the first 73.
+/// table is a page, its classes' words the first 85.
 const CUT_OFF = 1056
 
 /// XO_CUT=0: no growth cuts a magazine (decision 0383, (a)).
@@ -1047,20 +1049,8 @@ pub fn cut_for(h: Int, n: Int) -> Bool {
   if cen == 0 || rt.mem_load(cen, CUT_OFF, 8) != 0 {
     return false
   }
-  var c = 65
-  var size = 2040
-  if n <= 1024 {
-    c = n.wrapping_add(15).shr_logical(4)
-    if c == 0 {
-      c = 1
-    }
-    size = c.wrapping_shl(4)
-  } else {
-    while size < n {
-      size = size.wrapping_shl(1).wrapping_add(8)
-      c = c.wrapping_add(1)
-    }
-  }
+  let c = alloc.class_of_any(n)
+  let size = alloc.class_size(c)
   let fl = h.wrapping_add(c.wrapping_shl(3))
   // a block is there already (a list, the spare, or the central list got one)
   if rt.mem_load(fl, H_FREE_LISTS, 8) != 0 || rt.mem_load(fl, H_MAG, 8) != 0 || rt.slot_load(cen, c, RELAXED) != 0 {
@@ -1078,7 +1068,11 @@ pub fn cut_for(h: Int, n: Int) -> Bool {
   if want == 0 {
     want = CUT_BYTES
   }
-  var d = c.wrapping_add(1)
+  // above 1 KiB only the classes 4, 8, ... after c (decision 0506): their
+  // blocks are exactly 2, 4, ... of c's, so a cut leaves no tail (the
+  // other classes' cuts left 282 MB of the self build in tails)
+  let step = if c > 64 { 4 } else { 1 }
+  var d = c.wrapping_add(step)
   var first = 0
   var last = 0
   var dsize = 0
@@ -1088,10 +1082,7 @@ pub fn cut_for(h: Int, n: Int) -> Bool {
       clock(cen, d)
       first = rt.slot_load(cen, d, RELAXED)
       if first != 0 {
-        dsize = d.wrapping_shl(4)
-        if d > 64 {
-          dsize = (2048).wrapping_shl(d.wrapping_sub(65)) - 8
-        }
+        dsize = alloc.class_size(d)
         dstride = dsize.wrapping_add(8)
         // a magazine is cap blocks of the donor class
         var dcap = rt.mem_load(h.wrapping_add(d.wrapping_shl(3)), H_MAG_CAP, 8)
@@ -1109,7 +1100,7 @@ pub fn cut_for(h: Int, n: Int) -> Bool {
       cunlock(cen, d)
     }
     if first == 0 {
-      d = d.wrapping_add(1)
+      d = d.wrapping_add(step)
     }
   }
   if first == 0 {
@@ -1234,8 +1225,8 @@ const H_ALLOCS = 0
 const H_FREES = 8
 const H_MID_MAX = 56
 const H_CENTRAL = 64
-const H_FREE_LISTS = 80
-const H_MAG = 1248
+const H_FREE_LISTS = 11016
+const H_MAG = 12376
 const H_NEXT = 2136
 /// Whether the record counts (alloc.xo COUNT).
 const H_COUNT = 1864
@@ -1280,15 +1271,17 @@ const W_HSIZE = 29
 /// sample, its thread state, and its sampled block: alloc.xo SAMPLE_AT,
 /// heapprof.xo H_PSTATE, alloc.xo PSAMPLE), the size classes' limit
 /// (XO_HEAP_MID_MAX lowers it), and the central lists' words (a list
-/// per size class, 1 to 72); then each class's magazine size (alloc.xo
+/// per size class, 1 to 84); then each class's magazine size (alloc.xo
 /// MAG_CAP, written by mag_caps); then the page chunk's bump words and the
 /// page blocks flag (alloc.xo PCUR, PEND, PAGES; decision 0425), the
 /// chunks' reservation ends (H_BLIM, H_PLIM), and XO_FREE_CHECK's ring,
 /// its next slot and the block being freed (alloc.xo FQ, FQP; decision
-/// 0484).
-const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73 + 24 + 16 + 24
+/// 0484); then (decision 0506, 85 classes) each class's free list, its
+/// length, its spare magazine and its magazine size (alloc.xo FREE_LISTS,
+/// NFREE, MAG, MAG_CAP; the 73 class arrays before them are unused).
+const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73 + 24 + 16 + 24 + 4 * 8 * 85
 /// The first word of the per class magazine sizes (alloc.xo MAG_CAP).
-const H_MAG_CAP = 10368
+const H_MAG_CAP = 13056
 /// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).
 const MAG_BYTES = 65536
 const MID_MAX = alloc.MID_MAX_LIMIT
@@ -1310,7 +1303,7 @@ fn mid_default() -> Int {
     _ => MID_MAX
   }
 }
-const NCLASS1 = 73
+const NCLASS1 = 82
 
 /// Makes the main heap record and the central lists (C main, before
 /// anything allocates) and starts the list of every record with it: its
@@ -1331,16 +1324,13 @@ pub fn main_record() -> Int {
   h
 }
 
-/// Writes record h's magazine size of each class 1 to 72 (alloc.xo
+/// Writes record h's magazine size of each class 1 to 84 (alloc.xo
 /// MAG_CAP): the blocks of MAG_BYTES, at least 8, which alloc.free_mt
 /// computed with a multiply on every free of a long list (2026-10-19).
 fn mag_caps(h: Int) {
   var c = 1
   while c < NCLASS1 {
-    var size = c.wrapping_shl(4)
-    if c > 64 {
-      size = (2048).wrapping_shl(c.wrapping_sub(65)) - 8
-    }
+    let size = alloc.class_size(c)
     // MAG_BYTES / size by long division (no `/`: this module's rule)
     var q = 0
     var rem = MAG_BYTES
@@ -1387,9 +1377,7 @@ fn check_record(h: Int) {
 }
 
 /// The bytes after the prefix of a block of class c (alloc.xo's classes).
-fn class_bytes(c: Int) -> Int {
-  if c <= 64 { c.wrapping_shl(4) } else { (2048).wrapping_shl(c.wrapping_sub(65)).wrapping_sub(8) }
-}
+fn class_bytes(c: Int) -> Int { alloc.class_size(c) }
 
 /// XO_FREE_CHECK's free (cabi.xo heap_grow, from alloc.xo free_mt) of
 /// the block in record h's H_FQP word: a block of a class is filled with
@@ -1697,7 +1685,7 @@ pub fn scavenge(m: Int, c: Int) {
   if sanhook.sanitized() || sanhook.gorace() {
     return
   }
-  let size = (2048).wrapping_shl(c.wrapping_sub(65)) - 8
+  let size = alloc.class_size(c)
   var r = m
   while r != 0 {
     // a page block (class PAGE_CLASS and up, decision 0425) holds no link

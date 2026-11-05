@@ -860,8 +860,8 @@ pub fn rl_grow(hw: Int, l: Int, esize: Int) -> Int {
 }
 
 /// The bytes of the block the heap gives for b bytes (alloc.alloc's
-/// classes): 16 byte steps to SMALL_MAX, then powers of two less the 8
-/// byte prefix up to the heap's mid_max, else b (a big block).
+/// classes): 16 byte steps to SMALL_MAX, then alloc.class_size of its
+/// class (decision 0506) up to the heap's mid_max, else b (a big block).
 fn block_size(hw: Int, b: Int) -> Int {
   if b <= SMALL_MAX {
     return b.wrapping_add(15) & -16
@@ -869,11 +869,7 @@ fn block_size(hw: Int, b: Int) -> Int {
   if b > rt.mem_load(hw & -2, H_MID_MAX, 8) {
     return b
   }
-  var s = 2040
-  while s < b {
-    s = s.wrapping_shl(1).wrapping_add(8)
-  }
-  s
+  alloc.class_size(alloc.class_of(b))
 }
 
 /// rl_grow of a list that is not the empty literal's. Out of line (it

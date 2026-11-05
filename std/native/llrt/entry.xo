@@ -50,8 +50,8 @@ const W_OVERFLOW_COUNT = 61
 /// xo_rt.c XO_MID_MAX: the largest block the size classes serve.
 const MID_MAX = 262136
 
-/// XO_NCLASS (64 + 8 classes) and XO_CHUNK (4 MiB).
-const NCLASS = 72
+/// XO_NCLASS (64 + 20 classes, decision 0506) and XO_CHUNK (4 MiB).
+const NCLASS = 81
 const CHUNK_MB = 4
 
 /// Signals: SIGINT, SIGTERM, SIGPIPE; SIG_IGN; SA_RESTART on Linux and
@@ -509,7 +509,7 @@ pub fn heapstats() {
   var sum = 0
   for c in 1..NCLASS + 1 {
     let n = heapos.nfree(c)
-    let size = if c <= 64 { c * 16 } else { (2048).wrapping_shl(c - 65) }
+    let size = alloc.class_size(c)
     if n > 0 {
       var at = put(b, 0, "xo heapstats: class ")
       at = put_int(b, at, c)

@@ -18,6 +18,18 @@
 
 `T.wrapping_from(x: Int)` for Int8, Int16, Int32, UInt8, UInt16, UInt32 and UInt64 is Go's conversion: the low bits kept, sign extended for a signed T, no fault (`try` is the checked form, `UInt64.from_bits` the old name of the 64 bit one). The compiler lowers it to a mask, or a shift pair for a signed type, and a bare integer conversion. `Float32.to_bits() -> UInt32` and `Float32.from_bits(b: UInt32)` give and take the binary32 bits (std/native/prelude.xo, from the widened double, which is exact); a signaling NaN is quieted on the native backends, where the Go backend keeps it.
 
+## 2026-11-05: perf: the native heap has four size classes a doubling from 1 KiB to 8 KiB
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0506 (bench/results/size-class-waste-2026-11-04.md: allocations above 1 KiB were handed 1.195 times the bytes they asked for, a 16 KiB buffer a 32 KiB block)
+- Go reference: runtime/sizeclasses.go (about four classes a doubling, at most 12.5% tail waste)
+- Test: std/native/llrt/obj_test.xo "every size above 1 KiB gets the smallest class that holds it"; the arm64 and llvm goldens
+- Timing: xo bench --ab self on the linux/arm64 host, 5 rounds, 4 of them loaded by other jobs: max RSS 0.986 of main (4,341,468 to 4,280,256 KB), wall 0.994, cpu 0.993; bench/perf/sizewaste: 2 and 4 KiB buffers 1.27 times their payload (2.01), sizes between classes 1.03 to 1.06 (1.38 to 1.41) (bench/results/size-classes-stage-b-2026-11-05.md)
+- Shipped in: not yet released
+
+Above 1 KiB the classes were powers of two (2 KiB to 256 KiB), so a block could be almost twice its request. Classes 65 to 76 are now blocks of 1280, 1536, 1792 and 2048 bytes, then four a doubling to 8 KiB (a block at most 25% over its request, against up to 100% before: a 2 or 4 KiB buffer takes 1.27 times its payload, not 2.01). 16 KiB to 256 KiB stay powers of two (page blocks, decision 0425), so requests from 8 KiB to 16 KiB still take a 16 KiB block. A heap record's per class words moved to its end (82 classes). XO_HEAPSTATS reports a class's payload size.
+
 ## 2026-11-05: fix: a --race build no longer reports two tasks' faults on one worker as a race
 
 - Kind: fix

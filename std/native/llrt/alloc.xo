@@ -10,9 +10,10 @@
 // stage 3). Decision 0198 deleted the C path (`XO_LLRT_C=alloc`).
 //
 // Every block has an 8 byte prefix before the address handed out: its
-// size class (1 to 72) or, for a big block, minus its size.
-// Classes 1 to 64 are 16 to 1,024 bytes by 16, classes 65 to 72 are
-// 2 KiB to 256 KiB by powers of two; blocks above the heap's mid_max
+// size class (1 to 81) or, for a big block, minus its size.
+// Classes 1 to 64 are 16 to 1,024 bytes by 16, classes 65 to 76 are
+// blocks of 1280 to 8192 bytes, four a doubling, and 77 to 81 are 16 KiB
+// to 256 KiB by powers of two (decision 0506; class_of, class_size); blocks above the heap's mid_max
 // (at most 256 KiB, lowered by XO_HEAP_MID_MAX) are big blocks, mapped
 // from the system by heapos.xo (work item B21). A free
 // block of a class is on that class's free list (the next address is
@@ -59,15 +60,16 @@ pub fn mid_max_of(h: Int) -> Int { rt.mem_load(h, MID_MAX, 8) }
 pub fn set_mid_max_of(h: Int, m: Int) { rt.mem_store(h, MID_MAX, m, 8) }
 const CENTRAL = 64
 const LAST = 72
-const FREE_LISTS = 80
-const NFREE = 664
-/// The classes' words: (NFREE - FREE_LISTS) / 8.
-const CLASSES = 73
-const MAG = 1248
+const FREE_LISTS = 11016
+const NFREE = 11696
+/// The classes' words: (NFREE - FREE_LISTS) / 8 (decision 0506: the four
+/// arrays moved to the record's end, heapos.xo H_SIZE).
+const CLASSES = 82
+const MAG = 12376
 /// Each class's magazine size (at h + MAG_CAP + 8 * c): the blocks of
 /// MAG_BYTES, at least 8 (heapos.xo mag_caps writes them when it makes
 /// the record).
-const MAG_CAP = 10368
+const MAG_CAP = 13056
 /// Whether the heap counts its allocations and their bytes (ALLOCS,
 /// ABYTES): from the record's start, off at the program's start unless
 /// XO_LEAKCHECK, XO_HEAPSTATS, or XO_RTSTATS is set (their reports read
@@ -113,16 +115,20 @@ const LOCK_WAKE = 576460752303423488
 const TLS_W = 2
 const W_LOCKS = 3464
 
-/// The payload of the first class of the power of two blocks (class 65): a
-/// block of these classes is 2^k bytes with its 8 byte class word, so
-/// the blocks of a larger class are an exact number of the smaller class's
-/// (decision 0383, (a): a magazine can be cut into blocks of a smaller class
-/// with nothing left over). Each next class's payload is twice that plus 8.
-const BIG_FIRST = 2040
+/// The payload of the first class above SMALL_MAX (class 65, a 1280 byte
+/// block with its 8 byte class word). Until decision 0506 these classes were
+/// powers of two, so a larger class's block was an exact number of a
+/// smaller's (decision 0383 (a)); with four a doubling, cut_for (heapos.xo)
+/// cuts only blocks of the same quarter, which are exact multiples.
+const BIG_FIRST = 1272
+/// The largest payload of the classes four a doubling (decision 0506): an
+/// 8 KiB block; above it the classes are powers of two (16 KiB and up are
+/// the page classes).
+const QUARTER_MAX = 8184
 /// The first class (32 KiB) whose blocks on the central lists give their
 /// inner pages back to the system (heapos.xo scavenge, decision 0383).
-const SCAVENGE_FROM = 69
-/// (The 16 KiB class, 68, is a page block class too (decision 0425), so
+const SCAVENGE_FROM = 78
+/// (The 16 KiB class, 77, is a page block class too (decision 0425), so
 /// its free blocks could be scavenged whole; scavenging them cost 0.8% of
 /// the self build's wall for 0.8 GB of its footprint, 6816 to 6025 MB,
 /// 2026-10-30, and the owner's 7 GB goal holds without it.)
@@ -153,7 +159,7 @@ const MAG_BYTES = 65536
 /// library's malloc and so can be page aligned themselves).
 const PAGE = 16384
 const PCHUNK = 4194304
-const PAGE_CLASS = 68
+const PAGE_CLASS = 77
 const PT_CLASS = 0
 const PT_LINK = 2048
 const PT_CLINK = 4096
@@ -232,7 +238,51 @@ pub fn page_sample(p: Int) {
 }
 
 /// Whether blocks of n bytes are page blocks (at most the heap's mid_max).
-pub fn page_size(n: Int) -> Bool { n > (2048).wrapping_shl(PAGE_CLASS - 66) - 8 }
+pub fn page_size(n: Int) -> Bool { n > class_size(PAGE_CLASS.wrapping_sub(1)) }
+
+/// The size class of a block for n bytes, 0 < n <= MID_MAX_LIMIT (alloc's
+/// computation, decision 0506).
+pub fn class_of_any(n: Int) -> Int {
+  if n <= SMALL_MAX {
+    let c = n.wrapping_add(15).shr_logical(4)
+    return if c == 0 { 1 } else { c }
+  }
+  class_of(n)
+}
+
+/// The size class of a block for n bytes, SMALL_MAX < n <= MID_MAX_LIMIT:
+/// classes 65 to 76 are blocks (payload and the 8 byte prefix) of 1280,
+/// 1536, 1792, 2048, then four a doubling to 8 KiB (2560 ... 8192);
+/// 77 to 81 are 16 KiB to 256 KiB (decision 0506: the doubling classes
+/// gave a 16 KiB buffer a 32 KiB block).
+pub fn class_of(n: Int) -> Int {
+  let b1 = n.wrapping_add(7)
+  if n <= QUARTER_MAX {
+    var e = 10
+    if b1 >= 2048 { e = 11 }
+    if b1 >= 4096 { e = 12 }
+    return (65).wrapping_add(e.wrapping_sub(10).wrapping_shl(2)).wrapping_add(b1.shr_logical(e.wrapping_sub(2)) & 3)
+  }
+  var e = 14
+  if b1 >= 16384 { e = 15 }
+  if b1 >= 32768 { e = 16 }
+  if b1 >= 65536 { e = 17 }
+  if b1 >= 131072 { e = 18 }
+  PAGE_CLASS.wrapping_add(e).wrapping_sub(14)
+}
+
+/// The payload bytes of class c's blocks (1 to CLASSES - 1).
+pub fn class_size(c: Int) -> Int {
+  if c <= 64 {
+    return c.wrapping_shl(4)
+  }
+  if c < PAGE_CLASS {
+    let k = c.wrapping_sub(65)
+    let e = (10).wrapping_add(k.shr_logical(2))
+    return (1).wrapping_shl(e).wrapping_add((k & 3).wrapping_add(1).wrapping_shl(e.wrapping_sub(2))).wrapping_sub(8)
+  }
+  (16384).wrapping_shl(c.wrapping_sub(PAGE_CLASS)).wrapping_sub(8)
+}
 
 /// A magazine's link to the next magazine (its first block's second word,
 /// or the table's PT_CLINK word for page blocks; heapos.xo nfree).
@@ -307,9 +357,26 @@ pub fn alloc(h: Int, n: Int) -> Int {
     }
     size = c.wrapping_shl(4)
   } else {
-    while size < n {
-      size = size.wrapping_shl(1).wrapping_add(8)
-      c = c.wrapping_add(1)
+    // four classes a doubling of the block (payload and its 8 byte
+    // prefix) up to 8 KiB, then powers of two (decision 0506)
+    // (the block's exponent by comparisons: rt.clz is not one of this
+    // module's intrinsics, decision 0207)
+    let b1 = n.wrapping_add(7)
+    if n <= QUARTER_MAX {
+      var e = 10
+      if b1 >= 2048 { e = 11 }
+      if b1 >= 4096 { e = 12 }
+      let q = b1.shr_logical(e.wrapping_sub(2)) & 3
+      c = (65).wrapping_add(e.wrapping_sub(10).wrapping_shl(2)).wrapping_add(q)
+      size = (1).wrapping_shl(e).wrapping_add(q.wrapping_add(1).wrapping_shl(e.wrapping_sub(2))).wrapping_sub(8)
+    } else {
+      var e = 14
+      if b1 >= 16384 { e = 15 }
+      if b1 >= 32768 { e = 16 }
+      if b1 >= 65536 { e = 17 }
+      if b1 >= 131072 { e = 18 }
+      c = PAGE_CLASS.wrapping_add(e).wrapping_sub(14)
+      size = (1).wrapping_shl(e).wrapping_sub(8)
     }
   }
   // the class's words are at fl + FREE_LISTS, fl + NFREE, fl + MAG
@@ -341,8 +408,8 @@ pub fn alloc(h: Int, n: Int) -> Int {
     // stall per allocation (bench/results/xo1-speed-2026-10-13.md)
     rt.prefetch(next)
   } else if c >= PAGE_CLASS && rt.mem_load(h, PAGES, 8) != 0 {
-    // a page block from the heap's page chunk (size + 8 is a power of two
-    // of whole pages); the table word of its first page is its class
+    // a page block from the heap's page chunk (size + 8 is whole pages);
+    // the table word of its first page is its class
     let need = size.wrapping_add(8)
     let cur = rt.mem_load(h, PCUR, 8)
     if rt.mem_load(h, PEND, 8).wrapping_sub(cur) < need {
@@ -393,8 +460,8 @@ pub fn alloc(h: Int, n: Int) -> Int {
 /// waste when lifetimes do not depend on the size within a class. Only on
 /// the counted path (heapos.xo counting_on), with atomic adds.
 const W_WASTE = 98
-pub const WASTE_BIG = 73
-pub const WASTE_ROWS = 74
+pub const WASTE_BIG = 82
+pub const WASTE_ROWS = 83
 
 pub fn waste_on() {
   let t = rt.heap_large(WASTE_ROWS * 24)
@@ -611,9 +678,26 @@ pub fn refill(h: Int, n: Int) {
     }
     size = c.wrapping_shl(4)
   } else {
-    while size < n {
-      size = size.wrapping_shl(1).wrapping_add(8)
-      c = c.wrapping_add(1)
+    // four classes a doubling of the block (payload and its 8 byte
+    // prefix) up to 8 KiB, then powers of two (decision 0506)
+    // (the block's exponent by comparisons: rt.clz is not one of this
+    // module's intrinsics, decision 0207)
+    let b1 = n.wrapping_add(7)
+    if n <= QUARTER_MAX {
+      var e = 10
+      if b1 >= 2048 { e = 11 }
+      if b1 >= 4096 { e = 12 }
+      let q = b1.shr_logical(e.wrapping_sub(2)) & 3
+      c = (65).wrapping_add(e.wrapping_sub(10).wrapping_shl(2)).wrapping_add(q)
+      size = (1).wrapping_shl(e).wrapping_add(q.wrapping_add(1).wrapping_shl(e.wrapping_sub(2))).wrapping_sub(8)
+    } else {
+      var e = 14
+      if b1 >= 16384 { e = 15 }
+      if b1 >= 32768 { e = 16 }
+      if b1 >= 65536 { e = 17 }
+      if b1 >= 131072 { e = 18 }
+      c = PAGE_CLASS.wrapping_add(e).wrapping_sub(14)
+      size = (1).wrapping_shl(e).wrapping_sub(8)
     }
   }
   let fl = h.wrapping_add(c.wrapping_shl(3))
@@ -841,9 +925,26 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
     }
     size = c.wrapping_shl(4)
   } else {
-    while size < n {
-      size = size.wrapping_shl(1).wrapping_add(8)
-      c = c.wrapping_add(1)
+    // four classes a doubling of the block (payload and its 8 byte
+    // prefix) up to 8 KiB, then powers of two (decision 0506)
+    // (the block's exponent by comparisons: rt.clz is not one of this
+    // module's intrinsics, decision 0207)
+    let b1 = n.wrapping_add(7)
+    if n <= QUARTER_MAX {
+      var e = 10
+      if b1 >= 2048 { e = 11 }
+      if b1 >= 4096 { e = 12 }
+      let q = b1.shr_logical(e.wrapping_sub(2)) & 3
+      c = (65).wrapping_add(e.wrapping_sub(10).wrapping_shl(2)).wrapping_add(q)
+      size = (1).wrapping_shl(e).wrapping_add(q.wrapping_add(1).wrapping_shl(e.wrapping_sub(2))).wrapping_sub(8)
+    } else {
+      var e = 14
+      if b1 >= 16384 { e = 15 }
+      if b1 >= 32768 { e = 16 }
+      if b1 >= 65536 { e = 17 }
+      if b1 >= 131072 { e = 18 }
+      c = PAGE_CLASS.wrapping_add(e).wrapping_sub(14)
+      size = (1).wrapping_shl(e).wrapping_sub(8)
     }
   }
   if c == hdr {
@@ -916,12 +1017,9 @@ fn resize_aligned(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
   if n > rt.mem_load(h, MID_MAX, 8) {
     return 0
   }
-  var pc = 65
-  var psize = BIG_FIRST
-  while psize < n {
-    psize = psize.wrapping_shl(1).wrapping_add(8)
-    pc = pc.wrapping_add(1)
-  }
+  // a page class (n is above SMALL_MAX: a page block is 16 KiB or more)
+  let pc = class_of(n)
+  let psize = class_size(pc)
   if pc == (rt.mem_load(pword(p, PT_CLASS), 0, 8) & 127) {
     rt.mem_store(h, LAST, psize, 8)
     return p

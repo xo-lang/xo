@@ -64,10 +64,10 @@ test "page class blocks are page aligned, kept, reused and resized" {
   }
   expect(bad) == 0
   // p is on its free list: the next 16 KiB block is p again
-  let t = alloc_obj(12000)
+  let t = alloc_obj(15000)
   expect(t) == p
   // a prefixed block that grows into a page class moves to a page block
-  let u = resize_obj(q, 8000, 9000)
+  let u = resize_obj(q, 8000, 15000)
   expect(u & 16383) == 0
   free_obj(u)
   free_obj(t)
@@ -98,7 +98,7 @@ test "many page class blocks across chunks are distinct and freed" {
     }
   }
   expect(bad) == 0
-  // every block's page table word is its class (69) with no sample bit
+  // every block's page table word is its class (78) with no sample bit
   // read back through free and a new allocation: the freed blocks come
   // back in reverse order
   for k in 0..600 {
@@ -117,8 +117,12 @@ test "a growing List's capacity fills its block" {
   let h = heap_word()
   expect(block_size(h, 100)) == 112
   expect(block_size(h, 1024)) == 1024
-  expect(block_size(h, 1025)) == 2040
-  expect(block_size(h, 2041)) == 4088
+  expect(block_size(h, 1025)) == 1272
+  expect(block_size(h, 1273)) == 1528
+  expect(block_size(h, 2041)) == 2552
+  expect(block_size(h, 8185)) == 16376
+  expect(block_size(h, 16376)) == 16376
+  expect(block_size(h, 16377)) == 32760
   let over = alloc.mid_max_of(h & -2) + 1
   expect(block_size(h, over)) == over
   var xs: List[Int] = []
@@ -128,4 +132,48 @@ test "a growing List's capacity fills its block" {
   let cap = rt.mem_load(rt.obj_addr(xs), 16, 8)
   expect(cap >= 200)
   expect(block_size(h, L_HDR + 8 * cap) < L_HDR + 8 * (cap + 1))
+}
+
+test "every size above 1 KiB gets the smallest class that holds it (decision 0506)" {
+  // the class sizes: 12 blocks of 1280 to 8192 bytes, four a doubling,
+  // then 16 KiB to 256 KiB (the page classes)
+  var sizes: List[Int] = []
+  for c in 65..82 {
+    sizes.push(alloc.class_size(c) + 8)
+  }
+  expect(sizes) == [1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 5120, 6144, 7168, 8192, 16384, 32768, 65536, 131072, 262144]
+  var bad = 0
+  for n in 1025..alloc.MID_MAX_LIMIT + 1 {
+    let c = alloc.class_of(n)
+    if alloc.class_size(c) < n || (c > 65 && alloc.class_size(c - 1) >= n) {
+      bad += 1
+    }
+  }
+  expect(bad) == 0
+  expect(alloc.class_of(1025)) == 65
+  expect(alloc.class_of(8184)) == 76
+  expect(alloc.class_of(8185)) == 77
+  expect(alloc.class_of(16376)) == 77
+  expect(alloc.class_of(16377)) == 78
+  expect(alloc.class_of(alloc.MID_MAX_LIMIT)) == 81
+  expect(alloc.page_size(8184)) == false
+  expect(alloc.page_size(8185)) == true
+}
+
+test "cut_for's donors are an exact number of the class's blocks (decision 0506)" {
+  // heapos.xo cut_for cuts a class above 1 KiB only from the classes 4, 8,
+  // ... after it, below the page class (77): each such block (with its 8
+  // byte prefix) must be a whole number of the smaller's, or the rest is
+  // lost (gotchas/size-class-cut-tail-leak.md)
+  var bad = 0
+  for c in 65..77 {
+    var d = c + 4
+    while d < 77 {
+      if (alloc.class_size(d) + 8) % (alloc.class_size(c) + 8) != 0 {
+        bad += 1
+      }
+      d += 4
+    }
+  }
+  expect(bad) == 0
 }
