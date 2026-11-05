@@ -177,6 +177,54 @@ pub fn sum(data: Bytes) -> Bytes {
   h.sum()
 }
 
+/// sha1 applied n times to the 20 byte value a (PKCS #12's key derivation
+/// iterates it thousands of times). With the CPU's SHA-1 instructions each
+/// round is one compression of a block built once in place: the digest in
+/// its first 20 bytes, then the padding of a 20 byte message, with no
+/// allocation per round; else n calls of sum.
+pub fn iterate(a: Bytes, n: Int) -> Bytes {
+  if n <= 0 {
+    return a
+  }
+  if (cpu.hw() & cpu.HW_SHA1) == 0 || a.len() != SIZE {
+    var cur = a
+    for _ in 0..n {
+      cur = sum(cur)
+    }
+    return cur
+  }
+  var st = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0]
+  var blk: List[Int] = [0, 0, 0, 0, 0, 0, 0, 0]
+  // an index store first: a literal's list may be shared
+  st[0] = st[0]
+  blk[0] = blk[0]
+  let sp = rt.obj_addr(st).wrapping_add(rt.layout(2))
+  let bp = rt.obj_addr(blk).wrapping_add(rt.layout(2))
+  let kp = raw.bytes_addr(K1)
+  rt.mem_copy(bp, raw.bytes_addr(a), SIZE)
+  rt.mem_store(bp, SIZE, 0x80, 1)
+  rt.mem_store(bp, 63, 160, 1)
+  for _ in 0..n {
+    rt.mem_store(sp, 0, 0x67452301, 8)
+    rt.mem_store(sp, 8, 0xEFCDAB89, 8)
+    rt.mem_store(sp, 16, 0x98BADCFE, 8)
+    rt.mem_store(sp, 24, 0x10325476, 8)
+    rt.mem_store(sp, 32, 0xC3D2E1F0, 8)
+    cpu.sha1_block(sp, bp, kp)
+    for j in 0..5 {
+      rt.mem_store(bp, 4 * j, rt.mem_load(sp, 8 * j, 8).wrapping_shl(32).swap_bytes(), 4)
+    }
+  }
+  let out = rt.rs_with_cap(SIZE)
+  let w0 = rt.mem_load(bp, 0, 8)
+  let w1 = rt.mem_load(bp, 8, 8)
+  let w2 = rt.mem_load(bp, 16, 4)
+  keep(a)
+  keep_ints(st)
+  keep_ints(blk)
+  rt.rs_push_words(out, w0, w1, w2, 0, 0x0488).bytes()
+}
+
 /// The key padded to the block and xored with x.
 fn pad(key0: Bytes, x: Int) -> Bytes {
   let key = if key0.len() > BLOCK { sum(key0) } else { key0 }

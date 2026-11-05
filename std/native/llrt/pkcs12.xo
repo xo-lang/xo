@@ -93,10 +93,7 @@ fn pbkdf(salt: Bytes, password: Bytes, r: Int, id: Int, size: Int) -> Bytes {
     for x in inp {
       ib.write_byte(UInt8(x))
     }
-    var a = sha1.sum(ib.freeze())
-    for _ in 1..r {
-      a = sha1.sum(a)
-    }
+    let a = sha1.iterate(sha1.sum(ib.freeze()), r - 1)
     out.write(a)
     if i < c - 1 {
       // B is v bytes of Ai repeated; each v byte block of I becomes (Ij + B + 1) mod 2^(8v)

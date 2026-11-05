@@ -1,0 +1,10 @@
+test "iterate is sum applied n times" {
+  for n in [0, 1, 2, 3, 17, 100, 2048] {
+    var x = sum(b"abc")
+    for _ in 0..n {
+      x = sum(x)
+    }
+    expect(iterate(sum(b"abc"), n)) == x
+  }
+  expect(iterate(b"not twenty bytes", 3)) == sum(sum(sum(b"not twenty bytes")))
+}
