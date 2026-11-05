@@ -301,7 +301,11 @@ fn heap_grow(h: Int, n: Int) -> Int {
     return 0
   }
   if n == TRIM {
-    heapos.trim_thread()
+    heapos.trim_thread(false)
+    return 0
+  }
+  if n == TRIM_X {
+    heapos.trim_thread(true)
     return 0
   }
   if prof.supported() && n >= SAMPLE {
@@ -334,6 +338,10 @@ const PFREED = 288230376151711744
 /// page blocks (heapos.xo trim_thread; pool.xo's idle worker, which
 /// cannot import heapos; decision 0448 stage 1).
 const TRIM = 144115188075855872
+/// rt.heap_grow(0, TRIM_X): debug.mem_trim's trim of the calling thread's
+/// record, run by each worker for the pool's trim epoch (pool.xo
+/// trim_check): on Linux too (decision 0505).
+const TRIM_X = 144115188075855874
 /// alloc.xo's FHOLD: XO_FREE_CHECK holds the block free_mt left in h's
 /// FQP word (decision 0484).
 const FHOLD = 144115188075855873

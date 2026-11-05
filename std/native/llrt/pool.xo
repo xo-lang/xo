@@ -42,6 +42,11 @@ use native/sys_windows
 const RELAXED = 0
 /// rt.heap_grow's thread trim flag (cabi.xo TRIM, 2^57): the idle worker's heap trim.
 const HEAP_TRIM = 144115188075855872
+/// rt.heap_grow's explicit trim (cabi.xo TRIM_X): the calling thread's
+/// free page blocks given back on Linux too (decision 0505).
+const HEAP_TRIM_X = 144115188075855874
+const W_TRIM_SEEN = layout.W_TRIM_SEEN
+const P_TRIM_EPOCH_I = layout.P_TRIM_EPOCH_I
 const ACQUIRE = 1
 const RELEASE = 2
 const ACQ_REL = 3
@@ -1343,6 +1348,7 @@ pub fn worker_main(w: Int) -> Int {
   // wakep started it as a spinning worker
   var spinning = 1
   while true {
+    trim_check(p, w)
     let it = find_work(p, w, spinning)
     if spinning != 0 {
       cap_note(p, it != 0)
@@ -2008,6 +2014,101 @@ pub fn main_fiber(p: Int, w: Int, entry: Int, c: Int, m: Int, total: Int) -> Int
 /// wake of main or a spawn finds it); a parked main is a queue item like
 /// any fiber, so an idle worker resumes it while the root computes. It
 /// returns when main has ended, wherever it ran.
+/// Trims worker w's own heap record when debug.mem_trim moved the pool's
+/// trim epoch (decision 0505's addendum): a record's free lists are its
+/// thread's alone, so each thread trims its own, at the top of its loop
+/// (before it takes work or goes idle; agreed with decision 0502's
+/// change, which keeps this point), and records the epoch it saw.
+fn trim_check(p: Int, w: Int) {
+  let e = rt.slot_load(p, P_TRIM_EPOCH_I, ACQUIRE)
+  if e != rt.mem_load(w, W_TRIM_SEEN, 8) {
+    let _t = rt.heap_grow(0, HEAP_TRIM_X)
+    rt.slot_store(w, W_TRIM_SEEN.shr_logical(3), e, RELEASE)
+  }
+}
+
+/// debug.mem_trim's part in the pool (decision 0505's addendum): moves the
+/// trim epoch, marks the calling worker's record (its caller trims it),
+/// wakes every idle worker and the one waiting in the network poller so
+/// each trims its own record, and waits up to TRIM_WAIT_MS for every
+/// worker to have done so. A worker busy in a task trims at its next
+/// switch, after the wait if the task runs longer.
+pub fn trim_all() {
+  let me = rt.tlocal_get(TLS_W)
+  if me == 0 {
+    return
+  }
+  let p = rt.mem_load(me, W_POOL, 8)
+  if p == 0 {
+    return
+  }
+  let e = rt.slot_add(p, P_TRIM_EPOCH_I, 1, SEQ_CST) + 1
+  rt.slot_store(me, W_TRIM_SEEN.shr_logical(3), e, RELEASE)
+  // every idle worker, woken as wakep wakes one (off the list, counted
+  // spinning: it looks for work after its trim and goes idle again)
+  // the list is detached under the lock and counted there; its links
+  // are read after, each before its worker is woken (a woken worker
+  // writes its own link only once it runs; one that went idle and found
+  // work waits for this wake, as for wakep's: idle_unlist)
+  plock(p)
+  let head = rt.mem_load(p, P_IDLE, 8)
+  rt.mem_store(p, P_IDLE, 0, 8)
+  var n = 0
+  var w = head
+  while w != 0 {
+    rt.slot_add(p, P_NIDLE, -1, SEQ_CST)
+    rt.slot_add(p, P_SPINNING, 1, SEQ_CST)
+    n = n.wrapping_add(1)
+    w = rt.mem_load(w, W_IDLE_NEXT, 8)
+  }
+  punlock(p)
+  // the woken workers' records, for the wait (the runtime's own
+  // allocator: this may run in the middle of a heap's trim)
+  let ws = if n > 0 { rt.heap_large(n.wrapping_shl(3)) } else { 0 }
+  w = head
+  var k = 0
+  while w != 0 {
+    let next = rt.mem_load(w, W_IDLE_NEXT, 8)
+    if ws != 0 {
+      rt.mem_store(ws, k.wrapping_shl(3), w, 8)
+    }
+    k = k.wrapping_add(1)
+    rt.mem_store(w, W_IDLE_NEXT, 0, 8)
+    rt.slot_store(w, W_WAKEW_I, 1, RELEASE)
+    futex_wake(w.wrapping_add(W_WAKEW))
+    w = next
+  }
+  // the worker waiting in the network poller, if one is: it trims as its
+  // loop comes round, not waited for
+  np_break(p)
+  if ws == 0 {
+    return
+  }
+  // the woken workers' acknowledgements (W_TRIM_SEEN at e), up to
+  // TRIM_WAIT_MS; a busy worker is not waited for (xo's parallel build
+  // calls this at three phase ends with every worker busy)
+  var waited = 0
+  while waited < TRIM_WAIT_MS {
+    var all = true
+    var i = 0
+    while i < n {
+      let x = rt.mem_load(ws, i.wrapping_shl(3), 8)
+      if rt.slot_load(x, W_TRIM_SEEN.shr_logical(3), ACQUIRE) < e {
+        all = false
+      }
+      i = i.wrapping_add(1)
+    }
+    if all {
+      break
+    }
+    futex_wait_us(me.wrapping_add(W_TRIM_SEEN), e, 1000)
+    waited = waited.wrapping_add(1)
+  }
+  rt.heap_release(ws.wrapping_sub(8))
+}
+/// How long debug.mem_trim waits for the other workers' trims.
+const TRIM_WAIT_MS = 20
+
 pub fn root_main(p: Int, w: Int, mf: Int) {
   let dlk = rt.mem_load(p, P_DLK, 8)
   rt.slot_add(dlk, DLK_LOOPS, 1, SEQ_CST)
@@ -2016,6 +2117,7 @@ pub fn root_main(p: Int, w: Int, mf: Int) {
   var it = mf | 1
   var spinning = 0
   while rt.slot_load(mf, F_ENDED_I, ACQUIRE) == 0 {
+    trim_check(p, w)
     if it == 0 {
       it = find_work(p, w, spinning)
       if spinning != 0 {

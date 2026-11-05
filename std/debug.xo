@@ -56,9 +56,13 @@ fn mem_peak() -> Int
 /// the Go backend for now).
 fn mem_total() -> Int
 
-/// Gives the system the pages of the calling thread's free heap blocks of
-/// 16 KiB and over (decision 0448; darwin for now), and on every target unmaps the cached
-/// large blocks of 2 MiB and over: for a program that knows its live memory just fell, as xo
-/// does after its phases that free the most. The pages come back on the next use of those
-/// blocks, and the next such large block maps anew. Nothing on the Go and wasm backends.
+/// Gives the system the pages of the free heap blocks of 16 KiB and over
+/// of every worker thread (decisions 0448 and 0505: a task's frees land on
+/// whichever thread ran it) and of the central lists, and on every target unmaps the cached large
+/// blocks of 1 MiB and over: for a program that knows its live memory just
+/// fell, as xo does after its phases that free the most. It waits up to
+/// about 20 ms for the idle workers' trims; a worker busy in a task trims
+/// at its next switch, which may come after it returns. The pages come
+/// back on the next use of those blocks (a page fault each), and the next
+/// such large block maps anew. Nothing on the Go and wasm backends.
 fn mem_trim()

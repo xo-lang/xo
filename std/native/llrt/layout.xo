@@ -248,13 +248,20 @@ pub const W_TICK = 3560
 /// When find_work last took from the ring, the inject queue and the poller
 /// before the run-next slot (once a slice at most).
 pub const W_FAIR_AT = 3568
-pub const W_SIZE = 3576
+/// The trim epoch this worker last trimmed its heap record for (pool.xo
+/// trim_check, decision 0505's addendum).
+pub const W_TRIM_SEEN = 3576
+pub const W_SIZE = 3584
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 /// The spawn sites' average run times (pool.xo site_note): 256 words after
 /// the worker records' addresses (decision 0359).
 pub const P_SITES = 32928
-pub const P_SIZE = 34976
+/// The trim epoch (a word index, after the sites): debug.mem_trim adds one
+/// and each worker trims its own heap record when it sees it change
+/// (pool.xo trim_all, trim_check; decision 0505's addendum).
+pub const P_TRIM_EPOCH_I = 4372
+pub const P_SIZE = 34984
 
 /// xo_node, a cancellation node (pool.xo; xo_rt.c before; ctx.xo makes the
 /// context's, twrun.xo and pool.xo the others): its parent, first child,

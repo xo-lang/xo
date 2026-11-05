@@ -1,0 +1,59 @@
+// debug.mem_trim gives back the pages of free blocks of 16 KiB and over
+// (decision 0505: on Linux too) and the cached blocks of 1 MiB and over,
+// and nothing that is still in use: every other block of each size stays
+// live through two trims and keeps its bytes, the freed ones are made
+// again (their pages fault back in) and hold what is written to them.
+use std/debug
+
+fn fill(n: Int, seed: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for i in 0..n {
+    b.write_byte(UInt8((i * 31 + seed) & 255))
+  }
+  b.freeze()
+}
+
+fn check(b: Bytes, n: Int, seed: Int) -> Bool {
+  if b.len() != n {
+    return false
+  }
+  for i in [0, n / 3, n / 2, n - 1] {
+    if Int(b[i]) != (i * 31 + seed) & 255 {
+      return false
+    }
+  }
+  true
+}
+
+fn main(os: Os) {
+  for n in [16376, 16384, 32760, 65536, 200000, 1048576, 2097152 + 5] {
+    var live: List[Bytes] = []
+    var dead: List[Bytes] = []
+    for k in 0..24 {
+      if k % 2 == 0 {
+        live.push(fill(n, k))
+      } else {
+        dead.push(fill(n, k))
+      }
+    }
+    var gone = 0
+    for d in dead {
+      gone += d.len()
+    }
+    dead = []
+    debug.mem_trim()
+    var again: List[Bytes] = []
+    for k in 0..12 {
+      again.push(fill(n, 100 + k))
+    }
+    debug.mem_trim()
+    var ok = true
+    for (k, b) in live.indexed() {
+      ok = ok && check(b, n, 2 * k)
+    }
+    for (k, b) in again.indexed() {
+      ok = ok && check(b, n, 100 + k)
+    }
+    os.stdio.println("${n}: live and remade blocks intact ${ok} (${gone} freed)")
+  }
+}

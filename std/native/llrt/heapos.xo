@@ -26,6 +26,7 @@
 use native/llrt/alloc
 use native/llrt/linux
 use native/llrt/membudget
+use native/llrt/obj
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
@@ -515,12 +516,15 @@ fn take(need: Int) -> Int {
   0
 }
 
-/// Unmaps the large block cache's mappings of CACHE_DROP_MIN and over (a
-/// build's phase end, debug.mem_trim): the advice above leaves them in the
+/// Unmaps the large block cache's mappings of min bytes and over
+/// (debug.mem_trim: CACHE_DROP_MIN): the advice above leaves them in the
 /// RSS on Darwin and Linux has none (decision 0448 case (c)). Smaller ones
 /// stay: what comes next reuses them, and on Linux their pages would fault
 /// back in (conc-spawn's build, wall 1.03 with every mapping dropped).
-pub fn cache_drop() {
+/// 1 MiB since decision 0505: freed 1 MiB blocks stayed resident through
+/// the trim on both systems (17 to 19 MB of 160 MB; Go's FreeOSMemory
+/// returns them).
+pub fn cache_drop(min: Int) {
   let w = rt.static_word(W_CACHE)
   if rt.slot_load(w, 0, ACQUIRE) == 0 {
     return
@@ -534,7 +538,7 @@ pub fn cache_drop() {
   while k < n {
     let m = rt.mem_load(t, (24).wrapping_add(k.wrapping_shl(3)), 8)
     let size = rt.mem_load(m, 0, 8)
-    if size >= CACHE_DROP_MIN {
+    if size >= min {
       bytes = bytes.wrapping_sub(size)
       unmap_os(m, size)
     } else {
@@ -547,43 +551,104 @@ pub fn cache_drop() {
   rt.mem_store(t, 8, bytes, 8)
   clock_give()
 }
-const CACHE_DROP_MIN = 2097152
+pub const CACHE_DROP_MIN = 1048576
 
 /// Gives the system the pages of the calling thread's free page blocks
 /// (classes PAGE_CLASS and up on its heap record's free lists and spare
 /// magazines; decision 0448 stage 1: a build's phase end, debug.mem_trim),
 /// each block once (alloc.xo PADVISED, cleared when it is freed again):
 /// the record is the thread's own, so no lock; the central lists'
-/// magazines are scavenged as they arrive (alloc.xo free_mt).
-pub fn trim_thread() {
+/// magazines are scavenged as they arrive (alloc.xo free_mt). On Linux
+/// only an explicit trim (debug.mem_trim, decision 0505) advises: freed
+/// class blocks kept their pages for the life of the process there (324
+/// to 332 MB of 160 MB of freed 16 and 64 KiB blocks, Go 4 to 8), while
+/// the idle worker's trim stays darwin only (MADV_DONTNEED pages fault
+/// back in on reuse, and an idle server's next burst would pay it).
+pub fn trim_thread(explicit: Bool) {
   if !pages_on() {
     return
   }
-  let h = thread_heap()
+  // the record the allocator uses on this thread (obj.xo heap_word): the
+  // single threaded heap while no other thread runs, which the thread's
+  // own TLS_HEAP never names (thread_heap made a new, empty record there,
+  // so a program's trim before its first spawn gave back nothing, decision
+  // 0505's addendum), else the thread's record, if it has one
+  var h = obj.solo_heap()
+  if h == 0 {
+    h = rt.tlocal_get(TLS_HEAP)
+  }
+  if h == 0 {
+    return
+  }
+  // Linux's page size: madvise rounds its length up to whole pages, so a
+  // block it does not cover exactly (a 16 KiB block under 64 KiB pages)
+  // is skipped, never rounded over a live neighbor
+  let pg = match target.os {
+    TargetOs.Linux => if explicit { linux.auxval(linux.AT_PAGESZ) } else { 0 }
+    _ => 0
+  }
   for c in PAGE_CLASS..NCLASS1 {
     let fl = h.wrapping_add(c.wrapping_shl(3))
-    trim_list(rt.mem_load(fl, H_FREE_LISTS, 8), c)
-    trim_list(rt.mem_load(fl, H_MAG, 8), c)
+    trim_list(rt.mem_load(fl, H_FREE_LISTS, 8), c, pg)
+    trim_list(rt.mem_load(fl, H_MAG, 8), c, pg)
+  }
+}
+
+/// debug.mem_trim's walk of the central lists' magazines of page blocks
+/// (decision 0505's addendum): a class's full magazines wait there owned by
+/// no thread, under the class's lock, so the caller advises them. The 16
+/// KiB class's are not scavenged as they arrive on Linux (alloc.xo
+/// scavenge_pages), nor the first SCAVENGE_KEEP of the larger classes', so
+/// a threaded program's freed 16 KiB blocks stayed resident through the
+/// trim. scavenge advises each block once (PADVISED).
+pub fn trim_central() {
+  if !pages_on() || sanhook.sanitized() || sanhook.gorace() {
+    return
+  }
+  // the central lists are every record's (thread_heap copies H_CENTRAL)
+  let h = heaps_head()
+  if h == 0 || rt.mem_load(h, H_CENTRAL, 8) == 0 {
+    return
+  }
+  for c in PAGE_CLASS..NCLASS1 {
+    alloc.central_lock(h, c)
+    var m = alloc.central_first(h, c)
+    while m != 0 {
+      scavenge(m, c)
+      m = alloc.cnext(true, m)
+    }
+    alloc.central_unlock(h, c)
   }
 }
 
 /// trim_thread's walk of one list of page blocks of class c, linked
-/// through their chunk's table (alloc.xo PT_LINK).
-fn trim_list(p0: Int, c: Int) {
+/// through their chunk's table (alloc.xo PT_LINK, so a block's own pages
+/// hold nothing the list needs and all of them can go).
+/// pg: Linux's page size for an explicit trim, else 0 (no advice there).
+fn trim_list(p0: Int, c: Int, pg: Int) {
   let size = (2048).wrapping_shl(c.wrapping_sub(65))
   var p = p0
   while p != 0 {
     let cw = pword(p, PT_CLASS)
     let v = rt.mem_load(cw, 0, 8)
     if v & alloc.PADVISED == 0 {
-      rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
-      // darwin only, as cache_advise: Linux's MADV_DONTNEED refaults cost
-      // the warm build's wall (ab-host stage1-v1/v2, 2026-10-31)
+      // darwin's MADV_FREE_REUSABLE costs nothing until memory is short;
+      // Linux's MADV_DONTNEED refaults cost the warm build's wall at
+      // every phase (ab-host stage1-v1/v2, 2026-10-31), so there only an
+      // explicit trim gives the pages (MADV_DONTNEED 4), and a block not
+      // advised stays unmarked for the next one
       match target.os {
         TargetOs.Darwin => {
+          rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
           let _a = sys_darwin.madvise(p, size, 7)
         }
-        TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => {}
+        TargetOs.Linux => {
+          if pg > 0 && p % pg == 0 && size % pg == 0 {
+            rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
+            let _a = linux.madvise(p, size, 4)
+          }
+        }
+        TargetOs.Windows | TargetOs.Wasi => {}
       }
     }
     p = rt.mem_load(pword(p, PT_LINK), 0, 8)

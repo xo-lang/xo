@@ -236,6 +236,12 @@ pub fn page_size(n: Int) -> Bool { n > (2048).wrapping_shl(PAGE_CLASS - 66) - 8 
 
 /// A magazine's link to the next magazine (its first block's second word,
 /// or the table's PT_CLINK word for page blocks; heapos.xo nfree).
+/// Class c's central list of heap h, locked (central_lock) and unlocked,
+/// and its first magazine (for heapos.xo trim_central, decision 0505).
+pub fn central_lock(h: Int, c: Int) { clock(h, rt.mem_load(h, CENTRAL, 8), c) }
+pub fn central_unlock(h: Int, c: Int) { cunlock(h, rt.mem_load(h, CENTRAL, 8), c) }
+pub fn central_first(h: Int, c: Int) -> Int { rt.slot_load(rt.mem_load(h, CENTRAL, 8), c, RELAXED) }
+
 pub fn cnext(pg: Bool, m: Int) -> Int {
   if pg { rt.mem_load(pword(m, PT_CLINK), 0, 8) } else { rt.mem_load(m, 8, 8) }
 }

@@ -1,7 +1,8 @@
 # 0505: mem_trim on Linux: the freed class blocks and the 1 to 2 MiB cache
 
-Status: Proposed (Xo Lang 2, 2026-11-04, at the lead's request). Extends
-decision 0448's trim (debug.mem_trim).
+Status: Accepted (owner, 2026-11-04). Proposed by Xo Lang 2 the same day
+at the lead's request. Extends decision 0448's trim (debug.mem_trim).
+Finding 3 (the classes' doubling) stays a separate measurement item.
 
 ## Context
 
@@ -101,3 +102,99 @@ trim_thread runs only when called).
   RSS change", which this probe contradicts for a freed working set).
 - A background scavenger as Go's: more machinery than one call needs;
   can come later on this trim's code.
+
+## Addendum (2026-11-04, lead-approved): every worker trims its own record
+
+Building part 1 showed `mem_trim` reaching none of a program's freed
+class blocks: a heap record's free lists are its thread's alone, and a
+program's tasks (main's too, after its first park) free onto whichever
+worker ran them, while `trim_thread` walked only the calling thread's
+record. Instrumented on linux/arm64 (XO_THREADS=1 as well): the probe's
+64 freed 64 KiB blocks sat on the main OS thread's record while the trim
+ran on a worker's, whose lists and the central lists were empty. Darwin's
+trim of decision 0448 has had the same gap for programs; xo's own phase
+trims run on the compiling thread, so its measurements stood. Walking
+another thread's record is not safe (its owner pops and pushes without a
+lock, so an madvise could zero a block just handed out).
+
+So `mem_trim` now:
+
+1. trims the calling thread's record (part 1 above);
+2. adds one to the pool's trim epoch (pool record word P_TRIM_EPOCH_I)
+   and records it as seen in its own worker record (W_TRIM_SEEN);
+3. takes every idle worker off the idle list and wakes it as wakep does
+   (counted spinning), and breaks the network poller's waiter (np_break);
+4. waits up to 20 ms for the workers it woke to acknowledge;
+5. unmaps the cached large blocks of 1 MiB and over (part 2).
+
+Each worker checks the epoch at the top of its loop (worker_main and
+root_main, before it takes work or goes idle: the point agreed with
+decision 0502's change, which only adds a `continue` back to it) and,
+when it moved, trims its own record (rt.heap_grow TRIM_X, an explicit
+trim: the Linux advice too) and records the epoch. A worker busy in a
+task trims at its next switch, which may be after `mem_trim` returns;
+the wait covers only the woken idle workers, so a caller whose workers
+are all busy (xo's parallel build at its phase ends) pays no wait. The
+idle worker's own periodic trim (pool.xo, after FIBER_TRIM_US) stays
+darwin only on Linux's side: an idle server's next burst would pay the
+refaults.
+
+A second gap of the same kind: before a program's first spawn the
+allocator uses the single threaded heap record (obj.xo's heap word),
+which no thread's TLS_HEAP names, so `trim_thread`'s `thread_heap()`
+made a new, empty record and trimmed that (instrumented: the probe's
+blocks on the record made at start, owner thread unset, and a fresh
+record for the trimming root thread). `trim_thread` now takes the
+allocator's record: the single threaded one while it is set, else the
+thread's own, and does nothing for a thread that has none.
+
+A third: full magazines of page blocks wait on the central lists, owned
+by no thread. Linux does not scavenge the 16 KiB class's magazines as
+they arrive (alloc.xo scavenge_pages), nor the larger classes' first
+SCAVENGE_KEEP, so a threaded program's 16 KiB blocks stayed resident
+(TestMemTrimOtherThreads: 148 MB before the trim and after). `mem_trim`
+now walks each page class's central list under its lock and advises
+every magazine (heapos.xo trim_central; scavenge marks each block
+PADVISED once).
+
+Test: cmd/xo TestMemTrimOtherThreads (linux): 160 MB of 64 KiB blocks
+freed by eight tasks, then `mem_trim` from main, at least 100 MB and half
+of the resident set given back.
+
+## As built (2026-11-04)
+
+The probe (160 MB freed in blocks of one size, then `mem_trim` against
+Go's `debug.FreeOSMemory`; ~/xo-lead/notes/xo-lang-2/trimprobe, the
+driver samples after each phase). Resident set after the trim on
+linux/arm64 (offload host 2); phys_footprint on darwin/arm64 (the Mac:
+MADV_FREE_REUSABLE pages leave the footprint at once and the RSS only
+when memory is short, so darwin's RSS column shows no trim for Xo's
+class blocks or for Go).
+
+| block | linux Xo before | linux Xo after | linux Go | darwin Xo after | darwin Go |
+|---|---|---|---|---|---|
+| 16 KiB (x 10,240) | 324 MB | 4 MB | 8 MB | 3 MB | 15 MB |
+| 64 KiB (x 2,560) | 332 MB | 13 MB | 6 MB | 2 MB | 12 MB |
+| 1 MiB (x 160) | 17 MB | 1 MB | 7 MB | 2 MB | 12 MB |
+| 2, 4, 16 MiB | 1 MB | 1 MB | 5 to 8 MB | 2 MB | 5 to 55 MB |
+
+Xo's 16 KiB row maps 326 MB for 160 MB of blocks (a 16 KiB block plus its
+header takes the 32 KiB class): finding 3, measured separately.
+
+cmd/xo TestMemTrimOtherThreads (linux/arm64, host 2): a01773c2d (main
+before this change) 148 MB resident before the trim and 148 after, FAIL;
+this change 162 to 8 MB (arm64) and 154 to 10 (LLVM), PASS.
+
+`xo bench --ab` on linux/arm64 (host 1, 10 rounds, base bef074fef against
+this change at 8f710d8ec; later commits are docs only):
+
+| run | wall B/A | cpu B/A | max RSS B/A |
+|---|---|---|---|
+| self (xo building compiler/xo) | 1.002 (0.992 to 1.003, within noise) | 0.998 (within noise) | 0.932 (0.925 to 0.942, better): 4,449,148 to 4,147,090 KB |
+| bench/perf/alloc mixed | 0.988 (within noise) | 0.986 | 1.0 |
+
+The self run's host was busy (median load 6.9; ab-host warns that wall and
+cpu ratios are less reliable then); max RSS does not depend on load. xo's
+own `debug.mem_trim` calls after its phases now advise on Linux, the max RSS
+gain, with no wall cost seen in the refaults the 2026-10-31 stage1 runs
+warned of (those were the automatic trims, which stay darwin only).

@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+16376: live and remade blocks intact true (196512 freed)
+16384: live and remade blocks intact true (196608 freed)
+32760: live and remade blocks intact true (393120 freed)
+65536: live and remade blocks intact true (786432 freed)
+200000: live and remade blocks intact true (2400000 freed)
+1048576: live and remade blocks intact true (12582912 freed)
+2097157: live and remade blocks intact true (25165884 freed)
+--- stderr

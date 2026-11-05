@@ -6236,13 +6236,19 @@ fn mem_trim()
   16 GiB (decision 0349's default; none where physical memory is not
   read). The Go backend ignores the
   budget and its label, and both counts are 0 there.
-- `mem_trim()` (decision 0448, native backends): gives the system the
-  pages of the calling thread's free heap blocks of 16 KiB and over (its
-  free lists and spare magazines; darwin for now), each once until the
-  block is used and freed again, and on every target unmaps the cached
-  large blocks of 2 MiB and over; for a program that knows its live memory just fell, as xo
-  does after its phases that free the most. The pages come back on the next
-  use, and the next such large block maps anew. Nothing on the Go backend, whose runtime's scavenger does this
+- `mem_trim()` (decisions 0448 and 0505, native backends): gives the
+  system the pages of the free heap blocks of 16 KiB and over of every
+  worker thread (each thread's free lists and spare magazines; a task's
+  frees land on whichever thread ran it) and of the central lists'
+  magazines, each once until the block is
+  used and freed again, and on every target unmaps the cached large
+  blocks of 1 MiB and over; for a program that knows its live memory just
+  fell, as xo does after its phases that free the most. The calling thread
+  trims its own blocks, wakes the idle workers to trim theirs, and waits up
+  to about 20 ms for them; a worker busy in a task trims at its next
+  switch, which may come after `mem_trim` returns. The pages come back on
+  the next use (a page fault each), and the next such large block maps
+  anew. Nothing on the Go backend, whose runtime's scavenger does this
   itself.
 
 ## 37. std/metrics

@@ -3,6 +3,7 @@
 use std/http
 use native/rt
 use native/llrt/heapos
+use native/llrt/pool
 use native/llrt/prof
 use native/llrt/raw
 use native/llrt/rtstats
@@ -138,8 +139,13 @@ pub fn mem_trim() {
   if target.arch == TargetArch.Wasm32 {
     return
   }
-  heapos.trim_thread()
-  heapos.cache_drop()
+  heapos.trim_thread(true)
+  // the other threads' records: each trims its own (decision 0505's
+  // addendum; a task's frees land on whichever thread ran it)
+  pool.trim_all()
+  // and the magazines on the central lists, which no thread owns
+  heapos.trim_central()
+  heapos.cache_drop(heapos.CACHE_DROP_MIN)
 }
 
 pub fn mem_peak() -> Int { heapos.peak_bytes() }

@@ -1,5 +1,25 @@
 # std/debug changes
 
+## 2026-11-04: fix: mem_trim gives back freed blocks on Linux and of every thread
+
+- Kind: fix
+- Commit: this push
+- Found by: decision 0505's probe against Go's debug.FreeOSMemory on linux/arm64 (160 MB freed in blocks of 16 KiB to 16 MiB)
+- Go reference: runtime/debug.FreeOSMemory (a GC, then the scavenger returns every free page, madvise MADV_DONTNEED on Linux)
+- Test: cmd/xo TestMemTrimOtherThreads (linux: 162 MB resident before the trim, 8 after; 148 to 148 before the fix); golden mem_trim_mid (every backend)
+- Timing: --ab self and bench/perf/alloc in decision 0505's "As built"
+- Shipped in: not yet released
+
+`debug.mem_trim()` on Linux now advises the page aligned free size class
+blocks of 16 KiB and over (MADV_DONTNEED) and unmaps the cached large
+blocks of 1 MiB and over, where before it did nothing on Linux. On every
+OS it now reaches each worker thread's heap record (a moved trim epoch:
+idle workers are woken and waited for up to about 20 ms; a busy one
+trims at its next switch) and the central lists' magazines, and before a
+program's first spawn it trims the heap the allocator uses rather than a
+new, empty one. The probe's resident set after the trim, linux/arm64:
+16 KiB blocks 324 to 4 MB, 64 KiB 332 to 13, 1 MiB 17 to 1 (Go 6 to 8).
+
 ## 2026-11-02: fix: mem_trim does nothing on wasm
 
 - Kind: fix
