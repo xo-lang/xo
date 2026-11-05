@@ -7,15 +7,15 @@ programs with fast, structured feedback. It keeps what makes Go productive
 standard library, a compatibility promise) and moves the bugs tests usually
 miss into the compiler.
 
-Status: experimental, toolchain 0.33.0. The compiler and the `xo`
+Status: experimental, toolchain 0.40.0. The compiler and the `xo`
 toolchain are written in Xo and compile to native code (arm64, amd64,
-LLVM), Go, and WebAssembly. Xo stays on 0.x and expect breaking changes until
+LLVM), Go, and WebAssembly. Xo stays on 0.x; expect breaking changes until
 1.0.
 
-The repository is mostly Xo: about 20 MB of Xo in the compiler, toolchain
-and standard library (685 files), and about 52 MB counting tests and
-benchmarks, against about 6 MB of Go (the Go backend's runtime, the test
-drivers and benchmark twins). GitHub's language bar does not recognize
+The repository is mostly Xo: about 16 MB of Xo in the compiler, toolchain
+and standard library (720 files, not counting their tests), and about
+82 MB counting tests and benchmarks, against about 13 MB of Go (the Go
+backend's runtime, the test drivers and benchmark twins). GitHub's language bar does not recognize
 `.xo` files, so it shows only the Go.
 
 Xo is built almost entirely by AI agents working under one maintainer,
@@ -92,7 +92,7 @@ archives for macOS (Apple silicon and Intel, signed and notarized), Linux
 (arm64 and x86-64) and Windows (x86-64, Authenticode signed), with a
 `SHA256SUMS` file. Check the archive against it, unpack it, and put its
 `bin` directory on your `PATH`; `bin/xo` finds the standard library at
-`../lib/xo`, so keep the directory together. The steps for each platform
+`../lib/xo/std`, so keep the directory together. The steps for each platform
 are in [Getting started](https://xolang.dev/docs/getting-started/#install)
 on [xolang.dev](https://xolang.dev), which also has the language tour,
 the specification and the release notes.
@@ -151,10 +151,13 @@ windows/arm64.
 | `xo test [--seed=N] [--explore=N]` | Tests, property tests, contract fuzzing, deterministic scheduling |
 | `xo fmt`, `xo fix`, `xo vet` | Canonical formatting, machine fixes, advisory checks |
 | `xo query`, `xo edit` | Semantic queries (type, def, callers, effects, holes, api) and edits (rename, add-field, change-sig) |
+| `xo def`, `xo refs`, `xo type`, `xo symbols` | Where a name is declared, its references, the type at FILE:LINE:COL, a directory's declarations |
 | `xo doc`, `xo explain <code>` | Documentation and diagnostic explanations |
 | `xo init`, `xo get`, `xo mod`, `xo vendor`, `xo publish`, `xo audit` | Modules, versions, and supply chain checks |
 | `xo bind` | Bindings for `use go` packages and `use c` headers |
+| `xo debug [--dap]` | Debugger for native programs (macOS arm64, Linux, Windows amd64): breakpoints, stepping, tasks, attach; `--dap` for editors |
 | `xo dump`, `xo replay`, `xo prof`, `xo trace` | Task trees, replay of recorded runs, profiles, execution traces |
+| `xo bench --ab` | Interleaved A/B timing of two builds with a confidence interval |
 | `xo lsp`, `xo mcp`, `xo serve` | Language server, Model Context Protocol server, warm checker |
 
 `xo help` lists them all; `xo <command> -h` gives the flags.
@@ -185,9 +188,9 @@ lost updates), 30 per language: Xo prevented or caught 23 to 29, against
 with Codex, a second model family, as the author, 22 to 27 against 17
 for strict Go and 12 for plain Go
 ([codex-2026-10-09.md](bench/results/codex-2026-10-09.md)). Against Go on the
-same machine, the 0.26.0 release ran 14 of 20 benchmark workloads faster
-and all 20 in less peak memory, with smaller binaries
-([release-vs-go-v0.26.0.md](bench/results/release-vs-go-v0.26.0.md)).
+same machine (darwin/arm64), the 0.38.1 release ran 19 of 20 benchmark
+workloads faster and all 20 in less peak memory
+([release-vs-go-v0.38.1.md](bench/results/release-vs-go-v0.38.1.md)).
 Performance and code size results for each backend are indexed in
 [bench/results/README.md](bench/results/README.md).
 
