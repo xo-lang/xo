@@ -5831,7 +5831,9 @@ fn to_node(d: yaml.Doc, i: Int, var memo: Map[Int, yaml.Node]) -> yaml.Node {
     content.push(to_node(d, c, memo))
   }
   let n = yaml.Node{kind: node_kind(r.kind), style: r.style, tag: r.tag, value: r.value, anchor: r.anchor, alias: alias, content: content, line: r.line, column: r.column, head_comment: r.head_comment, line_comment: r.line_comment, foot_comment: r.foot_comment}
-  memo[i] = n
+  if r.anchor != "" {
+    memo[i] = n
+  }
   n
 }
 
