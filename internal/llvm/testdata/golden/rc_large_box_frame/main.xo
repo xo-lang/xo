@@ -1,0 +1,81 @@
+// The drop helper of a box holding a 521 word optional (aws issue 14,
+// 2026-11-05): its frame took `sub sp, sp, #4144` and `add x29, sp,
+// #4112`, past an add immediate's 4,095, which the assembler rejected.
+// E holds 260 Strs (two words each), just past the 256 that reach a
+// 4 KiB frame.
+struct A {
+  s0: Str
+  s1: Str
+  s2: Str
+  s3: Str
+  s4: Str
+  s5: Str
+  s6: Str
+  s7: Str
+  s8: Str
+  s9: Str
+}
+fn mk_a(t: Str) -> A {
+  A{s0: "${t}.0", s1: "${t}.1", s2: "${t}.2", s3: "${t}.3", s4: "${t}.4", s5: "${t}.5", s6: "${t}.6", s7: "${t}.7", s8: "${t}.8", s9: "${t}.9"}
+}
+struct B {
+  a0: A
+  a1: A
+  a2: A
+  a3: A
+  a4: A
+  a5: A
+  a6: A
+  a7: A
+  a8: A
+  a9: A
+}
+fn mk_b(t: Str) -> B {
+  B{a0: mk_a("${t}.0"), a1: mk_a("${t}.1"), a2: mk_a("${t}.2"), a3: mk_a("${t}.3"), a4: mk_a("${t}.4"), a5: mk_a("${t}.5"), a6: mk_a("${t}.6"), a7: mk_a("${t}.7"), a8: mk_a("${t}.8"), a9: mk_a("${t}.9")}
+}
+struct E {
+  b0: B
+  b1: B
+  a0: A
+  a1: A
+  a2: A
+  a3: A
+  a4: A
+  a5: A
+}
+
+fn mk_e(t: Str) -> E {
+  E{b0: mk_b("${t}.b0"), b1: mk_b("${t}.b1"), a0: mk_a("${t}.0"), a1: mk_a("${t}.1"), a2: mk_a("${t}.2"), a3: mk_a("${t}.3"), a4: mk_a("${t}.4"), a5: mk_a("${t}.5")}
+}
+
+struct Tree {
+  val: E?
+  next: Tree?
+}
+
+fn grow(tag: Str, n: Int) -> Tree {
+  var t = Tree{val: Some(mk_e(tag)), next: None}
+  for i in 0..n {
+    t = Tree{val: if i % 2 == 0 { Some(mk_e("${tag}/${i}")) } else { None }, next: Some(t)}
+  }
+  t
+}
+
+fn depth(t: Tree) -> Int {
+  match t.next {
+    Some(n) => 1 + depth(n)
+    None => 1
+  }
+}
+
+fn main(os: Os) {
+  // long enough to be counted (not inline), and not constant
+  let tag = "a long tag past the inline Str size ${os.env.args().len()}"
+  let t = grow(tag, 5)
+  let u = t
+  os.stdio.println("depth ${depth(t)} ${depth(u)}")
+  match t.val {
+    Some(e) => os.stdio.println("${e.b1.a9.s9} ${e.a5.s0}")
+    None => os.stdio.println("none")
+  }
+}

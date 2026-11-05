@@ -1,0 +1,97 @@
+// A function holding a value of 3,701 words (2026-11-05, with aws issues
+// 13 and 14): its frame's outgoing arguments took the frame record and
+// the saved registers past the 28 KiB native kept them in, and it failed
+// as "frame of one too large"; they are now addressed through a
+// register. D holds 1,850 Strs (two words each).
+struct A {
+  s0: Str
+  s1: Str
+  s2: Str
+  s3: Str
+  s4: Str
+  s5: Str
+  s6: Str
+  s7: Str
+  s8: Str
+  s9: Str
+}
+fn mk_a(t: Str) -> A {
+  A{s0: "${t}.0", s1: "${t}.1", s2: "${t}.2", s3: "${t}.3", s4: "${t}.4", s5: "${t}.5", s6: "${t}.6", s7: "${t}.7", s8: "${t}.8", s9: "${t}.9"}
+}
+struct B {
+  a0: A
+  a1: A
+  a2: A
+  a3: A
+  a4: A
+  a5: A
+  a6: A
+  a7: A
+  a8: A
+  a9: A
+}
+fn mk_b(t: Str) -> B {
+  B{a0: mk_a("${t}.0"), a1: mk_a("${t}.1"), a2: mk_a("${t}.2"), a3: mk_a("${t}.3"), a4: mk_a("${t}.4"), a5: mk_a("${t}.5"), a6: mk_a("${t}.6"), a7: mk_a("${t}.7"), a8: mk_a("${t}.8"), a9: mk_a("${t}.9")}
+}
+struct C {
+  b0: B
+  b1: B
+  b2: B
+  b3: B
+  b4: B
+  b5: B
+  b6: B
+  b7: B
+  b8: B
+  b9: B
+}
+fn mk_c(t: Str) -> C {
+  C{b0: mk_b("${t}.0"), b1: mk_b("${t}.1"), b2: mk_b("${t}.2"), b3: mk_b("${t}.3"), b4: mk_b("${t}.4"), b5: mk_b("${t}.5"), b6: mk_b("${t}.6"), b7: mk_b("${t}.7"), b8: mk_b("${t}.8"), b9: mk_b("${t}.9")}
+}
+struct D {
+  c0: C
+  b0: B
+  b1: B
+  b2: B
+  b3: B
+  b4: B
+  b5: B
+  b6: B
+  b7: B
+  a0: A
+  a1: A
+  a2: A
+  a3: A
+  a4: A
+}
+
+fn mk_d(t: Str) -> D {
+  D{c0: mk_c("${t}.c0"), b0: mk_b("${t}.b0"), b1: mk_b("${t}.b1"), b2: mk_b("${t}.b2"), b3: mk_b("${t}.b3"), b4: mk_b("${t}.b4"), b5: mk_b("${t}.b5"), b6: mk_b("${t}.b6"), b7: mk_b("${t}.b7"), a0: mk_a("${t}.0"), a1: mk_a("${t}.1"), a2: mk_a("${t}.2"), a3: mk_a("${t}.3"), a4: mk_a("${t}.4")}
+}
+
+fn make(ok: Bool, t: Str) -> Result[D, Str] {
+  if ok {
+    return Ok(mk_d(t))
+  }
+  Err("no ${t}")
+}
+
+fn line(r: Result[D, Str]) -> Str {
+  match r {
+    Ok(d) => "${d.c0.b0.a0.s0} ${d.a4.s9}"
+    Err(e) => e
+  }
+}
+
+fn one(ok: Bool, tag: Str) -> Str {
+  let r = make(ok, tag)
+  let s = line(r)
+  "${s} ${line(r).len()}"
+}
+
+fn main(os: Os) {
+  // long enough to be counted (not inline), and not constant
+  let tag = "a long tag past the inline Str size ${os.env.args().len()}"
+  os.stdio.println(one(true, tag))
+  os.stdio.println(one(false, tag))
+}

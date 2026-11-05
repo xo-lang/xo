@@ -245,8 +245,11 @@ fn (var g: G) emit() {
   if fr.leaf {
     fr.size = 0
   }
-  if (fr.size > MAX_FRAME && g.base == 0) || fr.size >= MAX_FAR_FRAME || fr.rec + 16 > MAX_FRAME {
-    g.fail("frame of ${g.f.name} too large (${fr.size} bytes)")
+  // a far frame's record and saved registers may sit past sp's scaled
+  // reach, behind outgoing arguments of thousands of words (prologue,
+  // saves, unframe address them through x16 or x17)
+  if (fr.size > MAX_FRAME && g.base == 0) || fr.size >= MAX_FAR_FRAME {
+    g.fail("frame of ${g.f.name} too large (${fr.size} bytes: ${fr.out_args} of outgoing arguments, ${g.slots} spill slots, ${g.mem_bytes} bytes of values in memory, ${g.saved.len()} saved registers${if g.base != 0 { ", far" } else { "" }})")
   }
   g.fr = fr
   g.shrink_plan()
@@ -817,10 +820,16 @@ fn (g: G) prologue(var b: List[Str]) {
     probe_sp(b, fr.size, g.local("${g.lbl_prefix()}_probe"))
     if fr.rec <= 504 {
       b.push("\tstp x29, x30, [sp, #${fr.rec}]\n")
+    } else if fr.rec + 8 > 32760 {
+      // past a scaled str's reach (outgoing arguments of a value of
+      // thousands of words, aws issue 13's follow-up): through x16
+      b.push("${add_at("x16", "sp", fr.rec)}\tstp x29, x30, [x16]\n\tmov x29, x16\n")
     } else {
       b.push("\tstr x29, [sp, #${fr.rec}]\n\tstr x30, [sp, #${fr.rec + 8}]\n")
     }
-    if fr.rec >= 4096 {
+    if fr.rec + 8 > 32760 {
+      // x29 set above
+    } else if fr.rec >= 4096 {
       // add takes a 12 bit immediate, optionally shifted by 12
       b.push("\tadd x29, sp, #${fr.rec >> 12}, lsl #12\n")
       let lo = fr.rec & 4095
@@ -889,15 +898,22 @@ fn (g: G) poison_frame(var b: List[Str]) {
 fn (g: G) saves(var b: List[Str], one: Str, two: Str) {
   var k = 0
   let n = g.saved.len()
+  // past a scaled ldr or str's reach: from x17, set to the save area
+  // (x17 is free in the prologue and the epilogue)
+  let far = n > 0 && g.fr.save_base + 8 * n > 32760
+  if far {
+    b.push(add_at("x17", "sp", g.fr.save_base))
+  }
+  let (base, at) = if far { ("x17", 0) } else { ("sp", g.fr.save_base) }
   while k < n {
     let r = g.saved[k]
-    let off = g.fr.save_base + 8 * k
+    let off = at + 8 * k
     if k + 1 < n && (g.saved[k + 1] >= FP_BASE) == (r >= FP_BASE) && off <= 496 && off & 15 == 0 {
-      b.push("\t${two} ${reg_name(g.saved[k + 1], false)}, ${reg_name(r, false)}, [sp, #${off}]\n")
+      b.push("\t${two} ${reg_name(g.saved[k + 1], false)}, ${reg_name(r, false)}, [${base}, #${off}]\n")
       k += 2
       continue
     }
-    b.push("\t${one} ${reg_name(r, false)}, [sp, #${off}]\n")
+    b.push("\t${one} ${reg_name(r, false)}, [${base}, #${off}]\n")
     k += 1
   }
 }
@@ -926,6 +942,8 @@ fn (g: G) unframe(var b: List[Str]) {
   }
   if fr.rec <= 504 {
     b.push("\tldp x29, x30, [sp, #${fr.rec}]\n")
+  } else if fr.rec + 8 > 32760 {
+    b.push("${add_at("x17", "sp", fr.rec)}\tldp x29, x30, [x17]\n")
   } else {
     b.push("\tldr x29, [sp, #${fr.rec}]\n\tldr x30, [sp, #${fr.rec + 8}]\n")
   }

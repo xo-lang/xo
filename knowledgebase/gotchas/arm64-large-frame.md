@@ -57,3 +57,38 @@ for the build any more. Building a change to `Checker` with
 `--backend=arm64` before committing is no longer required for frame
 size. Any new sp relative load or store form must be listed in
 `spRefRE` (emit.go) so a far frame rewrites it.
+
+Observed a fourth time (2026-11-05, aws issues 13 and 14 from the AWS
+SDK's read-only sweep; in 0.39.0 and main): four more places assumed a
+small value, each a build error on a legal program that the LLVM backend
+built.
+
+- The rc helpers' frames (rc.xo agg_rc_at, leaves_and_then, the by
+  pointer wrapper of a value past 8 words) were `sub sp, sp, #N` and
+  `add x29, sp, #N` with N past an add immediate's 4,095: "assembler:
+  unsupported instruction: sub sp, sp, #5280" for a box holding a
+  value of 520+ words (wafv2).
+- agg_rc refused a value whose saved words reached past the 32,760 bytes
+  a scaled `ldr`/`str` offset does: "reference counting of
+  `Result[mediaconvert.Output, Str]` (too many words)", about 2,050
+  words.
+- The equality helper refused a struct whose two copies passed a 4 KiB
+  frame: "equality of `Q` (too many words)", 254+ words.
+- A far frame's record and saved registers sit above the outgoing
+  arguments, so a call taking a value of 3,600+ words put them past 28
+  KiB: "frame of F too large".
+
+Also a list element of more than 4,095 words loaded and stored its words
+at `[base, #off]` past 32,760 (calls.xo load_elem and store_elem).
+
+Fix: rc.xo `frame_down` (probe_sp from 4 KiB), `add_at` (two
+immediates), `mem_at` (an offset past 32,760 through x12, a register
+offset); emit.xo's prologue, `saves` and `unframe` address a far record
+and save area through x16 or x17; calls.xo `at_word` takes a list
+element's far words through mem_at; the equality helper's limit is now
+eq_at's 4,095 words. Goldens, each sized just past its limit and failing
+on main before the fix: rc_large_offsets, rc_large_box_frame,
+eq_large_struct, frame_large_value. Remaining explicit limits (clean
+errors, not assembler failures): a closure's captures and a box's value
+past 32,760 bytes (closures.xo), a non-far frame (emit.xo), the equality
+of a struct past 4,095 words.

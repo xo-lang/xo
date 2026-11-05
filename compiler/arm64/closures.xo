@@ -455,19 +455,22 @@ fn (var g: G) eq_helper(t: Int) -> Str {
     Struct | Tuple | Enum => {
       let n = g.nwords(t)
       frame = align16(32 + 16 * n)
-      if frame >= 4096 {
+      // eq_at reads both values at scaled offsets of at most 32760; a
+      // frame of 4 KiB or more is lowered page by page (frame_down)
+      if 8 * n > 32760 {
         g.fail("equality of `${g.tname(t)}` (too many words)")
       }
-      b.push("\tsub sp, sp, #${frame}\n\tstp x29, x30, [sp]\n\tmov x29, sp\n\tstp x20, x19, [sp, #16]\n")
+      g.frame_down(b, frame, "")
+      b.push("\tstp x29, x30, [sp]\n\tmov x29, sp\n\tstp x20, x19, [sp, #16]\n")
       for w in 0..2 * n {
         if w < 8 {
-          b.push("\tstr x${w}, [sp, #${32 + 8 * w}]\n")
+          b.push(mem_at("str", "x${w}", "sp", 32 + 8 * w))
           continue
         }
         // stack arguments: at the caller's sp, which is sp + frame
-        b.push("\tldr x9, [sp, #${frame + 8 * (w - 8)}]\n\tstr x9, [sp, #${32 + 8 * w}]\n")
+        b.push("${mem_at("ldr", "x9", "sp", frame + 8 * (w - 8))}${mem_at("str", "x9", "sp", 32 + 8 * w)}")
       }
-      b.push("\tadd x19, sp, #32\n\tadd x20, sp, #${32 + 8 * n}\n")
+      b.push("\tadd x19, sp, #32\n${add_at("x20", "sp", 32 + 8 * n)}")
       g.eq_at(b, t, "x19", "x20", 0, no, false)
     }
     _ => g.fail("equality of `${g.tname(t)}`")
@@ -478,7 +481,9 @@ fn (var g: G) eq_helper(t: Int) -> Str {
   }
   b.push("\tldp x20, x19, [sp, #16]\n")
   if k is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum {
-    b.push("\tldp x29, x30, [sp]\n\tadd sp, sp, #${frame}\n\tret\n\n")
+    b.push("\tldp x29, x30, [sp]\n")
+    sub_sp(b, "add", frame)
+    b.push("\tret\n\n")
   } else {
     b.push("\tldp x29, x30, [sp], #${frame}\n\tret\n\n")
   }

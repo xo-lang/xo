@@ -1,0 +1,47 @@
+// == on a struct of 260 words (2026-11-05, with aws issues 13 and 14):
+// the native equality helper keeps both values in its frame, which past
+// 4 KiB failed as "equality of `Q` (too many words)". Q holds 130 Strs
+// (two words each), just past the 127 a 4 KiB frame holds.
+struct A {
+  s0: Str
+  s1: Str
+  s2: Str
+  s3: Str
+  s4: Str
+  s5: Str
+  s6: Str
+  s7: Str
+  s8: Str
+  s9: Str
+}
+fn mk_a(t: Str) -> A {
+  A{s0: "${t}.0", s1: "${t}.1", s2: "${t}.2", s3: "${t}.3", s4: "${t}.4", s5: "${t}.5", s6: "${t}.6", s7: "${t}.7", s8: "${t}.8", s9: "${t}.9"}
+}
+struct Q {
+  a0: A
+  a1: A
+  a2: A
+  a3: A
+  a4: A
+  a5: A
+  a6: A
+  a7: A
+  a8: A
+  a9: A
+  a10: A
+  a11: A
+  a12: A
+}
+fn mk_q(t: Str) -> Q {
+  Q{a0: mk_a("${t}.0"), a1: mk_a("${t}.1"), a2: mk_a("${t}.2"), a3: mk_a("${t}.3"), a4: mk_a("${t}.4"), a5: mk_a("${t}.5"), a6: mk_a("${t}.6"), a7: mk_a("${t}.7"), a8: mk_a("${t}.8"), a9: mk_a("${t}.9"), a10: mk_a("${t}.10"), a11: mk_a("${t}.11"), a12: mk_a("${t}.12")}
+}
+
+fn main(os: Os) {
+  // long enough to be counted (not inline), and not constant
+  let tag = "a long tag past the inline Str size ${os.env.args().len()}"
+  let p = mk_q(tag)
+  let q = mk_q(tag)
+  let r = mk_q("${tag}!")
+  let ps = [p, q, r]
+  os.stdio.println("${p == q} ${p == r} ${ps[0] == ps[1]} ${ps[1] != ps[2]}")
+}

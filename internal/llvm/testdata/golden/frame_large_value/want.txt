@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+a long tag past the inline Str size 0.c0.0.0.0 a long tag past the inline Str size 0.4.9 88
+no a long tag past the inline Str size 0 40
+--- stderr

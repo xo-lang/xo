@@ -551,6 +551,18 @@ fn at_operand(a: ElemAt, k: Int, u: Int) -> Str {
   "[$u${u}, #${a.off + 8 * k}]"
 }
 
+/// The memory operand and registers of word k of address a, as
+/// at_operand and at_regs, also for a word past a scaled offset's 32760
+/// bytes: from a register mem_at sets (an element of thousands of words,
+/// 2026-11-05 with aws issue 13).
+fn (var g: G) at_word(a: ElemAt, k: Int, u: Int) -> (Str, List[Int]) {
+  if a.idx != 0 || a.off + 8 * k <= 32760 {
+    return (at_operand(a, k, u), at_regs(a))
+  }
+  let (b, off) = g.mem_at(a.base, a.off + 8 * k)
+  ("[$u${u}, #${off}]", [b])
+}
+
 /// What loaded records for word k of address a.
 fn at_mem(a: ElemAt, k: Int, epoch: Int) -> MemAt {
   if a.idx != 0 {
@@ -691,7 +703,8 @@ fn (var g: G) load_elem(a: ElemAt, et: Int, as_int: Bool) -> List[Int] {
   }
   var out: List[Int] = []
   for (k, fp) in g.layout(et).indexed() {
-    let d = g.def1(fp && !as_int, "ldr $d0, ${at_operand(a, k, 0)}", at_regs(a))
+    let (op, rs) = g.at_word(a, k, 0)
+    let d = g.def1(fp && !as_int, "ldr $d0, ${op}", rs)
     let _mi = g.m_()
     g.cm.loaded[d] = at_mem(a, k, g.cm.epoch)
     out.push(d)
@@ -749,7 +762,8 @@ fn (var g: G) store_elem(a: ElemAt, et: Int, ws: List[Int]) {
   }
   for k in 0..lay.len() {
     if !skip[k] {
-      g.store("str $u0, ${at_operand(a, k, 1)}", [ws[k]] + at_regs(a))
+      let (op, rs) = g.at_word(a, k, 1)
+      g.store("str $u0, ${op}", [ws[k]] + rs)
     }
   }
 }
@@ -776,7 +790,8 @@ fn (var g: G) store_hole(a: ElemAt, et: Int) {
         w = obj
       }
     }
-    g.store("str $u0, ${at_operand(a, off, 1)}", [w] + at_regs(a))
+    let (op, rs) = g.at_word(a, off, 1)
+    g.store("str $u0, ${op}", [w] + rs)
   }
 }
 

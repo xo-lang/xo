@@ -348,28 +348,21 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
   }
   let base = out + 16
   let frame = align16(base + 8 * n)
-  // the words are stored and loaded at scaled offsets of at most 32760
-  // (a frame of 4 KiB or more, the arguments of a struct of about 500
-  // words, is lowered page by page: probe_sp; the hybrid Map's sixth word
-  // took the compiler's Result[Session, Str] past 4 KiB, 2026-10-21)
-  if frame + 8 * n >= 32760 {
-    g.fail("reference counting of `${x.name}` (too many words)")
-  }
+  // a frame of 4 KiB or more (the arguments of a struct of about 500
+  // words; the hybrid Map's sixth word took the compiler's
+  // Result[Session, Str] past 4 KiB, 2026-10-21) is lowered page by
+  // page, and offsets past 32760 go through x12 (mem_at, aws issue 13)
   if out == 0 && frame <= 504 {
     b.push("\tstp x29, x30, [sp, #-${frame}]!\n\tmov x29, sp\n")
   } else {
-    if frame >= 4096 {
-      probe_sp(b, frame, g.local("xo_${g.ns}${kind}${id}_probe"))
-    } else {
-      b.push("\tsub sp, sp, #${frame}\n")
-    }
-    b.push("${record_at("stp", out)}\tadd x29, sp, #${out}\n")
+    g.frame_down(b, frame, g.local("xo_${g.ns}${kind}${id}_probe"))
+    b.push("${record_at("stp", out)}${fp_at(out)}")
   }
   for k in 0..n {
     if k < 8 {
-      b.push("\tstr x${k}, [sp, #${base + 8 * k}]\n")
+      b.push(mem_at("str", "x${k}", "sp", base + 8 * k))
     } else {
-      b.push("\tldr x9, [sp, #${frame + 8 * (k - 8)}]\n\tstr x9, [sp, #${base + 8 * k}]\n")
+      b.push("${mem_at("ldr", "x9", "sp", frame + 8 * (k - 8))}${mem_at("str", "x9", "sp", base + 8 * k)}")
     }
   }
   let done = g.local("xo_${g.ns}${kind}${id}_done")
@@ -384,7 +377,7 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
         continue
       }
       let next = g.local("xo_${g.ns}${kind}${id}_v${vi}")
-      b.push("\tldr x9, [sp, #${base}]\n\tcmp x9, #${vi}\n\tb.ne ${next}\n")
+      b.push("${mem_at("ldr", "x9", "sp", base)}\tcmp x9, #${vi}\n\tb.ne ${next}\n")
       for (li, l) in ls.indexed() {
         g.leaf_call(b, kind, l, "sp", base, "${sym}_v${vi}l${li}")
       }
@@ -400,11 +393,7 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
     b.push("\tldp x29, x30, [sp], #${frame}\n\tret\n")
   } else {
     b.push(record_at("ldp", out))
-    if frame >= 4096 {
-      sub_sp(b, "add", frame)
-    } else {
-      b.push("\tadd sp, sp, #${frame}\n")
-    }
+    sub_sp(b, "add", frame)
     b.push("\tret\n")
   }
 }
@@ -468,7 +457,8 @@ fn (var g: G) agg_rc_at(var b: List[Str], kind: Str, sym: Str, t: Int) {
     out = imax(out, align16(8 * (g.leaf_words(l.t) - 8)))
   }
   let frame = out + 32
-  b.push("\tsub sp, sp, #${frame}\n${record_at("stp", out)}\tadd x29, sp, #${out}\n\tstr x19, [sp, #${out + 16}]\n\tmov x19, x0\n")
+  g.frame_down(b, frame, "")
+  b.push("${record_at("stp", out)}${fp_at(out)}${mem_at("str", "x19", "sp", out + 16)}\tmov x19, x0\n")
   let done = "${sym}_at_done"
   if x.kind == ssa.Kind.Enum {
     for (vi, v) in x.variants.indexed() {
@@ -492,7 +482,9 @@ fn (var g: G) agg_rc_at(var b: List[Str], kind: Str, sym: Str, t: Int) {
       g.leaf_call(b, kind, l, "x19", 0, "${sym}_atl${li}")
     }
   }
-  b.push("${done}:\n\tldr x19, [sp, #${out + 16}]\n${record_at("ldp", out)}\tadd sp, sp, #${frame}\n\tret\n\n")
+  b.push("${done}:\n${mem_at("ldr", "x19", "sp", out + 16)}${record_at("ldp", out)}")
+  sub_sp(b, "add", frame)
+  b.push("\tret\n\n")
 }
 
 /// The number of words an rc helper of leaf type t takes (a Str helper
@@ -512,7 +504,7 @@ fn (var g: G) leaf_words(t: Int) -> Int {
 fn (var g: G) leaf_call(var b: List[Str], kind: Str, l: Leaf, reg: Str, base: Int, lbl: Str) {
   let lk = g.kind(l.t)
   if kind == "dup" && (lk is ssa.Kind.Str | ssa.Kind.List | ssa.Kind.Box | ssa.Kind.Handle) {
-    b.push("\tldr x9, [${reg}, #${base + 8 * l.off}]\n")
+    b.push(mem_at("ldr", "x9", reg, base + 8 * l.off))
     if g.inl_str() && lk == ssa.Kind.Str {
       b.push("\ttbnz x9, #0, ${lbl}_inc\n")
     }
@@ -523,7 +515,7 @@ fn (var g: G) leaf_call(var b: List[Str], kind: Str, l: Leaf, reg: Str, base: In
     // out of line (helpers of the leaf types)
   } else if lk == ssa.Kind.Func {
     // the environment word; null: no captures
-    b.push("\tldr x0, [${reg}, #${base + 8 * (l.off + 1)}]\n\tcbz x0, ${lbl}_done\n")
+    b.push("${mem_at("ldr", "x0", reg, base + 8 * (l.off + 1))}\tcbz x0, ${lbl}_done\n")
     if kind == "dup" {
       b.push(g.inc_text("x0", "x9", "w10", lbl, false))
       b.push("${lbl}_done:\n")
@@ -533,7 +525,7 @@ fn (var g: G) leaf_call(var b: List[Str], kind: Str, l: Leaf, reg: Str, base: In
     b.push("${lbl}_free:\n\tldr x1, [x0, #8]\n\tbl ${g.sym("xo_x_obj_rc_defer_n")}\n${lbl}_done:\n")
     return
   } else if lk == ssa.Kind.Box {
-    b.push("\tldr x0, [${reg}, #${base + 8 * l.off}]\n")
+    b.push(mem_at("ldr", "x0", reg, base + 8 * l.off))
     b.push(g.dec_text("x0", "x9", "w10", lbl, "${lbl}_free", "${lbl}_done"))
     b.push("${lbl}_free:\n")
     let bd = g.box_drop(l.t)
@@ -543,10 +535,10 @@ fn (var g: G) leaf_call(var b: List[Str], kind: Str, l: Leaf, reg: Str, base: In
   }
   let n = g.leaf_words(l.t)
   for k in 8..imax(n, 8) {
-    b.push("\tldr x9, [${reg}, #${base + 8 * (l.off + k)}]\n\tstr x9, [sp, #${8 * (k - 8)}]\n")
+    b.push("${mem_at("ldr", "x9", reg, base + 8 * (l.off + k))}${mem_at("str", "x9", "sp", 8 * (k - 8))}")
   }
   for k in 0..imin(n, 8) {
-    b.push("\tldr x${k}, [${reg}, #${base + 8 * (l.off + k)}]\n")
+    b.push(mem_at("ldr", "x${k}", reg, base + 8 * (l.off + k)))
   }
   b.push("\tbl ${g.rc_helper(kind, l.t)}\n")
 }
@@ -616,16 +608,19 @@ fn (var g: G) elem_helper(kind: Str, t: Int) -> Str {
   if n > 8 {
     // the words past x7 go on the stack: no tail call
     let out = align16(8 * (n - 8))
-    b.push("\tsub sp, sp, #${out + 16}\n${record_at("stp", out)}\tadd x29, sp, #${out}\n")
+    g.frame_down(b, out + 16, "")
+    b.push("${record_at("stp", out)}${fp_at(out)}")
     for k in 8..n {
-      b.push("\tldr x9, [x0, #${8 * k}]\n\tstr x9, [sp, #${8 * (k - 8)}]\n")
+      b.push("${mem_at("ldr", "x9", "x0", 8 * k)}${mem_at("str", "x9", "sp", 8 * (k - 8))}")
     }
     var k = 7
     while k >= 0 {
-      b.push("\tldr x${k}, [x0, #${8 * k}]\n")
+      b.push(mem_at("ldr", "x${k}", "x0", 8 * k))
       k -= 1
     }
-    b.push("\tbl ${inner}\n${record_at("ldp", out)}\tadd sp, sp, #${out + 16}\n\tret\n\n")
+    b.push("\tbl ${inner}\n${record_at("ldp", out)}")
+    sub_sp(b, "add", out + 16)
+    b.push("\tret\n\n")
     g.helpers.push(b.join(""))
     return sym
   }
@@ -815,7 +810,46 @@ fn record_at(op: Str, off: Int) -> Str {
     return "\t${op} x29, x30, [sp, #${off}]\n"
   }
   let one = if op == "ldp" { "ldr" } else { "str" }
-  "\t${one} x29, [sp, #${off}]\n\t${one} x30, [sp, #${off + 8}]\n"
+  "${mem_at(one, "x29", "sp", off)}${mem_at(one, "x30", "sp", off + 8)}"
+}
+
+/// `op rt, [reg, #off]` for an offset of any size: a scaled immediate
+/// reaches 32760, past it the offset goes in x12 (aws issue 13: the
+/// helpers of mediaconvert's Output, a struct of thousands of words,
+/// failed as "too many words").
+fn mem_at(op: Str, rt: Str, reg: Str, off: Int) -> Str {
+  if off <= 32760 {
+    return "\t${op} ${rt}, [${reg}, #${off}]\n"
+  }
+  "${imm_text(off, "x12")}\t${op} ${rt}, [${reg}, x12]\n"
+}
+
+/// `add x29, sp, #off` for an offset of any size (add_at).
+fn fp_at(off: Int) -> Str {
+  add_at("x29", "sp", off)
+}
+
+/// `add rd, rn, #off` for an offset under 16 MiB: an add immediate is 12
+/// bits, optionally shifted by 12, so past 4095 it takes two (aws issue
+/// 14: `sub sp, sp, #5280` and `add x29, sp, #5248` in the drop helper
+/// of a wafv2 box).
+fn add_at(rd: Str, rn: Str, off: Int) -> Str {
+  if off < 4096 {
+    return "\tadd ${rd}, ${rn}, #${off}\n"
+  }
+  let lo = off & 4095
+  "\tadd ${rd}, ${rn}, #${off >> 12}, lsl #12\n${if lo > 0 { "\tadd ${rd}, ${rd}, #${lo}\n" } else { "" }}"
+}
+
+/// Lowers sp by n for a helper's frame: page by page from 4 KiB
+/// (probe_sp), so a large frame is in range and touches each page; lbl
+/// names the probe loop, "" for a new helper label.
+fn (var g: G) frame_down(var b: List[Str], n: Int, lbl: Str) {
+  if n < 4096 {
+    b.push("\tsub sp, sp, #${n}\n")
+  } else {
+    probe_sp(b, n, if lbl.is_empty() { g.helper_label("probe") } else { lbl })
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -943,22 +977,25 @@ fn (var g: G) leaves_and_then(var b: List[Str], kind: Str, ls: List[Leaf], hdr: 
     out = imax(out, align16(8 * (g.leaf_words(l.t) - 8)))
   }
   let frame = out + 32
-  b.push("\tsub sp, sp, #${frame}\n${record_at("stp", out)}\tadd x29, sp, #${out}\n\tstr x19, [sp, #${out + 16}]\n\tmov x19, x0\n")
+  g.frame_down(b, frame, "")
+  b.push("${record_at("stp", out)}${fp_at(out)}${mem_at("str", "x19", "sp", out + 16)}\tmov x19, x0\n")
   for l in ls {
     let h = g.rc_helper(kind, l.t)
     load_call(b, h, "x19", hdr + 8 * l.off, g.leaf_words(l.t))
   }
-  b.push("\tmov x0, x19\n\tldr x19, [sp, #${out + 16}]\n${record_at("ldp", out)}\tadd sp, sp, #${frame}\n${tail}")
+  b.push("\tmov x0, x19\n${mem_at("ldr", "x19", "sp", out + 16)}${record_at("ldp", out)}")
+  sub_sp(b, "add", frame)
+  b.push(tail)
 }
 
 /// Calls sym with the n words at [base, #off] as integer arguments:
 /// words past x7 go to the stack arguments at [sp, #8k].
 fn load_call(var b: List[Str], sym: Str, base: Str, off: Int, n: Int) {
   for k in 8..imax(n, 8) {
-    b.push("\tldr x9, [${base}, #${off + 8 * k}]\n\tstr x9, [sp, #${8 * (k - 8)}]\n")
+    b.push("${mem_at("ldr", "x9", base, off + 8 * k)}${mem_at("str", "x9", "sp", 8 * (k - 8))}")
   }
   for k in 0..imin(n, 8) {
-    b.push("\tldr x${k}, [${base}, #${off + 8 * k}]\n")
+    b.push(mem_at("ldr", "x${k}", base, off + 8 * k))
   }
   b.push("\tbl ${sym}\n")
 }
