@@ -56,7 +56,8 @@ built; the module check cache (modcache.xo) already holds modules whose
 bodies wait for check_lazy. The parse cache keys lazy and eager parses
 apart (ParseEntry.lazy).
 
-Opt in: XO_DEP_LAZY=1 (check/stmt.xo dep_lazy_mod, check/load.xo
+On by default since 2026-11-05 (XO_DEP_LAZY=0 turns it off; spec/core.md
+10.1 "What a build checks"); it was opt in at 23cfc50ae (check/stmt.xo dep_lazy_mod, check/load.xo
 parse_lazy_path), for `xo build` and `xo run` only. The 0496 (c) reads
 are covered (stmt.xo dep_cross_eager: a dependency's non-pub `display`
 and `debug` methods are checked with the declarations), so a logging

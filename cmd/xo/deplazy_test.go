@@ -8,7 +8,8 @@ import (
 	"github.com/xo-lang/xo/internal/mod/modtest"
 )
 
-// TestDepLazyBodies (decision 0517, XO_DEP_LAZY=1): a build checks a
+// TestDepLazyBodies (decision 0517, on by default; XO_DEP_LAZY=0 is the
+// eager check): a build checks a
 // dependency's function bodies as it reaches them. A type error in a body
 // the program never reaches no longer fails the build; one in a reached
 // body still does; `xo check` of the dependency still reports both; and a
@@ -27,9 +28,10 @@ func TestDepLazyBodies(t *testing.T) {
 	})
 	setenv(t, "XO_WORK", filepath.Join(ws, "xo.work"))
 	main := filepath.Join(ws, "app", "main")
-	// eager (the default): the unreached body's error fails the build
+	// eager (XO_DEP_LAZY=0): the unreached body's error fails the build
+	setenv(t, "XO_DEP_LAZY", "0")
 	xo(t, "build", "-o", filepath.Join(ws, "bin"), main).want(1)
-	setenv(t, "XO_DEP_LAZY", "1")
+	setenv(t, "XO_DEP_LAZY", "")
 	r := xo(t, "run", main).want(0)
 	if want := "(1, 2) Pt{x: 1} (1, 2) 7\n"; r.out != want {
 		t.Errorf("run with XO_DEP_LAZY=1: got %q, want %q\n%s", r.out, want, r.err)
@@ -59,7 +61,7 @@ func TestDepLazyBodies(t *testing.T) {
 		"app/main/main.xo": "use example.com/lib/shapes\n\npub fn label(p: shapes.Pt) -> Str {\n  p.display()\n}\n\nfn main(os: Os) {\n  os.stdio.println(label(shapes.Pt{x: 1, y: 2}))\n}\n",
 	})
 	modtest.WriteFiles(t, ws, map[string]string{"lib/shapes/s.xo": "use std/log\n\n" + strings.Replace(strings.Replace(lib, "fn (p: Pt) display() -> Str {\n", "fn (p: Pt) display() -> Str {\n  log.info(\"display\")\n", 1), "pub fn unused() -> Int {\n  \"not an Int\"\n}\n", "", 1)})
-	for _, lazy := range []string{"0", "1"} {
+	for _, lazy := range []string{"0", ""} {
 		setenv(t, "XO_DEP_LAZY", lazy)
 		r = xo(t, "build", "--json", "-o", filepath.Join(ws, "bin"), main).want(1)
 		if !strings.Contains(r.out+r.err, "XO0701") {

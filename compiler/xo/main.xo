@@ -762,7 +762,8 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // xo test too (2026-10-30: a test build parsed std's every body, 629 MB
   // of a one-test program's 905 MB allocated; bench/results/test-vs-go-2026-10-30.md)
   c.lazy_parse = (o.cmd is "build" | "run" | "test") && (os.env.get("XO_LAZY_PARSE") ?? "") != "off" && !c.std_roots
-  c.dep_lazy = (o.cmd is "build" | "run") && (os.env.get("XO_DEP_LAZY") ?? "") == "1"
+  // decision 0517 (owner, 2026-11-05): on by default, XO_DEP_LAZY=0 off
+  c.dep_lazy = (o.cmd is "build" | "run") && (os.env.get("XO_DEP_LAZY") ?? "") != "0"
   // decision 0291 (the switch, owner 2026-10-21): Map and Set are the
   // hybrid (the lists until written while shared twice, then the log);
   // XO_MAP_LOG=0 builds the lists alone (wasm too, since its hybrid's

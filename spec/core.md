@@ -3120,6 +3120,18 @@ JSON), `doc`, `explain`, `bind`, and `audit`. `run`, `replay`, `dump`, `serve`, 
 `version` print the program's or the tool's own output. When stdout is not a
 terminal, JSON is the default for `query`.
 
+**What a build checks** (decision 0517). `xo build` and `xo run` check
+every declaration of every module, and every function body of the
+modules they are given (the root modules); a dependency's function body
+is parsed and checked when the build reaches it. A dependency function
+the program never calls is not checked by the build, so a type error in
+it does not fail the build. Its declared effects and capabilities are
+checked at every call, and a dependency's non-`pub` method that another
+module may call (a prelude interface's `display` or `debug`, 2.4) is
+always checked. `xo check`, `xo test`, and `xo vet` of a module check all
+of its bodies, and `xo get` checks each newly required version in full
+once (above). `XO_DEP_LAZY=0` makes a build check every body.
+
 **Help and usage errors.** `xo help` lists every command with a one line
 purpose; `xo help <command>`, and `-h` or `--help` anywhere before `--`
 (for `xo run`, before its directory), print that command's usage on
