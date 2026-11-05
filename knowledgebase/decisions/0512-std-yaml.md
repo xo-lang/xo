@@ -44,6 +44,21 @@ testdata; to be vendored with attribution):
   example `dash-in-flow-sequence`, `invalid-comma-in-tag`,
   `wrong-indented-flow-sequence`).
 
+Xo prototype (2026-11-05, branch `yamlproto`, not pushed): a block YAML
+parser of about 200 lines of Xo that works on views of the text (block
+mappings and sequences, plain and quoted scalars, comments; no flow
+collections, escapes, anchors, tags or documents) parses the 920 byte
+Deployment into a node tree 16 times faster than yaml.v3 parses it into a
+`yaml.Node`: 36.3 ms against 588.8 ms for 20,000 parses (ratio 0.062,
+interval 0.057 to 0.065, `xo bench --ab`, 7 rounds, linux/arm64 host 2;
+both sides print the same checksum, 11,080,000). It is a subset, so it is
+a floor on the cost, not the full port's figure: the scanner's simple
+key lookahead, the full escape and block scalar rules, the resolver and
+`derive Yaml` still have to be paid for. It does show that a parser
+without a token pipeline and per scalar allocations has a large margin
+over yaml.v3 (28 to 30 MB/s), so the twin row target of beating yaml.v3
+is realistic.
+
 So "a port of yaml.v3" and "YAML 1.2 conformant" are different goals.
 Std follows Go's standard library and, for these, Go's de facto library
 (the port rule of CLAUDE.md: port Go's code and tests, Go's behavior is
@@ -155,9 +170,8 @@ the oracle).
 - The measured baseline (28 to 30 MB/s, about 480 allocations for a 920
   byte document) is a low bar: a scanner that works on the byte view
   without per token allocation should beat it; the first measured figure
-  from the stage 1 prototype goes into this ADR before it is accepted
-  (the Lead asked for figures from a prototype; this draft has the
-  yaml.v3 side only).
+  from the full stage 1 port replaces the subset prototype figure above
+  when stage 1 lands.
 
 ## Open questions for the owner
 
@@ -181,6 +195,10 @@ the oracle).
   results differ from yaml.v3's in places (different error texts, a
   different encoder), so there is no single Go oracle for byte equality
   and Go programs already written against yaml.v3 behave differently.
+- **`use go "gopkg.in/yaml.v3"`** (bench/usego-workflows/yaml shows it
+  works): available now, but the Go backend only, with Go's reflection
+  based API and no native or LLVM build; kept as the interim for programs
+  that need YAML before stage 2 lands.
 - **Bind libyaml**: a C dependency, against the zero-C goal.
 - **A new YAML 1.2 parser written from the spec**: no Go oracle for the
   differential and the suite alone decides correctness; larger risk for
