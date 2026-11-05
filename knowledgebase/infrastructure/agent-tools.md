@@ -1022,7 +1022,7 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   sources must name `codegen` in `PUSHQ_RAN`, and one that changes
   std/native/llrt or std/native/rt*.xo must name `wasm` (e.g.
   `PUSHQ_RAN="codegen wasm"`), after its gate ran `xo dev codegen
-  --backend=arm64,llvm test/codegen` and `go test ./internal/selfhost -run
+  --backend=arm64,llvm test/codegen` and `go test -timeout 30m ./internal/selfhost -run
   TestSelfhostWasm` (lead, 2026-11-05 bottleneck review: main went red twice
   that night on exactly these two skipped checks); pushq refuses otherwise.
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
