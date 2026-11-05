@@ -5782,9 +5782,9 @@ fn to_node(d: yaml.Doc, i: Int, var memo: Map[Int, yaml.Node]) -> yaml.Node {
     return m
   }
   let r = d.nodes[i]
-  var alias: List[yaml.Node] = []
+  var alias: yaml.Node? = None
   if r.kind == K_ALIAS {
-    alias.push(to_node(d, r.alias, memo))
+    alias = Some(to_node(d, r.alias, memo))
   }
   var content: List[yaml.Node] = []
   for c in r.content {
@@ -5797,7 +5797,7 @@ fn to_node(d: yaml.Doc, i: Int, var memo: Map[Int, yaml.Node]) -> yaml.Node {
 
 fn doc_node(d: yaml.Doc) -> yaml.Node {
   if d.root < 0 || d.nodes.len() == 0 {
-    return yaml.Node{kind: yaml.NodeKind.Document, style: 0, tag: "", value: "", anchor: "", alias: [], content: [], line: 0, column: 0, head_comment: "", line_comment: "", foot_comment: ""}
+    return yaml.Node{kind: yaml.NodeKind.Document, style: 0, tag: "", value: "", anchor: "", alias: None, content: [], line: 0, column: 0, head_comment: "", line_comment: "", foot_comment: ""}
   }
   var memo: Map[Int, yaml.Node] = {}
   to_node(d, d.root, memo)
@@ -6064,5 +6064,5 @@ fn to_node_field(d: yaml.Doc, i: Int, var st: yaml.Dec) -> (Bool, yaml.Node) ! y
 }
 
 fn zero_node() -> yaml.Node {
-  yaml.Node{kind: yaml.NodeKind.Scalar, style: 0, tag: "!!null", value: "null", anchor: "", alias: [], content: [], line: 0, column: 0, head_comment: "", line_comment: "", foot_comment: ""}
+  yaml.Node{kind: yaml.NodeKind.Scalar, style: 0, tag: "!!null", value: "null", anchor: "", alias: None, content: [], line: 0, column: 0, head_comment: "", line_comment: "", foot_comment: ""}
 }

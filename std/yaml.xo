@@ -51,8 +51,7 @@ const FLOW: Int = 32
 /// A node of a YAML document, as yaml.v3's Node: a Document holds its one root in
 /// `content`, a Sequence its items, a Mapping its keys and values alternately, a
 /// Scalar its text in `value` with its resolved `tag` (`!!str`, `!!int`, ...), and an
-/// Alias the anchor name in `value` and the node it names in `alias` (a list of one node; a List
-/// because a struct cannot hold an Option of itself in a debug build, gotchas/recursive-option-struct-debug.md). `anchor` is the
+/// Alias the anchor name in `value` and the node it names in `alias`. `anchor` is the
 /// name an anchored node defines; `head_comment`, `line_comment` and `foot_comment` hold
 /// the comments around the node as yaml.v3 associates them (`# ` prefixes kept, lines joined by
 /// a line feed); `line` and `column` count from 1.
@@ -65,7 +64,7 @@ struct Node {
   head_comment: Str
   line_comment: Str
   foot_comment: Str
-  alias: List[Node]
+  alias: Node?
   content: List[Node]
   line: Int
   column: Int

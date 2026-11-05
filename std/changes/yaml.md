@@ -1,5 +1,14 @@
 # std/yaml changes
 
+## 2026-11-05: fix: Node.alias is a Node?
+
+- Kind: fix
+- Commit: this commit
+- Found by: decision 0512 (stage 5), after f84e0258f (the compiler boxes a std struct that reaches itself)
+- Test: testdata/corpus/yaml (NODES, ND)
+
+`yaml.Node.alias` is `Node?` (None unless the node is an Alias), as decision 0512 sketched; it was a `List[Node]` of zero or one node while the compiler did not box recursive std structs. Breaking, one hour old.
+
 ## 2026-11-05: feature: Node fields
 
 - Kind: feature

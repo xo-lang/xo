@@ -719,7 +719,10 @@ fn node_kind_n(k: yaml.NodeKind) -> Int {
 }
 
 fn dump_node(var out: StrBuilder, n: yaml.Node, depth: Int) {
-  let a = if n.alias.is_empty() { "-" } else { n.alias[0].anchor }
+  let a = match n.alias {
+    Some(t) => t.anchor
+    None => "-"
+  }
   out.write("${" ".repeat(depth)}${node_kind_n(n.kind)} ${n.tag} ${n.style} ${n.value.quote()} ${n.anchor.quote()} ${n.line}:${n.column} ->${a} ${n.head_comment.quote()} ${n.line_comment.quote()} ${n.foot_comment.quote()}\n")
   for c in n.content {
     dump_node(out, c, depth + 1)

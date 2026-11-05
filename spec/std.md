@@ -7299,7 +7299,7 @@ fn encode_value[T: Yaml](v: T, indent: Int = 4) -> Str ! YamlErr
 fn encode_all[T: Yaml](docs: List[T], indent: Int = 4) -> Str ! YamlErr
 enum NodeKind { Document, Sequence, Mapping, Scalar, Alias }
 struct Node { kind: NodeKind, style: Int, tag: Str, value: Str, anchor: Str,
-              head_comment: Str, line_comment: Str, foot_comment: Str, alias: List[Node],
+              head_comment: Str, line_comment: Str, foot_comment: Str, alias: Node?,
               content: List[Node], line: Int, column: Int }
 fn parse(text: Str) -> Node ! YamlErr
 fn parse_all(text: Str) -> List[Node] ! YamlErr
@@ -7330,8 +7330,7 @@ fn to_json(text: Str) -> Str ! YamlErr
   `column` count from 1); the trees equal yaml.v3's on 466 documents. A Node carries its head, line and foot
   comments (`head_comment`, `line_comment`, `foot_comment`) as yaml.v3 associates them (the scanner's comment folding, the parser's
   stem and document comments, the composer's foot comment moves): the `#` stays in the text, the lines of one comment are joined
-  by a line feed, an empty string is no comment. `alias` of an Alias node is a list of the one node it
-  names (a `List` because a struct holding an Option of itself breaks a debug std build, gotchas/recursive-option-struct-debug.md).
+  by a line feed, an empty string is no comment. `alias` of an Alias node is the node it names.
   `parse_all` is all or nothing: on an error it returns the error, where yaml.v3's Decoder has returned the earlier documents.
 - `encode_node` writes a Node as yaml.v3's Marshal of a `yaml.Node` does (a Document node as is, another node as a document
   of its own; a tag is left out when the text resolves to it, except `!!merge`; styles and anchors are kept); equal to yaml.v3 on
