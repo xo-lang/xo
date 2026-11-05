@@ -1,6 +1,6 @@
 # 0508: A list builder reuses its receiver at the receiver's last use
 
-Status: Proposed (xo-lang-4, 2026-11-04; Lead asked for it for the owner)
+Status: Accepted (owner, 2026-11-04, through the Lead: "508 accept"); proposed by xo-lang-4 the same day
 
 ## Context
 
@@ -52,7 +52,7 @@ wall_ms               6.19        6.71        1.931% 2.213%     1.084   1.076 to
 max_rss_kb            19744       19744       0% 0%             1.0     1.0 to 1.0        within noise (n=15)
 ```
 
-## Decision (proposed)
+## Decision
 
 Std only; no language, checker or compiler change, and no change to any
 result:
