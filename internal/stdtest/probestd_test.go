@@ -25,7 +25,23 @@ import (
 // many tests content holds: xo test's totals must match it, so a
 // generated file that is not picked up (a wrong name, a module layout
 // change) or a name collision that drops cases fails here instead of
-// passing a comparison of nothing.
+// passing a comparison of nothing. The totals are compared with the test
+// blocks content holds (testBlocks); cases is for the log.
+// testBlocks is how many test blocks an Xo test file holds (a line that
+// starts `test "`): what xo test must report as passed for a generated
+// file, which may hold more tests than its cases (jsonfuzz's typed decode
+// tests, 19 since f3524650c, failed TestJsonFuzz with 2,022 of 2,003,
+// 2026-11-05).
+func testBlocks(content string) int {
+	n := 0
+	for _, l := range strings.Split(content, "\n") {
+		if strings.HasPrefix(l, "test \"") {
+			n++
+		}
+	}
+	return n
+}
+
 func probeModule(t *testing.T, module, file, content string, backends []string, cases int) {
 	t.Helper()
 	root, err := xotool.Root()
@@ -41,6 +57,7 @@ func probeModule(t *testing.T, module, file, content string, backends []string, 
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(work)
+	tests := testBlocks(content)
 	std := filepath.Join(work, "std")
 	if err := os.CopyFS(std, os.DirFS(filepath.Join(root, "std"))); err != nil {
 		t.Fatal(err)
@@ -60,10 +77,10 @@ func probeModule(t *testing.T, module, file, content string, backends []string, 
 		if !ok {
 			t.Fatalf("xo test --std-module=%s --backend=%s: no \"N passed\" summary in\n%s", module, b, out)
 		}
-		t.Logf("%s/%s: %d passed, %d failed of %d generated cases", module, b, passed, failed, cases)
-		if failed != 0 || passed != cases {
+		t.Logf("%s/%s: %d passed, %d failed of %d tests (%d generated cases)", module, b, passed, failed, tests, cases)
+		if failed != 0 || passed != tests {
 			t.Fatalf("xo test --std-module=%s --backend=%s ran %d passed, %d failed; the generated file holds %d tests (a file that is not picked up would otherwise compare nothing)\n%s",
-				module, b, passed, failed, cases, out)
+				module, b, passed, failed, tests, out)
 		}
 	}
 }

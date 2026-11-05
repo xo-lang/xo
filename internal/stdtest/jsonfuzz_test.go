@@ -558,6 +558,7 @@ func runFuzzDir(t *testing.T, file, content string, backends []string, cases int
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(work)
+	tests := testBlocks(content)
 	if err := os.WriteFile(filepath.Join(work, file), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -566,9 +567,9 @@ func runFuzzDir(t *testing.T, file, content string, backends []string, cases int
 		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
 		out, err := cmd.CombinedOutput()
 		passed, failed, ok := probeSummary(string(out))
-		if err != nil || !ok || failed != 0 || passed != cases {
-			t.Fatalf("xo test --backend=%s: %v; %d passed, %d failed of %d generated cases\n%s", b, err, passed, failed, cases, out)
+		if err != nil || !ok || failed != 0 || passed != tests {
+			t.Fatalf("xo test --backend=%s: %v; %d passed, %d failed; the generated file holds %d tests (%d generated cases)\n%s", b, err, passed, failed, tests, cases, out)
 		}
-		t.Logf("%s: %d passed of %d generated cases", b, passed, cases)
+		t.Logf("%s: %d passed of %d tests (%d generated cases)", b, passed, tests, cases)
 	}
 }
