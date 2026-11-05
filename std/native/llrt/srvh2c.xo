@@ -18,7 +18,9 @@ pub fn table() -> Int {
   rt.mem_set(n, 0, 8 * hconn.TO_COUNT)
   let w = hconn.tls_ops_set(n)
   if w != n {
-    rt.heap_release(n)
+    // the block's prefix, as rt.heap_large's result minus 8
+    // (gotchas/heap-large-prefix-not-malloc-address.md)
+    rt.heap_release(n - 8)
   }
   w
 }

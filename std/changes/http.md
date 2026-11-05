@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-05: fix: an h2c server installed by two threads at once no longer frees the losing table at a wrong address
+
+- Kind: fix
+- Commit: (this commit)
+- Found by: reading the inlined code of the 2026-11-05 darwin race stress report in srvh2c.table
+- Go reference: none (the native runtime's own records)
+- Test: none deterministic (the losing side of a race between two first installs); libcmem.xo heap_release's prefix check ends the program if it runs
+- Affected: 0.36.0 to 0.39.0, native and LLVM backends: srvh2c.table released its rt.heap_large block at the result instead of the prefix (result minus 8) when another thread published the table first (gotchas/heap-large-prefix-not-malloc-address.md)
+- Shipped in: not yet released
+
 ## 2026-11-05: security: a native server's response trailers no longer corrupt the runtime's heap
 
 - Kind: security

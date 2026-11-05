@@ -101,3 +101,47 @@ func TestRaceRuntimeInlinedUnchecked(t *testing.T) {
 		})
 	}
 }
+
+// TestRaceRuntimeCallsNotForced checks http_h2_config's IR: a non-race
+// build marks the call of srvh2c.install_h2c in http.Server.with_protocols
+// alwaysinline (#6), a --race build does not (call.xo race_keeps_call).
+// The forced inline put the runtime's code under with_protocols's
+// sanitize_thread, and the optimizer dropped the !nosanitize of a load it
+// speculated: the 2026-11-05 darwin race stress (1 run in 12, 13 in 24
+// with the runtime's own accesses marked) reported hconn.tls_ops_set's
+// table. Without the mark LLVM does not inline across the two functions'
+// sanitize attributes.
+func TestRaceRuntimeCallsNotForced(t *testing.T) {
+	dir := filepath.Join("testdata", "golden", "http_h2_config")
+	site := func(ir []byte) string {
+		in := false
+		for _, l := range strings.Split(string(ir), "\n") {
+			if strings.HasPrefix(l, "define ") && strings.Contains(l, "@\"x.http.Server.with_protocols\"(") {
+				in = true
+				continue
+			}
+			if in && l == "}" {
+				break
+			}
+			if in && strings.Contains(l, "@\"x.srvh2c.install_h2c\"(") {
+				return l
+			}
+		}
+		t.Fatal("no call of srvh2c.install_h2c in http.Server.with_protocols")
+		return ""
+	}
+	plain, err := xotool.LLVMIR(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := site(plain); !strings.Contains(l, ") #6") {
+		t.Fatalf("the non-race call is not alwaysinline (the check below would prove nothing): %s", strings.TrimSpace(l))
+	}
+	race, err := xotool.LLVMIRRace(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := site(race); strings.Contains(l, ") #6") {
+		t.Fatalf("--race forces the runtime's inline into an instrumented function: %s", strings.TrimSpace(l))
+	}
+}

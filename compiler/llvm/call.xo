@@ -41,6 +41,18 @@ fn (var g: Gen) mk_str(v: Int, obj: Str, n: Str) {
 }
 
 /// Lowers call v (call).
+/// Whether --race keeps the call of callee a call: the program's
+/// instrumented function calling the runtime's (decision 0273 mode 2). An
+/// alwaysinline call site is inlined over the two functions' sanitize
+/// attributes, and the optimizer then drops the !nosanitize of the
+/// runtime's loads it speculates (2026-11-05 darwin race stress:
+/// srvh2c.table inlined into http.Server.with_protocols, its plain read of
+/// hconn.tls_ops_set's table reported against the CAS); without it LLVM
+/// never inlines code without sanitize_thread into code with it.
+fn (g: Gen) race_keeps_call(callee: Int) -> Bool {
+  g.tsan && !g.tsan_runtime && !race_unchecked(g.f.file) && race_unchecked(g.m.funcs[callee].file)
+}
+
 fn (var g: Gen) call(v: Int) {
   let x = g.f.values[v]
   let name = aux_str(x.aux)
@@ -570,7 +582,7 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
   }
   let rl = g.res_ll(callee)
   var c = "${rl} ${fname(aux_str(x.aux))}(${args.join(", ")})"
-  if g.inl.contains(aux_str(x.aux)) {
+  if g.inl.contains(aux_str(x.aux)) && !g.race_keeps_call(callee) {
     c = "${c} #6"
   }
   let kept = g.kept_results(callee)
