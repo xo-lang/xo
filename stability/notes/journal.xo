@@ -144,8 +144,7 @@ pub fn (j: Journal) deleted(id: Int) -> () ! FsErr uses fs.write {
 
 fn (j: Journal) write(line: Str) -> () ! FsErr uses fs.write {
   let sync = j.sync
-  let outcome = j.log.with(fn(var f) -> Result[(), FsErr] { write_line(f, line, sync) })
-  outcome?
+  j.log.with(fn(var f) { write_line(f, line, sync)? })
 }
 
 fn write_line(f: File, line: Str, sync: Bool) -> () ! FsErr uses fs.write {
@@ -159,17 +158,11 @@ fn write_line(f: File, line: Str, sync: Bool) -> () ! FsErr uses fs.write {
 pub fn (j: Journal) compact() -> () ! JournalErr uses (fs, net.dial) {
   let fs = j.fs
   let db = j.db
-  let outcome = j.log.with(fn(var f) -> Result[(), JournalErr] {
-    match snapshot(fs, db) {
-      Ok(fresh) => {
-        f.close().ignore_err("the old log is replaced; its changes are in the snapshot")
-        f = fresh
-        Ok(())
-      }
-      Err(e) => Err(e)
-    }
+  j.log.with(fn(var f) {
+    let fresh = snapshot(fs, db)?
+    f.close().ignore_err("the old log is replaced; its changes are in the snapshot")
+    f = fresh
   })
-  outcome?
 }
 
 /// Writes the snapshot (a temporary file, fsynced, renamed over the old
