@@ -4646,7 +4646,10 @@ and read access to the seed bucket), or, when HEAD is older than that
 seed's commit (a bisect step), the newest seed cut from an ancestor of
 HEAD (FetchSeedFor, 2026-10-22: seed 0.24.0's output calls runtime
 exports a commit before it lacks,
-gotchas/xobuild-seed-newer-than-commit.md); a seed that fails, or whose
+gotchas/xobuild-seed-newer-than-commit.md). A release seed tagged off main
+(a release commit, version strings and docs only, on a main commit;
+0.39.0, 0.40.0) counts as its parent's (seedPlaced, 2026-11-05,
+gotchas/off-main-release-seed-skipped.md). A seed that fails, or whose
 built xo does not run `xo version`, is reported and the next one tried, and the log names the path taken ("xotool: building
 xo ... with the prebuilt seed of s3://..."). When none builds, xobuild
 exits non-zero with every cause, the bucket path, and the opt in (owner,

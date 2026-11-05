@@ -227,7 +227,7 @@ func FetchSeedFor(root string, log io.Writer) (string, error) {
 		return "", err
 	}
 	c := seedCommit(v)
-	if c == "" || !knownCommit(root, c) || isAncestor(root, c) {
+	if c == "" || !knownCommit(root, c) || seedPlaced(root, c) {
 		return fetchSeedVersion(base, v, plat, log)
 	}
 	names := cachedSeeds(base, plat)
@@ -267,6 +267,69 @@ func isAncestor(root, c string) bool {
 	return exec.Command("git", "-C", root, "merge-base", "--is-ancestor", c, "HEAD").Run() == nil
 }
 
+// releaseFiles are the files a release commit changes (relcommit: the
+// CHANGELOG's section, the version constants, std/VERSION and the spec
+// drafts, decision 0089).
+var releaseFiles = map[string]bool{
+	"CHANGELOG.md":                    true,
+	"compiler/cli/core/cli.xo":        true,
+	"compiler/cli/servers/servers.xo": true,
+	"std/VERSION":                     true,
+	"spec/core.md":                    true,
+	"spec/std.md":                     true,
+}
+
+// seedPlaced reports whether a seed cut at commit c can build root's
+// HEAD: c is an ancestor of HEAD, or c is a release commit whose parent
+// is: its change from its first parent is only releaseFiles, and in
+// compiler/ only the version constants (std/VERSION is the version too),
+// so no compiler or std code differs from the parent's. A release
+// tagged off main (0.39.0, 0.40.0: main moved on after the candidate) is
+// never an ancestor of main, so without the second rule main skipped
+// those seeds for 0.37.0's (2026-11-05).
+func seedPlaced(root, c string) bool {
+	if isAncestor(root, c) {
+		return true
+	}
+	if !isAncestor(root, c+"^") {
+		return false
+	}
+	out, err := exec.Command("git", "-C", root, "diff", "--name-only", c+"^", c).Output()
+	if err != nil {
+		return false
+	}
+	files := strings.Fields(string(out))
+	for _, f := range files {
+		if !releaseFiles[f] {
+			return false
+		}
+		// in compiler/ only the version constants may change: every
+		// changed line is `pub const VERSION = "..."` or XO_VERSION
+		if strings.HasPrefix(f, "compiler/") && !versionOnly(root, c, f) {
+			return false
+		}
+	}
+	return len(files) > 0
+}
+
+// versionOnly reports whether every line commit c changes in file f is a
+// version constant.
+func versionOnly(root, c, f string) bool {
+	out, err := exec.Command("git", "-C", root, "diff", "-U0", c+"^", c, "--", f).Output()
+	if err != nil {
+		return false
+	}
+	for _, l := range strings.Split(string(out), "\n") {
+		if (strings.HasPrefix(l, "+") || strings.HasPrefix(l, "-")) && !strings.HasPrefix(l, "+++") && !strings.HasPrefix(l, "---") {
+			s := strings.TrimSpace(l[1:])
+			if !strings.HasPrefix(s, "pub const VERSION = \"") && !strings.HasPrefix(s, "pub const XO_VERSION = \"") {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // newestAncestorSeed is the highest version of the seed names whose
 // commit is an ancestor of root's HEAD, or "".
 func newestAncestorSeed(root string, names []string) string {
@@ -275,7 +338,7 @@ func newestAncestorSeed(root string, names []string) string {
 		if !seedNameRE.MatchString(n) || (best != "" && !versionLess(seedVersion(best), seedVersion(n))) {
 			continue
 		}
-		if c := seedCommit(n); c != "" && isAncestor(root, c) {
+		if c := seedCommit(n); c != "" && seedPlaced(root, c) {
 			best = n
 		}
 	}

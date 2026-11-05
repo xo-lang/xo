@@ -882,7 +882,8 @@ const HopMax = 50
 // commitsBehind is how many commits the xo seed's recorded commit (`xo
 // version --json`, decision 0264) is behind root's HEAD, or -1 when that
 // is unknown: no record (an older xo), a commit this checkout does not
-// have or that is not an ancestor of HEAD, or no git.
+// have or that is not an ancestor of HEAD (a release commit off main
+// counts from its parent), or no git.
 func commitsBehind(root, seed string) int {
 	head := headCommit(root)
 	if head == "" {
@@ -898,10 +899,16 @@ func commitsBehind(root, seed string) int {
 	if json.Unmarshal([]byte(strings.TrimSpace(o)), &v) != nil || v.Commit == "" {
 		return -1
 	}
+	base := v.Commit
 	if exec.Command("git", "-C", root, "merge-base", "--is-ancestor", v.Commit, head).Run() != nil {
-		return -1
+		// a release commit tagged off main counts from its parent
+		// (seedPlaced; gotchas/off-main-release-seed-skipped.md)
+		if !seedPlaced(root, v.Commit) {
+			return -1
+		}
+		base = v.Commit + "^"
 	}
-	out, err := exec.Command("git", "-C", root, "rev-list", "--count", v.Commit+".."+head).Output()
+	out, err := exec.Command("git", "-C", root, "rev-list", "--count", base+".."+head).Output()
 	if err != nil {
 		return -1
 	}

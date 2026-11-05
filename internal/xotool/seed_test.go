@@ -522,6 +522,65 @@ func TestFetchSeedForAncestor(t *testing.T) {
 	if !strings.Contains(log.String(), "using seed "+va) {
 		t.Errorf("no note of the older seed:\n%s", log.String())
 	}
+	// a release commit off main (only release files changed, on an
+	// ancestor) is placed; a code commit there is not
+	git("checkout", "-q", "--detach", b)
+	os.MkdirAll(filepath.Join(root, "std"), 0o755)
+	os.WriteFile(filepath.Join(root, "std", "VERSION"), []byte("0.11.0\n"), 0o644)
+	git("add", "std/VERSION")
+	git("commit", "-q", "-m", "Version 0.11.0")
+	rel := git("rev-parse", "HEAD")
+	os.WriteFile(filepath.Join(root, "code.xo"), []byte("x\n"), 0o644)
+	git("add", "code.xo")
+	git("commit", "-q", "-m", "code")
+	code := git("rev-parse", "HEAD")
+	git("checkout", "-q", "main")
+	git("commit", "-q", "--allow-empty", "-m", "c")
+	vr, vc := "0.11.0-"+rel[:8], "0.12.0-"+code[:8]
+	addSeed(t, dir, vr, seedFiles())
+	latest := func(v string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "seeds", "latest.txt"), []byte(v+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	latest(vr)
+	if !seedPlaced(root, rel) || seedPlaced(root, code) {
+		t.Errorf("seedPlaced: release commit %v, code commit %v; want true, false", seedPlaced(root, rel), seedPlaced(root, code))
+	}
+	// a release file in compiler/ placed only when the version constant is
+	// all that changed
+	cli := filepath.Join(root, "compiler", "cli", "core", "cli.xo")
+	os.MkdirAll(filepath.Dir(cli), 0o755)
+	git("checkout", "-q", "--detach", b)
+	os.WriteFile(cli, []byte("pub const VERSION = \"0.10.0\"\nfn f() {}\n"), 0o644)
+	git("add", "compiler")
+	git("commit", "-q", "-m", "cli")
+	base := git("rev-parse", "HEAD")
+	for _, c := range []struct {
+		text string
+		want bool
+	}{{"pub const VERSION = \"0.11.0\"\nfn f() {}\n", true}, {"pub const VERSION = \"0.11.0\"\nfn f() { g() }\n", false}} {
+		git("checkout", "-q", "--detach", base)
+		os.WriteFile(cli, []byte(c.text), 0o644)
+		git("commit", "-q", "-am", "bump")
+		r := git("rev-parse", "HEAD")
+		git("checkout", "-q", "--detach", base)
+		if got := seedPlaced(root, r); got != c.want {
+			t.Errorf("seedPlaced of a cli.xo change %q = %v, want %v", c.text, got, c.want)
+		}
+	}
+	git("checkout", "-q", "main")
+	if got, err := FetchSeedFor(root, &log); err != nil || got != seedBin(vr) {
+		t.Errorf("release seed off main: FetchSeedFor = %q, %v; want %q\n%s", got, err, seedBin(vr), log.String())
+	}
+	addSeed(t, dir, vc, seedFiles())
+	latest(vc)
+	if got, err := FetchSeedFor(root, &log); err != nil || got != seedBin(vr) {
+		t.Errorf("code seed off main: FetchSeedFor = %q, %v; want %q\n%s", got, err, seedBin(vr), log.String())
+	}
+	git("checkout", "-q", "--detach", old)
+
 	// a seed whose commit the repository lacks (a shallow clone) is used
 	t.Setenv("XO_SEED_URL", "file://"+seedDir(t, "0.11.0-0123abcd", seedFiles()))
 	if got, err := FetchSeedFor(root, &log); err != nil || got != seedBin("0.11.0-0123abcd") {
