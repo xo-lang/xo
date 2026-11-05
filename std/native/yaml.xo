@@ -5815,10 +5815,13 @@ fn node_kind(k: Int) -> yaml.NodeKind {
 
 /// The public Node of arena node i; a node reached again through an alias is built once.
 fn to_node(d: yaml.Doc, i: Int, var memo: Map[Int, yaml.Node]) -> yaml.Node {
-  if let Some(m) = memo.get(i) {
-    return m
-  }
   let r = d.nodes[i]
+  // only an alias target is built twice, so a document without aliases keeps no memo
+  if r.anchor != "" {
+    if let Some(m) = memo.get(i) {
+      return m
+    }
+  }
   var alias: yaml.Node? = None
   if r.kind == K_ALIAS {
     alias = Some(to_node(d, r.alias, memo))
