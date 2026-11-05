@@ -1,6 +1,6 @@
 # 0514: On macOS a small spawn site's task wakes no chain worker
 
-Status: Accepted (owner, 2026-11-05). Landed in the commit that adds this
+Status: Accepted (owner, 2026-11-05); amended by 0518 (a lone worker still chains). Landed in the commit that adds this
 line (std/native/llrt/pool.xo worker_main).
 
 ## Context

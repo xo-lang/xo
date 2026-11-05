@@ -38,6 +38,20 @@ The fault unwinder zeroed and copied its per-thread scratch with the C library's
 
 The prelude has `interface Yaml {}`, the marker `derive Yaml` implements (as `Xml` is for `derive Xml`); `yaml.decode` and `yaml.encode_value` take a `T: Yaml`. Programs name it only through `derive Yaml`. See std/changes/yaml.md.
 
+## 2026-11-05: perf: on macOS scopes of tiny tasks no longer run slower than in 0.39.0
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 2's 0.40.0 pre-cut, bench/perf/conc spawn on darwin/arm64 (wall 1.191, CPU 2.144 against 0.39.0); decision 0518
+- Go reference: Go's wakep chain, which decision 0514 left out on macOS for tiny tasks
+- Test: TestGoldenRun conc_, spawn, sched, task_, scope_, fanout, chan_ on darwin/arm64; TestSelfhostWasm conc_*
+- Timing: darwin/arm64 conc spawn 0.881 of main (11 rounds), CPU 0.56; spawn100k 0.953 (noise, 0514's gain kept); darwin/amd64 spawn100k 1.04 and conc spawn 1.013 (noise)
+- Shipped in: not yet released
+
+The worker that finds a tiny task while it is the only worker awake wakes
+one more again, as before decision 0514: with no spinner left, each scope's
+spawns and joins woke sleeping workers instead, a costlier macOS wake each.
+
 ## 2026-11-05: perf: on macOS a burst of tiny tasks wakes no extra workers
 
 - Kind: perf

@@ -1366,8 +1366,12 @@ pub fn worker_main(w: Int) -> Int {
         // (decision 0514: a macOS wake and sleep cost more than such a
         // task, and the chain woke 3,500 workers a run of spawn100k on the
         // Intel laptop; on 28 CPU linux/amd64 its 430 wakes carried the
-        // burst and it ran 1.23 times as long without them)
-        if rt.slot_add(p, P_SPINNING, -1, SEQ_CST) == 1 && (layer() != 2 || (it & 1) != 0 || !site_small(p, it)) {
+        // burst and it ran 1.23 times as long without them); unless it is
+        // the only worker awake (decision 0518: a scope of 1,000 such
+        // tasks then had no spinner, so its spawns and joins woke
+        // sleeping workers instead, conc spawn 1.24 times as long on
+        // darwin/arm64)
+        if rt.slot_add(p, P_SPINNING, -1, SEQ_CST) == 1 && (layer() != 2 || (it & 1) != 0 || !site_small(p, it) || awake(p) < 2) {
           stat(ST_WAKE_CHAIN)
           wakep(p)
         }
