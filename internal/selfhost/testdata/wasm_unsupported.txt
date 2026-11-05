@@ -88,6 +88,7 @@ trace_ring # the wasm backend does not support the call `rt.heap_big` (stage 2),
 conn_deadline_move # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_duplex # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_duplex_h2tls # the wasm backend does not support the network
+http_ipv6_url # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 host_usage # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
 proc_child_usage # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
 netconn_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
