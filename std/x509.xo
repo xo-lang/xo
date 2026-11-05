@@ -104,6 +104,20 @@ fn (e: CertErr) display() -> Str
 
 /// The certificate of a DER (Go's ParseCertificate).
 fn parse(der: Bytes) -> Certificate ! CertErr
+/// What a PKCS #12 file holds (std.md 18.x, golang.org/x/crypto/pkcs12).
+struct Pkcs12 {
+  key: crypto.PrivateKey
+  /// the leaf: the certificate whose localKeyID names the key, else the first
+  certificate: Certificate
+  /// the other certificates, in file order
+  ca: List[Certificate]
+}
+
+/// The key and certificates of a .pfx or .p12 (Go's pkcs12.Decode, which needs exactly one of each: this reads
+/// chains too). password is the text the file was made with; "" also opens a file made with no
+/// password. 3DES and 40 bit RC2 with SHA-1 are the encryptions read, as Go's. Err is
+/// CertErr with Go's text (`pkcs12: decryption password incorrect`).
+fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr
 /// The certificates of a PEM text's CERTIFICATE blocks, in order; Err at the
 /// first that does not parse.
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr

@@ -5,6 +5,7 @@ package rt
 // std/native/x509.xo is the native backends'.
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	cryptorand "crypto/rand"
@@ -687,4 +688,87 @@ func X509_create_request(tk *Task, r Rand, t X509_RequestTemplate, key Crypto_Pr
 		return Err[X509_CertificateRequest](x509Err(textOf(err.Error())))
 	}
 	return X509_parse_request(tk, Bytes(der))
+}
+
+// X509_parse_pkcs12 is x509.parse_pkcs12 on the vendored x/crypto/pkcs12 (xcrypto_pkcs12.go): any
+// number of bags, the leaf the certificate whose localKeyID names the key.
+func X509_parse_pkcs12(tk *Task, data Bytes, password string) Result[X509_Pkcs12, X509_CertErr] {
+	fail := func(msg string) Result[X509_Pkcs12, X509_CertErr] {
+		return Err[X509_Pkcs12](x509Err(textOf(msg)))
+	}
+	enc, err := xp12_bmpString(password)
+	if err != nil {
+		return fail(xp12_ErrIncorrectPassword.Error())
+	}
+	bags, pw, err := xp12_getSafeContents([]byte(data), enc)
+	if err != nil {
+		return fail(err.Error())
+	}
+	var certs []*x509.Certificate
+	var ids [][]byte
+	var keyDER []byte
+	var keyID []byte
+	for _, bag := range bags {
+		var id []byte
+		for _, a := range bag.Attributes {
+			if a.Id.Equal(xp12_oidLocalKeyID) {
+				var v []byte
+				if _, e := asn1.Unmarshal(a.Value.Bytes, &v); e == nil {
+					id = v
+				}
+			}
+		}
+		switch {
+		case bag.Id.Equal(xp12_oidCertBag):
+			der, err := xp12_decodeCertBag(bag.Value.Bytes)
+			if err != nil {
+				return fail(err.Error())
+			}
+			cs, err := x509.ParseCertificates(der)
+			if err != nil {
+				return fail(err.Error())
+			}
+			for _, c := range cs {
+				certs = append(certs, c)
+				ids = append(ids, id)
+			}
+		case bag.Id.Equal(xp12_oidPKCS8ShroundedKeyBag):
+			if keyDER != nil {
+				return fail("pkcs12: expected exactly one key bag")
+			}
+			k, err := xp12_decodePkcs8ShroudedKeyBag(bag.Value.Bytes, pw)
+			if err != nil {
+				return fail(err.Error())
+			}
+			keyDER, err = x509.MarshalPKCS8PrivateKey(k)
+			if err != nil {
+				return fail("pkcs12: error parsing PKCS#8 private key: " + err.Error())
+			}
+			keyID = id
+		}
+	}
+	if len(certs) == 0 {
+		return fail("pkcs12: certificate missing")
+	}
+	if keyDER == nil {
+		return fail("pkcs12: private key missing")
+	}
+	kr := Crypto_parse_private_key(tk, Bytes(keyDER))
+	if !kr.Ok {
+		return fail("pkcs12: error parsing PKCS#8 private key")
+	}
+	leaf := 0
+	for i := range certs {
+		if len(keyID) > 0 && bytes.Equal(ids[i], keyID) {
+			leaf = i
+			break
+		}
+	}
+	var ca []X509_Certificate
+	for i, c := range certs {
+		if i != leaf {
+			ca = append(ca, x509CertOf(tk, c))
+		}
+	}
+	return Ok[X509_Pkcs12, X509_CertErr](X509_Pkcs12{F_key: kr.V, F_certificate: x509CertOf(tk, certs[leaf]), F_ca: ListFromSlice(ca)})
 }

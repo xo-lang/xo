@@ -10,6 +10,7 @@ var (
 	_ func(*X509_Name, *Task) List[Tuple2[string, string]]                                                                                   = (*X509_Name).M_attributes
 	_ func(*X509_CertErr, *Task) string                                                                                                      = (*X509_CertErr).M_display
 	_ func(*Task, Bytes) Result[X509_Certificate, X509_CertErr]                                                                              = X509_parse
+	_ func(*Task, Bytes, string) Result[X509_Pkcs12, X509_CertErr]                                                                           = X509_parse_pkcs12
 	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                                                        = X509_parse_pem
 	_ func(*X509_Certificate, *Task, X509_VerifyOptions) Result[List[List[X509_Certificate]], X509_CertErr]                                  = (*X509_Certificate).M_verify
 	_ func(*X509_Certificate, *Task, string) Result[Unit, X509_CertErr]                                                                      = (*X509_Certificate).M_verify_hostname

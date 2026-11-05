@@ -6466,6 +6466,8 @@ struct CertErr { msg: Str }
 fn (e: CertErr) display() -> Str
 fn parse(der: Bytes) -> Certificate ! CertErr
 fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
+struct Pkcs12 { key: crypto.PrivateKey, certificate: Certificate, ca: List[Certificate] }
+fn parse_pkcs12(data: Bytes, password: Str) -> Pkcs12 ! CertErr
 struct VerifyOptions {
   roots: List[Certificate], intermediates: List[Certificate] = [],
   dns_name: Str = "", at: Time, key_usages: List[ExtKeyUsage] = []   // [] is [ServerAuth]
@@ -6511,6 +6513,15 @@ struct RevocationList {
 fn parse_revocation_list(der: Bytes) -> RevocationList ! CertErr
 fn (l: RevocationList) check_signature_from(issuer: Certificate) -> () ! CertErr
 ```
+`parse_pkcs12` reads a PKCS #12 file (RFC 7292, a `.pfx` or `.p12`) as golang.org/x/crypto/pkcs12 does: a v3 file with a
+SHA-1 MAC, `pbeWithSHAAnd3-KeyTripleDES-CBC` and `pbeWithSHAAnd40BitRC2-CBC` encryption (the only algorithms Go reads; a
+PBES2 or AES file is `pkcs12: algorithm 1.2.840.113549.1.5.13 is not supported`), DER encoded. The password is the text
+the file was made with (`""` also opens a file made with no password, as Go does); a wrong one is `pkcs12: decryption
+password incorrect`. Deviations from Go's `Decode`, which accepts exactly one certificate and one key: any number of
+certificates and bags are read, `ca` holds those other than the leaf, the leaf is the certificate whose `localKeyID`
+names the key (else the first), and an unencrypted key bag is read too (on the native backends only). The corpus
+(`internal/stdtest/testdata/corpus/pkcs12`) holds Go's three test files and two made with OpenSSL, each with the right
+and a wrong password, truncated and bit-flipped; Go's results are the expected values.
 
 ```
 // a development certificate for a local HTTPS server

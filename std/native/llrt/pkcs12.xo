@@ -1,0 +1,380 @@
+// PKCS #12 (RFC 7292) files: the certificates and the private key of a .pfx or
+// .p12. A port of golang.org/x/crypto/pkcs12 (BSD, Copyright 2015 The Go
+// Authors): the key derivation of its pbkdf.go, the MAC check of mac.go, the
+// password based decryption of crypto.go (3DES and 40 bit RC2 with SHA-1, the
+// only algorithms Go reads) and the bag walking of pkcs12.go and safebags.go.
+// Differences: any number of safe contents and bags (Go insists on exactly
+// two), unencrypted key bags too, and the leaf certificate is the one whose
+// localKeyID names the key. Input must be DER, as Go's encoding/asn1 requires.
+use native/llrt/asn1
+use native/llrt/des
+use native/llrt/rc2
+use native/llrt/sha1
+
+const OID_SHA1: Str = "1.3.14.3.2.26"
+const OID_DATA: Str = "1.2.840.113549.1.7.1"
+const OID_ENCRYPTED_DATA: Str = "1.2.840.113549.1.7.6"
+const OID_KEY_BAG: Str = "1.2.840.113549.1.12.10.1.1"
+const OID_SHROUDED_KEY_BAG: Str = "1.2.840.113549.1.12.10.1.2"
+const OID_CERT_BAG: Str = "1.2.840.113549.1.12.10.1.3"
+const OID_X509_CERT: Str = "1.2.840.113549.1.9.22.1"
+const OID_3DES: Str = "1.2.840.113549.1.12.1.3"
+const OID_RC2_40: Str = "1.2.840.113549.1.12.1.6"
+const OID_LOCAL_KEY_ID: Str = "1.2.840.113549.1.9.21"
+
+const MAX_ITERATIONS: Int = 1048576
+
+/// What a file holds: the certificates (DER) with the localKeyID of each ("" for none), and
+/// the private key as PKCS #8 DER with its localKeyID; err is "" or a failure's text
+/// (Go's, `pkcs12: ...`).
+pub struct Pfx {
+  pub certs: List[Bytes]
+  pub cert_ids: List[Bytes]
+  pub key: Bytes
+  pub key_id: Bytes
+  pub err: Str
+}
+
+fn fail(msg: Str) -> Pfx { Pfx{certs: [], cert_ids: [], key: b"", key_id: b"", err: msg} }
+
+const ERR_PASSWORD: Str = "pkcs12: decryption password incorrect"
+const ERR_DECRYPTION: Str = "pkcs12: decryption error, incorrect padding"
+
+/// A password as the BMPString of RFC 7292 (UCS-2 big endian and a final 0 0), Go's bmpString.
+fn bmp_string(s: Str) -> Bytes? {
+  var out = BytesBuilder.new()
+  for r in s.runes() {
+    let c = Int(r)
+    if c > 0xFFFF || (c >= 0xD800 && c <= 0xDFFF) {
+      return None
+    }
+    out.write_byte(UInt8(c >> 8))
+    out.write_byte(UInt8(c & 255))
+  }
+  out.write_byte(0)
+  out.write_byte(0)
+  Some(out.freeze())
+}
+
+fn fill_with_repeats(pattern: Bytes, v: Int) -> Bytes {
+  if pattern.len() == 0 {
+    return b""
+  }
+  let n = v * ((pattern.len() + v - 1) / v)
+  var out = BytesBuilder.new()
+  for i in 0..n {
+    out.write_byte(pattern[i % pattern.len()])
+  }
+  out.freeze()
+}
+
+/// RFC 7292 appendix B.2 with SHA-1 (u 20, v 64), Go's pbkdf: size bytes for the purpose id
+/// (1 key, 2 IV, 3 MAC key) after r iterations.
+fn pbkdf(salt: Bytes, password: Bytes, r: Int, id: Int, size: Int) -> Bytes {
+  let u = 20
+  let v = 64
+  var d = BytesBuilder.new()
+  for _ in 0..v {
+    d.write_byte(UInt8(id))
+  }
+  let dd = d.freeze()
+  var inp: List[Int] = []
+  for x in fill_with_repeats(salt, v) {
+    inp.push(Int(x))
+  }
+  for x in fill_with_repeats(password, v) {
+    inp.push(Int(x))
+  }
+  let c = (size + u - 1) / u
+  var out = BytesBuilder.new()
+  for i in 0..c {
+    var ib = BytesBuilder.new()
+    ib.write(dd)
+    for x in inp {
+      ib.write_byte(UInt8(x))
+    }
+    var a = sha1.sum(ib.freeze())
+    for _ in 1..r {
+      a = sha1.sum(a)
+    }
+    out.write(a)
+    if i < c - 1 {
+      // B is v bytes of Ai repeated; each v byte block of I becomes (Ij + B + 1) mod 2^(8v)
+      var b: List[Int] = []
+      for k in 0..v {
+        b.push(Int(a[k % u]))
+      }
+      var j = 0
+      while j < inp.len() / v {
+        var carry = 1
+        var k = v - 1
+        while k >= 0 {
+          let s = inp[j * v + k] + b[k] + carry
+          inp[j * v + k] = s & 255
+          carry = s >> 8
+          k -= 1
+        }
+        j += 1
+      }
+    }
+  }
+  out.freeze()[0..size]
+}
+
+fn count(b: Bytes, t: asn1.Tlv) -> Int {
+  // an INTEGER no larger than a few bytes
+  asn1.small_int(b, t) ?? -1
+}
+
+/// The MAC of the authenticated safe message with the key derived from password (Go's
+/// verifyMac): "" or the failure's text.
+fn verify_mac(mac: Bytes, m: asn1.Tlv, message: Bytes, password: Bytes) -> Str {
+  let kids = asn1.children(mac, m)
+  if kids.len() < 2 || kids.len() > 3 || asn1.any_bad(kids) || kids[0].tag != asn1.SEQUENCE || kids[1].tag != asn1.OCTET_STRING {
+    return "pkcs12: error reading P12 data: malformed MacData"
+  }
+  let di = asn1.children(mac, kids[0])
+  if di.len() != 2 || asn1.any_bad(di) || di[0].tag != asn1.SEQUENCE || di[1].tag != asn1.OCTET_STRING {
+    return "pkcs12: error reading P12 data: malformed DigestInfo"
+  }
+  let alg = asn1.children(mac, di[0])
+  if alg.len() == 0 || asn1.any_bad(alg) || asn1.oid(mac, alg[0]) != OID_SHA1 {
+    let name = if alg.len() > 0 { asn1.oid(mac, alg[0]) } else { "" }
+    return "pkcs12: unknown digest algorithm: " + name
+  }
+  var iterations = 1
+  if kids.len() == 3 {
+    if kids[2].tag != asn1.INTEGER {
+      return "pkcs12: error reading P12 data: malformed MacData"
+    }
+    iterations = count(mac, kids[2])
+  }
+  if iterations < 0 || iterations > MAX_ITERATIONS {
+    return "pkcs12: iteration count is invalid or too high"
+  }
+  let key = pbkdf(asn1.contents(mac, kids[1]), password, iterations, 3, 20)
+  let want = sha1.mac(key, message)
+  let got = asn1.contents(mac, di[1])
+  if want != got {
+    return ERR_PASSWORD
+  }
+  ""
+}
+
+/// Go's pbDecrypt: the plaintext of encrypted with the PBE algorithm (an AlgorithmIdentifier at alg
+/// in b) and password, or the failure's text.
+fn pb_decrypt(b: Bytes, alg: asn1.Tlv, encrypted: Bytes, password: Bytes) -> (Bytes, Str) {
+  let parts = asn1.children(b, alg)
+  if parts.len() != 2 || asn1.any_bad(parts) || parts[1].tag != asn1.SEQUENCE {
+    return (b"", "pkcs12: error reading P12 data: malformed algorithm identifier")
+  }
+  let oid = asn1.oid(b, parts[0])
+  if oid != OID_3DES && oid != OID_RC2_40 {
+    return (b"", "pkcs12: algorithm " + oid + " is not supported")
+  }
+  let pp = asn1.children(b, parts[1])
+  if pp.len() != 2 || asn1.any_bad(pp) || pp[0].tag != asn1.OCTET_STRING || pp[1].tag != asn1.INTEGER {
+    return (b"", "pkcs12: error reading P12 data: malformed PBE parameters")
+  }
+  let salt = asn1.contents(b, pp[0])
+  let iterations = count(b, pp[1])
+  if iterations < 0 || iterations > MAX_ITERATIONS {
+    return (b"", "pkcs12: iteration count is invalid or too high")
+  }
+  if encrypted.len() == 0 {
+    return (b"", "pkcs12: empty encrypted data")
+  }
+  if encrypted.len() % 8 != 0 {
+    return (b"", "pkcs12: input is not a multiple of the block size")
+  }
+  var plain = b""
+  if oid == OID_3DES {
+    let key = pbkdf(salt, password, iterations, 1, 24)
+    let iv = pbkdf(salt, password, iterations, 2, 8)
+    plain = des.cbc_decrypt3(des.new_des3(key), iv, encrypted)
+  } else {
+    let key = pbkdf(salt, password, iterations, 1, 5)
+    let iv = pbkdf(salt, password, iterations, 2, 8)
+    plain = rc2.cbc_decrypt(rc2.new_rc2(key, key.len() * 8), iv, encrypted)
+  }
+  let ps_len = Int(plain[plain.len() - 1])
+  if ps_len == 0 || ps_len > 8 || plain.len() < ps_len {
+    return (b"", ERR_DECRYPTION)
+  }
+  for i in plain.len() - ps_len..plain.len() {
+    if Int(plain[i]) != ps_len {
+      return (b"", ERR_DECRYPTION)
+    }
+  }
+  (plain[0..plain.len() - ps_len], "")
+}
+
+/// The localKeyID of a safe bag's attributes ("" for none).
+fn local_key_id(b: Bytes, attrs: asn1.Tlv) -> Bytes {
+  for a in asn1.children(b, attrs) {
+    let kv = asn1.children(b, a)
+    if kv.len() == 2 && !asn1.any_bad(kv) && asn1.oid(b, kv[0]) == OID_LOCAL_KEY_ID && kv[1].tag == asn1.SET {
+      let vs = asn1.children(b, kv[1])
+      if vs.len() == 1 && vs[0].tag == asn1.OCTET_STRING {
+        return asn1.contents(b, vs[0])
+      }
+    }
+  }
+  b""
+}
+
+/// Reads the safe bags of safe (a DER SEQUENCE OF SafeBag) into out.
+fn read_bags(safe: Bytes, password: Bytes, var out: Pfx) -> Str {
+  let top = asn1.whole(safe, asn1.SEQUENCE)
+  if top.tag < 0 {
+    return "pkcs12: error reading P12 data: malformed safe contents"
+  }
+  for bag in asn1.children(safe, top) {
+    let f = asn1.children(safe, bag)
+    if bag.tag != asn1.SEQUENCE || f.len() < 2 || f.len() > 3 || asn1.any_bad(f) || f[1].tag != 0xa0 {
+      return "pkcs12: error reading P12 data: malformed safe bag"
+    }
+    let id = asn1.oid(safe, f[0])
+    let value = asn1.contents(safe, f[1])
+    var lk = b""
+    if f.len() == 3 && f[2].tag == asn1.SET {
+      lk = local_key_id(safe, f[2])
+    }
+    if id == OID_CERT_BAG {
+      let cb = asn1.whole(value, asn1.SEQUENCE)
+      let cf = if cb.tag < 0 { [] } else { asn1.children(value, cb) }
+      if cb.tag < 0 || cf.len() != 2 || asn1.any_bad(cf) || cf[1].tag != 0xa0 {
+        return "pkcs12: error decoding cert bag: malformed"
+      }
+      if asn1.oid(value, cf[0]) != OID_X509_CERT {
+        return "pkcs12: only X509 certificates are supported"
+      }
+      let inner = asn1.contents(value, cf[1])
+      let os = asn1.whole(inner, asn1.OCTET_STRING)
+      if os.tag < 0 {
+        return "pkcs12: error decoding cert bag: malformed"
+      }
+      out.certs.push(asn1.contents(inner, os))
+      out.cert_ids.push(lk)
+    } else if id == OID_KEY_BAG || id == OID_SHROUDED_KEY_BAG {
+      if out.key.len() > 0 {
+        return "pkcs12: expected exactly one key bag"
+      }
+      if id == OID_KEY_BAG {
+        out.key = value
+      } else {
+        let kb = asn1.whole(value, asn1.SEQUENCE)
+        let kf = if kb.tag < 0 { [] } else { asn1.children(value, kb) }
+        if kb.tag < 0 || kf.len() != 2 || asn1.any_bad(kf) || kf[0].tag != asn1.SEQUENCE || kf[1].tag != asn1.OCTET_STRING {
+          return "pkcs12: error decoding PKCS#8 shrouded key bag: malformed"
+        }
+        let (plain, err) = pb_decrypt(value, kf[0], asn1.contents(value, kf[1]), password)
+        if err != "" {
+          return "pkcs12: error decrypting PKCS#8 shrouded key bag: " + err
+        }
+        out.key = plain
+      }
+      out.key_id = lk
+    }
+  }
+  ""
+}
+
+/// The file's contents (Go's Decode, getSafeContents and decodeCertBag). The password is
+/// the text the file was made with.
+pub fn parse(data: Bytes, password: Str) -> Pfx {
+  let enc = match bmp_string(password) {
+    Some(e) => e
+    None => return fail(ERR_PASSWORD)
+  }
+  let pfx = asn1.whole(data, asn1.SEQUENCE)
+  let top = if pfx.tag < 0 { [] } else { asn1.children(data, pfx) }
+  if pfx.tag < 0 || top.len() < 2 || top.len() > 3 || asn1.any_bad(top) || top[0].tag != asn1.INTEGER || top[1].tag != asn1.SEQUENCE {
+    return fail("pkcs12: error reading P12 data: malformed PFX")
+  }
+  if count(data, top[0]) != 3 {
+    return fail("pkcs12: can only decode v3 PFX PDU's")
+  }
+  let ci = asn1.children(data, top[1])
+  if ci.len() != 2 || asn1.any_bad(ci) || ci[1].tag != 0xa0 {
+    return fail("pkcs12: error reading P12 data: malformed ContentInfo")
+  }
+  if asn1.oid(data, ci[0]) != OID_DATA {
+    return fail("pkcs12: only password-protected PFX is implemented")
+  }
+  let wrapped = asn1.contents(data, ci[1])
+  let os = asn1.whole(wrapped, asn1.OCTET_STRING)
+  if os.tag < 0 {
+    return fail("pkcs12: error reading P12 data: malformed authenticated safe")
+  }
+  let message = asn1.contents(wrapped, os)
+  if top.len() < 3 {
+    return fail("pkcs12: no MAC in data")
+  }
+  var pw = enc
+  var mac_err = verify_mac(data, top[2], message, pw)
+  if mac_err == ERR_PASSWORD && enc.len() == 2 {
+    // an empty password is also tried as no bytes at all, as Go does
+    pw = b""
+    mac_err = verify_mac(data, top[2], message, pw)
+  }
+  if mac_err != "" {
+    return fail(mac_err)
+  }
+  let auth = asn1.whole(message, asn1.SEQUENCE)
+  if auth.tag < 0 {
+    return fail("pkcs12: error reading P12 data: malformed authenticated safe")
+  }
+  var out = Pfx{certs: [], cert_ids: [], key: b"", key_id: b"", err: ""}
+  for item in asn1.children(message, auth) {
+    let f = asn1.children(message, item)
+    if item.tag != asn1.SEQUENCE || f.len() != 2 || asn1.any_bad(f) || f[1].tag != 0xa0 {
+      return fail("pkcs12: error reading P12 data: malformed ContentInfo")
+    }
+    let kind = asn1.oid(message, f[0])
+    let body = asn1.contents(message, f[1])
+    var safe = b""
+    if kind == OID_DATA {
+      let o = asn1.whole(body, asn1.OCTET_STRING)
+      if o.tag < 0 {
+        return fail("pkcs12: error reading P12 data: malformed data")
+      }
+      safe = asn1.contents(body, o)
+    } else if kind == OID_ENCRYPTED_DATA {
+      let ed = asn1.whole(body, asn1.SEQUENCE)
+      let ef = if ed.tag < 0 { [] } else { asn1.children(body, ed) }
+      if ed.tag < 0 || ef.len() != 2 || asn1.any_bad(ef) || ef[0].tag != asn1.INTEGER || ef[1].tag != asn1.SEQUENCE {
+        return fail("pkcs12: error reading P12 data: malformed encrypted data")
+      }
+      if count(body, ef[0]) != 0 {
+        return fail("pkcs12: only version 0 of EncryptedData is supported")
+      }
+      let ec = asn1.children(body, ef[1])
+      if ec.len() < 2 || ec.len() > 3 || asn1.any_bad(ec) || ec[1].tag != asn1.SEQUENCE {
+        return fail("pkcs12: error reading P12 data: malformed encrypted content info")
+      }
+      var encrypted = b""
+      if ec.len() == 3 && ec[2].tag == 0x80 {
+        encrypted = asn1.contents(body, ec[2])
+      }
+      let (plain, err) = pb_decrypt(body, ec[1], encrypted, pw)
+      if err != "" {
+        return fail(err)
+      }
+      safe = plain
+    } else {
+      return fail("pkcs12: only data and encryptedData content types are supported in authenticated safe")
+    }
+    let e = read_bags(safe, pw, out)
+    if e != "" {
+      return fail(e)
+    }
+  }
+  if out.certs.len() == 0 {
+    return fail("pkcs12: certificate missing")
+  }
+  if out.key.len() == 0 {
+    return fail("pkcs12: private key missing")
+  }
+  out
+}

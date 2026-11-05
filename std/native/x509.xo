@@ -5,6 +5,7 @@ use std/crypto
 use std/netip
 use std/x509
 use native/llrt/asn1
+use native/llrt/pkcs12
 use native/llrt/tlscert
 use native/llrt/x509cert as lx
 use native/llrt/x509verify as xv
@@ -731,4 +732,30 @@ fn create_request(r: Rand, t: x509.RequestTemplate, key: crypto.PrivateKey) -> x
     return Err(err("x509: signature over certificate returned by signer is invalid"))
   }
   parse_request(asn1.enc_seq([tbs, alg_id, asn1.enc_bits(sig)]))
+}
+
+fn parse_pkcs12(data: Bytes, password: Str) -> x509.Pkcs12 ! x509.CertErr {
+  let p = pkcs12.parse(data, password)
+  if p.err != "" {
+    return Err(x509.CertErr{msg: p.err})
+  }
+  let key = match crypto.parse_private_key(p.key) {
+    Ok(k) => k
+    Err(e) => return Err(x509.CertErr{msg: "pkcs12: error parsing PKCS#8 private key: ${e.msg}"})
+  }
+  var certs: List[x509.Certificate] = []
+  var leaf = 0
+  for (i, der) in p.certs.indexed() {
+    certs.push(parse(der)?)
+    if p.key_id.len() > 0 && p.cert_ids[i] == p.key_id && leaf == 0 {
+      leaf = i
+    }
+  }
+  var ca: List[x509.Certificate] = []
+  for (i, c) in certs.indexed() {
+    if i != leaf {
+      ca.push(c)
+    }
+  }
+  Ok(x509.Pkcs12{key: key, certificate: certs[leaf], ca: ca})
 }

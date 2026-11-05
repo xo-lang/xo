@@ -99,6 +99,7 @@ var generators = map[string]func() string{
 	"yaml":       yamlCorpus,
 	"yamlfuzz":   yamlfuzzCorpus,
 	"jwt":        jwtCorpus,
+	"pkcs12":     pkcs12Corpus,
 }
 
 func main() {
