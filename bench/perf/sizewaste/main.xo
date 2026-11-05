@@ -1,0 +1,34 @@
+// Memory held by blocks of one size (decision 0505's finding 3, the size
+// classes above 1 KiB): `<program> SIZE COUNT` allocates COUNT byte buffers of
+// SIZE bytes, writes every one, and prints `SIZE COUNT payload_kb rss_kb
+// ratio` where rss_kb is the growth of VmRSS over the empty program. The Go
+// twin (go/main.go) does the same.
+
+fn rss_kb(os: Os) -> Int {
+  let text = os.fs.read_text("/proc/self/status").ok() ?? ""
+  for line in text.split("\n") {
+    if line.starts_with("VmRSS:") {
+      return Int.parse(line[6..].replace(" kB", "").trim()) ?? 0
+    }
+  }
+  0
+}
+
+fn main(os: Os) {
+  let a = os.env.args()
+  let size = Int.parse(a.get(0) ?? "8192") ?? 8192
+  let count = Int.parse(a.get(1) ?? "1000") ?? 1000
+  let base = rss_kb(os)
+  var held: List[Bytes] = []
+  for _ in 0..count {
+    held.push(b"x".repeat(size))
+  }
+  let rss = rss_kb(os) - base
+  // the blocks stay live past the sample (a value is freed at its last use)
+  var sum = 0
+  for b in held {
+    sum += b.len() + Int(b[b.len() / 2])
+  }
+  let payload = size * count / 1024
+  os.stdio.println("${size} ${count} ${payload} ${rss} ${Float(rss) / Float(payload)} ${sum}")
+}

@@ -317,3 +317,5 @@
 - [std-twin-bcrypt-2026-11-04.md](std-twin-bcrypt-2026-11-04.md): bcrypt state as List[UInt32] tried, worse (1.137); raw buffer needs bcrypt out of go_compiled.
 - [struct-field-hoist-2026-11-04.md](struct-field-hoist-2026-11-04.md): hoist_fields for Deflater's fields (find_match, then deflate()'s loop through write_block with a per-callee summary): no zip gain (1.004, 0.993), branches lang1-dfl and lang1-fsum parked
 - [llvm-var-homes-2026-11-04.md](llvm-var-homes-2026-11-04.md): decision 0500 on LLVM, tlsloop --ab: 16 B TLS requests 0.969x wall, 0.951x CPU; 16 KiB within noise.
+- [size-class-waste-2026-11-04.md](size-class-waste-2026-11-04.md): RSS over payload for 8 to 256 KiB requests, Xo against Go (power of two classes waste up to half), the self build's blocks and its live bytes by request size; input to decision 0506
+- [idle-conn-40k-2026-11-04.md](idle-conn-40k-2026-11-04.md): 40,000 idle HTTP/1.1 and TLS HTTP/2 connections, Xo against Go net/http: memory per connection
