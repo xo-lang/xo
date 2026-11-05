@@ -1092,6 +1092,13 @@ fn (var g: Gen) slot_op(v: Int) {
     g.push(x.args[1])
     g.e("i32.const 8")
     g.e("call $elem")
+  } else if name == "rt.slot_add" && g.kind(g.vty(x.args[0])) == ssa.Kind.Handle {
+    // llrt atomic.xo's one step add on an Atomic (e067d6fb5), which
+    // atomics_to_runtime leaves: rt3.xo's object holds the value at byte 8,
+    // and one thread runs, so a plain add is the fetch and add
+    g.push(x.args[0])
+    g.e("i32.const 8")
+    g.e("i32.add")
   } else {
     g.fail("the wasm backend has `${name}` on a List[Int], an Atomic, or an address only")
     return
