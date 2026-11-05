@@ -1,0 +1,53 @@
+// std/amqp: AMQP 1.0 (ISO/IEC 19464, OASIS), a port of github.com/Azure/go-amqp
+// v1.7.0 (MIT, Copyright 2017 Kale Blankenship and Microsoft), decision 0521.
+// Declaration file. Stage 1: the type system and its encoding (go-amqp's
+// internal/encoding); the connection, sessions and links follow in stages 2
+// and 3 and the CBS helper in stage 4.
+
+/// An AMQP 1.0 value (section 1.6 of the specification): the primitive
+/// types, the compound types, and a described value.
+enum Value {
+  Null
+  Bool(v: Bool)
+  UByte(v: UInt8)
+  UShort(v: UInt16)
+  UInt(v: UInt32)
+  ULong(v: UInt64)
+  Byte(v: Int8)
+  Short(v: Int16)
+  Int(v: Int32)
+  Long(v: Int64)
+  Float(v: Float32)
+  Double(v: Float)
+  /// decimal32, decimal64 and decimal128 keep their IEEE 754 bit patterns
+  Decimal32(bits: UInt32)
+  Decimal64(bits: UInt64)
+  Decimal128(bits: Bytes)
+  /// a Unicode scalar value
+  Char(v: Rune)
+  /// milliseconds since the Unix epoch
+  Timestamp(ms: Int)
+  Uuid(bytes: Bytes)
+  Binary(v: Bytes)
+  Str(v: Str)
+  Symbol(v: Str)
+  List(items: List[Value])
+  /// pairs in wire order, keys not required to be unique
+  Map(pairs: List[(Value, Value)])
+  Array(items: List[Value])
+  Described(descriptor: Value, value: Value)
+}
+
+enum AmqpErr {
+  /// bytes that are not a valid encoding
+  Decode(msg: Str)
+  /// a value that cannot be encoded (an array of mixed types, an oversized string)
+  Encode(msg: Str)
+}
+
+/// The encoding of v with the smallest constructors go-amqp's encoder picks
+/// (smalluint, list8, str8 and so on).
+fn encode(v: Value) -> Bytes ! AmqpErr
+
+/// The value at the start of b and the number of bytes it took.
+fn decode(b: Bytes) -> (Value, Int) ! AmqpErr
