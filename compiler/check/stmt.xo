@@ -306,27 +306,39 @@ fn (c: Checker) body_spells(f: Int, fd: parser.FnDecl) -> Bool {
 /// Parses fo's body when the lazy parse skipped it (decision 0351 stage
 /// 2): the sentinel body becomes the real one in fo's declaration, which
 /// every later reader (the check, the SSA builder) sees. A syntax error
-/// in it is a std file's (TestStdChecks reports it), so the build stops.
-pub fn (var c: Checker) force_body(fo: Int) uses fs.read {
+/// in it (a dependency's, since decision 0517 parses those lazily too) is
+/// an ordinary diagnostic at its file and line (lazy_bad), and false: the
+/// declaration stays lazy, since a body standing as an empty block reached
+/// the front end's caches, and the next build reported XO0401 for it
+/// instead of the syntax error. It was a fault until 2026-11-05 (owner,
+/// from the agents' survey).
+pub fn (var c: Checker) force_body(fo: Int) -> Bool uses fs.read {
   if fo >= 0 {
     c.need_tree(fo)
   }
   if fo < 0 || c.objs[fo].fn_decl.is_empty() {
-    return
+    return true
   }
   let fd = c.objs[fo].fn_decl[0]
   if let Some(lb) = fd.lazy {
     let f = c.objs[fo].decl_file
+    if c.lazy_bad.contains(fo) {
+      return false
+    }
     let (b, ds) = parser.parse_body(c.files[f].path.bytes(), c.files[f].src, lb)
     if !ds.is_empty() {
-      fault("a lazily parsed body of ${c.files[f].path} does not parse: ${ds[0].message.to_str() ?? "?"} (XO_LAZY_PARSE=off parses it in full)")
+      let pd = parse_diags(c.files[f].path, ds)
+      c.lazy_bad[fo] = pd
+      c.diags = c.diags + pd
+      return false
     }
     var nf = fd
-    nf.body = Some(b)
     nf.lazy = None
+    nf.body = Some(b)
     c.objs[fo].fn_decl = [nf]
     c.lazy_parsed[fo] = lb
   }
+  true
 }
 
 /// Gives fo's body, which force_body parsed from its lazy span, that span
@@ -418,7 +430,11 @@ fn (var c: Checker) parse_body_words(fo: Int) -> Bool {
 /// obligations, and unused name reports of run are not run for it: they
 /// only report diagnostics, which an eager check of std already has.
 pub fn (var c: Checker) check_lazy(fo: Int) -> List[Diag] uses fs.read {
-  c.force_body(fo)
+  if !c.force_body(fo) {
+    // its syntax errors, without a check of the body that did not parse
+    c.lazy_fns[fo] = false
+    return c.lazy_bad.get(fo) ?? []
+  }
   if !(c.lazy_fns.get(fo) ?? false) {
     return []
   }

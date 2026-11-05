@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "function `embed` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 8
+    },
+    "notes": [
+      {
+        "message": "`embed(...)` is allowed only in a const initializer, which states the constant's type (`Str`, `Bytes` or `embed.Dir`): declare `const DATA: Str = embed(\"banner.txt\")` at the top level of the file and use `DATA` here (decision 0304)"
+      }
+    ],
+    "fixes": []
+  }
+]

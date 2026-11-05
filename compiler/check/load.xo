@@ -228,6 +228,10 @@ pub struct Checker {
   /// builder lets its tree go once it built the body; a later force_body
   /// parses the same tree again.
   pub lazy_parsed: Map[Int, parser.LazyBody] = {}
+  /// The syntax errors of each lazily parsed body that does not parse
+  /// (force_body), reported once; its declaration stays lazy, so no cache
+  /// records an empty body for it.
+  pub lazy_bad: Map[Int, List[Diag]] = {}
   /// The SSA builder's scans of each program module (tasks, budgets),
   /// made before unparse_bodies took the bodies they walk: by module
   /// (mod_cached_scan answers from them).

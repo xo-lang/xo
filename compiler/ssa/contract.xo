@@ -110,6 +110,13 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
   b.s.err_t = b.fail_err(err0)
   b.param_bindings(fo)
   let decl = b.c.objs[fo].fn_decl
+  if b.c.lazy_bad.contains(fo) {
+    // a lazily parsed body with syntax errors (check.force_body), which
+    // check_lazy reported: not built, and its declaration left lazy
+    b.skip_body("the body of ${b.c.display_name(fo)} does not parse")
+    b.end(saved)
+    return
+  }
   if decl.is_empty() || decl[0].body == None {
     b.unsupported("a function without a body")
     b.end(saved)

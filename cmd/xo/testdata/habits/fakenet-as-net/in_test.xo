@@ -1,0 +1,9 @@
+use std/http
+
+fn serve_ok(n: Net) {
+  n.handle("GET http://example.com/", fn(_r: http.Request) -> http.Response { http.Response{status: 200, headers: {}, body: b""} })
+}
+
+test "fake" {
+  serve_ok(os.net)
+}

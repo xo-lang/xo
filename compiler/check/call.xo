@@ -768,6 +768,10 @@ fn (var c: Checker) no_member(t: Int, sel: Ident, place: Bool) {
   }
   let d = c.unresolved(sel.span, "${what} of `${c.show(t)}`", text(sel.name), cands.sort())
   if d >= 0 {
+    c.fake_method_note(d, t, text(sel.name))
+    if nearest(text(sel.name), cands).is_empty() {
+      c.neighbours_note(d, t, text(sel.name), cands, place)
+    }
     let inner = c.option_elem(t)
     if inner >= 0 {
       let (m, _) = c.find_method(inner, text(sel.name))
@@ -782,6 +786,91 @@ fn (var c: Checker) no_member(t: Int, sel: Ident, place: Bool) {
         c.fix(d, "propagate with ?", [DEdit{span: JSpan{file: c.path, line: sel.span.start.line, col: sel.span.start.col - 1, end_line: sel.span.start.line, end_col: sel.span.start.col - 1}, replace: "?"}])
       }
     }
+  }
+}
+
+/// The test fake of each capability (std/testing, spec/std.md 8.1).
+fn capability_fake(name: Str) -> Str {
+  match name {
+    "Net" => "FakeNet"
+    "Clock" => "FakeClock"
+    "Fs" => "MemFs"
+    "Env" => "FakeEnv"
+    "Stdio" => "FakeStdio"
+    "Proc" => "FakeProc"
+    _ => ""
+  }
+}
+
+/// A note on d when capability t lacks method name but its test fake has
+/// it (a control method such as FakeNet's `handle`): the helper must take
+/// the fake (owner, 2026-11-05, from the agents' survey: aws-19's helper
+/// took `n: Net` to register handlers and was told only that `Net` has no
+/// method `handle`).
+fn (var c: Checker) fake_method_note(d: Int, t: Int, name: Str) {
+  let r = c.resolve(t)
+  if c.tys[r].kind != TyKind.Named || !c.is_prelude(r, text(c.objs[c.tys[r].obj].name)) {
+    return
+  }
+  let fake = capability_fake(text(c.objs[c.tys[r].obj].name))
+  let tm = c.testing_mod()
+  if fake.is_empty() || tm < 0 {
+    return
+  }
+  let fo = c.lookup_module_obj(tm, fake.bytes())
+  if fo < 0 || c.objs[fo].kind != ObjKind.Type || !c.objs[fo].methods.contains(name.bytes()) {
+    return
+  }
+  c.note(d, "did you mean `testing.${fake}`? `${name}` is a method of the test fake, which a test's `os.${fake_field(fake)}` is; a helper that calls it takes `testing.${fake}`, not `${c.show(t)}` (spec/std.md 8.1)")
+}
+
+/// The prelude number types a method missing on one may be found on.
+const NUMBER_TYPES: List[Str] = ["Int", "Float", "Float32", "Int8", "Int16", "Int32", "UInt8", "UInt16", "UInt32", "UInt64", "Rune"]
+
+/// When no name is close to name (no "did you mean"): a note naming what
+/// t does have, its fields and methods (the first 12, then `xo doc`), or
+/// that it has none, and the number type that has name when t is one
+/// (owner, 2026-11-05, from the agents' survey: `Float32.to_bits` got a
+/// bare XO0601, and `Float32` has no methods).
+fn (var c: Checker) neighbours_note(d: Int, t: Int, name: Str, cands: List[Str], place: Bool) {
+  let r = c.resolve(t)
+  if c.tys[r].kind != TyKind.Named {
+    return
+  }
+  let tn = c.show(t)
+  if NUMBER_TYPES.contains(tn) && c.is_prelude(r, tn) && c.prelude >= 0 {
+    var has: List[Str] = []
+    for other in NUMBER_TYPES {
+      if other == tn {
+        continue
+      }
+      let o = c.lookup_module_obj(c.prelude, other.bytes())
+      if o >= 0 && c.objs[o].methods.contains(name.bytes()) {
+        has.push("`${other}`")
+      }
+    }
+    if !has.is_empty() {
+      c.note(d, "`${name}` is a method of ${has.join(", ")}, not of `${tn}` (spec/std.md 2.1)")
+    }
+  }
+  let what = if place { "fields" } else { "fields or methods on a value" }
+  if cands.is_empty() {
+    c.note(d, "`${tn}` has no ${what} (`xo doc ${tn}` lists its static functions)")
+    return
+  }
+  let shown = if cands.len() > 12 { "${cands[0..12].join(", ")}, ... (`xo doc ${tn}` lists all ${cands.len()})" } else { cands.join(", ") }
+  c.note(d, "`${tn}` has ${shown}")
+}
+
+/// The TestOs field holding fake (std/testing.xo).
+fn fake_field(fake: Str) -> Str {
+  match fake {
+    "FakeNet" => "net"
+    "FakeClock" => "clock"
+    "MemFs" => "fs"
+    "FakeEnv" => "env"
+    "FakeStdio" => "stdio"
+    _ => "proc"
   }
 }
 

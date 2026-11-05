@@ -34,8 +34,11 @@ fn (var b: Builder) record_err(what: Str, never: Bool) {
 /// consequence of it and left out (core 10.2: never cascade).
 pub fn nogc_diags(b: Builder) -> List[check.Diag] {
   var kept: List[BuildErr] = []
-  // a native body's check errors (check_lazy) first, as themselves
-  var out: List[check.Diag] = b.lazy_diags
+  // a native body's check errors (check_lazy) first, as themselves; an
+  // XO1201 among them with no position is a cascade of one with a
+  // position (a body with a syntax error stands as an empty block)
+  let positioned = b.lazy_diags.any(fn(d) { d.code != "XO1201" && !d.file.is_empty() })
+  var out: List[check.Diag] = b.lazy_diags.filter(fn(d) { !(positioned && d.code == "XO1201" && d.file.is_empty()) })
   // the uses of each `use go` package by file: one diagnostic at its
   // `use go` line instead of one per call (0.33.0 tester's bug 17)
   var go_uses: Map[Str, Int] = {}
@@ -47,12 +50,24 @@ pub fn nogc_diags(b: Builder) -> List[check.Diag] {
   var go_types: Map[Str, List[Str]] = {}
   var go_types_order: List[Str] = []
   var std_go: List[BuildErr] = []
+  var lazy_files: Map[Str, Bool] = {}
+  for d in b.lazy_diags {
+    lazy_files[d.file] = true
+  }
   for e in b.errs {
     if cascades(e, kept) {
       continue
     }
     // an error type comes from a check error, reported as itself
     if !b.lazy_diags.is_empty() && e.feature.contains("<error>") {
+      continue
+    }
+    // so does what the builder could not lower in a file with a check
+    // error, or with no position: a body with a syntax error stands as an
+    // empty block (`()` where an Int is due), a mistyped call as an
+    // unsupported conversion, and an XO1201 printed first hid the real
+    // error (owner, 2026-11-05, from the agents' survey; core 10.2)
+    if !lazy_files.is_empty() && (e.file.is_empty() || lazy_files.contains(e.file)) {
       continue
     }
     let gp = go_package_of(e)

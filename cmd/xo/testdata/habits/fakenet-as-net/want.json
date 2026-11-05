@@ -1,0 +1,23 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`Net` has no field or method `handle`",
+    "span": {
+      "file": "main_test.xo",
+      "line": 4,
+      "col": 5,
+      "end_line": 4,
+      "end_col": 11
+    },
+    "notes": [
+      {
+        "message": "did you mean `testing.FakeNet`? `handle` is a method of the test fake, which a test's `os.net` is; a helper that calls it takes `testing.FakeNet`, not `Net` (spec/std.md 8.1)"
+      },
+      {
+        "message": "`Net` has listen, dial, dial_timeout, lookup_host, interfaces, only"
+      }
+    ],
+    "fixes": []
+  }
+]

@@ -267,6 +267,29 @@ fn (var c: Checker) habit_call(call: Expr, id: Ident, hint: Int) -> (Int, Bool) 
       c.infer_args(args)
       return (c.unit_ty, true)
     }
+    "parse_int" | "parseInt" | "atoi" | "parse_float" | "parseFloat" | "atof" => {
+      // Go's strconv, JavaScript's and C's parsers: Xo's are static
+      // methods that return an Option (owner, 2026-11-05, from the agents'
+      // survey)
+      let ty = if name is "parse_int" | "parseInt" | "atoi" { "Int" } else { "Float" }
+      let d = c.error("XO0601", id.span, "function `${name}` not found")
+      c.habit_note(d, "did you mean `${ty}.parse`? `${ty}.parse(s)` returns `${ty}?`, None when s is not a number${if ty == "Int" { "; `Int.parse_base(s, base)` reads other bases" } else { "" }} (spec/std.md 2)")
+      if n == 1 {
+        c.fix(d, "write `${ty}.parse`", [c.replace_edit(id.span, "${ty}.parse")])
+      }
+      c.infer_args(args)
+      return (c.option_of(c.named(ty)), true)
+    }
+    "embed" => {
+      // embed is not a function: a constant's initializer is replaced by
+      // the files' contents when its module loads (decision 0304), so a
+      // call anywhere else finds no `embed` (owner, 2026-11-05, from the
+      // agents' survey)
+      let pat = if n == 1 { c.arg_src(args, 0) } else { "\"PATH\"" }
+      c.habit_report(id, "`embed(...)` is allowed only in a const initializer, which states the constant's type (`Str`, `Bytes` or `embed.Dir`): declare `const DATA: Str = embed(${pat})` at the top level of the file and use `DATA` here (decision 0304)")
+      c.infer_args(args)
+      return (c.bad_ty, true)
+    }
     "typeof" | "type" | "isinstance" => {
       c.habit_report(id, "`${name}` inspects types at run time in TypeScript and Python; Xo types are known when checking: use an enum and `match` for values of several shapes (core 2.3)")
       c.infer_args(args)

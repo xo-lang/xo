@@ -888,7 +888,9 @@ fn (var b: Builder) run_job_fe(j: Job) {
       b.check_lazy(fo)
       let r = b.fe_begin()
       b.run_job0(j)
-      let eo = b.fe_entry(r, fi)
+      // a body that does not parse (check.force_body) gets no entry: a
+      // hit would skip check_lazy, which reports its syntax errors
+      let eo = if b.c.lazy_bad.contains(fo) { None } else { b.fe_entry(r, fi) }
       if eo == None {
         b.nofe_fo(fo)
       }

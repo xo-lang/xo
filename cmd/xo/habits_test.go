@@ -18,7 +18,8 @@ var updateHabits = flag.Bool("update-habits", false, "rewrite testdata/habits/*/
 // another language; want.json, the diagnostics `xo check --json` reports
 // for it (core 10.2), with paths relative to the program's directory;
 // and, when the habit has a machine fix, fixed.xo, the program after `xo
-// fix`, which must pass `xo check`. A case without fixed.xo is a habit
+// fix`, which must pass `xo check`; in_test.xo, when present, is written
+// beside it as main_test.xo, for a habit of test code. A case without fixed.xo is a habit
 // with no unambiguous rewrite. `go test ./cmd/xo -run TestHabitGolden
 // -update-habits` rewrites the expectations after an intended change:
 // review the diff. (The Go test of internal/fix ran these until decision
@@ -50,6 +51,13 @@ func TestHabitGolden(t *testing.T) {
 			main := filepath.Join(dir, "main.xo")
 			if err := os.WriteFile(main, src, 0o644); err != nil {
 				t.Fatal(err)
+			}
+			// in_test.xo, when the case has one: a test file beside it
+			// (where `testing` and a test's `os` fakes are predeclared)
+			if tsrc, err := os.ReadFile(filepath.Join(caseDir, "in_test.xo")); err == nil {
+				if err := os.WriteFile(filepath.Join(dir, "main_test.xo"), tsrc, 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 			var out, errOut bytes.Buffer
 			run(t, []string{"check", "--json", dir}, &out, &errOut)

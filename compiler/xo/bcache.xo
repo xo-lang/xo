@@ -882,7 +882,10 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   // only when a build reads them (XO_CHK_CACHE=1 or auto, or verify):
   // with the module skip off by default every build wrote entries no
   // build read (cache chk 0/21 on each xo build, 2026-10-22)
-  let chk_on = c.mod_skip_on || c.mod_verify
+  // none from a build with a lazily parsed body that does not parse: the
+  // builder's checker (b.c) knows it, not c, whose entries would replay
+  // that module's check without the syntax error (2026-11-05)
+  let chk_on = (c.mod_skip_on || c.mod_verify) && b.c.lazy_bad.is_empty()
   if !c.std_export_bad.is_empty() {
     fail(os, "XO_STD_EXPORT=verify: std's records differ from its declarations: ${c.std_export_bad}")
   }

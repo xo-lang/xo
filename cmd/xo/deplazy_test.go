@@ -67,3 +67,31 @@ func TestDepLazyBodies(t *testing.T) {
 		}
 	}
 }
+
+// TestDepLazySyntaxError (decision 0517): with XO_DEP_LAZY=1 a dependency's
+// bodies are parsed as the build reaches them. A syntax error in a reached
+// body is reported as itself, at its file and line, and fails the build;
+// it was a fault ("a lazily parsed body ... does not parse") until
+// 2026-11-05. A cold build and two on the warm caches report the same: the body
+// that did not parse is never cached as an empty block (that build said
+// XO0401 instead).
+func TestDepLazySyntaxError(t *testing.T) {
+	ws := t.TempDir()
+	modtest.WriteFiles(t, ws, map[string]string{
+		"xo.work":          "xo preview\nuse ./app\nuse ./lib\n",
+		"app/xo.mod":       "module example.com/app\nedition preview\n",
+		"app/main/main.xo": "use example.com/lib/num\n\nfn main(os: Os) {\n  os.stdio.println(\"${num.bad()}\")\n}\n",
+		"lib/xo.mod":       "module example.com/lib\nedition preview\n",
+		"lib/num/n.xo":     "pub fn good() -> Int {\n  1\n}\n\npub fn bad() -> Int {\n  let x = (1 +\n  x\n}\n",
+	})
+	setenv(t, "XO_WORK", filepath.Join(ws, "xo.work"))
+	setenv(t, "XO_DEP_LAZY", "1")
+	main := filepath.Join(ws, "app", "main")
+	for i := 1; i <= 3; i++ {
+		r := xo(t, "build", "-o", filepath.Join(ws, "bin"), main).want(1)
+		out := r.out + r.err
+		if strings.Contains(out, "fault") || !strings.Contains(out, "n.xo:7:") || !strings.Contains(out, "XO0161") || strings.Contains(out, "XO0401") || strings.Contains(out, "XO1201") {
+			t.Errorf("build %d: want the syntax error at n.xo:7 (XO0161), no fault, XO0401 or XO1201:\n%s", i, out)
+		}
+	}
+}

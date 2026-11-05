@@ -341,8 +341,15 @@ pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)], nofe: Map[I
     return out
   }
   let reads = c.cross_reads()
+  // a module with a lazily parsed body that does not parse (force_body)
+  // is not stored: its entry would replay a check without the syntax
+  // error (a warm build said XO0401 instead, 2026-11-05)
+  var bad_mods: Map[Int, Bool] = {}
+  for (fo, _) in c.lazy_bad {
+    bad_mods[c.objs[fo].module] = true
+  }
   for (m, key) in c.mod_keys {
-    if c.mod_skip.contains(m) {
+    if c.mod_skip.contains(m) || bad_mods.contains(m) {
       continue
     }
     let sc = scans.get(m)
