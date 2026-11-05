@@ -1,0 +1,13 @@
+{
+  "name": "notes",
+  "env": {
+    "NOTES_TOKEN": "t0p-admin",
+    "NOTES_PASSWORD": "correct horse",
+    "NOTES_ADDR": "{addr}",
+    "NOTES_DATA": "{data}"
+  },
+  "ready": "/health",
+  "tokens": {"admin": "t0p-admin", "bad": "not-a-token"},
+  "scenario": "scenario.jsonl",
+  "redact": ["created", "expires", "token"]
+}

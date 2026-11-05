@@ -1,0 +1,38 @@
+// The notes app's differential scenario (harness diff, decision 0520):
+// every route, every error status, and recovery across a graceful restart
+// and a SIGKILL. {name} is a value saved from an earlier response.
+{"method": "GET", "path": "/health", "expect": 200}
+{"method": "GET", "path": "/notes", "expect": 401}
+{"method": "GET", "path": "/notes", "token": "bad", "expect": 401}
+{"method": "GET", "path": "/notes", "token": "admin", "expect": 200}
+{"method": "POST", "path": "/notes", "token": "admin", "body": "{\"body\":\"first\",\"ttl_secs\":3600}", "expect": 201, "save": {"a": "id"}}
+{"method": "POST", "path": "/notes", "token": "admin", "body": "{\"body\":\"second, with \\\"quotes\\\" and ünïcödé\"}", "expect": 201, "save": {"b": "id"}}
+{"method": "POST", "path": "/notes", "token": "admin", "body": "{\"body\":\"third\",\"ttl_secs\":7200}", "expect": 201, "save": {"c": "id"}}
+{"method": "GET", "path": "/notes/{a}", "token": "admin", "expect": 200}
+{"method": "GET", "path": "/notes", "token": "admin", "expect": 200}
+{"method": "DELETE", "path": "/notes/{b}", "token": "admin", "expect": 204}
+{"method": "DELETE", "path": "/notes/{b}", "token": "admin", "expect": 404}
+{"method": "GET", "path": "/notes/{b}", "token": "admin", "expect": 404}
+{"method": "GET", "path": "/notes/999999", "token": "admin", "expect": 404}
+{"method": "GET", "path": "/notes/abc", "token": "admin", "expect": 400}
+{"method": "POST", "path": "/notes", "token": "admin", "body": "not json", "expect": 400}
+{"method": "POST", "path": "/notes", "token": "admin", "body": "{\"body\":\"\"}", "expect": 400}
+{"method": "POST", "path": "/notes", "token": "admin", "body": "{\"body\":\"x\",\"ttl_secs\":0}", "expect": 400}
+{"method": "POST", "path": "/notes", "token": "admin", "body": "{\"ttl_secs\":5}", "expect": 400}
+{"method": "POST", "path": "/login", "body": "{\"name\":\"admin\",\"password\":\"wrong\"}", "expect": 401}
+{"method": "POST", "path": "/login", "body": "{\"name\":\"nobody\",\"password\":\"correct horse\"}", "expect": 401}
+{"method": "POST", "path": "/login", "body": "{}", "expect": 400}
+{"restart": "term"}
+{"method": "GET", "path": "/notes", "token": "admin", "expect": 200}
+{"method": "GET", "path": "/notes/{b}", "token": "admin", "expect": 404}
+{"method": "POST", "path": "/notes", "token": "admin", "body": "{\"body\":\"after the restart\"}", "expect": 201, "save": {"d": "id"}}
+{"restart": "kill"}
+{"method": "GET", "path": "/notes", "token": "admin", "expect": 200}
+{"method": "GET", "path": "/notes/{d}", "token": "admin", "expect": 200}
+{"method": "DELETE", "path": "/notes/{a}", "token": "admin", "expect": 204}
+{"restart": "kill"}
+{"method": "GET", "path": "/notes", "token": "admin", "expect": 200}
+{"method": "POST", "path": "/notes", "token": "admin", "body": "{\"body\":\"id after two kills\"}", "expect": 201}
+{"method": "POST", "path": "/login", "body": "{\"name\":\"admin\",\"password\":\"correct horse\"}", "expect": 200, "save": {"fresh": "token"}}
+{"method": "GET", "path": "/notes", "token": "admin", "expect": 401}
+{"method": "GET", "path": "/notes", "token": "{fresh}", "expect": 200}
