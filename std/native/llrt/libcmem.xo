@@ -554,6 +554,13 @@ pub fn heap_release(b: Int) {
       return
     }
   }
+  // a block's prefix is 16 byte aligned (malloc_tc's blocks and the C
+  // library's are; windows --race's race heap puts it 8 past); one 8
+  // bytes off is a caller's mistake that free_tc would turn into a
+  // misaligned block on a free list
+  if (b & 15) != 0 && !sanhook.gorace() {
+    heapos.bad_release(b)
+  }
   free_tc(b)
 }
 

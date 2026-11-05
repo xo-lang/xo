@@ -570,7 +570,8 @@ pub fn srv_free(a: Int) {
   }
   let cfg = ld(a, hconn.SR_H2CFG)
   if cfg != 0 {
-    rt.heap_release(cfg)
+    // srv_h2cfg's block is rt.heap_large's address after the prefix
+    rt.heap_release(cfg - 8)
   }
   let tls = ld(a, hconn.SR_TLS)
   if tls != 0 {
@@ -921,7 +922,8 @@ pub fn sink_set_trailer(s: rthttp.Sink, name: Str, value: Str) {
     rt.mem_copy(nb + 8, blk + 8, old)
   }
   if blk != 0 {
-    rt.heap_release(blk)
+    // rt.heap_large's address after the prefix, as SK_TRL keeps it
+    rt.heap_release(blk - 8)
   }
   rt.mem_copy(nb + 8 + old, raw.data(line), line.len())
   st(nb, 0, old + line.len())
@@ -970,7 +972,7 @@ pub fn sink_free(k: Int) {
     rt.heap_release(b)
   }
   if ld(k, SK_TRL) != 0 {
-    rt.heap_release(ld(k, SK_TRL))
+    rt.heap_release(ld(k, SK_TRL) - 8)
   }
   let hc = ld(k, SK_HC)
   if hc != 0 {

@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-05: fix: the HTTP/2 settings and trailer blocks are freed at their own address
+
+- Kind: fix
+- Commit: this push
+- Found by: the 2026-11-05 race stress (http_h2_config, http_trailers and http_server_limits stopped on TSan's allocator CHECK under `--race`, 24 of 24 runs)
+- Go reference: none (the native runtime's own records)
+- Test: TestGoldenRun http_trailers, http_h2_config, http_server_limits, which now fail without the fix (libcmem.xo heap_release's prefix check)
+- Shipped in: not yet released
+
+A server with HTTP/2 settings (`srv_h2cfg`) and a response with trailers released their runtime blocks 8 bytes past the block's start (gotchas/heap-large-prefix-not-malloc-address.md). A normal build silently put an offset block on a free list. A `--race` build's malloc later returned a misaligned block, and TSan aborted. They are now released at the prefix.
+
 ## 2026-11-04: fix: Client.open of a piped request is full duplex under the fake net
 
 - Kind: fix

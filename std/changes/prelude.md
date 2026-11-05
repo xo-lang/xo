@@ -7,6 +7,17 @@
 
 
 
+## 2026-11-05: fix: rt.heap_release of an address that is no block's prefix ends the program
+
+- Kind: fix
+- Commit: this push
+- Found by: the 2026-11-05 race stress (hserve.xo released three rt.heap_large results without `- 8`)
+- Go reference: none (the native runtime's own records)
+- Test: TestGoldenRun http_trailers, http_h2_config, http_server_limits fail with "not a block's prefix" before hserve's fix; the full linux/arm64 golden set passes with it
+- Shipped in: not yet released
+
+`rt.heap_release` (libcmem.xo heap_release) now ends the program with status 70 and "xo: internal: rt.heap_release(ADDR): not a block's prefix" when given an address that is not 16 byte aligned. Before, such a block went onto a free list 8 bytes off and corrupted the heap silently. Windows `--race` blocks, whose prefix is 8 past a 16 byte boundary, are not checked.
+
 ## 2026-11-05: feature: interface Yaml, the marker of derive Yaml
 
 - Kind: feature

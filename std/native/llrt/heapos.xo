@@ -254,6 +254,19 @@ pub fn oom() {
   process.os_exit(70)
 }
 
+/// The end of the process (status 70) for rt.heap_release of b, which is
+/// no block's prefix (libcmem.xo heap_release): the address rt.heap_large
+/// returned (after the prefix) instead of 8 bytes before it. Freed, it
+/// put a block 8 bytes off on a class's free list (a --race build's
+/// malloc then returned misaligned blocks: TSan's CHECK in
+/// sanitizer_allocator_combined.h, the 2026-11-05 race stress).
+pub fn bad_release(b: Int) {
+  let m = "xo: internal: rt.heap_release(${b}): not a block's prefix (rt.heap_large's result minus 8)"
+  stdio.err(raw.data(m), m.len(), true)
+  raw.alive_str(m)
+  process.os_exit(70)
+}
+
 /// A large block of n bytes: the address after its prefix (minus n).
 pub fn large(n: Int) -> Int { large_room(n, n) }
 
