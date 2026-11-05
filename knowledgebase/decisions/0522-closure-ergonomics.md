@@ -30,23 +30,30 @@ since two of them turned out to work already in the form first described.
    with an effect parameter, `interface Provider[fx: Effects] { fn
    retrieve(self) -> ... uses (net.dial, clock, fx) }`, used as
    `List[Provider[fx]]` in a function generic over `fx`. What does not: a
-   value of `ProcProvider[env]` used as `Provider[env]` is refused, XO0701
+   value of `ProcProvider[env]` used as `Provider[env]` was refused, XO0701
    "`ProcProvider[env]` is used as `Provider[env]`, whose method `retrieve`
-   allows only `clock, fx, net.dial` ... but performs `fx`": the
-   interface's `fx` is not substituted by the type argument when the
-   method's effects are compared, a checker bug, and the message repeats
-   itself. A pure or smaller implementation (an `EnvProvider` without `fx`)
+   allows only `clock, fx, net.dial` ... but performs `fx`": neither
+   side's effect argument was substituted when the method's effects were
+   compared, a checker bug, and the message repeated itself. Fixed in
+   0061ac8f5 (test/errorcheck/effect_iface_param), ahead of this decision
+   at the lead's request, since it needs no language change. A pure or smaller implementation (an `EnvProvider` without `fx`)
    is accepted in the same list, so subsumption works.
 
-2. **`?` inside a closure (Xo Lang 2).** `?` already propagates to the
-   closure when its expected or declared result is a `Result`: `fn(s: Str)
-   -> Int ! E { parse(s)? + 1 }`, and `m.with(fn(var j) { j.n +=
-   parse(s)?; j.n })` in a function returning `Int ! E` (with's `R ! E`
-   gives the closure its error type) both check. XO0205 remains where the
-   expected function type cannot fail (`map`, `filter`, any `fn(T) -> U`),
-   where `?` would need an error the callee never returns. (Lang 2's own
-   snippet was requested on 2026-11-05; this section is amended if it shows
-   another form.)
+2. **`?` inside a closure (Xo Lang 2).** The XO0205 Lang 2 met while
+   writing journal.xo (7f945d420) does not reproduce, and Lang 2 withdrew
+   it: `?` propagates to the closure when its expected or declared result
+   is a `Result` (`fn(s: Str) -> Int ! E { parse(s)? + 1 }`; `m.with(fn(var
+   j) { j.n += step(s)?; j.n })` and `m.with(fn(var b) { b.n += step(s)? })`
+   in functions returning `Int ! E` and `() ! E`). Two related XO0401s
+   remain, which are about the error type, not `?`:
+   - inside `m.with(fn(var b) { b.n += other(s)?; b.n })` in a function
+     returning `Int ! E`, where `other` fails with `F`, the closure's error
+     type becomes `F`, and the outer function gets "expected `Int ! E`,
+     found `Result[Int, F]`" with no hint that `F` must convert to `E`;
+   - `Ok(xs.map(fn(s) { step(s)? }))` in a function returning `List[Int] !
+     E`: `map` over a failing closure returns a `Result`, so "expected
+     `List[Int]`, found `Result[List[Int], E]`"; the fix it offers
+     (propagate with `?`) is right but surprising.
 
 3. **Closures that mutate captured `var` bindings (Xo Lang 3).** XO0502 by
    design (core 3.3, decision 0003: closures capture by value; shared
@@ -71,9 +78,11 @@ since two of them turned out to work already in the form first described.
    `send[fx: Effects](req: Request[fx]) uses (..., fx)`; "unknown effect
    gx" in a method's parameter type suggests adding `[gx: Effects]` to
    the method. A section in docs (writing an SDK) shows the threaded form.
-3. **No change to `?` in closures.** It works where the closure can fail;
-   XO0205's note, where the expected type cannot fail, names the
-   alternatives (`try_map`, a `for` loop, or a failing function type).
+3. **No change to `?` in closures.** It works where the closure can fail.
+   The first XO0401 above gains a note naming the inner error type and the
+   conversion (`.map_err(...)`, or a `From`-style conversion if one
+   exists, decision 0438's rules), and the second a note that `map` over
+   a failing closure returns a `Result`.
 4. **No change to captured `var`s (0003 stands).** XO0502's note already
    names `Mutex` and `Atomic`; it adds the local alternative: return the
    new value from the closure, or fold.
@@ -106,6 +115,7 @@ since two of them turned out to work already in the form first described.
 ## Evidence
 
 - `xo check` runs on 2026-11-05 at 99ee25b38 of each form above (repros in
-  ~/xo-lead/notes/lang1/0522-repros/).
+  ~/xo-lead/notes/lang1/0522-repros/); Lang 2's on 05f945147 (its
+  scratchpad q205/main.xo, forms a to e).
 - aws-19's report of 2026-11-05 (xo 842bf3f5c) and docs/reports/xo-feedback.md
   in the aws repository (2026-11-04: upload_file, pager, credential_process).
