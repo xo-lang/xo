@@ -78,6 +78,16 @@ host 2, the 920 byte Deployment 20,000 times, checksums equal):
   the type-directed rules of `derive Yaml`). It shows the parser's cost with
   a cheap decode; the row for the type-directed `derive Yaml` decoder replaces
   it when that exists, and the owner should judge the design on that row.
+- decode into the same struct through `derive Yaml`, the type-directed
+  design (`bench/perf/yamlderive`; compiler/check/derive.xo expands it as
+  `derive Xml` is, to ordinary functions reading the node tree by the field
+  types): 407 ms against 697 ms, ratio 0.584 (0.576 to 0.606), RSS 0.139.
+  **This is the row that stands for the design.** `name: 1` into a `Str`
+  gives "1", `yes` into a `Bool` true, a float into an `Int` truncates,
+  merge keys and aliases apply, a mismatch is `line 2: cannot unmarshal
+  !!str `abc` into int`; one `as "name"` serves Json and Yaml, with
+  `yaml "name"` overriding for this format (prototype on the branch:
+  decode only, the first error, no `inline`/`omitempty`/`flow` yet).
 
 So "a port of yaml.v3" and "YAML 1.2 conformant" are different goals.
 Std follows Go's standard library and, for these, Go's de facto library
