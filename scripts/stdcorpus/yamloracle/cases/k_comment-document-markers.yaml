@@ -1,0 +1,10 @@
+# before
+---
+# head
+a: 1 # line
+# foot
+...
+# between
+---
+# second
+b: 2

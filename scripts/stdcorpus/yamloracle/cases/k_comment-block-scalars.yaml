@@ -1,0 +1,8 @@
+a: | # literal comment
+  line 1
+  # not a comment
+  line 2
+# head of b
+b: > # folded comment
+  text
+# foot

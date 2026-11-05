@@ -97,6 +97,26 @@ struct TagDirective {
   prefix: Bytes
 }
 
+/// A comment found by the scanner (yaml_comment_t), kept until the parser
+/// reaches the token it belongs to.
+struct Comment {
+  /// where scanning for comments started
+  scan_mark: Mark
+  /// the position after which tokens are associated with this comment
+  token_mark: Mark
+  /// the position of the `#`
+  start_mark: Mark
+  /// where the comment ended
+  end_mark: Mark
+  head: Str
+  line: Str
+  foot: Str
+}
+
+fn new_comment() -> Comment {
+  Comment{scan_mark: mark0(), token_mark: mark0(), start_mark: mark0(), end_mark: mark0(), head: "", line: "", foot: ""}
+}
+
 struct Parser {
   // Error handling.
   error: Int
@@ -143,6 +163,21 @@ struct Parser {
   /// token number to the simple_keys index
   simple_keys_by_tok: Map[Int, Int]
 
+  // Comments (yaml.v3).
+  /// the current head comments
+  head_comment: Str
+  /// the current line comments
+  line_comment: Str
+  /// the current foot comments
+  foot_comment: Str
+  /// a foot comment at the end of a block
+  tail_comment: Str
+  /// a comment in an item that precedes a nested structure
+  stem_comment: Str
+  /// the folded comments for all parsed tokens
+  comments: List[Comment]
+  comments_head: Int
+
   // Parser.
   state: Int
   states: List[Int]
@@ -162,6 +197,7 @@ fn new_parser(input: Bytes) -> Parser {
     stream_start_produced: false, stream_end_produced: false, flow_level: 0,
     tokens: [], tokens_head: 0, tokens_parsed: 0, token_available: false,
     indent: -1, indents: [], simple_key_allowed: false, simple_keys: [], simple_keys_by_tok: {},
+    head_comment: "", line_comment: "", foot_comment: "", tail_comment: "", stem_comment: "", comments: [], comments_head: 0,
     state: 0, states: [], marks: [], tag_directives: [],
   }
 }
@@ -624,6 +660,27 @@ fn unroll_indent(var p: Parser, column: Int, scan_mark: Mark) -> Bool {
   var block_mark = scan_mark
   block_mark.index -= 1
   while p.indent > column {
+    // [Go] Reposition the end token before potential following foot comments
+    // of parent blocks: search backwards for recent comments that were at the
+    // same indent as the block that is ending now.
+    var stop_index = block_mark.index
+    var i = p.comments.len() - 1
+    while i >= 0 {
+      let comment = p.comments[i]
+      if comment.end_mark.index < stop_index {
+        // Do not go back beyond the start of the comment and whitespace scan,
+        // unless column < 0 (the document is over and everything else is a foot).
+        break
+      }
+      if comment.start_mark.column == p.indent + 1 {
+        // A good match, but a former comment at that indent may exist.
+        block_mark = comment.start_mark
+      }
+      // While the end of the former comment matches the start of the following
+      // one, nothing is in between and scanning is still safe.
+      stop_index = comment.scan_mark.index
+      i -= 1
+    }
     insert_token(p, -1, tok(T_BLOCK_END, block_mark, block_mark))
     p.indent = p.indents.pop() ?? -1
   }
@@ -846,8 +903,7 @@ fn fetch_plain_scalar(var p: Parser) -> Bool {
   true
 }
 
-/// The dispatcher for token fetchers (yaml_parser_fetch_next_token); the comment
-/// handling of yaml.v3 is not ported (stage 4).
+/// The dispatcher for token fetchers (yaml_parser_fetch_next_token).
 fn fetch_next_token(var p: Parser) -> Bool {
   if p.unread < 1 && !update_buffer(p, 1) {
     return false
@@ -878,6 +934,25 @@ fn fetch_next_token(var p: Parser) -> Bool {
   if p.mark.column == 0 && a == 46 && p.c(1) == 46 && p.c(2) == 46 && p.is_blankz(3) {
     return fetch_document_indicator(p, T_DOCUMENT_END)
   }
+  var comment_mark = p.mark
+  if p.tokens.len() > 0 && ((p.flow_level == 0 && a == 58) || (p.flow_level > 0 && a == 44)) {
+    // Associate any following comments with the prior token.
+    comment_mark = p.tokens[p.tokens.len() - 1].start
+  }
+  if !fetch_token_kind(p, a) {
+    return false
+  }
+  if p.tokens.len() > 0 && p.tokens[p.tokens.len() - 1].typ == T_BLOCK_ENTRY {
+    // Sequence indicators alone have no line comments. It becomes a head
+    // comment for whatever follows.
+    return true
+  }
+  scan_line_comment(p, comment_mark)
+}
+
+/// The fetchers of the indicators and scalars (the rest of fetch_next_token),
+/// after which a line comment is scanned.
+fn fetch_token_kind(var p: Parser, a: Int) -> Bool {
   if a == 91 {
     return fetch_flow_collection_start(p, T_FLOW_SEQUENCE_START)
   }
@@ -931,9 +1006,10 @@ fn fetch_next_token(var p: Parser) -> Bool {
 
 // ---- scanning (scannerc.go) ----
 
-/// Eats whitespace, comments and line breaks up to the next token. Comments are
-/// skipped without being kept (yaml.v3's comment association is stage 4).
+/// Eats whitespace, comments and line breaks up to the next token; comments are
+/// kept in p.comments.
 fn scan_to_next_token(var p: Parser) -> Bool {
+  let scan_mark = p.mark
   while true {
     if p.unread < 1 && !update_buffer(p, 1) {
       return false
@@ -950,12 +1026,26 @@ fn scan_to_next_token(var p: Parser) -> Bool {
         return false
       }
     }
-    if p.c(0) == 35 {
-      while !p.is_breakz(0) {
-        skip(p)
-        if p.unread < 1 && !update_buffer(p, 1) {
-          return false
+    // A line comment just under a sequence entry that looks more like a header
+    // to the following content (`- # The comment` then `  - Some data`):
+    // transform it to a head comment and reposition.
+    if p.comments.len() > 0 && p.tokens.len() > 1 {
+      let token_a = p.tokens[p.tokens.len() - 2]
+      let token_b = p.tokens[p.tokens.len() - 1]
+      let ci = p.comments.len() - 1
+      if token_a.typ == T_BLOCK_SEQUENCE_START && token_b.typ == T_BLOCK_ENTRY && p.comments[ci].line.len() > 0 && !p.is_break(0) {
+        // If it was in the prior line, it becomes a header of the follow up
+        // token; otherwise it stays in place as a header of the former.
+        p.comments[ci].head = p.comments[ci].line
+        p.comments[ci].line = ""
+        if p.comments[ci].start_mark.line == p.mark.line - 1 {
+          p.comments[ci].token_mark = p.mark
         }
+      }
+    }
+    if p.c(0) == 35 {
+      if !scan_comments(p, scan_mark) {
+        return false
       }
     }
     if p.is_break(0) {
@@ -969,6 +1059,201 @@ fn scan_to_next_token(var p: Parser) -> Bool {
     } else {
       break
     }
+  }
+  true
+}
+
+/// A line comment after the token just scanned (yaml_parser_scan_line_comment).
+fn scan_line_comment(var p: Parser, token_mark: Mark) -> Bool {
+  if p.newlines > 0 {
+    return true
+  }
+  var start_mark = mark0()
+  var text = BytesBuilder.new()
+  var peek = 0
+  while peek < 512 {
+    if p.unread < peek + 1 && !update_buffer(p, peek + 1) {
+      break
+    }
+    if p.is_blank(peek) {
+      peek += 1
+      continue
+    }
+    if p.c(peek) == 35 {
+      let seen = p.mark.index + peek
+      while true {
+        if p.unread < 1 && !update_buffer(p, 1) {
+          return false
+        }
+        if p.is_breakz(0) {
+          if p.mark.index >= seen {
+            break
+          }
+          if p.unread < 2 && !update_buffer(p, 2) {
+            return false
+          }
+          skip_line(p)
+        } else if p.mark.index >= seen {
+          if text.len() == 0 {
+            start_mark = p.mark
+          }
+          read(p, text)
+        } else {
+          skip(p)
+        }
+      }
+    }
+    break
+  }
+  if text.len() > 0 {
+    var c = new_comment()
+    c.token_mark = token_mark
+    c.start_mark = start_mark
+    c.line = bytes_str(text.freeze())
+    p.comments.push(c)
+  }
+  true
+}
+
+/// The comments before the next token (yaml_parser_scan_comments): head comments
+/// of what follows, foot comments of what precedes.
+fn scan_comments(var p: Parser, scan_mark_in: Mark) -> Bool {
+  var scan_mark = scan_mark_in
+  var token = p.tokens[p.tokens.len() - 1]
+  if token.typ == T_FLOW_ENTRY && p.tokens.len() > 1 {
+    token = p.tokens[p.tokens.len() - 2]
+  }
+  var token_mark = token.start
+  var start_mark = mark0()
+  var next_indent = p.indent
+  if next_indent < 0 {
+    next_indent = 0
+  }
+  var recent_empty = false
+  var first_empty = p.newlines <= 1
+  var line = p.mark.line
+  var column = p.mark.column
+  var text = BytesBuilder.new()
+  // The foot line is the place where a comment must start to still be a foot of
+  // the prior content; with content in the current line it is the line below.
+  var foot_line = -1
+  if scan_mark.line > 0 {
+    foot_line = p.mark.line - p.newlines + 1
+    if p.newlines == 0 && p.mark.column > 1 {
+      foot_line += 1
+    }
+  }
+  var peek = 0
+  while peek < 512 {
+    if p.unread < peek + 1 && !update_buffer(p, peek + 1) {
+      break
+    }
+    column += 1
+    if p.is_blank(peek) {
+      peek += 1
+      continue
+    }
+    let c = p.c(peek)
+    let close_flow = p.flow_level > 0 && (c == 93 || c == 125)
+    if close_flow || p.is_breakz(peek) {
+      // A line break or a terminator.
+      if close_flow || !recent_empty {
+        if close_flow || (first_empty && ((start_mark.line == foot_line && token.typ != T_VALUE) || start_mark.column - 1 < next_indent)) {
+          // The first empty line with none before: this initial part of the
+          // comment is a foot of the prior token, not a head of the following
+          // one (or the last comment inside a flow scope). Split it up.
+          if text.len() > 0 {
+            if start_mark.column - 1 < next_indent {
+              // Dedented: unrelated to the prior token.
+              token_mark = start_mark
+            }
+            var cm = new_comment()
+            cm.scan_mark = scan_mark
+            cm.token_mark = token_mark
+            cm.start_mark = start_mark
+            cm.end_mark = Mark{index: p.mark.index + peek, line: line, column: column}
+            cm.foot = bytes_str(text.freeze())
+            p.comments.push(cm)
+            text = BytesBuilder.new()
+            scan_mark = Mark{index: p.mark.index + peek, line: line, column: column}
+            token_mark = scan_mark
+          }
+        } else {
+          if text.len() > 0 && p.c(peek) != 0 {
+            text.write_byte(UInt8(10))
+          }
+        }
+      }
+      if !p.is_break(peek) {
+        break
+      }
+      first_empty = false
+      recent_empty = true
+      column = 0
+      line += 1
+      peek += 1
+      continue
+    }
+    if text.len() > 0 && (close_flow || (column - 1 < next_indent && column != start_mark.column)) {
+      // A comment at a different indentation is a foot of the preceding data
+      // rather than a head of the upcoming one.
+      var cm = new_comment()
+      cm.scan_mark = scan_mark
+      cm.token_mark = token_mark
+      cm.start_mark = start_mark
+      cm.end_mark = Mark{index: p.mark.index + peek, line: line, column: column}
+      cm.foot = bytes_str(text.freeze())
+      p.comments.push(cm)
+      text = BytesBuilder.new()
+      scan_mark = Mark{index: p.mark.index + peek, line: line, column: column}
+      token_mark = scan_mark
+    }
+    if p.c(peek) != 35 {
+      break
+    }
+    if text.len() == 0 {
+      start_mark = Mark{index: p.mark.index + peek, line: line, column: column}
+    } else {
+      text.write_byte(UInt8(10))
+    }
+    recent_empty = false
+    // Consume until after the consumed comment line.
+    let seen = p.mark.index + peek
+    while true {
+      if p.unread < 1 && !update_buffer(p, 1) {
+        return false
+      }
+      if p.is_breakz(0) {
+        if p.mark.index >= seen {
+          break
+        }
+        if p.unread < 2 && !update_buffer(p, 2) {
+          return false
+        }
+        skip_line(p)
+      } else if p.mark.index >= seen {
+        read(p, text)
+      } else {
+        skip(p)
+      }
+    }
+    peek = 0
+    column = 0
+    line = p.mark.line
+    next_indent = p.indent
+    if next_indent < 0 {
+      next_indent = 0
+    }
+    peek += 1
+  }
+  if text.len() > 0 {
+    var cm = new_comment()
+    cm.scan_mark = scan_mark
+    cm.token_mark = start_mark
+    cm.start_mark = start_mark
+    cm.end_mark = Mark{index: p.mark.index + peek - 1, line: line, column: column}
+    cm.head = bytes_str(text.freeze())
+    p.comments.push(cm)
   }
   true
 }
@@ -1341,6 +1626,9 @@ fn scan_block_scalar(var p: Parser, literal: Bool) -> Token? {
     }
   }
   if p.c(0) == 35 {
+    if !scan_line_comment(p, start) {
+      return None
+    }
     while !p.is_breakz(0) {
       skip(p)
       if p.unread < 1 && !update_buffer(p, 1) {
@@ -1769,7 +2057,7 @@ fn scan_plain_scalar(var p: Parser) -> Token? {
   Some(t)
 }
 
-// ---- parser (parserc.go): tokens to events; comments are stage 4 ----
+// ---- parser (parserc.go): tokens to events ----
 
 // Event types.
 const E_NONE: Int = 0
@@ -1829,16 +2117,85 @@ struct Event {
   implicit: Bool
   quoted_implicit: Bool
   style: Int
+  head_comment: Str
+  line_comment: Str
+  foot_comment: Str
+  tail_comment: Str
 }
 
 fn ev(typ: Int, start: Mark, end: Mark) -> Event {
-  Event{typ: typ, start: start, end: end, has_version: false, major: 0, minor: 0, tag_directives: [], anchor: b"", tag: b"", value: b"", implicit: false, quoted_implicit: false, style: 0}
+  Event{typ: typ, start: start, end: end, has_version: false, major: 0, minor: 0, tag_directives: [], anchor: b"", tag: b"", value: b"", implicit: false, quoted_implicit: false, style: 0, head_comment: "", line_comment: "", foot_comment: "", tail_comment: ""}
+}
+
+/// Moves the parser's pending comments to the event (yaml_parser_set_event_comments).
+fn set_event_comments(var p: Parser, var e: Event) {
+  e.head_comment = p.head_comment
+  e.line_comment = p.line_comment
+  e.foot_comment = p.foot_comment
+  p.head_comment = ""
+  p.line_comment = ""
+  p.foot_comment = ""
+  p.tail_comment = ""
+  p.stem_comment = ""
+}
+
+/// Joins the comments behind the position of the token into the parser's
+/// top-level comment strings (yaml_parser_unfold_comments).
+fn unfold_comments(var p: Parser, t: Token) {
+  while p.comments_head < p.comments.len() && t.start.index >= p.comments[p.comments_head].token_mark.index {
+    let comment = p.comments[p.comments_head]
+    if comment.head.len() > 0 {
+      if t.typ == T_BLOCK_END {
+        // No heads on ends, so keep comment.head for a follow up token.
+        break
+      }
+      if p.head_comment.len() > 0 {
+        p.head_comment = p.head_comment + "\n"
+      }
+      p.head_comment = p.head_comment + comment.head
+    }
+    if comment.foot.len() > 0 {
+      if p.foot_comment.len() > 0 {
+        p.foot_comment = p.foot_comment + "\n"
+      }
+      p.foot_comment = p.foot_comment + comment.foot
+    }
+    if comment.line.len() > 0 {
+      if p.line_comment.len() > 0 {
+        p.line_comment = p.line_comment + "\n"
+      }
+      p.line_comment = p.line_comment + comment.line
+    }
+    p.comments[p.comments_head] = new_comment()
+    p.comments_head += 1
+  }
+}
+
+/// Splits the stem comment from the head comment (yaml_parser_split_stem_comment):
+/// a sequence or map found under a sequence entry takes the former head comment
+/// as a whole.
+fn split_stem_comment(var p: Parser, stem_len: Int) {
+  if stem_len == 0 {
+    return
+  }
+  let t = peek_token(p) ?? return
+  if t.typ != T_BLOCK_SEQUENCE_START && t.typ != T_BLOCK_MAPPING_START {
+    return
+  }
+  p.stem_comment = p.head_comment[0..stem_len]
+  if p.head_comment.len() == stem_len {
+    p.head_comment = ""
+  } else {
+    p.head_comment = p.head_comment[stem_len + 1..]
+  }
 }
 
 /// The next token without consuming it; None when the scanner failed.
 fn peek_token(var p: Parser) -> Token? {
   if p.token_available || fetch_more_tokens(p) {
-    return Some(p.tokens[p.tokens_head])
+    let t = p.tokens[p.tokens_head]
+    unfold_comments(p, t)
+    return Some(t)
   }
   None
 }
@@ -1971,7 +2328,29 @@ fn parse_document_start(var p: Parser, implicit: Bool) -> Event? {
     }
     p.states.push(PS_DOCUMENT_END)
     p.state = PS_BLOCK_NODE
-    return Some(ev(E_DOCUMENT_START, t.start, t.end))
+    var e = ev(E_DOCUMENT_START, t.start, t.end)
+    if p.head_comment.len() > 0 {
+      // [Go] Scan the header comment backwards, and if an empty line is found,
+      // break the header so the part before the last empty line goes into the
+      // document header, while the bottom of it goes into a follow up event.
+      let hb = p.head_comment.bytes()
+      var i = hb.len() - 1
+      while i > 0 {
+        if hb[i] == 10 {
+          if i == hb.len() - 1 {
+            e.head_comment = p.head_comment[0..i]
+            p.head_comment = p.head_comment[i + 1..]
+            break
+          } else if hb[i - 1] == 10 {
+            e.head_comment = p.head_comment[0..i - 1]
+            p.head_comment = p.head_comment[i + 1..]
+            break
+          }
+        }
+        i -= 1
+      }
+    }
+    return Some(e)
   }
   if t.typ != T_STREAM_END {
     let start = t.start
@@ -2019,6 +2398,11 @@ fn parse_document_end(var p: Parser) -> Event? {
   p.state = PS_DOCUMENT_START
   var e = ev(E_DOCUMENT_END, start, end)
   e.implicit = implicit
+  set_event_comments(p, e)
+  if e.head_comment.len() > 0 && e.foot_comment.len() == 0 {
+    e.foot_comment = e.head_comment
+    e.head_comment = ""
+  }
   Some(e)
 }
 
@@ -2035,6 +2419,7 @@ fn parse_node(var p: Parser, block: Bool, indentless_sequence: Bool) -> Event? {
     pop_state(p)
     var e = ev(E_ALIAS, t.start, t.end)
     e.anchor = t.value
+    set_event_comments(p, e)
     skip_token(p)
     return Some(e)
   }
@@ -2124,6 +2509,7 @@ fn parse_node(var p: Parser, block: Bool, indentless_sequence: Bool) -> Event? {
     e.implicit = plain_implicit
     e.quoted_implicit = quoted_implicit
     e.style = t.style
+    set_event_comments(p, e)
     skip_token(p)
     return Some(e)
   }
@@ -2135,6 +2521,7 @@ fn parse_node(var p: Parser, block: Bool, indentless_sequence: Bool) -> Event? {
     e.tag = tag
     e.implicit = implicit
     e.style = C_FLOW
+    set_event_comments(p, e)
     return Some(e)
   }
   if t.typ == T_FLOW_MAPPING_START {
@@ -2145,6 +2532,7 @@ fn parse_node(var p: Parser, block: Bool, indentless_sequence: Bool) -> Event? {
     e.tag = tag
     e.implicit = implicit
     e.style = C_FLOW
+    set_event_comments(p, e)
     return Some(e)
   }
   if block && t.typ == T_BLOCK_SEQUENCE_START {
@@ -2155,6 +2543,10 @@ fn parse_node(var p: Parser, block: Bool, indentless_sequence: Bool) -> Event? {
     e.tag = tag
     e.implicit = implicit
     e.style = C_BLOCK
+    if p.stem_comment.len() > 0 {
+      e.head_comment = p.stem_comment
+      p.stem_comment = ""
+    }
     return Some(e)
   }
   if block && t.typ == T_BLOCK_MAPPING_START {
@@ -2165,6 +2557,10 @@ fn parse_node(var p: Parser, block: Bool, indentless_sequence: Bool) -> Event? {
     e.tag = tag
     e.implicit = implicit
     e.style = C_BLOCK
+    if p.stem_comment.len() > 0 {
+      e.head_comment = p.stem_comment
+      p.stem_comment = ""
+    }
     return Some(e)
   }
   if anchor.len() > 0 || tag.len() > 0 {
@@ -2191,7 +2587,9 @@ fn parse_block_sequence_entry(var p: Parser, first: Bool) -> Event? {
   var t = peek_token(p) ?? return None
   if t.typ == T_BLOCK_ENTRY {
     let mark = t.end
+    let prior_head_len = p.head_comment.len()
     skip_token(p)
+    split_stem_comment(p, prior_head_len)
     t = peek_token(p) ?? return None
     if t.typ != T_BLOCK_ENTRY && t.typ != T_BLOCK_END {
       p.states.push(PS_BLOCK_SEQUENCE_ENTRY)
@@ -2215,7 +2613,9 @@ fn parse_indentless_sequence_entry(var p: Parser) -> Event? {
   var t = peek_token(p) ?? return None
   if t.typ == T_BLOCK_ENTRY {
     let mark = t.end
+    let prior_head_len = p.head_comment.len()
     skip_token(p)
+    split_stem_comment(p, prior_head_len)
     t = peek_token(p) ?? return None
     if t.typ != T_BLOCK_ENTRY && t.typ != T_KEY && t.typ != T_VALUE && t.typ != T_BLOCK_END {
       p.states.push(PS_INDENTLESS_SEQUENCE_ENTRY)
@@ -2248,8 +2648,10 @@ fn parse_block_mapping_key(var p: Parser, first: Bool) -> Event? {
   } else if t.typ == T_BLOCK_END {
     pop_state(p)
     p.marks.pop()
+    var e = ev(E_MAPPING_END, t.start, t.end)
+    set_event_comments(p, e)
     skip_token(p)
-    return Some(ev(E_MAPPING_END, t.start, t.end))
+    return Some(e)
   }
   let context_mark = p.marks.pop() ?? mark0()
   set_parser_error_context(p, "while parsing a block mapping", context_mark, "did not find expected key", t.start)
@@ -2305,8 +2707,10 @@ fn parse_flow_sequence_entry(var p: Parser, first: Bool) -> Event? {
   }
   pop_state(p)
   p.marks.pop()
+  var e = ev(E_SEQUENCE_END, t.start, t.end)
+  set_event_comments(p, e)
   skip_token(p)
-  Some(ev(E_SEQUENCE_END, t.start, t.end))
+  Some(e)
 }
 
 fn parse_flow_sequence_entry_mapping_key(var p: Parser) -> Event? {
@@ -2375,8 +2779,10 @@ fn parse_flow_mapping_key(var p: Parser, first: Bool) -> Event? {
   }
   pop_state(p)
   p.marks.pop()
+  var e = ev(E_MAPPING_END, t.start, t.end)
+  set_event_comments(p, e)
   skip_token(p)
-  Some(ev(E_MAPPING_END, t.start, t.end))
+  Some(e)
 }
 
 fn parse_flow_mapping_value(var p: Parser, empty: Bool) -> Event? {
@@ -2527,6 +2933,12 @@ fn c_peek(var c: Composer) -> Int {
   }
   match parse_event(c.p) {
     Some(e) => {
+      if c.p.error != NO_ERROR {
+        // yaml.v3: `|| p.parser.error != yaml_NO_ERROR` after a parse that returned true
+        // (a scanner error met while a peek ignored it, as split_stem_comment does).
+        c_fail_parser(c)
+        return -1
+      }
       c.ev = e
       c.has_ev = true
       return e.typ
@@ -2553,7 +2965,7 @@ fn new_node(var c: Composer, kind: Int, default_tag: Str, tag_in: Str, value: St
   } else if kind == K_SCALAR {
     tag = resolve_tag("", value)
   }
-  c.doc.nodes.push(yaml.RawNode{kind: kind, style: style, tag: tag, value: value, anchor: "", alias: -1, content: [], line: c.ev.start.line + 1, column: c.ev.start.column + 1})
+  c.doc.nodes.push(yaml.RawNode{kind: kind, style: style, tag: tag, value: value, anchor: "", alias: -1, content: [], line: c.ev.start.line + 1, column: c.ev.start.column + 1, head_comment: c.ev.head_comment, line_comment: c.ev.line_comment, foot_comment: c.ev.foot_comment})
   c.doc.nodes.len() - 1
 }
 
@@ -2626,6 +3038,7 @@ fn c_document(var c: Composer) -> Int {
     }
     return -1
   }
+  c.doc.nodes[n].foot_comment = c.ev.foot_comment
   c_next(c)
   n
 }
@@ -2685,6 +3098,8 @@ fn c_sequence(var c: Composer) -> Int {
       return -1
     }
   }
+  c.doc.nodes[n].line_comment = c.ev.line_comment
+  c.doc.nodes[n].foot_comment = c.ev.foot_comment
   c_next(c)
   n
 }
@@ -2696,10 +3111,40 @@ fn c_mapping(var c: Composer) -> Int {
   }
   c_anchor(c, n)
   c_next(c)
+  let block = c.ev.style != C_FLOW
   while c_peek(c) != E_MAPPING_END {
-    if c.err != "" || c_child(c, n) < 0 || c_child(c, n) < 0 {
+    if c.err != "" {
       return -1
     }
+    let k = c_child(c, n)
+    if k < 0 {
+      return -1
+    }
+    if block && c.doc.nodes[k].foot_comment != "" {
+      // Must be a foot comment for the prior value when being dedented.
+      let cl = c.doc.nodes[n].content.len()
+      if cl > 2 {
+        let prior = c.doc.nodes[n].content[cl - 3]
+        c.doc.nodes[prior].foot_comment = c.doc.nodes[k].foot_comment
+        c.doc.nodes[k].foot_comment = ""
+      }
+    }
+    let v = c_child(c, n)
+    if v < 0 {
+      return -1
+    }
+    if c.doc.nodes[k].foot_comment == "" && c.doc.nodes[v].foot_comment != "" {
+      c.doc.nodes[k].foot_comment = c.doc.nodes[v].foot_comment
+      c.doc.nodes[v].foot_comment = ""
+    }
+  }
+  c.doc.nodes[n].line_comment = c.ev.line_comment
+  c.doc.nodes[n].foot_comment = c.ev.foot_comment
+  let cn = c.doc.nodes[n].content.len()
+  if !(c.doc.nodes[n].style & NS_FLOW != 0) && c.doc.nodes[n].foot_comment != "" && cn > 1 {
+    let kn = c.doc.nodes[n].content[cn - 2]
+    c.doc.nodes[kn].foot_comment = c.doc.nodes[n].foot_comment
+    c.doc.nodes[n].foot_comment = ""
   }
   c_next(c)
   n
@@ -3460,6 +3905,8 @@ const ES_BLOCK_MAPPING_KEY: Int = 14
 const ES_BLOCK_MAPPING_SIMPLE_VALUE: Int = 15
 const ES_BLOCK_MAPPING_VALUE: Int = 16
 const ES_END: Int = 17
+const ES_FLOW_SEQUENCE_TRAIL_ITEM: Int = 18
+const ES_FLOW_MAPPING_TRAIL_KEY: Int = 19
 
 struct Emitter {
   out: BytesBuilder
@@ -3481,6 +3928,13 @@ struct Emitter {
   whitespace: Bool
   indention: Bool
   open_ended: Bool
+  /// the indent used to write the foot comment above, or -1 if none
+  foot_indent: Int
+  head_comment: Str
+  line_comment: Str
+  foot_comment: Str
+  tail_comment: Str
+  key_line_comment: Str
   best_indent: Int
   best_width: Int
   canonical: Bool
@@ -3499,7 +3953,7 @@ struct Emitter {
 }
 
 fn new_emitter(indent: Int) -> Emitter {
-  Emitter{out: BytesBuilder.new(), err: "", state: ES_STREAM_START, states: [], events: [], events_head: 0, indents: [], tag_directives: [], indent: -1, flow_level: 0, root_context: false, sequence_context: false, mapping_context: false, simple_key_context: false, line: 0, column: 0, whitespace: false, indention: false, open_ended: false, best_indent: indent, best_width: -1, canonical: false, unicode: true, anchor: b"", anchor_alias: false, tag_handle: b"", tag_suffix: b"", sv: b"", s_multiline: false, s_flow_plain: false, s_block_plain: false, s_single: false, s_block: false, s_style: 0}
+  Emitter{out: BytesBuilder.new(), err: "", state: ES_STREAM_START, states: [], events: [], events_head: 0, indents: [], tag_directives: [], indent: -1, flow_level: 0, root_context: false, sequence_context: false, mapping_context: false, simple_key_context: false, line: 0, column: 0, whitespace: false, indention: false, open_ended: false, foot_indent: -1, head_comment: "", line_comment: "", foot_comment: "", tail_comment: "", key_line_comment: "", best_indent: indent, best_width: -1, canonical: false, unicode: true, anchor: b"", anchor_alias: false, tag_handle: b"", tag_suffix: b"", sv: b"", s_multiline: false, s_flow_plain: false, s_block_plain: false, s_single: false, s_block: false, s_style: 0}
 }
 
 /// The byte at i, 0 past the end (the C code reads the NUL terminator).
@@ -3710,16 +4164,22 @@ fn state_machine(var e: Emitter, ev0: Event) -> Bool {
     return emit_document_end(e, ev0)
   }
   if s == ES_FLOW_SEQUENCE_FIRST_ITEM {
-    return emit_flow_sequence_item(e, ev0, true)
+    return emit_flow_sequence_item(e, ev0, true, false)
+  }
+  if s == ES_FLOW_SEQUENCE_TRAIL_ITEM {
+    return emit_flow_sequence_item(e, ev0, false, true)
   }
   if s == ES_FLOW_SEQUENCE_ITEM {
-    return emit_flow_sequence_item(e, ev0, false)
+    return emit_flow_sequence_item(e, ev0, false, false)
   }
   if s == ES_FLOW_MAPPING_FIRST_KEY {
-    return emit_flow_mapping_key(e, ev0, true)
+    return emit_flow_mapping_key(e, ev0, true, false)
+  }
+  if s == ES_FLOW_MAPPING_TRAIL_KEY {
+    return emit_flow_mapping_key(e, ev0, false, true)
   }
   if s == ES_FLOW_MAPPING_KEY {
-    return emit_flow_mapping_key(e, ev0, false)
+    return emit_flow_mapping_key(e, ev0, false, false)
   }
   if s == ES_FLOW_MAPPING_SIMPLE_VALUE {
     return emit_flow_mapping_value(e, ev0, true)
@@ -3766,6 +4226,7 @@ fn emit_stream_start(var e: Emitter, ev0: Event) -> Bool {
   e.column = 0
   e.whitespace = true
   e.indention = true
+  e.foot_indent = -1
   e.state = ES_FIRST_DOCUMENT_START
   true
 }
@@ -3817,6 +4278,10 @@ fn emit_document_start(var e: Emitter, ev0: Event, first: Bool) -> Bool {
       write_indicator(e, b"---", true, false, false)
       write_indent(e)
     }
+    if e.head_comment.len() > 0 {
+      process_head_comment(e)
+      put_break(e)
+    }
     e.state = ES_DOCUMENT_CONTENT
     return true
   }
@@ -3833,13 +4298,23 @@ fn emit_document_start(var e: Emitter, ev0: Event, first: Bool) -> Bool {
 
 fn emit_document_content(var e: Emitter, ev0: Event) -> Bool {
   e.states.push(ES_DOCUMENT_END)
-  emit_node(e, ev0, true, false, false, false)
+  process_head_comment(e)
+  if !emit_node(e, ev0, true, false, false, false) {
+    return false
+  }
+  process_line_comment(e)
+  process_foot_comment(e)
+  true
 }
 
 fn emit_document_end(var e: Emitter, ev0: Event) -> Bool {
   if ev0.typ != E_DOCUMENT_END {
     return em_error(e, "expected DOCUMENT-END")
   }
+  // [Go] Force document foot separation.
+  e.foot_indent = 0
+  process_foot_comment(e)
+  e.foot_indent = -1
   write_indent(e)
   if !ev0.implicit {
     write_indicator(e, b"...", true, false, false)
@@ -3850,57 +4325,83 @@ fn emit_document_end(var e: Emitter, ev0: Event) -> Bool {
   true
 }
 
-fn emit_flow_sequence_item(var e: Emitter, ev0: Event, first: Bool) -> Bool {
+fn has_trailing_comment(e: Emitter) -> Bool {
+  e.line_comment.len() + e.foot_comment.len() + e.tail_comment.len() > 0
+}
+
+fn emit_flow_sequence_item(var e: Emitter, ev0: Event, first: Bool, trail: Bool) -> Bool {
   if first {
     write_indicator(e, b"[", true, true, false)
     increase_indent(e, true, false)
     e.flow_level += 1
   }
   if ev0.typ == E_SEQUENCE_END {
+    if e.canonical && !first && !trail {
+      write_indicator(e, b",", false, false, false)
+    }
     e.flow_level -= 1
     pop_indent(e)
     if e.column == 0 || (e.canonical && !first) {
       write_indent(e)
     }
     write_indicator(e, b"]", false, false, false)
+    process_line_comment(e)
+    process_foot_comment(e)
     pop_estate(e)
     return true
   }
-  if !first {
+  if !first && !trail {
     write_indicator(e, b",", false, false, false)
   }
+  process_head_comment(e)
   if e.column == 0 {
     write_indent(e)
   }
   if e.canonical || e.column > e.best_width {
     write_indent(e)
   }
-  e.states.push(ES_FLOW_SEQUENCE_ITEM)
-  emit_node(e, ev0, false, true, false, false)
+  if has_trailing_comment(e) {
+    e.states.push(ES_FLOW_SEQUENCE_TRAIL_ITEM)
+  } else {
+    e.states.push(ES_FLOW_SEQUENCE_ITEM)
+  }
+  if !emit_node(e, ev0, false, true, false, false) {
+    return false
+  }
+  if has_trailing_comment(e) {
+    write_indicator(e, b",", false, false, false)
+  }
+  process_line_comment(e)
+  process_foot_comment(e)
+  true
 }
 
-fn emit_flow_mapping_key(var e: Emitter, ev0: Event, first: Bool) -> Bool {
+fn emit_flow_mapping_key(var e: Emitter, ev0: Event, first: Bool, trail: Bool) -> Bool {
   if first {
     write_indicator(e, b"{", true, true, false)
     increase_indent(e, true, false)
     e.flow_level += 1
   }
   if ev0.typ == E_MAPPING_END {
-    if e.canonical && !first {
+    if (e.canonical || e.head_comment.len() + e.foot_comment.len() + e.tail_comment.len() > 0) && !first && !trail {
       write_indicator(e, b",", false, false, false)
     }
+    process_head_comment(e)
     e.flow_level -= 1
     pop_indent(e)
     if e.canonical && !first {
       write_indent(e)
     }
     write_indicator(e, b"}", false, false, false)
+    process_line_comment(e)
+    process_foot_comment(e)
     pop_estate(e)
     return true
   }
-  if !first {
+  if !first && !trail {
     write_indicator(e, b",", false, false, false)
   }
+  process_head_comment(e)
   if e.column == 0 {
     write_indent(e)
   }
@@ -3925,8 +4426,20 @@ fn emit_flow_mapping_value(var e: Emitter, ev0: Event, simple: Bool) -> Bool {
     }
     write_indicator(e, b":", true, false, false)
   }
-  e.states.push(ES_FLOW_MAPPING_KEY)
-  emit_node(e, ev0, false, false, true, false)
+  if has_trailing_comment(e) {
+    e.states.push(ES_FLOW_MAPPING_TRAIL_KEY)
+  } else {
+    e.states.push(ES_FLOW_MAPPING_KEY)
+  }
+  if !emit_node(e, ev0, false, false, true, false) {
+    return false
+  }
+  if has_trailing_comment(e) {
+    write_indicator(e, b",", false, false, false)
+  }
+  process_line_comment(e)
+  process_foot_comment(e)
+  true
 }
 
 fn emit_block_sequence_item(var e: Emitter, ev0: Event, first: Bool) -> Bool {
@@ -3938,22 +4451,36 @@ fn emit_block_sequence_item(var e: Emitter, ev0: Event, first: Bool) -> Bool {
     pop_estate(e)
     return true
   }
+  process_head_comment(e)
   write_indent(e)
   write_indicator(e, b"-", true, false, true)
   e.states.push(ES_BLOCK_SEQUENCE_ITEM)
-  emit_node(e, ev0, false, true, false, false)
+  if !emit_node(e, ev0, false, true, false, false) {
+    return false
+  }
+  process_line_comment(e)
+  process_foot_comment(e)
+  true
 }
 
 fn emit_block_mapping_key(var e: Emitter, ev0: Event, first: Bool) -> Bool {
   if first {
     increase_indent(e, false, false)
   }
+  process_head_comment(e)
   if ev0.typ == E_MAPPING_END {
     pop_indent(e)
     pop_estate(e)
     return true
   }
   write_indent(e)
+  if e.line_comment.len() > 0 {
+    // [Go] A line comment was provided for the key. That is unusual as the
+    // scanner associates line comments with the value. Either way, save it
+    // and render it appropriately later.
+    e.key_line_comment = e.line_comment
+    e.line_comment = ""
+  }
   if check_simple_key(e) {
     e.states.push(ES_BLOCK_MAPPING_SIMPLE_VALUE)
     return emit_node(e, ev0, false, false, true, true)
@@ -3970,8 +4497,35 @@ fn emit_block_mapping_value(var e: Emitter, ev0: Event, simple: Bool) -> Bool {
     write_indent(e)
     write_indicator(e, b":", true, false, true)
   }
+  if e.key_line_comment.len() > 0 {
+    // [Go] Line comments are generally associated with the value, but when
+    // there is no value on the same line as a mapping key they end up attached
+    // to the key itself.
+    if ev0.typ == E_SCALAR {
+      if e.line_comment.len() == 0 {
+        // A scalar is coming and it has no line comment by itself yet, so let
+        // it handle the line comment as usual. If it has one, the key's is lost.
+        e.line_comment = e.key_line_comment
+        e.key_line_comment = ""
+      }
+    } else if ev0.style != C_FLOW && (ev0.typ == E_MAPPING_START || ev0.typ == E_SEQUENCE_START) {
+      // An indented block follows, so write the comment right now.
+      let saved = e.line_comment
+      e.line_comment = e.key_line_comment
+      e.key_line_comment = saved
+      process_line_comment(e)
+      let saved2 = e.line_comment
+      e.line_comment = e.key_line_comment
+      e.key_line_comment = saved2
+    }
+  }
   e.states.push(ES_BLOCK_MAPPING_KEY)
-  emit_node(e, ev0, false, false, true, false)
+  if !emit_node(e, ev0, false, false, true, false) {
+    return false
+  }
+  process_line_comment(e)
+  process_foot_comment(e)
+  true
 }
 
 fn emit_node(var e: Emitter, ev0: Event, root: Bool, sequence: Bool, mapping: Bool, simple_key: Bool) -> Bool {
@@ -4124,6 +4678,82 @@ fn process_tag(var e: Emitter) {
     write_tag_content(e, e.tag_suffix, false)
     write_indicator(e, b">", false, false, false)
   }
+}
+
+/// Writes the head comment (yaml_emitter_process_head_comment).
+fn process_head_comment(var e: Emitter) {
+  if e.tail_comment.len() > 0 {
+    write_indent(e)
+    write_comment(e, e.tail_comment.bytes())
+    e.tail_comment = ""
+    e.foot_indent = e.indent
+    if e.foot_indent < 0 {
+      e.foot_indent = 0
+    }
+  }
+  if e.head_comment.len() == 0 {
+    return
+  }
+  write_indent(e)
+  write_comment(e, e.head_comment.bytes())
+  e.head_comment = ""
+}
+
+/// Writes the line comment.
+fn process_line_comment(var e: Emitter) {
+  if e.line_comment.len() == 0 {
+    return
+  }
+  if !e.whitespace {
+    put(e, 32)
+  }
+  write_comment(e, e.line_comment.bytes())
+  e.line_comment = ""
+}
+
+/// Writes the foot comment.
+fn process_foot_comment(var e: Emitter) {
+  if e.foot_comment.len() == 0 {
+    return
+  }
+  write_indent(e)
+  write_comment(e, e.foot_comment.bytes())
+  e.foot_comment = ""
+  e.foot_indent = e.indent
+  if e.foot_indent < 0 {
+    e.foot_indent = 0
+  }
+}
+
+fn write_comment(var e: Emitter, comment: Bytes) {
+  var breaks = false
+  var pound = false
+  var i = 0
+  while i < comment.len() {
+    if is_break_at(comment, i) {
+      i = write_break(e, comment, i)
+      breaks = true
+      pound = false
+    } else {
+      if breaks {
+        write_indent(e)
+      }
+      if !pound {
+        if comment[i] != 35 {
+          put(e, 35)
+          put(e, 32)
+        }
+        pound = true
+      }
+      i = write_char(e, comment, i)
+      e.indention = false
+      breaks = false
+    }
+  }
+  if !breaks {
+    put_break(e)
+  }
+  e.whitespace = true
 }
 
 fn process_scalar(var e: Emitter) {
@@ -4341,6 +4971,18 @@ fn analyze_event(var e: Emitter, ev0: Event) -> Bool {
   e.tag_handle = b""
   e.tag_suffix = b""
   e.sv = b""
+  if ev0.head_comment.len() > 0 {
+    e.head_comment = ev0.head_comment
+  }
+  if ev0.line_comment.len() > 0 {
+    e.line_comment = ev0.line_comment
+  }
+  if ev0.foot_comment.len() > 0 {
+    e.foot_comment = ev0.foot_comment
+  }
+  if ev0.tail_comment.len() > 0 {
+    e.tail_comment = ev0.tail_comment
+  }
   let t = ev0.typ
   if t == E_ALIAS {
     return analyze_anchor(e, ev0.anchor, true)
@@ -4374,10 +5016,14 @@ fn write_indent(var e: Emitter) {
   if !e.indention || e.column > indent || (e.column == indent && !e.whitespace) {
     put_break(e)
   }
+  if e.foot_indent == indent {
+    put_break(e)
+  }
   while e.column < indent {
     put(e, 32)
   }
   e.whitespace = true
+  e.foot_indent = -1
 }
 
 fn write_indicator(var e: Emitter, indicator: Bytes, need_whitespace: Bool, is_whitespace: Bool, is_indention: Bool) {
@@ -4654,6 +5300,7 @@ fn write_block_scalar_hints(var e: Emitter, value: Bytes) {
 fn write_literal_scalar(var e: Emitter, value: Bytes) {
   write_indicator(e, b"|", true, false, false)
   write_block_scalar_hints(e, value)
+  process_line_comment(e)
   e.whitespace = true
   var breaks = true
   var i = 0
@@ -4675,6 +5322,7 @@ fn write_literal_scalar(var e: Emitter, value: Bytes) {
 fn write_folded_scalar(var e: Emitter, value: Bytes) {
   write_indicator(e, b">", true, false, false)
   write_block_scalar_hints(e, value)
+  process_line_comment(e)
   e.whitespace = true
   var breaks = true
   var leading_spaces = true
@@ -5140,14 +5788,14 @@ fn to_node(d: yaml.Doc, i: Int, var memo: Map[Int, yaml.Node]) -> yaml.Node {
   for c in r.content {
     content.push(to_node(d, c, memo))
   }
-  let n = yaml.Node{kind: node_kind(r.kind), style: r.style, tag: r.tag, value: r.value, anchor: r.anchor, alias: alias, content: content, line: r.line, column: r.column}
+  let n = yaml.Node{kind: node_kind(r.kind), style: r.style, tag: r.tag, value: r.value, anchor: r.anchor, alias: alias, content: content, line: r.line, column: r.column, head_comment: r.head_comment, line_comment: r.line_comment, foot_comment: r.foot_comment}
   memo[i] = n
   n
 }
 
 fn doc_node(d: yaml.Doc) -> yaml.Node {
   if d.root < 0 || d.nodes.len() == 0 {
-    return yaml.Node{kind: yaml.NodeKind.Document, style: 0, tag: "", value: "", anchor: "", alias: [], content: [], line: 0, column: 0}
+    return yaml.Node{kind: yaml.NodeKind.Document, style: 0, tag: "", value: "", anchor: "", alias: [], content: [], line: 0, column: 0, head_comment: "", line_comment: "", foot_comment: ""}
   }
   var memo: Map[Int, yaml.Node] = {}
   to_node(d, d.root, memo)
@@ -5175,7 +5823,7 @@ fn long_tag(tag: Str) -> Str {
 }
 
 /// yaml.v3's encoder.node: the events of n, a tag dropped when it is the one the text resolves to.
-fn emit_tree(var em: Emitter, n: yaml.Node) -> Bool {
+fn emit_tree(var em: Emitter, n: yaml.Node, tail_in: Str) -> Bool {
   var tag = n.tag
   let stag = short_tag(tag)
   var force_quoting = false
@@ -5200,12 +5848,14 @@ fn emit_tree(var em: Emitter, n: yaml.Node) -> Bool {
     Document => {
       var ds = ev(E_DOCUMENT_START, mark0(), mark0())
       ds.implicit = true
+      ds.head_comment = n.head_comment
       var ok = emit(em, ds)
       for c in n.content {
-        ok = ok && emit_tree(em, c)
+        ok = ok && emit_tree(em, c, "")
       }
       var de = ev(E_DOCUMENT_END, mark0(), mark0())
       de.implicit = true
+      de.foot_comment = n.foot_comment
       ok && emit(em, de)
     }
     Sequence | Mapping => {
@@ -5215,15 +5865,48 @@ fn emit_tree(var em: Emitter, n: yaml.Node) -> Bool {
       st.tag = long_tag(tag).bytes()
       st.implicit = tag == ""
       st.style = if n.style & NS_FLOW != 0 { C_FLOW } else { C_BLOCK }
-      var ok = emit(em, st)
-      for c in n.content {
-        ok = ok && emit_tree(em, c)
+      st.head_comment = n.head_comment
+      if !seq {
+        st.tail_comment = tail_in
       }
-      ok && emit(em, ev(if seq { E_SEQUENCE_END } else { E_MAPPING_END }, mark0(), mark0()))
+      var ok = emit(em, st)
+      var tail = ""
+      if seq {
+        for c in n.content {
+          ok = ok && emit_tree(em, c, "")
+        }
+      } else {
+        // The tail logic moves the foot comment of prior keys to the following key,
+        // since the value for each key may be a nested structure and the foot is
+        // processed only when the entirety of the value is streamed. The last tail
+        // is processed with the mapping end event.
+        var i = 0
+        while i + 1 < n.content.len() {
+          var k = n.content[i]
+          let foot = k.foot_comment
+          if foot != "" {
+            k.foot_comment = ""
+          }
+          ok = ok && emit_tree(em, k, tail)
+          tail = foot
+          ok = ok && emit_tree(em, n.content[i + 1], "")
+          i += 2
+        }
+      }
+      var en = ev(if seq { E_SEQUENCE_END } else { E_MAPPING_END }, mark0(), mark0())
+      if !seq {
+        en.tail_comment = tail
+      }
+      en.line_comment = n.line_comment
+      en.foot_comment = n.foot_comment
+      ok && emit(em, en)
     }
     Alias => {
       var a = ev(E_ALIAS, mark0(), mark0())
       a.anchor = n.value.bytes()
+      a.head_comment = n.head_comment
+      a.line_comment = n.line_comment
+      a.foot_comment = n.foot_comment
       emit(em, a)
     }
     Scalar => {
@@ -5248,6 +5931,10 @@ fn emit_tree(var em: Emitter, n: yaml.Node) -> Bool {
       sc.implicit = tag == ""
       sc.quoted_implicit = tag == ""
       sc.style = style
+      sc.head_comment = n.head_comment
+      sc.line_comment = n.line_comment
+      sc.foot_comment = n.foot_comment
+      sc.tail_comment = tail_in
       emit(em, sc)
     }
   }
@@ -5257,12 +5944,12 @@ fn encode_node(n: yaml.Node, indent: Int) -> Str ! yaml.YamlErr {
   var em = new_emitter(indent)
   var ok = emit(em, ev(E_STREAM_START, mark0(), mark0()))
   if n.kind == yaml.NodeKind.Document {
-    ok = ok && emit_tree(em, n)
+    ok = ok && emit_tree(em, n, "")
   } else {
     var ds = ev(E_DOCUMENT_START, mark0(), mark0())
     ds.implicit = true
     ok = ok && emit(em, ds)
-    ok = ok && emit_tree(em, n)
+    ok = ok && emit_tree(em, n, "")
     var de = ev(E_DOCUMENT_END, mark0(), mark0())
     de.implicit = true
     ok = ok && emit(em, de)

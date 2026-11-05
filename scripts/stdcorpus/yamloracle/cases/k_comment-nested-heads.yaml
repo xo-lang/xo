@@ -1,0 +1,10 @@
+# top
+root:
+  # in root
+  list:
+    # in list
+    - a
+    # between
+    - b
+  # end of root
+# end

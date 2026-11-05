@@ -1,0 +1,4 @@
+a: !!str x # tagged
+b: "q" # double
+c: 's' # single
+# foot c

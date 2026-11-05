@@ -53,13 +53,18 @@ const FLOW: Int = 32
 /// Scalar its text in `value` with its resolved `tag` (`!!str`, `!!int`, ...), and an
 /// Alias the anchor name in `value` and the node it names in `alias` (a list of one node; a List
 /// because a struct cannot hold an Option of itself in a debug build, gotchas/recursive-option-struct-debug.md). `anchor` is the
-/// name an anchored node defines; `line` and `column` count from 1.
+/// name an anchored node defines; `head_comment`, `line_comment` and `foot_comment` hold
+/// the comments around the node as yaml.v3 associates them (`# ` prefixes kept, lines joined by
+/// a line feed); `line` and `column` count from 1.
 struct Node {
   kind: NodeKind
   style: Int
   tag: Str
   value: Str
   anchor: Str
+  head_comment: Str
+  line_comment: Str
+  foot_comment: Str
   alias: List[Node]
   content: List[Node]
   line: Int
@@ -96,6 +101,9 @@ struct RawNode {
   content: List[Int]
   line: Int
   column: Int
+  head_comment: Str
+  line_comment: Str
+  foot_comment: Str
 }
 
 struct Doc {

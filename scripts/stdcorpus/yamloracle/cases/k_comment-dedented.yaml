@@ -1,0 +1,7 @@
+a:
+  b:
+    c: 1
+    # dedented once
+  # dedented twice
+# top level
+d: 2

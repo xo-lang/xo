@@ -212,7 +212,7 @@ func dumpNode(b *strings.Builder, n *yaml.Node, depth int) {
 	if n.Alias != nil {
 		a = n.Alias.Anchor
 	}
-	fmt.Fprintf(b, "%s%d %s %d %s %s %d:%d ->%s\n", strings.Repeat(" ", depth), int(n.Kind), n.Tag, int(n.Style), strconv.Quote(n.Value), strconv.Quote(n.Anchor), n.Line, n.Column, a)
+	fmt.Fprintf(b, "%s%d %s %d %s %s %d:%d ->%s %s %s %s\n", strings.Repeat(" ", depth), int(n.Kind), n.Tag, int(n.Style), strconv.Quote(n.Value), strconv.Quote(n.Anchor), n.Line, n.Column, a, strconv.Quote(n.HeadComment), strconv.Quote(n.LineComment), strconv.Quote(n.FootComment))
 	for _, c := range n.Content {
 		dumpNode(b, c, depth+1)
 	}
@@ -241,19 +241,6 @@ func nodesShow(in string) (out string) {
 		dumpNode(&b, &n, 0)
 	}
 	return b.String()
-}
-
-// hasComment reports whether any node carries a comment (stage 4 of decision 0512 adds them).
-func hasComment(n *yaml.Node) bool {
-	if n.HeadComment != "" || n.LineComment != "" || n.FootComment != "" {
-		return true
-	}
-	for _, c := range n.Content {
-		if hasComment(c) {
-			return true
-		}
-	}
-	return false
 }
 
 // jsonSafe reports whether v (decoded into an any) has only what to_json writes as Go
@@ -315,7 +302,7 @@ func emitShow(in string) (out string) {
 	if err := yaml.Unmarshal([]byte(in), &n); err != nil {
 		return "ERR " + strconv.Quote(norm(err.Error()))
 	}
-	if n.Kind == 0 || hasComment(&n) {
+	if n.Kind == 0 {
 		return "SKIP"
 	}
 	b, err := yaml.Marshal(&n)
@@ -669,7 +656,7 @@ fn node_kind_n(k: yaml.NodeKind) -> Int {
 
 fn dump_node(var out: StrBuilder, n: yaml.Node, depth: Int) {
   let a = if n.alias.is_empty() { "-" } else { n.alias[0].anchor }
-  out.write("${" ".repeat(depth)}${node_kind_n(n.kind)} ${n.tag} ${n.style} ${n.value.quote()} ${n.anchor.quote()} ${n.line}:${n.column} ->${a}\n")
+  out.write("${" ".repeat(depth)}${node_kind_n(n.kind)} ${n.tag} ${n.style} ${n.value.quote()} ${n.anchor.quote()} ${n.line}:${n.column} ->${a} ${n.head_comment.quote()} ${n.line_comment.quote()} ${n.foot_comment.quote()}\n")
   for c in n.content {
     dump_node(out, c, depth + 1)
   }

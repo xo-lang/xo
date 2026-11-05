@@ -1,0 +1,7 @@
+a: &x 1 # anchor line
+# head of b
+b: *x # alias line
+# foot of b
+c: &y
+  - 1
+d: *y

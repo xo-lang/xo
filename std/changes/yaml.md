@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: feature: comments in Node
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 stage 4
+- Go reference: gopkg.in/yaml.v3 v3.0.1 scannerc.go (scan_comments, scan_line_comment), parserc.go (unfold_comments, stem and document comments), decode.go (comment assignment in the composer), emitterc.go (head, line, foot and tail comments), encode.go node
+- Test: testdata/corpus/yaml (NODES and EMITS compare the three comments and the Marshal text on 466 documents, 24 of them hand written comment cases), a 40,000 document comment mutation differential run once against yaml.v3
+
+`yaml.Node` has `head_comment`, `line_comment` and `foot_comment`, filled by `parse` and `parse_all` and written by `encode_node` as yaml.v3 does. The scanner keeps comments instead of skipping them (two token lookahead, the head to foot transform when indents unroll, the line comment under a sequence entry), and the emitter ports the trailing item states for flow collections and the foot comment separation. A scanner error met by a lookahead that the stem comment split ignores is now reported by the composer, as yaml.v3 does.
+
 ## 2026-11-05: feature: to_json
 
 - Kind: feature

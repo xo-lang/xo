@@ -1,0 +1,9 @@
+- a # line a
+# head b
+- b
+- # on the dash
+  c
+- - nested # n
+  # head d
+  - d
+# foot

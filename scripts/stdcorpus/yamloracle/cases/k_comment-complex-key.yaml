@@ -1,0 +1,5 @@
+? a # key line
+: b # value line
+? - x
+  - y
+: z
