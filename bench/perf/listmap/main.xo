@@ -1,6 +1,8 @@
 // List.map on lists of one size (decision 0508): `small` maps 4 Ints and
 // 2 Strs 2M times, `mid` 32 and 31 Ints 300k times (around the in-place
-// threshold), `big` 1M Ints 20 times, each a list nothing else holds.
+// threshold), `big` 1M Ints 20 times, each a list nothing else holds;
+// `sortby` sorts 100k (Int, Str) records by their Int 10 times and
+// `sortby_small` 4 records 300k times (List.sort_by in place).
 fn main(os: Os) {
   let args = os.env.args()
   let mode = if args.is_empty() { "big" } else { args[0] }
@@ -19,6 +21,23 @@ fn main(os: Os) {
       total += ys[31]
       let zs = (0..31).to_list().map(fn(v) { v * 2 })
       total += zs[30]
+    }
+  } else if mode == "sortby" {
+    // records sorted by a key, 100k of them 10 times
+    for r in 0..10 {
+      var rs: List[(Int, Str)] = []
+      var x = 777 + r
+      for i in 0..100_000 {
+        x = (x * 1103515245 + 12345) % 2147483648
+        rs.push((x, "r${i}"))
+      }
+      let sorted = rs.sort_by(fn(t) { t.0 })
+      total += sorted[50_000].0
+    }
+  } else if mode == "sortby_small" {
+    for i in 0..300_000 {
+      let rs = [(3 + i, "c"), (1, "a"), (2, "b"), (i % 5, "d")]
+      total += rs.sort_by(fn(t) { t.0 })[0].0
     }
   } else {
     for r in 0..20 {
