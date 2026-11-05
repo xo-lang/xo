@@ -1,6 +1,6 @@
 # Xo Language Specification (Core)
 
-Status: draft 0.10 (2026-10-10; 0.9 released as toolchain v0.9.0, decision 0089)
+Status: draft 0.40 (2026-11-05; 0.39 released as toolchain v0.39.0, decision 0089)
 Edition: preview (the only edition before 1.0, decision 0155)
 Companion: `spec/std.md` (prelude methods and standard library surface)
 
@@ -10,7 +10,17 @@ fast builds, static binaries, a strong standard library, a compatibility
 promise) and is designed so that an AI agent can write, check, build, and debug
 programs for any OS with fast, structured, unambiguous feedback.
 
-## Changes in 0.10
+## Changes in 0.40
+
+None yet.
+
+## Changes in 0.10 to 0.39
+
+The header stayed at draft 0.10 through toolchain v0.39.0 (2026-10-10 to
+2026-11-05) instead of moving with each minor release as decision 0089
+says; the changes of those releases are listed together here, and
+`CHANGELOG.md` has them per release.
+
 
 - **User capabilities on every backend** (decision 0307): a program's own
   type converted to `Fs`, `Proc`, `Env`, `Net`, `Stdio`, `Clock`, or
