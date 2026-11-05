@@ -26,8 +26,8 @@ import (
 // environment as the golden gives them, against want_wasm.txt (else
 // want.txt). wasi:cli/exit has only ok and err, so a golden whose status is
 // not 0 must exit 1. A golden that does not build or run is an error unless
-// testdata/wasm_cmd_unsupported.txt lists it with the reason, and a listed
-// golden that passes is an error too. It skips where wasmtime or wasm-tools
+// its line in testdata/wasm_unsupported.txt has a `# wasip2: REASON` part
+// (wasip2List), and such a golden that passes is an error too. It skips where wasmtime or wasm-tools
 // is not installed (the Mac); the linux/arm64 offload hosts have them.
 // XO_WASM_GOLDENS chooses goldens as in TestSelfhostWasm.
 func TestWasmCommandGoldens(t *testing.T) {
@@ -40,7 +40,7 @@ func TestWasmCommandGoldens(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := repoRoot(t)
-	known := listFile(t, filepath.Join(root, "internal", "selfhost", "testdata", "wasm_cmd_unsupported.txt"))
+	known := wasip2List(t, filepath.Join(root, "internal", "selfhost", "testdata", "wasm_unsupported.txt"))
 	dirs, err := filepath.Glob(filepath.Join(root, "internal", "llvm", "testdata", "golden", "*"))
 	if err != nil || len(dirs) == 0 {
 		t.Fatalf("no goldens: %v", err)
@@ -80,7 +80,7 @@ func TestWasmCommandGoldens(t *testing.T) {
 				mu.Unlock()
 				_, listed := known[name]
 				if why != "" && !listed {
-					t.Errorf("%s; fix it, or list it in internal/selfhost/testdata/wasm_cmd_unsupported.txt with the reason", why)
+					t.Errorf("%s; fix it, or add `# wasip2: REASON` to its line in internal/selfhost/testdata/wasm_unsupported.txt", why)
 				} else if why != "" {
 					// what fails now, beside the list's reason (-v)
 					t.Logf("listed (%s): %s", known[name], why)
@@ -95,7 +95,7 @@ func TestWasmCommandGoldens(t *testing.T) {
 	}
 	for name := range known {
 		if ran[name] && failed[name] == "" {
-			t.Errorf("golden %s passes on wasip2/wasm: drop it from testdata/wasm_cmd_unsupported.txt", name)
+			t.Errorf("golden %s passes on wasip2/wasm: drop its `# wasip2:` part in testdata/wasm_unsupported.txt", name)
 		}
 	}
 }
@@ -209,6 +209,19 @@ func wasmNetFlags(wit string) []string {
 }
 
 // listFile reads a list of golden names, one a line, with # comments.
+// wasip2List reads the goldens expected to fail as wasip2 components: the
+// lines of wasm_unsupported.txt with a `# wasip2: REASON` part, by name
+// (the one list of both wasm tests since 2026-11-05).
+func wasip2List(t *testing.T, path string) map[string]string {
+	out := map[string]string{}
+	for name, why := range listFile(t, path) {
+		if _, w, ok := strings.Cut(why, "# wasip2:"); ok {
+			out[name] = strings.TrimSpace(w)
+		}
+	}
+	return out
+}
+
 func listFile(t *testing.T, path string) map[string]string {
 	out := map[string]string{}
 	b, err := os.ReadFile(path)
