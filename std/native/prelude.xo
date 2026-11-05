@@ -5658,6 +5658,62 @@ fn float_to_bits(f: Float) -> Int { rt.float_bits(f) }
 
 fn float_from_bits(b: Int) -> Float { rt.float_from_bits(b) }
 
+/// The binary32 bits of f (Float32frombits' inverse) from its widened
+/// double, which is exact: the exponent rebiased, the mantissa cut to 23
+/// bits, a double below the binary32 normal range shifted into a
+/// subnormal; infinities and NaNs keep their top payload bits.
+fn float32_to_bits(f: Float32) -> UInt32 {
+  let d = Float(f).to_bits()
+  let sign = (d >> 63) & 1
+  let e = (d >> 52) & 0x7FF
+  let m = d & 0xFFFFFFFFFFFFF
+  var bits = 0
+  if e == 0x7FF {
+    bits = 0x7F800000 | (m >> 29)
+    if m != 0 {
+      bits = bits | 0x400000
+    }
+  } else if e == 0 {
+    bits = 0
+  } else {
+    let x = e - 1023
+    if x >= -126 {
+      bits = ((x + 127) << 23) | (m >> 29)
+    } else {
+      bits = (0x10000000000000 | m) >> (29 - 126 - x)
+    }
+  }
+  UInt32(bits | (sign << 31))
+}
+
+/// Float32frombits: the double of the bits, rebiased (a binary32
+/// subnormal is a normal double), then narrowed, which is exact.
+fn float32_from_bits(b: UInt32) -> Float32 {
+  let n = Int(b)
+  let sign = (n >> 31) & 1
+  let e = (n >> 23) & 0xFF
+  let m = n & 0x7FFFFF
+  var d = 0
+  if e == 0xFF {
+    d = 0x7FF0000000000000 | (m << 29)
+  } else if e == 0 {
+    if m != 0 {
+      // m * 2^-149: the top set bit p of m is the exponent
+      var p = 22
+      while ((m >> p) & 1) == 0 {
+        p -= 1
+      }
+      d = ((p - 149 + 1023) << 52) | (((m << (52 - p)) & 0xFFFFFFFFFFFFF))
+    }
+  } else {
+    d = ((e - 127 + 1023) << 52) | (m << 29)
+  }
+  if sign == 1 {
+    d = d | (1).wrapping_shl(63)
+  }
+  Float32(Float.from_bits(d))
+}
+
 fn int_leading_zeros(n: Int) -> Int { rt.clz(n) }
 
 fn int_trailing_zeros(n: Int) -> Int { rt.ctz(n) }

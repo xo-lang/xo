@@ -97,7 +97,9 @@ Int(x: Float) -> Int                 // truncates toward zero; faults on NaN or 
 Float(x: Int) -> Float
 Int32(x: Int) -> Int32               // faults out of range; same for every sized type
 Int32.try(x: Int) -> Int32?
-UInt64.from_bits(b: Int) -> UInt64       // the same 64 bits (Go's uint64(x)): -1 is 2^64 - 1
+Int8.wrapping_from(x: Int) -> Int8       // Go's conversion T(x): the low bits kept, sign extended for a signed T, no fault;
+                                         // also Int16, Int32, UInt8, UInt16, UInt32 (Int8.wrapping_from(300) is 44, UInt8.wrapping_from(-1) is 255)
+UInt64.from_bits(b: Int) -> UInt64       // the same 64 bits (Go's uint64(x)): -1 is 2^64 - 1; UInt64.wrapping_from(x) is the same
 fn (u: UInt64) to_bits() -> Int          // the same 64 bits back (Go's int64(u)): 2^63 and up are negative
 Int(r: Rune) -> Int                  // the code point; every integer type (core 2.1)
 Rune(n: Int) -> Rune                 // faults unless n is a Unicode scalar value
@@ -128,6 +130,8 @@ fn (f: Float) atan2(x: Float) -> Float       // Go's Atan2(f, x)
 fn (f: Float) hypot(y: Float) -> Float
 fn (f: Float) mod(y: Float) -> Float         // Go's Mod: the remainder with the sign of f
 fn (f: Float) to_bits() -> Int               // the IEEE 754 bits; Float.from_bits(b) back
+fn (f: Float32) to_bits() -> UInt32          // the binary32 bits (Go's Float32bits); Float32.from_bits(b: UInt32) back (Float32frombits).
+                                             // A signaling NaN comes back quiet on the native backends (the Go backend keeps it)
 ```
 
 Int's word methods (decision 0260) treat an `Int` as a 64 bit word for
@@ -5265,7 +5269,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-502 declarations.
+511 declarations.
 
 ### Range
 
@@ -5374,18 +5378,21 @@ fn (static: Float) from_bits(b: Int) -> Float
 
 ```
 fn (static: Int8) try(x: Int) -> Int8?
+fn (static: Int8) wrapping_from(x: Int) -> Int8
 ```
 
 ### Int16
 
 ```
 fn (static: Int16) try(x: Int) -> Int16?
+fn (static: Int16) wrapping_from(x: Int) -> Int16
 ```
 
 ### Int32
 
 ```
 fn (static: Int32) try(x: Int) -> Int32?
+fn (static: Int32) wrapping_from(x: Int) -> Int32
 ```
 
 ### Int64
@@ -5398,26 +5405,37 @@ fn (static: Int64) try(x: Int) -> Int64?
 
 ```
 fn (static: UInt8) try(x: Int) -> UInt8?
+fn (static: UInt8) wrapping_from(x: Int) -> UInt8
 ```
 
 ### UInt16
 
 ```
 fn (static: UInt16) try(x: Int) -> UInt16?
+fn (static: UInt16) wrapping_from(x: Int) -> UInt16
 ```
 
 ### UInt32
 
 ```
 fn (static: UInt32) try(x: Int) -> UInt32?
+fn (static: UInt32) wrapping_from(x: Int) -> UInt32
 ```
 
 ### UInt64
 
 ```
 fn (static: UInt64) try(x: Int) -> UInt64?
+fn (static: UInt64) wrapping_from(x: Int) -> UInt64
 fn (static: UInt64) from_bits(b: Int) -> UInt64
 fn (u: UInt64) to_bits() -> Int
+```
+
+### Float32
+
+```
+fn (f: Float32) to_bits() -> UInt32
+fn (static: Float32) from_bits(b: UInt32) -> Float32
 ```
 
 ### Rune

@@ -1,0 +1,18 @@
+// T.wrapping_from (Go's conversion of an Int) and Float32.to_bits and from_bits.
+fn main(os: Os) {
+  var xs: List[Int] = [0, 1, -1, 127, 128, 255, 256, 300, 32767, 32768, 65535, 65536, 2147483647, 2147483648, 4294967295, 4294967296, -128, -129, -32769, -2147483649, 9223372036854775807]
+  xs.push(-9223372036854775807 - 1)
+  for x in xs {
+    os.stdio.println("${x}: ${Int8.wrapping_from(x)} ${Int16.wrapping_from(x)} ${Int32.wrapping_from(x)} ${UInt8.wrapping_from(x)} ${UInt16.wrapping_from(x)} ${UInt32.wrapping_from(x)} ${UInt64.wrapping_from(x)}")
+  }
+  for b in [0, 1, 0x7FFFFF, 0x800000, 0x3F800000, 0x80000000, 0xBF800000, 0x7F7FFFFF, 0x7F800000, 0xFF800000, 0x00400000, 0x00000001, 0x80000001, 0x01000000, 0x33800000, 0x7FC00000, 0x7FC00001, 0xFFC12345] {
+    let f = Float32.from_bits(UInt32(b))
+    os.stdio.println("${b}: ${f.to_bits()} ${Float32.from_bits(f.to_bits()).to_bits()}")
+  }
+  var x = 1.0
+  for _ in 0..30 {
+    x = x * 0.1
+    let f = Float32(x)
+    os.stdio.println("${f.to_bits()}")
+  }
+}

@@ -7,6 +7,17 @@
 
 
 
+## 2026-11-05: feature: Int8 to UInt32 wrapping_from and Float32 to_bits and from_bits
+
+- Kind: feature
+- Commit: this push
+- Found by: the std/amqp port (2026-11-05): `Int.wrapping_from`, `UInt64.wrapping_from` and `Float32.to_bits` were the natural names and did not exist (the owner's survey follow-up)
+- Go reference: the conversions uint8(x), int8(x), ... of an int64, and math.Float32bits and Float32frombits
+- Test: golden num_wrapping (every backend: 22 boundary values through all seven types, 18 binary32 patterns round tripped, 30 narrowed products of 0.1)
+- Shipped in: not yet released
+
+`T.wrapping_from(x: Int)` for Int8, Int16, Int32, UInt8, UInt16, UInt32 and UInt64 is Go's conversion: the low bits kept, sign extended for a signed T, no fault (`try` is the checked form, `UInt64.from_bits` the old name of the 64 bit one). The compiler lowers it to a mask, or a shift pair for a signed type, and a bare integer conversion. `Float32.to_bits() -> UInt32` and `Float32.from_bits(b: UInt32)` give and take the binary32 bits (std/native/prelude.xo, from the widened double, which is exact); a signaling NaN is quieted on the native backends, where the Go backend keeps it.
+
 ## 2026-11-05: fix: a --race build no longer reports two tasks' faults on one worker as a race
 
 - Kind: fix

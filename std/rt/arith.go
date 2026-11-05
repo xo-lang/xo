@@ -432,6 +432,20 @@ func UInt16_try(_ *Task, x int64) Option[uint16] { return TryConv[uint16](x) }
 // UInt32_try is `UInt32.try(x)`.
 func UInt32_try(_ *Task, x int64) Option[uint32] { return TryConv[uint32](x) }
 
+// T_wrapping_from is `T.wrapping_from(x)`: Go's conversion T(x).
+func Int8_wrapping_from(_ *Task, x int64) int8     { return int8(x) }
+func Int16_wrapping_from(_ *Task, x int64) int16   { return int16(x) }
+func Int32_wrapping_from(_ *Task, x int64) int32   { return int32(x) }
+func UInt8_wrapping_from(_ *Task, x int64) uint8   { return uint8(x) }
+func UInt16_wrapping_from(_ *Task, x int64) uint16 { return uint16(x) }
+func UInt32_wrapping_from(_ *Task, x int64) uint32 { return uint32(x) }
+func UInt64_wrapping_from(_ *Task, x int64) uint64 { return uint64(x) }
+
+// Float32_to_bits is `f.to_bits()` of a Float32 (math.Float32bits), and
+// Float32_from_bits is `Float32.from_bits(b)`.
+func Float32_to_bits(_ *Task, f float32) uint32   { return math.Float32bits(f) }
+func Float32_from_bits(_ *Task, b uint32) float32 { return math.Float32frombits(b) }
+
 // UInt64_from_bits is `UInt64.from_bits(b)`: the same 64 bits.
 func UInt64_from_bits(_ *Task, b int64) uint64 { return uint64(b) }
 

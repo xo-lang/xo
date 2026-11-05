@@ -49,8 +49,17 @@ var (
 	_ func(*Task, int64) Option[uint16]                               = UInt16_try
 	_ func(*Task, int64) Option[uint32]                               = UInt32_try
 	_ func(*Task, int64) Option[uint64]                               = UInt64_try
+	_ func(*Task, int64) int8                                         = Int8_wrapping_from
+	_ func(*Task, int64) int16                                        = Int16_wrapping_from
+	_ func(*Task, int64) int32                                        = Int32_wrapping_from
+	_ func(*Task, int64) uint8                                        = UInt8_wrapping_from
+	_ func(*Task, int64) uint16                                       = UInt16_wrapping_from
+	_ func(*Task, int64) uint32                                       = UInt32_wrapping_from
+	_ func(*Task, int64) uint64                                       = UInt64_wrapping_from
 	_ func(*Task, int64) uint64                                       = UInt64_from_bits
 	_ func(*Task, uint64) int64                                       = UInt64_to_bits
+	_ func(*Task, float32) uint32                                     = Float32_to_bits
+	_ func(*Task, uint32) float32                                     = Float32_from_bits
 	_ func(*Task, int64) Option[Rune]                                 = Rune_try
 	_ func(*Task, int64) int64                                        = Int_abs
 	_ func(*Task, int64, int64) int64                                 = Int_pow

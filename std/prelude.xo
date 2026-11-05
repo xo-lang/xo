@@ -182,10 +182,25 @@ fn (static: UInt8) try(x: Int) -> UInt8?
 fn (static: UInt16) try(x: Int) -> UInt16?
 fn (static: UInt32) try(x: Int) -> UInt32?
 fn (static: UInt64) try(x: Int) -> UInt64?
+/// Go's conversion T(x) of an Int to a smaller integer type: the low bits
+/// kept, sign extended for a signed T, no fault (`Int8.wrapping_from(300)`
+/// is 44, `UInt8.wrapping_from(-1)` is 255). `try` is the checked one.
+fn (static: Int8) wrapping_from(x: Int) -> Int8
+fn (static: Int16) wrapping_from(x: Int) -> Int16
+fn (static: Int32) wrapping_from(x: Int) -> Int32
+fn (static: UInt8) wrapping_from(x: Int) -> UInt8
+fn (static: UInt16) wrapping_from(x: Int) -> UInt16
+fn (static: UInt32) wrapping_from(x: Int) -> UInt32
+/// UInt64.wrapping_from(x) is UInt64.from_bits(x).
+fn (static: UInt64) wrapping_from(x: Int) -> UInt64
 /// Int's 64 bits as a UInt64 (Go's uint64(x)): -1 is 18446744073709551615.
 fn (static: UInt64) from_bits(b: Int) -> UInt64
 /// u's 64 bits as an Int (Go's int64(u)): 2^63 and up are negative.
 fn (u: UInt64) to_bits() -> Int
+/// The IEEE 754 binary32 bits of f (Go's Float32bits), and the Float32 of
+/// bits b (Float32frombits); a NaN keeps its payload.
+fn (f: Float32) to_bits() -> UInt32
+fn (static: Float32) from_bits(b: UInt32) -> Float32
 /// The character with code point x, or None when x is not a Unicode
 /// scalar value (a surrogate, negative, or above U+10FFFF).
 fn (static: Rune) try(x: Int) -> Rune?
