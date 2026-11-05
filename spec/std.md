@@ -7307,7 +7307,7 @@ fn encode_node(n: Node, indent: Int = 4) -> Str ! YamlErr
 fn to_json(text: Str) -> Str ! YamlErr
 ```
 
-- `derive Yaml` (structs only, no type parameters) maps Str, Int, Float, Bool, Duration, Bytes, `yaml.Node`, an Option, a List, a Map[Str, V] of those, or a
+- `derive Yaml` (structs only, no type parameters) maps Str, Int, Float, Bool, Duration, Bytes, Time, `time.Civil`, `yaml.Node`, an Option, a List, a Map[Str, V] of those, or a
   struct that derives Yaml (`XO0425` for another type). A field's key is its `yaml "name,options"` string, else its `as` string
   (shared with Json), else its name. Options are `omitempty` (also in the shared `as "name,omitempty"`), `flow` (only in
   `yaml "name,flow"`) and `inline` (a field that is a struct deriving Yaml, read and written in the enclosing mapping); the name
@@ -7322,6 +7322,14 @@ fn to_json(text: Str) -> Str ! YamlErr
 - A `yaml.Node` field holds the node of its key as it is (an alias stays an Alias node, as in yaml.v3, which stops at the Node type
   before its alias handling), comments included, and is written back through `encode_node`'s rules; a field the document lacks is a
   null scalar (yaml.v3's zero Node has kind 0 and is written as null).
+- A `Time` field decodes a timestamp scalar (yaml.v3's layouts `2001-12-14`, `2001-12-14 21:59:43.10`, `2001-12-14t21:59:43.10-05:00`)
+  to its instant, which equals yaml.v3's `t.UnixNano()`; any other scalar must be RFC 3339 (`Time.UnmarshalText`), else the
+  error `parsing time "x" as "2006-01-02T15:04:05Z07:00": cannot parse` (the rest of Go's layout error text is not
+  reproduced), and a mapping decodes into nothing, as for yaml.v3's struct. A `Time` is an instant with no zone (decision
+  0094) and spans 1677-09-21 to 2262-04-11, so a timestamp outside that range is `cannot unmarshal !!timestamp ... into
+  time.Time`, and a `Time` is written as RFC 3339 in UTC (`2001-12-15T02:59:43.1Z`), where yaml.v3 keeps the zone it read. A
+  `time.Civil` field keeps the offset (`+05:30`) and writes it back as yaml.v3 does. The zero of both is 1970-01-01T00:00:00Z
+  (yaml.v3's is year 1), so a field the document lacks differs.
 - A Duration is a string in `Duration.parse` syntax (`1h30m`), written as Go's Duration.String (`1h30m0s`); yaml.v3 refuses an
   int or a float there (`cannot unmarshal !!int `5` into time.Duration`), and so does Xo. Bytes is, as yaml.v3's `[]byte`, a
   sequence of ints 0 to 255 (a string or `!!binary` value is an error, `into []uint8`), written as such (`[]` when empty).

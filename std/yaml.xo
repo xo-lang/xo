@@ -3,6 +3,7 @@
 // gopkg.in/yaml.v3's rules (a port of its scanner, parser, decoder and emitter,
 // MIT).
 // Pure.
+use std/time
 
 /// Displays as `yaml: line 3: mapping values are not allowed in this context`;
 /// type mismatches as `yaml: unmarshal errors:\n  line 2: cannot unmarshal !!str
@@ -210,6 +211,17 @@ fn finish_all(ws: List[Enc], indent: Int) -> Str ! YamlErr
 /// A Duration field (yaml.v3's time.Duration): a string in `Duration.parse` syntax;
 /// an int or a float is an error there as here.
 fn to_duration(d: Doc, i: Int, var st: Dec) -> (Bool, Duration) ! YamlErr
+/// A Time field: a timestamp scalar (yaml.v3's `2001-12-14`, `2001-12-14 21:59:43.10`, `2001-12-14t21:59:43.10-05:00`)
+/// as its instant, or any other text in RFC 3339; the zone is not kept.
+fn to_time(d: Doc, i: Int, var st: Dec) -> (Bool, Time) ! YamlErr
+/// Writes a Time as RFC 3339 in UTC.
+fn put_time(var w: Enc, t: Time)
+/// A time.Civil field: a Time field that keeps the offset of the timestamp (yaml.v3's time.Time does).
+fn to_civil(d: Doc, i: Int, var st: Dec) -> (Bool, time.Civil) ! YamlErr
+/// The value of a time.Civil field the document does not hold: 1970-01-01T00:00:00Z.
+fn zero_civil() -> time.Civil
+/// Writes a Civil as RFC 3339 with its offset.
+fn put_civil(var w: Enc, c: time.Civil)
 /// A Bytes field, as yaml.v3's []byte: a sequence of ints 0 to 255.
 fn to_bytes(d: Doc, i: Int, var st: Dec) -> (Bool, Bytes) ! YamlErr
 /// Writes a Duration as Go's Duration.String text (`1h30m0s`).

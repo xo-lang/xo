@@ -354,6 +354,80 @@ var ndCases = []string{
 	"n: {a: 1, a: 2}\n",
 }
 
+type Tm struct {
+	T time.Time  `yaml:"t"`
+	P *time.Time `yaml:"p"`
+	N int        `yaml:"n"`
+}
+
+func tmNanos(t time.Time) string {
+	if t.IsZero() {
+		return "0" // Xo's zero Time is the epoch
+	}
+	sec, ns := t.Unix(), int64(t.Nanosecond())
+	if !((sec > -9223372037 || (sec == -9223372037 && ns >= 145224192)) && (sec < 9223372036 || (sec == 9223372036 && ns <= 854775807))) {
+		return "RANGE"
+	}
+	return strconv.FormatInt(t.UnixNano(), 10)
+}
+
+// tmShow decodes into Tm and prints the instants, or the error (a Time.UnmarshalText
+// error is ERRPARSE: its text is Go's layout error).
+func tmShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	var t Tm
+	if err := yaml.Unmarshal([]byte(in), &t); err != nil {
+		if strings.HasPrefix(err.Error(), "parsing time") {
+			return "ERRPARSE"
+		}
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	p := "nil"
+	if t.P != nil {
+		p = tmNanos(*t.P)
+	}
+	return fmt.Sprintf("t=%s p=%s n=%d", tmNanos(t.T), p, t.N)
+}
+
+// cvShow decodes into Tm and marshals it back (the offsets of the timestamps are kept), or SKIP when t
+// is the zero time (Xo's zero Civil is the epoch) or ERRPARSE / ERR.
+func cvShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	var t Tm
+	if err := yaml.Unmarshal([]byte(in), &t); err != nil {
+		if strings.HasPrefix(err.Error(), "parsing time") {
+			return "ERRPARSE"
+		}
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	if t.T.IsZero() {
+		return "SKIP"
+	}
+	b, err := yaml.Marshal(t)
+	if err != nil {
+		return "SKIP"
+	}
+	return "OK " + string(b)
+}
+
+var tmP = time.Date(2002, 2, 3, 4, 5, 6, 7, time.UTC)
+
+var tmCases = []string{
+	"t: 2001-12-14", "t: 2001-12-14t21:59:43.10-05:00", "t: 2001-12-14T21:59:43.10-05:00", "t: 2001-12-14 21:59:43.10", "t: 2001-12-14 21:59:43",
+	"t: 2001-1-2", "t: 2001-12-14T21:59:43Z", "t: 2001-12-14T1:2:3Z", "t: 2001-12-14 21:59:43 -5", "t: nope", "t: \"2001-12-14\"", "t: \"2001-12-14T21:59:43Z\"",
+	"t: 5", "t: 2001-12-32", "t: !!timestamp 2001-12-14", "t: ~", "t: [1]", "t: {a: 1}", "p: 2002-02-03", "p: ~", "t: 1970-01-01", "t: 1969-12-31T23:59:59.999999999Z",
+	"t: 2262-04-11T23:47:16.854775807Z", "t: 1677-09-21T00:12:43.145224192Z", "t: 3000-01-01", "t: 1000-01-01", "t: 2001-12-14T21:59:43.123456789+05:30", "t: 2001-12-14T21:59:43.1234567891Z",
+	"n: 1\nt: 2020-02-29\np: 2021-02-29", "t: 2000-02-29T24:00:00Z", "t: 2001-12-14T21:59:43.Z", "t: 2001-12-14T21:59:43+0530",
+}
+
 // strictShow is inlineShow with KnownFields(true).
 func strictShow(in string) (out string) {
 	defer func() {
@@ -518,6 +592,7 @@ func marshalAll(docs []Cfg) string {
 }
 
 const xoPrelude = `use std/yaml
+use std/time
 
 struct Inner {
   x: Int
@@ -652,6 +727,41 @@ fn show_nd(text: Str) -> Str {
         dump_node(out, t.n, 0)
       }
       out.freeze()
+    }
+  }
+}
+
+struct Tm {
+  t: Time
+  p: Time?
+  n: Int
+} derive Yaml
+
+fn show_tm(text: Str) -> Str {
+  match yaml.decode[Tm](text) {
+    Err(e) => if e.display().starts_with("yaml: parsing time") { "ERRPARSE" } else { "ERR ${e.display().quote()}" }
+    Ok(t) => {
+      let p = match t.p {
+        Some(v) => "${(v - Time.UNIX_EPOCH).nanos()}"
+        None => "nil"
+      }
+      "t=${(t.t - Time.UNIX_EPOCH).nanos()} p=${p} n=${t.n}"
+    }
+  }
+}
+
+struct Cv {
+  t: time.Civil
+  p: time.Civil?
+  n: Int
+} derive Yaml
+
+fn show_cv(text: Str) -> Str {
+  match yaml.decode[Cv](text) {
+    Err(e) => if e.display().starts_with("yaml: parsing time") { "ERRPARSE" } else { "ERR ${e.display().quote()}" }
+    Ok(c) => match yaml.encode_value[Cv](c) {
+      Ok(t) => "OK ${t}"
+      Err(e) => "ERR ${e.display().quote()}"
     }
   }
 }
@@ -892,6 +1002,30 @@ const CASES: List[(Str, Str)] = [
 		fmt.Fprintf(&ndOut, "  (%s, %d, %s),\n", xq(d), i, xq(string(mb)))
 	}
 	fmt.Fprintf(&o, "/// (a document, what yaml.v3 writes for an Nd whose n is the value of its first key; a is the index)\nconst ND_MARSHALED: List[(Str, Int, Str)] = [\n%s]\n\n", ndOut.String())
+	o.WriteString("/// (a document, what yaml.v3 decodes it into Tm as: the UnixNano of t and p; RANGE outside int64 nanoseconds, ERRPARSE for Time.UnmarshalText's error)\nconst TM: List[(Str, Str)] = [\n")
+	for _, d := range tmCases {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(tmShow(d)))
+	}
+	o.WriteString("]\n\n")
+	o.WriteString("/// (a document, what yaml.v3 decodes into Tm and marshals back: the offsets are kept; SKIP, ERRPARSE, ERR)\nconst CV: List[(Str, Str)] = [\n")
+	for _, d := range tmCases {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(d), xq(cvShow(d)))
+	}
+	o.WriteString("]\n\n")
+	tms := []Tm{
+		{T: time.Date(2001, 12, 15, 2, 59, 43, 100000000, time.UTC), N: 1},
+		{T: time.Date(2020, 2, 29, 0, 0, 0, 0, time.UTC)},
+		{T: time.Date(1969, 12, 31, 23, 59, 59, 999999999, time.UTC), P: &tmP},
+		{T: time.Date(2262, 4, 11, 23, 47, 16, 854775807, time.UTC)},
+	}
+	for i, r := range tms {
+		rb, err := yaml.Marshal(r)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Fprintf(&o, "const MARSHALED_TM%d: Str = %s\n", i, xq(string(rb)))
+	}
+	o.WriteString("\n")
 	topv := Top{Base{7, Meta{"m", []string{"a"}}}, "e", 99, 3}
 	tb, err := yaml.Marshal(topv)
 	if err != nil {
@@ -993,6 +1127,45 @@ test "a yaml.Node field is the node, as yaml.v3's" {
     let doc = yaml.parse(text).ok() ?? fault("parse")
     let root = doc.content[0]
     expect(yaml.encode_value[Nd](Nd{a: idx, n: root.content[1], z: "z"}).ok()) == Some(want)
+  }
+}
+
+test "Time fields are the instants yaml.v3's time.Time holds" {
+  for (text, want) in TM {
+    let got = show_tm(text)
+    if want.contains("RANGE") {
+      expect(got.contains("ERR") || got.contains("RANGE")) == true
+      continue
+    }
+    if want == "ERRPARSE" || got == "ERRPARSE" {
+      expect(got) == want
+      continue
+    }
+    expect(got) == want
+  }
+  let ts = [
+    Tm{t: Time.UNIX_EPOCH + Duration.from_nanos(1008385183100000000), p: None, n: 1},
+    Tm{t: Time.UNIX_EPOCH + Duration.from_nanos(1582934400000000000), p: None, n: 0},
+    Tm{t: Time.UNIX_EPOCH + Duration.from_nanos(-1), p: Some(Time.UNIX_EPOCH + Duration.from_nanos(1012709106000000007)), n: 0},
+    Tm{t: Time.UNIX_EPOCH + Duration.from_nanos(9223372036854775807), p: None, n: 0},
+  ]
+  let want = [MARSHALED_TM0, MARSHALED_TM1, MARSHALED_TM2, MARSHALED_TM3]
+  for (i, t) in ts.indexed() {
+    expect(yaml.encode_value[Tm](t).ok()) == Some(want[i])
+  }
+}
+
+test "time.Civil fields keep the offset of the timestamp, as yaml.v3's time.Time" {
+  for (text, want) in CV {
+    if want == "SKIP" {
+      continue
+    }
+    let got = show_cv(text)
+    if want.contains("ERR") && !want.contains("ERRPARSE") {
+      expect(got.starts_with("ERR")) == true
+      continue
+    }
+    expect(got) == want
   }
 }
 

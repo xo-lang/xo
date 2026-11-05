@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/yaml: `Time` and `time.Civil` fields (a timestamp as its instant, or with its offset); equal to yaml.v3 on 32 documents.
 - std/yaml: `yaml.Node` fields in `derive Yaml` structs (the node of the key, as yaml.v3).
 - std/yaml: `yaml.Node` has `head_comment`, `line_comment` and `foot_comment` (parse and parse_all fill them, encode_node writes them, as yaml.v3; 466 documents compared).
 - fix (compiler): a std struct that holds itself through an Option (or any value type) is boxed as a program's own struct is: std/yaml's `Node { alias: Node? }` built std's store with a stack overflow in the native backend's debug info or a fault in its variant code, and a program using it failed the same way. The SSA builder's check for a field that reaches its own struct skipped every std struct (gotchas/recursive-option-struct-debug.md).

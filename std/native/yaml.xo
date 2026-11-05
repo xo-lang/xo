@@ -25,6 +25,7 @@
 
 use std/yaml
 use std/json as js
+use std/time
 
 struct Mark {
   index: Int
@@ -3296,18 +3297,24 @@ fn ts_num(b: Bytes, i: Int, max_digits: Int) -> (Int, Int) {
 /// A timestamp in one of yaml.v3's layouts: 2006-1-2, 2006-1-2 15:4:5[.9], and
 /// 2006-1-2T15:4:5[.9]Z07:00 (also with t), with Go's range checks.
 fn is_timestamp(s: Str) -> Bool {
+  ts_parts(s).len() > 0
+}
+
+/// The parts of a timestamp in yaml.v3's layouts, [year, month, day, hour, minute, second,
+/// nanoseconds, offset seconds], or [] when s is not one.
+fn ts_parts(s: Str) -> List[Int] {
   let b = s.bytes()
   if b.len() < 8 || !(b[0] >= 48 && b[0] <= 57 && b[1] >= 48 && b[1] <= 57 && b[2] >= 48 && b[2] <= 57 && b[3] >= 48 && b[3] <= 57) || b[4] != 45 {
-    return false
+    return []
   }
   let year = (Int(b[0]) - 48) * 1000 + (Int(b[1]) - 48) * 100 + (Int(b[2]) - 48) * 10 + Int(b[3]) - 48
   let m = ts_num(b, 5, 2)
   if m.0 < 1 || m.0 > 12 || m.1 >= b.len() || b[m.1] != 45 {
-    return false
+    return []
   }
   let d = ts_num(b, m.1 + 1, 2)
   if d.0 < 1 {
-    return false
+    return []
   }
   let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
   var dim = 31
@@ -3317,11 +3324,11 @@ fn is_timestamp(s: Str) -> Bool {
     dim = if leap { 29 } else { 28 }
   }
   if d.0 > dim {
-    return false
+    return []
   }
   var i = d.1
   if i == b.len() {
-    return true
+    return [year, m.0, d.0, 0, 0, 0, 0, 0]
   }
   var tz = false
   if b[i] == 84 || b[i] == 116 {
@@ -3330,50 +3337,66 @@ fn is_timestamp(s: Str) -> Bool {
   } else if b[i] == 32 {
     i += 1
   } else {
-    return false
+    return []
   }
   let h = ts_num(b, i, 2)
   if h.0 < 0 || h.0 > 23 || h.1 >= b.len() || b[h.1] != 58 {
-    return false
+    return []
   }
   let mi = ts_num(b, h.1 + 1, 2)
   if mi.0 < 0 || mi.0 > 59 || mi.1 >= b.len() || b[mi.1] != 58 {
-    return false
+    return []
   }
   let sec = ts_num(b, mi.1 + 1, 2)
   if sec.0 < 0 || sec.0 > 59 {
-    return false
+    return []
   }
   i = sec.1
+  var nanos = 0
   if i < b.len() && b[i] == 46 {
     i += 1
     var nd = 0
     while i < b.len() && b[i] >= 48 && b[i] <= 57 {
+      if nd < 9 {
+        nanos = nanos * 10 + Int(b[i]) - 48
+      }
       i += 1
       nd += 1
     }
     if nd == 0 {
-      return false
+      return []
+    }
+    var k = nd
+    while k < 9 {
+      nanos = nanos * 10
+      k += 1
     }
   }
   if i == b.len() {
-    return true
+    return [year, m.0, d.0, h.0, mi.0, sec.0, nanos, 0]
   }
   if !tz {
-    return false
+    return []
   }
   if b[i] == 90 {
-    return i + 1 == b.len()
+    if i + 1 == b.len() {
+      return [year, m.0, d.0, h.0, mi.0, sec.0, nanos, 0]
+    }
+    return []
   }
   if b[i] != 43 && b[i] != 45 {
-    return false
+    return []
   }
   let th = ts_num(b, i + 1, 2)
   if th.1 != i + 3 || th.0 > 23 || th.1 >= b.len() || b[th.1] != 58 {
-    return false
+    return []
   }
   let tm = ts_num(b, th.1 + 1, 2)
-  tm.1 == th.1 + 3 && tm.0 <= 59 && tm.1 == b.len()
+  if !(tm.1 == th.1 + 3 && tm.0 <= 59 && tm.1 == b.len()) {
+    return []
+  }
+  let off = (th.0 * 3600 + tm.0 * 60) * (if b[i] == 45 { -1 } else { 1 })
+  [year, m.0, d.0, h.0, mi.0, sec.0, nanos, off]
 }
 
 fn res(d: yaml.Doc, i: Int) -> Int {
@@ -6079,4 +6102,129 @@ fn to_node_field(d: yaml.Doc, i: Int, var st: yaml.Dec) -> (Bool, yaml.Node) ! y
 
 fn zero_node() -> yaml.Node {
   yaml.Node{kind: yaml.NodeKind.Scalar, style: 0, tag: "!!null", value: "null", anchor: "", alias: None, content: [], line: 0, column: 0, head_comment: "", line_comment: "", foot_comment: ""}
+}
+
+/// Days from 1970-01-01 to the date (Howard Hinnant's days_from_civil).
+fn days_from_civil(y0: Int, m: Int, d: Int) -> Int {
+  let y = if m <= 2 { y0 - 1 } else { y0 }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+fn to_time(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Time) ! yaml.YamlErr {
+  let entered = tick(d, i0, st)?
+  let r = to_time_body(d, i0, st)
+  leave(st, entered)
+  r
+}
+
+fn to_time_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, Time) ! yaml.YamlErr {
+  let i = res(d, i0)
+  let n = d.nodes[i]
+  if n.kind == K_MAPPING {
+    // time.Time is a struct with no exported fields for yaml.v3: a mapping decodes into it, reading nothing
+    return Ok((false, Time.UNIX_EPOCH))
+  }
+  if n.kind != K_SCALAR {
+    st.errs.push(cannot(d, i, "time.Time"))
+    return Ok((false, Time.UNIX_EPOCH))
+  }
+  if let Some(e) = check_tag(d, i) {
+    return Err(e)
+  }
+  if n.tag == "!!null" {
+    return Ok((false, Time.UNIX_EPOCH))
+  }
+  if n.tag == "!!timestamp" {
+    let p = ts_parts(n.value)
+    if p.len() > 0 {
+      // int64 nanoseconds since 1970 reach 1677-09-21 to 2262-04-11
+      let secs = days_from_civil(p[0], p[1], p[2]) * 86400 + p[3] * 3600 + p[4] * 60 + p[5] - p[7]
+      let hi = secs < 9223372036 || (secs == 9223372036 && p[6] <= 854775807)
+      let lo = secs > -9223372037 || (secs == -9223372037 && p[6] >= 145224192)
+      if hi && lo {
+        return Ok((true, Time.UNIX_EPOCH + Duration.from_nanos(if secs >= 0 { secs * 1000000000 + p[6] } else { (secs + 1) * 1000000000 + (p[6] - 1000000000) })))
+      }
+      st.errs.push(cannot(d, i, "time.Time"))
+      return Ok((false, Time.UNIX_EPOCH))
+    }
+  }
+  // any other scalar goes to Time.UnmarshalText (RFC 3339), as yaml.v3 does
+  if let Some(t) = Time.parse_rfc3339(n.value) {
+    return Ok((true, t))
+  }
+  Err(yaml.YamlErr{line: 0, msg: "parsing time \"${n.value}\" as \"2006-01-02T15:04:05Z07:00\": cannot parse"})
+}
+
+fn put_time(var w: yaml.Enc, t: Time) {
+  put_raw(w, t.format_rfc3339(), S_PLAIN)
+}
+
+fn civil_of(p: List[Int]) -> time.Civil {
+  time.Civil{date: time.Date{year: p[0], month: p[1], day: p[2]}, time: time.ClockTime{hour: p[3], minute: p[4], second: p[5], nanos: p[6]}, offset: Duration.from_nanos(p[7] * 1000000000), zone: if p[7] == 0 { "UTC" } else { "" }}
+}
+
+fn to_civil(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, time.Civil) ! yaml.YamlErr {
+  let entered = tick(d, i0, st)?
+  let r = to_civil_body(d, i0, st)
+  leave(st, entered)
+  r
+}
+
+fn to_civil_body(d: yaml.Doc, i0: Int, var st: yaml.Dec) -> (Bool, time.Civil) ! yaml.YamlErr {
+  let zero = civil_of([1970, 1, 1, 0, 0, 0, 0, 0])
+  let i = res(d, i0)
+  let n = d.nodes[i]
+  if n.kind == K_MAPPING {
+    return Ok((false, zero))
+  }
+  if n.kind != K_SCALAR {
+    st.errs.push(cannot(d, i, "time.Time"))
+    return Ok((false, zero))
+  }
+  if let Some(e) = check_tag(d, i) {
+    return Err(e)
+  }
+  if n.tag == "!!null" {
+    return Ok((false, zero))
+  }
+  let p = ts_parts(n.value)
+  if p.len() > 0 && (n.tag == "!!timestamp" || Time.parse_rfc3339(n.value) != None) {
+    return Ok((true, civil_of(p)))
+  }
+  Err(yaml.YamlErr{line: 0, msg: "parsing time \"${n.value}\" as \"2006-01-02T15:04:05Z07:00\": cannot parse"})
+}
+
+fn pad2(n: Int) -> Str {
+  if n < 10 { "0${n}" } else { "${n}" }
+}
+
+fn put_civil(var w: yaml.Enc, c: time.Civil) {
+  var s = "${c.date.year}-${pad2(c.date.month)}-${pad2(c.date.day)}T${pad2(c.time.hour)}:${pad2(c.time.minute)}:${pad2(c.time.second)}"
+  if c.time.nanos != 0 {
+    var f = "${c.time.nanos}"
+    while f.len() < 9 {
+      f = "0${f}"
+    }
+    var end = f.len()
+    while end > 0 && f[end - 1..end] == "0" {
+      end -= 1
+    }
+    s = "${s}.${f[0..end]}"
+  }
+  let off = c.offset.nanos() / 1000000000
+  if off == 0 {
+    s = "${s}Z"
+  } else {
+    let a = if off < 0 { -off } else { off }
+    s = "${s}${if off < 0 { "-" } else { "+" }}${pad2(a / 3600)}:${pad2(a % 3600 / 60)}"
+  }
+  put_raw(w, s, S_PLAIN)
+}
+
+fn zero_civil() -> time.Civil {
+  civil_of([1970, 1, 1, 0, 0, 0, 0, 0])
 }

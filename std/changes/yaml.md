@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: feature: Time and time.Civil fields
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (stage 6), decision 0094 (Time is an instant, Civil carries the zone)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (resolve timestamps, TextUnmarshaler), encode.go (time.Time as RFC3339Nano)
+- Test: testdata/corpus/yaml (TM: 32 documents, the UnixNano of t and p; CV: the same documents decoded into time.Civil and written back with their offsets; four Marshal outputs)
+
+A `Time` field reads a YAML timestamp as its instant and a `time.Civil` field keeps its offset. Deviations: a `Time` is written in UTC, the zero is the epoch, and a timestamp outside 1677 to 2262 is an error for a `Time`.
+
 ## 2026-11-05: fix: an error text cutting a long value inside a UTF-8 sequence faulted
 
 - Kind: fix

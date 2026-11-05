@@ -487,7 +487,7 @@ fn yaml_type_text(t: parser.Type) -> Str? {
           None => None
         }
       }
-      if !args.is_empty() || (path.len() == 1 && (n is "Set" | "Time")) {
+      if !args.is_empty() || (path.len() == 1 && n == "Set") {
         return None
       }
       Some("${q}${n}")
@@ -550,6 +550,12 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
       }
       if path.len() == 2 && args.is_empty() && n == "Node" && text(path[0].name) == "yaml" {
         return Some(("yaml.to_node_field", "yaml.zero_node()", e))
+      }
+      if path.len() == 2 && args.is_empty() && n == "Civil" && text(path[0].name) == "time" {
+        return Some(("yaml.to_civil", "yaml.zero_civil()", e))
+      }
+      if path.len() == 1 && args.is_empty() && n == "Time" {
+        return Some(("yaml.to_time", "Time.UNIX_EPOCH", e))
       }
       if path.len() == 1 && args.is_empty() && n == "Duration" {
         return Some(("yaml.to_duration", "Duration.from_nanos(0)", e))
@@ -868,6 +874,12 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
       if path.len() == 2 && args.is_empty() && n == "Node" && text(path[0].name) == "yaml" {
         return Some(("yaml.put_node", e))
       }
+      if path.len() == 2 && args.is_empty() && n == "Civil" && text(path[0].name) == "time" {
+        return Some(("yaml.put_civil", e))
+      }
+      if path.len() == 1 && args.is_empty() && n == "Time" {
+        return Some(("yaml.put_time", e))
+      }
       if path.len() == 1 && args.is_empty() && n == "Duration" {
         return Some(("yaml.put_duration", e))
       }
@@ -963,6 +975,7 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
         "Float" => "v.${f} == 0.0"
         "Bool" => "!v.${f}"
         "Duration" => "v.${f}.nanos() == 0"
+        "Time" => "v.${f} == Time.UNIX_EPOCH"
         "Bytes" => "v.${f}.len() == 0"
         _ => if tx.starts_with("List[") || tx.starts_with("Map[") {
           "v.${f}.len() == 0"
