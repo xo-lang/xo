@@ -1,6 +1,7 @@
 // The heap profile's test program (internal/llvm prof_test.go
 // TestProfHeap): a task holds 2000 strings of about 1000 bytes while main
-// allocates and drops 20000 lists of 100 Ints (about 40 MB), then main
+// allocates and drops 20000 lists of 100 Ints (about 66 MB with each
+// list's growth by doubling), then main
 // exits the process with the strings still held, so they are in use when
 // the profile is written. churn's lists start in start, small enough
 // that both backends' inliners copy it into churn (a list literal would

@@ -320,8 +320,12 @@ func TestProfHeap(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if a, _ := heapTotal(string(txt), "allocated: "); a < 20000000 || a > 80000000 {
-				t.Fatalf("allocated %d bytes, want about 40 MB:\n%s", a, txt)
+			// rate 1 counts 66.09 MB in about 122,000 objects on both
+			// backends (each list grows by doubling); 30 runs per backend
+			// at the default rate estimated 57 to 79 MB (2026-11-05), and
+			// 80.3 MB once failed the old 80 MB bound
+			if a, _ := heapTotal(string(txt), "allocated: "); a < 33000000 || a > 132000000 {
+				t.Fatalf("allocated %d bytes, want about 66 MB:\n%s", a, txt)
 			}
 			if gobin, err := exec.LookPath("go"); err == nil {
 				p, err := exec.Command(gobin, "tool", "pprof", "-top", "-sample_index=alloc_space", filepath.Join(dir, "xo-prof.heap.pprof")).CombinedOutput()
