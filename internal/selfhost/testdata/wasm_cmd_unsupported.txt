@@ -6,6 +6,7 @@
 # Since 2026-11-03 every golden is tried, those of wasm_unsupported.txt too
 # (TCP over wasi:sockets, step R1); the network ones wait for step R2.
 cmd_inherit # XO1515: no processes in a WASI 0.2 world (proc.exec)
+frame_large_value # the wasm backend passes a value word by word: its rc helper takes 2,000 parameters, past the 1,000 a WebAssembly engine accepts (check_arity; decision 0519)
 fs_atomic # WASI has no file modes or locks: write_atomic's mode
 fs_cwd_path # no working directory under WASI
 fs_dir_errors # WASI has no file modes or locks
@@ -19,6 +20,7 @@ net_only # XO1515: no processes in a WASI 0.2 world (proc.run)
 proc_child_usage # XO1515: no processes in a WASI 0.2 world (proc.spawn)
 proc_children_load # XO1515: no processes in a WASI 0.2 world (proc.exec)
 proc_cmd # XO1515: no processes in a WASI 0.2 world (proc.run)
+rc_large_offsets # the wasm backend passes a value word by word: its rc helper takes 2,000 parameters, past the 1,000 a WebAssembly engine accepts (check_arity; decision 0519)
 rt_addrs # rt.fn_addr faults on wasm (native code paths name native-only exports through it: lowering it built the fiber switch into every wasm module, 2026-11-03), rt.sym_addr("strlen") needs the C library and auxv is Linux's
 signal_notify # XO1515: no processes in a WASI 0.2 world (proc.run)
 sys_c # the platform call `getpid` of c on another OS
