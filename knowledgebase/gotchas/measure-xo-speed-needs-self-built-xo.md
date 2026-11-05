@@ -5,8 +5,18 @@ Status: Observed (2026-11-04)
 Symptom: a cold `xo test --std-module=native/json` --ab against 0.38.1
 was 1.13 to 1.14 in instructions on the Mac for every xo from 1f648265b
 (decision 0488's ShareIn) on, but 0.997 and 0.993 (within noise) on the
-linux/arm64 offload host for the same two commits; the linux run was
-reported as "the regression is darwin only" and then withdrawn.
+linux/arm64 offload host with xobuild's seed-built xos; the linux run was
+reported as "the regression is darwin only", then withdrawn as a
+seed-built measurement. With each xo built by itself (bootstrap s2) linux
+still read 1.008, and that was right too: this regression turned out to
+be in the code xo emits (made_here's 1,000 step limit put a ShareIn on
+2,059 pushes of std json's GO_CASES constant, fixed in fbd8b4d2e), which a
+seed-built xo shows as well. What hid it on linux: 0.38.1's linux emit
+phase for that test was already about 580 ms (the Mac's about 420), and
+the regression took main's linux emit from about 390 ms (with the fix) to
+555 to 580 ms, back to 0.38.1's level, so main against 0.38.1 read flat;
+measured against its own parent instead of a release, linux shows it
+(emit 382 to 392 ms fixed, 554 to 579 ms not, 2026-11-04).
 
 Cause: `go run ./scripts/xobuild` (and ab-host.sh's own builds) compile
 the xo under test with a seed or an earlier xo. That xo then emits the
@@ -22,3 +32,8 @@ the seed, s2 by s1, so s2's code is the change's own), on both sides.
 A claim about the code xo emits for a program (bench/perf rows, ab-host
 PROG) is unaffected: there each side's xo compiles the program with its
 own code generation, whatever built xo.
+
+And a flat result against a release can hide a regression that an
+unrelated gain since that release cancels: bisect or compare against the
+change's parent, and look at the phase that moved (`--phase-times`)
+before calling a result platform specific.
