@@ -153,6 +153,7 @@ var componentGoldensNotRun = map[string]string{
 	"tls_mtls":                  "TLS, which the host owns",
 	"tls_peer_certs":            "TLS, which the host owns",
 	"trace_ring":                "its router is in main, and its answers carry random ids",
+	"http_stop_keepalive":       "its router is in main, and it tests the server's own connections at a stop, which the host owns",
 	"websocket":                 "an upgrade, which wasi:http 0.2 has no way to take",
 	"websocket_deadline":        "an upgrade, which wasi:http 0.2 has no way to take",
 	"websocket_stop":            "an upgrade, which wasi:http 0.2 has no way to take",

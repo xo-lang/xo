@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+4 requests answered, connections kept open
+serve returned ok, canceled by the grace period: false
+client: closed
+client: closed
+client: closed
+client: closed
+done
+--- stderr

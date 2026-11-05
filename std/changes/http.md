@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-05: fix: a native server stops when a kept-alive connection answered a request just before the stop
+
+- Kind: fix
+- Commit: this push
+- Found by: the stability program's soak (decision 0520 phase 1): stability/notes did not exit within 20 s of SIGTERM on 5 of 8 two-minute runs; a task dump showed serve waiting with no connection tasks
+- Go reference: net/http Server.Shutdown (closes idle connections, then polls until every connection is idle or closed)
+- Test: internal/llvm/testdata/golden/http_stop_keepalive (arm64, llvm): four kept-alive connections, a request each, a stop; serve returns before the 2 s grace period and each connection is closed
+- Timing: none
+- Shipped in: not yet released (the bug: 0.36.0 to 0.40.0; 0.35.0 did not park idle connections)
+
+A kept-alive HTTP/1.1 connection that answered a request waits up to 20 ms on its task before it parks idle (decision 0449). A stop in those 20 ms found it busy and left it open, and the parked-connection resumer, seeing nothing parked, ended; the connection then parked with no resumer and was never closed, so `serve` waited for it until the grace period canceled it, or for ever with none (SIGTERM never stopped such a server: 10 of 10 runs of a one-request repro on 0.36.0, 0.39.0 and 0.40.0). A connection now checks for a stop under the resumer's lock before it parks, and closes instead (gotchas/park-after-stop-check-then-act.md).
+
 ## 2026-11-05: perf: a pass-through connection reads into a 32 KiB block, not a 64 KiB one
 
 - Kind: perf

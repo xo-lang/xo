@@ -1152,3 +1152,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [cache-key-load-order.md](cache-key-load-order.md): Observed: std_sum hashed std modules in load order, so the first build with std's record missed every fe/chk entry; sort before hashing
 - [checker-bodies-list-keeps-trees.md](checker-bodies-list-keeps-trees.md): Observed 2026-11-05: Checker.bodies held every lazily checked body's tree past its build (236 MB in a cold s3+dynamodb build)
 - [wasm-two-unsupported-lists.md](wasm-two-unsupported-lists.md): Observed 2026-11-05: a golden the wasm backend cannot build goes in wasm_unsupported.txt and wasm_cmd_unsupported.txt (TestWasmCommandGoldens reads its own); full tier 52 failed on the second
+- [park-after-stop-check-then-act.md](park-after-stop-check-then-act.md): Observed 2026-11-05: a native HTTP server hung on SIGTERM when a kept-alive connection was in its 20 ms linger; re-check stopping under the resumer's lock before parking

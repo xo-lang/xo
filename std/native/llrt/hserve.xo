@@ -180,6 +180,22 @@ pub fn hc_park(h: rthttp.HConn, resume: fn() -> (), idle_ns: Int, h2: Bool = fal
   // an h2 timer is the connection's own (ping, deadline): its resume runs on the open connection
   st(pc, PC_KEEP, if h2 { 1 } else { 0 })
   hconn.rlock(srv)
+  // a stop may have come after park_ready read stopping (its linger waits
+  // up to LINGER_NS before the idle mark): srv_stop then left this
+  // connection open as busy, and the resumer, seeing stopping with nothing
+  // parked, may have ended, so a park now would never be resumed or closed
+  // and srv_wait would wait for it for ever (every native server with a
+  // kept-alive connection used in the last 20 ms hung on SIGTERM,
+  // 2026-11-05). Checked under the lock the resumer's own check holds:
+  // either the resumer sees this park and waits for it, or this sees the
+  // stop and the connection reads on, finds stopping, and closes.
+  if hconn.stopping_at(srv) {
+    hconn.runlock(srv)
+    let _s = stream_get(id, true)
+    obj.free_obj(pc)
+    hconn.set_idle(hc, false)
+    return false
+  }
   parked_add(srv, pc)
   hconn.runlock(srv)
   if poll.pd_park(pd, pc) {

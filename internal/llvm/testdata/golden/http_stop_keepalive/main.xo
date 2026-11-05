@@ -1,0 +1,69 @@
+// A stop with kept-alive connections that served a request a moment ago
+// (2026-11-05, the stability soak's shutdown hang): each such connection
+// lingers up to 20 ms on its task before it parks idle, so the stop finds
+// it busy and leaves it open, and the parked-connection resumer, with
+// nothing parked yet, ends. The connection then parked with no resumer, was
+// never closed, and serve waited for it until the grace period ended (for
+// ever without one: every native server hung on SIGTERM). Now a connection
+// that parks after a stop closes instead, so serve returns at once and is
+// not canceled. The grace bounds a regression to 2 s.
+use std/http
+use std/task
+
+const CONNS = 4
+
+/// One request on a new connection kept open: the connection, once the
+/// whole answer ("ok", no Connection: close) has come.
+fn request(os: Os, addr: Str) -> Conn {
+  let c = os.net.dial(addr).or_fault("dial")
+  c.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n".bytes()).or_fault("write")
+  var got = ""
+  while !got.ends_with("\r\n\r\nok") {
+    match c.read(4096) {
+      Ok(Some(b)) => got += b.to_str_lossy()
+      _ => break
+    }
+  }
+  c
+}
+
+/// What the client sees on c after the stop: the server's close.
+fn after(c: Conn) -> Str {
+  let how = match c.read(4096) {
+    Ok(None) => "closed"
+    Ok(Some(_)) => "more bytes"
+    Err(e) => "error ${e}"
+  }
+  c.close()
+  how
+}
+
+fn main(os: Os) {
+  os.proc.set_grace(2s)
+  var r = http.router()
+  r.handle("GET /", fn(req) { http.text(200, "ok") })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  let result = Chan[Str].new(cap: 1)
+  scope s {
+    s.spawn(fn() {
+      let how = match srv.serve() {
+        Ok(_) => "ok"
+        Err(e) => "failed: ${e}"
+      }
+      result.send("serve returned ${how}, canceled by the grace period: ${task.is_canceled()}")
+    })
+    var conns: List[Conn] = []
+    for _ in 0..CONNS {
+      conns.push(request(os, addr))
+    }
+    os.stdio.println("${conns.len()} requests answered, connections kept open")
+    os.proc.request_stop()
+    os.stdio.println(result.recv() ?? "no result")
+    for c in conns {
+      os.stdio.println("client: ${after(c)}")
+    }
+  }
+  os.stdio.println("done")
+}
