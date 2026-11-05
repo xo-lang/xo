@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
@@ -632,4 +633,77 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 	if err != nil || !strings.Contains(log, "module(s) from source") || passed(log) != n+2 {
 		t.Fatalf("after fixing the probe, want the variant reused and %d passed: %v\n%s", n+2, err, log)
 	}
+}
+
+// TestSepcompBackgroundBoth: a build that misses std's variants starts
+// one background build that makes both concurrency variants, so the next
+// build compiles separately. Each launch used to make only the variant
+// that missed, and the other waited for a later build to miss it: an edit
+// loop stayed whole program for about 15 builds (2026-11-05,
+// gotchas/sepcomp-one-variant-per-launch.md).
+func TestSepcompBackgroundBoth(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds std's variants")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-sepbg-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	prog := filepath.Join(work, "prog")
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"ok\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache")
+	build := func() string {
+		t.Helper()
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", filepath.Join(work, "bin"), "."))
+		cmd.Dir = prog
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_SEPCOMP_BG=1")
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build: %v\n%s", err, log)
+		}
+		return string(log)
+	}
+	if log := build(); !strings.Contains(log, "building in the background") {
+		t.Fatalf("the first build did not start a background build:\n%s", log)
+	}
+	// both variants' facts, then the lock free (the child is done)
+	deadline := time.Now().Add(10 * time.Minute)
+	for {
+		fs, _ := filepath.Glob(filepath.Join(cache, "std", "*.stdf"))
+		if len(fs) == 2 && !bgLocked(t, xo, cache) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after 10 minutes the background build made %d of std's 2 variants", len(fs))
+		}
+		time.Sleep(time.Second)
+	}
+	log := build()
+	if n := strings.Count(log, "reused"); !strings.Contains(log, "conc=false reused") || !strings.Contains(log, "conc=true reused") {
+		t.Fatalf("the next build did not reuse both variants (%d reused):\n%s", n, log)
+	}
+}
+
+// bgLocked reports whether a background std build holds the cache's
+// lock, by `xo dev stdcache --peek`'s note.
+func bgLocked(t *testing.T, xo, cache string) bool {
+	t.Helper()
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--peek"))
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
+	out, _ := cmd.CombinedOutput()
+	return strings.Contains(string(out), "a background build is running")
 }

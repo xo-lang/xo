@@ -330,9 +330,14 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmod
   }
   let xo = check.executable(os.env, os.fs)
   // its own std, cache and target (the child holds the lock while it
-  // builds; two that start at once build one, the other finds it held)
-  let script = "XO_STD_BG_CHILD=1 XO_STD=\"$1\" XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT= nice -n 10 \"$0\" dev stdcache --conc=$2 --target=$3 $4 </dev/null >/dev/null 2>&1 &"
-  os.proc.cmd("/bin/sh", ["-c", script, xo, ctx.std, if conc { "1" } else { "0" }, "${tgoos}/${tgoarch}", if tmode { "--test" } else { "" }]).run().ignore_err("a build that does not start starts on a later build")
+  // builds; two that start at once build one, the other finds it held).
+  // The other concurrency variant follows in the same child (a cached one
+  // is reused): a build needs both before it compiles separately, and
+  // with one per launch the second waited for a later build to miss it,
+  // so an edit loop stayed whole program for about 15 builds (2026-11-05,
+  // s3 and dynamodb: 1 s edits, 0.3 s once both were built)
+  let script = "export XO_STD_BG_CHILD=1 XO_STD=\"$1\" XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT=; (nice -n 10 \"$0\" dev stdcache --conc=$2 --target=$3 $4; nice -n 10 \"$0\" dev stdcache --conc=$5 --target=$3 $4) </dev/null >/dev/null 2>&1 &"
+  os.proc.cmd("/bin/sh", ["-c", script, xo, ctx.std, if conc { "1" } else { "0" }, "${tgoos}/${tgoarch}", if tmode { "--test" } else { "" }, if conc { "0" } else { "1" }]).run().ignore_err("a build that does not start starts on a later build")
   say("building in the background, the whole program is built")
   None
 }

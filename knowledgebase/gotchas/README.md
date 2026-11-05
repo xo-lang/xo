@@ -1143,3 +1143,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [debugger-trap-write-needs-flush-and-stop.md](debugger-trap-write-needs-flush-and-stop.md): `xo debug` on macOS: flush the caches after a trap write and suspend the other threads at a stop (Observed)
 - [ptrace-leader-reaped-last.md](ptrace-leader-reaped-last.md): xo debug on Linux hung reaping a killed program; the leader waits for its traced threads, and xo has its own children, so reap waits on -1 until the leader returns.
 - [recursive-option-struct-debug.md](recursive-option-struct-debug.md): a struct holding an Option of itself overflows arm64 `dv_type_ok` in a debug std build; use a List
+- [sepcomp-one-variant-per-launch.md](sepcomp-one-variant-per-launch.md): Observed: edits stayed whole program (~1 s) for ~15 builds after a cold cache: each background launch built one std variant; now both
