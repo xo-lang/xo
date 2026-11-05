@@ -989,11 +989,12 @@ fn fill(var c: Conn, nb: Bool) -> Bool {
     return false
   }
   let fd = rt.mem_load(c.pd, 8, 4)
-  let buf = raw.bytes_buf(16384)
+  // 16,352: a Bytes of n bytes takes n + 24 of a block, so this fills the 16 KiB class (16,376); 16,384 took the 32 KiB one (decision 0506)
+  let buf = raw.bytes_buf(16352)
   var ok = false
   poll.pd_clear_read(c.pd)
   while true {
-    let r = sock.read(fd, raw.bytes_addr(buf), 16384)
+    let r = sock.read(fd, raw.bytes_addr(buf), 16352)
     if r > 0 {
       took(c, buf, r)
       ok = true
@@ -1027,9 +1028,9 @@ fn fill(var c: Conn, nb: Bool) -> Bool {
 /// fill on wasm: pd is the connection's Conn (decision 0447 R2d); a read
 /// without waiting (nb, HTTP/2's) is not on wasm.
 fn fill_wasm(var c: Conn, nb: Bool) -> Bool {
-  let buf = raw.bytes_buf(16384)
+  let buf = raw.bytes_buf(16352)
   // nb: what the socket has now, for HTTP/2's reads (decision 0447 R2f)
-  let r = if nb { netwasi.hc_try_recv(c.pd, raw.bytes_addr(buf), 16384) } else { netwasi.hc_recv(c.pd, raw.bytes_addr(buf), 16384, c.when) }
+  let r = if nb { netwasi.hc_try_recv(c.pd, raw.bytes_addr(buf), 16352) } else { netwasi.hc_recv(c.pd, raw.bytes_addr(buf), 16352, c.when) }
   if r > 0 {
     took(c, buf, r)
     return true

@@ -4885,10 +4885,11 @@ fn tunnel(st: http.ClientStream, head: http.ResponseHead, req_up: Str) -> http.R
     scope s {
       // the client to the target
       s.spawn(fn() {
-        let b = raw.bytes_buf(32768)
+        // 32,736: the 32 KiB class's 32,760 less the Bytes header; 32,768 took the 64 KiB one (decision 0506)
+        let b = raw.bytes_buf(32736)
         while true {
           // not idle: a stop waits for the pass-through (decision 0429)
-          let n = hconn.recv(h, raw.bytes_addr(b), 32768, false)
+          let n = hconn.recv(h, raw.bytes_addr(b), 32736, false)
           if n <= 0 {
             break
           }

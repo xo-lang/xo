@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-11-05: perf: PostgreSQL COPY batches in a 64 KiB block, not a 128 KiB one
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0506 (bench/results/size-class-waste-2026-11-04.md: a Bytes of n bytes takes n + 24 of a block, so a power of two buffer fell into the class twice its size)
+- Go reference: none (Go's size classes are about four per doubling, so its 16 and 32 KiB buffers waste about 1%)
+- Test: none of its own (a capacity and a send threshold: 65,504 and 64,480 bytes)
+- Timing: none (memory: half the block per COPY batch)
+- Shipped in: not yet released
+
+A COPY FROM batch is built in a 65,504 byte builder (the 64 KiB class) and sent at 64,480 bytes, so a row of up to 1 KiB more still fits; 65,536 + 1,024 took the 128 KiB class.
+
 ## 2026-11-04: perf: the connection URL parser checks a character without slicing
 
 - Kind: perf

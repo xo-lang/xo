@@ -782,10 +782,11 @@ pub fn names(path: Str) -> (List[Str], Int) {
     return ([], -fd)
   }
   var out: List[Str] = []
-  let buf = raw.bytes_buf(16384)
+  // 16,352: a Bytes of n bytes takes n + 24 of a block, so this fills the 16 KiB class (16,376); 16,384 took the 32 KiB one (decision 0506)
+  let buf = raw.bytes_buf(16352)
   let a = raw.bytes_addr(buf)
   while true {
-    let n = rt.sys6(nr(61, 217), fd, a, 16384, 0, 0, 0)
+    let n = rt.sys6(nr(61, 217), fd, a, 16352, 0, 0, 0)
     if n == -EINTR {
       continue
     }
@@ -829,10 +830,10 @@ pub fn entries(path: Str) -> (List[Str], Int) {
     return ([], -fd)
   }
   var out: List[Str] = []
-  let buf = raw.bytes_buf(16384)
+  let buf = raw.bytes_buf(16352)
   let a = raw.bytes_addr(buf)
   while true {
-    let n = rt.sys6(nr(61, 217), fd, a, 16384, 0, 0, 0)
+    let n = rt.sys6(nr(61, 217), fd, a, 16352, 0, 0, 0)
     if n == -EINTR {
       continue
     }

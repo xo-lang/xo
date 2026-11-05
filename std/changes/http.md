@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-05: perf: a pass-through connection reads into a 32 KiB block, not a 64 KiB one
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0506 (bench/results/size-class-waste-2026-11-04.md: a Bytes of n bytes takes n + 24 of a block, so a power of two buffer fell into the class twice its size)
+- Go reference: none (Go's size classes are about four per doubling, so its 16 and 32 KiB buffers waste about 1%)
+- Test: internal/llvm/testdata/golden/http_reverse_proxy_ws and http_reverse_proxy (arm64, llvm)
+- Timing: none (memory: half the block per pass-through direction)
+- Shipped in: not yet released
+
+The pass-through (a proxied upgrade or CONNECT) read buffer is 32,736 bytes, which fills the 32 KiB size class; 32,768 took the 64 KiB one.
+
 ## 2026-11-05: feature: Request.with_expect_continue sends the head, waits for the 100, then sends the body
 
 - Kind: feature

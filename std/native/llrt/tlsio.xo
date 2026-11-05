@@ -481,8 +481,9 @@ fn send_all(var c: Conn, b: Bytes) -> Bool {
 /// ended or a wait failed.
 fn fill(var c: Conn) -> Bool {
   if target.arch == TargetArch.Wasm32 {
-    let buf = raw.bytes_buf(16384)
-    let r = netwasi.hc_recv(c.pd, raw.bytes_addr(buf), 16384, c.when)
+    // 16,352: a Bytes of n bytes takes n + 24 of a block, so this fills the 16 KiB class (16,376); 16,384 took the 32 KiB one (decision 0506)
+    let buf = raw.bytes_buf(16352)
+    let r = netwasi.hc_recv(c.pd, raw.bytes_addr(buf), 16352, c.when)
     if r > 0 {
       let got = raw.bytes_len(buf, r)
       if c.first.len() < 5 {
@@ -500,13 +501,13 @@ fn fill(var c: Conn) -> Bool {
     return false
   }
   let fd = rt.mem_load(c.pd, 8, 4)
-  let buf = raw.bytes_buf(16384)
+  let buf = raw.bytes_buf(16352)
   while true {
     if poll.canceled() {
       c.status = CC_CANCELED
       return false
     }
-    let r = sock.read(fd, raw.bytes_addr(buf), 16384)
+    let r = sock.read(fd, raw.bytes_addr(buf), 16352)
     if r > 0 {
       let got = raw.bytes_len(buf, r)
       if c.first.len() < 5 {

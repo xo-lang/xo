@@ -876,7 +876,10 @@ fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.
         }
       }
     })
-    var buf = BytesBuilder.with_capacity(65536 + 1024)
+    // 65,504: the 64 KiB class's 65,528 less the header, sent at 64,480 so
+    // a row of up to 1 KiB more still fits (65,536 + 1,024 took the 128 KiB
+    // class, decision 0506)
+    var buf = BytesBuilder.with_capacity(65504)
     while err.is_none() && send_err.is_none() && !refused.get() {
       match rows() {
         Ok(o) => {
@@ -889,12 +892,12 @@ fn (p: PgConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.
                 copy_field(v, buf)
               }
               buf.write_byte(10)
-              if buf.len() >= 65536 {
+              if buf.len() >= 64480 {
                 match p.send(pgwire.copy_data(buf.freeze())) {
                   Ok(_) => {}
                   Err(e) => send_err = Some(e)
                 }
-                buf = BytesBuilder.with_capacity(65536 + 1024)
+                buf = BytesBuilder.with_capacity(65504)
               }
             }
             None => break

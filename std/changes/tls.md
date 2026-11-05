@@ -1,5 +1,17 @@
 # std/tls changes
 
+## 2026-11-05: perf: a TLS connection reads into a 16 KiB block, not a 32 KiB one
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0506 (bench/results/size-class-waste-2026-11-04.md: a Bytes of n bytes takes n + 24 of a block, so a power of two buffer fell into the class twice its size)
+- Go reference: none (Go's size classes are about four per doubling, so its 16 and 32 KiB buffers waste about 1%)
+- Test: internal/llvm/testdata/golden tls13_server, tls13_go, tls12_server, tls_client, tls_mtls, tls_deadline, http_tls, http_duplex_h2tls, websocket_tls (arm64, llvm); tls13_server, tls_client, http_tls on wasm
+- Timing: none (memory: half the block per read)
+- Shipped in: not yet released
+
+The client's and server's socket reads use a 16,352 byte buffer, which fills the 16 KiB size class; 16,384 took the 32 KiB one. The reads loop, so only the read size changes.
+
 ## 2026-11-04: perf: a TLS connection's output and data are taken in place
 
 - Kind: perf (size)
