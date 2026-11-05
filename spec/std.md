@@ -7302,6 +7302,7 @@ struct Node { kind: NodeKind, style: Int, tag: Str, value: Str, anchor: Str, ali
               content: List[Node], line: Int, column: Int }
 fn parse(text: Str) -> Node ! YamlErr
 fn parse_all(text: Str) -> List[Node] ! YamlErr
+fn encode_node(n: Node, indent: Int = 4) -> Str ! YamlErr
 ```
 
 - `derive Yaml` (structs only, no type parameters) maps Str, Int, Float, Bool, Duration, Bytes, an Option, a List, a Map[Str, V] of those, or a
@@ -7324,4 +7325,7 @@ fn parse_all(text: Str) -> List[Node] ! YamlErr
   `column` count from 1); the trees equal yaml.v3's on 442 documents. `alias` of an Alias node is a list of the one node it
   names (a `List` because a struct holding an Option of itself breaks a debug std build, gotchas/recursive-option-struct-debug.md).
   `parse_all` is all or nothing: on an error it returns the error, where yaml.v3's Decoder has returned the earlier documents.
-- Not yet (later stages): Time and Node fields, inline Maps, comments, `encode_node`, `to_json`.
+- `encode_node` writes a Node as yaml.v3's Marshal of a `yaml.Node` does (a Document node as is, another node as a document
+  of its own; a tag is left out when the text resolves to it, except `!!merge`; styles and anchors are kept); equal to yaml.v3 on
+  295 documents (the 48 with comments are not compared: Node has no comments yet).
+- Not yet (later stages): Time and Node fields, inline Maps, comments (stage 4), `to_json`.

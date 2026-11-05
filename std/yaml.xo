@@ -71,6 +71,9 @@ struct Node {
 fn parse(text: Str) -> Node ! YamlErr
 /// Every document of text.
 fn parse_all(text: Str) -> List[Node] ! YamlErr
+/// n written as YAML (yaml.v3's Marshal of a Node): a Document node as is, any other
+/// node as a document of its own; a tag is left out when the text resolves to it.
+fn encode_node(n: Node, indent: Int = 4) -> Str ! YamlErr
 
 // ---- The helpers the code `derive Yaml` generates calls (programs call decode and
 // encode_value, not these): the node tree of a document, typed reads of its nodes

@@ -5165,3 +5165,111 @@ fn parse_all(text: Str) -> List[yaml.Node] ! yaml.YamlErr {
   }
   Ok(out)
 }
+
+fn long_tag(tag: Str) -> Str {
+  if tag.starts_with("!!") {
+    return TAG_PREFIX + tag[2..]
+  }
+  tag
+}
+
+/// yaml.v3's encoder.node: the events of n, a tag dropped when it is the one the text resolves to.
+fn emit_tree(var em: Emitter, n: yaml.Node) -> Bool {
+  var tag = n.tag
+  let stag = short_tag(tag)
+  var force_quoting = false
+  if tag != "" && n.style & NS_TAGGED == 0 {
+    if n.kind == yaml.NodeKind.Scalar {
+      if stag == "!!str" && n.style & (NS_SINGLE | NS_DOUBLE | NS_LITERAL | NS_FOLDED) != 0 {
+        tag = ""
+      } else if resolve_tag("", n.value) == stag && stag != "!!merge" {
+        tag = ""
+      } else if stag == "!!str" {
+        tag = ""
+        force_quoting = true
+      }
+    } else {
+      let rtag = if n.kind == yaml.NodeKind.Mapping { "!!map" } else if n.kind == yaml.NodeKind.Sequence { "!!seq" } else { "" }
+      if rtag == stag {
+        tag = ""
+      }
+    }
+  }
+  match n.kind {
+    Document => {
+      var ds = ev(E_DOCUMENT_START, mark0(), mark0())
+      ds.implicit = true
+      var ok = emit(em, ds)
+      for c in n.content {
+        ok = ok && emit_tree(em, c)
+      }
+      var de = ev(E_DOCUMENT_END, mark0(), mark0())
+      de.implicit = true
+      ok && emit(em, de)
+    }
+    Sequence | Mapping => {
+      let seq = n.kind == yaml.NodeKind.Sequence
+      var st = ev(if seq { E_SEQUENCE_START } else { E_MAPPING_START }, mark0(), mark0())
+      st.anchor = n.anchor.bytes()
+      st.tag = long_tag(tag).bytes()
+      st.implicit = tag == ""
+      st.style = if n.style & NS_FLOW != 0 { C_FLOW } else { C_BLOCK }
+      var ok = emit(em, st)
+      for c in n.content {
+        ok = ok && emit_tree(em, c)
+      }
+      ok && emit(em, ev(if seq { E_SEQUENCE_END } else { E_MAPPING_END }, mark0(), mark0()))
+    }
+    Alias => {
+      var a = ev(E_ALIAS, mark0(), mark0())
+      a.anchor = n.value.bytes()
+      emit(em, a)
+    }
+    Scalar => {
+      var style = S_PLAIN
+      if n.style & NS_DOUBLE != 0 {
+        style = S_DOUBLE
+      } else if n.style & NS_SINGLE != 0 {
+        style = S_SINGLE
+      } else if n.style & NS_LITERAL != 0 {
+        style = S_LITERAL
+      } else if n.style & NS_FOLDED != 0 {
+        style = S_FOLDED
+      } else if n.value.contains("\n") {
+        style = S_LITERAL
+      } else if force_quoting {
+        style = S_DOUBLE
+      }
+      var sc = ev(E_SCALAR, mark0(), mark0())
+      sc.anchor = n.anchor.bytes()
+      sc.tag = long_tag(tag).bytes()
+      sc.value = n.value.bytes()
+      sc.implicit = tag == ""
+      sc.quoted_implicit = tag == ""
+      sc.style = style
+      emit(em, sc)
+    }
+  }
+}
+
+fn encode_node(n: yaml.Node, indent: Int) -> Str ! yaml.YamlErr {
+  var em = new_emitter(indent)
+  var ok = emit(em, ev(E_STREAM_START, mark0(), mark0()))
+  if n.kind == yaml.NodeKind.Document {
+    ok = ok && emit_tree(em, n)
+  } else {
+    var ds = ev(E_DOCUMENT_START, mark0(), mark0())
+    ds.implicit = true
+    ok = ok && emit(em, ds)
+    ok = ok && emit_tree(em, n)
+    var de = ev(E_DOCUMENT_END, mark0(), mark0())
+    de.implicit = true
+    ok = ok && emit(em, de)
+  }
+  em.open_ended = false
+  ok = ok && emit(em, ev(E_STREAM_END, mark0(), mark0()))
+  if !ok {
+    return Err(yaml.YamlErr{line: 0, msg: em.err})
+  }
+  Ok(em.out.freeze().to_str() ?? "")
+}

@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: feature: encode_node
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (stage 3)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 encode.go node
+- Test: testdata/corpus/yaml (EMITS: the text yaml.v3 writes for the Node each of 295 documents parses into)
+
+`yaml.encode_node(n, indent: 4)` writes a Node tree as YAML, keeping styles, anchors, aliases and explicit tags.
+
 ## 2026-11-05: feature: parse and parse_all (Node trees); std/yamlcodec merged into std/yaml
 
 - Kind: feature

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/yaml: `yaml.encode_node` writes a Node tree as yaml.v3 does (295 documents compared).
 - std/yaml: `yaml.parse` and `yaml.parse_all` give yaml.v3-equal Node trees (kind, tag, style, value, anchor, line, column, alias; 442 documents); the internal module std/yamlcodec is merged into std/yaml.
 - --race: two tasks that fault one after the other on one worker are no longer reported as a data race on the fault unwinder's per-thread scratch (lazy_const_cycle_tasks, linux, 23 runs in 24): its memset and memcpy, which ThreadSanitizer intercepts, run with writes ignored (unwind.xo zero_regs, scratch_copy). std/changes/prelude.md, gotchas/tsan-fiber-switch-sync.md.
 - --race (LLVM backend, the darwin and linux default): runtime code that xo's inliner copied into a program function is no longer instrumented, as on the arm64 backend. Its loads, stores and atomics get `!nosanitize`, so the runtime's own accesses are not reported as the program's races (http_h2_config: hconn's TLS ops table; websocket_tls_deadline: pool.held). Test: internal/llvm TestRaceRuntimeInlinedUnchecked. Gotcha race-inlined-runtime-instrumented.md.

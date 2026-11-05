@@ -241,6 +241,41 @@ func nodesShow(in string) (out string) {
 	return b.String()
 }
 
+// hasComment reports whether any node carries a comment (stage 4 of decision 0512 adds them).
+func hasComment(n *yaml.Node) bool {
+	if n.HeadComment != "" || n.LineComment != "" || n.FootComment != "" {
+		return true
+	}
+	for _, c := range n.Content {
+		if hasComment(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// emitShow parses in into a Node and marshals it back, or the error; SKIP for a
+// text with no document (a zero Node, which Marshal writes as null).
+func emitShow(in string) (out string) {
+	defer func() {
+		if r := recover(); r != nil {
+			out = "ERR " + strconv.Quote(norm(fmt.Sprint(r)))
+		}
+	}()
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte(in), &n); err != nil {
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	if n.Kind == 0 || hasComment(&n) {
+		return "SKIP"
+	}
+	b, err := yaml.Marshal(&n)
+	if err != nil {
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	return "OK " + string(b)
+}
+
 // strictShow is inlineShow with KnownFields(true).
 func strictShow(in string) (out string) {
 	defer func() {
@@ -605,6 +640,21 @@ fn show_nodes(text: Str) -> Str {
   }
 }
 
+fn show_emit(text: Str) -> Str {
+  match yaml.parse(text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(n) => {
+      if n.content.is_empty() {
+        return "SKIP"
+      }
+      match yaml.encode_node(n) {
+        Ok(t) => "OK ${t}"
+        Err(e) => "ERR ${e.display().quote()}"
+      }
+    }
+  }
+}
+
 fn show_all(text: Str) -> Str {
   match yaml.decode_all[T](text) {
     Err(e) => "ERR ${e.display().quote()}"
@@ -645,6 +695,12 @@ const CASES: List[(Str, Str)] = [
 	for _, e := range ents {
 		in, _ := cases.ReadFile("cases/" + e.Name())
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(string(in)), xq(nodesShow(string(in))))
+	}
+	o.WriteString("]\n\n")
+	o.WriteString("/// (the YAML text, what yaml.v3 writes for the Node it parses it into)\nconst EMITS: List[(Str, Str)] = [\n")
+	for _, e := range ents {
+		in, _ := cases.ReadFile("cases/" + e.Name())
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(string(in)), xq(emitShow(string(in))))
 	}
 	o.WriteString("]\n\n")
 	o.WriteString("/// (an alias expansion document, what yaml.v3 decodes it into Deep as)\nconst DEEP: List[(Str, Str)] = [\n")
@@ -767,6 +823,15 @@ test "Duration and Bytes fields are yaml.v3's" {
 test "parse_all builds yaml.v3's Node trees" {
   for (text, want) in NODES {
     expect(show_nodes(text)) == want
+  }
+}
+
+test "encode_node writes the Node a document parses into as yaml.v3's Marshal" {
+  for (text, want) in EMITS {
+    if want == "SKIP" {
+      continue
+    }
+    expect(show_emit(text)) == want
   }
 }
 
