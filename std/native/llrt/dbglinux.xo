@@ -683,10 +683,22 @@ pub fn close(h: Int) {
 fn reap(h: Int) {
   let st = raw.bytes_buf(8)
   let sa = raw.bytes_addr(st)
+  let tick = raw.bytes_buf(8)
   let pid = rt.mem_load(h, PID, 8)
+  // at most 5 s: a session's end never hangs on a program the kernel does
+  // not hand back (a thread the debugger never learned of, another tracer)
+  var left = 5000
   while true {
-    let r = wait4(h, -1, sa, WALL)
-    if r <= 0 {
+    let r = wait4(h, -1, sa, WALL | WNOHANG)
+    if r == 0 {
+      pool.futex_wait_us(raw.bytes_addr(tick), 0, 10000)
+      left -= 10
+      if left <= 0 {
+        break
+      }
+      continue
+    }
+    if r < 0 {
       break
     }
     let v = rt.mem_load(sa, 0, 4)
@@ -697,6 +709,7 @@ fn reap(h: Int) {
     }
   }
   raw.alive(st)
+  raw.alive(tick)
   rt.mem_store(h, NT, 0, 8)
 }
 

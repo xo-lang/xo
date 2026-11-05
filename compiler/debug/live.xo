@@ -113,7 +113,7 @@ fn (var s: Session) step1(th: Int, pc: Int) -> List[Int] ! Str uses proc {
   if !internal.dbg_set_step(s.proc, th, true) || !internal.dbg_resume(s.proc, !svc) {
     return Err("could not step the thread at 0x${hex(pc)}")
   }
-  let r = internal.dbg_wait(s.proc, 0)
+  let r = s.wait_next()
   if r.len() > 0 && r[0] == 1 {
     let _s = internal.dbg_set_step(s.proc, th, false)
   }
@@ -204,8 +204,21 @@ fn (var s: Session) end() uses proc {
 }
 
 fn (var s: Session) wait_stop() -> Str uses proc {
-  let r = internal.dbg_wait(s.proc, 0)
+  let r = s.wait_next()
   s.stopped(r)
+}
+
+/// The program's next stop (dbg_wait's list). Past s.wait_ms (--timeout)
+/// with no stop, the program is ended (an attached one detached, left
+/// running) and the list is [5], so a session never waits forever for a
+/// program that will not stop.
+fn (var s: Session) wait_next() -> List[Int] uses proc {
+  let r = internal.dbg_wait(s.proc, s.wait_ms)
+  if s.wait_ms > 0 && (r.is_empty() || r[0] == 0) {
+    internal.dbg_kill(s.proc)
+    return [5]
+  }
+  r
 }
 
 /// The stop r (dbg_wait's list) taken in: the stopped thread's registers
@@ -219,7 +232,7 @@ fn (var s: Session) stopped(r: List[Int]) -> Str uses proc {
     s.stopj = "\"stop\":\"none\""
     return "the program did not stop"
   }
-  if r[0] == 2 || r[0] == 3 || r[0] == 4 {
+  if r[0] == 2 || r[0] == 3 || r[0] == 4 || r[0] == 5 {
     internal.dbg_close(s.proc)
     s.proc = 0
     s.thread = 0
@@ -231,6 +244,11 @@ fn (var s: Session) stopped(r: List[Int]) -> Str uses proc {
     if r[0] == 4 {
       s.stopj = "\"stop\":\"ended\""
       return "the program ended (attached: its status is its parent's)"
+    }
+    if r[0] == 5 {
+      let how = if s.attached { "detached from, left running" } else { "ended" }
+      s.stopj = "\"stop\":\"timeout\",\"ms\":${s.wait_ms}"
+      return "no stop within ${s.wait_ms} ms (--timeout): the program was ${how}"
     }
     s.stopj = "\"stop\":\"signaled\",\"signal\":${r[1]}"
     return "the program was ended by signal ${r[1]}"

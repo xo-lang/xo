@@ -1,5 +1,5 @@
-usage: xo debug [--batch] [--json] [-c CMD]... PROG [ARGS]
-       xo debug -p PID [--batch] [--json] [-c CMD]... PROG
+usage: xo debug [--batch] [--json] [--timeout=DUR] [-c CMD]... PROG [ARGS]
+       xo debug -p PID [--batch] [--json] [--timeout=DUR] [-c CMD]... PROG
        xo debug --dap
 
 Runs PROG, a native executable with its debug information (a native
@@ -9,6 +9,10 @@ requires them: each is echoed as `(xo) CMD`, then its output), else one a
 line from standard input, with the prompt `(xo) ` on a terminal and an
 empty line repeating the last command. --json prints one JSON line per
 command instead (spec 11.5). The program is ended after the last command.
+--timeout=DUR bounds each wait for the program's next stop (run, continue,
+step, next, finish): with no stop within DUR the program is ended (an
+attached one detached and left running) and the command says so, so a
+script or an agent never waits forever.
 -p PID attaches to the running process PID instead (PROG its executable:
 its debug information): every thread is stopped, and quit detaches,
 leaving it running; for a hung program, tasks shows what each task waits

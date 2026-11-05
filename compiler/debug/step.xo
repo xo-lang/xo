@@ -339,7 +339,7 @@ fn (var s: Session) run_to(th: Int, a: Int, sp: Int) -> List[Int] ! Str uses pro
     if !internal.dbg_resume(s.proc, false) {
       return Err("the program could not be resumed")
     }
-    let r = internal.dbg_wait(s.proc, 0)
+    let r = s.wait_next()
     if r.len() < 5 || r[0] != 1 || r[2] != EXC_BREAKPOINT {
       out = r
       break

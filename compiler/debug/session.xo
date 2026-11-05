@@ -118,6 +118,9 @@ pub struct Session {
   pub exe: Bytes = b""
   pub attached: Bool = false
   pub slide: Int = 0
+  /// how long a command waits for the program's next stop, in
+  /// milliseconds (`xo debug --timeout`); 0 waits as long as it runs
+  pub wait_ms: Int = 0
 }
 
 /// A session on a recorded stopped thread: exe is the executable (its

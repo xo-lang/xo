@@ -96,6 +96,7 @@ pub fn debug_main(os: Os, args: List[Str], usage: Str) -> Int uses (fs.read, std
   var json = false
   var batch = false
   var attach = false
+  var wait_ms = 0
   var i = 0
   while i < args.len() && args[i].starts_with("-") {
     let a = args[i]
@@ -116,7 +117,15 @@ pub fn debug_main(os: Os, args: List[Str], usage: Str) -> Int uses (fs.read, std
       i += 2
       continue
     }
-    if a == "--json" {
+    if a.starts_with("--timeout=") {
+      match Duration.parse(a["--timeout=".len()..a.len()]) {
+        Ok(d) if d.millis() > 0 => wait_ms = d.millis()
+        _ => {
+          os.stdio.eprint("xo debug: --timeout takes a duration (30s, 2m, 500ms), not ${a["--timeout=".len()..a.len()].quote()}\n${usage}")
+          return 2
+        }
+      }
+    } else if a == "--json" {
       json = true
     } else if a == "--batch" {
       batch = true
@@ -149,6 +158,7 @@ pub fn debug_main(os: Os, args: List[Str], usage: Str) -> Int uses (fs.read, std
     }
   }
   var s = debug.live_session(exe, sections, prog, args[i + 1..])
+  s.wait_ms = wait_ms
   if attach && cmds.len() == 1 && !batch {
     // -p with no commands: attach, then the prompt
     os.stdio.println(if json { s.exec_json(cmds[0]) } else { s.exec(cmds[0]) })

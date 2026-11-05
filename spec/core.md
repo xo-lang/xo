@@ -3095,7 +3095,7 @@ test "retries after 503" {
 | `xo replay`, `xo dump` | Debugging (section 11); `xo why` and `xo debug` are [P2] and not implemented yet (11.3, 11.5) |
 | `xo doc` | Docs from doc comments; `xo doc std` lists the std modules this xo ships, a line each |
 | `xo clean -cache [-n]` | Remove every cache under `<user cache>/xo` (build directories, the native back end's cache, GOCACHE, test binaries, watch builds, xo dev outputs, the test infrastructure's caches) and print the bytes freed per cache; `-n` prints what it would remove and removes nothing. Never touches anything outside `<user cache>/xo`; the module cache and the prebuilt seeds stay; an entry whose build lock a running process holds is left. `xo clean` without `-cache` is a usage error |
-| `xo debug [--batch] [--json] [-c CMD]... PROG [ARGS]`, `xo debug --dap` | Run a native program with its debug information under xo's own debugger (11.5; macOS arm64 and Linux so far): break, run, continue, step, next, finish, print, locals, backtrace, frame, threads, quit; `--json` gives the protocol of 11.5, `--dap` the Debug Adapter Protocol for editors |
+| `xo debug [--batch] [--json] [--timeout=DUR] [-c CMD]... PROG [ARGS]`, `xo debug --dap` | Run a native program with its debug information under xo's own debugger (11.5; macOS arm64 and Linux so far): break, run, continue, step, next, finish, print, locals, backtrace, frame, threads, quit; `--json` gives the protocol of 11.5, `--dap` the Debug Adapter Protocol for editors |
 | `xo get [--accept-effects] <path>[@version]`, `xo mod tidy`, `xo mod accept-effects [<path>...]`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, record wider effects of dependencies in xo.lock (decision 0156), copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
 | `xo audit [--json] [--no-gc] [<dir>]` | Supply chain report (decision 0156): per dependency its effects, its xo.lock effects line (ok, widened, narrowed, unlocked), its ceiling, and its escape hatches (`use c`, impure `use go`) with the vouches covering them; this module's attenuations (`only`, `sub`, `read_only`, `write_only`, `cwd`) with constant arguments, the capabilities it passes into dependencies and whether each is attenuated, vouches that match nothing, and the check's diagnostics. JSON with `--json` or when stdout is not a terminal (an agent piping it gets JSON), text otherwise. Exit 1 when the check has errors |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
@@ -3869,6 +3869,8 @@ that is not a command), and `ok`. With `ok` false the object has `error`
   `frame` (the innermost, as in `backtrace`); `"exception"` with
   `exception`, `code`, `subcode` (the Mach exception's), `thread` and
   `frame`; `"exited"` with `status`; `"signaled"` with `signal`;
+  `"timeout"` with `ms` (`--timeout`: no stop within it, the program
+  ended or, attached, detached and left running);
   `"ended"` (an attached program's end).
 - `attach`: `stop` `"attached"` with `pid`, `slide` (`"0x..."`),
   `threads` (their count), `thread` and `frame`.

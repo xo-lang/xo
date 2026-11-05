@@ -144,6 +144,47 @@ func TestDebugBatch(t *testing.T) {
 	}
 }
 
+// TestDebugTimeout checks --timeout: a program that never stops is ended
+// at the bound and the session goes on, so a batch run cannot hang
+// (decision 0253; a session at a killed program's end once waited forever,
+// gotchas/ptrace-leader-reaped-last.md).
+func TestDebugTimeout(t *testing.T) {
+	if !debugLaunches() {
+		t.Skip("xo debug's process control is macOS arm64 and Linux so far (decision 0253 stages 2 and 6)")
+	}
+	if testing.Short() {
+		t.Skip("builds and debugs a native program")
+	}
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	dir := writeFiles(t, map[string]string{"main.xo": "fn main(os: Os) {\n  os.clock.sleep(1h)\n}\n"})
+	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: debugBackend(), Out: filepath.Join(t.TempDir(), "prog")}))
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %s", err, res.Output)
+	}
+	prog := res.Binaries[xotool.Host()]
+	var out, errb bytes.Buffer
+	start := time.Now()
+	code := runXo(t, []string{"debug", "--batch", "--timeout=1s", "-c", "run", "-c", "threads", prog}, &out, &errb)
+	got := out.String()
+	if strings.Contains(got+errb.String(), "task_for_pid") {
+		t.Skipf("this xo cannot control the program (entitlements, Developer Mode):\n%s%s", got, errb.String())
+	}
+	if code != 0 {
+		t.Fatalf("xo debug: exit %d\n%s%s", code, got, errb.String())
+	}
+	wantAll(t, got,
+		"(xo) run\nno stop within 1000 ms (--timeout): the program was ended\n",
+		"(xo) threads\nno threads (the program is not stopped)\n",
+	)
+	if d := time.Since(start); d > 30*time.Second {
+		t.Errorf("the session took %v with --timeout=1s", d)
+	}
+	var e2 bytes.Buffer
+	if code := runXo(t, []string{"debug", "--batch", "--timeout=soon", "-c", "run", prog}, &out, &e2); code != 2 || !strings.Contains(e2.String(), "--timeout takes a duration") {
+		t.Errorf("--timeout=soon: exit %d, %s", code, e2.String())
+	}
+}
+
 // TestDebugStep is stage 3 (decision 0253): next over an inlined call
 // and by lines (and stopped by a breakpoint in the call it runs over),
 // step into an inlined call and a real one, finish out of
