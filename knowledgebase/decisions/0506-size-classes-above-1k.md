@@ -43,7 +43,20 @@ regardless: size std buffers just under a class (http.xo 32,768 to 32,736).
 
 ## Consequences
 
-PENDING
+- A request between classes wastes at most about 20% (one 1.25x step; at most
+  one 16 KiB page from 16 KiB up for sizes up to 128 KiB, then 32 KiB steps),
+  against up to 50% now. On the self build's census (requests over 1 KiB hold
+  1,424 MB of 2,097 MB live at inline.verify) the mean waste falls from about
+  25% of those bytes to about 10%: roughly 200 MB of that point's live bytes
+  (an estimate from the request histogram, to be confirmed by the `--ab` self
+  run's max RSS).
+- More classes mean more partly used runs and a larger free list set: the
+  retained free blocks at exit may grow (3,553 MB on the self build now); the
+  `--ab` self run and `XO_HEAPSTATS=1` decide.
+- A request above 1 KiB pays a table lookup instead of a shift: the bar is
+  bench/perf/alloc small and mixed within noise.
+- No language or ABI change: block sizes are the allocator's. Lang 2 owns
+  the change; this ADR stays Proposed until the owner accepts it.
 
 ## Alternatives
 
