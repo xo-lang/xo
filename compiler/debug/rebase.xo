@@ -3,7 +3,8 @@
 // slid by a multiple of the page size from the file's addresses. The
 // slide is found from the stopped threads (a return address into the
 // executable, then the candidate slides where the executable's Mach-O
-// header and load commands are in memory, byte for byte), and the debug
+// header and load commands, or ELF header and program headers, are in
+// memory, byte for byte), and the debug
 // information and unwind tables are moved by it, so everything after
 // reads the process's own addresses.
 
@@ -12,39 +13,74 @@ use std/internal
 /// arm64 macOS pages: the slide's unit.
 const PAGE = 16384
 
+/// Linux's smallest page (arm64 kernels may use 16 or 64 KiB pages, whose
+/// slides are multiples of it too).
+const ELF_PAGE = 4096
+
 /// The executable's slide in the attached program h, or None when no
 /// return address of its threads leads to it. exe is the executable's
 /// file.
 pub fn find_slide(h: Int, exe: Bytes, tab: Tables) -> Int? {
-  if exe.len() < 32 {
+  if exe.len() < 64 {
     return None
   }
-  // the header and load commands (sizeofcmds at 20): mapped unchanged at
-  // the start of __TEXT
-  let n = 32 + (Int(exe[20]) | (Int(exe[21]) << 8) | (Int(exe[22]) << 16) | (Int(exe[23]) << 24))
-  if n > exe.len() || n > 65536 {
-    return None
+  var n = 0
+  var base = tab.base
+  var page = PAGE
+  if exe[0..4] == b"\x7fELF" {
+    // the ELF header and program headers (e_phoff at 32, e_phentsize at
+    // 54, e_phnum at 56): mapped unchanged at the start of the load
+    // segment with file offset 0, whose p_vaddr is the file's base (0 in
+    // a position independent executable)
+    let phoff = rd64(exe, 32)
+    let phsz = rd16(exe, 54)
+    let phn = rd16(exe, 56)
+    n = phoff + phsz * phn
+    if n > exe.len() || n > 65536 || phsz < 56 {
+      return None
+    }
+    var found = false
+    for i in 0..phn {
+      let ph = phoff + i * phsz
+      // PT_LOAD with p_offset 0
+      if rd32(exe, ph) == 1 && rd64(exe, ph + 8) == 0 {
+        base = rd64(exe, ph + 16)
+        found = true
+        break
+      }
+    }
+    if !found {
+      return None
+    }
+    page = ELF_PAGE
+  } else {
+    // the Mach-O header and load commands (sizeofcmds at 20): mapped
+    // unchanged at the start of __TEXT
+    n = 32 + rd32(exe, 20)
+    if n > exe.len() || n > 65536 {
+      return None
+    }
   }
   let head = exe[0..n]
   var tried: Map[Int, Bool] = {}
-  if slide_ok(h, head, tab.base, 0) {
+  if slide_ok(h, head, base, 0) {
     return Some(0)
   }
   tried[0] = true
   for th in internal.dbg_threads(h) {
-    for r in return_addrs(h, th) {
+    for r in return_addrs(h, th, tab) {
       for (lo, hi) in tab.code {
         // r = a + s with a in [lo, hi): s in (r - hi, r - lo], page aligned
-        var s = (r - hi + PAGE) & (0).wrapping_sub(PAGE)
+        var s = (r - hi + page) & (0).wrapping_sub(page)
         var k = 0
         while s <= r - lo && k < 4096 {
           if !tried.contains(s) {
             tried[s] = true
-            if slide_ok(h, head, tab.base, s) {
+            if slide_ok(h, head, base, s) {
               return Some(s)
             }
           }
-          s += PAGE
+          s += page
           k += 1
         }
       }
@@ -68,14 +104,17 @@ fn slide_ok(h: Int, head: Bytes, base: Int, s: Int) -> Bool {
 
 /// Thread th's pc, link register, and the return addresses of its frame
 /// pointer chain (at most 64), pointer authentication bits off.
-fn return_addrs(h: Int, th: Int) -> List[Int] {
-  let rs = internal.dbg_regs(h, th)
-  if rs.len() < 33 {
+fn return_addrs(h: Int, th: Int, tab: Tables) -> List[Int] {
+  let rs = tab.regs_map(internal.dbg_regs(h, th))
+  if rs.is_empty() {
     return []
   }
   let mask = 0xffffffffffff
-  var out = [rs[32] & mask, rs[30] & mask]
-  var fp = rs[29]
+  var out = [(rs.get(-1) ?? 0) & mask]
+  if !tab.x86 {
+    out.push((rs.get(30) ?? 0) & mask)
+  }
+  var fp = rs.get(tab.fp_reg()) ?? 0
   while fp != 0 && fp & 7 == 0 && out.len() < 66 {
     let b = internal.dbg_read(h, fp, 16) ?? b""
     if b.len() < 16 {

@@ -229,8 +229,8 @@ func TestDebugTasks(t *testing.T) {
 // found from its threads), tasks and task read its records, and after
 // the session the program runs on (detached, not killed).
 func TestDebugAttach(t *testing.T) {
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("xo debug attaches on macOS arm64 so far (decision 0253 stage 4; Linux's needs /proc/PID/task, stage 6)")
+	if !debugLaunches() {
+		t.Skip("xo debug attaches on macOS arm64 and Linux (decision 0253 stages 4 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -257,7 +257,7 @@ func TestDebugAttach(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := runXo(t, []string{"debug", "-p", strconv.Itoa(p.Process.Pid), "--batch", "-c", "tasks", "-c", "task 2", "-c", "print v", prog}, &stdout, &stderr)
 		got = stdout.String()
-		if strings.Contains(got+stderr.String(), "task_for_pid") {
+		if strings.Contains(got+stderr.String(), "task_for_pid") || strings.Contains(got+stderr.String(), "ptrace_scope") {
 			t.Skipf("this xo cannot control the program (entitlements, Developer Mode):\n%s%s", got, stderr.String())
 		}
 		if code == 0 && strings.Contains(got, "blocked in Mutex.with") {

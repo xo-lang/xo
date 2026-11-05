@@ -482,10 +482,17 @@ asked for as the stages found them):
   the registers' roles (rbp, rsp, return address column 16), int3 (the
   pc moved back on it), syscall, the call forms next steps over (call
   rel32, [REX] ff /2), each trap saving only its own bytes, and the
-  x86 fiber switch frame. Attach is not built on Linux: listing a
-  process's threads needs /proc/PID/task, not on the approved list (on
-  the owner's list, 2026-11-05); a fallback through the runtime's worker
-  records would leave the poller and monitor running and was declined
-  by the lead. ptrace_scope: the linux/arm64 offload host has no Yama.
+  x86 fiber switch frame. Attach on Linux (after the owner's
+  2026-11-05 addition of /proc/PID/task, below): dbglinux attach reads
+  the thread ids from /proc/PID/task (openat, getdents64), seizes each
+  with TRACECLONE and no EXITKILL, interrupts it and waits for its stop,
+  and repeats until a pass finds no new thread; detach is PTRACE_DETACH
+  of each. The slide is found as on macOS, with the ELF header and
+  program headers in place of the Mach-O header (at the PT_LOAD of file
+  offset 0, 4 KiB units); Xo's ET_EXEC files have none, and a position
+  independent executable gets it. ptrace_scope: the linux/arm64 offload
+  host has no Yama; the linux/amd64 host (WSL) has ptrace_scope 1, where
+  the attach tests skip on the error and attach was checked with xo as
+  the program's parent (`sh -c 'prog & exec xo debug -p $!'`).
   Tests: cmd/xo TestDebugBatch, TestDebugStep, TestDebugTasks, TestDebugDAP
   run on linux/arm64 (debugLaunches); compiler/debug arch_test.xo.

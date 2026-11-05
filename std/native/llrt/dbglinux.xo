@@ -16,8 +16,8 @@
 //
 // A debuggee is a record (heap_large) at h:
 //   0 pid, 8 the tracer's mailbox, 16 the selected thread (the last
-//   stop's), 24 a stop was reported (resume answers it), 32 attached (not
-//   used yet: attach needs the thread list), 40 the threads table, 48 its
+//   stop's), 24 a stop was reported (resume answers it), 32 attached (quit
+//   detaches), 40 the threads table, 48 its
 //   count, 56 its capacity.
 // A thread's entry (TE bytes): 0 tid, 8 stopped, 16 the signal to deliver
 // at its next resume, 24 single step at its next resume.
@@ -57,6 +57,8 @@ const PTRACE_SEIZE = 0x4206
 const PTRACE_INTERRUPT = 0x4207
 /// PTRACE_O_TRACECLONE 8, TRACEEXEC 0x10, EXITKILL 0x100000
 const SEIZE_OPTS = 0x100018
+/// attach's: TRACECLONE only (the program outlives xo)
+const SEIZE_OPTS_ATTACH = 8
 const EVENT_CLONE = 3
 const EVENT_EXEC = 4
 const EVENT_STOP = 128
@@ -207,11 +209,113 @@ fn child(path: Int, argv: Int, envp: Int, out: Int, devnull: Int) {
   let _x = rt.sys6(nr(94, 231), 127, 0, 0, 0, 0, 0)
 }
 
-/// Attaching to a running process needs the list of its threads (every
-/// one is seized and stopped), which only /proc/PID/task gives: not on
-/// stage 6's approved list yet.
+/// Attaches to process pid: each thread of /proc/PID/task seized (with
+/// TRACECLONE, so a thread it makes meanwhile is traced too, and without
+/// EXITKILL: the program outlives xo) and stopped with PTRACE_INTERRUPT,
+/// the list read again until it has no new thread; the leader selected.
 pub fn attach(pid: Int) -> (Int, Str) {
-  (0, "attaching to process ${pid} on Linux needs its thread list from /proc/${pid}/task, which is not on decision 0253's approved list yet (stage 6); start the program under xo debug instead")
+  let h = new_record()
+  if h == 0 {
+    return (0, "the debugger's tracer thread could not be started")
+  }
+  rt.mem_store(h, PID, pid, 8)
+  rt.mem_store(h, ATTACHED, 1, 8)
+  let st = raw.bytes_buf(8)
+  let sa = raw.bytes_addr(st)
+  var more = true
+  while more {
+    let tids = task_ids(pid)
+    if tids.is_empty() {
+      raw.alive(st)
+      detach(h)
+      close(h)
+      return (0, "process ${pid}: no threads in /proc/${pid}/task (no such process, or it is not ours to read)")
+    }
+    more = false
+    for tid in tids {
+      if entry(h, tid) != 0 {
+        continue
+      }
+      let s = ptrace(h, PTRACE_SEIZE, tid, 0, SEIZE_OPTS_ATTACH)
+      if s != 0 {
+        if tid == pid || entry(h, pid) == 0 {
+          raw.alive(st)
+          detach(h)
+          close(h)
+          return (0, "ptrace(PTRACE_SEIZE) ${pid}: errno ${-s} (another debugger, or a security module such as Yama's ptrace_scope, may forbid it)")
+        }
+        // it ended meanwhile
+        continue
+      }
+      let _i = ptrace(h, PTRACE_INTERRUPT, tid, 0, 0)
+      let w = wait4(h, tid, sa, WALL)
+      if w != tid || rt.mem_load(sa, 0, 4) & 0xff != 0x7f {
+        continue
+      }
+      add_thread(h, tid)
+      set_stopped(h, tid, true)
+      let sig = (rt.mem_load(sa, 0, 4) >> 8) & 0xff
+      if rt.mem_load(sa, 0, 4) >> 16 == 0 && sig != SIGTRAP && sig != SIGSTOP {
+        // a signal it was getting: delivered when it runs on
+        rt.mem_store(entry(h, tid), E_SIG, sig, 8)
+      }
+      more = true
+    }
+  }
+  raw.alive(st)
+  rt.mem_store(h, HTHREAD, pid, 8)
+  rt.mem_store(h, PENDING, 1, 8)
+  (h, "")
+}
+
+/// The thread ids in /proc/pid/task (getdents64 of the directory), empty
+/// when it cannot be read.
+fn task_ids(pid: Int) -> List[Int] {
+  var out: List[Int] = []
+  let path = "/proc/${pid}/task\u{0}"
+  // openat(AT_FDCWD, path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+  let fd = rt.sys6(nr(56, 257), -100, raw.data(path), (if target.arch == TargetArch.Amd64 { 0x10000 } else { 0x4000 }) | 0x80000, 0, 0, 0)
+  let _z = path.len()
+  if fd < 0 {
+    return out
+  }
+  let buf = raw.bytes_buf(4096)
+  let b = raw.bytes_addr(buf)
+  while true {
+    let n = rt.sys6(nr(61, 217), fd, b, 4096, 0, 0, 0)
+    if n <= 0 {
+      break
+    }
+    // struct linux_dirent64: d_ino 8, d_off 8, d_reclen 2, d_type 1, name
+    var off = 0
+    while off < n {
+      let reclen = rt.mem_load(b, off + 16, 2)
+      var tid = 0
+      var k = off + 19
+      var digits = true
+      var any = false
+      while digits {
+        let c = rt.mem_load(b, k, 1)
+        if c >= 48 && c <= 57 {
+          tid = tid * 10 + (c - 48)
+          any = true
+          k += 1
+        } else {
+          digits = false
+          if c != 0 {
+            any = false
+          }
+        }
+      }
+      if any {
+        out.push(tid)
+      }
+      off += reclen
+    }
+  }
+  raw.alive(buf)
+  let _c = rt.sys6(nr(57, 3), fd, 0, 0, 0, 0, 0)
+  out
 }
 
 /// The threads of the stopped program (their tids), the selected one

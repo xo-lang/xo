@@ -3769,10 +3769,14 @@ with process_vm_readv; a fault is reported as `stopped by exception N`
 with the Mach numbering (1 bad access, 2 bad instruction, 3 arithmetic)
 and its signal delivered when the program runs on; signals the program
 handles itself (SIGURG's preemption, SIGCHLD, SIGPIPE) pass without a
-stop. `attach` and `-p` are not built on Linux yet (they need the
-process's thread list, /proc/PID/task, not on the decision's approved
-list). A security module may forbid ptrace (Yama's ptrace_scope); the
-error then says so. Windows is later.
+stop. `attach` and `-p` read the process's threads from /proc/PID/task,
+seize each (no kill on the debugger's exit) and stop it, until no new
+thread appears, and find the executable's load address from its ELF
+header in memory; `quit` detaches and the program runs on. A security
+module may forbid ptrace: Yama's ptrace_scope 1 (the default of many
+distributions, and of WSL) lets a process attach only to its own
+descendants, so `-p` of an unrelated process fails there (the error
+says so) unless the debugger runs as root or the scope is 0. Windows is later.
 
 `tasks` and `task N [bt]` (stage 4, 2026-11-05) read the stopped
 program's tasks from the runtime's own records in its memory, as `xo
@@ -3820,8 +3824,8 @@ protocol's version 1 below; with no `-c` it reads commands from standard
 input. There `run` and `continue` answer that the session is a recorded
 thread.
 
-**[later]** Not built: a live process on Windows, attaching on Linux
-(0253 stage 6), conditional
+**[later]** Not built: a live process on Windows (0253 stage 6),
+conditional
 breakpoints, a break on a contract failure, evaluating expressions
 (beyond `print`'s field path), stepping back over a replay (11.3), and
 DAP's `pause`.

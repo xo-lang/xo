@@ -787,7 +787,7 @@ fn dbg_attach(pid: Int) -> Int ! Str uses proc {
     let (h, e) = dbglinux.attach(pid)
     return if h == 0 { Err(e) } else { Ok(h) }
   }
-  Err("xo debug attaches on macOS arm64 so far (decision 0253 stage 4; Linux is stage 6)")
+  Err("xo debug attaches on macOS arm64 and Linux so far (decision 0253 stages 4 and 6; Windows is next)")
 }
 
 fn dbg_threads(h: Int) -> List[Int] { if dbg_mac() { dbgmac.threads(h) } else { dbglinux.threads(h) } }

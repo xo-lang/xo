@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -239,8 +238,8 @@ func fileExists(p string) bool {
 // it stopped (reason pause), its stack and threads are there, and
 // disconnect detaches, leaving the program running.
 func TestDebugDAPAttach(t *testing.T) {
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		t.Skip("xo debug attaches on macOS arm64 so far (decision 0253 stage 4; Linux's needs /proc/PID/task, stage 6)")
+	if !debugLaunches() {
+		t.Skip("xo debug attaches on macOS arm64 and Linux (decision 0253 stages 4 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -267,7 +266,7 @@ func TestDebugDAPAttach(t *testing.T) {
 		if runXo(t, []string{"debug", "-p", strconv.Itoa(p.Process.Pid), "--batch", "-c", "threads", prog}, &o, &e) == 0 {
 			break
 		}
-		if strings.Contains(o.String()+e.String(), "task_for_pid") {
+		if strings.Contains(o.String()+e.String(), "task_for_pid") || strings.Contains(o.String()+e.String(), "ptrace_scope") {
 			t.Skipf("this xo cannot control the program:\n%s%s", o.String(), e.String())
 		}
 		if try == 20 {
