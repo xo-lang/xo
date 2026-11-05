@@ -1,6 +1,6 @@
 # 0507: A scoped spawn borrows the captures that outlive its scope
 
-Status: Proposed (Xo Lang 1, 2026-11-04; for the owner)
+Status: Accepted (owner, 2026-11-04: "507 yes"; proposed by Xo Lang 1 the same day). The code lands after the 0.39 cut (branch lang1-0507).
 
 ## Context
 
