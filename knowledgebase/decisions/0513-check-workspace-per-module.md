@@ -147,10 +147,28 @@ TestCheckWorkspaceSizeMemory, and 0086's TestModules.
 Left: the overlay (frozen base tables) is not needed at these numbers;
 the remaining 17% is the members' own parse and check plus the copy of
 the base's other tables, to profile when this is built for main. The
-branch runs the shared base only for the workspace's own directory, not
-yet for a walk (`./...`), and behind XO_CHECK_PER_MODULE=1 with
+branch runs it behind XO_CHECK_PER_MODULE=1 with
 XO_CHECK_PER_MODULE_BASE=1; for main it becomes the default for
 whole-workspace checks of more than a few members, with no variable.
+
+### Walks (2026-11-05)
+
+`xo check ./...` at a workspace root now takes the same path on the
+branch: the walk's directories outside every member are the base
+(checked as named, never walked again), and each member is walked on its
+own from a copy of the base. On all of aws 8fe319e (linux/arm64, cache
+off): 52.2 s at 3,898 MB, the base 27 directories (the core packages and
+the codegen and integration modules' own packages) and 438 members,
+474 modules, 0 errors, 4 warnings (XO0305 in codegen/gen/restjson.xo);
+one checker stops at the 30 GB budget after 41 to 54 s. With the three
+planted errors the walk reports them (sigv4 and two services) and the
+same four warnings. TestCheckWorkspacePerModuleSameDiags covers both the
+workspace's directory and its walk, and asserts the per module path ran
+(XO_CHECK_PER_MODULE_TRACE, a prototype aid).
+
+The walk's peak (3.9 GB) is above the directory form's (2.3 GB) because
+its base holds more: every package of the root module, not only the
+ones two members import.
 
 Work, in order:
 
