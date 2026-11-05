@@ -1979,6 +1979,14 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   golden at that level, as release builds in TestDebugInfoSameOutputLLVM:
   use it for a change to what clang's optimizer sees (attributes,
   metadata, intrinsics).
+- **A program's own timeout** (2026-11-04): each golden program that
+  internal/llvm's buildRun and leakCheck and internal/arm64's
+  TestGoldenRun start runs through testtmp.RunTimed, which stops it (its
+  process group, SIGKILL) after 2 minutes and fails that program's subtest
+  with its name and output so far; `XO_TEST_PROG_TIMEOUT` (a Go duration,
+  such as 10m) changes the limit. Before it, a hung program held the step
+  to the package's -timeout (net_close_flush held tier 48's LLVM step
+  about 40 minutes). Last verified: 2026-11-04.
 - **No Go reference in TestGolden**: want.txt pins the output; the Go
   backend builds only under `-golden-update` (which writes want.txt).
   TestGoldenGoParity (XO_TEST_GO_PARITY=1) builds every golden with the

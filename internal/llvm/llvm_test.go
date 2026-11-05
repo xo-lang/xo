@@ -149,7 +149,10 @@ func buildRunEnv(t *testing.T, dir string, opts xotool.Options, leak bool) (runR
 	cmd.Stdin = progStdin(dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err = cmd.Run()
+	timedOut, err := testtmp.RunTimed(cmd)
+	if timedOut {
+		t.Fatalf("%s: still running after %v, stopped (XO_TEST_PROG_TIMEOUT sets the limit); stdout so far:\n%s\nstderr so far:\n%s", filepath.Base(dir), testtmp.ProgTimeout(), stdout.String(), stderr.String())
+	}
 	code := 0
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -177,7 +180,9 @@ func leakCheck(t *testing.T, bin, dir string) string {
 	cmd.Stdin = progStdin(dir)
 	var stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = io.Discard, &stderr
-	if err := cmd.Run(); err != nil {
+	if timedOut, err := testtmp.RunTimed(cmd); timedOut {
+		t.Fatalf("%s: leak check run still running after %v, stopped (XO_TEST_PROG_TIMEOUT sets the limit)\n%s", filepath.Base(dir), testtmp.ProgTimeout(), stderr.String())
+	} else if err != nil {
 		t.Fatalf("leak check run: %v\n%s", err, stderr.String())
 	}
 	m := leakRE.FindStringSubmatch(stderr.String())
