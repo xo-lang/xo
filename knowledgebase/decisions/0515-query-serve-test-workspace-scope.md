@@ -187,3 +187,29 @@ callers are in two other modules (one through an intermediate module)
 and an unrelated module has a type error gives byte-identical JSON both
 ways. A core target such as sigv4 needs 0513's per member merge to
 gain; that is left.
+
+## Point 3 measured (2026-11-05, branch lang1-qdef, on lang1-qcallers)
+
+Checker.decl_candidates scans each workspace package's lines for a
+top-level fn, method, struct, enum, interface, type or const declaring
+one of the name's dot separated segments (and takes a package whose
+import path ends in one), a superset of the packages that can answer.
+`xo query def`, `xo def` and `xo doc` of a name at a workspace or
+repository root load those packages, as named, with their imports; no
+match (a std or prelude name) loads as before. Multiple results are now
+listed in file and position order in both loads: the old order was the
+checker's module load order, which depends on what was loaded, so the
+narrow and wide loads listed the same declarations in different orders.
+aws 8fe319e, linux/arm64, `XO_CHK_CACHE=off`, each with
+XO_QUERY_WIDE=1 for the old load; every output byte-identical:
+
+| at the root | old load | candidates |
+|---|---|---|
+| `xo def payload_hash`, `xo doc payload_hash`, `xo def sigv4.payload_hash`, `query def payload_hash` | 6.47 GB, 9.0 s | 34 to 35 MB, 0.53 s |
+| `xo def Credentials` (2 declarations) / `query def Credentials` | 6.50 GB / 6.47 GB, 8.9 s | 379 MB / 358 MB, 0.86 s |
+| `xo def from_config` (435 declarations) | 8.32 GB, 9.4 s | 8.26 GB, 9.4 s |
+| `query def from_config`, `query def Str.find`, `xo def Str.find` | 6.47 GB, 8.9 s | 6.41 to 6.47 GB: every service declares from_config, and hundreds declare a `find` method |
+
+A prelude member (`Str.find`) could skip the scan; left. The cmd/xo
+query, def, doc, refs, symbols, agent and LSP tests pass with the sorted
+order (no golden depended on load order).
