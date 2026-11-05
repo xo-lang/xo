@@ -138,6 +138,19 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Debugging a wrong program or a fault
 
+- `xo debug` (decisions 0253, 0504; in 0.40.0, macOS arm64, Linux and
+  Windows amd64) is Xo's own debugger: reach for it before adding
+  println or rerunning with guesses (lead, 2026-11-05). Scripted for
+  agents: `xo debug --batch --timeout=30s -c 'break main.xo:18' -c run
+  -c locals -c bt -c 'print v.field' PROG [ARGS]` echoes each command
+  and its output; `--json` prints one JSON line per command (spec 11.5);
+  `--timeout` ends the program instead of waiting forever. A hung or
+  deadlocked program: `xo debug -p PID --batch -c tasks -c 'task 3 bt'
+  PROG` attaches, lists every task and what it waits on, and detaches,
+  leaving it running (`xo debug -h` says where -p is built). PROG is a
+  native build with its debug information (any build but -s or
+  --release). On the Mac xo needs the debugger entitlement and Developer
+  Mode (`xo debug -h`). Run it under heavy.sh like any repro.
 - A native program that dies on a hardware fault (SIGSEGV, SIGILL, an
   access violation) prints a crash report (decision 0343): the first
   line, the registers, `frames:` and a `traceback:` with files and
