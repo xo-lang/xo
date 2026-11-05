@@ -1,8 +1,12 @@
 // A close does not lose or wait on what is still queued (decision 0447,
 // 2026-11-03): the server writes 1 MB to a client in the same program and
-// closes before the client reads any of it; the client then reads all of
-// it and the end of the stream. On wasm a close used a blocking flush,
-// which stopped every task, the reader too, so a program like this hung.
+// closes; the client, reading all along, gets all of it and then the end
+// of the stream, and only then waits for the server's word that it closed.
+// On wasm a close used a blocking flush, which stopped every task, the
+// reader too, so a program like this hung. Until 2026-11-04 the client read
+// only after that word, so the server's write waited for room the unread
+// client never made whenever the kernel's buffers had not grown to take
+// 1 MB (tier 48; gotchas/unread-socket-write-needs-buffer-room.md).
 
 fn main(os: Os) {
   let n = 1 << 20
@@ -27,8 +31,6 @@ fn main(os: Os) {
         })
         match os.net.dial(addr) {
           Ok(c) => {
-            // the server has closed before the first read
-            let _ = wrote.recv()
             var got = 0
             var bad = 0
             while {
@@ -48,6 +50,8 @@ fn main(os: Os) {
                 }
               }
             }
+            // the end of the stream came after the server's close
+            let _ = wrote.recv()
             os.stdio.println("read ${got} of ${n} bytes, ${bad} wrong, then the end")
             c.close()
           }
