@@ -1,7 +1,8 @@
-# 0515: xo query and xo serve load what the question needs; xo test ./... per member
+# 0515: xo query loads what the question needs; xo test ./... per member
 
 Status: Proposed (Xo Lang 1, 2026-11-05, at the lead's request after
-decisions 0511 and 0513). A draft: no code yet. Amends decision 0289's
+decisions 0511 and 0513). Point 1 is prototyped on branch lang1-qscope
+(on lang1-ws11; not on main), measured below. Amends decision 0289's
 "a workspace or repository root checks the modules under it" for the
 query kinds below, and decision 0086's workspace rule for `xo query`,
 `xo serve` and `xo test ./...`.
@@ -23,7 +24,7 @@ linux/arm64 offload host, cold private caches, `XO_CHK_CACHE=off`,
 | `xo test ./service/s3/...` | 630 MB | 1.8 s | works |
 | `xo def from_config` at the root | 8,324 MB | 10.5 s | works, heavy |
 | `xo query type service/s3/client.xo:57:8` | over 30 GB | 40 s | dies at the memory budget |
-| `xo serve`, then that query through it | over 30 GB | | the server dies; every later check and query sent to it fails |
+| that query through `xo serve` | over 30 GB in the child | 40 s | fails; the server lives (below) |
 | `xo test ./...` | over 30 GB | 38 s | dies at the memory budget |
 
 The editor path holds: an editor runs `xo lsp`, which checks per
@@ -31,11 +32,16 @@ directory. What dies is what agents use most. `xo query type` on one s3
 file dies because load_session_pc (compiler/cli/semantic/query.xo)
 sets walk_all and calls workspace_dirs, so it loads all 474 modules to
 answer a question about one. `xo type` (decision 0261) answers it in
-0.21 s. `xo serve` runs the same load in its own process, so one query
-kills the server, and every check and query routed to it after that
-fails. Forwarding to serve is automatic, so a single agent query makes
-the whole repository uncheckable until someone notices. `xo test ./...`
-is the walk 0513 fixes for `xo check`, unfixed for test.
+0.21 s. `xo test ./...` is the walk 0513 fixes for `xo check`, unfixed
+for test.
+
+`xo serve` is not at risk itself (corrected 2026-11-05: the first draft
+said a query killed the server; the 30 GB was its child's, which GNU
+time counts). The Xo server runs each request as a child process
+(compiler/cli/servers/serve.xo) and caches the response, unlike the Go
+server it replaced, which checked in process. Checked: `check .` through
+serve failed at the budget after 34.8 s, the server stayed up at 14 MB,
+and the next requests answered (below).
 
 ## Decision
 
@@ -58,12 +64,8 @@ is the walk 0513 fixes for `xo check`, unfixed for test.
    its declaring modules from a declarations-only pass over the members
    (decls_only, no bodies), then answers as in point 1 from those
    modules. Today's 8.3 GB holds every member's bodies.
-4. **`xo serve` keeps one shared base** (0513) and per-member entries in
-   its existing LRU of checked programs. An entry is the member's
-   closure, the unit its check and query requests need. A request whose
-   load would pass the memory budget is answered with an error that
-   names the narrower command and does not stop the server. One query
-   never takes the server down for the others.
+4. **`xo serve` needs no change**: its children load what points 1 and
+   5 load, and a child that dies at the budget fails only its request.
 5. **`xo test ./...` checks per member** as 0513's `check ./...` does,
    then builds and runs each member's test packages from that member's
    checked program. The test binaries are per package already. Only the
@@ -80,14 +82,12 @@ is the walk 0513 fixes for `xo check`, unfixed for test.
 - `--dir=ROOT` keeps meaning the whole workspace, and for a reverse
   query it is the default. The scope narrows where the question allows,
   not because the flag changed.
-- serve's memory is bounded by its LRU entries plus the base, not by
-  the workspace. Its budget error is new client-visible output, a new
-  XO code, documented in spec section 10.
+- serve's own memory stays small (a child per request); its response
+  cache keys and stamps are unchanged.
 - Tests: cmd/xo tests on a synthetic workspace in which an unimported
   module holds a planted type error and 300 large unused members (0511's
   TestCheckWorkspaceSizeMemory pattern), asserting peak RSS for `query
-  type`, `def`, `callers` and `test ./...`, and that a server survives
-  a request past the budget.
+  type`, `def`, `callers` and `test ./...`.
 
 ## Alternatives
 
@@ -105,6 +105,31 @@ is the walk 0513 fixes for `xo check`, unfixed for test.
 
 1. Point 1 in load_session_pc, with the peak RSS test. This is the
    largest win: query type dies today.
-2. Point 4's budget error in serve, so one query cannot kill the server.
-3. Point 5, on 0513's code once the owner accepts 0513.
-4. Points 2 and 3.
+2. Point 5, on 0513's code once the owner accepts 0513.
+3. Points 2 and 3. `api`, `deps` and `imports` take a module argument
+   with `--dir` defaulting to `.`, so at the root they still load the
+   workspace (6.5 GB, decls only); they should default `--dir` to the
+   argument's directory.
+
+## Point 1 measured (2026-11-05, branch lang1-qscope)
+
+Every query kind but `callers` goes through Checker.check_workspace_dirs
+(0511's rule) when every asked directory holds `.xo` files of its own; a
+directory without them (a module or repository root, 0289) still walks
+the modules below it. XO_QUERY_WIDE=1 restores the old load. aws
+8fe319e, linux/arm64, cold:
+
+| query | 0.39.0 | branch |
+|---|---|---|
+| `type service/s3/client.xo:57:8` | over 30 GB, 40 s, fails | 282 MB, 0.22 s |
+| `def from_config --dir=service/s3` | (whole workspace) | 99 MB, 0.08 s |
+| `effects s3.new --dir=service/s3` | (whole workspace) | 283 MB, 0.20 s |
+| `holes --dir=service/s3` | (whole workspace) | 282 MB, 0.20 s |
+| `api service/s3`, `deps service/s3`, `def from_config` at the root | | 6.5 GB, 8.9 s (unchanged: `--dir` is the root) |
+| `type` through `xo serve` | fails, server lives | 286 ms; `check ./service/s3` 1.0 s, cached 2 ms |
+
+TestCheckWorkspaceSizeMemory now also measures `query type` in a 301
+module workspace: 36 MB against 36 MB for one module with the change,
+1,792 MB without it (XO_QUERY_WIDE=1; the test fails). cmd/xo's
+workspace, TestModules and TestQuery tests pass, and
+TestCodegenInputsClassified.
