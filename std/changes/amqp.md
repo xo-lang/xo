@@ -35,3 +35,15 @@
 - Shipped in: not yet released
 
 `amqp.dial`, `Connection` (`send`, `recv`, `begin`, `end_session`, `close`, `abort`) and `amqp.encode_message` / `decode_message` over `Message` (spec/std.md 64.2, 64.3). The connection is driven by one task; a background reader and the session mux are stage 2b-ii.
+
+## 2026-11-05: feature: std/amqp stages 3 and 4, links and CBS
+
+- Kind: feature (port)
+- Commit: this push
+- Found by: the Azure SDK's Service Bus and Event Hubs needs (decision 0521)
+- Go reference: github.com/Azure/go-amqp v1.7.0 sender.go, receiver.go and session.go (MIT, Copyright 2017 Kale Blankenship and Microsoft); the CBS put-token shape of the Azure SDK for Go
+- Test: std/native/amqp_test.xo (an in-process peer: a sender whose 1500 byte message is split to the peer's 512 byte frames and settled by the peer, a receiver assembling a two frame delivery and accepting it, CBS put-token with a 202 and with a 401)
+- Timing: none for this stage (no hot path; stage 1's row stands)
+- Shipped in: not yet released
+
+`Connection.new_sender` and `new_receiver`, `Sender.send` (credit, session window, fragmentation, outcome), `Receiver.receive`, `accept`, `reject`, `release`, `modify`, `close`, and `amqp.cbs_put_token` (spec/std.md 64.4, 64.5). Driven by one task; the real namespace smoke test is run by the owner only (decision 0521).

@@ -7522,3 +7522,50 @@ pub fn decode_message(b: Bytes) -> Message ! AmqpErr
   section that is not described, and an unknown section code.
 - The corpus (`MESSAGES`) is go-amqp's encoder on 22 messages and its decoder's values; Xo decodes each to the same
   message and encodes it back to the same bytes.
+
+### 64.4 Links (stage 3)
+
+```
+struct SenderOptions { name: Str = "", settle_mode: SenderSettleMode? = None, source: Str = "", max_message_size: Int = 0,
+                       properties: List[(Str, Value)] = [], capabilities: List[Str] = [], target_capabilities: List[Str] = [] }
+struct ReceiverOptions { name: Str = "", credit: Int = 1, settle_mode: ReceiverSettleMode? = None, target: Str = "",
+                         filters: List[(Str, Value)] = [], max_message_size: Int = 0, properties: List[(Str, Value)] = [],
+                         capabilities: List[Str] = [], source_capabilities: List[Str] = [] }
+struct Sender { conn: Connection, id: Int, name: Str, target: Str }       // handles over the connection
+struct Receiver { conn: Connection, id: Int, name: Str, source: Str }
+struct Delivery { message: Message, id: Int, tag: Bytes, settled: Bool, link: Int }
+fn (c: Connection) new_sender(s: Session, target: Str, opts: SenderOptions = SenderOptions{}) -> Sender ! AmqpErr uses net.dial
+fn (c: Connection) new_receiver(s: Session, source: Str, opts: ReceiverOptions = ReceiverOptions{}) -> Receiver ! AmqpErr uses net.dial
+fn (x: Sender) send(m: Message, settled: Bool = false) -> DeliveryState? ! AmqpErr uses net.dial
+fn (x: Sender) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
+fn (r: Receiver) receive() -> Delivery ! AmqpErr uses net.dial
+fn (r: Receiver) accept(d: Delivery) / reject(d, error) / release(d) / modify(d, delivery_failed, undeliverable_here)
+fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
+```
+
+- Links share the connection's single read loop: any call that waits (credit, window, an outcome, a delivery) reads frames
+  and applies them to every session and link, so a sender and a receiver can be used from one task in turn. A background
+  reader and timeouts come with 2b-ii.
+- `send` waits for link credit (the peer's Flow: delivery-count + link-credit - ours) and the session's remote incoming
+  window, splits the message into transfer frames no larger than the peer's `max_frame_size` (the delivery id and tag only
+  on the first, `more` on all but the last), counts the window per frame, and returns the peer's terminal outcome
+  (`Accepted`, `Rejected`, `Released`, `Modified`) once its Disposition settles the delivery; `settled: true` sends
+  pre-settled and returns `None`. A message larger than the peer's `max_message_size` is an `Encode` error.
+- `receive` tops the credit up to `ReceiverOptions.credit` (a Flow) when it falls to half, assembles multi-frame
+  deliveries, and returns a `Delivery`; an aborted delivery is dropped; `accept`, `reject`, `release` and `modify` send a
+  settling Disposition (nothing for a delivery the sender pre-settled). The session's incoming window is restored with a
+  Flow when it falls below half.
+- A peer Detach (with an error: `Peer(error)`) or End makes later calls on the link fail; `close` sends Detach and waits
+  for the peer's.
+
+### 64.5 Claims based security (stage 4)
+
+```
+fn cbs_put_token(c: Connection, s: Session, audience: Str, token: Str, token_type: Str = "servicebus.windows.net:sastoken", expiry_ms: Int = 0) -> () ! AmqpErr uses net.dial
+```
+
+Azure's token authorization: a request message (`operation: put-token`, `type`, `name: audience`, optional
+`expiration`, the token as the body, `to: $cbs`, `reply-to: cbs`) sent on a sender to `$cbs`, the answer read on a receiver
+from `$cbs` with target `cbs`; a `status-code` outside 200 to 299 is `Peer` with the condition
+`amqp:unauthorized-access`. The test is an in-process peer; the smoke test against a real namespace is run by the owner
+only (decision 0521).

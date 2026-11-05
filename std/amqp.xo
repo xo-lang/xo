@@ -338,6 +338,9 @@ struct ConnState {
   /// frames read while waiting for another and not yet returned by recv
   pending: List[Frame] = []
   closed: Bool = false
+  /// begun sessions and attached links (stage 3), by channel and by link id
+  sess: List[SessState] = []
+  links: List[LinkState] = []
 }
 
 /// An open AMQP connection. A handle: copies share the connection, and its methods serialize on it.
@@ -460,3 +463,146 @@ fn encode_message(m: Message) -> Bytes ! AmqpErr
 /// The message in b (all of it); a section out of the specification's order is accepted, a repeated
 /// header, properties or annotations section, or mixed body kinds, is a Decode error.
 fn decode_message(b: Bytes) -> Message ! AmqpErr
+
+// ---------------------------------------------------------------------------
+// Stage 3: links (go-amqp's sender.go, receiver.go and session.go flow control)
+
+/// A session's flow control state. Internal: use the methods of `Connection`.
+struct SessState {
+  channel: Int
+  /// the next transfer id this side uses (wraps at 2^32)
+  next_outgoing_id: Int = 0
+  /// the next transfer id expected from the peer
+  next_incoming_id: Int = 0
+  incoming_window: Int
+  initial_incoming_window: Int
+  /// frames the peer still accepts
+  remote_incoming_window: Int = 0
+  ended: Bool = false
+  next_handle: Int = 0
+}
+
+/// A completed incoming delivery.
+struct Delivery {
+  message: Message
+  /// the transfer id and tag
+  id: Int
+  tag: Bytes
+  /// whether the sender settled it
+  settled: Bool
+  /// the receiver link it came on
+  link: Int
+}
+
+/// A link's state. Internal: use `Sender` and `Receiver`.
+struct LinkState {
+  id: Int
+  name: Str
+  channel: Int
+  handle: Int
+  role: Role
+  /// the peer's handle for the link, once its Attach arrived
+  remote_handle: Int = -1
+  attached: Bool = false
+  detached: Bool = false
+  error: WireError? = None
+  /// the largest message the peer accepts, 0 for no limit
+  peer_max_message_size: Int = 0
+  /// transfers sent (sender) or received (receiver)
+  delivery_count: Int = 0
+  /// sender: credit the peer gave; receiver: credit granted and not used
+  credit: Int = 0
+  /// receiver: the credit topped up to
+  credit_target: Int = 1
+  tag_counter: Int = 0
+  /// sender: settled deliveries by transfer id with the peer's state
+  results: List[(Int, DeliveryState?)] = []
+  /// receiver: a delivery in progress
+  partial: Bytes = b""
+  partial_active: Bool = false
+  partial_id: Int = 0
+  partial_tag: Bytes = b""
+  partial_settled: Bool = false
+  /// sender: transfer ids sent and not yet settled by the peer
+  unsettled: List[Int] = []
+  inbox: List[Delivery] = []
+}
+
+struct SenderOptions {
+  /// empty: a generated name
+  name: Str = ""
+  settle_mode: SenderSettleMode? = None
+  /// the source address, empty for none
+  source: Str = ""
+  max_message_size: Int = 0
+  properties: List[(Str, Value)] = []
+  capabilities: List[Str] = []
+  target_capabilities: List[Str] = []
+}
+
+struct ReceiverOptions {
+  name: Str = ""
+  /// credit granted and topped up
+  credit: Int = 1
+  settle_mode: ReceiverSettleMode? = None
+  /// the target address, empty for none
+  target: Str = ""
+  filters: List[(Str, Value)] = []
+  max_message_size: Int = 0
+  properties: List[(Str, Value)] = []
+  capabilities: List[Str] = []
+  source_capabilities: List[Str] = []
+}
+
+/// A sending link; a handle over its connection.
+struct Sender {
+  conn: Connection
+  id: Int
+  name: Str
+  target: Str
+}
+
+/// A receiving link; a handle over its connection.
+struct Receiver {
+  conn: Connection
+  id: Int
+  name: Str
+  source: Str
+}
+
+/// Attaches a sending link on session `s` to `target` and waits for the peer's Attach. A peer that
+/// refuses the link answers with a Detach carrying an error, which is `Peer`.
+fn (c: Connection) new_sender(s: Session, target: Str, opts: SenderOptions = SenderOptions{}) -> Sender ! AmqpErr uses net.dial
+
+/// Attaches a receiving link on session `s` from `source` and grants the initial credit.
+fn (c: Connection) new_receiver(s: Session, source: Str, opts: ReceiverOptions = ReceiverOptions{}) -> Receiver ! AmqpErr uses net.dial
+
+/// Sends the message and returns the peer's outcome for it (`Accepted`, `Rejected`, ...), waiting for
+/// link credit, session window and the settlement. With `settled` true the transfer is sent
+/// pre-settled and the result is `None` right away.
+fn (x: Sender) send(m: Message, settled: Bool = false) -> DeliveryState? ! AmqpErr uses net.dial
+
+/// Detaches the link (with `closed` set) and waits for the peer's Detach.
+fn (x: Sender) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
+
+/// The next complete message, topping up credit as needed.
+fn (r: Receiver) receive() -> Delivery ! AmqpErr uses net.dial
+
+/// Settles the delivery with the outcome.
+fn (r: Receiver) accept(d: Delivery) -> () ! AmqpErr uses net.dial
+fn (r: Receiver) reject(d: Delivery, error: WireError? = None) -> () ! AmqpErr uses net.dial
+fn (r: Receiver) release(d: Delivery) -> () ! AmqpErr uses net.dial
+fn (r: Receiver) modify(d: Delivery, delivery_failed: Bool = true, undeliverable_here: Bool = false) -> () ! AmqpErr uses net.dial
+
+/// Detaches the link (with `closed` set) and waits for the peer's Detach.
+fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
+
+// ---------------------------------------------------------------------------
+// Stage 4: claims based security (Azure's put-token on the `$cbs` node)
+
+/// Authorizes the connection with a token: sends a `put-token` request on a `$cbs` sender and reads the
+/// answer on a `$cbs` receiver (reply address `cbs`), then detaches both links. `token_type` is
+/// `servicebus.windows.net:sastoken` for a SAS token and `jwt` for an Entra ID one. A status code
+/// outside 200 to 299 is `Peer` with the condition `amqp:unauthorized-access` and the description the
+/// server gave. `expiry_ms` (milliseconds since the Unix epoch) is sent as `expiration` when not 0.
+fn cbs_put_token(c: Connection, s: Session, audience: Str, token: Str, token_type: Str = "servicebus.windows.net:sastoken", expiry_ms: Int = 0) -> () ! AmqpErr uses net.dial

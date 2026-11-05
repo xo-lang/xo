@@ -1529,6 +1529,8 @@ fn st_begin(var c: amqp.ConnState, opts: amqp.SessionOptions = amqp.SessionOptio
           c.pending.push(f)
         } else {
           c.channels.push(ch)
+          c.sess.push(amqp.SessState{channel: ch, next_incoming_id: Int(b.next_outgoing_id), incoming_window: opts.incoming_window,
+            initial_incoming_window: opts.incoming_window, remote_incoming_window: Int(b.incoming_window)})
           let rc = match b.remote_channel {
             Some(x) => Int(x)
             None => 0
@@ -1569,6 +1571,7 @@ fn st_end_session(var c: amqp.ConnState, s: amqp.Session, error: amqp.WireError?
       End(x) => {
         if Int(f.channel) == s.channel {
           c.channels = c.channels.filter(fn(n: Int) { n != s.channel })
+          c.sess = c.sess.filter(fn(z: amqp.SessState) { z.channel != s.channel })
           match x.error {
             Some(e) => return Err(amqp.AmqpErr.Peer(error: e))
             None => return Ok(())
@@ -1899,4 +1902,610 @@ fn decode_message(b: Bytes) -> amqp.Message ! amqp.AmqpErr {
   }
   Ok(amqp.Message{header: header, delivery_annotations: dann, annotations: ann, properties: props,
     app_properties: app, body: body, footer: footer})
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3: links
+
+fn m32(x: Int) -> Int { x & 4294967295 }
+
+fn u32w(x: Int) -> UInt32 { UInt32.wrapping_from(m32(x)) }
+
+fn ss_idx(c: amqp.ConnState, ch: Int) -> Int {
+  var i = 0
+  while i < c.sess.len() {
+    if c.sess[i].channel == ch { return i }
+    i += 1
+  }
+  -1
+}
+
+fn lk_remote(c: amqp.ConnState, ch: Int, h: Int) -> Int {
+  var i = 0
+  while i < c.links.len() {
+    if c.links[i].channel == ch && c.links[i].remote_handle == h { return i }
+    i += 1
+  }
+  -1
+}
+
+fn lk_named(c: amqp.ConnState, ch: Int, name: Str) -> Int {
+  var i = 0
+  while i < c.links.len() {
+    if c.links[i].channel == ch && c.links[i].name == name && !c.links[i].attached { return i }
+    i += 1
+  }
+  -1
+}
+
+fn put_link(var c: amqp.ConnState, l: amqp.LinkState) { c.links[l.id] = l }
+
+fn put_sess(var c: amqp.ConnState, i: Int, z: amqp.SessState) { c.sess[i] = z }
+
+fn frame_on(ch: Int, body: amqp.FrameBody) -> amqp.Frame {
+  amqp.Frame{channel: UInt16.wrapping_from(ch), body: body}
+}
+
+/// A session Flow after the incoming window was used up.
+fn send_session_flow(var c: amqp.ConnState, i: Int) -> () ! amqp.AmqpErr uses net.dial {
+  let z = c.sess[i]
+  st_send(c, frame_on(z.channel, amqp.FrameBody.Flow(v: amqp.Flow{
+    next_incoming_id: Some(u32w(z.next_incoming_id)), incoming_window: u32w(z.incoming_window),
+    next_outgoing_id: u32w(z.next_outgoing_id), outgoing_window: u32w(2048), handle: None, delivery_count: None,
+    link_credit: None, available: None})))
+}
+
+/// A link Flow granting the receiver's credit.
+fn send_link_flow(var c: amqp.ConnState, id: Int) -> () ! amqp.AmqpErr uses net.dial {
+  let l = c.links[id]
+  let z = c.sess[ss_idx(c, l.channel)]
+  st_send(c, frame_on(l.channel, amqp.FrameBody.Flow(v: amqp.Flow{
+    next_incoming_id: Some(u32w(z.next_incoming_id)), incoming_window: u32w(z.incoming_window),
+    next_outgoing_id: u32w(z.next_outgoing_id), outgoing_window: u32w(2048), handle: Some(u32w(l.handle)),
+    delivery_count: Some(u32w(l.delivery_count)), link_credit: Some(u32w(l.credit)), available: None})))
+}
+
+fn peer_err(e: amqp.WireError?, what: Str) -> amqp.AmqpErr {
+  match e {
+    Some(x) => amqp.AmqpErr.Peer(error: x)
+    None => proto_err(what)
+  }
+}
+
+/// Reads one frame (queued ones first) and applies it to the sessions and links.
+fn pump(var c: amqp.ConnState) -> () ! amqp.AmqpErr uses net.dial {
+  let f = if c.pending.len() > 0 { take_pending(c) } else { read_frame(c)? }
+  let ch = Int(f.channel)
+  match f.body {
+    Flow(x) => {
+      let si = ss_idx(c, ch)
+      if si < 0 { return Ok(()) }
+      var z = c.sess[si]
+      let nin = match x.next_incoming_id {
+        Some(n) => Int(n)
+        None => 0
+      }
+      z.remote_incoming_window = m32(nin + Int(x.incoming_window) - z.next_outgoing_id)
+      put_sess(c, si, z)
+      match x.handle {
+        Some(h) => {
+          let li = lk_remote(c, ch, Int(h))
+          if li >= 0 {
+            var l = c.links[li]
+            match l.role {
+              Sender => {
+                let dc = match x.delivery_count {
+                  Some(n) => Int(n)
+                  None => l.delivery_count
+                }
+                let lc = match x.link_credit {
+                  Some(n) => Int(n)
+                  None => 0
+                }
+                l.credit = m32(dc + lc - l.delivery_count)
+                put_link(c, l)
+                if x.echo { send_link_flow_sender(c, li)? }
+              }
+              Receiver => {}
+            }
+          }
+        }
+        None => {}
+      }
+    }
+    Attach(x) => {
+      let li = lk_named(c, ch, x.name)
+      if li >= 0 {
+        var l = c.links[li]
+        l.remote_handle = Int(x.handle)
+        l.attached = true
+        l.peer_max_message_size = x.max_message_size
+        match l.role {
+          Receiver => { l.delivery_count = x.initial_delivery_count }
+          Sender => {}
+        }
+        put_link(c, l)
+      }
+    }
+    Transfer(x) => {
+      let li = lk_remote(c, ch, Int(x.handle))
+      let si = ss_idx(c, ch)
+      if li < 0 || si < 0 { return Ok(()) }
+      var z = c.sess[si]
+      z.incoming_window -= 1
+      var l = c.links[li]
+      match x.delivery_id {
+        Some(id) => {
+          z.next_incoming_id = m32(Int(id) + 1)
+          if !l.partial_active {
+            l.partial_active = true
+            l.partial_id = Int(id)
+            l.partial_tag = x.delivery_tag
+            l.partial_settled = x.settled
+            l.partial = b""
+          }
+        }
+        None => {}
+      }
+      if x.aborted {
+        l.partial_active = false
+        l.partial = b""
+      } else if l.partial_active {
+        l.partial = l.partial + x.payload
+        if x.settled { l.partial_settled = true }
+        if !x.more {
+          let m = decode_message(l.partial)?
+          l.inbox.push(amqp.Delivery{message: m, id: l.partial_id, tag: l.partial_tag, settled: l.partial_settled, link: l.id})
+          l.partial_active = false
+          l.partial = b""
+          l.delivery_count = m32(l.delivery_count + 1)
+          l.credit -= 1
+        }
+      }
+      put_link(c, l)
+      if z.incoming_window < z.initial_incoming_window / 2 {
+        z.incoming_window = z.initial_incoming_window
+        put_sess(c, si, z)
+        send_session_flow(c, si)?
+      } else {
+        put_sess(c, si, z)
+      }
+    }
+    Disposition(x) => {
+      match x.role {
+        Receiver => {
+          if x.settled {
+            let lastid = match x.last {
+              Some(n) => Int(n)
+              None => Int(x.first)
+            }
+            var i = 0
+            while i < c.links.len() {
+              var l = c.links[i]
+              if l.channel == ch && l.unsettled.len() > 0 {
+                var keep: List[Int] = []
+                for id in l.unsettled {
+                  if id >= Int(x.first) && id <= lastid {
+                    l.results.push((id, x.state))
+                  } else {
+                    keep.push(id)
+                  }
+                }
+                l.unsettled = keep
+                put_link(c, l)
+              }
+              i += 1
+            }
+          }
+        }
+        Sender => {}
+      }
+    }
+    Detach(x) => {
+      let li = lk_remote(c, ch, Int(x.handle))
+      if li >= 0 {
+        var l = c.links[li]
+        if !l.detached {
+          l.detached = true
+          l.error = x.error
+          put_link(c, l)
+          st_send(c, frame_on(ch, amqp.FrameBody.Detach(v: amqp.Detach{handle: u32w(l.handle), closed: x.closed, error: None})))?
+        }
+      }
+    }
+    End(x) => {
+      let si = ss_idx(c, ch)
+      if si >= 0 {
+        var z = c.sess[si]
+        z.ended = true
+        put_sess(c, si, z)
+        var i = 0
+        while i < c.links.len() {
+          var l = c.links[i]
+          if l.channel == ch && !l.detached {
+            l.detached = true
+            l.error = x.error
+            put_link(c, l)
+          }
+          i += 1
+        }
+      }
+    }
+    Close(x) => {
+      c.closed = true
+      return Err(peer_err(x.error, "the peer closed the connection"))
+    }
+    _ => {}
+  }
+  Ok(())
+}
+
+fn take_pending(var c: amqp.ConnState) -> amqp.Frame {
+  let f = c.pending[0]
+  c.pending = c.pending[1..]
+  f
+}
+
+/// A sender's Flow in answer to the peer's echo request.
+fn send_link_flow_sender(var c: amqp.ConnState, id: Int) -> () ! amqp.AmqpErr uses net.dial {
+  let l = c.links[id]
+  let z = c.sess[ss_idx(c, l.channel)]
+  st_send(c, frame_on(l.channel, amqp.FrameBody.Flow(v: amqp.Flow{
+    next_incoming_id: Some(u32w(z.next_incoming_id)), incoming_window: u32w(z.incoming_window),
+    next_outgoing_id: u32w(z.next_outgoing_id), outgoing_window: u32w(2048), handle: Some(u32w(l.handle)),
+    delivery_count: Some(u32w(l.delivery_count)), link_credit: Some(u32w(0)), available: None})))
+}
+
+/// Fails when the link, its session or the connection is gone.
+fn check_link(c: amqp.ConnState, id: Int) -> () ! amqp.AmqpErr {
+  if c.closed { return Err(proto_err("the connection is closed")) }
+  let l = c.links[id]
+  if l.detached { return Err(peer_err(l.error, "the link was detached")) }
+  let si = ss_idx(c, l.channel)
+  if si < 0 || c.sess[si].ended { return Err(proto_err("the session has ended")) }
+  Ok(())
+}
+
+fn new_link(var c: amqp.ConnState, s: amqp.Session, name: Str, role: amqp.Role) -> Int ! amqp.AmqpErr {
+  let si = ss_idx(c, s.channel)
+  if si < 0 { return Err(proto_err("unknown session")) }
+  var z = c.sess[si]
+  let h = z.next_handle
+  z.next_handle += 1
+  put_sess(c, si, z)
+  let id = c.links.len()
+  let nm = if name == "" { "xo-link-${id}" } else { name }
+  c.links.push(amqp.LinkState{id: id, name: nm, channel: s.channel, handle: h, role: role})
+  Ok(id)
+}
+
+fn st_new_sender(var c: amqp.ConnState, s: amqp.Session, target: Str, opts: amqp.SenderOptions) -> Int ! amqp.AmqpErr uses net.dial {
+  let id = new_link(c, s, opts.name, amqp.Role.Sender)?
+  let l = c.links[id]
+  st_send(c, frame_on(s.channel, amqp.FrameBody.Attach(v: amqp.Attach{
+    name: l.name, handle: u32w(l.handle), role: amqp.Role.Sender, sender_settle_mode: opts.settle_mode,
+    receiver_settle_mode: None, source: Some(amqp.Source{address: opts.source, capabilities: opts.capabilities}),
+    target: Some(amqp.Target{address: target, capabilities: opts.target_capabilities}),
+    initial_delivery_count: 0, max_message_size: opts.max_message_size, properties: opts.properties})))?
+  while !c.links[id].attached {
+    check_link(c, id)?
+    pump(c)?
+  }
+  Ok(id)
+}
+
+fn st_new_receiver(var c: amqp.ConnState, s: amqp.Session, source: Str, opts: amqp.ReceiverOptions) -> Int ! amqp.AmqpErr uses net.dial {
+  let id = new_link(c, s, opts.name, amqp.Role.Receiver)?
+  var l = c.links[id]
+  l.credit_target = opts.credit
+  put_link(c, l)
+  st_send(c, frame_on(s.channel, amqp.FrameBody.Attach(v: amqp.Attach{
+    name: l.name, handle: u32w(l.handle), role: amqp.Role.Receiver, sender_settle_mode: None,
+    receiver_settle_mode: opts.settle_mode,
+    source: Some(amqp.Source{address: source, filter: opts.filters, capabilities: opts.source_capabilities}),
+    target: Some(amqp.Target{address: opts.target, capabilities: opts.capabilities}),
+    max_message_size: opts.max_message_size, properties: opts.properties})))?
+  while !c.links[id].attached {
+    check_link(c, id)?
+    pump(c)?
+  }
+  grant_credit(c, id, opts.credit)?
+  Ok(id)
+}
+
+/// Sets the receiver's outstanding credit to n and tells the peer.
+fn grant_credit(var c: amqp.ConnState, id: Int, n: Int) -> () ! amqp.AmqpErr uses net.dial {
+  var l = c.links[id]
+  l.credit = n
+  put_link(c, l)
+  send_link_flow(c, id)
+}
+
+fn tag_bytes(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  b = be(b, m32(n), 4)
+  b.freeze()
+}
+
+fn transfer_frame(l: amqp.LinkState, id: Int, tag: Bytes, first: Bool, settled: Bool, more: Bool, payload: Bytes) -> amqp.Frame {
+  frame_on(l.channel, amqp.FrameBody.Transfer(v: amqp.Transfer{
+    handle: u32w(l.handle), delivery_id: if first { Some(u32w(id)) } else { None },
+    delivery_tag: if first { tag } else { b"" }, message_format: if first { Some(UInt32(0)) } else { None },
+    settled: settled, more: more, receiver_settle_mode: None, state: None, payload: payload}))
+}
+
+/// Sends one message: waits for link credit and session window, splits the payload to the peer's
+/// frame size, and (unless settled) waits for the peer's outcome.
+fn st_send_msg(var c: amqp.ConnState, id: Int, payload: Bytes, settled: Bool) -> amqp.DeliveryState? ! amqp.AmqpErr uses net.dial {
+  let l0 = c.links[id]
+  if l0.peer_max_message_size > 0 && payload.len() > l0.peer_max_message_size {
+    return Err(amqp.AmqpErr.Encode(msg: "the message is larger than the peer's maximum message size"))
+  }
+  while c.links[id].credit <= 0 {
+    check_link(c, id)?
+    pump(c)?
+  }
+  check_link(c, id)?
+  let si = ss_idx(c, l0.channel)
+  let tid = c.sess[si].next_outgoing_id
+  let tag = tag_bytes(c.links[id].tag_counter)
+  let probe = transfer_frame(l0, tid, tag, true, settled, true, b"")
+  let base = encode_frame(probe)?.len()
+  var chunk = c.peer_max_frame_size - base
+  if chunk < 1 { chunk = 1 }
+  var off = 0
+  var first = true
+  while first || off < payload.len() {
+    while c.sess[si].remote_incoming_window <= 0 {
+      check_link(c, id)?
+      pump(c)?
+    }
+    var end = off + chunk
+    if end > payload.len() { end = payload.len() }
+    let more = end < payload.len()
+    let l = c.links[id]
+    st_send(c, transfer_frame(l, tid, tag, first, settled, more, payload[off..end]))?
+    var z = c.sess[si]
+    z.remote_incoming_window -= 1
+    put_sess(c, si, z)
+    first = false
+    off = end
+  }
+  var z = c.sess[si]
+  z.next_outgoing_id = m32(z.next_outgoing_id + 1)
+  put_sess(c, si, z)
+  var l = c.links[id]
+  l.delivery_count = m32(l.delivery_count + 1)
+  l.credit -= 1
+  l.tag_counter += 1
+  if !settled { l.unsettled.push(tid) }
+  put_link(c, l)
+  if settled { return Ok(None) }
+  while true {
+    var r = c.links[id]
+    var i = 0
+    while i < r.results.len() {
+      if r.results[i].0 == tid {
+        let st = r.results[i].1
+        r.results = r.results.filter(fn(p: (Int, amqp.DeliveryState?)) { p.0 != tid })
+        put_link(c, r)
+        return Ok(st)
+      }
+      i += 1
+    }
+    check_link(c, id)?
+    pump(c)?
+  }
+  Ok(None)
+}
+
+fn st_receive(var c: amqp.ConnState, id: Int) -> amqp.Delivery ! amqp.AmqpErr uses net.dial {
+  while true {
+    check_link(c, id)?
+    var l = c.links[id]
+    if l.inbox.len() > 0 {
+      let d = l.inbox[0]
+      l.inbox = l.inbox[1..]
+      put_link(c, l)
+      if l.credit <= l.credit_target / 2 {
+        grant_credit(c, id, l.credit_target)?
+      }
+      return Ok(d)
+    }
+    if l.credit <= 0 {
+      grant_credit(c, id, l.credit_target)?
+    }
+    pump(c)?
+  }
+  Err(proto_err("unreachable"))
+}
+
+fn st_settle(var c: amqp.ConnState, id: Int, d: amqp.Delivery, state: amqp.DeliveryState) -> () ! amqp.AmqpErr uses net.dial {
+  check_link(c, id)?
+  let l = c.links[id]
+  if d.settled { return Ok(()) }
+  st_send(c, frame_on(l.channel, amqp.FrameBody.Disposition(v: amqp.Disposition{
+    role: amqp.Role.Receiver, first: u32w(d.id), last: None, settled: true, state: Some(state)})))
+}
+
+fn st_link_close(var c: amqp.ConnState, id: Int, error: amqp.WireError?) -> () ! amqp.AmqpErr uses net.dial {
+  let l = c.links[id]
+  if !l.detached {
+    st_send(c, frame_on(l.channel, amqp.FrameBody.Detach(v: amqp.Detach{handle: u32w(l.handle), closed: true, error: error})))?
+    while !c.links[id].detached {
+      if c.closed { return Err(proto_err("the connection is closed")) }
+      pump(c)?
+    }
+  }
+  match c.links[id].error {
+    Some(e) => Err(amqp.AmqpErr.Peer(error: e))
+    None => Ok(())
+  }
+}
+
+fn fin_unit(e: amqp.AmqpErr?) -> () ! amqp.AmqpErr {
+  match e {
+    Some(x) => Err(x)
+    None => Ok(())
+  }
+}
+
+fn fin[T](v: T?, e: amqp.AmqpErr?) -> T ! amqp.AmqpErr {
+  match e {
+    Some(x) => Err(x)
+    None => {
+      match v {
+        Some(y) => Ok(y)
+        None => Err(proto_err("no result"))
+      }
+    }
+  }
+}
+
+fn connection_new_sender(c: amqp.Connection, s: amqp.Session, target: Str, opts: amqp.SenderOptions = amqp.SenderOptions{}) -> amqp.Sender ! amqp.AmqpErr uses net.dial {
+  let r = c.st.with(fn(var z: amqp.ConnState) -> (Int?, amqp.AmqpErr?) uses net.dial {
+    match st_new_sender(z, s, target, opts) {
+      Ok(id) => (Some(id), None)
+      Err(x) => (None, Some(x))
+    }
+  })
+  let id = fin(r.0, r.1)?
+  let name = c.st.with_read(fn(z: amqp.ConnState) -> Str { z.links[id].name })
+  Ok(amqp.Sender{conn: c, id: id, name: name, target: target})
+}
+
+fn connection_new_receiver(c: amqp.Connection, s: amqp.Session, source: Str, opts: amqp.ReceiverOptions = amqp.ReceiverOptions{}) -> amqp.Receiver ! amqp.AmqpErr uses net.dial {
+  let r = c.st.with(fn(var z: amqp.ConnState) -> (Int?, amqp.AmqpErr?) uses net.dial {
+    match st_new_receiver(z, s, source, opts) {
+      Ok(id) => (Some(id), None)
+      Err(x) => (None, Some(x))
+    }
+  })
+  let id = fin(r.0, r.1)?
+  let name = c.st.with_read(fn(z: amqp.ConnState) -> Str { z.links[id].name })
+  Ok(amqp.Receiver{conn: c, id: id, name: name, source: source})
+}
+
+fn sender_send(x: amqp.Sender, m: amqp.Message, settled: Bool = false) -> amqp.DeliveryState? ! amqp.AmqpErr uses net.dial {
+  let payload = encode_message(m)?
+  let r = x.conn.st.with(fn(var z: amqp.ConnState) -> (amqp.DeliveryState?, amqp.AmqpErr?) uses net.dial {
+    match st_send_msg(z, x.id, payload, settled) {
+      Ok(st) => (st, None)
+      Err(e) => (None, Some(e))
+    }
+  })
+  match r.1 {
+    Some(e) => Err(e)
+    None => Ok(r.0)
+  }
+}
+
+fn sender_close(x: amqp.Sender, error: amqp.WireError? = None) -> () ! amqp.AmqpErr uses net.dial {
+  let e = x.conn.st.with(fn(var z: amqp.ConnState) -> amqp.AmqpErr? uses net.dial {
+    match st_link_close(z, x.id, error) {
+      Ok(_) => None
+      Err(y) => Some(y)
+    }
+  })
+  fin_unit(e)
+}
+
+fn receiver_receive(r: amqp.Receiver) -> amqp.Delivery ! amqp.AmqpErr uses net.dial {
+  let t = r.conn.st.with(fn(var z: amqp.ConnState) -> (amqp.Delivery?, amqp.AmqpErr?) uses net.dial {
+    match st_receive(z, r.id) {
+      Ok(d) => (Some(d), None)
+      Err(e) => (None, Some(e))
+    }
+  })
+  fin(t.0, t.1)
+}
+
+fn settle(r: amqp.Receiver, d: amqp.Delivery, state: amqp.DeliveryState) -> () ! amqp.AmqpErr uses net.dial {
+  let e = r.conn.st.with(fn(var z: amqp.ConnState) -> amqp.AmqpErr? uses net.dial {
+    match st_settle(z, r.id, d, state) {
+      Ok(_) => None
+      Err(y) => Some(y)
+    }
+  })
+  fin_unit(e)
+}
+
+fn receiver_accept(r: amqp.Receiver, d: amqp.Delivery) -> () ! amqp.AmqpErr uses net.dial {
+  settle(r, d, amqp.DeliveryState.Accepted)
+}
+
+fn receiver_reject(r: amqp.Receiver, d: amqp.Delivery, error: amqp.WireError? = None) -> () ! amqp.AmqpErr uses net.dial {
+  settle(r, d, amqp.DeliveryState.Rejected(error: error))
+}
+
+fn receiver_release(r: amqp.Receiver, d: amqp.Delivery) -> () ! amqp.AmqpErr uses net.dial {
+  settle(r, d, amqp.DeliveryState.Released)
+}
+
+fn receiver_modify(r: amqp.Receiver, d: amqp.Delivery, delivery_failed: Bool = true, undeliverable_here: Bool = false) -> () ! amqp.AmqpErr uses net.dial {
+  settle(r, d, amqp.DeliveryState.Modified(delivery_failed: delivery_failed, undeliverable_here: undeliverable_here, annotations: []))
+}
+
+fn receiver_close(r: amqp.Receiver, error: amqp.WireError? = None) -> () ! amqp.AmqpErr uses net.dial {
+  let e = r.conn.st.with(fn(var z: amqp.ConnState) -> amqp.AmqpErr? uses net.dial {
+    match st_link_close(z, r.id, error) {
+      Ok(_) => None
+      Err(y) => Some(y)
+    }
+  })
+  fin_unit(e)
+}
+
+// ---------------------------------------------------------------------------
+// Stage 4: claims based security
+
+fn cbs_put_token(c: amqp.Connection, s: amqp.Session, audience: Str, token: Str, token_type: Str = "servicebus.windows.net:sastoken", expiry_ms: Int = 0) -> () ! amqp.AmqpErr uses net.dial {
+  let snd = connection_new_sender(c, s, "$cbs", amqp.SenderOptions{name: "cbs-sender"})?
+  let rcv = match connection_new_receiver(c, s, "$cbs", amqp.ReceiverOptions{name: "cbs-receiver", target: "cbs", credit: 1}) {
+    Ok(r) => r
+    Err(e) => {
+      sender_close(snd).ignore_err("the receiver's error is the one reported")
+      return Err(e)
+    }
+  }
+  var props: List[(Str, amqp.Value)] = [("operation", amqp.Value.Str(v: "put-token")), ("type", amqp.Value.Str(v: token_type)), ("name", amqp.Value.Str(v: audience))]
+  if expiry_ms != 0 { props.push(("expiration", amqp.Value.Timestamp(ms: expiry_ms))) }
+  let req = amqp.Message{
+    properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "1"), to: Some("$cbs"), reply_to: Some("cbs")}),
+    app_properties: Some(props), body: amqp.Body.Value(v: amqp.Value.Str(v: token))}
+  let result = cbs_exchange(snd, rcv, req)
+  receiver_close(rcv).ignore_err("the put-token result is the one reported")
+  sender_close(snd).ignore_err("the put-token result is the one reported")
+  result
+}
+
+fn cbs_exchange(snd: amqp.Sender, rcv: amqp.Receiver, req: amqp.Message) -> () ! amqp.AmqpErr uses net.dial {
+  sender_send(snd, req)?
+  let d = receiver_receive(rcv)?
+  receiver_accept(rcv, d)?
+  var code = -1
+  var text = ""
+  match d.message.app_properties {
+    Some(ps) => {
+      for (k, v) in ps {
+        if k == "status-code" {
+          match v {
+            Int(x) => { code = Int(x) }
+            Long(x) => { code = Int(x) }
+            UInt(x) => { code = Int(x) }
+            _ => {}
+          }
+        }
+        if k == "status-description" {
+          match v {
+            Str(x) => { text = x }
+            _ => {}
+          }
+        }
+      }
+    }
+    None => {}
+  }
+  if code >= 200 && code < 300 { return Ok(()) }
+  Err(amqp.AmqpErr.Peer(error: amqp.WireError{condition: "amqp:unauthorized-access", description: "cbs put-token failed with status ${code}: ${text}"}))
 }

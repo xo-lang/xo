@@ -143,3 +143,8 @@ tests is go-amqp itself (the oracle), not a runtime dependency.
   native backends lack in a struct literal (XO1201; reported to Lang 1).
 - A connection that outlives its dial call and runs a reader task needs a `task.Group`; 2b-ii takes it as a
   parameter (`dial(net, tasks, addr, opts)`), as the structured concurrency rule (spec 7.1) requires.
+- Stages 3 and 4 as built (2026-11-05): links and CBS follow the synchronous model of 2b-i. `Sender` and `Receiver`
+  are handles over the connection (all state lives in `ConnState`, one Mutex), and every blocking call pumps the shared
+  read loop, so a background reader task is not needed for correctness, only for concurrent use of the connection from
+  several tasks (2b-ii). The API differs from the proposal where Xo requires it: `Connection.new_sender(session, ...)`
+  instead of `Session.new_sender`, `send(m, settled)` returning the peer's outcome, and no timeout arguments yet.

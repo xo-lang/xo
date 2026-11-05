@@ -297,3 +297,216 @@ test "addresses: schemes and default ports" {
   expect(parse_addr("amqps://[::1]:9")) == ("::1", "[::1]:9", true)
   expect(parse_addr("[::1]")) == ("::1", "[::1]:5672", false)
 }
+
+// ---------------------------------------------------------------------------
+// Links against an in-process peer
+
+fn big_payload(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for i in 0..n { b.write_byte(UInt8.wrapping_from(i * 7 + 3)) }
+  b.freeze()
+}
+
+/// mode 0: the client sends (the peer gives credit 5, checks the fragments, accepts); mode 1: the client
+/// receives (the peer sends a two frame delivery after the client's credit and expects an Accept).
+fn serve_links(l: Listener, mode: Int) {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", b"")
+  let (o, rest) = peer_frame(sc, buf)
+  buf = rest
+  match o.body {
+    Open(_) => {}
+    _ => fault("expected open")
+  }
+  peer_send(sc, 0, amqp.FrameBody.Open(v: amqp.Open{container_id: "broker", max_frame_size: 512}))
+  var acc = b""
+  var frames = 0
+  var cur_id = UInt32(0)
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    let ch = Int(f.channel)
+    match f.body {
+      Begin(_) => peer_send(sc, ch, amqp.FrameBody.Begin(v: amqp.Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(0), incoming_window: UInt32(100), outgoing_window: UInt32(100)}))
+      Attach(a) => {
+        match a.role {
+          Sender => {
+            peer_send(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: UInt32(7), role: amqp.Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target}))
+            peer_send(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(UInt32(0)), incoming_window: UInt32(100), next_outgoing_id: UInt32(0), outgoing_window: UInt32(100), handle: Some(UInt32(7)), delivery_count: Some(UInt32(0)), link_credit: Some(UInt32(5)), available: None}))
+          }
+          Receiver => {
+            peer_send(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: UInt32(7), role: amqp.Role.Sender, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target, initial_delivery_count: 0}))
+          }
+        }
+      }
+      Flow(x) => {
+        if mode == 1 && x.link_credit is Some(..) {
+          expect(x.link_credit) == Some(UInt32(2))
+          let msg = amqp.encode_message(amqp.Message{body: amqp.Body.Data(sections: [big_payload(700)])}).or_fault("msg")
+          let half = msg.len() / 2
+          peer_send(sc, ch, amqp.FrameBody.Transfer(v: amqp.Transfer{handle: UInt32(7), delivery_id: Some(UInt32(0)), delivery_tag: b"t0", message_format: Some(UInt32(0)), more: true, receiver_settle_mode: None, state: None, payload: msg[0..half]}))
+          peer_send(sc, ch, amqp.FrameBody.Transfer(v: amqp.Transfer{handle: UInt32(7), delivery_id: None, message_format: None, receiver_settle_mode: None, state: None, payload: msg[half..]}))
+        }
+      }
+      Transfer(t) => {
+        frames += 1
+        acc = acc + t.payload
+        match t.delivery_id {
+          Some(i) => { cur_id = i }
+          None => {}
+        }
+        if !t.more {
+          expect(frames >= 3) == true
+          let m = amqp.decode_message(acc).or_fault("decode")
+          expect(m.body) == amqp.Body.Data(sections: [big_payload(1500)])
+          peer_send(sc, ch, amqp.FrameBody.Disposition(v: amqp.Disposition{role: amqp.Role.Receiver, first: cur_id, last: None, settled: true, state: Some(amqp.DeliveryState.Accepted)}))
+          acc = b""
+          frames = 0
+        }
+      }
+      Disposition(d) => {
+        expect(d.state) == Some(amqp.DeliveryState.Accepted)
+        expect(d.settled) == true
+      }
+      Detach(_) => peer_send(sc, ch, amqp.FrameBody.Detach(v: amqp.Detach{handle: UInt32(7), closed: true, error: None}))
+      End(_) => peer_send(sc, ch, amqp.FrameBody.End(v: amqp.End{error: None}))
+      Close(_) => {
+        peer_send(sc, 0, amqp.FrameBody.Close(v: amqp.Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+  }
+}
+
+test "a sender fragments to the peer's frame size and gets the outcome" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_links(l, 0) })
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", max_frame_size: 4096}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, "queue").or_fault("sender")
+    let out = snd.send(amqp.Message{body: amqp.Body.Data(sections: [big_payload(1500)])}).or_fault("send")
+    expect(out) == Some(amqp.DeliveryState.Accepted)
+    let again = snd.send(amqp.Message{body: amqp.Body.Data(sections: [big_payload(1500)])}).or_fault("send 2")
+    expect(again) == Some(amqp.DeliveryState.Accepted)
+    snd.close().or_fault("close link")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+test "a receiver assembles a fragmented delivery and accepts it" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_links(l, 1) })
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", max_frame_size: 4096}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "queue", amqp.ReceiverOptions{credit: 2}).or_fault("receiver")
+    let d = rcv.receive().or_fault("receive")
+    expect(d.message.body) == amqp.Body.Data(sections: [big_payload(700)])
+    expect(d.tag) == b"t0"
+    expect(d.id) == 0
+    rcv.accept(d).or_fault("accept")
+    rcv.close().or_fault("close link")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CBS put-token against an in-process peer
+
+fn serve_cbs(l: Listener, status: Int) {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", b"")
+  let (o, rest) = peer_frame(sc, buf)
+  buf = rest
+  match o.body {
+    Open(_) => {}
+    _ => fault("expected open")
+  }
+  peer_send(sc, 0, amqp.FrameBody.Open(v: amqp.Open{container_id: "broker"}))
+  var got = false
+  var credit = false
+  var sent = false
+  var detaches = 0
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    let ch = Int(f.channel)
+    match f.body {
+      Begin(_) => peer_send(sc, ch, amqp.FrameBody.Begin(v: amqp.Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(0), incoming_window: UInt32(100), outgoing_window: UInt32(100)}))
+      Attach(a) => {
+        match a.role {
+          Sender => {
+            expect(a.target) == Some(amqp.Target{address: "$cbs"})
+            peer_send(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: UInt32(7), role: amqp.Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target}))
+            peer_send(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(UInt32(0)), incoming_window: UInt32(100), next_outgoing_id: UInt32(0), outgoing_window: UInt32(100), handle: Some(UInt32(7)), delivery_count: Some(UInt32(0)), link_credit: Some(UInt32(5)), available: None}))
+          }
+          Receiver => {
+            peer_send(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: UInt32(8), role: amqp.Role.Sender, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target, initial_delivery_count: 0}))
+          }
+        }
+      }
+      Flow(x) => {
+        if x.link_credit is Some(..) { credit = true }
+      }
+      Transfer(t) => {
+        let m = amqp.decode_message(t.payload).or_fault("decode")
+        expect(m.body) == amqp.Body.Value(v: amqp.Value.Str(v: "SAS token"))
+        let ap = m.app_properties ?? []
+        expect(ap.contains(("operation", amqp.Value.Str(v: "put-token")))) == true
+        expect(ap.contains(("name", amqp.Value.Str(v: "sb://x/q")))) == true
+        expect(ap.contains(("type", amqp.Value.Str(v: "servicebus.windows.net:sastoken")))) == true
+        got = true
+        peer_send(sc, ch, amqp.FrameBody.Disposition(v: amqp.Disposition{role: amqp.Role.Receiver, first: t.delivery_id ?? UInt32(0), last: None, settled: true, state: Some(amqp.DeliveryState.Accepted)}))
+      }
+      Detach(_) => {
+        detaches += 1
+        peer_send(sc, ch, amqp.FrameBody.Detach(v: amqp.Detach{handle: UInt32(if detaches == 1 { 8 } else { 7 }), closed: true, error: None}))
+      }
+      End(_) => peer_send(sc, ch, amqp.FrameBody.End(v: amqp.End{error: None}))
+      Close(_) => {
+        peer_send(sc, 0, amqp.FrameBody.Close(v: amqp.Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+    if got && credit && !sent {
+      sent = true
+      let reply = amqp.encode_message(amqp.Message{app_properties: Some([("status-code", amqp.Value.Int(v: Int32.wrapping_from(status))), ("status-description", amqp.Value.Str(v: "reply"))]), body: amqp.Body.Value(v: amqp.Value.Null)}).or_fault("reply")
+      peer_send(sc, 0, amqp.FrameBody.Transfer(v: amqp.Transfer{handle: UInt32(8), delivery_id: Some(UInt32(0)), delivery_tag: b"r", message_format: Some(UInt32(0)), receiver_settle_mode: None, state: None, payload: reply}))
+    }
+  }
+}
+
+test "cbs put-token succeeds on a 2xx status" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_cbs(l, 202) })
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester"}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    amqp.cbs_put_token(c, sess, "sb://x/q", "SAS token").or_fault("put-token")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+test "cbs put-token with a 401 is a Peer error" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_cbs(l, 401) })
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester"}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    match amqp.cbs_put_token(c, sess, "sb://x/q", "SAS token") {
+      Ok(_) => fault("expected an error")
+      Err(amqp.AmqpErr.Peer(e)) => expect(e.condition) == "amqp:unauthorized-access"
+      Err(_) => fault("wrong error")
+    }
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
