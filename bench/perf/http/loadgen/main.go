@@ -366,11 +366,25 @@ func sampleRSS(pid int, peak *atomic.Int64, stop <-chan struct{}) {
 	}
 }
 
-// cpuTime is the user plus system CPU time of pid so far (ps -o time=,
-// [[dd-]hh:]mm:ss.cc), or 0 when pid is 0 or ps fails.
+// cpuTime is the user plus system CPU time of pid so far: on Linux from
+// /proc/PID/stat's utime and stime (clock ticks, 100 a second; procps's
+// ps -o time= prints whole seconds, about 5% of a 10 s window's CPU), else
+// ps -o time= ([[dd-]hh:]mm:ss.cc); 0 when pid is 0 or both fail.
 func cpuTime(pid int) time.Duration {
 	if pid <= 0 {
 		return 0
+	}
+	if b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat"); err == nil {
+		// the fields after the command's closing parenthesis: state is
+		// field 3, utime 14 and stime 15
+		if i := strings.LastIndexByte(string(b), ')'); i >= 0 {
+			f := strings.Fields(string(b)[i+1:])
+			if len(f) > 12 {
+				u, _ := strconv.ParseInt(f[11], 10, 64)
+				st, _ := strconv.ParseInt(f[12], 10, 64)
+				return time.Duration(u+st) * 10 * time.Millisecond
+			}
+		}
 	}
 	out, err := exec.Command("ps", "-o", "time=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
