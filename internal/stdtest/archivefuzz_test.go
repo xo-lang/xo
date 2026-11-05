@@ -93,7 +93,10 @@ func afData(r *rand.Rand) []byte {
 	}
 }
 
-var afTime = time.Unix(1700000000, 0)
+// afTime is in UTC: zip writes a header's Modified as an MS-DOS date and
+// time in Modified's location, so a local time made the corpus differ by
+// time zone (the Mac's EST against the linux hosts' UTC, 2026-11-05).
+var afTime = time.Unix(1700000000, 0).UTC()
 
 // afTar is an archive from Go's tar.Writer; entries the writer refuses are
 // left out.
@@ -123,7 +126,7 @@ func afTar(r *rand.Rand) []byte {
 			h.Format = tar.FormatPAX
 		}
 		if r.Intn(6) == 0 {
-			h.ModTime = time.Unix(int64(r.Intn(1<<20)), int64(r.Intn(1e9)))
+			h.ModTime = time.Unix(int64(r.Intn(1<<20)), int64(r.Intn(1e9))).UTC()
 			h.Format = tar.FormatPAX
 		}
 		if r.Intn(10) == 0 && h.Typeflag != tar.TypeXGlobalHeader {
