@@ -1,0 +1,123 @@
+// A streamed request body read on another task must not outlive its
+// request (std/http stream_finish, 2026-11-04). A reverse proxy's full
+// duplex sender reads the client's body on its own task (decision 0433);
+// here the target answers before reading any body, so the proxy's
+// handler returns while the sender still waits inside the body's read
+// for bytes the client has not sent, and the server, before it answers,
+// discards the body's rest (stream_finish). The client then sends the
+// rest of the body and, at once on the same keep-alive connection, a
+// second request. Before the fix the discard and the sender read the
+// connection at the same time: the discard could take the body's rest
+// and the sender the second request's bytes, forwarding them to the
+// target as body bytes (or the two answers never came). Now the discard
+// waits for the read in flight: the target gets the body or a prefix of
+// it (the read after the discard gets net/http's closed body error), never
+// another request's bytes, and both requests are answered, every round.
+use std/http
+
+const ROUNDS = 12
+const HALF = 16
+
+fn main(os: Os) ! {
+  let up = os.net.listen("127.0.0.1:0")?
+  let fl = os.net.listen("127.0.0.1:0")?
+  // what the target saw after each head: the body bytes, as text
+  let seen = Mutex[List[Str]].new([])
+  let p = http.reverse_proxy(http.client(os.net), http.parse_url("http://${up.addr()}/").or_fault("url"))
+  var r = http.router()
+  r.handle_stream("/{rest...}", fn(req, body) { p.serve(req, body) })
+  let front = http.server(fl, r)
+  scope s {
+    s.spawn_background(fn() {
+      while true {
+        match up.accept() {
+          Ok(conn) => s.spawn_background(fn() {
+            // one request a connection: answer at the head, then read
+            // what the proxy forwards as its body
+            var got = ""
+            while got.find("\r\n\r\n") == None {
+              match conn.read(4096) {
+                Ok(Some(b)) => got = got + (b.to_str() ?? "?")
+                _ => return
+              }
+            }
+            conn.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".bytes()).ignore_err("the proxy may have gone")
+            var body = got[(got.find("\r\n\r\n") ?? 0) + 4..got.len()]
+            conn.set_read_deadline(os.clock, Some(os.clock.now() + 2s))
+            while body.len() < 2 * HALF {
+              match conn.read(4096) {
+                Ok(Some(b)) => body = body + (b.to_str() ?? "?")
+                _ => break
+              }
+            }
+            seen.with(fn(var l) { l.push(body) })
+            conn.close()
+          })
+          Err(_) => return
+        }
+      }
+    })
+    s.spawn_background(fn() {
+      match front.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    var second_ok = 0
+    for i in 0..ROUNDS {
+      let c = os.net.dial(fl.addr())?
+      c.set_read_deadline(os.clock, Some(os.clock.now() + 3s))
+      let a = "A".repeat(HALF)
+      c.write("POST /up HTTP/1.1\r\nHost: t\r\nContent-Length: ${2 * HALF}\r\n\r\n${a}".bytes())?
+      // the proxy's sender now waits inside the body's read for the rest,
+      // and the server, its handler done, wants the rest too (to discard
+      // it before it answers)
+      os.clock.sleep(150ms)
+      // the body's rest and the next request, in one write
+      c.write("${"B".repeat(HALF)}GET /two-${i} HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n".bytes())?
+      var two = ""
+      while true {
+        match c.read(4096) {
+          Ok(Some(b)) => two = two + (b.to_str() ?? "?")
+          _ => break
+        }
+      }
+      // both answers, on one connection
+      two = if two.split("HTTP/1.1 200").len() == 3 { "HTTP/1.1 200" } else { two }
+      if two.starts_with("HTTP/1.1 200") {
+        second_ok += 1
+      }
+      c.close()
+    }
+    // wait for the target's last reads
+    var n = 0
+    var tries = 0
+    while n < 2 * ROUNDS && tries < 300 {
+      os.clock.sleep(10ms)
+      n = seen.with(fn(l) { l.len() })
+      tries += 1
+    }
+    let bodies = seen.with(fn(l) { l })
+    // a body is the upload or a prefix of it: the discard may close the
+    // body between two of the sender's reads (net/http's closed body
+    // error), which cuts the upload short; never another request's bytes
+    let whole = "A".repeat(HALF) + "B".repeat(HALF)
+    var clean = 0
+    var foreign = 0
+    for b in bodies {
+      if b.is_empty() {
+        continue
+      }
+      if whole.starts_with(b) {
+        clean += 1
+      } else {
+        foreign += 1
+      }
+    }
+    // each round sends one POST and one GET through the proxy: the
+    // target sees 2 * ROUNDS requests, ROUNDS of them with the 32 byte
+    // body (a GET forwards none)
+    os.stdio.println("rounds ${ROUNDS} second requests answered ${second_ok}")
+    os.stdio.println("bodies clean ${clean} carrying other bytes ${foreign}")
+  }
+}

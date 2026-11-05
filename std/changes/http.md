@@ -56,6 +56,7 @@ writes the path as given, as the native backends do.
 - Go reference: net/http transfer.go body.Close takes body.mu, the lock Read holds, so a close waits for an in-flight read; a read after it is "http: invalid Read on closed Body"
 - Fix: stream_finish runs finish under the body's lock, then drops the body's reader; a later read gets net/http's closed body error (never the next request's bytes, never a silent end that would cut a proxied upload short)
 - Tests: TestGoldenRun http_reverse_proxy*, http_stream*, http_duplex*, http_trailers, http_h2c*, http_server*, http_pipe and others (21); ThreadSanitizer rounds of http_reverse_proxy_retry
+- Severity (2026-11-05, golden http_proxy_body_next_race): a reverse proxy forwarded the next pipelined request's bytes upstream as part of another client's upload in 17 of 27 runs before the fix on linux/arm64 (plain builds at 2 and 8 threads too, not only --race), and left second requests unanswered in 20; 0 of 27 on main. Present in v0.36.0 to v0.38.1.
 
 ## 2026-11-04: fix: the client sends a request's path as written (RawPath), and http://host/ reaches a listener on host:80
 

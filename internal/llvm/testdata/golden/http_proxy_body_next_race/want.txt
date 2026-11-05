@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+rounds 12 second requests answered 12
+bodies clean 12 carrying other bytes 0
+--- stderr
