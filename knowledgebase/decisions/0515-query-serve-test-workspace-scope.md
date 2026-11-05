@@ -66,10 +66,13 @@ and the next requests answered (below).
    modules. Today's 8.3 GB holds every member's bodies.
 4. **`xo serve` needs no change**: its children load what points 1 and
    5 load, and a child that dies at the budget fails only its request.
-5. **`xo test ./...` checks per member** as 0513's `check ./...` does,
-   then builds and runs each member's test packages from that member's
-   checked program. The test binaries are per package already. Only the
-   check phase holds the workspace at once today.
+5. **`xo test ./...` runs per member.** `xo test` checks, builds and
+   links one program from everything it is given, so a walk of a
+   workspace is one program of every member. At a workspace root with
+   members below it, the CLI runs one child `xo test` for the walk's
+   directories outside the members, then one `xo test MEMBER/...` per
+   member, with the command line's flags; the highest status wins (as
+   serve's children, each child holds only its own closure).
 
 ## Consequences
 
@@ -105,7 +108,7 @@ and the next requests answered (below).
 
 1. Point 1 in load_session_pc, with the peak RSS test. This is the
    largest win: query type dies today.
-2. Point 5, on 0513's code once the owner accepts 0513.
+2. Point 5 (done on the branch, below).
 3. Points 2 and 3. `api`, `deps` and `imports` of a directory argument
    now check that directory (done on the branch, below); a bare name
    at the root (`def from_config`, 6.5 GB) is point 3's
@@ -138,3 +141,23 @@ api` in a 301 module workspace: 36 MB against 35 MB and 30 MB against
 1,792 MB without it (XO_QUERY_WIDE=1; the test fails). cmd/xo's
 workspace, TestModules and TestQuery tests pass, and
 TestCodegenInputsClassified.
+
+## Point 5 measured (2026-11-05, branch lang1-qscope)
+
+Behind XO_TEST_PER_MODULE=1 on the branch (compiler/xo/main.xo
+test_per_member, core.test_split from 0513's walk split). aws 8fe319e,
+linux/arm64, cold private caches (backend, binary and check caches):
+
+| `xo test ./...` | peak RSS | wall | result |
+|---|---|---|---|
+| 0.39.0, one program | over 30 GB | 38 s | stops at the memory budget |
+| branch, a child per member | 3,952 MB | 3 min 15.6 s | 439 children with tests, 874 passed, 0 failed, status 0 |
+| branch, again (warm) | 24 MB in the parent | 7.6 s | the same, from the result cache |
+
+The peak is one child's: the largest member's closure (integration,
+as in 0513). TestTestWorkspacePerModule (cmd/xo workcheck_test.go): a
+workspace of a root module and three members with a failing test in
+one; one program and the per member run give the same totals (4
+passed, 1 failed) and status 1, and name the failing test. Left for
+main: the children's summaries print one per child (a total line at
+the end), and children could run in parallel within the memory budget.
