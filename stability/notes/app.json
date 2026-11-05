@@ -4,10 +4,13 @@
     "NOTES_TOKEN": "t0p-admin",
     "NOTES_PASSWORD": "correct horse",
     "NOTES_ADDR": "{addr}",
-    "NOTES_DATA": "{data}"
+    "NOTES_DATA": "{data}",
+    "NOTES_DEBUG_TOKEN": "dbg-t0k"
   },
   "ready": "/health",
-  "tokens": {"admin": "t0p-admin", "bad": "not-a-token"},
+  "tokens": {"admin": "t0p-admin", "bad": "not-a-token", "debug": "dbg-t0k"},
+  "stats": "/debug/sched",
+  "stats_token": "debug",
   "scenario": "scenario.jsonl",
   "redact": ["created", "expires", "token"]
 }

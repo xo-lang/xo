@@ -2,6 +2,7 @@
 // so that it does not share the runtime under test.
 //
 //	harness diff -xo XO -app DIR [-backends go,arm64,llvm] [-out OUT]
+//	harness soak -xo XO -app DIR -out OUT [-backend arm64] [-rate 500] [-d 2h] (soak.go)
 //
 // diff builds the app once per backend, runs each build through the app's
 // scenario (DIR/app.json names it), and compares the responses: status,
@@ -27,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -47,6 +49,10 @@ type App struct {
 	// Redact lists JSON object keys whose values differ from run to run
 	// (times, generated tokens); their values compare as "<redacted>".
 	Redact []string `json:"redact"`
+	// Stats is a path answering `name value` lines with heap_live (std/debug's
+	// /sched), read by soak with the token StatsToken names.
+	Stats      string `json:"stats"`
+	StatsToken string `json:"stats_token"`
 }
 
 // Step is one line of the scenario.
@@ -76,8 +82,11 @@ type Result struct {
 }
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "soak" {
+		os.Exit(soakMain(os.Args[2:]))
+	}
 	if len(os.Args) < 2 || os.Args[1] != "diff" {
-		fmt.Fprintln(os.Stderr, "usage: harness diff -xo XO -app DIR [-backends go,arm64,llvm] [-out OUT]")
+		fmt.Fprintln(os.Stderr, "usage: harness diff -xo XO -app DIR [-backends go,arm64,llvm] [-out OUT]\n       harness soak -xo XO -app DIR -out OUT [-backend arm64] [-rate 500] [-d 2h] [-every 10s] [-warmup 0.1]")
 		os.Exit(2)
 	}
 	fs := flag.NewFlagSet("diff", flag.ExitOnError)
@@ -271,6 +280,16 @@ func (p *proc) stop(how string) error {
 	case err := <-done:
 		return err
 	case <-time.After(20 * time.Second):
+		// where it is stuck, before it goes: macOS's sample (every
+		// thread's stack), or Linux's gdb when installed
+		hang := strings.TrimSuffix(p.log.Name(), ".log") + ".hang.txt"
+		pid := fmt.Sprint(p.cmd.Process.Pid)
+		if runtime.GOOS == "darwin" {
+			exec.Command("sample", pid, "3", "-file", hang).Run()
+		} else if gdb, err := exec.LookPath("gdb"); err == nil {
+			b, _ := exec.Command(gdb, "-p", pid, "-batch", "-ex", "thread apply all bt").CombinedOutput()
+			os.WriteFile(hang, b, 0o644)
+		}
 		p.cmd.Process.Kill()
 		<-done
 		return errors.New("did not stop within 20 s of SIGTERM")

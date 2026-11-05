@@ -15,7 +15,13 @@ fuzzing. Phase 1 builds the starter app and the harness.
   runs DIR/app.json's scenario against each build (restarts with SIGTERM or
   SIGKILL included, on the same data directory) and compares status,
   Content-Type and body, with app.json's `redact` keys masked; exit 1 when
-  they differ or a step misses its `expect` status. Build it with
+  they differ or a step misses its `expect` status. `harness soak -xo XO -app
+  stability/APP -out OUT [-backend arm64] [-rate 500] [-d 2h]` runs bench/soak's
+  open loop mix (per app, in soak.go) against a build under XO_LEAKCHECK=1,
+  samples RSS, fds, latency and the app's `heap_live` (app.json `stats`,
+  std/debug's /sched) into OUT/samples.csv, and writes OUT/drift.txt; exit 1
+  on drift, blocks left at exit, or a stop that takes over 20 s (its threads'
+  stacks are then saved beside the run's log). Build it with
   `cd stability/harness && go build -o /tmp/harness .`.
 
 An app's directory holds `app.json` (env with `{addr}` and `{data}`, the

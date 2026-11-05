@@ -114,3 +114,24 @@ test "with a data directory, main loads the notes and logs what it found" {
   expect(rec.fields.get("torn")) == Some("0")
   expect(os.fs.read_text("data/notes.snap")?.starts_with("N "))
 }
+
+test "NOTES_DEBUG_TOKEN mounts the debug routes behind that token" {
+  os.env.set("NOTES_TOKEN", "t0p")
+  os.env.set("NOTES_ADDR", ":0")
+  os.env.set("NOTES_DEBUG_TOKEN", "dbg")
+  os.proc.signal_after(1m)
+  let c = http.client(os.net, timeout: 5s)
+  scope s {
+    let got = s.spawn(fn() -> List[Int] ! Error {
+      os.clock.sleep(1s)
+      let rec = testing.logs().find(fn(r) { r.msg == "listening" }).or_fault("main logged no address")
+      let base = "http://${rec.fields.get("addr") ?? ""}"
+      let ok = c.send(http.new_request("GET", "${base}/debug/sched", headers: {"Authorization": "Bearer dbg"}))?
+      let wrong = c.send(http.new_request("GET", "${base}/debug/sched", headers: {"Authorization": "Bearer t0p"}))?
+      let none = c.get("${base}/debug/sched")?
+      [ok.status, wrong.status, none.status]
+    })
+    expect(testing.run_main(main, os)) == 0
+    expect(got.await?) == [200, 403, 403]
+  }
+}
