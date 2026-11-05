@@ -35,6 +35,7 @@
 // record is one mapping per thread, kept in thread local word UNW_TLS;
 // arithmetic that could overflow on bad tables wraps (rt.int_wrap).
 use native/llrt/linux
+use native/llrt/sanhook
 use native/rt
 use native/sys_darwin
 use native/sys_windows
@@ -200,6 +201,27 @@ const UA_FORCE_UNWIND = 8
 /// xo_rt.c XO_EXC_CLASS ("XO\0\0FAUL").
 const EXC_CLASS = 6363304799676486988
 
+/// Zeroes the register record at cur (PC + 8 bytes). A --race build's
+/// memset interceptor saw the thread's scratch written by two tasks that
+/// ran one after the other on the same worker, with no order it can see
+/// (lazy_const_cycle_tasks, the 2026-11-05 race stress;
+/// gotchas/tsan-fiber-switch-sync.md), so its writes are ignored, as
+/// heapos.xo large_room's are. A loop of stores did not help: LLVM made
+/// it a memset again.
+fn zero_regs(cur: Int) {
+  sanhook.ignore_writes(true)
+  rt.mem_set(cur, 0, PC + 8)
+  sanhook.ignore_writes(false)
+}
+
+/// Copies n bytes from src to dst, both in the thread's scratch, with a
+/// --race build's memcpy interceptor ignoring the writes (zero_regs).
+fn scratch_copy(dst: Int, src: Int, n: Int) {
+  sanhook.ignore_writes(true)
+  rt.mem_copy(dst, src, n)
+  sanhook.ignore_writes(false)
+}
+
 /// Unwinds the calling thread's frames for the fault whose exception
 /// object is at exc, running the first landing pad it finds below the
 /// boundary (a stack address; 0: none) in a frame whose personality
@@ -237,7 +259,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
     rt.mem_store(s, H_HDR, hdr, 8)
   }
   let cur = s + REGS_A
-  rt.mem_set(cur, 0, PC + 8)
+  zero_regs(cur)
   rt.unwind_save(cur)
   // this function's frame first: its pc is the save's return address
   rt.mem_store(cur, PC, rt.mem_load(cur, ra_off(), 8), 8)
@@ -334,7 +356,7 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
     rt.mem_store(s, H_HDR, hdr, 8)
   }
   let cur = s + REGS_A
-  rt.mem_set(cur, 0, PC + 8)
+  zero_regs(cur)
   rt.unwind_save(cur)
   rt.mem_store(cur, PC, rt.mem_load(cur, ra_off(), 8), 8)
   var n = 0
@@ -458,7 +480,7 @@ fn lookup_frame(s: Int, pc: Int, darwin: Bool) -> Bool {
     return true
   }
   // the first way's entry moves to the second, the new one goes first
-  rt.mem_copy(set + FC_BYTES, set, FC_BYTES)
+  scratch_copy(set + FC_BYTES, set, FC_BYTES)
   rt.mem_store(set, 0, 0, 8)
   let e = set
   rt.mem_store(s, H_ENC, 0, 8)

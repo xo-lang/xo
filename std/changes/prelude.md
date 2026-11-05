@@ -7,6 +7,17 @@
 
 
 
+## 2026-11-05: fix: a --race build no longer reports two tasks' faults on one worker as a race
+
+- Kind: fix
+- Commit: this push
+- Found by: the 2026-11-05 race stress (lazy_const_cycle_tasks under --race on linux, 23 runs in 24)
+- Go reference: Go's race detector leaves the runtime out, as decision 0273 mode 2 does
+- Test: internal/llvm TestRaceRuntimeInlinedUnchecked (lazy_const_cycle_tasks); 48 linux --race runs clean
+- Shipped in: not yet released
+
+The fault unwinder zeroed and copied its per-thread scratch with the C library's memset and memcpy, which ThreadSanitizer intercepts. Two tasks that faulted one after the other on the same worker looked like a race. Those writes are now ignored, as the runtime's malloc already was.
+
 ## 2026-11-05: fix: rt.heap_release of an address that is no block's prefix ends the program
 
 - Kind: fix

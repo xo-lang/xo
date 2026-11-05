@@ -72,7 +72,11 @@ func TestRaceStdNoUseAfterFree(t *testing.T) {
 // (race.xo race_instrument). The trailer and server limit goldens also
 // stopped on TSan's allocator CHECK before hserve.xo released its blocks
 // at their prefix (gotchas/heap-large-prefix-not-malloc-address.md).
-var raceInlinedGoldens = []string{"http_h2_config", "http_trailers", "http_server_limits", "websocket_tls_deadline"}
+// lazy_const_cycle_tasks: two tasks' faults on one worker zeroed and
+// copied the unwinder's per-thread scratch through the C library's
+// memset and memcpy, which a --race build intercepts (unwind.xo
+// zero_regs, scratch_copy; linux, 23 runs in 24).
+var raceInlinedGoldens = []string{"http_h2_config", "http_trailers", "http_server_limits", "websocket_tls_deadline", "lazy_const_cycle_tasks"}
 
 // TestRaceRuntimeInlinedUnchecked builds each of raceInlinedGoldens with
 // --race on the LLVM backend and runs it once: no ThreadSanitizer report.

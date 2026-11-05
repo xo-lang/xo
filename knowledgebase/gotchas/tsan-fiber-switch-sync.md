@@ -48,3 +48,15 @@ TestPreemptMigrate/llvm-race stays red with two reports of a runtime
 record set up by one context and used by a task's (the worker record read
 in pool.preempt, the fiber record's state written in sched.fiber_yield,
 the malloc of each the previous write): skipped there.
+
+Observed again 2026-11-05 (xo-lang-4, the race stress): the runtime's
+own code is not instrumented, but the C library calls it makes are,
+through TSan's interceptors. unwind.xo zeroed and copied its per-thread
+scratch with rt.mem_set and rt.mem_copy (memset and memcpy), so two
+tasks faulting one after the other on one worker were reported as a race
+(lazy_const_cycle_tasks on linux, 23 runs in 24). Those calls are now
+wrapped in sanhook.ignore_writes (unwind.xo zero_regs, scratch_copy), as
+heapos.xo large_room's malloc already was, and 48 runs in 48 are clean.
+A loop of word stores in place of the memset did not help: LLVM turned
+it back into a memset call. Look for an intercepted libc call before
+blaming a runtime store.
