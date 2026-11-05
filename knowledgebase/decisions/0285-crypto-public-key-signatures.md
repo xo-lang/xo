@@ -58,8 +58,9 @@ pub fn generate_key(r: Rand, alg: KeyAlg) -> PrivateKey ! KeyErr uses rand   // 
   signature is `false`, as Go.
 - RSA keys of 1024 bits or more verify (Go 1.24's minimum); 2048 to 8192
   for signing.
-- RSA key generation (needs prime generation, math/big) is a later step;
-  services import keys from PEM.
+- RSA key generation (needs prime generation, math/big) was a later step;
+  services imported keys from PEM. It landed 2026-11-05: `generate_key(r,
+  Rsa, bits)`, std/changes/crypto.md.
 
 
 ### One combined module (an exception to decision 0279)
@@ -127,7 +128,7 @@ custom reader) and both backends sign the same bytes for the same
   nonce to the hedged construction: a std/native change, so it passes
   the self rebuild fixed point, and std/changes/crypto.md records it as
   Kind: security.
-- RSA key generation waits for prime generation (a later step); keys
+- RSA key generation waited for prime generation (landed 2026-11-05); keys
   come from PEM.
 - spec/std.md 11 grows by the API above; bench/ct holds the timing test.
 

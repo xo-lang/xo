@@ -290,15 +290,89 @@ func Crypto_sign_raw_ecdsa(tk *Task, r Rand, k Crypto_PrivateKey, h Crypto_Hash,
 	return Ok[Bytes, Crypto_KeyErr](Bytes(out))
 }
 
+// rsaPrime is fips140/rsa's randomPrime on r's bytes, as the native
+// llrt/rsagen.xo reads them: a candidate of (bits+7)/8 bytes with the top
+// bits cleared to the size, the top two set and the low bit set, until it
+// is prime (ProbablyPrime, whose verdict agrees with Miller-Rabin's on
+// random candidates).
+func rsaPrime(tk *Task, r Rand, bits int) *big.Int {
+	n := (bits + 7) / 8
+	excess := n*8 - bits
+	for {
+		b := []byte(r.M_bytes(tk, int64(n)))
+		b[0] &= 0xff >> excess
+		z := new(big.Int).SetBytes(b)
+		z.SetBit(z, bits-1, 1)
+		z.SetBit(z, bits-2, 1)
+		z.SetBit(z, 0, 1)
+		if z.ProbablyPrime(20) {
+			return z
+		}
+	}
+}
+
+// rsaGenerate is fips140/rsa's GenerateKey on r's bytes (the native
+// llrt/rsagen.xo): e = 65537, d = e^-1 mod lcm(p - 1, q - 1), with the same
+// retries (a gcd above 32 bits, e dividing lambda, d at most 2^(bits/2)),
+// so the same r gives the same primes; nil when the source is broken.
+func rsaGenerate(tk *Task, r Rand, bits int) *rsa.PrivateKey {
+	one := big.NewInt(1)
+	e := big.NewInt(65537)
+	for {
+		p := rsaPrime(tk, r, (bits+1)/2)
+		q := rsaPrime(tk, r, bits/2)
+		if p.Cmp(q) == 0 {
+			return nil
+		}
+		n := new(big.Int).Mul(p, q)
+		if n.BitLen() != bits {
+			return nil
+		}
+		a := new(big.Int).Sub(p, one)
+		b := new(big.Int).Sub(q, one)
+		az, bz := a.TrailingZeroBits(), b.TrailingZeroBits()
+		if az < bz {
+			a.Rsh(a, az)
+		} else {
+			b.Rsh(b, bz)
+		}
+		g := new(big.Int).GCD(nil, nil, a, b)
+		if g.BitLen() > 32 {
+			continue
+		}
+		lam := new(big.Int).Mul(a, new(big.Int).Div(b, g))
+		d := new(big.Int).ModInverse(e, lam)
+		if d == nil || d.BitLen() <= bits/2 {
+			continue
+		}
+		k := &rsa.PrivateKey{PublicKey: rsa.PublicKey{N: n, E: 65537}, D: d, Primes: []*big.Int{p, q}}
+		k.Precompute()
+		if k.Validate() != nil {
+			return nil
+		}
+		return k
+	}
+}
+
 // Crypto_generate_key reads r as the native code does: an ECDSA scalar by
 // Go's rejection sampling (P-521's candidates shifted right by 7 bits),
-// an Ed25519 seed of 32 bytes; so the same r gives the same key on every
-// backend.
-func Crypto_generate_key(tk *Task, r Rand, alg Crypto_KeyAlg) Result[Crypto_PrivateKey, Crypto_KeyErr] {
+// an Ed25519 seed of 32 bytes, an RSA key's candidates (rsaGenerate); so
+// the same r gives the same key on every backend.
+func Crypto_generate_key(tk *Task, r Rand, alg Crypto_KeyAlg, bits int64) Result[Crypto_PrivateKey, Crypto_KeyErr] {
 	var k any
 	switch alg.Tag {
 	case 1:
-		return Err[Crypto_PrivateKey](keyErr("crypto: RSA key generation is not available yet (decision 0285)"))
+		if bits < 1024 {
+			return Err[Crypto_PrivateKey](keyErr("crypto/rsa: " + strconv.FormatInt(bits, 10) + "-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)"))
+		}
+		if bits > 8192 {
+			return Err[Crypto_PrivateKey](keyErr("crypto/rsa: " + strconv.FormatInt(bits, 10) + "-bit keys are too large"))
+		}
+		rk := rsaGenerate(tk, r, int(bits))
+		if rk == nil {
+			return Err[Crypto_PrivateKey](keyErr("crypto/rsa: key generation failed"))
+		}
+		k = rk
 	case 6:
 		k = ed25519.NewKeyFromSeed([]byte(r.M_bytes(tk, 32)))
 	default:

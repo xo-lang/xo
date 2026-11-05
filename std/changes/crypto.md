@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-05: feature: crypto.generate_key makes RSA keys
+
+- Kind: feature
+- Commit: this push
+- Found by: the Azure SDK embedding a test key until RSA generation landed (lead's queue, 2026-11-05)
+- Go reference: crypto/internal/fips140/rsa keygen.go (go1.26.1): GenerateKey, randomPrime, isPrime (trial division by 255 small primes, then BoringSSL's number of Miller-Rabin rounds), totient (lcm(p - 1, q - 1), a gcd above 32 bits retried), d = e^-1 mod lambda
+- Test: std/native/llrt/rsagen_test.xo (Mersenne and large primes, Carmichael numbers and strong pseudoprimes, the gcd and short division), crypto_test.xo (keys of 1024, 1031 and 2048 bits from a seeded stream, pinned from the Go backend and identical on native, LLVM and Go; sign and verify with PKCS #1 v1.5 and PSS; the size refusals) and golden crypto_keys (every backend)
+- Timing: Mac arm64, 40 random keys per run, two runs each (the time depends on the primes found): 1024 bits Go 210 and 214 ms, Xo 170 and 168 ms (0.80 of Go); 2048 bits Go 1.54 and 1.33 s, Xo 1.42 and 1.09 s (0.74 to 0.92 of Go)
+- Shipped in: not yet released
+
+`crypto.generate_key(r, Rsa, bits = 2048)` returns an RSA key of 1024 to 8192 bits with e = 65537; a size below 1024 is Go 1.26's `crypto/rsa: N-bit keys are insecure` and one above 8192 is `crypto/rsa: N-bit keys are too large` (the largest key std signs with). The prime candidates are read from `r` as Go's `randomPrime` does (top two bits and low bit set), so a seeded `Rand` gives the same key on every backend; the Miller-Rabin bases come from the system's random bytes. The generated key passes the checks a parsed one does. The ECDSA and Ed25519 cases ignore `bits`. `x509.self_signed` and the other callers are unchanged (they use ECDSA).
+
 ## 2026-11-04: feature: crypto.ecdsa_private_key
 
 - Kind: feature

@@ -18,6 +18,7 @@ use native/llrt/hkdf as hk
 use native/llrt/md5
 use native/llrt/nistec
 use native/llrt/rsa
+use native/llrt/rsagen
 use native/llrt/sha1
 use native/llrt/sha256
 use native/llrt/sha3
@@ -1493,9 +1494,9 @@ fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: crypto.Hash, msg: Bytes) -> Bytes !
   der_to_raw(der, nistec.size(nist_curve(k.kind)))
 }
 
-fn generate_key(r: Rand, alg: crypto.KeyAlg) -> PrivateKey ! crypto.KeyErr uses rand {
+fn generate_key(r: Rand, alg: crypto.KeyAlg, bits: Int = 2048) -> PrivateKey ! crypto.KeyErr uses rand {
   match alg {
-    Rsa => Err(key_err("crypto: RSA key generation is not available yet (decision 0285)"))
+    Rsa => generate_rsa(r, bits)
     Ed25519 => {
       let seed = r.bytes(32)
       PrivateKey{kind: alg, rsa: no_rsa(), d: seed, public: PublicKey{kind: alg, n: b"", e: 0, key: ed25519.public_key(seed)}}
@@ -1533,6 +1534,27 @@ fn ecdsa_private_key(alg: crypto.KeyAlg, d: Bytes) -> PrivateKey ! crypto.KeyErr
     return Err(key_err("ecdsa: invalid public key encoding"))
   }
   Ok(PrivateKey{kind: alg, rsa: no_rsa(), d: d, public: PublicKey{kind: alg, n: b"", e: 0, key: p}})
+}
+
+/// An RSA key of `bits` (Go's rsa.GenerateKey, with go1.26's size floor,
+/// and 8192, the largest key std signs with), its checks run as for a
+/// parsed key.
+fn generate_rsa(r: Rand, bits: Int) -> PrivateKey ! crypto.KeyErr uses rand {
+  if bits < 1024 {
+    return Err(key_err("crypto/rsa: ${bits}-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)"))
+  }
+  if bits > 8192 {
+    return Err(key_err("crypto/rsa: ${bits}-bit keys are too large"))
+  }
+  let k = match rsagen.generate(bits, fn(n: Int) -> Bytes uses rand { r.bytes(n) }) {
+    Some(k) => k
+    None => return Err(key_err("crypto/rsa: key generation failed"))
+  }
+  let err = rsa_check(k.n, k.e, k.d, k.p, k.q, k.dp, k.dq, k.qinv)
+  if !err.is_empty() {
+    return Err(key_err(err))
+  }
+  PrivateKey{kind: crypto.KeyAlg.Rsa, rsa: k, d: b"", public: PublicKey{kind: crypto.KeyAlg.Rsa, n: k.n, e: k.e, key: b""}}
 }
 
 fn nist_shift7(b: Bytes) -> Bytes {

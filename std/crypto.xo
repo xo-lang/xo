@@ -205,6 +205,7 @@ fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 /// ECDSA as the fixed size r || s of JWS.
 fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
-/// A new ECDSA or Ed25519 key from r (Go's GenerateKey); Rsa is KeyErr
-/// until prime generation lands.
-fn generate_key(r: Rand, alg: KeyAlg) -> PrivateKey ! KeyErr uses rand
+/// A new key from r (Go's GenerateKey): an ECDSA or Ed25519 key, or an RSA
+/// key of `bits` (1024 to 8192, exponent 65537; other algorithms ignore
+/// it). The same r gives the same key on every backend.
+fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyErr uses rand

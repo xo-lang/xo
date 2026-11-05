@@ -152,7 +152,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | crypto/hkdf | std/crypto | done | `hkdf_extract`, `hkdf_expand`, `hkdf` over every Hash (Go's Extract, Expand, Key), on TLS's llrt code (2026-10-29, `std/changes/crypto.md`). |
 | crypto/aes, crypto/cipher | std/crypto | partial | AEAD: `aead_key(Aead.AesGcm or ChaCha20Poly1305, key)`, `seal`/`open` with a nonce and additional data, `seal_random`/`open_random` (Go's NewGCMWithRandomNonce) (2026-10-29). Missing: the raw block cipher and the unauthenticated modes (CBC, CTR, CFB, OFB). |
 | crypto/ecdh | inside std/native/llrt (X25519, nistec) | partial | TLS only. |
-| crypto/ecdsa, crypto/rsa, crypto/elliptic | std/crypto | partial | Sign and verify (PKCS #1 v1.5, PSS, ECDSA DER and raw), ECDSA and Ed25519 key generation (decision 0285). Missing: RSA key generation, OAEP encryption, ECDH as an API. |
+| crypto/ecdsa, crypto/rsa, crypto/elliptic | std/crypto | partial | Sign and verify (PKCS #1 v1.5, PSS, ECDSA DER and raw), ECDSA, Ed25519 and RSA key generation (decision 0285). Missing: OAEP encryption, ECDH as an API. |
 | crypto/mlkem | inside std/native/llrt/mlkem.xo | partial | TLS key exchange only. |
 | crypto/hpke | none | planned | After a public AEAD and ECDH. |
 | crypto/x509, crypto/x509/pkix | std/crypto (keys); inside std/native/llrt (x509.xo, x509verify.xo) | partial | Key parsing and marshaling in std/crypto (decision 0285); chain verification for the HTTP client. Missing: a certificate API (parsing: NotAfter, subject, SANs; CSRs; generating test certificates) and a TLS connection's peer certificates (ConnectionState). |

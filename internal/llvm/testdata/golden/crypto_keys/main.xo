@@ -45,5 +45,8 @@ fn main(os: Os) ! {
     let s = crypto.sign(os.rand, k, crypto.Hash.Sha256, msg).map_err(fn(e) { e.msg })?
     os.stdio.println("generated ${a.debug()}: ${crypto.verify(k.public_key(), crypto.Hash.Sha256, msg, s)}")
   }
-  os.stdio.println("rsa generation: ${crypto.generate_key(os.rand, crypto.KeyAlg.Rsa).map_err(fn(e) { e.msg }).err() ?? "-"}")
+  os.stdio.println("rsa generation: ${crypto.generate_key(os.rand, crypto.KeyAlg.Rsa, 512).map_err(fn(e) { e.msg }).err() ?? "-"}")
+  let rk = crypto.generate_key(os.rand, crypto.KeyAlg.Rsa, 1024).map_err(fn(e) { e.msg })?
+  let rs = crypto.sign(os.rand, rk, crypto.Hash.Sha256, msg).map_err(fn(e) { e.msg })?
+  os.stdio.println("generated Rsa: ${crypto.verify(rk.public_key(), crypto.Hash.Sha256, msg, rs)} ${rk.public_key().alg().debug()} ${crypto.marshal_public_key(rk.public_key()).len()}")
 }

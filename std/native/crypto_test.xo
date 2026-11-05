@@ -2833,3 +2833,51 @@ test "ecdsa_private_key: Go's refusals" {
     Ok(_) => fault("Ed25519 accepted")
   }
 }
+
+// RSA key generation (decision 0285): the candidates of a seeded byte
+// stream give the same key on every backend. The pinned public keys come
+// from the Go backend's rsaGenerate (math/big, ProbablyPrime), which
+// native llrt/rsagen.xo (Miller-Rabin over bigmod) must match.
+struct Stream {
+  st: Mutex[Int]
+}
+
+fn (s: Stream) int(lo: Int, hi: Int) -> Int uses rand { lo }
+fn (s: Stream) float() -> Float uses rand { 0.5 }
+fn (s: Stream) bool() -> Bool uses rand { false }
+fn (s: Stream) shuffle[T](xs: List[T]) -> List[T] uses rand { xs }
+fn (s: Stream) bytes(n: Int) -> Bytes uses rand {
+  var out = BytesBuilder.new()
+  for _ in 0..n {
+    let v = s.st.with(fn(var x: Int) -> Int {
+      x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+      x.shr_logical(33) & 255
+    })
+    out.write_byte(UInt8(v))
+  }
+  out.freeze()
+}
+
+const GENERATED: List[(Int, Str)] = [
+  (1024, "30819f300d06092a864886f70d010101050003818d0030818902818100afba3d5491f8291262495f385b26d7407caaacd5500b90b9c8cfaa81df8b772e2b126b6e2f0a8b502b5d62e7519dccab9535734a3038e6ea6ce9d2842e012c2ab0619da5c3e191458b644e1f77ffe07de8707cff79ad74ec11cb2fb0234a2eec6a817c6fb9c81e0429d94e81278d239b212cfee826a178d0cd88dc94e7bb14f70203010001"),
+  (1031, "30819f300d06092a864886f70d010101050003818d003081890281817317dd78bd8a7b1e557d408b64f5c4930031a1850b884543127f554c4071237fd58faa69dd47098a81d7afd600c975bf48d784eb27804fc79d81f06eac761218701d2f8ff7b3892306688d764677c88e4d6a040dac53069a226363840daa00e536339a277c8f3376af3daf540be6c682ffff1516970135dbf343b2b5aaf2be7c8d0203010001"),
+  (2048, "30820122300d06092a864886f70d01010105000382010f003082010a0282010100a656bf06e8189f69777a6d30d3b0c8a69b18ea19a6426bdd7c8b5bae33451e57418d225d850a2bce4f19ab3208f2b0583d773bada6fb265e050536625fee25e2cd34201854ba1a8ed38a62eb1174fe3305df9fae0c7037e3a25c8959014d66ceabbc07303911eefbe6ac5b56ad422e9e46e602359a6b872969c1a71ea7a376600b74065d01dacbb3d4bffc92f47c83a63df6c74080c3425fdeaa11f02522799295f352d113a2549b5480f05452ef63fa58ebb606f8434537107fc1dbc2d1370e18ebb58847b7c79dc1ee55e4bf8f06ebed9b1f06e397431bb63562532291c100f0260ee4725e811db930563e9d0bb011e3d5dd768aae98b3ef69bd5250bcad670203010001"),
+]
+
+test "generate_key: RSA keys from a seeded stream, the same on every backend" {
+  for (bits, want) in GENERATED {
+    let r = Stream{st: Mutex[Int].new(777)}
+    let k = generate_key(r, crypto.KeyAlg.Rsa, bits).or_fault("generate")
+    expect(marshal_public_key(k.public_key()).to_hex()) == want
+    let sig = sign(r, k, crypto.Hash.Sha256, b"hello").or_fault("sign")
+    expect(verify(k.public_key(), crypto.Hash.Sha256, b"hello", sig)) == true
+    let pss = sign_pss(r, k, crypto.Hash.Sha256, b"hello").or_fault("pss")
+    expect(verify_pss(k.public_key(), crypto.Hash.Sha256, b"hello", pss)) == true
+  }
+}
+
+test "generate_key: RSA sizes below 1024 and above 8192 are refused" {
+  let r = Stream{st: Mutex[Int].new(1)}
+  expect(generate_key(r, crypto.KeyAlg.Rsa, 512).map_err(fn(e) { e.msg })) == Err("crypto/rsa: 512-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)")
+  expect(generate_key(r, crypto.KeyAlg.Rsa, 8193).map_err(fn(e) { e.msg })) == Err("crypto/rsa: 8193-bit keys are too large")
+}

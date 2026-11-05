@@ -1,0 +1,75 @@
+use native/llrt/bigmod
+
+fn num(hex: Str) -> List[Int] {
+  let b = Bytes.from_hex(hex) ?? b""
+  bigmod.from_bytes(b, (b.len() + 7) / 8) ?? []
+}
+
+test "is_prime accepts primes above the trial table" {
+  let ps = small_primes()
+  for h in [
+    "0655",                                   // 1621
+    "010001",                                 // 65537
+    "fffffffb",                               // 2^32 - 5
+    "ffffffffffffffc5",                       // 2^64 - 59
+    "1fffffffffffffff",                       // 2^61 - 1
+    "01ffffffffffffffffffffff",               // 2^89 - 1
+    "7fffffffffffffffffffffffffffffff",       // 2^127 - 1
+    "ffffffffffffffffffffffffffffff61",       // 2^128 - 159
+  ] {
+    expect(is_prime(num(h), ps)) == true
+  }
+}
+
+test "is_prime rejects composites, Carmichael numbers and strong pseudoprimes" {
+  let ps = small_primes()
+  for h in [
+    "bfa17dc7",                               // 3215031751, strong pseudoprime to bases 2, 3, 5, 7
+    "010000000000000001",                     // 2^64 + 1 = 274177 * 67280421310721
+    "098e3dd733",                             // 41041 * 1000003
+    "ffffffea00000055",                       // 4294967291 * 4294967279
+    "ffffffffffffffffffffffffffffffff",       // 2^128 - 1
+    "437ae92817f9fc85b7e5",                   // 318665857834031151167461, strong pseudoprime to the first 12 prime bases
+    "02be6951adc5b22410a5fd",                 // 3317044064679887385961981, to the first 13
+  ] {
+    expect(is_prime(num(h), ps)) == false
+  }
+}
+
+test "binary gcd, short division and shifts" {
+  expect(gcd(num("0f"), num("2d"))) == [15]
+  expect(gcd(num("d3"), num("e1"))) == [1]
+  let x = num("0102030405060708090a0b0c0d0e0f10")
+  let (q, r) = div_short(x, 65537)
+  expect(r) == rem_short(x, 65537)
+  // q * 65537 + r = x
+  let back = bigmod.add_plain(bigmod.mul_plain(q, [65537]), [r])
+  expect(bigmod.trim(back)) == x
+  expect(shr(num("0100000000000000000000000000000000"), 64)) == [0, 1, 0]
+  expect(shr(num("0100000000000000000000000000000000"), 65)[0]) == (1).wrapping_shl(63)
+  expect(shr(num("0100000000000000000000000000000000"), 128)) == [1, 0, 0]
+  expect(tz(num("0100000000000000000000000000000000"))) == 128
+  expect(pow_small(3, 65536, 65537)) == 1
+  expect(pow_small(3, 65535, 65537) * 3 % 65537) == 1
+}
+
+test "generate: a key of the asked size from a byte source" {
+  // xorshift-free counter source: bytes of an LCG, so the test is the same on every backend
+  let state = Mutex[Int].new(12345)
+  let src = fn(n: Int) -> Bytes uses rand {
+    var out = BytesBuilder.new()
+    for _ in 0..n {
+      let v = state.with(fn(var s: Int) -> Int {
+        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+        s.shr_logical(33) & 255
+      })
+      out.write_byte(UInt8(v))
+    }
+    out.freeze()
+  }
+  let k = generate(1024, src) ?? fault("no key")
+  expect(k.n.len()) == 128
+  expect(k.e) == 65537
+  expect(k.p.len()) == 64
+  expect(k.q.len()) == 64
+}

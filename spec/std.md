@@ -3489,7 +3489,7 @@ pub fn verify_raw_ecdsa(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 pub fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 pub fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 pub fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
-pub fn generate_key(r: Rand, alg: KeyAlg) -> PrivateKey ! KeyErr uses rand
+pub fn generate_key(r: Rand, alg: KeyAlg, bits: Int = 2048) -> PrivateKey ! KeyErr uses rand
 ```
 
 - PEM is Go's `encoding/pem`: `pem_decode` is `pem.Decode` repeated on
@@ -3521,8 +3521,16 @@ pub fn generate_key(r: Rand, alg: KeyAlg) -> PrivateKey ! KeyErr uses rand
   values computed when absent); keys of more than two primes are
   `crypto/rsa: multi-prime keys are not supported`. A message hash too
   long for the key is `crypto/rsa: message too long for RSA key size`;
-  `sign_pss` with another kind of key is `KeyErr`. `generate_key(r, Rsa)`
-  is `KeyErr` until prime generation lands (import RSA keys from PEM).
+  `sign_pss` with another kind of key is `KeyErr`. `generate_key(r, Rsa,
+  bits)` is Go's `rsa.GenerateKey` (FIPS 186-5 A.1.1: two random primes of
+  half the size, e = 65537, d = e^-1 mod lcm(p - 1, q - 1), the key checked
+  as a parsed key is): `bits` from 1024 (`crypto/rsa: 512-bit keys are
+  insecure (see ...)` below, Go 1.26's floor) to 8192 (`crypto/rsa: 8193-bit
+  keys are too large`, the largest key std signs with); `bits` is ignored
+  for other algorithms. The prime candidates are `r`'s bytes (Go's
+  `randomPrime`: the top two bits and the low bit set), so the same `r`
+  gives the same key on every backend; the Miller-Rabin bases come from the
+  system's random bytes, as Go's.
 - `jwk_public_key` reads RFC 7517 JSON (members matched exactly,
   unpadded base64url values; `use`, `kid`, `alg`, and private members
   ignored): `jwk: malformed JSON`, `jwk: unsupported key type "oct"`,
@@ -3539,7 +3547,7 @@ pub fn generate_key(r: Rand, alg: KeyAlg) -> PrivateKey ! KeyErr uses rand
   1.26 ignores a custom reader, and with `cryptocustomrand=1` it reads
   one extra byte at random), so those signatures verify but differ run
   to run; the bytes the native signer takes are drawn from `r` and
-  dropped, so `r`'s later values match. Keys from `generate_key`, RSA
+  dropped, so `r`'s later values match. Keys from `generate_key` (RSA included), RSA
   PKCS #1 v1.5, and Ed25519 signatures are the same bytes on every
   backend for the same `r`.
 - **Timing.** Every operation on a private key or a nonce (scalar

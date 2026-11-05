@@ -22,5 +22,6 @@ bad key: x509: malformed public key / x509: malformed private key
 generated EcdsaP256: true
 generated EcdsaP521: true
 generated Ed25519: true
-rsa generation: crypto: RSA key generation is not available yet (decision 0285)
+rsa generation: crypto/rsa: 512-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)
+generated Rsa: true Rsa 162
 --- stderr

@@ -55,5 +55,5 @@ var (
 	_ func(*Task, Rand, Crypto_PrivateKey, Crypto_Hash, Bytes) Result[Bytes, Crypto_KeyErr] = Crypto_sign
 	_ func(*Task, Rand, Crypto_PrivateKey, Crypto_Hash, Bytes) Result[Bytes, Crypto_KeyErr] = Crypto_sign_pss
 	_ func(*Task, Rand, Crypto_PrivateKey, Crypto_Hash, Bytes) Result[Bytes, Crypto_KeyErr] = Crypto_sign_raw_ecdsa
-	_ func(*Task, Rand, Crypto_KeyAlg) Result[Crypto_PrivateKey, Crypto_KeyErr]             = Crypto_generate_key
+	_ func(*Task, Rand, Crypto_KeyAlg, int64) Result[Crypto_PrivateKey, Crypto_KeyErr]      = Crypto_generate_key
 )

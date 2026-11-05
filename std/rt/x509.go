@@ -537,7 +537,7 @@ func (c *X509_Certificate) M_pem(*Task) Bytes {
 }
 
 func X509_self_signed(tk *Task, r Rand, hosts List[string], now Time, days int64) Result[Tuple2[Bytes, Bytes], X509_CertErr] {
-	kr := Crypto_generate_key(tk, r, Crypto_KeyAlg{Tag: 3})
+	kr := Crypto_generate_key(tk, r, Crypto_KeyAlg{Tag: 3}, 2048)
 	if !kr.Ok {
 		return Err[Tuple2[Bytes, Bytes]](x509Err(kr.E.F_msg))
 	}
