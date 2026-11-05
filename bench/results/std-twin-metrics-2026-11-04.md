@@ -16,6 +16,8 @@ Xo / Go:
 | histogram, first run | 73.09 | 256.4 | 3.508 | 3.414-3.546 |
 | histogram, after the bucket change | 72.25 | 242.5 | 3.357 | 3.266-3.385 |
 | histogram, after the capture fix | 74.1 | 241.3 | 3.256 | 3.213-3.274 |
+| counter, a Series holds its cells in one list (3 fields, not 6) | 68.8 | 252.6 | 3.671 | 3.414-3.710 |
+| histogram, the same | 75.82 | 203.2 | 2.681 | 2.615-2.722 |
 | scrape | 108.4 | 51.49 | 0.475 | 0.469-0.482 |
 
 Xo's own time fell 9% (counter) and 6% (histogram) over the three steps;
@@ -49,3 +51,22 @@ Next experiments, ranked:
    atomic, not six fields.
 3. A map read that returns a borrowed view (Lang 1; Map.get clones the
    value), which would help every Mutex[Map[..]] cache in std.
+
+## Series packed into three fields (host 1, 9 rounds)
+
+A Series was six fields (the label values, five atomic cells or lists of
+them), so every hit shared and then dropped six heap objects. It is three now
+(`values`, `cells`, `q`; cell 0 the value, 1 the count, 2 the sum, 3 and on
+the buckets): Xo's own time fell 12% (counter 287.3 to 252.6 ms) and 16%
+(histogram 241.3 to 203.2) against the previous step, ratios 4.07 to 3.67
+and 3.26 to 2.68.
+
+Profile of the counter loop after it (host 1, one thread, 60,000,000
+increments, 510 samples): series_of 58% cumulative, of which the read
+closure 18%; obj.free1 9%, obj_str_eq 7% (the key compare in the map),
+reference count work (rc_defer 11%, drops of a Str, List[Str], List[Atomic]
+about 12%), the mutex read lock about 10% (rlock_body, held_del, runlock,
+reader_out), closure environment drop 3%, hash 3%. No single piece is left
+to cut: the remaining cost is the shape of the call (a label list, a key, a
+closure, a lock, a lookup and a clone for every increment), which is what
+the child API of decision 0501 removes.

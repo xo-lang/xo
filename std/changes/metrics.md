@@ -1,5 +1,20 @@
 # std/metrics changes
 
+## 2026-11-04: perf: a Series holds its cells in one list
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/metrics (the profile of the labelled increment: six reference counted fields shared and dropped on every hit)
+- Go reference: none (client_golang's children hold their atomics directly)
+- Test: goldens metrics_text, metrics_summary, metrics_buckets (every backend and the Go backend), TestVetCostStd, stdgen
+- Timing: bench/results/std-twin-metrics-2026-11-04.md (host 1): counter 4.07 to 3.67, histogram 3.26 to 2.68 of client_golang; Xo's own time 12% and 16% lower
+- Shipped in: not yet released
+
+metrics.Series is three fields (values, cells, q): cell 0 the value, 1 the
+count, 2 the sum, 3 and on the buckets. The type is internal; nothing that
+uses the instruments changes.
+
+
 ## 2026-11-04: perf: a one label series key without a copy, one bucket a histogram observation, a closure without the Family
 
 - Kind: perf
