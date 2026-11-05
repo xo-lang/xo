@@ -369,7 +369,8 @@ nothing (decision 0374); they are stable exactly like `sort` and `sort_by`. A
 list another binding shares is copied first, the way `push` and `set` copy
 one, so the other holder keeps its own order; a uniquely owned list is sorted
 in its own array with a scratch under one list, where `sort` builds a
-whole second list.
+whole second list. A `List[Int]` receiver is sorted by the same
+pattern-defeating quicksort as `sort`, in its own array with no scratch.
 
 Higher order methods (`map`, `filter`, ...) pass through the callback's effects
 and errors through effect variables (core 6.2); `map` with a failing callback

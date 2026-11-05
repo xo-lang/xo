@@ -43,6 +43,12 @@ fn main(os: Os) ! {
     report(os, "strbuild1M", t0, sb.freeze().len())
   }
 
+  // sort1M sorts in place, the work of Go's slices.Sort, since 2026-11-04
+  // (Lead): until then it ran xs.freeze().sort(), which builds a second
+  // 8 MB list that Go's twin never does (bench/results/
+  // sort1M-in-place-2026-11-04.md). sort1M_copy keeps that form for the
+  // next release-vs-Go report, so the old row is still shown beside the
+  // new one; drop it after that report.
   if on("sort1M") {
     t0 = os.clock.now()
     var xs = Buf[Int].with_capacity(1_000_000)
@@ -51,8 +57,21 @@ fn main(os: Os) ! {
       x = (x * 1103515245 + 12345) % 2147483648
       xs.push(x)
     }
-    let sorted = xs.freeze().sort()
+    var sorted = xs.freeze()
+    sorted.sort_in_place()
     report(os, "sort1M", t0, sorted[500_000])
+  }
+
+  if on("sort1M_copy") {
+    t0 = os.clock.now()
+    var xs = Buf[Int].with_capacity(1_000_000)
+    var x = 12345
+    for _ in 0..1_000_000 {
+      x = (x * 1103515245 + 12345) % 2147483648
+      xs.push(x)
+    }
+    let sorted = xs.freeze().sort()
+    report(os, "sort1M_copy", t0, sorted[500_000])
   }
 
   if on("json10kx20") {

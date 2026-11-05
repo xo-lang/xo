@@ -3377,6 +3377,32 @@ test "list_sort_in_place: the sizes around the 16 element runs" {
   }
 }
 
+test "list_sort_in_place: Ints take pdqsort in the receiver, as sort does" {
+  // random, sorted runs, few distinct values, and descending: the
+  // partitions, the partial insertion, the equal partition and the
+  // pattern breaking of pdq_int, against sort's result
+  var x = 12345
+  var rnd: List[Int] = []
+  var runs: List[Int] = []
+  var few: List[Int] = []
+  var down: List[Int] = []
+  for i in 0..5000 {
+    x = (x * 1103515245 + 12345) % 2147483648
+    rnd.push(x)
+    runs.push(if i % 100 == 0 { x } else { i })
+    few.push(x % 3)
+    down.push(5000 - i)
+  }
+  for l in [rnd, runs, few, down] {
+    let want = l.sort()
+    var got = l
+    got.sort_in_place()
+    expect(got == want)
+  }
+  // rnd, which got shared until the sort wrote, keeps its order
+  expect(rnd.sort() != rnd)
+}
+
 test "list_sort_in_place: a list another binding shares is copied first" {
   var a = [3, 1, 2]
   let b = a

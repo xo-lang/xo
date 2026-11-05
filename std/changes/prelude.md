@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-04: perf: List[Int].sort_in_place runs pdqsort in the receiver
+
+- Kind: perf
+- Commit: this push
+- Found by: the sort1M x86 gap (Lead, 2026-11-04): split timing on the i7 laptop put the sort itself at Go's speed; the gap was micro13's `xs.freeze().sort()` building a second 8 MB list (1,529 page faults against Go's 1,003), and `sort_in_place`, the in-place form, ran the stable merge with a compare closure for Ints
+- Go reference: slices.Sort (pdqsortOrdered), already ported as list_sort_int
+- Test: prelude_test.xo "list_sort_in_place: Ints take pdqsort in the receiver, as sort does" and the other list_sort tests, arm64 and LLVM
+- Timing: bench/results/sort1M-in-place-2026-11-04.md (linux/amd64 --ab, sort_in_place of 1M Ints: 0.681 (0.674 to 0.702) of the merge's wall time)
+- Shipped in: not yet released
+
+`sort_in_place` on a `List[Int]` sorts with list_sort_int's pdqsort in the
+receiver's own array, with no scratch list and no closure call per compare.
+Equal Ints cannot be told apart, so the result is the stable sort's, as
+`sort` of a `List[Int]` already was.
+
 ## 2026-11-04: perf: a TCP connection's socket is made nonblocking by accept4 and socket on Linux
 
 - Kind: perf

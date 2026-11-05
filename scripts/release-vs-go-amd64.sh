@@ -13,7 +13,7 @@ xo=${2:?usage: release-vs-go-amd64.sh DIR XO ROUNDS}
 rounds=${3:-5}
 chmod +x "$dir"/rvg-micro13.base "$dir"/rvg-micro13.new "$dir"/rvg-micro13.go
 echo "host $(uname -sm), $(nproc) CPUs, load $(cut -d' ' -f1 /proc/loadavg)"
-for w in fib32 map1M strbuild1M sort1M json10kx20 spawn100k; do
+for w in fib32 map1M strbuild1M sort1M sort1M_copy json10kx20 spawn100k; do
 	for a in base go; do
 		echo "### $w: $a against new"
 		"$xo" bench --ab --rounds="$rounds" --metrics=wall_ms,cpu_ms,max_rss_kb "$dir/rvg-micro13.$a" "$dir/rvg-micro13.new" -- "$w" 2>&1 | grep -v '^round ' | sed "s#$dir/##g"

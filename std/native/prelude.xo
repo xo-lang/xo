@@ -2132,6 +2132,29 @@ fn list_heapify[T: Ord](var xs: List[T]) {
 /// copied the list when another binding shares it, so the receiver's array
 /// is the only one the sort writes.
 fn list_sort_in_place[T: Ord](var xs: List[T]) {
+  if let Some(v) = rt.any_get[List[Int]](rt.any_of[List[T]](xs)) {
+    // Ints: list_sort_int's pdqsort (slices.Sort), in the receiver's own
+    // array. The receiver lets go of its reference first, so the Int view
+    // is the array's only holder and its swaps copy nothing; the sorted
+    // view then goes back. Equal Ints cannot be told apart, so the
+    // unstable sort's result is the stable one's (bench/perf/micro13
+    // sort1M: the merge with a compare closure, and sort's second list,
+    // 2026-11-04)
+    var is = v
+    xs = []
+    let n = is.len()
+    var limit = 0
+    var m = n
+    while m > 0 {
+      limit += 1
+      m = m / 2
+    }
+    pdq_int(is, 0, n, limit)
+    if let Some(back) = rt.any_get[List[T]](rt.any_of[List[Int]](is)) {
+      xs = back
+    }
+    return
+  }
   merge_sort_in_place(xs, fn(a, b) { a < b })
 }
 

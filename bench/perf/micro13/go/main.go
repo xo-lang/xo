@@ -79,6 +79,20 @@ func main() {
 		report("sort1M", t0, xs[500_000])
 	}
 
+	// sort1M_copy: the same work as sort1M; the Xo twin's row runs its
+	// pre 2026-11-04 form (a sorted copy) for one release-vs-Go report
+	if on("sort1M_copy") {
+		t0 = time.Now()
+		xs := make([]int, 0, 1_000_000)
+		x := 12345
+		for i := 0; i < 1_000_000; i++ {
+			x = (x*1103515245 + 12345) % 2147483648
+			xs = append(xs, x)
+		}
+		slices.Sort(xs)
+		report("sort1M_copy", t0, xs[500_000])
+	}
+
 	if on("json10kx20") {
 		t0 = time.Now()
 		recs := make([]Rec, 10_000)

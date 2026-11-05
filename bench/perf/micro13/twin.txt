@@ -6,5 +6,6 @@ xo go fib32
 xo go map1M
 xo go strbuild1M
 xo go sort1M
+xo go sort1M_copy
 xo go json10kx20
 xo go spawn100k
