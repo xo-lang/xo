@@ -49,10 +49,23 @@ struct Deployment {
 } derive Yaml
 
 
+fn weigh(n: yaml.Node) -> Int {
+  var s = 1 + n.value.len()
+  for c in n.content {
+    s += weigh(c)
+  }
+  s
+}
+
 fn main(os: Os) uses stdio, env {
   let w = os.env.args().get(0) ?? "decode"
   var sum = 0
-  if w == "decode" {
+  if w == "parse" {
+    for _ in 0..20000 {
+      let n = yaml.parse(TEXT).ok() ?? fault("parse")
+      sum += weigh(n.content[0])
+    }
+  } else if w == "decode" {
     for _ in 0..20000 {
       let d: Deployment = yaml.decode[Deployment](TEXT).ok() ?? fault("decode")
       let c = d.spec.template.spec.containers[0]

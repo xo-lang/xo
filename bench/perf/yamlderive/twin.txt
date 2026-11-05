@@ -1,5 +1,6 @@
 # twincheck: yamlderive: std/yaml decode into a struct that derives Yaml against yaml.v3 Unmarshal (decision 0512).
 require gopkg.in/yaml.v3 v3.0.1
+- - parse
 - - decode
 - - encode
 - - none
