@@ -124,11 +124,18 @@ fn rt_allocs() -> Int uses realtime
 /// and alone keeps the others suspended for a single step); dbg_wait (ms 0: no limit) gives
 /// [1, thread, exception, code, subcode] at an exception (EXC_BREAKPOINT
 /// 6: subcode the trap's address, 0 after a single step), [2, status] at
-/// its exit, [3, signal] when a signal ended it, [0] when the time
+/// its exit, [3, signal] when a signal ended it, [4] when an attached
+/// one ended (its status is its parent's), [0] when the time
 /// passed. dbg_regs: x0 to x28, fp, lr, sp, pc, cpsr (empty when they
 /// cannot be read). dbg_write makes the page a private copy first (a
-/// trap planted in the program's text).
+/// trap planted in the program's text). dbg_attach (stage 4) takes a
+/// running process stopped, every thread suspended (its addresses are
+/// slid by ASLR); dbg_kill detaches from an attached one, leaving it
+/// running. dbg_threads: the stopped program's threads, the selected
+/// one first.
 fn dbg_launch(path: Str, args: List[Str], out: Str) -> Int ! Str uses proc
+fn dbg_attach(pid: Int) -> Int ! Str uses proc
+fn dbg_threads(h: Int) -> List[Int]
 fn dbg_pid(h: Int) -> Int
 fn dbg_read(h: Int, a: Int, n: Int) -> Bytes?
 fn dbg_write(h: Int, a: Int, data: Bytes) -> Bool uses proc

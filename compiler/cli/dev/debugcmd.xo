@@ -94,11 +94,24 @@ pub fn debug_main(os: Os, args: List[Str], usage: Str) -> Int uses (fs.read, std
   var cmds: List[Str] = []
   var json = false
   var batch = false
+  var attach = false
   var i = 0
   while i < args.len() && args[i].starts_with("-") {
     let a = args[i]
     if a == "-c" && i + 1 < args.len() {
       cmds.push(args[i + 1])
+      i += 2
+      continue
+    }
+    if a == "-p" && i + 1 < args.len() {
+      match Int.parse(args[i + 1]) {
+        Some(p) if p > 0 => cmds.insert(0, "attach ${p}")
+        _ => {
+          os.stdio.eprint("xo debug: -p takes a process id, not ${args[i + 1].quote()}\n${usage}")
+          return 2
+        }
+      }
+      attach = true
       i += 2
       continue
     }
@@ -115,7 +128,7 @@ pub fn debug_main(os: Os, args: List[Str], usage: Str) -> Int uses (fs.read, std
     }
     i += 1
   }
-  if i >= args.len() || (batch && cmds.is_empty()) {
+  if i >= args.len() || (batch && cmds.len() == (if attach { 1 } else { 0 })) {
     os.stdio.eprint(usage)
     return 2
   }
@@ -135,6 +148,11 @@ pub fn debug_main(os: Os, args: List[Str], usage: Str) -> Int uses (fs.read, std
     }
   }
   var s = debug.live_session(exe, sections, prog, args[i + 1..])
+  if attach && cmds.len() == 1 && !batch {
+    // -p with no commands: attach, then the prompt
+    os.stdio.println(if json { s.exec_json(cmds[0]) } else { s.exec(cmds[0]) })
+    return prompt_loop(os, s, json)
+  }
   if cmds.is_empty() { prompt_loop(os, s, json) } else { run_cmds(os, s, cmds, json) }
 }
 

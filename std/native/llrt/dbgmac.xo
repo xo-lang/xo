@@ -37,7 +37,12 @@ const HTHREAD = 56
 const MSG = 64
 const MSG_SIZE = 256
 const REPLY = 384
-const SIZE = 448
+/// attached: the program is not our child (attach), so waitpid does not
+/// see its end and detach leaves it running; self held: hold suspended
+/// HTHREAD too (attach's stop has no exception)
+const ATTACHED = 448
+const SELF_HELD = 456
+const SIZE = 464
 
 /// ARM_THREAD_STATE64 and its count of 32 bit words: x0 to x28, fp, lr,
 /// sp, pc, cpsr and a pad.
@@ -121,6 +126,77 @@ pub fn launch(path: Str, args: List[Str], out: Str) -> (Int, Str) {
   rt.mem_store(h, TASK, task, 8)
   rt.mem_store(h, PORT, port, 8)
   (h, "")
+}
+
+/// Attaches to the running process pid (decision 0253 stage 4, `xo debug
+/// -p`): its task, the exception port, and every thread suspended (the
+/// first one's selected, HTHREAD); the record and "", or 0 and why not.
+pub fn attach(pid: Int) -> (Int, Str) {
+  let buf = raw.bytes_buf(16)
+  let b = raw.bytes_addr(buf)
+  rt.mem_set(b, 0, 16)
+  let me = Int(sys_darwin.task_self_trap())
+  let k = Int(sys_darwin.task_for_pid(me, pid, b))
+  if k != 0 {
+    let _k = buf.len()
+    return (0, "task_for_pid ${pid}: kern_return ${k} (no such process, or xo lacks the com.apple.security.cs.debugger entitlement and the program get-task-allow; Developer Mode on; decision 0253 point 5)")
+  }
+  let task = rt.mem_load(b, 0, 4)
+  let _a = sys_darwin.mach_port_allocate(me, 1, b + 8)
+  let port = rt.mem_load(b + 8, 0, 4)
+  let _k = buf.len()
+  let _r = sys_darwin.mach_port_insert_right(me, port, port, 20)
+  let h = rt.heap_large(SIZE)
+  rt.mem_set(h, 0, SIZE)
+  rt.mem_store(h, PID, pid, 8)
+  rt.mem_store(h, TASK, task, 8)
+  rt.mem_store(h, PORT, port, 8)
+  rt.mem_store(h, STARTED, 1, 8)
+  rt.mem_store(h, ATTACHED, 1, 8)
+  // stopped first, then the exception port: a trap planted later reports
+  // to it
+  hold(h, 0)
+  if rt.mem_load(h, HELD, 8) == 0 {
+    close(h)
+    return (0, "task_threads ${pid}: the process's threads could not be listed")
+  }
+  rt.mem_store(h, HTHREAD, rt.mem_load(rt.mem_load(h, HELD, 8), 0, 4), 8)
+  rt.mem_store(h, SELF_HELD, 1, 8)
+  let x = Int(sys_darwin.task_set_exception_ports(task, 2 | 4 | 8 | 32 | 64, port, 1 | 0x80000000, 5))
+  if x != 0 {
+    detach(h)
+    return (0, "task_set_exception_ports: kern_return ${x}")
+  }
+  (h, "")
+}
+
+/// The threads of the stopped program (its Mach thread ports), the
+/// selected one first.
+pub fn threads(h: Int) -> List[Int] {
+  let list = rt.mem_load(h, HELD, 8)
+  let th = rt.mem_load(h, HTHREAD, 8)
+  var out = [th]
+  if list == 0 {
+    return out
+  }
+  for i in 0..rt.mem_load(h, NHELD, 8) {
+    let t = rt.mem_load(list, 4 * i, 4)
+    if t != th {
+      out.push(t)
+    }
+  }
+  out
+}
+
+/// Leaves an attached program running as it was: its exception ports
+/// reset (to none: the system's handlers take its faults), a pending
+/// exception answered, every thread resumed. The caller has taken its
+/// traps out and cleared the single step.
+pub fn detach(h: Int) {
+  let task = rt.mem_load(h, TASK, 8)
+  let _x = sys_darwin.task_set_exception_ports(task, 2 | 4 | 8 | 32 | 64, 0, 1 | 0x80000000, 5)
+  let _r = resume(h, false)
+  release(h)
 }
 
 pub fn pid(h: Int) -> Int { rt.mem_load(h, PID, 8) }
@@ -224,6 +300,15 @@ pub fn resume(h: Int, alone: Bool) -> Bool {
     return Int(sys_darwin.task_resume(rt.mem_load(h, TASK, 8))) == 0
   }
   if rt.mem_load(h, PENDING, 8) == 0 {
+    // attach's stop: no exception to answer; the selected thread was
+    // suspended with the others
+    if rt.mem_load(h, SELF_HELD, 8) != 0 {
+      rt.mem_store(h, SELF_HELD, 0, 8)
+      let _t = sys_darwin.thread_resume(rt.mem_load(h, HTHREAD, 8))
+    }
+    if !alone {
+      release(h)
+    }
     return true
   }
   if !alone {
@@ -269,8 +354,15 @@ pub fn wait(h: Int, ms: Int) -> List[Int] {
       return [1, rt.mem_load(m, 28, 4), rt.mem_load(m, 60, 4), rt.mem_load(m, 68, 8), rt.mem_load(m, 76, 8)]
     }
     rt.mem_store(sa, 0, 0, 4)
-    // WNOHANG 1
-    if Int(sys_darwin.waitpid(pid, sa, 1)) == pid {
+    if rt.mem_load(h, ATTACHED, 8) != 0 {
+      // not our child: kill with no signal fails once it is gone, its
+      // status is its parent's
+      if Int(sys_darwin.kill(pid, 0)) != 0 {
+        let _s = stw.len()
+        return [4]
+      }
+    } else if Int(sys_darwin.waitpid(pid, sa, 1)) == pid {
+      // WNOHANG 1
       let st = rt.mem_load(sa, 0, 4)
       let _s = stw.len()
       if st & 0x7f == 0 {
@@ -289,8 +381,13 @@ pub fn wait(h: Int, ms: Int) -> List[Int] {
   [0]
 }
 
-/// Ends the program (SIGKILL) and waits for it.
+/// Ends the program (SIGKILL) and waits for it (an attached one is
+/// detached instead: kill is never sent to a process xo did not start).
 pub fn kill(h: Int) {
+  if rt.mem_load(h, ATTACHED, 8) != 0 {
+    detach(h)
+    return
+  }
   reap_killed(rt.mem_load(h, PID, 8))
 }
 

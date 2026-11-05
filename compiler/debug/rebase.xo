@@ -1,0 +1,185 @@
+// An attached program's addresses (decision 0253 stage 4, `xo debug -p`):
+// a process the debugger did not start runs with ASLR, its executable
+// slid by a multiple of the page size from the file's addresses. The
+// slide is found from the stopped threads (a return address into the
+// executable, then the candidate slides where the executable's Mach-O
+// header and load commands are in memory, byte for byte), and the debug
+// information and unwind tables are moved by it, so everything after
+// reads the process's own addresses.
+
+use std/internal
+
+/// arm64 macOS pages: the slide's unit.
+const PAGE = 16384
+
+/// The executable's slide in the attached program h, or None when no
+/// return address of its threads leads to it. exe is the executable's
+/// file.
+pub fn find_slide(h: Int, exe: Bytes, tab: Tables) -> Int? {
+  if exe.len() < 32 {
+    return None
+  }
+  // the header and load commands (sizeofcmds at 20): mapped unchanged at
+  // the start of __TEXT
+  let n = 32 + (Int(exe[20]) | (Int(exe[21]) << 8) | (Int(exe[22]) << 16) | (Int(exe[23]) << 24))
+  if n > exe.len() || n > 65536 {
+    return None
+  }
+  let head = exe[0..n]
+  var tried: Map[Int, Bool] = {}
+  if slide_ok(h, head, tab.base, 0) {
+    return Some(0)
+  }
+  tried[0] = true
+  for th in internal.dbg_threads(h) {
+    for r in return_addrs(h, th) {
+      for (lo, hi) in tab.code {
+        // r = a + s with a in [lo, hi): s in (r - hi, r - lo], page aligned
+        var s = (r - hi + PAGE) & (0).wrapping_sub(PAGE)
+        var k = 0
+        while s <= r - lo && k < 4096 {
+          if !tried.contains(s) {
+            tried[s] = true
+            if slide_ok(h, head, tab.base, s) {
+              return Some(s)
+            }
+          }
+          s += PAGE
+          k += 1
+        }
+      }
+    }
+  }
+  None
+}
+
+/// Whether the executable's header head is at base + s in h's memory.
+fn slide_ok(h: Int, head: Bytes, base: Int, s: Int) -> Bool {
+  match internal.dbg_read(h, base + s, 4) {
+    Some(m) => {
+      if m != head[0..4] {
+        return false
+      }
+    }
+    None => return false
+  }
+  (internal.dbg_read(h, base + s, head.len()) ?? b"") == head
+}
+
+/// Thread th's pc, link register, and the return addresses of its frame
+/// pointer chain (at most 64), pointer authentication bits off.
+fn return_addrs(h: Int, th: Int) -> List[Int] {
+  let rs = internal.dbg_regs(h, th)
+  if rs.len() < 33 {
+    return []
+  }
+  let mask = 0xffffffffffff
+  var out = [rs[32] & mask, rs[30] & mask]
+  var fp = rs[29]
+  while fp != 0 && fp & 7 == 0 && out.len() < 66 {
+    let b = internal.dbg_read(h, fp, 16) ?? b""
+    if b.len() < 16 {
+      break
+    }
+    var next = 0
+    var ret = 0
+    for i in 0..8 {
+      next = next | (Int(b[i]) << (8 * i))
+      ret = ret | (Int(b[8 + i]) << (8 * i))
+    }
+    if ret & mask != 0 {
+      out.push(ret & mask)
+    }
+    if next <= fp {
+      break
+    }
+    fp = next
+  }
+  out
+}
+
+/// t with its addresses moved by s.
+pub fn rebase_tables(t: Tables, s: Int) -> Tables {
+  var o = t
+  o.eh_addr = t.eh_addr + s
+  o.base = t.base + s
+  o.text_addr = t.text_addr + s
+  o.ptext_addr = if t.ptext_addr == 0 { 0 } else { t.ptext_addr + s }
+  var code: List[(Int, Int)] = []
+  for (lo, hi) in t.code {
+    code.push((lo + s, hi + s))
+  }
+  o.code = code
+  var syms: List[(Int, Str)] = []
+  for (a, n) in t.syms {
+    syms.push((a + s, n))
+  }
+  o.syms = syms
+  o
+}
+
+/// l with its rows' addresses moved by s.
+pub fn rebase_lines(l: Lines, s: Int) -> Lines {
+  var o = l
+  var rows: List[Row] = []
+  for r in l.rows {
+    var x = r
+    x.addr = r.addr + s
+    rows.push(x)
+  }
+  o.rows = rows
+  o
+}
+
+/// i with its functions' and inlined calls' ranges, and its variables'
+/// location ranges and addresses, moved by s.
+pub fn rebase_info(i: Info, s: Int) -> Info {
+  var o = i
+  var fs: List[Func] = []
+  for f in i.funcs {
+    var g = f
+    g.lo = f.lo + s
+    g.hi = f.hi + s
+    g.vars = rebase_vars(f.vars, s)
+    var inl: List[Inlined] = []
+    for c in f.inlined {
+      var d = c
+      var rs: List[(Int, Int)] = []
+      for (lo, hi) in c.ranges {
+        rs.push((lo + s, hi + s))
+      }
+      d.ranges = rs
+      d.vars = rebase_vars(c.vars, s)
+      inl.push(d)
+    }
+    g.inlined = inl
+    fs.push(g)
+  }
+  o.funcs = fs
+  o.globals = rebase_vars(i.globals, s)
+  o
+}
+
+fn rebase_vars(vs: List[Var], s: Int) -> List[Var] {
+  var out: List[Var] = []
+  for v in vs {
+    var w = v
+    var locs: List[Loc] = []
+    for l in v.locs {
+      var ps: List[Piece] = []
+      for p in l.pieces {
+        ps.push(match p.place {
+          Place.Addr(a) => Piece{place: Place.Addr(addr: a + s), size: p.size}
+          // registers, the frame, constants: no address of the image
+          Place.Reg(_) | Place.Breg(_, _) | Place.Fbreg(_) | Place.Value(_) | Place.Gone | Place.Other(_) => p
+        })
+      }
+      // lo 0 and hi -1: every address (an exprloc)
+      let every = l.lo == 0 && l.hi == -1
+      locs.push(Loc{lo: if every { 0 } else { l.lo + s }, hi: if every { -1 } else { l.hi + s }, pieces: ps})
+    }
+    w.locs = locs
+    out.push(w)
+  }
+  out
+}

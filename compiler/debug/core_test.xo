@@ -7,6 +7,7 @@ fn desc(c: Cmd) -> Str {
     Cmd.Break(Spot.Func(n)) => "break func ${n}"
     Cmd.Delete(n) => "delete ${n}"
     Cmd.Run => "run"
+    Cmd.Attach(p) => "attach ${p}"
     Cmd.Continue => "continue"
     Cmd.Step => "step"
     Cmd.Next => "next"

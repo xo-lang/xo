@@ -15,7 +15,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 - `xo debug PROG` runs a native program under xo's debugger on macOS
   arm64 (10.1, 11.5; decision 0253 stages 2 and 3), with `run`,
   `continue`, `step`, `next` and `finish` and their `stop` fields in the
-  protocol, and `xo debug --dap` for editors (decision 0504); darwin
+  protocol, `tasks` and `task N [bt]` from the runtime's records and
+  `xo debug -p PID PROG` to attach (stage 4), and `xo debug --dap` for
+  editors (decision 0504); darwin
   builds with debug
   information carry `get-task-allow`, and `xo build --entitlement=KEY`
   adds an entitlement.
@@ -3754,7 +3756,40 @@ on the program, and Developer Mode: a darwin build with debug
 information that is not `--release` or `-s` carries `get-task-allow` in
 its ad hoc signature, `xo build --entitlement=KEY` adds others, and the
 checkout's and a release's xo carry the debugger's (decision 0253
-point 5). `tasks` and `task` are stage 4, Linux and Windows stage 6.
+point 5). Linux and Windows are stage 6.
+
+`tasks` and `task N [bt]` (stage 4, 2026-11-05) read the stopped
+program's tasks from the runtime's own records in its memory, as `xo
+dump` walks them from inside (decision 0251): the static words from the
+`xo_static` DWARF variable (else its symbol), the root contexts'
+registry, and each root's cancellation nodes. `tasks` lists the tree as
+`xo dump` does, one line each (main is task 1, numbered depth first; a
+scope's line has no number): `task N (spawned at FILE:LINE)` and its
+state: `running`, `ready`, `blocked in OP at FILE:LINE` (OP one of
+receive, send, select, Mutex.with, await, sleep, network I/O, serve,
+advance; the location the first frame of the program's own code, not
+std's), `in scope`, or `waiting for its tasks` (a scope's body),
+`(canceled)` after a canceled one. `task N` selects a blocked task's
+frames, read from its fiber's saved stack (or a root's wait from the
+park's frame pointers), with the frame of the program's code where it
+waits selected, so `locals`, `print` and `frame` read the task there
+until the next stop; `task N bt` also prints its backtrace. A running
+task is on a thread (`threads`, `backtrace`); its stack is not read from
+the records. The record layouts the debugger reads are copies of
+std/native/llrt's, each marked with its source and checked by
+TestRuntimeLayoutCopies.
+
+`xo debug -p PID PROG` (stage 4) attaches to a running process instead
+of starting one (the command `attach PID`, run first): every thread is
+suspended and the first one selected; the executable's ASLR slide is
+found from the threads (a return address into it, then the page aligned
+slide whose memory holds the executable's Mach-O header and load
+commands byte for byte), and the debug information and unwind tables are
+moved by it. PROG must be the process's executable (else the attach is
+refused). `quit` detaches: the traps are taken out, the exception ports
+reset to none, and every thread resumed, so the program runs on; `run` is
+refused in an attached session; the program's end is `the program ended`
+(its exit status is its parent's).
 
 Before it (decision 0253 stages 1 and 5's protocol, 2026-10-17):
 `xo dev debug` (hidden) runs the debugger's commands on a recorded,
@@ -3768,7 +3803,7 @@ input. There `run` and `continue` answer that the session is a recorded
 thread.
 
 **[later]** Not built: a live process on Linux and Windows (0253 stage
-6), attaching to a running process, conditional
+6), conditional
 breakpoints, a break on a contract failure, evaluating expressions
 (beyond `print`'s field path), stepping back over a replay (11.3), and
 DAP's `attach` and `pause`.
@@ -3795,7 +3830,7 @@ The protocol's version 1 (decision 0253; compiler/debug session.xo;
 `xo debug --json`, and `xo dev debug --json` on a recorded thread): each command (decision 0253 point 4) gives one line, an
 object with `v` (1), `cmd` (the command's long name: `break`, `delete`,
 `run`, `continue`, `step`, `next`, `finish`, `print`, `locals`,
-`backtrace`, `frame`, `tasks`, `task`, `threads`, `quit`; `""` for a line
+`backtrace`, `frame`, `tasks`, `task`, `threads`, `attach`, `quit`; `""` for a line
 that is not a command), and `ok`. With `ok` false the object has `error`
 (the text), nothing else. With `ok` true, by command:
 
@@ -3807,7 +3842,10 @@ that is not a command), and `ok`. With `ok` false the object has `error`
   `frame`; `"breakpoint"` with `id`, `thread` and
   `frame` (the innermost, as in `backtrace`); `"exception"` with
   `exception`, `code`, `subcode` (the Mach exception's), `thread` and
-  `frame`; `"exited"` with `status`; `"signaled"` with `signal`.
+  `frame`; `"exited"` with `status`; `"signaled"` with `signal`;
+  `"ended"` (an attached program's end).
+- `attach`: `stop` `"attached"` with `pid`, `slide` (`"0x..."`),
+  `threads` (their count), `thread` and `frame`.
 - `backtrace`: `frames`, each `{index, pc, function, inlined, file, path,
   line, selected}` (`path` the file as the line table names it); an inlined call is a frame of its own (`inlined` true) with
   its physical frame's `pc`, innermost first.
@@ -3817,6 +3855,11 @@ that is not a command), and `ok`. With `ok` false the object has `error`
   variable cannot be read there (`text` then says why, as
   `<optimized out>`).
 - `print`: `frame`, `path` (`p.a.x`), `text`, `value`.
+- `tasks`: `tasks`, each `{id, depth, kind, spawned, state, op, at,
+  canceled}` (`kind` main, runtime, task or scope; `id` 0 for a scope;
+  `state` running, ready, blocked, in scope or waiting).
+- `task`: `task` (one as in `tasks`) and `frames`, the task's frames as in
+  `backtrace` (the selected one marked).
 - `threads`: `threads`, each `{id, selected}` (and `recorded` for a
   recorded thread).
 - `quit`: no more fields.

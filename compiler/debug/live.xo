@@ -19,7 +19,42 @@ pub fn live_session(exe: Bytes, dwarf: Sections, prog: Str, args: List[Str]) -> 
   let info = read(dwarf)
   let l = lines(dwarf)
   let tab = tables(exe)
-  Session{info: info, lines: l, tab: tab, snap: Snapshot{}, prog: prog, args: args}
+  Session{info: info, lines: l, tab: tab, snap: Snapshot{}, prog: prog, args: args, exe: exe}
+}
+
+/// attach PID: the running process stopped (every thread suspended), its
+/// executable's slide found and the debug information moved by it
+/// (rebase.xo), the first thread selected. The program must be this
+/// session's executable.
+fn (var s: Session) attach(pid: Int) -> Str ! Str uses proc {
+  if s.proc != 0 {
+    return Err("the program is running already (quit first)")
+  }
+  let h = internal.dbg_attach(pid)?
+  let slide = match find_slide(h, s.exe, s.tab) {
+    Some(x) => x
+    None => {
+      internal.dbg_kill(h)
+      internal.dbg_close(h)
+      return Err("process ${pid} does not run ${s.prog} (its header is at none of the slides its threads lead to)")
+    }
+  }
+  s.proc = h
+  s.attached = true
+  if slide != 0 {
+    s.tab = rebase_tables(s.tab, slide)
+    s.lines = rebase_lines(s.lines, slide)
+    s.info = rebase_info(s.info, slide)
+    s.stmts = {}
+  }
+  s.slide = slide
+  s.traps = {}
+  s.plant()?
+  let ths = internal.dbg_threads(h)
+  let _t = s.stopped([1, ths[0], 0, 0, 0])
+  let at = if s.frames.is_empty() { "" } else { ": ${s.frame_text(s.frames[0])}" }
+  s.stopj = "\"stop\":\"attached\",\"pid\":${pid},\"slide\":\"0x${hex(slide)}\",\"threads\":${ths.len()},\"thread\":${s.thread}${s.top_json()}"
+  Ok("attached to process ${pid} (${ths.len()} threads, every one stopped; slide 0x${hex(slide)})${at}")
 }
 
 /// run: starts the program with every breakpoint planted and waits for
@@ -27,6 +62,9 @@ pub fn live_session(exe: Bytes, dwarf: Sections, prog: Str, args: List[Str]) -> 
 fn (var s: Session) run() -> Str ! Str uses proc {
   if s.proc != 0 {
     return Err("the program is running already (continue, or quit)")
+  }
+  if s.attached {
+    return Err("the attached program ended; run starts ${s.prog} only in a session that did not attach")
   }
   s.proc = internal.dbg_launch(s.prog, s.args, s.out)?
   s.traps = {}
@@ -140,8 +178,18 @@ fn (var s: Session) unplant(addrs: List[Int]) uses proc {
   }
 }
 
-/// Ends the program, when it runs (quit).
+/// Ends the program, when it runs (quit); an attached one is left
+/// running, its traps taken out first.
 fn (var s: Session) end() uses proc {
+  if s.proc != 0 && s.attached {
+    for (a, orig) in s.traps {
+      let _w = internal.dbg_write(s.proc, a, orig)
+    }
+    s.traps = {}
+    if s.thread != 0 {
+      let _s = internal.dbg_set_step(s.proc, s.thread, false)
+    }
+  }
   if s.proc != 0 {
     internal.dbg_kill(s.proc)
     internal.dbg_close(s.proc)
@@ -159,11 +207,12 @@ fn (var s: Session) wait_stop() -> Str uses proc {
 fn (var s: Session) stopped(r: List[Int]) -> Str uses proc {
   s.frames = []
   s.sel = 0
+  s.task = 0
   if r.is_empty() || r[0] == 0 {
     s.stopj = "\"stop\":\"none\""
     return "the program did not stop"
   }
-  if r[0] == 2 || r[0] == 3 {
+  if r[0] == 2 || r[0] == 3 || r[0] == 4 {
     internal.dbg_close(s.proc)
     s.proc = 0
     s.thread = 0
@@ -171,6 +220,10 @@ fn (var s: Session) stopped(r: List[Int]) -> Str uses proc {
     if r[0] == 2 {
       s.stopj = "\"stop\":\"exited\",\"status\":${r[1]}"
       return "the program exited with status ${r[1]}"
+    }
+    if r[0] == 4 {
+      s.stopj = "\"stop\":\"ended\""
+      return "the program ended (attached: its status is its parent's)"
     }
     s.stopj = "\"stop\":\"signaled\",\"signal\":${r[1]}"
     return "the program was ended by signal ${r[1]}"

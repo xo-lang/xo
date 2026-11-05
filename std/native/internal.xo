@@ -770,6 +770,16 @@ fn dbg_launch(path: Str, args: List[Str], out: Str) -> Int ! Str uses proc {
   if h == 0 { Err(e) } else { Ok(h) }
 }
 
+fn dbg_attach(pid: Int) -> Int ! Str uses proc {
+  if target.os != TargetOs.Darwin || target.arch != TargetArch.Arm64 {
+    return Err("xo debug attaches on macOS arm64 so far (decision 0253 stage 4; Linux is stage 6)")
+  }
+  let (h, e) = dbgmac.attach(pid)
+  if h == 0 { Err(e) } else { Ok(h) }
+}
+
+fn dbg_threads(h: Int) -> List[Int] { dbgmac.threads(h) }
+
 fn dbg_pid(h: Int) -> Int { dbgmac.pid(h) }
 
 fn dbg_read(h: Int, a: Int, n: Int) -> Bytes? { dbgmac.read(h, a, n) }

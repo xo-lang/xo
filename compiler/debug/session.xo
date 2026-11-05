@@ -107,6 +107,14 @@ pub struct Session {
   pub stopj: Str = ""
   /// the line table's statement rows by address (step.xo stmt_rows)
   pub stmts: Map[Int, Int] = {}
+  /// the task whose frames are selected (`task N`), 0 for the stopped
+  /// thread's
+  pub task: Int = 0
+  /// the executable's file (a live session's), and whether the program
+  /// was attached to (not started: quit detaches) and its ASLR slide
+  pub exe: Bytes = b""
+  pub attached: Bool = false
+  pub slide: Int = 0
 }
 
 /// A session on a recorded stopped thread: exe is the executable (its
@@ -165,6 +173,7 @@ pub fn cmd_name(c: Cmd) -> Str {
     Cmd.Break(_) => "break"
     Cmd.Delete(_) => "delete"
     Cmd.Run => "run"
+    Cmd.Attach(_) => "attach"
     Cmd.Continue => "continue"
     Cmd.Step => "step"
     Cmd.Next => "next"
@@ -249,6 +258,13 @@ fn (var s: Session) run_cmd(c: Cmd) -> Res ! Str uses proc {
       let t = s.run()?
       Ok(Res{text: t, json: s.stop_json()})
     }
+    Cmd.Attach(pid) => {
+      if s.prog.is_empty() {
+        return Err("this session is a recorded thread: attach with xo debug -p PID PROG")
+      }
+      let t = s.attach(pid)?
+      Ok(Res{text: t, json: s.stop_json()})
+    }
     Cmd.Continue => {
       if s.prog.is_empty() {
         return Err("this session is a recorded thread: run it with xo debug PROG")
@@ -267,7 +283,41 @@ fn (var s: Session) run_cmd(c: Cmd) -> Res ! Str uses proc {
       }
       Ok(Res{text: t, json: s.stop_json()})
     }
-    Cmd.Tasks | Cmd.Task(_, _) => Err("the task views come with decision 0253 stage 4")
+    Cmd.Tasks => {
+      let ts = s.task_walk()?
+      var out: List[Str] = []
+      var js: List[Str] = []
+      for t in ts {
+        out.push(task_text(t))
+        js.push(task_json(t))
+      }
+      Ok(Res{text: if out.is_empty() { "no tasks" } else { out.join("\n") }, json: "\"tasks\":[${js.join(",")}]"})
+    }
+    Cmd.Task(id, bt) => {
+      let ts = s.task_walk()?
+      for t in ts {
+        if t.id == id && id > 0 {
+          let fs = s.task_frames(t)
+          if fs.is_empty() {
+            return Err("task ${id} is ${t.state}: only a blocked task's stack can be read (a running one is on a thread: threads, backtrace)")
+          }
+          s.frames = fs
+          // the task's own code where it waits, not the scheduler's switch
+          s.sel = user_frame(fs).max(0)
+          s.task = id
+          var js: List[Str] = []
+          var out = [task_text(TaskRec{id: t.id, depth: 0, kind: t.kind, spawned: t.spawned, state: t.state, op: t.op, at: t.at, canceled: t.canceled})]
+          for (i, f) in fs.indexed() {
+            js.push(s.frame_json(i, f))
+            if bt || i == s.sel {
+              out.push("${if i == s.sel { "*" } else { " " }} #${i} ${s.frame_text(f)}")
+            }
+          }
+          return Ok(Res{text: out.join("\n"), json: "\"task\":${task_json(t)},\"frames\":[${js.join(",")}]"})
+        }
+      }
+      Err("no task ${id} (tasks lists them)")
+    }
     Cmd.Threads => {
       if s.prog.is_empty() {
         return Ok(Res{text: "* thread 1 (recorded)", json: "\"threads\":[{\"id\":1,\"selected\":true,\"recorded\":true}]"})
@@ -365,6 +415,10 @@ fn (s: Session) cur() -> VFrame ! Str {
 /// (the instruction before its return address).
 fn (s: Session) selected_pc() -> Int {
   let f = s.frames[s.sel]
+  if s.task != 0 {
+    // a task's frames are all return addresses (its fiber's switch)
+    return f.pc - 4
+  }
   // the first physical frame is the one at index 0 and the frames
   // inlined in it
   var first = true
@@ -379,6 +433,9 @@ fn (s: Session) selected_pc() -> Int {
 /// The registers of the selected frame: none (the thread's own) for the
 /// first physical frame.
 fn (s: Session) regs_of() -> Map[Int, Int] {
+  if s.task != 0 {
+    return s.frames[s.sel].regs
+  }
   if s.selected_pc() == s.frames[s.sel].pc { {} } else { s.frames[s.sel].regs }
 }
 

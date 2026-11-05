@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -149,4 +153,106 @@ func TestDebugStep(t *testing.T) {
 		"(xo) finish\n0x", " fact at main.xo:6\n(xo) p n\nn = 2\n(xo) locals\nn = 2\nr = 1\n",
 		" fact at main.xo:6\n(xo) p n\nn = 3\n(xo) finish\n0x", " main at main.xo:11\n",
 		"the program exited with status 0\n", "fact 6\n")
+}
+
+// debugTasks has, at the breakpoint in its third task, one task asleep
+// inside a Mutex it holds and one blocked on that Mutex (the program of
+// TestDump).
+const debugTasks = `fn main(os: Os) {
+  let m = Mutex[Int].new(0)
+  let held = Chan[Int].new(cap: 1)
+  scope s {
+    s.spawn(fn() {
+      m.with(fn(var v) {
+        held.send(1)
+        os.clock.sleep(1h)
+        v += 1
+      })
+    })
+    s.spawn(fn() {
+      let _ = held.recv()
+      m.with(fn(v) { v })
+    })
+    s.spawn(fn() {
+      os.clock.sleep(200ms)
+      os.stdio.println("mark")
+    })
+  }
+}
+`
+
+// TestDebugTasks checks decision 0253 stage 4 on a live program: tasks
+// lists the task tree from the runtime's records as xo dump does, task N
+// selects a blocked task's frame in the program's code (its fiber's
+// stack), and locals and print read it there.
+func TestDebugTasks(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("xo debug's process control is macOS arm64 so far (decision 0253 stage 2)")
+	}
+	if testing.Short() {
+		t.Skip("builds and debugs a native program")
+	}
+	got := debugBatch(t, debugTasks, []string{"break main.xo:18", "run", "tasks", "task 2", "print v", "task 3 bt"})
+	wantAll(t, got,
+		"(xo) tasks\nmain (task 1): in scope\n  scope: waiting for its tasks\n    task 2 (spawned at main.xo:5): blocked in sleep at main.xo:8\n    task 3 (spawned at main.xo:12): blocked in Mutex.with at main.xo:14\n    task 4 (spawned at main.xo:16): running\n",
+		"(xo) task 2\ntask 2 (spawned at main.xo:5): blocked in sleep at main.xo:8\n* #",
+		"main.fn1.fn4 at main.xo:8\n(xo) print v\nv = 0\n",
+		"mutex.lock_body at mutex.xo:",
+		"main.fn2 at main.xo:14\n",
+	)
+}
+
+// TestDebugAttach checks `xo debug -p PID PROG` (decision 0253 stage 4):
+// attached to debugTasks running on its own (ASLR on: the slide is
+// found from its threads), tasks and task read its records, and after
+// the session the program runs on (detached, not killed).
+func TestDebugAttach(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("xo debug's process control is macOS arm64 so far (decision 0253 stage 2)")
+	}
+	if testing.Short() {
+		t.Skip("builds and debugs a native program")
+	}
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	dir := writeFiles(t, map[string]string{"main.xo": debugTasks})
+	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: "arm64", Out: filepath.Join(t.TempDir(), "prog")}))
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %s", err, res.Output)
+	}
+	prog := res.Binaries[xotool.Host()]
+	p := exec.Command(prog)
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		p.Process.Kill()
+		p.Wait()
+	}()
+	// attached until both tasks are blocked (its output is buffered in a
+	// pipe, so it cannot say when); each attach leaves it running
+	var got string
+	for try := 0; ; try++ {
+		var stdout, stderr bytes.Buffer
+		code := runXo(t, []string{"debug", "-p", strconv.Itoa(p.Process.Pid), "--batch", "-c", "tasks", "-c", "task 2", "-c", "print v", prog}, &stdout, &stderr)
+		got = stdout.String()
+		if strings.Contains(got+stderr.String(), "task_for_pid") {
+			t.Skipf("this xo cannot control the program (entitlements, Developer Mode):\n%s%s", got, stderr.String())
+		}
+		if code == 0 && strings.Contains(got, "blocked in Mutex.with") {
+			break
+		}
+		if try == 20 {
+			t.Fatalf("xo debug -p: exit %d\n%s%s", code, got, stderr.String())
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	wantAll(t, got,
+		"(xo) attach "+strconv.Itoa(p.Process.Pid)+"\nattached to process "+strconv.Itoa(p.Process.Pid)+" (",
+		"threads, every one stopped; slide 0x",
+		"    task 2 (spawned at main.xo:5): blocked in sleep at main.xo:8\n    task 3 (spawned at main.xo:12): blocked in Mutex.with at main.xo:14\n",
+		"main.fn1.fn4 at main.xo:8\n(xo) print v\nv = 0\n",
+	)
+	if err := p.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Errorf("the program did not survive the detach: %v", err)
+	}
 }

@@ -1,0 +1,56 @@
+// The native runtime's record layouts that the task views read from the
+// debuggee's memory (decision 0253 point 3), copies of std/native/llrt's
+// constants: a compiler module cannot use std's native modules, so each
+// carries its source as `// = module.NAME`, and internal/repotest
+// TestRuntimeLayoutCopies fails when one differs from it (decision 0341's
+// check). dump.xo walks the same records from inside the program.
+
+/// The static word of the service record (rt.static_word's index), and
+/// the service record's slot of the root contexts' registry (a count, then
+/// at most ROOTS_MAX contexts).
+const SVC = 16 // = ctx.SVC
+const SV_ROOTS_SLOT = 36 // = ctx.SV_ROOTS_SLOT
+const ROOTS_MAX = 64 // = ctx.ROOTS_MAX
+
+/// The context record: its innermost cancellation node, its park record,
+/// why it parked, and the frame pointer of the park's caller.
+const C_NODE = 0 // = layout.C_NODE
+const C_PARK = 16 // = layout.C_PARK
+const C_WHY = 336 // = layout.C_WHY
+const C_PARK_FP = 352 // = layout.C_PARK_FP
+/// A park record's parked fiber.
+const PK_FIBER = 24 // = layout.PK_FIBER
+
+/// The cancellation node: parent, first child, next sibling, the
+/// canceled word.
+const N_PARENT = 0 // = layout.N_PARENT
+const N_CHILD = 8 // = layout.N_CHILD
+const N_NEXT = 24 // = layout.N_NEXT
+const N_CANCELED = 32 // = layout.N_CANCELED
+
+/// An object's header (16 bytes before it): its free function, which
+/// tells a task's node from a scope's.
+const H_FREE = 8 // = dump.H_FREE
+/// A task record: its node, its state (0 queued, 1 running, 2 done), the
+/// context that runs it, and its spawn location's text and length.
+const T_NODE = 16 // = tasks.T_NODE
+const T_STATE = 80 // = tasks.T_STATE
+const T_CTX = 224 // = tasks.T_CTX
+const T_LOC_P = 232 // = tasks.T_LOC_P
+const T_LOC_N = 240 // = tasks.T_LOC_N
+
+/// The park reasons (C_WHY).
+const WHY_SEND = 1 // = tracerec.WHY_SEND
+const WHY_RECV = 2 // = tracerec.WHY_RECV
+const WHY_SELECT = 3 // = tracerec.WHY_SELECT
+const WHY_MUTEX = 4 // = tracerec.WHY_MUTEX
+const WHY_JOIN = 5 // = tracerec.WHY_JOIN
+const WHY_SLEEP = 6 // = tracerec.WHY_SLEEP
+const WHY_NET = 7 // = tracerec.WHY_NET
+const WHY_HTTP = 8 // = tracerec.WHY_HTTP
+const WHY_TEST = 9 // = tracerec.WHY_TEST
+
+/// A parked fiber's switch frame (compiler/arm64 sched.xo
+/// stack_switch_body): x19 to x30 at saved + 0 to 88, the caller's stack
+/// at saved + 160 (std/native/llrt/unwind.xo fiber_walk).
+const FIBER_SP = 160

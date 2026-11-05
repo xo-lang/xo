@@ -1,0 +1,314 @@
+// The task views of `xo debug` (decision 0253 point 3, stage 4): the
+// runtime's own records read from the stopped program's memory, as
+// std/native/llrt/dump.xo walks them from inside. The static words come
+// from the xo_static DWARF variable (or symbol), the service record from
+// static word SVC, the root contexts from its registry, and each root's
+// cancellation nodes down to every task and scope. A parked task's stack
+// is its fiber's (the switch frame at its saved stack pointer); a root
+// waiting on its own thread has the park's frame pointer. Record layouts:
+// rtlayout.xo.
+
+/// A task or scope the walk found. id numbers the tasks as `xo dump`
+/// does (main is 1; a scope has 0 and cannot be selected).
+pub struct TaskRec {
+  pub id: Int
+  pub depth: Int
+  /// "main", "runtime", "task" or "scope"
+  pub kind: Str
+  /// a task's spawn location (`file:line`), "" for others
+  pub spawned: Str = ""
+  /// "running", "ready", "blocked", "in scope", "waiting"
+  pub state: Str
+  /// what it is blocked in (a blocked one's: receive, send, ...)
+  pub op: Str = ""
+  /// the first frame of the program's own code where it is blocked
+  pub at: Str = ""
+  pub canceled: Bool = false
+  /// a parked fiber's saved stack pointer, else the park's frame pointer
+  /// (a wait on the root's own thread), 0 for neither
+  pub saved: Int = 0
+  pub fp: Int = 0
+}
+
+/// The walk's state.
+struct Walk {
+  tasks: List[TaskRec] = []
+  n: Int = 0
+  task_free: Int = 0
+  scope_free: Int = 0
+}
+
+/// The word at address a of the stopped program, 0 when it cannot be read.
+fn (s: Session) word_at(a: Int) -> Int {
+  let b = s.snap.mem(a, 8) ?? b""
+  if b.len() < 8 {
+    return 0
+  }
+  var v = 0
+  for i in 0..8 {
+    v = v | (Int(b[i]) << (8 * i))
+  }
+  v
+}
+
+/// The address of symbol name (without its leading `_`), 0 when none.
+fn (s: Session) sym_addr(name: Str) -> Int {
+  for (a, n) in s.tab.syms {
+    if n == name {
+      return a
+    }
+  }
+  0
+}
+
+/// The address of rt.static_word's table: the xo_static DWARF variable,
+/// else its symbol.
+fn (s: Session) static_words() -> Int {
+  for g in s.info.globals {
+    if g.name == "xo_static" {
+      for l in g.locs {
+        for p in l.pieces {
+          if let Place.Addr(a) = p.place {
+            return a
+          }
+        }
+      }
+    }
+  }
+  s.sym_addr("xo_static")
+}
+
+/// Every task and scope of the stopped program, depth first, the oldest
+/// child first (as `xo dump` lists them).
+pub fn (s: Session) task_walk() -> List[TaskRec] ! Str {
+  if s.proc == 0 {
+    return Err(if s.prog.is_empty() { "the task views read a live program's memory: run it with xo debug PROG" } else { "the program is not running (run)" })
+  }
+  let st = s.static_words()
+  if st == 0 {
+    return Err("no xo_static in the program's debug information or symbols (a native Xo program built with debug information)")
+  }
+  var w = Walk{task_free: s.sym_addr("xo_x_task_free"), scope_free: s.sym_addr("xo_x_scope_free")}
+  let sv = s.word_at(st + 8 * SVC)
+  if sv == 0 {
+    return Err("the runtime has not started (no service record yet)")
+  }
+  let r = s.word_at(sv + 8 * SV_ROOTS_SLOT)
+  if r == 0 {
+    return Ok([])
+  }
+  let n = s.word_at(r).min(ROOTS_MAX)
+  for k in 0..n {
+    let c = s.word_at(r + 8 * (k + 1))
+    if c == 0 {
+      continue
+    }
+    var top = s.word_at(c + C_NODE)
+    var guard = 0
+    while top != 0 && s.word_at(top + N_PARENT) != 0 && guard < 10000 {
+      top = s.word_at(top + N_PARENT)
+      guard += 1
+    }
+    if top == 0 {
+      continue
+    }
+    w.n += 1
+    var rec = s.ctx_state(top, c, false)
+    rec.id = w.n
+    rec.depth = 0
+    rec.kind = if k == 0 { "main" } else { "runtime" }
+    rec.canceled = s.word_at(top + N_CANCELED) != 0
+    w.tasks.push(rec)
+    s.walk_kids(w, top, c, 1)
+  }
+  Ok(w.tasks)
+}
+
+/// The children of node n (c: the context running n's task or its scope
+/// bodies), oldest first, each with its subtree.
+fn (s: Session) walk_kids(var w: Walk, n: Int, c: Int, depth: Int) {
+  var kids: List[Int] = []
+  var k = s.word_at(n + N_CHILD)
+  while k != 0 && kids.len() < 100000 {
+    kids.push(k)
+    k = s.word_at(k + N_NEXT)
+  }
+  var i = kids.len() - 1
+  while i >= 0 {
+    s.walk_node(w, kids[i], c, depth)
+    i -= 1
+  }
+}
+
+/// Node n: a task's, a scope body's, or one that only holds others.
+fn (s: Session) walk_node(var w: Walk, n: Int, c: Int, depth: Int) {
+  let free = s.word_at(n - 16 + H_FREE)
+  if free != 0 && free == w.task_free {
+    let t = n - T_NODE
+    let state = s.word_at(t + T_STATE)
+    if state == 2 {
+      // finished, not pruned yet (dump.xo walk)
+      return
+    }
+    let tc = s.word_at(t + T_CTX)
+    w.n += 1
+    var rec = TaskRec{id: 0, depth: 0, kind: "task", state: "ready"}
+    if state != 0 {
+      rec = if tc == 0 { TaskRec{id: 0, depth: 0, kind: "task", state: "running"} } else { s.ctx_state(n, tc, false) }
+    }
+    rec.id = w.n
+    rec.depth = depth
+    rec.kind = "task"
+    let lp = s.word_at(t + T_LOC_P)
+    let ln = s.word_at(t + T_LOC_N)
+    if lp != 0 && ln > 0 && ln < 4096 {
+      rec.spawned = (s.snap.mem(lp, ln) ?? b"").to_str_lossy()
+    }
+    rec.canceled = s.word_at(n + N_CANCELED) != 0
+    w.tasks.push(rec)
+    s.walk_kids(w, n, tc, depth + 1)
+  } else if free != 0 && free == w.scope_free {
+    var rec = s.ctx_state(n, c, true)
+    rec.depth = depth
+    rec.kind = "scope"
+    rec.canceled = s.word_at(n + N_CANCELED) != 0
+    w.tasks.push(rec)
+    s.walk_kids(w, n, c, depth + 1)
+  } else {
+    s.walk_kids(w, n, c, depth)
+  }
+}
+
+/// What context c does at node n (dump.xo state): blocked (in what and
+/// where), in a scope it opened, waiting for its scope's tasks, running.
+fn (s: Session) ctx_state(n: Int, c: Int, body: Bool) -> TaskRec {
+  var r = TaskRec{id: 0, depth: 0, kind: "", state: "running"}
+  if c == 0 {
+    return r
+  }
+  if s.word_at(c + C_NODE) != n {
+    r.state = "in scope"
+    return r
+  }
+  let f = s.word_at(c + C_PARK + PK_FIBER)
+  let why = s.word_at(c + C_WHY)
+  if f == 0 && why == 0 {
+    return r
+  }
+  if body && why == WHY_JOIN {
+    r.state = "waiting"
+    r.op = "its tasks"
+    return r
+  }
+  r.state = "blocked"
+  r.op = op_name(why)
+  if f != 0 {
+    r.saved = s.word_at(f)
+  } else {
+    r.fp = s.word_at(c + C_PARK_FP)
+  }
+  r.at = user_at(s.task_frames(r))
+  r
+}
+
+/// The Go backend's names of the waits (std/rt sched.go waitOps).
+fn op_name(why: Int) -> Str {
+  match why {
+    WHY_SEND => "send"
+    WHY_RECV => "receive"
+    WHY_SELECT => "select"
+    WHY_MUTEX => "Mutex.with"
+    WHY_JOIN => "await"
+    WHY_SLEEP => "sleep"
+    WHY_NET => "network I/O"
+    WHY_HTTP => "serve"
+    WHY_TEST => "advance"
+    _ => "a wait"
+  }
+}
+
+/// The frames of a blocked task t: its fiber's from the switch frame, or
+/// the frame pointer chain of a wait on a root's thread; none otherwise.
+pub fn (s: Session) task_frames(t: TaskRec) -> List[VFrame] {
+  if t.saved != 0 {
+    var regs: Map[Int, Int] = {}
+    for k in 0..12 {
+      regs[19 + k] = s.word_at(t.saved + 8 * k)
+    }
+    regs[31] = t.saved + FIBER_SP
+    // the switch's return address (pointer authentication bits off)
+    regs[-1] = s.word_at(t.saved + 88) & 0xffffffffffff
+    return vframes(s.info, s.lines, s.tab, backtrace(s.tab, regs, s.snap, 64))
+  }
+  if t.fp != 0 {
+    var us: List[UFrame] = []
+    var fp = t.fp
+    while fp != 0 && fp & 7 == 0 && us.len() < 64 {
+      let pc = s.word_at(fp + 8) & 0xffffffffffff
+      if pc == 0 {
+        break
+      }
+      us.push(UFrame{pc: pc, regs: {29: s.word_at(fp), 31: fp + 16}, how: "frame pointer"})
+      let next = s.word_at(fp)
+      if next <= fp || next - fp > 1048576 {
+        break
+      }
+      fp = next
+    }
+    // every pc is a return address: vframes looks up frame 0 as a pc, so
+    // lead with a frame of none
+    if us.is_empty() {
+      return []
+    }
+    let vs = vframes(s.info, s.lines, s.tab, [UFrame{pc: 0, regs: {}, how: ""}] + us)
+    return vs.filter(fn(f) { f.pc != 0 })
+  }
+  []
+}
+
+/// The first frame of the program's own code (not std's): `file:line`.
+fn user_at(fs: List[VFrame]) -> Str {
+  let i = user_frame(fs)
+  if i < 0 { "" } else { "${fs[i].file}:${fs[i].line}" }
+}
+
+/// The index of the first frame of the program's own code, -1 if none.
+pub fn user_frame(fs: List[VFrame]) -> Int {
+  for (i, f) in fs.indexed() {
+    if f.line > 0 && !f.file.is_empty() && !in_std(f.path) {
+      return i
+    }
+  }
+  -1
+}
+
+/// Whether a line table's path names a file of std (`std/...` from std's
+/// parent, as the builds trim it).
+fn in_std(p: Str) -> Bool {
+  p.starts_with("std/") || p.starts_with("./std/") || p.contains("/std/")
+}
+
+/// A task's line of `tasks`.
+pub fn task_text(t: TaskRec) -> Str {
+  let pad = "  ".repeat(t.depth)
+  let who = match t.kind {
+    "task" => if t.spawned.is_empty() { "task ${t.id}" } else { "task ${t.id} (spawned at ${t.spawned})" }
+    "scope" => "scope"
+    k => "${k} (task ${t.id})"
+  }
+  var what = t.state
+  if t.state == "blocked" {
+    what = "blocked in ${t.op}"
+  } else if t.state == "waiting" {
+    what = "waiting for its tasks"
+  }
+  if !t.at.is_empty() {
+    what = "${what} at ${t.at}"
+  }
+  "${pad}${who}: ${what}${if t.canceled { " (canceled)" } else { "" }}"
+}
+
+/// A task's JSON object.
+pub fn task_json(t: TaskRec) -> Str {
+  "{\"id\":${t.id},\"depth\":${t.depth},\"kind\":${json_str(t.kind)},\"spawned\":${json_str(t.spawned)},\"state\":${json_str(t.state)},\"op\":${json_str(t.op)},\"at\":${json_str(t.at)},\"canceled\":${t.canceled}}"
+}

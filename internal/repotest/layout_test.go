@@ -27,13 +27,17 @@ type llrtConst struct {
 }
 
 // llrtConsts reads every constant of std/native/llrt's non-test files
-// with an integer literal or a `module.NAME` value, by module.
+// with an integer literal or a `module.NAME` value, by module, and those
+// of compiler/debug/rtlayout.xo (module "compiler/debug"): the debugger's
+// copies of the records it reads from a program (decision 0253 stage 4),
+// each marked with its source.
 func llrtConsts(t *testing.T) map[string][]llrtConst {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(root, "std", "native", "llrt", "*.xo"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no std/native/llrt sources: %v", err)
 	}
+	files = append(files, filepath.Join(root, "compiler", "debug", "rtlayout.xo"))
 	mods := map[string][]llrtConst{}
 	for _, p := range files {
 		if strings.HasSuffix(p, "_test.xo") {
@@ -44,6 +48,9 @@ func llrtConsts(t *testing.T) map[string][]llrtConst {
 			t.Fatal(err)
 		}
 		mod := strings.TrimSuffix(filepath.Base(p), ".xo")
+		if filepath.Base(filepath.Dir(p)) == "debug" {
+			mod = "compiler/debug"
+		}
 		for i, l := range strings.Split(string(b), "\n") {
 			m := layoutConst.FindStringSubmatch(l)
 			if m == nil {

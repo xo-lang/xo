@@ -13,6 +13,8 @@ pub enum Cmd {
   Break(spot: Spot)
   Delete(id: Int)
   Run
+  /// a running process, by its pid (stage 4; `xo debug -p PID PROG`)
+  Attach(pid: Int)
   Continue
   Step
   Next
@@ -73,6 +75,7 @@ pub fn parse_cmd(line: Str) -> Cmd ! Str {
     "backtrace" | "bt" => none(Cmd.Backtrace, args, "backtrace")
     "frame" | "f" => Ok(Cmd.Frame(n: one_int(args, "frame N")?))
     "tasks" => none(Cmd.Tasks, args, "tasks")
+    "attach" => Ok(Cmd.Attach(pid: one_int(args, "attach PID")?))
     "task" => {
       if args.len() == 2 && args[1] == "bt" {
         return Ok(Cmd.Task(id: one_int(args[0..1], "task N [bt]")?, bt: true))

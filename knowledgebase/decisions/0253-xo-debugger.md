@@ -407,4 +407,36 @@ programs):
   with n and r); 10 of 10 repeated runs pass. Seen, not fixed: after
   fact returns, main's n prints the result (6): its location list keeps
   x0 past the call (a DWARF location matter, not the stepping).
-
+- Stage 4 (2026-11-05, Xo Lang 2, on the unpushed stage 2 branch):
+  compiler/debug tasks.xo walks the runtime's records from the stopped
+  program's memory as dump.xo does from inside: xo_static (the DWARF
+  variable both backends emit, else the symbol), static word SVC's
+  service record, the root registry, each root's cancellation nodes;
+  a node is a task's or a scope's by its header's free function
+  (xo_x_task_free, xo_x_scope_free symbols). `tasks` lists the tree in
+  dump's words; `task N [bt]` builds a blocked task's frames from its
+  fiber's switch frame (x19 to x30 at the saved stack pointer, sp + 160)
+  or a root's park frame pointer chain, and selects the first frame of
+  the program's code (locals and print there read the callee saved and
+  stack values the unwinder recovers: TestDebugTasks prints a Mutex
+  value inside the sleeping task). The shared constants of point 3 are
+  copies (compiler modules cannot use std's native/llrt): rtlayout.xo,
+  each marked `// = module.NAME`, checked by TestRuntimeLayoutCopies,
+  which now reads that file too (a changed copy fails it). Attach (`xo
+  debug -p PID PROG`, the command `attach PID`): dbgmac attach
+  (task_for_pid, every thread suspended with thread_suspend, then the
+  exception port), detach (exception ports reset to none, a pending
+  exception answered, threads resumed); a process xo did not start is
+  never sent a signal, and its end is seen with kill(pid, 0) (ESRCH),
+  since waitpid only sees children: kill is on the approved list for
+  SIGSTOP and SIGKILL, and signal 0 sends nothing, but it is named here
+  for the owner. ASLR: the slide comes from the threads' return
+  addresses (pc, lr, the frame pointer chains) and the page aligned
+  candidates where the executable's header and load commands are in
+  memory byte for byte (approved calls only: no task_info or dyld
+  list), then compiler/debug rebase.xo moves the unwind tables, line
+  rows and DWARF ranges and addresses by it. TestDebugAttach attaches
+  to a hung program it started, reads its tasks and a variable, and
+  checks the program runs on after the detach. Not yet: attach in DAP,
+  a running task's stack (its thread's context is not mapped to a
+  thread), `-p` without PROG.

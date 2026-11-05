@@ -40,7 +40,7 @@ test "xo debug --json: one line per command" {
     ("threads", "{\"v\":1,\"cmd\":\"threads\",\"ok\":true,\"threads\":[{\"id\":1,\"selected\":true,\"recorded\":true}]}"),
     ("run", "{\"v\":1,\"cmd\":\"run\",\"ok\":false,\"error\":\"this session is a recorded thread: run it with xo debug PROG\"}"),
     ("c", "{\"v\":1,\"cmd\":\"continue\",\"ok\":false,\"error\":\"this session is a recorded thread: run it with xo debug PROG\"}"),
-    ("tasks", "{\"v\":1,\"cmd\":\"tasks\",\"ok\":false,\"error\":\"the task views come with decision 0253 stage 4\"}"),
+    ("tasks", "{\"v\":1,\"cmd\":\"tasks\",\"ok\":false,\"error\":\"the task views read a live program's memory: run it with xo debug PROG\"}"),
     ("frob", "{\"v\":1,\"cmd\":\"\",\"ok\":false,\"error\":\"unknown command \\\"frob\\\"\"}"),
     ("q", "{\"v\":1,\"cmd\":\"quit\",\"ok\":true}"),
   ]
