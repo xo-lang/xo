@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-05: fix: a native server's answers after a stop say Connection: close
+
+- Kind: fix
+- Commit: this push
+- Found by: the stop-test template (internal/llvm/testdata/golden/http_stop_keepalive): the Go backend's answer to a request in flight at a stop carried Connection: close and native's did not
+- Go reference: net/http server.go: Shutdown turns keep-alives off (doKeepAlives false), so a response sets closeAfterReply and adds Connection: close
+- Test: internal/llvm/testdata/golden/http_stop_keepalive (arm64, llvm, Go parity): a request in flight at the stop is answered with Connection: close
+- Timing: none
+- Shipped in: not yet released
+
+A stopping native server already closed each HTTP/1.1 connection after its current response, but the response did not say so, so a client could send its next request on a connection about to close. The response now has Connection: close (and an HTTP/1.0 keep-alive request's response no longer says keep-alive), as net/http's after Shutdown.
+
 ## 2026-11-05: fix: a native server stops when a kept-alive connection answered a request just before the stop
 
 - Kind: fix

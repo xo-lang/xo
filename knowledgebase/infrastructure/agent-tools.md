@@ -199,6 +199,23 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- Testing a server's stop (2026-11-05; the owner approved this as the
+  template): copy internal/llvm/testdata/golden/http_stop_keepalive.
+  It covers the connection states a stop must handle, in one process,
+  since `os.proc.request_stop()` happens once per process:
+  - kept-alive connections that answered a request a moment ago (each
+    must be closed);
+  - a slow client with half a request head (it must end: answered with
+    Connection: close, or closed unanswered);
+  - a request in flight (its answer is sent with Connection: close).
+  `os.proc.set_grace(2s)` bounds a regression: it shows as "canceled by
+  the grace period: true" or missing lines, never a hung suite. A
+  server whose own stop path changes (a new protocol, a new
+  connection state, TLS) adds its state to a copy, and the copy runs
+  on arm64, LLVM and the Go backend (TestGoldenGoParity). Found by the
+  stability soak: no golden had stopped a server with a recently used
+  kept-alive connection, and SIGTERM hung such servers in 0.36.0 to
+  0.40.0 (gotchas/park-after-stop-check-then-act.md).
 - Separately compiled goldens (2026-11-02): every other golden test
   builds whole programs, so `TestSepcompGoldens` (internal/arm64, not
   -short) builds std's variants into a private cache and builds

@@ -1,24 +1,34 @@
-// A stop with kept-alive connections that served a request a moment ago
-// (2026-11-05, the stability soak's shutdown hang): each such connection
-// lingers up to 20 ms on its task before it parks idle, so the stop finds
-// it busy and leaves it open, and the parked-connection resumer, with
-// nothing parked yet, ends. The connection then parked with no resumer, was
-// never closed, and serve waited for it until the grace period ended (for
-// ever without one: every native server hung on SIGTERM). Now a connection
-// that parks after a stop closes instead, so serve returns at once and is
-// not canceled. The grace bounds a regression to 2 s.
+// A server stop with connections in each state a stop must handle: the
+// shape to copy for a server's stop test (knowledgebase/infrastructure/
+// testing.md "Testing a server's stop"). One stop per process
+// (os.proc.request_stop), so every state is set up first on one server:
+//
+// - idle: kept-alive connections that answered a request a moment ago.
+//   Each lingers up to 20 ms on its task before it parks idle; a stop in
+//   that window once left it open and serve waited for ever (2026-11-05,
+//   the stability soak's SIGTERM hang, 0.36.0 to 0.40.0). They are closed.
+// - slow client: half a request head sent before the stop and the rest
+//   after. It ends either way a server may end it: answered with
+//   Connection: close (native) or closed unanswered (net/http, the Go
+//   backend); answered with the connection left open is a failure.
+// - in flight: a handler still running at the stop. Its answer is sent,
+//   with Connection: close, as net/http's after Shutdown.
+//
+// serve returns once they are done, before the grace period, which bounds
+// a regression to 2 s (it shows as "canceled by the grace period: true"
+// or missing lines, not a hang).
 use std/http
 use std/task
 
-const CONNS = 4
+const IDLE = 4
 
 /// One request on a new connection kept open: the connection, once the
-/// whole answer ("ok", no Connection: close) has come.
-fn request(os: Os, addr: Str) -> Conn {
+/// whole answer (`body`, no Connection: close) has come.
+fn kept_alive(os: Os, addr: Str, path: Str, body: Str) -> Conn {
   let c = os.net.dial(addr).or_fault("dial")
-  c.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n".bytes()).or_fault("write")
+  c.write("GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n".bytes()).or_fault("write")
   var got = ""
-  while !got.ends_with("\r\n\r\nok") {
+  while !got.ends_with("\r\n\r\n${body}") {
     match c.read(4096) {
       Ok(Some(b)) => got += b.to_str_lossy()
       _ => break
@@ -27,25 +37,55 @@ fn request(os: Os, addr: Str) -> Conn {
   c
 }
 
-/// What the client sees on c after the stop: the server's close.
-fn after(c: Conn) -> Str {
-  let how = match c.read(4096) {
-    Ok(None) => "closed"
-    Ok(Some(_)) => "more bytes"
-    Err(e) => "error ${e}"
+/// Everything c receives until the server closes it.
+fn read_to_close(c: Conn) -> Str {
+  var got = ""
+  while true {
+    match c.read(4096) {
+      Ok(Some(b)) => got += b.to_str_lossy()
+      _ => break
+    }
   }
   c.close()
-  how
+  got
+}
+
+/// An answer's status line, whether it closes the connection, and its body.
+fn summary(answer: Str) -> Str {
+  if answer.is_empty() {
+    return "closed with no answer"
+  }
+  let status = answer.split("\r\n")[0]
+  let closes = answer.to_lower().contains("\r\nconnection: close\r\n")
+  let body = answer.split("\r\n\r\n").last() ?? ""
+  "${status}, connection: close ${closes}, body ${body}"
+}
+
+/// The slow client's outcome: "ended" for either way a stopping server may
+/// end it.
+fn ended(answer: Str) -> Str {
+  if answer.is_empty() || answer.to_lower().contains("\r\nconnection: close\r\n") {
+    "ended"
+  } else {
+    "answered, connection left open: ${summary(answer)}"
+  }
 }
 
 fn main(os: Os) {
   os.proc.set_grace(2s)
+  let started = Chan[Bool].new(cap: 1)
   var r = http.router()
   r.handle("GET /", fn(req) { http.text(200, "ok") })
+  r.handle("GET /slow", fn(req) {
+    started.send(true)
+    os.clock.sleep(200ms)
+    http.text(200, "slow ok")
+  })
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   let srv = http.server(l, r)
   let addr = srv.addr()
   let result = Chan[Str].new(cap: 1)
+  let inflight = Chan[Str].new(cap: 1)
   scope s {
     s.spawn(fn() {
       let how = match srv.serve() {
@@ -54,15 +94,27 @@ fn main(os: Os) {
       }
       result.send("serve returned ${how}, canceled by the grace period: ${task.is_canceled()}")
     })
-    var conns: List[Conn] = []
-    for _ in 0..CONNS {
-      conns.push(request(os, addr))
+    var idle: List[Conn] = []
+    for _ in 0..IDLE {
+      idle.push(kept_alive(os, addr, "/", "ok"))
     }
-    os.stdio.println("${conns.len()} requests answered, connections kept open")
+    let slow = os.net.dial(addr).or_fault("dial")
+    slow.write("GET / HTTP/1.1\r\nHo".bytes()).or_fault("write")
+    s.spawn(fn() {
+      let c = os.net.dial(addr).or_fault("dial")
+      c.write("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n".bytes()).or_fault("write")
+      inflight.send(summary(read_to_close(c)))
+    })
+    let _ = started.recv()
+    os.stdio.println("${idle.len()} idle, 1 slow client, 1 request in flight")
     os.proc.request_stop()
+    os.clock.sleep(100ms)
+    slow.write("st: x\r\n\r\n".bytes()).or_fault("write")
+    os.stdio.println("slow client: ${ended(read_to_close(slow))}")
+    os.stdio.println("in flight: ${inflight.recv() ?? "no answer"}")
     os.stdio.println(result.recv() ?? "no result")
-    for c in conns {
-      os.stdio.println("client: ${after(c)}")
+    for c in idle {
+      os.stdio.println("idle: ${summary(read_to_close(c))}")
     }
   }
   os.stdio.println("done")

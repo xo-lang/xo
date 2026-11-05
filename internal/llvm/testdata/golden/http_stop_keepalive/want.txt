@@ -1,10 +1,12 @@
 exit 0
 --- stdout
-4 requests answered, connections kept open
+4 idle, 1 slow client, 1 request in flight
+slow client: ended
+in flight: HTTP/1.1 200 OK, connection: close true, body slow ok
 serve returned ok, canceled by the grace period: false
-client: closed
-client: closed
-client: closed
-client: closed
+idle: closed with no answer
+idle: closed with no answer
+idle: closed with no answer
+idle: closed with no answer
 done
 --- stderr

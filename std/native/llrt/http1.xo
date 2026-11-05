@@ -2301,7 +2301,10 @@ fn write(h: rthttp.HConn, x: Int, status: Int, body: Int, bn: Int, stream: Int) 
   let d = rt.heap_large(room + 8)
   let res = d + room
   rt.mem_store(res, 0, 0, 8)
-  let f = xl(x, X_FLAGS) | (if stream != 0 { http1w.F_STREAM } else { 0 })
+  var f = xl(x, X_FLAGS) | (if stream != 0 { http1w.F_STREAM } else { 0 })
+  if hconn.stopping(h) {
+    f = f | http1w.F_STOPPING
+  }
   let n = http1w.response(d, a, xl(x, X_HN), status, body, bn, f, res)
   var r = rt.mem_load(res, 0, 8)
   if !send(h, d, n) {

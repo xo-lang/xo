@@ -752,6 +752,10 @@ pub const F_EXPECT_UNREAD: Int = 64
 pub const F_BODY_BAD: Int = 128
 pub const F_TOO_BIG: Int = 256
 pub const F_STREAM: Int = 512
+/// The server is stopping: the connection closes after this response, and
+/// the response says so (net/http: Shutdown turns keep-alives off, so
+/// closeAfterReply adds Connection: close).
+pub const F_STOPPING: Int = 1024
 
 // What response stores at res.
 pub const R_KEEP: Int = 1
@@ -837,6 +841,10 @@ pub fn response(d: Int, ha: Int, hn: Int, status0: Int, body: Int, bn: Int, flag
   }
   if val_is(ha, conni, "close") || (flags & F_EXPECT_UNREAD) != 0 {
     close = true
+  }
+  if (flags & F_STOPPING) != 0 {
+    close = true
+    set_conn = ""
   }
   var too_large = false
   if (flags & F_HAS_BODY) != 0 && !close {
