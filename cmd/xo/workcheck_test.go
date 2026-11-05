@@ -70,9 +70,9 @@ func TestCheckWorkspaceSizeMemory(t *testing.T) {
 	}
 	files["xo.work"] = work.String()
 	modtest.WriteFiles(t, ws, files)
-	peak := func(workFile string) int64 {
-		cmd := command(t, xoBin(t), "check", filepath.Join(ws, "app", "a"))
-		cmd.Env = append(cmd.Env, "XO_WORK="+workFile, "XO_CHK_CACHE=off")
+	peakOf := func(workFile string, args ...string) int64 {
+		cmd := command(t, xoBin(t), args...)
+		cmd.Env = append(cmd.Env, "XO_WORK="+workFile, "XO_CHK_CACHE=off", "XO_NO_SERVE=1")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("check with %s: %v\n%s", workFile, err, out)
 		}
@@ -82,11 +82,19 @@ func TestCheckWorkspaceSizeMemory(t *testing.T) {
 		}
 		return rss
 	}
-	small := peak(filepath.Join(ws, "small", "xo.work"))
-	large := peak(filepath.Join(ws, "xo.work"))
-	t.Logf("peak RSS: 1 module workspace %d MB, 301 modules %d MB", small>>20, large>>20)
-	if large > small+small/4+(32<<20) {
-		t.Errorf("a 301 module workspace raised a one-module check's peak RSS from %d MB to %d MB", small>>20, large>>20)
+	// xo check (decision 0511) and xo query type (decision 0515)
+	for _, args := range [][]string{
+		{"check", filepath.Join(ws, "app", "a")},
+		{"query", "type", filepath.Join(ws, "app", "a", "a.xo") + ":1:23"},
+		{"query", "api", filepath.Join(ws, "app", "a")},
+		{"query", "def", "--dir=" + ws, "one"},
+	} {
+		small := peakOf(filepath.Join(ws, "small", "xo.work"), args...)
+		large := peakOf(filepath.Join(ws, "xo.work"), args...)
+		t.Logf("xo %s %s: peak RSS: 1 module workspace %d MB, 301 modules %d MB", args[0], args[1], small>>20, large>>20)
+		if large > small+small/4+(32<<20) {
+			t.Errorf("xo %s: a 301 module workspace raised a one-module peak RSS from %d MB to %d MB", args[0], small>>20, large>>20)
+		}
 	}
 }
 
@@ -141,6 +149,105 @@ func TestCheckWorkspacePerModuleSameDiags(t *testing.T) {
 		}
 		if n := strings.Count(b, `"code"`); n != 3 {
 			t.Errorf("check WS%s: want 3 diagnostics (lib, a, b), got %d:\n%s", walk, n, b)
+		}
+	}
+}
+
+// TestTestWorkspacePerModule: `xo test ./...` of a workspace of 8
+// members or more runs one child per member (decision 0515 point 5) and
+// passes and fails the same tests as one program of fewer members: the
+// totals of its summaries and its status match.
+func TestTestWorkspacePerModule(t *testing.T) {
+	files := map[string]string{
+		"xo.mod":             "module example.com/root\nedition preview\n",
+		"core/core.xo":       "pub fn two() -> Int { 2 }\n",
+		"core/core_test.xo":  "test \"two\" {\n  expect(two()) == 2\n}\n",
+		"lib/xo.mod":         "module example.com/lib\nedition preview\n",
+		"lib/util/util.xo":   "pub fn seven() -> Int { 7 }\n",
+		"lib/util/u_test.xo": "test \"seven\" {\n  expect(seven()) == 7\n}\n",
+		"a/xo.mod":           "module example.com/a\nedition preview\n",
+		"a/a.xo":             "use example.com/lib/util\n\npub fn a() -> Int { util.seven() + 1 }\n",
+		"a/a_test.xo":        "test \"eight\" {\n  expect(a()) == 8\n}\n\ntest \"nine\" {\n  expect(a() + 1) == 9\n}\n",
+		"b/xo.mod":           "module example.com/b\nedition preview\n",
+		"b/b.xo":             "use example.com/lib/util\n\npub fn b() -> Int { util.seven() }\n",
+		"b/b_test.xo":        "test \"wrong\" {\n  expect(b()) == 8\n}\n",
+	}
+	// members c1..cN with no tests
+	workspace := func(n int) string {
+		ws := t.TempDir()
+		work := "xo preview\nuse .\nuse ./lib\nuse ./a\nuse ./b\n"
+		fs := map[string]string{}
+		for k, v := range files {
+			fs[k] = v
+		}
+		for i := 1; i <= n; i++ {
+			fs[fmt.Sprintf("c%d/xo.mod", i)] = fmt.Sprintf("module example.com/c%d\nedition preview\n", i)
+			fs[fmt.Sprintf("c%d/c.xo", i)] = "pub fn c() -> Int { 0 }\n"
+			work += fmt.Sprintf("use ./c%d\n", i)
+		}
+		fs["xo.work"] = work
+		modtest.WriteFiles(t, ws, fs)
+		return ws
+	}
+	totals := func(out string) ([2]int, int) {
+		var n [2]int
+		lines := 0
+		for _, l := range strings.Split(out, "\n") {
+			var p, f int
+			if i := strings.Index(l, ": "); i >= 0 {
+				if _, err := fmt.Sscanf(l[i+2:], "%d passed, %d failed", &p, &f); err == nil {
+					n[0] += p
+					n[1] += f
+					lines++
+				}
+			}
+		}
+		return n, lines
+	}
+	one := xo(t, "test", workspace(1)+"/...").want(1)
+	each := xo(t, "test", workspace(6)+"/...").want(1)
+	tw, _ := totals(one.out)
+	te, children := totals(each.out)
+	if tw != [2]int{4, 1} || te != tw {
+		t.Errorf("passed and failed: one program %v, per member %v (want [4 1] both)\none program:\n%s\nper member:\n%s", tw, te, one.out, each.out)
+	}
+	if children < 2 {
+		t.Errorf("per member: want a summary per child, got %d:\n%s", children, each.out)
+	}
+	if !strings.Contains(each.out+each.err, "wrong") {
+		t.Errorf("per member: the failing test is not named:\n%s\n%s", each.out, each.err)
+	}
+}
+
+// TestQueryCallersReverseClosure: `xo query callers` of a workspace
+// package loads that package and the packages that import it (decision
+// 0515 point 2) and finds every caller: in the package itself, in a
+// module that imports it, in a package of another module that imports
+// it; c, which imports nothing of it, is not checked (its error is not
+// reported).
+func TestQueryCallersReverseClosure(t *testing.T) {
+	ws := t.TempDir()
+	modtest.WriteFiles(t, ws, map[string]string{
+		"xo.work":          "xo preview\nuse ./lib\nuse ./a\nuse ./b\nuse ./c\n",
+		"lib/xo.mod":       "module example.com/lib\nedition preview\n",
+		"lib/util/util.xo": "pub fn seven() -> Int { 7 }\n\npub fn eight() -> Int { seven() + 1 }\n",
+		"a/xo.mod":         "module example.com/a\nedition preview\n",
+		"a/a.xo":           "use example.com/lib/util\n\npub fn a() -> Int { util.seven() }\n",
+		"a/a_test.xo":      "test \"a\" {\n  expect(util.seven()) == 7\n}\n",
+		"b/xo.mod":         "module example.com/b\nedition preview\n",
+		"b/mid/mid.xo":     "use example.com/a\n\npub fn mid() -> Int { a.a() }\n",
+		"b/top/top.xo":     "use example.com/lib/util\n\npub fn top() -> Int { util.seven() * 2 }\n",
+		"c/xo.mod":         "module example.com/c\nedition preview\n",
+		"c/c.xo":           "pub fn c() -> Int { 0 }\n\nfn bad() -> Int { \"c\" }\n",
+	})
+	dir := "--dir=" + filepath.Join(ws, "lib", "util")
+	r := xo(t, "query", "callers", "--json", dir, "util.seven").want(0)
+	if n := strings.Count(r.out, `"caller"`); n != 3 {
+		t.Errorf("want 3 callers, got %d:\n%s", n, r.out)
+	}
+	for _, f := range []string{"util.xo", "a.xo", "top.xo"} {
+		if !strings.Contains(r.out, f) {
+			t.Errorf("want a caller in %s:\n%s", f, r.out)
 		}
 	}
 }

@@ -38,6 +38,16 @@ pub enum Bodies {
 /// Checker.parse_cache): `xo edit`'s check of the edited program
 /// (decision 0289).
 pub fn load_session_pc(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes], names: List[Str], wide: Bool, pc: Map[Str, check.ParseEntry], bodies: Bodies) -> Session ! Str uses env, fs, proc {
+  load_session_scope(os, dirs0, exact, overlay, names, wide, pc, bodies, false)
+}
+
+/// load_session_pc, and with closure (decision 0515's point queries) the
+/// workspace's other modules only when a directory is the workspace's own
+/// directory (Checker.check_workspace_dirs, as `xo check` has it under
+/// decision 0511): a question about one module loads that module and its
+/// imports, not every module of the workspace. A directory with no .xo
+/// file of its own keeps 0289's walk of the modules below it.
+pub fn load_session_scope(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes], names: List[Str], wide: Bool, pc: Map[Str, check.ParseEntry], bodies: Bodies, closure: Bool) -> Session ! Str uses env, fs, proc {
   let wd = wd_of(os)
   let std = std_dir_of(os)
   var c = check.new_checker(os.fs, std)
@@ -60,8 +70,39 @@ pub fn load_session_pc(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, 
   c.set_overlay(overlay)
   // xo query and xo edit cover the modules below a workspace or
   // repository root (decision 0289), within the walk's bound (0345)
-  c.walk_all = true
-  let dirs = if exact { dirs0 } else { c.workspace_dirs(dirs0) }
+  var dirs = dirs0
+  // a directory with no .xo file of its own (a module or repository
+  // root, decision 0289) still walks the modules below it
+  let own = dirs0.all(fn(d) { match os.fs.read_dir(d) {
+    Ok(es) => es.any(fn(e) { !e.is_dir && e.name.ends_with(".xo") })
+    Err(_) => false
+  } })
+  // def of a name at a root (decision 0515 point 3): the packages that
+  // may declare it, and their imports
+  // (a root: no .xo file of its own, or the workspace's own directory)
+  let at_root = !own || c.check_workspace_dirs(dirs0).len() > dirs0.len()
+  let cands = if closure && !exact && at_root && bodies is Decls && names.len() == 1 && dirs0.len() == 1 { c.decl_candidates(dirs0[0], names[0]) } else { [] }
+  if !cands.is_empty() {
+    // as named: the root's own package among them stands for itself,
+    // not for the workspace
+    c.walk_all = false
+    dirs = cands
+  } else if closure && !exact && own && wide {
+    // callers (decision 0515 point 2): the asked directories and every
+    // workspace package that imports them, with their imports
+    c.walk_all = false
+    dirs = c.reverse_importers(dirs0)
+  } else if closure && !exact && own {
+    dirs = c.check_workspace_dirs(dirs0)
+    // the workspace's own directory: every module below it, as before
+    c.walk_all = dirs.len() > dirs0.len()
+    if c.walk_all {
+      dirs = c.workspace_dirs(dirs0)
+    }
+  } else {
+    c.walk_all = true
+    dirs = if exact { dirs0 } else { c.workspace_dirs(dirs0) }
+  }
   c.check_dirs_bound(os, dirs)?
   if !c.unsupported.is_empty() {
     return Err("the self hosted checker cannot check this program: ${c.unsupported}")
@@ -499,7 +540,9 @@ pub fn (s: Session) def(name: Str) -> List[QDef] ! Str {
   if defs.is_empty() {
     return Err("${name.quote()} does not name a declaration in the checked modules")
   }
-  Ok(defs)
+  // in file and position order, not the order the modules loaded in,
+  // which depends on what was loaded (decision 0515)
+  Ok(defs.sort_by(fn(d) { (d.pos.file, d.pos.line, d.pos.col) }))
 }
 
 /// The objects name refers to (functions, types, constants), resolved as
@@ -1225,7 +1268,9 @@ fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str
       }
     }
   }
-  let s = match load_session_pc(os, dirs, false, {}, names, kind == "callers", {}, bodies) {
+  // decision 0515: each kind loads what its question needs (the asked
+  // module's closure; for callers its importers too)
+  let s = match load_session_scope(os, dirs, false, {}, names, kind == "callers", {}, bodies, true) {
     Ok(x) => x
     Err(e) => {
       os.stdio.eprintln("xo query: ${e}")

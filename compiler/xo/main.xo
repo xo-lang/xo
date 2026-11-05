@@ -195,6 +195,16 @@ fn main(os0: Os) ! {
     os.stdio.eprintln("xo ${o.cmd}: --watch is a flag of xo run and xo test")
     os.proc.exit(2)
   }
+  if o.cmd == "test" && o.dirs.len() == 1 && o.walk.len() == 1 {
+    // decision 0515 point 5: a walk of a workspace of PER_MODULE_MIN
+    // members or more tests each member in its own child, so no process
+    // holds every member at once
+    if let Some((base, members)) = core.test_split(os, core_ctx(os, o), o.dirs[0]) {
+      if members.len() >= core.PER_MODULE_MIN {
+        os.proc.exit(test_per_member(os, o, args, base, members))
+      }
+    }
+  }
   let goos = host_os(os)
   var ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos), tools: Some(Mutex[Map[Str, Str]].new({})), std_trees: Some(Mutex[Map[Str, Str]].new({}))}
   ctx.phases = o.phases
@@ -3194,4 +3204,26 @@ fn say_run_miss(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) {
       os.stdio.eprintln("cache run key ${p}")
     }
   }
+}
+
+/// `xo test ROOT/...` of a workspace, one child `xo test` per member
+/// (MEMBER/...) after one for the walk's other directories, each with the
+/// command line's flags (decision 0515 point 5); the highest status wins.
+fn test_per_member(os: Os, o: Opts, args: List[Str], base: List[Str], members: List[Str]) -> Int {
+  let xo_bin = check.executable(os.env, os.fs)
+  let flags = build_flags(args)
+  var runs: List[List[Str]] = [base]
+  for m in members {
+    runs.push(["${m.trim_suffix("/")}/..."])
+  }
+  var code = 0
+  for ds in runs {
+    let cmd = os.proc.cmd(xo_bin, ["test"] + flags + ds).dir(o.wd).set_env("PWD", o.wd).set_env("XO_STD", o.std)
+    // xo:allow XO0903 a child that cannot run is reported as exit 2
+    let c = cmd.inherit().run().ok() ?? 2
+    if c > code {
+      code = c
+    }
+  }
+  code
 }

@@ -1,6 +1,6 @@
 # 0515: xo query loads what the question needs; xo test ./... per member
 
-Status: Proposed (Xo Lang 1, 2026-11-05, at the lead's request after
+Status: Accepted (owner, 2026-11-05, with the short-name behavior change below). Proposed by Xo Lang 1 the same day at the lead's request after decisions 0511 and 0513. Amends decision 0289's "a workspace or repository root checks the modules under it" for the query kinds below, and decision 0086's workspace rule for `xo query` and `xo test ./...`.
 decisions 0511 and 0513). Point 1 is prototyped on branch lang1-qscope
 (on lang1-ws11; not on main), measured below. Amends decision 0289's
 "a workspace or repository root checks the modules under it" for the
@@ -225,3 +225,18 @@ XO_QUERY_WIDE=1 for the old load; every output byte-identical:
 A prelude member (`Str.find`) could skip the scan; left. The cmd/xo
 query, def, doc, refs, symbols, agent and LSP tests pass with the sorted
 order (no golden depended on load order).
+
+## As built (2026-11-05)
+
+Points 1, 2 (callers' reverse closure), 3 and 5 are on main with no
+environment variable: the XO_QUERY_WIDE and XO_TEST_PER_MODULE switches
+the measurements above used are gone. `xo test ROOT/...` runs a child
+per member when the walk's workspace has 8 members or more below ROOT
+(core.PER_MODULE_MIN, decision 0513's threshold). The cmd/xo tests
+assert the answers instead of comparing with the old load:
+TestCheckWorkspaceSizeMemory (`query type`, `query api`, `query def` in
+a 301 module workspace), TestQueryCallersReverseClosure (the three
+callers, an unrelated module's error unreported) and
+TestTestWorkspacePerModule (4 passed, 1 failed, one summary per child,
+against one program of 4 members). Callers of a core target per member
+(point 2's last part) is not on main yet.

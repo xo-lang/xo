@@ -201,3 +201,186 @@ fn (var c: Checker) work_edition_alias(name: Str) uses fs.read {
     c.edition_aliases[file] = ModRoot{path: "", dir: "", alias: f[1], alias_line: i + 1, alias_col: col, keyword: "xo"}
   }
 }
+
+/// The package directories of dirs' workspace that import a package of
+/// dirs, directly or through each other, read from their files' `use`
+/// lines (test files too: a test's call is a caller), with dirs first
+/// (decision 0515 point 2: `xo query callers` loads these and their
+/// imports, not the whole workspace); dirs alone outside a workspace.
+pub fn (var c: Checker) reverse_importers(dirs: List[Str]) -> List[Str] uses fs.read {
+  if c.deps.work_env == "off" || dirs.is_empty() {
+    return dirs
+  }
+  let root = c.mod_root_dir(dirs[0])
+  if root.is_empty() {
+    return dirs
+  }
+  let (w0, _) = c.find_work(root)
+  let w = match w0 {
+    Some(x) => x
+    None => return dirs
+  }
+  // each package directory of the workspace and the directories it imports
+  var imports: Map[Str, List[Str]] = {}
+  for m in w.modules {
+    let found = match c.walked_dirs(m.dir) {
+      Ok(ds) => ds
+      Err(_) => []
+    }
+    for d in found {
+      let da = c.abs(d)
+      if imports.contains(da) {
+        continue
+      }
+      var out: List[Str] = []
+      for e in c.fs.read_dir(da).ok() ?? [] {
+        if e.is_dir || !e.name.ends_with(".xo") {
+          continue
+        }
+        let text = c.fs.read_text("${da}/${e.name}").ok() ?? ""
+        for l in text.split("\n") {
+          let t = l.trim()
+          if !t.starts_with("use ") {
+            continue
+          }
+          let p = t[4..].trim().split(" ")[0]
+          // the workspace module holding p, longest path first
+          var best = -1
+          for (i, wm) in w.modules.indexed() {
+            if (p == wm.path || p.starts_with("${wm.path}/")) && (best < 0 || wm.path.len() > w.modules[best].path.len()) {
+              best = i
+            }
+          }
+          if best >= 0 {
+            let rest = p[w.modules[best].path.len()..].trim_prefix("/")
+            let md = c.abs(w.modules[best].dir)
+            out.push(if rest.is_empty() { md } else { "${md}/${rest}" })
+          }
+        }
+      }
+      imports[da] = out
+    }
+  }
+  // breadth first from dirs over the reversed edges
+  var want: Set[Str] = #{}
+  var queue: List[Str] = []
+  for d in dirs {
+    let a = c.abs(d)
+    if !want.contains(a) {
+      want.add(a)
+      queue.push(a)
+    }
+  }
+  var out = dirs
+  var i = 0
+  while i < queue.len() {
+    let t = queue[i]
+    i += 1
+    for (d, us) in imports.entries().sort_by(fn(e) { e.0 }) {
+      if !want.contains(d) && us.contains(t) {
+        want.add(d)
+        queue.push(d)
+        out.push(c.rel_dir(d))
+      }
+    }
+  }
+  out
+}
+
+/// The package directories of root's workspace that may declare name
+/// (decision 0515 point 3: `xo def NAME` at a root loads these, not every
+/// module): those with a top-level fn, method, struct, enum, interface,
+/// type or const line declaring one of name's dot separated segments,
+/// and those whose import path ends in one (module.name). A superset by
+/// construction; empty when nothing matches (the caller loads as before:
+/// a std or prelude name, or no workspace).
+pub fn (var c: Checker) decl_candidates(root: Str, name: Str) -> List[Str] uses fs.read {
+  let (w0, _) = c.find_work(c.abs(root))
+  let w = match w0 {
+    Some(x) => x
+    None => return []
+  }
+  let segs = name.split(".").filter(fn(s) { !s.is_empty() })
+  // in the order the whole workspace's load takes them: root's walk,
+  // then the modules outside root
+  let ra = c.abs(root)
+  var order = c.walked_dirs(root).ok() ?? []
+  for m in w.modules {
+    let md = c.abs(m.dir)
+    if md != ra && !md.starts_with("${ra}/") {
+      order = order + (c.walked_dirs(m.dir).ok() ?? [])
+    }
+  }
+  var out: List[Str] = []
+  var seen: Set[Str] = #{}
+  for d in order {
+    let da = c.abs(d)
+    if seen.contains(da) {
+      continue
+    }
+    seen.add(da)
+    let files = (c.fs.read_dir(da).ok() ?? []).filter(fn(e) { !e.is_dir && e.name.ends_with(".xo") })
+    if files.is_empty() {
+      continue
+    }
+    // the workspace module holding da, longest directory first
+    var path = ""
+    var best = ""
+    for m in w.modules {
+      let md = c.abs(m.dir)
+      if (da == md || da.starts_with("${md}/")) && md.len() > best.len() {
+        best = md
+        let rest = da[md.len()..].trim_prefix("/")
+        path = if rest.is_empty() { m.path } else { "${m.path}/${rest}" }
+      }
+    }
+    let ps = path.split("/")
+    var hit = !path.is_empty() && segs.contains(ps[ps.len() - 1])
+    for e in files {
+      if hit {
+        break
+      }
+      let text = c.fs.read_text("${da}/${e.name}").ok() ?? ""
+      for l in text.split("\n") {
+        if declares(l, segs) {
+          hit = true
+          break
+        }
+      }
+    }
+    if hit {
+      out.push(c.rel_dir(da))
+    }
+  }
+  out
+}
+
+/// Whether line l is a top-level declaration (or an interface's method)
+/// of one of segs.
+fn declares(l: Str, segs: List[Str]) -> Bool {
+  var t = l.trim_start().trim_prefix("pub ")
+  for kw in ["fn ", "struct ", "enum ", "interface ", "type ", "const "] {
+    if !t.starts_with(kw) {
+      continue
+    }
+    var r = t[kw.len()..].trim_start()
+    if kw == "fn " && r.starts_with("(") {
+      // a method: the name after the receiver
+      let i = r.find(")") ?? -1
+      if i < 0 {
+        return false
+      }
+      r = r[i + 1..].trim_start()
+    }
+    // the identifier ends at the first separator after it
+    var n = r.len()
+    for sep in [" ", "(", "[", "{", "<", ":", "="] {
+      let i = r.find(sep) ?? n
+      if i < n {
+        n = i
+      }
+    }
+    return segs.contains(r[..n])
+  }
+  false
+}

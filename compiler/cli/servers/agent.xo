@@ -245,7 +245,8 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   // def, doc and symbols read declarations only: no body is parsed or
   // checked (a position's lookup reads its body)
   let decls_only = (cmd is "def" | "doc" | "symbols") && position_of(a.target).is_none() && !eager
-  var s = match agent_session(os, dir, std, preload, a.testdata, words, decls_only) {
+  let named = if decls_only && (cmd is "def" | "doc") { a.target } else { "" }
+  var s = match agent_session_named(os, dir, std, preload, a.testdata, words, decls_only, named) {
     Ok(x) => x
     Err(e) => {
       // `xo doc NAME` or `xo def NAME` run outside a module (a scratch or
@@ -681,9 +682,32 @@ fn std_session(os: Os, std: Str, preload: List[Str], decls_only: Bool) -> Sessio
 /// documents, with nothing written to standard output; at a root,
 /// testdata walks its `testdata` directories too.
 fn agent_session(os: Os, dir: Str, std: Str, preload: List[Str], testdata: Bool, words: List[Str], decls_only: Bool) -> Session ! Str uses (stdio, fs, env) {
+  agent_session_named(os, dir, std, preload, testdata, words, decls_only, "")
+}
+
+/// agent_session; with name (`xo def NAME`, `xo doc NAME`) at a workspace
+/// or repository root, only the packages that may declare name and their
+/// imports are checked (decision 0515 point 3).
+fn agent_session_named(os: Os, dir: Str, std: Str, preload: List[Str], testdata: Bool, words: List[Str], decls_only: Bool, name: Str) -> Session ! Str uses (stdio, fs, env) {
   let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var s = Session{version: "", std_dir: std, wd: wd, lsp_std: "", quiet: true, preload: preload, decls_only: decls_only}
   let d = abs_of(wd, dir)
+  if decls_only && !name.is_empty() {
+    var probe = new_lsp_checker(os, std, wd, {})
+    let own = (os.fs.read_dir(d).ok() ?? []).any(fn(e) { !e.is_dir && e.name.ends_with(".xo") })
+    probe.walk_all = false
+    if !own || probe.check_workspace_dirs([d]).len() > 1 {
+      let cands = probe.decl_candidates(d, name)
+      if !cands.is_empty() {
+        let v = check_view_walk(os, s.std_dir, wd, {}, cands, preload, [], testdata, words, decls_only, false)
+        if v.err.is_empty() && v.stopped.is_empty() {
+          s.use_view(v)
+          s.diags = v.diags
+          return Ok(s)
+        }
+      }
+    }
+  }
   let entries = os.fs.read_dir(d).map_err(fn(e) { e.display() })?
   for fi in entries {
     if fi.is_dir || !fi.name.ends_with(".xo") {
@@ -1067,7 +1091,9 @@ fn (var s: Session) decl_json(found: Found) -> J {
 /// `xo def` (and `xo doc NAME`, with methods): the declarations.
 fn (var s: Session) agent_def(os: Os, target: Str, with_methods: Bool) -> J ! Str {
   var out: List[J] = []
-  for found in s.targets(os, target)? {
+  // in file and position order, not the order the modules loaded in
+  // (decision 0515)
+  for found in s.targets(os, target)?.sort_by(fn(f) { (f.tg.def_file, f.tg.def_start) }) {
     var d = s.decl_json(found)
     if with_methods && found.tg.what == "type" {
       var ms: List[J] = []

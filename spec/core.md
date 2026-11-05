@@ -3315,6 +3315,18 @@ xo query hash users.fetch_user              // content hash of a definition (4.3
 not under the working directory but is under DIR names that file (`xo
 mcp`'s query tool passes its `dir` this way).
 
+What a query checks (decision 0515): a directory with `.xo` files of its
+own (`--dir`, `type`'s file's directory, an `api`, `imports` or `deps`
+directory argument) is checked with the modules it imports, not the
+rest of its workspace; `callers` adds every workspace package that
+imports it, directly or through others. A name is resolved in what was
+checked, so a short name ambiguous only across the whole workspace
+answers for the module `--dir` names. `def` of a name (and `xo def`,
+`xo doc`) at a workspace or repository root checks the packages whose
+declarations name one of its segments, and everything when none does (a
+std or prelude name). Several declarations (`def`, `xo def`, `xo doc`)
+are listed in file and position order.
+
 `hash` (decision 0125) answers `{list}`, one entry per definition the
 name resolves to (a name, `Type.method`, `pkg.name`, or `<package
 path>.name` of the module holding `--dir`): `{id, package, name, kind,

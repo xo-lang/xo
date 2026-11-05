@@ -513,11 +513,18 @@ fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: Lis
 /// check_view, leaving out the module directories exclude; testdata
 /// walks the `testdata` directories too.
 fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str], exclude: List[Str], testdata: Bool, words: List[Str], decls_only: Bool) -> View uses (fs, env) {
+  check_view_walk(os, std_dir, wd, overlay, dirs, preload, exclude, testdata, words, decls_only, true)
+}
+
+/// check_view_excluding, with walk_all false when walk is: dirs are
+/// package directories, checked as named (decision 0515 point 3).
+fn check_view_walk(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str], exclude: List[Str], testdata: Bool, words: List[Str], decls_only: Bool, walk: Bool) -> View uses (fs, env) {
   var v = View{}
   if dirs.is_empty() {
     return v
   }
   var c = new_lsp_checker(os, std_dir, wd, overlay)
+  c.walk_all = walk
   c.preload = preload
   // the preloaded std and runtime modules a name refers to: their bodies
   // too, so that xo refs finds the calls inside them

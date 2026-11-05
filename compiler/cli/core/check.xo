@@ -288,7 +288,7 @@ fn load_walked(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str,
 /// The workspace members from which a whole-workspace `xo check` holds
 /// one at a time (decision 0513): below it one checker is as fast (aws
 /// core + 10 services: 1.13 s at 1,198 MB against 1.30 s at 968 MB).
-const PER_MODULE_MIN = 8
+pub const PER_MODULE_MIN = 8
 
 /// load_walked of each of dirs alone (exact), one checker at a time, its
 /// diagnostics merged without repeats (a module two of them import
@@ -398,6 +398,14 @@ fn load_each(os: Os, ctx: Ctx, base_dirs: List[Str], members: List[Str], walk_me
     Some(s) => Ok(Session{c: s.c, mods: mods, diags: sort_diags(diags)})
     None => Err("no directory to check")
   }
+}
+
+/// walk_split for `xo test ROOT/...` (decision 0515 point 5): the walk's
+/// directories outside the workspace's members and the members' own.
+pub fn test_split(os: Os, ctx: Ctx, root: Str) -> (List[Str], List[Str])? uses fs.read, env {
+  var c = new_checker(os, ctx)
+  c.walk = [abs_path(ctx, root)]
+  walk_split(os, ctx, c, root)
 }
 
 /// The walk of root split for decision 0513: the walked directories
