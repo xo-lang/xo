@@ -1,15 +1,5 @@
 # std/http changes
 
-## 2026-11-04: a client request to an IPv6 literal host keeps its brackets
-
-- Kind: fix
-- Commit: 73c760071
-- Found by: not recorded in the commit (a client reaching a server listening on `[::1]:0`)
-- Go reference: net/url's URL.String, which writes the host as stored, brackets included
-- Test: TestGolden http_ipv6_url (internal/llvm golden: a server on [::1], a Client.get of its own address, then parse_url of it)
-- Affected: every release with the native std (6c9e22a32, 2026-10-08) on the native backends, and the Go backend's std/rt: `Url.host` holds an IPv6 host without its brackets, and the URL text was rebuilt without adding them, so `http://::1:PORT/` was refused as an invalid URL
-- Shipped in: not yet released
-
 ## 2026-11-05: security: a native server's response trailers no longer corrupt the runtime's heap
 
 - Kind: security
