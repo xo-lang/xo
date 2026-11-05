@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- fix (build): a program that calls another module's non-`pub` Display, Debug or Error method (decision 0496 (c)) no longer checks those modules again on every warm build: the module check cache fell back each time, since the methods' effects are inferred from their bodies and read across modules. Their module's cache entry now checks them eagerly. Found by TestModuleCheckAuto (iface_method_cross_module).
 - std/yaml: `Time` and `time.Civil` fields (a timestamp as its instant, or with its offset); equal to yaml.v3 on 32 documents.
 - fix (--race, LLVM backend): a program function's call of a runtime function is no longer marked alwaysinline under --race: LLVM inlined it over the sanitize attributes and its optimizer dropped the runtime loads' !nosanitize, so http_h2_config reported hconn.tls_ops_set's table as a race (darwin, up to 13 runs in 24). Test TestRaceRuntimeCallsNotForced; gotcha race-inlined-runtime-instrumented.md. Also native http: srvh2c.table frees a losing table at its prefix (std/changes/http.md).
 - std/yaml: `yaml.Node` fields in `derive Yaml` structs (the node of the key, as yaml.v3).

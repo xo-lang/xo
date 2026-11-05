@@ -9,8 +9,9 @@
 // its closure adds the interfaces of the modules it imports,
 // transitively, and of the standard library (iface_closures, also the
 // front end cache's key, compiler/ssa fecache.xo). Effects inferred from
-// a body stay in its module (a pub function declares its effects), so a
-// module's check reads nothing of another module's bodies.
+// a body stay in its module (a pub function declares its effects), except
+// a method of a prelude interface another module calls without `pub`
+// (decision 0496 (c)), which its entry checks eagerly (cross_reads).
 
 use std/crypto
 
@@ -334,6 +335,7 @@ pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)], nofe: Map[I
   if c.mod_cache_dir.is_empty() {
     return out
   }
+  let reads = c.cross_reads()
   for (m, key) in c.mod_keys {
     if c.mod_skip.contains(m) {
       continue
@@ -364,7 +366,11 @@ pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)], nofe: Map[I
     e.tasks = t
     e.budgets = b
     e.fe_complete = !nofe.contains(m)
-    e.eager = c.eager_of(m, nofe_fos.get(m) ?? {})
+    var seeds = nofe_fos.get(m) ?? {}
+    for (fo, _) in reads.get(m) ?? {} {
+      seeds[fo] = true
+    }
+    e.eager = c.eager_of(m, seeds)
     e.zones = c.mod_zones(paths)
     e.main_unnamed = c.names_only_decl(c.mods[m].members.get(b"main") ?? -1)
     out.push((key, encode_mod_entry(e)))
@@ -560,6 +566,42 @@ fn decode_mod_entry(d: Bytes) -> Option[ModEntry] {
 /// skip_unsafe when it finds one.
 pub fn (c: Checker) effect_reads_across_modules() -> List[Str] {
   var out: List[Str] = []
+  for (f, g) in c.inferred_reads() {
+    // a body checked in this build has its effects: only one left for
+    // check_lazy (a skipped module's, the runtime's) is read unsolved
+    if c.lazy_fns.get(g) ?? false {
+      out.push("${c.display_name(f)} -> ${c.display_name(g)}")
+    }
+  }
+  out
+}
+
+/// The functions of module m with inferred effects (no declared set) that
+/// a body of another module reads, by m: decision 0496 (c) lets a module
+/// call another's methods of a prelude interface (Display, Debug, Error)
+/// without `pub`, so their effects, inferred from their bodies, cross
+/// modules. A module's cache entry lists them eager (ModEntry.eager), so
+/// a skipped module still checks them before the whole-program passes
+/// (2026-11-05: iface_method_cross_module's warm build fell back every
+/// time, TestModuleCheckAuto).
+fn (c: Checker) cross_reads() -> Map[Int, Map[Int, Bool]] {
+  var out: Map[Int, Map[Int, Bool]] = {}
+  for (f, g) in c.inferred_reads() {
+    let gm = c.objs[g].module
+    if gm >= 0 && gm != c.objs[f].module {
+      var s = out.get(gm) ?? {}
+      s[g] = true
+      out[gm] = s
+    }
+  }
+  out
+}
+
+/// Each inferred function f and each function g with no declared effect
+/// set that f's body reads (through its effect variables too), g in
+/// another module or one whose body waits for check_lazy.
+fn (c: Checker) inferred_reads() -> List[(Int, Int)] {
+  var out: List[(Int, Int)] = []
   for f in c.inferred_fns {
     let m = c.objs[f].module
     // the body's set and the sets its effect variables stand for
@@ -576,7 +618,7 @@ pub fn (c: Checker) effect_reads_across_modules() -> List[Str] {
           work.push(c.evars[it.evar])
         }
         if it.fn_obj >= 0 && c.objs[it.fn_obj].declared < 0 && (c.objs[it.fn_obj].module != m || (c.lazy_fns.get(it.fn_obj) ?? false)) {
-          out.push("${c.display_name(f)} -> ${c.display_name(it.fn_obj)}")
+          out.push((f, it.fn_obj))
         }
       }
     }
