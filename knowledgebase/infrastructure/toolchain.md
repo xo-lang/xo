@@ -421,6 +421,7 @@ go run ./cmd/xo doc [--json] [--all] [--dir=<dir>] [module]      # Markdown docs
 go run ./cmd/xo explain [--json] <code>                          # long form explanation of a diagnostic code
 go run ./cmd/xo mcp                                              # MCP server on stdio for agents (see "Agent interfaces")
 go run ./cmd/xo lsp                                              # LSP server on stdio for editors (see editors.md)
+# the VS Code extension (xo-lang/vscode) and its releases: editors.md "Releasing the VS Code extension"
 go run ./cmd/xo serve [--socket=path] [stop|status]              # resident checker; check and query use it when it answers
 go test ./internal/format -run TestGolden -update        # rewrite internal/format/testdata/*.golden
 go test ./internal/gen -run TestGoldenNoMono -golden-update   # rewrite want.txt of the golden programs

@@ -30,13 +30,62 @@ this repository:
   name "Xo" as taken), publisher `xo-lang`. Debugging needs Xo 0.40 or
   later (`xo debug --dap`); with an older xo the extension says so when
   a debug session starts.
-- Releases: pushing a tag `vX.Y.Z` there runs its release workflow
-  (tag checked against package.json and CHANGELOG.md, tests, the grammar
-  check, one `.vsix` published to both registries and a GitHub release);
-  the steps, the `VSCE_PAT` and `OVSX_PAT` secrets and the yearly Azure
-  DevOps token renewal are in its RELEASING.md. The owner tags releases.
+- Releases: see "Releasing the VS Code extension" below.
 
 Last verified: 2026-11-05.
+
+## Releasing the VS Code extension
+
+Owner, 2026-11-05. The extension is released from its own repository,
+[xo-lang/vscode](https://github.com/xo-lang/vscode), whose RELEASING.md
+has the same steps.
+
+- Names: the extension's display name is "Xo Language" (the Marketplace
+  refused "Xo" as taken), its id `xo-lang.xo`. The Visual Studio
+  Marketplace publisher is `xo-lang` (display name "Xo language"); the
+  Open VSX namespace is `xo-lang`. 0.1.0 was published by hand on
+  2026-11-05.
+- Tags are the owner's: an agent prepares the version and changelog
+  but never pushes a release tag.
+- Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml` there:
+  `scripts/release-check.js` (the tag must be `v` plus package.json's
+  version, and CHANGELOG.md must have a `## X.Y.Z` section that is not
+  marked unreleased; its text becomes the release notes), `npm ci`,
+  `npm test`, the grammar check, `vsce package` once, then that same
+  `.vsix` to the Marketplace (`vsce publish --packagePath`), Open VSX
+  (`ovsx publish`) and a GitHub release. The workflow has `contents:
+  write` only; its actions are pinned to commits, vsce and ovsx to exact
+  versions in package-lock.json.
+- The release commands (0.1.1 as the example), in the vscode checkout:
+
+  ```sh
+  npm version 0.1.1 --no-git-tag-version
+  # CHANGELOG.md: add "## 0.1.1 (YYYY-MM-DD)" at the top with the changes
+  node scripts/release-check.js v0.1.1 && npm test
+  git commit -am "Release 0.1.1" && git tag v0.1.1
+  git push origin main && git push origin v0.1.1
+  gh run watch --repo xo-lang/vscode
+  ```
+
+  A version publishes only once per registry: if a run fails after a
+  publish step, fix the cause and release the next patch version.
+- Secrets: `VSCE_PAT` (an Azure DevOps personal access token) and
+  `OVSX_PAT` (an open-vsx.org access token for a member of the `xo-lang`
+  namespace), set as the repository's GitHub Actions secrets
+  (`gh secret set VSCE_PAT --repo xo-lang/vscode`, or Settings, Secrets
+  and variables, Actions). Never in either repository, a commit, a file,
+  or a log.
+- Yearly renewal: Azure DevOps tokens last at most one year. Before
+  `VSCE_PAT` expires, create a new token at dev.azure.com (User
+  settings, Personal access tokens) with scope **Marketplace: Manage**
+  and organization **All accessible organizations**, then replace the
+  secret. A release that fails at the Marketplace step with a 401
+  usually means it expired. Fallback without a token: `vsce publish
+  --packagePath FILE --azure-credential` from a machine signed in with
+  the Azure CLI (Microsoft Entra ID) as a member of the publisher.
+
+Last verified: 2026-11-05.
+
 
 ## `xo lsp` (`compiler/cli/servers/`)
 
