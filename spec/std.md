@@ -6866,8 +6866,8 @@ fn encode(img: Image, level: Compression = Compression.Default) -> Bytes ! PngEr
 
 ## 49. std/jpeg
 
-Go's image/jpeg decoder over whole buffers: `decode` and `decode_config`
-(decision 0467). Baseline and progressive JPEG, every chroma subsampling
+Go's image/jpeg decoder and encoder over whole buffers: `decode`,
+`decode_config` (decision 0467) and `encode` (decision 0510). Baseline and progressive JPEG, every chroma subsampling
 ratio Go supports, restart intervals, Adobe CMYK, YCCK and RGB, and Go
 1.26's integer IDCT, so the decoded planes are the bytes Go's decoder
 returns. One `Image` struct holds Go's four decoded image types. Pure.
@@ -6878,13 +6878,14 @@ enum Subsample { S444, S440, S422, S420, S411, S410 } derive Eq, Display
 struct Image { width: Int, height: Int, model: Model, subsample: Subsample = Subsample.S444,
                pix: Bytes = b"", y: Bytes = b"", cb: Bytes = b"", cr: Bytes = b"" }
 struct Config { width: Int, height: Int, model: Model }
-enum JpegErr { Format(msg: Str), Unsupported(msg: Str), Truncated }
+enum JpegErr { Format(msg: Str), Unsupported(msg: Str), Truncated, Encode(msg: Str) }
 fn (e: JpegErr) display() -> Str
 fn (img: Image) chroma_width() -> Int
 fn (img: Image) chroma_height() -> Int
 fn (img: Image) to_rgba() -> Bytes
 fn decode(data: Bytes, max_pixels: Int = 100000000) -> Image ! JpegErr
 fn decode_config(data: Bytes) -> Config ! JpegErr
+fn encode(img: Image, quality: Int = 75) -> Bytes ! JpegErr
 ```
 
 - `decode` returns the type Go's `jpeg.Decode` does: Gray for one component,
@@ -6900,8 +6901,17 @@ fn decode_config(data: Bytes) -> Config ! JpegErr
   full text) and `Truncated` for `unexpected EOF`. A frame header asking for
   more than `max_pixels` pixels is `Format("image too large")`, refused before
   anything is allocated (Go allocates from the header).
-- Not ported: the `image.Image` interface, `jpeg.Encode`, and the `Reader`
-  interface (whole buffers only).
+- `encode` is Go's `jpeg.Encode` with `Options{Quality: quality}`, byte for
+  byte: baseline JPEG with the standard Huffman tables, quality scaled
+  quantization tables, Go's integer forward DCT, one component for Gray and
+  4:2:0 for every other input (a YCbCr of any `subsample` is resampled as Go
+  does; RGBA ignores alpha, as Go's `image.RGBA` fast path; CMYK goes through
+  Go's generic path). `quality` is clamped to 1..100. A width or height of
+  65,536 or more is `Encode("jpeg: image is too large to encode")`; an
+  `Image` whose `pix` or planes do not match its size is a fault, as in
+  `png.encode`. A zero size image gives what Go gives.
+- Not ported: the `image.Image` interface, a streaming encoder, and the
+  `Reader` interface (whole buffers only).
 
 ## 50. std/cbor
 

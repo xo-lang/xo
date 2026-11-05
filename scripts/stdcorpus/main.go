@@ -73,6 +73,7 @@ var generators = map[string]func() string{
 	"path":       pathCorpus,
 	"cbor":       cborCorpus,
 	"jpeg":       jpegCorpus,
+	"jpegenc":    jpegencCorpus,
 	"png":        pngCorpus,
 	"prelude":    preludeCorpus,
 	"regexp":     regexpCorpus,

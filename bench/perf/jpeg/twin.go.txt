@@ -50,5 +50,33 @@ func main() {
 			}
 		}
 	}
+	if w == "encode" || w == "encrgba" {
+		var imgs []image.Image
+		for _, f := range fs {
+			img, err := jpeg.Decode(bytes.NewReader(f))
+			if err != nil {
+				panic("decode")
+			}
+			if w == "encrgba" {
+				b := img.Bounds()
+				rgba := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+				draw.Draw(rgba, rgba.Bounds(), img, b.Min, draw.Src)
+				imgs = append(imgs, rgba)
+			} else {
+				imgs = append(imgs, img)
+			}
+		}
+		var buf bytes.Buffer
+		for p := 0; p < 100; p++ {
+			for _, img := range imgs {
+				buf.Reset()
+				if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 75}); err != nil {
+					panic("encode")
+				}
+				out := buf.Bytes()
+				sum += len(out) + int(out[len(out)/2]) + int(out[len(out)-1])
+			}
+		}
+	}
 	fmt.Println(w, sum+len(fs))
 }

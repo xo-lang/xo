@@ -52,13 +52,15 @@ struct Config {
 }
 
 /// Go's errors: `invalid JPEG format: ...` (Format), `unsupported JPEG
-/// feature: ...` (Unsupported) and `unexpected EOF` (Truncated); also Format
+/// feature: ...` (Unsupported) and `unexpected EOF` (Truncated); Encode is
+/// Go's `jpeg: image is too large to encode` (decision 0510); also Format
 /// for a JPEG whose frame header asks for more than max_pixels pixels,
 /// `image too large`.
 enum JpegErr {
   Format(msg: Str)
   Unsupported(msg: Str)
   Truncated
+  Encode(msg: Str)
 }
 
 fn (e: JpegErr) display() -> Str
@@ -78,3 +80,12 @@ fn decode(data: Bytes, max_pixels: Int = 100000000) -> Image ! JpegErr
 
 /// Go's jpeg.DecodeConfig: the size and image type without the pixels.
 fn decode_config(data: Bytes) -> Config ! JpegErr
+
+/// Go's jpeg.Encode with `Options{Quality: quality}` (decision 0510): baseline
+/// 4:2:0 (one component for Gray), the standard Huffman tables, the quality
+/// scaled quantization tables, Go's integer forward DCT, so the bytes are the
+/// bytes Go writes. Gray, YCbCr (any subsample ratio), RGBA (Go's image.RGBA
+/// fast path: premultiplied, alpha ignored) and CMYK inputs; `quality` is
+/// clamped to 1..100. A width or height of 65,536 or more is
+/// `JpegErr.Encode`; planes that do not match the size are a fault.
+fn encode(img: Image, quality: Int = 75) -> Bytes ! JpegErr

@@ -1,5 +1,19 @@
 # std/jpeg changes
 
+## 2026-11-05: feature: jpeg.encode, Go's image/jpeg Encode byte for byte
+
+- Kind: feature
+- Commit: this commit
+- Found by: roadmap (Xo Lead), decision 0510
+- Go reference: image/jpeg writer.go and dct.go (go1.26.1)
+- Test: testdata/corpus/jpegenc (245 generated cases of every kind at odd sizes and qualities, CRC-32 and length against Go's output, small ones in full), `TestJpegEncFuzz` (fresh seeds), bench/perf/jpeg `encode` and `encrgba` (twincheck)
+
+New `jpeg.encode(img, quality = 75) -> Bytes ! JpegErr`: baseline JPEG, the standard Huffman
+tables, quality scaled quantization tables and Go's integer forward DCT, so the output is the
+bytes Go writes. Gray is one component; every other input is written 4:2:0 (a YCbCr of any
+ratio is resampled as Go does). New `JpegErr.Encode(msg)` carries Go's `jpeg: image is too
+large to encode`. Mismatched planes are a fault, as in `png.encode`.
+
 ## 2026-11-03: port: std/jpeg, Go's image/jpeg decode and decode_config
 
 - Kind: port

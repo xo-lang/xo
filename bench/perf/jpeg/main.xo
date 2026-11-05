@@ -1,8 +1,9 @@
 // jpeg: std/jpeg decode of four of Go's test images (video-001.jpeg baseline 4:4:4,
 // video-001.q50.420.progressive.jpeg, video-005.gray.jpeg, video-001.restart2.jpeg),
 // 100 passes, against Go's image/jpeg (twin.go.txt). Usage: `<program>
-// decode|rgba|none` (rgba also converts each image to 8 bit RGBA; none: the setup
-// alone). Prints `<workload> <checksum>`; the twin prints the same.
+// decode|rgba|encode|encrgba|none` (rgba also converts each image to 8 bit RGBA;
+// encode writes each decoded image back 100 times at quality 75, encrgba the same
+// images as RGBA; none: the setup alone). Prints `<workload> <checksum>`; the twin prints the same.
 use std/jpeg
 
 fn files() -> List[Bytes] {
@@ -35,6 +36,23 @@ fn main(os: Os) {
           }
           Err(_) => {}
         }
+      }
+    }
+  }
+  if w == "encode" || w == "encrgba" {
+    var imgs: List[jpeg.Image] = []
+    for f in fs {
+      let img = jpeg.decode(f).ok() ?? fault("decode")
+      if w == "encrgba" {
+        imgs.push(jpeg.Image{width: img.width, height: img.height, model: jpeg.Model.RGBA, pix: img.to_rgba()})
+      } else {
+        imgs.push(img)
+      }
+    }
+    for _ in 0..100 {
+      for img in imgs {
+        let out = jpeg.encode(img, 75).ok() ?? fault("encode")
+        sum += out.len() + Int(out[out.len() / 2]) + Int(out[out.len() - 1])
       }
     }
   }

@@ -87,6 +87,7 @@ fn jpegerr_display(e: jpeg.JpegErr) -> Str {
     jpeg.JpegErr.Format(msg) => "invalid JPEG format: " + msg
     jpeg.JpegErr.Unsupported(msg) => "unsupported JPEG feature: " + msg
     jpeg.JpegErr.Truncated => "unexpected EOF"
+    jpeg.JpegErr.Encode(msg) => msg
   }
 }
 
@@ -1642,4 +1643,1360 @@ fn idct_cols(var b: List[Int]) {
     b[48 + i] = (((x6 + 2147483648) & 4294967295) - 2147483648) >> 18
     b[56 + i] = (((x7 + 2147483648) & 4294967295) - 2147483648) >> 18
   }
+}
+
+// ---- jpeg.encode (decision 0510): Go's image/jpeg writer.go and fdct
+// (dct.go), Copyright 2009 and 2025 The Go Authors, BSD-style license ----
+
+const FD_COS3_18: Int = 217965
+const FD_SIN3_18: Int = 145639
+const FD_COS1_18: Int = 257107
+const FD_SIN1_18: Int = 51142
+const FD_S2C6_18: Int = 141871
+const FD_S2S6_18: Int = 342508
+const FD_SQRT2_12: Int = 5793
+const FD_COS3_14: Int = 13623
+const FD_SIN3_14: Int = 9102
+const FD_COS1_14: Int = 16069
+const FD_SIN1_14: Int = 3196
+const FD_S2C6_14: Int = 8867
+const FD_S2S6_14: Int = 21407
+const FD_SQRT2_14: Int = 23170
+
+const ENC_QUANT_LUMA: List[Int] = [
+  16,
+  11,
+  12,
+  14,
+  12,
+  10,
+  16,
+  14,
+  13,
+  14,
+  18,
+  17,
+  16,
+  19,
+  24,
+  40,
+  26,
+  24,
+  22,
+  22,
+  24,
+  49,
+  35,
+  37,
+  29,
+  40,
+  58,
+  51,
+  61,
+  60,
+  57,
+  51,
+  56,
+  55,
+  64,
+  72,
+  92,
+  78,
+  64,
+  68,
+  87,
+  69,
+  55,
+  56,
+  80,
+  109,
+  81,
+  87,
+  95,
+  98,
+  103,
+  104,
+  103,
+  62,
+  77,
+  113,
+  121,
+  112,
+  100,
+  120,
+  92,
+  101,
+  103,
+  99,
+]
+
+const ENC_QUANT_CHROMA: List[Int] = [
+  17,
+  18,
+  18,
+  24,
+  21,
+  24,
+  47,
+  26,
+  26,
+  47,
+  99,
+  66,
+  56,
+  66,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+  99,
+]
+
+const ENC_LUM_DC_COUNT: List[Int] = [
+  0,
+  1,
+  5,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+]
+
+const ENC_LUM_DC_VALUE: List[Int] = [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+]
+
+const ENC_LUM_AC_COUNT: List[Int] = [
+  0,
+  2,
+  1,
+  3,
+  3,
+  2,
+  4,
+  3,
+  5,
+  5,
+  4,
+  4,
+  0,
+  0,
+  1,
+  125,
+]
+
+const ENC_LUM_AC_VALUE: List[Int] = [
+  1,
+  2,
+  3,
+  0,
+  4,
+  17,
+  5,
+  18,
+  33,
+  49,
+  65,
+  6,
+  19,
+  81,
+  97,
+  7,
+  34,
+  113,
+  20,
+  50,
+  129,
+  145,
+  161,
+  8,
+  35,
+  66,
+  177,
+  193,
+  21,
+  82,
+  209,
+  240,
+  36,
+  51,
+  98,
+  114,
+  130,
+  9,
+  10,
+  22,
+  23,
+  24,
+  25,
+  26,
+  37,
+  38,
+  39,
+  40,
+  41,
+  42,
+  52,
+  53,
+  54,
+  55,
+  56,
+  57,
+  58,
+  67,
+  68,
+  69,
+  70,
+  71,
+  72,
+  73,
+  74,
+  83,
+  84,
+  85,
+  86,
+  87,
+  88,
+  89,
+  90,
+  99,
+  100,
+  101,
+  102,
+  103,
+  104,
+  105,
+  106,
+  115,
+  116,
+  117,
+  118,
+  119,
+  120,
+  121,
+  122,
+  131,
+  132,
+  133,
+  134,
+  135,
+  136,
+  137,
+  138,
+  146,
+  147,
+  148,
+  149,
+  150,
+  151,
+  152,
+  153,
+  154,
+  162,
+  163,
+  164,
+  165,
+  166,
+  167,
+  168,
+  169,
+  170,
+  178,
+  179,
+  180,
+  181,
+  182,
+  183,
+  184,
+  185,
+  186,
+  194,
+  195,
+  196,
+  197,
+  198,
+  199,
+  200,
+  201,
+  202,
+  210,
+  211,
+  212,
+  213,
+  214,
+  215,
+  216,
+  217,
+  218,
+  225,
+  226,
+  227,
+  228,
+  229,
+  230,
+  231,
+  232,
+  233,
+  234,
+  241,
+  242,
+  243,
+  244,
+  245,
+  246,
+  247,
+  248,
+  249,
+  250,
+]
+
+const ENC_CHR_DC_COUNT: List[Int] = [
+  0,
+  3,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  0,
+  0,
+  0,
+]
+
+const ENC_CHR_DC_VALUE: List[Int] = [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+]
+
+const ENC_CHR_AC_COUNT: List[Int] = [
+  0,
+  2,
+  1,
+  2,
+  4,
+  4,
+  3,
+  4,
+  7,
+  5,
+  4,
+  4,
+  0,
+  1,
+  2,
+  119,
+]
+
+const ENC_CHR_AC_VALUE: List[Int] = [
+  0,
+  1,
+  2,
+  3,
+  17,
+  4,
+  5,
+  33,
+  49,
+  6,
+  18,
+  65,
+  81,
+  7,
+  97,
+  113,
+  19,
+  34,
+  50,
+  129,
+  8,
+  20,
+  66,
+  145,
+  161,
+  177,
+  193,
+  9,
+  35,
+  51,
+  82,
+  240,
+  21,
+  98,
+  114,
+  209,
+  10,
+  22,
+  36,
+  52,
+  225,
+  37,
+  241,
+  23,
+  24,
+  25,
+  26,
+  38,
+  39,
+  40,
+  41,
+  42,
+  53,
+  54,
+  55,
+  56,
+  57,
+  58,
+  67,
+  68,
+  69,
+  70,
+  71,
+  72,
+  73,
+  74,
+  83,
+  84,
+  85,
+  86,
+  87,
+  88,
+  89,
+  90,
+  99,
+  100,
+  101,
+  102,
+  103,
+  104,
+  105,
+  106,
+  115,
+  116,
+  117,
+  118,
+  119,
+  120,
+  121,
+  122,
+  130,
+  131,
+  132,
+  133,
+  134,
+  135,
+  136,
+  137,
+  138,
+  146,
+  147,
+  148,
+  149,
+  150,
+  151,
+  152,
+  153,
+  154,
+  162,
+  163,
+  164,
+  165,
+  166,
+  167,
+  168,
+  169,
+  170,
+  178,
+  179,
+  180,
+  181,
+  182,
+  183,
+  184,
+  185,
+  186,
+  194,
+  195,
+  196,
+  197,
+  198,
+  199,
+  200,
+  201,
+  202,
+  210,
+  211,
+  212,
+  213,
+  214,
+  215,
+  216,
+  217,
+  218,
+  226,
+  227,
+  228,
+  229,
+  230,
+  231,
+  232,
+  233,
+  234,
+  242,
+  243,
+  244,
+  245,
+  246,
+  247,
+  248,
+  249,
+  250,
+]
+
+const ENC_BITCOUNT: List[Int] = [
+  0,
+  1,
+  2,
+  2,
+  3,
+  3,
+  3,
+  3,
+  4,
+  4,
+  4,
+  4,
+  4,
+  4,
+  4,
+  4,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  5,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  6,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  7,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+]
+
+struct Enc {
+  out: BytesBuilder
+  acc: Int
+  n: Int
+}
+
+fn enc_emit(var e: Enc, bits: Int, nb: Int) {
+  e.acc = (e.acc << nb) | bits
+  e.n += nb
+  while e.n >= 8 {
+    let b = (e.acc >> (e.n - 8)) & 255
+    e.out.write_byte(UInt8(b))
+    if b == 255 {
+      e.out.write_byte(UInt8(0))
+    }
+    e.n -= 8
+  }
+  e.acc = e.acc & ((1 << e.n) - 1)
+}
+
+/// A look-up table of a Huffman specification: the codeword size in the high
+/// bits (shifted by 24) and the codeword in the low 24 (Go's huffmanLUT).
+fn enc_lut(count: List[Int], value: List[Int]) -> List[Int] {
+  var lut = zlist(256)
+  var code = 0
+  var k = 0
+  for i in 0..16 {
+    let nbits = (i + 1) << 24
+    for _j in 0..count[i] {
+      lut[value[k]] = nbits | code
+      code += 1
+      k += 1
+    }
+    code = code << 1
+  }
+  lut
+}
+
+fn enc_huff(var e: Enc, lut: List[Int], value: Int) {
+  let x = lut[value]
+  enc_emit(e, x & 16777215, x >> 24)
+}
+
+fn enc_huff_rle(var e: Enc, lut: List[Int], run: Int, value: Int) {
+  var a = value
+  var b = value
+  if a < 0 {
+    a = -value
+    b = value - 1
+  }
+  var nbits = 0
+  if a < 256 {
+    nbits = ENC_BITCOUNT[a]
+  } else {
+    nbits = 8 + ENC_BITCOUNT[a >> 8]
+  }
+  enc_huff(e, lut, (run << 4) | nbits)
+  if nbits > 0 {
+    enc_emit(e, b & ((1 << nbits) - 1), nbits)
+  }
+}
+
+/// Go's div: a / d rounded to the nearest integer, not toward zero, as a
+/// multiply by m = ceil(2^31 / d) (exact for |a| below 2^20, d below 2^11
+/// here; the coefficients are below 2^15).
+fn enc_div(a: Int, d: Int, m: Int) -> Int {
+  if a >= 0 {
+    return ((a + (d >> 1)) * m) >> 31
+  }
+  -(((d >> 1) - a) * m >> 31)
+}
+
+/// The divisors 8 * quant and their multipliers for enc_div.
+fn enc_divs(quant: List[Int]) -> List[Int] {
+  var out = zlist(128)
+  for j in 0..64 {
+    let d = 8 * quant[j]
+    out[j] = d
+    out[64 + j] = (2147483648 + d - 1) / d
+  }
+  out
+}
+
+/// The forward DCT of Go's dct.go on the 64 values of b at off, in place.
+fn fdct(var b: List[Int], off: Int) {
+  for i in 0..8 {
+    var x0 = b[off + i]
+    var x1 = b[off + 8 + i]
+    var x2 = b[off + 16 + i]
+    var x3 = b[off + 24 + i]
+    var x4 = b[off + 32 + i]
+    var x5 = b[off + 40 + i]
+    var x6 = b[off + 48 + i]
+    var x7 = b[off + 56 + i]
+    var t = x0 + x7
+    x7 = x0 - x7
+    x0 = t
+    t = x1 + x6
+    x6 = x1 - x6
+    x1 = t
+    t = x2 + x5
+    x5 = x2 - x5
+    x2 = t
+    t = x3 + x4
+    x4 = x3 - x4
+    x3 = t
+    var ks = FD_COS3_18 * (x4 + x7)
+    t = ks + (FD_SIN3_18 - FD_COS3_18) * x7
+    x7 = ks - (FD_COS3_18 + FD_SIN3_18) * x4
+    x4 = t
+    ks = FD_COS1_18 * (x5 + x6)
+    t = ks + (FD_SIN1_18 - FD_COS1_18) * x6
+    x6 = ks - (FD_COS1_18 + FD_SIN1_18) * x5
+    x5 = t
+    t = x0 + x3
+    x3 = x0 - x3
+    x0 = t
+    t = x1 + x2
+    x2 = x1 - x2
+    x1 = t
+    ks = FD_S2C6_18 * (x2 + x3)
+    t = ks + (FD_S2S6_18 - FD_S2C6_18) * x3
+    x3 = ks - (FD_S2C6_18 + FD_S2S6_18) * x2
+    x2 = t
+    t = x0 + x1
+    x1 = x0 - x1
+    x0 = t
+    b[off + i] = (x0 - 1024) << 18
+    b[off + 32 + i] = x1 << 18
+    b[off + 16 + i] = x2
+    b[off + 48 + i] = x3
+    t = x4 + x6
+    x6 = x4 - x6
+    x4 = t
+    t = x7 + x5
+    x5 = x7 - x5
+    x7 = t
+    x5 = (x5 >> 12) * FD_SQRT2_12
+    x6 = (x6 >> 12) * FD_SQRT2_12
+    t = x7 + x4
+    x4 = x7 - x4
+    x7 = t
+    b[off + 8 + i] = x7
+    b[off + 24 + i] = x5
+    b[off + 40 + i] = x6
+    b[off + 56 + i] = x4
+  }
+  for i in 0..8 {
+    let r = off + 8 * i
+    var x0 = b[r]
+    var x1 = b[r + 1]
+    var x2 = b[r + 2]
+    var x3 = b[r + 3]
+    var x4 = b[r + 4]
+    var x5 = b[r + 5]
+    var x6 = b[r + 6]
+    var x7 = b[r + 7]
+    var t = x0 + x7
+    x7 = x0 - x7
+    x0 = t
+    t = x1 + x6
+    x6 = x1 - x6
+    x1 = t
+    t = x2 + x5
+    x5 = x2 - x5
+    x2 = t
+    t = x3 + x4
+    x4 = x3 - x4
+    x3 = t
+    var a = x4 >> 14
+    var c = x7 >> 14
+    var ks = FD_COS3_14 * (a + c)
+    x4 = ks + (FD_SIN3_14 - FD_COS3_14) * c
+    x7 = ks - (FD_COS3_14 + FD_SIN3_14) * a
+    a = x5 >> 14
+    c = x6 >> 14
+    ks = FD_COS1_14 * (a + c)
+    x5 = ks + (FD_SIN1_14 - FD_COS1_14) * c
+    x6 = ks - (FD_COS1_14 + FD_SIN1_14) * a
+    t = x0 + x3
+    x3 = x0 - x3
+    x0 = t
+    t = x1 + x2
+    x2 = x1 - x2
+    x1 = t
+    a = x2 >> 14
+    c = x3 >> 14
+    ks = FD_S2C6_14 * (a + c)
+    x2 = ks + (FD_S2S6_14 - FD_S2C6_14) * c
+    x3 = ks - (FD_S2C6_14 + FD_S2S6_14) * a
+    t = x0 + x1
+    x1 = x0 - x1
+    x0 = t
+    t = x4 + x6
+    x6 = x4 - x6
+    x4 = t
+    t = x7 + x5
+    x5 = x7 - x5
+    x7 = t
+    x5 = (x5 >> 14) * FD_SQRT2_14
+    x6 = (x6 >> 14) * FD_SQRT2_14
+    t = x7 + x4
+    x4 = x7 - x4
+    x7 = t
+    b[r] = (x0 + 131072) >> 18
+    b[r + 1] = (x7 + 131072) >> 18
+    b[r + 2] = (x2 + 131072) >> 18
+    b[r + 3] = (x5 + 131072) >> 18
+    b[r + 4] = (x1 + 131072) >> 18
+    b[r + 5] = (x6 + 131072) >> 18
+    b[r + 6] = (x3 + 131072) >> 18
+    b[r + 7] = (x4 + 131072) >> 18
+  }
+}
+
+/// Go's writeBlock: the block at off (natural order), quantized with q and
+/// written; the DC value (post quantization) is returned.
+fn enc_block(var e: Enc, var b: List[Int], off: Int, dv: List[Int], dc_lut: List[Int], ac_lut: List[Int], prev_dc: Int) -> Int {
+  fdct(b, off)
+  let dc = enc_div(b[off], dv[0], dv[64])
+  enc_huff_rle(e, dc_lut, 0, dc - prev_dc)
+  var run = 0
+  for zig in 1..64 {
+    let ac = enc_div(b[off + UNZIG[zig]], dv[zig], dv[64 + zig])
+    if ac == 0 {
+      run += 1
+    } else {
+      while run > 15 {
+        enc_huff(e, ac_lut, 240)
+        run -= 16
+      }
+      enc_huff_rle(e, ac_lut, run, ac)
+      run = 0
+    }
+  }
+  if run > 0 {
+    enc_huff(e, ac_lut, 0)
+  }
+  dc
+}
+
+/// color.RGBToYCbCr.
+fn rgb_ycc(r: Int, g: Int, b: Int) -> (Int, Int, Int) {
+  let yy = (19595 * r + 38470 * g + 7471 * b + 32768) >> 16
+  var cb = -11056 * r - 21712 * g + 32768 * b + 8421376
+  if cb < 0 {
+    cb = 0
+  } else {
+    cb = cb >> 16
+    if cb > 255 {
+      cb = 255
+    }
+  }
+  var cr = 32768 * r - 27440 * g - 5328 * b + 8421376
+  if cr < 0 {
+    cr = 0
+  } else {
+    cr = cr >> 16
+    if cr > 255 {
+      cr = 255
+    }
+  }
+  (yy, cb, cr)
+}
+
+fn min2(a: Int, b: Int) -> Int { if a < b { a } else { b } }
+
+/// Go's scale: the 16x16 region of the four blocks at 256 of src to the 8x8
+/// block at 0 of dst.
+fn enc_scale(var dst: List[Int], src: List[Int]) {
+  for i in 0..4 {
+    let dst_off = ((i & 2) << 4) | ((i & 1) << 2)
+    for y in 0..4 {
+      for x in 0..4 {
+        let j = 16 * y + 2 * x
+        let s = src[i * 64 + j] + src[i * 64 + j + 1] + src[i * 64 + j + 8] + src[i * 64 + j + 9]
+        dst[8 * y + x + dst_off] = (s + 2) >> 2
+      }
+    }
+  }
+}
+
+/// Go's jpeg.Encode on an image of std/jpeg's types.
+fn encode(img: jpeg.Image, quality: Int) -> Bytes ! jpeg.JpegErr {
+  let w = img.width
+  let h = img.height
+  if w >= 65536 || h >= 65536 {
+    return Err(jpeg.JpegErr.Encode(msg: "jpeg: image is too large to encode"))
+  }
+  let gray = img.model == jpeg.Model.Gray
+  if w < 0 || h < 0 {
+    fault("jpeg.encode: negative size ${w}x${h}")
+  }
+  if gray && img.pix.len() != w * h {
+    fault("jpeg.encode: pix has ${img.pix.len()} bytes, want ${w * h} for ${w}x${h}")
+  }
+  if (img.model == jpeg.Model.RGBA || img.model == jpeg.Model.CMYK) && img.pix.len() != w * h * 4 {
+    fault("jpeg.encode: pix has ${img.pix.len()} bytes, want ${w * h * 4} for ${w}x${h}")
+  }
+  var q = quality
+  if q < 1 {
+    q = 1
+  } else if q > 100 {
+    q = 100
+  }
+  var sc = 0
+  if q < 50 {
+    sc = 5000 / q
+  } else {
+    sc = 200 - q * 2
+  }
+  var quant_y = zlist(64)
+  var quant_c = zlist(64)
+  for j in 0..64 {
+    var x = (ENC_QUANT_LUMA[j] * sc + 50) / 100
+    if x < 1 {
+      x = 1
+    } else if x > 255 {
+      x = 255
+    }
+    quant_y[j] = x
+    var z = (ENC_QUANT_CHROMA[j] * sc + 50) / 100
+    if z < 1 {
+      z = 1
+    } else if z > 255 {
+      z = 255
+    }
+    quant_c[j] = z
+  }
+  var cw = 0
+  var ch = 0
+  var sx = 1
+  var sy = 1
+  if img.model == jpeg.Model.YCbCr {
+    cw = image_chroma_width(img)
+    ch = image_chroma_height(img)
+    if img.y.len() != w * h || img.cb.len() != cw * ch || img.cr.len() != cw * ch {
+      fault("jpeg.encode: planes do not match ${w}x${h}")
+    }
+    let rt = ratios(img.subsample)
+    sx = rt.0
+    sy = rt.1
+  }
+  let dv_y = enc_divs(quant_y)
+  let dv_c = enc_divs(quant_c)
+  let ncomp = if gray { 1 } else { 3 }
+  let lum_dc = enc_lut(ENC_LUM_DC_COUNT, ENC_LUM_DC_VALUE)
+  let lum_ac = enc_lut(ENC_LUM_AC_COUNT, ENC_LUM_AC_VALUE)
+  let chr_dc = enc_lut(ENC_CHR_DC_COUNT, ENC_CHR_DC_VALUE)
+  let chr_ac = enc_lut(ENC_CHR_AC_COUNT, ENC_CHR_AC_VALUE)
+  var e = Enc{out: BytesBuilder.with_capacity(w * h / 4 + 700), acc: 0, n: 0}
+  e.out.write(b"\xff\xd8")
+  e.out.write(b"\xff\xdb\x00\x84")
+  e.out.write_byte(UInt8(0))
+  for j in 0..64 {
+    e.out.write_byte(UInt8(quant_y[j]))
+  }
+  e.out.write_byte(UInt8(1))
+  for j in 0..64 {
+    e.out.write_byte(UInt8(quant_c[j]))
+  }
+  e.out.write(b"\xff\xc0")
+  e.out.write_byte(UInt8(0))
+  e.out.write_byte(UInt8(8 + 3 * ncomp))
+  e.out.write_byte(UInt8(8))
+  e.out.write_byte(UInt8(h >> 8))
+  e.out.write_byte(UInt8(h & 255))
+  e.out.write_byte(UInt8(w >> 8))
+  e.out.write_byte(UInt8(w & 255))
+  e.out.write_byte(UInt8(ncomp))
+  if gray {
+    e.out.write(b"\x01\x11\x00")
+  } else {
+    e.out.write(b"\x01\x22\x00\x02\x11\x01\x03\x11\x01")
+  }
+  var mlen = 2
+  mlen += 1 + 16 + ENC_LUM_DC_VALUE.len()
+  mlen += 1 + 16 + ENC_LUM_AC_VALUE.len()
+  if !gray {
+    mlen += 1 + 16 + ENC_CHR_DC_VALUE.len()
+    mlen += 1 + 16 + ENC_CHR_AC_VALUE.len()
+  }
+  e.out.write(b"\xff\xc4")
+  e.out.write_byte(UInt8(mlen >> 8))
+  e.out.write_byte(UInt8(mlen & 255))
+  e.out.write_byte(UInt8(0))
+  for v in ENC_LUM_DC_COUNT {
+    e.out.write_byte(UInt8(v))
+  }
+  for v in ENC_LUM_DC_VALUE {
+    e.out.write_byte(UInt8(v))
+  }
+  e.out.write_byte(UInt8(16))
+  for v in ENC_LUM_AC_COUNT {
+    e.out.write_byte(UInt8(v))
+  }
+  for v in ENC_LUM_AC_VALUE {
+    e.out.write_byte(UInt8(v))
+  }
+  if !gray {
+    e.out.write_byte(UInt8(1))
+    for v in ENC_CHR_DC_COUNT {
+      e.out.write_byte(UInt8(v))
+    }
+    for v in ENC_CHR_DC_VALUE {
+      e.out.write_byte(UInt8(v))
+    }
+    e.out.write_byte(UInt8(17))
+    for v in ENC_CHR_AC_COUNT {
+      e.out.write_byte(UInt8(v))
+    }
+    for v in ENC_CHR_AC_VALUE {
+      e.out.write_byte(UInt8(v))
+    }
+  }
+  if gray {
+    e.out.write(b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00")
+  } else {
+    e.out.write(b"\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00")
+  }
+  let xmax = w - 1
+  let ymax = h - 1
+  let shx = if sx == 4 { 2 } else if sx == 2 { 1 } else { 0 }
+  let shy = if sy == 2 { 1 } else { 0 }
+  let mk = if img.model == jpeg.Model.YCbCr { 1 } else if img.model == jpeg.Model.RGBA { 2 } else { 3 }
+  let ypl = img.y
+  let cbpl = img.cb
+  let crpl = img.cr
+  let pxs = img.pix
+  var b = zlist(64)
+  var cbs = zlist(256)
+  var crs = zlist(256)
+  var prev_y = 0
+  var prev_cb = 0
+  var prev_cr = 0
+  if gray {
+    var y = 0
+    while y < h {
+      var x = 0
+      while x < w {
+        for j in 0..8 {
+          let row = min2(y + j, ymax) * w
+          for i in 0..8 {
+            b[8 * j + i] = Int(pxs[row + min2(x + i, xmax)])
+          }
+        }
+        prev_y = enc_block(e, b, 0, dv_y, lum_dc, lum_ac, prev_y)
+        x += 8
+      }
+      y += 8
+    }
+  } else {
+    var y = 0
+    while y < h {
+      var x = 0
+      while x < w {
+        for blk in 0..4 {
+          let px = x + (blk & 1) * 8
+          let py = y + ((blk & 2) * 4)
+          for j in 0..8 {
+            let syy = min2(py + j, ymax)
+            for i in 0..8 {
+              let sxx = min2(px + i, xmax)
+              var yv = 0
+              var cbv = 0
+              var crv = 0
+              if mk == 1 {
+                yv = Int(ypl[syy * w + sxx])
+                let ci = (syy >> shy) * cw + (sxx >> shx)
+                cbv = Int(cbpl[ci])
+                crv = Int(crpl[ci])
+              } else if mk == 2 {
+                let o = (syy * w + sxx) * 4
+                let t = rgb_ycc(Int(pxs[o]), Int(pxs[o + 1]), Int(pxs[o + 2]))
+                yv = t.0
+                cbv = t.1
+                crv = t.2
+              } else {
+                let o = (syy * w + sxx) * 4
+                let wk = 65535 - Int(pxs[o + 3]) * 257
+                let r = (65535 - Int(pxs[o]) * 257) * wk / 65535
+                let g = (65535 - Int(pxs[o + 1]) * 257) * wk / 65535
+                let bl = (65535 - Int(pxs[o + 2]) * 257) * wk / 65535
+                let t = rgb_ycc(r >> 8, g >> 8, bl >> 8)
+                yv = t.0
+                cbv = t.1
+                crv = t.2
+              }
+              b[8 * j + i] = yv
+              cbs[blk * 64 + 8 * j + i] = cbv
+              crs[blk * 64 + 8 * j + i] = crv
+            }
+          }
+          prev_y = enc_block(e, b, 0, dv_y, lum_dc, lum_ac, prev_y)
+        }
+        enc_scale(b, cbs)
+        prev_cb = enc_block(e, b, 0, dv_c, chr_dc, chr_ac, prev_cb)
+        enc_scale(b, crs)
+        prev_cr = enc_block(e, b, 0, dv_c, chr_dc, chr_ac, prev_cr)
+        x += 16
+      }
+      y += 16
+    }
+  }
+  enc_emit(e, 127, 7)
+  e.out.write(b"\xff\xd9")
+  Ok(e.out.freeze())
 }

@@ -28,8 +28,8 @@ integer arithmetic, so the output is Go's bytes (byte for byte, not only a decod
   `DefaultQuality` 75.
 - Errors: a width or height of 65,536 or more gives Go's `jpeg: image is too large to encode`
   as a new `JpegErr.Encode(msg: Str)` variant; an `Image` whose plane lengths disagree with its
-  size gives `Encode("jpeg: inconsistent image")` (Xo's own, since Go's images cannot be
-  inconsistent). A zero size image encodes as Go does (the differential decides).
+  size is a `fault` (as `png.encode`: Go's images cannot be inconsistent, so it is a
+  caller bug, not an error value). A zero size image encodes as Go does (the differential decides).
 - No streaming writer in this decision: the encoder returns a whole buffer like `png.encode`.
   Go's buffered writer and its sticky error have no counterpart (no I/O errors here).
 - The Huffman tables, `unscaledQuant`, `bitCount` and the zig-zag order are Go's constants;
