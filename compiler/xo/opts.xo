@@ -137,6 +137,11 @@ struct Opts {
   /// binary changed; --grace: how long a restart waits for the program
   /// to exit after SIGTERM.
   watch: Bool = false
+  /// --binfo-stable (hidden; the builds of `xo run --watch`): the build
+  /// information records "-" for each source's sha256 and leaves them out
+  /// of the build ID, so an edit that changes no code (a comment that
+  /// moves no line) builds the same binary and the watch does not restart
+  binfo_stable: Bool = false
   grace: Duration = 5s
   /// The directories (build, test, asm) or the one directory of run.
   dirs: List[Str] = []
@@ -162,7 +167,7 @@ fn value_flags() -> List[Str] {
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "fail-empty", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "trimpath", "inline-str", "pack-lists", "watch", "debug-contracts", "dbg"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "fail-empty", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "trimpath", "inline-str", "pack-lists", "watch", "debug-contracts", "dbg", "binfo-stable"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -748,6 +753,8 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.no_arenas = on
   } else if name == "no-preempt" {
     o.no_preempt = on
+  } else if name == "binfo-stable" {
+    o.binfo_stable = on
   } else if name == "no-gc" {
     o.no_gc = on
   } else if name == "holes" {

@@ -131,6 +131,14 @@ func TestRunWatch(t *testing.T) {
 	}
 	second := c.PID
 
+	// a comment that moves no line changes no code: the binary is the
+	// same (the watch's builds record no source digests), so no restart
+	write("main.xo", strings.ReplaceAll(watchProg, "VERSION", "v2")+"// a comment only\n")
+	c = next("a comment-only edit")
+	if c.Build != "unchanged" || c.Restarted || !alive(second) {
+		t.Errorf("a comment-only edit: %+v (want unchanged, %d still running)", c, second)
+	}
+
 	write("main.xo", "fn main( {\n")
 	c = next("a broken edit")
 	if c.Build != "failed" || c.Restarted || !alive(second) {

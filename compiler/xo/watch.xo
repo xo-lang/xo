@@ -175,7 +175,9 @@ struct Built {
 }
 
 fn build_once(os: Os, o: Opts, xo_bin: Str, flags: List[Str], out: Str) -> Built {
-  var words = ["build"] + flags + ["-o", out]
+  // --binfo-stable: the build information records no source digests, or
+  // every edit (a comment too) would change the binary and restart
+  var words = ["build", "--binfo-stable"] + flags + ["-o", out]
   if o.json {
     words.push("--json")
   }

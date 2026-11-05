@@ -29,9 +29,12 @@ fn build_info_json(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: S
 /// (gotchas/arm64-inline-verify-fallback.md), outside the build ID.
 fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o: Opts, backend: Str, target: Str, inline_fb: Str, memo_dir: Str) -> (Str, Str) {
   let paths = sources.keys().sort()
+  // --binfo-stable (watch builds): no source digests, so the binary
+  // depends only on what the sources compile to
+  let digest = fn(p: Str) -> Str { if o.binfo_stable { "-" } else { sources.get(p) ?? "" } }
   var h = StrBuilder.new()
   for p in paths {
-    h.write("${p} ${sources.get(p) ?? ""}\n")
+    h.write("${p} ${digest(p)}\n")
   }
   let release = o.release
   h.write("backend=${backend} target=${target}\n")
@@ -60,7 +63,7 @@ fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o
     if i > 0 {
       j = j + ","
     }
-    j = j + "${json_str(p)}:${json_str(sources.get(p) ?? "")}"
+    j = j + "${json_str(p)}:${json_str(digest(p))}"
   }
   j = j + "}"
   // the options (Info's omitempty fields, in its order)

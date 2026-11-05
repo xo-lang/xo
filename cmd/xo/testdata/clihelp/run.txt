@@ -22,7 +22,7 @@ scheduler's execution trace (XO_TRACE, a native backend; decision 0240)
 into FILE, then writes FILE.json for ui.perfetto.dev and prints a summary
 (xo trace). --watch rebuilds after a change to the module's sources and
 restarts the program only when the built binary changed (an edit to a
-test or a comment does not restart it): SIGTERM, up to --grace (5s) for
+test, or a comment that moves no line, does not restart it): SIGTERM, up to --grace (5s) for
 it to exit, then SIGKILL; a failed build keeps the old program running.
 With --json each cycle is a JSON line, the last also in
 last.json in the watch's cache directory, <user cache>/xo/watch/HASH
