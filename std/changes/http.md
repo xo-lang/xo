@@ -1,15 +1,22 @@
 # std/http changes
 
-## 2026-11-05: fix: the HTTP/2 settings and trailer blocks are freed at their own address
+## 2026-11-05: security: a native server's response trailers no longer corrupt the runtime's heap
 
-- Kind: fix
-- Commit: this push
+- Kind: security
+- Commit: cbe600955
 - Found by: the 2026-11-05 race stress (http_h2_config, http_trailers and http_server_limits stopped on TSan's allocator CHECK under `--race`, 24 of 24 runs)
 - Go reference: none (the native runtime's own records)
 - Test: TestGoldenRun http_trailers, http_h2_config, http_server_limits, which now fail without the fix (libcmem.xo heap_release's prefix check)
+- Affected: 0.36.0 to 0.39.0, native and LLVM backends (not the Go backend); introduced by e0444461a (trailers, decision 0433) and 4d83e777b (HTTP/2 settings, decision 0434), 2026-10-30
 - Shipped in: not yet released
 
-A server with HTTP/2 settings (`srv_h2cfg`) and a response with trailers released their runtime blocks 8 bytes past the block's start (gotchas/heap-large-prefix-not-malloc-address.md). A normal build silently put an offset block on a free list. A `--race` build's malloc later returned a misaligned block, and TSan aborted. They are now released at the prefix.
+A server's runtime freed three of its blocks 8 bytes past their start (gotchas/heap-large-prefix-not-malloc-address.md). The free read a stale word as the block's size class, so it could put an offset block on a free list (two later allocations then share memory), write past the thread cache's class table, or unmap the wrong range.
+
+- Remote trigger: a client can trigger it. Every response whose handler calls `BodyWriter.set_trailer` (a streaming handler's trailers, HTTP/1.1 or HTTP/2) freed its trailer block this way when the response's sink was freed, and again for each trailer after the first. A client only has to request such an endpoint; it cannot choose the stale word.
+- Settings block: a server built with HTTP/2 settings (`Server.with_h2_config`) freed its settings block the same way once, when the server closed. This is not client-driven.
+- Workaround on affected versions: do not set response trailers from native handlers. The settings block costs one bad free at shutdown.
+
+`--race` builds take every block from the C library's malloc, so the same frees made TSan's malloc return misaligned blocks. They are now released at the prefix. `rt.heap_release` of an address that is not 16 byte aligned now ends the program (std/changes/prelude.md).
 
 ## 2026-11-04: fix: Client.open of a piped request is full duplex under the fake net
 
