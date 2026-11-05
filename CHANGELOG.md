@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/yaml (decision 0512, spec/std.md 63): `derive Yaml` and `yaml.decode[T]` / `yaml.encode_value[T]`, a port of gopkg.in/yaml.v3 v3.0.1's decoder and emitter: the same values, error texts and `Marshal` bytes (442 corpus documents, 8,000 fuzz documents against yaml.v3), `omitempty` and `flow` fields, indent 4 or 2, merge keys, aliases with yaml.v3's expansion limit; linux/arm64 against yaml.v3 decode 0.62, encode 0.604 (bench/results/yaml-2026-11-05.md). Not yet: `inline`, Time, Duration, Bytes, a dynamic `Node`, comments.
 - fix (std/jpeg tests): the decode corpora and their generators match the new `JpegErr.Encode` variant (tier 51 failed TestStdCorpora jpeg and jpegfuzz); std/changes/jpeg.md notes that adding a variant to the public `JpegErr` breaks a caller's exhaustive `match`.
 - perf (native, macOS): a burst of tiny tasks no longer wakes extra workers (decision 0514): micro13 spawn100k darwin/amd64 29 to 26 ms (at Go's 25 to 27), darwin/arm64 22 to 18; Linux and Windows unchanged.
 - perf (std/jpeg): `jpeg.encode` skips the quantizer for coefficients that round to zero, writes each Huffman code with its value bits in one emit and indexes columns by a table per MCU; output unchanged; linux/arm64 against Go's Encode encode 1.29 to 0.83, encrgba 1.37 to 0.90 of Go's wall (bench/results/jpeg-encode-2026-11-05.md).

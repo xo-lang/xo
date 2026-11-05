@@ -7,6 +7,15 @@
 
 
 
+## 2026-11-05: feature: interface Yaml, the marker of derive Yaml
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (std/yaml)
+- Test: golden yaml_derive, `TestDerivableTable`
+
+The prelude has `interface Yaml {}`, the marker `derive Yaml` implements (as `Xml` is for `derive Xml`); `yaml.decode` and `yaml.encode_value` take a `T: Yaml`. Programs name it only through `derive Yaml`. See std/changes/yaml.md.
+
 ## 2026-11-05: perf: on macOS a burst of tiny tasks wakes no extra workers
 
 - Kind: perf

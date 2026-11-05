@@ -255,3 +255,23 @@ twin row (bench/perf), the derive goldens, TestDerivableTable and the spec.
 - **A new YAML 1.2 parser written from the spec**: no Go oracle for the
   differential and the suite alone decides correctness; larger risk for
   the same API.
+
+## Prototype figures, type directed `derive Yaml` (2026-11-05, branch only)
+
+Last verified: 2026-11-05. linux/arm64 offload host, `xo bench --ab` style twin row
+`bench/perf/yamlderive` (a Kubernetes style Deployment, 20000 iterations, n=6, Xo
+over the Go twin, lower is better):
+
+| workload | Go ms | Xo ms | Xo/Go | range | rss |
+|---|---|---|---|---|---|
+| decode (`yaml.decode[T]`, collecting readers) | 719.2 | 436.5 | 0.607 | 0.576-0.619 | 0.15 |
+| encode (`yaml.encode_value[T]`) | 274.9 | 170.6 | 0.62 | 0.587-0.629 | 0.155 |
+
+Columns as the twin row prints them (Go, Xo, ratio); see
+`bench/perf/yamlderive/twin.txt`.
+
+Correctness: 442 typed decode inputs (91 hand written cases plus the yaml-test-suite
+documents) give yaml.v3 v3.0.1's value or full error text; encode output is
+byte-identical to `yaml.Marshal` on a 14 field struct
+(`bench/perf/yamlderive/{diff,enc}`). Not covered yet: `inline`, `omitempty`, `flow`,
+comments, the Go backend.

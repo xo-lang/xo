@@ -1,0 +1,28 @@
+// std/yaml (decision 0512). Declaration file. YAML decoded into and encoded
+// from structs that derive Yaml, by the types of their fields, with
+// gopkg.in/yaml.v3's rules (a port of its scanner, parser, decoder and emitter,
+// MIT).
+// Pure.
+
+/// Displays as `yaml: line 3: mapping values are not allowed in this context`;
+/// type mismatches as `yaml: unmarshal errors:\n  line 2: cannot unmarshal !!str
+/// `x` into int`, all of them together.
+struct YamlErr {
+  line: Int
+  msg: Str
+}
+
+fn (e: YamlErr) display() -> Str
+
+/// The first document of text decoded into a struct that derives Yaml: a
+/// mapping's keys by the field names (or `as` wire names), the rest ignored.
+/// The call is compiled as a call of the function `derive Yaml` generates
+/// for T.
+fn decode[T: Yaml](text: Str) -> T ! YamlErr
+
+/// v as one YAML document, written as yaml.v3's Marshal does (indent 4 by
+/// default, `indent` spaces from 2 to 9 as its SetIndent, keys in
+/// field order, strings quoted when they would read back as another type, a map's
+/// keys sorted as yaml.v3 sorts them). The call is compiled as a call of the
+/// function `derive Yaml` generates for T.
+fn encode_value[T: Yaml](v: T, indent: Int = 4) -> Str ! YamlErr

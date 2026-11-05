@@ -1,0 +1,5 @@
+// std/yaml on every backend (decision 0512): the error text (the Go backend's
+// is std/rt/yaml.go).
+use std/yaml
+
+fn yamlerr_display(e: yaml.YamlErr) -> Str { "yaml: ${e.msg}" }

@@ -58,6 +58,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/compress | 32 | `std/changes/compress.md` |
 | std/big | 33 | `std/changes/big.md` |
 | std/xml | 34 | `std/changes/xml.md`, `std/changes/xmlcodec.md` |
+| std/yaml | 63 | `std/changes/yaml.md` |
 | std/websocket | 35 | `std/changes/websocket.md` |
 | std/debug | 36 | `std/changes/debug.md` |
 | std/metrics | 37 | `std/changes/metrics.md` |

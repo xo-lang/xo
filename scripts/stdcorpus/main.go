@@ -96,6 +96,8 @@ var generators = map[string]func() string{
 	"norm":       normCorpus,
 	"idna":       idnaCorpus,
 	"bcrypt":     bcryptCorpus,
+	"yaml":       yamlCorpus,
+	"yamlfuzz":   yamlfuzzCorpus,
 	"jwt":        jwtCorpus,
 }
 

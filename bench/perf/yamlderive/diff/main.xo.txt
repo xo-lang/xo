@@ -1,0 +1,61 @@
+use std/yaml
+
+struct Inner {
+  x: Int
+} derive Yaml
+
+struct T {
+  n: Int
+  f: Float
+  s: Str
+  b: Bool
+  o: Str?
+  l: List[Int]
+  m: Map[Str, Str]
+  in_ as "in": Inner
+} derive Yaml
+
+fn fl(f: Float) -> Str {
+  if f.is_nan() {
+    return "nan"
+  }
+  if f.is_inf() {
+    return if f > 0.0 { "inf" } else { "-inf" }
+  }
+  f.to_general(-1)
+}
+
+fn main(os: Os) uses stdio, env, fs {
+  let dir = os.env.args().get(0) ?? "."
+  let fs = os.fs
+  var names: List[Str] = []
+  for fi in fs.read_dir(dir).ok() ?? [] {
+    if fi.name.ends_with(".yaml") {
+      names.push(fi.name)
+    }
+  }
+  names = names.sort()
+  for nm in names {
+    let text = fs.read_text(dir + "/" + nm).ok() ?? ""
+    let name = nm[0..nm.len() - 5]
+    match yaml.decode[T](text) {
+      Err(e) => os.stdio.println("${name}\tERR ${e.display().quote()}")
+      Ok(t) => {
+        var ls: List[Str] = []
+        for x in t.l {
+          ls.push("${x}")
+        }
+        var ks = t.m.keys().sort()
+        var ms: List[Str] = []
+        for k in ks {
+          ms.push("${k.quote()}=${(t.m.get(k) ?? "").quote()}")
+        }
+        let o = match t.o {
+          Some(v) => v.quote()
+          None => "nil"
+        }
+        os.stdio.println("${name}\tn=${t.n} f=${fl(t.f)} s=${t.s.quote()} b=${t.b} o=${o} l=[${ls.join(",")}] m={${ms.join(",")}} in=${t.in_.x}")
+      }
+    }
+  }
+}

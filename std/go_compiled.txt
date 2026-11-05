@@ -24,3 +24,5 @@ cookiejar
 norm
 idna
 jwt
+yaml
+yamlcodec

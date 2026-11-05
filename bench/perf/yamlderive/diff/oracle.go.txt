@@ -1,0 +1,73 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+type Inner struct {
+	X int `yaml:"x"`
+}
+
+type T struct {
+	N  int               `yaml:"n"`
+	F  float64           `yaml:"f"`
+	S  string            `yaml:"s"`
+	B  bool              `yaml:"b"`
+	O  *string           `yaml:"o"`
+	L  []int             `yaml:"l"`
+	M  map[string]string `yaml:"m"`
+	In Inner             `yaml:"in"`
+}
+
+func fl(f float64) string {
+	switch {
+	case math.IsNaN(f):
+		return "nan"
+	case math.IsInf(f, 1):
+		return "inf"
+	case math.IsInf(f, -1):
+		return "-inf"
+	}
+	return strconv.FormatFloat(f, 'g', -1, 64)
+}
+
+func main() {
+	files, _ := filepath.Glob(filepath.Join(os.Args[1], "*.yaml"))
+	sort.Strings(files)
+	for _, f := range files {
+		in, _ := os.ReadFile(f)
+		var t T
+		err := yaml.Unmarshal(in, &t)
+		name := strings.TrimSuffix(filepath.Base(f), ".yaml")
+		if err != nil {
+			fmt.Printf("%s\tERR %q\n", name, err.Error())
+			continue
+		}
+		o := "nil"
+		if t.O != nil {
+			o = strconv.Quote(*t.O)
+		}
+		var ls []string
+		for _, x := range t.L {
+			ls = append(ls, strconv.Itoa(x))
+		}
+		var ks []string
+		for k := range t.M {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		var ms []string
+		for _, k := range ks {
+			ms = append(ms, strconv.Quote(k)+"="+strconv.Quote(t.M[k]))
+		}
+		fmt.Printf("%s\tn=%d f=%s s=%s b=%v o=%s l=[%s] m={%s} in=%d\n", name, t.N, fl(t.F), strconv.Quote(t.S), t.B, o, strings.Join(ls, ","), strings.Join(ms, ","), t.In.X)
+	}
+}

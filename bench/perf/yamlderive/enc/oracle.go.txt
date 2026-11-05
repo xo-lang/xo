@@ -1,0 +1,37 @@
+package main
+
+import (
+	"fmt"
+	"gopkg.in/yaml.v3"
+)
+
+type Inner struct {
+	N    int      `yaml:"n"`
+	Tags []string `yaml:"tags"`
+}
+type Cfg struct {
+	Name       string         `yaml:"name"`
+	ApiVersion string         `yaml:"apiVersion"`
+	Port       int            `yaml:"port"`
+	Ratio      float64        `yaml:"ratio"`
+	On         bool           `yaml:"on"`
+	O          *string        `yaml:"o"`
+	None       *string        `yaml:"none"`
+	Items      []Inner        `yaml:"items"`
+	M          map[string]int `yaml:"m"`
+	Empty      []int          `yaml:"empty"`
+	Text       string         `yaml:"text"`
+	Yes        string         `yaml:"yes"`
+	Num        string         `yaml:"num"`
+	Inner      Inner          `yaml:"inner"`
+}
+
+func main() {
+	h := "hi"
+	c := Cfg{"orders", "v1", 8080, 2.5, true, &h, nil, []Inner{{1, []string{"a", "b c"}}, {2, []string{}}}, map[string]int{"b10": 1, "b9": 2, "a": 3}, []int{}, "l1\nl2\n", "yes", "123", Inner{7, []string{"x: y", "- z", ""}}}
+	b, err := yaml.Marshal(c)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Print(string(b))
+}

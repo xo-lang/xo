@@ -1,0 +1,146 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+const text = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+  namespace: prod
+  labels:
+    app: orders
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: orders
+  template:
+    metadata:
+      labels:
+        app: orders
+    spec:
+      containers:
+        - name: orders
+          image: registry.example.com/orders:1.42.0
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: DB_URL
+              value: "postgres://db.internal:5432/orders"
+            - name: LOG_LEVEL
+              value: info
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 250m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+`
+
+type Meta struct {
+	Name      string            `yaml:"name"`
+	Namespace string            `yaml:"namespace"`
+	Labels    map[string]string `yaml:"labels"`
+}
+
+type Port struct {
+	ContainerPort int    `yaml:"containerPort"`
+	Protocol      string `yaml:"protocol"`
+}
+
+type Env struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
+}
+
+type Container struct {
+	Name  string `yaml:"name"`
+	Image string `yaml:"image"`
+	Ports []Port `yaml:"ports"`
+	Env   []Env  `yaml:"env"`
+}
+
+type PodSpec struct {
+	Containers []Container `yaml:"containers"`
+}
+
+type Template struct {
+	Spec PodSpec `yaml:"spec"`
+}
+
+type Spec struct {
+	Replicas int      `yaml:"replicas"`
+	Template Template `yaml:"template"`
+}
+
+type Deployment struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Metadata   Meta   `yaml:"metadata"`
+	Spec       Spec   `yaml:"spec"`
+}
+
+func weigh(n *yaml.Node) int {
+	s := 1 + len(n.Value)
+	for _, c := range n.Content {
+		s += weigh(c)
+	}
+	return s
+}
+
+func main() {
+	w := "parse"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	if w == "parse" {
+		for i := 0; i < 20000; i++ {
+			var n yaml.Node
+			if err := yaml.Unmarshal([]byte(text), &n); err != nil {
+				panic(err)
+			}
+			sum += weigh(n.Content[0])
+		}
+	} else if w == "decode" {
+		for i := 0; i < 20000; i++ {
+			var d Deployment
+			if err := yaml.Unmarshal([]byte(text), &d); err != nil {
+				panic(err)
+			}
+			c := d.Spec.Template.Spec.Containers[0]
+			sum += d.Spec.Replicas + c.Ports[0].ContainerPort + len(c.Image) + len(c.Env) + len(d.Metadata.Labels) + len(d.APIVersion)
+		}
+	} else if w == "encode" {
+		var d Deployment
+		if err := yaml.Unmarshal([]byte(text), &d); err != nil {
+			panic(err)
+		}
+		for i := 0; i < 20000; i++ {
+			b, err := yaml.Marshal(d)
+			if err != nil {
+				panic(err)
+			}
+			sum += len(b)
+		}
+	} else {
+		for i := 0; i < 20000; i++ {
+			sum += len(text)
+		}
+	}
+	fmt.Println(w, sum)
+}

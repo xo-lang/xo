@@ -1,0 +1,30 @@
+use std/yaml
+
+struct Inner {
+  n: Int
+  tags: List[Str]
+} derive Yaml
+
+struct Cfg {
+  name: Str
+  api_version as "apiVersion": Str
+  port: Int
+  ratio: Float
+  on: Bool
+  o: Str?
+  none: Str?
+  items: List[Inner]
+  m: Map[Str, Int]
+  empty: List[Int]
+  text: Str
+  yes: Str
+  num: Str
+  inner: Inner
+} derive Yaml
+
+fn main(os: Os) {
+  let c = Cfg{name: "orders", api_version: "v1", port: 8080, ratio: 2.5, on: true, o: Some("hi"), none: None,
+    items: [Inner{n: 1, tags: ["a", "b c"]}, Inner{n: 2, tags: []}], m: {"b10": 1, "b9": 2, "a": 3}, empty: [],
+    text: "l1\nl2\n", yes: "yes", num: "123", inner: Inner{n: 7, tags: ["x: y", "- z", ""]}}
+  os.stdio.print(yaml.encode_value(c).ok() ?? "ERR")
+}

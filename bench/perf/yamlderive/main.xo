@@ -1,0 +1,72 @@
+use std/yaml
+// yamlderive: std/yaml (decision 0512) decode into a struct that derives Yaml, type directed against gopkg.in/yaml.v3's parse into a yaml.Node (twin.go.txt)
+// on a 920 byte Kubernetes Deployment, 20,000 times. Usage: `<program> parse|none`.
+// Prints `<workload> <checksum>` (nodes plus scalar bytes); the twin prints the same.
+
+const TEXT: Str = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: orders\n  namespace: prod\n  labels:\n    app: orders\n    tier: backend\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: orders\n  template:\n    metadata:\n      labels:\n        app: orders\n    spec:\n      containers:\n        - name: orders\n          image: registry.example.com/orders:1.42.0\n          ports:\n            - containerPort: 8080\n              protocol: TCP\n          env:\n            - name: DB_URL\n              value: \"postgres://db.internal:5432/orders\"\n            - name: LOG_LEVEL\n              value: info\n          resources:\n            limits:\n              cpu: 500m\n              memory: 256Mi\n            requests:\n              cpu: 250m\n              memory: 128Mi\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: 8080\n            initialDelaySeconds: 5\n            periodSeconds: 10\n"
+
+struct Meta {
+  name: Str
+  namespace: Str
+  labels: Map[Str, Str]
+} derive Yaml
+
+struct Port {
+  container_port as "containerPort": Int
+  protocol: Str
+} derive Yaml
+
+struct EnvVar {
+  name: Str
+  value: Str
+} derive Yaml
+
+struct Container {
+  name: Str
+  image: Str
+  ports: List[Port]
+  env: List[EnvVar]
+} derive Yaml
+
+struct PodSpec {
+  containers: List[Container]
+} derive Yaml
+
+struct Template {
+  spec: PodSpec
+} derive Yaml
+
+struct Spec {
+  replicas: Int
+  template: Template
+} derive Yaml
+
+struct Deployment {
+  api_version as "apiVersion": Str
+  kind: Str
+  metadata: Meta
+  spec: Spec
+} derive Yaml
+
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "decode"
+  var sum = 0
+  if w == "decode" {
+    for _ in 0..20000 {
+      let d: Deployment = yaml.decode[Deployment](TEXT).ok() ?? fault("decode")
+      let c = d.spec.template.spec.containers[0]
+      sum += d.spec.replicas + c.ports[0].container_port + c.image.len() + c.env.len() + d.metadata.labels.len() + d.api_version.len()
+    }
+  } else if w == "encode" {
+    let d: Deployment = yaml.decode[Deployment](TEXT).ok() ?? fault("decode")
+    for _ in 0..20000 {
+      sum += (yaml.encode_value[Deployment](d).ok() ?? fault("encode")).len()
+    }
+  } else {
+    for _ in 0..20000 {
+      sum += TEXT.len()
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

@@ -320,6 +320,7 @@
 - [llvm-var-homes-2026-11-04.md](llvm-var-homes-2026-11-04.md): decision 0500 on LLVM, tlsloop --ab: 16 B TLS requests 0.969x wall, 0.951x CPU; 16 KiB within noise.
 - [size-class-waste-2026-11-04.md](size-class-waste-2026-11-04.md): RSS over payload for 8 to 256 KiB requests, Xo against Go (power of two classes waste up to half), the self build's blocks and its live bytes by request size; input to decision 0506
 - [idle-conn-40k-2026-11-04.md](idle-conn-40k-2026-11-04.md): 40,000 idle HTTP/1.1 and TLS HTTP/2 connections, Xo against Go net/http: memory per connection
+- [yaml-2026-11-05.md](yaml-2026-11-05.md): std/yaml typed decode and encode against yaml.v3 on linux/arm64: decode 0.62, encode 0.604 of Go's wall (decision 0512)
 - [jpeg-encode-2026-11-05.md](jpeg-encode-2026-11-05.md): jpeg.encode against Go's Encode on linux/arm64: byte exact, Xo 0.83x to 0.90x of Go time (decision 0510)
 - [worker-own-poll-2026-11-04.md](worker-own-poll-2026-11-04.md): decision 0502 on linux/arm64: tcpping handshake 0.93 of Go (from 1.54), smtp 0.53 of main, HTTP rows unchanged; the variants not taken (open loop p99 141 against 113 us, the busy average, the XO_NPSPIN_NS spin).
 - [capacity-hints-2026-11-05.md](capacity-hints-2026-11-05.md): every capacity hint per backend (all honored after 1b4b2bfa1 except ByteBuffer's, unused by measurement); deque ring sized once (linux/arm64 0.614), map/indexed/group_by/sort_by sized from 16 elements (mapconv 0.85)

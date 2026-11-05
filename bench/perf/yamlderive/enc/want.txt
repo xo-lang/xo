@@ -1,0 +1,30 @@
+name: orders
+apiVersion: v1
+port: 8080
+ratio: 2.5
+"on": true
+o: hi
+none: null
+items:
+    - "n": 1
+      tags:
+        - a
+        - b c
+    - "n": 2
+      tags: []
+m:
+    a: 3
+    b9: 2
+    b10: 1
+empty: []
+text: |
+    l1
+    l2
+"yes": "yes"
+num: "123"
+inner:
+    "n": 7
+    tags:
+        - 'x: y'
+        - '- z'
+        - ""

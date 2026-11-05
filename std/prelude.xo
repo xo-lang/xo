@@ -123,6 +123,8 @@ interface Proto {}
 interface SqlRow {}
 /// Reads and writes XML as Go's encoding/xml does (`derive Xml`, std.md 34).
 interface Xml {}
+/// Read from YAML by the types of its fields (`derive Yaml`, decision 0512).
+interface Yaml {}
 
 // ---------------------------------------------------------------------------
 // Predeclared functions (core 1.4, 8, 11.4)
