@@ -1,6 +1,6 @@
 # 0524: Request arenas on the native backends
 
-Status: Proposed (xo-lang-4, 2026-11-05; the owner decides). Recommends not building it now. Extends decision 0066 to
+Status: Accepted (owner, 2026-11-05; drafted by xo-lang-4): native request arenas are not built now. Extends decision 0066 to
 arm64, amd64 and LLVM. The explicit `arena scope` block (spec core 5.5) stays P2.
 
 ## Context

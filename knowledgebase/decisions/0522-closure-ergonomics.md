@@ -1,7 +1,7 @@
 # 0522: Closure ergonomics (amends 0003)
 
-Status: Proposed (Xo Lang 1, 2026-11-05, for the owner; from the agents'
-survey of 2026-11-05).
+Status: Accepted (owner, 2026-11-05). Drafted by Xo Lang 1 from the
+agents' survey of 2026-11-05.
 
 ## Context
 
