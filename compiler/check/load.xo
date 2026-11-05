@@ -219,6 +219,11 @@ pub struct Checker {
   /// The functions of the native modules whose bodies run left to
   /// check_lazy (true), and those it checked (false).
   pub lazy_fns: Map[Int, Bool] = {}
+  /// The bodies force_body parsed from their lazy span (decision 0351),
+  /// by function: unparse_body gives such a body back its span, so the SSA
+  /// builder lets its tree go once it built the body; a later force_body
+  /// parses the same tree again.
+  pub lazy_parsed: Map[Int, parser.LazyBody] = {}
   /// The functions of skipped modules checked before the whole-program
   /// passes (their entries' eager lists, check_module): the builder may
   /// build these from source without the module falling back.
@@ -442,6 +447,11 @@ pub struct Checker {
   /// Bodies checked, for the flow checks: closures before the body
   /// holding them (check.go bodies).
   bodies: List[BodyRef] = []
+  /// flow_bodies ran: bodies checked after (check_lazy, as the SSA builder
+  /// builds them) are not flow checked, so their BodyRef, which held each
+  /// body's whole tree past its build (2026-11-05: 236 MB at the end of a
+  /// cold fe.build of s3 and dynamodb), is not kept
+  flowed: Bool = false
   /// Locals never read, collected when their scope closes (XO0110).
   unused: List[Int] = []
   /// Locals reported as lost updates (XO0520), not also as unused.

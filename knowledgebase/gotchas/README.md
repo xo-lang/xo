@@ -1147,3 +1147,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [sepcomp-one-variant-per-launch.md](sepcomp-one-variant-per-launch.md): Observed: edits stayed whole program (~1 s) for ~15 builds after a cold cache: each background launch built one std variant; now both
 - [sampled-test-shifts-with-new-goldens.md](sampled-test-shifts-with-new-goldens.md): Observed: new goldens shifted TestModuleCheckAuto's every-8th sample onto a program that already fell back; check the subtest at the good commit with XO_SELFHOST_TIER=full
 - [cache-key-load-order.md](cache-key-load-order.md): Observed: std_sum hashed std modules in load order, so the first build with std's record missed every fe/chk entry; sort before hashing
+- [checker-bodies-list-keeps-trees.md](checker-bodies-list-keeps-trees.md): Observed 2026-11-05: Checker.bodies held every lazily checked body's tree past its build (236 MB in a cold s3+dynamodb build)

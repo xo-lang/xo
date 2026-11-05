@@ -830,6 +830,15 @@ fn (var b: Builder) run_job(j: Job) {
     }
   }
   b.run_job_fe(j)
+  // a body built: its tree, when force_body parsed it lazily, goes (a
+  // generic one's instances each need it, so it stays)
+  if let Body(fo, _, sub) = j {
+    if sub.is_empty() && b.c.objs[fo].tparams.is_empty() && (b.c.objs[fo].recv < 0 || b.c.objs[b.c.objs[fo].recv].tparams.is_empty()) {
+      if b.c.unparse_body(fo) {
+        b.fe_stats["unparsed"] = (b.fe_stats.get("unparsed") ?? 0) + 1
+      }
+    }
+  }
 }
 
 /// Lets std's facts go once no job will read them: an extern keeps its own

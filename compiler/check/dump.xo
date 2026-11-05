@@ -30,6 +30,7 @@ pub fn (var c: Checker) start_member() {
   c.diags = []
   c.root_mods = []
   c.bodies = []
+  c.flowed = false
   // the base's per-node records (each expression's type, each name's
   // object) serve the tools, not the member's check: dropped here
   // instead of copied on the member's first write

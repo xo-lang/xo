@@ -13,6 +13,7 @@ the text of every entry is unchanged).
 
 ## v0.40.0 (2026-11-05)
 
+- perf (build memory): the SSA builder lets go of each lazily parsed function body's tree once it built the body (Checker.unparse_body), and the checker no longer keeps the trees of bodies it checks after the flow pass: a cold build of s3 and dynamodb peaks at 932 MB instead of 1,108 (--ab 0.842, wall 0.989, linux/arm64); output identical (scripts/identity, 75 programs); xo's self build within noise. `XO_FE_STATS=1` prints `fe unparsed N`.
 - perf (native, macOS): decision 0518: a worker that finds a tiny task while it is the only one awake still wakes one more, so scopes of tiny tasks (bench/perf/conc spawn) run at 0.39.0's speed again on darwin/arm64 (0.881 of main, CPU 0.56), keeping decision 0514's spawn100k gain on both Macs.
 - fix (build): a program that calls another module's non-`pub` Display, Debug or Error method (decision 0496 (c)) no longer checks those modules again on every warm build: the module check cache fell back each time, since the methods' effects are inferred from their bodies and read across modules. Their module's cache entry now checks them eagerly. Found by TestModuleCheckAuto (iface_method_cross_module).
 - std/yaml: `Time` and `time.Civil` fields (a timestamp as its instant, or with its offset); equal to yaml.v3 on 32 documents.
