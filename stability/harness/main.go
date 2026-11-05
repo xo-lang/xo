@@ -280,10 +280,14 @@ func (p *proc) stop(how string) error {
 	case err := <-done:
 		return err
 	case <-time.After(20 * time.Second):
-		// where it is stuck, before it goes: macOS's sample (every
-		// thread's stack), or Linux's gdb when installed
+		// where it is stuck, before it goes: the task tree, then macOS's
+		// sample (every thread's stack) or Linux's gdb when installed
 		hang := strings.TrimSuffix(p.log.Name(), ".log") + ".hang.txt"
 		pid := fmt.Sprint(p.cmd.Process.Pid)
+		// an Xo program prints its task tree on SIGQUIT and goes on (core
+		// 11.4): what each task waits on, into the run's log
+		p.cmd.Process.Signal(syscall.SIGQUIT)
+		time.Sleep(2 * time.Second)
 		if runtime.GOOS == "darwin" {
 			exec.Command("sample", pid, "3", "-file", hang).Run()
 		} else if gdb, err := exec.LookPath("gdb"); err == nil {
