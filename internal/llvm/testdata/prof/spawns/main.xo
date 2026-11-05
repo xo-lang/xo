@@ -1,0 +1,34 @@
+// TestProfSpawnStress: micro13's spawn100k, REPS times (the first argument),
+// under XO_PROF=cpu; a second argument: full (default), rc (captures total,
+// never adds) or empty. Workers switch fibers all the time, so samples land
+// at every point of a fiber's stack: a walk past the top of one once read
+// the next fiber's guard page and the program died in the signal handler
+// (unwind.xo prof_walk, 2026-11-05). This is the program that showed it
+// (8 of 30 runs at 20 reps); its layout decides which unwind rule a sample
+// meets, so keep it as it is.
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let reps = if args.is_empty() { 100 } else { Int.parse(args[0]) ?? 100 }
+  let mode = if args.len() > 1 { args[1] } else { "full" }
+  var sum = 0
+  let t0 = os.clock.now()
+  for _ in 0..reps {
+    let total = Atomic[Int].new(0)
+    if mode == "empty" {
+      scope s {
+        for i in 0..100_000 { s.spawn(fn() { let _x = i % 7 }) }
+      }
+    } else if mode == "rc" {
+      // captures total (its count goes up and down) but adds only for i < 0
+      scope s {
+        for i in 0..100_000 { s.spawn(fn() { if i < 0 { total.add(1) } }) }
+      }
+    } else {
+      scope s {
+        for i in 0..100_000 { s.spawn(fn() { total.add(i % 7) }) }
+      }
+    }
+    sum = sum + total.get()
+  }
+  os.stdio.println("spawn100k x${reps} ${sum} ${(os.clock.now() - t0).millis()}")
+}

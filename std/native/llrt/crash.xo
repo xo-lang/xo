@@ -701,7 +701,7 @@ fn phase1(r: Int, sig: Int, info: Int, uc: Int) {
   var n = 0
   let lo = ld(r, R_LO)
   if lo != 0 {
-    n = unwind.prof_walk(r + R_UNW, uc, r + R_PCS, DEPTH, lo, ld(r, R_HI))
+    n = unwind.prof_walk(r + R_UNW, uc, r + R_PCS, DEPTH, lo, ld(r, R_HI), unwind.cur_fiber())
   } else {
     st(r, R_PCS, ld(regs, unwind.PC_AT))
     n = 1

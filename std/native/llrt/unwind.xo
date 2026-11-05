@@ -42,6 +42,11 @@ use native/sys_windows
 /// The thread local word holding the thread's scratch record
 /// (std/native/llrt/sched.xo lists the table's words).
 const UNW_TLS = 7
+/// The running fiber's record (sched.xo TLS_FIB) and its stack mapping's
+/// address and size (pool.xo F_MEM, F_SIZE): prof_walk's bound.
+const TLS_FIB = 1
+const F_MEM = 8
+const F_SIZE = 16
 /// The record's bytes (one mapping): FC_ENTRIES of the frame cache after
 /// the 20480 of the rest.
 const SCRATCH = 20480 + FC_ENTRIES * FC_BYTES
@@ -264,7 +269,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
     }
     first = false
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, 9223372036854775807) }) {
       return 0
     }
   }
@@ -346,7 +351,7 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
     }
     n += 1
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, 9223372036854775807) }) {
       break
     }
   }
@@ -391,7 +396,7 @@ pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
     rt.mem_store(out, 8 * n, pc, 8)
     n += 1
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, 9223372036854775807) }) {
       break
     }
   }
@@ -1754,7 +1759,7 @@ fn restore(s: Int, r: Int) {
 /// pointer is the frame's CFA, its pc the return address. The new values
 /// of the registers with rules are computed from the old ones first
 /// (TMP), then stored. Whether the rules could be applied.
-fn step(s: Int, regs: Int) -> Bool {
+fn step(s: Int, regs: Int, lo: Int, top: Int) -> Bool {
   let st = s + ST_CUR
   let cr = rt.mem_load(st, S_CFA_REG, 8)
   if rt.mem_load(st, S_CFA_EXPR, 8) != 0 || cr < 0 || cr >= NREG {
@@ -1772,7 +1777,12 @@ fn step(s: Int, regs: Int) -> Bool {
       let v = rt.mem_load(st, S_VAL + o, 8)
       var x = rt.mem_load(regs, o, 8)
       if k == R_OFFSET {
-        x = rt.mem_load(cfa.wrapping_add(v), 0, 8)
+        // a saved register: on the stack, [lo, top) (prof_walk)
+        let a = cfa.wrapping_add(v)
+        if a < lo || a > top - 8 {
+          return false
+        }
+        x = rt.mem_load(a, 0, 8)
       } else if k == R_VAL_OFFSET {
         x = cfa.wrapping_add(v)
       } else if k == R_REG {
@@ -1900,8 +1910,14 @@ pub fn prof_text(s: Int) -> (Int, Int) {
 /// ucontext; s the thread's profiler record; [lo, hi) the program's text.
 /// A pc outside the text (a C library function) is followed by its
 /// caller from the link register (arm64) or the word at the stack
-/// pointer (x86_64) once, as a leaf; then the walk ends.
-pub fn prof_walk(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int) -> Int {
+/// pointer (x86_64) once, as a leaf; then the walk ends. fib is the
+/// interrupted thread's fiber record (its TLS_FIB; 0 when unknown): when
+/// the stack pointer lies in that fiber's stack, no frame is read past the
+/// stack's top. A fiber's stack is mapped just below the next fiber's guard
+/// page, and the outermost frame's rule once pointed past the top: a
+/// sample read the guard and the program died in the signal handler (1 in
+/// 4 runs of 20 x spawn100k at 1,000 Hz on linux/arm64, 2026-11-05).
+pub fn prof_walk(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int, fib: Int) -> Int {
   let darwin = match target.os {
     TargetOs.Darwin => true
     TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
@@ -1911,8 +1927,21 @@ pub fn prof_walk(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int) -> Int {
   if !prof_regs(uc, cur, darwin) {
     return 0
   }
-  walk_regs(s, out, max, lo, hi, darwin, true)
+  let sp = rt.mem_load(cur, sp_off(), 8)
+  var top = sp.wrapping_add(PROF_SPAN)
+  if fib != 0 {
+    let mem = rt.mem_load(fib, F_MEM, 8)
+    let end = mem.wrapping_add(rt.mem_load(fib, F_SIZE, 8))
+    if sp >= mem && sp < end {
+      top = end
+    }
+  }
+  walk_regs(s, out, max, lo, hi, darwin, true, top)
 }
+
+/// The fiber record of the calling thread's running fiber (sched.xo
+/// TLS_FIB), for prof_walk: 0 on a thread that runs none.
+pub fn cur_fiber() -> Int { rt.tlocal_get(TLS_FIB) }
 
 /// The pcs of a parked fiber's frames, innermost first, into out (at most
 /// max): their count (`xo dump`, decision 0251). saved is the fiber's
@@ -1936,12 +1965,13 @@ pub fn fiber_walk(s: Int, saved: Int, out: Int, max: Int, lo: Int, hi: Int) -> I
   }
   rt.mem_store(cur, SP, saved + 160, 8)
   rt.mem_store(cur, PC, rt.mem_load(saved, 88, 8) & 281474976710655, 8)
-  walk_regs(s, out, max, lo, hi, darwin, false)
+  walk_regs(s, out, max, lo, hi, darwin, false, saved.wrapping_add(PROF_SPAN))
 }
 
 /// prof_walk's walk from the registers at s + REGS_A; leaf: the pc is an
-/// interrupted instruction's (a signal's), else a return address.
-fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: Bool) -> Int {
+/// interrupted instruction's (a signal's), else a return address. Nothing
+/// at or above top is read (the stack's end).
+fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: Bool, top: Int) -> Int {
   let cur = s + REGS_A
   let spo = sp_off()
   var n = 0
@@ -1965,7 +1995,7 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
         // callers (they showed `_open` alone, 2026-10-23)
         outside += 1
         let fp = rt.mem_load(cur, fp_off(), 8)
-        if outside > OUTSIDE_MAX || fp < sp || fp - sp > PROF_SPAN || (fp & 7) != 0 {
+        if outside > OUTSIDE_MAX || fp < sp || fp - sp > PROF_SPAN || fp > top - 16 || (fp & 7) != 0 {
           break
         }
         rt.mem_store(cur, PC, rt.mem_load(fp, 8, 8) & 281474976710655, 8)
@@ -1997,10 +2027,10 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
     if darwin && enc != 0 {
       // a compact frame record at x29 must lie on this stack
       let fp = rt.mem_load(cur, 8 * 29, 8)
-      if !x64() && (enc & 251658240) != 33554432 && (fp < sp || fp - sp > PROF_SPAN) {
+      if !x64() && (enc & 251658240) != 33554432 && (fp < sp || fp - sp > PROF_SPAN || fp > top - 16) {
         break
       }
-      if x64() && (fp < sp || fp - sp > PROF_SPAN) {
+      if x64() && (fp < sp || fp - sp > PROF_SPAN || fp > top - 16) {
         break
       }
       if !cstep(s, cur, enc) {
@@ -2013,10 +2043,10 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
         break
       }
       let cfa = rt.mem_load(cur, 8 * cr, 8) + rt.mem_load(st, S_CFA_OFF, 8)
-      if cfa < sp || cfa - sp > PROF_SPAN {
+      if cfa < sp || cfa - sp > PROF_SPAN || cfa > top {
         break
       }
-      if !step(s, cur) {
+      if !step(s, cur, sp, top) {
         break
       }
     }

@@ -5,6 +5,24 @@
 
 
 
+
+## 2026-11-05: fix: XO_PROF=cpu no longer crashes a program whose sample walks off a fiber's stack
+
+- Kind: fix
+- Commit: this push
+- Found by: profiling micro13 spawn100k on linux/arm64 (xo-lang-4)
+- Go reference: runtime traceback bounded by the goroutine's stack (gentraceback's stack.hi)
+- Test: internal/llvm TestProfSpawnStress (fails without the fix: SIGSEGV in run 3 and run 4 of 16); TestProf* and the fault goldens unchanged
+- Timing: none (the walk reads less)
+- Shipped in: not yet released (0.39.0 has the bug: 1 of 30 runs)
+
+A CPU profile sample unwinds the interrupted thread's frames in the signal
+handler. The walk bounded each frame only by 64 MiB above the stack pointer,
+so on a fiber near its stack's top it could read past the end into the next
+fiber's guard page, and the program died with SIGSEGV in `cabi.on_prof`
+(8 of 30 runs of a spawn heavy program at 1,000 Hz on linux/arm64). The walk
+now stops at the end of the running fiber's stack.
+
 ## 2026-11-05: perf: Atomic[Int].add is one fetch and add, not a compare and swap loop
 
 - Kind: perf

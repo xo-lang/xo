@@ -196,6 +196,38 @@ func TestProfLeafCaller(t *testing.T) {
 	}
 }
 
+// TestProfSpawnStress: XO_PROF=cpu at 1,000 Hz on testdata/prof/spawns
+// (20 x 100,000 spawned tasks), 16 runs, each must exit 0 with its sum. The
+// profiler's walk (unwind.xo prof_walk) once read past the top of a fiber's
+// stack into the next fiber's guard page: on linux/arm64, 8 of 30 runs of
+// 20 x 100,000 died with SIGSEGV in the signal handler (2026-11-05); 16 runs
+// catch that rate 99 times in 100.
+func TestProfSpawnStress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program 16 times")
+	}
+	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+		t.Skip("the arm64 backend's unwind tables, with SIGPROF")
+	}
+	// --release, as the crash was seen: a debug build's frames did not
+	// reach the bad rule in 16 runs
+	res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "spawns")}, xotool.Options{Backend: xotool.BackendArm64, Release: true, Flags: []string{"--profile-support"}})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	bin := res.Binaries[xotool.Host()]
+	for r := 0; r < 16; r++ {
+		dir := t.TempDir()
+		cmd := testtmp.Guard(exec.Command(bin, "20", "full"))
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+filepath.Join(dir, "prof.xoraw"))
+		got, err := runCombined(cmd, 2*time.Minute)
+		if err != nil || !strings.Contains(got, "spawn100k x20 5999900 ") {
+			t.Fatalf("run %d: %v\n%s", r, err, got)
+		}
+	}
+}
+
 // cumPercent is the cum% of the row of function fn in an `xo prof` text
 // summary's "top by cumulative" table (its last column the function), or
 // -1.

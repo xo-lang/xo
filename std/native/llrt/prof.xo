@@ -633,7 +633,7 @@ fn sample(r: Int, uc: Int) {
     return
   }
   let p = ld(r, R_RING) + k0 * SLOT
-  fill(r, k0, k, unwind.prof_walk(s, uc, p + 8, DEPTH, ld(r, R_TLO), ld(r, R_THI)))
+  fill(r, k0, k, unwind.prof_walk(s, uc, p + 8, DEPTH, ld(r, R_TLO), ld(r, R_THI), unwind.cur_fiber()))
 }
 
 /// The periods of CPU the thread with profiler record s used since its
@@ -1914,7 +1914,7 @@ fn mac_sample(r: Int, d: Int, t: Int, gen: Int) {
     let k0 = claim(r, k)
     if k0 >= 0 {
       let p = ld(r, R_RING) + k0 * SLOT
-      fill(r, k0, k, unwind.prof_walk(ld(d, DB_UNW), d + DB_UC, p + 8, DEPTH, ld(r, R_TLO), ld(r, R_THI)))
+      fill(r, k0, k, unwind.prof_walk(ld(d, DB_UNW), d + DB_UC, p + 8, DEPTH, ld(r, R_TLO), ld(r, R_THI), 0))
     }
   }
   let _r = sys_darwin.thread_resume(t)
