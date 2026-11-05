@@ -38,13 +38,18 @@ pub fn (c: Checker) iface_closures() -> List[Str] {
     }
     own.push(crypto.sha256(h.freeze()).to_hex())
   }
-  var stdh = BytesBuilder.new()
+  // by path, not by load order: a build that loads std from its record
+  // (stdx) loads the modules in another order than one that parses them,
+  // and every program module's closure missed on the first build with
+  // the record (2026-11-05: the second edit after a cold build checked
+  // and built every body again)
+  var stdl: List[Str] = []
   for (mi, md) in c.mods.indexed() {
     if md.is_std || md.is_prelude || md.native {
-      stdh.write_str("${md.path} ${own[mi]}\n")
+      stdl.push("${md.path} ${own[mi]}\n")
     }
   }
-  let std_sum = crypto.sha256(stdh.freeze()).to_hex()
+  let std_sum = crypto.sha256(stdl.sort().join("").bytes()).to_hex()
   var out: List[Str] = []
   for (mi, _) in c.mods.indexed() {
     var seen: Map[Int, Bool] = {}

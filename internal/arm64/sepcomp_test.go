@@ -707,3 +707,65 @@ func bgLocked(t *testing.T, xo, cache string) bool {
 	out, _ := cmd.CombinedOutput()
 	return strings.Contains(string(out), "a background build is running")
 }
+
+// TestSepcompStdxKeepsFrontCache: the first build that loads std from its
+// record (stdx) replays the front end cache entries of the build before
+// it, which parsed std: a program module's interface closure hashes std's
+// modules by path, not in their load order, which differs between the two
+// (2026-11-05: the second edit after a cold build checked and built
+// every body again, 0.58 s where 0.30 s was due).
+func TestSepcompStdxKeepsFrontCache(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds std's variants")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-sepstdx-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	prog := filepath.Join(work, "prog")
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache")
+	for _, c := range []string{"0", "1"} {
+		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+c))
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo dev stdcache --conc=%s: %v\n%s", c, err, out)
+		}
+	}
+	fe := regexp.MustCompile(`cache fe (\d+)/(\d+) bodies`)
+	build := func(word string) string {
+		t.Helper()
+		src := "use std/base64\nuse std/crc32\n\nfn words(s: Str) -> Int {\n  s.split(\" \").len() + crc32.checksum(s.bytes())\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"" + word + " ${words(\"a b c\")} ${base64.encode(b\"xo\")}\")\n}\n"
+		if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", filepath.Join(work, "bin"), "."))
+		cmd.Dir = prog
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_SEPCOMP_BG=0", "XO_CACHE_STATS=1", "XDG_CACHE_HOME="+filepath.Join(work, "xdg"))
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build: %v\n%s", err, log)
+		}
+		return string(log)
+	}
+	build("one")
+	log := build("two")
+	if !strings.Contains(log, "cache stdx record loaded") {
+		t.Fatalf("the second build did not load std's record:\n%s", log)
+	}
+	m := fe.FindStringSubmatch(log)
+	if m == nil || m[1] == "0" {
+		t.Errorf("the first build with std's record replayed no front end cache entry of the build before it:\n%s", log)
+	}
+}

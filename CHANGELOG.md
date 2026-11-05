@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (build): the second build after a cold one (the first that loads std's record) reuses the front end and module check caches of the build before it: their keys hashed std's modules in load order, which differs when std comes from its record. On s3 + dynamodb the second edit takes 0.33 s, was 0.58 s. Existing cache entries miss once.
 - perf (native, macOS): decision 0518: a worker that finds a tiny task while it is the only one awake still wakes one more, so scopes of tiny tasks (bench/perf/conc spawn) run at 0.39.0's speed again on darwin/arm64 (0.881 of main, CPU 0.56), keeping decision 0514's spawn100k gain on both Macs.
 - fix (build): a program that calls another module's non-`pub` Display, Debug or Error method (decision 0496 (c)) no longer checks those modules again on every warm build: the module check cache fell back each time, since the methods' effects are inferred from their bodies and read across modules. Their module's cache entry now checks them eagerly. Found by TestModuleCheckAuto (iface_method_cross_module).
 - std/yaml: `Time` and `time.Civil` fields (a timestamp as its instant, or with its offset); equal to yaml.v3 on 32 documents.

@@ -1146,3 +1146,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [recursive-option-struct-debug.md](recursive-option-struct-debug.md): a std struct holding an Option of itself was never boxed (ssa `reaches` skipped std structs): arm64 `dv_type_ok` overflowed in a debug std build; fixed 2026-11-05
 - [sepcomp-one-variant-per-launch.md](sepcomp-one-variant-per-launch.md): Observed: edits stayed whole program (~1 s) for ~15 builds after a cold cache: each background launch built one std variant; now both
 - [sampled-test-shifts-with-new-goldens.md](sampled-test-shifts-with-new-goldens.md): Observed: new goldens shifted TestModuleCheckAuto's every-8th sample onto a program that already fell back; check the subtest at the good commit with XO_SELFHOST_TIER=full
+- [cache-key-load-order.md](cache-key-load-order.md): Observed: std_sum hashed std modules in load order, so the first build with std's record missed every fe/chk entry; sort before hashing
