@@ -231,7 +231,22 @@ fn load_walked(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str,
   }
   c.overlay = overlay
   c.preload = preload
-  let all = if exact { dirs } else { c.workspace_dirs(dirs) }
+  let all = if exact { dirs } else { c.check_workspace_dirs(dirs) }
+  let walked = dirs.any(fn(d) { c.walk.contains(abs_path(ctx, d)) })
+  if ctx.per_module && !walked && all.len() - dirs.len() >= PER_MODULE_MIN {
+    // decision 0513: each workspace module on its own, from a copy of a
+    // shared base, so the peak is the largest module's closure
+    return load_each(os, ctx, [all[0]], all[1..], false, overlay, preload, native, cached)
+  }
+  if ctx.per_module && dirs.len() == 1 && walked {
+    // a walk of a workspace (decision 0513): the packages outside its
+    // members are the base, each member is walked on its own
+    if let Some((base_dirs, members)) = walk_split(os, ctx, c, dirs[0]) {
+      if members.len() >= PER_MODULE_MIN {
+        return load_each(os, ctx, base_dirs, members, true, overlay, preload, native, cached)
+      }
+    }
+  }
   // the workspace's other modules: walked when a named directory is
   // (DIR/...), left out when they hold no .xo file of their own
   c.named_dirs = dirs.len()
@@ -268,6 +283,217 @@ fn load_walked(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str,
   }
   let ds = sort_diags(all_diags)
   Ok(Session{c: c, mods: mods, diags: ds})
+}
+
+/// The workspace members from which a whole-workspace `xo check` holds
+/// one at a time (decision 0513): below it one checker is as fast (aws
+/// core + 10 services: 1.13 s at 1,198 MB against 1.30 s at 968 MB).
+const PER_MODULE_MIN = 8
+
+/// load_walked of each of dirs alone (exact), one checker at a time, its
+/// diagnostics merged without repeats (a module two of them import
+/// reports once); the session's checker is the last one's.
+fn load_each(os: Os, ctx: Ctx, base_dirs: List[Str], members: List[Str], walk_members: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool) -> Session ! Str uses fs, proc, net, rand, env {
+  var mods: List[Str] = []
+  var diags: List[Diag] = []
+  var seen: Set[Str] = #{}
+  var last: Session? = None
+  // the first directory's checker is the base the others start from (a
+  // copy; run skips its modules)
+  let extra0 = shared_imports(os, ctx, base_dirs[0], members)
+  // a walk's base keeps only the directories two members import; its
+  // other directories are checked on their own, as members are, but not
+  // walked (each is a directory of the walk already)
+  var core = base_dirs
+  var plain: List[Str] = []
+  if walk_members {
+    core = []
+    for bd in base_dirs {
+      if extra0.any(fn(x) { abs_path(ctx, x) == abs_path(ctx, bd) }) {
+        core.push(bd)
+      } else {
+        plain.push(bd)
+      }
+    }
+    if core.is_empty() {
+      core = [plain[0]]
+      plain = plain[1..]
+    }
+  }
+  // each entry: its directory and whether it is walked
+  var dirs: List[(Str, Bool)] = [("", false)]
+  for d in plain {
+    dirs.push((d, false))
+  }
+  for d in members {
+    dirs.push((d, walk_members))
+  }
+  var base: check.Checker? = None
+  for (di, (d, walks)) in dirs.indexed() {
+    // a workspace module with no .xo file of its own is left out, as one
+    // checker leaves it (only the named directories must hold sources)
+    let has_xo = if di == 0 { true } else { match os.fs.read_dir(d) {
+      Ok(es) => es.any(fn(e) { !e.is_dir && e.name.ends_with(".xo") })
+      Err(_) => false
+    } }
+    if di > 0 && !has_xo && !walks {
+      continue
+    }
+    var sub = Session{c: new_checker(os, ctx), mods: [], diags: []}
+    match base {
+      Some(b) => {
+        var c = b
+        c.start_member()
+        if walks {
+          c.walk = [abs_path(ctx, d)]
+        }
+        c.check_dirs([d])?
+        var ms: List[Str] = []
+        for m in c.root_mods {
+          ms.push(c.mods[m].path)
+        }
+        sub = Session{c: c, mods: ms, diags: c.diags}
+      }
+      None => {
+        var extra: List[Str] = []
+        for x in extra0 {
+          if !base_dirs.any(fn(bd) { abs_path(ctx, bd) == abs_path(ctx, x) }) {
+            extra.push(x)
+          }
+        }
+        // the base's directories are checked as named, never walked
+        var bctx = ctx
+        bctx.walk = []
+        bctx.per_module = false
+        sub = load_walked(os, bctx, core + extra, true, overlay, preload, native, cached, [])?
+        base = Some(sub.c)
+        if !extra.is_empty() {
+          // the shared packages are checked as imports are: only d's
+          // module is named
+          var ms: List[Str] = []
+          for m in sub.c.root_mods {
+            if core.any(fn(bd) { abs_path(ctx, bd) == abs_path(ctx, sub.c.mods[m].dir) }) {
+              ms.push(sub.c.mods[m].path)
+            }
+          }
+          sub = Session{c: sub.c, mods: ms, diags: sub.diags}
+        }
+      }
+    }
+    for m in sub.mods {
+      if !mods.contains(m) {
+        mods.push(m)
+      }
+    }
+    for x in sub.diags {
+      let k = human(x)
+      if !seen.contains(k) {
+        seen.add(k)
+        diags.push(x)
+      }
+    }
+    last = Some(sub)
+  }
+  match last {
+    Some(s) => Ok(Session{c: s.c, mods: mods, diags: sort_diags(diags)})
+    None => Err("no directory to check")
+  }
+}
+
+/// The walk of root split for decision 0513: the walked directories
+/// outside every workspace member below root (the base), and those
+/// members' directories (each walked on its own); None when root has no
+/// workspace with two members below it.
+fn walk_split(os: Os, ctx: Ctx, c: check.Checker, root: Str) -> (List[Str], List[Str])? uses fs.read, env {
+  let probe = new_checker(os, ctx)
+  let (w0, _) = probe.find_work(abs_path(ctx, root))
+  let w = w0?
+  let ra = abs_path(ctx, root)
+  var members: List[Str] = []
+  for m in w.modules {
+    let md = abs_path(ctx, m.dir)
+    if md != ra && md.starts_with("${ra}/") {
+      members.push(md)
+    }
+  }
+  if members.len() < 2 {
+    return None
+  }
+  var walker = c
+  let found = walker.walked_dirs(root).ok()?
+  var base: List[Str] = []
+  for d in found {
+    let a = abs_path(ctx, d)
+    if !members.any(fn(md) { a == md || a.starts_with("${md}/") }) {
+      base.push(d)
+    }
+  }
+  if base.is_empty() {
+    return None
+  }
+  var rel: List[Str] = []
+  for md in members.sort() {
+    rel.push(c.rel_dir(md))
+  }
+  Some((base, rel))
+}
+
+/// The directories of the packages two or more of dirs[1..] import that
+/// are in none of them (decision 0513's base: the workspace's shared
+/// core), from their files' `use` lines and the workspace's modules.
+fn shared_imports(os: Os, ctx: Ctx, root: Str, member_dirs: List[Str]) -> List[Str] uses fs.read, env {
+  if member_dirs.len() < 2 {
+    return []
+  }
+  let probe = new_checker(os, ctx)
+  let (w0, _) = probe.find_work(abs_path(ctx, root))
+  let w = match w0 {
+    Some(x) => x
+    None => return []
+  }
+  var members: Set[Str] = #{}
+  for d in member_dirs {
+    members.add(abs_path(ctx, d))
+  }
+  var count: Map[Str, Int] = {}
+  for d in member_dirs {
+    var seen: Set[Str] = #{}
+    for e in os.fs.read_dir(d).ok() ?? [] {
+      if e.is_dir || !e.name.ends_with(".xo") || e.name.ends_with("_test.xo") {
+        continue
+      }
+      let text = os.fs.read_text(join_path(d, e.name)).ok() ?? ""
+      for l in text.split("\n") {
+        let t = l.trim()
+        if !t.starts_with("use ") {
+          continue
+        }
+        let p = t[4..].trim().split(" ")[0]
+        // the workspace module holding p, longest path first
+        var best = -1
+        for (i, m) in w.modules.indexed() {
+          if (p == m.path || p.starts_with("${m.path}/")) && (best < 0 || m.path.len() > w.modules[best].path.len()) {
+            best = i
+          }
+        }
+        if best < 0 || members.contains(abs_path(ctx, w.modules[best].dir)) {
+          continue
+        }
+        let dir = join_path(w.modules[best].dir, p[w.modules[best].path.len()..].trim_prefix("/"))
+        if !seen.contains(dir) {
+          seen.add(dir)
+          count[dir] = (count.get(dir) ?? 0) + 1
+        }
+      }
+    }
+  }
+  var out: List[Str] = []
+  for (dir, n) in count.entries() {
+    if n >= 2 {
+      out.push(dir)
+    }
+  }
+  out.sort()
 }
 
 /// Stores the module check cache entries of the modules c checked in
@@ -392,7 +618,11 @@ fn load_check(os: Os, ctx: Ctx, dirs: List[Str], support: Bool, go_rules: Bool, 
   // --support keeps the module check cache and the lazy runtime: the SSA
   // builder checks the runtime bodies it reaches (check_lazy) as a build
   // does, and a skipped module's diagnostics come from its entry
-  var s = load_mode_cached(os, ctx, dirs, false, {}, [], true, true)?
+  // a plain check may hold one workspace member at a time (decision
+  // 0513); --support analyzes the session's one checker
+  var cx = ctx
+  cx.per_module = !support
+  var s = load_mode_cached(os, cx, dirs, false, {}, [], true, true)?
   if !support {
     return Ok(s)
   }

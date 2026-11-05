@@ -1641,8 +1641,13 @@ use ./billing
   selection runs over the requirements of all listed modules.
 - The workspace applies when it lists the main module; `--workspace=off`
   (or `XO_WORK=off`) ignores it, `XO_WORK=<file>` names another one.
-- `xo check`, `test`, `query`, `edit`, and `mcp` take every listed module
-  as one program (a rename reaches all of them, atomically).
+- `xo test`, `query`, `edit`, and `mcp` take every listed module as one
+  program (a rename reaches all of them, atomically). `xo check` does
+  when it is given the workspace's own directory or a walk of it
+  (`./...` there); a walk below it (`DIR/...`) checks the modules under
+  DIR, and `xo check DIR` of a plain directory DIR's module, each with
+  the workspace modules they import, transitively, so modules nothing
+  imports cost nothing (decision 0511).
 - xo.lock is never written with workspace overrides (`xo get`, `xo mod
   tidy`, and `xo vendor` ignore the workspace); builds record the local
   directories in build information only. A release build (`xo build
@@ -3107,8 +3112,8 @@ is a usage error: the error and the usage on stderr, exit status 2.
 **Directories and `DIR/...`.** A directory argument means that
 directory alone (decision 0345, superseding 0210's implicit walk):
 `check`, `vet`, `doc`, `test`, `build`, and `audit` take the module in
-it (plus the modules it imports, and for `check` the other modules of
-its `xo.work` workspace), and `fmt`, `fix`, and `parse` its own `.xo`
+it (plus the modules it imports; `check` of the `xo.work` workspace's
+own directory takes every module of the workspace, decision 0511), and `fmt`, `fix`, and `parse` its own `.xo`
 files. A directory with no `.xo` file is an error that names `DIR/...`.
 Only the package pattern `DIR/...` (`./...`, `cmd/...`, accepted by
 `check`, `test`, `build`, `vet`, `doc`, `fmt`, `fix`, `parse`, `audit`)

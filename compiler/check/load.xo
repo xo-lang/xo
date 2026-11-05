@@ -94,6 +94,9 @@ pub struct Checker {
   roots: List[ModRoot] = []
   /// The root modules of the run, in the order of their directories.
   pub root_mods: List[Int] = []
+  /// Modules a copied base checker already checked (decision 0513):
+  /// run's passes skip them.
+  pub base_mods: Set[Int] = #{}
   /// Why the run cannot be checked here (`use go`, a parse error), or "".
   pub unsupported: Str = ""
   /// The move walk (core 5.3, decision 0300): whether the current path

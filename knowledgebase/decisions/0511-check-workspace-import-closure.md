@@ -1,6 +1,6 @@
 # 0511: `xo check DIR` takes DIR and what it imports, not every workspace module
 
-Status: Proposed (Xo Lang 1, 2026-11-05, at the lead's request after aws issue 11). Amends decision 0086 ("xo check ... treat the workspace as one program") and point 2 of decision 0345 ("and `check` the other modules of its `xo.work`") for `xo check` only. The code is on branch lang1-ws11 (not on main).
+Status: Accepted (owner, 2026-11-05). Proposed by Xo Lang 1 the same day at the lead's request after aws issue 11. Amends decision 0086 ("xo check ... treat the workspace as one program") and point 2 of decision 0345 ("and `check` the other modules of its `xo.work`") for `xo check` only.
 
 ## Context
 

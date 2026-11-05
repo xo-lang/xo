@@ -63,6 +63,40 @@ pub fn (c: Checker) workspace_dirs(dirs: List[Str]) -> List[Str] uses fs.read {
   out
 }
 
+/// workspace_dirs for `xo check` (decision 0511): the workspace's other
+/// modules only when a named directory is the workspace's own directory
+/// or a walk (DIR/...) of it or of a directory above it; a walk below it
+/// takes the modules under DIR, which the walk finds; otherwise dirs
+/// alone, and a workspace module
+/// they import is still loaded and checked through its import, so the
+/// rest of a large workspace costs nothing (aws issue 11: 435 service
+/// modules took a one-service check past 18 GB).
+pub fn (c: Checker) check_workspace_dirs(dirs: List[Str]) -> List[Str] uses fs.read {
+  if c.deps.work_env == "off" || dirs.is_empty() {
+    return dirs
+  }
+  if c.walk_all {
+    return c.workspace_dirs(dirs)
+  }
+  let root = c.mod_root_dir(dirs[0])
+  if root.is_empty() {
+    return dirs
+  }
+  let (w0, _) = c.find_work(root)
+  let w = match w0 {
+    Some(x) => x
+    None => return dirs
+  }
+  let wd = c.abs(w.dir)
+  for d in dirs {
+    let a = c.abs(d)
+    if a == wd || (c.walk.contains(a) && wd.starts_with("${a.trim_suffix("/")}/")) {
+      return c.workspace_dirs(dirs)
+    }
+  }
+  dirs
+}
+
 /// The functions and methods declared in module m's files, in source
 /// order, interface methods excluded (Info.Funcs).
 pub fn (c: Checker) funcs_of(m: Int) -> List[Int] {

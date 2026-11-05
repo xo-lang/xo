@@ -152,7 +152,7 @@ fn (c: Checker) abs(p: Str) -> Str {
 
 /// An absolute path relative to the working directory when it lies below
 /// it (check.go relDir).
-fn (c: Checker) rel_dir(p: Str) -> Str {
+pub fn (c: Checker) rel_dir(p: Str) -> Str {
   let d = clean(p)
   if !is_rooted(d) || c.deps.wd.is_empty() {
     return d

@@ -1,6 +1,6 @@
 # 0513: A whole-workspace check holds one member at a time
 
-Status: Proposed (Xo Lang 1, 2026-11-05, at the lead's request; the follow-up decision 0511 names). The prototypes are on branch lang1-ws11 behind XO_CHECK_PER_MODULE=1 (a fresh checker per member) and XO_CHECK_PER_MODULE_BASE=1 (the shared base; not for main).
+Status: Accepted (owner, 2026-11-05). Proposed by Xo Lang 1 the same day at the lead's request (the follow-up decision 0511 names). The measurements below were taken on prototypes behind XO_CHECK_PER_MODULE=1 and XO_CHECK_PER_MODULE_BASE=1; main has no variable (see "As built").
 
 ## Context
 
@@ -176,7 +176,24 @@ integration member, which imports about ten services, ec2 among them:
 So the walk's peak is its largest member's own closure plus the base,
 as the design means it to be.
 
-Work, in order:
+## As built (2026-11-05)
+
+- `xo check` alone: the shared base is used when the check takes the
+  whole workspace (the workspace's directory, or a walk of it) and the
+  workspace has PER_MODULE_MIN (8) members or more besides the named
+  directory; below that one checker is as fast (core + 10: 1.13 s
+  against 1.30 s). No environment variable.
+- Not for `xo check --support` / `--no-gc`, nor for the other commands
+  that load through the same function (vet, doc and the rest): they
+  analyze the session's checker, which per member is the last member's
+  only (core/cli.xo Ctx.per_module, set by load_check).
+- The fresh-checker-per-member prototype is gone; the base is always
+  shared.
+- cmd/xo TestCheckWorkspacePerModuleSameDiags compares a 4 member
+  workspace (one checker) with a 10 member one (per member) holding the
+  same three errors, for the directory and its walk: the same JSON.
+
+Work, in order (as planned):
 
 1. Split the base from the members (the import graph of the workspace's
    members, which the build list already reads).

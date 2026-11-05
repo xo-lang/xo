@@ -27,6 +27,10 @@ pub struct Ctx {
   /// The directories (absolute) the command line named as DIR/...: only
   /// they cover the directories below them (decision 0345).
   pub walk: List[Str] = []
+  /// `xo check` alone (decision 0513): a whole-workspace check of
+  /// PER_MODULE_MIN members or more holds one member at a time; the
+  /// other commands analyze the session's one checker.
+  pub per_module: Bool = false
   /// The module check cache for `xo check` (decision 0351 addendum,
   /// 2026-10-23): the driver's backend cache directory and cache ID, ""
   /// when the cache is off (compiler/xo main.xo check_cache).
