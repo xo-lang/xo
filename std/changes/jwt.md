@@ -1,5 +1,15 @@
 # std/jwt changes
 
+## 2026-11-05: feature: extra protected header fields and x5c
+
+- Kind: feature
+- Commit: this commit
+- Found by: the Azure SDK (azidentity's client assertion needs x5t#S256 and optionally x5c in the header)
+- Go reference: RFC 7515 4.1.6 (x5c), golang-jwt Token.Header (any field)
+- Test: jwt_test.xo "extra header fields and x5c follow alg, kid and typ in order of name"
+
+`sign(..., header: Map[Str, Str] = {}, x5c: List[Str] = [])` writes the fields after `alg`, `kid`, `typ` in order of name; `Header` gains `extra` and `x5c`. Existing calls are unchanged and write the same header. Reserved names are refused.
+
 ## 2026-11-04: fix: an aud list holding a non string is refused; docs
 
 - Kind: fix

@@ -102,7 +102,7 @@ fn public_of(key: jwt.Key) -> crypto.PublicKey? {
   }
 }
 
-fn sign[T: Json](r: Rand, alg: jwt.Alg, key: jwt.Key, claims: T, kid: Str?) -> Str ! jwt.JwtErr uses rand {
+fn sign[T: Json](r: Rand, alg: jwt.Alg, key: jwt.Key, claims: T, kid: Str?, extra: Map[Str, Str], x5c: List[Str]) -> Str ! jwt.JwtErr uses rand {
   let bad = key_misfit(alg, key)
   if bad != "" {
     return Err(jwt.JwtErr.Alg(msg: bad))
@@ -111,7 +111,26 @@ fn sign[T: Json](r: Rand, alg: jwt.Alg, key: jwt.Key, claims: T, kid: Str?) -> S
   if let Some(k) = kid {
     header += ",\"kid\":${json.Value.Str(s: k).encode()}"
   }
-  header += ",\"typ\":\"JWT\"}"
+  header += ",\"typ\":\"JWT\""
+  var names = extra.keys()
+  if !x5c.is_empty() {
+    names.push("x5c")
+  }
+  for k in names.sort() {
+    if k == "x5c" {
+      var items: List[json.Value] = []
+      for c in x5c {
+        items.push(json.Value.Str(s: c))
+      }
+      header += ",\"x5c\":${json.Value.List(items: items).encode()}"
+      continue
+    }
+    if k == "alg" || k == "kid" || k == "typ" || k == "crit" {
+      return Err(malformed("header field ${k} is set by sign"))
+    }
+    header += ",${json.Value.Str(s: k).encode()}:${json.Value.Str(s: extra.get(k) ?? "").encode()}"
+  }
+  header += "}"
   let payload = json.encode(claims)
   match json.parse_value(payload.to_str() ?? "") {
     Ok(Object(_)) => ()
@@ -206,7 +225,33 @@ fn header_of(h: json.Value) -> jwt.Header ! jwt.JwtErr {
     Some(Str(s)) => Some(s)
     Some(_) => return Err(malformed("typ is not a string"))
   }
-  jwt.Header{alg: alg, kid: kid, typ: typ}
+  var extra: Map[Str, Str] = {}
+  var x5c: List[Str] = []
+  if let json.Value.Object(fields) = h {
+    for (k, v) in fields {
+      if k == "alg" || k == "kid" || k == "typ" {
+        continue
+      }
+      if k == "x5c" {
+        match v {
+          List(items) => {
+            for it in items {
+              match it {
+                Str(s) => x5c.push(s)
+                _ => return Err(malformed("x5c is not a list of strings"))
+              }
+            }
+          }
+          _ => return Err(malformed("x5c is not a list of strings"))
+        }
+        continue
+      }
+      if let json.Value.Str(s) = v {
+        extra.put(k, s)
+      }
+    }
+  }
+  jwt.Header{alg: alg, kid: kid, typ: typ, extra: extra, x5c: x5c}
 }
 
 fn peek_header(token: Str) -> jwt.Header ! jwt.JwtErr {

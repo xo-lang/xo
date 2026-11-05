@@ -7256,19 +7256,24 @@ encoding/json writes `\u003c`, `\u003e` and `\u0026`: both are valid JSON and ve
 ```xo
 enum Alg { HS256, HS384, HS512, RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512, EdDSA }
 enum Key { Hmac(secret: Secret[Bytes]), Public(key: crypto.PublicKey), Private(key: crypto.PrivateKey) }
-struct Header { alg: Alg, kid: Str?, typ: Str? }
+struct Header { alg: Alg, kid: Str?, typ: Str?, extra: Map[Str, Str] = {}, x5c: List[Str] = [] }
 struct Options { algs: List[Alg], now: Time, leeway: Duration = 0s, issuer: Str? = None, audience: Str? = None,
                  subject: Str? = None, require_exp: Bool = true, check_iat: Bool = false,
                  max_age: Duration? = None, max_size: Int = 16384 }
 enum JwtErr { Malformed(msg: Str), Alg(msg: Str), Signature, Expired(at: Time), NotYetValid(at: Time), Issuer,
               Audience, Subject, Claim(msg: Str), Key(msg: Str) }
 fn (e: JwtErr) display() -> Str
-fn sign[T: Json](r: Rand, alg: Alg, key: Key, claims: T, kid: Str? = None) -> Str ! JwtErr uses rand
+fn sign[T: Json](r: Rand, alg: Alg, key: Key, claims: T, kid: Str? = None, header: Map[Str, Str] = {}, x5c: List[Str] = []) -> Str ! JwtErr uses rand
 fn verify_with[T: Json](token: Str, key: Key, opts: Options) -> T ! JwtErr
 fn verify[T: Json](token: Str, keys: fn(Header) -> Key ! JwtErr, opts: Options) -> T ! JwtErr
 fn peek_header(token: Str) -> Header ! JwtErr
 fn jwks(set: Str) -> Map[Str, Key] ! JwtErr
 ```
+`sign`'s `header` adds string fields to the protected header (`x5t#S256`, `jku`) and `x5c` the certificate chain
+(standard base64 DER, leaf first); they are written after `alg`, `kid` and `typ`, ordered by name (`x5c` among them),
+and a `header` name of `alg`, `kid`, `typ` or `crit` is `Malformed`. `Header.extra` and `Header.x5c` give the string
+fields and the chain of a parsed token (`peek_header`, the `verify` key function); an `x5c` that is not a list of strings
+is `Malformed`. A call without them writes the header it always did.
 
 - There is no `none` algorithm and no default for `Options.algs`: a token whose `alg` is not in the list is
   `Alg`, and a key that does not fit the algorithm (an HMAC secret for RS256, an RSA key for HS256, a P-384

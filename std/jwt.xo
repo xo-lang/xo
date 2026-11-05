@@ -29,11 +29,16 @@ enum Key {
   Private(key: crypto.PrivateKey)
 }
 
-/// The protected header: `alg`, and the optional `kid` and `typ`.
+/// The protected header: `alg`, and the optional `kid` and `typ`. `extra`
+/// holds the other string fields (`x5t#S256`, `jku`, ...) and `x5c` the
+/// certificate chain of RFC 7515 4.1.6 (standard base64 DER, leaf first);
+/// fields of other types are not kept.
 struct Header {
   alg: Alg
   kid: Str?
   typ: Str?
+  extra: Map[Str, Str] = {}
+  x5c: List[Str] = []
 }
 
 /// What a verification requires. `algs` has no default: the token's own
@@ -78,7 +83,11 @@ fn (e: JwtErr) display() -> Str
 
 /// The compact token of claims (any `derive Json` value that encodes as an
 /// object), signed with key; `r` is the randomness of RSA-PSS and ECDSA.
-fn sign[T: Json](r: Rand, alg: Alg, key: Key, claims: T, kid: Str? = None) -> Str ! JwtErr uses rand
+/// `header` adds string fields to the protected header (`x5t#S256` for an
+/// Azure client assertion) and `x5c` its certificate chain; they follow
+/// `alg`, `kid` and `typ` in order of name, and a name of those, `x5c` in
+/// `header`, or `crit` is JwtErr.Malformed.
+fn sign[T: Json](r: Rand, alg: Alg, key: Key, claims: T, kid: Str? = None, header: Map[Str, Str] = {}, x5c: List[Str] = []) -> Str ! JwtErr uses rand
 /// Verifies token with one key and returns its claims decoded as T, after
 /// checking the registered claims against opts.
 fn verify_with[T: Json](token: Str, key: Key, opts: Options) -> T ! JwtErr
