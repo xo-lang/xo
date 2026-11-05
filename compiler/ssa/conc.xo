@@ -172,7 +172,8 @@ fn (var b: Builder) end_scope() {
   b.s.scopes.pop()
 }
 
-/// The variables the closures that body's `s.spawn` calls start may
+/// The variables the closures that body's `s.spawn` and
+/// `s.spawn_background` calls start may
 /// borrow (decision 0507): captured by a closure literal passed directly
 /// to `s.spawn` on the scope's variable vo, declared before the scope (a
 /// variable the function knows when the scope opens), a `let` or a
@@ -215,8 +216,8 @@ fn (var b: Builder) borrowable(vo: Int) -> Bool {
   !b.c.is_move_only(o.ty)
 }
 
-/// The closure literal of `s.spawn(fn ...)` called on the scope variable
-/// vo (decision 0507), or None.
+/// The closure literal of `s.spawn(fn ...)` or `s.spawn_background(fn
+/// ...)` called on the scope variable vo (decisions 0507, 0509), or None.
 fn (var b: Builder) scoped_spawn_lit(vo: Int, e: Expr) -> parser.FnLit? {
   let (_, _, args) = call_parts(e)
   if args.len() != 1 {
@@ -231,7 +232,7 @@ fn (var b: Builder) scoped_spawn_lit(vo: Int, e: Expr) -> parser.FnLit? {
     None => return None
   }
   let fo = ci.fn_obj
-  if fo < 0 || b.obj_name(fo) != "spawn" || ci.recv.len() != 1 {
+  if fo < 0 || !(b.obj_name(fo) is "spawn" | "spawn_background") || ci.recv.len() != 1 {
     return None
   }
   let r = b.c.objs[fo].recv
@@ -639,7 +640,7 @@ fn (var b: Builder) spawn(x: Expr, h: Int, background: Bool, ret: Bool) -> Int {
   // decision 0507: a closure literal spawned on its own scope borrows
   // the captures the scope keeps alive
   b.s.spawn_borrow = []
-  if !background && !b.s.scopes.is_empty() {
+  if !b.s.scopes.is_empty() {
     let sc = b.s.scopes[b.s.scopes.len() - 1]
     let svo = b.s.scope_tab[sc].vo
     if svo >= 0 && !b.s.scope_tab[sc].keep.is_empty() {

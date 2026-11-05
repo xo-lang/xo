@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+outlive true 10 loop 11
+shielded 4 deferred 24 deferred 24
+many 63
+cancelled 50
+early -1 146
+fails 10 -2
+outer 18
+owned 49
+--- stderr

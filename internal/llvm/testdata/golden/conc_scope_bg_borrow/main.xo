@@ -1,0 +1,212 @@
+// Decision 0509 (0507 for background tasks): captures a scope's own
+// s.spawn_background borrows. Each task still reads its capture after the
+// body's last statement (the close cancels it and waits), and each
+// captured value is checked after the scope, so a missed retain shows as
+// freed or reused memory.
+
+struct Box {
+  name: Str
+  xs: List[Int]
+}
+
+fn sum(xs: List[Int]) -> Int {
+  var t = 0
+  for x in xs {
+    t += x
+  }
+  t
+}
+
+// a background loop that outlives the body's last statement, reading its
+// borrowed capture until the close cancels it
+fn outlive(os: Os) -> Str {
+  let xs = [1, 2, 3, 4]
+  let b = Box{name: "loop", xs: [5, 6]}
+  let reads = Atomic[Int].new(0)
+  scope sc {
+    for _ in 0..4 {
+      sc.spawn_background(fn() {
+        while {
+          reads.add(sum(xs) + sum(b.xs) - 21 + 1)
+          os.clock.sleep(1ms)
+        }
+      })
+    }
+    // the body ends while the loops still run
+    while reads.get() == 0 {
+      os.clock.sleep(1ms)
+    }
+  }
+  "${reads.get() > 0} ${sum(xs)} ${b.name} ${sum(b.xs)}"
+}
+
+// a cancelled task still reading the capture in a shielded defer, after
+// the body has ended
+fn shielded(os: Os) -> Str {
+  let b = Box{name: "deferred", xs: [7, 8, 9]}
+  let ch = Chan[Str].new(8)
+  scope sc {
+    for i in 0..4 {
+      sc.spawn_background(fn() {
+        defer {
+          os.clock.sleep(20ms)
+          ch.send("${b.name} ${sum(b.xs) + i * 0}")
+        }
+        os.clock.sleep(1h)
+      })
+    }
+  }
+  var n = 0
+  var last = ""
+  for _ in 0..4 {
+    if let Some(s) = ch.recv() {
+      n += 1
+      last = s
+    }
+  }
+  "${n} ${last} ${b.name} ${sum(b.xs)}"
+}
+
+// many background tasks on one captured Box (spawn100k's shape)
+fn many(n: Int) -> Int {
+  let total = Atomic[Int].new(0)
+  let b = Box{name: "box", xs: [10, 20, 30]}
+  scope sc {
+    for i in 0..n {
+      sc.spawn_background(fn() { total.add(sum(b.xs) + i % 7 + b.name.len()) })
+    }
+    let _ = sc.spawn(fn() { total.add(0) }).await
+  }
+  // the background tasks may be cancelled before they run: only the
+  // capture is checked
+  sum(b.xs) + b.name.len() + if total.get() >= 0 { 0 } else { 1 }
+}
+
+// s.cancel() and then a normal end
+fn cancelled(os: Os) -> Int {
+  let xs = [3, 3]
+  let total = Atomic[Int].new(0)
+  scope sc {
+    for _ in 0..8 {
+      sc.spawn_background(fn() {
+        defer total.add(sum(xs))
+        os.clock.sleep(1h)
+      })
+    }
+    os.clock.sleep(1ms)
+    sc.cancel()
+  }
+  total.get() + xs.len()
+}
+
+// an early return out of the scope while background tasks run
+fn early(os: Os, stop: Bool) -> Int {
+  let xs = [9, 9]
+  let total = Atomic[Int].new(0)
+  scope sc {
+    for _ in 0..8 {
+      sc.spawn_background(fn() {
+        defer total.add(sum(xs))
+        os.clock.sleep(1h)
+      })
+    }
+    if stop {
+      return -1
+    }
+  }
+  total.get() + xs.len()
+}
+
+fn stop() -> Int ! Str {
+  Err("stop")
+}
+
+// a `?` out of the scope
+fn fails(os: Os, n: Int) -> Int ! Str {
+  let xs = [4, 4]
+  let total = Atomic[Int].new(0)
+  scope sc {
+    sc.spawn_background(fn() {
+      defer total.add(sum(xs))
+      os.clock.sleep(1h)
+    })
+    if n > 1 {
+      let _ = stop()?
+    }
+  }
+  Ok(total.get() + xs.len())
+}
+
+// an inner scope's body unwound by an outer cancel, its background task
+// reading the inner capture in a shielded defer
+fn outer_cancel(os: Os) -> Int {
+  let total = Atomic[Int].new(0)
+  scope outer {
+    outer.spawn(fn() {
+      let xs = [6, 6, 6]
+      scope inner {
+        inner.spawn_background(fn() {
+          defer {
+            os.clock.sleep(5ms)
+            total.add(sum(xs))
+          }
+          os.clock.sleep(1h)
+        })
+        os.clock.sleep(1h)
+      }
+      total.add(1000)
+    })
+    os.clock.sleep(5ms)
+    outer.cancel()
+  }
+  total.get()
+}
+
+// the cases the rule leaves owned, as background tasks: a var reassigned
+// in the scope, a closure held in a variable, a Group's spawn_background
+fn owned(os: Os) -> Int {
+  var xs = [5, 5]
+  let ys = [3, 3, 3]
+  let zs = [2, 2]
+  let total = Atomic[Int].new(0)
+  scope sc {
+    sc.spawn_background(fn() {
+      defer total.add(sum(xs))
+      os.clock.sleep(1h)
+    })
+    xs = [1]
+    let f = fn() {
+      defer total.add(sum(ys))
+      os.clock.sleep(1h)
+    }
+    sc.spawn_background(f)
+    let g = sc.group()
+    for _ in 0..4 {
+      g.spawn_background(fn() {
+        defer total.add(sum(zs))
+        os.clock.sleep(1h)
+      })
+    }
+    os.clock.sleep(1ms)
+  }
+  total.get() + sum(xs) + sum(ys) + sum(zs)
+}
+
+fn main(os: Os) {
+  os.stdio.println("outlive ${outlive(os)}")
+  os.stdio.println("shielded ${shielded(os)}")
+  os.stdio.println("many ${many(10000)}")
+  os.stdio.println("cancelled ${cancelled(os)}")
+  os.stdio.println("early ${early(os, true)} ${early(os, false)}")
+  let f1 = match fails(os, 1) {
+    Ok(v) => v
+    Err(_) => -2
+  }
+  let f2 = match fails(os, 2) {
+    Ok(v) => v
+    Err(_) => -2
+  }
+  os.stdio.println("fails ${f1} ${f2}")
+  os.stdio.println("outer ${outer_cancel(os)}")
+  os.stdio.println("owned ${owned(os)}")
+}

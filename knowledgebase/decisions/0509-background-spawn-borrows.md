@@ -1,6 +1,6 @@
 # 0509: A scope's s.spawn_background borrows its captures too (amends 0507)
 
-Status: Proposed (Xo Lang 1, 2026-11-05, at the lead's request). The code is on branch lang1-0507bg (not on main); it lands only if the owner accepts this.
+Status: Accepted (owner, 2026-11-05). Proposed by Xo Lang 1 the same day at the lead's request.
 
 ## Context
 
@@ -57,7 +57,7 @@ scoped_spawn_lit) accepts `spawn_background` as well as `spawn`, and
   the bench) against the branch: wall 0.757 (0.656 to 0.84, better), CPU
   1.023 (0.861 to 1.167, within noise), max RSS 1.0. As with 0507, the
   gain is in the spawning thread's waiting, not in work.
-- New golden conc_scope_bg_borrow (on the branch): background tasks that
+- New golden conc_scope_bg_borrow: background tasks that
   read their borrowed captures after the body's last statement (a loop
   until cancelled, a shielded defer that sleeps and then reads), 10,000
   background tasks on one captured value, `s.cancel()` then a normal
