@@ -339,7 +339,7 @@ fn (c: ModCtx) report_changes(changes: List[ModChange], probs: List[check.Proble
 }
 
 /// `xo get [--dir=<dir>] [--json] [-u] [--accept-effects] <path>[@version]...`.
-fn (var c: ModCtx) run_get(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
+fn (var c: ModCtx) run_get(args: List[Str]) -> Int uses (env, fs, net, proc, stdio, rand) {
   var fl = FlagSet{name: "get", defs: [flag_str("dir", ".", "a directory of the main module"), flag_bool("json", "print the result as JSON"), flag_bool("u", "upgrade to the latest versions (every requirement when no path is given)"), flag_bool("accept-effects", "record the new versions' effects in xo.lock even when they are wider than the locked ones (decision 0156)")]}
   if !c.parse_flags(fl, args) {
     return 2
@@ -375,6 +375,18 @@ fn (var c: ModCtx) run_get(args: List[Str]) -> Int uses (fs, net, proc, stdio, r
     }
   }
   let diffs = c.upgrade_diffs(root, changes)
+  // each newly required version checked in full once (decision 0517)
+  if errs(probs).is_empty() {
+    for ch in changes {
+      let v = if ch.selected.is_empty() { ch.new } else { ch.selected }
+      if !v.is_empty() {
+        let w = c.check_fetched(root, ch.path, v)
+        if !w.is_empty() {
+          c.os.stdio.eprintln(w)
+        }
+      }
+    }
+  }
   c.report_changes(changes, probs, fl.on("json"), diffs)
 }
 

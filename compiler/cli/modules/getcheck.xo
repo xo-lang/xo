@@ -1,0 +1,60 @@
+// xo get's check of a fetched version (decision 0517, owner's choice
+// (b)): a build checks a dependency's function bodies only as it reaches
+// them, so `xo get` checks each newly required version in full once,
+// with `xo check`, and reports its errors before any build uses it. The
+// result is recorded per version and xo in the module cache, so a
+// version is checked once.
+
+use github.com/xo-lang/xo/compiler/check
+use std/crypto
+
+/// Checks module path at version v (the version the main module at root
+/// builds with) unless a record of an earlier check exists; returns the
+/// warning to print, "" when the version checks clean or was checked
+/// before. XO_GET_CHECK=0 turns it off.
+fn (var c: ModCtx) check_fetched(root: Str, path: Str, v: Str) -> Str uses (env, fs, proc, rand, net) {
+  if (c.env.get("XO_GET_CHECK") ?? "") == "0" {
+    return ""
+  }
+  var dir = ""
+  for m in c.load(root, Options{no_workspace: true, no_vendor: true}).modules {
+    if m.path == path && m.version == v && !m.workspace && !m.vendored {
+      dir = m.dir
+    }
+  }
+  if dir.is_empty() {
+    return ""
+  }
+  let xo = check.executable(c.os.env, c.os.fs)
+  // the xo's own identity: a newer xo checks the version again
+  let st = match c.os.fs.stat(xo) {
+    Ok(Some(i)) => "${i.size} ${i.modified.unix_millis()}"
+    _ => ""
+  }
+  // beside the versions in the module cache (as Go's cache/download), so
+  // `xo mod clean` drops the records with the versions
+  let cache = c.cache_dir()
+  if cache.is_empty() || st.is_empty() {
+    return ""
+  }
+  let rec = "${cache}/cache/getcheck/${crypto.sha256("${path}@${v}\n${xo}\n${st}".bytes()).to_hex()[0..32]}"
+  // xo:allow XO0903 no record: the version is checked now
+  if c.os.fs.exists(rec).ok() ?? false {
+    return ""
+  }
+  let out = match c.os.proc.cmd(xo, ["check", "${dir}/..."]).dir(dir).set_env("XO_OFFLINE", "1").set_env("XO_WORK", "off").set_env("XO_GET_CHECK", "0").output() {
+    Ok(o) => o
+    Err(_) => return ""
+  }
+  // exit 2: a usage error (a module with no package to check), not a finding
+  let text = "${(out.stdout.to_str() ?? "").trim()}\n${(out.stderr.to_str() ?? "").trim()}".trim()
+  let errs = out.code == 1
+  c.os.fs.create_dir_all("${cache}/cache/getcheck").ignore_err("no record: the next xo get checks it again")
+  c.os.fs.write(rec, "${if errs { "errors" } else { "ok" }}\n${text}\n".bytes()).ignore_err("no record: the next xo get checks it again")
+  if !errs {
+    return ""
+  }
+  let lines = text.split("\n")
+  let shown = lines[0..lines.len().min(10)].join("\n")
+  "xo get: warning: ${path}@${v} has errors in its own code (xo check of it); a build reports one only if the program reaches it (decision 0517):\n${shown}${if lines.len() > 10 { "\n... (${lines.len() - 10} more lines)" } else { "" }}"
+}
