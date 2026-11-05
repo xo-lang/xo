@@ -79,6 +79,7 @@ func main() {
 	gap := flag.Duration("gap", 0, "-route mode: a pause before each request, so a server is idle (waiting to read) when it comes (callgrind.sh's h2)")
 	burst := flag.Int("burst", 0, "burst mode: dial this many connections at once (raw TCP, one GET /users/1 each, Connection: close), -reps times, and print the failures and the time until all are answered (burst.go)")
 	reps := flag.Int("reps", 10, "-burst mode: rounds")
+	pipeline := flag.Int("pipeline", 0, "pipelined mode: each worker writes this many GET /users/1 on one raw connection, then reads the responses (pipeline.go)")
 	h2det := flag.Bool("h2det", false, "with -h2: write each request's frames in one TLS write (h2det.go; callgrind.sh's deterministic counts)")
 	flag.Parse()
 	if *gencert != "" {
@@ -137,6 +138,9 @@ func main() {
 	}
 	if *burst > 0 {
 		os.Exit(runBurst(*base, *burst, *reps))
+	}
+	if *pipeline > 0 {
+		os.Exit(runPipeline(*base, *conc, *pipeline, *warm, *dur, *pid))
 	}
 
 	var peak atomic.Int64
