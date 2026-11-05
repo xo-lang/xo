@@ -162,6 +162,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-handles-shared.md](go-handles-shared.md): handles of Go objects are shared references; a setter on one copy is seen through all.
 - [first-signal-no-longer-cancels.md](first-signal-no-longer-cancels.md): since 0.7 the first SIGTERM only requests a stop; cancellation follows after 30s or a second signal.
 - [std-method-effect-only-go-method.md](std-method-effect-only-go-method.md): a std method whose only own type parameter is an effect (`Once.get[fx]`) is called as the Go method `M_get`, not `Task_Once_get`.
+- [rss-precondition-needs-concurrent-tasks.md](rss-precondition-needs-concurrent-tasks.md): Observed and fixed 2026-11-05: TestMemTrimOtherThreads failed under load on its "60 MB before the trim" precondition, since its 8 tasks ran partly one after another and reused each other's blocks; a channel barrier makes them hold their blocks at once
 - [run-main-without-error.md](run-main-without-error.md): `testing.run_main(main, os)` with `fn main(os: Os)` (no `!`) fails the Go build; declare `main` with `!`.
 - [permit-handoff-after-cancel.md](permit-handoff-after-cancel.md): a canceled item's permit release can wake the spawn loop, which then started one more item; recheck cancellation after acquire.
 - [golden-tie-insertion-order.md](golden-tie-insertion-order.md): arena_escape's `longest` ties depended on concurrent insertion order (fixed: ties broken by value).

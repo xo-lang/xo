@@ -24,13 +24,31 @@ fn rss_mb(os: Os) -> Int {
 }
 
 fn main(os: Os) {
+  // every task holds its blocks until all 8 have allocated (a barrier of
+  // channels, which park the task, not its thread), so the blocks are all
+  // live at once however many threads run the tasks: on a loaded machine
+  // the tasks ran partly one after another and reused each other's
+  // blocks, and the resident set before the trim fell toward the test's
+  // 60 MB bound (67 MB in a full cmd/xo run, 2026-11-05)
+  let ready: Chan[Int] = Chan.new(8)
+  let go: Chan[Int] = Chan.new(8)
   scope s {
+    s.spawn(fn() {
+      for _ in 0..8 {
+        let _r = ready.recv()
+      }
+      for _ in 0..8 {
+        go.send(1)
+      }
+    })
     for k in 0..8 {
       s.spawn(fn() {
         var keep: List[Bytes] = []
         for _ in 0..1280 {
           keep.push(b"t".repeat(12000))
         }
+        ready.send(k)
+        let _g = go.recv()
         var n = 0
         for b in keep {
           n += b.len() + k
