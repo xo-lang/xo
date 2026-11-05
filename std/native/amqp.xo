@@ -1,0 +1,611 @@
+// std/amqp: one pure source for the native backends and, through
+// std/go_compiled.txt, the Go backend (decision 0312). Stage 1 of decision
+// 0521: the AMQP 1.0 type system and its encoding, a port of
+// github.com/Azure/go-amqp v1.7.0's internal/encoding (MIT, Copyright 2017
+// Kale Blankenship and Microsoft). The encoder picks go-amqp's constructors
+// (smalluint, smallint, str8 and vbin8 by size, always list32 and map32);
+// the decoder takes every constructor of the specification.
+use std/amqp
+
+fn enc_err(msg: Str) -> amqp.AmqpErr { amqp.AmqpErr.Encode(msg: msg) }
+
+fn dec_err(msg: Str) -> amqp.AmqpErr { amqp.AmqpErr.Decode(msg: msg) }
+
+fn be(out: BytesBuilder, v: Int, n: Int) -> BytesBuilder {
+  var o = out
+  var i = n - 1
+  while i >= 0 {
+    o.write_byte(UInt8(v.shr_logical(8 * i) & 255))
+    i -= 1
+  }
+  o
+}
+
+fn put_code(out: BytesBuilder, c: Int) -> BytesBuilder {
+  var o = out
+  o.write_byte(UInt8(c))
+  o
+}
+
+// ---------------------------------------------------------------------------
+// Encoding
+
+/// A variable length value (binary, string, symbol): code8 for up to 255
+/// bytes, else code32.
+fn put_var(out: BytesBuilder, code8: Int, code32: Int, b: Bytes) -> BytesBuilder {
+  var o = out
+  if b.len() < 256 {
+    o = be(put_code(o, code8), b.len(), 1)
+  } else {
+    o = be(put_code(o, code32), b.len(), 4)
+  }
+  o.write(b)
+  o
+}
+
+fn put_value(out: BytesBuilder, v: amqp.Value) -> BytesBuilder ! amqp.AmqpErr {
+  var o = out
+  match v {
+    Null => put_code(o, 0x40)
+    Bool(b) => put_code(o, if b { 0x41 } else { 0x42 })
+    UByte(x) => be(put_code(o, 0x50), Int(x), 1)
+    UShort(x) => be(put_code(o, 0x60), Int(x), 2)
+    UInt(x) => {
+      let n = Int(x)
+      if n == 0 {
+        put_code(o, 0x43)
+      } else if n < 256 {
+        be(put_code(o, 0x52), n, 1)
+      } else {
+        be(put_code(o, 0x70), n, 4)
+      }
+    }
+    ULong(x) => {
+      if x == 0 {
+        put_code(o, 0x44)
+      } else if x < 256 {
+        be(put_code(o, 0x53), Int(x), 1)
+      } else {
+        be(put_code(o, 0x80), u64_int(x), 8)
+      }
+    }
+    Byte(x) => be(put_code(o, 0x51), Int(x), 1)
+    Short(x) => be(put_code(o, 0x61), Int(x), 2)
+    Int(x) => {
+      let n = Int(x)
+      if n < 128 && n >= -128 {
+        be(put_code(o, 0x54), n, 1)
+      } else {
+        be(put_code(o, 0x71), n, 4)
+      }
+    }
+    Long(x) => {
+      let n = Int(x)
+      if n < 128 && n >= -128 {
+        be(put_code(o, 0x55), n, 1)
+      } else {
+        be(put_code(o, 0x81), n, 8)
+      }
+    }
+    Float(bits) => be(put_code(o, 0x72), Int(bits), 4)
+    Double(x) => be(put_code(o, 0x82), x.to_bits(), 8)
+    Decimal32(x) => be(put_code(o, 0x74), Int(x), 4)
+    Decimal64(x) => be(put_code(o, 0x84), u64_int(x), 8)
+    Decimal128(b) => {
+      if b.len() != 16 {
+        return Err(enc_err("decimal128 needs 16 bytes"))
+      }
+      o = put_code(o, 0x94)
+      o.write(b)
+      o
+    }
+    Char(r) => be(put_code(o, 0x73), Int(r), 4)
+    Timestamp(ms) => be(put_code(o, 0x83), ms, 8)
+    Uuid(b) => {
+      if b.len() != 16 {
+        return Err(enc_err("uuid needs 16 bytes"))
+      }
+      o = put_code(o, 0x98)
+      o.write(b)
+      o
+    }
+    Binary(b) => put_var(o, 0xa0, 0xb0, b)
+    Str(s) => put_var(o, 0xa1, 0xb1, s.bytes())
+    Symbol(s) => put_var(o, 0xa3, 0xb3, s.bytes())
+    List(items) => {
+      if items.len() == 0 {
+        return Ok(put_code(o, 0x45))
+      }
+      var body = BytesBuilder.new()
+      for it in items {
+        body = put_value(body, it)?
+      }
+      let bb = body.freeze()
+      o = be(put_code(o, 0xd0), bb.len() + 4, 4)
+      o = be(o, items.len(), 4)
+      o.write(bb)
+      o
+    }
+    Map(pairs) => {
+      var body = BytesBuilder.new()
+      for (k, x) in pairs {
+        body = put_value(body, k)?
+        body = put_value(body, x)?
+      }
+      let bb = body.freeze()
+      o = be(put_code(o, 0xd1), bb.len() + 4, 4)
+      o = be(o, 2 * pairs.len(), 4)
+      o.write(bb)
+      o
+    }
+    Array(items) => put_array(o, items)?
+    Described(d, x) => {
+      o = put_code(o, 0x00)
+      o = put_value(o, d)?
+      put_value(o, x)?
+    }
+  }
+}
+
+/// u64's bits as an Int (wrapping above 2^63).
+fn u64_int(x: UInt64) -> Int { x.to_bits() }
+
+/// The kind of an array element: the constructor family.
+fn kind(v: amqp.Value) -> Int {
+  match v {
+    Null => 0
+    Bool(_) => 1
+    UByte(_) => 2
+    UShort(_) => 3
+    UInt(_) => 4
+    ULong(_) => 5
+    Byte(_) => 6
+    Short(_) => 7
+    Int(_) => 8
+    Long(_) => 9
+    Float(_) => 10
+    Double(_) => 11
+    Decimal32(_) => 12
+    Decimal64(_) => 13
+    Decimal128(_) => 14
+    Char(_) => 15
+    Timestamp(_) => 16
+    Uuid(_) => 17
+    Binary(_) => 18
+    Str(_) => 19
+    Symbol(_) => 20
+    Map(_) => 21
+    _ => 99
+  }
+}
+
+/// The integer of an element, for the width choice.
+fn small(v: amqp.Value) -> Bool {
+  match v {
+    UInt(x) => Int(x) < 256
+    ULong(x) => x < 256
+    Int(x) => Int(x) < 128 && Int(x) >= -128
+    Long(x) => Int(x) < 128 && Int(x) >= -128
+    _ => false
+  }
+}
+
+/// An array (go-amqp's arrayX Marshal): one constructor for all elements,
+/// the narrow form when every element fits it.
+fn put_array(out: BytesBuilder, items: List[amqp.Value]) -> BytesBuilder ! amqp.AmqpErr {
+  var o = out
+  if items.len() == 0 {
+    return Err(enc_err("an empty array has no element type"))
+  }
+  let k = kind(items[0])
+  if k == 0 || k == 99 {
+    return Err(enc_err("unsupported array element type"))
+  }
+  var all_small = true
+  for it in items {
+    if kind(it) != k {
+      return Err(enc_err("array elements of different types"))
+    }
+    if !small(it) {
+      all_small = false
+    }
+  }
+  var body = BytesBuilder.new()
+  var code = 0
+  if k == 1 {
+    code = 0x56
+    for it in items {
+      body = put_byte_of(body, it)
+    }
+  } else if k == 2 || k == 6 {
+    code = if k == 2 { 0x50 } else { 0x51 }
+    for it in items {
+      body = put_int_body(body, it, 1)
+    }
+  } else if k == 3 || k == 7 {
+    code = if k == 3 { 0x60 } else { 0x61 }
+    for it in items {
+      body = put_int_body(body, it, 2)
+    }
+  } else if k == 4 {
+    code = if all_small { 0x52 } else { 0x70 }
+    for it in items {
+      body = put_int_body(body, it, if all_small { 1 } else { 4 })
+    }
+  } else if k == 5 {
+    code = if all_small { 0x53 } else { 0x80 }
+    for it in items {
+      body = put_int_body(body, it, if all_small { 1 } else { 8 })
+    }
+  } else if k == 8 {
+    code = if all_small { 0x54 } else { 0x71 }
+    for it in items {
+      body = put_int_body(body, it, if all_small { 1 } else { 4 })
+    }
+  } else if k == 9 {
+    code = if all_small { 0x55 } else { 0x81 }
+    for it in items {
+      body = put_int_body(body, it, if all_small { 1 } else { 8 })
+    }
+  } else if k == 10 {
+    code = 0x72
+    for it in items {
+      body = put_int_body(body, it, 4)
+    }
+  } else if k == 11 {
+    code = 0x82
+    for it in items {
+      body = put_int_body(body, it, 8)
+    }
+  } else if k == 12 {
+    code = 0x74
+    for it in items {
+      body = put_int_body(body, it, 4)
+    }
+  } else if k == 13 {
+    code = 0x84
+    for it in items {
+      body = put_int_body(body, it, 8)
+    }
+  } else if k == 14 || k == 17 {
+    code = if k == 14 { 0x94 } else { 0x98 }
+    for it in items {
+      body.write(fixed_bytes(it))
+    }
+  } else if k == 15 {
+    code = 0x73
+    for it in items {
+      body = put_int_body(body, it, 4)
+    }
+  } else if k == 16 {
+    code = 0x83
+    for it in items {
+      body = put_int_body(body, it, 8)
+    }
+  } else if k == 18 || k == 19 || k == 20 {
+    // variable width: one length width for all, by the longest
+    var wide = false
+    for it in items {
+      if var_bytes(it).len() > 255 {
+        wide = true
+      }
+    }
+    let base = if k == 18 { 0xa0 } else if k == 19 { 0xa1 } else { 0xa3 }
+    code = if wide { base + 0x10 } else { base }
+    for it in items {
+      let b = var_bytes(it)
+      body = be(body, b.len(), if wide { 4 } else { 1 })
+      body.write(b)
+    }
+  } else {
+    // maps: map32 elements without their constructor
+    code = 0xd1
+    for it in items {
+      let enc = put_value(BytesBuilder.new(), it)?.freeze()
+      body.write(enc[1..])
+    }
+  }
+  let bb = body.freeze()
+  // the size counts the count and the element constructor
+  if bb.len() + 2 <= 255 {
+    o = be(put_code(o, 0xe0), bb.len() + 2, 1)
+    o = be(o, items.len(), 1)
+  } else {
+    o = be(put_code(o, 0xf0), bb.len() + 5, 4)
+    o = be(o, items.len(), 4)
+  }
+  o = put_code(o, code)
+  o.write(bb)
+  o
+}
+
+fn put_byte_of(out: BytesBuilder, v: amqp.Value) -> BytesBuilder {
+  var o = out
+  match v {
+    Bool(b) => o.write_byte(if b { 1 } else { 0 })
+    _ => {}
+  }
+  o
+}
+
+/// The big endian body (n bytes) of an integer-like element.
+fn put_int_body(out: BytesBuilder, v: amqp.Value, n: Int) -> BytesBuilder {
+  match v {
+    UByte(x) => be(out, Int(x), n)
+    UShort(x) => be(out, Int(x), n)
+    UInt(x) => be(out, Int(x), n)
+    ULong(x) => be(out, u64_int(x), n)
+    Byte(x) => be(out, Int(x), n)
+    Short(x) => be(out, Int(x), n)
+    Int(x) => be(out, Int(x), n)
+    Long(x) => be(out, Int(x), n)
+    Float(bits) => be(out, Int(bits), n)
+    Double(x) => be(out, x.to_bits(), n)
+    Decimal32(x) => be(out, Int(x), n)
+    Decimal64(x) => be(out, u64_int(x), n)
+    Char(r) => be(out, Int(r), n)
+    Timestamp(ms) => be(out, ms, n)
+    _ => out
+  }
+}
+
+fn fixed_bytes(v: amqp.Value) -> Bytes {
+  match v {
+    Decimal128(b) => b
+    Uuid(b) => b
+    _ => b""
+  }
+}
+
+fn var_bytes(v: amqp.Value) -> Bytes {
+  match v {
+    Binary(b) => b
+    Str(s) => s.bytes()
+    Symbol(s) => s.bytes()
+    _ => b""
+  }
+}
+
+fn encode(v: amqp.Value) -> Bytes ! amqp.AmqpErr {
+  Ok(put_value(BytesBuilder.new(), v)?.freeze())
+}
+
+// ---------------------------------------------------------------------------
+// Decoding
+
+fn need(b: Bytes, pos: Int, n: Int) -> () ! amqp.AmqpErr {
+  if n < 0 || pos + n > b.len() {
+    return Err(dec_err("unexpected end of data"))
+  }
+  Ok(())
+}
+
+fn get_be(b: Bytes, pos: Int, n: Int) -> Int {
+  var v = 0
+  for i in 0..n {
+    v = v.wrapping_shl(8) | Int(b[pos + i])
+  }
+  v
+}
+
+/// A signed value of n bytes.
+fn get_signed(b: Bytes, pos: Int, n: Int) -> Int {
+  let v = get_be(b, pos, n)
+  if n == 8 {
+    return v
+  }
+  let bits = 8 * n
+  if (v >> (bits - 1)) & 1 == 1 { v - (1 << bits) } else { v }
+}
+
+/// The value at pos and the position after it.
+fn get_value(b: Bytes, pos: Int, depth: Int) -> (amqp.Value, Int) ! amqp.AmqpErr {
+  if depth > 64 {
+    return Err(dec_err("values nested too deeply"))
+  }
+  need(b, pos, 1)?
+  let c = Int(b[pos])
+  let p = pos + 1
+  if c == 0x00 {
+    let (d, p1) = get_value(b, p, depth + 1)?
+    let (x, p2) = get_value(b, p1, depth + 1)?
+    return Ok((amqp.Value.Described(descriptor: d, value: x), p2))
+  }
+  if c == 0x40 {
+    return Ok((amqp.Value.Null, p))
+  }
+  if c == 0x41 || c == 0x42 {
+    return Ok((amqp.Value.Bool(v: c == 0x41), p))
+  }
+  if c == 0x56 {
+    need(b, p, 1)?
+    if Int(b[p]) > 1 {
+      return Err(dec_err("invalid boolean"))
+    }
+    return Ok((amqp.Value.Bool(v: b[p] == 1), p + 1))
+  }
+  if c == 0x43 {
+    return Ok((amqp.Value.UInt(v: UInt32(0)), p))
+  }
+  if c == 0x44 {
+    return Ok((amqp.Value.ULong(v: UInt64(0)), p))
+  }
+  if c == 0x45 {
+    return Ok((amqp.Value.List(items: []), p))
+  }
+  let w = fixed_width(c)
+  if w >= 0 {
+    need(b, p, w)?
+    return Ok((fixed_value(b, c, p), p + w))
+  }
+  if c == 0xa0 || c == 0xa1 || c == 0xa3 || c == 0xb0 || c == 0xb1 || c == 0xb3 {
+    let lw = if c < 0xb0 { 1 } else { 4 }
+    need(b, p, lw)?
+    let n = get_be(b, p, lw)
+    need(b, p + lw, n)?
+    let body = b[p + lw..p + lw + n]
+    let end = p + lw + n
+    if c == 0xa0 || c == 0xb0 {
+      return Ok((amqp.Value.Binary(v: body), end))
+    }
+    let s = body.to_str() ?? return Err(dec_err("not a valid UTF-8 string"))
+    if c == 0xa1 || c == 0xb1 {
+      return Ok((amqp.Value.Str(v: s), end))
+    }
+    return Ok((amqp.Value.Symbol(v: s), end))
+  }
+  if c == 0xc0 || c == 0xd0 || c == 0xc1 || c == 0xd1 || c == 0xe0 || c == 0xf0 {
+    let wide = c >= 0xd0 && c != 0xe0
+    let lw = if wide { 4 } else { 1 }
+    need(b, p, 2 * lw)?
+    let size = get_be(b, p, lw)
+    let count = get_be(b, p + lw, lw)
+    let start = p + 2 * lw
+    if size < lw {
+      return Err(dec_err("invalid compound size"))
+    }
+    let end = p + lw + size
+    need(b, p + lw, size)?
+    // every element takes at least a byte
+    if count > end - start && c != 0xe0 && c != 0xf0 {
+      return Err(dec_err("compound count exceeds its size"))
+    }
+    if c == 0xc0 || c == 0xd0 {
+      var items: List[amqp.Value] = []
+      var q = start
+      for _ in 0..count {
+        let (x, q1) = get_value(b, q, depth + 1)?
+        if q1 > end {
+          return Err(dec_err("list element past its end"))
+        }
+        items.push(x)
+        q = q1
+      }
+      if q != end {
+        return Err(dec_err("list size mismatch"))
+      }
+      return Ok((amqp.Value.List(items: items), end))
+    }
+    if c == 0xc1 || c == 0xd1 {
+      if count % 2 != 0 {
+        return Err(dec_err("odd map count"))
+      }
+      var pairs: List[(amqp.Value, amqp.Value)] = []
+      var q = start
+      for _ in 0..count / 2 {
+        let (k, q1) = get_value(b, q, depth + 1)?
+        let (x, q2) = get_value(b, q1, depth + 1)?
+        if q2 > end {
+          return Err(dec_err("map element past its end"))
+        }
+        pairs.push((k, x))
+        q = q2
+      }
+      if q != end {
+        return Err(dec_err("map size mismatch"))
+      }
+      return Ok((amqp.Value.Map(pairs: pairs), end))
+    }
+    // array: one element constructor, then the bodies
+    need(b, start, 1)?
+    let ec = Int(b[start])
+    var q = start + 1
+    var items: List[amqp.Value] = []
+    for _ in 0..count {
+      if q > end {
+        return Err(dec_err("array element past its end"))
+      }
+      let (x, q1) = get_body(b, ec, q, end, depth + 1)?
+      items.push(x)
+      q = q1
+    }
+    if q != end {
+      return Err(dec_err("array size mismatch"))
+    }
+    return Ok((amqp.Value.Array(items: items), end))
+  }
+  Err(dec_err("unknown type code 0x${hex2(c)}"))
+}
+
+fn hex2(c: Int) -> Str {
+  let h = "0123456789abcdef"
+  h[c >> 4..(c >> 4) + 1] + h[c & 15..(c & 15) + 1]
+}
+
+/// An element of an array with constructor ec at q (ending by end).
+fn get_body(b: Bytes, ec: Int, q: Int, end: Int, depth: Int) -> (amqp.Value, Int) ! amqp.AmqpErr {
+  if ec == 0x41 || ec == 0x42 || ec == 0x43 || ec == 0x44 || ec == 0x45 || ec == 0x40 {
+    // zero width constructors: the value is the constructor
+    let (v, _) = get_value(b, q - 1 + 0, depth)?
+    return Ok((v, q))
+  }
+  let w = fixed_width(ec)
+  if w >= 0 {
+    need(b, q, w)?
+    if ec == 0x56 && Int(b[q]) > 1 {
+      return Err(dec_err("invalid boolean"))
+    }
+    return Ok((fixed_value(b, ec, q), q + w))
+  }
+  if ec == 0xa0 || ec == 0xa1 || ec == 0xa3 || ec == 0xb0 || ec == 0xb1 || ec == 0xb3 {
+    // re-use get_value on a synthesized constructor
+    let lw = if ec < 0xb0 { 1 } else { 4 }
+    need(b, q, lw)?
+    let n = get_be(b, q, lw)
+    need(b, q + lw, n)?
+    var tmp = BytesBuilder.new()
+    tmp.write_byte(UInt8(ec))
+    tmp.write(b[q..q + lw + n])
+    let (v, _) = get_value(tmp.freeze(), 0, depth)?
+    return Ok((v, q + lw + n))
+  }
+  if ec == 0xd1 || ec == 0xc1 {
+    let lw = if ec == 0xd1 { 4 } else { 1 }
+    need(b, q, lw)?
+    let size = get_be(b, q, lw)
+    need(b, q, lw + size)?
+    var tmp = BytesBuilder.new()
+    tmp.write_byte(UInt8(ec))
+    tmp.write(b[q..q + lw + size])
+    let (v, _) = get_value(tmp.freeze(), 0, depth)?
+    return Ok((v, q + lw + size))
+  }
+  Err(dec_err("unsupported array element constructor 0x${hex2(ec)}"))
+}
+
+/// The body width of a fixed width constructor, or -1.
+fn fixed_width(c: Int) -> Int {
+  if c == 0x50 || c == 0x51 || c == 0x52 || c == 0x53 || c == 0x54 || c == 0x55 { return 1 }
+  if c == 0x60 || c == 0x61 { return 2 }
+  if c == 0x70 || c == 0x71 || c == 0x72 || c == 0x73 || c == 0x74 { return 4 }
+  if c == 0x80 || c == 0x81 || c == 0x82 || c == 0x83 || c == 0x84 { return 8 }
+  if c == 0x94 || c == 0x98 { return 16 }
+  -1
+}
+
+fn fixed_value(b: Bytes, c: Int, p: Int) -> amqp.Value {
+  if c == 0x50 { return amqp.Value.UByte(v: UInt8(get_be(b, p, 1))) }
+  if c == 0x51 { return amqp.Value.Byte(v: Int8(get_signed(b, p, 1))) }
+  if c == 0x52 { return amqp.Value.UInt(v: UInt32(get_be(b, p, 1))) }
+  if c == 0x53 { return amqp.Value.ULong(v: UInt64(get_be(b, p, 1))) }
+  if c == 0x54 { return amqp.Value.Int(v: Int32(get_signed(b, p, 1))) }
+  if c == 0x55 { return amqp.Value.Long(v: Int64(get_signed(b, p, 1))) }
+  if c == 0x60 { return amqp.Value.UShort(v: UInt16(get_be(b, p, 2))) }
+  if c == 0x61 { return amqp.Value.Short(v: Int16(get_signed(b, p, 2))) }
+  if c == 0x70 { return amqp.Value.UInt(v: UInt32(get_be(b, p, 4))) }
+  if c == 0x71 { return amqp.Value.Int(v: Int32(get_signed(b, p, 4))) }
+  if c == 0x72 { return amqp.Value.Float(bits: UInt32(get_be(b, p, 4))) }
+  if c == 0x73 { return amqp.Value.Char(v: Rune.try(get_be(b, p, 4)) ?? Rune.try(0xFFFD) ?? fault("rune")) }
+  if c == 0x74 { return amqp.Value.Decimal32(bits: UInt32(get_be(b, p, 4))) }
+  if c == 0x80 { return amqp.Value.ULong(v: UInt64.from_bits(get_be(b, p, 8))) }
+  if c == 0x81 { return amqp.Value.Long(v: Int64(get_be(b, p, 8))) }
+  if c == 0x82 { return amqp.Value.Double(v: Float.from_bits(get_be(b, p, 8))) }
+  if c == 0x83 { return amqp.Value.Timestamp(ms: get_be(b, p, 8)) }
+  if c == 0x84 { return amqp.Value.Decimal64(bits: UInt64.from_bits(get_be(b, p, 8))) }
+  if c == 0x94 { return amqp.Value.Decimal128(bits: b[p..p + 16]) }
+  amqp.Value.Uuid(bytes: b[p..p + 16])
+}
+
+fn decode(b: Bytes) -> (amqp.Value, Int) ! amqp.AmqpErr {
+  get_value(b, 0, 0)
+}

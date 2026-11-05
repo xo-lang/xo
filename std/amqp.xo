@@ -17,7 +17,8 @@ enum Value {
   Short(v: Int16)
   Int(v: Int32)
   Long(v: Int64)
-  Float(v: Float32)
+  /// the IEEE 754 binary32 bits (a Float32 has no bits accessor)
+  Float(bits: UInt32)
   Double(v: Float)
   /// decimal32, decimal64 and decimal128 keep their IEEE 754 bit patterns
   Decimal32(bits: UInt32)
