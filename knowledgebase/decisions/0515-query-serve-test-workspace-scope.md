@@ -238,5 +238,9 @@ TestCheckWorkspaceSizeMemory (`query type`, `query api`, `query def` in
 a 301 module workspace), TestQueryCallersReverseClosure (the three
 callers, an unrelated module's error unreported) and
 TestTestWorkspacePerModule (4 passed, 1 failed, one summary per child,
-against one program of 4 members). Callers of a core target per member
-(point 2's last part) is not on main yet.
+against one program of 4 members). Callers of a core target (more than
+CALLERS_PER_MEMBER, 32, importers in its reverse closure) check one
+importer at a time from a copy of a shared base, as decision 0513's
+check does, and list the callers in file and position order (one load
+lists them in that order too, so the two agree);
+TestQueryCallersPerMember covers 40 importers.

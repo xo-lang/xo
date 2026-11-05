@@ -890,6 +890,10 @@ pub fn (s: Session) callers(name: Str) -> (Str, List[Caller]) ! Str {
   let target = s.func_target(name)?
   var out: List[Caller] = []
   for m in s.user_modules() {
+    if s.c.base_mods.contains(m) {
+      // a member's copy of a base (decision 0515): the base answered
+      continue
+    }
     for f in s.c.mods[m].files {
       for (i, d) in s.c.files[f].ast.decls.indexed() {
         let encl = s.enclosing(f, i, d)
@@ -1269,7 +1273,18 @@ fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str
     }
   }
   // decision 0515: each kind loads what its question needs (the asked
-  // module's closure; for callers its importers too)
+  // module's closure; for callers its importers too, one at a time past
+  // CALLERS_PER_MEMBER of them)
+  if kind == "callers" {
+    match callers_per_member(os, dirs, names, bodies) {
+      Ok(Some((target, cs))) => return print_callers(os, target, cs, as_json)
+      Ok(None) => {}
+      Err(e) => {
+        os.stdio.eprintln("xo query: ${e}")
+        return 1
+      }
+    }
+  }
   let s = match load_session_scope(os, dirs, false, {}, names, kind == "callers", {}, bodies, true) {
     Ok(x) => x
     Err(e) => {
@@ -1312,17 +1327,7 @@ fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str
       }
     }
     "callers" => match s.callers(rest[0]) {
-      Ok((target, cs)) => {
-        var items: List[JVal] = []
-        var b = StrBuilder.new()
-        for c in cs {
-          items.push(caller_json(c))
-          b.write("${pos_text(c.pos)}: ${c.kind} in ${c.module}.${c.caller}\n")
-        }
-        b.write("${cs.len()} reference(s) to ${target}\n")
-        res = JVal.Obj([("target", JVal.Text(target)), ("callers", JVal.Arr(items))])
-        text = b.freeze()
-      }
+      Ok((target, cs)) => return print_callers(os, target, cs, as_json)
       Err(e) => err = e
     }
     "effects" => match s.effects(rest[0]) {
@@ -1442,4 +1447,70 @@ pub fn diag_human(d: check.Diag) -> Str {
     b.write("\n  fix: ${f.title}")
   }
   b.freeze()
+}
+
+/// The importers past which `xo query callers` checks them one at a time
+/// (the same number in every workspace: decision 0515).
+const CALLERS_PER_MEMBER = 32
+
+/// `xo query callers` of a package many others import (decision 0515
+/// point 2, a core target): the asked directories and their imports are
+/// checked once as a base (decision 0513), then each importing package
+/// from a copy of it, so no checker holds the whole reverse closure.
+/// None when the reverse closure has CALLERS_PER_MEMBER importers or
+/// fewer (one load answers).
+fn callers_per_member(os: Os, dirs: List[Str], names: List[Str], bodies: Bodies) -> (Str, List[Caller])? ! Str uses env, fs, proc {
+  let limit = CALLERS_PER_MEMBER
+  if names.len() != 1 {
+    return Ok(None)
+  }
+  let own = dirs.all(fn(d) { match os.fs.read_dir(d) {
+    Ok(es) => es.any(fn(e) { !e.is_dir && e.name.ends_with(".xo") })
+    Err(_) => false
+  } })
+  if !own {
+    return Ok(None)
+  }
+  let base = load_session_scope(os, dirs, false, {}, names, false, {}, bodies, true)?
+  var probe = base.c
+  let rev = probe.reverse_importers(dirs)
+  if rev.len() - dirs.len() <= limit {
+    return Ok(None)
+  }
+  let (target, first) = base.callers(names[0])?
+  var all = first
+  for d in rev[dirs.len()..] {
+    var c = base.c
+    c.start_member()
+    c.check_dirs([d])?
+    let (_, cs) = Session{c: c, wd: base.wd}.callers(names[0])?
+    all = all + cs
+  }
+  var seen: Set[Str] = #{}
+  var out: List[Caller] = []
+  for x in all.sort_by(fn(x) { (x.pos.file, x.pos.line, x.pos.col) }) {
+    let k = "${pos_text(x.pos)} ${x.kind}"
+    if !seen.contains(k) {
+      seen.add(k)
+      out.push(x)
+    }
+  }
+  Ok(Some((target, out)))
+}
+
+/// Prints the callers of target as `xo query callers` does.
+fn print_callers(os: Os, target: Str, cs: List[Caller], as_json: Bool) -> Int uses stdio {
+  var items: List[JVal] = []
+  var b = StrBuilder.new()
+  for c in cs {
+    items.push(caller_json(c))
+    b.write("${pos_text(c.pos)}: ${c.kind} in ${c.module}.${c.caller}\n")
+  }
+  b.write("${cs.len()} reference(s) to ${target}\n")
+  if as_json {
+    os.stdio.print(encode(JVal.Obj([("target", JVal.Text(target)), ("callers", JVal.Arr(items))])))
+  } else {
+    os.stdio.print(b.freeze())
+  }
+  0
 }

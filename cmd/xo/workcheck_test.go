@@ -251,3 +251,37 @@ func TestQueryCallersReverseClosure(t *testing.T) {
 		}
 	}
 }
+
+// TestQueryCallersPerMember: callers of a package more than 32 workspace
+// packages import (a core target) are found one importer at a time from
+// a shared base (decision 0515 point 2): every caller, once, in file and
+// position order.
+func TestQueryCallersPerMember(t *testing.T) {
+	ws := t.TempDir()
+	work := "xo preview\nuse ./lib\n"
+	files := map[string]string{
+		"lib/xo.mod":       "module example.com/lib\nedition preview\n",
+		"lib/util/util.xo": "pub fn seven() -> Int { 7 }\n",
+	}
+	const n = 40
+	for i := 0; i < n; i++ {
+		files[fmt.Sprintf("m%02d/xo.mod", i)] = fmt.Sprintf("module example.com/m%02d\nedition preview\n", i)
+		files[fmt.Sprintf("m%02d/m.xo", i)] = "use example.com/lib/util\n\npub fn m() -> Int { util.seven() }\n"
+		work += fmt.Sprintf("use ./m%02d\n", i)
+	}
+	files["xo.work"] = work
+	modtest.WriteFiles(t, ws, files)
+	r := xo(t, "query", "callers", "--json", "--dir="+filepath.Join(ws, "lib", "util"), "util.seven").want(0)
+	if c := strings.Count(r.out, `"caller"`); c != n {
+		t.Fatalf("want %d callers, got %d:\n%s", n, c, r.out)
+	}
+	last := -1
+	for i := 0; i < n; i++ {
+		k := strings.Index(r.out, fmt.Sprintf("/m%02d/", i))
+		if k < 0 || k < last {
+			t.Errorf("caller in m%02d missing or out of order:\n%s", i, r.out)
+			break
+		}
+		last = k
+	}
+}
