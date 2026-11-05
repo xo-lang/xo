@@ -567,7 +567,10 @@ fn (var c: Checker) solve_effects() {
     } else if ob.kind == ObKind.Const {
       "a const initializer must be pure (it runs once, at the constant's first use; decision 0332), but this one performs ${list}"
     } else {
-      "${c.ob_what(ob, c.flat_text(sup))}, but performs ${list}"
+      // an interface's text names the method that performs them
+      // ("..., but `T.m` performs `x`"; it read "..., but `T.m`, but
+      // performs" until 2026-11-05)
+      if ob.kind == ObKind.Iface { "${c.ob_what(ob, c.flat_text(sup))} performs ${list}" } else { "${c.ob_what(ob, c.flat_text(sup))}, but performs ${list}" }
     }
     let code = if ob.kind == ObKind.Const { "XO0415" } else { "XO0701" }
     let d = c.report(ob.file, code, ob.span, msg)

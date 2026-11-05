@@ -491,8 +491,12 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
     if sp.start.line > 0 {
       let mx = c.objs[m]
       let msp = c.obj_span(m)
-      let sub = if mx.declared >= 0 { c.performed(mx.declared, mx.file, msp, c.display_name(m)) } else { c.new_eset([EffItem{fn_obj: m, file: mx.file, span: msp}]) }
-      let sup = if c.objs[im].declared >= 0 { c.objs[im].declared } else { c.new_eset([]) }
+      // both sides with the type's and the interface's effect arguments
+      // substituted: ProcProvider[env] used as Provider[env] performs
+      // env where each declares fx (it was XO0701, 2026-11-05, decision
+      // 0522)
+      let sub = if mx.declared >= 0 { c.performed(c.subst_eff(mx.declared, ms2, 0), mx.file, msp, c.display_name(m)) } else { c.new_eset([EffItem{fn_obj: m, sub: ms2, has_sub: true, file: mx.file, span: msp}]) }
+      let sup = if c.objs[im].declared >= 0 { c.subst_eff(c.objs[im].declared, is, 0) } else { c.new_eset([]) }
       c.obligations.push(EffOb{kind: ObKind.Iface, sub: sub, sup: sup, file: c.path, span: sp, fo: m, ty: t, iface: iface, meth: text(c.objs[im].name)})
     }
   }

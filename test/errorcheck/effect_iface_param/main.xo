@@ -1,0 +1,37 @@
+// An interface with an effect parameter (core 6.2, decision 0522): an
+// implementation's effect argument and the interface's are substituted
+// before its method's effects are compared, so ProcProvider[env] is a
+// Provider[env]; one whose closure performs more than the interface's
+// argument is still refused.
+
+interface Provider[fx: Effects] {
+  fn retrieve(self) -> Str uses (clock, fx)
+}
+
+struct ProcProvider[fx: Effects] {
+  run: fn() -> Str uses fx
+}
+
+fn (p: ProcProvider[fx]) retrieve() -> Str uses (clock, fx) {
+  (p.run)()
+}
+
+struct Fixed {
+  s: Str
+}
+
+fn (p: Fixed) retrieve() -> Str uses clock {
+  p.s
+}
+
+fn first[fx: Effects](ps: List[Provider[fx]]) -> Str uses (clock, fx) {
+  ps[0].retrieve()
+}
+
+fn main(os: Os) {
+  let pp = ProcProvider{run: fn() -> Str { os.env.get("X") ?? "" }}
+  let ps: List[Provider[env]] = [pp, Fixed{s: "k"}]
+  let wide = ProcProvider{run: fn() -> Str { "${os.rand.int(0, 9)}${os.env.get("X") ?? ""}" }}
+  let bad: List[Provider[env]] = [wide] // ERROR XO0701 "performs `rand`"
+  os.stdio.println("${first(ps)} ${bad.len()}")
+}
