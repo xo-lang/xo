@@ -24,6 +24,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/xo-lang/xo/internal/xotool"
@@ -76,6 +77,9 @@ func main() {
 		fmt.Println(key)
 		return
 	}
+	if code := unguarded(); code != 0 {
+		os.Exit(code)
+	}
 	// which tree this builds for, on stderr: an agent's shell that resets
 	// its directory between commands ran xobuild in another worktree, and
 	// the path it printed was that tree's xo (2026-10-21)
@@ -88,4 +92,24 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println(bin)
+}
+
+// unguarded checks that a build runs under the lead's heavy.sh, which sets
+// HEAVY_JOB (CLAUDE.md: every build goes through it; an xo build takes
+// several GB, and two direct builds in one afternoon ran beside the
+// machine's memory guard, lead 2026-11-05). On the Mac a build outside it
+// is refused (exit 64, as heavy.sh refuses a Mac bulk run); elsewhere (an
+// offload host, CI, a contributor's machine) it is one line on stderr.
+// XO_UNGUARDED=1 skips the check. --key and --stamp-args build nothing and
+// are not checked.
+func unguarded() int {
+	if os.Getenv("HEAVY_JOB") != "" || os.Getenv("XO_UNGUARDED") == "1" {
+		return 0
+	}
+	if runtime.GOOS == "darwin" {
+		fmt.Fprintln(os.Stderr, "xobuild: not under heavy.sh (every build goes through it, CLAUDE.md): run it as ~/xo-lead/agents/heavy.sh NAME go run ./scripts/xobuild; XO_UNGUARDED=1 builds anyway")
+		return 64
+	}
+	fmt.Fprintln(os.Stderr, "xobuild: not under heavy.sh (every build goes through it, CLAUDE.md); XO_UNGUARDED=1 silences this")
+	return 0
 }

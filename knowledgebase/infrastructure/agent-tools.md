@@ -839,6 +839,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   closes the window, so no lead go is needed; never start one by hand when the
   load drops (two runs started that way overlapped another agent's
   window).
+- heavy.sh sets `HEAVY_JOB=NAME` in every job's environment (nested jobs
+  too), and `go run ./scripts/xobuild` checks it (lead, 2026-11-05, after
+  two direct xo builds in one afternoon). On the Mac, a build outside
+  heavy.sh is refused with exit 64 (`go run` reports it as exit status
+  1, with `exit status 64` printed). Elsewhere (an offload host, a
+  contributor's machine) it prints one warning line and builds.
+  `XO_UNGUARDED=1` skips the check. `--key` and `--stamp-args` build
+  nothing and are not checked. A Mac script that builds xo
+  (scripts/release.sh, a repro script) runs under heavy.sh, or sets
+  XO_UNGUARDED=1 when it must not take a slot.
 - Build both sides of an A/B (`xo build` in a scratch script, `xo bench
   --ab`) with `XO_INLINE_STRICT=1`: without it a module that fails
   verification builds without inlining and says so in one warning line
