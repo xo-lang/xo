@@ -162,6 +162,38 @@ func inlineShow(in string) (out string) {
 	return fmt.Sprintf("id=%d meta=%s/%s extra=%s hidden=%d n=%d", t.ID, t.Meta.Name, strings.Join(t.Meta.Tags, ","), t.Extra, t.Hidden, t.N)
 }
 
+type Im struct {
+	A    int `yaml:"a"`
+	Base `yaml:",inline"`
+	Rest map[string]int `yaml:",inline"`
+	B    string         `yaml:"b"`
+}
+
+// imShow decodes into Im (nothing else takes the keys no field names: they go to Rest) and
+// marshals it back; strict says KnownFields(true).
+func imShow(in string, strict bool) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	var t Im
+	dec := yaml.NewDecoder(strings.NewReader(in))
+	dec.KnownFields(strict)
+	if err := dec.Decode(&t); err != nil && err != io.EOF {
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	b, err := yaml.Marshal(t)
+	if err != nil {
+		return "ERR " + strconv.Quote(norm(err.Error()))
+	}
+	return "OK " + string(b)
+}
+
+var imCases = []string{
+	"a: 1\nb: x\nz: 3\ny: 4", "id: 5\nmeta: {name: m}\nq: 1", "{}", "a: 1\nunk: notint", "b: x\nr: ~", "z: 1\na: 2\nid: 3\nm: 9\nb: s\nn: 8", "a: 1\na: 2", "1: 2\na: 3", "r: [1]", "- x",
+}
+
 type Rt struct {
 	D time.Duration  `yaml:"d"`
 	B []byte         `yaml:"b"`
@@ -669,6 +701,23 @@ struct Top {
   n: Int
 } derive Yaml
 
+struct Im {
+  a: Int
+  base yaml ",inline": Base
+  rest yaml ",inline": Map[Str, Int]
+  b: Str
+} derive Yaml
+
+fn show_im(text: Str, strict: Bool) -> Str {
+  match yaml.decode[Im](text, strict) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(t) => match yaml.encode_value[Im](t) {
+      Ok(y) => "OK ${y}"
+      Err(e) => "ERR ${e.display().quote()}"
+    }
+  }
+}
+
 fn show_top(text: Str) -> Str {
   show_top_with(text, false)
 }
@@ -1026,6 +1075,11 @@ const CASES: List[(Str, Str)] = [
 		fmt.Fprintf(&o, "const MARSHALED_TM%d: Str = %s\n", i, xq(string(rb)))
 	}
 	o.WriteString("\n")
+	o.WriteString("/// (a document, what yaml.v3 decodes into Im, an inline struct and an inline map, and marshals back; strict decode too)\nconst IM: List[(Str, Str, Str)] = [\n")
+	for _, d := range imCases {
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xq(d), xq(imShow(d, false)), xq(imShow(d, true)))
+	}
+	o.WriteString("]\n\n")
 	topv := Top{Base{7, Meta{"m", []string{"a"}}}, "e", 99, 3}
 	tb, err := yaml.Marshal(topv)
 	if err != nil {
@@ -1190,6 +1244,13 @@ test "inline and skipped fields are yaml.v3's" {
   }
   let t = Top{base: Base{id: 7, meta: Meta{name: "m", tags: ["a"]}}, extra: "e", hidden: 99, n: 3}
   expect(yaml.encode_value[Top](t).ok()) == Some(MARSHALED_TOP)
+}
+
+test "an inline map takes the keys no field does, as yaml.v3's" {
+  for (text, want, strict_want) in IM {
+    expect(show_im(text, false)) == want
+    expect(show_im(text, true)) == strict_want
+  }
 }
 
 test "encode_value is yaml.v3's Marshal" {

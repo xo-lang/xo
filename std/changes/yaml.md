@@ -1,5 +1,15 @@
 # std/yaml changes
 
+## 2026-11-05: feature: inline Map fields
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (stage 6)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 decode.go (InlineMap), encode.go (structv)
+- Test: testdata/corpus/yaml (IM: 10 documents decoded into a struct with an inline struct and an inline map, marshaled back, plain and strict)
+
+`m yaml ",inline": Map[Str, V]` collects the keys no field names and writes them after the fields. Deviation: a colliding key is written, where yaml.v3 panics.
+
 ## 2026-11-05: feature: Time and time.Civil fields
 
 - Kind: feature

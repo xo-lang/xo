@@ -2,7 +2,7 @@
 
 Status: Accepted (owner, 2026-11-05), with the answers to the three open questions below ("go with your recommendations").
 
-Landed 2026-11-05 (std/changes/yaml.md has each entry): stage 1 typed decode and encode (c1b604865), stage 2 inline, `-`, strict, decode_all, encode_all, stage 3 Duration, Bytes, parse, parse_all, encode_node, to_json, stage 4 comments in Node, stage 5 `yaml.Node` fields. Time and `time.Civil` fields (stage 6, on decision 0094: an instant for Time, the offset in Civil). Not done: inline Maps. One deviation of the public API from the sketch below: `std/yamlcodec` was merged into `std/yaml` (an import cycle otherwise).
+Landed 2026-11-05 (std/changes/yaml.md has each entry): stage 1 typed decode and encode (c1b604865), stage 2 inline, `-`, strict, decode_all, encode_all, stage 3 Duration, Bytes, parse, parse_all, encode_node, to_json, stage 4 comments in Node, stage 5 `yaml.Node` fields. Time and `time.Civil` fields (stage 6, on decision 0094: an instant for Time, the offset in Civil). Inline Maps landed after (stage 7). One deviation of the public API from the sketch below: `std/yamlcodec` was merged into `std/yaml` (an import cycle otherwise).
 
 ## Context
 

@@ -701,6 +701,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   var zeros: List[Str] = []
   var keys: List[Str] = []
   var types: List[Str] = []
+  var vreaders: List[Str] = []
   var ok = true
   for fl in sd.fields {
     let (rd, zero, e2) = c.yaml_reader(fl.typ, fl.name.span, e, done) ?? {
@@ -712,7 +713,18 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     readers.push(rd)
     zeros.push("${text(fl.name.name)}: ${zero}")
     let yo = yaml_opts(fl)
-    let key = if yo.skip { "-" } else if yo.inline { "<<inline>>" } else { yo.key }
+    var key = if yo.skip { "-" } else if yo.inline { "<<inline>>" } else { yo.key }
+    var vrd = ""
+    if yo.inline {
+      if let Some(vt) = yaml_map_value(fl.typ) {
+        // an inline map takes the keys no field does (yaml.v3's InlineMap)
+        let (r2, _, e3) = c.yaml_reader(vt, fl.name.span, e, done) ?? return None
+        e = e3
+        vrd = r2
+        key = "<<inlinemap>>"
+      }
+    }
+    vreaders.push(vrd)
     keys.push(key)
     types.push(yaml_type_text(fl.typ) ?? "Str")
   }
@@ -742,6 +754,9 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
       inl.push(j)
       continue
     }
+    if keys[j] == "<<inlinemap>>" {
+      continue
+    }
     e.ln("    ${if first { "" } else { "} else " }}if k == ${quote_str(keys[j])} {", fl.name.span)
     first = false
     e.ln("      let (ok2, x) = ${readers[j]}(d, v, st)?", fl.name.span)
@@ -758,6 +773,19 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     }
     e.ln("      f_${text(fl.name.name)} = ${inner.0}yaml_set__${inner.1}(f_${text(fl.name.name)}, k, v, d, st)?", fl.name.span)
   }
+  var struct_known: List[Str] = []
+  for j in inl {
+    let inner = yaml_struct_name(sd.fields[j].typ) ?? return None
+    struct_known.push("${inner.0}yaml_known__${inner.1}(k)")
+  }
+  for (j, fl) in sd.fields.indexed() {
+    if keys[j] == "<<inlinemap>>" {
+      e.ln("      if !(${if struct_known.is_empty() { "false" } else { struct_known.join(" || ") }}) {", fl.name.span)
+      e.ln("        let (ok2, x) = ${vreaders[j]}(d, v, st)?", fl.name.span)
+      e.ln("        if ok2 || yaml.is_null(d, v) { f_${text(fl.name.name)}[k] = x }", fl.name.span)
+      e.ln("      }", fl.name.span)
+    }
+  }
   e.ln("      if st.strict && !yaml_known__${n}(k) { yaml.unknown_field(st, k, kl, ${quote_str(n)}) }", sp)
   e.ln("    }", sp)
   e.ln("  }", sp)
@@ -772,7 +800,9 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     if keys[j] == "-" {
       continue
     }
-    if keys[j] == "<<inline>>" {
+    if keys[j] == "<<inlinemap>>" {
+      known.push("true")
+    } else if keys[j] == "<<inline>>" {
       let inner = yaml_struct_name(fl.typ) ?? return None
       known.push("${inner.0}yaml_known__${inner.1}(k)")
     } else {
@@ -784,7 +814,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   e.ln("  var b = base", sp)
   var firstk = true
   for (j, fl) in sd.fields.indexed() {
-    if keys[j] == "-" || keys[j] == "<<inline>>" {
+    if keys[j] == "-" || keys[j] == "<<inline>>" || keys[j] == "<<inlinemap>>" {
       continue
     }
     e.ln("  ${if firstk { "" } else { "} else " }}if k == ${quote_str(keys[j])} {", fl.name.span)
@@ -937,6 +967,19 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
   }
 }
 
+/// The value type of a `Map[Str, V]`, for an inline map field.
+fn yaml_map_value(t: parser.Type) -> parser.Type? {
+  match t {
+    NamedType(_, path, args) => {
+      if path.len() == 1 && args.len() == 2 && text(path[0].name) == "Map" && names_type(args[0], "Str") {
+        return Some(args[1])
+      }
+      None
+    }
+    _ => None
+  }
+}
+
 /// The encoder of a struct: `yaml_write__N(var w, v)` writes it as a mapping, and
 /// `yaml_encode__N(v) -> Str ! yaml.YamlErr` is what yaml.encode_value[N] becomes.
 fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[Str, Bool], file: Int) -> Emit? {
@@ -945,11 +988,24 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
   let n = text(sd.name.name)
   let pub_ = if sd.is_pub { "pub " } else { "" }
   var body: List[Str] = []
+  var tail: List[Str] = []
   var ok = true
   for fl in sd.fields {
     let yo = yaml_opts(fl)
     let f = text(fl.name.name)
     if yo.skip {
+      continue
+    }
+    if yo.inline && yaml_map_value(fl.typ) != None {
+      // an inline map's entries follow the fields, by sorted key
+      let vt = yaml_map_value(fl.typ) ?? return None
+      let (iw, e2) = c.yaml_writer(vt, fl.name.span, e, done) ?? return None
+      e = e2
+      tail.push("  for k in yaml.sorted_keys(v.${f}.keys()) {")
+      tail.push("    yaml.put_str(w, k)")
+      tail.push("    yaml.set_flow(w, false)")
+      tail.push("    ${iw}(w, v.${f}.get(k) ?? fault(\"yaml: map key\"))")
+      tail.push("  }")
       continue
     }
     if yo.inline {
@@ -1011,6 +1067,9 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
   }
   e.ln("${pub_}fn yaml_fields__${n}(var w: yaml.Enc, v: ${n}) {", sp)
   for l in body {
+    e.ln(l, sp)
+  }
+  for l in tail {
     e.ln(l, sp)
   }
   e.ln("}", sp)
