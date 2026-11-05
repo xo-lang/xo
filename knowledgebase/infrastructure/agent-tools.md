@@ -147,7 +147,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `--timeout` ends the program instead of waiting forever. A hung or
   deadlocked program: `xo debug -p PID --batch -c tasks -c 'task 3 bt'
   PROG` attaches, lists every task and what it waits on, and detaches,
-  leaving it running (`xo debug -h` says where -p is built). PROG is a
+  leaving it running (every platform above; on Linux, Yama's
+  ptrace_scope 1, the offload amd64 host's WSL among them, allows -p
+  only on xo's own descendants: the error says so). PROG is a
   native build with its debug information (any build but -s or
   --release). On the Mac xo needs the debugger entitlement and Developer
   Mode (`xo debug -h`). Run it under heavy.sh like any repro.

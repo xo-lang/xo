@@ -3690,7 +3690,7 @@ call and its result, plus scheduler decisions.
   attached to crash bundles.
 - `xo replay trace.xotrace` (or a `.xocrash`) re executes the program offline
   with identical effect results and interleavings.
-- **[later]** `xo debug --replay trace.xotrace` steps backward (11.5: `xo debug` is not built).
+- **[later]** `xo debug --replay trace.xotrace` steps backward (11.5's `xo debug` runs forward only).
 - `xo why <expr> --at file:line` traces where a value came from (the
   assignments, calls, and effect results that produced it) using the replay.
 

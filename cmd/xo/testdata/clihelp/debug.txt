@@ -34,7 +34,9 @@ macOS arm64, Linux and Windows amd64. On macOS xo needs the
 com.apple.security.cs.debugger entitlement (ad hoc for development, the
 release signature for a release) and Developer Mode
 (DevToolsSecurity -enable). On Linux it uses ptrace (a security module
-such as Yama's ptrace_scope may forbid it); -p is not built there yet.
+such as Yama's ptrace_scope may forbid it: at 1, the default of many
+distributions and of WSL, -p attaches only to xo's own descendants unless
+xo runs as root or the scope is 0).
 On Windows it uses the system's debugging functions.
 
 Example:
