@@ -507,6 +507,28 @@ fn (var g: Gen) resume_point() -> Int {
   id
 }
 
+/// Retains or releases the value of type t whose leaves are the locals
+/// from base through its address: stored into a block of the frames'
+/// stack, rc_addr_fn, the block popped.
+fn (var g: Gen) rc_spilled(op: Str, t: Int, base: Int) {
+  let n = g.nleaves(t)
+  let bl = g.tmps(["i32"])
+  g.frames_used = true
+  g.e("i32.const ${8 * n}")
+  g.e("call $ls_push")
+  g.set(bl)
+  let ls = g.leaves(t)
+  for k in 0..n {
+    g.get(bl)
+    g.get(base + k)
+    g.e("${ls[k]}.store offset=${8 * k}")
+  }
+  g.get(bl)
+  g.e("call ${g.rc_addr_fn(op, t)}")
+  g.get(bl)
+  g.e("call $ls_pop")
+}
+
 /// Retains (op "dup") or releases ("drop") the struct or tuple of type t
 /// whose leaves are the locals from base, field by field: a wide field of
 /// a struct or tuple the same way, any other heap field through its
@@ -520,6 +542,10 @@ fn (var g: Gen) rc_fields(op: Str, t: Int, base: Int) {
     let off = g.field_off(t, i)
     if g.nleaves(ft) > WIDE_RC && g.kind(ft) is ssa.Kind.Struct | ssa.Kind.Tuple {
       g.rc_fields(op, ft, base + off)
+    } else if g.wide_mem(ft) {
+      // a wide enum: stored a leaf at a time into a block of the frames'
+      // stack and retained or released there (decision 0519)
+      g.rc_spilled(op, ft, base + off)
     } else {
       g.push_range(base + off, g.nleaves(ft))
       g.e("call ${g.rc_fn(op, ft)}")
@@ -1643,19 +1669,54 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       g.load_leaves(env, 8 + 8 * off, g.loc(v), g.leaves(t))
     }
     CallValue => {
+      // decision 0519: an argument past WIDE_LIMIT leaves goes as the
+      // address of a copy (the callee reads it in place, compute_homes),
+      // and a result past MAX_RESULTS leaves comes back in a block passed
+      // last (wide_result); both made before the resume point, so a
+      // resumed call passes the same ones
+      let rl = g.leaves(t)
+      var copies: Map[Int, Int] = {}
+      var nc = 0
+      for (i, a) in x.args.indexed() {
+        if i > 0 && g.wide_arg(g.vty(a)) {
+          copies[i] = g.temp_make(a, nc)
+          nc += 1
+        }
+      }
+      let blk = if rl.len() > MAX_RESULTS { g.sret_block_n(rl.len()) } else { -1 }
       let id = g.resume_point()
       var ps: List[Str] = []
-      for a in x.args {
+      for (i, a) in x.args.indexed() {
+        if let Some(c) = copies.get(i) {
+          ps.push("i32")
+          g.get(c)
+          continue
+        }
         for l in g.leaves(g.vty(a)) {
           ps.push(l)
         }
         g.push(a)
       }
-      let s = g.sig(ps, g.leaves(t))
+      if blk >= 0 {
+        ps.push("i32")
+        g.get(blk)
+      }
+      let s = g.sig(ps, if blk >= 0 { [] } else { rl })
       g.get(g.loc(x.args[0]))
       g.e("call_indirect (type ${s})")
       g.suspend_check(id)
+      if blk >= 0 {
+        g.mem_push(blk, 0, rl)
+      }
       g.def(v)
+      if blk >= 0 {
+        g.get(blk)
+        g.e("call $free")
+      }
+      for (_, c) in copies {
+        g.get(c)
+        g.e("call $free")
+      }
       g.check_fault(v)
     }
     Call => g.call(v)

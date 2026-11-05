@@ -1,6 +1,6 @@
 # 0519: wasm passes and reference counts values past a leaf limit by memory
 
-Status: Proposed (Xo Lang 1, 2026-11-05).
+Status: Accepted (owner, 2026-11-05, on the Xo Lead's recommendation).
 
 ## Context
 
@@ -21,7 +21,7 @@ WIDE_RC, 16, leaves) in memory field by field through rc_addr_fn. Enums
 are not covered, and rc_fn, the leaf form, never routes a wide type to
 the address form.
 
-## Decision (proposed)
+## Decision
 
 A type of more than WIDE_LIMIT leaves (proposed 256; below the 1,000
 limit with room for a function's other parameters) is passed by memory

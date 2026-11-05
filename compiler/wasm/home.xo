@@ -76,11 +76,21 @@ fn (var g: Gen) compute_homes(main: Int) {
   g.rhomes = []
   for (fi, f) in g.m.funcs.indexed() {
     var rs: List[Int] = []
-    let ok = fi != main && !f.indirect && !f.entry && !f.catches && !named.contains(f.name) && f.skip.is_empty()
+    let direct = !f.indirect && !named.contains(f.name)
+    // a function called through a function value decides by its types
+    // alone, whatever else it does: its callers cannot see it
+    let ok = fi != main && !f.entry && (!direct || !f.catches && f.skip.is_empty())
     if ok {
       for (pi, p) in f.blocks[0].params.indexed() {
         let pt = ssa.ty_of(f.values[p].tb)
-        if !f.var_params.contains(pi) && (htypes.contains(pt) || (g.kind(pt) is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum && g.nleaves(pt) >= HOME_MIN)) {
+        if f.var_params.contains(pi) {
+          continue
+        }
+        // a function called through a function value too takes only a
+        // value past WIDE_LIMIT leaves by reference, decided by its type
+        // alone, so every call_indirect of its signature agrees (decision
+        // 0519, func.xo CallValue)
+        if direct && (htypes.contains(pt) || (g.kind(pt) is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum && g.nleaves(pt) >= HOME_MIN)) || !direct && g.wide_arg(pt) {
           rs.push(pi)
           g.homes[fi].push(pi)
         }
@@ -117,10 +127,19 @@ fn (var g: Gen) result_leaves(fi: Int) -> Int {
 const MAX_RESULTS = 1000
 
 /// Whether function fi returns its results through memory: more than
-/// MAX_RESULTS leaves, called only directly.
+/// MAX_RESULTS leaves (a call through a function value passes the block
+/// as well, by the result type's leaves: decision 0519, func.xo
+/// CallValue).
 fn (var g: Gen) wide_result(fi: Int) -> Bool {
   let f = g.m.funcs[fi]
-  !f.indirect && !f.entry && g.result_leaves(fi) > MAX_RESULTS
+  !f.entry && g.result_leaves(fi) > MAX_RESULTS
+}
+
+/// Whether a parameter of type t of a function called through a function
+/// value is passed by reference (decision 0519): a struct, tuple or enum
+/// of more than WIDE_LIMIT leaves.
+fn (var g: Gen) wide_arg(t: Int) -> Bool {
+  g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum && g.nleaves(t) > WIDE_LIMIT
 }
 
 /// The home of the current function that holds `var` result k, -1 for
@@ -1112,6 +1131,31 @@ fn (var g: Gen) rc_addr_fn(op: Str, t: Int) -> Str {
         g.mem_rc(op, tys[i], 0, 8 * g.field_off(t, i))
       }
     }
+  } else if g.kind(t) == ssa.Kind.Enum {
+    // the live variant's fields from memory, as rc_fn takes them from
+    // leaves: the tag is word 0, a variant's fields the words from 1
+    for (vi, v) in g.m.types[t].variants.indexed() {
+      var heap = false
+      for fd in v.fields {
+        heap = heap || g.heap(fd.ty)
+      }
+      if !heap {
+        continue
+      }
+      g.get(0)
+      g.e("i64.load")
+      g.e("i64.const ${vi}")
+      g.e("i64.eq")
+      g.e("if")
+      var off = 1
+      for fd in v.fields {
+        if g.heap(fd.ty) {
+          g.mem_rc(op, fd.ty, 0, 8 * off)
+        }
+        off += g.nleaves(fd.ty)
+      }
+      g.e("end")
+    }
   } else {
     g.mem_push(0, 0, g.leaves(t))
     g.e("call ${g.rc_fn(op, t)}")
@@ -1146,12 +1190,33 @@ fn (var g: Gen) drop_mem_fields_fn(t: Int, fs: List[Int]) -> Str {
   name
 }
 
+/// Whether a value of type t is retained and released through its address
+/// (rc_addr_fn) when it is in memory: a struct or tuple of more than
+/// WIDE_RC leaves, an enum of more than WIDE_LIMIT. The helper that takes
+/// the leaves would take more than the 1,000 parameters an engine accepts
+/// past that many (decision 0519: rc_large_offsets' Result[D, Str], D of
+/// 3,700 fields); an enum below WIDE_LIMIT keeps its leaf helper, so its
+/// code is what it was.
+fn (var g: Gen) wide_mem(t: Int) -> Bool {
+  let n = g.nleaves(t)
+  match g.kind(t) {
+    Struct | Tuple => n > WIDE_RC
+    Enum => n > WIDE_LIMIT
+    _ => false
+  }
+}
+
+/// The most leaves of an enum retained and released through the helper
+/// that takes them (decision 0519): below the 1,000 parameters an engine
+/// accepts, with room for a function's other parameters.
+const WIDE_LIMIT = 256
+
 /// Retains (op "dup") or releases ("drop") the value of type t at offset
-/// off of the memory at local p: a wide struct or tuple (more than
-/// WIDE_RC leaves) through its address, field by field (rc_addr_fn),
-/// else its leaves pushed to the helper that takes them.
+/// off of the memory at local p: a wide one (wide_mem) through its
+/// address, field by field (rc_addr_fn), else its leaves pushed to the
+/// helper that takes them.
 fn (var g: Gen) mem_rc(op: Str, t: Int, p: Int, off: Int) {
-  if g.nleaves(t) > WIDE_RC && g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple {
+  if g.wide_mem(t) {
     g.get(p)
     if off > 0 {
       g.e("i32.const ${off}")

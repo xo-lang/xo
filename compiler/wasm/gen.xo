@@ -1051,9 +1051,13 @@ fn (var g: Gen) drop_elems(l: Int, et: Int) {
   g.e("i32.mul")
   g.e("i32.add")
   g.set(a)
-  g.load_leaves(a, 0, b, el)
-  g.push_range(b, el.len())
-  g.e("call ${g.rc_fn("drop", et)}")
+  if g.wide_mem(et) {
+    g.mem_rc("drop", et, a, 0)
+  } else {
+    g.load_leaves(a, 0, b, el)
+    g.push_range(b, el.len())
+    g.e("call ${g.rc_fn("drop", et)}")
+  }
   g.get(i)
   g.e("i32.const 1")
   g.e("i32.add")
@@ -1122,9 +1126,13 @@ fn (var g: Gen) lcopy_fn(t: Int) -> Str {
     g.e("i32.mul")
     g.e("i32.add")
     g.set(a)
-    g.load_leaves(a, 0, b, el)
-    g.push_range(b, el.len())
-    g.e("call ${g.rc_fn("dup", et)}")
+    if g.wide_mem(et) {
+      g.mem_rc("dup", et, a, 0)
+    } else {
+      g.load_leaves(a, 0, b, el)
+      g.push_range(b, el.len())
+      g.e("call ${g.rc_fn("dup", et)}")
+    }
     g.get(i)
     g.e("i32.const 1")
     g.e("i32.add")
@@ -1154,7 +1162,9 @@ fn (var g: Gen) boxdrop_fn(t: Int) -> Str {
   let saved = g.cur
   g.begin_helper(["i32"])
   let et = g.m.types[t].elems[0]
-  if g.heap(et) {
+  if g.heap(et) && g.wide_mem(et) {
+    g.mem_rc("drop", et, 0, 8)
+  } else if g.heap(et) {
     let el = g.leaves(et)
     let b = g.tmps(el)
     g.load_leaves(0, 8, b, el)
@@ -1183,7 +1193,9 @@ fn (var g: Gen) envdrop_fn(fi: Int) -> Str {
   var off = 0
   for c in f.captures {
     let cl = g.leaves(c)
-    if g.heap(c) {
+    if g.heap(c) && g.wide_mem(c) {
+      g.mem_rc("drop", c, 0, 8 + 8 * off)
+    } else if g.heap(c) {
       let b = g.tmps(cl)
       g.load_leaves(0, 8 + 8 * off, b, cl)
       g.push_range(b, cl.len())

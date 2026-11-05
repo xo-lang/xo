@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+a long tag past the inline Str size.0.0.0
+m.5.9.9
+a long tag past the inline Str size.3.4.5
+m.0.0.0
+C(a long tag past the inline Str size.0.0.0 a long tag past the inline Str size.5.9.9)
+C(m.0.0.0 m.5.9.9)
+--- stderr

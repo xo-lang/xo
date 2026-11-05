@@ -240,7 +240,9 @@ fn (var g: Gen) call(v: Int) {
       let et = g.vty(x.args[2])
       let a = g.elem_addr(v, x.args[0], x.args[1], et)
       let el = g.leaves(et)
-      if g.heap(et) {
+      if g.heap(et) && g.wide_mem(et) {
+        g.mem_rc("drop", et, a, 0)
+      } else if g.heap(et) {
         let old = g.scratch(el)
         g.load_leaves(a, 0, old, el)
         g.push_range(old, el.len())
@@ -273,7 +275,9 @@ fn (var g: Gen) call(v: Int) {
       let et = g.vty(x.args[2])
       let a = g.elem_addr(v, x.args[0], x.args[1], et)
       let el = g.leaves(et)
-      if g.heap(et) {
+      if g.heap(et) && g.wide_mem(et) {
+        g.mem_rc("drop", et, a, 0)
+      } else if g.heap(et) {
         let old = g.scratch(el)
         g.load_leaves(a, 0, old, el)
         g.push_range(old, el.len())
@@ -685,7 +689,11 @@ fn (var g: Gen) call(v: Int) {
 /// before the call's resume point, so a resumed call passes the same one,
 /// and freed after the call reads it.
 fn (var g: Gen) sret_block(ci: Int) -> Int {
-  let n = g.result_leaves(ci)
+  g.sret_block_n(g.result_leaves(ci))
+}
+
+/// A zeroed block of n leaves for a wide result, in a new local.
+fn (var g: Gen) sret_block_n(n: Int) -> Int {
   let blk = g.tmps(["i32"])
   g.e("i32.const ${8 * n}")
   g.e("call $alloc")
