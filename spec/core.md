@@ -3774,8 +3774,10 @@ frames, read from its fiber's saved stack (or a root's wait from the
 park's frame pointers), with the frame of the program's code where it
 waits selected, so `locals`, `print` and `frame` read the task there
 until the next stop; `task N bt` also prints its backtrace. A running
-task is on a thread (`threads`, `backtrace`); its stack is not read from
-the records. The record layouts the debugger reads are copies of
+task's frames are its thread's: the worker whose running fiber is the
+task's, and the thread whose stack pointer is in that fiber's stack,
+with its live registers. A ready task has no frames to read, and
+neither does a task run inline on another's fiber. The record layouts the debugger reads are copies of
 std/native/llrt's, each marked with its source and checked by
 TestRuntimeLayoutCopies.
 

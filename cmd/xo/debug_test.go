@@ -192,13 +192,16 @@ func TestDebugTasks(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
 	}
-	got := debugBatch(t, debugTasks, []string{"break main.xo:18", "run", "tasks", "task 2", "print v", "task 3 bt"})
+	got := debugBatch(t, debugTasks, []string{"break main.xo:18", "run", "tasks", "task 2", "print v", "task 3 bt", "task 4"})
 	wantAll(t, got,
 		"(xo) tasks\nmain (task 1): in scope\n  scope: waiting for its tasks\n    task 2 (spawned at main.xo:5): blocked in sleep at main.xo:8\n    task 3 (spawned at main.xo:12): blocked in Mutex.with at main.xo:14\n    task 4 (spawned at main.xo:16): running\n",
 		"(xo) task 2\ntask 2 (spawned at main.xo:5): blocked in sleep at main.xo:8\n* #",
 		"main.fn1.fn4 at main.xo:8\n(xo) print v\nv = 0\n",
 		"mutex.lock_body at mutex.xo:",
 		"main.fn2 at main.xo:14\n",
+		// the running task: on the stopped thread, at the breakpoint
+		"(xo) task 4\ntask 4 (spawned at main.xo:16): running\n* #0 0x",
+		"main.fn3 at main.xo:18\n",
 	)
 }
 

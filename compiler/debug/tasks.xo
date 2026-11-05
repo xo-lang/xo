@@ -8,6 +8,8 @@
 // waiting on its own thread has the park's frame pointer. Record layouts:
 // rtlayout.xo.
 
+use std/internal
+
 /// A task or scope the walk found. id numbers the tasks as `xo dump`
 /// does (main is 1; a scope has 0 and cannot be selected).
 pub struct TaskRec {
@@ -28,6 +30,8 @@ pub struct TaskRec {
   /// (a wait on the root's own thread), 0 for neither
   pub saved: Int = 0
   pub fp: Int = 0
+  /// a task's record (its fiber's F_TASK), 0 for a root or scope
+  pub rec: Int = 0
 }
 
 /// The walk's state.
@@ -159,6 +163,7 @@ fn (s: Session) walk_node(var w: Walk, n: Int, c: Int, depth: Int) {
     rec.id = w.n
     rec.depth = depth
     rec.kind = "task"
+    rec.rec = t
     let lp = s.word_at(t + T_LOC_P)
     let ln = s.word_at(t + T_LOC_N)
     if lp != 0 && ln > 0 && ln < 4096 {
@@ -264,6 +269,44 @@ pub fn (s: Session) task_frames(t: TaskRec) -> List[VFrame] {
     return vs.filter(fn(f) { f.pc != 0 })
   }
   []
+}
+
+/// The frames of running task t on its thread: the worker whose running
+/// fiber is t's, the thread whose sp is in that fiber's stack, that
+/// thread's registers (the second result); none when no thread runs it
+/// (a task run inline on another's fiber, or between fibers).
+pub fn (s: Session) running_frames(t: TaskRec) -> (List[VFrame], Int) {
+  if t.rec == 0 || s.proc == 0 {
+    return ([], 0)
+  }
+  let sv = s.word_at(s.static_words() + 8 * SVC)
+  let p = s.word_at(sv + SV_POOL)
+  if p == 0 {
+    return ([], 0)
+  }
+  let n = s.word_at(p + 8 * P_NW).min(4096)
+  for i in 0..n {
+    let wk = s.word_at(p + P_WS + 8 * i)
+    let f = if wk == 0 { 0 } else { s.word_at(wk + W_RUNF) }
+    if f == 0 || s.word_at(f + F_TASK) != t.rec {
+      continue
+    }
+    let lo = s.word_at(f + F_MEM)
+    let hi = lo + s.word_at(f + F_SIZE)
+    for th in internal.dbg_threads(s.proc) {
+      let rs = internal.dbg_regs(s.proc, th)
+      if rs.len() < 33 || rs[31] < lo || rs[31] >= hi {
+        continue
+      }
+      var regs: Map[Int, Int] = {}
+      for k in 0..32 {
+        regs[k] = rs[k]
+      }
+      regs[-1] = rs[32]
+      return (vframes(s.info, s.lines, s.tab, backtrace(s.tab, regs, s.snap, 64)), th)
+    }
+  }
+  ([], 0)
 }
 
 /// The first frame of the program's own code (not std's): `file:line`.

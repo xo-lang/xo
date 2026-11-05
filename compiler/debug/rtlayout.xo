@@ -50,6 +50,18 @@ const WHY_NET = 7 // = tracerec.WHY_NET
 const WHY_HTTP = 8 // = tracerec.WHY_HTTP
 const WHY_TEST = 9 // = tracerec.WHY_TEST
 
+/// The service record's pool, the pool's worker count (a word index) and
+/// worker records (from byte P_WS), a worker's running fiber, and a
+/// fiber's task and stack mapping: a running task's thread is the one
+/// whose sp is in its fiber's stack.
+const SV_POOL = 0 // = ctx.SV_POOL
+const P_NW = 3 // = layout.P_NW
+const P_WS = 160 // = layout.P_WS
+const W_RUNF = 3520 // = layout.W_RUNF
+const F_TASK = 24 // = pool.F_TASK
+const F_MEM = 8 // = pool.F_MEM
+const F_SIZE = 16 // = pool.F_SIZE
+
 /// A parked fiber's switch frame (compiler/arm64 sched.xo
 /// stack_switch_body): x19 to x30 at saved + 0 to 88, the caller's stack
 /// at saved + 160 (std/native/llrt/unwind.xo fiber_walk).

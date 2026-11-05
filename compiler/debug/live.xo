@@ -208,6 +208,7 @@ fn (var s: Session) stopped(r: List[Int]) -> Str uses proc {
   s.frames = []
   s.sel = 0
   s.task = 0
+  s.task_thread = 0
   if r.is_empty() || r[0] == 0 {
     s.stopj = "\"stop\":\"none\""
     return "the program did not stop"

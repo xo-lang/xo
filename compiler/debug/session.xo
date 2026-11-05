@@ -110,6 +110,9 @@ pub struct Session {
   /// the task whose frames are selected (`task N`), 0 for the stopped
   /// thread's
   pub task: Int = 0
+  /// the thread a selected running task runs on (its frame 0 is a live
+  /// pc, not a return address), 0 for a parked task
+  pub task_thread: Int = 0
   /// the executable's file (a live session's), and whether the program
   /// was attached to (not started: quit detaches) and its ASLR slide
   pub exe: Bytes = b""
@@ -297,14 +300,22 @@ fn (var s: Session) run_cmd(c: Cmd) -> Res ! Str uses proc {
       let ts = s.task_walk()?
       for t in ts {
         if t.id == id && id > 0 {
-          let fs = s.task_frames(t)
+          var fs = s.task_frames(t)
+          var on = 0
+          if fs.is_empty() && t.state == "running" {
+            // on a thread: its live registers
+            let (rf, th) = s.running_frames(t)
+            fs = rf
+            on = th
+          }
           if fs.is_empty() {
-            return Err("task ${id} is ${t.state}: only a blocked task's stack can be read (a running one is on a thread: threads, backtrace)")
+            return Err("task ${id} is ${t.state}: no stack of it can be read (a ready task has none; a running one run inline on another task's fiber is in that task's)")
           }
           s.frames = fs
           // the task's own code where it waits, not the scheduler's switch
           s.sel = user_frame(fs).max(0)
           s.task = id
+          s.task_thread = on
           var js: List[Str] = []
           var out = [task_text(TaskRec{id: t.id, depth: 0, kind: t.kind, spawned: t.spawned, state: t.state, op: t.op, at: t.at, canceled: t.canceled})]
           for (i, f) in fs.indexed() {
@@ -416,7 +427,19 @@ fn (s: Session) cur() -> VFrame ! Str {
 fn (s: Session) selected_pc() -> Int {
   let f = s.frames[s.sel]
   if s.task != 0 {
-    // a task's frames are all return addresses (its fiber's switch)
+    // a parked task's frames are all return addresses (its fiber's
+    // switch); a running one's first physical frame is its thread's pc
+    if s.task_thread != 0 {
+      var first = true
+      for i in 0..s.sel {
+        if !s.frames[i].inlined {
+          first = false
+        }
+      }
+      if first {
+        return f.pc
+      }
+    }
     return f.pc - 4
   }
   // the first physical frame is the one at index 0 and the frames

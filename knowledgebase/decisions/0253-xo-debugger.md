@@ -437,6 +437,10 @@ programs):
   list), then compiler/debug rebase.xo moves the unwind tables, line
   rows and DWARF ranges and addresses by it. TestDebugAttach attaches
   to a hung program it started, reads its tasks and a variable, and
-  checks the program runs on after the detach. Not yet: attach in DAP,
-  a running task's stack (its thread's context is not mapped to a
-  thread), `-p` without PROG.
+  checks the program runs on after the detach. Since then: attach in
+  DAP (0504's note), and a running task's stack: the pool's worker
+  records (svc + SV_POOL, P_NW, P_WS) give each worker's running fiber
+  (W_RUNF), whose F_TASK is the task's record; its thread is the one
+  whose sp is in the fiber's stack (F_MEM, F_SIZE), and `task N` takes
+  that thread's registers, frame 0's pc a live one (no new OS call).
+  Not yet: `-p` without PROG.
