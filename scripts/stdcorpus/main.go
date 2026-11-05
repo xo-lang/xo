@@ -100,6 +100,7 @@ var generators = map[string]func() string{
 	"yamlfuzz":   yamlfuzzCorpus,
 	"jwt":        jwtCorpus,
 	"pkcs12":     pkcs12Corpus,
+	"amqp":       amqpCorpus,
 }
 
 func main() {

@@ -7376,3 +7376,39 @@ fn to_json(text: Str) -> Str ! YamlErr
   written as they are (Go writes `\u003c`, `\u003e`, `\u0026`; both are valid JSON), a timestamp is its text, and compared
   documents leave out non-string keys, integers above the int64 range and invalid UTF-8.
 - Not yet (later stages): Time and Node fields, inline Maps.
+
+## 64. std/amqp
+
+AMQP 1.0 (ISO/IEC 19464) on a port of github.com/Azure/go-amqp v1.7.0 (MIT; decision 0521). Stage 1: the type
+system and its encoding. Connections, sessions, links and the CBS helper follow in stages 2 to 4. Pure: no
+capability, one source for every backend (std/go_compiled.txt).
+
+```
+enum Value { Null, Bool(v), UByte(v), UShort(v), UInt(v), ULong(v), Byte(v), Short(v), Int(v), Long(v),
+             Float(bits: UInt32), Double(v: Float), Decimal32(bits), Decimal64(bits), Decimal128(bits: Bytes),
+             Char(v: Rune), Timestamp(ms: Int), Uuid(bytes: Bytes), Binary(v: Bytes), Str(v: Str),
+             Symbol(v: Str), List(items), Map(pairs: List[(Value, Value)]), Array(items),
+             Described(descriptor: Value, value: Value) }
+enum AmqpErr { Decode(msg: Str), Encode(msg: Str) }
+pub fn encode(v: Value) -> Bytes ! AmqpErr
+pub fn decode(b: Bytes) -> (Value, Int) ! AmqpErr   // the value at the start of b and the bytes it took
+```
+
+- `encode` writes go-amqp's constructors: `smalluint`/`uint0` and `smallulong`/`ulong0` for unsigned values below
+  256, `smallint`/`smalllong` for signed values in -128 to 127, `str8`/`vbin8`/`sym8` up to 255 bytes and the
+  32 bit forms above, `list0` for an empty list, always `list32` and `map32` otherwise (go-amqp never writes
+  `list8` or `map8`). An array holds one element type and one constructor: the narrow form when every integer
+  fits it (`arrayUint32` with all elements below 256 is `smalluint`), a variable width form by its longest
+  element, an array of maps always with the `array32` header and `map32` bodies. An empty array, an array of
+  mixed types, of nulls, of lists or of arrays, a uuid or decimal128 that is not 16 bytes, and invalid UTF-8
+  are `Encode` errors.
+- `decode` accepts every constructor of the specification (the narrow and wide forms, `list8`, `map8`, `array8`,
+  zero width values, decimals, chars, described values), keeps a map's pairs in wire order and duplicate keys,
+  and refuses with a `Decode` error, never a fault: an unknown constructor, a length past the data, a compound
+  whose size or count disagrees with its elements, an odd map count, invalid UTF-8 in a string or symbol, a
+  boolean other than 0 or 1, and nesting deeper than 64 levels. Deviations from go-amqp's `ReadAny`: it refuses
+  decimals, chars and described values outside its typed composites, and decodes a symbol as a string; here they
+  decode to their own `Value`s.
+- The corpus (`internal/stdtest/testdata/corpus/amqp`) is go-amqp's encoder run on 148 values and its decoder's
+  verdict on each, checked on every backend: Xo decodes each of go-amqp's encodings to the same value and
+  encodes it back to the same bytes, and refuses the truncations go-amqp refuses.

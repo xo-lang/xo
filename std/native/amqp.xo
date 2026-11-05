@@ -307,7 +307,8 @@ fn put_array(out: BytesBuilder, items: List[amqp.Value]) -> BytesBuilder ! amqp.
   }
   let bb = body.freeze()
   // the size counts the count and the element constructor
-  if bb.len() + 2 <= 255 {
+  // go-amqp always writes an array of maps with the wide header
+  if bb.len() + 2 <= 255 && k != 21 {
     o = be(put_code(o, 0xe0), bb.len() + 2, 1)
     o = be(o, items.len(), 1)
   } else {
@@ -536,7 +537,17 @@ fn hex2(c: Int) -> Str {
 fn get_body(b: Bytes, ec: Int, q: Int, end: Int, depth: Int) -> (amqp.Value, Int) ! amqp.AmqpErr {
   if ec == 0x41 || ec == 0x42 || ec == 0x43 || ec == 0x44 || ec == 0x45 || ec == 0x40 {
     // zero width constructors: the value is the constructor
-    let (v, _) = get_value(b, q - 1 + 0, depth)?
+    let v = if ec == 0x40 {
+      amqp.Value.Null
+    } else if ec == 0x41 || ec == 0x42 {
+      amqp.Value.Bool(v: ec == 0x41)
+    } else if ec == 0x43 {
+      amqp.Value.UInt(v: UInt32(0))
+    } else if ec == 0x44 {
+      amqp.Value.ULong(v: UInt64(0))
+    } else {
+      amqp.Value.List(items: [])
+    }
     return Ok((v, q))
   }
   let w = fixed_width(ec)
@@ -575,7 +586,7 @@ fn get_body(b: Bytes, ec: Int, q: Int, end: Int, depth: Int) -> (amqp.Value, Int
 
 /// The body width of a fixed width constructor, or -1.
 fn fixed_width(c: Int) -> Int {
-  if c == 0x50 || c == 0x51 || c == 0x52 || c == 0x53 || c == 0x54 || c == 0x55 { return 1 }
+  if c == 0x56 || c == 0x50 || c == 0x51 || c == 0x52 || c == 0x53 || c == 0x54 || c == 0x55 { return 1 }
   if c == 0x60 || c == 0x61 { return 2 }
   if c == 0x70 || c == 0x71 || c == 0x72 || c == 0x73 || c == 0x74 { return 4 }
   if c == 0x80 || c == 0x81 || c == 0x82 || c == 0x83 || c == 0x84 { return 8 }
@@ -584,6 +595,7 @@ fn fixed_width(c: Int) -> Int {
 }
 
 fn fixed_value(b: Bytes, c: Int, p: Int) -> amqp.Value {
+  if c == 0x56 { return amqp.Value.Bool(v: b[p] == 1) }
   if c == 0x50 { return amqp.Value.UByte(v: UInt8(get_be(b, p, 1))) }
   if c == 0x51 { return amqp.Value.Byte(v: Int8(get_signed(b, p, 1))) }
   if c == 0x52 { return amqp.Value.UInt(v: UInt32(get_be(b, p, 1))) }

@@ -1,0 +1,82 @@
+use std/amqp
+
+fn hb(s: Str) -> Bytes { Bytes.from_hex(s).or_fault("hex") }
+
+fn dec(s: Str) -> amqp.Value { amqp.decode(hb(s)).or_fault("decode").0 }
+
+test "constructors go-amqp's encoder never writes decode" {
+  // list8, map8, array8 of ubyte, the zero value forms, small signed forms
+  expect(dec("c003015207")) == amqp.Value.List(items: [amqp.Value.UInt(v: UInt32(7))])
+  expect(dec("c1030243" + "44")) == amqp.Value.Map(pairs: [(amqp.Value.UInt(v: UInt32(0)), amqp.Value.ULong(v: UInt64(0)))])
+  expect(dec("e004" + "02" + "50" + "0102")) == amqp.Value.Array(items: [amqp.Value.UByte(v: UInt8(1)), amqp.Value.UByte(v: UInt8(2))])
+  expect(dec("45")) == amqp.Value.List(items: [])
+  expect(dec("5401")) == amqp.Value.Int(v: Int32(1))
+  expect(dec("55ff")) == amqp.Value.Long(v: Int64(-1))
+  expect(dec("7000000100")) == amqp.Value.UInt(v: UInt32(256))
+  expect(dec("a000")) == amqp.Value.Binary(v: b"")
+}
+
+test "decimals, chars and described values (which go-amqp's ReadAny refuses)" {
+  expect(dec("7400000001")) == amqp.Value.Decimal32(bits: UInt32(1))
+  expect(dec("840000000000000002")) == amqp.Value.Decimal64(bits: UInt64(2))
+  expect(dec("94000102030405060708090a0b0c0d0e0f")) == amqp.Value.Decimal128(bits: hb("000102030405060708090a0b0c0d0e0f"))
+  expect(dec("73000000e9")) == amqp.Value.Char(v: 'é')
+  expect(dec("005377a10161")) == amqp.Value.Described(descriptor: amqp.Value.ULong(v: UInt64(119)), value: amqp.Value.Str(v: "a"))
+  let d = amqp.Value.Described(descriptor: amqp.Value.Symbol(v: "x"), value: amqp.Value.List(items: [amqp.Value.Bool(v: true)]))
+  expect(amqp.decode(amqp.encode(d).or_fault("enc")).or_fault("dec").0) == d
+}
+
+test "bad input is an error, never a fault" {
+  for s in [
+    "",
+    "ff",                      // unknown constructor
+    "a105",                    // string longer than the data
+    "a1c3",                    // not UTF-8 (and short)
+    "a102c328",                // invalid UTF-8
+    "c101" + "0143",           // odd map count
+    "c002" + "05" + "52",      // count above the data
+    "c0020352",                // size past the data
+    "d000000001" + "00000000", // list32 size below its count field
+    "e0020150",                // array with no element for its count
+    "5600",                    // ok boolean: control (decoded below)
+    "5602",                    // invalid boolean
+  ] {
+    let r = amqp.decode(hb(s))
+    if s == "5600" {
+      expect(r.is_err()) == false
+    } else {
+      expect(r.is_err()) == true
+    }
+  }
+}
+
+test "nesting is bounded" {
+  var s = ""
+  for _ in 0..100 {
+    s += "c00101"
+  }
+  expect(amqp.decode(hb(s + "40")).is_err()) == true
+}
+
+test "values that cannot be encoded" {
+  expect(amqp.encode(amqp.Value.Array(items: [])).is_err()) == true
+  expect(amqp.encode(amqp.Value.Array(items: [amqp.Value.UByte(v: UInt8(1)), amqp.Value.UShort(v: UInt16(1))])).is_err()) == true
+  expect(amqp.encode(amqp.Value.Array(items: [amqp.Value.Null])).is_err()) == true
+  expect(amqp.encode(amqp.Value.Uuid(bytes: b"short")).is_err()) == true
+  expect(amqp.encode(amqp.Value.Decimal128(bits: b"short")).is_err()) == true
+}
+
+test "a ubyte array and the decimals round trip" {
+  for v in [
+    amqp.Value.Array(items: [amqp.Value.UByte(v: UInt8(1)), amqp.Value.UByte(v: UInt8(255))]),
+    amqp.Value.Decimal32(bits: UInt32(7)),
+    amqp.Value.Decimal64(bits: UInt64(7)),
+    amqp.Value.Char(v: '世'),
+    amqp.Value.Array(items: [amqp.Value.Char(v: 'a'), amqp.Value.Char(v: 'b')]),
+    amqp.Value.Array(items: [amqp.Value.Decimal32(bits: UInt32(1))]),
+  ] {
+    let (back, n) = amqp.decode(amqp.encode(v).or_fault("enc")).or_fault("dec")
+    expect(back) == v
+    expect(n) == amqp.encode(v).or_fault("enc").len()
+  }
+}
