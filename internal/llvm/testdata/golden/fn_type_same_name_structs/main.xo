@@ -1,0 +1,15 @@
+// Two modules with a struct of one name (Change) each make a type over a
+// function of their own Change: an Option of a fn(Change) -> Change and a
+// generic struct holding one. The native backends named such a type by
+// its text without the modules (`(fn(Change) -> Change)?`), so both
+// modules' types became one, and the second build failed with XO1201
+// "converting b.Change to a.Change" (found by List.map in place,
+// decision 0508, 2026-11-04).
+
+use github.com/xo-lang/xo/test/fn_type_same_name_structs/a
+use github.com/xo-lang/xo/test/fn_type_same_name_structs/b
+
+fn main(os: Os) {
+  os.stdio.println(a.run(1))
+  os.stdio.println(b.run(2))
+}

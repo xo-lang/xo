@@ -1,0 +1,22 @@
+use github.com/xo-lang/xo/test/fn_type_same_name_structs/holder
+
+// a struct of the same name as the other module's, different fields
+struct Change {
+  file: Str
+}
+
+pub fn run(i: Int) -> Str {
+  let c = Change{file: "a${i}"}
+  // an Option of a function type over this module's Change
+  let up: (fn(Change) -> Change)? = Some(fn(c) { Change{file: c.file + "+"} })
+  let c2 = match up {
+    Some(f) => f(c)
+    None => c
+  }
+  // a generic struct holding one
+  let h = holder.Holder{f: fn(c: Change) -> Change { Change{file: c.file + "+"} }}
+  let c3 = h.f(c2)
+  "${show(c3)}"
+}
+
+fn show(c: Change) -> Str { c.file }

@@ -86,7 +86,6 @@ fn rt3_globals() -> Str {
     (global $sscap (mut i32) (i32.const 0))
     (global $node (mut i32) (i32.const 0))
     (global $shield (mut i32) (i32.const 0))
-    (global $unw (mut i32) (i32.const 0))
     (global $events (mut i32) (i32.const 0))
     (global $act (mut i32) (i32.const 0))
     (global $nact (mut i32) (i32.const 0))

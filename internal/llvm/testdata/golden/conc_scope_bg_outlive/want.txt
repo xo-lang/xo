@@ -1,0 +1,21 @@
+exit 0
+--- stdout
+normal -> 7
+normal: ended true, done 5 then 5, late 0 then 0
+return -> 1
+return: ended true, done 5 then 5, late 0 then 0
+break -> 1
+break: ended true, done 5 then 5, late 0 then 0
+? -> Err
+?: ended true, done 5 then 5, late 0 then 0
+child error -> Err
+child error: ended true, done 5 then 5, late 0 then 0
+body fault -> faulted
+body fault: ended true, done 5 then 5, late 0 then 0
+child fault -> faulted
+child fault: ended true, done 5 then 5, late 0 then 0
+cancel -> 5
+cancel: ended true, done 5 then 5, late 0 then 0
+unwound -> 6
+unwound: ended true, done 5 then 5, late 0 then 0
+--- stderr

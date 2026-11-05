@@ -2018,6 +2018,34 @@ fn (var b: Builder) type_text(t0: Int) -> Str {
       }
       return "(${es.join(", ")})"
     }
+    Func => {
+      // as check's write_ty prints a function type, with each part through
+      // type_text: show's own text names an ambiguous struct without its
+      // module, so `(fn(Change) -> Change)?` of two modules' Change types
+      // became one Option type (List.map in place, decision 0508)
+      var s = "fn("
+      for (i, a) in x.args.indexed() {
+        if i > 0 {
+          s = s + ", "
+        }
+        if x.vars[i] {
+          s = s + "var "
+        }
+        s = s + b.type_text(a)
+      }
+      s = s + ")"
+      if x.result >= 0 && !b.c.is_unit(x.result) {
+        s = s + " -> " + b.type_text(x.result)
+      }
+      if x.err >= 0 && !b.c.is_never(x.err) {
+        s = s + " ! " + b.type_text(x.err)
+      }
+      let fx = b.c.eff_text(x.eff)
+      if !fx.is_empty() {
+        s = if fx.contains(",") { s + " uses (" + fx + ")" } else { s + " uses " + fx }
+      }
+      return s
+    }
     _ => {}
   }
   b.c.show(t)

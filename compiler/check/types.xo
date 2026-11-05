@@ -142,7 +142,7 @@ fn (c: Checker) is_bad(t: Int) -> Bool {
   c.tys[c.resolve(t)].kind == TyKind.Bad
 }
 
-fn (c: Checker) is_unit(t: Int) -> Bool {
+pub fn (c: Checker) is_unit(t: Int) -> Bool {
   let r = c.resolve(t)
   c.tys[r].kind == TyKind.Tuple && c.tys[r].args.is_empty()
 }

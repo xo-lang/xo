@@ -1,0 +1,3 @@
+pub struct Holder[T] {
+  pub f: T
+}

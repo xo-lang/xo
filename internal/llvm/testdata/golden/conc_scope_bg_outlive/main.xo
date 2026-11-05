@@ -1,0 +1,266 @@
+// No task outlives its scope (core 7.1 exit rules), on every way a scope
+// closes: the body completes (background tasks canceled, scope_close mode
+// 0), it exits early by `return`, `break`, `?` or a failed child (mode 1),
+// it faults, s.cancel() runs first, or the body unwinds because the code
+// around it was canceled (mode 2). Each background task records its end
+// last, after work the cancel cannot cut short (a shielded deferred sleep,
+// a compute loop after it saw the cancel, a task its deferred code starts
+// on the scope's group); the path marks its scope ended in a defer that
+// runs once the scope has closed. A task that ends after that mark counts
+// as late. The counts are read right after each path and again after a
+// pause, so a task still running at the first read shows up at the second.
+use std/task
+
+enum PathErr {
+  Bad
+}
+
+struct St {
+  ended: Atomic[Bool]
+  late: Atomic[Int]
+  done: Atomic[Int]
+  started: Atomic[Int]
+}
+
+fn new_st() -> St {
+  St{ended: Atomic[Bool].new(false), late: Atomic[Int].new(0), done: Atomic[Int].new(0), started: Atomic[Int].new(0)}
+}
+
+fn finish(st: St) {
+  if st.ended.get() {
+    st.late.add(1)
+  }
+  st.done.add(1)
+}
+
+fn spin(n: Int) -> Int {
+  var x = 1
+  for i in 0..n {
+    x = (x * 31 + i) % 1000003
+  }
+  x
+}
+
+// Starts the four background tasks of one scope and waits until each is
+// running (so each is canceled while at work, not before it starts).
+fn start_bg(s: Scope, clk: Clock, st: St, never: Chan[Int]) uses clock {
+  let g = s.group()
+  // blocked in a sleep; its deferred code sleeps in full (shielded)
+  s.spawn_background(fn() {
+    defer {
+      clk.sleep(20ms)
+      finish(st)
+    }
+    st.started.add(1)
+    clk.sleep(10s)
+  })
+  // a loop with no cancellation point until it sees the cancel, then
+  // compute work the cancel cannot stop
+  s.spawn_background(fn() {
+    st.started.add(1)
+    while !task.is_canceled() {
+      let _ = spin(1000)
+    }
+    let _ = spin(3_000_000)
+    finish(st)
+  })
+  // blocked on a channel nothing sends on
+  s.spawn_background(fn() {
+    defer finish(st)
+    st.started.add(1)
+    let _ = never.recv()
+  })
+  // its deferred code starts one more background task on the scope's
+  // group while the scope closes
+  s.spawn_background(fn() {
+    defer {
+      g.spawn_background(fn() {
+        defer {
+          clk.sleep(20ms)
+          finish(st)
+        }
+        clk.sleep(10s)
+      })
+      finish(st)
+    }
+    st.started.add(1)
+    clk.sleep(10s)
+  })
+  while st.started.get() < 4 {
+    clk.sleep(1ms)
+  }
+}
+
+fn normal(clk: Clock, st: St, never: Chan[Int]) -> Int uses clock {
+  defer st.ended.set(true)
+  scope s {
+    start_bg(s, clk, st, never)
+    7
+  }
+}
+
+fn early_return(clk: Clock, st: St, never: Chan[Int]) -> Int uses clock {
+  defer st.ended.set(true)
+  scope s {
+    start_bg(s, clk, st, never)
+    if st.started.get() == 4 {
+      return 1
+    }
+    2
+  }
+}
+
+fn early_break(clk: Clock, st: St, never: Chan[Int]) -> Int uses clock {
+  defer st.ended.set(true)
+  var n = 0
+  while true {
+    scope s {
+      start_bg(s, clk, st, never)
+      n += 1
+      if n == 1 {
+        break
+      }
+    }
+  }
+  n
+}
+
+fn fail_now() -> Int ! PathErr { Err(PathErr.Bad) }
+
+fn question(clk: Clock, st: St, never: Chan[Int]) -> Int ! PathErr uses clock {
+  defer st.ended.set(true)
+  scope s {
+    start_bg(s, clk, st, never)
+    let v = fail_now()?
+    v
+  }
+}
+
+fn child_fails(clk: Clock, st: St, never: Chan[Int]) -> Int ! PathErr uses clock {
+  defer st.ended.set(true)
+  scope s {
+    start_bg(s, clk, st, never)
+    s.spawn(fn() { fail_now() })
+    // canceled when the child fails
+    clk.sleep(10s)
+    3
+  }
+}
+
+fn body_faults(clk: Clock, st: St, never: Chan[Int]) -> Int uses clock {
+  defer st.ended.set(true)
+  scope s {
+    start_bg(s, clk, st, never)
+    let xs = [1, 2, 3]
+    let i = xs.len() + st.started.get()
+    xs[i]
+  }
+}
+
+fn child_faults(clk: Clock, st: St, never: Chan[Int]) -> Int uses clock {
+  defer st.ended.set(true)
+  scope s {
+    start_bg(s, clk, st, never)
+    s.spawn(fn() {
+      let xs = [1, 2, 3]
+      xs[xs.len() + 1]
+    })
+    clk.sleep(10s)
+    4
+  }
+}
+
+fn canceled_first(clk: Clock, st: St, never: Chan[Int]) -> Int uses clock {
+  defer st.ended.set(true)
+  scope s {
+    start_bg(s, clk, st, never)
+    s.cancel()
+    5
+  }
+}
+
+// The inner scope's body unwinds: it runs in a background task of an
+// outer scope whose body completes, so the outer cancels it mid sleep.
+fn unwound(clk: Clock, st: St, never: Chan[Int]) -> Int uses clock {
+  scope outer {
+    outer.spawn_background(fn() {
+      inner_unwinds(clk, st, never)
+    })
+    while st.started.get() < 4 {
+      clk.sleep(1ms)
+    }
+    6
+  }
+}
+
+fn inner_unwinds(clk: Clock, st: St, never: Chan[Int]) uses clock {
+  defer st.ended.set(true)
+  scope s {
+    start_bg(s, clk, st, never)
+    clk.sleep(10s)
+  }
+}
+
+fn check(io: Stdio, clk: Clock, label: Str, st: St) uses clock, stdio {
+  let ended = st.ended.get()
+  let d1 = st.done.get()
+  let l1 = st.late.get()
+  clk.sleep(60ms)
+  io.println("${label}: ended ${ended}, done ${d1} then ${st.done.get()}, late ${l1} then ${st.late.get()}")
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let clk = os.clock
+  let never: Chan[Int] = Chan.new(0)
+
+  var st = new_st()
+  io.println("normal -> ${normal(clk, st, never)}")
+  check(io, clk, "normal", st)
+
+  st = new_st()
+  io.println("return -> ${early_return(clk, st, never)}")
+  check(io, clk, "return", st)
+
+  st = new_st()
+  io.println("break -> ${early_break(clk, st, never)}")
+  check(io, clk, "break", st)
+
+  st = new_st()
+  match question(clk, st, never) {
+    Ok(v) => io.println("? -> ok ${v}")
+    Err(_) => io.println("? -> Err")
+  }
+  check(io, clk, "?", st)
+
+  st = new_st()
+  match child_fails(clk, st, never) {
+    Ok(v) => io.println("child error -> ok ${v}")
+    Err(_) => io.println("child error -> Err")
+  }
+  check(io, clk, "child error", st)
+
+  st = new_st()
+  let st6 = st
+  match task.isolate(fn() -> Int ! () { body_faults(clk, st6, never) }) {
+    Ok(v) => io.println("body fault -> ok ${v}")
+    Err(_) => io.println("body fault -> faulted")
+  }
+  check(io, clk, "body fault", st)
+
+  st = new_st()
+  let st7 = st
+  match task.isolate(fn() -> Int ! () { child_faults(clk, st7, never) }) {
+    Ok(v) => io.println("child fault -> ok ${v}")
+    Err(_) => io.println("child fault -> faulted")
+  }
+  check(io, clk, "child fault", st)
+
+  st = new_st()
+  io.println("cancel -> ${canceled_first(clk, st, never)}")
+  check(io, clk, "cancel", st)
+
+  st = new_st()
+  io.println("unwound -> ${unwound(clk, st, never)}")
+  check(io, clk, "unwound", st)
+}

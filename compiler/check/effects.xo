@@ -405,7 +405,7 @@ fn (var c: Checker) perform(s: Int) {
 /// The text of set s: its labels and effect parameters, sorted, joined
 /// with ", " (effects.go EffSet.String: function items are dropped
 /// unless they declare their effects).
-fn (c: Checker) eff_text(s: Int) -> Str {
+pub fn (c: Checker) eff_text(s: Int) -> Str {
   if s < 0 {
     return ""
   }
