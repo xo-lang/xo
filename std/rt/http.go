@@ -1480,7 +1480,11 @@ func urlStringPath(u Http_Url, path string) string {
 	if u.F_scheme != "" {
 		b.WriteString(u.F_scheme + "://")
 	}
-	b.WriteString(u.F_host)
+	if strings.Contains(u.F_host, ":") && !strings.HasPrefix(u.F_host, "[") {
+		b.WriteString("[" + u.F_host + "]")
+	} else {
+		b.WriteString(u.F_host)
+	}
 	if u.F_port.Some {
 		b.WriteString(":" + strconv.FormatInt(u.F_port.V, 10))
 	}

@@ -3850,7 +3850,8 @@ fn url_string_path(u: http.Url, path: Str) -> Str {
   if !u.scheme.is_empty() {
     s = u.scheme + "://"
   }
-  s = s + u.host
+  // an IPv6 host is stored without its brackets: a port or a path after it needs them
+  s = s + (if u.host.contains(":") && !u.host.starts_with("[") { "[" + u.host + "]" } else { u.host })
   match u.port {
     Some(p) => s = s + ":${p}"
     None => ()

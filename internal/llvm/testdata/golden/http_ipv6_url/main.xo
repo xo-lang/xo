@@ -1,0 +1,33 @@
+// A client request to an IPv6 literal host: the URL text the client sends
+// from keeps the brackets around the host (Url.host holds it without them),
+// so a server on [::1] answers a Client.get of its own address. Before the
+// fix the client rebuilt "http://::1:PORT/" and refused it as an invalid URL.
+use std/http
+
+fn main(os: Os) {
+  var r = http.router()
+  r.handle("GET /hi", fn(req: http.Request) -> http.Response { http.text(200, "hi from ${req.url.host}") })
+  match os.net.listen("[::1]:0") {
+    Ok(l) => {
+      let srv = http.server(l, r)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        let u = "http://${srv.addr()}/hi"
+        match http.client(os.net, timeout: 30s).get(u) {
+          Ok(resp) => os.stdio.println("status ${resp.status} body ${resp.body.to_str() ?? "?"}")
+          Err(e) => os.stdio.println("get: ${e}")
+        }
+        match http.parse_url(u) {
+          Ok(p) => os.stdio.println("host ${p.host} port set ${p.port is Some(_)}")
+          Err(e) => os.stdio.println("parse: ${e}")
+        }
+      }
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}
