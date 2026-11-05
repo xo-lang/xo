@@ -5,9 +5,46 @@
 
 use github.com/xo-lang/xo/compiler/parser
 
-/// The key of the node of file f with span sp and kind k (key_of in f).
+/// The key of the node of file f with span sp and kind k (key_of in f):
+/// its start in the run's sources one after another (the file's base,
+/// give_base), its length and its kind, so no two nodes share one. It was
+/// the file, start and end in 20 bits each, and a node past 1 MiB of a
+/// file had the key of a node of the next file: the checker's records of
+/// one were the other's, a call resolved to another file's function
+/// (aws's S3 client, 1.27 MB, XO1201 in unrelated functions, 2026-11-04;
+/// gotchas/node-key-aliased-past-1-mib.md).
 pub fn (c: Checker) key_in(f: Int, sp: Span, kind: Int) -> Int {
-  ((f * 1048576 + sp.start.offset) * 1048576 + sp.end.offset) * 64 + kind
+  let n = sp.end.offset - sp.start.offset
+  if f < 0 {
+    // no file (a query before any): keys of their own, below zero
+    return -((sp.start.offset * KEY_LEN + n) * 64 + kind) - 1
+  }
+  let b = c.files[f].base
+  if b < 0 || n < 0 || n >= KEY_LEN || sp.start.offset < 0 {
+    fault("internal compiler error: a node key of ${c.files[f].path} (offsets ${sp.start.offset} to ${sp.end.offset}, base ${b}) does not fit (check/info.xo key_in)")
+  }
+  ((b + sp.start.offset) * KEY_LEN + n) * 64 + kind
+}
+
+/// The bound of a node's length in its key (key_in): 256 MiB.
+const KEY_LEN = 268435456
+
+/// The bound of the run's sources together in the node keys (give_base):
+/// 512 MiB, so a key (start, length and kind) fits in 63 bits.
+const KEY_SOURCES = 536870912
+
+/// Gives file f its base in the node keys, once its source is known: the
+/// sources of the run's files one after another.
+pub fn (var c: Checker) give_base(f: Int) {
+  if c.files[f].base >= 0 {
+    return
+  }
+  let b = c.next_base
+  c.next_base = b + c.files[f].src.len() + 1
+  if c.next_base > KEY_SOURCES {
+    fault("internal compiler error: the run's sources pass ${KEY_SOURCES} bytes, the node keys' bound (check/info.xo give_base, at ${c.files[f].path})")
+  }
+  c.files[f].base = b
 }
 
 pub fn (c: Checker) expr_key_in(f: Int, e: Expr) -> Int {

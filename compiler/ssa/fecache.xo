@@ -23,7 +23,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v15"
+const FE_CACHE_VERSION = "xo front cache v16"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.

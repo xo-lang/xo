@@ -331,6 +331,10 @@ pub struct SrcFile {
   /// Made from a std record (load_std_record): no parse, no source,
   /// until ensure_tree reads and parses it.
   pub unloaded: Bool = false
+  /// Where its offsets start in the run's node keys (key_in: every
+  /// file's source one after another), given when its source is known
+  /// (give_base); -1 before.
+  pub base: Int = -1
   /// The SHA-256 of the source a record-made file was recorded from
   /// (StdFileRec.sha), for what names the sources without reading them
   /// (binfo_sources: the build's "<std>" entry hashed empty sources for

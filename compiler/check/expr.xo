@@ -102,7 +102,7 @@ pub fn expr_kind(e: Expr) -> Int {
 
 /// The identity of an expression node: its file, span, and kind.
 fn (c: Checker) key_of(sp: Span, kind: Int) -> Int {
-  ((c.cur_file * 1048576 + sp.start.offset) * 1048576 + sp.end.offset) * 64 + kind
+  c.key_in(c.cur_file, sp, kind)
 }
 
 fn (c: Checker) expr_key(e: Expr) -> Int {

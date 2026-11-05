@@ -86,6 +86,8 @@ pub struct Checker {
   pub mods: List[Module] = []
   pub mod_index: Map[Str, Int] = {}
   pub files: List[SrcFile] = []
+  /// The base the next file's source gets in the node keys (give_base).
+  pub next_base: Int = 0
   /// Modules in dependency order: a module after the modules it imports.
   pub order: List[Int] = []
   pub prelude: Int = -1
@@ -1235,6 +1237,7 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   let (r, ast) = c.parse_file_ast(path, src, sig)
   let f = c.files.len()
   c.files.push(SrcFile{path: path, module: m, ast: ast, iface: r.iface, is_test: path.ends_with("_test.xo"), sig: sig, src: src})
+  c.give_base(f)
   c.mods[m].files.push(f)
   // a C binding's declaration file is a signature file, and its valued
   // enums get their methods like any module's (decision 0269 part 4)
@@ -1317,7 +1320,10 @@ pub fn (var c: Checker) ensure_decl(f: Int, i: Int) uses fs.read {
     if i < k + dr.n {
       if c.files[f].src.is_empty() {
         match c.fs.read(c.source_path(c.files[f].path)) {
-          Ok(b) => c.files[f].src = b
+          Ok(b) => {
+            c.files[f].src = b
+            c.give_base(f)
+          }
           Err(_) => return
         }
       }
@@ -1418,6 +1424,7 @@ pub fn (var c: Checker) ensure_tree(m: Int) uses fs.read {
     let (r, ast) = c.parse_file_ast(path, data, c.files[f].sig)
     c.files[f].ast = ast
     c.files[f].src = data
+    c.give_base(f)
     c.files[f].unloaded = false
     if !c.mods[m].is_std && !c.files[f].sig {
       c.add_derived_file(m, path, f, r)
@@ -1442,6 +1449,7 @@ fn (var c: Checker) add_derived_file(m: Int, path: Str, f: Int, r: parser.ParseR
   }
   let gf = c.files.len()
   c.files.push(SrcFile{path: gpath, module: m, ast: g.file, iface: "${r.iface}#derive", generated: true, src: src.bytes()})
+  c.give_base(gf)
   c.mods[m].files.push(gf)
 }
 
