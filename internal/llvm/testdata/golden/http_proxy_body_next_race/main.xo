@@ -21,7 +21,7 @@ const HALF = 16
 fn main(os: Os) ! {
   let up = os.net.listen("127.0.0.1:0")?
   let fl = os.net.listen("127.0.0.1:0")?
-  // what the target saw after each head: the body bytes, as text
+  // what the target saw: each request's first line and its body bytes
   let seen = Mutex[List[Str]].new([])
   let p = http.reverse_proxy(http.client(os.net), http.parse_url("http://${up.addr()}/").or_fault("url"))
   var r = http.router()
@@ -50,7 +50,8 @@ fn main(os: Os) ! {
                 _ => break
               }
             }
-            seen.with(fn(var l) { l.push(body) })
+            let line = got[0..(got.find("\r\n") ?? 0)]
+            seen.with(fn(var l) { l.push("${line}|${body}") })
             conn.close()
           })
           Err(_) => return
@@ -98,26 +99,32 @@ fn main(os: Os) ! {
       tries += 1
     }
     let bodies = seen.with(fn(l) { l })
-    // a body is the upload or a prefix of it: the discard may close the
-    // body between two of the sender's reads (net/http's closed body
-    // error), which cuts the upload short; never another request's bytes
+    // a POST's body is the upload or a prefix of it, empty included: the
+    // discard may close the body before or between the sender's reads
+    // (net/http's closed body error), which cuts the upload short, as
+    // timing has it (under ASan about one round in five, 2026-11-05);
+    // never another request's bytes. A GET forwards none.
     let whole = "A".repeat(HALF) + "B".repeat(HALF)
+    var posts = 0
     var clean = 0
     var foreign = 0
-    for b in bodies {
-      if b.is_empty() {
-        continue
+    for e in bodies {
+      let k = e.find("|") ?? 0
+      let b = e[k + 1..e.len()]
+      if e.starts_with("POST") {
+        posts += 1
       }
       if whole.starts_with(b) {
-        clean += 1
+        if e.starts_with("POST") {
+          clean += 1
+        }
       } else {
         foreign += 1
       }
     }
     // each round sends one POST and one GET through the proxy: the
-    // target sees 2 * ROUNDS requests, ROUNDS of them with the 32 byte
-    // body (a GET forwards none)
+    // target sees 2 * ROUNDS requests
     os.stdio.println("rounds ${ROUNDS} second requests answered ${second_ok}")
-    os.stdio.println("bodies clean ${clean} carrying other bytes ${foreign}")
+    os.stdio.println("posts ${posts} bodies a prefix of the upload ${clean} carrying other bytes ${foreign}")
   }
 }
