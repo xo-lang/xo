@@ -21,7 +21,7 @@ Fix: the root fix landed with decision 0218: `os.fs.cwd_path()` asks
 the OS (getcwd; `$PWD` only when it names the same directory), and every
 place in compiler/ that read `$PWD` uses it, with `$PWD` only when getcwd
 fails. `PWD=/ bin/xo lsp` now answers the definition. The earlier
-workaround stays and is harmless: editors/vscode/extension.js starts
+workaround stays and is harmless: the VS Code extension (xo-lang/vscode, decision 0516) starts
 `xo lsp` with `cwd` and `PWD` set to the same directory (the first
 workspace folder, else the home directory). An xo older than the fix
 still needs a spawner to set PWD equal to cwd.

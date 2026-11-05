@@ -1,6 +1,6 @@
 # 0113: Editor support starts with a TextMate grammar in the repo
 
-Status: Accepted (2026-10-10, by the owner)
+Status: Accepted (2026-10-10, by the owner); the extension's place in the repo superseded by 0516 (its own repository, xo-lang/vscode)
 
 ## Context
 

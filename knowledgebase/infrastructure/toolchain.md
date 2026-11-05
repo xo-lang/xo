@@ -370,8 +370,9 @@ gogoldens_test.go). The packages that keep tests, all through the xo
 binary: cmd/xo (the CLI), internal/llvm, internal/gen, internal/arm64
 (the backends and runtimes, test only), internal/selfhost,
 internal/repotest, internal/xotool, internal/gobind, internal/gotool,
-internal/progen, internal/testtmp, std/rt, third_party, editors/vscode,
-scripts/disttar, internal/benchharness. Last verified: 2026-10-13.
+internal/progen, internal/testtmp, std/rt, third_party,
+scripts/disttar, internal/benchharness (editors/vscode moved to
+xo-lang/vscode, decision 0516). Last verified: 2026-11-05.
 
 Run from the repo root.
 
@@ -2066,7 +2067,6 @@ cmd/xo/                 CLI entry point; `xo parse`, `xo check`, `xo build`, `xo
                         `xo mcp`, `xo lsp`, `xo serve` (agent.go), hidden `xo lexdump` (lexdump.go),
                         `xo astdump` (astdump.go), `xo typedump` (typedump.go), `xo ssadump` (ssadump.go)
                         `xo fmt`, `xo vet`, `xo query`, `xo doc`, `xo explain` (tools.go), `xo dump` (dump.go), `xo fix` (fix.go)
-editors/vscode/          VS Code extension (TextMate grammar, Markdown injection, xo lsp client); see editors.md
 internal/token/         token kinds, keywords, Pos and Span (file, line, col, offset)
 internal/lexer/         tokens, newline termination (core 1.3), string interpolation parts,
                         doc comments; dump.go: the canonical token dump shared with compiler/lexer

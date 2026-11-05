@@ -2,60 +2,41 @@
 
 Last verified: 2026-10-13 (xo 0.9.0; VS Code 1.141.0, Node 22.22.1, vscode-tmgrammar-test 0.1.3, vscode-languageclient 9.0.1)
 
-## VS Code extension (`editors/vscode/`)
+## VS Code extension (xo-lang/vscode)
 
-Decisions 0113 (TextMate grammar) and 0114 (`xo lsp`). The extension
-colors files with the grammar and starts `xo lsp` for diagnostics,
-quick fixes, hover, definition, references, rename, document symbols,
-semantic highlighting, and formatting.
+Since decision 0516 (owner, 2026-11-05) the extension is its own
+repository, xo-lang/vscode (local checkout next to this one,
+`../vscode`), with editors/vscode's history: one extension, Marketplace
+id `xo-lang.xo`, for syntax (decision 0113), `xo lsp` (0114) and
+`xo debug --dap` (0253, 0504; debug type `xo`, launch and attach). Its
+README says how to build, test and install it; the points that touch
+this repository:
 
-| File | Purpose |
-|---|---|
-| `package.json` | Registers language `xo` for `.xo`, points at the grammar. Publisher `xo-lang`. |
-| `language-configuration.json` | `//` comments, brackets, auto closing pairs, indentation. |
-| `syntaxes/xo.tmLanguage.json` | Grammar, scope `source.xo`. Built from spec/core.md section 1. |
-| `syntaxes/xo.markdown.tmLanguage.json` | Injection: ` ```xo ` fences in Markdown use `source.xo`. |
-| `extension.js` | Starts `xo lsp` with vscode-languageclient 9.0.1. Binary: setting `xo.path`, else, in or above a workspace folder or the active file, `bin/xo` of an Xo checkout (a directory with `compiler/xo/main.xo`) then `.tools/bin/xo`, else the same in the checkout the extension is symlinked from, else `xo` on PATH (2026-10-10: the first version only checked workspace folder roots; 2026-10-13: `bin/xo` added ahead of `.tools/bin/xo`, see gotcha). One output channel "Xo" for the session (2026-10-13: each restart used to leave another "Xo" channel, since every LanguageClient opens its own; stop now disposes the client), logging the binary and its `xo version` at each start. The server starts in the first workspace folder (else the home directory) with `PWD` set to it, since xo reads its working directory from `$PWD` (gotchas/xo-working-dir-is-pwd.md). Failed requests go to that channel, not popups (`revealOutputChannelOn: Never`). Command "Xo: Restart Language Server". Setting `xo.lsp.enabled`. |
-| `test/syntax.xo` | Tokenization assertions (`// ^^^ scope` lines), run by `npm test`. |
-| `grammar_test.go` | Go test: grammar keywords equal `KEYWORDS` in `compiler/lexer/token.xo`, manifest matches grammar. Runs in `go test -short`. |
+- It finds xo as an installed user has it: the `xo.path` setting, then
+  `xo` on PATH, then `bin/xo` of an Xo checkout or `.tools/bin/xo` in a
+  workspace folder or above it. Working on Xo with a release xo on PATH,
+  set `xo.path` to the checkout's `bin/xo`.
+- `npm run check:grammar` there compares the grammar's keywords with the
+  newest Xo release's `compiler/lexer/token.xo` (from GitHub at the
+  release's tag), or a checkout's with `--lexer PATH`; it replaces
+  editors/vscode's grammar_test.go. A change to the lexical structure (a
+  keyword, a literal form, a contextual word) updates the grammar and its
+  `test/syntax.xo` there, after the release that has it.
+- `XO_TEST_XO=bin/xo npm test` there debugs a program through
+  `xo debug --dap`; `npm run test:vscode` installs the `.vsix` in a VS
+  Code of its own and checks highlighting, hover and a breakpoint.
+- Published (owner, 2026-11-05): 0.1.0 on the Visual Studio Marketplace
+  and Open VSX as "Xo Language" (the Marketplace refused the display
+  name "Xo" as taken), publisher `xo-lang`. Debugging needs Xo 0.40 or
+  later (`xo debug --dap`); with an older xo the extension says so when
+  a debug session starts.
+- Releases: pushing a tag `vX.Y.Z` there runs its release workflow
+  (tag checked against package.json and CHANGELOG.md, tests, the grammar
+  check, one `.vsix` published to both registries and a GitHub release);
+  the steps, the `VSCE_PAT` and `OVSX_PAT` secrets and the yearly Azure
+  DevOps token renewal are in its RELEASING.md. The owner tags releases.
 
-Install for local use (picks up edits on window reload, no packaging):
-
-```
-go run ./scripts/xobuild                            # bin/xo, the server the extension starts
-(cd editors/vscode && npm ci)                       # vscode-languageclient
-ln -s "$PWD/editors/vscode" ~/.vscode/extensions/xo-lang.xo-0.0.1
-# then in VS Code: Developer: Reload Window
-code --list-extensions --show-versions | grep xo   # xo-lang.xo@0.0.1
-```
-
-Uninstall: `rm ~/.vscode/extensions/xo-lang.xo-0.0.1` (the symlink only).
-
-A shareable `.vsix`: `cd editors/vscode && npx @vscode/vsce package
---allow-missing-repository --skip-license`, then
-`code --install-extension xo-0.0.1.vsix`.
-
-Rebuild `bin/xo` (`go run ./scripts/xobuild`) after compiler changes, then
-run "Xo: Restart Language Server" (or reload the window). Outside a
-checkout, put an xo at `.tools/bin/xo` or on PATH, or set `xo.path`.
-
-Tests:
-
-```
-go test -short ./editors/...            # keyword drift against the lexer
-cd editors/vscode && npm ci && npm test # tokenization assertions (needs Node)
-```
-
-The Markdown injection has no automated test; it was checked on
-2026-10-10 by tokenizing a fence with vscode-textmate against VS Code's
-own `markdown-basics` grammar.
-
-When the lexical structure changes (a keyword, a literal form, a
-contextual word, a predeclared name), update the grammar and
-`test/syntax.xo` in the same change as `spec/core.md`. The builtin type
-and interface lists in the grammar mirror `is_protected` in
-`compiler/check/base.xo` (equal on 2026-10-13); only keywords are checked
-automatically.
+Last verified: 2026-11-05.
 
 ## `xo lsp` (`compiler/cli/servers/`)
 

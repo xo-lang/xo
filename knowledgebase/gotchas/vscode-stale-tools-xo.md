@@ -15,7 +15,7 @@ silently aged while `bin/xo` (built by `go run ./scripts/xobuild`) moved
 on. The server answers a failed hover with an error, and
 vscode-languageclient shows each failed request as a popup.
 
-Fix (2026-10-13, `editors/vscode/extension.js`): in an Xo checkout the
+Fix (2026-10-13, `editors/vscode/extension.js`, now xo-lang/vscode's `lib/xopath.js`, decision 0516, which since 2026-11-05 prefers `xo` on PATH and looks for a checkout's `bin/xo` last): in an Xo checkout the
 extension prefers `bin/xo` over `.tools/bin/xo`, logs the binary and its
 `xo version` to the output channel at start, and sends failed requests to
 the output channel only (`revealOutputChannelOn: Never`). Run "Xo:

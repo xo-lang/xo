@@ -45,7 +45,9 @@ in detail; check before starting one.
    grammar, so Xo highlights in editors and on GitHub. *Verified
    2026-10-29:* editors/vscode is a complete extension (TextMate grammar,
    an `xo lsp` client; decision 0113) that is not published; no tree-sitter
-   grammar exists.
+   grammar exists. *2026-11-05:* the extension moved to its own repository,
+   xo-lang/vscode, and debugs through `xo debug --dap` (decision 0516); it
+   is still not published.
 6. **More platforms.** FreeBSD and Linux riscv64 are the common asks
    after the five current targets; 32-bit and mobile matter less for a
    backend language.

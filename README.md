@@ -171,7 +171,10 @@ windows/arm64.
 | `bench/` | Benchmark tasks, Go and Xo solutions, planted bugs, results |
 | `examples/` | Realistic programs (`notes-service`: HTTP JSON, std/sql, auth middleware, background job, graceful shutdown) |
 | `knowledgebase/` | Decisions (ADRs), gotchas, infrastructure notes |
-| `editors/` | Editor support (VS Code) |
+
+Editor support: the VS Code extension (syntax, `xo lsp`, `xo debug --dap`)
+lives in its own repository, [xo-lang/vscode](https://github.com/xo-lang/vscode)
+(decision 0516).
 
 ## Evidence
 
