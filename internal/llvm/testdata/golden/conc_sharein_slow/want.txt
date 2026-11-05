@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+elements 1600 bytes 57120 reads ok true
+--- stderr

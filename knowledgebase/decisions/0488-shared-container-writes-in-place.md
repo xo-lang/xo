@@ -83,3 +83,20 @@ cost. Self build wall and max RSS (xo builds with Mutexes).
   exact through every write, which is the write barrier above.
 - Leave maps in the log form (main today): costs cookiejar 30%, and
   lists in a Mutex keep the O(size) unlock.
+
+## Run time coverage of the write barrier (2026-11-04)
+
+Golden conc_sharein_slow takes ShareIn's -1 branch and fails without it.
+Four tasks push fresh heap Strs into a Mutex[List[Str]] (written in place,
+count -1). Then six readers copy the same elements out at once under
+`with_read` and drop the copies on their own threads. On linux/arm64, with
+an xo whose ShareIn pass is stubbed out, it fails at 2 and 8 threads:
+`--race` reports data races (4 and 10, in dropp.Str and the reader
+closure), and XO_FREE_CHECK=1 faults with a use after free. With main's
+xo it passes plain, under `--race` and under XO_FREE_CHECK=1 at 1, 2 and 8
+threads, and TestGoldenTasks runs it under ThreadSanitizer. A program
+that only stores and reads under the exclusive lock passes either way:
+the lock orders every count change, so a missed barrier shows only when
+copies are made concurrently under the shared read lock. A runtime count
+(obj.rl_share instrumented) also showed that a 10-element list in a
+Mutex is walked once, at its first unlock, not at each of 20 `with`s.

@@ -1,0 +1,60 @@
+// Decision 0488's write barrier at run time: inside `with`, a
+// Mutex[List[Str]] is shared and held once (count -1), so each push
+// writes in place and shares the Str it stores (ShareIn's -1 branch).
+// Readers then copy the same elements out at once under `with_read`'s
+// shared lock and drop their copies on their own threads: each copy is a
+// count change on the stored Str from several threads at a time, safe
+// only when the store shared it (an atomic count). Without the barrier
+// the Strs keep thread local counts, which these concurrent copies
+// corrupt (ThreadSanitizer reports the race under --race; XO_FREE_CHECK=1
+// catches the early free).
+fn main(os: Os) {
+  let mu = Mutex[List[Str]].new([])
+  let writers = 4
+  let readers = 6
+  let per = 400
+  let seen = Mutex[Int].new(0)
+  // phase 1: each writer builds fresh heap Strs on its own thread and
+  // stores them in place
+  scope s {
+    for t in 0..writers {
+      s.spawn(fn() {
+        for i in 0..per {
+          let v = "w${t}-i${i}-" + "x".repeat(24 + i % 9)
+          mu.with(fn(var l) { l.push(v) })
+        }
+      })
+    }
+  }
+  // phase 2: readers copy elements out concurrently (the same few hot
+  // elements most of the time), hold the copies, then drop them
+  scope s {
+    for r in 0..readers {
+      s.spawn(fn() {
+        var keep: List[Str] = []
+        var n = 0
+        for i in 0..per * 4 {
+          let x = mu.with_read(fn(l) { l[(i * 7 + r) % 16] })
+          n += x.len()
+          keep.push(x)
+          if keep.len() == 64 {
+            keep = []
+          }
+        }
+        seen.with(fn(var c) { c += n })
+      })
+    }
+  }
+  let total = seen.with(fn(c) { c })
+  // every element dropped here, on main's thread
+  let (count, bytes) = mu.with(fn(var l) {
+    var b = 0
+    for x in l {
+      b += x.len()
+    }
+    let c = l.len()
+    l = []
+    (c, b)
+  })
+  os.stdio.println("elements ${count} bytes ${bytes} reads ok ${total > 0}")
+}
