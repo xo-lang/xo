@@ -20,6 +20,6 @@ line per entry.
 [wasm-and-jit.md](wasm-and-jit.md): WebAssembly runtimes (V8, wasmtime, wazero), AOT and JIT, and why Xo targets WASI with no runtime of its own and no general JIT (the owner's Q&A, 2026-10-30).
 
 The language itself is specified in [../spec/core.md](../spec/core.md). The
-spec says *what* Xo is; decisions say *why*. [../spec/conventions.md](../spec/conventions.md) (a draft
-for the owner's review, 2026-11-05) collects the conventions for writing Xo,
+spec says *what* Xo is; decisions say *why*. [../spec/conventions.md](../spec/conventions.md) (approved by
+the owner, 2026-11-05) collects the conventions for writing Xo,
 each with its source.

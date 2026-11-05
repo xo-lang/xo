@@ -1,6 +1,7 @@
 # 0506: size classes above 1 KiB, four per doubling
 
-Status: Proposed (Xo Lang 3, 2026-11-04, at the lead's request; the class
+Status: Accepted (owner, 2026-11-05, through the lead) on its own bar: it ships only if the --ab
+self build shows lower max RSS and wall time not worse. Proposed (Xo Lang 3, 2026-11-04, at the lead's request; the class
 change and its --ab are Xo Lang 2's, who owns the heap code and 0505)
 
 ## Context

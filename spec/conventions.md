@@ -1,7 +1,7 @@
 # Xo Conventions
 
-Status: draft for the owner's review (Xo Lang 2, 2026-11-05). Not mirrored on the website until the owner
-approves it (scripts/sync-content.py lists the spec files it copies).
+Status: approved by the owner (2026-11-05); drafted by Xo Lang 2 the same day. Mirrored on the website as
+docs/spec/conventions.
 
 How to write Xo that reads like the rest of Xo and runs fast. spec/core.md defines the language; this file
 collects the habits that the compiler, std, the gotchas and the measurements agree on. Every rule names its

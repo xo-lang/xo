@@ -1,7 +1,8 @@
 # 0520: Stability program: a corpus of real services, tested continuously
 
-Status: Proposed (Xo Lang 2, 2026-11-05; the owner approved starting the program the same day, through the
-lead; this ADR is the plan for the owner to accept).
+Status: Accepted (owner, 2026-11-05, through the lead: "go with your recommendations"). Night soaks may
+take one long lease each (OFF_MAX_MIN raised for that job only) between 22:00 and 07:00 local time. Phase 1
+starts after release-vs-go-v0.40.0. Proposed by Xo Lang 2 the same day.
 
 ## Context
 
@@ -122,8 +123,8 @@ Estimates per app, to be replaced by measured times in phase 1: differential 5 m
 fuzz 30, soak 120. A daily pass of the four short checks over eight apps is about 8 host hours (under 3 hours
 of wall time in host 2's three slots); two soaks a night add 4 host hours; the weekly 8 hour soak adds 8 a
 week: about 13 host hours a day in all. The short checks run in leases of at most 10 minutes (the lead's
-2026-11-05 guidance); each soak takes one long lease at night, with OFF_MAX_MIN raised for that job by the
-lead's agreement. Results go to `bench/results/stability-DATE.md` (one table per app and check), and a
+2026-11-05 guidance); each soak takes one long lease at night, between 22:00 and 07:00 local time, with
+OFF_MAX_MIN raised for that job only (owner, 2026-11-05). Results go to `bench/results/stability-DATE.md` (one table per app and check), and a
 failing check opens an item on the board.
 
 ### 6. Phases
