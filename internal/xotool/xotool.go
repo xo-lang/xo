@@ -500,6 +500,47 @@ func Ensure(root string, log io.Writer) (string, error) {
 	return bin, nil
 }
 
+// Unguarded checks that a tool about to build xo (tool: xobuild, xocheck)
+// runs under the lead's heavy.sh, which sets HEAVY_JOB (CLAUDE.md: every
+// build goes through it; an xo build takes several GB, and direct builds
+// ran beside the machine's memory guard, lead 2026-11-05). On the Mac a
+// build outside it is refused with exit 64 (as heavy.sh refuses a Mac bulk
+// run), and how is the command to run under heavy.sh; elsewhere (an
+// offload host, a contributor's machine) it is one line on stderr.
+// XO_UNGUARDED=1 skips the check. It returns the exit code, 0 to go on.
+func Unguarded(tool, how string) int {
+	if os.Getenv("HEAVY_JOB") != "" || os.Getenv("XO_UNGUARDED") == "1" {
+		return 0
+	}
+	if runtime.GOOS == "darwin" {
+		fmt.Fprintf(os.Stderr, "%s: not under heavy.sh (every build goes through it, CLAUDE.md): run it as ~/xo-lead/agents/heavy.sh NAME %s; XO_UNGUARDED=1 builds anyway\n", tool, how)
+		return 64
+	}
+	fmt.Fprintf(os.Stderr, "%s: not under heavy.sh (every build goes through it, CLAUDE.md); XO_UNGUARDED=1 silences this\n", tool)
+	return 0
+}
+
+// Built reports whether Ensure(root) would return root's xo without
+// building one: root/bin/xo is of the current key, or the shared cache has
+// a build Ensure reuses (its conditions, in the same order).
+func Built(root string) bool {
+	key, err := Key(root)
+	if err != nil {
+		return false
+	}
+	bin := filepath.Join(root, "bin", exeName("xo"))
+	if k, err := os.ReadFile(filepath.Join(root, "bin", "xo.key")); err == nil && strings.TrimSpace(string(k)) == key && isFile(bin) && VerifyBuilt(bin, key) == nil {
+		return true
+	}
+	base, err := cacheBase()
+	if err != nil {
+		return false
+	}
+	built := filepath.Join(base, "checkout", key, exeName("xo"))
+	_, dirty := gitState(root)
+	return stampMatches(filepath.Dir(built), dirty) && isFile(built)
+}
+
 // SeedFallback is $XO_SEED_FALLBACK: "" (the default: no build from
 // source; a failed fetch of the prebuilt seed is an error), "chain"
 // (after the other seeds, the go-compiler-final root through the seed

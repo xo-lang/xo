@@ -3,7 +3,8 @@
 // building one when it can (owner, 2026-10-21): the checkout's current
 // bin/xo, else a cached build whose checker sources are the tree's
 // (internal/xotool CheckerXo), else it builds bin/xo first
-// (go run ./scripts/xobuild). The tree's std is used (XO_STD).
+// (go run ./scripts/xobuild), which on the Mac it does only under
+// heavy.sh (HEAVY_JOB, xotool.Unguarded). The tree's std is used (XO_STD).
 //
 //	go run ./scripts/xocheck [xo check flags] DIR...   # e.g. --no-gc compiler/ssa
 //
@@ -41,6 +42,13 @@ func main() {
 	}
 	xo, why, ok := xotool.CheckerXo(root, dirs)
 	if !ok {
+		// a build takes several GB: under heavy.sh only, as xobuild (a cached
+		// build of the key is copied, not built, and needs no guard)
+		if !xotool.Built(root) {
+			if code := xotool.Unguarded("xocheck", "go run ./scripts/xocheck ARGS"); code != 0 {
+				os.Exit(code)
+			}
+		}
 		fmt.Fprintln(os.Stderr, "xocheck: no xo with this tree's checker sources; building bin/xo")
 		xo, err = xotool.Ensure(root, os.Stderr)
 		if err != nil {

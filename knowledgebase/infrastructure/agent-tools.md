@@ -884,7 +884,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   1, with `exit status 64` printed). Elsewhere (an offload host, a
   contributor's machine) it prints one warning line and builds.
   `XO_UNGUARDED=1` skips the check. `--key` and `--stamp-args` build
-  nothing and are not checked. A Mac script that builds xo
+  nothing and are not checked. `go run ./scripts/xocheck` makes the same
+  check (internal/xotool Unguarded) only when it would build: when no
+  xo has the tree's checker sources and neither bin/xo nor the shared
+  cache holds a build of the tree's key (xotool.Built; lead, 2026-11-05:
+  a 60 s xocheck build ran outside heavy.sh). A Mac script that builds xo
   (scripts/release.sh, a repro script) runs under heavy.sh, or sets
   XO_UNGUARDED=1 when it must not take a slot.
 - Build both sides of an A/B (`xo build` in a scratch script, `xo bench
