@@ -2958,6 +2958,10 @@ fn (var r: Rc) reuse(var f: Func) {
 /// with a reuse: a write after a reuse sees the list proved unique (count
 /// 1 was the proof's premise) and has none.
 fn (var r: Rc) share_in(var f: Func) {
+  var made: List[Int] = []
+  for _ in 0..f.values.len() {
+    made.push(0)
+  }
   for bl in 0..f.blocks.len() {
     var out: List[Int] = []
     for v in f.blocks[bl].instrs {
@@ -2965,7 +2969,7 @@ fn (var r: Rc) share_in(var f: Func) {
       if x.op == Op.Call {
         let nm = aux_name(x.aux)
         let ei = if nm == "list.set" { 2 } else if nm == "list.push" { 1 } else { -1 }
-        if ei > 0 && ei < x.args.len() && r.heap(ty_of(f.values[x.args[ei]].tb)) && !made_here(f, x.args[0]) {
+        if ei > 0 && ei < x.args.len() && r.heap(ty_of(f.values[x.args[ei]].tb)) && !made_here(f, x.args[0], made) {
           out.push(new_value(f, bl, Op.ShareIn, -1, Aux.None, [x.args[0], x.args[ei]]))
         }
       }
@@ -2976,22 +2980,38 @@ fn (var r: Rc) share_in(var f: Func) {
 }
 
 /// Whether list value l is one this function made (a list.new or a
-/// literal, through the updates and reuses of it): never shared.
-fn made_here(f: Func, l: Int) -> Bool {
+/// literal, through the updates and reuses of it): never shared. made
+/// remembers each value's answer (0 not known, 1 made here, 2 not), so a
+/// literal's chain of n pushes costs n steps in all, with no limit on its
+/// length (a limit of 1000 steps gave the later pushes of std json's
+/// 4,118-entry GO_CASES literal a ShareIn each, 2026-11-04).
+fn made_here(f: Func, l: Int, var made: List[Int]) -> Bool {
+  var path: List[Int] = []
   var c = l
-  var n = 0
-  while n < 1000 {
-    let x = f.values[c]
-    if x.op == Op.Reuse && x.args.len() == 1 {
-      c = x.args[0]
-    } else if x.op == Op.Call && is_update_call(aux_name(x.aux)) && x.args.len() > 0 {
-      c = x.args[0]
+  var ans = 0
+  while ans == 0 {
+    if c < made.len() && made[c] != 0 {
+      ans = made[c]
     } else {
-      return x.op == Op.Call && aux_name(x.aux) is "list.new" | "list.with_capacity"
+      let x = f.values[c]
+      path.push(c)
+      if x.op == Op.Reuse && x.args.len() == 1 {
+        c = x.args[0]
+      } else if x.op == Op.Call && is_update_call(aux_name(x.aux)) && x.args.len() > 0 {
+        c = x.args[0]
+      } else if x.op == Op.Call && aux_name(x.aux) is "list.new" | "list.with_capacity" {
+        ans = 1
+      } else {
+        ans = 2
+      }
     }
-    n += 1
   }
-  false
+  for p in path {
+    if p < made.len() {
+      made[p] = ans
+    }
+  }
+  ans == 1
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,50 @@
+// made_here (rc.xo, decision 0488): a list this function made, followed
+// through its pushes however many there are.
+
+/// f(p) makes a list and pushes n Ints into it, then pushes once into its
+/// parameter p; returns (f, the last push into the made list, the push
+/// into p).
+fn pushes(n: Int) -> (Func, Int, Int) {
+  var m = Module{}
+  let it = m.intern(SType{kind: Kind.Int, name: "Int"})
+  let lt = m.intern(SType{kind: Kind.List, name: "List[Int]", elems: [it]})
+  let fi = m.new_func("f", [lt], [lt])
+  var f = m.funcs[fi]
+  let p = f.blocks[0].params[0]
+  let cap = f.add(0, Op.Const, it, Aux.I(n: n), [])
+  var l = f.add(0, Op.Call, lt, Aux.S(s: "list.new"), [cap])
+  for i in 0..n {
+    let e = f.add(0, Op.Const, it, Aux.I(n: i), [])
+    l = f.add(0, Op.Call, lt, Aux.S(s: "list.push"), [l, e])
+  }
+  let e = f.add(0, Op.Const, it, Aux.I(n: 7), [])
+  let q = f.add(0, Op.Call, lt, Aux.S(s: "list.push"), [p, e])
+  m.funcs[fi] = f
+  (m.funcs[fi], l, q)
+}
+
+fn no_made(f: Func) -> List[Int] {
+  var made: List[Int] = []
+  for _ in 0..f.values.len() {
+    made.push(0)
+  }
+  made
+}
+
+test "a literal's last push of thousands is still on a list made here" {
+  let (f, last, q) = pushes(4200)
+  var made = no_made(f)
+  expect(made_here(f, last, made)) == true
+  expect(made_here(f, q, made)) == false
+}
+
+test "every push of a long literal is made here, asked in any order" {
+  let (f, last, _) = pushes(3000)
+  var made = no_made(f)
+  // the last first fills the chain; an earlier push then reads its answer
+  expect(made_here(f, last, made)) == true
+  expect(made_here(f, last - 2, made)) == true
+  var fresh = no_made(f)
+  expect(made_here(f, last - 2, fresh)) == true
+  expect(made_here(f, last, fresh)) == true
+}
