@@ -219,8 +219,7 @@ less after decision 0337).
 6.1 **Break cycles through callbacks**: native memory is reference counted with no cycle collector, so a
 callback stored in the object it captures is never freed. Drop such hooks on close or on a final error.
 Advisory (the arm64 goldens' leak check catches it). Source: gotcha callback-capturing-its-owner-leaks;
-decision 0395. (core 5.5 still says "tracing GC"; that is the Go backend's runtime, and the section needs an
-update for native targets.)
+decision 0395. See core 5.5.
 
 6.2 **std and runtime code: keep a value alive while a raw address into it is in use** (`raw.alive(b)` after
 the last raw access when the address goes into a field, a block parameter or another function). Enforced in
@@ -318,7 +317,6 @@ Source: core 1.1; decision 0262.
 - 4.5: whether to recommend StrBuilder at all; the evidence on current main favors in-place `+=`, and an A/B
   would settle it.
 - 5.2 and 5.3 are enforced for std only; whether `xo vet` should report them for every program by default.
-- 6.1 depends on core 5.5 being updated for native targets (reference counting, no cycle collector).
 - 8.1: core 9.2 calls test placement "a note, not a rule"; this file states it as a convention. Whether
   core 9.2 should point here.
 - Rules left out as std or runtime internal (cold-path splitting and the inline budget; bounded `str_find`):

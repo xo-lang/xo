@@ -12,7 +12,7 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.41
 
-None yet.
+- 5.5 describes native memory management (reference counting, decision 0046, and the one way a cycle forms) instead of only the Go backend's tracing collector; no behavior change.
 
 ## Changes in 0.40
 
@@ -2395,8 +2395,15 @@ fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E
 
 ### 5.5 Memory management
 
-Tracing GC, plus request scoped arenas (decision 0066; on by default, off
-with `--no-arenas`). An arena is memory owned by one HTTP request served by
+Native builds (the default, 10.1 Backends) reference count their memory (decision
+0046): a value is freed when its last reference goes, with no collector and
+no pauses. Values cannot form cycles, since Xo has no mutable references; a
+cycle can form only through a shared handle (a `Mutex`, an `Atomic`, or a
+std handle such as a WebSocket connection) that stores a closure capturing
+the handle itself, and such a cycle is never freed, so the owner drops what
+it stored when nothing can call it again (conventions.md 6.1). The Go
+backend (`--backend=go`) uses Go's tracing garbage collector, plus request
+scoped arenas (decision 0066; on by default, off with `--no-arenas`). An arena is memory owned by one HTTP request served by
 `http.server` (std.md 4.4) and reused by a later request once the handler has
 returned and the response is written. The compiler and the runtime place in it
 only memory that provably cannot outlive the request: the request's header,
