@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- perf (build): the first edit after a cold build is warm: the background build of std's variants then builds the program once more (niced, its output thrown away), filling std's record and the front end, module check, function and part caches. On s3 + dynamodb (linux/arm64) the first edit takes 0.34 s, was 1.17 s. XO_STD_BG_WARM=0 turns it off.
 - perf (build): the second build after a cold one (the first that loads std's record) reuses the front end and module check caches of the build before it: their keys hashed std's modules in load order, which differs when std comes from its record. On s3 + dynamodb the second edit takes 0.33 s, was 0.58 s. Existing cache entries miss once.
 
 ## v0.40.0 (2026-11-05)

@@ -662,15 +662,20 @@ func TestSepcompBackgroundBoth(t *testing.T) {
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"ok\")\n}\n"), 0o644); err != nil {
-		t.Fatal(err)
+	write := func(word string) {
+		t.Helper()
+		src := "fn twice(n: Int) -> Int {\n  n * 2\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"" + word + " ${twice(21)}\")\n}\n"
+		if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
+	write("one")
 	cache := filepath.Join(work, "cache")
 	build := func() string {
 		t.Helper()
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", filepath.Join(work, "bin"), "."))
 		cmd.Dir = prog
-		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_SEPCOMP_BG=1")
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_SEPCOMP_BG=1", "XO_CACHE_STATS=1", "XDG_CACHE_HOME="+filepath.Join(work, "xdg"))
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo build: %v\n%s", err, log)
@@ -680,11 +685,13 @@ func TestSepcompBackgroundBoth(t *testing.T) {
 	if log := build(); !strings.Contains(log, "building in the background") {
 		t.Fatalf("the first build did not start a background build:\n%s", log)
 	}
-	// both variants' facts, then the lock free (the child is done)
+	// both variants' facts, the lock free, then the warm build of the
+	// program done (its .busy marker gone: the child is done)
 	deadline := time.Now().Add(10 * time.Minute)
 	for {
 		fs, _ := filepath.Glob(filepath.Join(cache, "std", "*.stdf"))
-		if len(fs) == 2 && !bgLocked(t, xo, cache) {
+		busy, _ := filepath.Glob(filepath.Join(cache, "std", ".warm-*"))
+		if len(fs) == 2 && !bgLocked(t, xo, cache) && len(busy) == 0 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -692,9 +699,19 @@ func TestSepcompBackgroundBoth(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
+	// an edit: the child's warm build of the program left std's record and
+	// the unchanged function's front end entry (2026-11-05: the first
+	// edit after the stores were built filled them, 1.17 s, the next 0.33 s)
+	write("two")
 	log := build()
 	if n := strings.Count(log, "reused"); !strings.Contains(log, "conc=false reused") || !strings.Contains(log, "conc=true reused") {
 		t.Fatalf("the next build did not reuse both variants (%d reused):\n%s", n, log)
+	}
+	if !strings.Contains(log, "cache stdx record loaded") {
+		t.Errorf("the background child's warm build left no std record:\n%s", log)
+	}
+	if m := regexp.MustCompile(`cache fe (\d+)/\d+ bodies`).FindStringSubmatch(log); m == nil || m[1] == "0" {
+		t.Errorf("the background child's warm build left no front end entry:\n%s", log)
 	}
 }
 

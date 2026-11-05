@@ -180,6 +180,17 @@ fn main(os0: Os) ! {
     os.proc.exit(2)
   }
   var o = parse_args(os, args)
+  // a background std build's warm build (stdcache.xo std_variant_peek):
+  // the build the user ran, its output to a throwaway path, run nothing
+  let warm_out = os.env.get("XO_STD_BG_WARM_OUT") ?? ""
+  if !warm_out.is_empty() && (os.env.get("XO_STD_BG_CHILD") ?? "") == "1" {
+    if o.watch || !o.profile.is_empty() || !(o.cmd is "build" | "run") {
+      os.proc.exit(0)
+    }
+    o.cmd = "build"
+    o.out = warm_out
+    o.prog_args = []
+  }
   if o.cmd == "build" && !o.profile.is_empty() && (os.env.get("XO_PROF_SELF") ?? "").is_empty() {
     // `xo build --profile=cpu|heap`: a profile of the compiler itself, as
     // xo-build.cpu.pprof (and .heap.pprof) with their .txt in the working

@@ -100,6 +100,8 @@ var codegenEnv = map[string]inputClass{
 	"XO_PREP_CACHE":           {"none", ""},                                    // off: a store link decides its kept atoms afresh (macho prepcache.xo); a hit links the same bytes
 	"XO_SEPCOMP_BG":           {"none", ""},                                    // 0: a miss of std's variant starts no background build (decision 0388); the build is whole program either way
 	"XO_STD_BG_CHILD":         {"none", ""},                                    // the background build of std's variant (stdcache.xo std_variant_peek's child): it takes the lock; the same entries
+	"XO_STD_BG_WARM":          {"none", ""},                                    // 0: the background child does not build the program again after std's variants (stdcache.xo); the same entries
+	"XO_STD_BG_WARM_OUT":      {"none", ""},                                    // the background child's warm build (main.xo): its output path; the same build, its output thrown away
 	"XO_SEPCOMP":              {"keyed", "sepcomp ${crypto.sha256(b.freeze()"}, // std's functions as externs (decision 0388 stage 3): cache_id holds the facts' hash
 	"XO_SEPCOMP_FACTS":        {"keyed", "sepcomp ${crypto.sha256(b.freeze()"},
 	"XO_SEPCOMP_FACTS_CONC":   {"keyed", "sepcomp ${crypto.sha256(b.freeze()"}, // the concurrent variant's facts (the default sets it; sepcomp_fact_files)
