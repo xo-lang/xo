@@ -529,6 +529,11 @@ fn (var c: Checker) solve_effects() {
     }
   }
   var seen: Map[Str, Bool] = {}
+  // per declared function, the declared functions that call it and their
+  // Decl obligations (built on the first XO0701 of a declaration)
+  var callers: Map[Int, List[Int]] = {}
+  var decl_ob: Map[Int, Int] = {}
+  var callers_built = false
   for ob in c.obligations {
     let sub = c.flatten(ob.sub, true)
     let sup = c.flatten(ob.sup, true)
@@ -597,7 +602,110 @@ fn (var c: Checker) solve_effects() {
       }
     }
     c.effect_chain(d, first, key0)
+    // the callers that would miss the same labels once this one declares
+    // them, in one note, so one round of edits fixes the chain (owner,
+    // 2026-11-05, from the agents' survey: getcheck.xo's check_fetched,
+    // then cli.xo's run_get, took two runs of xo check)
+    if ob.kind == ObKind.Decl && ob.fo >= 0 {
+      if !callers_built {
+        let (cs, dob) = c.decl_callers()
+        callers = cs
+        decl_ob = dob
+        callers_built = true
+      }
+      var labels: List[Str] = []
+      for l in missing {
+        if sub.labels.contains(l) {
+          labels.push(l)
+        }
+      }
+      if !labels.is_empty() {
+        c.caller_chain_note(d, ob.fo, labels, callers, decl_ob)
+      }
+    }
   }
+}
+
+/// The direct callers of each function: of a declared one from the calls
+/// that recorded them (declared_callers), of one whose effects are
+/// inferred from the function items of each body's effects; and the
+/// index in c.obligations of each declared function's Decl obligation.
+fn (c: Checker) decl_callers() -> (Map[Int, List[Int]], Map[Int, Int]) {
+  var callers: Map[Int, List[Int]] = c.declared_callers
+  var decl_ob: Map[Int, Int] = {}
+  var bodies: List[(Int, Int)] = []
+  for (i, ob) in c.obligations.indexed() {
+    if ob.kind == ObKind.Decl && ob.fo >= 0 {
+      decl_ob[ob.fo] = i
+      bodies.push((ob.fo, ob.sub))
+    }
+  }
+  for f in c.inferred_fns {
+    bodies.push((f, c.objs[f].body_eff))
+  }
+  for (f, s0) in bodies {
+    var stack: List[Int] = [s0]
+    var n = 0
+    while !stack.is_empty() && n < 1000 {
+      n += 1
+      let set = stack.pop() ?? -1
+      if set < 0 {
+        continue
+      }
+      for it in c.esets[set] {
+        if it.evar >= 0 {
+          stack.push(c.evars[it.evar])
+        } else if it.fn_obj >= 0 {
+          var l = callers.get(it.fn_obj) ?? []
+          if !l.contains(f) {
+            l.push(f)
+            callers[it.fn_obj] = l
+          }
+        }
+      }
+    }
+  }
+  (callers, decl_ob)
+}
+
+/// A note on d naming the declared functions above fo that would miss
+/// labels once fo declares them (each caller's own declaration does not
+/// cover them), walking up through those callers, at most 12.
+fn (var c: Checker) caller_chain_note(d: Int, fo: Int, labels: List[Str], callers: Map[Int, List[Int]], decl_ob: Map[Int, Int]) {
+  var found: List[Str] = []
+  var visited: Map[Int, Bool] = {}
+  visited[fo] = true
+  var queue: List[Int] = [fo]
+  var qi = 0
+  while qi < queue.len() && found.len() < 12 {
+    let f = queue[qi]
+    qi += 1
+    for g in callers.get(f) ?? [] {
+      if visited.contains(g) {
+        continue
+      }
+      visited[g] = true
+      let oi = decl_ob.get(g) ?? -1
+      if oi < 0 {
+        // its effects are inferred: they take the labels, and its own
+        // callers are the next to check
+        queue.push(g)
+        continue
+      }
+      let gob = c.obligations[oi]
+      let sup = c.flatten(gob.sup, true)
+      if labels.all(fn(l) { sup.covers_label(l) }) {
+        continue
+      }
+      found.push("`${c.display_name(g)}` (${gob.file}:${gob.span.start.line})")
+      queue.push(g)
+    }
+  }
+  if found.is_empty() {
+    return
+  }
+  let list = "`${labels.join("`, `")}`"
+  c.note(d, "once `${c.display_name(fo)}` declares ${list}, these callers need it too: ${found.join(", ")}")
 }
 
 /// The call chain that performs effect key, from item w, as notes on d

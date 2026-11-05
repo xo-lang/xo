@@ -1411,6 +1411,14 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
   c.check_ceiling(fo, span)
   if c.objs[fo].declared >= 0 {
     c.perform(c.performed(c.subst_eff(c.objs[fo].declared, sm, 0), c.path, span, c.display_name(fo)))
+    let caller = c.outer_fn()
+    if caller >= 0 {
+      var l = c.declared_callers.get(fo) ?? []
+      if !l.contains(caller) {
+        l.push(caller)
+        c.declared_callers[fo] = l
+      }
+    }
   } else {
     c.perform(c.new_eset([EffItem{fn_obj: fo, sub: sm, has_sub: true, file: c.path, span: span, via: c.display_name(fo)}]))
   }

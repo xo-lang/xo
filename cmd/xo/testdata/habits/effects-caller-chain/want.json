@@ -1,0 +1,30 @@
+[
+  {
+    "code": "XO0701",
+    "severity": "error",
+    "message": "`leaf` is pure, but performs `clock`",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 4,
+      "end_line": 1,
+      "end_col": 8
+    },
+    "notes": [
+      {
+        "message": "`Clock.now` uses `clock` here",
+        "span": {
+          "file": "main.xo",
+          "line": 2,
+          "col": 3,
+          "end_line": 2,
+          "end_col": 14
+        }
+      },
+      {
+        "message": "once `leaf` declares `clock`, these callers need it too: `mid` (main.xo:5), `top` (main.xo:13)"
+      }
+    ],
+    "fixes": []
+  }
+]

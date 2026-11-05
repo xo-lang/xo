@@ -228,6 +228,10 @@ pub struct Checker {
   /// builder lets its tree go once it built the body; a later force_body
   /// parses the same tree again.
   pub lazy_parsed: Map[Int, parser.LazyBody] = {}
+  /// Per function with declared effects, the functions whose bodies call
+  /// it (a call performs the callee's declared set, which names no
+  /// callee): XO0701's note of the callers that need the same effects.
+  pub declared_callers: Map[Int, List[Int]] = {}
   /// The syntax errors of each lazily parsed body that does not parse
   /// (force_body), reported once; its declaration stays lazy, so no cache
   /// records an empty body for it.
