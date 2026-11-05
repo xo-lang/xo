@@ -7,6 +7,21 @@
 
 
 
+## 2026-11-05: perf: on macOS a burst of tiny tasks wakes no extra workers
+
+- Kind: perf
+- Commit: this commit
+- Found by: micro13 spawn100k on darwin/amd64 against Go (xo-lang-4; decision 0514)
+- Go reference: Go's wakep chain (the last spinner to find work wakes another), which this keeps on Linux and Windows
+- Test: the 27 concurrency goldens (conc_, spawn, sched, task_, scope_, fanout, chan_) on darwin/arm64; TestSelfhostWasm
+- Timing: spawn100k darwin/amd64 work 29 to 26 ms (0.897, Go 25 to 27), darwin/arm64 22 to 18 (0.818); conc suite within noise, mutex 0.959
+- Shipped in: not yet released
+
+On macOS a spinning worker that finds a task of a spawn site whose tasks
+finish in microseconds (decision 0359) no longer wakes another spinner, so
+a burst of such tasks stays with the workers already awake instead of
+waking sleeping ones whose wake and sleep cost more than the tasks.
+
 ## 2026-11-05: perf: map, indexed, group_by and sort_by size their result once
 
 - Kind: perf

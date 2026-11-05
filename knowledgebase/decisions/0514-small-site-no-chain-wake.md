@@ -1,7 +1,7 @@
 # 0514: On macOS a small spawn site's task wakes no chain worker
 
-Status: Proposed (xo-lang-4, 2026-11-05; the code waits for the owner's
-accept, branch l4-chainsmall fdfd6caa7)
+Status: Accepted (owner, 2026-11-05). Landed in the commit that adds this
+line (std/native/llrt/pool.xo worker_main).
 
 ## Context
 
