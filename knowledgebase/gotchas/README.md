@@ -1142,3 +1142,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [dwarf-range-past-call-result.md](dwarf-range-past-call-result.md): Observed 2026-11-05: an argument's DWARF range ended after the call instruction, which also makes the result moves, so after `finish` the caller's variable showed the result in x0; ranges now end at the return address
 - [debugger-trap-write-needs-flush-and-stop.md](debugger-trap-write-needs-flush-and-stop.md): `xo debug` on macOS: flush the caches after a trap write and suspend the other threads at a stop (Observed)
 - [ptrace-leader-reaped-last.md](ptrace-leader-reaped-last.md): xo debug on Linux hung reaping a killed program; the leader waits for its traced threads, and xo has its own children, so reap waits on -1 until the leader returns.
+- [recursive-option-struct-debug.md](recursive-option-struct-debug.md): a struct holding an Option of itself overflows arm64 `dv_type_ok` in a debug std build; use a List

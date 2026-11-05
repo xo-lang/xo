@@ -49,10 +49,10 @@ x509.system_roots  reads the host's root store, which differs per machine
 go.Any.*  a use go value: needs the Go backend, covered by cmd/xo TestUseGoAny*
 http.serve_component  a wasi:http component runs under a host, not as a program: needs the wasm backend and a host, covered by internal/selfhost TestWasmComponentHTTP
 
-# std/yamlcodec: the helpers the code `derive Yaml` generates calls; the yaml corpora
+# std/yaml: the helpers the code `derive Yaml` generates calls; the yaml corpora
 # (corpus/yaml, corpus/yamlfuzz, golden yaml_derive) reach them through yaml.decode and
 # yaml.encode_value, which the coverage scan does not follow into generated code.
-yamlcodec.*  called only by derive Yaml's generated code
+yaml.*  called only by derive Yaml's generated code
 
 # xo debug's process control (decision 0253): reached only by xo debug,
 # whose cmd/xo tests (TestDebugBatch, TestDebugStep, TestDebugTasks,

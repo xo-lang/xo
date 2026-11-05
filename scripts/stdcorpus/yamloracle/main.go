@@ -204,6 +204,43 @@ var rtCases = []string{
 	"p: 5s", "p: ~", "p: 5", "e: 5s\nf: [1]", "e: 0s",
 }
 
+// dumpNode writes n and its content, one line a node.
+func dumpNode(b *strings.Builder, n *yaml.Node, depth int) {
+	a := "-"
+	if n.Alias != nil {
+		a = n.Alias.Anchor
+	}
+	fmt.Fprintf(b, "%s%d %s %d %s %s %d:%d ->%s\n", strings.Repeat(" ", depth), int(n.Kind), n.Tag, int(n.Style), strconv.Quote(n.Value), strconv.Quote(n.Anchor), n.Line, n.Column, a)
+	for _, c := range n.Content {
+		dumpNode(b, c, depth+1)
+	}
+}
+
+// nodesShow parses every document of in into Nodes (Decoder.Decode into a yaml.Node)
+// and dumps them, or the error.
+func nodesShow(in string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = "PANIC"
+		}
+	}()
+	dec := yaml.NewDecoder(strings.NewReader(in))
+	var b strings.Builder
+	for {
+		var n yaml.Node
+		err := dec.Decode(&n)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "ERR " + strconv.Quote(norm(err.Error()))
+		}
+		b.WriteString("doc\n")
+		dumpNode(&b, &n, 0)
+	}
+	return b.String()
+}
+
 // strictShow is inlineShow with KnownFields(true).
 func strictShow(in string) (out string) {
 	defer func() {
@@ -536,6 +573,38 @@ fn show_t(t: T) -> Str {
   "n=${t.n} f=${fl(t.f)} s=${t.s.quote()} b=${t.b} o=${o} l=[${ls.join(",")}] m={${ms.join(",")}} in=${t.in_.x}"
 }
 
+fn node_kind_n(k: yaml.NodeKind) -> Int {
+  match k {
+    Document => 1
+    Sequence => 2
+    Mapping => 4
+    Scalar => 8
+    Alias => 16
+  }
+}
+
+fn dump_node(var out: StrBuilder, n: yaml.Node, depth: Int) {
+  let a = if n.alias.is_empty() { "-" } else { n.alias[0].anchor }
+  out.write("${" ".repeat(depth)}${node_kind_n(n.kind)} ${n.tag} ${n.style} ${n.value.quote()} ${n.anchor.quote()} ${n.line}:${n.column} ->${a}\n")
+  for c in n.content {
+    dump_node(out, c, depth + 1)
+  }
+}
+
+fn show_nodes(text: Str) -> Str {
+  var out = StrBuilder.new()
+  match yaml.parse_all(text) {
+    Err(e) => "ERR ${e.display().quote()}"
+    Ok(ns) => {
+      for n in ns {
+        out.write("doc\n")
+        dump_node(out, n, 0)
+      }
+      out.freeze()
+    }
+  }
+}
+
 fn show_all(text: Str) -> Str {
   match yaml.decode_all[T](text) {
     Err(e) => "ERR ${e.display().quote()}"
@@ -570,6 +639,12 @@ const CASES: List[(Str, Str)] = [
 	for _, e := range ents {
 		in, _ := cases.ReadFile("cases/" + e.Name())
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(string(in)), xq(show(in)))
+	}
+	o.WriteString("]\n\n")
+	o.WriteString("/// (the YAML text, the Node trees yaml.v3 parses it into: kind tag style value anchor line:column ->alias, indented by depth)\nconst NODES: List[(Str, Str)] = [\n")
+	for _, e := range ents {
+		in, _ := cases.ReadFile("cases/" + e.Name())
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(string(in)), xq(nodesShow(string(in))))
 	}
 	o.WriteString("]\n\n")
 	o.WriteString("/// (an alias expansion document, what yaml.v3 decodes it into Deep as)\nconst DEEP: List[(Str, Str)] = [\n")
@@ -686,6 +761,12 @@ test "Duration and Bytes fields are yaml.v3's" {
   let want = [MARSHALED_RT0, MARSHALED_RT1, MARSHALED_RT2, MARSHALED_RT3, MARSHALED_RT4]
   for (i, r) in rs.indexed() {
     expect(yaml.encode_value[Rt](r).ok()) == Some(want[i])
+  }
+}
+
+test "parse_all builds yaml.v3's Node trees" {
+  for (text, want) in NODES {
+    expect(show_nodes(text)) == want
   }
 }
 

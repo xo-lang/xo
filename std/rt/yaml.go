@@ -1,6 +1,6 @@
 package rt
 
-// std/yaml on the Go backend: compiled from std/native/yamlcodec.xo
+// std/yaml on the Go backend: compiled from std/native/yaml.xo
 // (std/go_compiled.txt, decision 0312). The display method stays here, as
 // the runtime calls it through interfaces.
 

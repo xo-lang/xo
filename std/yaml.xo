@@ -35,3 +35,161 @@ fn decode_all[T: Yaml](text: Str, strict: Bool = false) -> List[T] ! YamlErr
 /// The documents written one after the other, each after the first behind a `---`
 /// line (yaml.v3's Encoder.Encode called for each).
 fn encode_all[T: Yaml](docs: List[T], indent: Int = 4) -> Str ! YamlErr
+
+/// The kinds of node yaml.v3's Node has.
+enum NodeKind { Document, Sequence, Mapping, Scalar, Alias }
+
+/// Style bits of a Node, as yaml.v3's Style: `TAGGED` (the tag is written),
+/// `DOUBLE_QUOTED`, `SINGLE_QUOTED`, `LITERAL`, `FOLDED`, `FLOW`.
+const TAGGED: Int = 1
+const DOUBLE_QUOTED: Int = 2
+const SINGLE_QUOTED: Int = 4
+const LITERAL: Int = 8
+const FOLDED: Int = 16
+const FLOW: Int = 32
+
+/// A node of a YAML document, as yaml.v3's Node: a Document holds its one root in
+/// `content`, a Sequence its items, a Mapping its keys and values alternately, a
+/// Scalar its text in `value` with its resolved `tag` (`!!str`, `!!int`, ...), and an
+/// Alias the anchor name in `value` and the node it names in `alias` (a list of one node; a List
+/// because a struct cannot hold an Option of itself in a debug build, gotchas/recursive-option-struct-debug.md). `anchor` is the
+/// name an anchored node defines; `line` and `column` count from 1.
+struct Node {
+  kind: NodeKind
+  style: Int
+  tag: Str
+  value: Str
+  anchor: Str
+  alias: List[Node]
+  content: List[Node]
+  line: Int
+  column: Int
+}
+
+/// The first document of text as a Node tree (a Document node; an empty text is
+/// a Document with no content).
+fn parse(text: Str) -> Node ! YamlErr
+/// Every document of text.
+fn parse_all(text: Str) -> List[Node] ! YamlErr
+
+// ---- The helpers the code `derive Yaml` generates calls (programs call decode and
+// encode_value, not these): the node tree of a document, typed reads of its nodes
+// with gopkg.in/yaml.v3's decoding rules (a scalar into a Str is its text, a float
+// into an Int truncates, `yes` into a Bool, merge keys, aliases), and the event
+// writer the encoder calls.
+
+/// A node of the document tree; children and aliases are indexes into Doc.nodes.
+struct RawNode {
+  kind: Int
+  style: Int
+  tag: Str
+  value: Str
+  anchor: Str
+  alias: Int
+  content: List[Int]
+  line: Int
+  column: Int
+}
+
+struct Doc {
+  nodes: List[RawNode]
+  anchors: Map[Str, Int]
+  root: Int
+}
+
+/// The first document of text as a node tree.
+fn parse_doc(text: Str) -> Doc ! YamlErr
+/// The index of the document's content node, -1 for an empty document.
+fn root(d: Doc) -> Int
+fn is_null(d: Doc, i: Int) -> Bool
+/// The reads below return whether a value was read (a null, a mismatch, or a
+/// node of the wrong kind leaves the field alone, as yaml.v3 does) and the
+/// value; a mismatch is put in st.errs (yaml.v3 reports every one together), and
+/// only an explicit tag that its text does not fit ends the decode.
+fn to_str(d: Doc, i: Int, var st: Dec) -> (Bool, Str) ! YamlErr
+fn to_int(d: Doc, i: Int, var st: Dec) -> (Bool, Int) ! YamlErr
+fn to_float(d: Doc, i: Int, var st: Dec) -> (Bool, Float) ! YamlErr
+fn to_bool(d: Doc, i: Int, var st: Dec) -> (Bool, Bool) ! YamlErr
+/// The items of a sequence node (what names the target type in the error).
+fn items(d: Doc, i: Int, what: Str, var st: Dec) -> (Bool, List[Int])
+/// The key and value node of each entry of a mapping node, as yaml.v3 decodes
+/// them as (key, value node, key line) (its own entries, then its merge key's; a repeated key or a key that is
+/// not a scalar is put in st.errs; a bad merge value ends the decode).
+fn pairs(d: Doc, i: Int, what: Str, var st: Dec) -> (Bool, List[(Str, Int, Int)]) ! YamlErr
+/// Puts in errs the error of a pairs entry for a key that is not a scalar (its
+/// value v is negative) or ends the decode for a bad merge value; the generated
+/// reader calls it for such an entry.
+fn bad_key(d: Doc, v: Int, var st: Dec) -> Bool ! YamlErr
+/// The error of a decode that collected st.errs (not empty): yaml.v3's
+/// "unmarshal errors:" list.
+fn errors(st: Dec) -> YamlErr
+
+/// A node event written by derive Yaml's encoder: 1 mapping start, 2 mapping
+/// end, 3 sequence start, 4 sequence end, 5 a scalar (its text and style).
+struct Ev {
+  kind: Int
+  text: Str
+  style: Int
+}
+
+/// The events of one document being written.
+struct Enc {
+  evs: List[Ev]
+  flow: Bool
+}
+
+fn enc_new() -> Enc
+/// Makes the next mapping or sequence started a flow one (yaml.v3's e.flow).
+fn set_flow(var w: Enc, flow: Bool)
+fn map_start(var w: Enc)
+fn map_end(var w: Enc)
+fn seq_start(var w: Enc)
+fn seq_end(var w: Enc)
+fn put_null(var w: Enc)
+fn put_bool(var w: Enc, b: Bool)
+fn put_int(var w: Enc, n: Int)
+fn put_float(var w: Enc, f: Float)
+/// A string as yaml.v3 writes it: quoted when it would read back as another
+/// type, a literal block when it has a line break (flow: quoted instead).
+fn put_str(var w: Enc, s: Str)
+/// The keys of a map[string] in yaml.v3's order (letters by code point, digit runs by value).
+fn sorted_keys(keys: List[Str]) -> List[Str]
+/// The document the events make, indented by `indent` spaces (yaml.v3's SetIndent;
+/// its Marshal uses 4; the emitter takes 2 to 9).
+fn finish(w: Enc, indent: Int) -> Str ! YamlErr
+
+/// The state of one decode: the type errors so far (yaml.v3 reports them
+/// together), and the counts of its limit on alias expansion.
+struct Dec {
+  errs: List[YamlErr]
+  dc: Int
+  ac: Int
+  ad: Int
+  active: List[Int]
+  strict: Bool
+}
+
+/// strict: an unknown key is an error (yaml.v3's KnownFields).
+fn dec_new(strict: Bool) -> Dec
+/// Puts the unknown key k, on line, of a struct typ in st.errs when the decode is strict.
+fn unknown_field(var st: Dec, k: Str, line: Int, typ: Str)
+/// Counts the read of node i (for an alias, also of its target, and enters it:
+/// leave undoes that); fails on yaml.v3's `document contains excessive aliasing`
+/// or an anchor that contains itself. The generated readers call it first.
+fn tick(d: Doc, i: Int, var st: Dec) -> Bool ! YamlErr
+fn leave(var st: Dec, entered: Bool)
+
+/// Every document of text (parse reads the first).
+fn parse_docs(text: Str) -> List[Doc] ! YamlErr
+/// The documents the event lists make, one after another.
+fn finish_all(ws: List[Enc], indent: Int) -> Str ! YamlErr
+
+/// A Duration field (yaml.v3's time.Duration): a string in `Duration.parse` syntax;
+/// an int or a float is an error there as here.
+fn to_duration(d: Doc, i: Int, var st: Dec) -> (Bool, Duration) ! YamlErr
+/// A Bytes field, as yaml.v3's []byte: a sequence of ints 0 to 255.
+fn to_bytes(d: Doc, i: Int, var st: Dec) -> (Bool, Bytes) ! YamlErr
+/// Writes a Duration as Go's Duration.String text (`1h30m0s`).
+fn put_duration(var w: Enc, d: Duration)
+/// Writes Bytes as a sequence of ints, as yaml.v3 writes a []byte.
+fn put_bytes(var w: Enc, b: Bytes)

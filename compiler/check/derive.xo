@@ -519,9 +519,9 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
   let tx = yaml_type_text(t) ?? return None
   var e = em
   let h = "yaml_dec__${yaml_mangle(tx)}"
-  let sig = "fn ${h}__b(d: yamlcodec.Doc, i: Int, var st: yamlcodec.Dec) -> (Bool, ${tx}) ! yaml.YamlErr"
-  let osig = "fn ${h}(d: yamlcodec.Doc, i: Int, var st: yamlcodec.Dec) -> (Bool, ${tx}) ! yaml.YamlErr"
-  let wrap = "fn ${h}(d: yamlcodec.Doc, i: Int, var st: yamlcodec.Dec) -> (Bool, ${tx}) ! yaml.YamlErr { let entered = yamlcodec.tick(d, i, st)?; let r = ${h}__b(d, i, st); yamlcodec.leave(st, entered); r }"
+  let sig = "fn ${h}__b(d: yaml.Doc, i: Int, var st: yaml.Dec) -> (Bool, ${tx}) ! yaml.YamlErr"
+  let osig = "fn ${h}(d: yaml.Doc, i: Int, var st: yaml.Dec) -> (Bool, ${tx}) ! yaml.YamlErr"
+  let wrap = "fn ${h}(d: yaml.Doc, i: Int, var st: yaml.Dec) -> (Bool, ${tx}) ! yaml.YamlErr { let entered = yaml.tick(d, i, st)?; let r = ${h}__b(d, i, st); yaml.leave(st, entered); r }"
   match t {
     OptionalType(_, elem) => {
       let (inner, _, e2) = c.yaml_reader(elem, sp, e, done) ?? return None
@@ -529,7 +529,7 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
       if !done.contains(h) {
         done[h] = true
         e.ln("${osig} {", sp)
-        e.ln("  if yamlcodec.is_null(d, i) { return Ok((true, None)) }", sp)
+        e.ln("  if yaml.is_null(d, i) { return Ok((true, None)) }", sp)
         e.ln("  let (ok, v) = ${inner}(d, i, st)?", sp)
         e.ln("  if !ok { return Ok((false, None)) }", sp)
         e.ln("  Ok((true, Some(v)))", sp)
@@ -541,18 +541,18 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
       let n = text(path[path.len() - 1].name)
       if path.len() == 1 && args.is_empty() && is_scalar_name(n) {
         let (fnn, zero) = match n {
-          "Str" => ("yamlcodec.to_str", "\"\"")
-          "Int" => ("yamlcodec.to_int", "0")
-          "Float" => ("yamlcodec.to_float", "0.0")
-          _ => ("yamlcodec.to_bool", "false")
+          "Str" => ("yaml.to_str", "\"\"")
+          "Int" => ("yaml.to_int", "0")
+          "Float" => ("yaml.to_float", "0.0")
+          _ => ("yaml.to_bool", "false")
         }
         return Some((fnn, zero, e))
       }
       if path.len() == 1 && args.is_empty() && n == "Duration" {
-        return Some(("yamlcodec.to_duration", "Duration.from_nanos(0)", e))
+        return Some(("yaml.to_duration", "Duration.from_nanos(0)", e))
       }
       if path.len() == 1 && args.is_empty() && n == "Bytes" {
-        return Some(("yamlcodec.to_bytes", "b\"\"", e))
+        return Some(("yaml.to_bytes", "b\"\"", e))
       }
       if path.len() == 1 && args.len() == 1 && n == "Option" {
         let (inner, _, e2) = c.yaml_reader(args[0], sp, e, done) ?? return None
@@ -560,7 +560,7 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
         if !done.contains(h) {
           done[h] = true
           e.ln("${osig} {", sp)
-          e.ln("  if yamlcodec.is_null(d, i) { return Ok((true, None)) }", sp)
+          e.ln("  if yaml.is_null(d, i) { return Ok((true, None)) }", sp)
           e.ln("  let (ok, v) = ${inner}(d, i, st)?", sp)
           e.ln("  if !ok { return Ok((false, None)) }", sp)
           e.ln("  Ok((true, Some(v)))", sp)
@@ -576,8 +576,8 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
           e.ln(wrap, sp)
           e.ln("${sig} {", sp)
           e.ln("  var out: ${tx} = []", sp)
-          e.ln("  if yamlcodec.is_null(d, i) { return Ok((true, out)) }", sp)
-          e.ln("  let (ok, its) = yamlcodec.items(d, i, ${quote_str(tx)}, st)", sp)
+          e.ln("  if yaml.is_null(d, i) { return Ok((true, out)) }", sp)
+          e.ln("  let (ok, its) = yaml.items(d, i, ${quote_str(tx)}, st)", sp)
           e.ln("  if !ok { return Ok((false, out)) }", sp)
           e.ln("  for it in its {", sp)
           e.ln("    let (ok2, v) = ${inner}(d, it, st)?", sp)
@@ -596,16 +596,16 @@ fn (var c: Checker) yaml_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
           e.ln(wrap, sp)
           e.ln("${sig} {", sp)
           e.ln("  var out: ${tx} = {}", sp)
-          e.ln("  if yamlcodec.is_null(d, i) { return Ok((true, out)) }", sp)
-          e.ln("  let (ok, ps) = yamlcodec.pairs(d, i, ${quote_str(tx)}, st)?", sp)
+          e.ln("  if yaml.is_null(d, i) { return Ok((true, out)) }", sp)
+          e.ln("  let (ok, ps) = yaml.pairs(d, i, ${quote_str(tx)}, st)?", sp)
           e.ln("  if !ok { return Ok((false, out)) }", sp)
           e.ln("  for (k, v, _) in ps {", sp)
           e.ln("    if v < 0 {", sp)
-          e.ln("      let _ = yamlcodec.bad_key(d, v, st)?", sp)
+          e.ln("      let _ = yaml.bad_key(d, v, st)?", sp)
           e.ln("      continue", sp)
           e.ln("    }", sp)
           e.ln("    let (ok2, x) = ${inner}(d, v, st)?", sp)
-          e.ln("    if ok2 || yamlcodec.is_null(d, v) { out[k] = x }", sp)
+          e.ln("    if ok2 || yaml.is_null(d, v) { out[k] = x }", sp)
           e.ln("  }", sp)
           e.ln("  Ok((true, out))", sp)
           e.ln("}", sp)
@@ -711,16 +711,16 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     return None
   }
   e.ln("${pub_}fn yaml_zero__${n}() -> ${n} { ${n}{${zeros.join(", ")}} }", sp)
-  e.ln("${pub_}fn yaml_merge__${n}(base: ${n}, d: yamlcodec.Doc, i: Int, var st: yamlcodec.Dec) -> (Bool, ${n}) ! yaml.YamlErr {", sp)
-  e.ln("  if yamlcodec.is_null(d, i) { return Ok((false, base)) }", sp)
-  e.ln("  let (ok, ps) = yamlcodec.pairs(d, i, ${quote_str(n)}, st)?", sp)
+  e.ln("${pub_}fn yaml_merge__${n}(base: ${n}, d: yaml.Doc, i: Int, var st: yaml.Dec) -> (Bool, ${n}) ! yaml.YamlErr {", sp)
+  e.ln("  if yaml.is_null(d, i) { return Ok((false, base)) }", sp)
+  e.ln("  let (ok, ps) = yaml.pairs(d, i, ${quote_str(n)}, st)?", sp)
   e.ln("  if !ok { return Ok((false, base)) }", sp)
   for (j, fl) in sd.fields.indexed() {
     e.ln("  var f_${text(fl.name.name)}: ${types[j]} = base.${text(fl.name.name)}", fl.name.span)
   }
   e.ln("  for (k, v, kl) in ps {", sp)
   e.ln("    if v < 0 {", sp)
-  e.ln("      let _ = yamlcodec.bad_key(d, v, st)?", sp)
+  e.ln("      let _ = yaml.bad_key(d, v, st)?", sp)
   e.ln("      continue", sp)
   e.ln("    }", sp)
   var inl: List[Int] = []
@@ -749,7 +749,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     }
     e.ln("      f_${text(fl.name.name)} = ${inner.0}yaml_set__${inner.1}(f_${text(fl.name.name)}, k, v, d, st)?", fl.name.span)
   }
-  e.ln("      if st.strict && !yaml_known__${n}(k) { yamlcodec.unknown_field(st, k, kl, ${quote_str(n)}) }", sp)
+  e.ln("      if st.strict && !yaml_known__${n}(k) { yaml.unknown_field(st, k, kl, ${quote_str(n)}) }", sp)
   e.ln("    }", sp)
   e.ln("  }", sp)
   var inits: List[Str] = []
@@ -771,7 +771,7 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
     }
   }
   e.ln("${pub_}fn yaml_known__${n}(k: Str) -> Bool { ${if known.is_empty() { "false" } else { known.join(" || ") }} }", sp)
-  e.ln("${pub_}fn yaml_set__${n}(base: ${n}, k: Str, v: Int, d: yamlcodec.Doc, var st: yamlcodec.Dec) -> ${n} ! yaml.YamlErr {", sp)
+  e.ln("${pub_}fn yaml_set__${n}(base: ${n}, k: Str, v: Int, d: yaml.Doc, var st: yaml.Dec) -> ${n} ! yaml.YamlErr {", sp)
   e.ln("  var b = base", sp)
   var firstk = true
   for (j, fl) in sd.fields.indexed() {
@@ -795,42 +795,42 @@ fn (var c: Checker) yaml_decoder(sd: parser.StructDecl, em: Emit, var done: Map[
   }
   e.ln("  b", sp)
   e.ln("}", sp)
-  e.ln("${pub_}fn yaml_from_node__${n}(d: yamlcodec.Doc, i: Int, var st: yamlcodec.Dec) -> (Bool, ${n}) ! yaml.YamlErr { let entered = yamlcodec.tick(d, i, st)?; let r = yaml_merge__${n}(yaml_zero__${n}(), d, i, st); yamlcodec.leave(st, entered); r }", sp)
+  e.ln("${pub_}fn yaml_from_node__${n}(d: yaml.Doc, i: Int, var st: yaml.Dec) -> (Bool, ${n}) ! yaml.YamlErr { let entered = yaml.tick(d, i, st)?; let r = yaml_merge__${n}(yaml_zero__${n}(), d, i, st); yaml.leave(st, entered); r }", sp)
   e.ln("${pub_}fn yaml_decode_all__${n}(text: Str, strict: Bool = false) -> List[${n}] ! yaml.YamlErr {", sp)
-  e.ln("  let docs = yamlcodec.parse_all(text)?", sp)
+  e.ln("  let docs = yaml.parse_docs(text)?", sp)
   e.ln("  var out: List[${n}] = []", sp)
   e.ln("  for d in docs {", sp)
-  e.ln("    let r = yamlcodec.root(d)", sp)
+  e.ln("    let r = yaml.root(d)", sp)
   e.ln("    if r < 0 {", sp)
   e.ln("      out.push(yaml_zero__${n}())", sp)
   e.ln("      continue", sp)
   e.ln("    }", sp)
-  e.ln("    var st = yamlcodec.dec_new(strict)", sp)
+  e.ln("    var st = yaml.dec_new(strict)", sp)
   e.ln("    let (_, v) = yaml_from_node__${n}(d, r, st)?", sp)
-  e.ln("    if st.errs.len() > 0 { return Err(yamlcodec.errors(st)) }", sp)
+  e.ln("    if st.errs.len() > 0 { return Err(yaml.errors(st)) }", sp)
   e.ln("    out.push(v)", sp)
   e.ln("  }", sp)
   e.ln("  Ok(out)", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn yaml_decode__${n}(text: Str, strict: Bool = false) -> ${n} ! yaml.YamlErr {", sp)
-  e.ln("  let d = yamlcodec.parse(text)?", sp)
-  e.ln("  let r = yamlcodec.root(d)", sp)
+  e.ln("  let d = yaml.parse_doc(text)?", sp)
+  e.ln("  let r = yaml.root(d)", sp)
   e.ln("  if r < 0 { return Ok(yaml_zero__${n}()) }", sp)
-  e.ln("  var st = yamlcodec.dec_new(strict)", sp)
+  e.ln("  var st = yaml.dec_new(strict)", sp)
   e.ln("  let (_, v) = yaml_from_node__${n}(d, r, st)?", sp)
-  e.ln("  if st.errs.len() > 0 { return Err(yamlcodec.errors(st)) }", sp)
+  e.ln("  if st.errs.len() > 0 { return Err(yaml.errors(st)) }", sp)
   e.ln("  Ok(v)", sp)
   e.ln("}", sp)
   Some(e)
 }
 
-/// The function that writes a value of type t into an Enc, `(var w: yamlcodec.Enc,
+/// The function that writes a value of type t into an Enc, `(var w: yaml.Enc,
 /// v: T)` (defined once into em); None for a type derive Yaml does not map.
 fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Map[Str, Bool]) -> (Str, Emit)? {
   let tx = yaml_type_text(t) ?? return None
   var e = em
   let h = "yaml_enc__${yaml_mangle(tx)}"
-  let sig = "fn ${h}(var w: yamlcodec.Enc, v: ${tx})"
+  let sig = "fn ${h}(var w: yaml.Enc, v: ${tx})"
   match t {
     OptionalType(_, elem) => {
       let (inner, e2) = c.yaml_writer(elem, sp, e, done) ?? return None
@@ -841,7 +841,7 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
         e.ln("  if let Some(x) = v {", sp)
         e.ln("    ${inner}(w, x)", sp)
         e.ln("  } else {", sp)
-        e.ln("    yamlcodec.put_null(w)", sp)
+        e.ln("    yaml.put_null(w)", sp)
         e.ln("  }", sp)
         e.ln("}", sp)
       }
@@ -853,20 +853,20 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
         if !done.contains(h) {
           done[h] = true
           let body = match n {
-            "Str" => "yamlcodec.put_str(w, v)"
-            "Int" => "yamlcodec.put_int(w, v)"
-            "Float" => "yamlcodec.put_float(w, v)"
-            _ => "yamlcodec.put_bool(w, v)"
+            "Str" => "yaml.put_str(w, v)"
+            "Int" => "yaml.put_int(w, v)"
+            "Float" => "yaml.put_float(w, v)"
+            _ => "yaml.put_bool(w, v)"
           }
           e.ln("${sig} { ${body} }", sp)
         }
         return Some((h, e))
       }
       if path.len() == 1 && args.is_empty() && n == "Duration" {
-        return Some(("yamlcodec.put_duration", e))
+        return Some(("yaml.put_duration", e))
       }
       if path.len() == 1 && args.is_empty() && n == "Bytes" {
-        return Some(("yamlcodec.put_bytes", e))
+        return Some(("yaml.put_bytes", e))
       }
       if path.len() == 1 && args.len() == 1 && n == "Option" {
         let (inner, e2) = c.yaml_writer(args[0], sp, e, done) ?? return None
@@ -877,7 +877,7 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
           e.ln("  if let Some(x) = v {", sp)
           e.ln("    ${inner}(w, x)", sp)
           e.ln("  } else {", sp)
-          e.ln("    yamlcodec.put_null(w)", sp)
+          e.ln("    yaml.put_null(w)", sp)
           e.ln("  }", sp)
           e.ln("}", sp)
         }
@@ -889,9 +889,9 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
         if !done.contains(h) {
           done[h] = true
           e.ln("${sig} {", sp)
-          e.ln("  yamlcodec.seq_start(w)", sp)
+          e.ln("  yaml.seq_start(w)", sp)
           e.ln("  for x in v { ${inner}(w, x) }", sp)
-          e.ln("  yamlcodec.seq_end(w)", sp)
+          e.ln("  yaml.seq_end(w)", sp)
           e.ln("}", sp)
         }
         return Some((h, e))
@@ -902,12 +902,12 @@ fn (var c: Checker) yaml_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
         if !done.contains(h) {
           done[h] = true
           e.ln("${sig} {", sp)
-          e.ln("  yamlcodec.map_start(w)", sp)
-          e.ln("  for k in yamlcodec.sorted_keys(v.keys()) {", sp)
-          e.ln("    yamlcodec.put_str(w, k)", sp)
+          e.ln("  yaml.map_start(w)", sp)
+          e.ln("  for k in yaml.sorted_keys(v.keys()) {", sp)
+          e.ln("    yaml.put_str(w, k)", sp)
           e.ln("    ${inner}(w, v.get(k) ?? fault(\"yaml: map key\"))", sp)
           e.ln("  }", sp)
-          e.ln("  yamlcodec.map_end(w)", sp)
+          e.ln("  yaml.map_end(w)", sp)
           e.ln("}", sp)
         }
         return Some((h, e))
@@ -972,8 +972,8 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
       }
     }
     var st: List[Str] = []
-    st.push("  yamlcodec.put_str(w, ${quote_str(key)})")
-    st.push("  yamlcodec.set_flow(w, ${flow})")
+    st.push("  yaml.put_str(w, ${quote_str(key)})")
+    st.push("  yaml.set_flow(w, ${flow})")
     st.push("  ${wr}(w, v.${f})")
     if omit {
       body.push("  if !(${zero}) {")
@@ -990,29 +990,29 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
   if !ok {
     return None
   }
-  e.ln("${pub_}fn yaml_fields__${n}(var w: yamlcodec.Enc, v: ${n}) {", sp)
+  e.ln("${pub_}fn yaml_fields__${n}(var w: yaml.Enc, v: ${n}) {", sp)
   for l in body {
     e.ln(l, sp)
   }
   e.ln("}", sp)
-  e.ln("${pub_}fn yaml_write__${n}(var w: yamlcodec.Enc, v: ${n}) {", sp)
-  e.ln("  yamlcodec.map_start(w)", sp)
+  e.ln("${pub_}fn yaml_write__${n}(var w: yaml.Enc, v: ${n}) {", sp)
+  e.ln("  yaml.map_start(w)", sp)
   e.ln("  yaml_fields__${n}(w, v)", sp)
-  e.ln("  yamlcodec.map_end(w)", sp)
+  e.ln("  yaml.map_end(w)", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn yaml_encode_all__${n}(docs: List[${n}], indent: Int = 4) -> Str ! yaml.YamlErr {", sp)
-  e.ln("  var ws: List[yamlcodec.Enc] = []", sp)
+  e.ln("  var ws: List[yaml.Enc] = []", sp)
   e.ln("  for v in docs {", sp)
-  e.ln("    var w = yamlcodec.enc_new()", sp)
+  e.ln("    var w = yaml.enc_new()", sp)
   e.ln("    yaml_write__${n}(w, v)", sp)
   e.ln("    ws.push(w)", sp)
   e.ln("  }", sp)
-  e.ln("  yamlcodec.finish_all(ws, indent)", sp)
+  e.ln("  yaml.finish_all(ws, indent)", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn yaml_encode__${n}(v: ${n}, indent: Int = 4) -> Str ! yaml.YamlErr {", sp)
-  e.ln("  var w = yamlcodec.enc_new()", sp)
+  e.ln("  var w = yaml.enc_new()", sp)
   e.ln("  yaml_write__${n}(w, v)", sp)
-  e.ln("  yamlcodec.finish(w, indent)", sp)
+  e.ln("  yaml.finish(w, indent)", sp)
   e.ln("}", sp)
   Some(e)
 }
@@ -1227,9 +1227,7 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
   }
   if any_yaml {
     head.push("use std/yaml")
-    head.push("use std/yamlcodec")
     seen["std/yaml"] = true
-    seen["std/yamlcodec"] = true
   }
   for u in f.imports {
     let p = text(u.path)

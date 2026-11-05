@@ -1,5 +1,17 @@
 # std/yaml changes
 
+## 2026-11-05: feature: parse and parse_all (Node trees); std/yamlcodec merged into std/yaml
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0512 (stage 3)
+- Go reference: gopkg.in/yaml.v3 v3.0.1 Node, Decoder.Decode into a yaml.Node
+- Test: testdata/corpus/yaml (NODES: the trees of 442 documents, every kind, tag, style, value, anchor, line, column and alias)
+
+`yaml.parse(text)` and `yaml.parse_all(text)` return `yaml.Node` trees. The helpers of derive Yaml's generated code, which were
+the module std/yamlcodec, are now in std/yaml itself (a public Node API there needs the parser, and the two modules would
+import each other); `yaml.Node` is the public tree and the arena node is `yaml.RawNode`.
+
 ## 2026-11-05: feature: Duration and Bytes fields
 
 - Kind: feature
@@ -40,9 +52,9 @@ A field whose `yaml` wire string is `,inline` (a struct that derives Yaml) reads
 
 New `derive Yaml` (decision 0315's rule; `as "name"` is the shared wire name, `yaml "name,omitempty,flow"` a YAML only one) and the module `std/yaml`: `yaml.decode[T: Yaml](text) -> T ! YamlErr` and `yaml.encode_value[T: Yaml](v, indent = 4) -> Str ! YamlErr`. Decoding is type directed as yaml.v3's: a scalar is read as its field's type (`1` into a Str is `1`, `yes` is true only into a Bool, a float into an Int truncates), a null leaves a field alone, only the first document is read, every type error is reported together in yaml.v3's text, merge keys and aliases work, and yaml.v3's alias expansion and nesting limits apply. Encoding writes `yaml.Marshal`'s bytes. Supported fields: Str, Int, Float, Bool, Option, List, Map with Str keys, and nested structs that derive Yaml; not yet `inline`, Time, Duration, Bytes, `Node`, several documents, comments (decision 0512's later stages).
 
-One pure source, `std/native/yamlcodec.xo` (about 5,000 lines), serves every backend (std/go_compiled.txt); `std/yamlcodec` holds the declarations of the helpers the generated code calls and is not for programs. bench/perf/yamlderive on linux/arm64 against yaml.v3 (Xo/Go wall, `--ab`): decode 0.62 (0.607 to 0.639), encode 0.604 (0.595 to 0.618) (bench/results/yaml-2026-11-05.md).
+One pure source, `std/native/yaml.xo` (about 5,000 lines), serves every backend (std/go_compiled.txt); `std/yamlcodec` holds the declarations of the helpers the generated code calls and is not for programs. bench/perf/yamlderive on linux/arm64 against yaml.v3 (Xo/Go wall, `--ab`): decode 0.62 (0.607 to 0.639), encode 0.604 (0.595 to 0.618) (bench/results/yaml-2026-11-05.md).
 
-License: the port is of gopkg.in/yaml.v3, which is MIT licensed, and of libyaml (Apache-2.0), as yaml.v3's NOTICE says; the notice text is in the header of std/native/yamlcodec.xo:
+License: the port is of gopkg.in/yaml.v3, which is MIT licensed, and of libyaml (Apache-2.0), as yaml.v3's NOTICE says; the notice text is in the header of std/native/yaml.xo:
 
 ```
 std/yamlcodec on every backend (decision 0512): a port of gopkg.in/yaml.v3
