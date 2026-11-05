@@ -1018,6 +1018,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   Pushes wait in heavyd's `merge` lane (decision 0451, 2026-10-31), so
   `~/xo-lead/agents/heavy.sh --status` shows the push queue; with no
   daemon pushq queues on its own lock as before.
+  A gated push that changes compiler/ssa, compiler/arm64 or compiler/llvm
+  sources must name `codegen` in `PUSHQ_RAN`, and one that changes
+  std/native/llrt or std/native/rt*.xo must name `wasm` (e.g.
+  `PUSHQ_RAN="codegen wasm"`), after its gate ran `xo dev codegen
+  --backend=arm64,llvm test/codegen` and `go test ./internal/selfhost -run
+  TestSelfhostWasm` (lead, 2026-11-05 bottleneck review: main went red twice
+  that night on exactly these two skipped checks); pushq refuses otherwise.
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision
