@@ -122,6 +122,11 @@ pub struct Gen {
   /// the inline site of the value cur_line is from (ssa Value.inl), for
   /// the position of a failure (ssa Func.at_source)
   cur_inl: Int = -1
+  /// --race: per inline site of the function, whether its code is the
+  /// runtime's (race_unchecked), and whether the value being lowered came
+  /// from one (its memory accesses get !nosanitize, func.xo emit)
+  race_skip: List[Bool] = []
+  nosan: Bool = false
 
   // The function being lowered (sfn).
   f: ssa.Func = ssa.Func{name: ""}
@@ -326,6 +331,8 @@ fn runtime_decls() -> Str {
     "; (2026-10-21: nbody's bs[j] in `for j in i + 1..n` kept its check and",
     "; a fault landing in the loop)",
     "!9 = !{i64 0, i64 4611686018427387904}",
+    "; --race: an access of the runtime's code inlined into the program's (func.xo emit)",
+    "!10 = !{}",
     "",
     "",
   ]

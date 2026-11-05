@@ -61,3 +61,39 @@ func TestRaceStdNoUseAfterFree(t *testing.T) {
 		})
 	}
 }
+
+// raceInlinedGoldens are goldens whose --race build on the LLVM backend
+// reported the runtime's own accesses as the program's races: xo's
+// inliner copied std/native/llrt code into a program function, whose
+// sanitize_thread then covered it (the 2026-11-05 race stress:
+// hconn.tls_ops_set's CAS against its plain read in
+// http.Server.with_protocols, pool.held in http.sput). func.xo emit
+// marks those accesses !nosanitize, as the arm64 backend leaves them out
+// (race.xo race_instrument). The trailer and server limit goldens also
+// stopped on TSan's allocator CHECK before hserve.xo released its blocks
+// at their prefix (gotchas/heap-large-prefix-not-malloc-address.md).
+var raceInlinedGoldens = []string{"http_h2_config", "http_trailers", "http_server_limits", "websocket_tls_deadline"}
+
+// TestRaceRuntimeInlinedUnchecked builds each of raceInlinedGoldens with
+// --race on the LLVM backend and runs it once: no ThreadSanitizer report.
+func TestRaceRuntimeInlinedUnchecked(t *testing.T) {
+	for _, g := range raceInlinedGoldens {
+		g := g
+		t.Run(g, func(t *testing.T) {
+			bin := raceBuild(t, filepath.Join("golden", g), xotool.BackendLLVM)
+			dir := filepath.Join("testdata", "golden", g)
+			cmd := testtmp.Guard(exec.Command(bin))
+			cmd.Dir = dir
+			cmd.Env = append(append(os.Environ(), progEnv(dir)...), "TSAN_OPTIONS=halt_on_error=0:atexit_sleep_ms=0")
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			_ = cmd.Run()
+			if text := stderr.String(); strings.Contains(text, "ThreadSanitizer") {
+				if len(text) > 6000 {
+					text = text[:6000]
+				}
+				t.Fatalf("a ThreadSanitizer report:\n%s", text)
+			}
+		})
+	}
+}

@@ -66,12 +66,21 @@ fn (var g: Gen) tmp() -> Str {
   "%t${g.n}"
 }
 
-fn (var g: Gen) emit(s: Str) {
+fn (var g: Gen) emit(s0: Str) {
+  let s = if g.nosan && race_access(s0) { "${s0}, !nosanitize !10" } else { s0 }
   if g.dbg_sp >= 0 {
     g.body.push("  ${s}, !dbg ${g.dbg_loc()}\n")
     return
   }
   g.body.push("  ${s}\n")
+}
+
+/// Whether instruction s is one ThreadSanitizer's pass instruments: a
+/// load, a store, an atomic, or a memory intrinsic's call.
+fn race_access(s: Str) -> Bool {
+  let i = s.find(" = ") ?? -1
+  let t = if i >= 0 { s[i + 3..] } else { s }
+  t.starts_with("load ") || t.starts_with("store ") || t.starts_with("atomicrmw ") || t.starts_with("cmpxchg ") || (t.starts_with("call ") && t.contains("@llvm.mem"))
 }
 
 fn (var g: Gen) def(s: Str) -> Str {
@@ -484,6 +493,18 @@ fn (var g: Gen) lower_func(fi: Int) {
   g.fi = fi
   g.cur_line = 0
   g.cur_inl = -1
+  // --race leaves out the runtime's code inlined into the program's
+  // functions too, as the arm64 backend does (race.xo race_instrument):
+  // xo's inliner copied it in, so the function's sanitize_thread
+  // covered it (2026-11-05 race stress: hconn.tls_ops_set's table and
+  // pool.held reported as the program's races)
+  g.nosan = false
+  g.race_skip = []
+  if g.tsan && !g.tsan_runtime && !race_unchecked(g.f.file) {
+    for s in g.f.inl_sites {
+      g.race_skip.push(race_unchecked(s.file))
+    }
+  }
   g.debug_func()
   g.allocas = []
   g.body = []
@@ -908,6 +929,8 @@ fn (var g: Gen) instr(v: Int) {
     g.cur_line = ssa.line_of(g.f.values[v].lp)
     g.cur_inl = ssa.inl_of(g.f.values[v].pi)
   }
+  let site = ssa.inl_of(g.f.values[v].pi)
+  g.nosan = site >= 0 && site < g.race_skip.len() && g.race_skip[site]
   let pad = ssa.pad_of(g.f.values[v].pi)
   if pad >= 0 {
     // a fault lands on the cleanup of its check (decision 0085)
