@@ -216,6 +216,27 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   stability soak: no golden had stopped a server with a recently used
   kept-alive connection, and SIGTERM hung such servers in 0.36.0 to
   0.40.0 (gotchas/park-after-stop-check-then-act.md).
+- A std, std/native or llrt edit needs no new xo to try (2026-11-05): build
+  the program with an xo you already have and the edited tree's std,
+  `XO_STD=WT/std XO/bin/xo build ...` (or `--std=WT/std`). xobuild is needed
+  only when the edit adds a runtime intrinsic the compiler lowers
+  (gotchas/seed-older-than-intrinsics.md) or changes a file compiler/xo
+  itself is built from (a std module the compiler imports). Lang 2 ran a
+  42 s xobuild for a one-line std/native/llrt/hserve.xo fix that only a
+  test server used.
+- A compiler edit's type errors: `go run ./scripts/xocheck DIR` uses any
+  cached xo whose checker sources match the tree and builds only when the
+  edit is in the checker itself (compiler/check, compiler/parser, ...;
+  --no-gc adds compiler/ssa). `XO_XOBUILD_TIMES=1 go run ./scripts/xobuild`
+  prints each step's time and the build's --phase-times and cache stats.
+- A compiler edit's rebuild (2026-11-05): `go run ./scripts/xobuild` builds
+  with the newest clean build of an ancestor commit (a stable builder, so
+  its caches stay warm), and after a pull far past every cached build it
+  builds HEAD once first, in a temporary worktree. Commit or build once
+  clean before a run of edits; each edit then rebuilds in about 10 to 15 s
+  on the Mac instead of 50 to 65 s (bench/results/edit-loop-2026-11-05.md,
+  gotchas/xobuild-edit-rebuilds-cold.md). `XO_SEED=...` overrides the
+  builder and turns the HEAD build off.
 - Separately compiled goldens (2026-11-02): every other golden test
   builds whole programs, so `TestSepcompGoldens` (internal/arm64, not
   -short) builds std's variants into a private cache and builds

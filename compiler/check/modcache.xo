@@ -124,7 +124,7 @@ fn (var c: Checker) mod_cache_load() uses fs.read {
       Ok(d) => {
         match decode_mod_entry(d) {
           Some(e) => {
-            if !c.mod_skip_auto || (e.fe_complete && !c.mod_noskip.contains(c.mods[m].path)) {
+            if !c.mod_skip_auto || (e.fe_complete && !c.mod_noskip.contains(c.mods[m].path) && !(c.mod_noskip_root && c.mods[m].root)) {
               c.mod_skip[m] = true
               c.mod_entries[m] = e
             }

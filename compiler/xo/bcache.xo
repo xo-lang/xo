@@ -782,7 +782,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   // separate compilation keys no std body (ssa fe_keys), so std's sum,
   // which parses every std file the memo lacks, is not needed
   let std_sum = if ssa.fe_std_keyed(c) { std_tree_sum(os, c.std_root(), dir) } else { "" }
-  fe.keys = ssa.fe_keys(c, "${id}\n${fe_settings(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}", stamp_root(root, stamps), std_sum)
+  fe.keys = ssa.fe_keys(c, "${id}\n${fe_settings(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}", root, stamp_root(root, stamps), std_sum)
   t = lap(os, phases, "fe.keys", t)
   // the own flags the last build of this program ended with (a hint):
   // read that variant and start as it did; with none (its first build)

@@ -704,6 +704,65 @@ func TestSecondHop(t *testing.T) {
 // TestSmokeXo: a built xo builds the small program SmokeXo writes, with
 // the checkout's std and the native backend; a fake that fails does not
 // pass.
+// TestNeedHeadBuild: an edit builds HEAD first (headBuilder) only when no
+// clean build within HopMax commits of HEAD is cached, so a pull far past
+// the cached builds gives the edits that follow a stable builder instead
+// of a second hop each (2026-11-05, the edit loop).
+func TestNeedHeadBuild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script builders")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	t.Setenv("XO_SEED", "")
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "old")
+	old := git("rev-parse", "HEAD")
+	for i := 0; i < HopMax+1; i++ {
+		git("commit", "-q", "--allow-empty", "-m", "c"+strconv.Itoa(i))
+	}
+	near := git("rev-parse", "HEAD~1")
+	base := t.TempDir()
+	build := func(name, commit string) {
+		d := filepath.Join(base, "checkout", name)
+		os.MkdirAll(d, 0o755)
+		src := "#!/bin/sh\nif [ \"$1\" = version ]; then echo '{\"version\":\"0.0.0\",\"commit\":\"" + commit + "\"}'; exit 0; fi\nexit 2\n"
+		os.WriteFile(filepath.Join(d, exeName("xo")), []byte(src), 0o755)
+		os.WriteFile(filepath.Join(d, "commit"), []byte(commit+"\n"), 0o644)
+		os.WriteFile(filepath.Join(d, "clean"), nil, 0o644)
+	}
+	if !needHeadBuild(root, base) {
+		t.Errorf("no cached build: needHeadBuild = false")
+	}
+	build("kfar", old)
+	if !needHeadBuild(root, base) {
+		t.Errorf("a build %d commits behind: needHeadBuild = false", HopMax+1)
+	}
+	build("knear", near)
+	if needHeadBuild(root, base) {
+		t.Errorf("a build 1 commit behind: needHeadBuild = true")
+	}
+	os.RemoveAll(filepath.Join(base, "checkout", "knear"))
+	t.Setenv("XO_SEED", "/x/xo")
+	if needHeadBuild(root, base) {
+		t.Errorf("with $XO_SEED: needHeadBuild = true")
+	}
+	if needHeadBuild(t.TempDir(), base) {
+		t.Errorf("outside git: needHeadBuild = true")
+	}
+}
+
 func TestSmokeXo(t *testing.T) {
 	cli := os.Getenv("XO_CLI")
 	if cli == "" {

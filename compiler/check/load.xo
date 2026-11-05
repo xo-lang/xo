@@ -255,6 +255,12 @@ pub struct Checker {
   /// checked in full regardless (the driver's fallback)
   pub mod_skip_auto: Bool = false
   pub mod_noskip: Map[Str, Bool] = {}
+  /// The root module is checked in full: a stamped build (xobuild's
+  /// XO_DIRTY, XO_SOURCE_KEY, ...) keys the root module's front end
+  /// entries on stamps that change with every edit, so its bodies are
+  /// built from source and skipping it only drops the first pass
+  /// (gotchas/xobuild-edit-rebuilds-cold.md)
+  pub mod_noskip_root: Bool = false
   /// The bodies checked read the inferred effects of a function of
   /// another module (effect_reads_across_modules): skipping is unsound,
   /// the driver checks again without it

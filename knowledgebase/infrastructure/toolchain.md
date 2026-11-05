@@ -41,8 +41,11 @@ Last verified: 2026-10-12
   fails, so an error in the sources is reported in seconds with its
   location, not after a build of minutes; `XO_BUILD_PRECHECK=0` turns the
   check off (internal/xotool CheckXo; with the seed chain on, a seed whose
-  check fails is still built, through the chain). Last verified:
-  2026-10-20.
+  check fails is still built, through the chain). The newest clean build
+  of an ancestor commit, tried first as a stable builder, skips the check
+  and the seed smoke: it passed the smoke when it was built, and the
+  build's own first phase is the check (2026-11-05). Last verified:
+  2026-11-05.
 - Standard library only. No third party module dependencies, for the
   compiler or for generated programs. (Go packages bound with `use go` are
   dependencies of the generated program, not of the compiler; see "Go

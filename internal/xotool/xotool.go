@@ -458,6 +458,7 @@ func Ensure(root string, log io.Writer) (string, error) {
 				return "", err
 			}
 		} else {
+			headBuilder(root, base, log)
 			tmp := filepath.Join(base, "checkout", fmt.Sprintf(".tmp-%d-%s", os.Getpid(), key))
 			defer os.RemoveAll(tmp)
 			built = filepath.Join(tmp, exeName("xo"))
@@ -570,16 +571,29 @@ func buildLockedForce(root, out string, log io.Writer, force bool) error {
 		// receiver error cost a 5 minute build, 2026-10-20); a seed whose
 		// check fails is too old for these sources or the sources do not
 		// check: the next seed is tried, or the seed chain when it is on
-		if PrecheckOn() && (s.NoChain || !chain) {
-			if cerr := CheckXo(root, s.Path); cerr != nil {
+		if PrecheckOn() && !s.Built && (s.NoChain || !chain) {
+			tc := time.Now()
+			cerr := CheckXo(root, s.Path)
+			stepDone("precheck", tc)
+			if cerr != nil {
 				fmt.Fprintf(log, "xotool: compiler/xo does not check with %s (%s); trying the next seed\n", s.Why, summary(cerr))
 				errs = append(errs, s.Why+": its check of compiler/xo: "+cerr.Error())
 				continue
 			}
 		}
 		// a broken builder (a miscompiled xo recorded as a clean build) is
-		// skipped in seconds
-		if serr := SmokeXo(root, s.Path); serr != nil {
+		// skipped in seconds; an earlier build passed the same smoke when
+		// it was built, and its precheck repeats the build's own first
+		// phase, so both are skipped for it (2 to 3 s of a 14 s edit
+		// rebuild on the Mac, 2026-11-05): a source error fails its build
+		// as fast, and the next seed is tried as before
+		var serr error
+		if !s.Built {
+			ts := time.Now()
+			serr = SmokeXo(root, s.Path)
+			stepDone("seed-smoke", ts)
+		}
+		if serr != nil {
 			fmt.Fprintf(log, "xotool: %s cannot build a small program (%s); trying the next seed\n", s.Why, summary(serr))
 			errs = append(errs, s.Why+": its smoke build: "+serr.Error())
 			continue
@@ -645,6 +659,9 @@ type Seed struct {
 	Path, Why string
 	Resolve   func(io.Writer) (string, error)
 	NoChain   bool
+	// Built is an earlier clean build of an ancestor commit, which passed
+	// the built checks (SmokeXo) when xobuild made it
+	Built bool
 }
 
 // Seeds are the candidate seeds of root, in order (the package comment):
@@ -685,19 +702,31 @@ func Seeds(root string) ([]Seed, error) {
 		out = append(out, Seed{Path: p, Why: why})
 	}
 	add(os.Getenv("XO_SEED"), "$XO_SEED")
+	// a stable builder first (2026-11-05, the edit loop): the newest clean
+	// build of an ancestor commit stays the same across uncommitted edits,
+	// so the front end and backend caches it wrote while building
+	// compiler/xo before serve the next edit (every body but the edited
+	// ones). The checkout's earlier bin/xo, built from the previous edit,
+	// has a new codegen key each time and finds nothing cached: a one-line
+	// compiler/ssa edit rebuilt cold (0 of 12,122 front end bodies, 49 to
+	// 65 s on the Mac). It stays the next seed, for an edit the ancestor
+	// cannot build (a new runtime intrinsic the compiler itself uses).
+	if base, err := cacheBase(); err == nil {
+		ms, _ := filepath.Glob(filepath.Join(base, "checkout", "*", exeName("xo")))
+		sort.Slice(ms, func(i, j int) bool { return modTime(ms[i]).After(modTime(ms[j])) })
+		if p := ancestorBuild(root, ms); p != "" {
+			add(p, "the newest earlier build "+p)
+			if n := len(out); n > 0 && out[n-1].Path == p {
+				out[n-1].Built = true
+			}
+		}
+	}
 	// not a bin/xo built from a commit that is not an ancestor of HEAD (a
 	// newer one, after checking out an older commit to bisect): its
 	// output calls runtime exports the older std lacks
 	// (gotchas/xobuild-seed-newer-than-commit.md)
 	if c, err := os.ReadFile(filepath.Join(root, "bin", "xo.commit")); err != nil || !knownCommit(root, strings.TrimSpace(string(c))) || isAncestor(root, strings.TrimSpace(string(c))) {
 		add(filepath.Join(root, "bin", exeName("xo")), "the checkout's earlier bin/xo")
-	}
-	if base, err := cacheBase(); err == nil {
-		ms, _ := filepath.Glob(filepath.Join(base, "checkout", "*", exeName("xo")))
-		sort.Slice(ms, func(i, j int) bool { return modTime(ms[i]).After(modTime(ms[j])) })
-		if p := ancestorBuild(root, ms); p != "" {
-			add(p, "the newest earlier build "+p)
-		}
 	}
 	if p, err := exec.LookPath("xo"); err == nil {
 		add(p, "xo on PATH ("+p+")")
@@ -873,6 +902,51 @@ func SecondHop(root, seed, why, out string, log io.Writer) error {
 	}
 	defer os.Remove(x1)
 	return BuildXo(root, x1, out)
+}
+
+// headBuilder builds HEAD's own sources once, in a temporary worktree,
+// when root has uncommitted changes and no earlier clean build is within
+// HopMax commits of HEAD (after a pull). Each edit would otherwise build
+// twice (SecondHop), the second time with the xo of the previous edit's
+// sources, whose codegen key is new each time, so every edit rebuilt
+// cold; the clean HEAD build is the stable builder of the edits that
+// follow (Seeds), and their caches stay warm. A failure is logged and the
+// edit builds as before; an explicit $XO_SEED is the builder as asked.
+func headBuilder(root, base string, log io.Writer) {
+	if !needHeadBuild(root, base) {
+		return
+	}
+	head := headCommit(root)
+	wt := filepath.Join(base, "checkout", fmt.Sprintf(".head-%d", os.Getpid()))
+	fmt.Fprintf(log, "xotool: no clean build within %d commits of HEAD: building HEAD (%s) once in %s as the builder of the edits\n", HopMax, head[:12], wt)
+	if o, err := exec.Command("git", "-C", root, "worktree", "add", "--detach", "--quiet", wt, head).CombinedOutput(); err != nil {
+		fmt.Fprintf(log, "xotool: no HEAD worktree (%v: %s); building the edit as before\n", err, strings.TrimSpace(string(o)))
+		return
+	}
+	defer func() {
+		exec.Command("git", "-C", root, "worktree", "remove", "--force", wt).Run()
+		os.RemoveAll(wt)
+	}()
+	if _, err := Ensure(wt, log); err != nil {
+		fmt.Fprintf(log, "xotool: HEAD did not build (%s); building the edit as before\n", summary(err))
+	}
+}
+
+// needHeadBuild is whether headBuilder builds HEAD: root is in git, no
+// $XO_SEED names the builder, and no clean build under base is an
+// ancestor within HopMax commits of HEAD.
+func needHeadBuild(root, base string) bool {
+	if headCommit(root) == "" || os.Getenv("XO_SEED") != "" {
+		return false
+	}
+	ms, _ := filepath.Glob(filepath.Join(base, "checkout", "*", exeName("xo")))
+	sort.Slice(ms, func(i, j int) bool { return modTime(ms[i]).After(modTime(ms[j])) })
+	if p := ancestorBuild(root, ms); p != "" {
+		if n := commitsBehind(root, p); n >= 0 && n <= HopMax {
+			return false
+		}
+	}
+	return true
 }
 
 // HopMax is how many commits behind HEAD a builder of compiler/xo may be
@@ -1117,11 +1191,21 @@ func BuildXo(root, seed, out string) error {
 	args := []string{"build", "--backend=" + backend, "--std=" + xoPath(filepath.Join(root, "std")), "-o", xoPath(tmp)}
 	args = append(args, StampArgs(root, seed)...)
 	args = append(args, debuggerArgs(seed)...)
+	if StepTimes() {
+		args = append(args, "--phase-times")
+		env = append(env, "XO_CACHE_STATS=1")
+	}
 	args = append(args, xoPath(filepath.Join(root, CompilerDir(root), "xo")))
+	tb := time.Now()
 	o, err := runIn(root, env, seed, args...)
+	if StepTimes() {
+		fmt.Fprint(os.Stderr, o)
+	}
+	stepDone("build", tb)
 	if err != nil {
 		return fmt.Errorf("%v\n%s", err, lastLines(o, 20))
 	}
+	defer stepDone("built-checks", time.Now())
 	if !isFile(tmp) {
 		return fmt.Errorf("no binary written\n%s", lastLines(o, 20))
 	}
@@ -1152,6 +1236,20 @@ func CheckXo(root, seed string) error {
 // PrecheckOn is false when XO_BUILD_PRECHECK=0 turns CheckXo off before
 // each build.
 func PrecheckOn() bool { return os.Getenv("XO_BUILD_PRECHECK") != "0" }
+
+// StepTimes is true when XO_XOBUILD_TIMES=1: each step of a build of xo
+// (the seed's precheck and smoke build, the build, the built xo's checks)
+// prints its time on standard error, and the build of compiler/xo runs
+// with --phase-times and XO_CACHE_STATS=1, its output passed through, so
+// a slow rebuild shows where its time goes (2026-11-05, the edit loop).
+func StepTimes() bool { return os.Getenv("XO_XOBUILD_TIMES") == "1" }
+
+// stepDone prints step's time since t0 when StepTimes.
+func stepDone(step string, t0 time.Time) {
+	if StepTimes() {
+		fmt.Fprintf(os.Stderr, "xotool: step %s %.2f s\n", step, time.Since(t0).Seconds())
+	}
+}
 
 // firstErrors is the error lines of xo check's output and the line after
 // each (its note or fix), at most n lines, then its summary line.

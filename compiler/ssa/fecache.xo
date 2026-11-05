@@ -100,8 +100,12 @@ pub fn fe_std_keyed(c: check.Checker) -> Bool { !(c.trees_lazy && !c.sepcomp_fac
 /// the build has a root (its positions name std files the same either
 /// way), not by what this program loads, so its entry serves every
 /// program (decision 0271 step 1b, for the shared std cache); a program
-/// module's body by its interface closure and the root.
-pub fn fe_keys(c: check.Checker, flags: Str, root: Str, std_sum: Str) -> Map[Int, Str] {
+/// module's body by its interface closure and the root. stamped is root
+/// with the build's --stamp values: only a root module's constants are
+/// stamped (apply_stamps), so only a root module's bodies are keyed on
+/// them (2026-11-05: xobuild stamps XO_DIRTY, a hash of the diff, so every
+/// one-line edit missed every program body: 3,914 of 12,122 hit).
+pub fn fe_keys(c: check.Checker, flags: Str, root: Str, stamped: Str, std_sum: Str) -> Map[Int, Str] {
   let closure = c.iface_closures()
   let std_keyed = fe_std_keyed(c)
   // a std module the build has as its root (xo test --std-module): its
@@ -146,7 +150,7 @@ pub fn fe_keys(c: check.Checker, flags: Str, root: Str, std_sum: Str) -> Map[Int
     // with its module, so an entry `xo test compiler/ssa` recorded called
     // value_self_faults by the name a build importing ssa lacks (an
     // unknown runtime call there, 2026-10-21)
-    let whose = if (md.is_std || md.is_prelude || md.native) && !md.root && !std_sum.is_empty() { "std ${std_sum} rooted=${!root.is_empty()} std_roots=${rootsk}" } else { "${closure[o.module]} root=${root} rootmod=${md.root}" }
+    let whose = if (md.is_std || md.is_prelude || md.native) && !md.root && !std_sum.is_empty() { "std ${std_sum} rooted=${!root.is_empty()} std_roots=${rootsk}" } else { "${closure[o.module]} root=${if md.root { stamped } else { root }} rootmod=${md.root}" }
     var h = BytesBuilder.new()
     // the declaration's column, not its line: an entry's lines are
     // relative to the declaration's (fe_entry), so a body that moved (an
