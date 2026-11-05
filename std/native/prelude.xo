@@ -1012,7 +1012,7 @@ fn bytes_repeat(b: Bytes, n: Int, at: rt.Loc) -> Bytes {
 }
 
 fn bytes_indexed(b: Bytes) -> List[(Int, UInt8)] {
-  var out: List[(Int, UInt8)] = []
+  var out: List[(Int, UInt8)] = if b.len() >= PRESIZE_MIN { List[(Int, UInt8)].with_capacity(b.len()) } else { [] }
   for i in 0..b.len() {
     out.push((i, b[i]))
   }
@@ -1311,7 +1311,7 @@ fn int_range_list(lo: Int, hi: Int) -> List[Int] {
 }
 
 fn list_indexed[T](xs: List[T]) -> List[(Int, T)] {
-  var out: List[(Int, T)] = []
+  var out: List[(Int, T)] = if xs.len() >= PRESIZE_MIN { List[(Int, T)].with_capacity(xs.len()) } else { [] }
   var i = 0
   for x in xs {
     out.push((i, x))
@@ -1338,6 +1338,13 @@ fn list_index_of[T](xs: List[T], x: T) -> Int? {
   None
 }
 
+/// A result of a known length is allocated at its size from this many
+/// elements (list_map, list_indexed, bytes_indexed, group_by, sort_by);
+/// shorter ones grow from [] as before: rl_new_n cost more than the
+/// first push's growth for 2 to 4 elements (2026-11-05, linux/arm64
+/// listmap small 1.04, sortby_small 1.039 sized at any length).
+const PRESIZE_MIN = 16
+
 /// list_map's in-place path starts at this length (decision 0508).
 const MAP_IN_PLACE_MIN = 256
 
@@ -1363,7 +1370,22 @@ fn list_map[T, U, E, fx: Effects](xs: List[T], f: fn(T) -> U ! E uses fx) -> Lis
       }
     }
   }
+  if a.len() >= PRESIZE_MIN {
+    return list_map_sized(a, f)
+  }
   var out: List[U] = []
+  for x in a {
+    out.push(f(x)?)
+  }
+  out
+}
+
+/// list_map of PRESIZE_MIN or more elements into a result allocated once
+/// (2026-11-05: growing from [] copied a million element result about 40
+/// times). Out of line, so list_map's short path stays as small as before
+/// (sized inline, listmap small read 1.034 on linux/arm64).
+fn list_map_sized[T, U, E, fx: Effects](a: List[T], f: fn(T) -> U ! E uses fx) -> List[U] ! E uses fx {
+  var out = List[U].with_capacity(a.len())
   for x in a {
     out.push(f(x)?)
   }
@@ -1484,7 +1506,7 @@ fn list_group_by[T, K: Hash, E, fx: Effects](xs: List[T], key: fn(T) -> K ! E us
       }
     }
   }
-  var out: List[(K, List[T])] = []
+  var out: List[(K, List[T])] = if keys.len() >= PRESIZE_MIN { List[(K, List[T])].with_capacity(keys.len()) } else { [] }
   for i in 0..keys.len() {
     out.push((keys[i], groups[i]))
   }
@@ -2196,11 +2218,11 @@ fn list_sort_in_place_by[T, K: Ord, E, fx: Effects](var xs: List[T], key: fn(T) 
   // (gotchas/list-swap-bypasses-copy-on-write.md)
   let first = xs[0]
   xs[0] = first
-  var keys: List[K] = []
+  var keys: List[K] = if n >= PRESIZE_MIN { List[K].with_capacity(n) } else { [] }
   for x in xs {
     keys.push(key(x)?)
   }
-  var idx: List[Int] = []
+  var idx: List[Int] = if n >= PRESIZE_MIN { List[Int].with_capacity(n) } else { [] }
   for i in 0..n {
     idx.push(i)
   }
@@ -5736,6 +5758,10 @@ const BB_SMALL = 64
 
 fn bytebuffer_new() -> ByteBuffer { ByteBuffer{} }
 
+/// n is not used: writes of 64 bytes or more are kept as views, and
+/// sizing the first small-write tail to n measured slower (2026-11-05,
+/// 4 MB of 32 byte writes: linux/arm64 1.86 times as long, darwin/arm64
+/// no change; bench/results/capacity-hints-2026-11-05.md)
 fn bytebuffer_with_capacity(n: Int) -> ByteBuffer { ByteBuffer{} }
 
 fn bytebuffer_len(b: ByteBuffer) -> Int { b.end - b.pos }

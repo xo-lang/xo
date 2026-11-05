@@ -7,6 +7,21 @@
 
 
 
+## 2026-11-05: perf: map, indexed, group_by and sort_by size their result once
+
+- Kind: perf
+- Commit: this commit
+- Found by: the capacity hint audit after 1b4b2bfa1 (xo-lang-4)
+- Go reference: make([]U, 0, len(xs))
+- Test: TestGoldenRun bytes_indexed, list_filter_map, list_group_by, list_sort_guard, map_inplace_copies; stdtest corpus prelude (arm64, LLVM, Go); the wasm goldens of the same names
+- Timing: 1M Ints mapped to pairs linux/arm64 0.85, darwin/arm64 0.80; indexed 0.862, 0.769 (bench/results/capacity-hints-2026-11-05.md)
+- Shipped in: not yet released
+
+List.map (when the result type differs), List.indexed, Bytes.indexed,
+List.group_by and List.sort_by built their result by pushing onto an empty
+list, so a large one grew through about 40 copies; from 16 elements it is
+now allocated once at its size.
+
 ## 2026-11-05: perf: Buf.with_capacity reserves its size on native builds
 
 - Kind: perf

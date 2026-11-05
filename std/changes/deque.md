@@ -1,5 +1,19 @@
 # std/deque changes
 
+## 2026-11-05: perf: the ring is allocated once at its size
+
+- Kind: perf
+- Commit: this commit
+- Found by: the capacity hint audit after 1b4b2bfa1 (xo-lang-4)
+- Go reference: make([]T, n) for a ring
+- Test: internal/stdtest corpus deque, every backend
+- Timing: 200,000 push_back, linux/arm64 0.614 from new(0), 0.741 from new(200_000); darwin/arm64 0.844, 0.765 (bench/results/capacity-hints-2026-11-05.md)
+- Shipped in: not yet released
+
+On the native backends `deque.new(cap)` and each growth built the new ring
+by pushing onto an empty list, so the ring itself grew through about
+log2(size) copies; it is now allocated once at its size.
+
 ## 2026-10-30: feature: std/deque
 
 - Kind: feature
