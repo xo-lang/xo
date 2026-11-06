@@ -165,6 +165,7 @@ tests is go-amqp itself (the oracle), not a runtime dependency.
   Without `keepalive` the same steps pump inline as before. A send takes its session's send turn
   (`SessState.sending`) for the transfer ids and frame order. `Begin` and `End` frames are queued in
   `pending` while the reader runs and `begin`/`end_session` take theirs; raw `recv` is refused then.
-  Known limit: two concurrent `begin` calls can pick the same channel. Test: "two receivers and a sender on
+  `begin` picks the channel and reserves it in `ConnState.channels` in one critical section (released on
+  failure), so concurrent begins get distinct channels (test: 8 concurrent begins). Test: "two receivers and a sender on
   one connection do not block each other" (100 sends and 100 echoed receives with a third receiver waiting:
   about 6 ms on loopback; with one lock the sends would wait for the receiver that waits).

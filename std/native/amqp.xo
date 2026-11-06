@@ -1600,8 +1600,24 @@ fn st_abort(var c: amqp.ConnState) {
   t_close(c.link)
 }
 
-/// The lowest free channel, with the Begin sent on it.
+/// Sends the Begin on channel `ch` and reserves the channel (in the same critical section that
+/// picked it, so concurrent begins get distinct channels); a failure gives it back.
 fn begin_send(var c: amqp.ConnState, ch: Int, opts: amqp.SessionOptions) -> () ! amqp.AmqpErr uses (net.dial, clock) {
+  c.channels.push(ch)
+  match begin_send_frame(c, ch, opts) {
+    Ok(_) => Ok(())
+    Err(e) => {
+      release_channel(c, ch)
+      Err(e)
+    }
+  }
+}
+
+fn release_channel(var c: amqp.ConnState, ch: Int) {
+  c.channels = c.channels.filter(fn(n: Int) { n != ch })
+}
+
+fn begin_send_frame(var c: amqp.ConnState, ch: Int, opts: amqp.SessionOptions) -> () ! amqp.AmqpErr uses (net.dial, clock) {
   st_send(c, amqp.Frame{channel: UInt16.wrapping_from(ch), body: amqp.FrameBody.Begin(v: amqp.Begin{
     remote_channel: None, next_outgoing_id: UInt32(0),
     incoming_window: UInt32.wrapping_from(opts.incoming_window), outgoing_window: UInt32.wrapping_from(opts.outgoing_window),
@@ -1609,7 +1625,6 @@ fn begin_send(var c: amqp.ConnState, ch: Int, opts: amqp.SessionOptions) -> () !
 }
 
 fn begin_done(var c: amqp.ConnState, ch: Int, b: amqp.Begin, opts: amqp.SessionOptions) -> amqp.Session {
-  c.channels.push(ch)
   c.sess.push(amqp.SessState{channel: ch, next_incoming_id: Int(b.next_outgoing_id), incoming_window: opts.incoming_window,
     initial_incoming_window: opts.incoming_window, remote_incoming_window: Int(b.incoming_window)})
   let rc = match b.remote_channel {
@@ -1657,8 +1672,14 @@ fn step_begin(var c: amqp.ConnState, ch: Int, opts: amqp.SessionOptions) -> amqp
       match f.body {
         End(x) => {
           match x.error {
-            Some(e) => return Err(amqp.AmqpErr.Peer(error: e))
-            None => return Err(proto_err("the peer ended the session during begin"))
+            Some(e) => {
+              release_channel(c, ch)
+              return Err(amqp.AmqpErr.Peer(error: e))
+            }
+            None => {
+              release_channel(c, ch)
+              return Err(proto_err("the peer ended the session during begin"))
+            }
           }
         }
         _ => {}
@@ -1678,6 +1699,16 @@ fn free_channel(c: amqp.ConnState) -> Int ! amqp.AmqpErr {
 
 fn st_begin(var c: amqp.ConnState, opts: amqp.SessionOptions = amqp.SessionOptions{}) -> amqp.Session ! amqp.AmqpErr uses (net.dial, clock) {
   let ch = free_channel(c)?
+  match st_begin_on(c, ch, opts) {
+    Ok(z) => Ok(z)
+    Err(e) => {
+      release_channel(c, ch)
+      Err(e)
+    }
+  }
+}
+
+fn st_begin_on(var c: amqp.ConnState, ch: Int, opts: amqp.SessionOptions) -> amqp.Session ! amqp.AmqpErr uses (net.dial, clock) {
   begin_send(c, ch, opts)?
   if c.mux { return Err(proto_err("internal: begin read the transport while the keepalive task owns it")) }
   while true {

@@ -543,6 +543,30 @@ test "two receivers and a sender on one connection do not block each other" uses
   }
 }
 
+test "concurrent begins on one connection get distinct channels" uses (net, clock) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_mux(l) })
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", clock: Some(os.clock), timeout_ms: 10000}).or_fault("dial")
+    c.keepalive(s.group()).or_fault("keepalive")
+    let got = Chan[Int].new(cap: 16)
+    for _ in 0..8 {
+      s.spawn(fn() {
+        let sess = c.begin().or_fault("begin")
+        got.send(sess.channel)
+      })
+    }
+    var seen: List[Int] = []
+    for _ in 0..8 {
+      let ch = got.recv() ?? -1
+      expect(seen.contains(ch)) == false
+      seen.push(ch)
+    }
+    expect(seen.len()) == 8
+    c.close().or_fault("close")
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CBS put-token against an in-process peer
 

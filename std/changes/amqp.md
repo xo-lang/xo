@@ -92,3 +92,4 @@ An opt-in interop test (`xo test --real` with `XO_AMQP_INTEROP_ADDR`) passes aga
 
 `Connection.keepalive(g)` now starts a reader task that reads without the connection lock; calls that block (`receive`, `send`, link and session setup and close, `close`) wait on their own channel with their own deadline instead of holding the lock, so a waiting receive no longer stops a send or another receiver. Without `keepalive` nothing changes. Raw `recv` is refused while the reader runs (spec/std.md 64).
 
+Concurrent `begin` calls reserve their channel in the same critical section that picks it, so they get distinct channels (test: 8 concurrent begins).
