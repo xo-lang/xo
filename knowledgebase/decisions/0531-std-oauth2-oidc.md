@@ -32,7 +32,10 @@ not new cryptography.
      2.3.1), as Go does.
    - Errors: `RetrieveError{status, body, error_code, error_description, error_uri}` for a 4xx/5xx or an `error`
      field; responses decode as JSON or as `application/x-www-form-urlencoded` (GitHub's), as Go; `expires_in` decoded as Go decodes it.
-   - An `http.Client` middleware that sets `Authorization: <type> <token>` from a `TokenSource`, for std/http.
+   - std/http's `Client` has no transport hook (immutable `with_*` builders), so instead of Go's `oauth2.Transport`
+     there is a wrapper: `t.apply(req) -> Request` sets `Authorization: <type> <token>`, and `src.client(c) ->
+     AuthClient` wraps `Client.send` with a token from the source on every request. std/http does not change. (Not
+     server-side middleware, which is a different std/http concept.)
 2. **std/oidc**, with go-oidc as its reference:
    - `discover(client, issuer)` fetches `issuer + "/.well-known/openid-configuration"` and requires its `issuer` to
      equal the one given (go-oidc's check; `insecure_issuer_url_context` as an explicit option for Azure's
@@ -42,6 +45,10 @@ not new cryptography.
    - `Verifier{client_id, supported_algs (default RS256), skip_client_id_check, skip_expiry_check, skip_issuer_check,
      now}` and `v.verify(raw)` returning `IdToken{issuer, audience, subject, expiry, issued_at, nonce,
      access_token_hash, claims(T)}`; `id_token.verify_access_token(at)` checks `at_hash`.
+   - The ID-token rules (issuer equality, `aud` and `azp`, nonce, `at_hash`) live in oidc, not jwt. The verifier
+     calls `jwt.verify[T]` with a key callback backed by the `RemoteKeySet` (the refetch on an unknown `kid` happens
+     inside the callback, under a Mutex), then applies those rules. `at_hash` takes its hash from the token's
+     `jwt.Alg` (left half of SHA-256 for RS256, ES256 and PS256), not a second algorithm table.
    - `provider.user_info(token_source)` for the UserInfo endpoint, JSON or a signed JWT response.
 3. **Wire identity**: each request's method, path, query, headers and form body are compared byte for byte with x/oauth2
    and go-oidc against a local fake identity provider (std/http test server), and each verification result with
@@ -49,7 +56,9 @@ not new cryptography.
    no real identity provider is contacted.
 4. **Maturity** (decision 0461): lands at least Solid on all three axes: the Go differential above plus x/oauth2's and
    go-oidc's own tests ported where they are table-driven; the token response, discovery document, key set and JWT
-   header parsers fuzzed; and a timing row (token response decode, ID token verify) against Go's packages.
+   header parsers fuzzed; and a timing row against Go's packages
+   for the CPU-bound parts only (token response decode, PKCE verifier and challenge, key set parse, ID token verify);
+   the flows themselves are network-bound and get no timing row.
 
 ## Consequences
 
@@ -57,7 +66,7 @@ not new cryptography.
   knowledgebase/infrastructure/std-coverage.md.
 - azidentity in the Azure SDK and the AWS SDK's SSO OIDC client can move onto std/oauth2 once a release has it
   (each through its own repo's ADR, since they change what those packages depend on).
-- std/oidc depends on std/jwt; a missing algorithm or header field there is a std/jwt change, not an oidc workaround.
+- std/oidc imports std/oauth2 (Token, Config) and std/jwt; a missing algorithm or header field there is a std/jwt change, not an oidc workaround.
 
 ## Alternatives
 
@@ -71,4 +80,6 @@ not new cryptography.
 
 - Whether the device flow's polling belongs in std (as Go) or stays a helper the caller loops over.
 - Whether `insecure_issuer_url_context` (go-oidc's name) keeps that name or becomes an `issuer_template` option.
-- Whether the `http.Client` middleware lands with the first slice or after the flows are Solid.
+- The authorized client: the `AuthClient` wrapper as proposed (no std/http change), or a request hook in std/http's
+  `Client` that oauth2 plugs into. And whether `AuthClient` retries once after a refresh on a 401 (Go's Transport does
+  not).
