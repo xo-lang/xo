@@ -180,6 +180,7 @@ func soakMain(args []string) int {
 	out := fs.String("out", "", "output directory")
 	maxRSSGrowth := fs.Float64("max-rss-growth", 0.10, "drift when RSS grows by more than this fraction per hour (after warmup)")
 	maxHeapGrowth := fs.Float64("max-heap-growth", 0.05, "drift when heap_live grows by more than this fraction per hour (after warmup)")
+	addEnv := fs.String("env", "", "K=V pairs, comma separated, added to the app's environment (e.g. XO_THP=off, XO_HEAPSTATS=1)")
 	clientIdle := fs.Duration("client-idle", 0, "close the load client's pooled connections after this long unused (0: never)")
 	maxLat := fs.Float64("max-lat-growth", 0.20, "drift when the last quarter's p99 exceeds the first quarter's by this fraction")
 	fs.Parse(args)
@@ -210,6 +211,11 @@ func soakMain(args []string) int {
 	}
 	// the leak check counts from the start, which heap_live needs too
 	app.Env["XO_LEAKCHECK"] = "1"
+	for _, kv := range strings.Split(*addEnv, ",") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok {
+			app.Env[k] = v
+		}
+	}
 	// a fault or crash report is kept in OUT/crash.txt as well as the
 	// run's log (XO_CRASH_FILE, decision 0520)
 	crashFile, _ := filepath.Abs(filepath.Join(*out, "crash.txt"))

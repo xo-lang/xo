@@ -20,7 +20,7 @@ fuzzing. Phase 1 builds the starter app and the harness.
   SIGKILL included, on the same data directory) and compares status,
   Content-Type and body, with app.json's `redact` keys masked; exit 1 when
   they differ or a step misses its `expect` status. `harness soak -xo XO -app
-  stability/APP -out OUT [-backend arm64] [-rate 500] [-d 2h]` runs bench/soak's
+  stability/APP -out OUT [-backend arm64] [-rate 500] [-d 2h] [-env K=V,...]` runs bench/soak's
   open loop mix (per app, in soak.go) against a build under XO_LEAKCHECK=1 and
   XO_CRASH_FILE=OUT/crash.txt (a report there is an alert),
   samples RSS, fds, latency and the app's `heap_live` and `timers_pending` (app.json `stats`,
