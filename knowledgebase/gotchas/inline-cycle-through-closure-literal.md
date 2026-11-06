@@ -33,3 +33,13 @@ cycles only. The golden internal/llvm/testdata/golden/inline_closure_recursion
 is the case. When a change removes landing pads, checks or calls from
 many functions, build compiler/xo cold with --phase-times before pushing:
 the inliner's limits assume what those removed.
+
+Cost of the fix and of b29c306c8 together (linux/arm64 host 2,
+2026-11-06): an xo at a843f8167 and one at main with the fix, each
+building compiler/xo's same tree cold, back to back in the order old,
+new, new, old: the cold self build is unchanged within load noise (wall
+61.3 s against 57.9 s averaged over the pairs, user CPU about 4 percent
+more, max RSS about 3 percent more, xo's .text 19 KB or 0.05 percent
+larger). The first comparison, 36 s against 69 s, was two hosts at
+different loads. Raw output: ~/xo-lead/notes/lang1/cmp-host.txt (not
+committed).
