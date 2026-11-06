@@ -70,6 +70,10 @@ pub fn std_types(c: check.Checker) -> Str ! Str {
       let file = c.files[fi]
       for (di, d) in file.ast.decls.indexed() {
         let o = if di < file.decl_objs.len() { file.decl_objs[di] } else { -1 }
+        if o >= 0 && c.objs[o].kind == check.ObjKind.Const && !prelude {
+          g.gen_std_const(o)
+          continue
+        }
         if o < 0 || c.objs[o].kind != check.ObjKind.Type {
           continue
         }
@@ -114,6 +118,31 @@ pub fn std_types(c: check.Checker) -> Str ! Str {
   let lines = g.pkgs[rp].out.join("").split("\n").filter(fn(l: Str) { !l.starts_with("//line ") })
   b.write(lines.join("\n"))
   add_extra_fields(b.freeze())
+}
+
+/// The Go variable of a std module's constant, which `const_ref` names as `rt.Module_NAME` (a
+/// constant of a native module read from user code or from another file of the module). A constant
+/// that is not known at compile time is not declared: its reads stay an error.
+fn (var g: Gen) gen_std_const(co: Int) {
+  let o = g.c.objs[co]
+  let d = match g.c.files[o.decl_file].ast.decls[o.decl_idx] {
+    ConstDecl(d) => d
+    _ => return
+  }
+  if !g.c.is_compile_time(o.decl_file, d.value) {
+    return
+  }
+  let saved_f = g.f
+  g.f = g.new_fn(-1)
+  g.f.file = o.decl_file
+  g.f.frames = [Frame{name: g.oname(co), res_t: o.ty}]
+  let code = g.val(d.value)
+  let body = g.f.out.join("")
+  g.f = saved_f
+  if !body.is_empty() {
+    return
+  }
+  g.pl("var ${g.std_prefix(g.omod(co))}${g.oname(co)} ${g.go_type(o.ty)} = ${code}\n")
 }
 
 /// The Go function type of a std function as the generator calls it:

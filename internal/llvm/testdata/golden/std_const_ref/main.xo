@@ -1,0 +1,7 @@
+// A constant of a std module read from user code (the Go backend declares it in std/rt).
+use std/bcrypt
+use std/protobuf
+
+fn main(os: Os) {
+  os.stdio.println("${bcrypt.MIN_COST} ${bcrypt.DEFAULT_COST} ${bcrypt.MAX_COST} ${protobuf.MAX_GROUP_DEPTH}")
+}
