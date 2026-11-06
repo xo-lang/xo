@@ -249,6 +249,44 @@ func cbValue(r *rand.Rand, depth int) []byte {
 	return append(cbHead(6, uint64(r.Intn(3)+1)), cbValue(r, depth+1)...)
 }
 
+// cbFor is a value of the kind the field wants, most of the time.
+func cbFor(r *rand.Rand, kind string) []byte {
+	if r.Intn(8) == 0 {
+		return cbValue(r, 1)
+	}
+	switch kind {
+	case "text":
+		return cbText([]string{"", "a", "Ann", "z\u00e9"}[r.Intn(4)])
+	case "int":
+		return cbInt(int64(r.Intn(2000)) - 500)
+	case "float":
+		if r.Intn(3) == 0 {
+			return cbInt(int64(r.Intn(10)))
+		}
+		return []byte{0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0}
+	case "bool":
+		return []byte{0xf4 + byte(r.Intn(2))}
+	case "bytes":
+		if r.Intn(4) == 0 {
+			return cbArr(cbInt(1), cbInt(int64(r.Intn(256))))
+		}
+		return cbBytes([]string{"", "ab", "\x00\xff"}[r.Intn(3)])
+	case "tags":
+		var items [][]byte
+		for i := r.Intn(4); i > 0; i-- {
+			items = append(items, cbFor(r, "text"))
+		}
+		return cbArr(items...)
+	case "attrs":
+		var kv [][]byte
+		for i := r.Intn(3); i > 0; i-- {
+			kv = append(kv, cbText([]string{"a", "b", "c"}[r.Intn(3)]), cbFor(r, "int"))
+		}
+		return cbMap(kv...)
+	}
+	return cbValue(r, 1)
+}
+
 func cbAddr(r *rand.Rand) []byte {
 	if r.Intn(5) == 0 {
 		return cbValue(r, 1)
@@ -256,7 +294,11 @@ func cbAddr(r *rand.Rand) []byte {
 	var kv [][]byte
 	for _, k := range []string{"city", "zip", "City", "other"} {
 		if r.Intn(2) == 0 {
-			kv = append(kv, cbText(k), cbValue(r, 2))
+			kind := "text"
+			if k == "zip" {
+				kind = "int"
+			}
+			kv = append(kv, cbText(k), cbFor(r, kind))
 		}
 	}
 	return cbMap(kv...)
@@ -272,21 +314,28 @@ func cborTypedInputs(r *rand.Rand, n int) [][]byte {
 				continue
 			}
 			var v []byte
-			if k == "addr" && r.Intn(2) == 0 {
+			switch k {
+			case "name", "Name", "NAME", "skip", "Skip":
+				v = cbFor(r, "text")
+			case "tags":
+				v = cbFor(r, "tags")
+			case "addr":
 				v = cbAddr(r)
-			} else if k == "name" && r.Intn(2) == 0 {
-				v = cbText("Ann")
-			} else if k == "tags" && r.Intn(2) == 0 {
-				v = cbArr(cbText("x"), cbText("y"))
-			} else if k == "attrs" && r.Intn(2) == 0 {
-				v = cbMap(cbText("a"), cbInt(1), cbText("b"), cbInt(-2))
-			} else {
+			case "ratio":
+				v = cbFor(r, "float")
+			case "ok":
+				v = cbFor(r, "bool")
+			case "raw":
+				v = cbFor(r, "bytes")
+			case "attrs":
+				v = cbFor(r, "attrs")
+			default:
 				v = cbValue(r, 0)
 			}
 			kv = append(kv, cbText(k), v)
 		}
 		if r.Intn(3) == 0 {
-			kv = append(kv, cbInt(7), cbValue(r, 1))
+			kv = append(kv, cbInt(7), cbFor(r, "int"))
 		}
 		if r.Intn(8) == 0 {
 			kv = append(kv, cbText("7"), cbValue(r, 1))
@@ -346,7 +395,7 @@ func cborDeepInputs(r *rand.Rand, n int) [][]byte {
 			}
 		}
 		if r.Intn(2) == 0 {
-			add("opt", cbValue(r, 2))
+			add("opt", cbFor(r, "int"))
 		}
 		if r.Intn(2) == 0 {
 			if r.Intn(4) == 0 {
@@ -356,7 +405,7 @@ func cborDeepInputs(r *rand.Rand, n int) [][]byte {
 				for j := r.Intn(3); j > 0; j-- {
 					var row [][]byte
 					for k := r.Intn(3); k > 0; k-- {
-						row = append(row, cbValue(r, 2))
+						row = append(row, cbFor(r, "int"))
 					}
 					rows = append(rows, cbArr(row...))
 				}
@@ -364,10 +413,10 @@ func cborDeepInputs(r *rand.Rand, n int) [][]byte {
 			}
 		}
 		if r.Intn(3) == 0 {
-			add("maybe", cbValue(r, 2))
+			add("maybe", cbFor(r, "float"))
 		}
 		if r.Intn(3) == 0 {
-			add("flag", cbValue(r, 2))
+			add("flag", cbFor(r, "bool"))
 		}
 		if r.Intn(3) == 0 {
 			if r.Intn(2) == 0 {
@@ -377,7 +426,7 @@ func cborDeepInputs(r *rand.Rand, n int) [][]byte {
 			}
 		}
 		if r.Intn(3) == 0 {
-			add("count", cbValue(r, 2))
+			add("count", cbFor(r, "int"))
 		}
 		in := cbMap(kv...)
 		if r.Intn(12) == 0 {

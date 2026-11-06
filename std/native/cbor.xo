@@ -950,9 +950,60 @@ fn to_str(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Str) {
   }
 }
 
+/// The last tag over v is 2 or 3 and wraps a byte string: its big integer,
+/// as `(1, n)` when it fits an Int, `(2, 0)` when it does not, `(0, 0)` when v
+/// is not one.
+fn bignum_int(v: cbor.Value) -> (Int, Int) {
+  var cur = v
+  var num = -1
+  while true {
+    match cur {
+      cbor.Value.Tag(t, inner) => {
+        num = t.to_bits()
+        cur = inner
+      }
+      _ => break
+    }
+  }
+  if num != 2 && num != 3 {
+    return (0, 0)
+  }
+  match cur {
+    cbor.Value.ByteString(b) => {
+      var mag = 0
+      var started = false
+      var n = 0
+      for x in b {
+        if !started && x == 0 {
+          continue
+        }
+        started = true
+        n += 1
+        if n > 8 {
+          return (2, 0)
+        }
+        if n == 8 && x >= 128 {
+          return (2, 0)
+        }
+        mag = (mag << 8) | Int(x)
+      }
+      if num == 2 { (1, mag) } else { (1, -1 - mag) }
+    }
+    _ => (0, 0)
+  }
+}
+
 fn to_int(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Int) {
   let (okt, v) = untag(v0, st)
   if !okt || is_null(v) { return (false, 0) }
+  let (bk, bn) = bignum_int(v0)
+  if bk == 1 {
+    return (true, bn)
+  }
+  if bk == 2 {
+    mismatch(st, "int", v)
+    return (false, 0)
+  }
   if let Some(n) = value_to_int(v) {
     return (true, n)
   }
