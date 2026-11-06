@@ -31,6 +31,35 @@ fn (var b: Builder) test_decls() -> List[TestRef] {
   out
 }
 
+/// `xo check`'s support check (lib_roots, decision 0523): a function per
+/// test block of the root modules, as build_tests declares them, so an
+/// XO1201 only a test reaches is reported by the check as by `xo test`
+/// (it was not: azure field report, 2026-11-06). No main runs them.
+fn (var b: Builder) declare_test_roots() {
+  if !b.c.lib_roots || b.tests {
+    return
+  }
+  let decls = b.test_decls()
+  if decls.is_empty() {
+    return
+  }
+  let os_t = b.os_type()
+  let err_ct = b.prelude_type("Error", [])
+  let rt = b.typ(b.result_of(b.c.unit_ty, err_ct))
+  for (i, tr) in decls.indexed() {
+    let params = b.c.test_params_of(tr.file, tr.td)
+    if params.len() != tr.td.params.len() {
+      continue
+    }
+    var ps = [os_t]
+    for vo in params {
+      ps.push(b.typ(b.c.objs[vo].ty))
+    }
+    let fi = b.m.new_func("test.${i}", ps, [rt])
+    b.queue.push(Job.Test(fi: fi, file: tr.file, td: tr.td))
+  }
+}
+
 /// A test the binary runs: its index, function name, and inputs.
 struct TestEntry {
   i: Int

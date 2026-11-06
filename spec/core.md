@@ -3275,7 +3275,7 @@ without `--no-gc` until then) or *impossible* (code from a `use go` package
 needs Go's runtime). A program the check accepts builds; the check is
 derived from the native code generator itself, so the two cannot disagree.
 `xo check` runs the same check without building, by default (decision
-0523; every function of the named modules, a library's too). Native builds have their own
+0523; every function and test block of the named modules, a library's too). Native builds have their own
 deterministic scheduler for `--seed` and `--explore` (7.4, decision 0350);
 recording (`--record`) is the Go backend's only (decision 0083). `xo test --no-gc` builds a
 native test binary and runs each test in a process of its own against the

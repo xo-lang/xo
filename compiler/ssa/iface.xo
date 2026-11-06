@@ -141,15 +141,11 @@ fn (var b: Builder) type_id(ct: Int) -> Int {
   if id < 0 {
     id = b.tids.len() + 1
     b.tids[key] = id
-    if b.skipped_any {
-      b.late_tids[id] = true
-    }
   }
-  if b.late_tids.contains(id) {
-    // numbered after skipped code: the Go builder's number may differ
-    // (decision 0150, stage 2 rules)
-    b.unsupported("an interface value's type number given after skipped code")
-  }
+  // a number given after skipped code is no longer an XO1201: it only
+  // had to match the deleted Go builder's (decision 0150, stage 2), and
+  // it reported every interface value after one unsupported construct
+  // at code nobody touched (aws field report, 2026-11-06)
   id
 }
 
@@ -816,9 +812,10 @@ fn (var b: Builder) eq_part(x: Int, y: Int) -> Int {
 }
 
 /// xo.eqc[T](a, b) -> Bool: `==` on a type that holds a Map or Set (or an
-/// interface value, or error frames): a Map or Set equals another with
-/// the same live entries in any order; the other types compare their
-/// parts (eqColl).
+/// interface value, error frames, or an http.Request or http.Response):
+/// a Map or Set equals another with the same live entries in any order,
+/// a Request or Response its std fields (eq_fields); the other types
+/// compare their parts (eqColl).
 fn (var b: Builder) eq_coll(t: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
@@ -866,7 +863,11 @@ fn (var b: Builder) eq_coll(t: Int) -> Str {
     b.if_then_end(no, join)
     b.for_up_to_end(i, iv, head, exit)
   } else if x.kind is Kind.Struct | Kind.Tuple {
-    for i in 0..b.num_fields(t) {
+    var parts = b.eq_fields(t)
+    if parts.is_empty() {
+      parts = (0..b.num_fields(t)).to_list()
+    }
+    for i in parts {
       let ft = b.field_type(t, i)
       let a = b.add(Op.Field, ft, Aux.I(n: i), [l])
       let c = b.add(Op.Field, ft, Aux.I(n: i), [r])

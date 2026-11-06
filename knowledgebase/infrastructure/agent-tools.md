@@ -127,8 +127,8 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - `xo check --support DIR` for code a native build compiles: plain `xo
   check` accepts what only the native backends reject (XO1201, such as a
   test's own struct converted to `Fs`), which a build then fails on
-  (gotchas/test-fs-wrapper-not-native.md). It lowers every function of
-  DIR's modules, a library's too (decision 0523); in a workspace check,
+  (gotchas/test-fs-wrapper-not-native.md). It lowers every function and
+  test block of DIR's modules, a library's too (decision 0523); in a workspace check,
   other modules only for a walk (`DIR/...`) or `--support-all`.
 - `xo vet` takes a `.xo` file, a std directory (`xo vet std/native/llrt`,
   every runtime module in one check, 0.6 s), or `--std-module=M`.

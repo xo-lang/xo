@@ -1861,17 +1861,14 @@ fn (var b: Builder) compare_values(op: lexer.Kind, l: Int, r: Int) -> Int {
       return b.add(o, bt, Aux.None, [c, b.cint(0)])
     }
     Struct | Tuple | Enum | List | Unit => {
-      if (o == Op.Eq || o == Op.Ne) && b.is_native_request(lt) {
-        // http.Request: its six fields; the route parameters and typed
-        // values of the implementation take no part in `==` (std/rt's
-        // XoEq)
+      let pub_fields = b.eq_fields(lt)
+      if (o == Op.Eq || o == Op.Ne) && !pub_fields.is_empty() {
+        // http.Request and http.Response: their std fields; the hidden
+        // ones of the implementation (route parameters, typed values, a
+        // streamed body) take no part in `==` (std/rt's XoEq)
         var eq = -1
-        for (i, name) in REQUEST_FIELDS.indexed() {
+        for i in pub_fields {
           let ft = b.field_type(lt, i)
-          if b.m.types[lt].fields[i].name != name {
-            b.unsupported("`==` on `http.Request`: its implementation's field ${i} is not `${name}`")
-            return b.undef(bt)
-          }
           let fl = b.add(Op.Field, ft, Aux.I(n: i), [l])
           let fr = b.add(Op.Field, ft, Aux.I(n: i), [r])
           let e = b.compare_values(lexer.Kind.Eq, fl, fr)
@@ -1917,13 +1914,40 @@ fn (var b: Builder) compare_values(op: lexer.Kind, l: Int, r: Int) -> Int {
   b.undef(bt)
 }
 
-/// The fields of http.Request (std.md 4), the first ones of its native
-/// implementation (std/native/http.xo).
+/// The fields of http.Request and http.Response (std.md 4), the first
+/// ones of their native implementations (std/native/http.xo), which add
+/// hidden fields after them.
 const REQUEST_FIELDS = ["method", "path", "url", "headers", "body", "remote_ip"]
+const RESPONSE_FIELDS = ["status", "headers", "body"]
 
-/// Whether t is the native implementation of http.Request.
-fn (var b: Builder) is_native_request(t: Int) -> Bool {
-  b.tkind(t) == Kind.Struct && b.m.types[t].name == "native.http.Request" && b.m.types[t].fields.len() >= REQUEST_FIELDS.len()
+/// The indexes of the fields `==` compares when t is the native
+/// implementation of http.Request or http.Response (their std fields, by
+/// name); empty for every other type, whose fields all take part.
+fn (var b: Builder) eq_fields(t: Int) -> List[Int] {
+  if b.tkind(t) != Kind.Struct {
+    return []
+  }
+  let x = b.m.types[t]
+  let names = match x.name {
+    "native.http.Request" => REQUEST_FIELDS
+    "native.http.Response" => RESPONSE_FIELDS
+    _ => return []
+  }
+  var out: List[Int] = []
+  for name in names {
+    var at = -1
+    for (i, f) in x.fields.indexed() {
+      if f.name == name {
+        at = i
+        break
+      }
+    }
+    if at < 0 {
+      return []
+    }
+    out.push(at)
+  }
+  out
 }
 
 /// Whether `==` on values of t lowers (comparable). seen is shared by
@@ -1938,6 +1962,15 @@ fn (var b: Builder) comparable(t: Int, var seen: List[Int]) -> Bool {
   let k = b.m.types[t].kind
   if k is Kind.Func | Kind.Handle {
     return false
+  }
+  let pub_fields = b.eq_fields(t)
+  if !pub_fields.is_empty() {
+    for i in pub_fields {
+      if !b.comparable(b.m.types[t].fields[i].ty, seen) {
+        return false
+      }
+    }
+    return true
   }
   let n = b.m.types[t].fields.len()
   for i in 0..n {
@@ -1975,7 +2008,9 @@ fn (var b: Builder) holds_coll_in(t: Int, seen0: List[Int]) -> (Bool, List[Int])
   }
   seen.push(t)
   let x = b.m.types[t]
-  if x.coll || b.is_iface(t) || b.is_trace(t) {
+  // http.Request and http.Response compare their std fields only, which
+  // the emitters' structural `==` cannot do (eq_fields)
+  if x.coll || b.is_iface(t) || b.is_trace(t) || !b.eq_fields(t).is_empty() {
     return (true, seen)
   }
   match x.kind {

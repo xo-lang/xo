@@ -1,0 +1,47 @@
+// `==` on http.Response and on values holding one or an http.Request
+// (std.md 4, decision 0112): both are comparable on every backend through
+// their std fields; the hidden fields of the native implementations (a
+// streamed body's function, the route parameters) take no part, at any
+// depth (a Result whose error held a Response was XO1201, azure field
+// report 2026-11-06).
+use std/http
+
+struct Wrap {
+  code: Int
+  resp: http.Response
+}
+
+enum CallErr {
+  Resp(e: Wrap)
+  Other(msg: Str)
+}
+
+struct Pair {
+  req: http.Request
+  n: Int
+}
+
+fn get(n: Int) -> Int ! CallErr {
+  if n > 0 {
+    return Ok(n)
+  }
+  if n == 0 {
+    return Err(CallErr.Resp(Wrap{code: 1, resp: http.text(404, "gone")}))
+  }
+  Err(CallErr.Other("no"))
+}
+
+fn main(os: Os) {
+  let r = http.text(200, "hi")
+  os.stdio.println("top ${r == http.text(200, "hi")} ${r == http.text(201, "hi")} ${r != http.text(200, "ho")}")
+  os.stdio.println("headers ${r == http.Response{status: 200, headers: {}, body: "hi".bytes()}}")
+  os.stdio.println("nested ${Wrap{code: 1, resp: r} == Wrap{code: 1, resp: http.text(200, "hi")}} ${Wrap{code: 1, resp: r} == Wrap{code: 2, resp: r}}")
+  os.stdio.println("result ${get(1) == Ok(1)} ${get(0) == Ok(1)} ${get(-1) == Ok(1)}")
+  os.stdio.println("error ${get(0) == Err(CallErr.Resp(Wrap{code: 1, resp: http.text(404, "gone")}))} ${get(0) == Err(CallErr.Resp(Wrap{code: 1, resp: http.text(404, "here")}))}")
+  let o: http.Response? = Some(r)
+  os.stdio.println("option ${o == Some(http.text(200, "hi"))} ${o == None}")
+  os.stdio.println("list ${[r, http.empty(204)].contains(http.empty(204))} ${[r] == [http.text(200, "hi")]}")
+  let q = http.new_request("GET", "/x")
+  let k: http.Key[Int] = http.key("n")
+  os.stdio.println("request ${Pair{req: q, n: 1} == Pair{req: q.with_value(k, 1), n: 1}} ${Pair{req: q, n: 1} == Pair{req: http.new_request("GET", "/y"), n: 1}}")
+}

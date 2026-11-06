@@ -352,3 +352,30 @@ func TestCheckSupportPerMember(t *testing.T) {
 	}
 	xo(t, "check", "--support=false", filepath.Join(ws, "v")).want(0)
 }
+
+// TestCheckSupportTests: `xo check` lowers a library's test blocks in its
+// support check, so an XO1201 only a test reaches is reported by the check
+// as by `xo test` (azure field report, 2026-11-06: `xo check` said 0
+// errors), and that one XO1201 is the only one: an interface value made
+// after the unsupported code is no longer an XO1201 of its own ("an
+// interface value's type number given after skipped code" was reported at
+// every such file nobody touched).
+func TestCheckSupportTests(t *testing.T) {
+	dir := t.TempDir()
+	modtest.WriteFiles(t, dir, map[string]string{
+		"xo.mod": "module example.com/lib\nedition preview\n",
+		"core.xo": "pub interface Shape {\n  fn area(self) -> Int\n}\n\npub struct Sq {\n  pub n: Int\n}\nfn (s: Sq) area() -> Int { s.n * s.n }\n\n" +
+			"pub fn total(xs: List[Shape]) -> Int {\n  var t = 0\n  for x in xs {\n    t += x.area()\n  }\n  t\n}\n\npub fn shapes() -> List[Shape] { [Sq{n: 2}] }\n",
+		"aa_test.xo": "test \"keyed\" {\n  " + nativeUnsupportedStmt + "\n  expect(m.len()) == 0\n}\n",
+		"zz_test.xo": "test \"shapes\" {\n  expect(total(shapes())) == 4\n}\n",
+	})
+	count := func(r modRun) int { return strings.Count(r.out, `"XO1201"`) }
+	r := xo(t, "check", "--json", dir).want(1)
+	if n := count(r); n != 1 || !strings.Contains(r.out, "aa_test.xo") {
+		t.Errorf("check: want the test's one XO1201 at aa_test.xo, got %d:\n%s", n, r.out)
+	}
+	r = xo(t, "test", dir).want(1)
+	if all := r.out + r.err; strings.Count(all, "XO1201") != 1 || strings.Contains(all, "skipped code") {
+		t.Errorf("test: want only the test's XO1201:\n%s", all)
+	}
+}

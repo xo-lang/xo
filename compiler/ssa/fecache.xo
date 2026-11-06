@@ -235,7 +235,7 @@ fn fe_mix(h: Int, s: Str) -> Int {
 /// What a body may change and an entry not replay: when any differs
 /// after the body, it is not cached.
 fn (b: Builder) fe_fixed() -> Str {
-  "${b.gens.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.natives.len()} ${b.late_tids.len()} ${b.nsyn} ${b.skipped_any} ${b.errs.len()} ${b.seen_err.len()} ${b.why} ${b.c.types.len()} ${b.c.diags.len()}"
+  "${b.gens.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.natives.len()} ${b.nsyn} ${b.skipped_any} ${b.errs.len()} ${b.seen_err.len()} ${b.why} ${b.c.types.len()} ${b.c.diags.len()}"
 }
 
 /// A function object's qualified name: module path, receiver type, name.
@@ -306,7 +306,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       b.fe_skip("read.${b.fe_touched}")
     } else if b.fe_fixed() != r.fixed {
       // which side table the body changed (XO_FE_STATS)
-      let names = ["gens", "ifaces", "tids", "natives", "late_tids", "nsyn", "skipped_any", "errs", "seen_err"]
+      let names = ["gens", "ifaces", "tids", "natives", "nsyn", "skipped_any", "errs", "seen_err"]
       let was = r.fixed.split(" ")
       let now = b.fe_fixed().split(" ")
       for (i, n) in names.indexed() {

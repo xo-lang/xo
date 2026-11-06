@@ -288,12 +288,9 @@ pub struct Builder {
   /// returns again: a capability call's receiver, evaluated once before
   /// user_cap_call branches (decision 0307).
   pinned: Map[Str, Int] = {}
-  /// Some construct was skipped so far: the Go builder lowered code there
-  /// that this builder did not, which may have numbered interface types
-  /// (tids) and queued bodies, so type numbers given from then on may
-  /// differ from the Go builder's (late_tids).
+  /// Some construct was skipped so far (a body that skips one is not
+  /// cached, fe_fixed).
   skipped_any: Bool = false
-  late_tids: Map[Int, Bool] = {}
   /// The checks made, in order (b.checks).
   checks: List[UCheck] = []
   /// A release build (`--release`): debug contract clauses are left out.
@@ -573,8 +570,9 @@ pub fn (var b: Builder) build() uses fs.read {
   if main_fo < 0 {
     if b.c.lib_roots {
       // a library's support check (`xo check`, decision 0523): its
-      // functions are the roots
+      // functions and tests are the roots
       b.declare_dump_roots()
+      b.declare_test_roots()
       b.run_queue()
       b.declare_exports()
       b.run_queue()
@@ -604,6 +602,7 @@ pub fn (var b: Builder) build() uses fs.read {
   // they build are declared too (a feature's exports are declared once its
   // importer is built)
   b.declare_dump_roots()
+  b.declare_test_roots()
   b.run_queue()
   b.declare_exports()
   b.run_queue()
