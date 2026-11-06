@@ -45,8 +45,10 @@ type driver struct {
 	op                func(r *rand.Rand)
 }
 
-func newDriver(app *App, mix mixFn, base string) *driver {
-	d := &driver{base: base, cl: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256, MaxConnsPerHost: 256}, Timeout: 10 * time.Second}}
+// idle closes a pooled connection after that long unused (0: never,
+// a hand built Transport's default, so a burst's connections stay open)
+func newDriver(app *App, mix mixFn, base string, idle time.Duration) *driver {
+	d := &driver{base: base, cl: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256, MaxConnsPerHost: 256, IdleConnTimeout: idle}, Timeout: 10 * time.Second}}
 	d.op = mix(app, d.do)
 	return d
 }
@@ -339,7 +341,7 @@ func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur
 		return r, err
 	}
 	pid := p.cmd.Process.Pid
-	d := newDriver(app, mix, "http://"+p.addr)
+	d := newDriver(app, mix, "http://"+p.addr, 0)
 	var stop func()
 	if v, ok := strings.CutPrefix(ld, "rate"); ok {
 		rate, _ := strconv.Atoi(v)

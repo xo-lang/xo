@@ -39,6 +39,7 @@ type sample struct {
 	p50, p99, p999    float64
 	rss, fds          float64
 	socks             float64
+	csocks            float64
 	heapLive, timers  float64
 	cpuPerReqUS       float64
 }
@@ -179,6 +180,7 @@ func soakMain(args []string) int {
 	out := fs.String("out", "", "output directory")
 	maxRSSGrowth := fs.Float64("max-rss-growth", 0.10, "drift when RSS grows by more than this fraction per hour (after warmup)")
 	maxHeapGrowth := fs.Float64("max-heap-growth", 0.05, "drift when heap_live grows by more than this fraction per hour (after warmup)")
+	clientIdle := fs.Duration("client-idle", 0, "close the load client's pooled connections after this long unused (0: never)")
 	maxLat := fs.Float64("max-lat-growth", 0.20, "drift when the last quarter's p99 exceeds the first quarter's by this fraction")
 	fs.Parse(args)
 	if *appDir == "" || *out == "" {
@@ -219,12 +221,12 @@ func soakMain(args []string) int {
 	}
 	pid := p.cmd.Process.Pid
 	base := "http://" + p.addr
-	d := newDriver(app, mix, base)
+	d := newDriver(app, mix, base, *clientIdle)
 	cl := d.cl
 	stopLoad := d.open(*rate)
 
 	f, _ := os.Create(filepath.Join(*out, "samples.csv"))
-	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks")
+	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks,client_socks")
 	statsURL := ""
 	if app.Stats != "" {
 		statsURL = base + app.Stats
@@ -239,6 +241,8 @@ func soakMain(args []string) int {
 		l := d.takeLat()
 		rss, fds, cpu, _ := procStats(pid)
 		fl, socks := fdList(pid)
+		// the harness's own sockets: the load client's connections to the app
+		_, csocks := fdList(os.Getpid())
 		if len(samples) == 0 {
 			os.WriteFile(filepath.Join(*out, "fds-first.txt"), []byte(strings.Join(fl, "\n")+"\n"), 0o644)
 		}
@@ -249,13 +253,13 @@ func soakMain(args []string) int {
 		}
 		n := atomic.LoadInt64(&d.reqs)
 		s := sample{t: time.Since(start).Seconds(), reqs: n, errs: atomic.LoadInt64(&d.errs), drops: atomic.LoadInt64(&d.drops),
-			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, socks: socks, heapLive: hl, timers: tm}
+			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, socks: socks, csocks: csocks, heapLive: hl, timers: tm}
 		if n > lastReqs {
 			s.cpuPerReqUS = (cpu - cpu0) / float64(n-lastReqs)
 		}
 		cpu0, lastReqs = cpu, n
 		samples = append(samples, s)
-		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f,%.0f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS, s.socks)
+		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f,%.0f,%.0f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS, s.socks, s.csocks)
 		f.Sync()
 	}
 	stopLoad()
@@ -335,6 +339,12 @@ func soakMain(args []string) int {
 			}
 			// which kind grows: fds-first.txt and fds-last.txt list them
 			fmt.Fprintf(&rep, "sockets: %.0f at warmup end, slope %.2f/hour; files: %.0f, slope %.2f/hour\n", ss[0], slope(xs, ss), fds[0]-ss[0], fdSlope-slope(xs, ss))
+			cs := make([]float64, len(body))
+			for i, s := range body {
+				cs[i] = s.csocks
+			}
+			// equal to the app's sockets: each is a connection the client holds
+			fmt.Fprintf(&rep, "client sockets: %.0f at warmup end, slope %.2f/hour, %.0f at the end (the app's: %.0f)\n", cs[0], slope(xs, cs), cs[len(cs)-1], ss[len(ss)-1])
 		}
 		q := len(body) / 4
 		avg := func(ss []sample) float64 {
