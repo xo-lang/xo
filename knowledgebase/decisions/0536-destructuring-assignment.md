@@ -1,9 +1,9 @@
 # 0536: Destructuring assignment to existing places (`(a, b) = f()`)
 
-Status: Proposed (Xo Lang 1, 2026-11-06). The owner approved the
-feature for an ADR (2026-11-06 morning, through the lead: "Go with your
-recommendations"); this text is reported for acceptance. Nothing is built
-yet; it is queued after the SIMD survey's step 2a.
+Status: Accepted (owner, 2026-11-06, through the lead: "go with your
+recommendations"), with value first evaluation order (item 5, Python's
+order, which replaced the proposal's Go order). Not built yet; queued
+after the SIMD survey's step 2a.
 
 ## Context
 
@@ -87,21 +87,26 @@ An assignment statement may have a tuple of places as its target:
    `var` arguments (decision 0111): the stores happen in order, so the
    result is defined (the later store wins, as in Go), and a swap of
    two elements is the main use.
-5. **Order (decision 0140 extended).** The indexes of every target are
-   evaluated left to right, then the value, then each element is
-   stored into its target, left to right, each store reading its
-   place's collection when it stores (as 0140's single assignment
-   does). A fault in a store (an index out of range, or a missing Map
-   key under a field or element target, which XO0410 reports per
-   target as for a single assignment) leaves the earlier stores done,
-   as in Go and as a sequence of single assignments would.
-6. **Lowering.** The checker and the SSA builder treat it as the value
-   bound to fresh temporaries, then one single assignment per target in
-   order: no tuple is built when the value is a tuple literal (the
-   elements are SSA values), so a swap costs two moves. Every backend
-   gets it from the SSA builder; the Go backend's emitter writes Go's
-   `a, b = ...` where every target is a plain variable and the
-   temporaries otherwise.
+5. **Order: the value first (accepted; Python's order).** The value is
+   evaluated first, then each target in turn, left to right: its
+   indexes, then its store, as a single assignment of that element
+   would (decision 0140: a store reads its place's collection when it
+   stores). This is exactly `{ let (t0, t1) = value; a = t0; b = t1 }`,
+   which is how it is built (item 6), so every check that reads single
+   assignments (definite assignment, XO0520's lost updates, escape)
+   applies unchanged. It differs from Go's order (every target's
+   indexes before the value) only when the value changes a variable a
+   target index reads, through a `var` argument. A fault in a store
+   (an index out of range, or a missing Map key under a field or
+   element target, which XO0410 reports per target as for a single
+   assignment) leaves the earlier stores done, as in Go and Python.
+6. **Lowering.** The checker rewrites it, after checking the target's
+   types, to the value bound to fresh temporaries, then one single
+   assignment per target in order (each temporary annotated with its
+   target's type, so item 2's per element check holds): no tuple is
+   built when the value is a tuple literal (the elements are SSA
+   values), so a swap costs two moves. Every backend
+   gets it through the rewrite.
 7. **`var` and `let` declarations do not change.** A destructuring
    assignment never declares: mixing new and existing names (Go's `:=`
    with an existing name) is not allowed; declare the new names first,
