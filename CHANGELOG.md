@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/amqp (fix): an unsettled `Sender.send` with the reader task running (`keepalive`) no longer waits forever when the peer's disposition is applied before send's turn ends; the delivery now counts as sent in the same lock section as its last frame (the amqptest_broker golden hung under load, gotchas/reader-task-applies-reply-between-locks.md).
 - checker: XO0401 names `Option.or_err`: an optional value where a Result is expected gets the note `.or_err(e)`, and `x ?? Err(e)` (which gives a value, never returns) gets the note and fix `x.or_err(e)?` (aws-19's feedback, 2026-11-06). compiler/check test.
 - std/json (perf): a `derive Json` encoder reserves a List of 8 or more elements' text after its first element (its size times the rest, an eighth more), instead of doubling the text through every size class: stability/notes GET /notes spent 73% of its allocated bytes there (bench/perf/json enc_small wall 0.951, enc_strings 0.893 on linux/arm64)
 - native: a `Mutex.with` body (or a function it calls) that hands a closure literal to Option.map or and_then, Result.map or map_err, List.map_sized or sort_in_place_by, or a Str or Bytes `*_where` or `map_runes` method is no longer a cancellation point unless the literal's own body is, so it writes its value in place instead of copying it first (as List.map, filter, fold and the other walks already did); test/codegen/withbody, gotchas/with-body-cancelable-through-closure-call.md.

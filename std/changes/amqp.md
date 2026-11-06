@@ -1,5 +1,17 @@
 # std/amqp changes
 
+## 2026-11-06: fix: an unsettled send no longer waits forever when its outcome arrives at once
+
+- Kind: fix
+- Commit: this push
+- Found by: llvm TestGoldenTasks/amqptest_broker hanging in about 1 run of 4 on linux/arm64, and once in the linux/amd64 hourly run
+- Go reference: none (go-amqp records the delivery before it writes the transfer)
+- Test: std/native/amqptest_test.xo "every unsettled send gets its outcome with the reader task running" (a guard: it passed on the old code too, 100 runs with --real); the proof is the golden under load, 16 native copies at a time pinned to 4 CPUs on linux/arm64: 3 hangs in the first 48 runs before, 0 in 640 after
+- Timing: none
+- Shipped in: not yet released
+
+With the reader task running (`keepalive`), `Sender.send` recorded its delivery as unsettled in a lock section after the one that wrote the last transfer frame. A disposition the reader applied in between matched no delivery and was dropped, and `send` waited for it forever (3 hangs in the first 48 runs of the golden, 16 at a time pinned to 4 CPUs). The delivery now counts as sent in the same lock section as its last frame's write.
+
 ## 2026-11-05: feature: message_format on send, manual credit and drain, settle mode Second waits, remote_attach
 
 - Kind: feature

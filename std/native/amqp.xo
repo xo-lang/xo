@@ -2779,24 +2779,30 @@ fn step_send_chunk(var c: amqp.ConnState, id: Int, tid: Int, tag: Bytes, chunk: 
   st_send(c, transfer_frame(l, tid, tag, off == 0, settled, end < payload.len(), payload[off..end], fmt))?
   var z = c.sess[si]
   z.remote_incoming_window -= 1
+  if end == payload.len() {
+    // the delivery counts as sent under the lock of its last frame's
+    // write: the reader task applies the peer's disposition (or a flow)
+    // only after this, so it finds tid unsettled (a disposition applied
+    // between this write and a later lock was dropped, and send waited
+    // for it forever under load: amqptest_broker, 2026-11-06)
+    z.next_outgoing_id = m32(z.next_outgoing_id + 1)
+    var d = c.links[id]
+    d.delivery_count = m32(d.delivery_count + 1)
+    d.credit -= 1
+    d.tag_counter += 1
+    if !settled { d.unsettled.push(tid) }
+    put_link(c, d)
+  }
   put_sess(c, si, z)
   Ok(Some(end))
 }
 
-/// Ends the send turn; on success the delivery counts as sent.
-fn st_send_done(var c: amqp.ConnState, id: Int, tid: Int, settled: Bool, sent: Bool) {
-  var l = c.links[id]
-  let si = ss_idx(c, l.channel)
+/// Ends the send turn (the delivery counted as sent with its last frame,
+/// step_send_chunk).
+fn st_send_done(var c: amqp.ConnState, id: Int) {
+  let si = ss_idx(c, c.links[id].channel)
   var z = c.sess[si]
   z.sending = false
-  if sent {
-    z.next_outgoing_id = m32(z.next_outgoing_id + 1)
-    l.delivery_count = m32(l.delivery_count + 1)
-    l.credit -= 1
-    l.tag_counter += 1
-    if !settled { l.unsettled.push(tid) }
-    put_link(c, l)
-  }
   put_sess(c, si, z)
   notify_waiters(c)
 }
@@ -2981,8 +2987,7 @@ fn sender_send(x: amqp.Sender, m: amqp.Message, settled: Bool = false, message_f
     }
     first = false
   }
-  let ok = failure is None
-  c.st.with(fn(var z: amqp.ConnState) { st_send_done(z, id, tid, settled, ok) })
+  c.st.with(fn(var z: amqp.ConnState) { st_send_done(z, id) })
   match failure {
     Some(e) => return Err(e)
     None => {}
