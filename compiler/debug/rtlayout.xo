@@ -61,6 +61,15 @@ const W_RUNF = 3520 // = layout.W_RUNF
 const F_TASK = 24 // = pool.F_TASK
 const F_MEM = 8 // = pool.F_MEM
 const F_SIZE = 16 // = pool.F_SIZE
+/// main's fiber's F_TASK (pool.xo root_main).
+const MAIN_TASK = 1 // = pool.MAIN_TASK
+/// main's fiber: the deadlock record's slot (it may run on the root
+/// thread's record, which is not in P_WS).
+const P_DLK = 120 // = layout.P_DLK
+const DLK_MAINF = 6 // = layout.DLK_MAINF
+/// main's fiber's root record: the root thread runs other fibers as a
+/// worker does while main is parked (pool.xo root_main), with its W_RUNF.
+const F_ROOT = 96 // = pool.F_ROOT
 
 /// A parked fiber's switch frame (compiler/arm64 sched.xo
 /// stack_switch_body): x19 to x30 at saved + 0 to 88, the caller's stack

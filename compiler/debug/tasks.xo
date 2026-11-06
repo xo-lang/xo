@@ -32,6 +32,10 @@ pub struct TaskRec {
   pub fp: Int = 0
   /// a task's record (its fiber's F_TASK), 0 for a root or scope
   pub rec: Int = 0
+  /// the records of the tasks whose fibers may run it inline (a join runs
+  /// a task no worker took yet on the joiner's stack, llrt tasks.xo
+  /// run_claimed): its enclosing tasks, nearest first, then main's
+  pub hosts: List[Int] = []
 }
 
 /// The walk's state.
@@ -123,14 +127,15 @@ pub fn (s: Session) task_walk() -> List[TaskRec] ! Str {
     rec.kind = if k == 0 { "main" } else { "runtime" }
     rec.canceled = s.word_at(top + N_CANCELED) != 0
     w.tasks.push(rec)
-    s.walk_kids(w, top, c, 1)
+    s.walk_kids(w, top, c, 1, if k == 0 { [MAIN_TASK] } else { [] })
   }
   Ok(w.tasks)
 }
 
 /// The children of node n (c: the context running n's task or its scope
-/// bodies), oldest first, each with its subtree.
-fn (s: Session) walk_kids(var w: Walk, n: Int, c: Int, depth: Int) {
+/// bodies; hosts: the tasks whose fibers may run them, TaskRec.hosts),
+/// oldest first, each with its subtree.
+fn (s: Session) walk_kids(var w: Walk, n: Int, c: Int, depth: Int, hosts: List[Int]) {
   var kids: List[Int] = []
   var k = s.word_at(n + N_CHILD)
   while k != 0 && kids.len() < 100000 {
@@ -139,13 +144,13 @@ fn (s: Session) walk_kids(var w: Walk, n: Int, c: Int, depth: Int) {
   }
   var i = kids.len() - 1
   while i >= 0 {
-    s.walk_node(w, kids[i], c, depth)
+    s.walk_node(w, kids[i], c, depth, hosts)
     i -= 1
   }
 }
 
 /// Node n: a task's, a scope body's, or one that only holds others.
-fn (s: Session) walk_node(var w: Walk, n: Int, c: Int, depth: Int) {
+fn (s: Session) walk_node(var w: Walk, n: Int, c: Int, depth: Int, hosts: List[Int]) {
   let free = s.word_at(n - 16 + H_FREE)
   if free != 0 && free == w.task_free {
     let t = n - T_NODE
@@ -164,6 +169,7 @@ fn (s: Session) walk_node(var w: Walk, n: Int, c: Int, depth: Int) {
     rec.depth = depth
     rec.kind = "task"
     rec.rec = t
+    rec.hosts = hosts
     let lp = s.word_at(t + T_LOC_P)
     let ln = s.word_at(t + T_LOC_N)
     if lp != 0 && ln > 0 && ln < 4096 {
@@ -171,16 +177,16 @@ fn (s: Session) walk_node(var w: Walk, n: Int, c: Int, depth: Int) {
     }
     rec.canceled = s.word_at(n + N_CANCELED) != 0
     w.tasks.push(rec)
-    s.walk_kids(w, n, tc, depth + 1)
+    s.walk_kids(w, n, tc, depth + 1, [t] + hosts)
   } else if free != 0 && free == w.scope_free {
     var rec = s.ctx_state(n, c, true)
     rec.depth = depth
     rec.kind = "scope"
     rec.canceled = s.word_at(n + N_CANCELED) != 0
     w.tasks.push(rec)
-    s.walk_kids(w, n, c, depth + 1)
+    s.walk_kids(w, n, c, depth + 1, hosts)
   } else {
-    s.walk_kids(w, n, c, depth)
+    s.walk_kids(w, n, c, depth, hosts)
   }
 }
 
@@ -291,24 +297,55 @@ pub fn (s: Session) task_frames(t: TaskRec) -> List[VFrame] {
 
 /// The frames of running task t on its thread: the worker whose running
 /// fiber is t's, the thread whose sp is in that fiber's stack, that
-/// thread's registers (the second result); none when no thread runs it
-/// (a task run inline on another's fiber, or between fibers).
+/// thread's registers (the second result). A task a join runs inline has
+/// no fiber of its own: it is on the fiber of one of its hosts, whose
+/// stack then holds run_claimed (TestDebugTasks failed 1 in 240 sessions
+/// on linux/arm64 when main's join ran task 4, 2026-11-06). None when no
+/// thread runs it (between fibers).
 pub fn (s: Session) running_frames(t: TaskRec) -> (List[VFrame], Int) {
   if t.rec == 0 || s.proc == 0 {
     return ([], 0)
   }
+  for (k, r) in ([t.rec] + t.hosts).indexed() {
+    let (fs, th) = s.fiber_frames(r)
+    if !fs.is_empty() && (k == 0 || fs.any(fn(f) { f.name.ends_with("run_claimed") })) {
+      return (fs, th)
+    }
+  }
+  ([], 0)
+}
+
+/// The frames of the thread running a fiber whose task is rec, and the
+/// thread; none when no thread runs one. The running fibers are the
+/// workers' and the root thread's (main's fiber's root record, not in
+/// P_WS: while main is parked the root runs queued fibers as a worker
+/// does, pool.xo root_main), and main's own.
+fn (s: Session) fiber_frames(rec: Int) -> (List[VFrame], Int) {
   let sv = s.word_at(s.static_words() + 8 * SVC)
   let p = s.word_at(sv + SV_POOL)
   if p == 0 {
     return ([], 0)
   }
+  let mf = s.word_at(s.word_at(p + P_DLK) + 8 * DLK_MAINF)
+  var recs: List[Int] = []
   let n = s.word_at(p + 8 * P_NW).min(4096)
   for i in 0..n {
-    let wk = s.word_at(p + P_WS + 8 * i)
+    recs.push(s.word_at(p + P_WS + 8 * i))
+  }
+  if mf != 0 {
+    recs.push(s.word_at(mf + F_ROOT))
+  }
+  var fibers: List[Int] = []
+  for wk in recs {
     let f = if wk == 0 { 0 } else { s.word_at(wk + W_RUNF) }
-    if f == 0 || s.word_at(f + F_TASK) != t.rec {
-      continue
+    if f != 0 && s.word_at(f + F_TASK) == rec && !fibers.contains(f) {
+      fibers.push(f)
     }
+  }
+  if rec == MAIN_TASK && mf != 0 && !fibers.contains(mf) {
+    fibers.push(mf)
+  }
+  for f in fibers {
     let lo = s.word_at(f + F_MEM)
     let hi = lo + s.word_at(f + F_SIZE)
     for th in internal.dbg_threads(s.proc) {
