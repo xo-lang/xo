@@ -789,4 +789,24 @@ test "std/protobuf answers what Go's protowire answers on every case" {
     fault("${bad.len()} of ${CASES.len()} cases differ, first: ${bad[0]}")
   }
 }
+
+test "the put_ builder forms write what the append_ forms write" {
+  for v in [0, 1, 127, 128, 300, 16383, 16384, 4294967295, 9223372036854775807, -1, -9223372036854775807] {
+    let u = UInt64.from_bits(v)
+    var o = BytesBuilder.new()
+    o = protobuf.put_tag(o, 3, 2)
+    o = protobuf.put_varint(o, u)
+    o = protobuf.put_fixed32(o, UInt32.wrapping_from(v))
+    o = protobuf.put_fixed64(o, u)
+    o = protobuf.put_bytes(o, b"abc")
+    var b = protobuf.append_tag(b"", 3, 2)
+    b = protobuf.append_varint(b, u)
+    b = protobuf.append_fixed32(b, UInt32.wrapping_from(v))
+    b = protobuf.append_fixed64(b, u)
+    b = protobuf.append_bytes(b, b"abc")
+    if o.freeze() != b {
+      fault("put_ and append_ differ for ${v}")
+    }
+  }
+}
 `
