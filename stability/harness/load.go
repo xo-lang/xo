@@ -42,7 +42,11 @@ type driver struct {
 	mu                sync.Mutex
 	lat               []float64
 	reqs, errs, drops int64
-	op                func(r *rand.Rand)
+	// c4xx counts 4xx answers: not errors (a mix expects some), but a
+	// target that answers a share of its requests 4xx does less work, so
+	// its row is not comparable with the twin's
+	c4xx int64
+	op   func(r *rand.Rand)
 }
 
 // idle closes a pooled connection after that long unused (0: never,
@@ -80,6 +84,8 @@ func (d *driver) do(method, path, token string, body []byte) (int, []byte) {
 	d.mu.Unlock()
 	if resp.StatusCode >= 500 {
 		atomic.AddInt64(&d.errs, 1)
+	} else if resp.StatusCode >= 400 {
+		atomic.AddInt64(&d.c4xx, 1)
 	}
 	return resp.StatusCode, b
 }
@@ -201,7 +207,8 @@ type loadRun struct {
 	round               int
 	rps                 float64
 	p50, p99, p999      float64
-	errs, drops         int64
+	errs, drops, c4xx   int64
+	reqs                int64
 	cpuPerReqUS, peakKB float64
 }
 
@@ -280,7 +287,7 @@ func loadMain(args []string) int {
 	}
 
 	f, _ := os.Create(filepath.Join(*out, "load.csv"))
-	fmt.Fprintln(f, "target,load,round,rps,p50_us,p99_us,p999_us,errs,drops,cpu_us_per_req,peak_rss_kib")
+	fmt.Fprintln(f, "target,load,round,rps,p50_us,p99_us,p999_us,errs,drops,cpu_us_per_req,peak_rss_kib,reqs,c4xx")
 	var runs []loadRun
 	bad := false
 	n := 0
@@ -315,7 +322,7 @@ func loadMain(args []string) int {
 				if r.errs > 0 {
 					bad = true
 				}
-				fmt.Fprintf(f, "%s,%s,%d,%.0f,%.0f,%.0f,%.0f,%d,%d,%.2f,%.0f\n", r.target, r.load, r.round, r.rps, r.p50, r.p99, r.p999, r.errs, r.drops, r.cpuPerReqUS, r.peakKB)
+				fmt.Fprintf(f, "%s,%s,%d,%.0f,%.0f,%.0f,%.0f,%d,%d,%.2f,%.0f,%d,%d\n", r.target, r.load, r.round, r.rps, r.p50, r.p99, r.p999, r.errs, r.drops, r.cpuPerReqUS, r.peakKB, r.reqs, r.c4xx)
 				f.Sync()
 			}
 		}
@@ -352,7 +359,7 @@ func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur
 	}
 	time.Sleep(warm)
 	d.takeLat()
-	reqs0, errs0, drops0 := atomic.LoadInt64(&d.reqs), atomic.LoadInt64(&d.errs), atomic.LoadInt64(&d.drops)
+	reqs0, errs0, drops0, c4xx0 := atomic.LoadInt64(&d.reqs), atomic.LoadInt64(&d.errs), atomic.LoadInt64(&d.drops), atomic.LoadInt64(&d.c4xx)
 	_, _, cpu0, _ := procStats(pid)
 	t0 := time.Now()
 	time.Sleep(dur)
@@ -367,6 +374,8 @@ func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur
 	stop()
 	r.errs = atomic.LoadInt64(&d.errs) - errs0
 	r.drops = atomic.LoadInt64(&d.drops) - drops0
+	r.c4xx = atomic.LoadInt64(&d.c4xx) - c4xx0
+	r.reqs = reqs
 	if err := p.stop("term"); err != nil {
 		return r, err
 	}
@@ -412,10 +421,15 @@ func loadReport(app string, runs []loadRun, loads []string, xoName string, twin 
 	for _, ld := range loads {
 		fmt.Fprintf(&b, "\n%s\n", ld)
 		var errs, drops int64
+		var c4, n4 = map[string]int64{}, map[string]int64{}
 		for _, r := range runs {
 			if r.load == ld && r.target == xoName {
 				errs += r.errs
 				drops += r.drops
+			}
+			if r.load == ld {
+				c4[r.target] += r.c4xx
+				n4[r.target] += r.reqs
 			}
 		}
 		for _, m := range metrics {
@@ -446,6 +460,13 @@ func loadReport(app string, runs []loadRun, loads []string, xoName string, twin 
 			b.WriteString("\n")
 		}
 		fmt.Fprintf(&b, "  %s errors %d, drops %d\n", xoName, errs, drops)
+		// a differing share of 4xx answers means the targets did different
+		// work: the mix's later requests depend on earlier answers
+		for _, t := range []string{xoName, "go"} {
+			if n4[t] > 0 {
+				fmt.Fprintf(&b, "  %s 4xx %d of %d (%.2f%%)\n", t, c4[t], n4[t], 100*float64(c4[t])/float64(n4[t]))
+			}
+		}
 	}
 	return b.String()
 }
