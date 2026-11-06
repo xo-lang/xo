@@ -1159,3 +1159,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [size-class-cut-tail-leak.md](size-class-cut-tail-leak.md): Observed: cut_for drops the tail when a donor block is not an exact multiple of the smaller stride; four classes a doubling leaked 282 MB of the self build (decision 0506)
 - [effect-args-in-lowered-type-names.md](effect-args-in-lowered-type-names.md): `Request[env]` passed as `Request[fx]` was native XO1201: lowered type names carried effect arguments (Observed)
 - [member-copy-drops-node-records.md](member-copy-drops-node-records.md): a decision 0513 member copy has no per-node records for the base's bodies; lowering them gave false XO1201 "the name `x` here" (Observed)
+- [go-ticker-submillisecond-rate.md](go-ticker-submillisecond-rate.md): a Go ticker under 1 ms loses ticks silently; an open loop load generator offered 4000/s sent 1200 (pace by schedule).

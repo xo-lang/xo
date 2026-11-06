@@ -109,15 +109,25 @@ func (d *driver) open(rate int) (stop func()) {
 		}(int64(i + 1))
 	}
 	go func() {
-		tk := time.NewTicker(time.Second / time.Duration(rate))
+		// by schedule, not one tick per request: a ticker under a
+		// millisecond loses ticks (4000/s offered sent about 1200/s on
+		// linux/arm64, 2026-11-05), so each millisecond sends what the
+		// rate owes since the start
+		tk := time.NewTicker(time.Millisecond)
 		defer tk.Stop()
+		t0 := time.Now()
+		var sent int64
 		for {
 			select {
 			case <-tk.C:
-				select {
-				case work <- struct{}{}:
-				default:
-					atomic.AddInt64(&d.drops, 1)
+				owed := int64(time.Since(t0).Seconds()*float64(rate)) - sent
+				for ; owed > 0; owed-- {
+					sent++
+					select {
+					case work <- struct{}{}:
+					default:
+						atomic.AddInt64(&d.drops, 1)
+					}
 				}
 			case <-quit:
 				close(work)
