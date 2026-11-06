@@ -187,7 +187,9 @@ func peakRSS(pid int) float64 {
 }
 
 // mapsSummary sums the process's Linux smaps: its current resident KiB,
-// and the count and resident KiB of the mappings the size of a native
+// its transparent huge pages (AnonHugePages: khugepaged can collapse a
+// range the heap gave back into a resident 2 MiB page again, decision
+// 0533), and the count and resident KiB of the mappings the size of a native
 // fiber stack (64 MiB above its guard page, which is a mapping of its own;
 // pool.xo map_stack), which are the fibers live or cached.
 func mapsSummary(pid int) string {
@@ -195,7 +197,7 @@ func mapsSummary(pid int) string {
 	if err != nil {
 		return "no smaps\n"
 	}
-	var size, rss, all, stacks, stackRSS, near, nearRSS int64
+	var size, rss, all, huge, stacks, stackRSS, near, nearRSS int64
 	flush := func() {
 		all += rss
 		if size == 65536 {
@@ -219,10 +221,13 @@ func mapsSummary(pid int) string {
 			size, _ = strconv.ParseInt(f[1], 10, 64)
 		case "Rss:":
 			rss, _ = strconv.ParseInt(f[1], 10, 64)
+		case "AnonHugePages:":
+			n, _ := strconv.ParseInt(f[1], 10, 64)
+			huge += n
 		}
 	}
 	flush()
-	return fmt.Sprintf("rss_kib %d stack_maps %d stack_rss_kib %d near_maps %d near_rss_kib %d\n", all, stacks, stackRSS, near, nearRSS)
+	return fmt.Sprintf("rss_kib %d anon_huge_kib %d stack_maps %d stack_rss_kib %d near_maps %d near_rss_kib %d\n", all, huge, stacks, stackRSS, near, nearRSS)
 }
 
 // saveStats writes the app's stats text to path.
