@@ -11,9 +11,15 @@ import (
 	"strings"
 )
 
-// timegoLayouts are Go layouts every element of which core time has a field for (std/timego translates them);
-// elements without one are LayoutErr cases, checked by the native tests.
+// timegoLayouts are Go layouts covering every element of Go's layout language (std/timego scans them itself) and
+// the constants of time/format.go.
 var timegoLayouts = []string{
+	"-07:00", "Z07", "-07", "Z0700", "-070000", "Z07:00:00", "-07:00:00", "2006-01-02T15:04:05.999Z07:00",
+	"2006-01-02T15:04:05,000", "Jan _2 15:04:05", "Mon Jan _2 15:04:05 2006", "Mon Jan _2 15:04:05 MST 2006",
+	"02 Jan 06 15:04 MST", "02 Jan 06 15:04 -0700", "Monday, 02-Jan-06 15:04:05 MST", "Mon, 02 Jan 2006 15:04:05 -0700",
+	"3:04PM", "3:04:05 pm", "06-1-2", "2006 002", "2006 __2", "06 15 4 5", "2006-01-02T15:04:05.999999999Z07:00",
+	"15:04:05.999999", "Jan 2 15:04:05.000", "2006/01/02 03:04:05.00 PM -07", "2006-01-02T15:04:05Z0700",
+	"2006-01-02 15:04:05 Z07:00:00",
 	"2006-01-02", "2006-01-02T15:04:05Z07:00", "2006-01-02 15:04:05", "Mon Jan 2 15:04:05 MST 2006",
 	"Monday, 02-Jan-2006", "Jan 2, 2006 at 03:04PM (MST)", "02/01/2006", "15:04:05.000", "15:04:05.000000000",
 	"2006-01-02T15:04:05-0700", "2006-01-02T15:04:05Z07:00 MST", "Mon, 02 Jan 2006 15:04:05 MST", "03:04:05PM",
@@ -32,12 +38,6 @@ func timegoOracle(in string) []string {
 		os.Exit(1)
 	}
 	return strings.Split(strings.TrimRight(string(out), "\n"), "\n")
-}
-
-// timegoNoParse is a layout whose Go output is not parsed back: a time of day alone has no date, and a zone
-// abbreviation (MST) without an offset is made up by Go but looked up in the given zone by core time (decision 0537).
-func timegoNoParse(l string) bool {
-	return l == "15:04:05.000" || l == "15:04:05.000000000" || l == "03:04:05PM" || strings.Contains(l, "MST")
 }
 
 // timegoFuzzSeed is XO_TIMEGOFUZZ_SEED (default 0, the committed corpus), added to the seed so a fresh run
@@ -108,14 +108,9 @@ func timegoCorpus() string {
 	ptext := make([]string, len(fc))
 	pmut := make([]bool, len(fc))
 	for i, c := range fc {
-		if timegoNoParse(c.layout) {
-			continue
-		}
 		ptext[i] = want[i]
 		pmut[i] = false
-		// a changed date under a weekday element would differ by design: Go ignores the weekday text, core time
-		// requires it to match the date (spec/std.md 67)
-		if r.Intn(3) == 0 && !strings.Contains(c.layout, "Mon") {
+		if r.Intn(3) == 0 {
 			ptext[i] = timegoMutate(r, want[i])
 			pmut[i] = true
 		}
@@ -125,9 +120,6 @@ func timegoCorpus() string {
 	o.WriteString("/// (Go layout, text, what Go's Parse answers: `err`, or `ok UNIX_NANOS OFFSET`, and whether the text was changed)\nconst PARSES: List[(Str, Str, Str, Bool)] = [\n")
 	k := 0
 	for i, c := range fc {
-		if timegoNoParse(c.layout) {
-			continue
-		}
 		fmt.Fprintf(&o, "  (%s, %s, %s, %t),\n", xq(c.layout), xq(ptext[i]), xq(pwant[k]), pmut[i])
 		k++
 	}
@@ -142,16 +134,10 @@ fn zone_for(off: Int) -> time.Zone {
 }
 
 test "std/timego formats what Go's Time.Format prints" {
-  expect(timego.to_core("2006-01-02").or_fault("to_core")) == "{year}-{month}-{day}"
-  expect(timego.to_core("2006-01-02 pm").is_err()) == true
-  expect(timego.layout("2006-01-02").or_fault("layout").display()) == "{year}-{month}-{day}"
   var bad: List[Str] = []
   for (layout, secs, nanos, off, want) in FORMATS {
     let t = Time.from_unix(secs) + Duration.from_nanos(nanos)
-    let got = match timego.format(t, zone_for(off), layout) {
-      Ok(x) => x
-      Err(_) => "layout error"
-    }
+    let got = timego.format(t, zone_for(off), layout)
     if got != want {
       bad.push("${layout} ${secs} ${nanos} ${off}: got ${got} want ${want}")
     }
@@ -174,11 +160,8 @@ test "std/timego parses what Go's Time.Parse parses" {
     // Go's answer ends with the text's offset, which a Time does not keep: compare the instant
     let parts = want.split(" ")
     let w = if parts[0] == "ok" { "ok ${parts[1]}" } else { "err" }
-    // core time is stricter than Go in places (a one digit 15, spec/std.md 67): on a changed text it may refuse what
-    // Go accepts, but never accept what Go refuses or read another instant; Go's own output must parse exactly
-    let stricter = changed && got == "err" && w != "err"
-    if got != w && !stricter {
-      bad.push("${layout} ${text}: got ${got} want ${w}")
+    if got != w {
+      bad.push("${layout} ${text} (changed ${changed}): got ${got} want ${w}")
     }
   }
   if !bad.is_empty() {

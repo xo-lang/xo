@@ -7,45 +7,53 @@ fn sample() -> Time {
   time.instant(d, time.ClockTime{hour: 14, minute: 5, second: 9, nanos: 123456789}, time.utc()).or_fault("instant")
 }
 
-test "to_core translates the reference elements" {
-  expect(timego.to_core("2006-01-02").or_fault("a")) == "{year}-{month}-{day}"
-  expect(timego.to_core("2006-01-02T15:04:05Z07:00").or_fault("b")) == "{year}-{month}-{day}T{hour}:{minute}:{second}{offset}"
-  expect(timego.to_core("Mon Jan 2 15:04:05 MST 2006").or_fault("c")) == "{weekday:short} {month:short} {day:1} {hour}:{minute}:{second} {zone} {year}"
-  expect(timego.to_core("03:04PM").or_fault("d")) == "{hour12}:{minute}{ampm}"
-  expect(timego.to_core("15:04:05.000").or_fault("e")) == "{hour}:{minute}:{second}{frac:3}"
-  expect(timego.to_core("{x}").or_fault("f")) == "{lbrace}x{rbrace}"
-}
-
 test "format matches Go" {
   let t = sample()
   let z = time.utc()
-  expect(timego.format(t, z, "2006-01-02").or_fault("1")) == "2026-11-06"
-  expect(timego.format(t, z, "2006-01-02T15:04:05Z07:00").or_fault("2")) == "2026-11-06T14:05:09Z"
-  expect(timego.format(t, z, "Mon Jan 2 15:04:05 MST 2006").or_fault("3")) == "Fri Nov 6 14:05:09 UTC 2026"
-  expect(timego.format(t, z, "03:04PM").or_fault("4")) == "02:05PM"
-  expect(timego.format(t, z, "15:04:05.000").or_fault("5")) == "14:05:09.123"
+  expect(timego.format(t, z, "2006-01-02")) == "2026-11-06"
+  expect(timego.format(t, z, "2006-01-02T15:04:05Z07:00")) == "2026-11-06T14:05:09Z"
+  expect(timego.format(t, z, "2006-01-02T15:04:05-07:00")) == "2026-11-06T14:05:09+00:00"
+  expect(timego.format(t, z, "Mon Jan 2 15:04:05 MST 2006")) == "Fri Nov 6 14:05:09 UTC 2026"
+  expect(timego.format(t, z, "03:04PM")) == "02:05PM"
+  expect(timego.format(t, z, "3:04pm")) == "2:05pm"
+  expect(timego.format(t, z, "15:04:05.000")) == "14:05:09.123"
+  expect(timego.format(t, z, "15:04:05.999999999")) == "14:05:09.123456789"
+  expect(timego.format(t, z, "Jan _2 06 002")) == "Nov  6 26 310"
+  expect(timego.format(t, z, "{x}")) == "{x}"
 }
 
-test "layout is the translated core layout, parsed once" {
-  let l = timego.layout("2006-01-02T15:04:05Z07:00").or_fault("l")
+test "layout is scanned once" {
+  let l = timego.layout("2006-01-02T15:04:05Z07:00")
   let t = sample()
   expect(l.format(t, time.utc())) == "2026-11-06T14:05:09Z"
   expect(l.parse("2026-11-06T14:05:09Z", time.utc()).or_fault("p")) == t - Duration.from_nanos(123456789)
-  expect(timego.layout("2006-01-02 pm").is_err()) == true
+  expect(l.parse("2026-11-06T15:05:09+01:00", time.utc()).or_fault("p")) == t - Duration.from_nanos(123456789)
 }
 
-test "an element core time lacks is a LayoutErr" {
-  for l in ["15:04:05.999", "3:04PM", "Jan _2", "06-01-02", "002", "Z0700", "-07:00", "2006-01-02 pm"] {
-    expect(timego.to_core(l).is_err()) == true
-  }
-}
-
-test "parse matches Go for exact layouts" {
+test "parse matches Go" {
   let z = time.utc()
   let t = timego.parse("2026-11-06T14:05:09Z", "2006-01-02T15:04:05Z07:00", z).or_fault("p1")
-  expect(timego.format(t, z, "2006-01-02T15:04:05Z07:00").or_fault("f1")) == "2026-11-06T14:05:09Z"
   let u = timego.parse("Fri Nov 6 14:05:09 UTC 2026", "Mon Jan 2 15:04:05 MST 2006", z).or_fault("p2")
   expect(u) == t
   expect(timego.parse("2026-13-06", "2006-01-02", z).is_err()) == true
   expect(timego.parse("2026-11-06", "2006-01-02 3", z).is_err()) == true
+  // one digit hour, a weekday that is not checked
+  let nine = time.instant(time.date(2026, 11, 6).or_fault("d"), time.ClockTime{hour: 9, minute: 5, second: 0, nanos: 0}, z).or_fault("i")
+  expect(timego.parse("2026-11-06 9:05", "2006-01-02 15:04", z).or_fault("p3")) == nine
+  expect(timego.parse("Mon Nov 6 14:05:09 UTC 2026", "Mon Jan 2 15:04:05 MST 2006", z).or_fault("p4")) == t
+}
+
+test "the layout constants are Go's" {
+  let t = sample()
+  let z = time.utc()
+  expect(timego.format(t, z, timego.ANSIC)) == "Fri Nov  6 14:05:09 2026"
+  expect(timego.format(t, z, timego.UNIX_DATE)) == "Fri Nov  6 14:05:09 UTC 2026"
+  expect(timego.format(t, z, timego.RFC822)) == "06 Nov 26 14:05 UTC"
+  expect(timego.format(t, z, timego.RFC850)) == "Friday, 06-Nov-26 14:05:09 UTC"
+  expect(timego.format(t, z, timego.RFC1123Z)) == "Fri, 06 Nov 2026 14:05:09 +0000"
+  expect(timego.format(t, z, timego.RFC3339_NANO)) == "2026-11-06T14:05:09.123456789Z"
+  expect(timego.format(t, z, timego.KITCHEN)) == "2:05PM"
+  expect(timego.format(t, z, timego.STAMP_MILLI)) == "Nov  6 14:05:09.123"
+  expect(timego.format(t, z, timego.DATE_TIME)) == "2026-11-06 14:05:09"
+  expect(timego.format(t, z, timego.TIME_ONLY)) == "14:05:09"
 }

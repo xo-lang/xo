@@ -1,78 +1,984 @@
-// std/timego: translate a Go layout to a core time layout (decision 0537).
+// std/timego: Go's time layouts (decision 0537), a port of time/format.go's nextStdChunk, appendFormat and parse over
+// core time's civil functions. A layout is scanned once into chunks: a kind, the literal text of a literal chunk, and
+// for a fractional second its digit count (the separator is the literal).
 use std/time
 use std/timego
 
-/// Go's reference elements in match order (longest first where one starts another), with the core field each
-/// means; an empty field marks an element core time has no field for (a `LayoutErr`, never a silent literal).
-fn elems() -> List[(Str, Str)] {
-  [("January", "{month:name}"), ("Jan", "{month:short}"), ("Monday", "{weekday:name}"), ("Mon", "{weekday:short}"),
-   ("2006", "{year}"), ("-07:00:00", ""), ("-070000", ""), ("Z07:00:00", ""), ("Z070000", ""),
-   ("Z07:00", "{offset}"), ("-07:00", ""), ("Z0700", ""), ("-0700", "{offset:compact}"), ("Z07", ""), ("-07", ""),
-   ("MST", "{zone}"), ("002", ""), ("__2", ""), ("_2", ""), ("01", "{month}"), ("02", "{day}"), ("06", ""),
-   ("15", "{hour}"), ("03", "{hour12}"), ("04", "{minute}"), ("05", "{second}"), ("PM", "{ampm}"), ("pm", ""),
-   ("1", "{month:1}"), ("2", "{day:1}"), ("3", ""), ("4", ""), ("5", "")]
+const LIT: Int = 0
+const YEAR2: Int = 1
+const YEAR4: Int = 2
+const MONTH_LONG: Int = 3
+const MONTH_SHORT: Int = 4
+const MONTH_NUM: Int = 5
+const MONTH_ZERO: Int = 6
+const WD_LONG: Int = 7
+const WD_SHORT: Int = 8
+const DAY: Int = 9
+const DAY_UNDER: Int = 10
+const DAY_ZERO: Int = 11
+const YDAY_UNDER: Int = 12
+const YDAY_ZERO: Int = 13
+const HOUR24: Int = 14
+const HOUR12: Int = 15
+const HOUR12_ZERO: Int = 16
+const MIN: Int = 17
+const MIN_ZERO: Int = 18
+const SEC: Int = 19
+const SEC_ZERO: Int = 20
+const PM_UP: Int = 21
+const PM_LO: Int = 22
+const TZ_NAME: Int = 23
+const ISO_BASIC: Int = 24
+const ISO_SECS: Int = 25
+const ISO_SHORT: Int = 26
+const ISO_COLON: Int = 27
+const ISO_COLON_SECS: Int = 28
+const NUM_BASIC: Int = 29
+const NUM_SECS: Int = 30
+const NUM_SHORT: Int = 31
+const NUM_COLON: Int = 32
+const NUM_COLON_SECS: Int = 33
+const FRAC0: Int = 34
+const FRAC9: Int = 35
+
+const MONTHS: List[Str] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+const SHORT_MONTHS: List[Str] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+const DAYS: List[Str] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+const SHORT_DAYS: List[Str] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+const DAYS_BEFORE: List[Int] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365]
+
+fn at_is(b: Bytes, i: Int, p: Bytes) -> Bool {
+  if i + p.len() > b.len() {
+    return false
+  }
+  var k = 0
+  while k < p.len() {
+    if b[i + k] != p[k] {
+      return false
+    }
+    k += 1
+  }
+  true
 }
 
-fn to_core(go_layout: Str) -> Str ! timego.LayoutErr {
-  var out = StrBuilder.new()
-  let es = elems()
-  let gb = go_layout.bytes()
-  var i = 0
-  while i < go_layout.len() {
-    let rest = go_layout[i..]
-    var hit = false
-    // fractional seconds: .000 and .999 runs after a second
-    if rest.starts_with(".0") || rest.starts_with(".9") {
-      let d = gb[i + 1]
-      var n = 1
-      while i + 1 + n < gb.len() && gb[i + 1 + n] == d {
-        n += 1
+fn lower_at(b: Bytes, j: Int) -> Bool { j < b.len() && Int(b[j]) >= 97 && Int(b[j]) <= 122 }
+fn digit_at(b: Bytes, j: Int) -> Bool { j >= 0 && j < b.len() && Int(b[j]) >= 48 && Int(b[j]) <= 57 }
+
+/// The reference element at byte i of a layout: (kind, length, digits), kind -1 for none.
+fn std_at(b: Bytes, i: Int) -> (Int, Int, Int) {
+  let c = Int(b[i])
+  if c == 74 {
+    if at_is(b, i, b"Jan") {
+      if at_is(b, i, b"January") {
+        return (MONTH_LONG, 7, 0)
       }
-      if d == UInt8(48) {
-        out.write("{frac:${n}}")
-        i += 1 + n
-        hit = true
-      } else {
-        return Err(timego.LayoutErr{layout: go_layout, at: i, msg: "a trimmed fraction (.999) has no core field"})
+      if !lower_at(b, i + 3) {
+        return (MONTH_SHORT, 3, 0)
       }
     }
-    if !hit {
-      for (g, c) in es {
-        if rest.starts_with(g) {
-          if c == "" {
-            return Err(timego.LayoutErr{layout: go_layout, at: i, msg: "the element ${g} has no core time field"})
-          }
-          out.write(c)
-          i += g.len()
-          hit = true
-          break
+  } else if c == 77 {
+    if at_is(b, i, b"Mon") {
+      if at_is(b, i, b"Monday") {
+        return (WD_LONG, 6, 0)
+      }
+      if !lower_at(b, i + 3) {
+        return (WD_SHORT, 3, 0)
+      }
+    }
+    if at_is(b, i, b"MST") {
+      return (TZ_NAME, 3, 0)
+    }
+  } else if c == 48 {
+    if i + 1 < b.len() && Int(b[i + 1]) >= 49 && Int(b[i + 1]) <= 54 {
+      let d = Int(b[i + 1]) - 49
+      let ks = [MONTH_ZERO, DAY_ZERO, HOUR12_ZERO, MIN_ZERO, SEC_ZERO, YEAR2]
+      return (ks[d], 2, 0)
+    }
+    if at_is(b, i, b"002") {
+      return (YDAY_ZERO, 3, 0)
+    }
+  } else if c == 49 {
+    if i + 1 < b.len() && Int(b[i + 1]) == 53 {
+      return (HOUR24, 2, 0)
+    }
+    return (MONTH_NUM, 1, 0)
+  } else if c == 50 {
+    if at_is(b, i, b"2006") {
+      return (YEAR4, 4, 0)
+    }
+    return (DAY, 1, 0)
+  } else if c == 95 {
+    if i + 1 < b.len() && Int(b[i + 1]) == 50 {
+      if at_is(b, i + 1, b"2006") {
+        return (-1, 1, 0)
+      }
+      return (DAY_UNDER, 2, 0)
+    }
+    if at_is(b, i, b"__2") {
+      return (YDAY_UNDER, 3, 0)
+    }
+  } else if c == 51 {
+    return (HOUR12, 1, 0)
+  } else if c == 52 {
+    return (MIN, 1, 0)
+  } else if c == 53 {
+    return (SEC, 1, 0)
+  } else if c == 80 {
+    if at_is(b, i, b"PM") {
+      return (PM_UP, 2, 0)
+    }
+  } else if c == 112 {
+    if at_is(b, i, b"pm") {
+      return (PM_LO, 2, 0)
+    }
+  } else if c == 45 {
+    if at_is(b, i, b"-070000") {
+      return (NUM_SECS, 7, 0)
+    }
+    if at_is(b, i, b"-07:00:00") {
+      return (NUM_COLON_SECS, 9, 0)
+    }
+    if at_is(b, i, b"-0700") {
+      return (NUM_BASIC, 5, 0)
+    }
+    if at_is(b, i, b"-07:00") {
+      return (NUM_COLON, 6, 0)
+    }
+    if at_is(b, i, b"-07") {
+      return (NUM_SHORT, 3, 0)
+    }
+  } else if c == 90 {
+    if at_is(b, i, b"Z070000") {
+      return (ISO_SECS, 7, 0)
+    }
+    if at_is(b, i, b"Z07:00:00") {
+      return (ISO_COLON_SECS, 9, 0)
+    }
+    if at_is(b, i, b"Z0700") {
+      return (ISO_BASIC, 5, 0)
+    }
+    if at_is(b, i, b"Z07:00") {
+      return (ISO_COLON, 6, 0)
+    }
+    if at_is(b, i, b"Z07") {
+      return (ISO_SHORT, 3, 0)
+    }
+  } else if c == 46 || c == 44 {
+    if i + 1 < b.len() && (Int(b[i + 1]) == 48 || Int(b[i + 1]) == 57) {
+      let ch = Int(b[i + 1])
+      var j = i + 1
+      while j < b.len() && Int(b[j]) == ch {
+        j += 1
+      }
+      if !digit_at(b, j) {
+        return (if ch == 48 { FRAC0 } else { FRAC9 }, j - i, j - (i + 1))
+      }
+    }
+  }
+  (-1, 1, 0)
+}
+
+fn layout(go_layout: Str) -> timego.Layout {
+  let b = go_layout.bytes()
+  var kinds: List[Int] = []
+  var lits: List[Str] = []
+  var ns: List[Int] = []
+  var lit_start = 0
+  var i = 0
+  while i < b.len() {
+    let (k, n, d) = std_at(b, i)
+    if k < 0 {
+      i += 1
+    } else {
+      if i > lit_start {
+        kinds.push(LIT)
+        lits.push(go_layout[lit_start..i].clone())
+        ns.push(0)
+      }
+      kinds.push(k)
+      // a fraction keeps its separator in lits, the other elements nothing
+      lits.push(if k == FRAC0 || k == FRAC9 { go_layout[i..i + 1].clone() } else { "" })
+      ns.push(d)
+      i += n
+      lit_start = i
+    }
+  }
+  if b.len() > lit_start {
+    kinds.push(LIT)
+    lits.push(go_layout[lit_start..].clone())
+    ns.push(0)
+  }
+  timego.Layout{text: go_layout, kinds: kinds, lits: lits, ns: ns}
+}
+
+fn put_int(out: BytesBuilder, n: Int, width: Int, pad: Int) -> BytesBuilder {
+  var o = out
+  let digits = "${n}"
+  var k = digits.len()
+  while k < width {
+    o.write_byte(UInt8(pad))
+    k += 1
+  }
+  o.write(digits.bytes())
+  o
+}
+
+fn is_leap(y: Int) -> Bool { y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) }
+
+fn days_in(m: Int, y: Int) -> Int {
+  if m == 2 && is_leap(y) { 29 } else { DAYS_BEFORE[m] - DAYS_BEFORE[m - 1] }
+}
+
+fn yday_of(y: Int, m: Int, d: Int) -> Int {
+  DAYS_BEFORE[m - 1] + d + (if m > 2 && is_leap(y) { 1 } else { 0 })
+}
+
+fn put_zone(out: BytesBuilder, kind: Int, offset: Int) -> BytesBuilder {
+  var o = out
+  let iso = kind >= ISO_BASIC && kind <= ISO_COLON_SECS
+  if offset == 0 && iso {
+    o.write_byte(UInt8(90))
+    return o
+  }
+  var zone = offset / 60
+  var abs_off = offset
+  if zone < 0 {
+    o.write_byte(UInt8(45))
+    zone = -zone
+    abs_off = -abs_off
+  } else {
+    o.write_byte(UInt8(43))
+  }
+  o = put_int(o, zone / 60, 2, 48)
+  let colon = kind == ISO_COLON || kind == NUM_COLON || kind == ISO_COLON_SECS || kind == NUM_COLON_SECS
+  if colon {
+    o.write_byte(UInt8(58))
+  }
+  if kind != NUM_SHORT && kind != ISO_SHORT {
+    o = put_int(o, zone % 60, 2, 48)
+  }
+  if kind == ISO_SECS || kind == NUM_SECS || kind == NUM_COLON_SECS || kind == ISO_COLON_SECS {
+    if kind == NUM_COLON_SECS || kind == ISO_COLON_SECS {
+      o.write_byte(UInt8(58))
+    }
+    o = put_int(o, abs_off % 60, 2, 48)
+  }
+  o
+}
+
+fn layout_format(l: timego.Layout, t: Time, z: time.Zone) -> Str {
+  let c = time.civil(t, z)
+  let year = c.date.year
+  let month = c.date.month
+  let day = c.date.day
+  let hour = c.time.hour
+  let offset = c.offset.nanos() / 1000000000
+  let wd = c.date.weekday().number() % 7
+  var out = BytesBuilder.with_capacity(l.text.len() + 16)
+  var i = 0
+  while i < l.kinds.len() {
+    let k = l.kinds[i]
+    if k == LIT {
+      out.write(l.lits[i].bytes())
+    } else if k == YEAR2 {
+      out = put_int(out, (if year < 0 { -year } else { year }) % 100, 2, 48)
+    } else if k == YEAR4 {
+      out = put_int(out, year, 4, 48)
+    } else if k == MONTH_LONG {
+      out.write(MONTHS[month - 1].bytes())
+    } else if k == MONTH_SHORT {
+      out.write(SHORT_MONTHS[month - 1].bytes())
+    } else if k == MONTH_NUM {
+      out = put_int(out, month, 1, 48)
+    } else if k == MONTH_ZERO {
+      out = put_int(out, month, 2, 48)
+    } else if k == WD_LONG {
+      out.write(DAYS[wd].bytes())
+    } else if k == WD_SHORT {
+      out.write(SHORT_DAYS[wd].bytes())
+    } else if k == DAY {
+      out = put_int(out, day, 1, 48)
+    } else if k == DAY_UNDER {
+      out = put_int(out, day, 2, 32)
+    } else if k == DAY_ZERO {
+      out = put_int(out, day, 2, 48)
+    } else if k == YDAY_UNDER {
+      out = put_int(out, yday_of(year, month, day), 3, 32)
+    } else if k == YDAY_ZERO {
+      out = put_int(out, yday_of(year, month, day), 3, 48)
+    } else if k == HOUR24 {
+      out = put_int(out, hour, 2, 48)
+    } else if k == HOUR12 || k == HOUR12_ZERO {
+      var h = hour % 12
+      if h == 0 {
+        h = 12
+      }
+      out = put_int(out, h, if k == HOUR12 { 1 } else { 2 }, 48)
+    } else if k == MIN {
+      out = put_int(out, c.time.minute, 1, 48)
+    } else if k == MIN_ZERO {
+      out = put_int(out, c.time.minute, 2, 48)
+    } else if k == SEC {
+      out = put_int(out, c.time.second, 1, 48)
+    } else if k == SEC_ZERO {
+      out = put_int(out, c.time.second, 2, 48)
+    } else if k == PM_UP {
+      out.write(if hour >= 12 { b"PM" } else { b"AM" })
+    } else if k == PM_LO {
+      out.write(if hour >= 12 { b"pm" } else { b"am" })
+    } else if k == TZ_NAME {
+      if c.zone != "" {
+        out.write(c.zone.bytes())
+      } else {
+        var zone = offset / 60
+        if zone < 0 {
+          out.write_byte(UInt8(45))
+          zone = -zone
+        } else {
+          out.write_byte(UInt8(43))
+        }
+        out = put_int(out, zone / 60, 2, 48)
+        out = put_int(out, zone % 60, 2, 48)
+      }
+    } else if k >= ISO_BASIC && k <= NUM_COLON_SECS {
+      out = put_zone(out, k, offset)
+    } else {
+      // a fractional second: ns digits of the nanoseconds, a run of nines without its trailing zeros
+      let digits = put_int(BytesBuilder.with_capacity(9), c.time.nanos, 9, 48).freeze()
+      var n = l.ns[i]
+      if n > 9 {
+        n = 9
+      }
+      if k == FRAC0 {
+        out.write(l.lits[i].bytes())
+        out.write(digits[0..n])
+        var extra = n
+        while extra < l.ns[i] {
+          out.write_byte(UInt8(48))
+          extra += 1
+        }
+      } else {
+        var end = n
+        while end > 0 && digits[end - 1] == UInt8(48) {
+          end -= 1
+        }
+        if end > 0 {
+          out.write(l.lits[i].bytes())
+          out.write(digits[0..end])
         }
       }
     }
-    if !hit {
-      let ch = rest[0..1]
-      if ch == "{" {
-        out.write("{lbrace}")
-      } else if ch == "}" {
-        out.write("{rbrace}")
-      } else {
-        out.write(ch)
+    i += 1
+  }
+  out.freeze().to_str_lossy()
+}
+
+fn format(t: Time, z: time.Zone, go_layout: Str) -> Str {
+  layout_format(layout(go_layout), t, z)
+}
+
+fn perr(s: Str, go_layout: Str, at: Int, msg: Str) -> time.ParseErr {
+  time.ParseErr{input: s, layout: go_layout, at: at, msg: msg}
+}
+
+fn lower_byte(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
+
+/// Go's lookup: the index of the name `v` begins with (case insensitive), or -1.
+fn lookup_name(names: List[Str], v: Bytes, p: Int) -> Int {
+  var i = 0
+  while i < names.len() {
+    let nb = names[i].bytes()
+    if p + nb.len() <= v.len() {
+      var k = 0
+      var ok = true
+      while k < nb.len() {
+        if lower_byte(Int(v[p + k])) != lower_byte(Int(nb[k])) {
+          ok = false
+          break
+        }
+        k += 1
       }
-      i += 1
+      if ok {
+        return i
+      }
+    }
+    i += 1
+  }
+  -1
+}
+
+/// Go's getnum: one or two digits (two when fixed): (value, next position), value -1 when bad.
+fn getnum(v: Bytes, p: Int, fixed: Bool) -> (Int, Int) {
+  if !digit_at(v, p) {
+    return (-1, p)
+  }
+  if !digit_at(v, p + 1) {
+    if fixed {
+      return (-1, p)
+    }
+    return (Int(v[p]) - 48, p + 1)
+  }
+  ((Int(v[p]) - 48) * 10 + Int(v[p + 1]) - 48, p + 2)
+}
+
+fn getnum3(v: Bytes, p: Int, fixed: Bool) -> (Int, Int) {
+  var n = 0
+  var i = 0
+  while i < 3 && digit_at(v, p + i) {
+    n = n * 10 + Int(v[p + i]) - 48
+    i += 1
+  }
+  if i == 0 || (fixed && i != 3) {
+    return (-1, p)
+  }
+  (n, p + i)
+}
+
+fn digits_at(v: Bytes, p: Int, n: Int) -> Int {
+  var x = 0
+  var i = 0
+  while i < n {
+    if !digit_at(v, p + i) {
+      return -1
+    }
+    x = x * 10 + Int(v[p + i]) - 48
+    i += 1
+  }
+  x
+}
+
+fn comma_or_period(v: Bytes, p: Int) -> Bool { p < v.len() && (Int(v[p]) == 46 || Int(v[p]) == 44) }
+
+/// Go's parseNanoseconds over nbytes at p (the separator included): nanoseconds, or -1.
+fn parse_nanos(v: Bytes, p: Int, nbytes: Int) -> Int {
+  var n = nbytes
+  if n > 10 {
+    n = 10
+  }
+  var ns = 0
+  var i = 1
+  while i < n {
+    if !digit_at(v, p + i) {
+      return -1
+    }
+    ns = ns * 10 + Int(v[p + i]) - 48
+    i += 1
+  }
+  var scale = 10 - n
+  while scale > 0 {
+    ns = ns * 10
+    scale -= 1
+  }
+  ns
+}
+
+/// Go's parseSignedOffset (a sign and a hour of at most 23): the length, 0 when none.
+fn parse_signed_offset(v: Bytes, p: Int) -> Int {
+  if p >= v.len() || (Int(v[p]) != 43 && Int(v[p]) != 45) {
+    return 0
+  }
+  var x = 0
+  var i = p + 1
+  while digit_at(v, i) {
+    x = x * 10 + Int(v[i]) - 48
+    if x > 100000000 {
+      return 0
+    }
+    i += 1
+  }
+  if i == p + 1 || x > 23 {
+    return 0
+  }
+  i - p
+}
+
+/// Go's parseTimeZone: the length of a zone name at p, 0 when it is not one.
+fn parse_zone_name(v: Bytes, p: Int) -> Int {
+  if v.len() - p < 3 {
+    return 0
+  }
+  if v.len() - p >= 4 && (at_is(v, p, b"ChST") || at_is(v, p, b"MeST")) {
+    return 4
+  }
+  if at_is(v, p, b"GMT") {
+    if v.len() - p == 3 {
+      return 3
+    }
+    return 3 + parse_signed_offset(v, p + 3)
+  }
+  if Int(v[p]) == 43 || Int(v[p]) == 45 {
+    return parse_signed_offset(v, p)
+  }
+  var up = 0
+  while up < 6 && p + up < v.len() && Int(v[p + up]) >= 65 && Int(v[p + up]) <= 90 {
+    up += 1
+  }
+  if up == 5 && Int(v[p + 4]) == 84 {
+    return 5
+  }
+  if up == 4 && (Int(v[p + 3]) == 84 || at_is(v, p, b"WITA")) {
+    return 4
+  }
+  if up == 3 {
+    return 3
+  }
+  0
+}
+
+/// Whether the literal prefix of a layout matches at p (Go's skip: a space in the layout matches a run of spaces).
+/// The next position, or -1.
+fn skip_lit(v: Bytes, p0: Int, lit: Bytes) -> Int {
+  var p = p0
+  var k = 0
+  while k < lit.len() {
+    if Int(lit[k]) == 32 {
+      if p < v.len() && Int(v[p]) != 32 {
+        return -1
+      }
+      while k < lit.len() && Int(lit[k]) == 32 {
+        k += 1
+      }
+      while p < v.len() && Int(v[p]) == 32 {
+        p += 1
+      }
+    } else {
+      if p >= v.len() || v[p] != lit[k] {
+        return -1
+      }
+      p += 1
+      k += 1
     }
   }
-  out.freeze()
+  p
 }
 
-fn format(t: Time, z: time.Zone, go_layout: Str) -> Str ! timego.LayoutErr {
-  time.format(t, z, to_core(go_layout)?)
+/// Go's RFC 3339 fast path: the text of the two reference layouts when it is plain, otherwise a failure the general
+/// parser then explains (as in Go, the result is the general parser's).
+fn parse_rfc3339(v: Bytes, z: time.Zone) -> Time? {
+  let n = v.len()
+  if n < 20 || !digit_at(v, 0) || Int(v[4]) != 45 || Int(v[7]) != 45 || Int(v[10]) != 84 || Int(v[13]) != 58 || Int(v[16]) != 58 {
+    return None
+  }
+  let year = digits_at(v, 0, 4)
+  let month = digits_at(v, 5, 2)
+  let day = digits_at(v, 8, 2)
+  let hour = digits_at(v, 11, 2)
+  let minute = digits_at(v, 14, 2)
+  let sec = digits_at(v, 17, 2)
+  if year < 0 || month < 1 || month > 12 || day < 1 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || sec < 0 || sec > 59 {
+    return None
+  }
+  if day > days_in(month, year) {
+    return None
+  }
+  var p = 19
+  var nsec = 0
+  if Int(v[p]) == 46 {
+    var q = p + 1
+    while digit_at(v, q) {
+      q += 1
+    }
+    if q == p + 1 {
+      return None
+    }
+    nsec = parse_nanos(v, p, q - p)
+    p = q
+  }
+  var off = 0
+  if p == n - 1 && Int(v[p]) == 90 {
+    off = 0
+  } else if p == n - 6 && (Int(v[p]) == 43 || Int(v[p]) == 45) && Int(v[p + 3]) == 58 {
+    let hh = digits_at(v, p + 1, 2)
+    let mm = digits_at(v, p + 4, 2)
+    if hh < 0 || mm < 0 || hh > 24 || mm > 60 {
+      return None
+    }
+    off = (hh * 60 + mm) * 60
+    if Int(v[p]) == 45 {
+      off = -off
+    }
+  } else {
+    return None
+  }
+  let d = match time.date(year, month, day) {
+    Ok(d) => d
+    Err(_) => return None
+  }
+  let t = match time.instant(d, time.ClockTime{hour: hour, minute: minute, second: sec, nanos: nsec}, time.utc(), time.Ambiguity.Earlier) {
+    Ok(t) => t
+    Err(_) => return None
+  }
+  Some(t - Duration.from_secs_int(off))
 }
 
-fn parse(s: Str, go_layout: Str, z: time.Zone) -> Time ! timego.Err {
-  let core = to_core(go_layout).map_err(fn(e) { timego.Err.Layout(err: e) })?
-  time.parse(s, core, z).map_err(fn(e) { timego.Err.Parse(err: e) })
+fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr {
+  let v = s.bytes()
+  if l.text == "2006-01-02T15:04:05Z07:00" || l.text == "2006-01-02T15:04:05.999999999Z07:00" {
+    match parse_rfc3339(v, z) {
+      Some(t) => return Ok(t)
+      None => {}
+    }
+  }
+  var p = 0
+  var year = 0
+  var month = -1
+  var day = -1
+  var yday = -1
+  var hour = 0
+  var minute = 0
+  var sec = 0
+  var nsec = 0
+  var pm_set = false
+  var am_set = false
+  var have_off = false
+  var off = 0
+  var zname = ""
+  var i = 0
+  while i < l.kinds.len() {
+    let k = l.kinds[i]
+    var bad = ""
+    if k == LIT {
+      let q = skip_lit(v, p, l.lits[i].bytes())
+      if q < 0 {
+        return Err(perr(s, l.text, p, "does not match the layout text " + l.lits[i]))
+      }
+      p = q
+    } else if k == YEAR2 {
+      let x = digits_at(v, p, 2)
+      if x < 0 {
+        bad = "expected 2 digit year"
+      } else {
+        year = if x >= 69 { x + 1900 } else { x + 2000 }
+        p += 2
+      }
+    } else if k == YEAR4 {
+      let x = digits_at(v, p, 4)
+      if x < 0 {
+        bad = "expected 4 digit year"
+      } else {
+        year = x
+        p += 4
+      }
+    } else if k == MONTH_LONG || k == MONTH_SHORT {
+      let x = lookup_name(if k == MONTH_LONG { MONTHS } else { SHORT_MONTHS }, v, p)
+      if x < 0 {
+        bad = "expected month name"
+      } else {
+        month = x + 1
+        p += (if k == MONTH_LONG { MONTHS[x] } else { SHORT_MONTHS[x] }).len()
+      }
+    } else if k == MONTH_NUM || k == MONTH_ZERO {
+      let (x, q) = getnum(v, p, k == MONTH_ZERO)
+      if x < 0 {
+        bad = "expected month number"
+      } else if x < 1 || x > 12 {
+        bad = "month out of range"
+      } else {
+        month = x
+        p = q
+      }
+    } else if k == WD_LONG || k == WD_SHORT {
+      let x = lookup_name(if k == WD_LONG { DAYS } else { SHORT_DAYS }, v, p)
+      if x < 0 {
+        bad = "expected weekday name"
+      } else {
+        p += (if k == WD_LONG { DAYS[x] } else { SHORT_DAYS[x] }).len()
+      }
+    } else if k == DAY || k == DAY_UNDER || k == DAY_ZERO {
+      if k == DAY_UNDER && p < v.len() && Int(v[p]) == 32 {
+        p += 1
+      }
+      let (x, q) = getnum(v, p, k == DAY_ZERO)
+      if x < 0 {
+        bad = "expected day"
+      } else {
+        day = x
+        p = q
+      }
+    } else if k == YDAY_UNDER || k == YDAY_ZERO {
+      var skipped = 0
+      if k == YDAY_UNDER {
+        while skipped < 2 && p < v.len() && Int(v[p]) == 32 {
+          p += 1
+          skipped += 1
+        }
+      }
+      let (x, q) = getnum3(v, p, k == YDAY_ZERO)
+      if x < 0 {
+        bad = "expected day of year"
+      } else if x < 1 || x > 366 {
+        bad = "day-of-year out of range"
+      } else {
+        yday = x
+        p = q
+      }
+    } else if k == HOUR24 {
+      let (x, q) = getnum(v, p, false)
+      if x < 0 {
+        bad = "expected hour"
+      } else if x >= 24 {
+        bad = "hour out of range"
+      } else {
+        hour = x
+        p = q
+      }
+    } else if k == HOUR12 || k == HOUR12_ZERO {
+      let (x, q) = getnum(v, p, k == HOUR12_ZERO)
+      if x < 0 {
+        bad = "expected hour"
+      } else if x > 12 {
+        bad = "hour out of range"
+      } else {
+        hour = x
+        p = q
+      }
+    } else if k == MIN || k == MIN_ZERO {
+      let (x, q) = getnum(v, p, k == MIN_ZERO)
+      if x < 0 {
+        bad = "expected minute"
+      } else if x >= 60 {
+        bad = "minute out of range"
+      } else {
+        minute = x
+        p = q
+      }
+    } else if k == SEC || k == SEC_ZERO {
+      let (x, q) = getnum(v, p, k == SEC_ZERO)
+      if x < 0 {
+        bad = "expected second"
+      } else if x >= 60 {
+        bad = "second out of range"
+      } else {
+        sec = x
+        p = q
+        // a fraction without a fractional second element in the layout is still read
+        if comma_or_period(v, p) && digit_at(v, p + 1) {
+          var j = i + 1
+          while j < l.kinds.len() && l.kinds[j] == LIT {
+            j += 1
+          }
+          let has_frac = j < l.kinds.len() && (l.kinds[j] == FRAC0 || l.kinds[j] == FRAC9)
+          if !has_frac {
+            var n = 2
+            while digit_at(v, p + n) {
+              n += 1
+            }
+            nsec = parse_nanos(v, p, n)
+            p += n
+          }
+        }
+      }
+    } else if k == PM_UP || k == PM_LO {
+      if at_is(v, p, if k == PM_UP { b"PM" } else { b"pm" }) {
+        pm_set = true
+        p += 2
+      } else if at_is(v, p, if k == PM_UP { b"AM" } else { b"am" }) {
+        am_set = true
+        p += 2
+      } else {
+        bad = "expected AM or PM"
+      }
+    } else if k == TZ_NAME {
+      if at_is(v, p, b"UTC") {
+        have_off = true
+        off = 0
+        p += 3
+      } else {
+        let n = parse_zone_name(v, p)
+        if n == 0 {
+          bad = "expected time zone name"
+        } else {
+          zname = s[p..p + n]
+          p += n
+        }
+      }
+    } else if k >= ISO_BASIC && k <= NUM_COLON_SECS {
+      let iso = k >= ISO_BASIC && k <= ISO_COLON_SECS
+      if iso && p < v.len() && Int(v[p]) == 90 {
+        have_off = true
+        off = 0
+        p += 1
+      } else {
+        let colon = k == ISO_COLON || k == NUM_COLON
+        let colon_secs = k == ISO_COLON_SECS || k == NUM_COLON_SECS
+        let short = k == ISO_SHORT || k == NUM_SHORT
+        let secs = k == ISO_SECS || k == NUM_SECS
+        var need = 5
+        if colon {
+          need = 6
+        } else if short {
+          need = 3
+        } else if colon_secs {
+          need = 9
+        } else if secs {
+          need = 7
+        }
+        var hh = -1
+        var mm = 0
+        var ss = 0
+        if v.len() - p >= need {
+          let h0 = p + 1
+          if colon {
+            if Int(v[p + 3]) == 58 {
+              hh = digits_at(v, h0, 2)
+              mm = digits_at(v, p + 4, 2)
+            }
+          } else if short {
+            hh = digits_at(v, h0, 2)
+          } else if colon_secs {
+            if Int(v[p + 3]) == 58 && Int(v[p + 6]) == 58 {
+              hh = digits_at(v, h0, 2)
+              mm = digits_at(v, p + 4, 2)
+              ss = digits_at(v, p + 7, 2)
+            }
+          } else if secs {
+            hh = digits_at(v, h0, 2)
+            mm = digits_at(v, p + 3, 2)
+            ss = digits_at(v, p + 5, 2)
+          } else {
+            hh = digits_at(v, h0, 2)
+            mm = digits_at(v, p + 3, 2)
+          }
+        }
+        let sign = if v.len() - p >= 1 { Int(v[p]) } else { 0 }
+        if hh < 0 || mm < 0 || ss < 0 || (sign != 43 && sign != 45) {
+          bad = "expected time zone offset"
+        } else if hh > 24 || mm > 60 || ss > 60 {
+          bad = "time zone offset out of range"
+        } else {
+          off = (hh * 60 + mm) * 60 + ss
+          if sign == 45 {
+            off = -off
+          }
+          have_off = true
+          p += need
+        }
+      }
+    } else if k == FRAC0 {
+      let nd = 1 + l.ns[i]
+      if v.len() - p < nd || !comma_or_period(v, p) {
+        bad = "expected fractional second"
+      } else {
+        let x = parse_nanos(v, p, nd)
+        if x < 0 {
+          bad = "expected fractional second"
+        } else {
+          nsec = x
+          p += nd
+        }
+      }
+    } else {
+      if comma_or_period(v, p) && digit_at(v, p + 1) {
+        var n = 1
+        while digit_at(v, p + n) {
+          n += 1
+        }
+        nsec = parse_nanos(v, p, n)
+        p += n
+      }
+    }
+    if bad != "" {
+      return Err(perr(s, l.text, p, bad))
+    }
+    if nsec < 0 {
+      return Err(perr(s, l.text, p, "bad fractional second"))
+    }
+    i += 1
+  }
+  if p < v.len() {
+    return Err(perr(s, l.text, p, "extra text"))
+  }
+  if pm_set && hour < 12 {
+    hour += 12
+  } else if am_set && hour == 12 {
+    hour = 0
+  }
+  if yday >= 0 {
+    var d = 0
+    var m = 0
+    var yd = yday
+    if is_leap(year) {
+      if yd == 60 {
+        m = 2
+        d = 29
+      } else if yd > 60 {
+        yd -= 1
+      }
+    }
+    if yd < 1 || yd > 365 {
+      return Err(perr(s, l.text, p, "day-of-year out of range"))
+    }
+    if m == 0 {
+      m = (yd - 1) / 31 + 1
+      if DAYS_BEFORE[m] < yd {
+        m += 1
+      }
+      d = yd - DAYS_BEFORE[m - 1]
+    }
+    if month >= 0 && month != m {
+      return Err(perr(s, l.text, p, "day-of-year does not match month"))
+    }
+    month = m
+    if day >= 0 && day != d {
+      return Err(perr(s, l.text, p, "day-of-year does not match day"))
+    }
+    day = d
+  } else {
+    if month < 0 {
+      month = 1
+    }
+    if day < 0 {
+      day = 1
+    }
+  }
+  if day < 1 || day > days_in(month, year) {
+    return Err(perr(s, l.text, p, "day out of range"))
+  }
+  let clock = time.ClockTime{hour: hour, minute: minute, second: sec, nanos: nsec}
+  let d = match time.date(year, month, day) {
+    Ok(d) => d
+    Err(e) => return Err(perr(s, l.text, p, "range: " + e.display()))
+  }
+  if zname != "" {
+    // a zone name: the zone's own offset when it was in effect, else a fixed zone with an unknown offset (GMT+N
+    // reads its hour)
+    let t = match time.instant(d, clock, time.utc(), time.Ambiguity.Earlier) {
+      Ok(t) => t
+      Err(e) => return Err(perr(s, l.text, p, "range: " + e.display()))
+    }
+    if z.abbreviation_at(t) == zname {
+      return Ok(t - z.offset_at(t))
+    }
+    var secs = 0
+    if zname.len() > 3 && zname.starts_with("GMT") {
+      let zb = zname.bytes()
+      var q = 3
+      let neg = Int(zb[q]) == 45
+      if Int(zb[q]) == 45 || Int(zb[q]) == 43 {
+        q += 1
+      }
+      var x = 0
+      while digit_at(zb, q) {
+        x = x * 10 + Int(zb[q]) - 48
+        q += 1
+      }
+      secs = (if neg { -x } else { x }) * 3600
+    }
+    return Ok(t - Duration.from_secs_int(secs))
+  }
+  if have_off {
+    let t = match time.instant(d, clock, time.utc(), time.Ambiguity.Earlier) {
+      Ok(t) => t
+      Err(e) => return Err(perr(s, l.text, p, "range: " + e.display()))
+    }
+    return Ok(t - Duration.from_secs_int(off))
+  }
+  match time.instant(d, clock, z, time.Ambiguity.Earlier) {
+    Ok(t) => Ok(t)
+    Err(e) => Err(perr(s, l.text, p, "range: " + e.display()))
+  }
 }
 
-fn layout(go_layout: Str) -> time.Layout ! timego.LayoutErr {
-  time.layout(to_core(go_layout)?)
+fn parse(s: Str, go_layout: Str, z: time.Zone) -> Time ! time.ParseErr {
+  layout_parse(layout(go_layout), s, z)
 }
