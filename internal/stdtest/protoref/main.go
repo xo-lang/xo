@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"math"
+	"sort"
 
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
@@ -62,6 +63,13 @@ func repDesc() protoreflect.MessageDescriptor {
 		}
 		return d
 	}
+	mf := func(name string, num int32, tn string) *descriptorpb.FieldDescriptorProto {
+		return f(name, num, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, true, tn)
+	}
+	entry := func(name string, kt, vt descriptorpb.FieldDescriptorProto_Type, vtn string) *descriptorpb.DescriptorProto {
+		return &descriptorpb.DescriptorProto{Name: proto.String(name), Options: &descriptorpb.MessageOptions{MapEntry: proto.Bool(true)},
+			Field: []*descriptorpb.FieldDescriptorProto{f("key", 1, kt, false, ""), f("value", 2, vt, false, vtn)}}
+	}
 	maybe := f("maybe", 4, descriptorpb.FieldDescriptorProto_TYPE_INT64, false, "")
 	maybe.Proto3Optional = proto.Bool(true)
 	maybe.OneofIndex = proto.Int32(0)
@@ -78,7 +86,13 @@ func repDesc() protoreflect.MessageDescriptor {
 				f("inners", 6, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, true, ".t.In"),
 				f("mo", 7, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, false, ".t.In"),
 				f("ds", 8, descriptorpb.FieldDescriptorProto_TYPE_DOUBLE, true, ""),
-			}, OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("_maybe")}}},
+				mf("ms", 9, ".t.R.MsEntry"), mf("mn", 10, ".t.R.MnEntry"), mf("mb", 11, ".t.R.MbEntry"),
+			}, OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("_maybe")}},
+				NestedType: []*descriptorpb.DescriptorProto{
+					entry("MsEntry", descriptorpb.FieldDescriptorProto_TYPE_STRING, descriptorpb.FieldDescriptorProto_TYPE_INT64, ""),
+					entry("MnEntry", descriptorpb.FieldDescriptorProto_TYPE_INT64, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, ".t.In"),
+					entry("MbEntry", descriptorpb.FieldDescriptorProto_TYPE_BOOL, descriptorpb.FieldDescriptorProto_TYPE_STRING, ""),
+				}},
 		},
 	}, nil)
 	if err != nil {
@@ -130,7 +144,27 @@ func showRep(m *dynamicpb.Message) string {
 	for i := 0; i < l.Len(); i++ {
 		ds = append(ds, strconv.FormatUint(math.Float64bits(l.Get(i).Float()), 10))
 	}
-	return fmt.Sprintf("%d %s %s %s %s %s %s %s", m.Get(d.ByNumber(1)).Int(), list(nums), list(tags), maybe, a(m.Get(d.ByNumber(5)).Message()), list(inners), mo, list(ds))
+	var ms, mn, mb []string
+	m.Get(d.ByNumber(9)).Map().Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
+		ms = append(ms, k.String()+"="+strconv.FormatInt(v.Int(), 10))
+		return true
+	})
+	m.Get(d.ByNumber(10)).Map().Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
+		mn = append(mn, strconv.FormatInt(k.Int(), 10)+"="+a(v.Message()))
+		return true
+	})
+	m.Get(d.ByNumber(11)).Map().Range(func(k protoreflect.MapKey, v protoreflect.Value) bool {
+		t := hex.EncodeToString([]byte(v.String()))
+		if t == "" {
+			t = "~"
+		}
+		mb = append(mb, strconv.FormatBool(k.Bool())+"="+t)
+		return true
+	})
+	sort.Strings(ms)
+	sort.Strings(mn)
+	sort.Strings(mb)
+	return fmt.Sprintf("%d %s %s %s %s %s %s %s %s %s %s", m.Get(d.ByNumber(1)).Int(), list(nums), list(tags), maybe, a(m.Get(d.ByNumber(5)).Message()), list(inners), mo, list(ds), list(ms), list(mn), list(mb))
 }
 
 func showMsg(m *dynamicpb.Message) string {
@@ -311,6 +345,33 @@ func main() {
 				for _, x := range strings.Split(f[8], ",") {
 					v, _ := strconv.ParseUint(x, 10, 64)
 					l.Append(protoreflect.ValueOfFloat64(math.Float64frombits(v)))
+				}
+			}
+			if len(f) > 9 && f[9] != "-" {
+				mp := m.Mutable(d.ByNumber(9)).Map()
+				for _, kv := range strings.Split(f[9], ",") {
+					p := strings.SplitN(kv, "=", 2)
+					v, _ := strconv.ParseInt(p[1], 10, 64)
+					mp.Set(protoreflect.ValueOfString(p[0]).MapKey(), protoreflect.ValueOfInt64(v))
+				}
+			}
+			if len(f) > 10 && f[10] != "-" {
+				mp := m.Mutable(d.ByNumber(10)).Map()
+				for _, kv := range strings.Split(f[10], ",") {
+					p := strings.SplitN(kv, "=", 2)
+					k, _ := strconv.ParseInt(p[0], 10, 64)
+					mp.Set(protoreflect.ValueOfInt64(k).MapKey(), mk(p[1]))
+				}
+			}
+			if len(f) > 11 && f[11] != "-" {
+				mp := m.Mutable(d.ByNumber(11)).Map()
+				for _, kv := range strings.Split(f[11], ",") {
+					p := strings.SplitN(kv, "=", 2)
+					if p[1] == "~" {
+						p[1] = ""
+					}
+					bs, _ := hex.DecodeString(p[1])
+					mp.Set(protoreflect.ValueOfBool(p[0] == "true").MapKey(), protoreflect.ValueOfString(string(bs)))
 				}
 			}
 			out, err := proto.MarshalOptions{Deterministic: true}.Marshal(m)

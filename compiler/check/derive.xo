@@ -1608,6 +1608,24 @@ fn proto_elem(tx: Str, po: ProtoOpts) -> ProtoElem? {
   None
 }
 
+/// The text of a field type for derive Proto: yaml_type_text, and a Map keyed by Int, Str or Bool.
+fn proto_type_text(t: parser.Type) -> Str? {
+  match t {
+    NamedType(_, path, args) => {
+      if path.len() == 1 && args.len() == 2 && text(path[0].name) == "Map" {
+        let k = yaml_type_text(args[0]) ?? return None
+        if !(k is "Int" | "Str" | "Bool") {
+          return None
+        }
+        let v = yaml_type_text(args[1]) ?? return None
+        return Some("Map[${k}, ${v}]")
+      }
+      yaml_type_text(t)
+    }
+    _ => yaml_type_text(t)
+  }
+}
+
 fn proto_sub(t: Str, b: Str, v: Str, x: Str) -> Str {
   t.replace("$B", b).replace("$V", v).replace("$X", x)
 }
@@ -1646,7 +1664,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
     }
     used.push(po.num)
     let k = po.num
-    var tx = yaml_type_text(fl.typ) ?? ""
+    var tx = proto_type_text(fl.typ) ?? ""
     var kind = 0
     if tx.starts_with("Option[") && tx.ends_with("]") {
       kind = 1
@@ -1657,6 +1675,27 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
     } else if tx.starts_with("List[") && tx.ends_with("]") {
       kind = 2
       tx = tx[5..tx.len() - 1]
+    }
+    if kind == 0 && tx.starts_with("Map[") && tx.ends_with("]") {
+      let kv = tx[4..tx.len() - 1].split(", ")
+      let kel = if kv.len() == 2 { proto_elem(kv[0], ProtoOpts{num: 0, zigzag: false, fixed: false, bad: ""}) } else { None }
+      let vel = if kv.len() == 2 && !kv[1].contains("[") { proto_elem(kv[1], po) } else { None }
+      if let Some(ke) = kel {
+        if let Some(ve) = vel {
+          if kv[0] == "Int" || kv[0] == "Str" || kv[0] == "Bool" {
+            zeros.push("${f}: {}")
+            wr.push("  for k in v.${f}.keys().sort() {")
+            wr.push("    let val = v.${f}.get(k) ?? ${ve.zero}")
+            wr.push("    var eb = b\"\"")
+            wr.push("    eb = ${proto_sub(ke.enc, "protobuf.append_tag(eb, 1, ${ke.wire})", "k", "")}")
+            wr.push("    eb = ${proto_sub(ve.enc, "protobuf.append_tag(eb, 2, ${ve.wire})", "val", "")}")
+            wr.push("    b = protobuf.append_bytes(protobuf.append_tag(b, ${k}, 2), eb)")
+            wr.push("  }")
+            rd.push((" num == ${k} && wire == 2", ["let (x, n2) = protobuf.read_bytes(data, at)?", "at = n2", "var ek = ${ke.zero}", "var ev = ${ve.zero}", "var q = 0", "while q < x.len() {", "  let (en, ew, q1) = protobuf.read_tag(x, q)?", "  q = q1", "  if en == 1 && ew == ${ke.wire} {", "    let (y, q2) = ${ke.rd}(x, q)?", "    q = q2", "    ek = ${proto_sub(ke.conv, "", "", "y")}", "  } else if en == 2 && ew == ${ve.wire} {", "    let (y, q2) = ${ve.rd}(x, q)?", "    q = q2", "    ev = ${if ve.merge.is_empty() { proto_sub(ve.conv, "", "", "y") } else { proto_sub(ve.merge, "", "", "y").replace("$R", "ev") }}", "  } else {", "    q = protobuf.skip_field(x, q, en, ew)?", "  }", "}", "r.${f}[ek] = ev"]))
+            continue
+          }
+        }
+      }
     }
     let el = proto_elem(tx, po) ?? {
       c.error_at(file, "XO0425", fl.name.span, "`derive Proto` maps an Int, Bool, Float, Str, Bytes or a struct deriving Proto, alone or in an Option or List; `${f}` is not one (decision 0530)")
