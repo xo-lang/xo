@@ -584,21 +584,20 @@ fn float_digits(f: Float) -> (Str, Int) {
     }
     None => {}
   }
-  var digits = ip + fp
+  let digits = ip + fp
   var exp10 = ip.len() - 1 + e
-  // strip leading zeros
+  // strip leading and trailing zeros, comparing bytes (a Str slice per step allocates)
+  let db = digits.bytes()
   var lead = 0
-  while lead < digits.len() - 1 && digits[lead..(lead + 1)] == "0" {
+  while lead < db.len() - 1 && db[lead] == 48 {
     lead += 1
   }
-  digits = digits[lead..digits.len()]
   exp10 -= lead
-  // strip trailing zeros
-  var end = digits.len()
-  while end > 1 && digits[(end - 1)..end] == "0" {
+  var end = db.len()
+  while end > lead + 1 && db[end - 1] == 48 {
     end -= 1
   }
-  (digits[0..end], exp10)
+  (digits[lead..end], exp10)
 }
 
 fn diag_float(f: Float) -> Str {

@@ -58,3 +58,14 @@ that is not one entry is `CborErr.Type`. New `cbor.bad_variant` helper for the g
 
 On an enum, `derive Cbor(case: snake | camel | pascal | kebab)` converts the variant names on the wire (`FastPath` is
 `fast_path` under snake); a variant's `as "name"` wins.
+
+## 2026-11-06: perf: the diagnostic float digits are stripped by bytes
+
+- Kind: perf
+- Commit: this commit
+- Found by: `xo vet --cost --cost-std` (XO0913, TestVetCostStd) after decision 0460
+- Go reference: none
+- Test: testdata/corpus/cbor, testdata/corpus/cborfuzz, cmd/xo TestVetCostStd
+
+`diag_float` stripped the leading and trailing zeros of the digit text with a Str slice per step; it now walks the bytes and
+slices once. No output change (cbor corpus 16 and cborfuzz 1,500 pass).
