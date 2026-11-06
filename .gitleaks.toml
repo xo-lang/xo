@@ -2,17 +2,21 @@
 # public repository,
 #   gitleaks git --log-opts="--all" -v .
 # The allowlist covers known false positives only: self-signed test keys
-# in the TLS goldens, and TLS code that compares key types.
+# in the TLS goldens, TLS code that compares key types, and the vendored
+# SQLite amalgamation (decision 0534: sqlite3_api-> and iKey== lines read
+# as generic API keys; its bytes are pinned by TestSQLiteVendored's
+# SHA-256, so it cannot change unseen).
 [extend]
 useDefault = true
 
 [allowlist]
-description = "TLS test fixtures, key-type comparisons, time zone name lists"
+description = "TLS test fixtures, key-type comparisons, time zone name lists, vendored SQLite"
 paths = [
   '''internal/llvm/testdata/golden/http_tls[^/]*/main\.xo''',
   '''internal/llvm/testdata/golden/http_conn_fault/main\.xo''',
   '''std/native/llrt/tls1[23](srv)?\.xo''',
   '''third_party/mbedtls/''',
+  '''std/native/sqlite/sqlite3\.c''',
   '''internal/llvm/time_diff_test\.go''',
 ]
 

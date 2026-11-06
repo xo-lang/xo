@@ -115,6 +115,8 @@ sqlite3_open_v2, `sqlite3_stmt **` in sqlite3_prepare_v3), destructor function p
   release scripts build it; std-coverage.md gets the row.
 - The binder gains a Bytes result kind, usable by any `use c` program.
 
+- std's store (decision 0388) does not hold std/sqlite: its `use c` made the store build link with cc and fail (2026-11-06, main red at 7b1cbe8da; gotchas/std-store-build-use-c-module.md), so the std roots skip any std module with a `use c` line, and a program that imports sqlite builds it as its own part. The vendored sqlite3.c is on .gitleaks.toml's path allowlist (4 generic-api-key false positives; its bytes are pinned by TestSQLiteVendored).
+
 ## Alternatives
 - `use c` of sqlite3.c at the user's build (route 1): needs cc per target for every user;
   first build compiles 9 MB of C. Kept as the checkout path only.
