@@ -40,6 +40,7 @@ fn (m: MapFs) set_modified(path: Str, t: Time) -> () ! FsErr { Err(FsErr.Denied(
 fn (m: MapFs) open(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (m: MapFs) create(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (m: MapFs) open_append(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) open_rw(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (m: MapFs) create_new(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (m: MapFs) append(path: Str, data: Bytes) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (m: MapFs) copy(from: Str, to: Str) -> () ! FsErr { Err(FsErr.Denied(path: from)) }

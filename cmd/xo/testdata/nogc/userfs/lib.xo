@@ -101,6 +101,10 @@ fn (f: FlakyFs) open_append(path: Str) -> File ! FsErr uses fs.write {
   f.inner.open_append(path)
 }
 
+fn (f: FlakyFs) open_rw(path: Str) -> File ! FsErr uses fs.write {
+  f.inner.open_rw(path)
+}
+
 fn (f: FlakyFs) create_new(path: Str) -> File ! FsErr uses fs.write {
   f.inner.create_new(path)
 }
