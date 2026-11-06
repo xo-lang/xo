@@ -390,3 +390,11 @@ lease and a waiting `--ab` runs between steps instead of waiting for the
 whole tier (tier 34 held the lane 1h18m; `--ab` runs waited up to 1h16m).
 A Mac tier step the memory cap stops (exit 143) runs once more at `-p=2`.
 Last verified: 2026-11-01
+
+- `OFF_WAIT_MIN=N` (offload.sh, heavyd `lease -wait=N`): when no lane slot
+  came in N minutes the job is not run and offload.sh exits 77. For
+  coverage steps that should be skipped rather than waited for: the full
+  tier's linux llvm and cmd steps use 20 and are named "SKIPPED" in the
+  tier's offload line (lead, 2026-11-06 bottleneck review: tier 54's
+  linux LLVM step waited 1h33m for every slot of the second host behind a
+  6 hour soak and held the 0.41.0 gate). Last verified: 2026-11-06.
