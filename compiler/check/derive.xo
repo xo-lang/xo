@@ -1138,8 +1138,11 @@ fn (var c: Checker) cbor_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
       if path.len() == 2 && args.is_empty() && n == "Value" && text(path[0].name) == "cbor" {
         return Some(("cbor.to_value", "cbor.Value.Null", e))
       }
-      if path.len() == 1 && args.is_empty() && n is "Time" | "Duration" {
-        return None
+      if path.len() == 1 && args.is_empty() && n == "Time" {
+        return Some(("cbor.to_time", "Time.UNIX_EPOCH", e))
+      }
+      if path.len() == 1 && args.is_empty() && n == "Duration" {
+        return Some(("cbor.to_duration", "Duration.from_nanos(0)", e))
       }
       if path.len() == 1 && args.len() == 1 && n == "Option" {
         let (inner, _, e2) = c.cbor_reader(args[0], sp, e, done) ?? return None
@@ -1240,8 +1243,11 @@ fn (var c: Checker) cbor_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
       if path.len() == 2 && args.is_empty() && n == "Value" && text(path[0].name) == "cbor" {
         return Some(("cbor.from_value", e))
       }
-      if path.len() == 1 && args.is_empty() && n is "Time" | "Duration" {
-        return None
+      if path.len() == 1 && args.is_empty() && n == "Time" {
+        return Some(("cbor.from_time", e))
+      }
+      if path.len() == 1 && args.is_empty() && n == "Duration" {
+        return Some(("cbor.from_duration", e))
       }
       if path.len() == 1 && args.len() == 1 && n == "Option" {
         let (inner, e2) = c.cbor_writer(args[0], sp, e, done) ?? return None
@@ -1297,10 +1303,12 @@ struct CborOpts {
   omit: Bool
   keyasint: Bool
   skip: Bool
+  /// the first option that is none of the above
+  bad: Str
 }
 
 fn cbor_opts(fl: parser.Field) -> CborOpts {
-  var o = CborOpts{key: text(fl.name.name), omit: false, keyasint: false, skip: false}
+  var o = CborOpts{key: text(fl.name.name), omit: false, keyasint: false, skip: false, bad: ""}
   var wire: Str? = None
   for fw in fl.formats {
     if fw.format == b"cbor" {
@@ -1326,6 +1334,8 @@ fn cbor_opts(fl: parser.Field) -> CborOpts {
         o.omit = true
       } else if opt == "keyasint" {
         o.keyasint = true
+      } else if o.bad.is_empty() {
+        o.bad = opt
       }
     }
   }
@@ -1340,6 +1350,8 @@ fn cbor_empty_test(tx: Str, f: Str) -> Str {
     "Float" => "v.${f} == 0.0"
     "Bool" => "!v.${f}"
     "Bytes" => "v.${f}.len() == 0"
+    "Duration" => "v.${f}.nanos() == 0"
+    "Time" => "v.${f} == Time.UNIX_EPOCH"
     _ => if tx.starts_with("List[") || tx.starts_with("Map[") {
       "v.${f}.len() == 0"
     } else if tx.ends_with("?") || tx.starts_with("Option[") {
@@ -1370,6 +1382,11 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   for fl in sd.fields {
     let f = text(fl.name.name)
     let co = cbor_opts(fl)
+    if !co.bad.is_empty() {
+      c.error_at(file, "XO0422", fl.name.span, "unknown cbor option `${co.bad}` of field `${f}`; the options are omitempty, omitzero and keyasint (decision 0527)")
+      ok = false
+      continue
+    }
     let (rd, zero, e2) = c.cbor_reader(fl.typ, fl.name.span, e, done) ?? {
       c.error_at(file, "XO0425", fl.name.span, "`derive Cbor` maps a Str, Int, Float, Bool, Bytes, a cbor.Value, an Option, a List, a Map[Str, V] of those, or a struct that derives Cbor; field `${f}` is another type (decision 0527)")
       ok = false

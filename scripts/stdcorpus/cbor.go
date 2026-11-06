@@ -252,6 +252,9 @@ func cbValue(r *rand.Rand, depth int) []byte {
 // cbFor is a value of the kind the field wants, most of the time.
 func cbFor(r *rand.Rand, kind string) []byte {
 	if r.Intn(8) == 0 {
+		if kind == "time" {
+			return []byte{0xf5}
+		}
 		return cbValue(r, 1)
 	}
 	switch kind {
@@ -266,6 +269,20 @@ func cbFor(r *rand.Rand, kind string) []byte {
 		return []byte{0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0}
 	case "bool":
 		return []byte{0xf4 + byte(r.Intn(2))}
+	case "time":
+		switch r.Intn(6) {
+		case 0:
+			return []byte{0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0}
+		case 1:
+			return append(cbHead(6, 1), cbInt(int64(r.Intn(2000000000)))...)
+		case 2:
+			return append(cbHead(6, 0), cbText("2020-01-02T03:04:05Z")...)
+		case 3:
+			return cbText("2021-12-31T23:59:59+01:00")
+		case 4:
+			return cbInt(int64(r.Intn(2000000000)) - 1000000000)
+		}
+		return cbInt(int64(r.Intn(100000)))
 	case "bytes":
 		if r.Intn(4) == 0 {
 			return cbArr(cbInt(1), cbInt(int64(r.Intn(256))))
@@ -428,6 +445,15 @@ func cborDeepInputs(r *rand.Rand, n int) [][]byte {
 		if r.Intn(3) == 0 {
 			add("count", cbFor(r, "int"))
 		}
+		if r.Intn(2) == 0 {
+			add("when", cbFor(r, "time"))
+		}
+		if r.Intn(3) == 0 {
+			add("dur", cbFor(r, "int"))
+		}
+		if r.Intn(3) == 0 {
+			add("spent", cbFor(r, "int"))
+		}
 		in := cbMap(kv...)
 		if r.Intn(12) == 0 {
 			in = cborMutate(r, in)
@@ -464,6 +490,9 @@ struct Deep {
   flag: Bool?
   nested: Person?
   count as "count,omitempty": Int
+  when: Time?
+  dur: Duration?
+  spent as "spent,omitempty": Duration
 } derive Cbor
 
 test "unmarshal and marshal into nested types agree with the oracle" {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -38,6 +39,9 @@ type typedDeep struct {
 	Flag   *bool                `cbor:"flag"`
 	Nested *typedPerson         `cbor:"nested"`
 	Count  int                  `cbor:"count,omitempty"`
+	When   *time.Time           `cbor:"when"`
+	Dur    *time.Duration       `cbor:"dur"`
+	Spent  time.Duration        `cbor:"spent,omitempty"`
 }
 
 type typedResult struct {
@@ -54,6 +58,7 @@ func typedMain(mode string) {
 	}
 	eo := cbor.CoreDetEncOptions()
 	eo.NilContainers = cbor.NilContainerAsEmpty
+	eo.Time = cbor.TimeUnixDynamic
 	enc, err := eo.EncMode()
 	if err != nil {
 		panic(err)

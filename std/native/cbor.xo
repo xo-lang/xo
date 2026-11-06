@@ -1121,3 +1121,58 @@ fn sorted_keys(keys: List[Str]) -> List[Str] {
 fn to_value(v: cbor.Value, var st: cbor.Unm) -> (Bool, cbor.Value) { (true, v) }
 
 fn from_value(v: cbor.Value) -> cbor.Value { v }
+
+/// A Time as fxamacker's TimeUnixDynamic: whole seconds as an integer, else seconds as a float.
+fn from_time(t: Time) -> cbor.Value {
+  let ms = t.unix_millis()
+  if ms % 1000 == 0 {
+    return from_int(ms / 1000)
+  }
+  cbor.Value.Float(f: Float(ms) / 1000.0)
+}
+
+fn from_duration(d: Duration) -> cbor.Value { from_int(d.nanos()) }
+
+/// A Time from integer or float seconds since the epoch, or an RFC 3339 text.
+fn to_time(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Time) {
+  let (okt, v) = untag(v0, st)
+  if !okt || is_null(v) { return (false, Time.UNIX_EPOCH) }
+  match v {
+    cbor.Value.TextString(s) => {
+      if let Some(t) = Time.parse_rfc3339(s) {
+        return (true, t)
+      }
+      mismatch(st, "time.Time", v)
+      return (false, Time.UNIX_EPOCH)
+    }
+    cbor.Value.Float(f) => {
+      if f > -9.0e9 && f < 9.0e9 {
+        return (true, Time.from_unix_millis(Int(f * 1000.0)))
+      }
+      mismatch(st, "time.Time", v)
+      return (false, Time.UNIX_EPOCH)
+    }
+    _ => {}
+  }
+  if let Some(n) = value_to_int(v) {
+    // seconds beyond what a millisecond count holds are refused
+    if n > -9000000000 && n < 9000000000 {
+      return (true, Time.from_unix(n))
+    }
+    mismatch(st, "time.Time", v)
+    return (false, Time.UNIX_EPOCH)
+  }
+  mismatch(st, "time.Time", v)
+  (false, Time.UNIX_EPOCH)
+}
+
+/// A Duration from integer nanoseconds.
+fn to_duration(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Duration) {
+  let (okt, v) = untag(v0, st)
+  if !okt || is_null(v) { return (false, Duration.from_nanos(0)) }
+  if let Some(n) = value_to_int(v) {
+    return (true, Duration.from_nanos(n))
+  }
+  mismatch(st, "time.Duration", v)
+  (false, Duration.from_nanos(0))
+}

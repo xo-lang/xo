@@ -140,3 +140,7 @@ fn unknown_key(var st: Unm, want: Str, k: Value)
 fn sorted_keys(keys: List[Str]) -> List[Str]
 fn to_value(v: Value, var st: Unm) -> (Bool, Value)
 fn from_value(v: Value) -> Value
+fn to_time(v: Value, var st: Unm) -> (Bool, Time)
+fn to_duration(v: Value, var st: Unm) -> (Bool, Duration)
+fn from_time(t: Time) -> Value
+fn from_duration(d: Duration) -> Value
