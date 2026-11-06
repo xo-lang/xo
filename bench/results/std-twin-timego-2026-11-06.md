@@ -24,3 +24,13 @@ Xo at 89509d0e2 (the layouts translated once with `timego.layout`, then `format`
 Format is within 25% of Go. Parse is 3.3x: the workload parses RFC 3339, which Go's time.Parse short-cuts with a hand written fast path
 (parseRFC3339), while core's Layout parse is the general walk (the std-twin-rows2 rows put it at 1.9x on other layouts). Next step:
 XO_PROF on parse, then a fast path in core time's Layout.parse for the RFC 3339 shape.
+
+## Go's layout engine (d3fcfb4f9, std/timego owns the layout scan, format and parse)
+
+| workload | Go ms | Xo ms | ratio | interval | RSS ratio | verdict |
+|---|---|---|---|---|---|---|
+| format | 30.15 | 34.56 | 1.146 | 1.118-1.188 | 0.158 | worse |
+| parse | 8.097 | 15.73 | 1.943 | 1.803-2.025 | 0.422 | worse |
+
+Parse went from 3.33x to 1.94x with the allocation free format, the name tables as Bytes literals and a direct instant for the RFC 3339
+and numeric offset parse. Next: layout_parse allocation (the result strings and the zone lookup).

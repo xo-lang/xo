@@ -30,5 +30,4 @@ New module for code ported from Go. `timego.to_core` translates a Go layout (`20
 `5`, `06`, `-07:00` (Go prints +00:00 for a zero offset, core prints Z), `002`, `-07`, `Z0700`, `pm`, seconds in offsets) is a `LayoutErr`, never a literal. Parsing is strict (core's rule: a weekday in the text must match the date, which Go ignores; `15` takes two digits, Go accepts one), and a zone
 abbreviation without an offset resolves in the given zone instead of Go's made up zone.
 
-Timing (host 2, n=5, bench/results/std-twin-timego-2026-11-06.md): translating on every call is 15.0x (format) and 25.5x (parse) of Go, so
-`timego.layout` translates once into a `time.Layout`: format 1.25x, parse 3.33x (Go's RFC 3339 fast path).
+Timing (host 2, n=5, bench/results/std-twin-timego-2026-11-06.md, d3fcfb4f9): format 1.15x Go, parse 1.94x (3.33x before the allocation free format and the direct instant).
