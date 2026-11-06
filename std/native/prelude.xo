@@ -1250,6 +1250,31 @@ fn set_intersect[T](s: Set[T], o: Set[T]) -> Set[T] {
   r
 }
 
+fn set_is_subset[T](s: Set[T], o: Set[T]) -> Bool {
+  if s.len() > o.len() {
+    return false
+  }
+  for x in s {
+    if !o.contains(x) {
+      return false
+    }
+  }
+  true
+}
+
+fn set_intersects[T](s: Set[T], o: Set[T]) -> Bool {
+  // walk the smaller set
+  if s.len() > o.len() {
+    return set_intersects(o, s)
+  }
+  for x in s {
+    if o.contains(x) {
+      return true
+    }
+  }
+  false
+}
+
 fn set_difference[T](s: Set[T], o: Set[T]) -> Set[T] {
   var r: Set[T] = #{}
   for x in s {

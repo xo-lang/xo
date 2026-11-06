@@ -1111,6 +1111,7 @@ Opt in with `derive` on the declaration:
 pub struct User { ... } derive Display, Ord, Json, OpenApi
 ```
 
+- `List`, `Map` and `Set` implement `Display` when their element types do, with the same text as `Debug`: `"${[1, 2]}"` is `[1, 2]`, `"${m}"` is `{"a": 1}`, `"${s}"` is `#{"x"}`, in iteration order, strings quoted (decision 0525). `Option` and `Result` do not (unwrap with `??`).
 - Derived `Display` prints the same text as `Debug`:
   `NotFound(id: 42)`, `User{id: 1, name: "a"}`. Implement `Display` by hand
   (`fn (e: ApiErr) display() -> Str`) for user facing text.

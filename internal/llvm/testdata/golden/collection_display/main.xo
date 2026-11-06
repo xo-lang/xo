@@ -1,0 +1,18 @@
+fn main(os: Os) {
+  let xs = [1, 2, 3]
+  let m = {"a": 1, "b": 2}
+  let s: Set[Str] = #{"x", "y"}
+  let e: List[Int] = []
+  os.stdio.println("${xs} ${m} ${s} ${e} ${[["a"], []]}")
+  os.stdio.println(xs.display())
+  os.stdio.println("${xs:?} ${m:?} ${s:?}")
+  let a: Set[Int] = #{1, 2, 3}
+  let b: Set[Int] = #{3, 2, 1}
+  let c: Set[Int] = #{1, 2}
+  let d: Set[Int] = #{7, 8}
+  let none: Set[Int] = #{}
+  os.stdio.println("${a == b} ${a == c} ${a != c}")
+  os.stdio.println("${c.is_subset(a)} ${a.is_subset(c)} ${none.is_subset(a)} ${a.is_subset(b)}")
+  os.stdio.println("${a.intersects(c)} ${a.intersects(d)} ${none.intersects(a)} ${d.intersects(a)}")
+  os.stdio.println("${a} ${a.union(d)} ${a.intersect(c)} ${a.difference(c)}")
+}

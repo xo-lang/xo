@@ -19,6 +19,18 @@
 
 `XO_CRASH_FILE=PATH` on Linux and macOS appends the reports a native program writes on standard error when it ends badly, a hardware fault's (crash.xo, both phases) and an uncaught fault's (`fault:` and its traceback), to PATH as well, creating it with mode 0644. The file is opened at start (std/native/llrt/crashfile.xo, close on exec), since the hardware fault report runs in a signal handler that may not allocate; a path that does not open is skipped. Windows and wasm ignore the variable.
 
+## 2026-11-05: feature: Display for List, Map and Set
+
+- Kind: feature
+- Commit: this push
+- Found by: the comparison with Go's container/set proposal (golang/go#69230); `${xs}` was XO0404 and agents hand wrote loops
+- Test: internal/llvm/testdata/golden/collection_display (native, LLVM, Go) and test/errorcheck/interp_collection
+- Shipped in: not yet released
+
+`"${xs}"` and `xs.display()` work on a `List`, `Map` or `Set` whose elements have Display; the text is the Debug text (`[1, 2]`, `{"a": 1}`, `#{"x"}`). Decision 0525.
+
+Also `Set.is_subset(o)` and `Set.intersects(o)` (the latter stops at the first shared element and allocates nothing); `==` on Sets already compared contents, ignoring order. A uniquely held Set is updated in place by `add` and by `s = s.union(x)` (1,000,000 adds 34 ms, 1,000,000 one element unions 70 ms on Mac arm64, against 49 ms for Go's map[int]struct{}).
+
 ## 2026-11-05: feature: Int8 to UInt32 wrapping_from and Float32 to_bits and from_bits
 
 - Kind: feature

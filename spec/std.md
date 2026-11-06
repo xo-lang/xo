@@ -68,7 +68,7 @@ order and NaNs end up last), derived `Ord` on types with Float fields,
 and every std error type implement `Display`, and so does every type with
 `derive Display`: `e.display()` is callable on each of them (the same text
 as `"${e}"`), as well as through a `T: Display` bound or an `Error` value.
-`Bytes` does not (use `to_str()`). `Json` is implemented by `derive Json` and by
+`List[T]`, `Map[K, V]` and `Set[T]` do when every type argument does, with their Debug text (`[1, 2]`, `{"a": 1}`, `#{"x"}`; decision 0525). `Bytes` does not (use `to_str()`). `Json` is implemented by `derive Json` and by
 builtin types (section 5). `SqlRow` is implemented only by `derive SqlRow`
 (section 10.4).
 
@@ -422,6 +422,8 @@ fn ([var] m: Map[K, V]) update[R](k: K, init: V, f: fn(var V) -> R) -> R
 fn (s: Set[T]) len() -> Int
 fn (s: Set[T]) contains(x: T) -> Bool
 fn (s: Set[T]) union(o: Set[T]) -> Set[T]    // also intersect, difference
+fn (s: Set[T]) is_subset(o: Set[T]) -> Bool   // every element of s is in o
+fn (s: Set[T]) intersects(o: Set[T]) -> Bool  // a shared element; stops at the first, allocates nothing
 fn (s: Set[T]) to_list() -> List[T]
 fn (s: Set[T]) is_empty() -> Bool
 fn (s: Set[T]) any(f: fn(T) -> Bool) -> Bool   // also all
@@ -5268,7 +5270,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-511 declarations.
+513 declarations.
 
 ### Range
 
@@ -5641,6 +5643,8 @@ fn (s: Set[T]) contains(x: T) -> Bool
 fn (s: Set[T]) union(o: Set[T]) -> Set[T]
 fn (s: Set[T]) intersect(o: Set[T]) -> Set[T]
 fn (s: Set[T]) difference(o: Set[T]) -> Set[T]
+fn (s: Set[T]) is_subset(o: Set[T]) -> Bool
+fn (s: Set[T]) intersects(o: Set[T]) -> Bool
 fn (s: Set[T]) to_list() -> List[T]
 fn (s: Set[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (s: Set[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx

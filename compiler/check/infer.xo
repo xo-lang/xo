@@ -392,6 +392,9 @@ pub fn (var c: Checker) implements(t0: Int, iface: Int, sp: Span) -> Bool {
         return true
       }
     }
+    if n == "Display" && c.is_display_collection(t, sp) {
+      return true
+    }
   }
   let x = c.tys[t]
   match x.kind {
@@ -819,6 +822,24 @@ fn (c: Checker) is_marked(t0: Int, name: Str) -> Bool {
     Param => c.constraint_is(t, name)
     Tuple | Func | Var | Bad | EffArg => false
   }
+}
+
+/// A List, Map or Set whose element types all implement Display: its
+/// Display text is its Debug text (core 2.9, decision 0525).
+fn (var c: Checker) is_display_collection(t: Int, sp: Span) -> Bool {
+  let o = c.named_obj(t)
+  if o < 0 || c.objs[o].module != c.prelude {
+    return false
+  }
+  if !((text(c.objs[o].name)) is "List" | "Map" | "Set") {
+    return false
+  }
+  for a in c.tys[t].args {
+    if !c.implements_name(a, "Display", sp) {
+      return false
+    }
+  }
+  true
 }
 
 fn (c: Checker) is_display_builtin(t: Int) -> Bool {

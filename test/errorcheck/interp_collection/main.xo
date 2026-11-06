@@ -1,0 +1,6 @@
+fn main(os: Os) {
+  let ok = [1, 2]
+  let none: List[Int?] = [None]
+  os.stdio.println("${ok}")
+  os.stdio.println("${none}") // ERROR XO0404 "does not implement `Display`"
+}

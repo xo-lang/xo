@@ -970,6 +970,32 @@ func Set_difference[T any](_ *Task, s Set[T], o Set[T]) Set[T] {
 	return r
 }
 
+// IsSubset is `s.is_subset(o)`.
+func Set_is_subset[T any](_ *Task, s Set[T], o Set[T]) bool {
+	if Set_len(nil, s) > Set_len(nil, o) {
+		return false
+	}
+	for x := range Set_All(s) {
+		if !Set_contains(nil, o, x) {
+			return false
+		}
+	}
+	return true
+}
+
+// Intersects is `s.intersects(o)`.
+func Set_intersects[T any](_ *Task, s Set[T], o Set[T]) bool {
+	if Set_len(nil, s) > Set_len(nil, o) {
+		s, o = o, s
+	}
+	for x := range Set_All(s) {
+		if Set_contains(nil, o, x) {
+			return true
+		}
+	}
+	return false
+}
+
 // SetAny is `s.any(f)`.
 func Set_any[T, E any](tk *Task, s Set[T], f func(*Task, T) Result[bool, E]) Result[bool, E] {
 	return List_any(tk, Set_to_list(tk, s), f)

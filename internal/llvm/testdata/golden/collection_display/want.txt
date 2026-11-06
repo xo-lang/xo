@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+[1, 2, 3] {"a": 1, "b": 2} #{"x", "y"} [] [["a"], []]
+[1, 2, 3]
+[1, 2, 3] {"a": 1, "b": 2} #{"x", "y"}
+true false true
+true false true true
+true false false false
+#{1, 2, 3} #{1, 2, 3, 7, 8} #{1, 2} #{3}
+--- stderr

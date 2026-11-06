@@ -633,6 +633,10 @@ fn (s: Set[T]) contains(x: T) -> Bool
 fn (s: Set[T]) union(o: Set[T]) -> Set[T]
 fn (s: Set[T]) intersect(o: Set[T]) -> Set[T]
 fn (s: Set[T]) difference(o: Set[T]) -> Set[T]
+/// Whether every element of s is in o (the empty set is a subset of every set).
+fn (s: Set[T]) is_subset(o: Set[T]) -> Bool
+/// Whether s and o share an element; stops at the first one and allocates nothing.
+fn (s: Set[T]) intersects(o: Set[T]) -> Bool
 fn (s: Set[T]) to_list() -> List[T]
 fn (s: Set[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (s: Set[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx

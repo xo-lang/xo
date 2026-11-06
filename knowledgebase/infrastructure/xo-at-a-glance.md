@@ -16,6 +16,7 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
 - Collections, all immutable persistent values: `List[T]`, `Map[K, V]`
   and `Set[T]` (both insertion ordered); literals `[1, 2]`, `{"a": 1}`,
   `#{1, 2}`, and empty `[]`, `{}` (a Map), `#{}` (a Set) (core 1.6);
+  `${xs}`, `${m}`, `${s}` print their Debug text when the elements have Display (decision 0525);
   `Buf[T]` is the mutable, move-only buffer (5.3). `ByteBuffer` is
   Go's bytes.Buffer for parsers: write at the back, `next`, `peek`,
   `read_until` (resumes its search), `discard`, `find` at the front
