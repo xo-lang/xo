@@ -753,6 +753,13 @@ func TestNeedHeadBuild(t *testing.T) {
 	if needHeadBuild(root, base) {
 		t.Errorf("a build 1 commit behind: needHeadBuild = true")
 	}
+	// an xo that writes to standard error too (XO_PROF's note at exit)
+	// is still 1 commit behind, not an unknown number
+	noisy := filepath.Join(t.TempDir(), exeName("xo"))
+	os.WriteFile(noisy, []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo '{\"version\":\"0.0.0\",\"commit\":\""+near+"\"}'; echo 'xo profile: 1 samples' >&2; exit 0; fi\nexit 2\n"), 0o755)
+	if n := commitsBehind(root, noisy); n != 1 {
+		t.Errorf("commitsBehind of an xo that also writes to stderr = %d, want 1", n)
+	}
 	os.RemoveAll(filepath.Join(base, "checkout", "knear"))
 	t.Setenv("XO_SEED", "/x/xo")
 	if needHeadBuild(root, base) {

@@ -1004,14 +1004,20 @@ func commitsBehind(root, seed string) int {
 	if head == "" {
 		return -1
 	}
-	o, err := runIn(root, nil, seed, "version", "--json")
+	// standard output only: an xo run under XO_PROF writes its profile's
+	// note to standard error at exit, and with it in the JSON every edit
+	// counted as too far behind and built a second time, cold (2026-11-05)
+	cmd := testtmp.Guard(exec.Command(seed, "version", "--json"))
+	cmd.Dir = root
+	cmd.Env = TestJobsEnv(append(os.Environ(), "PWD="+xoPath(root)))
+	o, err := cmd.Output()
 	if err != nil {
 		return -1
 	}
 	var v struct {
 		Commit string `json:"commit"`
 	}
-	if json.Unmarshal([]byte(strings.TrimSpace(o)), &v) != nil || v.Commit == "" {
+	if json.Unmarshal(bytes.TrimSpace(o), &v) != nil || v.Commit == "" {
 		return -1
 	}
 	base := v.Commit
