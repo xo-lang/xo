@@ -44,3 +44,16 @@ the Mac hourly worktree (`xo refs prelude.Str.to_lower`). Both now leave
 such a module out through check.uses_c, as the std store build does.
 Anything else that loads every std module (a sweep, a coverage tool) uses
 check.uses_c too, and its test runs on a tree without `std/native/.xo`.
+
+Third place (2026-11-06, the lead asked for the repository root): `xo def
+sqlite.version` and `xo doc sqlite.driver` failed with "the check stopped
+before resolving names (use c without the binding ...)" from the repo root
+and from any module, since naming a std module loads its implementation:
+preloads_for adds native/NAME by the name's first segment, load_impl loads
+the implementation of every std module loaded, and load_go_compiled loads
+std/go_compiled.txt's modules (sqlite is listed). A declarations only
+check (Checker.decls_only: def, doc, symbols) now leaves out an
+implementation with `use c` (Checker.skip_impl), and preloads_for no
+longer names one; std/NAME.xo answers. cmd/xo TestAgentRootStdUseC runs
+them from the repo root (it shows the bug only on a tree without the
+binding, as a fresh checkout is).

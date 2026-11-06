@@ -1157,6 +1157,9 @@ fn (var c: Checker) load_go_compiled() {
         Some(b) => b
         None => continue
       }
+      if c.skip_impl(data) {
+        continue
+      }
       let m = c.new_module("native/${name}", name, "std/native", false)
       c.mods[m].std_tree = true
       c.mods[m].native = true
@@ -1193,6 +1196,15 @@ fn (var c: Checker) load_native() {
   }
 }
 
+/// Whether a declarations only check (xo def, doc, symbols) leaves out
+/// the implementation module with source data: one with `use c`
+/// (a driver over a C library), whose binding is written only by a build with a
+/// C compiler; without it the check stopped, and std/<name>.xo answers
+/// (gotchas/std-store-build-use-c-module.md).
+fn (c: Checker) skip_impl(data: Bytes) -> Bool {
+  c.decls_only && uses_c(data)
+}
+
 /// The implementation module std/native/<name>.xo of the std module path
 /// (std/<name>), loaded once; -1 when there is none. load_native loads
 /// them in order, and an implementation module's `use native/<name>`
@@ -1208,6 +1220,9 @@ fn (var c: Checker) load_impl(path: Str) -> Int {
   let data = match src {
     Some(b) => b
     None => return -1
+  }
+  if c.skip_impl(data) {
+    return -1
   }
   let m = c.new_module("native/${name}", name, "std/native", false)
   c.mods[m].std_tree = true

@@ -130,7 +130,15 @@ pub fn preloads_for(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
     if !first.is_empty() && b[0] >= 'a' && b[0] <= 'z' {
       // std/X, the native backends' std/native/X (prelude.str_trim_end_chars
       // is native/prelude's), and the runtime's native/llrt/X
-      cands = ["std/${first}", "native/${first}", "native/llrt/${first}"]
+      cands = ["std/${first}"]
+      // not a native module with `use c` (a C library driver): its
+      // binding is written only by a build with a C compiler, and without
+      // it the check stopped (gotchas/std-store-build-use-c-module.md)
+      let nb = os.fs.read("${std_dir}/native/${first}.xo").ok()
+      if !(nb.map(fn(b) { check.uses_c(b) }) ?? false) {
+        cands.push("native/${first}")
+      }
+      cands.push("native/llrt/${first}")
     }
   }
   var out: List[Str] = []

@@ -1911,6 +1911,31 @@ func TestAgentRootSkipsBrokenModule(t *testing.T) {
 	}
 }
 
+// TestAgentRootStdUseC: xo def and xo doc from the repository root answer
+// for std/sqlite, whose implementation std/native/sqlite.xo has `use c`,
+// in a tree without its binding (written only by a build with a C
+// compiler, so a checkout has none until one runs). The check stopped
+// there before 2026-11-06 (gotchas/std-store-build-use-c-module.md), and
+// agents run these lookups from the root all day (decision 0261).
+func TestAgentRootStdUseC(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"def", "--dir=" + repoRoot, "sqlite.version"}, 0, "std/sqlite.xo:"},
+		{[]string{"doc", "--dir=" + repoRoot, "sqlite.driver"}, 0, "std/sqlite.xo:"},
+		{[]string{"def", "--dir=" + repoRoot, "sql.Db"}, 0, "std/sql.xo:"},
+	} {
+		var out, errOut bytes.Buffer
+		code := run(t, c.args, &out, &errOut)
+		if code != c.code || !strings.Contains(out.String(), c.want) || strings.Contains(out.String()+errOut.String(), "use c without the binding") {
+			t.Errorf("xo %s: exit %d, want %d and %q\n--- stdout\n%s--- stderr\n%s", strings.Join(c.args, " "), code, c.code, c.want, out.String(), errOut.String())
+		}
+	}
+}
+
 // TestSymbolsScope: `xo symbols` of one file (--file, or a .xo argument)
 // and of one module by import path (--module), std and runtime ones too;
 // the directory's own declarations stay the default (agent feedback: the
