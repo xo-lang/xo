@@ -41,11 +41,55 @@ const NUM_COLON_SECS: Int = 33
 const FRAC0: Int = 34
 const FRAC9: Int = 35
 
-const MONTHS: List[Str] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-const SHORT_MONTHS: List[Str] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-const DAYS: List[Str] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-const SHORT_DAYS: List[Str] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-const DAYS_BEFORE: List[Int] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365]
+/// The name tables are functions over Bytes literals: a package level List allocates at each use (gotchas/std-port-costly-go-idioms.md).
+fn month_name(m: Int, long: Bool) -> Bytes {
+  match m {
+    1 => if long { b"January" } else { b"Jan" }
+    2 => if long { b"February" } else { b"Feb" }
+    3 => if long { b"March" } else { b"Mar" }
+    4 => if long { b"April" } else { b"Apr" }
+    5 => if long { b"May" } else { b"May" }
+    6 => if long { b"June" } else { b"Jun" }
+    7 => if long { b"July" } else { b"Jul" }
+    8 => if long { b"August" } else { b"Aug" }
+    9 => if long { b"September" } else { b"Sep" }
+    10 => if long { b"October" } else { b"Oct" }
+    11 => if long { b"November" } else { b"Nov" }
+    _ => if long { b"December" } else { b"Dec" }
+  }
+}
+
+/// Weekday d, Sunday 0.
+fn day_name(d: Int, long: Bool) -> Bytes {
+  match d {
+    0 => if long { b"Sunday" } else { b"Sun" }
+    1 => if long { b"Monday" } else { b"Mon" }
+    2 => if long { b"Tuesday" } else { b"Tue" }
+    3 => if long { b"Wednesday" } else { b"Wed" }
+    4 => if long { b"Thursday" } else { b"Thu" }
+    5 => if long { b"Friday" } else { b"Fri" }
+    _ => if long { b"Saturday" } else { b"Sat" }
+  }
+}
+
+/// Days before month m (1 to 13) of a common year.
+fn days_before(m: Int) -> Int {
+  match m {
+    0 => 0
+    1 => 31
+    2 => 59
+    3 => 90
+    4 => 120
+    5 => 151
+    6 => 181
+    7 => 212
+    8 => 243
+    9 => 273
+    10 => 304
+    11 => 334
+    _ => 365
+  }
+}
 
 fn at_is(b: Bytes, i: Int, p: Bytes) -> Bool {
   if i + p.len() > b.len() {
@@ -213,24 +257,32 @@ fn layout(go_layout: Str) -> timego.Layout {
 
 fn put_int(out: BytesBuilder, n: Int, width: Int, pad: Int) -> BytesBuilder {
   var o = out
-  let digits = "${n}"
-  var k = digits.len()
+  var nd = 1
+  var div = 1
+  while n / div >= 10 {
+    div = div * 10
+    nd += 1
+  }
+  var k = nd
   while k < width {
-    o.write_byte(UInt8(pad))
+    o.write_byte(UInt8.wrapping_from(pad))
     k += 1
   }
-  o.write(digits.bytes())
+  while div > 0 {
+    o.write_byte(UInt8.wrapping_from(48 + (n / div) % 10))
+    div = div / 10
+  }
   o
 }
 
 fn is_leap(y: Int) -> Bool { y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) }
 
 fn days_in(m: Int, y: Int) -> Int {
-  if m == 2 && is_leap(y) { 29 } else { DAYS_BEFORE[m] - DAYS_BEFORE[m - 1] }
+  if m == 2 && is_leap(y) { 29 } else { days_before(m) - days_before(m - 1) }
 }
 
 fn yday_of(y: Int, m: Int, d: Int) -> Int {
-  DAYS_BEFORE[m - 1] + d + (if m > 2 && is_leap(y) { 1 } else { 0 })
+  days_before(m - 1) + d + (if m > 2 && is_leap(y) { 1 } else { 0 })
 }
 
 fn put_zone(out: BytesBuilder, kind: Int, offset: Int) -> BytesBuilder {
@@ -285,17 +337,17 @@ fn layout_format(l: timego.Layout, t: Time, z: time.Zone) -> Str {
     } else if k == YEAR4 {
       out = put_int(out, year, 4, 48)
     } else if k == MONTH_LONG {
-      out.write(MONTHS[month - 1].bytes())
+      out.write(month_name(month, true))
     } else if k == MONTH_SHORT {
-      out.write(SHORT_MONTHS[month - 1].bytes())
+      out.write(month_name(month, false))
     } else if k == MONTH_NUM {
       out = put_int(out, month, 1, 48)
     } else if k == MONTH_ZERO {
       out = put_int(out, month, 2, 48)
     } else if k == WD_LONG {
-      out.write(DAYS[wd].bytes())
+      out.write(day_name(wd, true))
     } else if k == WD_SHORT {
-      out.write(SHORT_DAYS[wd].bytes())
+      out.write(day_name(wd, false))
     } else if k == DAY {
       out = put_int(out, day, 1, 48)
     } else if k == DAY_UNDER {
@@ -383,11 +435,12 @@ fn perr(s: Str, go_layout: Str, at: Int, msg: Str) -> time.ParseErr {
 
 fn lower_byte(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
 
-/// Go's lookup: the index of the name `v` begins with (case insensitive), or -1.
-fn lookup_name(names: List[Str], v: Bytes, p: Int) -> Int {
-  var i = 0
-  while i < names.len() {
-    let nb = names[i].bytes()
+/// Go's lookup: the number of the month (1 to 12) or weekday (0 to 6) whose name v begins with at p (case insensitive), -1 for none.
+fn lookup_name(month: Bool, long: Bool, v: Bytes, p: Int) -> Int {
+  var i = if month { 1 } else { 0 }
+  let end = if month { 13 } else { 7 }
+  while i < end {
+    let nb = if month { month_name(i, long) } else { day_name(i, long) }
     if p + nb.len() <= v.len() {
       var k = 0
       var ok = true
@@ -600,15 +653,22 @@ fn parse_rfc3339(v: Bytes, z: time.Zone) -> Time? {
   } else {
     return None
   }
-  let d = match time.date(year, month, day) {
-    Ok(d) => d
-    Err(_) => return None
+  if year < 1678 || year > 2261 {
+    return None
   }
-  let t = match time.instant(d, time.ClockTime{hour: hour, minute: minute, second: sec, nanos: nsec}, time.utc(), time.Ambiguity.Earlier) {
-    Ok(t) => t
-    Err(_) => return None
-  }
-  Some(t - Duration.from_secs_int(off))
+  Some(unix_time(year, month, day, hour, minute, sec, nsec, off))
+}
+
+/// The instant of a civil time in UTC (year 1678 to 2261) less the offset, by Hinnant's days from civil.
+fn unix_time(year: Int, month: Int, day: Int, hour: Int, minute: Int, sec: Int, nsec: Int, off: Int) -> Time {
+  let y = if month <= 2 { year - 1 } else { year }
+  let era = y / 400
+  let yoe = y - era * 400
+  let mp = if month > 2 { month - 3 } else { month + 9 }
+  let doy = (153 * mp + 2) / 5 + day - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  let days = era * 146097 + doe - 719468
+  Time.from_unix(days * 86400 + hour * 3600 + minute * 60 + sec - off) + Duration.from_nanos(nsec)
 }
 
 fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr {
@@ -660,12 +720,12 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
         p += 4
       }
     } else if k == MONTH_LONG || k == MONTH_SHORT {
-      let x = lookup_name(if k == MONTH_LONG { MONTHS } else { SHORT_MONTHS }, v, p)
+      let x = lookup_name(true, k == MONTH_LONG, v, p)
       if x < 0 {
         bad = "expected month name"
       } else {
-        month = x + 1
-        p += (if k == MONTH_LONG { MONTHS[x] } else { SHORT_MONTHS[x] }).len()
+        month = x
+        p += month_name(x, k == MONTH_LONG).len()
       }
     } else if k == MONTH_NUM || k == MONTH_ZERO {
       let (x, q) = getnum(v, p, k == MONTH_ZERO)
@@ -678,11 +738,11 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
         p = q
       }
     } else if k == WD_LONG || k == WD_SHORT {
-      let x = lookup_name(if k == WD_LONG { DAYS } else { SHORT_DAYS }, v, p)
+      let x = lookup_name(false, k == WD_LONG, v, p)
       if x < 0 {
         bad = "expected weekday name"
       } else {
-        p += (if k == WD_LONG { DAYS[x] } else { SHORT_DAYS[x] }).len()
+        p += day_name(x, k == WD_LONG).len()
       }
     } else if k == DAY || k == DAY_UNDER || k == DAY_ZERO {
       if k == DAY_UNDER && p < v.len() && Int(v[p]) == 32 {
@@ -910,10 +970,10 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
     }
     if m == 0 {
       m = (yd - 1) / 31 + 1
-      if DAYS_BEFORE[m] < yd {
+      if days_before(m) < yd {
         m += 1
       }
-      d = yd - DAYS_BEFORE[m - 1]
+      d = yd - days_before(m - 1)
     }
     if month >= 0 && month != m {
       return Err(perr(s, l.text, p, "day-of-year does not match month"))
@@ -933,6 +993,9 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
   }
   if day < 1 || day > days_in(month, year) {
     return Err(perr(s, l.text, p, "day out of range"))
+  }
+  if have_off && zname == "" && year >= 1678 && year <= 2261 {
+    return Ok(unix_time(year, month, day, hour, minute, sec, nsec, off))
   }
   let clock = time.ClockTime{hour: hour, minute: minute, second: sec, nanos: nsec}
   let d = match time.date(year, month, day) {
