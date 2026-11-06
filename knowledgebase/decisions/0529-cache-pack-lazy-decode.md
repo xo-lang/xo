@@ -46,6 +46,19 @@ their goldens concurrently and are CPU bound (arm64 goldens: 2.07 s a
 build in the suite against 0.22 to 0.36 s alone), so CPU per build is
 what sets their wall, and the parse's 58 ms of CPU counts there in full.
 
+## The suites take separate compilation instead (2026-11-06)
+
+Item C's fix (c) (bench/results/suite-fixed-cost-2026-11-06.md): with
+std's two variants of decision 0388 prebuilt by the test harness, the
+arm64 goldens took 50 to 80 s of wall and 335 to 362 s of CPU against
+131 to 177 s and 1360 to 1369 s whole program; 0380 stage 2 on the
+same suite saved 5 to 10% of CPU. So the suites build separately, and
+this decision is for the builds that stay whole program: xo building
+itself, `--release` builds, cc links, the whole-program sample and full
+tier that keep the goldens' whole path covered, and a developer's
+first builds before the background build has made the variants. Each
+step below is judged on those builds, not on the suites.
+
 ## Decision
 
 Build on 0380 rather than beside it; each step measured on the
@@ -65,8 +78,7 @@ before the next:
 
 Ceiling: about 180 ms of the 357 ms of CPU per warm golden build; for a
 single build's wall less (the parse is off the critical path: 0380
-stage 2's 10 ms), for the suites about 9% of the arm64 goldens' build
-CPU (about 12 s of 146 s wall).
+stage 2's 10 ms). The suites are no longer the target (above).
 
 ## Consequences
 

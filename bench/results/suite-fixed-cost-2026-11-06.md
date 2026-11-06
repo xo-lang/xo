@@ -75,14 +75,48 @@ state and precomputed keys reaches most of stage 2's 0.19 s without a
 resident process, and also speeds every developer build. The owner
 approved it on 2026-11-06 (decision 0529, xo-lang-4).
 
+(c) Separate compilation in the harness (decision 0388): the test
+drivers set XO_SEPCOMP_BG=0 (internal/xotool init), so no build made
+std's two variants and every native golden compiled std with the
+program. Prebuilding them once per test process (`xo dev stdcache
+--conc=0` and `--conc=1`) lets each golden link std's store. Measured
+2026-11-06 on host 1 (ac2664c08), internal/arm64 TestGoldenRun, 648
+builds, a fresh private back-end cache per run, binary and whole-build
+caches off; logs ~/xo-lead/notes/xo-lang-4/sepcomp-*.log:
+
+| runs | std | wall s | user CPU s | mean build s | max load |
+|---|---|---:|---:|---:|---:|
+| 2 | whole (as today) | 131 to 177 | 1360 to 1369 | 2.27 to 2.99 | 24 to 53 |
+| 2 | variants prebuilt | 50 to 80 | 335 to 362 | 0.54 to 1.22 | 23 to 55 |
+| 3, 32 busy loops | whole | 310 to 320 | 1254 to 1284 | 5.3 to 5.5 | 56 to 58 |
+| 3, 32 busy loops | variants prebuilt | 96 to 104 | 328 to 337 | 1.37 to 1.40 | 50 to 52 |
+| 13 more, 0 or 16 busy loops | variants prebuilt | 41 to 80 | 318 to 341 | 0.48 to 1.04 | 11 to 36 |
+
+Building both variants takes about 20 s wall and 140 s CPU on an idle
+host (28 to 37 s wall loaded), once per xo. About 75% less CPU and 55
+to 70% less wall for the suite. 17 of the 18 separate runs passed;
+the one failure (the second run of the first pair, at load 55, beside
+other jobs) did not name its golden and did not recur in 16 runs at
+loads 11 to 57. A whole against separate comparison of all 596 goldens
+(host 2, outputs and exit status, each difference rerun 3 times)
+found no behavior difference: 590 identical, log_state's timestamps,
+and 5 fault traces without std's prelude.llrt_* wrapper frames
+(gotchas/sepcomp-trace-drops-std-wrapper-frame.md, decision 0224's
+tail calls; TestTracebackSeparate pins them).
+
 ## Recommendation
 
 Do not build 0283 stage 2 for the test suites: its ceiling is about
 13 s of the arm64 goldens' 146 s, 10 s of the llvm goldens' 533 s and
 35 s of std's 1172 s, under 3% of an 8-hourly tier, and it adds a
-resident process to every test driver. Do (b), the cache pack with lazy
-decode (decision 0529), which targets the same 0.19 s per build for
-every build. The suites' time is elsewhere: clang in the llvm goldens
+resident process to every test driver. Do (c) for the suites: the
+harness prebuilds std's variants (internal/xotool, 2026-11-06), with
+whole-program coverage kept by scripts/docker-amd64-sample.txt's
+goldens, which always build whole, and by the 8-hourly full tier with
+XO_TEST_SEPCOMP=0. Then (b), the cache pack with lazy decode (decision
+0529), narrowed to the builds that stay whole program (xo's own build,
+--release, cc links, the whole sample, a first build before the
+variants exist). The suites' time is elsewhere: clang in the llvm goldens
 (10.3 s a build against 2.1 s for arm64) and running programs in wasm
 (2126 s for 1 build); those are the next levers if suite time matters.
 

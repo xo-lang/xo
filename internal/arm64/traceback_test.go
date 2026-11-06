@@ -1,6 +1,7 @@
 package arm64
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,5 +144,59 @@ func TestTracebackContract(t *testing.T) {
 				t.Fatalf("got:\n%s\nwant:\n%s", errb.String(), want)
 			}
 		})
+	}
+}
+
+// TestTracebackSeparate pins a separately compiled program's full
+// traceback, which want.txt does not (it keeps a fault's first line):
+// std's prelude.llrt_* wrappers are std's own functions there, never
+// inlined into the program, and each ends in a tail call, so its frame
+// is not in the trace (decision 0224); the whole program inlines them
+// ("[inlined]"). Every other frame is the same
+// (gotchas/sepcomp-trace-drops-std-wrapper-frame.md).
+func TestTracebackSeparate(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	golden := filepath.Join("..", "llvm", "testdata", "golden")
+	for _, c := range []struct{ name, sep, whole string }{
+		{"atomic_ops",
+			`traceback:\n  atomic\.add \(atomic\.xo:\d+\)\n  bump \(main\.xo:\d+\) \[inlined\]\n  main \(main\.xo:\d+\)\n$`,
+			`traceback:\n  atomic\.add \(atomic\.xo:\d+\) \[inlined\]\n  prelude\.llrt_atomic_add \(prelude\.xo:\d+\) \[inlined\]\n  bump \(main\.xo:\d+\) \[inlined\]\n  main \(main\.xo:\d+\)\n$`},
+		{"conc_send_closed",
+			`traceback:\n  chan\.send_w \(chan\.xo:\d+\)\n  main \(main\.xo:\d+\)\n$`,
+			`traceback:\n  chan\.send_w \(chan\.xo:\d+\) \[inlined\]\n  prelude\.llrt_chan_send_w \(prelude\.xo:\d+\) \[inlined\]\n  main \(main\.xo:\d+\)\n$`},
+	} {
+		for _, sep := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/sep=%v", c.name, sep), func(t *testing.T) {
+				o := xotool.Options{Backend: xotool.BackendArm64, Flags: []string{"--phase-times"}}
+				if !sep {
+					o.Env = []string{"XO_SEPCOMP=0"}
+				}
+				res, err := xotool.Build([]string{filepath.Join(golden, c.name)}, o)
+				if err != nil || res.Failed {
+					t.Fatalf("build: %v %v", err, res)
+				}
+				if got := strings.Contains(res.Output, "cache std "); got != sep {
+					t.Fatalf("separately compiled %v, want %v (std's variants: xotool stdVariants):\n%s", got, sep, res.Output)
+				}
+				cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
+				cmd.Dir = filepath.Join(golden, c.name)
+				var errb strings.Builder
+				cmd.Stderr = &errb
+				_ = cmd.Run()
+				want := c.whole
+				if sep {
+					want = c.sep
+				}
+				if !regexp.MustCompile(want).MatchString(errb.String()) {
+					t.Fatalf("stderr:\n%s\nwant it to match:\n%s", errb.String(), want)
+				}
+			})
+		}
 	}
 }

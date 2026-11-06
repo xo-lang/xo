@@ -2005,6 +2005,17 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   such as 10m) changes the limit. Before it, a hung program held the step
   to the package's -timeout (net_close_flush held tier 48's LLVM step
   about 40 minutes). Last verified: 2026-11-04.
+- **Native goldens build separately compiled** (item C fix (c),
+  bench/results/suite-fixed-cost-2026-11-06.md): internal/xotool.Build
+  builds std's two variants of decision 0388 (`xo dev stdcache --conc=0`
+  and `--conc=1`, about 20 s once per xo) before a test process's first
+  native host build (`--backend=arm64|amd64`, no --targets, --release
+  or --race), so those goldens link std's store instead of compiling std
+  with every program (arm64 TestGoldenRun: about 75% less CPU). The
+  goldens of scripts/docker-amd64-sample.txt still build whole program
+  (XO_SEPCOMP=0) in every run; `XO_TEST_SEPCOMP=0` builds every golden
+  whole, as the full tier does. A test that sets XO_SEPCOMP in its
+  Options.Env keeps its own choice. Last verified: 2026-11-06.
 - **No Go reference in TestGolden**: want.txt pins the output; the Go
   backend builds only under `-golden-update` (which writes want.txt).
   TestGoldenGoParity (XO_TEST_GO_PARITY=1) builds every golden with the

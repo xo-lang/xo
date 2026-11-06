@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/xo-lang/xo/internal/testtmp"
 )
@@ -136,6 +137,14 @@ func Build(dirs []string, o Options) (*Result, error) {
 	mode := o.Mode
 	if mode == "" {
 		mode = ModeBuild
+	}
+	// separate compilation serves only a native build for the host
+	// (compiler/xo sepenv.xo sepcomp_default)
+	if mode == ModeBuild && (o.Backend == BackendArm64 || o.Backend == "amd64") && o.Targets == "" && !o.Release && !o.Race {
+		stdVariants(cli)
+		if len(dirs) > 0 && wholeSample()[filepath.Base(filepath.Clean(dirs[0]))] && !hasEnv(o.Env, "XO_SEPCOMP") {
+			o.Env = append(append([]string{}, o.Env...), "XO_SEPCOMP=0")
+		}
 	}
 	res := &Result{Binaries: map[string]string{}}
 	out := o.Out
@@ -449,4 +458,71 @@ func Check(dirs []string, flags ...string) ([]Diagnostic, error) {
 		return nil, fmt.Errorf("xo check --json: %v %v\n%s%s", err, jerr, out, stderr.String())
 	}
 	return r.Diagnostics, nil
+}
+
+var (
+	stdVariantsOnce sync.Once
+	wholeSampleOnce sync.Once
+	wholeSampleSet  map[string]bool
+)
+
+// wholeSample is the goldens that always build whole program when std's
+// variants are prebuilt (stdVariants): the names of
+// scripts/docker-amd64-sample.txt, chosen to cover code generation, so
+// every gate still runs the whole-program path; the full tier sets
+// XO_TEST_SEPCOMP=0 for all of them.
+func wholeSample() map[string]bool {
+	wholeSampleOnce.Do(func() {
+		wholeSampleSet = map[string]bool{}
+		root, err := Root()
+		if err != nil {
+			return
+		}
+		b, err := os.ReadFile(filepath.Join(root, "scripts", "docker-amd64-sample.txt"))
+		if err != nil {
+			return
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
+				wholeSampleSet[l] = true
+			}
+		}
+	})
+	return wholeSampleSet
+}
+
+// hasEnv reports whether env sets NAME.
+func hasEnv(env []string, name string) bool {
+	for _, e := range env {
+		if strings.HasPrefix(e, name+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+// stdVariants builds std's two separate compilation variants (decision
+// 0388, `xo dev stdcache --conc=0` and `--conc=1`) once per test process,
+// before its first native build: the tests set XO_SEPCOMP_BG=0 (init),
+// so no build starts the background build that makes them, and without
+// both every golden compiled std with the program (item C,
+// bench/results/suite-fixed-cost-2026-11-06.md). A cached variant is
+// reused at once; xo's own lock serializes processes that start
+// together. A failure is ignored: the builds go on whole program.
+// XO_TEST_SEPCOMP=0 keeps every build whole (the full tier's coverage of
+// the whole-program path).
+func stdVariants(cli []string) {
+	if os.Getenv("XO_TEST_SEPCOMP") == "0" {
+		return
+	}
+	stdVariantsOnce.Do(func() {
+		for _, conc := range []string{"0", "1"} {
+			args := append(append([]string{}, cli[1:]...), "dev", "stdcache", "--conc="+conc)
+			cmd := testtmp.Guard(exec.Command(cli[0], args...))
+			if out, err := cmd.CombinedOutput(); err != nil {
+				fmt.Fprintf(os.Stderr, "xotool: std's variant conc=%s did not build (%v); builds are whole program:\n%s", conc, err, out)
+				return
+			}
+		}
+	})
 }
