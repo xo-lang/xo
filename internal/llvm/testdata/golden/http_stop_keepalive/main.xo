@@ -109,7 +109,8 @@ fn main(os: Os) {
     os.stdio.println("${idle.len()} idle, 1 slow client, 1 request in flight")
     os.proc.request_stop()
     os.clock.sleep(100ms)
-    slow.write("st: x\r\n\r\n".bytes()).or_fault("write")
+    // either order prints "ended": the read below finds the close
+    let _ = slow.write("st: x\r\n\r\n".bytes()).ignore_err("the stopping server may have closed it unanswered first (EPIPE)")
     os.stdio.println("slow client: ${ended(read_to_close(slow))}")
     os.stdio.println("in flight: ${inflight.recv() ?? "no answer"}")
     os.stdio.println(result.recv() ?? "no result")
