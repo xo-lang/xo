@@ -165,14 +165,30 @@ if [ "$prebumped" = 0 ]; then
   sed -i '' "s/^pub const XO_VERSION = \"$cur\"$/pub const XO_VERSION = \"$version\"/" compiler/cli/servers/servers.xo
   # std's stamp (an xo older than its std warns: compiler/xo provenance.xo)
   echo "$version" > std/VERSION
-  [ "$(git diff --name-only | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo std/VERSION " ] ||
-    die "the bump changed $(git diff --name-only | tr '\n' ' ')(want cli.xo, servers.xo and std/VERSION)"
+  # the spec drafts move on to the next minor (decision 0089; internal/repotest
+  # TestSpecDraftFollowsVersion): both Status lines, and an empty "Changes in"
+  # section on top of core.md's
+  minor=${version#*.}; minor=${minor%%.*}
+  draft=${version%%.*}.$((minor + 1)); tagged=${version%.*}
+  for f in spec/core.md spec/std.md; do
+    grep -q "^Status: draft $draft " "$f" && continue
+    sed -i '' -E "s/^Status: draft [0-9]+\.[0-9]+ \([0-9-]+; [^)]*\)/Status: draft $draft ($(date +%Y-%m-%d); PLACEHOLDER)/" "$f"
+    grep -q "^Status: draft $draft " "$f" || die "$f: no Status: draft line to move to $draft"
+  done
+  sed -i '' "s/^Status: draft $draft (\([0-9-]*\); PLACEHOLDER)$/Status: draft $draft (\1; $tagged tagged as toolchain v$version, decision 0089)/" spec/core.md
+  sed -i '' "s/^Status: draft $draft (\([0-9-]*\); PLACEHOLDER)$/Status: draft $draft (\1; the same draft number as \`spec\/core.md\`, decision 0089)/" spec/std.md
+  if ! grep -q "^## Changes in $draft\$" spec/core.md; then
+    awk -v d="$draft" '!done && /^## Changes in /{print "## Changes in " d; print ""; print "None yet."; print ""; done=1} {print}' spec/core.md > spec/core.md.new && mv spec/core.md.new spec/core.md
+  fi
+  [ "$(git diff --name-only | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo spec/core.md spec/std.md std/VERSION " ] ||
+    die "the bump changed $(git diff --name-only | tr '\n' ' ')(want cli.xo, servers.xo, the two spec drafts and std/VERSION)"
   git commit -qam "Version $version (seed $version, decision 0216; tag v$version)"
 fi
 commit=$(git rev-parse HEAD)
 
 step "2. go test -short ./internal/xotool ./cmd/xo"
-XO_SELF_DRIVER=0 GOMAXPROCS=4 go test -short -p 2 ./internal/xotool ./cmd/xo > "$log/short.log" 2>&1 ||
+XO_SELF_DRIVER=0 GOMAXPROCS=4 go test -short -p 2 ./internal/xotool ./cmd/xo > "$log/short.log" 2>&1 &&
+  go test -count=1 ./internal/repotest -run '^TestSpecDraftFollowsVersion$' >> "$log/short.log" 2>&1 ||
   { grep -E '^(FAIL|--- FAIL)' "$log/short.log" | head; die "-short failed ($log/short.log)"; }
 
 step "3. gate: xobuild, hello, fixed point"
@@ -209,7 +225,7 @@ else
     ( cd "$onto" && git cherry-pick "$commit" ) > "$log/push.log" 2>&1 ||
       { tail "$log/push.log"; die "the version commit does not apply to the new main"; }
     pushed=$(git -C "$onto" rev-parse HEAD)
-    [ "$(git -C "$onto" diff --name-only origin/main "$pushed" | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo std/VERSION " ] ||
+    [ "$(git -C "$onto" diff --name-only origin/main "$pushed" | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo spec/core.md spec/std.md std/VERSION " ] ||
       die "the rebased version commit changes more than the version files"
     git -C "$onto" push -q origin HEAD:main || die "push refused twice (main moved again?): rerun with a new WORKDIR"
     git worktree remove --force "$onto"

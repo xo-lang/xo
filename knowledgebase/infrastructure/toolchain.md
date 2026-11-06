@@ -4807,6 +4807,11 @@ main moved during the gate, step 4 puts the version commit on the new main
 (only cli.xo, servers.xo and std/VERSION may differ from it), pushes and
 tags that, and the tag message names the gated commit the seed was built
 from; XO_PUSH_LOCK still pins main through the gate when wanted.
+The version commit also moves spec/core.md and spec/std.md to draft
+X.(Y+1) with an empty "Changes in X.(Y+1)" section in core.md (decision
+0089), and step 2 runs internal/repotest TestSpecDraftFollowsVersion (the
+0.42.0 cut moved only std/VERSION, and the check refused every push after
+it until the lead's fc6023740).
 
 With agents running (lead, 2026-10-27; Last verified: 2026-10-27):
 pause measure jobs first, and run the cut with
