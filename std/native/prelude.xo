@@ -3332,6 +3332,8 @@ struct File {
   mem: Int = 0
   /// opened by open_append: write_at is refused (Go's os.File.WriteAt)
   append: Bool = false
+  /// opened by open_rw: reads and writes both allowed, reads not buffered
+  rw: Bool = false
 }
 
 struct FileLock {
@@ -3347,7 +3349,7 @@ fn fs_open_mode(f: Fs, p: Str, mode: Int) -> File ! FsErr {
   if st != 0 {
     return Err(fs_err(st, p))
   }
-  File{h: h, path: p, write: mode != 0, mem: 0, append: mode == 2}
+  File{h: h, path: p, write: mode != 0, mem: 0, append: mode == 2, rw: mode == 6}
 }
 
 fn fs_open(f: Fs, p: Str) -> File ! FsErr {
@@ -3361,7 +3363,7 @@ fn fs_open(f: Fs, p: Str) -> File ! FsErr {
 // A test's MemFs handles (rt.mem_file and the others; std/native/
 // testing.xo memfile_* and memlock_*): the parts only this module sees.
 
-fn llrt_mem_file(id: Int, path: Str, write: Bool) -> File { File{h: fsops.no_file(), path: path, write: write, mem: id, append: false} }
+fn llrt_mem_file(id: Int, path: Str, write: Bool) -> File { File{h: fsops.no_file(), path: path, write: write, mem: id, append: false, rw: false} }
 
 fn llrt_mem_file_id(f: File) -> Int { f.mem }
 
@@ -3389,6 +3391,14 @@ fn fs_open_append(f: Fs, p: Str) -> File ! FsErr {
   fs_open_mode(f, p, 2)
 }
 
+fn fs_open_rw(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return userfs.open_as[File](u, p, 6)
+  }
+  fs_open_mode(f, p, 6)
+}
+
 fn fs_create_new(f: Fs, p: Str) -> File ! FsErr {
   // a user value converted to Fs (decision 0307)
   if let Some(u) = userfs.user(f) {
@@ -3405,6 +3415,9 @@ fn file_state(f: File, write: Bool) -> () ! FsErr {
   }
   if fsops.file_closed(f.h) {
     return Err(FsErr.Io(path: f.path, msg: "file already closed"))
+  }
+  if f.rw {
+    return Ok(())
   }
   if f.write && !write {
     return Err(FsErr.Io(path: f.path, msg: "file is open for writing"))

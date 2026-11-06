@@ -232,6 +232,7 @@ fn (d: DirFs) set_modified(path: Str, t: Time) -> () ! FsErr { Err(FsErr.Denied(
 fn (d: DirFs) open(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (d: DirFs) create(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (d: DirFs) open_append(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) open_rw(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (d: DirFs) create_new(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (d: DirFs) append(path: Str, data: Bytes) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
 fn (d: DirFs) copy(from: Str, to: Str) -> () ! FsErr { Err(FsErr.Denied(path: to)) }

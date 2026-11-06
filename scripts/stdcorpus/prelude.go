@@ -813,6 +813,33 @@ test "File.write_at, truncate and stat work at offsets without moving the positi
   ap.close()?
 }
 
+test "Fs.open_rw reads and writes one handle without truncating, as Go's OpenFile with O_RDWR|O_CREATE" {
+  os.fs.write("rw.txt", b"hello\nworld\nrest")?
+  let f = os.fs.open_rw("rw.txt")?
+  expect(f.stat()?.size) == 16
+  expect(f.read_line()?) == Some("hello")
+  expect(f.read(3)?) == Some(b"wor")
+  f.write(b"LD")?
+  expect(f.read_line()?) == Some("")
+  expect(f.read_at(0, 5)?) == Some(b"hello")
+  f.write_at(0, b"J")?
+  expect(f.read_at(0, 5)?) == Some(b"Jello")
+  f.truncate(12)?
+  expect(f.stat()?.size) == 12
+  f.close()?
+  expect(os.fs.read("rw.txt")?) == b"Jello\nworLD\n"
+  // open_rw did not truncate, and created a missing file
+  let g = os.fs.open_rw("rw2.txt")?
+  expect(g.read(4)?) == None
+  g.write(b"abc")?
+  g.close()?
+  let g2 = os.fs.open_rw("rw2.txt")?
+  expect(g2.read(10)?) == Some(b"abc")
+  g2.close()?
+  expect(g2.read(1).is_err()) == true
+  expect(g2.write(b"x").is_err()) == true
+}
+
 test "read_dir_entries, walk_entries and walk_dir_entries answer as Go's os.ReadDir and WalkDir with the type and no stat" {
   for d in ["a/b", "a/c"] {
     os.fs.create_dir_all(d)?

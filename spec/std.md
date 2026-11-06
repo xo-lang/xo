@@ -826,6 +826,7 @@ test binary's MemFs has all of them, as on the Go backend, since
 fn (f: Fs) open(path: Str) -> File ! FsErr        uses fs.read   // read as a stream
 fn (f: Fs) create(path: Str) -> File ! FsErr      uses fs.write  // write; created or truncated
 fn (f: Fs) open_append(path: Str) -> File ! FsErr uses fs.write  // write at the end; created if missing
+fn (f: Fs) open_rw(path: Str) -> File ! FsErr     uses fs.write  // read and write; created if missing, not truncated (Go's O_RDWR|O_CREATE)
 fn (f: Fs) create_new(path: Str) -> File ! FsErr  uses fs.write  // write a new file: Exists(path) if anything is there (O_EXCL; a symbolic link counts)
 fn (f: Fs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write
 fn (f: Fs) copy(from: Str, to: Str) -> () ! FsErr uses fs        // contents and permission bits
@@ -868,7 +869,12 @@ fn count_errors(fs: Fs, path: Str) -> Int ! FsErr uses fs.read {
 - A `File` is opened for reading (`open`) or writing (`create`,
   `open_append`); the other kind of operation is `Io(path, "file is open
   for reading")` (or writing). `read` returns at most `max` bytes (at
-  most 1 MiB), `None` at the end. Operations after `close` are `Io(path,
+  most 1 MiB), `None` at the end. `open_rw` opens for both: its reads are
+  not buffered, so `read`, `read_line` and `write` share one position as
+  Go's `os.File` (a wasm build buffers reads, so there a read after a
+  write on one handle should be a `read_at`); on MemFs its reads see the
+  file's current contents. A custom `Fs` implements `open_rw` too.
+  Operations after `close` are `Io(path,
   "file already closed")`. Writes are not buffered by Xo: each `write`
   reaches the OS. Handles are not recorded by record and replay yet.
 - `open` of a directory is `IsDir`. `create` and `open_append` do not
@@ -5873,6 +5879,7 @@ fn set_modified(self, path: Str, t: Time) -> () ! FsErr uses fs.write
 fn open(self, path: Str) -> File ! FsErr uses fs.read
 fn create(self, path: Str) -> File ! FsErr uses fs.write
 fn open_append(self, path: Str) -> File ! FsErr uses fs.write
+fn open_rw(self, path: Str) -> File ! FsErr uses fs.write
 fn create_new(self, path: Str) -> File ! FsErr uses fs.write
 fn append(self, path: Str, data: Bytes) -> () ! FsErr uses fs.write
 fn copy(self, from: Str, to: Str) -> () ! FsErr uses fs

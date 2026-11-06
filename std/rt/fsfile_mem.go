@@ -17,23 +17,38 @@ type memFileH struct {
 	data   string // reads: the contents at open
 	off    int
 	append bool // open_append: write_at is an error
+	rw     bool // open_rw: reads see the file's current contents, writes go at off
+}
+
+// cur is the contents reads use: the file's live ones for open_rw, else the
+// snapshot taken at open.
+func (m *memFileH) cur() string {
+	if !m.rw {
+		return m.data
+	}
+	fs := m.v.fs
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return string(m.node().data)
 }
 
 func (m *memFileH) read(max int64) Result[Option[Bytes], FsErr] {
-	if m.off >= len(m.data) {
+	data := m.cur()
+	if m.off >= len(data) {
 		return Ok[Option[Bytes], FsErr](Option[Bytes]{})
 	}
-	n := min(int64(len(m.data)-m.off), max, 1<<20)
-	b := m.data[m.off : m.off+int(n)]
+	n := min(int64(len(data)-m.off), max, 1<<20)
+	b := data[m.off : m.off+int(n)]
 	m.off += int(n)
 	return Ok[Option[Bytes], FsErr](Some(Bytes(b)))
 }
 
 func (m *memFileH) readLine() Result[Option[string], FsErr] {
-	if m.off >= len(m.data) {
+	data := m.cur()
+	if m.off >= len(data) {
 		return Ok[Option[string], FsErr](Option[string]{})
 	}
-	rest := m.data[m.off:]
+	rest := data[m.off:]
 	line := rest
 	if i := strings.IndexByte(rest, '\n'); i >= 0 {
 		line = rest[:i+1]
@@ -200,6 +215,19 @@ func (f Testing_MemFs) M_open_append(tk *Task, p string) Result[File, FsErr] {
 		return f.v.real.M_open_append(tk, p)
 	}
 	return f.openFile(tk, p, true, false)
+}
+
+func (f Testing_MemFs) M_open_rw(tk *Task, p string) Result[File, FsErr] {
+	if f.v.real != nil {
+		return f.v.real.M_open_rw(tk, p)
+	}
+	r := f.openFile(tk, p, true, false)
+	if r.Ok {
+		r.V.h.rw = true
+		r.V.h.mem.rw = true
+		r.V.h.mem.append = false
+	}
+	return r
 }
 
 func (f Testing_MemFs) M_create_new(tk *Task, p string) Result[File, FsErr] {

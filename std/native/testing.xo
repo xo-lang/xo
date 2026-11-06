@@ -135,6 +135,8 @@ struct MemFile {
   closed: Bool
   /// made by open_append: write_at is refused
   append: Bool
+  /// made by open_rw: reads see the file's current contents, writes go at off
+  rw: Bool
 }
 
 /// A held MemFs lock: the lock record (memlock_new) and whether it was
@@ -718,15 +720,15 @@ fn memfs_loop_err(p: Str) -> FsErr { FsErr.Io(path: p, msg: "too many levels of 
 // memfs_open_file is std/rt's openFile: a read handle holds the contents
 // at open; a write handle writes through (created, truncated when
 // truncate).
-fn memfs_open_file(f: Fs, p: Str, write: Bool, truncate: Bool, excl: Bool = false) -> File ! FsErr {
+fn memfs_open_file(f: Fs, p: Str, write: Bool, truncate: Bool, excl: Bool = false, rw: Bool = false) -> File ! FsErr {
   let given = memfs_begin(f, p, write)?
   var st = memfs_load()
-  let r = memfs_open_in(st, f, given, p, write, truncate, excl)
+  let r = memfs_open_in(st, f, given, p, write, truncate, excl, rw)
   memfs_store(st)
   r?
 }
 
-fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, truncate: Bool, excl: Bool = false) -> File ! FsErr {
+fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, truncate: Bool, excl: Bool = false, rw: Bool = false) -> File ! FsErr {
   if let Some(e) = memfs_failed(st, if write { 2 } else { 1 }, [given]) {
     return Err(e)
   }
@@ -751,7 +753,7 @@ fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, trunc
         if node.dir {
           return Err(memfs_err(5, p))
         }
-        h.files.put(id, MemFile{full: full, data: node.data, off: 0, closed: false, append: false})
+        h.files.put(id, MemFile{full: full, data: node.data, off: 0, closed: false, append: false, rw: false})
         st.hs = [h]
         return rt.mem_file(id, p, false)
       }
@@ -776,7 +778,7 @@ fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, trunc
       }
     }
   }
-  h.files.put(id, MemFile{full: full, data: b"", off: 0, closed: false, append: write && !truncate})
+  h.files.put(id, MemFile{full: full, data: b"", off: 0, closed: false, append: write && !truncate && !rw, rw: rw})
   st.hs = [h]
   rt.mem_file(id, p, true)
 }
@@ -805,6 +807,14 @@ fn memfs_open_append(f: Fs, p: Str) -> File ! FsErr {
   memfs_open_file(f, p, true, false)
 }
 
+fn memfs_open_rw(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.open_rw(p)
+  }
+  memfs_open_file(f, p, true, false, false, true)
+}
+
 fn memfs_create_new(f: Fs, p: Str) -> File ! FsErr {
   // a user value converted to Fs (decision 0307)
   if let Some(u) = userfs.user(f) {
@@ -819,9 +829,14 @@ fn memfile_state(st: MemState, f: File, write: Bool) -> MemFile ! FsErr {
   if rt.fs_canceled() {
     return Err(FsErr.Canceled)
   }
-  let mf = memfs_hs(st).files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true, append: false}
+  let mf = memfs_hs(st).files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true, append: false, rw: false}
   if mf.closed {
     return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file already closed"))
+  }
+  if mf.rw {
+    // open_rw: the file's current contents, not a snapshot
+    let n = memfs_get(st, mf.full)
+    return mf with {data: if let Some(node) = n { node.data } else { b"" }}
   }
   if rt.mem_file_writes(f) && !write {
     return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file is open for writing"))
@@ -932,7 +947,7 @@ fn memfile_stat_in(var st: MemState, f: File) -> FileInfo ! FsErr {
   if rt.fs_canceled() {
     return Err(FsErr.Canceled)
   }
-  let mf = memfs_hs(st).files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true, append: false}
+  let mf = memfs_hs(st).files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true, append: false, rw: false}
   if mf.closed {
     return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file already closed"))
   }
@@ -1004,6 +1019,11 @@ fn memfile_write(f: File, data: Bytes) -> () ! FsErr {
 
 fn memfile_write_in(var st: MemState, f: File, data: Bytes) -> () ! FsErr {
   let mf = memfile_state(st, f, true)?
+  if mf.rw {
+    memfile_write_at_in(st, f, mf.off, data)?
+    memfs_set_file(st, rt.mem_file_id(f), mf with {off: mf.off + data.len()})
+    return Ok(())
+  }
   // removed since it was opened: written again (std/rt memFileH.write)
   var n = memfs_get(st, mf.full) ?? MemNode{dir: false, data: b"", modified: memfs_now(), name: ""}
   if n.dir {

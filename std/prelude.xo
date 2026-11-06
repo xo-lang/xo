@@ -881,6 +881,10 @@ interface Fs {
   fn create(self, path: Str) -> File ! FsErr uses fs.write
   /// A handle that writes at the end of the file, created if missing.
   fn open_append(self, path: Str) -> File ! FsErr uses fs.write
+  /// A handle that reads and writes the file, created if missing and not
+  /// truncated (Go's os.OpenFile with O_RDWR|O_CREATE). Reads are not
+  /// buffered: `read` and `write` share one position, as Go's File.
+  fn open_rw(self, path: Str) -> File ! FsErr uses fs.write
   /// A handle that writes a new file: Exists(path) when something is
   /// already at path (O_EXCL; a symbolic link counts, dangling or not).
   fn create_new(self, path: Str) -> File ! FsErr uses fs.write

@@ -38,6 +38,9 @@ pub interface UserFs {
   fn create(self, path: Str) -> File ! FsErr uses fs.write
   /// A handle that writes at the end of the file, created if missing.
   fn open_append(self, path: Str) -> File ! FsErr uses fs.write
+  /// A handle that reads and writes the file, created if missing and not
+  /// truncated (Go's os.OpenFile with O_RDWR|O_CREATE).
+  fn open_rw(self, path: Str) -> File ! FsErr uses fs.write
   /// A handle that writes a new file: Exists(path) when something is
   /// already at path (O_EXCL; a symbolic link counts, dangling or not).
   fn create_new(self, path: Str) -> File ! FsErr uses fs.write
@@ -217,6 +220,7 @@ pub fn open_as[F](u: UserFs, p: Str, mode: Int) -> F ! FsErr uses fs.read, fs.wr
     0 => u.open(p)?
     1 => u.create(p)?
     2 => u.open_append(p)?
+    6 => u.open_rw(p)?
     _ => u.create_new(p)?
   }
   Ok(rt.cast[File, F](h))

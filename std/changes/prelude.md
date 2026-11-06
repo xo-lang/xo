@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-11-06: feature: Fs.open_rw (read and write without truncating)
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19: azblob's DownloadFile into an existing file cannot keep its old bytes, as Go does, without a read and write open that does not truncate
+- Go reference: os.OpenFile(name, O_RDWR|O_CREATE, 0o666) (os/file.go go1.26.1)
+- Test: testdata/corpus/prelude "Fs.open_rw reads and writes one handle without truncating" (native, Go backend, MemFs and the real file system)
+- Shipped in: not yet released
+
+`fs.open_rw(path)` opens a file for reading and writing, created if missing and not truncated, at offset 0. `read`, `read_line`, `write`, `read_at`, `write_at`, `truncate` and `stat` all work on it. Its reads are not buffered (Go's `os.File` has no read buffer), so `read` and `write` share one position. On MemFs the reads see the file's current contents, not the snapshot a read handle takes. `DirFs` answers `Denied`; a wasm build opens it like a read and write handle with buffered reads, so there a read after a write on one handle should be a `read_at`. A custom `Fs` (decision 0307) must now implement `open_rw` too.
+
 ## 2026-11-06: feature: File.write_at, File.truncate and File.stat (owner-approved for the Azure SDKs' UploadFile and DownloadFile)
 
 - Kind: feature

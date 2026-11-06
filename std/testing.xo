@@ -97,6 +97,8 @@ fn (f: MemFs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
 fn (f: MemFs) open(path: Str) -> File ! FsErr uses fs.read
 fn (f: MemFs) create(path: Str) -> File ! FsErr uses fs.write
 fn (f: MemFs) open_append(path: Str) -> File ! FsErr uses fs.write
+/// Like `Fs.open_rw`.
+fn (f: MemFs) open_rw(path: Str) -> File ! FsErr uses fs.write
 fn (f: MemFs) create_new(path: Str) -> File ! FsErr uses fs.write
 fn (f: MemFs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write
 fn (f: MemFs) copy(from: Str, to: Str) -> () ! FsErr uses fs

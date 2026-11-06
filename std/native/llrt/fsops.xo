@@ -152,6 +152,8 @@ fn open_once(l: Int, p: Str, k: Int, mode: Int) -> Int {
       1 => darwin.O_WRONLY | darwin.O_CREAT | darwin.O_TRUNC
       2 => darwin.O_WRONLY | darwin.O_CREAT | darwin.O_APPEND
       3 => darwin.O_RDWR | darwin.O_CREAT
+      // Fs.open_rw: like 3 (a lock file), for a handle the user reads and writes
+      6 => darwin.O_RDWR | darwin.O_CREAT
       // Fs.create_new: a new file only
       5 => darwin.O_WRONLY | darwin.O_CREAT | darwin.O_EXCL
       _ => darwin.O_RDWR | darwin.O_CREAT | darwin.O_EXCL
@@ -163,6 +165,7 @@ fn open_once(l: Int, p: Str, k: Int, mode: Int) -> Int {
     1 => linux.O_WRONLY | linux.O_CREAT | linux.O_TRUNC
     2 => linux.O_WRONLY | linux.O_CREAT | linux.O_APPEND
     3 => linux.O_RDWR | linux.O_CREAT
+    6 => linux.O_RDWR | linux.O_CREAT
     5 => linux.O_WRONLY | linux.O_CREAT | linux.O_EXCL
     _ => linux.O_RDWR | linux.O_CREAT | linux.O_EXCL
   }
@@ -558,7 +561,8 @@ pub fn open_file(p: Str, mode: Int, x: Str) -> rt.FsFile {
   // (expr.xo layer_call; not this module's layer()): a wasm build keeps
   // only this arm (the others call the native heap)
   if sysio.layer() == 0 {
-    return rt.fs_open(p, mode, x)
+    // Fs.open_rw (6) is the read and write kind (3) here
+    return rt.fs_open(p, if mode == 6 { 3 } else { mode }, x)
   }
   let l = layer()
   var e = 0
@@ -618,6 +622,21 @@ pub fn file_read(f: rt.FsFile, max: Int, x: Str) -> List[Bytes] {
   let l = layer()
   let a = rt.obj_addr(f)
   let m = if max > READ_MAX { READ_MAX } else { max }
+  if rt.mem_load(a, F_BUF, 8) == 0 {
+    // an open_rw handle has no read buffer: the read goes to the file, so
+    // read and write share the file's position as in Go
+    let b = raw.bytes_buf(m)
+    let k = read_at(l, rt.mem_load(a, F_FD, 8), raw.bytes_addr(b), m)
+    if k < 0 {
+      fail(l, -k, x)
+      return []
+    }
+    ok()
+    if k == 0 {
+      return []
+    }
+    return [raw.bytes_len(b, k)]
+  }
   var r = rt.mem_load(a, F_R, 8)
   var w = rt.mem_load(a, F_W, 8)
   if r == w {
@@ -794,6 +813,34 @@ pub fn file_read_line(f: rt.FsFile, x: Str) -> List[Str] {
   let a = rt.obj_addr(f)
   let buf = rt.mem_load(a, F_BUF, 8)
   var line = ""
+  if buf == 0 {
+    // an open_rw handle has no read buffer: one byte at a time, so the
+    // file's position stops after the line (a line cut by an error is
+    // returned, the error on the next call)
+    var acc = BytesBuilder.new()
+    var any = false
+    while true {
+      let one = file_read(f, 1, x)
+      if one.is_empty() {
+        if !any {
+          return []
+        }
+        break
+      }
+      any = true
+      let c = one[0][0]
+      if c == 10 {
+        break
+      }
+      acc.write_byte(c)
+    }
+    var bs = acc.freeze()
+    if bs.len() > 0 && bs[bs.len() - 1] == 13 {
+      bs = bs[0..bs.len() - 1]
+    }
+    ok()
+    return [rt.cast[Bytes, Str](bs)]
+  }
   while true {
     var r = rt.mem_load(a, F_R, 8)
     var w = rt.mem_load(a, F_W, 8)

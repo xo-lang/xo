@@ -294,6 +294,9 @@ func (d embedDirFs) M_create(tk *Task, p string) Result[File, FsErr] { return em
 func (d embedDirFs) M_open_append(tk *Task, p string) Result[File, FsErr] {
 	return embedDenied[File](p)
 }
+func (d embedDirFs) M_open_rw(tk *Task, p string) Result[File, FsErr] {
+	return embedDenied[File](p)
+}
 func (d embedDirFs) M_create_new(tk *Task, p string) Result[File, FsErr] {
 	return embedDenied[File](p)
 }

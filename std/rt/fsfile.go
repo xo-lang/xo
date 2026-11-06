@@ -27,6 +27,7 @@ type fileH struct {
 	mu     sync.Mutex
 	path   string // as given, for errors
 	write  bool   // opened for writing (else reading)
+	rw     bool   // open_rw: reads and writes, reads not buffered
 	closed bool
 	osf    *os.File
 	r      *bufio.Reader
@@ -95,7 +96,7 @@ func (f File) M_read(tk *Task, max int64) Result[Option[Bytes], FsErr] {
 		return Err[Option[Bytes]](FsCanceled)
 	case h.closed:
 		return Err[Option[Bytes]](fileClosed(h.path))
-	case h.write:
+	case h.write && !h.rw:
 		return Err[Option[Bytes]](fsIo(h.path, "file is open for writing"))
 	case max <= 0:
 		return Ok[Option[Bytes], FsErr](Some(Bytes("")))
@@ -104,7 +105,11 @@ func (f File) M_read(tk *Task, max int64) Result[Option[Bytes], FsErr] {
 		return h.mem.read(max)
 	}
 	buf := make([]byte, min(max, 1<<20))
-	n, err := h.r.Read(buf)
+	var rd io.Reader = h.r
+	if h.rw {
+		rd = h.osf
+	}
+	n, err := rd.Read(buf)
 	if n > 0 {
 		return Ok[Option[Bytes], FsErr](Some(Bytes(buf[:n])))
 	}
@@ -123,11 +128,14 @@ func (f File) M_read_line(tk *Task) Result[Option[string], FsErr] {
 		return Err[Option[string]](FsCanceled)
 	case h.closed:
 		return Err[Option[string]](fileClosed(h.path))
-	case h.write:
+	case h.write && !h.rw:
 		return Err[Option[string]](fsIo(h.path, "file is open for writing"))
 	}
 	if h.mem != nil {
 		return h.mem.readLine()
+	}
+	if h.rw {
+		return h.readLineRW()
 	}
 	line, err := h.r.ReadString('\n')
 	if line == "" && err != nil {
@@ -137,6 +145,32 @@ func (f File) M_read_line(tk *Task) Result[Option[string], FsErr] {
 		return Err[Option[string]](mapFsErr(err, h.path))
 	}
 	return Ok[Option[string], FsErr](Some(textOf(trimLine(line))))
+}
+
+// readLineRW is read_line on an open_rw handle: one byte at a time, so the
+// file's position stops after the line (the handle has no read buffer).
+func (h *fileH) readLineRW() Result[Option[string], FsErr] {
+	var line []byte
+	one := make([]byte, 1)
+	for {
+		n, err := h.osf.Read(one)
+		if n > 0 {
+			line = append(line, one[0])
+			if one[0] == '\n' {
+				break
+			}
+		}
+		if err != nil {
+			if len(line) == 0 {
+				if errors.Is(err, io.EOF) {
+					return Ok[Option[string], FsErr](Option[string]{})
+				}
+				return Err[Option[string]](mapFsErr(err, h.path))
+			}
+			break
+		}
+	}
+	return Ok[Option[string], FsErr](Some(textOf(trimLine(string(line)))))
 }
 
 func trimLine(s string) string { return strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r") }
@@ -154,7 +188,12 @@ func (f File) M_write(tk *Task, data Bytes) Result[Unit, FsErr] {
 		return Err[Unit](fsIo(h.path, "file is open for reading"))
 	}
 	if h.mem != nil {
-		h.mem.write(data)
+		if h.rw {
+			h.mem.writeAt(int64(h.mem.off), data)
+			h.mem.off += len(data)
+		} else {
+			h.mem.write(data)
+		}
 		return Ok[Unit, FsErr](Unit{})
 	}
 	if _, err := h.osf.Write([]byte(data)); err != nil {
@@ -205,7 +244,7 @@ func (f File) M_close(*Task) Result[Unit, FsErr] {
 // ---------------------------------------------------------------------------
 // The real filesystem
 
-func (f *realFs) openFile(tk *Task, p string, write bool, flag int) Result[File, FsErr] {
+func (f *realFs) openFile(tk *Task, p string, write bool, flag int, rw ...bool) Result[File, FsErr] {
 	op, e := f.check(tk, p, write)
 	if e != nil {
 		return Err[File](*e)
@@ -219,7 +258,7 @@ func (f *realFs) openFile(tk *Task, p string, write bool, flag int) Result[File,
 	if err != nil {
 		return Err[File](mapFsErr(err, p))
 	}
-	h := &fileH{path: p, write: write, osf: osf}
+	h := &fileH{path: p, write: write, osf: osf, rw: len(rw) > 0 && rw[0]}
 	if !write {
 		h.r = bufio.NewReaderSize(osf, 64<<10)
 	}
@@ -236,6 +275,13 @@ func (f *realFs) M_create(tk *Task, p string) Result[File, FsErr] {
 
 func (f *realFs) M_open_append(tk *Task, p string) Result[File, FsErr] {
 	return f.openFile(tk, p, true, os.O_WRONLY|os.O_CREATE|os.O_APPEND)
+}
+
+// M_open_rw opens for reading and writing, created if missing, not
+// truncated (os.OpenFile(p, O_RDWR|O_CREATE, 0o666)); reads are not
+// buffered, so the position is shared by read and write as in Go.
+func (f *realFs) M_open_rw(tk *Task, p string) Result[File, FsErr] {
+	return f.openFile(tk, p, true, os.O_RDWR|os.O_CREATE, true)
 }
 
 func (f *realFs) M_create_new(tk *Task, p string) Result[File, FsErr] {
@@ -645,7 +691,7 @@ func (f File) M_read_at(tk *Task, offset, max int64) Result[Option[Bytes], FsErr
 		return Err[Option[Bytes]](FsCanceled)
 	case h.closed:
 		return Err[Option[Bytes]](fileClosed(h.path))
-	case h.write:
+	case h.write && !h.rw:
 		return Err[Option[Bytes]](fsIo(h.path, "file is open for writing"))
 	case offset < 0:
 		return Err[Option[Bytes]](fsIo(h.path, "negative offset"))
@@ -653,7 +699,7 @@ func (f File) M_read_at(tk *Task, offset, max int64) Result[Option[Bytes], FsErr
 		return Ok[Option[Bytes], FsErr](Some(Bytes("")))
 	}
 	if h.mem != nil {
-		d := h.mem.data
+		d := h.mem.cur()
 		if offset >= int64(len(d)) {
 			return Ok[Option[Bytes], FsErr](Option[Bytes]{})
 		}
