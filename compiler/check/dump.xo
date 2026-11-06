@@ -295,6 +295,9 @@ fn (var c: Checker) run() -> () ! Str {
       c.check_std_defaults(m)
     }
   }
+  if c.mod_skip_auto && !c.mod_skip.is_empty() {
+    c.check_read_bodies()
+  }
   if c.mod_skip_auto && !c.mod_skip.is_empty() && !c.effect_reads_across_modules().is_empty() {
     c.skip_unsafe = true
   }

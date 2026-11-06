@@ -568,6 +568,46 @@ fn decode_mod_entry(d: Bytes) -> Option[ModEntry] {
   Some(e)
 }
 
+/// Checks now, before the whole-program passes, each body of a skipped
+/// module left for check_lazy whose inferred effects a checked body
+/// reads, and in turn the ones those read: their entry's eager list
+/// should have named them, but one written by a build whose checker
+/// never checked its seeds (a dependency module checked lazily, decision
+/// 0517, its bodies checked on the builder's copies) lists the seeds
+/// alone, and every warm compiler/ edit then checked the program twice
+/// (skip_unsafe; 2026-11-05). A body that does not parse stays lazy, so
+/// its read still makes the build unsafe.
+fn (var c: Checker) check_read_bodies() {
+  var tried: Map[Int, Bool] = {}
+  var more = true
+  while more {
+    more = false
+    for (_, g) in c.inferred_reads() {
+      if !(c.lazy_fns.get(g) ?? false) || tried.contains(g) || !c.mod_skip.contains(c.objs[g].module) {
+        continue
+      }
+      tried[g] = true
+      if !c.force_body(g) {
+        continue
+      }
+      c.lazy_fns[g] = false
+      c.eager_fns[g] = true
+      let sf = c.cur_file
+      let sm = c.cur_mod
+      let sp = c.path
+      c.cur_mod = c.objs[g].module
+      c.set_file(c.objs[g].decl_file)
+      c.check_fn_decl(c.objs[g].fn_decl[0], g)
+      if sf >= 0 {
+        c.set_file(sf)
+      }
+      c.cur_mod = sm
+      c.path = sp
+      more = true
+    }
+  }
+}
+
 /// The function items of the checked bodies' inferred effects that name
 /// a function of another module whose effects are inferred too: none,
 /// by the language (only a function that is not pub, not an interface's

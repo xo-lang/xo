@@ -80,3 +80,20 @@ other objects (tz_table: `NAMES` read as `os`, 54 XO1201 errors on the
 warm build; TestModuleCheckAuto). c.names is now only appended to: the
 entry's zone records are added unless the eager check made the same one.
 Test: internal/arm64 TestModuleCheckAutoZones.
+
+Observed again (2026-11-05, every warm compiler/ edit): each warm
+`xo build` of compiler/xo checked the program twice ("the module check
+cache skipped 21 module(s) ... checking them again", --phase-times),
+2.6 s of a 9.6 to 9.9 s edit rebuild on host 1 (6.96 to 7.39 s with the fix, w1 to w3 of festats-remote.sh). The trigger was skip_unsafe,
+not a body built from source: a skipped module's eager body (compiler/check
+`Checker.std_import_hint`, ssa `Rc.group_releases`) read the inferred
+effects of a body of its own module left lazy (`Checker.note`,
+`Rc.leaves`). The entry's eager list should have named those, but the
+entry is written from the build's checker, and with decision 0517 a
+dependency module's bodies are checked lazily on the builder's copies, so
+eager_of found no effect items on the seeds and listed the seeds alone.
+Smallest case: a dependency module's `xs.sort_by(fn(x) { weight(x) })`
+(a body with a closure, built from source) reading `weight`. Fix:
+Checker.check_read_bodies checks such bodies before skip_unsafe is
+decided, until none is left. Test: TestModuleCheckAutoGeneric's
+`by_weight`.

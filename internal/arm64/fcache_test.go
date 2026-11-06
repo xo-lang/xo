@@ -1388,6 +1388,11 @@ fn main(os: Os) uses stdio {
 // (ModEntry.eager), checked before the whole-program passes, so the
 // warm build and a build after an edit of another module skip it with
 // no fallback and are the cache-off builds' binaries.
+// by_weight, a body with a closure (built from source too), reads weight's
+// inferred effects: its entry, written by a build that checked lib's
+// bodies lazily (decision 0517), listed by_weight alone, and every warm
+// build fell back until the check took the bodies such a body reads
+// (Checker.check_read_bodies, 2026-11-05).
 func TestModuleCheckAutoGeneric(t *testing.T) {
 	t.Parallel()
 	if !native() {
@@ -1426,12 +1431,24 @@ pub fn total(xs: List[Int]) -> Int {
   }
   s
 }
+
+fn weight(x: Int) -> Int {
+  x % 7
+}
+
+fn by_weight(xs: List[Int]) -> List[Int] {
+  xs.sort_by(fn(x) { weight(x) })
+}
+
+pub fn heaviest(xs: List[Int]) -> Int {
+  by_weight(xs).last() ?? 0
+}
 `,
 		"main.xo": `use example.com/p/lib
 
 fn main(os: Os) uses stdio {
   let xs = [4, 5, 6]
-  os.stdio.println("v1 ${lib.pick(xs, 9)} ${lib.pick(["a", "b"], -1)} ${lib.total(xs)}")
+  os.stdio.println("v1 ${lib.pick(xs, 9)} ${lib.pick(["a", "b"], -1)} ${lib.total(xs)} ${lib.heaviest(xs)}")
 }
 `,
 	}
