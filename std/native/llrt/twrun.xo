@@ -694,8 +694,10 @@ pub fn in_use(addr: Str) -> Bool {
 }
 
 /// Reads at most max bytes from end me into a: the count, 0 at the end
-/// of the stream, -1 canceled, -2 when me is closed.
-pub fn me_read(me: Int, a: Int, max: Int) -> Int {
+/// of the stream, -1 canceled, -2 when me is closed, -4 when the user's
+/// read deadline dl (timers' clock, 0 for none) passed while it waited
+/// (a timer wakes the wait, as the real network's does).
+pub fn me_read(me: Int, a: Int, max: Int, dl: Int) -> Int {
   lock()
   let p = ld(me, ME_IN)
   while true {
@@ -722,9 +724,24 @@ pub fn me_read(me: Int, a: Int, max: Int) -> Int {
       unlock()
       return 0
     }
-    if !tasks.wl_wait_as(ctx.cur(), lock_word(), p + P_WAITERS, true, 0) {
+    let c = ctx.cur()
+    var tm = 0
+    if dl != 0 {
+      tm = poll.timer_park(dl, poll.park_of(c))
+    }
+    let live = tasks.wl_wait_as(c, lock_word(), p + P_WAITERS, true, 0)
+    var late = false
+    if tm != 0 {
+      late = poll.timer_fired(tm)
+      poll.timer_end(tm)
+    }
+    if !live {
       unlock()
       return -1
+    }
+    if late && ld(p, P_LEN) == 0 && ld(p, P_WCLOSED) == 0 && ld(p, P_RCLOSED) == 0 {
+      unlock()
+      return -4
     }
   }
   0

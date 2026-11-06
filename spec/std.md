@@ -1034,7 +1034,9 @@ Deadlines (decision 0430) are Go's net.Conn deadlines.
 - Deadlines never cancel: cancellation stays `Canceled` (core 7.2), and
   a `task.with_timeout` around the call still cancels it.
 - On FakeNet's in-memory connections, a deadline already passed fails at
-  once, but a waiting read or write is not woken by one.
+  once, and a waiting read is woken by its deadline (the virtual clock
+  moves to it; 2026-11-05, it deadlocked before); a waiting write is not
+  woken by one.
 - They are on the concrete types, not on `Stream` (decision 0430).
 
 Names (decision 0406): `lookup_host(host)` returns host's addresses as

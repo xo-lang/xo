@@ -7,6 +7,18 @@
 
 
 
+## 2026-11-05: fix: a read on a FakeNet connection is woken by its deadline
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19's azservicebus tests over std/amqptest (Receiver.receive(20) on an empty queue faulted XO-F001)
+- Go reference: net.Conn.SetReadDeadline (the in memory pipe of net.Pipe honors it)
+- Test: std/native/llrt/netconn_test.xo "a waiting read on a fake connection times out at its deadline", std/native/amqptest_test.xo "receive on an empty queue times out in the test world"
+- Timing: none (the timer exists only while a read waits with a deadline)
+- Shipped in: not yet released
+
+A `read` that waits on a connection of FakeNet's in-memory network now fails with `Timeout` when its read deadline (decision 0430) passes: a timer wakes the wait, so the test world's virtual clock moves to the deadline instead of reporting `XO-F001: deadlock: every task is blocked and no timer is pending`. A waiting write is still not woken by a deadline.
+
 ## 2026-11-05: fix: a CPU profile that fills its sample ring says so, and the ring is 8 times larger
 
 - Kind: fix

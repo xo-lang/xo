@@ -80,3 +80,17 @@ test "a deadline in the past fails at once on a clock that has not moved" {
     c.set_deadline(os.clock, None)
   }
 }
+
+// A read that waits on a FakeNet connection is woken by its deadline: the
+// virtual clock moves to it (it deadlocked with "no timer is pending"), and
+// the connection reads on after a later deadline (decision 0430).
+test "a waiting read on a fake connection times out at its deadline" {
+  let l = os.net.listen("wait.test:1")?
+  let c = os.net.dial("wait.test:1")?
+  let sc = l.accept()?
+  sc.set_read_deadline(os.clock, Some(os.clock.now() + 50ms))
+  expect(sc.read(8) == Err(NetErr.Timeout)) == true
+  sc.set_read_deadline(os.clock, None)
+  c.write("hi".bytes())?
+  expect(sc.read(8)?) == Some("hi".bytes())
+}

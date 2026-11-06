@@ -1376,13 +1376,15 @@ pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
   let me = ld(cn, C_MEM)
   if me != 0 {
     let buf = raw.bytes_buf(max)
-    let r = twrun.me_read(me, raw.bytes_addr(buf), max)
+    let r = twrun.me_read(me, raw.bytes_addr(buf), max, ld(cn, C_RDL))
     if r > 0 {
       ok(c)
       return read_list(buf, r, np)
     }
     if r == 0 {
       ok(c)
+    } else if r == -4 {
+      fail(c, 3, "")
     } else if r == -1 {
       fail(c, 5, "")
     } else {

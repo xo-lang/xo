@@ -502,3 +502,25 @@ test "a scheduled message appears at its time on the broker's clock" uses (net, 
   expect(b.ready("q").len()) == 1
   expect(b.scheduled("q").len()) == 0
 }
+
+test "receive on an empty queue times out in the test world" {
+  let b = amqptest.new(os.clock)
+  b.queue("q")
+  let l = os.net.listen("broker.example.test:5672").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = amqp.dial(os.net, "broker.example.test:5672", amqp.ConnOptions{container_id: "t", clock: Some(os.clock), sasl: amqp.Sasl.Anonymous, timeout_ms: 5000}).or_fault("dial")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "q").or_fault("receiver")
+    match rcv.receive(20) {
+      Ok(_) => fault("a message from an empty queue")
+      Err(e) => {
+        match e {
+          Net(m) => expect(m.contains("timeout")) == true
+          _ => fault("wrong error")
+        }
+      }
+    }
+    c.close().or_fault("close")
+  }
+}
