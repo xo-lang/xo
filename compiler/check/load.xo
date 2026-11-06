@@ -598,7 +598,7 @@ pub fn new_checker(fs: Fs, std_dir: Str) -> Checker {
   c
 }
 
-/// Whether std module n's native file has a `use c` line (std/sqlite).
+/// Whether std module n's native file has a `use c` line (decision 0534).
 fn (c: Checker) std_uses_c(n: Str) -> Bool uses fs.read {
   let b = c.fs.read("${c.std_dir}/native/${n}.xo").ok() ?? return false
   let src = b.to_str() ?? return false
@@ -618,8 +618,8 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   }
   if c.std_roots {
     // decision 0388 1b: std's object holds every std module, whether the
-    // program imports it or not, but one with C sources (std/sqlite's
-    // `use c`, decision 0534): with it the store build links with cc,
+    // program imports it or not, but one with C sources (decision 0534's
+    // `use c` module): with it the store build links with cc,
     // and an empty program does not link; a program that imports it
     // builds it as its own part
     for e in c.list_dir(c.std_dir) {
