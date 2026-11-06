@@ -1834,7 +1834,17 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       t = lap(os, phases, "hollow", t)
     } else if hollow_now {
       if p.parts.len() > 1 {
-        p.parts = hollow_parts(p.parts, march, tgoos == "linux")
+        // part by part in place: each old text is freed as its hollowed
+        // one is made (hollow_parts held both whole sets at once)
+        // (a part's facts name its chunks by views of its text, so they go
+        // with it)
+        var (hf, hl) = arm64.hollow_plan(p.parts, tgoos == "linux")
+        let trap = arm64.hollow_trap(march)
+        for i in 0..p.parts.len() {
+          let (ht, _, _) = arm64.hollow_rewrite(p.parts[i], hf[i], hl[i], trap)
+          hf[i] = arm64.HFacts{}
+          p.parts[i] = ht
+        }
       } else {
         p.asm = hollow_parts([p.asm], march, tgoos == "linux")[0]
       }

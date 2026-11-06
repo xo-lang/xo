@@ -4147,7 +4147,9 @@ fn drop_weak_in(own: Map[Str, Bool], os: Str, text: Str) -> Str {
   if from < n {
     out.write(text[from..n])
   }
-  out.freeze()
+  // an exact copy, as hollow_rewrite's: the parts outlive the build's
+  // later phases (gotchas/frozen-builder-keeps-capacity.md)
+  "" + out.freeze()
 }
 
 /// rt.sym_addr (decision 0234): the address of the C level symbol name,

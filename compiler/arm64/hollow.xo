@@ -71,13 +71,28 @@ pub fn hollow_unreached_elf(parts: List[Str]) -> (List[Str], Str) { hollow_text(
 /// the emptied body's trap (2026-10-25).
 pub fn hollow_unreached_amd64(parts: List[Str], elf: Bool) -> (List[Str], Str) { hollow_text(parts, elf, HOLLOW_UD2) }
 
-fn hollow_text(parts: List[Str], elf: Bool, trap: Str) -> (List[Str], Str) {
+/// What hollowing parts needs to rewrite each one (hollow_rewrite): every
+/// part's facts and which of its chunks are live. A caller that owns the
+/// parts rewrites them one at a time, so each old text is freed as its new
+/// one is made (the whole set twice at once was 0.95 GB of xo's amd64 self
+/// build, 2026-11-06).
+pub fn hollow_plan(parts: List[Str], elf: Bool) -> (List[HFacts], List[List[Bool]]) {
   let (extra, first) = hollow_extra(parts, elf)
   var facts: List[HFacts] = []
   for p in parts {
     facts.push(hollow_scan(p, elf, extra, first))
   }
   let live = hollow_live(facts, elf)
+  (facts, live)
+}
+
+/// The trap a hollowed function's body becomes for march.
+pub fn hollow_trap(march: Str) -> Str {
+  if march == "amd64" { HOLLOW_UD2 } else { "brk #${HOLLOW_BRK}" }
+}
+
+fn hollow_text(parts: List[Str], elf: Bool, trap: Str) -> (List[Str], Str) {
+  let (facts, live) = hollow_plan(parts, elf)
   var dead = 0
   var all = 0
   for l in live {
@@ -475,7 +490,10 @@ pub fn hollow_rewrite(p: Str, f: HFacts, live: List[Bool], trap: Str) -> (Str, I
     }
   }
   sb.write(p[at..p.len()])
-  (sb.freeze(), dead_data, dropped)
+  // an exact copy: a frozen builder keeps its doubling slack, and every
+  // part of a large program at once held 1.83 GB for 1.17 GB of text
+  // (gotchas/frozen-builder-keeps-capacity.md)
+  ("" + sb.freeze(), dead_data, dropped)
 }
 
 /// Whether c can start an ELF symbol of the program's own labels (not a
