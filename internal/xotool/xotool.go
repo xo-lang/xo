@@ -1318,11 +1318,14 @@ func BuildXo(root, seed, out string) error {
 }
 
 // builderMaxMem is the memory budget (XO_MAX_MEM) of seed's build of
-// compiler/xo: $XO_BUILDER_MAX_MEM, else 8G ("off" for none), for every
+// compiler/xo: $XO_BUILDER_MAX_MEM, else 12G ("off" for none), for every
 // builder but a release seed (one fetched into <cache>/seeds, or the
 // go-compiler-final root and its chain in <cache>/seed) and an explicit
 // $XO_SEED, which keep xo's own default: an older release can need more.
-// A healthy build of compiler/xo peaks at about 4.5 GB (2026-11-06), and
+// A healthy build of compiler/xo peaks at about 4.5 GB of heap on arm64
+// but maps about 8 GB on linux/amd64 (5.3 GB RSS), so 8G failed there
+// past phase write by luck and marked a good builder bad (Lang 1,
+// 2026-11-06); 12G keeps a margin over that and well under a runaway:
 // the cached builds of 11a08a448 to c1605f3ab's parent looped in
 // inline.apply past 22 GB; with xo's default budget (18 GB on the Mac)
 // each such builder ran past heavy.sh's 16 GB guard, which stopped the
@@ -1333,7 +1336,7 @@ func builderMaxMem(seed string) string {
 		return ""
 	}
 	if m == "" {
-		m = "8G"
+		m = "12G"
 	}
 	if s := os.Getenv("XO_SEED"); s != "" && s == seed {
 		return ""

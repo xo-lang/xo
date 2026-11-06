@@ -46,8 +46,10 @@ Last verified: 2026-10-12
   and the seed smoke: it passed the smoke when it was built, and the
   build's own first phase is the check (2026-11-05). Every builder but a
   release seed and an explicit `$XO_SEED` builds compiler/xo under
-  `XO_MAX_MEM=8G` (`XO_BUILDER_MAX_MEM` sets it, `off` for none; a healthy
-  build peaks at about 4.5 GB), and a cached build that exits 70 (a fault,
+  `XO_MAX_MEM=12G` (`XO_BUILDER_MAX_MEM` sets it, `off` for none; a healthy
+  build peaks at about 4.5 GB of heap on arm64 but maps about 8 GB on
+  linux/amd64, where 8G, the first default, failed past phase write by
+  luck, 2026-11-06), and a cached build that exits 70 (a fault,
   or that budget) gets a `bad` file beside it and is never a builder
   again; it stays its own key's xo (2026-11-06: the cached builds of
   b29c306c8 to 77cb1d2bf's parent looped in inline.apply past 22 GB and

@@ -803,7 +803,7 @@ func TestSmokeXo(t *testing.T) {
 // TestBadBuilder: a cached build that faults building compiler/xo (exit
 // status 70, as its memory budget stops it) is marked bad and never
 // offered as a builder again, and every builder but a release seed or an
-// explicit $XO_SEED builds under XO_BUILDER_MAX_MEM (8G by default): the
+// explicit $XO_SEED builds under XO_BUILDER_MAX_MEM (12G by default): the
 // cached builds of 11a08a448 to c1605f3ab's parent looped in inline.apply
 // past 22 GB, and each one ran into heavy.sh's 16 GB guard before the
 // next seed was tried (2026-11-06).
@@ -883,12 +883,12 @@ func TestBadBuilder(t *testing.T) {
 		t.Error("exit status 1 marked a builder bad")
 	}
 	// XO_BUILDER_MAX_MEM sets the budget, off removes it
-	t.Setenv("XO_BUILDER_MAX_MEM", "12G")
+	t.Setenv("XO_BUILDER_MAX_MEM", "10G")
 	BuildXo(root, cached, out)
 	t.Setenv("XO_BUILDER_MAX_MEM", "off")
 	BuildXo(root, cached, out)
 	b, _ := os.ReadFile(seen)
-	if got, want := string(b), "max=8G\nmax=\nmax=12G\nmax=\n"; got != want {
+	if got, want := string(b), "max=12G\nmax=\nmax=10G\nmax=\n"; got != want {
 		t.Errorf("budgets seen by the builders:\n%s\nwant:\n%s", got, want)
 	}
 }
