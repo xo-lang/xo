@@ -21,6 +21,6 @@ agree with the oracle on arm64 and LLVM.
 - Test: testdata/corpus/cbor (2,000 typed cases against internal/stdtest/cborref `typed`, `typed2` and `typed3`)
 
 Typed CBOR through a derive: `marshal[T]`, `unmarshal[T]`, `unmarshal_prefix[T]` for a struct that derives
-Cbor. New `CborErr.Type(msg)` variant (an exhaustive `match` on `CborErr` needs the arm). New public
+Cbor. BREAKING: new `CborErr.Type(msg)` variant (an exhaustive `match` on `CborErr` needs the arm). New public
 helpers used by the generated code: `Unm`, `unm_new`, `to_str` and the other `to_*` readers, `from_time`,
 `from_duration`, `items`, `pairs`, `key_text`, `key_int`, `unknown_key`, `sorted_keys`.

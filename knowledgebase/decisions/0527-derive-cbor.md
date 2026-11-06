@@ -1,6 +1,6 @@
 # 0527: derive Cbor, typed CBOR values (cbor.marshal and cbor.unmarshal)
 
-Status: Proposed (for the owner, 2026-11-05)
+Status: Accepted (owner, 2026-11-05)
 
 ## Context
 
