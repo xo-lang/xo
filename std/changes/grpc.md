@@ -1,5 +1,18 @@
 # std/grpc changes
 
+## 2026-11-06: feature: gzip compression (Client.with_gzip; compressed messages are read)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0535's list of what the first version leaves out
+- Go reference: PROTOCOL-HTTP2.md (Compressed-Flag, Message-Encoding), grpc-go encoding/gzip
+- Test: TestGrpcInterop "gzip" line both ways (an Xo client with_gzip against grpc-go, a grpc-go client UseCompressor(gzip) against an Xo server)
+- Shipped in: not yet released
+
+Every call advertises `grpc-accept-encoding: gzip,identity`. A message with the compressed flag is inflated when the peer's `grpc-encoding` is gzip
+(its size after inflating is held to the receive limit: ResourceExhausted), else the call fails Internal. `client.with_gzip()` sends its messages
+compressed; a server answers with the encoding of the request, as grpc-go does.
+
 ## 2026-11-06: feature: grpc.bin_encode and grpc.bin_decode for `-bin` metadata
 
 - Kind: feature

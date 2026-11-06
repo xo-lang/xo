@@ -7856,6 +7856,7 @@ fn encode_message(s: Str) -> Str
 fn decode_message(s: Str) -> Str
 fn encode_message_bytes(b: Bytes) -> Str
 fn decode_message_bytes(s: Str) -> Bytes
+fn (c: Client) with_gzip() -> Client          // sends gzip compressed messages (`grpc-encoding: gzip`); compressed messages from the peer are always read; a server answers compressed when the request was
 fn bin_encode(data: Bytes) -> Str            // a `-bin` metadata value: unpadded standard base64
 fn bin_decode(value: Str) -> Bytes?          // padded or not; None when it is not base64
 // the server
