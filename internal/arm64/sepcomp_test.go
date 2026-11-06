@@ -232,7 +232,9 @@ func TestSepcompDefault(t *testing.T) {
 		cmd.Dir = prog
 		// one cache for both modes: a whole program's entries and a
 		// separate build's must not answer each other
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_SEPCOMP_BG=0"), env...)
+		// without the full tier's XO_SEPCOMP=0 (xotool tierSepcomp):
+		// this test is of the default
+		cmd.Env = append(append(environWithout("XO_SEPCOMP"), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_SEPCOMP_BG=0"), env...)
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo build (%s): %v\n%s", strings.Join(env, " "), err, log)
@@ -273,6 +275,17 @@ func TestSepcompDefault(t *testing.T) {
 	if run(whole2) != "3 C\n" {
 		t.Fatal("the whole program rebuilt from the shared cache runs wrong")
 	}
+}
+
+// environWithout is os.Environ() without NAME.
+func environWithout(name string) []string {
+	var env []string
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, name+"=") {
+			env = append(env, e)
+		}
+	}
+	return env
 }
 
 // TestSepcompSharedMade (decision 0388): a function the compiler makes on

@@ -295,6 +295,22 @@ func init() {
 	if os.Getenv("XO_SEPCOMP_BG") == "" {
 		os.Setenv("XO_SEPCOMP_BG", "0")
 	}
+	if k, v, ok := tierSepcomp(os.Getenv); ok {
+		os.Setenv(k, v)
+	}
+}
+
+// tierSepcomp: XO_TEST_SEPCOMP=0 (the full tier's whole-program run) also
+// sets XO_SEPCOMP=0 for every xo the tests start. Skipping the variants'
+// prebuild (stdVariants) is not enough: once std's variants are cached,
+// by an earlier run or another worktree, xo builds separately by default
+// (decision 0388) and the tier would test the separate path without
+// saying so. An XO_SEPCOMP already set, or a test's own, wins.
+func tierSepcomp(getenv func(string) string) (string, string, bool) {
+	if getenv("XO_TEST_SEPCOMP") == "0" && getenv("XO_SEPCOMP") == "" {
+		return "XO_SEPCOMP", "0", true
+	}
+	return "", "", false
 }
 
 func Command() ([]string, error) {

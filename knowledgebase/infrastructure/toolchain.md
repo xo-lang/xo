@@ -2020,8 +2020,12 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   with every program (arm64 TestGoldenRun: about 75% less CPU). The
   goldens of scripts/docker-amd64-sample.txt still build whole program
   (XO_SEPCOMP=0) in every run; `XO_TEST_SEPCOMP=0` builds every golden
-  whole, as the full tier does. A test that sets XO_SEPCOMP in its
-  Options.Env keeps its own choice. Last verified: 2026-11-06.
+  whole, as the full tier does: it skips the prebuild and sets
+  XO_SEPCOMP=0 for every xo the tests start (xotool tierSepcomp), since
+  variants cached by an earlier run would otherwise still build
+  separately (TestTierSepcompWarm). A test that sets XO_SEPCOMP in its
+  Options.Env keeps its own choice; the tests of the separate path skip
+  or drop the variable. Last verified: 2026-11-06.
 - **No Go reference in TestGolden**: want.txt pins the output; the Go
   backend builds only under `-golden-update` (which writes want.txt).
   TestGoldenGoParity (XO_TEST_GO_PARITY=1) builds every golden with the

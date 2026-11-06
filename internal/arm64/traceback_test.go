@@ -173,6 +173,9 @@ func TestTracebackSeparate(t *testing.T) {
 	} {
 		for _, sep := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/sep=%v", c.name, sep), func(t *testing.T) {
+				if sep && os.Getenv("XO_TEST_SEPCOMP") == "0" {
+					t.Skip("XO_TEST_SEPCOMP=0: every build is whole program")
+				}
 				o := xotool.Options{Backend: xotool.BackendArm64, Flags: []string{"--phase-times"}}
 				if !sep {
 					o.Env = []string{"XO_SEPCOMP=0"}
