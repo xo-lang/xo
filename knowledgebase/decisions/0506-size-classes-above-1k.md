@@ -118,6 +118,15 @@ regardless: size std buffers just under a class (http.xo 32,768 to 32,736).
   - bench/perf/alloc on the linux/arm64 host: small wall 1.015 worse (31.15 to 31.61 ms;
     classes under 1 KiB are unchanged, so likely the per class words' move to the record's
     end), mixed max RSS 0.805 and wall 0.988 better. Darwin footprint: xo bench --ab self on the Mac (darwin/arm64), caches off, 3 rounds: max RSS 1.004 within noise (4,473,024 to 4,489,728 KB), wall 1.000, cpu 0.995.
+  - Tried after D and not kept (2026-11-05, Xo Lang 2): the free lists and their lengths
+    (FREE_LISTS, NFREE) back in the record's first pages, at the words the pre-stage-B
+    arrays used (80 and 760), with MAG and MAG_CAP at the end, to test whether the small
+    regression above came from the move. It did not: --ab against its parent 0950f781d,
+    bench/perf/alloc small 20 rounds on the 18 CPU linux/arm64 host 0.999 (31.33 to 31.31
+    ms, none loaded) and 10 rounds on the 12 CPU host 0.990 within noise; mixed 1.003 wall,
+    1.000 max RSS; self 5 rounds (4 loaded) wall 1.002, max RSS 0.993 within noise. The
+    3 round 1.015 above is so far unexplained; a 20 round small run of a27137842 against
+    0950f781d is the next check.
 
 ## Alternatives
 
