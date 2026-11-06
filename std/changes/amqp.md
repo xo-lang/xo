@@ -105,3 +105,14 @@ An opt-in interop test (`xo test --real` with `XO_AMQP_INTEROP_ADDR`) passes aga
 `Connection.keepalive(g)` now starts a reader task that reads without the connection lock; calls that block (`receive`, `send`, link and session setup and close, `close`) wait on their own channel with their own deadline instead of holding the lock, so a waiting receive no longer stops a send or another receiver. Without `keepalive` nothing changes. Raw `recv` is refused while the reader runs (spec/std.md 64).
 
 Concurrent `begin` calls reserve their channel in the same critical section that picks it, so they get distinct channels (test: 8 concurrent begins).
+
+## 2026-11-06: feature: cbs_put_token takes the expiration property as it is
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (a byte for byte comparison with Go's clients)
+- Go reference: azeventhubs and azservicebus send the put-token `expiration` as a string of Unix seconds
+- Test: native/amqptest "put-token takes expiration as a string of Unix seconds, as Go's clients send it"
+
+`cbs_put_token(..., expiration: Value? = None)` sends the given value as `expiration` and wins over `expiry_ms`. The test
+broker (std/amqptest) reads a string of Unix seconds as well as a Timestamp.

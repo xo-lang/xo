@@ -3083,7 +3083,7 @@ fn receiver_close(r: amqp.Receiver, error: amqp.WireError? = None) -> () ! amqp.
 // ---------------------------------------------------------------------------
 // Stage 4: claims based security
 
-fn cbs_put_token(c: amqp.Connection, s: amqp.Session, audience: Str, token: Str, token_type: Str = "servicebus.windows.net:sastoken", expiry_ms: Int = 0) -> () ! amqp.AmqpErr uses (net.dial, clock) {
+fn cbs_put_token(c: amqp.Connection, s: amqp.Session, audience: Str, token: Str, token_type: Str = "servicebus.windows.net:sastoken", expiry_ms: Int = 0, expiration: amqp.Value? = None) -> () ! amqp.AmqpErr uses (net.dial, clock) {
   let snd = connection_new_sender(c, s, "$cbs", amqp.SenderOptions{name: "cbs-sender"})?
   let rcv = match connection_new_receiver(c, s, "$cbs", amqp.ReceiverOptions{name: "cbs-receiver", target: "cbs", credit: 1}) {
     Ok(r) => r
@@ -3093,7 +3093,10 @@ fn cbs_put_token(c: amqp.Connection, s: amqp.Session, audience: Str, token: Str,
     }
   }
   var props: List[(Str, amqp.Value)] = [("operation", amqp.Value.Str(v: "put-token")), ("type", amqp.Value.Str(v: token_type)), ("name", amqp.Value.Str(v: audience))]
-  if expiry_ms != 0 { props.push(("expiration", amqp.Value.Timestamp(ms: expiry_ms))) }
+  match expiration {
+    Some(v) => props.push(("expiration", v))
+    None => { if expiry_ms != 0 { props.push(("expiration", amqp.Value.Timestamp(ms: expiry_ms))) } }
+  }
   let req = amqp.Message{
     properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "1"), to: Some("$cbs"), reply_to: Some("cbs")}),
     app_properties: Some(props), body: amqp.Body.Value(v: amqp.Value.Str(v: token))}

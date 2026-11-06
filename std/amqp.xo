@@ -672,4 +672,6 @@ fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses (net.dial,
 /// `servicebus.windows.net:sastoken` for a SAS token and `jwt` for an Entra ID one. A status code
 /// outside 200 to 299 is `Peer` with the condition `amqp:unauthorized-access` and the description the
 /// server gave. `expiry_ms` (milliseconds since the Unix epoch) is sent as `expiration` when not 0.
-fn cbs_put_token(c: Connection, s: Session, audience: Str, token: Str, token_type: Str = "servicebus.windows.net:sastoken", expiry_ms: Int = 0) -> () ! AmqpErr uses (net.dial, clock)
+/// `expiration`, when given, is sent as the `expiration` property as it is and wins over `expiry_ms` (Go's clients send
+/// a string of Unix seconds).
+fn cbs_put_token(c: Connection, s: Session, audience: Str, token: Str, token_type: Str = "servicebus.windows.net:sastoken", expiry_ms: Int = 0, expiration: Value? = None) -> () ! AmqpErr uses (net.dial, clock)

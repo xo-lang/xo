@@ -1265,6 +1265,8 @@ fn process_cbs(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: I
   var expiry = 0
   match app_get(req, "expiration") {
     Some(Timestamp(t)) => { expiry = t }
+    // Go's clients send a string of Unix seconds
+    Some(Str(sv)) => { expiry = (Int.parse(sv) ?? 0) * 1000 }
     _ => {}
   }
   let r = b.st.with(fn(var s: amqptest.BrokerState) -> (Int, Str, Str) {

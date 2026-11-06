@@ -80,3 +80,13 @@ no sessions is 204. `FakeSession` gains `updated_ms`, set by set-session-state.
 x-opt-sequence-number, x-opt-offset and x-opt-enqueued-time; receivers at `hub/ConsumerGroups/cg/Partitions/id` read from a
 selector filter without removing anything; `com.microsoft:epoch` ownership with `amqp:link:stolen`; the namespace
 `$management` link answers READ for the hub and a partition; `Broker.events` lists a partition. spec/std.md 64.6.
+
+## 2026-11-06: feature: put-token expiration as a string of Unix seconds
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1
+- Go reference: azeventhubs and azservicebus send the put-token `expiration` as a string of Unix seconds
+- Test: native/amqptest "put-token takes expiration as a string of Unix seconds, as Go's clients send it"
+
+The broker reads the put-token `expiration` as a Timestamp or as a string of Unix seconds.
