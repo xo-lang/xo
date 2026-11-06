@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-06: fix: a half-close, read or write no longer hits another connection that reused the fd's number
+
+- Kind: fix
+- Commit: this push
+- Found by: TestGoldenTasks http_reverse_proxy_ws under the held Linux skip-read change (a 502 on a proxied WebSocket dial)
+- Go reference: none (Go's net.conn holds its fd through fd.incref for each operation)
+- Test: the golden http_reverse_proxy_ws under the skip-read change, a 50-round repro of its two dials (0 failures with the fix); gotchas/shutdown-of-a-reused-fd.md
+- Timing: none (one lock pair per shutdown)
+- Shipped in: not yet released
+
 ## 2026-11-06: perf: a header name's case insensitive compare steps 8 bytes at a time
 
 - Kind: perf

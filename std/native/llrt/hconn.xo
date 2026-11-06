@@ -636,7 +636,15 @@ pub fn shut_wr(h: rthttp.HConn) {
   }
   let hc = rec(h)
   if ld(hc, HC_CONN) != 0 {
-    let _r = sock.shutdown(pd_fd(conn_pd(hc)), SHUT_WR)
+    // held, so a close on another task cannot free the fd's number for
+    // a new connection between the load and the shutdown (a WebSocket
+    // tunnel's last shut_wr once half-closed the next accepted
+    // connection: gotchas/shutdown-of-a-reused-fd.md)
+    let pd = conn_pd(hc)
+    if poll.pd_begin(pd) {
+      let _r = sock.shutdown(pd_fd(pd), SHUT_WR)
+      poll.pd_end(pd)
+    }
   }
 }
 

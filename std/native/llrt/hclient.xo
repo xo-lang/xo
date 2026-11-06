@@ -145,7 +145,20 @@ pub fn fill(c: Int) -> Int {
     }
     return -r
   }
+  // held, so a close on another task cannot free the fd's number for a
+  // new connection while it is used (gotchas/shutdown-of-a-reused-fd.md)
+  let pd = ld(c, C_PD)
+  if !poll.pd_begin(pd) {
+    return CC_ERR
+  }
   let fd = rt.mem_load(c, C_FD, 4)
+  let res = fill_plain(c, fd, p, n, cap)
+  poll.pd_end(pd)
+  res
+}
+
+/// fill's read of a plain connection's fd, the descriptor held.
+fn fill_plain(c: Int, fd: Int, p: Int, n: Int, cap: Int) -> Int {
   while true {
     if poll.canceled() {
       return CC_CANCELED
@@ -214,7 +227,20 @@ pub fn send(c: Int, p: Int, n: Int) -> Int {
   if tls != 0 {
     return tlsio.write(tls, p, n)
   }
+  // held, so a close on another task cannot free the fd's number for a
+  // new connection while it is used (gotchas/shutdown-of-a-reused-fd.md)
+  let pd = ld(c, C_PD)
+  if !poll.pd_begin(pd) {
+    return CC_ERR
+  }
   let fd = rt.mem_load(c, C_FD, 4)
+  let res = send_plain(c, fd, p, n)
+  poll.pd_end(pd)
+  res
+}
+
+/// send's writes on a plain connection's fd, the descriptor held.
+fn send_plain(c: Int, fd: Int, p: Int, n: Int) -> Int {
   var off = 0
   while off < n {
     let w = sock.send(fd, p + off, n - off, NOSIGNAL)
@@ -317,7 +343,13 @@ pub fn shut_wr(r: rthttp.CResp) {
   if ld(c, C_TLS) != 0 {
     return
   }
-  let _r = sock.shutdown(rt.mem_load(c, C_FD, 4), 1)
+  // held, as hconn.shut_wr: a close elsewhere cannot reuse the fd's
+  // number under the shutdown (gotchas/shutdown-of-a-reused-fd.md)
+  let pd = ld(c, C_PD)
+  if poll.pd_begin(pd) {
+    let _r = sock.shutdown(rt.mem_load(c, C_FD, 4), 1)
+    poll.pd_end(pd)
+  }
 }
 
 /// Sends the next piece of a streamed request body (decision 0404 stage
@@ -502,7 +534,20 @@ pub fn read_direct(r: rthttp.CResp, p: Int, n: Int) -> Int {
     }
     return k
   }
+  // held, so a close on another task cannot free the fd's number for a
+  // new connection while it is used (gotchas/shutdown-of-a-reused-fd.md)
+  let pd = ld(c, C_PD)
+  if !poll.pd_begin(pd) {
+    return 0 - CC_ERR
+  }
   let fd = rt.mem_load(c, C_FD, 4)
+  let res = read_plain(c, fd, p, n)
+  poll.pd_end(pd)
+  res
+}
+
+/// The read of a plain connection's fd for the caller above, the descriptor held.
+fn read_plain(c: Int, fd: Int, p: Int, n: Int) -> Int {
   while true {
     if poll.canceled() {
       return 0 - CC_CANCELED
