@@ -1,6 +1,6 @@
 # 0531: std/oauth2 and std/oidc, an OAuth 2.0 client and OpenID Connect verification
 
-Status: Proposed (Xo Azure 1, 2026-11-06; the owner accepts the API)
+Status: Accepted (owner, 2026-11-06; proposed by Xo Azure 1)
 
 ## Context
 
@@ -35,7 +35,10 @@ not new cryptography.
    - std/http's `Client` has no transport hook (immutable `with_*` builders), so instead of Go's `oauth2.Transport`
      there is a wrapper: `t.apply(req) -> Request` sets `Authorization: <type> <token>`, and `src.client(c) ->
      AuthClient` wraps `Client.send` with a token from the source on every request. std/http does not change. (Not
-     server-side middleware, which is a different std/http concept.)
+     server-side middleware, which is a different std/http concept.) Stage 1 is this wrapper; a request hook in
+     std/http is not part of this decision.
+   - No automatic retry on a 401 by default, as Go's `oauth2.Transport`: a 401 comes back to the caller. A retry
+     once after a forced refresh is an opt-in `AuthClient` option.
 2. **std/oidc**, with go-oidc as its reference:
    - `discover(client, issuer)` fetches `issuer + "/.well-known/openid-configuration"` and requires its `issuer` to
      equal the one given (go-oidc's check; `insecure_issuer_url_context` as an explicit option for Azure's
@@ -76,10 +79,12 @@ not new cryptography.
   belong to the caller. A program writes the two URLs or uses `oidc.discover`.
 - Token caching on disk: out of scope; a `TokenSource` wrapper can do it.
 
-## Open questions for the owner
+## Owner decisions (2026-11-06)
+
+- The authorized client is the `AuthClient` wrapper (stage 1), not a std/http transport hook.
+- No automatic retry on a 401 by default (Go's behavior); the retry is opt-in.
+
+## Open questions
 
 - Whether the device flow's polling belongs in std (as Go) or stays a helper the caller loops over.
 - Whether `insecure_issuer_url_context` (go-oidc's name) keeps that name or becomes an `issuer_template` option.
-- The authorized client: the `AuthClient` wrapper as proposed (no std/http change), or a request hook in std/http's
-  `Client` that oauth2 plugs into. And whether `AuthClient` retries once after a refresh on a 401 (Go's Transport does
-  not).
