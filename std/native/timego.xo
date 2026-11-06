@@ -22,9 +22,9 @@ fn to_core(go_layout: Str) -> Str ! timego.LayoutErr {
     var hit = false
     // fractional seconds: .000 and .999 runs after a second
     if rest.starts_with(".0") || rest.starts_with(".9") {
-      let d = rest[1..][0..1]
+      let d = go_layout[i + 1..i + 2]
       var n = 1
-      while n < rest.len() - 1 && rest[1 + n..][0..1] == d {
+      while i + 2 + n <= go_layout.len() && go_layout[i + 1 + n..i + 2 + n] == d {
         n += 1
       }
       if d == "0" {
