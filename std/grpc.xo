@@ -1,6 +1,7 @@
 // std/grpc (decision 0535): gRPC over std/http's HTTP/2. This file is the pure layer: the message frame, the
 // grpc-timeout header, the status codes and the grpc-message percent encoding, as grpc-go does them.
-// Declaration file. Pure.
+// Declaration file. The pure layer is pure; the server and the client use std/http.
+use std/http
 
 /// The 17 canonical status codes (their numbers are the wire values of `grpc-status`).
 enum Code {
@@ -55,3 +56,107 @@ fn encode_message_bytes(b: Bytes) -> Str
 fn decode_message(s: Str) -> Str
 /// The inverse as raw bytes, exactly what grpc-go's client reports.
 fn decode_message_bytes(s: Str) -> Bytes
+
+/// A call's outcome that is not OK, the error of every call: the code, the status message and the raw
+/// `grpc-status-details-bin` payload when the peer sent one.
+struct Status {
+  code: Code
+  message: Str = ""
+  details: Bytes = b""
+}
+
+/// Displays as `rpc error: code = NotFound desc = no such user` (grpc-go's text).
+fn (s: Status) display() -> Str
+
+/// The call a handler is serving.
+struct Call {
+  /// the full method, `/package.Service/Method`
+  method: Str
+  /// the request metadata: lower case names, the pseudo and reserved names (`grpc-*`, `content-type`, `te`) left out
+  metadata: Map[Str, Str]
+  /// the deadline the client sent (`grpc-timeout`), None for no deadline
+  timeout: Duration?
+}
+
+struct RecvState {
+  buf: Bytes = b""
+  at: Int = 0
+  done: Bool = false
+}
+
+/// The messages of a call's request stream, as a handler reads them.
+struct Recv {
+  body: http.BodyReader
+  st: Mutex[RecvState]
+  max: Int
+}
+
+/// The next message; None when the client has finished sending. A message above the receive limit is
+/// `ResourceExhausted`, a cut stream or a bad frame `Internal`, a compressed message `Unimplemented`.
+fn (r: Recv) next() -> Bytes? ! Status
+
+/// The messages a handler sends back.
+struct Send {
+  w: http.BodyWriter
+}
+
+/// Sends one message (a frame is flushed at once).
+fn (s: Send) send(msg: Bytes) -> () ! Status
+/// A trailer sent after the last message, next to `grpc-status` and `grpc-message`.
+fn (s: Send) set_trailer(name: Str, value: Str)
+
+/// A gRPC server: methods registered on it are served through `router()` by an HTTP/2 `http.Server`.
+struct Server {
+  routes: http.Router
+  max_recv: Int
+  methods: List[Str]
+}
+
+/// A server with grpc-go's 4 MiB receive limit.
+fn server() -> Server
+/// The server with another receive limit in bytes.
+fn (s: Server) with_max_recv(n: Int) -> Server
+/// Registers a unary method (`/package.Service/Method`).
+fn (var s: Server) unary[fx: Effects](method: Str, f: fn(Call, Bytes) -> Bytes ! Status uses fx) uses fx
+/// Registers a method of any kind: a handler reads the request messages from `Recv` and writes the responses to
+/// `Send`; returning Ok ends the call with OK, an error with its status.
+fn (var s: Server) stream[fx: Effects](method: Str, f: fn(Call, Recv, Send) -> () ! Status uses fx) uses fx
+/// The routes to give `http.server`, with `http.Protocol.UnencryptedHttp2` (or TLS and ALPN h2) in its protocols.
+fn (s: Server) router() -> http.Router
+
+/// A gRPC client over an `http.Client`.
+struct Client {
+  http: http.Client
+  base: Str
+}
+
+/// A client of `base` (`http://host:port`, plain HTTP/2 with prior knowledge, or `https://host:port`).
+fn client(c: http.Client, base: Str) -> Client
+/// One unary call: the request message, the response message, or the call's status. `timeout` is sent as
+/// `grpc-timeout` and bounds the call (DeadlineExceeded).
+fn (c: Client) unary(method: Str, req: Bytes, metadata: Map[Str, Str] = {}, timeout: Duration? = None) -> Bytes ! Status uses net.dial
+
+/// The client side of a streaming call, valid inside `Client.call`.
+struct ClientCall {
+  w: http.PipeWriter
+  head: Chan[(http.ClientStream?, Status?)]
+  st: Mutex[CallState]
+  max: Int
+}
+
+struct CallState {
+  stream: http.ClientStream? = None
+  failed: Status? = None
+  recv: RecvState = RecvState{}
+  final: Status? = None
+}
+
+/// Runs `f` on a streaming call: `f` sends with `send`, ends the request with `close_send` and reads with `recv`.
+/// The call's status is the result of `recv` after the last message (an error when it is not OK).
+fn (c: Client) call[R, fx: Effects](method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(ClientCall) -> R ! Status uses fx) -> R ! Status uses (fx, net.dial)
+/// Sends one message.
+fn (c: ClientCall) send(msg: Bytes) -> () ! Status
+/// Ends the request stream.
+fn (c: ClientCall) close_send()
+/// The next response message; None at the end of an OK call, the status as an error otherwise.
+fn (c: ClientCall) recv() -> Bytes? ! Status uses net.dial

@@ -1,5 +1,6 @@
 // std/grpc: the pure layer (decision 0535), after grpc-go's rpc_util.go (frame, timeout) and status (message encoding).
 use std/grpc
+use std/http
 
 fn code_number(c: grpc.Code) -> Int {
   match c {
@@ -154,4 +155,392 @@ fn decode_message_bytes(s: Str) -> Bytes {
     i += 1
   }
   out.freeze()
+}
+
+// ---- the server and the client over std/http (decision 0535) ----
+
+fn status_new(code: grpc.Code, message: Str) -> grpc.Status {
+  grpc.Status{code: code, message: message, details: b""}
+}
+
+fn status_display(s: grpc.Status) -> Str {
+  "rpc error: code = ${s.code} desc = ${s.message}"
+}
+
+fn reserved(name: Str) -> Bool {
+  name.starts_with("grpc-") || name == "content-type" || name == "te"
+}
+
+fn finish(w: http.BodyWriter, st: grpc.Status) {
+  w.set_trailer("grpc-status", "${st.code.number()}")
+  if st.message != "" {
+    w.set_trailer("grpc-message", encode_message(st.message))
+  }
+}
+
+fn send_send(s: grpc.Send, msg: Bytes) -> () ! grpc.Status {
+  match s.w.write(frame(msg)) {
+    Ok(_) => ()
+    Err(e) => return Err(status_new(grpc.Code.Unavailable, "${e}"))
+  }
+  match s.w.flush() {
+    Ok(_) => Ok(())
+    Err(e) => Err(status_new(grpc.Code.Unavailable, "${e}"))
+  }
+}
+
+fn send_set_trailer(s: grpc.Send, name: Str, value: Str) {
+  s.w.set_trailer(name, value)
+}
+
+/// The next message of the stream whose buffered state is `st`, reading more with `more` (None at its end).
+fn pull[fx: Effects](st: grpc.RecvState, max: Int, more: fn() -> Bytes? ! grpc.Status uses fx) -> (Bytes?, grpc.RecvState) ! grpc.Status uses fx {
+  var s = st
+  while true {
+    match unframe(s.buf, s.at, max) {
+      Ok((compressed, msg, next)) => {
+        if compressed {
+          return Err(status_new(grpc.Code.Unimplemented, "grpc: compressed message received but no compression was negotiated"))
+        }
+        s.at = next
+        return Ok((Some(msg), s))
+      }
+      Err(grpc.FrameErr.TooLarge(len)) => {
+        return Err(status_new(grpc.Code.ResourceExhausted, "grpc: received message larger than max (${len} vs. ${max})"))
+      }
+      Err(grpc.FrameErr.BadFlag(flag)) => {
+        return Err(status_new(grpc.Code.Internal, "grpc: received message with invalid compression flag ${flag}"))
+      }
+      Err(grpc.FrameErr.Truncated) => {
+        if s.done {
+          if s.at == s.buf.len() {
+            return Ok((None, s))
+          }
+          return Err(status_new(grpc.Code.Internal, "unexpected EOF"))
+        }
+        match more()? {
+          Some(d) => {
+            var b = BytesBuilder.with_capacity(s.buf.len() - s.at + d.len())
+            b.write(s.buf[s.at..])
+            b.write(d)
+            s.buf = b.freeze()
+            s.at = 0
+          }
+          None => {
+            s.done = true
+          }
+        }
+      }
+    }
+  }
+  Ok((None, s))
+}
+
+fn recv_next(r: grpc.Recv) -> Bytes? ! grpc.Status {
+  let out = r.st.with(fn(var s) -> Result[Bytes?, grpc.Status] {
+    match pull(s, r.max, fn() -> Bytes? ! grpc.Status {
+      match r.body.read() {
+        Ok(d) => Ok(d)
+        Err(e) => Err(status_new(grpc.Code.Canceled, "${e}"))
+      }
+    }) {
+      Ok((msg, ns)) => {
+        s = ns
+        Ok(msg)
+      }
+      Err(e) => Err(e)
+    }
+  })
+  out
+}
+
+fn server() -> grpc.Server {
+  grpc.Server{routes: http.router(), max_recv: 4194304, methods: []}
+}
+
+fn server_with_max_recv(s: grpc.Server, n: Int) -> grpc.Server {
+  grpc.Server{routes: s.routes, max_recv: n, methods: s.methods}
+}
+
+/// The routes, with a call to a method nobody registered answered the way grpc-go does: status Unimplemented in
+/// the trailers of a 200 response.
+fn server_router(s: grpc.Server) -> http.Router {
+  var r = s.routes
+  let methods = s.methods
+  r.not_found(fn(req) -> http.Response {
+    let ct = req.header("content-type") ?? ""
+    if !ct.starts_with("application/grpc") {
+      return http.not_found()
+    }
+    let parts = req.path.split("/")
+    let svc = if parts.len() > 1 { parts[1] } else { "" }
+    var known = false
+    for m in methods {
+      if m.starts_with("/${svc}/") {
+        known = true
+      }
+    }
+    let name = if parts.len() > 2 { parts[2] } else { "" }
+    trailers_only(status_new(grpc.Code.Unimplemented, if known { "unknown method ${name} for service ${svc}" } else { "unknown service ${svc}" }))
+  })
+  r
+}
+
+fn trailers_only(st: grpc.Status) -> http.Response {
+  http.stream(200, fn(w) -> () ! IoErr {
+    finish(w, st)
+  }).with_header("content-type", "application/grpc")
+}
+
+fn serve_call[fx: Effects](f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.Status uses fx, max: Int, method: Str, req: http.Request, body: http.BodyReader) -> http.Response uses fx {
+  let ct = req.header("content-type") ?? ""
+  if !ct.starts_with("application/grpc") {
+    return http.empty(415)
+  }
+  var timeout: Duration? = None
+  if let Some(t) = req.header("grpc-timeout") {
+    match decode_timeout(t) {
+      Some(ns) => {
+        timeout = Some(Duration.from_nanos(ns))
+      }
+      None => return trailers_only(status_new(grpc.Code.Internal, "malformed grpc-timeout"))
+    }
+  }
+  var md: Map[Str, Str] = {}
+  for (k, v) in req.headers {
+    let lk = k.to_lower()
+    if !reserved(lk) {
+      md[lk] = v
+    }
+  }
+  let call = grpc.Call{method: method, metadata: md, timeout: timeout}
+  let recv = grpc.Recv{body: body, st: Mutex[grpc.RecvState].new(grpc.RecvState{buf: b"", at: 0, done: false}), max: max}
+  http.stream(200, fn(w) -> () ! IoErr {
+    let send = grpc.Send{w: w}
+    let st = match f(call, recv, send) {
+      Ok(_) => grpc.Status{code: grpc.Code.Ok, message: "", details: b""}
+      Err(e) => e
+    }
+    finish(w, st)
+  }).with_header("content-type", "application/grpc").with_full_duplex()
+}
+
+fn server_stream[fx: Effects](var s: grpc.Server, method: Str, f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.Status uses fx) uses fx {
+  let max = s.max_recv
+  s.methods.push(method)
+  s.routes.handle_stream("POST ${method}", fn(req, body) -> http.Response {
+    serve_call(f, max, method, req, body)
+  })
+}
+
+fn server_unary[fx: Effects](var s: grpc.Server, method: Str, f: fn(grpc.Call, Bytes) -> Bytes ! grpc.Status uses fx) uses fx {
+  server_stream(s, method, fn(call, recv, send) -> () ! grpc.Status {
+    let req = match recv.next()? {
+      Some(m) => m
+      None => return Err(status_new(grpc.Code.Internal, "grpc: client sent no request message"))
+    }
+    let resp = f(call, req)?
+    send.send(resp)?
+  })
+}
+
+// ---- client ----
+
+fn client(c: http.Client, base: Str) -> grpc.Client {
+  let h = if base.starts_with("http://") { c.with_protocols(#{http.Protocol.UnencryptedHttp2}) } else { c }
+  grpc.Client{http: h, base: base}
+}
+
+fn from_client_err(e: http.ClientErr) -> grpc.Status {
+  match e {
+    Timeout => status_new(grpc.Code.DeadlineExceeded, "context deadline exceeded")
+    Canceled => status_new(grpc.Code.Canceled, "context canceled")
+    Connect(msg) => status_new(grpc.Code.Unavailable, "connection error: ${msg}")
+    Protocol(msg) => status_new(grpc.Code.Internal, msg)
+    InvalidUrl(msg) => status_new(grpc.Code.Internal, "invalid URL: ${msg}")
+  }
+}
+
+fn call_headers(metadata: Map[Str, Str], timeout: Duration?) -> Map[Str, Str] {
+  var h: Map[Str, Str] = {}
+  for (k, v) in metadata {
+    h[k.to_lower()] = v
+  }
+  h["content-type"] = "application/grpc"
+  h["te"] = "trailers"
+  h["user-agent"] = "grpc-xo/0.1"
+  if let Some(d) = timeout {
+    h["grpc-timeout"] = encode_timeout(d.nanos())
+  }
+  h
+}
+
+fn http_to_code(status: Int) -> grpc.Code {
+  if status == 400 {
+    grpc.Code.Internal
+  } else if status == 401 {
+    grpc.Code.Unauthenticated
+  } else if status == 403 {
+    grpc.Code.PermissionDenied
+  } else if status == 404 {
+    grpc.Code.Unimplemented
+  } else if status == 429 || status == 502 || status == 503 || status == 504 {
+    grpc.Code.Unavailable
+  } else {
+    grpc.Code.Unknown
+  }
+}
+
+/// The call's status from a finished stream: its trailers, or the head of a trailers only response.
+fn final_status(st: http.ClientStream) -> grpc.Status {
+  let head = st.head()
+  if head.status != 200 {
+    return status_new(http_to_code(head.status), "unexpected HTTP status code received from server: ${head.status}")
+  }
+  let tr = st.trailers()
+  let gs = tr.get("Grpc-Status") ?? (head.headers.get("Grpc-Status") ?? "")
+  if gs == "" {
+    return status_new(grpc.Code.Internal, "server closed the stream without sending trailers")
+  }
+  let n = Int.parse(gs) ?? -1
+  let code = code_from(n) ?? grpc.Code.Unknown
+  let msg = tr.get("Grpc-Message") ?? (head.headers.get("Grpc-Message") ?? "")
+  grpc.Status{code: code, message: decode_message(msg), details: b""}
+}
+
+fn client_unary(c: grpc.Client, method: Str, req: Bytes, metadata: Map[Str, Str], timeout: Duration?) -> Bytes ! grpc.Status {
+  var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout), frame(req))
+  if let Some(d) = timeout {
+    r = r.with_timeout(d)
+  }
+  let st = match c.http.open(r) {
+    Ok(s) => s
+    Err(e) => return Err(from_client_err(e))
+  }
+  let data = match st.read_all() {
+    Ok(b) => b
+    Err(e) => {
+      st.close()
+      return Err(from_client_err(e))
+    }
+  }
+  let fin = final_status(st)
+  st.close()
+  if fin.code != grpc.Code.Ok {
+    return Err(fin)
+  }
+  match unframe(data, 0) {
+    Ok((compressed, msg, _)) => {
+      if compressed {
+        return Err(status_new(grpc.Code.Unimplemented, "grpc: compressed message received but no compression was negotiated"))
+      }
+      Ok(msg)
+    }
+    Err(_) => Err(status_new(grpc.Code.Internal, "grpc: no response message"))
+  }
+}
+
+fn client_call[R, fx: Effects](c: grpc.Client, method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(grpc.ClientCall) -> R ! grpc.Status uses fx) -> R ! grpc.Status uses (fx, net.dial) {
+  let (pw, pr) = http.pipe()
+  var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout)).with_body_reader(pr)
+  if let Some(d) = timeout {
+    r = r.with_timeout(d)
+  }
+  let head = Chan[(http.ClientStream?, grpc.Status?)].new(1)
+  let cc = grpc.ClientCall{w: pw, head: head, st: Mutex[grpc.CallState].new(grpc.CallState{stream: None, failed: None, recv: grpc.RecvState{buf: b"", at: 0, done: false}, final: None}), max: 4194304}
+  var result: R? = None
+  var failure: grpc.Status? = None
+  scope s {
+    s.spawn(fn() {
+      match c.http.open(r) {
+        Ok(st) => head.send((Some(st), None))
+        Err(e) => head.send((None, Some(from_client_err(e))))
+      }
+    })
+    match f(cc) {
+      Ok(v) => {
+        result = Some(v)
+      }
+      Err(e) => {
+        failure = Some(e)
+      }
+    }
+    pw.close()
+    // release the stream, also when f never read the call to its end
+    var open_stream = cc.st.with(fn(var s) { s.stream })
+    let consumed = cc.st.with(fn(var s) { s.failed.is_some() })
+    if open_stream.is_none() && !consumed {
+      match head.recv() {
+        Some((Some(x), _)) => {
+          open_stream = Some(x)
+        }
+        _ => {}
+      }
+    }
+    if let Some(x) = open_stream {
+      x.close()
+    }
+  }
+  if let Some(e) = failure {
+    return Err(e)
+  }
+  Ok(result ?? fault("grpc call produced no result"))
+}
+
+fn clientcall_send(cc: grpc.ClientCall, msg: Bytes) -> () ! grpc.Status {
+  match cc.w.write(frame(msg)) {
+    Ok(_) => Ok(())
+    Err(e) => Err(status_new(grpc.Code.Unavailable, "${e}"))
+  }
+}
+
+fn clientcall_close_send(cc: grpc.ClientCall) {
+  cc.w.close()
+}
+
+fn clientcall_recv(cc: grpc.ClientCall) -> Bytes? ! grpc.Status uses net.dial {
+  let out = cc.st.with(fn(var s) -> Result[Bytes?, grpc.Status] uses net.dial {
+    if let Some(e) = s.failed {
+      return Err(e)
+    }
+    if let Some(fin) = s.final {
+      return if fin.code == grpc.Code.Ok { Ok(None) } else { Err(fin) }
+    }
+    if s.stream.is_none() {
+      match cc.head.recv() {
+        Some((Some(st), _)) => {
+          s.stream = Some(st)
+        }
+        Some((None, Some(e))) => {
+          s.failed = Some(e)
+          return Err(e)
+        }
+        _ => return Err(status_new(grpc.Code.Internal, "grpc: no response"))
+      }
+    }
+    let stream = s.stream ?? fault("stream")
+    let res = pull(s.recv, cc.max, fn() -> Bytes? ! grpc.Status uses net.dial {
+      match stream.read() {
+        Ok(d) => Ok(d)
+        Err(e) => Err(from_client_err(e))
+      }
+    })
+    match res {
+      Ok((msg, ns)) => {
+        s.recv = ns
+        if msg.is_none() {
+          let fin = final_status(stream)
+          stream.close()
+          s.final = Some(fin)
+          return if fin.code == grpc.Code.Ok { Ok(None) } else { Err(fin) }
+        }
+        Ok(msg)
+      }
+      Err(e) => {
+        s.failed = Some(e)
+        Err(e)
+      }
+    }
+  })
+  out
 }
