@@ -17,11 +17,38 @@ const REPLACEMENT: List[Str] = ["\u{20AC}", "\u{0081}", "\u{201A}", "\u{0192}", 
 // 2026-10-29)
 const ESC_EXTRA: Bytes = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00\x04\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
 
+/// Words of eight equal bytes.
+const ONES: Int = 72340172838076673
+const HIGHS: Int = -9187201950435737472
+const LOW7S: Int = 9187201950435737471
+
+/// The high bit of each byte of w that is the byte of r (eight copies of
+/// one byte), exactly (std/native/llrt/scan.xo's eq8).
+fn eq8(w: Int, r: Int) -> Int {
+  let y = w ^ r
+  ((((y & LOW7S).wrapping_add(LOW7S)) | y) ^ -1) & HIGHS
+}
+
+/// The high bit of each of the 8 bytes of w that escapes to 5 bytes
+/// (& ' ").
+fn esc5(w: Int) -> Int { eq8(w, 38 * ONES) | eq8(w, 39 * ONES) | eq8(w, 34 * ONES) }
+
+/// The high bit of each of the 8 bytes of w that escapes to 4 bytes
+/// (< >).
+fn esc4(w: Int) -> Int { eq8(w, 60 * ONES) | eq8(w, 62 * ONES) }
+
 fn escape_string(s: Str) -> Str {
   let b = s.bytes()
   let n = b.len()
   var extra = 0
   var i = 0
+  // a word a step: each special's extra length counted by mask, so a
+  // text dense in specials costs no more than a clean one
+  while n - i >= 8 {
+    let w = rt.bytes_word(b, i)
+    extra += 4 * rt.popcount(esc5(w)) + 3 * rt.popcount(esc4(w))
+    i += 8
+  }
   while i < n {
     let c = Int(b[i])
     extra += Int(ESC_EXTRA[c])
@@ -40,6 +67,16 @@ fn escape_string(s: Str) -> Str {
   var start = 0
   i = 0
   while i < n {
+    if n - i >= 8 {
+      // a clean word is skipped whole; else straight to its first special
+      let w = rt.bytes_word(b, i)
+      let m = esc5(w) | esc4(w)
+      if m == 0 {
+        i += 8
+        continue
+      }
+      i += rt.ctz(m).shr_logical(3)
+    }
     let c = b[i]
     if c == 38 || c == 60 || c == 62 || c == 39 || c == 34 {
       let run = i - start

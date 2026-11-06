@@ -108,6 +108,41 @@ func main() {
 				}
 			}
 		}
+	case "fold":
+		var ups [][]byte
+		for _, b := range big {
+			ups = append(ups, bytes.ToUpper(b))
+		}
+		for p := 0; p < passes; p++ {
+			for i, b := range big {
+				if bytes.EqualFold(b, ups[i]) {
+					sum++
+				}
+			}
+		}
+	case "fold_32":
+		var lows, ups [][]byte
+		for _, b := range small {
+			lows = append(lows, b[:32])
+			ups = append(ups, bytes.ToUpper(b[:32]))
+		}
+		for p := 0; p < passes*64; p++ {
+			for i, b := range lows {
+				if bytes.EqualFold(b, ups[i]) {
+					sum++
+				}
+			}
+		}
+	case "lower":
+		var ups [][]byte
+		for _, b := range big {
+			ups = append(ups, bytes.ToUpper(b))
+		}
+		for p := 0; p < passes/4; p++ {
+			for _, b := range ups {
+				sum += int(bytes.ToLower(b)[7])
+			}
+		}
 	case "hex":
 		for p := 0; p < passes/4; p++ {
 			for _, b := range big {

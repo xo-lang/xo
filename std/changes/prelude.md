@@ -19,6 +19,18 @@ The large block cache served a request only from a mapping of at most four times
 
 
 
+## 2026-11-06: perf: equal_fold, eq_lower and to_lower/to_upper's fast path step 8 bytes at a time
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md): ASCII case insensitive compares were the hottest unvectorized search loops
+- Go reference: strings.EqualFold, bytes.EqualFold (go1.26.1)
+- Test: std/native/llrt/scan_test.xo "fold_eq_words and case_run match a byte loop at each byte"
+- Timing: bench/perf/simdscan on linux/arm64, new std against main's (the same xo): fold (4 KiB) 0.185, fold_32 0.212 of main's wall; against Go 1.26.1 fold 0.165, fold_32 0.245. bytestransform upper 1.04 of main's (short lowercase texts: one word read before the byte that changes), lower 0.93
+- Shipped in: not yet released
+
+`Str.equal_fold`, `Bytes.equal_fold` and `eq_lower` compare 8 bytes a step while both words are ASCII, equal, or equal with their capitals lowered (std/native/llrt/scan.xo fold_eq_words), then go on byte by byte from the first word that is not; `to_lower` and `to_upper` find the first byte to change (or at or above 0x80) a word at a time (scan.xo case_run).
+
 ## 2026-11-06: perf: Str and Bytes equality, order and one byte search faster on linux; ASCII validation faster everywhere
 
 - Kind: perf

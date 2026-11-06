@@ -75,3 +75,34 @@ and the new std (B), `xo bench --ab --no-guard --rounds 5`, host 1:
 | utf8_mixed | 1.033 (within noise) | 0.855 (0.928) |
 
 Raw output: ~/xo-lead/notes/lang1/simd3-host.txt.
+
+## Step 1b: ASCII case folding and html escape (std only)
+
+std/native/llrt/scan.xo fold_eq_words compares 8 byte words while both
+are ASCII and equal, or equal with their capitals lowered (the SWAR
+range test `(w + (0x80-lo)*ONES) & ~(w + (0x7f-hi)*ONES) & HIGHS`),
+for `equal_fold` (Str and Bytes), `eq_lower` and http1.xo's header
+name compare; case_run finds the first byte `to_lower`/`to_upper`
+changes a word at a time. html.xo escape_string counts each word's
+specials by mask (popcount) and jumps to a word's first special (ctz).
+
+Measured as step 1 (one xo, new std against main's, `--rounds 5`,
+host 1), simdscan's new workloads (fold: 64 buffers of 4 KiB against
+their upper case; fold_32: 32 byte prefixes; lower: to_lower of upper
+case text):
+
+| Workload | F/A | F/Go |
+|---|---:|---:|
+| fold | 0.185 | 0.165 |
+| fold_32 | 0.212 | 0.245 |
+| lower | within noise (1.024) | 0.136 |
+| html escape (bench/perf/html) | 0.943 | within noise (0.721) |
+| bytestransform upper | 1.041 | |
+| bytestransform lower | 0.927 | |
+
+bytestransform's fold row stayed within noise: its inputs mostly differ
+in length, so the loop rarely runs. Its upper row is the cost of one
+word read before the first byte to change in its short lowercase texts.
+A first html version that tested a word at the top of the byte loop
+measured 2.444 of main's (gotchas/swar-skip-in-byte-loop.md). Raw
+output: ~/xo-lead/notes/lang1/simdfold-host.txt and simdfold2-host.txt.

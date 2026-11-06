@@ -1,5 +1,17 @@
 # std/html changes
 
+## 2026-11-06: perf: escape_string scans 8 bytes a step
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md)
+- Go reference: html escape.go EscapeString (go1.26.1)
+- Test: `xo test --std-module=native/html` (a new case: each special at each place of 0 to 40, and near misses)
+- Timing: host 1 A/B escape 0.943 of before (0.91-0.947, n=5) on bench/perf/html's text, a special every 5 bytes; a first version that rechecked the word at each byte was 2.44 of before on it
+- Shipped in: not yet released
+
+The size scan counts each word's specials by mask (4 extra bytes for `&`, `'` and `"`, 3 for `<` and `>`), and the write loop skips a word with no special and otherwise goes straight to its first one.
+
 ## 2026-11-04: perf: escape_string writes the output through its address
 
 - Kind: perf

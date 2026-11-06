@@ -621,7 +621,7 @@ pub fn equal_fold(a: Str, b: Str) -> Bool {
   if n != y.len() {
     return false
   }
-  var i = 0
+  var i = scan.fold_eq_words(x, y, n)
   while i < n {
     if lower(Int(x[i])) != lower(Int(y[i])) {
       return false

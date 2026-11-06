@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-06: perf: a header name's case insensitive compare steps 8 bytes at a time
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md)
+- Go reference: net/textproto, strings.EqualFold (go1.26.1)
+- Test: std/native/llrt/scan_test.xo "fold_eq_words and case_run match a byte loop at each byte", `xo test --std-module=native/llrt/http1`
+- Timing: the same loop as Str.equal_fold: bench/perf/simdscan fold_32 0.212 of main's wall on linux/arm64
+- Shipped in: not yet released
+
+std/native/llrt/http1.xo equal_fold compares 8 byte words while they are ASCII and equal with capitals lowered (scan.xo fold_eq_words).
+
 ## 2026-11-06: feature: Request.param_opt, and a second FakeNet.handle replaces the first
 
 - Kind: feature

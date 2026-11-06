@@ -245,3 +245,64 @@ test "bytes_any_eq32 and bytes_any_high32 see each of the 32 bytes" {
     }
   }
 }
+
+/// The ASCII byte c with a capital lowered.
+fn low1(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
+
+/// fold_eq_words by bytes: the first word with a byte 0x80 or above or a
+/// pair unequal lowered.
+fn fold_eq_ref(x: List[Int], y: List[Int], k: Int) -> Int {
+  var i = 0
+  while k - i >= 8 {
+    for j in i..i + 8 {
+      if x[j] >= 0x80 || y[j] >= 0x80 || low1(x[j]) != low1(y[j]) {
+        return i
+      }
+    }
+    i += 8
+  }
+  i
+}
+
+test "fold_eq_words and case_run match a byte loop at each byte" {
+  // x mixed case letters and punctuation, y the same with the case of
+  // each letter swapped
+  var x0: List[Int] = []
+  var y0: List[Int] = []
+  for j in 0..20 {
+    let c = if j % 5 == 4 { 33 + j } else { 65 + j + (j % 2) * 32 }
+    x0.push(c)
+    y0.push(if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) { c ^ 32 } else { c })
+  }
+  for k in [0, 7, 8, 13, 19] {
+    for p in 0..256 {
+      for q in [p, p ^ 32, (p + 1) % 256, 0x40, 0x41, 0x5A, 0x5B, 0x60, 0x61, 0x7A, 0x7B, 0xC1, 0xE1] {
+        var x = x0
+        var y = y0
+        x[k] = p
+        y[k] = q
+        let bx = bytes_of(x)
+        let by = bytes_of(y)
+        for n in [8, 16, 19, 20] {
+          expect(fold_eq_words(bx, by, n)) == fold_eq_ref(x, y, n)
+        }
+      }
+      var x = x0
+      x[k] = p
+      for (lo, hi) in [(65, 90), (97, 122)] {
+        var want = 0
+        while 20 - want >= 8 {
+          var stop = false
+          for j in want..want + 8 {
+            stop = stop || x[j] >= 0x80 || (x[j] >= lo && x[j] <= hi)
+          }
+          if stop {
+            break
+          }
+          want += 8
+        }
+        expect(case_run(bytes_of(x), lo, hi)) == want
+      }
+    }
+  }
+}

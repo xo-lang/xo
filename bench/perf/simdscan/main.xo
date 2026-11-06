@@ -102,6 +102,43 @@ fn main(os: Os) {
         }
       }
     }
+    "fold" => {
+      // ASCII case insensitive equality of a buffer and its upper case
+      var ups: List[Bytes] = []
+      for b in big {
+        ups.push(b.to_upper())
+      }
+      for _ in 0..passes {
+        for (i, b) in big.indexed() {
+          sum += if b.equal_fold(ups[i]) { 1 } else { 0 }
+        }
+      }
+    }
+    "fold_32" => {
+      // header name sized: 32 bytes
+      var lows: List[Bytes] = []
+      var ups: List[Bytes] = []
+      for b in small {
+        lows.push(b[0..32])
+        ups.push(b[0..32].to_upper())
+      }
+      for _ in 0..passes * 64 {
+        for (i, b) in lows.indexed() {
+          sum += if b.equal_fold(ups[i]) { 1 } else { 0 }
+        }
+      }
+    }
+    "lower" => {
+      var ups: List[Bytes] = []
+      for b in big {
+        ups.push(b.to_upper())
+      }
+      for _ in 0..passes / 4 {
+        for b in ups {
+          sum += Int(b.to_lower()[7])
+        }
+      }
+    }
     "hex" => {
       for _ in 0..passes / 4 {
         for b in big {

@@ -275,6 +275,7 @@ measured range of Xo's wall over Go's (below 1 is faster).
 
 | Module | Result file | Program, host | Xo/Go |
 |---|---|---|---|
+| prelude (equal_fold, to_lower), http (header names), html (escape) | bench/results/simd-survey-2026-11-06.md (step 1b) | bench/perf/simdscan fold, fold_32, lower; bench/perf/html escape; linux/arm64 host 1, Go 1.26.1 | equal_fold 0.165 (4 KiB) and 0.245 (32 B), to_lower 0.136, html escape within noise of Go (0.721) |
 | prelude (Str, Bytes byte paths) | bench/results/simd-survey-2026-11-06.md | bench/perf/simdscan, linux/arm64 host 1, Go 1.26.1 | 0.26 (to_hex) to 1.91 (one byte find); equal 1.65, compare 1.34, ASCII validation 1.26 after step 1: within 2x (Solid) |
 
 ## Survey of backend gaps (2026-10-30)

@@ -405,7 +405,7 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
 fn case_done(b: Bytes, lower: Bool) -> Bool {
   let lo = if lower { 65 } else { 97 }
   let hi = if lower { 90 } else { 122 }
-  var i = 0
+  var i = scan.case_run(b, lo, hi)
   while i < b.len() {
     let c = Int(b[i])
     if c >= 0x80 || (c >= lo && c <= hi) {
@@ -447,7 +447,7 @@ pub fn eq_lower(a: Str, b: Str) -> Bool {
   let y = b.bytes()
   let n = x.len()
   let m = y.len()
-  var i = 0
+  var i = scan.fold_eq_words(x, y, if n < m { n } else { m })
   while i < n && i < m {
     let p = Int(x[i])
     let q = Int(y[i])
@@ -577,7 +577,7 @@ pub fn equal_fold(a: Str, b: Str) -> Bool {
 pub fn equal_fold_bytes(x: Bytes, y: Bytes) -> Bool {
   let n = x.len()
   let m = y.len()
-  var i = 0
+  var i = scan.fold_eq_words(x, y, if n < m { n } else { m })
   while i < n && i < m {
     let p = Int(x[i])
     let q = Int(y[i])

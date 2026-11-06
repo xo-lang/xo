@@ -47,3 +47,22 @@ test "escape_string: adjacent and trailing specials, multi-byte runs" {
   expect(html.escape_string("&x")) == "&amp;x"
   expect(html.escape_string("")) == ""
 }
+
+/// escape_string by replacement, the reference of the word skipping one
+/// (`&` first, so the others' `&` stays).
+fn escape_ref(s: Str) -> Str {
+  s.replace("&", "&amp;").replace("'", "&#39;").replace("\"", "&#34;").replace("<", "&lt;").replace(">", "&gt;")
+}
+
+test "escape_string: each special at each place of 0 to 40, and near misses" {
+  let letters = ["a", "b", "c", "d", "e", "f", "g", "h"]
+  for c in ["&", "'", "\"", "<", ">", "%", "=", "?", "\u{00A6}"] {
+    for p in 0..41 {
+      var s = ""
+      for j in 0..41 {
+        s = s + (if j == p { c } else { letters[j % 8] })
+      }
+      expect(html.escape_string(s)) == escape_ref(s)
+    }
+  }
+}

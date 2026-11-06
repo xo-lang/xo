@@ -1390,3 +1390,49 @@ pub fn to_hex(b: Bytes) -> Str {
   }
   rt.rs_set_len(out, shl(n, 1))
 }
+
+/// The high bit of each byte of w (w all ASCII) that is from lo to hi
+/// (0x01 to 0x7f): b + (0x80 - lo) reaches 0x80 when b >= lo and
+/// b + (0x7f - hi) when b > hi, and no sum of an ASCII byte carries out
+/// of its byte.
+fn in8(w: Int, lo: Int, hi: Int) -> Int {
+  (addw(w, mulw(0x80 - lo, ONES)) & (addw(w, mulw(0x7f - hi, ONES)) ^ -1)) & HIGHS
+}
+
+/// w (all ASCII) with its capitals lowered.
+fn lower8(w: Int) -> Int { w | shr(in8(w, 65, 90), 2) }
+
+/// The first multiple of 8 below k - 7 (k <= both lengths) from which the
+/// 8 byte words of x and y are not both ASCII and equal with their
+/// capitals lowered, or the last such multiple: where a byte loop of
+/// ASCII case insensitive equality goes on (strings.EqualFold's fast
+/// loop, eight bytes a step).
+pub fn fold_eq_words(x: Bytes, y: Bytes, k: Int) -> Int {
+  var i = 0
+  while subw(k, i) >= 8 {
+    let a = rt.bytes_word(x, i)
+    let b = rt.bytes_word(y, i)
+    if ((a | b) & HIGHS) != 0 || (a != b && lower8(a) != lower8(b)) {
+      return i
+    }
+    i = addw(i, 8)
+  }
+  i
+}
+
+/// The first multiple of 8 from which an 8 byte word of b holds a byte
+/// 0x80 or above or one from lo to hi (0x01 to 0x7f), or the last such
+/// multiple below b.len() - 7: the word steps of a byte loop that stops
+/// at either.
+pub fn case_run(b: Bytes, lo: Int, hi: Int) -> Int {
+  let n = b.len()
+  var i = 0
+  while subw(n, i) >= 8 {
+    let w = rt.bytes_word(b, i)
+    if (w & HIGHS) != 0 || in8(w, lo, hi) != 0 {
+      return i
+    }
+    i = addw(i, 8)
+  }
+  i
+}
