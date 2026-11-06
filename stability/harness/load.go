@@ -186,6 +186,41 @@ func peakRSS(pid int) float64 {
 	return rss
 }
 
+// mapsSummary sums the process's Linux smaps: its current resident KiB,
+// and the count and resident KiB of the mappings the size of a native
+// fiber stack (64 MiB plus one guard page, pool.xo map_stack), which are
+// the fibers live or cached; "" elsewhere.
+func mapsSummary(pid int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/smaps", pid))
+	if err != nil {
+		return "no smaps\n"
+	}
+	var size, rss, all, stacks, stackRSS int64
+	flush := func() {
+		all += rss
+		if size > 65536 && size <= 65536+64 {
+			stacks++
+			stackRSS += rss
+		}
+		size, rss = 0, 0
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		switch f[0] {
+		case "Size:":
+			flush()
+			size, _ = strconv.ParseInt(f[1], 10, 64)
+		case "Rss:":
+			rss, _ = strconv.ParseInt(f[1], 10, 64)
+		}
+	}
+	flush()
+	return fmt.Sprintf("rss_kib %d stack_maps %d stack_rss_kib %d\n", all, stacks, stackRSS)
+}
+
 // saveStats writes the app's stats text to path.
 func saveStats(cl *http.Client, url, token, path string) {
 	req, _ := http.NewRequest("GET", url, nil)
@@ -379,7 +414,12 @@ func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur
 	reqs := atomic.LoadInt64(&d.reqs) - reqs0
 	_, _, cpu1, _ := procStats(pid)
 	r.peakKB = peakRSS(pid)
+	mem := "busy " + mapsSummary(pid)
 	stop()
+	// idle: every connection closed, past the runtime's 3 s fiber trim
+	time.Sleep(6 * time.Second)
+	mem += "idle " + mapsSummary(pid)
+	os.WriteFile(filepath.Join(work, "mem.txt"), []byte(mem), 0o644)
 	r.errs = atomic.LoadInt64(&d.errs) - errs0
 	r.drops = atomic.LoadInt64(&d.drops) - drops0
 	r.c4xx = atomic.LoadInt64(&d.c4xx) - c4xx0
