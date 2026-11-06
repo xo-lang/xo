@@ -398,3 +398,10 @@ Last verified: 2026-11-01
   tier's offload line (lead, 2026-11-06 bottleneck review: tier 54's
   linux LLVM step waited 1h33m for every slot of the second host behind a
   6 hour soak and held the 0.41.0 gate). Last verified: 2026-11-06.
+- Soaks and other runs of hours run outside the lane, with
+  `OFF_NO_LANE=1` (offload.sh's own ticket queue, which backfills around
+  an exclusive job): in a lane a plain long job holds its slot until it
+  ends, and the exclusive jobs queued behind it (`--ab`, twin-tg.sh) wait
+  the whole time (Xo Lang 2, 2026-11-06: a 6 hour soak in lane pass2
+  held slot 2 from 13:26, and two exclusive jobs waited 48 minutes before
+  the lead moved them to the first host). Last verified: 2026-11-06.
