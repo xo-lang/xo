@@ -11,3 +11,16 @@
 New module. `cbor.decode`, `cbor.encode` (preferred and deterministic), `cbor.diagnostic`,
 `cbor.to_json` and `cbor.from_json` over one `Value` tree. 12,000 fresh fuzz cases (four seeds)
 agree with the oracle on arm64 and LLVM.
+
+## 2026-11-05: feature: derive Cbor, cbor.marshal, cbor.unmarshal and cbor.unmarshal_prefix
+
+- Kind: feature
+- Commit: this commit
+- Found by: roadmap (Xo Lead), decision 0527
+- Go reference: github.com/fxamacker/cbor/v2 Marshal and Unmarshal (MIT), the differential oracle
+- Test: testdata/corpus/cbor (1,600 typed cases against internal/stdtest/cborref `typed` and `typed2`)
+
+Typed CBOR through a derive: `marshal[T]`, `unmarshal[T]`, `unmarshal_prefix[T]` for a struct that derives
+Cbor. New `CborErr.Type(msg)` variant (an exhaustive `match` on `CborErr` needs the arm). New public
+helpers used by the generated code: `Unm`, `unm_new`, `to_str` and the other `to_*` readers, `from_time`,
+`from_duration`, `items`, `pairs`, `key_text`, `key_int`, `unknown_key`, `sorted_keys`.

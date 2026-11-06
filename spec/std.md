@@ -7015,8 +7015,27 @@ fn from_json(j: json.Value) -> Value
   tags dropped, `Undefined` as null, `Simple(n)` as the text `simple(n)`, map
   keys of text, integer, float, bool and null kinds as their text; NaN,
   infinity and other keys are `Invalid`. `from_json` follows 6.1.
-- Not ported: a derive for typed values (use `derive Json` through `to_json`
-  and `from_json`), streaming, the date and time tag helpers.
+- `derive Cbor` (decision 0527, core 2.9) gives a struct typed `marshal[T]`,
+  `unmarshal[T]` and `unmarshal_prefix[T]`, matching fxamacker/cbor/v2's
+  `Marshal` and `Unmarshal` (differential corpus `testdata/corpus/cbor`,
+  1,600 typed cases):
+  - Fields: Str, Int, Float, Bool, Bytes, Time, Duration, `cbor.Value`, an
+    Option, a List, a `Map[Str, V]` of those, or a struct that derives Cbor.
+    Key: the field's `cbor "key,options"` string, else its `as` string, else
+    its name; options `omitempty`, `omitzero` (the same here), `keyasint`;
+    `-` skips the field. `toarray` and `derive Cbor(case:)` are not built yet.
+  - `marshal` writes a map of the fields (keys sorted when `deterministic`),
+    Float in the shortest form, Time as integer seconds or, with a fraction,
+    a float (fxamacker's TimeUnixDynamic), Duration as integer nanoseconds,
+    None as null.
+  - `unmarshal` matches a text key exactly, then ignoring case, and the first
+    key to reach a field wins; a `keyasint` field also takes its number as
+    text. Null leaves a field alone; tags are transparent after fxamacker's
+    checks of tags 0 to 3 (the tag 2 and 3 big integers read into Int when
+    they fit); an array of small integers reads as Bytes; an integer reads as
+    a Float. The first type mismatch is kept (`CborErr.Type`) and decoding
+    goes on; `strict: true` also makes a key no field names an error.
+- Not ported: streaming, the date and time tag helpers.
 
 ## 51. std/crc64
 

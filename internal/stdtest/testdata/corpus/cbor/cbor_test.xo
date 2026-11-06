@@ -2110,6 +2110,22 @@ struct Person {
   skip as "-": Str
 } derive Cbor
 
+test "unmarshal_prefix leaves what follows, strict refuses an unknown key" {
+  let p = Person{name: "Ann", age: 3, tags: [], addr: None, ratio: 1.5, ok: true, raw: b"", attrs: {}, skip: ""}
+  let b = cbor.marshal(p).ok() ?? fault("marshal")
+  match cbor.unmarshal_prefix[Person](b + b"\x01") {
+    Ok((q, n)) => {
+      expect(q.name) == "Ann"
+      expect(n) == b.len()
+    }
+    Err(e) => fault(e.display())
+  }
+  expect(cbor.unmarshal[Person](b + b"\x01").is_err()) == true
+  let extra = b"\xa2\x64name\x63Ann\x61z\x01"
+  expect(cbor.unmarshal[Person](extra).is_err()) == false
+  expect(cbor.unmarshal[Person](extra, strict: true).is_err()) == true
+}
+
 struct Deep {
   addrs: List[Addr]
   by: Map[Str, Addr]

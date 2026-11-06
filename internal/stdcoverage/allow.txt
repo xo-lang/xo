@@ -65,3 +65,17 @@ amqp.Connection.end_session	tested by the in-process peer tests of std/native/am
 amqp.Connection.peer_*	accessors read in the in-process peer tests of std/native/amqp_test.xo, not a corpus
 amqp.Receiver.reject	the settle path of accept (tested by the peer tests) with the Rejected state, whose frame bytes the corpus covers
 amqp.Receiver.release	the settle path of accept (tested by the peer tests) with the Released state, whose frame bytes the corpus covers
+
+# derive Cbor (decision 0527): the helpers its generated code calls, reached through cbor.marshal and
+# cbor.unmarshal (corpus/cbor typed cases), which the coverage scan does not follow into generated code.
+cbor.dec_error  called only by derive Cbor's generated code
+cbor.from_duration  called only by derive Cbor's generated code
+cbor.from_time  called only by derive Cbor's generated code
+cbor.key_int  called only by derive Cbor's generated code
+cbor.key_text  called only by derive Cbor's generated code
+cbor.sorted_keys  called only by derive Cbor's generated code
+cbor.to_bool  called only by derive Cbor's generated code
+cbor.to_bytes  called only by derive Cbor's generated code
+cbor.to_duration  called only by derive Cbor's generated code
+cbor.to_time  called only by derive Cbor's generated code
+cbor.unm_new  called only by derive Cbor's generated code

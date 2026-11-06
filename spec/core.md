@@ -1157,6 +1157,15 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   `yaml_decode_all__T`, `yaml_write__T`, `yaml_fields__T`, `yaml_encode__T`, `yaml_encode_all__T` and one `yaml_dec__TYPE`
   and `yaml_enc__TYPE` a field type), and a call of one of the four functions is rewritten to the generated function.
 
+- `Cbor` (structs only, no type parameters; decision 0527) gives the struct fxamacker/cbor/v2's typed encoding and decoding
+  through `cbor.marshal[T]`, `cbor.unmarshal[T]` and `cbor.unmarshal_prefix[T]` (spec/std.md 50). A field's key is its
+  `cbor` string, else its `as` string, else its name; the options after a comma are `omitempty`, `omitzero` and
+  `keyasint`, and the name `-` leaves the field out (`XO0422` for another option). Field types are Str, Int, Float, Bool,
+  Bytes, Time, Duration, a cbor.Value, a struct that derives Cbor, an Option, a List, or a Map[Str, V] of those (`XO0425`
+  for another type). The expansion is ordinary Xo as for `Yaml` (`cbor_zero__T`, `cbor_rd__T`, `cbor_wr__T`,
+  `cbor_marshal__T`, `cbor_unmarshal__T`, `cbor_unmarshal_prefix__T` and one `cbor_rd__TYPE` and `cbor_wr__TYPE` a field
+  type), and a call of one of the three functions is rewritten to the generated function.
+
 ### 2.10 Implicit conversions
 
 There are exactly four, and each applies only where the target type is

@@ -68,3 +68,13 @@ field tags `yaml "name,omitempty"`). CBOR is the next format with a struct mappi
   rule is shared and nothing is checked against the oracle.
 - Waiting for a service that needs it: AWS and Azure SDK work uses CBOR in a few places (the Smithy RPC v2 protocol), so the
   derive is also what those SDKs would generate against.
+
+## Prototype findings (2026-11-05)
+
+Pinned against fxamacker/cbor v2.9.0 by the typed corpora (1,600 cases agree): Time is written as
+TimeUnixDynamic (integer seconds, a float when there is a fraction) and read from integer or float seconds or
+RFC 3339 text, Duration is integer nanoseconds, both Time and Duration are supported; a repeated key reaching a
+field is dropped (first wins) and a text key matches exactly before ignoring case; a keyasint field also matches
+its number as text; built in tags 0 to 3 are checked on every decoded value; arrays of small integers read as
+Bytes. Xo's zero Time is the Unix epoch, so an absent Time field encodes as 0 where Go's zero time encodes as
+null (use `Time?`). `toarray`, enums and `derive Cbor(case:)` are not built yet.

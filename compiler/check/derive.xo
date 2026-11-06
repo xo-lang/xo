@@ -1792,7 +1792,12 @@ fn (var c: Checker) rewrite_xml_calls(from: Int) {
     let fname = text(c.objs[fo].name)
     let mpath = c.mods[c.objs[fo].module].path
     let cbor = mpath == "std/cbor"
-    let dname = if cbor { "Cbor" } else if mpath == "std/yaml" { "Yaml" } else { "Xml" }
+    var dname = "Xml"
+    if cbor {
+      dname = "Cbor"
+    } else if mpath == "std/yaml" {
+      dname = "Yaml"
+    }
     if c.tys[t].kind == TyKind.Named && !c.derives(c.tys[t].obj, dname) {
       // the constraint check reported it (XO0404)
       continue
