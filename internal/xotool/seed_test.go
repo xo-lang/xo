@@ -799,3 +799,96 @@ func TestSmokeXo(t *testing.T) {
 		t.Errorf("SmokeXo of a failing xo: %v, want its XO1201 error", err)
 	}
 }
+
+// TestBadBuilder: a cached build that faults building compiler/xo (exit
+// status 70, as its memory budget stops it) is marked bad and never
+// offered as a builder again, and every builder but a release seed or an
+// explicit $XO_SEED builds under XO_BUILDER_MAX_MEM (8G by default): the
+// cached builds of 11a08a448 to c1605f3ab's parent looped in inline.apply
+// past 22 GB, and each one ran into heavy.sh's 16 GB guard before the
+// next seed was tried (2026-11-06).
+func TestBadBuilder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script builders")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "a")
+	head := git("rev-parse", "HEAD")
+	base := t.TempDir()
+	t.Setenv("XO_CHECKOUT_CACHE", base)
+	t.Setenv("XO_SEED", "")
+	t.Setenv("XO_BUILDER_MAX_MEM", "")
+	t.Setenv("XO_MAX_MEM", "")
+	// a builder that fails as a budget does when XO_MAX_MEM is set, and
+	// otherwise logs the budget it was given
+	seen := filepath.Join(t.TempDir(), "maxmem")
+	planted := "#!/bin/sh\n" +
+		// debuggerArgs asks `build -h` on darwin; only builds count
+		"[ \"$1\" = build ] && [ \"$2\" != -h ] || exit 1\n" +
+		"echo \"max=$XO_MAX_MEM\" >> " + seen + "\n" +
+		"if [ -n \"$XO_MAX_MEM\" ]; then echo 'fatal error: memory budget exceeded: 8192 MB mapped, more than XO_MAX_MEM (8192 MB)'; echo '  while: building, past phase inline.read'; exit 70; fi\n" +
+		"exit 1\n"
+	entry := func(dir string) string {
+		d := filepath.Join(base, dir)
+		os.MkdirAll(d, 0o755)
+		p := filepath.Join(d, exeName("xo"))
+		if err := os.WriteFile(p, []byte(planted), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(d, "commit"), []byte(head+"\n"), 0o644)
+		os.WriteFile(filepath.Join(d, "clean"), nil, 0o644)
+		return p
+	}
+	cached := entry(filepath.Join("checkout", "k1"))
+	release := entry(filepath.Join("seeds", "0.0.0-x", "tree", "xo", "bin"))
+	if got := ancestorBuild(root, []string{cached}); got != cached {
+		t.Fatalf("before the fault: ancestorBuild = %q, want %q", got, cached)
+	}
+	out := filepath.Join(t.TempDir(), exeName("xo"))
+	err := BuildXo(root, cached, out)
+	if err == nil || !strings.HasPrefix(err.Error(), "exit status 70") {
+		t.Fatalf("the cached builder under its budget: %v", err)
+	}
+	if s := summary(err); !strings.Contains(s, "memory budget exceeded") {
+		t.Errorf("summary hides the fault: %q", s)
+	}
+	if !markBad(cached, err) {
+		t.Fatal("a cached builder that exited 70 was not marked bad")
+	}
+	if got := ancestorBuild(root, []string{cached}); got != "" {
+		t.Errorf("a bad builder offered again: ancestorBuild = %q", got)
+	}
+	// a release seed keeps xo's own budget, and is never marked
+	if err := BuildXo(root, release, out); err == nil || strings.HasPrefix(err.Error(), "exit status 70") {
+		t.Errorf("the release seed ran under a budget: %v", err)
+	}
+	if markBad(release, errors.New("exit status 70")) {
+		t.Error("a release seed was marked bad")
+	}
+	// another failure marks nothing
+	if markBad(entry(filepath.Join("checkout", "k2")), errors.New("exit status 1")) {
+		t.Error("exit status 1 marked a builder bad")
+	}
+	// XO_BUILDER_MAX_MEM sets the budget, off removes it
+	t.Setenv("XO_BUILDER_MAX_MEM", "12G")
+	BuildXo(root, cached, out)
+	t.Setenv("XO_BUILDER_MAX_MEM", "off")
+	BuildXo(root, cached, out)
+	b, _ := os.ReadFile(seen)
+	if got, want := string(b), "max=8G\nmax=\nmax=12G\nmax=\n"; got != want {
+		t.Errorf("budgets seen by the builders:\n%s\nwant:\n%s", got, want)
+	}
+}

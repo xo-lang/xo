@@ -664,6 +664,9 @@ func buildLockedForce(root, out string, log io.Writer, force bool) error {
 			// with pages of linker errors before the next seed works)
 			fmt.Fprintf(log, "xotool: %s failed (%s); trying the next seed\n", s.Why, summary(err))
 			errs = append(errs, s.Why+": "+err.Error())
+			if markBad(s.Path, err) {
+				fmt.Fprintf(log, "xotool: %s faulted building compiler/xo: marked bad, never a builder again\n", s.Why)
+			}
 			if s.NoChain || !chain {
 				continue
 			}
@@ -881,6 +884,9 @@ func ancestorBuild(root string, ms []string) string {
 			break
 		}
 		if _, err := os.Stat(filepath.Join(filepath.Dir(m), "clean")); err != nil {
+			continue
+		}
+		if isFile(filepath.Join(filepath.Dir(m), "bad")) {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(filepath.Dir(m), "commit"))
@@ -1271,6 +1277,9 @@ func CompilerDir(root string) string {
 // host's backend and root's std.
 func BuildXo(root, seed, out string) error {
 	backend, env := hostBackend()
+	if m := builderMaxMem(seed); m != "" {
+		env = append(env, "XO_MAX_MEM="+m)
+	}
 	tmp := fmt.Sprintf("%s.%d.tmp", out, os.Getpid())
 	defer os.Remove(tmp)
 	args := []string{"build", "--backend=" + backend, "--std=" + xoPath(filepath.Join(root, "std")), "-o", xoPath(tmp)}
@@ -1306,6 +1315,59 @@ func BuildXo(root, seed, out string) error {
 		return fmt.Errorf("the built xo cannot build a program: %v", err)
 	}
 	return os.Rename(tmp, out)
+}
+
+// builderMaxMem is the memory budget (XO_MAX_MEM) of seed's build of
+// compiler/xo: $XO_BUILDER_MAX_MEM, else 8G ("off" for none), for every
+// builder but a release seed (one fetched into <cache>/seeds, or the
+// go-compiler-final root and its chain in <cache>/seed) and an explicit
+// $XO_SEED, which keep xo's own default: an older release can need more.
+// A healthy build of compiler/xo peaks at about 4.5 GB (2026-11-06), and
+// the cached builds of 11a08a448 to c1605f3ab's parent looped in
+// inline.apply past 22 GB; with xo's default budget (18 GB on the Mac)
+// each such builder ran past heavy.sh's 16 GB guard, which stopped the
+// whole job, before it failed and the next seed was tried.
+func builderMaxMem(seed string) string {
+	m := strings.TrimSpace(os.Getenv("XO_BUILDER_MAX_MEM"))
+	if m == "off" {
+		return ""
+	}
+	if m == "" {
+		m = "8G"
+	}
+	if s := os.Getenv("XO_SEED"); s != "" && s == seed {
+		return ""
+	}
+	if base, err := cacheBase(); err == nil {
+		for _, d := range []string{"seeds", "seed"} {
+			if under(seed, filepath.Join(base, d)) {
+				return ""
+			}
+		}
+	}
+	return m
+}
+
+// markBad records that the cached build at seed (an entry of
+// <cache>/checkout) faulted building compiler/xo (exit status 70: a fault,
+// or its memory budget, builderMaxMem), in a `bad` file beside it, so
+// ancestorBuild never offers it as a builder again; the entry stays the
+// xo of its own key. False for any other seed or failure.
+func markBad(seed string, err error) bool {
+	if err == nil || !strings.HasPrefix(err.Error(), "exit status 70") {
+		return false
+	}
+	base, berr := cacheBase()
+	if berr != nil || !under(seed, filepath.Join(base, "checkout")) {
+		return false
+	}
+	return os.WriteFile(filepath.Join(filepath.Dir(seed), "bad"), []byte(summary(err)+"\n"), 0o644) == nil
+}
+
+// under reports whether p is inside dir.
+func under(p, dir string) bool {
+	r, err := filepath.Rel(dir, p)
+	return err == nil && r != "." && !strings.HasPrefix(r, "..")
 }
 
 // CheckXo runs `xo check` of root's compiler/xo with seed and root's std:

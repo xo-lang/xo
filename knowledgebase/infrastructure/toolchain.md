@@ -44,8 +44,15 @@ Last verified: 2026-10-12
   check fails is still built, through the chain). The newest clean build
   of an ancestor commit, tried first as a stable builder, skips the check
   and the seed smoke: it passed the smoke when it was built, and the
-  build's own first phase is the check (2026-11-05). Last verified:
-  2026-11-05.
+  build's own first phase is the check (2026-11-05). Every builder but a
+  release seed and an explicit `$XO_SEED` builds compiler/xo under
+  `XO_MAX_MEM=8G` (`XO_BUILDER_MAX_MEM` sets it, `off` for none; a healthy
+  build peaks at about 4.5 GB), and a cached build that exits 70 (a fault,
+  or that budget) gets a `bad` file beside it and is never a builder
+  again; it stays its own key's xo (2026-11-06: the cached builds of
+  b29c306c8 to 77cb1d2bf's parent looped in inline.apply past 22 GB and
+  ran into heavy.sh's 16 GB guard, TestBadBuilder). Last verified:
+  2026-11-06.
 - Standard library only. No third party module dependencies, for the
   compiler or for generated programs. (Go packages bound with `use go` are
   dependencies of the generated program, not of the compiler; see "Go
