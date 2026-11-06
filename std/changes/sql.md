@@ -4,7 +4,7 @@
 
 - Kind: perf
 - Commit: this push
-- Found by: harness load of stability/notes against its Go twin (bench/results/stability-load-2026-11-05.md: xo's p50 at 4000/s 1.47x Go's, std/sql about 25% of the CPU profile: full scans and a copy of the table per write under the Db lock)
+- Found by: harness load of stability/notes against its Go twin (bench/results/stability-load-2026-11-05.md; note 2026-11-06: the Go twin's GET /notes walked every id issued so far under its lock (O(creates) per list) before 472c82653, so Go relative rows measured before it are inflated (gotchas/twin-cost-grows-with-history.md; rerun in stability-load-2026-11-05.md's 2026-11-06 addendum); the 1.47x below is one of those rows: xo's p50 at 4000/s 1.47x Go's, std/sql about 25% of the CPU profile: full scans and a copy of the table per write under the Db lock)
 - Go reference: none (database/sql has no engine; SQLite's rowid and unique indexes are the model)
 - Test: std/native/sql_test.xo (8 tests: key lookups on 10,000 rows against the scan's rows, UNIQUE on insert and update, failing statements change nothing, insertion order across compaction, a WHERE the index cannot answer, a transaction's snapshot, CREATE and DROP with trailing text, writes on a growing table); the sql goldens
 - Timing: bench/perf/sqlmem (bench/results/sqlmem-0528-2026-11-06.md)

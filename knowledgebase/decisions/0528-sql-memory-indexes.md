@@ -4,6 +4,8 @@ Status: Accepted (owner, 2026-11-05: "Go with your recommendations", through the
 
 ## Context
 
+(Note 2026-11-06: the Go twin's GET /notes walked every id issued so far under its lock (O(creates) per list) before 472c82653, so Go relative rows measured before it are inflated (gotchas/twin-cost-grows-with-history.md; rerun in stability-load-2026-11-05.md's 2026-11-06 addendum). With the twin fixed, the map store variant's 4000/s p50 is 0.682 of Go's: the Xo against Xo ratios here stand, the Go relative ones do not.)
+
 Decision 0520's load check found this (bench/results/stability-load-2026-11-05.md). At 4000/s offered,
 stability/notes' p50 was 1.47 times its Go twin's and its p99.9 1.62 times, while it used less CPU per request.
 At 1000/s and at saturation Xo was ahead. Spinning idle workers did not change it (XO_SPIN_ROUNDS=16: 229 us
