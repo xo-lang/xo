@@ -1,0 +1,395 @@
+package main
+
+// harness load: the app's traffic mix at fixed offered rates (open loop) and
+// at saturation (closed loop), against the app built with xo and, when
+// app.json names one, its Go twin, in alternating rounds (decision 0520
+// section 2, check 2).
+//
+//	harness load -xo XO -app DIR -out OUT [-backend arm64] [-rates 1000,4000] [-sat 64] [-d 30s] [-warmup 5s] [-rounds 3] [-drop-env K,...]
+//
+// OUT/load.csv gets one row per run, OUT/load.txt the medians, ranges and
+// verdict per rate: slower or faster only when the rounds' ranges do not
+// overlap (bench/perf/jitter pads.py's rule). The exit status is 1 when a
+// run had errors; speed is reported, not gated.
+
+import (
+	"bytes"
+	"flag"
+	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// driver sends an app's mix to base and records each response's latency.
+type driver struct {
+	cl                *http.Client
+	base              string
+	mu                sync.Mutex
+	lat               []float64
+	reqs, errs, drops int64
+	op                func(r *rand.Rand)
+}
+
+func newDriver(app *App, mix mixFn, base string) *driver {
+	d := &driver{base: base, cl: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256, MaxConnsPerHost: 256}, Timeout: 10 * time.Second}}
+	d.op = mix(app, d.do)
+	return d
+}
+
+func (d *driver) do(method, path, token string, body []byte) (int, []byte) {
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, _ := http.NewRequest(method, d.base+path, rd)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	t0 := time.Now()
+	resp, err := d.cl.Do(req)
+	us := float64(time.Since(t0).Microseconds())
+	atomic.AddInt64(&d.reqs, 1)
+	if err != nil {
+		atomic.AddInt64(&d.errs, 1)
+		return 0, nil
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	d.mu.Lock()
+	d.lat = append(d.lat, us)
+	d.mu.Unlock()
+	if resp.StatusCode >= 500 {
+		atomic.AddInt64(&d.errs, 1)
+	}
+	return resp.StatusCode, b
+}
+
+// takeLat returns the latencies recorded since the last call, sorted.
+func (d *driver) takeLat() []float64 {
+	d.mu.Lock()
+	l := d.lat
+	d.lat = nil
+	d.mu.Unlock()
+	sort.Float64s(l)
+	return l
+}
+
+// open offers rate requests a second to 128 workers (a request no worker
+// is free for is a drop) until the returned stop is called.
+func (d *driver) open(rate int) (stop func()) {
+	work := make(chan struct{}, 4096)
+	quit := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 128; i++ {
+		wg.Add(1)
+		go func(seed int64) {
+			defer wg.Done()
+			r := rand.New(rand.NewSource(seed))
+			for range work {
+				d.op(r)
+			}
+		}(int64(i + 1))
+	}
+	go func() {
+		tk := time.NewTicker(time.Second / time.Duration(rate))
+		defer tk.Stop()
+		for {
+			select {
+			case <-tk.C:
+				select {
+				case work <- struct{}{}:
+				default:
+					atomic.AddInt64(&d.drops, 1)
+				}
+			case <-quit:
+				close(work)
+				return
+			}
+		}
+	}()
+	return func() {
+		close(quit)
+		wg.Wait()
+	}
+}
+
+// closed runs n workers that each send their next request as soon as the
+// last one is answered, until the returned stop is called.
+func (d *driver) closed(n int) (stop func()) {
+	var quit atomic.Bool
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(seed int64) {
+			defer wg.Done()
+			r := rand.New(rand.NewSource(seed))
+			for !quit.Load() {
+				d.op(r)
+			}
+		}(int64(i + 1))
+	}
+	return func() {
+		quit.Store(true)
+		wg.Wait()
+	}
+}
+
+// peakRSS is the process's peak resident KiB (Linux VmHWM), else its
+// current resident set.
+func peakRSS(pid int) float64 {
+	if runtime.GOOS == "linux" {
+		b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+		for _, line := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(line, "VmHWM:"); ok {
+				n, _ := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(v), " kB"), 64)
+				return n
+			}
+		}
+	}
+	rss, _, _, _ := procStats(pid)
+	return rss
+}
+
+// loadRun is one target's run at one load.
+type loadRun struct {
+	target, load        string
+	round               int
+	rps                 float64
+	p50, p99, p999      float64
+	errs, drops         int64
+	cpuPerReqUS, peakKB float64
+}
+
+func loadMain(args []string) int {
+	fs := flag.NewFlagSet("load", flag.ExitOnError)
+	xo := fs.String("xo", "xo", "the xo binary")
+	appDir := fs.String("app", "", "the app's directory (holds app.json)")
+	backend := fs.String("backend", "arm64", "the backend to build with")
+	rates := fs.String("rates", "1000,4000", "offered rates (requests per second), comma separated; empty for none")
+	sat := fs.Int("sat", 64, "closed loop workers for the saturation run (0: none)")
+	dur := fs.Duration("d", 30*time.Second, "measured duration of each run")
+	warm := fs.Duration("warmup", 5*time.Second, "load before each run's measurement")
+	rounds := fs.Int("rounds", 3, "rounds (each runs every target at every load)")
+	dropEnv := fs.String("drop-env", "", "app.json env keys left out for every target (e.g. NOTES_DATA when the twin has no persistence)")
+	out := fs.String("out", "", "output directory")
+	fs.Parse(args)
+	if *appDir == "" || *out == "" {
+		fmt.Fprintln(os.Stderr, "harness load: -app and -out are required")
+		return 2
+	}
+	app, _, err := loadApp(*appDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "harness load:", err)
+		return 2
+	}
+	mix, ok := mixes[app.Name]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "harness load: no traffic mix for app %q\n", app.Name)
+		return 2
+	}
+	for _, k := range strings.Split(*dropEnv, ",") {
+		delete(app.Env, strings.TrimSpace(k))
+	}
+	if err := os.MkdirAll(*out, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "harness load:", err)
+		return 2
+	}
+	type target struct{ name, bin string }
+	xoBin, _ := filepath.Abs(filepath.Join(*out, app.Name+"-"+*backend))
+	cmd := exec.Command(*xo, "build", "--backend="+*backend, "-o", xoBin, ".")
+	cmd.Dir = *appDir
+	if b, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "harness load: build: %v\n%s", err, b)
+		return 2
+	}
+	targets := []target{{"xo-" + *backend, xoBin}}
+	if app.Twin != "" {
+		twinBin, _ := filepath.Abs(filepath.Join(*out, app.Name+"-go"))
+		cmd := exec.Command("go", "build", "-o", twinBin, ".")
+		cmd.Dir = filepath.Join(*appDir, app.Twin)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "harness load: twin build: %v\n%s", err, b)
+			return 2
+		}
+		targets = append(targets, target{"go", twinBin})
+	}
+	var loads []string
+	for _, r := range strings.Split(*rates, ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			loads = append(loads, "rate"+r)
+		}
+	}
+	if *sat > 0 {
+		loads = append(loads, fmt.Sprintf("sat%d", *sat))
+	}
+
+	f, _ := os.Create(filepath.Join(*out, "load.csv"))
+	fmt.Fprintln(f, "target,load,round,rps,p50_us,p99_us,p999_us,errs,drops,cpu_us_per_req,peak_rss_kib")
+	var runs []loadRun
+	bad := false
+	n := 0
+	for round := 1; round <= *rounds; round++ {
+		for _, ld := range loads {
+			// alternate which target goes first, so a drift in the host's
+			// state over a round does not always favor the same one
+			order := targets
+			if round%2 == 0 && len(targets) == 2 {
+				order = []target{targets[1], targets[0]}
+			}
+			for _, t := range order {
+				n++
+				r, err := loadOnce(app, mix, t.bin, filepath.Join(*out, fmt.Sprintf("run-%s-%s-%d", t.name, ld, round)), n, ld, *warm, *dur)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "harness load: %s %s round %d: %v\n", t.name, ld, round, err)
+					return 2
+				}
+				r.target, r.load, r.round = t.name, ld, round
+				runs = append(runs, r)
+				if r.errs > 0 {
+					bad = true
+				}
+				fmt.Fprintf(f, "%s,%s,%d,%.0f,%.0f,%.0f,%.0f,%d,%d,%.2f,%.0f\n", r.target, r.load, r.round, r.rps, r.p50, r.p99, r.p999, r.errs, r.drops, r.cpuPerReqUS, r.peakKB)
+				f.Sync()
+			}
+		}
+	}
+	f.Close()
+	rep := loadReport(app.Name, runs, loads, targets[0].name, len(targets) == 2)
+	os.WriteFile(filepath.Join(*out, "load.txt"), []byte(rep), 0o644)
+	fmt.Print(rep)
+	if bad {
+		return 1
+	}
+	return 0
+}
+
+// loadOnce starts bin, offers load ld for warm then dur, and stops it.
+func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur time.Duration) (loadRun, error) {
+	var r loadRun
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		return r, err
+	}
+	p, err := start(app, bin, work, n)
+	if err != nil {
+		return r, err
+	}
+	pid := p.cmd.Process.Pid
+	d := newDriver(app, mix, "http://"+p.addr)
+	var stop func()
+	if v, ok := strings.CutPrefix(ld, "rate"); ok {
+		rate, _ := strconv.Atoi(v)
+		stop = d.open(rate)
+	} else {
+		w, _ := strconv.Atoi(strings.TrimPrefix(ld, "sat"))
+		stop = d.closed(w)
+	}
+	time.Sleep(warm)
+	d.takeLat()
+	reqs0, errs0, drops0 := atomic.LoadInt64(&d.reqs), atomic.LoadInt64(&d.errs), atomic.LoadInt64(&d.drops)
+	_, _, cpu0, _ := procStats(pid)
+	t0 := time.Now()
+	time.Sleep(dur)
+	l := d.takeLat()
+	el := time.Since(t0).Seconds()
+	reqs := atomic.LoadInt64(&d.reqs) - reqs0
+	_, _, cpu1, _ := procStats(pid)
+	r.peakKB = peakRSS(pid)
+	stop()
+	r.errs = atomic.LoadInt64(&d.errs) - errs0
+	r.drops = atomic.LoadInt64(&d.drops) - drops0
+	if err := p.stop("term"); err != nil {
+		return r, err
+	}
+	r.rps = float64(reqs) / el
+	r.p50, r.p99, r.p999 = pct(l, 0.5), pct(l, 0.99), pct(l, 0.999)
+	if reqs > 0 {
+		r.cpuPerReqUS = (cpu1 - cpu0) / float64(reqs)
+	}
+	return r, nil
+}
+
+// loadReport gives each target's median and range per load and metric and,
+// with a twin, xo's ratio to it and whether the ranges overlap.
+func loadReport(app string, runs []loadRun, loads []string, xoName string, twin bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "harness load %s: %d runs\n", app, len(runs))
+	type metric struct {
+		name   string
+		get    func(loadRun) float64
+		higher bool // higher is better
+	}
+	metrics := []metric{
+		{"req/s", func(r loadRun) float64 { return r.rps }, true},
+		{"p50 us", func(r loadRun) float64 { return r.p50 }, false},
+		{"p99 us", func(r loadRun) float64 { return r.p99 }, false},
+		{"p99.9 us", func(r loadRun) float64 { return r.p999 }, false},
+		{"cpu us/req", func(r loadRun) float64 { return r.cpuPerReqUS }, false},
+		{"peak RSS KiB", func(r loadRun) float64 { return r.peakKB }, false},
+	}
+	stats := func(target, ld string, m metric) (med, lo, hi float64, n int) {
+		var v []float64
+		for _, r := range runs {
+			if r.target == target && r.load == ld {
+				v = append(v, m.get(r))
+			}
+		}
+		if len(v) == 0 {
+			return 0, 0, 0, 0
+		}
+		sort.Float64s(v)
+		return v[len(v)/2], v[0], v[len(v)-1], len(v)
+	}
+	for _, ld := range loads {
+		fmt.Fprintf(&b, "\n%s\n", ld)
+		var errs, drops int64
+		for _, r := range runs {
+			if r.load == ld && r.target == xoName {
+				errs += r.errs
+				drops += r.drops
+			}
+		}
+		for _, m := range metrics {
+			xm, xl, xh, xn := stats(xoName, ld, m)
+			fmt.Fprintf(&b, "  %-13s %s %.1f (%.1f to %.1f)", m.name, xoName, xm, xl, xh)
+			if gm, gl, gh, gn := stats("go", ld, m); twin && gn > 0 {
+				ratio := 0.0
+				if gm != 0 {
+					ratio = xm / gm
+				}
+				verdict := "ranges overlap"
+				switch {
+				case xn < 2 || gn < 2:
+					// one run is a point, not a range
+					verdict = "one run, no verdict"
+				case m.name == "req/s" && strings.HasPrefix(ld, "rate"):
+					// an open loop's rate is what was offered
+					verdict = "offered"
+				case xh < gl || gh < xl:
+					if (xm > gm) == m.higher {
+						verdict = "better"
+					} else {
+						verdict = "worse"
+					}
+				}
+				fmt.Fprintf(&b, "  go %.1f (%.1f to %.1f)  xo/go %.3f %s", gm, gl, gh, ratio, verdict)
+			}
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "  %s errors %d, drops %d\n", xoName, errs, drops)
+	}
+	return b.String()
+}

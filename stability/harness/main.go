@@ -53,6 +53,10 @@ type App struct {
 	// /sched), read by soak with the token StatsToken names.
 	Stats      string `json:"stats"`
 	StatsToken string `json:"stats_token"`
+	// Twin is the directory, relative to the app's, of its Go twin (a main
+	// package with the same routes and environment), which load measures
+	// against.
+	Twin string `json:"twin"`
 }
 
 // Step is one line of the scenario.
@@ -85,8 +89,11 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "soak" {
 		os.Exit(soakMain(os.Args[2:]))
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "load" {
+		os.Exit(loadMain(os.Args[2:]))
+	}
 	if len(os.Args) < 2 || os.Args[1] != "diff" {
-		fmt.Fprintln(os.Stderr, "usage: harness diff -xo XO -app DIR [-backends go,arm64,llvm] [-out OUT]\n       harness soak -xo XO -app DIR -out OUT [-backend arm64] [-rate 500] [-d 2h] [-every 10s] [-warmup 0.1]")
+		fmt.Fprintln(os.Stderr, "usage: harness diff -xo XO -app DIR [-backends go,arm64,llvm] [-out OUT]\n       harness soak -xo XO -app DIR -out OUT [-backend arm64] [-rate 500] [-d 2h] [-every 10s] [-warmup 0.1]\n       harness load -xo XO -app DIR -out OUT [-backend arm64] [-rates 1000,4000] [-sat 64] [-d 30s] [-warmup 5s] [-rounds 3] [-drop-env K,...]")
 		os.Exit(2)
 	}
 	fs := flag.NewFlagSet("diff", flag.ExitOnError)

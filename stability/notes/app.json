@@ -11,6 +11,7 @@
   "tokens": {"admin": "t0p-admin", "bad": "not-a-token", "debug": "dbg-t0k"},
   "stats": "/debug/sched",
   "stats_token": "debug",
+  "twin": "../../bench/size/native/go/notes",
   "scenario": "scenario.jsonl",
   "redact": ["created", "expires", "token"]
 }

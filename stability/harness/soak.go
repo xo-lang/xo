@@ -25,7 +25,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -192,72 +191,9 @@ func soakMain(args []string) int {
 	}
 	pid := p.cmd.Process.Pid
 	base := "http://" + p.addr
-	cl := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256, MaxConnsPerHost: 256}, Timeout: 10 * time.Second}
-
-	var mu sync.Mutex
-	var lat []float64
-	var reqs, errs, drops int64
-	do := func(method, path, token string, body []byte) (int, []byte) {
-		var rd io.Reader
-		if body != nil {
-			rd = bytes.NewReader(body)
-		}
-		req, _ := http.NewRequest(method, base+path, rd)
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-		if body != nil {
-			req.Header.Set("Content-Type", "application/json")
-		}
-		t0 := time.Now()
-		resp, err := cl.Do(req)
-		us := float64(time.Since(t0).Microseconds())
-		atomic.AddInt64(&reqs, 1)
-		if err != nil {
-			atomic.AddInt64(&errs, 1)
-			return 0, nil
-		}
-		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		mu.Lock()
-		lat = append(lat, us)
-		mu.Unlock()
-		if resp.StatusCode >= 500 {
-			atomic.AddInt64(&errs, 1)
-		}
-		return resp.StatusCode, b
-	}
-	op := mix(app, do)
-
-	work := make(chan struct{}, 4096)
-	var wg sync.WaitGroup
-	for i := 0; i < 128; i++ {
-		wg.Add(1)
-		go func(seed int64) {
-			defer wg.Done()
-			r := rand.New(rand.NewSource(seed))
-			for range work {
-				op(r)
-			}
-		}(int64(i + 1))
-	}
-	stop := make(chan struct{})
-	go func() {
-		tk := time.NewTicker(time.Second / time.Duration(*rate))
-		defer tk.Stop()
-		for {
-			select {
-			case <-tk.C:
-				select {
-				case work <- struct{}{}:
-				default:
-					atomic.AddInt64(&drops, 1)
-				}
-			case <-stop:
-				return
-			}
-		}
-	}()
+	d := newDriver(app, mix, base)
+	cl := d.cl
+	stopLoad := d.open(*rate)
 
 	f, _ := os.Create(filepath.Join(*out, "samples.csv"))
 	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req")
@@ -272,18 +208,14 @@ func soakMain(args []string) int {
 	tk := time.NewTicker(*every)
 	for time.Since(start) < *dur {
 		<-tk.C
-		mu.Lock()
-		l := lat
-		lat = nil
-		mu.Unlock()
-		sort.Float64s(l)
+		l := d.takeLat()
 		rss, fds, cpu, _ := procStats(pid)
 		hl, tm := -1.0, -1.0
 		if statsURL != "" {
 			hl, tm = schedStats(cl, statsURL, app.Tokens[app.StatsToken])
 		}
-		n := atomic.LoadInt64(&reqs)
-		s := sample{t: time.Since(start).Seconds(), reqs: n, errs: atomic.LoadInt64(&errs), drops: atomic.LoadInt64(&drops),
+		n := atomic.LoadInt64(&d.reqs)
+		s := sample{t: time.Since(start).Seconds(), reqs: n, errs: atomic.LoadInt64(&d.errs), drops: atomic.LoadInt64(&d.drops),
 			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, heapLive: hl, timers: tm}
 		if n > lastReqs {
 			s.cpuPerReqUS = (cpu - cpu0) / float64(n-lastReqs)
@@ -293,9 +225,7 @@ func soakMain(args []string) int {
 		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS)
 		f.Sync()
 	}
-	close(stop)
-	close(work)
-	wg.Wait()
+	stopLoad()
 	f.Close()
 	stopErr := p.stop("term")
 
