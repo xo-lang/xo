@@ -202,7 +202,8 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
 /// macOS ld's `-U` flags, which leave a symbol no image defines 0 (ld
 /// rejects even a weak reference to one otherwise). An object's
 /// references are read from its source beside it (.s or .ll), when there
-/// is one.
+/// is one, and from the object itself otherwise (no source, or a reused
+/// object's stub .s).
 fn weak_undefined_args(os: Os, srcs: List[Str]) -> List[Str] {
   var seen: Set[Str] = #{}
   var out: List[Str] = []
@@ -213,7 +214,14 @@ fn weak_undefined_args(os: Os, srcs: List[Str]) -> List[Str] {
       paths = ["${base}.s", "${base}.ll"]
       // xo:allow XO0903 an object it cannot stat is read from its source
       let has_src = (os.fs.exists("${base}.s").ok() ?? false) || (os.fs.exists("${base}.ll").ok() ?? false)
-      if !has_src {
+      // a reused cc object's .s is a one-line stub naming its back-end
+      // cache key (CC_OBJ_STUB), which holds no weak references
+      let stub = match os.fs.read_text("${base}.s") {
+        Ok(x) => x.starts_with(CC_OBJ_STUB)
+        // xo:allow XO0903 no .s: the .ll or the object is read below
+        Err(_) => false
+      }
+      if !has_src || stub {
         // xo's own assembler writes no .s (b03, field report on 0.26.0:
         // a darwin/amd64 build linked by cc lacked every -U and ld
         // refused the ThreadSanitizer and fiber hooks): the object's own

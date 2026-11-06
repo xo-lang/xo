@@ -58,7 +58,9 @@ drop were 41% of the CPU of a references-heavy profile.
 | + cc object keys (fix 1, bccbae048) | 9.4 to 10.3 s | about 11 s | 121 to 123 of 126 objects reused; identity: warm == cold |
 | + one check pass (fix 2, feaeba094) | 6.96 to 7.39 s | 8.4 to 8.8 s | no module check cache fallback |
 
-The fix 1 row ran the branch at 9d1f8dd23 (with diagnostic counters, since
+Fix 1 was reverted (a7217f35d: a reused object's stub .s hid its weak
+references from a darwin cc link) and relanded with that fixed; the
+rows were measured before the revert. The fix 1 row ran the branch at 9d1f8dd23 (with diagnostic counters, since
 dropped; the landed code is bccbae048); the fix 2 row ran a9f0f726e, fixes
 1 and 2 with the same counters (landed as bccbae048 and feaeba094). Logs:
 ~/xo-lead/notes/xo-lang-4/editloop/objkey2-9d1f8dd23.log and

@@ -88,7 +88,10 @@ fn memo_sysroot(os: Os, ctx: Ctx) -> List[Str] {
 
 /// Assembles the files srcs with `cc -c` (the flags a compile takes from
 /// the link's), at most jobs processes at once: the objects beside them,
-/// and the output of the first failure ("" when none failed).
+/// and the output of the first failure ("" when none failed). Each runs in
+/// its source's directory on the base names: an ELF object names its
+/// source, and the build's directory is random (main.xo `w-`), so the
+/// back-end cache (cached_cc_assemble) keyed on the full path never hit.
 fn cc_assemble(os: Os, cc: Str, flags: List[Str], srcs: List[Str], jobs: Int) -> (List[Str], Str) {
   let cflags = asm_cflags(flags)
   var objs: List[Str] = []
@@ -100,7 +103,7 @@ fn cc_assemble(os: Os, cc: Str, flags: List[Str], srcs: List[Str], jobs: Int) ->
   var fails: List[Str] = []
   while next < srcs.len() || !running.is_empty() {
     while next < srcs.len() && running.len() < jobs.max(1) {
-      match os.proc.cmd(cc, cflags + ["-c", srcs[next], "-o", objs[next]]).merge_stderr().spawn() {
+      match os.proc.cmd(cc, cflags + ["-c", base_name(srcs[next]), "-o", base_name(objs[next])]).dir(dir_name(srcs[next])).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${srcs[next]}: ${e}\n")
       }
@@ -497,18 +500,45 @@ fn asm_cflags(flags: List[Str]) -> List[Str] {
   cflags
 }
 
+/// The back-end cache keys of cc's objects of the assembly texts, whose
+/// files are named names (base names: an ELF object names its source):
+/// cc's identity, the compile flags of the link's flags, each name and
+/// text.
+fn cc_obj_keys(os: Os, ctx: Ctx, cc: Str, flags: List[Str], names: List[Str], texts: List[Str], jobs: Int) -> List[Str] {
+  let prefix = "xo backend v1 obj cc\x00${tool_id_memo(os, ctx, cc, ["--version"])}\x00${asm_cflags(flags).join("\x00")}"
+  part_keys(prefix, names, texts, jobs)
+}
+
+/// The first line of the .s a lean build writes for a part whose cc
+/// object the back-end cache holds, followed by the key: the link reads
+/// that object's weak references itself (weak_undefined_args).
+const CC_OBJ_STUB = "# xo: the object of back-end cache key "
+
+/// Whether the back-end cache holds cc's object of key (cc_obj_keys).
+fn cc_obj_held(os: Os, ctx: Ctx, key: Str) -> Bool {
+  let dir = backend_cache_dir(os, ctx)
+  !dir.is_empty() && (os.fs.exists(zentry_path(dir, "obj", key, compress_on(os))).ok() ?? false)
+}
+
 /// cc_assemble through the back-end cache (decision 0220 addendum): the
 /// object of a part the cache holds (keyed by the C compiler's identity,
-/// the flags, the source's path, which an ELF object names, and its
-/// assembly texts[i]) is written beside it, the others assembled by cc.
-fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[Str], texts: List[Str], jobs: Int) -> (List[Str], Str, Int) {
+/// the flags, the source's base name, which an ELF object names, and its
+/// assembly text, or keys0[i] when given: cc_obj_keys) is written beside
+/// it, the others' texts (text_of) written and assembled by cc.
+fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[Str], text_of: fn(Int) -> Str, keys0: List[Str], jobs: Int) -> (List[Str], Str, Int) {
   let dir = backend_cache_dir(os, ctx)
-  if dir.is_empty() || srcs.len() < 2 || texts.len() != srcs.len() {
+  if dir.is_empty() || srcs.len() < 2 {
+    // (with no cache the caller wrote every part's text: cc_obj_held)
     let (objs, why) = cc_assemble(os, cc, flags, srcs, jobs)
     return (objs, why, srcs.len())
   }
-  let prefix = "xo backend v1 obj cc\x00${tool_id_memo(os, ctx, cc, ["--version"])}\x00${asm_cflags(flags).join("\x00")}"
-  let keys = part_keys(prefix, srcs, texts, jobs)
+  var texts: List[Str] = []
+  if keys0.len() != srcs.len() {
+    for i in 0..srcs.len() {
+      texts.push(text_of(i))
+    }
+  }
+  let keys = if keys0.len() == srcs.len() { keys0 } else { cc_obj_keys(os, ctx, cc, flags, srcs.map(fn(s) { base_name(s) }), texts, jobs) }
   var objs: List[Str] = []
   var miss: List[Int] = []
   var msrcs: List[Str] = []
@@ -527,6 +557,15 @@ fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[St
   }
   if miss.is_empty() {
     return (objs, "", 0)
+  }
+  // the texts of the parts cc assembles: the caller wrote a key line for
+  // a part whose object the cache held when it looked (cc_obj_held)
+  for i in miss {
+    if keys0.len() == srcs.len() {
+      if let Err(e) = os.fs.write(srcs[i], text_of(i).bytes()) {
+        return (objs, "${srcs[i]}: ${e}\n", miss.len())
+      }
+    }
   }
   let (_, why) = cc_assemble(os, cc, flags, msrcs, jobs)
   if !why.is_empty() {

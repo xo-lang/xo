@@ -215,6 +215,37 @@ func TestBuildWorkDirsPrivate(t *testing.T) {
 // failed on the random directory's name, 2026-10-24), and its line
 // tables are still in the program after the directory is gone (dsymutil
 // finds the objects by --oso-prepend-path).
+// TestBuildCCWarmObjects: a second cc build of a use c program in one
+// back-end cache reuses its objects, and the link still passes ld each
+// weak runtime hook those objects reference (2026-11-05: the reused
+// parts' stub .s files held no .weak_reference lines, so ld rejected
+// _AnnotateIgnoreReadsBegin and ___tsan_acquire on the warm build).
+func TestBuildCCWarmObjects(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("darwin and linux: the cc link")
+	}
+	src, err := filepath.Abs(filepath.Join("..", "..", "internal", "llvm", "testdata", "golden", "use_c_add"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, src)
+	setenv(t, "XO_BIN_CACHE", "off")
+	setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(t.TempDir(), "cache"))
+	for round := 0; round < 2; round++ {
+		setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+		out := filepath.Join(t.TempDir(), "p")
+		var o, e bytes.Buffer
+		if c := run(t, []string{"build", "-o", out, "."}, &o, &e); c != 0 {
+			t.Fatalf("build %d: exit %d\n%s", round, c, e.String())
+		}
+		got, err := exec.Command(out).CombinedOutput()
+		if err != nil {
+			t.Fatalf("build %d's program: %v\n%s", round, err, got)
+		}
+	}
+}
+
 func TestBuildCCLinkOSOPaths(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {

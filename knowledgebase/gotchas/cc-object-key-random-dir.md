@@ -35,21 +35,23 @@ get a .s file (cc_obj_keys, cc_obj_held). A build that hollows without
 the back-end cache hashes the texts as before. Warm edit build 9.4 to
 10.3 s, assembling about 1.2 s.
 
+The first landing of that (bccbae048) was reverted (a7217f35d): on
+darwin a warm cc link failed with undefined `_AnnotateIgnoreReadsBegin`,
+`___tsan_acquire` and the other weak runtime hooks. A held part's .s is
+a one-line stub naming its key, and the link builds its `-Wl,-U,sym`
+flags from the `.weak_reference` lines of the .s beside each object
+(link.xo weak_undefined_args), reading the object itself only when no
+.s exists. The stub existed, so the reused objects' weak references
+were dropped. The keys were not at fault: text keys failed the same way.
+The reland reads the object's own weak references when its .s is the
+stub (CC_OBJ_STUB); cmd/xo TestBuildCCWarmObjects builds a use c
+program twice in one cache.
+
 ## How to avoid
 
 A cache key must never take a path under a per-build random directory.
 Key on what the tool records (a base name), and run the tool where that
-name resolves. See also output-from-cache-keys-differs-cache-off.md.
-
-## Reverted (2026-11-05, 5cf111991's revert of bccbae048)
-
-The fix above broke warm cc links on darwin: the second build of a `use c`
-program (cmd/xo TestBuildCCLinkOSOPaths "build 1", TestVouchBuildCache)
-failed with undefined `_AnnotateIgnoreReadsBegin`, `___tsan_acquire` and
-other sanitizer hooks the runtime references weakly, referenced from
-`_xo_utext_*` in reused prog-darwin.N.o objects, with a fresh cache too
-and also with objects keyed by their text. So it is not the object key:
-a warm build's part text or link input differs from the cold one's in
-its weak references (to find: diff the cold and warm .s of one part with
-XO_KEEP_ASM=1, and the link line). Reland only with
-TestBuildCCLinkOSOPaths and TestVouchBuildCache passing twice in a row.
+name resolves. A file written in place of another (a stub) must still answer every
+reader of the original: list the readers (here the weak reference scan)
+before replacing an output. See also
+output-from-cache-keys-differs-cache-off.md.
