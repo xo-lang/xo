@@ -536,6 +536,8 @@ struct LinkState {
   /// the peer's handle for the link, once its Attach arrived
   remote_handle: Int = -1
   attached: Bool = false
+  /// the peer answered the Attach without a source or target (it refuses the link and detaches next)
+  refused: Bool = false
   detached: Bool = false
   error: WireError? = None
   /// the largest message the peer accepts, 0 for no limit
@@ -577,6 +579,8 @@ struct ReceiverOptions {
   /// credit granted and topped up
   credit: Int = 1
   settle_mode: ReceiverSettleMode? = None
+  /// `Settled` asks the sender to send settled transfers (receive and delete)
+  sender_settle_mode: SenderSettleMode? = None
   /// the target address, empty for none
   target: Str = ""
   filters: List[(Str, Value)] = []

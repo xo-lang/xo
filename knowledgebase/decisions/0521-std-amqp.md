@@ -169,3 +169,12 @@ tests is go-amqp itself (the oracle), not a runtime dependency.
   failure), so concurrent begins get distinct channels (test: 8 concurrent begins). Test: "two receivers and a sender on
   one connection do not block each other" (100 sends and 100 echoed receives with a third receiver waiting:
   about 6 ms on loopback; with one lock the sends would wait for the receiver that waits).
+- Test broker as built (2026-11-06, lead: no emulator for now, the owner decided to test Service Bus against an
+  in-process fake): `std/amqptest` (spec/std.md 64.6) is a Service Bus shaped AMQP broker for tests: CBS,
+  peek-lock queues with lock tokens and expiry, settle modes, dispositions mapped to complete, abandon, defer and
+  dead letter, `$management` (renew-lock, peek, schedule, cancel, receive-by-sequence-number, update-disposition,
+  session lock and state), topics with subscriptions, session queues, and injected faults and forced detaches or
+  closes. It is a std module so a client library in another repository can use it; the emulator run script stays on
+  branch sbemu. Not modelled: SQL and correlation filters, rules, auto-forwarding, duplicate detection, message
+  size limits, per entity authorization beyond the token audience suffix.
+

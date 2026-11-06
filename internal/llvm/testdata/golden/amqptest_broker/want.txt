@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+tokens 1
+bad token: amqp:unauthorized-access
+send true ready 1
+got one locked 1
+completed locked 0 ready 0
+dead letters 1
+deferred 1
+scheduled 1 ready 0
+s1 1 s2 1
+session state 0
+rejected true
+attach: com.microsoft:server-busy
+receiver: amqp:unauthorized-access
+receive: amqp:link:detach-forced
+begin failed
+--- stderr

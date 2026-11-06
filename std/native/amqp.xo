@@ -2486,6 +2486,10 @@ fn apply_frame(var c: amqp.ConnState, f: amqp.Frame) -> () ! amqp.AmqpErr uses (
         var l = c.links[li]
         l.remote_handle = Int(x.handle)
         l.attached = true
+        l.refused = match l.role {
+          Sender => x.target is None
+          Receiver => x.source is None
+        }
         l.peer_max_message_size = x.max_message_size
         match l.role {
           Receiver => { l.delivery_count = x.initial_delivery_count }
@@ -2686,7 +2690,7 @@ fn st_new_receiver(var c: amqp.ConnState, s: amqp.Session, source: Str, opts: am
   l.credit_target = opts.credit
   put_link(c, l)
   st_send(c, frame_on(s.channel, amqp.FrameBody.Attach(v: amqp.Attach{
-    name: l.name, handle: u32w(l.handle), role: amqp.Role.Receiver, sender_settle_mode: None,
+    name: l.name, handle: u32w(l.handle), role: amqp.Role.Receiver, sender_settle_mode: opts.sender_settle_mode,
     receiver_settle_mode: opts.settle_mode,
     source: Some(amqp.Source{address: source, filter: opts.filters, capabilities: opts.source_capabilities}),
     target: Some(amqp.Target{address: opts.target, capabilities: opts.capabilities}),
@@ -2697,7 +2701,8 @@ fn st_new_receiver(var c: amqp.ConnState, s: amqp.Session, source: Str, opts: am
 /// Waits for the peer's Attach of link `id`.
 fn step_attached(var c: amqp.ConnState, id: Int) -> Bool? ! amqp.AmqpErr uses (net.dial, clock) {
   check_link(c, id)?
-  if c.links[id].attached { return Ok(Some(true)) }
+  let l = c.links[id]
+  if l.attached && !l.refused { return Ok(Some(true)) }
   Ok(None)
 }
 

@@ -105,3 +105,4 @@ http_proxy_body_next_race # wasip1 # network: the network
 http_expect_continue # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_stop_keepalive # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_raw_header_names # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+amqptest_broker # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

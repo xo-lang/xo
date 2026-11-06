@@ -63,11 +63,5 @@ internal.dbg_*	reached only by xo debug, tested by cmd/xo TestDebug*
 amqp.Connection.abort	tested by the in-process peer tests of std/native/amqp_test.xo (a loopback listener), not a corpus
 amqp.Connection.end_session	tested by the in-process peer tests of std/native/amqp_test.xo, not a corpus
 amqp.Connection.peer_*	accessors read in the in-process peer tests of std/native/amqp_test.xo, not a corpus
-amqp.Connection.new_sender	tested by the in-process peer tests of std/native/amqp_test.xo, not a corpus
-amqp.Connection.new_receiver	tested by the in-process peer tests of std/native/amqp_test.xo, not a corpus
-amqp.Connection.keepalive	tested by the real-clock peer tests of std/native/amqp_test.xo (xo test --real), not a corpus
-amqp.Receiver.receive	tested by the in-process peer tests of std/native/amqp_test.xo, not a corpus
 amqp.Receiver.reject	the settle path of accept (tested by the peer tests) with the Rejected state, whose frame bytes the corpus covers
 amqp.Receiver.release	the settle path of accept (tested by the peer tests) with the Released state, whose frame bytes the corpus covers
-amqp.Receiver.modify	the settle path of accept (tested by the peer tests) with the Modified state, whose frame bytes the corpus covers
-amqp.cbs_put_token	tested by the in-process peer tests of std/native/amqp_test.xo; the real namespace smoke test is run by the owner only (decision 0521)

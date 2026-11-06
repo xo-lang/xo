@@ -1,0 +1,193 @@
+// std/amqptest: an in-process AMQP 1.0 broker that behaves like Azure Service Bus for the parts a
+// client library uses, for tests (decision 0521; the shape of Go's net/http/httptest). Serve it on a
+// listener (the test world's in memory listeners work) and dial it with std/amqp.
+use std/amqp
+use std/task
+
+/// One entity's settings.
+struct QueueOptions {
+  /// messages carry a session id (properties.group_id); a receiver locks one session
+  sessions: Bool = false
+  /// how long a delivered message stays locked, in milliseconds
+  lock_ms: Int = 60000
+  /// abandons after which a message goes to the dead letter queue
+  max_delivery_count: Int = 10
+}
+
+/// A message held by a queue. Internal: use the Broker's methods.
+struct FakeMsg {
+  seq: Int
+  m: amqp.Message
+  delivery_count: Int = 0
+  lock_token: Bytes = b""
+  /// 0 when not locked
+  locked_until: Int = 0
+  lock_conn: Int = 0
+  /// not deliverable before this time (milliseconds since the Unix epoch), 0 for none
+  scheduled_ms: Int = 0
+  enqueued_ms: Int = 0
+  session: Str = ""
+  deferred: Bool = false
+  dead_reason: Str = ""
+  dead_description: Str = ""
+}
+
+/// A session of a session enabled queue. Internal.
+struct FakeSession {
+  id: Str
+  state: Bytes = b""
+  locked_until: Int = 0
+  owner: Int = 0
+}
+
+/// A queue, or a topic's subscription (named `topic/Subscriptions/name`), or a topic (no messages).
+/// Internal.
+struct FakeQueue {
+  name: Str
+  opts: QueueOptions
+  is_topic: Bool = false
+  msgs: List[FakeMsg] = []
+  dead: List[FakeMsg] = []
+  next_seq: Int = 1
+  sessions: List[FakeSession] = []
+}
+
+/// An injected failure. Internal.
+struct FakeFail {
+  /// the operation: attach, transfer, disposition, put-token, or a management operation without
+  /// its `com.microsoft:` prefix (renew-lock, peek-message, ...)
+  op: Str
+  status: Int
+  condition: Str
+  description: Str
+  /// left uses, -1 until cleared
+  left: Int
+}
+
+/// The broker's state. Internal.
+struct BrokerState {
+  queues: List[FakeQueue] = []
+  tokens: List[(Str, Str)] = []
+  /// token expiry per audience in milliseconds since the Unix epoch, 0 for none
+  expiries: List[(Str, Int)] = []
+  rejected: List[Str] = []
+  require_token: Bool = false
+  fails: List[FakeFail] = []
+  /// connection id and the channel that wakes its loop
+  wakes: List[(Int, Chan[Bool])] = []
+  conns: List[(Int, ServerConn)] = []
+  next_conn: Int = 1
+  next_lock: Int = 1
+  /// a management reply is held back this long, in milliseconds
+  slow_mgmt_ms: Int = 0
+  /// forced link detaches and connection closes, each connection acts on those it has not seen
+  gen: Int = 0
+  detaches: List[(Int, Str, amqp.WireError)] = []
+  closes: List[(Int, amqp.WireError?)] = []
+}
+
+/// A broker. A handle: copies share it.
+struct Broker {
+  st: Mutex[BrokerState]
+  clock: Clock
+}
+
+/// A link of one connection. Internal.
+struct SvLink {
+  handle: Int
+  remote: Int
+  channel: Int
+  name: Str
+  /// the broker sends on this link (the client receives)
+  sends: Bool
+  /// 0 an entity, 1 $cbs, 2 $management, 3 dead letter queue
+  kind: Int
+  queue: Str
+  credit: Int = 0
+  delivery_count: Int = 0
+  /// the client asked for settled transfers: receive and delete
+  presettled: Bool = false
+  session_id: Str = ""
+  partial: Bytes = b""
+  partial_id: Int = 0
+  partial_settled: Bool = false
+  partial_active: Bool = false
+  /// replies waiting for credit ($cbs and $management)
+  replies: List[amqp.Message] = []
+  /// delivery id and sequence number of deliveries the client has not settled
+  unsettled: List[(Int, Int)] = []
+  detached: Bool = false
+}
+
+/// A session of one connection. Internal.
+struct SvSession {
+  channel: Int
+  next_in: Int = 0
+  next_out: Int = 0
+  remote_window: Int = 0
+  ended: Bool = false
+  /// transfers received since the last session Flow
+  in_used: Int = 0
+}
+
+/// One connection's state. Internal.
+struct SvConn {
+  id: Int
+  max_frame: Int = 65536
+  sess: List[SvSession] = []
+  links: List[SvLink] = []
+  seen_gen: Int = 0
+}
+
+/// A new broker; `clock` times message locks, scheduled messages and token expiry.
+fn new(clock: Clock) -> Broker
+
+/// Serves the connections `l` accepts, each in a task of `g`; returns at once. The tasks end when
+/// `g` is cancelled or `l` is closed.
+fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock)
+
+/// Declares a queue (a queue is also created, with the defaults, by the first link to it).
+fn (b: Broker) queue(name: Str, opts: QueueOptions = QueueOptions{})
+/// Declares a topic: a message sent to it is copied to every subscription.
+fn (b: Broker) topic(name: Str)
+/// Declares the subscription `topic/Subscriptions/name`, receivable at that address.
+fn (b: Broker) subscription(topic: Str, name: Str, opts: QueueOptions = QueueOptions{})
+
+/// Puts a message on a queue (or a topic) as if a client had sent it.
+fn (b: Broker) put(queue: Str, m: amqp.Message)
+/// The messages that can be delivered now, in order, as a client would receive them.
+fn (b: Broker) ready(queue: Str) -> List[amqp.Message]
+/// The number of messages locked by a receiver.
+fn (b: Broker) locked(queue: Str) -> Int
+/// The messages in the dead letter queue.
+fn (b: Broker) dead_letters(queue: Str) -> List[amqp.Message]
+/// The messages scheduled for later.
+fn (b: Broker) scheduled(queue: Str) -> List[amqp.Message]
+/// The deferred messages.
+fn (b: Broker) deferred(queue: Str) -> List[amqp.Message]
+/// The `(audience, token)` pairs the broker accepted through $cbs, in order.
+fn (b: Broker) tokens() -> List[(Str, Str)]
+/// A put-token with this token is answered with 401.
+fn (b: Broker) reject_token(token: Str)
+/// Links to entities are refused (`amqp:unauthorized-access`) until a put-token whose audience
+/// ends with the entity's name was accepted and has not expired.
+fn (b: Broker) require_token(on: Bool)
+/// The state of a session of a session enabled queue, as set by a client.
+fn (b: Broker) session_state(queue: Str, session: Str) -> Bytes
+
+/// The next use of operation `op` fails with an error: an attach, a transfer, a disposition or a
+/// put-token is refused with `condition`; a management operation (`renew-lock`, `peek-message`,
+/// `schedule-message`, `cancel-scheduled-message`, `receive-by-sequence-number`,
+/// `update-disposition`, `renew-session-lock`, `get-session-state`, `set-session-state`) answers
+/// `status` with `condition` and `description`.
+fn (b: Broker) fail_next(op: Str, status: Int, condition: Str, description: Str)
+/// Like `fail_next`, until `clear_failures`.
+fn (b: Broker) fail(op: Str, status: Int, condition: Str, description: Str)
+fn (b: Broker) clear_failures()
+/// Holds every management reply back by `ms` milliseconds.
+fn (b: Broker) slow_management(ms: Int)
+/// Detaches every link to `queue` with `error` (for example `amqp:link:detach-forced`).
+fn (b: Broker) detach_links(queue: Str, error: amqp.WireError)
+/// Closes every connection, with `error` in the Close frame when given, otherwise by dropping the
+/// transport.
+fn (b: Broker) disconnect_all(error: amqp.WireError? = None)

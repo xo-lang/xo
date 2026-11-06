@@ -1,0 +1,379 @@
+use std/amqp
+use std/amqptest
+
+fn text(m: amqp.Message) -> Str {
+  match m.body {
+    Data(sections) => (sections[0]).to_str_lossy()
+    _ => "?"
+  }
+}
+
+fn msg(t: Str) -> amqp.Message { amqp.Message{body: amqp.Body.Data(sections: [t.bytes()])} }
+
+fn opts(clk: Clock) -> amqp.ConnOptions {
+  amqp.ConnOptions{container_id: "tester", clock: Some(clk), sasl: amqp.Sasl.Anonymous, timeout_ms: 5000}
+}
+
+/// Waits for `cond` to hold, up to two seconds.
+fn until(clk: Clock, cond: fn() -> Bool) uses clock {
+  for _ in 0..400 {
+    if cond() { return }
+    clk.sleep(5ms)
+  }
+  fault("condition not reached")
+}
+
+struct Mgmt {
+  snd: amqp.Sender
+  rcv: amqp.Receiver
+}
+
+fn mgmt_open(c: amqp.Connection, sess: amqp.Session, entity: Str) -> Mgmt uses (net, clock) {
+  let snd = c.new_sender(sess, entity + "/$management", amqp.SenderOptions{name: "mgmt-s"}).or_fault("mgmt sender")
+  let rcv = c.new_receiver(sess, entity + "/$management", amqp.ReceiverOptions{name: "mgmt-r", target: "client-reply", credit: 5}).or_fault("mgmt receiver")
+  Mgmt{snd: snd, rcv: rcv}
+}
+
+fn mgmt_call(m: Mgmt, op: Str, body: amqp.Value) -> amqp.Message ! amqp.AmqpErr uses (net, clock) {
+  let req = amqp.Message{
+    properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "req-${op}"), reply_to: Some("client-reply")}),
+    app_properties: Some([("operation", amqp.Value.Str(v: "com.microsoft:" + op))]),
+    body: amqp.Body.Value(v: body)}
+  m.snd.send(req)?
+  let d = m.rcv.receive(2000)?
+  m.rcv.accept(d)?
+  Ok(d.message)
+}
+
+fn status(m: amqp.Message) -> Int {
+  for (k, v) in m.app_properties ?? [] {
+    if k == "statusCode" {
+      match v {
+        Int(x) => { return Int(x) }
+        _ => {}
+      }
+    }
+  }
+  -1
+}
+
+fn cond(m: amqp.Message) -> Str {
+  for (k, v) in m.app_properties ?? [] {
+    if k == "errorCondition" {
+      match v {
+        Str(x) => { return x }
+        _ => {}
+      }
+    }
+  }
+  ""
+}
+
+fn body_map(m: amqp.Message) -> List[(amqp.Value, amqp.Value)] {
+  match m.body {
+    Value(Map(ps)) => ps
+    _ => []
+  }
+}
+
+fn key(ps: List[(amqp.Value, amqp.Value)], k: Str) -> amqp.Value {
+  for (a, b) in ps {
+    if a == amqp.Value.Str(v: k) { return b }
+  }
+  amqp.Value.Null
+}
+
+fn dial_broker(n: Net, clk: Clock, l: Listener) -> amqp.Connection uses (net, clock) {
+  amqp.dial(n, l.addr(), opts(clk)).or_fault("dial")
+}
+
+test "send, receive and complete through the broker, with CBS" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("orders")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    amqp.cbs_put_token(c, sess, "sb://ns/orders", "tok-1").or_fault("put-token")
+    expect(b.tokens()) == [("sb://ns/orders", "tok-1")]
+    let snd = c.new_sender(sess, "orders").or_fault("sender")
+    expect(snd.send(msg("one")).or_fault("send")) == Some(amqp.DeliveryState.Accepted)
+    expect(b.ready("orders").len()) == 1
+    let rcv = c.new_receiver(sess, "orders", amqp.ReceiverOptions{credit: 5}).or_fault("receiver")
+    let d = rcv.receive(2000).or_fault("receive")
+    expect(text(d.message)) == "one"
+    expect(d.tag.len()) == 16
+    expect(b.locked("orders")) == 1
+    rcv.accept(d).or_fault("accept")
+    until(os.clock, fn() -> Bool { b.locked("orders") == 0 && b.ready("orders").len() == 0 })
+    rcv.close().or_fault("close receiver")
+    snd.close().or_fault("close sender")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+test "abandon redelivers, reject and the delivery limit dead letter" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q", amqptest.QueueOptions{max_delivery_count: 2})
+  b.put("q", msg("a"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+    let a1 = rcv.receive(2000).or_fault("receive a")
+    expect(text(a1.message)) == "a"
+    rcv.modify(a1).or_fault("abandon")
+    let a2 = rcv.receive(2000).or_fault("receive a again")
+    expect(text(a2.message)) == "a"
+    rcv.modify(a2).or_fault("abandon again")
+    // two deliveries used: a is dead lettered
+    until(os.clock, fn() -> Bool { b.dead_letters("q").len() == 1 && b.ready("q").len() == 0 })
+    b.put("q", msg("b"))
+    let b1 = rcv.receive(2000).or_fault("receive b")
+    expect(text(b1.message)) == "b"
+    rcv.reject(b1, Some(amqp.WireError{condition: "my-reason", description: "bad"})).or_fault("reject")
+    until(os.clock, fn() -> Bool { b.dead_letters("q").len() == 2 })
+    expect(text(b.dead_letters("q")[0])) == "a"
+    c.close().or_fault("close")
+  }
+}
+
+test "management: renew-lock, peek, schedule and cancel" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q", amqptest.QueueOptions{lock_ms: 300})
+  b.put("q", msg("m1"))
+  b.put("q", msg("m2"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let mg = mgmt_open(c, sess, "q")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+    let d = rcv.receive(2000).or_fault("receive")
+    // renew the lock before it runs out, twice, while a receive waits on another link
+    for _ in 0..2 {
+      os.clock.sleep(200ms)
+      let r = mgmt_call(mg, "renew-lock", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "lock-tokens"), amqp.Value.Array(items: [amqp.Value.Uuid(bytes: d.tag)]))])).or_fault("renew")
+      expect(status(r)) == 200
+    }
+    expect(b.locked("q")) == 1
+    // peek sees both, locked or not
+    let p = mgmt_call(mg, "peek-message", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "from-sequence-number"), amqp.Value.Long(v: Int64(0))), (amqp.Value.Str(v: "message-count"), amqp.Value.Int(v: Int32(10)))])).or_fault("peek")
+    expect(status(p)) == 200
+    match key(body_map(p), "messages") {
+      List(items) => expect(items.len()) == 2
+      _ => fault("no messages")
+    }
+    // schedule one for an hour from now, then cancel it
+    let when = os.clock.now().unix_millis() + 3600000
+    let sched = amqp.encode_message(amqp.Message{
+      annotations: Some([(amqp.Value.Symbol(v: "x-opt-scheduled-enqueue-time"), amqp.Value.Timestamp(ms: when))]),
+      body: amqp.Body.Data(sections: [b"later"])}).or_fault("encode")
+    let sr = mgmt_call(mg, "schedule-message", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "messages"), amqp.Value.List(items: [amqp.Value.Map(pairs: [(amqp.Value.Str(v: "message"), amqp.Value.Binary(v: sched))])]))])).or_fault("schedule")
+    expect(status(sr)) == 200
+    expect(b.scheduled("q").len()) == 1
+    let seqs = key(body_map(sr), "sequence-numbers")
+    let cr = mgmt_call(mg, "cancel-scheduled-message", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "sequence-numbers"), seqs)])).or_fault("cancel")
+    expect(status(cr)) == 200
+    expect(b.scheduled("q").len()) == 0
+    c.close().or_fault("close")
+  }
+}
+
+test "an expired lock returns the message and a stale renew is lock lost" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q", amqptest.QueueOptions{lock_ms: 100})
+  b.put("q", msg("x"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let mg = mgmt_open(c, sess, "q")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+    let d = rcv.receive(2000).or_fault("receive")
+    os.clock.sleep(250ms)
+    expect(b.ready("q").len()) == 1
+    let r = mgmt_call(mg, "renew-lock", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "lock-tokens"), amqp.Value.Array(items: [amqp.Value.Uuid(bytes: d.tag)]))])).or_fault("renew")
+    expect(status(r)) == 410
+    expect(cond(r)) == "com.microsoft:message-lock-lost"
+    c.close().or_fault("close")
+  }
+}
+
+test "receive and delete, and a topic fans out to subscriptions" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.topic("events")
+  b.subscription("events", "s1")
+  b.subscription("events", "s2")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, "events").or_fault("sender")
+    expect(snd.send(msg("hello")).or_fault("send")) == Some(amqp.DeliveryState.Accepted)
+    expect(b.ready("events/Subscriptions/s1").len()) == 1
+    expect(b.ready("events/Subscriptions/s2").len()) == 1
+    let rcv = c.new_receiver(sess, "events/Subscriptions/s1", amqp.ReceiverOptions{credit: 2, sender_settle_mode: Some(amqp.SenderSettleMode.Settled)}).or_fault("receiver")
+    let d = rcv.receive(2000).or_fault("receive")
+    expect(text(d.message)) == "hello"
+    expect(d.settled) == true
+    expect(b.ready("events/Subscriptions/s1").len()) == 0
+    expect(b.locked("events/Subscriptions/s1")) == 0
+    expect(b.ready("events/Subscriptions/s2").len()) == 1
+    c.close().or_fault("close")
+  }
+}
+
+test "defer, receive by sequence number and update disposition" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q")
+  b.put("q", msg("later"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let mg = mgmt_open(c, sess, "q")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+    let d = rcv.receive(2000).or_fault("receive")
+    var seq = 0
+    match d.message.annotations {
+      Some(ps) => {
+        for (k, v) in ps {
+          if k == amqp.Value.Symbol(v: "x-opt-sequence-number") {
+            match v {
+              Long(x) => { seq = Int(x) }
+              _ => {}
+            }
+          }
+        }
+      }
+      None => {}
+    }
+    expect(seq > 0) == true
+    rcv.modify(d, false, true).or_fault("defer")
+    until(os.clock, fn() -> Bool { b.deferred("q").len() == 1 })
+    let r = mgmt_call(mg, "receive-by-sequence-number", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "sequence-numbers"), amqp.Value.Array(items: [amqp.Value.Long(v: Int64(seq))]))])).or_fault("receive deferred")
+    expect(status(r)) == 200
+    var lock = b""
+    match key(body_map(r), "messages") {
+      List(items) => {
+        match items[0] {
+          Map(ps) => {
+            match key(ps, "lock-token") {
+              Uuid(bs) => { lock = bs }
+              _ => {}
+            }
+          }
+          _ => {}
+        }
+      }
+      _ => {}
+    }
+    expect(lock.len()) == 16
+    let u = mgmt_call(mg, "update-disposition", amqp.Value.Map(pairs: [
+      (amqp.Value.Str(v: "disposition-status"), amqp.Value.Str(v: "completed")),
+      (amqp.Value.Str(v: "lock-tokens"), amqp.Value.Array(items: [amqp.Value.Uuid(bytes: lock)]))])).or_fault("update")
+    expect(status(u)) == 200
+    expect(b.deferred("q").len()) == 0
+    c.close().or_fault("close")
+  }
+}
+
+test "session queues, session state and the session lock" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("sq", amqptest.QueueOptions{sessions: true})
+  b.put("sq", amqp.Message{properties: Some(amqp.Properties{group_id: Some("s-a")}), body: amqp.Body.Data(sections: [b"a1"])})
+  b.put("sq", amqp.Message{properties: Some(amqp.Properties{group_id: Some("s-b")}), body: amqp.Body.Data(sections: [b"b1"])})
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let filter = ("com.microsoft:session-filter", amqp.Value.Described(descriptor: amqp.Value.Symbol(v: "com.microsoft:session-filter"), value: amqp.Value.Str(v: "s-b")))
+    let rcv = c.new_receiver(sess, "sq", amqp.ReceiverOptions{credit: 5, filters: [filter]}).or_fault("receiver")
+    let d = rcv.receive(2000).or_fault("receive")
+    expect(text(d.message)) == "b1"
+    // the session is locked by this connection: a second receiver for it times out
+    let c2 = dial_broker(os.net, os.clock, l)
+    c2.keepalive(s.group()).or_fault("keepalive 2")
+    let sess2 = c2.begin().or_fault("begin 2")
+    match c2.new_receiver(sess2, "sq", amqp.ReceiverOptions{credit: 1, filters: [filter]}) {
+      Ok(_) => fault("the session is locked")
+      Err(Peer(e)) => expect(e.condition) == "com.microsoft:timeout"
+      Err(_) => fault("wrong error")
+    }
+    let mg = mgmt_open(c, sess, "sq")
+    let set = mgmt_call(mg, "set-session-state", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "session-id"), amqp.Value.Str(v: "s-b")), (amqp.Value.Str(v: "session-state"), amqp.Value.Binary(v: b"state-1"))])).or_fault("set state")
+    expect(status(set)) == 200
+    expect(b.session_state("sq", "s-b")) == b"state-1"
+    let got = mgmt_call(mg, "get-session-state", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "session-id"), amqp.Value.Str(v: "s-b"))])).or_fault("get state")
+    expect(key(body_map(got), "session-state")) == amqp.Value.Binary(v: b"state-1")
+    let ren = mgmt_call(mg, "renew-session-lock", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "session-id"), amqp.Value.Str(v: "s-b"))])).or_fault("renew session")
+    expect(status(ren)) == 200
+    c2.close().or_fault("close 2")
+    c.close().or_fault("close")
+  }
+}
+
+test "faults: unknown entity, missing token, injected errors, forced detach and close" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    match c.new_receiver(sess, "nope", amqp.ReceiverOptions{credit: 1}) {
+      Ok(_) => fault("unknown entity")
+      Err(Peer(e)) => expect(e.condition) == "amqp:not-found"
+      Err(_) => fault("wrong error")
+    }
+    b.require_token(true)
+    match c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}) {
+      Ok(_) => fault("no token")
+      Err(Peer(e)) => expect(e.condition) == "amqp:unauthorized-access"
+      Err(_) => fault("wrong error")
+    }
+    amqp.cbs_put_token(c, sess, "sb://ns/q", "tok").or_fault("put-token")
+    // a fresh token on the same $cbs link is accepted again
+    amqp.cbs_put_token(c, sess, "sb://ns/q", "tok-2").or_fault("refresh")
+    expect(b.tokens().len()) == 2
+    b.fail_next("attach", 0, "com.microsoft:server-busy", "busy")
+    match c.new_sender(sess, "q") {
+      Ok(_) => fault("injected attach failure")
+      Err(Peer(e)) => expect(e.condition) == "com.microsoft:server-busy"
+      Err(_) => fault("wrong error")
+    }
+    let snd = c.new_sender(sess, "q").or_fault("sender")
+    b.fail_next("transfer", 0, "amqp:resource-limit-exceeded", "full")
+    expect(snd.send(msg("x")).or_fault("send")) == Some(amqp.DeliveryState.Rejected(error: Some(amqp.WireError{condition: "amqp:resource-limit-exceeded", description: "full"})))
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+    b.detach_links("q", amqp.WireError{condition: "amqp:link:detach-forced", description: "forced"})
+    match rcv.receive(2000) {
+      Ok(_) => fault("detached")
+      Err(Peer(e)) => expect(e.condition) == "amqp:link:detach-forced"
+      Err(_) => fault("wrong error")
+    }
+    b.disconnect_all(Some(amqp.WireError{condition: "amqp:connection:forced", description: "bye"}))
+    match c.begin() {
+      Ok(_) => fault("closed")
+      Err(_) => {}
+    }
+  }
+}

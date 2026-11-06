@@ -1,0 +1,115 @@
+use std/amqp
+use std/amqptest
+
+// The in-process Service Bus broker (std/amqptest) driven by std/amqp's client.
+fn text(m: amqp.Message) -> Str {
+  match m.body {
+    Data(sections) => (sections[0]).to_str_lossy()
+    _ => "?"
+  }
+}
+
+fn msg(t: Str) -> amqp.Message { amqp.Message{body: amqp.Body.Data(sections: [t.bytes()])} }
+
+fn cond(e: amqp.AmqpErr) -> Str {
+  match e {
+    Peer(w) => w.condition
+    _ => "other"
+  }
+}
+
+fn wait_for(os: Os, ok: fn() -> Bool) {
+  for _ in 0..400 {
+    if ok() { return }
+    os.clock.sleep(5ms)
+  }
+}
+
+fn main(os: Os) {
+  let b = amqptest.new(os.clock)
+  b.queue("q", amqptest.QueueOptions{max_delivery_count: 2})
+  b.queue("sq", amqptest.QueueOptions{sessions: true})
+  b.topic("t")
+  b.subscription("t", "s1")
+  b.subscription("t", "s2")
+  b.slow_management(0)
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "golden", clock: Some(os.clock), sasl: amqp.Sasl.Anonymous, timeout_ms: 5000}).or_fault("dial")
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    amqp.cbs_put_token(c, sess, "sb://ns/q", "tok").or_fault("put-token")
+    os.stdio.println("tokens ${b.tokens().len()}")
+    b.reject_token("bad")
+    match amqp.cbs_put_token(c, sess, "sb://ns/q", "bad") {
+      Ok(_) => os.stdio.println("bad token accepted")
+      Err(e) => os.stdio.println("bad token: ${cond(e)}")
+    }
+    let snd = c.new_sender(sess, "q").or_fault("sender")
+    let out = snd.send(msg("one")).or_fault("send")
+    os.stdio.println("send ${out == Some(amqp.DeliveryState.Accepted)} ready ${b.ready("q").len()}")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+    let d = rcv.receive(2000).or_fault("receive")
+    os.stdio.println("got ${text(d.message)} locked ${b.locked("q")}")
+    rcv.accept(d).or_fault("accept")
+    wait_for(os, fn() -> Bool { b.locked("q") == 0 })
+    os.stdio.println("completed locked ${b.locked("q")} ready ${b.ready("q").len()}")
+
+    // dead letter after two abandons
+    b.put("q", msg("two"))
+    let d1 = rcv.receive(2000).or_fault("receive two")
+    rcv.modify(d1).or_fault("abandon")
+    let d2 = rcv.receive(2000).or_fault("receive two again")
+    rcv.modify(d2).or_fault("abandon again")
+    wait_for(os, fn() -> Bool { b.dead_letters("q").len() == 1 })
+    os.stdio.println("dead letters ${b.dead_letters("q").len()}")
+
+    // defer
+    b.put("q", msg("three"))
+    let d3 = rcv.receive(2000).or_fault("receive three")
+    rcv.modify(d3, false, true).or_fault("defer")
+    wait_for(os, fn() -> Bool { b.deferred("q").len() == 1 })
+    os.stdio.println("deferred ${b.deferred("q").len()}")
+
+    // scheduled
+    let when = os.clock.now().unix_millis() + 3600000
+    b.put("q", amqp.Message{annotations: Some([(amqp.Value.Symbol(v: "x-opt-scheduled-enqueue-time"), amqp.Value.Timestamp(ms: when))]), body: amqp.Body.Data(sections: [b"later"])})
+    os.stdio.println("scheduled ${b.scheduled("q").len()} ready ${b.ready("q").len()}")
+
+    // topic fan-out
+    let tsnd = c.new_sender(sess, "t").or_fault("topic sender")
+    tsnd.send(msg("fan")).or_fault("send fan")
+    os.stdio.println("s1 ${b.ready("t/Subscriptions/s1").len()} s2 ${b.ready("t/Subscriptions/s2").len()}")
+    os.stdio.println("session state ${b.session_state("sq", "none").len()}")
+
+    // injected failures
+    b.fail_next("transfer", 0, "amqp:resource-limit-exceeded", "full")
+    let rej = snd.send(msg("x")).or_fault("send x")
+    os.stdio.println("rejected ${rej != Some(amqp.DeliveryState.Accepted)}")
+    b.fail("attach", 0, "com.microsoft:server-busy", "busy")
+    match c.new_sender(sess, "q") {
+      Ok(_) => os.stdio.println("attach ok")
+      Err(e) => os.stdio.println("attach: ${cond(e)}")
+    }
+    b.clear_failures()
+    b.require_token(true)
+    match c.new_receiver(sess, "sq", amqp.ReceiverOptions{credit: 1}) {
+      Ok(_) => os.stdio.println("receiver ok")
+      Err(e) => os.stdio.println("receiver: ${cond(e)}")
+    }
+    b.require_token(false)
+
+    // forced detach, then a dropped connection
+    b.detach_links("q", amqp.WireError{condition: "amqp:link:detach-forced", description: "forced"})
+    match rcv.receive(2000) {
+      Ok(_) => os.stdio.println("receive ok")
+      Err(e) => os.stdio.println("receive: ${cond(e)}")
+    }
+    b.disconnect_all()
+    match c.begin() {
+      Ok(_) => os.stdio.println("begin ok")
+      Err(_) => os.stdio.println("begin failed")
+    }
+  }
+}

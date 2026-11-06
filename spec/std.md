@@ -7572,3 +7572,71 @@ Azure's token authorization: a request message (`operation: put-token`, `type`, 
 from `$cbs` with target `cbs`; a `status-code` outside 200 to 299 is `Peer` with the condition
 `amqp:unauthorized-access`. The test is an in-process peer; the smoke test against a real namespace is run by the owner
 only (decision 0521).
+
+### 64.6 The test broker (std/amqptest)
+
+```
+use std/amqptest
+fn amqptest.new(clock: Clock) -> Broker
+fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock)
+fn (b: Broker) queue(name: Str, opts: QueueOptions = QueueOptions{})      // QueueOptions{sessions, lock_ms, max_delivery_count}
+fn (b: Broker) topic(name: Str)
+fn (b: Broker) subscription(topic: Str, name: Str, opts: QueueOptions = QueueOptions{})
+fn (b: Broker) put(queue: Str, m: amqp.Message)
+fn (b: Broker) ready(queue: Str) -> List[amqp.Message]
+fn (b: Broker) locked(queue: Str) -> Int
+fn (b: Broker) dead_letters(queue: Str) -> List[amqp.Message]
+fn (b: Broker) scheduled(queue: Str) -> List[amqp.Message]
+fn (b: Broker) deferred(queue: Str) -> List[amqp.Message]
+fn (b: Broker) tokens() -> List[(Str, Str)]
+fn (b: Broker) reject_token(token: Str)
+fn (b: Broker) require_token(on: Bool)
+fn (b: Broker) session_state(queue: Str, session: Str) -> Bytes
+fn (b: Broker) fail_next(op: Str, status: Int, condition: Str, description: Str)
+fn (b: Broker) fail(op: Str, status: Int, condition: Str, description: Str)
+fn (b: Broker) clear_failures()
+fn (b: Broker) slow_management(ms: Int)
+fn (b: Broker) detach_links(queue: Str, error: amqp.WireError)
+fn (b: Broker) disconnect_all(error: amqp.WireError? = None)
+```
+
+An in-process AMQP 1.0 broker that behaves like Azure Service Bus for what a client library uses, for tests
+(decision 0521; Go's `net/http/httptest` is the model). `serve` accepts connections on any `Listener` (the test world's
+in memory listeners, or a loopback one) and serves each in a task of `g`; clients dial it with `amqp.dial`. It speaks
+SASL (any mechanism is accepted) or none.
+
+- Entities are queues, topics and subscriptions (`topic/Subscriptions/name`); a link to an undeclared entity is refused with
+  `amqp:not-found`, a send to a topic is copied to every subscription, and `put` creates a queue it does not know.
+- `$cbs`: a `put-token` request is answered with `status-code` 202 (401 and `amqp:unauthorized-access` for a token given to
+  `reject_token`); a later put-token for the same audience replaces the earlier one (the client's refresh). `tokens()` lists
+  the accepted `(audience, token)` pairs. With `require_token(true)` a link to an entity is refused with
+  `amqp:unauthorized-access` unless an accepted, unexpired token's audience ends with the entity's name.
+- Sending: a transfer is stored (sequence number and enqueue time are added as `x-opt-sequence-number` and
+  `x-opt-enqueued-time`) and answered `Accepted` unless settled by the sender; a session enabled queue refuses a message
+  without a session id (`properties.group_id`).
+- Receiving is peek lock: a delivery is locked for `lock_ms`, its delivery tag is the 16 byte lock token (also
+  `x-opt-lock-token`, with `x-opt-locked-until`), and the header's delivery count is the number of earlier deliveries.
+  `Accepted` completes; `Released` and `Modified` give the message back (`Modified` with `undeliverable-here` defers it);
+  `Rejected` dead letters it; past `max_delivery_count` a message is dead lettered with `MaxDeliveryCountExceeded`. A
+  disposition for a lock that ran out or is not the connection's is answered `Rejected` with
+  `com.microsoft:message-lock-lost`. A receiver that asks for settled transfers (`ReceiverOptions.sender_settle_mode`)
+  deletes on receive. Both receiver settle modes are answered. `<queue>/$DeadLetterQueue` delivers the dead letters
+  (removing them as it sends).
+- `<entity>/$management` answers (reply `statusCode`, `statusDescription`, `errorCondition`, correlation id = the request's
+  message id) `renew-lock`, `peek-message`, `schedule-message` (the message carries `x-opt-scheduled-enqueue-time`),
+  `cancel-scheduled-message`, `receive-by-sequence-number` (deferred messages), `update-disposition`
+  (`completed`, `abandoned`, `suspended`, `defered`), `renew-session-lock`, `get-session-state` and `set-session-state`; any
+  other operation is 501.
+- Sessions: a receiver on a session enabled queue gives the `com.microsoft:session-filter` (a session id or null); the
+  broker locks that session (or the first with a deliverable message) to the connection and echoes the chosen id in the
+  attach; a session locked by another connection, or none available, is refused with `com.microsoft:timeout`.
+- Faults: `fail_next`/`fail` make the operation `attach`, `transfer`, `disposition`, `put-token` or a management operation
+  (its name without `com.microsoft:`) fail with `condition`, `status` and `description` (an attach, transfer or
+  disposition is refused or rejected with the condition; a management reply carries `status` and the condition);
+  `slow_management(ms)` delays management replies; `detach_links` detaches every link to an entity with an error;
+  `disconnect_all` closes every connection, with the error in a Close frame when given.
+- Time: locks, scheduled messages, session locks and token expiry use the clock given to `new`; an expired lock is noticed
+  when the next operation looks at the message, not by a timer.
+
+The client side of a refused attach: `new_sender` and `new_receiver` return the link's `Peer` error when the answering
+Attach has no target (sender) or no source (receiver) and a Detach with an error follows (decision 0521).
