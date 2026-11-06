@@ -546,8 +546,10 @@ struct LinkState {
   delivery_count: Int = 0
   /// sender: credit the peer gave; receiver: credit granted and not used
   credit: Int = 0
-  /// receiver: the credit topped up to
+  /// receiver: the credit topped up to, 0 for manual credit (issue_credit and drain)
   credit_target: Int = 1
+  /// receiver: a drain was asked for and the peer's answer has not come
+  draining: Bool = false
   tag_counter: Int = 0
   /// sender: settled deliveries by transfer id with the peer's state
   results: List[(Int, DeliveryState?)] = []
@@ -576,7 +578,8 @@ struct SenderOptions {
 
 struct ReceiverOptions {
   name: Str = ""
-  /// credit granted and topped up
+  /// credit granted and topped up; 0 grants none: the program issues it with `Receiver.issue_credit`
+  /// and ends a batch with `Receiver.drain`
   credit: Int = 1
   settle_mode: ReceiverSettleMode? = None
   /// `Settled` asks the sender to send settled transfers (receive and delete)
@@ -615,14 +618,25 @@ fn (c: Connection) new_receiver(s: Session, source: Str, opts: ReceiverOptions =
 
 /// Sends the message and returns the peer's outcome for it (`Accepted`, `Rejected`, ...), waiting for
 /// link credit, session window and the settlement. With `settled` true the transfer is sent
-/// pre-settled and the result is `None` right away.
-fn (x: Sender) send(m: Message, settled: Bool = false) -> DeliveryState? ! AmqpErr uses (net.dial, clock)
+/// pre-settled and the result is `None` right away. `message_format` is the Transfer's message-format
+/// (0 for an AMQP message; Azure Service Bus batches use 0x80013700, a message whose data sections are
+/// each an encoded message).
+fn (x: Sender) send(m: Message, settled: Bool = false, message_format: Int = 0) -> DeliveryState? ! AmqpErr uses (net.dial, clock)
 
 /// Detaches the link (with `closed` set) and waits for the peer's Detach.
 fn (x: Sender) close(error: WireError? = None) -> () ! AmqpErr uses (net.dial, clock)
 
 /// The next complete message, topping up credit as needed.
 fn (r: Receiver) receive(timeout_ms: Int = 0) -> Delivery ! AmqpErr uses (net.dial, clock)
+
+/// Grants the peer `n` more credit (a Flow with the link credit raised by `n`). With
+/// `ReceiverOptions.credit` 0 this is the only credit the link has.
+fn (r: Receiver) issue_credit(n: Int) -> () ! AmqpErr uses (net.dial, clock)
+
+/// Asks the peer to use up or give up the credit (a Flow with `drain` set), waits for its answer and
+/// returns every delivery that arrived before it, oldest first; the link then has no credit.
+/// `timeout_ms` bounds the wait (0 for none; it needs `ConnOptions.clock`).
+fn (r: Receiver) drain(timeout_ms: Int = 0) -> List[Delivery] ! AmqpErr uses (net.dial, clock)
 
 /// Settles the delivery with the outcome.
 fn (r: Receiver) accept(d: Delivery) -> () ! AmqpErr uses (net.dial, clock)

@@ -524,3 +524,57 @@ test "receive on an empty queue times out in the test world" {
     c.close().or_fault("close")
   }
 }
+
+test "Sender.send with a message format sends a Service Bus batch as one transfer" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, "q").or_fault("sender")
+    let m1 = amqp.encode_message(msg("one")).or_fault("enc 1")
+    let m2 = amqp.encode_message(msg("two")).or_fault("enc 2")
+    let batch = amqp.Message{body: amqp.Body.Data(sections: [m1, m2])}
+    expect(snd.send(batch, message_format: 2147563264).or_fault("send")) == Some(amqp.DeliveryState.Accepted)
+    expect(b.ready("q").len()) == 2
+    snd.close().or_fault("close sender")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+test "manual credit: issue_credit grants exactly that much and drain leaves nothing locked" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q")
+  for t in ["a", "b", "c"] { b.put("q", msg(t)) }
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 0}).or_fault("receiver")
+    rcv.issue_credit(2).or_fault("credit")
+    let d1 = rcv.receive(2000).or_fault("receive 1")
+    let d2 = rcv.receive(2000).or_fault("receive 2")
+    expect([text(d1.message), text(d2.message)]) == ["a", "b"]
+    rcv.accept(d1).or_fault("accept 1")
+    rcv.accept(d2).or_fault("accept 2")
+    // no credit left: the third message stays on the broker, and the drain gives back no delivery
+    expect(rcv.drain(2000).or_fault("drain").len()) == 0
+    until(os.clock, fn() -> Bool { b.ready("q").len() == 1 && b.locked("q") == 0 })
+    // credit 5 for one message ready: it arrives, the drain returns it and nothing else is locked
+    rcv.issue_credit(5).or_fault("credit 5")
+    until(os.clock, fn() -> Bool { b.locked("q") == 1 })
+    let got = rcv.drain(2000).or_fault("drain 2")
+    expect(got.len()) == 1
+    expect(text(got[0].message)) == "c"
+    rcv.accept(got[0]).or_fault("accept 3")
+    rcv.close().or_fault("close receiver")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}

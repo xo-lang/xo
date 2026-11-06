@@ -2328,13 +2328,13 @@ fn send_session_flow(var c: amqp.ConnState, i: Int) -> () ! amqp.AmqpErr uses (n
 }
 
 /// A link Flow granting the receiver's credit.
-fn send_link_flow(var c: amqp.ConnState, id: Int) -> () ! amqp.AmqpErr uses (net.dial, clock) {
+fn send_link_flow(var c: amqp.ConnState, id: Int, drain: Bool = false) -> () ! amqp.AmqpErr uses (net.dial, clock) {
   let l = c.links[id]
   let z = c.sess[ss_idx(c, l.channel)]
   st_send(c, frame_on(l.channel, amqp.FrameBody.Flow(v: amqp.Flow{
     next_incoming_id: Some(u32w(z.next_incoming_id)), incoming_window: u32w(z.incoming_window),
     next_outgoing_id: u32w(z.next_outgoing_id), outgoing_window: u32w(2048), handle: Some(u32w(l.handle)),
-    delivery_count: Some(u32w(l.delivery_count)), link_credit: Some(u32w(l.credit)), available: None})))
+    delivery_count: Some(u32w(l.delivery_count)), link_credit: Some(u32w(l.credit)), available: None, drain: drain})))
 }
 
 fn peer_err(e: amqp.WireError?, what: Str) -> amqp.AmqpErr {
@@ -2473,7 +2473,18 @@ fn apply_frame(var c: amqp.ConnState, f: amqp.Frame) -> () ! amqp.AmqpErr uses (
                 put_link(c, l)
                 if x.echo { send_link_flow_sender(c, li)? }
               }
-              Receiver => {}
+              Receiver => {
+                // the sender's answer to our drain: it used or gave up the credit
+                if x.drain && l.draining {
+                  match x.delivery_count {
+                    Some(n) => { l.delivery_count = Int(n) }
+                    None => {}
+                  }
+                  l.credit = 0
+                  l.draining = false
+                  put_link(c, l)
+                }
+              }
             }
           }
         }
@@ -2666,10 +2677,10 @@ fn tag_bytes(n: Int) -> Bytes {
   b.freeze()
 }
 
-fn transfer_frame(l: amqp.LinkState, id: Int, tag: Bytes, first: Bool, settled: Bool, more: Bool, payload: Bytes) -> amqp.Frame {
+fn transfer_frame(l: amqp.LinkState, id: Int, tag: Bytes, first: Bool, settled: Bool, more: Bool, payload: Bytes, fmt: Int = 0) -> amqp.Frame {
   frame_on(l.channel, amqp.FrameBody.Transfer(v: amqp.Transfer{
     handle: u32w(l.handle), delivery_id: if first { Some(u32w(id)) } else { None },
-    delivery_tag: if first { tag } else { b"" }, message_format: if first { Some(UInt32(0)) } else { None },
+    delivery_tag: if first { tag } else { b"" }, message_format: if first { Some(u32w(fmt)) } else { None },
     settled: settled, more: more, receiver_settle_mode: None, state: None, payload: payload}))
 }
 
@@ -2708,7 +2719,7 @@ fn step_attached(var c: amqp.ConnState, id: Int) -> Bool? ! amqp.AmqpErr uses (n
 
 /// Takes the session's send turn once the link has credit. Returns the transfer id, the tag and
 /// the payload bytes per frame.
-fn step_send_begin(var c: amqp.ConnState, id: Int, size: Int) -> (Int, Bytes, Int)? ! amqp.AmqpErr uses (net.dial, clock) {
+fn step_send_begin(var c: amqp.ConnState, id: Int, size: Int, fmt: Int) -> (Int, Bytes, Int)? ! amqp.AmqpErr uses (net.dial, clock) {
   check_link(c, id)?
   let l0 = c.links[id]
   if l0.peer_max_message_size > 0 && size > l0.peer_max_message_size {
@@ -2722,7 +2733,7 @@ fn step_send_begin(var c: amqp.ConnState, id: Int, size: Int) -> (Int, Bytes, In
   put_sess(c, si, z)
   let tid = z.next_outgoing_id
   let tag = tag_bytes(l0.tag_counter)
-  let probe = transfer_frame(l0, tid, tag, true, false, true, b"")
+  let probe = transfer_frame(l0, tid, tag, true, false, true, b"", fmt)
   var chunk = c.peer_max_frame_size - encode_frame(probe)?.len()
   if chunk < 1 { chunk = 1 }
   Ok(Some((tid, tag, chunk)))
@@ -2730,14 +2741,14 @@ fn step_send_begin(var c: amqp.ConnState, id: Int, size: Int) -> (Int, Bytes, In
 
 /// Sends the frame of the payload that starts at `off` once the peer's window allows it; returns
 /// where the next one starts.
-fn step_send_chunk(var c: amqp.ConnState, id: Int, tid: Int, tag: Bytes, chunk: Int, payload: Bytes, off: Int, settled: Bool) -> Int? ! amqp.AmqpErr uses (net.dial, clock) {
+fn step_send_chunk(var c: amqp.ConnState, id: Int, tid: Int, tag: Bytes, chunk: Int, payload: Bytes, off: Int, settled: Bool, fmt: Int) -> Int? ! amqp.AmqpErr uses (net.dial, clock) {
   check_link(c, id)?
   let l = c.links[id]
   let si = ss_idx(c, l.channel)
   if c.sess[si].remote_incoming_window <= 0 { return Ok(None) }
   var end = off + chunk
   if end > payload.len() { end = payload.len() }
-  st_send(c, transfer_frame(l, tid, tag, off == 0, settled, end < payload.len(), payload[off..end]))?
+  st_send(c, transfer_frame(l, tid, tag, off == 0, settled, end < payload.len(), payload[off..end], fmt))?
   var z = c.sess[si]
   z.remote_incoming_window -= 1
   put_sess(c, si, z)
@@ -2792,10 +2803,36 @@ fn step_receive(var c: amqp.ConnState, id: Int) -> amqp.Delivery? ! amqp.AmqpErr
     }
     return Ok(Some(d))
   }
-  if l.credit <= 0 {
+  if l.credit <= 0 && l.credit_target > 0 {
     grant_credit(c, id, l.credit_target)?
   }
   Ok(None)
+}
+
+fn st_issue_credit(var c: amqp.ConnState, id: Int, n: Int) -> () ! amqp.AmqpErr uses (net.dial, clock) {
+  check_link(c, id)?
+  var l = c.links[id]
+  l.credit += n
+  put_link(c, l)
+  send_link_flow(c, id)
+}
+
+fn st_drain_begin(var c: amqp.ConnState, id: Int) -> () ! amqp.AmqpErr uses (net.dial, clock) {
+  check_link(c, id)?
+  var l = c.links[id]
+  l.draining = true
+  put_link(c, l)
+  send_link_flow(c, id, true)
+}
+
+fn step_drained(var c: amqp.ConnState, id: Int) -> List[amqp.Delivery]? ! amqp.AmqpErr uses (net.dial, clock) {
+  check_link(c, id)?
+  var l = c.links[id]
+  if l.draining { return Ok(None) }
+  let out = l.inbox
+  l.inbox = []
+  put_link(c, l)
+  Ok(Some(out))
 }
 
 fn st_settle(var c: amqp.ConnState, id: Int, d: amqp.Delivery, state: amqp.DeliveryState) -> () ! amqp.AmqpErr uses (net.dial, clock) {
@@ -2867,11 +2904,11 @@ fn connection_new_receiver(c: amqp.Connection, s: amqp.Session, source: Str, opt
   Ok(amqp.Receiver{conn: c, id: id, name: name, source: source})
 }
 
-fn sender_send(x: amqp.Sender, m: amqp.Message, settled: Bool = false) -> amqp.DeliveryState? ! amqp.AmqpErr uses (net.dial, clock) {
+fn sender_send(x: amqp.Sender, m: amqp.Message, settled: Bool = false, message_format: Int = 0) -> amqp.DeliveryState? ! amqp.AmqpErr uses (net.dial, clock) {
   let payload = encode_message(m)?
   let c = x.conn
   let id = x.id
-  let turn = await_cond(c, 0, fn(var z: amqp.ConnState) -> (Int, Bytes, Int)? ! amqp.AmqpErr uses (net.dial, clock) { step_send_begin(z, id, payload.len()) })?
+  let turn = await_cond(c, 0, fn(var z: amqp.ConnState) -> (Int, Bytes, Int)? ! amqp.AmqpErr uses (net.dial, clock) { step_send_begin(z, id, payload.len(), message_format) })?
   let tid = turn.0
   let tag = turn.1
   let chunk = turn.2
@@ -2881,7 +2918,7 @@ fn sender_send(x: amqp.Sender, m: amqp.Message, settled: Bool = false) -> amqp.D
   while failure is None && (first || off < payload.len()) {
     let at = off
     match await_cond(c, 0, fn(var z: amqp.ConnState) -> Int? ! amqp.AmqpErr uses (net.dial, clock) {
-      step_send_chunk(z, id, tid, tag, chunk, payload, at, settled)
+      step_send_chunk(z, id, tid, tag, chunk, payload, at, settled, message_format)
     }) {
       Ok(n) => { off = n }
       Err(e) => { failure = Some(e) }
@@ -2915,6 +2952,17 @@ fn sender_close(x: amqp.Sender, error: amqp.WireError? = None) -> () ! amqp.Amqp
 fn receiver_receive(r: amqp.Receiver, timeout_ms: Int = 0) -> amqp.Delivery ! amqp.AmqpErr uses (net.dial, clock) {
   let id = r.id
   await_cond(r.conn, timeout_ms, fn(var z: amqp.ConnState) -> amqp.Delivery? ! amqp.AmqpErr uses (net.dial, clock) { step_receive(z, id) })
+}
+
+fn receiver_issue_credit(r: amqp.Receiver, n: Int) -> () ! amqp.AmqpErr uses (net.dial, clock) {
+  let id = r.id
+  locked(r.conn, fn(var z: amqp.ConnState) -> () ! amqp.AmqpErr uses (net.dial, clock) { st_issue_credit(z, id, n) })
+}
+
+fn receiver_drain(r: amqp.Receiver, timeout_ms: Int = 0) -> List[amqp.Delivery] ! amqp.AmqpErr uses (net.dial, clock) {
+  let id = r.id
+  locked(r.conn, fn(var z: amqp.ConnState) -> () ! amqp.AmqpErr uses (net.dial, clock) { st_drain_begin(z, id) })?
+  await_cond(r.conn, timeout_ms, fn(var z: amqp.ConnState) -> List[amqp.Delivery]? ! amqp.AmqpErr uses (net.dial, clock) { step_drained(z, id) })
 }
 
 fn settle(r: amqp.Receiver, d: amqp.Delivery, state: amqp.DeliveryState) -> () ! amqp.AmqpErr uses (net.dial, clock) {
