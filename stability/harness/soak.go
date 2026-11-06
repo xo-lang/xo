@@ -203,6 +203,14 @@ func soakMain(args []string) int {
 	clientIdle := fs.Duration("client-idle", 0, "close the load client's pooled connections after this long unused (0: never)")
 	maxLat := fs.Float64("max-lat-growth", 0.20, "drift when the last quarter's p99 exceeds the first quarter's by this fraction")
 	fs.Parse(args)
+	if fs.NArg() > 0 {
+		// a value dropped by a caller's unquoted empty argument (`-rates ""`)
+		// made the next flag a value and stopped parsing, so every later
+		// flag kept its default and the run measured something else
+		// (2026-11-06: a 8/32/64/128 worker sweep ran 64 workers four times)
+		fmt.Fprintf(os.Stderr, "harness %s: unexpected argument %q (flags stop at the first non-flag: check for a dropped empty value)\n", fs.Name(), fs.Arg(0))
+		return 2
+	}
 	if *appDir == "" || *out == "" {
 		fmt.Fprintln(os.Stderr, "harness soak: -app and -out are required")
 		return 2

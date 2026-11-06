@@ -122,6 +122,14 @@ func main() {
 	backends := fs.String("backends", "go,arm64,llvm", "backends to compare, the first is the reference")
 	out := fs.String("out", "", "output directory (default: a new temporary directory)")
 	fs.Parse(os.Args[2:])
+	if fs.NArg() > 0 {
+		// a value dropped by a caller's unquoted empty argument (`-rates ""`)
+		// made the next flag a value and stopped parsing, so every later
+		// flag kept its default and the run measured something else
+		// (2026-11-06: a 8/32/64/128 worker sweep ran 64 workers four times)
+		fmt.Fprintf(os.Stderr, "harness %s: unexpected argument %q (flags stop at the first non-flag: check for a dropped empty value)\n", fs.Name(), fs.Arg(0))
+		os.Exit(2)
+	}
 	if *appDir == "" {
 		fmt.Fprintln(os.Stderr, "harness diff: -app is required")
 		os.Exit(2)

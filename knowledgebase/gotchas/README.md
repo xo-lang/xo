@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [dropped-empty-arg-defaults-flags.md](dropped-empty-arg-defaults-flags.md): Observed 2026-11-06: `-rates ""` through an unquoted $args vanished, the harness read -sat as the value and stopped parsing, so a 8/32/64/128 worker sweep ran 64 workers four times; "$@" and fs.NArg() == 0
 - [twin-cost-grows-with-history.md](twin-cost-grows-with-history.md): Observed 2026-11-06: the notes Go twin's GET /notes walked every id ever issued under its lock (O(creates)), so its saturation rows measured that walk (Go 9k req/s, 177 us CPU per request); walk live notes, count 4xx in harness load
 - [cc-object-key-random-dir.md](cc-object-key-random-dir.md): Observed 2026-11-05: under xobuild on Linux (cc link) no object was ever reused (0/126, 9.2 s of a 15.9 s warm build) because cc's object keys took the .s path in the build's random w- directory; cc now runs on base names in the part's directory
 - [with-body-cancelable-through-closure-call.md](with-body-cancelable-through-closure-call.md): Observed 2026-11-05: a closure call (items.map, filter) anywhere below a Mutex.with body made it cancelable, so it kept its value and every write copied the table (sql.memory 100k INSERTs 31.7 s); use loops on that path
