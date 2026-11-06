@@ -78,3 +78,23 @@ test "memcmp of 0 to 80 bytes differing at each byte" {
     raw.alive(c)
   }
 }
+
+test "mem_ne32 sees a difference at each of the 32 bytes" {
+  let (b, a) = buf(64)
+  let (c, d) = buf(64)
+  expect(rt.mem_ne32(a, d)) == 0
+  expect(rt.mem_ne32(a + 3, d + 3)) == 0
+  for p in 0..32 {
+    let x = rt.mem_load(d, p, 1)
+    rt.mem_store(d, p, x ^ 128, 1)
+    expect(rt.mem_ne32(a, d) != 0) == true
+    expect(rt.mem_ne32(d, a) != 0) == true
+    // a range that starts after p is equal
+    if p >= 1 {
+      expect(rt.mem_ne32(a + p + 1, d + p + 1)) == 0
+    }
+    rt.mem_store(d, p, x, 1)
+  }
+  raw.alive(b)
+  raw.alive(c)
+}

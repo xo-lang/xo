@@ -1524,6 +1524,32 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         g.elem_store(et, va, pb, md)
       }
     }
+    "rt.bytes_any_eq32" | "rt.bytes_any_high32" => {
+      // a <32 x i8> compare as an i32, nonzero when a byte matched
+      let (_, d, _) = g.str_parts(g.op(x.args[0]))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let w = g.def("load <32 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
+      var e = ""
+      if aux_str(x.aux) == "rt.bytes_any_eq32" {
+        let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+        var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
+        r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
+        e = g.def("icmp eq <32 x i8> ${w}, ${r}")
+      } else {
+        e = g.def("icmp slt <32 x i8> ${w}, zeroinitializer")
+      }
+      let m = g.def("bitcast <32 x i1> ${e} to i32")
+      g.set(v, "zext i32 ${m} to i64")
+    }
+    "rt.mem_ne32" => {
+      let pa = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
+      let pb = g.def("inttoptr i64 ${g.op(x.args[1])} to ptr")
+      let wa = g.def("load <32 x i8>, ptr ${pa}, align 1")
+      let wb = g.def("load <32 x i8>, ptr ${pb}, align 1")
+      let e = g.def("icmp ne <32 x i8> ${wa}, ${wb}")
+      let m = g.def("bitcast <32 x i1> ${e} to i32")
+      g.set(v, "zext i32 ${m} to i64")
+    }
     "rt.bytes_eq16" | "rt.bytes_high16" => {
       let (_, d, _) = g.str_parts(g.op(x.args[0]))
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")

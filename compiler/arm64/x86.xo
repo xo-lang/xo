@@ -1663,6 +1663,21 @@ fn (var g: G) x86_case_fold16(us: List[Int], mode: Int) {
   g.x86_store(t.join("\n"), us)
 }
 
+/// rt.bytes_any_eq32 on x86_64 (SSE2): the 32 bytes at $u0 + $u1 compared
+/// with c (the constant c when kc, else $u2's low byte), the two lanes'
+/// compares or'ed, nonzero when one matched.
+fn (var g: G) x86_any_eq32(us: List[Int], c: Int, kc: Bool) -> Int {
+  var t: List[Str] = []
+  if kc {
+    t.push("movl $${(c & 255) * 16843009}, %r11d")
+  } else {
+    t.push("movzbl $bu2, %r11d")
+    t.push("imull $16843009, %r11d, %r11d")
+  }
+  t = t + ["movd %r11d, %xmm14", "pshufd $0, %xmm14, %xmm14", "movdqu ($u0,$u1), %xmm15", "pcmpeqb %xmm14, %xmm15", "pmovmskb %xmm15, %r11d", "movdqu 16($u0,$u1), %xmm15", "pcmpeqb %xmm14, %xmm15", "pmovmskb %xmm15, $wd0", "orl %r11d, $wd0"]
+  g.x86_def1(t.join("\n"), us)
+}
+
 /// rt.bytes_eq16 and rt.bytes_high16 on x86_64 (SSE2): the 16 bytes at
 /// $u0 + $u1 compared, narrowed to 4 bits a byte as arm64's shrn does (the
 /// contract std/native/llrt/scan.xo reads).

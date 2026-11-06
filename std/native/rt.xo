@@ -169,6 +169,22 @@ fn bytes_eq16_bits(b: Bytes, i: Int, c: Int) -> Int
 /// bytes_high16 with one bit a byte (pmovmskb alone), as
 /// bytes_eq16_bits.
 fn bytes_high16_bits(b: Bytes, i: Int) -> Int
+/// Nonzero when one of the 32 bytes of b from i is the byte c (0 to
+/// 255), else 0: the test of a 32 byte step, one move from the vector
+/// unit where two bytes_eq16 took two (lowered inline: arm64 two cmeq,
+/// orr and shrn, x86_64 SSE2 pcmpeqb and pmovmskb, LLVM a <32 x i8>
+/// compare, wasm two bytes_eq16; bench/results/simd-survey-2026-11-06.md).
+/// Unchecked: 0 <= i and i + 32 <= b.len().
+fn bytes_any_eq32(b: Bytes, i: Int, c: Int) -> Int
+/// Nonzero when one of the 32 bytes of b from i is 0x80 or above, else
+/// 0 (as bytes_any_eq32).
+fn bytes_any_high32(b: Bytes, i: Int) -> Int
+/// Nonzero when the 32 bytes at address a differ from the 32 at address
+/// b, else 0 (lowered inline: arm64 two cmeq and an and, x86_64 SSE2
+/// pcmpeqb, LLVM a <32 x i8> compare, wasm four words). Unchecked: both
+/// ranges are readable. For std/native/llrt/libcstr.xo's memcmp, which
+/// may not call rt.mem_cmp.
+fn mem_ne32(a: Int, b: Int) -> Int
 /// The 16 bytes at src from i with their ASCII letters lowered (mode 1)
 /// or raised (mode 2), written to dst from i (lowered inline: arm64 a
 /// NEON fold of the lane in nine instructions, x86_64 the same with SSE2,

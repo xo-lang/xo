@@ -180,8 +180,9 @@ pub fn encode_op(o: Op) -> Int {
   if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" | "sha1c" | "sha1p" | "sha1m" | "sha1h" | "sha1su0" | "sha1su1" | "sha512h" | "sha512h2" | "sha512su0" | "sha512su1" | "eor3" | "bcax" | "rax1" | "xar" {
     return simd_word(o.m, o.ops)
   }
-  // decision 0373's case fold adds cmhs and bic on whole bytes
-  if o.m is "mov" | "add" | "eor" | "sub" | "mul" | "and" | "umull" | "umull2" | "uzp2" | "zip2" | "sshr" | "cmhs" | "bic" && n >= 2 {
+  // decision 0373's case fold adds cmhs and bic on whole bytes, the 32
+  // byte scans (rt.bytes_any_eq32) orr
+  if o.m is "mov" | "add" | "eor" | "orr" | "sub" | "mul" | "and" | "umull" | "umull2" | "uzp2" | "zip2" | "sshr" | "cmhs" | "bic" && n >= 2 {
     if let Operand.VReg(..) = o.ops[0] {
       return simd_word(o.m, o.ops)
     }
@@ -1562,6 +1563,7 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
       base | (y * 0x10000) | (x * 32) | d
     }
     "and" => if n != 3 || d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" { -1 } else { 0x4e201c00 | (y * 0x10000) | (x * 32) | d }
+    "orr" => if n != 3 || d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" { -1 } else { 0x4ea01c00 | (y * 0x10000) | (x * 32) | d }
     "sshr" => if n != 3 || d < 0 || x < 0 || ad != "4s" || ax != "4s" || i2 < 1 || i2 > 32 { -1 } else { 0x4f000400 | ((64 - i2) * 0x10000) | (x * 32) | d }
     "ins" => {
       // ins vD.d[i], vN.d[j] (decision 0323's builds, 0339's lane moves)

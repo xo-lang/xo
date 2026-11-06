@@ -226,3 +226,22 @@ test "find_byte and span find a byte at each place of 0 to 100" {
     }
   }
 }
+
+test "bytes_any_eq32 and bytes_any_high32 see each of the 32 bytes" {
+  for p in 0..40 {
+    var xs: List[Int] = []
+    for i in 0..72 {
+      xs.push(if i == p { 0xC3 } else { 97 + i % 26 })
+    }
+    let b = bytes_of(xs)
+    for i in [0, 1, 7, 8, 31, 40] {
+      let hit = p >= i && p < i + 32
+      expect(rt.bytes_any_eq32(b, i, 0xC3) != 0) == hit
+      expect(rt.bytes_any_high32(b, i) != 0) == hit
+      // a byte c that varies at run time, and one that is absent
+      let c = Int(b[p])
+      expect(rt.bytes_any_eq32(b, i, c) != 0) == hit
+      expect(rt.bytes_any_eq32(b, i, 0x7F)) == 0
+    }
+  }
+}

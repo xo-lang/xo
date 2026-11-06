@@ -2524,6 +2524,42 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // nibbles' low bits gathered, pairs at a time
       g.set(v, [g.def1(false, "and $d0, $u0, #0x1111111111111111\norr $d0, $d0, $d0, lsr #3\nand $d0, $d0, #0x0303030303030303\norr $d0, $d0, $d0, lsr #6\nand $d0, $d0, #0x000f000f000f000f\norr $d0, $d0, $d0, lsr #12\nand $d0, $d0, #0x000000ff000000ff\norr $d0, $d0, $d0, lsr #24\nand $d0, $d0, #0xffff", [nib])])
     }
+    "rt.bytes_any_eq32" | "rt.bytes_any_high32" => {
+      // 32 bytes as two lanes, their compares or'ed before the one move
+      // to a general register: one fmov a 32 byte step where two 16 byte
+      // masks took two (bench/results/simd-survey-2026-11-06.md)
+      let ws = g.words(x.args[0])
+      let d = g.str_base_heap(ws)
+      var us = [d, g.word(x.args[1])]
+      if aux_str(x.aux) == "rt.bytes_any_eq32" {
+        let (c, ok) = g.const_int(x.args[2])
+        if !ok {
+          us.push(g.word(x.args[2]))
+        }
+        if g.x86 {
+          g.set(v, [g.x86_any_eq32(us, c, ok)])
+          return true
+        }
+        let rep = if ok { "movi v29.16b, #${c & 255}" } else { "dup v29.16b, $wu2" }
+        g.set(v, [g.def1(false, "${rep}\nadd $d0, $u0, $u1\nldp q30, q31, [$d0]\ncmeq v30.16b, v30.16b, v29.16b\ncmeq v31.16b, v31.16b, v29.16b\norr v30.16b, v30.16b, v31.16b\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
+        return true
+      }
+      if g.x86 {
+        g.set(v, [g.x86_def1("movdqu ($u0,$u1), %xmm15\nmovdqu 16($u0,$u1), %xmm14\npor %xmm14, %xmm15\npmovmskb %xmm15, $wd0", us)])
+        return true
+      }
+      g.set(v, [g.def1(false, "add $d0, $u0, $u1\nldp q30, q31, [$d0]\norr v30.16b, v30.16b, v31.16b\ncmlt v30.16b, v30.16b, #0\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
+    }
+    "rt.mem_ne32" => {
+      let us = [g.word(x.args[0]), g.word(x.args[1])]
+      if g.x86 {
+        // each lane's equal bytes to a mask, the two masks and'ed: r11 is
+        // the emitter's scratch, xmm14 and xmm15 its only vector ones
+        g.set(v, [g.x86_def1("movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npcmpeqb %xmm14, %xmm15\npmovmskb %xmm15, %r11d\nmovdqu 16($u0), %xmm15\nmovdqu 16($u1), %xmm14\npcmpeqb %xmm14, %xmm15\npmovmskb %xmm15, $wd0\nandl %r11d, $wd0\nxorl $0xffff, $wd0", us)])
+        return true
+      }
+      g.set(v, [g.def1(false, "ldp q30, q31, [$u0]\nldr q29, [$u1]\ncmeq v30.16b, v30.16b, v29.16b\nldr q29, [$u1, #16]\ncmeq v31.16b, v31.16b, v29.16b\nand v30.16b, v30.16b, v31.16b\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30\nmvn $d0, $d0", us)])
+    }
     "rt.case_fold16" => {
       // 16 bytes of ASCII case folding in one lane (decision 0373): the
       // range test is one unsigned compare of the bytes shifted down by
