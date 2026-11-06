@@ -27,6 +27,11 @@ use a loop instead of a prelude method with a closure (`map`, `filter`,
 and `compact` are loops now. To find the call, wrap each callee of the
 body in a never-run branch before the write and time the loop (std
 `_test.xo` files reach private functions; the first test of each run
-also pays the test build, about 1 s). A compiler that knew a literal
-closure cannot wait, or an `xo vet --cost` note naming the call that made
-a `with` body cancelable, would remove the trap.
+also pays the test build, about 1 s). Since 2026-11-06 (Xo Lang 1, compiler/ssa
+passes.xo walk_literal) a prelude walk given a closure literal (List
+map, filter, filter_map, find, any, all, fold, sort_by, group_by; Map
+and Set map, filter, any, all) counts as cancelable only when the
+literal's own body is, so such a body writes in place
+(test/codegen/withbody). A walk given a function value, or a call of
+one, still counts; an `xo vet --cost` note naming the call that made a
+`with` body cancelable would cover those.

@@ -157,8 +157,14 @@ pub fn (var b: Builder) prune_unwind() {
   }
   // each check's callee by index (-1 for none or not a function of m)
   var gs: List[Int] = List.with_capacity(b.checks.len())
+  // whose cancel bit each check takes: its callee's, or the closure
+  // literal's that a prelude walk was given (walk_literal)
+  var ds: List[Int] = List.with_capacity(b.checks.len())
   for c in b.checks {
-    gs.push(if c.callee.is_empty() { -1 } else { b.m.func_index(c.callee) })
+    let g = if c.callee.is_empty() { -1 } else { b.m.func_index(c.callee) }
+    gs.push(g)
+    let l = if g >= 0 { walk_literal(b.m, c) } else { -1 }
+    ds.push(if l >= 0 { l } else { g })
   }
   if b.conc {
     // a function may be canceled when it has a check of no callee, or
@@ -176,8 +182,8 @@ pub fn (var b: Builder) prune_unwind() {
           may[c.fi] = true
           work.push(c.fi)
         }
-      } else if gs[ci] >= 0 {
-        callers[gs[ci]].push(c.fi)
+      } else if ds[ci] >= 0 {
+        callers[ds[ci]].push(c.fi)
       }
     }
     // a std extern may be canceled as its facts say (decision 0388)
@@ -208,7 +214,7 @@ pub fn (var b: Builder) prune_unwind() {
   }
   for (ci, c) in b.checks.indexed() {
     let g = gs[ci]
-    if b.conc && (c.callee.is_empty() || (g >= 0 && may[g])) {
+    if b.conc && (c.callee.is_empty() || (ds[ci] >= 0 && may[ds[ci]])) {
       continue
     }
     if c.callee.is_empty() || (g >= 0 && faults[g]) {
@@ -222,6 +228,36 @@ pub fn (var b: Builder) prune_unwind() {
       hand_back_zero(b.m.funcs[fi])
     }
   }
+}
+
+/// For a check after a call of a prelude method that walks a collection
+/// with a function value (callback_walk, and filter_map, sort_by and
+/// group_by), given a closure literal: the literal's function, else -1.
+/// Such a method waits only in calls of its function value, so whether
+/// the caller may be canceled is the literal's, as for a literal called in
+/// place (UCheck callee, Builder.check). Without it every walk counted as
+/// a cancellation point, and a Mutex.with body that mapped a list kept the
+/// value it was given for an unwind, so its first write copied it
+/// (gotchas/with-body-cancelable-through-closure-call.md).
+fn walk_literal(m: Module, c: UCheck) -> Int {
+  let base = c.callee.split("[")[0]
+  if !callback_walk(c.callee).0 && !(base is "prelude.list_filter_map" | "prelude.list_sort_by" | "prelude.list_group_by") {
+    return -1
+  }
+  let f = m.funcs[c.fi]
+  if c.w < 0 || c.w >= f.values.len() {
+    return -1
+  }
+  let x = f.values[c.w]
+  if x.op != Op.Call || aux_name(x.aux) != c.callee || x.args.is_empty() {
+    return -1
+  }
+  // the function value is the method's last parameter
+  let a = f.values[x.args[x.args.len() - 1]]
+  if a.op != Op.Closure {
+    return -1
+  }
+  m.func_index(aux_name(a.aux))
 }
 
 /// A `Mutex.with` closure that cannot be canceled hands back a zero value
