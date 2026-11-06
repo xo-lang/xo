@@ -1176,3 +1176,9 @@ fn to_duration(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Duration) {
   mismatch(st, "time.Duration", v)
   (false, Duration.from_nanos(0))
 }
+
+fn bad_arity(var st: cbor.Unm, want: Str, got: Int, need: Int) {
+  if st.err == None {
+    st.err = Some(cbor.CborErr.Type(msg: "cannot decode CBOR array to struct ${want} with different number of elements (${got}, want ${need})"))
+  }
+}

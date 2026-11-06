@@ -463,6 +463,31 @@ func cborDeepInputs(r *rand.Rand, n int) [][]byte {
 	return out
 }
 
+func cborPairInputs(r *rand.Rand, n int) [][]byte {
+	var out [][]byte
+	for i := 0; i < n; i++ {
+		items := [][]byte{cbFor(r, "int"), cbFor(r, "text"), cbFor(r, "int"), cbFor(r, "tags")}
+		if r.Intn(3) == 0 {
+			items[2] = []byte{0xf6}
+		}
+		switch r.Intn(10) {
+		case 0:
+			items = items[:r.Intn(4)]
+		case 1:
+			items = append(items, cbFor(r, "int"))
+		}
+		in := cbArr(items...)
+		switch r.Intn(15) {
+		case 0:
+			in = cbValue(r, 0)
+		case 1:
+			in = cborMutate(r, in)
+		}
+		out = append(out, in)
+	}
+	return out
+}
+
 const cborTypedXo = `
 struct Addr {
   city: Str
@@ -495,6 +520,41 @@ test "unmarshal_prefix leaves what follows, strict refuses an unknown key" {
   let extra = b"\xa2\x64name\x63Ann\x61z\x01"
   expect(cbor.unmarshal[Person](extra).is_err()) == false
   expect(cbor.unmarshal[Person](extra, strict: true).is_err()) == true
+}
+
+struct Pair {
+  a cbor ",toarray": Int
+  b: Str
+  c: Int?
+  d: List[Str]
+} derive Cbor
+
+test "toarray structs agree with the oracle" {
+  var bad: List[Str] = []
+  for (data, err, out) in TYPED3 {
+    match cbor.unmarshal[Pair](data) {
+      Ok(p) => {
+        if err {
+          bad.push("accepted " + data.to_hex())
+        } else {
+          match cbor.marshal(p) {
+            Ok(b) => {
+              if b.to_hex() != out {
+                bad.push("marshal " + data.to_hex() + ": " + b.to_hex() + " want " + out)
+              }
+            }
+            Err(e) => bad.push("marshal failed " + data.to_hex() + ": " + e.display())
+          }
+        }
+      }
+      Err(_) => {
+        if !err {
+          bad.push("refused " + data.to_hex())
+        }
+      }
+    }
+  }
+  expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
 }
 
 struct Deep {
@@ -611,6 +671,13 @@ func cborCorpus() string {
 	o.WriteString("\n/// (CBOR bytes, decoding into Deep fails, the deterministic marshal of the result in hex)\nconst TYPED2: List[(Bytes, Bool, Str)] = [\n")
 	for i, in := range tin2 {
 		fmt.Fprintf(&o, "  (%s, %v, %s),\n", xbytes(in), trefs2[i].Err, xq(trefs2[i].Out))
+	}
+	o.WriteString("]\n")
+	tin3 := cborPairInputs(rand.New(rand.NewSource(13)), 400)
+	trefs3 := cborTypedOracle("typed3", tin3)
+	o.WriteString("\n/// (CBOR bytes, decoding into Pair fails, the deterministic marshal of the result in hex)\nconst TYPED3: List[(Bytes, Bool, Str)] = [\n")
+	for i, in := range tin3 {
+		fmt.Fprintf(&o, "  (%s, %v, %s),\n", xbytes(in), trefs3[i].Err, xq(trefs3[i].Out))
 	}
 	o.WriteString("]\n")
 	o.WriteString(cborTypedXo)

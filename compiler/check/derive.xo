@@ -1302,13 +1302,14 @@ struct CborOpts {
   key: Str
   omit: Bool
   keyasint: Bool
+  toarray: Bool
   skip: Bool
   /// the first option that is none of the above
   bad: Str
 }
 
 fn cbor_opts(fl: parser.Field) -> CborOpts {
-  var o = CborOpts{key: text(fl.name.name), omit: false, keyasint: false, skip: false, bad: ""}
+  var o = CborOpts{key: text(fl.name.name), omit: false, keyasint: false, toarray: false, skip: false, bad: ""}
   var wire: Str? = None
   for fw in fl.formats {
     if fw.format == b"cbor" {
@@ -1334,6 +1335,8 @@ fn cbor_opts(fl: parser.Field) -> CborOpts {
         o.omit = true
       } else if opt == "keyasint" {
         o.keyasint = true
+      } else if opt == "toarray" {
+        o.toarray = true
       } else if o.bad.is_empty() {
         o.bad = opt
       }
@@ -1379,11 +1382,18 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   var seen_decls: List[Str] = []
   var nfound = 0
   var ok = true
+  var toarray = false
+  var pos_rd: List[Str] = []
+  var pos_wr: List[Str] = []
+  var pos_f: List[Str] = []
   for fl in sd.fields {
     let f = text(fl.name.name)
     let co = cbor_opts(fl)
+    if co.toarray {
+      toarray = true
+    }
     if !co.bad.is_empty() {
-      c.error_at(file, "XO0422", fl.name.span, "unknown cbor option `${co.bad}` of field `${f}`; the options are omitempty, omitzero and keyasint (decision 0527)")
+      c.error_at(file, "XO0422", fl.name.span, "unknown cbor option `${co.bad}` of field `${f}`; the options are omitempty, omitzero, keyasint and toarray (decision 0527)")
       ok = false
       continue
     }
@@ -1401,6 +1411,9 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
       decls.push("  let f_${f} = base.${f}")
       continue
     }
+    pos_rd.push(rd)
+    pos_wr.push(wr)
+    pos_f.push(f)
     let tx = yaml_type_text(fl.typ) ?? "Str"
     decls.push("  var f_${f}: ${tx} = base.${f}")
     var keyval = ""
@@ -1443,6 +1456,31 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   e.ln("${pub_}fn cbor_rd__${n}(x: cbor.Value, var st: cbor.Unm) -> (Bool, ${n}) {", sp)
   e.ln("  let base = cbor_zero__${n}()", sp)
   e.ln("  if cbor.is_null(x) { return (false, base) }", sp)
+  if toarray {
+    e.ln("  let (ok, its) = cbor.items(x, ${quote_str(n)}, st)", sp)
+    e.ln("  if !ok { return (false, base) }", sp)
+    e.ln("  if its.len() != ${pos_f.len()} {", sp)
+    e.ln("    cbor.bad_arity(st, ${quote_str(n)}, its.len(), ${pos_f.len()})", sp)
+    e.ln("    return (false, base)", sp)
+    e.ln("  }", sp)
+    for l in decls {
+      e.ln(l, sp)
+    }
+    for (j, f) in pos_f.indexed() {
+      e.ln("  let (o${j}, x${j}) = ${pos_rd[j]}(its[${j}], st)", sp)
+      e.ln("  if o${j} { f_${f} = x${j} }", sp)
+    }
+    e.ln("  (true, ${n}{${inits.join(", ")}})", sp)
+    e.ln("}", sp)
+    e.ln("${pub_}fn cbor_wr__${n}(v: ${n}) -> cbor.Value {", sp)
+    e.ln("  var out: List[cbor.Value] = []", sp)
+    for (j, f) in pos_f.indexed() {
+      e.ln("  out.push(${pos_wr[j]}(v.${f}))", sp)
+    }
+    e.ln("  cbor.Value.Array(items: out)", sp)
+    e.ln("}", sp)
+    return Some(c.cbor_entries(n, pub_, sp, e))
+  }
   e.ln("  let (ok, ps) = cbor.pairs(x, ${quote_str(n)}, st)", sp)
   e.ln("  if !ok { return (false, base) }", sp)
   for l in decls {
@@ -1488,6 +1526,13 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   }
   e.ln("  cbor.Value.Map(pairs: ps)", sp)
   e.ln("}", sp)
+  Some(c.cbor_entries(n, pub_, sp, e))
+}
+
+/// `cbor_marshal__N`, `cbor_unmarshal__N` and `cbor_unmarshal_prefix__N`, over the
+/// struct's `cbor_wr__N` and `cbor_rd__N`.
+fn (var c: Checker) cbor_entries(n: Str, pub_: Str, sp: Span, em: Emit) -> Emit {
+  var e = em
   e.ln("${pub_}fn cbor_marshal__${n}(v: ${n}, deterministic: Bool = true) -> Bytes ! cbor.CborErr {", sp)
   e.ln("  cbor.encode(cbor_wr__${n}(v), deterministic)", sp)
   e.ln("}", sp)
@@ -1505,7 +1550,7 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   e.ln("  if let Some(err) = cbor.dec_error(st) { return Err(err) }", sp)
   e.ln("  Ok((v, used))", sp)
   e.ln("}", sp)
-  Some(e)
+  e
 }
 
 /// The methods of a valued enum (decision 0269), as source: one constant

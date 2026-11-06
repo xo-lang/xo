@@ -18,7 +18,7 @@ agree with the oracle on arm64 and LLVM.
 - Commit: this commit
 - Found by: roadmap (Xo Lead), decision 0527
 - Go reference: github.com/fxamacker/cbor/v2 Marshal and Unmarshal (MIT), the differential oracle
-- Test: testdata/corpus/cbor (1,600 typed cases against internal/stdtest/cborref `typed` and `typed2`)
+- Test: testdata/corpus/cbor (2,000 typed cases against internal/stdtest/cborref `typed`, `typed2` and `typed3`)
 
 Typed CBOR through a derive: `marshal[T]`, `unmarshal[T]`, `unmarshal_prefix[T]` for a struct that derives
 Cbor. New `CborErr.Type(msg)` variant (an exhaustive `match` on `CborErr` needs the arm). New public

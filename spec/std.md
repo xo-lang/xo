@@ -7018,12 +7018,14 @@ fn from_json(j: json.Value) -> Value
 - `derive Cbor` (decision 0527, core 2.9) gives a struct typed `marshal[T]`,
   `unmarshal[T]` and `unmarshal_prefix[T]`, matching fxamacker/cbor/v2's
   `Marshal` and `Unmarshal` (differential corpus `testdata/corpus/cbor`,
-  1,600 typed cases):
+  2,000 typed cases):
   - Fields: Str, Int, Float, Bool, Bytes, Time, Duration, `cbor.Value`, an
     Option, a List, a `Map[Str, V]` of those, or a struct that derives Cbor.
     Key: the field's `cbor "key,options"` string, else its `as` string, else
     its name; options `omitempty`, `omitzero` (the same here), `keyasint`;
-    `-` skips the field. `toarray` and `derive Cbor(case:)` are not built yet.
+    `-` skips the field; `cbor ",toarray"` on a struct's first field writes the struct as an
+    array in field order and reads an array of exactly that many items.
+    `derive Cbor(case:)` is not built yet.
   - `marshal` writes a map of the fields (keys sorted when `deterministic`),
     Float in the shortest form, Time as integer seconds or, with a fraction,
     a float (fxamacker's TimeUnixDynamic), Duration as integer nanoseconds,

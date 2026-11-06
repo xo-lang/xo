@@ -144,3 +144,4 @@ fn to_time(v: Value, var st: Unm) -> (Bool, Time)
 fn to_duration(v: Value, var st: Unm) -> (Bool, Duration)
 fn from_time(t: Time) -> Value
 fn from_duration(d: Duration) -> Value
+fn bad_arity(var st: Unm, want: Str, got: Int, need: Int)

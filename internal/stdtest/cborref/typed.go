@@ -44,6 +44,14 @@ type typedDeep struct {
 	Spent  time.Duration        `cbor:"spent,omitempty"`
 }
 
+type typedPair struct {
+	_ struct{} `cbor:",toarray"`
+	A int
+	B string
+	C *int
+	D []string
+}
+
 type typedResult struct {
 	Err bool   `json:"err"`
 	Out string `json:"out"` // hex of the deterministic marshal of what decoded ("" when Err)
@@ -76,6 +84,9 @@ func typedMain(mode string) {
 		var p any = &typedPerson{}
 		if mode == "typed2" {
 			p = &typedDeep{}
+		}
+		if mode == "typed3" {
+			p = &typedPair{}
 		}
 		if err := dec.Unmarshal(data, p); err != nil {
 			res.Err = true
