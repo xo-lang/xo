@@ -342,6 +342,57 @@ func TestStampMatches(t *testing.T) {
 	}
 }
 
+// TestStampIgnoresNonInputs: an uncommitted edit outside the files xo is
+// built from (a script, the knowledgebase, a compiler test) leaves the
+// tree clean for the shared entry and XO_DIRTY, and an edit to an input
+// (compiler/xo, a std module it uses) does not (2026-11-06: the lead's
+// worktree with script edits skipped the cached build of its key and
+// built xo twice from a seed, 30 minutes).
+func TestStampIgnoresNonInputs(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(name, body string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("compiler/xo/main.xo", "use std/fmt\nfn main() {}\n")
+	write("compiler/xo/main_test.xo", "fn t() {}\n")
+	write("std/fmt.xo", "fn f() {}\n")
+	write("std/http.xo", "fn h() {}\n")
+	write("scripts/gate.sh", "echo one\n")
+	git("init", "-q")
+	git("add", "-A")
+	git("commit", "-q", "-m", "a")
+	for _, f := range []string{"scripts/gate.sh", "compiler/xo/main_test.xo", "std/http.xo"} {
+		write(f, "edited\n")
+		if _, d := gitState(dir); d != "" {
+			t.Errorf("an edit to %s (not an input) reads dirty %q", f, d)
+		}
+	}
+	write("std/fmt.xo", "fn f() { 1 }\n")
+	_, d1 := gitState(dir)
+	if d1 == "" {
+		t.Fatal("an edit to std/fmt.xo (an input) reads clean")
+	}
+	write("compiler/xo/main.xo", "use std/fmt\nfn main() { 2 }\n")
+	if _, d2 := gitState(dir); d2 == "" || d2 == d1 {
+		t.Errorf("an edit to compiler/xo/main.xo: dirty %q after %q", d2, d1)
+	}
+}
+
 // TestBuildLockedForceReusesConcurrentBuild: a process that waited for the
 // build lock with force set (it had seen no matching stamp) finds the entry
 // another process built while it waited, with a stamp that matches its

@@ -21,8 +21,12 @@ tree whose diff hash is the same (TestStampMatches); a tree with uncommitted
 changes builds into a private `.tmp-PID-KEY` directory, removed after the
 copy, and stores nothing in the shared cache. An entry with no stamp file (one
 stored before this) matches no tree and is built again once. Cost: a tree
-with any uncommitted tracked change (documentation included) builds its xo
-instead of reusing the shared one when its bin/xo is missing or stale.
+with an uncommitted change builds its xo instead of reusing the shared one
+when its bin/xo is missing or stale. Since 2026-11-06 only a change to xo's
+inputs counts (gitState diffs Inputs, TestStampIgnoresNonInputs): the lead's
+worktree with script and doc edits skipped the cached build of its key,
+its builder faulted (exit 70), and it built twice from a seed 215 commits
+back, over 30 minutes.
 Before the fix, for a measurement or an identity check: delete bin/xo and
 bin/xo.key and rebuild with a private `XO_CHECKOUT_CACHE` (deleted after),
 then check `xo version -m bin/xo` shows the expected commit and an empty

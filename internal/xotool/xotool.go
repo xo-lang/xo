@@ -1065,14 +1065,36 @@ func headCommit(root string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// summary is the first line of err and how many lines follow it.
+// summary is the first line of err, then up to summaryLines of the lines
+// after it, each on its own line indented by a tab, and how many more
+// follow. The lines after the first are the failing build's last output
+// (a fault's message, the linker's error): "exit status 70; 2 more lines"
+// hid why the newest earlier build failed, which cost a build from a seed
+// 215 commits back (lead, 2026-11-06).
 func summary(err error) string {
 	ls := strings.Split(strings.TrimRight(err.Error(), "\n"), "\n")
 	if len(ls) == 1 {
 		return ls[0]
 	}
-	return fmt.Sprintf("%s; %d more lines", ls[0], len(ls)-1)
+	rest := ls[1:]
+	more := 0
+	if len(rest) > summaryLines {
+		more = len(rest) - summaryLines
+		rest = rest[len(rest)-summaryLines:]
+	}
+	var b strings.Builder
+	b.WriteString(ls[0])
+	if more > 0 {
+		fmt.Fprintf(&b, "; %d earlier lines not shown", more)
+	}
+	for _, l := range rest {
+		b.WriteString("\n\t" + l)
+	}
+	return b.String()
 }
+
+// summaryLines is how many lines after the first summary keeps.
+const summaryLines = 8
 
 // SeedFromTag is the xo1 of the last commit with the Go compiler
 // (SeedCommit, else the go-compiler-final tag), built once into
@@ -1463,15 +1485,25 @@ func StampArgs(root, seed string) []string {
 	return args
 }
 
-// gitState is root's HEAD commit and, when tracked files differ from it,
-// the first 12 hex digits of the SHA-256 of `git diff HEAD`.
+// gitState is root's HEAD commit and, when the tracked files xo is built
+// from (Inputs) differ from it, the first 12 hex digits of the SHA-256 of
+// `git diff HEAD` over them; over every tracked file when Inputs cannot
+// be listed (no compiler/xo). An edit outside the inputs (a script, the
+// knowledgebase) builds the same xo as HEAD, so it neither stamps
+// XO_DIRTY nor keeps the tree from the shared entry (2026-11-06: the
+// lead's worktree with script edits built xo twice, 30 minutes, beside a
+// cached build of the same key).
 func gitState(root string) (string, string) {
 	out, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return "", ""
 	}
 	commit := strings.TrimSpace(string(out))
-	diff, err := exec.Command("git", "-C", root, "diff", "HEAD").Output()
+	args := []string{"-C", root, "diff", "HEAD"}
+	if names, err := Inputs(root); err == nil {
+		args = append(append(args, "--"), names...)
+	}
+	diff, err := exec.Command("git", args...).Output()
 	if err != nil || len(diff) == 0 {
 		return commit, ""
 	}

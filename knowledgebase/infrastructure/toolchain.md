@@ -1816,7 +1816,11 @@ Every xo built by internal/xotool (scripts/xobuild, the tests) or by
 scripts/bootstrap-xo.sh carries build stamps: `xo version --json` prints
 the commit, `dirty` and the diff hash, the source key (internal/xotool
 Key; `go run ./scripts/xobuild --key` prints the checkout's), and the xo
-that built it. A cached build is shared by every commit with the same
+that built it. The diff hash covers only xo's inputs (Inputs: compiler/xo
+and the std modules it uses, tests excluded): a tree with uncommitted
+edits elsewhere (scripts, docs) builds a clean xo and reuses the shared
+cached build of its key (2026-11-06; before, any tracked edit made the
+tree build its own xo). A cached build is shared by every commit with the same
 sources, so it keeps the commit that first built it; compare keys, not
 commits. bench/perf/xocheck.sh, sourced by the bench runners, refuses an
 xo whose key is not the checkout's (or that has no stamp) unless

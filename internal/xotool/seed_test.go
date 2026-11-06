@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"io"
 	"os"
@@ -414,8 +415,15 @@ func TestAncestorBuild(t *testing.T) {
 	if got := ancestorBuild(t.TempDir(), []string{mine}); got != "" {
 		t.Errorf("outside git: ancestorBuild = %q", got)
 	}
-	if s := summary(errors.New("exit status 1\nld: one\nld: two")); s != "exit status 1; 2 more lines" {
+	if s := summary(errors.New("exit status 1\nld: one\nld: two")); s != "exit status 1\n\tld: one\n\tld: two" {
 		t.Errorf("summary %q", s)
+	}
+	long := "exit status 70"
+	for i := 0; i < 12; i++ {
+		long += fmt.Sprintf("\nline %d", i)
+	}
+	if s := summary(errors.New(long)); !strings.HasPrefix(s, "exit status 70; 4 earlier lines not shown\n\tline 4\n") || !strings.HasSuffix(s, "\tline 11") {
+		t.Errorf("summary of 13 lines %q", s)
 	}
 }
 
