@@ -7698,3 +7698,34 @@ SASL (any mechanism is accepted) or none.
 
 The client side of a refused attach: `new_sender` and `new_receiver` return the link's `Peer` error when the answering
 Attach has no target (sender) or no source (receiver) and a Detach with an error follows (decision 0521).
+
+## 65. std/protobuf
+
+The Protocol Buffers wire format and the runtime of `derive Proto` (decision 0530; core 2.9), with Go's
+`google.golang.org/protobuf` (protowire, proto) as the reference. Pure.
+
+```xo
+enum ProtoErr { Truncated, Overflow, BadTag, BadWire(wire: Int), EndGroup, Recursion, BadLength, Utf8 }
+fn marshal[T: Proto](v: T) -> Bytes                     // rewritten to the generated proto_marshal__T
+fn unmarshal[T: Proto](data: Bytes) -> T ! ProtoErr     // as proto.Unmarshal: scalars last wins, messages merge
+fn append_varint(b: Bytes, v: UInt64) -> Bytes          // the wire functions of protowire, by the same names
+fn append_tag(b: Bytes, num: Int, wire: Int) -> Bytes
+fn append_fixed32(b: Bytes, v: UInt32) -> Bytes
+fn append_fixed64(b: Bytes, v: UInt64) -> Bytes
+fn append_bytes(b: Bytes, data: Bytes) -> Bytes
+fn size_varint(v: UInt64) -> Int
+fn encode_zigzag(v: Int) -> UInt64
+fn decode_zigzag(v: UInt64) -> Int
+fn read_varint(b: Bytes, at: Int) -> (UInt64, Int) ! ProtoErr
+fn read_tag(b: Bytes, at: Int) -> (Int, Int, Int) ! ProtoErr
+fn read_fixed32(b: Bytes, at: Int) -> (UInt32, Int) ! ProtoErr
+fn read_fixed64(b: Bytes, at: Int) -> (UInt64, Int) ! ProtoErr
+fn read_bytes(b: Bytes, at: Int) -> (Bytes, Int) ! ProtoErr
+fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! ProtoErr   // groups to MAX_GROUP_DEPTH
+```
+
+- Reads return the value and the offset after it. A field number above 536870911 is `BadTag` in the generated
+  reader; `read_tag` itself accepts what protowire accepts.
+- A struct with `derive Proto` writes its fields in field number order, then oneofs, then unknown fields. A plain
+  nested struct is always written (use an Option for presence); a scalar equal to its zero value is omitted.
+- Not yet: proto2, well known types (Timestamp, Duration, Any, Struct), JSON mapping, the `.proto` generator.

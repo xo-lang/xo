@@ -1124,10 +1124,25 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   their `Debug` keeps the variant form.
 - `Json`, `OpenApi`, and `Proto` derives generate codecs and schemas from the
   same declaration so wire formats and docs cannot drift. JSON rules are in
-  `spec/std.md`. **[after 1.0]** `OpenApi` and `Proto` are planned for
-  after 1.0 (owner, 2026-10-09; additive, so not a 1.0 blocker): the
-  derives are reserved, accepted only when every field derives them too
-  (no builtin type implements them yet), and nothing is generated.
+  `spec/std.md`. **[after 1.0]** `OpenApi` is planned for after 1.0 (owner,
+  2026-10-09; additive, so not a 1.0 blocker): the derive is reserved,
+  accepted only when every field derives it too, and nothing is generated.
+- `derive Proto` (decision 0530, accepted 2026-11-06) generates the Protocol
+  Buffers wire codec, read through `protobuf.marshal` and `protobuf.unmarshal`.
+  Every field carries its number as a `proto` tag, `name proto "N": T`, with
+  the options `zigzag` (sint32, sint64) and `fixed` (fixed and sfixed types)
+  after a comma. A field of type Int, Int32, UInt32, UInt64, Float, Float32,
+  Bool, Str, Bytes, an Int valued enum of the same file, or a struct that
+  derives Proto maps to the scalar or message of that name; an Option is a
+  field with explicit presence, a List is repeated (numbers and Bool packed,
+  the reader accepts both forms), and a Map keyed by Int, Str or Bool is a
+  map field. An enum with one payload field per variant (`Circle as "2"(r: Int)`)
+  is a oneof, held in a field tagged `proto "oneof"` of type `Enum?`. One
+  `Bytes` field tagged `proto "unknown"` keeps the fields the reader did not
+  know. Output is wire identical to Go's `proto.Marshal` with deterministic
+  map order; a wire type that does not match a field is read as unknown, as
+  in Go. `XO0422` is a missing, repeated or reserved number or an unknown
+  option, `XO0425` a field type the derive cannot map.
 - `SqlRow` (structs only) generates a decoder from a std/sql row: each field
   is read from the column of the same name, or of its wire name or
   `case:` rule (2.2; `spec/std.md` 10.4).
@@ -3513,7 +3528,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0416` | error | checker | a constant's value holds a handle (`Mutex`, `Chan`, `Atomic`, `Task`, a file) (core 3.1, decision 0332) |
 | `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
 | `XO0421` | error | checker | integer literal does not fit the integer type it takes in context (1.6) |
-| `XO0422` | error | checker | unknown wire name option; the only one is `omitempty` (core 2.2, decision 0309) |
+| `XO0422` | error | checker | unknown wire name option; the only one is `omitempty` (core 2.2, decision 0309); for `derive Proto`, a bad field number, a repeated number or an unknown option (decision 0530) |
 | `XO0423` | error | checker | a field has two wire strings for one format (`json "a" json "b"`) (core 2.2, decision 0315) |
 | `XO0424` | error | checker | a format's wire string (`json`, `sql`, `xml`) on a struct that does not derive that format (core 2.2, decision 0315) |
 | `XO0425` | error | checker | a field type, a type parameter list, or a nested struct that `derive Xml` cannot map (core 2.9, decision 0315) |
