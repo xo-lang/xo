@@ -27,6 +27,7 @@
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/ssa
+use github.com/xo-lang/xo/compiler/tzsel
 
 fn main(os: Os) ! {
   var asm_in = ""
@@ -144,8 +145,22 @@ fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str, why: 
       return "== unsupported the SSA builder skipped ${f.name}: ${f.skip}"
     }
   }
+  // the zone data std/time needs, embedded as `xo build --backend=wasm`
+  // embeds it (compiler/xo main.xo: noted before the passes)
+  var uses_time = false
+  for m in c.mods {
+    uses_time = uses_time || m.path == "native/time"
+  }
+  var tz: List[tzsel.TZSel] = []
+  if uses_time {
+    let sel = tzsel.tz_select(os, std_dir, tzsel.tz_use(c, b.m, root), "", "wasip1")
+    if !sel.err.is_empty() {
+      return "== error ${sel.err}"
+    }
+    tz.push(sel)
+  }
   b.run_passes()
-  let p = generate_with(b.m, why, lax, annotate)
+  let p = gen_module(b.m, why, lax, annotate, tz, false)
   if !p.err.is_empty() {
     return "== unsupported ${p.err}"
   }
