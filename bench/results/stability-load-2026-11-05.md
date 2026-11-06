@@ -111,7 +111,9 @@ is 0.682 of Go's (the loss above was the twin's lock plus std/sql's per statemen
 the sql store still pays: a separate item). Peak RSS at saturation
 (1.2 times Go's) does not compare: the mix's creates outlive the run (deletes reach only
 the 1,000 ids the client keeps, notes live 60 to 180 s), so the store grows with the
-requests served, and Xo served 2.3 times as many. A sweep of 8, 32, 64 and 128 workers
-(host 2, 20 s each) put Xo at 59.8 to 71.8 MB at every width at about 90k req/s: memory
-follows stored notes, about 100 bytes per note on both targets, not connections. At a
-fixed offered rate, where both store the same, Xo's peak RSS is 0.40 of Go's (4000/s).
+requests served, and Xo served 2.3 times as many. Connections count too: a sweep of
+8, 32 and 128 workers (host 2, shared with a soak, one 20 s run each) put Xo's peak at 24.0,
+41.2 and 65.4 MB (Go 54.7, 47.1, 56.6), and at 128 Xo served fewer requests than at 32, so
+about 0.25 MB per extra busy connection is Xo's own (an open item; a first sweep that read
+"not connections" ran 64 workers four times, gotchas/dropped-empty-arg-defaults-flags.md).
+At a fixed offered rate, where both store the same, Xo's peak RSS is 0.40 of Go's (4000/s).
