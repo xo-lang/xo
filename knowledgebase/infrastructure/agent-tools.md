@@ -1107,6 +1107,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   the unfiltered suite took over an hour on the arm64 host on 2026-11-05
   and runs in the main check and the tier instead) (lead, 2026-11-05 bottleneck review: main went red twice
   that night on exactly these two skipped checks); pushq refuses otherwise.
+  scripts/gate.sh runs both by the same paths after its named steps and
+  prints the line `pushq: PUSHQ_RAN="..."` to push with (XO_GATE_PUSHQ=0
+  skips them; lead, 2026-11-06 bottleneck review: two pushes were refused
+  in three hours for a wasm run their gates never did).
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision

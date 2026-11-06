@@ -69,7 +69,11 @@
 #            (XO_GATE_CACHE=0 skips that; lead, 2026-10-30); and
 #            internal/llvm's TestRaceSyncTable and TestRaceSyncTableArm64
 #            on darwin when it changes llrt's task, scheduler or race
-#            runtime (XO_GATE_RACE=0 skips that; lead, 2026-10-31)
+#            runtime (XO_GATE_RACE=0 skips that; lead, 2026-10-31); and
+#            the checks pushq.sh requires by path, `xo dev codegen` for
+#            compiler/ssa, arm64 or llvm and TestSelfhostWasm for llrt or
+#            std/native/rt*.xo, printing the PUSHQ_RAN value to push with
+#            (XO_GATE_PUSHQ=0 skips them; lead, 2026-11-06)
 #   warm    the backend caches across xo builds (decision 0275): the
 #            parent commit's xo is built, then TestFrontCacheAcrossPrograms
 #            fills a cache with it and builds every program again with
@@ -440,5 +444,31 @@ fi
 if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
   full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'
 fi
+# The checks pushq.sh requires by path (its "Proving-test reminders"), run
+# here so the push is not refused after the gate (lead, 2026-11-06
+# bottleneck review: l2-tape at 03:42 and simd at 06:04 were refused for
+# a wasm run their gates never did, each a second gate). The same paths
+# as pushq.sh; the last line before GATE-DONE names what to pass as
+# PUSHQ_RAN. XO_GATE_PUSHQ=0 skips both.
+ran=""
+base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+ch=$({ git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -v '_test\.xo$')
+if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -qE '^compiler/(ssa|arm64|llvm)/.*\.xo$'; then
+  if "$XO_CLI" dev codegen --backend=arm64,llvm test/codegen >"$logs/codegen.txt" 2>&1; then
+    echo "codegen: $(tail -1 "$logs/codegen.txt")"; ran="$ran codegen"
+  else
+    failed=1; echo "codegen: FAIL ($logs/codegen.txt)"
+  fi
+fi
+if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -qE '^std/native/(llrt/|rt[^/]*\.xo$)'; then
+  # the goldens the branch touches, and the concurrency, atomics and map
+  # sets pushq.sh names
+  g=$(echo "$ch" | sed -n 's|^internal/[a-z0-9]*/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -)
+  f0=$failed; failed=0
+  XO_WASM_GOLDENS="${g:+$g,}conc_*,atomic_ops,map_*" full wasm ./internal/selfhost -run '^TestSelfhostWasm$'
+  [ "$failed" = 0 ] && ran="$ran wasm"
+  [ "$f0" = 1 ] && failed=1
+fi
+[ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
 echo GATE-DONE
 exit $failed
