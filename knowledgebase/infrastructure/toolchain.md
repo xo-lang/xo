@@ -113,6 +113,15 @@ run the full suite with the full internal/selfhost tier:
 `XO_SELFHOST_TIER=full go test -timeout 120m ./...` (see the TestSelfhost
 tier lines under Commands). Last verified: 2026-10-11.
 
+**A release never holds pushes to main** (lead, 2026-11-06, from the
+bottleneck review): the version bump commit goes on the commit the
+release's full tier tested (0.41.0: 299d5a5fe on a843f8167, tier 54) and
+the tag on that bump, not on main's tip; main gets its own version commit
+afterwards (the release notes' `relmain.sh`: the tag's CHANGELOG section
+moves out of Unreleased, later entries stay), so agents push each
+branch as soon as it is gated, before and during the release, and
+nothing waits for the archives (rel-final). Last verified: 2026-11-06.
+
 **std/VERSION** (2026-10-23): one line, the toolchain version
 (`compiler/cli/core` `VERSION`, kept equal by internal/repotest
 TestStdVersionMatches; scripts/seed-cut.sh's bump writes both). An xo
