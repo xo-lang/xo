@@ -4,8 +4,8 @@
 
 - Kind: feature
 - Commit: this push
-- Found by: aws-19's Event Hubs v2 slice 2 (geo-replication asks for `com.microsoft:geo-data-replication` on the link)
-- Go reference: go-amqp SenderOptions.DesiredCapabilities, ReceiverOptions.DesiredCapabilities
+- Found by: aws-19's Event Hubs v2 slice 2 (geo-replication asks for `com.microsoft:georeplication` on the link)
+- Go reference: go-amqp SenderOptions.DesiredCapabilities, ReceiverOptions.DesiredCapabilities; azeventhubs v2.0.2 internal/constants.go CapabilityGeoDRReplication ("com.microsoft:georeplication")
 - Test: std/native/amqp_test.xo "a link's desired capabilities go in its Attach, apart from its source's and target's"
 - Timing: none
 - Shipped in: not yet released

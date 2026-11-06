@@ -7606,7 +7606,7 @@ fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
   Flow when it falls below half.
 - Capabilities: a sender's `capabilities` are its Source's and `target_capabilities` its Target's; a receiver's
   `capabilities` are its Target's and `source_capabilities` its Source's; `desired_capabilities` (either) is the Attach
-  frame's desired-capabilities, the link's own (Event Hubs' `com.microsoft:geo-data-replication`).
+  frame's desired-capabilities, the link's own (Event Hubs' `com.microsoft:georeplication`).
 - `send(m, settled, message_format)`: `message_format` is the Transfer's message-format (0 for an AMQP message; Azure
   Service Bus batches are one transfer of format 0x80013700, 2147563264, whose data sections are encoded messages).
 - Manual credit: `ReceiverOptions.credit: 0` grants nothing and `receive` never tops up; `r.issue_credit(n)` raises the link

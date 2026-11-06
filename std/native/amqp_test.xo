@@ -562,7 +562,7 @@ fn serve_caps(l: Listener, geo: Str) {
 test "a link's desired capabilities go in its Attach, apart from its source's and target's" uses (net, clock) {
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   // Event Hubs' geo-replication asks for it on every link
-  let geo = "com.microsoft:geo-data-replication"
+  let geo = "com.microsoft:georeplication"
   scope s {
     s.spawn(fn() { serve_caps(l, geo) })
     let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", clock: Some(os.clock), timeout_ms: 10000}).or_fault("dial")
