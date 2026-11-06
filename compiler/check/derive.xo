@@ -1564,9 +1564,56 @@ fn proto_opts(fl: parser.Field) -> ProtoOpts {
   o
 }
 
-/// `proto_zero__N`, `proto_wr__N`, `proto_rd__N`, `proto_marshal__N` and `proto_unmarshal__N`
-/// for a struct deriving Proto: Int, Bool, Str, Bytes and Float fields with proto3 implicit
-/// presence (a zero value is not written), fields in declaration order.
+/// How derive Proto writes and reads one element type: wire type, the expression that appends the
+/// value $V to the buffer $B, the reader function, the value from the read result $X, and the test
+/// that $V is not the proto3 default.
+struct ProtoElem {
+  wire: Int
+  enc: Str
+  rd: Str
+  conv: Str
+  nonzero: Str
+  zero: Str
+  packable: Bool
+}
+
+fn proto_elem(tx: Str, po: ProtoOpts) -> ProtoElem? {
+  if tx == "Int" {
+    if po.zigzag {
+      return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, protobuf.encode_zigzag($V))", rd: "protobuf.read_varint", conv: "protobuf.decode_zigzag($X)", nonzero: "$V != 0", zero: "0", packable: true})
+    }
+    if po.fixed {
+      return Some(ProtoElem{wire: 1, enc: "protobuf.append_fixed64($B, UInt64.from_bits($V))", rd: "protobuf.read_fixed64", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true})
+    }
+    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits($V))", rd: "protobuf.read_varint", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true})
+  }
+  if tx == "Bool" {
+    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits(if $V { 1 } else { 0 }))", rd: "protobuf.read_varint", conv: "$X.to_bits() != 0", nonzero: "$V", zero: "false", packable: true})
+  }
+  if tx == "Float" {
+    return Some(ProtoElem{wire: 1, enc: "protobuf.append_fixed64($B, UInt64.from_bits($V.to_bits()))", rd: "protobuf.read_fixed64", conv: "Float.from_bits($X.to_bits())", nonzero: "$V.to_bits() != 0", zero: "0.0", packable: true})
+  }
+  if tx == "Str" {
+    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, $V.bytes())", rd: "protobuf.read_bytes", conv: "($X.to_str() ?? return Err(protobuf.ProtoErr.Utf8))", nonzero: "!$V.is_empty()", zero: "\"\"", packable: false})
+  }
+  if tx == "Bytes" {
+    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, $V)", rd: "protobuf.read_bytes", conv: "$X", nonzero: "$V.len() > 0", zero: "b\"\"", packable: false})
+  }
+  if !tx.is_empty() && !tx.contains("[") && tx.bytes()[0] >= 65 && tx.bytes()[0] <= 90 {
+    // a struct deriving Proto (its generated functions must exist; a plain field is always written)
+    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, proto_marshal__${tx}($V))", rd: "protobuf.read_bytes", conv: "proto_unmarshal__${tx}($X)?", nonzero: "true", zero: "proto_zero__${tx}()", packable: false})
+  }
+  None
+}
+
+fn proto_sub(t: Str, b: Str, v: Str, x: Str) -> Str {
+  t.replace("$B", b).replace("$V", v).replace("$X", x)
+}
+
+/// `proto_zero__N`, `proto_marshal__N` and `proto_unmarshal__N` for a struct deriving Proto: Int, Bool,
+/// Float, Str, Bytes and nested Proto struct fields, with Option (explicit presence) and List (packed
+/// for the numeric types), proto3 implicit presence otherwise (a zero value is not written), fields
+/// in declaration order.
 fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> Emit? {
   var e = em
   let sp = sd.name.span
@@ -1574,7 +1621,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
   let pub_ = if sd.is_pub { "pub " } else { "" }
   var zeros: List[Str] = []
   var wr: List[Str] = []
-  var rd: List[Str] = []
+  var rd: List[(Str, List[Str])] = []
   var ok = true
   var used: List[Int] = []
   for fl in sd.fields {
@@ -1596,41 +1643,47 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
       continue
     }
     used.push(po.num)
-    let tx = yaml_type_text(fl.typ) ?? ""
     let k = po.num
-    if tx == "Int" {
-      if po.zigzag {
-        zeros.push("${f}: 0")
-        wr.push("  if v.${f} != 0 { b = protobuf.append_varint(protobuf.append_tag(b, ${k}, 0), protobuf.encode_zigzag(v.${f})) }")
-        rd.push("num == ${k} && wire == 0@@let (x, n2) = protobuf.read_varint(data, at)?; at = n2; r.${f} = protobuf.decode_zigzag(x)")
-      } else if po.fixed {
-        zeros.push("${f}: 0")
-        wr.push("  if v.${f} != 0 { b = protobuf.append_fixed64(protobuf.append_tag(b, ${k}, 1), UInt64.from_bits(v.${f})) }")
-        rd.push("num == ${k} && wire == 1@@let (x, n2) = protobuf.read_fixed64(data, at)?; at = n2; r.${f} = x.to_bits()")
-      } else {
-        zeros.push("${f}: 0")
-        wr.push("  if v.${f} != 0 { b = protobuf.append_varint(protobuf.append_tag(b, ${k}, 0), UInt64.from_bits(v.${f})) }")
-        rd.push("num == ${k} && wire == 0@@let (x, n2) = protobuf.read_varint(data, at)?; at = n2; r.${f} = x.to_bits()")
-      }
-    } else if tx == "Bool" {
-      zeros.push("${f}: false")
-      wr.push("  if v.${f} { b = protobuf.append_varint(protobuf.append_tag(b, ${k}, 0), UInt64.from_bits(1)) }")
-      rd.push("num == ${k} && wire == 0@@let (x, n2) = protobuf.read_varint(data, at)?; at = n2; r.${f} = x.to_bits() != 0")
-    } else if tx == "Float" {
-      zeros.push("${f}: 0.0")
-      wr.push("  if v.${f}.to_bits() != 0 { b = protobuf.append_fixed64(protobuf.append_tag(b, ${k}, 1), UInt64.from_bits(v.${f}.to_bits())) }")
-      rd.push("num == ${k} && wire == 1@@let (x, n2) = protobuf.read_fixed64(data, at)?; at = n2; r.${f} = Float.from_bits(x.to_bits())")
-    } else if tx == "Str" {
-      zeros.push("${f}: \"\"")
-      wr.push("  if !v.${f}.is_empty() { b = protobuf.append_bytes(protobuf.append_tag(b, ${k}, 2), v.${f}.bytes()) }")
-      rd.push("num == ${k} && wire == 2@@let (x, n2) = protobuf.read_bytes(data, at)?; at = n2; r.${f} = x.to_str() ?? return Err(protobuf.ProtoErr.Utf8)")
-    } else if tx == "Bytes" {
-      zeros.push("${f}: b\"\"")
-      wr.push("  if v.${f}.len() > 0 { b = protobuf.append_bytes(protobuf.append_tag(b, ${k}, 2), v.${f}) }")
-      rd.push("num == ${k} && wire == 2@@let (x, n2) = protobuf.read_bytes(data, at)?; at = n2; r.${f} = x")
-    } else {
-      c.error_at(file, "XO0425", fl.name.span, "`derive Proto` maps an Int, Bool, Float, Str or Bytes field so far; `${f}` is not one (decision 0530)")
+    var tx = yaml_type_text(fl.typ) ?? ""
+    var kind = 0
+    if tx.starts_with("Option[") && tx.ends_with("]") {
+      kind = 1
+      tx = tx[7..tx.len() - 1]
+    } else if tx.ends_with("?") {
+      kind = 1
+      tx = tx[0..tx.len() - 1]
+    } else if tx.starts_with("List[") && tx.ends_with("]") {
+      kind = 2
+      tx = tx[5..tx.len() - 1]
+    }
+    let el = proto_elem(tx, po) ?? {
+      c.error_at(file, "XO0425", fl.name.span, "`derive Proto` maps an Int, Bool, Float, Str, Bytes or a struct deriving Proto, alone or in an Option or List; `${f}` is not one (decision 0530)")
       ok = false
+      continue
+    }
+    let w = el.wire
+    let tag = "protobuf.append_tag(b, ${k}, ${w})"
+        if kind == 0 {
+      zeros.push("${f}: ${el.zero}")
+      wr.push("  if ${proto_sub(el.nonzero, "", "v.${f}", "")} { b = ${proto_sub(el.enc, tag, "v.${f}", "")} }")
+      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = ${proto_sub(el.conv, "", "", "x")}"]))
+    } else if kind == 1 {
+      zeros.push("${f}: None")
+      wr.push("  if let Some(x) = v.${f} { b = ${proto_sub(el.enc, tag, "x", "")} }")
+      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = Some(${proto_sub(el.conv, "", "", "x")})"]))
+    } else {
+      zeros.push("${f}: []")
+      if el.packable {
+        wr.push("  if v.${f}.len() > 0 {")
+        wr.push("    var pb = b\"\"")
+        wr.push("    for x in v.${f} { pb = ${proto_sub(el.enc, "pb", "x", "")} }")
+        wr.push("    b = protobuf.append_bytes(protobuf.append_tag(b, ${k}, 2), pb)")
+        wr.push("  }")
+        rd.push((" num == ${k} && wire == 2", ["let (x, n2) = protobuf.read_bytes(data, at)?", "at = n2", "var q = 0", "while q < x.len() {", "  let (y, q2) = ${el.rd}(x, q)?", "  q = q2", "  r.${f}.push(${proto_sub(el.conv, "", "", "y")})", "}"]))
+      } else {
+        wr.push("  for x in v.${f} { b = ${proto_sub(el.enc, tag, "x", "")} }")
+      }
+      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f}.push(${proto_sub(el.conv, "", "", "x")})"]))
     }
   }
   if !ok {
@@ -1652,10 +1705,11 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
   e.ln("    at = nx", sp)
   e.ln("    if num > 536870911 { return Err(protobuf.ProtoErr.BadTag) }", sp)
   var first = true
-  for l in rd {
-    let parts = l.split("@@")
-    e.ln("    ${if first { "if" } else { "} else if" }} ${parts[0]} {", sp)
-    e.ln("      ${parts[1]}", sp)
+  for (cond, lines) in rd {
+    e.ln("    ${if first { "if" } else { "} else if" }}${cond} {", sp)
+    for l in lines {
+      e.ln("      ${l}", sp)
+    }
     first = false
   }
   if first {
