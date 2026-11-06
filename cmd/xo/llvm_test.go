@@ -61,11 +61,11 @@ func TestBuildRunLLVM(t *testing.T) {
 		t.Fatalf("dbg --release: %v %q", err, res)
 	}
 	// constructs outside the subset are build errors naming them
-	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte("fn main(os: Os) {\n  let m: Map[Set[Int], Int] = {}\n  os.stdio.println(\"${m.len()}\")\n}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte("fn main(os: Os) {\n  "+nativeUnsupportedStmt+"\n  os.stdio.println(\"${m.len()}\")\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	errOut.Reset()
-	if code := run(t, []string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:31: error XO1201: not available on the native backends (arm64, amd64, LLVM) yet: a Map key or Set element that holds a Map or Set (support is planned)") {
+	if code := run(t, []string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:31: error XO1201: not available on the native backends (arm64, amd64, LLVM) yet: "+nativeUnsupportedWhy) {
 		t.Fatalf("unsupported: exit %d stderr %s", code, errOut.String())
 	}
 }
@@ -100,7 +100,7 @@ func TestNoGC(t *testing.T) {
 	if code := run(t, []string{"run", "--no-gc", src}, &out, &errOut); code != 0 || out.String() != "3\n" {
 		t.Fatalf("run --no-gc: exit %d stdout %q stderr %s", code, out.String(), errOut.String())
 	}
-	write("fn main(os: Os) {\n  let m: Map[Set[Int], Int] = {}\n  os.stdio.println(\"${m.len()}\")\n}\n")
+	write("fn main(os: Os) {\n  " + nativeUnsupportedStmt + "\n  os.stdio.println(\"${m.len()}\")\n}\n")
 	out.Reset()
 	errOut.Reset()
 	if code := run(t, []string{"build", "--no-gc", "--json", src}, &out, &errOut); code != 1 {

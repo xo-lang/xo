@@ -299,9 +299,8 @@ func TestCheckSupportPerMember(t *testing.T) {
 		"lib/xo.mod":       "module example.com/lib\nedition preview\n",
 		"lib/util/util.xo": "pub fn seven() -> Int {\n  let x = 3\n  var y = x + 4\n  y\n}\n",
 		"v/xo.mod":         "module example.com/v\nedition preview\n",
-		// one construct the native backends do not have yet (a function
-		// value with `var` parameters was one until fd27a4579)
-		"v/v.xo": "pub fn nested() -> Int {\n  var s: Set[Set[Int]] = #{}\n  s.add(#{1})\n  s.len()\n}\n",
+		// one construct the native backends do not have yet (unsupported_test.go)
+		"v/v.xo": "pub fn keyed() -> Int {\n  " + nativeUnsupportedStmt + "\n  m.len()\n}\n",
 	}
 	work := "xo preview\nuse .\nuse ./lib\nuse ./v\n"
 	for i := 1; i <= 8; i++ {
