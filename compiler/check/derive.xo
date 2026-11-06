@@ -1579,7 +1579,13 @@ struct ProtoElem {
   merge: Str
 }
 
-fn proto_elem(tx: Str, po: ProtoOpts) -> ProtoElem? {
+fn proto_elem(tx: Str, po: ProtoOpts, enums: Map[Str, Str]) -> ProtoElem? {
+  if let Some(first) = enums.get(tx) {
+    // an Int valued enum: its value is the number on the wire; a closed enum maps an unknown number to its first variant
+    let zero = if first == "open" { "${tx}.from(0)" } else { "(${tx}.from(0) ?? ${tx}.${first})" }
+    let conv = if first == "open" { "${tx}.from($X.to_bits())" } else { "(${tx}.from($X.to_bits()) ?? ${zero})" }
+    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits($V.value()))", rd: "protobuf.read_varint", conv: conv, nonzero: "$V.value() != 0", zero: zero, packable: true, merge: ""})
+  }
   if tx == "Int" {
     if po.zigzag {
       return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, protobuf.encode_zigzag($V))", rd: "protobuf.read_varint", conv: "protobuf.decode_zigzag($X)", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
@@ -1634,7 +1640,7 @@ fn proto_sub(t: Str, b: Str, v: Str, x: Str) -> Str {
 /// Float, Str, Bytes and nested Proto struct fields, with Option (explicit presence) and List (packed
 /// for the numeric types), proto3 implicit presence otherwise (a zero value is not written), fields
 /// in declaration order.
-fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> Emit? {
+fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enums: Map[Str, Str]) -> Emit? {
   var e = em
   let sp = sd.name.span
   let n = text(sd.name.name)
@@ -1678,8 +1684,8 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
     }
     if kind == 0 && tx.starts_with("Map[") && tx.ends_with("]") {
       let kv = tx[4..tx.len() - 1].split(", ")
-      let kel = if kv.len() == 2 { proto_elem(kv[0], ProtoOpts{num: 0, zigzag: false, fixed: false, bad: ""}) } else { None }
-      let vel = if kv.len() == 2 && !kv[1].contains("[") { proto_elem(kv[1], po) } else { None }
+      let kel = if kv.len() == 2 { proto_elem(kv[0], ProtoOpts{num: 0, zigzag: false, fixed: false, bad: ""}, enums) } else { None }
+      let vel = if kv.len() == 2 && !kv[1].contains("[") { proto_elem(kv[1], po, enums) } else { None }
       if let Some(ke) = kel {
         if let Some(ve) = vel {
           if kv[0] == "Int" || kv[0] == "Str" || kv[0] == "Bool" {
@@ -1697,8 +1703,8 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
         }
       }
     }
-    let el = proto_elem(tx, po) ?? {
-      c.error_at(file, "XO0425", fl.name.span, "`derive Proto` maps an Int, Bool, Float, Str, Bytes or a struct deriving Proto, alone or in an Option or List; `${f}` is not one (decision 0530)")
+    let el = proto_elem(tx, po, enums) ?? {
+      c.error_at(file, "XO0425", fl.name.span, "`derive Proto` maps an Int, Bool, Float, Str, Bytes, an Int valued enum of the same file or a struct deriving Proto, alone or in an Option or List; `${f}` is not one (decision 0530)")
       ok = false
       continue
     }
@@ -2157,6 +2163,23 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
     }
   }
   var any_proto = false
+  // Int valued enums of this file: "open" with a catch-all variant, else the first variant
+  var penums: Map[Str, Str] = {}
+  for d in f.decls {
+    if let EnumDecl(ed) = d {
+      if let Some(vt) = ed.value_type {
+        if text(vt.name) == "Int" && !ed.variants.is_empty() {
+          var open = false
+          for v in ed.variants {
+            if v.fields != None {
+              open = true
+            }
+          }
+          penums[text(ed.name.name)] = if open { "open" } else { text(ed.variants[0].name.name) }
+        }
+      }
+    }
+  }
   for d in f.decls {
     let sd = match d {
       StructDecl(s) => s
@@ -2175,7 +2198,7 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
       c.error_at(file, "XO0425", sd.name.span, "`derive Proto` needs a struct without type parameters; `${text(sd.name.name)}` has some")
       continue
     }
-    if let Some(e2) = c.proto_codec(sd, em, file) {
+    if let Some(e2) = c.proto_codec(sd, em, file, penums) {
       em = e2
       any = true
       any_proto = true
