@@ -64,6 +64,8 @@ fn calls(os: Os, c: grpc.Client, canceled: Chan[Int]) {
   os.stdio.println("echo: ${show(c.unary("/t.S/Echo", "hi ".bytes(), {"x-who": "bob"}))}")
   os.stdio.println("fail: ${show(c.unary("/t.S/Echo", b"x", {"x-fail": "1"}))}")
   os.stdio.println("missing: ${show(c.unary("/t.S/Missing", b"x"))}")
+  os.stdio.println("gzip: ${show(c.with_gzip().unary("/t.S/Echo", "hi ".bytes(), {"x-who": "ann"}))}")
+  os.stdio.println("bin: ${grpc.bin_encode(b"foo")} ${(grpc.bin_decode("Zm9v") ?? b"?").len()}")
   os.stdio.println("slow: ${show(c.unary("/t.S/Slow", b"x", {}, Some(300ms)))}")
   let _ = canceled.recv()
   os.stdio.println("the server cancelled the handler")

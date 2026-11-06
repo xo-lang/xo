@@ -3,6 +3,8 @@ exit 0
 echo: ok hi bob
 fail: err rpc error: code = NotFound desc = no such user é%
 missing: err rpc error: code = Unimplemented desc = unknown method Missing for service t.S
+gzip: ok hi ann
+bin: Zm9v 3
 slow: err rpc error: code = DeadlineExceeded desc = context deadline exceeded
 the server cancelled the handler
 count: ["0", "1", "2"]
