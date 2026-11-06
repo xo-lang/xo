@@ -1538,6 +1538,7 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
 /// A field's protobuf tag, `proto "N,options"`: the number and the options zigzag and
 /// fixed (decision 0530); bad is the first other option, num 0 when missing.
 struct ProtoOpts {
+  /// 0 when missing, -1 for a oneof (`proto "oneof"`)
   num: Int
   zigzag: Bool
   fixed: Bool
@@ -1549,7 +1550,7 @@ fn proto_opts(fl: parser.Field) -> ProtoOpts {
   for fw in fl.formats {
     if fw.format == b"proto" {
       let parts = text(fw.wire).split(",")
-      o.num = Int.parse(parts[0]) ?? 0
+      o.num = if parts[0] == "oneof" { -1 } else { Int.parse(parts[0]) ?? 0 }
       for opt in parts[1..] {
         if opt == "zigzag" {
           o.zigzag = true
@@ -1640,7 +1641,7 @@ fn proto_sub(t: Str, b: Str, v: Str, x: Str) -> Str {
 /// Float, Str, Bytes and nested Proto struct fields, with Option (explicit presence) and List (packed
 /// for the numeric types), proto3 implicit presence otherwise (a zero value is not written), fields
 /// in declaration order.
-fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enums: Map[Str, Str]) -> Emit? {
+fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enums: Map[Str, Str], oneofs: Map[Str, List[(Int, Str, Str)]]) -> Emit? {
   var e = em
   let sp = sd.name.span
   let n = text(sd.name.name)
@@ -1653,8 +1654,8 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   for fl in sd.fields {
     let f = text(fl.name.name)
     let po = proto_opts(fl)
-    if po.num < 1 || po.num > 536870911 || (po.num >= 19000 && po.num <= 19999) {
-      c.error_at(file, "XO0422", fl.name.span, "field `${f}` of a `derive Proto` struct needs a field number in 1 to 536870911 outside 19000 to 19999, written `${f} proto \"N\": T` (decision 0530)")
+    if po.num != -1 && (po.num < 1 || po.num > 536870911 || (po.num >= 19000 && po.num <= 19999)) {
+      c.error_at(file, "XO0422", fl.name.span, "field `${f}` of a `derive Proto` struct needs a field number in 1 to 536870911 outside 19000 to 19999, written `${f} proto \"N\": T` (decision 0530), or `proto \"oneof\"` for an enum of oneof variants")
       ok = false
       continue
     }
@@ -1663,13 +1664,11 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       ok = false
       continue
     }
-    if used.contains(po.num) {
+    if po.num != -1 && used.contains(po.num) {
       c.error_at(file, "XO0422", fl.name.span, "field number ${po.num} of `${f}` is used twice (decision 0530)")
       ok = false
       continue
     }
-    used.push(po.num)
-    let k = po.num
     var tx = proto_type_text(fl.typ) ?? ""
     var kind = 0
     if tx.starts_with("Option[") && tx.ends_with("]") {
@@ -1682,6 +1681,57 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       kind = 2
       tx = tx[5..tx.len() - 1]
     }
+    if po.num == -1 {
+      let ovs = oneofs.get(tx) ?? []
+      if ovs.is_empty() {
+        c.error_at(file, "XO0425", fl.name.span, "`proto \"oneof\"` on `${f}` needs an enum declared in this file whose variants each have one field and a field number, `Circle as \"2\"(r: Int)` (decision 0530)")
+        ok = false
+        continue
+      }
+      var arms: List[Str] = []
+      var first_zero = ""
+      for (num, vn, vt) in ovs {
+        let ve = proto_elem(vt, po, enums) ?? {
+          c.error_at(file, "XO0425", fl.name.span, "the variant `${vn}` of `${tx}` has a type `derive Proto` does not map (decision 0530)")
+          ok = false
+          continue
+        }
+        if used.contains(num) {
+          c.error_at(file, "XO0422", fl.name.span, "field number ${num} of variant `${vn}` is used twice (decision 0530)")
+          ok = false
+          continue
+        }
+        used.push(num)
+        if first_zero.is_empty() {
+          first_zero = "${tx}.${vn}(${ve.zero})"
+        }
+        arms.push("      ${vn}(x) => { b = ${proto_sub(ve.enc, "protobuf.append_tag(b, ${num}, ${ve.wire})", "x", "")} }")
+        var val = proto_sub(ve.conv, "", "", "x")
+        if !ve.merge.is_empty() {
+          // the same message variant read before merges, as Go does
+          let cur = if kind == 1 { "Some(${tx}.${vn}(p))" } else { "${tx}.${vn}(p)" }
+          val = proto_sub(ve.merge, "", "", "x").replace("$R", "(match r.${f} { ${cur} => p, _ => ${ve.zero} })")
+        }
+        rd.push((" num == ${num} && wire == ${ve.wire}", ["let (x, n2) = ${ve.rd}(data, at)?", "at = n2", "r.${f} = ${if kind == 1 { "Some(" } else { "" }}${tx}.${vn}(${val})${if kind == 1 { ")" } else { "" }}"]))
+      }
+      if kind == 1 {
+        zeros.push("${f}: None")
+        wr.push("  if let Some(ov) = v.${f} {")
+        wr.push("    match ov {")
+      } else {
+        zeros.push("${f}: ${first_zero}")
+        wr.push("  {")
+        wr.push("    match v.${f} {")
+      }
+      for l in arms {
+        wr.push(l)
+      }
+      wr.push("    }")
+      wr.push("  }")
+      continue
+    }
+    used.push(po.num)
+    let k = po.num
     if kind == 0 && tx.starts_with("Map[") && tx.ends_with("]") {
       let kv = tx[4..tx.len() - 1].split(", ")
       let kel = if kv.len() == 2 { proto_elem(kv[0], ProtoOpts{num: 0, zigzag: false, fixed: false, bad: ""}, enums) } else { None }
@@ -2163,6 +2213,26 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
     }
   }
   var any_proto = false
+  // enums of oneof variants of this file: (field number, variant, type) per variant
+  var poneofs: Map[Str, List[(Int, Str, Str)]] = {}
+  for d in f.decls {
+    if let EnumDecl(ed) = d {
+      var vs: List[(Int, Str, Str)] = []
+      var good = ed.value_type == None && !ed.variants.is_empty()
+      for v in ed.variants {
+        let fs = v.fields ?? []
+        let wn = if let Some(w) = v.wire { Int.parse(text(w)) ?? 0 } else { 0 }
+        if fs.len() != 1 || wn < 1 {
+          good = false
+          continue
+        }
+        vs.push((wn, text(v.name.name), yaml_type_text(fs[0].typ) ?? ""))
+      }
+      if good {
+        poneofs[text(ed.name.name)] = vs
+      }
+    }
+  }
   // Int valued enums of this file: "open" with a catch-all variant, else the first variant
   var penums: Map[Str, Str] = {}
   for d in f.decls {
@@ -2198,7 +2268,7 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
       c.error_at(file, "XO0425", sd.name.span, "`derive Proto` needs a struct without type parameters; `${text(sd.name.name)}` has some")
       continue
     }
-    if let Some(e2) = c.proto_codec(sd, em, file, penums) {
+    if let Some(e2) = c.proto_codec(sd, em, file, penums, poneofs) {
       em = e2
       any = true
       any_proto = true

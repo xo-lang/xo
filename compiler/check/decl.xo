@@ -524,6 +524,9 @@ fn (var c: Checker) variant_wire_names(t: Int, ed: parser.EnumDecl, vs0: List[Va
         seen[vs[i].json_name] = i
       }
     } else if let Some(ws) = v.wire_span {
+      if derives.contains("Proto") || derives.contains("Cbor") {
+        continue
+      }
       c.warn("XO0414", ws, "the wire name of variant `${text(vs[i].name)}` is unused: `${text(ed.name.name)}` does not derive Json")
     }
   }
