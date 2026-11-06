@@ -1411,7 +1411,12 @@ fn on_disposition(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch
               }
               _ => {}
             }
-            state
+            // the service answers a dead letter with a rejected response that carries no error (go-amqp
+            // receiver.go); an error is for a refusal such as a lost lock
+            match state {
+              Rejected(_) => amqp.DeliveryState.Rejected(error: None)
+              _ => state
+            }
           })
           answer = r
         }

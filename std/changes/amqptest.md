@@ -32,3 +32,15 @@ A delivery's tag is the lock token in .NET GUID byte order (the first three grou
 
 Transfers with message format 0x80013700 are unpacked into separate messages, a drain flow is answered, and a session receiver's attach reply carries `com.microsoft:locked-until-utc`.
 
+
+## 2026-11-06: fix: a dead letter is settled with Rejected and no error
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Azure 1 (azservicebus dead_letter_message under ReceiverSettleMode.Second)
+- Go reference: go-amqp v1.7.0 receiver.go: the service answers a dead letter with a rejected response that carries no error
+- Test: native/amqptest "settle mode Second: a dead letter is settled without an error, so reject succeeds"
+
+The broker settled a client's `reject` with the client's own `Rejected(error)`, so a receiver in settle mode
+Second reported the successful dead letter as `Peer(com.microsoft:dead-letter)`. It now answers `Rejected(error: None)`;
+`Rejected(error)` stays for refusals such as a lost lock.
