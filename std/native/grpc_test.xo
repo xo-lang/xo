@@ -1,0 +1,49 @@
+// Vectors from grpc-go (rpc_util.go, http_util.go encodeTimeout and encodeGrpcMessage, codes).
+use std/grpc
+
+test "frame and unframe" {
+  let f = grpc.frame(b"abc")
+  expect(f) == b"\x00\x00\x00\x00\x03abc"
+  let (c, p, n) = grpc.unframe(f, 0).or_fault("u")
+  expect((c, p, n)) == (false, b"abc", 8)
+  expect(grpc.frame(b"", true)) == b"\x01\x00\x00\x00\x00"
+  expect(grpc.unframe(b"\x02\x00\x00\x00\x00", 0)) == Err(grpc.FrameErr.BadFlag(flag: 2))
+  expect(grpc.unframe(b"\x00\x00\x00", 0)) == Err(grpc.FrameErr.Truncated)
+  expect(grpc.unframe(b"\x00\x00\x00\x00\x05ab", 0)) == Err(grpc.FrameErr.Truncated)
+  expect(grpc.unframe(b"\x00\x00\x00\x40\x01", 0, 16384)) == Err(grpc.FrameErr.TooLarge(len: 16385))
+}
+
+test "timeouts" {
+  expect(grpc.encode_timeout(0)) == "0n"
+  expect(grpc.encode_timeout(-5)) == "0n"
+  expect(grpc.encode_timeout(1)) == "1n"
+  expect(grpc.encode_timeout(99999999)) == "99999999n"
+  expect(grpc.encode_timeout(100000000)) == "100000u"
+  expect(grpc.encode_timeout(1000000000)) == "1000000u"
+  expect(grpc.encode_timeout(60000000000)) == "60000000u"
+  expect(grpc.encode_timeout(7200000000000)) == "7200000m"
+  expect(grpc.decode_timeout("1000m")) == Some(1000000000)
+  expect(grpc.decode_timeout("5S")) == Some(5000000000)
+  expect(grpc.decode_timeout("2H")) == Some(7200000000000)
+  expect(grpc.decode_timeout("S")) == None
+  expect(grpc.decode_timeout("123456789S")) == None
+  expect(grpc.decode_timeout("5x")) == None
+  expect(grpc.decode_timeout("")) == None
+}
+
+test "codes" {
+  expect(grpc.Code.Unauthenticated.number()) == 16
+  expect(grpc.code_from(4)) == Some(grpc.Code.DeadlineExceeded)
+  expect(grpc.code_from(17)) == None
+}
+
+test "grpc-message encoding" {
+  expect(grpc.encode_message("hello world")) == "hello world"
+  expect(grpc.encode_message("100%")) == "100%25"
+  expect(grpc.encode_message("a\nb")) == "a%0Ab"
+  expect(grpc.encode_message("é")) == "%C3%A9"
+  expect(grpc.decode_message("a%0Ab")) == "a\nb"
+  expect(grpc.decode_message("%C3%A9")) == "é"
+  expect(grpc.decode_message("%zz")) == "%zz"
+  expect(grpc.decode_message("100%")) == "100%"
+}

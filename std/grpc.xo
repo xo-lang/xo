@@ -1,0 +1,53 @@
+// std/grpc (decision 0535): gRPC over std/http's HTTP/2. This file is the pure layer: the message frame, the
+// grpc-timeout header, the status codes and the grpc-message percent encoding, as grpc-go does them.
+// Declaration file. Pure.
+
+/// The 17 canonical status codes (their numbers are the wire values of `grpc-status`).
+enum Code {
+  Ok
+  Canceled
+  Unknown
+  InvalidArgument
+  DeadlineExceeded
+  NotFound
+  AlreadyExists
+  PermissionDenied
+  ResourceExhausted
+  FailedPrecondition
+  Aborted
+  OutOfRange
+  Unimplemented
+  Internal
+  Unavailable
+  DataLoss
+  Unauthenticated
+} derive Display
+
+/// The wire number of a code (OK is 0, UNAUTHENTICATED is 16).
+fn (c: Code) number() -> Int
+/// The code of a `grpc-status` number; None above 16.
+fn code_from(n: Int) -> Code?
+
+/// Why a frame was refused.
+enum FrameErr {
+  Truncated
+  BadFlag(flag: Int)
+  TooLarge(len: Int)
+} derive Display
+
+/// One message frame: a flag byte (1 for a compressed payload), a 4 byte big endian length, the payload.
+fn frame(payload: Bytes, compressed: Bool = false) -> Bytes
+/// Reads the frame at `at`: (compressed, payload, next offset). A length above `max_len` is `TooLarge` (grpc-go's
+/// default receive limit is 4 MiB).
+fn unframe(data: Bytes, at: Int, max_len: Int = 4194304) -> (Bool, Bytes, Int) ! FrameErr
+
+/// The `grpc-timeout` header value for a duration in nanoseconds: at most 8 digits and the largest unit that keeps
+/// it (`n`, `u`, `m`, `S`, `M`, `H`), as grpc-go's encodeTimeout.
+fn encode_timeout(ns: Int) -> Str
+/// The nanoseconds of a `grpc-timeout` value; None for a value that is not 1 to 8 digits and one unit letter.
+fn decode_timeout(s: Str) -> Int?
+
+/// `grpc-message` encoding: bytes outside 0x20 to 0x7e and `%` are written as `%XX` (upper case hex).
+fn encode_message(s: Str) -> Str
+/// The inverse; a malformed escape is kept as written (grpc-go).
+fn decode_message(s: Str) -> Str

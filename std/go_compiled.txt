@@ -32,3 +32,4 @@ protobuf
 # reports XO1201 there (decision 0534); stdgen generates no std/rt Go for it
 sqlite
 timego
+grpc

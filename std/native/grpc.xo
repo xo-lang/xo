@@ -1,0 +1,137 @@
+// std/grpc: the pure layer (decision 0535), after grpc-go's rpc_util.go (frame, timeout) and status (message encoding).
+use std/grpc
+
+fn code_number(c: grpc.Code) -> Int {
+  match c {
+    Ok => 0
+    Canceled => 1
+    Unknown => 2
+    InvalidArgument => 3
+    DeadlineExceeded => 4
+    NotFound => 5
+    AlreadyExists => 6
+    PermissionDenied => 7
+    ResourceExhausted => 8
+    FailedPrecondition => 9
+    Aborted => 10
+    OutOfRange => 11
+    Unimplemented => 12
+    Internal => 13
+    Unavailable => 14
+    DataLoss => 15
+    Unauthenticated => 16
+  }
+}
+
+fn code_from(n: Int) -> grpc.Code? {
+  let all = [grpc.Code.Ok, grpc.Code.Canceled, grpc.Code.Unknown, grpc.Code.InvalidArgument, grpc.Code.DeadlineExceeded,
+    grpc.Code.NotFound, grpc.Code.AlreadyExists, grpc.Code.PermissionDenied, grpc.Code.ResourceExhausted,
+    grpc.Code.FailedPrecondition, grpc.Code.Aborted, grpc.Code.OutOfRange, grpc.Code.Unimplemented, grpc.Code.Internal,
+    grpc.Code.Unavailable, grpc.Code.DataLoss, grpc.Code.Unauthenticated]
+  if n < 0 || n > 16 { None } else { Some(all[n]) }
+}
+
+fn frame(payload: Bytes, compressed: Bool = false) -> Bytes {
+  var b = BytesBuilder.with_capacity(5 + payload.len())
+  b.write_byte(UInt8.wrapping_from(if compressed { 1 } else { 0 }))
+  b.write_byte(UInt8.wrapping_from((payload.len() >> 24) & 255))
+  b.write_byte(UInt8.wrapping_from((payload.len() >> 16) & 255))
+  b.write_byte(UInt8.wrapping_from((payload.len() >> 8) & 255))
+  b.write_byte(UInt8.wrapping_from(payload.len() & 255))
+  b.write(payload)
+  b.freeze()
+}
+
+fn unframe(data: Bytes, at: Int, max_len: Int = 4194304) -> (Bool, Bytes, Int) ! grpc.FrameErr {
+  if at + 5 > data.len() {
+    return Err(grpc.FrameErr.Truncated)
+  }
+  let flag = Int(data[at])
+  if flag > 1 {
+    return Err(grpc.FrameErr.BadFlag(flag: flag))
+  }
+  let n = (Int(data[at + 1]) << 24) | (Int(data[at + 2]) << 16) | (Int(data[at + 3]) << 8) | Int(data[at + 4])
+  if n > max_len {
+    return Err(grpc.FrameErr.TooLarge(len: n))
+  }
+  if at + 5 + n > data.len() {
+    return Err(grpc.FrameErr.Truncated)
+  }
+  (flag == 1, data[at + 5..at + 5 + n], at + 5 + n)
+}
+
+// grpc-go encodeTimeout: the smallest unit whose value (rounded to nearest) fits 8 digits; hours otherwise
+fn encode_timeout(ns: Int) -> Str {
+  if ns <= 0 {
+    return "0n"
+  }
+  let units = [(1, "n"), (1000, "u"), (1000000, "m"), (1000000000, "S"), (60000000000, "M"), (3600000000000, "H")]
+  var best = "0n"
+  for (div, letter) in units {
+    let v = (ns + div / 2) / div
+    if v <= 99999999 {
+      return "${v}${letter}"
+    }
+    best = "${v}${letter}"
+  }
+  best
+}
+
+fn decode_timeout(s: Str) -> Int? {
+  if s.len() < 2 || s.len() > 9 {
+    return None
+  }
+  let unit = s[s.len() - 1..]
+  let digits = s[0..s.len() - 1]
+  let v = Int.parse(digits) ?? return None
+  if v < 0 {
+    return None
+  }
+  match unit {
+    "n" => Some(v)
+    "u" => Some(v * 1000)
+    "m" => Some(v * 1000000)
+    "S" => Some(v * 1000000000)
+    "M" => Some(v * 60000000000)
+    "H" => Some(v * 3600000000000)
+    _ => None
+  }
+}
+
+fn encode_message(s: Str) -> Str {
+  var out = BytesBuilder.with_capacity(s.len())
+  let hex = "0123456789ABCDEF".bytes()
+  let bs = s.bytes()
+  var i = 0
+  while i < bs.len() {
+    let c = Int(bs[i])
+    if c >= 32 && c <= 126 && c != 37 {
+      out.write_byte(UInt8.wrapping_from(c))
+    } else {
+      out.write_byte(UInt8(37))
+      out.write_byte(hex[c >> 4])
+      out.write_byte(hex[c & 15])
+    }
+    i += 1
+  }
+  out.freeze().to_str_lossy()
+}
+
+fn decode_message(s: Str) -> Str {
+  let bs = s.bytes()
+  var out = BytesBuilder.with_capacity(bs.len())
+  var i = 0
+  while i < bs.len() {
+    if bs[i] == UInt8(37) && i + 2 < bs.len() {
+      let h = Int.parse_base(s[i + 1..i + 3], 16)
+      if let Some(v) = h {
+        out.write_byte(UInt8.wrapping_from(v))
+        i += 3
+        continue
+      }
+    }
+    out.write_byte(bs[i])
+    i += 1
+  }
+  out.freeze().to_str() ?? s
+}

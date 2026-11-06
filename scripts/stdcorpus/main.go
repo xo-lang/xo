@@ -102,6 +102,7 @@ var generators = map[string]func() string{
 	"jwt":        jwtCorpus,
 	"pkcs12":     pkcs12Corpus,
 	"amqp":       amqpCorpus,
+	"grpc":       grpcCorpus,
 	"timego":     timegoCorpus,
 }
 
