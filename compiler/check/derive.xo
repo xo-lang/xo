@@ -1095,6 +1095,372 @@ fn (var c: Checker) yaml_encoder(sd: parser.StructDecl, em: Emit, var done: Map[
   Some(e)
 }
 
+// ---- derive Cbor (decision 0527): readers and writers over cbor.Value ----
+
+/// The function that reads a cbor.Value as type t, `(x, var st: cbor.Unm) ->
+/// (Bool, T)` (defined once into em; the Bool is whether a value was read: a
+/// mismatch leaves a field alone and drops a list item, the type error is kept
+/// in st), with the zero value text of t; None for a type derive Cbor does not map.
+fn (var c: Checker) cbor_reader(t: parser.Type, sp: Span, em: Emit, var done: Map[Str, Bool]) -> (Str, Str, Emit)? {
+  let tx = yaml_type_text(t) ?? return None
+  var e = em
+  let h = "cbor_rd__${yaml_mangle(tx)}"
+  let sig = "fn ${h}(x: cbor.Value, var st: cbor.Unm) -> (Bool, ${tx})"
+  match t {
+    OptionalType(_, elem) => {
+      let (inner, _, e2) = c.cbor_reader(elem, sp, e, done) ?? return None
+      e = e2
+      if !done.contains(h) {
+        done[h] = true
+        e.ln("${sig} {", sp)
+        e.ln("  if cbor.is_null(x) { return (true, None) }", sp)
+        e.ln("  let (ok, v) = ${inner}(x, st)", sp)
+        e.ln("  if !ok { return (false, None) }", sp)
+        e.ln("  (true, Some(v))", sp)
+        e.ln("}", sp)
+      }
+      return Some((h, "None", e))
+    }
+    NamedType(_, path, args) => {
+      let n = text(path[path.len() - 1].name)
+      if path.len() == 1 && args.is_empty() && is_scalar_name(n) {
+        let (fnn, zero) = match n {
+          "Str" => ("cbor.to_str", "\"\"")
+          "Int" => ("cbor.to_int", "0")
+          "Float" => ("cbor.to_float", "0.0")
+          _ => ("cbor.to_bool", "false")
+        }
+        return Some((fnn, zero, e))
+      }
+      if path.len() == 1 && args.is_empty() && n == "Bytes" {
+        return Some(("cbor.to_bytes", "b\"\"", e))
+      }
+      if path.len() == 2 && args.is_empty() && n == "Value" && text(path[0].name) == "cbor" {
+        return Some(("cbor.to_value", "cbor.Value.Null", e))
+      }
+      if path.len() == 1 && args.is_empty() && n is "Time" | "Duration" {
+        return None
+      }
+      if path.len() == 1 && args.len() == 1 && n == "Option" {
+        let (inner, _, e2) = c.cbor_reader(args[0], sp, e, done) ?? return None
+        e = e2
+        if !done.contains(h) {
+          done[h] = true
+          e.ln("${sig} {", sp)
+          e.ln("  if cbor.is_null(x) { return (true, None) }", sp)
+          e.ln("  let (ok, v) = ${inner}(x, st)", sp)
+          e.ln("  if !ok { return (false, None) }", sp)
+          e.ln("  (true, Some(v))", sp)
+          e.ln("}", sp)
+        }
+        return Some((h, "None", e))
+      }
+      if path.len() == 1 && args.len() == 1 && n == "List" {
+        let (inner, _, e2) = c.cbor_reader(args[0], sp, e, done) ?? return None
+        e = e2
+        if !done.contains(h) {
+          done[h] = true
+          e.ln("${sig} {", sp)
+          e.ln("  var out: ${tx} = []", sp)
+          e.ln("  if cbor.is_null(x) { return (true, out) }", sp)
+          e.ln("  let (ok, its) = cbor.items(x, ${quote_str(tx)}, st)", sp)
+          e.ln("  if !ok { return (false, out) }", sp)
+          e.ln("  for it in its {", sp)
+          e.ln("    let (ok2, v) = ${inner}(it, st)", sp)
+          e.ln("    if ok2 { out.push(v) }", sp)
+          e.ln("  }", sp)
+          e.ln("  (true, out)", sp)
+          e.ln("}", sp)
+        }
+        return Some((h, "[]", e))
+      }
+      if path.len() == 1 && args.len() == 2 && n == "Map" {
+        let (inner, _, e2) = c.cbor_reader(args[1], sp, e, done) ?? return None
+        e = e2
+        if !done.contains(h) {
+          done[h] = true
+          e.ln("${sig} {", sp)
+          e.ln("  var out: ${tx} = {}", sp)
+          e.ln("  if cbor.is_null(x) { return (true, out) }", sp)
+          e.ln("  let (ok, ps) = cbor.pairs(x, ${quote_str(tx)}, st)", sp)
+          e.ln("  if !ok { return (false, out) }", sp)
+          e.ln("  for (k, v) in ps {", sp)
+          e.ln("    let (okk, key) = cbor.to_str(k, st)", sp)
+          e.ln("    if !okk { continue }", sp)
+          e.ln("    let (ok2, val) = ${inner}(v, st)", sp)
+          e.ln("    if ok2 { out[key] = val }", sp)
+          e.ln("  }", sp)
+          e.ln("  (true, out)", sp)
+          e.ln("}", sp)
+        }
+        return Some((h, "{}", e))
+      }
+      let q = if path.len() == 2 { "${text(path[0].name)}." } else { "" }
+      return Some(("${q}cbor_rd__${n}", "${q}cbor_zero__${n}()", e))
+    }
+    _ => return None
+  }
+}
+
+/// The function that turns a value of type t into a cbor.Value, `(v: T) ->
+/// cbor.Value` (defined once into em); None for a type derive Cbor does not map.
+fn (var c: Checker) cbor_writer(t: parser.Type, sp: Span, em: Emit, var done: Map[Str, Bool]) -> (Str, Emit)? {
+  let tx = yaml_type_text(t) ?? return None
+  var e = em
+  let h = "cbor_wr__${yaml_mangle(tx)}"
+  let sig = "fn ${h}(v: ${tx}) -> cbor.Value"
+  match t {
+    OptionalType(_, elem) => {
+      let (inner, e2) = c.cbor_writer(elem, sp, e, done) ?? return None
+      e = e2
+      if !done.contains(h) {
+        done[h] = true
+        e.ln("${sig} {", sp)
+        e.ln("  if let Some(x) = v { ${inner}(x) } else { cbor.Value.Null }", sp)
+        e.ln("}", sp)
+      }
+      return Some((h, e))
+    }
+    NamedType(_, path, args) => {
+      let n = text(path[path.len() - 1].name)
+      if path.len() == 1 && args.is_empty() && (is_scalar_name(n) || n == "Bytes") {
+        if !done.contains(h) {
+          done[h] = true
+          let body = match n {
+            "Str" => "cbor.Value.TextString(s: v)"
+            "Int" => "cbor.from_int(v)"
+            "Float" => "cbor.Value.Float(f: v)"
+            "Bytes" => "cbor.Value.ByteString(b: v)"
+            _ => "cbor.Value.Bool(b: v)"
+          }
+          e.ln("${sig} { ${body} }", sp)
+        }
+        return Some((h, e))
+      }
+      if path.len() == 2 && args.is_empty() && n == "Value" && text(path[0].name) == "cbor" {
+        return Some(("cbor.from_value", e))
+      }
+      if path.len() == 1 && args.is_empty() && n is "Time" | "Duration" {
+        return None
+      }
+      if path.len() == 1 && args.len() == 1 && n == "Option" {
+        let (inner, e2) = c.cbor_writer(args[0], sp, e, done) ?? return None
+        e = e2
+        if !done.contains(h) {
+          done[h] = true
+          e.ln("${sig} {", sp)
+          e.ln("  if let Some(x) = v { ${inner}(x) } else { cbor.Value.Null }", sp)
+          e.ln("}", sp)
+        }
+        return Some((h, e))
+      }
+      if path.len() == 1 && args.len() == 1 && n == "List" {
+        let (inner, e2) = c.cbor_writer(args[0], sp, e, done) ?? return None
+        e = e2
+        if !done.contains(h) {
+          done[h] = true
+          e.ln("${sig} {", sp)
+          e.ln("  var out: List[cbor.Value] = []", sp)
+          e.ln("  for x in v { out.push(${inner}(x)) }", sp)
+          e.ln("  cbor.Value.Array(items: out)", sp)
+          e.ln("}", sp)
+        }
+        return Some((h, e))
+      }
+      if path.len() == 1 && args.len() == 2 && n == "Map" {
+        let (inner, e2) = c.cbor_writer(args[1], sp, e, done) ?? return None
+        e = e2
+        if !done.contains(h) {
+          done[h] = true
+          e.ln("${sig} {", sp)
+          e.ln("  var out: List[(cbor.Value, cbor.Value)] = []", sp)
+          e.ln("  for k in cbor.sorted_keys(v.keys()) {", sp)
+          e.ln("    out.push((cbor.Value.TextString(s: k), ${inner}(v.get(k) ?? fault(\"cbor: map key\"))))", sp)
+          e.ln("  }", sp)
+          e.ln("  cbor.Value.Map(pairs: out)", sp)
+          e.ln("}", sp)
+        }
+        return Some((h, e))
+      }
+      let q = if path.len() == 2 { "${text(path[0].name)}." } else { "" }
+      return Some(("${q}cbor_wr__${n}", e))
+    }
+    _ => return None
+  }
+}
+
+/// A field's CBOR struct tag, from its shared `as "name,options"` wire name or
+/// its own `cbor "name,options"`: the key, and the options omitempty, omitzero,
+/// keyasint; a wire name `-` leaves the field out.
+struct CborOpts {
+  key: Str
+  omit: Bool
+  keyasint: Bool
+  skip: Bool
+}
+
+fn cbor_opts(fl: parser.Field) -> CborOpts {
+  var o = CborOpts{key: text(fl.name.name), omit: false, keyasint: false, skip: false}
+  var wire: Str? = None
+  for fw in fl.formats {
+    if fw.format == b"cbor" {
+      wire = Some(text(fw.wire))
+    }
+  }
+  if wire == None {
+    if let Some(w) = fl.wire {
+      wire = Some(text(w))
+    }
+  }
+  if let Some(w) = wire {
+    if w == "-" {
+      o.skip = true
+      return o
+    }
+    let parts = w.split(",")
+    if !parts[0].is_empty() {
+      o.key = parts[0]
+    }
+    for opt in parts[1..] {
+      if opt == "omitempty" || opt == "omitzero" {
+        o.omit = true
+      } else if opt == "keyasint" {
+        o.keyasint = true
+      }
+    }
+  }
+  o
+}
+
+/// The test that a field value is empty, for omitempty ("" when the type has none).
+fn cbor_empty_test(tx: Str, f: Str) -> Str {
+  match tx {
+    "Str" => "v.${f} == \"\""
+    "Int" => "v.${f} == 0"
+    "Float" => "v.${f} == 0.0"
+    "Bool" => "!v.${f}"
+    "Bytes" => "v.${f}.len() == 0"
+    _ => if tx.starts_with("List[") || tx.starts_with("Map[") {
+      "v.${f}.len() == 0"
+    } else if tx.ends_with("?") || tx.starts_with("Option[") {
+      "v.${f} == None"
+    } else {
+      ""
+    }
+  }
+}
+
+/// The reader, writer and entry points of a struct that derives Cbor.
+fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[Str, Bool], file: Int) -> Emit? {
+  var e = em
+  let sp = sd.name.span
+  let n = text(sd.name.name)
+  let pub_ = if sd.is_pub { "pub " } else { "" }
+  var zeros: List[Str] = []
+  var inits: List[Str] = []
+  var decls: List[Str] = []
+  var arms: List[Str] = []
+  var puts: List[Str] = []
+  var ok = true
+  for fl in sd.fields {
+    let f = text(fl.name.name)
+    let co = cbor_opts(fl)
+    let (rd, zero, e2) = c.cbor_reader(fl.typ, fl.name.span, e, done) ?? {
+      c.error_at(file, "XO0425", fl.name.span, "`derive Cbor` maps a Str, Int, Float, Bool, Bytes, a cbor.Value, an Option, a List, a Map[Str, V] of those, or a struct that derives Cbor; field `${f}` is another type (decision 0527)")
+      ok = false
+      continue
+    }
+    e = e2
+    let (wr, e3) = c.cbor_writer(fl.typ, fl.name.span, e, done) ?? return None
+    e = e3
+    zeros.push("${f}: ${zero}")
+    inits.push("${f}: f_${f}")
+    if co.skip {
+      decls.push("  let f_${f} = base.${f}")
+      continue
+    }
+    let tx = yaml_type_text(fl.typ) ?? "Str"
+    decls.push("  var f_${f}: ${tx} = base.${f}")
+    var keytest = ""
+    var keyval = ""
+    if co.keyasint {
+      let ki = Int.parse(co.key) ?? {
+        c.error_at(file, "XO0425", fl.name.span, "`keyasint` needs an integer wire name; `${co.key}` is not one (decision 0527)")
+        ok = false
+        continue
+      }
+      keytest = "ki == Some(${ki})"
+      keyval = "cbor.from_int(${ki})"
+    } else {
+      keytest = "kl == ${quote_str(co.key.to_lower())}"
+      keyval = "cbor.Value.TextString(s: ${quote_str(co.key)})"
+    }
+    arms.push("    ${if arms.is_empty() { "" } else { "} else " }}if ${keytest} {")
+    arms.push("      let (ok2, x) = ${rd}(v, st)")
+    arms.push("      if ok2 { f_${f} = x }")
+    var line = "  ps.push((${keyval}, ${wr}(v.${f})))"
+    if co.omit {
+      let zt = cbor_empty_test(tx, f)
+      if zt.is_empty() {
+        c.error_at(file, "XO0425", fl.name.span, "`omitempty` on field `${f}` needs a Str, Int, Float, Bool, Bytes, Option, List or Map field (decision 0527)")
+        ok = false
+        continue
+      }
+      line = "  if !(${zt}) { ps.push((${keyval}, ${wr}(v.${f}))) }"
+    }
+    puts.push(line)
+  }
+  if !ok {
+    return None
+  }
+  e.ln("${pub_}fn cbor_zero__${n}() -> ${n} { ${n}{${zeros.join(", ")}} }", sp)
+  e.ln("${pub_}fn cbor_rd__${n}(x: cbor.Value, var st: cbor.Unm) -> (Bool, ${n}) {", sp)
+  e.ln("  let base = cbor_zero__${n}()", sp)
+  e.ln("  if cbor.is_null(x) { return (false, base) }", sp)
+  e.ln("  let (ok, ps) = cbor.pairs(x, ${quote_str(n)}, st)", sp)
+  e.ln("  if !ok { return (false, base) }", sp)
+  for l in decls {
+    e.ln(l, sp)
+  }
+  e.ln("  for (k, v) in ps {", sp)
+  e.ln("    let ki = cbor.key_int(k)", sp)
+  e.ln("    let kl = (cbor.key_text(k) ?? \"\").to_lower()", sp)
+  for l in arms {
+    e.ln(l, sp)
+  }
+  e.ln("    ${if arms.is_empty() { "{" } else { "} else {" }}", sp)
+  e.ln("      cbor.unknown_key(st, ${quote_str(n)}, k)", sp)
+  e.ln("    }", sp)
+  e.ln("  }", sp)
+  e.ln("  (true, ${n}{${inits.join(", ")}})", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn cbor_wr__${n}(v: ${n}) -> cbor.Value {", sp)
+  e.ln("  var ps: List[(cbor.Value, cbor.Value)] = []", sp)
+  for l in puts {
+    e.ln(l, sp)
+  }
+  e.ln("  cbor.Value.Map(pairs: ps)", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn cbor_marshal__${n}(v: ${n}, deterministic: Bool = true) -> Bytes ! cbor.CborErr {", sp)
+  e.ln("  cbor.encode(cbor_wr__${n}(v), deterministic)", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn cbor_unmarshal__${n}(data: Bytes, strict: Bool = false, max_depth: Int = 128) -> ${n} ! cbor.CborErr {", sp)
+  e.ln("  let x = cbor.decode(data, max_depth, false)?", sp)
+  e.ln("  var st = cbor.unm_new(strict)", sp)
+  e.ln("  let (_, v) = cbor_rd__${n}(x, st)", sp)
+  e.ln("  if let Some(err) = cbor.dec_error(st) { return Err(err) }", sp)
+  e.ln("  Ok(v)", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn cbor_unmarshal_prefix__${n}(data: Bytes, strict: Bool = false, max_depth: Int = 128) -> (${n}, Int) ! cbor.CborErr {", sp)
+  e.ln("  let (x, used) = cbor.decode_prefix(data, max_depth, false)?", sp)
+  e.ln("  var st = cbor.unm_new(strict)", sp)
+  e.ln("  let (_, v) = cbor_rd__${n}(x, st)", sp)
+  e.ln("  if let Some(err) = cbor.dec_error(st) { return Err(err) }", sp)
+  e.ln("  Ok((v, used))", sp)
+  e.ln("}", sp)
+  Some(e)
+}
+
 /// The methods of a valued enum (decision 0269), as source: one constant
 /// a variant (the declared expression, or the previous plus one, or the
 /// variant's name for a `Str`), `value()`, `E.from(v)`, and `E.all()`.
@@ -1284,6 +1650,32 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
       }
     }
   }
+  var any_cbor = false
+  var cdone: Map[Str, Bool] = {}
+  for d in f.decls {
+    let sd = match d {
+      StructDecl(s) => s
+      _ => continue
+    }
+    var derived = false
+    for id in sd.derive {
+      if id.name == b"Cbor" {
+        derived = true
+      }
+    }
+    if !derived {
+      continue
+    }
+    if !sd.type_params.is_empty() {
+      c.error_at(file, "XO0425", sd.name.span, "`derive Cbor` needs a struct without type parameters; `${text(sd.name.name)}` has some")
+      continue
+    }
+    if let Some(e2) = c.cbor_codec(sd, em, cdone, file) {
+      em = e2
+      any = true
+      any_cbor = true
+    }
+  }
   for d in f.decls {
     if let EnumDecl(ed) = d {
       if ed.value_type != None {
@@ -1306,6 +1698,10 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
   if any_yaml {
     head.push("use std/yaml")
     seen["std/yaml"] = true
+  }
+  if any_cbor {
+    head.push("use std/cbor")
+    seen["std/cbor"] = true
   }
   for u in f.imports {
     let p = text(u.path)
@@ -1347,8 +1743,9 @@ fn (var c: Checker) rewrite_xml_calls(from: Int) {
     // (the call's file is its own: report by the span in the current file
     // only for a call in the program's main file)
     let fname = text(c.objs[fo].name)
-    let yaml = c.mods[c.objs[fo].module].path == "std/yaml"
-    let dname = if yaml { "Yaml" } else { "Xml" }
+    let mpath = c.mods[c.objs[fo].module].path
+    let cbor = mpath == "std/cbor"
+    let dname = if cbor { "Cbor" } else if mpath == "std/yaml" { "Yaml" } else { "Xml" }
     if c.tys[t].kind == TyKind.Named && !c.derives(c.tys[t].obj, dname) {
       // the constraint check reported it (XO0404)
       continue
@@ -1359,7 +1756,7 @@ fn (var c: Checker) rewrite_xml_calls(from: Int) {
       continue
     }
     let o = c.tys[t].obj
-    let want = "${dname.to_lower()}_${if fname == "decode" { "decode" } else if fname == "decode_all" { "decode_all" } else if fname == "encode_all" { "encode_all" } else { "encode" }}__${text(c.objs[o].name)}"
+    let want = if cbor { "cbor_${fname}__${text(c.objs[o].name)}" } else { "${dname.to_lower()}_${if fname == "decode" { "decode" } else if fname == "decode_all" { "decode_all" } else if fname == "encode_all" { "encode_all" } else { "encode" }}__${text(c.objs[o].name)}" }
     let g = c.mods[c.objs[o].module].members.get(want.bytes()) ?? -1
     if g < 0 {
       c.error("XO0427", sp, "DEBUG no generated function ${want}")

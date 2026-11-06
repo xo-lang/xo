@@ -14,6 +14,8 @@ func (e Cbor_CborErr) M_display(*Task) string {
 		return "cbor: " + e.P.(Cbor_CborErr_Syntax).F_msg
 	case 3:
 		return "cbor: " + e.P.(Cbor_CborErr_Invalid).F_msg
+	case 4:
+		return "cbor: " + e.P.(Cbor_CborErr_Limit).F_msg
 	}
-	return "cbor: " + e.P.(Cbor_CborErr_Limit).F_msg
+	return "cbor: " + e.P.(Cbor_CborErr_Type).F_msg
 }

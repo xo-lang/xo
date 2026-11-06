@@ -47,6 +47,7 @@ fn derivable_table() -> List[Derivable] {
     Derivable{name: "SqlRow", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "sql"},
     Derivable{name: "Xml", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "xml"},
     Derivable{name: "Yaml", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "yaml"},
+    Derivable{name: "Cbor", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "cbor"},
   ]
 }
 

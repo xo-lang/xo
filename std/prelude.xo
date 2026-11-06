@@ -125,6 +125,8 @@ interface SqlRow {}
 interface Xml {}
 /// Read from YAML by the types of its fields (`derive Yaml`, decision 0512).
 interface Yaml {}
+/// Marshaled to and from CBOR by the types of its fields (`derive Cbor`, decision 0527).
+interface Cbor {}
 
 // ---------------------------------------------------------------------------
 // Predeclared functions (core 1.4, 8, 11.4)

@@ -19,6 +19,7 @@ fn cborerr_display(e: cbor.CborErr) -> Str {
     cbor.CborErr.Syntax(m) => "cbor: " + m
     cbor.CborErr.Invalid(m) => "cbor: " + m
     cbor.CborErr.Limit(m) => "cbor: " + m
+    cbor.CborErr.Type(m) => "cbor: " + m
   }
 }
 
@@ -844,3 +845,155 @@ fn from_json(j: json.Value) -> cbor.Value {
     json.Value.Trusted(_, s) => cbor.Value.TextString(s: s)
   }
 }
+
+// ---------------------------------------------------------------------------
+// derive Cbor (decision 0527): the helpers of the generated code
+
+fn unm_new(strict: Bool) -> cbor.Unm { cbor.Unm{strict: strict, err: None} }
+
+fn dec_error(st: cbor.Unm) -> cbor.CborErr? { st.err }
+
+fn kind_name(v: cbor.Value) -> Str {
+  match v {
+    cbor.Value.Uint(_) | cbor.Value.Nint(_) => "integer"
+    cbor.Value.ByteString(_) => "byte string"
+    cbor.Value.TextString(_) => "UTF-8 text string"
+    cbor.Value.Array(_) => "array"
+    cbor.Value.Map(_) => "map"
+    cbor.Value.Tag(..) => "tag"
+    cbor.Value.Simple(_) => "simple value"
+    cbor.Value.Bool(_) => "primitives"
+    cbor.Value.Null | cbor.Value.Undefined => "primitives"
+    cbor.Value.Float(_) => "float"
+  }
+}
+
+fn mismatch(var st: cbor.Unm, want: Str, v: cbor.Value) {
+  if st.err == None {
+    st.err = Some(cbor.CborErr.Type(msg: "cannot unmarshal ${kind_name(v)} into Go value of type ${want}"))
+  }
+}
+
+fn is_null(v: cbor.Value) -> Bool {
+  match v {
+    cbor.Value.Null | cbor.Value.Undefined => true
+    _ => false
+  }
+}
+
+/// A tag is transparent on decode (decision 0527).
+fn untag(v: cbor.Value) -> cbor.Value {
+  match v {
+    cbor.Value.Tag(_, inner) => untag(inner)
+    _ => v
+  }
+}
+
+fn to_str(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Str) {
+  let v = untag(v0)
+  match v {
+    cbor.Value.TextString(s) => (true, s)
+    _ => {
+      mismatch(st, "string", v)
+      (false, "")
+    }
+  }
+}
+
+fn to_int(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Int) {
+  let v = untag(v0)
+  if let Some(n) = value_to_int(v) {
+    return (true, n)
+  }
+  mismatch(st, "int", v)
+  (false, 0)
+}
+
+fn to_float(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Float) {
+  let v = untag(v0)
+  match v {
+    cbor.Value.Float(f) => (true, f)
+    _ => {
+      if let Some(n) = value_to_int(v) {
+        return (true, Float(n))
+      }
+      mismatch(st, "float64", v)
+      (false, 0.0)
+    }
+  }
+}
+
+fn to_bool(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bool) {
+  let v = untag(v0)
+  match v {
+    cbor.Value.Bool(b) => (true, b)
+    _ => {
+      mismatch(st, "bool", v)
+      (false, false)
+    }
+  }
+}
+
+fn to_bytes(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bytes) {
+  let v = untag(v0)
+  match v {
+    cbor.Value.ByteString(b) => (true, b)
+    _ => {
+      mismatch(st, "[]uint8", v)
+      (false, b"")
+    }
+  }
+}
+
+fn items(v0: cbor.Value, want: Str, var st: cbor.Unm) -> (Bool, List[cbor.Value]) {
+  let v = untag(v0)
+  match v {
+    cbor.Value.Array(xs) => (true, xs)
+    _ => {
+      mismatch(st, want, v)
+      (false, [])
+    }
+  }
+}
+
+fn pairs(v0: cbor.Value, want: Str, var st: cbor.Unm) -> (Bool, List[(cbor.Value, cbor.Value)]) {
+  let v = untag(v0)
+  match v {
+    cbor.Value.Map(ps) => (true, ps)
+    _ => {
+      mismatch(st, want, v)
+      (false, [])
+    }
+  }
+}
+
+fn key_text(k: cbor.Value) -> Str? {
+  match k {
+    cbor.Value.TextString(s) => Some(s)
+    _ => None
+  }
+}
+
+fn key_int(k: cbor.Value) -> Int? { value_to_int(k) }
+
+fn unknown_key(var st: cbor.Unm, want: Str, k: cbor.Value) {
+  if st.strict && st.err == None {
+    st.err = Some(cbor.CborErr.Type(msg: "unknown field in ${want}: ${value_diagnostic(k)}"))
+  }
+}
+
+fn sorted_keys(keys: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for k in keys {
+    var at = out.len()
+    while at > 0 && k < out[at - 1] {
+      at -= 1
+    }
+    out.insert(at, k)
+  }
+  out
+}
+
+fn to_value(v: cbor.Value, var st: cbor.Unm) -> (Bool, cbor.Value) { (true, v) }
+
+fn from_value(v: cbor.Value) -> cbor.Value { v }

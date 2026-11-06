@@ -40,6 +40,9 @@ enum CborErr {
   Syntax(msg: Str)
   Invalid(msg: Str)
   Limit(msg: Str)
+  /// a value whose type does not fit the field it is decoded into
+  /// (`unmarshal`, decision 0527)
+  Type(msg: Str)
 }
 
 fn (e: CborErr) display() -> Str
@@ -98,3 +101,42 @@ fn (v: Value) to_json() -> json.Value ! CborErr
 /// or Nint, Num as Float, Str as TextString, List as Array, Object as Map
 /// with text keys. A `Trusted` value is its text.
 fn from_json(j: json.Value) -> Value
+
+// ---- derive Cbor (decision 0527) ----
+
+/// The state of one `unmarshal`: the first type mismatch is kept and the
+/// decode goes on (fxamacker's UnmarshalTypeError); `strict` makes a map
+/// key no field names an error.
+struct Unm {
+  strict: Bool
+  err: CborErr?
+}
+
+/// Decoded into a struct that derives Cbor, by the types of its fields.
+/// The call is compiled as a call of the function `derive Cbor` generates
+/// for T. `deterministic` sorts map keys (section 4.2.1).
+fn marshal[T: Cbor](v: T, deterministic: Bool = true) -> Bytes ! CborErr
+
+/// `data` (exactly one item) decoded into T.
+fn unmarshal[T: Cbor](data: Bytes, strict: Bool = false, max_depth: Int = 128) -> T ! CborErr
+
+/// The first item of `data` decoded into T, and the bytes it used.
+fn unmarshal_prefix[T: Cbor](data: Bytes, strict: Bool = false, max_depth: Int = 128) -> (T, Int) ! CborErr
+
+// The helpers of the generated code.
+fn unm_new(strict: Bool) -> Unm
+fn dec_error(st: Unm) -> CborErr?
+fn is_null(v: Value) -> Bool
+fn to_str(v: Value, var st: Unm) -> (Bool, Str)
+fn to_int(v: Value, var st: Unm) -> (Bool, Int)
+fn to_float(v: Value, var st: Unm) -> (Bool, Float)
+fn to_bool(v: Value, var st: Unm) -> (Bool, Bool)
+fn to_bytes(v: Value, var st: Unm) -> (Bool, Bytes)
+fn items(v: Value, want: Str, var st: Unm) -> (Bool, List[Value])
+fn pairs(v: Value, want: Str, var st: Unm) -> (Bool, List[(Value, Value)])
+fn key_text(k: Value) -> Str?
+fn key_int(k: Value) -> Int?
+fn unknown_key(var st: Unm, want: Str, k: Value)
+fn sorted_keys(keys: List[Str]) -> List[Str]
+fn to_value(v: Value, var st: Unm) -> (Bool, Value)
+fn from_value(v: Value) -> Value

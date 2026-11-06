@@ -1341,7 +1341,7 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
       // per-format overrides, `xml "ID,attr"` (decision 0315): a contextual
       // word followed by a string
       var formats: List[FormatWire] = []
-      while (p.at_ident(b"json") || p.at_ident(b"xml") || p.at_ident(b"yaml") || p.at_ident(b"sql")) && (p.peek(1).kind == Kind.String || p.peek(1).kind == Kind.RawString) {
+      while (p.at_ident(b"json") || p.at_ident(b"xml") || p.at_ident(b"yaml") || p.at_ident(b"cbor") || p.at_ident(b"sql")) && (p.peek(1).kind == Kind.String || p.peek(1).kind == Kind.RawString) {
         let fmt = p.tok.text
         p.next()
         let (w, wsp, ok) = p.plain_string()
