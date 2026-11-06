@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -140,6 +141,13 @@ func protoMutate(r *rand.Rand, in []byte) []byte {
 	return b
 }
 
+// protoFuzzSeed is XO_PROTOFUZZ_SEED (default 0, the committed corpus): added to both random seeds so a fresh
+// run (internal/stdtest TestProtobufFuzz) makes new cases.
+func protoFuzzSeed() int64 {
+	n, _ := strconv.ParseInt(os.Getenv("XO_PROTOFUZZ_SEED"), 10, 64)
+	return n
+}
+
 func protobufCorpus() string {
 	var cases []protoCase
 	add := func(op string, in []byte) { cases = append(cases, protoCase{op, in}) }
@@ -170,7 +178,7 @@ func protobufCorpus() string {
 	ok = append(ok, bytes.Repeat([]byte{0x0c}, 10000)...)
 	add("field", ok)
 	// typed cases: derive Proto's marshal (msg) and unmarshal (unmsg) against a dynamicpb message
-	tr := rand.New(rand.NewSource(5301))
+	tr := rand.New(rand.NewSource(5301 + protoFuzzSeed()))
 	for i := 0; i < 400; i++ {
 		id := int64(0)
 		name := []byte(nil)
@@ -518,7 +526,7 @@ func protobufCorpus() string {
 	for _, v := range []int64{0, 1, -1, 2, -2, 63, -64, 1<<31 - 1, -1 << 31, 1<<63 - 1, -1 << 63} {
 		cases = append(cases, protoCase{"zigzag " + fmt.Sprint(v), nil})
 	}
-	r := rand.New(rand.NewSource(530))
+	r := rand.New(rand.NewSource(530 + protoFuzzSeed()))
 	for i := 0; i < 1200; i++ {
 		f := protoField(r, 0)
 		add("field", f)

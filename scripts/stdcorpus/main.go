@@ -128,6 +128,10 @@ func main() {
 			os.Exit(2)
 		}
 		path := filepath.Join("internal", "stdtest", "testdata", "corpus", m, m+"_test.xo")
+		if out := os.Getenv("XO_STDCORPUS_OUT"); out != "" {
+			// a scratch copy (fresh fuzz seeds), never the committed corpus
+			path = filepath.Join(out, m+"_test.xo")
+		}
 		text := []byte(gen())
 		if *check {
 			old, err := os.ReadFile(path)

@@ -29,3 +29,14 @@ The generated writers threaded an immutable Bytes through `protobuf.append_*`, e
 (quadratic over a message). They now write into one BytesBuilder with `protobuf.put_*` (new, builder forms of the
 append functions) and freeze once. `append_*` is unchanged.
 Row after (host 2, n=5, Xo at 5e770dcbb): marshal 18.1 ms against Go 19.22 ms is 1.06x (1.026-1.172), was 4.41x; unmarshal 0.46x of Go.
+
+## 2026-11-06 test: fresh seed fuzz of the wire decoder and derive Proto
+
+- Kind: test
+- Commit: this commit
+- Found by: decision 0461 (a parser of untrusted input is Early until fuzzed)
+- Test: internal/stdtest TestProtobufFuzz (XO_PROTOFUZZ_SEED, XO_PROTOFUZZ_BACKENDS), testdata/corpus/protobuf (seed 0)
+
+`TestProtobufFuzz` makes the corpus generator's cases (random wire fields with wide varints, truncations and changed
+copies; typed messages against dynamicpb including unknown field preservation) with a fresh seed and runs them on
+arm64 and LLVM. Result: seed 2 on arm64: 8,942 generated cases pass; the committed seed 0 corpus is unchanged.
