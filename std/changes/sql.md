@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-11-06: perf: the memory driver builds a statement's row environment once
+
+- Kind: perf
+- Commit: this push
+- Found by: the sat64 profile of stability/notes on the sql store (2026-11-06: dropping the `Table?` of the per row EvalEnv was 4.2% of CPU)
+- Go reference: none (database/sql has no engine)
+- Test: std/native/sql_test.xo (10 tests), the sql goldens (native_sql, native_sql_index, sql_conv, sql_driver, sql_json_tagged, sql_tx_driver_err, sql_values, sql_wire_names)
+- Timing: host 1 (linux/arm64), 2026-11-06, stability/notes harness load sat64, 3 rounds, against its parent (the CREATE INDEX change): xo 36.2 cpu us/req (36.2 to 36.7) against 38.3 (37.4 to 39.0), better; 54.1k req/s (53.9k to 55.1k) against 50.3k (50.1k to 52.1k)
+- Shipped in: not yet released
+
+A SELECT's WHERE and ORDER BY, the select list, and an UPDATE's or DELETE's WHERE evaluate every row in one environment that holds the table, instead of wrapping the table anew for each row, which retained and released it per row. Results and errors are unchanged.
+
 ## 2026-11-06: feature: the memory driver takes CREATE INDEX and DROP INDEX
 
 - Kind: feature, perf

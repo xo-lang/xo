@@ -2713,13 +2713,16 @@ fn update_plan(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue],
   var changed: List[List[sql.SqlValue]] = []
   var repl: Map[Int, List[sql.SqlValue]] = {}
   let cand = candidates(old, w, args)
+  // one environment for every row: wrapping the table per row cost a
+  // retain and a release of it each
+  var env = EvalEnv{t: Some(old), row: [], args: args}
   for k in 0..slots_len(old, cand) {
     let ri = slot_at(cand, k)
     let row = old.rows[ri]
     if row.is_empty() {
       continue
     }
-    let env = EvalEnv{t: Some(old), row: row, args: args}
+    env.row = row
     if !env.where_ok(w)? {
       continue
     }
@@ -2769,13 +2772,14 @@ fn delete_plan(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue],
   var slots: List[Int] = []
   var gone: List[List[sql.SqlValue]] = []
   let cand = candidates(old, w, args)
+  var env = EvalEnv{t: Some(old), row: [], args: args}
   for k in 0..slots_len(old, cand) {
     let ri = slot_at(cand, k)
     let row = old.rows[ri]
     if row.is_empty() {
       continue
     }
-    let env = EvalEnv{t: Some(old), row: row, args: args}
+    env.row = row
     if env.where_ok(w)? {
       gone.push(row)
       slots.push(ri)
@@ -2885,8 +2889,9 @@ fn sel_cols(t: Table, items: List[SelItem]) -> (List[Str], Int) {
 fn project(t: Table, items: List[SelItem], rows: List[List[sql.SqlValue]], args: List[sql.SqlValue]) -> MemRows ! sql.SqlErr {
   let (cols, _) = sel_cols(t, items)
   var out: List[List[sql.SqlValue]] = []
+  var env = EvalEnv{t: Some(t), row: [], args: args}
   for row in rows {
-    let env = EvalEnv{t: Some(t), row: row, args: args}
+    env.row = row
     var r: List[sql.SqlValue] = []
     for it in items {
       if it.star {
@@ -3018,12 +3023,16 @@ fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) 
   // filter
   var rows: List[List[sql.SqlValue]] = []
   let cand = candidates(t, w, args)
+  // one environment for every row: wrapping the table per row cost a
+  // retain and a release of it each
+  var env = EvalEnv{t: Some(t), row: [], args: args}
   for k in 0..slots_len(t, cand) {
     let row = t.rows[slot_at(cand, k)]
     if row.is_empty() {
       continue
     }
-    if (EvalEnv{t: Some(t), row: row, args: args}).where_ok(w)? {
+    env.row = row
+    if env.where_ok(w)? {
       rows.push(row)
     }
   }
@@ -3031,7 +3040,7 @@ fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) 
   if !orders.is_empty() {
     var keys: List[List[sql.SqlValue]] = []
     for row in rows {
-      let env = EvalEnv{t: Some(t), row: row, args: args}
+      env.row = row
       var k: List[sql.SqlValue] = []
       for o in orders {
         k.push(env.eval(o.e)?)
