@@ -46,6 +46,7 @@ func httpCorpus() string {
 	o.WriteString(httpHeaderTables())
 	o.WriteString(literalHeaderTables())
 	o.WriteString(httpCookieTables())
+	o.WriteString(httpStatusTextTable())
 	return o.String()
 }
 
@@ -823,3 +824,15 @@ test "parse_set_cookie is Go's ParseSetCookie and the cookie displays as Go's St
   expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
 }
 `
+
+// httpStatusTextTable is http.status_text against net/http's StatusText: every code from -1 to 700 (the named
+// ones and the rest, which are empty).
+func httpStatusTextTable() string {
+	var o strings.Builder
+	o.WriteString("\n/// (code, Go's http.StatusText of it)\nconst STATUS_TEXT: List[(Int, Str)] = [\n")
+	for c := -1; c <= 700; c++ {
+		fmt.Fprintf(&o, "  (%d, %s),\n", c, xq(http.StatusText(c)))
+	}
+	o.WriteString("]\n\ntest \"http.status_text is Go's http.StatusText\" {\n  var bad: List[(Int, Str, Str)] = []\n  for (code, want) in STATUS_TEXT {\n    let got = http.status_text(code)\n    if got != want {\n      bad.push((code, got, want))\n    }\n  }\n  expect(bad) == []\n}\n")
+	return o.String()
+}

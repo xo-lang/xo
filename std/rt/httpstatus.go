@@ -1,5 +1,10 @@
 package rt
 
+import "net/http"
+
+// Http_status_text is `http.status_text(code)`: net/http's StatusText.
+func Http_status_text(_ *Task, code int64) string { return http.StatusText(int(code)) }
+
 // The status code constants of std/http (decision 0269): Http_OK and the
 // rest, as values of the generated newtype Http_Status.
 var (

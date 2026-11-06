@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-06: feature: http.status_text, net/http's StatusText
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19: azcore carries a copy of net/http's StatusText table because std/http has no public one
+- Go reference: net/http StatusText (status.go go1.26.1)
+- Test: testdata/corpus/http "http.status_text is Go's http.StatusText" (every code from -1 to 700 against Go's table; native, Go backend)
+- Shipped in: not yet released
+
+`http.status_text(code)` is the reason phrase of a status code (`Not Found` for 404, `I'm a teapot` for 418), empty for a code Go does not name. It is the table the native server writes in the status line.
+
 ## 2026-11-06: perf: a native server on Linux skips the empty read after one that drained the socket
 
 - Kind: perf

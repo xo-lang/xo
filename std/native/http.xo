@@ -1402,6 +1402,8 @@ fn request_raw_query(r: Request) -> Str { r.raw_query }
 fn request_escaped_path(r: Request) -> Str { http1.escaped_path(r.path, r.raw_path) }
 
 /// Go's Redirect (server.go): the Location, resolved for a relative url.
+fn status_text(code: Int) -> Str { http1w.status_text(code) }
+
 fn redirect(req: http.Request, url0: Str, status: Int) -> http.Response {
   var u = url0
   // a url with no scheme and no host is relative to the request's path

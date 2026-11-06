@@ -301,6 +301,9 @@ fn empty(status: Int) -> Response
 /// encoded; a GET or HEAD gets `text/html; charset=utf-8` and a GET the
 /// body `<a href="URL">Status Text</a>.` on a line.
 fn redirect(req: Request, url: Str, status: Int) -> Response
+
+/// The text of an HTTP status code, as Go's http.StatusText (`Not Found` for 404); empty for a code Go does not name.
+fn status_text(code: Int) -> Str
 /// Go's Error: `text/plain; charset=utf-8`, `X-Content-Type-Options:
 /// nosniff`, the body msg and a newline.
 fn error_page(status: Int, msg: Str) -> Response

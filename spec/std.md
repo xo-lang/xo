@@ -1663,6 +1663,7 @@ struct TlsState {                             // Go's tls.ConnectionState
 fn (r: Request) raw_query() -> Str            // Go's URL.RawQuery
 fn (r: Request) escaped_path() -> Str         // Go's URL.EscapedPath
 pub fn redirect(req: Request, url: Str, status: Int) -> Response   // Go's Redirect: Location resolved against the path, an HTML body on GET
+pub fn status_text(code: Int) -> Str   // Go's http.StatusText: `Not Found` for 404; empty for a code Go does not name
 pub fn error_page(status: Int, msg: Str) -> Response                // Go's Error: text/plain, nosniff, msg and a newline
 pub fn error_html(status: Int, title: Str, detail: Str) -> Response   // text/html (nosniff): the title in <title> and <h1>, the detail in <p>, both escaped
 pub fn not_found() -> Response                                      // Go's NotFound   // every field of name, in order (decision 0288); found the way header is
