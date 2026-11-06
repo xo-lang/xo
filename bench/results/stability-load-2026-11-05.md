@@ -108,5 +108,10 @@ both fixes; Xo's store is a map behind a lock, as the twin's):
 mix's work. The 1000/s latency rows overlap with wide ranges (one noisy round each side) and
 are left out. With the twin fixed the 4000/s median is no loss: with the same store, Xo's p50
 is 0.682 of Go's (the loss above was the twin's lock plus std/sql's per statement cost, which
-the sql store still pays: a separate item). The one loss left is peak RSS at saturation,
-1.2 times Go's with 64 connections at once (the per connection memory item).
+the sql store still pays: a separate item). Peak RSS at saturation
+(1.2 times Go's) does not compare: the mix's creates outlive the run (deletes reach only
+the 1,000 ids the client keeps, notes live 60 to 180 s), so the store grows with the
+requests served, and Xo served 2.3 times as many. A sweep of 8, 32, 64 and 128 workers
+(host 2, 20 s each) put Xo at 59.8 to 71.8 MB at every width at about 90k req/s: memory
+follows stored notes, about 100 bytes per note on both targets, not connections. At a
+fixed offered rate, where both store the same, Xo's peak RSS is 0.40 of Go's (4000/s).
