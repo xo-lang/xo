@@ -342,3 +342,13 @@ test "every token's text is its source span on lexer like input" for words: List
     expect(c.span.end.offset <= src.len())
   }
 }
+
+test "a closure spanning lines inside a one line string's interpolation" {
+  // one error at the `${`, and the string goes on after the closing `}`
+  // (aws-19, 2026-11-06: five errors, the last at the closing brace)
+  let src = "fn show(xs: List[Int]) -> Str {\n  \"[\${xs.map(fn(v: Int) -> Str {\n    match v {\n      0 => \"zero\"\n      other => \"\${other}\"\n    }\n  }).join(\",\")}]\"\n}\n"
+  expect(codes(src)) == ["XO0156"]
+  expect(messages(src)[0].starts_with("this `\${...}` spans lines")) == true
+  // a `${` left open by a typo on its line is still `not closed`
+  expect(messages("let s = \"\${x\"\nlet t = 1\n")) == ["`\${` is not closed by `}`"]
+}

@@ -1,0 +1,12 @@
+// A variant field written as a bare type, Rust's or Swift's positional
+// form, says the field needs a name (core 2.3), not that `Str` must be
+// snake_case (aws-19, 2026-11-06).
+enum Op {
+  Create(Str) // ERROR XO0160 "a variant field needs a name, `name: Type`: `\(value: Str\)`"
+  Delete(id: Int)
+}
+
+fn main(os: Os) {
+  let _op = Op.Delete(id: 1)
+  os.stdio.println("ok")
+}

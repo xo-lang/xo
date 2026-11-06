@@ -1477,6 +1477,14 @@ fn (var p: Parser) parse_enum(doc: Doc?, is_pub: Bool, start: Pos) -> EnumDecl {
           if p.at_ident(b"from") && p.peek(1).kind != Kind.Colon {
             p.next()
             from = true
+          } else if p.tok.kind == Kind.Ident && p.peek(1).kind != Kind.Colon {
+            // `Create(Str)`: a type where the field's name goes (aws-19,
+            // 2026-11-06: it read "field name `Str` must be snake_case")
+            let tsp = p.tok.span
+            let more = if p.peek(1).kind is Kind.RParen | Kind.Comma { "" } else { "..." }
+            let d = p.fail(UNEXPECTED_TOKEN, tsp, "a variant field needs a name, `name: Type`: `(value: ${(p.tok.text.to_str() ?? "")}${more})`; Xo has no positional variant fields, though a one field variant is constructed positionally, `E.Create(x)` (core 2.3)")
+            p.add_fix(d, "name the field `value`", [replace_range(tsp.start, tsp.start, "value: ")])
+            fname = Some(Ident{span: tsp, name: b"value"})
           } else {
             fname = Some(p.expect_ident("a field name or `from`"))
             p.expect(Kind.Colon, "`:` after the variant field name")

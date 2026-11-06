@@ -997,6 +997,21 @@ fn (var l: Lexer) string_lit(start: Pos) {
       l.advance_n(2)
       let expr_start = l.pos()
       let end = l.scan_interp(l.off, triple)
+      let over = if end < 0 && !triple && l.opens_block(l.off) { l.scan_interp(l.off, true) } else { -1 }
+      if over >= 0 {
+        // a `${...}` of a one line string that closes on a later line (a
+        // closure's body): one error at the `${`, and the string goes on
+        // after its `}`, so the lines inside are not read as code (aws-19,
+        // 2026-11-06: five errors, the last at the closing brace)
+        while l.off < over {
+          l.advance()
+        }
+        l.advance() // }
+        l.error(UNTERMINATED_INTERP, l.span(open), b"this `\${...}` spans lines, but a `\"...\"` string ends on its line, and so does an interpolation in it: bind the value with `let` before the string and interpolate the name (core 1.6)")
+        cur_start = l.pos()
+        seg = l.off
+        continue
+      }
       if end < 0 {
         // Unterminated: consume to end of line or string.
         while l.off < l.end && l.cur() != '\n' && l.cur() != '"' {
@@ -1081,6 +1096,23 @@ fn (l: Lexer) find_closing(from: Int, hashes: Int) -> Int {
     i += 1
   }
   -1
+}
+
+/// Whether the line from off opens more `{` than it closes: an
+/// interpolation that goes on to a later line inside a block (a closure),
+/// not one left unclosed by a typo.
+fn (l: Lexer) opens_block(off: Int) -> Bool {
+  var depth = 0
+  var i = off
+  while i < l.end && l.src[i] != '\n' {
+    if l.src[i] == '{' {
+      depth += 1
+    } else if l.src[i] == '}' {
+      depth -= 1
+    }
+    i += 1
+  }
+  depth > 0
 }
 
 /// Finds the `}` that closes an interpolation whose expression starts at
