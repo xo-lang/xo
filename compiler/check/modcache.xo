@@ -75,6 +75,49 @@ pub fn (c: Checker) iface_closures() -> List[Str] {
   out
 }
 
+/// Whether a file of module m is in the overlay (an editor's open text,
+/// decision 0526): such a module is checked in full and its entry is not
+/// stored, so the cache never holds an unsaved state.
+fn (c: Checker) mod_overlaid(m: Int) -> Bool {
+  if c.overlay.is_empty() {
+    return false
+  }
+  c.mods[m].files.any(fn(f) { c.overlay.contains(c.abs(c.files[f].path)) })
+}
+
+/// Stores the module check cache entries of the modules checked in full
+/// without an error (mod_cache_entries) under mod_cache_dir, each written
+/// to a temporary file named with suffix and renamed into place (`xo
+/// lsp`'s worker, decision 0526; `xo check` stores its own).
+pub fn (c: Checker) store_mod_cache(suffix: Str) uses fs {
+  var scans: Map[Int, (Bool, Bool)] = {}
+  for m in c.order {
+    scans[m] = (false, false)
+  }
+  for (k, e) in c.mod_cache_entries(scans, {}, {}) {
+    let dir = "${c.mod_cache_dir}/chk/${k[0..2]}"
+    let path = "${dir}/${k}"
+    if c.fs.exists(path).ok() ?? false {
+      continue
+    }
+    match c.fs.create_dir_all(dir) {
+      Ok(_) => {}
+      // xo:allow XO0903 a cache it cannot write is only slower
+      Err(_) => return
+    }
+    let tmp = "${path}.tmp-${suffix}"
+    match c.fs.write(tmp, e) {
+      Ok(_) => {
+        match c.fs.rename(tmp, path) {
+          Ok(_) => {}
+          Err(_) => c.fs.remove(tmp).ignore_err("another process stored it")
+        }
+      }
+      Err(_) => c.fs.remove(tmp).ignore_err("a failed store")
+    }
+  }
+}
+
 /// Whether module m's check may come from the cache: a program module
 /// (not std, not native).
 fn (c: Checker) mod_cacheable(m: Int) -> Bool {
@@ -124,7 +167,9 @@ fn (var c: Checker) mod_cache_load() uses fs.read {
       Ok(d) => {
         match decode_mod_entry(d) {
           Some(e) => {
-            if !c.mod_skip_auto || (e.fe_complete && !c.mod_noskip.contains(c.mods[m].path) && !(c.mod_noskip_root && c.mods[m].root)) {
+            if c.mod_overlaid(m) {
+              // an open editor text (decision 0526): checked in full
+            } else if !c.mod_skip_auto || (e.fe_complete && !c.mod_noskip.contains(c.mods[m].path) && !(c.mod_noskip_root && c.mods[m].root)) {
               c.mod_skip[m] = true
               c.mod_entries[m] = e
             }
@@ -349,7 +394,7 @@ pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)], nofe: Map[I
     bad_mods[c.objs[fo].module] = true
   }
   for (m, key) in c.mod_keys {
-    if c.mod_skip.contains(m) || bad_mods.contains(m) {
+    if c.mod_skip.contains(m) || bad_mods.contains(m) || c.mod_overlaid(m) {
       continue
     }
     let sc = scans.get(m)

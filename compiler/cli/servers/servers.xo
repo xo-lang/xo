@@ -36,13 +36,15 @@ pub fn self_program(os: Os) -> Str uses env {
 }
 
 /// Runs the command (is_command) with its arguments: the exit status.
-pub fn run(os: Os, cmd: Str, args: List[Str], version: Str) -> Int uses (stdio, proc, env, fs, net, clock, rand) {
+/// chk: the module check cache's directory and toolchain id for `xo lsp`
+/// (decision 0526), or empty.
+pub fn run(os: Os, cmd: Str, args: List[Str], version: Str, chk: (Str, Str)) -> Int uses (stdio, proc, env, fs, net, clock, rand) {
   let ex = Exec{program: self_program(os), env: [("XO_NO_SERVE", "1")]}
   match cmd {
     "mcp" => run_mcp(os, ex, MCP_VERSION, args)
     "dump" => run_dump(os, args)
     "serve" => run_serve(os, ex, args)
     "replay" => run_replay(os, ex, args)
-    _ => run_lsp(os, ex, version, args)
+    _ => run_lsp(os, ex, version, args, chk)
   }
 }

@@ -1,6 +1,6 @@
 # 0526: `xo lsp` checks through the module check cache
 
-Status: Proposed (xo-lang-4, 2026-11-05; decision 0283 stage 1b, item A
+Status: Accepted (owner, 2026-11-05: "0526 approve"; proposed by xo-lang-4, decision 0283 stage 1b, item A
 of the lead's queue: "make xo lsp share serve's warm state")
 
 ## Context
@@ -56,8 +56,15 @@ CLI read and write one cache:
 ## Consequences
 
 - Diagnostics after an edit check the edited module and replay its
-  dependencies. Expected: the CLI's 1.13 to 0.42 s ratio; the after rows
-  (lspbench, Mac and host 1) go in the item B results file.
+  dependencies. Measured on the Mac (lspbench, compiler/ssa/build.xo open,
+  one binary with XO_CHK_CACHE=off against the default, interleaved, 3
+  rounds each twice, 2026-11-05): first diagnostics 537 to 758 ms down to
+  355 to 399 ms, diagnostics after an edit 770 to 809 ms down to 583 to
+  613 ms, RSS 1.64 GB down to 1.51 GB; references unchanged (159 to 206
+  ms, not cached). The first session ever stores the entries and runs as
+  without the cache.
+- `XO_CHK_CACHE=off` (or XO_FE_CACHE=off, XO_BACKEND_CACHE=off) turns it
+  off for the lsp as for `xo check`.
 - A dependency's warning diagnostics come from its entry, as `xo check`
   shows them.
 - The skip_unsafe fallback (feaeba094 fixed the dependency case) costs a

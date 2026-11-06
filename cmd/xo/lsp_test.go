@@ -24,10 +24,16 @@ type lspClient struct {
 
 func startLSP(t *testing.T, dir string) *lspClient {
 	t.Helper()
+	return startLSPEnv(t, dir)
+}
+
+// startLSPEnv is startLSP with env (K=V) added to the server's environment.
+func startLSPEnv(t *testing.T, dir string, env ...string) *lspClient {
+	t.Helper()
 	cmd := command(t, xoBin(t), "lsp")
 	cmd.Dir = dir
 	// xo reads its working directory from $PWD (decision 0218 replaces it)
-	cmd.Env = append(cmd.Env, "PWD="+dir)
+	cmd.Env = append(append(cmd.Env, "PWD="+dir), env...)
 	cmd.Stderr = os.Stderr
 	in, err := cmd.StdinPipe()
 	if err != nil {
@@ -310,5 +316,91 @@ fn main(os: Os) {
 	}
 	if ap := sh["activeParameter"]; ap != float64(1) {
 		t.Errorf("activeParameter = %v, want 1", ap)
+	}
+}
+
+// diagnostics waits for the server's publishDiagnostics of uri and
+// returns their messages.
+func (c *lspClient) diagnostics(uri string) []string {
+	c.t.Helper()
+	timeout := time.After(3 * time.Minute)
+	for {
+		select {
+		case msg, ok := <-c.msgs:
+			if !ok {
+				c.t.Fatalf("server closed its output before diagnostics of %s", uri)
+			}
+			if msg["method"] != "textDocument/publishDiagnostics" {
+				continue
+			}
+			p, _ := msg["params"].(map[string]any)
+			if p["uri"] != uri {
+				continue
+			}
+			var out []string
+			ds, _ := p["diagnostics"].([]any)
+			for _, d := range ds {
+				m, _ := d.(map[string]any)
+				out = append(out, fmt.Sprint(m["message"]))
+			}
+			return out
+		case <-timeout:
+			c.t.Fatalf("no diagnostics of %s", uri)
+		}
+	}
+}
+
+// TestLSPModuleCache: xo lsp checks through xo check's module check cache
+// (decision 0526). The first session stores the entry of the dependency
+// module lib, which no open document is in, and not the open module's;
+// a second session with lib's file open and edited (unsaved, a type
+// error) checks lib in full and reports the error instead of replaying
+// lib's clean entry.
+func TestLSPModuleCache(t *testing.T) {
+	t.Parallel()
+	lib := "pub fn twice(x: Int) -> Int {\n  x * 2\n}\n"
+	main := "use example.com/lspmc/lib\n\nfn main(os: Os) uses stdio {\n  os.stdio.println(\"${lib.twice(21)}\")\n}\n"
+	dir := writeFiles(t, map[string]string{"xo.mod": "module example.com/lspmc\n", "main.xo": main, "lib/lib.xo": lib})
+	cache := t.TempDir()
+	entries := func() int {
+		n := 0
+		filepath.Walk(filepath.Join(cache, "chk"), func(p string, fi os.FileInfo, err error) error {
+			if err == nil && !fi.IsDir() && !strings.Contains(fi.Name(), ".tmp-") {
+				n++
+			}
+			return nil
+		})
+		return n
+	}
+	open := func(c *lspClient, uri, text string) {
+		c.notify("textDocument/didOpen", map[string]any{"textDocument": map[string]any{"uri": uri, "languageId": "xo", "version": 1, "text": text}})
+	}
+	session := func() *lspClient {
+		c := startLSPEnv(t, dir, "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on")
+		c.request("initialize", map[string]any{"processId": nil, "rootUri": "file://" + dir, "capabilities": map[string]any{}})
+		c.notify("initialized", map[string]any{})
+		return c
+	}
+	mainURI := "file://" + filepath.Join(dir, "main.xo")
+	libURI := "file://" + filepath.Join(dir, "lib", "lib.xo")
+
+	c1 := session()
+	open(c1, mainURI, main)
+	if d := c1.diagnostics(mainURI); len(d) != 0 {
+		t.Fatalf("main.xo: %v", d)
+	}
+	if n := entries(); n != 1 {
+		t.Fatalf("after the first check the cache holds %d module entries, want 1 (lib's; the open module's is not stored)", n)
+	}
+
+	c2 := session()
+	open(c2, mainURI, main)
+	open(c2, libURI, strings.Replace(lib, "x * 2", "x * \"2\"", 1))
+	var got []string
+	for i := 0; i < 4 && len(got) == 0; i++ {
+		got = c2.diagnostics(libURI)
+	}
+	if len(got) == 0 {
+		t.Fatalf("lib.xo edited with a type error: no diagnostics (its clean entry replayed?)")
 	}
 }

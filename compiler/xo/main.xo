@@ -119,7 +119,9 @@ fn main(os0: Os) ! {
     os.proc.exit(servers.run_agent(os, args[0], args[1..]))
   }
   if !args.is_empty() && servers.is_command(args[0]) {
-    os.proc.exit(servers.run(os, args[0], args[1..], servers.XO_VERSION))
+    // `xo lsp` checks through `xo check`'s module cache (decision 0526)
+    let chk = if args[0] == "lsp" { check_cache(os, ["check"]) } else { ("", "") }
+    os.proc.exit(servers.run(os, args[0], args[1..], servers.XO_VERSION, chk))
   }
   if let Some(code) = version_cmd(os, args) {
     // the build stamps (decision 0264)

@@ -699,7 +699,7 @@ fn agent_session_named(os: Os, dir: Str, std: Str, preload: List[Str], testdata:
     if !own || probe.check_workspace_dirs([d]).len() > 1 {
       let cands = probe.decl_candidates(d, name)
       if !cands.is_empty() {
-        let v = check_view_walk(os, s.std_dir, wd, {}, cands, preload, [], testdata, words, decls_only, false)
+        let v = check_view_walk(os, s.std_dir, wd, {}, cands, preload, [], testdata, words, decls_only, false, ("", ""))
         if v.err.is_empty() && v.stopped.is_empty() {
           s.use_view(v)
           s.diags = v.diags
