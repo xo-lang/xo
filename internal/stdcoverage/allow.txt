@@ -68,6 +68,7 @@ amqp.Receiver.release	the settle path of accept (tested by the peer tests) with 
 
 # derive Cbor (decision 0527): the helpers its generated code calls, reached through cbor.marshal and
 # cbor.unmarshal (corpus/cbor typed cases), which the coverage scan does not follow into generated code.
+cbor.bad_arity  called only by derive Cbor's generated code
 cbor.dec_error  called only by derive Cbor's generated code
 cbor.from_duration  called only by derive Cbor's generated code
 cbor.from_time  called only by derive Cbor's generated code
