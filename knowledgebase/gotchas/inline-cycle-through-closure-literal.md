@@ -27,7 +27,7 @@ literals that cannot be canceled, and with them the pads.
 
 ## Fix
 
-5bb4779fd: inline_walk also walks the functions a body's values name
+77cb1d2bf: inline_walk also walks the functions a body's values name
 without calling them (closure literals, functions passed as values), for
 cycles only. The golden internal/llvm/testdata/golden/inline_closure_recursion
 is the case. When a change removes landing pads, checks or calls from
