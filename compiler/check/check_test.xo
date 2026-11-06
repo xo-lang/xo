@@ -231,6 +231,38 @@ test "a destructuring assignment checks each place, its value against their type
   expect(errs.filter(fn(l) { l.contains("\"XO0401\"") }).len()) == 2
 }
 
+test "an Option where a Result is expected, and `x ?? Err(e)`, name or_err (XO0401)" {
+  // aws-19, 2026-11-06: `Time.parse_rfc3339(s) ?? Err(...)` and an
+  // Option returned as a Result; the prelude's or_err was not found
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/prelude.xo", PRELUDE.bytes())?
+  os.fs.write("std/testing.xo", b"")?
+  os.fs.create_dir_all("o")?
+  os.fs.write("o/main.xo", """
+    fn find(k: Int) -> Int? {
+      if k > 0 { Some(k) } else { None }
+    }
+
+    fn a(k: Int) -> Result[Int, Str] {
+      find(k)
+    }
+
+    fn b(k: Int) -> Int ! Str {
+      let v = find(k) ?? Err("missing")
+      Ok(v)
+    }
+    """.bytes())?
+  var c = new_checker(os.fs, "std")
+  if let Err(e) = c.check_dirs(["o"]) {
+    fault("check: ${e}")
+  }
+  let ds = c.diags.filter(fn(d) { d.code == "XO0401" })
+  expect(ds.len()) == 2
+  expect(ds[0].notes.any(fn(n) { n.message.contains("`.or_err(e)` turns it into this Result") })) == true
+  expect(ds[1].notes.any(fn(n) { n.message.contains("`find(k).or_err(\"missing\")?` fails with the error") })) == true
+  expect(ds[1].fixes.filter(fn(f) { f.title == "use `.or_err(...)?`" }).map(fn(f) { f.edits.map(fn(e) { e.replace }) })) == [["find(k).or_err(\"missing\")?"]]
+}
+
 test "an integer literal must fit its type (XO0421)" {
   let out = check_files(os, "r", [("r/main.xo", """
     const MIN: Int = -9223372036854775808

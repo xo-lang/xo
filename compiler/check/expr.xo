@@ -261,10 +261,32 @@ fn (var c: Checker) mismatch_d(sp: Span, w: Int, g: Int, has_e: Bool) -> Int {
     c.note(d, "a `TestOs` is not an `Os`; to run code that takes `Os` in a test, wrap it in a main and run it with `testing.run_main(fn(o: Os) -> () ! Error { ... }, os)`, which gives it an `Os` backed by the test's fakes (std.md 8); or let the function take only the capabilities it uses (`stdio: Stdio`), which a test passes directly (`os.stdio`)")
   }
   let gi = c.option_elem(g)
-  if gi >= 0 && c.option_elem(w) < 0 && c.assignable(gi, w, Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}) {
+  if gi >= 0 && c.is_result(w) && c.assignable(gi, c.result_t(w), Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}) {
+    c.note(d, "the value is optional; `.or_err(e)` turns it into this Result, with e as the error when it is missing (spec/std.md 2.5)")
+  } else if gi >= 0 && c.option_elem(w) < 0 && c.assignable(gi, w, Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}) {
     c.note(d, "the value is optional; unwrap it with `??`, `?`, `if let`, or `match` (core 2.5)")
   }
   d
+}
+
+/// For `x ?? Err(e)`, whose right side is a Result where x's element is
+/// expected (XO0401 d): `??` gives a value and never returns, so the
+/// note names `x.or_err(e)?`, with a fix when the function can propagate
+/// (aws-19, 2026-11-06: `Time.parse_rfc3339(s) ?? Err(...)`).
+fn (var c: Checker) or_err_fix(d: Int, span: Span, x: Expr, y: Expr) {
+  let arg = match unparen(y) {
+    CallExpr(fun: Ident(id), args: args, ..) if id.name == b"Err" && args.len() == 1 => args[0].value
+    _ => {
+      c.note(d, "`??` gives a value and does not return; to fail when the value is missing, `x.or_err(e)?` turns the optional value into a Result and propagates its error (spec/std.md 2.5)")
+      return
+    }
+  }
+  let xs = c.src_of(parser.expr_span(x))
+  let es = c.src_of(parser.expr_span(arg))
+  c.note(d, "`??` gives a value and does not return; `${xs}.or_err(${es})?` fails with the error when the value is missing (spec/std.md 2.5)")
+  if c.can_propagate() {
+    c.fix(d, "use `.or_err(...)?`", [c.replace_edit(span, "${xs}.or_err(${es})?")])
+  }
 }
 
 /// For an XO0401 d whose types w and g print the same: a note at each
@@ -1498,7 +1520,10 @@ fn (var c: Checker) binary(span: Span, op: parser.Kind, x: Expr, y: Expr, hint: 
     if c.assignable(yt, el, parser.expr_span(y)) {
       return el
     }
-    c.mismatch(parser.expr_span(y), el, yt, true)
+    let d = c.mismatch_d(parser.expr_span(y), el, yt, true)
+    if d >= 0 && c.is_result(yt) {
+      c.or_err_fix(d, span, x, y)
+    }
     return c.bad_ty
   }
   var xt = -1
