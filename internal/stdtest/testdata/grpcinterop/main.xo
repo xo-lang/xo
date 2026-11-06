@@ -51,6 +51,7 @@ fn show(r: Result[Bytes, grpc.Status]) -> Str {
 
 fn calls(os: Os, c: grpc.Client) {
   os.stdio.println("echo: ${show(c.unary("/t.S/Echo", "hi ".bytes(), {"x-who": "bob"}))}")
+  os.stdio.println("gzip: ${show(c.with_gzip().unary("/t.S/Echo", "hi ".bytes(), {"x-who": "bob"}))}")
   os.stdio.println("fail: ${show(c.unary("/t.S/Echo", b"x", {"x-fail": "1"}))}")
   os.stdio.println("missing: ${show(c.unary("/t.S/Missing", b"x"))}")
   let counted = c.call("/t.S/Count", {}, None, fn(cc) -> List[Str] ! grpc.Status {

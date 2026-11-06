@@ -1,5 +1,6 @@
 // std/grpc: the pure layer (decision 0535), after grpc-go's rpc_util.go (frame, timeout) and status (message encoding).
 use std/base64
+use std/compress
 use std/grpc
 use std/http
 use std/task
@@ -32,6 +33,14 @@ fn code_from(n: Int) -> grpc.Code? {
     grpc.Code.FailedPrecondition, grpc.Code.Aborted, grpc.Code.OutOfRange, grpc.Code.Unimplemented, grpc.Code.Internal,
     grpc.Code.Unavailable, grpc.Code.DataLoss, grpc.Code.Unauthenticated]
   if n < 0 || n > 16 { None } else { Some(all[n]) }
+}
+
+/// The frame of msg, gzip compressed when gzip.
+fn frame_msg(msg: Bytes, gzip: Bool) -> Bytes {
+  if gzip {
+    return frame(compress.gzip(msg), true)
+  }
+  frame(msg)
 }
 
 fn frame(payload: Bytes, compressed: Bool = false) -> Bytes {
@@ -186,7 +195,7 @@ fn finish(w: http.BodyWriter, st: grpc.Status) {
 }
 
 fn send_send(s: grpc.Send, msg: Bytes) -> () ! grpc.Status {
-  match s.w.write(frame(msg)) {
+  match s.w.write(frame_msg(msg, s.gzip)) {
     Ok(_) => ()
     Err(e) => return Err(status_new(grpc.Code.Unavailable, "${e}"))
   }
@@ -206,10 +215,21 @@ fn pull[fx: Effects](st: grpc.RecvState, max: Int, more: fn() -> Bytes? ! grpc.S
   while true {
     match unframe(s.buf, s.at, max) {
       Ok((compressed, msg, next)) => {
-        if compressed {
-          return Err(status_new(grpc.Code.Unimplemented, "grpc: compressed message received but no compression was negotiated"))
-        }
         s.at = next
+        if compressed {
+          if !s.gzip {
+            return Err(status_new(grpc.Code.Internal, "grpc: compressed message received without a grpc-encoding"))
+          }
+          match compress.gunzip(msg, max + 1) {
+            Ok(plain) => {
+              if plain.len() > max {
+                return Err(status_new(grpc.Code.ResourceExhausted, "grpc: received message after decompression larger than max (${max})"))
+              }
+              return Ok((Some(plain), s))
+            }
+            Err(_) => return Err(status_new(grpc.Code.Internal, "grpc: failed to decompress the received message"))
+          }
+        }
         return Ok((Some(msg), s))
       }
       Err(grpc.FrameErr.TooLarge(len)) => {
@@ -304,6 +324,7 @@ fn serve_call[fx: Effects](f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.S
   if !ct.starts_with("application/grpc") {
     return http.empty(415)
   }
+  let gz = (req.header("grpc-encoding") ?? "") == "gzip"
   var timeout: Duration? = None
   if let Some(t) = req.header("grpc-timeout") {
     match decode_timeout(t) {
@@ -321,9 +342,9 @@ fn serve_call[fx: Effects](f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.S
     }
   }
   let call = grpc.Call{method: method, metadata: md, timeout: timeout}
-  let recv = grpc.Recv{body: body, st: Mutex[grpc.RecvState].new(grpc.RecvState{buf: b"", at: 0, done: false}), max: max}
+  let recv = grpc.Recv{body: body, st: Mutex[grpc.RecvState].new(grpc.RecvState{buf: b"", at: 0, done: false, gzip: (req.header("grpc-encoding") ?? "") == "gzip"}), max: max}
   http.stream(200, fn(w) -> () ! IoErr {
-    let send = grpc.Send{w: w}
+    let send = grpc.Send{w: w, gzip: gz}
     let st = match timeout {
       Some(d) => match task.with_timeout(clock, d, fn() -> () ! grpc.Status { f(call, recv, send) }) {
         Ok(_) => grpc.Status{code: grpc.Code.Ok, message: "", details: b""}
@@ -336,7 +357,7 @@ fn serve_call[fx: Effects](f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.S
       }
     }
     finish(w, st)
-  }).with_header("content-type", "application/grpc").with_full_duplex()
+  }).with_header("content-type", "application/grpc").with_header("grpc-accept-encoding", "gzip,identity").with_header("grpc-encoding", if gz { "gzip" } else { "identity" }).with_full_duplex()
 }
 
 fn server_stream[fx: Effects](var s: grpc.Server, method: Str, f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.Status uses fx) uses (fx, clock) {
@@ -363,7 +384,11 @@ fn server_unary[fx: Effects](var s: grpc.Server, method: Str, f: fn(grpc.Call, B
 
 fn client(c: http.Client, base: Str) -> grpc.Client {
   let h = if base.starts_with("http://") { c.with_protocols(#{http.Protocol.UnencryptedHttp2}) } else { c }
-  grpc.Client{http: h, base: base}
+  grpc.Client{http: h, base: base, gzip: false}
+}
+
+fn client_with_gzip(c: grpc.Client) -> grpc.Client {
+  grpc.Client{http: c.http, base: c.base, gzip: true}
 }
 
 fn from_client_err(e: http.ClientErr) -> grpc.Status {
@@ -376,13 +401,17 @@ fn from_client_err(e: http.ClientErr) -> grpc.Status {
   }
 }
 
-fn call_headers(metadata: Map[Str, Str], timeout: Duration?) -> Map[Str, Str] {
+fn call_headers(metadata: Map[Str, Str], timeout: Duration?, gzip: Bool) -> Map[Str, Str] {
   var h: Map[Str, Str] = {}
   for (k, v) in metadata {
     h[k.to_lower()] = v
   }
   h["content-type"] = "application/grpc"
   h["te"] = "trailers"
+  h["grpc-accept-encoding"] = "gzip,identity"
+  if gzip {
+    h["grpc-encoding"] = "gzip"
+  }
   h["user-agent"] = "grpc-xo/0.1"
   if let Some(d) = timeout {
     h["grpc-timeout"] = encode_timeout(d.nanos())
@@ -424,7 +453,7 @@ fn final_status(st: http.ClientStream) -> grpc.Status {
 }
 
 fn client_unary(c: grpc.Client, method: Str, req: Bytes, metadata: Map[Str, Str], timeout: Duration?) -> Bytes ! grpc.Status {
-  var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout), frame(req))
+  var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout, c.gzip), frame_msg(req, c.gzip))
   if let Some(d) = timeout {
     r = r.with_timeout(d)
   }
@@ -440,6 +469,7 @@ fn client_unary(c: grpc.Client, method: Str, req: Bytes, metadata: Map[Str, Str]
     }
   }
   let fin = final_status(st)
+  let enc = st.head().headers.get("Grpc-Encoding") ?? ""
   st.close()
   if fin.code != grpc.Code.Ok {
     return Err(fin)
@@ -447,7 +477,13 @@ fn client_unary(c: grpc.Client, method: Str, req: Bytes, metadata: Map[Str, Str]
   match unframe(data, 0) {
     Ok((compressed, msg, _)) => {
       if compressed {
-        return Err(status_new(grpc.Code.Unimplemented, "grpc: compressed message received but no compression was negotiated"))
+        if enc != "gzip" {
+          return Err(status_new(grpc.Code.Internal, "grpc: compressed message received without a grpc-encoding"))
+        }
+        match compress.gunzip(msg, 4194305) {
+          Ok(plain) => return Ok(plain)
+          Err(_) => return Err(status_new(grpc.Code.Internal, "grpc: failed to decompress the received message"))
+        }
       }
       Ok(msg)
     }
@@ -457,12 +493,12 @@ fn client_unary(c: grpc.Client, method: Str, req: Bytes, metadata: Map[Str, Str]
 
 fn client_call[R, fx: Effects](c: grpc.Client, method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(grpc.ClientCall) -> R ! grpc.Status uses fx) -> R ! grpc.Status uses (fx, net.dial) {
   let (pw, pr) = http.pipe()
-  var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout)).with_body_reader(pr)
+  var r = http.new_request("POST", "${c.base}${method}", call_headers(metadata, timeout, c.gzip)).with_body_reader(pr)
   if let Some(d) = timeout {
     r = r.with_timeout(d)
   }
   let head = Chan[(http.ClientStream?, grpc.Status?)].new(1)
-  let cc = grpc.ClientCall{w: pw, head: head, st: Mutex[grpc.CallState].new(grpc.CallState{stream: None, failed: None, recv: grpc.RecvState{buf: b"", at: 0, done: false}, final: None}), max: 4194304}
+  let cc = grpc.ClientCall{w: pw, head: head, st: Mutex[grpc.CallState].new(grpc.CallState{stream: None, failed: None, recv: grpc.RecvState{buf: b"", at: 0, done: false}, final: None}), max: 4194304, gzip: c.gzip}
   var result: R? = None
   var failure: grpc.Status? = None
   scope s {
@@ -503,7 +539,7 @@ fn client_call[R, fx: Effects](c: grpc.Client, method: Str, metadata: Map[Str, S
 }
 
 fn clientcall_send(cc: grpc.ClientCall, msg: Bytes) -> () ! grpc.Status {
-  match cc.w.write(frame(msg)) {
+  match cc.w.write(frame_msg(msg, cc.gzip)) {
     Ok(_) => Ok(())
     Err(e) => Err(status_new(grpc.Code.Unavailable, "${e}"))
   }
@@ -525,6 +561,7 @@ fn clientcall_recv(cc: grpc.ClientCall) -> Bytes? ! grpc.Status uses net.dial {
       match cc.head.recv() {
         Some((Some(st), _)) => {
           s.stream = Some(st)
+          s.recv = s.recv with {gzip: (st.head().headers.get("Grpc-Encoding") ?? "") == "gzip"}
         }
         Some((None, Some(e))) => {
           s.failed = Some(e)

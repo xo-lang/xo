@@ -88,6 +88,8 @@ struct RecvState {
   buf: Bytes = b""
   at: Int = 0
   done: Bool = false
+  /// the peer sends `grpc-encoding: gzip`: a message with the compressed flag is inflated
+  gzip: Bool = false
 }
 
 /// The messages of a call's request stream, as a handler reads them.
@@ -104,6 +106,8 @@ fn (r: Recv) next() -> Bytes? ! Status
 /// The messages a handler sends back.
 struct Send {
   w: http.BodyWriter
+  /// the request came compressed with gzip: responses are too (grpc-go's rule)
+  gzip: Bool = false
 }
 
 /// Sends one message (a frame is flushed at once).
@@ -136,10 +140,14 @@ fn (s: Server) router() -> http.Router
 struct Client {
   http: http.Client
   base: Str
+  /// requests are sent gzip compressed
+  gzip: Bool = false
 }
 
 /// A client of `base` (`http://host:port`, plain HTTP/2 with prior knowledge, or `https://host:port`).
 fn client(c: http.Client, base: Str) -> Client
+/// The client sending its messages gzip compressed (`grpc-encoding: gzip`); responses are read compressed or not.
+fn (c: Client) with_gzip() -> Client
 /// One unary call: the request message, the response message, or the call's status. `timeout` is sent as
 /// `grpc-timeout` and bounds the call (DeadlineExceeded).
 fn (c: Client) unary(method: Str, req: Bytes, metadata: Map[Str, Str] = {}, timeout: Duration? = None) -> Bytes ! Status uses net.dial
@@ -150,6 +158,8 @@ struct ClientCall {
   head: Chan[(http.ClientStream?, Status?)]
   st: Mutex[CallState]
   max: Int
+  /// messages are sent gzip compressed (Client.with_gzip)
+  gzip: Bool = false
 }
 
 struct CallState {

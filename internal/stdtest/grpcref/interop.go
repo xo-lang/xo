@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/mem"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -124,16 +125,19 @@ func quoteList(l []string) string {
 func interopClient(addr string) {
 	cc := dial(addr)
 	defer cc.Close()
-	unary := func(method, req string, kv ...string) string {
+	unaryOpts := func(method, req string, opts []grpc.CallOption, kv ...string) string {
 		ctx := metadata.AppendToOutgoingContext(context.Background(), kv...)
 		in := []byte(req)
 		var out []byte
-		if err := cc.Invoke(ctx, method, &in, &out, grpc.ForceCodecV2(bytesCodec{})); err != nil {
+		opts = append(opts, grpc.ForceCodecV2(bytesCodec{}))
+		if err := cc.Invoke(ctx, method, &in, &out, opts...); err != nil {
 			return "err " + err.Error()
 		}
 		return "ok " + string(out)
 	}
+	unary := func(method, req string, kv ...string) string { return unaryOpts(method, req, nil, kv...) }
 	fmt.Println("echo: " + unary("/t.S/Echo", "hi ", "x-who", "bob"))
+	fmt.Println("gzip: " + unaryOpts("/t.S/Echo", "hi ", []grpc.CallOption{grpc.UseCompressor(gzip.Name)}, "x-who", "bob"))
 	fmt.Println("fail: " + unary("/t.S/Echo", "x", "x-fail", "1"))
 	fmt.Println("missing: " + unary("/t.S/Missing", "x"))
 	desc := &grpc.StreamDesc{ServerStreams: true, ClientStreams: true}
