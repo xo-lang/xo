@@ -1,0 +1,34 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+)
+
+func main() {
+	mode := "none"
+	if len(os.Args) > 1 {
+		mode = os.Args[1]
+	}
+	n := 0
+	if mode == "format" {
+		for i := 0; i < 300000; i++ {
+			t := time.Unix(int64(1760000000+i*37), 0).UTC()
+			n += len(t.Format("2006-01-02T15:04:05Z07:00"))
+			n += len(t.Format("Mon, 02 Jan 2006 15:04:05 MST"))
+		}
+	}
+	if mode == "parse" {
+		for i := 0; i < 300000; i++ {
+			s := "2026-10-" + strconv.Itoa(10+i%20) + "T12:34:56Z"
+			t, err := time.Parse("2006-01-02T15:04:05Z07:00", s)
+			if err != nil {
+				panic(err)
+			}
+			n += int(t.Unix() % 7)
+		}
+	}
+	fmt.Println(mode, n)
+}

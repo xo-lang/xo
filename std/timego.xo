@@ -1,0 +1,32 @@
+// std/timego (decision 0537): Go's time layouts ("2006-01-02T15:04:05Z07:00") on top of core time, for code
+// ported from Go. The core API is unchanged (decision 0087); a Go layout is translated to a core layout.
+// Declaration file. Pure.
+use std/time
+
+/// Why a Go layout was refused: a reference-time element core time has no field for.
+struct LayoutErr {
+  layout: Str
+  at: Int
+  msg: Str
+} derive Display
+
+/// The core layout a Go layout means (`2006-01-02` is `{year}-{month}-{day}`). Faults with a `LayoutErr`
+/// for an element core time cannot express.
+fn to_core(go_layout: Str) -> Str ! LayoutErr
+
+/// Same as `time.format(t, z, to_core(go_layout))`.
+fn format(t: Time, z: time.Zone, go_layout: Str) -> Str ! LayoutErr
+
+/// The core `time.Layout` a Go layout means, parsed once: hot code translates a layout once and calls
+/// `format` and `parse` on the result (a layout string is translated and parsed on every call otherwise).
+fn layout(go_layout: Str) -> time.Layout ! LayoutErr
+
+/// A Go layout refused, or the text not matching it.
+enum Err {
+  Layout(err: LayoutErr)
+  Parse(err: time.ParseErr)
+} derive Display
+
+/// Same as `time.parse(s, to_core(go_layout), z)`: strict (exactly the layout), `z` applies when the text has no
+/// offset. Unlike Go, a zone abbreviation without an offset is resolved in `z`, never made up.
+fn parse(s: Str, go_layout: Str, z: time.Zone) -> Time ! Err

@@ -1,0 +1,4 @@
+# twincheck: timego: Go layouts through timego (translated per call) against Go time.Format and time.Parse
+- - none
+- - format
+- - parse

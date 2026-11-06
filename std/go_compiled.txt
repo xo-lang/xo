@@ -31,3 +31,4 @@ protobuf
 # std/sqlite binds C: listed so the Go backend loads its native file and
 # reports XO1201 there (decision 0534); stdgen generates no std/rt Go for it
 sqlite
+timego

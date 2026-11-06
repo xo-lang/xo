@@ -7785,3 +7785,24 @@ let db = sql.open_driver(os.net, sqlite.driver(os.fs), "file:app.db?_busy_timeou
   `PRAGMA query_only` until it ends. `copy_from` runs one prepared INSERT per row.
 - Effects: each call is a database call, `uses net.dial` as std/sql's Db names every driver's work; the files
   are reached through the Fs given to `driver` (decision 0534 records this for the owner).
+
+## 67. std/timego
+
+Go's time layouts (`2006-01-02T15:04:05Z07:00`) for code ported from Go (decision 0537); the core time API keeps
+its named fields (decision 0087). A Go layout is translated to a core layout and run through `time.format` and
+`time.parse`. Pure. Reference: Go's `time.Format` and `time.Parse`.
+
+```xo
+struct LayoutErr { layout: Str, at: Int, msg: Str }      // an element core time has no field for
+enum Err { Layout(err: LayoutErr), Parse(err: time.ParseErr) }
+fn to_core(go_layout: Str) -> Str ! LayoutErr
+fn layout(go_layout: Str) -> time.Layout ! LayoutErr    // translated and parsed once; use it in hot code
+fn format(t: Time, z: time.Zone, go_layout: Str) -> Str ! LayoutErr
+fn parse(s: Str, go_layout: Str, z: time.Zone) -> Time ! Err
+```
+
+- Elements with a core field: `2006`, `01`, `1`, `Jan`, `January`, `02`, `2`, `Mon`, `Monday`, `15`, `03`, `04`, `05`,
+  `PM`, `.000` runs, `Z07:00`, `-0700`, `MST`. Any other reference element (`.999`, `_2`, `3`, `4`, `5`, `06`, `002`,
+  `-07:00`, `Z0700`, `Z07`, `-07`, `pm`, seconds in offsets) is a `LayoutErr`, never a literal.
+- Parsing is core's strict parse: a weekday in the text must match the date (Go ignores it), and `15` takes exactly two digits (Go accepts one). A zone abbreviation without an offset is looked up in the given zone; Go makes up a
+  zone with that name and a zero offset.

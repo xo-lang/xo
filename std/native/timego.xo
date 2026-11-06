@@ -1,0 +1,77 @@
+// std/timego: translate a Go layout to a core time layout (decision 0537).
+use std/time
+use std/timego
+
+/// Go's reference elements in match order (longest first where one starts another), with the core field each
+/// means; an empty field marks an element core time has no field for (a `LayoutErr`, never a silent literal).
+fn elems() -> List[(Str, Str)] {
+  [("January", "{month:name}"), ("Jan", "{month:short}"), ("Monday", "{weekday:name}"), ("Mon", "{weekday:short}"),
+   ("2006", "{year}"), ("-07:00:00", ""), ("-070000", ""), ("Z07:00:00", ""), ("Z070000", ""),
+   ("Z07:00", "{offset}"), ("-07:00", ""), ("Z0700", ""), ("-0700", "{offset:compact}"), ("Z07", ""), ("-07", ""),
+   ("MST", "{zone}"), ("002", ""), ("__2", ""), ("_2", ""), ("01", "{month}"), ("02", "{day}"), ("06", ""),
+   ("15", "{hour}"), ("03", "{hour12}"), ("04", "{minute}"), ("05", "{second}"), ("PM", "{ampm}"), ("pm", ""),
+   ("1", "{month:1}"), ("2", "{day:1}"), ("3", ""), ("4", ""), ("5", "")]
+}
+
+fn to_core(go_layout: Str) -> Str ! timego.LayoutErr {
+  var out = StrBuilder.new()
+  let es = elems()
+  var i = 0
+  while i < go_layout.len() {
+    let rest = go_layout[i..]
+    var hit = false
+    // fractional seconds: .000 and .999 runs after a second
+    if rest.starts_with(".0") || rest.starts_with(".9") {
+      let d = rest[1..][0..1]
+      var n = 1
+      while n < rest.len() - 1 && rest[1 + n..][0..1] == d {
+        n += 1
+      }
+      if d == "0" {
+        out.write("{frac:${n}}")
+        i += 1 + n
+        hit = true
+      } else {
+        return Err(timego.LayoutErr{layout: go_layout, at: i, msg: "a trimmed fraction (.999) has no core field"})
+      }
+    }
+    if !hit {
+      for (g, c) in es {
+        if rest.starts_with(g) {
+          if c == "" {
+            return Err(timego.LayoutErr{layout: go_layout, at: i, msg: "the element ${g} has no core time field"})
+          }
+          out.write(c)
+          i += g.len()
+          hit = true
+          break
+        }
+      }
+    }
+    if !hit {
+      let ch = rest[0..1]
+      if ch == "{" {
+        out.write("{lbrace}")
+      } else if ch == "}" {
+        out.write("{rbrace}")
+      } else {
+        out.write(ch)
+      }
+      i += 1
+    }
+  }
+  out.freeze()
+}
+
+fn format(t: Time, z: time.Zone, go_layout: Str) -> Str ! timego.LayoutErr {
+  time.format(t, z, to_core(go_layout)?)
+}
+
+fn parse(s: Str, go_layout: Str, z: time.Zone) -> Time ! timego.Err {
+  let core = to_core(go_layout).map_err(fn(e) { timego.Err.Layout(err: e) })?
+  time.parse(s, core, z).map_err(fn(e) { timego.Err.Parse(err: e) })
+}
+
+fn layout(go_layout: Str) -> time.Layout ! timego.LayoutErr {
+  time.layout(to_core(go_layout)?)
+}
