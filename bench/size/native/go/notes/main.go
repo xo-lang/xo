@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -164,13 +165,17 @@ func (s *store) routes() http.Handler {
 	notes.HandleFunc("GET /notes", func(w http.ResponseWriter, r *http.Request) {
 		u := r.Context().Value(ctxKey{}).(*user)
 		s.mu.Lock()
+		// the live notes in id order (the SQL store's ORDER BY id); a walk
+		// of every id issued so far cost O(creates) under the lock, which
+		// made the twin quadratic under sustained load (2026-11-06)
 		out := []note{}
-		for id := 1; id <= s.nextID; id++ {
-			if n, ok := s.notes[id]; ok && n.Owner == u.id {
+		for _, n := range s.notes {
+			if n.Owner == u.id {
 				out = append(out, n)
 			}
 		}
 		s.mu.Unlock()
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 		writeJSON(w, 200, out)
 	})
 	one := func(w http.ResponseWriter, r *http.Request, del bool) {
