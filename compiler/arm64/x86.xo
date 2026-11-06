@@ -1678,6 +1678,20 @@ fn (var g: G) x86_any_eq32(us: List[Int], c: Int, kc: Bool) -> Int {
   g.x86_def1(t.join("\n"), us)
 }
 
+/// rt.bytes_count_eq32 on x86_64: the two lanes' pcmpeqb masks (one bit
+/// a byte) joined into 32 bits and counted with popcnt (as rt.popcount).
+fn (var g: G) x86_count_eq32(us: List[Int], c: Int, kc: Bool) -> Int {
+  var t: List[Str] = []
+  if kc {
+    t.push("movl $${(c & 255) * 16843009}, %r11d")
+  } else {
+    t.push("movzbl $bu2, %r11d")
+    t.push("imull $16843009, %r11d, %r11d")
+  }
+  t = t + ["movd %r11d, %xmm14", "pshufd $0, %xmm14, %xmm14", "movdqu ($u0,$u1), %xmm15", "pcmpeqb %xmm14, %xmm15", "pmovmskb %xmm15, %r11d", "movdqu 16($u0,$u1), %xmm15", "pcmpeqb %xmm14, %xmm15", "pmovmskb %xmm15, $wd0", "shlq $16, $d0", "orq %r11, $d0", "popcntq $d0, $d0"]
+  g.x86_def1(t.join("\n"), us)
+}
+
 /// rt.bytes_any_stop32 on x86_64 (SSE2): each lane of the 32 bytes at
 /// $u0 + $u1 compared with c1 and c2 (pcmpeqb) and with lo (pcmpgtb, a
 /// signed compare), each mask moved and or'ed into the result; the

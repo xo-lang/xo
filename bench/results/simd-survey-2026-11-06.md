@@ -154,3 +154,21 @@ append_body skip 32 clean bytes a step, bench/perf/json long_strings and
 enc_long) waits for a seed that knows the intrinsic and is measured
 then. Checked on linux/amd64: scan 17/17, libcstr 4/4, the 51 sample
 goldens.
+
+## Step 3c: a 32 byte count (stage 1, code generation only)
+
+count_byte (Str.count and Bytes.count of one byte, line counting) tests
+16 bytes a step and counts the mask: on arm64 ldr, dup, cmeq, shrn,
+fmov, and, fmov, cnt, addv, fmov, add, about 11 instructions a 16
+bytes. A 32 byte probe that skips blocks with no match (step 3a) helps
+only sparse bytes and costs a failed probe a block in between: on 80
+byte lines the probe gated on the last step regressed count_nl to
+1.188 of the base (~/xo-lead/notes/lang1/ab3d.txt).
+rt.bytes_count_eq32(b, i, c) counts 32 bytes with no branch at any
+density: arm64 ldp, two cmeq (each lane -1 a match), add of the lanes,
+addv over 16 lanes (minus the count modulo 256), fmov, neg, and #255;
+x86_64 two pcmpeqb and pmovmskb joined into 32 bits and popcnt; LLVM a
+<32 x i8> compare, its i32 counted with ctpop; wasm two bytes_eq16
+counted (four bits a match). The arm64 encoder gains `addv` on 16
+lanes. Stage 2 (count_byte 32 bytes a step) waits for a seed that knows
+the intrinsic and is measured then.

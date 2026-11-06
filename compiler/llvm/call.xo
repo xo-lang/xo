@@ -1541,6 +1541,19 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let m = g.def("bitcast <32 x i1> ${e} to i32")
       g.set(v, "zext i32 ${m} to i64")
     }
+    "rt.bytes_count_eq32" => {
+      // a <32 x i8> compare as an i32, its bits counted
+      let (_, d, _) = g.str_parts(g.op(x.args[0]))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let w = g.def("load <32 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
+      let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+      var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
+      r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
+      let e = g.def("icmp eq <32 x i8> ${w}, ${r}")
+      let m = g.def("bitcast <32 x i1> ${e} to i32")
+      let z = g.def("zext i32 ${m} to i64")
+      g.set(v, "call i64 @llvm.ctpop.i64(i64 ${z})")
+    }
     "rt.bytes_any_stop32" => {
       // c1 or c2 equal, or below lo as a signed byte, as an i32 mask
       let (_, d, _) = g.str_parts(g.op(x.args[0]))

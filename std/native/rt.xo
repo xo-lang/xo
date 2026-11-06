@@ -176,6 +176,13 @@ fn bytes_high16_bits(b: Bytes, i: Int) -> Int
 /// compare, wasm two bytes_eq16; bench/results/simd-survey-2026-11-06.md).
 /// Unchecked: 0 <= i and i + 32 <= b.len().
 fn bytes_any_eq32(b: Bytes, i: Int, c: Int) -> Int
+/// The number of the 32 bytes of b from i that are the byte c (0 to
+/// 255): a count with no branch and no mask a match (lowered inline:
+/// arm64 two cmeq, an add of the lanes and addv, x86_64 SSE2 pcmpeqb,
+/// pmovmskb and popcnt, LLVM a <32 x i8> compare and ctpop, wasm two
+/// bytes_eq16; bench/results/simd-survey-2026-11-06.md).
+/// Unchecked: 0 <= i and i + 32 <= b.len().
+fn bytes_count_eq32(b: Bytes, i: Int, c: Int) -> Int
 /// Nonzero when one of the 32 bytes of b from i is 0x80 or above, else
 /// 0 (as bytes_any_eq32).
 fn bytes_any_high32(b: Bytes, i: Int) -> Int

@@ -2550,6 +2550,23 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       g.set(v, [g.def1(false, "add $d0, $u0, $u1\nldp q30, q31, [$d0]\norr v30.16b, v30.16b, v31.16b\ncmlt v30.16b, v30.16b, #0\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
     }
+    "rt.bytes_count_eq32" => {
+      // each lane's cmeq is -1 a match: the two lanes added (-2 to 0 a
+      // byte) and addv'ed give minus the count modulo 256, so neg and a
+      // mask of the low byte leave the count (0 to 32), with no branch
+      let ws = g.words(x.args[0])
+      var us = [g.str_base_heap(ws), g.word(x.args[1])]
+      let (c, ok) = g.const_int(x.args[2])
+      if !ok {
+        us.push(g.word(x.args[2]))
+      }
+      if g.x86 {
+        g.set(v, [g.x86_count_eq32(us, c, ok)])
+        return true
+      }
+      let rep = if ok { "movi v29.16b, #${c & 255}" } else { "dup v29.16b, $wu2" }
+      g.set(v, [g.def1(false, "${rep}\nadd $d0, $u0, $u1\nldp q30, q31, [$d0]\ncmeq v30.16b, v30.16b, v29.16b\ncmeq v31.16b, v31.16b, v29.16b\nadd v30.16b, v30.16b, v31.16b\naddv b30, v30.16b\nfmov $d0, d30\nneg $d0, $d0\nand $d0, $d0, #255", us)])
+    }
     "rt.bytes_any_stop32" => {
       // each lane: the bytes equal to c1 or c2, or below lo as signed
       // bytes (cmgt), or'ed into v31; v29 to v31 are the emitter's only

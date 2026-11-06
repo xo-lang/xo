@@ -1442,16 +1442,17 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     return if n != 2 || kd != RS || kx != RS { -1 } else { 0x5e280800 | (x * 32) | d }
   }
   if m == "addv" {
-    // addv bD, vN.8b (bD a Raw operand)
+    // addv bD, vN.8b or vN.16b (bD a Raw operand; rt.bytes_count_eq32
+    // sums 16 lanes)
     let (x, ax) = v_of(o[1])
     let r = match o[0] {
       Raw(b) => if b.len() >= 2 && b[0] == 'b' { parse_int(b[1..]) ?? -1 } else { -1 }
       Reg(..) | VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) => -1
     }
-    if n != 2 || x < 0 || ax != "8b" || r < 0 || r > 31 {
+    if n != 2 || x < 0 || (ax != "8b" && ax != "16b") || r < 0 || r > 31 {
       return -1
     }
-    return 0x0e31b800 | (x * 32) | r
+    return (if ax == "16b" { 0x4e31b800 } else { 0x0e31b800 }) | (x * 32) | r
   }
   let (d, ad) = v_of(o[0])
   let (x, ax) = v_of(o[1])

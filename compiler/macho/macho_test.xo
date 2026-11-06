@@ -379,6 +379,10 @@ const ENCODINGS: List[(Str, Int)] = [
   // assembles them (2026-11-06)
   ("orr v30.16b, v30.16b, v31.16b", 0x4ebf1fde),
   ("orr v1.16b, v2.16b, v3.16b", 0x4ea31c41),
+  // rt.bytes_count_eq32's lane sum, as clang 21 assembles it (2026-11-06)
+  ("add v30.16b, v30.16b, v31.16b", 0x4e3f87de),
+  ("addv b30, v30.16b", 0x4e31bbde),
+  ("neg x0, x0", 0xcb0003e0),
   ("ldp q30, q31, [x5]", 0xad407cbe),
   ("mvn x3, x3", 0xaa2303e3),
   // decision 0373's case fold lane, each word as clang assembles it
