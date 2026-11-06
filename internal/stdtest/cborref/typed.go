@@ -29,6 +29,17 @@ type typedPerson struct {
 	Skip  string         `cbor:"-"`
 }
 
+type typedDeep struct {
+	Addrs  []typedAddr          `cbor:"addrs"`
+	By     map[string]typedAddr `cbor:"by"`
+	Opt    *int                 `cbor:"opt"`
+	Grid   [][]int              `cbor:"grid"`
+	Maybe  *float64             `cbor:"maybe"`
+	Flag   *bool                `cbor:"flag"`
+	Nested *typedPerson         `cbor:"nested"`
+	Count  int                  `cbor:"count,omitempty"`
+}
+
 type typedResult struct {
 	Err bool   `json:"err"`
 	Out string `json:"out"` // hex of the deterministic marshal of what decoded ("" when Err)
@@ -36,7 +47,7 @@ type typedResult struct {
 
 // typedMain reads hex inputs a line and writes the outcome of decoding each
 // into typedPerson (strict: false) and marshaling the result.
-func typedMain() {
+func typedMain(mode string) {
 	dec, err := cbor.DecOptions{MaxNestedLevels: 128, MaxArrayElements: maxInt, MaxMapPairs: maxInt, DupMapKey: cbor.DupMapKeyQuiet}.DecMode()
 	if err != nil {
 		panic(err)
@@ -57,8 +68,11 @@ func typedMain() {
 			panic(err)
 		}
 		var res typedResult
-		var p typedPerson
-		if err := dec.Unmarshal(data, &p); err != nil {
+		var p any = &typedPerson{}
+		if mode == "typed2" {
+			p = &typedDeep{}
+		}
+		if err := dec.Unmarshal(data, p); err != nil {
 			res.Err = true
 		} else {
 			out, err := enc.Marshal(p)

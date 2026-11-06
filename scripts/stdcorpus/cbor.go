@@ -33,13 +33,13 @@ type cborTypedRef struct {
 	Out string `json:"out"`
 }
 
-func cborTypedOracle(inputs [][]byte) []cborTypedRef {
+func cborTypedOracle(mode string, inputs [][]byte) []cborTypedRef {
 	var in bytes.Buffer
 	for _, b := range inputs {
 		in.WriteString(hex.EncodeToString(b))
 		in.WriteByte('\n')
 	}
-	cmd := exec.Command("go", "run", ".", "typed")
+	cmd := exec.Command("go", "run", ".", mode)
 	cmd.Dir = filepath.Join("internal", "stdtest", "cborref")
 	cmd.Stdin = &in
 	cmd.Stderr = os.Stderr
@@ -309,6 +309,85 @@ func cborTypedInputs(r *rand.Rand, n int) [][]byte {
 	return out
 }
 
+func cbAddrs(r *rand.Rand) []byte {
+	var items [][]byte
+	for i := r.Intn(4); i > 0; i-- {
+		items = append(items, cbAddr(r))
+	}
+	return cbArr(items...)
+}
+
+func cbPerson(r *rand.Rand) []byte {
+	in := cborTypedInputs(r, 1)[0]
+	return in
+}
+
+func cborDeepInputs(r *rand.Rand, n int) [][]byte {
+	var out [][]byte
+	for i := 0; i < n; i++ {
+		var kv [][]byte
+		add := func(k string, v []byte) { kv = append(kv, cbText(k), v) }
+		if r.Intn(2) == 0 {
+			if r.Intn(4) == 0 {
+				add("addrs", cbValue(r, 1))
+			} else {
+				add("addrs", cbAddrs(r))
+			}
+		}
+		if r.Intn(2) == 0 {
+			if r.Intn(4) == 0 {
+				add("by", cbValue(r, 1))
+			} else {
+				var m [][]byte
+				for j := r.Intn(3); j > 0; j-- {
+					m = append(m, cbText([]string{"p", "q", "r"}[r.Intn(3)]), cbAddr(r))
+				}
+				add("by", cbMap(m...))
+			}
+		}
+		if r.Intn(2) == 0 {
+			add("opt", cbValue(r, 2))
+		}
+		if r.Intn(2) == 0 {
+			if r.Intn(4) == 0 {
+				add("grid", cbValue(r, 1))
+			} else {
+				var rows [][]byte
+				for j := r.Intn(3); j > 0; j-- {
+					var row [][]byte
+					for k := r.Intn(3); k > 0; k-- {
+						row = append(row, cbValue(r, 2))
+					}
+					rows = append(rows, cbArr(row...))
+				}
+				add("grid", cbArr(rows...))
+			}
+		}
+		if r.Intn(3) == 0 {
+			add("maybe", cbValue(r, 2))
+		}
+		if r.Intn(3) == 0 {
+			add("flag", cbValue(r, 2))
+		}
+		if r.Intn(3) == 0 {
+			if r.Intn(2) == 0 {
+				add("nested", cbValue(r, 1))
+			} else {
+				add("nested", cbPerson(r))
+			}
+		}
+		if r.Intn(3) == 0 {
+			add("count", cbValue(r, 2))
+		}
+		in := cbMap(kv...)
+		if r.Intn(12) == 0 {
+			in = cborMutate(r, in)
+		}
+		out = append(out, in)
+	}
+	return out
+}
+
 const cborTypedXo = `
 struct Addr {
   city: Str
@@ -326,6 +405,45 @@ struct Person {
   attrs: Map[Str, Int]
   skip as "-": Str
 } derive Cbor
+
+struct Deep {
+  addrs: List[Addr]
+  by: Map[Str, Addr]
+  opt: Int?
+  grid: List[List[Int]]
+  maybe: Float?
+  flag: Bool?
+  nested: Person?
+  count as "count,omitempty": Int
+} derive Cbor
+
+test "unmarshal and marshal into nested types agree with the oracle" {
+  var bad: List[Str] = []
+  for (data, err, out) in TYPED2 {
+    match cbor.unmarshal[Deep](data) {
+      Ok(p) => {
+        if err {
+          bad.push("accepted " + data.to_hex())
+        } else {
+          match cbor.marshal(p) {
+            Ok(b) => {
+              if b.to_hex() != out {
+                bad.push("marshal " + data.to_hex() + ": " + b.to_hex() + " want " + out)
+              }
+            }
+            Err(e) => bad.push("marshal failed " + data.to_hex() + ": " + e.display())
+          }
+        }
+      }
+      Err(_) => {
+        if !err {
+          bad.push("refused " + data.to_hex())
+        }
+      }
+    }
+  }
+  expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
+}
 
 test "unmarshal and marshal into a struct agree with the oracle" {
   var bad: List[Str] = []
@@ -388,10 +506,17 @@ func cborCorpus() string {
 	}
 	o.WriteString("]\n")
 	tin := cborTypedInputs(rand.New(rand.NewSource(7)), 800)
-	trefs := cborTypedOracle(tin)
+	trefs := cborTypedOracle("typed", tin)
 	o.WriteString("\n/// (CBOR bytes, decoding into Person fails, the deterministic marshal of the result in hex)\nconst TYPED: List[(Bytes, Bool, Str)] = [\n")
 	for i, in := range tin {
 		fmt.Fprintf(&o, "  (%s, %v, %s),\n", xbytes(in), trefs[i].Err, xq(trefs[i].Out))
+	}
+	o.WriteString("]\n")
+	tin2 := cborDeepInputs(rand.New(rand.NewSource(11)), 800)
+	trefs2 := cborTypedOracle("typed2", tin2)
+	o.WriteString("\n/// (CBOR bytes, decoding into Deep fails, the deterministic marshal of the result in hex)\nconst TYPED2: List[(Bytes, Bool, Str)] = [\n")
+	for i, in := range tin2 {
+		fmt.Fprintf(&o, "  (%s, %v, %s),\n", xbytes(in), trefs2[i].Err, xq(trefs2[i].Out))
 	}
 	o.WriteString("]\n")
 	o.WriteString(cborTypedXo)

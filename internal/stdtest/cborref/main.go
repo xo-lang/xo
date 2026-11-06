@@ -94,8 +94,8 @@ func hasIndef(data []byte) bool {
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "typed" {
-		typedMain()
+	if len(os.Args) > 1 && strings.HasPrefix(os.Args[1], "typed") {
+		typedMain(os.Args[1])
 		return
 	}
 	dec, err := cbor.DecOptions{
