@@ -31,3 +31,16 @@ Guard (lead, 2026-11-06): scripts/gate.sh runs internal/arm64
 TestStdStoreBuilds for any change to a std module's source (std/*.xo,
 std/native/*.xo or a std/native/MOD/ directory), so a module that breaks
 the store build fails its own gate instead of the next main check.
+
+Second place (2026-11-06, Xo Lang 3 found it on a fresh linux/arm64
+checkout): `xo dev edges` preloads every std implementation file
+(compiler/cli/servers edges.xo impl_modules), and a `use c` module there
+needs its C binding (`.xo/cbind`), which only a build with a C compiler
+writes; a checkout that had built the module passed, a fresh one failed
+cmd/xo TestDevEdges. The spelling scan of `xo def` and `xo refs`
+(compiler/cli/semantic query.xo preloads_wide, which adds every std file
+that spells the name) did the same: cmd/xo TestAgentRefsSamePath failed in
+the Mac hourly worktree (`xo refs prelude.Str.to_lower`). Both now leave
+such a module out through check.uses_c, as the std store build does.
+Anything else that loads every std module (a sweep, a coverage tool) uses
+check.uses_c too, and its test runs on a tree without `std/native/.xo`.

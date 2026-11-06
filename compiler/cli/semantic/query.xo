@@ -190,7 +190,11 @@ pub fn preloads_wide(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read 
           }
           // xo:allow XO0903 a file it cannot read is left out, as a missing one
           let text = os.fs.read("${std_dir}/${sub}${fi.name}").ok() ?? b""
-          if check.spells_ident(text, word) {
+          // a `use c` module (or the declaration file of one) only when
+          // asked for: its C binding may not exist yet (check.uses_c)
+          // xo:allow XO0903 a native file it cannot read is no `use c` one
+          let native = if sub == "" { os.fs.read("${std_dir}/native/${fi.name}").ok() ?? b"" } else { text }
+          if check.spells_ident(text, word) && !check.uses_c(native) {
             out.push(q)
           }
         }

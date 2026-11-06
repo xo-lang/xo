@@ -601,6 +601,16 @@ pub fn new_checker(fs: Fs, std_dir: Str) -> Checker {
 /// Whether std module n's native file has a `use c` line (decision 0534).
 fn (c: Checker) std_uses_c(n: Str) -> Bool uses fs.read {
   let b = c.fs.read("${c.std_dir}/native/${n}.xo").ok() ?? return false
+  uses_c(b)
+}
+
+/// Whether a source file's text has a `use c` line (decision 0534): its C
+/// binding (`.xo/cbind`) is written only by a build with a C compiler, so
+/// a tool that loads every std module leaves such a module out unless it
+/// was asked for (the std store build, `xo dev edges`'s preload, the
+/// spelling scans of `xo def` and `xo refs`); a fresh checkout has no
+/// binding (gotchas/std-store-build-use-c-module.md).
+pub fn uses_c(b: Bytes) -> Bool {
   let src = b.to_str() ?? return false
   src.starts_with("use c ") || src.contains("\nuse c ")
 }

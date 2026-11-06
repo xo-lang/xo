@@ -123,7 +123,13 @@ fn impl_modules(os: Os, std_dir: Str) -> List[Str] uses fs.read {
       continue
     }
     let name = e.name.trim_suffix(".xo")
-    if os.fs.read("${std_dir.trim_suffix("/")}/native/${name}.xo").is_ok() {
+    // a module with a `use c` line (decision 0534's) needs its C binding,
+    // which only a build with a C compiler writes: a fresh checkout has
+    // none, and the preload failed (cmd/xo TestDevEdges on linux/arm64,
+    // 2026-11-06); the std store build skips it the same way (check
+    // load.xo std_uses_c)
+    let b = os.fs.read("${std_dir.trim_suffix("/")}/native/${name}.xo").ok() ?? continue
+    if !check.uses_c(b) {
       out.push("native/${name}")
     }
   }
