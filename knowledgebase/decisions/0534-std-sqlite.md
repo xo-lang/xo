@@ -3,8 +3,9 @@
 Status: Accepted (owner, 2026-11-06, "go with your recommendations"), with three conditions:
 fs effects, not net.dial (item 5); std/sql's portable error codes (item 8); the amalgamation
 vendored with a hash check, its version in THIRD_PARTY_NOTICES (the owner's "NOTICE") and an update procedure (item 11). The
-std/sql API change item 5 needs is with the owner (lead, 2026-11-06); std/sql is not changed
-until that answer.
+std/sql API change item 5 needs (the effect parameter on Driver, DriverConn, DriverRows,
+DriverCursor, Db, Tx and Rows) is approved too (owner, 2026-11-06, "go with your recommendations",
+through the lead) and lands with std/sqlite.
 
 ## Context
 
@@ -96,8 +97,17 @@ sqlite3_open_v2, `sqlite3_stmt **` in sqlite3_prepare_v3), destructor function p
 - Two checker bugs a std `use c` module hit were fixed first (gotchas/std-use-c-binding-types.md,
   cmd/xo TestStdModuleUseC): the binding is declared with std's tree, and its paths resolve
   under the std directory.
-- The std/sql effect parameter (item 5) changes std/sql's declared types; no source change is
-  expected for code that writes `Db` without an effect argument.
+- The std/sql effect parameter (item 5) changes std/sql's declared types. Code that writes `Db`
+  without an effect argument still checks (an implicit effect variable), except where a Db is
+  captured in a closure whose type fixes its effects: that function and the ones passing the Db
+  to it write `sql.Db[()]` (stability/notes: 3 of its 14 signatures; an XO0701 fix-it for
+  `xo fix` follows).
+- The Go backend: std/sqlite is in std/go_compiled.txt, so a Go backend build loads
+  std/native/sqlite.xo and its `use c` is XO1201 (cmd/xo TestStdSQLiteGoBackend); stdgen skips a
+  module whose native file has `use c`, so std/rt has no Go for it. std/rt's std_sigs_sql.go
+  keeps the signature checks of std/sql's free functions and Row, not of Db, Tx and Rows (their
+  receivers take `fx` now, and std_sigs skips generic receivers); the Go parity goldens of
+  std/sql still run those calls.
 - std's binding cache is std/native/.xo/cbind, inside the std tree: a read only std (a package
   manager's install) needs the release to ship the binding (stage 2, with item 2's objects).
 - std's first C: the release grows by one object per target (about 1.5 MB each); the seed and
@@ -110,6 +120,12 @@ sqlite3_open_v2, `sqlite3_stmt **` in sqlite3_prepare_v3), destructor function p
 - Translate the C to Xo (modernc's route): pure Xo everywhere, wasm too; very large; parked
   as the long term path.
 - A pure Xo engine reading the file format: smallest dependency, largest correctness risk.
+- A default effect argument (`struct Db[fx: Effects = ()]`, a bare `sql.Db` meaning `Db[()]`;
+  lead and owner, 2026-11-06, not taken): Postgres and in memory users would never annotate,
+  but every std/sqlite user would write `sql.Db[fs]` wherever a Db is kept, so the case the
+  parameter exists for becomes the one that needs annotating, and generic code over drivers
+  writes `Db[fx]` everywhere. Today's rule annotates only a Db captured in a closure with fixed
+  effects; the XO0701 fix-it writes that annotation.
 
 ## First experiments (2026-11-06)
 

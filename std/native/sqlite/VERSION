@@ -1,0 +1,7 @@
+SQLite 3.54.1 amalgamation (sqlite3.c, sqlite3.h), public domain
+from https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip
+SHA3-256 of the zip: 92281c86e2957f9b9305890f9ac04204caa7b677cc868dc326d942689df28e30
+(sqlite.org's published hash; checked 2026-11-06)
+SHA-256 of sqlite3.c: 0c657666d819f261cc4007526ad57e1669de9949df7a8ea847aa284a2bf0ee52
+SHA-256 of sqlite3.h: d6c84557261893439b341d2e6c35187ae3ea24fbfd843ad94616f72d89242b8c
+(the files as extracted from that zip; internal/repotest TestSQLiteVendored checks them)

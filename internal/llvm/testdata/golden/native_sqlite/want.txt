@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+sqlite 3.54.1
+insert: rows 1 id 1
+1 ada 9.5 1 00ff786f 1
+2 bob null null null 2
+3 cy null null null null
+count: 2
+unique: UNIQUE constraint failed: users.name
+not null: NOT NULL constraint failed: users.name
+foreign key: FOREIGN KEY constraint failed
+no table: no such table: nope
+syntax: syntax error: near "SELEC"
+named: sqlite: named placeholder ":a": std/sql passes arguments by position ($1 or ?)
+count: sqlite: placeholder 2 has no argument (1 given)
+after tx: bob null
+after tx: cy 2.0
+--- stderr

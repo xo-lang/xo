@@ -339,6 +339,9 @@ func loadImplDecls(root string) ([]decl, error) {
 	sort.Strings(paths)
 	var out []decl
 	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			continue // std/native/.xo: the `use c` binding cache (decision 0534)
+		}
 		mod := strings.TrimSuffix(filepath.Base(p), ".xo")
 		ds, err := declared(mod, p)
 		if err != nil {

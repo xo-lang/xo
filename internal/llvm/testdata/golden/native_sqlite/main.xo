@@ -1,0 +1,57 @@
+// std/sqlite (decision 0534): an in memory database through
+// sql.open_driver: DDL, binds of every value kind, rows, a blob round trip,
+// the portable constraint codes, a missing table, a syntax error, and a
+// committed and a rolled back transaction.
+use std/sql
+use std/sqlite
+
+fn show[T](os: Os, label: Str, r: Result[T, sql.SqlErr]) {
+  match r {
+    Ok(_) => os.stdio.println("${label}: ok")
+    Err(e) => os.stdio.println("${label}: ${e}")
+  }
+}
+
+fn opt[T: Display](v: T?) -> Str {
+  match v {
+    Some(x) => "${x}"
+    None => "null"
+  }
+}
+
+fn main(os: Os) ! {
+  os.stdio.println("sqlite ${sqlite.version()}")
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, score REAL, admin INTEGER, avatar BLOB, born TEXT, team INTEGER REFERENCES teams(id))", [])?
+  db.exec("CREATE TABLE teams (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO teams (name) VALUES ('red'), ('blue')", [])?
+  db.exec("PRAGMA foreign_keys = ON", [])?
+  let r = db.exec("INSERT INTO users (name, score, admin, avatar, born, team) VALUES ($1, $2, $3, $4, $5, $6)", [sql.str("ada"), sql.float(9.5), sql.bool(true), sql.bytes(b"\x00\xffxo"), sql.str("1815-12-10"), sql.int(1)])?
+  os.stdio.println("insert: rows ${r.rows_affected} id ${r.last_insert_id}")
+  db.exec("INSERT INTO users (name, team) VALUES (?, ?)", [sql.str("bob"), sql.int(2)])?
+  db.exec("INSERT INTO users (name) VALUES ($1)", [sql.str("cy")])?
+  for row in db.query("SELECT id, name, score, admin, avatar, team FROM users ORDER BY id", [])? {
+    let avatar = match row.bytes_opt("avatar")? {
+      Some(b) => b.to_hex()
+      None => "null"
+    }
+    os.stdio.println("${row.int("id")?} ${row.str("name")?} ${opt(row.float_opt("score")?)} ${opt(row.int_opt("admin")?)} ${avatar} ${opt(row.int_opt("team")?)}")
+  }
+  let n = db.query_one("SELECT count(*) AS n FROM users WHERE name > $1", [sql.str("b")])?.int("n")?
+  os.stdio.println("count: ${n}")
+  show(os, "unique", db.exec("INSERT INTO users (name) VALUES ('ada')", []))
+  show(os, "not null", db.exec("INSERT INTO users (score) VALUES (1)", []))
+  show(os, "foreign key", db.exec("INSERT INTO users (name, team) VALUES ('dee', 9)", []))
+  show(os, "no table", db.query("SELECT * FROM nope", []))
+  show(os, "syntax", db.query("SELEC 1", []))
+  show(os, "named", db.query("SELECT :a", [sql.int(1)]))
+  show(os, "count", db.query("SELECT $1, $2", [sql.int(1)]))
+  let tx = db.begin()?
+  tx.exec("UPDATE users SET score = 1 WHERE name = 'bob'", [])?
+  tx.rollback()?
+  let tx2 = db.begin()?
+  tx2.exec("UPDATE users SET score = 2 WHERE name = 'cy'", [])?
+  tx2.commit()?
+  for row in db.query("SELECT name, score FROM users WHERE name <> 'ada' ORDER BY name", [])? {
+    os.stdio.println("after tx: ${row.str("name")?} ${opt(row.float_opt("score")?)}")
+  }
+}

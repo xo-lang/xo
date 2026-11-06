@@ -3,7 +3,11 @@
 //
 // - Db, Tx, and Row are opaque handles (empty structs).
 // - Every operation on a Db or Tx declares `uses net.dial`: a Db may be backed
-//   by a network driver. The in memory driver (`memory`) performs no I/O but
+//   by a network driver. Db, Tx and Rows also carry their driver's effects
+//   (`fx`, decision 0534): a driver that opens files (std/sqlite) is a
+//   `Driver[fs]`, and its Db's operations perform fs too. Postgres and the
+//   in memory driver add none. Code that names `Db` without an effect
+//   argument gets it as an implicit effect variable (core 6.2). The in memory driver (`memory`) performs no I/O but
 //   keeps the same signatures, so code under test is typed like production
 //   code. Opening the in memory driver needs no capability.
 // - Network drivers are written in Xo (decision 0278): `open` knows
@@ -90,12 +94,12 @@ struct ExecResult {
   last_insert_id: Int
 }
 
-struct Db {}
-struct Tx {}
+struct Db[fx: Effects] {}
+struct Tx[fx: Effects] {}
 struct Row {}
 /// A result read row by row (decision 0479, Go's *sql.Rows): holds a
 /// connection from `rows` to the last row or `close`.
-struct Rows {}
+struct Rows[fx: Effects] {}
 
 /// Opens a database: "postgres" (decision 0278; `roots` is PEM for
 /// sslmode verify-ca and verify-full) natively. `max_open` bounds concurrent
@@ -194,22 +198,22 @@ fn (r: Row) items(name: Str) -> List[SqlValue] ! SqlErr
 /// A database driver written in Xo (decision 0278): opened with
 /// `open_driver`, which gives it std/sql's pool, transactions, and
 /// cancellation. It dials through the Net it is given.
-interface Driver {
-  fn connect(self, net: Net, dsn: Str) -> DriverConn ! SqlErr uses net.dial
+interface Driver[fx: Effects] {
+  fn connect(self, net: Net, dsn: Str) -> DriverConn[fx] ! SqlErr uses (net.dial, fx)
 }
 
 /// One connection of a Driver, used by one task at a time. Its waits are
 /// cancellation points that return Canceled.
-interface DriverConn {
-  fn query(self, q: Str, args: List[SqlValue]) -> DriverRows ! SqlErr uses net.dial
-  fn exec(self, q: Str, args: List[SqlValue]) -> ExecResult ! SqlErr uses net.dial
-  fn begin(self) -> () ! SqlErr uses net.dial
-  fn commit(self) -> () ! SqlErr uses net.dial
-  fn rollback(self) -> () ! SqlErr uses net.dial
-  fn ping(self) -> () ! SqlErr uses net.dial
+interface DriverConn[fx: Effects] {
+  fn query(self, q: Str, args: List[SqlValue]) -> DriverRows[fx] ! SqlErr uses (net.dial, fx)
+  fn exec(self, q: Str, args: List[SqlValue]) -> ExecResult ! SqlErr uses (net.dial, fx)
+  fn begin(self) -> () ! SqlErr uses (net.dial, fx)
+  fn commit(self) -> () ! SqlErr uses (net.dial, fx)
+  fn rollback(self) -> () ! SqlErr uses (net.dial, fx)
+  fn ping(self) -> () ! SqlErr uses (net.dial, fx)
   /// COPY FROM STDIN (decision 0479): a driver without it returns Driver.
-  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
-  fn close(self) uses net.dial
+  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses (net.dial, fx)
+  fn close(self) uses (net.dial, fx)
   /// True once the connection cannot be used again; the pool drops it.
   fn is_broken(self) -> Bool
 }
@@ -217,25 +221,25 @@ interface DriverConn {
 /// The result of DriverConn.query: column names and rows of values. A
 /// driver may return a few rows (or none) and a cursor for the rest
 /// (decision 0479): Db.rows reads them as asked, Db.query reads them all.
-struct DriverRows {
+struct DriverRows[fx: Effects] {
   columns: List[Str]
   rows: List[List[SqlValue]]
-  cursor: DriverCursor? = None
+  cursor: DriverCursor[fx]? = None
 }
 
 /// The rest of a result still on the connection. The connection is not
 /// used again until the cursor is read to the end or closed.
-interface DriverCursor {
+interface DriverCursor[fx: Effects] {
   /// The next row, None after the last.
-  fn next(self) -> List[SqlValue]? ! SqlErr uses net.dial
+  fn next(self) -> List[SqlValue]? ! SqlErr uses (net.dial, fx)
   /// All the remaining rows.
-  fn rest(self) -> List[List[SqlValue]] ! SqlErr uses net.dial
+  fn rest(self) -> List[List[SqlValue]] ! SqlErr uses (net.dial, fx)
   /// Reads and discards the remaining rows.
-  fn close(self) uses net.dial
+  fn close(self) uses (net.dial, fx)
 }
 
 /// A Db over d: `max_open` connections at most (operations and open
 /// transactions; waiting is a cancellation point), `max_idle` kept open
 /// when unused, each closed after `max_lifetime`. Connects once before it
 /// returns, so a wrong password or host fails here.
-fn open_driver(net: Net, d: Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m) -> Db ! SqlErr uses net.dial
+fn open_driver[fx: Effects](net: Net, d: Driver[fx], dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m) -> Db[fx] ! SqlErr uses (net.dial, fx)

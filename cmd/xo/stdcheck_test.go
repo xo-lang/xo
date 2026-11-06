@@ -105,7 +105,7 @@ func TestStdChecks(t *testing.T) {
 		}
 		rel, _ := filepath.Rel(std, p)
 		if e.IsDir() {
-			if e.Name() == "testdata" || rel == "rt" {
+			if e.Name() == "testdata" || rel == "rt" || e.Name() == ".xo" {
 				return filepath.SkipDir
 			}
 			return os.MkdirAll(filepath.Join(copyStd, rel), 0o755)

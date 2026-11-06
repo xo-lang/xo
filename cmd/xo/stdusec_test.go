@@ -100,3 +100,22 @@ pub fn sum(a: Int, b: Int) -> Int {
 		t.Fatalf("xo run: exit %d, stdout %q, want 42\n%s", code, out.String(), errOut.String())
 	}
 }
+
+// TestStdSQLiteGoBackend: std/sqlite binds C, so the Go backend reports
+// XO1201 for a program that uses it (std/go_compiled.txt loads its native
+// file there, decision 0534), instead of a Go build that cannot find
+// std/rt's Sqlite functions (stdgen generates none for a `use c` module).
+func TestStdSQLiteGoBackend(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("checks a program on the Go backend")
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module app\n",
+		"main.xo": "use std/sqlite\n\nfn main(os: Os) uses fs {\n  let _ = sqlite.version()\n}\n",
+	})
+	code, out := xoOut(t, "build", "--backend=go", "-o", filepath.Join(t.TempDir(), "p"), dir)
+	if code == 0 || !strings.Contains(out, "XO1201") || !strings.Contains(out, "impossible on the Go backend") {
+		t.Errorf("want XO1201 (C is impossible on the Go backend), got exit %d:\n%s", code, out)
+	}
+}

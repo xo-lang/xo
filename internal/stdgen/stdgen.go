@@ -64,8 +64,11 @@ func Generated(root string) ([]string, error) {
 const hashPrefix = "// Declarations: "
 
 // modules are the std modules the generator's program uses: every
-// std/*.xo but tests, the prelude (always loaded), and std/go and
-// std/internal (not modules a program uses for types).
+// std/*.xo but tests, the prelude (always loaded), std/go and
+// std/internal (not modules a program uses for types), and a module whose
+// native implementation binds C with `use c` (std/sqlite, decision 0534):
+// the Go backend cannot build one (XO1201, through std/go_compiled.txt),
+// so std/rt has no Go for it.
 func modules(root string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(root, "std", "*.xo"))
 	if err != nil {
@@ -77,10 +80,27 @@ func modules(root string) ([]string, error) {
 		if strings.HasSuffix(name, "_test") || name == "prelude" || name == "go" || name == "internal" {
 			continue
 		}
+		if usesC(root, name) {
+			continue
+		}
 		mods = append(mods, name)
 	}
 	sort.Strings(mods)
 	return mods, nil
+}
+
+// usesC reports whether std/native/name.xo has a `use c` line.
+func usesC(root, name string) bool {
+	src, err := os.ReadFile(filepath.Join(root, "std", "native", name+".xo"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(src), "\n") {
+		if strings.HasPrefix(line, "use c ") {
+			return true
+		}
+	}
+	return false
 }
 
 var declStart = regexp.MustCompile(`^(pub )?(struct|enum|interface|type) `)

@@ -109,6 +109,9 @@ func TestOutsideBytesValidated(t *testing.T) {
 	files, _ := filepath.Glob(filepath.Join(root, "std/native/*.xo"))
 	more, _ := filepath.Glob(filepath.Join(root, "std/native/llrt/*.xo"))
 	for _, f := range append(files, more...) {
+		if fi, err := os.Stat(f); err == nil && fi.IsDir() {
+			continue // std/native/.xo: the `use c` binding cache (decision 0534)
+		}
 		src, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

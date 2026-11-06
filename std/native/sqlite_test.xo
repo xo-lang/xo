@@ -1,0 +1,55 @@
+use std/sql
+use std/sqlite
+
+test "config reads mattn's keys" {
+  let c = sqlite.config("file:app.db?_busy_timeout=250&_journal_mode=wal&_fk=1&cache=shared")?
+  expect(c.path) == "app.db"
+  expect(c.uri) == true
+  expect(c.keys) == ["cache=shared"]
+  expect(c.busy_ms) == 250
+  expect(c.pragmas) == ["PRAGMA journal_mode = WAL", "PRAGMA foreign_keys = ON"]
+}
+
+test "config refuses an unknown driver key" {
+  match sqlite.config("file:a.db?_bogus=1") {
+    Err(Param(msg)) => expect(msg) == "sqlite: unknown key \"_bogus\""
+    _ => expect(false) == true
+  }
+}
+
+test "a memory database runs statements, binds and maps errors" {
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, score REAL, data BLOB)", [])?
+  let r = db.exec("INSERT INTO t (name, score, data) VALUES ($1, $2, $3)", [sql.str("ada"), sql.float(1.5), sql.bytes(b"\x00\x01\xff")])?
+  expect(r.rows_affected) == 1
+  expect(r.last_insert_id) == 1
+  db.exec("INSERT INTO t (name) VALUES (?)", [sql.str("bob")])?
+  let rows = db.query("SELECT id, name, score, data FROM t WHERE id >= $1 ORDER BY id", [sql.int(1)])?
+  expect(rows.len()) == 2
+  expect(rows[0].str("name")?) == "ada"
+  expect(rows[0].float("score")?) == 1.5
+  expect(rows[0].bytes("data")?) == b"\x00\x01\xff"
+  expect(rows[1].float_opt("score")?) == None
+  match db.exec("INSERT INTO t (name) VALUES ($1)", [sql.str("ada")]) {
+    Err(Constraint(_, code, _)) => expect(code) == "23505"
+    _ => expect(false) == true
+  }
+  match db.query("SELECT * FROM missing", []) {
+    Err(NoTable(name)) => expect(name) == "missing"
+    _ => expect(false) == true
+  }
+}
+
+test "a transaction commits and rolls back" {
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), ":memory:", max_open: 1)?
+  db.exec("CREATE TABLE t (n INTEGER)", [])?
+  let tx = db.begin()?
+  tx.exec("INSERT INTO t VALUES (1)", [])?
+  tx.rollback()?
+  let tx2 = db.begin()?
+  tx2.exec("INSERT INTO t VALUES (2)", [])?
+  tx2.commit()?
+  let rows = db.query("SELECT n FROM t", [])?
+  expect(rows.len()) == 1
+  expect(rows[0].int("n")?) == 2
+}

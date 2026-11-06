@@ -61,3 +61,29 @@ compiler/macho/glibc.xo	// stage 3): the default version of every symbol of glib
 compiler/macho/glibc.xo	// scripts/elf-glibc-versions.py; do not edit.
 compiler/macho/glibc_amd64.xo	// stage 3): the default version of every symbol of glibc 2.31's
 compiler/macho/glibc_amd64.xo	// scripts/elf-glibc-versions.py --amd64; do not edit.
+
+# std/sqlite and std/sql (decision 0534): the binding module names the
+# SQLite library it calls, its behavior and its version; no SQLite code
+# or text copied (the vendored copy is std/native/sqlite, marked in its
+# README.md).
+std/native/sqlite.xo	// std/sqlite on the native backends (decision 0534): a driver for std/sql's
+std/native/sqlite.xo	// open_driver (decision 0278's Driver interface) over the SQLite
+std/native/sqlite.xo	// target; a checkout compiles sqlite/sqlite3.c with its C compiler on first
+std/native/sqlite.xo	//   let db = sql.open_driver(net, sqlite.driver(fs), "file:app.db?_busy_timeout=5000")?
+std/native/sqlite.xo	// The calls perform `fs` (SQLite reads and writes its files), so the
+std/native/sqlite.xo	/// only (SQLite keeps its journal beside the file).
+std/native/sqlite.xo	/// URI keys SQLite reads itself (mode=, cache=), and the driver's `_`
+std/native/sqlite.xo	/// `_` are the driver's and leave the name SQLite sees; an unknown one is
+std/native/sqlite.xo	/// The name SQLite opens and the open flags, with fs's root and mode
+std/native/sqlite.xo	// Syntax displays as "syntax error: MSG": SQLite's own suffix goes
+std/native/sqlite.xo	// or read only: SQLite's transactions are serializable, and read only
+std/native/sqlite.xo	/// A prepared INSERT run per row (SQLite has no COPY), inside the
+std/native/sqlite.xo	/// The SQLite library's version, e.g. "3.54.1".
+std/sql.xo	//   (`fx`, decision 0534): a driver that opens files (std/sqlite) is a
+std/sqlite.xo	// std/sqlite (decision 0534). Declaration file. A SQLite driver for
+std/sqlite.xo	// std/sql's open_driver, over the SQLite library (public domain) linked
+std/sqlite.xo	//   let db = sql.open_driver(os.net, sqlite.driver(os.fs), "file:app.db?_busy_timeout=5000")?
+std/sqlite.xo	//   reads it: SQLite's own URI keys (`mode=ro|rw|rwc|memory`,
+std/sqlite.xo	//   extended result code's name (`SQLITE_BUSY`) and SQLite's message.
+std/sqlite.xo	// - Transactions are SQLite's (serializable); a read only one runs with
+std/sqlite.xo	/// The SQLite library's version, e.g. "3.54.1".

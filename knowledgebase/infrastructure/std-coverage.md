@@ -34,6 +34,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/testing | 8 | `std/changes/testing.md` |
 | std/path | 9 | `std/changes/path.md` |
 | std/sql | 10 | `std/changes/sql.md` |
+| std/sqlite | 65 | `std/changes/sqlite.md` |
 | std/crypto | 11 | `std/changes/crypto.md` |
 | std/go | 12 | `std/changes/go.md` |
 | std/time | 13 | `std/changes/time.md` |
@@ -242,6 +243,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | Need | Go source | Xo | Status | Notes |
 |---|---|---|---|---|
 | Postgres driver | github.com/jackc/pgx, lib/pq | std/sql | done | Pure Xo wire protocol (v3, SCRAM-SHA-256, TLS) over Net (decision 0278). |
+| SQLite driver | mattn/go-sqlite3, modernc.org/sqlite | std/sqlite | in progress | The SQLite library through `use c`, a driver for `sql.open_driver` (decision 0534, section 66, 2026-11-06); prebuilt objects per release target, the differential corpus and the timing row to follow. |
 | MySQL driver | go-sql-driver/mysql | none | planned | After Postgres. |
 | SQLite | modernc.org/sqlite, mattn/go-sqlite3 | none | planned | Through `use c` or a port; after Postgres. |
 | Redis client | redis/go-redis | none | planned | RESP over Net. |

@@ -73,3 +73,4 @@ entries yet.
 - [jwt.md](jwt.md): std/jwt (spec/std.md 62)
 - [amqp.md](amqp.md): std/amqp (spec/std.md 64)
 - [amqptest.md](amqptest.md): std/amqptest (spec/std.md 64.6)
+- [sqlite.md](sqlite.md): std/sqlite (spec/std.md 66)

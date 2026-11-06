@@ -71,6 +71,20 @@ func TestThirdPartyOrigins(t *testing.T) {
 		t.Skipf("git ls-files: %v", err)
 	}
 	allow := readOriginsAllow(t)
+	// a README.md's `Origin: KEY` line names the unchanged copies beside
+	// it (std/native/sqlite's amalgamation): their own comments are the
+	// outside project's, not Xo's, so they are not scanned
+	readmes := map[string]string{}
+	for _, name := range bytes.Split(out, []byte{0}) {
+		f := string(name)
+		if filepath.Base(f) != "README.md" {
+			continue
+		}
+		if data, err := os.ReadFile(filepath.Join(root, f)); err == nil {
+			readmes[f] = string(data)
+		}
+	}
+	vendored := originVendored(readmes)
 	used := map[string]bool{}
 	allowUsed := map[string]bool{}
 	for _, name := range bytes.Split(out, []byte{0}) {
@@ -93,7 +107,7 @@ func TestThirdPartyOrigins(t *testing.T) {
 				used[m[1]] = true
 			}
 		}
-		if !originShipped(f) {
+		if !originShipped(f) || vendored[f] {
 			continue
 		}
 		hash := strings.HasSuffix(f, ".py") || strings.HasSuffix(f, ".sh")
@@ -129,6 +143,47 @@ func TestThirdPartyOrigins(t *testing.T) {
 	for k := range allow {
 		if !allowUsed[k] {
 			t.Errorf("internal/repotest/testdata/origins-allow.txt: %q matches no line; remove it", strings.Replace(k, "\t", " | ", 1))
+		}
+	}
+}
+
+// originVendored returns the files that README.md files (path to text)
+// name on an `Origin: KEY` line, beside the README: the unchanged copies
+// whose own comments are not scanned. A copy no README's Origin line names
+// is scanned as any file.
+func originVendored(readmes map[string]string) map[string]bool {
+	vendored := map[string]bool{}
+	for f, text := range readmes {
+		for _, line := range strings.Split(text, "\n") {
+			if !originMarker.MatchString(line) {
+				continue
+			}
+			for _, w := range strings.FieldsFunc(line, func(r rune) bool { return r == ' ' || r == ',' || r == '(' || r == ')' }) {
+				vendored[filepath.ToSlash(filepath.Dir(f))+"/"+w] = true
+			}
+		}
+	}
+	return vendored
+}
+
+// TestOriginVendored: only a file a README's Origin line names counts as
+// a vendored copy; a file beside it the line does not name, a file in
+// another directory, and a README whose mention is not an Origin line
+// mark nothing, so an unmarked copy still fails TestThirdPartyOrigins.
+func TestOriginVendored(t *testing.T) {
+	v := originVendored(map[string]string{
+		"std/native/lib/README.md":   "# lib\n\nOrigin: sqlite the amalgamation (lib.c, lib.h), copied unchanged\n\n- [extra.c](extra.c): ours\n",
+		"std/native/other/README.md": "# other\n\nCopied from SQLite (other.c), no marker line\n",
+	})
+	for f, want := range map[string]bool{
+		"std/native/lib/lib.c":     true,
+		"std/native/lib/lib.h":     true,
+		"std/native/lib/extra.c":   false,
+		"std/native/x/lib.c":       false,
+		"std/native/other/other.c": false,
+	} {
+		if v[f] != want {
+			t.Errorf("originVendored: %s = %v, want %v", f, v[f], want)
 		}
 	}
 }

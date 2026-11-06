@@ -215,3 +215,13 @@ LICENSE and std/LICENSE.
    DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
    OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
    USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+8. SQLite [sqlite]
+
+   Copied (vendored): std/native/sqlite/sqlite3.c and sqlite3.h, the
+   amalgamation of SQLite 3.54.1 (sqlite-amalgamation-3540100.zip, its
+   SHA3-256 in std/native/sqlite/VERSION; decision 0534), compiled into
+   programs that use std/sqlite.
+
+   License: public domain. The SQLite authors have dedicated the code to
+   the public domain (https://www.sqlite.org/copyright.html).

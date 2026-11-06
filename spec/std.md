@@ -3127,27 +3127,40 @@ Status: implemented natively and on the Go backend (decision 0278 stage
 B, 2026-10-20); the Postgres driver (10.8) uses it.
 
 ```
-interface Driver {
-  fn connect(self, net: Net, dsn: Str) -> DriverConn ! SqlErr uses net.dial
+interface Driver[fx: Effects] {
+  fn connect(self, net: Net, dsn: Str) -> DriverConn[fx] ! SqlErr uses (net.dial, fx)
 }
-interface DriverConn {
-  fn query(self, q: Str, args: List[SqlValue]) -> DriverRows ! SqlErr uses net.dial
-  fn exec(self, q: Str, args: List[SqlValue]) -> ExecResult ! SqlErr uses net.dial
-  fn begin(self) -> () ! SqlErr uses net.dial      // also commit, rollback, ping
-  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses net.dial
-  fn close(self)
+interface DriverConn[fx: Effects] {
+  fn query(self, q: Str, args: List[SqlValue]) -> DriverRows[fx] ! SqlErr uses (net.dial, fx)
+  fn exec(self, q: Str, args: List[SqlValue]) -> ExecResult ! SqlErr uses (net.dial, fx)
+  fn begin(self) -> () ! SqlErr uses (net.dial, fx)      // also commit, rollback, ping
+  fn copy_from(self, table: Str, columns: List[Str], rows: fn() -> List[SqlValue]? ! SqlErr) -> Int ! SqlErr uses (net.dial, fx)
+  fn close(self) uses (net.dial, fx)
   fn is_broken(self) -> Bool                       // dropped from the pool when true
 }
-struct DriverRows { columns: List[Str], rows: List[List[SqlValue]], cursor: DriverCursor? = None }
-interface DriverCursor {                         // the rest of a result on the connection (decision 0479)
-  fn next(self) -> List[SqlValue]? ! SqlErr uses net.dial   // None after the last row
-  fn rest(self) -> List[List[SqlValue]] ! SqlErr uses net.dial
-  fn close(self) uses net.dial                   // reads and discards the remaining rows
+struct DriverRows[fx: Effects] { columns: List[Str], rows: List[List[SqlValue]], cursor: DriverCursor[fx]? = None }
+interface DriverCursor[fx: Effects] {            // the rest of a result on the connection (decision 0479)
+  fn next(self) -> List[SqlValue]? ! SqlErr uses (net.dial, fx)   // None after the last row
+  fn rest(self) -> List[List[SqlValue]] ! SqlErr uses (net.dial, fx)
+  fn close(self) uses (net.dial, fx)             // reads and discards the remaining rows
 }
 
-pub fn open_driver(net: Net, d: Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2,
-                   max_lifetime: Duration = 30m) -> Db ! SqlErr uses net.dial
+pub fn open_driver[fx: Effects](net: Net, d: Driver[fx], dsn: Str, max_open: Int = 10, max_idle: Int = 2,
+                   max_lifetime: Duration = 30m) -> Db[fx] ! SqlErr uses (net.dial, fx)
 ```
+
+- The effect parameter (decision 0534): a driver's operations may perform
+  effects beyond `net.dial`, named by its `fx`, and `Db`, `Tx` and `Rows`
+  carry them: std/sqlite's driver is a `Driver[fs]`, so its Db's
+  operations perform fs. The Postgres driver and the in memory one add
+  none (`Db[()]`). A `sql.Db` written without the argument is an implicit
+  effect variable (core 6.2), so most code is unchanged; a function that
+  captures a Db in a closure whose type fixes its effects (a handler or
+  middleware returned as `fn(...) uses net.dial`) names the argument,
+  `sql.Db[()]` for Postgres or `memory`, and so do the functions that
+  pass that Db along (stability/notes). An interface's effect argument is
+  not inferred from the struct that implements it, so a driver's
+  constructor returns `sql.Driver[fx]` with its effects written.
 
 - A driver is a value passed to `open_driver`; there is no registry of
   names (a package global). std/sql gives it the pool: `max_open`
@@ -7729,3 +7742,46 @@ fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! ProtoErr   // gro
 - A struct with `derive Proto` writes its fields in field number order, then oneofs, then unknown fields. A plain
   nested struct is always written (use an Option for presence); a scalar equal to its zero value is omitted.
 - Not yet: proto2, well known types (Timestamp, Duration, Any, Struct), JSON mapping, the `.proto` generator.
+
+## 66. std/sqlite
+
+A SQLite driver for std/sql's `open_driver` (decision 0534) over the SQLite library (3.54.1, public domain),
+compiled from the amalgamation vendored in std/native/sqlite and linked through `use c`: native backends only
+(`XO1201` on the Go backend; wasm has no C). Stage 1: the driver on a checkout's C compiler; the release's
+prebuilt object per target follows.
+
+```
+struct SqliteDriver {}
+struct Config { path: Str, uri: Bool, keys: List[Str], busy_ms: Int, pragmas: List[Str] }
+fn driver(fs: Fs) -> sql.Driver[fs]                     // performs fs (decision 0534)
+fn config(dsn: Str) -> Config ! sql.SqlErr               // the DSN's parts, as connect reads them
+fn version() -> Str uses net.dial                       // "3.54.1"
+```
+
+```
+let db = sql.open_driver(os.net, sqlite.driver(os.fs), "file:app.db?_busy_timeout=5000&_journal_mode=wal")?
+```
+
+- DSN as mattn/go-sqlite3 reads it: `:memory:`, a path, or `file:PATH?k=v&...`. SQLite's own URI keys
+  (`mode=ro|rw|rwc|memory`, `cache=shared|private`) pass to SQLite; the driver's keys are `_busy_timeout`
+  (`_timeout`, milliseconds, default 5000), `_journal_mode` (`_journal`: DELETE, TRUNCATE, PERSIST, MEMORY,
+  WAL, OFF), `_foreign_keys` (`_fk`) and `_synchronous` (`_sync`), run as PRAGMAs after the open. An unknown
+  `_` key or a bad value is `Param` (mattn ignores an unknown key).
+- The file is opened through the driver's Fs: a sub Fs (`Fs.sub`) roots the path, and a path that is absolute
+  or holds `..` is `Conn`; a read only Fs opens it read only; a write only Fs is `Conn`. SQLite keeps its
+  journal and WAL files beside the database.
+- Placeholders bind by position: `$1` and `?1` name argument 1, a bare `?` is its position among the
+  placeholders; a named one (`:a`, `@a`) is `Param`, as is a count that does not match the arguments.
+- Values: an INTEGER column's value is `Integer`, REAL `Real`, TEXT `Text` (invalid UTF-8 replaced by U+FFFD),
+  BLOB `Blob`, NULL `Null`. `Flag` binds as 0 or 1, `At` as RFC 3339 text, `JsonText` as text; `Array` is
+  `Param`.
+- Errors: a UNIQUE or PRIMARY KEY violation is `Constraint(code: "23505")`, FOREIGN KEY "23503", NOT NULL
+  "23502", CHECK "23514" (the memory driver's and Postgres's codes, with SQLite's message); a missing table is
+  `NoTable`, a parse error `Syntax`, anything else `Server(code: the extended result code's name, such as
+  "SQLITE_BUSY", msg)`. After an I/O error or a corrupt file the connection is dropped by the pool.
+- A text of several statements runs them in order; arguments bind to the last, whose rows and changes are
+  the result. `exec`'s `last_insert_id` is `sqlite3_last_insert_rowid`.
+- Transactions are SQLite's (BEGIN, COMMIT, ROLLBACK; serializable); a read only transaction runs with
+  `PRAGMA query_only` until it ends. `copy_from` runs one prepared INSERT per row.
+- Effects: each call is a database call, `uses net.dial` as std/sql's Db names every driver's work; the files
+  are reached through the Fs given to `driver` (decision 0534 records this for the owner).

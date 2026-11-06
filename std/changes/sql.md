@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-06: feature: drivers carry their effects (Driver[fx], Db[fx])
+
+- Kind: feature (API change)
+- Commit: this push
+- Found by: decision 0534's condition that std/sqlite perform fs, not net.dial
+- Go reference: none (database/sql has no effects; its drivers open files freely)
+- Test: std/native/sqlite_test.xo (a Driver[fs] through open_driver), std/native/sql_test.xo, golden native_sqlite and sql_driver
+- Timing: none (types only; no code path changed)
+- Shipped in: not yet released
+- Migration: `sql.Db` without an argument still checks as an implicit effect variable; a function that captures a Db in a closure whose type fixes its effects (a handler returned as `fn(...) uses net.dial`) writes `sql.Db[()]` for Postgres and the in memory driver, and so do the functions that pass that Db along (stability/notes: 3 signatures, auth and the two on the path from the Db's creation to it). A driver written in Xo declares `Driver[fx]` and its methods `uses (net.dial, fx)`.
+
 ## 2026-11-05: perf: the memory driver looks up UNIQUE columns by index and writes in place
 
 - Kind: perf

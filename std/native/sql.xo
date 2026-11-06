@@ -41,25 +41,25 @@ fn sqlerr_display(e: sql.SqlErr) -> Str {
 // ---------------------------------------------------------------------------
 // Handles
 
-struct Db {
+struct Db[fx: Effects] {
   st: Mutex[Store]
   /// One token: the permit of the single open transaction.
   writer: Chan[Bool]
   closed: Atomic[Bool]
   /// The connections of a driver (open_driver); None for the in memory one.
-  pool: Pool? = None
+  pool: Pool[fx]? = None
 }
 
 // ---------------------------------------------------------------------------
 // The pool of a driver (decision 0278): max_open permits, idle connections
 
-struct Pool {
+struct Pool[fx: Effects] {
   net: Net
-  drv: sql.Driver
+  drv: sql.Driver[fx]
   dsn: Str
   /// max_open tokens: one per operation in flight and open transaction.
   permits: Chan[Bool]
-  idle: Mutex[List[Idle]]
+  idle: Mutex[List[Idle[fx]]]
   max_idle: Int
   /// Nanoseconds; 0 for none.
   max_lifetime: Int
@@ -77,15 +77,15 @@ fn pool_now() -> Int {
   sysio.mono_ns()
 }
 
-struct Idle {
-  c: sql.DriverConn
+struct Idle[fx: Effects] {
+  c: sql.DriverConn[fx]
   /// When it was connected (pool_now).
   born: Int
 }
 
 /// A connection taken from the pool, with when it was connected.
-struct Taken {
-  c: sql.DriverConn
+struct Taken[fx: Effects] {
+  c: sql.DriverConn[fx]
   born: Int
 }
 
@@ -119,7 +119,7 @@ fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
 
 /// Gives t back: kept idle while it works, has room, and is young enough,
 /// else closed; then the permit.
-fn (p: Pool) give(t: Taken) {
+fn give[fx: Effects](p: Pool[fx], t: Taken[fx]) uses (net.dial, fx) {
   let keep = !t.c.is_broken() && (p.max_lifetime == 0 || pool_now() - t.born < p.max_lifetime)
   let kept = keep && p.idle.with(fn(var xs) -> Bool {
     if xs.len() >= p.max_idle {
@@ -141,7 +141,7 @@ fn (p: Pool) query(q: Str, args: List[sql.SqlValue]) -> List[Row] ! sql.SqlErr u
     Ok(x) => drain_rows(x)
     Err(e) => Err(e)
   }
-  p.give(t)
+  give(p, t)
   let rows = all?
   to_rows(rows.columns, rows.rows)
 }
@@ -168,14 +168,14 @@ fn drain_rows(x: sql.DriverRows) -> sql.DriverRows ! sql.SqlErr uses net.dial {
 fn (p: Pool) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
   let t = p.take()?
   let r = t.c.exec(q, args)
-  p.give(t)
+  give(p, t)
   r
 }
 
 fn (p: Pool) ping() -> () ! sql.SqlErr uses net.dial {
   let t = p.take()?
   let r = t.c.ping()
-  p.give(t)
+  give(p, t)
   r
 }
 
@@ -212,11 +212,11 @@ struct Store {
   tables: Map[Str, Table]
 }
 
-struct Tx {
+struct Tx[fx: Effects] {
   st: Mutex[TxState]
-  db: Db
+  db: Db[fx]
   /// A transaction of a driver: its connection, held from begin to its end.
-  conn: Taken? = None
+  conn: Taken[fx]? = None
 }
 
 struct TxState {
@@ -363,13 +363,13 @@ fn (d: Db) begin(isolation: sql.Isolation = sql.Isolation.Default, read_only: Bo
     // the transaction holds its permit and connection until it ends
     let t = p.take()?
     if let Err(e) = t.c.begin() {
-      p.give(t)
+      give(p, t)
       return Err(e)
     }
     if let Some(mode) = tx_mode(isolation, read_only) {
       if let Err(e) = t.c.exec(mode, []) {
         let _ = t.c.rollback().ignore_err("the SET TRANSACTION error is the one to report")
-        p.give(t)
+        give(p, t)
         return Err(e)
       }
     }
@@ -503,7 +503,7 @@ fn (t: Tx) commit() -> () ! sql.SqlErr uses net.dial {
       return Err(sql.SqlErr.TxDone)
     }
     let r = tc.c.commit()
-    db.pool.or_fault("a driver's transaction has a pool").give(tc)
+    give(db.pool.or_fault("a driver's transaction has a pool"), tc)
     return r
   }
   t.st.with(fn(var ts) -> () ! sql.SqlErr {
@@ -524,7 +524,7 @@ fn (t: Tx) rollback() -> () ! sql.SqlErr uses net.dial {
       return Ok(())
     }
     let r = tc.c.rollback()
-    db.pool.or_fault("a driver's transaction has a pool").give(tc)
+    give(db.pool.or_fault("a driver's transaction has a pool"), tc)
     return r
   }
   t.st.with(fn(var ts) {
@@ -540,18 +540,18 @@ fn (t: Tx) rollback() -> () ! sql.SqlErr uses net.dial {
 
 /// A result read as asked (decision 0479): the rows already in hand, the
 /// driver's cursor for the rest, and the pool connection held until the end.
-struct Rows {
+struct Rows[fx: Effects] {
   cols: List[Str]
-  st: Mutex[RowsState]
+  st: Mutex[RowsState[fx]]
 }
 
-struct RowsState {
+struct RowsState[fx: Effects] {
   buf: List[List[sql.SqlValue]]
   pos: Int
-  cursor: sql.DriverCursor? = None
+  cursor: sql.DriverCursor[fx]? = None
   /// The pool connection of a Db.rows, given back at the end.
-  held: Taken? = None
-  pool: Pool? = None
+  held: Taken[fx]? = None
+  pool: Pool[fx]? = None
   done: Bool = false
 }
 
@@ -566,7 +566,7 @@ fn rows_finish(var s: RowsState) {
   s.buf = []
   if let Some(t) = s.held {
     if let Some(p) = s.pool {
-      p.give(t)
+      give(p, t)
     }
   }
   s.held = None
@@ -574,9 +574,9 @@ fn rows_finish(var s: RowsState) {
 
 /// The Rows of x taken from the pool connection t: a result with no
 /// cursor is whole, so the connection goes back at once.
-fn pool_rows(p: Pool, t: Taken, x: sql.DriverRows) -> Rows {
+fn pool_rows[fx: Effects](p: Pool[fx], t: Taken[fx], x: sql.DriverRows[fx]) -> Rows[fx] uses (net.dial, fx) {
   if x.cursor is None {
-    p.give(t)
+    give(p, t)
     return new_rows(x.columns, RowsState{buf: x.rows, pos: 0})
   }
   new_rows(x.columns, RowsState{buf: x.rows, pos: 0, cursor: x.cursor, held: Some(t), pool: Some(p)})
@@ -589,7 +589,7 @@ fn (d: Db) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses
     match t.c.query(q, args) {
       Ok(x) => return pool_rows(p, t, x)
       Err(e) => {
-        p.give(t)
+        give(p, t)
         return Err(e)
       }
     }
@@ -646,7 +646,7 @@ fn (d: Db) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlV
   if let Some(p) = d.pool {
     let t = p.take()?
     let r = t.c.copy_from(table, columns, rows)
-    p.give(t)
+    give(p, t)
     return r
   }
   mem_copy(fn(q, args) { d.exec(q, args) }, table, columns, rows)
@@ -670,7 +670,7 @@ fn (t: Tx) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlV
 /// COPY on the in memory database: an INSERT per row. The rows copied
 /// before an error from rows stay, as the in memory driver has no COPY to
 /// roll back (use a transaction).
-fn mem_copy(ins: fn(Str, List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial, table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses net.dial {
+fn mem_copy[fx: Effects](ins: fn(Str, List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses fx, table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses fx {
   let q = copy_insert_sql(table, columns)
   var n = 0
   while {

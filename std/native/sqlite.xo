@@ -1,0 +1,480 @@
+// std/sqlite on the native backends (decision 0534): a driver for std/sql's
+// open_driver (decision 0278's Driver interface) over the SQLite
+// amalgamation through `use c`. The release links a prebuilt object per
+// target; a checkout compiles sqlite/sqlite3.c with its C compiler on first
+// use.
+//
+//   let db = sql.open_driver(net, sqlite.driver(fs), "file:app.db?_busy_timeout=5000")?
+//
+// The calls perform `fs` (SQLite reads and writes its files), so the
+// driver is a `sql.Driver[fs]` and its Db's operations perform fs where
+// they are called (decision 0534); the Fs given to driver() roots and
+// limits the files it opens.
+//
+// The pool gives a connection to one task at a time, so the handle is
+// used by one thread at a time (SQLITE_OPEN_NOMUTEX).
+use std/sql
+use native/rt
+use c "sqlite/xo_sqlite.h" link "sqlite/xo_sqlite.c" link "sqlite/sqlite3.c" as c3 uses fs
+
+const OK = Int32(0)
+const ROW = Int32(100)
+const DONE = Int32(101)
+
+const T_INTEGER = Int32(1)
+const T_FLOAT = Int32(2)
+const T_TEXT = Int32(3)
+const T_BLOB = Int32(4)
+
+// sqlite3_open_v2 flags
+const OPEN_READONLY = 0x1
+const OPEN_READWRITE = 0x2
+const OPEN_CREATE = 0x4
+const OPEN_URI = 0x40
+const OPEN_NOMUTEX = 0x8000
+
+// extended result codes std/sql has a portable variant for
+const CONSTRAINT_CHECK = 275
+const CONSTRAINT_FOREIGNKEY = 787
+const CONSTRAINT_NOTNULL = 1299
+const CONSTRAINT_PRIMARYKEY = 1555
+const CONSTRAINT_UNIQUE = 2067
+
+/// The driver for sql.open_driver. The database file is opened through
+/// fs: a sub Fs (Fs.sub) roots its path, and a read only one opens it read
+/// only (SQLite keeps its journal beside the file).
+struct SqliteDriver {
+  fs: Fs
+}
+
+pub fn driver(fs: Fs) -> sql.Driver[fs] {
+  SqliteDriver{fs: fs}
+}
+
+/// A parsed DSN: the database path, whether it was a file: URI and the
+/// URI keys SQLite reads itself (mode=, cache=), and the driver's `_`
+/// keys, as mattn/go-sqlite3 reads them.
+pub struct Config {
+  pub path: Str
+  pub uri: Bool
+  pub keys: List[Str]
+  pub busy_ms: Int
+  /// PRAGMA statements run after the open, in order.
+  pub pragmas: List[Str]
+}
+
+fn param_err(msg: Str) -> sql.SqlErr { sql.SqlErr.Param(msg: "sqlite: ${msg}") }
+
+fn flag(k: Str, v: Str) -> Bool ! sql.SqlErr {
+  match v.to_lower() {
+    "1" | "yes" | "true" | "on" => Ok(true)
+    "0" | "no" | "false" | "off" => Ok(false)
+    _ => Err(param_err("${k}: ${v.quote()} is not a boolean"))
+  }
+}
+
+/// `file:PATH?k=v&...`, `:memory:`, or a plain path. Keys that start with
+/// `_` are the driver's and leave the name SQLite sees; an unknown one is
+/// an error (mattn ignores it, so a typo there silently does nothing).
+pub fn config(dsn: Str) -> Config ! sql.SqlErr {
+  var base = dsn
+  var query = ""
+  if let Some(i) = dsn.find("?") {
+    base = dsn[0..i]
+    query = dsn[i + 1..dsn.len()]
+  }
+  var kept: List[Str] = []
+  var busy = 5000
+  var pragmas: List[Str] = []
+  for kv in query.split("&") {
+    if kv.is_empty() {
+      continue
+    }
+    let (k, v) = match kv.find("=") {
+      Some(j) => (kv[0..j], kv[j + 1..kv.len()])
+      None => (kv, "")
+    }
+    if !k.starts_with("_") {
+      kept.push(kv)
+      continue
+    }
+    match k {
+      "_busy_timeout" | "_timeout" => {
+        let n = Int.parse(v).or_err(param_err("${k}: ${v.quote()} is not a number of milliseconds"))?
+        if n < 0 {
+          return Err(param_err("${k}: ${v.quote()} is negative"))
+        }
+        busy = n
+      }
+      "_journal_mode" | "_journal" => {
+        let m = v.to_upper()
+        if !(m is "DELETE" | "TRUNCATE" | "PERSIST" | "MEMORY" | "WAL" | "OFF") {
+          return Err(param_err("${k}: ${v.quote()} is not a journal mode"))
+        }
+        pragmas.push("PRAGMA journal_mode = ${m}")
+      }
+      "_foreign_keys" | "_fk" => {
+        pragmas.push("PRAGMA foreign_keys = ${if flag(k, v)? { "ON" } else { "OFF" }}")
+      }
+      "_synchronous" | "_sync" => {
+        let m = v.to_upper()
+        if !(m is "OFF" | "NORMAL" | "FULL" | "EXTRA" | "0" | "1" | "2" | "3") {
+          return Err(param_err("${k}: ${v.quote()} is not a synchronous mode"))
+        }
+        pragmas.push("PRAGMA synchronous = ${m}")
+      }
+      _ => return Err(param_err("unknown key ${k.quote()}"))
+    }
+  }
+  let uri = base.starts_with("file:")
+  let path = if uri { base[5..base.len()] } else { base }
+  if path.is_empty() && !kept.contains("mode=memory") {
+    return Err(param_err("the DSN names no database (use :memory: for one in memory)"))
+  }
+  Config{path: path, uri: uri, keys: kept, busy_ms: busy, pragmas: pragmas}
+}
+
+/// True when the database lives in memory, not in a file.
+fn (c: Config) memory() -> Bool {
+  c.path == ":memory:" || c.keys.contains("mode=memory")
+}
+
+/// The name SQLite opens and the open flags, with fs's root and mode
+/// applied to a file database.
+fn (c: Config) open_args(fs: Fs) -> (Str, Int) ! sql.SqlErr {
+  var path = c.path
+  var flags = OPEN_READWRITE | OPEN_CREATE | OPEN_URI | OPEN_NOMUTEX
+  if !c.memory() {
+    let mode = rt.fs_mode(fs)
+    if mode & 4 != 0 {
+      return Err(sql.SqlErr.Conn(msg: "sqlite: a write only Fs cannot open a database"))
+    }
+    if mode & 2 != 0 {
+      flags = OPEN_READONLY | OPEN_URI | OPEN_NOMUTEX
+    }
+    let root = rt.fs_root(fs)
+    if !root.is_empty() {
+      if path.starts_with("/") || path.split("/").contains("..") {
+        return Err(sql.SqlErr.Conn(msg: "sqlite: ${path.quote()} leaves the Fs's directory"))
+      }
+      path = "${root}/${path}"
+    }
+  }
+  var name = if c.uri { "file:${path}" } else { path }
+  if !c.keys.is_empty() {
+    if !c.uri {
+      name = "file:${path}"
+    }
+    name = "${name}?${c.keys.join("&")}"
+  }
+  (name, flags)
+}
+
+struct SqliteConn {
+  db: c3.Sqlite3
+  broken: Atomic[Bool]
+}
+
+fn (d: SqliteDriver) connect(net: Net, dsn: Str) -> sql.DriverConn[fs] ! sql.SqlErr uses fs {
+  let cfg = config(dsn)?
+  let (name, flags) = cfg.open_args(d.fs)?
+  let db = c3.xo_sq_open(name, Int32(flags), "").or_err(sql.SqlErr.Conn(msg: "sqlite: out of memory opening ${name.quote()}"))?
+  if c3.sqlite3_errcode(db) != OK {
+    let e = conn_err(db)
+    c3.sqlite3_close_v2(db)
+    return Err(e)
+  }
+  c3.sqlite3_busy_timeout(db, Int32(cfg.busy_ms))
+  let c = SqliteConn{db: db, broken: Atomic.new(false)}
+  for p in cfg.pragmas {
+    if let Err(e) = c.run(p, []) {
+      c3.sqlite3_close_v2(db)
+      return Err(e)
+    }
+  }
+  Ok(c)
+}
+
+fn conn_err(db: c3.Sqlite3) -> sql.SqlErr {
+  sql.SqlErr.Conn(msg: "sqlite: ${c3.sqlite3_errmsg(db)}")
+}
+
+/// The error of db's last call as std/sql's portable variants: a
+/// constraint as its SQLSTATE (so code that matches 23505 works on every
+/// driver), a missing table, a syntax error, and anything else as Server
+/// with the extended code's name.
+fn err_of(db: c3.Sqlite3) -> sql.SqlErr {
+  let code = Int(c3.sqlite3_extended_errcode(db))
+  let msg = c3.sqlite3_errmsg(db)
+  match code {
+    CONSTRAINT_UNIQUE | CONSTRAINT_PRIMARYKEY => return sql.SqlErr.Constraint(msg: msg, code: "23505", name: "")
+    CONSTRAINT_FOREIGNKEY => return sql.SqlErr.Constraint(msg: msg, code: "23503", name: "")
+    CONSTRAINT_NOTNULL => return sql.SqlErr.Constraint(msg: msg, code: "23502", name: "")
+    CONSTRAINT_CHECK => return sql.SqlErr.Constraint(msg: msg, code: "23514", name: "")
+    _ => {}
+  }
+  if msg.starts_with("no such table: ") {
+    return sql.SqlErr.NoTable(name: msg["no such table: ".len()..msg.len()])
+  }
+  if msg.ends_with(": syntax error") {
+    // Syntax displays as "syntax error: MSG": SQLite's own suffix goes
+    return sql.SqlErr.Syntax(msg: msg.trim_suffix(": syntax error"))
+  }
+  if msg.starts_with("incomplete input") {
+    return sql.SqlErr.Syntax(msg: msg)
+  }
+  sql.SqlErr.Server(code: code_name(code), msg: msg)
+}
+
+/// The name of an extended result code, as sqlite3.h spells it.
+fn code_name(code: Int) -> Str {
+  match code {
+    1 => "SQLITE_ERROR"
+    5 => "SQLITE_BUSY"
+    6 => "SQLITE_LOCKED"
+    7 => "SQLITE_NOMEM"
+    8 => "SQLITE_READONLY"
+    9 => "SQLITE_INTERRUPT"
+    10 => "SQLITE_IOERR"
+    11 => "SQLITE_CORRUPT"
+    13 => "SQLITE_FULL"
+    14 => "SQLITE_CANTOPEN"
+    17 => "SQLITE_SCHEMA"
+    18 => "SQLITE_TOOBIG"
+    19 => "SQLITE_CONSTRAINT"
+    20 => "SQLITE_MISMATCH"
+    21 => "SQLITE_MISUSE"
+    23 => "SQLITE_AUTH"
+    25 => "SQLITE_RANGE"
+    26 => "SQLITE_NOTADB"
+    517 => "SQLITE_BUSY_SNAPSHOT"
+    261 => "SQLITE_BUSY_RECOVERY"
+    _ => "SQLITE_${code}"
+  }
+}
+
+/// Codes after which the handle is not used again.
+fn fatal(code: Int) -> Bool {
+  let primary = code & 0xff
+  primary == 10 || primary == 11 || primary == 26
+}
+
+/// A step's error: marks the connection broken after an I/O error or a
+/// corrupt file.
+fn (c: SqliteConn) fail() -> sql.SqlErr {
+  if fatal(Int(c3.sqlite3_extended_errcode(c.db))) {
+    c.broken.set(true)
+  }
+  err_of(c.db)
+}
+
+/// The statement at the start of q[at..]; None when only space or
+/// comments are left. at moves past it.
+fn (c: SqliteConn) prepare(q: Str, var at: Int) -> c3.Sqlite3Stmt? ! sql.SqlErr uses fs {
+  let rest = q[at..q.len()]
+  let st = c3.xo_sq_prepare(c.db, rest, UInt32(0))
+  let used = c3.xo_sq_prepared_len(c.db)
+  match st {
+    Some(s) => {
+      at += used
+      Ok(Some(s))
+    }
+    None => {
+      if c3.sqlite3_errcode(c.db) != OK {
+        return Err(c.fail())
+      }
+      at = q.len()
+      Ok(None)
+    }
+  }
+}
+
+/// The argument number a placeholder takes: `?NNN` and `$NNN` name it,
+/// a bare `?` is its position. Named forms (`:name`, `@name`) are refused:
+/// std/sql passes arguments by position.
+fn arg_index(st: c3.Sqlite3Stmt, k: Int) -> Int ! sql.SqlErr {
+  let name = c3.sqlite3_bind_parameter_name(st, Int32(k))
+  if name.is_empty() {
+    return Ok(k)
+  }
+  if name.starts_with("?") || name.starts_with("$") {
+    if let Some(n) = Int.parse(name[1..name.len()]) {
+      return Ok(n)
+    }
+  }
+  Err(sql.SqlErr.Param(msg: "sqlite: named placeholder ${name.quote()}: std/sql passes arguments by position ($1 or ?)"))
+}
+
+fn (c: SqliteConn) bind(st: c3.Sqlite3Stmt, args: List[sql.SqlValue]) -> () ! sql.SqlErr {
+  let n = Int(c3.sqlite3_bind_parameter_count(st))
+  var used = 0
+  for k in 1..n + 1 {
+    let a = arg_index(st, k)?
+    if a < 1 || a > args.len() {
+      return Err(sql.SqlErr.Param(msg: "sqlite: placeholder ${a} has no argument (${args.len()} given)"))
+    }
+    used = used.max(a)
+    let i = Int32(k)
+    let rc = match args[a - 1] {
+      sql.SqlValue.Null => c3.sqlite3_bind_null(st, i)
+      sql.SqlValue.Integer(n) => c3.sqlite3_bind_int64(st, i, n)
+      sql.SqlValue.Real(f) => c3.sqlite3_bind_double(st, i, f)
+      sql.SqlValue.Flag(b) => c3.sqlite3_bind_int64(st, i, if b { 1 } else { 0 })
+      sql.SqlValue.Text(s) => c3.xo_sq_bind_text(st, i, s)
+      sql.SqlValue.JsonText(s) => c3.xo_sq_bind_text(st, i, s)
+      sql.SqlValue.At(t) => c3.xo_sq_bind_text(st, i, t.format_rfc3339())
+      sql.SqlValue.Blob(b) => c3.xo_sq_bind_blob(st, i, b)
+      sql.SqlValue.Array(_) => return Err(sql.SqlErr.Param(msg: "sqlite: argument ${a}: SQLite has no array type"))
+    }
+    if rc != OK {
+      return Err(err_of(c.db))
+    }
+  }
+  if used != args.len() {
+    return Err(sql.SqlErr.Param(msg: "sqlite: ${args.len()} arguments for ${used} placeholders"))
+  }
+}
+
+fn column(st: c3.Sqlite3Stmt, i: Int32) -> sql.SqlValue {
+  match c3.sqlite3_column_type(st, i) {
+    T_INTEGER => sql.SqlValue.Integer(n: c3.sqlite3_column_int64(st, i))
+    T_FLOAT => sql.SqlValue.Real(f: c3.sqlite3_column_double(st, i))
+    T_TEXT => sql.SqlValue.Text(s: c3.xo_sq_column_text(st, i).to_str_lossy())
+    T_BLOB => sql.SqlValue.Blob(b: c3.xo_sq_column_blob(st, i))
+    _ => sql.SqlValue.Null
+  }
+}
+
+/// Runs q's statements in order: the ones before the last take no
+/// arguments and their rows are dropped; args bind to the last, whose
+/// rows and changes are the result.
+fn (c: SqliteConn) run(q: Str, args: List[sql.SqlValue]) -> (sql.DriverRows, sql.ExecResult) ! sql.SqlErr uses fs {
+  var at = 0
+  var cols: List[Str] = []
+  var rows: List[List[sql.SqlValue]] = []
+  var res = sql.ExecResult{rows_affected: 0, last_insert_id: 0}
+  var seen = false
+  while let Some(st) = c.prepare(q, at)? {
+    let last = c.prepare_left(q, at)
+    cols = []
+    rows = []
+    let r = c.step_all(st, if last { args } else { [] }, cols, rows)
+    c3.sqlite3_finalize(st)
+    r?
+    res = sql.ExecResult{rows_affected: c3.sqlite3_changes64(c.db), last_insert_id: c3.sqlite3_last_insert_rowid(c.db)}
+    seen = true
+  }
+  if !seen && !args.is_empty() {
+    return Err(sql.SqlErr.Param(msg: "sqlite: ${args.len()} arguments for a text with no statement"))
+  }
+  (sql.DriverRows{columns: cols, rows: rows}, res)
+}
+
+/// True when nothing but space and comments follows at: the statement
+/// just prepared is the last.
+fn (c: SqliteConn) prepare_left(q: Str, at: Int) -> Bool {
+  q[at..q.len()].trim().is_empty()
+}
+
+fn (c: SqliteConn) step_all(st: c3.Sqlite3Stmt, args: List[sql.SqlValue], var cols: List[Str], var rows: List[List[sql.SqlValue]]) -> () ! sql.SqlErr uses fs {
+  c.bind(st, args)?
+  let n = c3.sqlite3_column_count(st)
+  for i in 0..Int(n) {
+    cols.push(c3.sqlite3_column_name(st, Int32(i)))
+  }
+  while {
+    let rc = c3.sqlite3_step(st)
+    if rc == DONE {
+      return
+    }
+    if rc != ROW {
+      return Err(c.fail())
+    }
+    var row = List[sql.SqlValue].with_capacity(Int(n))
+    for i in 0..Int(n) {
+      row.push(column(st, Int32(i)))
+    }
+    rows.push(row)
+  }
+}
+
+fn (c: SqliteConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses fs {
+  let (rows, _) = c.run(q, args)?
+  rows
+}
+
+fn (c: SqliteConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses fs {
+  // std/sql sends SET TRANSACTION after BEGIN for a non default isolation
+  // or read only: SQLite's transactions are serializable, and read only
+  // is PRAGMA query_only until the transaction ends
+  let t = q.trim().to_upper()
+  if t.starts_with("SET TRANSACTION") {
+    if t.contains("READ ONLY") {
+      c.run("PRAGMA query_only = ON", [])?
+    }
+    return sql.ExecResult{rows_affected: 0, last_insert_id: 0}
+  }
+  let (_, res) = c.run(q, args)?
+  res
+}
+
+fn (c: SqliteConn) begin() -> () ! sql.SqlErr uses fs {
+  c.run("BEGIN", [])?
+}
+
+fn (c: SqliteConn) commit() -> () ! sql.SqlErr uses fs {
+  let r = c.run("COMMIT", [])
+  c.run("PRAGMA query_only = OFF", [])?
+  r?
+}
+
+fn (c: SqliteConn) rollback() -> () ! sql.SqlErr uses fs {
+  let r = c.run("ROLLBACK", [])
+  c.run("PRAGMA query_only = OFF", [])?
+  r?
+}
+
+fn (c: SqliteConn) ping() -> () ! sql.SqlErr uses fs {
+  c.run("SELECT 1", [])?
+}
+
+/// A prepared INSERT run per row (SQLite has no COPY), inside the
+/// caller's transaction when there is one.
+fn (c: SqliteConn) copy_from(table: Str, columns: List[Str], rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr) -> Int ! sql.SqlErr uses fs {
+  let names = columns.map(fn(n) { quote_ident(n) }).join(", ")
+  let marks = columns.map(fn(_) { "?" }).join(", ")
+  let q = "INSERT INTO ${quote_ident(table)} (${names}) VALUES (${marks})"
+  var at = 0
+  let st = c.prepare(q, at)?.or_err(sql.SqlErr.Driver(msg: "sqlite: copy_from prepared no statement"))?
+  var n = 0
+  let r = c.copy_rows(st, rows, n)
+  c3.sqlite3_finalize(st)
+  r?
+  n
+}
+
+fn (c: SqliteConn) copy_rows(st: c3.Sqlite3Stmt, rows: fn() -> List[sql.SqlValue]? ! sql.SqlErr, var n: Int) -> () ! sql.SqlErr uses fs {
+  while let Some(row) = rows()? {
+    c.bind(st, row)?
+    if c3.sqlite3_step(st) != DONE {
+      return Err(c.fail())
+    }
+    c3.sqlite3_reset(st)
+    n += 1
+  }
+}
+
+fn quote_ident(s: Str) -> Str {
+  "\"${s.replace("\"", "\"\"")}\""
+}
+
+fn (c: SqliteConn) close() uses fs {
+  c3.sqlite3_close_v2(c.db)
+}
+
+fn (c: SqliteConn) is_broken() -> Bool { c.broken.get() }
+
+/// The SQLite library's version, e.g. "3.54.1".
+pub fn version() -> Str uses fs {
+  c3.sqlite3_libversion()
+}

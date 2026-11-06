@@ -1,0 +1,46 @@
+// std/sqlite (decision 0534). Declaration file. A SQLite driver for
+// std/sql's open_driver, over the SQLite library (public domain) linked
+// into the program through `use c`: native backends only (XO1201 on the
+// Go backend, unsupported on wasm).
+//
+//   let db = sql.open_driver(os.net, sqlite.driver(os.fs), "file:app.db?_busy_timeout=5000")?
+//
+// - DSN: `:memory:`, a path, or `file:PATH?k=v&...` as mattn/go-sqlite3
+//   reads it: SQLite's own URI keys (`mode=ro|rw|rwc|memory`,
+//   `cache=shared|private`) and the driver's `_busy_timeout` (`_timeout`,
+//   milliseconds, default 5000), `_journal_mode` (`_journal`),
+//   `_foreign_keys` (`_fk`) and `_synchronous` (`_sync`). An unknown `_`
+//   key is Param.
+// - The database file is opened through the driver's Fs: a sub Fs roots
+//   its path (an absolute path or `..` is refused), a read only Fs opens it
+//   read only, a write only one is refused.
+// - Placeholders `$1`, `?1` and `?` bind by position; named ones are Param.
+// - Values: INTEGER Integer, REAL Real, TEXT Text, BLOB Blob, NULL Null; a
+//   Flag binds as 0 or 1, an At as RFC 3339 text, JsonText as text.
+// - Errors: a constraint is Constraint with its SQLSTATE (23505 unique and
+//   primary key, 23503 foreign key, 23502 not null, 23514 check), a missing
+//   table NoTable, a parse error Syntax, anything else Server with the
+//   extended result code's name (`SQLITE_BUSY`) and SQLite's message.
+// - Transactions are SQLite's (serializable); a read only one runs with
+//   `PRAGMA query_only`. copy_from runs a prepared INSERT per row.
+use std/sql
+
+
+/// A parsed DSN (see the module comment).
+struct Config {
+  path: Str
+  uri: Bool
+  keys: List[Str]
+  busy_ms: Int
+  pragmas: List[Str]
+}
+
+/// The driver, opening database files through fs; its Db's operations
+/// perform fs.
+fn driver(fs: Fs) -> sql.Driver[fs]
+
+/// The DSN's parts; Param for an unknown `_` key or a bad value.
+fn config(dsn: Str) -> Config ! sql.SqlErr
+
+/// The SQLite library's version, e.g. "3.54.1".
+fn version() -> Str uses fs
