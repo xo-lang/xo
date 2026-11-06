@@ -38,3 +38,12 @@ environment; the separately compiled path gets its own case
 (TestDebugVars macho-sep, TestStdDebugMap, TestSepcompDebugInfo). To
 see which path a build took, pass --phase-times: a separately compiled
 build prints "cache std ... reused".
+
+Since 4e87479c1 every darwin debug test of the whole program's link
+also has a separately compiled case (TestDebugLineDarwin, -DarwinCC,
+-Inlined, TestDwarfReader, TestUnwind, TestDebugLoclistsBudget,
+TestDebugVars, TestDebugTypes): internal/arm64 debugsep_test.go's
+sepDarwinEnv builds std's variants first (xotool.StdVariants) and drops
+XO_SEPCOMP, and sepDsym fails a build that came out whole (a case that
+skipped then went unseen) and makes the dSYM from the debug map. The
+cases skip under the full tier (XO_TEST_SEPCOMP=0, whole builds only).
