@@ -4804,9 +4804,10 @@ the X.Y.0 path is unchanged. Docker must be up for step 6.
 
 Main need not freeze (lead, 2026-11-06; Last verified: 2026-11-06): when
 main moved during the gate, step 4 puts the version commit on the new main
-(only cli.xo, servers.xo and std/VERSION may differ from it), pushes and
-tags that, and the tag message names the gated commit the seed was built
-from; XO_PUSH_LOCK still pins main through the gate when wanted.
+(only cli.xo, servers.xo, the spec drafts and std/VERSION may differ from
+it) and pushes that; the tag stays on the gated commit, whose tree the
+seed was built from (the replay and identity checks need the tag's source
+to be the seed's), and its message names the commit main got; XO_PUSH_LOCK still pins main through the gate when wanted.
 The version commit also moves spec/core.md and spec/std.md to draft
 X.(Y+1) with an empty "Changes in X.(Y+1)" section in core.md (decision
 0089), and step 2 runs internal/repotest TestSpecDraftFollowsVersion (the

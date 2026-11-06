@@ -55,8 +55,9 @@
 # pushes wait meanwhile. A dry run takes no lock.
 # Without the lock (2026-11-06), a push refused because main moved puts
 # the version commit on the new main in a worktree of its own, checks that
-# it changes only the three version files, and pushes and tags that; the
-# seed stays the build of the gated commit, which the tag message names.
+# it changes only the version files, and pushes that; the tag stays on the
+# gated commit the seed is built from (off main's first parent line then),
+# and its message names the commit main got.
 set -euo pipefail
 
 die() { echo "seed-cut: $*" >&2; exit 1; }
@@ -215,8 +216,9 @@ else
     # main moved since step 1: put the version commit on the new main in a
     # worktree of its own (the tree stays at $commit, which steps 2 and 3
     # gated and steps 5 and 6 build), check that it changes only the
-    # version files, and push that; the seed is $commit's build, and the
-    # tag names both
+    # version files, and push that; the tag stays on $commit, whose tree
+    # is the one gated and built (a tag needs not be on main's first parent
+    # line), so the seed's source is the tag's, and its message names both
     [ "$prebumped" = 0 ] || die "push refused and main's version commit was made by hand: rerun with a new WORKDIR"
     git fetch -q origin
     onto=$work/push
@@ -229,9 +231,9 @@ else
       die "the rebased version commit changes more than the version files"
     git -C "$onto" push -q origin HEAD:main || die "push refused twice (main moved again?): rerun with a new WORKDIR"
     git worktree remove --force "$onto"
-    printf '\nThe seed is the build of %s (gated); the version commit landed on main as %s.\n' "$commit" "$pushed" >> "$work/tag-notes.txt"
+    printf '\nThis tag is %s, the gated commit the seed was built from; main moved during the cut, so its version commit landed on main as %s (the same version files on the newer main).\n' "$commit" "$pushed" >> "$work/tag-notes.txt"
   fi
-  git tag -a "v$version" -F "$work/tag-notes.txt" "$pushed"
+  git tag -a "v$version" -F "$work/tag-notes.txt" "$commit"
   git push -q origin "v$version"
   if [ -n "$locked" ]; then
     rm -rf "${locked:?}"; trap - EXIT; locked=""
