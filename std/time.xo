@@ -190,6 +190,7 @@ struct LayoutErr {
 fn (e: LayoutErr) display() -> Str
 
 /// Faults on a bad layout (a constant layout is checked at compile time).
+/// `{frac}` and `{frac:N}` include their leading `.`: write `{second}{frac:7}`, not `{second}.{frac:7}`.
 fn format(t: Time, z: Zone, layout: Str) -> Str
 /// Strict: accepts exactly the layout. `z` applies when the text has no
 /// offset.

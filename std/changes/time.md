@@ -1,5 +1,14 @@
 # std/time changes
 
+## 2026-11-06: docs: {frac} and {frac:N} carry their leading dot
+
+- Kind: docs
+- Commit: this commit
+- Found by: aws-19 (azfile SAS port, feedback 5f3c3e5), who wrote `.${frac}` and got `..1234567`
+- Go reference: none (Xo layouts)
+- Test: none (doc comment and spec field list only; behavior unchanged)
+- Shipped in: not yet released
+
 ## 2026-11-03: perf: parse keeps a field's argument as an integer code and the literal as a layout range
 
 - Kind: perf

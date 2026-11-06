@@ -3754,7 +3754,8 @@ without padding, `{month:short}` `Jan`, `{month:name}` `January`; `{day}`
 01 to 31, `{day:1}`; `{weekday:short}` `Mon`, `{weekday:name}` `Monday`;
 `{hour}` 00 to 23, `{hour12}` 01 to 12 with `{ampm}` AM or PM; `{minute}`;
 `{second}`; `{frac}` a fraction with as many digits as needed (none when
-zero), `{frac:3}` exactly three (1 to 9); `{offset}` `Z` or `+02:00`,
+zero), `{frac:3}` exactly three (1 to 9), both with their leading `.`
+(write `{second}{frac:3}`); `{offset}` `Z` or `+02:00`,
 `{offset:compact}` `+0200`; `{zone}` the zone abbreviation. A literal
 brace is written `{lbrace}` or `{rbrace}`. A layout that is a constant is
 checked at compile time: an unknown field is an error with a did you mean
