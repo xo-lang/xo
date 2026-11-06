@@ -12,6 +12,7 @@
   "stats": "/debug/sched",
   "stats_token": "debug",
   "twin": "../../bench/size/native/go/notes",
+  "owners": {"env": "NOTES_USERS", "token": "t0p-admin-u{n}"},
   "scenario": "scenario.jsonl",
   "redact": ["created", "expires", "token"]
 }

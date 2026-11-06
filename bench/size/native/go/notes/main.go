@@ -271,6 +271,11 @@ func main() {
 		admin.password = hashPassword(pw)
 	}
 	s.users = append(s.users, admin)
+	// NOTES_USERS=N adds users u1 to uN with tokens <admin token>-u1 to -uN
+	n, _ := strconv.Atoi(os.Getenv("NOTES_USERS"))
+	for i := 1; i <= n; i++ {
+		s.users = append(s.users, &user{id: i + 1, name: fmt.Sprintf("u%d", i), digest: digest(fmt.Sprintf("%s-u%d", token, i))})
+	}
 	addr := os.Getenv("NOTES_ADDR")
 	if addr == "" {
 		addr = "127.0.0.1:8080"

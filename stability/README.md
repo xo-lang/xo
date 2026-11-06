@@ -36,7 +36,7 @@ fuzzing. Phase 1 builds the starter app and the harness.
   that fills early and stays is not a leak), blocks left at exit, or a stop that takes over 20 s (its threads'
   stacks are then saved beside the run's log). `harness load -xo XO -app
   stability/APP -out OUT [-rates 1000,4000] [-sat 64] [-d 30s] [-rounds 3]
-  [-drop-env K,...]` offers the same mix at each fixed rate (open loop) and
+  [-drop-env K,...] [-owners N]` offers the same mix at each fixed rate (open loop) and
   at saturation (closed loop, 64 workers), to the xo build and to the app's
   Go twin (app.json `twin`) in alternating rounds, each run on a fresh
   start after a 5 s warmup, and writes OUT/load.csv (one row per run:
@@ -46,13 +46,17 @@ fuzzing. Phase 1 builds the starter app and the harness.
   `-drop-env NOTES_DATA`, since the twin keeps no journal); `-env
   XO_RTSTATS=1` adds to the xo build's environment, and each xo run keeps
   its /debug/sched text at the end of its measurement in its run
-  directory's stats.txt. Build it with
+  directory's stats.txt; `-owners N` (default 1, the admin user alone)
+  spreads the mix over N users that the app makes from app.json
+  `owners.env` set to N, each request using user n's `owners.token`
+  (notes: `NOTES_USERS`, `t0p-admin-u{n}`). Build it with
   `cd stability/harness && go build -o /tmp/harness .`.
 
 An app's directory holds `app.json` (`name`, which picks the soak and load
 traffic mix in soak.go, env with `{addr}` and `{data}`, the
 readiness path, named tokens, the scenario file, the redacted keys,
-the stats path and its token, the Go twin's directory) and its
+the stats path and its token, the Go twin's directory, and `owners`
+for -owners) and its
 scenario, one JSON step per line: `method`, `path`, `body` (a string is
 sent as its text, any other JSON value as its JSON), `token` (a name
 from app.json or `{saved}`), `expect`, `save` (`{"name": "field"}` from the

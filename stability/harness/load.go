@@ -263,6 +263,7 @@ func loadMain(args []string) int {
 	rounds := fs.Int("rounds", 3, "rounds (each runs every target at every load)")
 	addEnv := fs.String("env", "", "K=V pairs, comma separated, added to the xo build's environment (e.g. XO_RTSTATS=1)")
 	dropEnv := fs.String("drop-env", "", "app.json env keys left out for every target (e.g. NOTES_DATA when the twin has no persistence)")
+	owners := fs.Int("owners", 1, "users the traffic is spread over (1: the admin user alone, as rows before 2026-11-06 ran; above 1 needs app.json's owners)")
 	out := fs.String("out", "", "output directory")
 	fs.Parse(args)
 	if fs.NArg() > 0 {
@@ -289,6 +290,16 @@ func loadMain(args []string) int {
 	}
 	for _, k := range strings.Split(*dropEnv, ",") {
 		delete(app.Env, strings.TrimSpace(k))
+	}
+	if *owners > 1 {
+		if app.Owners.Env == "" || !strings.Contains(app.Owners.Token, "{n}") {
+			fmt.Fprintln(os.Stderr, "harness load: -owners above 1 needs app.json's owners.env and an owners.token with {n}")
+			return 2
+		}
+		app.Env[app.Owners.Env] = strconv.Itoa(*owners)
+		for i := 1; i <= *owners; i++ {
+			app.OwnerTokens = append(app.OwnerTokens, strings.ReplaceAll(app.Owners.Token, "{n}", strconv.Itoa(i)))
+		}
 	}
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "harness load:", err)

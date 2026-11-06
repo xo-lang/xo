@@ -117,3 +117,11 @@ requests served, and Xo served 2.3 times as many. Connections count too: a sweep
 about 0.25 MB per extra busy connection is Xo's own (an open item; a first sweep that read
 "not connections" ran 64 workers four times, gotchas/dropped-empty-arg-defaults-flags.md).
 At a fixed offered rate, where both store the same, Xo's peak RSS is 0.40 of Go's (4000/s).
+
+One owner: every row above ran the mix as the admin user alone, so every note had one owner
+and `GET /notes` returned every live note of the run. That favors neither app's per row
+cost but makes a list grow with the store, and a per owner index (std/sql's CREATE INDEX,
+decision 0528) never pays off: it slowed Xo's saturation row (44.6k to 36.8k req/s, host 1,
+2026-11-06) because each lookup returned most of the table. The harness's `-owners=N`
+(2026-11-06; default 1, so the rows above stay comparable) spreads the mix over N users, made
+by the app's `NOTES_USERS=N`; rows with N above 1 are not comparable with these.

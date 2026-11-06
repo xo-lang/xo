@@ -2,7 +2,8 @@
 // notes-service example with its notes kept on disk (journal.xo) when
 // NOTES_DATA names a directory, so a restart, or a kill, keeps every note a
 // client saw stored. NOTES_FSYNC=1 fsyncs each change before the response.
-// Users stay in memory: the admin user is made from NOTES_TOKEN each start.
+// Users stay in memory: the admin user is made from NOTES_TOKEN each start
+// (and NOTES_USERS=N more, u1 to uN, for a load spread over N owners).
 // NOTES_DEBUG_TOKEN mounts std/debug's router at /debug behind that bearer
 // token (the harness's soak reads /debug/sched's heap_live).
 //
@@ -314,6 +315,11 @@ fn main(os: Os) ! {
     }
   }
   let admin = add_user(db, "admin", token)?
+  // NOTES_USERS=N adds users u1 to uN with tokens <admin token>-u1 to -uN,
+  // so a load spreads its notes over N owners (the harness's -owners=N)
+  for i in 1..(Int.parse(os.env.get("NOTES_USERS") ?? "0") ?? 0) + 1 {
+    add_user(db, "u${i}", "${token}-u${i}")?
+  }
   if let Some(pw) = os.env.get("NOTES_PASSWORD") {
     set_password(db, os.rand, admin, pw)?
   }

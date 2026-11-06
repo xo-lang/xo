@@ -439,12 +439,19 @@ type mixFn func(app *App, do func(method, path, token string, body []byte) (int,
 var mixes = map[string]mixFn{"notes": notesMix}
 
 // notesMix is bench/soak's: 22% create (ttl 60 to 180 s, so the purge job
-// removes some), 28% get, 10% list, 22% delete, 18% health.
+// removes some), 28% get, 10% list, 22% delete, 18% health. With
+// OwnerTokens each request acts as a random one of those users, on that
+// user's notes.
 func notesMix(app *App, do func(method, path, token string, body []byte) (int, []byte)) func(r *rand.Rand) {
-	tok := app.Tokens["admin"]
+	toks := app.OwnerTokens
+	if len(toks) == 0 {
+		toks = []string{app.Tokens["admin"]}
+	}
 	var idMu sync.Mutex
-	ids := make([]int64, 0, 1024)
+	owned := make([][]int64, len(toks))
 	return func(r *rand.Rand) {
+		o := r.Intn(len(toks))
+		tok := toks[o]
 		x := r.Intn(100)
 		switch {
 		case x < 22:
@@ -455,16 +462,17 @@ func notesMix(app *App, do func(method, path, token string, body []byte) (int, [
 				}
 				if json.Unmarshal(rb, &n) == nil {
 					idMu.Lock()
-					if len(ids) < 1000 {
-						ids = append(ids, n.ID)
+					if len(owned[o]) < 1000 {
+						owned[o] = append(owned[o], n.ID)
 					} else {
-						ids[r.Intn(len(ids))] = n.ID
+						owned[o][r.Intn(len(owned[o]))] = n.ID
 					}
 					idMu.Unlock()
 				}
 			}
 		case x < 50:
 			idMu.Lock()
+			ids := owned[o]
 			var id int64 = -1
 			if len(ids) > 0 {
 				id = ids[r.Intn(len(ids))]
@@ -477,12 +485,13 @@ func notesMix(app *App, do func(method, path, token string, body []byte) (int, [
 			do("GET", "/notes", tok, nil)
 		case x < 82:
 			idMu.Lock()
+			ids := owned[o]
 			var id int64 = -1
 			if n := len(ids); n > 0 {
 				i := r.Intn(n)
 				id = ids[i]
 				ids[i] = ids[n-1]
-				ids = ids[:n-1]
+				owned[o] = ids[:n-1]
 			}
 			idMu.Unlock()
 			if id >= 0 {

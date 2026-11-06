@@ -57,6 +57,16 @@ type App struct {
 	// package with the same routes and environment), which load measures
 	// against.
 	Twin string `json:"twin"`
+	// Owners says how the app makes more users for load's -owners=N: Env
+	// is set to N, and Token, with {n} replaced by 1 to N, is user n's
+	// bearer token.
+	Owners struct {
+		Env   string `json:"env"`
+		Token string `json:"token"`
+	} `json:"owners"`
+	// OwnerTokens are the tokens a mix spreads its requests over (load's
+	// -owners above 1); empty means the admin token alone.
+	OwnerTokens []string `json:"-"`
 }
 
 // bodyText is a step's request body: a JSON string is sent as its text,
