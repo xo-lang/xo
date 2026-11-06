@@ -90,3 +90,14 @@ selector filter without removing anything; `com.microsoft:epoch` ownership with 
 - Test: native/amqptest "put-token takes expiration as a string of Unix seconds, as Go's clients send it"
 
 The broker reads the put-token `expiration` as a Timestamp or as a string of Unix seconds.
+
+## 2026-11-06: fix: event hub links accept a claim on their own path
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Azure 1 (azeventhubs NegotiateClaim puts the token on the link's path)
+- Go reference: azeventhubs links negotiate a claim for `hub/Partitions/id` or `hub/ConsumerGroups/cg/Partitions/id`
+- Test: native/amqptest "an event hub link under require_token accepts a claim on the hub or on its own path"
+
+Under `require_token(true)` an event hub link is authorized by a claim whose audience ends with the hub's name or with the
+link's own path.

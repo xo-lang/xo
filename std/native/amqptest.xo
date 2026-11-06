@@ -1400,7 +1400,9 @@ fn on_hub_attach(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch:
       Some(f) => return (Some(werr(f.condition, f.description)), 0)
       None => {}
     }
-    if !auth_ok(s, hub, now) {
+    // a claim on the hub covers its sub-paths; a claim on the link's own path (Go's NegotiateClaim) covers it too
+    let link_path = if kind == 4 { path } else if part >= 0 { "${hub}/Partitions/${part}" } else { hub }
+    if !auth_ok(s, hub, now) && !auth_ok(s, link_path, now) {
       return (Some(werr("amqp:unauthorized-access", "A valid claim is required for " + hub)), 0)
     }
     let hi = find_hub(s, hub)
