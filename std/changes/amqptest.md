@@ -1,5 +1,17 @@
 # std/amqptest changes
 
+## 2026-11-05: fix: lock tokens in Service Bus's byte order and in the delivery annotations
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19's port of azservicebus (Go's lockTokenFromMessageTag swaps the tag back; it reads x-opt-lock-token from the delivery annotations only)
+- Go reference: github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus (internal/amqpwrap, message.go)
+- Test: std/native/amqptest_test.xo "send, receive and complete through the broker, with CBS" (tag swapped equals the annotation token)
+- Timing: none
+- Shipped in: not yet released
+
+A delivery's tag is the lock token in .NET GUID byte order (the first three groups little endian), as on real Service Bus, and `x-opt-lock-token` is also in the delivery annotations (it stays in the message annotations). Tokens now carry a non-palindromic prefix so the order shows. A client that used the tag as the token must read the annotation or swap the tag.
+
 ## 2026-11-06: feature: std/amqptest, an in-process Service Bus broker for tests
 
 - Kind: feature

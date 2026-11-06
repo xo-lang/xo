@@ -106,7 +106,8 @@ fn group_of(m: amqp.Message) -> Str {
 /// A 16 byte lock token from a counter.
 fn token_bytes(n: Int) -> Bytes {
   var b = BytesBuilder.new()
-  for _ in 0..8 { b.write_byte(UInt8(0)) }
+  // a fixed prefix whose first three groups are not palindromes, so GUID byte order shows
+  for x in [10, 11, 12, 13, 26, 27, 42, 43] { b.write_byte(UInt8(x)) }
   var k = 7
   while k >= 0 {
     b.write_byte(UInt8.wrapping_from((n >> (8 * k)) & 255))
@@ -751,6 +752,17 @@ fn send_message(sc: ServerConn, var c: amqptest.SvConn, li: Int, msg: amqp.Messa
   Ok(id)
 }
 
+/// A 16 byte lock token in .NET GUID byte order (the first three groups little endian), which is how
+/// Service Bus writes it as the delivery tag; the swap is its own inverse.
+fn guid_order(t: Bytes) -> Bytes {
+  if t.len() != 16 { return t }
+  var b = BytesBuilder.new()
+  for i in [3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15] {
+    b.write_byte(t[i])
+  }
+  b.freeze()
+}
+
 fn with_delivery_annotations(m: amqptest.FakeMsg) -> amqp.Message {
   var msg = m.m
   if m.locked_until > 0 {
@@ -758,7 +770,12 @@ fn with_delivery_annotations(m: amqptest.FakeMsg) -> amqp.Message {
     msg = ann_set(msg, "x-opt-lock-token", amqp.Value.Uuid(bytes: m.lock_token))
   }
   let h = msg.header ?? amqp.Header{}
-  msg with {header: Some(h with {delivery_count: if m.delivery_count > 0 { m.delivery_count - 1 } else { 0 }})}
+  var out = msg with {header: Some(h with {delivery_count: if m.delivery_count > 0 { m.delivery_count - 1 } else { 0 }})}
+  if m.locked_until > 0 {
+    // Service Bus also puts the token in the delivery annotations, where Go's azservicebus reads it
+    out = out with {delivery_annotations: Some([(amqp.Value.Symbol(v: "x-opt-lock-token"), amqp.Value.Uuid(bytes: m.lock_token))])}
+  }
+  out
 }
 
 /// Sends the entity's deliverable messages while the link has credit and the client's window allows.
@@ -791,7 +808,7 @@ fn deliver_link(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: 
         if l.kind == 3 {
           msg = ann_set(msg, "x-opt-deadletter-reason", amqp.Value.Str(v: m.dead_reason))
         }
-        let tag = if m.lock_token.len() > 0 { m.lock_token } else { token_bytes(m.seq) }
+        let tag = if m.lock_token.len() > 0 { guid_order(m.lock_token) } else { token_bytes(m.seq) }
         let id = send_message(sc, c, li, msg, tag, l.presettled || l.kind == 3)?
         if !l.presettled && l.kind != 3 {
           var l2 = c.links[li]

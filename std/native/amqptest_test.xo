@@ -23,6 +23,22 @@ fn until(clk: Clock, cond: fn() -> Bool) uses clock {
   fault("condition not reached")
 }
 
+/// The lock token of a delivery, from its delivery annotations (where Go's azservicebus reads it).
+fn token_of(d: amqp.Delivery) -> Bytes {
+  for (k, v) in d.message.delivery_annotations ?? [] {
+    match (k, v) {
+      (Symbol(n), Uuid(bs)) => { if n == "x-opt-lock-token" { return bs } }
+      _ => {}
+    }
+  }
+  b""
+}
+
+/// A tag in .NET GUID order: the first three groups reversed.
+fn guid_swap(t: Bytes) -> Bytes {
+  Bytes.from_hex(t[3..4].to_hex() + t[2..3].to_hex() + t[1..2].to_hex() + t[0..1].to_hex() + t[5..6].to_hex() + t[4..5].to_hex() + t[7..8].to_hex() + t[6..7].to_hex() + t[8..16].to_hex()) ?? b""
+}
+
 struct Mgmt {
   snd: amqp.Sender
   rcv: amqp.Receiver
@@ -105,6 +121,8 @@ test "send, receive and complete through the broker, with CBS" uses (net, clock)
     let d = rcv.receive(2000).or_fault("receive")
     expect(text(d.message)) == "one"
     expect(d.tag.len()) == 16
+    expect(guid_swap(d.tag)) == token_of(d)
+    expect(d.tag != token_of(d)) == true
     expect(b.locked("orders")) == 1
     rcv.accept(d).or_fault("accept")
     until(os.clock, fn() -> Bool { b.locked("orders") == 0 && b.ready("orders").len() == 0 })
@@ -161,7 +179,7 @@ test "management: renew-lock, peek, schedule and cancel" uses (net, clock) {
     // renew the lock before it runs out, twice, while a receive waits on another link
     for _ in 0..2 {
       os.clock.sleep(200ms)
-      let r = mgmt_call(mg, "renew-lock", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "lock-tokens"), amqp.Value.Array(items: [amqp.Value.Uuid(bytes: d.tag)]))])).or_fault("renew")
+      let r = mgmt_call(mg, "renew-lock", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "lock-tokens"), amqp.Value.Array(items: [amqp.Value.Uuid(bytes: token_of(d))]))])).or_fault("renew")
       expect(status(r)) == 200
     }
     expect(b.locked("q")) == 1
@@ -203,7 +221,7 @@ test "an expired lock returns the message and a stale renew is lock lost" uses (
     let d = rcv.receive(2000).or_fault("receive")
     os.clock.sleep(250ms)
     expect(b.ready("q").len()) == 1
-    let r = mgmt_call(mg, "renew-lock", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "lock-tokens"), amqp.Value.Array(items: [amqp.Value.Uuid(bytes: d.tag)]))])).or_fault("renew")
+    let r = mgmt_call(mg, "renew-lock", amqp.Value.Map(pairs: [(amqp.Value.Str(v: "lock-tokens"), amqp.Value.Array(items: [amqp.Value.Uuid(bytes: token_of(d))]))])).or_fault("renew")
     expect(status(r)) == 410
     expect(cond(r)) == "com.microsoft:message-lock-lost"
     c.close().or_fault("close")
