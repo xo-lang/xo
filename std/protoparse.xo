@@ -1,0 +1,30 @@
+// std/protoparse (decision 0530): a parser for `.proto` files (proto3), for `xo proto gen`.
+// Declaration file. Pure.
+
+/// Where and why a parse failed; the position is 1 based.
+struct ParseErr {
+  line: Int
+  col: Int
+  msg: Str
+} derive Display
+
+/// A token kind: an identifier (dots allowed inside, as in `foo.Bar`), an integer, a float, a
+/// string literal (unquoted, escapes decoded), or one symbol character.
+enum Kind {
+  Ident
+  Int
+  Float
+  Str
+  Sym
+}
+
+struct Token {
+  kind: Kind
+  text: Str
+  line: Int
+  col: Int
+}
+
+/// The tokens of `src` without comments (`//` and `/* */`). A token never spans lines except
+/// inside a comment.
+fn tokens(src: Str) -> List[Token] ! ParseErr
