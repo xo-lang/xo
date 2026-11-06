@@ -1,0 +1,20 @@
+// A module's own `struct Conn` hides the prelude's: a mismatch between
+// the two names each with its module (the prelude's unqualified) and
+// notes where the module's is declared (aws-19, 2026-11-06: "expected
+// `Conn`, found `Conn`").
+struct Conn {
+  id: Int
+}
+
+struct Pool {
+  conns: List[Conn]
+}
+
+fn open(os: Os, p: Pool) -> Pool ! NetErr uses net.dial {
+  let c = os.net.dial("localhost:1")?
+  Ok(Pool{conns: p.conns + [c]}) // ERROR XO0401 "expected `[^`]+\.Conn`, found `Conn`|expected `List\[[^`]+\.Conn\]`, found `List\[Conn\]`"
+}
+
+fn main(os: Os) uses stdio {
+  os.stdio.println("${Conn{id: 1}.id}")
+}

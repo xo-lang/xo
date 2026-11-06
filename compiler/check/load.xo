@@ -20,6 +20,9 @@ pub struct TestMissing {
 
 pub struct Checker {
   fs: Fs
+  /// qual_name writes a program module's type with its module path, for
+  /// a message whose two types print the same (same_name_notes)
+  show_paths: Bool = false
   /// Where the std declaration files are read from.
   std_dir: Str
   pub objs: List[Obj] = []

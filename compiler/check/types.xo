@@ -523,7 +523,36 @@ pub fn (c: Checker) qual_name(o: Int) -> Str {
   if m >= 0 && c.mods[m].is_std && !c.mods[m].is_prelude {
     return "${c.mods[m].name}.${text(c.objs[o].name)}"
   }
+  if c.show_paths && m >= 0 && !c.mods[m].is_std {
+    return "${c.mod_label(m)}.${text(c.objs[o].name)}"
+  }
   text(c.objs[o].name)
+}
+
+/// A program module as a message names it: its path, else its name.
+fn (c: Checker) mod_label(m: Int) -> Str {
+  if c.mods[m].path.is_empty() { c.mods[m].name } else { c.mods[m].path }
+}
+
+/// The named types' objects in t, its arguments' too, once each.
+fn (c: Checker) named_objs(t0: Int, var out: List[Int]) {
+  if t0 < 0 {
+    return
+  }
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  if x.kind == TyKind.Named && !out.contains(x.obj) {
+    out.push(x.obj)
+  }
+  if x.kind is TyKind.Named | TyKind.Tuple | TyKind.Func {
+    for a in x.args {
+      c.named_objs(a, out)
+    }
+  }
+  if x.kind == TyKind.Func {
+    c.named_objs(x.result, out)
+    c.named_objs(x.err, out)
+  }
 }
 
 /// The text of t as Type.String prints it after Deep: variables are

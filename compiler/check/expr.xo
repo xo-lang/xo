@@ -226,11 +226,24 @@ fn (var c: Checker) mismatch_d(sp: Span, w: Int, g: Int, has_e: Bool) -> Int {
   if c.contains_bad(w) || c.contains_bad(g) {
     return -1
   }
-  let ws = c.show(w)
-  let gs = c.show(g)
+  var ws = c.show(w)
+  var gs = c.show(g)
+  let same = ws == gs
+  if same {
+    // two types of one name (a module's `struct Conn` and the prelude's):
+    // a program module's with its path (aws-19, 2026-11-06: "expected
+    // `Conn`, found `Conn`")
+    c.show_paths = true
+    ws = c.show(w)
+    gs = c.show(g)
+    c.show_paths = false
+  }
   let d = c.error("XO0401", sp, "expected `${ws}`, found `${gs}`")
   if d < 0 {
     return -1
+  }
+  if same {
+    c.same_name_notes(d, w, g)
   }
   if c.is_numeric(w) && c.is_numeric(g) {
     c.note(d, "there are no implicit numeric conversions; convert explicitly with `${ws}(...)` (core 2.1)")
@@ -252,6 +265,36 @@ fn (var c: Checker) mismatch_d(sp: Span, w: Int, g: Int, has_e: Bool) -> Int {
     c.note(d, "the value is optional; unwrap it with `??`, `?`, `if let`, or `match` (core 2.5)")
   }
   d
+}
+
+/// For an XO0401 d whose types w and g print the same: a note at each
+/// declaration of a program module whose name another type in the
+/// message shares, saying which one it hides when that is the prelude's.
+fn (var c: Checker) same_name_notes(d: Int, w: Int, g: Int) {
+  var ws: List[Int] = []
+  var gs: List[Int] = []
+  c.named_objs(w, ws)
+  c.named_objs(g, gs)
+  var done: List[Int] = []
+  for a in ws {
+    for b in gs {
+      if a == b || c.objs[a].name != c.objs[b].name {
+        continue
+      }
+      for (o, other) in [(a, b), (b, a)] {
+        let m = c.objs[o].module
+        if done.contains(o) || m < 0 || c.mods[m].is_std || c.objs[o].file.is_empty() {
+          continue
+        }
+        done.push(o)
+        let name = text(c.objs[o].name)
+        let om = c.objs[other].module
+        let hides = if om >= 0 && c.mods[om].is_prelude { " and hides the prelude's `${name}` in its module" } else { "" }
+        let at = parser.Pos{offset: 0, line: c.objs[o].line, col: c.objs[o].col}
+        c.note_at(d, c.objs[o].file, Span{start: at, end: at}, "`${c.mod_label(m)}.${name}` is declared here${hides}; renaming it tells the two apart")
+      }
+    }
+  }
 }
 
 /// Whether a `?` can propagate here: the function or closure has an
