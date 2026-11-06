@@ -401,15 +401,12 @@ fn parse(src: Str) -> protoparse.File ! protoparse.ParseErr {
 }
 
 fn g_camel(s: Str) -> Str {
-  var sb = BytesBuilder.new()
+  var o = ""
   for part in s.split("_") {
-    let pb = part.bytes()
-    if pb.len() == 0 { continue }
-    let c = Int(pb[0])
-    if c >= 97 && c <= 122 { sb.write(Bytes.from_list([UInt8(c - 32)])) } else { sb.write(pb[0..1]) }
-    sb.write(pb[1..])
+    if part.is_empty() { continue }
+    o = o + part[0..1].to_upper() + part[1..]
   }
-  sb.freeze().to_str_lossy()
+  o
 }
 
 /// The Xo type name of a scalar proto type, with the field option it needs.
@@ -455,8 +452,10 @@ fn g_resolve(typ: Str, scope: Str, names: List[(Str, Str)]) -> Str? {
     let cand = if sc == "" { t } else { "${sc}.${t}" }
     for (d, g) in names { if d == cand { return Some(g) } }
     if sc == "" { break }
-    let at = sc.last_index_of(".")
-    sc = if at >= 0 { sc[0..at] } else { "" }
+    sc = match sc.rfind(".") {
+      Some(at) => sc[0..at]
+      None => ""
+    }
   }
   // a name qualified by the package: keep the last components that match
   for (d, g) in names { if t.ends_with(".${d}") { return Some(g) } }
