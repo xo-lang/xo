@@ -1535,6 +1535,141 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   Some(c.cbor_entries(n, pub_, sp, e))
 }
 
+/// A field's protobuf tag, `proto "N,options"`: the number and the options zigzag and
+/// fixed (decision 0530); bad is the first other option, num 0 when missing.
+struct ProtoOpts {
+  num: Int
+  zigzag: Bool
+  fixed: Bool
+  bad: Str
+}
+
+fn proto_opts(fl: parser.Field) -> ProtoOpts {
+  var o = ProtoOpts{num: 0, zigzag: false, fixed: false, bad: ""}
+  for fw in fl.formats {
+    if fw.format == b"proto" {
+      let parts = text(fw.wire).split(",")
+      o.num = Int.parse(parts[0]) ?? 0
+      for opt in parts[1..] {
+        if opt == "zigzag" {
+          o.zigzag = true
+        } else if opt == "fixed" {
+          o.fixed = true
+        } else if o.bad.is_empty() {
+          o.bad = opt
+        }
+      }
+    }
+  }
+  o
+}
+
+/// `proto_zero__N`, `proto_wr__N`, `proto_rd__N`, `proto_marshal__N` and `proto_unmarshal__N`
+/// for a struct deriving Proto: Int, Bool, Str, Bytes and Float fields with proto3 implicit
+/// presence (a zero value is not written), fields in declaration order.
+fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> Emit? {
+  var e = em
+  let sp = sd.name.span
+  let n = text(sd.name.name)
+  let pub_ = if sd.is_pub { "pub " } else { "" }
+  var zeros: List[Str] = []
+  var wr: List[Str] = []
+  var rd: List[Str] = []
+  var ok = true
+  var used: List[Int] = []
+  for fl in sd.fields {
+    let f = text(fl.name.name)
+    let po = proto_opts(fl)
+    if po.num < 1 || po.num > 536870911 || (po.num >= 19000 && po.num <= 19999) {
+      c.error_at(file, "XO0422", fl.name.span, "field `${f}` of a `derive Proto` struct needs a field number in 1 to 536870911 outside 19000 to 19999, written `${f} proto \"N\": T` (decision 0530)")
+      ok = false
+      continue
+    }
+    if !po.bad.is_empty() {
+      c.error_at(file, "XO0422", fl.name.span, "unknown proto option `${po.bad}` of field `${f}`; the options are zigzag and fixed (decision 0530)")
+      ok = false
+      continue
+    }
+    if used.contains(po.num) {
+      c.error_at(file, "XO0422", fl.name.span, "field number ${po.num} of `${f}` is used twice (decision 0530)")
+      ok = false
+      continue
+    }
+    used.push(po.num)
+    let tx = yaml_type_text(fl.typ) ?? ""
+    let k = po.num
+    if tx == "Int" {
+      if po.zigzag {
+        zeros.push("${f}: 0")
+        wr.push("  if v.${f} != 0 { b = protobuf.append_varint(protobuf.append_tag(b, ${k}, 0), protobuf.encode_zigzag(v.${f})) }")
+        rd.push("num == ${k} && wire == 0@@let (x, n2) = protobuf.read_varint(data, at)?; at = n2; r.${f} = protobuf.decode_zigzag(x)")
+      } else if po.fixed {
+        zeros.push("${f}: 0")
+        wr.push("  if v.${f} != 0 { b = protobuf.append_fixed64(protobuf.append_tag(b, ${k}, 1), UInt64.from_bits(v.${f})) }")
+        rd.push("num == ${k} && wire == 1@@let (x, n2) = protobuf.read_fixed64(data, at)?; at = n2; r.${f} = x.to_bits()")
+      } else {
+        zeros.push("${f}: 0")
+        wr.push("  if v.${f} != 0 { b = protobuf.append_varint(protobuf.append_tag(b, ${k}, 0), UInt64.from_bits(v.${f})) }")
+        rd.push("num == ${k} && wire == 0@@let (x, n2) = protobuf.read_varint(data, at)?; at = n2; r.${f} = x.to_bits()")
+      }
+    } else if tx == "Bool" {
+      zeros.push("${f}: false")
+      wr.push("  if v.${f} { b = protobuf.append_varint(protobuf.append_tag(b, ${k}, 0), UInt64.from_bits(1)) }")
+      rd.push("num == ${k} && wire == 0@@let (x, n2) = protobuf.read_varint(data, at)?; at = n2; r.${f} = x.to_bits() != 0")
+    } else if tx == "Float" {
+      zeros.push("${f}: 0.0")
+      wr.push("  if v.${f}.to_bits() != 0 { b = protobuf.append_fixed64(protobuf.append_tag(b, ${k}, 1), UInt64.from_bits(v.${f}.to_bits())) }")
+      rd.push("num == ${k} && wire == 1@@let (x, n2) = protobuf.read_fixed64(data, at)?; at = n2; r.${f} = Float.from_bits(x.to_bits())")
+    } else if tx == "Str" {
+      zeros.push("${f}: \"\"")
+      wr.push("  if !v.${f}.is_empty() { b = protobuf.append_bytes(protobuf.append_tag(b, ${k}, 2), v.${f}.bytes()) }")
+      rd.push("num == ${k} && wire == 2@@let (x, n2) = protobuf.read_bytes(data, at)?; at = n2; r.${f} = x.to_str() ?? return Err(protobuf.ProtoErr.Utf8)")
+    } else if tx == "Bytes" {
+      zeros.push("${f}: b\"\"")
+      wr.push("  if v.${f}.len() > 0 { b = protobuf.append_bytes(protobuf.append_tag(b, ${k}, 2), v.${f}) }")
+      rd.push("num == ${k} && wire == 2@@let (x, n2) = protobuf.read_bytes(data, at)?; at = n2; r.${f} = x")
+    } else {
+      c.error_at(file, "XO0425", fl.name.span, "`derive Proto` maps an Int, Bool, Float, Str or Bytes field so far; `${f}` is not one (decision 0530)")
+      ok = false
+    }
+  }
+  if !ok {
+    return None
+  }
+  e.ln("${pub_}fn proto_zero__${n}() -> ${n} { ${n}{${zeros.join(", ")}} }", sp)
+  e.ln("${pub_}fn proto_marshal__${n}(v: ${n}) -> Bytes {", sp)
+  e.ln("  var b = b\"\"", sp)
+  for l in wr {
+    e.ln(l, sp)
+  }
+  e.ln("  b", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn proto_unmarshal__${n}(data: Bytes) -> ${n} ! protobuf.ProtoErr {", sp)
+  e.ln("  var r = proto_zero__${n}()", sp)
+  e.ln("  var at = 0", sp)
+  e.ln("  while at < data.len() {", sp)
+  e.ln("    let (num, wire, nx) = protobuf.read_tag(data, at)?", sp)
+  e.ln("    at = nx", sp)
+  var first = true
+  for l in rd {
+    let parts = l.split("@@")
+    e.ln("    ${if first { "if" } else { "} else if" }} ${parts[0]} {", sp)
+    e.ln("      ${parts[1]}", sp)
+    first = false
+  }
+  if first {
+    e.ln("    at = protobuf.skip_field(data, at, num, wire)?", sp)
+  } else {
+    e.ln("    } else {", sp)
+    e.ln("      at = protobuf.skip_field(data, at, num, wire)?", sp)
+    e.ln("    }", sp)
+  }
+  e.ln("  }", sp)
+  e.ln("  Ok(r)", sp)
+  e.ln("}", sp)
+  Some(e)
+}
+
 /// `cbor_marshal__N`, `cbor_unmarshal__N` and `cbor_unmarshal_prefix__N`, over the
 /// struct's `cbor_wr__N` and `cbor_rd__N`.
 fn (var c: Checker) cbor_entries(n: Str, pub_: Str, sp: Span, em: Emit) -> Emit {
@@ -1916,6 +2051,31 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
       any_cbor = true
     }
   }
+  var any_proto = false
+  for d in f.decls {
+    let sd = match d {
+      StructDecl(s) => s
+      _ => continue
+    }
+    var pd = false
+    for id in sd.derive {
+      if id.name == b"Proto" {
+        pd = true
+      }
+    }
+    if !pd {
+      continue
+    }
+    if !sd.type_params.is_empty() {
+      c.error_at(file, "XO0425", sd.name.span, "`derive Proto` needs a struct without type parameters; `${text(sd.name.name)}` has some")
+      continue
+    }
+    if let Some(e2) = c.proto_codec(sd, em, file) {
+      em = e2
+      any = true
+      any_proto = true
+    }
+  }
   for d in f.decls {
     if let EnumDecl(ed) = d {
       var cb = false
@@ -1953,6 +2113,10 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
   if any_yaml {
     head.push("use std/yaml")
     seen["std/yaml"] = true
+  }
+  if any_proto {
+    head.push("use std/protobuf")
+    seen["std/protobuf"] = true
   }
   if any_cbor {
     head.push("use std/cbor")
@@ -2003,6 +2167,8 @@ fn (var c: Checker) rewrite_xml_calls(from: Int) {
     var dname = "Xml"
     if cbor {
       dname = "Cbor"
+    } else if mpath == "std/protobuf" {
+      dname = "Proto"
     } else if mpath == "std/yaml" {
       dname = "Yaml"
     }
@@ -2016,7 +2182,7 @@ fn (var c: Checker) rewrite_xml_calls(from: Int) {
       continue
     }
     let o = c.tys[t].obj
-    let want = if cbor { "cbor_${fname}__${text(c.objs[o].name)}" } else { "${dname.to_lower()}_${if fname == "decode" { "decode" } else if fname == "decode_all" { "decode_all" } else if fname == "encode_all" { "encode_all" } else { "encode" }}__${text(c.objs[o].name)}" }
+    let want = if cbor { "cbor_${fname}__${text(c.objs[o].name)}" } else if dname == "Proto" { "proto_${fname}__${text(c.objs[o].name)}" } else { "${dname.to_lower()}_${if fname == "decode" { "decode" } else if fname == "decode_all" { "decode_all" } else if fname == "encode_all" { "encode_all" } else { "encode" }}__${text(c.objs[o].name)}" }
     let g = c.mods[c.objs[o].module].members.get(want.bytes()) ?? -1
     if g < 0 {
       c.error("XO0427", sp, "DEBUG no generated function ${want}")

@@ -54,3 +54,9 @@ fn read_bytes(b: Bytes, at: Int) -> (Bytes, Int) ! ProtoErr
 /// The offset after the value of a field with tag number `num` and wire type `wire` starting at
 /// `at`, groups included (ConsumeFieldValue).
 fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! ProtoErr
+
+/// `v` as protobuf wire bytes, fields in declaration order, proto3 implicit presence (a zero
+/// value is not written). `T` derives Proto (decision 0530).
+fn marshal[T: Proto](v: T) -> Bytes
+/// The `T` that `data` encodes; unknown fields are skipped, a later value of a field wins.
+fn unmarshal[T: Proto](data: Bytes) -> T ! ProtoErr
