@@ -1647,12 +1647,8 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
     }
   }
   let days = days_from_civil(year, month, day)
-  if weekday >= 0 {
-    let want = weekday_index(days)
-    if want != weekday {
-      return perr(s, layout, weekday_at, "weekday ${weekday_name()[weekday]} does not match ${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}, a ${weekday_name()[want]}")
-    }
-  }
+  // the weekday text is read but not checked against the date, as Go's time.Parse
+  let _ = weekday + weekday_at
   let local = days * 86400 + hour * 3600 + minute * 60 + second
   var secs = local
   if has_off {
@@ -2095,12 +2091,8 @@ fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
     }
   }
   let days = days_from_civil(year, month, day)
-  if weekday >= 0 {
-    let want = weekday_index(days)
-    if want != weekday {
-      return perr(s, layout, weekday_at, "weekday ${weekday_name()[weekday]} does not match ${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}, a ${weekday_name()[want]}")
-    }
-  }
+  // the weekday text is read but not checked against the date, as Go's time.Parse
+  let _ = weekday + weekday_at
   let local = days * 86400 + hour * 3600 + minute * 60 + second
   var secs = local
   if has_off {

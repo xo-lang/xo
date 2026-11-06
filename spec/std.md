@@ -3860,8 +3860,8 @@ Settled while implementing; examples are in the goldens
   digit year, has none).
 - **Parsing.** Numeric fields have exactly their width (`{day:1}` and
   `{month:1}` take one or two digits). Fields missing from the layout
-  default to 1970-01-01 and 00:00:00. A parsed weekday must match the
-  date. Without `{offset}`, `{zone}` picks the instant whose abbreviation
+  default to 1970-01-01 and 00:00:00. A parsed weekday is read but not
+  checked against the date (Go's time.Parse ignores it). Without `{offset}`, `{zone}` picks the instant whose abbreviation
   in `z` matches (`UTC` and `GMT` also mean +00:00), and a civil time in a
   gap or overlap with neither is a `ParseErr` (no silent choice).
 - **HTTP dates.** `RFC1123` formatted in `utc()` ends in `UTC`, while

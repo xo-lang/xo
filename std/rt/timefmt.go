@@ -513,12 +513,8 @@ func parseItems(items []tlItem, s, layout string, z Time_Zone) Result[Time, Time
 		}
 	}
 	days := daysFromCivil(year, month, day)
-	if weekday >= 0 {
-		w := days + 3
-		if want := int(w - floorDiv(w, 7)*7); want != weekday {
-			return p.fail(weekdayAt, "weekday %s does not match %04d-%02d-%02d, a %s", weekdayName[weekday], year, month, day, weekdayName[want])
-		}
-	}
+	// the weekday text is read but not checked against the date, as Go's time.Parse
+	_, _ = weekday, weekdayAt
 	local := days*86400 + hour*3600 + minute*60 + second
 	at := func() string {
 		return fmt.Sprintf("%04d-%02d-%02dT%02d:%02d:%02d", year, month, day, hour, minute, second)

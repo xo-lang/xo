@@ -1210,6 +1210,15 @@ const GO_FORMAT: List[(Int, Int, Str, Int, Str)] = [
 const L1: Str = "{weekday:short} {year}-{month}-{day}T{hour}:{minute}:{second}{frac}{offset} {zone}"
 const L2: Str = "{weekday:name}, {month:name} {day:1} {month:1} {hour12}:{minute} {ampm} {offset:compact}{frac:3}"
 
+test "parse reads a weekday without checking it against the date, as Go's time.Parse" {
+  let z = time.utc()
+  // 2006-01-02 is a Monday; Go reads "Wed Jan 2 2006" as that date
+  let t = time.parse("Wed 2006-01-02", "{weekday:short} {year}-{month}-{day}", z)?
+  expect(t.format_rfc3339()) == "2006-01-02T00:00:00Z"
+  let bad = time.parse("Funday 2006-01-02", "{weekday:short} {year}-{month}-{day}", z)
+  expect(bad.is_err()) == true
+}
+
 test "format as Go's Format in fixed zones, every field" {
   var bad: List[(Int, Int, Str, Int, Str, Str)] = []
   for (secs, nanos, name, off, want) in GO_FORMAT {

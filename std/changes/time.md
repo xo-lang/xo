@@ -11,6 +11,16 @@
 
 `Time.rfc3339_offset(s)` is the offset the text carries as a `Duration` (`Z`, `+00:00` and `-00:00` are zero), or `None` exactly when `Time.parse_rfc3339(s)` is. With the instant from `parse_rfc3339`, a caller can format the text back in its own offset with `time.fixed`.
 
+## 2026-11-06: behavior: time.parse no longer checks the weekday against the date
+
+- Kind: behavior
+- Commit: this push
+- Found by: aws-19: azcore parses HTTP dates whose weekday Go's time.Parse ignores, and time.parse refused the ones that disagree with the date
+- Go reference: time.Parse (format.go go1.26.1): the weekday name is read and not validated
+- Test: std/native/time_test.xo "parse reads a weekday without checking it against the date, as Go's time.Parse" (Wed 2006-01-02, a Monday, parses; an unknown name is still a ParseErr)
+
+`time.parse` and a layout's `parse` read a `{weekday}` field and no longer return a ParseErr when it names another day than the date does (`weekday Wednesday does not match 2006-01-02, a Monday`); a text that is not a weekday name is still refused. Both native parsers and the Go backend changed; the spec's parsing rule says so.
+
 ## 2026-11-06: docs: {frac} and {frac:N} carry their leading dot
 
 - Kind: docs
