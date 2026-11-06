@@ -83,8 +83,10 @@ not new cryptography.
 
 - The authorized client is the `AuthClient` wrapper (stage 1), not a std/http transport hook.
 - No automatic retry on a 401 by default (Go's behavior); the retry is opt-in.
+- The device flow's polling is in std: `c.device_access_token(resp)` polls as Go's `DeviceAccessToken` does (the
+  `authorization_pending`, `slow_down` and `expired_token` handling above), rather than a helper the caller loops over.
+- The multi-tenant issuer option keeps go-oidc's name, `insecure_issuer_url_context`, not an `issuer_template` option.
 
 ## Open questions
 
-- Whether the device flow's polling belongs in std (as Go) or stays a helper the caller loops over.
-- Whether `insecure_issuer_url_context` (go-oidc's name) keeps that name or becomes an `issuer_template` option.
+None left: the two above were decided by the owner on 2026-11-06.
