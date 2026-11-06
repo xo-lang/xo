@@ -19,6 +19,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `check_*`), `--limit=N` on symbols and refs, `--doc` adds symbols' doc
   comments, `--json` is JSON a record a line for scripts. Pipe through
   grep or head freely; prefer NAME and --limit over a whole listing.
+  A running `xo serve` (in its own terminal or as a background task)
+  answers repeated lookups inside a module from its cache until a file
+  under the module root or std changes (decision 0283 stage 1,
+  2026-11-05); without one each lookup checks from cold (0.2 to 0.7 s
+  on compiler/).
   Use them instead of grep for declarations, callers, types, and to check
   that a method exists before calling it (`Map.update` existed while
   agents guessed `update_or`, 2026-10-18).

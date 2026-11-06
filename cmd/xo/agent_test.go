@@ -434,6 +434,93 @@ func TestServe(t *testing.T) {
 	}
 }
 
+// TestServeImportEdit: a cached check of a directory is not answered after
+// an edit to a module it imports from the same xo.mod (decision 0283 stage
+// 1: the server stamps the module root, not only the checked directory;
+// a check of compiler/xo kept its answer after an edit to compiler/ssa,
+// 2026-11-05).
+func TestServeImportEdit(t *testing.T) {
+	t.Parallel()
+	sockDir, err := os.MkdirTemp("", "xs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(sockDir)
+	sock := filepath.Join(sockDir, "s.sock")
+	srv := startServe(t, sock)
+	stopped := make(chan error, 1)
+	go func() { stopped <- srv.Wait() }()
+	defer func() {
+		if _, err := serveCall(sock, serveRequest{Op: "shutdown"}); err != nil {
+			t.Errorf("shutdown: %v", err)
+		}
+		select {
+		case err := <-stopped:
+			if err != nil {
+				t.Errorf("serve: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			srv.Process.Kill() // the process this test started
+			t.Error("server did not stop")
+		}
+	}()
+	setenv(t, serveSocketEnv, sock)
+	setenv(t, serveDisableEnv, "")
+
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":      "module example.com/sv\nedition preview\n",
+		"app/main.xo": "use example.com/sv/lib\n\nfn main(os: Os) {\n  os.stdio.println(\"${lib.f()}\")\n}\n",
+		"lib/lib.xo":  "pub fn f() -> Int { 1 }\n",
+	})
+	app := filepath.Join(dir, "app")
+	check := func() (int, string) {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		code := run(t, []string{"check", "--json", app}, &out, &errOut)
+		return code, out.String() + errOut.String()
+	}
+	if code, out := check(); code != 0 {
+		t.Fatalf("first check = %d %s", code, out)
+	}
+	if code, out := check(); code != 0 {
+		t.Fatalf("second check = %d %s", code, out)
+	}
+	r, err := serveCall(sock, serveRequest{Op: "stats"})
+	if err != nil || r.Stats == nil || r.Stats.Hits != 1 {
+		t.Fatalf("stats after two checks: %+v %v, want one hit", r, err)
+	}
+	// a lookup goes through the same cache: def of a function not
+	// declared yet, twice (the second from the cache), then declared
+	def := func() (int, string) {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		code := run(t, []string{"def", "g", "--dir=" + dir}, &out, &errOut)
+		return code, out.String() + errOut.String()
+	}
+	if code, out := def(); code != 1 {
+		t.Fatalf("def g before it exists = %d %s", code, out)
+	}
+	if code, out := def(); code != 1 {
+		t.Fatalf("def g again = %d %s", code, out)
+	}
+	r, err = serveCall(sock, serveRequest{Op: "stats"})
+	if err != nil || r.Stats == nil || r.Stats.Hits != 2 {
+		t.Fatalf("stats after two lookups: %+v %v, want the second served from the cache", r, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lib", "lib.xo"), []byte("pub fn f() -> Int { 1 }\npub fn g() -> Int { 2 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := def(); code != 0 || !strings.Contains(out, "fn g()") {
+		t.Errorf("def g after declaring it = %d %s (a stale cached answer)", code, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lib", "lib.xo"), []byte("pub fn f() -> Int { \"x\" }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := check(); code == 0 {
+		t.Errorf("check after an edit to the imported module passed (a stale cached answer): %s", out)
+	}
+}
+
 // TestServeLongSocketPath: a socket path over the kernel's limit (103
 // bytes on macOS, 107 on Linux) fails with a note naming the limit and
 // the fix, not a bare "bind: invalid argument" (Intel field report

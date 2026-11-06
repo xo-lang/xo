@@ -2,5 +2,7 @@ usage: xo serve [--socket=path] [stop|status]
 
 Keep checked programs in memory and answer xo check and xo query over a
 unix socket (default $XO_SERVE_SOCKET or <user cache dir>/xo/serve.sock).
-check and query use a running server automatically; XO_NO_SERVE=1 turns
-that off. stop shuts the server down; status prints its cache counters.
+check, query, and, inside a module, def, refs, type, symbols and doc use
+a running server automatically; an answer is reused until a file under
+the module root or std changes. XO_NO_SERVE=1 turns that off. stop shuts
+the server down; status prints its cache counters.

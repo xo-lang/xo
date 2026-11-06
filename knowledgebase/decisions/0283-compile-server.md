@@ -209,3 +209,33 @@ misses, main, and the exports. Only where the per-function cache is
 used (arm64, no XO_PASSES or --race, not --release, verify or `xo asm`);
 XO_LAZY_INLINE=off turns it off. fn_key faults on a function with facts
 and no cache key (its key prints the body).
+
+## Implementation stages (xo-lang-4, 2026-11-05; lead-approved order)
+
+The 2026-11-05 measurement (bench/results/edit-loop-2026-11-05.md, "A
+resident compiler") changed the order of point 5. On linux/arm64, a warm
+edit to compiler/ssa built in 15.9 s through xobuild. Two cache bugs, not
+process state, took most of that: cc object keys that carried the build's
+random directory (9.2 s of assembling) and a dropped first pass (about
+2.4 s). Without them a resident process could save at most about 1.5 s,
+at about 3.3 GB. The lookups (def, refs, type, doc, symbols) were the cold
+cost an agent pays most often (0.2 to 0.7 s each). They did not go through
+the server, and the server's cached check missed edits outside the checked
+directory. The stages now:
+
+1. The lookup server.
+   - (b) First: the response cache stamps each checked directory's module
+     root (and std), not only the directory itself. A stale "ok" is a
+     correctness bug.
+   - (a) Then: def, refs, type, doc and symbols are forwarded to `xo serve`
+     and answered through the same cache.
+   - (c) Then: each lookup is measured cold against warm, with the server's
+     RSS.
+2. The build cache fixes that help one-shot builds: the cc object key
+   and the dropped first pass, measured warm before and after (each
+   outside this decision; listed here because the ceiling depends on them).
+3. Remeasure the warm edit after stage 2. If what a resident process can
+   still remove (cache reads and decodes, keys) is worth its memory, build
+   point 5 (b) to (d) as written. That includes the driver's roughly 115
+   exits, which must become returned errors, or a forked child per
+   request.

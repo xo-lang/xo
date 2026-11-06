@@ -14,11 +14,16 @@
 // xo.lock, or xo.work above them) changed in modification time or size,
 // appeared, or disappeared. The hit and miss counts are the Go server's
 // (one load per check or query); a hit whose exact command line was not
-// run yet runs it (the Go server answers it from the session). Files of
-// modules outside the directories (imports through xo.mod) are not
-// stamped: their changes are seen after a change under the directories.
+// run yet runs it (the Go server answers it from the session). The
+// directories walked are the module roots of the checked ones (the
+// nearest directory above with an xo.mod, or with an xo.work, which holds
+// its members), and std: a check of compiler/xo reads compiler/ssa, and a
+// cached answer missed an edit there (decision 0283 stage 1, 2026-11-05).
+// Modules from the module cache are not stamped: a version's files do not
+// change.
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
 /// The environment variable that overrides the socket path.
 const SOCKET_ENV = "XO_SERVE_SOCKET"
@@ -232,6 +237,21 @@ pub fn forward_cli(os: Os, args: List[Str]) -> Int? uses (env, proc, net, fs, st
     if os.stdio.stdout_is_tty() && !format {
       fwd.push("--text")
     }
+  } else if is_lookup(args[0]) {
+    // an agent's lookup (decision 0261) in a module: answered from the
+    // server's cache while nothing under the module root changed
+    // (decision 0283 stage 1); outside a module (a scratch directory,
+    // $HOME) the server would stamp the whole tree, so it runs here
+    if args[1..].any(fn(x) { cmdhelp.is_help_flag(x) }) || !is_agent_command(os, args) {
+      return None
+    }
+    // every directory it reads (loads_of) must be in a module: the
+    // working directory need not be (a checkout's compiler/xo.mod)
+    let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+    let ds = loads_of(args) ?? []
+    if cwd.is_empty() || ds.is_empty() || ds.any(fn(d) { module_root(os, if d.starts_with("/") { d } else { join(cwd, d.trim_prefix("./")) }).is_empty() }) {
+      return None
+    }
   } else {
     return None
   }
@@ -312,6 +332,48 @@ fn stamps(os: Os, dirs: List[Str]) -> Map[Str, Stamp] uses fs {
   out
 }
 
+/// The agents' lookups the server answers (decision 0283 stage 1).
+fn is_lookup(cmd: Str) -> Bool {
+  cmd is "def" | "refs" | "type" | "symbols" | "doc"
+}
+
+/// The nearest directory at or above d with an xo.work, else with an
+/// xo.mod; "" when neither.
+fn module_root(os: Os, d0: Str) -> Str uses fs {
+  var modr = ""
+  var d = d0
+  while d.len() > 1 {
+    if (os.fs.exists(join(d, "xo.work")).ok() ?? false) {
+      return d
+    }
+    if modr.is_empty() && (os.fs.exists(join(d, "xo.mod")).ok() ?? false) {
+      modr = d
+    }
+    let i = d.trim_suffix("/").split("/")
+    d = i[0..i.len() - 1].join("/")
+  }
+  modr
+}
+
+/// The directories whose files a check of dirs reads: each one's module
+/// root (the nearest directory above with an xo.work, else with an
+/// xo.mod; the directory itself when neither is found), once, and std.
+fn stamp_roots(os: Os, dirs: List[Str]) -> List[Str] uses (fs, env) {
+  var out: List[Str] = []
+  for d0 in dirs {
+    let modr = module_root(os, d0)
+    let root = if modr.is_empty() { d0 } else { modr }
+    if !out.contains(root) {
+      out.push(root)
+    }
+  }
+  let sd = check.std_dir(os.env, os.fs)
+  if !sd.is_empty() && !out.any(fn(r) { sd == r || sd.starts_with("${r.trim_suffix("/")}/") }) {
+    out.push(sd)
+  }
+  out
+}
+
 /// The directories a check or query command line loads (cmd/xo
 /// runCheckWith and runQueryWith), or None when it loads none.
 fn loads_of(args: List[Str]) -> List[Str]? {
@@ -325,6 +387,25 @@ fn loads_of(args: List[Str]) -> List[Str]? {
       return None
     }
     return Some(p.args)
+  }
+  if is_lookup(args[0]) {
+    // the directory checked, a position's or --file's directory, and a
+    // symbols directory argument (agent.xo run_agent); stamp_roots widens
+    // each to its module root
+    let a = agent_args(args[0], args[1..]).ok()?
+    var dirs = [a.dir]
+    if let Some((file, _, _)) = position_of(a.target) {
+      // a position's file is checked with its directory (refs keeps the
+      // root too, to search the modules that import it)
+      dirs = if args[0] == "refs" { [a.dir, dir_of(file)] } else { [dir_of(file)] }
+    }
+    if !a.file.is_empty() {
+      dirs.push(dir_of(a.file))
+    }
+    if args[0] == "symbols" && !a.target.is_empty() && position_of(a.target).is_none() {
+      dirs.push(a.target)
+    }
+    return Some(dirs)
   }
   if args[0] == "query" {
     if args.len() < 2 {
@@ -402,7 +483,7 @@ fn run_request(os: Os, ex: Exec, s: Server, args: List[Str], cwd: Str) -> Resp u
   if args.is_empty() {
     return not_served(2, "xo serve: empty command\n")
   }
-  if !(args[0] is "check" | "query") {
+  if !(args[0] is "check" | "query") && !is_lookup(args[0]) {
     return not_served(2, "xo serve: ${args[0]} is not served\n")
   }
   let dir = if cwd.is_empty() { os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "" } else { cwd }
@@ -415,7 +496,7 @@ fn run_request(os: Os, ex: Exec, s: Server, args: List[Str], cwd: Str) -> Resp u
   r
 }
 
-fn run_locked(os: Os, ex: Exec, s: Server, args: List[Str], dir: Str) -> Resp uses (proc, fs) {
+fn run_locked(os: Os, ex: Exec, s: Server, args: List[Str], dir: Str) -> Resp uses (proc, fs, env) {
   {
     let loads = loads_of(args)
     let line = args.join("\u{0}")
@@ -431,6 +512,7 @@ fn run_locked(os: Os, ex: Exec, s: Server, args: List[Str], dir: Str) -> Resp us
           let d = if d0 == "/..." { "/" } else { d0.trim_suffix("/...") }
           abs.push(if d.starts_with("/") { d } else if d == "." { dir } else { join(dir, d.trim_prefix("./")) })
         }
+        abs = stamp_roots(os, abs)
         key = dir + "\u{0}" + ds.join("\u{0}")
         let found = s.state.with(fn(var st) {
           st.clock += 1
