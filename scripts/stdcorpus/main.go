@@ -72,6 +72,7 @@ var generators = map[string]func() string{
 	"netip":      netipCorpus,
 	"path":       pathCorpus,
 	"cbor":       cborCorpus,
+	"protobuf":   protobufCorpus,
 	"jpeg":       jpegCorpus,
 	"jpegenc":    jpegencCorpus,
 	"png":        pngCorpus,

@@ -8,6 +8,7 @@ fn protoerr_display(e: protobuf.ProtoErr) -> Str {
     Overflow => "proto: variable length integer overflow"
     BadTag => "proto: invalid field number"
     BadWire(w) => "proto: invalid wire type ${w}"
+    EndGroup => "proto: unexpected end group"
     Recursion => "proto: exceeded maximum recursion depth"
     BadLength => "proto: invalid length"
     Utf8 => "proto: string field contains invalid UTF-8"
@@ -107,11 +108,8 @@ fn read_varint(b: Bytes, at: Int) -> (UInt64, Int) ! protobuf.ProtoErr {
 fn read_tag(b: Bytes, at: Int) -> (Int, Int, Int) ! protobuf.ProtoErr {
   let (v, next) = read_varint(b, at)?
   let x = v.to_bits()
-  if x < 0 || x > 4294967295 {
-    return Err(protobuf.ProtoErr.BadTag)
-  }
-  let num = x >> 3
-  if num < 1 || num > 536870911 {
+  let num = x.shr_logical(3)
+  if num < 1 || num > 2147483647 {
     return Err(protobuf.ProtoErr.BadTag)
   }
   Ok((num, x & 7, next))
@@ -167,7 +165,7 @@ fn skip_value(b: Bytes, at: Int, num: Int, wire: Int, depth: Int) -> Int ! proto
       Ok(next)
     }
     3 => {
-      if depth <= 0 {
+      if depth < 0 {
         return Err(protobuf.ProtoErr.Recursion)
       }
       var i = at
@@ -175,7 +173,7 @@ fn skip_value(b: Bytes, at: Int, num: Int, wire: Int, depth: Int) -> Int ! proto
         let (n2, w2, next) = read_tag(b, i)?
         if w2 == 4 {
           if n2 != num {
-            return Err(protobuf.ProtoErr.BadTag)
+            return Err(protobuf.ProtoErr.EndGroup)
           }
           return Ok(next)
         }
@@ -183,6 +181,7 @@ fn skip_value(b: Bytes, at: Int, num: Int, wire: Int, depth: Int) -> Int ! proto
       }
       Err(protobuf.ProtoErr.Truncated)
     }
+    4 => Err(protobuf.ProtoErr.EndGroup)
     _ => Err(protobuf.ProtoErr.BadWire(wire: wire))
   }
 }
