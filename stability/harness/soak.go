@@ -38,7 +38,7 @@ type sample struct {
 	reqs, errs, drops int64
 	p50, p99, p999    float64
 	rss, fds          float64
-	heapLive          float64
+	heapLive, timers  float64
 	cpuPerReqUS       float64
 }
 
@@ -105,27 +105,37 @@ func slope(x, y []float64) float64 {
 	return (n*sxy - sx*sy) / d
 }
 
-// heapLive reads heap_live from the app's stats path; -1 when it has none.
-func heapLive(cl *http.Client, url, token string) float64 {
+// schedStats reads heap_live and timers_pending from the app's stats path
+// (/debug/sched); -1 for each it does not report.
+func schedStats(cl *http.Client, url, token string) (heapLive, timers float64) {
+	heapLive, timers = -1, -1
 	req, _ := http.NewRequest("GET", url, nil)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := cl.Do(req)
 	if err != nil {
-		return -1
+		return
 	}
 	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	for _, line := range strings.Split(string(b), "\n") {
-		if v, ok := strings.CutPrefix(line, "heap_live "); ok {
-			n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-			if err == nil {
-				return n
-			}
+		k, v, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			continue
+		}
+		switch k {
+		case "heap_live":
+			heapLive = n
+		case "timers_pending":
+			timers = n
 		}
 	}
-	return -1
+	return
 }
 
 var leakLine = regexp.MustCompile(`xo leakcheck: (\d+) live of (\d+) allocations`)
@@ -250,7 +260,7 @@ func soakMain(args []string) int {
 	}()
 
 	f, _ := os.Create(filepath.Join(*out, "samples.csv"))
-	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,cpu_us_per_req")
+	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req")
 	statsURL := ""
 	if app.Stats != "" {
 		statsURL = base + app.Stats
@@ -268,19 +278,19 @@ func soakMain(args []string) int {
 		mu.Unlock()
 		sort.Float64s(l)
 		rss, fds, cpu, _ := procStats(pid)
-		hl := -1.0
+		hl, tm := -1.0, -1.0
 		if statsURL != "" {
-			hl = heapLive(cl, statsURL, app.Tokens[app.StatsToken])
+			hl, tm = schedStats(cl, statsURL, app.Tokens[app.StatsToken])
 		}
 		n := atomic.LoadInt64(&reqs)
 		s := sample{t: time.Since(start).Seconds(), reqs: n, errs: atomic.LoadInt64(&errs), drops: atomic.LoadInt64(&drops),
-			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, heapLive: hl}
+			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, heapLive: hl, timers: tm}
 		if n > lastReqs {
 			s.cpuPerReqUS = (cpu - cpu0) / float64(n-lastReqs)
 		}
 		cpu0, lastReqs = cpu, n
 		samples = append(samples, s)
-		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.cpuPerReqUS)
+		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS)
 		f.Sync()
 	}
 	close(stop)
@@ -315,8 +325,9 @@ func soakMain(args []string) int {
 		rs := make([]float64, len(body))
 		fds := make([]float64, len(body))
 		hs := make([]float64, len(body))
+		ts := make([]float64, len(body))
 		for i, s := range body {
-			xs[i], rs[i], fds[i], hs[i] = s.t/3600, s.rss, s.fds, s.heapLive
+			xs[i], rs[i], fds[i], hs[i], ts[i] = s.t/3600, s.rss, s.fds, s.heapLive, s.timers
 		}
 		rssSlope := slope(xs, rs)
 		rssFrac := rssSlope / math.Max(rs[0], 1)
@@ -335,6 +346,18 @@ func soakMain(args []string) int {
 			}
 		} else {
 			rep.WriteString("heap_live: not reported by the app\n")
+		}
+		if ts[0] >= 0 {
+			// a server's timers follow its open connections' deadlines, so
+			// only a steady climb past both 5 an hour and 5% an hour counts
+			tSlope := slope(xs, ts)
+			fmt.Fprintf(&rep, "timers_pending: %.0f at warmup end, slope %.2f/hour\n", ts[0], tSlope)
+			if tSlope > math.Max(5, 0.05*ts[0]) {
+				bad = true
+				rep.WriteString("ALERT: pending timers grow\n")
+			}
+		} else {
+			rep.WriteString("timers_pending: not reported by the app\n")
 		}
 		fdSlope := slope(xs, fds)
 		fmt.Fprintf(&rep, "fds: %.0f at warmup end, slope %.2f/hour\n", fds[0], fdSlope)
