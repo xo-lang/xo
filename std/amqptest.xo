@@ -79,6 +79,8 @@ struct FakeHub {
   created_ms: Int
   /// the next partition for an event with no partition key
   rr: Int = 0
+  /// the READ reply's georeplication_factor (above 1: geo-replication enabled)
+  geo_factor: Int = 1
 }
 
 /// A receiver link that owns a partition of a consumer group at an epoch. Internal.
@@ -96,6 +98,8 @@ struct BrokerState {
   hubs: List[FakeHub] = []
   owners: List[HubOwner] = []
   tokens: List[(Str, Str)] = []
+  /// every link attached by a client: address, role and desired capabilities
+  attaches: List[(Str, Str, List[Str])] = []
   /// token expiry per audience in milliseconds since the Unix epoch, 0 for none
   expiries: List[(Str, Int)] = []
   rejected: List[Str] = []
@@ -189,6 +193,9 @@ fn (b: Broker) queue(name: Str, opts: QueueOptions = QueueOptions{})
 /// Declares an event hub with `partitions` partitions (ids "0", "1", ...), receivable by each consumer group
 /// at `hub/ConsumerGroups/cg/Partitions/id` and sendable at `hub` or `hub/Partitions/id`.
 fn (b: Broker) event_hub(name: Str, partitions: Int, consumer_groups: List[Str] = ["$Default"])
+/// Sets the georeplication_factor an event hub's READ reports (1 when declared; above 1 means
+/// geo-replication is enabled, as Event Hubs v2 reads it).
+fn (b: Broker) event_hub_geo_factor(hub: Str, factor: Int)
 /// The events a partition holds, with their x-opt-sequence-number, x-opt-offset and x-opt-enqueued-time
 /// message annotations.
 fn (b: Broker) events(hub: Str, partition: Int) -> List[amqp.Message]
@@ -211,6 +218,9 @@ fn (b: Broker) scheduled(queue: Str) -> List[amqp.Message]
 fn (b: Broker) deferred(queue: Str) -> List[amqp.Message]
 /// The `(audience, token)` pairs the broker accepted through $cbs, in order.
 fn (b: Broker) tokens() -> List[(Str, Str)]
+/// Every link a client attached, in order: its address (a sender's target, a receiver's source),
+/// the client's role ("sender" or "receiver") and the Attach's desired capabilities.
+fn (b: Broker) attaches() -> List[(Str, Str, List[Str])]
 /// A put-token with this token is answered with 401.
 fn (b: Broker) reject_token(token: Str)
 /// Links to entities are refused (`amqp:unauthorized-access`) until a put-token whose audience

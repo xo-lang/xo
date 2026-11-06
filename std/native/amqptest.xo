@@ -601,6 +601,21 @@ fn broker_event_hub(b: amqptest.Broker, name: Str, partitions: Int, consumer_gro
   })
 }
 
+fn broker_event_hub_geo_factor(b: amqptest.Broker, hub: Str, factor: Int) {
+  b.st.with(fn(var s: amqptest.BrokerState) {
+    let i = find_hub(s, hub)
+    if i >= 0 {
+      var h = s.hubs[i]
+      h.geo_factor = factor
+      s.hubs[i] = h
+    }
+  })
+}
+
+fn broker_attaches(b: amqptest.Broker) -> List[(Str, Str, List[Str])] {
+  b.st.with_read(fn(s: amqptest.BrokerState) -> List[(Str, Str, List[Str])] { s.attaches })
+}
+
 fn broker_events(b: amqptest.Broker, hub: Str, partition: Int) -> List[amqp.Message] {
   b.st.with_read(fn(s: amqptest.BrokerState) -> List[amqp.Message] {
     let hi = find_hub(s, hub)
@@ -1506,7 +1521,8 @@ fn hub_mgmt(b: amqptest.Broker, var c: amqptest.SvConn, li: Int, req: amqp.Messa
       var ids: List[amqp.Value] = []
       for i in 0..h.parts.len() { ids.push(amqp.Value.Str(v: "${i}")) }
       return ok_out(amqp.Value.Map(pairs: [pair("name", amqp.Value.Str(v: h.name)), pair("created_at", amqp.Value.Timestamp(ms: h.created_ms)),
-        pair("partition_count", amqp.Value.Int(v: Int32.wrapping_from(h.parts.len()))), pair("partition_ids", amqp.Value.Array(items: ids))]))
+        pair("partition_count", amqp.Value.Int(v: Int32.wrapping_from(h.parts.len()))), pair("partition_ids", amqp.Value.Array(items: ids)),
+        pair("georeplication_factor", amqp.Value.Long(v: Int64(h.geo_factor)))]))
     }
     if typ == "com.microsoft:partition" {
       let pi = Int.parse(part) ?? -1
@@ -1883,7 +1899,20 @@ fn handle_frame(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, f: a
       c.sess.push(amqptest.SvSession{channel: ch, next_in: Int(x.next_outgoing_id), remote_window: Int(x.incoming_window)})
       out(sc, ch, amqp.FrameBody.Begin(v: amqp.Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(0), incoming_window: UInt32(2048), outgoing_window: UInt32(2048)}))?
     }
-    Attach(a) => on_attach(b, sc, c, ch, a)?
+    Attach(a) => {
+      let (addr, role) = match a.role {
+        Sender => (match a.target {
+          Some(t) => t.address
+          None => ""
+        }, "sender")
+        Receiver => (match a.source {
+          Some(x) => x.address
+          None => ""
+        }, "receiver")
+      }
+      b.st.with(fn(var s: amqptest.BrokerState) { s.attaches.push((addr, role, a.desired_capabilities)) })
+      on_attach(b, sc, c, ch, a)?
+    }
     Flow(x) => on_flow(b, sc, c, ch, x)?
     Transfer(t) => on_transfer(b, sc, c, ch, t)?
     Disposition(d) => on_disposition(b, sc, c, ch, d)?

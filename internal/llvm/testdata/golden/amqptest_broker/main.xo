@@ -103,6 +103,11 @@ fn main(os: Os) {
     let hsnd = c.new_sender(sess, "hub/Partitions/1").or_fault("hub sender")
     hsnd.send(msg("e1")).or_fault("send e1")
     os.stdio.println("hub ${b.events("hub", 0).len()} ${b.events("hub", 1).len()}")
+    // geo-replication on (the READ reply's georeplication_factor), and the attach log's last entry
+    b.event_hub_geo_factor("hub", 2)
+    let ats = b.attaches()
+    let (aaddr, arole, acaps) = ats[ats.len() - 1]
+    os.stdio.println("attach ${aaddr} ${arole} ${acaps.len()}")
 
     // injected failures
     b.fail_next("transfer", 0, "amqp:resource-limit-exceeded", "full")

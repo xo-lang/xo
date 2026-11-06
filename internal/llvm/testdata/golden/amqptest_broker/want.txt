@@ -12,6 +12,7 @@ batch true got m1 drained 0 ready 1 attach true true
 s1 1 s2 1
 session state 0
 hub 0 1
+attach hub/Partitions/1 sender 0
 rejected true
 attach: com.microsoft:server-busy
 receiver: amqp:unauthorized-access

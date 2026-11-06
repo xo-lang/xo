@@ -1,5 +1,17 @@
 # std/amqptest changes
 
+## 2026-11-06: feature: an event hub's READ reports georeplication_factor; the broker logs each attach's desired capabilities
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19's Event Hubs v2 port (azeventhubs v2.0.2 newEventHubProperties fails without georeplication_factor; slice 2 checks com.microsoft:georeplication on each link)
+- Go reference: github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs v2.0.2 (mgmt.go newEventHubProperties, internal/constants.go CapabilityGeoDRReplication)
+- Test: std/native/amqptest_test.xo "an event hub answers the hub and partition properties on the namespace management link, and the broker logs each attach"
+- Timing: none
+- Shipped in: not yet released
+
+The `com.microsoft:eventhub` READ reply carries `georeplication_factor`, a Long, 1 by default; `Broker.event_hub_geo_factor(hub, n)` sets it (above 1: geo-replication enabled). `Broker.attaches()` lists every link a client attached: its address (a sender's target, a receiver's source), the client's role and the Attach's desired capabilities.
+
 ## 2026-11-05: fix: lock tokens in Service Bus's byte order and in the delivery annotations
 
 - Kind: fix

@@ -7643,6 +7643,7 @@ fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock)
 fn (b: Broker) queue(name: Str, opts: QueueOptions = QueueOptions{})      // QueueOptions{sessions, lock_ms, max_delivery_count}
 fn (b: Broker) topic(name: Str)
 fn (b: Broker) event_hub(name: Str, partitions: Int, consumer_groups: List[Str] = ["$Default"])
+fn (b: Broker) event_hub_geo_factor(hub: Str, factor: Int)
 fn (b: Broker) events(hub: Str, partition: Int) -> List[amqp.Message]
 fn (b: Broker) subscription(topic: Str, name: Str, opts: QueueOptions = QueueOptions{})
 fn (b: Broker) put(queue: Str, m: amqp.Message)
@@ -7652,6 +7653,7 @@ fn (b: Broker) dead_letters(queue: Str) -> List[amqp.Message]
 fn (b: Broker) scheduled(queue: Str) -> List[amqp.Message]
 fn (b: Broker) deferred(queue: Str) -> List[amqp.Message]
 fn (b: Broker) tokens() -> List[(Str, Str)]
+fn (b: Broker) attaches() -> List[(Str, Str, List[Str])]
 fn (b: Broker) reject_token(token: Str)
 fn (b: Broker) require_token(on: Bool)
 fn (b: Broker) session_state(queue: Str, session: Str) -> Bytes
@@ -7708,9 +7710,12 @@ SASL (any mechanism is accepted) or none.
   detaches the holders with a lower one with `amqp:link:stolen`, and a lower epoch (or none) against a higher holder is refused
   with `amqp:link:stolen`. An unknown partition is `com.microsoft:argument-out-of-range`, an unknown hub or group
   `amqp:not-found`. The namespace `$management` link answers operation READ with `type` `com.microsoft:eventhub`
-  (name, created_at, partition_count, partition_ids) and `com.microsoft:partition` (name, partition, begin_sequence_number,
+  (name, created_at, partition_count, partition_ids, georeplication_factor: a Long, 1 unless `event_hub_geo_factor` set
+  it; above 1 means geo-replication, as Event Hubs v2 reads it) and `com.microsoft:partition` (name, partition, begin_sequence_number,
   last_enqueued_sequence_number, last_enqueued_offset, last_enqueued_time_utc, is_partition_empty), reply keys `status-code`
   and `status-description`. `events` lists a partition's events; `detach_links` takes a hub name or a receiver path.
+- `attaches` lists every link a client attached, in order: its address (a sender's target, a receiver's source), the
+  client's role (`"sender"` or `"receiver"`) and the Attach's desired capabilities (`com.microsoft:georeplication`).
 - Faults: `fail_next`/`fail` make the operation `attach`, `transfer`, `disposition`, `put-token` or a management operation
   (its name without `com.microsoft:`) fail with `condition`, `status` and `description` (an attach, transfer or
   disposition is refused or rejected with the condition; a management reply carries `status` and the condition);

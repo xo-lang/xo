@@ -842,7 +842,7 @@ test "an event hub receiver with a higher epoch takes the partition with amqp:li
   }
 }
 
-test "an event hub answers the hub and partition properties on the namespace management link" uses (net, clock) {
+test "an event hub answers the hub and partition properties on the namespace management link, and the broker logs each attach" uses (net, clock) {
   let b = amqptest.new(os.clock)
   b.event_hub("hub", 3)
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
@@ -851,10 +851,11 @@ test "an event hub answers the hub and partition properties on the namespace man
     let c = dial_broker(os.net, os.clock, l)
     c.keepalive(s.group()).or_fault("keepalive")
     let sess = c.begin().or_fault("begin")
-    let snd = c.new_sender(sess, "hub/Partitions/2", amqp.SenderOptions{name: "es"}).or_fault("event sender")
+    let geo = "com.microsoft:georeplication"
+    let snd = c.new_sender(sess, "hub/Partitions/2", amqp.SenderOptions{name: "es", desired_capabilities: [geo]}).or_fault("event sender")
     snd.send(msg("a")).or_fault("send")
     let ms = c.new_sender(sess, "\$management", amqp.SenderOptions{name: "m-s"}).or_fault("mgmt sender")
-    let mr = c.new_receiver(sess, "\$management", amqp.ReceiverOptions{name: "m-r", target: "client-reply", credit: 5}).or_fault("mgmt receiver")
+    let mr = c.new_receiver(sess, "\$management", amqp.ReceiverOptions{name: "m-r", target: "client-reply", credit: 5, desired_capabilities: [geo]}).or_fault("mgmt receiver")
     let ask = fn(props: List[(Str, amqp.Value)]) -> amqp.Message uses (net, clock) {
       let req = amqp.Message{
         properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "r-1"), reply_to: Some("client-reply")}),
@@ -869,6 +870,11 @@ test "an event hub answers the hub and partition properties on the namespace man
     expect(key_of(hub, "status-code")) == amqp.Value.Int(v: 200)
     expect(key(body_map(hub), "partition_count")) == amqp.Value.Int(v: 3)
     expect(key(body_map(hub), "partition_ids")) == amqp.Value.Array(items: [amqp.Value.Str(v: "0"), amqp.Value.Str(v: "1"), amqp.Value.Str(v: "2")])
+    // Event Hubs v2 (azeventhubs v2.0.2) refuses a READ reply without it
+    expect(key(body_map(hub), "georeplication_factor")) == amqp.Value.Long(v: 1)
+    b.event_hub_geo_factor("hub", 2)
+    expect(key(body_map(ask([("type", amqp.Value.Str(v: "com.microsoft:eventhub"))])), "georeplication_factor")) == amqp.Value.Long(v: 2)
+    expect(b.attaches()) == [("hub/Partitions/2", "sender", [geo]), ("\$management", "sender", []), ("\$management", "receiver", [geo])]
     let part = ask([("type", amqp.Value.Str(v: "com.microsoft:partition")), ("partition", amqp.Value.Str(v: "2"))])
     expect(key(body_map(part), "last_enqueued_sequence_number")) == amqp.Value.Long(v: 0)
     expect(key(body_map(part), "is_partition_empty")) == amqp.Value.Bool(v: false)
