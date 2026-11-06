@@ -511,6 +511,17 @@ func hasEnv(env []string, name string) bool {
 // together. A failure is ignored: the builds go on whole program.
 // XO_TEST_SEPCOMP=0 keeps every build whole (the full tier's coverage of
 // the whole-program path).
+// StdVariants builds std's variants as a native build would (stdVariants),
+// for a test that runs xo itself and wants the separately compiled path.
+func StdVariants() error {
+	cli, err := Command()
+	if err != nil {
+		return err
+	}
+	stdVariants(cli)
+	return nil
+}
+
 func stdVariants(cli []string) {
 	if os.Getenv("XO_TEST_SEPCOMP") == "0" {
 		return

@@ -59,8 +59,8 @@ func TestDebugVars(t *testing.T) {
 	// macho is the whole program's link, its DWARF in the executable;
 	// macho-sep the separately compiled one (decision 0388), whose
 	// executable has no __DWARF but a debug map (decision 0401) that
-	// dsymutil turns into a dSYM: it runs when std's variants are in the
-	// cache (xotool's prebuild, or any earlier build's background one)
+	// dsymutil turns into a dSYM, std's variants built first
+	// (sepDarwinEnv)
 	for _, c := range []struct {
 		name string
 		args []string
@@ -80,17 +80,15 @@ func TestDebugVars(t *testing.T) {
 			if c.env != "" {
 				cmd.Env = append(cmd.Env, c.env)
 			}
+			if c.name == "macho-sep" {
+				cmd.Env = append(sepDarwinEnv(t), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+			}
 			b, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("xo %v: %v\n%s", args, err, b)
 			}
 			if c.name == "macho-sep" {
-				if !bytes.Contains(b, []byte("cache std ")) {
-					t.Skip("std's variants are not in the cache: the build was whole program")
-				}
-				if d, err := exec.Command("dsymutil", bin).CombinedOutput(); err != nil {
-					t.Fatalf("dsymutil: %v\n%s", err, d)
-				}
+				sepDsym(t, bin, b)
 			}
 			dsym := dwarfFile(bin)
 			if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
@@ -408,20 +406,31 @@ func TestDwarfReader(t *testing.T) {
 		{"macho", []string{"--backend=arm64", "--ld=macho"}, []string{"param k: Int line 5", "var total: Int line 9", "var p: Point line 10", "var d: Int line 11", "var pr: Pair line 14", "reg11 (8), reg12 (8)"}},
 		{"cc", []string{"--backend=arm64", "--ld=cc"}, []string{"param k: Int line 5", "var total: Int line 9", "var p: Point line 10", "var d: Int line 11"}},
 		{"llvm", []string{"--backend=llvm"}, []string{"inlined sum call line 24", "param k: Int line 5", "var total: Int line 9", "=10"}},
+		// separately compiled (decision 0388's default): the dSYM of its
+		// debug map (decision 0401)
+		{"macho-sep", []string{"--backend=arm64", "--ld=macho", "--phase-times"}, []string{"param k: Int line 5", "var total: Int line 9", "var p: Point line 10", "var d: Int line 11", "var pr: Pair line 14", "reg11 (8), reg12 (8)"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			sep := c.name == "macho-sep"
 			bin := filepath.Join(out, c.name)
 			args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
 			cmd := testtmp.Guard(exec.Command(xo, args...))
 			cmd.Dir = src
-			// the whole program's link, its DWARF in the executable (a separately
-			// compiled one has a debug map instead, decision 0401: TestDebugVars
-			// macho-sep, TestStdDebugMap)
-			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off", "XO_SEPCOMP=0")
-			if b, err := cmd.CombinedOutput(); err != nil {
+			// the whole program's link, its DWARF in the executable,
+			// except in the separately compiled case
+			env := append(os.Environ(), "XO_SEPCOMP=0")
+			if sep {
+				env = sepDarwinEnv(t)
+			}
+			cmd.Env = append(env, "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+			b, err := cmd.CombinedOutput()
+			if err != nil {
 				t.Fatalf("xo %v: %v\n%s", args, err, b)
 			}
 			dw := dwarfFile(bin)
+			if sep {
+				dw = sepDsym(t, bin, b)
+			}
 			got, err := testtmp.Guard(exec.Command(xo, "dev", "dwarf", "--func=sum", dw)).CombinedOutput()
 			if err != nil {
 				t.Fatalf("xo dev dwarf: %v\n%s", err, got)
@@ -597,6 +606,9 @@ func TestUnwind(t *testing.T) {
 			{"cc", []string{"--backend=arm64", "--ld=cc"}, false},
 			{"llvm", []string{"--backend=llvm"}, false},
 			{"sephalf", []string{"--backend=arm64", "--ld=macho"}, true},
+			// separately compiled (decision 0388's default): the dSYM of
+			// its debug map, std's locals included (decision 0401)
+			{"sep", []string{"--backend=arm64", "--ld=macho", "--phase-times"}, false},
 		} {
 			t.Run(p.name+"/"+c.name, func(t *testing.T) {
 				bin := filepath.Join(out, p.name+"-"+c.name)
@@ -613,8 +625,15 @@ func TestUnwind(t *testing.T) {
 				if c.half {
 					cmd.Env = append(cmd.Env, sepHalfEnv(t, xo, root, out)...)
 				}
-				if b, err := cmd.CombinedOutput(); err != nil {
+				if c.name == "sep" {
+					cmd.Env = append(sepDarwinEnv(t), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+				}
+				b, err := cmd.CombinedOutput()
+				if err != nil {
 					t.Fatalf("xo %v: %v\n%s", args, err, b)
+				}
+				if c.name == "sep" {
+					sepDsym(t, bin, b)
 				}
 				if c.half {
 					if l, _ := testtmp.Guard(exec.Command("otool", "-l", bin)).Output(); !strings.Contains(string(l), "sectname _ptext") {
@@ -799,8 +818,7 @@ func TestDebugTypes(t *testing.T) {
 		{"macho", []string{"--backend=arm64", "--ld=macho"}, arm64Cmds, arm64Wants, nil},
 		// separately compiled (decision 0388): lldb reads the program's
 		// DWARF through the debug map (decision 0401), as dsymutil does,
-		// so not the string's bytes either; it runs when std's variants
-		// are cached
+		// so not the string's bytes either
 		{"macho-sep", []string{"--backend=arm64", "--ld=macho", "--phase-times"}, arm64Cmds, append(append([]string{}, arm64Wants[:3]...), arm64Wants[4:]...), nil},
 		// not the string's bytes: dsymutil relocates an address in a
 		// location list as the function's
@@ -828,17 +846,15 @@ func TestDebugTypes(t *testing.T) {
 				// the whole program's link (its DWARF in the executable)
 				cmd.Env = append(cmd.Env, "XO_SEPCOMP=0")
 			}
+			if c.name == "macho-sep" {
+				cmd.Env = append(sepDarwinEnv(t), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+			}
 			bo, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("xo %v: %v\n%s", args, err, bo)
 			}
 			if c.name == "macho-sep" {
-				if !bytes.Contains(bo, []byte("cache std ")) {
-					t.Skip("std's variants are not in the cache: the build was whole program")
-				}
-				if d, err := exec.Command("dsymutil", bin).CombinedOutput(); err != nil {
-					t.Fatalf("dsymutil: %v\n%s", err, d)
-				}
+				sepDsym(t, bin, bo)
 			}
 			if v, err := exec.Command("dwarfdump", "--verify", dwarfFile(bin)).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 				t.Errorf("dwarfdump --verify: %v\n%s", err, v)
@@ -893,42 +909,55 @@ func TestDebugLoclistsBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(root, "internal", "llvm", "testdata", "golden", "http_server")
-	bin := filepath.Join(t.TempDir(), "hs")
-	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", bin, "."))
-	cmd.Dir = src
-	// the whole program's link, its DWARF in the executable (a separately
-	// compiled one has a debug map instead, decision 0401: TestDebugVars
-	// macho-sep, TestStdDebugMap)
-	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off", "XO_SEPCOMP=0")
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("xo build: %v\n%s", err, b)
-	}
-	lc, err := exec.Command("otool", "-l", dwarfFile(bin)).Output()
-	if err != nil {
-		t.Fatalf("otool -l: %v", err)
-	}
-	size := int64(-1)
-	in := false
-	for _, l := range strings.Split(string(lc), "\n") {
-		f := strings.Fields(l)
-		if len(f) == 2 && f[0] == "sectname" {
-			in = f[1] == "__debug_loclists"
-		}
-		if in && len(f) == 2 && f[0] == "size" {
-			size, err = strconv.ParseInt(strings.TrimPrefix(f[1], "0x"), 16, 64)
-			if err != nil {
-				t.Fatal(err)
+	// the whole program's DWARF in the executable, and the separately
+	// compiled build's (decision 0388's default) in the dSYM dsymutil
+	// makes from its debug map (decision 0401), program and std together
+	for _, sep := range []bool{false, true} {
+		t.Run(map[bool]string{false: "whole", true: "sep"}[sep], func(t *testing.T) {
+			bin := filepath.Join(t.TempDir(), "hs")
+			cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", bin, "."))
+			cmd.Dir = src
+			env := append(os.Environ(), "XO_SEPCOMP=0")
+			if sep {
+				env = sepDarwinEnv(t)
 			}
-			break
-		}
-	}
-	if size < 0 {
-		t.Fatalf("no __debug_loclists in %s:\n%s", dwarfFile(bin), lc)
-	}
-	const budget = 3 << 20
-	t.Logf("__debug_loclists: %d bytes (budget %d)", size, budget)
-	if size > budget {
-		t.Errorf("__debug_loclists is %d bytes, over its %d byte budget: compact the location lists (dwvars.xo dv_field, debug.xo)", size, budget)
+			cmd.Env = append(env, "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+			b, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("xo build: %v\n%s", err, b)
+			}
+			dw := dwarfFile(bin)
+			if sep {
+				dw = sepDsym(t, bin, b)
+			}
+			lc, err := exec.Command("otool", "-l", dw).Output()
+			if err != nil {
+				t.Fatalf("otool -l: %v", err)
+			}
+			size := int64(-1)
+			in := false
+			for _, l := range strings.Split(string(lc), "\n") {
+				f := strings.Fields(l)
+				if len(f) == 2 && f[0] == "sectname" {
+					in = f[1] == "__debug_loclists"
+				}
+				if in && len(f) == 2 && f[0] == "size" {
+					size, err = strconv.ParseInt(strings.TrimPrefix(f[1], "0x"), 16, 64)
+					if err != nil {
+						t.Fatal(err)
+					}
+					break
+				}
+			}
+			if size < 0 {
+				t.Fatalf("no __debug_loclists in %s:\n%s", dw, lc)
+			}
+			const budget = 3 << 20
+			t.Logf("__debug_loclists: %d bytes (budget %d)", size, budget)
+			if size > budget {
+				t.Errorf("__debug_loclists is %d bytes, over its %d byte budget: compact the location lists (dwvars.xo dv_field, debug.xo)", size, budget)
+			}
+		})
 	}
 }
 

@@ -75,27 +75,45 @@ func TestDebugLineDarwin(t *testing.T) {
 	if !hasDwarfSegment(t, bin) {
 		t.Fatalf("%s has no __DWARF segment", bin)
 	}
-	dsym := bin
-	info, err := exec.Command("dwarfdump", "--debug-info", dsym).CombinedOutput()
-	if err != nil {
-		t.Fatalf("dwarfdump: %v\n%s", err, info)
+	// lines checks the DWARF file dsym: main's address looks up at its
+	// first statement, and the tables verify
+	lines := func(t *testing.T, dsym string) {
+		t.Helper()
+		info, err := exec.Command("dwarfdump", "--debug-info", dsym).CombinedOutput()
+		if err != nil {
+			t.Fatalf("dwarfdump: %v\n%s", err, info)
+		}
+		m := regexp.MustCompile(`DW_AT_name\s+\("main"\)\s+DW_AT_low_pc\s+\((0x[0-9a-f]+)\)`).FindSubmatch(info)
+		if m == nil {
+			t.Fatalf("no subprogram main in\n%s", info)
+		}
+		// main's first statement, `var t = 0`, is line 7
+		look, err := exec.Command("dwarfdump", "--lookup="+string(m[1]), dsym).CombinedOutput()
+		if err != nil {
+			t.Fatalf("dwarfdump --lookup: %v\n%s", err, look)
+		}
+		if !strings.Contains(string(look), "file 'main.xo', line 7") && !strings.Contains(string(look), "file 'main.xo', line 8") {
+			t.Errorf("main's address is not at main.xo:7 or 8:\n%s", look)
+		}
+		if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
+			t.Errorf("dwarfdump --verify: %v\n%s", err, v)
+		}
+		checkLinePaths(t, dsym)
 	}
-	m := regexp.MustCompile(`DW_AT_name\s+\("main"\)\s+DW_AT_low_pc\s+\((0x[0-9a-f]+)\)`).FindSubmatch(info)
-	if m == nil {
-		t.Fatalf("no subprogram main in\n%s", info)
-	}
-	// main's first statement, `var t = 0`, is line 7
-	look, err := exec.Command("dwarfdump", "--lookup="+string(m[1]), dsym).CombinedOutput()
-	if err != nil {
-		t.Fatalf("dwarfdump --lookup: %v\n%s", err, look)
-	}
-	if !strings.Contains(string(look), "file 'main.xo', line 7") && !strings.Contains(string(look), "file 'main.xo', line 8") {
-		t.Errorf("main's address is not at main.xo:7 or 8:\n%s", look)
-	}
-	if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
-		t.Errorf("dwarfdump --verify: %v\n%s", err, v)
-	}
-	checkLinePaths(t, dsym)
+	lines(t, bin)
+	// the separately compiled build (decision 0388's default): the same
+	// tables through the dSYM of its debug map (decision 0401)
+	t.Run("sep", func(t *testing.T) {
+		sb := filepath.Join(out, "s")
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", sb, src))
+		cmd.Dir = src
+		cmd.Env = append(sepDarwinEnv(t), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build: %v\n%s", err, b)
+		}
+		lines(t, sepDsym(t, sb, b))
+	})
 	// atos names the program's first function, which a part's text
 	// marker (xo_utext_) shared its address with (2026-10-22)
 	if _, err := exec.LookPath("atos"); err == nil {
@@ -275,8 +293,34 @@ func TestDebugLineDarwinCC(t *testing.T) {
 		{"cc-dsym", []string{"--backend=arm64", "--ld=cc", "--dsym"}, true},
 		{"macho", []string{"--backend=arm64", "--ld=macho"}, false},
 		{"macho-dsym", []string{"--backend=arm64", "--ld=macho", "--dsym"}, true},
+		// the separately compiled build (decision 0388's default): a
+		// debug map, its dSYM made by dsymutil (decision 0401)
+		{"macho-sep", []string{"--backend=arm64", "--ld=macho", "--phase-times"}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			if c.name == "macho-sep" {
+				bin := filepath.Join(out, c.name)
+				args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
+				cmd := testtmp.Guard(exec.Command(xo, args...))
+				cmd.Dir = src
+				cmd.Env = append(sepDarwinEnv(t), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+				b, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("xo %v: %v\n%s", args, err, b)
+				}
+				dw := sepDsym(t, bin, b)
+				if v, err := exec.Command("dwarfdump", "--verify", dw).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
+					t.Errorf("dwarfdump --verify %s: %v\n%s", dw, err, v)
+				}
+				if v, err := exec.Command("codesign", "--verify", "--strict", bin).CombinedOutput(); err != nil {
+					t.Errorf("codesign --verify --strict %s: %v\n%s", bin, err, v)
+				}
+				lb, err := lldb(t, false, "-b", "-o", "breakpoint set -f main.xo -l 9", bin)
+				if err != nil || !regexp.MustCompile(`Breakpoint 1: where = .* at main\.xo:\d+`).Match(lb) {
+					t.Errorf("lldb b main.xo:9 on %s: %v\n%s", bin, err, lb)
+				}
+				return
+			}
 			bin := build(c.name, c.args...)
 			if _, err := os.Stat(bin + ".dSYM"); (err == nil) != c.bundle {
 				t.Fatalf("%s.dSYM present: %v, want %v", bin, err == nil, c.bundle)
@@ -335,46 +379,58 @@ func TestDebugLineInlined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(out, "p")
-	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--ld=macho", "-o", bin, "."))
-	cmd.Dir = src
-	// the whole program's link, its DWARF in the executable (a separately
-	// compiled one has a debug map instead, decision 0401: TestDebugVars
-	// macho-sep, TestStdDebugMap)
-	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off", "XO_SEPCOMP=0")
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("xo build: %v\n%s", err, b)
-	}
-	dsym := dwarfFile(bin)
-	info, err := exec.Command("dwarfdump", "--debug-info", dsym).CombinedOutput()
-	if err != nil {
-		t.Fatalf("dwarfdump: %v\n%s", err, info)
-	}
-	m := regexp.MustCompile(`DW_TAG_inlined_subroutine\s+DW_AT_abstract_origin\s+\(0x[0-9a-f]+ "scale"\)\s+DW_AT_low_pc\s+\((0x[0-9a-f]+)\)[\s\S]*?DW_AT_call_line\s+\((\d+)\)`).FindSubmatch(info)
-	if m == nil {
-		t.Fatalf("no inlined subroutine of scale in\n%s", info)
-	}
-	if string(m[2]) != "12" {
-		t.Errorf("scale's inlined copy has call line %s, want 12", m[2])
-	}
-	look, err := exec.Command("dwarfdump", "--lookup="+string(m[1]), dsym).CombinedOutput()
-	if err != nil {
-		t.Fatalf("dwarfdump --lookup: %v\n%s", err, look)
-	}
-	if !strings.Contains(string(look), "DW_TAG_inlined_subroutine") || !regexp.MustCompile(`file '[^']*main\.xo', line [56]\b`).Match(look) {
-		t.Errorf("the inlined copy's address does not look up as scale's lines:\n%s", look)
-	}
-	if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
-		t.Errorf("dwarfdump --verify: %v\n%s", err, v)
-	}
-	// a frame's parameters follow its name when it has any with debug
-	// information (main's os, 2026-10-22: "main(os=<unavailable>) at")
-	bt, err := lldb(t, true, "-b", "-o", "b scale", "-o", "run", "-o", "bt 4", bin)
-	if err != nil {
-		t.Fatalf("lldb: %v\n%s", err, bt)
-	}
-	if !regexp.MustCompile(`frame #0: .*scale(\(.*\))? at main\.xo:[56]:\d+ .*\[inlined\]`).Match(bt) || !regexp.MustCompile(`frame #1: .*main(\(.*\))? at main\.xo:12:\d+`).Match(bt) {
-		t.Errorf("lldb's backtrace lacks the inlined frame of scale above main at line 12:\n%s", bt)
+	// the whole program's link, its DWARF in the executable, and the
+	// separately compiled one (decision 0388's default), whose debug map
+	// dsymutil turns into a dSYM (decision 0401)
+	for _, sep := range []bool{false, true} {
+		t.Run(map[bool]string{false: "whole", true: "sep"}[sep], func(t *testing.T) {
+			bin := filepath.Join(out, map[bool]string{false: "p", true: "s"}[sep])
+			cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--ld=macho", "--phase-times", "-o", bin, "."))
+			cmd.Dir = src
+			env := append(os.Environ(), "XO_SEPCOMP=0")
+			if sep {
+				env = sepDarwinEnv(t)
+			}
+			cmd.Env = append(env, "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+			b, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("xo build: %v\n%s", err, b)
+			}
+			dsym := dwarfFile(bin)
+			if sep {
+				dsym = sepDsym(t, bin, b)
+			}
+			info, err := exec.Command("dwarfdump", "--debug-info", dsym).CombinedOutput()
+			if err != nil {
+				t.Fatalf("dwarfdump: %v\n%s", err, info)
+			}
+			m := regexp.MustCompile(`DW_TAG_inlined_subroutine\s+DW_AT_abstract_origin\s+\(0x[0-9a-f]+ "scale"\)\s+DW_AT_low_pc\s+\((0x[0-9a-f]+)\)[\s\S]*?DW_AT_call_line\s+\((\d+)\)`).FindSubmatch(info)
+			if m == nil {
+				t.Fatalf("no inlined subroutine of scale in\n%s", info)
+			}
+			if string(m[2]) != "12" {
+				t.Errorf("scale's inlined copy has call line %s, want 12", m[2])
+			}
+			look, err := exec.Command("dwarfdump", "--lookup="+string(m[1]), dsym).CombinedOutput()
+			if err != nil {
+				t.Fatalf("dwarfdump --lookup: %v\n%s", err, look)
+			}
+			if !strings.Contains(string(look), "DW_TAG_inlined_subroutine") || !regexp.MustCompile(`file '[^']*main\.xo', line [56]\b`).Match(look) {
+				t.Errorf("the inlined copy's address does not look up as scale's lines:\n%s", look)
+			}
+			if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
+				t.Errorf("dwarfdump --verify: %v\n%s", err, v)
+			}
+			// a frame's parameters follow its name when it has any with debug
+			// information (main's os, 2026-10-22: "main(os=<unavailable>) at")
+			bt, err := lldb(t, true, "-b", "-o", "b scale", "-o", "run", "-o", "bt 4", bin)
+			if err != nil {
+				t.Fatalf("lldb: %v\n%s", err, bt)
+			}
+			if !regexp.MustCompile(`frame #0: .*scale(\(.*\))? at main\.xo:[56]:\d+ .*\[inlined\]`).Match(bt) || !regexp.MustCompile(`frame #1: .*main(\(.*\))? at main\.xo:12:\d+`).Match(bt) {
+				t.Errorf("lldb's backtrace lacks the inlined frame of scale above main at line 12:\n%s", bt)
+			}
+		})
 	}
 }
 
