@@ -2547,6 +2547,11 @@ pub fn sync(src: Fs, out: Stdio) -> () ! SyncErr uses fs.read, stdio { ... }
   - In parameter and receiver types they become implicit effect variables of
     the function. These count as declared: the function may perform them
     without naming them in `uses`.
+    Such a variable is abstract, so a closure capturing the value cannot
+    have a function type that fixes its effects (`fn(...) uses net.dial`):
+    XO0701 then names the parameter, and `xo fix` writes the argument as
+    no effects (`sql.Db[()]`, what a value performing none has), then on
+    each caller passing the value along.
   - In result and error types they are inferred from the function body, so a
     constructor `fn new_cache(...) -> Cache[Int, Item]` returns the effects of
     the loader it was given.

@@ -3,8 +3,8 @@ pub struct Request[fx: Effects] {
   pub run: fn() -> Int uses fx
 }
 
-pub fn send(req: Request) -> Int uses clock {
-  let f = fn() -> Int { (req.run)() }
+pub fn send(req: Request[()]) -> Int uses clock {
+  let f = fn() -> Int uses clock { (req.run)() }
   f()
 }
 

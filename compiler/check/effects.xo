@@ -160,6 +160,14 @@ fn (var c: Checker) elided_effect_note(d: Int, sub: Flat, sup: Flat, ob: EffOb) 
       fx = text(fx.bytes()[i + 1..])
     }
     c.note(d, "to pass the caller's effects through, name the effect parameter and list it: `fn f[${fx}: Effects](x: ${tn}[${fx}]) uses (..., ${fx})`, with `${fx}` in the closure's `uses` too (decision 0522)")
+    // the fix `xo fix` applies first: the argument written as no effects,
+    // what a value that performs none (a Postgres or in memory sql.Db)
+    // has; a caller passing the value along gets the same note and fix
+    // in turn. Only for a type written bare (its one effect parameter
+    // left out); with other arguments the note says what to write.
+    if !from.text.contains("[") {
+      c.fix(d, "write the effect argument: `${from.text}[()]`, a value that performs no effects (the effects of the value passed in when it performs some)", [DEdit{span: JSpan{file: from.file, line: from.at.end.line, col: from.at.end.col, end_line: from.at.end.line, end_col: from.at.end.col}, replace: "[()]"}])
+    }
     if !ob.uses_file.is_empty() {
       c.fix(d, "remove the closure's `uses` clause so its effects are inferred", [DEdit{span: JSpan{file: ob.uses_file, line: ob.uses_clause.start.line, col: ob.uses_clause.start.col, end_line: ob.uses_clause.end.line, end_col: ob.uses_clause.end.col}, replace: ""}])
     }

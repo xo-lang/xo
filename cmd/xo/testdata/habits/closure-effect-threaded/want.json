@@ -35,6 +35,21 @@
     ],
     "fixes": [
       {
+        "title": "write the effect argument: `Request[()]`, a value that performs no effects (the effects of the value passed in when it performs some)",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 25,
+              "end_line": 6,
+              "end_col": 25
+            },
+            "replace": "[()]"
+          }
+        ]
+      },
+      {
         "title": "remove the closure's `uses` clause so its effects are inferred",
         "edits": [
           {

@@ -1,0 +1,44 @@
+[
+  {
+    "code": "XO0701",
+    "severity": "error",
+    "message": "the expected function type allows only `net.dial`, but performs `Conn.fx`",
+    "span": {
+      "file": "main.xo",
+      "line": 14,
+      "col": 3,
+      "end_line": 14,
+      "end_col": 21
+    },
+    "notes": [
+      {
+        "message": "`Conn.fx` is the effect argument left out of `Conn` here; an omitted effect argument stays an abstract effect variable of the function (core 6.2), as Rust and TypeScript generics would infer it, so a `uses` list cannot name it: write the effect argument, `Conn[..., net.dial]` naming the effects of the value passed in, or let the closure's effects be inferred",
+        "span": {
+          "file": "main.xo",
+          "line": 13,
+          "col": 15
+        }
+      },
+      {
+        "message": "to pass the caller's effects through, name the effect parameter and list it: `fn f[fx: Effects](x: Conn[fx]) uses (..., fx)`, with `fx` in the closure's `uses` too (decision 0522)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write the effect argument: `Conn[()]`, a value that performs no effects (the effects of the value passed in when it performs some)",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 13,
+              "col": 19,
+              "end_line": 13,
+              "end_col": 19
+            },
+            "replace": "[()]"
+          }
+        ]
+      }
+    ]
+  }
+]

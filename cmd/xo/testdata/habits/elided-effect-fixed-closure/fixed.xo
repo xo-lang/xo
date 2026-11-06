@@ -1,0 +1,25 @@
+// A value whose type takes an effect parameter (a sql.Db, decision 0534),
+// written bare and captured in a closure whose type fixes its effects:
+// xo fix writes `[()]` on handler's parameter, then on routes', the
+// function passing it along.
+struct Conn[fx: Effects] {
+  run: fn(Str) -> Str uses fx
+}
+
+fn (c: Conn[fx]) ask(q: Str) -> Str uses fx {
+  c.run(q)
+}
+
+fn handler(c: Conn[()]) -> fn(Str) -> Str uses net.dial {
+  fn(q) { c.ask(q) }
+}
+
+fn routes(c: Conn[()]) -> fn(Str) -> Str uses net.dial {
+  handler(c)
+}
+
+fn main(os: Os) {
+  let c = Conn{run: fn(q) { q }}
+  let h = routes(c)
+  os.stdio.println(h("x"))
+}
