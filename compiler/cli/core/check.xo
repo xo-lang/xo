@@ -549,9 +549,9 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str], support_fn: fn(check.Checker) ->
   var fl = new_flags("check")
   fl.bool_flag("json", "print diagnostics as JSON")
   fl.str_flag("backend", "", "the build backend whose rules to check by (go for the Go backend's; default the native backends', as xo build builds)")
-  fl.bool_flag("support", "also run the native backends' support check (XO1201: what they cannot build yet), which lowers every function of the root modules (decision 0523)")
+  fl.opt_bool_flag("support", "the native backends' support check (XO1201: what they cannot build yet), which lowers every function of the checked modules: on by default, except for a walk (DIR/...), about 10 times the plain check there; --support turns it on for every walked module, --support=false skips it (decision 0523)")
   fl.bool_flag("no-gc", "the same as --support (its old name)")
-  fl.bool_flag("support-all", "with --support, run the support check on every module of the workspace, not only on the named directories and the walked (DIR/...) ones")
+  fl.bool_flag("support-all", "run the support check on every module of the workspace, not only on the named directories and the walked (DIR/...) ones")
   fl.bool_flag("fix", "first apply every unambiguous machine fix (as `xo fix`) and reformat the changed files, then report what remains (decision 0096)")
   fl.str_flag("dir", "", "a directory to check, as def, refs, and doc take --dir (the same as giving it as an argument)")
   fl.bool_flag("wip", "report unused bindings and imports (XO0110) and unused computed values (XO0209) as warnings, for checking code mid edit; a normal check and every build keep them errors (decision 0293)")
@@ -584,7 +584,14 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str], support_fn: fn(check.Checker) ->
   }
   var lctx = ctx
   lctx.support_all = fl.get_bool("support-all")
-  var s = match load_check(os, lctx, targets, fl.get_bool("support") || fl.get_bool("no-gc"), be == "go", support_fn) {
+  // the support check by default on the named directories, a walk
+  // (DIR/...) only when asked (decision 0523: about 10 times the plain
+  // check on aws's 480 modules)
+  let support = match fl.opt_bool("support") {
+    Some(x) => x
+    None => fl.get_bool("no-gc") || lctx.support_all || lctx.walk.is_empty()
+  }
+  var s = match load_check(os, lctx, targets, support, be == "go", support_fn) {
     Ok(x) => x
     Err(e) => {
       os.stdio.eprintln("xo check: ${e}")

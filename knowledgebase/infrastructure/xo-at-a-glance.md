@@ -127,6 +127,10 @@ lists the rest.
 `xo def`, `refs`, `type`, `doc`, `symbols`, `edit rename`, `vet`, `fmt`,
 `test`, `prof`, `dbg`, `scripts/xocheck`, `scripts/identity`,
 `xo dev dump --fn/--stage`.
+- `xo check DIR` (0523) also runs the native support check (XO1201,
+  what the native backends cannot build yet) on DIR's modules, every
+  function, a library's too; a walk `DIR/...` only with `--support`;
+  `--support=false` skips it.
 - `xo vet --cost` (0327): notes on costs the source does not show:
   `XO0907` a loop copying a map's entries first, `XO0908` an element
   counted up and down each iteration (including callback walks such as

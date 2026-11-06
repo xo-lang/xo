@@ -127,8 +127,15 @@ func TestNoGC(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run(t, []string{"check", src}, &out, &errOut); code != 0 {
+	// the support check runs by default (decision 0523); --support=false
+	// is the type check alone
+	if code := run(t, []string{"check", src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "XO1201") {
 		t.Errorf("check: exit %d stderr %s", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"check", "--support=false", src}, &out, &errOut); code != 0 {
+		t.Errorf("check --support=false: exit %d stderr %s", code, errOut.String())
 	}
 	errOut.Reset()
 	if code := run(t, []string{"build", "--no-gc", "--backend=go", src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "native backend") {

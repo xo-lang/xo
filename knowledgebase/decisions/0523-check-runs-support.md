@@ -1,7 +1,8 @@
 # 0523: `xo check` runs the native support check by default
 
-Status: Proposed (Xo Lang 1, 2026-11-05, for the owner; the Xo Lead's
-queue item "check vs native gap" from the survey of 2026-11-05)
+Status: Accepted (owner, 2026-11-06, with the walk left opt-in: point 1
+below; proposed by Xo Lang 1, 2026-11-05, the Xo Lead's queue item
+"check vs native gap" from the survey of 2026-11-05)
 
 ## Context
 
@@ -32,13 +33,19 @@ Two problems turned up on the way:
 ## Decision
 
 Points 2 to 4 landed with this ADR under the opt-in `--support` (they
-fix it and widen it); point 1, the default, is the owner's call.
+fix it and widen it); point 1, the default, the owner accepted on
+2026-11-06 with a walk left opt-in.
 
-1. Proposed: `xo check` runs the support check by default when the
-   check finds no error; `--support=false` skips it (`--support` and
-   `--no-gc` still parse, as no-ops). The switch is one flag default in
-   compiler/cli/core/check.xo run_check, plus cmd/xo TestBind (a `use
-   go` program then fails plain `xo check`, as a native build does).
+1. `xo check` runs the support check by default, when the check finds
+   no error, on the modules of the directories it is given (`xo check
+   .`, `xo check DIR`). A walk (`DIR/...`) keeps it opt-in: `--support`
+   turns it on for every walked module (about 10 times the plain check
+   on aws, the table below). `--support=false` skips it; `--support-all`
+   runs it on every module of the workspace; `--no-gc` is `--support`.
+   compiler/cli/core/check.xo run_check (a flag whose absence differs
+   from `=false`, flags.xo opt_bool_flag), and cmd/xo TestBind: a `use
+   go` program fails plain `xo check`, as a native build does, and
+   passes with `--backend=go`.
 2. The support check lowers every non generic function of the root
    modules (`Checker.lib_roots`, declared as roots beside main), so a
    library's functions and ones main does not reach get their XO1201.
@@ -75,11 +82,13 @@ false XO1201 on two runs.
 
 ## Consequences
 
-- With point 1, an agent sees XO1201 at `xo check`, before a build,
-  including in libraries; until then, with `xo check --support`.
-- With point 1, `xo check` of a `use go` program exits 1 (XO1201: Go
-  packages need the Go backend) unless `--backend=go`, as a native build
-  would fail.
+- An agent sees XO1201 at `xo check DIR`, before a build, including in
+  libraries; a walk `xo check ./...` shows it only with `--support`, so
+  a workspace's CI that walks still needs the flag to see every module's.
+- `xo check` of a `use go` program exits 1 (XO1201: Go packages need the
+  Go backend) unless `--backend=go`, as a native build would fail.
+- `xo check DIR` costs the support check's lowering: compiler/xo 0.79 s
+  to 1.5 to 1.8 s, aws `check .` 47 s to 50 s (the table).
 - A per member support check keeps the base's per-node records on each
   copy, so it needs more memory per member than a plain check.
 - cmd/xo TestCheckSupportPerMember: one real XO1201 in a 12 module

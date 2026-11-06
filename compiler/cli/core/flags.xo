@@ -41,6 +41,13 @@ pub fn (var f: Flags) bool_flag(name: Str, usage: Str) {
   f.vals[name] = "false"
 }
 
+/// A boolean flag whose absence differs from `-name=false` (opt_bool):
+/// the command picks the default itself, and its usage says which.
+pub fn (var f: Flags) opt_bool_flag(name: Str, usage: Str) {
+  f.bool_flag(name, usage)
+  f.vals[name] = ""
+}
+
 pub fn (var f: Flags) str_flag(name: Str, def: Str, usage: Str) {
   f.defs.push(FlagDef{name: name, kind: FlagKind.StrFlag, usage: usage, def: def})
   f.vals[name] = def
@@ -53,6 +60,15 @@ pub fn (var f: Flags) int_flag(name: Str, def: Int, usage: Str) {
 
 pub fn (f: Flags) get_bool(name: Str) -> Bool {
   (f.vals.get(name) ?? "") == "true"
+}
+
+/// An opt_bool_flag's value, None when the command line did not set it.
+pub fn (f: Flags) opt_bool(name: Str) -> Bool? {
+  match f.vals.get(name) ?? "" {
+    "true" => Some(true)
+    "false" => Some(false)
+    _ => None
+  }
 }
 
 pub fn (f: Flags) get_str(name: Str) -> Str {

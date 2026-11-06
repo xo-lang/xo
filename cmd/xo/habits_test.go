@@ -121,8 +121,10 @@ func TestHabitGolden(t *testing.T) {
 				}
 				out.Reset()
 				errOut.Reset()
-				if code := run(t, []string{"check", dir}, &out, &errOut); code != 0 {
-					t.Errorf("the fixed program does not check: exit %d\n%s", code, errOut.String())
+				// the fix's code checks; whether the native backends build it
+				// (a `use go` fixture: XO1201) is not the habit's (decision 0523)
+				if code := run(t, []string{"check", "--support=false", dir}, &out, &errOut); code != 0 {
+					t.Errorf("the fixed program does not check: exit %d\n%s%s", code, out.String(), errOut.String())
 				}
 			case os.IsNotExist(err):
 				if hasFix {

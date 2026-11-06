@@ -339,9 +339,16 @@ func TestCheckSupportPerMember(t *testing.T) {
 	if n := count(xo(t, "check", "--support", "--json", "--support-all", ws).want(1)); n != 1 {
 		t.Errorf("check --support-all WS: want v's XO1201, got %d", n)
 	}
-	// a library alone, and without --support
+	// a library alone: the support check runs by default on a named
+	// directory (decision 0523), not on a walk, and --support=false skips it
 	if n := count(xo(t, "check", "--support", "--json", filepath.Join(ws, "v")).want(1)); n != 1 {
-		t.Errorf("check v: want its XO1201, got %d", n)
+		t.Errorf("check --support v: want its XO1201, got %d", n)
 	}
-	xo(t, "check", filepath.Join(ws, "v")).want(0)
+	if n := count(xo(t, "check", "--json", filepath.Join(ws, "v")).want(1)); n != 1 {
+		t.Errorf("check v: want its XO1201 by default, got %d", n)
+	}
+	if n := count(xo(t, "check", "--json", ws+"/...").want(0)); n != 0 {
+		t.Errorf("check WS/...: want no XO1201 (a walk needs --support), got %d", n)
+	}
+	xo(t, "check", "--support=false", filepath.Join(ws, "v")).want(0)
 }

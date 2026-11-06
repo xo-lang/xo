@@ -44,8 +44,15 @@ func TestBind(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run(t, []string{"check", filepath.Join(dir, "app")}, &out, &errOut); code != 0 {
-		t.Fatalf("check exit %d: %s", code, errOut.String())
+	// the support check runs by default (decision 0523): Go packages
+	// need the Go backend, as a native build of the program would say
+	if code := run(t, []string{"check", filepath.Join(dir, "app")}, &out, &errOut); code != 1 || !strings.Contains(out.String()+errOut.String(), "XO1201") {
+		t.Fatalf("check exit %d, want 1 with XO1201: %s%s", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"check", "--backend=go", filepath.Join(dir, "app")}, &out, &errOut); code != 0 {
+		t.Fatalf("check --backend=go exit %d: %s", code, errOut.String())
 	}
 }
 
