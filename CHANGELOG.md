@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- native, LLVM, wasm: the runtime intrinsic `rt.bytes_any_stop32(b, i, c1, c2, lo)`, nonzero when one of 32 bytes equals c1 or c2 or is below lo as a signed byte (lo 32 stops at control bytes and at 0x80 and above in one compare), for JSON's string scan; arm64 two cmeq and a cmgt per 16 byte lane, x86_64 SSE2 pcmpeqb and pcmpgtb, LLVM three <32 x i8> compares, wasm a byte loop; the vector `cmgt` in the arm64 encoder; std uses it only once a seed knows it (bench/results/simd-survey-2026-11-06.md step 3b).
 - xo debug: `task N` on a task whose every frame is std's (one a std library spawned) selects the first frame outside the runtime, so `locals` shows that code's variables, not the scheduler's `fiber_park`; `tasks` names that place too.
 - std/amqp (fix): an unsettled `Sender.send` with the reader task running (`keepalive`) no longer waits forever when the peer's disposition is applied before send's turn ends; the delivery now counts as sent in the same lock section as its last frame (the amqptest_broker golden hung under load, gotchas/reader-task-applies-reply-between-locks.md).
 - checker: XO0401 names `Option.or_err`: an optional value where a Result is expected gets the note `.or_err(e)`, and `x ?? Err(e)` (which gives a value, never returns) gets the note and fix `x.or_err(e)?` (aws-19's feedback, 2026-11-06). compiler/check test.

@@ -246,6 +246,26 @@ test "bytes_any_eq32 and bytes_any_high32 see each of the 32 bytes" {
   }
 }
 
+test "bytes_any_stop32 sees c1, c2 and the bytes below lo at each of the 32 bytes" {
+  // each kind of stop at each place: a quote, a backslash, a control
+  // byte, 0x80 and above; 0x20 and 0x7F are plain
+  for stop in [34, 92, 0, 31, 0x80, 0xFF] {
+    for p in 0..40 {
+      var xs: List[Int] = []
+      for i in 0..72 {
+        xs.push(if i == p { stop } else { 32 + i % 2 * 95 })
+      }
+      let b = bytes_of(xs)
+      for i in [0, 1, 7, 8, 31, 40] {
+        let hit = p >= i && p < i + 32
+        expect(rt.bytes_any_stop32(b, i, 34, 92, 32) != 0) == hit
+        // lo 0 stops only at 0x80 and above
+        expect(rt.bytes_any_stop32(b, i, 1, 2, 0) != 0) == (hit && stop >= 0x80)
+      }
+    }
+  }
+}
+
 /// The ASCII byte c with a capital lowered.
 fn low1(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
 

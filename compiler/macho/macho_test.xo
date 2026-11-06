@@ -374,6 +374,7 @@ const ENCODINGS: List[(Str, Int)] = [
   ("and x9, x9, #16777215", 0x92405d29),
   ("cmeq v30.16b, v30.16b, v31.16b", 0x6e3f8fde),
   ("cmlt v30.16b, v30.16b, #0", 0x4e20abde),
+  ("cmgt v30.16b, v28.16b, v30.16b", 0x4e3e379e),
   // the 32 byte scans (rt.bytes_any_eq32, rt.mem_ne32), as clang 21
   // assembles them (2026-11-06)
   ("orr v30.16b, v30.16b, v31.16b", 0x4ebf1fde),

@@ -1678,6 +1678,35 @@ fn (var g: G) x86_any_eq32(us: List[Int], c: Int, kc: Bool) -> Int {
   g.x86_def1(t.join("\n"), us)
 }
 
+/// rt.bytes_any_stop32 on x86_64 (SSE2): each lane of the 32 bytes at
+/// $u0 + $u1 compared with c1 and c2 (pcmpeqb) and with lo (pcmpgtb, a
+/// signed compare), each mask moved and or'ed into the result; the
+/// address goes to a second def first, so neither def overwrites a use
+/// still to be read, and r11 builds each constant.
+fn (var g: G) x86_any_stop32(us: List[Int], c1: Int, c2: Int, lo: Int) -> Int {
+  var t = ["leaq ($u0,$u1), $d1"]
+  for k in 0..2 {
+    t.push(if k == 0 { "movdqu ($d1), %xmm15" } else { "movdqu 16($d1), %xmm15" })
+    for (j, c) in [c1, c2, lo].indexed() {
+      t = t + ["movl $${(c & 255) * 16843009}, %r11d", "movd %r11d, %xmm14", "pshufd $0, %xmm14, %xmm14"]
+      t.push(if j == 2 { "pcmpgtb %xmm15, %xmm14" } else { "pcmpeqb %xmm15, %xmm14" })
+      if k == 0 && j == 0 {
+        t.push("pmovmskb %xmm14, $wd0")
+      } else {
+        t = t + ["pmovmskb %xmm14, %r11d", "orl %r11d, $wd0"]
+      }
+    }
+  }
+  let d = g.new_vreg(false)
+  let p = g.new_vreg(false)
+  var rs: List[Int] = []
+  for u in us {
+    rs.push(g.real(u))
+  }
+  let _i = g.add(Inst{kind: K_PLAIN, text: t.join("\n"), defs: [d, p], us: rs, fl: IF_X86})
+  d
+}
+
 /// rt.bytes_eq16 and rt.bytes_high16 on x86_64 (SSE2): the 16 bytes at
 /// $u0 + $u1 compared, narrowed to 4 bits a byte as arm64's shrn does (the
 /// contract std/native/llrt/scan.xo reads).

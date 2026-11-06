@@ -177,7 +177,7 @@ fn mem_text(m: Mem) -> Str {
 /// stay on the text path).
 pub fn encode_op(o: Op) -> Int {
   let n = o.ops.len()
-  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" | "sha1c" | "sha1p" | "sha1m" | "sha1h" | "sha1su0" | "sha1su1" | "sha512h" | "sha512h2" | "sha512su0" | "sha512su1" | "eor3" | "bcax" | "rax1" | "xar" {
+  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmgt" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" | "sha1c" | "sha1p" | "sha1m" | "sha1h" | "sha1su0" | "sha1su1" | "sha512h" | "sha512h2" | "sha512su0" | "sha512su1" | "eor3" | "bcax" | "rax1" | "xar" {
     return simd_word(o.m, o.ops)
   }
   // decision 0373's case fold adds cmhs and bic on whole bytes, the 32
@@ -1647,6 +1647,7 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     }
     "cnt" => if n != 2 || d < 0 || ad != "8b" || ax != "8b" || x < 0 { -1 } else { 0x0e205800 | (x * 32) | d }
     "cmeq" => if d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" { -1 } else { 0x6e208c00 | (y * 0x10000) | (x * 32) | d }
+    "cmgt" => if d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" { -1 } else { 0x4e203400 | (y * 0x10000) | (x * 32) | d }
     "cmlt" => if n != 3 || d < 0 || x < 0 || ad != "16b" || ax != "16b" || i2 != 0 { -1 } else { 0x4e20a800 | (x * 32) | d }
     "shrn" => {
       // shrn vD.8b, vN.8h, #s (1 to 8)

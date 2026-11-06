@@ -2550,6 +2550,36 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       g.set(v, [g.def1(false, "add $d0, $u0, $u1\nldp q30, q31, [$d0]\norr v30.16b, v30.16b, v31.16b\ncmlt v30.16b, v30.16b, #0\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
     }
+    "rt.bytes_any_stop32" => {
+      // each lane: the bytes equal to c1 or c2, or below lo as signed
+      // bytes (cmgt), or'ed into v31; v29 to v31 are the emitter's only
+      // scratch, so each constant is rebuilt per lane (movi is free of
+      // dependencies). rt.xo: the three are constants.
+      let (c1, ok1) = g.const_int(x.args[2])
+      let (c2, ok2) = g.const_int(x.args[3])
+      let (lo, ok3) = g.const_int(x.args[4])
+      if !ok1 || !ok2 || !ok3 {
+        return false
+      }
+      let ws = g.words(x.args[0])
+      let us = [g.str_base_heap(ws), g.word(x.args[1])]
+      if g.x86 {
+        g.set(v, [g.x86_any_stop32(us, c1, c2, lo)])
+        return true
+      }
+      var t = ["add $d0, $u0, $u1"]
+      for k in 0..2 {
+        t.push(if k == 0 { "ldr q30, [$d0]" } else { "ldr q30, [$d0, #16]" })
+        let acc = if k == 0 { "v31" } else { "v29" }
+        t = t + ["movi v29.16b, #${c1 & 255}", "cmeq ${acc}.16b, v30.16b, v29.16b"]
+        if k == 1 {
+          t.push("orr v31.16b, v31.16b, v29.16b")
+        }
+        t = t + ["movi v29.16b, #${c2 & 255}", "cmeq v29.16b, v30.16b, v29.16b", "orr v31.16b, v31.16b, v29.16b", "movi v29.16b, #${lo & 255}", "cmgt v29.16b, v29.16b, v30.16b", "orr v31.16b, v31.16b, v29.16b"]
+      }
+      t = t + ["shrn v31.8b, v31.8h, #4", "fmov $d0, d31"]
+      g.set(v, [g.def1(false, t.join("\n"), us)])
+    }
     "rt.mem_ne32" => {
       let us = [g.word(x.args[0]), g.word(x.args[1])]
       if g.x86 {

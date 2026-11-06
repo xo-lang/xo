@@ -179,6 +179,14 @@ fn bytes_any_eq32(b: Bytes, i: Int, c: Int) -> Int
 /// Nonzero when one of the 32 bytes of b from i is 0x80 or above, else
 /// 0 (as bytes_any_eq32).
 fn bytes_any_high32(b: Bytes, i: Int) -> Int
+/// Nonzero when one of the 32 bytes of b from i is the byte c1 or c2, or
+/// is below lo read as a signed byte, else 0: lo 32 stops at the bytes
+/// below 0x20 and at 0x80 and above in one compare (a JSON string's
+/// plain run, std/native/llrt/jsontext.xo). c1, c2 and lo are constants
+/// (lowered inline: arm64 two cmeq and a cmgt a lane, x86_64 SSE2
+/// pcmpeqb and pcmpgtb, LLVM <32 x i8> compares, wasm a byte loop).
+/// Unchecked: 0 <= i and i + 32 <= b.len().
+fn bytes_any_stop32(b: Bytes, i: Int, c1: Int, c2: Int, lo: Int) -> Int
 /// Nonzero when the 32 bytes at address a differ from the 32 at address
 /// b, else 0 (lowered inline: arm64 two cmeq and an and, x86_64 SSE2
 /// pcmpeqb, LLVM a <32 x i8> compare, wasm four words). Unchecked: both

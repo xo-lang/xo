@@ -140,3 +140,17 @@ simdscan with step 1's std (B) and 2b's (C), `--rounds 5`, host 1:
 utf8_mixed has a multibyte sequence about every 7 bytes, so the 32
 byte test rarely passes and adds a step before the 16 byte loop. Raw
 output: ~/xo-lead/notes/lang1/simd2a-host.txt.
+
+## Step 3b: the JSON string scan (stage 1, code generation only)
+
+rt.bytes_any_stop32(b, i, c1, c2, lo) is nonzero when one of the 32
+bytes from i equals c1 or c2 or is below lo as a signed byte. JSON's
+string scan stops at `"`, `\`, control bytes and every byte of 0x80
+and above (it validates UTF-8 there), so (34, 92, 32) covers all four
+with one signed compare. arm64: per 16 byte lane two cmeq and a cmgt
+or'ed, shrn, fmov; x86_64 SSE2 pcmpeqb, pcmpgtb and pmovmskb; LLVM three
+<32 x i8> compares; wasm a byte loop. Stage 2 (jsontext.xo str_end and
+append_body skip 32 clean bytes a step, bench/perf/json long_strings and
+enc_long) waits for a seed that knows the intrinsic and is measured
+then. Checked on linux/amd64: scan 17/17, libcstr 4/4, the 51 sample
+goldens.
