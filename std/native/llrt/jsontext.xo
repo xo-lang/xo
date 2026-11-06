@@ -304,7 +304,13 @@ fn lit_end(b: Bytes, i: Int, n: Int, c: Int) -> Int {
 /// The tape of the JSON text b, and 0, or the error.
 fn scan(b: Bytes) -> (List[Int], Int) {
   let n = b.len()
-  var tape = List[Int].with_capacity(48)
+  // a node (3 words) for every 4 bytes of text, once: a typical document
+  // has one per 4 to 8 bytes (json10kx20's records one per 5.8), so the
+  // tape is one allocation instead of a growth chain from 48 that copied
+  // it each step (json10kx20: wall 0.827 and max RSS 0.785 on linux/arm64,
+  // wall 0.909 on linux/amd64); a denser text still grows, and a large
+  // block's unused tail is never touched, so costs no RSS
+  var tape = List[Int].with_capacity(if n < 64 { 48 } else { 3 * (n >> 2) + 3 })
   // the open containers around the innermost: its tape index and its
   // values so far, from stack[0] to stack[sp - 1]
   var stack: List[Int] = []

@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-06: perf: decode reserves its tape once
+
+- Kind: perf
+- Commit: this push
+- Found by: the json10kx20 RSS item (bench/results/release-vs-go-v0.40.0.md:612)
+- Go reference: encoding/json decodes without a tape and reuses its scanner and encodeState through sync.Pool, a package level cache std does not keep (gotchas/std-port-costly-go-idioms.md); the transferable part is not to grow a large buffer step by step per call
+- Test: the json goldens and corpus (unchanged output)
+- Timing: ab-host micro13 json10kx20, 3 rounds: linux/arm64 wall 0.827, max RSS 0.785 (15,820 to 12,424 KB); linux/amd64 wall 0.909
+- Shipped in: not yet released
+
+`json.decode` and `parse_value` reserve the parser's tape at one node (3 words) per 4 bytes of text instead of growing it from 48 words: a 700 KB document's tape is one allocation, not a chain of copies. A text denser than that still grows the tape as before.
+
 ## 2026-11-04: feature: TokenReader and JsonWriter (decision 0495)
 
 - Kind: feature
