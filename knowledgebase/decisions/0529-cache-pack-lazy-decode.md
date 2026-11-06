@@ -1,6 +1,6 @@
 # 0529: Std's parse, decoded state and keys from the cache pack for warm builds
 
-Status: Proposed (xo-lang-4, 2026-11-06; owner-approved work item, item C option b: "making std's cache reads cheap"; the target set by the step 1 breakdown below)
+Status: Proposed (xo-lang-4, 2026-11-06; owner-approved work item, item C option b: "making std's cache reads cheap"; the target set by the step 1 breakdown below; continues decision 0380's open stages)
 
 ## Context
 
@@ -30,27 +30,43 @@ build over 20 profiled builds:
 The bytes read (about 24 MB) are not the cost; parsing std again,
 decoding and replaying std's records and computing their keys are.
 
+## Relation to decision 0380
+
+Decision 0380 (accepted 2026-10-26) already covers the parse part: its
+stage 1 (7b32ec87e) is the lossless parse codec (compiler/parser
+astcodec.xo), its stage 2 (std's parses from the back-end cache,
+XO_IFC_CACHE=1, refs/recover/lang1-0380-stage2) measured about 10 ms of
+one edit's wall and was not landed, because the parse runs on prefetch
+tasks off the critical path and a decoded tree allocates as much as a
+parsed one; its stage 3 (declaring std from entries) is open. The 58 ms
+above is that same parse: CPU, mostly not one build's wall.
+
+What 0380 did not measure is CPU under parallel load. The suites build
+their goldens concurrently and are CPU bound (arm64 goldens: 2.07 s a
+build in the suite against 0.22 to 0.36 s alone), so CPU per build is
+what sets their wall, and the parse's 58 ms of CPU counts there in full.
+
 ## Decision
 
-Std, which does not change between a developer's builds or between a
-suite's goldens, is kept in the cache pack in the form the build uses,
-per (xo identity, std content hash, build flags), in three steps, each
-measured with `xo bench --ab` on the linux/arm64 host (a warm hello and a
-golden build, and one arm64 goldens suite wall) before the next:
+Build on 0380 rather than beside it; each step measured on the
+linux/arm64 host by both a single warm golden build (`xo bench --ab`,
+wall and CPU) and one arm64 goldens suite wall (parallel, CPU bound),
+before the next:
 
-1. Std's parse: each std file's lazy parse (its top-level declarations
-   and body spans, parse_file_lazy's result) stored under the file's
-   content hash and the parser's identity, read instead of lexing.
-2. Std's decoded state: the front end's replayed std bodies and the
-   reference counting records, kept decoded per std variant and
-   referenced by the program's build, decoded only when a pass reads
-   one (the rc cache's "undecoded" path extended to fe).
-3. Std's keys: the cleanup, inline and function keys of std's functions
-   precomputed in the pack, so a warm build hashes only the program's.
+1. 0380 stage 2 rebased onto main (std's lazy parses from the cache),
+   judged by the suite wall and CPU, not a single build's wall.
+2. 0380 stage 3: std modules declared from entries (the checker's
+   declarations serialized, types by stable names), the check's std
+   share (about 30 of 42 ms).
+3. New here: std's front end replay and reference counting records kept
+   decoded per std variant and decoded only when read (the rc cache's
+   "undecoded" path extended to the front end), and std's cleanup,
+   inline and function keys precomputed in the pack.
 
-Ceiling: about 180 ms of the 357 ms of CPU per warm golden build (about
-0.12 to 0.15 s of wall); the arm64 goldens about 12 s of 146 s wall; a
-small program's warm build or run from about 0.3 s to about 0.15 s.
+Ceiling: about 180 ms of the 357 ms of CPU per warm golden build; for a
+single build's wall less (the parse is off the critical path: 0380
+stage 2's 10 ms), for the suites about 9% of the arm64 goldens' build
+CPU (about 12 s of 146 s wall).
 
 ## Consequences
 
