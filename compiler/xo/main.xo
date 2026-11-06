@@ -2090,55 +2090,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     var progs = [s]
     // each object's cache key, for the link's (macho_bin_key)
     var obj_keys: Map[Str, Str] = {}
-    // cc's parts: their texts and object keys (cached_cc_assemble); a
-    // part whose object the cache holds is written as a line naming its
-    // key, which the link's key reads (native_bin_key) in place of the
-    // text, and cached_cc_assemble writes the text of each part it
-    // assembles (1.1 s of a warm compiler edit wrote 125 parts for 3)
-    // a part's object is keyed by its part cache key (fcache.xo
-    // part_keys: its text up to the debug path slots), this xo's
-    // identity and the slots' values when every part has one, else by
-    // its text (hashing every part's text was 1.1 s of the same edit)
-    var cc_keys: List[Str] = []
     if p.parts.len() > 1 {
       progs = []
-      let lean = !macho_as && !keep_asm
-      if lean {
-        var names: List[Str] = []
-        for i in 0..p.parts.len() {
-          names.push("prog-${tgoos}.${i}.s")
-        }
-        // what changed a part's text after its part key: the std store's
-        // subsections line, and hollowing, which reads the whole program
-        // (incr_texts by each part's live functions, keyed below;
-        // hollow_parts without the back-end cache: texts keyed)
-        let pk = fc.part_keys
-        var live: List[Str] = []
-        if hollow_late {
-          if let Some(r) = inc {
-            for l in r.live {
-              live.push(l.map(fn(x) { if x { "1" } else { "0" } }).join(""))
-            }
-          }
-        }
-        let by_part = pk.len() == p.parts.len() && !pk.any(fn(k) { k.is_empty() }) && (if hollow_late { live.len() == p.parts.len() } else { !hollow_now })
-        var ids: List[Str] = []
-        if by_part {
-          let cid = cache_id(os)
-          for (i, k) in pk.indexed() {
-            let subs = p.parts[i].starts_with("\t.subsections_via_symbols\n")
-            ids.push("part ${k}\nxo ${cid}\ndw ${gdw.0} ${gdw.1} ${gdw.2}\nsubs ${subs}\nlive ${if hollow_late { live[i] } else { "-" }}\n")
-          }
-        } else {
-          ids = p.parts.map(fn(x) { dw_real(gdw, x) })
-        }
-        cc_keys = cc_obj_keys(os, ctx, cc, flags + memo_sysroot(os, ctx), names, ids, jobs)
-      }
       for (i, part) in p.parts.indexed() {
         let ps = "${dir}/prog-${tgoos}.${i}.s"
-        if lean && i < cc_keys.len() && cc_obj_held(os, ctx, cc_keys[i]) {
-          write_or_fail(os, dir, ps, "# xo: the object of back-end cache key ${cc_keys[i]}\n".bytes())
-        } else if keep_asm || !macho_as {
+        if keep_asm || !macho_as {
           write_or_fail(os, dir, ps, dw_real(gdw, part).bytes())
         }
         progs.push(ps)
@@ -2284,8 +2240,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       var lsrcs = srcs
       if progs.len() > 1 && !macho_as {
         // the parts assembled by parallel cc processes, then linked
-        let parts = p.parts
-        let (objs, why, nasm) = cached_cc_assemble(os, ctx, cc, flags + memo_sysroot(os, ctx), progs, fn(i: Int) -> Str { dw_real(gdw, parts[i]) }, cc_keys, jobs)
+        let (objs, why, nasm) = cached_cc_assemble(os, ctx, cc, flags + memo_sysroot(os, ctx), progs, p.parts.map(fn(x) { dw_real(gdw, x) }), jobs)
         if !why.is_empty() {
           os.stdio.eprint(why)
           fail_stage(os, cst, "${cc} failed")

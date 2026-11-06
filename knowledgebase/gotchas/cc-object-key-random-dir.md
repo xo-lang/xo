@@ -40,3 +40,16 @@ the back-end cache hashes the texts as before. Warm edit build 9.4 to
 A cache key must never take a path under a per-build random directory.
 Key on what the tool records (a base name), and run the tool where that
 name resolves. See also output-from-cache-keys-differs-cache-off.md.
+
+## Reverted (2026-11-05, 5cf111991's revert of bccbae048)
+
+The fix above broke warm cc links on darwin: the second build of a `use c`
+program (cmd/xo TestBuildCCLinkOSOPaths "build 1", TestVouchBuildCache)
+failed with undefined `_AnnotateIgnoreReadsBegin`, `___tsan_acquire` and
+other sanitizer hooks the runtime references weakly, referenced from
+`_xo_utext_*` in reused prog-darwin.N.o objects, with a fresh cache too
+and also with objects keyed by their text. So it is not the object key:
+a warm build's part text or link input differs from the cold one's in
+its weak references (to find: diff the cold and warm .s of one part with
+XO_KEEP_ASM=1, and the link line). Reland only with
+TestBuildCCLinkOSOPaths and TestVouchBuildCache passing twice in a row.
