@@ -25,3 +25,15 @@ for ELF links and compiler/macho's link (the default on macOS when no C
 source is linked); dwvars.xo describes a string literal's word only when
 it is set, and an Int constant's (DW_OP_constu, no address) always.
 TestDebugTypes checks the string on the macho link and skips it on cc.
+
+Observed again 2026-11-06 (xo-lang-4): a separately compiled darwin
+build (decision 0388, the default once std's variants are cached)
+links through a debug map (decision 0401), which lldb and dsymutil read
+as they read a cc link's objects: lldb showed another address's bytes
+for a Str literal local (TestDebugTypes `bytes = "box"`), and
+dsymutil's dSYM failed `dwarfdump --verify` with 54 .debug_names
+errors, in std's units. The driver now sets dw_data_addrs off on darwin
+for the program's side of a separately compiled build and for std's
+object (gm.sepcomp_program, gm.std_obj), and STD_CACHE_VERSION went to
+2 so cached variants rebuild; TestDebugTypes and TestDebugVars check
+the separately compiled build (macho-sep) through dsymutil and lldb.

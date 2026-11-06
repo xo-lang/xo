@@ -56,13 +56,20 @@ func TestDebugVars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// macho is the whole program's link, its DWARF in the executable;
+	// macho-sep the separately compiled one (decision 0388), whose
+	// executable has no __DWARF but a debug map (decision 0401) that
+	// dsymutil turns into a dSYM: it runs when std's variants are in the
+	// cache (xotool's prebuild, or any earlier build's background one)
 	for _, c := range []struct {
 		name string
 		args []string
+		env  string
 	}{
-		{"macho", []string{"--backend=arm64", "--ld=macho"}},
-		{"cc", []string{"--backend=arm64", "--ld=cc"}},
-		{"llvm", []string{"--backend=llvm"}},
+		{"macho", []string{"--backend=arm64", "--ld=macho"}, "XO_SEPCOMP=0"},
+		{"macho-sep", []string{"--backend=arm64", "--ld=macho", "--phase-times"}, ""},
+		{"cc", []string{"--backend=arm64", "--ld=cc"}, ""},
+		{"llvm", []string{"--backend=llvm"}, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			bin := filepath.Join(out, c.name)
@@ -70,8 +77,20 @@ func TestDebugVars(t *testing.T) {
 			cmd := testtmp.Guard(exec.Command(xo, args...))
 			cmd.Dir = src
 			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
-			if b, err := cmd.CombinedOutput(); err != nil {
+			if c.env != "" {
+				cmd.Env = append(cmd.Env, c.env)
+			}
+			b, err := cmd.CombinedOutput()
+			if err != nil {
 				t.Fatalf("xo %v: %v\n%s", args, err, b)
+			}
+			if c.name == "macho-sep" {
+				if !bytes.Contains(b, []byte("cache std ")) {
+					t.Skip("std's variants are not in the cache: the build was whole program")
+				}
+				if d, err := exec.Command("dsymutil", bin).CombinedOutput(); err != nil {
+					t.Fatalf("dsymutil: %v\n%s", err, d)
+				}
 			}
 			dsym := dwarfFile(bin)
 			if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
@@ -97,7 +116,7 @@ func TestDebugVars(t *testing.T) {
 					t.Errorf("%s's .debug_info lacks %s", dsym, want)
 				}
 			}
-			b, err := lldb(t, true, "-b", "-o", "breakpoint set -f main.xo -l 12", "-o", "run", "-o", "frame variable", bin)
+			b, err = lldb(t, true, "-b", "-o", "breakpoint set -f main.xo -l 12", "-o", "run", "-o", "frame variable", bin)
 			if err != nil {
 				t.Fatalf("lldb: %v\n%s", err, b)
 			}
@@ -395,7 +414,10 @@ func TestDwarfReader(t *testing.T) {
 			args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
 			cmd := testtmp.Guard(exec.Command(xo, args...))
 			cmd.Dir = src
-			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+			// the whole program's link, its DWARF in the executable (a separately
+			// compiled one has a debug map instead, decision 0401: TestDebugVars
+			// macho-sep, TestStdDebugMap)
+			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off", "XO_SEPCOMP=0")
 			if b, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("xo %v: %v\n%s", args, err, b)
 			}
@@ -582,6 +604,12 @@ func TestUnwind(t *testing.T) {
 				cmd := testtmp.Guard(exec.Command(xo, args...))
 				cmd.Dir = src
 				cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+				if c.name == "macho" {
+					// the whole program's link: std's variables read from the
+					// executable (a separately compiled one leaves std's
+					// location lists to the debug map, decision 0401: sephalf)
+					cmd.Env = append(cmd.Env, "XO_SEPCOMP=0")
+				}
 				if c.half {
 					cmd.Env = append(cmd.Env, sepHalfEnv(t, xo, root, out)...)
 				}
@@ -769,6 +797,11 @@ func TestDebugTypes(t *testing.T) {
 		nots []string
 	}{
 		{"macho", []string{"--backend=arm64", "--ld=macho"}, arm64Cmds, arm64Wants, nil},
+		// separately compiled (decision 0388): lldb reads the program's
+		// DWARF through the debug map (decision 0401), as dsymutil does,
+		// so not the string's bytes either; it runs when std's variants
+		// are cached
+		{"macho-sep", []string{"--backend=arm64", "--ld=macho", "--phase-times"}, arm64Cmds, append(append([]string{}, arm64Wants[:3]...), arm64Wants[4:]...), nil},
 		// not the string's bytes: dsymutil relocates an address in a
 		// location list as the function's
 		// (gotchas/dsymutil-loclist-address-function-offset.md)
@@ -791,8 +824,21 @@ func TestDebugTypes(t *testing.T) {
 			cmd := testtmp.Guard(exec.Command(xo, args...))
 			cmd.Dir = src
 			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
-			if b, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("xo %v: %v\n%s", args, err, b)
+			if c.name == "macho" {
+				// the whole program's link (its DWARF in the executable)
+				cmd.Env = append(cmd.Env, "XO_SEPCOMP=0")
+			}
+			bo, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("xo %v: %v\n%s", args, err, bo)
+			}
+			if c.name == "macho-sep" {
+				if !bytes.Contains(bo, []byte("cache std ")) {
+					t.Skip("std's variants are not in the cache: the build was whole program")
+				}
+				if d, err := exec.Command("dsymutil", bin).CombinedOutput(); err != nil {
+					t.Fatalf("dsymutil: %v\n%s", err, d)
+				}
 			}
 			if v, err := exec.Command("dwarfdump", "--verify", dwarfFile(bin)).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 				t.Errorf("dwarfdump --verify: %v\n%s", err, v)
@@ -850,7 +896,10 @@ func TestDebugLoclistsBudget(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "hs")
 	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", bin, "."))
 	cmd.Dir = src
-	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+	// the whole program's link, its DWARF in the executable (a separately
+	// compiled one has a debug map instead, decision 0401: TestDebugVars
+	// macho-sep, TestStdDebugMap)
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off", "XO_SEPCOMP=0")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("xo build: %v\n%s", err, b)
 	}

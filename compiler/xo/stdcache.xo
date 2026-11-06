@@ -14,8 +14,12 @@ use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 
 /// The version of std's entries: a new one when the store's layout or
-/// the facts' codec changes (with STORE_MAGIC, gotchas/store-format-magic.md).
-const STD_CACHE_VERSION = 1
+/// the facts' codec changes (with STORE_MAGIC, gotchas/store-format-magic.md),
+/// or when the driver changes what it hands std's build (the key holds the
+/// backends' identity, not the driver's, decision 0275). 2: a darwin std
+/// object's DWARF has no string literal addresses (2026-11-06,
+/// gotchas/dsymutil-loclist-address-function-offset.md).
+const STD_CACHE_VERSION = 2
 
 /// The key of std's entries for target, conc and test (decision 0436:
 /// std built in test mode for `xo test`): the code generation

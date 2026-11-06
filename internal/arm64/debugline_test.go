@@ -58,7 +58,10 @@ func TestDebugLineDarwin(t *testing.T) {
 		args = append(args, "-o", bin, src)
 		cmd := testtmp.Guard(exec.Command(xo, args...))
 		cmd.Dir = wd
-		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+wd, "XO_BIN_CACHE=off")
+		// the whole program's link, its DWARF in the executable (a separately
+		// compiled one has a debug map instead, decision 0401: TestDebugVars
+		// macho-sep, TestStdDebugMap)
+		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+wd, "XO_BIN_CACHE=off", "XO_SEPCOMP=0")
 		if b, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("xo %v: %v\n%s", args, err, b)
 		}
@@ -226,7 +229,10 @@ func TestDebugLineDarwinCC(t *testing.T) {
 		args = append(args, "-o", bin, ".")
 		cmd := testtmp.Guard(exec.Command(xo, args...))
 		cmd.Dir = src
-		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE="+cache)
+		// the whole program's link, its DWARF in the executable (a separately
+		// compiled one has a debug map instead, decision 0401: TestDebugVars
+		// macho-sep, TestStdDebugMap)
+		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE="+cache, "XO_SEPCOMP=0")
 		if b, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("xo %v: %v\n%s", args, err, b)
 		}
@@ -332,7 +338,10 @@ func TestDebugLineInlined(t *testing.T) {
 	bin := filepath.Join(out, "p")
 	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--ld=macho", "-o", bin, "."))
 	cmd.Dir = src
-	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+	// the whole program's link, its DWARF in the executable (a separately
+	// compiled one has a debug map instead, decision 0401: TestDebugVars
+	// macho-sep, TestStdDebugMap)
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off", "XO_SEPCOMP=0")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("xo build: %v\n%s", err, b)
 	}

@@ -3035,9 +3035,13 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   // a release build without --debug-info
   gm.debug_info = o.cmd != "asm" && !o.strip && debug_info_eff(o, release) != "off"
   // a string literal's address in a variable's location: not through
-  // dsymutil (a cc link on macOS), which relocates it as the function's
+  // dsymutil (a cc link on macOS), which relocates it as the function's,
+  // nor through a separately compiled link's debug map (decision 0401),
+  // which lldb and dsymutil read the same way, for the program's objects
+  // and std's (lldb showed another address's bytes, 2026-11-06;
+  // gotchas/dsymutil-loclist-address-function-offset.md)
   let own_ld = o.linker == "macho" || (o.linker.is_empty() && default_ld(os, ctx, o, c, tgoos, "", false))
-  gm.dw_data_addrs = gm.debug_info && (tgoos != "darwin" || own_ld)
+  gm.dw_data_addrs = gm.debug_info && (tgoos != "darwin" || (own_ld && !gm.sepcomp_program && !gm.std_obj))
   // the line root (the sources' names are relative to it: ssa file_name)
   // is the compilation directory, not the working directory, which
   // differs for `xo build DIR` (lldb opened the working directory's
