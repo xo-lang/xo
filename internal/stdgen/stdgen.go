@@ -195,6 +195,39 @@ func Recorded(root string) (map[string]string, error) {
 	return out, nil
 }
 
+// skipDecl is the key of a declaration split leaves out.
+const skipDecl = "-"
+
+// handWritten is the names of the top level constants and variables the hand written files of
+// std/rt (not std_gen_*.go or std_sigs_*.go) declare.
+func handWritten(root string) (map[string]bool, error) {
+	fs, err := filepath.Glob(filepath.Join(root, Dir, "*.go"))
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	for _, f := range fs {
+		b := filepath.Base(f)
+		if strings.HasPrefix(b, "std_gen_") || strings.HasPrefix(b, "std_sigs_") || strings.HasSuffix(b, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), f, nil, 0)
+		if err != nil {
+			continue
+		}
+		for _, d := range file.Decls {
+			if gd, ok := d.(*ast.GenDecl); ok && (gd.Tok == token.CONST || gd.Tok == token.VAR) {
+				for _, s := range gd.Specs {
+					for _, n := range s.(*ast.ValueSpec).Names {
+						names[n.Name] = true
+					}
+				}
+			}
+		}
+	}
+	return names, nil
+}
+
 // Generate returns the generated files for the std at root by their
 // paths (Path, SigsPath), made with the xo command xo (its fields: the
 // binary and its flags).
@@ -265,12 +298,24 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("std types: %v", err)
 	}
+	hand, err := handWritten(root)
+	if err != nil {
+		return nil, err
+	}
 	chunks, err := split(whole, func(d ast.Decl) string {
 		switch d := d.(type) {
 		case *ast.GenDecl:
 			if len(d.Specs) > 0 {
 				if ts, ok := d.Specs[0].(*ast.TypeSpec); ok {
 					return group(ts.Name.Name)
+				}
+				// a module's constant (gen std_types): not when a hand written file of std/rt
+				// declares it already
+				if vs, ok := d.Specs[0].(*ast.ValueSpec); ok && len(vs.Names) > 0 {
+					if hand[vs.Names[0].Name] {
+						return skipDecl
+					}
+					return group(vs.Names[0].Name)
 				}
 			}
 		case *ast.FuncDecl:
@@ -372,6 +417,9 @@ func split(src []byte, key func(ast.Decl) string) (map[string]string, error) {
 		}
 		text := string(src[fset.Position(start).Offset:fset.Position(d.End()).Offset])
 		k := key(d)
+		if k == skipDecl {
+			continue
+		}
 		if out[k] != "" {
 			out[k] += "\n\n"
 		}

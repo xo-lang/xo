@@ -142,7 +142,7 @@ fn (var g: Gen) gen_std_const(co: Int) {
   if !body.is_empty() {
     return
   }
-  g.pl("var ${g.std_prefix(g.omod(co))}${g.oname(co)} ${g.go_type(o.ty)} = ${code}\n")
+  g.pl("var ${g.std_prefix(g.omod(co))}${g.oname(co)} = ${code}\n")
 }
 
 /// The Go function type of a std function as the generator calls it:
