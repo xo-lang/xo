@@ -98,7 +98,11 @@ pub const HC_QUICK = 176
 /// LINGER_NS of a park since; park_ready)
 pub const HC_PARKT = 184
 pub const HC_NOLINGER = 192
-pub const HC_SIZE = 200
+/// Whether the last plain read on Linux drained the socket (it returned
+/// fewer bytes than asked): the next read waits for readiness first when
+/// no edge came since, instead of a read that finds nothing (recv_raw)
+pub const HC_DRAINED = 200
+pub const HC_SIZE = 208
 
 /// The longest address text kept (INET6_ADDRSTRLEN less its zero byte).
 const IP_MAX = 45
@@ -388,6 +392,9 @@ pub fn park_ready(h: rthttp.HConn, h2: Bool = false) -> Bool {
   if !poll.pd_begin(pd) {
     return false
   }
+  // a parked connection resumes on an edge its resumer takes, so the read
+  // after it must not wait for another (recv_raw's skip)
+  st(hc, HC_DRAINED, 0)
   // the readiness the last read left (edge triggered: it stays set until
   // a wait takes it) would make pd_park refuse; an edge after this call
   // keeps the flag, and the peek sees what came before
@@ -492,8 +499,13 @@ fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
     let pd = conn_pd(hc)
     if poll.pd_begin(pd) {
       let fd = pd_fd(pd)
+      // a read after one that drained the socket finds nothing unless an
+      // edge came since (the poller is edge triggered and keeps an edge
+      // no one waited for in the descriptor): wait first, as after EAGAIN
+      var skip = target.os == TargetOs.Linux && ld(hc, HC_DRAINED) != 0 && !poll.pd_read_ready(pd)
       while true {
-        r = sock.read(fd, p, cap)
+        r = if skip { -sock.EAGAIN } else { sock.read(fd, p, cap) }
+        skip = false
         if r >= 0 {
           break
         }
@@ -512,6 +524,7 @@ fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
         break
       }
       poll.pd_end(pd)
+      st(hc, HC_DRAINED, if r > 0 && r < cap { 1 } else { 0 })
     }
   }
   set_idle(hc, false)
@@ -700,6 +713,8 @@ pub fn h2_read(h: rthttp.HConn, p: Int, cap: Int) -> Int {
   }
   let pd = conn_pd(hc)
   var r = -1
+  // a read here may leave bytes no new edge announces (recv_raw's skip)
+  st(hc, HC_DRAINED, 0)
   if poll.pd_begin(pd) {
     while true {
       r = sock.read(pd_fd(pd), p, cap)

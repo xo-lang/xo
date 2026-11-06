@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-06: perf: a native server on Linux skips the empty read after one that drained the socket
+
+- Kind: perf
+- Commit: this push
+- Found by: /proc/PID/io syscall counts of bench/perf/http's server under loadgen on linux/arm64 host 1 (2026-11-05): native 2.0 reads and 1 sendto per keep-alive request, one read of them empty (strace and perf tracepoints are not available on host 1). Go: 2.37 reads, 1.05 writes
+- Go reference: internal/poll fd_unix.go Read: Go also reads first and waits on EAGAIN; it does not skip (its netpoller is edge triggered the same way), so this goes past Go
+- Test: TestGoldenRun http_* (arm64), internal/llvm TestGolden http_*, internal/selfhost TestSelfhostWasm (http_*, conc_*)
+- Timing: xo bench --ab on linux/arm64 host 1, bench/perf/httpkeep (32 clients, 30,000 requests each): wall 0.993 (0.98 to 1.005), CPU 0.988 (0.985 to 1.004), within noise; max RSS 0.98, better. Not a speedup claim. read(2) calls per request (/proc/PID/io syscr, bench/perf/http's server under loadgen, 32 keep-alive workers, 3 alternating rounds of 5 s on host 1): 1.96 to 2.00 before, 1.001 to 1.003 after
+- Shipped in: not yet released
+
+A plain HTTP/1.1 read that returned fewer bytes than it asked for drained the socket, so the next read on the connection found nothing and returned EAGAIN before waiting for readiness. On Linux the read after a draining one now waits first when no readiness edge came since (the poller is edge triggered and keeps an untaken edge in the descriptor). A parked connection clears the mark, since it resumes on an edge its resumer took. A pipelined response is still sent at once (decision 0074's 2026-11-06 addendum).
+
 ## 2026-11-06: fix: a half-close, read or write no longer hits another connection that reused the fd's number
 
 - Kind: fix

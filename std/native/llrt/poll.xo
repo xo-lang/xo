@@ -600,6 +600,17 @@ pub fn pd_clear_read(pd: Int) {
   unlk(addw(pd, D_MU))
 }
 
+/// Whether an edge came for reading that no wait has taken yet, under the
+/// descriptor's lock as the poller sets it (an unlocked load was a data
+/// race under --race: TestGoldenTasks http_client_body_reader, 2026-11-06);
+/// a flag set just after this is still seen by the wait's own check.
+pub fn pd_read_ready(pd: Int) -> Bool {
+  lk(addw(pd, D_MU))
+  let r = rt.mem_load(pd, D_RREADY, 4) != 0
+  unlk(addw(pd, D_MU))
+  r
+}
+
 /// The descriptor's fd now, unless taken to close it (-1).
 fn take_fd(pd: Int) -> Int {
   let fd = rt.mem_load(pd, D_FD, 4)
