@@ -1512,6 +1512,29 @@ const RFC_CASES: List[(Str, Bool, Str, Int, Int)] = [
   ("1751-10-23T07:10:02.740306957Z", true, "1751-10-23T07:10:02.740306957Z", -6885449398, -6885449397260),
 ]
 
+/// (text, whether it is a Time, the offset Go's time.Parse reads from it, in seconds)
+const OFFSET_CASES: List[(Str, Bool, Int)] = [
+  ("2026-10-24T12:34:56Z", true, 0),
+  ("2026-10-24T12:34:56+00:00", true, 0),
+  ("2026-10-24T12:34:56-00:00", true, 0),
+  ("2026-10-24T12:34:56+01:00", true, 3600),
+  ("2026-10-24T12:34:56-07:00", true, -25200),
+  ("2026-10-24T12:34:56.123456789+05:30", true, 19800),
+  ("2026-10-24T12:34:56.5-03:30", true, -12600),
+  ("2026-10-24T12:34:56+14:00", true, 50400),
+  ("2026-10-24T12:34:56-12:00", true, -43200),
+  ("2026-10-24T12:34:56+23:59", true, 86340),
+  ("1970-01-01T00:00:00+01:00", true, 3600),
+  ("2262-04-11T23:47:16+00:00", true, 0),
+  ("2026-10-24T12:34:56", false, 0),
+  ("2026-10-24T12:34:56+0100", false, 0),
+  ("2026-10-24T12:34:56+1:00", false, 0),
+  ("2026-10-24 12:34:56Z", false, 0),
+  ("x", false, 0),
+  ("", false, 0),
+  ("2026-13-24T12:34:56Z", false, 0),
+]
+
 /// (Unix second, its Unix millisecond, Go's text in UTC)
 const UNIX_CASES: List[(Int, Int, Str)] = [
   (0, 0, "1970-01-01T00:00:00Z"),
@@ -4700,6 +4723,21 @@ test "Time.parse_rfc3339 and format_rfc3339 are Go's RFC 3339 in UTC" {
     } else {
       "!none"
     }
+    if got != want {
+      bad.push((text, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "Time.rfc3339_offset is the offset Go's time.Parse reads from an RFC 3339 text" {
+  var bad: List[(Str, Str, Str)] = []
+  for (text, ok, secs) in OFFSET_CASES {
+    let got = match Time.rfc3339_offset(text) {
+      Some(d) => "${d.nanos() / 1000000000}"
+      None => "!none"
+    }
+    let want = if ok { "${secs}" } else { "!none" }
     if got != want {
       bad.push((text, got, want))
     }

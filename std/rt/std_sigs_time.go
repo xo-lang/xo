@@ -10,6 +10,7 @@ var (
 	_ func(*Task, int64) Time                                                                       = Time_from_unix
 	_ func(*Task, int64) Time                                                                       = Time_from_unix_millis
 	_ func(*Task, string) Option[Time]                                                              = Time_parse_rfc3339
+	_ func(*Task, string) Option[Duration]                                                          = Time_rfc3339_offset
 	_ func(*Task, Time) int64                                                                       = Time_unix
 	_ func(*Task, Time) int64                                                                       = Time_unix_millis
 	_ func(*Task, Time) string                                                                      = Time_format_rfc3339
