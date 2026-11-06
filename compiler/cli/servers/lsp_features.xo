@@ -70,10 +70,9 @@ fn (var s: Session) sites_of(f: Int) -> List[Site] {
 
 /// resolve with the resolution tables of the last check.
 fn (var s: Session) resolve(f: Int, site: Site) -> LspTarget {
-  var r = s.res[0]
-  let t = r.resolve(f, site)
-  s.res[0] = r
-  t
+  // in place: a copy of the tables (the whole checker) per identifier
+  // was most of a references request (2026-11-05)
+  s.res[0].resolve(f, site)
 }
 
 /// at: the identifier at the request's position.

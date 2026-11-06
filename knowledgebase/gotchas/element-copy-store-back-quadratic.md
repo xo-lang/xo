@@ -18,3 +18,12 @@ changes the list's own value in place (f104cabd). Where a copy-out is
 needed, take the element (`xs[i] = []` right after the read) so the
 local is the only holder. `xo vet` notes the pattern as `XO0536`
 (decision 0294 addendum).
+
+Observed again (2026-11-05, compiler/cli/servers): `Session.resolve` did
+`var r = s.res[0]`, called the `var` method `r.resolve(f, site)` and
+stored `s.res[0] = r`, once per identifier. Res
+holds the whole checker, so each call copied its fields and dropped the
+old value: inc and drop were 41% of an LSP references request's CPU
+(622 to 733 ms on compiler/ssa/build.xo, 142 to 148 ms with
+`s.res[0].resolve(f, site)`). XO0536 did not note it: the write was a
+`var` method call on the copy, not an index or field store.

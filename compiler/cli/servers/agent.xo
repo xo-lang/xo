@@ -1043,9 +1043,7 @@ fn (var s: Session) found_obj(d: semantic.QDef) -> Found? {
   if d.obj < 0 {
     return None
   }
-  var r = s.res[0]
-  let tg = r.obj_target(d.obj)
-  s.res[0] = r
+  let tg = s.res[0].obj_target(d.obj)
   let f = s.file_named(d.pos.file)
   let at = parser.Pos{offset: tg.def_start, line: d.pos.line, col: d.pos.col}
   let id = parser.Ident{span: parser.Span{start: at, end: at}, name: d.name.bytes()}

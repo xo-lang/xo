@@ -306,10 +306,8 @@ fn (s: Session) item(label: Str, kind: Int, tg: LspTarget, rank: Int, ty: Int) -
 
 /// The item of a top level object o (a function, type, or constant).
 fn (var s: Session) obj_item(o: Int, rank: Int) -> Item {
-  var r = s.res[0]
-  let tg = r.obj_target(o)
-  s.res[0] = r
-  let ob = r.c.objs[o]
+  let tg = s.res[0].obj_target(o)
+  let ob = s.res[0].c.objs[o]
   let name = check.text(ob.name)
   match ob.kind {
     Func => s.item(name, CK_FUNCTION, tg, rank, ob.result)
@@ -449,9 +447,7 @@ fn (var s: Session) member_items(f: Int, xx: Expr) -> List[Item] {
           return s.module_items(im.module, m, 1, true)
         }
       }
-      var r = s.res[0]
-      let tg = r.type_name(f, [xid], "")
-      s.res[0] = r
+      let tg = s.res[0].type_name(f, [xid], "")
       if tg.what == "type" {
         return s.static_items(tg.oi)
       }

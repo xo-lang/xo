@@ -259,9 +259,7 @@ fn (var s: Session) impl_lines() -> (List[Str], List[Str]) {
 /// The path, 1 based line and name of the declaration of object oi (a file
 /// with line 0 and no path when it has no declaration site).
 fn (var s: Session) obj_pos(oi: Int) -> (Str, Int, Str) {
-  var r = s.res[0]
-  let tg = r.obj_target(oi)
-  s.res[0] = r
+  let tg = s.res[0].obj_target(oi)
   let name = s.res[0].c.display_name(oi)
   if tg.def_file.is_empty() {
     return ("", 0, name)
@@ -282,9 +280,7 @@ fn (var s: Session) src_decl(f: Int, off: Int) -> (Str, Int, Str) {
   if oi < 0 {
     return (path, 0, "")
   }
-  var r = s.res[0]
-  let tg = r.obj_target(oi)
-  s.res[0] = r
+  let tg = s.res[0].obj_target(oi)
   let name = s.res[0].c.display_name(oi)
   let df = s.file_named(tg.def_file)
   if df < 0 {
