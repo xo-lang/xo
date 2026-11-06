@@ -47,3 +47,14 @@ string, by the same rule as `derive Json` (decision 0277). An unknown case is `X
 A plain enum without type parameters can `derive Cbor`: a unit variant is the text of its name, a variant with fields a one
 entry map from its name to a map of its fields (a lone unnamed `from` field is the value itself). An unknown variant or a map
 that is not one entry is `CborErr.Type`. New `cbor.bad_variant` helper for the generated code.
+
+## 2026-11-06: feature: derive Cbor(case:) on enums
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0527 follow-up (Xo Lang 3)
+- Go reference: none (Xo's own, as `derive Json(case:)` on an enum)
+- Test: golden cbor_enum (`Mode` with `case: snake`)
+
+On an enum, `derive Cbor(case: snake | camel | pascal | kebab)` converts the variant names on the wire (`FastPath` is
+`fast_path` under snake); a variant's `as "name"` wins.

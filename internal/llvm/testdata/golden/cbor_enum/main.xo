@@ -3,6 +3,11 @@
 // trips, an unknown variant is a CborErr.Type, and an enum field of a struct follows the same form.
 use std/cbor
 
+enum Mode {
+  FastPath
+  SlowPath(retries: Int)
+} derive Cbor(case: snake)
+
 enum Shape {
   Empty
   Circle(radius: Float)
@@ -25,6 +30,13 @@ fn show(s: Shape) -> Str {
   }
 }
 
+fn mode_text(m: Mode) -> Str {
+  match m {
+    FastPath => "fast"
+    SlowPath(r) => "slow ${r}"
+  }
+}
+
 fn main(os: Os) {
   for s in [Shape.Empty, Shape.Circle(radius: 1.5), Shape.Rect(w: 3, h: 4), Shape.Label("hi")] {
     let data = cbor.marshal(s).ok() ?? fault("marshal")
@@ -35,6 +47,10 @@ fn main(os: Os) {
   let sd = cbor.marshal(scene).ok() ?? fault("marshal scene")
   let sb = cbor.unmarshal[Scene](sd).ok() ?? fault("unmarshal scene")
   os.stdio.println("${sb.name} ${show(sb.main)} ${sb.extras.len()} ${show(sb.extras[1])}")
+  let md = cbor.marshal(Mode.SlowPath(retries: 3)).ok() ?? fault("marshal mode")
+  let mb = cbor.unmarshal[Mode](md).ok() ?? fault("unmarshal mode")
+  let fast = cbor.marshal(Mode.FastPath).ok() ?? fault("marshal fast")
+  os.stdio.println("mode ${md.len()} ${fast.len()} ${mode_text(mb)}")
   // hand written: {"Rect": {"w": 5, "h": 6}} then an unknown variant
   let rect = cbor.encode(cbor.Value.Map(pairs: [(cbor.Value.TextString(s: "Rect"), cbor.Value.Map(pairs: [(cbor.Value.TextString(s: "h"), cbor.Value.Uint(n: UInt64(6))), (cbor.Value.TextString(s: "w"), cbor.Value.Uint(n: UInt64(5)))]))]), true).ok() ?? fault("encode")
   os.stdio.println(show(cbor.unmarshal[Shape](rect).ok() ?? fault("rect")))

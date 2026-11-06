@@ -452,8 +452,12 @@ fn (var c: Checker) variant_wire_names(t: Int, ed: parser.EnumDecl, vs0: List[Va
     let d = text(a.derive.name)
     let k = text(a.key.name)
     let v = text(a.value.name)
+    if d == "Cbor" && k == "case" && a.str == None && (v is "snake" | "camel" | "pascal" | "kebab") {
+      // the variant names of derive Cbor (decision 0527), read by the derive's expansion
+      continue
+    }
     if d != "Json" {
-      c.error("XO0413", a.span, "`derive ${d}` takes no arguments on an enum; `case:`, `tag:` and `content:` apply to `derive Json` (decision 0478)")
+      c.error("XO0413", a.span, "`derive ${d}` takes no arguments on an enum except `case:` of `derive Cbor`; `case:`, `tag:` and `content:` apply to `derive Json` (decision 0478)")
       continue
     }
     if k is "tag" | "content" {

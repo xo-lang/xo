@@ -1165,7 +1165,7 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   for another type). The expansion is ordinary Xo as for `Yaml` (`cbor_zero__T`, `cbor_rd__T`, `cbor_wr__T`,
   `cbor_marshal__T`, `cbor_unmarshal__T`, `cbor_unmarshal_prefix__T` and one `cbor_rd__TYPE` and `cbor_wr__TYPE` a field
   type), and a call of one of the three functions is rewritten to the generated function.
-  On an enum a unit variant is the text of its name (`as "x"` on the variant renames it), a variant with fields a one entry
+  On an enum a unit variant is the text of its name (`as "x"` on the variant renames it, `derive Cbor(case:)` converts it as `derive Json` does), a variant with fields a one entry
   map from its name to a map of its fields keyed by field name (a lone unnamed `from` field is the value itself), and a
   struct field of an enum type uses the same form; an unknown variant is `CborErr.Type`.
 

@@ -77,7 +77,7 @@ RFC 3339 text, Duration is integer nanoseconds, both Time and Duration are suppo
 field is dropped (first wins) and a text key matches exactly before ignoring case; a keyasint field also matches
 its number as text; built in tags 0 to 3 are checked on every decoded value; arrays of small integers read as
 Bytes. Xo's zero Time is the Unix epoch, so an absent Time field encodes as 0 where Go's zero time encodes as
-null (use `Time?`). `toarray` (a tag on the first field) is built and pinned (an array of exactly the field count). `derive Cbor(case:)` is built (2026-11-06, golden cbor_case) and so are enums (golden cbor_enum; the variant wire names do not follow `case:` yet).
+null (use `Time?`). `toarray` (a tag on the first field) is built and pinned (an array of exactly the field count). `derive Cbor(case:)` is built (2026-11-06, golden cbor_case) and so are enums (golden cbor_enum; variant names follow `case:` and `as`).
 
 ## Next pushes (design notes, 2026-11-05)
 

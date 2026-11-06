@@ -1567,6 +1567,12 @@ fn (var c: Checker) cbor_enum_codec(ed: parser.EnumDecl, em: Emit, var done: Map
   let sp = ed.name.span
   let n = text(ed.name.name)
   let pub_ = if ed.is_pub { "pub " } else { "" }
+  var rule = ""
+  for a in ed.derive_args {
+    if text(a.derive.name) == "Cbor" && text(a.key.name) == "case" {
+      rule = text(a.value.name)
+    }
+  }
   var wr: List[Str] = []
   var rd_text: List[Str] = []
   var rd_map: List[Str] = []
@@ -1574,7 +1580,7 @@ fn (var c: Checker) cbor_enum_codec(ed: parser.EnumDecl, em: Emit, var done: Map
   var ok = true
   for (vi, v) in ed.variants.indexed() {
     let vn = text(v.name.name)
-    let wire = if let Some(w) = v.wire { text(w) } else { vn }
+    let wire = if let Some(w) = v.wire { text(w) } else { if rule.is_empty() { vn } else { text(wire_case(snake_of(v.name.name), rule)) } }
     let key = "cbor.Value.TextString(s: ${quote_str(wire)})"
     match v.fields {
       None => {
