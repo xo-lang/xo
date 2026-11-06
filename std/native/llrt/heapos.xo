@@ -508,7 +508,14 @@ fn take(need: Int) -> Int {
   rt.mem_store(t, CACHE_WANT + 8 * wi, need, 8)
   rt.mem_store(t, CACHE_WANT_AT, (wi + 1) % WANT_N, 8)
   var k = rt.mem_load(t, 16, 8)
-  let most = need.wrapping_shl(2)
+  // the largest mapping that fits: four times need rounded up to GRAIN,
+  // since large_resize maps a growing block with four times its room,
+  // rounded so: an unrounded bound refused the very mapping a request's
+  // growth had made (n of 1,048,512 bytes maps 4,194,304; four times need
+  // is 4,194,048), so each json10kx20 round mapped a new 4 MiB and the old
+  // one stayed (on amd64 past the quarter bound, decision 0492) until the
+  // cache held CACHE_N of them (16 mappings, 39 MB)
+  let most = need.wrapping_shl(2).wrapping_add(GRAIN - 1) & (0 - GRAIN)
   while k > 0 {
     k = k.wrapping_sub(1)
     let at = (24).wrapping_add(k.wrapping_shl(3))

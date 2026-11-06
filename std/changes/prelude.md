@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-06: perf: a large block's growth reuses the mapping its last growth made
+
+- Kind: perf
+- Commit: this push
+- Found by: the json10kx20 row of bench/results/release-vs-go-v0.40.0.md:612 (max RSS 3.25 times Go's on linux/amd64)
+- Go reference: none (Go's heap has no such cache; runtime/mheap.go reuses spans by page count)
+- Test: std/native/llrt/heapos_test.xo "a block grown past 1 MiB reuses the mapping its last growth made"
+- Timing: ab-host micro13 json10kx20, 3 rounds: linux/amd64 max RSS 45,352 to 12,092 KB (0.267; Go 13.9 MB), wall 0.94; linux/arm64 within noise (wall 0.897, 0.882 to 1.015; max RSS 1.042, 1.0 to 1.042; 15,184 to 15,820 KB: the quarter bound already dropped the dead mappings there)
+- Shipped in: not yet released
+
+The large block cache served a request only from a mapping of at most four times its size, unrounded, while a growing block's mapping is four times its size rounded up to 64 KiB: a block that grew past 1 MiB mapped 4 MiB, and the same growth next time could not take that mapping back. A loop that grows such a block each round (json10kx20's encode and decode) mapped a new 4 MiB every round; on amd64 the old ones stayed resident in the cache (decision 0492) until it held 16 of them. The bound is now rounded the same way (gotchas/large-cache-fit-refuses-own-growth.md).
+
 
 
 

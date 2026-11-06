@@ -1,0 +1,24 @@
+// Tests of heapos.xo's large block cache (`xo test
+// --std-module=native/llrt/heapos`, run by internal/stdtest).
+
+test "a block grown past 1 MiB reuses the mapping its last growth made" {
+  // n = 1,048,496 bytes asks for need 1,048,512 and large_resize maps
+  // room for four times n, rounded up to GRAIN: 4,194,304, past four
+  // times need. take's bound refused it, so every round mapped another
+  // 4 MiB (json10kx20, 2026-11-06)
+  // a large block held (mapped, never touched) lets the cache keep past
+  // its quarter bound on every target, as amd64's wanted sizes did
+  let held = large(100000000)
+  var after_first = -1
+  for round in 0..6 {
+    let p = large(200000)
+    let q = large_resize(p - 8, 1048496)
+    release(q - 8)
+    if round == 0 {
+      after_first = cache_count()
+    }
+  }
+  expect(after_first >= 1)
+  expect(cache_count() <= after_first)
+  release(held - 8)
+}
