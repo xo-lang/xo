@@ -38,6 +38,8 @@ struct FakeSession {
   state: Bytes = b""
   locked_until: Int = 0
   owner: Int = 0
+  /// when a client last set the state, milliseconds since the Unix epoch
+  updated_ms: Int = 0
 }
 
 /// A queue, or a topic's subscription (named `topic/Subscriptions/name`), or a topic (no messages).

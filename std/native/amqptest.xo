@@ -1066,10 +1066,39 @@ fn mgmt_op(var s: amqptest.BrokerState, qi: Int, conn: Int, now: Int, op: Str, r
       Some(Binary(bs)) => bs
       _ => b""
     }
+    z.updated_ms = now
     ss[si] = z
     q.sessions = ss
     put_queue(s, qi, q)
     return ok_out(amqp.Value.Map(pairs: []))
+  }
+  if op == "get-message-sessions" {
+    // the sessions that have messages (last-updated-time at the year 10000 is Go's "no filter") or whose
+    // state changed after that time, in name order, then skip and top
+    let since = match mget(body, "last-updated-time") {
+      Some(Timestamp(t)) => t
+      _ => 253402300800000
+    }
+    var ids: List[Str] = []
+    if since >= 253402300799000 {
+      for m in q.msgs {
+        if m.session != "" && !ids.contains(m.session) { ids.push(m.session) }
+      }
+    }
+    for z in q.sessions {
+      if z.updated_ms > since && !ids.contains(z.id) { ids.push(z.id) }
+    }
+    ids = ids.sort()
+    let skip = val_int(mget(body, "skip"))
+    let top = val_int(mget(body, "top"))
+    var page: List[amqp.Value] = []
+    var i = skip
+    while i < ids.len() && (top <= 0 || page.len() < top) {
+      page.push(amqp.Value.Str(v: ids[i]))
+      i += 1
+    }
+    if page.is_empty() { return (204, "", "No Content", amqp.Value.Null) }
+    return ok_out(amqp.Value.Map(pairs: [pair("sessions-ids", amqp.Value.Array(items: page)), pair("skip", amqp.Value.Int(v: Int32.wrapping_from(skip + page.len())))]))
   }
   (501, "amqp:not-implemented", "the fake broker does not implement " + op, amqp.Value.Null)
 }

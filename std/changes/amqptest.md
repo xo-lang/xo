@@ -55,3 +55,15 @@ Second reported the successful dead letter as `Peer(com.microsoft:dead-letter)`.
 
 `Receiver.modify(..., annotations:)` now lands in the stored message's `app_properties` (a later key replaces an
 earlier one), visible through `Broker.ready` and the next delivery.
+
+## 2026-11-06: feature: get-message-sessions on a session queue's $management
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (azservicebus v1.11.0 internal/mgmt.go GetMessageSessions)
+- Go reference: azservicebus GetMessageSessions request and reply shape
+- Test: native/amqptest "get-message-sessions lists the sessions with messages, pages by skip and top, and answers 204 when none"
+
+`com.microsoft:get-message-sessions` answers `sessions-ids` (an Array of Str, name order) and `skip`, for the sessions with
+messages (last-updated-time at the year 10000) or whose state was set after that time; `skip` and `top` page the list and
+no sessions is 204. `FakeSession` gains `updated_ms`, set by set-session-state.
