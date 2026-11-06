@@ -80,3 +80,15 @@ An opt-in interop test (`xo test --real` with `XO_AMQP_INTEROP_ADDR`) passes aga
 - Shipped in: not yet released
 
 `dial` bounds the connect by `ConnOptions.timeout_ms`; `Receiver.receive(timeout_ms: Int = 0)` waits at most that long for a delivery. Together with 2b-ii this covers connect, CBS and attach waits, receive and idle heartbeat.
+
+## 2026-11-06: feature: amqp reader task, concurrent calls on one connection
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19's Service Bus needs (lead, 2026-11-05: concurrent receivers, a sender while a receive waits, lock renewal while processing)
+- Go reference: github.com/Azure/go-amqp v1.7.0 conn.go (connMux), MIT
+- Test: "two receivers and a sender on one connection do not block each other" (the whole module `--real`, the Artemis interop tests, the corpora on native, LLVM and the Go backend)
+- Shipped in: not yet released
+
+`Connection.keepalive(g)` now starts a reader task that reads without the connection lock; calls that block (`receive`, `send`, link and session setup and close, `close`) wait on their own channel with their own deadline instead of holding the lock, so a waiting receive no longer stops a send or another receiver. Without `keepalive` nothing changes. Raw `recv` is refused while the reader runs (spec/std.md 64).
+

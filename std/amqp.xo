@@ -351,6 +351,15 @@ struct ConnState {
   last_send_ms: Int = 0
   /// set by the keeper when the connection failed in the background; later calls return it
   broken: AmqpErr? = None
+  /// set while the keepalive task owns the transport read; calls then wait on a notification
+  /// outside the lock instead of reading
+  mux: Bool = false
+  /// our Close went out and the peer's is awaited (with the reader task: it sets close_done)
+  closing: Bool = false
+  close_done: Bool = false
+  close_err: AmqpErr? = None
+  /// calls waiting for the next frame to be applied, each on its own channel
+  waiters: List[Chan[Bool]] = []
   /// begun sessions and attached links (stage 3), by channel and by link id
   sess: List[SessState] = []
   links: List[LinkState] = []
@@ -374,8 +383,10 @@ fn (c: Connection) peer_properties() -> List[(Str, Value)]
 /// Starts a task in `g` that keeps the connection alive while no call is running: it sends an
 /// empty frame at half the peer's idle timeout, reads and applies frames that arrive, and fails
 /// the connection (later calls return the error) when the peer is silent for `idle_timeout_ms`.
-/// It needs `ConnOptions.clock` and ends when `g` is cancelled or the connection is closed.
-/// Calls that are running do the same work themselves while they wait.
+/// While it runs it is the only reader: calls that wait (a receive, a send waiting for credit)
+/// wait on their own channel without the connection lock, so tasks can receive on several links,
+/// send and settle at the same time; `recv` is refused. It needs `ConnOptions.clock` and ends when
+/// `g` is cancelled or the connection is closed. Without it, calls read while they wait.
 fn (c: Connection) keepalive(g: task.Group) -> () ! AmqpErr uses (net.dial, clock)
 
 /// Connects to `addr` (`host:port`, `amqp://host[:port]` or `amqps://host[:port]`; ports default
@@ -499,6 +510,8 @@ struct SessState {
   remote_incoming_window: Int = 0
   ended: Bool = false
   next_handle: Int = 0
+  /// a transfer is being sent on the session (its frames and ids stay in order)
+  sending: Bool = false
 }
 
 /// A completed incoming delivery.

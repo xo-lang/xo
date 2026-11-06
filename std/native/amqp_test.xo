@@ -419,6 +419,131 @@ test "a receiver assembles a fragmented delivery and accepts it" {
 }
 
 // ---------------------------------------------------------------------------
+// Concurrent calls on one connection (the reader task)
+
+fn peer_deliver(sc: ServerConn, ch: Int, handle: Int, id: Int, text: Str) {
+  let msg = amqp.encode_message(amqp.Message{body: amqp.Body.Data(sections: [text.bytes()])}).or_fault("msg")
+  peer_send(sc, ch, amqp.FrameBody.Transfer(v: amqp.Transfer{handle: UInt32.wrapping_from(handle), delivery_id: Some(UInt32.wrapping_from(id)), delivery_tag: b"t",
+    message_format: Some(UInt32(0)), more: false, receiver_settle_mode: None, state: None, payload: msg}))
+}
+
+/// A peer for the receivers "a" and "b" and a sender: it accepts every transfer, echoes it on "b",
+/// and sends one delivery on "a" only when the transfer says "stop".
+fn serve_mux(l: Listener) {
+  let sc = l.accept().or_fault("accept")
+  var buf = peer_header(sc, b"AMQP\x00\x01\x00\x00", b"")
+  let (o, rest) = peer_frame(sc, buf)
+  buf = rest
+  match o.body {
+    Open(_) => {}
+    _ => fault("expected open")
+  }
+  peer_send(sc, 0, amqp.FrameBody.Open(v: amqp.Open{container_id: "broker"}))
+  var ha = -1
+  var hb = -1
+  var next_handle = 10
+  var out_id = 0
+  while true {
+    let (f, rest) = peer_frame(sc, buf)
+    buf = rest
+    let ch = Int(f.channel)
+    match f.body {
+      Begin(_) => peer_send(sc, ch, amqp.FrameBody.Begin(v: amqp.Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(0), incoming_window: UInt32(1000), outgoing_window: UInt32(1000)}))
+      Attach(a) => {
+        let h = next_handle
+        next_handle += 1
+        match a.role {
+          Sender => {
+            peer_send(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: UInt32.wrapping_from(h), role: amqp.Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target}))
+            peer_send(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(UInt32(0)), incoming_window: UInt32(1000), next_outgoing_id: UInt32(0), outgoing_window: UInt32(1000), handle: Some(UInt32.wrapping_from(h)), delivery_count: Some(UInt32(0)), link_credit: Some(UInt32(1000)), available: None}))
+          }
+          Receiver => {
+            if a.name == "a" { ha = h }
+            if a.name == "b" { hb = h }
+            peer_send(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: UInt32.wrapping_from(h), role: amqp.Role.Sender, sender_settle_mode: None, receiver_settle_mode: None, source: a.source, target: a.target, initial_delivery_count: 0}))
+          }
+        }
+      }
+      Transfer(t) => {
+        let m = amqp.decode_message(t.payload).or_fault("decode")
+        var text = "?"
+        match m.body {
+          Data(sections) => { text = (sections[0]).to_str_lossy() }
+          _ => {}
+        }
+        match t.delivery_id {
+          Some(i) => peer_send(sc, ch, amqp.FrameBody.Disposition(v: amqp.Disposition{role: amqp.Role.Receiver, first: i, last: None, settled: true, state: Some(amqp.DeliveryState.Accepted)}))
+          None => {}
+        }
+        if text == "stop" {
+          peer_deliver(sc, ch, ha, out_id, "to-a")
+        } else {
+          peer_deliver(sc, ch, hb, out_id, text)
+        }
+        out_id += 1
+      }
+      // the peer's handles are ours plus 10
+      Detach(d) => peer_send(sc, ch, amqp.FrameBody.Detach(v: amqp.Detach{handle: UInt32.wrapping_from(Int(d.handle) + 10), closed: true, error: None}))
+      End(_) => peer_send(sc, ch, amqp.FrameBody.End(v: amqp.End{error: None}))
+      Close(_) => {
+        peer_send(sc, 0, amqp.FrameBody.Close(v: amqp.Close{error: None}))
+        sc.close()
+        return
+      }
+      _ => {}
+    }
+  }
+}
+
+test "two receivers and a sender on one connection do not block each other" uses (net, clock, stdio) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.spawn(fn() { serve_mux(l) })
+    let c = amqp.dial(os.net, l.addr(), amqp.ConnOptions{container_id: "tester", clock: Some(os.clock), timeout_ms: 10000}).or_fault("dial")
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin(amqp.SessionOptions{incoming_window: 1000, outgoing_window: 1000}).or_fault("begin")
+    let a = c.new_receiver(sess, "qa", amqp.ReceiverOptions{name: "a", credit: 10}).or_fault("receiver a")
+    let b = c.new_receiver(sess, "qb", amqp.ReceiverOptions{name: "b", credit: 500}).or_fault("receiver b")
+    let snd = c.new_sender(sess, "qs").or_fault("sender")
+    let done_a = Chan[Str].new(cap: 1)
+    let done_b = Chan[Int].new(cap: 1)
+    // "a" waits with no deadline until the sender's last message; under one lock this would stall the rest
+    s.spawn(fn() {
+      let d = a.receive().or_fault("receive a")
+      a.accept(d).or_fault("accept a")
+      done_a.send(text(d))
+    })
+    s.spawn(fn() {
+      var n = 0
+      for _ in 0..100 {
+        let d = b.receive().or_fault("receive b")
+        b.accept(d).or_fault("accept b")
+        n += 1
+      }
+      done_b.send(n)
+    })
+    let t0 = os.clock.now().unix_millis()
+    for i in 0..100 {
+      let out = snd.send(amqp.Message{body: amqp.Body.Data(sections: ["m-${i}".bytes()])}).or_fault("send ${i}")
+      expect(out) == Some(amqp.DeliveryState.Accepted)
+    }
+    let took = os.clock.now().unix_millis() - t0
+    os.stdio.println("mux: 100 sends and 100 echoed receives with a third receiver waiting took ${took} ms")
+    expect(took < 3000) == true
+    expect(done_a.try_recv() is None) == true
+    expect(done_b.recv()) == Some(100)
+    let out = snd.send(amqp.Message{body: amqp.Body.Data(sections: [b"stop"])}).or_fault("send stop")
+    expect(out) == Some(amqp.DeliveryState.Accepted)
+    expect(done_a.recv()) == Some("to-a")
+    a.close().or_fault("close a")
+    b.close().or_fault("close b")
+    snd.close().or_fault("close sender")
+    c.end_session(sess).or_fault("end")
+    c.close().or_fault("close")
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CBS put-token against an in-process peer
 
 fn serve_cbs(l: Listener, status: Int) {

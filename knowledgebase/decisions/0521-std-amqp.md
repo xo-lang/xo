@@ -155,3 +155,16 @@ tests is go-amqp itself (the oracle), not a runtime dependency.
   read loop, so a background reader task is not needed for correctness, only for concurrent use of the connection from
   several tasks (2b-ii). The API differs from the proposal where Xo requires it: `Connection.new_sender(session, ...)`
   instead of `Session.new_sender`, `send(m, settled)` returning the peer's outcome, and no timeout arguments yet.
+- Reader task as built (2026-11-05, lead's request to close the Service Bus concurrency gap): `keepalive(g)`
+  now starts a reader task (go-amqp's connMux in shape) that owns the transport read: it reads without the
+  lock, applies each frame under it (`apply_frame`, split from `pump`), wakes waiters, sends heartbeats at
+  half the peer's idle timeout and fails the connection (`broken`) when the peer is silent for
+  `idle_timeout_ms`. Blocked calls are a loop of idempotent steps run under the lock (`await_cond`); a step
+  that is not done registers a one slot channel in `ConnState.waiters` and the call waits on it outside the
+  lock with its own deadline (`select ... after`), so a waiting `receive` does not hold up a `send`.
+  Without `keepalive` the same steps pump inline as before. A send takes its session's send turn
+  (`SessState.sending`) for the transfer ids and frame order. `Begin` and `End` frames are queued in
+  `pending` while the reader runs and `begin`/`end_session` take theirs; raw `recv` is refused then.
+  Known limit: two concurrent `begin` calls can pick the same channel. Test: "two receivers and a sender on
+  one connection do not block each other" (100 sends and 100 echoed receives with a third receiver waiting:
+  about 6 ms on loopback; with one lock the sends would wait for the receiver that waits).

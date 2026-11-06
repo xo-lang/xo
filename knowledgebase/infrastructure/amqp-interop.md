@@ -49,3 +49,5 @@ Edge container's sqlservr crashed (a core dump in its log, DB recovery then exit
 reported "Name or service not known" for the SQL host and halted, so the AMQP port never opened. Not tried yet: an
 amd64 host with Docker (the emulator's supported target), or a SQL Server 2022 image in place of SQL Edge. The test
 (`interop: Service Bus emulator, CBS put-token...`, `XO_AMQP_SB_ADDR`) is written and skips without the variable.
+
+Re-run 2026-11-05 after the reader task (keepalive owns the transport read): the three interop tests pass unchanged against Artemis (`apache/activemq-artemis:latest-alpine`, image sha256:1bce124d2324).
