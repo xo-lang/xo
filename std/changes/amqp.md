@@ -70,3 +70,13 @@ An opt-in interop test (`xo test --real` with `XO_AMQP_INTEROP_ADDR`) passes aga
 - Shipped in: not yet released
 
 `Value.Float(v: Float32)` replaces `Value.Float(bits: UInt32)`; the wire bits still round trip exactly, NaN payloads included (spec/std.md 64).
+
+## 2026-11-06: feature: amqp connect timeout and Receiver.receive(timeout_ms)
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19's Service Bus needs (lead, 2026-11-05)
+- Test: the interop test against Artemis (an empty queue gives `i/o timeout` at the deadline, then the link still works)
+- Shipped in: not yet released
+
+`dial` bounds the connect by `ConnOptions.timeout_ms`; `Receiver.receive(timeout_ms: Int = 0)` waits at most that long for a delivery. Together with 2b-ii this covers connect, CBS and attach waits, receive and idle heartbeat.

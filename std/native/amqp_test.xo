@@ -691,6 +691,16 @@ test "interop: a large delivery, keepalive, reject and the dead letter path" use
     expect(d4.message.body) == amqp.Body.Data(sections: [b"mod"])
     expect(d4.message.header.or_fault("header").delivery_count) == 1
     rcv.accept(d4).or_fault("accept mod")
+    // an empty queue: receive gives up at its own deadline, and the link stays usable
+    match rcv.receive(timeout_ms: 300) {
+      Ok(_) => fault("the queue should be empty")
+      Err(Net(m)) => expect(m) == "i/o timeout"
+      Err(_) => fault("wrong error for a receive deadline")
+    }
+    let after = snd.send(amqp.Message{body: amqp.Body.Data(sections: [b"after"])}).or_fault("send after")
+    expect(after) == Some(amqp.DeliveryState.Accepted)
+    let d5 = rcv.receive(timeout_ms: 5000).or_fault("receive after the deadline")
+    rcv.accept(d5).or_fault("accept after")
     // the keeper runs while the test is idle
     os.clock.sleep(1500ms)
     snd.close().or_fault("close sender")
