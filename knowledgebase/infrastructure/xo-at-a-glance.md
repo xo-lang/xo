@@ -108,7 +108,7 @@ http (server, router, client with keep-alive, HTTP/2 and h2c with
 streams (0433), mutual TLS (`with_client_auth`, `Client.with_cert`),
 streaming bodies, multipart, ServeContent, gzip), tls, websocket, json (derive, Value,
 streaming decoder), xml (tokens, tree, derive), sql (Postgres driver),
-csv, toml, yaml (derive Yaml, decode/encode, Node with comments, to_json; a port of yaml.v3, 0512), regexp, time, url, netip, udp, mime, mail, smtp, multipart,
+csv, toml, yaml (derive Yaml, decode/encode, Node with comments, to_json; a port of yaml.v3, 0512), regexp, time, url, netip, udp, mime, mail, smtp, amqp (AMQP 1.0 client with a reader task for concurrent links, CBS; a port of go-amqp, 0521) and amqptest (an in-process Service Bus shaped broker for tests, spec/std.md 64.6), multipart,
 template, embed, compress, big, base64/base32, binary, uuid, path, png (decode and encode, 0466), jpeg (decode, 0467), cbor (0468),
 crypto, archive, log, task, testing, cli, term, go (`use go` bindings).
 `time` layouts are named fields (`"{year}-{month}-{day}"`), checked at
