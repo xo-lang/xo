@@ -1575,33 +1575,35 @@ struct ProtoElem {
   nonzero: Str
   zero: Str
   packable: Bool
+  /// a message merges into the value already read ($R), as Go does; empty for other types
+  merge: Str
 }
 
 fn proto_elem(tx: Str, po: ProtoOpts) -> ProtoElem? {
   if tx == "Int" {
     if po.zigzag {
-      return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, protobuf.encode_zigzag($V))", rd: "protobuf.read_varint", conv: "protobuf.decode_zigzag($X)", nonzero: "$V != 0", zero: "0", packable: true})
+      return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, protobuf.encode_zigzag($V))", rd: "protobuf.read_varint", conv: "protobuf.decode_zigzag($X)", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
     }
     if po.fixed {
-      return Some(ProtoElem{wire: 1, enc: "protobuf.append_fixed64($B, UInt64.from_bits($V))", rd: "protobuf.read_fixed64", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true})
+      return Some(ProtoElem{wire: 1, enc: "protobuf.append_fixed64($B, UInt64.from_bits($V))", rd: "protobuf.read_fixed64", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
     }
-    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits($V))", rd: "protobuf.read_varint", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true})
+    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits($V))", rd: "protobuf.read_varint", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
   }
   if tx == "Bool" {
-    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits(if $V { 1 } else { 0 }))", rd: "protobuf.read_varint", conv: "$X.to_bits() != 0", nonzero: "$V", zero: "false", packable: true})
+    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits(if $V { 1 } else { 0 }))", rd: "protobuf.read_varint", conv: "$X.to_bits() != 0", nonzero: "$V", zero: "false", packable: true, merge: ""})
   }
   if tx == "Float" {
-    return Some(ProtoElem{wire: 1, enc: "protobuf.append_fixed64($B, UInt64.from_bits($V.to_bits()))", rd: "protobuf.read_fixed64", conv: "Float.from_bits($X.to_bits())", nonzero: "$V.to_bits() != 0", zero: "0.0", packable: true})
+    return Some(ProtoElem{wire: 1, enc: "protobuf.append_fixed64($B, UInt64.from_bits($V.to_bits()))", rd: "protobuf.read_fixed64", conv: "Float.from_bits($X.to_bits())", nonzero: "$V.to_bits() != 0", zero: "0.0", packable: true, merge: ""})
   }
   if tx == "Str" {
-    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, $V.bytes())", rd: "protobuf.read_bytes", conv: "($X.to_str() ?? return Err(protobuf.ProtoErr.Utf8))", nonzero: "!$V.is_empty()", zero: "\"\"", packable: false})
+    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, $V.bytes())", rd: "protobuf.read_bytes", conv: "($X.to_str() ?? return Err(protobuf.ProtoErr.Utf8))", nonzero: "!$V.is_empty()", zero: "\"\"", packable: false, merge: ""})
   }
   if tx == "Bytes" {
-    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, $V)", rd: "protobuf.read_bytes", conv: "$X", nonzero: "$V.len() > 0", zero: "b\"\"", packable: false})
+    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, $V)", rd: "protobuf.read_bytes", conv: "$X", nonzero: "$V.len() > 0", zero: "b\"\"", packable: false, merge: ""})
   }
   if !tx.is_empty() && !tx.contains("[") && tx.bytes()[0] >= 65 && tx.bytes()[0] <= 90 {
     // a struct deriving Proto (its generated functions must exist; a plain field is always written)
-    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, proto_marshal__${tx}($V))", rd: "protobuf.read_bytes", conv: "proto_unmarshal__${tx}($X)?", nonzero: "true", zero: "proto_zero__${tx}()", packable: false})
+    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, proto_marshal__${tx}($V))", rd: "protobuf.read_bytes", conv: "proto_unmarshal__${tx}($X)?", nonzero: "true", zero: "proto_zero__${tx}()", packable: false, merge: "proto_merge__${tx}($R, $X)?"})
   }
   None
 }
@@ -1666,11 +1668,19 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
         if kind == 0 {
       zeros.push("${f}: ${el.zero}")
       wr.push("  if ${proto_sub(el.nonzero, "", "v.${f}", "")} { b = ${proto_sub(el.enc, tag, "v.${f}", "")} }")
-      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = ${proto_sub(el.conv, "", "", "x")}"]))
+      var val = proto_sub(el.conv, "", "", "x")
+      if !el.merge.is_empty() {
+        val = proto_sub(el.merge, "", "", "x").replace("$R", "r.${f}")
+      }
+      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = ${val}"]))
     } else if kind == 1 {
       zeros.push("${f}: None")
       wr.push("  if let Some(x) = v.${f} { b = ${proto_sub(el.enc, tag, "x", "")} }")
-      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = Some(${proto_sub(el.conv, "", "", "x")})"]))
+      var val = proto_sub(el.conv, "", "", "x")
+      if !el.merge.is_empty() {
+        val = proto_sub(el.merge, "", "", "x").replace("$R", "(r.${f} ?? ${el.zero})")
+      }
+      rd.push((" num == ${k} && wire == ${w}", ["let (x, n2) = ${el.rd}(data, at)?", "at = n2", "r.${f} = Some(${val})"]))
     } else {
       zeros.push("${f}: []")
       if el.packable {
@@ -1697,8 +1707,9 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
   }
   e.ln("  b", sp)
   e.ln("}", sp)
-  e.ln("${pub_}fn proto_unmarshal__${n}(data: Bytes) -> ${n} ! protobuf.ProtoErr {", sp)
-  e.ln("  var r = proto_zero__${n}()", sp)
+  e.ln("${pub_}fn proto_unmarshal__${n}(data: Bytes) -> ${n} ! protobuf.ProtoErr { proto_merge__${n}(proto_zero__${n}(), data) }", sp)
+  e.ln("${pub_}fn proto_merge__${n}(r0: ${n}, data: Bytes) -> ${n} ! protobuf.ProtoErr {", sp)
+  e.ln("  var r = r0", sp)
   e.ln("  var at = 0", sp)
   e.ln("  while at < data.len() {", sp)
   e.ln("    let (num, wire, nx) = protobuf.read_tag(data, at)?", sp)

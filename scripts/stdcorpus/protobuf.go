@@ -227,6 +227,115 @@ func protobufCorpus() string {
 		}
 		add("unmsg", b)
 	}
+	// Option, List and nested fields: marshal (rmsg) and unmarshal (runmsg) against dynamicpb
+	join := func(p []string) string {
+		if len(p) == 0 {
+			return "-"
+		}
+		return strings.Join(p, ",")
+	}
+	for i := 0; i < 400; i++ {
+		var nums, tags, inners, ds []string
+		for j, n := 0, tr.Intn(5); j < n; j++ {
+			v := int64(tr.Uint64() >> uint(tr.Intn(64)))
+			if tr.Intn(3) == 0 {
+				v = -v
+			}
+			nums = append(nums, fmt.Sprint(v))
+		}
+		for j, n := 0, tr.Intn(4); j < n; j++ {
+			t := make([]byte, tr.Intn(6))
+			for k := range t {
+				t[k] = byte('a' + tr.Intn(26))
+			}
+			if len(t) == 0 {
+				tags = append(tags, "~")
+			} else {
+				tags = append(tags, hex.EncodeToString(t))
+			}
+		}
+		for j, n := 0, tr.Intn(4); j < n; j++ {
+			inners = append(inners, fmt.Sprint(tr.Intn(5)-2))
+		}
+		for j, n := 0, tr.Intn(4); j < n; j++ {
+			ds = append(ds, fmt.Sprint(math.Float64bits(float64(tr.Intn(100))/4)))
+		}
+		maybe, mo := "n", "n"
+		if tr.Intn(2) == 0 {
+			maybe = fmt.Sprint(tr.Intn(3))
+		}
+		if tr.Intn(2) == 0 {
+			mo = fmt.Sprint(tr.Intn(3))
+		}
+		id := fmt.Sprint(tr.Intn(3))
+		cases = append(cases, protoCase{fmt.Sprintf("rmsg %s %s %s %s %d %s %s %s", id, join(nums), join(tags), maybe, tr.Intn(3), join(inners), mo, join(ds)), nil})
+	}
+	for i := 0; i < 400; i++ {
+		var b []byte
+		in := func() []byte {
+			var x []byte
+			for j, n := 0, tr.Intn(3); j < n; j++ {
+				if tr.Intn(3) == 0 {
+					x = append(x, protoField(tr, 0)...)
+				} else {
+					x = append(x, 0x08)
+					x = append(x, protoVarint(uint64(tr.Intn(4)), 0)...)
+				}
+			}
+			return x
+		}
+		for j, n := 0, 1+tr.Intn(7); j < n; j++ {
+			num := uint64(1 + tr.Intn(8))
+			switch num {
+			case 1, 4:
+				b = append(b, protoVarint(num<<3, 0)...)
+				b = append(b, protoVarint(tr.Uint64()>>uint(tr.Intn(64)), 0)...)
+			case 2, 8:
+				if tr.Intn(2) == 0 {
+					b = append(b, protoVarint(num<<3|2, 0)...)
+					var p []byte
+					for k, m := 0, tr.Intn(4); k < m; k++ {
+						if num == 2 {
+							p = append(p, protoVarint(tr.Uint64()>>uint(tr.Intn(64)), 0)...)
+						} else {
+							p = append(p, make([]byte, 8)...)
+							tr.Read(p[len(p)-8:])
+						}
+					}
+					b = append(b, protoVarint(uint64(len(p)), 0)...)
+					b = append(b, p...)
+				} else if num == 2 {
+					b = append(b, protoVarint(num<<3, 0)...)
+					b = append(b, protoVarint(tr.Uint64()>>uint(tr.Intn(64)), 0)...)
+				} else {
+					b = append(b, protoVarint(num<<3|1, 0)...)
+					p := make([]byte, 8)
+					tr.Read(p)
+					b = append(b, p...)
+				}
+			case 3:
+				b = append(b, protoVarint(num<<3|2, 0)...)
+				t := make([]byte, tr.Intn(5))
+				for k := range t {
+					t[k] = byte('a' + tr.Intn(26))
+				}
+				if tr.Intn(10) == 0 && len(t) > 0 {
+					t[0] = 0xff
+				}
+				b = append(b, protoVarint(uint64(len(t)), 0)...)
+				b = append(b, t...)
+			default:
+				x := in()
+				b = append(b, protoVarint(num<<3|2, 0)...)
+				b = append(b, protoVarint(uint64(len(x)), 0)...)
+				b = append(b, x...)
+			}
+		}
+		if tr.Intn(6) == 0 {
+			b = protoMutate(tr, b)
+		}
+		add("runmsg", b)
+	}
 	for _, v := range []uint64{0, 1, 127, 128, 255, 300, 16383, 16384, 1<<32 - 1, 1 << 32, 1<<63 - 1, 1 << 63, 1<<64 - 1} {
 		cases = append(cases, protoCase{"encvarint " + fmt.Sprint(v), nil})
 	}
@@ -252,7 +361,7 @@ func protobufCorpus() string {
 	refs := protoOracle(cases)
 	var o strings.Builder
 	o.WriteString(header("google.golang.org/protobuf's protowire: ConsumeVarint, ConsumeTag, ConsumeFixed32 and 64, ConsumeBytes, ConsumeFieldValue (groups, the recursion limit), AppendVarint, SizeVarint and the zigzag forms, on curated and seeded random inputs, against internal/stdtest/protoref"))
-	o.WriteString("use std/protobuf\n\nstruct M {\n  id proto \"1\": Int\n  name proto \"2\": Str\n  z proto \"3,zigzag\": Int\n  ok proto \"4\": Bool\n  f proto \"5\": Float\n  raw proto \"6\": Bytes\n} derive Proto\n\n")
+	o.WriteString("use std/protobuf\n\nstruct In {\n  a proto \"1\": Int\n} derive Proto\n\nstruct R {\n  id proto \"1\": Int\n  nums proto \"2\": List[Int]\n  tags proto \"3\": List[Str]\n  maybe proto \"4\": Int?\n  inner proto \"5\": In\n  inners proto \"6\": List[In]\n  mo proto \"7\": In?\n  ds proto \"8\": List[Float]\n} derive Proto\n\nstruct M {\n  id proto \"1\": Int\n  name proto \"2\": Str\n  z proto \"3,zigzag\": Int\n  ok proto \"4\": Bool\n  f proto \"5\": Float\n  raw proto \"6\": Bytes\n} derive Proto\n\n")
 	o.WriteString("/// (operation, input in hex or the number, what Go's protowire answers: `ok VALUE N` or `err KIND`)\nconst CASES: List[(Str, Bytes, Str)] = [\n")
 	for i, c := range cases {
 		op, arg := c.op, ""
@@ -356,7 +465,48 @@ fn run(op: Str, data: Bytes) -> Str {
       Err(_) => "err err"
     }
   }
+  if op == "rmsg" {
+    let f = data.to_str_lossy().split(" ")
+    var r = R{id: Int.parse(f[0]) ?? 0, nums: [], tags: [], maybe: None, inner: In{a: Int.parse(f[4]) ?? 0}, inners: [], mo: None, ds: []}
+    if f[1] != "-" {
+      for x in f[1].split(",") { r.nums.push(Int.parse(x) ?? 0) }
+    }
+    if f[2] != "-" {
+      for x in f[2].split(",") { r.tags.push(if x == "~" { "" } else { unhex(x).to_str_lossy() }) }
+    }
+    if f[3] != "n" { r.maybe = Some(Int.parse(f[3]) ?? 0) }
+    if f[5] != "-" {
+      for x in f[5].split(",") { r.inners.push(In{a: Int.parse(x) ?? 0}) }
+    }
+    if f[6] != "n" { r.mo = Some(In{a: Int.parse(f[6]) ?? 0}) }
+    if f[7] != "-" {
+      for x in f[7].split(",") { r.ds.push(Float.from_bits(ubits_of(x.bytes()))) }
+    }
+    return "ok ${protobuf.marshal(r).to_hex()} 0"
+  }
+  if op == "runmsg" {
+    return match protobuf.unmarshal[R](data) {
+      Ok(r) => "ok ${show_rep(r)} 0"
+      Err(_) => "err err"
+    }
+  }
   "unknown op ${op}"
+}
+
+fn dash(p: List[Str]) -> Str { if p.is_empty() { "-" } else { p.join(",") } }
+
+fn show_rep(r: R) -> Str {
+  var nums: List[Str] = []
+  for x in r.nums { nums.push("${x}") }
+  var tags: List[Str] = []
+  for t in r.tags { tags.push(if t.is_empty() { "~" } else { t.bytes().to_hex() }) }
+  var inners: List[Str] = []
+  for i in r.inners { inners.push("${i.a}") }
+  var ds: List[Str] = []
+  for d in r.ds { ds.push("${UInt64.from_bits(d.to_bits())}") }
+  let maybe = if let Some(m) = r.maybe { "${m}" } else { "n" }
+  let mo = if let Some(m) = r.mo { "${m.a}" } else { "n" }
+  "${r.id} ${dash(nums)} ${dash(tags)} ${maybe} ${r.inner.a} ${dash(inners)} ${mo} ${dash(ds)}"
 }
 
 fn unhex(s: Str) -> Bytes { if s == "-" { b"" } else { Bytes.from_hex(s) ?? b"" } }
