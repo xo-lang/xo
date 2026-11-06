@@ -94,6 +94,10 @@ func hasIndef(data []byte) bool {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "typed" {
+		typedMain()
+		return
+	}
 	dec, err := cbor.DecOptions{
 		MaxNestedLevels:  128,
 		MaxArrayElements: maxInt,

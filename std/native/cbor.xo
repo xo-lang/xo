@@ -881,16 +881,66 @@ fn is_null(v: cbor.Value) -> Bool {
   }
 }
 
-/// A tag is transparent on decode (decision 0527).
-fn untag(v: cbor.Value) -> cbor.Value {
+/// A tag is transparent on decode (decision 0527), after the check fxamacker
+/// makes of the built in ones: tag 0 wraps a text string, tag 1 an integer or a
+/// float, tags 2 and 3 a byte string; the self described tag 55799 is dropped
+/// first. A refused tag records the type error and gives `(false, v)`.
+fn untag(v0: cbor.Value, var st: cbor.Unm) -> (Bool, cbor.Value) {
+  var v = v0
+  while true {
+    match v {
+      cbor.Value.Tag(num, inner) => {
+        if num.to_bits() != 55799 {
+          break
+        }
+        v = inner
+      }
+      _ => break
+    }
+  }
+  var cur = v
+  while true {
+    match cur {
+      cbor.Value.Tag(num, inner) => {
+        let good = match num.to_bits() {
+          0 => match inner {
+            cbor.Value.TextString(_) => true
+            _ => false
+          }
+          1 => match inner {
+            cbor.Value.Uint(_) | cbor.Value.Nint(_) | cbor.Value.Float(_) => true
+            _ => false
+          }
+          2 | 3 => match inner {
+            cbor.Value.ByteString(_) => true
+            _ => false
+          }
+          _ => true
+        }
+        if !good {
+          if st.err == None {
+            st.err = Some(cbor.CborErr.Type(msg: "cbor: invalid content of tag ${num.to_bits()}"))
+          }
+          return (false, v)
+        }
+        cur = inner
+      }
+      _ => break
+    }
+  }
+  (true, strip_tags(v))
+}
+
+fn strip_tags(v: cbor.Value) -> cbor.Value {
   match v {
-    cbor.Value.Tag(_, inner) => untag(inner)
+    cbor.Value.Tag(_, inner) => strip_tags(inner)
     _ => v
   }
 }
 
 fn to_str(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Str) {
-  let v = untag(v0)
+  let (okt, v) = untag(v0, st)
+  if !okt || is_null(v) { return (false, "") }
   match v {
     cbor.Value.TextString(s) => (true, s)
     _ => {
@@ -901,7 +951,8 @@ fn to_str(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Str) {
 }
 
 fn to_int(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Int) {
-  let v = untag(v0)
+  let (okt, v) = untag(v0, st)
+  if !okt || is_null(v) { return (false, 0) }
   if let Some(n) = value_to_int(v) {
     return (true, n)
   }
@@ -910,7 +961,8 @@ fn to_int(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Int) {
 }
 
 fn to_float(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Float) {
-  let v = untag(v0)
+  let (okt, v) = untag(v0, st)
+  if !okt || is_null(v) { return (false, 0.0) }
   match v {
     cbor.Value.Float(f) => (true, f)
     _ => {
@@ -924,7 +976,8 @@ fn to_float(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Float) {
 }
 
 fn to_bool(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bool) {
-  let v = untag(v0)
+  let (okt, v) = untag(v0, st)
+  if !okt || is_null(v) { return (false, false) }
   match v {
     cbor.Value.Bool(b) => (true, b)
     _ => {
@@ -935,9 +988,27 @@ fn to_bool(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bool) {
 }
 
 fn to_bytes(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bytes) {
-  let v = untag(v0)
+  let (okt, v) = untag(v0, st)
+  if !okt || is_null(v) { return (false, b"") }
   match v {
     cbor.Value.ByteString(b) => (true, b)
+    cbor.Value.Array(xs) => {
+      // an array of small integers is a []byte too, as fxamacker reads it
+      var out = BytesBuilder.new()
+      var good = true
+      for x in xs {
+        let (okx, n) = to_int(x, st)
+        if okx && n >= 0 && n <= 255 {
+          out.write_byte(UInt8(n))
+        } else {
+          if okx {
+            mismatch(st, "uint8", x)
+          }
+          good = false
+        }
+      }
+      (good, out.freeze())
+    }
     _ => {
       mismatch(st, "[]uint8", v)
       (false, b"")
@@ -946,7 +1017,8 @@ fn to_bytes(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Bytes) {
 }
 
 fn items(v0: cbor.Value, want: Str, var st: cbor.Unm) -> (Bool, List[cbor.Value]) {
-  let v = untag(v0)
+  let (okt, v) = untag(v0, st)
+  if !okt { return (false, []) }
   match v {
     cbor.Value.Array(xs) => (true, xs)
     _ => {
@@ -957,7 +1029,8 @@ fn items(v0: cbor.Value, want: Str, var st: cbor.Unm) -> (Bool, List[cbor.Value]
 }
 
 fn pairs(v0: cbor.Value, want: Str, var st: cbor.Unm) -> (Bool, List[(cbor.Value, cbor.Value)]) {
-  let v = untag(v0)
+  let (okt, v) = untag(v0, st)
+  if !okt { return (false, []) }
   match v {
     cbor.Value.Map(ps) => (true, ps)
     _ => {

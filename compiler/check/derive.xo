@@ -1156,7 +1156,7 @@ fn (var c: Checker) cbor_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
         return Some((h, "None", e))
       }
       if path.len() == 1 && args.len() == 1 && n == "List" {
-        let (inner, _, e2) = c.cbor_reader(args[0], sp, e, done) ?? return None
+        let (inner, izero, e2) = c.cbor_reader(args[0], sp, e, done) ?? return None
         e = e2
         if !done.contains(h) {
           done[h] = true
@@ -1167,7 +1167,7 @@ fn (var c: Checker) cbor_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
           e.ln("  if !ok { return (false, out) }", sp)
           e.ln("  for it in its {", sp)
           e.ln("    let (ok2, v) = ${inner}(it, st)", sp)
-          e.ln("    if ok2 { out.push(v) }", sp)
+          e.ln("    out.push(if ok2 { v } else { ${izero} })", sp)
           e.ln("  }", sp)
           e.ln("  (true, out)", sp)
           e.ln("}", sp)
@@ -1175,7 +1175,7 @@ fn (var c: Checker) cbor_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
         return Some((h, "[]", e))
       }
       if path.len() == 1 && args.len() == 2 && n == "Map" {
-        let (inner, _, e2) = c.cbor_reader(args[1], sp, e, done) ?? return None
+        let (inner, izero, e2) = c.cbor_reader(args[1], sp, e, done) ?? return None
         e = e2
         if !done.contains(h) {
           done[h] = true
@@ -1188,7 +1188,7 @@ fn (var c: Checker) cbor_reader(t: parser.Type, sp: Span, em: Emit, var done: Ma
           e.ln("    let (okk, key) = cbor.to_str(k, st)", sp)
           e.ln("    if !okk { continue }", sp)
           e.ln("    let (ok2, val) = ${inner}(v, st)", sp)
-          e.ln("    if ok2 { out[key] = val }", sp)
+          e.ln("    out[key] = if ok2 { val } else { ${izero} }", sp)
           e.ln("  }", sp)
           e.ln("  (true, out)", sp)
           e.ln("}", sp)
@@ -1361,6 +1361,11 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   var decls: List[Str] = []
   var arms: List[Str] = []
   var puts: List[Str] = []
+  var exact: List[Str] = []
+  var fold: List[Str] = []
+  var iarms: List[Str] = []
+  var seen_decls: List[Str] = []
+  var nfound = 0
   var ok = true
   for fl in sd.fields {
     let f = text(fl.name.name)
@@ -1381,7 +1386,6 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
     }
     let tx = yaml_type_text(fl.typ) ?? "Str"
     decls.push("  var f_${f}: ${tx} = base.${f}")
-    var keytest = ""
     var keyval = ""
     if co.keyasint {
       let ki = Int.parse(co.key) ?? {
@@ -1389,15 +1393,20 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
         ok = false
         continue
       }
-      keytest = "ki == Some(${ki})"
       keyval = "cbor.from_int(${ki})"
+      iarms.push("      ${if iarms.is_empty() { "" } else { "else " }}if i == ${ki} { idx = ${nfound} }")
     } else {
-      keytest = "kl == ${quote_str(co.key.to_lower())}"
       keyval = "cbor.Value.TextString(s: ${quote_str(co.key)})"
     }
-    arms.push("    ${if arms.is_empty() { "" } else { "} else " }}if ${keytest} {")
+    // fxamacker matches a key's text exactly first (a keyasint field's text is
+    // the number), then ignoring case; the first key to reach a field wins
+    exact.push("${if exact.is_empty() { "" } else { "else " }}if s == ${quote_str(co.key)} { idx = ${nfound} }")
+    fold.push("${if fold.is_empty() { "" } else { "else " }}if sl == ${quote_str(co.key.to_lower())} { idx = ${nfound} }")
+    seen_decls.push("  var seen_${nfound} = false")
+    arms.push("    ${if arms.is_empty() { "" } else { "} else " }}if idx == ${nfound} {")
     arms.push("      let (ok2, x) = ${rd}(v, st)")
     arms.push("      if ok2 { f_${f} = x }")
+    nfound += 1
     var line = "  ps.push((${keyval}, ${wr}(v.${f})))"
     if co.omit {
       let zt = cbor_empty_test(tx, f)
@@ -1422,15 +1431,36 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   for l in decls {
     e.ln(l, sp)
   }
+  for l in seen_decls {
+    e.ln(l, sp)
+  }
   e.ln("  for (k, v) in ps {", sp)
-  e.ln("    let ki = cbor.key_int(k)", sp)
-  e.ln("    let kl = (cbor.key_text(k) ?? \"\").to_lower()", sp)
+  e.ln("    var idx = -1", sp)
+  e.ln("    if let Some(s) = cbor.key_text(k) {", sp)
+  e.ln("      let sl = s.to_lower()", sp)
+  e.ln("      ${exact.join(" ")}${if exact.is_empty() { "" } else { " else " }}{", sp)
+  e.ln("        ${fold.join(" ")}", sp)
+  e.ln("      }", sp)
+  if iarms.is_empty() {
+    e.ln("    }", sp)
+  } else {
+    e.ln("    } else if let Some(i) = cbor.key_int(k) {", sp)
+    e.ln("      ${iarms.join(" ")}", sp)
+    e.ln("    }", sp)
+  }
+  e.ln("    if idx < 0 {", sp)
+  e.ln("      cbor.unknown_key(st, ${quote_str(n)}, k)", sp)
+  e.ln("      continue", sp)
+  e.ln("    }", sp)
+  for j in 0..seen_decls.len() {
+    e.ln("    if idx == ${j} { if seen_${j} { continue }; seen_${j} = true }", sp)
+  }
   for l in arms {
     e.ln(l, sp)
   }
-  e.ln("    ${if arms.is_empty() { "{" } else { "} else {" }}", sp)
-  e.ln("      cbor.unknown_key(st, ${quote_str(n)}, k)", sp)
-  e.ln("    }", sp)
+  if !arms.is_empty() {
+    e.ln("    }", sp)
+  }
   e.ln("  }", sp)
   e.ln("  (true, ${n}{${inits.join(", ")}})", sp)
   e.ln("}", sp)

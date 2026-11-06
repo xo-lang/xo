@@ -23,6 +23,46 @@ type cborRef struct {
 
 // cborOracle runs the oracle over the inputs (hex a line).
 func cborOracle(inputs [][]byte) []cborRef {
+	return cborOracleRun(inputs)
+}
+
+// cborTypedRef is what the oracle makes of one input decoded into the typed
+// struct and marshaled again (decision 0527).
+type cborTypedRef struct {
+	Err bool   `json:"err"`
+	Out string `json:"out"`
+}
+
+func cborTypedOracle(inputs [][]byte) []cborTypedRef {
+	var in bytes.Buffer
+	for _, b := range inputs {
+		in.WriteString(hex.EncodeToString(b))
+		in.WriteByte('\n')
+	}
+	cmd := exec.Command("go", "run", ".", "typed")
+	cmd.Dir = filepath.Join("internal", "stdtest", "cborref")
+	cmd.Stdin = &in
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stdcorpus: the cbor oracle (typed) failed: %v\n", err)
+		os.Exit(1)
+	}
+	var refs []cborTypedRef
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		var r cborTypedRef
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			panic(err)
+		}
+		refs = append(refs, r)
+	}
+	if len(refs) != len(inputs) {
+		panic("cbor typed oracle: wrong number of answers")
+	}
+	return refs
+}
+
+func cborOracleRun(inputs [][]byte) []cborRef {
 	var in bytes.Buffer
 	for _, b := range inputs {
 		in.WriteString(hex.EncodeToString(b))
@@ -126,6 +166,196 @@ func cborMutate(r *rand.Rand, b []byte) []byte {
 	return out
 }
 
+// ---- derive Cbor (decision 0527): decode into a struct and marshal it again ----
+
+func cbHead(major byte, n uint64) []byte {
+	switch {
+	case n < 24:
+		return []byte{major<<5 | byte(n)}
+	case n < 1<<8:
+		return []byte{major<<5 | 24, byte(n)}
+	case n < 1<<16:
+		return []byte{major<<5 | 25, byte(n >> 8), byte(n)}
+	case n < 1<<32:
+		return []byte{major<<5 | 26, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}
+	}
+	b := []byte{major<<5 | 27}
+	for i := 7; i >= 0; i-- {
+		b = append(b, byte(n>>(8*uint(i))))
+	}
+	return b
+}
+
+func cbInt(n int64) []byte {
+	if n >= 0 {
+		return cbHead(0, uint64(n))
+	}
+	return cbHead(1, uint64(-1-n))
+}
+func cbText(s string) []byte  { return append(cbHead(3, uint64(len(s))), s...) }
+func cbBytes(s string) []byte { return append(cbHead(2, uint64(len(s))), s...) }
+func cbArr(items ...[]byte) []byte {
+	b := cbHead(4, uint64(len(items)))
+	for _, it := range items {
+		b = append(b, it...)
+	}
+	return b
+}
+func cbMap(kv ...[]byte) []byte {
+	b := cbHead(5, uint64(len(kv)/2))
+	for _, it := range kv {
+		b = append(b, it...)
+	}
+	return b
+}
+
+// cbValue is a random item: scalars of every kind, small arrays and maps,
+// tags, null.
+func cbValue(r *rand.Rand, depth int) []byte {
+	n := 11
+	if depth >= 2 {
+		n = 8
+	}
+	switch r.Intn(n) {
+	case 0:
+		return cbInt(int64(r.Intn(40)) - 5)
+	case 1:
+		return cbInt(r.Int63() >> uint(r.Intn(62)))
+	case 2:
+		return cbText([]string{"", "a", "Ann", "z\u00e9"}[r.Intn(4)])
+	case 3:
+		return cbBytes([]string{"", "ab", "\x00\xff"}[r.Intn(3)])
+	case 4:
+		return []byte{0xf4 + byte(r.Intn(2))}
+	case 5:
+		return []byte{0xf6}
+	case 6:
+		return []byte{0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0} // 1.5
+	case 7:
+		return []byte{0xf9, 0x3c, 0x00} // 1.0 as a half
+	case 8:
+		var items [][]byte
+		for i := r.Intn(4); i > 0; i-- {
+			items = append(items, cbValue(r, depth+1))
+		}
+		return cbArr(items...)
+	case 9:
+		var kv [][]byte
+		for i := r.Intn(3); i > 0; i-- {
+			kv = append(kv, cbText([]string{"a", "b", "c"}[r.Intn(3)]), cbValue(r, depth+1))
+		}
+		return cbMap(kv...)
+	}
+	return append(cbHead(6, uint64(r.Intn(3)+1)), cbValue(r, depth+1)...)
+}
+
+func cbAddr(r *rand.Rand) []byte {
+	if r.Intn(5) == 0 {
+		return cbValue(r, 1)
+	}
+	var kv [][]byte
+	for _, k := range []string{"city", "zip", "City", "other"} {
+		if r.Intn(2) == 0 {
+			kv = append(kv, cbText(k), cbValue(r, 2))
+		}
+	}
+	return cbMap(kv...)
+}
+
+func cborTypedInputs(r *rand.Rand, n int) [][]byte {
+	keys := []string{"name", "Name", "NAME", "tags", "addr", "ratio", "ok", "raw", "attrs", "zzz", "skip", "Skip"}
+	var out [][]byte
+	for i := 0; i < n; i++ {
+		var kv [][]byte
+		for _, k := range keys {
+			if r.Intn(3) != 0 {
+				continue
+			}
+			var v []byte
+			if k == "addr" && r.Intn(2) == 0 {
+				v = cbAddr(r)
+			} else if k == "name" && r.Intn(2) == 0 {
+				v = cbText("Ann")
+			} else if k == "tags" && r.Intn(2) == 0 {
+				v = cbArr(cbText("x"), cbText("y"))
+			} else if k == "attrs" && r.Intn(2) == 0 {
+				v = cbMap(cbText("a"), cbInt(1), cbText("b"), cbInt(-2))
+			} else {
+				v = cbValue(r, 0)
+			}
+			kv = append(kv, cbText(k), v)
+		}
+		if r.Intn(3) == 0 {
+			kv = append(kv, cbInt(7), cbValue(r, 1))
+		}
+		if r.Intn(8) == 0 {
+			kv = append(kv, cbText("7"), cbValue(r, 1))
+		}
+		// shuffle the pairs
+		for j := len(kv)/2 - 1; j > 0; j-- {
+			k := r.Intn(j + 1)
+			kv[2*j], kv[2*k] = kv[2*k], kv[2*j]
+			kv[2*j+1], kv[2*k+1] = kv[2*k+1], kv[2*j+1]
+		}
+		in := cbMap(kv...)
+		switch r.Intn(12) {
+		case 0:
+			in = cbValue(r, 0)
+		case 1:
+			in = cborMutate(r, in)
+		}
+		out = append(out, in)
+	}
+	return out
+}
+
+const cborTypedXo = `
+struct Addr {
+  city: Str
+  zip: Int
+} derive Cbor
+
+struct Person {
+  name: Str
+  age cbor "7,keyasint": Int
+  tags as "tags,omitempty": List[Str]
+  addr: Addr?
+  ratio: Float
+  ok: Bool
+  raw: Bytes
+  attrs: Map[Str, Int]
+  skip as "-": Str
+} derive Cbor
+
+test "unmarshal and marshal into a struct agree with the oracle" {
+  var bad: List[Str] = []
+  for (data, err, out) in TYPED {
+    match cbor.unmarshal[Person](data) {
+      Ok(p) => {
+        if err {
+          bad.push("accepted " + data.to_hex())
+        } else {
+          match cbor.marshal(p) {
+            Ok(b) => {
+              if b.to_hex() != out {
+                bad.push("marshal " + data.to_hex() + ": " + b.to_hex() + " want " + out)
+              }
+            }
+            Err(e) => bad.push("marshal failed " + data.to_hex() + ": " + e.display())
+          }
+        }
+      }
+      Err(_) => {
+        if !err {
+          bad.push("refused " + data.to_hex())
+        }
+      }
+    }
+  }
+  expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
+}
+`
+
 func cborCorpus() string {
 	var inputs [][]byte
 	add := func(h string) {
@@ -157,6 +387,14 @@ func cborCorpus() string {
 		fmt.Fprintf(&o, "  (%s, %v, %s, %s, %s),\n", xbytes(in), rf.WF, xq(rf.Diag), xq(rf.Canon), xq(rf.Dup))
 	}
 	o.WriteString("]\n")
+	tin := cborTypedInputs(rand.New(rand.NewSource(7)), 800)
+	trefs := cborTypedOracle(tin)
+	o.WriteString("\n/// (CBOR bytes, decoding into Person fails, the deterministic marshal of the result in hex)\nconst TYPED: List[(Bytes, Bool, Str)] = [\n")
+	for i, in := range tin {
+		fmt.Fprintf(&o, "  (%s, %v, %s),\n", xbytes(in), trefs[i].Err, xq(trefs[i].Out))
+	}
+	o.WriteString("]\n")
+	o.WriteString(cborTypedXo)
 	o.WriteString(cborCheckXo)
 	o.WriteString(cborAPITests)
 	return o.String()
