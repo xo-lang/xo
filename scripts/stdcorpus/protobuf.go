@@ -433,6 +433,20 @@ func protobufCorpus() string {
 		}
 		add("ounmsg", b)
 	}
+	for _, v := range []uint64{0, 1, 255, 1 << 31, 1<<32 - 1} {
+		cases = append(cases, protoCase{"appfixed32 " + fmt.Sprint(v), nil})
+	}
+	for _, v := range []uint64{0, 1, 1 << 32, 1<<63 + 5, 1<<64 - 1} {
+		cases = append(cases, protoCase{"appfixed64 " + fmt.Sprint(v), nil})
+	}
+	for _, nw := range [][2]int{{1, 0}, {2, 2}, {15, 5}, {16, 1}, {2047, 2}, {536870911, 0}, {19000, 2}} {
+		cases = append(cases, protoCase{fmt.Sprintf("apptag %d:%d", nw[0], nw[1]), nil})
+	}
+	for i := 0; i < 20; i++ {
+		p := make([]byte, tr.Intn(300))
+		tr.Read(p)
+		add("appbytes", p)
+	}
 	for _, v := range []uint64{0, 1, 127, 128, 255, 300, 16383, 16384, 1<<32 - 1, 1 << 32, 1<<63 - 1, 1 << 63, 1<<64 - 1} {
 		cases = append(cases, protoCase{"encvarint " + fmt.Sprint(v), nil})
 	}
@@ -546,6 +560,19 @@ fn run(op: Str, data: Bytes) -> Str {
     let v = UInt64.from_bits(ubits_of(data))
     let b = protobuf.append_varint(b"", v)
     return "ok ${b.to_hex()} ${protobuf.size_varint(v)}"
+  }
+  if op == "appfixed32" {
+    return "ok ${protobuf.append_fixed32(b"", UInt32.wrapping_from(num_of(data))).to_hex()} 0"
+  }
+  if op == "appfixed64" {
+    return "ok ${protobuf.append_fixed64(b"", UInt64.from_bits(ubits_of(data))).to_hex()} 0"
+  }
+  if op == "apptag" {
+    let p = data.to_str_lossy().split(":")
+    return "ok ${protobuf.append_tag(b"", Int.parse(p[0]) ?? 0, Int.parse(p[1]) ?? 0).to_hex()} 0"
+  }
+  if op == "appbytes" {
+    return "ok ${protobuf.append_bytes(b"", data).to_hex()} 0"
   }
   if op == "zigzag" {
     let z = protobuf.encode_zigzag(num_of(data))

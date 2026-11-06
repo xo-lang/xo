@@ -324,6 +324,20 @@ func main() {
 		case "encvarint":
 			u, _ := strconv.ParseUint(f[1], 10, 64)
 			a = ans{V: hex.EncodeToString(protowire.AppendVarint(nil, u)), N: protowire.SizeVarint(u)}
+		case "appfixed32":
+			u, _ := strconv.ParseUint(f[1], 10, 32)
+			a = ans{V: hex.EncodeToString(protowire.AppendFixed32(nil, uint32(u)))}
+		case "appfixed64":
+			u, _ := strconv.ParseUint(f[1], 10, 64)
+			a = ans{V: hex.EncodeToString(protowire.AppendFixed64(nil, u))}
+		case "apptag":
+			// apptag NUM:WIRE
+			p := strings.SplitN(f[1], ":", 2)
+			n, _ := strconv.ParseInt(p[0], 10, 32)
+			w, _ := strconv.ParseInt(p[1], 10, 32)
+			a = ans{V: hex.EncodeToString(protowire.AppendTag(nil, protowire.Number(n), protowire.Type(w)))}
+		case "appbytes":
+			a = ans{V: hex.EncodeToString(protowire.AppendBytes(nil, b))}
 		case "zigzag":
 			i, _ := strconv.ParseInt(f[1], 10, 64)
 			z := protowire.EncodeZigZag(i)
