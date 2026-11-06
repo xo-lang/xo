@@ -115,6 +115,10 @@ func parsePattern(p string) (string, []routeSeg) {
 			}
 			continue
 		}
+		// a literal segment is unescaped, as Go's ServeMux does
+		if u, err := url.PathUnescape(s); err == nil {
+			s = u
+		}
 		segs = append(segs, routeSeg{lit: s})
 	}
 	return method, segs

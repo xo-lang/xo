@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+GET /x HTTP/1.1
+User-Agent: Go-http-client/1.1
+X-Ms-Meta-Project: a
+Accept-Encoding: gzip
+--
+GET /x HTTP/1.1
+User-Agent: Go-http-client/1.1
+X-Ms-Meta-Name: b
+Accept-Encoding: gzip
+--
+GET /x HTTP/1.1
+User-Agent: Go-http-client/1.1
+X-Plain: c
+x-ms-meta-project: a
+Accept-Encoding: gzip
+--
+--- stderr

@@ -1,0 +1,43 @@
+use std/http
+
+// The client writes header names as the caller stored them (Go: a Header map's
+// keys go out as they are; only Set and Add canonicalize).
+fn probe(os: Os, l: Listener, req: http.Request) -> Str {
+  scope s {
+    let t = s.spawn(fn() -> Str {
+      let sc = l.accept().or_fault("accept")
+      var buf = b""
+      while !buf.to_str_lossy().contains("\r\n\r\n") {
+        match sc.read(4096).or_fault("read") {
+          Some(b) => buf = buf + b
+          None => break
+        }
+      }
+      sc.write(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").or_fault("write")
+      sc.close()
+      buf.to_str_lossy()
+    })
+    let c = http.client(os.net)
+    c.send(req).ignore_err("wire probe")
+    return t.await
+  }
+}
+
+fn show(os: Os, text: Str) {
+  for line in text.split("\r\n") {
+    if line != "" && !line.starts_with("Host:") {
+      os.stdio.println(line)
+    }
+  }
+  os.stdio.println("--")
+}
+
+fn main(os: Os) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let url = "http://${l.addr()}/x"
+  // new_request and with_header canonicalize (Go's Header.Set)
+  show(os, probe(os, l, http.new_request("GET", url, {"x-ms-meta-project": "a"})))
+  show(os, probe(os, l, http.new_request("GET", url).with_header("x-ms-meta-name", "b")))
+  // a headers map assigned directly goes out as stored (Go's map assignment)
+  show(os, probe(os, l, http.new_request("GET", url) with {headers: {"x-ms-meta-project": "a", "X-Plain": "c"}}))
+}

@@ -452,13 +452,15 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 		}
 	}
 	for k, v := range Map_All(req.F_headers) {
+		// the key as the caller stored it (Go writes a Header map's keys as
+		// they are; only Set and Add canonicalize)
 		if len(req.XFields) == 0 {
-			hr.Header.Set(k, v)
+			hr.Header[k] = []string{v}
 			continue
 		}
-		hr.Header.Del(k)
+		delete(hr.Header, k)
 		for _, x := range valuesOf(req.F_headers, req.XFields, k) {
-			hr.Header.Add(k, x)
+			hr.Header[k] = append(hr.Header[k], x)
 		}
 	}
 	tr := sharedTransport

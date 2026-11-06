@@ -102,3 +102,4 @@ http_raw_path # the wasm backend does not support the network (`rt.net_listen`):
 http_proxy_body_next_race # the wasm backend does not support the network
 http_expect_continue # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_stop_keepalive # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_raw_header_names # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets

@@ -1,5 +1,27 @@
 # std/http changes
 
+## 2026-11-06: behavior: the client sends header names as the caller stored them
+
+- Kind: behavior
+- Commit: this push
+- Found by: aws-19 (Azure Storage): `x-ms-meta-project` went out as `X-Ms-Meta-Project`, so Azure stored the metadata name `Project`
+- Go reference: net/http writes a Header map's keys as they are; only Header.Set and Add canonicalize
+- Test: internal/llvm/testdata/golden/http_client_raw_header_names (the request head on the wire, native, LLVM and Go)
+- Shipped in: not yet released
+
+`Client.send` and `Client.open` no longer canonicalize the names of `req.headers`. `http.new_request(..., headers)` and `req.with_header` still canonicalize (Go's Header.Set); to send a non-canonical name, assign the map directly: `req with {headers: {"x-ms-meta-project": "a"}}`. The redirect rule that drops Authorization, Cookie and the like still matches names in canonical form, as Go's shouldCopyHeaderOnRedirect.
+
+## 2026-11-06: fix: FakeNet and Router match escaped paths on their unescaped segments
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19 (Azure Storage blob names with a slash, a space or a non-ASCII character)
+- Go reference: net/http ServeMux (go1.22 patterns): the path is split on its escaped slashes, each segment unescaped, and a pattern's literal segments are unescaped too
+- Test: std/native/http_test.xo "FakeNet matches a pattern on the escaped path's unescaped segments"
+- Shipped in: not yet released
+
+A client request's `path` is decoded, so `/obj/x%2Fy` split into two segments and matched nothing. FakeNet now splits the escaped path (`raw_path` when set) before unescaping each segment, so `{name}` binds `x/y`; a pattern written `/dir/a%20b/leaf` matches the segment `a b` (the same unescaping now applies to a Router's patterns).
+
 ## 2026-11-05: fix: a native server's answers after a stop say Connection: close
 
 - Kind: fix

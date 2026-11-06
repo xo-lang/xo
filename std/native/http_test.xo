@@ -1777,3 +1777,26 @@ test "escaped_path, raw_query, host and tls of a request built as a struct liter
   expect(req.host()) == ""
   expect(req.tls()) == false
 }
+
+test "FakeNet matches a pattern on the escaped path's unescaped segments" {
+  let hits = Mutex[List[Str]].new([])
+  os.net.handle("GET /obj/{name}", fn(r: http.Request) -> http.Response {
+    hits.with(fn(var h: List[Str]) { h.push(r.param("name")) })
+    http.text(200, "ok")
+  })
+  os.net.handle("GET /dir/a%20b/leaf", fn(_r: http.Request) -> http.Response { http.text(200, "space") })
+  let c = http.client(os.net)
+  for (url, want) in [
+    ("http://h.test/obj/x%2Fy", "x/y"),
+    ("http://h.test/obj/a%20b", "a b"),
+    ("http://h.test/obj/%E5%90%8D", "名"),
+    ("http://h.test/obj/plain", "plain"),
+  ] {
+    let resp = c.send(http.new_request("GET", url)).or_fault("send ${url}")
+    expect(resp.status) == 200
+    expect(hits.with_read(fn(h: List[Str]) -> Str { h[h.len() - 1] })) == want
+  }
+  expect(c.send(http.new_request("GET", "http://h.test/dir/a%20b/leaf")).or_fault("space").status) == 200
+  // an escaped slash is one segment, not two
+  expect(c.send(http.new_request("GET", "http://h.test/obj/x%2Fy/z")).is_err()) == true
+}

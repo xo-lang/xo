@@ -390,7 +390,8 @@ fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
       }
       continue
     }
-    segs.push(Seg{lit: s, param: "", is_int: false, rest: false})
+    // a literal segment is unescaped, as Go's ServeMux does: `a%20b` matches the segment `a b`
+    segs.push(Seg{lit: http1.path_unescape(s), param: "", is_int: false, rest: false})
   }
   (method, segs)
 }
@@ -4094,7 +4095,9 @@ fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])
   }
   let (_, segs) = parse_pattern(testworld.fake_text(kind, i, 2))
   let route = Route{method: "", segs: segs, h: fn(_q: Request) -> http.Response { empty(404) }}
-  let parts = split_path(req.path)
+  // the escaped path, split before unescaping (Go's ServeMux): a client
+  // request's path is decoded, so an escaped slash would split it
+  let parts = split_path(http1.escaped_path(req.path, req.raw_path))
   var uparts: List[Str] = List.with_capacity(parts.len())
   for p in parts {
     uparts.push(http1.path_unescape(p))
