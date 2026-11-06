@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-11-06: feature: the memory driver takes CREATE INDEX and DROP INDEX
+
+- Kind: feature, perf
+- Commit: this push
+- Found by: the sat64 profile of stability/notes on the sql store (2026-11-06: mem_select 23% of CPU, GET /notes' `WHERE owner = $1` scanned every note under the Db lock; owner is not UNIQUE, so decision 0528's index did not apply)
+- Go reference: none (database/sql has no engine; PostgreSQL's CREATE INDEX syntax, SQLite's non unique index as the model)
+- Test: std/native/sql_test.xo (an index's rows and order against a scan through inserts, updates to and from NULL, deletes and compaction; IF NOT EXISTS, unnamed, DROP INDEX and each error); golden native_sql_index (the same texts on the Go backend)
+- Timing: host 1 (linux/arm64), 2026-11-06, against the parent f04a8b4ca. stability/notes harness load sat64, 3 rounds: xo 38.3 cpu us/req (37.4 to 39.0) against 36.6 (36.2 to 37.8), ranges overlap; 50.3k req/s against 31.8k (29.5k to 50.9k, a noisy parent). bench/perf/sqlmem none 200000 (the insert path, with the UNIQUE index kept apart from the CREATE INDEX lists and an ASCII scan of names in lex): wall 1.000 (0.985 to 1.011, n=5). bench/perf/sqlmem owner_idx against owner (20,000 rows, 100 owners): 275 against 4358 ms median, 15.8x (bench/results/sqlmem-create-index-2026-11-06.md)
+- Shipped in: not yet released
+
+`CREATE INDEX [IF NOT EXISTS] [name] ON table (column)` gives one column an equality index; a `WHERE column = value` (or an AND with one) on an INT or TEXT column then visits only the rows holding the value, in the scan's order, and gives the scan's rows and errors. A UNIQUE column's one row index is still preferred. Unnamed, the index is `table_column_idx`, as in PostgreSQL. `DROP INDEX [IF EXISTS] name` removes it. `CREATE UNIQUE INDEX` and an index on several columns are refused with a syntax error. The Go backend's driver accepts the same statements with the same errors and scans. A value held by more than a quarter of the rows is scanned instead. stability/notes does not index `notes.owner`: its load has one owner, so the index selects every row (harness load sat64 on host 1, 2026-11-06: 36.8k against 44.6k req/s without it, peak RSS 43 against 31 MB).
+
 ## 2026-11-06: feature: drivers carry their effects (Driver[fx], Db[fx])
 
 - Kind: feature (API change)

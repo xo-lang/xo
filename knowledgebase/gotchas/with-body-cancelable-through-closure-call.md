@@ -40,4 +40,12 @@ map_err, List.map_sized and sort_in_place_by, and the Str and Bytes
 `*_where` and `map_runes` methods (fn_param_only), and a literal handed
 to `Map.update` already counted as its own body (Builder.check), so
 std/sql's index upkeep (`t.idx.update(ci, ..., fn(var x) { ...
-x.get(0).map(fn ...) })`) no longer needs its loops.
+x.get(0).map(fn ...) })`) would no longer need its loops.
+
+Seen 2026-11-06 before that change (CREATE INDEX in the memory driver,
+decision 0528): the nested `Map.update` and `Option.map` closures in
+idx_add and idx_drop made the with bodies cancelable; the commit cost
+about 7 µs a request on stability/notes with no index in use (39.9k
+against 43.96k req/s at sat64; the A/B of the fix is stability/sqlab5).
+std/sql keeps the fix's form, `remove`, a change of the value, then
+`put`: it moves the slot list out of the map instead of copying it.

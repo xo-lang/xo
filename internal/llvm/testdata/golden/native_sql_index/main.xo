@@ -1,0 +1,57 @@
+// std/sql's in memory driver: CREATE INDEX and DROP INDEX give the same
+// rows and error texts on every backend (the native driver looks a
+// column's equality up in the index, std/rt/sqlmem.go scans).
+use std/sql
+
+fn ids(r: Result[List[sql.Row], sql.SqlErr]) -> Str {
+  match r {
+    Ok(rows) => {
+      var parts: List[Str] = []
+      for row in rows {
+        parts.push("${row.int("id").ok() ?? -1}")
+      }
+      "[${parts.join(" ")}]"
+    }
+    Err(e) => "error ${e}"
+  }
+}
+
+fn run(db: sql.Db, q: Str) -> Str uses net.dial {
+  match db.exec(q) {
+    Ok(_) => "ok"
+    Err(e) => "error ${e}"
+  }
+}
+
+fn main(os: Os) uses stdio, net.dial {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT); CREATE INDEX t_n ON t (n)").or_fault("schema")
+  for i in 0..12 {
+    db.exec("INSERT INTO t (name, n) VALUES ($1, $2)", [sql.str("k${i}"), sql.int(i % 4)]).or_fault("insert")
+  }
+  os.stdio.println("n=1: ${ids(db.query("SELECT id FROM t WHERE n = 1"))}")
+  os.stdio.println("n=1 and id>4: ${ids(db.query("SELECT id FROM t WHERE n = $1 AND id > 4", [sql.int(1)]))}")
+  os.stdio.println("n=null: ${ids(db.query("SELECT id FROM t WHERE n = NULL"))}")
+  os.stdio.println("update: ${run(db, "UPDATE t SET n = 1 WHERE id = 1")}")
+  os.stdio.println("delete: ${run(db, "DELETE FROM t WHERE id = 6")}")
+  os.stdio.println("n=1: ${ids(db.query("SELECT id FROM t WHERE n = 1 ORDER BY id DESC"))}")
+  for q in [
+    "CREATE INDEX t_n ON t (n)",
+    "CREATE INDEX IF NOT EXISTS t_n ON t (n)",
+    "CREATE INDEX t_n2 ON t (n)",
+    "CREATE INDEX t_x ON t (nope)",
+    "CREATE INDEX t_x ON nope (n)",
+    "CREATE INDEX t_x ON t (n, name)",
+    "CREATE UNIQUE INDEX t_x ON t (n)",
+    "CREATE INDEX t_x ON t (id) garbage",
+    "DROP INDEX t_n garbage",
+    "DROP INDEX t_n",
+    "DROP INDEX t_n",
+    "DROP INDEX IF EXISTS t_n",
+    "CREATE INDEX ON t (n)",
+    "CREATE INDEX t_n_idx ON t (name)",
+    "DROP INDEX t_n_idx",
+  ] {
+    os.stdio.println("${q}: ${run(db, q)}")
+  }
+  os.stdio.println("n=2: ${ids(db.query("SELECT id FROM t WHERE n = 2"))}")
+}

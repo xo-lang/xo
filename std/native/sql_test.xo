@@ -153,3 +153,76 @@ test "an INSERT and a DELETE under the Db's lock stay fast as the table grows" {
   }
   expect(db.query("SELECT id FROM t WHERE n = 3")?.len()) == 1800
 }
+
+/// The ids of each n in 0..10 and of NULL, in the rows' order.
+fn by_n(db: sql.Db) -> List[List[Int]] ! sql.SqlErr uses net.dial {
+  var out: List[List[Int]] = []
+  for v in 0..10 {
+    out.push(ids(db.query("SELECT id FROM t WHERE n = $1", [sql.int(v)])?))
+  }
+  out.push(ids(db.query("SELECT id FROM t WHERE n = $1 AND id > 5", [sql.int(3)])?))
+  out.push(ids(db.query("SELECT id FROM t WHERE n = NULL")?))
+  out
+}
+
+test "a CREATE INDEX column finds the scan's rows in the scan's order through writes and compaction" {
+  let schema = "CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT)"
+  let plain = sql.memory(schema)?
+  let db = sql.memory(schema)?
+  fill(plain, 200)?
+  fill(db, 100)?
+  // an index on rows already there, then on rows added after it
+  db.exec("CREATE INDEX t_n ON t (n)")?
+  for i in 100..200 {
+    db.exec("INSERT INTO t (name, n) VALUES ($1, $2)", [sql.str("k${i}"), sql.int(i % 10)])?
+  }
+  expect(by_n(db)?) == by_n(plain)?
+  for d in [db, plain] {
+    d.exec("UPDATE t SET n = 3 WHERE id <= 30")?
+    d.exec("UPDATE t SET n = NULL WHERE id = 40")?
+    d.exec("DELETE FROM t WHERE n = 4 OR n = 5 OR n = 6 OR n = 7 OR n = 8 OR n = 9")?
+    d.exec("INSERT INTO t (name, n) VALUES ('late', 3)")?
+  }
+  expect(by_n(db)?) == by_n(plain)?
+  expect(ids(db.query("SELECT id FROM t WHERE n = 3 ORDER BY id DESC LIMIT 2")?)) == [201, 194]
+}
+
+test "CREATE INDEX: IF NOT EXISTS, unnamed, DROP INDEX, and its errors change nothing" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT); CREATE INDEX t_n ON t (n)")?
+  fill(db, 20)?
+  expect(db.exec("CREATE INDEX t_n ON t (n)").is_err()) == true
+  db.exec("CREATE INDEX IF NOT EXISTS t_n ON t (n)")?
+  expect(db.exec("CREATE INDEX t_n2 ON t (n)").is_err()) == true
+  expect(db.exec("CREATE INDEX t_x ON t (nope)").is_err()) == true
+  expect(db.exec("CREATE INDEX t_x ON nope (n)").is_err()) == true
+  expect(db.exec("CREATE INDEX t_x ON t (n, name)").is_err()) == true
+  expect(db.exec("CREATE UNIQUE INDEX t_x ON t (n)").is_err()) == true
+  expect(db.exec("CREATE INDEX t_x ON t (id) garbage").is_err()) == true
+  expect(db.exec("DROP INDEX t_n garbage").is_err()) == true
+  expect(ids(db.query("SELECT id FROM t WHERE n = 2")?)) == [3, 13]
+  db.exec("DROP INDEX t_n")?
+  expect(db.exec("DROP INDEX t_n").is_err()) == true
+  db.exec("DROP INDEX IF EXISTS t_n")?
+  expect(ids(db.query("SELECT id FROM t WHERE n = 2")?)) == [3, 13]
+  // unnamed: table_column_idx
+  db.exec("CREATE INDEX ON t (n)")?
+  expect(db.exec("CREATE INDEX t_n_idx ON t (name)").is_err()) == true
+  db.exec("UPDATE t SET n = 2 WHERE id = 1")?
+  expect(ids(db.query("SELECT id FROM t WHERE n = 2")?)) == [1, 3, 13]
+  db.exec("DROP INDEX t_n_idx")?
+  // an index on a UNIQUE column keeps its one slot index
+  db.exec("CREATE INDEX t_name ON t (name)")?
+  expect(db.query_one("SELECT id FROM t WHERE name = 'k5'")?.int("id")?) == 6
+  db.exec("DROP INDEX t_name")?
+  expect(db.query_one("SELECT id FROM t WHERE name = 'k5'")?.int("id")?) == 6
+}
+
+test "names lex the same with ASCII and non ASCII letters, digits and underscores" {
+  let db = sql.memory("CREATE TABLE café_2 (id SERIAL, Nom_é TEXT, n9 INT)")?
+  db.exec("INSERT INTO CAFÉ_2 (nom_é, N9) VALUES ($1, 7)", [sql.str("x")])?
+  expect(db.query_one("SELECT nom_é, n9 FROM café_2 WHERE N9 = 7")?.str("nom_é")?) == "x"
+  match db.query("SELECT nom_x FROM café_2") {
+    Err(e) => expect("${e}") == "syntax error: no such column nom_x"
+    Ok(_) => expect(false) == true
+  }
+}

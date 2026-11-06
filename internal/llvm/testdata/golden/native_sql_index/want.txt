@@ -1,0 +1,25 @@
+exit 0
+--- stdout
+n=1: [2 6 10]
+n=1 and id>4: [6 10]
+n=null: []
+update: ok
+delete: ok
+n=1: [10 2 1]
+CREATE INDEX t_n ON t (n): error syntax error: index t_n already exists
+CREATE INDEX IF NOT EXISTS t_n ON t (n): ok
+CREATE INDEX t_n2 ON t (n): error syntax error: column n already has index t_n
+CREATE INDEX t_x ON t (nope): error syntax error: no such column nope
+CREATE INDEX t_x ON nope (n): error no such table: nope
+CREATE INDEX t_x ON t (n, name): error syntax error: an index on several columns is not supported
+CREATE UNIQUE INDEX t_x ON t (n): error syntax error: CREATE UNIQUE INDEX is not supported (declare the column UNIQUE)
+CREATE INDEX t_x ON t (id) garbage: error syntax error: expected end of statement, found "garbage"
+DROP INDEX t_n garbage: error syntax error: expected end of statement, found "garbage"
+DROP INDEX t_n: ok
+DROP INDEX t_n: error syntax error: no such index t_n
+DROP INDEX IF EXISTS t_n: ok
+CREATE INDEX ON t (n): ok
+CREATE INDEX t_n_idx ON t (name): error syntax error: index t_n_idx already exists
+DROP INDEX t_n_idx: ok
+n=2: [3 7 11]
+--- stderr

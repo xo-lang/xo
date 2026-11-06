@@ -82,6 +82,16 @@ columns; range or ORDER BY use of an index.
   10,000 rows), and harness load at 4000/s, notes against its twin.
 - std/changes/sql.md entry. No Go reference for the engine: Go's database/sql has no engine (SQLite's rowid and
   unique indexes are the model).
+- Extension (2026-11-06, Xo Lang 2, the lead agreeing): a non UNIQUE column gets an index only through
+  `CREATE INDEX [IF NOT EXISTS] [name] ON table (column)` (PostgreSQL's syntax, one column; `DROP INDEX`), kept as
+  each value's slots in ascending order so the rows come in the scan's order; the planner prefers a UNIQUE equality
+  and falls back to an indexed one. Indexing every INT and TEXT column instead would make every insert pay for
+  columns no query filters on (notes.body). The Go backend's driver takes the statements with the same errors and
+  scans. Found by the sat64 profile of stability/notes on the sql store (`WHERE owner = $1`, 23% of CPU in
+  mem_select). A value held by more than a quarter of the live rows is scanned instead of visited through its
+  slot list. The notes service does not declare the index: its harness load has one owner, so the index selected
+  every row and cost 0.82 of the scan's sat64 throughput and 12 MB of peak RSS (host 1, 2026-11-06); its timing row
+  is bench/perf/sqlmem's many-owner select.
 
 ## Alternatives
 

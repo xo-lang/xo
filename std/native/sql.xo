@@ -1024,6 +1024,9 @@ struct Col {
   def: sql.SqlValue = sql.SqlValue.Null
   /// The elements' kind of a KARR column.
   elem: Int = 0
+  /// Whether a CREATE INDEX is on the column (its name in the table's
+  /// Made.names, so a copy of a Col retains no name).
+  has_index: Bool = false
 }
 
 struct Table {
@@ -1038,18 +1041,82 @@ struct Table {
   /// The index of each indexed column (by position): its stored values'
   /// slots.
   idx: Map[Int, ColIdx] = {}
+  /// The CREATE INDEX columns' indexes and names, None until the first
+  /// (one field, so a table without one copies as before).
+  made: Made? = None
 }
 
-/// An equality index of a UNIQUE column (decision 0528): each stored
-/// value's slot, Integer and Text values apart (NULL is not indexed).
+/// A table's CREATE INDEX state.
+struct Made {
+  /// The indexes, apart from idx so a UNIQUE column's update builds no
+  /// slot list maps.
+  midx: Map[Int, ManyIdx] = {}
+  /// The names by column.
+  names: Map[Int, Str] = {}
+}
+
+/// Moves t's CREATE INDEX state out (made_put puts it back), so changing
+/// its maps copies none.
+fn made_take(var t: Table) -> Made {
+  let m = t.made ?? Made{}
+  t.made = None
+  m
+}
+
+fn made_put(var t: Table, m: Made) {
+  t.made = if m.names.is_empty() { None } else { Some(m) }
+}
+
+/// An equality index of a column (decision 0528), Integer and Text values
+/// apart (NULL is not indexed): a UNIQUE column's each stored value's
+/// slot, a CREATE INDEX column's each value's slots in ascending order (a
+/// scan's).
 struct ColIdx {
   ints: Map[Int, Int] = {}
   strs: Map[Str, Int] = {}
 }
 
-/// Whether a column has an index: UNIQUE (SERIAL columns are) and INT or
-/// TEXT, whose stored values are only Integer or Text, or NULL (coerce).
-fn indexed(c: Col) -> Bool { c.unique && (c.kind == KI || c.kind == KT) }
+/// A CREATE INDEX column's index: each value's slots in ascending order.
+struct ManyIdx {
+  ints: Map[Int, List[Int]] = {}
+  strs: Map[Str, List[Int]] = {}
+}
+
+/// Whether a column has an index: UNIQUE (SERIAL columns are) or a CREATE
+/// INDEX on it, and INT or TEXT, whose stored values are only Integer or
+/// Text, or NULL (coerce).
+fn indexed(c: Col) -> Bool { (c.unique || c.has_index) && (c.kind == KI || c.kind == KT) }
+
+/// Whether column c's index holds several slots per value (not UNIQUE).
+fn many(c: Col) -> Bool { !c.unique }
+
+/// Inserts slot s into the ascending list l.
+fn slot_add(var l: List[Int], s: Int) {
+  var i = l.len()
+  while i > 0 && l[i - 1] > s {
+    i -= 1
+  }
+  if i == l.len() {
+    l.push(s)
+  } else {
+    l.insert(i, s)
+  }
+}
+
+/// Takes slot s out of the ascending list l.
+fn slot_del(var l: List[Int], s: Int) {
+  var i = l.len()
+  while i > 0 {
+    i -= 1
+    if l[i] == s {
+      let _ = l.remove_at(i)
+      return
+    }
+    if l[i] < s {
+      return
+    }
+  }
+}
 
 /// Adds the row in slot to the table's indexes.
 fn idx_put(var t: Table, slot: Int) {
@@ -1059,6 +1126,10 @@ fn idx_put(var t: Table, slot: Int) {
       continue
     }
     let v = row[ci]
+    if many(c) {
+      midx_put(t, ci, v, slot)
+      continue
+    }
     t.idx.update(ci, ColIdx{}, fn(var x) {
       match v {
         Integer(n) => x.ints.put(n, slot)
@@ -1069,13 +1140,42 @@ fn idx_put(var t: Table, slot: Int) {
   }
 }
 
-/// Takes row's values out of the table's indexes.
-fn idx_drop(var t: Table, row: List[sql.SqlValue]) {
+/// The CREATE INDEX part of idx_put, apart so idx_put's UNIQUE path is
+/// the one it was before CREATE INDEX.
+fn midx_put(var t: Table, ci: Int, v: sql.SqlValue, slot: Int) {
+  var mx = made_take(t)
+  mx.midx.update(ci, ManyIdx{}, fn(var x) {
+    match v {
+      Integer(n) => {
+        var l = x.ints.remove(n) ?? []
+        slot_add(l, slot)
+        x.ints.put(n, l)
+      }
+      Text(z) => {
+        var l = x.strs.remove(z) ?? []
+        slot_add(l, slot)
+        x.strs.put(z, l)
+      }
+      _ => {}
+    }
+  })
+  made_put(t, mx)
+}
+
+/// Takes the row in slot out of the table's indexes. A slot list is
+/// removed, changed and put back, so it moves out of the map instead of
+/// being copied (gotchas/with-body-cancelable-through-closure-call.md).
+fn idx_drop(var t: Table, slot: Int) {
+  let row = t.rows[slot]
   for (ci, c) in t.cols.indexed() {
     if !indexed(c) {
       continue
     }
     let v = row[ci]
+    if many(c) {
+      midx_drop(t, ci, v, slot)
+      continue
+    }
     t.idx.update(ci, ColIdx{}, fn(var x) {
       match v {
         Integer(n) => {
@@ -1087,6 +1187,44 @@ fn idx_drop(var t: Table, row: List[sql.SqlValue]) {
         _ => {}
       }
     })
+  }
+}
+
+/// The CREATE INDEX part of idx_drop, apart so idx_drop's UNIQUE path is
+/// the one it was before CREATE INDEX.
+fn midx_drop(var t: Table, ci: Int, v: sql.SqlValue, slot: Int) {
+  var mx = made_take(t)
+  mx.midx.update(ci, ManyIdx{}, fn(var x) {
+    match v {
+      Integer(n) => {
+        var l = x.ints.remove(n) ?? []
+        slot_del(l, slot)
+        if !l.is_empty() {
+          x.ints.put(n, l)
+        }
+      }
+      Text(z) => {
+        var l = x.strs.remove(z) ?? []
+        slot_del(l, slot)
+        if !l.is_empty() {
+          x.strs.put(z, l)
+        }
+      }
+      _ => {}
+    }
+  })
+  made_put(t, mx)
+}
+
+/// The slots whose column ci holds v by the column's CREATE INDEX, in
+/// ascending order.
+fn idx_find_many(t: Table, ci: Int, v: sql.SqlValue) -> List[Int] {
+  let m = t.made ?? return []
+  let x = m.midx.get(ci) ?? return []
+  match v {
+    Integer(n) => x.ints.get(n) ?? []
+    Text(z) => x.strs.get(z) ?? []
+    _ => []
   }
 }
 
@@ -1113,6 +1251,9 @@ fn compact(var t: Table) {
   t.rows = kept
   t.dead = 0
   t.idx = {}
+  var mx = made_take(t)
+  mx.midx = {}
+  made_put(t, mx)
   for slot in 0..t.rows.len() {
     idx_put(t, slot)
   }
@@ -1177,14 +1318,30 @@ fn candidates(t: Table, w: Node?, args: List[sql.SqlValue]) -> List[Int]? {
   if !eq_leaves(t, n, args, leaves) {
     return None
   }
+  // a UNIQUE column's one slot first, then a CREATE INDEX column's
   for (ci, v) in leaves {
-    if indexed(t.cols[ci]) {
+    if indexed(t.cols[ci]) && !many(t.cols[ci]) {
       if v is Null {
         // `= NULL` is never true
         return Some([])
       }
       let s = idx_find(t, ci, v)
       return Some(if s >= 0 { [s] } else { [] })
+    }
+  }
+  for (ci, v) in leaves {
+    if indexed(t.cols[ci]) {
+      if v is Null {
+        return Some([])
+      }
+      let ss = idx_find_many(t, ci, v)
+      // a value most rows hold: scanning in place costs less than
+      // visiting through the slot list (stability/notes with one owner,
+      // 2026-11-06: the index's sat64 was 0.82 of the scan's)
+      if ss.len() * 4 > t.rows.len() - t.dead {
+        return None
+      }
+      return Some(ss)
     }
   }
   None
@@ -1264,6 +1421,17 @@ fn lex(q: Str) -> List[Tok] ! sql.SqlErr {
     } else if c.is_letter() || c == '_' {
       var j = i
       while j < n {
+        // ASCII without decoding: a statement's names and keywords are
+        // (the decode and is_ident_rune call cost 2% of an INSERT when
+        // the inliner left it out of lex, 2026-11-06)
+        let x = b[j]
+        if x < 128 {
+          if !((x >= 97 && x <= 122) || (x >= 65 && x <= 90) || (x >= 48 && x <= 57) || x == 95) {
+            break
+          }
+          j += 1
+          continue
+        }
         let (d, ds) = rune_at(b, j)
         if !is_ident_rune(d) {
           break
@@ -1998,6 +2166,9 @@ fn table_for(tables: Map[Str, Table], name: Str) -> Table ! sql.SqlErr {
 
 fn mem_create(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr {
   p.i += 1
+  if p.is_kw("index") || p.is_kw("unique") {
+    return mem_create_index(tables, p)
+  }
   p.expect_kw("table")?
   var if_not = false
   if p.accept_kw("if") {
@@ -2073,6 +2244,108 @@ fn mem_create(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr {
   tables.put(name, t)
 }
 
+/// The table and column of the index named name, None when no table has
+/// it.
+fn index_at(tables: Map[Str, Table], name: Str) -> (Str, Int)? {
+  for (tn, t) in tables {
+    let m = t.made ?? continue
+    for (ci, n) in m.names {
+      if n == name {
+        return Some((tn, ci))
+      }
+    }
+  }
+  None
+}
+
+/// `CREATE INDEX [IF NOT EXISTS] [name] ON table (column)`: an equality
+/// index of one column that WHERE `column = value` uses, on an INT or TEXT
+/// column (on another kind it is kept by name and not used); unnamed, it
+/// is table_column_idx, as in PostgreSQL. A UNIQUE column has one already.
+fn mem_create_index(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr {
+  if p.is_kw("unique") {
+    return Err(syntax("CREATE UNIQUE INDEX is not supported (declare the column UNIQUE)"))
+  }
+  p.i += 1
+  var if_not = false
+  if p.accept_kw("if") {
+    p.expect_kw("not")?
+    p.expect_kw("exists")?
+    if_not = true
+  }
+  var name = ""
+  if !p.is_kw("on") {
+    name = p.ident("an index name")?
+  }
+  p.expect_kw("on")?
+  let tn = p.ident("a table name")?
+  p.expect_sym("(")?
+  let cn = p.ident("a column name")?
+  if p.is_sym(",") {
+    return Err(syntax("an index on several columns is not supported"))
+  }
+  p.expect_sym(")")?
+  stmt_end(p)?
+  if name == "" {
+    name = "${tn}_${cn}_idx"
+  }
+  if index_at(tables, name) is Some(_) {
+    if if_not {
+      return Ok(())
+    }
+    return Err(syntax("index ${name} already exists"))
+  }
+  var t = table_for(tables, tn)?
+  let ci = t.index(cn)
+  if ci < 0 {
+    return Err(syntax("no such column ${cn}"))
+  }
+  var col = t.cols[ci]
+  var mx = made_take(t)
+  if let Some(old) = mx.names.get(ci) {
+    return Err(syntax("column ${cn} already has index ${old}"))
+  }
+  col.has_index = true
+  t.cols.set(ci, col)
+  mx.names.put(ci, name)
+  made_put(t, mx)
+  if !col.unique {
+    for slot in 0..t.rows.len() {
+      if !t.rows[slot].is_empty() {
+        idx_put(t, slot)
+      }
+    }
+  }
+  tables.put(tn, t)
+}
+
+/// `DROP INDEX [IF EXISTS] name`.
+fn mem_drop_index(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr {
+  p.i += 1
+  var if_ex = false
+  if p.accept_kw("if") {
+    p.expect_kw("exists")?
+    if_ex = true
+  }
+  let name = p.ident("an index name")?
+  stmt_end(p)?
+  let (tn, ci) = index_at(tables, name) ?? {
+    if if_ex {
+      return Ok(())
+    }
+    return Err(syntax("no such index ${name}"))
+  }
+  var t = table_for(tables, tn)?
+  var col = t.cols[ci]
+  col.has_index = false
+  t.cols.set(ci, col)
+  var mx = made_take(t)
+  let _ = mx.names.remove(ci)
+  let _ = mx.midx.remove(ci)
+  made_put(t, mx)
+  tables.put(tn, t)
+}
+
 fn col_def(var p: Parser) -> Col ! sql.SqlErr {
   let name = p.ident("a column name")?
   let ty = p.ident("a column type")?
@@ -2137,6 +2410,9 @@ fn col_def(var p: Parser) -> Col ! sql.SqlErr {
 
 fn mem_drop(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr {
   p.i += 1
+  if p.is_kw("index") {
+    return mem_drop_index(tables, p)
+  }
   p.expect_kw("table")?
   var if_ex = false
   if p.accept_kw("if") {
@@ -2394,7 +2670,7 @@ fn mem_update(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValu
   tables.update(pl.name, no_table(pl.name), fn(var t) {
     // out of the indexes first, so a row taking another's old value keeps it
     for ri in pl.slots {
-      idx_drop(t, t.rows[ri])
+      idx_drop(t, ri)
     }
     for (k, ri) in pl.slots.indexed() {
       t.rows.set(ri, pl.rows[k])
@@ -2468,7 +2744,7 @@ fn mem_delete(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValu
   // compacted once they are more than half of it
   tables.update(pl.name, no_table(pl.name), fn(var t) {
     for ri in pl.slots {
-      idx_drop(t, t.rows[ri])
+      idx_drop(t, ri)
       t.rows.set(ri, [])
     }
     t.dead += pl.slots.len()

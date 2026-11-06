@@ -46,6 +46,7 @@ type memCol struct {
 	pk      bool
 	auto    bool
 	def     any
+	index   string // the name of the CREATE INDEX on the column, "" when none
 }
 
 type memTable struct {
@@ -976,6 +977,9 @@ func memTableFor(tables map[string]*memTable, name string) (*memTable, error) {
 
 func memCreate(tables map[string]*memTable, p *sqlParser) error {
 	p.i++
+	if p.isKw("index") || p.isKw("unique") {
+		return memCreateIndex(tables, p)
+	}
 	if err := p.expectKw("table"); err != nil {
 		return err
 	}
@@ -1153,8 +1157,138 @@ func memColDef(p *sqlParser) (memCol, error) {
 	}
 }
 
+// memIndexAt is the table and column of the index named name.
+func memIndexAt(tables map[string]*memTable, name string) (string, int, bool) {
+	for tn, t := range tables {
+		for ci, c := range t.cols {
+			if c.index == name {
+				return tn, ci, true
+			}
+		}
+	}
+	return "", 0, false
+}
+
+// memSetIndex replaces table tn with a copy whose column ci has index name
+// (a transaction's snapshot shares the table and its columns).
+func memSetIndex(tables map[string]*memTable, tn string, ci int, name string) {
+	t := tables[tn].clone()
+	t.cols = append([]memCol(nil), t.cols...)
+	t.cols[ci].index = name
+	tables[tn] = t
+}
+
+// memCreateIndex is CREATE INDEX [IF NOT EXISTS] [name] ON table (column);
+// the native driver's equality index (std/native/sql.xo), here only its
+// name: the rows are the scan's either way.
+func memCreateIndex(tables map[string]*memTable, p *sqlParser) error {
+	if p.isKw("unique") {
+		return sqlErr(SqlSyntax, "CREATE UNIQUE INDEX is not supported (declare the column UNIQUE)")
+	}
+	p.i++
+	ifNot := false
+	if p.acceptKw("if") {
+		if err := p.expectKw("not"); err != nil {
+			return err
+		}
+		if err := p.expectKw("exists"); err != nil {
+			return err
+		}
+		ifNot = true
+	}
+	name := ""
+	if !p.isKw("on") {
+		n, err := p.ident("an index name")
+		if err != nil {
+			return err
+		}
+		name = n
+	}
+	if err := p.expectKw("on"); err != nil {
+		return err
+	}
+	tn, err := p.ident("a table name")
+	if err != nil {
+		return err
+	}
+	if err := p.expectSym("("); err != nil {
+		return err
+	}
+	cn, err := p.ident("a column name")
+	if err != nil {
+		return err
+	}
+	if p.isSym(",") {
+		return sqlErr(SqlSyntax, "an index on several columns is not supported")
+	}
+	if err := p.expectSym(")"); err != nil {
+		return err
+	}
+	if p.peek().k != tEOF {
+		return p.fail("end of statement")
+	}
+	if name == "" {
+		name = tn + "_" + cn + "_idx"
+	}
+	if _, _, ok := memIndexAt(tables, name); ok {
+		if ifNot {
+			return nil
+		}
+		return sqlErr(SqlSyntax, "index %s already exists", name)
+	}
+	t, err := memTableFor(tables, tn)
+	if err != nil {
+		return err
+	}
+	ci := -1
+	for i, c := range t.cols {
+		if c.name == cn {
+			ci = i
+		}
+	}
+	if ci < 0 {
+		return sqlErr(SqlSyntax, "no such column %s", cn)
+	}
+	if t.cols[ci].index != "" {
+		return sqlErr(SqlSyntax, "column %s already has index %s", cn, t.cols[ci].index)
+	}
+	memSetIndex(tables, tn, ci, name)
+	return nil
+}
+
+// memDropIndex is DROP INDEX [IF EXISTS] name.
+func memDropIndex(tables map[string]*memTable, p *sqlParser) error {
+	p.i++
+	ifEx := false
+	if p.acceptKw("if") {
+		if err := p.expectKw("exists"); err != nil {
+			return err
+		}
+		ifEx = true
+	}
+	name, err := p.ident("an index name")
+	if err != nil {
+		return err
+	}
+	if p.peek().k != tEOF {
+		return p.fail("end of statement")
+	}
+	tn, ci, ok := memIndexAt(tables, name)
+	if !ok {
+		if ifEx {
+			return nil
+		}
+		return sqlErr(SqlSyntax, "no such index %s", name)
+	}
+	memSetIndex(tables, tn, ci, "")
+	return nil
+}
+
 func memDrop(tables map[string]*memTable, p *sqlParser) error {
 	p.i++
+	if p.isKw("index") {
+		return memDropIndex(tables, p)
+	}
 	if err := p.expectKw("table"); err != nil {
 		return err
 	}

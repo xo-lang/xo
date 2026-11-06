@@ -3118,6 +3118,11 @@ NOT EXISTS]` (types `INT`/`INTEGER`/`BIGINT`, `TEXT`/`VARCHAR`, `REAL`/`FLOAT`,
 (`JsonText` values), and an array of any of them written `TYPE[]` (`Array`
 values whose elements are of TYPE or NULL); `PRIMARY KEY` on a single integer column
 auto-assigns keys; `NOT NULL`, `UNIQUE`, `DEFAULT literal`), `DROP TABLE`,
+`CREATE INDEX [IF NOT EXISTS] [name] ON table (column)` (one column; unnamed
+it is `table_column_idx`; a `WHERE column = value` on an `INT` or `TEXT`
+column then looks the rows up instead of scanning, in the scan's order;
+`CREATE UNIQUE INDEX` is not supported, declare the column `UNIQUE`),
+`DROP INDEX [IF EXISTS] name`,
 `INSERT ... VALUES` (several tuples), `SELECT` of `*`, expressions with `AS`,
 or `COUNT(*)` from one table with `WHERE`, `ORDER BY` (several keys, `ASC`/`DESC`),
 `LIMIT`/`OFFSET`, `UPDATE ... SET ... WHERE`, and `DELETE ... WHERE`.
