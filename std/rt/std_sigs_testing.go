@@ -49,6 +49,7 @@ var (
 	_ func(*Testing_MemFs, *Task, string) Result[File, FsErr]                                       = (*Testing_MemFs).M_open
 	_ func(*Testing_MemFs, *Task, string) Result[File, FsErr]                                       = (*Testing_MemFs).M_create
 	_ func(*Testing_MemFs, *Task, string) Result[File, FsErr]                                       = (*Testing_MemFs).M_open_append
+	_ func(*Testing_MemFs, *Task, string) Result[File, FsErr]                                       = (*Testing_MemFs).M_open_rw
 	_ func(*Testing_MemFs, *Task, string) Result[File, FsErr]                                       = (*Testing_MemFs).M_create_new
 	_ func(*Testing_MemFs, *Task, string, Bytes) Result[Unit, FsErr]                                = (*Testing_MemFs).M_append
 	_ func(*Testing_MemFs, *Task, string, string) Result[Unit, FsErr]                               = (*Testing_MemFs).M_copy
