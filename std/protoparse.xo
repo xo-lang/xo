@@ -28,3 +28,65 @@ struct Token {
 /// The tokens of `src` without comments (`//` and `/* */`). A token never spans lines except
 /// inside a comment.
 fn tokens(src: Str) -> List[Token] ! ParseErr
+
+/// A field of a message. `typ` is the type as written (`int32`, `Other.Msg`); for a map it is the
+/// value type and `key` the key type. `oneof` names the oneof it belongs to, or is empty.
+struct Field {
+  name: Str
+  num: Int
+  typ: Str
+  key: Str
+  repeated: Bool
+  optional: Bool
+  oneof: Str
+}
+
+struct EnumValue {
+  name: Str
+  num: Int
+}
+
+struct Enum {
+  name: Str
+  values: List[EnumValue]
+}
+
+struct Message {
+  name: Str
+  fields: List[Field]
+  oneofs: List[Str]
+  nested: List[Message]
+  enums: List[Enum]
+}
+
+struct Rpc {
+  name: Str
+  req: Str
+  resp: Str
+  client_stream: Bool
+  server_stream: Bool
+}
+
+struct Service {
+  name: Str
+  rpcs: List[Rpc]
+}
+
+struct File {
+  syntax: Str
+  package: Str
+  imports: List[Str]
+  messages: List[Message]
+  enums: List[Enum]
+  services: List[Service]
+}
+
+/// Parses a proto3 (or proto2 syntax declaration, read as proto3) file. Options, `reserved`,
+/// `extensions` and field options are read and dropped; `extend` and `group` are errors.
+fn parse(src: Str) -> File ! ParseErr
+
+/// Xo source for the messages, enums and oneofs of `f`, using `derive Proto` (decision 0530):
+/// a nested type `Inner` of `Outer` becomes `OuterInner`, a oneof `kind` of `Msg` the enum
+/// `MsgKind` held in an optional field marked `proto "oneof"`, an enum an open `Int` enum with a
+/// catch-all `Other(v: Int)`. Fields keep their proto names. Services are not generated here.
+fn gen(f: File) -> Str ! ParseErr
