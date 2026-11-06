@@ -215,3 +215,69 @@ func TestDebugSchedTimersPending(t *testing.T) {
 		}
 	}
 }
+
+// heap_chunks and heap_cache_bytes from /debug/sched: 24 MiB of small
+// blocks kept live carve at least four more 4 MiB chunks, and a freed 2 MiB
+// block stays in the large block cache.
+const heapFootprintProg = `use std/debug
+use std/http
+
+fn stat(r: http.Router, name: Str) -> Int {
+  let text = r.call(http.new_request("GET", "/sched")).text() ?? ""
+  for line in text.split("\n") {
+    if line.starts_with("${name} ") {
+      return Int.parse(line.trim_prefix("${name} ")) ?? -2
+    }
+  }
+  -1
+}
+
+fn main(os: Os) {
+  let r = debug.router(os.clock, fn(_) { true })
+  let before = stat(r, "heap_chunks")
+  var keep: List[Bytes] = []
+  for i in 0..24576 {
+    keep.push(Bytes.zeroed(1000 + i % 8))
+  }
+  let during = stat(r, "heap_chunks")
+  var big = Bytes.zeroed(2097152)
+  os.stdio.println("big ${big.len()} keep ${keep.len()}")
+  big = Bytes.zeroed(1)
+  let cache = stat(r, "heap_cache_bytes")
+  os.stdio.println("heap ${before} ${during} ${cache} ${big.len()}")
+}
+`
+
+func TestDebugSchedHeapFootprint(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	dir := writeFiles(t, map[string]string{
+		"app/xo.mod":  "module app\n",
+		"app/main.xo": heapFootprintProg,
+	})
+	app := filepath.Join(dir, "app")
+	for _, be := range nativeBackends(t) {
+		bin := filepath.Join(t.TempDir(), "app")
+		if code, out := xoOut(t, "build", "--backend="+be, "-o", bin, app); code != 0 {
+			t.Fatalf("%s: build: exit %d\n%s", be, code, out)
+		}
+		out, err := command(t, bin).Output()
+		if err != nil {
+			t.Fatalf("%s: run: %v\n%s", be, err, out)
+		}
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		f := strings.Fields(lines[len(lines)-1])
+		if len(f) != 5 || f[0] != "heap" {
+			t.Fatalf("%s: output %q", be, out)
+		}
+		before, _ := strconv.Atoi(f[1])
+		during, _ := strconv.Atoi(f[2])
+		cache, _ := strconv.Atoi(f[3])
+		t.Logf("%s: heap_chunks %d before, %d with 24 MiB live; heap_cache_bytes %d after a 2 MiB block is freed", be, before, during, cache)
+		if before < 0 || during-before < 4 || cache < 2097152 {
+			t.Errorf("%s: heap_chunks %d, %d, heap_cache_bytes %d: want a rise of at least 4 chunks and the freed 2 MiB block cached", be, before, during, cache)
+		}
+	}
+}

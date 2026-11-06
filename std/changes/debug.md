@@ -1,5 +1,20 @@
 # std/debug changes
 
+## 2026-11-06: feature: /debug/sched reports heap_chunks and heap_cache_bytes
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0520 (a load run of stability/notes, 2026-11-06: Xo's RSS rose about 90 KiB per extra busy connection, and the soak needs to see whether that is the size classes' chunks or the large block cache while the program runs)
+- Go reference: runtime/metrics /memory/classes/heap/* (Go reports its heap by use; these are Xo's two footprints)
+- Test: cmd/xo TestDebugSchedHeapFootprint (24 MiB of small blocks kept live carve at least 4 more chunks; a freed 2 MiB block is in the cache)
+- Timing: none (two atomic loads per GET)
+- Shipped in: not yet released
+
+`GET /sched` of `debug.router` on the native backends adds `heap_chunks N`,
+the 4 MiB chunks the heap's size classes were carved from so far (never
+returned), and `heap_cache_bytes N`, the bytes of freed large blocks kept
+mapped for reuse. Neither walks another thread's free lists.
+
 ## 2026-11-05: feature: /debug/sched reports timers_pending
 
 - Kind: feature

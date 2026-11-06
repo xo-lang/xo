@@ -423,6 +423,9 @@ func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur
 	// idle: every connection closed, past the runtime's 3 s fiber trim
 	time.Sleep(6 * time.Second)
 	mem += "idle " + mapsSummary(pid)
+	if app.Stats != "" {
+		saveStats(d.cl, d.base+app.Stats, app.Tokens[app.StatsToken], filepath.Join(work, "stats-idle.txt"))
+	}
 	os.WriteFile(filepath.Join(work, "mem.txt"), []byte(mem), 0o644)
 	r.errs = atomic.LoadInt64(&d.errs) - errs0
 	r.drops = atomic.LoadInt64(&d.drops) - drops0

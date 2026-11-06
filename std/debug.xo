@@ -26,7 +26,9 @@ use std/http
 ///   `fds_open`, the process's open file descriptors (files, sockets,
 ///   pipes, the poller's own), and on the native backends
 ///   `timers_pending`, the event loop's timers (sleeps, deadlines,
-///   timeouts).
+///   timeouts), `heap_chunks`, the 4 MiB chunks the heap's size classes
+///   were carved from, and `heap_cache_bytes`, the bytes of freed large
+///   blocks kept mapped for reuse.
 ///
 /// A request for which `auth` answers false gets 403.
 fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses clock

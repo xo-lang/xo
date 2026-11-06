@@ -120,6 +120,12 @@ fn sched(req: http.Request) -> http.Response {
   }
   if target.arch != TargetArch.Wasm32 {
     lines.push("timers_pending ${poll.timers_pending()}")
+    // the heap's footprint (decision 0520: a load run reads where a busy
+    // connection's memory goes): the 4 MiB chunks the size classes are
+    // carved from, and the large block cache's mapped bytes; each one
+    // atomic load, no walk of another thread's lists
+    lines.push("heap_chunks ${heapos.chunks()}")
+    lines.push("heap_cache_bytes ${heapos.cache_bytes()}")
   }
   http.Response{status: 200, headers: {"Content-Type": "text/plain; charset=utf-8"}, body: "${lines.join("\n")}\n".bytes()}
 }
