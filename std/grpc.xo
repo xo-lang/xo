@@ -49,5 +49,9 @@ fn decode_timeout(s: Str) -> Int?
 
 /// `grpc-message` encoding: bytes outside 0x20 to 0x7e and `%` are written as `%XX` (upper case hex).
 fn encode_message(s: Str) -> Str
-/// The inverse; a malformed escape is kept as written (grpc-go).
+/// `encode_message` of arbitrary bytes (a status message from another language need not be UTF-8).
+fn encode_message_bytes(b: Bytes) -> Str
+/// The inverse; a malformed escape is kept as written (grpc-go), and bytes that are not UTF-8 become U+FFFD.
 fn decode_message(s: Str) -> Str
+/// The inverse as raw bytes, exactly what grpc-go's client reports.
+fn decode_message_bytes(s: Str) -> Bytes

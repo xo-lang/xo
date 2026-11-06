@@ -99,9 +99,12 @@ fn decode_timeout(s: Str) -> Int? {
 }
 
 fn encode_message(s: Str) -> Str {
-  var out = BytesBuilder.with_capacity(s.len())
+  encode_message_bytes(s.bytes())
+}
+
+fn encode_message_bytes(bs: Bytes) -> Str {
+  var out = BytesBuilder.with_capacity(bs.len())
   let hex = "0123456789ABCDEF".bytes()
-  let bs = s.bytes()
   var i = 0
   while i < bs.len() {
     let c = Int(bs[i])
@@ -117,15 +120,32 @@ fn encode_message(s: Str) -> Str {
   out.freeze().to_str_lossy()
 }
 
+fn hex_val(c: Int) -> Int {
+  if c >= 48 && c <= 57 {
+    c - 48
+  } else if c >= 65 && c <= 70 {
+    c - 55
+  } else if c >= 97 && c <= 102 {
+    c - 87
+  } else {
+    -1
+  }
+}
+
 fn decode_message(s: Str) -> Str {
+  decode_message_bytes(s).to_str_lossy()
+}
+
+fn decode_message_bytes(s: Str) -> Bytes {
   let bs = s.bytes()
   var out = BytesBuilder.with_capacity(bs.len())
   var i = 0
   while i < bs.len() {
     if bs[i] == UInt8(37) && i + 2 < bs.len() {
-      let h = Int.parse_base(s[i + 1..i + 3], 16)
-      if let Some(v) = h {
-        out.write_byte(UInt8.wrapping_from(v))
+      let hi = hex_val(Int(bs[i + 1]))
+      let lo = hex_val(Int(bs[i + 2]))
+      if hi >= 0 && lo >= 0 {
+        out.write_byte(UInt8.wrapping_from(hi * 16 + lo))
         i += 3
         continue
       }
@@ -133,5 +153,5 @@ fn decode_message(s: Str) -> Str {
     out.write_byte(bs[i])
     i += 1
   }
-  out.freeze().to_str() ?? s
+  out.freeze()
 }
