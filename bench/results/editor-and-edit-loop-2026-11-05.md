@@ -55,8 +55,25 @@ drop were 41% of the CPU of a references-heavy profile.
 | | build | wall | note |
 |---|---:|---:|---|
 | before (main of 2026-11-05 morning) | 15.7 to 15.9 s | 17.5 to 17.6 s | edit-loop-2026-11-05.md w2, w3 |
-| + cc object keys (fix 1, bccbae048) | 9.4 to 10.3 s | about 11 s | 121 to 123 of 126 objects reused; identity: warm == cold |
-| + one check pass (fix 2, feaeba094) | 6.96 to 7.39 s | 8.4 to 8.8 s | no module check cache fallback |
+| + cc object keys (fix 1, bccbae048, reverted in a7217f35d) | 9.4 to 10.3 s | about 11 s | 121 to 123 of 126 objects reused; identity: warm == cold |
+| + one check pass (fix 2, feaeba094) | 6.96 to 7.39 s | 8.4 to 8.8 s | no module check cache fallback; ran with fix 1 of bccbae048 |
+
+### Relanded (ac2664c08, both fixes on main)
+
+Fix 1 relanded as ac2664c08 (8184fcb08 before pushq's rebase), with
+the weak references of a reused object read from the object itself.
+Measured at ac2664c08 on host 1, 2026-11-06, the same edit loop
+(objkey3-remote.sh: a one-line comment edit in compiler/ssa/build.xo,
+xobuild with XO_XOBUILD_TIMES=1, w2 and w3 after e0 and w1):
+
+| | build | wall | note |
+|---|---:|---:|---|
+| main at ac2664c08 (fixes 1 and 2) | 6.81 to 6.90 s | 8.23 to 8.34 s | 121 of 127 objects and 120 of 126 parts reused; identity: warm == cold (w5) |
+
+Log: ~/xo-lead/notes/xo-lang-4/editloop/objkey3-ac2664c08.log. The
+program has 127 objects now (126 parts and one more object since the
+rows above). The six objects rebuilt are the edited part's and those
+whose part changed with it; assembling them is 2.3 s of the build.
 
 Fix 1 was reverted (a7217f35d: a reused object's stub .s hid its weak
 references from a darwin cc link) and relanded with that fixed; the
@@ -83,4 +100,5 @@ before the gate (the code that landed).
   quarter less with the module check cache (A/B above), RSS 8% lower.
 - CLI lookups through `xo serve`: 0.25 to 0.94 s cold, 0.03 s served.
 - A warm one-line compiler edit through xobuild on linux/arm64: 17.5 s,
-  now 8.4 to 8.8 s wall (build 15.7 to 15.9 s, now 6.96 to 7.39 s).
+  now 8.2 to 8.3 s wall (build 15.7 to 15.9 s, now 6.8 to 6.9 s), on main
+  at ac2664c08 (the "Relanded" table).
