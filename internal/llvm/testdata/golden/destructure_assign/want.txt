@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+swap 2 1
+divmod 3 2
+typed 7 n=7
+fields 4 3
+elems [30, 20, 10]
+map 1 2
+nested 5 6 9
+order 1 [30, 10, 10] ["x", "b1", "z"]
+lists ["p", "q"] ["r"]
+--- stderr

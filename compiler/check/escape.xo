@@ -334,12 +334,14 @@ fn (var c: Checker) closure_escapes(span: Span, body: Block, h: Int) {
   c.esc_tail(w, body)
   for n in all {
     match n {
-      NStmt(AssignStmt(target: target, value: value, ..)) => {
-        if c.is_capturing(w, value) {
-          if let Some(id) = place_root(target) {
-            let v = c.ident_obj(id)
-            if v >= 0 && (c.objs[v].file.is_empty() || c.declared_before(v, span)) {
-              c.closure_report(w, value, "is stored in `${text(id.name)}`, which outlives the scope")
+      NStmt(AssignStmt(target: atarget, value: avalue, ..)) => {
+        for (target, value) in assign_pairs(atarget, avalue) {
+          if c.is_capturing(w, value) {
+            if let Some(id) = place_root(target) {
+              let v = c.ident_obj(id)
+              if v >= 0 && (c.objs[v].file.is_empty() || c.declared_before(v, span)) {
+                c.closure_report(w, value, "is stored in `${text(id.name)}`, which outlives the scope")
+              }
             }
           }
         }
@@ -465,13 +467,15 @@ fn (var c: Checker) group_escapes(span: Span, body: Block, h: Int) {
           }
         }
       }
-      NStmt(AssignStmt(target: target, value: value, ..)) => {
-        if let Some(id) = place_root(target) {
-          let v = c.ident_obj(id)
-          if v >= 0 && c.declared_before(v, span) && c.group_escapes_in(value, frame, tainted) {
-            c.group_report(h, value, "is stored in `${text(id.name)}`, which outlives the scope")
-          } else if v >= 0 && c.group_mentions(value, frame, tainted) {
-            tainted.push(v)
+      NStmt(AssignStmt(target: atarget, value: avalue, ..)) => {
+        for (target, value) in assign_pairs(atarget, avalue) {
+          if let Some(id) = place_root(target) {
+            let v = c.ident_obj(id)
+            if v >= 0 && c.declared_before(v, span) && c.group_escapes_in(value, frame, tainted) {
+              c.group_report(h, value, "is stored in `${text(id.name)}`, which outlives the scope")
+            } else if v >= 0 && c.group_mentions(value, frame, tainted) {
+              tainted.push(v)
+            }
           }
         }
       }

@@ -69,9 +69,11 @@ fn (var c: Checker) uw_stmt(s: Stmt, var w: UndoWalk, tail: Bool) -> Bool {
   match s {
     AssignStmt(target: target, value: value, ..) => {
       let _t = c.uw_expr(value, w, false)
-      if let Some(id) = place_root(target) {
-        if id.name == w.p {
-          c.uw_write(w, parser.expr_span(target))
+      for t in assign_places(target) {
+        if let Some(id) = place_root(t) {
+          if id.name == w.p {
+            c.uw_write(w, parser.expr_span(t))
+          }
         }
       }
       false

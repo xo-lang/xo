@@ -1820,6 +1820,10 @@ fn compound_op(k: parser.Kind) -> parser.Kind {
 }
 
 fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Expr) {
+  if let TupleExpr(..) = unparen(target) {
+    c.tuple_assign(op, target, value)
+    return
+  }
   if c.assign_decl_habit(op, target, value) {
     return
   }
@@ -1848,6 +1852,63 @@ fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Exp
   if !c.is_bad(rt) && !c.assignable(rt, tt, span) {
     c.error("XO0401", span, "`${op_text(op)}` produces `${c.show(rt)}`, which cannot be stored in `${c.show(tt)}`")
   }
+}
+
+/// `(a, b) = v` (decision 0536): each place is typed and checked as a
+/// single assignment's target, `_` takes any element, and v is checked
+/// against the tuple of the places' types, so `(n, s) = (0, "")` types 0
+/// as n's type. A place named twice is XO0539.
+fn (var c: Checker) tuple_assign(op: parser.Kind, target: Expr, value: Expr) {
+  if op != parser.Kind.Assign {
+    c.infer(value, -1)
+    c.error("XO0502", parser.expr_span(target), "`${op_text(op)}` needs a single target; a tuple of places takes only `=`")
+    return
+  }
+  var seen: Map[Str, Bool] = {}
+  let t = c.tuple_place(target, seen)
+  c.check_ty(value, t)
+  c.set_type(target, t)
+}
+
+/// The type a destructuring assignment's target takes: a tuple of its
+/// elements' types for a tuple, a fresh type for `_`, else the place's.
+fn (var c: Checker) tuple_place(e: Expr, var seen: Map[Str, Bool]) -> Int {
+  match unparen(e) {
+    TupleExpr(elems: els, ..) => {
+      var ts: List[Int] = []
+      for x in els {
+        ts.push(c.tuple_place(x, seen))
+      }
+      let t = c.mk_tuple(ts)
+      c.set_type(e, t)
+      t
+    }
+    Ident(id) if id.name == b"_" => c.new_var()
+    p => {
+      if let IndexExpr(..) = p {
+        c.map_store = c.expr_key(p)
+      }
+      let tt = c.place_type(p)
+      c.map_store = -1
+      c.require_mutable(p, "XO0502", "assignment")
+      if c.place_twice(p, seen) {
+        c.error("XO0539", parser.expr_span(p), "`${c.src_of(parser.expr_span(p))}` is assigned twice in one destructuring assignment; which value it keeps would depend on the order of the stores")
+      }
+      tt
+    }
+  }
+}
+
+/// Whether the place p was already named in this destructuring
+/// assignment (same source text: a binding, a field path, or an element
+/// at the same index expression), recording it.
+fn (var c: Checker) place_twice(p: Expr, var seen: Map[Str, Bool]) -> Bool {
+  let k = c.src_of(parser.expr_span(p)).replace(" ", "")
+  if seen.contains(k) {
+    return true
+  }
+  seen[k] = true
+  false
 }
 
 /// Python's `x = v` for an undeclared x: XO0601, and x is declared from

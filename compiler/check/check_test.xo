@@ -193,6 +193,44 @@ test "a value of the wrong type is XO0401" {
   expect(ls.any(fn(l) { l.contains("\"XO0401\"") && l.contains("expected `Str`, found `Int`") })) == true
 }
 
+test "a destructuring assignment checks each place, its value against their types, and a place named twice (decision 0536)" {
+  let out = check_files(os, "d", [("d/main.xo", """
+    fn pair() -> (Int, Str) {
+      (1, "a")
+    }
+
+    fn f() -> Int {
+      var a = 1
+      var b = 2
+      (a, b) = (b, a)
+      var n: Int32 = 0
+      var s = ""
+      (n, s) = (7, "x")
+      (_, s) = pair()
+      let c = 3
+      (a, c) = (1, 2)
+      (a, a) = (1, 2)
+      (a, b) += (1, 2)
+      (a, s) = (1, 2)
+      (a, s) = (1, "x", 3)
+      if n > 0 {
+        return 0
+      }
+      a + b + c + s.len()
+    }
+    """)])?
+  let ls = lines(out)
+  let errs = ls.filter(fn(l) { l.contains("\"XO") })
+  expect(errs.any(fn(l) { l.contains("\"XO0502\"") && l.contains("`c` to be `var`") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0539\"") && l.contains("`a` is assigned twice") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0502\"") && l.contains("`+=` needs a single target") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0401\"") && l.contains("expected `Str`, found `Int`") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0401\"") && l.contains("found `(Int, Str, Int)`") })) == true
+  expect(errs.filter(fn(l) { l.contains("\"XO0502\"") }).len()) == 2
+  expect(errs.filter(fn(l) { l.contains("\"XO0539\"") }).len()) == 1
+  expect(errs.filter(fn(l) { l.contains("\"XO0401\"") }).len()) == 2
+}
+
 test "an integer literal must fit its type (XO0421)" {
   let out = check_files(os, "r", [("r/main.xo", """
     const MIN: Int = -9223372036854775808

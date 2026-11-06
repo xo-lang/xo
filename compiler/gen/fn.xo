@@ -1884,6 +1884,15 @@ fn (var g: Gen) assign(s: Stmt) {
     AssignStmt(span: span, op: op, target: target, value: value) => (span, op, target, value)
     _ => fault("assign")
   }
+  if let TupleExpr(..) = unparen(target) {
+    // `(a, b) = v` (decision 0536): the value first, then each place
+    // left to right
+    let tmp = g.tmp("da")
+    g.line("${tmp} := ${g.val(value)}")
+    g.line("_ = ${tmp}")
+    g.destructure(target, tmp, value)
+    return
+  }
   if op == Kind.Assign {
     // `x = x` does nothing (go vet: self-assignment)
     if let Ident(t) = target {
@@ -1915,6 +1924,24 @@ fn (var g: Gen) assign(s: Stmt) {
   }
   let cur = g.read_place(place)
   g.write_place(place, g.binop(o, cur, yv, tt, yt, tt, at), keep)
+}
+
+/// Writes the elements of subj, the Go value of a destructuring
+/// assignment's value, into the places of its target e; `_` drops its
+/// element.
+fn (var g: Gen) destructure(e: Expr, subj: Str, value: Expr) {
+  match unparen(e) {
+    TupleExpr(elems: els, ..) => {
+      for (i, x) in els.indexed() {
+        g.destructure(x, "${subj}.F${i}", value)
+      }
+    }
+    Ident(id) if id.name == b"_" => {}
+    t => {
+      let root = g.root_var(t)
+      g.write_place(g.resolve_place(t), subj, root >= 0 && !g.mutates(Node.E(value), root))
+    }
+  }
 }
 
 /// The key of a statement in the maps of the analyses: its span and a

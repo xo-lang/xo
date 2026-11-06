@@ -173,9 +173,11 @@ fn (var c: Checker) rt_stmt(var w: RtWalk, s: Stmt) {
       if op == parser.Kind.PlusAssign && c.rt_growable(target) {
         c.rt_report(w, "XO1401", span, "`+=` on `${c.show(c.type_of(target))}` allocates in a real-time function")
       }
-      if let IndexExpr(x: x, ..) = target {
-        if c.is_prelude(c.type_of(x), "Map") {
-          c.rt_report(w, "XO1401", span, "storing into a Map may grow it in a real-time function; use a List indexed by a small Int")
+      for t in assign_places(target) {
+        if let IndexExpr(x: x, ..) = t {
+          if c.is_prelude(c.type_of(x), "Map") {
+            c.rt_report(w, "XO1401", span, "storing into a Map may grow it in a real-time function; use a List indexed by a small Int")
+          }
         }
       }
       c.rt_expr(w, target)

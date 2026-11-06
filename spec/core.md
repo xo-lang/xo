@@ -12,7 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.43
 
-None yet.
+- **Destructuring assignment** (5.2, decision 0536): `(a, b) = (b, a)`
+  and `(q, r) = divmod(x, y)` assign a tuple's elements to existing
+  places, the value first, then each place left to right; `XO0539` for a
+  place named twice.
 
 ## Changes in 0.42
 
@@ -2286,6 +2289,18 @@ never depend on it, but the time does:
   (`+=`, `-=`, ...) reads the target's old value after the value, so
   `t.n += t.bump()` keeps what `bump` changed in `t`, `n` included
   (decision 0159).
+- **Destructuring assignment** (decision 0536): `(a, b) = v` stores the
+  elements of the tuple `v` into the places `a` and `b`, which may be
+  bindings, fields, list and map elements, nested tuples of places, or `_`
+  (the element is dropped). `v` is evaluated first and in full, then each
+  place's indexes are evaluated and its element stored, left to right
+  (Python's order), so `(a, b) = (b, a)` swaps and
+  `(xs[i], ys[i]) = bump(i)` with a `var i` changed by `bump` stores at
+  the new `i`. Each place follows the rules of a single assignment
+  (`XO0502` per place); the value is checked against the tuple of the
+  places' types, so `(n, s) = (0, "")` with `n: Int32` types `0` as
+  `Int32`. Naming the same place twice (`(a, a) = ...`, `(p.x, p.x)`,
+  `(xs[i], xs[i])`) is `XO0539`. Compound assignment takes one target.
 - A call evaluates the place of a `var` receiver or `var` argument, then
   every argument in order, then reads those places (decision 0142):
   `t.get(t.add(v))` on a `var t` sees the item `add` pushed, and
@@ -3565,6 +3580,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0536` | note | vet | a collection copied out of a list element, changed, and stored back, so its first change copies all of it; change the element in place (core 5.1, decision 0294) |
 | `XO0537` | warning | vet | retired, never reported; was: a by value receiver read before an argument that changes it; decision 0326 defines that order, so the check is gone (the code stays reserved) |
 | `XO0538` | warning | vet | a `var` local written after a closure that reads it was created and before the closure is used: the closure keeps the value from its creation (core 5.1) |
+| `XO0539` | error | checker | a destructuring assignment names the same place twice (core 5.2, decision 0536) |
 | `XO0540` | warning | checker | a `Mutex.with` closure writes its `var` value, then a path returns `Err`, which undoes the write (core 5.4) |
 | `XO0601` | error | checker | name does not resolve (core 4.3) |
 | `XO0602` | error | checker | import path does not yield a valid local name (core 4.1) |

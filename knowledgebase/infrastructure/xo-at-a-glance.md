@@ -25,7 +25,9 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
   propagates, `??` supplies a default and since 0321 an early exit
   (`x ?? return v`, `?? break`, `?? continue`), and on a Result names
   the error: `r ?? e => return Err(Wrap(e))`, `r ?? _ => continue`.
-- Tuples `(A, B)` with `t.0`, `t.1`; structs with field defaults; enums
+- Tuples `(A, B)` with `t.0`, `t.1`, destructured into new names
+  (`let (q, r) = f()`) or existing places (`(a, b) = (b, a)`, 5.2,
+  0536); structs with field defaults; enums
   (sum types) with payloads; valued enums `enum E: Str { A = "a" }` with
   `value()`, `E.from(v)`, `E.all()` (0269) and an optional catch-all last
   variant `Unknown(value: Str)` that keeps unlisted values (0493);

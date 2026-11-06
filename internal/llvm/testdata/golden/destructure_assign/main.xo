@@ -1,0 +1,68 @@
+// Destructuring assignment (decision 0536): `(a, b) = v` evaluates v
+// first, then stores each element into its place left to right; `_`
+// drops its element; places may be bindings, fields, list and map
+// elements, and nested tuples.
+struct P {
+  x: Int
+  y: Int
+}
+
+fn divmod(a: Int, b: Int) -> (Int, Int) {
+  (a / b, a % b)
+}
+
+fn named(n: Int32) -> (Int32, Str) {
+  (n, "n=${n}")
+}
+
+// changes i (through var) while the value is evaluated: the target's
+// index reads i after, since the value comes first
+fn bump(var i: Int) -> (Int, Str) {
+  i += 1
+  (i * 10, "b${i}")
+}
+
+fn main(os: Os) {
+  var a = 1
+  var b = 2
+  (a, b) = (b, a)
+  os.stdio.println("swap ${a} ${b}")
+
+  var q = 0
+  var r = 0
+  (q, r) = divmod(17, 5)
+  os.stdio.println("divmod ${q} ${r}")
+
+  var n: Int32 = 0
+  var s = ""
+  (n, s) = (7, "seven")
+  (_, s) = named(n)
+  os.stdio.println("typed ${n} ${s}")
+
+  var p = P{x: 3, y: 4}
+  (p.x, p.y) = (p.y, p.x)
+  os.stdio.println("fields ${p.x} ${p.y}")
+
+  var xs = [10, 20, 30]
+  (xs[0], xs[2]) = (xs[2], xs[0])
+  os.stdio.println("elems ${xs}")
+
+  var m: Map[Str, Int] = {}
+  (m["a"], m["b"]) = (1, 2)
+  let ma = m.get("a") ?? 0
+  let mb = m.get("b") ?? 0
+  os.stdio.println("map ${ma} ${mb}")
+
+  ((a, b), q) = ((5, 6), 9)
+  os.stdio.println("nested ${a} ${b} ${q}")
+
+  var i = 0
+  var names = ["x", "y", "z"]
+  (xs[i], names[i]) = bump(i)
+  os.stdio.println("order ${i} ${xs} ${names}")
+
+  var words = ["p", "q"]
+  var ws2 = words
+  (words, ws2) = (ws2, ["r"])
+  os.stdio.println("lists ${words} ${ws2}")
+}

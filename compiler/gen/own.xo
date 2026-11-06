@@ -269,9 +269,11 @@ fn (g: Gen) mutates(n: Node, v: Int) -> Bool {
   while i < ns.len() {
     match ns[i].node {
       S(s) => {
-        if let AssignStmt(target: target, ..) = s {
-          if g.hit(target, v) {
-            return true
+        if let AssignStmt(target: at, ..) = s {
+          for target in assign_targets(at) {
+            if g.hit(target, v) {
+              return true
+            }
           }
         }
       }

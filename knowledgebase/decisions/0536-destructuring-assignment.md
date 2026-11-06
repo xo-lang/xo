@@ -2,8 +2,14 @@
 
 Status: Accepted (owner, 2026-11-06, through the lead: "go with your
 recommendations"), with value first evaluation order (item 5, Python's
-order, which replaced the proposal's Go order). Not built yet; queued
-after the SIMD survey's step 2a.
+order, which replaced the proposal's Go order). Built 2026-11-06 (Xo
+Lang 1): the checker types each place and checks the value against the
+tuple of their types (compiler/check/stmt.xo tuple_assign), the flow,
+escape, undone and realtime analyses read the places through
+assign_places and assign_pairs (flow.xo), and the native backends and
+the Go backend evaluate the value once, then store each element
+(compiler/ssa/stmt.xo and compiler/gen/fn.xo destructure); golden
+destructure_assign.
 
 ## Context
 

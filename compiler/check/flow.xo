@@ -27,6 +27,59 @@ fn place_root(e: Expr) -> Ident? {
   }
 }
 
+/// The places an assignment's target writes: the target itself, or for
+/// a destructuring assignment `(a, b) = v` (decision 0536) each element,
+/// nested tuples flattened and `_` left out.
+fn assign_places(target: Expr) -> List[Expr] {
+  var out: List[Expr] = []
+  if let TupleExpr(elems: els, ..) = unparen(target) {
+    for x in els {
+      if let Ident(id) = unparen(x) {
+        if id.name == b"_" {
+          continue
+        }
+      }
+      for y in assign_places(x) {
+        out.push(y)
+      }
+    }
+    return out
+  }
+  out.push(target)
+  out
+}
+
+/// Each place an assignment writes with the expression whose value it
+/// gets: the target and value themselves, or for a destructuring
+/// assignment the elements of a tuple literal value paired with their
+/// places (nested), else the whole value with each place.
+fn assign_pairs(target: Expr, value: Expr) -> List[(Expr, Expr)] {
+  var out: List[(Expr, Expr)] = []
+  if let TupleExpr(elems: ts, ..) = unparen(target) {
+    if let TupleExpr(elems: vs, ..) = unparen(value) {
+      if vs.len() == ts.len() {
+        for (i, t) in ts.indexed() {
+          for pr in assign_pairs(t, vs[i]) {
+            out.push(pr)
+          }
+        }
+        return out
+      }
+    }
+    for t in assign_places(target) {
+      out.push((t, value))
+    }
+    return out
+  }
+  if let Ident(id) = unparen(target) {
+    if id.name == b"_" {
+      return out
+    }
+  }
+  out.push((target, value))
+  out
+}
+
 /// Checks that e is a place rooted at a mutable binding of the current
 /// function: a `var` binding, `var` parameter, or `var` receiver (core
 /// 5.2). code is XO0501 for `var` method calls and XO0502 otherwise.
@@ -985,16 +1038,18 @@ fn (var c: Checker) mv_stmt(s: Stmt, var moved: Moved) {
     }
     AssignStmt(op: op, target: target, value: value, ..) => {
       c.mv_expr(value, true, moved)
-      if let Ident(id) = target {
-        if op == parser.Kind.Assign {
-          let v = c.ident_obj(id)
-          if v >= 0 {
-            moved.remove(v) // reassignment gives the binding a new value
+      for t in assign_places(target) {
+        if let Ident(id) = unparen(t) {
+          if op == parser.Kind.Assign {
+            let v = c.ident_obj(id)
+            if v >= 0 {
+              moved.remove(v) // reassignment gives the binding a new value
+            }
+            continue
           }
-          return
         }
+        c.mv_expr(t, false, moved)
       }
-      c.mv_expr(target, false, moved)
     }
     DeferStmt(body: body, ..) => c.mv_stmt(body, moved)
     ReturnStmt(value: value, ..) => {
@@ -1386,11 +1441,13 @@ fn (var c: Checker) lost_updates(sites: List[FlowSite], nodes: List[Node]) {
   for n in nodes {
     match n {
       NStmt(AssignStmt(op: op, target: target, ..)) => {
-        if op == parser.Kind.Assign && unparen(target) is Ident(..) {
-          continue
-        }
-        if let Some(id) = place_root(target) {
-          mutating[c.name_key(id.span.start.offset)] = true
+        for t in assign_places(target) {
+          if op == parser.Kind.Assign && unparen(t) is Ident(..) {
+            continue
+          }
+          if let Some(id) = place_root(t) {
+            mutating[c.name_key(id.span.start.offset)] = true
+          }
         }
       }
       NExpr(e) => {
@@ -1532,16 +1589,18 @@ fn (var c: Checker) stored_updates(sites: List[FlowSite], nodes: List[Node]) {
   for n in nodes {
     match n {
       NStmt(AssignStmt(op: op, target: target, value: value, ..)) => {
-        var done = false
-        if let Ident(id) = target {
-          if op == parser.Kind.Assign {
-            kinds[c.name_key(id.span.start.offset)] = SU_RESET
-            done = true
+        for t in assign_places(target) {
+          var done = false
+          if let Ident(id) = t {
+            if op == parser.Kind.Assign {
+              kinds[c.name_key(id.span.start.offset)] = SU_RESET
+              done = true
+            }
           }
-        }
-        if !done {
-          if let Some(id) = place_root(target) {
-            kinds[c.name_key(id.span.start.offset)] = SU_MUTATE
+          if !done {
+            if let Some(id) = place_root(t) {
+              kinds[c.name_key(id.span.start.offset)] = SU_MUTATE
+            }
           }
         }
         if let IndexExpr(x: ix, ..) = target {

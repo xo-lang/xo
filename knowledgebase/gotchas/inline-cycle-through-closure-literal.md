@@ -43,3 +43,13 @@ more, max RSS about 3 percent more, xo's .text 19 KB or 0.05 percent
 larger). The first comparison, 36 s against 69 s, was two hosts at
 different loads. Raw output: ~/xo-lead/notes/lang1/cmp-host.txt (not
 committed).
+
+After the fix (2026-11-06): main's 2-hourly check still stopped at 20.5 GB,
+because xotool picks the newest cached build of an ancestor commit as the
+builder of bin/xo, and six cached builds from b29c306c8 to 77cb1d2bf^ on
+the Mac still had the loop. XO_INLINE_STRICT=1 was suspected and ruled out:
+cold self builds with and without it peaked at 3.9 and 4.1 GB. The lead
+deleted those cache entries; a lasting fix (a memory cap for builders, a
+builder that exits 70 never picked again) is Xo Lang 4's. A compiler bug
+fixed on main can keep running from the build cache until the bad builds
+are evicted.

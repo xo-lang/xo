@@ -742,10 +742,12 @@ fn (var g: Gen) ra_find_volatile(body: parser.Block) {
 fn (var g: Gen) ra_deferred(n: Node, sp: Span) {
   for ne in flatten(n) {
     if let S(s) = ne.node {
-      if let AssignStmt(target: target, ..) = s {
-        let v = g.ra_root_var(target)
-        if v >= 0 && g.outside(sp, v) {
-          g.ra.volatile[v] = true
+      if let AssignStmt(target: at, ..) = s {
+        for target in assign_targets(at) {
+          let v = g.ra_root_var(target)
+          if v >= 0 && g.outside(sp, v) {
+            g.ra.volatile[v] = true
+          }
         }
       }
     }
@@ -800,10 +802,12 @@ fn (var g: Gen) ra_havoc(n: Node) {
   for ne in flatten(n) {
     if let S(s) = ne.node {
       match s {
-        AssignStmt(target: target, ..) => {
-          let v = g.ra_root_var(target)
-          if v >= 0 {
-            g.ra.env.m.remove(v)
+        AssignStmt(target: at, ..) => {
+          for target in assign_targets(at) {
+            let v = g.ra_root_var(target)
+            if v >= 0 {
+              g.ra.env.m.remove(v)
+            }
           }
         }
         BreakStmt(..) | ContinueStmt(..) => jumps = true
@@ -1522,6 +1526,18 @@ fn (var g: Gen) ra_assign(s: Stmt) {
     _ => fault("assign")
   }
   let rb = g.ra_expr(value)
+  if let TupleExpr(..) = unparen(target) {
+    // `(a, b) = v` (decision 0536): each place's range is unknown after
+    for t in assign_targets(target) {
+      let tv = g.ra_tracked(t)
+      if tv >= 0 {
+        g.ra.env.m.remove(tv)
+      } else {
+        g.ra_place_expr(t)
+      }
+    }
+    return
+  }
   let v = g.ra_tracked(target)
   if op == Kind.Assign {
     if v >= 0 {
@@ -1667,4 +1683,21 @@ fn (var g: Gen) ra_loop(label: Str, cond: Expr?, body: parser.Block, is_for: Boo
     head = next
     round += 1
   }
+}
+
+/// The places an assignment's target writes: the target, or each element
+/// of a destructuring assignment's tuple (decision 0536), nested ones
+/// flattened.
+fn assign_targets(target: Expr) -> List[Expr] {
+  var out: List[Expr] = []
+  if let TupleExpr(elems: els, ..) = unparen(target) {
+    for x in els {
+      for y in assign_targets(x) {
+        out.push(y)
+      }
+    }
+    return out
+  }
+  out.push(target)
+  out
 }
