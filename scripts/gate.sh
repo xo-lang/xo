@@ -72,8 +72,12 @@
 #            runtime (XO_GATE_RACE=0 skips that; lead, 2026-10-31); and
 #            the checks pushq.sh requires by path, `xo dev codegen` for
 #            compiler/ssa, arm64 or llvm and TestSelfhostWasm for llrt or
-#            std/native/rt*.xo, printing the PUSHQ_RAN value to push with
-#            (XO_GATE_PUSHQ=0 skips them; lead, 2026-11-06)
+#            std/native/rt*.xo, and one cold build of compiler/xo with
+#            the new xo under XO_MAX_MEM=8G with --phase-times for what
+#            compiler/xo builds from (compiler/ but macho and wasm,
+#            std/native, std/llrt; "selfbuild"), printing the PUSHQ_RAN
+#            value to push with (XO_GATE_PUSHQ=0 skips them; lead,
+#            2026-11-06)
 #   warm    the backend caches across xo builds (decision 0275): the
 #            parent commit's xo is built, then TestFrontCacheAcrossPrograms
 #            fills a cache with it and builds every program again with
@@ -468,6 +472,18 @@ if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -qE '^std/native/(llrt/|r
   XO_WASM_GOLDENS="${g:+$g,}conc_*,atomic_ops,map_*" full wasm ./internal/selfhost -run '^TestSelfhostWasm$'
   [ "$failed" = 0 ] && ran="$ran wasm"
   [ "$f0" = 1 ] && failed=1
+fi
+# what compiler/xo builds from: one cold self build with the new xo under
+# an 8 GB budget (owner, 2026-11-06: 11a08a448's inliner runaway passed
+# 22 GB building xo and reached main, found only when builders failed)
+if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -E '^(compiler/|std/native/|std/llrt/)' | grep -qvE '^compiler/(macho|wasm)/'; then
+  t1=$(date +%s)
+  if XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_WHOLE_BUILD=off "$XO_CLI" build --phase-times -o "$logs/selfbuild-xo" ./compiler/xo >"$logs/selfbuild.txt" 2>&1; then
+    echo "selfbuild: $(($(date +%s) - t1)) s, $(grep -o 'peak [0-9]* MB' "$logs/selfbuild.txt" | sort -k2 -n | tail -1)"; ran="$ran selfbuild"
+  else
+    failed=1; echo "selfbuild: FAIL ($logs/selfbuild.txt: $(grep -m1 -E 'memory budget|error' "$logs/selfbuild.txt"))"
+  fi
+  rm -f "$logs/selfbuild-xo"
 fi
 [ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
 echo GATE-DONE

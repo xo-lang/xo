@@ -1111,6 +1111,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   prints the line `pushq: PUSHQ_RAN="..."` to push with (XO_GATE_PUSHQ=0
   skips them; lead, 2026-11-06 bottleneck review: two pushes were refused
   in three hours for a wasm run their gates never did).
+  A gated push that changes what compiler/xo builds from (compiler/ but
+  compiler/macho, compiler/wasm and `_test.xo` files; std/native;
+  std/llrt) must also name `selfbuild`: one cold build of compiler/xo
+  with the new xo, `XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off
+  xo build --phase-times -o OUT ./compiler/xo`, which gate.sh runs and
+  reports with its wall and the peak heap of its phases (owner,
+  2026-11-06: b29c306c8's inliner runaway passed 22 GB building xo and
+  reached main; builders found it, not a gate).
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision

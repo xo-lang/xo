@@ -169,7 +169,12 @@ Update the knowledgebase in the same change as the work, not later:
     host only for an x86 code generation change or a change to the C
     compiler or linker flags xo passes (owner, 2026-10-31: a clang only
     flag broke every gcc build on Linux, b87f61855; the amd64 host's cc is
-    gcc). No package suites, no identity unless a
+    gcc). A push changing what compiler/xo builds from (compiler/ but
+    compiler/macho, compiler/wasm and `_test.xo`; std/native; std/llrt)
+    also builds compiler/xo once, cold, with the new xo under
+    XO_MAX_MEM=8G with --phase-times (owner, 2026-11-06: an inliner
+    runaway past 22 GB reached main); scripts/gate.sh runs it and pushq
+    requires "selfbuild" in PUSHQ_RAN. No package suites, no identity unless a
     push claims no output change, no extra benchmark sweeps unless the
     push claims a speedup. The lead runs the full tier every 8 hours
     (scripts/gate.sh short arm64 llvm cmd gen fp, LLVM at -O1 with Go
