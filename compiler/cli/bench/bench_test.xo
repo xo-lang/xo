@@ -198,3 +198,34 @@ test "the load note counts loaded rounds and warns at a busy median" {
   expect(q.contains("warning")) == false
   expect(load_note(o, [])) == ""
 }
+
+fn pos_round(a: Float, b: Float, a_first: Bool) -> Round {
+  Round{a: Sample{vals: {"wall_ms": a}, ok: true, why: ""}, b: Sample{vals: {"wall_ms": b}, ok: true, why: ""}, load_a: 0.0, load_b: 0.0, a_first: a_first, loaded: false}
+}
+
+test "same slot B/A cancels a first-run advantage" {
+  // equal programs; the first run of each round is 20% faster
+  let rs = [pos_round(80.0, 100.0, true), pos_round(100.0, 80.0, false), pos_round(80.0, 100.0, true), pos_round(100.0, 80.0, false)]
+  expect(same_pos(rs, "wall_ms", true)) == 1.0
+  expect(same_pos(rs, "wall_ms", false)) == 1.0
+  expect(same_pos([pos_round(80.0, 100.0, true)], "wall_ms", true)) == 0.0
+  expect(pos_str(0.0)) == "n/a"
+}
+
+test "{side} names each side's output" {
+  let o = parse_opts(["--ab", "a", "b", "--", "build", "-o", "out-{side}", "."]).or_fault("valid flags")
+  expect(side_args(o, true).join(" ")) == "build -o out-a ."
+  expect(side_args(o, false).join(" ")) == "build -o out-b ."
+}
+
+test "a shared back-end cache is warned about; a cache per side or off is not" {
+  let shared = parse_opts(["--ab", "a", "b", "--", "build", "-o", "out-{side}", "."]).or_fault("valid flags")
+  expect(shared_cache_note(shared, "", "").is_empty()) == false
+  expect(shared_cache_note(shared, "/c", "off")) == ""
+  let split = parse_opts(["--ab", "--env-a=XO_BACKEND_CACHE_DIR=/c/a", "--env-b=XO_BACKEND_CACHE_DIR=/c/b", "a", "b", "--", "build", "."]).or_fault("valid flags")
+  expect(shared_cache_note(split, "/c", "")) == ""
+  let one_off = parse_opts(["--ab", "--env-a=XO_BACKEND_CACHE=off", "a", "b", "--", "run", "."]).or_fault("valid flags")
+  expect(shared_cache_note(one_off, "", "").is_empty()) == false
+  let not_xo = parse_opts(["--ab", "a", "b", "--", "-n", "100"]).or_fault("valid flags")
+  expect(shared_cache_note(not_xo, "", "")) == ""
+}

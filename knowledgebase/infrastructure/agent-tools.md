@@ -776,6 +776,19 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   early after N of M rounds".
   The Mac's measure windows are only for darwin only claims (Mach-O,
   the macOS scheduler or syscalls) and Mac memory footprints.
+- Two xos building through one back-end cache (Xo Lang 4, 2026-11-06):
+  the second build of each --ab round ran about 25% slower than the
+  first, whichever side it was, since it followed the other xo's build
+  (a cache per side, or A against A, showed none). Give each side its
+  own cache (`--env-a=XO_BACKEND_CACHE_DIR=DIR/a`, `--env-b=...DIR/b`)
+  and output (`-o out-{side}`: `{side}` in an argument is `a` or `b`).
+  `xo bench --ab` warns when a build, run or test would share one
+  cache (both sides' XO_BACKEND_CACHE_DIR equal and the cache on).
+  `xo bench --ab` prints a "same slot B/A" column (JSON
+  `same_slot_first`, `same_slot_second`): B's B-first runs against A's
+  A-first runs, and the same for the second slots; when they disagree
+  the sides interfere. gotchas/bench-run-position-effect.md. Last
+  verified: 2026-11-06.
 - A placement claim (a sweep over XO_ARM64_PAD, an alignment, a layout)
   carries the one-binary control beside it: the same statistic with one
   binary in every slot (16 slots x the rounds); only a spread above that

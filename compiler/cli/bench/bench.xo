@@ -3,6 +3,10 @@
 // a bootstrap interval for the ratio, and a verdict.
 //
 //   xo bench --ab [flags] A [B] [-- ARGS...]
+//
+// `{side}` in any argument is replaced by `a` or `b`, so the sides of a
+// build write separate outputs (`-o out-{side}`) instead of one shared
+// file, which one side's run would find left by the other's.
 
 use github.com/xo-lang/xo/compiler/cli/core
 use std/regexp
@@ -451,14 +455,44 @@ fn run_once(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]
 }
 
 fn side_args(o: Opts, side_a: Bool) -> List[Str] {
+  let side = if side_a { "a" } else { "b" }
   var out: List[Str] = []
   for a in (if side_a { o.args_a } else { o.args_b }) {
-    out.push(a)
+    out.push(a.replace("{side}", side))
   }
   for a in o.common {
-    out.push(a)
+    out.push(a.replace("{side}", side))
   }
   out
+}
+
+/// env_val is KEY's value in a side's --env list, else dflt.
+fn env_val(env: List[Str], key: Str, dflt: Str) -> Str {
+  var v = dflt
+  for e in env {
+    if e.starts_with("${key}=") {
+      v = e[key.len() + 1..e.len()]
+    }
+  }
+  v
+}
+
+/// shared_cache_note warns when both sides build through one back-end
+/// cache: the second build of each round then ran about 25% slower,
+/// whichever side it was (gotchas/bench-run-position-effect.md). dir
+/// and cache are the caller's XO_BACKEND_CACHE_DIR and XO_BACKEND_CACHE.
+fn shared_cache_note(o: Opts, dir: Str, cache: Str) -> Str {
+  let first = if !o.args_a.is_empty() { o.args_a[0] } else { o.common.first() ?? "" }
+  if first != "build" && first != "run" && first != "test" {
+    return ""
+  }
+  if env_val(o.env_a, "XO_BACKEND_CACHE", cache) == "off" && env_val(o.env_b, "XO_BACKEND_CACHE", cache) == "off" {
+    return ""
+  }
+  if env_val(o.env_a, "XO_BACKEND_CACHE_DIR", dir) != env_val(o.env_b, "XO_BACKEND_CACHE_DIR", dir) {
+    return ""
+  }
+  "warning: both sides build through one back-end cache, which slows the second build of each round (gotchas/bench-run-position-effect.md); give each side its own: --env-a=XO_BACKEND_CACHE_DIR=DIR/a --env-b=XO_BACKEND_CACHE_DIR=DIR/b"
 }
 
 fn finite(v: Float) -> Bool {
@@ -503,6 +537,35 @@ struct Row {
   spread_b: Float
   r: Ratio
   verdict: Str
+  /// B / A of the medians of runs in the same slot of their round
+  /// (first: B's B-first rounds against A's A-first rounds; second: the
+  /// rest), 0 when a slot has no runs. A position effect (the first run
+  /// of a round faster) cancels in these; compare them with B / A.
+  pos_first: Float
+  pos_second: Float
+}
+
+/// same_pos is B / A of the medians of the runs in slot `first` (or the
+/// second slot), 0 when either side has none there.
+fn same_pos(rounds: List[Round], k: Str, first: Bool) -> Float {
+  var xa: List[Float] = []
+  var xb: List[Float] = []
+  for r in rounds {
+    if let Some(va) = r.a.vals.get(k) {
+      if let Some(vb) = r.b.vals.get(k) {
+        if r.a_first == first {
+          xa.push(va)
+        } else {
+          xb.push(vb)
+        }
+      }
+    }
+  }
+  if xa.is_empty() || xb.is_empty() {
+    return 0.0
+  }
+  let ma = median(xa)
+  if ma == 0.0 { 0.0 } else { median(xb) / ma }
 }
 
 fn rows_of(o: Opts, rounds: List[Round]) -> List[Row] {
@@ -572,7 +635,7 @@ fn rows_of(o: Opts, rounds: List[Round]) -> List[Row] {
     if vd != "too few rounds" && coarse(if src == k { ma } else { cpu_med_a }, if src == k { mb } else { cpu_med_b }, resolution(src)) {
       vd = "too coarse"
     }
-    rows.push(Row{name: k, n: xa.len(), med_a: ma, med_b: mb, spread_a: spread_pct(xa), spread_b: spread_pct(xb), r: rt, verdict: vd})
+    rows.push(Row{name: k, n: xa.len(), med_a: ma, med_b: mb, spread_a: spread_pct(xa), spread_b: spread_pct(xb), r: rt, verdict: vd, pos_first: same_pos(rounds, k, true), pos_second: same_pos(rounds, k, false)})
   }
   rows
 }
@@ -619,9 +682,9 @@ fn pad(s: Str, n: Int) -> Str {
 
 fn table(rows: List[Row]) -> Str {
   var out = StrBuilder.new()
-  out.write("${pad("metric", 22)}${pad("A median", 12)}${pad("B median", 12)}${pad("spread A/B", 18)}${pad("B / A", 8)}${pad("95% interval", 18)}verdict\n")
+  out.write("${pad("metric", 22)}${pad("A median", 12)}${pad("B median", 12)}${pad("spread A/B", 18)}${pad("B / A", 8)}${pad("95% interval", 18)}${pad("same slot B/A", 16)}verdict\n")
   for r in rows {
-    out.write("${pad(r.name, 22)}${pad(fmt(r.med_a), 12)}${pad(fmt(r.med_b), 12)}${pad("${fmt(r.spread_a)}% ${fmt(r.spread_b)}%", 18)}${pad(if r.r.defined { fmt(r.r.ratio) } else { "n/a" }, 8)}${pad(if r.r.defined { "${fmt(r.r.lo)} to ${fmt(r.r.hi)}" } else { "n/a" }, 18)}${r.verdict} (n=${r.n})\n")
+    out.write("${pad(r.name, 22)}${pad(fmt(r.med_a), 12)}${pad(fmt(r.med_b), 12)}${pad("${fmt(r.spread_a)}% ${fmt(r.spread_b)}%", 18)}${pad(if r.r.defined { fmt(r.r.ratio) } else { "n/a" }, 8)}${pad(if r.r.defined { "${fmt(r.r.lo)} to ${fmt(r.r.hi)}" } else { "n/a" }, 18)}${pad("${pos_str(r.pos_first)} ${pos_str(r.pos_second)}", 16)}${r.verdict} (n=${r.n})\n")
   }
   out.freeze()
 }
@@ -635,7 +698,7 @@ fn json_out(o: Opts, rounds: List[Round], used: Int, rows: List[Row], stopped: S
       out.write(",")
     }
     first = false
-    out.write("${r.name.quote()}:{\"n\":${r.n},\"median_a\":${jnum(r.med_a)},\"median_b\":${jnum(r.med_b)},\"spread_a_pct\":${jnum(r.spread_a)},\"spread_b_pct\":${jnum(r.spread_b)},\"ratio\":${if r.r.defined { jnum(r.r.ratio) } else { "null" }},\"lo\":${if r.r.defined { jnum(r.r.lo) } else { "null" }},\"hi\":${if r.r.defined { jnum(r.r.hi) } else { "null" }},\"verdict\":${r.verdict.quote()}}")
+    out.write("${r.name.quote()}:{\"n\":${r.n},\"median_a\":${jnum(r.med_a)},\"median_b\":${jnum(r.med_b)},\"spread_a_pct\":${jnum(r.spread_a)},\"spread_b_pct\":${jnum(r.spread_b)},\"ratio\":${if r.r.defined { jnum(r.r.ratio) } else { "null" }},\"lo\":${if r.r.defined { jnum(r.r.lo) } else { "null" }},\"hi\":${if r.r.defined { jnum(r.r.hi) } else { "null" }},\"verdict\":${r.verdict.quote()},\"same_slot_first\":${pos_json(r.pos_first)},\"same_slot_second\":${pos_json(r.pos_second)}}")
   }
   out.write("},\"per_round\":[")
   var i = 0
@@ -648,6 +711,14 @@ fn json_out(o: Opts, rounds: List[Round], used: Int, rows: List[Row], stopped: S
   }
   out.write("]}")
   out.freeze()
+}
+
+fn pos_str(v: Float) -> Str {
+  if v == 0.0 { "n/a" } else { fmt(v) }
+}
+
+fn pos_json(v: Float) -> Str {
+  if v == 0.0 { "null" } else { jnum(v) }
 }
 
 fn vals_json(m: Map[Str, Float]) -> Str {
@@ -721,6 +792,10 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
   }
   // the load before any round runs: the limit a round is loaded at is
   // relative to it (load_limit)
+  let shared = shared_cache_note(o0, os.env.get("XO_BACKEND_CACHE_DIR") ?? "", os.env.get("XO_BACKEND_CACHE") ?? "")
+  if !shared.is_empty() {
+    os.stdio.eprintln("xo bench: ${shared}")
+  }
   var o = o0
   o.base_load = load1(os, h.goos)
   let aa = side_args(o, true)
