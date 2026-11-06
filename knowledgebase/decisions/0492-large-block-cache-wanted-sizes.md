@@ -127,3 +127,43 @@ map1M 55 to 50; micro and push max RSS unchanged; the xo self build's
 peak footprint 3550 to 3584 MB down to 3431 to 3445 (max RSS about 5%
 higher). A mapping no recent request fits is still advised, so 0448
 stage 1's footprint goal holds.
+
+## Addendum (2026-11-06, Xo Lang 4; owner, 2026-11-06: keep): the amd64 exemption stays with take-fit
+
+Question: is keep's amd64 exemption (`&& !(target.arch == TargetArch.Amd64
+&& wanted(t, size))` past the quarter bound) dead weight once Lang 2's
+take-fit change (401e99939) lands? Arms: A = 401e99939, B = A with the
+exemption removed (the darwin advice gate kept); A_t and B_t add Lang 2's
+json tape presize (b9e952dcd). Owner's decision: keep the exemption, and
+revisit when the Linux scavenger (decision 0533) lands, since returning
+long free pages on a timer may cover the memory it costs.
+
+linux/amd64 offload host, `xo bench --ab`, 3 rounds, 0 loaded (B/A):
+
+| row | wall | max RSS |
+|---|---|---|
+| micro13 json10kx20 | 1.25 (69.3 to 86.7 ms), worse | 1.133 (12.1 to 13.7 MB), worse |
+| json10kx20 with the tape presize | 1.40 (51.3 to 71.9 ms), worse | 1.0 (9.7 MB) |
+| micro13 map1M | 0.89, noise | 0.644 (73.7 to 47.5 MB), better |
+| micro13 sort1M, strbuild1M | noise | same |
+| perf putget | 1.014, worse | 0.838 (6.5 to 5.5 MB), better |
+| perf push | 0.53 (45.2 to 24.0 ms, wide spread), better | 0.80 (50.5 to 40.5 MB), better |
+
+darwin/amd64, the owner's Intel laptop (i7-9750H), binaries cross-built on
+the Mac with --release, 7 interleaved rounds, program-reported best ms and
+the least max RSS of 7 (A to B):
+
+| row | wall (best) | max RSS |
+|---|---|---|
+| json10kx20 | 139 to 163 (1.17) | 11.6 to 11.5 MB |
+| json10kx20 with the tape presize | 113 to 139 (1.23) | 11.1 to 9.2 MB |
+| map1M | 149 to 152 | 54.1 to 45.1 MB |
+| sort1M, strbuild1M | same | same |
+| putget | 72.3 to 72.5 | 6.2 to 3.8 MB |
+| push | 29.3 to 20.4 (0.70) | 50.8 to 24.3 MB |
+
+Reading: take-fit fixes reuse as a block grows, not a program that frees
+and asks again for the same large sizes each round, so json10kx20 still
+needs the exemption (17 to 40% slower without it, more with the tape
+presize). The trade is unchanged in kind: json speed against the memory
+the kept mappings hold in map1M, putget and push (up to 26 MB on push).

@@ -1,6 +1,6 @@
 # 0529: Std's parse, decoded state and keys from the cache pack for warm builds
 
-Status: Proposed (xo-lang-4, 2026-11-06; owner-approved work item, item C option b: "making std's cache reads cheap"; the target set by the step 1 breakdown below; continues decision 0380's open stages)
+Status: Accepted (owner, 2026-11-06). Proposed (xo-lang-4, 2026-11-06; owner-approved work item, item C option b: "making std's cache reads cheap"; the target set by the step 1 breakdown below; continues decision 0380's open stages)
 
 ## Context
 

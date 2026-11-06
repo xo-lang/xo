@@ -160,3 +160,22 @@ type of every value (decision 0046 rejects layouts in the runtime).
 - **A generic `Any` through closures** for request values: closures cannot
   give their captured value back at a known type; a list of one with its
   type name and a typed drop function can.
+
+## Addendum (2026-11-06, Xo Lang 4; owner, 2026-11-06): a pipelined HTTP/1.1 response is sent at once
+
+The native HTTP/1.1 server sends each response when its handler returns,
+as Go's net/http does (conn.serve's finishRequest flushes after every
+response), including when the client has pipelined the next request.
+A hold that kept a pipelined response back and sent it with the next one
+(one send per pipelined burst, Xo Lang 4's WIP 2cf8e472e, never on main)
+is dropped: on linux/arm64 host 1 it cut server CPU per pipelined request
+about 29% (medians 4.13 to 2.93 us, 32 connections at depth 8; plain
+keep-alive unchanged), but a response then waits for the next request's
+handler, so a handler that sleeps, does I/O or waits on a channel delays
+the earlier response by its whole run (head-of-line blocking). A safe
+variant needs a flush before every blocking call a handler can make,
+since flushing from the scheduler's park path runs under the park's lock
+or races the waker. Browsers, curl and Go's client never pipeline, so the
+gain would reach almost no client. The skip-read change (a read after one
+that drained the socket waits for readiness first, Linux) is kept and
+lands on its own.
