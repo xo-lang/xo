@@ -114,6 +114,7 @@ func TestSelfhostWasm(t *testing.T) {
 	results := parseWasmRuns(string(res))
 	runner := filepath.Join(root, "compiler", "wasm", "run.mjs")
 	pass, unsupported, failed := 0, 0, 0
+	passed := map[string]bool{}
 	var why []string
 	for _, r := range rel {
 		name := filepath.Base(r)
@@ -172,11 +173,12 @@ func TestSelfhostWasm(t *testing.T) {
 				}
 			}
 			pass++
+			passed[name] = true
 		})
 	}
-	t.Logf("wasm goldens: %d pass, %d unsupported, %d fail of %d", pass, unsupported, failed, len(rel))
+	t.Logf("wasm goldens: %d pass, %d WASI limits, %d fail of %d", pass, unsupported, failed, len(rel))
 	for _, w := range why {
-		t.Logf("unsupported %s", w)
+		t.Logf("WASI limit %s", w)
 	}
 	// a golden that stops building or running for wasm must not hide in the
 	// unsupported count (0.34.0: every scope, spawn and Chan golden went
@@ -186,19 +188,22 @@ func TestSelfhostWasm(t *testing.T) {
 	// skipping the check there let net_dial_dual_stack reach main unlisted
 	// (2026-11-02); only the pass count below needs every golden
 	{
-		expected := map[string]bool{}
-		if b, err := os.ReadFile(filepath.Join(root, "internal", "selfhost", "testdata", "wasm_unsupported.txt")); err == nil {
-			for _, l := range strings.Split(string(b), "\n") {
-				l, _, _ = strings.Cut(l, "#")
-				if l = strings.TrimSpace(l); l != "" {
-					expected[l] = true
-				}
-			}
-		}
+		expected := wasmLimits(t, filepath.Join(root, "internal", "selfhost", "testdata", "wasm_unsupported.txt"), "wasip1")
+		got := map[string]bool{}
 		for _, w := range why {
 			name, _, _ := strings.Cut(w, ":")
-			if !expected[name] {
-				t.Errorf("golden %s became unsupported for wasm (%s); fix the backend, or list it in internal/selfhost/testdata/wasm_unsupported.txt if it can never run there", name, w)
+			got[name] = true
+			if _, ok := expected[name]; !ok {
+				t.Errorf("golden %s became unsupported for wasm (%s); fix the backend, or, when WASI preview1 lacks what it uses, list it as a WASI limit in internal/selfhost/testdata/wasm_unsupported.txt", name, w)
+			}
+		}
+		// a listed golden that ran and passed is no limit (debug_routes,
+		// metrics_text and trace_ring were, listed for a heap call wasm had
+		// since gained; 2026-11-05)
+		for _, r := range rel {
+			name := filepath.Base(r)
+			if _, ok := expected[name]; ok && !got[name] && passed[name] {
+				t.Errorf("golden %s passes on wasip1/wasm: drop wasip1 from its targets in internal/selfhost/testdata/wasm_unsupported.txt", name)
 			}
 		}
 	}

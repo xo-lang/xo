@@ -52,7 +52,7 @@ func TestWasmUnsupportedListsNetGoldens(t *testing.T) {
 			if wasmNetCall.Match(src) {
 				matched++
 				if name := filepath.Base(d); !listed[name] {
-					t.Errorf("golden %s calls the network (%s) but is not listed in internal/selfhost/testdata/wasm_unsupported.txt; add `%s # the wasm backend does not support the network`", name, filepath.Base(f), name)
+					t.Errorf("golden %s calls the network (%s) but is not listed in internal/selfhost/testdata/wasm_unsupported.txt; add `%s # wasip1 # network: WASI preview1 has no sockets`", name, filepath.Base(f), name)
 				}
 				break
 			}

@@ -1,105 +1,107 @@
-# Goldens expected to be unsupported on wasm, for both wasm tests (one list
-# since 2026-11-05; gotchas/wasm-two-unsupported-lists.md).
+# WASI limits: the goldens that cannot run on a WASI target, because the
+# platform lacks what they use (sockets in preview 1, processes, file modes
+# and locks, a working directory, C calls). None is a gap in the wasm
+# backend: a golden that fails for wasm for any other reason is fixed, not
+# listed (audit of 2026-11-05: every line below fails on its targets only).
 #
-# TestSelfhostWasm (wasip1/wasm, 2026-10-29) does not try a listed golden,
-# and fails on a golden that is not listed and becomes unsupported, so a
+# A line: NAME # TARGETS # AREA: REASON. TARGETS is `wasip1` (preview 1
+# lacks it, the wasip2 component runs it) or `wasip1 wasip2`; AREA is one of
+# network, processes, files, c.
+#
+# TestSelfhostWasm (wasip1/wasm, Node) and TestWasmCommandGoldens
+# (wasip2/wasm components, wasmtime, decision 0447 stage 3) each expect to
+# fail exactly the lines naming their target: a golden failing there
+# unlisted, or listed there and passing (a full run), fails the test, so a
 # regression such as 0.34.0's (Chan programs refused for wasm for twelve
-# days) cannot hide in the unsupported count. It reads the name, up to the
-# first `#`; the reason after it is for reading only.
-#
-# TestWasmCommandGoldens (wasip2/wasm components, decision 0447 stage 3,
-# 2026-11-02) tries every golden. It expects to fail exactly the lines with
-# a second part, `# wasip2: REASON`: a golden failing there unlisted, or
-# listed there and passing, fails the test. A golden listed with no wasip2
-# part (most need the network or processes that preview 1 lacks) must pass
-# as a component.
+# days) cannot hide among the limits. One list for both tests since
+# 2026-11-05 (gotchas/wasm-two-unsupported-lists.md); the file keeps its
+# name because pushq and repotest read it.
 
-cmd_inherit # the wasm backend does not support processes (`proc.exec`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.exec)
-conn_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-conn_iface # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-dns_no_tasks # the wasm backend does not support the call `rt.call_c2` (std/dns's native resolver)
-dns_records # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-fs_atomic # operation not supported (WASI has no file modes or locks): write_atomic's mode # wasip2: WASI has no file modes or locks: write_atomic's mode
-fs_cwd_path # no working directory under WASI # wasip2: no working directory under WASI
-fs_dir_errors # operation not supported (WASI has no file modes or locks) # wasip2: WASI has no file modes or locks
-fs_files # operation not supported (WASI has no file modes or locks) # wasip2: WASI has no file modes or locks
-fs_mkdir_mode # operation not supported (WASI has no file modes or locks): create_dir_all_mode # wasip2: WASI has no file modes or locks: create_dir_all_mode
-fs_ops_edges # WASI has no times before 1970 # wasip2: WASI has no times before 1970
-handle_drop_leak # the wasm backend does not support processes (`proc.spawn`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.spawn)
-http_client # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_client_body_reader # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_client_keepalive # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_client_pool_body # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_client_policy # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_client_responses # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_client_stream # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_conn_fault # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_fault # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_form # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_gzip # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_gzip_responses # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_header_fields # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_multipart_stream # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_reverse_proxy # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_reverse_proxy_retry # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_reverse_proxy_ws # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_server # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_server_limits # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_server_request # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_stream # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_stream_body # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_stream_body_h2 # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_tls # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-tls_mtls # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_h2c # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_h2c_sniff # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_h2_config # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_h2_max_header_bytes # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_tls_state # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_tls_keys # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_pipe # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_trailers # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_wire # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-lock_drop_relock # operation not supported (WASI has no file modes or locks) # wasip2: WASI has no file modes or locks
-multipart_basic # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-native_sql # the wasm backend does not support the network (`rt.net_dial`): WASI preview1 has no sockets
-net_close_flush # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-net_close_stuck # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-net_dial_dual_stack # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-net_echo # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-net_lookup_dial_timeout # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-net_only # the wasm backend does not support processes (`proc.run`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.run)
-net_short_str # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-proc_children_load # the wasm backend does not support processes (`proc.exec`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.exec)
-proc_cmd # the wasm backend does not support processes (`proc.run`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.run)
-rt_addrs # rt.fn_addr faults on wasm (native code paths name native-only exports through it: lowering it built the fiber switch into every wasm module, 2026-11-03), rt.sym_addr("strlen") needs the C library and auxv is Linux's # wasip2: rt.fn_addr faults on wasm (native code paths name native-only exports through it: lowering it built the fiber switch into every wasm module, 2026-11-03), rt.sym_addr("strlen") needs the C library and auxv is Linux's
-signal_notify # the wasm backend does not support processes (`proc.run`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.run)
-sys_c # the platform call `getpid` of c on another OS # wasip2: the platform call `getpid` of c on another OS
-tls_client # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-tls_coalesced_finish # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-tls_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-tls_peer_certs # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-udp_echo # the wasm backend does not support the network (`rt.conn_close`): WASI preview1 has no sockets
-udp_no_tasks # std/udp reaches netconn's name resolution, a platform call of darwin or linux, which faults on WASI by design
-unix_kill # the wasm backend does not support processes (`proc.spawn`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.spawn)
-use_c_add # use c without the binding of addc.h in internal/llvm/testdata/golden/use_c_add/.xo/cbind (a Go build # wasip2: use c: no C calls on wasm
-use_c_enum # use c without the binding of enumc.h in internal/llvm/testdata/golden/use_c_enum/.xo/cbind (a Go build or `xo bind --c` writes it) # wasip2: use c: no C calls on wasm
-user_caps # the wasm backend does not support processes (`proc.run`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.run)
-websocket # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-websocket_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-websocket_stop # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-websocket_tls_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-websocket_tls # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-
-conn_deadline_move # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_duplex # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_duplex_h2tls # the wasm backend does not support the network
-http_ipv6_url # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-host_usage # the wasm backend does not support processes (`proc.run`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.run)
-proc_child_usage # the wasm backend does not support processes (`proc.run`): WASI preview1 has none # wasip2: XO1515: no processes in a WASI 0.2 world (proc.spawn)
-netconn_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_raw_path # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_proxy_body_next_race # the wasm backend does not support the network
-http_expect_continue # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_stop_keepalive # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
-http_client_raw_header_names # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+cmd_inherit # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.exec)
+conn_deadline # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+conn_iface # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+dns_no_tasks # wasip1 # network: the call `rt.call_c2` (std/dns's native resolver)
+dns_records # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+fs_atomic # wasip1 wasip2 # files: WASI has no file modes or locks: write_atomic's mode
+fs_cwd_path # wasip1 wasip2 # files: no working directory under WASI
+fs_dir_errors # wasip1 wasip2 # files: WASI has no file modes or locks
+fs_files # wasip1 wasip2 # files: WASI has no file modes or locks
+fs_mkdir_mode # wasip1 wasip2 # files: WASI has no file modes or locks: create_dir_all_mode
+fs_ops_edges # wasip1 wasip2 # files: WASI has no times before 1970
+handle_drop_leak # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.spawn)
+http_client # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_body_reader # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_keepalive # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_pool_body # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_policy # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_responses # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_conn_fault # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_fault # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_form # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_gzip # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_gzip_responses # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_header_fields # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_multipart_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_reverse_proxy # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_reverse_proxy_retry # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_reverse_proxy_ws # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_server # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_server_limits # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_server_request # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_stream_body # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_stream_body_h2 # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_tls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_mtls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_h2c # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_h2c_sniff # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_h2_config # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_h2_max_header_bytes # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_tls_state # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_tls_keys # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_pipe # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_trailers # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_wire # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+lock_drop_relock # wasip1 wasip2 # files: WASI has no file modes or locks
+multipart_basic # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+native_sql # wasip1 # network: the network (`rt.net_dial`): WASI preview1 has no sockets
+net_close_flush # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+net_close_stuck # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+net_dial_dual_stack # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+net_echo # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+net_lookup_dial_timeout # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+net_only # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)
+net_short_str # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+proc_children_load # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.exec)
+proc_cmd # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)
+rt_addrs # wasip1 wasip2 # c: rt.fn_addr faults on wasm (native code paths name native-only exports through it: lowering it built the fiber switch into every wasm module, 2026-11-03), rt.sym_addr("strlen") needs the C library and auxv is Linux's
+signal_notify # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)
+sys_c # wasip1 wasip2 # c: the platform call `getpid` of c on another OS
+tls_client # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_coalesced_finish # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_deadline # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_peer_certs # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+udp_echo # wasip1 # network: the network (`rt.conn_close`): WASI preview1 has no sockets
+udp_no_tasks # wasip1 # network: std/udp reaches netconn's name resolution, a platform call of darwin or linux, which faults on WASI by design
+unix_kill # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.spawn)
+use_c_add # wasip1 wasip2 # c: use c: no C calls on wasm
+use_c_enum # wasip1 wasip2 # c: use c: no C calls on wasm
+user_caps # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)
+websocket # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+websocket_deadline # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+websocket_stop # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+websocket_tls_deadline # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+websocket_tls # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+conn_deadline_move # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_duplex # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_duplex_h2tls # wasip1 # network: the network
+http_ipv6_url # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+host_usage # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)
+proc_child_usage # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.spawn)
+netconn_deadline # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_raw_path # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_proxy_body_next_race # wasip1 # network: the network
+http_expect_continue # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_stop_keepalive # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_raw_header_names # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

@@ -23,6 +23,11 @@ part on its line in wasm_unsupported.txt, `# wasip2: REASON`, which is all
 TestWasmCommandGoldens reads (wasip2List). When a push makes such a
 golden work, drop the whole line. Before then: list it in both files with
 the same reason, and drop both lines when it works.
+Since 2026-11-05 (later the same day) each line is
+`NAME # TARGETS # AREA: REASON`, TARGETS `wasip1` or `wasip1 wasip2`: both
+tests read their own target from it (wasmLimits), and TestSelfhostWasm
+also fails when a golden listed for wasip1 runs and passes (three such
+stale lines had sat there).
 Prove the second with `XO_WASM_GOLDENS=NAME go test ./internal/selfhost
 -run '^TestWasmCommandGoldens$' -v` on a linux/arm64 offload host (it has
 wasmtime and wasm-tools). Fixed forward in cc959f9f9.
