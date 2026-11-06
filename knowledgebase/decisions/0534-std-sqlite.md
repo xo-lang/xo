@@ -2,7 +2,7 @@
 
 Status: Accepted (owner, 2026-11-06, "go with your recommendations"), with three conditions:
 fs effects, not net.dial (item 5); std/sql's portable error codes (item 8); the amalgamation
-vendored with a hash check, its version in NOTICE and an update procedure (item 11). The
+vendored with a hash check, its version in THIRD_PARTY_NOTICES (the owner's "NOTICE") and an update procedure (item 11). The
 std/sql API change item 5 needs is with the owner (lead, 2026-11-06); std/sql is not changed
 until that answer.
 
@@ -78,10 +78,10 @@ sqlite3_open_v2, `sqlite3_stmt **` in sqlite3_prepare_v3), destructor function p
 
 11. **Vendoring (owner condition).** std/native/sqlite holds sqlite3.c and sqlite3.h of the
     release amalgamation (about 9.1 MB and 0.7 MB in the repository, public domain), the shim,
-    and VERSION with the zip's URL and SHA3-256. NOTICE names SQLite and its version. Update
+    and VERSION with the zip's URL and SHA3-256. THIRD_PARTY_NOTICES names SQLite and its version. Update
     procedure: download `sqlite-amalgamation-NNNNNNN.zip` from sqlite.org, check its SHA3-256
     against the one sqlite.org publishes for that release, replace sqlite3.c and sqlite3.h,
-    update VERSION and NOTICE in the same commit, rerun std/sqlite's tests, golden
+    update VERSION and THIRD_PARTY_NOTICES in the same commit, rerun std/sqlite's tests, golden
     native_sqlite (its first line prints the version) and the differential corpus, and add a
     std/changes/sqlite.md entry naming the SQLite release.
 
