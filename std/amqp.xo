@@ -550,6 +550,11 @@ struct LinkState {
   credit_target: Int = 1
   /// receiver: a drain was asked for and the peer's answer has not come
   draining: Bool = false
+  /// receiver: settle mode Second, a settlement waits for the peer's disposition
+  second: Bool = false
+  /// receiver in mode Second: ids of deliveries sent unsettled, and the peer's answers to them
+  waiting: List[Int] = []
+  acks: List[(Int, DeliveryState?)] = []
   tag_counter: Int = 0
   /// sender: settled deliveries by transfer id with the peer's state
   results: List[(Int, DeliveryState?)] = []
@@ -638,11 +643,15 @@ fn (r: Receiver) issue_credit(n: Int) -> () ! AmqpErr uses (net.dial, clock)
 /// `timeout_ms` bounds the wait (0 for none; it needs `ConnOptions.clock`).
 fn (r: Receiver) drain(timeout_ms: Int = 0) -> List[Delivery] ! AmqpErr uses (net.dial, clock)
 
-/// Settles the delivery with the outcome.
+/// Settles the delivery with the outcome. With `ReceiverSettleMode.Second` the outcome is sent
+/// unsettled and the call waits for the peer's settlement: a peer that refuses it (a Rejected state
+/// with an error, such as Service Bus's `com.microsoft:message-lock-lost`) makes the call `Peer`.
 fn (r: Receiver) accept(d: Delivery) -> () ! AmqpErr uses (net.dial, clock)
 fn (r: Receiver) reject(d: Delivery, error: WireError? = None) -> () ! AmqpErr uses (net.dial, clock)
 fn (r: Receiver) release(d: Delivery) -> () ! AmqpErr uses (net.dial, clock)
-fn (r: Receiver) modify(d: Delivery, delivery_failed: Bool = true, undeliverable_here: Bool = false) -> () ! AmqpErr uses (net.dial, clock)
+/// `annotations` are the Modified outcome's message-annotations to apply (Go's properties to modify;
+/// the keys are symbols).
+fn (r: Receiver) modify(d: Delivery, delivery_failed: Bool = true, undeliverable_here: Bool = false, annotations: List[(Str, Value)] = []) -> () ! AmqpErr uses (net.dial, clock)
 
 /// Detaches the link (with `closed` set) and waits for the peer's Detach.
 fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses (net.dial, clock)

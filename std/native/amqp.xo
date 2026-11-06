@@ -2580,7 +2580,30 @@ fn apply_frame(var c: amqp.ConnState, f: amqp.Frame) -> () ! amqp.AmqpErr uses (
             }
           }
         }
-        Sender => {}
+        Sender => {
+          // the peer's settlement of dispositions we sent unsettled (settle mode Second)
+          let lastid = match x.last {
+            Some(n) => Int(n)
+            None => Int(x.first)
+          }
+          var i = 0
+          while i < c.links.len() {
+            var l = c.links[i]
+            if l.channel == ch && l.waiting.len() > 0 {
+              var keep: List[Int] = []
+              for id in l.waiting {
+                if id >= Int(x.first) && id <= lastid {
+                  l.acks.push((id, x.state))
+                } else {
+                  keep.push(id)
+                }
+              }
+              l.waiting = keep
+              put_link(c, l)
+            }
+            i += 1
+          }
+        }
       }
     }
     Detach(x) => {
@@ -2699,6 +2722,10 @@ fn st_new_receiver(var c: amqp.ConnState, s: amqp.Session, source: Str, opts: am
   let id = new_link(c, s, opts.name, amqp.Role.Receiver)?
   var l = c.links[id]
   l.credit_target = opts.credit
+  l.second = match opts.settle_mode {
+    Some(m) => m == amqp.ReceiverSettleMode.Second
+    None => false
+  }
   put_link(c, l)
   st_send(c, frame_on(s.channel, amqp.FrameBody.Attach(v: amqp.Attach{
     name: l.name, handle: u32w(l.handle), role: amqp.Role.Receiver, sender_settle_mode: opts.sender_settle_mode,
@@ -2839,8 +2866,36 @@ fn st_settle(var c: amqp.ConnState, id: Int, d: amqp.Delivery, state: amqp.Deliv
   check_link(c, id)?
   let l = c.links[id]
   if d.settled { return Ok(()) }
+  if l.second {
+    var z = l
+    z.waiting.push(d.id)
+    put_link(c, z)
+    return st_send(c, frame_on(l.channel, amqp.FrameBody.Disposition(v: amqp.Disposition{
+      role: amqp.Role.Receiver, first: u32w(d.id), last: None, settled: false, state: Some(state)})))
+  }
   st_send(c, frame_on(l.channel, amqp.FrameBody.Disposition(v: amqp.Disposition{
     role: amqp.Role.Receiver, first: u32w(d.id), last: None, settled: true, state: Some(state)})))
+}
+
+/// The peer's answer to the unsettled disposition of delivery `did` (mode Second).
+fn step_ack(var c: amqp.ConnState, id: Int, did: Int) -> (amqp.DeliveryState?)? ! amqp.AmqpErr uses (net.dial, clock) {
+  check_link(c, id)?
+  var l = c.links[id]
+  var i = 0
+  while i < l.acks.len() {
+    if l.acks[i].0 == did {
+      let st = l.acks[i].1
+      var keep: List[(Int, amqp.DeliveryState?)] = []
+      for a in l.acks {
+        if a.0 != did { keep.push(a) }
+      }
+      l.acks = keep
+      put_link(c, l)
+      return Ok(Some(st))
+    }
+    i += 1
+  }
+  Ok(None)
 }
 
 /// Starts a link's close: sends Detach when the peer has not detached it yet.
@@ -2972,7 +3027,22 @@ fn settle(r: amqp.Receiver, d: amqp.Delivery, state: amqp.DeliveryState) -> () !
       Err(y) => Some(y)
     }
   })
-  fin_unit(e)
+  fin_unit(e)?
+  let second = r.conn.st.with_read(fn(z: amqp.ConnState) -> Bool { z.links[r.id].second })
+  if !second || d.settled { return Ok(()) }
+  let id = r.id
+  let did = d.id
+  let answer = await_cond(r.conn, 0, fn(var z: amqp.ConnState) -> (amqp.DeliveryState?)? ! amqp.AmqpErr uses (net.dial, clock) { step_ack(z, id, did) })?
+  match answer {
+    Some(Rejected(error)) => {
+      match error {
+        Some(x) => return Err(amqp.AmqpErr.Peer(error: x))
+        None => {}
+      }
+    }
+    _ => {}
+  }
+  Ok(())
 }
 
 fn receiver_accept(r: amqp.Receiver, d: amqp.Delivery) -> () ! amqp.AmqpErr uses (net.dial, clock) {
@@ -2987,8 +3057,12 @@ fn receiver_release(r: amqp.Receiver, d: amqp.Delivery) -> () ! amqp.AmqpErr use
   settle(r, d, amqp.DeliveryState.Released)
 }
 
-fn receiver_modify(r: amqp.Receiver, d: amqp.Delivery, delivery_failed: Bool = true, undeliverable_here: Bool = false) -> () ! amqp.AmqpErr uses (net.dial, clock) {
-  settle(r, d, amqp.DeliveryState.Modified(delivery_failed: delivery_failed, undeliverable_here: undeliverable_here, annotations: []))
+fn receiver_modify(r: amqp.Receiver, d: amqp.Delivery, delivery_failed: Bool = true, undeliverable_here: Bool = false, annotations: List[(Str, amqp.Value)] = []) -> () ! amqp.AmqpErr uses (net.dial, clock) {
+  var ann: List[(amqp.Value, amqp.Value)] = []
+  for a in annotations {
+    ann.push((amqp.Value.Symbol(v: a.0), a.1))
+  }
+  settle(r, d, amqp.DeliveryState.Modified(delivery_failed: delivery_failed, undeliverable_here: undeliverable_here, annotations: ann))
 }
 
 fn receiver_close(r: amqp.Receiver, error: amqp.WireError? = None) -> () ! amqp.AmqpErr uses (net.dial, clock) {

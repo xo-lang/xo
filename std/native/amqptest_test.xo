@@ -578,3 +578,34 @@ test "manual credit: issue_credit grants exactly that much and drain leaves noth
     c.close().or_fault("close")
   }
 }
+
+test "settle mode Second: accept waits for the peer, a lost lock is reported, modify carries annotations" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q", amqptest.QueueOptions{lock_ms: 100})
+  b.put("q", msg("x"))
+  b.put("q", msg("y"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 2, settle_mode: Some(amqp.ReceiverSettleMode.Second)}).or_fault("receiver")
+    let d1 = rcv.receive(2000).or_fault("receive 1")
+    let d2 = rcv.receive(2000).or_fault("receive 2")
+    // a good accept returns after the broker settled it, so the queue is already updated
+    rcv.accept(d1).or_fault("accept")
+    expect(b.locked("q")) == 1
+    os.clock.sleep(250ms)
+    match rcv.modify(d2, annotations: [("x-opt-note", amqp.Value.Str(v: "n"))]) {
+      Ok(_) => fault("a lost lock was accepted")
+      Err(e) => {
+        match e {
+          Peer(w) => expect(w.condition) == "com.microsoft:message-lock-lost"
+          _ => fault("wrong error")
+        }
+      }
+    }
+    c.close().or_fault("close")
+  }
+}
