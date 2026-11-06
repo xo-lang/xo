@@ -404,4 +404,9 @@ Last verified: 2026-11-01
   ends, and the exclusive jobs queued behind it (`--ab`, twin-tg.sh) wait
   the whole time (Xo Lang 2, 2026-11-06: a 6 hour soak in lane pass2
   held slot 2 from 13:26, and two exclusive jobs waited 48 minutes before
-  the lead moved them to the first host). Last verified: 2026-11-06.
+  the lead moved them to the first host). The same holds for any plain
+  run expected past 30 minutes, such as a repro loop waiting for a rare
+  hang (lead, 2026-11-06 bottleneck review: an amqp hang loop held the
+  first host's lane 14:29 to 15:15 while three exclusive jobs and the
+  tier's host step waited up to 1h32m behind it): send it with
+  `OFF_NO_LANE=1`. Last verified: 2026-11-06.
