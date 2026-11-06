@@ -25,6 +25,12 @@ const XO_BUILT_BY: Str = ""
 /// caches key on it (bcache.xo cache_id); "" when unstamped.
 const XO_CODEGEN_KEY: Str = ""
 
+/// internal/xotool DriverKey of the sources it was built from: this
+/// module's files. std's separately compiled variants key on it with
+/// XO_CODEGEN_KEY (stdcache.xo std_id), since the driver decides what
+/// std's build is handed; "" when unstamped.
+const XO_DRIVER_KEY: Str = ""
+
 /// A warning on standard error when this xo is older than the std it
 /// runs with (std/VERSION, written by seed-cut.sh's bump): a stale bin/xo
 /// on PATH checks and builds a newer std with old rules (lead,

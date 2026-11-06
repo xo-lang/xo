@@ -1438,6 +1438,12 @@ func StampArgs(root, seed string) []string {
 			args = append(args, "--stamp", "XO_CODEGEN_KEY="+ck)
 		}
 	}
+	// the driver's key (std's separately compiled variants key on it)
+	if src, err := os.ReadFile(filepath.Join(root, CompilerDir(root), "xo", "provenance.xo")); err == nil && bytes.Contains(src, []byte("const XO_DRIVER_KEY: Str")) {
+		if dk, err := DriverKey(root); err == nil {
+			args = append(args, "--stamp", "XO_DRIVER_KEY="+dk)
+		}
+	}
 	return args
 }
 

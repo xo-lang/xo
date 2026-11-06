@@ -112,6 +112,39 @@ func CodegenKey(root string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// DriverKey is XO_DRIVER_KEY of root: the SHA-256 of the driver's
+// sources (the compiler's xo module, test files left out). The code
+// generation key leaves the driver out, so an xo rebuilt from a driver
+// change keeps its back-end caches; but the driver decides the settings
+// std's separately compiled variants are built with (dw_data_addrs,
+// debug info, weak helpers: compiler/xo main.xo), so std's variant key
+// holds this too (stdcache.xo std_id; decision 0275's rule that what
+// the driver hands the backends is keyed, 2026-11-06).
+func DriverKey(root string) (string, error) {
+	files, err := moduleFiles(filepath.Join(root, CompilerDir(root), "xo"))
+	if err != nil {
+		return "", err
+	}
+	if len(files) == 0 {
+		return "", fmt.Errorf("driver key: no source in %s/xo", CompilerDir(root))
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\n", driverKeyVersion)
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return "", err
+		}
+		rel := "xo/" + filepath.Base(f)
+		fmt.Fprintf(h, "%d:%s\n%d\n", len(rel), rel, len(b))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// driverKeyVersion changes when what DriverKey hashes changes.
+const driverKeyVersion = "xo driver key v1"
+
 // moduleFiles are the .xo files of a module directory but its tests,
 // sorted.
 func moduleFiles(dir string) ([]string, error) {

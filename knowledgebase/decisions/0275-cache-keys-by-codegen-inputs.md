@@ -200,3 +200,24 @@ generation key):
 - **Hash xo's code generation functions in the binary** (the text of
   the functions reachable from the backends): exact, but needs the
   linker's call graph at runtime; the source set is simpler to check.
+
+## Addendum (2026-11-06, xo-lang-4): std's variants key on the driver too
+
+"Driver inputs into the keys" held for the entries' key headers
+(fn_key's settings line holds dwaddr, debug, regs ...), but std's
+separately compiled variants (decision 0388, stdcache.xo
+std_cache_key) keyed on XO_CODEGEN_KEY and std's tree alone: a driver
+change to what std's build is handed (dw_data_addrs off for std's
+darwin object, 31ffaa532) left the key, and the stale variants were
+reused. The variant key now also holds XO_DRIVER_KEY, the SHA-256 of
+compiler/xo's non-test files (internal/xotool DriverKey, stamped like
+XO_CODEGEN_KEY), so any driver edit rebuilds std's variants once
+(about 10 s each on the Mac; compiler/xo changed in 17 commits of
+277 on 2026-11-05 to 06, the backends in 22). Over-invalidating rather
+than hashing the settings line std's build receives: the settings are
+assigned across main.xo from the environment, the options and the
+target, and a list kept beside them would be the next thing to miss.
+A release's store .id holds both keys (scripts/release.sh,
+std_released). Proof: TestDriverKeyChanges; on the Mac an xo rebuilt
+after a comment in compiler/xo/main.xo built std's variant under a new
+key, and the reverted tree's xo reused the first key.

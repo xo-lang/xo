@@ -1789,7 +1789,13 @@ TestCodegenInputsClassified fails on an environment variable, module
 field, or file system read of the driver or the closure that is not
 classified (key header, bypass, program content, link, or no effect);
 TestCodegenKeyChanges checks the key moves with every closure module
-and not with compiler/xo or a test. gate.sh's `warm` step builds the
+and not with compiler/xo or a test. std's separately compiled variants
+(decision 0388) also key on XO_DRIVER_KEY, the SHA-256 of compiler/xo's
+non-test files (DriverKey, stamped beside the code generation key;
+stdcache.xo std_id), since the driver decides the settings std's build
+is handed: a driver edit rebuilds them once (about 10 s each on the
+Mac), and a release's store .id holds both keys (2026-11-06;
+TestDriverKeyChanges). Last verified: 2026-11-06. gate.sh's `warm` step builds the
 base's xo, fills a cache with it, and checks this xo's builds through
 it (TestFrontCacheAcrossPrograms, XO_TEST_WARM_XO) and TestGoldenRun
 with XO_BACKEND_CACHE=verify against the user cache. Last verified:

@@ -29,7 +29,7 @@ const STD_CACHE_VERSION = 2
 /// development std changes the object, unlike std_tree_sum's interface
 /// hash); "" when xo's identity or std cannot be read.
 fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bool) -> Str {
-  let id = if XO_CODEGEN_KEY.len() == 64 { "codegen ${XO_CODEGEN_KEY}" } else { self_id(os) }
+  let id = std_id(os)
   if id.is_empty() {
     return ""
   }
@@ -38,6 +38,22 @@ fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Boo
     return ""
   }
   crypto.sha256("${std_key_head(id, tgoos, tgoarch, conc, tmode)}${tree}".bytes()).to_hex()
+}
+
+/// The identity std's entries key on: the code generation key and the
+/// driver's (the driver decides the settings std's build is handed,
+/// decision 0275), else xo's own binary.
+fn std_id(os: Os) -> Str {
+  if XO_CODEGEN_KEY.len() != 64 {
+    return self_id(os)
+  }
+  "codegen ${XO_CODEGEN_KEY}${if XO_DRIVER_KEY.len() == 64 { "\ndriver ${XO_DRIVER_KEY}" } else { "" }}"
+}
+
+/// What a release's store .id file holds: the code generation key and,
+/// when stamped, the driver's on a second line (scripts/release.sh).
+fn std_release_id() -> Str {
+  if XO_DRIVER_KEY.len() == 64 { "${XO_CODEGEN_KEY}\n${XO_DRIVER_KEY}" } else { XO_CODEGEN_KEY }
 }
 
 /// The part of std_cache_key before std's tree lines.
@@ -196,7 +212,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bo
     if tmode {
       // what the key hashed, for a --std-module run after a source edit
       // (std_variant_near)
-      let id = if XO_CODEGEN_KEY.len() == 64 { "codegen ${XO_CODEGEN_KEY}" } else { self_id(os) }
+      let id = std_id(os)
       os.fs.write("${dir}/std/${key}.tree", "${std_key_head(id, tgoos, tgoarch, conc, tmode)}${std_tree_lines(os, ctx, ctx.std)}".bytes()).ignore_err("only a --std-module run after an edit misses")
     }
   }
@@ -392,7 +408,8 @@ fn std_cache_dir(os: Os) -> Str {
 /// The release's store and facts for the target and variant: in
 /// lib/xo/stdstore beside std (std at <prefix>/lib/xo/std, the release
 /// layout), <os>-<arch>-conc<N>[-test].store and .stdf, used when the .id file
-/// beside them names this xo's code generation identity; None otherwise.
+/// beside them names this xo's code generation and driver identity
+/// (std_release_id); None otherwise.
 fn std_released(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bool) -> (Str, Str)? {
   if XO_CODEGEN_KEY.len() != 64 || !std.trim_suffix("/").ends_with("/lib/xo/std") {
     return None
@@ -400,7 +417,7 @@ fn std_released(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool, tmode: B
   let base = "${dir_name(std.trim_suffix("/"))}/stdstore/${tgoos}-${tgoarch}-conc${if conc { 1 } else { 0 }}${if tmode { "-test" } else { "" }}"
   // xo:allow XO0903 no release store: the cache's is used
   let id = (os.fs.read("${base}.id").ok() ?? b"").to_str() ?? ""
-  if id.trim() != XO_CODEGEN_KEY {
+  if id.trim() != std_release_id() {
     return None
   }
   // a windows store's PDB parts beside it (pe_link reads PATH.pdb): one
@@ -515,7 +532,7 @@ fn std_variant_near(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, src:
   if dir.is_empty() || on_wasi() || src.is_empty() {
     return None
   }
-  let id = if XO_CODEGEN_KEY.len() == 64 { "codegen ${XO_CODEGEN_KEY}" } else { self_id(os) }
+  let id = std_id(os)
   if id.is_empty() {
     return None
   }

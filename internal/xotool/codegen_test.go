@@ -483,3 +483,50 @@ func TestStdCodeEnvListed(t *testing.T) {
 		}
 	}
 }
+
+// TestDriverKeyChanges: a change to a non-test file of compiler/xo
+// changes the driver's key (std's variants rebuild: stdcache.xo std_id),
+// a change to a backend or to a driver test file does not, and StampArgs
+// stamps it.
+func TestDriverKeyChanges(t *testing.T) {
+	root := codegenRepoRoot(t)
+	cd := CompilerDir(root)
+	tree := copyCodegenTree(t, root)
+	base, err := DriverKey(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if real, err := DriverKey(root); err != nil || real != base {
+		t.Fatalf("the copy's key differs from the tree's (%v)", err)
+	}
+	try := func(what, rel string, changes bool) {
+		t.Helper()
+		p := filepath.Join(tree, rel)
+		orig, err := os.ReadFile(p)
+		if err != nil {
+			os.WriteFile(p, nil, 0o644)
+		}
+		appendCodegen(t, p, "\n// a change\n")
+		if k, err := DriverKey(tree); err != nil || (k != base) != changes {
+			t.Errorf("%s: key changed %v, want %v (%v)", what, k != base, changes, err)
+		}
+		if orig == nil {
+			os.Remove(p)
+		} else {
+			os.WriteFile(p, orig, 0o644)
+		}
+	}
+	try("a change to compiler/xo main.xo", filepath.Join(cd, "xo", "main.xo"), true)
+	try("a change to compiler/xo stdcache.xo", filepath.Join(cd, "xo", "stdcache.xo"), true)
+	try("a change to compiler/arm64", filepath.Join(cd, "arm64", "emit.xo"), false)
+	try("a new driver test file", filepath.Join(cd, "xo", "zz_test.xo"), false)
+	found := false
+	for _, a := range StampArgs(root, "seed") {
+		if a == "XO_DRIVER_KEY="+base {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("StampArgs does not stamp XO_DRIVER_KEY=%s", base)
+	}
+}
