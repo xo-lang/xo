@@ -5,8 +5,12 @@ package main
 // app.json names one, its Go twin, in alternating rounds (decision 0520
 // section 2, check 2).
 //
-//	harness load -xo XO -app DIR -out OUT [-backend arm64] [-rates 1000,4000] [-sat 64] [-d 30s] [-warmup 5s] [-rounds 3] [-drop-env K,...]
+//	harness load -xo XO -app DIR -out OUT [-backend arm64] [-rates 1000,4000] [-sat 64] [-d 30s] [-warmup 5s] [-rounds 3] [-drop-env K,...] [-env K=V,...]
 //
+// When app.json names a stats path, each xo run's stats text (std/debug's
+// /sched: the scheduler's counters, heap_live, fds_open, timers_pending) at
+// the end of its measurement is kept in its run directory as stats.txt; set
+// XO_RTSTATS=1 with -env for the scheduler's counters.
 // OUT/load.csv gets one row per run, OUT/load.txt the medians, ranges and
 // verdict per rate: slower or faster only when the rounds' ranges do not
 // overlap (bench/perf/jitter pads.py's rule). The exit status is 1 when a
@@ -164,6 +168,21 @@ func peakRSS(pid int) float64 {
 	return rss
 }
 
+// saveStats writes the app's stats text to path.
+func saveStats(cl *http.Client, url, token, path string) {
+	req, _ := http.NewRequest("GET", url, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := cl.Do(req)
+	if err != nil {
+		return
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	os.WriteFile(path, b, 0o644)
+}
+
 // loadRun is one target's run at one load.
 type loadRun struct {
 	target, load        string
@@ -184,6 +203,7 @@ func loadMain(args []string) int {
 	dur := fs.Duration("d", 30*time.Second, "measured duration of each run")
 	warm := fs.Duration("warmup", 5*time.Second, "load before each run's measurement")
 	rounds := fs.Int("rounds", 3, "rounds (each runs every target at every load)")
+	addEnv := fs.String("env", "", "K=V pairs, comma separated, added to the xo build's environment (e.g. XO_RTSTATS=1)")
 	dropEnv := fs.String("drop-env", "", "app.json env keys left out for every target (e.g. NOTES_DATA when the twin has no persistence)")
 	out := fs.String("out", "", "output directory")
 	fs.Parse(args)
@@ -208,7 +228,17 @@ func loadMain(args []string) int {
 		fmt.Fprintln(os.Stderr, "harness load:", err)
 		return 2
 	}
-	type target struct{ name, bin string }
+	xoEnv := map[string]string{}
+	for _, kv := range strings.Split(*addEnv, ",") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok {
+			xoEnv[k] = v
+		}
+	}
+	type target struct {
+		name, bin string
+		env       map[string]string
+		stats     bool
+	}
 	xoBin, _ := filepath.Abs(filepath.Join(*out, app.Name+"-"+*backend))
 	cmd := exec.Command(*xo, "build", "--backend="+*backend, "-o", xoBin, ".")
 	cmd.Dir = *appDir
@@ -216,7 +246,7 @@ func loadMain(args []string) int {
 		fmt.Fprintf(os.Stderr, "harness load: build: %v\n%s", err, b)
 		return 2
 	}
-	targets := []target{{"xo-" + *backend, xoBin}}
+	targets := []target{{"xo-" + *backend, xoBin, xoEnv, true}}
 	if app.Twin != "" {
 		twinBin, _ := filepath.Abs(filepath.Join(*out, app.Name+"-go"))
 		cmd := exec.Command("go", "build", "-o", twinBin, ".")
@@ -225,7 +255,7 @@ func loadMain(args []string) int {
 			fmt.Fprintf(os.Stderr, "harness load: twin build: %v\n%s", err, b)
 			return 2
 		}
-		targets = append(targets, target{"go", twinBin})
+		targets = append(targets, target{"go", twinBin, nil, false})
 	}
 	var loads []string
 	for _, r := range strings.Split(*rates, ",") {
@@ -252,7 +282,18 @@ func loadMain(args []string) int {
 			}
 			for _, t := range order {
 				n++
-				r, err := loadOnce(app, mix, t.bin, filepath.Join(*out, fmt.Sprintf("run-%s-%s-%d", t.name, ld, round)), n, ld, *warm, *dur)
+				ta := *app
+				ta.Env = map[string]string{}
+				for k, v := range app.Env {
+					ta.Env[k] = v
+				}
+				for k, v := range t.env {
+					ta.Env[k] = v
+				}
+				if !t.stats {
+					ta.Stats = ""
+				}
+				r, err := loadOnce(&ta, mix, t.bin, filepath.Join(*out, fmt.Sprintf("run-%s-%s-%d", t.name, ld, round)), n, ld, *warm, *dur)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "harness load: %s %s round %d: %v\n", t.name, ld, round, err)
 					return 2
@@ -305,6 +346,9 @@ func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur
 	time.Sleep(dur)
 	l := d.takeLat()
 	el := time.Since(t0).Seconds()
+	if app.Stats != "" {
+		saveStats(d.cl, d.base+app.Stats, app.Tokens[app.StatsToken], filepath.Join(work, "stats.txt"))
+	}
 	reqs := atomic.LoadInt64(&d.reqs) - reqs0
 	_, _, cpu1, _ := procStats(pid)
 	r.peakKB = peakRSS(pid)

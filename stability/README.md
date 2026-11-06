@@ -31,7 +31,10 @@ fuzzing. Phase 1 builds the starter app and the harness.
   req/s, p50 to p99.9, errors, drops, CPU per request, peak RSS) and
   OUT/load.txt (medians, ranges, xo/go, and "better" or "worse" only when
   the ranges do not overlap); exit 1 only when a run had errors (notes:
-  `-drop-env NOTES_DATA`, since the twin keeps no journal). Build it with
+  `-drop-env NOTES_DATA`, since the twin keeps no journal); `-env
+  XO_RTSTATS=1` adds to the xo build's environment, and each xo run keeps
+  its /debug/sched text at the end of its measurement in its run
+  directory's stats.txt. Build it with
   `cd stability/harness && go build -o /tmp/harness .`.
 
 An app's directory holds `app.json` (env with `{addr}` and `{data}`, the
