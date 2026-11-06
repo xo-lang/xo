@@ -1,0 +1,14 @@
+// A C buffer returned by value (a struct of a const byte pointer and an
+// integer length) binds as a Bytes result (core 4.5): copied, NUL bytes
+// kept, NULL empty; the copy outlives the C storage and goes back to C as
+// a Bytes parameter.
+use c "bufc.h" link "bufc.c"
+
+fn main(os: Os) {
+  for w in [0, 1, 2] {
+    let b = bufc.bufc_get(w)
+    os.stdio.println("${w}: ${b.len()} ${b.to_hex()} sum ${bufc.bufc_sum(b)}")
+  }
+  let joined = bufc.bufc_get(0) + bufc.bufc_get(1)
+  os.stdio.println("joined ${joined.to_hex()}")
+}

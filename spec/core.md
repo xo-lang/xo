@@ -2171,8 +2171,12 @@ fn main(os: Os) {
   parameter is a `Str` (copied and NUL terminated) and a `const char *`
   result a `Str` (copied; NULL is ""); a const byte pointer followed by an
   integer length parameter is one `Str` (`const char *`) or `Bytes`
-  parameter; a struct of such scalars passed or returned by value is an Xo
-  struct with the same fields, copied; a pointer to a struct the header
+  parameter; a struct of exactly a const byte pointer then an integer
+  (`struct buf { const void *p; int64_t n; }`) returned by value is a
+  `Bytes` result (the n bytes at p copied, NUL bytes kept; a NULL p is
+  empty), since a `const char *` result stops at its first NUL; a struct
+  of such scalars passed or returned by value is an Xo struct with the
+  same fields, copied; a pointer to a struct the header
   declares but does not define is an opaque handle type (a result is
   `T?`, None for NULL). Handles are not comparable (2.9) and Xo never frees
   them: call the library's free function. Anything else (output

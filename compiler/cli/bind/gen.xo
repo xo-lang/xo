@@ -40,6 +40,10 @@ struct CRet {
   sc: Scalar = Scalar{}
   handle: Str = ""
   st: Flat = Flat{}
+  /// kind "bytes": the C names of the pointer and length fields of the
+  /// struct returned by value
+  bp: Str = ""
+  bn: Str = ""
 }
 
 struct CFunc {
@@ -174,6 +178,9 @@ fn (var b: Binder) result(t: CType) -> CRet ! Str {
     if let Some(sc) = scalar_of(t) {
       return Ok(CRet{kind: "scalar", ct: t, sc: sc})
     }
+    if let Some((bp, bn)) = b.buf_struct(t) {
+      return Ok(CRet{kind: "bytes", ct: t, bp: bp, bn: bn})
+    }
     let st = b.flat_struct(t)?
     return Ok(CRet{kind: "struct", ct: t, st: st})
   }
@@ -188,6 +195,26 @@ fn (var b: Binder) result(t: CType) -> CRet ! Str {
     return Ok(CRet{kind: "handle", ct: t, handle: h})
   }
   Err(ctype_str(t))
+}
+
+/// buf_struct: the pointer and length field names of a struct of exactly
+/// two fields, a const byte pointer then an integer, which a result by
+/// value binds as Bytes (copied; a NULL pointer is empty): C has no other
+/// way to return a buffer that may hold NUL bytes.
+fn (b: Binder) buf_struct(t: CType) -> (Str, Str)? {
+  if !t.base.starts_with("struct ") || t.ptr != 0 {
+    return None
+  }
+  let r = b.records.get(t.base.trim_prefix("struct "))?
+  if !r.complete || r.is_union || r.fields.len() != 2 || r.fields[0].0.is_empty() || r.fields[1].0.is_empty() {
+    return None
+  }
+  let pt = b.parse_type(r.fields[0].1).ok()?
+  let nt = b.parse_type(r.fields[1].1).ok()?
+  if pt.ptr != 1 || !is_byte_base(pt.base) || !pt.const_base || !is_int_base(nt) {
+    return None
+  }
+  Some((r.fields[0].0, r.fields[1].0))
 }
 
 /// handle: the Xo handle type of a pointer to a struct the header does
@@ -361,6 +388,7 @@ fn (var b: Binder) decl_file(os: Os, fns: List[CFunc]) -> Str uses proc {
     let res = match f.ret.kind {
       "scalar" => " -> ${f.ret.sc.xo}"
       "str" => " -> Str"
+      "bytes" => " -> Bytes"
       "handle" => " -> ${f.ret.handle}?"
       "struct" => " -> ${f.ret.st.xo}"
       _ => ""
@@ -500,6 +528,22 @@ fn (b: Binder) adapter_file(fns: List[CFunc]) -> Str {
         body.push("\tc = \"\";")
         body.push("}")
         body.push("void *r = (void *)(intptr_t)xo_x_cffi_str((int64_t)(intptr_t)c, (int64_t)strlen(c), (int64_t)(intptr_t)xo_len);")
+        for l in post {
+          body.push(l)
+        }
+        body.push("return r;")
+      }
+      "bytes" => {
+        ret = "void *"
+        params.push("int64_t *xo_len")
+        body.push("${f.ret.ct.base} v = ${call};")
+        body.push("const char *c = (const char *)v.${f.ret.bp};")
+        body.push("int64_t n = c ? (int64_t)v.${f.ret.bn} : 0;")
+        body.push("if (!c || n < 0) {")
+        body.push("\tc = \"\";")
+        body.push("\tn = 0;")
+        body.push("}")
+        body.push("void *r = (void *)(intptr_t)xo_x_cffi_str((int64_t)(intptr_t)c, n, (int64_t)(intptr_t)xo_len);")
         for l in post {
           body.push(l)
         }

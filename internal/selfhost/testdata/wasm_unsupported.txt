@@ -86,6 +86,7 @@ udp_echo # wasip1 # network: the network (`rt.conn_close`): WASI preview1 has no
 udp_no_tasks # wasip1 # network: std/udp reaches netconn's name resolution, a platform call of darwin or linux, which faults on WASI by design
 unix_kill # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.spawn)
 use_c_add # wasip1 wasip2 # c: use c: no C calls on wasm
+use_c_bytes # wasip1 wasip2 # c: use c: no C calls on wasm
 use_c_enum # wasip1 wasip2 # c: use c: no C calls on wasm
 user_caps # wasip1 wasip2 # processes: XO1515: no processes in a WASI 0.2 world (proc.run)
 websocket # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
