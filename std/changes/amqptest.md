@@ -44,3 +44,14 @@ Transfers with message format 0x80013700 are unpacked into separate messages, a 
 The broker settled a client's `reject` with the client's own `Rejected(error)`, so a receiver in settle mode
 Second reported the successful dead letter as `Peer(com.microsoft:dead-letter)`. It now answers `Rejected(error: None)`;
 `Rejected(error)` stays for refusals such as a lost lock.
+
+## 2026-11-06: feature: a Modified outcome's annotations are applied to the message
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (azservicebus abandon and defer properties to modify)
+- Go reference: Service Bus applies the properties to modify to the message's application properties
+- Test: native/amqptest "a Modified outcome's annotations land in the message's application properties"
+
+`Receiver.modify(..., annotations:)` now lands in the stored message's `app_properties` (a later key replaces an
+earlier one), visible through `Broker.ready` and the next delivery.

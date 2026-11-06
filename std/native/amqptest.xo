@@ -263,6 +263,36 @@ fn unlock(var s: amqptest.BrokerState, qi: Int, seq: Int, count_it: Bool) {
   notify_all(s)
 }
 
+/// Service Bus applies an abandon or defer's properties to modify to the message's application
+/// properties; a key is a symbol or a string, a later one replaces an earlier one.
+fn apply_modified(var s: amqptest.BrokerState, qi: Int, seq: Int, ann: List[(amqp.Value, amqp.Value)]) {
+  if ann.is_empty() { return }
+  var q = s.queues[qi]
+  let i = find_seq(q, seq)
+  if i < 0 { return }
+  var m = q.msgs[i]
+  var props: List[(Str, amqp.Value)] = m.m.app_properties ?? []
+  for (k, v) in ann {
+    var name = ""
+    match k {
+      Symbol(sv) => name = sv
+      Str(sv) => name = sv
+      _ => continue
+    }
+    var found = false
+    for j in 0..props.len() {
+      if props[j].0 == name {
+        props[j] = (name, v)
+        found = true
+      }
+    }
+    if !found { props.push((name, v)) }
+  }
+  m.m.app_properties = Some(props)
+  put_msg(q, i, m)
+  put_queue(s, qi, q)
+}
+
 fn complete(var s: amqptest.BrokerState, qi: Int, seq: Int) {
   var q = s.queues[qi]
   q.msgs = q.msgs.filter(fn(x: amqptest.FakeMsg) { x.seq != seq })
@@ -1402,7 +1432,8 @@ fn on_disposition(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch
             match state {
               Accepted => complete(s, qi, seq)
               Released => unlock(s, qi, seq, false)
-              Modified(_, undeliverable_here, _) => {
+              Modified(_, undeliverable_here, ann) => {
+                apply_modified(s, qi, seq, ann)
                 if undeliverable_here { defer_msg(s, qi, seq) } else { unlock(s, qi, seq, true) }
               }
               Rejected(error) => {

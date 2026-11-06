@@ -647,6 +647,26 @@ test "settle mode Second: a dead letter is settled without an error, so reject s
   }
 }
 
+test "a Modified outcome's annotations land in the message's application properties" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q", amqptest.QueueOptions{lock_ms: 5000})
+  b.put("q", msg("x"))
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let rcv = c.new_receiver(sess, "q", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+    let d = rcv.receive(2000).or_fault("receive")
+    rcv.modify(d, annotations: [("note", amqp.Value.Str(v: "n1"))]).or_fault("modify")
+    c.close().or_fault("close")
+  }
+  let ready = b.ready("q")
+  expect(ready.len()) == 1
+  expect(ready[0].app_properties ?? []) == [("note", amqp.Value.Str(v: "n1"))]
+}
+
 test "a typed receiver exposes the peer's attach: the echoed session filter and locked-until" uses (net, clock) {
   let b = amqptest.new(os.clock)
   b.queue("sq", amqptest.QueueOptions{sessions: true, lock_ms: 5000})
