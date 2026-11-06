@@ -72,6 +72,13 @@ for n in $names; do
     echo "skip $n (hangs under Rosetta)" | tee -a "$sum"
     continue
   fi
+  # a run with no C toolchain (XO_CLANG=/bin/false, offload-amd64.sh)
+  # cannot build a golden that binds C: its own `use c` (use_c_*) or
+  # std/sqlite's (decision 0534; native_sqlite was BUILD there, 2026-11-06)
+  if [ "${XO_CLANG:-}" = /bin/false ] && grep -q -E '^use (c |std/sqlite)' "$d"/*.xo 2>/dev/null; then
+    echo "skip $n (binds C; XO_CLANG=/bin/false)" | tee -a "$sum"
+    continue
+  fi
   if [ "$backend" = default ]; then set -- ; else set -- --backend="$backend"; fi
   if ! (cd "$d" && "$xo" build "$@" -o "$out/bin/$n" .) >"$out/log/$n.build" 2>&1; then
     echo "BUILD $n" | tee -a "$sum"
