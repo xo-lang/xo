@@ -1,0 +1,59 @@
+// Vectors from google.golang.org/protobuf/encoding/protowire's wire_test.go and the protobuf encoding guide.
+use std/protobuf
+
+test "varints: the guide's examples and the extremes, round trip" {
+  let cases: List[(UInt64, Bytes)] = [
+    (UInt64(0), b"\x00"), (UInt64(1), b"\x01"), (UInt64(127), b"\x7f"), (UInt64(128), b"\x80\x01"),
+    (UInt64(150), b"\x96\x01"), (UInt64(300), b"\xac\x02"), (UInt64(16384), b"\x80\x80\x01"),
+    (UInt64.from_bits(-1), b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01"),
+    (UInt64.from_bits(-9223372036854775807 - 1), b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x01"),
+  ]
+  for (v, want) in cases {
+    expect(protobuf.append_varint(b"", v)) == want
+    expect(protobuf.size_varint(v)) == want.len()
+    let (back, next) = protobuf.read_varint(want, 0).or_fault("read")
+    expect(back) == v
+    expect(next) == want.len()
+  }
+}
+
+test "varint errors: truncated and overflow" {
+  expect(protobuf.read_varint(b"", 0)) == Err(protobuf.ProtoErr.Truncated)
+  expect(protobuf.read_varint(b"\x80", 0)) == Err(protobuf.ProtoErr.Truncated)
+  expect(protobuf.read_varint(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x02", 0)) == Err(protobuf.ProtoErr.Overflow)
+  expect(protobuf.read_varint(b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x01", 0)) == Err(protobuf.ProtoErr.Overflow)
+}
+
+test "zigzag" {
+  for (v, want) in [(0, 0), (-1, 1), (1, 2), (-2, 3), (2147483647, 4294967294), (-2147483648, 4294967295)] {
+    expect(protobuf.encode_zigzag(v)) == UInt64(want)
+    expect(protobuf.decode_zigzag(UInt64(want))) == v
+  }
+}
+
+test "tags, fixed and length delimited values, and skipping" {
+  // field 1 varint 150, field 2 string "testing" (the guide's example)
+  var b = protobuf.append_tag(b"", 1, protobuf.VARINT)
+  b = protobuf.append_varint(b, UInt64(150))
+  b = protobuf.append_tag(b, 2, protobuf.BYTES)
+  b = protobuf.append_bytes(b, b"testing")
+  expect(b) == b"\x08\x96\x01\x12\x07testing"
+  let (n1, w1, at1) = protobuf.read_tag(b, 0).or_fault("tag 1")
+  expect((n1, w1)) == (1, 0)
+  expect(protobuf.skip_field(b, at1, n1, w1).or_fault("skip")) == 3
+  let (n2, w2, at2) = protobuf.read_tag(b, 3).or_fault("tag 2")
+  expect((n2, w2)) == (2, 2)
+  let (s, end) = protobuf.read_bytes(b, at2).or_fault("bytes")
+  expect(s) == b"testing"
+  expect(end) == b.len()
+  expect(protobuf.append_fixed32(b"", UInt32(1))) == b"\x01\x00\x00\x00"
+  expect(protobuf.append_fixed64(b"", UInt64(258))) == b"\x02\x01\x00\x00\x00\x00\x00\x00"
+  expect(protobuf.read_fixed32(b"\x01\x02\x03\x04", 0).or_fault("f32").0) == UInt32(67305985)
+  // a group: start 1, a varint field, end 1
+  let g = b"\x0b\x10\x05\x0c"
+  let (gn, gw, gat) = protobuf.read_tag(g, 0).or_fault("group")
+  expect((gn, gw)) == (1, 3)
+  expect(protobuf.skip_field(g, gat, gn, gw).or_fault("skip group")) == 4
+  expect(protobuf.read_tag(b"\x00", 0)) == Err(protobuf.ProtoErr.BadTag)
+  expect(protobuf.skip_field(b"", 0, 1, 6)) == Err(protobuf.ProtoErr.BadWire(wire: 6))
+}

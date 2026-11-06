@@ -1,0 +1,55 @@
+// std/protobuf (decision 0530): the Protocol Buffers wire format, as Go's
+// google.golang.org/protobuf/encoding/protowire. Declaration file. Pure.
+
+/// A field's wire type (the low three bits of its tag).
+const VARINT: Int = 0
+const FIXED64: Int = 1
+const BYTES: Int = 2
+const START_GROUP: Int = 3
+const END_GROUP: Int = 4
+const FIXED32: Int = 5
+
+/// Why a wire read failed: the cases of protowire's error codes.
+/// `Truncated` the input ends inside a value, `Overflow` a varint is longer than ten bytes or
+/// its tenth byte is above 1, `BadTag` a field number outside 1..2^29-1 or a tag over 32 bits,
+/// `BadWire` a wire type of 6 or 7 (or an end group with no start), `Recursion` groups nested
+/// deeper than the limit, `BadLength` a length that does not fit the input, `Utf8` text that is
+/// not valid UTF-8.
+enum ProtoErr {
+  Truncated
+  Overflow
+  BadTag
+  BadWire(wire: Int)
+  Recursion
+  BadLength
+  Utf8
+} derive Display
+
+/// The greatest nesting of groups `skip_field` follows (protowire's 10000).
+const MAX_GROUP_DEPTH: Int = 10000
+
+/// The bytes of `v` as a varint appended to `b` (protowire.AppendVarint).
+fn append_varint(b: Bytes, v: UInt64) -> Bytes
+/// The bytes of the tag of field `num` with wire type `wire` appended to `b` (AppendTag).
+fn append_tag(b: Bytes, num: Int, wire: Int) -> Bytes
+fn append_fixed32(b: Bytes, v: UInt32) -> Bytes
+fn append_fixed64(b: Bytes, v: UInt64) -> Bytes
+/// A length prefix then the bytes (AppendBytes).
+fn append_bytes(b: Bytes, data: Bytes) -> Bytes
+/// The number of bytes `append_varint` writes for `v` (SizeVarint).
+fn size_varint(v: UInt64) -> Int
+/// The zigzag form of a signed value (EncodeZigZag) and its inverse (DecodeZigZag).
+fn encode_zigzag(v: Int) -> UInt64
+fn decode_zigzag(v: UInt64) -> Int
+
+/// The varint at offset `at` of `b` and the offset after it (ConsumeVarint).
+fn read_varint(b: Bytes, at: Int) -> (UInt64, Int) ! ProtoErr
+/// The field number, wire type and the offset after the tag at `at` (ConsumeTag).
+fn read_tag(b: Bytes, at: Int) -> (Int, Int, Int) ! ProtoErr
+fn read_fixed32(b: Bytes, at: Int) -> (UInt32, Int) ! ProtoErr
+fn read_fixed64(b: Bytes, at: Int) -> (UInt64, Int) ! ProtoErr
+/// A length prefixed value: its bytes (a view) and the offset after it (ConsumeBytes).
+fn read_bytes(b: Bytes, at: Int) -> (Bytes, Int) ! ProtoErr
+/// The offset after the value of a field with tag number `num` and wire type `wire` starting at
+/// `at`, groups included (ConsumeFieldValue).
+fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! ProtoErr

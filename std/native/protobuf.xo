@@ -1,0 +1,192 @@
+// std/protobuf on the native backends (decision 0530): the wire format of Go's
+// google.golang.org/protobuf/encoding/protowire (wire.go), with its error cases.
+use std/protobuf
+
+fn protoerr_display(e: protobuf.ProtoErr) -> Str {
+  match e {
+    Truncated => "proto: unexpected EOF"
+    Overflow => "proto: variable length integer overflow"
+    BadTag => "proto: invalid field number"
+    BadWire(w) => "proto: invalid wire type ${w}"
+    Recursion => "proto: exceeded maximum recursion depth"
+    BadLength => "proto: invalid length"
+    Utf8 => "proto: string field contains invalid UTF-8"
+  }
+}
+
+fn size_varint(v: UInt64) -> Int {
+  var n = 1
+  var x = v.to_bits()
+  // an unsigned shift: the sign bit is cleared by the first one
+  if x < 0 {
+    return 10
+  }
+  while x >= 128 {
+    x = x.shr_logical(7)
+    n += 1
+  }
+  n
+}
+
+fn append_varint(b: Bytes, v: UInt64) -> Bytes {
+  var out = BytesBuilder.with_capacity(b.len() + 10)
+  out.write(b)
+  var x = v.to_bits()
+  var i = 0
+  while i < 9 {
+    if x >= 0 && x < 128 {
+      out.write_byte(UInt8.wrapping_from(x))
+      return out.freeze()
+    }
+    out.write_byte(UInt8.wrapping_from((x & 127) | 128))
+    x = x.shr_logical(7)
+    i += 1
+  }
+  out.write_byte(UInt8.wrapping_from(x))
+  out.freeze()
+}
+
+fn append_tag(b: Bytes, num: Int, wire: Int) -> Bytes {
+  append_varint(b, UInt64.wrapping_from((num << 3) | (wire & 7)))
+}
+
+fn append_fixed32(b: Bytes, v: UInt32) -> Bytes {
+  var out = BytesBuilder.with_capacity(b.len() + 4)
+  out.write(b)
+  let x = Int(v)
+  for i in 0..4 {
+    out.write_byte(UInt8.wrapping_from((x >> (8 * i)) & 255))
+  }
+  out.freeze()
+}
+
+fn append_fixed64(b: Bytes, v: UInt64) -> Bytes {
+  var out = BytesBuilder.with_capacity(b.len() + 8)
+  out.write(b)
+  let x = v.to_bits()
+  for i in 0..8 {
+    out.write_byte(UInt8.wrapping_from((x >> (8 * i)) & 255))
+  }
+  out.freeze()
+}
+
+fn append_bytes(b: Bytes, data: Bytes) -> Bytes {
+  var out = BytesBuilder.with_capacity(b.len() + data.len() + 5)
+  out.write(append_varint(b, UInt64.wrapping_from(data.len())))
+  out.write(data)
+  out.freeze()
+}
+
+fn encode_zigzag(v: Int) -> UInt64 { UInt64.from_bits(v.wrapping_shl(1) ^ (v >> 63)) }
+
+fn decode_zigzag(v: UInt64) -> Int {
+  let x = v.to_bits()
+  x.shr_logical(1) ^ -(x & 1)
+}
+
+fn read_varint(b: Bytes, at: Int) -> (UInt64, Int) ! protobuf.ProtoErr {
+  var v = 0
+  var i = 0
+  while i < 10 {
+    if at + i >= b.len() {
+      return Err(protobuf.ProtoErr.Truncated)
+    }
+    let c = Int(b[at + i])
+    if i == 9 && c > 1 {
+      return Err(protobuf.ProtoErr.Overflow)
+    }
+    v = v | (c & 127).wrapping_shl(7 * i)
+    if c < 128 {
+      return Ok((UInt64.from_bits(v), at + i + 1))
+    }
+    i += 1
+  }
+  Err(protobuf.ProtoErr.Overflow)
+}
+
+fn read_tag(b: Bytes, at: Int) -> (Int, Int, Int) ! protobuf.ProtoErr {
+  let (v, next) = read_varint(b, at)?
+  let x = v.to_bits()
+  if x < 0 || x > 4294967295 {
+    return Err(protobuf.ProtoErr.BadTag)
+  }
+  let num = x >> 3
+  if num < 1 || num > 536870911 {
+    return Err(protobuf.ProtoErr.BadTag)
+  }
+  Ok((num, x & 7, next))
+}
+
+fn read_fixed32(b: Bytes, at: Int) -> (UInt32, Int) ! protobuf.ProtoErr {
+  if at + 4 > b.len() {
+    return Err(protobuf.ProtoErr.Truncated)
+  }
+  var x = 0
+  for i in 0..4 {
+    x = x | Int(b[at + i]).wrapping_shl(8 * i)
+  }
+  Ok((UInt32.wrapping_from(x), at + 4))
+}
+
+fn read_fixed64(b: Bytes, at: Int) -> (UInt64, Int) ! protobuf.ProtoErr {
+  if at + 8 > b.len() {
+    return Err(protobuf.ProtoErr.Truncated)
+  }
+  var x = 0
+  for i in 0..8 {
+    x = x | Int(b[at + i]).wrapping_shl(8 * i)
+  }
+  Ok((UInt64.from_bits(x), at + 8))
+}
+
+fn read_bytes(b: Bytes, at: Int) -> (Bytes, Int) ! protobuf.ProtoErr {
+  let (n, next) = read_varint(b, at)?
+  let len = n.to_bits()
+  if len < 0 || len > b.len() - next {
+    return Err(protobuf.ProtoErr.Truncated)
+  }
+  Ok((b[next..next + len], next + len))
+}
+
+fn skip_value(b: Bytes, at: Int, num: Int, wire: Int, depth: Int) -> Int ! protobuf.ProtoErr {
+  match wire {
+    0 => {
+      let (_, next) = read_varint(b, at)?
+      Ok(next)
+    }
+    1 => {
+      let (_, next) = read_fixed64(b, at)?
+      Ok(next)
+    }
+    2 => {
+      let (_, next) = read_bytes(b, at)?
+      Ok(next)
+    }
+    5 => {
+      let (_, next) = read_fixed32(b, at)?
+      Ok(next)
+    }
+    3 => {
+      if depth <= 0 {
+        return Err(protobuf.ProtoErr.Recursion)
+      }
+      var i = at
+      while true {
+        let (n2, w2, next) = read_tag(b, i)?
+        if w2 == 4 {
+          if n2 != num {
+            return Err(protobuf.ProtoErr.BadTag)
+          }
+          return Ok(next)
+        }
+        i = skip_value(b, next, n2, w2, depth - 1)?
+      }
+      Err(protobuf.ProtoErr.Truncated)
+    }
+    _ => Err(protobuf.ProtoErr.BadWire(wire: wire))
+  }
+}
+
+fn skip_field(b: Bytes, at: Int, num: Int, wire: Int) -> Int ! protobuf.ProtoErr {
+  skip_value(b, at, num, wire, protobuf.MAX_GROUP_DEPTH)
+}

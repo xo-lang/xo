@@ -27,3 +27,4 @@ jwt
 yaml
 amqp
 amqptest
+protobuf
