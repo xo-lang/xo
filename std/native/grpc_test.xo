@@ -47,3 +47,49 @@ test "grpc-message encoding" {
   expect(grpc.decode_message("%zz")) == "%zz"
   expect(grpc.decode_message("100%")) == "100%"
 }
+
+fn lcg(x: Int) -> Int {
+  (x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)) & 0x7fffffffffffffff
+}
+
+test "random bytes never fault the frame, timeout and message readers" {
+  var x = 12345
+  for _ in 0..3000 {
+    x = lcg(x)
+    let n = (x >> 33) % 24
+    var b = BytesBuilder.with_capacity(n)
+    for _ in 0..n {
+      x = lcg(x)
+      b.write_byte(UInt8.wrapping_from((x >> 40) & 255))
+    }
+    let data = b.freeze()
+    // a frame read of any bytes is Ok or an error, and an Ok frame reframes to the bytes it came from
+    match grpc.unframe(data, 0) {
+      Ok((compressed, msg, next)) => {
+        expect(grpc.frame(msg, compressed)) == data[0..next]
+      }
+      Err(_) => {}
+    }
+    let s = data.to_str_lossy()
+    let back = grpc.decode_message_bytes(s)
+    expect(back.len() <= s.len()) == true
+    match grpc.decode_timeout(s) {
+      Some(ns) => expect(ns >= 0) == true
+      None => {}
+    }
+  }
+}
+
+test "frame round trips every length class and the receive limit" {
+  for n in [0, 1, 255, 256, 65535, 65536, 100000] {
+    let payload = Bytes.zeroed(n)
+    let (c, m, next) = grpc.unframe(grpc.frame(payload), 0).or_fault("unframe")
+    expect(c) == false
+    expect(m.len()) == n
+    expect(next) == n + 5
+  }
+  match grpc.unframe(grpc.frame(Bytes.zeroed(10)), 0, 9) {
+    Ok(_) => fault("want TooLarge")
+    Err(e) => expect(e) == grpc.FrameErr.TooLarge(len: 10)
+  }
+}

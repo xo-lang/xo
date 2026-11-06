@@ -79,22 +79,27 @@ fn encode_timeout(ns: Int) -> Str {
 }
 
 fn decode_timeout(s: Str) -> Int? {
-  if s.len() < 2 || s.len() > 9 {
+  let b = s.bytes()
+  if b.len() < 2 || b.len() > 9 {
     return None
   }
-  let unit = s[s.len() - 1..]
-  let digits = s[0..s.len() - 1]
-  let v = Int.parse(digits) ?? return None
-  if v < 0 {
-    return None
+  var v = 0
+  var i = 0
+  while i < b.len() - 1 {
+    let c = Int(b[i])
+    if c < 48 || c > 57 {
+      return None
+    }
+    v = v * 10 + c - 48
+    i += 1
   }
-  match unit {
-    "n" => Some(v)
-    "u" => Some(v * 1000)
-    "m" => Some(v * 1000000)
-    "S" => Some(v * 1000000000)
-    "M" => Some(v * 60000000000)
-    "H" => Some(v * 3600000000000)
+  match Int(b[b.len() - 1]) {
+    110 => Some(v)
+    117 => Some(v * 1000)
+    109 => Some(v * 1000000)
+    83 => Some(v * 1000000000)
+    77 => Some(v * 60000000000)
+    72 => Some(v * 3600000000000)
     _ => None
   }
 }
