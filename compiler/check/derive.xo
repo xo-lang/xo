@@ -1650,6 +1650,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int) -> E
   e.ln("  while at < data.len() {", sp)
   e.ln("    let (num, wire, nx) = protobuf.read_tag(data, at)?", sp)
   e.ln("    at = nx", sp)
+  e.ln("    if num > 536870911 { return Err(protobuf.ProtoErr.BadTag) }", sp)
   var first = true
   for l in rd {
     let parts = l.split("@@")

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -168,6 +169,64 @@ func protobufCorpus() string {
 	ok := bytes.Repeat([]byte{0x0b}, 10000)
 	ok = append(ok, bytes.Repeat([]byte{0x0c}, 10000)...)
 	add("field", ok)
+	// typed cases: derive Proto's marshal (msg) and unmarshal (unmsg) against a dynamicpb message
+	tr := rand.New(rand.NewSource(5301))
+	for i := 0; i < 400; i++ {
+		id := int64(0)
+		name := []byte(nil)
+		z := int64(0)
+		okb := 0
+		fb := uint64(0)
+		raw := []byte(nil)
+		if tr.Intn(3) != 0 {
+			id = int64(tr.Uint64() >> uint(tr.Intn(64)))
+			if tr.Intn(2) == 0 {
+				id = -id
+			}
+		}
+		if tr.Intn(3) != 0 {
+			name = make([]byte, tr.Intn(20))
+			for j := range name {
+				name[j] = byte('a' + tr.Intn(26))
+			}
+		}
+		if tr.Intn(3) != 0 {
+			z = int64(tr.Uint64() >> uint(tr.Intn(64)))
+			if tr.Intn(2) == 0 {
+				z = -z
+			}
+		}
+		if tr.Intn(2) == 0 {
+			okb = 1
+		}
+		if tr.Intn(3) != 0 {
+			fb = tr.Uint64()
+			if tr.Intn(2) == 0 {
+				fb = math.Float64bits(float64(tr.Intn(2000)-1000) / 8)
+			}
+		}
+		if tr.Intn(3) != 0 {
+			raw = make([]byte, tr.Intn(20))
+			tr.Read(raw)
+		}
+		h := func(b []byte) string {
+			if len(b) == 0 {
+				return "-"
+			}
+			return hex.EncodeToString(b)
+		}
+		cases = append(cases, protoCase{fmt.Sprintf("msg %d %s %d %d %d %s", id, h(name), z, okb, fb, h(raw)), nil})
+	}
+	for i := 0; i < 300; i++ {
+		var b []byte
+		for j, n := 0, tr.Intn(6); j < n; j++ {
+			b = append(b, protoField(tr, 0)...)
+		}
+		if tr.Intn(4) == 0 {
+			b = protoMutate(tr, b)
+		}
+		add("unmsg", b)
+	}
 	for _, v := range []uint64{0, 1, 127, 128, 255, 300, 16383, 16384, 1<<32 - 1, 1 << 32, 1<<63 - 1, 1 << 63, 1<<64 - 1} {
 		cases = append(cases, protoCase{"encvarint " + fmt.Sprint(v), nil})
 	}
@@ -193,7 +252,7 @@ func protobufCorpus() string {
 	refs := protoOracle(cases)
 	var o strings.Builder
 	o.WriteString(header("google.golang.org/protobuf's protowire: ConsumeVarint, ConsumeTag, ConsumeFixed32 and 64, ConsumeBytes, ConsumeFieldValue (groups, the recursion limit), AppendVarint, SizeVarint and the zigzag forms, on curated and seeded random inputs, against internal/stdtest/protoref"))
-	o.WriteString("use std/protobuf\n\n")
+	o.WriteString("use std/protobuf\n\nstruct M {\n  id proto \"1\": Int\n  name proto \"2\": Str\n  z proto \"3,zigzag\": Int\n  ok proto \"4\": Bool\n  f proto \"5\": Float\n  raw proto \"6\": Bytes\n} derive Proto\n\n")
 	o.WriteString("/// (operation, input in hex or the number, what Go's protowire answers: `ok VALUE N` or `err KIND`)\nconst CASES: List[(Str, Bytes, Str)] = [\n")
 	for i, c := range cases {
 		op, arg := c.op, ""
@@ -286,8 +345,21 @@ fn run(op: Str, data: Bytes) -> Str {
     let z = protobuf.encode_zigzag(num_of(data))
     return "ok ${z} ${protobuf.decode_zigzag(z)}"
   }
+  if op == "msg" {
+    let f = data.to_str_lossy().split(" ")
+    let m = M{id: Int.parse(f[0]) ?? 0, name: unhex(f[1]).to_str_lossy(), z: Int.parse(f[2]) ?? 0, ok: f[3] == "1", f: Float.from_bits(ubits_of(f[4].bytes())), raw: unhex(f[5])}
+    return "ok ${protobuf.marshal(m).to_hex()} 0"
+  }
+  if op == "unmsg" {
+    return match protobuf.unmarshal[M](data) {
+      Ok(r) => "ok ${r.id} ${r.name.bytes().to_hex()} ${r.z} ${r.ok} ${UInt64.from_bits(r.f.to_bits())} ${r.raw.to_hex()} 0"
+      Err(_) => "err err"
+    }
+  }
   "unknown op ${op}"
 }
+
+fn unhex(s: Str) -> Bytes { if s == "-" { b"" } else { Bytes.from_hex(s) ?? b"" } }
 
 test "std/protobuf answers what Go's protowire answers on every case" {
   var bad: List[Str] = []
