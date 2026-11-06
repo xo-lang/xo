@@ -7809,7 +7809,6 @@ const ANSIC, UNIX_DATE, RUBY_DATE, RFC822, RFC822Z, RFC850, RFC1123, RFC1123Z, R
       STAMP, STAMP_MILLI, STAMP_MICRO, STAMP_NANO, DATE_TIME, DATE_ONLY, TIME_ONLY: Str
 ```
 
-<<<<<<< HEAD
 - Every element of Go's layout language: `2006 06 01 1 Jan January 02 2 _2 002 __2 Mon Monday 15 03 3 04 4 05 5 PM pm
   MST Z07:00 Z0700 Z07 Z070000 Z07:00:00 -07:00 -0700 -07 -070000 -07:00:00`, and `.000`, `,000`, `.999` runs (a fraction
   is an element only when no digit follows it, as in Go).
@@ -7826,12 +7825,6 @@ const ANSIC, UNIX_DATE, RUBY_DATE, RFC822, RFC822Z, RFC850, RFC1123, RFC1123Z, R
   zone name `z` does not know is never looked up among all of `z`'s zones, only at that instant; `ParseErr` text is
   core's, not Go's `parsing time ...` wording.
 - `layout` plus `RFC3339` and `RFC3339_NANO` texts take Go's fast path in `parse`.
-=======
-- Elements with a core field: `2006`, `01`, `1`, `Jan`, `January`, `02`, `2`, `Mon`, `Monday`, `15`, `03`, `04`, `05`,
-  `PM`, `.000` runs, `Z07:00`, `-0700`, `MST`. Any other reference element (`.999`, `_2`, `3`, `4`, `5`, `06`, `002`,
-  `-07:00`, `Z0700`, `Z07`, `-07`, `pm`, seconds in offsets) is a `LayoutErr`, never a literal.
-- Parsing is core's strict parse: a weekday in the text must match the date (Go ignores it), and `15` takes exactly two digits (Go accepts one). A zone abbreviation without an offset is looked up in the given zone; Go makes up a
-  zone with that name and a zero offset.
 
 ## 68. std/grpc
 
@@ -7892,4 +7885,3 @@ fn (c: ClientCall) recv() -> Bytes? ! Status
   maps its HTTP status to a code as grpc-go does.
 - Not yet: compression (`grpc-encoding`), binary metadata (`-bin`), response headers and trailers other than the
   status, `grpc-status-details-bin`, the typed stubs of `xo proto gen`, a TLS example.
->>>>>>> 990311560 (WIP std/grpc: spec section 68, change log, coverage row, ADR 0535 accepted, wasm unsupported entry)
