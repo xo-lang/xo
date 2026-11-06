@@ -223,6 +223,11 @@ fn (f: RecFs) open_append(path: Str) -> File ! FsErr uses fs.write {
   f.inner.open_append(path)
 }
 
+fn (f: RecFs) open_rw(path: Str) -> File ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.open_rw(path)
+}
+
 fn (f: RecFs) create_new(path: Str) -> File ! FsErr uses fs.write {
   f.note_write(path)
   f.inner.create_new(path)

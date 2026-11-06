@@ -198,6 +198,12 @@ fn (f: StatFs) open_append(path: Str) -> File ! FsErr uses fs.write {
   r
 }
 
+fn (f: StatFs) open_rw(path: Str) -> File ! FsErr uses fs.write {
+  let r = f.inner.open_rw(path)
+  f.note(path, "create", 0)
+  r
+}
+
 fn (f: StatFs) create_new(path: Str) -> File ! FsErr uses fs.write {
   let r = f.inner.create_new(path)
   f.note(path, "create", 0)
