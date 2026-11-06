@@ -384,6 +384,55 @@ func protobufCorpus() string {
 		}
 		add("runmsg", b)
 	}
+	// oneof: marshal (omsg) and unmarshal (ounmsg) against dynamicpb
+	for i := 0; i < 300; i++ {
+		kind := []string{"n", "c", "s", "l", "i"}[tr.Intn(5)]
+		val := "-"
+		switch kind {
+		case "c":
+			val = fmt.Sprint(tr.Intn(3))
+		case "s":
+			val = fmt.Sprint(math.Float64bits(float64(tr.Intn(3))))
+		case "l":
+			val = []string{"~", "7a", "6162"}[tr.Intn(3)]
+		case "i":
+			val = fmt.Sprint(tr.Intn(3))
+		}
+		tail := []string{"~", "7a"}[tr.Intn(2)]
+		cases = append(cases, protoCase{fmt.Sprintf("omsg %d %s %s %s", tr.Intn(3), kind, val, tail), nil})
+	}
+	for i := 0; i < 300; i++ {
+		var b []byte
+		for j, n := 0, 1+tr.Intn(6); j < n; j++ {
+			switch num := 1 + tr.Intn(6); num {
+			case 1, 2:
+				b = append(b, protoVarint(uint64(num)<<3, 0)...)
+				b = append(b, protoVarint(uint64(tr.Intn(3)), 0)...)
+			case 3:
+				b = append(b, protoVarint(3<<3|1, 0)...)
+				b = append(b, make([]byte, 8)...)
+				b[len(b)-1] = byte(tr.Intn(2))
+			case 4, 6:
+				b = append(b, protoVarint(uint64(num)<<3|2, 0)...)
+				l := tr.Intn(3)
+				b = append(b, byte(l))
+				for k := 0; k < l; k++ {
+					b = append(b, byte('a'+tr.Intn(3)))
+				}
+			default:
+				b = append(b, protoVarint(5<<3|2, 0)...)
+				if tr.Intn(3) == 0 {
+					b = append(b, 0)
+				} else {
+					b = append(b, 2, 0x08, byte(tr.Intn(3)))
+				}
+			}
+		}
+		if tr.Intn(6) == 0 {
+			b = protoMutate(tr, b)
+		}
+		add("ounmsg", b)
+	}
 	for _, v := range []uint64{0, 1, 127, 128, 255, 300, 16383, 16384, 1<<32 - 1, 1 << 32, 1<<63 - 1, 1 << 63, 1<<64 - 1} {
 		cases = append(cases, protoCase{"encvarint " + fmt.Sprint(v), nil})
 	}
@@ -409,7 +458,7 @@ func protobufCorpus() string {
 	refs := protoOracle(cases)
 	var o strings.Builder
 	o.WriteString(header("google.golang.org/protobuf's protowire: ConsumeVarint, ConsumeTag, ConsumeFixed32 and 64, ConsumeBytes, ConsumeFieldValue (groups, the recursion limit), AppendVarint, SizeVarint and the zigzag forms, on curated and seeded random inputs, against internal/stdtest/protoref"))
-	o.WriteString("use std/protobuf\n\nstruct In {\n  a proto \"1\": Int\n} derive Proto\n\nstruct R {\n  id proto \"1\": Int\n  nums proto \"2\": List[Int]\n  tags proto \"3\": List[Str]\n  maybe proto \"4\": Int?\n  inner proto \"5\": In\n  inners proto \"6\": List[In]\n  mo proto \"7\": In?\n  ds proto \"8\": List[Float]\n  ms proto \"9\": Map[Str, Int]\n  mn proto \"10\": Map[Int, In]\n  mb proto \"11\": Map[Bool, Str]\n} derive Proto\n\nstruct M {\n  id proto \"1\": Int\n  name proto \"2\": Str\n  z proto \"3,zigzag\": Int\n  ok proto \"4\": Bool\n  f proto \"5\": Float\n  raw proto \"6\": Bytes\n} derive Proto\n\n")
+	o.WriteString("use std/protobuf\n\nstruct In {\n  a proto \"1\": Int\n} derive Proto\n\nstruct R {\n  id proto \"1\": Int\n  nums proto \"2\": List[Int]\n  tags proto \"3\": List[Str]\n  maybe proto \"4\": Int?\n  inner proto \"5\": In\n  inners proto \"6\": List[In]\n  mo proto \"7\": In?\n  ds proto \"8\": List[Float]\n  ms proto \"9\": Map[Str, Int]\n  mn proto \"10\": Map[Int, In]\n  mb proto \"11\": Map[Bool, Str]\n} derive Proto\n\nenum Choice {\n  Circle as \"2\"(r: Int)\n  Sq as \"3\"(side: Float)\n  Lbl as \"4\"(text: Str)\n  Inn as \"5\"(v: In)\n} derive Proto\n\nstruct O {\n  id proto \"1\": Int\n  ch proto \"oneof\": Choice?\n  tail proto \"6\": Str\n} derive Proto\n\nstruct M {\n  id proto \"1\": Int\n  name proto \"2\": Str\n  z proto \"3,zigzag\": Int\n  ok proto \"4\": Bool\n  f proto \"5\": Float\n  raw proto \"6\": Bytes\n} derive Proto\n\n")
 	o.WriteString("/// (operation, input in hex or the number, what Go's protowire answers: `ok VALUE N` or `err KIND`)\nconst CASES: List[(Str, Bytes, Str)] = [\n")
 	for i, c := range cases {
 		op, arg := c.op, ""
@@ -556,7 +605,49 @@ fn run(op: Str, data: Bytes) -> Str {
       Err(_) => "err err"
     }
   }
+  if op == "omsg" {
+    let f = data.to_str_lossy().split(" ")
+    var ch: Choice? = None
+    if f[1] == "c" { ch = Some(Choice.Circle(Int.parse(f[2]) ?? 0)) }
+    if f[1] == "s" { ch = Some(Choice.Sq(Float.from_bits(ubits_of(f[2].bytes())))) }
+    if f[1] == "l" { ch = Some(Choice.Lbl(if f[2] == "~" { "" } else { unhex(f[2]).to_str_lossy() })) }
+    if f[1] == "i" { ch = Some(Choice.Inn(In{a: Int.parse(f[2]) ?? 0})) }
+    let o = O{id: Int.parse(f[0]) ?? 0, ch: ch, tail: if f[3] == "~" { "" } else { unhex(f[3]).to_str_lossy() }}
+    return "ok ${protobuf.marshal(o).to_hex()} 0"
+  }
+  if op == "ounmsg" {
+    return match protobuf.unmarshal[O](data) {
+      Ok(o) => "ok ${show_one(o)} 0"
+      Err(_) => "err err"
+    }
+  }
   "unknown op ${op}"
+}
+
+fn show_one(o: O) -> Str {
+  var kind = "n"
+  var val = "-"
+  if let Some(c) = o.ch {
+    match c {
+      Circle(r) => {
+        kind = "c"
+        val = "${r}"
+      }
+      Sq(s) => {
+        kind = "s"
+        val = "${UInt64.from_bits(s.to_bits())}"
+      }
+      Lbl(t) => {
+        kind = "l"
+        val = if t.is_empty() { "~" } else { t.bytes().to_hex() }
+      }
+      Inn(i) => {
+        kind = "i"
+        val = "${i.a}"
+      }
+    }
+  }
+  "${o.id} ${kind} ${val} ${if o.tail.is_empty() { "~" } else { o.tail.bytes().to_hex() }}"
 }
 
 fn dash(p: List[Str]) -> Str { if p.is_empty() { "-" } else { p.join(",") } }

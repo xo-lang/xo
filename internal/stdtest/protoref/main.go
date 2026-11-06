@@ -167,6 +167,68 @@ func showRep(m *dynamicpb.Message) string {
 	return fmt.Sprintf("%d %s %s %s %s %s %s %s %s %s %s", m.Get(d.ByNumber(1)).Int(), list(nums), list(tags), maybe, a(m.Get(d.ByNumber(5)).Message()), list(inners), mo, list(ds), list(ms), list(mn), list(mb))
 }
 
+// oneDesc is O { int64 id=1; oneof ch { int64 circle=2; double sq=3; string lbl=4; In inn=5 } string tail=6 } with In { int64 a=1 }.
+func oneDesc() protoreflect.MessageDescriptor {
+	f := func(name string, num int32, typ descriptorpb.FieldDescriptorProto_Type, oneof bool, tn string) *descriptorpb.FieldDescriptorProto {
+		d := &descriptorpb.FieldDescriptorProto{Name: proto.String(name), Number: proto.Int32(num), Type: typ.Enum(),
+			Label: descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(), JsonName: proto.String(name)}
+		if oneof {
+			d.OneofIndex = proto.Int32(0)
+		}
+		if tn != "" {
+			d.TypeName = proto.String(tn)
+		}
+		return d
+	}
+	fd, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name: proto.String("o.proto"), Syntax: proto.String("proto3"), Package: proto.String("t"),
+		MessageType: []*descriptorpb.DescriptorProto{
+			{Name: proto.String("In"), Field: []*descriptorpb.FieldDescriptorProto{f("a", 1, descriptorpb.FieldDescriptorProto_TYPE_INT64, false, "")}},
+			{Name: proto.String("O"), Field: []*descriptorpb.FieldDescriptorProto{
+				f("id", 1, descriptorpb.FieldDescriptorProto_TYPE_INT64, false, ""),
+				f("circle", 2, descriptorpb.FieldDescriptorProto_TYPE_INT64, true, ""),
+				f("sq", 3, descriptorpb.FieldDescriptorProto_TYPE_DOUBLE, true, ""),
+				f("lbl", 4, descriptorpb.FieldDescriptorProto_TYPE_STRING, true, ""),
+				f("inn", 5, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, true, ".t.In"),
+				f("tail", 6, descriptorpb.FieldDescriptorProto_TYPE_STRING, false, ""),
+			}, OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("ch")}}},
+		},
+	}, nil)
+	if err != nil {
+		panic(err)
+	}
+	return fd.Messages().ByName("O")
+}
+
+// showOne is an oneDesc message as "id KIND VALUE tail": KIND n, c, s (double bits), l (hex, ~ for empty) or i.
+func showOne(m *dynamicpb.Message) string {
+	d := m.Descriptor().Fields()
+	kind, val := "n", "-"
+	if fd := m.WhichOneof(m.Descriptor().Oneofs().Get(0)); fd != nil {
+		v := m.Get(fd)
+		switch fd.Number() {
+		case 2:
+			kind, val = "c", strconv.FormatInt(v.Int(), 10)
+		case 3:
+			kind, val = "s", strconv.FormatUint(math.Float64bits(v.Float()), 10)
+		case 4:
+			kind, val = "l", hex.EncodeToString([]byte(v.String()))
+			if val == "" {
+				val = "~"
+			}
+		case 5:
+			kind = "i"
+			mm := v.Message()
+			val = strconv.FormatInt(mm.Get(mm.Descriptor().Fields().ByNumber(1)).Int(), 10)
+		}
+	}
+	tail := hex.EncodeToString([]byte(m.Get(d.ByNumber(6)).String()))
+	if tail == "" {
+		tail = "~"
+	}
+	return fmt.Sprintf("%d %s %s %s", m.Get(d.ByNumber(1)).Int(), kind, val, tail)
+}
+
 func showMsg(m *dynamicpb.Message) string {
 	d := m.Descriptor().Fields()
 	return fmt.Sprintf("%d %s %d %t %d %s", m.Get(d.ByNumber(1)).Int(), hex.EncodeToString([]byte(m.Get(d.ByNumber(2)).String())),
@@ -386,6 +448,49 @@ func main() {
 				a = ans{Err: "err"}
 			} else {
 				a = ans{V: showRep(m)}
+			}
+		case "omsg":
+			// omsg ID KIND VAL TAIL
+			md := oneDesc()
+			m := dynamicpb.NewMessage(md)
+			d := md.Fields()
+			id, _ := strconv.ParseInt(f[1], 10, 64)
+			m.Set(d.ByNumber(1), protoreflect.ValueOfInt64(id))
+			switch f[2] {
+			case "c":
+				v, _ := strconv.ParseInt(f[3], 10, 64)
+				m.Set(d.ByNumber(2), protoreflect.ValueOfInt64(v))
+			case "s":
+				v, _ := strconv.ParseUint(f[3], 10, 64)
+				m.Set(d.ByNumber(3), protoreflect.ValueOfFloat64(math.Float64frombits(v)))
+			case "l":
+				if f[3] == "~" {
+					f[3] = ""
+				}
+				bs, _ := hex.DecodeString(f[3])
+				m.Set(d.ByNumber(4), protoreflect.ValueOfString(string(bs)))
+			case "i":
+				in := dynamicpb.NewMessage(d.ByNumber(5).Message())
+				v, _ := strconv.ParseInt(f[3], 10, 64)
+				in.Set(in.Descriptor().Fields().ByNumber(1), protoreflect.ValueOfInt64(v))
+				m.Set(d.ByNumber(5), protoreflect.ValueOfMessage(in))
+			}
+			if f[4] != "~" {
+				bs, _ := hex.DecodeString(f[4])
+				m.Set(d.ByNumber(6), protoreflect.ValueOfString(string(bs)))
+			}
+			out, err := proto.MarshalOptions{Deterministic: true}.Marshal(m)
+			if err != nil {
+				a = ans{Err: err.Error()}
+			} else {
+				a = ans{V: hex.EncodeToString(out)}
+			}
+		case "ounmsg":
+			m := dynamicpb.NewMessage(oneDesc())
+			if err := proto.Unmarshal(b, m); err != nil {
+				a = ans{Err: "err"}
+			} else {
+				a = ans{V: showOne(m)}
 			}
 		default:
 			a = ans{Err: "unknown op " + op}

@@ -1648,6 +1648,9 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   let pub_ = if sd.is_pub { "pub " } else { "" }
   var zeros: List[Str] = []
   var wr: List[Str] = []
+  // oneofs are written after the other fields, as Go does
+  var wr_one: List[Str] = []
+  var helpers: List[Str] = []
   var rd: List[(Str, List[Str])] = []
   var ok = true
   var used: List[Int] = []
@@ -1709,25 +1712,34 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
         var val = proto_sub(ve.conv, "", "", "x")
         if !ve.merge.is_empty() {
           // the same message variant read before merges, as Go does
-          let cur = if kind == 1 { "Some(${tx}.${vn}(p))" } else { "${tx}.${vn}(p)" }
-          val = proto_sub(ve.merge, "", "", "x").replace("$R", "(match r.${f} { ${cur} => p, _ => ${ve.zero} })")
+          let hn = "proto_cur__${n}__${f}__${vn}"
+          helpers.push("fn ${hn}(c: ${tx}?) -> ${vt} {")
+          helpers.push("  if let Some(x) = c {")
+          helpers.push("    match x {")
+          helpers.push("      ${vn}(p) => { return p }")
+          helpers.push("      _ => {}")
+          helpers.push("    }")
+          helpers.push("  }")
+          helpers.push("  ${ve.zero}")
+          helpers.push("}")
+          val = proto_sub(ve.merge, "", "", "x").replace("$R", "${hn}(${if kind == 1 { "r.${f}" } else { "Some(r.${f})" }})")
         }
         rd.push((" num == ${num} && wire == ${ve.wire}", ["let (x, n2) = ${ve.rd}(data, at)?", "at = n2", "r.${f} = ${if kind == 1 { "Some(" } else { "" }}${tx}.${vn}(${val})${if kind == 1 { ")" } else { "" }}"]))
       }
       if kind == 1 {
         zeros.push("${f}: None")
-        wr.push("  if let Some(ov) = v.${f} {")
-        wr.push("    match ov {")
+        wr_one.push("  if let Some(ov) = v.${f} {")
+        wr_one.push("    match ov {")
       } else {
         zeros.push("${f}: ${first_zero}")
-        wr.push("  {")
-        wr.push("    match v.${f} {")
+        wr_one.push("  {")
+        wr_one.push("    match v.${f} {")
       }
       for l in arms {
-        wr.push(l)
+        wr_one.push(l)
       }
-      wr.push("    }")
-      wr.push("  }")
+      wr_one.push("    }")
+      wr_one.push("  }")
       continue
     }
     used.push(po.num)
@@ -1794,10 +1806,16 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   if !ok {
     return None
   }
+  for l in helpers {
+    e.ln(l, sp)
+  }
   e.ln("${pub_}fn proto_zero__${n}() -> ${n} { ${n}{${zeros.join(", ")}} }", sp)
   e.ln("${pub_}fn proto_marshal__${n}(v: ${n}) -> Bytes {", sp)
   e.ln("  var b = b\"\"", sp)
   for l in wr {
+    e.ln(l, sp)
+  }
+  for l in wr_one {
     e.ln(l, sp)
   }
   e.ln("  b", sp)
