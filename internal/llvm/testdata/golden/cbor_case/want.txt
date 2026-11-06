@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+1 a 2
+1 a 2
+7
+--- stderr

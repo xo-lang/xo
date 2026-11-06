@@ -1,0 +1,34 @@
+// derive Cbor(case:) (decision 0527): the wire names of a struct follow the rule, a field's own
+// `as` string wins, and a reader keyed by explicit names sees the converted keys.
+use std/cbor
+
+struct Hdr {
+  api_version: Int
+  user_name: Str
+  fixed as "Keep_Me": Int
+} derive Cbor(case: camel)
+
+struct Plain {
+  api_version as "apiVersion": Int
+  user_name as "userName": Str
+  fixed as "Keep_Me": Int
+} derive Cbor
+
+struct Kebab {
+  api_version: Int
+} derive Cbor(case: kebab)
+
+struct KebabPlain {
+  api_version as "api-version": Int
+} derive Cbor
+
+fn main(os: Os) {
+  let data = cbor.marshal(Hdr{api_version: 1, user_name: "a", fixed: 2}).ok() ?? fault("marshal")
+  let p = cbor.unmarshal[Plain](data, true).ok() ?? fault("plain")
+  os.stdio.println("${p.api_version} ${p.user_name} ${p.fixed}")
+  let h = cbor.unmarshal[Hdr](data, true).ok() ?? fault("hdr")
+  os.stdio.println("${h.api_version} ${h.user_name} ${h.fixed}")
+  let k = cbor.marshal(Kebab{api_version: 7}).ok() ?? fault("kebab")
+  let kp = cbor.unmarshal[KebabPlain](k, true).ok() ?? fault("kebab plain")
+  os.stdio.println("${kp.api_version}")
+}

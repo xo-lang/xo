@@ -1159,7 +1159,7 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
 
 - `Cbor` (structs only, no type parameters; decision 0527) gives the struct fxamacker/cbor/v2's typed encoding and decoding
   through `cbor.marshal[T]`, `cbor.unmarshal[T]` and `cbor.unmarshal_prefix[T]` (spec/std.md 50). A field's key is its
-  `cbor` string, else its `as` string, else its name; the options after a comma are `omitempty`, `omitzero`,
+  `cbor` string, else its `as` string, else its name under `derive Cbor(case: snake | camel | pascal | kebab)` (as for `Json`, 2.2), else its name; the options after a comma are `omitempty`, `omitzero`,
   `keyasint` and `toarray` (on the first field: the struct is an array), and the name `-` leaves the field out (`XO0422` for another option). Field types are Str, Int, Float, Bool,
   Bytes, Time, Duration, a cbor.Value, a struct that derives Cbor, an Option, a List, or a Map[Str, V] of those (`XO0425`
   for another type). The expansion is ordinary Xo as for `Yaml` (`cbor_zero__T`, `cbor_rd__T`, `cbor_wr__T`,

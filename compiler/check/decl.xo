@@ -371,8 +371,8 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
     let d = text(a.derive.name)
     let k = text(a.key.name)
     let v = text(a.value.name)
-    if !(d is "Json" | "SqlRow") {
-      c.error("XO0413", a.span, "`derive ${d}` takes no arguments; `case:` applies to `derive Json` and `derive SqlRow` (decision 0277)")
+    if !(d is "Json" | "SqlRow" | "Cbor") {
+      c.error("XO0413", a.span, "`derive ${d}` takes no arguments; `case:` applies to `derive Json`, `derive SqlRow` and `derive Cbor` (decisions 0277, 0527)")
       continue
     }
     if d == "Json" && (k is "via" | "to" | "from") {
@@ -391,7 +391,7 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
       c.error("XO0413", a.value.span, "unknown case `${v}`; `case:` is one of snake, camel, pascal, kebab")
       continue
     }
-    if d == "Json" { json_case = v } else { sql_case = v }
+    if d == "Json" { json_case = v } else if d == "SqlRow" { sql_case = v }
   }
   var any_wire = false
   for i in 0..fields.len() {

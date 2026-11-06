@@ -1308,8 +1308,8 @@ struct CborOpts {
   bad: Str
 }
 
-fn cbor_opts(fl: parser.Field) -> CborOpts {
-  var o = CborOpts{key: text(fl.name.name), omit: false, keyasint: false, toarray: false, skip: false, bad: ""}
+fn cbor_opts(fl: parser.Field, rule: Str) -> CborOpts {
+  var o = CborOpts{key: text(wire_case(fl.name.name, rule)), omit: false, keyasint: false, toarray: false, skip: false, bad: ""}
   var wire: Str? = None
   for fw in fl.formats {
     if fw.format == b"cbor" {
@@ -1383,12 +1383,18 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   var nfound = 0
   var ok = true
   var toarray = false
+  var rule = ""
+  for a in sd.derive_args {
+    if text(a.derive.name) == "Cbor" && text(a.key.name) == "case" {
+      rule = text(a.value.name)
+    }
+  }
   var pos_rd: List[Str] = []
   var pos_wr: List[Str] = []
   var pos_f: List[Str] = []
   for fl in sd.fields {
     let f = text(fl.name.name)
-    let co = cbor_opts(fl)
+    let co = cbor_opts(fl, rule)
     if co.toarray {
       toarray = true
     }

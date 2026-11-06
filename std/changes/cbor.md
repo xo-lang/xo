@@ -24,3 +24,14 @@ Typed CBOR through a derive: `marshal[T]`, `unmarshal[T]`, `unmarshal_prefix[T]`
 Cbor. BREAKING: new `CborErr.Type(msg)` variant (an exhaustive `match` on `CborErr` needs the arm). New public
 helpers used by the generated code: `Unm`, `unm_new`, `to_str` and the other `to_*` readers, `from_time`,
 `from_duration`, `items`, `pairs`, `key_text`, `key_int`, `unknown_key`, `sorted_keys`.
+
+## 2026-11-06: feature: derive Cbor(case:)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0527 follow-up (Xo Lang 3)
+- Go reference: none (fxamacker/cbor has no key case rule; Xo's own, as `derive Json(case:)`)
+- Test: golden cbor_case (camel and kebab, a field's `as` wins, strict decode by the converted keys)
+
+`derive Cbor(case: snake | camel | pascal | kebab)` converts every field without its own `cbor` or `as`
+string, by the same rule as `derive Json` (decision 0277). An unknown case is `XO0413`.
