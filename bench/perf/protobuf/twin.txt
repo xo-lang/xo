@@ -1,0 +1,5 @@
+# twincheck: protobuf: three workloads (none is the setup alone); Go is google.golang.org/protobuf (BSD-3) with protoc-gen-go generated messages (govendor/pb/doc.pb.go, generated from the descriptor of main.xo's messages).
+require google.golang.org/protobuf v1.36.12
+- - none
+- - unmarshal
+- - marshal
