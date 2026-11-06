@@ -85,6 +85,12 @@ null (use `Time?`). `toarray` (a tag on the first field) is built and pinned (an
   decision 0527 section 3 says; no Go oracle exists, so the corpus is round trip (marshal then unmarshal gives the value) plus
   hand written hex for the shapes. The generator reuses `cbor_codec`'s field loop per variant; `derive Json`'s enum code
   (compiler/check/derive.xo) is the model for variant dispatch.
+- Enums, finding (2026-11-06): `derive Json` handles enums in the backends (compiler/ssa/json.xo, jsonval.xo, gen/json.xo),
+  not as generated source, so there is no source generator to copy. The Cbor generator builds source text per variant:
+  a `match` on the value in `cbor_wr__E` (unit variant: `cbor.Value.Text`; variant with fields: a one entry map whose
+  value is the field map built by the struct field loop), and in `cbor_rd__E` a text/map dispatch on the variant name.
+  Needs: variant field lists from `parser.EnumDecl.variants` (fields with names and types, as `valued_enum_methods` reads
+  them), no type parameters, the same `cbor_opts` per field, and `derive Cbor` accepted on an enum in decl.xo.
 - `derive Cbor(case: snake | camel | pascal | kebab)`: apply 0277's key transform in `cbor_opts` when no `as` or `cbor` string
   names the field; the transform helper `derive Json` uses is shared.
 - A typed fuzz corpus (`TestCborFuzz` style, fresh seeds through the typed oracle modes) to follow the fixed corpora.
