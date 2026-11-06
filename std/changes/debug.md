@@ -1,5 +1,20 @@
 # std/debug changes
 
+## 2026-11-05: feature: /debug/sched reports timers_pending
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0520 (the stability program's soak needs the live timer count while the program runs)
+- Go reference: none exported (Go's runtime keeps per-P timer heaps; runtime/metrics has no timer count)
+- Test: cmd/xo TestDebugSchedTimersPending (10 tasks asleep: timers_pending rises by at least 10, falls back once they are canceled)
+- Timing: none (one load of the timer heap's length per GET; no new counting)
+- Shipped in: not yet released
+
+`GET /sched` of `debug.router` on the native backends adds a line
+`timers_pending N`: the timers in the event loop's heap now (sleeping
+tasks, descriptor deadlines, select and scope timeouts), read without
+the event loop's lock.
+
 ## 2026-11-05: feature: /debug/sched reports fds_open
 
 - Kind: feature

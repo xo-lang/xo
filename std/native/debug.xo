@@ -5,6 +5,7 @@ use native/rt
 use native/llrt/darwin
 use native/llrt/heapos
 use native/llrt/linux
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/prof
 use native/llrt/raw
@@ -116,6 +117,9 @@ fn sched(req: http.Request) -> http.Response {
   let fds = fds_open()
   if fds >= 0 {
     lines.push("fds_open ${fds}")
+  }
+  if target.arch != TargetArch.Wasm32 {
+    lines.push("timers_pending ${poll.timers_pending()}")
   }
   http.Response{status: 200, headers: {"Content-Type": "text/plain; charset=utf-8"}, body: "${lines.join("\n")}\n".bytes()}
 }

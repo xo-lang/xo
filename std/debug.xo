@@ -24,7 +24,9 @@ use std/http
 ///   and not yet freed, when the heap counts (`XO_LEAKCHECK`,
 ///   `XO_HEAPSTATS` or `XO_RTSTATS` at start), and on Linux and macOS
 ///   `fds_open`, the process's open file descriptors (files, sockets,
-///   pipes, the poller's own).
+///   pipes, the poller's own), and on the native backends
+///   `timers_pending`, the event loop's timers (sleeps, deadlines,
+///   timeouts).
 ///
 /// A request for which `auth` answers false gets 403.
 fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses clock

@@ -111,7 +111,8 @@ lands with its regression test and, for std, a std/changes entry (decision 0276)
 - A live count of allocations and of open handles (fds, sockets, timers, tasks) in /debug/sched, so a soak
   sees growth while it runs; leakcheck at exit stays.
   Partly done 2026-11-05 (Xo Lang 2): /debug/sched reports `heap_live` (the live heap blocks) and
-  `fds_open` (the open descriptors); sockets, timers and tasks are not counted apart yet.
+  `fds_open` (the open descriptors) and `timers_pending` (the event loop's timers); live tasks are
+  `fiber_live` among the XO_RTSTATS counters; sockets are not counted apart from fds.
 - Native crash bundles, or at least the fault trace written to a file named by an environment variable, so a
   chaos or soak failure on a native build keeps more than stderr.
   Done 2026-11-05 (Xo Lang 2): `XO_CRASH_FILE=PATH` (std/native/llrt/crashfile.xo), Linux and macOS, the

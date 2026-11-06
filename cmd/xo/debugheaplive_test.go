@@ -151,3 +151,67 @@ func TestDebugSchedFdsOpen(t *testing.T) {
 		}
 	}
 }
+
+// timers_pending from /debug/sched counts the event loop's timers: ten
+// sleeping tasks add ten, and canceling them takes them out again.
+const timersPendingProg = `use std/debug
+use std/http
+
+fn timers(r: http.Router) -> Int {
+  let text = r.call(http.new_request("GET", "/sched")).text() ?? ""
+  for line in text.split("\n") {
+    if line.starts_with("timers_pending ") {
+      return Int.parse(line.trim_prefix("timers_pending ")) ?? -2
+    }
+  }
+  -1
+}
+
+fn main(os: Os) {
+  let r = debug.router(os.clock, fn(_) { true })
+  let before = timers(r)
+  var during = -3
+  scope s {
+    for _ in 0..10 {
+      s.spawn_background(fn() { os.clock.sleep(1h) })
+    }
+    os.clock.sleep(50ms)
+    during = timers(r)
+  }
+  let after = timers(r)
+  os.stdio.println("timers ${before} ${during} ${after}")
+}
+`
+
+func TestDebugSchedTimersPending(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	dir := writeFiles(t, map[string]string{
+		"app/xo.mod":  "module app\n",
+		"app/main.xo": timersPendingProg,
+	})
+	app := filepath.Join(dir, "app")
+	for _, be := range nativeBackends(t) {
+		bin := filepath.Join(t.TempDir(), "app")
+		if code, out := xoOut(t, "build", "--backend="+be, "-o", bin, app); code != 0 {
+			t.Fatalf("%s: build: exit %d\n%s", be, code, out)
+		}
+		out, err := command(t, bin).Output()
+		if err != nil {
+			t.Fatalf("%s: run: %v\n%s", be, err, out)
+		}
+		f := strings.Fields(strings.TrimSpace(string(out)))
+		if len(f) != 4 || f[0] != "timers" {
+			t.Fatalf("%s: output %q", be, out)
+		}
+		before, _ := strconv.Atoi(f[1])
+		during, _ := strconv.Atoi(f[2])
+		after, _ := strconv.Atoi(f[3])
+		t.Logf("%s: timers_pending %d before, %d with 10 tasks asleep, %d after they are canceled", be, before, during, after)
+		if before < 0 || during-before < 10 || after > before+1 {
+			t.Errorf("%s: timers_pending %d, %d, %d: want a rise of at least 10 while asleep and back after", be, before, during, after)
+		}
+	}
+}

@@ -40,6 +40,11 @@ const W_HEAP = 40
 const W_N = 41
 const W_CAP = 42
 
+/// The timers in the heap now (sleeps, deadlines, select and scope
+/// timeouts), read without the event loop's lock: a gauge for /debug/sched
+/// (decision 0520), 0 before the first timer.
+pub fn timers_pending() -> Int { rt.slot_load(rt.static_word(W_N), 0, RELAXED) }
+
 fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
 fn subw(a: Int, b: Int) -> Int { a.wrapping_sub(b) }
