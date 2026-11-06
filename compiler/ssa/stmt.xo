@@ -553,9 +553,10 @@ fn compound_op(op: lexer.Kind) -> lexer.Kind? {
 }
 
 fn (var b: Builder) assign(span: Span, op: lexer.Kind, target: Expr, value: Expr) {
-  if let TupleExpr(..) = strip_parens(target) {
-    // `(a, b) = v` (decision 0536): the value first, then each place's
-    // indexes and store, left to right (Python's order)
+  if strip_parens(target) is TupleExpr(..) | StructLit(..) {
+    // `(a, b) = v` (decision 0536) and `P{x, y} = v` (decision 0538): the
+    // value first, then each place's indexes and store, left to right
+    // (Python's order)
     let vt = b.type_of(value)
     b.destructure(target, b.value_as(value, vt), vt)
     return
@@ -598,10 +599,33 @@ fn (var b: Builder) assign(span: Span, op: lexer.Kind, target: Expr, value: Expr
   b.place_set(p, nv)
 }
 
-/// Stores the elements of the tuple v (of type vt) into the places of the
-/// destructuring target e, left to right; `_` drops its element.
+/// Stores the elements of the tuple v (of type vt), or the fields of the
+/// struct v a struct target names, into the places of the destructuring
+/// target e, left to right; `_` drops its element.
 fn (var b: Builder) destructure(e: Expr, v: Int, vt: Int) {
   match strip_parens(e) {
+    StructLit(fields: fields, ..) => {
+      if b.tkind(vt) != Kind.Struct {
+        b.unsupported("this destructuring assignment")
+        return
+      }
+      for f in fields {
+        let name = check.text(f.name.name)
+        var at = -1
+        for (i, sf) in b.m.types[vt].fields.indexed() {
+          if sf.name == name {
+            at = i
+            break
+          }
+        }
+        if at < 0 {
+          b.unsupported("a struct target's field `${name}`")
+          return
+        }
+        let ft = b.field_type(vt, at)
+        b.destructure(f.value, b.add(Op.Field, ft, Aux.I(n: at), [v]), ft)
+      }
+    }
     TupleExpr(elems: els, ..) => {
       if b.tkind(vt) != Kind.Tuple || els.len() != b.m.types[vt].elems.len() {
         b.unsupported("this destructuring assignment")

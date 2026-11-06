@@ -534,21 +534,43 @@ fn (var p: Parser) parse_map_lit() -> Expr {
 }
 
 fn (var p: Parser) parse_field_inits() -> List[FieldInit] {
+  p.parse_field_list(false).0
+}
+
+/// A struct literal's or `with` update's fields; with lit (a struct
+/// literal), a field may be `name` alone and the list may end in `..`,
+/// the forms of a destructuring assignment's target (decision 0538),
+/// which the checker rejects elsewhere. Returns whether it ended in `..`.
+fn (var p: Parser) parse_field_list(lit: Bool) -> (List[FieldInit], Bool) {
   var out: List[FieldInit] = []
+  var rest = false
   let st = p.list_open(Kind.LBrace)
   while p.list_more(Kind.RBrace) {
     let before = p.pos
     let start = p.tok.span.start
+    if lit && p.at(Kind.DotDot) && p.peek(1).kind is Kind.RBrace | Kind.Newline | Kind.Comma {
+      p.next()
+      rest = true
+      p.list_sep(before, Kind.RBrace, "field")
+      if !p.at(Kind.RBrace) {
+        p.fail("XO0171", p.tok.span, "`..` must come last in a struct target's fields")
+      }
+      break
+    }
     let name = p.expect_ident("a field name")
-    p.expect(Kind.Colon, "`:` after the field name")
-    let value = p.parse_expr()
-    out.push(FieldInit{span: p.span_from(start), name: name, value: value})
+    if lit && name.name != b"" && p.tok.kind is Kind.Comma | Kind.RBrace | Kind.Newline {
+      out.push(FieldInit{span: name.span, name: name, value: Expr.Ident(id: name), short: true})
+    } else {
+      p.expect(Kind.Colon, "`:` after the field name")
+      let value = p.parse_expr()
+      out.push(FieldInit{span: p.span_from(start), name: name, value: value})
+    }
     if !p.list_sep(before, Kind.RBrace, "field") {
       break
     }
   }
   p.list_close(st, Kind.RBrace)
-  out
+  (out, rest)
 }
 
 /// One `if` of an `else if` chain, parsed before the `if`s after it
@@ -905,8 +927,8 @@ fn (var p: Parser) parse_postfix(x0: Expr) -> Expr {
         if p.no_lit || !is_type_name(x) {
           return x
         }
-        let fields = p.parse_field_inits()
-        x = Expr.StructLit(span: p.span_from(start), typ: x, fields: fields)
+        let (fields, rest) = p.parse_field_list(true)
+        x = Expr.StructLit(span: p.span_from(start), typ: x, fields: fields, rest: rest)
       }
       _ => return x
     }

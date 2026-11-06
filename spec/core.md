@@ -16,6 +16,10 @@ programs for any OS with fast, structured, unambiguous feedback.
   and `(q, r) = divmod(x, y)` assign a tuple's elements to existing
   places, the value first, then each place left to right; `XO0539` for a
   place named twice.
+- **Struct targets** (5.2, decision 0538): `P{x, y} = p`,
+  `P{x: st.lo, y: xs[i], ..} = p` and `(P{x, y}, n) = (p, 3)` store a
+  struct's fields into existing places by the rules of `let`'s struct
+  pattern. List targets (`[a, b] = xs`) are not decided yet.
 
 ## Changes in 0.42
 
@@ -1491,8 +1495,9 @@ warning names at most 8 hidden variants, then how many more (decision 0080).
 An `UpperCamel` name in a pattern always refers to a variant; bindings are
 `snake_case` (1.5), so the two never collide.
 `let` requires an irrefutable pattern (`let (a, b) = pair`), and so does
-`var` with a pattern (`var (a, b) = pair`, `var [first, ..] = xs`,
-`var Point{x, y} = p`; decision 0384): every name it binds is mutable,
+`var` with a pattern (`var (a, b) = pair`, `var Point{x, y} = p`;
+decision 0384; a list pattern other than `[..]` can fail, `[]` not
+matching, so it is `XO0303` here): every name it binds is mutable,
 as one `var` per name would be.
 
 ### 3.6 Indexing and slicing
@@ -2301,6 +2306,18 @@ never depend on it, but the time does:
   places' types, so `(n, s) = (0, "")` with `n: Int32` types `0` as
   `Int32`. Naming the same place twice (`(a, a) = ...`, `(p.x, p.x)`,
   `(xs[i], xs[i])`) is `XO0539`. Compound assignment takes one target.
+- **Struct targets** (decision 0538): `P{x, y} = p` stores the fields of
+  the struct value `p` into places, by the rules of `let`'s struct
+  pattern (3.5): each field is `name: place`, `name` alone (the binding
+  `name`), `name: _`, or a nested tuple or struct target, every field is
+  named unless the target ends in `..`, and `P` must be the value's type
+  (`XO0302` for a type that is not a struct or a field not named,
+  `XO0401` for a value of another type or a field whose type does not fit
+  its place). The value is evaluated first, then each named field is
+  stored left to right, as for a tuple: `P{x: y, y: x} = P{x: x, y: y}`
+  swaps. The shorthand `name` and `..` belong to targets and patterns
+  only: in a struct literal they are `XO0160`. A list target (`[a, b] =
+  xs`) is not decided yet and is `XO0502`.
 - A call evaluates the place of a `var` receiver or `var` argument, then
   every argument in order, then reads those places (decision 0142):
   `t.get(t.add(v))` on a `var t` sees the item `add` pushed, and
@@ -3500,7 +3517,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0156` | error | lexer | `${` without a matching `}` in the same string |
 | `XO0157` | error | lexer | `${}` with no expression |
 | `XO0158` | error | lexer | `use` not followed by a valid import path |
-| `XO0160` | error | parser | a token that does not fit the grammar here |
+| `XO0160` | error | parser, checker | a token that does not fit the grammar here; the checker reports a struct literal's field written `name` alone or its `..`, which only a destructuring assignment's target takes (decision 0538) |
 | `XO0161` | error | parser | list element followed by a newline instead of a comma (core 1.3) |
 | `XO0162` | error | parser | `else` must be on the line of the closing brace (core 1.3) |
 | `XO0163` | error | parser | unparenthesized struct literal in a condition (core 1.4) |

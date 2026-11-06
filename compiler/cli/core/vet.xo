@@ -1509,7 +1509,7 @@ fn walk_expr(e: parser.Expr, var out: List[parser.Expr]) {
         walk_expr(en.value, out)
       }
     }
-    StructLit(_, typ, fields) => {
+    StructLit(_, typ, fields, _) => {
       out.push(e)
       walk_expr(typ, out)
       for f in fields {
@@ -1649,7 +1649,7 @@ fn stored_locals(c: check.Checker, f: Int, nodes: List[parser.Expr]) -> Map[Int,
   var out: Map[Int, Int] = {}
   for e in nodes {
     match e {
-      StructLit(_, _, fields) => {
+      StructLit(_, _, fields, _) => {
         for fl in fields {
           note_local(c, f, out, fl.value)
         }

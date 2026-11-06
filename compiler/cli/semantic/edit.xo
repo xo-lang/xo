@@ -821,7 +821,7 @@ fn edit_add_field(os: Os, dirs: List[Str], dry: Bool, target: Str, spec: Str) ->
     for d in s.q.c.files[f].ast.decls {
       for n in decl_nodes(d) {
         if let E(e) = n {
-          if let StructLit(sp, _, fields) = e {
+          if let StructLit(sp, _, fields, _) = e {
             let ty = s.q.c.type_in(f, e)
             if ty < 0 {
               continue

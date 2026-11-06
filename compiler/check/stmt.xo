@@ -1820,7 +1820,7 @@ fn compound_op(k: parser.Kind) -> parser.Kind {
 }
 
 fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Expr) {
-  if let TupleExpr(..) = unparen(target) {
+  if unparen(target) is TupleExpr(..) | StructLit(..) {
     c.tuple_assign(op, target, value)
     return
   }
@@ -1854,14 +1854,15 @@ fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Exp
   }
 }
 
-/// `(a, b) = v` (decision 0536): each place is typed and checked as a
-/// single assignment's target, `_` takes any element, and v is checked
-/// against the tuple of the places' types, so `(n, s) = (0, "")` types 0
-/// as n's type. A place named twice is XO0539.
+/// `(a, b) = v` (decision 0536) and `P{x, y} = v` (decision 0538): each
+/// place is typed and checked as a single assignment's target, `_` takes
+/// any element, and v is checked against the tuple of the places' types
+/// (or the struct target's type), so `(n, s) = (0, "")` types 0 as n's
+/// type. A place named twice is XO0539.
 fn (var c: Checker) tuple_assign(op: parser.Kind, target: Expr, value: Expr) {
   if op != parser.Kind.Assign {
     c.infer(value, -1)
-    c.error("XO0502", parser.expr_span(target), "`${op_text(op)}` needs a single target; a tuple of places takes only `=`")
+    c.error("XO0502", parser.expr_span(target), "`${op_text(op)}` needs a single target; a tuple or struct of places takes only `=`")
     return
   }
   var seen: Map[Str, Bool] = {}
@@ -1871,9 +1872,15 @@ fn (var c: Checker) tuple_assign(op: parser.Kind, target: Expr, value: Expr) {
 }
 
 /// The type a destructuring assignment's target takes: a tuple of its
-/// elements' types for a tuple, a fresh type for `_`, else the place's.
+/// elements' types for a tuple, the struct's for a struct target, a
+/// fresh type for `_`, else the place's.
 fn (var c: Checker) tuple_place(e: Expr, var seen: Map[Str, Bool]) -> Int {
   match unparen(e) {
+    StructLit(span: span, typ: typ, fields: fields, rest: rest) => {
+      let t = c.struct_place(span, typ, fields, rest, seen)
+      c.set_type(e, t)
+      t
+    }
     TupleExpr(elems: els, ..) => {
       var ts: List[Int] = []
       for x in els {
@@ -1897,6 +1904,80 @@ fn (var c: Checker) tuple_place(e: Expr, var seen: Map[Str, Bool]) -> Int {
       tt
     }
   }
+}
+
+/// A struct target `P{x, y: p.y, ..}` (decision 0538), by the rules of
+/// `let`'s struct pattern (struct_pattern): P names a struct, each field
+/// it names exists, once, and is visible, every field is named unless it
+/// ends in `..`, and each field's type is stored into its place as a
+/// single assignment would (XO0401). Returns P's type, whose type
+/// arguments the value's check infers.
+fn (var c: Checker) struct_place(span: Span, typ: Expr, fields: List[parser.FieldInit], rest: Bool, var seen: Map[Str, Bool]) -> Int {
+  var r = c.type_of_expr(typ)
+  let tsp = parser.expr_span(typ)
+  if r.obj >= 0 && c.objs[r.obj].tkind == "alias" {
+    r = c.alias_named(r.obj, r.args, r.has_args, tsp)
+  }
+  if r.obj < 0 || c.objs[r.obj].tkind != "struct" {
+    if r.obj >= 0 {
+      c.error("XO0302", tsp, "`${c.qual_name(r.obj)}` is not a struct type")
+    } else {
+      c.infer(typ, -1)
+    }
+    for f in fields {
+      let _t = c.tuple_place(f.value, seen)
+    }
+    return c.bad_ty
+  }
+  let obj = r.obj
+  let nt = c.instantiate(obj, r.args, r.has_args, tsp)
+  if nt < 0 {
+    return c.bad_ty
+  }
+  let s = c.args_subst(c.objs[obj].tparams, c.tys[nt].args)
+  var used: List[Bytes] = []
+  for f in fields {
+    let pt = c.tuple_place(f.value, seen)
+    let fi = c.field_index(obj, f.name.name)
+    if fi < 0 {
+      var cands: List[Str] = []
+      for ff in c.objs[obj].fields {
+        cands.push(text(ff.name))
+      }
+      c.unresolved(f.name.span, "field of `${text(c.objs[obj].name)}`", text(f.name.name), cands)
+      continue
+    }
+    let fo = c.objs[obj].fields[fi]
+    if !f.short {
+      // a shorthand field's name is also its place, the binding it
+      // stores into, whose record this would replace (same span)
+      c.record_text(f.name, c.field_text(obj, fo))
+    }
+    if used.contains(fo.name) {
+      c.error("XO0403", f.name.span, "field `${text(fo.name)}` is given twice")
+    }
+    used.push(fo.name)
+    if c.field_hidden(obj, fo.is_pub) {
+      c.internal_note(c.error("XO0605", f.name.span, "field `${text(fo.name)}` of `${text(c.objs[obj].name)}` is not `pub`"), obj)
+    }
+    let ft = c.subst(fo.ty, s)
+    let vsp = parser.expr_span(f.value)
+    if !c.is_bad(pt) && !c.is_bad(ft) && !c.assignable(ft, pt, vsp) {
+      c.error("XO0401", vsp, "field `${text(fo.name)}` is `${c.show(ft)}`, which cannot be stored in `${c.show(pt)}`")
+    }
+  }
+  if !rest {
+    var missing: List[Str] = []
+    for fo in c.objs[obj].fields {
+      if !used.contains(fo.name) {
+        missing.push(text(fo.name))
+      }
+    }
+    if !missing.is_empty() {
+      c.error("XO0302", span, "target for `${text(c.objs[obj].name)}` does not mention field(s) `${missing.join("`, `")}`; add them or `..`")
+    }
+  }
+  nt
 }
 
 /// Whether the place p was already named in this destructuring

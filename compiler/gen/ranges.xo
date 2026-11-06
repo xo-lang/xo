@@ -1526,8 +1526,9 @@ fn (var g: Gen) ra_assign(s: Stmt) {
     _ => fault("assign")
   }
   let rb = g.ra_expr(value)
-  if let TupleExpr(..) = unparen(target) {
-    // `(a, b) = v` (decision 0536): each place's range is unknown after
+  if unparen(target) is TupleExpr(..) | StructLit(..) {
+    // `(a, b) = v` (decision 0536), `P{x, y} = v` (decision 0538): each
+    // place's range is unknown after
     for t in assign_targets(target) {
       let tv = g.ra_tracked(t)
       if tv >= 0 {
@@ -1686,13 +1687,21 @@ fn (var g: Gen) ra_loop(label: Str, cond: Expr?, body: parser.Block, is_for: Boo
 }
 
 /// The places an assignment's target writes: the target, or each element
-/// of a destructuring assignment's tuple (decision 0536), nested ones
-/// flattened.
+/// of a destructuring assignment's tuple (decision 0536) or field of its
+/// struct target (decision 0538), nested ones flattened.
 fn assign_targets(target: Expr) -> List[Expr] {
   var out: List[Expr] = []
   if let TupleExpr(elems: els, ..) = unparen(target) {
     for x in els {
       for y in assign_targets(x) {
+        out.push(y)
+      }
+    }
+    return out
+  }
+  if let StructLit(fields: fs, ..) = unparen(target) {
+    for f in fs {
+      for y in assign_targets(f.value) {
         out.push(y)
       }
     }

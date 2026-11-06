@@ -231,6 +231,50 @@ test "a destructuring assignment checks each place, its value against their type
   expect(errs.filter(fn(l) { l.contains("\"XO0401\"") }).len()) == 2
 }
 
+test "a struct target follows let's struct pattern rules, and its shorthand and `..` stay out of struct literals (decision 0538)" {
+  let out = check_files(os, "d", [("d/main.xo", """
+    struct P {
+      x: Int
+      y: Int
+    }
+
+    enum E {
+      A
+    }
+
+    fn f() -> Int {
+      var x = 1
+      var y = 2
+      var s = ""
+      let c = 3
+      P{x, y} = P{x: 5, y: 6}
+      P{x, ..} = P{x: 7, y: 8}
+      P{x} = P{x: 1, y: 2}
+      P{x, c} = P{x: 1, y: 2}
+      P{x: c, y} = P{x: 1, y: 2}
+      P{x, y: x} = P{x: 1, y: 2}
+      P{x: s, y} = P{x: 1, y: 2}
+      P{x, y} += P{x: 1, y: 2}
+      E{x, ..} = E.A
+      let p = P{x}
+      let q = P{x: 1, ..}
+      x + y + c + s.len() + p.x + q.y
+    }
+    """)])?
+  let ls = lines(out)
+  let errs = ls.filter(fn(l) { l.contains("\"XO") })
+  expect(errs.any(fn(l) { l.contains("\"XO0302\"") && l.contains("does not mention field(s) `y`") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0601\"") && l.contains("`P` has no field `c`") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0502\"") && l.contains("`c` to be `var`") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0539\"") && l.contains("`x` is assigned twice") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0401\"") && l.contains("field `x` is `Int`, which cannot be stored in `Str`") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0502\"") && l.contains("`+=` needs a single target") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0302\"") && l.contains("`E` is not a struct type") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0160\"") && l.contains("a struct literal writes `x: value`") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0160\"") && l.contains("`..` in a struct literal") })) == true
+  expect(errs.filter(fn(l) { l.contains("\"XO0160\"") }).len()) == 2
+}
+
 test "an Option where a Result is expected, and `x ?? Err(e)`, name or_err (XO0401)" {
   // aws-19, 2026-11-06: `Time.parse_rfc3339(s) ?? Err(...)` and an
   // Option returned as a Result; the prelude's or_err was not found

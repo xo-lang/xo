@@ -103,7 +103,7 @@ fn embed_placeholder(ty: Str, sp: parser.Span) -> Expr {
   }
   if ty == "embed.Dir" {
     let typ = Expr.SelectorExpr(span: sp, x: Expr.Ident(id: parser.Ident{span: sp, name: b"embed"}), sel: parser.Ident{span: sp, name: b"Dir"})
-    return Expr.StructLit(span: sp, typ: typ, fields: [parser.FieldInit{span: sp, name: parser.Ident{span: sp, name: b"files"}, value: Expr.MapLit(span: sp, entries: [])}])
+    return Expr.StructLit(span: sp, typ: typ, fields: [parser.FieldInit{span: sp, name: parser.Ident{span: sp, name: b"files"}, value: Expr.MapLit(span: sp, entries: [])}], rest: false)
   }
   Expr.StringLit(s: parser.StringLit{span: sp, kind: parser.StringKind.Plain, parts: []})
 }
@@ -197,7 +197,7 @@ fn (var c: Checker) expand_embeds(m: Int) uses fs.read {
           entries.push(parser.MapEntry{span: sp, key: Expr.StringLit(s: parser.StringLit{span: sp, kind: parser.StringKind.Plain, parts: [parser.StringPart{text: rel.bytes(), expr: None}]}), value: Expr.BytesLit(span: sp, value: b)})
         }
         let typ = Expr.SelectorExpr(span: sp, x: Expr.Ident(id: parser.Ident{span: sp, name: b"embed"}), sel: parser.Ident{span: sp, name: b"Dir"})
-        lit = Expr.StructLit(span: sp, typ: typ, fields: [parser.FieldInit{span: sp, name: parser.Ident{span: sp, name: b"files"}, value: Expr.MapLit(span: sp, entries: entries)}])
+        lit = Expr.StructLit(span: sp, typ: typ, fields: [parser.FieldInit{span: sp, name: parser.Ident{span: sp, name: b"files"}, value: Expr.MapLit(span: sp, entries: entries)}], rest: false)
       }
       c.embeds[f] = recs
       c.embed_replace(f, di, cd, lit)

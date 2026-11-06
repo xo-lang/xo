@@ -461,6 +461,7 @@ fn field_inits_json(fs: List[parser.FieldInit]) -> List[Str] {
     var o = node("FieldInit", f.span)
     o.put("name", ident_json(f.name))
     o.put("value", expr_json(f.value))
+    o.flag("short", f.short)
     o.done()
   })
 }
@@ -533,10 +534,11 @@ fn expr_json(e: parser.Expr) -> Str {
       o.list("elems", exprs_json(elems))
       o.done()
     }
-    StructLit(span, typ, fields) => {
+    StructLit(span, typ, fields, rest) => {
       var o = node("StructLit", span)
       o.put("type", expr_json(typ))
       o.list("fields", field_inits_json(fields))
+      o.flag("rest", rest)
       o.done()
     }
     UnaryExpr(span, op, x) => {

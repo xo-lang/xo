@@ -1033,10 +1033,13 @@ fn (var c: Enc) expr(var b: BytesBuilder, e: Expr) {
       open(b, "SetLit")
       c.exprs(b, elems)
     }
-    StructLit(_, typ, fields) => {
+    StructLit(_, typ, fields, rest) => {
       open(b, "StructLit")
       c.expr(b, typ)
       c.field_inits(b, fields)
+      if rest {
+        w(b, "rest", "1")
+      }
     }
     UnaryExpr(_, op, x) => {
       open(b, "UnaryExpr")

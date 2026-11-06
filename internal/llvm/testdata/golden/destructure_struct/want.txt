@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+short 3 30
+places 7 [0, 8, 0]
+rest 60 50
+nested 41 2 40 boxed 0
+swap 2 41
+generic g 9
+map 2 20
+order [0, 8, 99] 2
+--- stderr

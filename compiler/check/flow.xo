@@ -28,11 +28,12 @@ fn place_root(e: Expr) -> Ident? {
 }
 
 /// The places an assignment's target writes: the target itself, or for
-/// a destructuring assignment `(a, b) = v` (decision 0536) each element,
-/// nested tuples flattened and `_` left out.
+/// a destructuring assignment `(a, b) = v` (decision 0536) or `P{x, y} =
+/// v` (decision 0538) each element or field, nested targets flattened and
+/// `_` left out.
 fn assign_places(target: Expr) -> List[Expr] {
   var out: List[Expr] = []
-  if let TupleExpr(elems: els, ..) = unparen(target) {
+  if let Some(els) = target_parts(target) {
     for x in els {
       if let Ident(id) = unparen(x) {
         if id.name == b"_" {
@@ -55,6 +56,27 @@ fn assign_places(target: Expr) -> List[Expr] {
 /// places (nested), else the whole value with each place.
 fn assign_pairs(target: Expr, value: Expr) -> List[(Expr, Expr)] {
   var out: List[(Expr, Expr)] = []
+  if let StructLit(fields: tfs, ..) = unparen(target) {
+    // a struct literal value: each field's value with its place
+    if let StructLit(fields: vfs, ..) = unparen(value) {
+      for tf in tfs {
+        if let Some(vf) = vfs.find(fn(f: parser.FieldInit) -> Bool { f.name.name == tf.name.name }) {
+          for pr in assign_pairs(tf.value, vf.value) {
+            out.push(pr)
+          }
+        } else {
+          for t in assign_places(tf.value) {
+            out.push((t, value))
+          }
+        }
+      }
+      return out
+    }
+    for t in assign_places(target) {
+      out.push((t, value))
+    }
+    return out
+  }
   if let TupleExpr(elems: ts, ..) = unparen(target) {
     if let TupleExpr(elems: vs, ..) = unparen(value) {
       if vs.len() == ts.len() {
@@ -78,6 +100,16 @@ fn assign_pairs(target: Expr, value: Expr) -> List[(Expr, Expr)] {
   }
   out.push((target, value))
   out
+}
+
+/// The parts of a destructuring assignment's target: a tuple's elements
+/// or a struct target's field values (decision 0538); None for a place.
+fn target_parts(target: Expr) -> List[Expr]? {
+  match unparen(target) {
+    TupleExpr(elems: els, ..) => Some(els)
+    StructLit(fields: fs, ..) => Some(fs.map(fn(f: parser.FieldInit) -> Expr { f.value }))
+    _ => None
+  }
 }
 
 /// Checks that e is a place rooted at a mutable binding of the current

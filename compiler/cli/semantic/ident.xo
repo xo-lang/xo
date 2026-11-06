@@ -492,7 +492,7 @@ pub fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: L
         w.expr(me.value, "Value", -1, SiteCtx.Other, [])
       }
     }
-    StructLit(_, typ, fields) => {
+    StructLit(_, typ, fields, _) => {
       w.expr(typ, "Type", -1, SiteCtx.Other, [])
       w.field_inits(fields, e)
     }

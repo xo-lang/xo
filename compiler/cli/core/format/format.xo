@@ -444,6 +444,8 @@ enum ItemK {
   CallArg(a: List[parser.Arg])
   MArm(ma: List[parser.MatchArm])
   SArm(sa: List[parser.SelectArm])
+  /// text printed as is (a struct target's `..`, decision 0538)
+  Text(t: List[Str])
 }
 
 /// One element of a bracketed list: its source range and what it prints.
@@ -504,8 +506,12 @@ fn (var p: Printer) print_item(it: Item) {
     }
     FInit(fis) => {
       let fi = fis[0]
-      p.w(name_of(fi.name) + ": ")
-      p.expr(fi.value)
+      if fi.short {
+        p.w(name_of(fi.name))
+      } else {
+        p.w(name_of(fi.name) + ": ")
+        p.expr(fi.value)
+      }
     }
     CallArg(args) => {
       let a = args[0]
@@ -516,6 +522,7 @@ fn (var p: Printer) print_item(it: Item) {
     }
     MArm(mas) => p.match_arm(mas[0])
     SArm(sas) => p.select_arm(sas[0])
+    Text(ts) => p.w(ts[0])
   }
 }
 
@@ -1357,9 +1364,9 @@ fn (var p: Printer) expr(e: Expr) {
       }
       p.list("{", "}", off(span), items, false)
     }
-    StructLit(_, typ, fields) => {
+    StructLit(_, typ, fields, rest) => {
       p.expr(typ)
-      p.field_inits(fields, p.find(eend(typ), '{'))
+      p.field_inits(fields, p.find(eend(typ), '{'), rest)
     }
     UnaryExpr(_, op, x) => {
       p.w(op_text(op))
@@ -1451,10 +1458,17 @@ fn expr_items(es: List[Expr]) -> List[Item] {
   items
 }
 
-fn (var p: Printer) field_inits(fs: List[parser.FieldInit], open_off: Int) {
+fn (var p: Printer) field_inits(fs: List[parser.FieldInit], open_off: Int, rest: Bool) {
   var items: List[Item] = []
   for f in fs {
     items.push(Item{start: off(f.span), end: end_off(f.span), k: ItemK.FInit([f])})
+  }
+  if rest {
+    // a destructuring assignment target's `..` (decision 0538), after the
+    // last field
+    let from = if fs.is_empty() { open_off + 1 } else { end_off(fs[fs.len() - 1].span) }
+    let at = p.find(from, '.')
+    items.push(Item{start: at, end: at + 2, k: ItemK.Text([".."])})
   }
   p.list("{", "}", open_off, items, false)
 }
@@ -1554,7 +1568,7 @@ fn (var p: Printer) postfix(e: Expr) {
       TryExpr(..) => p.w("?")
       WithExpr(_, x, fields) => {
         p.w(" with ")
-        p.field_inits(fields, p.find(eend(x), '{'))
+        p.field_inits(fields, p.find(eend(x), '{'), false)
       }
       _ => {}
     }

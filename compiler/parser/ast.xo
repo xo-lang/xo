@@ -400,6 +400,10 @@ pub struct FieldInit {
   pub span: Span
   pub name: Ident
   pub value: Expr
+  /// written `name` alone (value is the Ident name): a destructuring
+  /// assignment's target only (decision 0538); the checker rejects it
+  /// elsewhere
+  pub short: Bool = false
 }
 
 /// A call argument, optionally named.
@@ -477,7 +481,9 @@ pub enum Expr {
   ListLit(span: Span, elems: List[Expr])
   MapLit(span: Span, entries: List[MapEntry])
   SetLit(span: Span, elems: List[Expr])
-  StructLit(span: Span, typ: Expr, fields: List[FieldInit])
+  /// rest: the fields end in `..` (a destructuring assignment's target
+  /// only, decision 0538).
+  StructLit(span: Span, typ: Expr, fields: List[FieldInit], rest: Bool)
   UnaryExpr(span: Span, op: Kind, x: Expr)
   BinaryExpr(span: Span, op: Kind, x: Expr, y: Expr)
   IsExpr(span: Span, x: Expr, pattern: Pattern)

@@ -119,7 +119,7 @@ fn walk_expr(var out: List[Node], e: Expr) {
         walk_expr(out, en.value)
       }
     }
-    StructLit(_, _, fields) => {
+    StructLit(_, _, fields, _) => {
       for f in fields {
         walk_expr(out, f.value)
       }

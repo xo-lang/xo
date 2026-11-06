@@ -9,7 +9,7 @@
 use github.com/xo-lang/xo/compiler/lexer
 
 /// The version of the form: a change to the AST or this file changes it.
-pub const AST_CODEC_VERSION = "xo ast codec v6"
+pub const AST_CODEC_VERSION = "xo ast codec v7"
 
 struct Enc {
   b: BytesBuilder = BytesBuilder.new()
@@ -555,6 +555,7 @@ fn (var e: Enc) fields(xs: List[FieldInit]) {
     e.span(f.span)
     e.ident(f.name)
     e.expr(f.value)
+    e.bool(f.short)
   }
 }
 
@@ -649,11 +650,12 @@ fn (var e: Enc) expr(x: Expr) {
       e.span(span)
       e.exprs(elems)
     }
-    StructLit(span, typ, fields) => {
+    StructLit(span, typ, fields, rest) => {
       e.int(14)
       e.span(span)
       e.expr(typ)
       e.fields(fields)
+      e.bool(rest)
     }
     UnaryExpr(span, op, x1) => {
       e.int(15)
@@ -1576,7 +1578,8 @@ fn (var r: Dec) fields() -> List[FieldInit] {
     let s = r.span()
     let nm = r.ident()
     let v = r.expr()
-    out.push(FieldInit{span: s, name: nm, value: v})
+    let short = r.bool()
+    out.push(FieldInit{span: s, name: nm, value: v, short: short})
   }
   out
 }
@@ -1668,7 +1671,8 @@ fn (var r: Dec) expr() -> Expr {
       let s = r.span()
       let t = r.expr()
       let fs = r.fields()
-      Expr.StructLit(span: s, typ: t, fields: fs)
+      let rest = r.bool()
+      Expr.StructLit(span: s, typ: t, fields: fs, rest: rest)
     }
     15 => {
       let s = r.span()

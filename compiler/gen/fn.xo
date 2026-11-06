@@ -1884,9 +1884,9 @@ fn (var g: Gen) assign(s: Stmt) {
     AssignStmt(span: span, op: op, target: target, value: value) => (span, op, target, value)
     _ => fault("assign")
   }
-  if let TupleExpr(..) = unparen(target) {
-    // `(a, b) = v` (decision 0536): the value first, then each place
-    // left to right
+  if unparen(target) is TupleExpr(..) | StructLit(..) {
+    // `(a, b) = v` (decision 0536) and `P{x, y} = v` (decision 0538): the
+    // value first, then each place left to right
     let tmp = g.tmp("da")
     g.line("${tmp} := ${g.val(value)}")
     g.line("_ = ${tmp}")
@@ -1931,6 +1931,14 @@ fn (var g: Gen) assign(s: Stmt) {
 /// element.
 fn (var g: Gen) destructure(e: Expr, subj: Str, value: Expr) {
   match unparen(e) {
+    StructLit(fields: fields, ..) => {
+      let t = g.type_of(e)
+      for f in fields {
+        let n = check.text(f.name.name)
+        let sub = if g.boxed_field_named(t, n) { "${subj}.${go_field(n)}.Get()" } else { "${subj}.${go_field(n)}" }
+        g.destructure(f.value, sub, value)
+      }
+    }
     TupleExpr(elems: els, ..) => {
       for (i, x) in els.indexed() {
         g.destructure(x, "${subj}.F${i}", value)

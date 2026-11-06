@@ -1,0 +1,65 @@
+// Struct targets of a destructuring assignment (decision 0538): `P{x, y}
+// = v` stores v's fields into existing places by the rules of `let`'s
+// struct pattern; the value first, then each named field left to right
+// (decision 0536's order).
+struct P {
+  x: Int
+  y: Int
+}
+
+struct Box[T] {
+  item: T
+  n: Int
+}
+
+struct St {
+  lo: Int
+  hi: Int
+  name: Str
+}
+
+fn pair(a: Int) -> P {
+  P{x: a, y: a * 10}
+}
+
+fn main(os: Os) {
+  var x = 0
+  var y = 0
+  P{x, y} = pair(3)
+  os.stdio.println("short ${x} ${y}")
+  // places: fields and list elements
+  var st = St{lo: 0, hi: 0, name: "s"}
+  var xs = [0, 0, 0]
+  var i = 1
+  P{x: st.lo, y: xs[i]} = P{x: 7, y: 8}
+  os.stdio.println("places ${st.lo} ${xs}")
+  // `..` and `_`
+  P{y, ..} = pair(5)
+  P{x: _, y: x} = pair(6)
+  os.stdio.println("rest ${x} ${y}")
+  // nested in a tuple, a tuple inside
+  var n = 0
+  var b = Box{item: (0, ""), n: 0}
+  (P{x, y}, n) = (P{x: 1, y: 2}, 3)
+  Box{item: (n, st.name), n: x} = Box{item: (40, "boxed"), n: 41}
+  os.stdio.println("nested ${x} ${y} ${n} ${st.name} ${b.n}")
+  // a swap through a struct value
+  P{x: y, y: x} = P{x: x, y: y}
+  os.stdio.println("swap ${x} ${y}")
+  // generic struct, element type inferred
+  var name = ""
+  Box{item: name, n} = Box{item: "g", n: 9}
+  os.stdio.println("generic ${name} ${n}")
+  // a Map element as a place
+  var m: Map[Str, Int] = {"a": 1}
+  P{x: m["a"], y: m["b"]} = pair(2)
+  os.stdio.println("map ${m.get("a") ?? 0} ${m.get("b") ?? 0}")
+  // the value first: the target's index reads i after the value changed it
+  P{x: xs[i], ..} = bump(i, 99)
+  os.stdio.println("order ${xs} ${i}")
+}
+
+fn bump(var i: Int, v: Int) -> P {
+  i += 1
+  P{x: v, y: 0}
+}

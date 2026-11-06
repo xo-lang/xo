@@ -531,7 +531,7 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
     ListLit(elems: elems, ..) => c.collection_lit("List", elems, hint)
     SetLit(elems: elems, ..) => c.collection_lit("Set", elems, hint)
     MapLit(entries: entries, ..) => c.map_lit(entries, hint)
-    StructLit(span: span, typ: typ, fields: fields) => c.struct_lit(span, typ, fields, hint)
+    StructLit(span: span, typ: typ, fields: fields, rest: rest) => c.struct_lit(span, typ, fields, rest, hint)
     WithExpr(span: span, x: x, fields: fields) => c.with_expr(span, x, fields, hint)
     UnaryExpr(span: span, op: op, x: x) => c.unary(span, op, x, hint)
     BinaryExpr(span: span, op: op, x: x, y: y) => c.binary(span, op, x, y, hint)
@@ -1896,7 +1896,21 @@ fn (c: Checker) variant_pos(obj: Int, name: Bytes) -> Int {
   -1
 }
 
-fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldInit], hint: Int) -> Int {
+fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldInit], rest: Bool, hint: Int) -> Int {
+  // the forms of a destructuring assignment's target (decision 0538),
+  // which the parser reads in every struct literal
+  for f in fields {
+    if f.short {
+      let n = text(f.name.name)
+      let d = c.error("XO0160", f.span, "expected `:` after the field name: a struct literal writes `${n}: value`")
+      c.note(d, "`${n}` alone stores a field into the binding `${n}` only in a destructuring assignment's target, `P{${n}, ..} = v` (core 5.2)")
+      c.fix(d, "write `${n}: ${n}`", [c.insert_edit(f.span.end, ": ${n}")])
+    }
+  }
+  if rest {
+    let d = c.error("XO0160", span, "`..` in a struct literal: a struct literal names every field without a default")
+    c.note(d, "`..` leaves fields out only in a pattern or a destructuring assignment's target (core 3.5, 5.2)")
+  }
   var r = c.type_of_expr(typ)
   if r.obj < 0 {
     c.infer(typ, -1)
