@@ -6,6 +6,18 @@ package rt
 
 import "strings"
 
+var Protobuf_VARINT = int64(0)
+
+var Protobuf_FIXED64 = int64(1)
+
+var Protobuf_BYTES = int64(2)
+
+var Protobuf_START_GROUP = int64(3)
+
+var Protobuf_END_GROUP = int64(4)
+
+var Protobuf_FIXED32 = int64(5)
+
 type Protobuf_ProtoErr struct {
 	Tag int
 	P   any
@@ -66,3 +78,5 @@ func (v Protobuf_ProtoErr) XoDebug(b *strings.Builder) {
 func (v Protobuf_ProtoErr) M_debug(*Task) string { return Debug(v) }
 
 func (v Protobuf_ProtoErr) M_display(*Task) string { return Debug(v) }
+
+var Protobuf_MAX_GROUP_DEPTH = int64(10000)

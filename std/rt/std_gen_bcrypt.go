@@ -6,6 +6,12 @@ package rt
 
 import "strings"
 
+var Bcrypt_MIN_COST = int64(4)
+
+var Bcrypt_MAX_COST = int64(31)
+
+var Bcrypt_DEFAULT_COST = int64(10)
+
 type Bcrypt_BcryptErr struct {
 	Tag int
 	P   any

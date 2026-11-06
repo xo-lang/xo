@@ -83,6 +83,18 @@ func (v Yaml_NodeKind) XoDebug(b *strings.Builder) {
 
 func (v Yaml_NodeKind) M_debug(*Task) string { return Debug(v) }
 
+var Yaml_TAGGED = int64(1)
+
+var Yaml_DOUBLE_QUOTED = int64(2)
+
+var Yaml_SINGLE_QUOTED = int64(4)
+
+var Yaml_LITERAL = int64(8)
+
+var Yaml_FOLDED = int64(16)
+
+var Yaml_FLOW = int64(32)
+
 type Yaml_Node struct {
 	F_kind         Yaml_NodeKind
 	F_style        int64

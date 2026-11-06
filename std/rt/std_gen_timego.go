@@ -6,6 +6,42 @@ package rt
 
 import "strings"
 
+var Timego_ANSIC = "Mon Jan _2 15:04:05 2006"
+
+var Timego_UNIX_DATE = "Mon Jan _2 15:04:05 MST 2006"
+
+var Timego_RUBY_DATE = "Mon Jan 02 15:04:05 -0700 2006"
+
+var Timego_RFC822 = "02 Jan 06 15:04 MST"
+
+var Timego_RFC822Z = "02 Jan 06 15:04 -0700"
+
+var Timego_RFC850 = "Monday, 02-Jan-06 15:04:05 MST"
+
+var Timego_RFC1123 = "Mon, 02 Jan 2006 15:04:05 MST"
+
+var Timego_RFC1123Z = "Mon, 02 Jan 2006 15:04:05 -0700"
+
+var Timego_RFC3339 = "2006-01-02T15:04:05Z07:00"
+
+var Timego_RFC3339_NANO = "2006-01-02T15:04:05.999999999Z07:00"
+
+var Timego_KITCHEN = "3:04PM"
+
+var Timego_STAMP = "Jan _2 15:04:05"
+
+var Timego_STAMP_MILLI = "Jan _2 15:04:05.000"
+
+var Timego_STAMP_MICRO = "Jan _2 15:04:05.000000"
+
+var Timego_STAMP_NANO = "Jan _2 15:04:05.000000000"
+
+var Timego_DATE_TIME = "2006-01-02 15:04:05"
+
+var Timego_DATE_ONLY = "2006-01-02"
+
+var Timego_TIME_ONLY = "15:04:05"
+
 type Timego_Layout struct {
 	F_text  string
 	F_kinds List[int64]
