@@ -32,7 +32,7 @@ emit, hollow and link (about 30 ms) stay.
 | internal/arm64 TestGoldenRun* | 648 | 1341.7 s | 2.07 s | 146 s |
 | internal/llvm TestGolden | 596 | 6115.7 s | 10.26 s | 533 s |
 | internal/wasm | 1 | 28.6 s | 28.6 s | 2126 s |
-| cmd/xo (full) | pending (running on the amd64 host, 2026-11-06; added when it ends) | | | |
+| cmd/xo (full, amd64 host) | 458 compiling (213 build, 156 test, 89 run) + 572 check | about 87 s (builds) + 25 s (checks) | n/a (counted only) | at most about 5 s of 377 s (28 CPUs) |
 | internal/stdtest TestStdModules (amd64 host) | 353 `xo test` | 2229.0 s | 6.32 s | 1172 s |
 
 The suite means are 10x the uncontended 0.22 s: builds run in parallel
@@ -50,7 +50,7 @@ part above); it cannot touch clang, assembling, linking or running.
 | llvm goldens | 596 | 113 s | 2% | about 10 s of 533 s |
 | std modules | 353 | 67 s | 3% | about 35 s of 1172 s (amd64 host) |
 | wasm | 1 | 0 | 0% | 0 of 2126 s |
-| cmd/xo (full) | pending (running on the amd64 host, 2026-11-06; added when it ends) | | | |
+| cmd/xo (full, amd64 host) | 458 compiling + 572 check | about 112 s | n/a (counted only) | at most about 5 s of 377 s |
 | go test -short (repo but runs/) | 507 compiling (366 build, 107 test, 34 run) + 571 check | about 96 s (builds) + 25 s (std check share of the checks) | n/a (counted only) | at most about 10 s of 121 s (12 CPUs) |
 
 Per 8-hourly tier (short, arm64, llvm, cmd, gen, fp): the goldens alone
@@ -85,6 +85,14 @@ decode (decision 0529), which targets the same 0.19 s per build for
 every build. The suites' time is elsewhere: clang in the llvm goldens
 (10.3 s a build against 2.1 s for arm64) and running programs in wasm
 (2126 s for 1 build); those are the next levers if suite time matters.
+
+The cmd/xo count (linux/amd64 host, cd05891b8, the exec wrapper; log
+~/xo-lead/notes/xo-lang-4/itemc/cmdxo2-amd64-cd05891b8.log) took 377 s
+with 2061 xo calls; five tests failed there, none from the counting:
+TestCheckSupportPerMember and TestHeapStatsWaste (failing on main that
+day), and TestGobindNewerGo, TestHolesNative and
+TestTracebackIsolatedNoLeak (amd64 only at that revision; amd64 is best
+effort and they are recorded, not chased).
 
 The -short count (host 1, cd05891b8; log
 ~/xo-lead/notes/xo-lang-4/itemc/short2-cd05891b8.log) had two failing
