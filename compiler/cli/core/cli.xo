@@ -31,6 +31,13 @@ pub struct Ctx {
   /// PER_MODULE_MIN members or more holds one member at a time; the
   /// other commands analyze the session's one checker.
   pub per_module: Bool = false
+  /// `xo check`'s support check (decision 0523), run on each member's
+  /// checker as a per module check holds it (decision 0513), so a
+  /// workspace's peak stays one member's; None for every other command.
+  pub member_support: (fn(check.Checker) -> List[Diag] uses (clock, env, fs, proc, rand, stdio))? = None
+  /// --support-all: member_support runs on every member, not only on the
+  /// named directories' and the walked ones (decision 0523)
+  pub support_all: Bool = false
   /// The module check cache for `xo check` (decision 0351 addendum,
   /// 2026-10-23): the driver's backend cache directory and cache ID, ""
   /// when the cache is off (compiler/xo main.xo check_cache).

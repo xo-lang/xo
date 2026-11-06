@@ -66,7 +66,7 @@ pub fn release_check(os: Os, ctx: Ctx, dirs: List[Str], as_json: Bool, flag: Str
 /// ciCheck: fails (1, the report printed) when a .xo file under dirs is
 /// not formatted or `dbg(...)` is left in code (XO0901 as an error); 2
 /// when the files cannot be read or checked; 0 to build.
-pub fn ci_check(os: Os, ctx: Ctx, dirs: List[Str], as_json: Bool) -> Int uses (fs, env, stdio, net, proc, rand) {
+pub fn ci_check(os: Os, ctx: Ctx, dirs: List[Str], as_json: Bool) -> Int uses (fs, env, stdio, net, proc, rand, clock) {
   let files = match collect(os, ctx, dirs) {
     Ok(fs) => fs
     Err(e) => {

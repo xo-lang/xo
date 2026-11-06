@@ -1158,3 +1158,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [zip-modified-local-time.md](zip-modified-local-time.md): Observed: archive/zip writes Modified in its own location, so a corpus built from time.Unix differed between the Mac (EST) and the linux hosts (UTC); use .UTC()
 - [size-class-cut-tail-leak.md](size-class-cut-tail-leak.md): Observed: cut_for drops the tail when a donor block is not an exact multiple of the smaller stride; four classes a doubling leaked 282 MB of the self build (decision 0506)
 - [effect-args-in-lowered-type-names.md](effect-args-in-lowered-type-names.md): `Request[env]` passed as `Request[fx]` was native XO1201: lowered type names carried effect arguments (Observed)
+- [member-copy-drops-node-records.md](member-copy-drops-node-records.md): a decision 0513 member copy has no per-node records for the base's bodies; lowering them gave false XO1201 "the name `x` here" (Observed)

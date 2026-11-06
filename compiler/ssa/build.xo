@@ -568,6 +568,15 @@ pub fn (var b: Builder) build() uses fs.read {
     }
   }
   if main_fo < 0 {
+    if b.c.lib_roots {
+      // a library's support check (`xo check`, decision 0523): its
+      // functions are the roots
+      b.declare_dump_roots()
+      b.run_queue()
+      b.declare_exports()
+      b.run_queue()
+      return
+    }
     b.why = "no `main` function in the root module"
     return
   }
@@ -601,7 +610,7 @@ pub fn (var b: Builder) build() uses fs.read {
 /// (`xo dev dump ssa --fn=NAME`: `Type.method`, `name`, or either with
 /// its module's name before) as roots of the build.
 fn (var b: Builder) declare_dump_roots() {
-  if b.c.dump_roots.is_empty() && !b.c.std_roots {
+  if b.c.dump_roots.is_empty() && !b.c.std_roots && !b.c.lib_roots {
     return
   }
   for o in 0..b.c.objs.len() {
@@ -625,6 +634,15 @@ fn (var b: Builder) declare_dump_roots() {
       let has_body = !ob.fn_decl.is_empty() && (ob.fn_decl[0].body != None || ob.fn_decl[0].lazy != None)
       if bound && has_body {
         let _s = b.declare(o, [])
+      }
+      continue
+    }
+    if b.c.lib_roots && b.c.root_mods.contains(ob.module) {
+      // `xo check`'s support check (decision 0523): every function of the
+      // root modules, so one main does not reach (or a library's) is
+      // lowered too
+      if !ob.fn_decl.is_empty() && (ob.fn_decl[0].body != None || ob.fn_decl[0].lazy != None) {
+        let _r = b.declare(o, [])
       }
       continue
     }

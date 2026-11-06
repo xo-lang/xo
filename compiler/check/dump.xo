@@ -23,6 +23,14 @@ pub fn (var c: Checker) walked_dirs(d: Str) -> List[Str] ! Str uses fs.read {
 /// (decision 0513): its modules are checked (run skips them), and its
 /// diagnostics, root modules and bodies (the flow pass's) start empty.
 pub fn (var c: Checker) start_member() {
+  c.start_member_with(false)
+}
+
+/// start_member, keeping the base's per-node records when keep_records:
+/// the SSA builder reads them to lower the base's bodies (`xo check`'s
+/// support check on a member, decision 0523; without them each name of a
+/// base body was an XO1201 "the name `x` here")
+pub fn (var c: Checker) start_member_with(keep_records: Bool) {
   c.base_mods = #{}
   for m in 0..c.mods.len() {
     c.base_mods.add(m)
@@ -31,6 +39,9 @@ pub fn (var c: Checker) start_member() {
   c.root_mods = []
   c.bodies = []
   c.flowed = false
+  if keep_records {
+    return
+  }
   // the base's per-node records (each expression's type, each name's
   // object) serve the tools, not the member's check: dropped here
   // instead of copied on the member's first write

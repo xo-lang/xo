@@ -173,25 +173,27 @@ pub struct Session {
   pub mods: List[Str]
   /// The diagnostics, sorted (diag.Sort).
   pub diags: List[Diag]
+  /// Whether ctx.member_support ran on each member (load_each).
+  pub supported: Bool = false
 }
 
 /// Checks dirs and, unless exact, the other modules of their workspace
 /// (query.Load, LoadExact). The error is what cmd/xo prints after
 /// "xo <command>: ".
-pub fn load(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses fs, proc, net, rand, env {
+pub fn load(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes]) -> Session ! Str uses fs, proc, net, rand, env, clock, stdio {
   load_with(os, ctx, dirs, exact, overlay, [])
 }
 
 /// load with the std and runtime modules of preload (`std/tls`,
 /// `native/llrt/pool`) loaded too, imported or not (decision 0289).
-pub fn load_with(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str]) -> Session ! Str uses fs, proc, net, rand, env {
+pub fn load_with(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str]) -> Session ! Str uses fs, proc, net, rand, env, clock, stdio {
   load_mode(os, ctx, dirs, exact, overlay, preload, false)
 }
 
 /// load_with under the native backends' checker rules when native (as
 /// `xo check` checks by default, owner 2026-10-23: `use c` is valid), else
 /// the Go backend's.
-fn load_mode(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool) -> Session ! Str uses fs, proc, net, rand, env {
+fn load_mode(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool) -> Session ! Str uses fs, proc, net, rand, env, clock, stdio {
   load_mode_cached(os, ctx, dirs, exact, overlay, preload, native, false)
 }
 
@@ -201,14 +203,14 @@ fn load_mode(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, B
 /// diagnostics, warnings included, come from its entry, so the output is
 /// a full check's. The entries are `xo check`'s own (their flags say so):
 /// a build's entries also record what its front end cache replays.
-fn load_mode_cached(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool) -> Session ! Str uses fs, proc, net, rand, env {
+fn load_mode_cached(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool) -> Session ! Str uses fs, proc, net, rand, env, clock, stdio {
   load_walked(os, ctx, dirs, exact, overlay, preload, native, cached, [])
 }
 
 /// load_mode_cached with the directories of walk walked (DIR/...): a
 /// module root left out for its module path is checked as the walk found
 /// it, its packages below it.
-fn load_walked(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool, walk: List[Str]) -> Session ! Str uses fs, proc, net, rand, env {
+fn load_walked(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool, walk: List[Str]) -> Session ! Str uses fs, proc, net, rand, env, clock, stdio {
   var c = new_checker(os, ctx)
   for w in walk {
     c.walk.push(abs_path(ctx, w))
@@ -293,7 +295,7 @@ pub const PER_MODULE_MIN = 8
 /// load_walked of each of dirs alone (exact), one checker at a time, its
 /// diagnostics merged without repeats (a module two of them import
 /// reports once); the session's checker is the last one's.
-fn load_each(os: Os, ctx: Ctx, base_dirs: List[Str], members: List[Str], walk_members: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool) -> Session ! Str uses fs, proc, net, rand, env {
+fn load_each(os: Os, ctx: Ctx, base_dirs: List[Str], members: List[Str], walk_members: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool) -> Session ! Str uses fs, proc, net, rand, env, clock, stdio {
   var mods: List[Str] = []
   var diags: List[Diag] = []
   var seen: Set[Str] = #{}
@@ -343,7 +345,7 @@ fn load_each(os: Os, ctx: Ctx, base_dirs: List[Str], members: List[Str], walk_me
     match base {
       Some(b) => {
         var c = b
-        c.start_member()
+        c.start_member_with(ctx.member_support.is_some())
         if walks {
           c.walk = [abs_path(ctx, d)]
         }
@@ -380,6 +382,16 @@ fn load_each(os: Os, ctx: Ctx, base_dirs: List[Str], members: List[Str], walk_me
         }
       }
     }
+    if let Some(sup) = ctx.member_support {
+      // the member's support check on its own checker (decision 0523),
+      // when its check found no error: the named directories' (the base)
+      // and the walked members', every member's with --support-all (a
+      // whole workspace's took aws's check from 21 s to 205 s)
+      if (di == 0 || walks || ctx.support_all) && !sub.diags.any(fn(x) { !x.warning }) {
+        sub.c.lib_roots = true
+        sub.diags = sub.diags + sup(sub.c)
+      }
+    }
     for m in sub.mods {
       if !mods.contains(m) {
         mods.push(m)
@@ -395,7 +407,7 @@ fn load_each(os: Os, ctx: Ctx, base_dirs: List[Str], members: List[Str], walk_me
     last = Some(sub)
   }
   match last {
-    Some(s) => Ok(Session{c: s.c, mods: mods, diags: sort_diags(diags)})
+    Some(s) => Ok(Session{c: s.c, mods: mods, diags: sort_diags(diags), supported: ctx.member_support.is_some()})
     None => Err("no directory to check")
   }
 }
@@ -537,8 +549,9 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str], support_fn: fn(check.Checker) ->
   var fl = new_flags("check")
   fl.bool_flag("json", "print diagnostics as JSON")
   fl.str_flag("backend", "", "the build backend whose rules to check by (go for the Go backend's; default the native backends', as xo build builds)")
-  fl.bool_flag("support", "also run the native backends' support check (XO1201: what they cannot build yet), which lowers the program")
+  fl.bool_flag("support", "also run the native backends' support check (XO1201: what they cannot build yet), which lowers every function of the root modules (decision 0523)")
   fl.bool_flag("no-gc", "the same as --support (its old name)")
+  fl.bool_flag("support-all", "with --support, run the support check on every module of the workspace, not only on the named directories and the walked (DIR/...) ones")
   fl.bool_flag("fix", "first apply every unambiguous machine fix (as `xo fix`) and reformat the changed files, then report what remains (decision 0096)")
   fl.str_flag("dir", "", "a directory to check, as def, refs, and doc take --dir (the same as giving it as an argument)")
   fl.bool_flag("wip", "report unused bindings and imports (XO0110) and unused computed values (XO0209) as warnings, for checking code mid edit; a normal check and every build keep them errors (decision 0293)")
@@ -569,7 +582,9 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str], support_fn: fn(check.Checker) ->
     os.stdio.eprintln("xo check: --backend=${be}: want go, arm64, amd64 or llvm")
     return 2
   }
-  var s = match load_check(os, ctx, targets, fl.get_bool("support") || fl.get_bool("no-gc"), be == "go", support_fn) {
+  var lctx = ctx
+  lctx.support_all = fl.get_bool("support-all")
+  var s = match load_check(os, lctx, targets, fl.get_bool("support") || fl.get_bool("no-gc"), be == "go", support_fn) {
     Ok(x) => x
     Err(e) => {
       os.stdio.eprintln("xo check: ${e}")
@@ -615,23 +630,29 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str], support_fn: fn(check.Checker) ->
 /// The check of `xo check` (owner, 2026-10-23, field report 0.26.0 b08):
 /// the workspace's modules under the native backends' checker rules, as a
 /// build checks them, or the Go backend's with go_rules (--backend=go); with
-/// support, when the check reports no error and a root module declares
-/// main, the XO1201 diagnostics of the SSA builder too (what the native
-/// backends cannot build yet; it lowers the program, about 2 s for
-/// compiler/xo, so it is not the default yet).
+/// support, when the check reports no error, the XO1201 diagnostics of the
+/// SSA builder too, lowering every function of the root modules (a
+/// library's too): what the native backends cannot build yet (decision
+/// 0523 proposes it as the default; about 0.9 s more for compiler/xo,
+/// warm). A per module check (decision 0513) runs it on each member's
+/// checker.
 fn load_check(os: Os, ctx: Ctx, dirs: List[Str], support: Bool, go_rules: Bool, support_fn: fn(check.Checker) -> List[Diag] uses (clock, env, fs, proc, rand, stdio)) -> Session ! Str uses fs, proc, net, rand, env, clock, stdio {
   if go_rules {
     return load(os, ctx, dirs, false, {})
   }
   // --support keeps the module check cache and the lazy runtime: the SSA
   // builder checks the runtime bodies it reaches (check_lazy) as a build
-  // does, and a skipped module's diagnostics come from its entry
-  // a plain check may hold one workspace member at a time (decision
-  // 0513); --support analyzes the session's one checker
+  // does, and a skipped module's diagnostics come from its entry. A check
+  // may hold one workspace member at a time (decision 0513): the support
+  // check then runs on each member's checker (load_each; with one
+  // checker for the whole workspace, aws's 438 modules passed 18 GB)
   var cx = ctx
-  cx.per_module = !support
+  cx.per_module = true
+  if support {
+    cx.member_support = Some(support_fn)
+  }
   var s = load_mode_cached(os, cx, dirs, false, {}, [], true, true)?
-  if !support {
+  if !support || s.supported {
     return Ok(s)
   }
   var errs = false
@@ -640,7 +661,9 @@ fn load_check(os: Os, ctx: Ctx, dirs: List[Str], support: Bool, go_rules: Bool, 
   }
   if !errs {
     // the driver's support check (compiler/xo: through the front end
-    // cache), or plain_support
+    // cache), or plain_support, with every function of the root modules
+    // a root (decision 0523)
+    s.c.lib_roots = true
     s.diags = sort_diags(s.diags + support_fn(s.c))
   }
   Ok(s)

@@ -36,7 +36,7 @@ func TestCheckWorkspaceImportClosure(t *testing.T) {
 	xo(t, "check", filepath.Join(ws, "app")+"/...").want(0)
 	// a walk checks every module (the workspace's directory too, when it
 	// holds a module: here it has no .xo file, a usage error, decision 0345)
-	r := xo(t, "check", "--json", ws+"/...").want(1)
+	r := xo(t, "check", "--support", "--json", ws+"/...").want(1)
 	if !strings.Contains(r.out, "broken") {
 		t.Errorf("check of the walk: the broken module's error is missing:\n%s", r.out)
 	}
@@ -281,4 +281,66 @@ func TestQueryCallersPerMember(t *testing.T) {
 		}
 		last = k
 	}
+}
+
+// TestCheckSupportPerMember: `xo check --support` runs the native
+// backends' support check (XO1201) on every function of the checked
+// modules, unreached and library ones too (decision 0523); in a per member check
+// (decision 0513) it lowers a shared module's bodies on each member's
+// copy of the base, whose per-node records it keeps (they were dropped,
+// and every name of such a body was a false XO1201 "the name `x` here").
+// The output is the same on every run; the workspace's other members are
+// lowered only for a walk or --support-all.
+func TestCheckSupportPerMember(t *testing.T) {
+	ws := t.TempDir()
+	files := map[string]string{
+		"xo.mod":           "module example.com/root\nedition preview\n",
+		"root.xo":          "pub fn root() -> Int { 0 }\n",
+		"lib/xo.mod":       "module example.com/lib\nedition preview\n",
+		"lib/util/util.xo": "pub fn seven() -> Int {\n  let x = 3\n  var y = x + 4\n  y\n}\n",
+		"v/xo.mod":         "module example.com/v\nedition preview\n",
+		"v/v.xo":           "pub struct S { n: Int }\n\npub fn locked(f: fn(var S) -> Int) -> Int {\n  var s = S{n: 1}\n  f(s)\n}\n",
+	}
+	work := "xo preview\nuse .\nuse ./lib\nuse ./v\n"
+	for i := 1; i <= 8; i++ {
+		files[fmt.Sprintf("c%d/xo.mod", i)] = fmt.Sprintf("module example.com/c%d\nedition preview\n", i)
+		files[fmt.Sprintf("c%d/c.xo", i)] = "use example.com/lib/util\n\npub fn c() -> Int { util.seven() + 1 }\n"
+		work += fmt.Sprintf("use ./c%d\n", i)
+	}
+	files["xo.work"] = work
+	modtest.WriteFiles(t, ws, files)
+	count := func(r modRun) int { return strings.Count(r.out, `"XO1201"`) }
+	// with the front end cache off too: with it, a member replays the
+	// base's own lowering of a shared body and the dropped records hid
+	for _, fe := range []string{"", "off"} {
+		t.Run("fe="+fe, func(t *testing.T) {
+			if fe != "" {
+				setenv(t, "XO_FE_CACHE", fe)
+			}
+			var first string
+			for run := 0; run < 3; run++ {
+				r := xo(t, "check", "--support", "--json", ws+"/...").want(1)
+				if n := count(r); n != 1 {
+					t.Errorf("check WS/... run %d: want the one XO1201 of v, got %d:\n%s", run, n, r.out)
+				}
+				if run == 0 {
+					first = r.out
+				} else if r.out != first {
+					t.Errorf("check WS/... run %d: output differs from run 0:\n%s\nrun 0:\n%s", run, r.out, first)
+				}
+			}
+		})
+	}
+	// the workspace's directory: its own module only, unless --support-all
+	if n := count(xo(t, "check", "--support", "--json", ws).want(0)); n != 0 {
+		t.Errorf("check WS: want no XO1201 (v is not named), got %d", n)
+	}
+	if n := count(xo(t, "check", "--support", "--json", "--support-all", ws).want(1)); n != 1 {
+		t.Errorf("check --support-all WS: want v's XO1201, got %d", n)
+	}
+	// a library alone, and without --support
+	if n := count(xo(t, "check", "--support", "--json", filepath.Join(ws, "v")).want(1)); n != 1 {
+		t.Errorf("check v: want its XO1201, got %d", n)
+	}
+	xo(t, "check", filepath.Join(ws, "v")).want(0)
 }

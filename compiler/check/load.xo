@@ -143,6 +143,10 @@ pub struct Checker {
   /// every non generic function of a std module is a root of the build
   /// (decision 0388 stage 1b: std's object, XO_STD_ROOTS=1)
   pub std_roots: Bool = false
+  /// every non generic function of a root module is a root of the build:
+  /// `xo check`'s support check (decision 0523), so XO1201 shows in a
+  /// library and in functions main does not reach
+  pub lib_roots: Bool = false
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false
