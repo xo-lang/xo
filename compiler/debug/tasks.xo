@@ -323,20 +323,36 @@ pub fn (s: Session) running_frames(t: TaskRec) -> (List[VFrame], Int) {
   ([], 0)
 }
 
-/// The first frame of the program's own code (not std's): `file:line`.
+/// The first frame of the program's own code (else of a std library, not
+/// the runtime): `file:line`.
 fn user_at(fs: List[VFrame]) -> Str {
   let i = user_frame(fs)
   if i < 0 { "" } else { "${fs[i].file}:${fs[i].line}" }
 }
 
-/// The index of the first frame of the program's own code, -1 if none.
+/// The index of the first frame of the program's own code; when every
+/// frame is std's, the first of a std library outside the runtime (a task
+/// std/amqptest spawned waits in its own code, not in sched.xo's
+/// fiber_park, which `task N` selected, 2026-11-06); -1 if none.
 pub fn user_frame(fs: List[VFrame]) -> Int {
+  var lib = -1
   for (i, f) in fs.indexed() {
-    if f.line > 0 && !f.file.is_empty() && !in_std(f.path) {
-      return i
+    if f.line > 0 && !f.file.is_empty() {
+      if !in_std(f.path) {
+        return i
+      }
+      if lib < 0 && !in_runtime(f.path) {
+        lib = i
+      }
     }
   }
-  -1
+  lib
+}
+
+/// Whether a path names a file of the native runtime (std/native/llrt,
+/// std/llrt), whose frames are the scheduler's, not the task's.
+fn in_runtime(p: Str) -> Bool {
+  p.contains("std/native/llrt/") || p.contains("std/llrt/") || p.starts_with("native/llrt/")
 }
 
 /// Whether a line table's path names a file of std (`std/...` from std's

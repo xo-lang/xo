@@ -1,0 +1,20 @@
+// Tests of the frame `tasks`, `task N` and DAP select for a task.
+
+fn fr(path: Str, line: Int) -> VFrame {
+  VFrame{pc: 0, name: "f", file: if path.is_empty() { "" } else { "x.xo" }, path: path, line: line, inlined: false, vars: [], regs: {}, how: ""}
+}
+
+test "user_frame: the program's own frame first" {
+  let fs = [fr("std/native/llrt/sched.xo", 310), fr("std/native/amqptest.xo", 1956), fr("main.xo", 4)]
+  expect(user_frame(fs)) == 2
+}
+
+test "user_frame: with only std frames, the first outside the runtime" {
+  let fs = [fr("std/native/llrt/sched.xo", 310), fr("std/native/llrt/pool.xo", 2758), fr("", 0), fr("std/native/amqptest.xo", 1956), fr("std/native/llrt/tasks.xo", 905)]
+  expect(user_frame(fs)) == 3
+}
+
+test "user_frame: only runtime frames give -1" {
+  let fs = [fr("std/native/llrt/sched.xo", 310), fr("std/native/llrt/cabi.xo", 748)]
+  expect(user_frame(fs)) == -1
+}
