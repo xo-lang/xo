@@ -43,7 +43,7 @@ fn derivable_table() -> List[Derivable] {
     Derivable{name: "Ord", kind: DeriveKind.Order, marker: true, fields_must: true},
     Derivable{name: "Json", kind: DeriveKind.Serial, marker: true, fields_must: true, format: "json"},
     Derivable{name: "OpenApi", kind: DeriveKind.Serial, marker: true, fields_must: true},
-    Derivable{name: "Proto", kind: DeriveKind.Serial, marker: true, fields_must: true},
+    Derivable{name: "Proto", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "proto"},
     Derivable{name: "SqlRow", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "sql"},
     Derivable{name: "Xml", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "xml"},
     Derivable{name: "Yaml", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "yaml"},
