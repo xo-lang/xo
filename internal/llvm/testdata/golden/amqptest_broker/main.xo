@@ -98,6 +98,12 @@ fn main(os: Os) {
     os.stdio.println("s1 ${b.ready("t/Subscriptions/s1").len()} s2 ${b.ready("t/Subscriptions/s2").len()}")
     os.stdio.println("session state ${b.session_state("sq", "none").len()}")
 
+    // an event hub
+    b.event_hub("hub", 2)
+    let hsnd = c.new_sender(sess, "hub/Partitions/1").or_fault("hub sender")
+    hsnd.send(msg("e1")).or_fault("send e1")
+    os.stdio.println("hub ${b.events("hub", 0).len()} ${b.events("hub", 1).len()}")
+
     // injected failures
     b.fail_next("transfer", 0, "amqp:resource-limit-exceeded", "full")
     let rej = snd.send(msg("x")).or_fault("send x")

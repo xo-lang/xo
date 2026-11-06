@@ -695,6 +695,146 @@ test "get-message-sessions lists the sessions with messages, pages by skip and t
   }
 }
 
+fn selector(expr: Str) -> (Str, amqp.Value) {
+  let k = "apache.org:selector-filter:string"
+  (k, amqp.Value.Described(descriptor: amqp.Value.Symbol(v: k), value: amqp.Value.Str(v: expr)))
+}
+
+fn ann_of(m: amqp.Message, k: Str) -> amqp.Value {
+  for (a, v) in m.annotations ?? [] {
+    if a == amqp.Value.Symbol(v: k) { return v }
+  }
+  amqp.Value.Null
+}
+
+test "an event hub stores events per partition with x-opt annotations and serves selector reads" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.event_hub("hub", 2)
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let to1 = c.new_sender(sess, "hub/Partitions/1", amqp.SenderOptions{name: "s1"}).or_fault("sender 1")
+    expect(to1.send(msg("a")).or_fault("send a")) == Some(amqp.DeliveryState.Accepted)
+    expect(to1.send(msg("b")).or_fault("send b")) == Some(amqp.DeliveryState.Accepted)
+    // a partition key picks a partition, deterministically, and is echoed
+    let any = c.new_sender(sess, "hub", amqp.SenderOptions{name: "s2"}).or_fault("sender any")
+    let keyed = amqp.Message{annotations: Some([(amqp.Value.Symbol(v: "x-opt-partition-key"), amqp.Value.Str(v: "k1"))]), body: amqp.Body.Data(sections: [b"c"])}
+    any.send(keyed).or_fault("send keyed")
+    any.send(keyed).or_fault("send keyed 2")
+    let evs = b.events("hub", 1)
+    expect(evs.len() >= 2) == true
+    expect(text(evs[0])) == "a"
+    expect(ann_of(evs[0], "x-opt-sequence-number")) == amqp.Value.Long(v: 0)
+    expect(ann_of(evs[1], "x-opt-sequence-number")) == amqp.Value.Long(v: 1)
+    expect(ann_of(evs[1], "x-opt-offset") != ann_of(evs[0], "x-opt-offset")) == true
+    match ann_of(evs[0], "x-opt-enqueued-time") {
+      Timestamp(_) => {}
+      _ => fault("no enqueued time")
+    }
+    expect(b.events("hub", 0).len() + b.events("hub", 1).len()) == 4
+    // a read from the start sees every event and removes nothing
+    let rd = c.new_receiver(sess, "hub/ConsumerGroups/\$Default/Partitions/1", amqp.ReceiverOptions{name: "r1", credit: 10, filters: [selector("amqp.annotation.x-opt-offset > '-1'")]}).or_fault("receiver")
+    let d0 = rd.receive(2000).or_fault("receive 0")
+    expect(text(d0.message)) == "a"
+    let d1 = rd.receive(2000).or_fault("receive 1")
+    expect(text(d1.message)) == "b"
+    expect(b.events("hub", 1).len() >= 2) == true
+    // @latest sees only what arrives later, and a sequence number selects the rest
+    let late = c.new_receiver(sess, "hub/ConsumerGroups/\$Default/Partitions/1", amqp.ReceiverOptions{name: "r2", credit: 10, filters: [selector("amqp.annotation.x-opt-offset > '@latest'")]}).or_fault("latest")
+    to1.send(msg("z")).or_fault("send z")
+    expect(text(late.receive(2000).or_fault("receive z").message)) == "z"
+    let by_seq = c.new_receiver(sess, "hub/ConsumerGroups/\$Default/Partitions/1", amqp.ReceiverOptions{name: "r3", credit: 10, filters: [selector("amqp.annotation.x-opt-sequence-number >= '1'")]}).or_fault("by seq")
+    expect(text(by_seq.receive(2000).or_fault("receive seq").message)) == "b"
+    // an unknown partition, hub and group are refused
+    match c.new_receiver(sess, "hub/ConsumerGroups/\$Default/Partitions/9", amqp.ReceiverOptions{name: "r4"}) {
+      Err(Peer(e)) => expect(e.condition) == "com.microsoft:argument-out-of-range"
+      _ => fault("unknown partition")
+    }
+    match c.new_receiver(sess, "hub/ConsumerGroups/nope/Partitions/0", amqp.ReceiverOptions{name: "r5"}) {
+      Err(Peer(e)) => expect(e.condition) == "amqp:not-found"
+      _ => fault("unknown group")
+    }
+    c.close().or_fault("close")
+  }
+}
+
+test "an event hub receiver with a higher epoch takes the partition with amqp:link:stolen" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.event_hub("hub", 1)
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let path = "hub/ConsumerGroups/\$Default/Partitions/0"
+    let lo = c.new_receiver(sess, path, amqp.ReceiverOptions{name: "lo", properties: [("com.microsoft:epoch", amqp.Value.Long(v: 5))]}).or_fault("epoch 5")
+    let hi = c.new_receiver(sess, path, amqp.ReceiverOptions{name: "hi", properties: [("com.microsoft:epoch", amqp.Value.Long(v: 7))]}).or_fault("epoch 7")
+    match lo.receive(1000) {
+      Err(Peer(e)) => expect(e.condition) == "amqp:link:stolen"
+      _ => fault("the lower epoch was not detached")
+    }
+    // a lower epoch, or none, is refused while the higher one holds the partition
+    match c.new_receiver(sess, path, amqp.ReceiverOptions{name: "late", properties: [("com.microsoft:epoch", amqp.Value.Long(v: 6))]}) {
+      Err(Peer(e)) => expect(e.condition) == "amqp:link:stolen"
+      _ => fault("a lower epoch attached")
+    }
+    match c.new_receiver(sess, path, amqp.ReceiverOptions{name: "none"}) {
+      Err(Peer(e)) => expect(e.condition) == "amqp:link:stolen"
+      _ => fault("no epoch attached")
+    }
+    hi.close().or_fault("close hi")
+    c.close().or_fault("close")
+  }
+}
+
+test "an event hub answers the hub and partition properties on the namespace management link" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.event_hub("hub", 3)
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let snd = c.new_sender(sess, "hub/Partitions/2", amqp.SenderOptions{name: "es"}).or_fault("event sender")
+    snd.send(msg("a")).or_fault("send")
+    let ms = c.new_sender(sess, "\$management", amqp.SenderOptions{name: "m-s"}).or_fault("mgmt sender")
+    let mr = c.new_receiver(sess, "\$management", amqp.ReceiverOptions{name: "m-r", target: "client-reply", credit: 5}).or_fault("mgmt receiver")
+    let ask = fn(props: List[(Str, amqp.Value)]) -> amqp.Message uses (net, clock) {
+      let req = amqp.Message{
+        properties: Some(amqp.Properties{message_id: amqp.Value.Str(v: "r-1"), reply_to: Some("client-reply")}),
+        app_properties: Some([("operation", amqp.Value.Str(v: "READ")), ("name", amqp.Value.Str(v: "hub"))] + props),
+        body: amqp.Body.Value(v: amqp.Value.Null)}
+      ms.send(req).or_fault("ask")
+      let d = mr.receive(2000).or_fault("answer")
+      mr.accept(d).or_fault("accept")
+      d.message
+    }
+    let hub = ask([("type", amqp.Value.Str(v: "com.microsoft:eventhub"))])
+    expect(key_of(hub, "status-code")) == amqp.Value.Int(v: 200)
+    expect(key(body_map(hub), "partition_count")) == amqp.Value.Int(v: 3)
+    expect(key(body_map(hub), "partition_ids")) == amqp.Value.Array(items: [amqp.Value.Str(v: "0"), amqp.Value.Str(v: "1"), amqp.Value.Str(v: "2")])
+    let part = ask([("type", amqp.Value.Str(v: "com.microsoft:partition")), ("partition", amqp.Value.Str(v: "2"))])
+    expect(key(body_map(part), "last_enqueued_sequence_number")) == amqp.Value.Long(v: 0)
+    expect(key(body_map(part), "is_partition_empty")) == amqp.Value.Bool(v: false)
+    let empty = ask([("type", amqp.Value.Str(v: "com.microsoft:partition")), ("partition", amqp.Value.Str(v: "0"))])
+    expect(key(body_map(empty), "is_partition_empty")) == amqp.Value.Bool(v: true)
+    expect(key(body_map(empty), "last_enqueued_offset")) == amqp.Value.Str(v: "-1")
+    c.close().or_fault("close")
+  }
+}
+
+fn key_of(m: amqp.Message, k: Str) -> amqp.Value {
+  for (a, v) in m.app_properties ?? [] {
+    if a == k { return v }
+  }
+  amqp.Value.Null
+}
+
 test "a typed receiver exposes the peer's attach: the echoed session filter and locked-until" uses (net, clock) {
   let b = amqptest.new(os.clock)
   b.queue("sq", amqptest.QueueOptions{sessions: true, lock_ms: 5000})

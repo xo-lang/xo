@@ -313,6 +313,7 @@ fn defer_msg(var s: amqptest.BrokerState, qi: Int, seq: Int) {
 
 /// Gives back everything connection `conn` holds locked (it went away).
 fn release_conn(var s: amqptest.BrokerState, conn: Int) {
+  s.owners = s.owners.filter(fn(o: amqptest.HubOwner) -> Bool { !o.key.contains("#${conn}.") })
   var qi = 0
   while qi < s.queues.len() {
     var q = s.queues[qi]
@@ -580,6 +581,141 @@ fn broker_detach_links(b: amqptest.Broker, queue: Str, error: amqp.WireError) {
   })
 }
 
+fn find_hub(s: amqptest.BrokerState, name: Str) -> Int {
+  var i = 0
+  while i < s.hubs.len() {
+    if s.hubs[i].name == name { return i }
+    i += 1
+  }
+  -1
+}
+
+fn broker_event_hub(b: amqptest.Broker, name: Str, partitions: Int, consumer_groups: List[Str] = ["$Default"]) {
+  let now = now_ms(b)
+  b.st.with(fn(var s: amqptest.BrokerState) {
+    var parts: List[amqptest.FakePart] = []
+    for _ in 0..partitions { parts.push(amqptest.FakePart{}) }
+    let h = amqptest.FakeHub{name: name, groups: consumer_groups, parts: parts, created_ms: now}
+    let i = find_hub(s, name)
+    if i >= 0 { s.hubs[i] = h } else { s.hubs.push(h) }
+  })
+}
+
+fn broker_events(b: amqptest.Broker, hub: Str, partition: Int) -> List[amqp.Message] {
+  b.st.with_read(fn(s: amqptest.BrokerState) -> List[amqp.Message] {
+    let hi = find_hub(s, hub)
+    if hi < 0 || partition < 0 || partition >= s.hubs[hi].parts.len() { return [] }
+    s.hubs[hi].parts[partition].events
+  })
+}
+
+/// The kind, hub, consumer group and partition of an event hub address: 4 for
+/// `hub/ConsumerGroups/cg/Partitions/id` (a receiver), 5 for `hub` or `hub/Partitions/id` (a sender, partition -1
+/// for any), 0 for anything else.
+fn hub_parse(addr: Str) -> (Int, Str, Str, Int) {
+  let p = addr.split("/")
+  if p.len() == 5 && p[1] == "ConsumerGroups" && p[3] == "Partitions" {
+    return (4, p[0], p[2], Int.parse(p[4]) ?? -2)
+  }
+  if p.len() == 3 && p[1] == "Partitions" { return (5, p[0], "", Int.parse(p[2]) ?? -2) }
+  if p.len() == 1 && p[0] != "" && p[0] != "$cbs" && p[0] != "$management" { return (5, p[0], "", -1) }
+  (0, "", "", -1)
+}
+
+fn part_hash(key: Str) -> Int {
+  var h = 0
+  for c in key.bytes() { h = (h * 31 + Int(c)) & 1048575 }
+  h
+}
+
+/// Stores events sent to hub `hi`: the partition is the link's, else by the partition key, else round robin.
+/// Each event gets the x-opt-sequence-number, x-opt-offset and x-opt-enqueued-time annotations.
+fn hub_store(var s: amqptest.BrokerState, hi: Int, part: Int, msgs: List[amqp.Message], now: Int) -> amqp.DeliveryState {
+  var h = s.hubs[hi]
+  let n = h.parts.len()
+  for m in msgs {
+    var pi = part
+    if pi < 0 {
+      match ann_get(m, "x-opt-partition-key") {
+        Some(k) => pi = part_hash(val_str(Some(k))) % n
+        None => {
+          pi = h.rr % n
+          h.rr += 1
+        }
+      }
+    }
+    var p = h.parts[pi]
+    let seq = p.events.len()
+    var e = ann_set(m, "x-opt-sequence-number", amqp.Value.Long(v: Int64(seq)))
+    e = ann_set(e, "x-opt-offset", amqp.Value.Str(v: "${hub_offset(seq)}"))
+    e = ann_set(e, "x-opt-enqueued-time", amqp.Value.Timestamp(ms: now))
+    p.events.push(e)
+    h.parts[pi] = p
+  }
+  s.hubs[hi] = h
+  notify_all(s)
+  amqp.DeliveryState.Accepted
+}
+
+fn hub_offset(seq: Int) -> Int { 128 * seq + 64 }
+
+/// Where a receiver with selector `expr` starts in `events`: after the matching event (`>`) or at it (`>=`).
+fn start_pos(events: List[amqp.Message], expr: Str) -> Int {
+  if expr.contains("@latest") { return events.len() }
+  let key = if expr.contains("x-opt-sequence-number") { 1 } else if expr.contains("x-opt-enqueued-time") { 2 } else { 0 }
+  let ge = expr.contains(">=")
+  var lo = 0
+  var hi = 0
+  match expr.find("'") {
+    Some(a) => {
+      match expr[a + 1..].find("'") {
+        Some(z) => { lo = Int.parse(expr[a + 1..a + 1 + z]) ?? -1 }
+        None => {}
+      }
+    }
+    None => {}
+  }
+  hi = lo
+  var i = 0
+  while i < events.len() {
+    var v = i
+    if key == 0 { v = hub_offset(i) }
+    if key == 2 {
+      match ann_get(events[i], "x-opt-enqueued-time") {
+        Some(Timestamp(t)) => { v = t }
+        _ => {}
+      }
+    }
+    if v > hi || (ge && v == hi) { return i }
+    i += 1
+  }
+  events.len()
+}
+
+fn hub_selector(src: amqp.Source?) -> Str {
+  match src {
+    Some(x) => {
+      for (k, v) in x.filter {
+        if k.contains("selector-filter") {
+          match v {
+            Described(_, inner) => return val_str(Some(inner))
+            _ => return val_str(Some(v))
+          }
+        }
+      }
+      ""
+    }
+    None => ""
+  }
+}
+
+fn hub_epoch(a: amqp.Attach) -> Int {
+  for (k, v) in a.properties {
+    if k == "com.microsoft:epoch" { return val_int(Some(v)) }
+  }
+  0
+}
+
 fn broker_disconnect_all(b: amqptest.Broker, error: amqp.WireError? = None) {
   b.st.with(fn(var s: amqptest.BrokerState) {
     s.gen += 1
@@ -726,6 +862,7 @@ fn body_value(m: amqp.Message) -> amqp.Value {
 /// How the audience of a link is classified: the kind and the entity name.
 fn classify(addr: Str) -> (Int, Str) {
   if addr == "$cbs" { return (1, "$cbs") }
+  if addr == "$management" { return (2, "") }
   if addr.ends_with("/$management") { return (2, addr.trim_suffix("/$management")) }
   if addr.ends_with("/$DeadLetterQueue") { return (3, addr.trim_suffix("/$DeadLetterQueue")) }
   (0, addr)
@@ -812,6 +949,7 @@ fn with_delivery_annotations(m: amqptest.FakeMsg) -> amqp.Message {
 fn deliver_link(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: Int) -> () ! amqp.AmqpErr uses (net.listen, clock) {
   while true {
     let l = c.links[li]
+    if l.kind == 4 { return deliver_hub(b, sc, c, li) }
     if !l.sends || l.detached || l.kind == 1 || l.kind == 2 { break }
     let si = ss_idx(c, l.channel)
     if si < 0 || c.sess[si].ended { break }
@@ -1108,6 +1246,7 @@ fn process_mgmt(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: 
   let op = val_str(app_get(req, "operation")).trim_prefix("com.microsoft:")
   let now = now_ms(b)
   let conn = c.id
+  if l.queue == "" { return hub_mgmt(b, c, li, req) }
   let r = b.st.with(fn(var s: amqptest.BrokerState) -> (Int, Str, Str, amqp.Value, Int) {
     let qi = find_queue(s, l.queue)
     if qi < 0 { return (404, "amqp:not-found", "no such entity " + l.queue, amqp.Value.Null, s.slow_mgmt_ms) }
@@ -1146,6 +1285,18 @@ fn process_cbs(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: I
 fn process_send(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: Int, id: Int, settled: Bool, msgs: List[amqp.Message]) -> () ! amqp.AmqpErr uses (net.listen, clock) {
   let l = c.links[li]
   let now = now_ms(b)
+  if l.kind == 5 {
+    let hs = b.st.with(fn(var s: amqptest.BrokerState) -> amqp.DeliveryState {
+      match take_fail(s, "transfer") {
+        Some(f) => return amqp.DeliveryState.Rejected(error: Some(werr(f.condition, f.description)))
+        None => {}
+      }
+      let hi = find_hub(s, l.hub)
+      if hi < 0 { return amqp.DeliveryState.Rejected(error: Some(werr("amqp:not-found", "no such entity " + l.hub))) }
+      hub_store(s, hi, l.part, msgs, now)
+    })
+    return settle_reply(sc, l.channel, id, settled, hs)
+  }
   let state = b.st.with(fn(var s: amqptest.BrokerState) -> amqp.DeliveryState {
     match take_fail(s, "transfer") {
       Some(f) => return amqp.DeliveryState.Rejected(error: Some(werr(f.condition, f.description)))
@@ -1172,7 +1323,7 @@ fn process_message(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, l
     Ok(x) => x
     Err(_) => return settle_reply(sc, l.channel, id, settled, amqp.DeliveryState.Rejected(error: Some(werr("amqp:decode-error", "the message does not decode"))))
   }
-  if l.kind == 0 {
+  if l.kind == 0 || l.kind == 5 {
     var msgs = [m]
     // a batch (message format 0x80013700): each data section is one encoded message
     if fmt == 2147563264 {
@@ -1225,6 +1376,158 @@ fn session_echo(v: amqp.Value, id: Str) -> amqp.Value {
   }
 }
 
+fn hub_link_match(l: amqptest.SvLink, q: Str) -> Bool {
+  l.kind == 4 && (l.hkey == q || l.hkey.split("#")[0] == q)
+}
+
+/// Attaches a link to an event hub: a receiver of one partition of a consumer group (kind 4) or a sender to a
+/// hub or one of its partitions (kind 5).
+fn on_hub_attach(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: Int, a: amqp.Attach, client_sends: Bool, hp: (Int, Str, Str, Int)) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let si = ss_idx(c, ch)
+  if si < 0 { return Ok(()) }
+  let (kind, hub, cg, part) = hp
+  let now = now_ms(b)
+  let conn = c.id
+  let h = c.links.len()
+  let path = "${hub}/ConsumerGroups/${cg}/Partitions/${part}"
+  let hkey = "${path}#${conn}.${h}"
+  let epoch = hub_epoch(a)
+  let sel = hub_selector(a.source)
+  let r = b.st.with(fn(var s: amqptest.BrokerState) -> (amqp.WireError?, Int) {
+    match take_fail(s, "attach") {
+      Some(f) => return (Some(werr(f.condition, f.description)), 0)
+      None => {}
+    }
+    if !auth_ok(s, hub, now) {
+      return (Some(werr("amqp:unauthorized-access", "A valid claim is required for " + hub)), 0)
+    }
+    let hi = find_hub(s, hub)
+    if hi < 0 { return (Some(werr("amqp:not-found", "The messaging entity '" + hub + "' could not be found.")), 0) }
+    let n = s.hubs[hi].parts.len()
+    if (kind == 4) == client_sends { return (Some(werr("amqp:not-allowed", "the link has the wrong direction for " + hub)), 0) }
+    if part < -1 || part >= n { return (Some(werr("com.microsoft:argument-out-of-range", "The partition does not exist.")), 0) }
+    if kind == 5 { return (None, 0) }
+    if !s.hubs[hi].groups.contains(cg) {
+      return (Some(werr("amqp:not-found", "The consumer group '" + cg + "' could not be found.")), 0)
+    }
+    if part < 0 { return (Some(werr("com.microsoft:argument-out-of-range", "A receiver needs a partition.")), 0) }
+    for o in s.owners {
+      if o.path == path && o.epoch > epoch {
+        return (Some(werr("amqp:link:stolen", "A receiver with a higher epoch owns the partition.")), 0)
+      }
+    }
+    var keep: List[amqptest.HubOwner] = []
+    for o in s.owners {
+      if o.path == path && o.epoch < epoch {
+        s.gen += 1
+        s.detaches.push((s.gen, o.key, werr("amqp:link:stolen", "A receiver with a higher epoch took the partition.")))
+      } else {
+        keep.push(o)
+      }
+    }
+    keep.push(amqptest.HubOwner{path: path, key: hkey, epoch: epoch})
+    s.owners = keep
+    notify_all(s)
+    (None, start_pos(s.hubs[hi].parts[part].events, sel))
+  })
+  var link = amqptest.SvLink{handle: h, remote: Int(a.handle), channel: ch, name: a.name, sends: !client_sends, kind: kind, queue: hub,
+    hub: hub, cg: cg, part: part, pos: r.1, epoch: epoch, hkey: hkey, presettled: true}
+  match r.0 {
+    Some(e) => {
+      link.detached = true
+      c.links.push(link)
+      let role = if client_sends { amqp.Role.Receiver } else { amqp.Role.Sender }
+      out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: role, sender_settle_mode: None, receiver_settle_mode: None, source: None, target: None}))?
+      return out(sc, ch, amqp.FrameBody.Detach(v: amqp.Detach{handle: u32w(h), closed: true, error: Some(e)}))
+    }
+    None => {}
+  }
+  if client_sends {
+    link.presettled = false
+    link.credit = 100000
+    c.links.push(link)
+    out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Receiver, sender_settle_mode: a.sender_settle_mode,
+      receiver_settle_mode: a.receiver_settle_mode, source: a.source, target: a.target, max_message_size: 0}))?
+    let z = c.sess[si]
+    return out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z.next_out),
+      outgoing_window: UInt32(2048), handle: Some(u32w(h)), delivery_count: Some(u32w(0)), link_credit: Some(u32w(100000)), available: None}))
+  }
+  c.links.push(link)
+  out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Sender, sender_settle_mode: a.sender_settle_mode,
+    receiver_settle_mode: a.receiver_settle_mode, source: a.source, target: a.target, initial_delivery_count: 0}))
+}
+
+/// Sends the events a hub receiver has not got yet while it has credit; reading removes nothing.
+fn deliver_hub(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: Int) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  while true {
+    let l = c.links[li]
+    if l.detached || l.credit <= 0 { break }
+    let si = ss_idx(c, l.channel)
+    if si < 0 || c.sess[si].ended || c.sess[si].remote_window <= 0 { break }
+    let ev = b.st.with_read(fn(s: amqptest.BrokerState) -> amqp.Message? {
+      let hi = find_hub(s, l.hub)
+      if hi < 0 { return None }
+      let evs = s.hubs[hi].parts[l.part].events
+      if l.pos >= evs.len() { return None }
+      Some(evs[l.pos])
+    })
+    match ev {
+      None => break
+      Some(m) => {
+        let seq = l.pos
+        var l2 = c.links[li]
+        l2.pos += 1
+        put_link(c, l2)
+        send_message(sc, c, li, m, token_bytes(seq), true)?
+      }
+    }
+  }
+  Ok(())
+}
+
+fn hub_mgmt(b: amqptest.Broker, var c: amqptest.SvConn, li: Int, req: amqp.Message) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let l = c.links[li]
+  let name = val_str(app_get(req, "name"))
+  let typ = val_str(app_get(req, "type"))
+  let part = val_str(app_get(req, "partition"))
+  let r = b.st.with(fn(var s: amqptest.BrokerState) -> (Int, Str, Str, amqp.Value) {
+    match take_fail(s, "read") {
+      Some(f) => return (f.status, f.condition, f.description, amqp.Value.Null)
+      None => {}
+    }
+    let hi = find_hub(s, name)
+    if hi < 0 { return (404, "amqp:not-found", "The messaging entity '" + name + "' could not be found.", amqp.Value.Null) }
+    let h = s.hubs[hi]
+    if typ == "com.microsoft:eventhub" {
+      var ids: List[amqp.Value] = []
+      for i in 0..h.parts.len() { ids.push(amqp.Value.Str(v: "${i}")) }
+      return ok_out(amqp.Value.Map(pairs: [pair("name", amqp.Value.Str(v: h.name)), pair("created_at", amqp.Value.Timestamp(ms: h.created_ms)),
+        pair("partition_count", amqp.Value.Int(v: Int32.wrapping_from(h.parts.len()))), pair("partition_ids", amqp.Value.Array(items: ids))]))
+    }
+    if typ == "com.microsoft:partition" {
+      let pi = Int.parse(part) ?? -1
+      if pi < 0 || pi >= h.parts.len() { return (404, "com.microsoft:argument-out-of-range", "The partition does not exist.", amqp.Value.Null) }
+      let evs = h.parts[pi].events
+      let n = evs.len()
+      var last_time = h.created_ms
+      if n > 0 {
+        match ann_get(evs[n - 1], "x-opt-enqueued-time") {
+          Some(Timestamp(t)) => { last_time = t }
+          _ => {}
+        }
+      }
+      return ok_out(amqp.Value.Map(pairs: [pair("name", amqp.Value.Str(v: h.name)), pair("partition", amqp.Value.Str(v: part)),
+        pair("begin_sequence_number", amqp.Value.Long(v: Int64(if n > 0 { 0 } else { -1 }))),
+        pair("last_enqueued_sequence_number", amqp.Value.Long(v: Int64(n - 1))),
+        pair("last_enqueued_offset", amqp.Value.Str(v: if n > 0 { "${hub_offset(n - 1)}" } else { "-1" })),
+        pair("last_enqueued_time_utc", amqp.Value.Timestamp(ms: last_time)), pair("is_partition_empty", amqp.Value.Bool(v: n == 0))]))
+    }
+    (400, "amqp:invalid-field", "unknown type " + typ, amqp.Value.Null)
+  })
+  push_reply(c, l, reply_message(req, "status-code", "status-description", r.0, r.2, r.1, r.3))
+  Ok(())
+}
+
 fn on_attach(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: Int, a: amqp.Attach) -> () ! amqp.AmqpErr uses (net.listen, clock) {
   let si = ss_idx(c, ch)
   if si < 0 { return Ok(()) }
@@ -1243,6 +1546,10 @@ fn on_attach(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: Int
       None => ""
     }
   }
+  let hp = hub_parse(addr)
+  if hp.0 != 0 && b.st.with_read(fn(s: amqptest.BrokerState) -> Bool { find_hub(s, hp.1) >= 0 }) {
+    return on_hub_attach(b, sc, c, ch, a, client_sends, hp)
+  }
   let (kind, entity) = classify(addr)
   let now = now_ms(b)
   let conn = c.id
@@ -1254,7 +1561,7 @@ fn on_attach(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: Int
       Some(f) => return (Some(werr(f.condition, f.description)), "", 0)
       None => {}
     }
-    if kind == 1 { return (None, "", 0) }
+    if kind == 1 || (kind == 2 && entity == "") { return (None, "", 0) }
     if !auth_ok(s, entity, now) {
       return (Some(werr("amqp:unauthorized-access", "A valid claim is required for " + entity)), "", 0)
     }
@@ -1497,6 +1804,9 @@ fn drop_link(b: amqptest.Broker, var c: amqptest.SvConn, li: Int) {
   var l = c.links[li]
   if l.detached { return }
   let conn = c.id
+  if l.kind == 4 {
+    b.st.with(fn(var s: amqptest.BrokerState) { s.owners = s.owners.filter(fn(o: amqptest.HubOwner) -> Bool { o.key != l.hkey }) })
+  }
   b.st.with(fn(var s: amqptest.BrokerState) {
     let qi = find_queue(s, l.queue)
     if qi < 0 { return }
@@ -1542,7 +1852,7 @@ fn control(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn) -> Bool !
     var i = 0
     while i < c.links.len() {
       let l = c.links[i]
-      if !l.detached && l.kind != 1 && l.queue == q {
+      if !l.detached && l.kind != 1 && (l.queue == q || hub_link_match(l, q)) {
         let h = l.handle
         let ch = l.channel
         drop_link(b, c, i)

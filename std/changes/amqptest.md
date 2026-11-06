@@ -67,3 +67,16 @@ earlier one), visible through `Broker.ready` and the next delivery.
 `com.microsoft:get-message-sessions` answers `sessions-ids` (an Array of Str, name order) and `skip`, for the sessions with
 messages (last-updated-time at the year 10000) or whose state was set after that time; `skip` and `top` page the list and
 no sessions is 204. `FakeSession` gains `updated_ms`, set by set-session-state.
+
+## 2026-11-06: feature: event hubs (Broker.event_hub, Broker.events)
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (azeventhubs v1.4.0 port)
+- Go reference: azeventhubs v1.4.0 partition_client.go, mgmt.go, event_data.go (what the client sends and expects)
+- Test: native/amqptest "an event hub ..." (three tests), golden amqptest_broker
+
+`Broker.event_hub(name, partitions, consumer_groups)` declares a hub; sends to `hub` or `hub/Partitions/id` store events with
+x-opt-sequence-number, x-opt-offset and x-opt-enqueued-time; receivers at `hub/ConsumerGroups/cg/Partitions/id` read from a
+selector filter without removing anything; `com.microsoft:epoch` ownership with `amqp:link:stolen`; the namespace
+`$management` link answers READ for the hub and a partition; `Broker.events` lists a partition. spec/std.md 64.6.

@@ -7616,6 +7616,8 @@ fn amqptest.new(clock: Clock) -> Broker
 fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock)
 fn (b: Broker) queue(name: Str, opts: QueueOptions = QueueOptions{})      // QueueOptions{sessions, lock_ms, max_delivery_count}
 fn (b: Broker) topic(name: Str)
+fn (b: Broker) event_hub(name: Str, partitions: Int, consumer_groups: List[Str] = ["$Default"])
+fn (b: Broker) events(hub: Str, partition: Int) -> List[amqp.Message]
 fn (b: Broker) subscription(topic: Str, name: Str, opts: QueueOptions = QueueOptions{})
 fn (b: Broker) put(queue: Str, m: amqp.Message)
 fn (b: Broker) ready(queue: Str) -> List[amqp.Message]
@@ -7660,7 +7662,7 @@ SASL (any mechanism is accepted) or none.
 - `<entity>/$management` answers (reply `statusCode`, `statusDescription`, `errorCondition`, correlation id = the request's
   message id) `renew-lock`, `peek-message`, `schedule-message` (the message carries `x-opt-scheduled-enqueue-time`),
   `cancel-scheduled-message`, `receive-by-sequence-number` (deferred messages), `update-disposition`
-  (`completed`, `abandoned`, `suspended`, `defered`), `renew-session-lock`, `get-session-state` and `set-session-state`; any
+  (`completed`, `abandoned`, `suspended`, `defered`), `renew-session-lock`, `get-session-state`, `set-session-state` and `get-message-sessions`; any
   other operation is 501.
 - Sessions: a receiver on a session enabled queue gives the `com.microsoft:session-filter` (a session id, or null for the
   next available one); the broker locks that session (or the first with a deliverable message) to the connection, echoes
@@ -7670,6 +7672,19 @@ SASL (any mechanism is accepted) or none.
   and all are stored under one `Accepted`. A flow with credit makes the broker send up to the credit; a flow with `drain` set
   gets what is deliverable, then a flow from the link with `drain` and `link-credit` 0 whose delivery count has advanced by
   the credit left.
+- Event Hubs: `event_hub(name, partitions, groups)` declares a hub whose partitions are "0", "1", .... A send to `hub` picks a
+  partition by `x-opt-partition-key` (a fixed hash), else round robin; a send to `hub/Partitions/id` goes to that one. Each
+  stored event gets the annotations `x-opt-sequence-number` (Long, from 0 per partition), `x-opt-offset` (Str, increasing) and
+  `x-opt-enqueued-time` (Timestamp); the partition key stays. A receiver at `hub/ConsumerGroups/cg/Partitions/id` has its own
+  position and gets pre-settled deliveries (reading removes nothing), starting where its `apache.org:selector-filter:string`
+  says (`amqp.annotation.x-opt-offset > '-1'` or `'@latest'` or `'N'`, `>=`, `x-opt-sequence-number`, `x-opt-enqueued-time`);
+  events sent later keep flowing. The attach property `com.microsoft:epoch` makes a receiver the owner: a higher epoch
+  detaches the holders with a lower one with `amqp:link:stolen`, and a lower epoch (or none) against a higher holder is refused
+  with `amqp:link:stolen`. An unknown partition is `com.microsoft:argument-out-of-range`, an unknown hub or group
+  `amqp:not-found`. The namespace `$management` link answers operation READ with `type` `com.microsoft:eventhub`
+  (name, created_at, partition_count, partition_ids) and `com.microsoft:partition` (name, partition, begin_sequence_number,
+  last_enqueued_sequence_number, last_enqueued_offset, last_enqueued_time_utc, is_partition_empty), reply keys `status-code`
+  and `status-description`. `events` lists a partition's events; `detach_links` takes a hub name or a receiver path.
 - Faults: `fail_next`/`fail` make the operation `attach`, `transfer`, `disposition`, `put-token` or a management operation
   (its name without `com.microsoft:`) fail with `condition`, `status` and `description` (an attach, transfer or
   disposition is refused or rejected with the condition; a management reply carries `status` and the condition);

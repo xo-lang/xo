@@ -66,9 +66,35 @@ struct FakeFail {
   left: Int
 }
 
+/// One partition of an event hub: the events in order, each with its x-opt annotations. Internal.
+struct FakePart {
+  events: List[amqp.Message] = []
+}
+
+/// An event hub (decision 0521). Internal.
+struct FakeHub {
+  name: Str
+  groups: List[Str]
+  parts: List[FakePart]
+  created_ms: Int
+  /// the next partition for an event with no partition key
+  rr: Int = 0
+}
+
+/// A receiver link that owns a partition of a consumer group at an epoch. Internal.
+struct HubOwner {
+  /// `hub/ConsumerGroups/cg/Partitions/id`
+  path: Str
+  /// the link's own key, the target of a forced detach
+  key: Str
+  epoch: Int
+}
+
 /// The broker's state. Internal.
 struct BrokerState {
   queues: List[FakeQueue] = []
+  hubs: List[FakeHub] = []
+  owners: List[HubOwner] = []
   tokens: List[(Str, Str)] = []
   /// token expiry per audience in milliseconds since the Unix epoch, 0 for none
   expiries: List[(Str, Int)] = []
@@ -120,6 +146,15 @@ struct SvLink {
   /// delivery id and sequence number of deliveries the client has not settled
   unsettled: List[(Int, Int)] = []
   detached: Bool = false
+  /// event hub links: 4 receives a partition, 5 sends to a hub or one partition (`part` -1 for any)
+  hub: Str = ""
+  cg: Str = ""
+  part: Int = -1
+  /// the next event of the partition this receiver gets
+  pos: Int = 0
+  epoch: Int = 0
+  /// `path#connection.handle`, unique to the link
+  hkey: Str = ""
 }
 
 /// A session of one connection. Internal.
@@ -151,6 +186,12 @@ fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock)
 
 /// Declares a queue (a queue is also created, with the defaults, by the first link to it).
 fn (b: Broker) queue(name: Str, opts: QueueOptions = QueueOptions{})
+/// Declares an event hub with `partitions` partitions (ids "0", "1", ...), receivable by each consumer group
+/// at `hub/ConsumerGroups/cg/Partitions/id` and sendable at `hub` or `hub/Partitions/id`.
+fn (b: Broker) event_hub(name: Str, partitions: Int, consumer_groups: List[Str] = ["$Default"])
+/// The events a partition holds, with their x-opt-sequence-number, x-opt-offset and x-opt-enqueued-time
+/// message annotations.
+fn (b: Broker) events(hub: Str, partition: Int) -> List[amqp.Message]
 /// Declares a topic: a message sent to it is copied to every subscription.
 fn (b: Broker) topic(name: Str)
 /// Declares the subscription `topic/Subscriptions/name`, receivable at that address.
