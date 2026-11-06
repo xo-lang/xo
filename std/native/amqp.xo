@@ -1513,7 +1513,7 @@ fn dial(net: Net, addr: Str, opts: amqp.ConnOptions = amqp.ConnOptions{}) -> amq
     net.dial(hostport).map_err(net_err)?
   }
   let link = if secure {
-    amqp.Transport.Tls(t: tls.client(raw, host, roots: opts.tls_roots, verify: opts.tls_verify).map_err(net_err)?)
+    amqp.Transport.Tls(t: tls.client(raw, if opts.hostname == "" { host } else { opts.hostname }, roots: opts.tls_roots, verify: opts.tls_verify).map_err(net_err)?)
   } else {
     amqp.Transport.Plain(c: raw)
   }

@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+hostname good.test: after the handshake: i/o timeout
+hostname wrong.test: certificate error: tls: failed to verify certificate: x509: certificate is valid for localhost, good.test, not wrong.test
+no hostname: after the handshake: i/o timeout
+--- stderr

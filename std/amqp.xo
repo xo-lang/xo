@@ -301,7 +301,8 @@ enum Sasl {
 struct ConnOptions {
   /// empty: a random container id
   container_id: Str = ""
-  /// the Open's hostname, empty: the host of the address
+  /// the Open's hostname and, for amqps, the name sent as the TLS server name and checked against the certificate (go-amqp's
+  /// HostName; set it to dial through a TLS proxy), empty: the host of the address
   hostname: Str = ""
   /// the largest frame accepted, in bytes (at least 512)
   max_frame_size: Int = 65536

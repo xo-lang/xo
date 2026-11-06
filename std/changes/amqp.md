@@ -116,3 +116,15 @@ Concurrent `begin` calls reserve their channel in the same critical section that
 
 `cbs_put_token(..., expiration: Value? = None)` sends the given value as `expiration` and wins over `expiry_ms`. The test
 broker (std/amqptest) reads a string of Unix seconds as well as a Timestamp.
+
+## 2026-11-06: feature: ConnOptions.hostname is the TLS server name of an amqps dial
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (a TLS proxy such as an Azure custom endpoint)
+- Go reference: go-amqp ConnOptions.HostName
+- Test: golden amqp_tls_hostname (hostname good.test connects past the handshake, wrong.test fails the certificate check)
+
+`amqp.dial` of an `amqps://` address sent and verified the TLS server name of the address's host. With
+`ConnOptions.hostname` set it now uses that name for both, as it already did for the Open's hostname, so a client
+dialing a proxy's address can verify the namespace's name.
