@@ -1,0 +1,32 @@
+// A function that recurses through a closure literal it hands to list.map,
+// in a program with tasks (cancellation checks are on): the inliner must
+// not copy it into itself without end (11a08a448, 2026-11-06).
+struct Tree {
+  n: Int
+  kids: List[Tree]
+}
+
+fn size(t: Tree) -> Int {
+  t.kids.map(fn(k: Tree) -> Int { size(k) }).fold(1, fn(a: Int, b: Int) -> Int { a + b })
+}
+
+fn total(t: Tree) -> Int {
+  t.n + t.kids.map(fn(k: Tree) -> Int { total(k) }).fold(0, fn(a: Int, b: Int) -> Int { a + b })
+}
+
+fn grow(d: Int) -> Tree {
+  if d == 0 {
+    return Tree{n: 1, kids: []}
+  }
+  Tree{n: d, kids: [grow(d - 1), grow(d - 1)]}
+}
+
+fn main(os: Os) {
+  let t = grow(10)
+  let r = scope s {
+    let a = s.spawn(fn() -> Int { size(t) })
+    let b = s.spawn(fn() -> Int { total(t) })
+    a.await + b.await
+  }
+  os.stdio.println("${r}")
+}

@@ -319,6 +319,27 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
       c.tail_cold = c.tail_cold || (k.tail_cold && site_tail)
     }
   }
+  // the functions its values name but it does not call (a closure
+  // literal it makes, a function it passes as a value): walked for
+  // cycles only, at no cost. devirtualize turns an inlined walk's call of
+  // its function value into a call of the literal, so f making
+  // fn(t) { f(t.kids) } for list.map nested copies of f into f without
+  // end once f had no landing pads to keep it out (inline.apply past 22
+  // GB on xo's own build after 11a08a448, 2026-11-06)
+  for name in s.names {
+    let ci = by_name.get(name) ?? -1
+    if ci < 0 {
+      continue
+    }
+    let st = state.get(m.funcs[ci].name) ?? 0
+    if st == 1 {
+      c.bad = true
+      c.hard = true
+      c.why = "cycle through ${m.funcs[ci].name}"
+    } else if st == 0 {
+      let _k = inline_walk(m, sums, by_name, sites, ci, state, costs, vis)
+    }
+  }
   if !c.leaf {
     c.instrs += c.consts
     c.consts = 0
