@@ -81,3 +81,32 @@ app's storage apart from the runtime.
   against 8,949 (2.89x).
 - The Xo build's peak RSS at the fixed rates is the same 21,244 KiB in nearly every run: the
   heap reaches its working size during the warmup.
+
+## Addendum 2026-11-06: the twin's list was quadratic
+
+Every Go row above measured a twin whose `GET /notes` walked every id issued so far under its
+lock (gotchas/twin-cost-grows-with-history.md), so its cost per list grew with the run's
+creates; the saturation row most of all. The twin now walks the live notes (sorted by id,
+output unchanged), and `harness load` counts 4xx answers per target. Rerun on linux/arm64
+host 1, `load-run.sh 7d7192656 -d 30s -warmup 5s -rounds 3 -rates 1000,4000 -sat 64
+-drop-env NOTES_DATA` (7d7192656: the map store experiment 30d947457, never pushed, with
+both fixes; Xo's store is a map behind a lock, as the twin's):
+
+| load | metric | xo arm64 | Go twin | xo/go | verdict |
+|------|--------|----------|---------|-------|---------|
+| 1000/s | CPU us/request | 48.6 (44.5 to 50.2) | 76.4 (68.3 to 93.0) | 0.635 | better |
+| 1000/s | peak RSS KiB | 21,156 | 51,012 | 0.415 | better |
+| 4000/s | p50 us | 107 (104 to 122) | 157 (140 to 256) | 0.682 | better |
+| 4000/s | p99 us | 399 (369 to 5,204) | 635 (550 to 10,730) | 0.628 | ranges overlap |
+| 4000/s | CPU us/request | 25.7 (24.2 to 27.6) | 78.3 (75.3 to 86.8) | 0.329 | better |
+| saturation 64 | req/s | 99,509 (69,366 to 106,076) | 43,276 (42,745 to 43,993) | 2.299 | better |
+| saturation 64 | p50 us | 338 (309 to 386) | 859 (852 to 894) | 0.393 | better |
+| saturation 64 | CPU us/request | 22.8 (22.4 to 23.8) | 74.6 (74.3 to 78.4) | 0.306 | better |
+| saturation 64 | peak RSS KiB | 63,372 (55,816 to 65,800) | 52,680 (49,936 to 53,184) | 1.203 | worse |
+
+4xx answers: at most 0.42% of Xo's requests and 1.65% of Go's per load, so both did the
+mix's work. The 1000/s latency rows overlap with wide ranges (one noisy round each side) and
+are left out. With the twin fixed the 4000/s median is no loss: with the same store, Xo's p50
+is 0.682 of Go's (the loss above was the twin's lock plus std/sql's per statement cost, which
+the sql store still pays: a separate item). The one loss left is peak RSS at saturation,
+1.2 times Go's with 64 connections at once (the per connection memory item).
