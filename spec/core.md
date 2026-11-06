@@ -1157,7 +1157,7 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   `yaml_decode_all__T`, `yaml_write__T`, `yaml_fields__T`, `yaml_encode__T`, `yaml_encode_all__T` and one `yaml_dec__TYPE`
   and `yaml_enc__TYPE` a field type), and a call of one of the four functions is rewritten to the generated function.
 
-- `Cbor` (structs only, no type parameters; decision 0527) gives the struct fxamacker/cbor/v2's typed encoding and decoding
+- `Cbor` (structs, and plain enums without type parameters; decision 0527) gives the struct fxamacker/cbor/v2's typed encoding and decoding
   through `cbor.marshal[T]`, `cbor.unmarshal[T]` and `cbor.unmarshal_prefix[T]` (spec/std.md 50). A field's key is its
   `cbor` string, else its `as` string, else its name under `derive Cbor(case: snake | camel | pascal | kebab)` (as for `Json`, 2.2), else its name; the options after a comma are `omitempty`, `omitzero`,
   `keyasint` and `toarray` (on the first field: the struct is an array), and the name `-` leaves the field out (`XO0422` for another option). Field types are Str, Int, Float, Bool,
@@ -1165,6 +1165,9 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
   for another type). The expansion is ordinary Xo as for `Yaml` (`cbor_zero__T`, `cbor_rd__T`, `cbor_wr__T`,
   `cbor_marshal__T`, `cbor_unmarshal__T`, `cbor_unmarshal_prefix__T` and one `cbor_rd__TYPE` and `cbor_wr__TYPE` a field
   type), and a call of one of the three functions is rewritten to the generated function.
+  On an enum a unit variant is the text of its name (`as "x"` on the variant renames it), a variant with fields a one entry
+  map from its name to a map of its fields keyed by field name (a lone unnamed `from` field is the value itself), and a
+  struct field of an enum type uses the same form; an unknown variant is `CborErr.Type`.
 
 ### 2.10 Implicit conversions
 

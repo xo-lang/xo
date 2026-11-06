@@ -1559,6 +1559,142 @@ fn (var c: Checker) cbor_entries(n: Str, pub_: Str, sp: Span, em: Emit) -> Emit 
   e
 }
 
+/// The codec of an enum that derives Cbor (decision 0527), as source: a unit variant is the text of its name, a variant
+/// with fields a one entry map from its name to a map of its fields (the field name is the key), or, for a lone unnamed
+/// `from` field, to that value. The functions are `cbor_zero__E`, `cbor_wr__E`, `cbor_rd__E` and the three entry points.
+fn (var c: Checker) cbor_enum_codec(ed: parser.EnumDecl, em: Emit, var done: Map[Str, Bool], file: Int) -> Emit? {
+  var e = em
+  let sp = ed.name.span
+  let n = text(ed.name.name)
+  let pub_ = if ed.is_pub { "pub " } else { "" }
+  var wr: List[Str] = []
+  var rd_text: List[Str] = []
+  var rd_map: List[Str] = []
+  var zero = ""
+  var ok = true
+  for (vi, v) in ed.variants.indexed() {
+    let vn = text(v.name.name)
+    let wire = if let Some(w) = v.wire { text(w) } else { vn }
+    let key = "cbor.Value.TextString(s: ${quote_str(wire)})"
+    match v.fields {
+      None => {
+        if vi == 0 {
+          zero = "${n}.${vn}"
+        }
+        wr.push("    ${vn} => ${key}")
+        rd_text.push("  if name == ${quote_str(wire)} { return (true, ${n}.${vn}) }")
+        rd_map.push("    if name == ${quote_str(wire)} { return (true, ${n}.${vn}) }")
+      }
+      Some(fs) => {
+        var binds: List[Str] = []
+        var entries: List[Str] = []
+        var decls: List[Str] = []
+        var arms: List[Str] = []
+        var args: List[Str] = []
+        var zeros: List[Str] = []
+        let lone = fs.len() == 1 && fs[0].name == None
+        for (i, f) in fs.indexed() {
+          let (r, z, e2) = c.cbor_reader(f.typ, f.span, e, done) ?? {
+            c.error_at(file, "XO0425", f.span, "`derive Cbor` maps a Str, Int, Float, Bool, Bytes, a cbor.Value, an Option, a List, a Map[Str, V] of those, a struct or enum that derives Cbor; field ${i + 1} of variant `${vn}` is another type (decision 0527)")
+            ok = false
+            continue
+          }
+          e = e2
+          let (w, e3) = c.cbor_writer(f.typ, f.span, e, done) ?? return None
+          e = e3
+          binds.push("f${i}")
+          zeros.push(z)
+          decls.push("      var f${i} = ${z}")
+          if lone {
+            entries.push("${w}(f${i})")
+            arms.push("      let (ok0, t0) = ${r}(ps[0].1, st)")
+            arms.push("      if ok0 { f0 = t0 }")
+            args.push("f0")
+          } else {
+            let fname = if let Some(id) = f.name { text(id.name) } else { "f${i}" }
+            entries.push("(cbor.Value.TextString(s: ${quote_str(fname)}), ${w}(f${i}))")
+            let kw = if i == 0 { "if" } else { "} else if" }
+            arms.push("        ${kw} kn == ${quote_str(fname)} {")
+            arms.push("          let (ok1, t1) = ${r}(fv, st)")
+            arms.push("          if ok1 { f${i} = t1 }")
+            args.push(if let Some(id) = f.name { "${text(id.name)}: f${i}" } else { "f${i}" })
+          }
+        }
+        if vi == 0 {
+          zero = "${n}.${vn}(${zeros.join(", ")})"
+        }
+        let inner = if lone { entries[0] } else { "cbor.Value.Map(pairs: [${entries.join(", ")}])" }
+        wr.push("    ${vn}(${binds.join(", ")}) => cbor.Value.Map(pairs: [(${key}, ${inner})])")
+        var body: List[Str] = []
+        body.push("    if name == ${quote_str(wire)} {")
+        for d in decls {
+          body.push(d)
+        }
+        if lone {
+          for a in arms {
+            body.push(a)
+          }
+        } else {
+          body.push("      let (okm, fs) = cbor.pairs(ps[0].1, ${quote_str("${n}.${vn}")}, st)")
+          body.push("      if !okm { return (false, z) }")
+          body.push("      for (fk, fv) in fs {")
+          body.push("        let kn = cbor.key_text(fk) ?? \"\"")
+          for a in arms {
+            body.push(a)
+          }
+          body.push("        } else {")
+          body.push("          cbor.unknown_key(st, ${quote_str("${n}.${vn}")}, fk)")
+          body.push("        }")
+          body.push("      }")
+        }
+        body.push("      return (true, ${n}.${vn}(${args.join(", ")}))")
+        body.push("    }")
+        for b in body {
+          rd_map.push(b)
+        }
+      }
+    }
+  }
+  if !ok {
+    return None
+  }
+  if ed.variants.is_empty() {
+    return None
+  }
+  e.ln("fn cbor_zero__${n}() -> ${n} { ${zero} }", sp)
+  e.ln("fn cbor_wr__${n}(v: ${n}) -> cbor.Value {", sp)
+  e.ln("  match v {", sp)
+  for w in wr {
+    e.ln(w, sp)
+  }
+  e.ln("  }", sp)
+  e.ln("}", sp)
+  e.ln("fn cbor_rd__${n}(x: cbor.Value, var st: cbor.Unm) -> (Bool, ${n}) {", sp)
+  e.ln("  let z = cbor_zero__${n}()", sp)
+  e.ln("  if let Some(name) = cbor.key_text(x) {", sp)
+  for r in rd_text {
+    e.ln("  ${r}", sp)
+  }
+  e.ln("    cbor.bad_variant(st, ${quote_str(n)}, name)", sp)
+  e.ln("    return (false, z)", sp)
+  e.ln("  }", sp)
+  e.ln("  let (okp, ps) = cbor.pairs(x, ${quote_str(n)}, st)", sp)
+  e.ln("  if !okp { return (false, z) }", sp)
+  e.ln("  if ps.len() != 1 {", sp)
+  e.ln("    cbor.bad_variant(st, ${quote_str(n)}, \"a map that is not one entry\")", sp)
+  e.ln("    return (false, z)", sp)
+  e.ln("  }", sp)
+  e.ln("  let name = cbor.key_text(ps[0].0) ?? \"\"", sp)
+  for r in rd_map {
+    e.ln(r, sp)
+  }
+  e.ln("  cbor.bad_variant(st, ${quote_str(n)}, name)", sp)
+  e.ln("  (false, z)", sp)
+  e.ln("}", sp)
+  e = c.cbor_entries(n, pub_, sp, e)
+  Some(e)
+}
+
 /// The methods of a valued enum (decision 0269), as source: one constant
 /// a variant (the declared expression, or the previous plus one, or the
 /// variant's name for a `Str`), `value()`, `E.from(v)`, and `E.all()`.
@@ -1776,6 +1912,21 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
   }
   for d in f.decls {
     if let EnumDecl(ed) = d {
+      var cb = false
+      for id in ed.derive {
+        if id.name == b"Cbor" {
+          cb = true
+        }
+      }
+      if cb {
+        if ed.value_type != None || !ed.type_params.is_empty() {
+          c.error_at(file, "XO0425", ed.name.span, "`derive Cbor` on an enum needs a plain enum without type parameters; `${text(ed.name.name)}` is a valued or generic one (decision 0527)")
+        } else if let Some(e2) = c.cbor_enum_codec(ed, em, cdone, file) {
+          em = e2
+          any = true
+          any_cbor = true
+        }
+      }
       if ed.value_type != None {
         em = c.valued_enum_methods(file, ed, em)
         any = true

@@ -35,3 +35,15 @@ helpers used by the generated code: `Unm`, `unm_new`, `to_str` and the other `to
 
 `derive Cbor(case: snake | camel | pascal | kebab)` converts every field without its own `cbor` or `as`
 string, by the same rule as `derive Json` (decision 0277). An unknown case is `XO0413`.
+
+## 2026-11-06: feature: derive Cbor on enums
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0527 follow-up (Xo Lang 3)
+- Go reference: none (fxamacker/cbor has no sum types; Xo's own form, as `derive Json` writes an enum)
+- Test: golden cbor_enum (round trips, a hand built map, an unknown variant, an enum in a struct and a List)
+
+A plain enum without type parameters can `derive Cbor`: a unit variant is the text of its name, a variant with fields a one
+entry map from its name to a map of its fields (a lone unnamed `from` field is the value itself). An unknown variant or a map
+that is not one entry is `CborErr.Type`. New `cbor.bad_variant` helper for the generated code.

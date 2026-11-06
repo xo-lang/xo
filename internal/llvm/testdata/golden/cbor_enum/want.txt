@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+empty 6
+circle 1.5 19
+rect 3x4 13
+label hi 10
+s rect 1x2 2 label x
+rect 5x6
+bad variant: cbor: cannot decode CBOR to enum Shape: Triangle
+--- stderr
