@@ -18,3 +18,14 @@ fields kept in a `proto "unknown"` Bytes field. Not yet: proto2, the `.proto` ge
 ## 2026-11-06 unknown field preservation
 
 - feature: a `derive Proto` struct may mark one `Bytes` field `proto "unknown"`; the reader keeps the raw bytes of every field it does not know (or whose wire type does not match) in it, and the writer appends them after the known fields, as Go's protobuf keeps and rewrites unknown fields.
+## 2026-11-06 perf: derive Proto marshal writes into one buffer
+
+- Kind: perf
+- Commit: this commit
+- Found by: the host 2 twin row (bench/results/std-twin-protobuf-2026-11-06.md): marshal 4.41x Go
+- Test: testdata/corpus/protobuf (unchanged, byte-identical output), bench/perf/protobuf --ab marshal
+
+The generated writers threaded an immutable Bytes through `protobuf.append_*`, each of which copied the whole buffer
+(quadratic over a message). They now write into one BytesBuilder with `protobuf.put_*` (new, builder forms of the
+append functions) and freeze once. `append_*` is unchanged.
+Row after (host 2, n=5, Xo at 5e770dcbb): marshal 18.1 ms against Go 19.22 ms is 1.06x (1.026-1.172), was 4.41x; unmarshal 0.46x of Go.
