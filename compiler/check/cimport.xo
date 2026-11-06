@@ -51,7 +51,12 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
       }
     }
   }
-  let mdir = c.mods[m].dir
+  var mdir = c.mods[m].dir
+  if c.mods[m].std_tree && !c.std_dir.is_empty() && (mdir == "std" || mdir.starts_with("std/")) {
+    // a std module's dir is a label ("std/native"): its header and link
+    // files are under the std directory, not the program's (decision 0534)
+    mdir = join(c.std_dir, mdir.trim_prefix("std").trim_prefix("/"))
+  }
   var root = mdir
   if let Some(r) = c.find_mod_root(mdir) {
     root = c.abs(c.go_bind_root(r.dir))
@@ -143,6 +148,9 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
     c.mods[dep].c_header = header
     c.mods[dep].c_decl = decl_path
     c.mods[dep].c_skipped = c_skipped_names(data)
+    // a std module's binding is part of std's tree: declared with std,
+    // before std's signatures name its handle types (decision 0534)
+    c.mods[dep].std_tree = c.mods[m].std_tree
     c.parse_into(dep, decl_path, data, true)
     c.mods[dep].state = 1
     c.load_imports(dep)
