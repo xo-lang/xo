@@ -3,6 +3,8 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [cc-object-key-random-dir.md](cc-object-key-random-dir.md): Observed 2026-11-05: under xobuild on Linux (cc link) no object was ever reused (0/126, 9.2 s of a 15.9 s warm build) because cc's object keys took the .s path in the build's random w- directory; cc now runs on base names in the part's directory
+- [xobuild-xo-prof-second-build.md](xobuild-xo-prof-second-build.md): Observed 2026-11-05: XO_PROF=cpu with xobuild built every edit twice (a cold second build): commitsBehind parsed `xo version --json` with standard error, where XO_PROF's exit note broke the JSON; it reads standard output only now
 - [xobuild-edit-rebuilds-cold.md](xobuild-edit-rebuilds-cold.md): Observed 2026-11-05: every xobuild after a compiler/ssa edit rebuilt cold (49 to 65 s on the Mac): the previous edit's xo as the builder (a new codegen key), the per-edit stamps in every body's front end key, and a second hop past HopMax; a stable builder and root-only stamps fix it
 - [windows-debug-unwind-needs-pdata.md](windows-debug-unwind-needs-pdata.md): Observed 2026-11-05: on Windows the debugger must unwind by .pdata (no .eh_frame), step into past the prologue, and take drive paths
 - [checker-dirs-relative-to-wd.md](checker-dirs-relative-to-wd.md): Observed 2026-11-04: compiler/check's module dirs are relative to the working directory ("." for the module there), so a prefix test of two dirs needs c.abs on both.
