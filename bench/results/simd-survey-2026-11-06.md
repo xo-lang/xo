@@ -106,3 +106,12 @@ word read before the first byte to change in its short lowercase texts.
 A first html version that tested a word at the top of the byte loop
 measured 2.444 of main's (gotchas/swar-skip-in-byte-loop.md). Raw
 output: ~/xo-lead/notes/lang1/simdfold-host.txt and simdfold2-host.txt.
+
+## Not taken: websocket's mask 32 bytes a step
+
+std/native/websocket.xo mask_to already XORs a word a step; four words
+a step with wrapping index arithmetic measured within noise on
+bench/perf/websocket (host 1, `--rounds 7`, against main's std): big
+(16 KB messages) 1.078 (0.951 to 1.253), small 1.004 (0.996 to 1.033).
+The loopback round trip dominates both. Raw output:
+~/xo-lead/notes/lang1/wsmask-host.txt.
