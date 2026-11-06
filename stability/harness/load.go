@@ -188,19 +188,23 @@ func peakRSS(pid int) float64 {
 
 // mapsSummary sums the process's Linux smaps: its current resident KiB,
 // and the count and resident KiB of the mappings the size of a native
-// fiber stack (64 MiB plus one guard page, pool.xo map_stack), which are
-// the fibers live or cached; "" elsewhere.
+// fiber stack (64 MiB above its guard page, which is a mapping of its own;
+// pool.xo map_stack), which are the fibers live or cached.
 func mapsSummary(pid int) string {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/smaps", pid))
 	if err != nil {
 		return "no smaps\n"
 	}
-	var size, rss, all, stacks, stackRSS int64
+	var size, rss, all, stacks, stackRSS, near, nearRSS int64
 	flush := func() {
 		all += rss
-		if size > 65536 && size <= 65536+64 {
+		if size == 65536 {
 			stacks++
 			stackRSS += rss
+		} else if size > 65536 && size <= 65536+64 {
+			// a stack and its guard as one mapping
+			near++
+			nearRSS += rss
 		}
 		size, rss = 0, 0
 	}
@@ -218,7 +222,7 @@ func mapsSummary(pid int) string {
 		}
 	}
 	flush()
-	return fmt.Sprintf("rss_kib %d stack_maps %d stack_rss_kib %d\n", all, stacks, stackRSS)
+	return fmt.Sprintf("rss_kib %d stack_maps %d stack_rss_kib %d near_maps %d near_rss_kib %d\n", all, stacks, stackRSS, near, nearRSS)
 }
 
 // saveStats writes the app's stats text to path.
