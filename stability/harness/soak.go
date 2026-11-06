@@ -40,6 +40,7 @@ type sample struct {
 	rss, fds          float64
 	socks             float64
 	csocks            float64
+	huge              float64
 	heapLive, timers  float64
 	cpuPerReqUS       float64
 }
@@ -78,6 +79,24 @@ func procStats(pid int) (rss, fds float64, cpuUS float64, err error) {
 		fds = float64(bytes.Count(lo, []byte("\n")) - 1)
 	}
 	return rss, fds, secs * 1e6, nil
+}
+
+// anonHuge reads the KiB of the process's anonymous memory in
+// transparent huge pages (Linux smaps_rollup's AnonHugePages; elsewhere
+// -1): RSS counts a huge page whole once one byte of it is touched, so
+// RSS growth that is all huge pages may be the policy, not the program.
+func anonHuge(pid int) float64 {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/smaps_rollup", pid))
+	if err != nil {
+		return -1
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if f := strings.Fields(l); len(f) >= 2 && f[0] == "AnonHugePages:" {
+			v, _ := strconv.ParseFloat(f[1], 64)
+			return v
+		}
+	}
+	return -1
 }
 
 // fdList reads where each of the server's open fds points (Linux:
@@ -232,7 +251,7 @@ func soakMain(args []string) int {
 	stopLoad := d.open(*rate)
 
 	f, _ := os.Create(filepath.Join(*out, "samples.csv"))
-	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks,client_socks")
+	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks,client_socks,anon_huge_kib")
 	statsURL := ""
 	if app.Stats != "" {
 		statsURL = base + app.Stats
@@ -249,6 +268,7 @@ func soakMain(args []string) int {
 		fl, socks := fdList(pid)
 		// the harness's own sockets: the load client's connections to the app
 		_, csocks := fdList(os.Getpid())
+		huge := anonHuge(pid)
 		if len(samples) == 0 {
 			os.WriteFile(filepath.Join(*out, "fds-first.txt"), []byte(strings.Join(fl, "\n")+"\n"), 0o644)
 		}
@@ -259,13 +279,13 @@ func soakMain(args []string) int {
 		}
 		n := atomic.LoadInt64(&d.reqs)
 		s := sample{t: time.Since(start).Seconds(), reqs: n, errs: atomic.LoadInt64(&d.errs), drops: atomic.LoadInt64(&d.drops),
-			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, socks: socks, csocks: csocks, heapLive: hl, timers: tm}
+			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, socks: socks, csocks: csocks, huge: huge, heapLive: hl, timers: tm}
 		if n > lastReqs {
 			s.cpuPerReqUS = (cpu - cpu0) / float64(n-lastReqs)
 		}
 		cpu0, lastReqs = cpu, n
 		samples = append(samples, s)
-		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f,%.0f,%.0f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS, s.socks, s.csocks)
+		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f,%.0f,%.0f,%.0f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS, s.socks, s.csocks, s.huge)
 		f.Sync()
 	}
 	stopLoad()
@@ -309,6 +329,13 @@ func soakMain(args []string) int {
 			bad = true
 			rep.WriteString("ALERT: RSS grows\n")
 		}
+		if body[0].huge >= 0 {
+			ns := make([]float64, len(body))
+			for i, s := range body {
+				ns[i] = s.rss - s.huge
+			}
+			fmt.Fprintf(&rep, "rss outside huge pages: %.0f KiB at warmup end, slope %.0f KiB/hour; AnonHugePages %.0f to %.0f KiB\n", ns[0], slope(xs, ns), body[0].huge, body[len(body)-1].huge)
+		}
 		if hs[0] >= 0 {
 			hSlope := slope(xs, hs)
 			hFrac := hSlope / math.Max(hs[0], 1)
@@ -332,9 +359,15 @@ func soakMain(args []string) int {
 		} else {
 			rep.WriteString("timers_pending: not reported by the app\n")
 		}
+		// judged on the second half: a client's connection pool fills to its
+		// high-water mark early and then stays (2026-11-06 soak: 19 to 36
+		// sockets in the first half hour, flat after), where a leak keeps
+		// climbing
 		fdSlope := slope(xs, fds)
-		fmt.Fprintf(&rep, "fds: %.0f at warmup end, slope %.2f/hour\n", fds[0], fdSlope)
-		if fdSlope > 1 {
+		hf := len(xs) / 2
+		fdLate := slope(xs[hf:], fds[hf:])
+		fmt.Fprintf(&rep, "fds: %.0f at warmup end, slope %.2f/hour, %.2f/hour over the second half\n", fds[0], fdSlope, fdLate)
+		if fdLate > 1 {
 			bad = true
 			rep.WriteString("ALERT: open fds grow\n")
 		}
