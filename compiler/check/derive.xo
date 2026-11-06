@@ -1585,56 +1585,56 @@ fn proto_elem(tx: Str, po: ProtoOpts, enums: Map[Str, Str]) -> ProtoElem? {
     // an Int valued enum: its value is the number on the wire; a closed enum maps an unknown number to its first variant
     let zero = if first == "open" { "${tx}.from(0)" } else { "(${tx}.from(0) ?? ${tx}.${first})" }
     let conv = if first == "open" { "${tx}.from($X.to_bits())" } else { "(${tx}.from($X.to_bits()) ?? ${zero})" }
-    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits($V.value()))", rd: "protobuf.read_varint", conv: conv, nonzero: "$V.value() != 0", zero: zero, packable: true, merge: ""})
+    return Some(ProtoElem{wire: 0, enc: "protobuf.put_varint($B, UInt64.from_bits($V.value()))", rd: "protobuf.read_varint", conv: conv, nonzero: "$V.value() != 0", zero: zero, packable: true, merge: ""})
   }
   if tx == "Int" {
     if po.zigzag {
-      return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, protobuf.encode_zigzag($V))", rd: "protobuf.read_varint", conv: "protobuf.decode_zigzag($X)", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
+      return Some(ProtoElem{wire: 0, enc: "protobuf.put_varint($B, protobuf.encode_zigzag($V))", rd: "protobuf.read_varint", conv: "protobuf.decode_zigzag($X)", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
     }
     if po.fixed {
-      return Some(ProtoElem{wire: 1, enc: "protobuf.append_fixed64($B, UInt64.from_bits($V))", rd: "protobuf.read_fixed64", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
+      return Some(ProtoElem{wire: 1, enc: "protobuf.put_fixed64($B, UInt64.from_bits($V))", rd: "protobuf.read_fixed64", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
     }
-    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits($V))", rd: "protobuf.read_varint", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
+    return Some(ProtoElem{wire: 0, enc: "protobuf.put_varint($B, UInt64.from_bits($V))", rd: "protobuf.read_varint", conv: "$X.to_bits()", nonzero: "$V != 0", zero: "0", packable: true, merge: ""})
   }
   if tx == "Int32" {
     if po.zigzag {
-      return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, protobuf.encode_zigzag(Int($V)))", rd: "protobuf.read_varint", conv: "Int32.wrapping_from(protobuf.decode_zigzag(UInt64.from_bits($X.to_bits() & 4294967295)))", nonzero: "$V != Int32.wrapping_from(0)", zero: "Int32.wrapping_from(0)", packable: true, merge: ""})
+      return Some(ProtoElem{wire: 0, enc: "protobuf.put_varint($B, protobuf.encode_zigzag(Int($V)))", rd: "protobuf.read_varint", conv: "Int32.wrapping_from(protobuf.decode_zigzag(UInt64.from_bits($X.to_bits() & 4294967295)))", nonzero: "$V != Int32.wrapping_from(0)", zero: "Int32.wrapping_from(0)", packable: true, merge: ""})
     }
     if po.fixed {
-      return Some(ProtoElem{wire: 5, enc: "protobuf.append_fixed32($B, UInt32.wrapping_from(Int($V)))", rd: "protobuf.read_fixed32", conv: "Int32.wrapping_from(Int($X))", nonzero: "$V != Int32.wrapping_from(0)", zero: "Int32.wrapping_from(0)", packable: true, merge: ""})
+      return Some(ProtoElem{wire: 5, enc: "protobuf.put_fixed32($B, UInt32.wrapping_from(Int($V)))", rd: "protobuf.read_fixed32", conv: "Int32.wrapping_from(Int($X))", nonzero: "$V != Int32.wrapping_from(0)", zero: "Int32.wrapping_from(0)", packable: true, merge: ""})
     }
-    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits(Int($V)))", rd: "protobuf.read_varint", conv: "Int32.wrapping_from($X.to_bits())", nonzero: "$V != Int32.wrapping_from(0)", zero: "Int32.wrapping_from(0)", packable: true, merge: ""})
+    return Some(ProtoElem{wire: 0, enc: "protobuf.put_varint($B, UInt64.from_bits(Int($V)))", rd: "protobuf.read_varint", conv: "Int32.wrapping_from($X.to_bits())", nonzero: "$V != Int32.wrapping_from(0)", zero: "Int32.wrapping_from(0)", packable: true, merge: ""})
   }
   if tx == "UInt32" {
     if po.fixed {
-      return Some(ProtoElem{wire: 5, enc: "protobuf.append_fixed32($B, $V)", rd: "protobuf.read_fixed32", conv: "$X", nonzero: "$V != UInt32.wrapping_from(0)", zero: "UInt32.wrapping_from(0)", packable: true, merge: ""})
+      return Some(ProtoElem{wire: 5, enc: "protobuf.put_fixed32($B, $V)", rd: "protobuf.read_fixed32", conv: "$X", nonzero: "$V != UInt32.wrapping_from(0)", zero: "UInt32.wrapping_from(0)", packable: true, merge: ""})
     }
-    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits(Int($V)))", rd: "protobuf.read_varint", conv: "UInt32.wrapping_from($X.to_bits())", nonzero: "$V != UInt32.wrapping_from(0)", zero: "UInt32.wrapping_from(0)", packable: true, merge: ""})
+    return Some(ProtoElem{wire: 0, enc: "protobuf.put_varint($B, UInt64.from_bits(Int($V)))", rd: "protobuf.read_varint", conv: "UInt32.wrapping_from($X.to_bits())", nonzero: "$V != UInt32.wrapping_from(0)", zero: "UInt32.wrapping_from(0)", packable: true, merge: ""})
   }
   if tx == "UInt64" {
     if po.fixed {
-      return Some(ProtoElem{wire: 1, enc: "protobuf.append_fixed64($B, $V)", rd: "protobuf.read_fixed64", conv: "$X", nonzero: "$V.to_bits() != 0", zero: "UInt64.from_bits(0)", packable: true, merge: ""})
+      return Some(ProtoElem{wire: 1, enc: "protobuf.put_fixed64($B, $V)", rd: "protobuf.read_fixed64", conv: "$X", nonzero: "$V.to_bits() != 0", zero: "UInt64.from_bits(0)", packable: true, merge: ""})
     }
-    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, $V)", rd: "protobuf.read_varint", conv: "$X", nonzero: "$V.to_bits() != 0", zero: "UInt64.from_bits(0)", packable: true, merge: ""})
+    return Some(ProtoElem{wire: 0, enc: "protobuf.put_varint($B, $V)", rd: "protobuf.read_varint", conv: "$X", nonzero: "$V.to_bits() != 0", zero: "UInt64.from_bits(0)", packable: true, merge: ""})
   }
   if tx == "Float32" {
-    return Some(ProtoElem{wire: 5, enc: "protobuf.append_fixed32($B, $V.to_bits())", rd: "protobuf.read_fixed32", conv: "Float32.from_bits($X)", nonzero: "$V.to_bits() != UInt32.wrapping_from(0)", zero: "Float32.from_bits(UInt32.wrapping_from(0))", packable: true, merge: ""})
+    return Some(ProtoElem{wire: 5, enc: "protobuf.put_fixed32($B, $V.to_bits())", rd: "protobuf.read_fixed32", conv: "Float32.from_bits($X)", nonzero: "$V.to_bits() != UInt32.wrapping_from(0)", zero: "Float32.from_bits(UInt32.wrapping_from(0))", packable: true, merge: ""})
   }
   if tx == "Bool" {
-    return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, UInt64.from_bits(if $V { 1 } else { 0 }))", rd: "protobuf.read_varint", conv: "$X.to_bits() != 0", nonzero: "$V", zero: "false", packable: true, merge: ""})
+    return Some(ProtoElem{wire: 0, enc: "protobuf.put_varint($B, UInt64.from_bits(if $V { 1 } else { 0 }))", rd: "protobuf.read_varint", conv: "$X.to_bits() != 0", nonzero: "$V", zero: "false", packable: true, merge: ""})
   }
   if tx == "Float" {
-    return Some(ProtoElem{wire: 1, enc: "protobuf.append_fixed64($B, UInt64.from_bits($V.to_bits()))", rd: "protobuf.read_fixed64", conv: "Float.from_bits($X.to_bits())", nonzero: "$V.to_bits() != 0", zero: "0.0", packable: true, merge: ""})
+    return Some(ProtoElem{wire: 1, enc: "protobuf.put_fixed64($B, UInt64.from_bits($V.to_bits()))", rd: "protobuf.read_fixed64", conv: "Float.from_bits($X.to_bits())", nonzero: "$V.to_bits() != 0", zero: "0.0", packable: true, merge: ""})
   }
   if tx == "Str" {
-    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, $V.bytes())", rd: "protobuf.read_bytes", conv: "($X.to_str() ?? return Err(protobuf.ProtoErr.Utf8))", nonzero: "!$V.is_empty()", zero: "\"\"", packable: false, merge: ""})
+    return Some(ProtoElem{wire: 2, enc: "protobuf.put_bytes($B, $V.bytes())", rd: "protobuf.read_bytes", conv: "($X.to_str() ?? return Err(protobuf.ProtoErr.Utf8))", nonzero: "!$V.is_empty()", zero: "\"\"", packable: false, merge: ""})
   }
   if tx == "Bytes" {
-    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, $V)", rd: "protobuf.read_bytes", conv: "$X", nonzero: "$V.len() > 0", zero: "b\"\"", packable: false, merge: ""})
+    return Some(ProtoElem{wire: 2, enc: "protobuf.put_bytes($B, $V)", rd: "protobuf.read_bytes", conv: "$X", nonzero: "$V.len() > 0", zero: "b\"\"", packable: false, merge: ""})
   }
   if !tx.is_empty() && !tx.contains("[") && tx.bytes()[0] >= 65 && tx.bytes()[0] <= 90 {
     // a struct deriving Proto (its generated functions must exist; a plain field is always written)
-    return Some(ProtoElem{wire: 2, enc: "protobuf.append_bytes($B, proto_marshal__${tx}($V))", rd: "protobuf.read_bytes", conv: "proto_unmarshal__${tx}($X)?", nonzero: "true", zero: "proto_zero__${tx}()", packable: false, merge: "proto_merge__${tx}($R, $X)?"})
+    return Some(ProtoElem{wire: 2, enc: "protobuf.put_bytes($B, proto_marshal__${tx}($V))", rd: "protobuf.read_bytes", conv: "proto_unmarshal__${tx}($X)?", nonzero: "true", zero: "proto_zero__${tx}()", packable: false, merge: "proto_merge__${tx}($R, $X)?"})
   }
   None
 }
@@ -1742,7 +1742,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
         if first_zero.is_empty() {
           first_zero = "${tx}.${vn}(${ve.zero})"
         }
-        arms.push("      ${vn}(x) => { b = ${proto_sub(ve.enc, "protobuf.append_tag(b, ${num}, ${ve.wire})", "x", "")} }")
+        arms.push("      ${vn}(x) => { b = ${proto_sub(ve.enc, "protobuf.put_tag(b, ${num}, ${ve.wire})", "x", "")} }")
         var val = proto_sub(ve.conv, "", "", "x")
         if !ve.merge.is_empty() {
           // the same message variant read before merges, as Go does
@@ -1788,10 +1788,10 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
             zeros.push("${f}: {}")
             wr.push("  for k in v.${f}.keys().sort() {")
             wr.push("    let val = v.${f}.get(k) ?? ${ve.zero}")
-            wr.push("    var eb = b\"\"")
-            wr.push("    eb = ${proto_sub(ke.enc, "protobuf.append_tag(eb, 1, ${ke.wire})", "k", "")}")
-            wr.push("    eb = ${proto_sub(ve.enc, "protobuf.append_tag(eb, 2, ${ve.wire})", "val", "")}")
-            wr.push("    b = protobuf.append_bytes(protobuf.append_tag(b, ${k}, 2), eb)")
+            wr.push("    var eb = BytesBuilder.new()")
+            wr.push("    eb = ${proto_sub(ke.enc, "protobuf.put_tag(eb, 1, ${ke.wire})", "k", "")}")
+            wr.push("    eb = ${proto_sub(ve.enc, "protobuf.put_tag(eb, 2, ${ve.wire})", "val", "")}")
+            wr.push("    b = protobuf.put_bytes(protobuf.put_tag(b, ${k}, 2), eb.freeze())")
             wr.push("  }")
             rd.push((" num == ${k} && wire == 2", ["let (x, n2) = protobuf.read_bytes(data, at)?", "at = n2", "var ek = ${ke.zero}", "var ev = ${ve.zero}", "var q = 0", "while q < x.len() {", "  let (en, ew, q1) = protobuf.read_tag(x, q)?", "  q = q1", "  if en == 1 && ew == ${ke.wire} {", "    let (y, q2) = ${ke.rd}(x, q)?", "    q = q2", "    ek = ${proto_sub(ke.conv, "", "", "y")}", "  } else if en == 2 && ew == ${ve.wire} {", "    let (y, q2) = ${ve.rd}(x, q)?", "    q = q2", "    ev = ${if ve.merge.is_empty() { proto_sub(ve.conv, "", "", "y") } else { proto_sub(ve.merge, "", "", "y").replace("$R", "ev") }}", "  } else {", "    q = protobuf.skip_field(x, q, en, ew)?", "  }", "}", "r.${f}[ek] = ev"]))
             continue
@@ -1805,7 +1805,7 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       continue
     }
     let w = el.wire
-    let tag = "protobuf.append_tag(b, ${k}, ${w})"
+    let tag = "protobuf.put_tag(b, ${k}, ${w})"
         if kind == 0 {
       zeros.push("${f}: ${el.zero}")
       wr.push("  if ${proto_sub(el.nonzero, "", "v.${f}", "")} { b = ${proto_sub(el.enc, tag, "v.${f}", "")} }")
@@ -1826,9 +1826,9 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
       zeros.push("${f}: []")
       if el.packable {
         wr.push("  if v.${f}.len() > 0 {")
-        wr.push("    var pb = b\"\"")
+        wr.push("    var pb = BytesBuilder.new()")
         wr.push("    for x in v.${f} { pb = ${proto_sub(el.enc, "pb", "x", "")} }")
-        wr.push("    b = protobuf.append_bytes(protobuf.append_tag(b, ${k}, 2), pb)")
+        wr.push("    b = protobuf.put_bytes(protobuf.put_tag(b, ${k}, 2), pb.freeze())")
         wr.push("  }")
         rd.push((" num == ${k} && wire == 2", ["let (x, n2) = protobuf.read_bytes(data, at)?", "at = n2", "var q = 0", "while q < x.len() {", "  let (y, q2) = ${el.rd}(x, q)?", "  q = q2", "  r.${f}.push(${proto_sub(el.conv, "", "", "y")})", "}"]))
       } else {
@@ -1842,24 +1842,21 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   }
   if unknown_f != "" {
     zeros.push("${unknown_f}: b\"\"")
-    wr_one.push("  var ub = BytesBuilder.new()")
-    wr_one.push("  ub.write(b)")
-    wr_one.push("  ub.write(v.${unknown_f})")
-    wr_one.push("  b = ub.freeze()")
+    wr_one.push("  b.write(v.${unknown_f})")
   }
   for l in helpers {
     e.ln(l, sp)
   }
   e.ln("${pub_}fn proto_zero__${n}() -> ${n} { ${n}{${zeros.join(", ")}} }", sp)
   e.ln("${pub_}fn proto_marshal__${n}(v: ${n}) -> Bytes {", sp)
-  e.ln("  var b = b\"\"", sp)
+  e.ln("  var b = BytesBuilder.new()", sp)
   for l in wr {
     e.ln(l, sp)
   }
   for l in wr_one {
     e.ln(l, sp)
   }
-  e.ln("  b", sp)
+  e.ln("  b.freeze()", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn proto_unmarshal__${n}(data: Bytes) -> ${n} ! protobuf.ProtoErr { proto_merge__${n}(proto_zero__${n}(), data) }", sp)
   e.ln("${pub_}fn proto_merge__${n}(r0: ${n}, data: Bytes) -> ${n} ! protobuf.ProtoErr {", sp)

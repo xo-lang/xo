@@ -37,6 +37,12 @@ fn append_fixed32(b: Bytes, v: UInt32) -> Bytes
 fn append_fixed64(b: Bytes, v: UInt64) -> Bytes
 /// A length prefix then the bytes (AppendBytes).
 fn append_bytes(b: Bytes, data: Bytes) -> Bytes
+/// Builder forms of the append functions (the generated writers of `derive Proto` use them: one buffer, no copy per field).
+fn put_varint(out: BytesBuilder, v: UInt64) -> BytesBuilder
+fn put_tag(out: BytesBuilder, num: Int, wire: Int) -> BytesBuilder
+fn put_fixed32(out: BytesBuilder, v: UInt32) -> BytesBuilder
+fn put_fixed64(out: BytesBuilder, v: UInt64) -> BytesBuilder
+fn put_bytes(out: BytesBuilder, data: Bytes) -> BytesBuilder
 /// The number of bytes `append_varint` writes for `v` (SizeVarint).
 fn size_varint(v: UInt64) -> Int
 /// The zigzag form of a signed value (EncodeZigZag) and its inverse (DecodeZigZag).
