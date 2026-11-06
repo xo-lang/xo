@@ -8,6 +8,9 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+
+## v0.41.0 (2026-11-06)
+- perf (build memory): the SSA builder lets go of each lazily parsed function body's tree once it built the body (Checker.unparse_body), and the checker no longer keeps the trees of bodies it checks after the flow pass: a cold build of s3 and dynamodb peaks at 932 MB instead of 1,108 (--ab 0.842, wall 0.989, linux/arm64); output identical (scripts/identity, 75 programs); xo's self build within noise. `XO_FE_STATS=1` prints `fe unparsed N`.
 - xo check: a `${...}` of a one line string that opens a block and closes on a later line (a closure spanning lines) is one XO0156 at the `${`, saying the interpolation spans lines and to bind the value with `let` first; the lexer then goes on after the closing `}`, where it gave five errors ending at the closing brace (aws-19's report).
 - xo check: an enum variant field written as a bare type (`Create(Str)`, the positional form of Rust and Swift) says the field needs a name, `(value: Str)`, with a fix that adds `value: `, and that a one field variant is still constructed positionally (core 2.3); it read "field name `Str` must be snake_case" (aws-19's report).
 - xo check: a type mismatch (XO0401) whose two types print the same, such as a module's own `struct Conn` against the prelude's `Conn`, names each program module's type with its module path (expected `example.com/amqp.Conn`, found `Conn`) and adds a note at the declaration, saying when it hides the prelude's type of that name; it read "expected `Conn`, found `Conn`".
@@ -52,7 +55,6 @@ the text of every entry is unchanged).
 
 ## v0.40.0 (2026-11-05)
 
-- perf (build memory): the SSA builder lets go of each lazily parsed function body's tree once it built the body (Checker.unparse_body), and the checker no longer keeps the trees of bodies it checks after the flow pass: a cold build of s3 and dynamodb peaks at 932 MB instead of 1,108 (--ab 0.842, wall 0.989, linux/arm64); output identical (scripts/identity, 75 programs); xo's self build within noise. `XO_FE_STATS=1` prints `fe unparsed N`.
 - perf (native, macOS): decision 0518: a worker that finds a tiny task while it is the only one awake still wakes one more, so scopes of tiny tasks (bench/perf/conc spawn) run at 0.39.0's speed again on darwin/arm64 (0.881 of main, CPU 0.56), keeping decision 0514's spawn100k gain on both Macs.
 - fix (build): a program that calls another module's non-`pub` Display, Debug or Error method (decision 0496 (c)) no longer checks those modules again on every warm build: the module check cache fell back each time, since the methods' effects are inferred from their bodies and read across modules. Their module's cache entry now checks them eagerly. Found by TestModuleCheckAuto (iface_method_cross_module).
 - std/yaml: `Time` and `time.Civil` fields (a timestamp as its instant, or with its offset); equal to yaml.v3 on 32 documents.
