@@ -58,6 +58,21 @@ decision 0077's addendum. Each request at a moderate rate then pays a futex wake
 threads spin briefly before parking. The first experiment is the same load with
 XO_SPIN_ROUNDS=16; it is recorded below when done.
 
+The XO_SPIN_ROUNDS=16 experiment ruled spinning out (same command with `-env XO_SPIN_ROUNDS=16`, 3 rounds).
+At 4000/s Xo's p50 was 229 us (129 to 233), against Go's 166 (161 to 193): the same as
+without spinning (234). Its CPU per request fell to 47.8 us (0.48 of Go), and every
+latency range overlapped. That run was noisier: Go's own p50 at 1000/s was 92 us,
+against 172 in the run above, and Xo's p99 at 1000/s ranged from 249 to 2,582 us. So
+whether a thread wakes from idle is not what makes the 4000/s median slow.
+
+The two apps do not do the same work. The Go twin keeps notes in a map behind a
+sync.Mutex. The Xo app goes through std/sql's in-memory driver, which parses each
+statement and holds the database's lock while it runs. Xo's p50 rising with the rate
+(148 us at 1000/s, 234 at 4000/s) while Go's stays flat (172, 159) fits a serialized
+section that is held longer. The next experiment is an XO_PROF=cpu profile of the Xo
+build at 4000/s, plus a run of a Go twin on the same std/sql-shaped store, to tell the
+app's storage apart from the runtime.
+
 ## Notes
 
 - An earlier run at 63a9235fc offered 4000/s but sent about 1,200/s: the harness's open loop
