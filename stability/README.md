@@ -20,7 +20,10 @@ fuzzing. Phase 1 builds the starter app and the harness.
   open loop mix (per app, in soak.go) against a build under XO_LEAKCHECK=1 and
   XO_CRASH_FILE=OUT/crash.txt (a report there is an alert),
   samples RSS, fds, latency and the app's `heap_live` and `timers_pending` (app.json `stats`,
-  std/debug's /sched) into OUT/samples.csv, and writes OUT/drift.txt; exit 1
+  std/debug's /sched) into OUT/samples.csv (on Linux also the open sockets,
+  with each fd's link target in OUT/fds-first.txt and OUT/fds-last.txt, so a
+  climbing fds column shows whether sockets or files are left open), and
+  writes OUT/drift.txt; exit 1
   on drift, blocks left at exit, or a stop that takes over 20 s (its threads'
   stacks are then saved beside the run's log). `harness load -xo XO -app
   stability/APP -out OUT [-rates 1000,4000] [-sat 64] [-d 30s] [-rounds 3]

@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,7 @@ type sample struct {
 	reqs, errs, drops int64
 	p50, p99, p999    float64
 	rss, fds          float64
+	socks             float64
 	heapLive, timers  float64
 	cpuPerReqUS       float64
 }
@@ -75,6 +77,32 @@ func procStats(pid int) (rss, fds float64, cpuUS float64, err error) {
 		fds = float64(bytes.Count(lo, []byte("\n")) - 1)
 	}
 	return rss, fds, secs * 1e6, nil
+}
+
+// fdList reads where each of the server's open fds points (Linux:
+// /proc/PID/fd's links, "socket:[N]" for a socket), sorted, and how many
+// are sockets; elsewhere nil and -1. It tells a socket kept open from a
+// file left open when the fds column climbs.
+func fdList(pid int) ([]string, float64) {
+	if runtime.GOOS != "linux" {
+		return nil, -1
+	}
+	dir := fmt.Sprintf("/proc/%d/fd", pid)
+	ents, _ := os.ReadDir(dir)
+	var out []string
+	socks := 0.0
+	for _, e := range ents {
+		l, err := os.Readlink(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(l, "socket:") {
+			socks++
+		}
+		out = append(out, e.Name()+" "+l)
+	}
+	sort.Strings(out)
+	return out, socks
 }
 
 func pct(v []float64, p float64) float64 {
@@ -196,7 +224,7 @@ func soakMain(args []string) int {
 	stopLoad := d.open(*rate)
 
 	f, _ := os.Create(filepath.Join(*out, "samples.csv"))
-	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req")
+	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks")
 	statsURL := ""
 	if app.Stats != "" {
 		statsURL = base + app.Stats
@@ -210,19 +238,24 @@ func soakMain(args []string) int {
 		<-tk.C
 		l := d.takeLat()
 		rss, fds, cpu, _ := procStats(pid)
+		fl, socks := fdList(pid)
+		if len(samples) == 0 {
+			os.WriteFile(filepath.Join(*out, "fds-first.txt"), []byte(strings.Join(fl, "\n")+"\n"), 0o644)
+		}
+		os.WriteFile(filepath.Join(*out, "fds-last.txt"), []byte(strings.Join(fl, "\n")+"\n"), 0o644)
 		hl, tm := -1.0, -1.0
 		if statsURL != "" {
 			hl, tm = schedStats(cl, statsURL, app.Tokens[app.StatsToken])
 		}
 		n := atomic.LoadInt64(&d.reqs)
 		s := sample{t: time.Since(start).Seconds(), reqs: n, errs: atomic.LoadInt64(&d.errs), drops: atomic.LoadInt64(&d.drops),
-			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, heapLive: hl, timers: tm}
+			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, socks: socks, heapLive: hl, timers: tm}
 		if n > lastReqs {
 			s.cpuPerReqUS = (cpu - cpu0) / float64(n-lastReqs)
 		}
 		cpu0, lastReqs = cpu, n
 		samples = append(samples, s)
-		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS)
+		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f,%.0f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS, s.socks)
 		f.Sync()
 	}
 	stopLoad()
@@ -294,6 +327,14 @@ func soakMain(args []string) int {
 		if fdSlope > 1 {
 			bad = true
 			rep.WriteString("ALERT: open fds grow\n")
+		}
+		if body[0].socks >= 0 {
+			ss := make([]float64, len(body))
+			for i, s := range body {
+				ss[i] = s.socks
+			}
+			// which kind grows: fds-first.txt and fds-last.txt list them
+			fmt.Fprintf(&rep, "sockets: %.0f at warmup end, slope %.2f/hour; files: %.0f, slope %.2f/hour\n", ss[0], slope(xs, ss), fds[0]-ss[0], fdSlope-slope(xs, ss))
 		}
 		q := len(body) / 4
 		avg := func(ss []sample) float64 {
