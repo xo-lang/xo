@@ -7856,6 +7856,8 @@ fn encode_message(s: Str) -> Str
 fn decode_message(s: Str) -> Str
 fn encode_message_bytes(b: Bytes) -> Str
 fn decode_message_bytes(s: Str) -> Bytes
+fn bin_encode(data: Bytes) -> Str            // a `-bin` metadata value: unpadded standard base64
+fn bin_decode(value: Str) -> Bytes?          // padded or not; None when it is not base64
 // the server
 struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration? }
 fn server(clock: Clock) -> Server

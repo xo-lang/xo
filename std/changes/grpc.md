@@ -1,5 +1,16 @@
 # std/grpc changes
 
+## 2026-11-06: feature: grpc.bin_encode and grpc.bin_decode for `-bin` metadata
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0535's list of what the first version leaves out
+- Go reference: PROTOCOL-HTTP2.md (Custom-Metadata: a name ending in `-bin` carries base64, written unpadded, read padded or not); grpc-go internal/metadata
+- Test: std/native/grpc_test.xo "binary metadata is unpadded base64 and reads padded or not" (RFC 4648 vectors, 40 length round trips)
+- Shipped in: not yet released
+
+A metadata value of a name ending in `-bin` is bytes: `bin_encode(data)` makes the header text, `bin_decode(text)` reads one from a peer.
+
 ## 2026-11-06: feature: std/grpc, gRPC over std/http's HTTP/2 (decision 0535)
 
 - Kind: feature
