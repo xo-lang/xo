@@ -16,18 +16,19 @@ fn elems() -> List[(Str, Str)] {
 fn to_core(go_layout: Str) -> Str ! timego.LayoutErr {
   var out = StrBuilder.new()
   let es = elems()
+  let gb = go_layout.bytes()
   var i = 0
   while i < go_layout.len() {
     let rest = go_layout[i..]
     var hit = false
     // fractional seconds: .000 and .999 runs after a second
     if rest.starts_with(".0") || rest.starts_with(".9") {
-      let d = go_layout[i + 1..i + 2]
+      let d = gb[i + 1]
       var n = 1
-      while i + 2 + n <= go_layout.len() && go_layout[i + 1 + n..i + 2 + n] == d {
+      while i + 1 + n < gb.len() && gb[i + 1 + n] == d {
         n += 1
       }
-      if d == "0" {
+      if d == UInt8(48) {
         out.write("{frac:${n}}")
         i += 1 + n
         hit = true
