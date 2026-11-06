@@ -3,8 +3,8 @@
 use std/grpc
 use std/http
 
-fn handlers() -> grpc.Server {
-  var srv = grpc.server()
+fn handlers(clock: Clock) -> grpc.Server {
+  var srv = grpc.server(clock)
   srv.unary("/t.S/Echo", fn(call, req) -> Bytes ! grpc.Status {
     if call.metadata.get("x-fail") == Some("1") {
       return Err(grpc.Status{code: grpc.Code.NotFound, message: "no such user \u{e9}%", details: b""})
@@ -111,7 +111,7 @@ fn main(os: Os) {
   if args[0] == "serve" {
     match os.net.listen("127.0.0.1:0") {
       Ok(l) => {
-        let hs = http.server(l, handlers().router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+        let hs = http.server(l, handlers(os.clock).router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
         os.stdio.println(hs.addr())
         hs.serve().ignore_err("the test kills the process")
       }

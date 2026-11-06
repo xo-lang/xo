@@ -4,13 +4,23 @@
 use std/grpc
 use std/http
 
-fn handlers() -> grpc.Server {
-  var srv = grpc.server()
+fn handlers(clock: Clock, canceled: Chan[Int]) -> grpc.Server {
+  var srv = grpc.server(clock)
   srv.unary("/t.S/Echo", fn(call, req) -> Bytes ! grpc.Status {
     if call.metadata.get("x-fail") == Some("1") {
       return Err(grpc.Status{code: grpc.Code.NotFound, message: "no such user \u{e9}%", details: b""})
     }
     Ok(req + (call.metadata.get("x-who") ?? "").bytes())
+  })
+  srv.unary("/t.S/Slow", fn(_call, _req) -> Bytes ! grpc.Status {
+    // the deadline cancels this task: it unwinds at its next sleep and the defer runs
+    defer {
+      canceled.send(1)
+    }
+    while true {
+      clock.sleep(10ms)
+    }
+    Err(grpc.Status{code: grpc.Code.Aborted, message: "unreachable", details: b""})
   })
   srv.stream("/t.S/Count", fn(_call, recv, send) -> () ! grpc.Status {
     let m = recv.next()? ?? b"0"
@@ -50,10 +60,13 @@ fn show(r: Result[Bytes, grpc.Status]) -> Str {
   }
 }
 
-fn calls(os: Os, c: grpc.Client) {
+fn calls(os: Os, c: grpc.Client, canceled: Chan[Int]) {
   os.stdio.println("echo: ${show(c.unary("/t.S/Echo", "hi ".bytes(), {"x-who": "bob"}))}")
   os.stdio.println("fail: ${show(c.unary("/t.S/Echo", b"x", {"x-fail": "1"}))}")
   os.stdio.println("missing: ${show(c.unary("/t.S/Missing", b"x"))}")
+  os.stdio.println("slow: ${show(c.unary("/t.S/Slow", b"x", {}, Some(300ms)))}")
+  let _ = canceled.recv()
+  os.stdio.println("the server cancelled the handler")
   let counted = c.call("/t.S/Count", {}, None, fn(cc) -> List[Str] ! grpc.Status {
     cc.send(b"3")?
     cc.close_send()
@@ -104,9 +117,10 @@ fn calls(os: Os, c: grpc.Client) {
 }
 
 fn main(os: Os) {
+  let canceled = Chan[Int].new(1)
   match os.net.listen("127.0.0.1:0") {
     Ok(l) => {
-      let hs = http.server(l, handlers().router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+      let hs = http.server(l, handlers(os.clock, canceled).router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
       scope s {
         s.spawn_background(fn() {
           match hs.serve() {
@@ -114,7 +128,7 @@ fn main(os: Os) {
             Err(e) => os.stdio.println("serve failed: ${e}")
           }
         })
-        calls(os, grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}"))
+        calls(os, grpc.client(http.client(os.net, timeout: 30s), "http://${hs.addr()}"), canceled)
       }
       os.stdio.println("done")
     }

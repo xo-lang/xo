@@ -1,6 +1,7 @@
 // std/grpc: the pure layer (decision 0535), after grpc-go's rpc_util.go (frame, timeout) and status (message encoding).
 use std/grpc
 use std/http
+use std/task
 
 fn code_number(c: grpc.Code) -> Int {
   match c {
@@ -259,12 +260,12 @@ fn recv_next(r: grpc.Recv) -> Bytes? ! grpc.Status {
   out
 }
 
-fn server() -> grpc.Server {
-  grpc.Server{routes: http.router(), max_recv: 4194304, methods: []}
+fn server(clock: Clock) -> grpc.Server {
+  grpc.Server{routes: http.router(), max_recv: 4194304, methods: [], clock: clock}
 }
 
 fn server_with_max_recv(s: grpc.Server, n: Int) -> grpc.Server {
-  grpc.Server{routes: s.routes, max_recv: n, methods: s.methods}
+  grpc.Server{routes: s.routes, max_recv: n, methods: s.methods, clock: s.clock}
 }
 
 /// The routes, with a call to a method nobody registered answered the way grpc-go does: status Unimplemented in
@@ -297,7 +298,7 @@ fn trailers_only(st: grpc.Status) -> http.Response {
   }).with_header("content-type", "application/grpc")
 }
 
-fn serve_call[fx: Effects](f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.Status uses fx, max: Int, method: Str, req: http.Request, body: http.BodyReader) -> http.Response uses fx {
+fn serve_call[fx: Effects](f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.Status uses fx, clock: Clock, max: Int, method: Str, req: http.Request, body: http.BodyReader) -> http.Response uses (fx, clock) {
   let ct = req.header("content-type") ?? ""
   if !ct.starts_with("application/grpc") {
     return http.empty(415)
@@ -322,23 +323,31 @@ fn serve_call[fx: Effects](f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.S
   let recv = grpc.Recv{body: body, st: Mutex[grpc.RecvState].new(grpc.RecvState{buf: b"", at: 0, done: false}), max: max}
   http.stream(200, fn(w) -> () ! IoErr {
     let send = grpc.Send{w: w}
-    let st = match f(call, recv, send) {
-      Ok(_) => grpc.Status{code: grpc.Code.Ok, message: "", details: b""}
-      Err(e) => e
+    let st = match timeout {
+      Some(d) => match task.with_timeout(clock, d, fn() -> () ! grpc.Status { f(call, recv, send) }) {
+        Ok(_) => grpc.Status{code: grpc.Code.Ok, message: "", details: b""}
+        Err(task.Timed.TimedOut) => status_new(grpc.Code.DeadlineExceeded, "context deadline exceeded")
+        Err(task.Timed.Failed(e)) => e
+      }
+      None => match f(call, recv, send) {
+        Ok(_) => grpc.Status{code: grpc.Code.Ok, message: "", details: b""}
+        Err(e) => e
+      }
     }
     finish(w, st)
   }).with_header("content-type", "application/grpc").with_full_duplex()
 }
 
-fn server_stream[fx: Effects](var s: grpc.Server, method: Str, f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.Status uses fx) uses fx {
+fn server_stream[fx: Effects](var s: grpc.Server, method: Str, f: fn(grpc.Call, grpc.Recv, grpc.Send) -> () ! grpc.Status uses fx) uses (fx, clock) {
   let max = s.max_recv
+  let clock = s.clock
   s.methods.push(method)
   s.routes.handle_stream("POST ${method}", fn(req, body) -> http.Response {
-    serve_call(f, max, method, req, body)
+    serve_call(f, clock, max, method, req, body)
   })
 }
 
-fn server_unary[fx: Effects](var s: grpc.Server, method: Str, f: fn(grpc.Call, Bytes) -> Bytes ! grpc.Status uses fx) uses fx {
+fn server_unary[fx: Effects](var s: grpc.Server, method: Str, f: fn(grpc.Call, Bytes) -> Bytes ! grpc.Status uses fx) uses (fx, clock) {
   server_stream(s, method, fn(call, recv, send) -> () ! grpc.Status {
     let req = match recv.next()? {
       Some(m) => m

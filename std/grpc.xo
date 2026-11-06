@@ -2,6 +2,7 @@
 // grpc-timeout header, the status codes and the grpc-message percent encoding, as grpc-go does them.
 // Declaration file. The pure layer is pure; the server and the client use std/http.
 use std/http
+use std/task
 
 /// The 17 canonical status codes (their numbers are the wire values of `grpc-status`).
 enum Code {
@@ -110,17 +111,19 @@ struct Server {
   routes: http.Router
   max_recv: Int
   methods: List[Str]
+  clock: Clock
 }
 
-/// A server with grpc-go's 4 MiB receive limit.
-fn server() -> Server
+/// A server with grpc-go's 4 MiB receive limit. `clock` times the deadlines clients send: a handler still running at
+/// its `grpc-timeout` is cancelled and the call ends with `DeadlineExceeded`.
+fn server(clock: Clock) -> Server
 /// The server with another receive limit in bytes.
 fn (s: Server) with_max_recv(n: Int) -> Server
 /// Registers a unary method (`/package.Service/Method`).
-fn (var s: Server) unary[fx: Effects](method: Str, f: fn(Call, Bytes) -> Bytes ! Status uses fx) uses fx
+fn (var s: Server) unary[fx: Effects](method: Str, f: fn(Call, Bytes) -> Bytes ! Status uses fx) uses (fx, clock)
 /// Registers a method of any kind: a handler reads the request messages from `Recv` and writes the responses to
 /// `Send`; returning Ok ends the call with OK, an error with its status.
-fn (var s: Server) stream[fx: Effects](method: Str, f: fn(Call, Recv, Send) -> () ! Status uses fx) uses fx
+fn (var s: Server) stream[fx: Effects](method: Str, f: fn(Call, Recv, Send) -> () ! Status uses fx) uses (fx, clock)
 /// The routes to give `http.server`, with `http.Protocol.UnencryptedHttp2` (or TLS and ALPN h2) in its protocols.
 fn (s: Server) router() -> http.Router
 
