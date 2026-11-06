@@ -19,6 +19,8 @@ line per entry.
 
 [ai-and-ml.md](ai-and-ml.md): what it would take for Xo to replace Python for AI and ML (arrays, GPU, autodiff on effect-checked pure functions, interop, a REPL), and where Xo fits first: inference serving, backends whose effects show what touches the network or disk, and code AI writes (the owner's Q&A, 2026-11-05; exploration, nothing decided).
 
+[frontend.md](frontend.md): whether Xo could do well in the js-framework-benchmark (WebAssembly cannot touch the DOM, so near but behind the top JS frameworks; bundle size unmeasured), front end options that fit Xo (server-rendered HTML, shared types, WebAssembly islands, a full reactive framework last), and what a reactive framework would offer (an effect-checked server and browser boundary, supply chain safety, fewer React bug classes) against its costs (the owner's Q&A, 2026-11-05; not now).
+
 [wasm-and-jit.md](wasm-and-jit.md): WebAssembly runtimes (V8, wasmtime, wazero), AOT and JIT, and why Xo targets WASI with no runtime of its own and no general JIT (the owner's Q&A, 2026-10-30).
 
 The language itself is specified in [../spec/core.md](../spec/core.md). The
