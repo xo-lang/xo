@@ -1,0 +1,13 @@
+# twincheck: simdscan workloads (the same names on both sides).
+- - none
+- - utf8_ascii
+- - utf8_mixed
+- - index_byte
+- - index_byte_64
+- - equal
+- - compare
+- - hex
+- - base64_enc
+- - base64_dec
+- - crc32
+- - sha256

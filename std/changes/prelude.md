@@ -7,6 +7,18 @@
 
 
 
+## 2026-11-06: perf: Str and Bytes equality, order and one byte search faster on linux; ASCII validation faster everywhere
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md)
+- Go reference: bytes.Equal, bytes.Compare, bytes.IndexByte, utf8.Valid
+- Test: std/native/llrt/libcstr_test.xo "memcmp of 0 to 80 bytes differing at each byte", std/native/llrt/scan_test.xo "find_byte and span find a byte at each place of 0 to 100"
+- Timing: bench/perf/simdscan on linux/arm64, new std against main's (the same xo): equal 0.73, compare 0.74, index_byte 0.74, utf8_ascii 0.60, index_byte_64 0.87 of main's wall; against Go 1.26.1 equal 1.65 (was 2.30), compare 1.34 (1.86), index_byte 1.91 (2.73), utf8_ascii 1.26 (2.63)
+- Shipped in: not yet released
+
+On linux the native build carries its own `memcmp` (std/native/llrt/libcstr.xo), which every Str and Bytes `==` over 16 bytes and every `<` reach: it compared 8 bytes a step and then byte by byte; it now compares 32 bytes a step and finds the first differing byte of a word by its lowest set bit, with the last partial word read as the word ending at the end. `find` of one byte and the ASCII run of UTF-8 validation (`Bytes.to_str`) test 32 bytes a step, one branch for two 16 byte masks, with wrapping index arithmetic in the loops.
+
 ## 2026-11-05: fix: a read on a FakeNet connection is woken by its deadline
 
 - Kind: fix

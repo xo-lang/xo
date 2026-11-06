@@ -207,3 +207,22 @@ test "bytes_eq16_bits matches a byte loop" for xs: List[Int], c: Int {
     expect(rt.bytes_high16_bits(b, i) == wh)
   }
 }
+
+test "find_byte and span find a byte at each place of 0 to 100" {
+  for n in 0..101 {
+    for p in 0..n {
+      var xs: List[Int] = []
+      for i in 0..n {
+        xs.push(if i == p { 0xC3 } else { 97 + i % 26 })
+      }
+      let b = bytes_of(xs)
+      for from in [0, 1, 15, 31, 33] {
+        if from <= n {
+          let want = if p >= from { p } else { -1 }
+          expect(find_byte(b, from, n, 0xC3)) == want
+          expect(span(b, from, 0)) == (if p >= from { p } else { n })
+        }
+      }
+    }
+  }
+}

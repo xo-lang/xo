@@ -1,0 +1,147 @@
+// simdscan: the byte-heavy std paths a SIMD survey ranks (Xo Lang 1,
+// 2026-11-06), each over 64 buffers of 4 KiB (and a 64 byte variant where
+// short inputs matter), against Go (twin.go.txt). Usage: `<program>
+// WORKLOAD`; prints `<workload> <checksum>`, the same line as the twin.
+use std/base64
+use std/crc32
+use std/crypto
+
+
+fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+/// n bytes: ASCII letters, or with mixed set every 7th byte a 2 or 3 byte
+/// UTF-8 sequence.
+fn buf(seed: Int, n: Int, mixed: Bool) -> Bytes {
+  var r = seed
+  var bb = BytesBuilder.with_capacity(n + 4)
+  var k = 0
+  while k < n {
+    r = next(r)
+    if mixed && (r >> 8) % 7 == 0 {
+      let t = if (r >> 12) % 2 == 0 { "é" } else { "日" }
+      bb.write_str(t)
+      k += t.len()
+    } else {
+      bb.write_byte(UInt8(97 + (r >> 8) % 26))
+      k += 1
+    }
+  }
+  bb.freeze()[0..n]
+}
+
+fn bufs(n: Int, mixed: Bool) -> List[Bytes] {
+  var out: List[Bytes] = []
+  for i in 0..64 {
+    out.push(buf(i + 1, n, mixed))
+  }
+  out
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "none"
+  // passes: the second argument, 400 by default
+  let passes = Int.parse(os.env.args().get(1) ?? "400") ?? 400
+  let big = bufs(4096, false)
+  let mix = bufs(4096, true)
+  let small = bufs(64, false)
+  var sum = 0
+  match w {
+    "utf8_ascii" => {
+      for _ in 0..passes {
+        for b in big {
+          sum += if b.to_str().is_some() { 1 } else { 0 }
+        }
+      }
+    }
+    "utf8_mixed" => {
+      for _ in 0..passes {
+        for b in mix {
+          sum += if b.to_str().is_some() { 1 } else { 0 }
+        }
+      }
+    }
+    "index_byte" => {
+      // absent: the whole buffer is scanned
+      for _ in 0..passes {
+        for b in big {
+          sum += b.find(b"#") ?? -1
+        }
+      }
+    }
+    "index_byte_64" => {
+      for _ in 0..passes * 32 {
+        for b in small {
+          sum += b.find(b"#") ?? -1
+        }
+      }
+    }
+    "equal" => {
+      var copies: List[Bytes] = []
+      for b in big {
+        var cb = BytesBuilder.with_capacity(b.len())
+        cb.write(b)
+        copies.push(cb.freeze())
+      }
+      for _ in 0..passes {
+        for (i, b) in big.indexed() {
+          sum += if b == copies[i] { 1 } else { 0 }
+        }
+      }
+    }
+    "compare" => {
+      // the same text but the last byte
+      var ss: List[Str] = []
+      var ts: List[Str] = []
+      for b in big {
+        ss.push(b.to_str() ?? "")
+        ts.push((b[0..b.len() - 1].to_str() ?? "") + "~")
+      }
+      for _ in 0..passes {
+        for (i, s) in ss.indexed() {
+          sum += if s < ts[i] { 1 } else { 0 }
+        }
+      }
+    }
+    "hex" => {
+      for _ in 0..passes / 4 {
+        for b in big {
+          sum += b.to_hex().len()
+        }
+      }
+    }
+    "base64_enc" => {
+      for _ in 0..passes / 4 {
+        for b in big {
+          sum += base64.encode(b).len()
+        }
+      }
+    }
+    "base64_dec" => {
+      var es: List[Str] = []
+      for b in big {
+        es.push(base64.encode(b))
+      }
+      for _ in 0..passes / 4 {
+        for e in es {
+          sum += (base64.decode(e).ok() ?? b"").len()
+        }
+      }
+    }
+    "crc32" => {
+      for _ in 0..passes {
+        for b in big {
+          sum += crc32.checksum(b) % 1000003
+        }
+      }
+    }
+    "sha256" => {
+      for _ in 0..passes / 8 {
+        for b in big {
+          sum += Int(crypto.sha256(b)[0])
+        }
+      }
+    }
+    _ => {}
+  }
+  os.stdio.println("${w} ${sum}")
+}

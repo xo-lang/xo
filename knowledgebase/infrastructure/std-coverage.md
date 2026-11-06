@@ -263,6 +263,16 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | S3 and AWS SigV4 | aws-sdk-go-v2 | none | not planned | A third party module; std provides HMAC and SHA-256. |
 | gRPC, protobuf | google.golang.org/grpc | none | not planned | Large; a module, after HTTP/2 trailers are exposed. |
 
+## Performance evidence (decision 0461)
+
+Committed result files with a Go twin that set a module's performance
+mark, newest first. A row gives the twin's program, the host, and the
+measured range of Xo's wall over Go's (below 1 is faster).
+
+| Module | Result file | Program, host | Xo/Go |
+|---|---|---|---|
+| prelude (Str, Bytes byte paths) | bench/results/simd-survey-2026-11-06.md | bench/perf/simdscan, linux/arm64 host 1, Go 1.26.1 | 0.26 (to_hex) to 1.91 (one byte find); equal 1.65, compare 1.34, ASCII validation 1.26 after step 1: within 2x (Solid) |
+
 ## Survey of backend gaps (2026-10-30)
 
 Five more services, of kinds the two earlier surveys did not cover,

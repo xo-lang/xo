@@ -214,8 +214,28 @@ pub fn memset(d: Int, c: Int, n: Int) -> Int {
 /// above b's.
 pub fn memcmp(a: Int, b: Int, n: Int) -> Int {
   var i = 0
-  while addw(i, 8) <= n && rt.mem_load(a, i, 8) == rt.mem_load(b, i, 8) {
+  // 32 bytes a step while they are equal: one branch for four words
+  while addw(i, 32) <= n {
+    let d0 = rt.mem_load(a, i, 8) ^ rt.mem_load(b, i, 8)
+    let d1 = rt.mem_load(a, addw(i, 8), 8) ^ rt.mem_load(b, addw(i, 8), 8)
+    let d2 = rt.mem_load(a, addw(i, 16), 8) ^ rt.mem_load(b, addw(i, 16), 8)
+    let d3 = rt.mem_load(a, addw(i, 24), 8) ^ rt.mem_load(b, addw(i, 24), 8)
+    if (d0 | d1 | d2 | d3) != 0 {
+      break
+    }
+    i = addw(i, 32)
+  }
+  while addw(i, 8) <= n {
+    let r = word_cmp(rt.mem_load(a, i, 8), rt.mem_load(b, i, 8))
+    if r != 0 {
+      return r
+    }
     i = addw(i, 8)
+  }
+  if i < n && n >= 8 {
+    // the word ending at n: its bytes before i are equal
+    let k = subw(n, 8)
+    return word_cmp(rt.mem_load(a, k, 8), rt.mem_load(b, k, 8))
   }
   while i < n {
     let x = byte(a, i)
@@ -226,6 +246,16 @@ pub fn memcmp(a: Int, b: Int, n: Int) -> Int {
     i = addw(i, 1)
   }
   0
+}
+
+/// memcmp of two little endian words: the first differing byte is the
+/// lowest, at the lowest set bit of x ^ y.
+fn word_cmp(x: Int, y: Int) -> Int {
+  if x == y {
+    return 0
+  }
+  let k = rt.ctz(x ^ y) & 56
+  if (x.shr_logical(k) & 255) < (y.shr_logical(k) & 255) { -1 } else { 1 }
 }
 
 // ---------------------------------------------------------------------------

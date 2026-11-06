@@ -55,3 +55,26 @@ test "memcpy of 0 to 40 bytes" {
     raw.alive(b)
   }
 }
+
+test "memcmp of 0 to 80 bytes differing at each byte" {
+  for n in 0..81 {
+    let (b, a) = buf(n + 1)
+    let (c, d) = buf(n + 1)
+    expect(memcmp(a, d, n)) == 0
+    for p in 0..n {
+      let x = rt.mem_load(a, p, 1)
+      rt.mem_store(d, p, x + 1, 1)
+      expect(memcmp(a, d, n)) == -1
+      expect(memcmp(d, a, n)) == 1
+      // a later difference does not change the order
+      if p + 1 < n {
+        rt.mem_store(a, p + 1, 255, 1)
+        expect(memcmp(a, d, n)) == -1
+        rt.mem_store(a, p + 1, (p + 1) % 251, 1)
+      }
+      rt.mem_store(d, p, x, 1)
+    }
+    raw.alive(b)
+    raw.alive(c)
+  }
+}

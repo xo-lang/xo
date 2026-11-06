@@ -1,0 +1,149 @@
+package main
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"hash/crc32"
+	"os"
+	"strconv"
+	"unicode/utf8"
+)
+
+
+func next(x int) int { return (x*1103515245 + 12345) % 2147483648 }
+
+func buf(seed, n int, mixed bool) []byte {
+	r := seed
+	b := make([]byte, 0, n+4)
+	for len(b) < n {
+		r = next(r)
+		if mixed && (r>>8)%7 == 0 {
+			if (r>>12)%2 == 0 {
+				b = append(b, "é"...)
+			} else {
+				b = append(b, "日"...)
+			}
+		} else {
+			b = append(b, byte(97+(r>>8)%26))
+		}
+	}
+	return b[:n]
+}
+
+func bufs(n int, mixed bool) [][]byte {
+	var out [][]byte
+	for i := 0; i < 64; i++ {
+		out = append(out, buf(i+1, n, mixed))
+	}
+	return out
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	passes := 400
+	if len(os.Args) > 2 {
+		passes, _ = strconv.Atoi(os.Args[2])
+	}
+	big := bufs(4096, false)
+	mix := bufs(4096, true)
+	small := bufs(64, false)
+	sum := 0
+	switch w {
+	case "utf8_ascii":
+		for p := 0; p < passes; p++ {
+			for _, b := range big {
+				if utf8.Valid(b) {
+					sum++
+				}
+			}
+		}
+	case "utf8_mixed":
+		for p := 0; p < passes; p++ {
+			for _, b := range mix {
+				if utf8.Valid(b) {
+					sum++
+				}
+			}
+		}
+	case "index_byte":
+		for p := 0; p < passes; p++ {
+			for _, b := range big {
+				sum += bytes.IndexByte(b, '#')
+			}
+		}
+	case "index_byte_64":
+		for p := 0; p < passes*32; p++ {
+			for _, b := range small {
+				sum += bytes.IndexByte(b, '#')
+			}
+		}
+	case "equal":
+		var copies [][]byte
+		for _, b := range big {
+			copies = append(copies, append([]byte(nil), b...))
+		}
+		for p := 0; p < passes; p++ {
+			for i, b := range big {
+				if bytes.Equal(b, copies[i]) {
+					sum++
+				}
+			}
+		}
+	case "compare":
+		var ss, ts []string
+		for _, b := range big {
+			ss = append(ss, string(b))
+			ts = append(ts, string(b[:len(b)-1])+"~")
+		}
+		for p := 0; p < passes; p++ {
+			for i, s := range ss {
+				if s < ts[i] {
+					sum++
+				}
+			}
+		}
+	case "hex":
+		for p := 0; p < passes/4; p++ {
+			for _, b := range big {
+				sum += len(hex.EncodeToString(b))
+			}
+		}
+	case "base64_enc":
+		for p := 0; p < passes/4; p++ {
+			for _, b := range big {
+				sum += len(base64.StdEncoding.EncodeToString(b))
+			}
+		}
+	case "base64_dec":
+		var es []string
+		for _, b := range big {
+			es = append(es, base64.StdEncoding.EncodeToString(b))
+		}
+		for p := 0; p < passes/4; p++ {
+			for _, e := range es {
+				d, _ := base64.StdEncoding.DecodeString(e)
+				sum += len(d)
+			}
+		}
+	case "crc32":
+		for p := 0; p < passes; p++ {
+			for _, b := range big {
+				sum += int(crc32.ChecksumIEEE(b)) % 1000003
+			}
+		}
+	case "sha256":
+		for p := 0; p < passes/8; p++ {
+			for _, b := range big {
+				h := sha256.Sum256(b)
+				sum += int(h[0])
+			}
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

@@ -75,12 +75,24 @@ fn eq8(w: Int, r: Int) -> Int {
 /// (to <= b.len()), or -1.
 pub fn find_byte(b: Bytes, from: Int, to: Int, c: Int) -> Int {
   var i = from
-  while to - i >= 16 {
+  // 32 bytes a step while they hold no c: one branch for two masks
+  while subw(to, i) >= 32 {
+    let m = eq16_1(b, i, c)
+    let m2 = eq16_1(b, addw(i, 16), c)
+    if (m | m2) != 0 {
+      if m != 0 {
+        return addw(i, rt.ctz(m) >> bsh())
+      }
+      return addw(addw(i, 16), rt.ctz(m2) >> bsh())
+    }
+    i = addw(i, 32)
+  }
+  while subw(to, i) >= 16 {
     let m = eq16_1(b, i, c)
     if m != 0 {
-      return i + (rt.ctz(m) >> bsh())
+      return addw(i, rt.ctz(m) >> bsh())
     }
-    i += 16
+    i = addw(i, 16)
   }
   if i >= to {
     return -1
@@ -980,12 +992,24 @@ pub fn span(b: Bytes, from: Int, cls: Int) -> Int {
   let n = b.len()
   var i = from
   if cls == 0 {
-    while n - i >= 16 {
+    // 32 bytes a step while they are ASCII: one branch for two masks
+    while subw(n, i) >= 32 {
+      let m = high16_1(b, i)
+      let m2 = high16_1(b, addw(i, 16))
+      if (m | m2) != 0 {
+        if m != 0 {
+          return addw(i, rt.ctz(m) >> bsh())
+        }
+        return addw(addw(i, 16), rt.ctz(m2) >> bsh())
+      }
+      i = addw(i, 32)
+    }
+    while subw(n, i) >= 16 {
       let m = high16_1(b, i)
       if m != 0 {
-        return i + (rt.ctz(m) >> bsh())
+        return addw(i, rt.ctz(m) >> bsh())
       }
-      i += 16
+      i = addw(i, 16)
     }
     while n - i >= 8 {
       let m = rt.bytes_word(b, i) & HIGHS
