@@ -159,6 +159,7 @@ var componentGoldensNotRun = map[string]string{
 	"websocket_stop":            "an upgrade, which wasi:http 0.2 has no way to take",
 	"websocket_tls":             "an upgrade, which wasi:http 0.2 has no way to take",
 	"websocket_tls_deadline":    "an upgrade, which wasi:http 0.2 has no way to take",
+	"amqp_tls_hostname":         "TLS, which the host owns, and an amqps dial over a socket",
 }
 
 var goldenMain = regexp.MustCompile(`(?ms)^fn main\(.*?^}\n`)
