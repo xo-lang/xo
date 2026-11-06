@@ -605,6 +605,12 @@ pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(63, 0), fd, a, raw.i
 /// pread64(2) of at most n bytes at offset off to the address a.
 pub fn pread_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(nr(67, 17), fd, a, raw.io_len(n), off, 0, 0) }
 
+/// pwrite64(2) of at most n bytes from the address a at offset off.
+pub fn pwrite_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(nr(68, 18), fd, a, raw.io_len(n), off, 0, 0) }
+
+/// ftruncate(2) of the descriptor fd to size bytes: 0, or -errno.
+pub fn ftruncate(fd: Int, size: Int) -> Int { rt.sys6(nr(46, 77), fd, size, 0, 0, 0, 0) }
+
 /// sched_getaffinity(2) of the calling thread into the n bytes at a: the
 /// mask's bytes written, or -errno.
 pub fn sched_getaffinity(a: Int, n: Int) -> Int { rt.sys6(nr(123, 204), 0, n, a, 0, 0, 0) }

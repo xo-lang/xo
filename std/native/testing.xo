@@ -133,6 +133,8 @@ struct MemFile {
   data: Bytes
   off: Int
   closed: Bool
+  /// made by open_append: write_at is refused
+  append: Bool
 }
 
 /// A held MemFs lock: the lock record (memlock_new) and whether it was
@@ -749,7 +751,7 @@ fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, trunc
         if node.dir {
           return Err(memfs_err(5, p))
         }
-        h.files.put(id, MemFile{full: full, data: node.data, off: 0, closed: false})
+        h.files.put(id, MemFile{full: full, data: node.data, off: 0, closed: false, append: false})
         st.hs = [h]
         return rt.mem_file(id, p, false)
       }
@@ -774,7 +776,7 @@ fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, trunc
       }
     }
   }
-  h.files.put(id, MemFile{full: full, data: b"", off: 0, closed: false})
+  h.files.put(id, MemFile{full: full, data: b"", off: 0, closed: false, append: write && !truncate})
   st.hs = [h]
   rt.mem_file(id, p, true)
 }
@@ -817,7 +819,7 @@ fn memfile_state(st: MemState, f: File, write: Bool) -> MemFile ! FsErr {
   if rt.fs_canceled() {
     return Err(FsErr.Canceled)
   }
-  let mf = memfs_hs(st).files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true}
+  let mf = memfs_hs(st).files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true, append: false}
   if mf.closed {
     return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file already closed"))
   }
@@ -856,6 +858,87 @@ fn memfile_read_in(var st: MemState, f: File, max: Int) -> Bytes? ! FsErr {
   mf.off += n
   memfs_set_file(st, rt.mem_file_id(f), mf)
   Some(b)
+}
+
+fn memfile_write_at(f: File, offset: Int, data: Bytes) -> () ! FsErr {
+  var st = memfs_load()
+  let r = memfile_write_at_in(st, f, offset, data)
+  memfs_store(st)
+  r?
+}
+
+fn memfile_write_at_in(var st: MemState, f: File, offset: Int, data: Bytes) -> () ! FsErr {
+  let mf = memfile_state(st, f, true)?
+  if offset < 0 {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "negative offset"))
+  }
+  if mf.append {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "invalid use of write_at on a file opened with open_append"))
+  }
+  var n = memfs_get(st, mf.full) ?? MemNode{dir: false, data: b"", modified: memfs_now(), name: ""}
+  if n.dir {
+    n = MemNode{dir: false, data: b"", modified: memfs_now(), name: ""}
+  }
+  var out = BytesBuilder.new()
+  let old = n.data
+  if offset > old.len() {
+    out.write(old)
+    out.write(Bytes.zeroed(offset - old.len()))
+  } else {
+    out.write(old[0..offset])
+  }
+  out.write(data)
+  if offset + data.len() < old.len() {
+    out.write(old[offset + data.len()..old.len()])
+  }
+  memfs_put(st, mf.full, n with {data: out.freeze(), modified: memfs_now()})
+}
+
+fn memfile_truncate(f: File, size: Int) -> () ! FsErr {
+  var st = memfs_load()
+  let r = memfile_truncate_in(st, f, size)
+  memfs_store(st)
+  r?
+}
+
+fn memfile_truncate_in(var st: MemState, f: File, size: Int) -> () ! FsErr {
+  let mf = memfile_state(st, f, true)?
+  if size < 0 {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "negative size"))
+  }
+  var n = memfs_get(st, mf.full) ?? MemNode{dir: false, data: b"", modified: memfs_now(), name: ""}
+  if n.dir {
+    n = MemNode{dir: false, data: b"", modified: memfs_now(), name: ""}
+  }
+  let old = n.data
+  var out = BytesBuilder.new()
+  if size <= old.len() {
+    out.write(old[0..size])
+  } else {
+    out.write(old)
+    out.write(Bytes.zeroed(size - old.len()))
+  }
+  memfs_put(st, mf.full, n with {data: out.freeze(), modified: memfs_now()})
+}
+
+fn memfile_stat(f: File) -> FileInfo ! FsErr {
+  var st = memfs_load()
+  let r = memfile_stat_in(st, f)
+  memfs_store(st)
+  r?
+}
+
+fn memfile_stat_in(var st: MemState, f: File) -> FileInfo ! FsErr {
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  let mf = memfs_hs(st).files.get(rt.mem_file_id(f)) ?? MemFile{full: "", data: b"", off: 0, closed: true, append: false}
+  if mf.closed {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "file already closed"))
+  }
+  // a file removed since it was opened is still its handle's: the data it was opened with
+  let n = memfs_get(st, mf.full) ?? MemNode{dir: false, data: mf.data, modified: memfs_now(), name: mf.full}
+  Ok(FileInfo{name: path.base(mf.full), path: rt.mem_file_path(f), is_dir: n.dir, size: n.data.len(), modified: n.modified, is_symlink: false})
 }
 
 fn memfile_read_at(f: File, offset: Int, max: Int) -> Bytes? ! FsErr {

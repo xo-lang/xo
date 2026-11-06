@@ -775,6 +775,44 @@ test "File.read_at reads at an offset without moving the position, as Go's ReadA
   w.close()?
 }
 
+test "File.write_at, truncate and stat work at offsets without moving the position, as Go's WriteAt, Truncate and Stat" {
+  let w = os.fs.create("wa.bin")?
+  w.write(b"0123456789")?
+  w.write_at(2, b"AB")?
+  w.write(b"xy")?
+  w.write_at(14, b"Z")?
+  w.write_at(0, b"")?
+  expect(w.stat()?.size) == 15
+  w.truncate(12)?
+  expect(w.stat()?.size) == 12
+  w.write(b"!")?
+  expect(w.stat()?.name) == "wa.bin"
+  expect(w.stat()?.is_dir) == false
+  w.close()?
+  // write added "xy" at the position (10), the later write "!" after the cut at 12
+  expect(os.fs.read("wa.bin")?) == b"01AB456789xy!"
+  expect(w.write_at(0, b"q").is_err()) == true
+  expect(w.truncate(0).is_err()) == true
+  expect(w.stat().is_err()) == true
+  let g = os.fs.create("wg.bin")?
+  g.write_at(3, b"abc")?
+  g.truncate(8)?
+  g.close()?
+  expect(os.fs.read("wg.bin")?) == b"\0\0\0abc\0\0"
+  let g2 = os.fs.create("wg.bin")?
+  expect(g2.write_at(-1, b"x").is_err()) == true
+  expect(g2.truncate(-1).is_err()) == true
+  g2.close()?
+  let r = os.fs.open("wa.bin")?
+  expect(r.write_at(0, b"x").is_err()) == true
+  expect(r.truncate(0).is_err()) == true
+  expect(r.stat()?.size) == 13
+  r.close()?
+  let ap = os.fs.open_append("wa.bin")?
+  expect(ap.write_at(0, b"x").is_err()) == true
+  ap.close()?
+}
+
 test "read_dir_entries, walk_entries and walk_dir_entries answer as Go's os.ReadDir and WalkDir with the type and no stat" {
   for d in ["a/b", "a/c"] {
     os.fs.create_dir_all(d)?

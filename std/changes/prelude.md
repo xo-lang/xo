@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-06: feature: File.write_at, File.truncate and File.stat (owner-approved for the Azure SDKs' UploadFile and DownloadFile)
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19's request: a parallel download writes each range of a file at its offset, an upload reads the size of the open file
+- Go reference: os.File.WriteAt, Truncate and Stat (os/file.go, file_posix.go, file_windows.go go1.26.1)
+- Test: testdata/corpus/prelude "File.write_at, truncate and stat work at offsets without moving the position" (native, Go backend, MemFs and the real file system)
+- Shipped in: not yet released
+
+`f.write_at(offset, data)` writes every byte of `data` at `offset` of a file made by `create` (pwrite, WriteFile with an offset on Windows; short
+writes retried) and leaves the position alone; the file grows, a gap reads as zero bytes. On a file from `open_append` it is an error, as in Go.
+`f.truncate(size)` cuts the file or pads it with zero bytes (ftruncate, SetFileInformationByHandle) and leaves the position alone. `f.stat()`
+is the FileInfo of the open handle (fstat), not of its path. All three are available on macOS, Linux, Windows, the Go backend and MemFs; a wasm
+build answers "function not implemented", as read_at does.
+
 ## 2026-11-06: perf: a large block's growth reuses the mapping its last growth made
 
 - Kind: perf

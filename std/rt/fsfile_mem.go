@@ -12,10 +12,11 @@ import (
 
 // memFileH is an open MemFs file.
 type memFileH struct {
-	v    *memView
-	full string
-	data string // reads: the contents at open
-	off  int
+	v      *memView
+	full   string
+	data   string // reads: the contents at open
+	off    int
+	append bool // open_append: write_at is an error
 }
 
 func (m *memFileH) read(max int64) Result[Option[Bytes], FsErr] {
@@ -54,6 +55,62 @@ func (m *memFileH) write(data Bytes) {
 	}
 	n.data += data
 	n.mod = fs.now()
+}
+
+// node is the file's node, a fresh empty one when it was removed since it
+// was opened (as write). Caller holds fs.mu.
+func (m *memFileH) node() *memNode {
+	fs := m.v.fs
+	n := fs.get(m.full)
+	if n == nil || n.dir {
+		n = &memNode{}
+		fs.put(m.full, n)
+	}
+	return n
+}
+
+// writeAt is write_at: the bytes at offset, zero bytes in a gap.
+func (m *memFileH) writeAt(offset int64, data Bytes) {
+	fs := m.v.fs
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	n := m.node()
+	d := []byte(n.data)
+	if end := int(offset) + len(data); end > len(d) {
+		d = append(d, make([]byte, end-len(d))...)
+	}
+	copy(d[offset:], data)
+	n.data = Bytes(d)
+	n.mod = fs.now()
+}
+
+// truncate is truncate: cut, or padded with zero bytes.
+func (m *memFileH) truncate(size int64) {
+	fs := m.v.fs
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	n := m.node()
+	d := []byte(n.data)
+	if int(size) <= len(d) {
+		d = d[:size]
+	} else {
+		d = append(d, make([]byte, int(size)-len(d))...)
+	}
+	n.data = Bytes(d)
+	n.mod = fs.now()
+}
+
+// stat is stat: the node's size and time (a file removed since it was
+// opened has the data it was opened with).
+func (m *memFileH) stat(given string) FileInfo {
+	fs := m.v.fs
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	n := fs.get(m.full)
+	if n == nil {
+		return FileInfo{F_name: path.Base(given), F_path: given, F_size: int64(len(m.data))}
+	}
+	return FileInfo{F_name: path.Base(given), F_path: given, F_is_dir: n.dir, F_size: int64(len(n.data)), F_modified: n.mod}
 }
 
 func (m *memFileH) close() {}
@@ -121,7 +178,7 @@ func (f Testing_MemFs) openFile(tk *Task, p string, write, truncate bool, excl .
 	} else if truncate {
 		n.data, n.mod = "", fs.now()
 	}
-	return Ok[File, FsErr](File{&fileH{path: p, write: true, mem: &memFileH{v: f.v, full: full}}})
+	return Ok[File, FsErr](File{&fileH{path: p, write: true, mem: &memFileH{v: f.v, full: full, append: !truncate}}})
 }
 
 func (f Testing_MemFs) M_open(tk *Task, p string) Result[File, FsErr] {

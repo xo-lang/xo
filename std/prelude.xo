@@ -995,6 +995,20 @@ fn (f: File) read(max: Int) -> Bytes? ! FsErr uses fs.read
 fn (f: File) read_at(offset: Int, max: Int) -> Bytes? ! FsErr uses fs.read
 fn (f: File) read_line() -> Str? ! FsErr uses fs.read
 fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
+/// Writes all of data at offset of a file made by `create`, whatever the
+/// position, which the call leaves alone (Go's os.File.WriteAt: the file
+/// grows, a gap reads as zero bytes); an error on a file from
+/// `open_append`. A wasm build answers "function not implemented".
+fn (f: File) write_at(offset: Int, data: Bytes) -> () ! FsErr uses fs.write
+/// Sets the size of a file made by `create` (Go's os.File.Truncate: shorter
+/// cuts it, longer pads with zero bytes); the position is unchanged. A
+/// wasm build answers "function not implemented".
+fn (f: File) truncate(size: Int) -> () ! FsErr uses fs.write
+/// The name, size and modification time of the open file, from its handle
+/// (Go's os.File.Stat), so a file replaced or renamed since it was opened
+/// is not confused with its path. A wasm build answers "function not
+/// implemented".
+fn (f: File) stat() -> FileInfo ! FsErr uses fs.read
 /// Commits what was written to stable storage (Go's File.Sync: fsync,
 /// F_FULLFSYNC on macOS, FlushFileBuffers on Windows).
 fn (f: File) sync() -> () ! FsErr uses fs.write

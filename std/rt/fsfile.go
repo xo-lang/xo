@@ -670,3 +670,87 @@ func (f File) M_read_at(tk *Task, offset, max int64) Result[Option[Bytes], FsErr
 	}
 	return Err[Option[Bytes]](mapFsErr(err, h.path))
 }
+
+// writableState is the state check of the write_at and truncate: canceled,
+// closed, or open for reading.
+func (h *fileH) writableState(tk *Task) *FsErr {
+	switch {
+	case tk.Canceled():
+		return &FsCanceled
+	case h.closed:
+		e := fileClosed(h.path)
+		return &e
+	case !h.write:
+		e := fsIo(h.path, "file is open for reading")
+		return &e
+	}
+	return nil
+}
+
+// M_write_at is `f.write_at(offset, data)`: Go's os.File.WriteAt (every
+// byte, the position untouched; an O_APPEND file is an error). A MemFs file
+// grows with zero bytes up to offset.
+func (f File) M_write_at(tk *Task, offset int64, data Bytes) Result[Unit, FsErr] {
+	h := f.h
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if e := h.writableState(tk); e != nil {
+		return Err[Unit](*e)
+	}
+	if offset < 0 {
+		return Err[Unit](fsIo(h.path, "negative offset"))
+	}
+	if h.mem != nil {
+		if h.mem.append {
+			return Err[Unit](fsIo(h.path, "invalid use of write_at on a file opened with open_append"))
+		}
+		h.mem.writeAt(offset, data)
+		return Ok[Unit, FsErr](Unit{})
+	}
+	if _, err := h.osf.WriteAt([]byte(data), offset); err != nil {
+		return Err[Unit](mapFsErr(err, h.path))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+// M_truncate is `f.truncate(size)`: Go's os.File.Truncate.
+func (f File) M_truncate(tk *Task, size int64) Result[Unit, FsErr] {
+	h := f.h
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if e := h.writableState(tk); e != nil {
+		return Err[Unit](*e)
+	}
+	if size < 0 {
+		return Err[Unit](fsIo(h.path, "negative size"))
+	}
+	if h.mem != nil {
+		h.mem.truncate(size)
+		return Ok[Unit, FsErr](Unit{})
+	}
+	if err := h.osf.Truncate(size); err != nil {
+		return Err[Unit](mapFsErr(err, h.path))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+// M_stat is `f.stat()`: Go's os.File.Stat, from the open handle.
+func (f File) M_stat(tk *Task) Result[FileInfo, FsErr] {
+	h := f.h
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case tk.Canceled():
+		return Err[FileInfo](FsCanceled)
+	case h.closed:
+		return Err[FileInfo](fileClosed(h.path))
+	}
+	if h.mem != nil {
+		return Ok[FileInfo, FsErr](h.mem.stat(h.path))
+	}
+	fi, err := h.osf.Stat()
+	if err != nil {
+		return Err[FileInfo](mapFsErr(err, h.path))
+	}
+	return Ok[FileInfo, FsErr](FileInfo{F_name: filepath.Base(h.path), F_path: h.path, F_is_dir: fi.IsDir(), F_size: fi.Size(), F_modified: Time(fi.ModTime().UnixNano())})
+}

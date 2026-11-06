@@ -199,6 +199,12 @@ pub fn read_at(fd: Int, a: Int, n: Int) -> Int { ret(sys_darwin.read(fd, a, raw.
 /// pread(2) of at most n bytes at offset off to the address a.
 pub fn pread_at(fd: Int, a: Int, n: Int, off: Int) -> Int { ret(sys_darwin.pread(fd, a, raw.io_len(n), off)) }
 
+/// pwrite(2) of at most n bytes from the address a at offset off.
+pub fn pwrite_at(fd: Int, a: Int, n: Int, off: Int) -> Int { ret(sys_darwin.pwrite(fd, a, raw.io_len(n), off)) }
+
+/// ftruncate(2) of the descriptor fd to size bytes: 0, or -errno.
+pub fn ftruncate(fd: Int, size: Int) -> Int { ret(Int(sys_darwin.ftruncate(fd, size))) }
+
 /// rename(2) of a to b (as written: "" is no file).
 pub fn rename(a: Str, b: Str) -> Int {
   let za = zpath(a)

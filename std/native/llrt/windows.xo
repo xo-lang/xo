@@ -951,6 +951,46 @@ pub fn pread_at(h: Int, a: Int, n: Int, off: Int) -> Int {
   rt.mem_load(done, 0, 8) & 4294967295
 }
 
+/// WriteFile of at most n bytes from the address a at offset off (an
+/// OVERLAPPED with the offset on a synchronous handle), as pread_at: the
+/// count, or the negative errno.
+pub fn pwrite_at(h: Int, a: Int, n: Int, off: Int) -> Int {
+  let done = obj.scratch()
+  let k = if n > 2147483647 { 2147483647 } else { n }
+  let o = raw.bytes_buf(32)
+  let oa = raw.bytes_addr(o)
+  rt.mem_store(oa, 0, 0, 8)
+  rt.mem_store(oa, 8, 0, 8)
+  rt.mem_store(oa, 16, off, 8)
+  rt.mem_store(oa, 24, 0, 8)
+  let rc = keep(o, Int(sys_windows.WriteFile(h, a, k, done, oa)))
+  if rc == 0 {
+    let e = Int(sys_windows.GetLastError())
+    return if e == ERROR_ACCESS_DENIED { -EBADF } else { -dos_errno(e) }
+  }
+  rt.mem_load(done, 0, 8) & 4294967295
+}
+
+/// ftruncate of the handle h to size bytes (SetFileInformationByHandle
+/// with FileEndOfFileInfo, as Go's File.Truncate: the position is
+/// unchanged): 0, or the negative errno.
+pub fn ftruncate(h: Int, size: Int) -> Int {
+  let o = raw.bytes_buf(8)
+  rt.mem_store(raw.bytes_addr(o), 0, size, 8)
+  let rc = keep(o, Int(sys_windows.SetFileInformationByHandle(h, 6, raw.bytes_addr(o), 8)))
+  if rc == 0 {
+    let e = Int(sys_windows.GetLastError())
+    return if e == ERROR_ACCESS_DENIED { -EBADF } else { -dos_errno(e) }
+  }
+  0
+}
+
+/// The facts of the open handle h: mode, size, modified time (Unix
+/// nanoseconds), and 0, or the errno.
+pub fn fstat(h: Int) -> (Stat, Int) {
+  info(h, false)
+}
+
 /// flock of the handle h with op (LOCK_SH 1, LOCK_EX 2, LOCK_NB 4,
 /// LOCK_UN 8) over the whole file: LockFileEx or UnlockFileEx. 0, or the
 /// negative errno (EWOULDBLOCK when another handle holds it).

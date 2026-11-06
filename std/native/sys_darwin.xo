@@ -17,6 +17,10 @@ fn open(path: Bytes, flags: Int, va_mode: Int) -> Int32
 fn read(fd: Int, buf: Int, n: Int) -> Int
 /// pread(2) of at most n bytes at offset off to the address buf.
 fn pread(fd: Int, buf: Int, n: Int, off: Int) -> Int
+/// pwrite(2) of n bytes from the address buf at offset off.
+fn pwrite(fd: Int, buf: Int, n: Int, off: Int) -> Int
+/// ftruncate(2) of fd to size bytes.
+fn ftruncate(fd: Int, size: Int) -> Int32
 /// write(2) of n bytes from the address buf.
 fn write(fd: Int, buf: Int, n: Int) -> Int
 fn close(fd: Int) -> Int32

@@ -222,6 +222,36 @@ fn pread_fd(l: Int, fd: Int, a: Int, n: Int, off: Int) -> Int {
   0
 }
 
+/// One positioned write of at most n bytes at offset off: the count, or
+/// the negative errno.
+fn pwrite_fd(l: Int, fd: Int, a: Int, n: Int, off: Int) -> Int {
+  if l == 3 {
+    return windows.pwrite_at(fd, a, n, off)
+  }
+  while true {
+    let r = if l == 2 { darwin.pwrite_at(fd, a, n, off) } else { linux.pwrite_at(fd, a, n, off) }
+    if r != -EINTR {
+      return r
+    }
+  }
+  0
+}
+
+/// ftruncate(2) of fd to size bytes (EINTR retried): 0, or the negative
+/// errno.
+fn ftruncate_fd(l: Int, fd: Int, size: Int) -> Int {
+  if l == 3 {
+    return windows.ftruncate(fd, size)
+  }
+  while true {
+    let r = if l == 2 { darwin.ftruncate(fd, size) } else { linux.ftruncate(fd, size) }
+    if r != -EINTR {
+      return r
+    }
+  }
+  0
+}
+
 /// Writes the n bytes at the address a (EINTR and short writes retried):
 /// 0, or the errno.
 fn write_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
@@ -645,6 +675,87 @@ pub fn file_read_at(f: rt.FsFile, offset: Int, max: Int, x: Str) -> List[Bytes] 
     return []
   }
   [raw.bytes_len(b, k)]
+}
+
+/// `f.write_at(offset, data)` (offset >= 0): every byte of data at offset
+/// (short writes retried), the position untouched; the status. A wasm
+/// build has no positioned write (status ENOSYS).
+pub fn file_write_at(f: rt.FsFile, offset: Int, data: Bytes, x: Str) -> Int {
+  if sysio.layer() == 0 {
+    fail(1, 38, x)
+    return 38
+  }
+  let l = layer()
+  let fd = rt.mem_load(rt.obj_addr(f), F_FD, 8)
+  let n = data.len()
+  var done_n = 0
+  while done_n < n {
+    let k = pwrite_fd(l, fd, raw.bytes_addr(data) + done_n, n - done_n, offset + done_n)
+    if k < 0 {
+      raw.alive(data)
+      return fail(l, -k, x)
+    }
+    if k == 0 {
+      // nothing written and no error: the disk is full
+      raw.alive(data)
+      return fail(l, 28, x)
+    }
+    done_n += k
+  }
+  raw.alive(data)
+  ok()
+}
+
+/// `f.truncate(size)` (size >= 0): the status. The position is untouched.
+/// A wasm build has no truncate (status ENOSYS).
+pub fn file_truncate(f: rt.FsFile, size: Int, x: Str) -> Int {
+  if sysio.layer() == 0 {
+    fail(1, 38, x)
+    return 38
+  }
+  let l = layer()
+  done(l, ftruncate_fd(l, rt.mem_load(rt.obj_addr(f), F_FD, 8), size), x)
+}
+
+/// `f.stat()`: [st_mode, size, modified time in Unix nanoseconds] of the
+/// open handle, or the empty list on an error (status set). A wasm build
+/// has no fstat (status ENOSYS).
+pub fn file_stat(f: rt.FsFile, x: Str) -> List[Int] {
+  if sysio.layer() == 0 {
+    fail(1, 38, x)
+    return []
+  }
+  let l = layer()
+  let fd = rt.mem_load(rt.obj_addr(f), F_FD, 8)
+  var mode = 0
+  var size = 0
+  var mtime = 0
+  var e = 0
+  if l == 3 {
+    let (s, se) = windows.fstat(fd)
+    mode = s.mode
+    size = s.size
+    mtime = s.mtime
+    e = se
+  } else if l == 2 {
+    let (s, se) = darwin.fstat(fd)
+    mode = s.mode
+    size = s.size
+    mtime = s.mtime
+    e = se
+  } else {
+    let (s, se) = linux.fstat(fd)
+    mode = s.mode
+    size = s.size
+    mtime = s.mtime
+    e = se
+  }
+  if e != 0 {
+    fail(l, e, x)
+    return []
+  }
+  ok()
+  [mode, size, mtime]
 }
 
 /// The index of the first \n in the bytes at the address a from lo to hi,

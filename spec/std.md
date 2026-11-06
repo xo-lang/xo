@@ -841,6 +841,9 @@ fn (f: File) read(max: Int) -> Bytes? ! FsErr     uses fs.read   // None at the 
 fn (f: File) read_line() -> Str? ! FsErr          uses fs.read   // without \n or \r\n
 fn (f: File) read_at(offset: Int, max: Int) -> Bytes? ! FsErr uses fs.read   // decision 0479: Go's ReadAt once; position untouched; None at the end
 fn (f: File) write(data: Bytes) -> () ! FsErr     uses fs.write
+fn (f: File) write_at(offset: Int, data: Bytes) -> () ! FsErr uses fs.write   // Go's WriteAt: every byte, position untouched, a gap reads as zeros; an open_append file is an error
+fn (f: File) truncate(size: Int) -> () ! FsErr    uses fs.write   // Go's Truncate: cut or zero padded, position unchanged
+fn (f: File) stat() -> FileInfo ! FsErr           uses fs.read    // Go's File.Stat: from the handle
 fn (f: File) sync() -> () ! FsErr                 uses fs.write   // fsync (F_FULLFSYNC on macOS)
 fn (f: File) close() -> () ! FsErr                               // closing again does nothing
 struct FileLock {}                                // handle
@@ -5288,7 +5291,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-513 declarations.
+516 declarations.
 
 ### Range
 
@@ -5892,6 +5895,9 @@ fn (f: File) read(max: Int) -> Bytes? ! FsErr uses fs.read
 fn (f: File) read_at(offset: Int, max: Int) -> Bytes? ! FsErr uses fs.read
 fn (f: File) read_line() -> Str? ! FsErr uses fs.read
 fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
+fn (f: File) write_at(offset: Int, data: Bytes) -> () ! FsErr uses fs.write
+fn (f: File) truncate(size: Int) -> () ! FsErr uses fs.write
+fn (f: File) stat() -> FileInfo ! FsErr uses fs.read
 fn (f: File) sync() -> () ! FsErr uses fs.write
 fn (f: File) close() -> () ! FsErr
 ```

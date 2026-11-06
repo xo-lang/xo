@@ -3330,6 +3330,8 @@ struct File {
   /// A test's MemFs file (std/native/testing.xo memfile_*): its number in
   /// the MemFs state; 0 for a file of the real file system
   mem: Int = 0
+  /// opened by open_append: write_at is refused (Go's os.File.WriteAt)
+  append: Bool = false
 }
 
 struct FileLock {
@@ -3345,7 +3347,7 @@ fn fs_open_mode(f: Fs, p: Str, mode: Int) -> File ! FsErr {
   if st != 0 {
     return Err(fs_err(st, p))
   }
-  File{h: h, path: p, write: mode != 0}
+  File{h: h, path: p, write: mode != 0, mem: 0, append: mode == 2}
 }
 
 fn fs_open(f: Fs, p: Str) -> File ! FsErr {
@@ -3359,7 +3361,7 @@ fn fs_open(f: Fs, p: Str) -> File ! FsErr {
 // A test's MemFs handles (rt.mem_file and the others; std/native/
 // testing.xo memfile_* and memlock_*): the parts only this module sees.
 
-fn llrt_mem_file(id: Int, path: Str, write: Bool) -> File { File{h: fsops.no_file(), path: path, write: write, mem: id} }
+fn llrt_mem_file(id: Int, path: Str, write: Bool) -> File { File{h: fsops.no_file(), path: path, write: write, mem: id, append: false} }
 
 fn llrt_mem_file_id(f: File) -> Int { f.mem }
 
@@ -3460,6 +3462,46 @@ fn file_write(f: File, data: Bytes) -> () ! FsErr {
   if st != 0 {
     return Err(fs_err(st, f.path))
   }
+}
+
+fn file_write_at(f: File, offset: Int, data: Bytes) -> () ! FsErr {
+  file_state(f, true)?
+  if offset < 0 {
+    return Err(FsErr.Io(path: f.path, msg: "negative offset"))
+  }
+  if f.append {
+    return Err(FsErr.Io(path: f.path, msg: "invalid use of write_at on a file opened with open_append"))
+  }
+  let st = fsops.file_write_at(f.h, offset, data, f.path)
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+}
+
+fn file_truncate(f: File, size: Int) -> () ! FsErr {
+  file_state(f, true)?
+  if size < 0 {
+    return Err(FsErr.Io(path: f.path, msg: "negative size"))
+  }
+  let st = fsops.file_truncate(f.h, size, f.path)
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+}
+
+fn file_stat(f: File) -> FileInfo ! FsErr {
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  if fsops.file_closed(f.h) {
+    return Err(FsErr.Io(path: f.path, msg: "file already closed"))
+  }
+  let l = fsops.file_stat(f.h, f.path)
+  let st = sysio.status()
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+  Ok(FileInfo{name: fs_base(f.path), path: f.path, is_dir: (l[0] & 61440) == 16384, size: l[1], modified: Time.UNIX_EPOCH + Duration.from_nanos(l[2]), is_symlink: false})
 }
 
 fn file_sync(f: File) -> () ! FsErr {
