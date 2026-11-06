@@ -57,3 +57,18 @@ test "tags, fixed and length delimited values, and skipping" {
   expect(protobuf.read_tag(b"\x00", 0)) == Err(protobuf.ProtoErr.BadTag)
   expect(protobuf.skip_field(b"", 0, 1, 6)) == Err(protobuf.ProtoErr.BadWire(wire: 6))
 }
+
+test "put_* builder forms write the same bytes as append_*" {
+  var o = BytesBuilder.new()
+  o = protobuf.put_tag(o, 3, 2)
+  o = protobuf.put_varint(o, UInt64(300))
+  o = protobuf.put_fixed32(o, UInt32(1))
+  o = protobuf.put_fixed64(o, UInt64(258))
+  o = protobuf.put_bytes(o, b"abc")
+  var b = protobuf.append_tag(b"", 3, 2)
+  b = protobuf.append_varint(b, UInt64(300))
+  b = protobuf.append_fixed32(b, UInt32(1))
+  b = protobuf.append_fixed64(b, UInt64(258))
+  b = protobuf.append_bytes(b, b"abc")
+  expect(o.freeze()) == b
+}
