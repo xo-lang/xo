@@ -1,4 +1,7 @@
 use std/amqp
+use std/base64
+use std/crypto
+use std/url
 
 fn hb(s: Str) -> Bytes { Bytes.from_hex(s).or_fault("hex") }
 
@@ -695,4 +698,41 @@ test "interop: a large delivery, keepalive, reject and the dead letter path" use
     c.end_session(sess).or_fault("end")
     c.close().or_fault("close")
   }
+}
+
+/// A Service Bus SAS token for `uri` (std/crypto HMAC-SHA256 over "url-encoded-uri\nexpiry").
+fn sb_sas_token(uri: Str, key_name: Str, key: Str, expiry: Int) -> Str {
+  let enc = url.query_escape(uri)
+  let sig = crypto.hmac_sha256(key.bytes(), "${enc}\n${expiry}".bytes())
+  "SharedAccessSignature sr=${enc}&sig=${url.query_escape(base64.encode(sig))}&se=${expiry}&skn=${key_name}"
+}
+
+test "interop: Service Bus emulator, CBS put-token then send and receive" uses (net, clock, env) {
+  let addr = os.env.get("XO_AMQP_SB_ADDR") ?? ""
+  if addr == "" { return }
+  let c = amqp.dial(os.net, addr, amqp.ConnOptions{container_id: "xo-sb", clock: Some(os.clock), timeout_ms: 20000,
+    sasl: amqp.Sasl.Anonymous}).or_fault("dial")
+  let sess = c.begin().or_fault("begin")
+  let audience = "sb://sbemulatorns/xo-interop"
+  let expiry = os.clock.now().unix() + 3600
+  let tok = sb_sas_token(audience, "RootManageSharedAccessKey", "SAS_KEY_VALUE", expiry)
+  amqp.cbs_put_token(c, sess, audience, tok, expiry_ms: expiry * 1000).or_fault("put-token")
+  // a wrong key is refused
+  let bad = sb_sas_token(audience, "RootManageSharedAccessKey", "wrong", expiry)
+  match amqp.cbs_put_token(c, sess, audience, bad, expiry_ms: expiry * 1000) {
+    Ok(_) => fault("a bad token should be refused")
+    Err(Peer(_)) => {}
+    Err(_) => fault("wrong error for a bad token")
+  }
+  let snd = c.new_sender(sess, "xo-interop").or_fault("sender")
+  let out = snd.send(amqp.Message{body: amqp.Body.Data(sections: [b"hello sb"])}).or_fault("send")
+  expect(out) == Some(amqp.DeliveryState.Accepted)
+  let rcv = c.new_receiver(sess, "xo-interop", amqp.ReceiverOptions{credit: 1}).or_fault("receiver")
+  let d = rcv.receive().or_fault("receive")
+  expect(d.message.body) == amqp.Body.Data(sections: [b"hello sb"])
+  rcv.accept(d).or_fault("accept")
+  rcv.close().or_fault("close receiver")
+  snd.close().or_fault("close sender")
+  c.end_session(sess).or_fault("end")
+  c.close().or_fault("close")
 }
