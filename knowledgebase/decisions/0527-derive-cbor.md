@@ -78,3 +78,13 @@ field is dropped (first wins) and a text key matches exactly before ignoring cas
 its number as text; built in tags 0 to 3 are checked on every decoded value; arrays of small integers read as
 Bytes. Xo's zero Time is the Unix epoch, so an absent Time field encodes as 0 where Go's zero time encodes as
 null (use `Time?`). `toarray` (a tag on the first field) is built and pinned (an array of exactly the field count). Enums and `derive Cbor(case:)` are not built yet.
+
+## Next pushes (design notes, 2026-11-05)
+
+- Enums: a variant with fields is a one entry map `{ "Variant": {fields as a map} }` (a unit variant is the text of its name), as
+  decision 0527 section 3 says; no Go oracle exists, so the corpus is round trip (marshal then unmarshal gives the value) plus
+  hand written hex for the shapes. The generator reuses `cbor_codec`'s field loop per variant; `derive Json`'s enum code
+  (compiler/check/derive.xo) is the model for variant dispatch.
+- `derive Cbor(case: snake | camel | pascal | kebab)`: apply 0277's key transform in `cbor_opts` when no `as` or `cbor` string
+  names the field; the transform helper `derive Json` uses is shared.
+- A typed fuzz corpus (`TestCborFuzz` style, fresh seeds through the typed oracle modes) to follow the fixed corpora.
