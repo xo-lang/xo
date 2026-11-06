@@ -1136,10 +1136,34 @@ fn (var b: Builder) with_closure(e: Expr, et: Int, keep: Bool = true) -> (Int, B
     // a function value of type fn(var T) -> R is already packed (typ)
     return (b.value_as(e, b.typ(nct)), true)
   }
-  // Mutex.with keeps the value when the closure faults, which only a
-  // literal it builds can promise
-  b.unsupported("a function value with a `var` parameter given to `Mutex.with` that is not a closure literal")
-  (-1, false)
+  // Mutex.with keeps the value when the closure faults: a catching
+  // wrapper calls the packed value and hands back what it was given
+  let fv = b.value_as(e, b.typ(nct))
+  let ft = b.vty(fv)
+  b.nclos += 1
+  let name = "${b.s.f.name}.fn${b.nclos}"
+  let fi = b.m.new_func(name, [ft, et], [b.m.types[ft].ret])
+  b.m.funcs[fi].indirect = true
+  b.m.funcs[fi].captures = [ft]
+  b.m.funcs[fi].catches = true
+  // the owner gets no front end cache entry (fe_entry's queue check)
+  b.queue.push(Job.Wrap(fi: fi, file: b.s.file, ft: ft))
+  (b.add(Op.Closure, ft, Aux.S(s: name), [fv]), true)
+}
+
+/// The body of a Job.Wrap: call the captured packed value with the value
+/// given; a fault hands that value back (pack_orig, finish_fn).
+fn (var b: Builder) wrap_body(fi: Int, file: Int, ft: Int) {
+  let saved = b.begin(fi, file)
+  let env = b.param(0)
+  let fv = b.add(Op.Capture, ft, Aux.I(n: 0), [env])
+  let v = b.param(1)
+  b.s.pack_orig = v
+  let r = b.add(Op.CallValue, b.m.types[ft].ret, Aux.None, [fv, v])
+  b.check("")
+  b.add(Op.Return, -1, Aux.None, [r])
+  b.finish_fn()
+  b.end(saved)
 }
 
 /// A closure literal with a `var` parameter whose function returns its

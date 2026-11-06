@@ -1,0 +1,57 @@
+// Mutex.with given a function value with a `var` parameter (not a closure
+// literal): a named function, a closure held in a local, one that fails
+// (the value stays as it was) and one that faults (the mutex is poisoned,
+// reset puts a value back).
+use std/task
+
+struct Acct {
+  name: Str
+  bal: Int = 0
+  log: List[Str] = []
+}
+
+fn deposit(var a: Acct) -> Int {
+  a.bal += 10
+  a.log.push("dep")
+  a.bal
+}
+
+fn withdraw(var a: Acct) -> Int ! Str {
+  if a.bal < 100 {
+    return Err("low: ${a.bal}")
+  }
+  a.bal -= 100
+  a.bal
+}
+
+fn crash(var a: Acct) -> Int {
+  a.bal = -1
+  let xs: List[Int] = []
+  xs[a.log.len()]
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let m = Mutex[Acct].new(Acct{name: "a"})
+  io.println("${m.with(deposit)} ${m.with(deposit)}")
+  let twice = fn(var a: Acct) -> Int { a.bal *= 2; a.log.push("x2"); a.bal }
+  let f = twice
+  io.println("${m.with(f)} ${m.with(twice)}")
+  match m.with(withdraw) {
+    Ok(v) => io.println("ok ${v}")
+    Err(e) => io.println("err ${e}")
+  }
+  io.println("${m.with(fn(a) { a.bal })} ${m.with(fn(a) { a.log.len() })}")
+  for _ in 0..3 { m.with(deposit) }
+  match m.with(withdraw) {
+    Ok(v) => io.println("ok ${v}")
+    Err(e) => io.println("err ${e}")
+  }
+  let before = m.with(fn(a) { a })
+  let r = task.isolate(fn() -> Int ! () { m.with(crash) })
+  io.println("faulted ${r.is_err()}")
+  let p = task.isolate(fn() -> Int ! () { m.with_read(fn(_a) { 0 }) })
+  io.println("poisoned ${p.is_err()}")
+  m.reset(before)
+  io.println("${m.with(deposit)} ${m.with(fn(a) { a.log.join(",") })}")
+}

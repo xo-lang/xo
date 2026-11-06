@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+10 20
+40 80
+err low: 80
+80 4
+ok 10
+faulted true
+poisoned true
+20 dep,dep,x2,x2,dep,dep,dep,dep
+--- stderr
