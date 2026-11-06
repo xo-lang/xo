@@ -1,6 +1,6 @@
 # 0530: std/protobuf, derive Proto and a .proto generator
 
-Status: Proposed (Xo Lang 3, 2026-11-06; the owner accepts the API)
+Status: Accepted (owner, 2026-11-06: "Go with your recommendations"; Xo Lang 3 drafted 2026-11-06)
 
 ## Context
 
