@@ -214,15 +214,9 @@ pub fn memset(d: Int, c: Int, n: Int) -> Int {
 /// above b's.
 pub fn memcmp(a: Int, b: Int, n: Int) -> Int {
   var i = 0
-  // 32 bytes a step while they are equal: one branch for four words
-  while addw(i, 32) <= n {
-    let d0 = rt.mem_load(a, i, 8) ^ rt.mem_load(b, i, 8)
-    let d1 = rt.mem_load(a, addw(i, 8), 8) ^ rt.mem_load(b, addw(i, 8), 8)
-    let d2 = rt.mem_load(a, addw(i, 16), 8) ^ rt.mem_load(b, addw(i, 16), 8)
-    let d3 = rt.mem_load(a, addw(i, 24), 8) ^ rt.mem_load(b, addw(i, 24), 8)
-    if (d0 | d1 | d2 | d3) != 0 {
-      break
-    }
+  // 32 bytes a step while they are equal; the word steps below find
+  // the first that differs
+  while addw(i, 32) <= n && rt.mem_ne32(addw(a, i), addw(b, i)) == 0 {
     i = addw(i, 32)
   }
   while addw(i, 8) <= n {

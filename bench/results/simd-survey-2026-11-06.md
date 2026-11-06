@@ -115,3 +115,28 @@ bench/perf/websocket (host 1, `--rounds 7`, against main's std): big
 (16 KB messages) 1.078 (0.951 to 1.253), small 1.004 (0.996 to 1.033).
 The loopback round trip dominates both. Raw output:
 ~/xo-lead/notes/lang1/wsmask-host.txt.
+
+## Step 2: 32 byte lane intrinsics
+
+Step 2a (code generation only): rt.bytes_any_eq32, rt.bytes_any_high32
+and rt.mem_ne32 on arm64 (one ldp of two q registers, the compares, an
+orr or and of the halves, shrn, fmov), x86_64 (SSE2 pcmpeqb or por and
+pmovmskb), LLVM (a <32 x i8> compare) and wasm. Step 2b: find_byte,
+span and memcmp's 32 byte loops call them in place of two 16 byte masks
+or four word xors. 2b waits for a seed that knows the intrinsics.
+
+Measured with an xo built from 2a (lang1-simd2, 9b2e88cc2) building
+simdscan with step 1's std (B) and 2b's (C), `--rounds 5`, host 1:
+
+| Workload | C/B | C/Go |
+|---|---:|---:|
+| index_byte | 0.679 | 1.347 |
+| index_byte_64 | 0.730 | within noise (0.977) |
+| utf8_ascii | 0.839 | 1.057 |
+| equal | 0.831 | 1.371 |
+| compare | 0.873 | 1.157 |
+| utf8_mixed | 1.060 (1.038 to 1.112) | within noise (0.885) |
+
+utf8_mixed has a multibyte sequence about every 7 bytes, so the 32
+byte test rarely passes and adds a step before the 16 byte loop. Raw
+output: ~/xo-lead/notes/lang1/simd2a-host.txt.

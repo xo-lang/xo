@@ -31,6 +31,16 @@ The large block cache served a request only from a mapping of at most four times
 
 `Str.equal_fold`, `Bytes.equal_fold` and `eq_lower` compare 8 bytes a step while both words are ASCII, equal, or equal with their capitals lowered (std/native/llrt/scan.xo fold_eq_words), then go on byte by byte from the first word that is not; `to_lower` and `to_upper` find the first byte to change (or at or above 0x80) a word at a time (scan.xo case_run).
 
+## 2026-11-06: perf: a one byte find, the ASCII run of UTF-8 validation and the linux memcmp test 32 bytes with one vector compare
+
+- Kind: perf
+- Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md), step 2
+- Go reference: bytes.IndexByte, utf8.Valid, bytes.Equal, bytes.Compare (go1.26.1)
+- Test: std/native/llrt/scan_test.xo "find_byte and span find a byte at each place of 0 to 100", libcstr_test.xo "memcmp of 0 to 80 bytes differing at each byte"
+- Timing: bench/perf/simdscan on linux/arm64, against step 1's std (the same xo): index_byte 0.679, index_byte_64 0.730, utf8_ascii 0.839, equal 0.831, compare 0.873, utf8_mixed 1.06 of the wall; against Go 1.26.1 index_byte 1.35, index_byte_64 0.98, utf8_ascii 1.06, equal 1.37, compare 1.16
+
+std/native/llrt/scan.xo find_byte and span, and libcstr.xo memcmp, call rt.bytes_any_eq32, rt.bytes_any_high32 and rt.mem_ne32 for their 32 byte steps (one load pair, compare and mask move on arm64; SSE2 on x86_64) in place of two 16 byte masks or four word xors.
+
 ## 2026-11-06: perf: Str and Bytes equality, order and one byte search faster on linux; ASCII validation faster everywhere
 
 - Kind: perf
