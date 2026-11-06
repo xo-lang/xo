@@ -1132,7 +1132,13 @@ fn (var b: Builder) with_closure(e: Expr, et: Int, keep: Bool = true) -> (Int, B
     FnLit(lit) => return (b.closure_with(lit, ct, et, keep), true)
     _ => {}
   }
-  b.unsupported("a function value with a `var` parameter that is not a closure literal")
+  if !keep {
+    // a function value of type fn(var T) -> R is already packed (typ)
+    return (b.value_as(e, b.typ(nct)), true)
+  }
+  // Mutex.with keeps the value when the closure faults, which only a
+  // literal it builds can promise
+  b.unsupported("a function value with a `var` parameter given to `Mutex.with` that is not a closure literal")
   (-1, false)
 }
 

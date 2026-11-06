@@ -1,0 +1,69 @@
+struct S {
+  n: Int
+  log: List[Str]
+}
+
+fn bump(var s: S, by: Int) -> Int {
+  s.n += by
+  s.log.push("bump ${by}")
+  s.n
+}
+
+fn apply(f: fn(var S, Int) -> Int, var s: S, k: Int) -> Int {
+  f(s, k) + f(s, k)
+}
+
+fn twice(var a: Int, var b: Int) -> Int {
+  a += 1
+  b += 10
+  a + b
+}
+
+fn fails(var s: S) -> Int ! Str {
+  s.n += 100
+  if s.n > 150 {
+    return Err("too big: ${s.n}")
+  }
+  Ok(s.n)
+}
+
+fn main(os: Os) {
+  var s = S{n: 1, log: []}
+  // a named function as a value
+  let r = apply(bump, s, 2)
+  os.stdio.println("${r} ${s.n} ${s.log.len()}")
+  // a closure literal, and two var parameters
+  let g: fn(var Int, var Int) -> Int = fn(var a: Int, var b: Int) -> Int {
+    a *= 2
+    b *= 3
+    a + b
+  }
+  var x = 5
+  var y = 7
+  let z = g(x, y)
+  os.stdio.println("${z} ${x} ${y}")
+  let h = twice
+  let w = h(x, y)
+  os.stdio.println("${w} ${x} ${y}")
+  // a failing one: the value is written back on both paths
+  let fl: fn(var S) -> Int ! Str = fails
+  var t = S{n: 10, log: []}
+  match fl(t) {
+    Ok(v) => os.stdio.println("ok ${v} ${t.n}")
+    Err(e) => os.stdio.println("err ${e} ${t.n}")
+  }
+  match fl(t) {
+    Ok(v) => os.stdio.println("ok ${v} ${t.n}")
+    Err(e) => os.stdio.println("err ${e} ${t.n}")
+  }
+  // a list element as the place
+  var xs = [S{n: 0, log: []}, S{n: 40, log: []}]
+  let q = apply(bump, xs[1], 1)
+  os.stdio.println("${q} ${xs[1].n} ${xs[1].log.len()} ${xs[0].n}")
+  // Map.update with a function value
+  var m: Map[Str, Int] = {"a": 1}
+  let inc: fn(var Int) -> () = fn(var v: Int) { v += 5 }
+  m.update("a", 0, inc)
+  m.update("b", 100, inc)
+  os.stdio.println("${m.get("a") ?? -1} ${m.get("b") ?? -1}")
+}

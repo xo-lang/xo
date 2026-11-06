@@ -1239,13 +1239,22 @@ fn (var b: Builder) typ(t0: Int) -> Int {
     }
     Func => {
       var ps: List[Int] = []
+      var vts: List[Int] = []
       for (i, p) in x.args.indexed() {
+        let pt = b.typ(p)
+        ps.push(pt)
         if x.vars[i] {
-          b.unsupported("function values with `var` parameters")
+          vts.push(pt)
         }
-        ps.push(b.typ(p))
       }
       let rt = b.typ(b.result_of(x.result, b.fail_err(x.err)))
+      if !vts.is_empty() {
+        // `var` parameters: the function returns its result and their
+        // new values as one tuple, as a direct call's results and
+        // closure_with's packed closure (Mutex.with) are laid out; the
+        // caller writes them back to the argument places (value_call)
+        return b.m.func_type(ps, b.m.tuple([rt] + vts))
+      }
       return b.m.func_type(ps, rt)
     }
     Var => return b.unit_t()

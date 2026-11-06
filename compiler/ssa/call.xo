@@ -324,16 +324,55 @@ fn (var b: Builder) value_call(x: Expr) -> Int {
     b.unsupported("this call of a function value")
     return b.undef(b.nat_of(x))
   }
+  // the checker's type says which parameters are `var` (typ packs them):
+  // a local's own type (the callee expression of a call has no recorded
+  // type), else the expression's
+  var vars: List[Bool] = []
+  var fct = -1
+  if let Ident(id: id) = fun {
+    let vo = b.c.var_of(b.s.file, id)
+    if vo >= 0 {
+      fct = b.apply(b.c.objs[vo].ty)
+    }
+  }
+  if fct < 0 {
+    fct = b.nat_check(fun)
+  }
+  if fct >= 0 && b.c.tys[b.c.resolve(fct)].kind == check.TyKind.Func {
+    vars = b.c.tys[b.c.resolve(fct)].vars
+  }
   var vs = [fv]
+  var places: List[Place] = []
   for (i, a) in args.indexed() {
     if a.name != None {
       b.unsupported("a named argument to a function value")
     }
-    vs.push(b.value_as(a.value, b.m.types[ft].elems[i]))
+    if i < vars.len() && vars[i] {
+      var p = b.place(a.value)
+      if !p.ok {
+        return b.undef(b.nat_of(x))
+      }
+      vs.push(b.place_get(p))
+      places.push(p)
+    } else {
+      vs.push(b.value_as(a.value, b.m.types[ft].elems[i]))
+    }
   }
   let r = b.add(Op.CallValue, b.m.types[ft].ret, Aux.None, vs)
   b.check("")
-  b.call_result(r, x)
+  if places.is_empty() {
+    return b.call_result(r, x)
+  }
+  // a packed result: the call's result, then each `var` argument's new
+  // value, written back as a direct call's are
+  let t = b.vty(r)
+  for (i, p0) in places.indexed() {
+    var p = p0
+    let f = b.add(Op.Field, b.m.types[t].elems[i + 1], Aux.I(n: i + 1), [r])
+    b.place_set(p, f)
+  }
+  let f0 = b.add(Op.Field, b.m.types[t].elems[0], Aux.I(n: 0), [r])
+  b.call_result(f0, x)
 }
 
 /// After a call of a function that never returns, the block ends
@@ -405,7 +444,7 @@ fn (var b: Builder) closure(e: Expr, lit: parser.FnLit) -> Int {
   b.fe_closure_made(fi)
   let x = b.c.tys[ct]
   let err_t = b.fail_err(x.err)
-  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: false, polls: b.s.polls))
+  b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: x.vars.contains(true), polls: b.s.polls))
   b.add(Op.Closure, t, Aux.S(s: name), vals)
 }
 
@@ -429,9 +468,16 @@ fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: 
     if b.s.f.catches {
       b.s.pack_orig = b.param(1)
     }
-    if ps.len() == 1 && ps[0] >= 0 {
-      b.write_var(ps[0], b.param(1))
-      b.s.var_params = [ps[0]]
+    // each parameter, and the `var` ones (closure_with's single one, or
+    // those the literal marks) hand back their values in the tuple
+    for (i, vo) in ps.indexed() {
+      if vo < 0 {
+        continue
+      }
+      b.write_var(vo, b.param(i + 1))
+      if ps.len() == 1 || (i < lit.params.len() && lit.params[i].is_var) {
+        b.s.var_params.push(vo)
+      }
     }
   } else {
     let nps = b.s.f.blocks[0].params.len()
@@ -786,12 +832,10 @@ fn (var b: Builder) func_value(fo: Int, e: Expr) -> Int {
   var w = b.thunks.get(key) ?? -1
   if w < 0 {
     let callee = b.declare(fo, targs)
-    if !b.m.funcs[callee].var_params.is_empty() {
-      b.unsupported("a function with `var` parameters as a value")
-      return b.undef(t)
-    }
     let cname = b.m.funcs[callee].name
-    let cres = b.m.funcs[callee].results[0]
+    // a function with `var` parameters returns (result, their values),
+    // the tuple a packed function value returns
+    let cres = if b.m.funcs[callee].results.len() == 1 { b.m.funcs[callee].results[0] } else { b.m.tuple(b.m.funcs[callee].results) }
     var ps = [t]
     for p in b.m.types[t].elems {
       ps.push(p)
