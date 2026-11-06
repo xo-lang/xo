@@ -236,6 +236,35 @@ func showMsg(m *dynamicpb.Message) string {
 		hex.EncodeToString(m.Get(d.ByNumber(6)).Bytes()))
 }
 
+// sDesc is S { int32 i32=1; uint32 u32=2; uint64 u64=3; sint32 s32=4; fixed32 f32=5; sfixed32 sf32=6; fixed64 f64=7; float fl=8 },
+// the scalar widths of derive Proto (Int32, UInt32, UInt64, Float32 and the zigzag and fixed options).
+func sDesc() protoreflect.MessageDescriptor {
+	f := func(name string, num int32, typ descriptorpb.FieldDescriptorProto_Type) *descriptorpb.FieldDescriptorProto {
+		return &descriptorpb.FieldDescriptorProto{Name: proto.String(name), Number: proto.Int32(num), Type: typ.Enum(),
+			Label: descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(), JsonName: proto.String(name)}
+	}
+	fd, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name: proto.String("s.proto"), Syntax: proto.String("proto3"), Package: proto.String("t"),
+		MessageType: []*descriptorpb.DescriptorProto{{Name: proto.String("S"), Field: []*descriptorpb.FieldDescriptorProto{
+			f("i32", 1, descriptorpb.FieldDescriptorProto_TYPE_INT32), f("u32", 2, descriptorpb.FieldDescriptorProto_TYPE_UINT32),
+			f("u64", 3, descriptorpb.FieldDescriptorProto_TYPE_UINT64), f("s32", 4, descriptorpb.FieldDescriptorProto_TYPE_SINT32),
+			f("f32", 5, descriptorpb.FieldDescriptorProto_TYPE_FIXED32), f("sf32", 6, descriptorpb.FieldDescriptorProto_TYPE_SFIXED32),
+			f("f64", 7, descriptorpb.FieldDescriptorProto_TYPE_FIXED64), f("fl", 8, descriptorpb.FieldDescriptorProto_TYPE_FLOAT),
+		}}},
+	}, nil)
+	if err != nil {
+		panic(err)
+	}
+	return fd.Messages().ByName("S")
+}
+
+func showS(m *dynamicpb.Message) string {
+	d := m.Descriptor().Fields()
+	// the float is left to the re-marshaled bytes: widening a signaling NaN to float64 quiets it
+	return fmt.Sprintf("%d %d %d %d %d %d %d", m.Get(d.ByNumber(1)).Int(), m.Get(d.ByNumber(2)).Uint(), m.Get(d.ByNumber(3)).Uint(),
+		m.Get(d.ByNumber(4)).Int(), m.Get(d.ByNumber(5)).Uint(), m.Get(d.ByNumber(6)).Int(), m.Get(d.ByNumber(7)).Uint())
+}
+
 type ans struct {
 	Err string `json:"err,omitempty"`
 	V   string `json:"v,omitempty"`
@@ -371,6 +400,42 @@ func main() {
 				a = ans{Err: "err"}
 			} else {
 				a = ans{V: showMsg(m)}
+			}
+		case "smsg":
+			// smsg I32 U32 U64 S32 F32 SF32 F64 FLBITS: marshal
+			md := sDesc()
+			m := dynamicpb.NewMessage(md)
+			d := md.Fields()
+			i32, _ := strconv.ParseInt(f[1], 10, 32)
+			u32, _ := strconv.ParseUint(f[2], 10, 32)
+			u64, _ := strconv.ParseUint(f[3], 10, 64)
+			s32, _ := strconv.ParseInt(f[4], 10, 32)
+			f32, _ := strconv.ParseUint(f[5], 10, 32)
+			sf32, _ := strconv.ParseInt(f[6], 10, 32)
+			f64, _ := strconv.ParseUint(f[7], 10, 64)
+			fl, _ := strconv.ParseUint(f[8], 10, 32)
+			m.Set(d.ByNumber(1), protoreflect.ValueOfInt32(int32(i32)))
+			m.Set(d.ByNumber(2), protoreflect.ValueOfUint32(uint32(u32)))
+			m.Set(d.ByNumber(3), protoreflect.ValueOfUint64(u64))
+			m.Set(d.ByNumber(4), protoreflect.ValueOfInt32(int32(s32)))
+			m.Set(d.ByNumber(5), protoreflect.ValueOfUint32(uint32(f32)))
+			m.Set(d.ByNumber(6), protoreflect.ValueOfInt32(int32(sf32)))
+			m.Set(d.ByNumber(7), protoreflect.ValueOfUint64(f64))
+			m.Set(d.ByNumber(8), protoreflect.ValueOfFloat32(math.Float32frombits(uint32(fl))))
+			out, err := proto.MarshalOptions{Deterministic: true}.Marshal(m)
+			if err != nil {
+				a = ans{Err: err.Error()}
+			} else {
+				a = ans{V: hex.EncodeToString(out)}
+			}
+		case "sunmsg":
+			// sunmsg HEX: unmarshal, answer the fields and the re-marshaled bytes (unknown fields are kept and written last)
+			m := dynamicpb.NewMessage(sDesc())
+			if err := proto.Unmarshal(b, m); err != nil {
+				a = ans{Err: "err"}
+			} else {
+				out, _ := proto.MarshalOptions{Deterministic: true}.Marshal(m)
+				a = ans{V: showS(m) + " " + hex.EncodeToString(out)}
 			}
 		case "rmsg":
 			// rmsg ID NUMS TAGS MAYBE INNER INNERS MO DS (the showRep form): marshal

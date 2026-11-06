@@ -1598,7 +1598,7 @@ fn proto_elem(tx: Str, po: ProtoOpts, enums: Map[Str, Str]) -> ProtoElem? {
   }
   if tx == "Int32" {
     if po.zigzag {
-      return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, protobuf.encode_zigzag(Int($V)))", rd: "protobuf.read_varint", conv: "Int32.wrapping_from(protobuf.decode_zigzag($X))", nonzero: "$V != Int32.wrapping_from(0)", zero: "Int32.wrapping_from(0)", packable: true, merge: ""})
+      return Some(ProtoElem{wire: 0, enc: "protobuf.append_varint($B, protobuf.encode_zigzag(Int($V)))", rd: "protobuf.read_varint", conv: "Int32.wrapping_from(protobuf.decode_zigzag(UInt64.from_bits($X.to_bits() & 4294967295)))", nonzero: "$V != Int32.wrapping_from(0)", zero: "Int32.wrapping_from(0)", packable: true, merge: ""})
     }
     if po.fixed {
       return Some(ProtoElem{wire: 5, enc: "protobuf.append_fixed32($B, UInt32.wrapping_from(Int($V)))", rd: "protobuf.read_fixed32", conv: "Int32.wrapping_from(Int($X))", nonzero: "$V != Int32.wrapping_from(0)", zero: "Int32.wrapping_from(0)", packable: true, merge: ""})

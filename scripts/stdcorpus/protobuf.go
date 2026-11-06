@@ -227,6 +227,71 @@ func protobufCorpus() string {
 		}
 		add("unmsg", b)
 	}
+	// scalar widths: marshal (smsg) and unmarshal (sunmsg, with unknown fields kept) against dynamicpb
+	for i := 0; i < 400; i++ {
+		pick := func(bits uint) uint64 {
+			if tr.Intn(3) == 0 {
+				return 0
+			}
+			v := tr.Uint64() >> uint(64-bits+uint(tr.Intn(int(bits))))
+			return v
+		}
+		sg := func(v uint64, bits uint) int64 {
+			x := int64(int32(v))
+			if tr.Intn(2) == 0 {
+				x = int64(int32(-x))
+			}
+			return x
+		}
+		fl := uint64(0)
+		if tr.Intn(3) != 0 {
+			fl = uint64(math.Float32bits(float32(tr.Intn(2000)-1000) / 8))
+			if tr.Intn(3) == 0 {
+				fl = uint64(uint32(tr.Uint32()))
+			}
+		}
+		cases = append(cases, protoCase{fmt.Sprintf("smsg %d %d %d %d %d %d %d %d", sg(pick(32), 32), pick(32), pick(64), sg(pick(32), 32), pick(32), sg(pick(32), 32), pick(64), fl), nil})
+	}
+	for i := 0; i < 300; i++ {
+		var b []byte
+		for j, n := 0, tr.Intn(8); j < n; j++ {
+			f := protoField(tr, 0)
+			if tr.Intn(2) == 0 {
+				// a field of S with its own wire type
+				num := uint64(1 + tr.Intn(9))
+				wire := []uint64{0, 0, 0, 0, 5, 5, 1, 5, 0}[num-1]
+				if num == 9 || tr.Intn(10) == 0 {
+					wire = uint64(tr.Intn(3) * 2 / 2)
+				}
+				f = protoVarint(num<<3|wire, 0)
+				switch wire {
+				case 0:
+					f = append(f, protoVarint(tr.Uint64()>>uint(tr.Intn(64)), 0)...)
+				case 1:
+					f = append(f, make([]byte, 8)...)
+					tr.Read(f[len(f)-8:])
+				case 2:
+					n := tr.Intn(6)
+					f = append(f, protoVarint(uint64(n), 0)...)
+					p := make([]byte, n)
+					tr.Read(p)
+					f = append(f, p...)
+				}
+				if num == 5 || num == 6 || num == 8 {
+					if wire == 5 {
+						f = protoVarint(num<<3|5, 0)
+						f = append(f, make([]byte, 4)...)
+						tr.Read(f[len(f)-4:])
+					}
+				}
+			}
+			b = append(b, f...)
+		}
+		if tr.Intn(4) == 0 {
+			b = protoMutate(tr, b)
+		}
+		add("sunmsg", b)
+	}
 	// Option, List and nested fields: marshal (rmsg) and unmarshal (runmsg) against dynamicpb
 	join := func(p []string) string {
 		if len(p) == 0 {
@@ -472,7 +537,7 @@ func protobufCorpus() string {
 	refs := protoOracle(cases)
 	var o strings.Builder
 	o.WriteString(header("google.golang.org/protobuf's protowire: ConsumeVarint, ConsumeTag, ConsumeFixed32 and 64, ConsumeBytes, ConsumeFieldValue (groups, the recursion limit), AppendVarint, SizeVarint and the zigzag forms, on curated and seeded random inputs, against internal/stdtest/protoref"))
-	o.WriteString("use std/protobuf\n\nstruct In {\n  a proto \"1\": Int\n} derive Proto\n\nstruct R {\n  id proto \"1\": Int\n  nums proto \"2\": List[Int]\n  tags proto \"3\": List[Str]\n  maybe proto \"4\": Int?\n  inner proto \"5\": In\n  inners proto \"6\": List[In]\n  mo proto \"7\": In?\n  ds proto \"8\": List[Float]\n  ms proto \"9\": Map[Str, Int]\n  mn proto \"10\": Map[Int, In]\n  mb proto \"11\": Map[Bool, Str]\n} derive Proto\n\nenum Choice {\n  Circle as \"2\"(r: Int)\n  Sq as \"3\"(side: Float)\n  Lbl as \"4\"(text: Str)\n  Inn as \"5\"(v: In)\n} derive Proto\n\nstruct O {\n  id proto \"1\": Int\n  ch proto \"oneof\": Choice?\n  tail proto \"6\": Str\n} derive Proto\n\nstruct M {\n  id proto \"1\": Int\n  name proto \"2\": Str\n  z proto \"3,zigzag\": Int\n  ok proto \"4\": Bool\n  f proto \"5\": Float\n  raw proto \"6\": Bytes\n} derive Proto\n\n")
+	o.WriteString("use std/protobuf\n\nstruct In {\n  a proto \"1\": Int\n} derive Proto\n\nstruct R {\n  id proto \"1\": Int\n  nums proto \"2\": List[Int]\n  tags proto \"3\": List[Str]\n  maybe proto \"4\": Int?\n  inner proto \"5\": In\n  inners proto \"6\": List[In]\n  mo proto \"7\": In?\n  ds proto \"8\": List[Float]\n  ms proto \"9\": Map[Str, Int]\n  mn proto \"10\": Map[Int, In]\n  mb proto \"11\": Map[Bool, Str]\n} derive Proto\n\nenum Choice {\n  Circle as \"2\"(r: Int)\n  Sq as \"3\"(side: Float)\n  Lbl as \"4\"(text: Str)\n  Inn as \"5\"(v: In)\n} derive Proto\n\nstruct O {\n  id proto \"1\": Int\n  ch proto \"oneof\": Choice?\n  tail proto \"6\": Str\n} derive Proto\n\nstruct S {\n  i32 proto \"1\": Int32\n  u32 proto \"2\": UInt32\n  u64 proto \"3\": UInt64\n  s32 proto \"4,zigzag\": Int32\n  f32 proto \"5,fixed\": UInt32\n  sf32 proto \"6,fixed\": Int32\n  f64 proto \"7,fixed\": UInt64\n  fl proto \"8\": Float32\n  rest proto \"unknown\": Bytes\n} derive Proto\n\nstruct M {\n  id proto \"1\": Int\n  name proto \"2\": Str\n  z proto \"3,zigzag\": Int\n  ok proto \"4\": Bool\n  f proto \"5\": Float\n  raw proto \"6\": Bytes\n} derive Proto\n\n")
 	o.WriteString("/// (operation, input in hex or the number, what Go's protowire answers: `ok VALUE N` or `err KIND`)\nconst CASES: List[(Str, Bytes, Str)] = [\n")
 	for i, c := range cases {
 		op, arg := c.op, ""
@@ -582,6 +647,17 @@ fn run(op: Str, data: Bytes) -> Str {
     let f = data.to_str_lossy().split(" ")
     let m = M{id: Int.parse(f[0]) ?? 0, name: unhex(f[1]).to_str_lossy(), z: Int.parse(f[2]) ?? 0, ok: f[3] == "1", f: Float.from_bits(ubits_of(f[4].bytes())), raw: unhex(f[5])}
     return "ok ${protobuf.marshal(m).to_hex()} 0"
+  }
+  if op == "smsg" {
+    let f = data.to_str_lossy().split(" ")
+    let s = S{i32: Int32.wrapping_from(Int.parse(f[0]) ?? 0), u32: UInt32.wrapping_from(Int.parse(f[1]) ?? 0), u64: UInt64.from_bits(ubits_of(f[2].bytes())), s32: Int32.wrapping_from(Int.parse(f[3]) ?? 0), f32: UInt32.wrapping_from(Int.parse(f[4]) ?? 0), sf32: Int32.wrapping_from(Int.parse(f[5]) ?? 0), f64: UInt64.from_bits(ubits_of(f[6].bytes())), fl: Float32.from_bits(UInt32.wrapping_from(Int.parse(f[7]) ?? 0)), rest: b""}
+    return "ok ${protobuf.marshal(s).to_hex()} 0"
+  }
+  if op == "sunmsg" {
+    return match protobuf.unmarshal[S](data) {
+      Ok(r) => "ok ${r.i32} ${r.u32} ${r.u64} ${r.s32} ${r.f32} ${r.sf32} ${r.f64} ${protobuf.marshal(r).to_hex()} 0"
+      Err(_) => "err err"
+    }
   }
   if op == "unmsg" {
     return match protobuf.unmarshal[M](data) {
