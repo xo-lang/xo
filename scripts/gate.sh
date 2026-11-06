@@ -67,6 +67,10 @@
 #            TestMachoBinCache among them) when it changes compiler/xo's
 #            bcache.xo, parallel.xo, packseg.xo or cache.xo
 #            (XO_GATE_CACHE=0 skips that; lead, 2026-10-30); and
+#            internal/arm64 TestStdStoreBuilds when it changes a std
+#            module's source (std/*.xo, std/native/*.xo or a
+#            std/native/MOD/ directory; XO_GATE_STDSTORE=0 skips that;
+#            lead, 2026-11-06); and
 #            internal/llvm's TestRaceSyncTable and TestRaceSyncTableArm64
 #            on darwin when it changes llrt's task, scheduler or race
 #            runtime (XO_GATE_RACE=0 skips that; lead, 2026-10-31); and
@@ -234,6 +238,17 @@ cross_ran=0
 scale_change() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/arm64/jumptab\.xo$'
+}
+# stdstore_change: the branch changes a std module's source, which std's
+# store build (every std module at once, decision 0388) compiles, so
+# internal/arm64's TestStdStoreBuilds (about 30 s) runs after the steps
+# named (lead, 2026-11-06: f0b4e8523 added std/sqlite, the first std
+# module with `use c`; the store build went down the cc link path, every
+# build fell back to whole program, and main was red 11:23 to 14:22
+# (gotchas/std-store-build-use-c-module.md)). XO_GATE_STDSTORE=0 skips it.
+stdstore_change() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^std/([a-z0-9_]+\.xo|native/[a-z0-9_]+\.xo|native/[a-z0-9_]+/)'
 }
 # race_change: the branch changes llrt's task, scheduler or TSan runtime
 # (tasks.xo, sched.xo, racesym.xo, cabi_race*.xo), so on darwin, where the
@@ -444,6 +459,9 @@ if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
 fi
 if [ "${XO_GATE_CACHE:-1}" != 0 ] && cache_change; then
   full caches ./internal/arm64 -run 'Cache|BinCache'
+fi
+if [ "${XO_GATE_STDSTORE:-1}" != 0 ] && stdstore_change; then
+  full stdstore ./internal/arm64 -run '^TestStdStoreBuilds$'
 fi
 if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
   full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'

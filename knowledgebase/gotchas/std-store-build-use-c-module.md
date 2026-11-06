@@ -26,3 +26,8 @@ usesC does for the Go backend). A program that imports such a module builds
 it as its own part. When adding a std module with C sources, run
 `xo dev stdobj` (or TestStdStoreBuilds) in the gate: a build that falls
 back to whole program still passes most tests.
+
+Guard (lead, 2026-11-06): scripts/gate.sh runs internal/arm64
+TestStdStoreBuilds for any change to a std module's source (std/*.xo,
+std/native/*.xo or a std/native/MOD/ directory), so a module that breaks
+the store build fails its own gate instead of the next main check.
