@@ -4802,8 +4802,14 @@ X.Y.0, from the tag's own scripts. The running seed-cut.sh must still
 match origin/main's. Rehearse with `XO_SEED_DRY_RUN=1 XO_SEED_TAG=...`;
 the X.Y.0 path is unchanged. Docker must be up for step 6.
 
+Main need not freeze (lead, 2026-11-06; Last verified: 2026-11-06): when
+main moved during the gate, step 4 puts the version commit on the new main
+(only cli.xo, servers.xo and std/VERSION may differ from it), pushes and
+tags that, and the tag message names the gated commit the seed was built
+from; XO_PUSH_LOCK still pins main through the gate when wanted.
+
 With agents running (lead, 2026-10-27; Last verified: 2026-10-27):
-freeze main and pause measure jobs first, and run the cut with
+pause measure jobs first, and run the cut with
 `XO_HEAVY="$HOME/xo-lead/agents/heavy.sh NAME" HEAVY_PRIORITY=1`: each
 heavy step queues on its own, and the 0.33.0 cut (bulk class) took 70
 minutes instead of 35 because its gate and its darwin build each waited

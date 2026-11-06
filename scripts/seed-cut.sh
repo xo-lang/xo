@@ -53,6 +53,10 @@
 # cannot move under the gate (2026-10-21: the 0.24.0 cut passed its gate
 # and its push was refused, main having moved in the 20 minutes). Other
 # pushes wait meanwhile. A dry run takes no lock.
+# Without the lock (2026-11-06), a push refused because main moved puts
+# the version commit on the new main in a worktree of its own, checks that
+# it changes only the three version files, and pushes and tags that; the
+# seed stays the build of the gated commit, which the tag message names.
 set -euo pipefail
 
 die() { echo "seed-cut: $*" >&2; exit 1; }
@@ -189,8 +193,29 @@ elif [ "$dry" = 1 ]; then
   step "4. dry run: not pushing $commit, no tag"
 else
   step "4. push $commit to main, tag v$version"
-  git push -q origin HEAD:main || die "push refused (main moved?): rerun with a new WORKDIR"
-  git tag -a "v$version" -F "$notes" "$commit"
+  pushed=$commit
+  cp "$notes" "$work/tag-notes.txt"
+  if ! git push -q origin HEAD:main 2>"$log/push.log"; then
+    # main moved since step 1: put the version commit on the new main in a
+    # worktree of its own (the tree stays at $commit, which steps 2 and 3
+    # gated and steps 5 and 6 build), check that it changes only the
+    # version files, and push that; the seed is $commit's build, and the
+    # tag names both
+    [ "$prebumped" = 0 ] || die "push refused and main's version commit was made by hand: rerun with a new WORKDIR"
+    git fetch -q origin
+    onto=$work/push
+    rm -rf "${onto:?}"; git worktree prune
+    git worktree add -q --detach "$onto" origin/main
+    ( cd "$onto" && git cherry-pick "$commit" ) > "$log/push.log" 2>&1 ||
+      { tail "$log/push.log"; die "the version commit does not apply to the new main"; }
+    pushed=$(git -C "$onto" rev-parse HEAD)
+    [ "$(git -C "$onto" diff --name-only origin/main "$pushed" | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo std/VERSION " ] ||
+      die "the rebased version commit changes more than the version files"
+    git -C "$onto" push -q origin HEAD:main || die "push refused twice (main moved again?): rerun with a new WORKDIR"
+    git worktree remove --force "$onto"
+    printf '\nThe seed is the build of %s (gated); the version commit landed on main as %s.\n' "$commit" "$pushed" >> "$work/tag-notes.txt"
+  fi
+  git tag -a "v$version" -F "$work/tag-notes.txt" "$pushed"
   git push -q origin "v$version"
   if [ -n "$locked" ]; then
     rm -rf "${locked:?}"; trap - EXIT; locked=""
