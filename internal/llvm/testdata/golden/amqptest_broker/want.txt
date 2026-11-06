@@ -8,6 +8,7 @@ completed locked 0 ready 0
 dead letters 1
 deferred 1
 scheduled 1 ready 0
+batch true got m1 drained 0 ready 1 attach true true
 s1 1 s2 1
 session state 0
 rejected true

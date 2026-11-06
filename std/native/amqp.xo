@@ -2496,6 +2496,7 @@ fn apply_frame(var c: amqp.ConnState, f: amqp.Frame) -> () ! amqp.AmqpErr uses (
       if li >= 0 {
         var l = c.links[li]
         l.remote_handle = Int(x.handle)
+        l.remote_attach = Some(x)
         l.attached = true
         l.refused = match l.role {
           Sender => x.target is None
@@ -3007,6 +3008,16 @@ fn sender_close(x: amqp.Sender, error: amqp.WireError? = None) -> () ! amqp.Amqp
 fn receiver_receive(r: amqp.Receiver, timeout_ms: Int = 0) -> amqp.Delivery ! amqp.AmqpErr uses (net.dial, clock) {
   let id = r.id
   await_cond(r.conn, timeout_ms, fn(var z: amqp.ConnState) -> amqp.Delivery? ! amqp.AmqpErr uses (net.dial, clock) { step_receive(z, id) })
+}
+
+fn receiver_remote_attach(r: amqp.Receiver) -> amqp.Attach? {
+  let id = r.id
+  r.conn.st.with_read(fn(z: amqp.ConnState) -> amqp.Attach? { z.links[id].remote_attach })
+}
+
+fn sender_remote_attach(x: amqp.Sender) -> amqp.Attach? {
+  let id = x.id
+  x.conn.st.with_read(fn(z: amqp.ConnState) -> amqp.Attach? { z.links[id].remote_attach })
 }
 
 fn receiver_issue_credit(r: amqp.Receiver, n: Int) -> () ! amqp.AmqpErr uses (net.dial, clock) {

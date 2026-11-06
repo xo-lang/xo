@@ -548,6 +548,8 @@ struct LinkState {
   credit: Int = 0
   /// receiver: the credit topped up to, 0 for manual credit (issue_credit and drain)
   credit_target: Int = 1
+  /// the peer's Attach for this link, once it came
+  remote_attach: Attach? = None
   /// receiver: a drain was asked for and the peer's answer has not come
   draining: Bool = false
   /// receiver: settle mode Second, a settlement waits for the peer's disposition
@@ -633,6 +635,12 @@ fn (x: Sender) close(error: WireError? = None) -> () ! AmqpErr uses (net.dial, c
 
 /// The next complete message, topping up credit as needed.
 fn (r: Receiver) receive(timeout_ms: Int = 0) -> Delivery ! AmqpErr uses (net.dial, clock)
+
+/// The peer's Attach frame for this link (None until it arrives; `new_receiver` returns after it did):
+/// its source with the filters the peer applied (Service Bus echoes `com.microsoft:session-filter`
+/// with the session it chose), its target and its properties (`com.microsoft:locked-until-utc`).
+fn (r: Receiver) remote_attach() -> Attach?
+fn (x: Sender) remote_attach() -> Attach?
 
 /// Grants the peer `n` more credit (a Flow with the link credit raised by `n`). With
 /// `ReceiverOptions.credit` 0 this is the only credit the link has.

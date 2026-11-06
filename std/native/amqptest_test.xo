@@ -609,3 +609,34 @@ test "settle mode Second: accept waits for the peer, a lost lock is reported, mo
     c.close().or_fault("close")
   }
 }
+
+test "a typed receiver exposes the peer's attach: the echoed session filter and locked-until" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("sq", amqptest.QueueOptions{sessions: true, lock_ms: 5000})
+  b.put("sq", amqp.Message{properties: Some(amqp.Properties{group_id: Some("s-a")}), body: amqp.Body.Data(sections: [b"a1"])})
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    c.keepalive(s.group()).or_fault("keepalive")
+    let sess = c.begin().or_fault("begin")
+    let key = "com.microsoft:session-filter"
+    let rcv = c.new_receiver(sess, "sq", amqp.ReceiverOptions{filters: [(key, amqp.Value.Described(descriptor: amqp.Value.Symbol(v: key), value: amqp.Value.Null))]}).or_fault("receiver")
+    let a = rcv.remote_attach() ?? fault("no remote attach")
+    match a.source {
+      Some(src) => expect(src.filter[0].1) == amqp.Value.Described(descriptor: amqp.Value.Symbol(v: key), value: amqp.Value.Str(v: "s-a"))
+      None => fault("no source")
+    }
+    var seen = false
+    for (k, v) in a.properties {
+      if k == "com.microsoft:locked-until-utc" {
+        match v {
+          Timestamp(ms) => { seen = ms > os.clock.now().unix_millis() }
+          _ => {}
+        }
+      }
+    }
+    expect(seen) == true
+    c.close().or_fault("close")
+  }
+}

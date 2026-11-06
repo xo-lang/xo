@@ -1,5 +1,17 @@
 # std/amqp changes
 
+## 2026-11-05: feature: message_format on send, manual credit and drain, settle mode Second waits, remote_attach
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19's azservicebus (Go v1.11.0) port over std/amqp and std/amqptest
+- Go reference: github.com/Azure/go-amqp v1.7.0 (Receiver.IssueCredit, drain in ReceiveMessages, AcceptMessage in settle mode Second, Sender.Send with MessageFormat)
+- Test: std/native/amqptest_test.xo (batch format, manual credit and drain, settle mode Second with a lost lock, typed remote attach) and the amqptest_broker golden on every backend
+- Timing: none
+- Shipped in: not yet released
+
+`Sender.send(m, settled, message_format)`; `ReceiverOptions.credit: 0`, `Receiver.issue_credit(n)` and `Receiver.drain(timeout_ms)`; with `ReceiverSettleMode.Second` `accept`, `reject`, `release` and `modify` wait for the peer's settlement and report a refusal as `Peer(error)`; `modify(..., annotations)`; `Sender.remote_attach()` and `Receiver.remote_attach()`. A timed `receive` without the reader task no longer deadlocks in the test world (see prelude changes: a FakeNet read is woken by its deadline).
+
 ## 2026-11-05: feature: std/amqp stage 1, the AMQP 1.0 type system and encoding
 
 - Kind: feature (port)

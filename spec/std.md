@@ -7581,6 +7581,18 @@ fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
   deliveries, and returns a `Delivery`; an aborted delivery is dropped; `accept`, `reject`, `release` and `modify` send a
   settling Disposition (nothing for a delivery the sender pre-settled). The session's incoming window is restored with a
   Flow when it falls below half.
+- `send(m, settled, message_format)`: `message_format` is the Transfer's message-format (0 for an AMQP message; Azure
+  Service Bus batches are one transfer of format 0x80013700, 2147563264, whose data sections are encoded messages).
+- Manual credit: `ReceiverOptions.credit: 0` grants nothing and `receive` never tops up; `r.issue_credit(n)` raises the link
+  credit by `n` (a Flow); `r.drain(timeout_ms)` sends a Flow with `drain` set, waits for the peer's answering Flow and returns
+  every delivery that arrived before it, leaving the link with no credit (Go's ReceiveMessages: credit, collect, drain).
+- Settle mode Second (`ReceiverOptions.settle_mode`): `accept`, `reject`, `release` and `modify` send the outcome unsettled
+  and wait for the peer's settling Disposition; a Rejected state with an error is returned as `Peer(error)` (Service Bus's
+  `com.microsoft:message-lock-lost`). `modify(d, delivery_failed, undeliverable_here, annotations)` carries message
+  annotations (symbol keys), Go's properties to modify.
+- `remote_attach()` on a `Sender` or `Receiver` is the peer's Attach for the link (None before it arrives): its source
+  filters (Service Bus echoes `com.microsoft:session-filter` with the chosen session), target and properties
+  (`com.microsoft:locked-until-utc`).
 - A peer Detach (with an error: `Peer(error)`) or End makes later calls on the link fail; `close` sends Detach and waits
   for the peer's.
 

@@ -29,6 +29,7 @@ fn main(os: Os) {
   let b = amqptest.new(os.clock)
   b.queue("q", amqptest.QueueOptions{max_delivery_count: 2})
   b.queue("sq", amqptest.QueueOptions{sessions: true})
+  b.queue("m")
   b.topic("t")
   b.subscription("t", "s1")
   b.subscription("t", "s2")
@@ -76,6 +77,20 @@ fn main(os: Os) {
     let when = os.clock.now().unix_millis() + 3600000
     b.put("q", amqp.Message{annotations: Some([(amqp.Value.Symbol(v: "x-opt-scheduled-enqueue-time"), amqp.Value.Timestamp(ms: when))]), body: amqp.Body.Data(sections: [b"later"])})
     os.stdio.println("scheduled ${b.scheduled("q").len()} ready ${b.ready("q").len()}")
+
+    // manual credit, drain, the peer's attach, a batch format and settle mode Second
+    let msnd = c.new_sender(sess, "m").or_fault("m sender")
+    let inner = amqp.Message{body: amqp.Body.Data(sections: [amqp.encode_message(msg("m1")).or_fault("enc"), amqp.encode_message(msg("m2")).or_fault("enc")])}
+    let bout = msnd.send(inner, message_format: 2147563264).or_fault("batch")
+    let mrcv = c.new_receiver(sess, "m", amqp.ReceiverOptions{credit: 0, settle_mode: Some(amqp.ReceiverSettleMode.Second)}).or_fault("manual receiver")
+    mrcv.issue_credit(1).or_fault("credit")
+    let md = mrcv.receive(2000).or_fault("manual receive")
+    mrcv.accept(md).or_fault("manual accept")
+    let rest = mrcv.drain(2000).or_fault("drain")
+    let ra = mrcv.remote_attach() ?? fault("no attach")
+    let sa = msnd.remote_attach() ?? fault("no sender attach")
+    os.stdio.println("batch ${bout == Some(amqp.DeliveryState.Accepted)} got ${text(md.message)} drained ${rest.len()} ready ${b.ready("m").len()} attach ${ra.name == mrcv.name} ${sa.name == msnd.name}")
+    mrcv.modify(md, annotations: [("k", amqp.Value.Int(v: 1))]).or_fault("late modify")
 
     // topic fan-out
     let tsnd = c.new_sender(sess, "t").or_fault("topic sender")
