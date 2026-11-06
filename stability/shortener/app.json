@@ -1,0 +1,18 @@
+{
+  "name": "shortener",
+  "env": {
+    "SHORT_ADDR": "{addr}",
+    "SHORT_DATA": "{data}",
+    "SHORT_TOKEN": "stability-token"
+  },
+  "ready": "/health",
+  "tokens": {
+    "admin": "stability-token",
+    "wrong": "not-the-token"
+  },
+  "scenario": "scenario.jsonl",
+  "redact": ["created", "code"],
+  "stats": "/debug/sched",
+  "stats_token": "admin",
+  "twin": "go"
+}

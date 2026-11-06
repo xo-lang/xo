@@ -9,6 +9,10 @@ fuzzing. Phase 1 builds the starter app and the harness.
   app. `NOTES_DATA=DIR` keeps notes in DIR; `NOTES_FSYNC=1` fsyncs each change
   before the response. Tests: `xo test stability/notes` (also with
   `--backend=go` and `--backend=llvm`).
+- [shortener/](shortener/): a URL shortener written blind from the spec
+  (decision 0520 phase 2): links with hit counts, an append log with a
+  snapshot past 1 MiB, batched hit flushes; NOTES.md lists the spec gaps the
+  writer hit; go/ is its Go twin. Tests: `xo test stability/shortener`.
 - [harness/](harness/): the checks, in Go (its own module, so it shares no
   runtime with the apps). `harness diff -xo XO -app stability/APP` builds the
   app on each backend (`-backends go,arm64,llvm`, the first the reference),
@@ -43,9 +47,11 @@ fuzzing. Phase 1 builds the starter app and the harness.
   directory's stats.txt. Build it with
   `cd stability/harness && go build -o /tmp/harness .`.
 
-An app's directory holds `app.json` (env with `{addr}` and `{data}`, the
+An app's directory holds `app.json` (`name`, which picks the soak and load
+traffic mix in soak.go, env with `{addr}` and `{data}`, the
 readiness path, named tokens, the scenario file, the redacted keys,
 the stats path and its token, the Go twin's directory) and its
-scenario, one JSON step per line: `method`, `path`, `body`, `token` (a name
+scenario, one JSON step per line: `method`, `path`, `body` (a string is
+sent as its text, any other JSON value as its JSON), `token` (a name
 from app.json or `{saved}`), `expect`, `save` (`{"name": "field"}` from the
 JSON response, used later as `{name}`), or `restart` (`term` or `kill`).

@@ -59,12 +59,30 @@ type App struct {
 	Twin string `json:"twin"`
 }
 
+// bodyText is a step's request body: a JSON string is sent as its text,
+// any other JSON value (an object, say) as that value's JSON.
+type bodyText string
+
+func (b *bodyText) UnmarshalJSON(data []byte) error {
+	var s string
+	if json.Unmarshal(data, &s) == nil {
+		*b = bodyText(s)
+		return nil
+	}
+	var c bytes.Buffer
+	if err := json.Compact(&c, data); err != nil {
+		return err
+	}
+	*b = bodyText(c.String())
+	return nil
+}
+
 // Step is one line of the scenario.
 type Step struct {
-	Method string `json:"method,omitempty"`
-	Path   string `json:"path,omitempty"`
-	Body   string `json:"body,omitempty"`
-	Token  string `json:"token,omitempty"`
+	Method string   `json:"method,omitempty"`
+	Path   string   `json:"path,omitempty"`
+	Body   bodyText `json:"body,omitempty"`
+	Token  string   `json:"token,omitempty"`
 	// Expect is the status the step must get (0: any).
 	Expect int `json:"expect,omitempty"`
 	// Save stores fields of the JSON response under names that later
@@ -81,8 +99,10 @@ type Result struct {
 	Request     string `json:"request"`
 	Status      int    `json:"status"`
 	ContentType string `json:"content_type,omitempty"`
-	Body        string `json:"body,omitempty"`
-	Err         string `json:"err,omitempty"`
+	// Location is a redirect's target (the client does not follow it)
+	Location string `json:"location,omitempty"`
+	Body     string `json:"body,omitempty"`
+	Err      string `json:"err,omitempty"`
 }
 
 func main() {
@@ -329,7 +349,9 @@ func runScenario(app *App, steps []Step, bin, work string) ([]Result, error) {
 			return m
 		})
 	}
-	cl := &http.Client{Timeout: 10 * time.Second}
+	// a redirect is a response to compare, not one to follow (shortener's
+	// GET /{code} points at the internet)
+	cl := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	var res []Result
 	for i, s := range steps {
 		if s.Restart != "" {
@@ -343,10 +365,12 @@ func runScenario(app *App, steps []Step, bin, work string) ([]Result, error) {
 			continue
 		}
 		path := fill(s.Path)
-		r := Result{Step: i, Request: s.Method + " " + path}
+		// the step's path as written: a filled in {name} may be random (a
+		// generated code), and the response that saved it is compared already
+		r := Result{Step: i, Request: s.Method + " " + s.Path}
 		var body io.Reader
 		if s.Body != "" {
-			body = strings.NewReader(fill(s.Body))
+			body = strings.NewReader(fill(string(s.Body)))
 		}
 		req, err := http.NewRequest(s.Method, "http://"+p.addr+path, body)
 		if err != nil {
@@ -369,6 +393,7 @@ func runScenario(app *App, steps []Step, bin, work string) ([]Result, error) {
 		resp.Body.Close()
 		r.Status = resp.StatusCode
 		r.ContentType = resp.Header.Get("Content-Type")
+		r.Location = resp.Header.Get("Location")
 		var doc any
 		if json.Unmarshal(b, &doc) == nil {
 			for name, field := range s.Save {

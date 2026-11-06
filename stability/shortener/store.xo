@@ -1,0 +1,428 @@
+// The link store: links in memory behind one Mutex, and, when a data
+// directory is given, an append-only journal (links.log) with a snapshot
+// (snapshot.json) written when the journal passes 1 MiB.
+//
+// Every journal record carries a sequence number; the snapshot stores the
+// last one it covers, so a crash between writing the snapshot and emptying
+// the journal replays nothing twice.
+
+use std/json
+use std/log
+
+const MAX_URL = 2048
+const SNAPSHOT_AT = 1048576
+const CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+const GEN_LEN = 7
+const LOG_FILE = "links.log"
+const SNAP_FILE = "snapshot.json"
+
+/// A link as GET /links/{code} shows it, and as the snapshot stores it.
+struct Link {
+  code: Str
+  url: Str
+  created: Time
+  hits: Int
+} derive Json
+
+/// The body of a 201 from POST /links.
+struct Created {
+  code: Str
+  url: Str
+  created: Time
+} derive Json
+
+/// The body of POST /links.
+struct CreateReq {
+  url: Str
+  code: Str? = None
+} derive Json
+
+enum Op: Str {
+  Create = "create"
+  Delete = "delete"
+  Hits = "hits"
+} derive Json
+
+/// One journal line.
+struct Rec {
+  seq: Int
+  op: Op
+  code as "code,omitempty": Str = ""
+  url as "url,omitempty": Str = ""
+  created as "created,omitempty": Time? = None
+  hits as "hits,omitempty": Map[Str, Int] = {}
+} derive Json
+
+struct Snap {
+  seq: Int
+  links: List[Link]
+} derive Json
+
+/// A link in memory. `hits` is bumped without the lock on the redirect
+/// path; `flushed` is the total the journal last recorded.
+struct Entry {
+  url: Str
+  created: Time
+  hits: Atomic[Int]
+  flushed: Atomic[Int]
+}
+
+struct Journal {
+  fs: Fs
+  file: File
+}
+
+struct State {
+  links: Map[Str, Entry]
+  journal: Journal?
+  log_size: Int
+  seq: Int
+}
+
+struct App {
+  st: Mutex[State]
+  token: Secret[Str]
+  clock: Clock
+  rand: Rand
+}
+
+enum ApiErr {
+  BadRequest(msg: Str)
+  Unauthorized
+  NotFound
+  Conflict
+  Corrupt(msg: Str)
+  Storage(from FsErr)
+}
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    BadRequest(_) => 400
+    Unauthorized => 401
+    NotFound => 404
+    Conflict => 409
+    Corrupt(_) => 500
+    Storage(_) => 500
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    Unauthorized => "unauthorized"
+    NotFound => "not found"
+    Conflict => "code already exists"
+    Corrupt(msg) => "corrupt data: ${msg}"
+    Storage(err) => "storage: ${err}"
+  }
+}
+
+fn new_entry(url: Str, created: Time, hits: Int) -> Entry {
+  Entry{url: url, created: created, hits: Atomic[Int].new(hits), flushed: Atomic[Int].new(hits)}
+}
+
+/// Opens the store: in memory when `data` is None, else loads DIR's
+/// snapshot and journal, compacts a non-empty journal into a new snapshot,
+/// and opens the journal for appending.
+fn open_app(fs: Fs, data: Str?, clock: Clock, rand: Rand, token: Str) -> App ! ApiErr {
+  var st = State{links: {}, journal: None, log_size: 0, seq: 0}
+  if let Some(dir) = data {
+    fs.create_dir_all(dir)?
+    let d = fs.sub(dir)
+    let replayed = load(d, st)?
+    if replayed > 0 {
+      write_snapshot(d, st)?
+      d.write(LOG_FILE, b"")?
+    }
+    let f = d.open_append(LOG_FILE)?
+    let size = d.stat(LOG_FILE)?.map(fn(i) { i.size }) ?? 0
+    st.journal = Some(Journal{fs: d, file: f})
+    st.log_size = size
+  }
+  App{st: Mutex[State].new(st), token: Secret[Str].new(token), clock: clock, rand: rand}
+}
+
+/// Loads the snapshot then replays the journal into `st`; returns the
+/// number of journal records applied. A last line that does not decode is
+/// a write cut short by a crash (never acknowledged) and is dropped.
+fn load(fs: Fs, var st: State) -> Int ! ApiErr {
+  if fs.exists(SNAP_FILE)? {
+    let snap = json.decode[Snap](fs.read(SNAP_FILE)?)
+      .map_err(fn(e) { ApiErr.Corrupt(msg: "${SNAP_FILE}: ${e}") })?
+    for l in snap.links {
+      st.links.put(l.code, new_entry(l.url, l.created, l.hits))
+    }
+    st.seq = snap.seq
+  }
+  if !fs.exists(LOG_FILE)? {
+    return 0
+  }
+  let lines = fs.read(LOG_FILE)?.split(b"\n")
+  var applied = 0
+  for (i, line) in lines.indexed() {
+    if line.is_empty() {
+      continue
+    }
+    let rec = match json.decode[Rec](line) {
+      Ok(r) => r
+      Err(e) => {
+        if i == lines.len() - 1 {
+          log.warn("dropping a cut short journal line", {"line": i + 1})
+          break
+        }
+        return Err(ApiErr.Corrupt(msg: "${LOG_FILE} line ${i + 1}: ${e}"))
+      }
+    }
+    if rec.seq <= st.seq {
+      continue
+    }
+    apply(st, rec)
+    st.seq = rec.seq
+    applied += 1
+  }
+  applied
+}
+
+fn apply(var st: State, rec: Rec) {
+  match rec.op {
+    Create => st.links.put(rec.code, new_entry(rec.url, rec.created ?? Time.UNIX_EPOCH, 0))
+    Delete => {
+      let _ = st.links.remove(rec.code)
+    }
+    Hits => {
+      for (code, n) in rec.hits {
+        if let Some(e) = st.links.get(code) {
+          e.hits.set(n)
+          e.flushed.set(n)
+        }
+      }
+    }
+  }
+}
+
+/// Appends one record; returns the bytes written.
+fn write_rec(j: Journal, rec: Rec) -> Int ! FsErr {
+  let line = json.encode(rec) + b"\n"
+  j.file.write(line)?
+  line.len()
+}
+
+fn write_snapshot(fs: Fs, st: State) -> () ! FsErr {
+  var links = List[Link].with_capacity(st.links.len())
+  for (code, e) in st.links {
+    let h = e.hits.get()
+    links.push(Link{code: code, url: e.url, created: e.created, hits: h})
+    e.flushed.set(h)
+  }
+  write_atomic(fs, SNAP_FILE, json.encode(Snap{seq: st.seq, links: links}))
+}
+
+fn valid_code(c: Str) -> Bool {
+  if c.len() < 4 || c.len() > 32 {
+    return false
+  }
+  for b in c.bytes() {
+    match b {
+      'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' => {}
+      _ => return false
+    }
+  }
+  true
+}
+
+/// http:// or https://, a non-empty host, at most MAX_URL bytes, and no
+/// space or control byte (the value goes into a Location header).
+fn valid_url(u: Str) -> Bool {
+  if u.len() > MAX_URL {
+    return false
+  }
+  for b in u.bytes() {
+    if b <= 0x20 || b == 0x7f {
+      return false
+    }
+  }
+  var rest = ""
+  if let Some(r) = u.cut_prefix("https://") {
+    rest = r
+  } else if let Some(r) = u.cut_prefix("http://") {
+    rest = r
+  } else {
+    return false
+  }
+  let end = rest.find_any("/?#") ?? rest.len()
+  var host = rest[..end]
+  if let Some(at) = host.rfind("@") {
+    host = host[at + 1..]
+  }
+  if host.starts_with("[") {
+    let close = host.find("]") ?? return false
+    return close > 1
+  }
+  if let Some((h, _)) = host.cut(":") {
+    host = h
+  }
+  !host.is_empty()
+}
+
+const RESERVED = #{"links", "health", "debug"}
+
+fn fresh_code(rand: Rand, links: Map[Str, Entry]) -> Str ! ApiErr {
+  for _ in 0..16 {
+    var b = StrBuilder.new()
+    for _ in 0..GEN_LEN {
+      let i = rand.int(0, 64)
+      b.write(CODE_CHARS[i..i + 1])
+    }
+    let c = b.freeze()
+    if !links.contains(c) {
+      return c
+    }
+  }
+  Err(ApiErr.BadRequest(msg: "no free code, try again"))
+}
+
+fn (a: App) create(req: CreateReq) -> Created ! ApiErr {
+  if !valid_url(req.url) {
+    return Err(ApiErr.BadRequest(msg: "url must be http:// or https:// with a host, at most 2048 bytes"))
+  }
+  if let Some(c) = req.code {
+    if !valid_code(c) {
+      return Err(ApiErr.BadRequest(msg: "code must be 4 to 32 characters of A-Z a-z 0-9 _ -"))
+    }
+    if RESERVED.contains(c) {
+      return Err(ApiErr.BadRequest(msg: "code is reserved"))
+    }
+  }
+  let now = Time.from_unix(a.clock.now().unix())
+  let rand = a.rand
+  let out = a.st.with(fn(var st) -> Created ! ApiErr {
+    let code = match req.code {
+      Some(c) => {
+        if st.links.contains(c) {
+          return Err(ApiErr.Conflict)
+        }
+        c
+      }
+      None => fresh_code(rand, st.links)?
+    }
+    let seq = st.seq + 1
+    if let Some(j) = st.journal {
+      let n = write_rec(j, Rec{seq: seq, op: Op.Create, code: code, url: req.url, created: Some(now)})?
+      st.log_size += n
+    }
+    st.seq = seq
+    st.links.put(code, new_entry(req.url, now, 0))
+    Created{code: code, url: req.url, created: now}
+  })?
+  a.compact()
+  out
+}
+
+fn (a: App) delete(code: Str) -> () ! ApiErr {
+  a.st.with(fn(var st) -> () ! ApiErr {
+    if !st.links.contains(code) {
+      return Err(ApiErr.NotFound)
+    }
+    let seq = st.seq + 1
+    if let Some(j) = st.journal {
+      let n = write_rec(j, Rec{seq: seq, op: Op.Delete, code: code})?
+      st.log_size += n
+    }
+    st.seq = seq
+    let _ = st.links.remove(code)
+  })?
+  a.compact()
+  Ok(())
+}
+
+/// The redirect path: a shared read of the map and an atomic add.
+fn (a: App) resolve(code: Str) -> Str? {
+  let e = a.st.with_read(fn(st) { st.links.get(code) }) ?? return None
+  e.hits.add(1)
+  Some(e.url)
+}
+
+fn (a: App) info(code: Str) -> Link? {
+  let e = a.st.with_read(fn(st) { st.links.get(code) }) ?? return None
+  Some(Link{code: code, url: e.url, created: e.created, hits: e.hits.get()})
+}
+
+/// Writes one hits record with the new totals of every link hit since the
+/// last flush. Nothing in memory only mode.
+fn (a: App) flush() -> () ! ApiErr {
+  a.st.with(fn(var st) -> () ! ApiErr {
+    let j = st.journal ?? return Ok(())
+    var hits: Map[Str, Int] = {}
+    for (code, e) in st.links {
+      let h = e.hits.get()
+      if h != e.flushed.get() {
+        hits.put(code, h)
+      }
+    }
+    if hits.is_empty() {
+      return Ok(())
+    }
+    let seq = st.seq + 1
+    let n = write_rec(j, Rec{seq: seq, op: Op.Hits, hits: hits})?
+    for (code, h) in hits {
+      if let Some(e) = st.links.get(code) {
+        e.flushed.set(h)
+      }
+    }
+    st.seq = seq
+    st.log_size += n
+  })?
+  a.compact()
+  Ok(())
+}
+
+/// Past SNAPSHOT_AT bytes of journal: write the snapshot, then restart the
+/// journal empty.
+fn (a: App) maybe_snapshot() -> () ! ApiErr {
+  a.st.with(fn(var st) -> () ! ApiErr {
+    if st.log_size <= SNAPSHOT_AT {
+      return Ok(())
+    }
+    let j = st.journal ?? return Ok(())
+    write_snapshot(j.fs, st)?
+    j.file.close()?
+    j.fs.write(LOG_FILE, b"")?
+    let f = j.fs.open_append(LOG_FILE)?
+    st.journal = Some(Journal{fs: j.fs, file: f})
+    st.log_size = 0
+  })
+}
+
+/// maybe_snapshot for a caller whose own record is already written: a
+/// failed snapshot leaves the journal growing, which a later one fixes.
+fn (a: App) compact() {
+  match a.maybe_snapshot() {
+    Ok(_) => {}
+    Err(e) => log.error("snapshot failed", {"error": "${e}"})
+  }
+}
+
+/// Flushes the hits and closes the journal; for shutdown and tests.
+fn (a: App) close() {
+  match a.flush() {
+    Ok(_) => {}
+    Err(e) => log.error("final hit flush failed", {"error": "${e}"})
+  }
+  a.st.with(fn(var st) {
+    if let Some(j) = st.journal {
+      j.file.close().ignore_err("closing the journal at shutdown")
+    }
+    st.journal = None
+  })
+}
+
+/// Flushes the hits every second until cancelled.
+fn flusher(a: App, clock: Clock) {
+  while {
+    clock.sleep(1s)
+    match a.flush() {
+      Ok(_) => {}
+      Err(e) => log.warn("hit flush failed", {"error": "${e}"})
+    }
+  }
+}

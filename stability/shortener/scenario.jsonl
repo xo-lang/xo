@@ -1,0 +1,37 @@
+{"method": "GET", "path": "/health", "expect": 200}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "https://example.com/alpha", "code": "alpha"}, "expect": 201}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "http://example.org/beta?q=1#frag", "code": "beta_2-B"}, "expect": 201}
+{"method": "POST", "path": "/links", "body": {"url": "https://example.com/x", "code": "notoken"}, "expect": 401}
+{"method": "POST", "path": "/links", "token": "wrong", "body": {"url": "https://example.com/x", "code": "wrongtok"}, "expect": 401}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "https://example.com/again", "code": "alpha"}, "expect": 409}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "ftp://example.com/x", "code": "badurl"}, "expect": 400}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "https://", "code": "nohost"}, "expect": 400}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "https://example.com/x", "code": "a!"}, "expect": 400}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "https://example.com/x", "code": "health"}, "expect": 400}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"code": "nourl"}, "expect": 400}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "https://example.com/generated"}, "expect": 201, "save": {"gen": "code"}}
+{"method": "GET", "path": "/alpha", "expect": 302}
+{"method": "GET", "path": "/alpha", "expect": 302}
+{"method": "GET", "path": "/{gen}", "expect": 302}
+{"method": "GET", "path": "/links/alpha", "expect": 200}
+{"method": "GET", "path": "/links/{gen}", "expect": 200}
+{"method": "GET", "path": "/missing", "expect": 404}
+{"method": "GET", "path": "/links/missing", "expect": 404}
+{"method": "DELETE", "path": "/links/beta_2-B", "expect": 401}
+{"method": "DELETE", "path": "/links/beta_2-B", "token": "admin", "expect": 204}
+{"method": "DELETE", "path": "/links/beta_2-B", "token": "admin", "expect": 404}
+{"restart": "term"}
+{"method": "GET", "path": "/links/alpha", "expect": 200}
+{"method": "GET", "path": "/links/beta_2-B", "expect": 404}
+{"method": "GET", "path": "/links/{gen}", "expect": 200}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "https://example.com/gamma", "code": "gamma"}, "expect": 201}
+{"method": "POST", "path": "/links", "token": "admin", "body": {"url": "https://example.com/delta", "code": "delta"}, "expect": 201}
+{"method": "DELETE", "path": "/links/delta", "token": "admin", "expect": 204}
+{"restart": "kill"}
+{"method": "GET", "path": "/links/gamma", "expect": 200}
+{"method": "GET", "path": "/links/delta", "expect": 404}
+{"method": "GET", "path": "/links/alpha", "expect": 200}
+{"method": "GET", "path": "/gamma", "expect": 302}
+{"method": "DELETE", "path": "/links/gamma", "token": "admin", "expect": 204}
+{"method": "GET", "path": "/gamma", "expect": 404}
+{"method": "GET", "path": "/health", "expect": 200}

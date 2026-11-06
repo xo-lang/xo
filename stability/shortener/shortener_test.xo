@@ -1,0 +1,198 @@
+use std/http
+use std/json
+
+const TOKEN = "test-token"
+
+fn auth(token: Str) -> Map[Str, Str] {
+  if token.is_empty() {
+    return {}
+  }
+  {"Authorization": "Bearer ${token}"}
+}
+
+fn post(r: http.Router, body: Str, token: Str = TOKEN) -> http.Response {
+  r.call(http.new_request("POST", "/links", headers: auth(token), body: body.bytes()))
+}
+
+fn get(r: http.Router, path: Str) -> http.Response {
+  r.call(http.new_request("GET", path))
+}
+
+fn del(r: http.Router, code: Str, token: Str = TOKEN) -> http.Response {
+  r.call(http.new_request("DELETE", "/links/${code}", headers: auth(token)))
+}
+
+fn create_body(url: Str, code: Str) -> Str {
+  json.encode_str(CreateReq{url: url, code: Some(code)})
+}
+
+test "create then GET /{code} redirects and GET /links/{code} shows hits 1" {
+  let app = open_app(os.fs, None, os.clock, os.rand, TOKEN)?
+  let r = routes(app)
+  let c = post(r, create_body("https://example.com/a?b=1", "abcd"))
+  expect(c.status) == 201
+  let out = c.decode_json[Created]()?
+  expect(out.code) == "abcd"
+  expect(out.url) == "https://example.com/a?b=1"
+  expect(out.created.format_rfc3339()) == "2026-01-01T00:00:00Z"
+
+  let g = get(r, "/abcd")
+  expect(g.status) == 302
+  expect(g.header("Location")) == Some("https://example.com/a?b=1")
+
+  let i = get(r, "/links/abcd")
+  expect(i.status) == 200
+  let l = i.decode_json[Link]()?
+  expect(l.hits) == 1
+  expect(l.url) == "https://example.com/a?b=1"
+  expect(get(r, "/links/nope").status) == 404
+  expect(get(r, "/nope").status) == 404
+  expect(get(r, "/health").text()) == Some(r#"{"status":"ok"}"#)
+}
+
+test "a generated code is 7 characters and redirects" {
+  let app = open_app(os.fs, None, os.clock, os.rand, TOKEN)?
+  let r = routes(app)
+  let c = post(r, r#"{"url": "http://example.com"}"#)
+  expect(c.status) == 201
+  let out = c.decode_json[Created]()?
+  expect(out.code.len()) == 7
+  expect(valid_code(out.code))
+  expect(get(r, "/${out.code}").status) == 302
+}
+
+test "duplicate is 409, bad url and bad code are 400, missing token is 401" {
+  let app = open_app(os.fs, None, os.clock, os.rand, TOKEN)?
+  let r = routes(app)
+  expect(post(r, create_body("https://a.example", "dupe")).status) == 201
+  expect(post(r, create_body("https://b.example", "dupe")).status) == 409
+
+  let long = "https://example.com/" + "x".repeat(2048)
+  for u in ["ftp://example.com", "http://", "https:///path", "example.com", "http://a b", long, "https://@/x", "https://:80/"] {
+    let resp = post(r, create_body(u, "okcode"))
+    expect(resp.status) == 400
+    expect((resp.text() ?? "").contains("error"))
+  }
+  for code in ["abc", "a b c d", "x".repeat(33), "bad/code", "caf\u{e9}", "links", "health"] {
+    expect(post(r, create_body("https://example.com", code)).status) == 400
+  }
+  expect(post(r, "not json").status) == 400
+  expect(post(r, r#"{"code": "nourl"}"#).status) == 400
+
+  expect(post(r, create_body("https://example.com", "notoken"), token: "").status) == 401
+  expect(post(r, create_body("https://example.com", "badtoken"), token: "wrong").status) == 401
+  expect(del(r, "dupe", token: "").status) == 401
+  expect(del(r, "dupe", token: "test-tokem").status) == 401
+  expect(get(r, "/links/notoken").status) == 404
+
+  expect(post(r, create_body("https://example.com:8443/p", "x_y-Z09")).status) == 201
+  expect(post(r, create_body("http://[::1]:8080/", "ipv6")).status) == 201
+  expect(post(r, create_body("https://u:p@host.example/", "userinfo")).status) == 201
+  expect(post(r, create_body(long[..2048], "maxlen")).status) == 201
+  expect(post(r, create_body("https://example.com", "y".repeat(32))).status) == 201
+}
+
+test "delete is 204 then 404" {
+  let app = open_app(os.fs, None, os.clock, os.rand, TOKEN)?
+  let r = routes(app)
+  expect(post(r, create_body("https://example.com", "gone")).status) == 201
+  expect(del(r, "gone").status) == 204
+  expect(del(r, "gone").status) == 404
+  expect(get(r, "/gone").status) == 404
+}
+
+test "with SHORT_DATA the state survives a restart" {
+  let a1 = open_app(os.fs, Some("data"), os.clock, os.rand, TOKEN)?
+  let r1 = routes(a1)
+  expect(post(r1, create_body("https://keep.example/1", "keep")).status) == 201
+  expect(post(r1, create_body("https://drop.example/2", "drop")).status) == 201
+  expect(post(r1, create_body("https://cold.example/3", "cold")).status) == 201
+  expect(del(r1, "drop").status) == 204
+  expect(get(r1, "/keep").status) == 302
+  expect(get(r1, "/keep").status) == 302
+  a1.close()
+
+  let a2 = open_app(os.fs, Some("data"), os.clock, os.rand, TOKEN)?
+  let r2 = routes(a2)
+  let keep = get(r2, "/links/keep").decode_json[Link]()?
+  expect(keep.hits) == 2
+  expect(keep.url) == "https://keep.example/1"
+  expect(get(r2, "/links/drop").status) == 404
+  expect(get(r2, "/links/cold").decode_json[Link]()?.hits) == 0
+  // the restart compacted the journal into the snapshot
+  expect(os.fs.read("data/links.log")?.len()) == 0
+  expect(os.fs.exists("data/snapshot.json")?)
+
+  // a second life on top of the snapshot, then a crash (no close): the
+  // acknowledged create survives, the unflushed hit is lost
+  expect(post(r2, create_body("https://late.example", "late")).status) == 201
+  expect(get(r2, "/late").status) == 302
+  let a3 = open_app(os.fs, Some("data"), os.clock, os.rand, TOKEN)?
+  let r3 = routes(a3)
+  expect(get(r3, "/links/late").decode_json[Link]()?.hits) == 0
+  expect(get(r3, "/links/keep").decode_json[Link]()?.hits) == 2
+  a3.close()
+}
+
+test "a journal line cut short by a crash is dropped" {
+  os.fs.write("data/links.log", b"{\"seq\":1,\"op\":\"create\",\"code\":\"full\",\"url\":\"https://a.example\",\"created\":\"2026-01-01T00:00:00Z\"}\n{\"seq\":2,\"op\":\"cre")?
+  let a = open_app(os.fs, Some("data"), os.clock, os.rand, TOKEN)?
+  let r = routes(a)
+  expect(get(r, "/full").status) == 302
+  a.close()
+}
+
+test "snapshot rollover past 1 MiB keeps every link" {
+  let a1 = open_app(os.fs, Some("data"), os.clock, os.rand, TOKEN)?
+  let r1 = routes(a1)
+  let pad = "p".repeat(1900)
+  for i in 0..700 {
+    expect(post(r1, create_body("https://example.com/${i}/${pad}", "code${i}")).status) == 201
+  }
+  expect(get(r1, "/code7").status) == 302
+  expect(os.fs.exists("data/snapshot.json")?)
+  expect(os.fs.read("data/links.log")?.len()) < SNAPSHOT_AT
+  a1.close()
+
+  let a2 = open_app(os.fs, Some("data"), os.clock, os.rand, TOKEN)?
+  let r2 = routes(a2)
+  for i in 0..700 {
+    let l = get(r2, "/links/code${i}").decode_json[Link]()?
+    expect(l.url) == "https://example.com/${i}/${pad}"
+  }
+  expect(get(r2, "/links/code7").decode_json[Link]()?.hits) == 1
+  a2.close()
+}
+
+test "main needs SHORT_TOKEN" {
+  expect(testing.run_main(main, os)) == 2
+  expect(os.stdio.errors().contains("SHORT_TOKEN"))
+}
+
+test "main serves, stops on SIGTERM, and flushes hits" {
+  os.env.set("SHORT_TOKEN", TOKEN)
+  os.env.set("SHORT_ADDR", "127.0.0.1:8080")
+  os.env.set("SHORT_DATA", "data")
+  os.proc.signal_after(10s)
+  let code = scope s {
+    let t = s.spawn(fn() { testing.run_main(main, os) })
+    // a request made before main's listen finds no listener (no fake
+    // handler), so wait for the ready line first
+    while !os.stdio.output().contains("listening on") bound 1000 {
+      os.clock.sleep(1ms)
+    }
+    let c = http.client(os.net)
+    let h = c.get("http://127.0.0.1:8080/health")?
+    expect(h.status) == 200
+    let created = c.send(http.new_request("POST", "http://127.0.0.1:8080/links", headers: auth(TOKEN), body: create_body("https://example.com/x", "live").bytes()))?
+    expect(created.status) == 201
+    let hit = c.get("http://127.0.0.1:8080/live")?
+    expect(hit.status) == 302
+    t.await
+  }
+  expect(code) == 0
+  expect(os.stdio.output()) == "listening on 127.0.0.1:8080\n"
+  let a = open_app(os.fs, Some("data"), os.clock, os.rand, TOKEN)?
+  expect(get(routes(a), "/links/live").decode_json[Link]()?.hits) == 1
+  a.close()
+}

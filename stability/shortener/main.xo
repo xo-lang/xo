@@ -1,0 +1,92 @@
+// shortener: a URL shortener service (stability corpus, decision 0520
+// phase 2). SHORT_ADDR (default 127.0.0.1:8080), SHORT_TOKEN (required,
+// the bearer token for creating and deleting links), SHORT_DATA (a data
+// directory; links stay in memory only without it).
+
+use std/debug
+use std/http
+use std/log
+
+fn (a: App) authorized(req: http.Request) -> Bool {
+  let h = req.header("Authorization") ?? return false
+  let given = h.cut_prefix("Bearer ") ?? return false
+  same_text(given, a.token.reveal())
+}
+
+fn (a: App) authorize(req: http.Request) -> () ! ApiErr {
+  if !a.authorized(req) {
+    return Err(ApiErr.Unauthorized)
+  }
+  Ok(())
+}
+
+/// Compares in time that depends only on the lengths.
+fn same_text(x: Str, y: Str) -> Bool {
+  if x.len() != y.len() {
+    return false
+  }
+  let xb = x.bytes()
+  let yb = y.bytes()
+  var diff = 0
+  for i in 0..xb.len() {
+    diff = diff | (Int(xb[i]) ^ Int(yb[i]))
+  }
+  diff == 0
+}
+
+fn routes(a: App) -> http.Router {
+  var r = http.router()
+  r.handle("GET /health", fn(_req) { http.json(200, {"status": "ok"}) })
+  r.handle("POST /links", fn(req) -> http.Response ! ApiErr {
+    a.authorize(req)?
+    let body = req.json[CreateReq]().map_err(fn(e) { ApiErr.BadRequest(msg: "invalid body: ${e}") })?
+    let out = a.create(body)?
+    http.json(201, out)
+  })
+  r.handle("GET /links/{code}", fn(req) -> http.Response ! ApiErr {
+    let l = a.info(req.param("code")).or_err(ApiErr.NotFound)?
+    http.json(200, l)
+  })
+  r.handle("DELETE /links/{code}", fn(req) -> http.Response ! ApiErr {
+    a.authorize(req)?
+    a.delete(req.param("code"))?
+    http.empty(204)
+  })
+  r.handle("GET /{code}", fn(req) -> http.Response ! ApiErr {
+    let url = a.resolve(req.param("code")).or_err(ApiErr.NotFound)?
+    http.empty(302).with_header("Location", url)
+  })
+  r.mount("/debug", debug.router(a.clock, fn(req) { a.authorized(req) }))
+  r
+}
+
+fn main(os: Os) ! {
+  let token = os.env.get("SHORT_TOKEN") ?? ""
+  if token.is_empty() {
+    os.stdio.eprintln("shortener: SHORT_TOKEN is required")
+    os.proc.exit(2)
+  }
+  let addr = os.env.get("SHORT_ADDR") ?? "127.0.0.1:8080"
+  var data: Str? = os.env.get("SHORT_DATA")
+  if data == Some("") {
+    data = None
+  }
+  let app = open_app(os.fs, data, os.clock, os.rand, token)?
+  defer {
+    app.close()
+  }
+  let l = os.net.listen(addr)?
+  os.proc.set_grace(5s)
+  let srv = http.server(l, routes(app))
+  os.stdio.println("listening on ${l.addr()}")
+  let clock = os.clock
+  scope s {
+    s.spawn_background(fn() { flusher(app, clock) })
+    match srv.serve() {
+      Ok(_) => {}
+      Err(http.HttpErr.Canceled) => log.warn("grace period over, in flight requests cut")
+      Err(e) => return Err(e)
+    }
+  }
+  log.info("stopped")
+}
