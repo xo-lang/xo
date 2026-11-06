@@ -105,9 +105,10 @@ sqlite3_open_v2, `sqlite3_stmt **` in sqlite3_prepare_v3), destructor function p
 - The Go backend: std/sqlite is in std/go_compiled.txt, so a Go backend build loads
   std/native/sqlite.xo and its `use c` is XO1201 (cmd/xo TestStdSQLiteGoBackend); stdgen skips a
   module whose native file has `use c`, so std/rt has no Go for it. std/rt's std_sigs_sql.go
-  keeps the signature checks of std/sql's free functions and Row, not of Db, Tx and Rows (their
-  receivers take `fx` now, and std_sigs skips generic receivers); the Go parity goldens of
-  std/sql still run those calls.
+  checks Db, Tx and Rows's methods too: std_sigs (compiler/gen stdtypes.xo) skips a function
+  or receiver only for a type parameter that is not an effect variable, since an effect
+  parameter has no Go type (which also brought in 8 effect generic functions of http, testing,
+  websocket and the prelude that were never checked).
 - std's binding cache is std/native/.xo/cbind, inside the std tree: a read only std (a package
   manager's install) needs the release to ship the binding (stage 2, with item 2's objects).
 - std's first C: the release grows by one object per target (about 1.5 MB each); the seed and

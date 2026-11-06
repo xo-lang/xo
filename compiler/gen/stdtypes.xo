@@ -139,6 +139,19 @@ fn (var g: Gen) std_sig_type(fo: Int, recv: Str) -> Str {
   b
 }
 
+/// Whether ps has a type parameter that is not an effect variable: an
+/// effect parameter (`Db[fx: Effects]`, decision 0534) has no Go type, so
+/// a std function generic only in effects still has one Go signature to
+/// check.
+fn (g: Gen) has_type_param(ps: List[Int]) -> Bool {
+  for p in ps {
+    if !g.c.objs[p].effect {
+      return true
+    }
+  }
+  false
+}
+
 /// The text of std/rt/std_sigs_gen.go before gofmt: for each std function
 /// the runtime writes by hand (no Xo body, not generic), a declaration
 /// `var _ TYPE = NAME` that stops std/rt compiling when the hand written
@@ -182,7 +195,7 @@ pub fn std_sigs(c: check.Checker) -> Str ! Str {
           _ => true
         }
         let o = c.objs[fo]
-        if body || !o.tparams.is_empty() || o.iface {
+        if body || g.has_type_param(o.tparams) || o.iface {
           continue
         }
         if o.recv < 0 {
@@ -193,7 +206,7 @@ pub fn std_sigs(c: check.Checker) -> Str ! Str {
           if !(c.mods[m].is_prelude && g.oname(fo) is "fault" | "dbg") && (g.impl_mod(c.mods[m].path) < 0 || g.impl_member(g.impl_mod(c.mods[m].path), fo) < 0) {
             b.write("\t_ ${g.std_sig_type(fo, "")} = ${prefix}${g.oname(fo)}\n")
           }
-        } else if !g.c.objs[o.recv].tparams.is_empty() {
+        } else if g.has_type_param(g.c.objs[o.recv].tparams) {
           continue
         } else if g.impl_mod(c.mods[m].path) >= 0 && g.impl_member(g.impl_mod(c.mods[m].path), fo) >= 0 {
           // compiled from the native implementation (decision 0312)

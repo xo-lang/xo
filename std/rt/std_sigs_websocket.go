@@ -6,16 +6,19 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Websocket_WsErr, *Task) string                                                                                = (*Websocket_WsErr).M_display
-	_ func(*Websocket_WsConn, *Task) Result[Websocket_Message, Websocket_WsErr]                                           = (*Websocket_WsConn).M_read
-	_ func(*Websocket_WsConn, *Task, Websocket_Message) Result[Unit, Websocket_WsErr]                                     = (*Websocket_WsConn).M_write
-	_ func(*Websocket_WsConn, *Task, string) Result[Unit, Websocket_WsErr]                                                = (*Websocket_WsConn).M_write_text
-	_ func(*Websocket_WsConn, *Task, Bytes) Result[Unit, Websocket_WsErr]                                                 = (*Websocket_WsConn).M_ping
-	_ func(*Websocket_WsConn, *Task, int64, string) Result[Unit, Websocket_WsErr]                                         = (*Websocket_WsConn).M_close
-	_ func(*Websocket_WsConn, *Task) string                                                                               = (*Websocket_WsConn).M_subprotocol
-	_ func(*Websocket_WsConn, *Task, Clock, Option[Time])                                                                 = (*Websocket_WsConn).M_set_deadline
-	_ func(*Websocket_WsConn, *Task, Clock, Option[Time])                                                                 = (*Websocket_WsConn).M_set_read_deadline
-	_ func(*Websocket_WsConn, *Task, Clock, Option[Time])                                                                 = (*Websocket_WsConn).M_set_write_deadline
-	_ func(*Websocket_WsConn, *Task, Bytes) Result[Unit, Websocket_WsErr]                                                 = (*Websocket_WsConn).M_pong
-	_ func(*Task, Net, string, Map[string, string], List[string], int64, Bytes) Result[Websocket_WsConn, Websocket_WsErr] = Websocket_dial
+	_ func(*Websocket_WsErr, *Task) string                                                                                          = (*Websocket_WsErr).M_display
+	_ func(*Websocket_WsConn, *Task) Result[Websocket_Message, Websocket_WsErr]                                                     = (*Websocket_WsConn).M_read
+	_ func(*Websocket_WsConn, *Task, Websocket_Message) Result[Unit, Websocket_WsErr]                                               = (*Websocket_WsConn).M_write
+	_ func(*Websocket_WsConn, *Task, string) Result[Unit, Websocket_WsErr]                                                          = (*Websocket_WsConn).M_write_text
+	_ func(*Websocket_WsConn, *Task, Bytes) Result[Unit, Websocket_WsErr]                                                           = (*Websocket_WsConn).M_ping
+	_ func(*Websocket_WsConn, *Task, int64, string) Result[Unit, Websocket_WsErr]                                                   = (*Websocket_WsConn).M_close
+	_ func(*Websocket_WsConn, *Task) string                                                                                         = (*Websocket_WsConn).M_subprotocol
+	_ func(*Websocket_WsConn, *Task, Clock, Option[Time])                                                                           = (*Websocket_WsConn).M_set_deadline
+	_ func(*Websocket_WsConn, *Task, Clock, Option[Time])                                                                           = (*Websocket_WsConn).M_set_read_deadline
+	_ func(*Websocket_WsConn, *Task, Clock, Option[Time])                                                                           = (*Websocket_WsConn).M_set_write_deadline
+	_ func(*Websocket_WsConn, *Task, func(*Task, Bytes) Result[Unit, Never])                                                        = (*Websocket_WsConn).M_on_ping
+	_ func(*Websocket_WsConn, *Task, func(*Task, Bytes) Result[Unit, Never])                                                        = (*Websocket_WsConn).M_on_pong
+	_ func(*Websocket_WsConn, *Task, Bytes) Result[Unit, Websocket_WsErr]                                                           = (*Websocket_WsConn).M_pong
+	_ func(*Task, Http_Request, func(*Task, Websocket_WsConn) Result[Unit, Never], List[string], List[string], int64) Http_Response = Websocket_upgrade
+	_ func(*Task, Net, string, Map[string, string], List[string], int64, Bytes) Result[Websocket_WsConn, Websocket_WsErr]           = Websocket_dial
 )

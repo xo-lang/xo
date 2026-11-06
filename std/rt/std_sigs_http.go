@@ -47,6 +47,7 @@ var (
 	_ func(*Task, int64, string) Http_Response                                                                                                          = Http_error_page
 	_ func(*Task) Http_Response                                                                                                                         = Http_not_found
 	_ func(*Task, int64, string, string) Http_Response                                                                                                  = Http_error_html
+	_ func(*Task, int64, func(*Task, Http_BodyWriter) Result[Unit, IoErr]) Http_Response                                                                = Http_stream
 	_ func(*Http_BodyReader, *Task, int64) Result[Option[Bytes], IoErr]                                                                                 = (*Http_BodyReader).M_read
 	_ func(*Http_BodyReader, *Task) Result[Bytes, IoErr]                                                                                                = (*Http_BodyReader).M_read_all
 	_ func(*Http_BodyReader, *Task, Http_Request) Result[Http_PartReader, Multipart_MultipartErr]                                                       = (*Http_BodyReader).M_multipart
