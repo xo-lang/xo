@@ -662,7 +662,10 @@ fn (var g: Gen) go_impl(fo: Int) -> Int {
     return -1
   }
   let var_unrouted = o.recv_var && g.impl_member(m, fo) < 0
-  if o.recv >= 0 && (o.is_static || var_unrouted || !o.tparams.is_empty()) && !(g.oname(fo) is "display" | "debug") && !o.iface {
+  // a generic method routes to a free function TYPE_method with as many type parameters (Xo Lang 3, 2026-11-06:
+  // std/grpc's effect generic `Server.unary` and `Client.call`)
+  let generic_unrouted = !o.tparams.is_empty() && g.impl_member(m, fo) < 0
+  if o.recv >= 0 && (o.is_static || var_unrouted || generic_unrouted) && !(g.oname(fo) is "display" | "debug") && !o.iface {
     // the module is compiled from its Xo implementation, so std/rt's Go
     // version may be gone or stale: no silent fallback (owner,
     // 2026-10-21)
@@ -682,13 +685,16 @@ fn (g: Gen) impl_member(m: Int, fo: Int) -> Int {
   let o = g.c.objs[fo]
   var name = g.oname(fo)
   if o.recv >= 0 {
-    if o.is_static || o.iface || !o.tparams.is_empty() || name == "display" || name == "debug" {
+    if o.is_static || o.iface || name == "display" || name == "debug" {
       return -1
     }
     name = "${g.oname(o.recv).to_lower()}_${name}"
   }
   let x = g.c.mods[m].members.get(name.bytes()) ?? -1
   if x < 0 || g.c.objs[x].kind != check.ObjKind.Func {
+    return -1
+  }
+  if o.recv >= 0 && g.c.objs[x].tparams.len() != o.tparams.len() {
     return -1
   }
   if o.recv >= 0 && o.recv_var {
