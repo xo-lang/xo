@@ -69,6 +69,7 @@ entries yet.
 - [png.md](png.md): std/png (spec/std.md 48)
 - [jpeg.md](jpeg.md): std/jpeg (spec/std.md 49)
 - [cbor.md](cbor.md): std/cbor (spec/std.md 50)
+- [protobuf.md](protobuf.md): std/protobuf (decision 0530, prototype)
 - [jwt.md](jwt.md): std/jwt (spec/std.md 62)
 - [amqp.md](amqp.md): std/amqp (spec/std.md 64)
 - [amqptest.md](amqptest.md): std/amqptest (spec/std.md 64.6)
