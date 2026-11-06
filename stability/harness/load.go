@@ -260,6 +260,7 @@ func loadMain(args []string) int {
 	sat := fs.Int("sat", 64, "closed loop workers for the saturation run (0: none)")
 	dur := fs.Duration("d", 30*time.Second, "measured duration of each run")
 	warm := fs.Duration("warmup", 5*time.Second, "load before each run's measurement")
+	idle := fs.Duration("idle", 6*time.Second, "wait after each run's load before mem.txt's idle line (past the runtime's 3 s fiber trim; decision 0533's age passes need 30 to 60 s)")
 	rounds := fs.Int("rounds", 3, "rounds (each runs every target at every load)")
 	addEnv := fs.String("env", "", "K=V pairs, comma separated, added to the xo build's environment (e.g. XO_RTSTATS=1)")
 	dropEnv := fs.String("drop-env", "", "app.json env keys left out for every target (e.g. NOTES_DATA when the twin has no persistence)")
@@ -370,7 +371,7 @@ func loadMain(args []string) int {
 				if !t.stats {
 					ta.Stats = ""
 				}
-				r, err := loadOnce(&ta, mix, t.bin, filepath.Join(*out, fmt.Sprintf("run-%s-%s-%d", t.name, ld, round)), n, ld, *warm, *dur)
+				r, err := loadOnce(&ta, mix, t.bin, filepath.Join(*out, fmt.Sprintf("run-%s-%s-%d", t.name, ld, round)), n, ld, *warm, *dur, *idle)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "harness load: %s %s round %d: %v\n", t.name, ld, round, err)
 					return 2
@@ -396,7 +397,7 @@ func loadMain(args []string) int {
 }
 
 // loadOnce starts bin, offers load ld for warm then dur, and stops it.
-func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur time.Duration) (loadRun, error) {
+func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur, idleWait time.Duration) (loadRun, error) {
 	var r loadRun
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		return r, err
@@ -432,7 +433,7 @@ func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur
 	mem := "busy " + mapsSummary(pid)
 	stop()
 	// idle: every connection closed, past the runtime's 3 s fiber trim
-	time.Sleep(6 * time.Second)
+	time.Sleep(idleWait)
 	mem += "idle " + mapsSummary(pid)
 	if app.Stats != "" {
 		saveStats(d.cl, d.base+app.Stats, app.Tokens[app.StatsToken], filepath.Join(work, "stats-idle.txt"))
