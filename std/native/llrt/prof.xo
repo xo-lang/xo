@@ -114,6 +114,19 @@ const SLOT = 520
 /// (32,768 lost seven of every eight samples of a cold self build at
 /// 1000 Hz, 2026-11-05)
 const CAP = 262144
+/// The ring's slots: XO_PROF_RING when it is 1,024 to 4,194,304 (a test
+/// that must fill the ring sets a small one), else CAP.
+fn ring_cap() -> Int {
+  let v = process.env_real_at("XO_PROF_RING")
+  if v != 0 {
+    let n = atoi(v)
+    if n >= 1024 && n <= 4194304 {
+      return n
+    }
+  }
+  CAP
+}
+
 /// The threads that can be sampled (each claims an unwind record of
 /// unwind.PROF_RECORD bytes on its first sample).
 const POOL_N = 64
@@ -265,8 +278,9 @@ fn disarm() {
 /// pool of unwind records mapped, the program's text found; -1 without
 /// memory, -2 without the unwind tables.
 fn make_record(hz: Int) -> Int {
+  let cap = ring_cap()
   let r = map(R_SIZE)
-  let ring = map(CAP * SLOT)
+  let ring = map(cap * SLOT)
   let pool = map(POOL_N * unwind.PROF_RECORD)
   let wts = map(POOL_N * WT)
   if r == 0 || ring == 0 || pool == 0 || wts == 0 {
@@ -279,7 +293,7 @@ fn make_record(hz: Int) -> Int {
   }
   let (lo, hi) = unwind.prof_text(pool)
   st(r, R_RING, ring)
-  st(r, R_CAP, CAP)
+  st(r, R_CAP, cap)
   st(r, R_POOL, pool)
   st(r, R_WTS, wts)
   st(r, R_POOL_N, POOL_N)
@@ -740,7 +754,7 @@ pub fn finish() {
       what = "${nc} samples"
       if dropped > 0 {
         // a full profile is a prefix of the run, never silently short
-        what = "${what} (${dropped} more dropped: the profile holds ${cap}; lower XO_PROF_HZ for a run this long)"
+        what = "${what} (PROFILE INCOMPLETE: ${dropped} more dropped: the profile holds ${cap}; lower XO_PROF_HZ for a run this long)"
       }
     }
     if rh != 0 {

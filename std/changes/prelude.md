@@ -29,7 +29,7 @@ A `read` that waits on a connection of FakeNet's in-memory network now fails wit
 - Timing: none (the larger ring is mapped only when profiling, its pages touched as samples arrive)
 - Shipped in: not yet released
 
-The runtime's CPU sample ring (std/native/llrt/prof.xo CAP) holds 262,144 samples, up from 32,768. A profile that still fills it prints `xo profile: PROFILE INCOMPLETE: N samples dropped` at exit even under XO_PROF_QUIET, and `xo prof` repeats it with the share lost and the XO_PROF_HZ that would keep every sample.
+The runtime's CPU sample ring (std/native/llrt/prof.xo CAP) holds 262,144 samples, up from 32,768. A profile that still fills it prints `xo profile: PROFILE INCOMPLETE: N samples dropped` at exit even under XO_PROF_QUIET, and `xo prof` repeats it with the share lost and the XO_PROF_HZ that would keep every sample. `XO_PROF_RING=N` sets the ring's slots (1,024 to 4,194,304), for a test that must fill it; the exit line without XO_PROF_QUIET says PROFILE INCOMPLETE too.
 
 ## 2026-11-05: feature: XO_CRASH_FILE keeps a native program's fault and crash reports in a file
 
