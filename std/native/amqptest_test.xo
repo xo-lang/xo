@@ -377,3 +377,128 @@ test "faults: unknown entity, missing token, injected errors, forced detach and 
     }
   }
 }
+
+/// The next frame of the connection with a body of interest (others are skipped).
+fn raw_until(c: amqp.Connection, want: fn(amqp.FrameBody) -> Bool) -> amqp.FrameBody uses (net, clock) {
+  for _ in 0..50 {
+    let f = c.recv().or_fault("recv")
+    if want(f.body) { return f.body }
+  }
+  fault("frame not seen")
+}
+
+fn is_attach(b: amqp.FrameBody) -> Bool {
+  match b {
+    Attach(_) => true
+    _ => false
+  }
+}
+
+test "raw links: a null session filter takes the next session and the attach says which" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("sq", amqptest.QueueOptions{sessions: true, lock_ms: 5000})
+  b.put("sq", amqp.Message{properties: Some(amqp.Properties{group_id: Some("s-a")}), body: amqp.Body.Data(sections: [b"a1"])})
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    let sess = c.begin().or_fault("begin")
+    let key = "com.microsoft:session-filter"
+    c.send(amqp.Frame{channel: UInt16.wrapping_from(sess.channel), body: amqp.FrameBody.Attach(v: amqp.Attach{
+      name: "raw", handle: UInt32(0), role: amqp.Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None,
+      source: Some(amqp.Source{address: "sq", filter: [(key, amqp.Value.Described(descriptor: amqp.Value.Symbol(v: key), value: amqp.Value.Null))]}),
+      target: Some(amqp.Target{address: "client"})})}).or_fault("attach")
+    match raw_until(c, is_attach) {
+      Attach(a) => {
+        match a.source {
+          Some(src) => expect(src.filter[0].1) == amqp.Value.Described(descriptor: amqp.Value.Symbol(v: key), value: amqp.Value.Str(v: "s-a"))
+          None => fault("no source")
+        }
+        var seen = false
+        for (k, v) in a.properties {
+          if k == "com.microsoft:locked-until-utc" {
+            match v {
+              Timestamp(ms) => { seen = ms > os.clock.now().unix_millis() }
+              _ => {}
+            }
+          }
+        }
+        expect(seen) == true
+      }
+      _ => fault("no attach")
+    }
+    c.abort()
+  }
+}
+
+test "raw links: a batch is unpacked and a drain gives up the credit" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    b.serve(s.group(), l)
+    let c = dial_broker(os.net, os.clock, l)
+    let sess = c.begin().or_fault("begin")
+    let ch = UInt16.wrapping_from(sess.channel)
+    c.send(amqp.Frame{channel: ch, body: amqp.FrameBody.Attach(v: amqp.Attach{
+      name: "snd", handle: UInt32(0), role: amqp.Role.Sender, sender_settle_mode: None, receiver_settle_mode: None,
+      source: Some(amqp.Source{address: "client"}), target: Some(amqp.Target{address: "q"})})}).or_fault("attach sender")
+    let _ = raw_until(c, is_attach)
+    let m1 = amqp.encode_message(msg("one")).or_fault("enc 1")
+    let m2 = amqp.encode_message(msg("two")).or_fault("enc 2")
+    let batch = amqp.encode_message(amqp.Message{body: amqp.Body.Data(sections: [m1, m2])}).or_fault("enc batch")
+    c.send(amqp.Frame{channel: ch, body: amqp.FrameBody.Transfer(v: amqp.Transfer{handle: UInt32(0), delivery_id: Some(UInt32(0)), delivery_tag: b"t",
+      message_format: Some(UInt32.wrapping_from(2147563264)), receiver_settle_mode: None, state: None, payload: batch})}).or_fault("transfer")
+    let d = raw_until(c, fn(x: amqp.FrameBody) -> Bool {
+      match x {
+        Disposition(_) => true
+        _ => false
+      }
+    })
+    match d {
+      Disposition(x) => expect(x.state) == Some(amqp.DeliveryState.Accepted)
+      _ => fault("no disposition")
+    }
+    expect(b.ready("q").len()) == 2
+    // a receiver with credit 5 and one message ready: one comes, the drain gives the rest up
+    b.queue("one")
+    b.put("one", msg("only"))
+    c.send(amqp.Frame{channel: ch, body: amqp.FrameBody.Attach(v: amqp.Attach{
+      name: "rcv", handle: UInt32(1), role: amqp.Role.Receiver, sender_settle_mode: None, receiver_settle_mode: None,
+      source: Some(amqp.Source{address: "one"}), target: Some(amqp.Target{address: "client"})})}).or_fault("attach receiver")
+    let _ = raw_until(c, is_attach)
+    c.send(amqp.Frame{channel: ch, body: amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(UInt32(0)), incoming_window: UInt32(100), next_outgoing_id: UInt32(1),
+      outgoing_window: UInt32(100), handle: Some(UInt32(1)), delivery_count: Some(UInt32(0)), link_credit: Some(UInt32(5)), available: None, drain: true})}).or_fault("flow")
+    var transfers = 0
+    var drained = false
+    for _ in 0..20 {
+      if drained { break }
+      let f = c.recv().or_fault("recv")
+      match f.body {
+        Transfer(_) => { transfers += 1 }
+        Flow(x) => {
+          if x.drain && x.link_credit == Some(UInt32(0)) {
+            drained = true
+            expect(x.delivery_count) == Some(UInt32(5))
+          }
+        }
+        _ => {}
+      }
+    }
+    expect(transfers) == 1
+    expect(drained) == true
+    c.abort()
+  }
+}
+
+test "a scheduled message appears at its time on the broker's clock" uses (net, clock) {
+  let b = amqptest.new(os.clock)
+  b.queue("q")
+  let at = os.clock.now().unix_millis() + 200
+  b.put("q", amqp.Message{annotations: Some([(amqp.Value.Symbol(v: "x-opt-scheduled-enqueue-time"), amqp.Value.Timestamp(ms: at))]), body: amqp.Body.Data(sections: [b"soon"])})
+  expect(b.ready("q").len()) == 0
+  expect(b.scheduled("q").len()) == 1
+  os.clock.sleep(350ms)
+  expect(b.ready("q").len()) == 1
+  expect(b.scheduled("q").len()) == 0
+}

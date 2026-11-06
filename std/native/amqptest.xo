@@ -1067,7 +1067,7 @@ fn process_cbs(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: I
   Ok(())
 }
 
-fn process_send(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: Int, id: Int, settled: Bool, m: amqp.Message) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+fn process_send(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: Int, id: Int, settled: Bool, msgs: List[amqp.Message]) -> () ! amqp.AmqpErr uses (net.listen, clock) {
   let l = c.links[li]
   let now = now_ms(b)
   let state = b.st.with(fn(var s: amqptest.BrokerState) -> amqp.DeliveryState {
@@ -1077,22 +1077,44 @@ fn process_send(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: 
     }
     let qi = find_queue(s, l.queue)
     if qi < 0 { return amqp.DeliveryState.Rejected(error: Some(werr("amqp:not-found", "no such entity " + l.queue))) }
-    if s.queues[qi].opts.sessions && group_of(m) == "" {
-      return amqp.DeliveryState.Rejected(error: Some(werr("amqp:invalid-field", "a session id is required")))
+    if s.queues[qi].opts.sessions {
+      for m in msgs {
+        if group_of(m) == "" { return amqp.DeliveryState.Rejected(error: Some(werr("amqp:invalid-field", "a session id is required"))) }
+      }
     }
-    let _ = enqueue(s, qi, m, now)
+    for m in msgs {
+      let _ = enqueue(s, qi, m, now)
+    }
     amqp.DeliveryState.Accepted
   })
   settle_reply(sc, l.channel, id, settled, state)
 }
 
-fn process_message(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: Int, id: Int, settled: Bool, payload: Bytes) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+fn process_message(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, li: Int, id: Int, settled: Bool, fmt: Int, payload: Bytes) -> () ! amqp.AmqpErr uses (net.listen, clock) {
   let l = c.links[li]
   let m = match amqp.decode_message(payload) {
     Ok(x) => x
     Err(_) => return settle_reply(sc, l.channel, id, settled, amqp.DeliveryState.Rejected(error: Some(werr("amqp:decode-error", "the message does not decode"))))
   }
-  if l.kind == 0 { return process_send(b, sc, c, li, id, settled, m) }
+  if l.kind == 0 {
+    var msgs = [m]
+    // a batch (message format 0x80013700): each data section is one encoded message
+    if fmt == 2147563264 {
+      msgs = []
+      match m.body {
+        Data(sections) => {
+          for sec in sections {
+            match amqp.decode_message(sec) {
+              Ok(inner) => msgs.push(inner)
+              Err(_) => return settle_reply(sc, l.channel, id, settled, amqp.DeliveryState.Rejected(error: Some(werr("amqp:decode-error", "a message of the batch does not decode"))))
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+    return process_send(b, sc, c, li, id, settled, msgs)
+  }
   if l.kind == 1 || l.kind == 2 {
     if l.kind == 1 { process_cbs(b, sc, c, li, m)? } else { process_mgmt(b, sc, c, li, m)? }
     settle_reply(sc, l.channel, id, settled, amqp.DeliveryState.Accepted)?
@@ -1151,31 +1173,31 @@ fn on_attach(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: Int
   let fk = filter_key(a.source)
   let sessions_wanted = !client_sends && kind == 0
   // refusal, or the session chosen for a receiver
-  let r = b.st.with(fn(var s: amqptest.BrokerState) -> (amqp.WireError?, Str) {
+  let r = b.st.with(fn(var s: amqptest.BrokerState) -> (amqp.WireError?, Str, Int) {
     match take_fail(s, "attach") {
-      Some(f) => return (Some(werr(f.condition, f.description)), "")
+      Some(f) => return (Some(werr(f.condition, f.description)), "", 0)
       None => {}
     }
-    if kind == 1 { return (None, "") }
+    if kind == 1 { return (None, "", 0) }
     if !auth_ok(s, entity, now) {
-      return (Some(werr("amqp:unauthorized-access", "A valid claim is required for " + entity)), "")
+      return (Some(werr("amqp:unauthorized-access", "A valid claim is required for " + entity)), "", 0)
     }
     let qi = find_queue(s, entity)
     if qi < 0 || (s.queues[qi].is_topic && !client_sends) {
-      return (Some(werr("amqp:not-found", "The messaging entity '" + entity + "' could not be found.")), "")
+      return (Some(werr("amqp:not-found", "The messaging entity '" + entity + "' could not be found.")), "", 0)
     }
     if sessions_wanted && s.queues[qi].opts.sessions {
       match fk {
-        None => return (Some(werr("amqp:not-allowed", "a session filter is required")), "")
+        None => return (Some(werr("amqp:not-allowed", "a session filter is required")), "", 0)
         Some(kv) => {
           match lock_session(s, qi, conn, now, session_want(kv.1)) {
-            Some(id) => return (None, id)
-            None => return (Some(werr("com.microsoft:timeout", "No session is available.")), "")
+            Some(id) => return (None, id, now + s.queues[qi].opts.lock_ms)
+            None => return (Some(werr("com.microsoft:timeout", "No session is available.")), "", 0)
           }
         }
       }
     }
-    (None, "")
+    (None, "", 0)
   })
   let h = c.links.len()
   var link = amqptest.SvLink{handle: h, remote: Int(a.handle), channel: ch, name: a.name, sends: !client_sends, kind: kind, queue: entity, session_id: r.1}
@@ -1213,7 +1235,8 @@ fn on_attach(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: Int
     None => {}
   }
   out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Sender, sender_settle_mode: a.sender_settle_mode,
-    receiver_settle_mode: a.receiver_settle_mode, source: src, target: a.target, initial_delivery_count: 0}))
+    receiver_settle_mode: a.receiver_settle_mode, source: src, target: a.target, initial_delivery_count: 0,
+    properties: if r.1 != "" { [("com.microsoft:locked-until-utc", amqp.Value.Timestamp(ms: r.2))] } else { [] }}))
 }
 
 fn on_flow(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: Int, x: amqp.Flow) -> () ! amqp.AmqpErr uses (net.listen, clock) {
@@ -1245,7 +1268,26 @@ fn on_flow(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: Int, 
     }
     None => {}
   }
-  deliver_all(b, sc, c)
+  deliver_all(b, sc, c)?
+  // drain: what could not be sent is given up, and the link says so
+  if x.drain {
+    match x.handle {
+      Some(h) => {
+        let li = lk_remote(c, ch, Int(h))
+        if li >= 0 && c.links[li].sends {
+          var l = c.links[li]
+          l.delivery_count = (l.delivery_count + l.credit) & 4294967295
+          l.credit = 0
+          put_link(c, l)
+          let z2 = c.sess[si]
+          out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z2.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z2.next_out),
+            outgoing_window: UInt32(2048), handle: Some(u32w(l.handle)), delivery_count: Some(u32w(l.delivery_count)), link_credit: Some(UInt32(0)), available: None, drain: true}))?
+        }
+      }
+      None => {}
+    }
+  }
+  Ok(())
 }
 
 fn on_transfer(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: Int, t: amqp.Transfer) -> () ! amqp.AmqpErr uses (net.listen, clock) {
@@ -1263,6 +1305,10 @@ fn on_transfer(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: I
         l.partial_id = Int(id)
         l.partial_settled = t.settled
         l.partial = b""
+        l.partial_format = match t.message_format {
+          Some(n) => Int(n)
+          None => 0
+        }
       }
     }
     None => {}
@@ -1279,6 +1325,7 @@ fn on_transfer(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: I
   let id = l.partial_id
   let settled = l.partial_settled
   let payload = l.partial
+  let fmt = l.partial_format
   if done {
     l.partial_active = false
     l.partial = b""
@@ -1291,7 +1338,7 @@ fn on_transfer(b: amqptest.Broker, sc: ServerConn, var c: amqptest.SvConn, ch: I
     flow = true
   }
   put_sess(c, si, z)
-  if done { process_message(b, sc, c, li, id, settled, payload)? }
+  if done { process_message(b, sc, c, li, id, settled, fmt, payload)? }
   if flow {
     let z2 = c.sess[si]
     out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z2.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z2.next_out), outgoing_window: UInt32(2048), handle: None, delivery_count: None, link_credit: None, available: None}))?

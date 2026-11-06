@@ -112,6 +112,7 @@ struct SvLink {
   partial_id: Int = 0
   partial_settled: Bool = false
   partial_active: Bool = false
+  partial_format: Int = 0
   /// replies waiting for credit ($cbs and $management)
   replies: List[amqp.Message] = []
   /// delivery id and sequence number of deliveries the client has not settled

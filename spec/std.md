@@ -7627,9 +7627,14 @@ SASL (any mechanism is accepted) or none.
   `cancel-scheduled-message`, `receive-by-sequence-number` (deferred messages), `update-disposition`
   (`completed`, `abandoned`, `suspended`, `defered`), `renew-session-lock`, `get-session-state` and `set-session-state`; any
   other operation is 501.
-- Sessions: a receiver on a session enabled queue gives the `com.microsoft:session-filter` (a session id or null); the
-  broker locks that session (or the first with a deliverable message) to the connection and echoes the chosen id in the
-  attach; a session locked by another connection, or none available, is refused with `com.microsoft:timeout`.
+- Sessions: a receiver on a session enabled queue gives the `com.microsoft:session-filter` (a session id, or null for the
+  next available one); the broker locks that session (or the first with a deliverable message) to the connection, echoes
+  the chosen id in the attach reply's filter and adds `com.microsoft:locked-until-utc` to the reply's properties; a session
+  locked by another connection, or none available, is refused with `com.microsoft:timeout`.
+- Batches and drain: a transfer with message format 0x80013700 is a batch, each data section of its body one encoded message,
+  and all are stored under one `Accepted`. A flow with credit makes the broker send up to the credit; a flow with `drain` set
+  gets what is deliverable, then a flow from the link with `drain` and `link-credit` 0 whose delivery count has advanced by
+  the credit left.
 - Faults: `fail_next`/`fail` make the operation `attach`, `transfer`, `disposition`, `put-token` or a management operation
   (its name without `com.microsoft:`) fail with `condition`, `status` and `description` (an attach, transfer or
   disposition is refused or rejected with the condition; a management reply carries `status` and the condition);

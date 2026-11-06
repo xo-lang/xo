@@ -9,3 +9,14 @@
 - Shipped in: not yet released
 
 `amqptest.new(clock)`, `Broker.serve(group, listener)`, queues, topics, subscriptions, and inspection and fault methods (spec/std.md 64.6). `std/amqp` also changes: `ReceiverOptions.sender_settle_mode`, and `new_sender` and `new_receiver` report a refused attach (an answering Attach without target or source, then a Detach with an error) as the `Peer` error at once.
+
+## 2026-11-06: feature: amqptest batches, drain and the locked-until property
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19's session and batch paths
+- Test: std/native/amqptest_test.xo (raw frame tests: a null session filter and the attach reply, a batch and a drain, a scheduled message appearing on the broker's clock)
+- Shipped in: not yet released
+
+Transfers with message format 0x80013700 are unpacked into separate messages, a drain flow is answered, and a session receiver's attach reply carries `com.microsoft:locked-until-utc`.
+
