@@ -99,6 +99,15 @@ test "grpc-message: decode_message answers what grpc-go's client reports" {
   }
 }
 
+test "grpc: codes and frames" {
+  expect(grpc.code_from(14)) == Some(grpc.Code.Unavailable)
+  expect(grpc.code_from(17)) == None
+  let (c, m, next) = grpc.unframe(grpc.frame(b"abc"), 0).or_fault("unframe")
+  expect(c) == false
+  expect(m) == b"abc"
+  expect(next) == 8
+}
+
 test "grpc-message: the Str forms" {
   expect(grpc.decode_message("a%0Ab")) == "a\nb"
   expect(grpc.encode_message("a\nb")) == "a%0Ab"

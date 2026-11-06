@@ -7809,6 +7809,7 @@ const ANSIC, UNIX_DATE, RUBY_DATE, RFC822, RFC822Z, RFC850, RFC1123, RFC1123Z, R
       STAMP, STAMP_MILLI, STAMP_MICRO, STAMP_NANO, DATE_TIME, DATE_ONLY, TIME_ONLY: Str
 ```
 
+<<<<<<< HEAD
 - Every element of Go's layout language: `2006 06 01 1 Jan January 02 2 _2 002 __2 Mon Monday 15 03 3 04 4 05 5 PM pm
   MST Z07:00 Z0700 Z07 Z070000 Z07:00:00 -07:00 -0700 -07 -070000 -07:00:00`, and `.000`, `,000`, `.999` runs (a fraction
   is an element only when no digit follows it, as in Go).
@@ -7825,3 +7826,67 @@ const ANSIC, UNIX_DATE, RUBY_DATE, RFC822, RFC822Z, RFC850, RFC1123, RFC1123Z, R
   zone name `z` does not know is never looked up among all of `z`'s zones, only at that instant; `ParseErr` text is
   core's, not Go's `parsing time ...` wording.
 - `layout` plus `RFC3339` and `RFC3339_NANO` texts take Go's fast path in `parse`.
+=======
+- Elements with a core field: `2006`, `01`, `1`, `Jan`, `January`, `02`, `2`, `Mon`, `Monday`, `15`, `03`, `04`, `05`,
+  `PM`, `.000` runs, `Z07:00`, `-0700`, `MST`. Any other reference element (`.999`, `_2`, `3`, `4`, `5`, `06`, `002`,
+  `-07:00`, `Z0700`, `Z07`, `-07`, `pm`, seconds in offsets) is a `LayoutErr`, never a literal.
+- Parsing is core's strict parse: a weekday in the text must match the date (Go ignores it), and `15` takes exactly two digits (Go accepts one). A zone abbreviation without an offset is looked up in the given zone; Go makes up a
+  zone with that name and a zero offset.
+
+## 68. std/grpc
+
+gRPC over std/http's HTTP/2 (decision 0535): the wire protocol of grpc-go, interoperable with it in both directions
+(TestGrpcInterop). Messages are `Bytes`; a message type that derives `Proto` (std/protobuf) is marshalled by the caller,
+or by the stubs `xo proto gen` writes. A server runs on `http.server` with HTTP/2 (`http.Protocol.UnencryptedHttp2`, or
+TLS and ALPN `h2`); a client is an `http.Client`. Reference: grpc-go's wire behavior (PROTOCOL-HTTP2.md).
+
+```xo
+enum Code { Ok, Canceled, Unknown, InvalidArgument, DeadlineExceeded, NotFound, AlreadyExists, PermissionDenied,
+            ResourceExhausted, FailedPrecondition, Aborted, OutOfRange, Unimplemented, Internal, Unavailable, DataLoss,
+            Unauthenticated }
+fn (c: Code) number() -> Int
+fn code_from(n: Int) -> Code?
+struct Status { code: Code, message: Str, details: Bytes }      // the error of every call; displays as grpc-go's text
+// the wire pieces
+fn frame(payload: Bytes, compressed: Bool = false) -> Bytes
+fn unframe(data: Bytes, at: Int, max_len: Int = 4194304) -> (Bool, Bytes, Int) ! FrameErr
+fn encode_timeout(ns: Int) -> Str
+fn decode_timeout(s: Str) -> Int?
+fn encode_message(s: Str) -> Str
+fn decode_message(s: Str) -> Str
+fn encode_message_bytes(b: Bytes) -> Str
+fn decode_message_bytes(s: Str) -> Bytes
+// the server
+struct Call { method: Str, metadata: Map[Str, Str], timeout: Duration? }
+fn server(clock: Clock) -> Server
+fn (var s: Server) unary(method: Str, f: fn(Call, Bytes) -> Bytes ! Status)
+fn (var s: Server) stream(method: Str, f: fn(Call, Recv, Send) -> () ! Status)
+fn (s: Server) router() -> http.Router
+fn (r: Recv) next() -> Bytes? ! Status
+fn (s: Send) send(msg: Bytes) -> () ! Status
+fn (s: Send) set_trailer(name: Str, value: Str)
+// the client
+fn client(c: http.Client, base: Str) -> Client
+fn (c: Client) unary(method: Str, req: Bytes, metadata = {}, timeout: Duration? = None) -> Bytes ! Status
+fn (c: Client) call[R](method: Str, metadata: Map[Str, Str], timeout: Duration?, f: fn(ClientCall) -> R ! Status) -> R ! Status
+fn (c: ClientCall) send(msg: Bytes) -> () ! Status
+fn (c: ClientCall) close_send()
+fn (c: ClientCall) recv() -> Bytes? ! Status
+```
+
+- One call is one HTTP/2 stream: `application/grpc`, `te: trailers`, 5 byte frames, the status in the `grpc-status` and
+  `grpc-message` trailers (percent encoded as grpc-go does, any byte), `grpc-timeout` as grpc-go encodes it (at most 8
+  digits, the unit that keeps them). A method nobody registered, and a path no service has, answer `Unimplemented` in
+  the trailers of a 200 response with grpc-go's texts; a request without `application/grpc` is 415.
+- `unary` is `stream` with one message each way. A handler reads `Recv.next` until None (the client finished sending)
+  and writes with `Send.send`; returning Ok ends the call with OK, an error with its status. Server streaming,
+  client streaming and bidirectional calls differ only in how the handler and the `ClientCall` use them.
+- A deadline: the client sends its `timeout` as `grpc-timeout` and stops waiting at it (`DeadlineExceeded`); the
+  server cancels a handler still running at the deadline the client sent (the task unwinds at its next blocking
+  call; `defer` blocks still run) and ends the call with `DeadlineExceeded`.
+- A message above `max_recv` (4 MiB, `with_max_recv`) is `ResourceExhausted`; a bad frame, a stream cut inside a
+  message, or a missing status is `Internal`; a connection that cannot be made is `Unavailable`; a non gRPC response
+  maps its HTTP status to a code as grpc-go does.
+- Not yet: compression (`grpc-encoding`), binary metadata (`-bin`), response headers and trailers other than the
+  status, `grpc-status-details-bin`, the typed stubs of `xo proto gen`, a TLS example.
+>>>>>>> 990311560 (WIP std/grpc: spec section 68, change log, coverage row, ADR 0535 accepted, wasm unsupported entry)

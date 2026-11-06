@@ -75,3 +75,4 @@ entries yet.
 - [amqp.md](amqp.md): std/amqp (spec/std.md 64)
 - [amqptest.md](amqptest.md): std/amqptest (spec/std.md 64.6)
 - [sqlite.md](sqlite.md): std/sqlite (spec/std.md 66)
+- [grpc.md](grpc.md): std/grpc (decision 0535)

@@ -265,7 +265,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | Cron schedules | robfig/cron | std/cron | done | parse and next of robfig/cron v3.0.1 (spec/std.md 58, decision 0474). |
 | Prometheus exposition | prometheus/client_golang | std/metrics | done | Registry, counters, gauges, histograms, text exposition and handler (section 37). |
 | S3 and AWS SigV4 | aws-sdk-go-v2 | none | not planned | A third party module; std provides HMAC and SHA-256. |
-| gRPC, protobuf | google.golang.org/grpc | none | not planned | Large; a module, after HTTP/2 trailers are exposed. |
+| gRPC | google.golang.org/grpc | std/grpc | in progress | Decision 0535. Wire interop with grpc-go both ways (TestGrpcInterop: unary, status, unknown method, three streaming shapes), codecs checked against grpc-go (testdata/corpus/grpc), server deadlines cancel the handler. Missing: compression, `-bin` metadata, response metadata, `xo proto gen` stubs, a timing row against grpc-go. |
 
 ## Performance evidence (decision 0461)
 

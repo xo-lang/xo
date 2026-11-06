@@ -5,7 +5,7 @@ use std/grpc
 use std/http
 
 fn handlers(clock: Clock, canceled: Chan[Int]) -> grpc.Server {
-  var srv = grpc.server(clock)
+  var srv = grpc.server(clock).with_max_recv(1048576)
   srv.unary("/t.S/Echo", fn(call, req) -> Bytes ! grpc.Status {
     if call.metadata.get("x-fail") == Some("1") {
       return Err(grpc.Status{code: grpc.Code.NotFound, message: "no such user \u{e9}%", details: b""})
