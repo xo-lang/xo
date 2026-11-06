@@ -45,9 +45,10 @@ fn (n: FakeNet) lookup_host(host: Str) -> List[Str] ! NetErr uses net.dial   // 
 fn (n: FakeNet) interfaces() -> List[NetInterface] ! NetErr uses net.listen   // decision 0426: one loopback, "lo"
 fn (n: FakeNet) only(hosts: List[Str]) -> Net
 fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response)
-/// Every matching request fails, until clear_failures.
+/// Every matching request fails with err, until clear_failures. The handler is skipped, so it never sees the
+/// request: use requests() to see what was sent.
 fn (n: FakeNet) fail(pattern: Str, err: http.ClientErr)
-/// The next matching request fails, once.
+/// The next matching request fails with err, once; like fail, it skips the handler and requests() still lists it.
 fn (n: FakeNet) fail_next(pattern: Str, err: http.ClientErr)
 fn (n: FakeNet) clear_failures()
 fn (n: FakeNet) requests() -> List[http.Request]
