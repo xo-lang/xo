@@ -230,9 +230,12 @@ pub fn (var b: Builder) prune_unwind() {
   }
 }
 
-/// For a check after a call of a prelude method that walks a collection
-/// with a function value (callback_walk, and filter_map, sort_by and
-/// group_by), given a closure literal: the literal's function, else -1.
+/// For a check after a call of a prelude method that takes a function
+/// value as its last parameter and calls nothing else that waits
+/// (callback_walk's walks, and fn_param_only's: filter_map, sort_by,
+/// group_by, Option.map and and_then, Result.map and map_err, the Str and
+/// Bytes *_where and map_runes methods), given a closure literal: the
+/// literal's function, else -1.
 /// Such a method waits only in calls of its function value, so whether
 /// the caller may be canceled is the literal's, as for a literal called in
 /// place (UCheck callee, Builder.check). Without it every walk counted as
@@ -241,7 +244,7 @@ pub fn (var b: Builder) prune_unwind() {
 /// (gotchas/with-body-cancelable-through-closure-call.md).
 fn walk_literal(m: Module, c: UCheck) -> Int {
   let base = c.callee.split("[")[0]
-  if !callback_walk(c.callee).0 && !(base is "prelude.list_filter_map" | "prelude.list_sort_by" | "prelude.list_group_by") {
+  if !callback_walk(c.callee).0 && !fn_param_only(base) {
     return -1
   }
   let f = m.funcs[c.fi]
@@ -258,6 +261,14 @@ fn walk_literal(m: Module, c: UCheck) -> Int {
     return -1
   }
   m.func_index(aux_name(a.aux))
+}
+
+/// The prelude methods outside callback_walk whose only call that may
+/// wait is of their last parameter, a function value (std/native/prelude.xo;
+/// not walk_dir, which does I/O). Std code mapped an Option inside a
+/// Mutex.with body and had to hoist the closure (wbody2, 2026-11-06).
+fn fn_param_only(base: Str) -> Bool {
+  base is "prelude.list_filter_map" | "prelude.list_sort_by" | "prelude.list_group_by" | "prelude.list_map_sized" | "prelude.list_sort_in_place_by" | "prelude.option_map" | "prelude.option_and_then" | "prelude.result_map" | "prelude.result_map_err" | "prelude.where_index" | "prelude.where_last_index" | "prelude.where_trim_left" | "prelude.where_trim_right" | "prelude.where_spans" | "prelude.str_find_where" | "prelude.str_rfind_where" | "prelude.str_contains_where" | "prelude.str_split_where" | "prelude.str_trim_start_where" | "prelude.str_trim_end_where" | "prelude.str_trim_where" | "prelude.str_map_runes" | "prelude.bytes_split_where" | "prelude.bytes_trim_where" | "prelude.bytes_trim_start_where" | "prelude.bytes_trim_end_where" | "prelude.bytes_find_where" | "prelude.bytes_rfind_where" | "prelude.bytes_contains_where" | "prelude.bytes_map_runes"
 }
 
 /// A `Mutex.with` closure that cannot be canceled hands back a zero value

@@ -3,6 +3,7 @@
 struct St {
   items: List[Int]
   names: List[Str]
+  idx: Map[Int, List[Int]]
 }
 
 // A with body that maps a list with a closure literal is not a
@@ -33,13 +34,34 @@ fn val(m: Mutex[St], k: Int, f: fn(Str) -> Int) -> Int {
   })
 }
 
+// The literal may also be handed to Map.update and, inside it, to
+// Option.map (std/sql's index upkeep, which hoisted both out of its
+// with bodies' helpers to stay uncancelable): neither literal waits, so
+// the helper and the body stay free of checks (wbody2, 2026-11-06).
+fn keep(var st: St, k: Int) {
+  st.idx.update(k % 4, [], fn(var xs) {
+    let first = xs.get(0).map(fn(x) { x + 1 }) ?? 0
+    xs.push(first + k)
+  })
+}
+
+fn upd(m: Mutex[St], k: Int) -> Int {
+  m.with(fn(var st) -> Int {
+    // func upd.fn3
+    // arm64: -"bl _?xo_x_ctx_unwinding"
+    keep(st, k)
+    st.items.push(k)
+    st.items.len()
+  })
+}
+
 fn size(s: Str) -> Int { s.len() }
 
 fn main(os: Os) {
-  let m = Mutex[St].new(St{items: [], names: ["a", "bb"]})
+  let m = Mutex[St].new(St{items: [], names: ["a", "bb"], idx: {}})
   var n = 0
   for i in 0..100 {
-    n += lit(m, i) + val(m, i, size)
+    n += lit(m, i) + val(m, i, size) + upd(m, i)
   }
   os.stdio.println("${n}")
 }

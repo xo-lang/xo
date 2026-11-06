@@ -34,4 +34,10 @@ and Set map, filter, any, all) counts as cancelable only when the
 literal's own body is, so such a body writes in place
 (test/codegen/withbody). A walk given a function value, or a call of
 one, still counts; an `xo vet --cost` note naming the call that made a
-`with` body cancelable would cover those.
+`with` body cancelable would cover those. Since the same day's wbody2
+change the literal may also go to Option.map and and_then, Result.map and
+map_err, List.map_sized and sort_in_place_by, and the Str and Bytes
+`*_where` and `map_runes` methods (fn_param_only), and a literal handed
+to `Map.update` already counted as its own body (Builder.check), so
+std/sql's index upkeep (`t.idx.update(ci, ..., fn(var x) { ...
+x.get(0).map(fn ...) })`) no longer needs its loops.
