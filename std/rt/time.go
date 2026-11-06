@@ -126,6 +126,16 @@ func Time_parse_rfc3339(_ *Task, s string) Option[Time] {
 	return Some(Time(t.UnixNano()))
 }
 
+// Time_rfc3339_offset is `Time.rfc3339_offset(s)`: the zone offset parseRFC3339 reads.
+func Time_rfc3339_offset(_ *Task, s string) Option[Duration] {
+	t, ok := parseRFC3339(s)
+	if !ok || !inTimeRange(t) {
+		return Option[Duration]{}
+	}
+	_, off := t.Zone()
+	return Some(Duration(time.Duration(off) * time.Second))
+}
+
 // inTimeRange reports whether t is a Time: 1677-09-21T00:12:43.145224192Z
 // to 2262-04-11T23:47:16.854775807Z, the nanoseconds of an int64 (decision
 // 0364; UnixNano wraps outside it).

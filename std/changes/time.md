@@ -1,5 +1,16 @@
 # std/time changes
 
+## 2026-11-06: feature: Time.rfc3339_offset keeps the offset parse_rfc3339 drops
+
+- Kind: feature
+- Commit: this commit
+- Found by: aws-19: azcore re-parses the offset of an RFC 3339 text by hand, since a `Time` is an instant and `parse_rfc3339` loses `+01:00`
+- Go reference: time.Parse(time.RFC3339Nano, s) then Time.Zone() (go1.26.1)
+- Test: testdata/corpus/time "Time.rfc3339_offset is the offset Go's time.Parse reads from an RFC 3339 text" (Go's offsets of 12 valid texts, 7 refused)
+- Shipped in: not yet released
+
+`Time.rfc3339_offset(s)` is the offset the text carries as a `Duration` (`Z`, `+00:00` and `-00:00` are zero), or `None` exactly when `Time.parse_rfc3339(s)` is. With the instant from `parse_rfc3339`, a caller can format the text back in its own offset with `time.fixed`.
+
 ## 2026-11-06: docs: {frac} and {frac:N} carry their leading dot
 
 - Kind: docs

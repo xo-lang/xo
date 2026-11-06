@@ -485,6 +485,7 @@ struct DurationErr { input: Str }  // displays as `invalid duration "1x": expect
 Time.UNIX_EPOCH: Time
 Time.from_unix(secs: Int) -> Time
 Time.from_unix_millis(ms: Int) -> Time
+Time.rfc3339_offset(s: Str) -> Duration?   // the offset the text carries (Go's Zone() of time.Parse; Z is zero), None when parse_rfc3339 is None
 Time.parse_rfc3339(s: Str) -> Time?   // None for text that is not RFC 3339 or a time outside Time's range (1677-09-21 to 2262-04-11, int64 nanoseconds since 1970; decision 0364)
 fn (t: Time) unix() -> Int
 fn (t: Time) unix_millis() -> Int
@@ -5730,6 +5731,7 @@ fn (static: Time) UNIX_EPOCH() -> Time
 fn (static: Time) from_unix(secs: Int) -> Time
 fn (static: Time) from_unix_millis(ms: Int) -> Time
 fn (static: Time) parse_rfc3339(s: Str) -> Time?
+fn (static: Time) rfc3339_offset(s: Str) -> Duration?
 fn (t: Time) unix() -> Int
 fn (t: Time) unix_millis() -> Int
 fn (t: Time) format_rfc3339() -> Str

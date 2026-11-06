@@ -392,6 +392,27 @@ func timeCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// The offset of an RFC 3339 text (Time.rfc3339_offset): Go's Zone() offset of the
+	// same text, in seconds, for the rows Xo reads.
+	o.WriteString("\n/// (text, whether it is a Time, the offset Go's time.Parse reads from it, in seconds)\nconst OFFSET_CASES: List[(Str, Bool, Int)] = [\n")
+	offs := []string{"2026-10-24T12:34:56Z", "2026-10-24T12:34:56+00:00", "2026-10-24T12:34:56-00:00",
+		"2026-10-24T12:34:56+01:00", "2026-10-24T12:34:56-07:00", "2026-10-24T12:34:56.123456789+05:30",
+		"2026-10-24T12:34:56.5-03:30", "2026-10-24T12:34:56+14:00", "2026-10-24T12:34:56-12:00",
+		"2026-10-24T12:34:56+23:59", "1970-01-01T00:00:00+01:00", "2262-04-11T23:47:16+00:00"}
+	for _, s := range offs {
+		t, err := time.Parse(time.RFC3339Nano, s)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "stdcorpus: Go refuses the offset row %q\n", s)
+			os.Exit(1)
+		}
+		_, off := t.Zone()
+		fmt.Fprintf(&o, "  (%s, true, %d),\n", xq(s), off)
+	}
+	for _, s := range []string{"2026-10-24T12:34:56", "2026-10-24T12:34:56+0100", "2026-10-24T12:34:56+1:00", "2026-10-24 12:34:56Z", "x", "", "2026-13-24T12:34:56Z"} {
+		fmt.Fprintf(&o, "  (%s, false, 0),\n", xq(s))
+	}
+	o.WriteString("]\n")
+
 	// Unix seconds and milliseconds: the instants Time.from_unix and
 	// from_unix_millis build, and what they read back.
 	secs := []int64{0, 1, -1, 60, -60, 951782400, -2208988800, 1700000000,
@@ -665,6 +686,21 @@ test "Time.parse_rfc3339 and format_rfc3339 are Go's RFC 3339 in UTC" {
     } else {
       "!none"
     }
+    if got != want {
+      bad.push((text, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "Time.rfc3339_offset is the offset Go's time.Parse reads from an RFC 3339 text" {
+  var bad: List[(Str, Str, Str)] = []
+  for (text, ok, secs) in OFFSET_CASES {
+    let got = match Time.rfc3339_offset(text) {
+      Some(d) => "${d.nanos() / 1000000000}"
+      None => "!none"
+    }
+    let want = if ok { "${secs}" } else { "!none" }
     if got != want {
       bad.push((text, got, want))
     }

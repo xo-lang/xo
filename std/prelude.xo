@@ -704,6 +704,9 @@ fn (static: Time) UNIX_EPOCH() -> Time
 fn (static: Time) from_unix(secs: Int) -> Time
 fn (static: Time) from_unix_millis(ms: Int) -> Time
 fn (static: Time) parse_rfc3339(s: Str) -> Time?
+/// The offset an RFC 3339 text carries (`Z` and `+00:00` are zero; Go's Zone() of time.Parse), or None
+/// when `parse_rfc3339` refuses the text. A `Time` is an instant, so this is how a caller keeps `+01:00`.
+fn (static: Time) rfc3339_offset(s: Str) -> Duration?
 fn (t: Time) unix() -> Int
 fn (t: Time) unix_millis() -> Int
 fn (t: Time) format_rfc3339() -> Str

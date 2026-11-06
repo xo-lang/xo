@@ -4872,6 +4872,23 @@ fn time_parse_rfc3339(s: Str) -> Time? {
   }
 }
 
+/// The offset of the RFC 3339 text s (parse_time accepted it), as a Duration.
+fn time_rfc3339_offset(s: Str) -> Duration? {
+  match text.parse_time(s) {
+    None => return None
+    Some(_) => {}
+  }
+  let b = s.bytes()
+  let n = b.len()
+  if b[n - 1] == 90 {
+    return Some(Duration.from_nanos(0))
+  }
+  let hh = Int(b[n - 5] - 48) * 10 + Int(b[n - 4] - 48)
+  let mm = Int(b[n - 2] - 48) * 10 + Int(b[n - 1] - 48)
+  let secs = hh * 3600 + mm * 60
+  Some(Duration.from_nanos((if b[n - 6] == 45 { 0 - secs } else { secs }) * 1000000000))
+}
+
 /// RFC 3339 in UTC: the Display text of a Time.
 fn time_format_rfc3339(t: Time) -> Str { "${t}" }
 
