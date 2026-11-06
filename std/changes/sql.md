@@ -7,7 +7,7 @@
 - Found by: harness load of stability/notes against its Go twin (bench/results/stability-load-2026-11-05.md: xo's p50 at 4000/s 1.47x Go's, std/sql about 25% of the CPU profile: full scans and a copy of the table per write under the Db lock)
 - Go reference: none (database/sql has no engine; SQLite's rowid and unique indexes are the model)
 - Test: std/native/sql_test.xo (8 tests: key lookups on 10,000 rows against the scan's rows, UNIQUE on insert and update, failing statements change nothing, insertion order across compaction, a WHERE the index cannot answer, a transaction's snapshot, CREATE and DROP with trailing text, writes on a growing table); the sql goldens
-- Timing: bench/perf/sqlmem (results in the decision 0528 results file)
+- Timing: bench/perf/sqlmem (bench/results/sqlmem-0528-2026-11-06.md)
 - Shipped in: not yet released
 
 Decision 0528. Each UNIQUE INT or TEXT column (SERIAL columns included) has an equality index, so a WHERE of `col = value` (or an AND with one) on it visits one row and the UNIQUE check is one lookup; other WHEREs scan as before and give the same rows and errors. A write checks everything first and then changes the table in place instead of copying it; a DELETE leaves empty slots, compacted when they pass half the table. A CREATE or DROP with text after the statement still fails and changes nothing.
