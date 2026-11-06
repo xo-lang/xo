@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/json (perf): a `derive Json` encoder reserves a List of 8 or more elements' text after its first element (its size times the rest, an eighth more), instead of doubling the text through every size class: stability/notes GET /notes spent 73% of its allocated bytes there (bench/perf/json enc_small wall 0.951, enc_strings 0.893 on linux/arm64)
 - native (fix): the inliner no longer copies a function into itself when it recurses through a closure literal it hands to a prelude walk (`xs.map(fn(x) { f(x) })`); after the with-body change above, xo's own build ran past 22 GB in inline.apply.
 - `use c` in a std module: the binding's handle types can be named in the module's struct fields and signatures (they were XO0601 "module has no type", since the binding was declared after std's signatures), and the header and `link` paths resolve under the std directory, not the program's (a program outside the repository root failed with XO1104 no such file). cmd/xo TestStdModuleUseC; gotchas/std-use-c-binding-types.md.
 - xo fix: an XO0701 on an effect argument left out of a parameter's type (a bare `sql.Db` captured by a closure whose type fixes its effects, a middleware returned as `fn(...) uses net.dial`) now has a fix that writes the argument as no effects, `sql.Db[()]`; the callers passing the value along get the same error and fix in turn (decision 0534's migration; habits case elided-effect-fixed-closure).

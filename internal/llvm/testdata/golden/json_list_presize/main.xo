@@ -1,0 +1,50 @@
+// The derived List encoder reserves room for a list's rest after its
+// first element (jsontext.reserve_list): lists below and above its 8
+// element floor, with elements of uneven size, nested lists, escaped
+// strings, and a list after a long prefix give the same text as before.
+use std/json
+
+struct Item {
+  id: Int
+  name: Str
+  tags: List[Str]
+} derive Json
+
+struct Page {
+  title: Str
+  items: List[Item]
+  counts: List[Int]
+} derive Json
+
+fn items(n: Int) -> List[Item] {
+  var out: List[Item] = []
+  for i in 0..n {
+    var tags: List[Str] = []
+    for j in 0..(i % 11) {
+      tags.push("t${j}")
+    }
+    let name = if i % 3 == 0 { "q\"uote\\${i}" } else { "n${i}".repeat(i % 5 + 1) }
+    out.push(Item{id: i, name: name, tags: tags})
+  }
+  out
+}
+
+fn main(os: Os) uses stdio {
+  for n in [0, 1, 2, 7, 8, 9, 40] {
+    let b = json.encode(items(n))
+    os.stdio.println("${n}: ${b.len()} ${b.to_str() ?? "?"}")
+  }
+  var counts: List[Int] = []
+  for i in 0..300 {
+    counts.push(i * 7919 % 1000003)
+  }
+  let p = Page{title: "x".repeat(5000), items: items(12), counts: counts}
+  let b = json.encode(p)
+  let s = b.to_str() ?? ""
+  os.stdio.println("page: ${b.len()} ${s[4990..5200]}")
+  let back = json.decode[Page](b)
+  match back {
+    Ok(q) => os.stdio.println("round trip: ${q.items.len()} ${q.counts.len()} ${q.counts[299]}")
+    Err(e) => os.stdio.println("decode: ${e}")
+  }
+}

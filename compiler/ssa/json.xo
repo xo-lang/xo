@@ -366,10 +366,19 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     let et = b.m.types[t].elems[0]
     let av = b.local()
     b.write_var(av, b.lit(acc, "["))
+    // the output's length before the first element: after it, the room
+    // for the rest is reserved by its size (jsontext.reserve_list), so a
+    // long list's text does not regrow through every size class
+    let start = b.str_len_of(b.read(av))
     let iv = b.local()
     let n = b.call("list.len", it, "", [v])
     let (i, head, exit) = b.for_up_to_begin(n, iv)
     let (no, join) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [i, b.cint(0)]))
+    let (no1, join1) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [i, b.cint(1)]))
+    if let Some(r) = b.llrt_or_none("json_reserve_list", st, [b.read(av), start, n]) {
+      b.write_var(av, r)
+    }
+    b.if_then_end(no1, join1)
     b.write_var(av, b.lit(b.read(av), ","))
     b.if_then_end(no, join)
     let cur = b.read(av)

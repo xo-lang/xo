@@ -1153,6 +1153,28 @@ fn short_escape(c: Int) -> Int {
   }
 }
 
+/// out with room for the rest of a list of n elements whose first one
+/// was written from byte start on (the derived List encoder, after the
+/// first element): its size times the n - 1 still due, an eighth more,
+/// and the commas and the bracket. Only for 8 elements and up and when
+/// the room is at least out's length, since it copies out once: a list
+/// that grew by doubling went through every size class on its way, and
+/// each class kept a free block per request in flight (stability/notes
+/// GET /notes, 2026-11-06: 73% of the bytes allocated).
+pub fn reserve_list(out: Str, start: Int, n: Int) -> Str {
+  let len = out.len()
+  let one = len - start
+  if n < 8 || one <= 0 {
+    return out
+  }
+  let rest = one * (n - 1)
+  let k = rest + rest / 8 + n + 1
+  if k < len {
+    return out
+  }
+  rt.rs_append_bytes(rt.rs_with_cap(len + k), out.bytes(), 0, len, 0)
+}
+
 /// out + s as a JSON string: std/rt's appendJSONString (encoding/json
 /// without HTML escaping): `"`, `\`, and control bytes escaped, invalid
 /// UTF-8 as �, U+2028 and U+2029 as   and  .

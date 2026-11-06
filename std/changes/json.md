@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-06: perf: a derived encoder reserves a long List's text after its first element
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0520's load runs (stability/notes GET /notes, 2026-11-06: growing the list's JSON text was 73% of the bytes allocated, each size class on the way keeping a free block per request in flight)
+- Go reference: encoding/json's encodeState is a bytes.Buffer reused through sync.Pool, a package level cache std does not keep (gotchas/std-port-costly-go-idioms.md); the transferable part is not to grow a large buffer through every size
+- Test: internal/llvm golden json_list_presize (lists of 0 to 40 elements around the 8 element floor, uneven sizes, nested lists, escaped strings, a list after a 5,000 byte prefix, and a round trip; output as before), the json goldens and std json's tests
+- Timing: ab-host bench/perf/json, 3 rounds, linux/arm64 (423f8b929 vs 414902244): enc_small wall 0.951 (0.951 to 0.975), max RSS 0.98; enc_strings wall 0.893 (0.888 to 0.945), max RSS 1.001 (runs of 5 to 8 ms)
+- Shipped in: not yet released
+
+The encoder `derive Json` generates for a `List[T]` field, after writing the first element, reserves room for the rest at the first element's size times the elements still due, an eighth more, plus the commas and the bracket (jsontext.reserve_list), when the list has 8 elements or more. The text is copied once there instead of doubling through every size class.
+
 ## 2026-11-06: perf: decode reserves its tape once
 
 - Kind: perf

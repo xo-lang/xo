@@ -4843,6 +4843,8 @@ fn llrt_append_duration(s: Str, d: Int) -> Str { text.append_duration(s, d) }
 
 fn llrt_append_time(s: Str, t: Int) -> Str { text.append_time(s, t) }
 
+fn llrt_json_reserve_list(s: Str, start: Int, n: Int) -> Str { jsontext.reserve_list(s, start, n) }
+
 fn llrt_append_quote(s: Str, t: Str) -> Str { text.append_quote(s, t.bytes()) }
 
 fn llrt_append_bytes_quote(s: Str, b: Bytes) -> Str { text.append_quote(s, b) }
