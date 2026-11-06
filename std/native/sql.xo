@@ -303,12 +303,11 @@ fn (d: Db) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlEr
   if let Some(p) = d.pool {
     return p.query(q, args)
   }
-  let res = d.st.with(fn(var st) -> MemRows ! sql.SqlErr {
-    var work = st.tables
-    let r = mem_run(work, q, args)?
-    st.tables = work
-    r
-  })?
+  // a failing statement leaves the tables as they were (decision 0528:
+  // each statement checks everything before it changes anything)
+  // (the outcome as the closure's success value: its writes are kept, and
+  // a failed statement made none)
+  let res = d.st.with(fn(var st) -> Result[MemRows, sql.SqlErr] { mem_run(st.tables, q, args) })?
   to_rows(res.cols, res.rows)
 }
 
@@ -325,12 +324,7 @@ fn (d: Db) exec(q: Str, args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.S
   if let Some(p) = d.pool {
     return p.exec(q, args)
   }
-  d.st.with(fn(var st) -> sql.ExecResult ! sql.SqlErr {
-    var work = st.tables
-    let r = mem_exec(work, q, args)?
-    st.tables = work
-    r
-  })
+  d.st.with(fn(var st) -> Result[sql.ExecResult, sql.SqlErr] { mem_exec(st.tables, q, args) })?
 }
 
 fn (d: Db) query_as[T: SqlRow](q: Str, args: List[sql.SqlValue] = []) -> List[T] ! sql.SqlErr uses net.dial {
@@ -600,12 +594,11 @@ fn (d: Db) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses
       }
     }
   }
-  let res = d.st.with(fn(var st) -> MemRows ! sql.SqlErr {
-    var work = st.tables
-    let r = mem_run(work, q, args)?
-    st.tables = work
-    r
-  })?
+  // a failing statement leaves the tables as they were (decision 0528:
+  // each statement checks everything before it changes anything)
+  // (the outcome as the closure's success value: its writes are kept, and
+  // a failed statement made none)
+  let res = d.st.with(fn(var st) -> Result[MemRows, sql.SqlErr] { mem_run(st.tables, q, args) })?
   new_rows(res.cols, RowsState{buf: res.rows, pos: 0})
 }
 
@@ -1036,8 +1029,180 @@ struct Col {
 struct Table {
   name: Str
   cols: List[Col]
+  /// The rows in insertion order; a deleted row's slot is an empty row
+  /// until the table is compacted (decision 0528).
   rows: List[List[sql.SqlValue]]
   next_id: Int
+  /// The deleted slots in rows.
+  dead: Int = 0
+  /// The index of each indexed column (by position): its stored values'
+  /// slots.
+  idx: Map[Int, ColIdx] = {}
+}
+
+/// An equality index of a UNIQUE column (decision 0528): each stored
+/// value's slot, Integer and Text values apart (NULL is not indexed).
+struct ColIdx {
+  ints: Map[Int, Int] = {}
+  strs: Map[Str, Int] = {}
+}
+
+/// Whether a column has an index: UNIQUE (SERIAL columns are) and INT or
+/// TEXT, whose stored values are only Integer or Text, or NULL (coerce).
+fn indexed(c: Col) -> Bool { c.unique && (c.kind == KI || c.kind == KT) }
+
+/// Adds the row in slot to the table's indexes.
+fn idx_put(var t: Table, slot: Int) {
+  let row = t.rows[slot]
+  for (ci, c) in t.cols.indexed() {
+    if !indexed(c) {
+      continue
+    }
+    let v = row[ci]
+    t.idx.update(ci, ColIdx{}, fn(var x) {
+      match v {
+        Integer(n) => x.ints.put(n, slot)
+        Text(z) => x.strs.put(z, slot)
+        _ => {}
+      }
+    })
+  }
+}
+
+/// Takes row's values out of the table's indexes.
+fn idx_drop(var t: Table, row: List[sql.SqlValue]) {
+  for (ci, c) in t.cols.indexed() {
+    if !indexed(c) {
+      continue
+    }
+    let v = row[ci]
+    t.idx.update(ci, ColIdx{}, fn(var x) {
+      match v {
+        Integer(n) => {
+          let _ = x.ints.remove(n)
+        }
+        Text(z) => {
+          let _ = x.strs.remove(z)
+        }
+        _ => {}
+      }
+    })
+  }
+}
+
+/// The slot whose column ci holds v by the column's index, -1 when none.
+fn idx_find(t: Table, ci: Int, v: sql.SqlValue) -> Int {
+  let x = t.idx.get(ci) ?? return -1
+  match v {
+    Integer(n) => x.ints.get(n) ?? -1
+    Text(z) => x.strs.get(z) ?? -1
+    _ => -1
+  }
+}
+
+/// Drops the deleted slots and rebuilds the indexes.
+fn compact(var t: Table) {
+  // a loop, not filter with a closure (a point that can be canceled; see
+  // coerce)
+  var kept: List[List[sql.SqlValue]] = List.with_capacity(t.rows.len() - t.dead)
+  for row in t.rows {
+    if !row.is_empty() {
+      kept.push(row)
+    }
+  }
+  t.rows = kept
+  t.dead = 0
+  t.idx = {}
+  for slot in 0..t.rows.len() {
+    idx_put(t, slot)
+  }
+}
+
+/// Whether w is equalities between a column and a value, joined by AND,
+/// that evaluate without error on every row: each column exists and each
+/// value is NULL or of the column's own type (an INT column holds only
+/// Integer or NULL, a TEXT column only Text or NULL). Appends each
+/// equality's column and value to out.
+fn eq_leaves(t: Table, n: Node, args: List[sql.SqlValue], var out: List[(Int, sql.SqlValue)]) -> Bool {
+  match n {
+    Bin(op, l, r) => {
+      if op == "and" {
+        return eq_leaves(t, l, args, out) && eq_leaves(t, r, args, out)
+      }
+      if op != "=" {
+        return false
+      }
+      let (c, x) = match (l, r) {
+        (Col(c), x) => (c, x)
+        (x, Col(c)) => (c, x)
+        _ => return false
+      }
+      let v = match x {
+        Lit(lv) => lv
+        Param(i) => {
+          if i < 1 || i > args.len() {
+            return false
+          }
+          args[i - 1]
+        }
+        Col(_) | Count | Bin(_, _, _) | Not(_) | IsNull(_, _) | InList(_, _) | Like(_, _) => return false
+      }
+      let ci = t.index(c)
+      if ci < 0 {
+        return false
+      }
+      let kind = t.cols[ci].kind
+      let ok = match v {
+        Null => true
+        Integer(_) => kind == KI
+        Text(_) => kind == KT
+        _ => false
+      }
+      if ok {
+        out.push((ci, v))
+      }
+      ok
+    }
+    _ => false
+  }
+}
+
+/// The slots a WHERE can only be true on, by an indexed column's equality
+/// (decision 0528), or None to scan every slot. The caller still evaluates
+/// the whole WHERE on each, so the rows are the scan's; eq_leaves makes
+/// sure the scan could not have failed on a row this skips.
+fn candidates(t: Table, w: Node?, args: List[sql.SqlValue]) -> List[Int]? {
+  let n = w ?? return None
+  var leaves: List[(Int, sql.SqlValue)] = []
+  if !eq_leaves(t, n, args, leaves) {
+    return None
+  }
+  for (ci, v) in leaves {
+    if indexed(t.cols[ci]) {
+      if v is Null {
+        // `= NULL` is never true
+        return Some([])
+      }
+      let s = idx_find(t, ci, v)
+      return Some(if s >= 0 { [s] } else { [] })
+    }
+  }
+  None
+}
+
+/// The slot of the k-th row to visit: a candidate's, or k when scanning.
+fn slot_at(cand: List[Int]?, k: Int) -> Int {
+  match cand {
+    Some(ss) => ss[k]
+    None => k
+  }
+}
+
+fn slots_len(t: Table, cand: List[Int]?) -> Int {
+  match cand {
+    Some(ss) => ss.len()
+    None => t.rows.len()
+  }
 }
 
 fn (t: Table) index(name: Str) -> Int {
@@ -1747,11 +1912,11 @@ fn mem_run(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> Mem
   if p.is_kw("select") {
     return mem_select(tables, p, args)
   } else if p.is_kw("insert") {
-    w = mem_insert(tables, p, args)?
+    w = mem_insert(tables, p, args, true)?
   } else if p.is_kw("update") {
-    w = mem_update(tables, p, args)?
+    w = mem_update(tables, p, args, true)?
   } else if p.is_kw("delete") {
-    w = mem_delete(tables, p, args)?
+    w = mem_delete(tables, p, args, true)?
   } else {
     return Err(syntax(QUERY_NEEDS))
   }
@@ -1764,7 +1929,9 @@ fn mem_run(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> Mem
   MemRows{cols: w.cols, rows: w.rows}
 }
 
-/// Runs write statements on tables (a private copy).
+/// Runs write statements on tables, leaving them as they were on an error:
+/// several statements run on a copy, one in place (decision 0528: each
+/// write checks everything before it changes anything).
 fn mem_exec(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr {
   let stmts = split_statements(lex(q)?)
   if stmts.is_empty() {
@@ -1773,36 +1940,57 @@ fn mem_exec(var tables: Map[Str, Table], q: Str, args: List[sql.SqlValue]) -> sq
   if stmts.len() > 1 && !args.is_empty() {
     return Err(sql.SqlErr.Param(msg: "several statements cannot take arguments"))
   }
+  if stmts.len() == 1 {
+    let w = exec_one(tables, stmts[0], args)?
+    return sql.ExecResult{rows_affected: w.n, last_insert_id: w.id}
+  }
+  var work = tables
   var total = 0
   var last_id = 0
   for st in stmts {
-    var p = Parser{toks: st}
-    var w = Write{}
-    if p.is_kw("create") {
-      mem_create(tables, p)?
-    } else if p.is_kw("drop") {
-      mem_drop(tables, p)?
-    } else if p.is_kw("insert") {
-      w = mem_insert(tables, p, args)?
-    } else if p.is_kw("update") {
-      w = mem_update(tables, p, args)?
-    } else if p.is_kw("delete") {
-      w = mem_delete(tables, p, args)?
-    } else if p.is_kw("select") {
-      return Err(syntax("exec cannot run a SELECT (use query)"))
-    } else {
-      return Err(p.fail("a statement"))
-    }
-    if p.peek().k != T_EOF {
-      return Err(p.fail("end of statement"))
-    }
+    let w = exec_one(work, st, args)?
     total += w.n
     if w.id != 0 {
       last_id = w.id
     }
   }
+  tables = work
   sql.ExecResult{rows_affected: total, last_insert_id: last_id}
 }
+
+/// One write statement of mem_exec; it changes tables only when it
+/// succeeds.
+fn exec_one(var tables: Map[Str, Table], st: List[Tok], args: List[sql.SqlValue]) -> Write ! sql.SqlErr {
+  var p = Parser{toks: st}
+  if p.is_kw("create") || p.is_kw("drop") {
+    // each checks that the statement ends before its one write, so tables
+    // is not copied: a copy written to makes the Map a log one, whose
+    // later writes copy a table's rows (decision 0528)
+    if p.is_kw("create") {
+      mem_create(tables, p)?
+    } else {
+      mem_drop(tables, p)?
+    }
+    stmt_end(p)?
+    return Write{}
+  }
+  if p.is_kw("insert") {
+    return mem_insert(tables, p, args, false)
+  }
+  if p.is_kw("update") {
+    return mem_update(tables, p, args, false)
+  }
+  if p.is_kw("delete") {
+    return mem_delete(tables, p, args, false)
+  }
+  if p.is_kw("select") {
+    return Err(syntax("exec cannot run a SELECT (use query)"))
+  }
+  Err(p.fail("a statement"))
+}
+
+/// The default of a write's Map.update, never used: its plan read the table.
+fn no_table(name: Str) -> Table { Table{name: name, cols: [], rows: [], next_id: 1} }
 
 fn table_for(tables: Map[Str, Table], name: Str) -> Table ! sql.SqlErr {
   tables.get(name).or_err(sql.SqlErr.NoTable(name: name))
@@ -1881,6 +2069,7 @@ fn mem_create(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr {
   if t.cols.is_empty() {
     return Err(syntax("a table needs a column"))
   }
+  stmt_end(p)?
   tables.put(name, t)
 }
 
@@ -1961,6 +2150,7 @@ fn mem_drop(var tables: Map[Str, Table], var p: Parser) -> () ! sql.SqlErr {
     }
     return Err(sql.SqlErr.NoTable(name: name))
   }
+  stmt_end(p)?
   tables.remove(name)
 }
 
@@ -1981,9 +2171,17 @@ fn kind_want(kind: Int) -> Str {
 fn coerce(c: Col, v: sql.SqlValue) -> sql.SqlValue ! sql.SqlErr {
   if c.kind == KARR {
     if let Array(items) = v {
-      // each element to the column's element kind (NULL allowed)
+      // each element to the column's element kind (NULL allowed); a loop,
+      // not items.map with a closure: a call through a function value is a
+      // point that can be canceled, which made every Mutex.with body that
+      // reaches coerce (each INSERT and UPDATE) keep the tables it was
+      // given and copy the table it wrote (decision 0528)
       let ec = Col{name: c.name, kind: c.elem}
-      return sql.SqlValue.Array(items: items.map(fn(x) { coerce(ec, x) })?)
+      var out: List[sql.SqlValue] = List.with_capacity(items.len())
+      for x in items {
+        out.push(coerce(ec, x)?)
+      }
+      return sql.SqlValue.Array(items: out)
     }
   }
   match v {
@@ -2031,25 +2229,79 @@ fn coerce(c: Col, v: sql.SqlValue) -> sql.SqlValue ! sql.SqlErr {
   Err(sql.SqlErr.Constraint(msg: "column ${c.name} expects ${kind_want(c.kind)}, got ${go_type(v)}", code: "42804", name: ""))
 }
 
-fn check_row(t: Table, row: List[sql.SqlValue], skip: Int) -> () ! sql.SqlErr {
+/// Checks row's NOT NULL and UNIQUE constraints against t's rows (but slot
+/// skip, the row it replaces), with the rows in repl standing for their
+/// slots' and the rows of extra added (a statement's own earlier rows: the
+/// table as it would be, decision 0528).
+fn check_row(t: Table, row: List[sql.SqlValue], skip: Int, extra: List[List[sql.SqlValue]], repl: Map[Int, List[sql.SqlValue]]) -> () ! sql.SqlErr {
   for (i, c) in t.cols.indexed() {
     if row[i] is Null && c.not_null {
       return Err(sql.SqlErr.Constraint(msg: "NOT NULL constraint failed: ${t.name}.${c.name}", code: "23502", name: ""))
     }
     if c.unique && !(row[i] is Null) {
-      for (j, o) in t.rows.indexed() {
+      let dup = sql.SqlErr.Constraint(msg: "UNIQUE constraint failed: ${t.name}.${c.name}", code: "23505", name: "")
+      if indexed(c) {
+        let s = idx_find(t, i, row[i])
+        if s >= 0 && s != skip && !repl.contains(s) {
+          return Err(dup)
+        }
+      } else {
+        for (j, o) in t.rows.indexed() {
+          if j == skip || o.is_empty() || repl.contains(j) || o[i] is Null {
+            continue
+          }
+          if let Ok(0) = sql_cmp(o[i], row[i]) {
+            return Err(dup)
+          }
+        }
+      }
+      for (j, o) in repl.entries() {
         if j == skip || o[i] is Null {
           continue
         }
         if let Ok(0) = sql_cmp(o[i], row[i]) {
-          return Err(sql.SqlErr.Constraint(msg: "UNIQUE constraint failed: ${t.name}.${c.name}", code: "23505", name: ""))
+          return Err(dup)
+        }
+      }
+      for o in extra {
+        if o[i] is Null {
+          continue
+        }
+        if let Ok(0) = sql_cmp(o[i], row[i]) {
+          return Err(dup)
         }
       }
     }
   }
 }
 
-fn mem_insert(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) -> Write ! sql.SqlErr {
+/// What a write statement changes, made and checked by its plan function
+/// before the table changes. The plan holds the table it read, so the
+/// change runs after it returns, in a Map.update whose closure cannot
+/// fail: the table is then changed in place, where a remove or get and a
+/// put back copies its rows (the log Map keeps each value it held;
+/// decision 0528).
+struct Plan {
+  name: Str
+  res: Write
+  slots: List[Int] = []
+  rows: List[List[sql.SqlValue]] = []
+  next_id: Int = 0
+}
+
+fn mem_insert(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue], want_ret: Bool) -> Write ! sql.SqlErr {
+  let pl = insert_plan(tables, p, args, want_ret)?
+  tables.update(pl.name, no_table(pl.name), fn(var t) {
+    for row in pl.rows {
+      t.rows.push(row)
+      idx_put(t, t.rows.len() - 1)
+    }
+    t.next_id = pl.next_id
+  })
+  pl.res
+}
+
+fn insert_plan(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue], want_ret: Bool) -> Plan ! sql.SqlErr {
   p.i += 1
   p.expect_kw("into")?
   let name = p.ident("a table name")?
@@ -2096,37 +2348,40 @@ fn mem_insert(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValu
   }
   let (ret, has_ret) = p.returning()?
   check_params(p, args)?
-  var t = old
+  // every row made and checked before the table changes (decision 0528)
   let env = EvalEnv{t: None, row: [], args: args}
+  var next_id = old.next_id
   var last_id = 0
+  var added: List[List[sql.SqlValue]] = []
   for tup in tuples {
     var row: List[sql.SqlValue] = []
-    for c in t.cols {
+    for c in old.cols {
       row.push(c.def)
     }
     for (k, ci) in cols.indexed() {
       let v = env.eval(tup[k])?
-      row.set(ci, coerce(t.cols[ci], v)?)
+      row.set(ci, coerce(old.cols[ci], v)?)
     }
-    for (i, c) in t.cols.indexed() {
+    for (i, c) in old.cols.indexed() {
       if !c.auto {
         continue
       }
       if row[i] is Null {
-        row.set(i, sql.SqlValue.Integer(n: t.next_id))
+        row.set(i, sql.SqlValue.Integer(n: next_id))
       }
       if let Integer(id) = row[i] {
-        if id >= t.next_id {
-          t.next_id = id + 1
+        if id >= next_id {
+          next_id = id + 1
         }
         last_id = id
       }
     }
-    check_row(t, row, -1)?
-    t.rows.push(row)
+    check_row(old, row, -1, added, {})?
+    added.push(row)
   }
-  tables.put(name, t)
-  written(t, tuples.len(), last_id, ret, has_ret, t.rows[old.rows.len()..t.rows.len()], args)
+  let res = written(old, tuples.len(), last_id, ret, has_ret, added, args)?
+  write_end(p, has_ret, want_ret)?
+  Plan{name: name, res: res, rows: added, next_id: next_id}
 }
 
 struct Asg {
@@ -2134,7 +2389,24 @@ struct Asg {
   e: Node
 }
 
-fn mem_update(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) -> Write ! sql.SqlErr {
+fn mem_update(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue], want_ret: Bool) -> Write ! sql.SqlErr {
+  let pl = update_plan(tables, p, args, want_ret)?
+  tables.update(pl.name, no_table(pl.name), fn(var t) {
+    // out of the indexes first, so a row taking another's old value keeps it
+    for ri in pl.slots {
+      idx_drop(t, t.rows[ri])
+    }
+    for (k, ri) in pl.slots.indexed() {
+      t.rows.set(ri, pl.rows[k])
+    }
+    for ri in pl.slots {
+      idx_put(t, ri)
+    }
+  })
+  pl.res
+}
+
+fn update_plan(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue], want_ret: Bool) -> Plan ! sql.SqlErr {
   p.i += 1
   let name = p.ident("a table name")?
   let old = table_for(tables, name)?
@@ -2159,30 +2431,55 @@ fn mem_update(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValu
   }
   let (ret, has_ret) = p.returning()?
   check_params(p, args)?
-  var t = old
-  var n = 0
+  // every new row made and checked, in slot order against the rows before
+  // it already changed, before the table changes (decision 0528)
+  var slots: List[Int] = []
   var changed: List[List[sql.SqlValue]] = []
-  for ri in 0..t.rows.len() {
-    let row = t.rows[ri]
-    let env = EvalEnv{t: Some(t), row: row, args: args}
+  var repl: Map[Int, List[sql.SqlValue]] = {}
+  let cand = candidates(old, w, args)
+  for k in 0..slots_len(old, cand) {
+    let ri = slot_at(cand, k)
+    let row = old.rows[ri]
+    if row.is_empty() {
+      continue
+    }
+    let env = EvalEnv{t: Some(old), row: row, args: args}
     if !env.where_ok(w)? {
       continue
     }
     var nr = row
     for a in asgs {
       let v = env.eval(a.e)?
-      nr.set(a.col, coerce(t.cols[a.col], v)?)
+      nr.set(a.col, coerce(old.cols[a.col], v)?)
     }
-    check_row(t, nr, ri)?
-    t.rows.set(ri, nr)
+    check_row(old, nr, ri, [], repl)?
+    repl.put(ri, nr)
+    slots.push(ri)
     changed.push(nr)
-    n += 1
   }
-  tables.put(name, t)
-  written(t, n, 0, ret, has_ret, changed, args)
+  let res = written(old, changed.len(), 0, ret, has_ret, changed, args)?
+  write_end(p, has_ret, want_ret)?
+  Plan{name: name, res: res, slots: slots, rows: changed}
 }
 
-fn mem_delete(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) -> Write ! sql.SqlErr {
+fn mem_delete(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue], want_ret: Bool) -> Write ! sql.SqlErr {
+  let pl = delete_plan(tables, p, args, want_ret)?
+  // the slots become empty rows (no rebuild of the list, decision 0528),
+  // compacted once they are more than half of it
+  tables.update(pl.name, no_table(pl.name), fn(var t) {
+    for ri in pl.slots {
+      idx_drop(t, t.rows[ri])
+      t.rows.set(ri, [])
+    }
+    t.dead += pl.slots.len()
+    if t.dead > 64 && t.dead * 2 > t.rows.len() {
+      compact(t)
+    }
+  })
+  pl.res
+}
+
+fn delete_plan(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue], want_ret: Bool) -> Plan ! sql.SqlErr {
   p.i += 1
   p.expect_kw("from")?
   let name = p.ident("a table name")?
@@ -2193,21 +2490,41 @@ fn mem_delete(var tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValu
   }
   let (ret, has_ret) = p.returning()?
   check_params(p, args)?
-  var t = old
-  t.rows = []
-  var n = 0
+  var slots: List[Int] = []
   var gone: List[List[sql.SqlValue]] = []
-  for row in old.rows {
+  let cand = candidates(old, w, args)
+  for k in 0..slots_len(old, cand) {
+    let ri = slot_at(cand, k)
+    let row = old.rows[ri]
+    if row.is_empty() {
+      continue
+    }
     let env = EvalEnv{t: Some(old), row: row, args: args}
     if env.where_ok(w)? {
       gone.push(row)
-      n += 1
-    } else {
-      t.rows.push(row)
+      slots.push(ri)
     }
   }
-  tables.put(name, t)
-  written(old, n, 0, ret, has_ret, gone, args)
+  let res = written(old, gone.len(), 0, ret, has_ret, gone, args)?
+  write_end(p, has_ret, want_ret)?
+  Plan{name: name, res: res, slots: slots}
+}
+
+/// The end of a statement, checked before its write.
+fn stmt_end(p: Parser) -> () ! sql.SqlErr {
+  if p.peek().k != T_EOF {
+    return Err(p.fail("end of statement"))
+  }
+}
+
+/// The checks mem_exec and mem_run made after a write, made before it
+/// changes anything (decision 0528): the statement ends, and a query's
+/// write has RETURNING.
+fn write_end(p: Parser, has_ret: Bool, want_ret: Bool) -> () ! sql.SqlErr {
+  stmt_end(p)?
+  if want_ret && !has_ret {
+    return Err(syntax(QUERY_NEEDS))
+  }
 }
 
 /// The outcome of a write that touched rows of t.
@@ -2424,7 +2741,12 @@ fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) 
   check_params(p, args)?
   // filter
   var rows: List[List[sql.SqlValue]] = []
-  for row in t.rows {
+  let cand = candidates(t, w, args)
+  for k in 0..slots_len(t, cand) {
+    let row = t.rows[slot_at(cand, k)]
+    if row.is_empty() {
+      continue
+    }
     if (EvalEnv{t: Some(t), row: row, args: args}).where_ok(w)? {
       rows.push(row)
     }

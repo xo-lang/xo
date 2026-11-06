@@ -1,0 +1,155 @@
+// The memory driver's indexes and in place writes (decision 0528): the
+// same rows, order and errors as a full scan of a copied table.
+use std/sql
+
+fn ids(rows: List[sql.Row]) -> List[Int] {
+  var out: List[Int] = []
+  for r in rows {
+    out.push(r.int("id").ok() ?? -1)
+  }
+  out
+}
+
+fn fill(db: sql.Db, n: Int) -> () ! sql.SqlErr uses net.dial {
+  for i in 0..n {
+    db.exec("INSERT INTO t (name, n) VALUES ($1, $2)", [sql.str("k${i}"), sql.int(i % 10)])?
+  }
+}
+
+test "get, update and delete by id visit one row of 10,000, and the rows are the scan's" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT)")?
+  fill(db, 10000)?
+  expect(db.query_one("SELECT name FROM t WHERE id = $1", [sql.int(5000)])?.str("name")?) == "k4999"
+  expect(db.query("SELECT id FROM t WHERE id = $1 AND n = $2", [sql.int(5000), sql.int(3)])?.len()) == 0
+  expect(db.query("SELECT id FROM t WHERE $1 = id AND n = $2", [sql.int(5000), sql.int(9)])?.len()) == 1
+  expect(db.query("SELECT id FROM t WHERE id = $1", [sql.int(20000)])?.len()) == 0
+  expect(db.query("SELECT id FROM t WHERE id = NULL")?.len()) == 0
+  expect(db.query_one("SELECT id FROM t WHERE name = $1", [sql.str("k41")])?.int("id")?) == 42
+  expect(db.exec("UPDATE t SET n = 77 WHERE id = $1", [sql.int(7)])?.rows_affected) == 1
+  expect(db.query("SELECT id FROM t WHERE n = 77")?.len()) == 1
+  expect(db.exec("DELETE FROM t WHERE id = $1", [sql.int(7)])?.rows_affected) == 1
+  expect(db.exec("DELETE FROM t WHERE id = $1", [sql.int(7)])?.rows_affected) == 0
+  expect(db.query("SELECT id FROM t")?.len()) == 9999
+}
+
+test "a UNIQUE violation on insert and update is reported and leaves the table as it was" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT)")?
+  fill(db, 3)?
+  match db.exec("INSERT INTO t (name, n) VALUES ($1, 1)", [sql.str("k1")]) {
+    Err(Constraint(msg, code, _)) => {
+      expect(code) == "23505"
+      expect(msg) == "UNIQUE constraint failed: t.name"
+    }
+    _ => expect(false) == true
+  }
+  match db.exec("UPDATE t SET name = $1 WHERE id = $2", [sql.str("k0"), sql.int(3)]) {
+    Err(Constraint(_, code, _)) => expect(code) == "23505"
+    _ => expect(false) == true
+  }
+  // a multi row INSERT whose second row clashes with its first adds neither
+  match db.exec("INSERT INTO t (name) VALUES ('x'), ('x')") {
+    Err(Constraint(_, code, _)) => expect(code) == "23505"
+    _ => expect(false) == true
+  }
+  expect(db.query("SELECT id FROM t WHERE name = 'x'")?.len()) == 0
+  expect(db.query_one("SELECT name FROM t WHERE id = 3")?.str("name")?) == "k2"
+  // a swap through a third value: each step sees the rows the one before left
+  db.exec("UPDATE t SET name = 'tmp' WHERE id = 1")?
+  db.exec("UPDATE t SET name = 'k0' WHERE id = 2")?
+  db.exec("UPDATE t SET name = 'k1' WHERE id = 1")?
+  expect(db.query_one("SELECT id FROM t WHERE name = 'k1'")?.int("id")?) == 1
+  expect(db.query_one("SELECT id FROM t WHERE name = 'k0'")?.int("id")?) == 2
+  // one UPDATE of two rows to one value: the second clashes with the
+  // first's new value, and neither changes
+  match db.exec("UPDATE t SET name = 'same' WHERE id <= 2") {
+    Err(Constraint(_, code, _)) => expect(code) == "23505"
+    _ => expect(false) == true
+  }
+  expect(db.query("SELECT id FROM t WHERE name = 'same'")?.len()) == 0
+  expect(db.query_one("SELECT id FROM t WHERE name = 'k1'")?.int("id")?) == 1
+}
+
+test "a failing statement changes nothing: a bad value, trailing text, and a query's write without RETURNING" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT)")?
+  fill(db, 2)?
+  expect(db.exec("INSERT INTO t (name, n) VALUES ('a', 1), ('b', 'oops')").is_err()) == true
+  expect(db.exec("DELETE FROM t WHERE id = 1 junk").is_err()) == true
+  expect(db.query("DELETE FROM t WHERE id = 1").is_err()) == true
+  expect(db.query("UPDATE t SET n = 5 WHERE id = 2").is_err()) == true
+  expect(ids(db.query("SELECT id FROM t ORDER BY id")?)) == [1, 2]
+  expect(db.query_one("SELECT n FROM t WHERE id = 2")?.int("n")?) == 1
+  // the next id is not used up by the failed insert
+  expect(db.exec("INSERT INTO t (name) VALUES ('c')")?.last_insert_id) == 3
+}
+
+test "rows keep insertion order across deletes, inserts and compaction" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT)")?
+  fill(db, 300)?
+  // delete 2 of every 3 (past half the slots: the table compacts)
+  db.exec("DELETE FROM t WHERE n = 0 OR n = 1 OR n = 2 OR n = 4 OR n = 5 OR n = 7 OR n = 8")?
+  db.exec("INSERT INTO t (name, n) VALUES ('late', 3)")?
+  let got = ids(db.query("SELECT id FROM t")?)
+  var want: List[Int] = []
+  for i in 0..300 {
+    let n = i % 10
+    if n == 3 || n == 6 || n == 9 {
+      want.push(i + 1)
+    }
+  }
+  want.push(301)
+  expect(got) == want
+  // the indexes still find each row after the compaction
+  expect(db.query_one("SELECT id FROM t WHERE name = 'late'")?.int("id")?) == 301
+  expect(db.query_one("SELECT name FROM t WHERE id = 4")?.str("name")?) == "k3"
+  expect(db.query("SELECT id FROM t WHERE id = 1")?.len()) == 0
+}
+
+test "a WHERE the index cannot answer exactly scans and fails as a scan does" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT)")?
+  fill(db, 5)?
+  // a Real compared with the INT id: no index, the scan's numeric compare
+  expect(db.query("SELECT id FROM t WHERE id = 2.0")?.len()) == 1
+  // a Text against the INT id fails on every row, also when no row would match
+  expect(db.query("SELECT id FROM t WHERE id = 'x'").is_err()) == true
+  expect(db.query("SELECT id FROM t WHERE id = 99 AND n = 'x'").is_err()) == true
+  expect(db.query("SELECT id FROM t WHERE id = 3 OR id = 4")?.len()) == 2
+}
+
+test "a transaction's snapshot is not changed by writes outside it" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT)")?
+  fill(db, 3)?
+  let tx = db.begin()?
+  db.exec("DELETE FROM t WHERE id = 1")?
+  db.exec("UPDATE t SET n = 50 WHERE id = 2")?
+  expect(tx.query("SELECT id FROM t")?.len()) == 3
+  expect(tx.query_one("SELECT n FROM t WHERE id = 2")?.int("n")?) == 1
+  tx.rollback()?
+  expect(db.query("SELECT id FROM t")?.len()) == 2
+}
+
+test "a CREATE or DROP with trailing text fails and changes nothing" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT)")?
+  fill(db, 2)?
+  expect(db.exec("CREATE TABLE u (a INT) garbage").is_err()) == true
+  expect(db.query("SELECT a FROM u").is_err()) == true
+  expect(db.exec("DROP TABLE t garbage").is_err()) == true
+  expect(db.query("SELECT id FROM t")?.len()) == 2
+  // IF NOT EXISTS on a table that exists still checks the end
+  expect(db.exec("CREATE TABLE IF NOT EXISTS t (a INT) garbage").is_err()) == true
+  db.exec("CREATE TABLE IF NOT EXISTS t (a INT)")?
+  db.exec("DROP TABLE t")?
+  expect(db.query("SELECT id FROM t").is_err()) == true
+}
+
+test "an INSERT and a DELETE under the Db's lock stay fast as the table grows" {
+  // 0528: a call through a function value (items.map, filter) reachable
+  // from the write path made each Mutex.with body cancelable, so it kept
+  // the tables it was given and every write copied the table: 20,000 rows
+  // took about 2 s on the Mac; in place, about 0.03 s
+  let db = sql.memory("CREATE TABLE t (id SERIAL, name TEXT NOT NULL UNIQUE, n INT)")?
+  fill(db, 20000)?
+  for k in 0..2000 {
+    db.exec("DELETE FROM t WHERE id = $1", [sql.int(k + 1)])?
+  }
+  expect(db.query("SELECT id FROM t WHERE n = 3")?.len()) == 1800
+}

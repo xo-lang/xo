@@ -1,6 +1,6 @@
 # 0528: std/sql memory driver: indexes on UNIQUE columns and writes in place
 
-Status: Proposed (Xo Lang 2, 2026-11-05), for the owner through the lead.
+Status: Accepted (owner, 2026-11-05: "Go with your recommendations", through the lead). Built in the same push.
 
 ## Context
 
@@ -32,7 +32,8 @@ Every statement is also lexed and parsed on each call, but that does not show in
 1. **Validate, then apply, in place.** Each single-statement write computes and checks everything first: the new
    rows of an INSERT, the replacement rows of an UPDATE, the positions a DELETE removes. Every error (a coercion,
    NOT NULL, UNIQUE, a bad parameter) happens in that phase. Only then does it apply the changes to the table,
-   taken out of the map so that it is the only reference (Map.remove, then put), so nothing is copied. Db.exec
+   in a Map.update whose closure cannot fail, after the plan function that read the table has returned, so the
+   table has one holder and nothing is copied (see Implementation). Db.exec
    drops the `work` copy for a single statement; a text of several statements (a schema) keeps today's copy, so
    it stays all or nothing. A transaction's snapshot still shares the tables, so the first write while one is
    open copies once, as now: transaction semantics are unchanged.
@@ -47,6 +48,21 @@ Every statement is also lexed and parsed on each call, but that does not show in
    with such a conjunct, on an indexed column, with v a parameter or literal of exactly that index's type (Integer
    or Text, not Null), it visits only the slot the index names. It still evaluates the whole WHERE on that row, so
    the result is the same as the scan's. Anything else scans.
+
+Implementation (2026-11-05). Each write is a plan function (insert_plan, update_plan, delete_plan: parse,
+evaluate, check, return a Plan of the rows or slots) and an apply step in `tables.update`. Three things kept the
+first build copying the table on every write; each was found by timing, then bisecting with never-run calls:
+
+- Map.remove and a put back do not leave a value unique: the hybrid Map in its log form keeps each value it held
+  in its value log (decision 0291), so the removed table still shared its rows. Map.update with a closure that
+  cannot fail changes the value in place (map_update_take).
+- A CREATE or DROP ran on a copy of the map (`var work = tables`) to keep a failed end of statement from changing
+  anything; a written copy is what turns a Map into the log form. Both now check the statement's end before their
+  one write and run on the map itself.
+- `coerce`'s array branch (`items.map` with a closure) and `compact` (`rows.filter` with a closure) made every
+  Db.exec body cancelable: a call through a function value is a cancellation point, and a cancelable
+  `Mutex.with` body keeps the value it was given (core 5.4), so its first write copied the table. Both are loops
+  now (gotchas/with-body-cancelable-through-closure-call.md).
 
 Not in this decision: a parsed statement cache, which the profile does not call for; indexes on non-UNIQUE
 columns; range or ORDER BY use of an index.

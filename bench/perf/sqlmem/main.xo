@@ -1,0 +1,36 @@
+// std/sql's in memory driver by key (decision 0528): a notes-like table
+// (a SERIAL id, a UNIQUE token, an owner and a body) of N rows, then
+// 20,000 statements of one workload. `get`: SELECT by id; `token`: SELECT
+// by the UNIQUE text column; `churn`: INSERT one row and DELETE an older
+// one, so the table keeps its size; `none` builds the table and stops.
+// Usage: `<program> none|get|token|churn [N]` (N 1000 by default).
+// Prints `<workload> <N> <checksum>`.
+use std/sql
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "none"
+  let n = Int.parse(os.env.args().get(1) ?? "1000") ?? 1000
+  let db = sql.memory("CREATE TABLE notes (id SERIAL, token TEXT NOT NULL UNIQUE, owner INT NOT NULL, body TEXT NOT NULL)")?
+  for i in 0..n {
+    db.exec("INSERT INTO notes (token, owner, body) VALUES ($1, $2, $3)", [sql.str("t${i}"), sql.int(i % 7), sql.str("note body ${i}")])?
+  }
+  var sum = 0
+  if w == "get" {
+    for k in 0..20000 {
+      let id = 1 + k * 7919 % n
+      let r = db.query_one("SELECT * FROM notes WHERE id = $1 AND owner = $2", [sql.int(id), sql.int((id - 1) % 7)])?
+      sum += r.str("body")?.len()
+    }
+  } else if w == "token" {
+    for k in 0..20000 {
+      let r = db.query_one("SELECT id FROM notes WHERE token = $1", [sql.str("t${k * 7919 % n}")])?
+      sum += r.int("id")?
+    }
+  } else if w == "churn" {
+    for k in 0..20000 {
+      let res = db.exec("INSERT INTO notes (token, owner, body) VALUES ($1, 1, 'x')", [sql.str("c${k}")])?
+      sum += db.exec("DELETE FROM notes WHERE id = $1", [sql.int(res.last_insert_id - n)])?.rows_affected
+    }
+  }
+  os.stdio.println("${w} ${n} ${sum}")
+}
