@@ -61,8 +61,8 @@ func TestHeapStatsFreeLists(t *testing.T) {
 }
 
 const heapWasteProg = `fn main(os: Os) {
-  // 2000 Bytes of 3000 bytes each: blocks of the 4088 byte class (decision
-  // 0506's measurement, XO_HEAPSTATS=waste)
+  // 2000 Bytes of 3000 bytes each: blocks of the smallest class that
+  // holds them (decision 0506's measurement, XO_HEAPSTATS=waste)
   var xs: List[Bytes] = []
   for i in 0..2000 {
     xs.push(b"x".repeat(3000 + i % 2))
@@ -71,10 +71,13 @@ const heapWasteProg = `fn main(os: Os) {
 }
 `
 
-var heapWasteLine = regexp.MustCompile(`waste class 66 allocs (\d+) asked (\d+) handed (\d+) per mille (\d+)`)
+var heapWasteLine = regexp.MustCompile(`waste class (\d+) allocs (\d+) asked (\d+) handed (\d+) per mille (\d+)`)
 
 // TestHeapStatsWaste: XO_HEAPSTATS=waste reports, per size class above
 // 1 KiB, what allocations asked for against what their class handed out.
+// The class is found by its allocations, not by number: decision 0506
+// moves the class numbers above 1 KiB (2000 blocks of about 3000 bytes
+// were class 66's 4096 before stage B, class 70's 3072 after).
 func TestHeapStatsWaste(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -94,15 +97,27 @@ func TestHeapStatsWaste(t *testing.T) {
 		if err := cmd.Run(); err != nil {
 			t.Fatalf("run on %s: %v\n%s", be, err, errb.String())
 		}
-		m := heapWasteLine.FindStringSubmatch(errb.String())
-		if m == nil {
-			t.Fatalf("%s: no class 66 waste line:\n%s", be, errb.String())
+		// the class whose blocks the 2000 Bytes took: at least 2000
+		// allocations of about 3000 bytes each
+		var class string
+		var allocs, asked, handed int
+		for _, m := range heapWasteLine.FindAllStringSubmatch(errb.String(), -1) {
+			a, _ := strconv.Atoi(m[2])
+			k, _ := strconv.Atoi(m[3])
+			h, _ := strconv.Atoi(m[4])
+			if a >= 2000 && k >= a*3000 && k <= a*3100 {
+				class, allocs, asked, handed = m[1], a, k, h
+			}
 		}
-		allocs, _ := strconv.Atoi(m[1])
-		asked, _ := strconv.Atoi(m[2])
-		handed, _ := strconv.Atoi(m[3])
-		if allocs < 2000 || handed != allocs*4096 || asked < allocs*3000 || asked > allocs*3100 {
-			t.Errorf("%s: class 66 allocs %d asked %d handed %d, want at least 2000 blocks of 4096 bytes for about 3000 asked each:\n%s", be, allocs, asked, handed, errb.String())
+		if class == "" {
+			t.Fatalf("%s: no waste line with 2000 allocations of about 3000 bytes:\n%s", be, errb.String())
 		}
+		// one block size per class, at least the ask, and under the 1.25
+		// step of four classes a doubling
+		block := handed / allocs
+		if handed%allocs != 0 || block < asked/allocs || block*4 > asked/allocs*5 {
+			t.Errorf("%s: class %s allocs %d asked %d handed %d: want one block size per allocation, at least the %d asked and under 1.25 times it:\n%s", be, class, allocs, asked, handed, asked/allocs, errb.String())
+		}
+		t.Logf("%s: class %s, %d blocks of %d bytes for %d asked on average", be, class, allocs, block, asked/allocs)
 	}
 }
