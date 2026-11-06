@@ -130,6 +130,17 @@ struct Rc {
   skip_imm: Bool = false
   /// the numbers of leaf paths (Rc.leaf, leaf_key): "" is 0
   pids: Map[Str, Int] = {}
+  /// each number's path (pids' inverse; "" is 0)
+  pnames: List[Str] = [""]
+  /// the numbers of joined paths, so a leaf seen before is found with no
+  /// string built or hashed (a cold self build spent 4 to 6% of its CPU
+  /// in leaves_fresh and base, 2026-11-05): (base number << 24) + the
+  /// leaf path's number (leaves_fresh), and (base number << 24) + a
+  /// field index for the path base adds `.N` to (pfield)
+  pcat: Map[Int, Int] = {}
+  pfield: Map[Int, Int] = {}
+  /// the numbers of leaf_paths(t), by t
+  lpids: Map[Int, List[Int]] = {}
   /// the memo of leaves (decision 0383's follow-up: the pass allocated 14
   /// GB of the compiler's cold self build, 43%, asking again for the
   /// leaves of a value): function lm_fi's leaves by value index, whether
@@ -167,8 +178,45 @@ fn (var r: Rc) leaf(root: Int, path: Str) -> Leaf {
   }
   let n = r.pids.len() + 1
   r.pids[path] = n
+  r.pnames.push(path)
   r.ranks = []
   Leaf{root: root, path: path, pid: n}
+}
+
+/// The leaf of root at the path numbered n (pnames).
+fn (r: Rc) leaf_n(root: Int, n: Int) -> Leaf {
+  Leaf{root: root, path: r.pnames[n], pid: n}
+}
+
+/// The leaf of root at base path b followed by path lp, numbered lpn:
+/// leaf(root, b.path + lp) through pcat.
+fn (var r: Rc) leaf_cat(root: Int, b: Leaf, lp: Str, lpn: Int) -> Leaf {
+  if b.pid == 0 {
+    return r.leaf_n(root, lpn)
+  }
+  if lpn == 0 {
+    return r.leaf_n(root, b.pid)
+  }
+  let key = (b.pid << 24) + lpn
+  if let Some(n) = r.pcat.get(key) {
+    return r.leaf_n(root, n)
+  }
+  let l = r.leaf(root, "${b.path}${lp}")
+  r.pcat[key] = l.pid
+  l
+}
+
+/// The numbers of leaf_paths(t), in its order.
+fn (var r: Rc) leaf_pids(t: Int) -> List[Int] {
+  if let Some(ns) = r.lpids.get(t) {
+    return ns
+  }
+  var ns: List[Int] = []
+  for lp in r.leaf_paths(t) {
+    ns.push(r.leaf(0, lp).pid)
+  }
+  r.lpids[t] = ns
+  ns
 }
 
 /// The rank of each path by number (index pid): its place in the order
@@ -397,7 +445,14 @@ fn (var r: Rc) base(f: Func, v: Int) -> Leaf {
   if r.is_alias(f, v) {
     let x = f.values[v]
     let b = r.base(f, x.args[0])
-    return r.leaf(b.root, "${b.path}.${aux_int(x.aux)}")
+    let i = aux_int(x.aux)
+    let key = (b.pid << 24) + i
+    if let Some(n) = r.pfield.get(key) {
+      return r.leaf_n(b.root, n)
+    }
+    let l = r.leaf(b.root, "${b.path}.${i}")
+    r.pfield[key] = l.pid
+    return l
   }
   Leaf{root: v, path: ""}
 }
@@ -446,14 +501,12 @@ fn (r: Rc) leaves_stale(f: Func, v: Int) {
 /// leaves without the memo.
 fn (var r: Rc) leaves_fresh(f: Func, v: Int) -> List[Leaf] {
   let b = r.base(f, v)
-  let lps = r.leaf_paths(ty_of(f.values[v].tb))
+  let t = ty_of(f.values[v].tb)
+  let lps = r.leaf_paths(t)
+  let lns = r.leaf_pids(t)
   var out = List[Leaf].with_capacity(lps.len())
-  for lp in lps {
-    if b.path.is_empty() {
-      out.push(r.leaf(b.root, lp))
-    } else {
-      out.push(r.leaf(b.root, "${b.path}${lp}"))
-    }
+  for (k, lp) in lps.indexed() {
+    out.push(r.leaf_cat(b.root, b, lp, lns[k]))
   }
   out
 }
@@ -750,17 +803,6 @@ fn (var r: Rc) owner_use(var out: List[Use], f: Func, a: Int, at: Int) {
   }
 }
 
-/// The leaves the arguments of edge e pass (edgeUses).
-fn (var r: Rc) edge_uses(f: Func, e: Int) -> List[Leaf] {
-  var out: List[Leaf] = []
-  for a in f.edges[e].args {
-    for l in r.leaves(f, a) {
-      out.push(l)
-    }
-  }
-  out
-}
-
 /// A new value of f placed nowhere yet (newValue / mk).
 fn new_value(var f: Func, bl: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
   let v = f.values.len()
@@ -1052,8 +1094,9 @@ fn (r: Rc) borrow_round(funcs: List[Func], todo: List[Int], jobs: Int) -> List[(
 /// by r.borrowed (inferBorrows' scan of one function).
 fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
   r.fi = fi
-  if f.indirect {
-    // fixed by its type (init_borrows): a consuming path retains
+  if f.indirect || !r.borrowed[fi].contains(true) {
+    // fixed by its type (init_borrows): a consuming path retains; or
+    // nothing left to find (flags only go from borrowed to owned)
     return []
   }
   // the blocks that consume each borrowed parameter
@@ -1066,8 +1109,10 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
         }
       }
       for e in f.values[v].succs {
-        for l in r.edge_uses(f, e) {
-          cons = r.consumed(f, l, bi, cons)
+        for a in f.edges[e].args {
+          for l in r.leaves(f, a) {
+            cons = r.consumed(f, l, bi, cons)
+          }
         }
       }
     }
@@ -1581,13 +1626,15 @@ fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
         }
       }
       for e in f.values[v].succs {
-        for l in r.edge_uses(f, e) {
-          if r.tracked(f, l) && block_of(f.values[l.root].tb) != bi {
-            let k = leaf_key(l)
-            if !c.live_in[bi].contains(k) {
-              c.live_in[bi][k] = l
-              wb.push(bi)
-              wl.push(l)
+        for a in f.edges[e].args {
+          for l in r.leaves(f, a) {
+            if r.tracked(f, l) && block_of(f.values[l.root].tb) != bi {
+              let k = leaf_key(l)
+              if !c.live_in[bi].contains(k) {
+                c.live_in[bi][k] = l
+                wb.push(bi)
+                wl.push(l)
+              }
             }
           }
         }
@@ -1889,8 +1936,10 @@ struct EdgeNeed {
 
 fn (var r: Rc) edge_need(f: Func, c: RcFunc, e: Int) -> EdgeNeed {
   var k = Counted{}
-  for l in r.edge_uses(f, e) {
-    k.add(l, Mode.Consume)
+  for a in f.edges[e].args {
+    for l in r.leaves(f, a) {
+      k.add(l, Mode.Consume)
+    }
   }
   let to = f.edges[e].to
   EdgeNeed{args: k, live: c.live_in[to], sorted: c.live_sorted[to]}
@@ -2252,39 +2301,62 @@ fn (var r: Rc) anchors(f: Func, v0: Int) -> List[Int] {
 /// between consumes or releases x or its anchors (cancel).
 fn (var r: Rc) cancel(var f: Func) {
   for bl in 0..f.blocks.len() {
-    var changed = true
-    while changed {
-      changed = false
-      let ins = f.blocks[bl].instrs
-      for (j, v) in ins.indexed() {
-        if f.values[v].op != Op.Release {
+    let ins = f.blocks[bl].instrs
+    // a cancelled pair is marked, not cut out, and the scan goes on after
+    // its retain: a release before the retain scans only what precedes it,
+    // so it finds what it found before, and one after it is looked at
+    // again, as the restart from the block's start did (a rebuild and a
+    // rescan of the block per pair, 2026-11-05)
+    var gone: List[Bool] = []
+    var any = false
+    var j = 0
+    while j < ins.len() {
+      let v = ins[j]
+      if gone.len() > 0 && gone[j] || f.values[v].op != Op.Release {
+        j += 1
+        continue
+      }
+      let key = r.leaves(f, f.values[v].args[0])[0]
+      let an = r.anchors(f, key.root)
+      var k = j - 1
+      var hit = -1
+      while k >= 0 {
+        if gone.len() > 0 && gone[k] {
+          k -= 1
           continue
         }
-        let key = r.leaves(f, f.values[v].args[0])[0]
-        let an = r.anchors(f, key.root)
-        var k = j - 1
-        while k >= 0 {
-          let w = ins[k]
-          if f.values[w].op == Op.Retain && leaf_key(r.leaves(f, f.values[w].args[0])[0]) == leaf_key(key) {
-            var out: List[Int] = []
-            for (i, x) in ins.indexed() {
-              if i != k && i != j {
-                out.push(x)
-              }
-            }
-            f.blocks[bl].instrs = out
-            changed = true
-            break
-          }
-          if w == key.root || r.touches(f, w, an) {
-            break
-          }
-          k -= 1
-        }
-        if changed {
+        let w = ins[k]
+        if f.values[w].op == Op.Retain && leaf_key(r.leaves(f, f.values[w].args[0])[0]) == leaf_key(key) {
+          hit = k
           break
         }
+        if w == key.root || r.touches(f, w, an) {
+          break
+        }
+        k -= 1
       }
+      if hit < 0 {
+        j += 1
+        continue
+      }
+      if gone.is_empty() {
+        for _ in 0..ins.len() {
+          gone.push(false)
+        }
+      }
+      gone[hit] = true
+      gone[j] = true
+      any = true
+      j = hit + 1
+    }
+    if any {
+      var out: List[Int] = []
+      for (i, x) in ins.indexed() {
+        if !gone[i] {
+          out.push(x)
+        }
+      }
+      f.blocks[bl].instrs = out
     }
   }
   remove_dead_fields(f)
@@ -2568,10 +2640,14 @@ fn (var r: Rc) touches(f: Func, w: Int, an: List[Int]) -> Bool {
       return true
     }
   }
+  // the leaves of each edge argument read in place (edge_uses' list,
+  // made for every edge of every instruction scanned, was an allocation)
   for e in x.succs {
-    for l in r.edge_uses(f, e) {
-      if an.contains(l.root) {
-        return true
+    for a in f.edges[e].args {
+      for l in r.leaves(f, a) {
+        if an.contains(l.root) {
+          return true
+        }
       }
     }
   }
