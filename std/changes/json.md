@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-11-06: fix: json.indent keeps the whitespace after the value
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19: json.indent dropped the trailing white space that Go's json.Indent keeps
+- Go reference: encoding/json Indent (indent.go go1.26.1): "trailing space characters at the end of src are preserved and copied to dst"
+- Test: std/native/json_test.xo "indent and compact (S3): Go's TestCompactAndIndent" (the Go vectors added there; the Go backend already used Go's Indent)
+- Shipped in: not yet released
+
+`json.indent(text)` now ends with the space, tab, carriage return and newline characters `text` ends with, as Go's Indent does (a text with a trailing newline gives one). `json.compact` still drops them, as Go's Compact.
+
 ## 2026-11-06: perf: a derived encoder reserves a long List's text after its first element
 
 - Kind: perf

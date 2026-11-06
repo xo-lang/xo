@@ -247,6 +247,14 @@ fn walk_text(text: Str, prefix: Str, indent: Str, pretty: Bool) -> Str ! json.De
   }
   var out = BytesBuilder.new()
   write_node(src, tape, 0, prefix, indent, 0, pretty, out)
+  if pretty {
+    // Indent keeps the whitespace after the value (Go's appendIndent copies it); Compact drops it
+    var end = src.len()
+    while end > 0 && (src[end - 1] == 32 || src[end - 1] == 9 || src[end - 1] == 10 || src[end - 1] == 13) {
+      end -= 1
+    }
+    out.write(src[end..src.len()])
+  }
   Ok(out.freeze().to_str() ?? text)
 }
 

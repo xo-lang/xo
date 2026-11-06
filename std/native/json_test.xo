@@ -3168,7 +3168,17 @@ test "indent and compact (S3): Go's TestCompactAndIndent" {
   expect(bad) == []
   // the text's own whitespace goes (Go 1.26: `null \n\r\t` compacts to null)
   expect(json.compact("null \n\r\t").ok()) == Some("null")
-  expect(json.indent(" [ 1 , {\"a\" : \"b\\u0041\\n\"} ] ", "> ", "  ").ok()) == Some("[\n>   1,\n>   {\n>     \"a\": \"b\\u0041\\n\"\n>   }\n> ]")
+  expect(json.indent(" [ 1 , {\"a\" : \"b\\u0041\\n\"} ] ", "> ", "  ").ok()) == Some("[\n>   1,\n>   {\n>     \"a\": \"b\\u0041\\n\"\n>   }\n> ] ")
+  // Go's Indent keeps the whitespace after the value, Compact drops it (go1.26.1; values from encoding/json)
+  expect(json.indent("{\"a\":[1,2]}\n").ok()) == Some("{\n  \"a\": [\n    1,\n    2\n  ]\n}\n")
+  expect(json.indent("[1,2] \t\r\n").ok()) == Some("[\n  1,\n  2\n] \t\r\n")
+  expect(json.indent("  {\"a\":1}  ").ok()) == Some("{\n  \"a\": 1\n}  ")
+  expect(json.indent("1 ").ok()) == Some("1 ")
+  expect(json.indent("null\n\n").ok()) == Some("null\n\n")
+  expect(json.indent("{}\n").ok()) == Some("{}\n")
+  expect(json.indent("[]  ").ok()) == Some("[]  ")
+  expect(json.indent("[1]").ok()) == Some("[\n  1\n]")
+  expect(json.compact("[1,2] \t\r\n").ok()) == Some("[1,2]")
   // Go's TestIndentErrors: a text that is not JSON
   expect(json.indent("{\"X\": \"foo\", \"Y\"}", "", " ").is_err()) == true
   expect(json.indent("{\"X\": \"foo\" \"Y\": \"bar\"}", "", " ").is_err()) == true
