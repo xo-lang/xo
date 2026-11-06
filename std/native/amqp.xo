@@ -1506,7 +1506,11 @@ fn run_sasl(var c: amqp.ConnState, sasl: amqp.Sasl, hostname: Str) -> () ! amqp.
 fn dial(net: Net, addr: Str, opts: amqp.ConnOptions = amqp.ConnOptions{}) -> amqp.Connection ! amqp.AmqpErr uses (net.dial, clock) {
   if opts.max_frame_size < 512 { return Err(proto_err("max_frame_size must be at least 512")) }
   let (host, hostport, secure) = parse_addr(addr)
-  let raw = net.dial(hostport).map_err(net_err)?
+  let raw = if opts.timeout_ms > 0 {
+    net.dial_timeout(hostport, Duration.from_millis(opts.timeout_ms)).map_err(net_err)?
+  } else {
+    net.dial(hostport).map_err(net_err)?
+  }
   let link = if secure {
     amqp.Transport.Tls(t: tls.client(raw, host, roots: opts.tls_roots, verify: opts.tls_verify).map_err(net_err)?)
   } else {
@@ -2440,7 +2444,21 @@ fn st_send_msg(var c: amqp.ConnState, id: Int, payload: Bytes, settled: Bool) ->
   Ok(None)
 }
 
-fn st_receive(var c: amqp.ConnState, id: Int) -> amqp.Delivery ! amqp.AmqpErr uses (net.dial, clock) {
+fn st_receive(var c: amqp.ConnState, id: Int, timeout_ms: Int) -> amqp.Delivery ! amqp.AmqpErr uses (net.dial, clock) {
+  var end_ms = 0
+  if timeout_ms > 0 {
+    match c.clock {
+      Some(k) => { end_ms = k.now().unix_millis() + timeout_ms }
+      None => return Err(proto_err("a receive timeout needs ConnOptions.clock"))
+    }
+  }
+  let saved = c.timeout_ms
+  let r = receive_loop(c, id, end_ms)
+  c.timeout_ms = saved
+  r
+}
+
+fn receive_loop(var c: amqp.ConnState, id: Int, end_ms: Int) -> amqp.Delivery ! amqp.AmqpErr uses (net.dial, clock) {
   while true {
     check_link(c, id)?
     var l = c.links[id]
@@ -2455,6 +2473,16 @@ fn st_receive(var c: amqp.ConnState, id: Int) -> amqp.Delivery ! amqp.AmqpErr us
     }
     if l.credit <= 0 {
       grant_credit(c, id, l.credit_target)?
+    }
+    if end_ms > 0 {
+      match c.clock {
+        Some(k) => {
+          let left = end_ms - k.now().unix_millis()
+          if left <= 0 { return Err(amqp.AmqpErr.Net(msg: "i/o timeout")) }
+          c.timeout_ms = left
+        }
+        None => {}
+      }
     }
     pump(c)?
   }
@@ -2551,9 +2579,9 @@ fn sender_close(x: amqp.Sender, error: amqp.WireError? = None) -> () ! amqp.Amqp
   fin_unit(e)
 }
 
-fn receiver_receive(r: amqp.Receiver) -> amqp.Delivery ! amqp.AmqpErr uses (net.dial, clock) {
+fn receiver_receive(r: amqp.Receiver, timeout_ms: Int = 0) -> amqp.Delivery ! amqp.AmqpErr uses (net.dial, clock) {
   let t = r.conn.st.with(fn(var z: amqp.ConnState) -> (amqp.Delivery?, amqp.AmqpErr?) uses (net.dial, clock) {
-    match st_receive(z, r.id) {
+    match st_receive(z, r.id, timeout_ms) {
       Ok(d) => (Some(d), None)
       Err(e) => (None, Some(e))
     }

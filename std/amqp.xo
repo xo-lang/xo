@@ -605,7 +605,7 @@ fn (x: Sender) send(m: Message, settled: Bool = false) -> DeliveryState? ! AmqpE
 fn (x: Sender) close(error: WireError? = None) -> () ! AmqpErr uses (net.dial, clock)
 
 /// The next complete message, topping up credit as needed.
-fn (r: Receiver) receive() -> Delivery ! AmqpErr uses (net.dial, clock)
+fn (r: Receiver) receive(timeout_ms: Int = 0) -> Delivery ! AmqpErr uses (net.dial, clock)
 
 /// Settles the delivery with the outcome.
 fn (r: Receiver) accept(d: Delivery) -> () ! AmqpErr uses (net.dial, clock)
