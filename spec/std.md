@@ -7575,10 +7575,11 @@ pub fn decode_message(b: Bytes) -> Message ! AmqpErr
 
 ```
 struct SenderOptions { name: Str = "", settle_mode: SenderSettleMode? = None, source: Str = "", max_message_size: Int = 0,
-                       properties: List[(Str, Value)] = [], capabilities: List[Str] = [], target_capabilities: List[Str] = [] }
+                       properties: List[(Str, Value)] = [], capabilities: List[Str] = [], target_capabilities: List[Str] = [],
+                       desired_capabilities: List[Str] = [] }
 struct ReceiverOptions { name: Str = "", credit: Int = 1, settle_mode: ReceiverSettleMode? = None, target: Str = "",
                          filters: List[(Str, Value)] = [], max_message_size: Int = 0, properties: List[(Str, Value)] = [],
-                         capabilities: List[Str] = [], source_capabilities: List[Str] = [] }
+                         capabilities: List[Str] = [], source_capabilities: List[Str] = [], desired_capabilities: List[Str] = [] }
 struct Sender { conn: Connection, id: Int, name: Str, target: Str }       // handles over the connection
 struct Receiver { conn: Connection, id: Int, name: Str, source: Str }
 struct Delivery { message: Message, id: Int, tag: Bytes, settled: Bool, link: Int }
@@ -7603,6 +7604,9 @@ fn (r: Receiver) close(error: WireError? = None) -> () ! AmqpErr uses net.dial
   deliveries, and returns a `Delivery`; an aborted delivery is dropped; `accept`, `reject`, `release` and `modify` send a
   settling Disposition (nothing for a delivery the sender pre-settled). The session's incoming window is restored with a
   Flow when it falls below half.
+- Capabilities: a sender's `capabilities` are its Source's and `target_capabilities` its Target's; a receiver's
+  `capabilities` are its Target's and `source_capabilities` its Source's; `desired_capabilities` (either) is the Attach
+  frame's desired-capabilities, the link's own (Event Hubs' `com.microsoft:geo-data-replication`).
 - `send(m, settled, message_format)`: `message_format` is the Transfer's message-format (0 for an AMQP message; Azure
   Service Bus batches are one transfer of format 0x80013700, 2147563264, whose data sections are encoded messages).
 - Manual credit: `ReceiverOptions.credit: 0` grants nothing and `receive` never tops up; `r.issue_credit(n)` raises the link

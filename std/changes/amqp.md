@@ -1,5 +1,17 @@
 # std/amqp changes
 
+## 2026-11-06: feature: SenderOptions and ReceiverOptions take the Attach's desired capabilities
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19's Event Hubs v2 slice 2 (geo-replication asks for `com.microsoft:geo-data-replication` on the link)
+- Go reference: go-amqp SenderOptions.DesiredCapabilities, ReceiverOptions.DesiredCapabilities
+- Test: std/native/amqp_test.xo "a link's desired capabilities go in its Attach, apart from its source's and target's"
+- Timing: none
+- Shipped in: not yet released
+
+`desired_capabilities` on `SenderOptions` and `ReceiverOptions` is sent as the Attach frame's desired-capabilities, the link's own, apart from the source's and target's `capabilities` the options already mapped. The Attach type and its encoding already carried the field; the link constructors now pass it through. The default, empty, sends the field as before (absent).
+
 ## 2026-11-06: fix: an unsettled send no longer waits forever when its outcome arrives at once
 
 - Kind: fix

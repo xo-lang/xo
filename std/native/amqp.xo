@@ -2715,7 +2715,8 @@ fn st_new_sender(var c: amqp.ConnState, s: amqp.Session, target: Str, opts: amqp
     name: l.name, handle: u32w(l.handle), role: amqp.Role.Sender, sender_settle_mode: opts.settle_mode,
     receiver_settle_mode: None, source: Some(amqp.Source{address: opts.source, capabilities: opts.capabilities}),
     target: Some(amqp.Target{address: target, capabilities: opts.target_capabilities}),
-    initial_delivery_count: 0, max_message_size: opts.max_message_size, properties: opts.properties})))?
+    initial_delivery_count: 0, max_message_size: opts.max_message_size,
+    desired_capabilities: opts.desired_capabilities, properties: opts.properties})))?
   Ok(id)
 }
 
@@ -2733,7 +2734,8 @@ fn st_new_receiver(var c: amqp.ConnState, s: amqp.Session, source: Str, opts: am
     receiver_settle_mode: opts.settle_mode,
     source: Some(amqp.Source{address: source, filter: opts.filters, capabilities: opts.source_capabilities}),
     target: Some(amqp.Target{address: opts.target, capabilities: opts.capabilities}),
-    max_message_size: opts.max_message_size, properties: opts.properties})))?
+    max_message_size: opts.max_message_size, desired_capabilities: opts.desired_capabilities,
+    properties: opts.properties})))?
   Ok(id)
 }
 
