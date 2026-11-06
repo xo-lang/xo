@@ -380,6 +380,10 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
     if part && !store.is_empty() && !store_check {
       continue
     }
+    if let Some(b) = ctx.mem_objs.get(p) {
+      if part { parts.push(macho.LinkInput{path: p, data: b}) } else { ins.push(macho.LinkInput{path: p, data: b}) }
+      continue
+    }
     match os.fs.read(p) {
       Ok(b) => if part { parts.push(macho.LinkInput{path: p, data: b}) } else { ins.push(macho.LinkInput{path: p, data: b}) }
       Err(e) => return "${p}: ${e}"

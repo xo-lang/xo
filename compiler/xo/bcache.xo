@@ -396,11 +396,14 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
   let bpath = borrow_record_path(os, dir, b.m.goarch)
   let full_mode = backend_cache_mode(os) == "verify"
   let check = (os.env.get("XO_BORROW_CHECK") ?? "") == "1"
-  let (r0, rec, nd, same) = if full_mode { (b.rc_prepare(jobs), {}, b.m.funcs.len(), true) } else { b.rc_prepare_incr(jobs, id, borrow_record_read(os, bpath), check) }
+  let prev: Map[Str, List[Bool]] = if full_mode { {} } else { borrow_record_read(os, bpath) }
+  let (r0, rec, nd, same) = if full_mode { (b.rc_prepare(jobs), {}, b.m.funcs.len(), true) } else { b.rc_prepare_incr(jobs, id, prev, check) }
   if !same {
     fail(os, "XO_BORROW_CHECK=1: the incremental borrow inference differs from the full one (${nd} of ${b.m.funcs.len()} functions inferred)")
   }
-  if !full_mode {
+  // stored only when it changed: an unchanged 110 KB record was written
+  // again by every warm build (2026-11-06)
+  if !full_mode && !borrow_record_same(prev, rec) {
     borrow_record_write(os, bpath, rec)
   }
   if phases {
@@ -523,6 +526,22 @@ fn borrow_record_read(os: Os, path: Str) -> Map[Str, List[Bool]] {
   prev
 }
 
+/// Whether the records a and b hold the same flags for the same bodies.
+fn borrow_record_same(a: Map[Str, List[Bool]], b: Map[Str, List[Bool]]) -> Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for (h, fl) in b {
+    match a.get(h) {
+      Some(x) => if x != fl {
+        return false
+      }
+      None => return false
+    }
+  }
+  true
+}
+
 fn borrow_record_write(os: Os, path: Str, rec: Map[Str, List[Bool]]) {
   var w = StrBuilder.new()
   for (h, fl) in rec {
@@ -559,9 +578,11 @@ fn std_tree_sum(os: Os, dir: Str, cache: Str) -> Str {
   }
   let memo = "${cache}/stdsums/${crypto.sha256(dir.bytes()).to_hex()[0..32]}"
   var known: Map[Str, (Str, Str)] = {}
+  var old = ""
   if !cache.is_empty() {
     // xo:allow XO0903 a memo: a failed read hashes the files again
     let text = (os.fs.read(memo).ok() ?? b"").to_str() ?? ""
+    old = text
     let lines = text.split("\n")
     if !lines.is_empty() && lines[0] == STD_SUM_VERSION {
       for line in lines[1..lines.len()] {
@@ -607,8 +628,11 @@ fn std_tree_sum(os: Os, dir: Str, cache: Str) -> Str {
       out.write("${rel} ${st} ${fh}\n")
     }
   }
-  if (changed || known.len() != files.len()) && !cache.is_empty() {
-    cache_put(os, memo, out.freeze().bytes())
+  // stored only when its text changed: an unchanged memo was written
+  // again by every warm build (2026-11-06)
+  let next = out.freeze()
+  if (changed || known.len() != files.len()) && !cache.is_empty() && next != old {
+    cache_put(os, memo, next.bytes())
   }
   crypto.sha256(h.freeze()).to_hex()
 }

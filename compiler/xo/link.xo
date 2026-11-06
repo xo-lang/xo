@@ -60,6 +60,12 @@ struct Ctx {
   // std's .xo files as std_cache_key lists them, by std directory, made
   // once a process (sepcomp_default asks for both variants' keys)
   std_trees: Mutex[Map[Str, Str]]? = None
+  // a linux build's part objects held in memory, by the path they would
+  // have in the build's directory: Xo's ELF linker reads them from here
+  // instead of a copy of the cached bytes written for every build (3.6 MB
+  // of a warm hello, 2026-11-06); darwin writes them (its debug map names
+  // the files a debugger reads)
+  mem_objs: Map[Str, Bytes] = {}
 }
 
 /// The OS the link of ctx targets: the host unless a cross build set it.

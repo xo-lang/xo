@@ -307,6 +307,20 @@ fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs:
   if !key_tree(os, k, dir, ["bin", SPILL_DIR], known) {
     return ""
   }
+  // the part objects held in memory (Ctx mem_objs) are not in dir: each
+  // by its relative path and its object key, as key_tree names a file
+  // it knows
+  var mem: List[Str] = []
+  for (p, _) in ctx.mem_objs {
+    mem.push(p)
+  }
+  for p in mem.sort() {
+    let rel = p.trim_prefix("${dir}/")
+    match known.get(rel) {
+      Some(v) => k.str("mem ${rel} ${v}")
+      None => return ""
+    }
+  }
   k.sum()
 }
 

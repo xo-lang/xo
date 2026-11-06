@@ -2090,6 +2090,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     var progs = [s]
     // each object's cache key, for the link's (macho_bin_key)
     var obj_keys: Map[Str, Str] = {}
+    // the part objects Xo's ELF linker reads from memory (Ctx mem_objs)
+    var mem_objs: Map[Str, Bytes] = {}
     // cc's parts: their texts and object keys (cached_cc_assemble); a
     // part whose object the cache holds is written as a line naming its
     // key, which the link's key reads (native_bin_key) in place of the
@@ -2165,13 +2167,21 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           okeys = ok
         }
       }
+      // linux: the objects stay in memory for Xo's ELF linker (Ctx
+      // mem_objs) unless the files are kept or std's object is made
+      let in_mem = tgoos == "linux" && no_cc && !keep_asm && !gstd_obj && dir != sdir
       for (i, r) in assembled.indexed() {
         let obj = if progs.len() > 1 { "${dir}/prog-${tgoos}.${i}.o" } else { "${dir}/prog-${tgoos}.o" }
         match r {
           // the real paths in its .debug_str slots (a cached object
           // names no worktree)
           Ok(b) => {
-            write_or_fail(os, dir, obj, if gdw.0 { arm64.dw_slots_obj(b, gdw.1, gdw.2) } else { b })
+            let ob = if gdw.0 { arm64.dw_slots_obj(b, gdw.1, gdw.2) } else { b }
+            if in_mem && i < okeys.len() && !okeys[i].is_empty() {
+              mem_objs[obj] = ob
+            } else {
+              write_or_fail(os, dir, obj, ob)
+            }
             // the link's key names the object by its cache key and what
             // the slots took, not by hashing its bytes again (about 5 ms
             // of llvm-fib's edit, 2026-10-27)
@@ -2215,18 +2225,20 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // the link's own steps under --phase-times (link.key, link.fetch,
       // the link's link.* steps, link.store_bin, link.commit), as windows'
       var tl = os.clock.now()
+      var mctx = ctx
+      mctx.mem_objs = mem_objs
       let ents = macho_ents(o, release, gdw.0)
       var ekey: List[Str] = []
       for e in ents {
         ekey.push("entitlement=${e}")
       }
-      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }) + (if sep_key.is_empty() { [] } else { [sep_key] }) + ekey, srcs, o.strip, nl, race_rt, o.dsym, release, obj_keys)
+      let mkey = macho_bin_key(os, mctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }) + (if sep_key.is_empty() { [] } else { [sep_key] }) + ekey, srcs, o.strip, nl, race_rt, o.dsym, release, obj_keys)
       tl = lap(os, phases, "link.key", tl)
       let mst = stage(os, ctx, bin)
       let (mhit, mentry) = fetch_bin(os, ctx, mkey, mst.bin)
       tl = lap(os, phases, "link.fetch", tl)
       if !mhit {
-        var lctx = ctx
+        var lctx = mctx
         lctx.sep_store = sepcomp_store(os, b.conc)
         // decision 0403 stage 1b: the layout's symbol order for the store
         // link (read after lctx was made, so set here)
