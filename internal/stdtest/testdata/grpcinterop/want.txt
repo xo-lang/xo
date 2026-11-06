@@ -1,0 +1,6 @@
+echo: ok hi bob
+fail: err rpc error: code = NotFound desc = no such user é%
+missing: err rpc error: code = Unimplemented desc = unknown method Missing for service t.S
+count: ["0", "1", "2"]
+sum: 10
+bidi: ["m0", "m1", "m2", "rpc error: code = Aborted desc = done"]

@@ -112,6 +112,9 @@ func call(cc *grpc.ClientConn, ctx context.Context) error {
 }
 
 func main() {
+	if interopMain() {
+		return
+	}
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for sc.Scan() {

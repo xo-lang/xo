@@ -1,0 +1,123 @@
+// Interop with grpc-go (decision 0535): `serve` prints its address and serves the methods of internal/stdtest/grpcref's
+// interop handler, `client ADDR` makes the calls against a grpc-go server; the test (TestGrpcInterop) crosses them.
+use std/grpc
+use std/http
+
+fn handlers() -> grpc.Server {
+  var srv = grpc.server()
+  srv.unary("/t.S/Echo", fn(call, req) -> Bytes ! grpc.Status {
+    if call.metadata.get("x-fail") == Some("1") {
+      return Err(grpc.Status{code: grpc.Code.NotFound, message: "no such user \u{e9}%", details: b""})
+    }
+    Ok(req + (call.metadata.get("x-who") ?? "").bytes())
+  })
+  srv.stream("/t.S/Count", fn(_call, recv, send) -> () ! grpc.Status {
+    let m = recv.next()? ?? b"0"
+    let n = Int.parse(m.to_str() ?? "0") ?? 0
+    for i in 0..n {
+      send.send("${i}".bytes())?
+    }
+  })
+  srv.stream("/t.S/Sum", fn(_call, recv, send) -> () ! grpc.Status {
+    var total = 0
+    while true {
+      match recv.next()? {
+        Some(m) => {
+          total += Int.parse(m.to_str() ?? "0") ?? 0
+        }
+        None => break
+      }
+    }
+    send.send("${total}".bytes())?
+  })
+  srv.stream("/t.S/Echo2", fn(_call, recv, send) -> () ! grpc.Status {
+    while true {
+      match recv.next()? {
+        Some(m) => send.send(m)?
+        None => break
+      }
+    }
+    return Err(grpc.Status{code: grpc.Code.Aborted, message: "done", details: b""})
+  })
+  srv
+}
+
+fn show(r: Result[Bytes, grpc.Status]) -> Str {
+  match r {
+    Ok(b) => "ok ${b.to_str() ?? "?"}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+fn calls(os: Os, c: grpc.Client) {
+  os.stdio.println("echo: ${show(c.unary("/t.S/Echo", "hi ".bytes(), {"x-who": "bob"}))}")
+  os.stdio.println("fail: ${show(c.unary("/t.S/Echo", b"x", {"x-fail": "1"}))}")
+  os.stdio.println("missing: ${show(c.unary("/t.S/Missing", b"x"))}")
+  let counted = c.call("/t.S/Count", {}, None, fn(cc) -> List[Str] ! grpc.Status {
+    cc.send(b"3")?
+    cc.close_send()
+    var out: List[Str] = []
+    while true {
+      match cc.recv()? {
+        Some(m) => out.push(m.to_str() ?? "?")
+        None => break
+      }
+    }
+    Ok(out)
+  })
+  match counted {
+    Ok(l) => os.stdio.println("count: ${l}")
+    Err(e) => os.stdio.println("count: ${e.display()}")
+  }
+  let summed = c.call("/t.S/Sum", {}, None, fn(cc) -> Str ! grpc.Status {
+    for i in 1..5 {
+      cc.send("${i}".bytes())?
+    }
+    cc.close_send()
+    let m = cc.recv()? ?? b"?"
+    Ok(m.to_str() ?? "?")
+  })
+  match summed {
+    Ok(t) => os.stdio.println("sum: ${t}")
+    Err(e) => os.stdio.println("sum: ${e.display()}")
+  }
+  let echoed = c.call("/t.S/Echo2", {}, None, fn(cc) -> List[Str] ! grpc.Status {
+    var out: List[Str] = []
+    for i in 0..3 {
+      cc.send("m${i}".bytes())?
+      let m = cc.recv()? ?? b"?"
+      out.push(m.to_str() ?? "?")
+    }
+    cc.close_send()
+    match cc.recv() {
+      Ok(None) => out.push("end")
+      Ok(Some(m)) => out.push("extra ${m.len()}")
+      Err(e) => out.push(e.display())
+    }
+    Ok(out)
+  })
+  match echoed {
+    Ok(l) => os.stdio.println("bidi: ${l}")
+    Err(e) => os.stdio.println("bidi: ${e.display()}")
+  }
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  if args.len() == 0 {
+    os.stdio.println("usage: serve | client ADDR")
+    return
+  }
+  if args[0] == "serve" {
+    match os.net.listen("127.0.0.1:0") {
+      Ok(l) => {
+        let hs = http.server(l, handlers().router()).with_protocols(#{http.Protocol.UnencryptedHttp2})
+        os.stdio.println(hs.addr())
+        hs.serve().ignore_err("the test kills the process")
+      }
+      Err(e) => os.stdio.println("listen failed: ${e}")
+    }
+  } else {
+    calls(os, grpc.client(http.client(os.net, timeout: 30s), "http://${args[1]}"))
+  }
+}
