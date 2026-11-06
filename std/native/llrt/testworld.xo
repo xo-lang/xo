@@ -1243,6 +1243,7 @@ fn fake_list(kind: Int) -> Int {
 }
 
 fn fake_add(kind: Int, method: Str, prefix: Str, path: Str, v: rt.Any, once: Bool) {
+  if kind == 0 && fake_replace(method, prefix, path, v) { return }
   let e = rt.heap_large(40)
   rt.mem_store(e, 0, blk_of(method), 8)
   rt.mem_store(e, 8, blk_of(prefix), 8)
@@ -1252,6 +1253,31 @@ fn fake_add(kind: Int, method: Str, prefix: Str, path: Str, v: rt.Any, once: Boo
   lock()
   vec_push(fake_list(kind), e)
   unlock()
+}
+
+/// A second FakeNet.handle for the same method, prefix and path pattern replaces the handler of the first (last wins,
+/// unlike Go's ServeMux, which panics: a test overrides a default); true when it did.
+fn fake_replace(method: Str, prefix: Str, path: Str, v: rt.Any) -> Bool {
+  let nk = keep(v)
+  var old = 0
+  lock()
+  let h = fake_list(0)
+  let n = vec_len(h)
+  for i in 0..n {
+    let e = vec_at(h, i)
+    if blk_str(rt.mem_load(e, 0, 8)) == method && blk_str(rt.mem_load(e, 8, 8)) == prefix && blk_str(rt.mem_load(e, 16, 8)) == path {
+      old = rt.mem_load(e, 24, 8)
+      rt.mem_store(e, 24, nk, 8)
+      break
+    }
+  }
+  unlock()
+  if old == 0 {
+    drop_kept(nk)
+    return false
+  }
+  drop_kept(old)
+  true
 }
 
 /// Frees entry e and drops its value.

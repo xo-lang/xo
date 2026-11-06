@@ -1635,6 +1635,7 @@ struct Request {
   remote_ip: Str
 }
 fn (r: Request) param(name: Str) -> Str             // faults if the pattern has no such segment
+fn (r: Request) param_opt(name: Str) -> Str?        // None if the pattern has no such segment
 fn (r: Request) param_int(name: Str) -> Int         // segment must be declared {name:Int}
 fn (r: Request) query(name: Str) -> Str?
 fn (r: Request) query_all(name: Str) -> List[Str]   // every value of a repeated key, in order
@@ -2676,6 +2677,7 @@ library given `os.net.only([...])` fails with `Denied` elsewhere.
 ```
 fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response)
     // pattern: "[METHOD ]<absolute url pattern>", e.g. "GET https://api.test/users/{id}"
+    // a second handle with the same method, URL prefix and path pattern replaces the first (last wins; Go's ServeMux panics)
 fn (n: FakeNet) fail(pattern: Str, err: http.ClientErr)       // every matching request, until clear_failures
 fn (n: FakeNet) fail_next(pattern: Str, err: http.ClientErr)  // the next matching request only
 fn (n: FakeNet) clear_failures()

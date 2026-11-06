@@ -120,7 +120,11 @@ struct Request {
   body: Bytes
   remote_ip: Str
 }
+/// The path parameter `name` of the matched route; faults if the route has no such segment (`param_opt` answers
+/// None instead).
 fn (r: Request) param(name: Str) -> Str
+/// The path parameter `name`, or None when the route has no such segment.
+fn (r: Request) param_opt(name: Str) -> Str?
 fn (r: Request) param_int(name: Str) -> Int
 fn (r: Request) query(name: Str) -> Str?
 /// Every value of name in the query, in order (decision 0279).

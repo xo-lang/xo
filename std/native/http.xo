@@ -1187,6 +1187,8 @@ fn request_param(r: Request, name: Str, at: rt.Loc) -> Str {
   }
 }
 
+fn request_param_opt(r: Request, name: Str) -> Str? { r.params.get(name) }
+
 fn request_param_int(r: Request, name: Str, at: rt.Loc) -> Int {
   let s = request_param(r, name, at)
   match Int.parse(s) {

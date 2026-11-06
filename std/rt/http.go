@@ -485,6 +485,11 @@ func (r Http_Request) M_param(_ *Task, name string) string {
 	return v.V
 }
 
+// M_param_opt is `req.param_opt(name)`: None when the pattern has no such segment.
+func (r Http_Request) M_param_opt(_ *Task, name string) Option[string] {
+	return Map_get(nil, r.XParams, name)
+}
+
 // M_param_int is `req.param_int(name)`.
 func (r Http_Request) M_param_int(tk *Task, name string) int64 {
 	s := r.M_param(tk, name)

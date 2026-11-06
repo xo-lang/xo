@@ -1800,3 +1800,19 @@ test "FakeNet matches a pattern on the escaped path's unescaped segments" {
   // an escaped slash is one segment, not two
   expect(c.send(http.new_request("GET", "http://h.test/obj/x%2Fy/z")).is_err()) == true
 }
+
+test "a second FakeNet.handle for the same pattern replaces the first, and param_opt answers None for a missing segment" {
+  os.net.handle("GET http://dup.test/item/{id}", fn(r: http.Request) -> http.Response {
+    http.text(200, "first ${r.param_opt("id") ?? "-"} ${r.param_opt("nope") ?? "none"}")
+  })
+  os.net.handle("GET http://dup.test/item/{id}", fn(r: http.Request) -> http.Response {
+    http.text(200, "second ${r.param_opt("id") ?? "-"} ${r.param_opt("nope") ?? "none"}")
+  })
+  // a different pattern is a different handler
+  os.net.handle("GET http://dup.test/other", fn(_r: http.Request) -> http.Response { http.text(200, "other") })
+  let c = http.client(os.net)
+  let a = c.send(http.new_request("GET", "http://dup.test/item/7")).or_fault("send item")
+  expect(a.body.to_str_lossy()) == "second 7 none"
+  let b = c.send(http.new_request("GET", "http://dup.test/other")).or_fault("send other")
+  expect(b.body.to_str_lossy()) == "other"
+}

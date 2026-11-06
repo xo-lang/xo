@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-11-06: feature: Request.param_opt, and a second FakeNet.handle replaces the first
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (azure repo 4bbedcc)
+- Go reference: net/http Request.PathValue returns "" for a missing name (Xo's param faults; param_opt is the Option form)
+- Test: native/http "a second FakeNet.handle for the same pattern replaces the first, and param_opt answers None for a missing segment"
+
+`req.param_opt(name) -> Str?` answers None where `req.param(name)` faults (the route has no such segment).
+`FakeNet.handle` with the same method, URL prefix and path pattern as an earlier one now replaces it (last wins); before,
+the first kept serving and the second was ignored silently. Go's ServeMux panics on a duplicate pattern; Xo takes last wins
+because a test overrides a default handler it set up earlier, and a panic would make that impossible.
+
 ## 2026-11-06: behavior: the client sends header names as the caller stored them
 
 - Kind: behavior

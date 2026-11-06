@@ -911,6 +911,7 @@ type fakeHandler struct {
 	method string
 	prefix string // scheme://host[:port]
 	r      *route
+	rest   string // the path pattern as written
 	h      func(*Task, Http_Request) Result[Http_Response, Never]
 }
 
@@ -923,7 +924,7 @@ type fakeFail struct {
 }
 
 // parseFakePattern splits "[METHOD ]https://host/path/{x}".
-func parseFakePattern(p string) (string, string, *route) {
+func parseFakePattern(p string) (string, string, *route, string) {
 	method := ""
 	if i := strings.IndexByte(p, ' '); i > 0 && !strings.Contains(p[:i], "/") {
 		method, p = strings.ToUpper(p[:i]), strings.TrimSpace(p[i+1:])
@@ -939,7 +940,7 @@ func parseFakePattern(p string) (string, string, *route) {
 		}
 	}
 	_, segs := parsePattern(rest)
-	return method, prefix, &route{segs: segs}
+	return method, prefix, &route{segs: segs}, rest
 }
 
 // Testing_FakeNet is the fake network of a test.
@@ -948,17 +949,25 @@ type Testing_FakeNet struct{ n *fakeNet }
 // XoDebug implements Debug.
 func (Testing_FakeNet) XoDebug(b *strings.Builder) { b.WriteString("<fake net>") }
 
-// M_handle registers a handler for "[METHOD ]<absolute url pattern>".
+// M_handle registers a handler for "[METHOD ]<absolute url pattern>"; a second one for the same pattern replaces the first.
 func (f Testing_FakeNet) M_handle(_ *Task, pattern string, h func(*Task, Http_Request) Result[Http_Response, Never]) {
-	m, prefix, r := parseFakePattern(pattern)
+	m, prefix, r, rest := parseFakePattern(pattern)
 	f.n.mu.Lock()
-	f.n.handlers = append(f.n.handlers, &fakeHandler{method: m, prefix: prefix, r: r, h: h})
+	// a second handler for the same method, prefix and path replaces the first (last wins)
+	for _, old := range f.n.handlers {
+		if old.method == m && old.prefix == prefix && old.rest == rest {
+			old.h = h
+			f.n.mu.Unlock()
+			return
+		}
+	}
+	f.n.handlers = append(f.n.handlers, &fakeHandler{method: m, prefix: prefix, r: r, rest: rest, h: h})
 	f.n.mu.Unlock()
 }
 
 // M_fail makes every matching request fail until clear_failures.
 func (f Testing_FakeNet) M_fail(_ *Task, pattern string, err Http_ClientErr) {
-	m, prefix, r := parseFakePattern(pattern)
+	m, prefix, r, _ := parseFakePattern(pattern)
 	f.n.mu.Lock()
 	f.n.fails = append(f.n.fails, &fakeFail{method: m, prefix: prefix, r: r, err: err})
 	f.n.mu.Unlock()
@@ -966,7 +975,7 @@ func (f Testing_FakeNet) M_fail(_ *Task, pattern string, err Http_ClientErr) {
 
 // M_fail_next makes the next matching request fail.
 func (f Testing_FakeNet) M_fail_next(_ *Task, pattern string, err Http_ClientErr) {
-	m, prefix, r := parseFakePattern(pattern)
+	m, prefix, r, _ := parseFakePattern(pattern)
 	f.n.mu.Lock()
 	f.n.fails = append(f.n.fails, &fakeFail{method: m, prefix: prefix, r: r, err: err, once: true})
 	f.n.mu.Unlock()

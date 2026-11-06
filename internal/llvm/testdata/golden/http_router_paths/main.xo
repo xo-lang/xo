@@ -11,7 +11,7 @@ fn main(os: Os) {
   r.handle("GET /users/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "user ${q.param_int("id")}") })
   r.handle("PATCH /users/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "patch ${q.param("id")}") })
   r.handle("GET /users/me", fn(q: http.Request) -> http.Response { http.text(200, "me") })
-  r.handle("GET /a/{x}/b/{y}", fn(q: http.Request) -> http.Response { http.text(200, "ab [${q.param("x")}] [${q.param("y")}]") })
+  r.handle("GET /a/{x}/b/{y}", fn(q: http.Request) -> http.Response { http.text(200, "ab [${q.param("x")}] [${q.param("y")}] ${q.param_opt("z") ?? "no z"}") })
   r.handle("GET /files/{p...}", fn(q: http.Request) -> http.Response { http.text(200, "files [${q.param("p")}]") })
   r.handle("/any/{v}", fn(q: http.Request) -> http.Response { http.text(200, "any ${q.method} [${q.param("v")}]") })
   r.handle("GET /x//y", fn(q: http.Request) -> http.Response { http.text(200, "xy") })
