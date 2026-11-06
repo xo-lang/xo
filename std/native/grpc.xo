@@ -1,4 +1,5 @@
 // std/grpc: the pure layer (decision 0535), after grpc-go's rpc_util.go (frame, timeout) and status (message encoding).
+use std/base64
 use std/grpc
 use std/http
 use std/task
@@ -557,4 +558,17 @@ fn clientcall_recv(cc: grpc.ClientCall) -> Bytes? ! grpc.Status uses net.dial {
     }
   })
   out
+}
+
+fn bin_encode(data: Bytes) -> Str { base64.encode(data, base64.Base64.RawStd) }
+
+fn bin_decode(value: Str) -> Bytes? {
+  var v = value
+  while v.ends_with("=") {
+    v = v[0..v.len() - 1]
+  }
+  match base64.decode(v, base64.Base64.RawStd) {
+    Ok(b) => Some(b)
+    Err(_) => None
+  }
 }

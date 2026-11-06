@@ -93,3 +93,24 @@ test "frame round trips every length class and the receive limit" {
     Err(e) => expect(e) == grpc.FrameErr.TooLarge(len: 10)
   }
 }
+
+test "binary metadata is unpadded base64 and reads padded or not" {
+  expect(grpc.bin_encode(b"")) == ""
+  expect(grpc.bin_encode(b"f")) == "Zg"
+  expect(grpc.bin_encode(b"fo")) == "Zm8"
+  expect(grpc.bin_encode(b"foo")) == "Zm9v"
+  expect(grpc.bin_decode("Zg")) == Some(b"f")
+  expect(grpc.bin_decode("Zg==")) == Some(b"f")
+  expect(grpc.bin_decode("Zm8=")) == Some(b"fo")
+  expect(grpc.bin_decode("Zm9v")) == Some(b"foo")
+  expect(grpc.bin_decode("!!")) == None
+  expect(grpc.bin_decode("Z")) == None
+  for n in 0..40 {
+    var b = BytesBuilder.new()
+    for i in 0..n {
+      b.write_byte(UInt8(i * 37 % 256))
+    }
+    let data = b.freeze()
+    expect(grpc.bin_decode(grpc.bin_encode(data))) == Some(data)
+  }
+}

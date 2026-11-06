@@ -58,6 +58,11 @@ fn decode_message(s: Str) -> Str
 /// The inverse as raw bytes, exactly what grpc-go's client reports.
 fn decode_message_bytes(s: Str) -> Bytes
 
+/// A binary metadata value as grpc-go sends it: unpadded standard base64, for a name that ends in `-bin`.
+fn bin_encode(data: Bytes) -> Str
+/// The bytes of a `-bin` metadata value, padded or not (grpc-go accepts both); None when it is not base64.
+fn bin_decode(value: Str) -> Bytes?
+
 /// A call's outcome that is not OK, the error of every call: the code, the status message and the raw
 /// `grpc-status-details-bin` payload when the peer sent one.
 struct Status {
