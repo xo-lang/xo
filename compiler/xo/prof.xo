@@ -526,6 +526,9 @@ fn prof_cpu_out(os: Os, c: ProfCpu, out: Str, replace: Bool) -> () ! Str uses (f
     return Err("could not write ${out} (it must not exist: a profile never overwrites a file)")
   }
   os.stdio.eprintln("xo profile: ${total} samples in ${out} and ${txt}")
+  if c.lost > 0 {
+    os.stdio.eprintln("xo profile: ${cpu_lost_warning(total, c.lost, c.hz)}")
+  }
   Ok(())
 }
 
@@ -630,6 +633,18 @@ fn rpad(s: Str, w: Int) -> Str {
   s + " ".repeat(w - s.len())
 }
 
+/// The warning for a CPU profile whose ring filled: the samples kept are
+/// the run's first part only, so its shares can mislead (a cold self
+/// build at 1000 Hz kept 32,768 and lost 247,476, and put a pass at 35%
+/// that a full profile put at 27%, 2026-11-05); the rate that would
+/// have kept them all.
+fn cpu_lost_warning(total: Int, lost: Int, hz: Int) -> Str {
+  let all = total + lost
+  var r = hz * total / all.max(1)
+  r = r.max(1)
+  "warning: PROFILE INCOMPLETE: ${lost} of ${all} samples were lost (${pct(lost, all)}; the sample ring was full), so this covers only the start of the run; rerun with XO_PROF_HZ=${r}"
+}
+
 /// The CPU summary: the totals, then the top 30 by flat and by cumulative.
 fn top_text(flat: List[Int], cum: List[Int], names: List[Str], hot: List[Str], total: Int, lost: Int, dur: Int, hz: Int, period: Int) -> Str {
   var b = StrBuilder.new()
@@ -638,6 +653,9 @@ fn top_text(flat: List[Int], cum: List[Int], names: List[Str], hot: List[Str], t
     b.write(", ${lost} lost")
   }
   b.write("\n")
+  if lost > 0 {
+    b.write("${cpu_lost_warning(total, lost, hz)}\n")
+  }
   for by_cum in [false, true] {
     b.write(if by_cum { "\ntop 30 by cumulative\n" } else { "\ntop 30 by flat\n" })
     b.write("      flat  flat%   sum%        cum   cum%  line (the hottest)  function\n")

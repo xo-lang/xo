@@ -108,9 +108,12 @@ const WT = 32
 /// then the pcs.
 const DEPTH = 64
 const SLOT = 520
-/// The ring's slots: 32,768 samples (5.5 minutes of one busy thread at
-/// 100 Hz) in 17 MB, mapped only when profiling.
-const CAP = 32768
+/// The ring's slots: 262,144 samples (44 minutes of one busy thread at
+/// 100 Hz, about 5 minutes of a build on 8 threads at 1000 Hz) in 136
+/// MB, mapped only when profiling and touched only as samples arrive
+/// (32,768 lost seven of every eight samples of a cold self build at
+/// 1000 Hz, 2026-11-05)
+const CAP = 262144
 /// The threads that can be sampled (each claims an unwind record of
 /// unwind.PROF_RECORD bytes on its first sample).
 const POOL_N = 64
@@ -724,6 +727,11 @@ pub fn finish() {
   let out = expand_pid(if out0.is_empty() || out0[0].is_empty() { "xo-prof.xoraw" } else { out0[0] })
   let ok = write_file(out, raw.data)
   let quiet = process.env_real_at("XO_PROF_QUIET") != 0
+  if ok && quiet && rc != 0 && dropped > 0 {
+    // a profile cut short says so even when quiet (xo run --profile and
+    // xo test --profile set it, and repeat the warning in `xo prof`)
+    stdio.eprint("xo profile: PROFILE INCOMPLETE: ${dropped} samples dropped (the profile holds ${cap}) in ${out}; lower XO_PROF_HZ for a run this long", true)
+  }
   if !ok {
     stdio.eprint("xo profile: could not write ${out} (it must not exist: a profile never overwrites a file)", true)
   } else if !quiet {

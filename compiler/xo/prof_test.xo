@@ -102,3 +102,12 @@ test "heap_text warns when samples were lost and suggests a rate" {
   let ok = heap_text([[], []], vals, t, 524288, 0, 0)
   expect(ok.contains("warning")) == false
 }
+
+test "top_text warns loudly when CPU samples were lost and suggests a rate" {
+  // the cold self build of 2026-11-05: 32,768 kept of 280,244 at 1000 Hz
+  let txt = top_text([], [], [], [], 32768, 247476, 0, 1000, 1000000)
+  expect(txt.contains("PROFILE INCOMPLETE: 247476 of 280244 samples were lost (88.31%")) == true
+  expect(txt.contains("XO_PROF_HZ=116")) == true
+  let ok = top_text([], [], [], [], 32768, 0, 0, 1000, 1000000)
+  expect(ok.contains("INCOMPLETE")) == false
+}

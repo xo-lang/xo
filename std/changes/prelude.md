@@ -7,6 +7,18 @@
 
 
 
+## 2026-11-05: fix: a CPU profile that fills its sample ring says so, and the ring is 8 times larger
+
+- Kind: fix
+- Commit: this push
+- Found by: Xo Lang 1's cold self build profile at 1000 Hz (32,768 of 280,244 samples kept; a pass read 35% instead of 27%)
+- Go reference: runtime/pprof's profBuf, which grows its record and reports overflow as lost samples
+- Test: compiler/xo prof_test.xo "top_text warns loudly when CPU samples were lost and suggests a rate"
+- Timing: none (the larger ring is mapped only when profiling, its pages touched as samples arrive)
+- Shipped in: not yet released
+
+The runtime's CPU sample ring (std/native/llrt/prof.xo CAP) holds 262,144 samples, up from 32,768. A profile that still fills it prints `xo profile: PROFILE INCOMPLETE: N samples dropped` at exit even under XO_PROF_QUIET, and `xo prof` repeats it with the share lost and the XO_PROF_HZ that would keep every sample.
+
 ## 2026-11-05: feature: XO_CRASH_FILE keeps a native program's fault and crash reports in a file
 
 - Kind: feature
