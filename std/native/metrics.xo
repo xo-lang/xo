@@ -376,6 +376,30 @@ fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
   made
 }
 
+/// The cells of the label values' series (series_of): a hit takes only
+/// the cells from the map, so it shares and releases one list where the
+/// whole Series was three, each an atomic count of a shared list
+/// (2026-11-07: the Series' drop was 16% of bench/perf/metrics counter).
+fn cells_of(f: metrics.Family, values: List[Str]) -> List[Atomic[Int]]? {
+  if values.len() == f.labels.len() {
+    // the key series_of makes
+    let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
+    let hit = f.series.with_read(fn(m: Map[Str, metrics.Series]) -> List[Atomic[Int]]? {
+      match m.get(key) {
+        Some(s) => Some(s.cells)
+        None => None
+      }
+    })
+    if hit is Some(_) {
+      return hit
+    }
+  }
+  match series_of(f, values) {
+    Some(s) => Some(s.cells)
+    None => None
+  }
+}
+
 /// The float whose bits a holds (the cells hold bits: the native
 /// backends' atomics are integers).
 fn load(a: Atomic[Int]) -> Float {
@@ -400,42 +424,42 @@ fn counter_add(c: metrics.Counter, n: Float, values: List[Str] = []) {
   if n < 0.0 {
     fault("metrics: a counter cannot decrease")
   }
-  if let Some(s) = series_of(c.f, values) {
-    add_float(s.cells[0], n)
+  if let Some(cells) = cells_of(c.f, values) {
+    add_float(cells[0], n)
   }
 }
 
 fn gauge_set(g: metrics.Gauge, v: Float, values: List[Str] = []) {
-  if let Some(s) = series_of(g.f, values) {
-    s.cells[0].set(v.to_bits())
+  if let Some(cells) = cells_of(g.f, values) {
+    cells[0].set(v.to_bits())
   }
 }
 
 fn gauge_add(g: metrics.Gauge, v: Float, values: List[Str] = []) {
-  if let Some(s) = series_of(g.f, values) {
-    add_float(s.cells[0], v)
+  if let Some(cells) = cells_of(g.f, values) {
+    add_float(cells[0], v)
   }
 }
 
 fn histogram_observe(h: metrics.Histogram, v: Float, values: List[Str] = []) {
-  if let Some(s) = series_of(h.f, values) {
-    histogram_add(s, h.f.bounds, v)
+  if let Some(cells) = cells_of(h.f, values) {
+    histogram_add(cells, h.f.bounds, v)
   }
 }
 
 /// One observation into the first bucket that holds v (client_golang's
 /// findBucket: the cells count one bucket each and a scrape adds them up),
 /// the count and the sum.
-fn histogram_add(s: metrics.Series, bounds: List[Float], v: Float) {
+fn histogram_add(cells: List[Atomic[Int]], bounds: List[Float], v: Float) {
   var i = 0
   while i < bounds.len() && !(v <= bounds[i]) {
     i += 1
   }
   if i < bounds.len() {
-    let _n = s.cells[3 + i].add(1)
+    let _n = cells[3 + i].add(1)
   }
-  let _c = s.cells[1].add(1)
-  add_float(s.cells[2], v)
+  let _c = cells[1].add(1)
+  add_float(cells[2], v)
 }
 
 // ---- children (decision 0501) ----
@@ -476,7 +500,7 @@ fn gaugechild_add(g: metrics.GaugeChild, v: Float) {
 }
 
 fn histogramchild_observe(h: metrics.HistogramChild, v: Float) {
-  histogram_add(h.s, h.bounds, v)
+  histogram_add(h.s.cells, h.bounds, v)
 }
 
 fn summarychild_observe(s: metrics.SummaryChild, v: Float) {

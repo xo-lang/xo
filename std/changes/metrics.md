@@ -1,5 +1,20 @@
 # std/metrics changes
 
+## 2026-11-07: perf: a labelled update shares only the series' cells
+
+- Kind: perf
+- Commit: this push
+- Found by: XO_PROF=cpu of bench/perf/metrics counter on linux/arm64 (the drop of the looked up Series was 16% of samples)
+- Go reference: prometheus/client_golang's metricVec lookup (the found metric is used in place)
+- Test: goldens metrics_buckets, metrics_child, metrics_summary, metrics_text (arm64, LLVM); std corpus metrics (go, arm64, llvm)
+- Timing: --ab on linux/arm64 against main without it: bench/perf/metrics counter 0.900 (0.892 to 0.923, n=9), histogram 0.866 (0.855 to 0.873, n=6), counterheld within noise
+- Shipped in: not yet released
+
+A labelled inc, set, add or observe took the whole Series out of the map
+on every call, sharing and then releasing its three lists (atomic counts:
+the series is shared between threads). A hit now takes only the cells
+list (cells_of), one count instead of three.
+
 ## 2026-11-07: perf: a labelled update no longer counts the Family's fields
 
 - Kind: perf
