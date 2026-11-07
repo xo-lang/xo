@@ -1,0 +1,78 @@
+// std/otlp's Exporter (decision 0539) against an in process collector: the request path, Content-Type and headers, a
+// 503 with Retry-After then a 200 (retried, the same body), a 400 (not retried), a 429 that never recovers (gives up after
+// max_tries), and a transport failure.
+use std/http
+use std/otlp
+use std/trace
+use std/metrics
+use std/backoff
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let hits = Atomic[Int].new(0)
+  let mode = Atomic[Int].new(0)
+  let log = Mutex[List[Str]].new([])
+  var r = http.router()
+  r.handle("POST /v1/traces", fn(req: http.Request) -> http.Response {
+    let n = hits.add(1)
+    log.with(fn(var l: List[Str]) { l.push("traces ${req.header("Content-Type") ?? "-"} key=${req.header("X-Key") ?? "-"} body=${req.body.len()}") })
+    let m = mode.get()
+    if m == 0 && n == 0 {
+      return http.Response{status: 503, headers: {"Retry-After": "0"}, body: b""}
+    }
+    if m == 1 {
+      return http.text(400, "bad spans")
+    }
+    if m == 2 {
+      return http.Response{status: 429, headers: {}, body: b""}
+    }
+    http.text(200, "")
+  })
+  r.handle("POST /v1/metrics", fn(req: http.Request) -> http.Response {
+    log.with(fn(var l: List[Str]) { l.push("metrics body=${req.body.len()}") })
+    http.text(200, "")
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  let srv = http.server(l, r)
+  scope s {
+    s.spawn_background(fn() {
+      match srv.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    let res = otlp.Resource{service: "svc"}
+    let fast = backoff.Backoff{initial: 1ms, max_interval: 2ms, randomization: 0.0, max_tries: 3}
+    let ex = otlp.exporter(http.client(os.net, timeout: 5s), "http://${addr}/", res, os.clock, os.rand).with_headers({"X-Key": "k"}).with_backoff(fast)
+    let spans = [trace.Span{id: "abc", name: "request", start_ms: 1700000000000, micros: 1500, status: 200}]
+    let show = fn(label: Str, r: Result[(), otlp.ExportErr]) {
+      match r {
+        Ok(_) => os.stdio.println("${label}: ok")
+        Err(e) => os.stdio.println("${label}: ${e}".replace(addr, "ADDR"))
+      }
+    }
+    show("retried", ex.send_traces(spans))
+    os.stdio.println("hits=${hits.get()}")
+    mode.set(1)
+    show("rejected", ex.send_traces(spans))
+    mode.set(2)
+    let before = hits.get()
+    show("gave up", ex.send_traces(spans))
+    os.stdio.println("tries=${hits.get() - before}")
+    show("empty", ex.send_traces([]))
+    let reg = metrics.registry()
+    reg.counter("c", "h").inc()
+    show("metrics", ex.send_metrics(reg, 1700000000000))
+    log.with_read(fn(l: List[Str]) -> () {
+      for x in l {
+        os.stdio.println(x)
+      }
+    })
+  }
+  let dead = otlp.exporter(http.client(os.net, timeout: 1s), "http://127.0.0.1:1", otlp.Resource{service: "svc"}, os.clock, os.rand).with_backoff(backoff.Backoff{initial: 1ms, max_interval: 1ms, randomization: 0.0, max_tries: 2})
+  match dead.send_traces([trace.Span{id: "a", name: "request", start_ms: 1, micros: 1, status: 200}]) {
+    Ok(_) => os.stdio.println("dead: ok")
+    Err(e) => os.stdio.println("dead: ${e}".split(":").first() ?? "")
+  }
+  os.stdio.println("done")
+}

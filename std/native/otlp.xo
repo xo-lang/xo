@@ -1,5 +1,7 @@
 // std/otlp (decision 0539): the OTLP trace messages, written onto std/protobuf's builder.
+use std/backoff
 use std/crypto
+use std/http
 use std/metrics
 use std/otlp
 use std/protobuf
@@ -275,4 +277,76 @@ fn encode_metrics(res: otlp.Resource, reg: metrics.Registry, start_ms: Int, now_
   var req = BytesBuilder.new()
   req = msg_field(req, 1, rm.freeze())
   req.freeze()
+}
+
+fn exporterr_display(e: otlp.ExportErr) -> Str {
+  match e {
+    Transport(msg) => "export: ${msg}"
+    Rejected(status, body) => "export rejected: ${status} ${body}"
+    GaveUp(status, tries) => "export gave up after ${tries} tries: ${status}"
+  }
+}
+
+fn exporter(client: http.Client, endpoint: Str, res: otlp.Resource, clock: Clock, rand: Rand) -> otlp.Exporter {
+  otlp.Exporter{client: client, endpoint: endpoint.trim_suffix("/"), resource: res, headers: {}, backoff: backoff.Backoff{initial: 500ms, multiplier: 1.5, randomization: 0.5, max_interval: 60s, max_elapsed: 15m, max_tries: 5}, clock: clock, rand: rand}
+}
+
+fn exporter_with_headers(e: otlp.Exporter, h: Map[Str, Str]) -> otlp.Exporter { e with {headers: h} }
+
+fn exporter_with_backoff(e: otlp.Exporter, b: backoff.Backoff) -> otlp.Exporter { e with {backoff: b} }
+
+fn retryable(status: Int) -> Bool { status == 429 || status == 502 || status == 503 || status == 504 }
+
+/// The seconds of a Retry-After value (the HTTP date form is not read), 0 when absent or not a number.
+fn retry_after(resp: http.Response) -> Int {
+  let v = resp.header("Retry-After") ?? return 0
+  match Int.parse(v.trim()) {
+    Some(n) => if n > 0 { n } else { 0 }
+    None => 0
+  }
+}
+
+fn post(e: otlp.Exporter, path: Str, body: Bytes) -> () ! otlp.ExportErr uses net.dial, clock, rand {
+  var headers = e.headers
+  headers["Content-Type"] = "application/x-protobuf"
+  var tries = 0
+  while true {
+    tries += 1
+    let req = http.new_request("POST", "${e.endpoint}${path}", headers, body)
+    let resp = match e.client.send(req) {
+      Ok(r) => r
+      Err(err) => {
+        // no answer: retried as a 503 would be
+        if e.backoff.max_tries != 0 && tries >= e.backoff.max_tries {
+          return Err(otlp.ExportErr.Transport(msg: "${err}"))
+        }
+        e.clock.sleep(e.backoff.delay(tries - 1, e.rand))
+        continue
+      }
+    }
+    if resp.status >= 200 && resp.status < 300 {
+      return Ok(())
+    }
+    if !retryable(resp.status) {
+      return Err(otlp.ExportErr.Rejected(status: resp.status, body: resp.body.to_str() ?? ""))
+    }
+    if e.backoff.max_tries != 0 && tries >= e.backoff.max_tries {
+      return Err(otlp.ExportErr.GaveUp(status: resp.status, tries: tries))
+    }
+    let wait = e.backoff.delay(tries - 1, e.rand)
+    let asked = Duration.from_secs_int(retry_after(resp))
+    e.clock.sleep(if asked > wait { asked } else { wait })
+  }
+  Ok(())
+}
+
+fn exporter_send_traces(e: otlp.Exporter, spans: List[trace.Span]) -> () ! otlp.ExportErr uses net.dial, clock, rand {
+  if spans.is_empty() {
+    return Ok(())
+  }
+  post(e, "/v1/traces", encode_traces(e.resource, spans))
+}
+
+fn exporter_send_metrics(e: otlp.Exporter, reg: metrics.Registry, start_ms: Int) -> () ! otlp.ExportErr uses net.dial, clock, rand {
+  post(e, "/v1/metrics", encode_metrics(e.resource, reg, start_ms, e.clock.now().unix_millis()))
 }

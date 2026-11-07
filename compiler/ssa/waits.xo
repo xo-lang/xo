@@ -17,7 +17,7 @@
 
 /// Prelude capability methods (`Type.method`) that wait on the event
 /// loop.
-const WAITS = ["Clock.sleep", "Clock.sleep_or_cancel", "Stdio.read_line", "Stdio.read_all", "Stdio.lines", "Stdio.read_secret", "Stdio.read_bytes", "Stdio.read_all_bytes", "Fs.lock", "Proc.run", "Proc.pipeline", "Cmd.output", "Cmd.run", "Cmd.spawn", "Child.write", "Child.read", "Child.read_err", "Child.read_line", "Child.wait", "Child.wait_usage"]
+const WAITS = ["Clock.sleep", "Clock.sleep_or_cancel", "Stdio.read_line", "Stdio.read_all", "Stdio.lines", "Stdio.read_secret", "Stdio.read_bytes", "Stdio.read_all_bytes", "Fs.lock", "Proc.run", "Proc.pipeline", "Cmd.output", "Cmd.run", "Cmd.spawn", "Child.write", "Child.read", "Child.read_err", "Child.read_line", "Child.wait", "Child.wait_usage", "Exporter.send_traces", "Exporter.send_metrics"]
 
 /// Std functions with no Xo body that declare `clock`, `stdio`, `proc` or
 /// `fs` and do not wait at the call (or wait only through calls their

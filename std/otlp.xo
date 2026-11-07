@@ -2,6 +2,8 @@
 // opentelemetry-proto 1.x messages (ExportTraceServiceRequest, ExportMetricsServiceRequest) written straight
 // onto std/protobuf's builder, the body of OTLP/HTTP's POST /v1/traces and /v1/metrics
 // (Content-Type application/x-protobuf). Declaration file.
+use std/backoff
+use std/http
 use std/metrics
 use std/trace
 
@@ -27,3 +29,39 @@ fn encode_traces(res: Resource, spans: List[trace.Span]) -> Bytes
 /// a gauge a Gauge, a histogram a Histogram (bucket counts per bucket, not cumulative, as OTLP has them), a summary
 /// a Summary with its count and sum (no quantile values); a label becomes a string attribute of the point.
 fn encode_metrics(res: Resource, reg: metrics.Registry, start_ms: Int, now_ms: Int) -> Bytes
+
+/// Why an export failed: the transport (no response), a status the collector will not take (400 and the like: a
+/// retry would send the same bytes), or retries that ran out with the last answer.
+enum ExportErr {
+  Transport(msg: Str)
+  Rejected(status: Int, body: Str)
+  GaveUp(status: Int, tries: Int)
+}
+
+/// `export: MSG`, `export rejected: STATUS BODY`, `export gave up after N tries: STATUS`.
+fn (e: ExportErr) display() -> Str
+
+/// Sends OTLP/HTTP requests (`POST {endpoint}/v1/traces` and `/v1/metrics`, `Content-Type: application/x-protobuf`)
+/// to a collector. 429, 502, 503 and 504 are retried with the schedule of `backoff`, waiting at least the
+/// `Retry-After` the collector asks for (in seconds); any other non 2xx status is not retried, as the OTLP
+/// specification says.
+struct Exporter {
+  client: http.Client
+  endpoint: Str
+  resource: Resource
+  headers: Map[Str, Str]
+  backoff: backoff.Backoff
+  clock: Clock
+  rand: Rand
+}
+
+/// An exporter to the collector at `endpoint` (`http://host:4318`, no path), for the spans and metrics of `res`.
+fn exporter(client: http.Client, endpoint: Str, res: Resource, clock: Clock, rand: Rand) -> Exporter
+/// The exporter sending these headers on every request (an API key, `Authorization`).
+fn (e: Exporter) with_headers(h: Map[Str, Str]) -> Exporter
+/// The exporter retrying on schedule b (5 tries by default).
+fn (e: Exporter) with_backoff(b: backoff.Backoff) -> Exporter
+/// Exports `spans` (one request; an empty list sends nothing).
+fn (e: Exporter) send_traces(spans: List[trace.Span]) -> () ! ExportErr uses net.dial, clock, rand
+/// Exports the registry's metrics (one request), every point cumulative since `start_ms`, stamped now.
+fn (e: Exporter) send_metrics(reg: metrics.Registry, start_ms: Int) -> () ! ExportErr uses net.dial, clock, rand

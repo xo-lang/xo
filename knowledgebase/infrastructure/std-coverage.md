@@ -266,7 +266,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | Prometheus exposition | prometheus/client_golang | std/metrics | done | Registry, counters, gauges, histograms, text exposition and handler (section 37). |
 | S3 and AWS SigV4 | aws-sdk-go-v2 | none | not planned | A third party module; std provides HMAC and SHA-256. |
 | gRPC | google.golang.org/grpc | std/grpc | in progress | Decision 0535. Wire interop with grpc-go both ways (TestGrpcInterop: unary, status, unknown method, three streaming shapes), codecs checked against grpc-go (testdata/corpus/grpc), server deadlines cancel the handler. Missing: compression, `-bin` metadata, response metadata, `xo proto gen` stubs, a timing row against grpc-go. |
-| OTLP export | go.opentelemetry.io/otel exporters (otlptrace, otlpmetric) | std/otlp | in progress | Decision 0539. Trace request bytes checked against protobuf-go (testdata/corpus/otlp). Missing: metrics corpus, HTTP exporter with retry, gRPC transport, timing row. |
+| OTLP export | go.opentelemetry.io/otel exporters (otlptrace, otlpmetric) | std/otlp | in progress | Decision 0539. Trace request bytes checked against protobuf-go (testdata/corpus/otlp). Metrics checked too; `Exporter` over OTLP/HTTP with retry (golden otlp_export). Missing: gRPC transport, partial success, Retry-After dates, timing row. |
 
 ## Performance evidence (decision 0461)
 

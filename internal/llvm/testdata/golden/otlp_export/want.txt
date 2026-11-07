@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+retried: ok
+hits=1
+rejected: export rejected: 400 bad spans
+gave up: export gave up after 3 tries: 429
+tries=3
+empty: ok
+metrics: ok
+traces application/x-protobuf key=k body=140
+traces application/x-protobuf key=k body=140
+traces application/x-protobuf key=k body=140
+traces application/x-protobuf key=k body=140
+traces application/x-protobuf key=k body=140
+metrics body=85
+dead
+done
+--- stderr
