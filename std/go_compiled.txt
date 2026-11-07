@@ -37,3 +37,4 @@ otlp
 protoparse
 htmltok
 protodesc
+protowkt

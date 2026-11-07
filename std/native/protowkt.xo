@@ -292,8 +292,7 @@ fn decode_value(b: Bytes) -> protowkt.Value ! protobuf.ProtoErr {
 
 fn encode_struct(m: protowkt.Struct) -> Bytes {
   var o = BytesBuilder.new()
-  var keys = m.fields.keys()
-  keys.sort_by(fn(k: Str) -> Str { k })
+  let keys = m.fields.keys().sort_by(fn(k: Str) -> Str { k })
   for k in keys {
     var e = BytesBuilder.new()
     pd.wsa(e, 1, k)
