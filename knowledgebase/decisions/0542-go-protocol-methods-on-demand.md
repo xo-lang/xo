@@ -54,7 +54,7 @@ whole-program analysis is available.
    recorded form ran: armnetwork calls `marshal_json` with more than 64
    types, so its form runs, and all 3,290 types kept XoEq and XoHash
    (548,505 lines); rooting the calls' type arguments instead keeps
-   1,251. internal/gen TestGoProtoNotKept checks that go_proto_roots'
+   the 1,437 types c2f2c5617 kept, the same set. internal/gen TestGoProtoNotKept checks that go_proto_roots'
    Unused has none, specialized and with --no-mono.)
    std's types in the runtime package keep every method.
 2. Each such method is written between two marker chunks of the package's
@@ -87,9 +87,15 @@ whole-program analysis is available.
   XO_GO_PROTO=all, -14.8%; compile time 48.96 s median against 54.74 s, -10.6%. (aws-19's 1 s
   samples on the Mac, 8.8 against 8.3 GB, were within their noise.) 44% of the types still keep XoEq: which roots reach them
   is the next refinement.
-- After the narrowing and its fix (2026-11-07, xo at this change, generated on the Mac): armnetwork's
-  package is 448,455 lines, with XoEq and XoHash on 1,251 types and XoEqT on 1,246 (c2f2c5617:
-  507,372 lines and 1,437 types).
+- After the narrowing and its fix, measured by aws-19 on 2026-11-07 (xo 3b2ba02f6, the same
+  `xo test --backend=go` of armnetwork, caches off, tests 9/9): 507,372 lines, XoEq and XoHash on
+  1,437 types and XoEqT on 1,431, the same type set as c2f2c5617; XO_GO_PROTO=why printed no
+  reason, so no protocol is kept on every type. The narrowing gains nothing on armnetwork: its
+  1,437 types are marshal_json's type arguments, rooted because std's json.to_value and
+  json.encode take a constrained T whose bodies the generator does not see. Knowing which std
+  functions compare or hash a type parameter (a fact stdgen could record) is the next lever.
+  (A first count of 448,455 lines and 1,251 types, in 3b2ba02f6's message and this decision's
+  first text, was generated from an older azure checkout on the Mac, not aws-19's tree.)
 - Golden internal/llvm/testdata/golden/go_proto_roots reaches a type through each root kind only;
   Go parity fails if the walk misses one.
 - A new root kind in the language must be added to the analysis (a test lists the roots).
