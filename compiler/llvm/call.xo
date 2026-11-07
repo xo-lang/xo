@@ -1582,6 +1582,36 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let z = g.def("zext i32 ${m} to i64")
       g.set(v, "call i64 @llvm.ctpop.i64(i64 ${z})")
     }
+    "rt.bytes_skip32" => {
+      // bytes_any_eq32's steps as a loop: j from i while 32 bytes remain
+      // before to and the <32 x i8> compare finds no c
+      let (_, d, _) = g.str_parts(g.op(x.args[0]))
+      let i0 = g.op(x.args[1])
+      let to = g.op(x.args[2])
+      let c = g.def("trunc i64 ${g.op(x.args[3])} to i8")
+      var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
+      r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
+      let pre = g.label
+      let head = g.new_label("skh")
+      let body = g.new_label("skb")
+      let done = g.new_label("skd")
+      g.emit("br label %${head}")
+      g.start(head)
+      g.emit("%${head}.j = phi i64 [ ${i0}, %${pre} ], [ %${body}.n, %${body} ]")
+      g.emit("%${head}.e = add i64 %${head}.j, 32")
+      g.emit("%${head}.c = icmp sle i64 %${head}.e, ${to}")
+      g.emit("br i1 %${head}.c, label %${body}, label %${done}")
+      g.start(body)
+      let p = g.def("getelementptr i8, ptr ${d}, i64 %${head}.j")
+      let w = g.def("load <32 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
+      let e = g.def("icmp eq <32 x i8> ${w}, ${r}")
+      let m = g.def("bitcast <32 x i1> ${e} to i32")
+      let z = g.def("icmp eq i32 ${m}, 0")
+      g.emit("%${body}.n = add i64 %${head}.j, 32")
+      g.emit("br i1 ${z}, label %${head}, label %${done}")
+      g.start(done)
+      g.set(v, "add i64 %${head}.j, 0")
+    }
     "rt.bytes_count_below32" => {
       // a <32 x i8> signed compare with lo as an i32, its bits counted
       let (_, d, _) = g.str_parts(g.op(x.args[0]))

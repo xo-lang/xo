@@ -32,7 +32,7 @@ fn same_object_call(name: Str) -> Bool {
 
 /// Calls that read their arguments and keep nothing of them past the call.
 fn read_call(name: Str) -> Bool {
-  name is "Str.len" | "Bytes.len" | "bytes.index" | "str.index" | "str.eq" | "str.ne" | "bytes.eq" | "rt.bytes_word" | "rt.obj_addr" | "rt.mem_load" | "rt.mem_store" | "rt.mem_copy" | "rt.str_eq" | "rt.bytes_eq16" | "rt.bytes_high16" | "rt.bytes_any_eq32" | "rt.bytes_any_stop32" | "rt.bytes_count_eq32" | "rt.bytes_count_below32" | "rt.bytes_any_high32" | "rt.mem_ne32" | "rt.mem_ne64" | "rt.mem_any_eq32" | "rt.utf8_valid"
+  name is "Str.len" | "Bytes.len" | "bytes.index" | "str.index" | "str.eq" | "str.ne" | "bytes.eq" | "rt.bytes_word" | "rt.obj_addr" | "rt.mem_load" | "rt.mem_store" | "rt.mem_copy" | "rt.str_eq" | "rt.bytes_eq16" | "rt.bytes_high16" | "rt.bytes_any_eq32" | "rt.bytes_any_stop32" | "rt.bytes_count_eq32" | "rt.bytes_count_below32" | "rt.bytes_skip32" | "rt.bytes_any_high32" | "rt.mem_ne32" | "rt.mem_ne64" | "rt.mem_any_eq32" | "rt.utf8_valid"
 }
 
 /// The facts the rule reads: each value's instruction uses, the edges

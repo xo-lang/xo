@@ -496,3 +496,30 @@ test "fold_eq_words and case_run match a byte loop at each byte" {
     }
   }
 }
+
+test "bytes_skip32 stops at the first 32 byte step holding c, or near to" {
+  // c at each place of a 200 byte buffer (and absent), every start and
+  // bound around the steps, c a constant and a variable byte
+  for at in [-1, 0, 1, 15, 16, 31, 32, 33, 63, 64, 100, 130, 167, 168, 199] {
+    var xs: List[Int] = []
+    for k in 0..200 {
+      xs.push(if k == at { 0x23 } else { 97 + k % 26 })
+    }
+    let b = bytes_of(xs)
+    var cv = 0x22
+    cv += 1
+    for i in [0, 1, 7, 31, 32, 40, 100, 168, 169, 200] {
+      for to in [i, i + 31, i + 32, i + 33, i + 64, i + 95, 200] {
+        if to > 200 {
+          continue
+        }
+        var want = i
+        while to - want >= 32 && rt.bytes_any_eq32(b, want, cv) == 0 {
+          want += 32
+        }
+        expect(rt.bytes_skip32(b, i, to, 0x23)) == want
+        expect(rt.bytes_skip32(b, i, to, cv)) == want
+      }
+    }
+  }
+}

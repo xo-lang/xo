@@ -2577,6 +2577,35 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       g.set(v, [g.def1(false, "add $d0, $u0, $u1\nldp q30, q31, [$d0]\norr v30.16b, v30.16b, v31.16b\ncmlt v30.16b, v30.16b, #0\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
     }
+    "rt.bytes_skip32" => {
+      // bytes_any_eq32's 32 byte steps as one loop (decision 0532 step
+      // 2): the byte broadcast once, x16 the address and x17 the bytes
+      // left less 32 (the emitter's scratch); the result is early, so it
+      // is the mask in the loop and the operands stay for the end
+      let ws = g.words(x.args[0])
+      var us = [g.str_base_heap(ws), g.word(x.args[1]), g.word(x.args[2])]
+      let (c, ok) = g.const_int(x.args[3])
+      if !ok {
+        us.push(g.word(x.args[3]))
+      }
+      var rs: List[Int] = []
+      for u in us {
+        rs.push(g.real(u))
+      }
+      let d = g.new_vreg(false)
+      var t = ""
+      if g.x86 {
+        // r11 the bound and then each half's mask, xmm14 the byte
+        let rep = if ok { "movl $${(c & 255) * 16843009}, %r11d" } else { "movzbl $bu3, %r11d\nimull $16843009, %r11d, %r11d" }
+        t = "${rep}\nmovd %r11d, %xmm14\npshufd $0, %xmm14, %xmm14\nmovq $u1, $d0\n1:\nleaq 32($d0), %r11\ncmpq $u2, %r11\njg 2f\nmovdqu ($u0,$d0), %xmm15\npcmpeqb %xmm14, %xmm15\npmovmskb %xmm15, %r11d\ntestl %r11d, %r11d\njnz 2f\nmovdqu 16($u0,$d0), %xmm15\npcmpeqb %xmm14, %xmm15\npmovmskb %xmm15, %r11d\ntestl %r11d, %r11d\njnz 2f\naddq $32, $d0\njmp 1b\n2:"
+      } else {
+        let rep = if ok { "movi v29.16b, #${c & 255}" } else { "dup v29.16b, $wu3" }
+        t = "${rep}\nadd x16, $u0, $u1\nsub x17, $u2, $u1\nsubs x17, x17, #32\nb.lt 2f\n1:\nldp q30, q31, [x16], #32\ncmeq v30.16b, v30.16b, v29.16b\ncmeq v31.16b, v31.16b, v29.16b\norr v30.16b, v30.16b, v31.16b\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30\ncbnz $d0, 2f\nsubs x17, x17, #32\nb.ge 1b\n2:\nadd x17, x17, #32\nsub $d0, $u2, x17"
+      }
+      let ii = g.add(Inst{kind: K_PLAIN, text: t, defs: [d], us: rs, fl: if g.x86 { IF_X86 } else { 0 }})
+      g.blocks[g.cur].insts[ii].fl = g.blocks[g.cur].insts[ii].fl | IF_EARLY
+      g.set(v, [d])
+    }
     "rt.mem_any_eq32" => {
       // rt.bytes_any_eq32 at an address (a buffer that is not a Bytes):
       // the same two lanes and one move, the base a plain word
