@@ -25,7 +25,7 @@ const STD_CACHE_VERSION = 2
 /// std built in test mode for `xo test`): the code generation
 /// identity of this xo (cache_id's, without a separately compiled
 /// build's facts, which these are), the target, the variant, and every
-/// std source's path, size and modification time (a body edit in a
+/// std source's path, size and content hash (a body edit in a
 /// development std changes the object, unlike std_tree_sum's interface
 /// hash); "" when xo's identity or std cannot be read.
 fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bool) -> Str {
@@ -40,6 +40,43 @@ fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Boo
   crypto.sha256("${std_key_head(id, tgoos, tgoarch, conc, tmode)}${tree}".bytes()).to_hex()
 }
 
+/// The stamp table of the std tree at std in the back-end cache: one per
+/// tree (by its absolute path), "" when the cache is off.
+fn std_stamps_path(os: Os, std: Str) -> Str {
+  let dir = std_cache_dir(os)
+  if dir.is_empty() {
+    return ""
+  }
+  // xo:allow XO0903 the working directory from $PWD when getcwd fails
+  let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+  let abs = if std.starts_with("/") { std } else { "${wd}/${std}" }
+  "${dir}/std/stamps/${crypto.sha256(abs.bytes()).to_hex()[0..24]}"
+}
+
+/// The stamp table std_tree_lines wrote for std: "PATH SIZE MTIME" to
+/// the file's content hash, and the time it was written (0 for none).
+fn std_stamps(os: Os, std: Str) -> (Map[Str, Str], Int) {
+  var m: Map[Str, Str] = {}
+  let p = std_stamps_path(os, std)
+  if p.is_empty() {
+    return (m, 0)
+  }
+  // xo:allow XO0903 no table: every file is hashed
+  let t = os.fs.read_text(p).ok() ?? ""
+  var at = 0
+  for l in t.split("\n") {
+    if let Some(a) = l.cut_prefix("at ") {
+      at = Int.parse(a) ?? 0
+      continue
+    }
+    let f = l.split(" ")
+    if f.len() == 4 {
+      m["${f[0]} ${f[1]} ${f[2]}"] = f[3]
+    }
+  }
+  (m, at)
+}
+
 /// What std_cache_key read of std's tree, for a phase line: the root as
 /// given, the file count, the hash of the tree lines and the newest file
 /// with its size and time. A miss right after xo dev stdcache built the
@@ -49,18 +86,18 @@ fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Boo
 fn std_tree_note(os: Os, ctx: Ctx, std: Str) -> Str {
   let t = std_tree_lines(os, ctx, std)
   var n = 0
+  for l in t.split("\n") {
+    if l.split(" ").len() >= 3 {
+      n += 1
+    }
+  }
+  // the newest file by its time (the tree lines hold content hashes)
   var newest = ""
   var top = -1
-  for l in t.split("\n") {
-    let f = l.split(" ")
-    if f.len() < 3 {
-      continue
-    }
-    n += 1
-    let ms = Int.parse(f[f.len() - 1]) ?? 0
-    if ms > top {
-      top = ms
-      newest = l
+  for f in os.fs.walk(std).ok() ?? [] {
+    if !f.is_dir && f.path.ends_with(".xo") && !f.path.ends_with("_test.xo") && f.modified.unix_millis() > top {
+      top = f.modified.unix_millis()
+      newest = "${f.path.trim_prefix(std)} ${f.size} ${top}"
     }
   }
   "std ${std}: ${n} files, tree ${crypto.sha256(t.bytes()).to_hex()[0..12]}, newest ${newest}"
@@ -99,7 +136,7 @@ fn std_key_head(id: Str, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bool) -> S
   "xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n${if tmode { "test=1\n" } else { "" }}"
 }
 
-/// std's .xo files under std (not its tests), one "PATH SIZE MTIME" line each in path
+/// std's .xo files under std (not its tests), one "PATH SIZE SHA" line each (SHA the first 32 hex digits of the content's SHA-256) in path
 /// order, the part of std_cache_key every variant shares: walked once a
 /// process (Ctx.std_trees); "" when std cannot be walked.
 fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
@@ -112,6 +149,16 @@ fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
     Ok(fs) => fs
     Err(_) => return ""
   }
+  // each file's content hash from the stamp table when its size and
+  // time are the ones hashed (std_stamps), else read and hashed: a file
+  // touched with its bytes unchanged (a fresh checkout, an editor's save,
+  // a copy) keeps the key (2026-11-07: a tier's TestSepcompDefault missed
+  // the variant xo dev stdcache had just built)
+  let (old, _) = std_stamps(os, std)
+  let now = os.clock.now().unix_millis()
+  var stamps = StrBuilder.new()
+  stamps.write("at ${now}\n")
+  var fresh = false
   var b = StrBuilder.new()
   for f in files.sort_by(fn(f: FileInfo) -> Str { f.path }) {
     // not std's tests: no variant reads them (a build skips them, decision
@@ -119,7 +166,29 @@ fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
     // --std-module loads a module's tests), so editing one keeps the
     // variants (`xo test --std-module` after a test edit)
     if !f.is_dir && f.path.ends_with(".xo") && !f.path.ends_with("_test.xo") {
-      b.write("${f.path.trim_prefix(std)} ${f.size} ${f.modified.unix_millis()}\n")
+      let rel = f.path.trim_prefix(std)
+      let ms = f.modified.unix_millis()
+      var sha = old.get("${rel} ${f.size} ${ms}") ?? ""
+      if sha.is_empty() {
+        // xo:allow XO0903 a file that cannot be read keys as its absence; the build reads it and says why
+        let data = os.fs.read(f.path).ok() ?? b""
+        sha = crypto.sha256(data).to_hex()[0..32]
+        fresh = true
+      }
+      // a time within 2 s of now is not trusted next time: the file can
+      // still change within the same time (as decision 0388's stdx header)
+      if ms < now - 2000 {
+        stamps.write("${rel} ${f.size} ${ms} ${sha}\n")
+      } else {
+        fresh = true
+      }
+      b.write("${rel} ${f.size} ${sha}\n")
+    }
+  }
+  if fresh {
+    let p = std_stamps_path(os, std)
+    if !p.is_empty() {
+      cache_put(os, p, stamps.freeze().bytes())
     }
   }
   let t = b.freeze()
