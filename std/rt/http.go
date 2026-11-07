@@ -641,8 +641,12 @@ func Http_new_request(tk *Task, method, rawURL string, headers Map[string, strin
 	if pu, err := url.Parse(rawURL); err == nil {
 		raw = pu.RawQuery
 		// Go's URL.RawPath: the path as written when escaping the decoded
-		// one gives something else; the client sends it as it is (aws-19)
-		rawPath = pu.RawPath
+		// one gives something else; the client sends it as it is (aws-19).
+		// Kept only while it is a valid encoding (Go's EscapedPath rule): a
+		// path written with a space has RawPath "/y z" but escapes to "/y%20z"
+		if pu.EscapedPath() == pu.RawPath {
+			rawPath = pu.RawPath
+		}
 		// the request's path is Go's URL.Path (its escaped form when the decoded
 		// bytes are not UTF-8, which a Str cannot hold), "" for a URL with none
 		// or an opaque one (url.path of the loose parse says "/" for the

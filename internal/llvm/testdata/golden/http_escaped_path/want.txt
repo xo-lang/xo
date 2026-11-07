@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+new_request: path=/c2/x/y z.txt escaped=/c2/x/y%20z.txt
+new_request: path=/c2/a/b escaped=/c2/a%2Fb
+new_request: path=/c2/café x escaped=/c2/caf%C3%A9%20x
+new_request: path= escaped=
+server: path=/c2/x/y z.txt escaped=/c2/x/y%20z.txt
+server: path=/c2/a/b escaped=/c2/a%2Fb
+server: path=/c2/café x escaped=/c2/caf%C3%A9%20x
+--- stderr

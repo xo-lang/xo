@@ -1,0 +1,37 @@
+// req.escaped_path() is Go's URL.EscapedPath on every backend: a path
+// written with a space is escaped ("y%20z"), one written with a valid
+// escape the decoded path loses ("a%2Fb") is kept as written, both for a
+// request built by new_request and for what a server sees of the
+// client's request (the client sends the path escaped, as Go's does).
+use std/http
+
+fn main(os: Os) {
+  for u in ["http://h.example.test/c2/x/y z.txt", "http://h.example.test/c2/a%2Fb", "http://h.example.test/c2/caf%C3%A9 x", "http://h.example.test"] {
+    let req = http.new_request("GET", u)
+    os.stdio.println("new_request: path=${req.path} escaped=${req.escaped_path()}")
+  }
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      var r = http.router()
+      r.handle("/{rest...}", fn(req) { http.text(200, "path=${req.path} escaped=${req.escaped_path()}") })
+      let srv = http.server(l, r)
+      let base = "http://${srv.addr()}"
+      let c = http.client(os.net)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        for p in ["/c2/x/y z.txt", "/c2/a%2Fb", "/c2/caf%C3%A9 x"] {
+          match c.send(http.new_request("DELETE", base + p)) {
+            Ok(resp) => os.stdio.println("server: ${resp.body.to_str() ?? "?"}")
+            Err(e) => os.stdio.println("send failed: ${e}")
+          }
+        }
+      }
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

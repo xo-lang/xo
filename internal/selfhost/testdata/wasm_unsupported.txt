@@ -37,6 +37,7 @@ http_client_policy # wasip1 # network: the network (`rt.net_listen`): WASI previ
 http_client_responses # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_client_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_conn_fault # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+http_escaped_path # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_fault # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_form # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 http_gzip # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

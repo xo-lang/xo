@@ -24,6 +24,21 @@ The read-skip of 2026-11-06 (the read after one that drained the socket waits fo
 
 Natively, `send` now runs a `handle` handler's `http.stream` function into the body, as a served router's call already did; before, the body came back empty. On both backends `Client.open` under FakeNet now runs the handler in its own task for every request, not only one with a source body, so a streamed response reaches `read` flush by flush: a test can read one event before the handler writes the next. A request's whole body reaches the handler as its body, read whole or as a stream.
 
+## 2026-11-06: fix: escaped_path escapes a path written with a space on the Go backend
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19 (azblob: 4 of 27 tests failed on `--backend=go` for a blob name with a space)
+- Go reference: net/url URL.setPath and URL.EscapedPath (RawPath used only while validEncoded) (go1.26.1)
+- Test: internal/llvm/testdata/golden/http_escaped_path (every backend, Go parity)
+
+On the Go backend, `http.new_request("GET", "http://h/x/y z.txt").escaped_path()`
+returned `/x/y z.txt`: the request kept Go's RawPath, the path as
+written, even when it is not a valid encoding. It now keeps RawPath only
+when Go's EscapedPath would use it, so `escaped_path()` is `/x/y%20z.txt`,
+as on the native backends; a valid escape the decoded path loses
+(`a%2Fb`) is still kept. The client already sent the escaped path.
+
 ## 2026-11-06: feature: http.status_text, net/http's StatusText
 
 - Kind: feature
