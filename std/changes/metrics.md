@@ -1,5 +1,20 @@
 # std/metrics changes
 
+## 2026-11-07: perf: a labelled update no longer counts the Family's fields
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/results/xo-vs-go-survey-2026-11-07.md (metrics/counter 4.25 and histogram 2.72 times client_golang)
+- Go reference: prometheus/client_golang's metricVec lookup (no per call cost on the family)
+- Test: goldens metrics_buckets, metrics_child, metrics_summary; std corpus metrics
+- Timing: --ab on linux/arm64 against main without it: bench/perf/metrics counter 0.781, histogram 0.667, counterheld within noise
+- Shipped in: not yet released
+
+The miss path's closure captured the Family's bounds List, which made the
+Family an owned parameter of every lookup: each inc, set, add and observe
+retained and released every heap field of it (atomic counts, since the
+Family is shared). It captures the bounds' count instead (gotchas/captured-field-owns-struct-param.md).
+
 ## 2026-11-04: feature: child handles (decision 0501)
 
 - Kind: feature

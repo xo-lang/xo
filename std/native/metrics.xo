@@ -352,8 +352,11 @@ fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
     return Some(s)
   }
   // the fields the closure reads, bound first: capturing f would copy
-  // its 13 words and share each heap field on every call (XO0910)
-  let bounds = f.bounds
+  // its 13 words and share each heap field on every call (XO0910); the
+  // bounds' count, not the List: a captured heap field consumes a leaf of
+  // f, which makes f an owned parameter, so every call (a hit too)
+  // retained and released each heap field of the Family (2026-11-07)
+  let nb = f.bounds.len()
   let kind = f.kind
   let age_buckets = f.age_buckets
   let made = f.series.with(fn(var m: Map[Str, metrics.Series]) -> metrics.Series? {
@@ -363,7 +366,7 @@ fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
     if m.len() >= MAX_SERIES {
       return None
     }
-    let s = new_series(values, bounds.len(), kind, age_buckets)
+    let s = new_series(values, nb, kind, age_buckets)
     m.put(key, s)
     Some(s)
   })
