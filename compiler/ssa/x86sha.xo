@@ -205,3 +205,33 @@ pub fn sha256_ni_lines(st: Str, p: Str, k: Str) -> List[Str] {
     "movq %r11, 56(${st})",
   ]
 }
+
+/// cpu.sha256_blocks on x86-64 (as ssa a64sha256.xo's arm64 loop): the n
+/// blocks at d, sha256_ni_lines' rounds in a loop with the state in xmm1
+/// and xmm2 throughout, its load, byte swap mask and store once; p and c
+/// are scratch registers for the data pointer and the blocks left (r11
+/// stays the lines' own scratch).
+pub fn sha256_ni_loop_lines(st: Str, d: Str, n: Str, k: Str, p: Str, c: Str) -> List[Str] {
+  let ls = sha256_ni_lines(st, p, k)
+  var a = -1
+  var b = -1
+  var e = -1
+  for (i, l) in ls.indexed() {
+    if l == "movdqa %xmm1, %xmm9" && a < 0 {
+      a = i
+    } else if l == "movdqu 0(${p}), %xmm3" && b < 0 {
+      b = i
+    } else if l == "paddd %xmm10, %xmm2" && e < 0 {
+      e = i + 1
+    }
+  }
+  if a < 0 || b < a || e < b {
+    fault("sha256_ni_loop_lines: sha256_ni_lines changed shape")
+  }
+  // the state packed and the mask built once; the state before each
+  // block kept in xmm9 and xmm10 inside the loop
+  ls[0..a] + ls[a + 2..b] + ["movq ${d}, ${p}", "movq ${n}, ${c}", "testq ${c}, ${c}", "jz 2f", "1:", "movdqa %xmm1, %xmm9", "movdqa %xmm2, %xmm10"] + ls[b..e] + ["addq $64, ${p}", "decq ${c}", "jnz 1b", "2:"] + ls[e..ls.len()]
+}
+
+/// The xmm registers sha256_ni_lines and its loop write: xmm0 to xmm10.
+pub fn sha256_ni_xmms() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }

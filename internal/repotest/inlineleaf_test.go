@@ -26,7 +26,7 @@ var inlineNotLeaf = map[string]string{
 	"rt.aes_gcm_enc10": "block kernel", "rt.aes_gcm_enc12": "block kernel", "rt.aes_gcm_enc14": "block kernel",
 	"rt.aes_last": "block kernel", "rt.aes_round": "block kernel",
 	"rt.chacha_blocks4": "block kernel", "rt.chacha_stream4": "block kernel",
-	"rt.ghash4": "block kernel", "rt.ghash_blocks": "block kernel",
+	"rt.ghash4": "block kernel", "rt.ghash_blocks": "block kernel", "rt.sha256_blocks": "block kernel",
 	"rt.mlkem_inverse_ntt": "block kernel", "rt.mlkem_mul_acc": "block kernel", "rt.mlkem_ntt": "block kernel",
 	"rt.sha256_block": "block kernel", "rt.keccak_f1600": "block kernel", "rt.sha1_block": "block kernel", "rt.sha512_block": "block kernel",
 	"rt.call_c2": "a C call", "rt.call_c4": "a C call",

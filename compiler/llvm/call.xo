@@ -1022,6 +1022,34 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, i64 ${g.op(x.args[3])})")
     }
+    "rt.sha256_blocks" if g.arch() == "amd64" => {
+      // SHA-NI: ssa.sha256_ni_loop_lines as inline asm, r9 to r11 and
+      // xmm0 to xmm10 clobbered
+      var t: List[Str] = []
+      for l in ssa.sha256_ni_loop_lines("@0@", "@1@", "@2@", "@3@", "%r9", "%r10") {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3"))
+      }
+      var clob = "r,r,r,r"
+      for r in ssa.sha256_ni_xmms() {
+        clob = clob + ",~{xmm${r}}"
+      }
+      clob = clob + ",~{r9},~{r10},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, i64 ${g.op(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+    }
+    "rt.sha256_blocks" => {
+      // arm64 (ssa call.xo): ssa.sha256_loop_lines as inline asm,
+      // x9, x10 and its V registers clobbered
+      var t = [".arch_extension crypto"]
+      for l in ssa.sha256_loop_lines("$0", "$1", "$2", "$3", "x9", "x10") {
+        t.push(l)
+      }
+      var clob = "r,r,r,r,~{x9},~{x10}"
+      for r in ssa.sha256_loop_vregs() {
+        clob = clob + ",~{q${r}}"
+      }
+      clob = clob + ",~{memory},~{cc}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, i64 ${g.op(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+    }
     "rt.ghash_blocks" => {
       // arm64 only (ssa call.xo): ssa.ghash_loop_lines as inline asm, x9,
       // x10 and its V registers clobbered

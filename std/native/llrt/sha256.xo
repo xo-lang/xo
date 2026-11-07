@@ -93,6 +93,24 @@ pub fn block256(var st: List[Int], b: Bytes, i: Int) {
   digest_tables.sha256_block(st, b, i)
 }
 
+/// block256 of the n blocks of b from i: with the CPU's instructions one
+/// cpu.sha256_blocks call (a loop with the state in registers on arm64).
+pub fn blocks256(var st: List[Int], b: Bytes, i: Int, n: Int) {
+  if n > 1 && target.arch != TargetArch.Wasm32 && (cpu.hw() & cpu.HW_SHA256) != 0 {
+    // as block256: an index store first, so the raw writes change only st
+    st[0] = st[0]
+    cpu.sha256_blocks(rt.obj_addr(st).wrapping_add(rt.layout(2)), raw.bytes_addr(b).wrapping_add(i), n, raw.bytes_addr(K256))
+    keep(b)
+    keep_ints(st)
+    return
+  }
+  var j = 0
+  while j < n {
+    block256(st, b, i + 64 * j)
+    j += 1
+  }
+}
+
 /// SHA-256's compression of the block of the 16 words m (UInt32s, as
 /// digest_tables.sha256_words takes them) into st: with the CPU's
 /// instructions, the words packed big endian first.
@@ -179,6 +197,11 @@ pub fn (var h: Hasher) write(data: Bytes) {
     }
     compress(h.hash, st, held, 0)
     h.held = b""
+  }
+  if is256(h.hash) {
+    let nb = (n - i) / bs
+    blocks256(st, data, i, nb)
+    i += nb * bs
   }
   while n - i >= bs {
     compress(h.hash, st, data, i)

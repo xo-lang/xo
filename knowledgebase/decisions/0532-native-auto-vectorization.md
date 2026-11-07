@@ -290,6 +290,14 @@ loop changes, so rt.ct_barrier code is untouched, and a fault in
 count_cont's loop is impossible (each block is in bounds by the loop's
 test), as before.
 
+The remaining step 2 candidates (2026-11-07, host 1, --ab against main):
+
+| Candidate | Change | Result |
+|---|---|---|
+| html escape sizing | five rt.bytes_count_eq32 a 32 byte block (2965673e9) | 0.871, pushed |
+| png up-unfilter | the row buffer as a Bytes written by address, the up filter a word at a time | 0.975 (0.962 to 0.985); dropped: std/png also builds on the Go backend from std/native/png.xo (std/go_compiled.txt), which has no raw addresses or rt intrinsics, and inflate is most of decode (branch lang1-pngup) |
+| SHA-256 over many blocks | cpu.sha256_blocks: one loop with the state in registers (arm64 SHA2, x86-64 SHA-NI), where each block was a call that saved and packed the state | simdscan sha256 0.884 (0.871 to 0.894, n=6); x86-64 (amd64 host, SHA-NI) 0.79 of main by medians of 9 runs; pushed |
+
 ## Consequences
 
 - Step 1 is in std and the emitters already; steps 2 and 3 each need

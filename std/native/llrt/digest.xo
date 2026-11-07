@@ -33,11 +33,9 @@ fn sha256_init() -> List[Int] { [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
 /// message of total bytes (the bytes hashed before lo are total - (hi -
 /// lo), whole blocks).
 fn finish(var h: List[Int], b: Bytes, lo: Int, hi: Int, total: Int) {
-  var i = lo
-  while hi - i >= 64 {
-    sha2.block256(h, b, i)
-    i += 64
-  }
+  let nb = (hi - lo) / 64
+  sha2.blocks256(h, b, lo, nb)
+  let i = lo + 64 * nb
   // the rest, 0x80, zeros, and the length in bits: one or two blocks
   let r = hi - i
   var t = rt.rs_push_byte(rt.rs_append_bytes(rt.rs_with_cap(136), b, i, hi, 0), 0x80)

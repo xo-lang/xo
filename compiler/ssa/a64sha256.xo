@@ -1,0 +1,41 @@
+// SHA-256 over many blocks on arm64 (decision 0231's instructions in a
+// loop): the instruction sequence both arm64 lowerings use (compiler/arm64
+// calls.xo, compiler/llvm call.xo) for rt.sha256_blocks
+// (std/native/llrt/cpu.xo sha256_blocks).
+
+/// The V registers sha256_loop_lines writes: the state (v16, v17), abcd's
+/// copy for SHA256H2 (v18), the message (v19 to v22), W + K (v23) and the
+/// state before each block (v24, v25); all caller saved.
+pub fn sha256_loop_vregs() -> List[Int] { [16, 17, 18, 19, 20, 21, 22, 23, 24, 25] }
+
+/// cpu.sha256_blocks on arm64 (Xo Lang 1, 2026-11-07: rt.sha256_block a
+/// call per 64 bytes saved and restored five V registers and packed and
+/// unpacked the state each time, 1.25 of Go's time on 4 KiB, where Go's
+/// loop keeps the state in registers): the n blocks at d into the state at
+/// st (8 words, one UInt32 in each, as sha256_block), the round constants
+/// at k; abcd in v16 and efgh in v17 throughout. p and c are scratch
+/// registers for the data pointer and the blocks left.
+pub fn sha256_loop_lines(st: Str, d: Str, n: Str, k: Str, p: Str, c: Str) -> List[Str] {
+  let m = ["v19", "v20", "v21", "v22"]
+  var t = ["ldr q16, [${st}]", "ldr q17, [${st}, #16]", "uzp1 v16.4s, v16.4s, v17.4s", "ldr q17, [${st}, #32]", "ldr q18, [${st}, #48]", "uzp1 v17.4s, v17.4s, v18.4s"]
+  t = t + ["mov ${p}, ${d}", "mov ${c}, ${n}", "cbz ${c}, 2f", "1:", "mov v24.16b, v16.16b", "mov v25.16b, v17.16b", "ldp q19, q20, [${p}], #32", "ldp q21, q22, [${p}], #32"]
+  for w in m {
+    t.push("rev32 ${w}.16b, ${w}.16b")
+  }
+  for i in 0..16 {
+    let w = m[i % 4]
+    t = t + ["ldr q23, [${k}, #${16 * i}]", "add v23.4s, v23.4s, ${w}.4s"]
+    if i < 12 {
+      t.push("sha256su0 ${w}.4s, ${m[(i + 1) % 4]}.4s")
+    }
+    t = t + ["mov v18.16b, v16.16b", "sha256h q16, q17, v23.4s", "sha256h2 q17, q18, v23.4s"]
+    if i < 12 {
+      t.push("sha256su1 ${w}.4s, ${m[(i + 2) % 4]}.4s, ${m[(i + 3) % 4]}.4s")
+    }
+  }
+  t = t + ["add v16.4s, v16.4s, v24.4s", "add v17.4s, v17.4s, v25.4s", "subs ${c}, ${c}, #1", "b.ne 1b", "2:"]
+  // the state unpacked to 8 byte words
+  t = t + ["ushll v18.2d, v16.2s, #0", "ushll2 v23.2d, v16.4s, #0", "str q18, [${st}]", "str q23, [${st}, #16]"]
+  t = t + ["ushll v18.2d, v17.2s, #0", "ushll2 v23.2d, v17.4s, #0", "str q18, [${st}, #32]", "str q23, [${st}, #48]"]
+  t
+}

@@ -1,0 +1,45 @@
+test "blocks256 of n blocks is block256 n times, at every count and offset" {
+  // the hardware loop (cpu.sha256_blocks on arm64) against one block a
+  // call, from 0 to 9 blocks at offsets 0, 1 and 64, from two states
+  var bb = BytesBuilder.with_capacity(64 * 10 + 1)
+  var r = 7
+  for _ in 0..(64 * 10 + 1) {
+    r = (r * 1103515245 + 12345) % 2147483648
+    bb.write_byte(UInt8((r >> 16) & 255))
+  }
+  let b = bb.freeze()
+  for start in [new(HASH_SHA256).st, new(HASH_SHA224).st] {
+    for off in [0, 1, 64] {
+      for n in 0..9 {
+        var want = start.map(fn(x: Int) { x })
+        for j in 0..n {
+          block256(want, b, off + 64 * j)
+        }
+        var got = start.map(fn(x: Int) { x })
+        blocks256(got, b, off, n)
+        expect(got) == want
+      }
+    }
+  }
+}
+
+test "a Hasher written in pieces sums as one write, for lengths 0 to 700" {
+  var bb = BytesBuilder.with_capacity(700)
+  for i in 0..700 {
+    bb.write_byte(UInt8((i * 31 + 7) & 255))
+  }
+  let b = bb.freeze()
+  for n in [0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 300, 640, 700] {
+    let one = sum(HASH_SHA256, b[0..n])
+    for piece in [1, 7, 64, 100, 257] {
+      var h = new(HASH_SHA256)
+      var i = 0
+      while i < n {
+        let e = if n - i < piece { n } else { i + piece }
+        h.write(b[i..e])
+        i = e
+      }
+      expect(h.sum()) == one
+    }
+  }
+}

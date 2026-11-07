@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-07: perf: SHA-256 hashes many blocks in one loop on arm64
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md: sha256 1.25 of Go, block256 91% of the profile)
+- Go reference: crypto/sha256 sha256block_arm64.s (go1.26.1; one routine over every block, the state in registers)
+- Test: std/native/llrt/sha256_test.xo (blocks256 against block256 at 0 to 8 blocks and three offsets; a Hasher written in pieces against one write); crypto tests; sha and crypto goldens on arm64, LLVM and wasm
+- Timing: bench/perf/simdscan sha256, linux/arm64 host 1, xo bench --ab against main: 0.884 (0.871 to 0.894, n=6; better); linux/amd64 (SHA-NI) 96 to 76 ms, 0.79, by medians of 9 alternating runs
+- Shipped in: not yet released
+
+A run of whole blocks (crypto's sha256 and sha224 sums, a Hasher's write, HMAC) goes to cpu.sha256_blocks: on arm64 (native and LLVM) one loop with the state in two vector registers, where each block was a call that saved five vector registers and packed and unpacked the state; elsewhere a block at a time as before.
+
 ## 2026-11-05: feature: crypto.generate_key makes RSA keys
 
 - Kind: feature
