@@ -103,6 +103,7 @@ var generators = map[string]func() string{
 	"pkcs12":     pkcs12Corpus,
 	"amqp":       amqpCorpus,
 	"grpc":       grpcCorpus,
+	"otlp":       otlpCorpus,
 	"timego":     timegoCorpus,
 }
 

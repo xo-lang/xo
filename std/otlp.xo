@@ -1,0 +1,29 @@
+// std/otlp (decision 0539): OTLP export of std/trace spans and std/metrics registries, as the
+// opentelemetry-proto 1.x messages (ExportTraceServiceRequest, ExportMetricsServiceRequest) written straight
+// onto std/protobuf's builder, the body of OTLP/HTTP's POST /v1/traces and /v1/metrics
+// (Content-Type application/x-protobuf). Declaration file.
+use std/metrics
+use std/trace
+
+/// What an export says about the program that made the spans: the `service.name` resource attribute, more
+/// resource attributes, and the instrumentation scope name (and version) the spans are filed under.
+struct Resource {
+  service: Str
+  attributes: List[(Str, Str)] = []
+  scope: Str = "std/trace"
+  version: Str = ""
+}
+
+/// The body of an ExportTraceServiceRequest for `spans` (one ResourceSpans, one ScopeSpans). A span's
+/// trace id is its request id when that is 32 hex digits, else the first 16 bytes of the SHA-256 of the id;
+/// the `request` span of an id is a server span with the id as its trace, its other spans are internal
+/// spans whose parent is that `request` span; span ids are the first 8 bytes of a SHA-256 of the span's
+/// request id, name and start, so an export repeated after a retry names the same spans. A `request` span's
+/// HTTP status becomes the span status (500 and above is an error) and the attribute `http.response.status_code`.
+fn encode_traces(res: Resource, spans: List[trace.Span]) -> Bytes
+
+/// The body of an ExportMetricsServiceRequest for the families of `reg` (one ResourceMetrics, one ScopeMetrics),
+/// every point cumulative since `start_ms` and stamped `now_ms` (Unix milliseconds): a counter is a monotonic Sum,
+/// a gauge a Gauge, a histogram a Histogram (bucket counts per bucket, not cumulative, as OTLP has them), a summary
+/// a Summary with its count and sum (no quantile values); a label becomes a string attribute of the point.
+fn encode_metrics(res: Resource, reg: metrics.Registry, start_ms: Int, now_ms: Int) -> Bytes

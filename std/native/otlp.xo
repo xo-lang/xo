@@ -1,0 +1,278 @@
+// std/otlp (decision 0539): the OTLP trace messages, written onto std/protobuf's builder.
+use std/crypto
+use std/metrics
+use std/otlp
+use std/protobuf
+use std/trace
+
+// Field writers: each takes the builder and gives it back (the put functions of std/protobuf); a scalar or
+// string equal to its default is left out, as protobuf-go's marshal does.
+
+fn str_field(out: BytesBuilder, num: Int, s: Str) -> BytesBuilder {
+  if s.len() == 0 {
+    return out
+  }
+  let o = protobuf.put_tag(out, num, 2)
+  protobuf.put_bytes(o, s.bytes())
+}
+
+fn bytes_field(out: BytesBuilder, num: Int, b: Bytes) -> BytesBuilder {
+  if b.len() == 0 {
+    return out
+  }
+  let o = protobuf.put_tag(out, num, 2)
+  protobuf.put_bytes(o, b)
+}
+
+fn msg_field(out: BytesBuilder, num: Int, inner: Bytes) -> BytesBuilder {
+  let o = protobuf.put_tag(out, num, 2)
+  protobuf.put_bytes(o, inner)
+}
+
+fn fixed64_field(out: BytesBuilder, num: Int, v: Int) -> BytesBuilder {
+  if v == 0 {
+    return out
+  }
+  let o = protobuf.put_tag(out, num, 1)
+  protobuf.put_fixed64(o, UInt64.wrapping_from(v))
+}
+
+fn varint_field(out: BytesBuilder, num: Int, v: Int) -> BytesBuilder {
+  if v == 0 {
+    return out
+  }
+  let o = protobuf.put_tag(out, num, 0)
+  protobuf.put_varint(o, UInt64.wrapping_from(v))
+}
+
+/// KeyValue{key, value: AnyValue{string_value}}
+fn kv_str(key: Str, value: Str) -> Bytes {
+  var v = BytesBuilder.new()
+  v = str_field(v, 1, value)
+  var kv = BytesBuilder.new()
+  kv = str_field(kv, 1, key)
+  kv = msg_field(kv, 2, v.freeze())
+  kv.freeze()
+}
+
+/// KeyValue{key, value: AnyValue{int_value}}
+fn kv_int(key: Str, value: Int) -> Bytes {
+  var v = BytesBuilder.new()
+  let t = protobuf.put_tag(v, 3, 0)
+  v = protobuf.put_varint(t, UInt64.wrapping_from(value))
+  var kv = BytesBuilder.new()
+  kv = str_field(kv, 1, key)
+  kv = msg_field(kv, 2, v.freeze())
+  kv.freeze()
+}
+
+fn hex_val(c: UInt8) -> Int {
+  if c >= 48 && c <= 57 {
+    return Int(c) - 48
+  }
+  if c >= 97 && c <= 102 {
+    return Int(c) - 87
+  }
+  if c >= 65 && c <= 70 {
+    return Int(c) - 55
+  }
+  -1
+}
+
+/// The 16 bytes of a trace id: the id itself when it is 32 hex digits, else the first 16 bytes of the
+/// SHA-256 of the text.
+fn trace_id(id: Str) -> Bytes {
+  let b = id.bytes()
+  if b.len() == 32 {
+    var out = BytesBuilder.new()
+    var ok = true
+    var i = 0
+    while i < 32 {
+      let h = hex_val(b[i])
+      let l = hex_val(b[i + 1])
+      if h < 0 || l < 0 {
+        ok = false
+      } else {
+        out.write_byte(UInt8.wrapping_from(h * 16 + l))
+      }
+      i += 2
+    }
+    if ok {
+      return out.freeze()
+    }
+  }
+  crypto.sha256(b)[0..16]
+}
+
+/// The 8 bytes of a span id from the text that names it.
+fn span_id(seed: Str) -> Bytes {
+  crypto.sha256(seed.bytes())[0..8]
+}
+
+fn root_id(id: Str) -> Bytes { span_id("${id}/request") }
+
+fn encode_span(s: trace.Span) -> Bytes {
+  let root = s.name == "request"
+  var sp = BytesBuilder.new()
+  sp = bytes_field(sp, 1, trace_id(s.id))
+  sp = bytes_field(sp, 2, if root { root_id(s.id) } else { span_id("${s.id}/${s.name}/${s.start_ms}/${s.micros}") })
+  if !root {
+    sp = bytes_field(sp, 4, root_id(s.id))
+  }
+  sp = str_field(sp, 5, s.name)
+  sp = varint_field(sp, 6, if root { 2 } else { 1 })
+  let start = s.start_ms * 1000000
+  sp = fixed64_field(sp, 7, start)
+  sp = fixed64_field(sp, 8, start + s.micros * 1000)
+  if root && s.status > 0 {
+    sp = msg_field(sp, 9, kv_int("http.response.status_code", s.status))
+    var st = BytesBuilder.new()
+    st = varint_field(st, 3, if s.status >= 500 { 2 } else { 1 })
+    sp = msg_field(sp, 15, st.freeze())
+  }
+  sp.freeze()
+}
+
+fn encode_traces(res: otlp.Resource, spans: List[trace.Span]) -> Bytes {
+  var r = BytesBuilder.new()
+  r = msg_field(r, 1, kv_str("service.name", res.service))
+  for (k, v) in res.attributes {
+    r = msg_field(r, 1, kv_str(k, v))
+  }
+  var sc = BytesBuilder.new()
+  sc = str_field(sc, 1, res.scope)
+  sc = str_field(sc, 2, res.version)
+  var ss = BytesBuilder.new()
+  ss = msg_field(ss, 1, sc.freeze())
+  for s in spans {
+    ss = msg_field(ss, 2, encode_span(s))
+  }
+  var rs = BytesBuilder.new()
+  rs = msg_field(rs, 1, r.freeze())
+  rs = msg_field(rs, 2, ss.freeze())
+  var req = BytesBuilder.new()
+  req = msg_field(req, 1, rs.freeze())
+  req.freeze()
+}
+
+fn double_bits(v: Float) -> UInt64 {
+  UInt64.wrapping_from(v.to_bits())
+}
+
+fn double_field(out: BytesBuilder, num: Int, v: Float) -> BytesBuilder {
+  let o = protobuf.put_tag(out, num, 1)
+  protobuf.put_fixed64(o, double_bits(v))
+}
+
+fn labels_attrs(pt: BytesBuilder, num: Int, labels: List[Str], values: List[Str]) -> BytesBuilder {
+  var o = pt
+  for (i, l) in labels.indexed() {
+    o = msg_field(o, num, kv_str(l, values[i]))
+  }
+  o
+}
+
+// the oneof member as_double is written after the attributes, as protobuf-go orders a message with a oneof
+fn number_point(f: metrics.Family, values: List[Str], v: Float, start_ms: Int, now_ms: Int, with_start: Bool) -> Bytes {
+  var p = BytesBuilder.new()
+  if with_start {
+    p = fixed64_field(p, 2, start_ms * 1000000)
+  }
+  p = fixed64_field(p, 3, now_ms * 1000000)
+  p = labels_attrs(p, 7, f.labels, values)
+  p = double_field(p, 4, v)
+  p.freeze()
+}
+
+fn load_cell(a: Atomic[Int]) -> Float {
+  Float.from_bits(a.get())
+}
+
+fn encode_family(f: metrics.Family, start_ms: Int, now_ms: Int) -> Bytes {
+  var m = BytesBuilder.new()
+  m = str_field(m, 1, f.name)
+  m = str_field(m, 2, f.help)
+  var pts = BytesBuilder.new()
+  if let Some(read) = f.reads.get(0) {
+    let ss = read().sort_by(fn(x: metrics.Sample) -> Str { x.values.join("\x1f") })
+    for x in ss {
+      pts = msg_field(pts, 1, number_point(f, x.values, x.value, start_ms, now_ms, f.kind == 0))
+    }
+  } else {
+    let sm = f.series.with_read(fn(m: Map[Str, metrics.Series]) -> Map[Str, metrics.Series] { m })
+    for k in sm.keys().sort() {
+      let s = sm.get(k) ?? continue
+      if f.kind < 2 {
+        pts = msg_field(pts, 1, number_point(f, s.values, load_cell(s.cells[0]), start_ms, now_ms, f.kind == 0))
+      } else if f.kind == 3 {
+        var p = BytesBuilder.new()
+        p = fixed64_field(p, 2, start_ms * 1000000)
+        p = fixed64_field(p, 3, now_ms * 1000000)
+        p = fixed64_field(p, 4, s.cells[1].get())
+        p = double_field(p, 5, load_cell(s.cells[2]))
+        p = labels_attrs(p, 7, f.labels, s.values)
+        pts = msg_field(pts, 1, p.freeze())
+      } else {
+        var counts = BytesBuilder.new()
+        var bounds = BytesBuilder.new()
+        var upto = 0
+        for (i, b) in f.bounds.indexed() {
+          let c = s.cells[3 + i].get()
+          upto += c
+          counts = protobuf.put_fixed64(counts, UInt64.wrapping_from(c))
+          bounds = protobuf.put_fixed64(bounds, double_bits(b))
+        }
+        let n = s.cells[1].get()
+        counts = protobuf.put_fixed64(counts, UInt64.wrapping_from(n - upto))
+        var p = BytesBuilder.new()
+        p = fixed64_field(p, 2, start_ms * 1000000)
+        p = fixed64_field(p, 3, now_ms * 1000000)
+        p = fixed64_field(p, 4, n)
+        p = double_field(p, 5, load_cell(s.cells[2]))
+        p = bytes_field(p, 6, counts.freeze())
+        p = bytes_field(p, 7, bounds.freeze())
+        p = labels_attrs(p, 9, f.labels, s.values)
+        pts = msg_field(pts, 1, p.freeze())
+      }
+    }
+  }
+  // pts holds the data_points entries (field 1) already
+  var body = BytesBuilder.new()
+  body.write(pts.freeze())
+  if f.kind == 0 {
+    body = varint_field(body, 2, 2)
+    body = varint_field(body, 3, 1)
+    m = msg_field(m, 7, body.freeze())
+  } else if f.kind == 1 {
+    m = msg_field(m, 5, body.freeze())
+  } else if f.kind == 3 {
+    m = msg_field(m, 11, body.freeze())
+  } else {
+    body = varint_field(body, 2, 2)
+    m = msg_field(m, 9, body.freeze())
+  }
+  m.freeze()
+}
+
+fn encode_metrics(res: otlp.Resource, reg: metrics.Registry, start_ms: Int, now_ms: Int) -> Bytes {
+  var r = BytesBuilder.new()
+  r = msg_field(r, 1, kv_str("service.name", res.service))
+  for (k, v) in res.attributes {
+    r = msg_field(r, 1, kv_str(k, v))
+  }
+  var sc = BytesBuilder.new()
+  sc = str_field(sc, 1, res.scope)
+  sc = str_field(sc, 2, res.version)
+  var sm = BytesBuilder.new()
+  sm = msg_field(sm, 1, sc.freeze())
+  let fs = reg.families.with_read(fn(l: List[metrics.Family]) -> List[metrics.Family] { l })
+  for f in fs {
+    sm = msg_field(sm, 2, encode_family(f, start_ms, now_ms))
+  }
+  var rm = BytesBuilder.new()
+  rm = msg_field(rm, 1, r.freeze())
+  rm = msg_field(rm, 2, sm.freeze())
+  var req = BytesBuilder.new()
+  req = msg_field(req, 1, rm.freeze())
+  req.freeze()
+}

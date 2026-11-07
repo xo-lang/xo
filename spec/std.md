@@ -7910,3 +7910,25 @@ fn (c: ClientCall) recv() -> Bytes? ! Status
   maps its HTTP status to a code as grpc-go does.
 - Not yet: compression (`grpc-encoding`), binary metadata (`-bin`), response headers and trailers other than the
   status, `grpc-status-details-bin`, the typed stubs of `xo proto gen`, a TLS example.
+
+## 69. std/otlp
+
+OTLP export of std/trace spans and std/metrics registries (decision 0539): the opentelemetry-proto 1.x messages
+`ExportTraceServiceRequest` and `ExportMetricsServiceRequest` written straight onto std/protobuf's builder (no message
+tree), the body of OTLP/HTTP's `POST /v1/traces` and `/v1/metrics` with `Content-Type: application/x-protobuf`. The bytes
+are checked against protobuf-go marshaling the same messages (testdata/corpus/otlp).
+
+```xo
+struct Resource { service: Str, attributes: List[(Str, Str)] = [], scope: Str = "std/trace", version: Str = "" }
+fn encode_traces(res: Resource, spans: List[trace.Span]) -> Bytes
+fn encode_metrics(res: Resource, reg: metrics.Registry, start_ms: Int, now_ms: Int) -> Bytes
+```
+
+`encode_traces`: one ResourceSpans and one ScopeSpans. A span's trace id is its request id when that is 32 hex digits,
+else the first 16 bytes of the SHA-256 of the id; the `request` span of an id is a server span (the id's root), its other
+spans are internal spans whose parent is that root; span ids are the first 8 bytes of a SHA-256 of the span's request id,
+name and start, so a retried export names the same spans. A `request` span's status becomes the attribute
+`http.response.status_code` and the span status (500 and above is an error).
+
+`encode_metrics`: a counter is a monotonic cumulative Sum, a gauge a Gauge, a histogram a cumulative Histogram (bucket
+counts per bucket, with the explicit bounds), a summary a Summary with its count and sum; labels are string attributes.

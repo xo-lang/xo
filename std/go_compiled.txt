@@ -33,3 +33,4 @@ protobuf
 sqlite
 timego
 grpc
+otlp

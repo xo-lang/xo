@@ -1,0 +1,17 @@
+// Vectors by hand from opentelemetry-proto (trace.proto, common.proto, resource.proto); the generated corpus
+// (internal/stdtest/testdata/corpus/otlp) compares against protobuf-go.
+use std/otlp
+use std/trace
+
+test "trace ids: 32 hex digits are kept, other text is hashed" {
+  let hexid = "0123456789abcdef0123456789abcdef"
+  let one = otlp.encode_traces(otlp.Resource{service: "s"}, [trace.Span{id: hexid, name: "request", start_ms: 1, micros: 2, status: 200}])
+  expect(one.to_hex().contains("0a100123456789abcdef0123456789abcdef")) == true
+  let other = otlp.encode_traces(otlp.Resource{service: "s"}, [trace.Span{id: "abc", name: "request", start_ms: 1, micros: 2, status: 200}])
+  expect(other.to_hex().contains("0a10ba7816bf8f01cfea414140de5dae2223")) == true
+}
+
+test "a span repeated after a retry has the same ids" {
+  let s = trace.Span{id: "r1", name: "db", start_ms: 5, micros: 7, status: 0}
+  expect(otlp.encode_traces(otlp.Resource{service: "x"}, [s])) == otlp.encode_traces(otlp.Resource{service: "x"}, [s])
+}
