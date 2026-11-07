@@ -8089,27 +8089,3 @@ are written in key order (protobuf-go's Deterministic marshaling); decoding keep
 unknown ones. Checked against protobuf-go's types marshaled for fixed and seeded random values (testdata/corpus/protowkt,
 byte for byte, and the decoded values). Decision 0549 converts the module to generated code.
 
-## 74. std/protojson
-
-Protocol Buffers' canonical JSON mapping (decision 0546 item 2) as protobuf-go's `encoding/protojson`, driven by descriptors
-(std/protodesc) instead of generated code: a message is converted between its wire bytes and compact JSON text.
-
-```xo
-struct JsonErr { text: Str }
-struct Opts { proto_names: Bool = false, emit_defaults: Bool = false, enum_numbers: Bool = false, discard_unknown: Bool = false }
-fn registry(files: List[protodesc.FileDesc]) -> Registry
-fn registry_from_set(set: Bytes) -> Registry ! protobuf.ProtoErr
-fn marshal(r: Registry, name: Str, wire: Bytes, o: Opts = Opts{}) -> Str ! JsonErr
-fn unmarshal(r: Registry, name: Str, json: Str, o: Opts = Opts{}) -> Bytes ! JsonErr
-```
-
-`marshal` writes fields in descriptor order with lowerCamelCase `json_name`s (`proto_names` writes the proto names), 64 bit
-integers as strings, bytes as standard base64, enums by name (`enum_numbers` writes numbers), `NaN` and `Infinity` as
-strings, maps with sorted keys, only the set member of a oneof, and nothing for an unset or default field unless
-`emit_defaults` (implicit presence scalars, `[]` and `{}`). `Timestamp` and `Duration` are strings, `FieldMask` one
-comma separated string, `Struct`, `Value` and `ListValue` plain JSON, the wrappers their value, `Any` its message with a
-leading `@type` (the type must be in the registry). `unmarshal` accepts both names, numbers or strings for integers (integer
-valued forms such as `1e2` and `1.0`), base64 with or without padding in the standard or URL alphabet, enum names or
-numbers, rejects unknown fields (skipped with `discard_unknown`), duplicate fields and a second member of a oneof, treats
-`null` as unset (except for `Value` and `NullValue`), and writes the wire fields in protobuf-go's order (fields by number,
-then oneofs), maps in key order. Checked against protobuf-go's `protojson` (testdata/corpus/protojson).
