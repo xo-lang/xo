@@ -52,6 +52,18 @@ What Go does (encoding/json go1.26.6, encode.go `typeFields`, decode.go `object`
 6. **Other formats.** `derive Cbor`, `Yaml`, `Toml` and `Xml` do not take the option (`XO0422`), as they take no
    `omitempty` today unless their own decisions say so. `json.Value` objects are unaffected.
 
+## Field counts (Xo Azure 1, 2026-11-07)
+
+All 651 Discovery documents of google.golang.org/api v0.311.0, JSON type `string` with a numeric format: scalar `int64` 8,811,
+scalar `uint64` 723, list items `int64` 460 and `uint64` 11, map values `int64` 85; no `int32` or `uint32` as strings. (Method
+parameters, not JSON: `int64` 4,388, `uint64` 276, repeated 651 and 2.) Go's generator (google-api-go-generator gen.go
+`typeAsGo`) uses the tag option for scalars only; lists use the named slice types `googleapi.Int64s`, `Uint64s` and
+`Float64s`, whose MarshalJSON writes each element as a string, and map values stay `map[string]string`. So the option
+covers 9,534 of the 10,090 fields; the 471 list items would be `List[Int]` read and written as strings. That form is not
+Go's tag option and is not part of this decision: it needs its own (a list wide wire form, for example a `json_list_string`
+wrapper type in std/json, or `List[Int]` with the option applied to the elements). Until it is decided the generator keeps
+`List[Str]` there, as Go's `map[string]string` does for maps.
+
 ## Consequences
 
 - Azure 1's generator emits `as "n,omitempty,string"` straight from the Discovery `format`; no wrapper types.
