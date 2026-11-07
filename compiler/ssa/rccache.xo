@@ -434,14 +434,7 @@ fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str], var seen: Map[Int, In
     write_ints(b, e.args)
     b.write_str("]\n")
   }
-  for d in f.dvars {
-    b.write_str("dvar ${d.name.len()}:${d.name} ")
-    tkey_w(b, tk, seen, d.ty)
-    b.write_str(" ${d.line} ${d.param} ${d.inl}\n")
-  }
-  for d in f.dbinds {
-    b.write_str("dbind ${d.dvar} ${d.value} ${d.line}\n")
-  }
+  key_debug(b, f, tk, seen)
 }
 
 /// What a front end replay (fecache.xo fe_replay) sets of a body beyond
@@ -468,17 +461,42 @@ fn key_replayed(var b: BytesBuilder, f: Func, tk: List[Str]) {
     tkey_w(b, tk, seen, ty_of(x.tb))
     b.write_byte('\n')
   }
+  key_debug(b, f, tk, seen)
+}
+
+/// The debug rows of f (its variables and bindings) for a key, the bytes
+/// "dvar ${d.name.len()}:${d.name} TYPE ${d.line} ${d.param} ${d.inl}"
+/// and "dbind ${d.dvar} ${d.value} ${d.line}" lines wrote, with no
+/// string per row (interpolation was a tenth of key_replayed, 2026-11-07
+/// profile).
+fn key_debug(var b: BytesBuilder, f: Func, tk: List[Str], var seen: Map[Int, Int]) {
   for d in f.dvars {
-    b.write_str("dvar ${d.name.len()}:${d.name} ")
+    b.write_str("dvar ")
+    write_int(b, d.name.len())
+    b.write_byte(':')
+    b.write_str(d.name)
+    b.write_byte(' ')
     tkey_w(b, tk, seen, d.ty)
-    b.write_str(" ${d.line} ${d.param} ${d.inl}\n")
+    b.write_byte(' ')
+    write_int(b, d.line)
+    b.write_str(if d.param { " true " } else { " false " })
+    write_int(b, d.inl)
+    b.write_byte('\n')
   }
   for d in f.dbinds {
-    b.write_str("dbind ${d.dvar} ${d.value} ${d.line}\n")
+    b.write_str("dbind ")
+    write_int(b, d.dvar)
+    b.write_byte(' ')
+    write_int(b, d.value)
+    b.write_byte(' ')
+    write_int(b, d.line)
+    b.write_byte('\n')
   }
 }
 
-/// Writes x in decimal, as "${x}" does.
+/// Writes x in decimal, as "${x}" does: its digits from the top, with no
+/// call per digit (a recursive form was a quarter of key_replayed,
+/// 2026-11-07 profile).
 fn write_int(var b: BytesBuilder, x: Int) {
   if x >= 0 && x < 10 {
     b.write_byte(UInt8(x + 48))
@@ -494,8 +512,17 @@ fn write_int(var b: BytesBuilder, x: Int) {
     write_int(b, -x)
     return
   }
-  write_int(b, x / 10)
-  b.write_byte(UInt8(x % 10 + 48))
+  // d: the largest power of ten at most x
+  var d = 10
+  while d <= x / 10 {
+    d *= 10
+  }
+  var r = x
+  while d > 0 {
+    b.write_byte(UInt8(r / d + 48))
+    r = r % d
+    d = d / 10
+  }
 }
 
 /// Writes xs as ints_line does: decimal, separated by one space.

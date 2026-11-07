@@ -52,7 +52,7 @@ fn key_func_ref(var b: BytesBuilder, f: Func, tk: List[Str]) {
 }
 
 test "write_int and write_ints write what interpolation and ints_line do" {
-  for x in [0, 1, 9, 10, 11, 99, 100, 12345, 9223372036854775807, -1, -9, -10, -12345, -9223372036854775807 - 1] {
+  for x in [0, 1, 9, 10, 11, 99, 100, 101, 909, 1000, 12345, 1000000000000000000, 999999999999999999, 9223372036854775807, -1, -9, -10, -12345, -9223372036854775807 - 1] {
     var b = BytesBuilder.new()
     write_int(b, x)
     expect(b.freeze().to_str() ?? "") == "${x}"
