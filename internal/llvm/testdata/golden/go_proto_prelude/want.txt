@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+contains: true false
+index_of: 1 -1
+to_set: 2
+group_by: 2 odd 2
+map: true 10 20 false
+map ==: true false
+set: true true 2 true true
+set ==: true
+option ==: true false
+result ==: true
+tuple ==: true false
+nested ==: true
+set map: 2
+keys: true
+--- stderr

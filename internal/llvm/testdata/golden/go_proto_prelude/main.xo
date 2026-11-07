@@ -1,0 +1,104 @@
+// Every prelude method that compares or hashes its elements, each on a
+// user type reached only through that method (decision 0542): on
+// --backend=go a type the protocol walk misses has no XoEq or XoHash and
+// the program faults "xo internal: XoEq not generated", so this golden's
+// output equals the native one only while every such method is a root.
+
+struct InList {
+  id: Int
+}
+
+struct AtIndex {
+  id: Int
+}
+
+struct ToSet {
+  id: Int
+}
+
+struct GroupKey {
+  k: Str
+}
+
+struct MapKey {
+  k: Int
+}
+
+struct MapVal {
+  v: Int
+}
+
+struct SetElem {
+  e: Int
+}
+
+struct SetEq {
+  e: Int
+}
+
+struct OptEq {
+  o: Int
+}
+
+struct ResEq {
+  r: Int
+}
+
+struct TupEq {
+  t: Int
+}
+
+struct Nested {
+  n: Int
+}
+
+struct SetMapped {
+  m: Int
+}
+
+struct MapKeysOut {
+  k: Int
+}
+
+fn main(os: Os) {
+  let a = [InList{id: 1}, InList{id: 2}]
+  os.stdio.println("contains: ${a.contains(InList{id: 2})} ${a.contains(InList{id: 9})}")
+  let b = [AtIndex{id: 1}, AtIndex{id: 2}]
+  os.stdio.println("index_of: ${b.index_of(AtIndex{id: 2}) ?? -1} ${b.index_of(AtIndex{id: 9}) ?? -1}")
+  let c = [ToSet{id: 1}, ToSet{id: 1}, ToSet{id: 2}].to_set()
+  os.stdio.println("to_set: ${c.len()}")
+  let g = [1, 2, 3, 4].group_by(fn(x) { GroupKey{k: if x % 2 == 0 { "even" } else { "odd" }} })
+  os.stdio.println("group_by: ${g.len()} ${g[0].0.k} ${g[0].1.len()}")
+  var m: Map[MapKey, Int] = {}
+  m.put(MapKey{k: 1}, 10)
+  m[MapKey{k: 2}] = 20
+  let had = m.contains(MapKey{k: 1})
+  let gone = m.remove(MapKey{k: 1}) ?? -1
+  os.stdio.println("map: ${had} ${gone} ${m.get(MapKey{k: 2}) ?? -1} ${m.contains(MapKey{k: 1})}")
+  let mv1: Map[Str, MapVal] = {"a": MapVal{v: 1}}
+  let mv2: Map[Str, MapVal] = {"a": MapVal{v: 1}}
+  let mv3: Map[Str, MapVal] = {"a": MapVal{v: 2}}
+  os.stdio.println("map ==: ${mv1 == mv2} ${mv1 == mv3}")
+  var s: Set[SetElem] = #{}
+  s.add(SetElem{e: 1})
+  s.add(SetElem{e: 2})
+  let removed = s.remove(SetElem{e: 1})
+  let t: Set[SetElem] = #{SetElem{e: 2}, SetElem{e: 3}}
+  os.stdio.println("set: ${removed} ${s.contains(SetElem{e: 2})} ${s.union(t).len()} ${s.is_subset(t)} ${s.intersects(t)}")
+  let se1: Set[SetEq] = #{SetEq{e: 1}}
+  let se2: Set[SetEq] = #{SetEq{e: 1}}
+  os.stdio.println("set ==: ${se1 == se2}")
+  let o: OptEq? = Some(OptEq{o: 1})
+  os.stdio.println("option ==: ${o == Some(OptEq{o: 1})} ${o == None}")
+  let r: Result[ResEq, Str] = Ok(ResEq{r: 1})
+  os.stdio.println("result ==: ${r == Ok(ResEq{r: 1})}")
+  let tp = (1, TupEq{t: 2})
+  os.stdio.println("tuple ==: ${tp == (1, TupEq{t: 2})} ${tp == (1, TupEq{t: 3})}")
+  let n1: Map[Str, List[Nested]] = {"x": [Nested{n: 1}]}
+  let n2: Map[Str, List[Nested]] = {"x": [Nested{n: 1}]}
+  os.stdio.println("nested ==: ${n1 == n2}")
+  let sm = #{1, 2}.map(fn(x) { SetMapped{m: x % 2} })
+  os.stdio.println("set map: ${sm.len()}")
+  let mk: Map[MapKeysOut, Int] = {MapKeysOut{k: 1}: 1}
+  os.stdio.println("keys: ${mk.keys().contains(MapKeysOut{k: 1})}")
+}
