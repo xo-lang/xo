@@ -542,3 +542,14 @@ underlying value on every backend, as core 2.8 says.
 - Shipped in: not yet released
 
 `to_value` turned every whole Float into an Int, which has no sign of zero; -0 is now kept as a Num and written `-0`. The text `-0` read into a Value is a Num too (Go's float64 keeps its sign), where it was an Int 0.
+
+## 2026-11-07: behavior: a Map's keys are written sorted, as Go does (decision 0543)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: Xo Azure 1 (azsystemevents vectors: 21 of 178 spec examples differ from Go in map key order)
+- Go reference: encoding/json sorts map keys when encoding a map
+- Test: corpora of json, jsonencode and toml against Go; goldens that encode a Map
+- Shipped in: not yet released
+
+`json.encode`, `derive Json` struct fields of type `Map[Str, V]` and `json.to_value` write a Map's keys sorted by their bytes, not in insertion order, on every backend; the output no longer depends on how the Map was built. A `json.Value` object keeps its order (a parsed document round trips unchanged), and `Set` still writes insertion order. toml's `encode` goes through `to_value`, so its maps are sorted too. A Map read from an object and written back no longer keeps the document's key order; use a `json.Value` for that.

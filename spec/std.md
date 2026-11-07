@@ -2367,7 +2367,7 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | `Int`, `Float`, `Bool`, `Str` | number, number, boolean, string |
 | `Int8`, `Int16`, `Int32`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Float32` | number; decoding refuses a number out of the type's range (`expected integer` for a signed type, `expected non negative integer` for an unsigned one, `cannot unmarshal number 1e39 into Float32` for a Float32 past its largest value, Go's words with Xo's type), on every backend |
 | `List[T]`, `Set[T]` | array |
-| `Map[Str, V]` | object |
+| `Map[Str, V]` | object, keys sorted by their bytes as Go's encoding/json writes them (decision 0543; a `json.Value` object keeps its order) |
 | valued enum (`enum E: Int` or `enum E: Str`, decision 0269) | the variant's value: a number or a string; decoding refuses a value no variant has (`unknown value 7 of enum Weekday`), or, with a catch-all variant (`Unknown(value: Str)`, decision 0493), keeps it there and writes it back unchanged |
 | enum unit variant | string `"Variant"` (its wire name: `as "name"` or `case:`, decision 0478, core 2.3) |
 | enum variant with fields | object `{"Variant": {fields}}`, the name and the fields' keys as above |
@@ -4499,7 +4499,7 @@ fn load(fs: Fs) -> Config ! Error uses fs.read {
   when it has no fraction. v is read through `json.to_value`, so a None
   field is left out, a `Time` or `Duration` is its JSON string (Go writes
   a `time.Time` as a bare date-time), a `Float` without a fraction is an
-  integer, and a map's keys come in its JSON order (Go sorts them);
+  integer, and a map's keys come in its JSON order (sorted, as Go);
   `decode` reads each back. A root that is not a record or a map, and a
   None inside a list (Go writes a nil pointer's zero value), are
   `TomlErr` with line 0: `toml: cannot encode an Int as a document

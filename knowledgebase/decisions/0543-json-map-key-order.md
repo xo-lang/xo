@@ -1,6 +1,6 @@
 # 0543: Map key order in JSON output
 
-Status: Proposed (Xo Lang 3, 2026-11-07; for the owner to decide, raised by xo-lead from Xo Azure 1's findings)
+Status: Accepted, option (a) (owner, 2026-11-07; Xo Lang 3; raised by xo-lead from Xo Azure 1's findings). A Map's keys are written sorted by their bytes, as Go's encoding/json; a `json.Value` object keeps its order.
 
 ## Context
 

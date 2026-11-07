@@ -187,9 +187,16 @@ fn (var b: Builder) json_val_body(ct: Int, t: Int, vt: Int) {
       b.write_var(lv, b.call("list.new", lt, "", []))
     }
     let iv = b.local()
-    let n = b.call("list.len", it, "", [keys])
-    let (i, head, exit) = b.for_up_to_begin(n, iv)
-    let (no, join) = b.if_then_begin(b.map_live(live, i))
+    // a Map's keys come sorted as Go's encoding/json writes them (decision 0543); a Set keeps its order
+    var order = -1
+    var n = b.call("list.len", it, "", [keys])
+    if oname == "Map" {
+      order = if live < 0 { b.json_rt("rs_json_order_all", b.m.list(it), [keys]) } else { b.json_rt("rs_json_order", b.m.list(it), [keys, live]) }
+      n = b.call("list.len", it, "", [order])
+    }
+    let (i0, head, exit) = b.for_up_to_begin(n, iv)
+    let i = if oname == "Map" { b.call("list.index", it, "", [order, i0]) } else { i0 }
+    let (no, join) = b.if_then_begin(if oname == "Map" { b.cbool(true) } else { b.map_live(live, i) })
     let k = b.call("list.index", kt, "", [keys, i])
     if oname == "Map" {
       let x = b.call("list.index", mvt, "", [vals, i])
@@ -199,7 +206,7 @@ fn (var b: Builder) json_val_body(ct: Int, t: Int, vt: Int) {
       b.write_var(lv, b.call("list.push", lt, "", [b.read(lv), b.val_sub(k, args[0], vt)]))
     }
     b.if_then_end(no, join)
-    b.for_up_to_end(i, iv, head, exit)
+    b.for_up_to_end(i0, iv, head, exit)
     b.retv(b.jv(vt, if oname == "Map" { "Object" } else { "List" }, [b.read(lv)]))
     return
   }

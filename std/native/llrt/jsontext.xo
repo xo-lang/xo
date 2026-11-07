@@ -1189,6 +1189,20 @@ pub fn reserve_list(out: Str, start: Int, n: Int) -> Str {
   rt.rs_append_bytes(rt.rs_with_cap(len + k), out.bytes(), 0, len, 0)
 }
 
+/// The entry numbers of a Map in the order Go's encoding/json writes its keys (sorted by their bytes, decision
+/// 0543): every entry of `keys` whose flag in `live` is set, all of them when `live` is empty.
+pub fn sorted_order(keys: List[Str], live: List[Bool]) -> List[Int] {
+  var idx: List[Int] = []
+  var i = 0
+  while i < keys.len() {
+    if live.is_empty() || live[i] {
+      idx.push(i)
+    }
+    i += 1
+  }
+  idx.sort_by(fn(a: Int) -> Str { keys[a] })
+}
+
 /// out + s as a JSON string: std/rt's appendJSONString (encoding/json
 /// without HTML escaping): `"`, `\`, and control bytes escaped, invalid
 /// UTF-8 as �, U+2028 and U+2029 as   and  .

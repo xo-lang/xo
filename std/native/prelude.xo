@@ -5178,6 +5178,10 @@ fn llrt_json_range_msg(src: Bytes, tape: List[Int], i: Int, ty: Str) -> Str { js
 
 fn llrt_rs_append_json_str(s: Str, t: Str) -> Str { jsontext.append_str(s, t) }
 
+fn llrt_rs_json_order(keys: List[Str], live: List[Bool]) -> List[Int] { jsontext.sorted_order(keys, live) }
+
+fn llrt_rs_json_order_all(keys: List[Str]) -> List[Int] { jsontext.sorted_order(keys, []) }
+
 fn llrt_rs_append_json_body(s: Str, t: Str) -> Str { jsontext.append_body(s, t) }
 
 fn llrt_rs_append_json_float(s: Str, f: Float) -> Str { jsontext.append_float(s, f) }

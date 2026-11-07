@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -759,16 +760,26 @@ func (s *Set[T]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 	return nil
 }
 
-// XoJsonEnc encodes a Map[Str, V] as an object, in insertion order.
+// XoJsonEnc encodes a Map[Str, V] as an object with its keys sorted by their bytes, as encoding/json does
+// (decision 0543).
 func (m Map[K, V]) XoJsonEnc(tk *Task, w *JsonW) {
-	w.ObjStart()
+	type entry struct {
+		k string
+		v V
+	}
+	es := make([]entry, 0, m.n)
 	for k, v := range Map_All(m) {
 		ks, ok := any(k).(string)
 		if !ok {
 			FaultHere("only Map[Str, V] encodes as JSON")
 		}
-		w.Field(ks)
-		JsonEnc(tk, w, v)
+		es = append(es, entry{ks, v})
+	}
+	slices.SortStableFunc(es, func(a, b entry) int { return strings.Compare(a.k, b.k) })
+	w.ObjStart()
+	for _, e := range es {
+		w.Field(e.k)
+		JsonEnc(tk, w, e.v)
 	}
 	w.ObjEnd()
 }
