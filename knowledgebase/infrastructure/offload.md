@@ -233,6 +233,14 @@ not restart; the Mac's known_hosts entry changes with the host key):
   default `XO_MAC_SEED`, v0.35.0; `ALLOC_BUILD=host2`: required) and
   release-vs-go.sh's http section by `HTTP_BASE_XO` (required), each the
   release compared against.
+- `/work/azure1-specs` (the second host; owner Xo Azure 1, 2026-11-07):
+  the Azure port's spec cache, the azure repo's `codegen/.specs` (a
+  pinned commit's folders and its `.store` partial clone, about 1 GB),
+  kept between the Azure differential batches. Each batch job sends only
+  the files changed since its last run and points its run's
+  `codegen/.specs` at it; the job's trap removes its own run directory
+  and leaves this one. Delete it to free the space; the next batch sends
+  it whole again.
 
 ### WebAssembly tools (owner-approved 2026-10-30, decisions 0405 and 0447)
 
