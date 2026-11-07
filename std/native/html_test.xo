@@ -31,6 +31,30 @@ test "escape_string: the five characters, and the round trip" {
   }
 }
 
+test "escape_string: each character at each place of 0 to 100, against a byte loop" {
+  let subs = ["&amp;", "&#39;", "&#34;", "&lt;", "&gt;"]
+  var k = 0
+  for c in ["&", "'", "\"", "<", ">"] {
+    for n in 0..101 {
+      for at in 0..n {
+        var src = StrBuilder.new()
+        var want = StrBuilder.new()
+        for j in 0..n {
+          if j == at || j % 37 == 5 {
+            src.write(c)
+            want.write(subs[k])
+          } else {
+            src.write("x")
+            want.write("x")
+          }
+        }
+        expect(html.escape_string(src.freeze())) == want.freeze()
+      }
+    }
+    k += 1
+  }
+}
+
 test "unescape_string: legacy names, prefixes and a name followed by text" {
   // &copy without a semicolon, &copyright as the prefix copy + "right"
   expect(html.unescape_string("&copy &copyright &notit")) == "\u{00A9} \u{00A9}right \u{00AC}it"

@@ -1,5 +1,17 @@
 # std/html changes
 
+## 2026-11-07: perf: escape_string sizes 32 bytes a step
+
+- Kind: perf
+- Commit: this push
+- Found by: ADR 0532 step 2's candidates (html escape sizing)
+- Go reference: html escape.go EscapeString (go1.26.1)
+- Test: `xo test --std-module=native/html` (a new case: each special at each place of 0 to 100, with a special every 37 bytes, against the expected text)
+- Timing: host 1 A/B escape 0.871 of main (0.864 to 0.887, n=6; bench/perf/html, a special every 5 bytes)
+- Shipped in: not yet released
+
+The size scan counts the five specials of 32 bytes with five lane compares (rt.bytes_count_eq32), then finishes a word a step as before.
+
 ## 2026-11-06: perf: escape_string scans 8 bytes a step
 
 - Kind: perf

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/html (perf): escape_string counts the specials of 32 bytes at a time (five lane compares) to size its result: bench/perf/html escape 0.871 of main on linux/arm64.
 - xo build (fix): a windows/amd64 cross build of a program with a `use c` source (its own, or a std module's such as std/sqlite's) from a host with no XO_WINSYSROOT stops with a message naming the sysroot and decision 0534 stage 2 (the prebuilt SQLite, not shipped yet), instead of clang's "'stdlib.h' file not found"; `xo dev goldens --build-only` counts it unsupported (gotchas/std-use-c-cross-sample-miss.md).
 - native (perf): `Str.quote` and the Debug text of a Str skip runs of printable ASCII 32 bytes a step (rt.bytes_any_stop32 and bytes_any_eq32): simdscan quote 0.542 of main on linux/arm64.
 - native (perf): UTF-8 validation of text mixing ASCII and other runes finds each sequence with one 8 byte word test and checks the common 2 and 3 byte sequences inline: utf8_mixed 0.922 of main on linux/arm64, utf8_ascii within noise.

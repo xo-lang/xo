@@ -42,8 +42,14 @@ fn escape_string(s: Str) -> Str {
   let n = b.len()
   var extra = 0
   var i = 0
-  // a word a step: each special's extra length counted by mask, so a
-  // text dense in specials costs no more than a clean one
+  // 32 bytes a step, each character counted by one lane compare, then a
+  // word a step: each special's extra length counted by mask, so a text
+  // dense in specials costs no more than a clean one
+  while n - i >= 32 {
+    let e5 = rt.bytes_count_eq32(b, i, 38) + rt.bytes_count_eq32(b, i, 39) + rt.bytes_count_eq32(b, i, 34)
+    extra += 4 * e5 + 3 * (rt.bytes_count_eq32(b, i, 60) + rt.bytes_count_eq32(b, i, 62))
+    i += 32
+  }
   while n - i >= 8 {
     let w = rt.bytes_word(b, i)
     extra += 4 * rt.popcount(esc5(w)) + 3 * rt.popcount(esc4(w))
