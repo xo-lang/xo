@@ -604,3 +604,14 @@ the body with jsontext.append_body and then ran three `Str.replace` calls for th
 that byte a word at a time (jsontext.first_stop, the HTML bytes included when the writer escapes them),
 writes the string as it is when there is none, and otherwise escapes from that byte in one pass
 (jsontext.append_escaped). Output unchanged.
+
+## 2026-11-07: fix: a Float32 is written with its own shortest digits, as Go does
+
+- Kind: fix
+- Commit: this commit
+- Found by: lead (Xo Azure 1: 619 float32 fields in 63 modules need byte exact bodies; Float32(1.1) came out as 1.100000023841858)
+- Go reference: encoding/json encodes a float32 with strconv.AppendFloat(b, f, 'f', -1, 32), or 'e' below 1e-6 and from 1e21 compared as float32s; Go 1.26 internal/strconv/ftoadbox.go dboxFtoa32 (BSD license)
+- Test: internal/stdtest/testdata/corpus/jsonencode ("encode of a Float32 is Go's", "to_value of a Float32 field encodes as Go's float32 text", 27 hand picked patterns, every power of two, 400 random patterns)
+- Shipped in: not yet released
+
+`json.encode`, `derive Json` and `json.to_value` wrote a Float32 as the float64 shortest text of its value (`1.100000023841858`). They now write the shortest digits that read back as the same float32 (`1.1`), in Go's layout; reading already matched. The native encoder uses a port of Go's Dragonbox float32 path (`llrt/num.xo` dbox32), the Go backend `json.Marshal(float32)`. `to_value` of a Float32 holds the double nearest those digits, as the encoder's text read back gives.

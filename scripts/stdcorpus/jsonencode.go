@@ -136,6 +136,10 @@ struct FloatBox {
   v: Float
 } derive Json
 
+struct F32Box {
+  v: Float32
+} derive Json
+
 struct IntBox {
   n: Int
 } derive Json
@@ -204,6 +208,36 @@ struct IntBox {
 		fmt.Fprintf(&o, "  (FloatBox{v: Float.from_bits(%d)}, %s),\n", int64(b),
 			xq(jsonGo(struct {
 				V float64 `json:"v"`
+			}{f})))
+	}
+	o.WriteString("]\n")
+
+	// Float32: Go writes a float32 with the shortest digits that read back as the float32 (bitSize 32), in the
+	// same 'f' or 'e' layout, the 'e' bounds compared as float32s. The cases are the float32 patterns around the
+	// layout bounds, powers of two (the uneven interval), the subnormals, and random patterns.
+	f32 := []uint32{0, 1 << 31, math.Float32bits(1), math.Float32bits(-1), math.Float32bits(1.1),
+		math.Float32bits(0.1), math.Float32bits(3.14159274), math.Float32bits(16777216), math.Float32bits(16777217),
+		math.Float32bits(1e-6), math.Float32bits(1e-7), math.Float32bits(9.999999e-7), math.Float32bits(1e21),
+		math.Float32bits(9.9999995e20), math.Float32bits(1e20), math.Float32bits(123456789), math.Float32bits(1e10),
+		math.Float32bits(3.4028235e38), math.Float32bits(1.17549435e-38), 1, 2, 0x7fffff, 0x800000, 0x800001,
+		math.Float32bits(8.5e-1), math.Float32bits(2.0e-3), math.Float32bits(0.00024414062)}
+	for e := -149; e <= 127; e++ {
+		f32 = append(f32, math.Float32bits(float32(math.Ldexp(1, e))))
+	}
+	rg := rand.New(rand.NewSource(131))
+	for i := 0; i < 400; i++ {
+		f32 = append(f32, rg.Uint32())
+	}
+	o.WriteString("\n/// (float32 bits, Go's encoding/json text of that Float32 field; NaN and the infinities are null in Xo)\nconst F32_CASES: List[(F32Box, Str)] = [\n")
+	for _, b := range f32 {
+		f := math.Float32frombits(b)
+		if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+			fmt.Fprintf(&o, "  (F32Box{v: Float32.from_bits(%d)}, %s),\n", b, xq(`{"v":null}`))
+			continue
+		}
+		fmt.Fprintf(&o, "  (F32Box{v: Float32.from_bits(%d)}, %s),\n", b,
+			xq(jsonGo(struct {
+				V float32 `json:"v"`
 			}{f})))
 	}
 	o.WriteString("]\n")
@@ -333,6 +367,7 @@ fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
 	for _, b := range []box{
 		{"STR_CASES", "a Str"},
 		{"FLOAT_CASES", "a Float"},
+		{"F32_CASES", "a Float32"},
 		{"INT_CASES", "an Int"},
 		{"SCALARS_CASES", "a struct of scalars"},
 		{"OPTS_CASES", "an Option field"},
@@ -362,6 +397,21 @@ test "encode of %s is Go's" {
 }
 `, b.typ, b.name)
 	}
+
+	o.WriteString(`
+test "to_value of a Float32 field encodes as Go's float32 text" {
+  var bad: List[(Str, Str, Str)] = []
+  var i = 0
+  for (v, want) in F32_CASES {
+    let got = json.to_value(v).encode()
+    if got != want {
+      bad.push(("row ${i}", got, want))
+    }
+    i += 1
+  }
+  expect(show3(bad)) == []
+}
+`)
 
 	o.WriteString(`
 test "parse_value then encode gives the canonical text" {
