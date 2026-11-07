@@ -216,3 +216,21 @@ func TestCheckSameModulePath(t *testing.T) {
 		t.Errorf("modules %v: example.com/notes/store checked %d times, want each copy's", res.Modules, n)
 	}
 }
+
+// TestCheckStdRefused: `xo check` on a directory inside std exits 2 with
+// a usage message pointing at `xo test --std-module=M`, instead of the
+// 16,022 misleading errors std's files gave checked on their own
+// (2026-11-06; scripts/xocheck refuses them the same way).
+func TestCheckStdRefused(t *testing.T) {
+	t.Parallel()
+	std := filepath.Join(repoRoot, "std")
+	setenv(t, "XO_STD", std)
+	chdir(t, repoRoot)
+	for _, arg := range []string{"std/...", "std", "./std/native/llrt", std + "/json/..."} {
+		var out, errOut bytes.Buffer
+		code := run(t, []string{"check", arg}, &out, &errOut)
+		if code != 2 || !strings.Contains(errOut.String(), "is inside std") || !strings.Contains(errOut.String(), "xo test --std-module=M") {
+			t.Errorf("xo check %s: exit %d, want 2 and the std message:\n%s%s", arg, code, out.String(), errOut.String())
+		}
+	}
+}

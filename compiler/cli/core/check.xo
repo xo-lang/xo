@@ -566,6 +566,12 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str], support_fn: fn(check.Checker) ->
     os.stdio.eprintln("xo check: no directories given")
     return 2
   }
+  if let Some(t) = std_target(ctx, targets) {
+    // checked on their own, std's files gave 16,022 misleading errors
+    // (2026-11-06; scripts/xocheck refused them since 2026-10-24)
+    os.stdio.eprintln("xo check: ${t} is inside std, whose modules are checked as a program's dependencies, not on their own (their use lines, such as native/llrt/raw, resolve only from a program): run `xo test --std-module=M` for module M, or check a program that uses it")
+    return 2
+  }
   let do_fix = fl.get_bool("fix")
   var applied: List[Change] = []
   if do_fix {
@@ -643,6 +649,26 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str], support_fn: fn(check.Checker) ->
 /// 0523 proposes it as the default; about 0.9 s more for compiler/xo,
 /// warm). A per module check (decision 0513) runs it on each member's
 /// checker.
+/// The first of targets (a directory, or a walk DIR/...) at or inside the
+/// std root, None when there is none.
+fn std_target(ctx: Ctx, targets: List[Str]) -> Str? {
+  if ctx.std.is_empty() {
+    return None
+  }
+  let std = clean_path(abs_path(ctx, ctx.std))
+  for t in targets {
+    var d = t.trim_suffix("/...")
+    if d == "..." {
+      d = "."
+    }
+    let a = clean_path(abs_path(ctx, d))
+    if a == std || a.starts_with("${std}/") {
+      return Some(t)
+    }
+  }
+  None
+}
+
 fn load_check(os: Os, ctx: Ctx, dirs: List[Str], support: Bool, go_rules: Bool, support_fn: fn(check.Checker) -> List[Diag] uses (clock, env, fs, proc, rand, stdio)) -> Session ! Str uses fs, proc, net, rand, env, clock, stdio {
   if go_rules {
     return load(os, ctx, dirs, false, {})
