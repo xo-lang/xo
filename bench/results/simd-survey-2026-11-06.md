@@ -170,5 +170,24 @@ addv over 16 lanes (minus the count modulo 256), fmov, neg, and #255;
 x86_64 two pcmpeqb and pmovmskb joined into 32 bits and popcnt; LLVM a
 <32 x i8> compare, its i32 counted with ctpop; wasm two bytes_eq16
 counted (four bits a match). The arm64 encoder gains `addv` on 16
-lanes. Stage 2 (count_byte 32 bytes a step) waits for a seed that knows
-the intrinsic and is measured then.
+lanes. Stage 2 (2026-11-07, after the 0.43.0 seed): count_byte counts
+32 bytes a step with it at every density, with no probe.
+
+## Step 3a: probes dropped; find_bytes filters after Go's cutover
+
+The gated 32 byte probe (skip 32 bytes with no match, taken only when the
+last 32 held none) in count_byte, one byte split and find_bytes, against
+the workloads-only base on linux/arm64 host 1, 5 rounds
+(~/xo-lead/notes/lang1/ab3e.txt): count_nl 1.292, split_csv 1.032,
+split_long 1.0, index_byte 1.007, find_common 0.516, find_rare 1.209.
+Only the first and last byte filter in find_bytes paid, and only for a
+common first byte. The probes were dropped; find_bytes now runs
+find_byte until its false starts pass 4 plus one per 64 bytes searched,
+then the filter, 16 starts a step. Go's bytes.Index cutover (one per 16
+bytes) never fired on find_common's first byte, one in 26: 1.047 of the
+base (ab-scan4.txt).
+
+Stage 2 of step 3c with this find_bytes, against main with the workloads
+(linux/arm64 host 2, 5 rounds, ~/xo-lead/notes/lang1/ab-scan4.txt):
+count_nl 0.741, count_dense 0.869, count_rare 0.71; split_csv 1.022, split_long 0.942 (split unchanged); with the
+64 byte cutover (ab-scan5.txt) find_common 0.347, find_rare 0.997, index_byte 1.034 (within noise).

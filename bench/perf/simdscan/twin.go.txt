@@ -9,6 +9,7 @@ import (
 	"hash/crc32"
 	"os"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -41,6 +42,22 @@ func bufs(n int, mixed bool) [][]byte {
 	return out
 }
 
+func seps(big [][]byte, k int, c byte) []string {
+	var out []string
+	for _, b := range big {
+		t := make([]byte, len(b))
+		for i, x := range b {
+			if i%k == k-1 {
+				t[i] = c
+			} else {
+				t[i] = x
+			}
+		}
+		out = append(out, string(t))
+	}
+	return out
+}
+
 func main() {
 	w := "none"
 	if len(os.Args) > 1 {
@@ -69,6 +86,59 @@ func main() {
 				if utf8.Valid(b) {
 					sum++
 				}
+			}
+		}
+	case "find_common":
+		ts := seps(big, 1000000, ' ')
+		for p := 0; p < passes; p++ {
+			for _, t := range ts {
+				if strings.Contains(t, "ezzzq") {
+					sum++
+				}
+			}
+		}
+	case "find_rare":
+		ts := seps(big, 1000000, ' ')
+		for p := 0; p < passes; p++ {
+			for _, t := range ts {
+				if strings.Contains(t, "#needle") {
+					sum++
+				}
+			}
+		}
+	case "count_nl":
+		ts := seps(big, 80, '\n')
+		for p := 0; p < passes; p++ {
+			for _, t := range ts {
+				sum += strings.Count(t, "\n")
+			}
+		}
+	case "count_dense":
+		ts := seps(big, 6, ',')
+		for p := 0; p < passes/4; p++ {
+			for _, t := range ts {
+				sum += strings.Count(t, ",")
+			}
+		}
+	case "count_rare":
+		ts := seps(big, 1000000, '\n')
+		for p := 0; p < passes; p++ {
+			for _, t := range ts {
+				sum += strings.Count(t, "\n")
+			}
+		}
+	case "split_csv":
+		ts := seps(big, 6, ',')
+		for p := 0; p < passes/4; p++ {
+			for _, t := range ts {
+				sum += len(strings.Split(t, ","))
+			}
+		}
+	case "split_long":
+		ts := seps(big, 200, ',')
+		for p := 0; p < passes; p++ {
+			for _, t := range ts {
+				sum += len(strings.Split(t, ","))
 			}
 		}
 	case "index_byte":

@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: perf: Str.count of one byte counts 32 bytes a step; find switches to a first and last byte filter when its first byte is common
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md steps 3a and 3c)
+- Go reference: bytes.Count (internal/bytealg count_arm64.s), bytes.Index and its cutover of false starts (go1.26.1)
+- Test: std/native/llrt/scan_test.xo "find_bytes matches a byte loop with near matches everywhere" (texts to 1000 bytes, past the cutover); std prelude tests
+- Timing: linux/arm64 host 1, xo bench --ab, 5 rounds, N over B (main with the workloads, 11531e815): count_nl 0.741, count_dense 0.869, count_rare 0.71 (~/xo-lead/notes/lang1/ab-scan4.txt); find_common 0.347, find_rare 0.997, index_byte 1.034 within noise (ab-scan5.txt); split_csv 1.022 and split_long 0.942 (split unchanged)
+- Shipped in: not yet released
+
+count_byte (Str.count and Bytes.count of one byte, line counting) counts 32 bytes a step with rt.bytes_count_eq32, one vector count at every density. find_bytes searches with find_byte as before until its false starts pass 4 plus one per 64 bytes searched (Go's bytes.Index allows one per 16, which a first byte one in 26 never passes: find_common 1.047 of the base with it), then tests sub's first and last bytes at 16 starts a step and ands the masks (Mula's filter), so a common first byte costs no false starts and a rare one keeps find_byte's speed. A probe that skipped 32 bytes with no match, tried first for count, split and find, cost more than it saved on all but sparse bytes (count_nl 1.29, find_rare 1.21 of the base) and was dropped.
+
 ## 2026-11-07: fix: FakeNet deadlines wake a waiting read or write (Go backend), and a waiting write (native)
 
 - Kind: fix

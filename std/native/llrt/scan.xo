@@ -134,11 +134,18 @@ fn find_short(b: Bytes, from: Int, to: Int, c: Int) -> Int {
 }
 
 /// The number of the byte c (0 to 255) in b from `from` to `to` (to <=
-/// b.len()), 16 bytes a step: bytes.Count for a one byte sub.
+/// b.len()), 32 bytes a step: bytes.Count for a one byte sub.
 pub fn count_byte(b: Bytes, from: Int, to: Int, c: Int) -> Int {
   var n = 0
   var i = from
-  while to - i >= 16 {
+  // one vector count per 32 bytes at every density (rt.bytes_count_eq32
+  // sums the compare in the vector unit), so a sparse c and a dense one
+  // cost the same
+  while to - i >= 32 {
+    n += rt.bytes_count_eq32(b, i, c)
+    i = addw(i, 32)
+  }
+  if to - i >= 16 {
     n += rt.popcount(eq16_1(b, i, c))
     i = addw(i, 16)
   }
@@ -264,6 +271,7 @@ pub fn find_bytes(b: Bytes, sub: Bytes, from: Int) -> Int {
   let last = n - m + 1
   let c = Int(sub[0])
   var i = f
+  var fails = 0
   while true {
     i = find_byte(b, i, last, c)
     if i < 0 {
@@ -276,6 +284,46 @@ pub fn find_bytes(b: Bytes, sub: Bytes, from: Int) -> Int {
     // candidate whose first byte matched often fails here, and eq_at is a
     // call where this is one load and a compare
     if Int(b[i + 1]) == Int(sub[1]) && (m == 2 || eq_at(b, i + 2, sub, 2, m - 2)) {
+      return i
+    }
+    i += 1
+    // once false starts outnumber 4 plus one per 64 bytes searched, the
+    // first byte is common, and find_byte stops at each one; the filter
+    // below skips them 16 at a time instead. Go's bytes.Index allows one
+    // per 16 bytes, which a first byte one in 26 never passes, where
+    // restarting find_byte costs this loop twice the filter
+    // (bench/perf/simdscan find_common)
+    fails += 1
+    if fails > 4 + ((i - f) >> 6) {
+      return find_filtered(b, sub, i, last)
+    }
+  }
+  -1
+}
+
+/// find_bytes from i once its first byte proved common (m >= 2): Mula's
+/// filter, sub's first and last bytes tested at 16 starts a step and
+/// their masks and'ed, so a start whose last byte differs costs nothing;
+/// the starts left after the last whole step one at a time. Reads end at
+/// i + 15 + m - 1 < b.len().
+fn find_filtered(b: Bytes, sub: Bytes, from: Int, last: Int) -> Int {
+  let m = sub.len()
+  let c = Int(sub[0])
+  let cl = Int(sub[m - 1])
+  var i = from
+  while subw(last, i) >= 16 {
+    var k = eq16_1(b, i, c) & eq16_1(b, addw(i, m - 1), cl)
+    while k != 0 {
+      let j = addw(i, rt.ctz(k) >> bsh())
+      if m == 2 || eq_at(b, j + 1, sub, 1, m - 2) {
+        return j
+      }
+      k = k & subw(k, 1)
+    }
+    i = addw(i, 16)
+  }
+  while i < last {
+    if Int(b[i]) == c && eq_at(b, i + 1, sub, 1, m - 1) {
       return i
     }
     i += 1

@@ -14,3 +14,10 @@
 - - fold
 - - fold_32
 - - lower
+- - count_nl
+- - split_csv
+- - split_long
+- - find_common
+- - find_rare
+- - count_dense
+- - count_rare

@@ -186,6 +186,58 @@ step gated by a measurement before code:
      under 0.1 percent because few loops qualify; a native vectorizer
      of the same reach would cost as little and gain as little.
 
+## Update (2026-11-07): step 1 results
+
+Decision step 1 (the intrinsic route for search shapes) went on after
+this ADR was written:
+
+- Step 3b, the JSON string scan (pushed cd76d3822): rt.bytes_any_stop32
+  (a quote, a backslash, a control byte or a byte of 0x80 and above in 32
+  bytes, one signed compare for the last two) on arm64, x86_64, LLVM and
+  wasm; jsontext str_end and append_body skip 32 clean bytes a step.
+  bench/perf/json enc_long and long_strings: see std/changes/json.md
+  (2026-11-06, xo bench --ab on host 2, 8 rounds per order); same
+  position ratios 0.86 to 0.94 for enc_long. A fused class intrinsic,
+  as this ADR's step 1 predicted ("a class intrinsic ... one more code
+  generation step and seed").
+- Step 3a: the gated 32 byte probe (count_byte, one byte split,
+  find_bytes) was measured and dropped (ab3e.txt, host 1: count_nl 1.292,
+  find_rare 1.209, find_common 0.516): a probe that fails costs a block,
+  so it paid only on sparse bytes. find_bytes keeps the first and last
+  byte filter behind a cutover of false starts (4 plus one per 64 bytes;
+  Go's one per 16 never fired on a first byte one in 26).
+- Step 3c (rt.bytes_count_eq32, a 32 byte count with no branch): stage 1
+  (code generation) pushed; stage 2 (count_byte uses it at every
+  density) with 3a's find_bytes in one push (linux/arm64 host 1, 5
+  rounds, against main with the workloads): count_nl 0.741, count_dense
+  0.869, count_rare 0.71; find_common 0.347, find_rare 0.997 (cutover at
+  one false start per 64 bytes).
+
+What this says about step 2 (idiom recognition) and step 3 (a loop
+vectorizer):
+
+- Each search kernel so far needed its own lane shape (any_eq32,
+  any_high32, mem_ne32, any_stop32, count_eq32): a general vectorizer
+  would have to synthesize the same mask, early exit and locate
+  sequences, which clang 23 does not do on these loops (the ceiling
+  table). The hand kernels remain the cheaper route for class C.
+- A fixed kernel set also carries a cost the ADR did not list: every new
+  intrinsic needs a seed before std can use it (two pushes and a seed
+  per kernel; json32 waited for 0.43.0). Step 2's idiom pass, which
+  calls std kernels written with existing intrinsics, has no seed cost
+  unless it adds a lane shape.
+- Two wasm failures came from the WAT assembler's opcode table lacking
+  instructions a new lowering used (gotchas/wasm-assembler-opcode-table.md,
+  third hit with any_stop32's i32.extend8_s);
+  internal/repotest TestWasmAsmOpcodes now checks the table against every
+  mnemonic the wasm lowering emits. Any vector kernel added for step 2
+  gets the check for free.
+
+Proposed next measurement for step 2 (unchanged from the ADR, now with a
+concrete first target): websocket's mask xor and a count of UTF-8
+continuation bytes, hand kernels against the native loop, on host 1 with
+`xo bench --ab`; the 0366 bar (2 times on the loop alone) decides.
+
 ## Consequences
 
 - Step 1 is in std and the emitters already; steps 2 and 3 each need

@@ -37,6 +37,20 @@ fn bufs(n: Int, mixed: Bool) -> List[Bytes] {
   out
 }
 
+/// big's buffers as text with the byte c at every k-th place: lines (c
+/// a newline every 80 bytes) and fields (a comma every 6 or 200 bytes).
+fn seps(big: List[Bytes], k: Int, c: Int) -> List[Str] {
+  var out: List[Str] = []
+  for b in big {
+    var bb = BytesBuilder.with_capacity(b.len())
+    for (i, x) in b.indexed() {
+      bb.write_byte(if i % k == k - 1 { UInt8(c) } else { x })
+    }
+    out.push(bb.freeze().to_str() ?? "")
+  }
+  out
+}
+
 fn main(os: Os) {
   let w = os.env.args().get(0) ?? "none"
   // passes: the second argument, 400 by default
@@ -175,6 +189,64 @@ fn main(os: Os) {
       for _ in 0..passes / 8 {
         for b in big {
           sum += Int(crypto.sha256(b)[0])
+        }
+      }
+    }
+    "find_common" => {
+      // an absent needle whose first byte is a common letter (a start
+      // to test every 26 bytes) and one whose first byte never occurs
+      let ts = seps(big, 1000000, 32)
+      for _ in 0..passes {
+        for t in ts {
+          sum += if t.contains("ezzzq") { 1 } else { 0 }
+        }
+      }
+    }
+    "find_rare" => {
+      let ts = seps(big, 1000000, 32)
+      for _ in 0..passes {
+        for t in ts {
+          sum += if t.contains("#needle") { 1 } else { 0 }
+        }
+      }
+    }
+    "count_nl" => {
+      let ts = seps(big, 80, 10)
+      for _ in 0..passes {
+        for t in ts {
+          sum += t.count("\n")
+        }
+      }
+    }
+    "count_dense" => {
+      let ts = seps(big, 6, 44)
+      for _ in 0..passes / 4 {
+        for t in ts {
+          sum += t.count(",")
+        }
+      }
+    }
+    "count_rare" => {
+      let ts = seps(big, 1000000, 10)
+      for _ in 0..passes {
+        for t in ts {
+          sum += t.count("\n")
+        }
+      }
+    }
+    "split_csv" => {
+      let ts = seps(big, 6, 44)
+      for _ in 0..passes / 4 {
+        for t in ts {
+          sum += t.split(",").len()
+        }
+      }
+    }
+    "split_long" => {
+      let ts = seps(big, 200, 44)
+      for _ in 0..passes {
+        for t in ts {
+          sum += t.split(",").len()
         }
       }
     }

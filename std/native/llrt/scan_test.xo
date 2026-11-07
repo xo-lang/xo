@@ -101,6 +101,41 @@ test "find_byte matches a byte loop" for xs: List[Int], c: Int {
   expect(find_byte(b, 0, b.len(), want_c) == want)
 }
 
+/// The first start at or after from where sub occurs in b, by a byte loop.
+fn find_naive(b: Bytes, sub: Bytes, from: Int) -> Int {
+  var i = from
+  while i + sub.len() <= b.len() {
+    var k = 0
+    while k < sub.len() && b[i + k] == sub[k] {
+      k += 1
+    }
+    if k == sub.len() {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+test "find_bytes matches a byte loop with near matches everywhere" {
+  // a two letter text, so first and last byte candidates are dense
+  for n in [0, 15, 17, 31, 33, 47, 64, 100, 300, 1000] {
+    var xs: List[Int] = []
+    var x = n + 7
+    for _ in 0..n {
+      x = (x * 1103515245 + 12345) % 2147483648
+      xs.push(97 + (x >> 16) % 2)
+    }
+    let b = bytes_of(xs)
+    for sub in ["ab", "ba", "aab", "abba", "bbbbb", "abababab", "aaaaaaaaaaaaaaaaab", "c", "ac"] {
+      let sb = sub.bytes()
+      for from in [0, 1, 5, 16] {
+        expect(find_bytes(b, sb, from)) == if from > n { -1 } else { find_naive(b, sb, from) }
+      }
+    }
+  }
+}
+
 test "count_cont counts continuation bytes in any range" for xs: List[Int], from: Int {
   let b = bytes_of(xs)
   let n = b.len()
