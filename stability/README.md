@@ -39,7 +39,7 @@ fuzzing. Phase 1 builds the starter app and the harness.
   not a leak; gotchas/soak-fds-client-pool.md), blocks left at exit, or a stop that takes over 20 s (its threads'
   stacks are then saved beside the run's log). `harness load -xo XO -app
   stability/APP -out OUT [-rates 1000,4000] [-sat 64] [-d 30s] [-rounds 3]
-  [-drop-env K,...] [-owners N] [-idle 6s]` offers the same mix at each fixed rate (open loop) and
+  [-drop-env K,...] [-owners N] [-idle 6s] [-idle-at D,...]` offers the same mix at each fixed rate (open loop) and
   at saturation (closed loop, 64 workers), to the xo build and to the app's
   Go twin (app.json `twin`) in alternating rounds, each run on a fresh
   start after a 5 s warmup, and writes OUT/load.csv (one row per run:
@@ -55,7 +55,8 @@ fuzzing. Phase 1 builds the starter app and the harness.
   (notes: `NOTES_USERS`, `t0p-admin-u{n}`). Each run's mem.txt holds the
   app's resident KiB at the end of its load (`busy`) and `-idle` (default
   6 s) after it (`idle`; decision 0533's age passes give pages back only
-  after 30 to 60 s, so `-idle 75s` measures them). Build it with
+  after 30 to 60 s, so `-idle 75s` measures them); `-idle-at 75s` with
+  `-idle 150s` adds an `idle@75s` line in the same run (2026-11-07). Build it with
   `cd stability/harness && go build -o /tmp/harness .`.
 
 An app's directory holds `app.json` (`name`, which picks the soak and load

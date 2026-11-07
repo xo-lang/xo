@@ -283,6 +283,7 @@ func loadMain(args []string) int {
 	dur := fs.Duration("d", 30*time.Second, "measured duration of each run")
 	warm := fs.Duration("warmup", 5*time.Second, "load before each run's measurement")
 	idle := fs.Duration("idle", 6*time.Second, "wait after each run's load before mem.txt's idle line (past the runtime's 3 s fiber trim; decision 0533's age passes need 30 to 60 s)")
+	idleAt := fs.String("idle-at", "", "earlier idle samples, comma separated durations below -idle (e.g. 75s), each an idle@D line in mem.txt before the idle line")
 	rounds := fs.Int("rounds", 3, "rounds (each runs every target at every load)")
 	addEnv := fs.String("env", "", "K=V pairs, comma separated, added to the xo build's environment (e.g. XO_RTSTATS=1)")
 	dropEnv := fs.String("drop-env", "", "app.json env keys left out for every target (e.g. NOTES_DATA when the twin has no persistence)")
@@ -297,6 +298,19 @@ func loadMain(args []string) int {
 		fmt.Fprintf(os.Stderr, "harness %s: unexpected argument %q (flags stop at the first non-flag: check for a dropped empty value)\n", fs.Name(), fs.Arg(0))
 		return 2
 	}
+	var idles []time.Duration
+	for _, f := range strings.Split(*idleAt, ",") {
+		if f == "" {
+			continue
+		}
+		v, err := time.ParseDuration(f)
+		if err != nil || v <= 0 || v >= *idle {
+			fmt.Fprintf(os.Stderr, "harness %s: -idle-at %q: each sample must be a duration between 0 and -idle\n", fs.Name(), f)
+			return 2
+		}
+		idles = append(idles, v)
+	}
+	sort.Slice(idles, func(i, j int) bool { return idles[i] < idles[j] })
 	if *appDir == "" || *out == "" {
 		fmt.Fprintln(os.Stderr, "harness load: -app and -out are required")
 		return 2
@@ -393,7 +407,7 @@ func loadMain(args []string) int {
 				if !t.stats {
 					ta.Stats = ""
 				}
-				r, err := loadOnce(&ta, mix, t.bin, filepath.Join(*out, fmt.Sprintf("run-%s-%s-%d", t.name, ld, round)), n, ld, *warm, *dur, *idle)
+				r, err := loadOnce(&ta, mix, t.bin, filepath.Join(*out, fmt.Sprintf("run-%s-%s-%d", t.name, ld, round)), n, ld, *warm, *dur, *idle, idles)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "harness load: %s %s round %d: %v\n", t.name, ld, round, err)
 					return 2
@@ -419,7 +433,7 @@ func loadMain(args []string) int {
 }
 
 // loadOnce starts bin, offers load ld for warm then dur, and stops it.
-func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur, idleWait time.Duration) (loadRun, error) {
+func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur, idleWait time.Duration, idleAt []time.Duration) (loadRun, error) {
 	var r loadRun
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		return r, err
@@ -455,7 +469,14 @@ func loadOnce(app *App, mix mixFn, bin, work string, n int, ld string, warm, dur
 	mem := "busy " + mapsSummary(pid)
 	stop()
 	// idle: every connection closed, past the runtime's 3 s fiber trim
-	time.Sleep(idleWait)
+	// earlier samples (-idle-at) on the way, then the idle line
+	var waited time.Duration
+	for _, at := range idleAt {
+		time.Sleep(at - waited)
+		waited = at
+		mem += "idle@" + at.String() + " " + mapsSummary(pid)
+	}
+	time.Sleep(idleWait - waited)
 	mem += "idle " + mapsSummary(pid)
 	if app.Stats != "" {
 		saveStats(d.cl, d.base+app.Stats, app.Tokens[app.StatsToken], filepath.Join(work, "stats-idle.txt"))
