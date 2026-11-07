@@ -214,10 +214,19 @@ pub fn memset(d: Int, c: Int, n: Int) -> Int {
 /// above b's.
 pub fn memcmp(a: Int, b: Int, n: Int) -> Int {
   var i = 0
-  // 32 bytes a step while they are equal; the word steps below find
-  // the first that differs
-  while addw(i, 32) <= n && rt.mem_ne32(addw(a, i), addw(b, i)) == 0 {
+  // 64 bytes a step (two 32 byte tests, one branch), then 32, while they
+  // are equal; the word steps below find the first that differs
+  while addw(i, 64) <= n && (rt.mem_ne32(addw(a, i), addw(b, i)) | rt.mem_ne32(addw(a, addw(i, 32)), addw(b, addw(i, 32)))) == 0 {
+    i = addw(i, 64)
+  }
+  if addw(i, 32) <= n && rt.mem_ne32(addw(a, i), addw(b, i)) == 0 {
     i = addw(i, 32)
+  }
+  // fewer than 32 left of 32 or more: the 32 bytes ending at n, whose
+  // bytes before i are equal, settle an equal pair with one test (with
+  // 32 or more left, the 32 byte step above found a difference)
+  if i < n && n >= 32 && subw(n, i) < 32 && rt.mem_ne32(addw(a, subw(n, 32)), addw(b, subw(n, 32))) == 0 {
+    return 0
   }
   while addw(i, 8) <= n {
     let r = word_cmp(rt.mem_load(a, i, 8), rt.mem_load(b, i, 8))

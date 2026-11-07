@@ -56,8 +56,9 @@ test "memcpy of 0 to 40 bytes" {
   }
 }
 
-test "memcmp of 0 to 80 bytes differing at each byte" {
-  for n in 0..81 {
+test "memcmp of 0 to 200 bytes differing at each byte" {
+  // past two 64 byte steps, the 32 byte step and the last 32 bytes
+  for n in 0..201 {
     let (b, a) = buf(n + 1)
     let (c, d) = buf(n + 1)
     expect(memcmp(a, d, n)) == 0

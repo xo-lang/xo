@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: perf: Str ordering compares 64 bytes a step on Linux
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md: compare 1.16 and equal 1.37 of Go after step 2)
+- Go reference: internal/bytealg compare_arm64.s and equal_arm64.s (64 bytes a loop)
+- Test: std/native/llrt/libcstr_test.xo "memcmp of 0 to 200 bytes differing at each byte"
+- Timing: bench/perf/simdscan, linux/arm64 host 1, xo bench --ab 5 rounds against main: compare 0.915, equal 0.997 (within noise) (~/xo-lead/notes/lang1/ab-mc64.txt)
+- Shipped in: not yet released
+
+std's memcmp (std/native/llrt/libcstr.xo, the native Linux build's, which has no C library) tests 64 bytes a step with two rt.mem_ne32 tests and one branch, then 32, and settles an equal pair's last fewer than 32 bytes with one test of the 32 ending at the end. `<` on Str and Bytes (and sorts of them) runs through it. `==` stayed within noise: its cost is the move from the vector unit after each 32 byte test, which a 64 byte intrinsic would halve.
+
 ## 2026-11-07: perf: Str.count of one byte counts 32 bytes a step; find switches to a first and last byte filter when its first byte is common
 
 - Kind: perf
