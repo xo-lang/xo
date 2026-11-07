@@ -410,3 +410,14 @@ Last verified: 2026-11-01
   first host's lane 14:29 to 15:15 while three exclusive jobs and the
   tier's host step waited up to 1h32m behind it): send it with
   `OFF_NO_LANE=1`. Last verified: 2026-11-06.
+- A run with `OFF_NO_LANE=1` leaves a marker in `~/xo-lead/locks/nolane`
+  (its PID, host file and name), and heavyd starts no exclusive lease on
+  that host while it runs: the exclusive job shows "a run with no lane is
+  on this host (NAME)", plain leases behind it go on, and a lease that
+  matches another lane (`arm64*`, ab-host.sh) starts there. Send a
+  timing job pinned to a host (`OFFLOAD_ENV=`) to the other host while a
+  soak runs (lead, 2026-11-06: json32-ab.sh took the second host's
+  exclusive lease 19:53 to 20:49 beside Xo Lang 2's 0533 soak, and the
+  soak's p99 rose from 2 ms to 291 ms with its client sockets 95 to 204
+  seven minutes later, so the soak did not clear 0533). Last verified:
+  2026-11-06.
