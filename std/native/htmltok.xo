@@ -31,7 +31,7 @@ fn tokenizer_fragment(text: Str, context_tag: Str) -> htmltok.Tokenizer {
 fn is_alpha(c: Int) -> Bool { (c >= 97 && c <= 122) || (c >= 65 && c <= 90) }
 fn is_space(c: Int) -> Bool { c == 32 || c == 10 || c == 13 || c == 9 || c == 12 }
 
-fn (z: htmltok.Tokenizer) err() -> Str? {
+fn tokenizer_err(z: htmltok.Tokenizer) -> Str? {
   if z.tt != htmltok.TokenType.Error || z.errc == 0 {
     None
   } else if z.errc == 1 {
@@ -41,22 +41,16 @@ fn (z: htmltok.Tokenizer) err() -> Str? {
   }
 }
 
-fn (var z: htmltok.Tokenizer) allow_cdata(allow: Bool) { z.cdata = allow }
-fn (var z: htmltok.Tokenizer) next_is_not_raw_text() { z.raw_tag = "" }
-fn (var z: htmltok.Tokenizer) set_max_buf(n: Int) { z.max_buf = n }
+fn tokenizer_allow_cdata(var z: htmltok.Tokenizer, allow: Bool) { z.cdata = allow }
+fn tokenizer_next_is_not_raw_text(var z: htmltok.Tokenizer) { z.raw_tag = "" }
+fn tokenizer_set_max_buf(var z: htmltok.Tokenizer, n: Int) { z.max_buf = n }
 
-// the Go backend compiles this module and routes a `var` method through a free function (decision 0312)
-fn tokenizer_next(var z: htmltok.Tokenizer) -> htmltok.TokenType { z.next() }
-fn tokenizer_token(var z: htmltok.Tokenizer) -> htmltok.Token { z.token() }
-fn tokenizer_allow_cdata(var z: htmltok.Tokenizer, allow: Bool) { z.allow_cdata(allow) }
-fn tokenizer_next_is_not_raw_text(var z: htmltok.Tokenizer) { z.next_is_not_raw_text() }
-fn tokenizer_set_max_buf(var z: htmltok.Tokenizer, n: Int) { z.set_max_buf(n) }
-fn (z: htmltok.Tokenizer) buffered() -> Str { z.src[z.re..z.src.len()].to_str_lossy() }
-fn (z: htmltok.Tokenizer) raw() -> Str { z.src[z.rs..z.re].to_str_lossy() }
+fn tokenizer_buffered(z: htmltok.Tokenizer) -> Str { z.src[z.re..z.src.len()].to_str_lossy() }
+fn tokenizer_raw(z: htmltok.Tokenizer) -> Str { z.src[z.rs..z.re].to_str_lossy() }
 
 /// Go's readByte: the next byte, 0 with `err` set at the end of the input or
 /// when the token reaches the limit.
-fn (var z: htmltok.Tokenizer) rb() -> Int {
+fn tokenizer_rb(var z: htmltok.Tokenizer) -> Int {
   if z.re >= z.src.len() {
     z.errc = 1
     return 0
@@ -70,12 +64,12 @@ fn (var z: htmltok.Tokenizer) rb() -> Int {
   x
 }
 
-fn (var z: htmltok.Tokenizer) skip_white_space() {
+fn tokenizer_skip_white_space(var z: htmltok.Tokenizer) {
   if z.errc != 0 {
     return
   }
   while true {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       return
     }
@@ -88,11 +82,11 @@ fn (var z: htmltok.Tokenizer) skip_white_space() {
 
 /// Go's readRawEndTag: "</foo" plus a delimiter, `foo` the raw tag; on
 /// success backs up to the "</".
-fn (var z: htmltok.Tokenizer) read_raw_end_tag() -> Bool {
+fn tokenizer_read_raw_end_tag(var z: htmltok.Tokenizer) -> Bool {
   let tag = z.raw_tag.bytes()
   var i = 0
   while i < tag.len() {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       return false
     }
@@ -102,7 +96,7 @@ fn (var z: htmltok.Tokenizer) read_raw_end_tag() -> Bool {
     }
     i += 1
   }
-  let c = z.rb()
+  let c = tokenizer_rb(z)
   if z.errc != 0 {
     return false
   }
@@ -114,22 +108,22 @@ fn (var z: htmltok.Tokenizer) read_raw_end_tag() -> Bool {
   false
 }
 
-fn (var z: htmltok.Tokenizer) read_raw_or_rcdata() {
+fn tokenizer_read_raw_or_rcdata(var z: htmltok.Tokenizer) {
   if z.raw_tag == "script" {
-    z.read_script()
+    tokenizer_read_script(z)
     z.text_raw = true
     z.raw_tag = ""
     return
   }
   while true {
-    var c = z.rb()
+    var c = tokenizer_rb(z)
     if z.errc != 0 {
       break
     }
     if c != 60 {
       continue
     }
-    c = z.rb()
+    c = tokenizer_rb(z)
     if z.errc != 0 {
       break
     }
@@ -137,7 +131,7 @@ fn (var z: htmltok.Tokenizer) read_raw_or_rcdata() {
       z.re -= 1
       continue
     }
-    if z.read_raw_end_tag() || z.errc != 0 {
+    if tokenizer_read_raw_end_tag(z) || z.errc != 0 {
       break
     }
   }
@@ -167,23 +161,23 @@ const S_DESC_DASH_DASH = 13
 const S_DESC_LT = 14
 const S_DESC_END = 15
 
-fn (var z: htmltok.Tokenizer) read_script() {
-  z.read_script_states()
+fn tokenizer_read_script(var z: htmltok.Tokenizer) {
+  tokenizer_read_script_states(z)
   z.de = z.re
 }
 
-fn (var z: htmltok.Tokenizer) read_script_states() {
+fn tokenizer_read_script_states(var z: htmltok.Tokenizer) {
   var st = S_DATA
   while true {
     if st == S_END_OPEN {
-      if z.read_raw_end_tag() || z.errc != 0 {
+      if tokenizer_read_raw_end_tag(z) || z.errc != 0 {
         return
       }
       st = S_DATA
       continue
     }
     if st == S_ESC_END_OPEN {
-      if z.read_raw_end_tag() || z.errc != 0 {
+      if tokenizer_read_raw_end_tag(z) || z.errc != 0 {
         return
       }
       st = S_ESC
@@ -195,7 +189,7 @@ fn (var z: htmltok.Tokenizer) read_script_states() {
       var i = 0
       var ok = true
       while i < word.len() {
-        let c = z.rb()
+        let c = tokenizer_rb(z)
         if z.errc != 0 {
           return
         }
@@ -210,7 +204,7 @@ fn (var z: htmltok.Tokenizer) read_script_states() {
         st = S_ESC
         continue
       }
-      let c = z.rb()
+      let c = tokenizer_rb(z)
       if z.errc != 0 {
         return
       }
@@ -223,7 +217,7 @@ fn (var z: htmltok.Tokenizer) read_script_states() {
       continue
     }
     if st == S_DESC_END {
-      if z.read_raw_end_tag() {
+      if tokenizer_read_raw_end_tag(z) {
         z.re += 9
         st = S_ESC
         continue
@@ -234,7 +228,7 @@ fn (var z: htmltok.Tokenizer) read_script_states() {
       st = S_DESC
       continue
     }
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       return
     }
@@ -332,14 +326,14 @@ fn (var z: htmltok.Tokenizer) read_script_states() {
   }
 }
 
-fn (var z: htmltok.Tokenizer) read_comment() {
+fn tokenizer_read_comment(var z: htmltok.Tokenizer) {
   z.ds = z.re
   var dash = 0
   var beginning = true
   while true {
-    var c = z.rb()
+    var c = tokenizer_rb(z)
     if z.errc != 0 {
-      z.de = z.abrupt_comment_data_end()
+      z.de = tokenizer_abrupt_comment_data_end(z)
       break
     }
     if c == 45 {
@@ -353,9 +347,9 @@ fn (var z: htmltok.Tokenizer) read_comment() {
       }
     } else if c == 33 {
       if dash >= 2 {
-        c = z.rb()
+        c = tokenizer_rb(z)
         if z.errc != 0 {
-          z.de = z.abrupt_comment_data_end()
+          z.de = tokenizer_abrupt_comment_data_end(z)
           break
         } else if c == 62 {
           z.de = z.re - 4
@@ -383,7 +377,7 @@ fn has_suffix(b: Bytes, suffix: Str) -> Bool {
   b[b.len() - s.len()..b.len()] == s
 }
 
-fn (z: htmltok.Tokenizer) abrupt_comment_data_end() -> Int {
+fn tokenizer_abrupt_comment_data_end(z: htmltok.Tokenizer) -> Int {
   let raw = z.src[z.rs..z.re]
   if raw.len() >= 4 {
     let r = raw[4..raw.len()]
@@ -398,10 +392,10 @@ fn (z: htmltok.Tokenizer) abrupt_comment_data_end() -> Int {
   z.re
 }
 
-fn (var z: htmltok.Tokenizer) read_until_close_angle() {
+fn tokenizer_read_until_close_angle(var z: htmltok.Tokenizer) {
   z.ds = z.re
   while true {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       z.de = z.re
       return
@@ -413,13 +407,13 @@ fn (var z: htmltok.Tokenizer) read_until_close_angle() {
   }
 }
 
-fn (var z: htmltok.Tokenizer) read_markup_declaration() -> htmltok.TokenType {
+fn tokenizer_read_markup_declaration(var z: htmltok.Tokenizer) -> htmltok.TokenType {
   z.ds = z.re
   var c0 = 0
   var c1 = 0
   var i = 0
   while i < 2 {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       z.de = z.re
       if i == 1 && c0 == 62 {
@@ -431,26 +425,26 @@ fn (var z: htmltok.Tokenizer) read_markup_declaration() -> htmltok.TokenType {
     i += 1
   }
   if c0 == 45 && c1 == 45 {
-    z.read_comment()
+    tokenizer_read_comment(z)
     return htmltok.TokenType.Comment
   }
   z.re -= 2
-  if z.read_doctype() {
+  if tokenizer_read_doctype(z) {
     return htmltok.TokenType.Doctype
   }
-  if z.cdata && z.read_cdata() {
+  if z.cdata && tokenizer_read_cdata(z) {
     z.convert_nul = true
     return htmltok.TokenType.Text
   }
-  z.read_until_close_angle()
+  tokenizer_read_until_close_angle(z)
   htmltok.TokenType.Comment
 }
 
-fn (var z: htmltok.Tokenizer) read_doctype() -> Bool {
+fn tokenizer_read_doctype(var z: htmltok.Tokenizer) -> Bool {
   let s = "DOCTYPE".bytes()
   var i = 0
   while i < s.len() {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       if z.errc == 1 {
         z.re = z.ds
@@ -466,21 +460,21 @@ fn (var z: htmltok.Tokenizer) read_doctype() -> Bool {
     }
     i += 1
   }
-  z.skip_white_space()
+  tokenizer_skip_white_space(z)
   if z.errc != 0 {
     z.ds = z.re
     z.de = z.re
     return true
   }
-  z.read_until_close_angle()
+  tokenizer_read_until_close_angle(z)
   true
 }
 
-fn (var z: htmltok.Tokenizer) read_cdata() -> Bool {
+fn tokenizer_read_cdata(var z: htmltok.Tokenizer) -> Bool {
   let s = "[CDATA[".bytes()
   var i = 0
   while i < s.len() {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       if z.errc == 1 {
         z.re = z.ds
@@ -499,7 +493,7 @@ fn (var z: htmltok.Tokenizer) read_cdata() -> Bool {
   z.ds = z.re
   var brackets = 0
   while true {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       z.de = z.re
       return true
@@ -554,7 +548,7 @@ fn replace_nul(b: Bytes) -> Bytes {
   out.freeze()
 }
 
-fn (z: htmltok.Tokenizer) start_tag_in(names: List[Str]) -> Bool {
+fn tokenizer_start_tag_in(z: htmltok.Tokenizer, names: List[Str]) -> Bool {
   let name = lower_bytes(z.src[z.ds..z.de])
   for n in names {
     if name == n.bytes() {
@@ -564,8 +558,8 @@ fn (z: htmltok.Tokenizer) start_tag_in(names: List[Str]) -> Bool {
   false
 }
 
-fn (var z: htmltok.Tokenizer) read_start_tag() -> htmltok.TokenType {
-  z.read_tag(true)
+fn tokenizer_read_start_tag(var z: htmltok.Tokenizer) -> htmltok.TokenType {
+  tokenizer_read_tag(z, true)
   if z.errc != 0 {
     return htmltok.TokenType.Error
   }
@@ -575,17 +569,17 @@ fn (var z: htmltok.Tokenizer) read_start_tag() -> htmltok.TokenType {
   }
   var raw = false
   if c == 105 {
-    raw = z.start_tag_in(["iframe"])
+    raw = tokenizer_start_tag_in(z, ["iframe"])
   } else if c == 110 {
-    raw = z.start_tag_in(["noembed", "noframes", "noscript"])
+    raw = tokenizer_start_tag_in(z, ["noembed", "noframes", "noscript"])
   } else if c == 112 {
-    raw = z.start_tag_in(["plaintext"])
+    raw = tokenizer_start_tag_in(z, ["plaintext"])
   } else if c == 115 {
-    raw = z.start_tag_in(["script", "style"])
+    raw = tokenizer_start_tag_in(z, ["script", "style"])
   } else if c == 116 {
-    raw = z.start_tag_in(["textarea", "title"])
+    raw = tokenizer_start_tag_in(z, ["textarea", "title"])
   } else if c == 120 {
-    raw = z.start_tag_in(["xmp"])
+    raw = tokenizer_start_tag_in(z, ["xmp"])
   }
   if raw {
     z.raw_tag = lower_bytes(z.src[z.ds..z.de]).to_str_lossy()
@@ -597,21 +591,21 @@ fn (var z: htmltok.Tokenizer) read_start_tag() -> htmltok.TokenType {
   htmltok.TokenType.StartTag
 }
 
-fn (var z: htmltok.Tokenizer) read_tag(save_attr: Bool) {
+fn tokenizer_read_tag(var z: htmltok.Tokenizer, save_attr: Bool) {
   z.attr = []
-  z.read_tag_name()
-  z.skip_white_space()
+  tokenizer_read_tag_name(z)
+  tokenizer_skip_white_space(z)
   if z.errc != 0 {
     return
   }
   while true {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 || c == 62 {
       break
     }
     z.re -= 1
-    z.read_tag_attr_key()
-    z.read_tag_attr_val()
+    tokenizer_read_tag_attr_key(z)
+    tokenizer_read_tag_attr_val(z)
     if save_attr && z.pend.k0 != z.pend.k1 {
       let key = lower_bytes(z.src[z.pend.k0..z.pend.k1])
       var dup = false
@@ -630,17 +624,17 @@ fn (var z: htmltok.Tokenizer) read_tag(save_attr: Bool) {
         z.attr.push(z.pend.v1)
       }
     }
-    z.skip_white_space()
+    tokenizer_skip_white_space(z)
     if z.errc != 0 {
       break
     }
   }
 }
 
-fn (var z: htmltok.Tokenizer) read_tag_name() {
+fn tokenizer_read_tag_name(var z: htmltok.Tokenizer) {
   z.ds = z.re - 1
   while true {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       z.de = z.re
       return
@@ -657,10 +651,10 @@ fn (var z: htmltok.Tokenizer) read_tag_name() {
   }
 }
 
-fn (var z: htmltok.Tokenizer) read_tag_attr_key() {
+fn tokenizer_read_tag_attr_key(var z: htmltok.Tokenizer) {
   z.pend.k0 = z.re
   while true {
-    let c = z.rb()
+    let c = tokenizer_rb(z)
     if z.errc != 0 {
       z.pend.k1 = z.re
       return
@@ -676,14 +670,14 @@ fn (var z: htmltok.Tokenizer) read_tag_attr_key() {
   }
 }
 
-fn (var z: htmltok.Tokenizer) read_tag_attr_val() {
+fn tokenizer_read_tag_attr_val(var z: htmltok.Tokenizer) {
   z.pend.v0 = z.re
   z.pend.v1 = z.re
-  z.skip_white_space()
+  tokenizer_skip_white_space(z)
   if z.errc != 0 {
     return
   }
-  var c = z.rb()
+  var c = tokenizer_rb(z)
   if z.errc != 0 {
     return
   }
@@ -694,11 +688,11 @@ fn (var z: htmltok.Tokenizer) read_tag_attr_val() {
     z.re -= 1
     return
   }
-  z.skip_white_space()
+  tokenizer_skip_white_space(z)
   if z.errc != 0 {
     return
   }
-  let quote = z.rb()
+  let quote = tokenizer_rb(z)
   if z.errc != 0 {
     return
   }
@@ -709,7 +703,7 @@ fn (var z: htmltok.Tokenizer) read_tag_attr_val() {
   if quote == 39 || quote == 34 {
     z.pend.v0 = z.re
     while true {
-      c = z.rb()
+      c = tokenizer_rb(z)
       if z.errc != 0 {
         z.pend.v1 = z.re
         return
@@ -722,7 +716,7 @@ fn (var z: htmltok.Tokenizer) read_tag_attr_val() {
   }
   z.pend.v0 = z.re - 1
   while true {
-    c = z.rb()
+    c = tokenizer_rb(z)
     if z.errc != 0 {
       z.pend.v1 = z.re
       return
@@ -739,7 +733,7 @@ fn (var z: htmltok.Tokenizer) read_tag_attr_val() {
   }
 }
 
-fn (var z: htmltok.Tokenizer) next() -> htmltok.TokenType {
+fn tokenizer_next(var z: htmltok.Tokenizer) -> htmltok.TokenType {
   z.rs = z.re
   z.ds = z.re
   z.de = z.re
@@ -750,12 +744,12 @@ fn (var z: htmltok.Tokenizer) next() -> htmltok.TokenType {
   if z.raw_tag != "" {
     if z.raw_tag == "plaintext" {
       while z.errc == 0 {
-        let _ = z.rb()
+        let _ = tokenizer_rb(z)
       }
       z.de = z.re
       z.text_raw = true
     } else {
-      z.read_raw_or_rcdata()
+      tokenizer_read_raw_or_rcdata(z)
     }
     if z.de > z.ds {
       z.tt = htmltok.TokenType.Text
@@ -766,14 +760,14 @@ fn (var z: htmltok.Tokenizer) next() -> htmltok.TokenType {
   z.text_raw = false
   z.convert_nul = false
   while true {
-    let c0 = z.rb()
+    let c0 = tokenizer_rb(z)
     if z.errc != 0 {
       break
     }
     if c0 != 60 {
       continue
     }
-    var c = z.rb()
+    var c = tokenizer_rb(z)
     if z.errc != 0 {
       break
     }
@@ -796,11 +790,11 @@ fn (var z: htmltok.Tokenizer) next() -> htmltok.TokenType {
       return z.tt
     }
     if kind == 1 {
-      z.tt = z.read_start_tag()
+      z.tt = tokenizer_read_start_tag(z)
       return z.tt
     }
     if kind == 2 {
-      c = z.rb()
+      c = tokenizer_rb(z)
       if z.errc != 0 {
         break
       }
@@ -809,7 +803,7 @@ fn (var z: htmltok.Tokenizer) next() -> htmltok.TokenType {
         return z.tt
       }
       if is_alpha(c) {
-        z.read_tag(false)
+        tokenizer_read_tag(z, false)
         if z.errc != 0 {
           z.tt = htmltok.TokenType.Error
         } else {
@@ -818,16 +812,16 @@ fn (var z: htmltok.Tokenizer) next() -> htmltok.TokenType {
         return z.tt
       }
       z.re -= 1
-      z.read_until_close_angle()
+      tokenizer_read_until_close_angle(z)
       z.tt = htmltok.TokenType.Comment
       return z.tt
     }
     if c == 33 {
-      z.tt = z.read_markup_declaration()
+      z.tt = tokenizer_read_markup_declaration(z)
       return z.tt
     }
     z.re -= 1
-    z.read_until_close_angle()
+    tokenizer_read_until_close_angle(z)
     z.tt = htmltok.TokenType.Comment
     return z.tt
   }
@@ -1009,7 +1003,7 @@ fn unescape(b: Bytes, attribute: Bool) -> Bytes {
 
 /// Go's Text: the data span unescaped (raw text is not), newlines converted,
 /// NUL replaced.
-fn (var z: htmltok.Tokenizer) text() -> Str {
+fn tokenizer_text(var z: htmltok.Tokenizer) -> Str {
   var s = z.src[z.ds..z.de]
   z.ds = z.re
   z.de = z.re
@@ -1023,7 +1017,7 @@ fn (var z: htmltok.Tokenizer) text() -> Str {
   s.to_str_lossy()
 }
 
-fn (var w: htmltok.Tokenizer) token() -> htmltok.Token {
+fn tokenizer_token(var w: htmltok.Tokenizer) -> htmltok.Token {
   let tt = w.tt
   if tt == htmltok.TokenType.Text || tt == htmltok.TokenType.Comment || tt == htmltok.TokenType.Doctype {
     return htmltok.Token{typ: tt, data: w.text(), attrs: []}
