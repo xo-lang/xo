@@ -44,6 +44,7 @@ type sample struct {
 	huge              float64
 	heapLive, timers  float64
 	chunks, cacheB    float64
+	aged              float64
 	cpuPerReqUS       float64
 }
 
@@ -159,8 +160,8 @@ func slope(x, y []float64) float64 {
 // block cache's mapped bytes) from the app's stats path (/debug/sched); -1
 // for each it does not report. The two footprint figures tell a heap that
 // grows its mappings from RSS the kernel keeps for other reasons.
-func schedStats(cl *http.Client, url, token string) (heapLive, timers, chunks, cacheB float64) {
-	heapLive, timers, chunks, cacheB = -1, -1, -1, -1
+func schedStats(cl *http.Client, url, token string) (heapLive, timers, chunks, cacheB, aged float64) {
+	heapLive, timers, chunks, cacheB, aged = -1, -1, -1, -1, -1
 	req, _ := http.NewRequest("GET", url, nil)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -189,6 +190,8 @@ func schedStats(cl *http.Client, url, token string) (heapLive, timers, chunks, c
 			chunks = n
 		case "heap_cache_bytes":
 			cacheB = n
+		case "heap_aged_bytes":
+			aged = n
 		}
 	}
 	return
@@ -299,7 +302,7 @@ func soakMain(args []string) int {
 	}
 
 	f, _ := os.Create(filepath.Join(*out, "samples.csv"))
-	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks,client_socks,anon_huge_kib,client_dials,heap_chunks,heap_cache_bytes")
+	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks,client_socks,anon_huge_kib,client_dials,heap_chunks,heap_cache_bytes,heap_aged_bytes")
 	statsURL := ""
 	if app.Stats != "" {
 		statsURL = base + app.Stats
@@ -321,19 +324,19 @@ func soakMain(args []string) int {
 			os.WriteFile(filepath.Join(*out, "fds-first.txt"), []byte(strings.Join(fl, "\n")+"\n"), 0o644)
 		}
 		os.WriteFile(filepath.Join(*out, "fds-last.txt"), []byte(strings.Join(fl, "\n")+"\n"), 0o644)
-		hl, tm, ch, cb := -1.0, -1.0, -1.0, -1.0
+		hl, tm, ch, cb, ag := -1.0, -1.0, -1.0, -1.0, -1.0
 		if statsURL != "" {
-			hl, tm, ch, cb = schedStats(cl, statsURL, app.Tokens[app.StatsToken])
+			hl, tm, ch, cb, ag = schedStats(cl, statsURL, app.Tokens[app.StatsToken])
 		}
 		n := atomic.LoadInt64(&d.reqs)
 		s := sample{t: time.Since(start).Seconds(), reqs: n, errs: atomic.LoadInt64(&d.errs), drops: atomic.LoadInt64(&d.drops),
-			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, socks: socks, csocks: csocks, dials: atomic.LoadInt64(&d.dials), huge: huge, heapLive: hl, timers: tm, chunks: ch, cacheB: cb}
+			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, socks: socks, csocks: csocks, dials: atomic.LoadInt64(&d.dials), huge: huge, heapLive: hl, timers: tm, chunks: ch, cacheB: cb, aged: ag}
 		if n > lastReqs {
 			s.cpuPerReqUS = (cpu - cpu0) / float64(n-lastReqs)
 		}
 		cpu0, lastReqs = cpu, n
 		samples = append(samples, s)
-		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f,%.0f,%.0f,%.0f,%d,%.0f,%.0f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS, s.socks, s.csocks, s.huge, s.dials, s.chunks, s.cacheB)
+		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f,%.0f,%.0f,%.0f,%d,%.0f,%.0f,%.0f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS, s.socks, s.csocks, s.huge, s.dials, s.chunks, s.cacheB, s.aged)
 		f.Sync()
 	}
 	stopLoad()
@@ -407,6 +410,9 @@ func soakMain(args []string) int {
 		// pages, stacks, retained pages); both climbing is the heap growing
 		if b0, b1 := body[0], body[len(body)-1]; b0.chunks >= 0 {
 			fmt.Fprintf(&rep, "heap_chunks: %.0f at warmup end, %.0f at the end (4 MiB each); heap_cache_bytes: %.0f KiB to %.0f KiB\n", b0.chunks, b1.chunks, b0.cacheB/1024, b1.cacheB/1024)
+			if b1.aged >= 0 {
+				fmt.Fprintf(&rep, "heap_aged_bytes: %.0f KiB at warmup end, %.0f KiB at the end (given back by decision 0533's age passes, cumulative)\n", b0.aged/1024, b1.aged/1024)
+			}
 		}
 		if ts[0] >= 0 {
 			// a server's timers follow its open connections' deadlines, so

@@ -23,7 +23,7 @@ fuzzing. Phase 1 builds the starter app and the harness.
   stability/APP -out OUT [-backend arm64] [-rate 500] [-d 2h] [-env K=V,...]` runs bench/soak's
   open loop mix (per app, in soak.go) against a build under XO_LEAKCHECK=1 and
   XO_CRASH_FILE=OUT/crash.txt (a report there is an alert),
-  with `-conc N` a closed loop of N workers instead of `-rate`'s open loop, and `-spikes T1,T2 -spike-conc M -spike-d D` M more workers for D at each time, so two soaks see identical spikes (2026-11-07); samples RSS, fds, latency and the app's `heap_live`, `timers_pending`, `heap_chunks` and `heap_cache_bytes` (app.json `stats`,
+  with `-conc N` a closed loop of N workers instead of `-rate`'s open loop, and `-spikes T1,T2 -spike-conc M -spike-d D` M more workers for D at each time, so two soaks see identical spikes (2026-11-07); samples RSS, fds, latency and the app's `heap_live`, `timers_pending`, `heap_chunks`, `heap_cache_bytes` and `heap_aged_bytes` (app.json `stats`,
   std/debug's /sched) into OUT/samples.csv (on Linux also the open sockets,
   with each fd's link target in OUT/fds-first.txt and OUT/fds-last.txt, so a
   climbing fds column shows whether sockets or files are left open, and the
