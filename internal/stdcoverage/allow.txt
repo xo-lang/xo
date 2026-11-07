@@ -81,3 +81,6 @@ cbor.to_bytes  called only by derive Cbor's generated code
 cbor.to_duration  called only by derive Cbor's generated code
 cbor.to_time  called only by derive Cbor's generated code
 cbor.unm_new  called only by derive Cbor's generated code
+htmlent.entity2_of  internal table lookup of std/html and std/htmltok, covered through their corpora (unescape and the token corpus)
+htmlent.entity_of  internal table lookup of std/html and std/htmltok, covered through their corpora (unescape and the token corpus)
+htmltok.Tokenizer.next_is_not_raw_text  internal hook for the html parser's raw text handling, no Go corpus case drives it alone
