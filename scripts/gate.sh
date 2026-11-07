@@ -516,5 +516,15 @@ if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -E '^(compiler/|std/nativ
   rm -f "$logs/selfbuild-xo"
 fi
 [ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
+# pushq-ran (lead, 2026-11-06 bottleneck review: 6 pushes in 3 hours were
+# refused for a PUSHQ_RAN their gate had printed but the agent did not
+# pass): a passing gate records the checks it ran with the patch id of
+# its change, in the worktree's git dir; pushq.sh uses them when
+# PUSHQ_RAN is unset and the change's patch id still matches
+pr=$(git rev-parse --git-dir 2>/dev/null)/pushq-ran
+if [ "$failed" = 0 ] && [ -n "$ran" ]; then
+  pid=$(git diff "$(git merge-base HEAD origin/main)" HEAD | git patch-id --stable | cut -d' ' -f1)
+  [ -n "$pid" ] && echo "$pid $(echo $ran)" >"$pr"
+fi
 echo GATE-DONE
 exit $failed
