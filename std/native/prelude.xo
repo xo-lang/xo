@@ -5194,6 +5194,10 @@ fn llrt_rs_append_json_body(s: Str, t: Str) -> Str { jsontext.append_body(s, t) 
 
 fn llrt_rs_append_json_float(s: Str, f: Float) -> Str { jsontext.append_float(s, f) }
 
+fn llrt_rs_append_json_float32(s: Str, f: Float) -> Str { jsontext.append_float32(s, f) }
+
+fn llrt_rs_json_float32_value(f: Float) -> Float { jsontext.float32_value(f) }
+
 fn llrt_rs_append_b64_quoted(s: Str, b: Bytes) -> Str { jsontext.append_b64(s, b) }
 
 fn llrt_b64_opt(s: Str) -> Bytes? { num.from_base64(s) }

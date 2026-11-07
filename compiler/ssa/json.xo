@@ -300,9 +300,13 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
       return
     }
     Float => {
-      // a Float32 is written as the Float of its value (std/rt json.go)
-      let fv = if b.m.is_f32(t) { b.rt("f32_round", b.float_t(), [v]) } else { v }
-      b.retv(b.json_rt("rs_append_json_float", st, [acc, fv]))
+      // a Float32 is written with its own shortest digits, as Go's float32 encoder does (1.1, not 1.100000023841858)
+      if b.m.is_f32(t) {
+        let fv = b.rt("f32_round", b.float_t(), [v])
+        b.retv(b.json_rt("rs_append_json_float32", st, [acc, fv]))
+        return
+      }
+      b.retv(b.json_rt("rs_append_json_float", st, [acc, v]))
       return
     }
     Bool => {

@@ -238,7 +238,7 @@ func jsonEncAny(tk *Task, w *JsonW, v any) {
 	case float64:
 		w.Raw(jsonFloat(x))
 	case float32:
-		w.Raw(jsonFloat(float64(x)))
+		w.Raw(jsonFloat32(x))
 	case bool:
 		w.Raw(strconv.FormatBool(x))
 	case string:
@@ -266,6 +266,16 @@ func jsonEncAny(tk *Task, w *JsonW, v any) {
 
 func jsonFloat(f float64) string {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return "null"
+	}
+	data, _ := json.Marshal(f)
+	return string(data)
+}
+
+// jsonFloat32 is encoding/json's float32 text: the shortest digits that read back as the float32 (1.1, not
+// 1.100000023841858).
+func jsonFloat32(f float32) string {
+	if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
 		return "null"
 	}
 	data, _ := json.Marshal(f)

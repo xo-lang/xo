@@ -272,6 +272,85 @@ fn dbox(mant: Int, e2: Int, denorm: Bool) -> (Int, Int) {
   (yru, 0 - k0)
 }
 
+/// Dragonbox's shortest digits of a finite nonzero Float32 of significand mant and binary exponent e2 (value
+/// mant * 2^e2): the digits as an Int and the decimal exponent of its last digit (strconv.dboxFtoa32, Go 1.26,
+/// internal/strconv/ftoadbox.go, BSD license; kappa 1 and 64 bit words).
+fn dbox32(mant: Int, e2: Int, denorm: Bool) -> (Int, Int) {
+  let m32 = 0xFFFFFFFF
+  if mant == 0x800000 && !denorm {
+    // Algorithm 5.6: the lower neighbor is closer
+    let k0 = 0 - ((e2 * 631305 - 261663) >> 21)
+    var ph = pow10_hi(k0)
+    if k0 < 0 || k0 > 27 {
+      ph = addw(ph, 1)
+    }
+    let beta = e2 + 1 + mul_log2_10(k0) - 1
+    var xi = shr(subw(ph, shr(ph, 25)), 40 - beta) & m32
+    let zi = shr(addw(ph, shr(ph, 24)), 40 - beta) & m32
+    if e2 != 2 && e2 != 3 {
+      xi += 1
+    }
+    let q = zi / 10
+    if xi <= q * 10 {
+      return trimmed(q, 0 - k0 + 1)
+    }
+    var yru = ((shr(ph, 39 - beta) + 1) & m32) / 2
+    if e2 == -77 && yru % 2 != 0 {
+      yru -= 1
+    } else if yru < xi {
+      yru += 1
+    }
+    return (yru, 0 - k0)
+  }
+  // Algorithm 5.2, kappa 1
+  let k0 = 0 - mul_log10_2(e2)
+  let k = 1 + k0
+  var ph = pow10_hi(k)
+  if k < 0 || k > 27 {
+    ph = addw(ph, 1)
+  }
+  let beta = e2 + 1 + mul_log2_10(k) - 1
+  // zi, exact: the upper 64 bits of the 96 bit u * phi, as umul96Upper64
+  let u = shl(mant * 2 + 1, beta) & m32
+  let r96 = addw(mulw(u, shr(ph, 32)), shr(mulw(u, ph & m32), 32))
+  let zi = shr(r96, 32) & m32
+  let exact = (r96 & m32) == 0
+  var s = zi / 100
+  var r = zi % 100
+  let delta = shr(ph, 63 - beta) & m32
+  if r < delta {
+    if r != 0 || !exact || mant % 2 == 0 {
+      return trimmed(s, 0 - k0 + 1)
+    }
+    s -= 1
+    r = 100
+  } else if r == delta {
+    let pe = parity32(mant * 2 - 1, ph, beta)
+    if (pe & 1) != 0 || ((pe & 2) != 0 && mant % 2 == 0) {
+      return trimmed(s, 0 - k0 + 1)
+    }
+  }
+  // Algorithm 5.4
+  let d = r + 5 - delta / 2
+  let tq = d / 10
+  var yru = 10 * s + tq
+  if d % 10 == 0 {
+    let pe = parity32(mant * 2, ph, beta)
+    if ((pe & 1) != 0) != ((d - 5) % 2 != 0) || ((pe & 2) != 0 && yru % 2 != 0) {
+      yru -= 1
+    }
+  }
+  (yru, 0 - k0)
+}
+
+/// The parity (bit 0) and integrality (bit 1) of m times phi at beta for a Float32 (strconv.dboxParity32).
+fn parity32(m: Int, ph: Int, beta: Int) -> Int {
+  let r = mulw(m, ph)
+  let p = shr(r, 64 - beta) & 1
+  let whole = (shr(r, 32 - beta) & 0xFFFFFFFF) == 0
+  if whole { p | 2 } else { p }
+}
+
 /// The parity (bit 0) and integrality (bit 1) of m times phi at beta
 /// (strconv.dboxParity64).
 fn parity(m: Int, ph: Int, pl: Int, beta: Int) -> Int {
@@ -482,6 +561,42 @@ pub fn append_json_float(out: Str, f: Float) -> Str {
     mant = mant | 0x10000000000000
   }
   let (dig, dexp) = dbox(mant, e - 1075, denorm)
+  let nd = ndigits(dig)
+  json_layout(out, neg, dig, nd, nd + dexp)
+}
+
+/// out + the JSON text of the Float32 f (given as the Float of its value) as encoding/json writes a float32: the
+/// shortest digits that read back as the float32 (Float32(1.1) is 1.1, not 1.100000023841858), in the 'f' layout, or
+/// 'e' below 1e-6 and from 1e21; "null" for NaN and the infinities (decision 0543's neighbor, 2026-11-07).
+pub fn append_json_float32(out: Str, f: Float) -> Str {
+  let bits = rt.float_bits(f)
+  let neg = bits < 0
+  let be = (bits >> 52) & 0x7FF
+  let m52 = bits & 0xFFFFFFFFFFFFF
+  if be == 0x7FF {
+    return rt.rs_push_word(out, 0x6C6C756E, 4)
+  }
+  if be == 0 && m52 == 0 {
+    if neg {
+      return rt.rs_push_word(out, 0x302D, 2)
+    }
+    return rt.rs_push_word(out, 0x30, 1)
+  }
+  // f is exactly a float32: its 24 bit significand and exponent from the double's fields
+  let e = be - 1023
+  let m53 = m52 | 0x10000000000000
+  var mant = 0
+  var e2 = 0
+  var denorm = false
+  if e >= -126 {
+    mant = m53 >> 29
+    e2 = e - 23
+  } else {
+    mant = m53 >> (29 + (-126 - e))
+    e2 = -149
+    denorm = true
+  }
+  let (dig, dexp) = dbox32(mant, e2, denorm)
   let nd = ndigits(dig)
   json_layout(out, neg, dig, nd, nd + dexp)
 }

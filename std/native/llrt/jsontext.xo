@@ -1699,6 +1699,18 @@ pub fn text_tape(s: Str) -> List[Int] {
 
 pub fn append_float(out: Str, f: Float) -> Str { num.append_json_float(out, f) }
 
+/// The Float a Float32 reads as from its JSON text: the double nearest its shortest float32 digits (1.1 for
+/// Float32(1.1)), as `to_value` of the encoder's text gives; NaN and the infinities as they are.
+pub fn float32_value(f: Float) -> Float {
+  if f != f || f - f != 0.0 {
+    return f
+  }
+  num.parse_float(append_float32("", f)) ?? f
+}
+
+/// out + a Float32's JSON text (as the Float of its value), the float32 shortest digits (num.append_json_float32).
+pub fn append_float32(out: Str, f: Float) -> Str { num.append_json_float32(out, f) }
+
 /// out + b as std/json writes Bytes: its standard base64, padded, in
 /// double quotes.
 pub fn append_b64(out: Str, b: Bytes) -> Str { rt.rs_push_byte(num.append_base64(rt.rs_push_byte(out, 34), b), 34) }

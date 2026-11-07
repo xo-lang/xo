@@ -115,8 +115,8 @@ fn (var b: Builder) json_val_body(ct: Int, t: Int, vt: Int) {
       return
     }
     Float => {
-      // a Float32 is the Float of its value, as the encoder writes it
-      let fv = if b.m.is_f32(t) { b.rt("f32_round", b.float_t(), [v]) } else { v }
+      // a Float32 is the Float its shortest float32 text reads as, as the encoder writes it
+      let fv = if b.m.is_f32(t) { b.json_rt("rs_json_float32_value", b.float_t(), [b.rt("f32_round", b.float_t(), [v])]) } else { v }
       b.retv(b.json_native_call("val_float", vt, [fv]))
       return
     }
