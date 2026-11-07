@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo build (fix): the built-in arm64 assembler encodes `ldr` and `str` of a q register with a pre or post index (`ldr q29, [x17], #16`), which stopped a native build with "unsupported instruction" while clang assembled it; gotchas/builtin-assembler-lacks-mnemonics.md lists the SIMD load and store forms it still lacks.
 - Go backend (perf): std/rt's JsonDec[T], the decoder from a parse tree, keeps only its commonest cases generic and decodes every other kind in one non-generic function, so Go no longer compiles its whole type switch once per decoded type: azure armnetwork's package compiles in 8.1 GB and 61 s instead of 9.1 GB and 68 s (GOGC=25), with the same decode speed (std/changes/json.md).
 - std/crypto (perf): SHA-256 and SHA-224 hash a run of whole blocks in one loop on arm64 with the state in vector registers (cpu.sha256_blocks; native and LLVM): bench/perf/simdscan sha256 0.884 of main on linux/arm64, 0.79 on linux/amd64.
 - std/html (perf): escape_string counts the specials of 32 bytes at a time (five lane compares) to size its result: bench/perf/html escape 0.871 of main on linux/arm64.

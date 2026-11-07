@@ -469,9 +469,10 @@ fn ldst_word(m: Str, t: Int, kt: Int, mo: Mem) -> Int {
     }
     _ => return -1
   }
-  // a q register: a register offset, or an unsigned offset in 16 byte
-  // units (the unrolled AES rounds of decision 0231)
-  if !mo.ok || (kt == RQ && !((mo.mode == 3 && mo.sh < 0) || mo.mode == 0)) {
+  // a q register: a register offset, an unsigned offset in 16 byte
+  // units (the unrolled AES rounds of decision 0231), or a pre or post
+  // index (a SIMD loop's step); no shifted register offset
+  if !mo.ok || (kt == RQ && mo.mode == 3 && mo.sh >= 0) {
     return -1
   }
   let head = (size * 0x40000000) | 0x38000000 | (v * 0x4000000)
