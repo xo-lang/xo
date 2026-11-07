@@ -1,5 +1,20 @@
 # std/cli changes
 
+## 2026-11-07: feature: single_dash_long, Go style -name long flags on an opt-in command
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Lang 2's port of goversioninfo (a Go tool; its users and the README call it as `goversioninfo -icon=x.ico -64`, which std cli read as the short flags -i and -6)
+- Go reference: flag (go1.26.1): `-name`, `--name`, `-name=value`, `-name value`, bool `-name=false`
+- Test: internal/llvm/testdata/golden/cli_single_dash (and internal/arm64's, and Go parity): the goversioninfo invocations, short clusters beside long names, `--`, a flag after a positional, `-help`, an unknown word with its suggestion, and the same arguments without the option; cli_single_dash_fault: a long name that reads as a short cluster faults at help (and parse); std/rt TestCliValidate's new cases
+
+`cli.command(..., single_dash_long: true)` reads `-name` as `--name`
+when name is a declared long flag (decision 0547), so a Go tool ported
+to Xo keeps its users' command lines; short clusters apply otherwise,
+and a long name that would also read as a cluster of declared shorts is
+a fault at parse. Off by default: 0160's GNU reading is unchanged. No
+timing row: a command line is parsed once a run.
+
 ## 2026-11-07: feature: bool_flag default
 
 - Kind: feature

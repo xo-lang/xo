@@ -1,0 +1,4 @@
+exit 70
+--- stdout
+--- stderr
+fault: cli: flag --output also reads as short flags -output under single_dash_long (command tool) at main.xo:11

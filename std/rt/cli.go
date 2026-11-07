@@ -50,6 +50,7 @@ type cliCmd struct {
 	flags               []*cliFlag
 	args                []*cliArg
 	cmds                []*cliCmd
+	dash                bool // -name reads as --name for a declared long flag (decision 0547)
 }
 
 // Cli_Command is `cli.Command`.
@@ -123,8 +124,8 @@ func cliVersionErr(text string) Cli_CliErr {
 }
 
 // Cli_command is `cli.command(...)`.
-func Cli_command(_ *Task, name, help string, flags List[Cli_Flag], args List[Cli_Arg], commands List[Cli_Command], version string) Cli_Command {
-	c := &cliCmd{name: name, help: help, version: version}
+func Cli_command(_ *Task, name, help string, flags List[Cli_Flag], args List[Cli_Arg], commands List[Cli_Command], version string, singleDashLong bool) Cli_Command {
+	c := &cliCmd{name: name, help: help, version: version, dash: singleDashLong}
 	for _, f := range flags.s {
 		c.flags = append(c.flags, f.f)
 	}
@@ -223,9 +224,34 @@ func cliCmdName(s string) bool {
 	return true
 }
 
+// cliReadsAsCluster reports whether "-" followed by name parses as a
+// cluster of the short flags in fs: every letter a declared short (or -h)
+// until a short that takes a value, which takes the rest (decision 0547).
+func cliReadsAsCluster(name string, fs []*cliFlag) bool {
+	for j := 0; j < len(name); j++ {
+		c := name[j : j+1]
+		if c == "h" {
+			return true
+		}
+		var f *cliFlag
+		for _, x := range fs {
+			if x.short == c {
+				f = x
+			}
+		}
+		if f == nil {
+			return false
+		}
+		if f.kind != cliBool {
+			return true
+		}
+	}
+	return true
+}
+
 // cliValidate faults on the first mistake in the tree under c; outer
 // holds the flags of the commands above c.
-func cliValidate(c *cliCmd, outer []*cliFlag, version bool) {
+func cliValidate(c *cliCmd, outer []*cliFlag, version, dash bool) {
 	if !cliCmdName(c.name) {
 		FaultHere("cli: command name %s must be letters, digits, ., _, and - (not first)", strconv.Quote(c.name))
 	}
@@ -261,6 +287,15 @@ func cliValidate(c *cliCmd, outer []*cliFlag, version bool) {
 		}
 		seen = append(seen, f)
 	}
+	on := dash || c.dash
+	if on {
+		for _, f := range seen {
+			own := len(f.name) == 1 && f.short == f.name
+			if !own && cliReadsAsCluster(f.name, seen) {
+				FaultHere("cli: flag --%s also reads as short flags -%s under single_dash_long (command %s)", f.name, f.name, c.name)
+			}
+		}
+	}
 	if len(c.args) > 0 && len(c.cmds) > 0 {
 		FaultHere("cli: command %s has both positional arguments and subcommands", c.name)
 	}
@@ -290,7 +325,7 @@ func cliValidate(c *cliCmd, outer []*cliFlag, version bool) {
 				FaultHere("cli: command %s is declared twice under %s", s.name, c.name)
 			}
 		}
-		cliValidate(s, seen, version)
+		cliValidate(s, seen, version, on)
 	}
 }
 
@@ -465,7 +500,7 @@ func cliHelpText(path []*cliCmd) string {
 // Cli_help is `cli.help(cmd, path)`.
 func Cli_help(_ *Task, cmd Cli_Command, path string) string {
 	root := cmd.c
-	cliValidate(root, nil, root.version != "")
+	cliValidate(root, nil, root.version != "", false)
 	p := []*cliCmd{root}
 	if path != "" {
 		for _, w := range strings.Split(path, " ") {
@@ -583,7 +618,7 @@ func cliSet(vals map[*cliFlag]*cliVal, f *cliFlag, v, env string) *cliUsageErr {
 
 func cliParse(tk *Task, root *cliCmd, args []string, env Env) (*cliParsed, *Cli_CliErr) {
 	version := root.version != ""
-	cliValidate(root, nil, version)
+	cliValidate(root, nil, version, false)
 	p := &cliParsed{root: root, path: []*cliCmd{root}, vals: map[*cliFlag]*cliVal{}, argVals: map[*cliArg][]string{}}
 	var active []*cliFlag
 	addFlags := func(c *cliCmd) {
@@ -606,6 +641,33 @@ func cliParse(tk *Task, root *cliCmd, args []string, env Env) (*cliParsed, *Cli_
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		cur := p.path[len(p.path)-1]
+		if !dashes && len(a) > 1 && a[0] == '-' && !strings.HasPrefix(a, "--") && cliDash(p.path) {
+			// decision 0547: -name is --name when name is a declared long flag
+			name, _, _ := strings.Cut(a[1:], "=")
+			known := name == "help" || version && name == "version"
+			for _, x := range active {
+				if x.name == name {
+					known = true
+				}
+			}
+			if known {
+				a = "-" + a
+			} else if len(name) > 1 && !cliReadsAsCluster(name, active) {
+				cands := []string{}
+				for _, x := range active {
+					cands = append(cands, x.name)
+				}
+				cands = append(cands, "help")
+				if version {
+					cands = append(cands, "version")
+				}
+				msg := "unknown flag -" + name
+				if s := cliSuggest(name, cands); s != "" {
+					msg += " (did you mean -" + s + "?)"
+				}
+				return usage(msg)
+			}
+		}
 		switch {
 		case dashes:
 			pos = append(pos, a)
@@ -992,4 +1054,14 @@ func (p Cli_Parsed) M_rest(_ *Task, name string) List[string] {
 		FaultHere("cli: <%s> is not a rest argument; read it with arg or arg_opt", name)
 	}
 	return ListOf(v...)
+}
+
+// cliDash reports whether a command on the path has single_dash_long.
+func cliDash(path []*cliCmd) bool {
+	for _, c := range path {
+		if c.dash {
+			return true
+		}
+	}
+	return false
 }

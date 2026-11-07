@@ -28,6 +28,8 @@ func cliCmdOf(name string, flags []*cliFlag, args []*cliArg, cmds ...*cliCmd) *c
 // 14.1): they are bugs in the program, reported when it parses.
 func TestCliValidate(t *testing.T) {
 	b := func(name, short string) *cliFlag { return &cliFlag{name: name, short: short, kind: cliBool} }
+	s := func(name, short string) *cliFlag { return &cliFlag{name: name, short: short, kind: cliStr} }
+	dash := func(c *cliCmd) *cliCmd { c.dash = true; return c }
 	cases := []struct {
 		cmd     *cliCmd
 		version bool
@@ -54,9 +56,18 @@ func TestCliValidate(t *testing.T) {
 		{cliCmdOf("tool", nil, []*cliArg{{name: "xs", rest: true}, {name: "y"}}), false, "cli: rest argument <xs> must be the last argument (command tool)"},
 		{cliCmdOf("tool", nil, []*cliArg{{name: "x", optional: true}, {name: "y"}}), false, "cli: required argument <y> follows an optional one (command tool)"},
 		{cliCmdOf("tool", nil, nil, cliCmdOf("a", nil, nil), cliCmdOf("a", nil, nil)), false, "cli: command a is declared twice under tool"},
+		// decision 0547: under single_dash_long a long name must not also
+		// read as a cluster of declared shorts.
+		{dash(cliCmdOf("tool", []*cliFlag{s("o", ""), s("original-name", "")}, nil)), false, ""},
+		{dash(cliCmdOf("tool", []*cliFlag{s("o", "o")}, nil)), false, ""},
+		{dash(cliCmdOf("tool", []*cliFlag{s("output", "o")}, nil)), false, "cli: flag --output also reads as short flags -output under single_dash_long (command tool)"},
+		{dash(cliCmdOf("tool", []*cliFlag{b("verbose", "v"), b("quiet", "q"), b("vq", "")}, nil)), false, "cli: flag --vq also reads as short flags -vq under single_dash_long (command tool)"},
+		{dash(cliCmdOf("tool", []*cliFlag{b("verbose", "v"), b("vx", "")}, nil)), false, ""},
+		{dash(cliCmdOf("tool", []*cliFlag{b("all", "a")}, nil, cliCmdOf("sub", []*cliFlag{b("ab", ""), b("bee", "b")}, nil))), false, "cli: flag --ab also reads as short flags -ab under single_dash_long (command sub)"},
+		{cliCmdOf("tool", []*cliFlag{s("output", "o")}, nil), false, ""},
 	}
 	for _, c := range cases {
-		got := cliFault(func() { cliValidate(c.cmd, nil, c.version) })
+		got := cliFault(func() { cliValidate(c.cmd, nil, c.version, false) })
 		if got != c.want {
 			t.Errorf("%s: fault %q, want %q", c.cmd.name, got, c.want)
 		}

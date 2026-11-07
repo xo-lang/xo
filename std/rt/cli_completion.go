@@ -228,7 +228,7 @@ func cliFish(root *cliCmd) string {
 // Cli_completion is `cli.completion(cmd, shell)`.
 func Cli_completion(_ *Task, cmd Cli_Command, shell string) Result[string, Cli_CliErr] {
 	root := cmd.c
-	cliValidate(root, nil, root.version != "")
+	cliValidate(root, nil, root.version != "", false)
 	switch shell {
 	case "bash":
 		return Ok[string, Cli_CliErr](cliBash(root))

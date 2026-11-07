@@ -4,6 +4,8 @@ Status: Accepted, implemented (2026-10-11) on the Go backend
 (`std/rt/cli.go`) and the native backends (`std/native/cli.xo`), with
 byte for byte the same help, usage errors, and faults. Spec: std.md 14.
 
+Extended by 0547 (2026-11-07, Proposed): `single_dash_long` on a command reads `-name` as `--name` for a declared long flag.
+
 ## Context
 
 Xo targets backends and the tools around them. A command line tool

@@ -1,0 +1,53 @@
+// std/cli (decision 0547): a command with single_dash_long reads -name as
+// --name when name is a declared long flag, so a port of a Go tool keeps
+// its users' invocations; a short cluster applies otherwise, and a
+// command without the option keeps 0160's GNU reading.
+use std/cli
+
+fn app(dash: Bool) -> cli.Command {
+  cli.command("gvi", "Writes a resource.",
+    flags: [
+      cli.str_flag("icon", "icon files"),
+      cli.str_flag("o", "output file", default: "resource.syso"),
+      cli.bool_flag("64", "64-bit"),
+      cli.int_flag("ver-major", "major", default: -1),
+      cli.bool_flag("verbose", "more output", short: "v"),
+      cli.bool_flag("quiet", "less output", short: "q"),
+      cli.str_flag("name", "a name", short: "s"),
+    ],
+    args: [cli.arg("config", "the configuration", optional: true)],
+    single_dash_long: dash)
+}
+
+fn show(dash: Bool, args: List[Str], os: Os) {
+  let line = args.join(" ")
+  match cli.parse(app(dash), args, os.env) {
+    Ok(p) => os.stdio.println("${line} => icon=${p.str("icon")} o=${p.str("o")} 64=${p.bool("64")} ver-major=${p.int("ver-major")} v=${p.bool("verbose")} q=${p.bool("quiet")} name=${p.str("name")} config=${p.arg_opt("config") ?? "-"}")
+    Err(e) => os.stdio.println("${line} => exit ${e.exit_code()}: ${e.display().lines()[0]}")
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("with single_dash_long:")
+  for args in [
+    ["-icon=x.ico", "-64", "-o", "out.syso", "v.json"],
+    ["-icon", "x.ico", "-ver-major", "3"],
+    ["-64=false", "-ver-major=-1"],
+    ["--icon=y.ico", "--64"],
+    ["-vq", "-sfoo"],
+    ["-vsbar"],
+    ["-verbose", "-name=z"],
+    ["-x"],
+    ["-iconx"],
+    ["-vx"],
+    ["--", "-icon"],
+    ["v.json", "-64"],
+    ["-help"],
+  ] {
+    show(true, args, os)
+  }
+  os.stdio.println("without:")
+  for args in [["-icon=x.ico"], ["-64"], ["--icon=x.ico", "-vq"]] {
+    show(false, args, os)
+  }
+}

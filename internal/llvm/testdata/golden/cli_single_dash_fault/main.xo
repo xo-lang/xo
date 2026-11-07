@@ -1,0 +1,16 @@
+// std/cli (decision 0547): under single_dash_long, a long flag whose name
+// also reads as a cluster of declared short flags (here --output, which
+// -o would read as -o with the value "utput") is a fault at the help
+// or parse call, with the same message on every backend.
+use std/cli
+
+fn main(os: Os) {
+  let app = cli.command("tool", "A tool.",
+    flags: [cli.str_flag("output", "the output", short: "o")],
+    single_dash_long: true)
+  os.stdio.println(cli.help(app).lines()[0])
+  match cli.parse(app, ["-output", "x"], os.env) {
+    Ok(p) => os.stdio.println("parsed ${p.str("output")}")
+    Err(e) => os.stdio.println("error ${e}")
+  }
+}

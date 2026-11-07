@@ -1,0 +1,21 @@
+exit 0
+--- stdout
+with single_dash_long:
+-icon=x.ico -64 -o out.syso v.json => icon=x.ico o=out.syso 64=true ver-major=-1 v=false q=false name= config=v.json
+-icon x.ico -ver-major 3 => icon=x.ico o=resource.syso 64=false ver-major=3 v=false q=false name= config=-
+-64=false -ver-major=-1 => icon= o=resource.syso 64=false ver-major=-1 v=false q=false name= config=-
+--icon=y.ico --64 => icon=y.ico o=resource.syso 64=true ver-major=-1 v=false q=false name= config=-
+-vq -sfoo => icon= o=resource.syso 64=false ver-major=-1 v=true q=true name=foo config=-
+-vsbar => icon= o=resource.syso 64=false ver-major=-1 v=true q=false name=bar config=-
+-verbose -name=z => icon= o=resource.syso 64=false ver-major=-1 v=true q=false name=z config=-
+-x => exit 2: unknown flag -x
+-iconx => exit 2: unknown flag -iconx (did you mean -icon?)
+-vx => exit 2: unknown flag -vx
+-- -icon => icon= o=resource.syso 64=false ver-major=-1 v=false q=false name= config=-icon
+v.json -64 => icon= o=resource.syso 64=true ver-major=-1 v=false q=false name= config=v.json
+-help => exit 0: Writes a resource.
+without:
+-icon=x.ico => exit 2: unknown flag -i
+-64 => exit 2: unknown flag -6
+--icon=x.ico -vq => icon=x.ico o=resource.syso 64=false ver-major=-1 v=true q=true name= config=-
+--- stderr

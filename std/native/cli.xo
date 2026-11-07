@@ -48,6 +48,8 @@ struct Command {
   flags: List[Flag]
   args: List[Arg]
   cmds: List[Command]
+  /// `-name` reads as `--name` for a declared long flag (decision 0547).
+  dash: Bool
 }
 
 struct Val {
@@ -93,8 +95,29 @@ fn clierr_exit_code(e: cli.CliErr) -> Int {
   }
 }
 
-fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], commands: List[Command] = [], version: Str = "") -> Command {
-  Command{name: name, help: help, version: version, flags: flags, args: args, cmds: commands}
+fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], commands: List[Command] = [], version: Str = "", single_dash_long: Bool = false) -> Command {
+  Command{name: name, help: help, version: version, flags: flags, args: args, cmds: commands, dash: single_dash_long}
+}
+
+/// Whether `-` followed by name parses as a cluster of the short flags in
+/// fs: every letter a declared short (or -h) until a short that takes a
+/// value, which takes the rest (decision 0547's setup check).
+fn reads_as_cluster(name: Str, fs: List[Flag]) -> Bool {
+  for j in 0..name.len() {
+    let c = raw.str_slice(name, j, j + 1)
+    if c == "h" {
+      return true
+    }
+    match index_of_short(fs, c) {
+      None => return false
+      Some(fi) => {
+        if fs[fi].kind != BOOL {
+          return true
+        }
+      }
+    }
+  }
+  true
 }
 
 fn new_flag(name: Str, help: Str, short: Str, env: Str, kind: Int) -> Flag {
@@ -176,7 +199,7 @@ fn cmd_name_ok(s: Str) -> Bool {
   true
 }
 
-fn validate(c: Command, outer: List[Flag], version: Bool, at: rt.Loc) {
+fn validate(c: Command, outer: List[Flag], version: Bool, dash: Bool, at: rt.Loc) {
   if !cmd_name_ok(c.name) {
     rt.fault_at("cli: command name ${c.name.quote()} must be letters, digits, ., _, and - (not first)", at)
   }
@@ -212,6 +235,15 @@ fn validate(c: Command, outer: List[Flag], version: Bool, at: rt.Loc) {
     }
     seen.push(f)
   }
+  let on = dash || c.dash
+  if on {
+    for f in seen {
+      let own = f.name.len() == 1 && f.short == f.name
+      if !own && reads_as_cluster(f.name, seen) {
+        rt.fault_at("cli: flag --${f.name} also reads as short flags -${f.name} under single_dash_long (command ${c.name})", at)
+      }
+    }
+  }
   if !c.args.is_empty() && !c.cmds.is_empty() {
     rt.fault_at("cli: command ${c.name} has both positional arguments and subcommands", at)
   }
@@ -243,7 +275,7 @@ fn validate(c: Command, outer: List[Flag], version: Bool, at: rt.Loc) {
         rt.fault_at("cli: command ${s.name} is declared twice under ${c.name}", at)
       }
     }
-    validate(s, seen, version, at)
+    validate(s, seen, version, on, at)
   }
 }
 
@@ -391,7 +423,7 @@ fn help_text(path: List[Command]) -> Str {
 }
 
 fn help(cmd: Command, path: Str = "", at: rt.Loc) -> Str {
-  validate(cmd, [], cmd.version != "", at)
+  validate(cmd, [], cmd.version != "", false, at)
   var p = [cmd]
   if path != "" {
     for w in path.split(" ") {
@@ -517,7 +549,7 @@ fn empty_val() -> Val { Val{set: false, b: false, s: "", i: 0, d: 0s, f: 0.0, l:
 /// The parse of args; Err(the CliErr) for help, version, or a usage error.
 fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! cli.CliErr uses env {
   let version = root.version != ""
-  validate(root, [], version, at)
+  validate(root, [], version, false, at)
   var path = [root]
   var active: List[Flag] = []
   var vals: List[Val] = []
@@ -529,8 +561,31 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
   var dashes = false
   var i = 0
   while i < args.len() {
-    let a = args[i]
+    var a = args[i]
     let cur = path[path.len() - 1]
+    if !dashes && a.len() > 1 && a.starts_with("-") && !a.starts_with("--") && path.any(fn(c) { c.dash }) {
+      // decision 0547: -name is --name when name is a declared long flag
+      let body = raw.str_slice(a, 1, a.len())
+      let name = match body.find("=") {
+        Some(k) => raw.str_slice(body, 0, k)
+        None => body
+      }
+      if name == "help" || version && name == "version" || index_of_name(active, name).is_some() {
+        a = "-" + a
+      } else if name.len() > 1 && !reads_as_cluster(name, active) {
+        var cands = active.map(fn(f) { f.name })
+        cands.push("help")
+        if version {
+          cands.push("version")
+        }
+        var msg = "unknown flag -" + name
+        let s = suggest(name, cands)
+        if s != "" {
+          msg = msg + " (did you mean -" + s + "?)"
+        }
+        return Err(cli.CliErr.Usage(msg: msg, usage: usage_text(path)))
+      }
+    }
     if dashes {
       pos.push(a)
     } else if a == "--" {
@@ -1134,7 +1189,7 @@ fn fish_script(root: Command) -> Str {
 }
 
 fn completion(cmd: Command, shell: Str, at: rt.Loc) -> Str ! cli.CliErr {
-  validate(cmd, [], cmd.version != "", at)
+  validate(cmd, [], cmd.version != "", false, at)
   if shell == "bash" {
     return bash_script(cmd)
   }

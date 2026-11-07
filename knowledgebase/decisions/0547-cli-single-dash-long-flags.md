@@ -1,6 +1,6 @@
 # 0547: std cli accepts single-dash long flags on an opt-in command
 
-Status: Proposed (Xo Lang 2, 2026-11-07; the lead asked for it, for the owner)
+Status: Accepted (owner, 2026-11-07; proposed by Xo Lang 2, 2026-11-07, at the lead's request)
 
 Extends decision 0160 (std cli grammar, point 5).
 
@@ -47,9 +47,8 @@ sets it, and every subcommand under it:
 - The fault in point 3 makes a declaration choose: a tool with short
   `-o` (valued) cannot also have long flags starting with `o` under the
   option. A Go tool has no shorts, so a port declares none.
-- Implementation ready on branch l2-clidash (std/native/cli.xo and
-  std/rt/cli.go; goldens cli_single_dash and cli_single_dash_fault on
-  every backend); it lands when the owner accepts this decision.
+- Implemented in std/native/cli.xo and std/rt/cli.go; golden
+  cli_single_dash and cli_single_dash_fault on every backend.
 
 ## Alternatives
 - **Each port parses its own flags**: the lead rejected it (2026-11-07):

@@ -3969,7 +3969,8 @@ struct Flag {}
 struct Arg {}
 
 pub fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [],
-               commands: List[Command] = [], version: Str = "") -> Command
+               commands: List[Command] = [], version: Str = "",
+               single_dash_long: Bool = false) -> Command
 
 pub fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "", default: Bool = false) -> Flag
 pub fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str = "",
@@ -4076,6 +4077,19 @@ Rules, in order:
   `strs_flag`, which collects every value in order.
 - `--` ends the flags: every later argument is positional. `-` alone is
   positional.
+- `single_dash_long: true` (decision 0547; for ports of Go tools, whose
+  users write `-icon=x.ico -64`) also reads `-name`, `-name=value` and
+  `-name value` as the `--` forms when `name` is a declared long flag of
+  the path (or `help`, or `version` when the root has one); otherwise the
+  argument is a short cluster as above, and a word of more than one
+  letter that is neither is `unknown flag -name` (with a did you mean of
+  `-` form). It applies to the command that sets it and every
+  subcommand under it. Under it, a long flag whose name also reads as a
+  cluster of the path's short flags (`--output` beside `-o` taking a
+  value, `--vq` beside bool `-v` and `-q`) is a declaration fault, except
+  a one letter long flag whose short is that letter. Flags still come
+  before or after positional arguments (Go's flag package stops at the
+  first one). Help text keeps the `--` forms.
 - Flags may come before or after positional arguments. A subcommand is
   selected by the first positional argument of a command with
   subcommands; after it, the flags of every command on the path are
