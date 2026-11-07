@@ -84,7 +84,11 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   only when no other lease runs on its lane, and no lease starts beside it
   while it runs, as an exclusive one, but it does not wait for the host's
   no-lane runs (soaks), and the remote side takes one slot lock, not all;
-  `heavyd status` shows it as `memory`. A lane only: the amd64 and win
+  `heavyd status` shows it as `memory`. After heavyd starts (a restart, an
+  install), it grants no lane lease for 15 s (AdoptGrace), so the runs
+  still going from before re-adopt their slots first (lead, 2026-11-07: a
+  new lease took pass2's slot 1 in the same second an adopted run came
+  back to it). A lane only: the amd64 and win
   lanes share one machine, so OFF_MEM=1 there does not hold the other
   side. Last verified: 2026-11-07. Jobs start in arrival order: each
   takes a ticket in `/work/offload.q`, and only the oldest live ticket may
