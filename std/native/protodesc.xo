@@ -458,7 +458,9 @@ fn decode(data: Bytes) -> protodesc.FileDesc ! protobuf.ProtoErr {
     } else if f.num == 10 && is_v(f) {
       d.public_dependency.push(f.v)
     } else if f.num == 10 && is_s(f) {
-      d.public_dependency.push(packed_first(f.data))
+      for v in packed(f.data)? {
+        d.public_dependency.push(v)
+      }
     } else if f.num == 11 && is_v(f) {
       d.weak_dependency.push(f.v)
     } else if f.num == 12 && is_s(f) {
@@ -470,11 +472,14 @@ fn decode(data: Bytes) -> protodesc.FileDesc ! protobuf.ProtoErr {
   Ok(d)
 }
 
-/// The first value of a packed varint run (descriptor.proto writes these unpacked; a packed one is
-/// rare and holds one value in practice).
-fn packed_first(b: Bytes) -> Int {
-  match protobuf.read_varint(b, 0) {
-    Ok((v, _)) => v.to_bits()
-    Err(_) => 0
+/// The values of a packed varint run (descriptor.proto writes these unpacked; a reader accepts both).
+fn packed(b: Bytes) -> List[Int] ! protobuf.ProtoErr {
+  var out: List[Int] = []
+  var at = 0
+  while at < b.len() {
+    let (v, next) = protobuf.read_varint(b, at)?
+    out.push(v.to_bits())
+    at = next
   }
+  Ok(out)
 }

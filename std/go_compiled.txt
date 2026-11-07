@@ -36,3 +36,4 @@ grpc
 otlp
 protoparse
 htmltok
+protodesc
