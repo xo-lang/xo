@@ -208,6 +208,15 @@ The PDB/CodeView writer for the PE linker (owner approved the same day)
 comes after stage 2: it serves debuggers and WER dumps, while this
 report serves the log.
 
+## Update (2026-11-07): stack overflow named
+
+A SIGSEGV or SIGBUS within 64 KiB of the running fiber's stack mapping
+start (its guard page; main runs on a fiber) writes "fatal error: stack
+overflow" before the signal's line, as Windows' on_overflow and the Go
+backend say it. Nothing else changes: the same report and the signal's
+default action. macOS delivers a guard page hit as SIGBUS, which read as
+a bad access (gotchas/stack-overflow-reported-as-sigbus.md).
+
 ## Consequences
 
 - A hardware fault in a native program prints where it happened, in CI

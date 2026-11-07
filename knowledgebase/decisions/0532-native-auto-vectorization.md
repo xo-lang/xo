@@ -1,7 +1,11 @@
 # 0532: Auto-vectorization in the native backend
 
-Status: Proposed (Xo Lang 1, 2026-11-06; the owner's SIMD request of
-2026-11-06, part 2: design only, nothing built)
+Status: Accepted (owner, 2026-11-07: "Nah keep going with your
+strategy", on why there is no general vectorizer). Proposed by Xo Lang 1,
+2026-11-06 (the owner's SIMD request of 2026-11-06, part 2). The order
+stands: 1. intrinsics for search shapes, 2. idiom recognition into std
+kernels, 3. a loop vectorizer only if step 2's measurements show the
+rest matters, each step gated by a measurement before code.
 
 ## Context
 
@@ -121,7 +125,7 @@ clang 23.1.3.
 Raw output: ~/xo-lead/notes/lang1/vecceil-host.txt (not committed; the
 table is).
 
-## Decision (proposed)
+## Decision
 
 Do not build a general loop vectorizer now. Build in this order, each
 step gated by a measurement before code:

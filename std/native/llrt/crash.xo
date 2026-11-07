@@ -677,8 +677,37 @@ fn exc_text(code: Int) -> Str {
 }
 
 /// The first line, the pc, the registers, the frames' pcs.
+/// Whether a SIGSEGV or SIGBUS at addr hit the guard page of the stack
+/// this thread runs on: the fiber's mapping (pool.xo F_MEM, the record's
+/// second word; main's stack is a fiber's too, decision 0286) starts
+/// with its guard page, so a stack overflow faults at or a frame below
+/// that start. GUARD_SPAN on each side: a page is 16 KiB on darwin, and
+/// a frame larger than the guard can skip past it (crashc_deep's 4 KiB
+/// buffer; Go's stack overflow is the same test of its guard). macOS
+/// reports a guard page hit as SIGBUS, Linux as SIGSEGV.
+fn on_guard(sig: Int, addr: Int) -> Bool {
+  if sig != SIGSEGV && sig != sigbus() {
+    return false
+  }
+  let f = unwind.cur_fiber()
+  if f == 0 {
+    return false
+  }
+  let mem = ld(f, 8)
+  mem != 0 && addr >= mem.wrapping_sub(GUARD_SPAN) && addr < mem.wrapping_add(GUARD_SPAN)
+}
+
+/// on_guard's reach below and above a fiber stack's mapping start.
+const GUARD_SPAN = 65536
+
 fn phase1(r: Int, sig: Int, info: Int, uc: Int) {
   let code = s32(rt.mem_load(info, 8, 4))
+  // a stack overflow says so first (as Windows' on_overflow and the Go
+  // backend); the signal's line follows, and its default action still
+  // ends the program
+  if on_guard(sig, ld(info, if darwin() { 24 } else { 16 })) {
+    w_str(r, "fatal error: stack overflow\n")
+  }
   w_str(r, "fatal error: ")
   w_str(r, sig_name(sig))
   w_str(r, ": ")

@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: fix: a stack overflow on Linux and macOS is reported as one
+
+- Kind: fix
+- Commit: this push
+- Found by: Xo Azure 1 (the Azure generator's unbounded type_of recursion on darwin/arm64 said "SIGBUS: bus error")
+- Go reference: runtime "fatal error: stack overflow" (the Go backend's message)
+- Test: internal/arm64 TestCrashReport overflow, xdeep and xdeep_task (C recursion, Xo recursion on main's stack and on a task's)
+- Affected: 0.43.0 and earlier (native Linux and macOS)
+- Shipped in: not yet released
+
+A SIGSEGV or SIGBUS on the guard page of the stack the thread runs on (a fiber's, main's included) now writes "fatal error: stack overflow" before the signal's line, as Windows and the Go backend do; the report, the traceback and the signal's default action are otherwise unchanged. macOS reports a guard page hit as SIGBUS, which read as a bad memory access (knowledgebase/gotchas/stack-overflow-reported-as-sigbus.md).
+
 ## 2026-11-07: perf: Str ordering compares 64 bytes a step on Linux
 
 - Kind: perf

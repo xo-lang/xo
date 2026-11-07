@@ -76,7 +76,7 @@ func testCrashReport(t *testing.T, be string) {
 	// inlines it into poke and the frame says [inlined])
 	const loc = `( \([^)]*\))?`
 	const thunk = `(  xo_c_\S+` + loc + `( \[inlined\])?\n)?`
-	frames := regexp.MustCompile(`(?m)^  \S*crashc_write` + loc + `\n` + thunk + `  poke \(main\.xo:18\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n  main \(main\.xo:33\)$`)
+	frames := regexp.MustCompile(`(?m)^  \S*crashc_write` + loc + `\n` + thunk + `  poke \(main\.xo:18\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n  main \(main\.xo:55\)$`)
 	if !frames.MatchString(got) {
 		t.Errorf("segv: the traceback lacks the frames:\n%s", got)
 	}
@@ -112,10 +112,23 @@ func testCrashReport(t *testing.T, be string) {
 	if sig != syscall.SIGTRAP || !strings.HasPrefix(got, "fatal error: SIGTRAP: trace trap (code ") || strings.Contains(got, "crash report faulted") || !regexp.MustCompile(`crashc_trap`+loc+`\n`+thunk+`  poke \(main\.xo:15\)\n`).MatchString(got) {
 		t.Errorf("trap: signal %v\n%s", sig, got)
 	}
-	// a stack overflow in C: reported on the alternate signal stack
+	// a stack overflow in C: reported on the alternate signal stack, named
+	// a stack overflow before the signal's line (a guard page hit is
+	// SIGBUS on macOS, SIGSEGV on Linux)
 	_, got, sig = run("XO_CRASH_KIND=overflow")
-	if (sig != syscall.SIGSEGV && sig != syscall.SIGBUS) || !strings.HasPrefix(got, "fatal error: SIG") || !strings.Contains(got, "crashc_deep") {
+	if (sig != syscall.SIGSEGV && sig != syscall.SIGBUS) || !strings.HasPrefix(got, "fatal error: stack overflow\nfatal error: SIG") || !strings.Contains(got, "crashc_deep") {
 		t.Errorf("overflow: signal %v\n%s", sig, got)
+	}
+	// unbounded Xo recursion on main's stack and on a task's
+	for _, k := range []string{"xdeep", "xdeep_task"} {
+		_, got, sig = run("XO_CRASH_KIND=" + k)
+		if (sig != syscall.SIGSEGV && sig != syscall.SIGBUS) || !strings.HasPrefix(got, "fatal error: stack overflow\nfatal error: SIG") || !strings.Contains(got, "xdeep (main.xo:") {
+			t.Errorf("%s: signal %v\n%s", k, sig, got)
+		}
+	}
+	// a fault that is not on a guard page is not a stack overflow
+	if _, got, _ = run("XO_CRASH_KIND=segv"); strings.Contains(got, "stack overflow") {
+		t.Errorf("segv: reported as a stack overflow:\n%s", got)
 	}
 	// a fault in a task (a worker's fiber): its own frames
 	_, got, sig = run("XO_CRASH_KIND=task")

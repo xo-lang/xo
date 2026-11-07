@@ -1,8 +1,8 @@
 // TestCrashReport's program (decision 0343): a hardware fault two Xo
 // frames down, chosen by XO_CRASH_KIND (segv, trap, overflow; task: segv
-// in a task), reported by the runtime's crash handler before the
-// signal's default action (scripts/ci/windows-crash.sh runs it on
-// Windows).
+// in a task; xdeep, xdeep_task: Xo recursion), reported by the runtime's
+// crash handler before the signal's default action
+// (scripts/ci/windows-crash.sh runs it on Windows).
 use c "crashc.h" link "crashc.c"
 
 fn poke(kind: Str, n: Int) -> Int {
@@ -19,9 +19,31 @@ fn poke(kind: Str, n: Int) -> Int {
   }
 }
 
+/// Unbounded recursion in Xo code (the result used, so no tail call):
+/// xdeep on main's stack, xdeep_task on a task's. Kept below poke, whose
+/// line numbers TestCrashReport matches.
+fn xdeep(n: Int) -> Int {
+  if n < 0 {
+    return 0
+  }
+  xdeep(n + 1) + 1
+}
+
 fn main(os: Os) {
   let kind = os.env.get("XO_CRASH_KIND") ?? "segv"
   os.stdio.println("before")
+  if kind == "xdeep_task" {
+    scope s {
+      s.spawn(fn() {
+        let _n = xdeep(0)
+      })
+    }
+    return
+  }
+  if kind == "xdeep" {
+    os.stdio.println("${xdeep(0)}")
+    return
+  }
   if kind == "task" {
     scope s {
       s.spawn(fn() {
