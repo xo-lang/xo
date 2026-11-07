@@ -2,7 +2,7 @@
 // so that it does not share the runtime under test.
 //
 //	harness diff -xo XO -app DIR [-backends go,arm64,llvm] [-out OUT]
-//	harness soak -xo XO -app DIR -out OUT [-backend arm64] [-rate 500] [-d 2h] (soak.go)
+//	harness soak -xo XO -app DIR -out OUT [-backend arm64] [-rate 500 | -conc N] [-spikes T,... -spike-conc 128 -spike-d 20s] [-d 2h] (soak.go)
 //
 // diff builds the app once per backend, runs each build through the app's
 // scenario (DIR/app.json names it), and compares the responses: status,
@@ -123,7 +123,7 @@ func main() {
 		os.Exit(loadMain(os.Args[2:]))
 	}
 	if len(os.Args) < 2 || os.Args[1] != "diff" {
-		fmt.Fprintln(os.Stderr, "usage: harness diff -xo XO -app DIR [-backends go,arm64,llvm] [-out OUT]\n       harness soak -xo XO -app DIR -out OUT [-backend arm64] [-rate 500] [-d 2h] [-every 10s] [-warmup 0.1] [-client-idle DUR] [-env K=V,...]\n       harness load -xo XO -app DIR -out OUT [-backend arm64] [-rates 1000,4000] [-sat 64] [-d 30s] [-warmup 5s] [-rounds 3] [-drop-env K,...] [-env K=V,...]")
+		fmt.Fprintln(os.Stderr, "usage: harness diff -xo XO -app DIR [-backends go,arm64,llvm] [-out OUT]\n       harness soak -xo XO -app DIR -out OUT [-backend arm64] [-rate 500 | -conc N] [-spikes T,... -spike-conc 128 -spike-d 20s] [-d 2h] [-every 10s] [-warmup 0.1] [-client-idle DUR] [-env K=V,...]\n       harness load -xo XO -app DIR -out OUT [-backend arm64] [-rates 1000,4000] [-sat 64] [-d 30s] [-warmup 5s] [-rounds 3] [-drop-env K,...] [-env K=V,...]")
 		os.Exit(2)
 	}
 	fs := flag.NewFlagSet("diff", flag.ExitOnError)

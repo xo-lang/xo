@@ -210,6 +210,10 @@ func soakMain(args []string) int {
 	maxHeapGrowth := fs.Float64("max-heap-growth", 0.05, "drift when heap_live grows by more than this fraction per hour (after warmup)")
 	addEnv := fs.String("env", "", "K=V pairs, comma separated, added to the app's environment (e.g. XO_THP=off, XO_HEAPSTATS=1)")
 	clientIdle := fs.Duration("client-idle", 30*time.Second, "close the load client's pooled connections after this long unused (0: never, the soaks before 2026-11-07: fds then ratchet up to the pool's high-water mark)")
+	conc := fs.Int("conc", 0, "closed loop: this many workers, each sending its next request when the last is answered, in place of -rate's open loop (0: open loop)")
+	spikes := fs.String("spikes", "", "times from the start (e.g. 20m,50m) to add -spike-conc more closed loop workers for -spike-d, so two runs see identical load spikes")
+	spikeConc := fs.Int("spike-conc", 128, "the workers each spike adds")
+	spikeDur := fs.Duration("spike-d", 20*time.Second, "how long each spike lasts")
 	maxLat := fs.Float64("max-lat-growth", 0.20, "drift when the last quarter's p99 exceeds the first quarter's by this fraction")
 	fs.Parse(args)
 	if fs.NArg() > 0 {
@@ -265,7 +269,34 @@ func soakMain(args []string) int {
 	base := "http://" + p.addr
 	d := newDriver(app, mix, base, *clientIdle)
 	cl := d.cl
-	stopLoad := d.open(*rate)
+	var spikeAt []time.Duration
+	for _, v := range strings.Split(*spikes, ",") {
+		if v = strings.TrimSpace(v); v == "" {
+			continue
+		}
+		t, err := time.ParseDuration(v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harness soak: -spikes %q: %v\n", v, err)
+			return 2
+		}
+		spikeAt = append(spikeAt, t)
+	}
+	var stopLoad func()
+	if *conc > 0 {
+		stopLoad = d.closed(*conc)
+	} else {
+		stopLoad = d.open(*rate)
+	}
+	t0 := time.Now()
+	for _, at := range spikeAt {
+		at := at
+		go func() {
+			time.Sleep(time.Until(t0.Add(at)))
+			stop := d.closed(*spikeConc)
+			time.Sleep(*spikeDur)
+			stop()
+		}()
+	}
 
 	f, _ := os.Create(filepath.Join(*out, "samples.csv"))
 	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks,client_socks,anon_huge_kib,client_dials,heap_chunks,heap_cache_bytes")
