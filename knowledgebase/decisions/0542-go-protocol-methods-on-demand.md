@@ -57,9 +57,12 @@ whole-program analysis is available.
   generated package is 507,373 lines (20.7 MB) by default against 576,481 (22.7 MB) with
   XO_GO_PROTO=all, 69,108 fewer (-12.0%). Protocol methods fall from 118,172 lines (20.5%: XoEq
   3,290 functions, XoEqT 3,114, XoHash 3,290, XoGenAny 3,290) to 55,782 (11.0%: XoEq 1,437,
-  XoEqT 1,431, XoHash 1,437, XoGenAny 0). The Go compile's peak was not measured exactly (1 s RSS
-  samples: largest compile 8.8 GB default against 8.3 GB all, within noise); an exact max RSS
-  run with xo's own go flags is pending. 44% of the types still keep XoEq: which roots reach them
+  XoEqT 1,431, XoHash 1,437, XoGenAny 0). The armnetwork package's Go compile, measured exactly
+  on 2026-11-07 (linux/arm64 host, 12 CPUs, go 1.26.1, xo's flags `-trimpath -mod=mod
+  -gcflags=all=-dwarf=false`, a fresh GOCACHE, /usr/bin/time -v through -toolexec, 3 rounds):
+  max RSS 14.83 GB median (14.78, 15.60, 14.83) against 17.40 GB (17.72, 17.36, 17.40) with
+  XO_GO_PROTO=all, -14.8%; compile time 48.96 s median against 54.74 s, -10.6%. (aws-19's 1 s
+  samples on the Mac, 8.8 against 8.3 GB, were within their noise.) 44% of the types still keep XoEq: which roots reach them
   is the next refinement.
 - Golden internal/llvm/testdata/golden/go_proto_roots reaches a type through each root kind only;
   Go parity fails if the walk misses one.
