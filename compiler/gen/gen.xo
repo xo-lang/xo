@@ -49,6 +49,8 @@ pub struct Opts {
   /// Every protocol method of every type (XO_GO_PROTO=all, decision
   /// 0542), as before the roots were walked.
   pub proto_all: Bool = false
+  /// Report why every type keeps a protocol (XO_GO_PROTO=why).
+  pub proto_why: Bool = false
 }
 
 /// One generated file.
@@ -69,6 +71,8 @@ pub struct Program {
   pub err: Str = ""
   /// The declarations left out: `<file> <declaration>: <why>`.
   pub skipped: List[Str] = []
+  /// Why every type keeps a protocol (XO_GO_PROTO=why).
+  pub proto_why: List[Str] = []
 }
 
 /// A reference to one test of the test table (support.go testRef).
@@ -191,13 +195,16 @@ pub struct Gen {
   /// a generic function's generic form: the protocols a type parameter in
   /// it reaches, the generic forms it calls, and whether one runs
   proto_gform: Map[Int, Int] = {}
-  proto_gcalls: Map[Int, List[Int]] = {}
-  proto_gused: Map[Int, Bool] = {}
+  proto_gcalls: Map[Int, List[(Int, List[Int])]] = {}
   /// set while proto_call_roots walks the syntax (no function is being
   /// generated)
   proto_prepass: Bool = false
   /// the protocols a type parameter reaches: every type keeps them
   proto_all: Int = 0
+  /// why each protocol bit of proto_all was set (Opts.proto_why)
+  proto_why_log: List[Str] = []
+  /// why a generic form's protocol bits were recorded, the first reason
+  proto_gwhy: Map[Int, Str] = {}
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +249,7 @@ fn (var g: Gen) run() -> Program {
     g.drain_specs()
   }
   g.proto_close()
+  prog.proto_why = g.proto_why_log
   if !g.errs.is_empty() {
     prog.err = g.errs.join("\n")
     return prog

@@ -4,6 +4,8 @@
 // internal: XoEq not generated", so this golden's output is the same on
 // every backend only while the walk finds every root.
 
+use std/json
+
 // reached only through a field of a compared struct
 struct Inner {
   tags: List[Str]
@@ -139,6 +141,18 @@ struct Bag[T] {
   items: Set[T]
 }
 
+// reached only as the type argument of a generic that passes it to a
+// constrained std function (std's Go is pregenerated, so its body may
+// compare): under --no-mono that generic's form runs, and only the types
+// it is called with are roots, not every type (Unused keeps none)
+struct Sent {
+  s: Int
+} derive Json
+
+fn send[T: Json](v: T) -> Str {
+  json.encode_str(v)
+}
+
 fn main(os: Os) {
   let o1 = Outer{name: "a", inner: Inner{tags: ["x", "y"]}}
   let o2 = Outer{name: "a", inner: Inner{tags: ["x", "y"]}}
@@ -179,4 +193,5 @@ fn main(os: Os) {
   bag.items.add(BagT{b: 1})
   bag.items.add(BagT{b: 1})
   os.stdio.println("bag: ${bag.items.len()} ${bag.items.contains(BagT{b: 1})}")
+  os.stdio.println("sent: ${send(Sent{s: 4})}")
 }

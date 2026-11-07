@@ -569,7 +569,7 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
     return g.emit_spec_call(fo, sub, spec, recv0, args)
   }
   if g.is_generic_user_func(fo) {
-    g.proto_gform_call(fo)
+    g.proto_gform_call(fo, sub)
   }
   let impl = g.go_impl(fo)
   if impl >= 0 {

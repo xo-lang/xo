@@ -40,6 +40,7 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   opts.no_mono = o.no_mono
   // decision 0542: every protocol method of every type, as before
   opts.proto_all = (os.env.get("XO_GO_PROTO") ?? "") == "all"
+  opts.proto_why = (os.env.get("XO_GO_PROTO") ?? "") == "why"
   opts.release = release
   // the settings --release presets, each overridable (decision 0354)
   opts.no_error_args = !error_args_eff(o)
@@ -47,6 +48,9 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   opts.dbg = dbg_eff(o, release)
   opts.gc = gc_line(os, root)
   let prog = gen.generate(c, opts)
+  for w in prog.proto_why {
+    os.stdio.eprintln("xo go proto: ${w}")
+  }
   if !prog.err.is_empty() {
     fail(os, prog.err)
   }

@@ -59,12 +59,40 @@ fn (var g: Gen) proto_root(t: Int, bits: Int) {
     let cur = g.proto_cur_gform()
     if cur >= 0 {
       g.proto_gform[cur] = (g.proto_gform.get(cur) ?? 0) | bits
+      g.proto_gnote(cur, "type parameter ${g.c.show(t)} compared or hashed")
     } else {
-      g.proto_all = g.proto_all | bits
+      g.proto_set_all(bits, "type parameter ${g.c.show(t)} rooted outside a generic form (${g.proto_where()})")
     }
     return
   }
   g.proto_roots[t] = (g.proto_roots.get(t) ?? 0) | bits
+}
+
+/// Sets the protocols in bits for every type, noting why when asked.
+fn (var g: Gen) proto_set_all(bits: Int, why: Str) {
+  if g.opts.proto_why && (bits & (bits ^ g.proto_all)) != 0 {
+    g.proto_why_log.push("bits ${bits & (bits ^ g.proto_all)}: ${why}")
+  }
+  g.proto_all = g.proto_all | bits
+}
+
+/// Notes the first reason generic form fo records a protocol.
+fn (var g: Gen) proto_gnote(fo: Int, why: Str) {
+  if g.opts.proto_why && !g.proto_gwhy.contains(fo) {
+    g.proto_gwhy[fo] = why
+  }
+}
+
+/// The function being generated, for XO_GO_PROTO=why.
+fn (g: Gen) proto_where() -> Str {
+  if g.proto_prepass {
+    return "syntax pass"
+  }
+  if g.f.frames.is_empty() {
+    return "no function"
+  }
+  let fo = g.f.frames[0].fo
+  "in ${if fo >= 0 { g.oname(fo) } else { "?" }}${if g.pkgs[g.p].ms.on { " copy" } else { "" }}"
 }
 
 /// Whether the method bit of object o is written: XO_GO_PROTO=all, a
@@ -142,7 +170,7 @@ fn (var g: Gen) proto_iface(from: Int, to: Int) {
 /// any type, compared through the interface without a constraint.
 fn (var g: Gen) proto_walk_any(t: Int, bits: Int, var walked: Map[Int, Int]) {
   if t >= 0 && g.c.tys[g.c.resolve(t)].kind == check.TyKind.Param {
-    g.proto_all = g.proto_all | bits
+    g.proto_set_all(bits, "type parameter ${g.c.show(t)} converted to an interface")
     return
   }
   g.proto_walk(t, bits, walked)
@@ -158,16 +186,19 @@ fn (g: Gen) proto_cur_gform() -> Int {
   if g.is_generic_user_func(fo) { fo } else { -1 }
 }
 
-/// A call of generic function fo's generic form (emit_call, no copy).
-fn (var g: Gen) proto_gform_call(fo: Int) {
-  let cur = g.proto_cur_gform()
-  if cur >= 0 {
-    var l = g.proto_gcalls.get(cur) ?? []
-    l.push(fo)
-    g.proto_gcalls[cur] = l
-  } else {
-    g.proto_gused[fo] = true
+/// A call of generic function fo's generic form with type arguments sub
+/// (emit_call, no copy), recorded under the generic form that makes it
+/// (-1: code that runs): a running form's protocols reach the arguments
+/// it is called with.
+fn (var g: Gen) proto_gform_call(fo: Int, sub: Map[Int, Int]) {
+  var args: List[Int] = []
+  for p in g.type_params(g.c.objs[fo].tparams) {
+    args.push(g.mono_type(sub.get(p) ?? -1))
   }
+  let cur = g.proto_cur_gform()
+  var l = g.proto_gcalls.get(cur) ?? []
+  l.push((fo, args))
+  g.proto_gcalls[cur] = l
 }
 
 /// A call of std function fo with type arguments sub, as generated: inside
@@ -260,6 +291,7 @@ fn (var g: Gen) proto_close() {
         }
         if g.is_generic_user_func(o) {
           g.proto_gform[o] = (g.proto_gform.get(o) ?? 0) | P_EQ | P_HASH
+          g.proto_gnote(o, "key or constrained argument ${g.c.show(a)}")
         } else if !keyed.contains((o, g.c.objs[o].tparams.index_of(p) ?? -1)) {
           keyed[(o, g.c.objs[o].tparams.index_of(p) ?? -1)] = true
           changed = true
@@ -284,19 +316,61 @@ fn (var g: Gen) proto_close() {
   }
   // the generic forms that run: called where no copy was made, and what
   // those call in turn
-  var work: List[Int] = []
-  for (fo, _) in g.proto_gused {
-    work.push(fo)
-  }
+  var running: Map[Int, Bool] = {}
+  var work: List[Int] = [-1]
   var seen: Map[Int, Bool] = {}
-  while let Some(fo) = work.pop() {
-    if seen.contains(fo) {
+  while let Some(c) = work.pop() {
+    if seen.contains(c) {
       continue
     }
-    seen[fo] = true
-    g.proto_all = g.proto_all | (g.proto_gform.get(fo) ?? 0)
-    for c in g.proto_gcalls.get(fo) ?? [] {
-      work.push(c)
+    seen[c] = true
+    for (fo, _) in g.proto_gcalls.get(c) ?? [] {
+      running[fo] = true
+      work.push(fo)
+    }
+  }
+  // a running form's protocols reach the type arguments of its calls: a
+  // concrete one is a root, a type parameter of the calling form gives
+  // that form the protocols in turn (until no form gains one)
+  var grooted: Map[Int, Int] = {}
+  var gchanged = true
+  while gchanged {
+    gchanged = false
+    for (c, calls) in g.proto_gcalls {
+      if c >= 0 && !running.contains(c) {
+        continue
+      }
+      for (fo, args) in calls {
+        let bits = g.proto_gform.get(fo) ?? 0
+        if bits == 0 {
+          continue
+        }
+        for a in args {
+          var ps: List[Int] = []
+          g.proto_params_in(a, ps, 0)
+          if a < 0 {
+            g.proto_set_all(bits, "generic form ${g.oname(fo)} runs with a type argument not known")
+          } else if ps.is_empty() {
+            let had = grooted.get(a) ?? 0
+            if (had | bits) != had {
+              grooted[a] = had | bits
+              roots.push((a, bits))
+            }
+          }
+          for p in ps {
+            if c >= 0 && g.c.objs[c].tparams.contains(p) {
+              let had = g.proto_gform.get(c) ?? 0
+              if (had | bits) != had {
+                g.proto_gform[c] = had | bits
+                g.proto_gnote(c, "passes ${g.c.show(a)} to ${g.oname(fo)}")
+                gchanged = true
+              }
+            } else {
+              g.proto_set_all(bits, "generic form ${g.oname(fo)} runs with type argument ${g.c.show(a)} (${if c >= 0 { g.oname(c) } else { "not a generic form" }}; ${g.proto_gwhy.get(fo) ?? "?"})")
+            }
+          }
+        }
+      }
     }
   }
   var walked: Map[Int, Int] = {}
@@ -356,7 +430,7 @@ fn (var g: Gen) proto_walk(t0: Int, bits: Int, var walked: Map[Int, Int]) {
       // a compared or hashed type parameter is constrained, so each of
       // its arguments is a root of its own (proto_call_roots); a
       // generated one may be any type
-      g.proto_all = g.proto_all | (bits & P_GEN)
+      g.proto_set_all(bits & P_GEN, "testing.gen reaches type parameter ${g.c.show(t)}")
     }
     Tuple => {
       for a in x.args {

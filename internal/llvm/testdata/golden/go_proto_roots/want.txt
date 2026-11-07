@@ -15,4 +15,5 @@ deep: true false
 has: true false
 uniq: 2
 bag: 1 true
+sent: {"s":4}
 --- stderr

@@ -23,3 +23,10 @@ protocol method as before 0542. Then add the missing root to
 compiler/gen/proto.xo (proto_root at the generator site, or a case in
 proto_close or proto_walk) and a case to the golden
 internal/llvm/testdata/golden/go_proto_roots that fails without it.
+
+The other direction (Observed, 2026-11-07): a package keeps XoEq or
+XoHash on many types nothing compares (9257e25d8 kept all 3,290 of
+armnetwork's, since one generic form that ran set them for every type).
+No output shows it. Build with `XO_GO_PROTO=why` to see each reason a
+protocol is kept for every type, and pin the fix in internal/gen
+TestGoProtoNotKept (a type the golden never compares keeps none).

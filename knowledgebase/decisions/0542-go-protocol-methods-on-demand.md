@@ -32,10 +32,13 @@ whole-program analysis is available.
      derives Eq, Hash or Ord with what its fields reach.
    A type parameter as a root (in a key, a compare, a search or a std
    call) is resolved where it is written: in a specialized copy it is
-   concrete; in a function's generic form it is recorded on that function
-   and keeps every type's methods only if the generic form runs (a call
-   not specialized: past MAX_SPECS_PER_FUNC or MAX_SPEC_DEPTH, or
-   --no-mono, and what such a form calls); in a generic type (a field
+   concrete; in a function's generic form it is recorded on that function,
+   and if the generic form runs (a call not specialized: past
+   MAX_SPECS_PER_FUNC or MAX_SPEC_DEPTH, or --no-mono, and what such a
+   form calls) the type arguments of the calls that reach it are roots
+   (each unspecialized call records them; one that is a type parameter of
+   the calling form records the protocols on that form in turn, and only
+   one that is not known keeps every type's); in a generic type (a field
    `Set[T]`) it makes that type's parameter keyed, so each instance roots
    its argument. An interface type reached by a protocol reaches every
    type the program converts to it (each conversion the generator writes
@@ -46,7 +49,13 @@ whole-program analysis is available.
    program; the next rooted every constrained argument, so azure's
    `marshal_json[T: Json]` kept XoEq on 1,437 of armnetwork's 3,290
    types. One was too narrow: List `contains` and `index_of` were not
-   roots and faulted, fixed in 1cd6984d8 with golden go_proto_prelude.)
+   roots and faulted, fixed in 1cd6984d8 with golden go_proto_prelude.
+   The first narrowing, 9257e25d8, kept every type's methods whenever a
+   recorded form ran: armnetwork calls `marshal_json` with more than 64
+   types, so its form runs, and all 3,290 types kept XoEq and XoHash
+   (548,505 lines); rooting the calls' type arguments instead keeps
+   1,251. internal/gen TestGoProtoNotKept checks that go_proto_roots'
+   Unused has none, specialized and with --no-mono.)
    std's types in the runtime package keep every method.
 2. Each such method is written between two marker chunks of the package's
    output; pkg_file keeps a method only when its object is reached (or the
@@ -61,6 +70,9 @@ whole-program analysis is available.
    generated struct without XoGenAny. A missed root is a loud fault, never
    a wrong comparison.
 4. XO_GO_PROTO=all writes every method, as before (a bisect switch).
+   XO_GO_PROTO=why prints, on stderr, each reason a protocol's methods are
+   kept on every type (`xo go proto: bits 6: generic form F runs with type
+   argument T (...)`), for a package that keeps more than its roots say.
 
 ## Consequences
 - armnetwork, measured by aws-19 on 2026-11-07 (xo c2f2c5617, `xo test --backend=go` of
@@ -75,6 +87,9 @@ whole-program analysis is available.
   XO_GO_PROTO=all, -14.8%; compile time 48.96 s median against 54.74 s, -10.6%. (aws-19's 1 s
   samples on the Mac, 8.8 against 8.3 GB, were within their noise.) 44% of the types still keep XoEq: which roots reach them
   is the next refinement.
+- After the narrowing and its fix (2026-11-07, xo at this change, generated on the Mac): armnetwork's
+  package is 448,455 lines, with XoEq and XoHash on 1,251 types and XoEqT on 1,246 (c2f2c5617:
+  507,372 lines and 1,437 types).
 - Golden internal/llvm/testdata/golden/go_proto_roots reaches a type through each root kind only;
   Go parity fails if the walk misses one.
 - A new root kind in the language must be added to the analysis (a test lists the roots).

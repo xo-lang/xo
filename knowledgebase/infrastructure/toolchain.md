@@ -907,7 +907,7 @@ a Go package with callback adapters (`NewGoCallback` in an
 `rt/xo_gobind_*.go`) also gets `-tags=xo_gotimers
 -ldflags=-checklinkname=0`, which link `runtime.timeSleepUntil` into std/rt
 for deadlock reports through Go calls (decision 0073); `XO_GOTIMERS=off`
-`XO_GO_PROTO=all xo build --backend=go .` (decision 0542, 2026-11-07): the Go backend writes every type's XoEq, XoEqT, XoHash and (in test builds) XoGenAny, as before; by default only the types a whole-program walk reaches from that protocol's roots (compiler/gen/proto.xo) get them, and rt faults with `xo internal: XoEq not generated for T` if a missed root ever reaches one. A bisect switch for that fault.
+`XO_GO_PROTO=all xo build --backend=go .` (decision 0542, 2026-11-07): the Go backend writes every type's XoEq, XoEqT, XoHash and (in test builds) XoGenAny, as before; by default only the types a whole-program walk reaches from that protocol's roots (compiler/gen/proto.xo) get them, and rt faults with `xo internal: XoEq not generated for T` if a missed root ever reaches one. A bisect switch for that fault. `XO_GO_PROTO=why` prints on stderr each reason a protocol is kept on every type (a generic form that runs with a type argument not known, a type parameter converted to an interface), for a package whose generated Go keeps more than its roots (last verified: 2026-11-07).
 drops them, and a failed link of that symbol is retried without them with
 one warning line (`xo build: warning: deadlock detection through Go
 callbacks is off ...`; gotcha `go-runtime-timer-linkname.md`; Last
