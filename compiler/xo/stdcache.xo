@@ -40,6 +40,32 @@ fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Boo
   crypto.sha256("${std_key_head(id, tgoos, tgoarch, conc, tmode)}${tree}".bytes()).to_hex()
 }
 
+/// What std_cache_key read of std's tree, for a phase line: the root as
+/// given, the file count, the hash of the tree lines and the newest file
+/// with its size and time. A miss right after xo dev stdcache built the
+/// variant (2026-11-07, the full arm64 suite only) then tells a changed
+/// file (another newest, or another hash) from one tree under two
+/// spellings (the same hash) or a store that is gone.
+fn std_tree_note(os: Os, ctx: Ctx, std: Str) -> Str {
+  let t = std_tree_lines(os, ctx, std)
+  var n = 0
+  var newest = ""
+  var top = -1
+  for l in t.split("\n") {
+    let f = l.split(" ")
+    if f.len() < 3 {
+      continue
+    }
+    n += 1
+    let ms = Int.parse(f[f.len() - 1]) ?? 0
+    if ms > top {
+      top = ms
+      newest = l
+    }
+  }
+  "std ${std}: ${n} files, tree ${crypto.sha256(t.bytes()).to_hex()[0..12]}, newest ${newest}"
+}
+
 /// Why std_cache_key is empty: no identity, or std's tree not walked
 /// (with the error).
 fn std_key_why(os: Os, std: Str) -> Str {
@@ -233,7 +259,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bo
     l.unlock()
   }
   if phases {
-    os.stdio.eprintln("cache std ${key[0..12]} conc=${conc}${tv(tmode)} ${if done { "built" } else { "failed (${why}): the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
+    os.stdio.eprintln("cache std ${key[0..12]} conc=${conc}${tv(tmode)} ${if done { "built" } else { "failed (${why}): the whole program is built" }} in ${os.clock.since(t0).millis()} ms (${std_tree_note(os, ctx, ctx.std)})")
   }
   if done { Some((store, facts)) } else { None }
 }
@@ -337,7 +363,7 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmod
     if phases {
       // the key and variant too: a store made under another key (2026-11-07,
       // a miss right after xo dev stdcache only in the full suite)
-      os.stdio.eprintln("std variant: miss, ${why} (key ${key[0..12]} conc=${conc}${tv(tmode)})")
+      os.stdio.eprintln("std variant: miss, ${why} (key ${key[0..12]} conc=${conc}${tv(tmode)}; ${std_tree_note(os, ctx, ctx.std)})")
     }
   }
   // a build of this variant failed for this std less than an hour ago:
