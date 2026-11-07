@@ -102,6 +102,9 @@ struct MethodDesc {
   options: Bytes = b""
   client_streaming: Bool = false
   server_streaming: Bool = false
+  /// Bit 1: `client_streaming` and bit 2: `server_streaming` were present on the wire, also when false (a proto2
+  /// optional field written as false), so the descriptor encodes back to the same bytes.
+  streaming_set: Int = 0
 } derive Eq
 
 struct ServiceDesc {
