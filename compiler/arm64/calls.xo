@@ -2550,6 +2550,21 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       g.set(v, [g.def1(false, "add $d0, $u0, $u1\nldp q30, q31, [$d0]\norr v30.16b, v30.16b, v31.16b\ncmlt v30.16b, v30.16b, #0\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
     }
+    "rt.mem_any_eq32" => {
+      // rt.bytes_any_eq32 at an address (a buffer that is not a Bytes):
+      // the same two lanes and one move, the base a plain word
+      var us = [g.word(x.args[0]), g.word(x.args[1])]
+      let (c, ok) = g.const_int(x.args[2])
+      if !ok {
+        us.push(g.word(x.args[2]))
+      }
+      if g.x86 {
+        g.set(v, [g.x86_any_eq32(us, c, ok)])
+        return true
+      }
+      let rep = if ok { "movi v29.16b, #${c & 255}" } else { "dup v29.16b, $wu2" }
+      g.set(v, [g.def1(false, "${rep}\nadd $d0, $u0, $u1\nldp q30, q31, [$d0]\ncmeq v30.16b, v30.16b, v29.16b\ncmeq v31.16b, v31.16b, v29.16b\norr v30.16b, v30.16b, v31.16b\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
+    }
     "rt.bytes_count_eq32" => {
       // each lane's cmeq is -1 a match: the two lanes added (-2 to 0 a
       // byte) and addv'ed give minus the count modulo 256, so neg and a

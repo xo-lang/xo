@@ -281,6 +281,25 @@ test "bytes_any_eq32 and bytes_any_high32 see each of the 32 bytes" {
   }
 }
 
+test "mem_any_eq32 sees each of the 32 bytes at an address" {
+  for p in 0..40 {
+    var xs: List[Int] = []
+    for i in 0..72 {
+      xs.push(if i == p { 10 } else { 97 + i % 26 })
+    }
+    let b = bytes_of(xs)
+    let a = raw.bytes_addr(b)
+    for i in [0, 1, 7, 8, 31, 40] {
+      let hit = p >= i && p < i + 32
+      expect(rt.mem_any_eq32(a, i, 10) != 0) == hit
+      // a byte c that varies at run time, and one that is absent
+      let c = Int(b[p])
+      expect(rt.mem_any_eq32(a, i, c) != 0) == hit
+      expect(rt.mem_any_eq32(a, i, 0x7F)) == 0
+    }
+  }
+}
+
 test "bytes_count_eq32 matches a byte loop, from none to all 32 bytes" {
   // every density: byte k is c when k % step == 0 (step 1 is all of
   // them, step 99 one or none), at offsets that cross the 16 byte lanes

@@ -2040,6 +2040,43 @@ fn rt2_text(var g: Gen) -> Str {
       call $bytes_high16
       i64.or)
 
+    ;; 1 when one of the 32 bytes at p + i is the byte c, else 0: a byte
+    ;; at a time (no lane here)
+    (func $mem_any_eq32 (param $p i64) (param $i i64) (param $c i64) (result i64) (local $a i32) (local $e i32)
+      local.get $p
+      local.get $i
+      i64.add
+      i32.wrap_i64
+      local.tee $a
+      i32.const 32
+      i32.add
+      local.set $e
+      block $out
+        loop $next
+          local.get $a
+          local.get $e
+          i32.ge_u
+          br_if $out
+          local.get $a
+          i32.load8_u
+          local.get $c
+          i32.wrap_i64
+          i32.const 255
+          i32.and
+          i32.eq
+          if
+            i64.const 1
+            return
+          end
+          local.get $a
+          i32.const 1
+          i32.add
+          local.set $a
+          br $next
+        end
+      end
+      i64.const 0)
+
     ;; the 32 bytes at a and b as four words each, their xors or'ed
     (func $mem_ne32 (param $a i64) (param $b i64) (result i64) (local $p i32) (local $q i32)
       local.get $a
@@ -2768,5 +2805,5 @@ fn rt2_text(var g: Gen) -> Str {
 /// The runtime functions of rt2.xo called with the operands' leaves under
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt2_direct(name: Str) -> Bool {
-  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_program" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "u64_divc" | "float_bits" | "float_from_bits" | "bytes_word" | "mem_load" | "mem_store" | "mem_copy" | "mem_copy_block" | "mem_move" | "mem_set" | "mem_cmp" | "popcount" | "ctz" | "clz" | "ct_barrier" | "bytes_eq16" | "bytes_high16" | "bytes_eq16_bits" | "bytes_high16_bits" | "bytes_any_eq32" | "bytes_any_stop32" | "bytes_count_eq32" | "bytes_any_high32" | "mem_ne32" | "case_fold16" | "rs_put_word" | "rs_set_len"
+  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_program" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "u64_divc" | "float_bits" | "float_from_bits" | "bytes_word" | "mem_load" | "mem_store" | "mem_copy" | "mem_copy_block" | "mem_move" | "mem_set" | "mem_cmp" | "popcount" | "ctz" | "clz" | "ct_barrier" | "bytes_eq16" | "bytes_high16" | "bytes_eq16_bits" | "bytes_high16_bits" | "bytes_any_eq32" | "bytes_any_stop32" | "bytes_count_eq32" | "bytes_any_high32" | "mem_ne32" | "mem_any_eq32" | "case_fold16" | "rs_put_word" | "rs_set_len"
 }

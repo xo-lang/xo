@@ -200,6 +200,11 @@ fn bytes_any_stop32(b: Bytes, i: Int, c1: Int, c2: Int, lo: Int) -> Int
 /// ranges are readable. For std/native/llrt/libcstr.xo's memcmp, which
 /// may not call rt.mem_cmp.
 fn mem_ne32(a: Int, b: Int) -> Int
+/// Nonzero when one of the 32 bytes at address p + i is the byte c (0 to
+/// 255), else 0: rt.bytes_any_eq32 for memory that is not a Bytes (an
+/// HTTP/1.1 connection's input buffer; lowered inline as it is, wasm a
+/// byte loop). Unchecked: the 32 bytes are readable.
+fn mem_any_eq32(p: Int, i: Int, c: Int) -> Int
 /// The 16 bytes at src from i with their ASCII letters lowered (mode 1)
 /// or raised (mode 2), written to dst from i (lowered inline: arm64 a
 /// NEON fold of the lane in nine instructions, x86_64 the same with SSE2,

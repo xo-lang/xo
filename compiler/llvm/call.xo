@@ -1571,6 +1571,18 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let m = g.def("bitcast <32 x i1> ${e} to i32")
       g.set(v, "zext i32 ${m} to i64")
     }
+    "rt.mem_any_eq32" => {
+      // rt.bytes_any_eq32 at an address: a <32 x i8> compare as an i32
+      let a = g.def("add i64 ${g.op(x.args[0])}, ${g.op(x.args[1])}")
+      let p = g.def("inttoptr i64 ${a} to ptr")
+      let w = g.def("load <32 x i8>, ptr ${p}, align 1")
+      let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+      var r = g.def("insertelement <32 x i8> poison, i8 ${c}, i64 0")
+      r = g.def("shufflevector <32 x i8> ${r}, <32 x i8> poison, <32 x i32> zeroinitializer")
+      let e = g.def("icmp eq <32 x i8> ${w}, ${r}")
+      let m = g.def("bitcast <32 x i1> ${e} to i32")
+      g.set(v, "zext i32 ${m} to i64")
+    }
     "rt.mem_ne32" => {
       let pa = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
       let pb = g.def("inttoptr i64 ${g.op(x.args[1])} to ptr")
