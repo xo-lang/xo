@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Go backend (perf): std/rt's JsonDec[T], the decoder from a parse tree, keeps only its commonest cases generic and decodes every other kind in one non-generic function, so Go no longer compiles its whole type switch once per decoded type: azure armnetwork's package compiles in 8.1 GB and 61 s instead of 9.1 GB and 68 s (GOGC=25), with the same decode speed (std/changes/json.md).
 - std/crypto (perf): SHA-256 and SHA-224 hash a run of whole blocks in one loop on arm64 with the state in vector registers (cpu.sha256_blocks; native and LLVM): bench/perf/simdscan sha256 0.884 of main on linux/arm64, 0.79 on linux/amd64.
 - std/html (perf): escape_string counts the specials of 32 bytes at a time (five lane compares) to size its result: bench/perf/html escape 0.871 of main on linux/arm64.
 - xo build (fix): a windows/amd64 cross build of a program with a `use c` source (its own, or a std module's such as std/sqlite's) from a host with no XO_WINSYSROOT stops with a message naming the sysroot and decision 0534 stage 2 (the prebuilt SQLite, not shipped yet), instead of clang's "'stdlib.h' file not found"; `xo dev goldens --build-only` counts it unsupported (gotchas/std-use-c-cross-sample-miss.md).

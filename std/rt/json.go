@@ -266,7 +266,41 @@ func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 		}
 		x = dd.last
 	}
+	// the commonest kinds here, which Go resolves per type; every other
+	// kind in jsonDecAny, compiled once rather than once per decoded type
+	// (each struct is a type shape of its own: armnetwork's Go backend
+	// build compiled 3,521 copies of the whole switch, 9.7 MB)
 	switch d := any(dst).(type) {
+	case jsonDecoder:
+		return d.XoJsonDec(tk, x, path)
+	case *string:
+		s, ok := x.(string)
+		if !ok {
+			return JsonErr(path, "expected string")
+		}
+		*d = s
+		return nil
+	case *int64:
+		n, err := jsonInt(x, path, 64, true)
+		if err != nil {
+			return err
+		}
+		*d = n
+		return nil
+	case *bool:
+		b, ok := x.(bool)
+		if !ok {
+			return JsonErr(path, "expected boolean")
+		}
+		*d = b
+		return nil
+	}
+	return jsonDecAny(tk, dst, x, path)
+}
+
+// jsonDecAny is JsonDec's body for the other kinds, not generic.
+func jsonDecAny(tk *Task, dst any, x any, path string) *Json_DecodeErr {
+	switch d := dst.(type) {
 	case *int64:
 		n, err := jsonInt(x, path, 64, true)
 		if err != nil {

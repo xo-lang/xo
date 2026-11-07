@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-07: perf: the Go backend compiles the parse tree decoder once, not once per type
+
+- Kind: perf
+- Commit: this push
+- Found by: the armnetwork Go backend compile memory item (lead, 2026-11-07): a symbol census of the package's archive showed 3,521 copies of rt.JsonDec[T], 9.7 MB of its machine code (notes: ~/xo-lead/notes/xo-lang-2/gomem/notes.md)
+- Go reference: none (Go's encoding/json decodes through reflection, one copy)
+- Test: the JSON and derive goldens on the Go backend (TestGoldenGoParity json*, derive*, sql_json*, native_json); azure armnetwork's 9 tests on the Go backend
+- Timing: decode speed on the Go backend, linux/amd64 offload host, 16 alternating runs of a 200 record decode loop: decode_str median 117.5 ms against 117.5 ms; from_value (the parse tree path, rt.JsonDec per field) 200.0 ms against 199.5 ms. Compile memory of azure armnetwork's package under `xo test --backend=go` (amd64 offload host, go 1.26.0, xo's go build flags, GOGC=25, two rounds each): 9.10 and 9.10 GB, 67.5 and 68.0 s before; 8.19 and 8.06 GB, 61.0 and 61.8 s after (-11%, -9%); its 9 tests pass
+- Shipped in: not yet released
+
+std/rt's JsonDec[T] (the Go backend's decoder from a parse tree, which `json.from_value` and a derived XoJsonDec call per field) was one type switch over every decodable kind, and Go compiled the whole switch once per type it decodes (each struct type is a shape of its own). It now keeps only the commonest cases (a type with XoJsonDec, Str, Int and Bool) in the generic function and decodes every other kind in one non-generic function. Only the Go backend's build changes; decoding gives the same values and errors.
+
 ## 2026-11-06: perf: string scanning skips 32 bytes at a time
 
 - Kind: perf
