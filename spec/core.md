@@ -920,6 +920,12 @@ pub interface Store {
   interface with its signature (`display` of `Display` or `Error`, `debug`
   of `Debug`), which is callable by name wherever the type is (decision
   0496); other interfaces' methods need `pub`.
+- A method whose parameter type leaves its effect arguments out (`next:
+  Next`, an implicit effect variable, section 6.2) satisfies an interface
+  method whose parameter type writes them (`next: Next[fx]`): the variable
+  takes the interface's argument, as a call instantiates it from its
+  argument, and the method's effects are checked against the interface's
+  `uses` with it (decision 0540).
 - Every derivable name (`Display`, `Ord`, `Json`, ...) is also an interface and
   may be used as a constraint: `fn reply[T: Json](v: T)`.
 
@@ -2596,7 +2602,8 @@ pub fn sync(src: Fs, out: Stdio) -> () ! SyncErr uses fs.read, stdio { ... }
   - In a local binding they are inferred from the value.
   - In parameter and receiver types they become implicit effect variables of
     the function. These count as declared: the function may perform them
-    without naming them in `uses`.
+    without naming them in `uses`. When a method is checked against an
+    interface, they take the interface method's arguments (section 2.4).
     Such a variable is abstract, so a closure capturing the value cannot
     have a function type that fixes its effects (`fn(...) uses net.dial`):
     XO0701 then names the parameter, and `xo fix` writes the argument as

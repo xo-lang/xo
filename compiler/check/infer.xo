@@ -457,6 +457,14 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
     }
     let mps = c.objs[m].params
     let ips = c.objs[im].params
+    // an effect argument the method's parameter type leaves out takes the
+    // interface's argument (`next: Next` as `next: Next[fx]`, decision
+    // 0540), as a call instantiates it from the argument
+    if mps.len() == ips.len() {
+      for (i, p) in mps.indexed() {
+        c.bind_param_effs(p.ty, c.subst(ips[i].ty, is), m, ms2)
+      }
+    }
     // the substitutions first: identical's receiver is read before its
     // arguments (core 5.2, decision 0142), so a type subst creates (the
     // own type parameters of a generic method) would be past the end of
@@ -504,6 +512,57 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
     }
   }
   true
+}
+
+/// Binds in s each implicit effect variable of method m that an effect
+/// argument of its parameter type mt leaves out (core 6.2) to the effect
+/// argument at the same place in it, the interface method's parameter
+/// type (decision 0540). A variable already bound (the receiver's) keeps
+/// its binding.
+fn (var c: Checker) bind_param_effs(mt0: Int, it0: Int, m: Int, var s: Subst) {
+  let mt = c.resolve(mt0)
+  let it = c.resolve(it0)
+  if mt < 0 || it < 0 {
+    return
+  }
+  let x = c.tys[mt]
+  let y = c.tys[it]
+  match x.kind {
+    EffArg => {
+      if y.kind != TyKind.EffArg || x.eff < 0 || c.esets[x.eff].len() != 1 {
+        return
+      }
+      let q = c.esets[x.eff][0].param
+      if q >= 0 && !s.contains(q) && c.objs[q].implicit && c.objs[q].effect && c.objs[m].tparams.contains(q) {
+        s[q] = it
+      }
+    }
+    Param => {
+      let q = x.obj
+      if y.kind == TyKind.EffArg && !s.contains(q) && c.objs[q].implicit && c.objs[q].effect && c.objs[m].tparams.contains(q) {
+        s[q] = it
+      }
+    }
+    Named | Tuple => {
+      if y.kind != x.kind || y.obj != x.obj || y.args.len() != x.args.len() {
+        return
+      }
+      for (i, a) in x.args.indexed() {
+        c.bind_param_effs(a, y.args[i], m, s)
+      }
+    }
+    Func => {
+      if y.kind != TyKind.Func || y.args.len() != x.args.len() {
+        return
+      }
+      for (i, a) in x.args.indexed() {
+        c.bind_param_effs(a, y.args[i], m, s)
+      }
+      c.bind_param_effs(x.result, y.result, m, s)
+      c.bind_param_effs(x.err, y.err, m, s)
+    }
+    Var | Bad => {}
+  }
 }
 
 /// Method name on t (any visibility) and the substitution of its

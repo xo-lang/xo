@@ -1,0 +1,63 @@
+// A method whose parameter leaves an effect argument out (`next: Next`)
+// satisfies an interface method whose parameter fixes it (`Next[fx]`):
+// the variable takes the interface's argument (decision 0540; azcore's
+// Policy/Next shape from Xo Azure 1, azure decision 0009).
+
+interface Policy[fx: Effects] {
+  fn send(self, req: Str, next: Next[fx]) -> Str ! Str uses (clock, fx)
+}
+
+struct Next[fx: Effects] {
+  policies: List[Policy[fx]]
+  at: Int = 0
+}
+
+fn (n: Next) send(req: Str) -> Str ! Str uses (clock) {
+  if n.at < n.policies.len() {
+    return n.policies[n.at].send(req, n with {at: n.at + 1})
+  }
+  Ok(req)
+}
+
+struct Tag {
+  name: Str
+}
+
+fn (t: Tag) send(req: Str, next: Next) -> Str ! Str uses (clock) {
+  next.send("${req} ${t.name}")
+}
+
+struct Stop {}
+
+fn (s: Stop) send(req: Str, next: Next) -> Str ! Str uses (clock) {
+  Err("stopped at ${req}")
+}
+
+struct KeyFile {
+  fs: Fs
+  path: Str
+}
+
+fn (k: KeyFile) send(req: Str, next: Next[fs.read]) -> Str ! Str uses (clock, fs.read) {
+  let key = (k.fs.read(k.path) ?? e => return Err(e.display())).to_str_lossy()
+  next.send("${req} key=${key}")
+}
+
+fn pipeline[fx: Effects](extra: Policy[fx]) -> Next[fx] {
+  let ps: List[Policy[fx]] = [Tag{name: "a"}, extra, Tag{name: "z"}]
+  Next[fx]{policies: ps}
+}
+
+fn main(os: Os) {
+  let d = "iface_param_effects_tmp"
+  os.fs.remove_all(d).ok()
+  os.fs.create_dir_all(d).or_fault("mkdir")
+  os.fs.write("${d}/x.key", b"k1").or_fault("write")
+  os.stdio.println(pipeline(Tag{name: "b"}).send("/a") ?? e => "err ${e}")
+  os.stdio.println(pipeline(Stop{}).send("/b") ?? e => "err ${e}")
+  let k: Policy[fs.read] = KeyFile{fs: os.fs, path: "${d}/x.key"}
+  os.stdio.println(pipeline(k).send("/c") ?? e => "err ${e}")
+  let gone: Policy[fs.read] = KeyFile{fs: os.fs, path: "${d}/nosuch"}
+  os.stdio.println(pipeline(gone).send("/d") ?? e => "err ${e.len() > 0}")
+  os.fs.remove_all(d).ok()
+}

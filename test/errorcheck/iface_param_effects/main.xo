@@ -1,0 +1,51 @@
+// A method parameter's omitted effect argument takes the interface's
+// argument (decision 0540): Tag satisfies Policy[fx] because next's
+// effects are the interface's fx. A body that performs more than the
+// interface allows is still XO0701.
+interface Policy[fx: Effects] {
+  fn send(self, req: Str, next: Next[fx]) -> Str uses (clock, fx)
+}
+
+struct Next[fx: Effects] {
+  policies: List[Policy[fx]]
+  at: Int = 0
+}
+
+fn (n: Next) send(req: Str) -> Str uses (clock) {
+  if n.at < n.policies.len() {
+    return n.policies[n.at].send(req, n with {at: n.at + 1})
+  }
+  req
+}
+
+struct Tag {
+  name: Str
+}
+
+fn (t: Tag) send(req: Str, next: Next) -> Str uses (clock) {
+  next.send("${req} ${t.name}")
+}
+
+struct Reader {
+  fs: Fs
+}
+
+fn (r: Reader) send(req: Str, next: Next) -> Str uses (clock, fs.read) {
+  let b = r.fs.read("x.key") ?? _ => b""
+  next.send("${req} ${b.len()}")
+}
+
+fn pipeline[fx: Effects](extra: Policy[fx]) -> Next[fx] {
+  let ps: List[Policy[fx]] = [Tag{name: "a"}, extra]
+  Next[fx]{policies: ps}
+}
+
+fn reader_pipeline[fx: Effects](fs: Fs, extra: Policy[fx]) -> Next[fx] {
+  let ps: List[Policy[fx]] = [Reader{fs: fs}, extra] // ERROR XO0701 "performs `fs.read`"
+  Next[fx]{policies: ps}
+}
+
+fn main(os: Os) {
+  os.stdio.println(pipeline(Tag{name: "b"}).send("r"))
+  os.stdio.println(reader_pipeline(os.fs, Tag{name: "b"}).send("r"))
+}

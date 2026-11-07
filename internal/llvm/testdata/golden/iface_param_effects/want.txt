@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+/a a b z
+err stopped at /b a
+/c a key=k1 z
+err true
+--- stderr

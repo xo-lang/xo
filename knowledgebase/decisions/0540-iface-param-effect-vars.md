@@ -1,7 +1,10 @@
 # 0540: A parameter's implicit effect variable takes the interface's argument
 
-Status: Proposed (Xo Lang 1, 2026-11-06; for azure decision 0009, from
-Xo Azure 1's azcore Policy/Next shape)
+Status: Accepted (owner, 2026-11-06, through the lead). Proposed by Xo
+Lang 1 the same day for azure decision 0009, from Xo Azure 1's azcore
+Policy/Next shape; built 2026-11-06: compiler/check/infer.xo
+bind_param_effs; golden iface_param_effects,
+test/errorcheck/iface_param_effects.
 
 ## Context
 
@@ -40,7 +43,7 @@ Tag[fx: Effects]` with `fn (t: Tag[fx]) send(req: Str, next: Next[fx]) ...
 uses (..., fx)`. azcore has 24 hand-written policy types (azure 0009), and
 each would carry an `fx` it never stores.
 
-## Decision (proposed)
+## Decision
 
 When method `m` of a type is matched against interface method `im`, each
 implicit effect variable of `m` that comes from an effect argument left
