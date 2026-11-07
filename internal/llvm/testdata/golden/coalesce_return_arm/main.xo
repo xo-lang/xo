@@ -1,0 +1,38 @@
+// `return` of a match whose arms mix T and Err(e): the coalesce arm form
+// `x ?? e => Err(...)` in return position (Go backend lost the Ok wrap).
+fn get(fail: Bool) -> Int ! Str {
+  if fail {
+    return Err("x")
+  }
+  Ok(1)
+}
+
+fn f(o: Int?, fail: Bool) -> Int ! Str {
+  let v = o ?? return get(fail) ?? e => Err("wrapped " + e)
+  Ok(v + 10)
+}
+
+fn g(n: Int) -> Int ! Str {
+  if n < 0 {
+    return match n {
+      -1 => 100
+      _ => Err("neg ${n}")
+    }
+  }
+  return if n == 0 { Err("zero") } else { n * 2 }
+}
+
+fn main(os: Os) {
+  for (o, fail) in [(Some(1), false), (None, false), (None, true)] {
+    match f(o, fail) {
+      Ok(v) => os.stdio.println("ok ${v}")
+      Err(e) => os.stdio.println("err ${e}")
+    }
+  }
+  for n in [-2, -1, 0, 3] {
+    match g(n) {
+      Ok(v) => os.stdio.println("g ok ${v}")
+      Err(e) => os.stdio.println("g err ${e}")
+    }
+  }
+}

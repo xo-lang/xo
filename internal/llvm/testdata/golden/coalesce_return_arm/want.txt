@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+ok 11
+ok 1
+err wrapped x
+g err neg -2
+g ok 100
+g err zero
+g ok 6
+--- stderr

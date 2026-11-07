@@ -1249,7 +1249,9 @@ fn (var g: Gen) stmt(s: Stmt) {
         }
         Some(v) => {
           g.f.unit = Node.E(v)
-          g.ret(v)
+          // as a tail: each arm of an if or match returns on its own, so
+          // arms may mix T and Err(e) (core: return position)
+          g.into(v, Dest{kind: D_RETURN})
         }
       }
     }
