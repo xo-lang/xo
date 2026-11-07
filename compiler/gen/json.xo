@@ -60,7 +60,9 @@ fn (var g: Gen) gen_json_struct(t: Int) {
     g.pl("}\n")
   }
   g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
-  g.pl("\tobj, err := ${rt}JsonObject(x, path)")
+  // an empty struct reads no field, and Go rejects an unused obj
+  let obj = if fields.is_empty() { "_" } else { "obj" }
+  g.pl("\t${obj}, err := ${rt}JsonObject(x, path)")
   g.pl("\tif err != nil {\n\t\treturn err\n\t}")
   for (i, f) in fields.indexed() {
     let n = check.text(f.name)

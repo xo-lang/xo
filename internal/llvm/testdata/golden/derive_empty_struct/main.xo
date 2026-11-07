@@ -1,0 +1,29 @@
+// Every derive on a struct with no fields (Go backend: XoJsonDec once
+// declared an unused obj, 2026-11-07).
+use std/json
+use std/protobuf
+
+struct E {} derive Json, Eq, Hash, Ord, Debug, Display
+struct P {} derive Proto
+struct G[T] {} derive Json, Eq, Hash, Debug
+struct W { e: E, n: Int } derive Json, Eq, Hash, Debug
+
+fn main(os: Os) {
+  os.stdio.println("decode ${json.decode_str[E]("{}").is_ok()}")
+  os.stdio.println("decode extra ${json.decode_str[E]("{\"x\": 1}").is_ok()}")
+  os.stdio.println("decode list ${json.decode_str[E]("[]").is_ok()}")
+  os.stdio.println("encode ${json.encode(E{}).len()}")
+  os.stdio.println("generic ${json.decode_str[G[Int]]("{}").is_ok()}")
+  match json.decode_str[W]("{\"e\": {}, \"n\": 3}") {
+    Ok(w) => os.stdio.println("nested ${w.n} ${w == W{e: E{}, n: 3}}")
+    Err(e) => os.stdio.println("nested error ${e}")
+  }
+  let b = protobuf.marshal(P{})
+  os.stdio.println("proto ${b.len()} ${protobuf.unmarshal[P](b).is_ok()}")
+  os.stdio.println("eq ${E{} == E{}} lt ${E{} < E{}} le ${E{} <= E{}}")
+  var s: Set[E] = #{}
+  s.add(E{})
+  s.add(E{})
+  os.stdio.println("set ${s.len()}")
+  os.stdio.println("debug ${E{}:?} ${W{e: E{}, n: 1}:?}")
+}

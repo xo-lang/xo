@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+decode true
+decode extra true
+decode list false
+encode 2
+generic true
+nested 3 true
+proto 0 true
+eq true lt false le true
+set 1
+debug E{} W{e: E{}, n: 1}
+--- stderr
