@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+[]: color=true verbose=false set=false
+["--color=false"]: color=false verbose=false set=true
+["-c", "-v"]: color=true verbose=true set=true
+["--color=0", "--verbose=1"]: color=false verbose=true set=true
+An app.
+
+Usage: app [flags]
+
+Flags:
+  -c, --color    color the output [default: true]
+  -v, --verbose  print more
+  -h, --help     show this help
+--- stderr

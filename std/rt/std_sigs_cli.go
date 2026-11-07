@@ -9,7 +9,7 @@ var (
 	_ func(*Cli_CliErr, *Task) string                                                                   = (*Cli_CliErr).M_display
 	_ func(*Cli_CliErr, *Task) int64                                                                    = (*Cli_CliErr).M_exit_code
 	_ func(*Task, string, string, List[Cli_Flag], List[Cli_Arg], List[Cli_Command], string) Cli_Command = Cli_command
-	_ func(*Task, string, string, string, string) Cli_Flag                                              = Cli_bool_flag
+	_ func(*Task, string, string, string, string, bool) Cli_Flag                                        = Cli_bool_flag
 	_ func(*Task, string, string, string, string, string, bool, string) Cli_Flag                        = Cli_str_flag
 	_ func(*Task, string, string, string, int64, string, bool) Cli_Flag                                 = Cli_int_flag
 	_ func(*Task, string, string, string, Duration, string, bool) Cli_Flag                              = Cli_duration_flag

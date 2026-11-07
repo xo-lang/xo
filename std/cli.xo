@@ -43,8 +43,9 @@ fn (e: CliErr) exit_code() -> Int
 /// positional arguments of its own.
 fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], commands: List[Command] = [], version: Str = "") -> Command
 
-/// A flag that is true when given (`--verbose`, `-v`, `--verbose=false`).
-fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "") -> Flag
+/// A flag that is true when given (`--verbose`, `-v`, `--verbose=false`),
+/// else `default`.
+fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "", default: Bool = false) -> Flag
 /// A text flag. `value` names the value in the help (`--out <path>`).
 fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str = "", required: Bool = false, value: Str = "str") -> Flag
 /// An integer flag.

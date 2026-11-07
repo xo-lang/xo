@@ -1,5 +1,18 @@
 # std/cli changes
 
+## 2026-11-07: feature: bool_flag default
+
+- Kind: feature
+- Commit: this commit
+- Found by: the goversioninfo port (its `-64` and `-arm` default to true on 64-bit and arm hosts; the port read `Parsed.is_set` to fake it)
+- Go reference: flag.Bool's default value (go1.26.1)
+- Test: internal/llvm/testdata/golden/cli_bool_default (and internal/arm64's): a flag defaulting to true not given, turned off with `=false` and `=0`, given as a short flag, and the help's `[default: true]`, the same text on the Go backend, arm64 and LLVM
+
+`cli.bool_flag(..., default: Bool = false)`: `Parsed.bool` returns the
+default when neither the flag nor its variable is given; the help shows
+`[default: true]` for a flag that defaults to true (a false default, the
+old behavior, shows nothing). No timing row: a flag is parsed once a run.
+
 ## 2026-10-29: feature: float_flag
 
 - Kind: feature

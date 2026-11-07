@@ -30,6 +30,7 @@ type cliFlag struct {
 	kind                   int
 	defStr                 string
 	defInt                 int64
+	defBool                bool
 	defDur                 Duration
 	defFloat               float64
 	required               bool
@@ -137,8 +138,8 @@ func Cli_command(_ *Task, name, help string, flags List[Cli_Flag], args List[Cli
 }
 
 // Cli_bool_flag is `cli.bool_flag(...)`.
-func Cli_bool_flag(_ *Task, name, help, short, env string) Cli_Flag {
-	return Cli_Flag{&cliFlag{name: name, short: short, help: help, env: env, kind: cliBool}}
+func Cli_bool_flag(_ *Task, name, help, short, env string, def bool) Cli_Flag {
+	return Cli_Flag{&cliFlag{name: name, short: short, help: help, env: env, kind: cliBool, defBool: def}}
 }
 
 // Cli_str_flag is `cli.str_flag(...)`.
@@ -362,6 +363,10 @@ func cliFlagHelp(f *cliFlag) string {
 		}
 	}
 	switch f.kind {
+	case cliBool:
+		if f.defBool {
+			add("[default: true]")
+		}
 	case cliStr, cliChoice:
 		if f.defStr != "" {
 			add("[default: " + f.defStr + "]")
@@ -875,8 +880,11 @@ func cliFindArg(c *cliCmd, name string) *cliArg {
 func (p Cli_Parsed) M_command(*Task) string { return p.p.command() }
 
 func (p Cli_Parsed) M_bool(_ *Task, name string) bool {
-	_, v := p.p.flag(name, cliBool)
-	return v.b
+	f, v := p.p.flag(name, cliBool)
+	if v.set {
+		return v.b
+	}
+	return f.defBool
 }
 
 func (p Cli_Parsed) M_str(_ *Task, name string) string {

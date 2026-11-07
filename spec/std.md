@@ -3971,7 +3971,7 @@ struct Arg {}
 pub fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [],
                commands: List[Command] = [], version: Str = "") -> Command
 
-pub fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "") -> Flag
+pub fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "", default: Bool = false) -> Flag
 pub fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str = "",
                 required: Bool = false, value: Str = "str") -> Flag
 pub fn int_flag(name: Str, help: Str, short: Str = "", default: Int = 0, env: Str = "",
@@ -4016,6 +4016,11 @@ fn app() -> cli.Command {
   of a command above it; sibling subcommands may share names).
 - Positional arguments: required ones first, then optional ones, then at
   most one `rest`, last.
+- A `bool_flag` is true when given (`--name`, `-s`) and takes `=false`
+  or `=0` to turn it off; when it is not given (nor its `env` variable)
+  `Parsed.bool` is its `default`, and the help shows `[default: true]`
+  for a flag that defaults to true (2026-11-07, for Go flags such as
+  goversioninfo's `-64` whose default depends on the host).
 - `env` names a variable read when the flag is not on the command line
   (an empty value counts as unset; a `strs_flag` variable is split on
   `,`). Variables are read through the `Env` given to `parse`, so an

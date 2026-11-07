@@ -1,0 +1,22 @@
+// bool_flag's default: the value when the flag is not given, shown in the
+// help when true.
+use std/cli
+
+fn show(os: Os, app: cli.Command, argv: List[Str]) {
+  match cli.parse(app, argv, os.env) {
+    Ok(p) => os.stdio.println("${argv}: color=${p.bool("color")} verbose=${p.bool("verbose")} set=${p.is_set("color")}")
+    Err(e) => os.stdio.println("${argv}: error ${e}")
+  }
+}
+
+fn main(os: Os) {
+  let app = cli.command("app", "An app.", flags: [
+    cli.bool_flag("color", "color the output", short: "c", default: true),
+    cli.bool_flag("verbose", "print more", short: "v"),
+  ])
+  show(os, app, [])
+  show(os, app, ["--color=false"])
+  show(os, app, ["-c", "-v"])
+  show(os, app, ["--color=0", "--verbose=1"])
+  os.stdio.println(cli.help(app))
+}

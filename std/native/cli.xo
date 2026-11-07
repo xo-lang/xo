@@ -27,6 +27,7 @@ struct Flag {
   def_int: Int
   def_dur: Duration
   def_float: Float
+  def_bool: Bool
   required: Bool
   value: Str
   choices: List[Str]
@@ -97,11 +98,11 @@ fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], c
 }
 
 fn new_flag(name: Str, help: Str, short: Str, env: Str, kind: Int) -> Flag {
-  Flag{name: name, short: short, help: help, env: env, kind: kind, def_str: "", def_int: 0, def_dur: 0s, def_float: 0.0, required: false, value: "", choices: []}
+  Flag{name: name, short: short, help: help, env: env, kind: kind, def_str: "", def_int: 0, def_dur: 0s, def_float: 0.0, def_bool: false, required: false, value: "", choices: []}
 }
 
-fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "") -> Flag {
-  new_flag(name, help, short, env, BOOL)
+fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "", default: Bool = false) -> Flag {
+  new_flag(name, help, short, env, BOOL) with {def_bool: default}
 }
 
 fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str = "", required: Bool = false, value: Str = "str") -> Flag {
@@ -304,6 +305,9 @@ fn flag_help(f: Flag) -> Str {
   var s = f.help
   if (f.kind == STR || f.kind == CHOICE) && f.def_str != "" {
     s = add_note(s, "[default: ${f.def_str}]")
+  }
+  if f.kind == BOOL && f.def_bool {
+    s = add_note(s, "[default: true]")
   }
   if f.kind == INT && f.def_int != 0 {
     s = add_note(s, "[default: ${f.def_int}]")
@@ -794,8 +798,11 @@ fn (p: Parsed) arg_of(name: Str, at: rt.Loc) -> (Arg, List[Str]?) {
 }
 
 fn (p: Parsed) bool(name: Str, at: rt.Loc) -> Bool {
-  let (_, v) = p.flag(name, [BOOL], at)
-  v.b
+  let (f, v) = p.flag(name, [BOOL], at)
+  if v.set {
+    return v.b
+  }
+  f.def_bool
 }
 
 fn (p: Parsed) str(name: Str, at: rt.Loc) -> Str {
