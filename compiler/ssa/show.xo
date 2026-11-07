@@ -36,7 +36,7 @@ fn (var b: Builder) method_of(ct: Int, name: Str) -> Int {
 
 /// Calls method m of the named type ct on v (callMethod).
 fn (var b: Builder) call_method(m: Int, ct: Int, v: Int) -> Int {
-  let targs = b.ty_args(ct)
+  let targs = b.recv_targs(m, ct)
   if b.type_params(m).len() != targs.len() {
     b.unsupported("the method `${b.c.display_name(m)}` of `${b.c.show(ct)}`")
     return b.undef(b.typ(b.c.objs[m].result))

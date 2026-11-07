@@ -1202,6 +1202,25 @@ fn (var b: Builder) type_params(fo: Int) -> List[Int] {
   out
 }
 
+/// The type arguments of method m called on a value of the named type ct,
+/// one per type_params(m): ct's arguments matched against m's receiver
+/// type, so an effect parameter of the receiver (Bearer[fx]) takes no
+/// argument; ty_args(ct) when m has a type parameter the match leaves
+/// unbound.
+fn (var b: Builder) recv_targs(m: Int, ct: Int) -> List[Int] {
+  var bound: Map[Int, Int] = {}
+  b.match_tparams(b.c.objs[m].recv_ty, ct, bound)
+  var out: List[Int] = []
+  for p in b.type_params(m) {
+    let t = bound.get(p) ?? -1
+    if t < 0 {
+      return b.ty_args(ct)
+    }
+    out.push(t)
+  }
+  out
+}
+
 // ---------------------------------------------------------------------------
 // Types (build.go typ)
 

@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+/a auth=t1 auth=t1
+/b auth=k1 auth=k1
+err true
+/d auth=t2 auth=t2
+err no credential for s
+--- stderr

@@ -377,7 +377,7 @@ fn (var b: Builder) method_on(name: Str, ct0: Int, recv: Int, args: List[Int], w
   }
   let m = b.method_of(ct, name)
   if m >= 0 {
-    let targs = b.ty_args(ct)
+    let targs = b.recv_targs(m, ct)
     let tps = b.type_params(m)
     if tps.len() != targs.len() || b.c.objs[m].recv_var {
       b.unsupported("the method `${b.c.display_name(m)}` of `${b.c.show(ct)}` through an interface")

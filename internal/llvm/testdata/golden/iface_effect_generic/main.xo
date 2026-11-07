@@ -1,0 +1,96 @@
+// A method of a struct with an effect parameter (Bearer[fx], Chain[fx])
+// called through an interface (Policy[fx], Cred[fx]): the receiver's
+// effect argument takes no type argument of the method's instance (azure
+// decision 0009's TokenCredential[fx], from aws-19's fxproto2).
+
+interface Cred[fx: Effects] {
+  fn get_token(self, scope: Str) -> Str ! Str uses (clock, fx)
+}
+
+interface Policy[fx: Effects] {
+  fn apply(self, req: Str) -> Str ! Str uses (clock, fx)
+}
+
+struct Bearer[fx: Effects] {
+  cred: Cred[fx]
+}
+
+fn (b: Bearer) apply(req: Str) -> Str ! Str uses (clock) {
+  Ok("${req} auth=${b.cred.get_token("s")?}")
+}
+
+struct Chain[fx: Effects] {
+  creds: List[Cred[fx]]
+}
+
+fn (c: Chain) get_token(scope: Str) -> Str ! Str uses (clock) {
+  for x in c.creds {
+    if let Ok(t) = x.get_token(scope) {
+      return Ok(t)
+    }
+  }
+  Err("no credential for ${scope}")
+}
+
+struct Pipeline[fx: Effects] {
+  policies: List[Policy[fx]]
+}
+
+fn (p: Pipeline) send(req: Str) -> Str ! Str uses (clock) {
+  var r = req
+  for x in p.policies {
+    r = x.apply(r)?
+  }
+  Ok(r)
+}
+
+struct Client {
+  pipeline: Pipeline
+}
+
+fn new_client[fx: Effects](cred: Cred[fx]) -> Client[fx] {
+  let b: Policy[fx] = Bearer[fx]{cred: cred}
+  Client{pipeline: Pipeline[fx]{policies: [b, b]}}
+}
+
+fn (c: Client) get(path: Str) -> Str ! Str uses (clock) {
+  c.pipeline.send(path)
+}
+
+struct Pure {
+  tok: Str
+}
+
+fn (s: Pure) get_token(scope: Str) -> Str ! Str uses (clock) {
+  if s.tok.is_empty() {
+    return Err("empty")
+  }
+  Ok(s.tok)
+}
+
+struct Arc {
+  fs: Fs
+  path: Str
+}
+
+fn (a: Arc) get_token(scope: Str) -> Str ! Str uses (clock, fs.read) {
+  Ok((a.fs.read(a.path) ?? e => return Err(e.display())).to_str_lossy())
+}
+
+fn main(os: Os) {
+  let d = "iface_effect_generic_tmp"
+  os.fs.remove_all(d).ok()
+  os.fs.create_dir_all(d).or_fault("mkdir")
+  os.fs.write("${d}/x.key", b"k1").or_fault("write")
+  os.stdio.println(new_client(Pure{tok: "t1"}).get("/a") ?? e => "err ${e}")
+  let a: Cred[fs.read] = Arc{fs: os.fs, path: "${d}/x.key"}
+  os.stdio.println(new_client(a).get("/b") ?? e => "err ${e}")
+  let gone: Cred[fs.read] = Arc{fs: os.fs, path: "${d}/nosuch"}
+  os.stdio.println(new_client(gone).get("/c") ?? e => "err ${e.len() > 0}")
+  let p: Cred[fs.read] = Pure{tok: "t2"}
+  let ch: Cred[fs.read] = Chain[fs.read]{creds: [gone, p, a]}
+  os.stdio.println(new_client(ch).get("/d") ?? e => "err ${e}")
+  let none: Cred[()] = Chain[()]{creds: [Pure{tok: ""}]}
+  os.stdio.println(new_client(none).get("/e") ?? e => "err ${e}")
+  os.fs.remove_all(d).ok()
+}
