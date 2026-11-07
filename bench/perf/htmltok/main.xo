@@ -1,0 +1,52 @@
+// htmltok: std/htmltok against golang.org/x/net/html's Tokenizer (twin.go.txt): a 12 KB page of
+// paragraphs, links with attributes, entities, comments, a script and a style, tokenized 2,000
+// times by `next` alone and by `next` plus `token`; `none` is the setup alone. Usage: `<program>
+// none|next|token`. Prints `<workload> <checksum>`; the twin prints the same.
+use std/htmltok
+
+fn page() -> Str {
+  var b = StrBuilder.new()
+  b.write("<!DOCTYPE html><html><head><title>Bench &amp; page</title><style>p{color:red}</style></head><body>")
+  for i in 0..60 {
+    b.write("<!-- item ${i} --><div class=\"post\" id=p${i}><h2>Post ${i}</h2><p>Tom &amp; Jerry's <a href=\"/x?a=1&amp;b=2\" title='show ${i}'>show</a> &copy; text &lt;b&gt; more words here.</p><img src=a.png alt=\"\"><br/></div>\n")
+  }
+  b.write("<script>if (a < b && c > d) { document.write('<p>x</p>'); }</script></body></html>")
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let t = page()
+  var sum = 0
+  if w == "next" {
+    for i in 0..2000 {
+      var z = htmltok.tokenizer(t)
+      while true {
+        let tt = z.next()
+        if tt == htmltok.TokenType.Error {
+          break
+        }
+        sum += 1
+      }
+      sum += i % 3
+    }
+  } else if w == "token" {
+    for i in 0..2000 {
+      var z = htmltok.tokenizer(t)
+      while true {
+        let tt = z.next()
+        if tt == htmltok.TokenType.Error {
+          break
+        }
+        let k = z.token()
+        sum += 1 + k.data.len() + k.attrs.len()
+      }
+      sum += i % 3
+    }
+  } else {
+    for i in 0..2000 {
+      sum += t.len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

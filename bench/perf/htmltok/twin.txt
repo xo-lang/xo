@@ -1,0 +1,5 @@
+# twincheck: htmltok: three workloads (none is the setup alone); Go is golang.org/x/net/html's Tokenizer.
+require golang.org/x/net v0.62.0
+- - none
+- - next
+- - token
