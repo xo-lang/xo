@@ -796,7 +796,7 @@ func TestDebugTypes(t *testing.T) {
 	}
 	arm64Cmds := []string{"frame variable *xs", "frame variable m", "frame variable *it.name.obj", "frame variable sh"}
 	arm64Wants := []string{
-		"(List[Int].obj) *xs = (count = 1, len = 3, cap = 4",
+		"(List[Int].obj) *xs = (count = 1, len = 3, cap = 3",
 		"(Map[Str, Int]) m = {",
 		"keys = 0x",
 		// it.name, a literal: no retain keeps its word in a register
@@ -833,7 +833,7 @@ func TestDebugTypes(t *testing.T) {
 		// string's address (gotchas/llvm-aggregate-dbg-value.md). main's m
 		// was the zero map of `{}` until a later binding ended that location
 		{"llvm", []string{"--backend=llvm"}, []string{"frame variable *xs", "frame variable m", "frame variable it", "frame select 0", "frame variable name m"},
-			[]string{"(List[Int].obj) *xs = (count = 1, len = 3, cap = 4", "(Item) it = {", "len = 3", "tags = 0x", "(Str) name = {", "len = 5", "n = 2"},
+			[]string{"(List[Int].obj) *xs = (count = 1, len = 3, cap = 3", "(Item) it = {", "len = 3", "tags = 0x", "(Str) name = {", "len = 5", "n = 2"},
 			[]string{"(Map[Str, Int]) m = {\n  keys = NULL\n  vals = NULL\n  live = NULL\n  slots = NULL\n  n = 0"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
