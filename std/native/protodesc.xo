@@ -1,0 +1,480 @@
+// std/protodesc on the native backends (decision 0546): descriptor.proto's
+// FileDescriptorProto and its messages, read and written by hand.
+use std/protodesc
+use std/protobuf
+
+/// One field of a message as read off the wire: its number and wire type, the value of a varint
+/// field (`v`) or the bytes of a length delimited one (`data`), and the whole field (`raw`).
+struct Fld {
+  num: Int
+  wire: Int
+  v: Int
+  data: Bytes
+  raw: Bytes
+}
+
+fn walk(b: Bytes) -> List[Fld] ! protobuf.ProtoErr {
+  var out: List[Fld] = []
+  var at = 0
+  while at < b.len() {
+    let start = at
+    let (num, wire, next) = protobuf.read_tag(b, at)?
+    var v = 0
+    var data = b""
+    if wire == 0 {
+      let (x, n2) = protobuf.read_varint(b, next)?
+      v = x.to_bits()
+      at = n2
+    } else if wire == 2 {
+      let (d, n2) = protobuf.read_bytes(b, next)?
+      data = d
+      at = n2
+    } else {
+      at = protobuf.skip_field(b, next, num, wire)?
+    }
+    out.push(Fld{num: num, wire: wire, v: v, data: data, raw: b[start..at]})
+  }
+  Ok(out)
+}
+
+fn text(f: Fld) -> Str ! protobuf.ProtoErr {
+  match f.data.to_str() {
+    Some(s) => Ok(s)
+    None => Err(protobuf.ProtoErr.Utf8)
+  }
+}
+
+/// Whether f has the wire type its field number is declared with.
+fn is_s(f: Fld) -> Bool { f.wire == 2 }
+fn is_v(f: Fld) -> Bool { f.wire == 0 }
+
+fn cat(a: Bytes, b: Bytes) -> Bytes {
+  if a.is_empty() {
+    return b
+  }
+  var o = BytesBuilder.with_capacity(a.len() + b.len())
+  o.write(a)
+  o.write(b)
+  o.freeze()
+}
+
+// ---- writing -------------------------------------------------------------
+
+fn wv(var o: BytesBuilder, v: Int) {
+  var x = UInt64.wrapping_from(v).to_bits()
+  while x < 0 || x >= 128 {
+    o.write_byte(UInt8.wrapping_from((x & 127) | 128))
+    x = x.shr_logical(7)
+  }
+  o.write_byte(UInt8.wrapping_from(x))
+}
+
+fn wtag(var o: BytesBuilder, num: Int, wire: Int) { wv(o, (num << 3) | wire) }
+
+fn ws(var o: BytesBuilder, num: Int, s: Str) {
+  if !s.is_empty() {
+    wtag(o, num, 2)
+    wv(o, s.len())
+    o.write_str(s)
+  }
+}
+
+fn wsa(var o: BytesBuilder, num: Int, s: Str) {
+  wtag(o, num, 2)
+  wv(o, s.len())
+  o.write_str(s)
+}
+
+fn wi(var o: BytesBuilder, num: Int, v: Int) {
+  if v != 0 {
+    wtag(o, num, 0)
+    wv(o, v)
+  }
+}
+
+fn wia(var o: BytesBuilder, num: Int, v: Int) {
+  wtag(o, num, 0)
+  wv(o, v)
+}
+
+fn wb(var o: BytesBuilder, num: Int, v: Bool) {
+  if v {
+    wtag(o, num, 0)
+    wv(o, 1)
+  }
+}
+
+/// A message-valued field (always written, even when empty).
+fn wm(var o: BytesBuilder, num: Int, m: Bytes) {
+  wtag(o, num, 2)
+  wv(o, m.len())
+  o.write(m)
+}
+
+/// Opaque bytes: an options message is written when it has any bytes.
+fn wo(var o: BytesBuilder, num: Int, m: Bytes) {
+  if !m.is_empty() {
+    wm(o, num, m)
+  }
+}
+
+fn enc_range(r: protodesc.ReservedRange) -> Bytes {
+  var o = BytesBuilder.new()
+  wia(o, 1, r.start)
+  wia(o, 2, r.end)
+  o.freeze()
+}
+
+fn enc_ext_range(r: protodesc.ExtensionRange) -> Bytes {
+  var o = BytesBuilder.new()
+  wia(o, 1, r.start)
+  wia(o, 2, r.end)
+  wo(o, 3, r.options)
+  o.freeze()
+}
+
+fn enc_oneof(d: protodesc.OneofDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  ws(o, 1, d.name)
+  wo(o, 2, d.options)
+  o.freeze()
+}
+
+fn enc_field(f: protodesc.FieldDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  ws(o, 1, f.name)
+  ws(o, 2, f.extendee)
+  wi(o, 3, f.number)
+  wi(o, 4, f.label)
+  wi(o, 5, f.kind)
+  ws(o, 6, f.type_name)
+  ws(o, 7, f.default_value)
+  wo(o, 8, f.options)
+  match f.oneof_index {
+    Some(i) => wia(o, 9, i)
+    None => {}
+  }
+  ws(o, 10, f.json_name)
+  wb(o, 17, f.proto3_optional)
+  o.write(f.unknown)
+  o.freeze()
+}
+
+fn enc_value(v: protodesc.EnumValueDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  ws(o, 1, v.name)
+  wia(o, 2, v.number)
+  wo(o, 3, v.options)
+  o.freeze()
+}
+
+fn enc_enum(e: protodesc.EnumDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  ws(o, 1, e.name)
+  for v in e.value {
+    wm(o, 2, enc_value(v))
+  }
+  wo(o, 3, e.options)
+  for r in e.reserved_range {
+    wm(o, 4, enc_range(r))
+  }
+  for n in e.reserved_name {
+    wsa(o, 5, n)
+  }
+  o.freeze()
+}
+
+fn enc_message(m: protodesc.MessageDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  ws(o, 1, m.name)
+  for f in m.field {
+    wm(o, 2, enc_field(f))
+  }
+  for n in m.nested_type {
+    wm(o, 3, enc_message(n))
+  }
+  for e in m.enum_type {
+    wm(o, 4, enc_enum(e))
+  }
+  for r in m.extension_range {
+    wm(o, 5, enc_ext_range(r))
+  }
+  for f in m.extension {
+    wm(o, 6, enc_field(f))
+  }
+  wo(o, 7, m.options)
+  for d in m.oneof_decl {
+    wm(o, 8, enc_oneof(d))
+  }
+  for r in m.reserved_range {
+    wm(o, 9, enc_range(r))
+  }
+  for n in m.reserved_name {
+    wsa(o, 10, n)
+  }
+  o.freeze()
+}
+
+fn enc_method(m: protodesc.MethodDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  ws(o, 1, m.name)
+  ws(o, 2, m.input_type)
+  ws(o, 3, m.output_type)
+  wo(o, 4, m.options)
+  wb(o, 5, m.client_streaming)
+  wb(o, 6, m.server_streaming)
+  o.freeze()
+}
+
+fn enc_service(s: protodesc.ServiceDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  ws(o, 1, s.name)
+  for m in s.method {
+    wm(o, 2, enc_method(m))
+  }
+  wo(o, 3, s.options)
+  o.freeze()
+}
+
+fn encode(f: protodesc.FileDesc) -> Bytes {
+  var o = BytesBuilder.new()
+  ws(o, 1, f.name)
+  ws(o, 2, f.package)
+  for d in f.dependency {
+    wsa(o, 3, d)
+  }
+  for m in f.message_type {
+    wm(o, 4, enc_message(m))
+  }
+  for e in f.enum_type {
+    wm(o, 5, enc_enum(e))
+  }
+  for s in f.service {
+    wm(o, 6, enc_service(s))
+  }
+  for x in f.extension {
+    wm(o, 7, enc_field(x))
+  }
+  wo(o, 8, f.options)
+  wo(o, 9, f.source_code_info)
+  for i in f.public_dependency {
+    wia(o, 10, i)
+  }
+  for i in f.weak_dependency {
+    wia(o, 11, i)
+  }
+  ws(o, 12, f.syntax)
+  wi(o, 14, f.edition)
+  o.freeze()
+}
+
+// ---- reading -------------------------------------------------------------
+
+fn dec_range(b: Bytes) -> protodesc.ReservedRange ! protobuf.ProtoErr {
+  var r = protodesc.ReservedRange{start: 0, end: 0}
+  for f in walk(b)? {
+    if f.num == 1 && is_v(f) {
+      r.start = f.v
+    } else if f.num == 2 && is_v(f) {
+      r.end = f.v
+    }
+  }
+  Ok(r)
+}
+
+fn dec_ext_range(b: Bytes) -> protodesc.ExtensionRange ! protobuf.ProtoErr {
+  var r = protodesc.ExtensionRange{start: 0, end: 0, options: b""}
+  for f in walk(b)? {
+    if f.num == 1 && is_v(f) {
+      r.start = f.v
+    } else if f.num == 2 && is_v(f) {
+      r.end = f.v
+    } else if f.num == 3 && is_s(f) {
+      r.options = f.data
+    }
+  }
+  Ok(r)
+}
+
+fn dec_oneof(b: Bytes) -> protodesc.OneofDesc ! protobuf.ProtoErr {
+  var d = protodesc.OneofDesc{name: "", options: b""}
+  for f in walk(b)? {
+    if f.num == 1 && is_s(f) {
+      d.name = text(f)?
+    } else if f.num == 2 && is_s(f) {
+      d.options = f.data
+    }
+  }
+  Ok(d)
+}
+
+fn dec_field(b: Bytes) -> protodesc.FieldDesc ! protobuf.ProtoErr {
+  var d = protodesc.FieldDesc{name: "", extendee: "", number: 0, label: 0, kind: 0, type_name: "", default_value: "", options: b"", oneof_index: None, json_name: "", proto3_optional: false, unknown: b""}
+  for f in walk(b)? {
+    if f.num == 1 && is_s(f) {
+      d.name = text(f)?
+    } else if f.num == 2 && is_s(f) {
+      d.extendee = text(f)?
+    } else if f.num == 3 && is_v(f) {
+      d.number = f.v
+    } else if f.num == 4 && is_v(f) {
+      d.label = f.v
+    } else if f.num == 5 && is_v(f) {
+      d.kind = f.v
+    } else if f.num == 6 && is_s(f) {
+      d.type_name = text(f)?
+    } else if f.num == 7 && is_s(f) {
+      d.default_value = text(f)?
+    } else if f.num == 8 && is_s(f) {
+      d.options = f.data
+    } else if f.num == 9 && is_v(f) {
+      d.oneof_index = Some(f.v)
+    } else if f.num == 10 && is_s(f) {
+      d.json_name = text(f)?
+    } else if f.num == 17 && is_v(f) {
+      d.proto3_optional = f.v != 0
+    } else {
+      d.unknown = cat(d.unknown, f.raw)
+    }
+  }
+  Ok(d)
+}
+
+fn dec_value(b: Bytes) -> protodesc.EnumValueDesc ! protobuf.ProtoErr {
+  var d = protodesc.EnumValueDesc{name: "", number: 0, options: b""}
+  for f in walk(b)? {
+    if f.num == 1 && is_s(f) {
+      d.name = text(f)?
+    } else if f.num == 2 && is_v(f) {
+      d.number = f.v
+    } else if f.num == 3 && is_s(f) {
+      d.options = f.data
+    }
+  }
+  Ok(d)
+}
+
+fn dec_enum(b: Bytes) -> protodesc.EnumDesc ! protobuf.ProtoErr {
+  var d = protodesc.EnumDesc{name: "", value: [], options: b"", reserved_range: [], reserved_name: []}
+  for f in walk(b)? {
+    if f.num == 1 && is_s(f) {
+      d.name = text(f)?
+    } else if f.num == 2 && is_s(f) {
+      d.value.push(dec_value(f.data)?)
+    } else if f.num == 3 && is_s(f) {
+      d.options = f.data
+    } else if f.num == 4 && is_s(f) {
+      d.reserved_range.push(dec_range(f.data)?)
+    } else if f.num == 5 && is_s(f) {
+      d.reserved_name.push(text(f)?)
+    }
+  }
+  Ok(d)
+}
+
+fn dec_message(b: Bytes) -> protodesc.MessageDesc ! protobuf.ProtoErr {
+  var d = protodesc.MessageDesc{name: "", field: [], extension: [], nested_type: [], enum_type: [], extension_range: [], oneof_decl: [], options: b"", reserved_range: [], reserved_name: []}
+  for f in walk(b)? {
+    if f.num == 1 && is_s(f) {
+      d.name = text(f)?
+    } else if f.num == 2 && is_s(f) {
+      d.field.push(dec_field(f.data)?)
+    } else if f.num == 3 && is_s(f) {
+      d.nested_type.push(dec_message(f.data)?)
+    } else if f.num == 4 && is_s(f) {
+      d.enum_type.push(dec_enum(f.data)?)
+    } else if f.num == 5 && is_s(f) {
+      d.extension_range.push(dec_ext_range(f.data)?)
+    } else if f.num == 6 && is_s(f) {
+      d.extension.push(dec_field(f.data)?)
+    } else if f.num == 7 && is_s(f) {
+      d.options = f.data
+    } else if f.num == 8 && is_s(f) {
+      d.oneof_decl.push(dec_oneof(f.data)?)
+    } else if f.num == 9 && is_s(f) {
+      d.reserved_range.push(dec_range(f.data)?)
+    } else if f.num == 10 && is_s(f) {
+      d.reserved_name.push(text(f)?)
+    }
+  }
+  Ok(d)
+}
+
+fn dec_method(b: Bytes) -> protodesc.MethodDesc ! protobuf.ProtoErr {
+  var d = protodesc.MethodDesc{name: "", input_type: "", output_type: "", options: b"", client_streaming: false, server_streaming: false}
+  for f in walk(b)? {
+    if f.num == 1 && is_s(f) {
+      d.name = text(f)?
+    } else if f.num == 2 && is_s(f) {
+      d.input_type = text(f)?
+    } else if f.num == 3 && is_s(f) {
+      d.output_type = text(f)?
+    } else if f.num == 4 && is_s(f) {
+      d.options = f.data
+    } else if f.num == 5 && is_v(f) {
+      d.client_streaming = f.v != 0
+    } else if f.num == 6 && is_v(f) {
+      d.server_streaming = f.v != 0
+    }
+  }
+  Ok(d)
+}
+
+fn dec_service(b: Bytes) -> protodesc.ServiceDesc ! protobuf.ProtoErr {
+  var d = protodesc.ServiceDesc{name: "", method: [], options: b""}
+  for f in walk(b)? {
+    if f.num == 1 && is_s(f) {
+      d.name = text(f)?
+    } else if f.num == 2 && is_s(f) {
+      d.method.push(dec_method(f.data)?)
+    } else if f.num == 3 && is_s(f) {
+      d.options = f.data
+    }
+  }
+  Ok(d)
+}
+
+fn decode(data: Bytes) -> protodesc.FileDesc ! protobuf.ProtoErr {
+  var d = protodesc.FileDesc{name: "", package: "", dependency: [], public_dependency: [], weak_dependency: [], message_type: [], enum_type: [], service: [], extension: [], options: b"", source_code_info: b"", syntax: "", edition: 0}
+  for f in walk(data)? {
+    if f.num == 1 && is_s(f) {
+      d.name = text(f)?
+    } else if f.num == 2 && is_s(f) {
+      d.package = text(f)?
+    } else if f.num == 3 && is_s(f) {
+      d.dependency.push(text(f)?)
+    } else if f.num == 4 && is_s(f) {
+      d.message_type.push(dec_message(f.data)?)
+    } else if f.num == 5 && is_s(f) {
+      d.enum_type.push(dec_enum(f.data)?)
+    } else if f.num == 6 && is_s(f) {
+      d.service.push(dec_service(f.data)?)
+    } else if f.num == 7 && is_s(f) {
+      d.extension.push(dec_field(f.data)?)
+    } else if f.num == 8 && is_s(f) {
+      d.options = f.data
+    } else if f.num == 9 && is_s(f) {
+      d.source_code_info = f.data
+    } else if f.num == 10 && is_v(f) {
+      d.public_dependency.push(f.v)
+    } else if f.num == 10 && is_s(f) {
+      d.public_dependency.push(packed_first(f.data))
+    } else if f.num == 11 && is_v(f) {
+      d.weak_dependency.push(f.v)
+    } else if f.num == 12 && is_s(f) {
+      d.syntax = text(f)?
+    } else if f.num == 14 && is_v(f) {
+      d.edition = f.v
+    }
+  }
+  Ok(d)
+}
+
+/// The first value of a packed varint run (descriptor.proto writes these unpacked; a packed one is
+/// rare and holds one value in practice).
+fn packed_first(b: Bytes) -> Int {
+  match protobuf.read_varint(b, 0) {
+    Ok((v, _)) => v.to_bits()
+    Err(_) => 0
+  }
+}

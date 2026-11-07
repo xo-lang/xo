@@ -1,0 +1,133 @@
+// std/protodesc (decision 0546, item 1). Declaration file; encoding rules are
+// listed at the top of std/prelude.xo. The descriptors of google/protobuf/
+// descriptor.proto that reflection, ProtoJSON and Any resolve names through:
+// FileDescriptorProto and the messages under it as Xo values, with the wire
+// codec written by hand over std/protobuf (derive Proto does not expand in std).
+// Options messages are kept as their wire bytes (`options`), unknown fields as
+// theirs (`unknown`, written after the known ones), so a descriptor made by
+// protoc or protobuf-go decodes and encodes back to the same bytes. Pure.
+use std/protobuf
+
+/// FieldDescriptorProto.Label.
+const LABEL_OPTIONAL: Int = 1
+const LABEL_REQUIRED: Int = 2
+const LABEL_REPEATED: Int = 3
+
+/// FieldDescriptorProto.Type.
+const TYPE_DOUBLE: Int = 1
+const TYPE_FLOAT: Int = 2
+const TYPE_INT64: Int = 3
+const TYPE_UINT64: Int = 4
+const TYPE_INT32: Int = 5
+const TYPE_FIXED64: Int = 6
+const TYPE_FIXED32: Int = 7
+const TYPE_BOOL: Int = 8
+const TYPE_STRING: Int = 9
+const TYPE_GROUP: Int = 10
+const TYPE_MESSAGE: Int = 11
+const TYPE_BYTES: Int = 12
+const TYPE_UINT32: Int = 13
+const TYPE_ENUM: Int = 14
+const TYPE_SFIXED32: Int = 15
+const TYPE_SFIXED64: Int = 16
+const TYPE_SINT32: Int = 17
+const TYPE_SINT64: Int = 18
+
+/// A `start` to `end` range (DescriptorProto.ReservedRange and EnumReservedRange; end is exclusive for
+/// messages and inclusive for enums, as in descriptor.proto).
+struct ReservedRange {
+  start: Int
+  end: Int
+} derive Eq
+
+struct ExtensionRange {
+  start: Int
+  end: Int
+  options: Bytes = b""
+} derive Eq
+
+struct OneofDesc {
+  name: Str
+  options: Bytes = b""
+} derive Eq
+
+/// FieldDescriptorProto. `kind` is the proto `type` (TYPE_*), `type_name` the fully qualified name with
+/// its leading dot (`.pkg.Msg`) for a message or enum field.
+struct FieldDesc {
+  name: Str
+  extendee: Str = ""
+  number: Int
+  label: Int = 0
+  kind: Int = 0
+  type_name: Str = ""
+  default_value: Str = ""
+  options: Bytes = b""
+  oneof_index: Int? = None
+  json_name: Str = ""
+  proto3_optional: Bool = false
+  unknown: Bytes = b""
+} derive Eq
+
+struct EnumValueDesc {
+  name: Str
+  number: Int
+  options: Bytes = b""
+} derive Eq
+
+struct EnumDesc {
+  name: Str
+  value: List[EnumValueDesc] = []
+  options: Bytes = b""
+  reserved_range: List[ReservedRange] = []
+  reserved_name: List[Str] = []
+} derive Eq
+
+struct MessageDesc {
+  name: Str
+  field: List[FieldDesc] = []
+  extension: List[FieldDesc] = []
+  nested_type: List[MessageDesc] = []
+  enum_type: List[EnumDesc] = []
+  extension_range: List[ExtensionRange] = []
+  oneof_decl: List[OneofDesc] = []
+  options: Bytes = b""
+  reserved_range: List[ReservedRange] = []
+  reserved_name: List[Str] = []
+} derive Eq
+
+struct MethodDesc {
+  name: Str
+  input_type: Str
+  output_type: Str
+  options: Bytes = b""
+  client_streaming: Bool = false
+  server_streaming: Bool = false
+} derive Eq
+
+struct ServiceDesc {
+  name: Str
+  method: List[MethodDesc] = []
+  options: Bytes = b""
+} derive Eq
+
+/// FileDescriptorProto. `syntax` is `proto2` (written as empty), `proto3` or `editions`.
+struct FileDesc {
+  name: Str
+  package: Str = ""
+  dependency: List[Str] = []
+  public_dependency: List[Int] = []
+  weak_dependency: List[Int] = []
+  message_type: List[MessageDesc] = []
+  enum_type: List[EnumDesc] = []
+  service: List[ServiceDesc] = []
+  extension: List[FieldDesc] = []
+  options: Bytes = b""
+  source_code_info: Bytes = b""
+  syntax: Str = ""
+  edition: Int = 0
+} derive Eq
+
+/// The wire bytes of `f` (a serialized FileDescriptorProto), fields in field number order.
+fn encode(f: FileDesc) -> Bytes
+/// The FileDescriptorProto of `data`; the wire reader's errors, and `Utf8` for a name that is not text.
+fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr
