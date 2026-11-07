@@ -27,15 +27,33 @@ pub fn (var b: Builder) specialize_args() {
   // and not at each of its call sites (3.4 of the pass's 6 ms of CPU on
   // an HTTP server edit, 2026-10-27)
   var callee_ok: List[Int] = []
+  // each function's calls (spec_calls), found once for both passes: the
+  // passes change a call's name, never an op (a walk of every value of
+  // every function, copying each, twice, was most of the pass, 2026-11-07
+  // profile)
+  var calls: List[List[Int]] = []
   // closures first, then literals with the budget left: the literals at
   // most call sites are fault locations a callee only passes on
-  b.specialize_pass(clones, callee_ok, true)
-  b.specialize_pass(clones, callee_ok, false)
+  b.specialize_pass(clones, callee_ok, calls, true)
+  b.specialize_pass(clones, callee_ok, calls, false)
+}
+
+/// The values of f that are calls, in its blocks' order.
+fn spec_calls(f: Func) -> List[Int] {
+  var out: List[Int] = []
+  for bl in f.blocks {
+    for v in bl.instrs {
+      if f.values[v].op == Op.Call {
+        out.push(v)
+      }
+    }
+  }
+  out
 }
 
 /// One pass of specialize_args over the module and the clones it adds:
 /// closure arguments when closures, else literals.
-fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], var callee_ok: List[Int], closures: Bool) {
+fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], var callee_ok: List[Int], var calls: List[List[Int]], closures: Bool) {
   // the clones too, as they are added: a constant a clone passes on
   // (str_split_where's closure, which it hands to where_spans) clones the
   // next callee; SPEC_MAX_CLONES bounds the chain
@@ -44,45 +62,43 @@ fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], var callee_ok: Li
     if clones.len() >= SPEC_MAX_CLONES {
       return
     }
-    for bi in 0..b.m.funcs[fi].blocks.len() {
-      for v in b.m.funcs[fi].blocks[bi].instrs {
-        let x = b.m.funcs[fi].values[v]
-        if x.op != Op.Call {
+    while calls.len() <= fi {
+      calls.push(spec_calls(b.m.funcs[calls.len()]))
+    }
+    for v in calls[fi] {
+      let x = b.m.funcs[fi].values[v]
+      let name = match x.aux {
+        S(s) => s
+        None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+      }
+      let ci = b.m.func_at.get(name) ?? -1
+      if ci < 0 || ci == fi || !b.spec_callee_at(callee_ok, ci) {
+        continue
+      }
+      for (k, a) in x.args.indexed() {
+        let key = spec_key(b.m.funcs[fi], a)
+        if key.is_empty() || key.starts_with("fn ") != closures || !spec_param(b.m.funcs[ci], k) {
           continue
         }
-        let name = match x.aux {
-          S(s) => s
-          None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
-        }
-        let ci = b.m.func_at.get(name) ?? -1
-        if ci < 0 || ci == fi || !b.spec_callee_at(callee_ok, ci) {
+        if !closures && !spec_compared(b.m, ci, k, 3) {
           continue
         }
-        for (k, a) in x.args.indexed() {
-          let key = spec_key(b.m.funcs[fi], a)
-          if key.is_empty() || key.starts_with("fn ") != closures || !spec_param(b.m.funcs[ci], k) {
-            continue
+        let ck = "${name}#${k}=${key}"
+        var c = clones.get(ck) ?? -1
+        if c < 0 {
+          if clones.len() >= SPEC_MAX_CLONES {
+            break
           }
-          if !closures && !spec_compared(b.m, ci, k, 3) {
-            continue
-          }
-          let ck = "${name}#${k}=${key}"
-          var c = clones.get(ck) ?? -1
-          if c < 0 {
-            if clones.len() >= SPEC_MAX_CLONES {
-              break
-            }
-            c = b.m.add_clone(spec_clone(b.m.funcs[ci], k, b.m.funcs[fi].values[a], b.spec_name(name, ck)))
-            clones[ck] = c
-          }
-          b.m.funcs[fi].values[v].aux = Aux.S(s: b.m.funcs[c].name)
-          if fi < b.m.body_ids.len() {
-            b.m.body_ids[fi] = ""
-          }
-          // one constant parameter a call: the clone's other parameters
-          // stay parameters
-          break
+          c = b.m.add_clone(spec_clone(b.m.funcs[ci], k, b.m.funcs[fi].values[a], b.spec_name(name, ck)))
+          clones[ck] = c
         }
+        b.m.funcs[fi].values[v].aux = Aux.S(s: b.m.funcs[c].name)
+        if fi < b.m.body_ids.len() {
+          b.m.body_ids[fi] = ""
+        }
+        // one constant parameter a call: the clone's other parameters
+        // stay parameters
+        break
       }
     }
     fi += 1
