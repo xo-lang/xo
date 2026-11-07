@@ -1,0 +1,29 @@
+// A pub method whose receiver leaves the effect argument out may perform
+// it by its signature (core 6.2), so a pure caller holding a Box[fx]
+// performs fx through it: XO0701, with a note and fix naming the
+// argument (`Box[fx]`). A receiver written Box[fx] is not performed
+// unless `uses` lists it.
+pub struct Box[fx: Effects] {
+  get: fn() -> Int uses fx
+}
+
+pub fn (b: Box) name() -> Str {
+  "box"
+}
+
+pub fn (b: Box[fx]) named() -> Str {
+  "named"
+}
+
+pub fn (b: Box[fx]) label() -> Str { // ERROR XO0701 "performs `fx`"
+  b.name()
+}
+
+pub fn (b: Box[fx]) label2() -> Str {
+  b.named()
+}
+
+fn main(os: Os) {
+  let b = Box{get: fn() { 3 }}
+  os.stdio.println("${b.label()} ${b.label2()}")
+}

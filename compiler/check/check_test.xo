@@ -335,6 +335,47 @@ test "an Option where a Result is expected, and `x ?? Err(e)`, name or_err (XO04
   expect(ds[1].fixes.filter(fn(f) { f.title == "use `.or_err(...)?`" }).map(fn(f) { f.edits.map(fn(e) { e.replace }) })) == [["find(k).or_err(\"missing\")?"]]
 }
 
+test "a pure caller performing a bare receiver's effect gets a note and a fix naming it (XO0701)" {
+  // aws-19, 2026-11-06: a pub method on a bare `Box` may perform the
+  // struct's fx by its signature (core 6.2); its body performs none, so
+  // the fix writes `Box[fx]` on the callee's receiver
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/prelude.xo", PRELUDE.bytes())?
+  os.fs.write("std/testing.xo", b"")?
+  os.fs.create_dir_all("bx")?
+  os.fs.write("bx/main.xo", """
+    pub struct Box[fx: Effects] {
+      get: fn() -> Int uses fx
+    }
+
+    pub fn (b: Box) name() -> Str {
+      "box"
+    }
+
+    pub fn (b: Box) run() -> Int {
+      b.get()
+    }
+
+    pub fn (b: Box[fx]) label() -> Str {
+      b.name()
+    }
+
+    pub fn (b: Box[fx]) count() -> Int {
+      b.run()
+    }
+    """.bytes())?
+  var c = new_checker(os.fs, "std")
+  if let Err(e) = c.check_dirs(["bx"]) {
+    fault("check: ${e}")
+  }
+  let ds = c.diags.filter(fn(d) { d.code == "XO0701" })
+  expect(ds.len()) == 2
+  expect(ds[0].notes.any(fn(n) { n.message.contains("only through `Box`") })) == true
+  expect(ds[0].fixes.map(fn(f) { f.edits.map(fn(e) { e.replace }) })) == [["[fx]"]]
+  // run's body performs fx, so naming it would be wrong: no fix
+  expect(ds[1].fixes.len()) == 0
+}
+
 test "an integer literal must fit its type (XO0421)" {
   let out = check_files(os, "r", [("r/main.xo", """
     const MIN: Int = -9223372036854775808

@@ -39,6 +39,9 @@ pub struct EffItem {
   pub file: Str = ""
   pub span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
   pub via: Str = ""
+  /// The callee's effect parameter this item was substituted for at a
+  /// call (subst_eff), -1 for none: XO0701's receiver note names it.
+  pub from_param: Int = -1
 }
 
 /// An effect set with function items expanded: its labels and effect
@@ -170,6 +173,63 @@ fn (var c: Checker) elided_effect_note(d: Int, sub: Flat, sup: Flat, ob: EffOb) 
     }
     if !ob.uses_file.is_empty() {
       c.fix(d, "remove the closure's `uses` clause so its effects are inferred", [DEdit{span: JSpan{file: ob.uses_file, line: ob.uses_clause.start.line, col: ob.uses_clause.start.col, end_line: ob.uses_clause.end.line, end_col: ob.uses_clause.end.col}, replace: ""}])
+    }
+    return
+  }
+}
+
+/// The note on an XO0701 whose missing effect reaches it only through a
+/// called function's implicit effect variable: an effect argument left out
+/// of its receiver or parameter type (`fn (b: Box) name()`), which a pub
+/// signature counts as performed (core 6.2) though the body performs
+/// none. The fix names the argument (`Box[fx]`), an effect parameter that
+/// is performed only when `uses` lists it (lead, 2026-11-06, from Xo
+/// Azure 1's azcore).
+fn (var c: Checker) implicit_callee_note(d: Int, sub: Flat, sup: Flat) {
+  for (k, p) in sub.params.indexed() {
+    let q = sub.param_items[k].from_param
+    if sup.params.contains(p) || q < 0 {
+      continue
+    }
+    let o = c.objs[q]
+    if !o.elided || !o.effect {
+      continue
+    }
+    // the callee is the function whose body obligation has q among its
+    // type parameters; a body that performs q keeps the signature right
+    var callee = -1
+    var performs = false
+    for ob in c.obligations {
+      if ob.kind == ObKind.Decl && ob.fo >= 0 && c.objs[ob.fo].tparams.contains(q) {
+        performs = c.flatten(ob.sub, true).params.contains(q)
+        callee = ob.fo
+        break
+      }
+    }
+    if callee < 0 || performs {
+      continue
+    }
+    // where the argument was left out: a parameter's type records it; a
+    // bare receiver (`fn (b: Box)`) is its declaration's receiver type
+    var from = ElidedFrom{file: "", at: no_span(), text: ""}
+    if !o.elided_from.is_empty() {
+      from = o.elided_from[0]
+    } else if !c.objs[callee].fn_decl.is_empty() && c.objs[callee].decl_file >= 0 {
+      if let Some(r) = c.objs[callee].fn_decl[0].recv {
+        from = ElidedFrom{file: c.files[c.objs[callee].decl_file].path, at: parser.type_span(r.typ), text: type_text(r.typ)}
+      }
+    }
+    if from.file.is_empty() {
+      continue
+    }
+    var fx = text(o.name)
+    if let Some(i) = fx.rfind(".") {
+      fx = text(fx.bytes()[i + 1..])
+    }
+    let name = c.display_name(callee)
+    c.diags[d].notes.push(DNote{message: "`${name}` performs `${text(c.objs[p].name)}` here only through `${from.text}`, whose effect argument is left out: a pub signature counts it as performed (core 6.2), though the body of `${name}` performs none; written as a named parameter, `${from.text}[${fx}]`, it is performed only when `uses` lists it", span: Some(JSpan{file: from.file, line: from.at.start.line, col: from.at.start.col})})
+    if !from.text.contains("[") {
+      c.fix(d, "name the effect argument of `${name}`'s `${from.text}`: `${from.text}[${fx}]`", [DEdit{span: JSpan{file: from.file, line: from.at.end.line, col: from.at.end.col, end_line: from.at.end.line, end_col: from.at.end.col}, replace: "[${fx}]"}])
     }
     return
   }
@@ -374,6 +434,9 @@ fn (var c: Checker) subst_eff(s: Int, sm: Subst, depth: Int) -> Int {
         if c.tys[t].kind == TyKind.EffArg && c.tys[t].eff >= 0 {
           for x0 in c.esets[c.tys[t].eff] {
             var x = x0
+            if x.from_param < 0 {
+              x.from_param = it.param
+            }
             if x.file.is_empty() {
               x.file = it.file
               x.span = it.span
@@ -480,6 +543,9 @@ fn (c: Checker) flatten_into(var out: Flat, s: Int, with_inferred: Bool, depth: 
       it.span = at.span
       it.via = at.via
     }
+    if it.from_param < 0 {
+      it.from_param = at.from_param
+    }
     if !it.label.is_empty() {
       if !out.labels.contains(it.label) {
         out.labels.push(it.label)
@@ -491,7 +557,7 @@ fn (c: Checker) flatten_into(var out: Flat, s: Int, with_inferred: Bool, depth: 
         out.param_items.push(it)
       }
     } else if it.evar >= 0 {
-      c.flatten_into(out, c.evars[it.evar], with_inferred, depth + 1, EffItem{})
+      c.flatten_into(out, c.evars[it.evar], with_inferred, depth + 1, EffItem{from_param: it.from_param})
     } else if it.fn_obj >= 0 {
       let d = c.objs[it.fn_obj].declared
       if d >= 0 {
@@ -596,6 +662,7 @@ fn (var c: Checker) solve_effects() {
       c.fix(d, ob.log_title, ob.log_edits)
     }
     c.elided_effect_note(d, sub, sup, ob)
+    c.implicit_callee_note(d, sub, sup)
     // the item witnessing the first missing effect: a label, else a
     // parameter (in the order of sub)
     var first = EffItem{}
