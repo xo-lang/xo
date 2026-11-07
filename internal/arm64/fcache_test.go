@@ -3441,7 +3441,16 @@ func TestFirstEditAfterColdParts(t *testing.T) {
 			t.Fatalf("%s: %d parts, not more than PART_PACK_FIRST: the test checks nothing new", name, n)
 		}
 		if second := build(); !strings.Contains(second, "phase run_cache ") {
-			t.Fatalf("%s: the second build was not served by the run cache:\n%s", name, second)
+			// the cold build's run cache lines too: whether it stored an
+			// entry, and under which key (2026-11-07: a miss here only in
+			// the full suite on the second linux/arm64 host)
+			var runs []string
+			for _, l := range strings.Split(cold, "\n") {
+				if strings.Contains(l, "run_cache") || strings.Contains(l, "cache run") || strings.Contains(l, "std variant") {
+					runs = append(runs, l)
+				}
+			}
+			t.Fatalf("%s: the second build was not served by the run cache:\n%s\nthe cold build's run cache lines:\n%s", name, second, strings.Join(runs, "\n"))
 		}
 		f := filepath.Join(src, "main.xo")
 		b, err := os.ReadFile(f)
