@@ -188,6 +188,14 @@ pub struct Gen {
   proto_need: Map[Int, Int] = {}
   /// interface object: the types converted to it (proto.xo)
   proto_ifs: Map[Int, List[Int]] = {}
+  /// a generic function's generic form: the protocols a type parameter in
+  /// it reaches, the generic forms it calls, and whether one runs
+  proto_gform: Map[Int, Int] = {}
+  proto_gcalls: Map[Int, List[Int]] = {}
+  proto_gused: Map[Int, Bool] = {}
+  /// set while proto_call_roots walks the syntax (no function is being
+  /// generated)
+  proto_prepass: Bool = false
   /// the protocols a type parameter reaches: every type keeps them
   proto_all: Int = 0
 }

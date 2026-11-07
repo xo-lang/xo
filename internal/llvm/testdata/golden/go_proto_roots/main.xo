@@ -86,6 +86,59 @@ fn alike[T](x: T, y: T) -> Bool {
   x == y
 }
 
+// reached only as the key of a Map a generic function builds
+struct TallyKey {
+  k: Int
+}
+
+fn tally[K](xs: List[K]) -> Map[K, Int] {
+  var m: Map[K, Int] = {}
+  for x in xs {
+    m[x] = (m.get(x) ?? 0) + 1
+  }
+  m
+}
+
+// reached only through a generic that passes its type parameter to one
+// that compares
+struct Deep {
+  d: Int
+}
+
+fn inner_eq[U](a: U, b: U) -> Bool {
+  a == b
+}
+
+fn outer_eq[T](a: T, b: T) -> Bool {
+  inner_eq(a, b)
+}
+
+// reached only through prelude searches and sets inside generics
+struct HasT {
+  h: Int
+}
+
+fn has[T](xs: List[T], x: T) -> Bool {
+  xs.contains(x)
+}
+
+struct UniqT {
+  u: Int
+}
+
+fn uniq[T](xs: List[T]) -> Int {
+  xs.to_set().len()
+}
+
+// reached only as the element of a Set inside a generic struct
+struct BagT {
+  b: Int
+}
+
+struct Bag[T] {
+  items: Set[T]
+}
+
 fn main(os: Os) {
   let o1 = Outer{name: "a", inner: Inner{tags: ["x", "y"]}}
   let o2 = Outer{name: "a", inner: Inner{tags: ["x", "y"]}}
@@ -117,4 +170,13 @@ fn main(os: Os) {
   let sp = [Spot{name: "a"}, Spot{name: "b"}]
   os.stdio.println("spot: ${sp.index_of(Spot{name: "b"}) ?? -1}")
   os.stdio.println("plain: ${alike(Plain{v: 1}, Plain{v: 1})} ${alike(Plain{v: 1}, Plain{v: 2})}")
+  let tl = tally([TallyKey{k: 1}, TallyKey{k: 2}, TallyKey{k: 1}])
+  os.stdio.println("tally: ${tl.len()} ${tl.get(TallyKey{k: 1}) ?? -1}")
+  os.stdio.println("deep: ${outer_eq(Deep{d: 1}, Deep{d: 1})} ${outer_eq(Deep{d: 1}, Deep{d: 2})}")
+  os.stdio.println("has: ${has([HasT{h: 1}], HasT{h: 1})} ${has([HasT{h: 1}], HasT{h: 2})}")
+  os.stdio.println("uniq: ${uniq([UniqT{u: 1}, UniqT{u: 1}, UniqT{u: 2}])}")
+  var bag = Bag[BagT]{items: #{}}
+  bag.items.add(BagT{b: 1})
+  bag.items.add(BagT{b: 1})
+  os.stdio.println("bag: ${bag.items.len()} ${bag.items.contains(BagT{b: 1})}")
 }

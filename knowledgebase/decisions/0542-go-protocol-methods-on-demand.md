@@ -22,20 +22,31 @@ whole-program analysis is available.
      and fuzz targets, and the type arguments of `testing.gen[T]` calls.
    - XoEq, XoEqT and XoHash: the operand type of every `==` and `!=` the
      generator writes (compare(): `expect(a) == b` too), the subject of a
-     literal pattern it compares with rt.Eq, every Map key and Set element
-     type instance, every type argument of a constrained type parameter
-     (a type instance or a call's substitution, std's hand written
-     functions included), and every user type that derives Eq, Hash or Ord
-     with what its fields reach.
-   An interface type reached by a protocol reaches every type the program
-   converts to it (each conversion the generator writes is recorded); a
-   type parameter converted to an interface, or one reached by XoGenAny,
-   keeps that protocol's methods on every type (its dynamic types are not
-   known). A type parameter reached by XoEq or XoHash adds nothing: it is
-   constrained, so each of its arguments is a root at the call. (The first
-   draft kept every method for any interface or type parameter reached;
-   std's own generic instances, such as `Map[K, V]`, reached one in every
-   program, so nothing was pruned.)
+     literal pattern it compares with rt.Eq, the element type of the
+     prelude's `contains` and `index_of` (std/rt List_contains and
+     List_index_of compare with rt.Eq), every Map key and Set element
+     type instance, every argument of a constrained type parameter of a
+     std function or type (std's Go is pregenerated, so its bodies are not
+     seen; a program's own generic needs no root at its calls, since each
+     specialized copy roots what it compares), and every user type that
+     derives Eq, Hash or Ord with what its fields reach.
+   A type parameter as a root (in a key, a compare, a search or a std
+   call) is resolved where it is written: in a specialized copy it is
+   concrete; in a function's generic form it is recorded on that function
+   and keeps every type's methods only if the generic form runs (a call
+   not specialized: past MAX_SPECS_PER_FUNC or MAX_SPEC_DEPTH, or
+   --no-mono, and what such a form calls); in a generic type (a field
+   `Set[T]`) it makes that type's parameter keyed, so each instance roots
+   its argument. An interface type reached by a protocol reaches every
+   type the program converts to it (each conversion the generator writes
+   is recorded); a type parameter converted to an interface, or one
+   reached by XoGenAny, keeps that protocol's methods on every type.
+   (Two drafts were too wide: one kept every method for any interface or
+   type parameter reached, which std's own `Map[K, V]` did in every
+   program; the next rooted every constrained argument, so azure's
+   `marshal_json[T: Json]` kept XoEq on 1,437 of armnetwork's 3,290
+   types. One was too narrow: List `contains` and `index_of` were not
+   roots and faulted, fixed in 1cd6984d8 with golden go_proto_prelude.)
    std's types in the runtime package keep every method.
 2. Each such method is written between two marker chunks of the package's
    output; pkg_file keeps a method only when its object is reached (or the

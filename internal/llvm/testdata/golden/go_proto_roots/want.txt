@@ -10,4 +10,9 @@ codes: 2 true
 wanted: true false
 spot: 1
 plain: true false
+tally: 2 2
+deep: true false
+has: true false
+uniq: 2
+bag: 1 true
 --- stderr

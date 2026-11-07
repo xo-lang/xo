@@ -52,9 +52,16 @@ fn (var g: Gen) proto_root(t: Int, bits: Int) {
     return
   }
   if g.c.tys[g.c.resolve(t)].kind == check.TyKind.Param {
-    // a generic body Go compiles once (past MAX_SPECS_PER_FUNC copies)
-    // compares or hashes values of any type its callers pass
-    g.proto_all = g.proto_all | bits
+    // a generic form compares or hashes values of any type its callers
+    // pass, but runs only when a call was not specialized (past
+    // MAX_SPECS_PER_FUNC copies or MAX_SPEC_DEPTH, or with no copies):
+    // proto_close keeps every type's methods only then
+    let cur = g.proto_cur_gform()
+    if cur >= 0 {
+      g.proto_gform[cur] = (g.proto_gform.get(cur) ?? 0) | bits
+    } else {
+      g.proto_all = g.proto_all | bits
+    }
     return
   }
   g.proto_roots[t] = (g.proto_roots.get(t) ?? 0) | bits
@@ -90,16 +97,23 @@ fn (var g: Gen) proto_call_roots() {
               // (std/rt list.go List_contains, List_index_of)
               if fo >= 0 && g.oprelude(fo) && g.oname(fo) is "contains" | "index_of" {
                 for (_, t) in ci.subst {
-                  g.proto_root(t, P_EQ)
+                  if g.c.tys[g.c.resolve(t)].kind != check.TyKind.Param {
+                    g.proto_root(t, P_EQ)
+                  }
                 }
               }
-              // a constrained type parameter's argument may be compared
-              // or hashed in the callee (std's hand written ones too)
-              for (p, t) in ci.subst {
-                // (a type parameter passed on is constrained too, and its
-                // own callers' arguments are roots of their own)
-                if p >= 0 && g.c.objs[p].constraint >= 0 && g.c.tys[g.c.resolve(t)].kind != check.TyKind.Param {
-                  g.proto_root(t, P_EQ | P_HASH)
+              // a std callee's constrained type parameter may be compared or
+              // hashed in its body, which this run does not generate (std's
+              // Go is pregenerated); a program's own generic needs no root:
+              // its copies root what they compare. A type parameter passed
+              // to a prelude method keeps every type; to another std
+              // function, the copy's call roots its concrete type
+              // (proto_std_call)
+              if fo >= 0 && g.ostd(fo) {
+                for (p, t) in ci.subst {
+                  if p >= 0 && g.c.objs[p].constraint >= 0 && g.c.tys[g.c.resolve(t)].kind != check.TyKind.Param {
+                    g.proto_root(t, P_EQ | P_HASH)
+                  }
                 }
               }
             }
@@ -134,16 +148,85 @@ fn (var g: Gen) proto_walk_any(t: Int, bits: Int, var walked: Map[Int, Int]) {
   g.proto_walk(t, bits, walked)
 }
 
+/// The generic function whose generic form is being generated, or -1 (a
+/// specialized copy, a non-generic function, or the syntax pass).
+fn (g: Gen) proto_cur_gform() -> Int {
+  if g.proto_prepass || g.pkgs[g.p].ms.on || g.f.frames.is_empty() {
+    return -1
+  }
+  let fo = g.f.frames[0].fo
+  if g.is_generic_user_func(fo) { fo } else { -1 }
+}
+
+/// A call of generic function fo's generic form (emit_call, no copy).
+fn (var g: Gen) proto_gform_call(fo: Int) {
+  let cur = g.proto_cur_gform()
+  if cur >= 0 {
+    var l = g.proto_gcalls.get(cur) ?? []
+    l.push(fo)
+    g.proto_gcalls[cur] = l
+  } else {
+    g.proto_gused[fo] = true
+  }
+}
+
+/// A call of std function fo with type arguments sub, as generated: inside
+/// a specialized copy a type parameter's argument is concrete here.
+fn (var g: Gen) proto_std_call(fo: Int, sub: Map[Int, Int]) {
+  let search = g.oprelude(fo) && g.oname(fo) is "contains" | "index_of"
+  for (p, t) in sub {
+    if p >= 0 && (search || g.c.objs[p].constraint >= 0) && g.c.tys[g.c.resolve(t)].kind == check.TyKind.Param {
+      g.proto_root(g.mono_type(t), if search { P_EQ } else { P_EQ | P_HASH })
+    }
+  }
+}
+
+/// The type parameters t holds (depth-limited: a type is finite, but a
+/// recursive generic is cut).
+fn (g: Gen) proto_params_in(t0: Int, var out: List[Int], depth: Int) {
+  if t0 < 0 || depth > 16 {
+    return
+  }
+  let t = g.c.resolve(t0)
+  let x = g.c.tys[t]
+  if x.kind == check.TyKind.Param {
+    if x.obj >= 0 && !out.contains(x.obj) {
+      out.push(x.obj)
+    }
+    return
+  }
+  for a in x.args {
+    g.proto_params_in(a, out, depth + 1)
+  }
+  if x.kind == check.TyKind.Func {
+    g.proto_params_in(x.result, out, depth + 1)
+    g.proto_params_in(x.err, out, depth + 1)
+  }
+}
+
 /// Closes the roots over the types they reach (after every module and
 /// copy is generated).
 fn (var g: Gen) proto_close() {
+  g.proto_prepass = true
   g.proto_call_roots()
+  g.proto_prepass = false
   var roots: List[(Int, Int)] = []
   for (t, bits) in g.proto_roots {
     roots.push((t, bits))
   }
   // every type instance: a Map's key and a Set's element are compared and
   // hashed; a constrained parameter's argument may be
+  // a key that holds a type parameter is a root of each argument that
+  // parameter is given: a function's in its generic form (when that form
+  // runs), a generic type's in each of its instances
+  var owner: Map[Int, Int] = {}
+  for (o, ob) in g.c.objs.indexed() {
+    for p in ob.tparams {
+      owner[p] = o
+    }
+  }
+  var keyed: Map[(Int, Int), Bool] = {}
+  var keys: List[Int] = []
   for t in 0..g.c.tys.len() {
     let x = g.c.tys[t]
     if x.kind != check.TyKind.Named || x.obj < 0 {
@@ -152,12 +235,68 @@ fn (var g: Gen) proto_close() {
     let o = x.obj
     let ps = g.c.objs[o].tparams
     if g.oprelude(o) && (g.oname(o) == "Map" || g.oname(o) == "Set") && !x.args.is_empty() {
-      roots.push((x.args[0], P_EQ | P_HASH))
+      keys.push(x.args[0])
     }
     for (i, p) in ps.indexed() {
       if i < x.args.len() && g.c.objs[p].constraint >= 0 {
-        roots.push((x.args[i], P_EQ | P_HASH))
+        keys.push(x.args[i])
       }
+    }
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for a in keys {
+      var ps: List[Int] = []
+      g.proto_params_in(a, ps, 0)
+      if ps.is_empty() {
+        roots.push((a, P_EQ | P_HASH))
+        continue
+      }
+      for p in ps {
+        let o = owner.get(p) ?? -1
+        if o < 0 || g.ostd(o) {
+          continue
+        }
+        if g.is_generic_user_func(o) {
+          g.proto_gform[o] = (g.proto_gform.get(o) ?? 0) | P_EQ | P_HASH
+        } else if !keyed.contains((o, g.c.objs[o].tparams.index_of(p) ?? -1)) {
+          keyed[(o, g.c.objs[o].tparams.index_of(p) ?? -1)] = true
+          changed = true
+        }
+      }
+    }
+    keys = []
+    if changed {
+      // each instance of a generic type gives its keyed parameters' arguments
+      for t in 0..g.c.tys.len() {
+        let x = g.c.tys[t]
+        if x.kind != check.TyKind.Named || x.obj < 0 {
+          continue
+        }
+        for i in 0..x.args.len() {
+          if keyed.contains((x.obj, i)) {
+            keys.push(x.args[i])
+          }
+        }
+      }
+    }
+  }
+  // the generic forms that run: called where no copy was made, and what
+  // those call in turn
+  var work: List[Int] = []
+  for (fo, _) in g.proto_gused {
+    work.push(fo)
+  }
+  var seen: Map[Int, Bool] = {}
+  while let Some(fo) = work.pop() {
+    if seen.contains(fo) {
+      continue
+    }
+    seen[fo] = true
+    g.proto_all = g.proto_all | (g.proto_gform.get(fo) ?? 0)
+    for c in g.proto_gcalls.get(fo) ?? [] {
+      work.push(c)
     }
   }
   var walked: Map[Int, Int] = {}
