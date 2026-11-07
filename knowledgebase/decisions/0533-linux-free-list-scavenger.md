@@ -156,27 +156,24 @@ mapping that has one resident page, filling the other 511 with zeroed memory
 eligible, so a collapse can undo the age pass. The base's re-inflation shows the same collapse of
 sparse ranges that were never given back.
 
-Amended decision, both on Linux only and only while huge pages are possible (THP `always` and
-the heap not XO_THP=off):
-1. age_sparse (93f714153): an age pass gives back a block only when its 2 MiB range is at least
-   half free, as Go's scavenger skips dense chunks (mgcscavenge.go). This keeps a lone hole out of
-   a dense range, and it fixed sat8 (above).
-2. MADV_NOHUGEPAGE on the whole 2 MiB range (half a chunk, so inside one mapping) of each block an
-   age pass gives back, after MADV_DONTNEED (heapos.xo age_nohuge, draft 1146e4d31 on l2-scavthp's
-   93f714153). khugepaged then never collapses that range, which age_sparse alone did not ensure:
-   the sat128 run that re-inflated had given back 2.7 MB first. Advising the range, not the block,
-   splits a chunk's mapping into at most one VMA per 2 MiB, and neighbouring ranges with the flag
-   merge. The flag stays when the range is reused, since Linux has no advice back to the default
-   (MADV_HUGEPAGE opts in, which differs from the default under `madvise`), so the range's live
-   blocks and later reuse get 4 KiB pages; the range had already lost its huge page when the block
-   was given back.
-   Before it lands, measure: the VMA count (vm.max_map_count is 65,530 by default), the warm build's wall
-   on ab-host (the TLB cost of 4 KiB pages on a reused range), and the THP-on sat128 rows again,
-   expecting 0 of 8 new-side re-inflations.
+Amended decision, on Linux only and only while huge pages are possible (THP `always` and the heap
+not XO_THP=off): age_sparse (93f714153). An age pass gives back a block only when its 2 MiB range
+is at least half free, as Go's scavenger skips dense chunks (mgcscavenge.go). This keeps a lone
+hole out of a dense range, and it fixed sat8 (above).
 
-Not decided here: the collapse of sparse ranges that were never given back (the base run) is
-decision 0454's question (XO_THP's default). This amendment only keeps the age passes' returns
-from being undone.
+Tried and withdrawn (2026-11-07): MADV_NOHUGEPAGE on the 2 MiB range of each block an age pass
+gives back (heapos.xo age_nohuge, draft 1146e4d31 on 93f714153), to stop khugepaged refilling it.
+The THP-on sat128 rows with it (-idle 150s, idle@75s, host 1, 4 runs per side, order base, new,
+new, base; busy -> 75 s -> 150 s KiB, AnonHugePages in brackets):
+- base 1d8571422: 37076 -> 37080 -> 43904 [8 MiB]; 34748 -> 34756 -> 34756; 38936 [2] -> 38944 ->
+  38944; 33064 -> 34172 [2] -> 34172. 2 of 4 rose at idle (+6.8 and +1.1 MB).
+- new 1146e4d31: 35200 -> 37100 [4] -> 36484; 37816 [2] -> 36712 -> 41984 [8]; 36496 -> 34340 ->
+  45528 [14]; 35988 [2] -> 34704 -> 34704. 3 of 4 rose at idle (+1.9, +5.3 and +11.2 MB).
+So the collapses are in ranges the age passes never gave back, which the base shows as often:
+advising the given-back ranges does not stop them, and the step only adds VMAs. Idle RSS under
+THP `always` with khugepaged's max_ptes_none 511 is the host's and the heap's mappings' question,
+not the scavenger's: decision 0454 (XO_THP's default) or host tuning, as Go's GC guide advises
+(max_ptes_none 0, or GODEBUG=disablethp=1). With XO_THP=off no run re-inflated (0 of 8, above).
 
 ## Alternatives
 

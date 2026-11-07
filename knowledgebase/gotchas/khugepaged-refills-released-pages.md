@@ -23,8 +23,10 @@ Fix: measure RSS rows with `XO_THP=off` beside the default (decision 0454:
 MADV_NOHUGEPAGE on every heap mapping). With it no run re-inflated (0 of
 8) and AnonHugePages stayed 0. Read `anon_huge_kib` in the harness's
 mem.txt and samples.csv before calling an idle rise a leak. Decision 0533's
-amendment skips dense 2 MiB ranges (age_sparse) and advises
-MADV_NOHUGEPAGE on each range it gives back. Check the host's settings
+amendment skips dense 2 MiB ranges (age_sparse). Advising MADV_NOHUGEPAGE
+on each range it gave back did not help (3 of 4 runs still rose, against
+2 of 4 for the base): most collapses are in ranges never given back, so the
+fix is XO_THP=off or host tuning, not the scavenger. Check the host's settings
 first:
 `cat /sys/kernel/mm/transparent_hugepage/{enabled,defrag,khugepaged/max_ptes_none}`.
 Go has the same exposure and the same knob (GODEBUG=disablethp=1).
