@@ -4482,7 +4482,10 @@ version information (`--stamp VERSION=1.2.3` sets the version), as
 compiler/macho/peimports.xo, generated with `python3 -I
 scripts/win-import-table.py SYSROOT > compiler/macho/peimports.xo` from
 an SDK's import libraries when std/native/sys_windows.xo gains a
-function. Wine under Box64 on 2026-10-19: hello 460 KB (1.4 MB with the
+function; an import sys_windows.xo does not declare (an object's, a
+runtime lookup's) goes in scripts/win-imports-extra.txt, never into the
+table by hand: internal/repotest TestPEImportsMatchInputs fails when the
+table holds anything else (2026-11-07). Wine under Box64 on 2026-10-19: hello 460 KB (1.4 MB with the
 C runtime); every golden 194 of 202 (the seven known Wine gaps and
 sys_c, since fixed). Last verified: 2026-10-19. A program with DWARF (not
 --release or --strip) also gets PROG.pdb next to PROG.exe, named by the

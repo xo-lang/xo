@@ -1,0 +1,76 @@
+# Windows functions compiler/macho/peimports.xo imports that
+# std/native/sys_windows.xo does not declare (scripts/win-import-table.py
+# reads this file; internal/repotest TestPEImportsMatchInputs checks the
+# table holds exactly these and sys_windows.xo's): one name a line, under
+# a comment naming who needs it. Add an import here, never to the table
+# by hand: a regenerated table keeps only what its inputs name.
+
+# --race's ThreadSanitizer object (decision 0273,
+# lib/xo/race/windows-amd64/race_windows_amd64.syso, `llvm-nm -u` without
+# the C runtime's memmove and strlen, which cabi_wincrt.xo defines)
+CreateDirectoryA
+CreateFileA
+GetCurrentProcess
+GetFileAttributesA
+GetNativeSystemInfo
+IsDebuggerPresent
+K32GetProcessMemoryInfo
+OutputDebugStringA
+Sleep
+VirtualProtect
+VirtualQuery
+WakeByAddressAll
+
+# std/sqlite's prebuilt windows/amd64 object (decision 0534 stage 2,
+# lib/xo/sqlite/windows-amd64/sqlite.obj, `llvm-nm -u` without the C
+# library functions cabi_wincrt.xo defines)
+AcquireSRWLockExclusive
+AreFileApisANSI
+CreateFileMappingW
+DeleteCriticalSection
+DeleteFileW
+EnterCriticalSection
+FlushViewOfFile
+FormatMessageW
+GetCurrentProcessId
+GetDriveTypeW
+GetFileAttributesExW
+GetFileSizeEx
+GetFullPathNameW
+GetOverlappedResult
+GetProcessHeap
+GetSystemTimeAsFileTime
+GetTempPathW
+GetTickCount64
+HeapAlloc
+HeapCompact
+HeapCreate
+HeapDestroy
+HeapFree
+HeapReAlloc
+HeapSize
+HeapValidate
+InitializeCriticalSection
+InitializeSRWLock
+LeaveCriticalSection
+LocalFree
+LockFileEx
+MapViewOfFile
+MultiByteToWideChar
+OutputDebugStringA
+QueryPerformanceCounter
+ReleaseSRWLockExclusive
+SetEndOfFile
+SetFilePointerEx
+Sleep
+TryAcquireSRWLockExclusive
+TryEnterCriticalSection
+UnlockFileEx
+UnmapViewOfFile
+WaitForSingleObject
+WaitForSingleObjectEx
+WideCharToMultiByte
+
+# std/native/llrt/crash.xo (decision 0343 stage 2), which looks it up with
+# GetProcAddress; in the table since d64d5a14b
+SetUnhandledExceptionFilter

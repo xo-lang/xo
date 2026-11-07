@@ -95,7 +95,7 @@ compiler/xo/main.xo	/// such as std/sqlite's sqlite3.c)
 # std/sqlite on windows/amd64 and its prebuilt objects (decision 0534 stage
 # 2): the comments name SQLite, the library the object holds; no code copied.
 compiler/arm64/x86win.xo	/// Only a windows/amd64 build with no C runtime defines it: SQLite's
-compiler/macho/peimports.xo	// and each one std/sqlite's prebuilt object imports (decision 0534).
+compiler/macho/peimports.xo	// and each one std/sqlite's prebuilt object imports (decision 0534):
 compiler/xo/cffi.xo	/// std/sqlite's binding is its prebuilt object for tgoos/tgoarch when one
 compiler/xo/cffi.xo	/// std/sqlite's prebuilt object for tgoos/tgoarch (decision 0534 stage
 compiler/xo/cffi.xo	/// 2), or "" when there is none to use: m is std/sqlite's binding (its

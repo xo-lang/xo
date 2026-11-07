@@ -29,5 +29,8 @@ compiler/macho/peimports.xo also holds entries added by hand that
 scripts/win-import-table.py does not produce (crash.xo's
 SetUnhandledExceptionFilter, IPHLPAPI.dll's GetAdaptersAddresses, whose
 DLL name the SDK spells IPHLPAPI.DLL): regenerating the table drops them
-and fails internal/repotest TestPEImportsCoverSysWindows. Add new
-entries to the existing table instead (2026-11-07, decision 0534 stage 2).
+and fails internal/repotest TestPEImportsCoverSysWindows. Since
+2026-11-07 such imports are listed in scripts/win-imports-extra.txt, which
+the generator reads, the generator writes `.dll` for any capitals, and
+TestPEImportsMatchInputs fails when the table names anything its inputs
+do not.
