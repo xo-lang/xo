@@ -76,7 +76,7 @@ func strct(s *structpb.Struct) string {
 	return "{" + strings.Join(p, ",") + "}"
 }
 
-var words = []string{"", "a", "key", "héllo", "日本", "x y", "with tab", "0", "type.googleapis.com/pkg.Msg"}
+var words = []string{"", "a", "kay", "héllo", "日本", "x y", "with tab", "0", "type.googleapis.com/pkg.Msg"}
 
 func rval(r *rand.Rand, depth int) *structpb.Value {
 	n := 6
