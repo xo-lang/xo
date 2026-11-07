@@ -6,6 +6,14 @@
 //
 //	go run ./scripts/twincheck                  # every bench directory with a twin
 //	go run ./scripts/twincheck bench/perf/sort  # named ones
+//	go run ./scripts/twincheck -time 5          # and time each agreeing case
+//
+// -time N runs each agreeing case's two programs N times, alternating,
+// without twin.txt's env (its smaller iteration counts are for the check),
+// and prints `time NAME xo MS go MS ratio R`: the medians of the wall times
+// and Xo over Go. It is a survey's first cut (2026-11-07, the Xo against
+// Go re-survey), not an --ab: a claim about one change still takes
+// `xo bench --ab` on an offload host.
 //
 // A bench directory's twin.txt says how to run it (internal/twincheck has
 // the format: cases, arguments, compare fields, env, skip). Exit 1 when a
@@ -34,8 +42,9 @@ func main() {
 	verbose := flag.Bool("v", false, "print every case, not only the mismatches")
 	timeout := flag.Duration("timeout", 5*time.Minute, "per build and per run")
 	keep := flag.Bool("keep", false, "keep the built binaries and say where")
+	times := flag.Int("time", 0, "time each agreeing case's two programs this many times (medians, Xo over Go)")
 	flag.Parse()
-	if err := run(*verbose, *timeout, *keep, flag.Args()); err != nil {
+	if err := run(*verbose, *timeout, *keep, *times, flag.Args()); err != nil {
 		fmt.Fprintln(os.Stderr, "twincheck:", err)
 		os.Exit(1)
 	}
@@ -47,6 +56,7 @@ type checker struct {
 	tmp     string
 	timeout time.Duration
 	verbose bool
+	times   int
 	builds  map[string]built
 }
 
@@ -55,7 +65,7 @@ type built struct {
 	err  error
 }
 
-func run(verbose bool, timeout time.Duration, keep bool, dirs []string) error {
+func run(verbose bool, timeout time.Duration, keep bool, times int, dirs []string) error {
 	root, err := xotool.Root()
 	if err != nil {
 		return err
@@ -73,7 +83,7 @@ func run(verbose bool, timeout time.Duration, keep bool, dirs []string) error {
 	} else {
 		defer os.RemoveAll(tmp)
 	}
-	c := &checker{root: root, xo: xo, tmp: tmp, timeout: timeout, verbose: verbose, builds: map[string]built{}}
+	c := &checker{root: root, xo: xo, tmp: tmp, timeout: timeout, verbose: verbose, times: times, builds: map[string]built{}}
 	if len(dirs) == 0 {
 		if dirs, err = twincheck.Discover(root); err != nil {
 			return err
@@ -109,6 +119,13 @@ func run(verbose bool, timeout time.Duration, keep bool, dirs []string) error {
 			default:
 				if verbose {
 					fmt.Printf("%s: ok\n", name)
+				}
+				if c.times > 0 {
+					if line, err := c.timeCase(d, cs, name); err != nil {
+						fmt.Printf("%s: time: %v\n", name, err)
+					} else {
+						fmt.Println(line)
+					}
 				}
 			}
 		}
@@ -247,6 +264,47 @@ func (c *checker) exec(bin, dir string, args, env []string) (string, error) {
 		return "", fmt.Errorf("%s %s: %v\n%s", filepath.Base(bin), strings.Join(args, " "), err, tail(errOut.String()))
 	}
 	return out.String(), nil
+}
+
+// timeCase runs the case's two built programs c.times times each,
+// alternating, with the plain environment (no twin.txt env), and returns
+// the `time` line: the median wall milliseconds and Xo over Go.
+func (c *checker) timeCase(d *twincheck.Dir, cs twincheck.Case, name string) (string, error) {
+	dir := filepath.Join(c.root, d.Path)
+	xoBin, err := c.buildXo(d.Path, cs.Xo)
+	if err != nil {
+		return "", err
+	}
+	goBin, err := c.buildGo(d, cs.Go)
+	if err != nil {
+		return "", err
+	}
+	var xs, gs []float64
+	for i := 0; i < c.times; i++ {
+		for _, side := range []struct {
+			bin  string
+			args []string
+			out  *[]float64
+		}{{xoBin, cs.XoArgs, &xs}, {goBin, cs.GoArgs, &gs}} {
+			t := time.Now()
+			if _, err := c.exec(side.bin, dir, side.args, os.Environ()); err != nil {
+				return "", err
+			}
+			*side.out = append(*side.out, float64(time.Since(t).Microseconds())/1000)
+		}
+	}
+	x, g := median(xs), median(gs)
+	return fmt.Sprintf("time %s xo %.1f go %.1f ratio %.3f", strings.ReplaceAll(name, " ", "/"), x, g, x/g), nil
+}
+
+func median(v []float64) float64 {
+	s := append([]float64{}, v...)
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
+	return s[len(s)/2]
 }
 
 // tail is the last lines of a failed command's output.

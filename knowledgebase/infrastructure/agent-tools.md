@@ -950,7 +950,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `require MODULE VERSION` for a twin importing outside the standard library
   (built offline from the module cache), and `skip REASON` for a server.
   It is a pre-results step, not part of the hourly tier: it builds every
-  program twice. A mismatch in a bench that has a results file is a finding
+  program twice. `-time N` also times each agreeing case's two programs N
+  times, alternating, at full size (without twin.txt's env), and prints
+  `time NAME xo MS go MS ratio R` (medians, Xo over Go): a survey's first
+  cut across every twin (2026-11-07), not a claim about one change, which
+  still takes `xo bench --ab` on an offload host. A mismatch in a bench that has a results file is a finding
   to report, not to fix quietly.
 - A change to the build cache's lookup, store, listing or prune paths
   is timed against the real shared user cache (tens of GB, every shard
