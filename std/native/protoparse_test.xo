@@ -1,0 +1,170 @@
+// Hand written cases for the .proto parser and the derive Proto generator (decision 0530); the
+// grammar is the protobuf language specification's proto3 subset.
+use std/protoparse
+
+fn must(src: Str) -> protoparse.File {
+  protoparse.parse(src).or_fault("parse")
+}
+
+test "lexer: comments, numbers, strings and positions" {
+  let ts = protoparse.tokens("a // c\n/* x\ny */ 0x1F 1.5e-3 'q\\n' \"r\"").or_fault("tokens")
+  expect(ts.len()) == 5
+  expect(ts[0].text) == "a"
+  expect(ts[1].text) == "0x1F"
+  expect(ts[1].line) == 3
+  expect(ts[2].kind == protoparse.Kind.Float) == true
+  expect(ts[3].text) == "q\n"
+  expect(ts[4].kind == protoparse.Kind.Str) == true
+}
+
+test "lexer errors carry a position" {
+  match protoparse.tokens("a\n  \"abc") {
+    Ok(_) => fault("want error")
+    Err(e) => {
+      expect(e.line) == 2
+      expect(e.col) == 3
+    }
+  }
+  expect(protoparse.tokens("/* open").is_err()) == true
+}
+
+test "file header: syntax, package, imports, options" {
+  let f = must("syntax = \"proto3\";\npackage a.b.c;\nimport \"x.proto\";\nimport public \"y.proto\";\noption java_package = \"z\";")
+  expect(f.syntax) == "proto3"
+  expect(f.package) == "a.b.c"
+  expect(f.imports.len()) == 2
+  expect(f.imports[1]) == "y.proto"
+}
+
+test "message fields, labels, maps and field options" {
+  let f = must("message M { int32 a = 1; repeated string b = 2 [packed = false]; optional bool c = 3; map<string, M> d = 4; .a.B e = 5; reserved 6, 8 to 9; }")
+  let m = f.messages[0]
+  expect(m.fields.len()) == 5
+  expect(m.fields[1].repeated) == true
+  expect(m.fields[2].optional) == true
+  expect(m.fields[3].key) == "string"
+  expect(m.fields[3].typ) == "M"
+  expect(m.fields[4].typ) == ".a.B"
+}
+
+test "oneof, nested types and enums" {
+  let f = must("message M { oneof k { int64 x = 1; string y = 2; } message In { int32 v = 1; } enum E { Z = 0; A = -1; B = 0x10; } }")
+  let m = f.messages[0]
+  expect(m.oneofs[0]) == "k"
+  expect(m.fields[1].oneof) == "k"
+  expect(m.nested[0].name) == "In"
+  expect(m.enums[0].values[1].num) == -1
+  expect(m.enums[0].values[2].num) == 16
+}
+
+test "services: the four streaming shapes" {
+  let f = must("service S { rpc A(Q) returns (R); rpc B(Q) returns (stream R); rpc C(stream Q) returns (R); rpc D(stream Q) returns (stream R) { option deprecated = true; } }")
+  let r = f.services[0].rpcs
+  expect(r.len()) == 4
+  expect(r[1].server_stream) == true
+  expect(r[1].client_stream) == false
+  expect(r[2].client_stream) == true
+  expect(r[3].client_stream && r[3].server_stream) == true
+}
+
+test "parse errors: position and message" {
+  match protoparse.parse("message A {\n  int32 x = ;\n}") {
+    Ok(_) => fault("want error")
+    Err(e) => {
+      expect(e.line) == 2
+      expect(e.col) == 13
+    }
+  }
+  expect(protoparse.parse("message A { required int32 x = 1; }").is_err()) == true
+  expect(protoparse.parse("message A { int32 x = 1;").is_err()) == true
+  // extend blocks (custom options) are skipped; required and group are proto2 only
+  expect(protoparse.parse("extend A { int32 x = 1; }").is_err()) == false
+  expect(protoparse.parse("message M { optional group G = 1 { optional int32 x = 1; } }").is_err()) == true
+  expect(protoparse.parse("syntax = proto3;").is_err()) == true
+}
+
+test "generator: scalars, options, nesting, oneof and enum names" {
+  let f = must("message O { message I { sint32 z = 1; } enum K { U = 0; V = 1; } I i = 1; K k = 2; fixed64 f = 3; oneof w { string s = 4; I t = 5; } map<int64, I> m = 6; }")
+  let src = protoparse.gen(f).or_fault("gen")
+  expect(src.contains("struct OI {")) == true
+  expect(src.contains("z proto \"1,zigzag\": Int32")) == true
+  expect(src.contains("enum OK: Int {")) == true
+  expect(src.contains("i proto \"1\": OI")) == true
+  expect(src.contains("k proto \"2\": OK")) == true
+  expect(src.contains("f proto \"3,fixed\": UInt64")) == true
+  expect(src.contains("enum OW {")) == true
+  expect(src.contains("T as \"5\"(v: OI)")) == true
+  expect(src.contains("w proto \"oneof\": OW?")) == true
+  expect(src.contains("m proto \"6\": Map[Int, OI]")) == true
+}
+
+test "generator: unknown types are an error" {
+  expect(protoparse.gen(must("message A { B b = 1; }")).is_err()) == true
+}
+
+fn lcg(x: Int) -> Int {
+  (x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)) & 0x7fffffffffffffff
+}
+
+const SAMPLE: Str = "syntax = \"proto3\";\npackage a.b;\nimport \"x.proto\";\nenum E { Z = 0; ONE = 1; }\nmessage M {\n  int32 id = 1;\n  repeated string tags = 2;\n  optional bytes raw = 3;\n  map<string, int64> m = 4;\n  oneof k { string s = 5; int64 n = 6; }\n  message In { E e = 1; }\n  In in = 7;\n}\nservice S { rpc Get(M) returns (stream M); rpc Put(stream M) returns (M); }\n"
+
+test "mutated .proto text is an error or a file, never a fault" {
+  var x = 777
+  let base = SAMPLE.bytes()
+  for _ in 0..4000 {
+    var b = BytesBuilder.with_capacity(base.len())
+    x = lcg(x)
+    let cut = (x >> 30) % (base.len() + 1)
+    var i = 0
+    while i < cut {
+      x = lcg(x)
+      let r = (x >> 33) % 40
+      if r == 0 {
+        // drop the byte
+      } else if r == 1 {
+        b.write_byte(UInt8.wrapping_from((x >> 20) & 127))
+        b.write_byte(base[i])
+      } else if r == 2 {
+        b.write_byte(UInt8.wrapping_from(33 + (x >> 20) % 90))
+      } else {
+        b.write_byte(base[i])
+      }
+      i += 1
+    }
+    let text = b.freeze().to_str_lossy()
+    match protoparse.parse(text) {
+      Ok(f) => {
+        // a file the parser accepts generates or fails with a position, never faults
+        match protoparse.gen(f) {
+          Ok(_) => {}
+          Err(_) => {}
+        }
+      }
+      Err(e) => expect(e.line >= 1) == true
+    }
+  }
+}
+
+test "proto2: labels, required, default, groups, extensions" {
+  let f = must("syntax = \"proto2\";\nmessage M {\n  required int32 a = 1;\n  optional string b = 2 [default = \"x\"];\n  repeated int64 c = 3;\n  optional group Res = 4 {\n    required string url = 5;\n  }\n  extensions 100 to 199;\n  optional int32 e = 6 [deprecated = true];\n}\nextend M { optional int32 ext = 100; }")
+  let m = f.messages[0]
+  expect(f.syntax) == "proto2"
+  expect(m.fields.len()) == 5
+  expect(m.fields[0].required) == true
+  expect(m.fields[1].optional) == true
+  expect(m.fields[2].repeated) == true
+  expect(m.fields[3].name) == "res"
+  expect(m.fields[3].typ) == "Res"
+  expect(m.nested[0].name) == "Res"
+  expect(m.nested[0].fields[0].required) == true
+  let src = protoparse.gen(f).or_fault("gen")
+  expect(src.contains("a proto \"1\": Int32")) == true
+  expect(src.contains("b proto \"2\": Str?")) == true
+  expect(src.contains("res proto \"4\": MRes?")) == true
+}
+
+test "proto2: unlabeled field and a oneof member" {
+  expect(protoparse.parse("syntax = \"proto2\"; message M { int32 a = 1; }").is_err()) == true
+  let f = must("syntax = \"proto2\"; message M { oneof k { int32 a = 1; string b = 2; } }")
+  expect(f.messages[0].fields.len()) == 2
+}

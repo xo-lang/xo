@@ -25,7 +25,7 @@ fn wasi_unavailable(args: List[Str]) -> Str {
     return ""
   }
   let cmd = args[i]
-  if cmd is "run" | "test" | "bench" | "serve" | "lsp" | "mcp" | "replay" | "dump" | "dev" | "bind" | "get" | "mod" | "vendor" | "publish" | "audit" {
+  if cmd is "run" | "test" | "bench" | "serve" | "lsp" | "mcp" | "replay" | "dump" | "dev" | "bind" | "proto" | "get" | "mod" | "vendor" | "publish" | "audit" {
     return cmd
   }
   if cmd is "build" | "asm" {

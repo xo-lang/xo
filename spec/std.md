@@ -7992,3 +7992,31 @@ name and start, so a retried export names the same spans. A `request` span's sta
 
 `encode_metrics`: a counter is a monotonic cumulative Sum, a gauge a Gauge, a histogram a cumulative Histogram (bucket
 counts per bucket, with the explicit bounds), a summary a Summary with its count and sum; labels are string attributes.
+
+## 70. std/protoparse
+
+A parser for `.proto` files and a generator of `derive Proto` structs, for `xo proto gen` (decision 0530). Pure.
+
+```xo
+struct ParseErr { line: Int, col: Int, msg: Str }              // 1 based; displays as `line:col: msg`
+fn tokens(src: Str) -> List[Token] ! ParseErr
+fn parse(src: Str) -> File ! ParseErr
+fn gen(f: File) -> Str ! ParseErr
+// File { syntax, package, imports, messages: List[Message], enums: List[Enum], services: List[Service] }
+// Message { name, fields: List[Field], oneofs: List[Str], nested: List[Message], enums: List[Enum] }
+// Field { name, num, typ, key, repeated, optional, required, oneof }   Rpc { name, req, resp, client_stream, server_stream }
+```
+
+- The lexer reads identifiers (dots inside), integers (a `0x` prefix is lexed), floats, string literals (escapes decoded)
+  and single symbol characters; `//` and `/* */` comments are dropped.
+- `parse` reads proto3 and proto2: `package`, `import`, messages with fields, `repeated`, `optional`, `map<K, V>`,
+  `oneof`, nested messages and enums, top level enums, `service` with `rpc` and `stream`. Options, `reserved`,
+  `extensions`, field options (`default` included) and `extend` blocks are read and dropped. In a proto2 file every
+  field outside a oneof needs a label (`required`, `optional` or `repeated`, else an error), and `required` and
+  `group` are accepted: a group is a nested message plus a field of that type named in lower case. A proto3 file
+  rejects `required` and `group`. `gen` maps `required` to a plain field and proto2 `optional` to an Option;
+  proto2 repeated numeric fields are unpacked on the wire but `derive Proto` writes them packed (the reader takes
+  both), so a generated proto2 message is not byte identical to protoc's output for those fields.
+- `gen` writes Xo source: a nested type `Inner` of `Outer` is `OuterInner`, a oneof is an enum held in an optional
+  field marked `proto "oneof"`, an enum is an open `Int` enum with a catch-all variant. Services are not generated
+  here (the stubs of std/grpc come with `xo proto gen`).

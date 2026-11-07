@@ -40,6 +40,7 @@ pub fn commands() -> List[Command] {
     Command{name: "publish", purpose: "check a release against the previous version tag"},
     Command{name: "audit", purpose: "supply chain report of the dependencies"},
     Command{name: "bind", purpose: "bind Go packages (use go) or C headers (use c)"},
+    Command{name: "proto", purpose: "generate Xo derive Proto structs from .proto files (gen)"},
     Command{name: "dump", purpose: "print the task tree of a running Xo program"},
     Command{name: "replay", purpose: "rerun a recorded trace or crash bundle offline"},
     Command{name: "prof", purpose: "pprof files and summaries of a native program's profile"},
@@ -113,6 +114,7 @@ pub fn usage(name: Str) -> Str {
     "publish" => publish_text()
     "audit" => audit_text()
     "bind" => bind_text()
+    "proto" => proto_text()
     "dump" => dump_text()
     "replay" => replay_text()
     "prof" => prof_text()
@@ -714,6 +716,17 @@ headers for use c "<header>" on native builds (decision 0116): write
 the Xo declaration file and the adapter into the binding cache and print
 how much mapped. check, build, and test bind missing packages on their
 own.
+"""
+}
+
+fn proto_text() -> Str {
+  """
+usage: xo proto gen [--out=<dir>] <file.proto...>
+
+Generate Xo source from .proto files (decision 0530): the messages, enums
+and oneofs of proto3 and proto2 files become structs and enums with derive
+Proto, written to <dir>/<name>.xo, or to standard output for one file
+without --out. Services and imports are not generated.
 """
 }
 

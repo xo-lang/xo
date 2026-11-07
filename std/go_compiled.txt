@@ -34,3 +34,4 @@ sqlite
 timego
 grpc
 otlp
+protoparse
