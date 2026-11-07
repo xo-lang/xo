@@ -1583,6 +1583,15 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let m = g.def("bitcast <32 x i1> ${e} to i32")
       g.set(v, "zext i32 ${m} to i64")
     }
+    "rt.mem_ne64" => {
+      // a <64 x i8> compare as an i64, nonzero when a byte differs
+      let pa = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
+      let pb = g.def("inttoptr i64 ${g.op(x.args[1])} to ptr")
+      let wa = g.def("load <64 x i8>, ptr ${pa}, align 1")
+      let wb = g.def("load <64 x i8>, ptr ${pb}, align 1")
+      let e = g.def("icmp ne <64 x i8> ${wa}, ${wb}")
+      g.set(v, "bitcast <64 x i1> ${e} to i64")
+    }
     "rt.mem_ne32" => {
       let pa = g.def("inttoptr i64 ${g.op(x.args[0])} to ptr")
       let pb = g.def("inttoptr i64 ${g.op(x.args[1])} to ptr")

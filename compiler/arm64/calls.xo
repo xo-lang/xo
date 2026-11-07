@@ -2622,6 +2622,31 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       g.set(v, [g.def1(false, "ldp q30, q31, [$u0]\nldr q29, [$u1]\ncmeq v30.16b, v30.16b, v29.16b\nldr q29, [$u1, #16]\ncmeq v31.16b, v31.16b, v29.16b\nand v30.16b, v30.16b, v31.16b\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30\nmvn $d0, $d0", us)])
     }
+    "rt.mem_ne64" => {
+      // mem_ne32 over 64 bytes: four lanes' cmeq and'ed into v30 before
+      // the one move to a general register (the move is the cost of a
+      // 32 byte step, bench/results/simd-survey-2026-11-06.md); v29 to
+      // v31 are the emitter's only vector scratch registers
+      let us = [g.word(x.args[0]), g.word(x.args[1])]
+      if g.x86 {
+        // pmovmskb is cheap on x86_64: each lane's mask and'ed in r11d
+        // and the result (xmm14 and xmm15 are the only vector scratch)
+        var t: List[Str] = []
+        for k in 0..4 {
+          let o = if k == 0 { "" } else { "${k * 16}" }
+          t = t + ["movdqu ${o}($u0), %xmm15", "movdqu ${o}($u1), %xmm14", "pcmpeqb %xmm14, %xmm15"]
+          if k == 0 {
+            t.push("pmovmskb %xmm15, $wd0")
+          } else {
+            t = t + ["pmovmskb %xmm15, %r11d", "andl %r11d, $wd0"]
+          }
+        }
+        t.push("xorl $0xffff, $wd0")
+        g.set(v, [g.x86_def1(t.join("\n"), us)])
+        return true
+      }
+      g.set(v, [g.def1(false, "ldp q30, q31, [$u0]\nldr q29, [$u1]\ncmeq v30.16b, v30.16b, v29.16b\nldr q29, [$u1, #16]\ncmeq v31.16b, v31.16b, v29.16b\nand v30.16b, v30.16b, v31.16b\nldr q31, [$u0, #32]\nldr q29, [$u1, #32]\ncmeq v31.16b, v31.16b, v29.16b\nand v30.16b, v30.16b, v31.16b\nldr q31, [$u0, #48]\nldr q29, [$u1, #48]\ncmeq v31.16b, v31.16b, v29.16b\nand v30.16b, v30.16b, v31.16b\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30\nmvn $d0, $d0", us)])
+    }
     "rt.case_fold16" => {
       // 16 bytes of ASCII case folding in one lane (decision 0373): the
       // range test is one unsigned compare of the bytes shifted down by
