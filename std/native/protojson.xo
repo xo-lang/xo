@@ -1311,3 +1311,816 @@ fn parse_float(v: Jv, bits: Int) -> Float? {
   }
   Some(f)
 }
+
+// ---- JSON to wire -----------------------------------------------------------
+
+/// One scalar or message value ready to write: `v` holds varint and fixed bits, `data` a length delimited payload.
+struct Sv {
+  v: Int
+  data: Bytes
+}
+
+fn bad(fd: protodesc.FieldDesc) -> protojson.JsonErr { jerr("invalid value for field ${fd.name}") }
+
+fn trim_dot(s: Str) -> Str { if s.starts_with(".") { s[1..s.len()] } else { s } }
+
+fn enum_of(r: Registry, fd: protodesc.FieldDesc) -> protodesc.EnumDesc? { r.enums.get(trim_dot(fd.type_name)) }
+
+fn zz32(n: Int) -> Int { ((n << 1) ^ (n >> 31)) & 0xFFFFFFFF }
+
+fn zz64(n: Int) -> Int { (n << 1) ^ (n >> 63) }
+
+/// A scalar field's value; None when it is skipped (an unknown enum name with discard_unknown).
+fn enc_scalar(r: Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -> Sv? ! protojson.JsonErr {
+  let k = fd.kind
+  if k == protodesc.TYPE_DOUBLE {
+    let f = parse_float(jv, 64) ?? return Err(bad(fd))
+    return Ok(Some(Sv{v: f.to_bits(), data: b""}))
+  }
+  if k == protodesc.TYPE_FLOAT {
+    let f = parse_float(jv, 32) ?? return Err(bad(fd))
+    return Ok(Some(Sv{v: Int(Float32(f).to_bits()), data: b""}))
+  }
+  if k == protodesc.TYPE_INT64 || k == protodesc.TYPE_SFIXED64 || k == protodesc.TYPE_SINT64 || k == protodesc.TYPE_INT32 || k == protodesc.TYPE_SFIXED32 || k == protodesc.TYPE_SINT32 {
+    let t = num_text(jv) ?? return Err(bad(fd))
+    let w32 = k == protodesc.TYPE_INT32 || k == protodesc.TYPE_SFIXED32 || k == protodesc.TYPE_SINT32
+    let n = parse_i64(t, if w32 { 32 } else { 64 }) ?? return Err(bad(fd))
+    if k == protodesc.TYPE_SINT32 {
+      return Ok(Some(Sv{v: zz32(n), data: b""}))
+    }
+    if k == protodesc.TYPE_SINT64 {
+      return Ok(Some(Sv{v: zz64(n), data: b""}))
+    }
+    return Ok(Some(Sv{v: n, data: b""}))
+  }
+  if k == protodesc.TYPE_UINT64 || k == protodesc.TYPE_FIXED64 || k == protodesc.TYPE_UINT32 || k == protodesc.TYPE_FIXED32 {
+    let t = num_text(jv) ?? return Err(bad(fd))
+    let w32 = k == protodesc.TYPE_UINT32 || k == protodesc.TYPE_FIXED32
+    let n = parse_u64(t, if w32 { 32 } else { 64 }) ?? return Err(bad(fd))
+    return Ok(Some(Sv{v: n, data: b""}))
+  }
+  if k == protodesc.TYPE_BOOL {
+    match jv {
+      Bool(b) => return Ok(Some(Sv{v: if b { 1 } else { 0 }, data: b""}))
+      _ => return Err(bad(fd))
+    }
+  }
+  if k == protodesc.TYPE_STRING {
+    match jv {
+      Text(s) => return Ok(Some(Sv{v: 0, data: s.bytes()}))
+      _ => return Err(bad(fd))
+    }
+  }
+  if k == protodesc.TYPE_BYTES {
+    match jv {
+      Text(s) => {
+        let enc = if s.contains("-") || s.contains("_") {
+          if s.len() % 4 != 0 { base64.RawUrl } else { base64.Url }
+        } else if s.len() % 4 != 0 {
+          base64.RawStd
+        } else {
+          base64.Std
+        }
+        match base64.decode(s, enc) {
+          Ok(b) => return Ok(Some(Sv{v: 0, data: b}))
+          Err(_) => return Err(bad(fd))
+        }
+      }
+      _ => return Err(bad(fd))
+    }
+  }
+  if k == protodesc.TYPE_ENUM {
+    match jv {
+      Text(s) => {
+        match enum_of(r, fd) {
+          Some(e) => {
+            for v in e.value {
+              if v.name == s {
+                return Ok(Some(Sv{v: v.number, data: b""}))
+              }
+            }
+          }
+          None => {}
+        }
+        if o.discard_unknown {
+          return Ok(None)
+        }
+        return Err(bad(fd))
+      }
+      Num(raw) => {
+        let n = parse_i64(raw, 32) ?? return Err(bad(fd))
+        return Ok(Some(Sv{v: n, data: b""}))
+      }
+      Null => {
+        if trim_dot(fd.type_name) == "google.protobuf.NullValue" {
+          return Ok(Some(Sv{v: 0, data: b""}))
+        }
+        return Err(bad(fd))
+      }
+      _ => return Err(bad(fd))
+    }
+  }
+  Err(jerr("field ${fd.name}: unsupported kind ${k}"))
+}
+
+/// A field's single value, a message converted through its descriptor.
+fn enc_single(r: Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -> Sv? ! protojson.JsonErr {
+  if fd.kind == protodesc.TYPE_MESSAGE {
+    let mi = lookup(r, fd.type_name)?
+    return Ok(Some(Sv{v: 0, data: msg_wire(r, mi, jv, o)?}))
+  }
+  if fd.kind == protodesc.TYPE_GROUP {
+    return Err(jerr("field ${fd.name}: groups are not supported"))
+  }
+  enc_scalar(r, fd, jv, o)
+}
+
+fn w_fixed(var out: BytesBuilder, v: Int, n: Int) {
+  var i = 0
+  while i < n {
+    out.write_byte(UInt8.wrapping_from((v >> (8 * i)) & 255))
+    i += 1
+  }
+}
+
+/// Writes `sv` for a field of kind `k`, with its tag when `tagged`.
+fn emit(var out: BytesBuilder, num: Int, k: Int, sv: Sv, tagged: Bool) {
+  let w = wire_of(k)
+  if tagged {
+    pd.wtag(out, num, w)
+  }
+  if w == 0 {
+    pd.wv(out, sv.v)
+  } else if w == 1 {
+    w_fixed(out, sv.v, 8)
+  } else if w == 5 {
+    w_fixed(out, sv.v, 4)
+  } else {
+    pd.wv(out, sv.data.len())
+    out.write(sv.data)
+  }
+}
+
+fn is_packed(info: MsgInfo, fd: protodesc.FieldDesc) -> Bool {
+  if !is_numeric_kind(fd.kind) {
+    return false
+  }
+  var packed = info.proto3
+  if !fd.options.is_empty() {
+    for f in pd.walk(fd.options) ?? [] {
+      if f.num == 2 && f.wire == 0 {
+        packed = f.v != 0
+      }
+    }
+  }
+  packed
+}
+
+fn is_null(jv: Jv) -> Bool {
+  match jv {
+    Null => true
+    _ => false
+  }
+}
+
+fn is_value_field(fd: protodesc.FieldDesc) -> Bool {
+  fd.kind == protodesc.TYPE_MESSAGE && trim_dot(fd.type_name) == "google.protobuf.Value"
+}
+
+fn is_nullvalue_field(fd: protodesc.FieldDesc) -> Bool {
+  fd.kind == protodesc.TYPE_ENUM && trim_dot(fd.type_name) == "google.protobuf.NullValue"
+}
+
+fn key_sv(kfd: protodesc.FieldDesc, ks: Str) -> (Sv, Str) ! protojson.JsonErr {
+  let k = kfd.kind
+  if k == protodesc.TYPE_STRING {
+    return Ok((Sv{v: 0, data: ks.bytes()}, ks))
+  }
+  if k == protodesc.TYPE_BOOL {
+    if ks == "true" {
+      return Ok((Sv{v: 1, data: b""}, "1"))
+    }
+    if ks == "false" {
+      return Ok((Sv{v: 0, data: b""}, "0"))
+    }
+    return Err(bad(kfd))
+  }
+  let sv = enc_scalar(Registry{msgs: {}, enums: {}}, kfd, Jv.Text(ks), protojson.Opts{})?
+  let x = match sv {
+    Some(x) => x
+    None => return Err(bad(kfd))
+  }
+  let sb = -9223372036854775807 - 1
+  var sk = ""
+  if k == protodesc.TYPE_UINT32 || k == protodesc.TYPE_FIXED32 || k == protodesc.TYPE_UINT64 || k == protodesc.TYPE_FIXED64 {
+    sk = hex16(x.v)
+  } else if k == protodesc.TYPE_SINT32 {
+    let u = x.v & 0xFFFFFFFF
+    sk = hex16(i32(u.shr_logical(1) ^ (0 - (u & 1))) ^ sb)
+  } else if k == protodesc.TYPE_SINT64 {
+    sk = hex16(x.v.shr_logical(1) ^ (0 - (x.v & 1)) ^ sb)
+  } else {
+    sk = hex16(x.v ^ sb)
+  }
+  Ok((x, sk))
+}
+
+fn map_entry_fields(entry: MsgInfo) -> (protodesc.FieldDesc, protodesc.FieldDesc) {
+  var kfd = entry.d.field[0]
+  var vfd = entry.d.field[1]
+  for f in entry.d.field {
+    if f.number == 1 {
+      kfd = f
+    } else if f.number == 2 {
+      vfd = f
+    }
+  }
+  (kfd, vfd)
+}
+
+/// The records of a map field: entries in key order, key and value both written.
+fn enc_map(r: Registry, fd: protodesc.FieldDesc, entry: MsgInfo, members: List[(Str, Jv)], o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+  let (kfd, vfd) = map_entry_fields(entry)
+  var seen: Map[Str, Bool] = {}
+  var recs: List[(Str, Bytes)] = []
+  for m in members {
+    let (ks, jv) = m
+    let (ksv, sk) = key_sv(kfd, ks)?
+    if seen.contains(sk) {
+      return Err(jerr("duplicate map key ${jstr(ks)}"))
+    }
+    seen.put(sk, true)
+    var vsv = Sv{v: 0, data: b""}
+    if is_null(jv) && !is_value_field(vfd) && !is_nullvalue_field(vfd) {
+      return Err(bad(fd))
+    }
+    match enc_single(r, vfd, jv, o)? {
+      Some(x) => vsv = x
+      None => continue
+    }
+    var rec = BytesBuilder.new()
+    emit(rec, 1, kfd.kind, ksv, true)
+    emit(rec, 2, vfd.kind, vsv, true)
+    recs.push((sk, rec.freeze()))
+  }
+  let sorted = recs.sort_by(fn(e: (Str, Bytes)) -> Str { e.0 })
+  var out = BytesBuilder.new()
+  for e in sorted {
+    pd.wtag(out, fd.number, 2)
+    pd.wv(out, e.1.len())
+    out.write(e.1)
+  }
+  Ok(out.freeze())
+}
+
+/// The wire bytes of one field from its JSON value.
+fn enc_field(r: Registry, info: MsgInfo, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts, real_oneof: Bool) -> Bytes ! protojson.JsonErr {
+  var out = BytesBuilder.new()
+  if fd.label == protodesc.LABEL_REPEATED {
+    if fd.kind == protodesc.TYPE_MESSAGE {
+      let mi = lookup(r, fd.type_name)?
+      if mi.is_map {
+        match jv {
+          Obj(members) => return enc_map(r, fd, mi, members, o)
+          _ => return Err(bad(fd))
+        }
+      }
+    }
+    let items = match jv {
+      Arr(items) => items
+      _ => return Err(bad(fd))
+    }
+    var svs: List[Sv] = []
+    for it in items {
+      if is_null(it) && !is_value_field(fd) && !is_nullvalue_field(fd) {
+        return Err(bad(fd))
+      }
+      match enc_single(r, fd, it, o)? {
+        Some(x) => svs.push(x)
+        None => {}
+      }
+    }
+    if svs.is_empty() {
+      return Ok(b"")
+    }
+    if is_packed(info, fd) {
+      var body = BytesBuilder.new()
+      for x in svs {
+        emit(body, fd.number, fd.kind, x, false)
+      }
+      let bb = body.freeze()
+      pd.wtag(out, fd.number, 2)
+      pd.wv(out, bb.len())
+      out.write(bb)
+    } else {
+      for x in svs {
+        emit(out, fd.number, fd.kind, x, true)
+      }
+    }
+    return Ok(out.freeze())
+  }
+  let sv = match enc_single(r, fd, jv, o)? {
+    Some(x) => x
+    None => return Ok(b"")
+  }
+  let implicit = info.proto3 && fd.kind != protodesc.TYPE_MESSAGE && fd.kind != protodesc.TYPE_GROUP && !real_oneof && !fd.proto3_optional
+  if implicit {
+    let zero = if wire_of(fd.kind) == 2 { sv.data.is_empty() } else { sv.v == 0 }
+    if zero {
+      return Ok(b"")
+    }
+  }
+  emit(out, fd.number, fd.kind, sv, true)
+  Ok(out.freeze())
+}
+
+fn unmarshal(r: Registry, name: Str, json: Str, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+  let jv = parse_json(json)?
+  match r.msgs.get(name) {
+    Some(info) => msg_wire(r, info, jv, o)
+    None => Err(jerr("unknown message ${name}"))
+  }
+}
+
+fn field_for(info: MsgInfo, key: Str) -> protodesc.FieldDesc? {
+  for fd in info.d.field {
+    if json_name(fd) == key {
+      return Some(fd)
+    }
+  }
+  for fd in info.d.field {
+    if fd.name == key {
+      return Some(fd)
+    }
+  }
+  None
+}
+
+/// The wire bytes of the message `info` from its JSON value.
+fn msg_wire(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+  match wkt_wire(r, info, jv, o)? {
+    Some(b) => return Ok(b)
+    None => {}
+  }
+  msg_wire_obj(r, info, jv, o, false)
+}
+
+fn msg_wire_obj(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts, in_any: Bool) -> Bytes ! protojson.JsonErr {
+  let members = match jv {
+    Obj(m) => m
+    _ => return Err(jerr("unexpected token"))
+  }
+  var seen: Map[Int, Bool] = {}
+  var oneofs: Map[Int, Bool] = {}
+  var recs: List[(Int, Bytes)] = []
+  for m in members {
+    let (key, v) = m
+    if in_any && key == "@type" {
+      continue
+    }
+    let fd = match field_for(info, key) {
+      Some(f) => f
+      None => {
+        if o.discard_unknown || (key.starts_with("[") && key.ends_with("]") && o.discard_unknown) {
+          continue
+        }
+        return Err(jerr("unknown field ${jstr(key)}"))
+      }
+    }
+    if seen.contains(fd.number) {
+      return Err(jerr("duplicate field ${jstr(key)}"))
+    }
+    seen.put(fd.number, true)
+    if is_null(v) && !is_value_field(fd) && !is_nullvalue_field(fd) {
+      continue
+    }
+    var order = fd.number
+    var real_oneof = false
+    match fd.oneof_index {
+      Some(k) => {
+        if !fd.proto3_optional {
+          real_oneof = true
+          if fd.label != protodesc.LABEL_REPEATED {
+            if oneofs.contains(k) {
+              return Err(jerr("oneof is already set for field ${jstr(key)}"))
+            }
+            oneofs.put(k, true)
+          }
+          order = (k + 1) * 1000000000000 + fd.number
+        }
+      }
+      None => {}
+    }
+    let b = enc_field(r, info, fd, v, o, real_oneof)?
+    if !b.is_empty() {
+      recs.push((order, b))
+    }
+  }
+  let sorted = recs.sort_by(fn(e: (Int, Bytes)) -> Int { e.0 })
+  var out = BytesBuilder.new()
+  for e in sorted {
+    out.write(e.1)
+  }
+  Ok(out.freeze())
+}
+
+// ---- well known types from JSON ----------------------------------------------
+
+fn digits_at(b: Bytes, at: Int, n: Int) -> Int {
+  if at + n > b.len() {
+    return -1
+  }
+  var v = 0
+  for i in 0..n {
+    let c = Int(b[at + i])
+    if !is_digit(c) {
+      return -1
+    }
+    v = v * 10 + (c - 48)
+  }
+  v
+}
+
+fn leap(y: Int) -> Bool { y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) }
+
+fn days_in(y: Int, m: Int) -> Int {
+  if m == 2 {
+    if leap(y) { 29 } else { 28 }
+  } else if m == 4 || m == 6 || m == 9 || m == 11 {
+    30
+  } else {
+    31
+  }
+}
+
+/// Days from 1970-01-01 of a civil date (proleptic Gregorian).
+fn days_from_civil(y0: Int, m: Int, d: Int) -> Int {
+  let y = if m <= 2 { y0 - 1 } else { y0 }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let yoe = y - era * 400
+  let mp = (m + 9) % 12
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+fn ts_wire(secs: Int, nanos: Int) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.wi(o, 1, secs)
+  pd.wi(o, 2, nanos)
+  o.freeze()
+}
+
+fn parse_timestamp(s: Str) -> Bytes ! protojson.JsonErr {
+  let e = jerr("invalid google.protobuf.Timestamp value ${jstr(s)}")
+  let b = s.bytes()
+  if b.len() < 20 {
+    return Err(e)
+  }
+  let y = digits_at(b, 0, 4)
+  let mo = digits_at(b, 5, 2)
+  let d = digits_at(b, 8, 2)
+  let h = digits_at(b, 11, 2)
+  let mi = digits_at(b, 14, 2)
+  let sec = digits_at(b, 17, 2)
+  if y < 0 || mo < 0 || d < 0 || h < 0 || mi < 0 || sec < 0 {
+    return Err(e)
+  }
+  if b[4] != 45 || b[7] != 45 || b[10] != 84 || b[13] != 58 || b[16] != 58 {
+    return Err(e)
+  }
+  if y < 1 || mo < 1 || mo > 12 || d < 1 || d > days_in(y, mo) || h > 23 || mi > 59 || sec > 59 {
+    return Err(e)
+  }
+  var i = 19
+  var nanos = 0
+  if b[i] == 46 {
+    let s0 = i + 1
+    i += 1
+    while i < b.len() && is_digit(Int(b[i])) {
+      i += 1
+    }
+    let nd = i - s0
+    if nd == 0 || nd > 9 {
+      return Err(e)
+    }
+    var v = 0
+    for k in 0..9 {
+      v = v * 10 + (if k < nd { Int(b[s0 + k]) - 48 } else { 0 })
+    }
+    nanos = v
+  }
+  if i >= b.len() {
+    return Err(e)
+  }
+  var off = 0
+  if b[i] == 90 {
+    i += 1
+  } else if b[i] == 43 || b[i] == 45 {
+    let oh = digits_at(b, i + 1, 2)
+    let om = digits_at(b, i + 4, 2)
+    if oh < 0 || om < 0 || i + 3 >= b.len() || b[i + 3] != 58 || oh > 24 || om > 60 {
+      return Err(e)
+    }
+    off = (oh * 3600 + om * 60) * (if b[i] == 45 { -1 } else { 1 })
+    i += 6
+  } else {
+    return Err(e)
+  }
+  if i != b.len() {
+    return Err(e)
+  }
+  let secs = days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + sec - off
+  if secs < -62135596800 || secs > 253402300799 {
+    return Err(jerr("google.protobuf.Timestamp value is out of range: ${jstr(s)}"))
+  }
+  Ok(ts_wire(secs, nanos))
+}
+
+fn parse_duration(s: Str) -> Bytes ! protojson.JsonErr {
+  let e = jerr("invalid google.protobuf.Duration value ${jstr(s)}")
+  let b = s.bytes()
+  if b.len() < 2 || b[b.len() - 1] != 115 {
+    return Err(e)
+  }
+  var i = 0
+  let end = b.len() - 1
+  var neg = false
+  if b[0] == 43 {
+    i = 1
+  } else if b[0] == 45 {
+    neg = true
+    i = 1
+  }
+  if i >= end {
+    return Err(e)
+  }
+  var secs = 0
+  if b[i] == 48 {
+    i += 1
+  } else if Int(b[i]) >= 49 && Int(b[i]) <= 57 {
+    let s0 = i
+    while i < end && is_digit(Int(b[i])) {
+      i += 1
+    }
+    if i - s0 > 18 {
+      return Err(e)
+    }
+    secs = Int.parse(s[s0..i]) ?? return Err(e)
+  } else {
+    return Err(e)
+  }
+  var nanos = 0
+  if i < end {
+    if b[i] != 46 {
+      return Err(e)
+    }
+    let s0 = i + 1
+    let nd = end - s0
+    if nd == 0 || nd > 9 {
+      return Err(e)
+    }
+    var v = 0
+    for k in 0..9 {
+      if k < nd {
+        let c = Int(b[s0 + k])
+        if !is_digit(c) {
+          return Err(e)
+        }
+        v = v * 10 + (c - 48)
+      } else {
+        v = v * 10
+      }
+    }
+    nanos = v
+  }
+  if secs > 315576000000 {
+    return Err(e)
+  }
+  if neg {
+    secs = 0 - secs
+    nanos = 0 - nanos
+  }
+  Ok(ts_wire(secs, nanos))
+}
+
+fn text_of(jv: Jv, what: Str) -> Str ! protojson.JsonErr {
+  match jv {
+    Text(s) => Ok(s)
+    _ => Err(jerr("invalid ${what} value"))
+  }
+}
+
+fn value_wire(jv: Jv, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+  var out = BytesBuilder.new()
+  match jv {
+    Null => pd.wia(out, 1, 0)
+    Num(raw) => {
+      let f = parse_float(jv, 64) ?? return Err(jerr("invalid google.protobuf.Value number ${raw}"))
+      pd.wtag(out, 2, 1)
+      w_fixed(out, f.to_bits(), 8)
+    }
+    Text(s) => pd.wsa(out, 3, s)
+    Bool(b) => pd.wia(out, 4, if b { 1 } else { 0 })
+    Obj(m) => pd.wm(out, 5, struct_wire(m, o)?)
+    Arr(items) => pd.wm(out, 6, list_wire(items, o)?)
+  }
+  Ok(out.freeze())
+}
+
+fn struct_wire(members: List[(Str, Jv)], o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+  var seen: Map[Str, Bool] = {}
+  var recs: List[(Str, Bytes)] = []
+  for m in members {
+    if seen.contains(m.0) {
+      return Err(jerr("duplicate map key ${jstr(m.0)}"))
+    }
+    seen.put(m.0, true)
+    var rec = BytesBuilder.new()
+    pd.wsa(rec, 1, m.0)
+    pd.wm(rec, 2, value_wire(m.1, o)?)
+    recs.push((m.0, rec.freeze()))
+  }
+  let sorted = recs.sort_by(fn(e: (Str, Bytes)) -> Str { e.0 })
+  var out = BytesBuilder.new()
+  for e in sorted {
+    pd.wm(out, 1, e.1)
+  }
+  Ok(out.freeze())
+}
+
+fn list_wire(items: List[Jv], o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+  var out = BytesBuilder.new()
+  for it in items {
+    pd.wm(out, 1, value_wire(it, o)?)
+  }
+  Ok(out.freeze())
+}
+
+fn fieldmask_wire(s0: Str) -> Bytes ! protojson.JsonErr {
+  let str = s0.trim()
+  var out = BytesBuilder.new()
+  if str.is_empty() {
+    return Ok(out.freeze())
+  }
+  for p in str.split(",") {
+    let sn = snake(p)
+    if p.contains("_") || !valid_full_name(sn) {
+      return Err(jerr("google.protobuf.FieldMask.paths contains invalid path: ${jstr(p)}"))
+    }
+    pd.wsa(out, 1, sn)
+  }
+  Ok(out.freeze())
+}
+
+fn wkt_wire(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes? ! protojson.JsonErr {
+  let n = info.full
+  if !n.starts_with("google.protobuf.") {
+    return Ok(None)
+  }
+  let short = n[16..n.len()]
+  if short == "Timestamp" {
+    return Ok(Some(parse_timestamp(text_of(jv, "google.protobuf.Timestamp")?)?))
+  }
+  if short == "Duration" {
+    return Ok(Some(parse_duration(text_of(jv, "google.protobuf.Duration")?)?))
+  }
+  if short == "BoolValue" || short == "Int32Value" || short == "Int64Value" || short == "UInt32Value" || short == "UInt64Value" || short == "FloatValue" || short == "DoubleValue" || short == "StringValue" || short == "BytesValue" {
+    let fd = pick_field(info, 1)
+    match enc_scalar(r, fd, jv, o)? {
+      Some(sv) => {
+        let zero = if wire_of(fd.kind) == 2 { sv.data.is_empty() } else { sv.v == 0 }
+        var out = BytesBuilder.new()
+        if !zero {
+          emit(out, 1, fd.kind, sv, true)
+        }
+        return Ok(Some(out.freeze()))
+      }
+      None => return Ok(Some(b""))
+    }
+  }
+  if short == "Struct" {
+    match jv {
+      Obj(m) => return Ok(Some(struct_wire(m, o)?))
+      _ => return Err(jerr("unexpected token"))
+    }
+  }
+  if short == "ListValue" {
+    match jv {
+      Arr(items) => return Ok(Some(list_wire(items, o)?))
+      _ => return Err(jerr("unexpected token"))
+    }
+  }
+  if short == "Value" {
+    return Ok(Some(value_wire(jv, o)?))
+  }
+  if short == "FieldMask" {
+    return Ok(Some(fieldmask_wire(text_of(jv, "google.protobuf.FieldMask")?)?))
+  }
+  if short == "Empty" {
+    match jv {
+      Obj(m) => {
+        if !m.is_empty() && !o.discard_unknown {
+          return Err(jerr("unknown field ${jstr(m[0].0)}"))
+        }
+        return Ok(Some(b""))
+      }
+      _ => return Err(jerr("unexpected token"))
+    }
+  }
+  if short == "Any" {
+    return Ok(Some(any_wire(r, info, jv, o)?))
+  }
+  Ok(None)
+}
+
+fn any_wire(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+  let members = match jv {
+    Obj(m) => m
+    _ => return Err(jerr("unexpected token"))
+  }
+  if members.is_empty() {
+    return Ok(b"")
+  }
+  var url = ""
+  for m in members {
+    if m.0 == "@type" {
+      if !url.is_empty() {
+        return Err(jerr("duplicate \"@type\" field"))
+      }
+      match m.1 {
+        Text(s) => {
+          if s.is_empty() {
+            return Err(jerr("@type field contains empty value"))
+          }
+          url = s
+        }
+        _ => return Err(jerr("@type field value is not a string"))
+      }
+    }
+  }
+  if url.is_empty() {
+    if o.discard_unknown {
+      return Ok(b"")
+    }
+    return Err(jerr("missing \"@type\" field"))
+  }
+  var tn = url
+  match url.rfind("/") {
+    Some(i) => tn = url[i + 1..url.len()]
+    None => {}
+  }
+  let em = match r.msgs.get(tn) {
+    Some(m) => m
+    None => return Err(jerr("unable to resolve ${jstr(url)}: not found"))
+  }
+  var value = b""
+  let en = em.full
+  if en.starts_with("google.protobuf.") && en != "google.protobuf.Empty" && wkt_name(en) {
+    var found = false
+    for m in members {
+      if m.0 == "@type" {
+        continue
+      }
+      if m.0 == "value" {
+        if found {
+          return Err(jerr("duplicate \"value\" field"))
+        }
+        value = msg_wire(r, em, m.1, o)?
+        found = true
+      } else if !o.discard_unknown {
+        return Err(jerr("unknown field ${jstr(m.0)}"))
+      }
+    }
+    if !found {
+      return Err(jerr("missing \"value\" field"))
+    }
+  } else if en == "google.protobuf.Empty" {
+    for m in members {
+      if m.0 == "@type" {
+        continue
+      }
+      if m.0 == "value" {
+        value = msg_wire(r, em, m.1, o)?
+      } else if !o.discard_unknown {
+        return Err(jerr("unknown field ${jstr(m.0)}"))
+      }
+    }
+  } else {
+    value = msg_wire_obj(r, em, jv, o, true)?
+  }
+  var out = BytesBuilder.new()
+  pd.ws(out, 1, url)
+  if !value.is_empty() {
+    pd.wtag(out, 2, 2)
+    pd.wv(out, value.len())
+    out.write(value)
+  }
+  Ok(out.freeze())
+}
+
+/// The well known types with a special JSON form.
+fn wkt_name(n: Str) -> Bool {
+  let s = n[16..n.len()]
+  s == "Timestamp" || s == "Duration" || s == "BoolValue" || s == "Int32Value" || s == "Int64Value" || s == "UInt32Value" || s == "UInt64Value" || s == "FloatValue" || s == "DoubleValue" || s == "StringValue" || s == "BytesValue" || s == "Struct" || s == "ListValue" || s == "Value" || s == "FieldMask" || s == "Any"
+}
