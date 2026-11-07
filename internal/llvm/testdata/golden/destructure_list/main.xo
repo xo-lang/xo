@@ -1,0 +1,20 @@
+// `[..] = v`, the one list target the checker accepts (decision 0538,
+// option A): the value is evaluated, in order with the other places of a
+// tuple target, and nothing is stored from it.
+
+fn made(stdio: Stdio, k: Int) -> List[Int] {
+  stdio.println("made ${k}")
+  [k, k + 1]
+}
+
+fn main(os: Os) {
+  [..] = made(os.stdio, 1)
+  var a = 0
+  var b = 0
+  (a, [..], b) = (7, made(os.stdio, 2), 9)
+  os.stdio.println("a ${a} b ${b}")
+  var xs = [1, 2]
+  [..] = xs
+  xs.push(3)
+  os.stdio.println("xs ${xs}")
+}

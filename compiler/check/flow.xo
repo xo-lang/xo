@@ -108,6 +108,7 @@ fn target_parts(target: Expr) -> List[Expr]? {
   match unparen(target) {
     TupleExpr(elems: els, ..) => Some(els)
     StructLit(fields: fs, ..) => Some(fs.map(fn(f: parser.FieldInit) -> Expr { f.value }))
+    ListLit(elems: els, ..) => Some(els)
     _ => None
   }
 }

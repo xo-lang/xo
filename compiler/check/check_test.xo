@@ -275,6 +275,34 @@ test "a struct target follows let's struct pattern rules, and its shorthand and 
   expect(errs.filter(fn(l) { l.contains("\"XO0160\"") }).len()) == 2
 }
 
+test "a list target is XO0303 unless it is `[..]`, as let's list patterns, and `..` stays out of list literals (decision 0538)" {
+  let out = check_files(os, "d", [("d/main.xo", """
+    fn f() -> Int {
+      let xs = [1, 2, 3]
+      var a = 0
+      var b = 0
+      let c = 4
+      [a, b] = xs
+      [a, ..] = xs
+      [] = xs
+      (a, [b]) = (1, xs)
+      [c, ..] = xs
+      [..] = xs
+      (a, [..]) = (5, xs)
+      [..] += xs
+      let ys = [a, ..]
+      a + b + c + ys.len()
+    }
+    """)])?
+  let ls = lines(out)
+  let errs = ls.filter(fn(l) { l.contains("\"XO") })
+  expect(errs.filter(fn(l) { l.contains("\"XO0303\"") && l.contains("a list target must match every list") }).len()) == 5
+  expect(errs.any(fn(l) { l.contains("\"XO0502\"") && l.contains("`c` to be `var`") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0502\"") && l.contains("`+=` needs a single target") })) == true
+  expect(errs.any(fn(l) { l.contains("\"XO0160\"") && l.contains("`..` in a list literal") })) == true
+  expect(errs.len()) == 8
+}
+
 test "an Option where a Result is expected, and `x ?? Err(e)`, name or_err (XO0401)" {
   // aws-19, 2026-11-06: `Time.parse_rfc3339(s) ?? Err(...)` and an
   // Option returned as a Result; the prelude's or_err was not found

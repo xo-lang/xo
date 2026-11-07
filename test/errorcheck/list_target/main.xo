@@ -1,0 +1,14 @@
+// A list target follows let's list patterns (decision 0538, option A):
+// a list's length is not known until it runs, so only `[..]` is accepted.
+fn main(os: Os) {
+  let xs = [1, 2, 3]
+  var a = 0
+  var b = 0
+  [a, b] = xs            // ERROR XO0303 "a list target must match every list"
+  [a, ..] = xs           // ERROR XO0303
+  [] = xs                // ERROR XO0303
+  (a, [b, ..]) = (1, xs) // ERROR XO0303
+  let ys = [a, ..]       // ERROR XO0160 "`..` in a list literal"
+  [..] = xs
+  os.stdio.println("${a} ${b} ${ys.len()}")
+}

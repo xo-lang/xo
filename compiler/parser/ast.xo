@@ -478,7 +478,9 @@ pub enum Expr {
   UnitExpr(span: Span)
   ParenExpr(span: Span, x: Expr)
   TupleExpr(span: Span, elems: List[Expr])
-  ListLit(span: Span, elems: List[Expr])
+  /// rest: a trailing `..`, read only as a destructuring assignment's
+  /// list target (decision 0538); elsewhere the checker reports it
+  ListLit(span: Span, elems: List[Expr], rest: Bool)
   MapLit(span: Span, entries: List[MapEntry])
   SetLit(span: Span, elems: List[Expr])
   /// rest: the fields end in `..` (a destructuring assignment's target

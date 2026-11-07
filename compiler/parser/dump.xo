@@ -597,9 +597,9 @@ fn dump_expr(var out: StrBuilder, depth: Int, label: Str, e: Expr) {
       out.write("\n")
       dump_exprs(out, d, "elems", elems)
     }
-    ListLit(span, elems) => {
+    ListLit(span, elems, rest) => {
       head(out, depth, label, "ListLit", span)
-      out.write("\n")
+      out.write(if rest { " rest\n" } else { "\n" })
       dump_exprs(out, d, "elems", elems)
     }
     MapLit(span, entries) => {

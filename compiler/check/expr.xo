@@ -528,7 +528,13 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
       }
       c.mk_tuple(el)
     }
-    ListLit(elems: elems, ..) => c.collection_lit("List", elems, hint)
+    ListLit(span: span, elems: elems, rest: rest) => {
+      if rest {
+        let d = c.error("XO0160", span, "`..` in a list literal: a list literal writes each element")
+        c.note(d, "`..` leaves elements out only in a pattern or a destructuring assignment's list target (core 3.5, 5.2)")
+      }
+      c.collection_lit("List", elems, hint)
+    }
     SetLit(elems: elems, ..) => c.collection_lit("Set", elems, hint)
     MapLit(entries: entries, ..) => c.map_lit(entries, hint)
     StructLit(span: span, typ: typ, fields: fields, rest: rest) => c.struct_lit(span, typ, fields, rest, hint)

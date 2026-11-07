@@ -1884,7 +1884,7 @@ fn (var g: Gen) assign(s: Stmt) {
     AssignStmt(span: span, op: op, target: target, value: value) => (span, op, target, value)
     _ => fault("assign")
   }
-  if unparen(target) is TupleExpr(..) | StructLit(..) {
+  if unparen(target) is TupleExpr(..) | StructLit(..) | ListLit(..) {
     // `(a, b) = v` (decision 0536) and `P{x, y} = v` (decision 0538): the
     // value first, then each place left to right
     let tmp = g.tmp("da")
@@ -1945,6 +1945,8 @@ fn (var g: Gen) destructure(e: Expr, subj: Str, value: Expr) {
       }
     }
     Ident(id) if id.name == b"_" => {}
+    // `[..]`, the one list target the checker accepts: nothing stored
+    ListLit(..) => {}
     t => {
       let root = g.root_var(t)
       g.write_place(g.resolve_place(t), subj, root >= 0 && !g.mutates(Node.E(value), root))

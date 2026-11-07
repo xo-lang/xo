@@ -373,9 +373,20 @@ fn (var p: Parser) parse_primary() -> Expr {
     LBrack => {
       var elems: List[Expr] = []
       var comp: List[Comprehension] = []
+      var rest = false
       let st = p.list_open(Kind.LBrack)
       while p.list_more(Kind.RBrack) {
         let before = p.pos
+        // a trailing `..` (a list target, decision 0538); `[..5]` is a range
+        if comp.is_empty() && p.at(Kind.DotDot) && p.peek(1).kind is Kind.RBrack | Kind.Newline | Kind.Comma {
+          p.next()
+          rest = true
+          p.list_sep(before, Kind.RBrack, "list")
+          if !p.at(Kind.RBrack) {
+            p.fail("XO0171", p.tok.span, "`..` must come last in a list target's elements")
+          }
+          break
+        }
         elems.push(p.parse_expr())
         if elems.len() == 1 && p.at(Kind.For) && !p.bad {
           comp.push(p.parse_comprehension(elems[0]))
@@ -388,7 +399,7 @@ fn (var p: Parser) parse_primary() -> Expr {
       if let Some(c) = comp.first() {
         return p.finish_comprehension(c, lsp)
       }
-      return Expr.ListLit(span: lsp, elems: elems)
+      return Expr.ListLit(span: lsp, elems: elems, rest: rest)
     }
     HashLBrace => {
       var elems: List[Expr] = []
@@ -1178,7 +1189,7 @@ fn (var p: Parser) finish_comprehension(c: Comprehension, sp: Span) -> Expr {
   let d = p.foreign(c.kw.span, "`[x for x in xs]` is a Python comprehension; Xo calls the list methods, `xs.filter(fn(x) { cond }).map(fn(x) { f(x) })` (spec/std.md 2)")
   let (bsp, name) = match c.pat {
     BindPat(span, id) => (span, id.name)
-    _ => return Expr.ListLit(span: sp, elems: [c.elem])
+    _ => return Expr.ListLit(span: sp, elems: [c.elem], rest: false)
   }
   let params = [Param{span: bsp, name: Ident{span: bsp, name: name}}]
   var text = p.operand_text(c.iter)

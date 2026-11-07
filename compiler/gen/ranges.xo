@@ -1526,7 +1526,7 @@ fn (var g: Gen) ra_assign(s: Stmt) {
     _ => fault("assign")
   }
   let rb = g.ra_expr(value)
-  if unparen(target) is TupleExpr(..) | StructLit(..) {
+  if unparen(target) is TupleExpr(..) | StructLit(..) | ListLit(..) {
     // `(a, b) = v` (decision 0536), `P{x, y} = v` (decision 0538): each
     // place's range is unknown after
     for t in assign_targets(target) {
@@ -1702,6 +1702,14 @@ fn assign_targets(target: Expr) -> List[Expr] {
   if let StructLit(fields: fs, ..) = unparen(target) {
     for f in fs {
       for y in assign_targets(f.value) {
+        out.push(y)
+      }
+    }
+    return out
+  }
+  if let ListLit(elems: els, ..) = unparen(target) {
+    for x in els {
+      for y in assign_targets(x) {
         out.push(y)
       }
     }

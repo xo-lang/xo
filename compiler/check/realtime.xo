@@ -257,7 +257,7 @@ fn (var c: Checker) rt_expr(var w: RtWalk, e: Expr) {
       c.rt_report(w, "XO1401", f.span, "a closure allocates its environment in a real-time function")
       return
     }
-    ListLit(span: span, elems: els) => {
+    ListLit(span: span, elems: els, ..) => {
       c.rt_report(w, "XO1401", span, "a List literal allocates in a real-time function; build the List during initialization and write it by index")
       c.rt_exprs(w, els)
     }

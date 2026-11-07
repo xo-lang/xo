@@ -1820,7 +1820,7 @@ fn compound_op(k: parser.Kind) -> parser.Kind {
 }
 
 fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Expr) {
-  if unparen(target) is TupleExpr(..) | StructLit(..) {
+  if unparen(target) is TupleExpr(..) | StructLit(..) | ListLit(..) {
     c.tuple_assign(op, target, value)
     return
   }
@@ -1862,7 +1862,7 @@ fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Exp
 fn (var c: Checker) tuple_assign(op: parser.Kind, target: Expr, value: Expr) {
   if op != parser.Kind.Assign {
     c.infer(value, -1)
-    c.error("XO0502", parser.expr_span(target), "`${op_text(op)}` needs a single target; a tuple or struct of places takes only `=`")
+    c.error("XO0502", parser.expr_span(target), "`${op_text(op)}` needs a single target; a tuple, struct or list of places takes only `=`")
     return
   }
   var seen: Map[Str, Bool] = {}
@@ -1890,6 +1890,11 @@ fn (var c: Checker) tuple_place(e: Expr, var seen: Map[Str, Bool]) -> Int {
       c.set_type(e, t)
       t
     }
+    ListLit(span: span, elems: els, rest: rest) => {
+      let t = c.list_place(span, els, rest, seen)
+      c.set_type(e, t)
+      t
+    }
     Ident(id) if id.name == b"_" => c.new_var()
     p => {
       if let IndexExpr(..) = p {
@@ -1904,6 +1909,23 @@ fn (var c: Checker) tuple_place(e: Expr, var seen: Map[Str, Bool]) -> Int {
       tt
     }
   }
+}
+
+/// A list target `[a, b]` or `[a, ..]` (decision 0538, owner 2026-11-06:
+/// option A): by the rule of `let`'s list patterns it must match every
+/// list, and a list's length is not known before it runs, so every list
+/// target but `[..]` is XO0303; `[..]` takes the value and stores nothing.
+/// Its places are still checked. Returns `List[T]` for a fresh T.
+fn (var c: Checker) list_place(span: Span, els: List[Expr], rest: Bool, var seen: Map[Str, Bool]) -> Int {
+  let et = c.new_var()
+  for x in els {
+    let _t = c.tuple_place(x, seen)
+  }
+  if !els.is_empty() || !rest {
+    let d = c.error("XO0303", span, "a list target must match every list, but `[]` is not covered: a list's length is not known until it runs")
+    c.note(d, "a list target follows `let`'s list patterns (decision 0538); match the length with `if let [a, b] = xs` or `match`, or assign the elements by index (core 5.2)")
+  }
+  c.named1("List", et)
 }
 
 /// A struct target `P{x, y: p.y, ..}` (decision 0538), by the rules of

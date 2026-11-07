@@ -553,7 +553,7 @@ fn compound_op(op: lexer.Kind) -> lexer.Kind? {
 }
 
 fn (var b: Builder) assign(span: Span, op: lexer.Kind, target: Expr, value: Expr) {
-  if strip_parens(target) is TupleExpr(..) | StructLit(..) {
+  if strip_parens(target) is TupleExpr(..) | StructLit(..) | ListLit(..) {
     // `(a, b) = v` (decision 0536) and `P{x, y} = v` (decision 0538): the
     // value first, then each place's indexes and store, left to right
     // (Python's order)
@@ -637,6 +637,8 @@ fn (var b: Builder) destructure(e: Expr, v: Int, vt: Int) {
       }
     }
     Ident(id) if id.name == b"_" => {}
+    // `[..]`, the one list target the checker accepts: nothing stored
+    ListLit(..) => {}
     t => {
       var p = b.place(t)
       if p.ok {

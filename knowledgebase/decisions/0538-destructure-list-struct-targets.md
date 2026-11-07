@@ -1,10 +1,11 @@
 # 0538: Struct (and list) shaped destructuring assignment targets
 
-Status: Accepted (owner, 2026-11-06, through the lead) for struct
-targets; built 2026-11-06 (Xo Lang 1): parser expr.xo parse_field_list,
-checker stmt.xo struct_place, flow.xo target_parts, ssa and gen
-`destructure`; golden destructure_struct. List targets: open, owner
-question pending (see "List targets" below).
+Status: Accepted (owner, 2026-11-06, through the lead). Struct targets
+built 2026-11-06 (Xo Lang 1): parser expr.xo parse_field_list, checker
+stmt.xo struct_place, flow.xo target_parts, ssa and gen `destructure`;
+golden destructure_struct. List targets: option (A), owner 2026-11-06,
+built the same day: parser list literal `..` (ListLit.rest), checker
+stmt.xo list_place; golden destructure_list, test/errorcheck/list_target.
 
 ## Context
 
@@ -70,11 +71,12 @@ P{x: _, y} = p                // `_` drops a field
    compiler/gen `destructure`); the flow analyses read the places
    through `assign_places` and `assign_pairs`.
 
-### List targets (open)
+### List targets: option (A) (owner, 2026-11-06)
 
 Under `let`'s rules a list target can only be `[..]`, which stores
 nothing: `[a, b] = xs` would always be XO0303. Three ways were put to
-the owner on 2026-11-06:
+the owner on 2026-11-06, who chose (A): no run time fault and no special
+case for list literals.
 
 - (A) `let`'s rules exactly: the grammar takes a list target, and it is
   XO0303 unless irrefutable; list targets become useful only if
@@ -86,7 +88,22 @@ the owner on 2026-11-06:
   literal of the same length (`[a, b] = [b, a]`), which the tuple form
   `(a, b) = (b, a)` already writes.
 
-Until the answer, a list target is XO0502 as before this decision.
+As built:
+
+1. **Grammar.** A list literal may end in `..` (`[a, ..]`, `[..]`;
+   `ListLit.rest`, AST codec v8); `..` elsewhere in it is XO0171. Outside
+   a target a list literal's `..` is XO0160, so list literals in
+   expressions do not change.
+2. **The rule of `let`'s list patterns.** A list target, alone or nested
+   in a tuple or struct target, is XO0303 ("a list target must match
+   every list, but `[]` is not covered") unless it is `[..]`; `[]` and
+   `[a, ..]` are XO0303 too. Its places are still checked as 0536's
+   (XO0502, XO0539), so every error shows at once.
+3. **`[..] = v`** evaluates `v` (in order with the other places of the
+   target it is nested in) and stores nothing; the native and Go
+   backends lower it as nothing to store.
+
+Before this, a list target was XO0502 (not a place).
 
 ## Consequences
 
@@ -101,6 +118,10 @@ Until the answer, a list target is XO0502 as before this decision.
   codec's version changes and cached parses are read again once.
 - spec 3.5's `var [first, ..] = xs` example is corrected to a pattern
   that compiles.
+- A list target says why it fails (XO0303, pointing at `if let` and
+  `match`) instead of "cannot assign to this expression" (XO0502); if
+  `let`'s list patterns ever take a length check or a fault, list
+  targets follow them.
 
 ## Alternatives
 

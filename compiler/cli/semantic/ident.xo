@@ -476,7 +476,7 @@ pub fn (var w: Walk) expr(e: Expr, field: Str, index: Int, ctx: SiteCtx, call: L
         w.expr(x, "Elems", i, SiteCtx.Other, [])
       }
     }
-    ListLit(_, elems) => {
+    ListLit(_, elems, _) => {
       for (i, x) in elems.indexed() {
         w.expr(x, "Elems", i, SiteCtx.Other, [])
       }

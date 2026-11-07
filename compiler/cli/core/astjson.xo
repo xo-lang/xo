@@ -514,9 +514,10 @@ fn expr_json(e: parser.Expr) -> Str {
       o.list("elems", exprs_json(elems))
       o.done()
     }
-    ListLit(span, elems) => {
+    ListLit(span, elems, rest) => {
       var o = node("ListLit", span)
       o.list("elems", exprs_json(elems))
+      o.flag("rest", rest)
       o.done()
     }
     MapLit(span, entries) => {

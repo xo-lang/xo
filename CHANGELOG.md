@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- List targets of a destructuring assignment (decision 0538, owner 2026-11-06, option A): a list shaped target follows `let`'s list patterns, so `[a, b] = xs`, `[a, ..] = xs` and `[] = xs` are XO0303 (they were XO0502), alone or nested; `[..] = v` evaluates v and stores nothing; a list literal's trailing `..` is XO0160. The parser reads a trailing `..` in a list literal (ListLit.rest, AST codec v8). Golden destructure_list, test/errorcheck/list_target, checker test.
 - std/amqptest (fix): a frame a client sends after `disconnect_all` or `detach_links` returns is no longer answered on the connection or link they ended (the amqptest_broker golden printed "begin ok" under load); std/changes/amqptest.md.
 - std/amqptest: an event hub's READ reply carries `georeplication_factor` (1, or what `Broker.event_hub_geo_factor` sets), which azeventhubs v2 requires; `Broker.attaches()` lists each link a client attached with its address, role and desired capabilities; std/changes/amqptest.md.
 - std/amqp: `SenderOptions.desired_capabilities` and `ReceiverOptions.desired_capabilities` are sent as the Attach frame's desired-capabilities, the link's own, apart from the Source's and Target's capabilities (Event Hubs v2 geo-replication asks for `com.microsoft:georeplication`, as azeventhubs v2.0.2 does); std/changes/amqp.md.

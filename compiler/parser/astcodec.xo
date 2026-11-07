@@ -9,7 +9,7 @@
 use github.com/xo-lang/xo/compiler/lexer
 
 /// The version of the form: a change to the AST or this file changes it.
-pub const AST_CODEC_VERSION = "xo ast codec v7"
+pub const AST_CODEC_VERSION = "xo ast codec v8"
 
 struct Enc {
   b: BytesBuilder = BytesBuilder.new()
@@ -630,10 +630,11 @@ fn (var e: Enc) expr(x: Expr) {
       e.span(span)
       e.exprs(elems)
     }
-    ListLit(span, elems) => {
+    ListLit(span, elems, rest) => {
       e.int(11)
       e.span(span)
       e.exprs(elems)
+      e.bool(rest)
     }
     MapLit(span, entries) => {
       e.int(12)
@@ -1645,7 +1646,8 @@ fn (var r: Dec) expr() -> Expr {
     11 => {
       let s = r.span()
       let el = r.exprs()
-      Expr.ListLit(span: s, elems: el)
+      let rest = r.bool()
+      Expr.ListLit(span: s, elems: el, rest: rest)
     }
     12 => {
       let s = r.span()

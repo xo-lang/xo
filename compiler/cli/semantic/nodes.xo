@@ -103,7 +103,7 @@ fn walk_expr(var out: List[Node], e: Expr) {
         walk_expr(out, x)
       }
     }
-    ListLit(_, elems) => {
+    ListLit(_, elems, _) => {
       for x in elems {
         walk_expr(out, x)
       }

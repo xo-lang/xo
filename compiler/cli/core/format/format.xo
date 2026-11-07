@@ -1355,7 +1355,16 @@ fn (var p: Printer) expr(e: Expr) {
       p.w(")")
     }
     TupleExpr(span, elems) => p.list("(", ")", off(span), expr_items(elems), true)
-    ListLit(span, elems) => p.list("[", "]", off(span), expr_items(elems), false)
+    ListLit(span, elems, rest) => {
+      var items = expr_items(elems)
+      if rest {
+        // a list target's `..` (decision 0538), after the last element
+        let from = if elems.is_empty() { off(span) + 1 } else { eend(elems[elems.len() - 1]) }
+        let at = p.find(from, '.')
+        items.push(Item{start: at, end: at + 2, k: ItemK.Text([".."])})
+      }
+      p.list("[", "]", off(span), items, false)
+    }
     SetLit(span, elems) => p.list("#{", "}", off(span), expr_items(elems), false)
     MapLit(span, entries) => {
       var items: List[Item] = []

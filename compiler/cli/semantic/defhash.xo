@@ -1016,9 +1016,12 @@ fn (var c: Enc) expr(var b: BytesBuilder, e: Expr) {
       open(b, "TupleExpr")
       c.exprs(b, elems)
     }
-    ListLit(_, elems) => {
+    ListLit(_, elems, rest) => {
       open(b, "ListLit")
       c.exprs(b, elems)
+      if rest {
+        w(b, "rest", "1")
+      }
     }
     MapLit(_, entries) => {
       open(b, "MapLit")

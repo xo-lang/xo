@@ -19,7 +19,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 - **Struct targets** (5.2, decision 0538): `P{x, y} = p`,
   `P{x: st.lo, y: xs[i], ..} = p` and `(P{x, y}, n) = (p, 3)` store a
   struct's fields into existing places by the rules of `let`'s struct
-  pattern. List targets (`[a, b] = xs`) are not decided yet.
+  pattern. List targets follow `let`'s list patterns (owner,
+  2026-11-06): `[a, b] = xs` is `XO0303`, and `[..] = xs` only
+  evaluates `xs`.
 
 ## Changes in 0.42
 
@@ -2316,8 +2318,16 @@ never depend on it, but the time does:
   its place). The value is evaluated first, then each named field is
   stored left to right, as for a tuple: `P{x: y, y: x} = P{x: x, y: y}`
   swaps. The shorthand `name` and `..` belong to targets and patterns
-  only: in a struct literal they are `XO0160`. A list target (`[a, b] =
-  xs`) is not decided yet and is `XO0502`.
+  only: in a struct literal they are `XO0160`.
+- **List targets** (decision 0538, owner 2026-11-06): a list shaped
+  target follows the rule of `let`'s list patterns (3.5), which must
+  match every value: a list's length is not known until it runs, so
+  `[a, b] = xs`, `[a, ..] = xs` and `[] = xs` are `XO0303`, alone or
+  nested in a tuple or struct target. `[..] = v` matches every list: it
+  evaluates `v`, in order with the target's other places, and stores
+  nothing. A list of a given length is matched with `if let [a, b] = xs`
+  or `match`, or its elements assigned by index. A trailing `..` in a
+  list literal is `XO0160`.
 - A call evaluates the place of a `var` receiver or `var` argument, then
   every argument in order, then reads those places (decision 0142):
   `t.get(t.add(v))` on a `var t` sees the item `add` pushed, and
@@ -3517,7 +3527,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0156` | error | lexer | `${` without a matching `}` in the same string |
 | `XO0157` | error | lexer | `${}` with no expression |
 | `XO0158` | error | lexer | `use` not followed by a valid import path |
-| `XO0160` | error | parser, checker | a token that does not fit the grammar here; the checker reports a struct literal's field written `name` alone or its `..`, which only a destructuring assignment's target takes (decision 0538) |
+| `XO0160` | error | parser, checker | a token that does not fit the grammar here; the checker reports a struct literal's field written `name` alone or its `..`, or a list literal's `..`, which only a destructuring assignment's target takes (decision 0538) |
 | `XO0161` | error | parser | list element followed by a newline instead of a comma (core 1.3) |
 | `XO0162` | error | parser | `else` must be on the line of the closing brace (core 1.3) |
 | `XO0163` | error | parser | unparenthesized struct literal in a condition (core 1.4) |
@@ -3548,7 +3558,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0209` | error | checker | an expression statement discards the result of a call that only computes it, such as `xs.reverse()` (core 2.6) |
 | `XO0301` | error | checker | match does not cover every case (core 2.3) |
 | `XO0302` | error | checker | pattern does not fit the type of the matched value (core 3.5) |
-| `XO0303` | error | checker | refutable pattern where an irrefutable one is required (core 3.5) |
+| `XO0303` | error | checker | refutable pattern where an irrefutable one is required (core 3.5), and an assignment's list target other than `[..]` (core 5.2, decision 0538) |
 | `XO0304` | error | checker | alternatives of an or pattern bind different names or types (core 3.5) |
 | `XO0305` | warning | checker | `_` arm hides variants of an enum declared in this module (core 3.5) |
 | `XO0401` | error | checker | value of the wrong type; only three implicit conversions exist (core 2.10) |
