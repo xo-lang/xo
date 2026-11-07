@@ -22,3 +22,8 @@ json.encode_str
 json.encode_indent
 json.encode_indent_str
 json.to_value
+#
+# toml decodes through JsonDec and encodes through Json_encode (toml.go);
+# no std/rt/toml*.go file compares or hashes.
+toml.decode
+toml.encode
