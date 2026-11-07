@@ -28,6 +28,7 @@ and its transport leaves `Request.Host` as the original authority while the conn
 ## Consequences
 
 - No new TLS state outside the Roots record; no change to a client that sets none of these.
+- Amendment (2026-11-07, Azure 1's Service Fabric item): `Client.with_verify(tls.Verify)` lets a client skip chain and name checks (Go's InsecureSkipVerify) and `with_roots` keeps the name, hook and mode. `Verify.None` is refused at connect time unless a `with_verify_conn` is set, and the spec marks it unsafe alone.
 - The hook runs once per new connection (a pooled connection was checked when made).
 
 ## Alternatives

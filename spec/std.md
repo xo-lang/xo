@@ -2147,7 +2147,8 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
 fn (c: Client) with_cert(cert: TlsCert) -> Client
 fn (c: Client) with_server_name(name: Str) -> Client
 fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str) -> Client
-struct TlsOptions { server_name: Str, verify_conn: Bool, custom_roots: Bool, client_cert: Bool }
+fn (c: Client) with_verify(v: tls.Verify) -> Client
+struct TlsOptions { server_name: Str, verify_conn: Bool, custom_roots: Bool, client_cert: Bool, verify: tls.Verify }
 fn (c: Client) tls_options() -> TlsOptions
 fn (r: Request) with_host(host: Str) -> Request
 ```
@@ -2158,6 +2159,14 @@ certificates (leaf first) after the handshake and the verification mode's own ch
 text fails the connection with that text; it runs once per new connection. A client with a server name or hook is its own
 pool key. `Request.with_host(host)` is Go's `Request.Host`: the Host of HTTP/1.1 and the `:authority` of HTTP/2 for the
 first host's requests, while the connection and the TLS name stay the URL's (decision 0541).
+
+`with_verify(v)` selects how https checks the server's certificate (Go's `InsecureSkipVerify` for `Verify.None`;
+`Verify.ChainOnly` checks the chain against the roots but not the name; the default is `Verify.Full`). It is UNSAFE
+alone: `Verify.None` accepts any certificate, so a request on a `Verify.None` client without a `with_verify_conn` fails
+("tls: Verify.None needs a verify_conn (an unverified connection must be pinned)"); pair it with a pin
+(`tls.pin_sha256`, `tls.pin_sha1`) for a self signed server whose certificate is known only by its digest. A client with a
+mode has its own pool key; `with_roots` keeps the server name, hook and mode, so the call order of the four does not
+matter. A wasi:http component's host does TLS, so there `with_verify` has no effect.
 
 ```
 fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) {

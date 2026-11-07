@@ -3065,13 +3065,23 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
   if !e.is_empty() {
     return Err(http.TlsErr{msg: e})
   }
+  let kept = tlsio.roots_inherit(r, c.roots)
   match c.cert {
     Some(t) => {
       let cd = ntls.cert_data(t)
-      c with {roots: tlsio.roots_with_cert(r, cd.certs, cd.key)}
+      c with {roots: tlsio.roots_with_cert(kept, cd.certs, cd.key)}
     }
-    None => c with {roots: r}
+    None => c with {roots: kept}
   }
+}
+
+fn (c: Client) with_verify(v: tls.Verify) -> Client {
+  let n = match v {
+    tls.Verify.Full => 0
+    tls.Verify.ChainOnly => tlsio.VERIFY_CHAIN
+    tls.Verify.None => tlsio.VERIFY_NONE
+  }
+  c with {roots: tlsio.roots_with_verify(c.roots, n)}
 }
 
 fn (c: Client) with_server_name(name: Str) -> Client {
@@ -3084,7 +3094,9 @@ fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str) -> Cl
 
 fn (c: Client) tls_options() -> http.TlsOptions {
   let (n, v, r, k) = tlsio.roots_tls(c.roots)
-  http.TlsOptions{server_name: n, verify_conn: v, custom_roots: r, client_cert: k}
+  let m = tlsio.roots_verify(c.roots)
+  let mode = if m == tlsio.VERIFY_CHAIN { tls.Verify.ChainOnly } else if m == tlsio.VERIFY_NONE { tls.Verify.None } else { tls.Verify.Full }
+  http.TlsOptions{server_name: n, verify_conn: v, custom_roots: r, client_cert: k, verify: mode}
 }
 
 /// The certificate is kept for the TLS client's CertificateRequest path

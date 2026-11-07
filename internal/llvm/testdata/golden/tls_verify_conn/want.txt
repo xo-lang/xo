@@ -14,9 +14,18 @@ wrong pin delivered=0
 bad pin: tls: pin is not hexadecimal
 short pin: tls: pin is 2 bytes, want 32
 no roots: error certificate refused
+none unpinned: error none needs a pin
+none pinned: 200 hit host=127.0.0.1
+none wrong pin: error pin mismatch
+none wrong pin delivered=0
+none pinned wrong name: 200 hit host=127.0.0.1
+chain only wrong name: 200 hit host=127.0.0.1
+chain only no roots: error certificate refused
+full again: error certificate refused
+roots last: server_name=sni.example verify_conn=true custom_roots=true client_cert=false verify=ChainOnly
 server name wrong: error certificate refused
 with_host: 200 hit host=login.example.test
-options: server_name=sni.example verify_conn=true custom_roots=true client_cert=false
-plain options: server_name= verify_conn=false custom_roots=false client_cert=false
+options: server_name=sni.example verify_conn=true custom_roots=true client_cert=false verify=Full
+plain options: server_name= verify_conn=false custom_roots=false client_cert=false verify=Full
 done
 --- stderr

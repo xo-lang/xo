@@ -608,18 +608,33 @@ func expectTransport(base *http.Transport, d time.Duration) *http.Transport {
 var sharedTransport = newTransport(nil)
 
 func newTransport(roots *x509.CertPool) *http.Transport {
-	return certTransport(roots, nil, "", Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]{})
+	return certTransport(roots, nil, "", Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]{}, 0)
 }
 
 // certTransport is newTransport presenting cert (with_cert) when a server
 // asks for one.
-func certTransport(roots *x509.CertPool, cert *tls.Certificate, serverName string, vconn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]) *http.Transport {
+func certTransport(roots *x509.CertPool, cert *tls.Certificate, serverName string, vconn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]], verify int) *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.Protocols = new(http.Protocols)
 	t.Protocols.SetHTTP1(true)
 	t.Protocols.SetHTTP2(true)
-	if roots != nil || cert != nil || serverName != "" || vconn.Some || noMLKEM() {
+	if roots != nil || cert != nil || serverName != "" || vconn.Some || verify != 0 || noMLKEM() {
 		t.TLSClientConfig = &tls.Config{RootCAs: roots, ServerName: serverName}
+	}
+	switch verify {
+	case 1:
+		// ChainOnly: the chain against the roots, not the name
+		t.TLSClientConfig.InsecureSkipVerify = true
+		t.TLSClientConfig.VerifyPeerCertificate = func(raw [][]byte, _ [][]*x509.Certificate) error {
+			return verifyChain(raw, roots)
+		}
+	case 2:
+		t.TLSClientConfig.InsecureSkipVerify = true
+	}
+	if verify == 2 && !vconn.Some {
+		t.TLSClientConfig.VerifyConnection = func(tls.ConnectionState) error {
+			return errors.New("tls: Verify.None needs a verify_conn (an unverified connection must be pinned)")
+		}
 	}
 	if vconn.Some {
 		f := vconn.V
@@ -659,7 +674,7 @@ func clientTransport(c Http_Client) any {
 	if c.cert.Some {
 		cert = c.cert.V.c
 	}
-	t := certTransport(c.roots, cert, c.serverName, c.vconn)
+	t := certTransport(c.roots, cert, c.serverName, c.vconn, c.verify)
 	ps := protoSetOf(c.protos)
 	t.Protocols.SetHTTP1(ps.h1)
 	t.Protocols.SetHTTP2(ps.h2)

@@ -510,12 +510,19 @@ fn (c: Client) with_server_name(name: Str) -> Client
 /// on every new connection, so a pinning check works with a self signed server. A client with one has its own
 /// connections.
 fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str) -> Client
+/// How the client checks the server's certificate for https (Go's InsecureSkipVerify when Verify.None, with
+/// Verify.ChainOnly the chain without the name); the default is Verify.Full. UNSAFE alone: Verify.None accepts any
+/// certificate, so a request on such a client fails ("tls: Verify.None needs a verify_conn ...") unless
+/// with_verify_conn is set, which should pin the certificate (tls.pin_sha256, tls.pin_sha1). A client with one has
+/// its own connections.
+fn (c: Client) with_verify(v: tls.Verify) -> Client
 /// What a client's TLS settings are, for tests and diagnostics.
 struct TlsOptions {
   server_name: Str
   verify_conn: Bool
   custom_roots: Bool
   client_cert: Bool
+  verify: tls.Verify
 }
 fn (c: Client) tls_options() -> TlsOptions
 /// The client presenting cert when an https server asks for a

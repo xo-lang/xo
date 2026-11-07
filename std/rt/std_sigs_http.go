@@ -95,6 +95,7 @@ var (
 	_ func(*Http_Client, *Task, Bytes) Result[Http_Client, Http_TlsErr]                                                                                 = (*Http_Client).M_with_roots
 	_ func(*Http_Client, *Task, string) Http_Client                                                                                                     = (*Http_Client).M_with_server_name
 	_ func(*Http_Client, *Task, func(*Task, List[X509_Certificate]) Result[Unit, string]) Http_Client                                                   = (*Http_Client).M_with_verify_conn
+	_ func(*Http_Client, *Task, Tls_Verify) Http_Client                                                                                                 = (*Http_Client).M_with_verify
 	_ func(*Http_Client, *Task) Http_TlsOptions                                                                                                         = (*Http_Client).M_tls_options
 	_ func(*Http_Client, *Task, Tls_TlsCert) Http_Client                                                                                                = (*Http_Client).M_with_cert
 	_ func(*Http_Client, *Task, Set[Http_Protocol]) Http_Client                                                                                         = (*Http_Client).M_with_protocols

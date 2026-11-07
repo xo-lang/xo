@@ -23,7 +23,7 @@ fn show(os: Os, label: Str, addr: Str, r: Result[http.Response, http.ClientErr])
     Err(e) => {
       let t = clean(e, addr)
       // the text of a failed handshake differs by backend after the hook's own words
-      let k = if t.contains("does not match the pin") { "pin mismatch" } else if t.contains("x509") || t.contains("certificate") { "certificate refused" } else { t }
+      let k = if t.contains("does not match the pin") { "pin mismatch" } else if t.contains("Verify.None needs") { "none needs a pin" } else if t.contains("x509") || t.contains("certificate") { "certificate refused" } else { t }
       os.stdio.println("${label}: error ${k}")
     }
   }
@@ -37,7 +37,7 @@ fn pin_text(r: Result[fn(List[x509.Certificate]) -> () ! Str, Str]) -> Str {
 }
 
 fn opts(o: http.TlsOptions) -> Str {
-  "server_name=${o.server_name} verify_conn=${o.verify_conn} custom_roots=${o.custom_roots} client_cert=${o.client_cert}"
+  "server_name=${o.server_name} verify_conn=${o.verify_conn} custom_roots=${o.custom_roots} client_cert=${o.client_cert} verify=${o.verify}"
 }
 
 fn main(os: Os) uses net, stdio, rand, clock {
@@ -108,6 +108,20 @@ fn main(os: Os) uses net, stdio, rand, clock {
     // verify_conn with no verification: a pin alone is enough for a self signed server
     let bare = http.client(os.net, timeout: 5s)
     show(os, "no roots", addr, bare.get(url))
+    // Client.with_verify: Verify.None skips the chain and the name but must be pinned
+    let none = bare.with_verify(tls.Verify.None)
+    show(os, "none unpinned", addr, none.get(url))
+    show(os, "none pinned", addr, none.with_verify_conn(tls.pin_sha1(sha1_hex).or_fault("pin")).get(url))
+    let before3 = hits.get()
+    show(os, "none wrong pin", addr, none.with_verify_conn(tls.pin_sha1("0000000000000000000000000000000000000000").or_fault("pin")).get(url))
+    os.stdio.println("none wrong pin delivered=${hits.get() - before3}")
+    show(os, "none pinned wrong name", addr, none.with_server_name("wrong.example").with_verify_conn(tls.pin_sha256(sha256_hex).or_fault("pin")).get(url))
+    show(os, "chain only wrong name", addr, base.with_verify(tls.Verify.ChainOnly).with_server_name("wrong.example").get(url))
+    show(os, "chain only no roots", addr, bare.with_verify(tls.Verify.ChainOnly).get(url))
+    show(os, "full again", addr, none.with_verify(tls.Verify.Full).get(url))
+    // the call order of with_roots, with_server_name, with_verify and with_verify_conn does not matter
+    let late = bare.with_server_name("sni.example").with_verify(tls.Verify.ChainOnly).with_verify_conn(fn(certs: List[x509.Certificate]) -> () ! Str { Ok(()) }).with_roots(cert.pem()).or_fault("roots")
+    os.stdio.println("roots last: ${opts(late.tls_options())}")
     // the server name
     show(os, "server name wrong", addr, base.with_server_name("wrong.example").get(url))
     // Request.Host

@@ -1869,6 +1869,19 @@ and HTTP/2.
 A client can set the TLS server name (SNI and the verified name), check the server's certificates after the handshake and before
 any request byte, and send a Host that differs from the URL's. A client with a server name or hook has its own pooled connections.
 
+## 2026-11-07: feature: Client.with_verify, and with_roots keeps the server name and hook
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (azidentity's Service Fabric endpoint: self signed, known only by its SHA-1 thumbprint), decision 0541
+- Go reference: tls.Config.InsecureSkipVerify with VerifyConnection
+- Test: golden tls_verify_conn (go, arm64, llvm)
+- Shipped in: not yet released
+
+`client.with_verify(tls.Verify.None)` skips the chain and name checks, and `ChainOnly` skips the name; a `None` client without a
+`with_verify_conn` pin refuses every connection. `tls_options()` reports the mode. `with_roots` called after `with_server_name`,
+`with_verify_conn` or `with_verify` no longer drops them.
+
 ## 2026-11-07: fix: an HTTP/2 request's host() is its :authority
 
 - Kind: fix

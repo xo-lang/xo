@@ -188,6 +188,8 @@ struct RootsData {
   /// Go's tls.Config.VerifyConnection: called with the server's chain (DER, leaf first) after the handshake and
   /// before any byte is sent; a non empty answer fails the connection with that text. Its own pool key too.
   vconn: (fn(List[Bytes]) -> Str)? = None
+  /// Client.with_verify (VERIFY_*; 0 leaves the caller's mode): a Roots with one is its own pool key
+  verify: Int = 0
 }
 
 fn as_roots(a: rt.Any) -> rthttp.Roots { rt.obj_at[rthttp.Roots](rt.obj_addr(a)) }
@@ -256,6 +258,31 @@ pub fn roots_with_tls(r: rthttp.Roots, sni: Str, vconn: (fn(List[Bytes]) -> Str)
       as_roots(rt.any_of(d with {sni: n, vconn: v}))
     }
     None => r
+  }
+}
+
+/// roots r with the verification mode v (Client.with_verify): its own pool key.
+pub fn roots_with_verify(r: rthttp.Roots, v: Int) -> rthttp.Roots {
+  match roots_data(rt.obj_addr(r)) {
+    Some(d) => as_roots(rt.any_of(d with {verify: v}))
+    None => r
+  }
+}
+
+/// The verification mode roots r carries (VERIFY_*).
+pub fn roots_verify(r: rthttp.Roots) -> Int {
+  match roots_data(rt.obj_addr(r)) {
+    Some(d) => d.verify
+    None => 0
+  }
+}
+
+/// roots r (a new pool) carrying the server name, verify hook and verification mode of old, so with_roots
+/// keeps them whatever the call order.
+pub fn roots_inherit(r: rthttp.Roots, old: rthttp.Roots) -> rthttp.Roots {
+  match (roots_data(rt.obj_addr(r)), roots_data(rt.obj_addr(old))) {
+    (Some(d), Some(o)) => as_roots(rt.any_of(d with {sni: o.sni, vconn: o.vconn, verify: o.verify}))
+    _ => r
   }
 }
 
@@ -377,6 +404,11 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
     None => RootsData{certs: [], err: "", system: false}
   }
   let system = data.system
+  // Client.with_verify: the client's mode, which must be pinned when it checks nothing
+  if data.verify == VERIFY_NONE && data.vconn.is_none() {
+    return failed(CC_ERR, 4, "tls: Verify.None needs a verify_conn (an unverified connection must be pinned)")
+  }
+  let verify = if data.verify != 0 { data.verify } else { verify }
   // the framework decides on macOS with the system's roots
   let apple = if system && target.os == TargetOs.Darwin { 1 } else { 0 }
   let certs = if system && apple == 0 && data.cell != 0 { system_certs(data.cell) } else { data.certs }

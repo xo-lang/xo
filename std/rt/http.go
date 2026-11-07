@@ -1319,6 +1319,8 @@ type Http_Client struct {
 	// with_server_name and with_verify_conn (decision 0541)
 	serverName string
 	vconn      Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]
+	// with_verify: 0 Full, 1 ChainOnly, 2 None
+	verify int
 	// with_redirects (decision 0404): the redirects followed at most; 0
 	// returns the 3xx itself
 	redirects int64
@@ -1369,9 +1371,17 @@ func (c Http_Client) M_with_verify_conn(_ *Task, f func(*Task, List[X509_Certifi
 	return c
 }
 
+// M_with_verify is `c.with_verify(v)`: Verify.None skips the chain and name checks (InsecureSkipVerify) and needs a
+// verify_conn.
+func (c Http_Client) M_with_verify(_ *Task, v Tls_Verify) Http_Client {
+	c.verify = v.Tag - 1
+	c.tr = clientTransport(c)
+	return c
+}
+
 // M_tls_options is `c.tls_options()`.
 func (c Http_Client) M_tls_options(_ *Task) Http_TlsOptions {
-	return Http_TlsOptions{F_server_name: c.serverName, F_verify_conn: c.vconn.Some, F_custom_roots: c.roots != nil, F_client_cert: c.cert.Some}
+	return Http_TlsOptions{F_server_name: c.serverName, F_verify_conn: c.vconn.Some, F_custom_roots: c.roots != nil, F_client_cert: c.cert.Some, F_verify: Tls_Verify{Tag: c.verify + 1}}
 }
 
 // M_with_host is `r.with_host(host)` (decision 0541): Go's Request.Host.
