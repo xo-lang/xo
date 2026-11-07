@@ -141,7 +141,9 @@ func Build(dirs []string, o Options) (*Result, error) {
 	// separate compilation serves only a native build for the host
 	// (compiler/xo sepenv.xo sepcomp_default)
 	if mode == ModeBuild && (o.Backend == BackendArm64 || o.Backend == "amd64") && o.Targets == "" && !o.Release && !o.Race {
-		stdVariants(cli)
+		if err := stdVariants(cli); err != nil {
+			return &Result{Binaries: map[string]string{}}, err
+		}
 		if len(dirs) > 0 && wholeSample()[filepath.Base(filepath.Clean(dirs[0]))] && !hasEnv(o.Env, "XO_SEPCOMP") {
 			o.Env = append(append([]string{}, o.Env...), "XO_SEPCOMP=0")
 		}
@@ -462,6 +464,7 @@ func Check(dirs []string, flags ...string) ([]Diagnostic, error) {
 
 var (
 	stdVariantsOnce sync.Once
+	stdVariantsErr  error
 	wholeSampleOnce sync.Once
 	wholeSampleSet  map[string]bool
 )
@@ -508,7 +511,12 @@ func hasEnv(env []string, name string) bool {
 // both every golden compiled std with the program (item C,
 // bench/results/suite-fixed-cost-2026-11-06.md). A cached variant is
 // reused at once; xo's own lock serializes processes that start
-// together. A failure is ignored: the builds go on whole program.
+// together. A failure is every native build's error from then on (the
+// lead, 2026-11-07: it was ignored, and the builds went on whole
+// program, so a variant that did not build under the full suite's load
+// showed only as later tests' wrong output: TestTracebackSeparate's
+// sep=true cases and the sepcomp tests failed in the full suite and
+// passed alone).
 // XO_TEST_SEPCOMP=0 keeps every build whole (the full tier's coverage of
 // the whole-program path).
 // StdVariants builds std's variants as a native build would (stdVariants),
@@ -518,22 +526,23 @@ func StdVariants() error {
 	if err != nil {
 		return err
 	}
-	stdVariants(cli)
-	return nil
+	return stdVariants(cli)
 }
 
-func stdVariants(cli []string) {
+func stdVariants(cli []string) error {
 	if os.Getenv("XO_TEST_SEPCOMP") == "0" {
-		return
+		return nil
 	}
 	stdVariantsOnce.Do(func() {
 		for _, conc := range []string{"0", "1"} {
 			args := append(append([]string{}, cli[1:]...), "dev", "stdcache", "--conc="+conc)
 			cmd := testtmp.Guard(exec.Command(cli[0], args...))
 			if out, err := cmd.CombinedOutput(); err != nil {
-				fmt.Fprintf(os.Stderr, "xotool: std's variant conc=%s did not build (%v); builds are whole program:\n%s", conc, err, out)
+				stdVariantsErr = fmt.Errorf("xotool: std's variant conc=%s did not build (%v; XO_TEST_SEPCOMP=0 builds whole program instead):\n%s", conc, err, out)
+				fmt.Fprintln(os.Stderr, stdVariantsErr)
 				return
 			}
 		}
 	})
+	return stdVariantsErr
 }
