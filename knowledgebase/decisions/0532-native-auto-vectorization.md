@@ -277,6 +277,19 @@ widened byte counter), which waits for the owner's go as the
 Consequences say. The mask stops at step 2: its loop is not where
 bench/perf/websocket's time goes.
 
+The count's kernel is rt.bytes_count_below32(b, i, lo) (2026-11-07): the
+bytes of 32 below lo as signed bytes (lo -64: continuation bytes), two
+signed lane compares and a lane sum (arm64 cmgt and addv, x86_64 pcmpgtb,
+pmovmskb and popcnt, LLVM a <32 x i8> compare and ctpop, wasm a byte
+loop). It lands as code generation first; scan.xo count_cont's use of it
+(lang1-ccont-std) waits for a seed that lowers it. Measured before then
+(ab-host builds the use with the code generation commit's xo):
+bench/perf/simdscan rune_count 0.502 of the code generation commit
+(0.485 to 0.537, n=6, host 1). It is an intrinsic, not a pass: no other
+loop changes, so rt.ct_barrier code is untouched, and a fault in
+count_cont's loop is impossible (each block is in bounds by the loop's
+test), as before.
+
 ## Consequences
 
 - Step 1 is in std and the emitters already; steps 2 and 3 each need

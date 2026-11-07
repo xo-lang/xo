@@ -183,6 +183,13 @@ fn bytes_any_eq32(b: Bytes, i: Int, c: Int) -> Int
 /// bytes_eq16; bench/results/simd-survey-2026-11-06.md).
 /// Unchecked: 0 <= i and i + 32 <= b.len().
 fn bytes_count_eq32(b: Bytes, i: Int, c: Int) -> Int
+/// The number of the 32 bytes of b from i that are below lo read as a
+/// signed byte: lo -64 counts UTF-8 continuation bytes (0x80 to 0xBF), lo
+/// 0 the bytes 0x80 and above. lo is a constant (lowered inline: arm64
+/// two cmgt, an add of the lanes and addv, x86_64 SSE2 pcmpgtb, pmovmskb
+/// and popcnt, LLVM a <32 x i8> signed compare and ctpop, wasm a byte
+/// loop; decision 0532 step 2). Unchecked: 0 <= i and i + 32 <= b.len().
+fn bytes_count_below32(b: Bytes, i: Int, lo: Int) -> Int
 /// Nonzero when one of the 32 bytes of b from i is 0x80 or above, else
 /// 0 (as bytes_any_eq32).
 fn bytes_any_high32(b: Bytes, i: Int) -> Int

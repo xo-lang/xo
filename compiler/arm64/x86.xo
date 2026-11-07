@@ -1692,6 +1692,15 @@ fn (var g: G) x86_count_eq32(us: List[Int], c: Int, kc: Bool) -> Int {
   g.x86_def1(t.join("\n"), us)
 }
 
+/// rt.bytes_count_below32 on x86_64: each lane's pcmpgtb (lo > the byte,
+/// signed) mask, the first held in r11 and the second built after the
+/// last read of the address, joined into 32 bits and counted with popcnt.
+fn (var g: G) x86_count_below32(us: List[Int], lo: Int) -> Int {
+  let k = (lo & 255) * 16843009
+  let t = ["movl $${k}, %r11d", "movd %r11d, %xmm14", "pshufd $0, %xmm14, %xmm14", "movdqu ($u0,$u1), %xmm15", "pcmpgtb %xmm15, %xmm14", "pmovmskb %xmm14, %r11d", "movdqu 16($u0,$u1), %xmm15", "movl $${k}, $wd0", "movd $wd0, %xmm14", "pshufd $0, %xmm14, %xmm14", "pcmpgtb %xmm15, %xmm14", "pmovmskb %xmm14, $wd0", "shlq $16, $d0", "orq %r11, $d0", "popcntq $d0, $d0"]
+  g.x86_def1(t.join("\n"), us)
+}
+
 /// rt.bytes_any_stop32 on x86_64 (SSE2): each lane of the 32 bytes at
 /// $u0 + $u1 compared with c1 and c2 (pcmpeqb) and with lo (pcmpgtb, a
 /// signed compare), each mask moved and or'ed into the result; the

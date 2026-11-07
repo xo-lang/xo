@@ -259,6 +259,19 @@ func main() {
 				sum += len(strconv.Quote(s))
 			}
 		}
+	case "rune_count":
+		// as Xo's b.to_str() ?? "": a buffer cut inside a rune is ""
+		ss := make([]string, len(mix))
+		for i, b := range mix {
+			if utf8.Valid(b) {
+				ss[i] = string(b)
+			}
+		}
+		for p := 0; p < passes; p++ {
+			for _, s := range ss {
+				sum += utf8.RuneCountInString(s)
+			}
+		}
 	}
 	fmt.Printf("%s %d\n", w, sum)
 }

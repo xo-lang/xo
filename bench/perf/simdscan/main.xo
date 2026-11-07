@@ -262,6 +262,18 @@ fn main(os: Os) {
         }
       }
     }
+    "rune_count" => {
+      // utf8.RuneCountInString of mixed text: a count of continuation bytes
+      var ss: List[Str] = []
+      for b in mix {
+        ss.push(b.to_str() ?? "")
+      }
+      for _ in 0..passes {
+        for s in ss {
+          sum += s.rune_count()
+        }
+      }
+    }
     _ => {}
   }
   os.stdio.println("${w} ${sum}")
