@@ -44,6 +44,7 @@ var (
 	_ func(*Task, int64, string) Http_Response                                                                                                          = Http_text
 	_ func(*Task, int64) Http_Response                                                                                                                  = Http_empty
 	_ func(*Task, Http_Request, string, int64) Http_Response                                                                                            = Http_redirect
+	_ func(*Task, int64) string                                                                                                                         = Http_status_text
 	_ func(*Task, int64, string) Http_Response                                                                                                          = Http_error_page
 	_ func(*Task) Http_Response                                                                                                                         = Http_not_found
 	_ func(*Task, int64, string, string) Http_Response                                                                                                  = Http_error_html
