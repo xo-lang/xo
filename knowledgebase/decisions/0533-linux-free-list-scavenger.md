@@ -151,13 +151,16 @@ the heap not XO_THP=off):
 1. age_sparse (93f714153): an age pass gives back a block only when its 2 MiB range is at least
    half free, as Go's scavenger skips dense chunks (mgcscavenge.go). This keeps a lone hole out of
    a dense range, and it fixed sat8 (above).
-2. MADV_NOHUGEPAGE on each range an age pass gives back, after MADV_DONTNEED. khugepaged then skips
-   every 2 MiB range that overlaps it, which age_sparse alone did not ensure: the sat128 run that
-   re-inflated had given back 2.7 MB first. The flag stays when the range is reused, since Linux
-   has no advice back to the default (MADV_HUGEPAGE opts in, which differs from the default under
-   `madvise`), so a reused range keeps 4 KiB pages.
-   Before it lands, measure: the VMA count (each advised range splits its mapping until its
-   neighbours carry the same flag; vm.max_map_count is 65,530 by default), the warm build's wall
+2. MADV_NOHUGEPAGE on the whole 2 MiB range (half a chunk, so inside one mapping) of each block an
+   age pass gives back, after MADV_DONTNEED (heapos.xo age_nohuge, draft 1146e4d31 on l2-scavthp's
+   93f714153). khugepaged then never collapses that range, which age_sparse alone did not ensure:
+   the sat128 run that re-inflated had given back 2.7 MB first. Advising the range, not the block,
+   splits a chunk's mapping into at most one VMA per 2 MiB, and neighbouring ranges with the flag
+   merge. The flag stays when the range is reused, since Linux has no advice back to the default
+   (MADV_HUGEPAGE opts in, which differs from the default under `madvise`), so the range's live
+   blocks and later reuse get 4 KiB pages; the range had already lost its huge page when the block
+   was given back.
+   Before it lands, measure: the VMA count (vm.max_map_count is 65,530 by default), the warm build's wall
    on ab-host (the TLB cost of 4 KiB pages on a reused range), and the THP-on sat128 rows again,
    expecting 0 of 8 new-side re-inflations.
 
