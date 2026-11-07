@@ -27,3 +27,15 @@ TestSelfhostWasm counted as unsupported, not failed. The test now fails a
 `== unsupported` line naming `the assembler:`. Check: every
 `i32.|i64.|f32.|f64.` mnemonic in compiler/wasm's .xo files against asm.xo's
 table (`comm -23` of the two sorted lists; only `f64.const` is parsed apart).
+
+## A third time, now a repo test (Observed 2026-11-06)
+
+rt2.xo's `$bytes_any_stop32` (SIMD survey step 3b stage 1, a22a76620) used
+`i32.extend8_s` (0xC0); the table had only the i64 sign extensions. No
+program called rt.bytes_any_stop32 until std/json's 32 byte string scan,
+so main's wasm goldens passed and all 15 json goldens failed on the json
+branch's gate ("unknown instruction `i32.extend8_s`"). The table now has
+`i32.extend8_s` and `i32.extend16_s` (0xC1), and
+internal/repotest TestWasmAsmOpcodes runs the check above on every push
+(pushq's repotest), so a mnemonic missing from the table fails before any
+program needs it.
