@@ -386,6 +386,12 @@ func TestProfHeap(t *testing.T) {
 				if err != nil || !regexp.MustCompile(`start \S*main\.xo:\d+ \(inline\)`).Match(p) {
 					t.Fatalf("go tool pprof -top -lines: no inlined start: %v\n%s", err, p)
 				}
+				// each sample carries Go's bytes label (its object's size),
+				// so pprof -tags and -tagfocus=bytes=N work as on Go's
+				p, err = exec.Command(gobin, "tool", "pprof", "-tags", filepath.Join(dir, "xo-prof.heap.pprof")).CombinedOutput()
+				if err != nil || !strings.Contains(string(p), "bytes: Total") {
+					t.Fatalf("go tool pprof -tags: no bytes label: %v\n%s", err, p)
+				}
 			}
 			// the default rate (512 KiB): an estimate
 			dir, _ = run("XO_PROF=heap")
