@@ -301,6 +301,21 @@ func maskPE(x []byte) []byte {
 	return x
 }
 
+// objdumpTool is llvm-objdump when there is one (on PATH or in the
+// linux hosts' /opt/llvm/bin), else objdump: GNU objdump, a Linux host's
+// objdump, does not read arm64 Mach-O, and a run there stopped at its
+// first darwin program ("objdump .../prog: exit status 1", 2026-11-07);
+// on macOS objdump is LLVM's.
+func objdumpTool() string {
+	if p, err := exec.LookPath("llvm-objdump"); err == nil {
+		return p
+	}
+	if _, err := os.Stat("/opt/llvm/bin/llvm-objdump"); err == nil {
+		return "/opt/llvm/bin/llvm-objdump"
+	}
+	return "objdump"
+}
+
 func equal(a, b string, macho bool) (bool, error) {
 	if !macho {
 		x, err := os.ReadFile(a)
@@ -314,7 +329,7 @@ func equal(a, b string, macho bool) (bool, error) {
 		return bytes.Equal(maskPE(x), maskPE(y)), nil
 	}
 	dis := func(p string) ([]byte, error) {
-		o, err := exec.Command("objdump", "-d", p).Output()
+		o, err := exec.Command(objdumpTool(), "-d", p).Output()
 		if err != nil {
 			return nil, fmt.Errorf("objdump %s: %v", p, err)
 		}
