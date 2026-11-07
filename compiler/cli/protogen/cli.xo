@@ -2,6 +2,7 @@
 // and writes the Xo source of its messages and enums (`derive Proto`) to DIR/NAME.xo, or to standard
 // output when --out is not given and one file is named.
 
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 use github.com/xo-lang/xo/compiler/cli/core
 use std/path
 use std/protoparse
@@ -15,7 +16,7 @@ pub fn is_command(name: Str) -> Bool {
 pub fn run(os: Os, args: List[Str]) -> Int uses (fs, stdio) {
   let rest = if args.is_empty() { [] } else { args[1..] }
   if rest.is_empty() || rest[0] != "gen" {
-    os.stdio.eprintln("xo proto: usage: xo proto gen [--out=DIR] FILE.proto...")
+    os.stdio.eprint(cmdhelp.usage("proto"))
     return 2
   }
   var fl = core.new_flags("proto gen")
