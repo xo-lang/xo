@@ -201,7 +201,7 @@ func soakMain(args []string) int {
 	maxRSSGrowth := fs.Float64("max-rss-growth", 0.10, "drift when RSS grows by more than this fraction per hour (after warmup)")
 	maxHeapGrowth := fs.Float64("max-heap-growth", 0.05, "drift when heap_live grows by more than this fraction per hour (after warmup)")
 	addEnv := fs.String("env", "", "K=V pairs, comma separated, added to the app's environment (e.g. XO_THP=off, XO_HEAPSTATS=1)")
-	clientIdle := fs.Duration("client-idle", 0, "close the load client's pooled connections after this long unused (0: never)")
+	clientIdle := fs.Duration("client-idle", 30*time.Second, "close the load client's pooled connections after this long unused (0: never, the soaks before 2026-11-07: fds then ratchet up to the pool's high-water mark)")
 	maxLat := fs.Float64("max-lat-growth", 0.20, "drift when the last quarter's p99 exceeds the first quarter's by this fraction")
 	fs.Parse(args)
 	if fs.NArg() > 0 {
@@ -376,7 +376,26 @@ func soakMain(args []string) int {
 		hf := len(xs) / 2
 		fdLate := slope(xs[hf:], fds[hf:])
 		fmt.Fprintf(&rep, "fds: %.0f at warmup end, slope %.2f/hour, %.2f/hour over the second half\n", fds[0], fdSlope, fdLate)
-		if fdLate > 1 {
+		// a connection the client holds open is the client pool's, not the
+		// app's leak: a latency spike dials more and, with -client-idle 0,
+		// they stay (2026-11-07: fds 28 to 150 in steps, client sockets
+		// equal to the app's, gotchas/soak-fds-client-pool.md); judge the
+		// fds the client does not hold, and the client's against poolCap
+		if fdLate > 1 && body[0].socks >= 0 {
+			un := make([]float64, len(body))
+			for i, s := range body {
+				un[i] = fds[i] - s.csocks
+			}
+			unLate := slope(xs[hf:], un[hf:])
+			last := body[len(body)-1].csocks
+			fmt.Fprintf(&rep, "fds the client does not hold: %.0f at warmup end, %.2f/hour over the second half; client sockets %.0f at the end (pool cap %d)\n", un[0], unLate, last, poolCap)
+			if unLate > 1 || last > poolCap {
+				bad = true
+				rep.WriteString("ALERT: open fds grow\n")
+			} else {
+				rep.WriteString("note: fds grow with the client's pool (bounded by its cap), not the app's\n")
+			}
+		} else if fdLate > 1 {
 			bad = true
 			rep.WriteString("ALERT: open fds grow\n")
 		}

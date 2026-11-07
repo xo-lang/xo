@@ -28,12 +28,15 @@ fuzzing. Phase 1 builds the starter app and the harness.
   with each fd's link target in OUT/fds-first.txt and OUT/fds-last.txt, so a
   climbing fds column shows whether sockets or files are left open, and the
   harness's own sockets, which are the load client's connections to the app:
-  the client keeps a burst's connections pooled for the whole run unless
-  `-client-idle DUR` closes them after DUR unused, and the AnonHugePages KiB,
+  the client closes a pooled connection after `-client-idle DUR` unused
+  (30 s by default since 2026-11-07, so fds follow concurrency and the app's
+  close path runs; 0 keeps a burst's connections for the whole run, as the
+  soaks before did), and the AnonHugePages KiB,
   since RSS counts a transparent huge page whole), and
   writes OUT/drift.txt; exit 1
-  on drift (open fds judged on the run's second half, so a connection pool
-  that fills early and stays is not a leak), blocks left at exit, or a stop that takes over 20 s (its threads'
+  on drift (open fds judged on the run's second half, and on the fds the
+  client does not hold, so a connection pool that grows to its cap of 256 is
+  not a leak; gotchas/soak-fds-client-pool.md), blocks left at exit, or a stop that takes over 20 s (its threads'
   stacks are then saved beside the run's log). `harness load -xo XO -app
   stability/APP -out OUT [-rates 1000,4000] [-sat 64] [-d 30s] [-rounds 3]
   [-drop-env K,...] [-owners N] [-idle 6s]` offers the same mix at each fixed rate (open loop) and

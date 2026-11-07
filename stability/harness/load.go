@@ -56,6 +56,10 @@ type driver struct {
 	op   func(r *rand.Rand)
 }
 
+// poolCap is the most connections the load client holds to the app: a
+// soak's client sockets stay at or under it however long the run.
+const poolCap = 256
+
 // idle closes a pooled connection after that long unused (0: never,
 // a hand built Transport's default, so a burst's connections stay open)
 func newDriver(app *App, mix mixFn, base string, idle time.Duration) *driver {
@@ -65,7 +69,7 @@ func newDriver(app *App, mix mixFn, base string, idle time.Duration) *driver {
 		atomic.AddInt64(&d.dials, 1)
 		return dl.DialContext(ctx, network, addr)
 	}
-	d.cl = &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256, MaxConnsPerHost: 256, IdleConnTimeout: idle, DialContext: dial}, Timeout: 10 * time.Second}
+	d.cl = &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: poolCap, MaxConnsPerHost: poolCap, IdleConnTimeout: idle, DialContext: dial}, Timeout: 10 * time.Second}
 	d.op = mix(app, d.do)
 	return d
 }
