@@ -1137,7 +1137,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       }
       fs.push(JField{name: fname, key: check.text(f.json_key), ct: b.c.subst(f.ty, sb), st: b.m.types[t].fields[fi].ty, dflt: f.default, dfile: df})
     }
-    let vals = b.dec_fields(d, i, "", fs, !b.is_std_mod(om))
+    let vals = b.dec_fields(d, i, "", fs, !b.is_std_mod(om), b.c.objs[obj].json_fold)
     // the struct in SSA field order
     var sargs: List[Int] = []
     for _ in b.m.types[t].fields {
@@ -1253,7 +1253,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       }
       let wn = check.text(check.variant_json_name(vo))
       let (no, join3) = b.if_then_begin(b.call("str.eq", bt, "", [nm, b.const_str(wn)]))
-      b.dec_variant(d, t, vi, wn, ".${wn}", vo, sb, pay, has)
+      b.dec_variant(d, t, vi, wn, ".${wn}", vo, sb, pay, has, b.c.objs[obj].json_fold)
       b.if_then_end(no, join3)
     }
     let p = b.const_str("")
@@ -1328,7 +1328,7 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
     // the tag compared in place, with no Str of it (str_is)
     let (no, join3) = b.if_then_begin(b.json_rt("json_str_is", bt, [d.src, d.tape, j, b.const_str(wn)]))
     if !content.is_empty() {
-      b.dec_variant(d, t, vi, wn, ".${content}", vo, sb, pay, has)
+      b.dec_variant(d, t, vi, wn, ".${content}", vo, sb, pay, has, b.c.objs[obj].json_fold)
     } else if vo.fields.is_empty() {
       b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), []))
     } else if vo.fields.len() == 1 && (vo.fields[0].from || vo.fields[0].name.is_empty()) {
@@ -1343,7 +1343,7 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
       for (fi, f) in vo.fields.indexed() {
         fs.push(JField{name: check.text(f.name), key: check.text(check.vfield_json_key(f)), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
       }
-      let vals = b.dec_fields(d, i, "", fs, false)
+      let vals = b.dec_fields(d, i, "", fs, false, b.c.objs[obj].json_fold)
       b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), vals))
     }
     b.if_then_end(no, join3)
@@ -1355,7 +1355,7 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
 }
 
 /// The body of one variant's branch of an enum decoder.
-fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vseg: Str, vo: check.VariantInfo, sb: Map[Int, Int], pay: Int, has: Int) {
+fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vseg: Str, vo: check.VariantInfo, sb: Map[Int, Int], pay: Int, has: Int, fold: Bool) {
   let bt = b.bool_t()
   let it = b.int_t()
   if vo.fields.is_empty() {
@@ -1383,16 +1383,16 @@ fn (var b: Builder) dec_variant(d: Dec, t: Int, vi: Int, vname: Str, vseg: Str, 
   for (fi, f) in vo.fields.indexed() {
     fs.push(JField{name: check.text(f.name), key: check.text(check.vfield_json_key(f)), ct: b.c.subst(f.ty, sb), st: vfs[fi].ty})
   }
-  let vals = b.dec_fields(d, pay, vseg, fs, false)
+  let vals = b.dec_fields(d, pay, vseg, fs, false, fold)
   b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), vals))
 }
 
 /// Reads the fields fs of the object at node o, with seg in front of
 /// their paths; defaults apply when with_defaults (jsonDec's fields).
-fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_defaults: Bool) -> List[Int] {
-  let it = b.int_t()
-  let bt = b.bool_t()
-  var out: List[Int] = []
+fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_defaults: Bool, fold: Bool) -> List[Int] {
+  if fold {
+    return b.dec_fields_fold(d, o, seg, fs, with_defaults)
+  }
   // every field's member in one pass over the object (jsontext
   // find_all), its keys each after its length as one byte; a key of 128
   // bytes or more, or a single field, finds alone
@@ -1409,11 +1409,288 @@ fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_
   for _ in 0..8 {
     packed.write("${Rune(0)}")
   }
+  b.dec_fields_in(d, o, seg, fs, with_defaults, all, packed.freeze())
+}
+
+/// dec_fields for a type with `derive Json(match: fold)` (decision 0550):
+/// the members found by jsontext.find_all_fold, decoded as dec_fields
+/// decodes them, except that any error (a member's, or a missing field's)
+/// leaves for one cold block, where dec_fields_fold_err decodes them all
+/// again to return the error Go would (a fast path free of its four error
+/// variables, which as phis through every field cost an exact key decode
+/// about a fifth, 2026-11-07).
+fn (var b: Builder) dec_fields_fold(d: Dec, o: Int, seg: Str, fs: List[JField], with_defaults: Bool) -> List[Int] {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  var out: List[Int] = []
+  let lt = b.m.list(it)
+  let nk = fs.len()
+  let (keys, folds) = fold_keys(fs)
+  let idx = b.json_rt("json_find_all_fold", lt, [d.src, d.tape, o, b.const_str(keys), b.const_str(folds), b.cint(nk)])
+  let nidx = b.call("list.len", it, "", [idx])
+  let slow = b.new_block()
+  for (fk, f) in fs.indexed() {
+    let (nod, joind) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [nidx, b.cint(nk)]))
+    let dv = b.local()
+    let npairs = b.add(Op.Div, it, Aux.None, [b.add(Op.Sub, it, Aux.None, [nidx, b.cint(nk)]), b.cint(2)])
+    let (q, headd, exitd) = b.for_up_to_begin(npairs, dv)
+    let at = b.add(Op.Add, it, Aux.None, [b.cint(nk), b.add(Op.Mul, it, Aux.None, [q, b.cint(2)])])
+    let fi = b.call("list.index", it, "", [idx, at])
+    let (nom, joinm) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [fi, b.cint(fk)]))
+    let dn = b.call("list.index", it, "", [idx, b.add(Op.Add, it, Aux.None, [at, b.cint(1)])])
+    let _dup = b.dec_or_jump(d, f.ct, b.typ(f.ct), dn, slow)
+    b.if_then_end(nom, joinm)
+    b.for_up_to_end(q, dv, headd, exitd)
+    b.if_then_end(nod, joind)
+    let j = b.call("list.index", it, "", [idx, b.cint(fk)])
+    let join = b.new_block()
+    let res = b.s.f.add_param(join, f.st)
+    let (found, missing) = b.branch(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
+    b.s.cur = found
+    let v = b.dec_or_jump(d, f.ct, f.st, j, slow)
+    b.jump(join, [v])
+    b.s.cur = missing
+    if with_defaults && !f.dflt.is_empty() {
+      let dfv = b.foreign_value(f.dflt[0], f.dfile, f.st, b.s.sub)
+      b.jump(join, [dfv])
+    } else if b.is_json_patch(f.ct) {
+      let pt = b.unbox_type(f.st)
+      let a = b.add(Op.Variant, pt, Aux.I(n: b.m.variant_index(pt, "Absent")), [])
+      b.jump(join, [b.coerce(a, f.st)])
+    } else if b.option_elem(f.ct) >= 0 {
+      let pt = b.unbox_type(f.st)
+      let a = b.add(Op.Variant, pt, Aux.I(n: b.m.variant_index(pt, "None")), [])
+      b.jump(join, [b.coerce(a, f.st)])
+    } else {
+      b.jump(slow, [])
+    }
+    b.seal(join)
+    b.s.cur = join
+    out.push(res)
+  }
+  let cont = b.s.cur
+  b.seal(slow)
+  b.s.cur = slow
+  b.dec_fields_fold_err(d, seg, fs, with_defaults, idx, nidx)
+  b.s.cur = cont
+  out
+}
+
+/// The member at tape index j decoded as xt (dec_child), its value as st;
+/// on an error, a jump to slow (dec_fields_fold's error block).
+fn (var b: Builder) dec_or_jump(d: Dec, xt: Int, st: Int, j: Int, slow: Int) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let cn = b.json_dec(xt)
+  let cf = b.fidx(cn)
+  if cf < 0 {
+    return b.undef(st)
+  }
+  let crt = b.m.funcs[cf].results[0]
+  let r = b.call(cn, crt, "", [d.src, d.tape, j])
+  let ce = b.m.variant_index(crt, "Err")
+  let co = b.m.variant_index(crt, "Ok")
+  let (bad, good) = b.branch(b.add(Op.Eq, bt, Aux.None, [b.add(Op.Tag, it, Aux.None, [r]), b.cint(ce)]))
+  b.s.cur = bad
+  b.jump(slow, [])
+  b.s.cur = good
+  let v = b.add(Op.Payload, b.m.types[crt].variants[co].fields[0].ty, Aux.P(tag: co, field: 0), [r])
+  b.coerce(v, st)
+}
+
+/// dec_fields_fold's error block: Go's error order (encoding/json keeps
+/// the first type error in document order and goes on, while an
+/// UnmarshalJSON error stops the decode and wins). Every selected member
+/// decodes, replaced ones included; the error returned is that of the
+/// earliest member (its tape index) among the hard ones (a field whose
+/// type is a via type, json_hard), else among all. A missing field, which
+/// Go does not report, comes after every member's error, the first
+/// declared first. A nested type reports its own earliest error, so the
+/// order holds across the document; a via type inside a nested non-via
+/// struct counts as a type error there (a known gap, decision 0550). The
+/// fast path found an error, so this one finds one too and returns it.
+fn (var b: Builder) dec_fields_fold_err(d: Dec, seg: Str, fs: List[JField], with_defaults: Bool, idx: Int, nidx: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let nk = fs.len()
+  let ev = FoldErr{pos: b.local(), hard: b.local(), path: b.local(), msg: b.local()}
+  b.write_var(ev.pos, b.cint(-1))
+  b.write_var(ev.hard, b.cbool(false))
+  b.write_var(ev.path, b.const_str(""))
+  b.write_var(ev.msg, b.const_str(""))
+  for (fk, f) in fs.indexed() {
+    let fseg = b.const_str("${seg}.${f.key}")
+    let hard = b.json_hard(f.ct)
+    // the members this field's last one replaced, in document order
+    let (nod, joind) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [nidx, b.cint(nk)]))
+    let dv = b.local()
+    let npairs = b.add(Op.Div, it, Aux.None, [b.add(Op.Sub, it, Aux.None, [nidx, b.cint(nk)]), b.cint(2)])
+    let (q, headd, exitd) = b.for_up_to_begin(npairs, dv)
+    let at = b.add(Op.Add, it, Aux.None, [b.cint(nk), b.add(Op.Mul, it, Aux.None, [q, b.cint(2)])])
+    let fi = b.call("list.index", it, "", [idx, at])
+    let (nom, joinm) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [fi, b.cint(fk)]))
+    let dn = b.call("list.index", it, "", [idx, b.add(Op.Add, it, Aux.None, [at, b.cint(1)])])
+    let _dup = b.dec_try(d, ev, f.ct, b.typ(f.ct), dn, fseg, hard)
+    b.if_then_end(nom, joinm)
+    b.for_up_to_end(q, dv, headd, exitd)
+    b.if_then_end(nod, joind)
+    let j = b.call("list.index", it, "", [idx, b.cint(fk)])
+    let join = b.new_block()
+    let res = b.s.f.add_param(join, f.st)
+    let (found, missing) = b.branch(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
+    b.s.cur = found
+    let v = b.dec_try(d, ev, f.ct, f.st, j, fseg, hard)
+    b.jump(join, [v])
+    b.s.cur = missing
+    if with_defaults && !f.dflt.is_empty() {
+      let dfv = b.foreign_value(f.dflt[0], f.dfile, f.st, b.s.sub)
+      b.jump(join, [dfv])
+    } else if b.is_json_patch(f.ct) {
+      let pt = b.unbox_type(f.st)
+      let a = b.add(Op.Variant, pt, Aux.I(n: b.m.variant_index(pt, "Absent")), [])
+      b.jump(join, [b.coerce(a, f.st)])
+    } else if b.option_elem(f.ct) >= 0 {
+      let pt = b.unbox_type(f.st)
+      let a = b.add(Op.Variant, pt, Aux.I(n: b.m.variant_index(pt, "None")), [])
+      b.jump(join, [b.coerce(a, f.st)])
+    } else {
+      b.fold_err(ev, b.cint(1 << 62), false, b.const_str(seg), b.const_str("missing field `${f.key}`"))
+      b.jump(join, [b.zero(f.st, [])])
+    }
+    b.seal(join)
+    b.s.cur = join
+    let _ = res
+  }
+  b.retv(b.dec_err(d, b.read(ev.path), b.read(ev.msg)))
+}
+
+/// The variables of dec_fields_fold's chosen error: its member's tape
+/// index (-1: none yet), whether it is hard, its path and message.
+struct FoldErr {
+  pos: Int
+  hard: Int
+  path: Int
+  msg: Int
+}
+
+/// Whether a decode error of a member of type ct stops a Go decode
+/// (decision 0550): Go's UnmarshalJSON errors do, and a via type (decision
+/// 0478) is Xo's own decoder, also as the element of an Option, List,
+/// Set or Map.
+fn (var b: Builder) json_hard(ct: Int) -> Bool {
+  let o = b.named_obj(ct)
+  if o < 0 {
+    return false
+  }
+  if b.c.objs[o].json_via >= 0 {
+    return true
+  }
+  if b.is_prelude_mod(b.obj_mod(o)) && (b.obj_name(o) is "Option" | "List" | "Set" | "Map") {
+    let a = b.ty_args(ct)
+    return !a.is_empty() && b.json_hard(a[a.len() - 1])
+  }
+  false
+}
+
+/// The member at tape index j decoded as xt (dec_child), its value as st;
+/// on an error, the error is recorded in ev (fold_err) and the value is
+/// st's zero: dec_fields_fold decodes on to find the earliest error.
+fn (var b: Builder) dec_try(d: Dec, ev: FoldErr, xt: Int, st: Int, j: Int, seg: Int, hard: Bool) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let cn = b.json_dec(xt)
+  let cf = b.fidx(cn)
+  if cf < 0 {
+    return b.undef(st)
+  }
+  let crt = b.m.funcs[cf].results[0]
+  let r = b.call(cn, crt, "", [d.src, d.tape, j])
+  let ce = b.m.variant_index(crt, "Err")
+  let co = b.m.variant_index(crt, "Ok")
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, st)
+  let (bad, good) = b.branch(b.add(Op.Eq, bt, Aux.None, [b.add(Op.Tag, it, Aux.None, [r]), b.cint(ce)]))
+  b.s.cur = bad
+  let cdt = b.m.types[crt].variants[ce].fields[0].ty
+  let e = b.add(Op.Payload, cdt, Aux.P(tag: ce, field: 0), [r])
+  let p = b.call("str.concat", b.str_t(), "", [seg, b.add(Op.Field, b.str_t(), Aux.I(n: 0), [e])])
+  b.fold_err(ev, j, hard, p, b.add(Op.Field, b.str_t(), Aux.I(n: 1), [e]))
+  b.jump(join, [b.zero(st, [])])
+  b.s.cur = good
+  let v = b.add(Op.Payload, b.m.types[crt].variants[co].fields[0].ty, Aux.P(tag: co, field: 0), [r])
+  b.jump(join, [b.coerce(v, st)])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// Keeps the error (path p, message m) of the member at pos in ev when
+/// it comes first: a hard one before every type error, else the earliest
+/// position.
+fn (var b: Builder) fold_err(ev: FoldErr, pos: Int, hard: Bool, p: Int, m: Int) {
+  let bt = b.bool_t()
+  let cur = b.read(ev.pos)
+  let earlier = b.add(Op.Or, bt, Aux.None, [b.add(Op.Lt, bt, Aux.None, [cur, b.cint(0)]), b.add(Op.Lt, bt, Aux.None, [pos, cur])])
+  let was_hard = b.read(ev.hard)
+  let better = if hard {
+    b.add(Op.Or, bt, Aux.None, [b.add(Op.Not, bt, Aux.None, [was_hard]), earlier])
+  } else {
+    b.add(Op.And, bt, Aux.None, [b.add(Op.Not, bt, Aux.None, [was_hard]), earlier])
+  }
+  let (no, join) = b.if_then_begin(better)
+  b.write_var(ev.pos, pos)
+  b.write_var(ev.hard, b.cbool(hard))
+  b.write_var(ev.path, p)
+  b.write_var(ev.msg, m)
+  b.if_then_end(no, join)
+}
+
+/// find_all_fold's two lists (jsontext, decision 0550): each field's key
+/// after its length, and its fold (Go's foldName: ToUpper of ToLower,
+/// rune by rune) after its length and a byte that is 1 when an earlier
+/// field's key folds equal to it (it matches only exactly: Go selects the
+/// first declared field), each list then 8 zero bytes.
+fn fold_keys(fs: List[JField]) -> (Str, Str) {
+  var keys = StrBuilder.new()
+  var folds = StrBuilder.new()
+  var seen: List[Str] = []
+  for f in fs {
+    let fk = f.key.to_lower().to_upper()
+    keys.write(fold_len_text(f.key.len()))
+    keys.write(f.key)
+    folds.write(fold_len_text(fk.len()))
+    folds.write(if seen.contains(fk) { "${Rune(1)}" } else { "${Rune(0)}" })
+    folds.write(fk)
+    seen.push(fk)
+  }
+  for _ in 0..8 {
+    keys.write("${Rune(0)}")
+    folds.write("${Rune(0)}")
+  }
+  (keys.freeze(), folds.freeze())
+}
+
+/// A length in find_all_fold's lists: one byte under 127, else 127 and
+/// the length less 127 as three 7 bit bytes, high first.
+fn fold_len_text(n: Int) -> Str {
+  if n < 127 {
+    return "${Rune(n)}"
+  }
+  let r = n - 127
+  "${Rune(127)}${Rune((r >> 14) & 127)}${Rune((r >> 7) & 127)}${Rune(r & 127)}"
+}
+
+/// dec_fields' decoding once its keys are packed: all, one find_all (or
+/// find_all_fold when fold) over keys; else a find per field.
+fn (var b: Builder) dec_fields_in(d: Dec, o: Int, seg: Str, fs: List[JField], with_defaults: Bool, all: Bool, keys: Str) -> List[Int] {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  var out: List[Int] = []
   var idx = -1
   var nidx = -1
   let lt = b.m.list(it)
   if all {
-    idx = b.json_rt("json_find_all", lt, [d.src, d.tape, o, b.const_str(packed.freeze()), b.cint(fs.len())])
+    idx = b.json_rt("json_find_all", lt, [d.src, d.tape, o, b.const_str(keys), b.cint(fs.len())])
     nidx = b.call("list.len", it, "", [idx])
   }
   for (fk, f) in fs.indexed() {

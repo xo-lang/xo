@@ -1,0 +1,30 @@
+exit 0
+--- stdout
+ok: {"Major":2,"Minor":3}
+ok: {"Major":3,"Minor":0}
+ok: {"Major":2,"Minor":0}
+ok: {"Key":1,"KEY":0}
+ok: {"Key":0,"KEY":1}
+ok: {"Key":2,"KEY":0}
+ok: {"Key":1,"KEY":0}
+ok: {"KEY":1,"Key":0}
+ok: {"straße":1,"k":2,"sun":3}
+ok: {"straße":0,"k":2,"sun":3}
+ok: {"Major":0,"Minor":1}
+ok: {"inner":{"x":1},"name":"n"}
+ok: {"inner":{"x":0},"name":""}
+ok: {"major":0}
+err: at $.Minor: expected integer
+err: at $.Major: expected integer
+err: at $.Major: expected integer
+err: at $.h: not hex: zz
+ok: {"a":4,"h":"4","b":0}
+err: at $.c: expected integer
+err: at $.n: expected integer
+err: at $: missing field `id`
+ok: {"id":7,"n":0}
+ok: {"long_kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk":2,"w":1}
+ok: {"long_kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk":3,"w":0}
+ok: {"Rect":{"width":2,"height":3}}
+err: at $.Rect.width: expected integer
+--- stderr

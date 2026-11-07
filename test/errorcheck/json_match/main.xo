@@ -1,0 +1,22 @@
+// `derive Json(match:)` (decision 0550): exact or fold, a name.
+use std/json
+
+struct Loose {
+  a: Int
+} derive Json(match: fuzzy) // ERROR XO0413 "unknown match `fuzzy`"
+
+struct Quoted {
+  a: Int
+} derive Json(match: "fold") // ERROR XO0413 "`match:` takes a name"
+
+struct Fine {
+  a: Int
+} derive Json(match: exact)
+
+enum E {
+  A(x: Int)
+} derive Json(match: loud) // ERROR XO0413 "unknown match `loud`"
+
+fn main(os: Os) {
+  os.stdio.println(json.encode_str(Fine{a: 1}))
+}

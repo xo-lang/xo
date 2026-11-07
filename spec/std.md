@@ -2358,6 +2358,7 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | Xo | JSON |
 |---|---|
 | struct | object, keys are field names, or a field's wire name (`kind as "type": Str`), or the `derive Json(case: camel \| pascal \| kebab \| snake)` rule (core 2.2, decision 0277) |
+| `derive Json(match: fold)` struct or enum | keys matched as Go's encoding/json does: an exact key, else the first declared field whose key folds equal; the last selecting member wins; errors in Go's document order (core 2.2, decision 0550) |
 | newtype (`type Email struct(Str)`) | its underlying value's JSON (core 2.8) |
 | `T?` field | missing key or `null` decodes to `None`; `None` encodes as `null` |
 | field with a default | missing key decodes to the default |

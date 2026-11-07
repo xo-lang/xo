@@ -1,6 +1,6 @@
 # 0550: Case-insensitive key matching for derive Json
 
-Status: Proposed (Xo Lang 2, 2026-11-07; asked for by xo-lead after the goversioninfo port, for the owner to decide)
+Status: Accepted (owner, 2026-11-07; proposed by Xo Lang 2, 2026-11-07, asked for by xo-lead after the goversioninfo port)
 
 ## Context
 
@@ -82,6 +82,74 @@ Go's rule, verified with go1.26.1 on 2026-11-07 (`json.Unmarshal`):
   spec/std.md 5, std/changes/json.md; an unknown `match:` value reuses
   the derive option error code if its text fits, else a new XO code.
 
+## Implementation (Xo Lang 2, 2026-11-07)
+
+- Spelling: `match` is a keyword, so the parser takes it as a derive
+  argument's name in that one position (compiler/parser parse_derive);
+  the checker sets the type's `json_fold` (compiler/check decl.xo
+  json_match, exported in the std export, version v9).
+- Native, LLVM and wasm: `dec_fields_fold` (compiler/ssa/json.xo) calls
+  `jsontext.find_all_fold` with two lists packed at compile time, the
+  exact keys in find_all's form and the folded keys, each folded key
+  marked when an earlier key folds equal to it (it then matches only
+  exactly, so the first declared field wins). Per member: the exact
+  probe loop as find_all's; on a miss, an unescaped ASCII key (no
+  STR_HIGH) compares against the folded keys a word at a time (upper8,
+  a-z less 0x20 per byte); an escaped or non-ASCII key goes through a
+  cold path (fold_match_slow: the unquoted key, Go's fold rune by rune
+  with unicode.to_case, an invalid byte as U+FFFD).
+- Go's error order (FEEDBACK item 6, agreed with xo-lead 2026-11-07):
+  a folding type's decoder decodes as dec_fields does until any error,
+  then jumps to one cold block (dec_fields_fold_err) that decodes every
+  selected member again, replaced ones included, and keeps one error: a hard one (a member whose type is a via type, or
+  an Option, List, Set or Map of one: Xo's analogue of an UnmarshalJSON
+  error, which stops Go's decode and wins) before any type error, else
+  the earliest member in document order (its tape index); a missing
+  field, which Go does not report, after every member's. A nested type
+  reports its own earliest error, so the order holds across the
+  document. Types without the option keep today's order (declaration
+  order, first error returned).
+- Go backend: `rt.JsonObjectFold` selects the members over the object's
+  ordered members (jsonObj.all, else its keys) with encoding/json's
+  foldName ported from fold.go, and returns each field's members in
+  document order; the generated decoder decodes each into the field and
+  `rt.JsonFoldErr.Note` keeps the error by the same rule. A folding
+  type's XoJsonRead (the exact-key fast reader) returns false, so the
+  tree decoder runs.
+- Tests: golden json_fold (internal/llvm/testdata/golden: every backend
+  and TestGoldenGoParity; wasm through `xo dev goldens --backend=wasm`),
+  test/errorcheck/json_match, and internal/stdtest TestJsonFoldDiff, a
+  differential against encoding/json (keys in random case, folding
+  runes, escapes, duplicates, values that do not fit; seed 1 with 1,500
+  cases and seed 7 with 4,000 cases equal on arm64, LLVM and the Go
+  backend, 2026-11-07).
+
+## Measured (2026-11-07)
+
+`xo bench --ab`, linux/arm64 offload host 1, 9 rounds, 0 loaded, one
+binary decoding a 10 field struct (`case: pascal`, Int fields with
+defaults) 2,000,000 times, A the type without the option, B the same
+type with `match: fold`, ns per decode (medians, B/A with its 95%
+interval):
+
+| input | without | with `match: fold` | B/A |
+|---|---|---|---|
+| (a) exact keys | 227 | 237 | 1.044 (1.039 to 1.07) |
+| (b) every key lowercased | 258 | 350 | 1.357 (1.349 to 1.37) |
+| (c) unknown keys | 254 | 361 | 1.421 (1.417 to 1.433) |
+
+(a) is the cost of the option on input that uses the declared keys:
+the exact probe is find_all's, the rest is the fold path's code size.
+In (b) the type without the option matches nothing and decodes no field
+(every field takes its default), while the folding type decodes all ten,
+so the row overstates the matching cost; against (a)'s folding decode the
+fold match costs 113 ns for 10 members. In (c) every member misses both
+passes: about 11 ns per member. A type without the option runs the same
+code as before (dec_fields_in is the old body; the option is chosen at
+compile time). A first version that carried the error state as SSA
+variables through every field cost (a) about a fifth on the Mac; the
+fast path now jumps to one cold block on any error.
+
 ## Consequences
 
 - Go config ports keep `derive Json` and Go's input compatibility, with
@@ -89,6 +157,13 @@ Go's rule, verified with go1.26.1 on 2026-11-07 (`json.Unmarshal`):
   becomes a derive.
 - A folding decoder is as lenient as Go: a key that folds to a field
   (`"MAJOR"`) is accepted.
+- Known gap (agreed with xo-lead, 2026-11-07): a via type inside a
+  nested struct that is not itself a via type counts as a type error at
+  the outer level (DecodeErr carries no hard flag, and adding one would
+  change a public std type), so an earlier type error in the outer
+  object wins where Go would report the via error; golden json_fold's
+  `Wrap` case pins today's behavior. If a real program needs Go's answer
+  there, it comes back as its own ADR.
 - Independent of 0543 (map key order on encode; confirmed with Xo Lang
   3, 2026-11-07): that changes encoding only.
 

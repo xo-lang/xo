@@ -5159,6 +5159,7 @@ fn llrt_json_time_opt(src: Bytes, tape: List[Int], i: Int) -> Int? { jsontext.ti
 fn llrt_json_find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int { jsontext.find(src, tape, i, key) }
 
 fn llrt_json_find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List[Int] { jsontext.find_all(src, tape, i, keys, nk) }
+fn llrt_json_find_all_fold(src: Bytes, tape: List[Int], i: Int, keys: Str, folds: Str, nk: Int) -> List[Int] { jsontext.find_all_fold(src, tape, i, keys, folds, nk) }
 
 fn llrt_json_find_dups(src: Bytes, tape: List[Int], i: Int, key: Str) -> List[Int] { jsontext.find_dups(src, tape, i, key) }
 

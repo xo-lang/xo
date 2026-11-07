@@ -12,7 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.44
 
-None yet.
+- `derive Json(match: fold)` (decision 0550, 2.2): a type's decoder matches
+  keys as Go's encoding/json does (an exact key, else the first declared
+  field whose key folds equal; the last selecting member wins; errors in
+  Go's document order). `match` is accepted as a derive argument name.
 
 ## Changes in 0.43
 
@@ -779,6 +782,28 @@ pub struct User {
   wins. An unknown argument or case is `XO0413`; two fields with one key
   under a derive the struct has are `XO0411`; a wire name on a struct
   with neither derive is the warning `XO0414`.
+- `derive Json(match: fold)` (decision 0550; `match: exact`, the default,
+  may be written) decodes keys as Go's encoding/json does, on a struct or
+  on an enum for its variants' fields: each member, in document order,
+  selects the field whose key (its name, `as "key"` or `case:` spelling)
+  equals it, else the first declared field whose key folds equal to it
+  (Go's foldName: each rune through `unicode.ToLower` then
+  `unicode.ToUpper`, so `"MAJOR"` and `"major"` select `Major`, the
+  Kelvin sign selects `k`, and `ß` stays `ß`); the last member that
+  selects a field wins. Its errors come in Go's order: every selected
+  member decodes, and the error is the first in document order, a via
+  type's (Go's UnmarshalJSON) before any type error, a missing field's
+  after both. The option is per type: a field's own struct type folds
+  only when it says so. Encoding is unchanged. An unknown `match:` value
+  is `XO0413`.
+
+  ```
+  struct Version {
+    major: Int = 0
+    minor: Int = 0
+  } derive Json(case: pascal, match: fold)
+  // {"major": 1, "MINOR": 2} decodes to Version{major: 1, minor: 2}
+  ```
 
 ### 2.3 Enums (sum types)
 
@@ -3584,7 +3609,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0410` | error | checker | reading a Map by index; use `get` or `get_or_fault` (core 3.6) |
 | `XO0411` | error | checker | two fields have one wire key under a derive the struct has (core 2.2, decision 0277) |
 | `XO0412` | error | checker | empty wire name, `as ""` (core 2.2) |
-| `XO0413` | error | checker | unknown derive argument or `case:` value, or an argument on a derive that takes none (core 2.2) |
+| `XO0413` | error | checker | unknown derive argument or `case:` or `match:` value, or an argument on a derive that takes none (core 2.2) |
 | `XO0414` | warning | checker | a wire name on a struct with no derive that maps fields to keys (core 2.2) |
 | `XO0415` | error | checker | a top-level constant's initializer performs an effect (core 3.1, decision 0332) |
 | `XO0416` | error | checker | a constant's value holds a handle (`Mutex`, `Chan`, `Atomic`, `Task`, a file) (core 3.1, decision 0332) |

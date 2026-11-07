@@ -1,0 +1,130 @@
+// Case-insensitive key matching, `derive Json(match: fold)` (decision
+// 0550), with encoding/json's rules on every backend: an exact key
+// first, else the first declared field whose key folds equal; the last
+// selecting member wins; the first error in document order, a via type's
+// error before any type error.
+use std/json
+
+struct Version {
+  major: Int = 0
+  minor: Int = 0
+} derive Json(case: pascal, match: fold)
+
+struct KeyFirst {
+  a as "Key": Int = 0
+  b as "KEY": Int = 0
+} derive Json(match: fold)
+
+struct KeyLast {
+  b as "KEY": Int = 0
+  a as "Key": Int = 0
+} derive Json(match: fold)
+
+struct Wide {
+  strasse as "straße": Int = 0
+  k: Int = 0
+  sun: Int = 0
+} derive Json(match: fold)
+
+struct Exact {
+  x: Int = 0
+} derive Json
+
+struct Outer {
+  inner: Exact
+  name: Str = ""
+} derive Json(match: fold)
+
+struct Plain {
+  major: Int = 0
+} derive Json
+
+struct Hex {
+  n: Int
+} derive Json(via: Str, to: hex_text, from: parse_hex)
+
+fn hex_text(h: Hex) -> Str { "${h.n}" }
+
+fn parse_hex(s: Str) -> Hex ! Str {
+  if s.starts_with("0x") {
+    return Ok(Hex{n: s.len()})
+  }
+  Err("not hex: ${s}")
+}
+
+struct Mixed {
+  a: Int = 0
+  h: Hex = Hex{n: 0}
+  b: Int = 0
+} derive Json(match: fold)
+
+struct Wrap {
+  m: Mixed = Mixed{}
+  c: Int = 0
+} derive Json(match: fold)
+
+struct Need {
+  id: Int
+  n: Int = 0
+} derive Json(match: fold)
+
+// a key of 127 bytes or more (find_all_fold's long length)
+struct Long {
+  v as "long_kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk": Int = 0
+  w: Int = 0
+} derive Json(match: fold)
+
+enum Shape {
+  Rect(width: Int, height: Int)
+} derive Json(match: fold)
+
+fn show[T: Json](os: Os, s: Str) {
+  match json.decode_str[T](s) {
+    Ok(v) => os.stdio.println("ok: ${json.encode_str(v)}")
+    Err(e) => os.stdio.println("err: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  // folded keys, and encoding keeps the declared keys
+  show[Version](os, "{\"major\":2,\"MINOR\":3}")
+  // the last selecting member wins, exact or folded
+  show[Version](os, "{\"Major\":1,\"major\":2,\"Major\":3}")
+  show[Version](os, "{\"Major\":1,\"major\":2}")
+  // two keys that fold equal: exact first, else the first declared
+  show[KeyFirst](os, "{\"key\":1}")
+  show[KeyFirst](os, "{\"KEY\":1}")
+  show[KeyFirst](os, "{\"kEy\":1,\"Key\":2}")
+  show[KeyFirst](os, "{\"Key\":2,\"kEy\":1}")
+  show[KeyLast](os, "{\"key\":1}")
+  // non-ASCII: ß has no single upper case rune, the Kelvin sign folds to
+  // K, ſ to S; an escaped key folds too
+  show[Wide](os, "{\"STRAßE\":1,\"K\":2,\"ſUN\":3}")
+  show[Wide](os, "{\"STRASSE\":1,\"\\u004b\":2,\"S\\u0055n\":3}")
+  // unknown keys are ignored
+  show[Version](os, "{\"patch\":9,\"Minor\":1}")
+  // a nested type without the option matches exactly
+  show[Outer](os, "{\"INNER\":{\"x\":1},\"Name\":\"n\"}")
+  show[Outer](os, "{\"inner\":{\"X\":1}}")
+  show[Plain](os, "{\"MAJOR\":1}")
+  // Go's error order: the first type error in document order
+  show[Version](os, "{\"minor\":\"x\",\"major\":\"y\"}")
+  show[Version](os, "{\"major\":\"y\",\"minor\":\"x\"}")
+  // a replaced member still decodes, and its error comes first
+  show[Version](os, "{\"major\":\"a\",\"minor\":\"b\",\"MAJOR\":1}")
+  // a via type's error wins over an earlier type error
+  show[Mixed](os, "{\"a\":\"x\",\"H\":\"zz\",\"b\":\"y\"}")
+  show[Mixed](os, "{\"h\":\"0xff\",\"A\":4}")
+  // known gap (decision 0550): a via error inside a nested struct counts
+  // as a type error at the outer level, so an earlier type error wins
+  show[Wrap](os, "{\"c\":\"x\",\"M\":{\"h\":\"zz\"}}")
+  // a missing field comes after every member's error
+  show[Need](os, "{\"N\":\"x\"}")
+  show[Need](os, "{\"n\":1}")
+  show[Need](os, "{\"ID\":7}")
+  show[Long](os, "{\"W\":1,\"LONG_KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK\":2}")
+  show[Long](os, "{\"long_kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\":3}")
+  // an enum's variant fields fold
+  show[Shape](os, "{\"Rect\":{\"WIDTH\":2,\"Height\":3}}")
+  show[Shape](os, "{\"Rect\":{\"width\":\"w\",\"HEIGHT\":\"h\"}}")
+}

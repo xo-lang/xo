@@ -78,7 +78,7 @@ pub struct StdFileRec {
   pub ranges: List[parser.DeclRange] = []
 }
 
-const EXPORT_VERSION = "xo std export v8 (variant JSON names, tagged enums, own forms, decision 0478)"
+const EXPORT_VERSION = "xo std export v9 (derive Json match: fold, decision 0550)"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {
@@ -390,6 +390,7 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
   }
   w.bytes(x.json_tag)
   w.bytes(x.json_content)
+  w.bool(x.json_fold)
   w.sv(x.json_via)
   w.sv(x.json_to)
   w.sv(x.json_from)
@@ -522,6 +523,7 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
   }
   x.json_tag = r.bytes()
   x.json_content = r.bytes()
+  x.json_fold = r.bool()
   x.json_via = r.sv()
   x.json_to = r.sv()
   x.json_from = r.sv()

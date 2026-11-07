@@ -62,15 +62,113 @@ fn (var g: Gen) gen_json_struct(t: Int) {
   g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
   // an empty struct reads no field, and Go rejects an unused obj
   let obj = if fields.is_empty() { "_" } else { "obj" }
-  g.pl("\t${obj}, err := ${rt}JsonObject(x, path)")
+  var keys: List[Str] = []
+  for f in fields {
+    keys.push(check.text(f.json_key))
+  }
+  g.pl("\t${obj}, err := ${g.json_object(t, "x", "path", keys)}")
   g.pl("\tif err != nil {\n\t\treturn err\n\t}")
+  let fold = g.c.objs[t].json_fold && !fields.is_empty()
+  if fold {
+    g.pl("\tvar fe ${rt}JsonFoldErr")
+  }
   for (i, f) in fields.indexed() {
     let n = check.text(f.name)
     let d = g.json_default(t, i)
-    g.json_field(check.text(f.json_key), go_field(n), f.ty, d)
+    if fold {
+      g.json_field_fold(i, check.text(f.json_key), go_field(n), f.ty, d)
+    } else {
+      g.json_field(check.text(f.json_key), go_field(n), f.ty, d)
+    }
   }
-  g.pl("\treturn nil\n}\n")
+  if fold {
+    g.pl("\treturn fe.Err()\n}\n")
+  } else {
+    g.pl("\treturn nil\n}\n")
+  }
   g.gen_json_read(t)
+}
+
+/// The call that reads the object x as a map from each field's key to
+/// its member (rt.JsonObject), for a type with `derive Json(match: fold)`
+/// rt.JsonObjectFold over the fields' keys (decision 0550: an exact key
+/// first, else the first declared key that folds equal, the last
+/// selecting member winning).
+fn (var g: Gen) json_object(t: Int, x: Str, path: Str, keys: List[Str]) -> Str {
+  if !g.c.objs[t].json_fold {
+    return "${g.rt()}JsonObject(${x}, ${path})"
+  }
+  var ks: List[Str] = []
+  for k in keys {
+    ks.push(k.quote())
+  }
+  "${g.rt()}JsonObjectFold(${x}, ${path}, []string{${ks.join(", ")}})"
+}
+
+/// The field decoding of a variant's payload function: json_field each,
+/// or for a folding enum (decision 0550) json_field_fold and the error
+/// kept.
+fn (var g: Gen) json_variant_fields(t: Int, v: check.VariantInfo) {
+  let fold = g.c.objs[t].json_fold
+  if fold {
+    g.pl("\tvar fe ${g.rt()}JsonFoldErr")
+  }
+  for (i, f) in v.fields.indexed() {
+    if fold {
+      g.json_field_fold(i, check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "")
+    } else {
+      g.json_field(check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "")
+    }
+  }
+  g.pl(if fold { "\t\t\treturn fe.Err()" } else { "\t\t\treturn nil" })
+}
+
+/// json_field for a folding type (decision 0550): every member the field
+/// selected (obj[i], rt.JsonObjectFold's) decodes, and fe keeps the error
+/// in Go's order; a missing field's error comes after every member's.
+fn (var g: Gen) json_field_fold(i: Int, name: Str, go_name: Str, t: Int, dflt: Str) {
+  let rt = g.rt()
+  let hard = if g.json_hard(t) { "true" } else { "false" }
+  g.pl("\tif ms := obj[${i}]; len(ms) > 0 {")
+  g.pl("\t\tfor _, m := range ms {\n\t\t\tfe.Note(m.Pos, ${hard}, ${rt}JsonDec(tk, &v.${go_name}, m.V, path+${("." + name).quote()}))\n\t\t}")
+  g.pl("\t} else {")
+  if !dflt.is_empty() {
+    g.pl("\t\t${dflt}")
+  } else if g.option_elem(t) >= 0 {
+    g.pl("\t\tv.${go_name} = ${g.go_type(t)}{}")
+  } else if g.is_patch(t) {
+    g.pl("\t\tv.${go_name} = ${g.go_type(t)}{Tag: 1}")
+  } else {
+    g.pl("\t\tfe.Note(${rt}JsonFoldMissing, false, ${rt}JsonErr(path, ${("missing field `" + name + "`").quote()}))")
+  }
+  g.pl("\t}")
+}
+
+/// Whether a decode error of type t stops a Go decode (decision 0550): a
+/// via type's, also as the element of an Option, List, Set or Map (the
+/// SSA decoder's json_hard).
+fn (g: Gen) json_hard(t: Int) -> Bool {
+  let o = g.nobj(t)
+  if o < 0 {
+    return false
+  }
+  if g.c.objs[o].json_via >= 0 {
+    return true
+  }
+  if g.oprelude(o) && (g.oname(o) is "Option" | "List" | "Set" | "Map") {
+    let a = g.targs(t)
+    return !a.is_empty() && g.json_hard(a[a.len() - 1])
+  }
+  false
+}
+
+/// The JSON keys of a variant's fields.
+fn vfield_keys(v: check.VariantInfo) -> List[Str] {
+  var ks: List[Str] = []
+  for f in v.fields {
+    ks.push(check.text(check.vfield_json_key(f)))
+  }
+  ks
 }
 
 /// The statement that sets a missing field to its default, or ""
@@ -164,6 +262,12 @@ fn (var g: Gen) gen_json_read(t: Int) {
   let self = g.self_type(t)
   let fields = g.c.objs[t].fields
   g.pl("func (v *${self}) XoJsonRead(tk *${rt}Task, r *${rt}JsonR) bool {")
+  if g.c.objs[t].json_fold {
+    // the direct reader matches keys exactly; a folding type (decision
+    // 0550) leaves the decode to the tree decoder's JsonObjectFold
+    g.pl("\treturn false\n}\n")
+    return
+  }
   g.pl("\tif !r.ObjStart() {\n\t\treturn false\n\t}")
   if !fields.is_empty() {
     g.pl("\tvar seen [${fields.len()}]bool")
@@ -350,13 +454,11 @@ fn (var g: Gen) gen_json_enum(t: Int) {
     if v.fields.len() == 1 && (v.fields[0].from || v.fields[0].name.is_empty()) {
       g.pl("\t\tif err := ${rt}JsonDec(tk, &p.${g.vfield_name(v.fields[0], 0)}, payload, path+${("." + vname).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
     } else {
-      g.pl("\t\tobj, err := ${rt}JsonObject(payload, path+${("." + vname).quote()})")
+      g.pl("\t\tobj, err := ${g.json_object(t, "payload", "path+" + ("." + vname).quote(), vfield_keys(v))}")
       g.pl("\t\tif err != nil {\n\t\t\treturn err\n\t\t}")
       g.pl("\t\tif err := func(v *${pt}, path string) *${rt}Json_DecodeErr {")
-      for (i, f) in v.fields.indexed() {
-        g.json_field(check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "")
-      }
-      g.pl("\t\t\treturn nil\n\t\t}(&p, path+${("." + vname).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+      g.json_variant_fields(t, v)
+      g.pl("\t\t}(&p, path+${("." + vname).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
     }
     g.pl("\t\t*v = ${self}{Tag: ${v.index + 1}, P: p}\n\t\treturn nil")
   }
@@ -402,13 +504,11 @@ fn (var g: Gen) gen_json_tagged_dec(t: Int, self: Str, tuse: Str, jtag: Str, jco
     if wrapped {
       g.pl("\t\tif err := ${rt}JsonDec(tk, &p.${g.vfield_name(v.fields[0], 0)}, ${src}, path+${seg.quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
     } else {
-      g.pl("\t\tobj, err := ${rt}JsonObject(${src}, path+${seg.quote()})")
+      g.pl("\t\tobj, err := ${g.json_object(t, src, "path+" + seg.quote(), vfield_keys(v))}")
       g.pl("\t\tif err != nil {\n\t\t\treturn err\n\t\t}")
       g.pl("\t\tif err := func(v *${pt}, path string) *${rt}Json_DecodeErr {")
-      for (i, f) in v.fields.indexed() {
-        g.json_field(check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "")
-      }
-      g.pl("\t\t\treturn nil\n\t\t}(&p, path+${seg.quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+      g.json_variant_fields(t, v)
+      g.pl("\t\t}(&p, path+${seg.quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
     }
     g.pl("\t\t*v = ${self}{Tag: ${v.index + 1}, P: p}\n\t\treturn nil")
   }

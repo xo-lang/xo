@@ -40,7 +40,8 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
   `Say as "say"` and `derive Json(case: snake)` on an enum, tagged enums
   `derive Json(tag: "type"[, content: "data"])`, and a type's own form
   `derive Json(via: Str, to: f, from: g)` on a struct, enum or newtype
-  (0478).
+  (0478); Go's case-insensitive key matching per type,
+  `derive Json(match: fold)` (0550).
 
 ## Statements and expressions (core 3)
 

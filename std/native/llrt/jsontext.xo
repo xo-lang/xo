@@ -855,6 +855,268 @@ pub fn find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List
   out
 }
 
+/// find_all for a type with `derive Json(match: fold)` (decision 0550),
+/// encoding/json's rule: a member selects the field whose key equals it,
+/// else the first declared field whose key folds equal to it (Go's
+/// foldName, encoding/json/fold.go: each rune through unicode.ToLower
+/// then unicode.ToUpper, an invalid byte as U+FFFD), and the last member
+/// that selects a field wins. keys is find_all's (each key after its
+/// length, then 8 zero bytes); folds holds each key folded (the compiler
+/// folds them) after its length and a byte that is 1 when an earlier key
+/// folds equal to it (such a key only matches exactly), then 8 zero
+/// bytes. A length is one byte under 127, else 127 and three 7 bit bytes
+/// of the length less 127 (fold_len). The result is find_all's: out[f]
+/// the value node of the last member that selected key f, then the
+/// replaced members as pairs. Both passes try the keys from the one
+/// after the last match: the exact keys are distinct, and so are the
+/// folded keys of the keys not marked 1, so the first match found is the
+/// only one.
+pub fn find_all_fold(src: Bytes, tape: List[Int], i: Int, keys: Str, folds: Str, nk: Int) -> List[Int] {
+  var out: List[Int] = List.with_capacity(nk)
+  for _ in 0..nk {
+    out.push(-1)
+  }
+  let kb = keys.bytes()
+  let fb = folds.bytes()
+  let m = tape[i + 1]
+  var j = i + 3
+  var k = 0
+  // the key to try first and its offset, in keys and in folds
+  var hf = 0
+  var hp = 0
+  var ff = 0
+  var fp = 0
+  while k < m {
+    let v = j + 3
+    let raw = tape[j + 2]
+    var sel = -1
+    if raw > LEN_MASK {
+      sel = fold_match_slow(src, tape, j, kb, fb, nk)
+    } else {
+      let at = tape[j + 1]
+      var p = hp
+      var f = hf
+      var c = 0
+      while c < nk {
+        var kl = Int(kb[p])
+        var ko = p + 1
+        if kl == 127 {
+          kl = fold_len(kb, ko)
+          ko += 3
+        }
+        if raw == kl && key_eq_padded(src, at, kb, ko, kl) {
+          sel = f
+          hf = f + 1
+          hp = ko + kl
+          if hf == nk {
+            hf = 0
+            hp = 0
+          }
+          break
+        }
+        p = ko + kl
+        f += 1
+        if f == nk {
+          f = 0
+          p = 0
+        }
+        c += 1
+      }
+      if sel < 0 {
+        // an ASCII key (no STR_HIGH), so its fold is as long as it
+        p = fp
+        f = ff
+        c = 0
+        while c < nk {
+          var fl = Int(fb[p])
+          var fo = p + 1
+          if fl == 127 {
+            fl = fold_len(fb, fo)
+            fo += 3
+          }
+          if raw == fl && fb[fo] == 0 && fold_eq_ascii(src, at, fb, fo + 1, fl) {
+            sel = f
+            ff = f + 1
+            fp = fo + 1 + fl
+            if ff == nk {
+              ff = 0
+              fp = 0
+            }
+            break
+          }
+          p = fo + 1 + fl
+          f += 1
+          if f == nk {
+            f = 0
+            p = 0
+          }
+          c += 1
+        }
+      }
+    }
+    if sel >= 0 {
+      if out[sel] >= 0 && tape[out[sel]] != 0 {
+        out.push(sel)
+        out.push(out[sel])
+      }
+      out[sel] = v
+    }
+    j = next(tape, v)
+    k += 1
+  }
+  out
+}
+
+/// A long length of find_all_fold's lists: three 7 bit bytes from p,
+/// high first, plus 127.
+fn fold_len(b: Bytes, p: Int) -> Int { 127 + ((Int(b[p]) << 14) | (Int(b[p + 1]) << 7) | Int(b[p + 2])) }
+
+/// find_all_fold's match of a key node at j with an escape or a byte
+/// from 0x80 (cold): its unquoted bytes against each key exactly, else
+/// folded (fold_eq) against each unmarked folded key, in declaration
+/// order; the key's index or -1.
+fn fold_match_slow(src: Bytes, tape: List[Int], j: Int, kb: Bytes, fb: Bytes, nk: Int) -> Int {
+  let s = str_at(src, tape, j).bytes()
+  var p = 0
+  var f = 0
+  while f < nk {
+    var kl = Int(kb[p])
+    var ko = p + 1
+    if kl == 127 {
+      kl = fold_len(kb, ko)
+      ko += 3
+    }
+    if s.len() == kl && range_eq(s, 0, kb, ko, kl) {
+      return f
+    }
+    p = ko + kl
+    f += 1
+  }
+  p = 0
+  f = 0
+  while f < nk {
+    var fl = Int(fb[p])
+    var fo = p + 1
+    if fl == 127 {
+      fl = fold_len(fb, fo)
+      fo += 3
+    }
+    if fb[fo] == 0 && fold_eq(s, 0, s.len(), fb, fo + 1, fl) {
+      return f
+    }
+    p = fo + 1 + fl
+    f += 1
+  }
+  -1
+}
+
+/// Whether the n ASCII bytes of src from at, upper cased, are the n bytes
+/// of fb from fp (fb has 8 bytes after its last key): a word at a time,
+/// a-z less 0x20 in each byte (no byte reaches 0x80, so no carry crosses
+/// bytes), the last part of a word masked; bytes only within 8 bytes of
+/// src's end.
+fn fold_eq_ascii(src: Bytes, at: Int, fb: Bytes, fp: Int, n: Int) -> Bool {
+  var t = 0
+  while t + 8 <= n {
+    if upper8(rt.bytes_word(src, at + t)) != rt.bytes_word(fb, fp + t) {
+      return false
+    }
+    t += 8
+  }
+  let r = n - t
+  if r == 0 {
+    return true
+  }
+  if at + t + 8 <= src.len() {
+    let mask = (1 << (8 * r)) - 1
+    return ((upper8(rt.bytes_word(src, at + t)) ^ rt.bytes_word(fb, fp + t)) & mask) == 0
+  }
+  while t < n {
+    let c = Int(src[at + t])
+    let u = if c >= 97 && c <= 122 { c - 32 } else { c }
+    if u != Int(fb[fp + t]) {
+      return false
+    }
+    t += 1
+  }
+  true
+}
+
+/// The 8 bytes of w (each under 0x80) with a-z upper cased: a byte's high
+/// bit after adding 0x1F is b >= 0x61, after adding 0x05 b >= 0x7B.
+fn upper8(w: Int) -> Int {
+  let ge_a = addw(w, 0x1F1F1F1F1F1F1F1F)
+  let gt_z = addw(w, 0x0505050505050505)
+  let lower = ge_a & (gt_z ^ -1) & HIGHS
+  subw(w, shr(lower, 2))
+}
+
+/// Whether the n bytes of b from at fold to the fl bytes of kb from kp
+/// (Go's foldName of the member's key equals the folded key): ASCII
+/// letters upper cased, any other rune decoded (an invalid byte as
+/// U+FFFD), mapped by unicode.ToUpper(unicode.ToLower(r)) and compared
+/// in UTF-8.
+fn fold_eq(b: Bytes, at: Int, n: Int, kb: Bytes, kp: Int, fl: Int) -> Bool {
+  var x = 0
+  var y = 0
+  while x < n {
+    let c = Int(b[at + x])
+    if c < 0x80 {
+      if y >= fl {
+        return false
+      }
+      let u = if c >= 97 && c <= 122 { c - 32 } else { c }
+      if Int(kb[kp + y]) != u {
+        return false
+      }
+      x += 1
+      y += 1
+    } else {
+      let d = raw.decode(b, at + x)
+      let r = unicode.to_case(unicode.to_case(d >> 3, true), false)
+      let w = rune_at_eq(kb, kp + y, fl - y, r)
+      if w < 0 {
+        return false
+      }
+      x += d & 7
+      y += w
+    }
+  }
+  y == fl
+}
+
+/// The UTF-8 size of r when the n bytes of kb from p start with r's
+/// encoding, else -1.
+fn rune_at_eq(kb: Bytes, p: Int, n: Int, r: Int) -> Int {
+  let w = unicode.utf8_len(r)
+  if w > n {
+    return -1
+  }
+  if w == 1 {
+    return if Int(kb[p]) == r { 1 } else { -1 }
+  }
+  var lead = 0
+  if w == 2 {
+    lead = 0xC0 | (r >> 6)
+  } else if w == 3 {
+    lead = 0xE0 | (r >> 12)
+  } else {
+    lead = 0xF0 | (r >> 18)
+  }
+  if Int(kb[p]) != lead {
+    return -1
+  }
+  var q = 1
+  while q < w {
+    let cont = 0x80 | ((r >> (6 * (w - 1 - q))) & 0x3F)
+    if Int(kb[p + q]) != cont {
+      return -1
+    }
+    q += 1
+  }
+  w
+}
+
 /// Whether the n bytes of src from at are the n bytes of kb from kp,
 /// where kb has 8 bytes after its last key (find_all's keys): a word at
 /// a time, the last part of a word masked, so a key under 8 bytes is one

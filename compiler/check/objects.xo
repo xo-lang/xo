@@ -136,6 +136,9 @@ pub struct Obj {
   /// payload (empty: the fields beside the tag).
   pub json_tag: Bytes = b""
   pub json_content: Bytes = b""
+  /// `derive Json(match: fold)` (decision 0550): its decoder matches keys
+  /// as Go's encoding/json does, an exact key first, else a folded one.
+  pub json_fold: Bool = false
   /// `derive Json(via: P, to: f, from: g)` (decision 0478): the proxy
   /// type P and the Func objects that convert to and from it (-1: none),
   /// and g's error type (-1: g has none).

@@ -429,6 +429,14 @@ fn (var p: Parser) expect(k: Kind, what: Str) -> Token {
   t
 }
 
+/// The keyword at the parser as an Ident of its text (a derive
+/// argument's `match`).
+fn (var p: Parser) keyword_ident() -> Ident {
+  let id = Ident{span: p.tok.span, name: p.tok.text}
+  p.next()
+  id
+}
+
 fn (var p: Parser) expect_ident(what: Str) -> Ident {
   if p.tok.kind == Kind.Ident {
     let id = Ident{span: p.tok.span, name: p.tok.text}
@@ -1401,7 +1409,9 @@ fn (var p: Parser) parse_derive() -> (List[Ident], List[DeriveArg]) {
     if p.got(Kind.LParen) {
       while !p.bad && !p.at(Kind.RParen) {
         let astart = p.tok.span.start
-        let key = p.expect_ident("a derive argument name")
+        // `match:` (decision 0550) is the one keyword a derive argument
+        // is named with
+        let key = if p.at(Kind.Match) { p.keyword_ident() } else { p.expect_ident("a derive argument name") }
         p.expect(Kind.Colon, "`:` after the derive argument's name")
         if key.name == b"via" {
           // a type, `via: Str` (decision 0478)

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 	"unsafe"
 )
@@ -890,6 +891,109 @@ func JsonObject(x any, path string) (map[string]any, *Json_DecodeErr) {
 		d.prev = append(d.prev, r.v)
 	}
 	return m, nil
+}
+
+// JsonObjectFold reads the object x for a type with `derive Json(match:
+// fold)` (decision 0550), keys its fields' keys in declaration order: each
+// member, in document order, selects the field whose key equals it, else
+// the first field whose key folds equal to it (jsonFoldName), as
+// encoding/json does. The result holds each field's members in document
+// order, the last one selecting it last, with the earlier null ones left
+// out (a null into a value is a no-op in Go), as std/native's
+// jsontext.find_all_fold.
+func JsonObjectFold(x any, path string, keys []string) ([][]JsonFoldMember, *Json_DecodeErr) {
+	obj, ok := x.(*jsonObj)
+	if !ok {
+		return nil, JsonErr(path, "expected object")
+	}
+	members := obj.all
+	if members == nil {
+		members = make([]jsonRep, len(obj.keys))
+		for i, k := range obj.keys {
+			members[i] = jsonRep{k, obj.vals[k]}
+		}
+	}
+	exact := make(map[string]int, len(keys))
+	folded := make(map[string]int, len(keys))
+	for i, k := range keys {
+		exact[k] = i
+		fk := string(jsonFoldName([]byte(k)))
+		if _, dup := folded[fk]; !dup {
+			folded[fk] = i
+		}
+	}
+	out := make([][]JsonFoldMember, len(keys))
+	for pos, mb := range members {
+		i, ok := exact[mb.k]
+		if !ok {
+			i, ok = folded[string(jsonFoldName([]byte(mb.k)))]
+			if !ok {
+				continue
+			}
+		}
+		if n := len(out[i]); n > 0 && out[i][n-1].V == nil {
+			out[i] = out[i][:n-1]
+		}
+		out[i] = append(out[i], JsonFoldMember{pos, mb.v})
+	}
+	return out, nil
+}
+
+// JsonFoldMember is a member JsonObjectFold selected: its position among
+// the object's members and its value.
+type JsonFoldMember struct {
+	Pos int
+	V   any
+}
+
+// JsonFoldErr is the error a folding type's decoder returns (decision
+// 0550), in encoding/json's order: Go keeps the first type error in
+// document order and goes on, while an UnmarshalJSON error stops the
+// decode and wins. Every member decodes; Note keeps a hard error (a via
+// type's) before any type error, else the earliest position.
+type JsonFoldErr struct {
+	pos  int
+	hard bool
+	err  *Json_DecodeErr
+}
+
+// JsonFoldMissing is the position of a missing field's error: after
+// every member's (Go reports none).
+const JsonFoldMissing = 1 << 62
+
+// Note keeps err (nil: none) of the member at pos when it comes first.
+func (f *JsonFoldErr) Note(pos int, hard bool, err *Json_DecodeErr) {
+	if err == nil {
+		return
+	}
+	earlier := f.err == nil || pos < f.pos
+	if (hard && (!f.hard || earlier)) || (!hard && !f.hard && earlier) {
+		f.pos, f.hard, f.err = pos, hard, err
+	}
+}
+
+// Err is the error kept, or nil.
+func (f *JsonFoldErr) Err() *Json_DecodeErr { return f.err }
+
+// jsonFoldName is encoding/json's foldName (fold.go, Copyright 2013 The
+// Go Authors, BSD license): ASCII letters upper cased, any other rune
+// through unicode.ToUpper(unicode.ToLower(r)), an invalid byte as U+FFFD.
+func jsonFoldName(in []byte) []byte {
+	out := make([]byte, 0, len(in))
+	for i := 0; i < len(in); {
+		if c := in[i]; c < utf8.RuneSelf {
+			if 'a' <= c && c <= 'z' {
+				c -= 'a' - 'A'
+			}
+			out = append(out, c)
+			i++
+			continue
+		}
+		r, n := utf8.DecodeRune(in[i:])
+		out = utf8.AppendRune(out, unicode.ToUpper(unicode.ToLower(r)))
+		i += n
+	}
+	return out
 }
 
 // JsonEnumInt reads the integer value of a valued enum (decision 0269).

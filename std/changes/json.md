@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-07: feature: `derive Json(match: fold)`, Go's case-insensitive key matching
+
+- Kind: feature
+- Commit: this push
+- Found by: the goversioninfo port (its FEEDBACK.md std items 3, 4 and 6): Go's versioninfo.json files mix `"Major"` and `"major"`, and the port decoded a json.Value by hand (about 200 lines)
+- Go reference: encoding/json decode.go object() and fold.go foldName (go1.26.1): an exact key first, else the first field whose key folds equal; the last selecting member wins; the first type error in document order, an UnmarshalJSON error stopping the decode
+- Test: golden json_fold (arm64, LLVM, Go backend parity, wasm); test/errorcheck/json_match; internal/stdtest TestJsonFoldDiff against encoding/json (seed 1, 1,500 cases, and seed 7, 4,000 cases, equal on arm64, LLVM and the Go backend)
+- Timing: xo bench --ab, linux/arm64 offload host 1, 9 rounds, a 10 field struct decoded without and with the option: exact keys 227 and 237 ns (1.044), lowercased keys 258 and 350 ns (1.357; the type without the option decodes no field there), unknown keys 254 and 361 ns (1.421); types without the option run unchanged code (decision 0550, Measured)
+- Shipped in: not yet released
+
+A type with `derive Json(match: fold)` (a struct, or an enum for its variants' fields) decodes keys as encoding/json does: each member selects the field whose key equals it, else the first declared field whose key folds equal to it (each rune through ToLower then ToUpper, so the Kelvin sign selects `k` and `ß` stays `ß`), and the last member that selects a field wins. Every selected member decodes, and the error is Go's: the first in document order, a via type's before any type error, a missing field's after both. The option is per type, not inherited. Encoding is unchanged.
+
 ## 2026-11-07: perf: the Go backend compiles the parse tree decoder once, not once per type
 
 - Kind: perf
