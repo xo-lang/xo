@@ -25,3 +25,13 @@ TestStdSQLiteCrossBuilds builds native_sqlite for windows/amd64,
 linux/amd64 and darwin/amd64 every time, so a sample cannot skip it. A
 golden that reaches C through std is a cross build case of its own: give
 it a test outside the sample.
+
+**Also (2026-11-07, the lead's tier 58 on linux/arm64).** The test passed
+on the Mac and failed on Linux: darwin/amd64 skipped the "does not cross
+link" stop on every host (main.xo's mac_x86, meant for Xo's Mach-O linker,
+which needs no cc), so a `use c` program reached the Linux host's clang
+with Apple's `-arch x86_64` ("unsupported option '-arch' for target
+'aarch64-unknown-linux-gnu'"). The skip now holds only on a Mac or with no
+cc (mac_x86_links); from Linux the build stops with the documented
+message. A cross test that accepts "a documented limit" runs on each host
+kind it can run on before it lands.

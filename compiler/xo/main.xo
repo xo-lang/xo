@@ -1908,8 +1908,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       fail(os, "--race on the ${march} backend links with Xo's linker (not --ld=cc, decision 0273): darwin and linux")
     }
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
+    // a darwin/amd64 program that needs cc (a `use c` source, a std
+    // module's too) builds only on a Mac, whose cc compiles either darwin
+    // arch: from a linux host cc stopped at clang's "unsupported option
+    // '-arch'" (cmd/xo's std C cross build test on the linux/arm64 host,
+    // 2026-11-07)
+    let mac_x86_links = mac_x86 && (goos == "darwin" || no_cc)
     let win = march == "amd64" && tgoos == "windows"
-    let asm_only = !win && tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86
+    let asm_only = !win && tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86_links
     // a build that stops at the assembly leaves it as its product, in the
     // build directory itself, where the message names it
     let s = if asm_only { "${sdir}/prog-${tgoos}.s" } else { "${dir}/prog-${tgoos}.s" }
@@ -2076,7 +2082,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       bins.push((tg, wbin))
       continue
     }
-    if tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86 {
+    if tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86_links {
       // another target that links with cc (a `use c` source, --ld=cc):
       // the host's cc does not link it, and the build stopped at its
       // assembly with exit 0 and no binary (Intel field report b04)

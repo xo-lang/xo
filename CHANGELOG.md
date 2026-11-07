@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo build (fix): a darwin/amd64 cross build from Linux of a program with a `use c` source (its own, or std/sqlite's) stops with "xo does not cross link with one: build it on darwin/amd64" instead of the Linux clang's "unsupported option '-arch'"; a darwin/amd64 build with no C still links with Xo's Mach-O linker from any host.
 - std/crypto (perf): SHA-384 and SHA-512 hash a run of whole blocks in one loop on arm64 with the state in vector registers (cpu.sha512_blocks; native and LLVM), and Ed25519 hashes with the SHA512 instructions where it ran the rounds in Xo: bench/perf/simdscan sha512 0.965 (0.958 to 0.976, n=6), ed25519 sign 0.985 of main on linux/arm64 (verify within noise); a write of one block (an HMAC pad) takes one call again, not the blocks loop (simdscan hmac256 1.002, within noise).
 - std/crypto (perf): SHA-1 hashes a run of whole blocks in one loop with the state in vector registers (cpu.sha1_blocks; arm64 SHA1 and x86-64 SHA-NI, native and LLVM): bench/perf/simdscan sha1 0.884 of main and perf/sha1 0.977 on linux/arm64, simdscan sha1 0.86 on linux/amd64.
 - xo build (fix): the built-in arm64 assembler encodes `ldr` and `str` of a q register with a pre or post index (`ldr q29, [x17], #16`), which stopped a native build with "unsupported instruction" while clang assembled it; gotchas/builtin-assembler-lacks-mnemonics.md lists the SIMD load and store forms it still lacks.
