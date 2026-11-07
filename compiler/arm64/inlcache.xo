@@ -34,6 +34,9 @@ pub struct InlineKeys {
   /// one per function, "" for one not cached; [] for none
   pub keys: List[Str] = []
   st: InlineState = InlineState{}
+  /// st was built (inline_keys); inline_keys_known leaves it to
+  /// inline_cached, which builds it only when a function is computed
+  st_built: Bool = false
 }
 
 /// The inline key of each function of m (before inlining), from the
@@ -57,7 +60,7 @@ pub fn inline_keys(m: ssa.Module, rc_keys: List[Str], jobs: Int) -> InlineKeys {
     }
     keys.push(k)
   }
-  InlineKeys{keys: keys, st: st}
+  InlineKeys{keys: keys, st: st, st_built: true}
 }
 
 /// The inliner's settings, the head of every inline key.
@@ -87,9 +90,10 @@ pub fn inline_list_key(m: ssa.Module, rc_keys: List[Str]) -> Str {
 }
 
 /// The inline keys of m when its list (inline_list_key's) was read from
-/// the cache: the inliner's view built as inline_keys builds it.
-pub fn inline_keys_known(m: ssa.Module, keys: List[Str], jobs: Int) -> InlineKeys {
-  InlineKeys{keys: keys, st: inline_state_jobs(m, jobs)}
+/// the cache; the inliner's view is built by inline_cached when a
+/// function is computed (a warm build reads every one from its entry).
+pub fn inline_keys_known(keys: List[Str]) -> InlineKeys {
+  InlineKeys{keys: keys}
 }
 
 /// A key's text: the key itself, or text pieces each followed by the
@@ -259,7 +263,6 @@ fn inlinable(st: InlineState, s: Str) -> Bool {
 pub fn inline_cached(var m: ssa.Module, ik: InlineKeys, entries: Map[Str, Bytes], verify: Bool, break_inline: Bool, jobs: Int, lazy: Bool) -> InlineOut {
   var out = InlineOut{}
   let keys = ik.keys
-  let st = ik.st
   // the module's types for the codec, without its functions
   let mt = ssa.Module{types: m.types, type_at: m.type_at, goarch: m.goarch}
   let n = m.funcs.len()
@@ -281,6 +284,9 @@ pub fn inline_cached(var m: ssa.Module, ik: InlineKeys, entries: Map[Str, Bytes]
   for (fi, _) in hits {
     is_hit[fi] = true
   }
+  // the inliner's view of m before inlining, as inline_keys built it:
+  // only for a function to compute (m is not changed before here)
+  let st = if ik.st_built || is_hit.len() == n { ik.st } else { inline_state_jobs(m, jobs) }
   // the bodies the walk reads (decision 0220 addendum stage D 2b): each
   // function computed here and each it can inline (its name closure);
   // a function read from its entry needs neither its own body before

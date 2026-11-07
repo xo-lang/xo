@@ -1024,7 +1024,7 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
       }
     }
   }
-  let ik = if known.is_empty() || verify { arm64.inline_keys(mi, rc_keys, jobs) } else { arm64.inline_keys_known(mi, known, jobs) }
+  let ik = if known.is_empty() || verify { arm64.inline_keys(mi, rc_keys, jobs) } else { arm64.inline_keys_known(known) }
   let keys = ik.keys
   if !lk.is_empty() {
     if known.is_empty() {
