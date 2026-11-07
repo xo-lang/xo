@@ -77,7 +77,16 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   AB_QUIET_LOAD (1), since an exclusive lease that starts as a long
   benchmark ends inherits its load: 8.03 on 12 CPUs on 2026-11-02, Last
   verified: 2026-11-02). It takes both at once or neither, so a plain job
-  never holds a slot while it waits. Jobs start in arrival order: each
+  never holds a slot while it waits. A job that needs much of the host's memory
+  (an LLVM golden run with clang, a big Go test) sets `OFF_MEM=1` (heavyd
+  `lease -mem`; Xo Lang 2, 2026-11-07, after host 2 OOM killed clang in
+  LLVM goldens and a Go test while several leases ran at once): it starts
+  only when no other lease runs on its lane, and no lease starts beside it
+  while it runs, as an exclusive one, but it does not wait for the host's
+  no-lane runs (soaks), and the remote side takes one slot lock, not all;
+  `heavyd status` shows it as `memory`. A lane only: the amd64 and win
+  lanes share one machine, so OFF_MEM=1 there does not hold the other
+  side. Last verified: 2026-11-07. Jobs start in arrival order: each
   takes a ticket in `/work/offload.q`, and only the oldest live ticket may
   take a slot (one free slot for a plain job, every slot for an exclusive
   one), so a job behind an exclusive one waits for it (2026-10-30: nine
