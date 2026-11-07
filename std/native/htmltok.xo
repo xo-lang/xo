@@ -68,6 +68,19 @@ fn tokenizer_skip_white_space(var z: htmltok.Tokenizer) {
   if z.errc != 0 {
     return
   }
+  if z.max_buf == 0 {
+    // no limit: the same loop over a local index (one store of z.re, not one a byte)
+    var i = z.re
+    let n = z.src.len()
+    while i < n && is_space(Int(z.src[i])) {
+      i += 1
+    }
+    z.re = i
+    if i >= n {
+      z.errc = 1
+    }
+    return
+  }
   while true {
     let c = tokenizer_rb(z)
     if z.errc != 0 {
@@ -633,6 +646,28 @@ fn tokenizer_read_tag(var z: htmltok.Tokenizer, save_attr: Bool) {
 
 fn tokenizer_read_tag_name(var z: htmltok.Tokenizer) {
   z.ds = z.re - 1
+  if z.max_buf == 0 {
+    var i = z.re
+    let n = z.src.len()
+    while i < n {
+      let c = Int(z.src[i])
+      if is_space(c) {
+        z.re = i + 1
+        z.de = i
+        return
+      }
+      if c == 47 || c == 62 {
+        z.re = i
+        z.de = i
+        return
+      }
+      i += 1
+    }
+    z.re = n
+    z.errc = 1
+    z.de = n
+    return
+  }
   while true {
     let c = tokenizer_rb(z)
     if z.errc != 0 {
@@ -653,6 +688,27 @@ fn tokenizer_read_tag_name(var z: htmltok.Tokenizer) {
 
 fn tokenizer_read_tag_attr_key(var z: htmltok.Tokenizer) {
   z.pend.k0 = z.re
+  if z.max_buf == 0 {
+    var i = z.re
+    let n = z.src.len()
+    while i < n {
+      let c = Int(z.src[i])
+      if c == 61 && z.pend.k0 == i {
+        i += 1
+        continue
+      }
+      if c == 61 || is_space(c) || c == 47 || c == 62 {
+        z.re = i
+        z.pend.k1 = i
+        return
+      }
+      i += 1
+    }
+    z.re = n
+    z.errc = 1
+    z.pend.k1 = n
+    return
+  }
   while true {
     let c = tokenizer_rb(z)
     if z.errc != 0 {
@@ -702,6 +758,22 @@ fn tokenizer_read_tag_attr_val(var z: htmltok.Tokenizer) {
   }
   if quote == 39 || quote == 34 {
     z.pend.v0 = z.re
+    if z.max_buf == 0 {
+      var i = z.re
+      let n = z.src.len()
+      while i < n && Int(z.src[i]) != quote {
+        i += 1
+      }
+      if i >= n {
+        z.re = n
+        z.errc = 1
+        z.pend.v1 = n
+      } else {
+        z.re = i + 1
+        z.pend.v1 = i
+      }
+      return
+    }
     while true {
       c = tokenizer_rb(z)
       if z.errc != 0 {
@@ -760,6 +832,15 @@ fn tokenizer_next(var z: htmltok.Tokenizer) -> htmltok.TokenType {
   z.text_raw = false
   z.convert_nul = false
   while true {
+    if z.max_buf == 0 {
+      // no limit: jump to the next '<' (or the end) instead of reading byte by byte
+      var i = z.re
+      let n = z.src.len()
+      while i < n && z.src[i] != 60 {
+        i += 1
+      }
+      z.re = i
+    }
     let c0 = tokenizer_rb(z)
     if z.errc != 0 {
       break
