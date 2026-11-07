@@ -904,13 +904,35 @@ fn seq_len(b: Bytes, i: Int, n: Int) -> Int {
   k + 1
 }
 
-/// utf8.Valid: runs of ASCII skipped 16 bytes at a time (span).
+/// utf8.Valid: one 8 byte word finds the next non-ASCII byte of a short
+/// run (mixed text averages a few ASCII bytes between sequences); a word
+/// with none hands the run to span from the same place (32 bytes a step,
+/// its loads where they were: from i + 8 they read 1.10 of it on ASCII).
+/// The common 2 and 3 byte sequences are checked here, the rest by
+/// seq_len.
 pub fn utf8_valid(b: Bytes) -> Bool {
   let n = b.len()
   var i = 0
   while i < n {
-    if b[i] < 0x80 {
-      i = span(b, i, 0)
+    if subw(n, i) >= 8 {
+      let m = rt.bytes_word(b, i) & HIGHS
+      if m == 0 {
+        i = span(b, i, 0)
+        continue
+      }
+      i = addw(i, rt.ctz(m) >> 3)
+    } else if b[i] < 0x80 {
+      i += 1
+      continue
+    }
+    let c = Int(b[i])
+    if c >= 0xC2 && c <= 0xDF && subw(n, i) > 1 && (Int(b[addw(i, 1)]) & 0xC0) == 0x80 {
+      i = addw(i, 2)
+      continue
+    }
+    // E1 to EC: any two continuation bytes (E0 and ED limit the second)
+    if c >= 0xE1 && c <= 0xEC && subw(n, i) > 2 && ((Int(b[addw(i, 1)]) & 0xC0) | ((Int(b[addw(i, 2)]) & 0xC0) << 8)) == 0x8080 {
+      i = addw(i, 3)
       continue
     }
     let k = seq_len(b, i, n)

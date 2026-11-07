@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: perf: UTF-8 validation of text mixing ASCII and other runes finds each sequence with one word test
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md: utf8_mixed 1.06 worse after step 2b's 32 byte span)
+- Go reference: unicode/utf8.Valid (eight bytes a step over ASCII, then one rune)
+- Test: std/native/llrt/scan_test.xo "utf8_valid finds a sequence at any place of an 8 byte word"; std prelude tests
+- Timing: bench/perf/simdscan, linux/arm64 host 1, xo bench --ab against main: utf8_mixed 0.922 (10 rounds, better), utf8_ascii 1.018 (5 rounds, within noise) (~/xo-lead/notes/lang1/ab-u8w2r10.txt, ab-u8w2.txt); a first version that handed span the run from 8 bytes on read utf8_ascii 1.096 (its 32 byte loads off their alignment)
+- Shipped in: not yet released
+
+utf8_valid (every Bytes to Str conversion and the outside bytes boundary of decision 0259) tests the next 8 bytes as one word: when one is 0x80 or above, ctz gives its place and the sequence is checked there, with no call of span for a run of a few ASCII bytes (mixed text averages six between sequences); a word with none hands the run to span from the same place, 32 bytes a step, as before. The common 2 byte and 3 byte (E1 to EC) sequences are checked inline; the rest go to seq_len.
+
 ## 2026-11-07: perf: a List of word-sized elements starts with room for 2, not 4 (decision 0452 addendum, accepted by the owner 2026-11-07)
 
 - Kind: perf

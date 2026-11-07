@@ -62,6 +62,29 @@ test "utf8_valid rejects each malformed sequence" {
   expect(!utf8_valid(hex("41edbfbf41")))
 }
 
+test "utf8_valid finds a sequence at any place of an 8 byte word" {
+  // each sample after 0 to 40 ASCII bytes and before 0 to 9: the word
+  // test, span and the byte loop each meet it
+  // the first 4 are valid
+  let all = ["c2a2", "e282ac", "f09f9880", "c3a9e697a5", "c0af", "80", "c3", "e282", "f09f98", "eda080", "ff"]
+  for pre in 0..41 {
+    for post in 0..10 {
+      for (k, h) in all.indexed() {
+        var bb = BytesBuilder.new()
+        for _ in 0..pre {
+          bb.write_byte(UInt8(97))
+        }
+        bb.write(hex(h))
+        for _ in 0..post {
+          bb.write_byte(UInt8(98))
+        }
+        let b = bb.freeze()
+        expect(utf8_valid(b) == (k < 4))
+      }
+    }
+  }
+}
+
 test "fix_utf8 replaces each invalid byte" {
   expect(fix_utf8(hex("61ff62"), false) == "a\u{FFFD}b")
   expect(fix_utf8(hex("61ff62"), true) == "a%FFb")
