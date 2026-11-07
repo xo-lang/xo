@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [readme-status-flip-union-merge.md](readme-status-flip-union-merge.md): Observed 2026-11-07: flipping an ADR's line in decisions/README.md to Accepted, then rebasing, kept both versions (merge=union), and neighbours' flips came back doubled; TestDecisionNumbersUnique failed in pushq; check the count and amend
 - [std-use-c-cross-sample-miss.md](std-use-c-cross-sample-miss.md): Observed 2026-11-07: native_sqlite's windows/amd64 cross build failed on clang's missing stdlib.h (no XO_WINSYSROOT) since std/sqlite landed, unseen until hourly.sh's every 4th sample reached it; xo build names the sysroot, dev goldens counts it unsupported, TestStdSQLiteCrossBuilds builds it every time
 - [dropped-empty-arg-defaults-flags.md](dropped-empty-arg-defaults-flags.md): Observed 2026-11-06: `-rates ""` through an unquoted $args vanished, the harness read -sat as the value and stopped parsing, so a 8/32/64/128 worker sweep ran 64 workers four times; "$@" and fs.NArg() == 0
 - [twin-cost-grows-with-history.md](twin-cost-grows-with-history.md): Observed 2026-11-06: the notes Go twin's GET /notes walked every id ever issued under its lock (O(creates)), so its saturation rows measured that walk (Go 9k req/s, 177 us CPU per request); walk live notes, count 4xx in harness load

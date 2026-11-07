@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: perf: a Map lookup skips the key compare on a hash tag mismatch, and a rebuild does not rehash Str keys (decision 0552)
+
+- Kind: perf
+- Commit: this push
+- Found by: warm build profiles of http_server_request (str_hash and xo.map.rebuildk, decision 0552's Context)
+- Go reference: runtime/map.go's tophash (a hash byte per entry, compared before the key)
+- Test: std prelude tests; internal/arm64 TestGoldenRun; the LLVM goldens; TestWasmCommandGoldens; bench/perf/mapops
+- Timing: bench/perf/mapops, linux/arm64 host 1, xo bench --ab on top of decision 0545: insert_str 0.654, hit_str 0.773, miss_str 0.668, iter 0.866, delete 0.751, insert_int 0.904, hit_int 0.866, miss_int 0.859, RSS within run spread (decision 0552's Results)
+- Shipped in: not yet released
+
+A Map's slot holds the low 31 bits of its key's hash above the entry index: a lookup compares them before it reads the live flag and the key, and a rebuild of a map with non-Int keys places each entry by its slot's bits instead of hashing the key again (Int keys hash again, which keeps the old table from outliving the new one). Lowered in compiler/ssa, so every backend gets it; no program can observe the slots.
+
 ## 2026-11-07: perf, security: a Str Map key or Set element hashes eight bytes per multiply, from a per-process seed (decision 0545)
 
 - Kind: perf, security

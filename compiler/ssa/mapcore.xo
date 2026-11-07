@@ -73,7 +73,11 @@ fn (var b: Builder) map_putk(t: Int) -> Str {
   let c3 = b.add(Op.Mul, it, Aux.None, [tcap0, b.cint(3)])
   let (no2, join2) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [t4, c3]))
   let want = b.add(Op.Add, it, Aux.None, [n0, b.cint(1)])
-  let rb = b.call(rebuild, b.m.tuple([fs[0].ty, fs[2].ty, fs[3].ty]), "", [keys0, live0, want])
+  // Int keys hash again (cheap), so the old table dies before the new
+  // one is made (decision 0552: reusing it kept a 1M entry Int map's
+  // peak RSS 1.11 times)
+  let rargs = if kt == it { [keys0, live0, want] } else { [keys0, live0, slots0, want] }
+  let rb = b.call(rebuild, b.m.tuple([fs[0].ty, fs[2].ty, fs[3].ty]), "", rargs)
   b.write_var(kv, b.add(Op.Field, fs[0].ty, Aux.I(n: 0), [rb]))
   b.write_var(lv, b.add(Op.Field, fs[2].ty, Aux.I(n: 1), [rb]))
   b.write_var(sv, b.add(Op.Field, fs[3].ty, Aux.I(n: 2), [rb]))
@@ -93,7 +97,7 @@ fn (var b: Builder) map_putk(t: Int) -> Str {
   name
 }
 
-/// xo.map.rebuildk[K](keys, live, want) -> (keys, live, slots):
+/// xo.map.rebuildk[K](keys, live, slots, want) -> (keys, live, slots):
 /// map_rebuild's key side, the live keys in order in a table with room
 /// for want entries (the values were compacted by the same live flags
 /// first, xo.map.vcompact).
@@ -106,14 +110,17 @@ fn (var b: Builder) map_rebuildk(t: Int) -> Str {
   let llt = fs[2].ty
   let slt = fs[3].ty
   let name = "xo.map.rebuildk[${b.m.types[kt].name}]"
-  let fi = b.thunk_func(name, [klt, llt, it], [b.m.tuple([klt, llt, slt])], [])
+  let rehash = kt == it
+  let ps = if rehash { [klt, llt, it] } else { [klt, llt, slt, it] }
+  let fi = b.thunk_func(name, ps, [b.m.tuple([klt, llt, slt])], [])
   if fi < 0 {
     return name
   }
   let saved = b.begin(fi, b.s.file)
   let keys = b.param(0)
   let live = b.param(1)
-  let want = b.param(2)
+  let oslots = if rehash { -1 } else { b.param(2) }
+  let want = b.param(if rehash { 2 } else { 3 })
   let nk = b.local()
   let nl = b.local()
   let twice = b.add(Op.Mul, it, Aux.None, [want, b.cint(2)])
@@ -156,13 +163,7 @@ fn (var b: Builder) map_rebuildk(t: Int) -> Str {
   b.write_var(sv, b.call("list.push", slt, "", [b.read(sv), b.cint(0)]))
   b.for_up_to_end(j, iv2, head2, exit2)
   let keys2 = b.read(nk)
-  let iv3 = b.local()
-  let n2 = b.call("list.len", it, "", [keys2])
-  let (k3, head3, exit3) = b.for_up_to_begin(n2, iv3)
-  let kk = b.call("list.index", kt, "", [keys2, k3])
-  let hh = b.call(b.hash_func(kt), it, "", [kk])
-  b.write_var(sv, b.insert_slot(b.read(sv), hh, k3))
-  b.for_up_to_end(k3, iv3, head3, exit3)
+  b.refill_slots(sv, kt, keys2, live, oslots, n0)
   b.retv(b.add(Op.Tuple, b.m.tuple([klt, llt, slt]), Aux.None, [keys2, b.read(nl), b.read(sv)]))
   b.finish_fn()
   b.end(saved)

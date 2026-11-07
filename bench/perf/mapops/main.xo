@@ -1,0 +1,107 @@
+// mapops: the Map operations decision 0552 changes, one per mode, for
+// `xo bench --ab`: `insert_str` builds a Map[Str, Int] of 200k 64-digit
+// hex keys (a compiler cache key's shape) from empty 10 times (every
+// growth), `insert_int` a Map[Int, Int] of 1M keys 5 times; `hit_str` and
+// `hit_int` look up every key of such a map 20 times, `miss_str` and
+// `miss_int` as many absent keys of the same shape; `iter` walks the
+// 200k Str map 50 times; `delete` builds it and removes every key 5
+// times. Usage: `<program> MODE`; prints `MODE <checksum>`.
+fn hexkey(i: Int) -> Str {
+  // 64 hex digits that differ early and late, as SHA-256 keys do
+  let digits = "0123456789abcdef"
+  var x = i * 2654435761 % 4294967296 + 97
+  var b = StrBuilder.new()
+  for _ in 0..8 {
+    x = (x * 69069 + 1442695) % 4294967296
+    for j in 0..8 {
+      let d = (x >> (28 - 4 * j)) & 15
+      b.write(digits[d..d + 1])
+    }
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let mode = os.env.args().get(0) ?? "hit_str"
+  let n = 200_000
+  var keys: List[Str] = List.with_capacity(n)
+  var absent: List[Str] = List.with_capacity(n)
+  if mode.ends_with("_str") || mode == "iter" || mode == "delete" {
+    for i in 0..n {
+      keys.push(hexkey(i))
+      absent.push(hexkey(i + n))
+    }
+  }
+  var sum = 0
+  if mode == "insert_str" {
+    for _r in 0..10 {
+      var m: Map[Str, Int] = {}
+      for (i, k) in keys.indexed() {
+        m[k] = i
+      }
+      sum += m.len()
+    }
+  } else if mode == "insert_int" {
+    for r in 0..5 {
+      var m: Map[Int, Int] = {}
+      for i in 0..1_000_000 {
+        m[i * 7919 + r] = i
+      }
+      sum += m.len()
+    }
+  } else if mode == "hit_str" || mode == "miss_str" {
+    var m: Map[Str, Int] = {}
+    for (i, k) in keys.indexed() {
+      m[k] = i
+    }
+    let qs = if mode == "hit_str" { keys } else { absent }
+    for _r in 0..20 {
+      for q in qs {
+        if let Some(v) = m.get(q) {
+          sum += v
+        } else {
+          sum += 1
+        }
+      }
+    }
+  } else if mode == "hit_int" || mode == "miss_int" {
+    var m: Map[Int, Int] = {}
+    for i in 0..1_000_000 {
+      m[i * 7919] = i
+    }
+    let off = if mode == "hit_int" { 0 } else { 1 }
+    for _r in 0..5 {
+      for i in 0..1_000_000 {
+        if let Some(v) = m.get(i * 7919 + off) {
+          sum += v
+        } else {
+          sum += 1
+        }
+      }
+    }
+  } else if mode == "iter" {
+    var m: Map[Str, Int] = {}
+    for (i, k) in keys.indexed() {
+      m[k] = i
+    }
+    for _r in 0..50 {
+      for (k, v) in m {
+        sum += v + k.len()
+      }
+    }
+  } else if mode == "delete" {
+    for _r in 0..5 {
+      var m: Map[Str, Int] = {}
+      for (i, k) in keys.indexed() {
+        m[k] = i
+      }
+      for k in keys {
+        if let Some(v) = m.remove(k) {
+          sum += v
+        }
+      }
+      sum += m.len()
+    }
+  }
+  os.stdio.println("${mode} ${sum}")
+}

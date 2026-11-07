@@ -1,9 +1,8 @@
 # 0552: Map slots carry the key's hash bits
 
-Status: Proposed (Xo Lang 4, 2026-11-07; the lead approved this ADR and a
-prototype on a branch; the change waits for the owner. The code is
-branch l4-0552-code, 14ff2072e, on main c08d348d1; the 0545 stack is
-l4-slot45r3, c662cb058).
+Status: Accepted (the owner, 2026-11-07, together with decision 0545;
+Xo Lang 4). Landed from the 0545 stack (l4-slot45r3, c662cb058) on top
+of decision 0545's code.
 
 ## Context
 

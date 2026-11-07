@@ -23,6 +23,10 @@
 use github.com/xo-lang/xo/compiler/ssa
 
 const INLINE_MAX_INSTRS = 40
+/// A map's find (xo.map.find[K]) is inlined at every site up to this
+/// many instructions: decision 0552's hash tag check made a Str find 50
+/// (40 before), which INLINE_MAX_INSTRS left a call outside loops.
+const INLINE_FIND_INSTRS = 52
 /// A call in tail position (tail_at: its result returned and nothing
 /// after it) is a branch on arm64 (shrink.xo mark_tails), so a callee
 /// over this size stays a call there and counts as one instruction in
@@ -393,7 +397,7 @@ fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (M
         }
       } else if !c.bad && c.few {
         fewl[f.name] = true
-      } else if !c.bad || (!c.hard && f.name.starts_with("xo.map.find[") && c.instrs <= INLINE_MAX_INSTRS) {
+      } else if !c.bad || (!c.hard && f.name.starts_with("xo.map.find[") && c.instrs <= INLINE_FIND_INSTRS) {
         // a map's find: its blocks are mostly the joins of its tests (14
         // for 36 instructions, over INLINE_MAX_BLOCKS), and put, get and
         // update call it once each (2026-10-17: put and find 249M
