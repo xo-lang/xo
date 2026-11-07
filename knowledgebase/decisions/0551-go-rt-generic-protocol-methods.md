@@ -95,17 +95,26 @@ error frame.)
    called.
 
 ## Consequences
-- XoCmp is left for a second stage: it has no roots yet (0542 prunes no
-  XoCmp), and it adds 0.6 GB on armnetwork beyond Eq and Hash (11.4 to
-  10.8 GB). Its roots would be `<` and the other orderings, sort and the
-  prelude's min and max, Ord constrained std arguments, and derive Ord.
-- A single root keeps a generic type's method for all of its
-  instantiations: armnetwork's tests compare five `Enum?` values with
-  `==` (XO_GO_PROTO=why), so Option keeps XoEq on all 1,224 Option types.
-  A second stage could write such a compare as a typed generic function
-  call (rt.OptionEqT[T], like the XoEqT of decision 0542's typed
-  comparisons), which Go instantiates only for the compared type, so the
-  method is not needed.
+- A second stage was sized and is not proposed (2026-11-07): on the
+  0551 armnetwork tree, also dropping Option's XoEq and every generic
+  type's XoCmp saves 0.33 GB (7.28 and 7.14 GB to 6.95 and 6.81 GB, two
+  rounds, -4.6%) and 2.5 s. A typed `==` on an Option or List of a typed
+  element (rt.OptionEqBy and rt.ListEqBy, written on branch l2-0551s2,
+  Go parity goldens passing) does not reach even that on armnetwork: its
+  tests compare `json.Value?`, and json.Value's own XoEq compares its
+  List, Option and tuple fields, so those keep XoEq (XO_GO_PROTO=why,
+  which now names the root that first reaches each runtime generic
+  type). XoCmp would need roots of its own (`<` and the other orderings,
+  sort, min and max, Ord constrained std arguments, derive Ord).
+- What the 0551 tree's compile still holds (go tool nm, text symbols):
+  189,265 functions and 70.9 MB against 267,305 and 115 MB before 0542
+  and 0551; the package's own functions 17.6 MB, other generic copies
+  12.6 MB, rt.JsonDec[T] 9.7 MB (3,521 copies; the commonest cases kept
+  generic and the rest made non-generic in 0e5c67778: armnetwork on main
+  9.10 to 8.12 GB, on the 0551 tree 7.15 to 6.35 GB), closures 2.8 MB,
+  Result's XoDebug 2.6 MB, rt.JsonRead[T] 2.5 MB (its five cases are the
+  fast decode path; making it non-generic cost 3% of decode speed, so it
+  stays).
 - std/rt's hand written Go compares a generic value with EqAny in one
   place (http.go's request query, a Map[string, string]); it now compares
   the two maps directly (queryEq), since the first armnetwork run with
