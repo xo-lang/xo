@@ -253,19 +253,25 @@ func TestSepcompDefault(t *testing.T) {
 	// std's variants in the test's cache first: a miss would build the
 	// whole program (the Go tests run with XO_SEPCOMP_BG=0, so no
 	// background build either)
+	// what xo dev stdcache said (its store paths name its keys), for a
+	// miss right after it (tier 58, 2026-11-07: "std variant: miss" in
+	// the full suite only)
+	var made strings.Builder
 	for _, c := range []string{"0", "1"} {
 		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+c))
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"))
-		if out, err := stdRun(cmd.CombinedOutput); err != nil {
+		out, err := stdRun(cmd.CombinedOutput)
+		if err != nil {
 			t.Fatalf("xo dev stdcache --conc=%s: %v\n%s", c, err, out)
 		}
+		fmt.Fprintf(&made, "xo dev stdcache --conc=%s:\n%s", c, out)
 	}
 	whole := filepath.Join(work, "whole")
 	build(whole, "XO_SEPCOMP=0")
 	sep := filepath.Join(work, "sep")
 	log := build(sep)
 	if !strings.Contains(log, "cache std ") {
-		t.Fatalf("the default build did not ask the std cache:\n%s", log)
+		t.Fatalf("the default build did not ask the std cache:\n%s\n%s%s", log, made.String(), stdDirList(filepath.Join(work, "cache")))
 	}
 	if got, want := run(sep), run(whole); got != want || want != "3 C\n" {
 		t.Fatalf("separately compiled %q, whole %q, want %q", got, want, "3 C\n")
