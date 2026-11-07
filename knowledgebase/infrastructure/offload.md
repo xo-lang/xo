@@ -410,6 +410,15 @@ Last verified: 2026-11-01
   first host's lane 14:29 to 15:15 while three exclusive jobs and the
   tier's host step waited up to 1h32m behind it): send it with
   `OFF_NO_LANE=1`. Last verified: 2026-11-06.
+- A plain job that carries its own inputs (a bundle in the script, no
+  earlier `--put`) goes with `OFF_LANE='arm64*'`, so heavyd starts it on
+  whichever arm64 host frees first; pin a host (`OFFLOAD_ENV=`) only when
+  the job needs files already there, and do not chain plain work behind
+  one's own exclusive job in a script pinned to one host (lead,
+  2026-11-06 bottleneck review: pn-host.sh waited 53 minutes on the first
+  host, ot1-host.sh 50 and pn-host.sh 49 on the second, each behind an
+  exclusive A/B while the other host had free slots). Last verified:
+  2026-11-06.
 - A run with `OFF_NO_LANE=1` leaves a marker in `~/xo-lead/locks/nolane`
   (its PID, host file and name), and heavyd starts no exclusive lease on
   that host while it runs: the exclusive job shows "a run with no lane is
