@@ -5,9 +5,14 @@ package rt
 // native backends'.
 
 import (
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -83,7 +88,7 @@ func clientAuthType(m Tls_ClientAuth) tls.ClientAuthType { return tls.ClientAuth
 
 // Tls_client is `tls.client(c, host, roots, verify, alpn, cert)`: the
 // handshake on c (at most 10 seconds), which std/tls owns from then on.
-func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert]) Result[Tls_TlsConn, NetErr] {
+func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert], verifyConn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]) Result[Tls_TlsConn, NetErr] {
 	if tk.Canceled() {
 		return Err[Tls_TlsConn](netErr(5, ""))
 	}
@@ -118,6 +123,23 @@ func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify T
 		}
 	case 3:
 		cfg.InsecureSkipVerify = true
+	}
+	if verifyConn.Some {
+		// Go's VerifyConnection (decision 0541): after the verification mode's own check
+		f := verifyConn.V
+		cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+			var certs []X509_Certificate
+			for _, pc := range cs.PeerCertificates {
+				certs = append(certs, x509CertOf(tk, pc))
+			}
+			if r := f(tk, ListFromSlice(certs)); !r.Ok {
+				if r.E == "" {
+					return errors.New("tls: verify_conn failed")
+				}
+				return errors.New(r.E)
+			}
+			return nil
+		}
 	}
 	t := tls.Client(c.c, cfg)
 	// http.DefaultTransport's TLSHandshakeTimeout, or the connection's own
@@ -287,3 +309,38 @@ func (t Tls_TlsConn) M_version(*Task) string {
 	}
 	return tls.VersionName(t.t.ConnectionState().Version)
 }
+
+// pinCheck is the verify_conn function of pin_sha1 and pin_sha256 (decision 0541): the digest of the leaf's DER
+// against the pin in constant time.
+func pinCheck(pin string, size int, sum func([]byte) []byte) Result[func(*Task, List[X509_Certificate]) Result[Unit, string], string] {
+	type fn = func(*Task, List[X509_Certificate]) Result[Unit, string]
+	hex := strings.NewReplacer(":", "", " ", "").Replace(pin)
+	want, err := hexDecode(hex)
+	if err != nil {
+		return Err[fn]("tls: pin is not hexadecimal")
+	}
+	if len(want) != size {
+		return Err[fn](fmt.Sprintf("tls: pin is %d bytes, want %d", len(want), size))
+	}
+	return Ok[fn, string](func(_ *Task, certs List[X509_Certificate]) Result[Unit, string] {
+		if len(certs.s) == 0 {
+			return Err[Unit]("tls: server presented no certificate")
+		}
+		if subtle.ConstantTimeCompare(sum([]byte(certs.s[0].F_raw)), want) != 1 {
+			return Err[Unit]("tls: certificate does not match the pin")
+		}
+		return Ok[Unit, string](Unit{})
+	})
+}
+
+// Tls_pin_sha1 is `tls.pin_sha1(pin)`.
+func Tls_pin_sha1(_ *Task, pin string) Result[func(*Task, List[X509_Certificate]) Result[Unit, string], string] {
+	return pinCheck(pin, sha1.Size, func(b []byte) []byte { h := sha1.Sum(b); return h[:] })
+}
+
+// Tls_pin_sha256 is `tls.pin_sha256(pin)`.
+func Tls_pin_sha256(_ *Task, pin string) Result[func(*Task, List[X509_Certificate]) Result[Unit, string], string] {
+	return pinCheck(pin, sha256.Size, func(b []byte) []byte { h := sha256.Sum256(b); return h[:] })
+}
+
+func hexDecode(s string) ([]byte, error) { return hex.DecodeString(s) }

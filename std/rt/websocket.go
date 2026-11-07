@@ -726,7 +726,7 @@ func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string],
 			}
 			r = Some(rr.V)
 		}
-		tc := Tls_client(tk, d.V, u.Hostname(), r, Tls_Verify{Tag: 1}, List[string]{}, None[Tls_TlsCert]())
+		tc := Tls_client(tk, d.V, u.Hostname(), r, Tls_Verify{Tag: 1}, List[string]{}, None[Tls_TlsCert](), None[func(*Task, List[X509_Certificate]) Result[Unit, string]]())
 		if !tc.Ok {
 			return Err[Websocket_WsConn](Websocket_WsErr{Tag: 4, P: Websocket_WsErr_Net{F_err: tc.E}})
 		}

@@ -461,3 +461,16 @@ fails on the Mac: 506 to 154 ms of CPU, 1,570 to 394 ms of wall time.
 and host name), `ChainOnly` (libpq's verify-ca), or `None` (encryption
 only, reported by `xo vet` as XO0902), and private roots with
 `tls.roots(pem)`.
+
+## 2026-11-06: feature: tls.client verify_conn, tls.pin_sha1 and tls.pin_sha256
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (Service Fabric managed identity pins the SHA-1 thumbprint of the server's certificate), decision 0541
+- Go reference: tls.Config.VerifyConnection; MSAL's servicefabric.go thumbprint check (sha1 of the leaf, constant time)
+- Test: golden tls_verify_conn (go, arm64, llvm)
+- Shipped in: not yet released
+
+`tls.client(..., verify_conn: f)` calls `f` with the server's certificates after the handshake; an `Err` text fails the connection.
+`tls.pin_sha1(pin)` and `tls.pin_sha256(pin)` make such a function from a hex pin (colons and spaces ignored) compared with the leaf's
+digest in constant time.

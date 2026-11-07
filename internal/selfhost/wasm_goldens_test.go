@@ -144,6 +144,7 @@ var componentGoldensNotRun = map[string]string{
 	"http_proxy_body_next_race": "a raw socket client pipelines a second request behind a streamed body on one kept connection, which the host's incoming-handler owns",
 	"http_tls_keys":             "TLS, which the host owns",
 	"http_tls_state":            "TLS, which the host owns",
+	"tls_verify_conn":           "TLS, which the host owns",
 	"http_trailers":             "trailers are not decided",
 	"metrics_text":              "its router is in main, over registries it prints; its handlers' effects are stdout's",
 	"net_only":                  "raw sockets",

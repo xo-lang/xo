@@ -57,7 +57,13 @@ struct TlsConn {}
 /// Runs a TLS client handshake on c, which belongs to the result from
 /// then on (std.md 27). cert is the certificate presented when the
 /// server asks for one (decision 0433).
-fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None) -> TlsConn ! NetErr uses net.dial
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None) -> TlsConn ! NetErr uses net.dial
+/// A verify_conn function (also Client.with_verify_conn's) that accepts a server whose leaf certificate's DER has the
+/// SHA-1 digest pin (hex, colons and spaces ignored; Service Fabric's thumbprint), compared in constant time; the
+/// text of a bad pin is the Err of the call.
+fn pin_sha1(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str
+/// Like pin_sha1, over SHA-256.
+fn pin_sha256(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial
 fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial
 fn (t: TlsConn) close()

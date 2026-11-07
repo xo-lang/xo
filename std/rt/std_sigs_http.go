@@ -20,6 +20,7 @@ var (
 	_ func(*Http_Request, *Task, string) Option[string]                                                                                                 = (*Http_Request).M_header
 	_ func(*Http_Request, *Task, string, string) Http_Request                                                                                           = (*Http_Request).M_with_header
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_timeout
+	_ func(*Http_Request, *Task, string) Http_Request                                                                                                   = (*Http_Request).M_with_host
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_expect_continue
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_idle_timeout
 	_ func(*Http_Request, *Task, Http_BodyReader) Http_Request                                                                                          = (*Http_Request).M_with_body_reader
@@ -92,6 +93,9 @@ var (
 	_ func(*Http_Client, *Task, string) Result[Http_Response, Http_ClientErr]                                                                           = (*Http_Client).M_get
 	_ func(*Http_Client, *Task, Http_Request) Result[Http_Response, Http_ClientErr]                                                                     = (*Http_Client).M_send
 	_ func(*Http_Client, *Task, Bytes) Result[Http_Client, Http_TlsErr]                                                                                 = (*Http_Client).M_with_roots
+	_ func(*Http_Client, *Task, string) Http_Client                                                                                                     = (*Http_Client).M_with_server_name
+	_ func(*Http_Client, *Task, func(*Task, List[X509_Certificate]) Result[Unit, string]) Http_Client                                                   = (*Http_Client).M_with_verify_conn
+	_ func(*Http_Client, *Task) Http_TlsOptions                                                                                                         = (*Http_Client).M_tls_options
 	_ func(*Http_Client, *Task, Tls_TlsCert) Http_Client                                                                                                = (*Http_Client).M_with_cert
 	_ func(*Http_Client, *Task, Set[Http_Protocol]) Http_Client                                                                                         = (*Http_Client).M_with_protocols
 	_ func(*Http_Client, *Task, Http_H2Config) Http_Client                                                                                              = (*Http_Client).M_with_h2_config

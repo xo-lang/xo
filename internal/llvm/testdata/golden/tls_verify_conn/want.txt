@@ -1,0 +1,22 @@
+exit 0
+--- stdout
+hook 1: 200 hit host=127.0.0.1
+hook 2: 200 hit host=127.0.0.1
+hook calls=1 leaf=1
+unhooked: 200 hit host=127.0.0.1
+hook calls after unhooked=1
+refusing hook: true delivered=0
+pin sha1: 200 hit host=127.0.0.1
+pin sha1 colons: 200 hit host=127.0.0.1
+pin sha256: 200 hit host=127.0.0.1
+pin wrong: error pin mismatch
+wrong pin delivered=0
+bad pin: tls: pin is not hexadecimal
+short pin: tls: pin is 2 bytes, want 32
+no roots: error certificate refused
+server name wrong: error certificate refused
+with_host: 200 hit host=login.example.test
+options: server_name=sni.example verify_conn=true custom_roots=true client_cert=false
+plain options: server_name= verify_conn=false custom_roots=false client_cert=false
+done
+--- stderr

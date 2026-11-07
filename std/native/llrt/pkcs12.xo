@@ -277,6 +277,50 @@ fn read_bags(safe: Bytes, password: Bytes, var out: Pfx) -> Str {
   ""
 }
 
+/// encoding/asn1's own text for a file whose outer element is not a SEQUENCE, as Go's Unmarshal of the pfxPdu
+/// reports it ("" when the tag is a SEQUENCE's, or the header is of a form this does not reproduce):
+/// an empty file is a truncated sequence, a header that is not a constructed universal tag 16 is a structure
+/// error showing the tag and length read and the offset after them.
+fn asn1_outer_error(data: Bytes) -> Str {
+  let n = data.len()
+  if n == 0 {
+    return "asn1: syntax error: sequence truncated"
+  }
+  let b0 = Int(data[0])
+  if b0 & 0x1f == 0x1f {
+    return ""
+  }
+  if n < 2 {
+    return "asn1: syntax error: truncated tag or length"
+  }
+  let class = b0 >> 6
+  let tag = b0 & 0x1f
+  let compound = b0 & 0x20 != 0
+  let b1 = Int(data[1])
+  var length = b1
+  var off = 2
+  if b1 & 0x80 != 0 {
+    let k = b1 & 0x7f
+    if k == 0 || k > 3 || n < 2 + k {
+      return ""
+    }
+    length = 0
+    var i = 0
+    while i < k {
+      length = length * 256 + Int(data[2 + i])
+      i += 1
+    }
+    if length < 128 || Int(data[2]) == 0 {
+      return ""
+    }
+    off = 2 + k
+  }
+  if class == 0 && tag == 16 && compound {
+    return ""
+  }
+  "asn1: structure error: tags don't match (16 vs {class:${class} tag:${tag} length:${length} isCompound:${compound}}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} pfxPdu @${off}"
+}
+
 /// The file's contents (Go's Decode, getSafeContents and decodeCertBag). The password is
 /// the text the file was made with.
 pub fn parse(data: Bytes, password: Str) -> Pfx {
@@ -287,7 +331,8 @@ pub fn parse(data: Bytes, password: Str) -> Pfx {
   let pfx = asn1.whole(data, asn1.SEQUENCE)
   let top = if pfx.tag < 0 { [] } else { asn1.children(data, pfx) }
   if pfx.tag < 0 || top.len() < 2 || top.len() > 3 || asn1.any_bad(top) || top[0].tag != asn1.INTEGER || top[1].tag != asn1.SEQUENCE {
-    return fail("pkcs12: error reading P12 data: malformed PFX")
+    let outer = asn1_outer_error(data)
+    return fail(if outer.is_empty() { "pkcs12: error reading P12 data: malformed PFX" } else { "pkcs12: error reading P12 data: " + outer })
   }
   if count(data, top[0]) != 3 {
     return fail("pkcs12: can only decode v3 PFX PDU's")

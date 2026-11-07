@@ -4523,10 +4523,17 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
   // for a Request's several fields, decision 0288)
   var ik: List[Str] = []
   var iv: List[Str] = []
+  // Request.with_host (Go's Request.Host): the pseudo field ":host" names the Host sent (HTTP/1.1) and the
+  // :authority (HTTP/2) of the first host's requests; the connection and the TLS name stay the URL's
+  var host_over = ""
   var n = 0
   while n < names.len() && n < values.len() {
-    ik.push(names[n])
-    iv.push(values[n])
+    if names[n] == ":host" {
+      host_over = values[n]
+    } else {
+      ik.push(names[n])
+      iv.push(values[n])
+    }
     n += 1
   }
   let when = if timeout > 0 && !wasiworld.component() { hclient.cl_deadline(timeout) } else { 0 }
@@ -4556,6 +4563,8 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       return cfail(if redirects == 0 { 1 } else { 4 }, "parse " + go_quote(raw) + ": " + u.err)
     }
     let (name, uport) = split_hostport(u.host)
+    // the Host sent: the override while the request is for the first host
+    let sent_host = if !host_over.is_empty() && (!has_ihost || ihost == u.host) { host_over } else { u.host }
     let https = u.scheme == "https"
     let port = if !uport.is_empty() { uport } else if https { "443" } else { "80" }
     if redirects > 0 && !lists.is_empty() {
@@ -4639,7 +4648,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       // after the head
       var h2x: H2X? = None
       if hclient.h2(r) {
-        h2x = h2_run(r, stream, method, target_of, u.host, hk, hv, body.len(), src, tnames, tfn)
+        h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)
         if hclient.retry(r) && !src.is_empty() {
           // a streamed body cannot be sent again (Go's error without
           // Request.GetBody)
@@ -4650,7 +4659,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
           // it goes on a new one, as Transport retries it
           r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
           if hclient.h2(r) {
-            h2x = h2_run(r, stream, method, target_of, u.host, hk, hv, body.len(), src, tnames, tfn)
+            h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)
           }
         }
       }
@@ -4659,11 +4668,11 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       var hb = BodyRead{mode: 0, done: true}
       if h1 {
         var x = if stream {
-          let hr = h1_head_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
+          let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
           hb = hr.b
           hr.x
         } else {
-          h1_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn, expect)
+          h1_round(r, method, target_of, sent_host, hk, hv, body, https, addr, name, roots, src, tnames, tfn, expect)
         }
         if x.none && hclient.reused(r) && replayable(method, hk) && src.is_empty() {
           // the pooled connection was dead (the server closed it): the
@@ -4672,13 +4681,13 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
           r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
           h1 = hclient.reading(r)
           if hclient.h2(r) {
-            h2x = h2_run(r, stream, method, target_of, u.host, hk, hv, body.len(), src, tnames, tfn)
+            h2x = h2_run(r, stream, method, target_of, sent_host, hk, hv, body.len(), src, tnames, tfn)
           } else if h1 && stream {
-            let hr = h1_head_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
+            let hr = h1_head_round(r, method, target_of, sent_host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
             hb = hr.b
             x = hr.x
           } else if h1 {
-            x = h1_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn, expect)
+            x = h1_round(r, method, target_of, sent_host, hk, hv, body, https, addr, name, roots, src, tnames, tfn, expect)
           }
         }
         if h1 && hclient.err(r) == 0 {

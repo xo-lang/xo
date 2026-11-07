@@ -2145,7 +2145,19 @@ fn (s: Server) with_tls(certs: List[TlsCert]) -> Server
 fn (s: Server) with_client_auth(mode: tls.ClientAuth, roots: tls.Roots? = None) -> Server
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
 fn (c: Client) with_cert(cert: TlsCert) -> Client
+fn (c: Client) with_server_name(name: Str) -> Client
+fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str) -> Client
+struct TlsOptions { server_name: Str, verify_conn: Bool, custom_roots: Bool, client_cert: Bool }
+fn (c: Client) tls_options() -> TlsOptions
+fn (r: Request) with_host(host: Str) -> Request
 ```
+
+`with_server_name(name)` is Go's `tls.Config.ServerName`: the SNI and the name the certificate is verified against, in
+place of the URL's host ("" keeps the URL's). `with_verify_conn(f)` is `tls.Config.VerifyConnection`: `f` gets the server's
+certificates (leaf first) after the handshake and the verification mode's own check, before any request byte; an `Err`
+text fails the connection with that text; it runs once per new connection. A client with a server name or hook is its own
+pool key. `Request.with_host(host)` is Go's `Request.Host`: the Host of HTTP/1.1 and the `:authority` of HTTP/2 for the
+first host's requests, while the connection and the TLS name stay the URL's (decision 0541).
 
 ```
 fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) {
@@ -4793,7 +4805,9 @@ struct TlsCert {}                                  // handle: a certificate chai
 fn cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! TlsErr
 enum ClientAuth { None, Request, RequireAny, VerifyIfGiven, RequireAndVerify }
 struct TlsConn {}                                  // handle
-fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None) -> TlsConn ! NetErr uses net.dial
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None) -> TlsConn ! NetErr uses net.dial
+fn pin_sha1(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str
+fn pin_sha256(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr  uses net.dial
 fn (t: TlsConn) write(data: Bytes) -> () ! NetErr  uses net.dial
 fn (t: TlsConn) close()

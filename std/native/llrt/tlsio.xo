@@ -182,6 +182,12 @@ struct RootsData {
   /// chain (DER) and key; a Roots with one is its own pool key
   ccerts: List[Bytes] = []
   ckey: Bytes = b""
+  /// Go's tls.Config.ServerName: the SNI and the name verified instead of the URL's host ("" for the host);
+  /// a Roots with one is its own pool key
+  sni: Str = ""
+  /// Go's tls.Config.VerifyConnection: called with the server's chain (DER, leaf first) after the handshake and
+  /// before any byte is sent; a non empty answer fails the connection with that text. Its own pool key too.
+  vconn: (fn(List[Bytes]) -> Str)? = None
 }
 
 fn as_roots(a: rt.Any) -> rthttp.Roots { rt.obj_at[rthttp.Roots](rt.obj_addr(a)) }
@@ -234,6 +240,31 @@ pub fn roots_with_cert(r: rthttp.Roots, certs: List[Bytes], key: Bytes) -> rthtt
       as_roots(rt.any_of(d with {ccerts: certs, ckey: key}))
     }
     None => r
+  }
+}
+
+/// roots r with a server name and a verify hook (Client.with_server_name, with_verify_conn): a new Roots, so the pool
+/// keeps the clients with and without them apart. A name of "" or no hook keeps r's.
+pub fn roots_with_tls(r: rthttp.Roots, sni: Str, vconn: (fn(List[Bytes]) -> Str)?) -> rthttp.Roots {
+  match roots_data(rt.obj_addr(r)) {
+    Some(d) => {
+      let n = if sni.is_empty() { d.sni } else { sni }
+      let v = match vconn {
+        Some(f) => Some(f)
+        None => d.vconn
+      }
+      as_roots(rt.any_of(d with {sni: n, vconn: v}))
+    }
+    None => r
+  }
+}
+
+/// What roots r carries: the server name, whether a verify hook is set, whether the roots are the caller's
+/// (not the system's), whether a client certificate is set.
+pub fn roots_tls(r: rthttp.Roots) -> (Str, Bool, Bool, Bool) {
+  match roots_data(rt.obj_addr(r)) {
+    Some(d) => (d.sni, d.vconn.is_some(), !d.system, !d.ccerts.is_empty())
+    None => ("", false, false, false)
   }
 }
 
@@ -352,7 +383,7 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   if system && apple == 0 && certs.is_empty() && verify != VERIFY_NONE {
     return failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")
   }
-  var name = host
+  var name = if data.sni.is_empty() { host } else { data.sni }
   if name.len() >= 2 && name.starts_with("[") && name.ends_with("]") {
     name = raw.str_slice(name, 1, name.len() - 1)
   }
@@ -381,6 +412,17 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
     }
   }
   if done(c) {
+    if let Some(vf) = data.vconn {
+      var ders: List[Bytes] = []
+      for x in (if v12(c) { c.cl12[0].peer } else { c.cl.peer }) {
+        ders.push(x.raw)
+      }
+      let why = vf(ders)
+      if !why.is_empty() {
+        let _sent = flush(c)
+        return failed(CC_ERR, 4, why)
+      }
+    }
     c.when = dl
     let h = rt.heap_large(8)
     rt.mem_store(h, 0, 0, 8)

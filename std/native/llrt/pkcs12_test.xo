@@ -1,0 +1,18 @@
+// The texts encoding/asn1 gives (through x/crypto/pkcs12's Decode) for a file that is not a PFX at all; Xo Azure 1
+// compared them with Go v1.15.0's azidentity ParseCertificates.
+use std/x509
+
+fn text(data: Bytes) -> Str {
+  match x509.parse_pkcs12(data, "") {
+    Ok(_) => "ok"
+    Err(e) => e.msg
+  }
+}
+
+const TAIL: Str = " {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} pfxPdu @2"
+
+test "a file that is not a PFX reports encoding/asn1's text" {
+  expect(text(b"hello")) == "pkcs12: error reading P12 data: asn1: structure error: tags don't match (16 vs {class:1 tag:8 length:101 isCompound:true})" + TAIL
+  expect(text(b"")) == "pkcs12: error reading P12 data: asn1: syntax error: sequence truncated"
+  expect(text(b"-----BEGIN CERTIFICATE-----\nAAAA\n")) == "pkcs12: error reading P12 data: asn1: structure error: tags don't match (16 vs {class:0 tag:13 length:45 isCompound:true})" + TAIL
+}

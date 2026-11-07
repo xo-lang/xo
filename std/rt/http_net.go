@@ -432,6 +432,10 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 	if err != nil {
 		return nil, nil, head, clientErr(1, err.Error())
 	}
+	if req.XHost != "" {
+		// with_host (decision 0541): Go's Request.Host
+		hr.Host = req.XHost
+	}
 	if ts, ok := req.XSrc.(*trailerSrc); ok {
 		// with_trailers (decision 0433): net/http writes hr.Trailer
 		// after the body, which the source fills at its end
@@ -604,18 +608,35 @@ func expectTransport(base *http.Transport, d time.Duration) *http.Transport {
 var sharedTransport = newTransport(nil)
 
 func newTransport(roots *x509.CertPool) *http.Transport {
-	return certTransport(roots, nil)
+	return certTransport(roots, nil, "", Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]{})
 }
 
 // certTransport is newTransport presenting cert (with_cert) when a server
 // asks for one.
-func certTransport(roots *x509.CertPool, cert *tls.Certificate) *http.Transport {
+func certTransport(roots *x509.CertPool, cert *tls.Certificate, serverName string, vconn Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]) *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.Protocols = new(http.Protocols)
 	t.Protocols.SetHTTP1(true)
 	t.Protocols.SetHTTP2(true)
-	if roots != nil || cert != nil || noMLKEM() {
-		t.TLSClientConfig = &tls.Config{RootCAs: roots}
+	if roots != nil || cert != nil || serverName != "" || vconn.Some || noMLKEM() {
+		t.TLSClientConfig = &tls.Config{RootCAs: roots, ServerName: serverName}
+	}
+	if vconn.Some {
+		f := vconn.V
+		t.TLSClientConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+			tk := NewRootTask()
+			var certs []X509_Certificate
+			for _, c := range cs.PeerCertificates {
+				certs = append(certs, x509CertOf(tk, c))
+			}
+			if r := f(tk, ListFromSlice(certs)); !r.Ok {
+				if r.E == "" {
+					return errors.New("tls: verify_conn failed")
+				}
+				return errors.New(r.E)
+			}
+			return nil
+		}
 	}
 	if cert != nil {
 		t.TLSClientConfig.Certificates = []tls.Certificate{*cert}
@@ -638,7 +659,7 @@ func clientTransport(c Http_Client) any {
 	if c.cert.Some {
 		cert = c.cert.V.c
 	}
-	t := certTransport(c.roots, cert)
+	t := certTransport(c.roots, cert, c.serverName, c.vconn)
 	ps := protoSetOf(c.protos)
 	t.Protocols.SetHTTP1(ps.h1)
 	t.Protocols.SetHTTP2(ps.h2)

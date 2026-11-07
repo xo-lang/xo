@@ -1,6 +1,7 @@
 // std/tls on the native backends (decision 0281): the client of
 // std/native/llrt/tlsio.xo (the http client's) on a connection the
 // program dialed. std/rt/tls.go is the Go backend's.
+use std/crypto
 use std/tls
 use std/x509
 use native/rt
@@ -60,10 +61,48 @@ fn cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! tls.TlsErr {
   TlsCert{c: c}
 }
 
+/// f as the tlsio hook: the DERs parsed (those that parse), Err's text or "".
+pub fn vconn_wrap(f: fn(List[x509.Certificate]) -> () ! Str) -> fn(List[Bytes]) -> Str {
+  fn(ders: List[Bytes]) -> Str {
+    var certs: List[x509.Certificate] = []
+    for d in ders {
+      if let Ok(x) = x509.parse(d) {
+        certs.push(x)
+      }
+    }
+    match f(certs) {
+      Ok(_) => ""
+      Err(e) => if e.is_empty() { "tls: verify_conn failed" } else { e }
+    }
+  }
+}
+
+/// Go's pin check over the leaf's DER: pin is hex (colons and spaces dropped), of the digest h's size.
+fn pin_check(h: crypto.Hash, pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str {
+  var hex = pin.replace(":", "").replace(" ", "")
+  let want = Bytes.from_hex(hex) ?? return Err("tls: pin is not hexadecimal")
+  if want.len() != h.size() {
+    return Err("tls: pin is ${want.len()} bytes, want ${h.size()}")
+  }
+  fn(certs: List[x509.Certificate]) -> () ! Str {
+    if certs.is_empty() {
+      return Err("tls: server presented no certificate")
+    }
+    if !crypto.equal(crypto.digest(h, certs[0].raw), want) {
+      return Err("tls: certificate does not match the pin")
+    }
+    Ok(())
+  }
+}
+
+fn pin_sha1(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str { pin_check(crypto.Hash.Sha1, pin) }
+
+fn pin_sha256(pin: Str) -> (fn(List[x509.Certificate]) -> () ! Str) ! Str { pin_check(crypto.Hash.Sha256, pin) }
+
 /// cert is passed to the client's CertificateRequest path when it lands
 /// (Lang 3's tls13/tls12 hooks, decision 0433); until then the client
 /// answers a request with no certificate.
-fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None) -> TlsConn ! NetErr uses net.dial {
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None, verify_conn: (fn(List[x509.Certificate]) -> () ! Str)? = None) -> TlsConn ! NetErr uses net.dial {
   let cn = rt.obj_addr(c)
   if target.arch == TargetArch.Wasm32 {
     // a wasip2 command's connection (netwasi.xo, decision 0447 R2e):
@@ -78,9 +117,12 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Ver
     // FakeNet: no TLS, the connection's bytes pass through
     return TlsConn{c: c, h: None}
   }
-  let r = match roots {
+  var r = match roots {
     Some(x) => x.r
     None => tlsio.roots_system_at(rt.fn_addr("tls_roots_free"), true)
+  }
+  if let Some(f) = verify_conn {
+    r = tlsio.roots_with_tls(r, "", Some(vconn_wrap(f)))
   }
   let v = match verify {
     Full => tlsio.VERIFY_FULL

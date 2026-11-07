@@ -79,6 +79,8 @@ struct Request {
   src: List[fn(Int) -> http1.BodyPart] = []
   /// with_expect_continue's wait in nanoseconds, 0 for none. Hidden.
   expect_ns: Int = 0
+  /// with_host's Host (Go's Request.Host), "" for the URL's. Hidden.
+  host_over: Str = ""
   /// with_trailers' f (decision 0433), asked once the body is sent; one
   /// entry or none. Hidden from Xo code.
   trailer_fn: List[fn() -> Map[Str, Str]] = []
@@ -3038,7 +3040,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
   let th = hconn.tls_of(q.conn)
   let scheme = if q.scheme.is_empty() { if th != 0 { "https" } else { "http" } } else { q.scheme }
   let url = http.Url{scheme: scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  let req = Request{over_tls: th != 0, tls_neg: tls_neg_of(th), raw_host: q.urlhost, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
+  let req = Request{over_tls: th != 0, tls_neg: tls_neg_of(th), raw_host: q.host, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
   if !q.streamed {
     return req
   }
@@ -3070,6 +3072,19 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
     }
     None => c with {roots: r}
   }
+}
+
+fn (c: Client) with_server_name(name: Str) -> Client {
+  c with {roots: tlsio.roots_with_tls(c.roots, name, None)}
+}
+
+fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str) -> Client {
+  c with {roots: tlsio.roots_with_tls(c.roots, "", Some(ntls.vconn_wrap(f)))}
+}
+
+fn (c: Client) tls_options() -> http.TlsOptions {
+  let (n, v, r, k) = tlsio.roots_tls(c.roots)
+  http.TlsOptions{server_name: n, verify_conn: v, custom_roots: r, client_cert: k}
 }
 
 /// The certificate is kept for the TLS client's CertificateRequest path
@@ -3123,6 +3138,10 @@ fn (c: Client) with_h2_config(cfg: http.H2Config) -> Client { c with {h2cfg: Som
 /// The client following at most max redirects (decision 0404): 0 returns
 /// a 3xx response as it came, its Location as the server sent it.
 fn (c: Client) with_redirects(max: Int) -> Client { c with {redirects: if max < 0 { 0 } else { max }} }
+
+/// The request sent with Host (HTTP/1.1) and :authority (HTTP/2) host in place of the URL's (Go's Request.Host); the
+/// connection and the TLS name stay the URL's. "" is the URL's host.
+fn (r: Request) with_host(host: Str) -> Request { r with {host_over: host} }
 
 /// The request with its own time limit in place of the client's (decision
 /// 0404): the whole exchange, the body included, as Go's Client.Timeout.
@@ -3868,6 +3887,11 @@ fn header_lists(req: Request) -> (List[Str], List[Str]) {
       values.push(x)
     }
   }
+  if !req.host_over.is_empty() {
+    // the pseudo field http1.client_do turns into the Host sent
+    names.push(":host")
+    values.push(req.host_over)
+  }
   (names, values)
 }
 
@@ -4041,7 +4065,9 @@ fn mem_serve(req: Request, raw: Str, m: MemOut) {
   m.chunks.close()
 }
 
-fn send_mem(req: Request, raw: Str, streamed: Bool = false) -> http.Response ! http.ClientErr {
+fn send_mem(req0: Request, raw: Str, streamed: Bool = false) -> http.Response ! http.ClientErr {
+  // the handler sees the Host a real server would
+  let req = if req0.host_over.is_empty() { req0 } else { req0 with {raw_host: req0.host_over} }
   testworld.record(rt.any_of(req))
   for i in 0..testworld.fake_count(1) {
     if fake_match(1, i, req, raw) is Some(_) {

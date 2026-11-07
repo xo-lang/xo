@@ -110,3 +110,4 @@ http_stop_keepalive # wasip1 # network: the network (`rt.net_listen`): WASI prev
 http_client_raw_header_names # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 amqptest_broker # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 amqp_tls_hostname # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_verify_conn # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets

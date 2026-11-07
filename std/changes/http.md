@@ -1843,3 +1843,26 @@ now sends the query as given unless `url.query` was changed.
 `url.Values`, and `req.query_all(name)` returns every value of a repeated
 query key; the server keeps each request's raw query for it, over HTTP/1.1
 and HTTP/2.
+
+## 2026-11-06: feature: Client.with_server_name, with_verify_conn, tls_options and Request.with_host
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (azidentity's Service Fabric thumbprint pin and the workload identity token proxy), decision 0541
+- Go reference: tls.Config.ServerName and VerifyConnection, http.Request.Host
+- Test: golden tls_verify_conn (go, arm64, llvm)
+- Shipped in: not yet released
+
+A client can set the TLS server name (SNI and the verified name), check the server's certificates after the handshake and before
+any request byte, and send a Host that differs from the URL's. A client with a server name or hook has its own pooled connections.
+
+## 2026-11-07: fix: an HTTP/2 request's host() is its :authority
+
+- Kind: fix
+- Commit: this commit
+- Found by: golden tls_verify_conn (decision 0541): the native HTTP/2 server answered "" for Request.host()
+- Go reference: net/http's Request.Host is the :authority of an HTTP/2 request
+- Test: golden tls_verify_conn
+- Shipped in: not yet released
+
+The native server took host() from the target's URL host, empty for an ordinary request, instead of the :authority (or Host) it had parsed.

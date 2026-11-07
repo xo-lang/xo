@@ -1316,6 +1316,9 @@ type Http_Client struct {
 	// with_protocols and with_h2_config (decision 0434)
 	protos Option[Set[Http_Protocol]]
 	h2     Option[Http_H2Config]
+	// with_server_name and with_verify_conn (decision 0541)
+	serverName string
+	vconn      Option[func(*Task, List[X509_Certificate]) Result[Unit, string]]
 	// with_redirects (decision 0404): the redirects followed at most; 0
 	// returns the 3xx itself
 	redirects int64
@@ -1350,6 +1353,31 @@ func (c Http_Client) M_with_roots(_ *Task, pem Bytes) Result[Http_Client, Http_T
 	c.roots = pool
 	c.tr = clientTransport(c)
 	return Ok[Http_Client, Http_TlsErr](c)
+}
+
+// M_with_server_name is `c.with_server_name(name)` (decision 0541): tls.Config.ServerName.
+func (c Http_Client) M_with_server_name(_ *Task, name string) Http_Client {
+	c.serverName = name
+	c.tr = clientTransport(c)
+	return c
+}
+
+// M_with_verify_conn is `c.with_verify_conn(f)` (decision 0541): tls.Config.VerifyConnection.
+func (c Http_Client) M_with_verify_conn(_ *Task, f func(*Task, List[X509_Certificate]) Result[Unit, string]) Http_Client {
+	c.vconn = Some(f)
+	c.tr = clientTransport(c)
+	return c
+}
+
+// M_tls_options is `c.tls_options()`.
+func (c Http_Client) M_tls_options(_ *Task) Http_TlsOptions {
+	return Http_TlsOptions{F_server_name: c.serverName, F_verify_conn: c.vconn.Some, F_custom_roots: c.roots != nil, F_client_cert: c.cert.Some}
+}
+
+// M_with_host is `r.with_host(host)` (decision 0541): Go's Request.Host.
+func (r Http_Request) M_with_host(_ *Task, host string) Http_Request {
+	r.XHost = host
+	return r
 }
 
 // M_with_cert is `c.with_cert(cert)` (decision 0433): https presents cert

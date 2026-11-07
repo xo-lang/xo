@@ -144,6 +144,9 @@ fn (r: Request) with_header(name: Str, value: Str) -> Request
 /// whole exchange with the body (Go's Client.Timeout); a client side
 /// builder (decision 0404).
 fn (r: Request) with_timeout(d: Duration) -> Request
+/// The request sent with Host (HTTP/1.1) and :authority (HTTP/2) host in place of the URL's (Go's Request.Host); the
+/// connection and the TLS name stay the URL's. "" is the URL's host.
+fn (r: Request) with_host(host: Str) -> Request
 /// The request with `Expect: 100-continue` (Go's Transport.ExpectContinueTimeout,
 /// default 1s): an HTTP/1.1 client sends the head, waits up to timeout for
 /// the server's `100 Continue`, then sends the body; a final response
@@ -499,6 +502,22 @@ fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses n
 /// The client trusting the certificates of pem instead of the system's
 /// roots for https (std.md 4.6).
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
+/// The client's name for the server (Go's tls.Config.ServerName): sent as SNI and verified against the certificate in
+/// place of the URL's host; "" keeps the URL's. A client with one has its own connections (decision 0541).
+fn (c: Client) with_server_name(name: Str) -> Client
+/// The client calling f with the server's certificates (leaf first) after the TLS handshake and its verification, before
+/// any request byte is sent (Go's tls.Config.VerifyConnection); Err(text) fails the connection with that text. It runs
+/// on every new connection, so a pinning check works with a self signed server. A client with one has its own
+/// connections.
+fn (c: Client) with_verify_conn(f: fn(List[x509.Certificate]) -> () ! Str) -> Client
+/// What a client's TLS settings are, for tests and diagnostics.
+struct TlsOptions {
+  server_name: Str
+  verify_conn: Bool
+  custom_roots: Bool
+  client_cert: Bool
+}
+fn (c: Client) tls_options() -> TlsOptions
 /// The client presenting cert when an https server asks for a
 /// certificate (Go's tls.Config.Certificates on a client; decision 0433).
 fn (c: Client) with_cert(cert: TlsCert) -> Client

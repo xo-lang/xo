@@ -1,0 +1,122 @@
+// TLS client hooks (decision 0541): Client.with_verify_conn sees the server's chain after the handshake and before any
+// request byte (a wrong pin never reaches the handler), tls.pin_sha1 and pin_sha256 (colons and spaces in the pin), a
+// hooked client is its own pool key (the hook runs once per connection, an unhooked client's requests never reuse its
+// connection), Client.with_server_name (the name verified), Request.with_host (the Host the handler sees) and
+// tls_options. The server is self signed (std/x509) and trusted through with_roots.
+use std/http
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/netip
+
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+/// The error text without the listener's address.
+fn clean(e: http.ClientErr, addr: Str) -> Str { "${e}".replace(addr, "ADDR") }
+
+fn show(os: Os, label: Str, addr: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${(resp.body.to_str() ?? "?").trim()}")
+    Err(e) => {
+      let t = clean(e, addr)
+      // the text of a failed handshake differs by backend after the hook's own words
+      let k = if t.contains("does not match the pin") { "pin mismatch" } else if t.contains("x509") || t.contains("certificate") { "certificate refused" } else { t }
+      os.stdio.println("${label}: error ${k}")
+    }
+  }
+}
+
+fn pin_text(r: Result[fn(List[x509.Certificate]) -> () ! Str, Str]) -> Str {
+  match r {
+    Ok(_) => "ok"
+    Err(e) => e
+  }
+}
+
+fn opts(o: http.TlsOptions) -> Str {
+  "server_name=${o.server_name} verify_conn=${o.verify_conn} custom_roots=${o.custom_roots} client_cert=${o.client_cert}"
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let now = os.clock.now()
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let t = x509.Template{subject: x509.Name{common_name: "server"}, not_before: now - 1h, not_after: now + 24h, ip_addresses: [netip.parse_addr("127.0.0.1").or_fault("ip")], key_usage: [x509.KeyUsage.DigitalSignature], ext_key_usage: [x509.ExtKeyUsage.ServerAuth]}
+  let cert = x509.create_certificate(os.rand, t, key.public_key(), None, key).or_fault("cert")
+  var pem = cert.pem()
+  let pair = tls.cert(pem, pem_block("PRIVATE KEY", crypto.marshal_private_key(key))).or_fault("pair")
+  let sha1_hex = crypto.digest(crypto.Hash.Sha1, cert.raw).to_hex()
+  let sha256_hex = crypto.digest(crypto.Hash.Sha256, cert.raw).to_hex()
+  let digest1 = crypto.digest(crypto.Hash.Sha1, cert.raw)
+  var spaced: List[Str] = []
+  var i = 0
+  while i < digest1.len() {
+    spaced.push(digest1[i..i + 1].to_hex().to_upper())
+    i += 1
+  }
+  let hits = Atomic[Int].new(0)
+  var r = http.router()
+  r.handle("GET /hit", fn(req: http.Request) -> http.Response {
+    let _n = hits.add(1)
+    http.text(200, "hit host=${req.host().split(":").first() ?? ""}")
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  let url = "https://${addr}/hit"
+  let srv = http.server(l, r).with_tls([pair])
+  scope s {
+    s.spawn_background(fn() {
+      match srv.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    let base = http.client(os.net, timeout: 5s).with_roots(cert.pem()).or_fault("roots")
+    // the hook sees the leaf, once per connection
+    let seen = Atomic[Int].new(0)
+    let leaf_ok = Atomic[Int].new(0)
+    let hooked = base.with_verify_conn(fn(certs: List[x509.Certificate]) -> () ! Str {
+      let _n = seen.add(1)
+      if certs.len() >= 1 && certs[0].raw == cert.raw {
+        let _m = leaf_ok.add(1)
+      }
+      Ok(())
+    })
+    show(os, "hook 1", addr, hooked.get(url))
+    show(os, "hook 2", addr, hooked.get(url))
+    os.stdio.println("hook calls=${seen.get()} leaf=${leaf_ok.get()}")
+    show(os, "unhooked", addr, base.get(url))
+    os.stdio.println("hook calls after unhooked=${seen.get()}")
+    // a failing hook: the request is never sent
+    let before = hits.get()
+    let no = base.with_verify_conn(fn(certs: List[x509.Certificate]) -> () ! Str { Err("custom refusal") })
+    match no.get(url) {
+      Ok(_) => os.stdio.println("refusing hook: connected")
+      Err(e) => os.stdio.println("refusing hook: ${clean(e, addr).contains("custom refusal")} delivered=${hits.get() - before}")
+    }
+    // pins
+    show(os, "pin sha1", addr, base.with_verify_conn(tls.pin_sha1(sha1_hex).or_fault("pin")).get(url))
+    show(os, "pin sha1 colons", addr, base.with_verify_conn(tls.pin_sha1(spaced.join(":")).or_fault("pin")).get(url))
+    show(os, "pin sha256", addr, base.with_verify_conn(tls.pin_sha256(sha256_hex).or_fault("pin")).get(url))
+    let before2 = hits.get()
+    show(os, "pin wrong", addr, base.with_verify_conn(tls.pin_sha1("0000000000000000000000000000000000000000").or_fault("pin")).get(url))
+    os.stdio.println("wrong pin delivered=${hits.get() - before2}")
+    os.stdio.println("bad pin: ${pin_text(tls.pin_sha1("zz"))}")
+    os.stdio.println("short pin: ${pin_text(tls.pin_sha256("aabb"))}")
+    // verify_conn with no verification: a pin alone is enough for a self signed server
+    let bare = http.client(os.net, timeout: 5s)
+    show(os, "no roots", addr, bare.get(url))
+    // the server name
+    show(os, "server name wrong", addr, base.with_server_name("wrong.example").get(url))
+    // Request.Host
+    let req = http.new_request("GET", url).with_host("login.example.test")
+    show(os, "with_host", addr, base.send(req))
+    // the options
+    let o = base.with_server_name("sni.example").with_verify_conn(fn(certs: List[x509.Certificate]) -> () ! Str { Ok(()) }).tls_options()
+    os.stdio.println("options: ${opts(o)}")
+    os.stdio.println("plain options: ${opts(http.client(os.net).tls_options())}")
+  }
+  os.stdio.println("done")
+}
