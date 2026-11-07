@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -359,12 +361,29 @@ func TestGoldenGoParity(t *testing.T) {
 	if err != nil || len(dirs) == 0 {
 		t.Fatalf("no golden programs: %v", err)
 	}
-	for _, dir := range dirs {
+	// XO_GO_PARITY_SAMPLE=N also runs every Nth golden (sorted), beside
+	// XO_LLVM_GOLDENS: the gate's selection follows the LLVM IR, which a
+	// Go backend change does not touch, so it named none (2026-11-06)
+	sample, _ := strconv.Atoi(os.Getenv("XO_GO_PARITY_SAMPLE"))
+	// a run with no golden built passes while checking nothing: it fails
+	// instead, unless -run names no golden at all
+	var ran, matched atomic.Int64
+	t.Cleanup(func() {
+		if matched.Load() > 0 && ran.Load() == 0 {
+			t.Errorf("TestGoldenGoParity ran no golden program on the Go backend (%d matched, every one skipped: XO_LLVM_GOLDENS=%q, XO_GO_PARITY_SAMPLE=%q)", matched.Load(), os.Getenv("XO_LLVM_GOLDENS"), os.Getenv("XO_GO_PARITY_SAMPLE"))
+		}
+	})
+	for i, dir := range dirs {
 		dir := dir
+		inSample := sample > 0 && i%sample == 0
 		t.Run(filepath.Base(dir), func(t *testing.T) {
-			skipUnselected(t, dir)
+			matched.Add(1)
+			if !inSample {
+				skipUnselected(t, dir)
+			}
 			t.Parallel()
 			res := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
+			ran.Add(1)
 			name := "want_go.txt"
 			want, err := os.ReadFile(filepath.Join(dir, name))
 			if os.IsNotExist(err) {

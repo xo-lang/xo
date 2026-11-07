@@ -339,7 +339,12 @@ llvm_step() {
       echo "llvm goldens: $(cat "$logs/llvm-select.txt")"
       if [ "$sel" = all ]; then unset XO_LLVM_GOLDENS; else export XO_LLVM_GOLDENS=$sel; fi
       if go_backend; then
-        XO_TEST_GO_PARITY=1 full llvm ./internal/llvm
+        # every 16th golden on the Go backend too: the selection above
+        # follows the LLVM IR, which a Go backend change leaves alone, so
+        # TestGoldenGoParity ran none and passed (2026-11-06,
+        # gotchas/go-parity-selected-by-llvm-ir.md); it now fails when it
+        # runs none
+        XO_TEST_GO_PARITY=1 XO_GO_PARITY_SAMPLE=${XO_GO_PARITY_SAMPLE:-16} full llvm ./internal/llvm
       else
         full llvm ./internal/llvm
       fi
