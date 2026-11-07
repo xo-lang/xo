@@ -839,7 +839,7 @@ pub fn file_read_line(f: rt.FsFile, x: Str) -> List[Str] {
       bs = bs[0..bs.len() - 1]
     }
     ok()
-    return [rt.cast[Bytes, Str](bs)]
+    return [raw.str_at(raw.bytes_addr(bs), bs.len())]
   }
   while true {
     var r = rt.mem_load(a, F_R, 8)
