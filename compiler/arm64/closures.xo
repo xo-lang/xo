@@ -82,11 +82,13 @@ fn (var g: G) closure_fill(v: Int, ci: Int, env: Int) {
 }
 
 /// The closures of the function whose environment can be in its frame:
-/// those whose captured values hold nothing counted (no drop to run) and
-/// whose value is only called, retained, or released here: never stored,
-/// passed, returned, captured, or carried on an edge (2026-10-23: a
-/// closure given to Map.update in a loop allocated its environment at
-/// every iteration).
+/// those whose value is only called, retained, or released here: never
+/// stored, passed, returned, captured, or carried on an edge (2026-10-23:
+/// a closure given to Map.update in a loop allocated its environment at
+/// every iteration). One whose captured values hold something counted is
+/// never retained either, so its release releases them
+/// (stack_env_release; 2026-11-07: Mutex.with_read's closure over a Str
+/// key allocated and freed its environment on every metrics lookup).
 fn (var g: G) stack_closures() -> Map[Int, Bool] {
   if g.stack_env_done {
     return g.stack_env
@@ -97,15 +99,7 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
     if x.op != ssa.Op.Closure || x.args.is_empty() || ssa.block_of(x.tb) < 0 {
       continue
     }
-    var ok = true
-    for a in x.args {
-      if g.m.heap(g.vty(a)) {
-        ok = false
-      }
-    }
-    if ok {
-      cand[v] = true
-    }
+    cand[v] = true
   }
   if cand.is_empty() {
     return g.stack_env
@@ -117,7 +111,9 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
         if !cand.contains(a) {
           continue
         }
-        let fine = (y.op == ssa.Op.CallValue && k == 0) || ((y.op == ssa.Op.Retain || y.op == ssa.Op.Release) && y.args.len() == 1)
+        // a retain only of one whose captures hold nothing counted: with
+        // none, any release is the last (2026-11-07), and releases them
+        let fine = (y.op == ssa.Op.CallValue && k == 0) || (y.op == ssa.Op.Release && y.args.len() == 1) || (y.op == ssa.Op.Retain && y.args.len() == 1 && !g.counted_env(a))
         if !fine {
           cand.remove(a)
         }
@@ -133,6 +129,43 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
   }
   g.stack_env = cand
   g.stack_env
+}
+
+/// Whether closure value v captures a value holding something counted.
+fn (var g: G) counted_env(v: Int) -> Bool {
+  for a in g.f.values[v].args {
+    if g.m.heap(g.vty(a)) {
+      return true
+    }
+  }
+  false
+}
+
+/// The release of a closure value v whose environment is in the frame
+/// (stack_closures): with counted captures it is never retained, so
+/// this release is its last and releases them; else nothing.
+fn (var g: G) stack_env_release(v: Int) {
+  if !g.counted_env(v) {
+    return
+  }
+  let ci = g.by_name.get(aux_str(g.f.values[v].aux)) ?? -1
+  if ci < 0 {
+    g.fail("closure of unknown function `${aux_str(g.f.values[v].aux)}`")
+    return
+  }
+  let env = g.real(g.words(v)[1])
+  var off = 0
+  for t in g.m.funcs[ci].captures {
+    let lay = g.layout(t)
+    if g.m.heap(t) {
+      var ws: List[Int] = []
+      for (k, fp) in lay.indexed() {
+        ws.push(g.def1(fp, "ldr $d0, [$u0, #${ENV_HDR + 8 * (off + k)}]", [env]))
+      }
+      g.release(t, ws)
+    }
+    off += lay.len()
+  }
 }
 
 /// Lowers a capture: the words of a captured value, loaded from the
