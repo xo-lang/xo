@@ -342,7 +342,14 @@ func soakMain(args []string) int {
 
 	var rep strings.Builder
 	bad := false
-	fmt.Fprintf(&rep, "harness soak %s on %s: rate %d/s for %s\n", app.Name, *backend, *rate, *dur)
+	ld := fmt.Sprintf("rate %d/s", *rate)
+	if *conc > 0 {
+		ld = fmt.Sprintf("closed loop of %d workers", *conc)
+	}
+	if len(spikeAt) > 0 {
+		ld += fmt.Sprintf(", spikes of %d workers for %s at %s", *spikeConc, *spikeDur, *spikes)
+	}
+	fmt.Fprintf(&rep, "harness soak %s on %s: %s for %s\n", app.Name, *backend, ld, *dur)
 	if stopErr != nil {
 		fmt.Fprintf(&rep, "ALERT: stop: %v\n", stopErr)
 		bad = true
