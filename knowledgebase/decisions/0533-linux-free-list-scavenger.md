@@ -136,6 +136,16 @@ Decided: an age rule instead of an idle rule, as Go's scavenger returns only wha
   (gotchas/madvise-rounds-over-neighbor.md): under 64 KiB pages a 32 KiB block's advice had rounded
   over its neighbor.
 - Follow-up: a /debug/sched line for the bytes the age passes gave back, beside heap_chunks.
+- Follow-up, outside this decision: the classes under 16 KiB. In a 1 h soak of the base (2026-11-07,
+  1d8571422, harness -client-idle 30s, host 2) the exit free lists held 28 MB against 34 MB of RSS,
+  of which about 7.5 MB in the 32 to 272 B classes (32, 96, 128, 224, 272 B the largest), which the
+  age passes never give back. Their blocks share pages with live ones, so returning them needs a
+  page-level view of the small class spans (Go's scavenger works on whole pages of free spans),
+  a separate decision.
+- The base's RSS drift in a soak is retention, not a leak: the same leg's heap chunks grew 12 to 38
+  at latency spikes the host's load made (p99 5.7 to 65 ms), heap_live ended near its start and
+  leakcheck found 0 live at exit; the chunks' resident pages, not THP or stacks, held the growth
+  (smaps at 2, 32 and 59 min).
 
 ## Amendment (Xo Lang 2, 2026-11-07): released ranges and khugepaged
 
