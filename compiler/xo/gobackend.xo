@@ -146,6 +146,14 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
     os.stdio.eprint((fr.stderr.to_str() ?? ""))
     fail(os, "gofmt failed on the generated Go (a code generator bug)")
   }
+  // each line of a statement gofmt split keeps the statement's position
+  for w in written {
+    let t = os.fs.read_text(w)?
+    let pinned = gen.pin_line_directives(t)
+    if pinned != t {
+      os.fs.write(w, pinned.bytes())?
+    }
+  }
   let host = "${ctx.goos}/${host_arch()}"
   let targets = parse_targets(os, o.targets, host)
   if targets.len() > 1 && !out.is_empty() {

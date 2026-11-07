@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Go backend (fix): a fault raised inside a call whose result the generated Go wraps in a list marking closure (std `cli.parse`) is reported at the call's line, not the line of a later statement or one past the end of the file: each line gofmt splits a generated statement into keeps the statement's //line position (gotchas/gofmt-splits-line-directive-statements.md). Goldens fault_line_after_call and fault_line_match_scrutinee.
 - Prelude (perf, decision 0452 addendum): a List of word-sized elements (8 bytes or less) starts with room for 2 elements, not 4, on the native, LLVM and wasm backends: xo's self build peaks 4.4% lower (max RSS 0.956), wall time unchanged.
 - native (fix): a stack overflow on Linux and macOS (a SIGSEGV, or on macOS a SIGBUS, on the guard page of the running fiber's stack) is reported as "fatal error: stack overflow" before the signal's line, as on Windows; it read as a bus error on macOS (gotchas/stack-overflow-reported-as-sigbus.md).
 - native, LLVM, wasm: a runtime intrinsic `rt.mem_ne64(a, b)`, nonzero when the 64 bytes at two addresses differ, with one move from the vector unit where two `rt.mem_ne32` took two (arm64 four NEON cmeq and'ed; x86_64 SSE2 pcmpeqb and pmovmskb a lane; LLVM a <64 x i8> compare; wasm two mem_ne32), for the linux memcmp's 64 byte step (the survey's equal, 1.37 of Go); std uses it only once a seed knows it (gotchas/seed-older-than-intrinsics.md).

@@ -975,3 +975,99 @@ fn (var r: BR) expr_range(from: Int, to: Int) {
     j += 1
   }
 }
+
+/// The file's text after gofmt with each statement's //line directive
+/// repeated before every further line gofmt split the statement into. A
+/// directive positions only the next line, and Go counts each line after
+/// it as the next source line, so a call on the fifth line of a statement
+/// gofmt spread out (a closure marking a Result's lists) was reported
+/// four lines past its statement: a fault in std cli.parse read
+/// main.xo:11 for main.xo:6. Lines inside a raw string or a block comment
+/// are left as they are.
+pub fn pin_line_directives(src: Str) -> Str {
+  var b = StrBuilder.new()
+  var cur = ""
+  var after = 0
+  var raw = false
+  var block = false
+  let lines = src.split("\n")
+  for (i, l) in lines.indexed() {
+    if l.starts_with("//line ") && !raw && !block {
+      cur = l
+      after = 0
+    } else {
+      if cur != "" && after >= 1 && !raw && !block && !l.trim().is_empty() {
+        b.write(cur)
+        b.write("\n")
+      }
+      after += 1
+      let (r, k) = scan_go_line(l.bytes(), raw, block)
+      raw = r
+      block = k
+    }
+    b.write(l)
+    if i < lines.len() - 1 {
+      b.write("\n")
+    }
+  }
+  b.freeze()
+}
+
+/// Whether a raw string and a block comment are open after the Go line l,
+/// given whether each was open before it.
+fn scan_go_line(l: Bytes, raw0: Bool, block0: Bool) -> (Bool, Bool) {
+  var raw = raw0
+  var block = block0
+  var j = 0
+  let n = l.len()
+  while j < n {
+    if raw {
+      match l[j..n].find(b"`") {
+        Some(k) => {
+          raw = false
+          j += k + 1
+        }
+        None => j = n
+      }
+      continue
+    }
+    if block {
+      match l[j..n].find(b"*/") {
+        Some(k) => {
+          block = false
+          j += k + 2
+        }
+        None => j = n
+      }
+      continue
+    }
+    let c = l[j]
+    if c == 47 && j + 1 < n && l[j + 1] == 47 {
+      return (false, false)
+    }
+    if c == 47 && j + 1 < n && l[j + 1] == 42 {
+      block = true
+      j += 2
+      continue
+    }
+    if c == 96 {
+      raw = true
+      j += 1
+      continue
+    }
+    if c == 34 || c == 39 {
+      // an interpreted string or a rune: ends on its line
+      j += 1
+      while j < n && l[j] != c {
+        if l[j] == 92 {
+          j += 1
+        }
+        j += 1
+      }
+      j += 1
+      continue
+    }
+    j += 1
+  }
+  (raw, block)
+}

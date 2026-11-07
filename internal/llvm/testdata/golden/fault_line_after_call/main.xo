@@ -1,0 +1,16 @@
+// A fault raised inside a std call whose result the Go backend wraps in a
+// closure gofmt spreads over lines (cli.parse's Result) is reported at the
+// call's line on every backend, with statements after it (the Go backend
+// reported the last statement's line before 2026-11-07).
+use std/cli
+
+fn main(os: Os) {
+  let app = cli.command("db", "Database tool.",
+    flags: [cli.str_flag("url", "the database", short: "u"), cli.bool_flag("dry-run", "show only", short: "u")])
+  let r = cli.parse(app, [], os.env)
+  match r {
+    Ok(p) => os.stdio.println("parsed ${p.command()}")
+    Err(e) => os.stdio.println("error ${e}")
+  }
+  os.stdio.println("after")
+}

@@ -1,0 +1,4 @@
+exit 70
+--- stdout
+--- stderr
+fault: cli: short name -u is used by --url and --dry-run at main.xo:10

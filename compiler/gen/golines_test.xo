@@ -1,0 +1,16 @@
+test "pin_line_directives repeats a directive on each line gofmt split a statement into" {
+  let src = "//line main.xo:6:3\n\tvar r T = func(v T) T {\n\t\tif v.Ok {\n\t\t\trt.MarkP(&v.V)\n\t\t}\n\t\treturn v\n\t}(rt.Cli_parse(tk))\n//line main.xo:7:3\n\tx := 1\n"
+  let want = "//line main.xo:6:3\n\tvar r T = func(v T) T {\n//line main.xo:6:3\n\t\tif v.Ok {\n//line main.xo:6:3\n\t\t\trt.MarkP(&v.V)\n//line main.xo:6:3\n\t\t}\n//line main.xo:6:3\n\t\treturn v\n//line main.xo:6:3\n\t}(rt.Cli_parse(tk))\n//line main.xo:7:3\n\tx := 1\n"
+  expect(pin_line_directives(src)) == want
+}
+
+test "pin_line_directives leaves raw strings, block comments and blank lines alone" {
+  let src = "//line a.xo:1:1\n\ts := `one\ntwo` + \"`\"\n\t/* a\nb */ y := '`'\n\n\tz := 2 // `\n\tw := 3\n"
+  let want = "//line a.xo:1:1\n\ts := `one\ntwo` + \"`\"\n//line a.xo:1:1\n\t/* a\nb */ y := '`'\n\n//line a.xo:1:1\n\tz := 2 // `\n//line a.xo:1:1\n\tw := 3\n"
+  expect(pin_line_directives(src)) == want
+}
+
+test "pin_line_directives keeps a text without directives" {
+  let src = "package x\n\nfunc f() {\n}\n"
+  expect(pin_line_directives(src)) == src
+}
