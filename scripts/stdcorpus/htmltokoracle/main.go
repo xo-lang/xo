@@ -219,17 +219,13 @@ fn render(input: Str, mode: Int, max_buf: Int) -> (Str, Str) {
 }
 
 test "token streams equal Go's x/net/html Tokenizer" {
-  var bad = 0
   for (input, mode, max_buf, want) in CASES {
     let (got, _) = render(input, mode, max_buf)
     if got != want {
-      if bad < 3 {
-        println("input ${q(input)} mode ${mode} max ${max_buf}\nwant:\n${want}got:\n${got}")
-      }
-      bad += 1
+      // the first difference shows in the failure
+      expect("input ${q(input)} mode ${mode} max ${max_buf}\\n${got}") == "input ${q(input)} mode ${mode} max ${max_buf}\\n${want}"
     }
   }
-  expect(bad) == 0
 }
 
 test "the raw texts of the tokens partition the input" {
