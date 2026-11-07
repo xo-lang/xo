@@ -31,6 +31,11 @@ source-loaded modules. The branch after it declared every module not
 
 ## Fix
 
+(The same touch also changed std's separately compiled variant key,
+which held each file's time, so a build right after `xo dev stdcache`
+could miss the variant it had just built; the key now holds each file's
+content hash, TestStdVariantKeyTouched.)
+
 `install_std` marks the modules whose members it installed
 (`record_members`), and the declare, resolve_types and resolve_sigs
 passes after it skip them as they skip `from_record` ones.

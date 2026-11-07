@@ -370,7 +370,9 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   std/<key>.store and std/<key>.stdf. The key hashes this xo's code generation identity
   (without a separately compiled build's facts), the target, the variant, STD_CACHE_VERSION
   and every std source's path, size and modification time, so a body edit in a development std
-  makes a new one. A miss builds it with `xo dev stdobj --target --conc --facts` into a
+  makes a new one. Since 2026-11-07 the content's SHA-256 in place of the time (from a stamp
+  table in the cache, std/stamps/, by size and time; a time within 2 s of recording is hashed
+  again): a touch with the bytes unchanged keeps the variant (TestStdVariantKeyTouched). A miss builds it with `xo dev stdobj --target --conc --facts` into a
   directory of its own under the cache and renames each file into place. Concurrent builds
   each build it and the last rename wins: the same bytes. The prune treats the two files as
   any entry, and a pair with one file gone is built again. None (the cache off, xo's identity
