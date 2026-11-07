@@ -178,6 +178,12 @@ pub struct Checker {
   /// name, 2026-10-26): no function body is parsed or checked, as if
   /// body_words spelled nothing.
   pub decls_only: Bool = false
+  /// An agent's or editor's view (xo def, refs, doc, symbols, the LSP):
+  /// a std module whose `use c` binding is missing (a C library driver's,
+  /// written only by a build with a C compiler) leaves its C names
+  /// unresolved instead of stopping the check
+  /// (gotchas/std-store-build-use-c-module.md).
+  pub view_only: Bool = false
   pub lazy: Bool = false
   /// Map and Set as decision 0291's hybrid (every backend since 2026-10-21,
   /// the playground's too; compiler/xo main.xo turns it off for
@@ -1727,6 +1733,11 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
       }
     }
   }
+  // std's own native directory checked as one module (xo refs
+  // --dir=std/native): not a file with `use c` (a C library driver),
+  // whose binding only a build with a C compiler writes; without it the
+  // check stopped (gotchas/std-store-build-use-c-module.md)
+  let std_native = !c.std_dir.is_empty() && c.abs(dir) == c.abs(join(c.std_dir, "native"))
   for n in names.sort() {
     let p = join(dir, n)
     let src = match c.overlay.get(c.abs(p)) {
@@ -1741,6 +1752,9 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
           None => continue
         }
       }
+    }
+    if std_native && uses_c(src) {
+      continue
     }
     c.parse_into(m, p, src, false)
   }

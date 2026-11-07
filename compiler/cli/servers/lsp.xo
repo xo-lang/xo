@@ -544,6 +544,7 @@ fn check_view_walk(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs
   c.body_words = words
   // def, doc, symbols: no body
   c.decls_only = decls_only
+  c.view_only = true
   let (chk_dir, chk_id) = chk
   if !chk_dir.is_empty() {
     c.mod_cache_dir = chk_dir

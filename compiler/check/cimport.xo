@@ -137,7 +137,7 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
     let data = match src {
       Some(b) => b
       None => {
-        if c.unsupported.is_empty() {
+        if c.unsupported.is_empty() && !(c.view_only && c.mods[m].std_tree) {
           c.unsupported = "use c without the binding of ${header} in ${cache} (a Go build or `xo bind --c` writes it) in ${fpath}"
         }
         return

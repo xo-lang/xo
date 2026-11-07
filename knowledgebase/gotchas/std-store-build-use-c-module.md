@@ -57,3 +57,15 @@ implementation with `use c` (Checker.skip_impl), and preloads_for no
 longer names one; std/NAME.xo answers. cmd/xo TestAgentRootStdUseC runs
 them from the repo root (it shows the bug only on a tree without the
 binding, as a fresh checkout is).
+
+Fourth place (2026-11-06, the abac4a7da main check, cmd/xo
+TestAgentRuntimeRefs): `xo refs --dir=std/native pool.park_wait` checks
+std/native as one directory module, so sqlite.xo's `use c` was in it, and
+sqlite_test.xo's `use std/sqlite` loaded native/sqlite with its body (refs
+is not declarations only). Two changes: load_dir leaves a `use c` file out
+of std's own native directory, and an agent's or editor's view
+(Checker.view_only, set by compiler/cli/servers lsp.xo check_view_walk)
+no longer stops on a std module's missing binding: that module's C names
+stay unresolved, and the lookup answers from the rest. A build still
+stops. The whole cmd/xo TestAgent* group, TestDevEdges and TestSymbols*
+are the gate for any change here, run on a tree without std/native/.xo.
