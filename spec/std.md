@@ -8020,3 +8020,40 @@ fn gen(f: File) -> Str ! ParseErr
 - `gen` writes Xo source: a nested type `Inner` of `Outer` is `OuterInner`, a oneof is an enum held in an optional
   field marked `proto "oneof"`, an enum is an open `Int` enum with a catch-all variant. Services are not generated
   here (the stubs of std/grpc come with `xo proto gen`).
+
+## 71. std/htmltok
+
+The HTML5 tokenizer of golang.org/x/net/html (decision 0548; token.go and the unescape of escape.go, BSD license): a text
+in memory becomes a stream of tokens with Go's rules for raw text elements, comments, doctypes, attributes, entities
+and the buffer limit. There is no tree builder. The token streams are checked against x/net v0.62.0's Tokenizer
+(testdata/corpus/htmltok: curated and seeded random inputs in plain, AllowCDATA and fragment modes, and with buffer
+limits).
+
+```xo
+enum TokenType { Error, Text, StartTag, EndTag, SelfClosingTag, Comment, Doctype }
+struct Attribute { key: Str, val: Str }
+struct Token { typ: TokenType, data: Str, attrs: List[Attribute] }
+struct Tokenizer {}
+fn tokenizer(text: Str) -> Tokenizer
+fn tokenizer_fragment(text: Str, context_tag: Str) -> Tokenizer
+fn (var z: Tokenizer) next() -> TokenType
+fn (var z: Tokenizer) token() -> Token
+fn (z: Tokenizer) raw() -> Str
+fn (z: Tokenizer) err() -> Str?
+fn (var z: Tokenizer) allow_cdata(allow: Bool)
+fn (var z: Tokenizer) next_is_not_raw_text()
+fn (var z: Tokenizer) set_max_buf(n: Int)
+fn (z: Tokenizer) buffered() -> Str
+```
+
+`next` is Go's Next: the type of the next token, `Error` at the end (`err` is `EOF`) or past the limit set by
+`set_max_buf` (`max buffer exceeded`). `token` is Go's Token and consumes the token's data, so call it once per `next`:
+a tag's `data` is its lower cased name (NUL as U+FFFD), a text, comment or doctype's is unescaped with newlines
+converted; `attrs` keep the order, lower case the keys, unescape the values (a legacy reference without its semicolon
+stays literal in a value when an `=` or a letter follows, as the HTML5 attribute rule says) and drop empty and duplicate
+keys. `raw` is the unmodified text of the current token: the raw texts partition the input up to the Error token.
+`script`, `style`, `textarea`, `title`, `iframe`, `noembed`, `noframes`, `noscript`, `plaintext` and `xmp` make the next
+token raw text (RCDATA for `textarea` and `title`: entities are still read); `next_is_not_raw_text` and
+`allow_cdata` are the caller's tools for foreign content, as in Go. Differences from Go: the input is a `Str` (valid
+UTF-8, held in memory) rather than an `io.Reader`, so there is no read error, and `tag_name`, `tag_attr` and `text`
+(the allocation free accessors) are not offered: `token` is the one accessor.

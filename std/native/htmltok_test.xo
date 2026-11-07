@@ -1,0 +1,77 @@
+// Hand written cases for std/htmltok (decision 0548); the differential against Go's Tokenizer is
+// internal/stdtest/testdata/corpus/htmltok.
+use std/htmltok
+
+fn types(src: Str) -> List[htmltok.TokenType] {
+  var z = htmltok.tokenizer(src)
+  var out: List[htmltok.TokenType] = []
+  while true {
+    let t = z.next()
+    if t == htmltok.TokenType.Error {
+      break
+    }
+    out.push(t)
+  }
+  out
+}
+
+test "tags, text and the end" {
+  var z = htmltok.tokenizer("<a href=\"x&amp;y\" B=1>t&lt;</a><br/>")
+  expect(z.next() == htmltok.TokenType.StartTag) == true
+  let a = z.token()
+  expect(a.data) == "a"
+  expect(a.attrs.len()) == 2
+  expect(a.attrs[0].key) == "href"
+  expect(a.attrs[0].val) == "x&y"
+  expect(a.attrs[1].key) == "b"
+  expect(z.next() == htmltok.TokenType.Text) == true
+  expect(z.token().data) == "t<"
+  expect(z.next() == htmltok.TokenType.EndTag) == true
+  expect(z.raw()) == "</a>"
+  expect(z.next() == htmltok.TokenType.SelfClosingTag) == true
+  expect(z.next() == htmltok.TokenType.Error) == true
+  expect(z.err()) == Some("EOF")
+}
+
+test "script and textarea are raw text" {
+  var z = htmltok.tokenizer("<script>a<b>&amp;</script><textarea>x<b>&amp;</textarea>")
+  expect(z.next() == htmltok.TokenType.StartTag) == true
+  expect(z.next() == htmltok.TokenType.Text) == true
+  expect(z.token().data) == "a<b>&amp;"
+  expect(z.next() == htmltok.TokenType.EndTag) == true
+  expect(z.next() == htmltok.TokenType.StartTag) == true
+  expect(z.next() == htmltok.TokenType.Text) == true
+  expect(z.token().data) == "x<b>&"
+}
+
+test "comments, doctypes and CDATA" {
+  expect(types("<!--c--><!DOCTYPE html><?pi?>").len()) == 3
+  var z = htmltok.tokenizer("<![CDATA[x]]>")
+  expect(z.next() == htmltok.TokenType.Comment) == true
+  var w = htmltok.tokenizer("<![CDATA[x]]>")
+  w.allow_cdata(true)
+  expect(w.next() == htmltok.TokenType.Text) == true
+  expect(w.token().data) == "x"
+}
+
+test "the buffer limit" {
+  var z = htmltok.tokenizer("<a b=cccccccccc>")
+  z.set_max_buf(5)
+  expect(z.next() == htmltok.TokenType.Error) == true
+  expect(z.err()) == Some("max buffer exceeded")
+}
+
+test "attribute entities keep a legacy name before an equals sign" {
+  var z = htmltok.tokenizer("<a b=\"?x=1&copy=2&copy;\">")
+  expect(z.next() == htmltok.TokenType.StartTag) == true
+  expect(z.token().attrs[0].val) == "?x=1&copy=2\u{00A9}"
+}
+
+test "fragment contexts" {
+  var z = htmltok.tokenizer_fragment("a<b>&amp;", "title")
+  expect(z.next() == htmltok.TokenType.Text) == true
+  expect(z.token().data) == "a<b>&"
+  var p = htmltok.tokenizer_fragment("<b>x", "plaintext")
+  expect(p.next() == htmltok.TokenType.Text) == true
+  expect(p.token().data) == "<b>x"
+}

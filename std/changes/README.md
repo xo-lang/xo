@@ -66,6 +66,7 @@ entries yet.
 - [trace.md](trace.md): std/trace (spec/std.md 38)
 - [cli.md](cli.md): std/cli (spec/std.md 14)
 - [html.md](html.md): std/html (escape_string, unescape_string)
+- [htmltok.md](htmltok.md): std/htmltok (x/net/html Tokenizer)
 - [png.md](png.md): std/png (spec/std.md 48)
 - [jpeg.md](jpeg.md): std/jpeg (spec/std.md 49)
 - [cbor.md](cbor.md): std/cbor (spec/std.md 50)
