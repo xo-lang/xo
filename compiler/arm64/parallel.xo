@@ -611,9 +611,12 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
     texts.push(Mutex[Str].new(f))
   }
   files = []
-  let own = drop_weak_all(g.own_exports(), g.os, texts, jobs, g.win_map())
+  let exports = g.own_exports()
+  let win = g.win_map()
+  let own = drop_weak_all(exports, g.os, texts, jobs, win)
+  let tags = part_tags(fc, np, own.len(), exports, g.os, win)
   // with parts, no whole text (Program.text joins them when wanted)
-  Program{asm: if own.len() > 1 { "" } else { own.join("") }, err: g.err, skipped: skipped + g.skipped, dumps: g.dumps, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches, spills: spills}
+  Program{asm: if own.len() > 1 { "" } else { own.join("") }, err: g.err, skipped: skipped + g.skipped, dumps: g.dumps, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches, spills: spills, part_tags: tags}
 }
 
 /// The part cache's key of part p, "" for none.

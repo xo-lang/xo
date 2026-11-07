@@ -1832,7 +1832,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // a tool reads them (hollow_late)
     // (amd64 too: it has no per-function cache, fdir, but incr_hollow needs
     // only the back-end cache, which it checks)
-    let inc = if (tgoos is "darwin" | "linux") && o.cmd != "asm" && o.asm_path.is_empty() && p.parts.len() > 1 && backend_cache_mode(os) != "verify" && (os.env.get("XO_SIZE_CAUSES") ?? "").is_empty() { incr_hollow(os, ctx, p.parts, march, hollow_now, tgoos == "linux", jobs) } else { None }
+    let inc = if (tgoos is "darwin" | "linux") && o.cmd != "asm" && o.asm_path.is_empty() && p.parts.len() > 1 && backend_cache_mode(os) != "verify" && (os.env.get("XO_SIZE_CAUSES") ?? "").is_empty() { incr_hollow(os, ctx, p.parts, p.part_tags, march, hollow_now, tgoos == "linux", jobs) } else { None }
     var hollow_late = false
     if inc.is_some() {
       hollow_late = hollow_now

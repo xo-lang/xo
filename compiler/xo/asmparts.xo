@@ -280,14 +280,23 @@ struct IncrOut {
 /// nothing reaches emptied when hollow, through the back-end cache, and
 /// the undefined symbols; None without the cache (the build then hollows
 /// and assembles the whole text).
-fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, elf: Bool, jobs: Int) -> IncrOut? {
+fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], tags: List[Str], march: Str, hollow: Bool, elf: Bool, jobs: Int) -> IncrOut? {
   let dir = backend_cache_dir(os, ctx)
   let id = cache_id(os)
   if dir.is_empty() || id.is_empty() || parts.len() < 2 {
     return None
   }
   let amd64 = march == "amd64"
-  let tk = part_keys("${HOLLOW_INCR_VERSION} facts ${id} elf=${elf}", [], parts, jobs)
+  // a part the part cache fixes (arm64 part_tags) by its tag, every
+  // other by its text
+  var ktags: List[Str] = []
+  var ksrcs: List[Str] = []
+  for (i, t) in parts.indexed() {
+    let g = if i < tags.len() { tags[i] } else { "" }
+    ktags.push(g)
+    ksrcs.push(if g.is_empty() { t } else { "" })
+  }
+  let tk = part_keys("${HOLLOW_INCR_VERSION} facts ${id} elf=${elf}", ktags, ksrcs, jobs)
   // ELF: an ELF part's scan reads the labels without the xo_ prefix that
   // every part defines (hollow_extra), so each part's are kept by its text
   // and a facts entry is keyed by its text and the hash of them all

@@ -74,6 +74,10 @@ pub struct Program {
   pub part_mismatches: List[Int] = []
   /// the parts' entries written to files instead (decision 0418)
   pub spills: List[Spill] = []
+  /// per part of parts: a text that fixes its text, "" for none
+  /// (part_tags): the driver keys a part's hollow facts by it instead of
+  /// hashing the part's text
+  pub part_tags: List[Str] = []
 }
 
 /// The program's whole assembly: asm, or its parts joined.

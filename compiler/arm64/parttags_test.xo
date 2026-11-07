@@ -1,0 +1,35 @@
+// part_tags (partcache.xo): the tag that keys a part's hollow facts in
+// place of its text fixes the text, so every input of drop_weak_all
+// besides the part's entry changes it.
+
+fn tags_cache() -> FnCache { FnCache{part_keys: ["k0", "", "k2"]} }
+
+test "a part with a key is tagged, the rest and the last file are not" {
+  let t = part_tags(tags_cache(), 3, 4, {"_xo_e": true}, "darwin", {})
+  expect(t.len()) == 4
+  expect(t[0].starts_with("part k0 ")) == true
+  expect(t[1]) == ""
+  expect(t[2].starts_with("part k2 ")) == true
+  expect(t[3]) == ""
+}
+
+test "the same inputs give the same tags" {
+  let a = part_tags(tags_cache(), 3, 4, {"_xo_e": true, "_xo_f": true}, "linux", {"memcpy": "xo_w64_memcpy"})
+  let b = part_tags(tags_cache(), 3, 4, {"_xo_f": true, "_xo_e": true}, "linux", {"memcpy": "xo_w64_memcpy"})
+  expect(a) == b
+}
+
+test "the exports, the os and the windows retargets each change a tag" {
+  let base = part_tags(tags_cache(), 3, 4, {"_xo_e": true}, "linux", {})
+  expect(part_tags(tags_cache(), 3, 4, {"_xo_e": true, "_xo_g": true}, "linux", {})[0] != base[0]) == true
+  expect(part_tags(tags_cache(), 3, 4, {}, "linux", {})[0] != base[0]) == true
+  expect(part_tags(tags_cache(), 3, 4, {"_xo_e": true}, "darwin", {})[0] != base[0]) == true
+  expect(part_tags(tags_cache(), 3, 4, {"_xo_e": true}, "linux", {"memcpy": "xo_w64_memcpy"})[0] != base[0]) == true
+}
+
+test "no tags under verify or without part keys" {
+  var v = tags_cache()
+  v.verify = true
+  expect(part_tags(v, 3, 4, {}, "linux", {}).len()) == 0
+  expect(part_tags(FnCache{}, 3, 4, {}, "linux", {}).len()) == 0
+}

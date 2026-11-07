@@ -21,6 +21,39 @@ use github.com/xo-lang/xo/compiler/ssa
 
 const PART_CACHE_VERSION = "xo part cache v7"
 
+/// Per file of a program of np parts and n files: for part p with a part
+/// cache key, "part KEY DIGEST", which fixes the file's text: the part's
+/// text is its entry's (the part cache's premise: a key's text is the
+/// same however it is made; verify checks it) after drop_weak_all, whose
+/// inputs are the exports, the target os and the windows retargets
+/// (DIGEST hashes them); "" for every other file (the program's last one,
+/// a part with no key, any part under verify). The driver keys a part's
+/// hollow facts by it in place of the part's text, which every warm
+/// build hashed again (2026-11-07: about 4% of a warm build's CPU).
+pub fn part_tags(fc: FnCache, np: Int, n: Int, exports: Map[Str, Bool], os: Str, win: Map[Str, Str]) -> List[Str] {
+  var out: List[Str] = []
+  if fc.verify || fc.part_keys.is_empty() {
+    return out
+  }
+  var ex: List[Str] = []
+  for (k, _) in exports {
+    ex.push(k)
+  }
+  var wl: List[Str] = []
+  for (k, v) in win {
+    wl.push("${k.len()}:${k}=${v.len()}:${v}")
+  }
+  let dig = crypto.sha256("${PART_TAG_VERSION}\n${os}\n${ex.sort().join("\n")}\n--\n${wl.sort().join("\n")}".bytes()).to_hex()
+  for i in 0..n {
+    let k = if i < np && i < fc.part_keys.len() { fc.part_keys[i] } else { "" }
+    out.push(if k.is_empty() { "" } else { "part ${k} ${dig}" })
+  }
+  out
+}
+
+/// part_tags' version: changed when what fixes a file's text changes.
+const PART_TAG_VERSION = "xo part tag v1"
+
 /// The key of each part of m for os from the functions' keys (fkeys,
 /// fcache.xo function_keys), "" for a part with a function not cached;
 /// [] when the module is not split or fkeys is [].
