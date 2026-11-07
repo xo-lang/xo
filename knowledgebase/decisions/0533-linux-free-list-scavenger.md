@@ -172,7 +172,8 @@ new, base; busy -> 75 s -> 150 s KiB, AnonHugePages in brackets):
 So the collapses are in ranges the age passes never gave back, which the base shows as often:
 advising the given-back ranges does not stop them, and the step only adds VMAs. Idle RSS under
 THP `always` with khugepaged's max_ptes_none 511 is the host's and the heap's mappings' question,
-not the scavenger's: decision 0454 (XO_THP's default) or host tuning, as Go's GC guide advises
+not the scavenger's: XO_THP's default (`dense` on Linux, decision 0456, which every "THP as the host
+has it" row above ran under; `off` is decision 0454's) or host tuning, as Go's GC guide advises
 (max_ptes_none 0, or GODEBUG=disablethp=1). With XO_THP=off no run re-inflated (0 of 8, above).
 
 ## Alternatives

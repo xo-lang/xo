@@ -19,7 +19,9 @@ range given back with MADV_DONTNEED stays eligible, so the collapse undoes
 the release; a sparsely touched range that was never given back is filled
 the same way.
 
-Fix: measure RSS rows with `XO_THP=off` beside the default (decision 0454:
+Fix: measure RSS rows with `XO_THP=off` beside the default (`dense`,
+decision 0456, whose chunks take huge pages once a heap record fills
+2 MiB; `off` is decision 0454's:
 MADV_NOHUGEPAGE on every heap mapping). With it no run re-inflated (0 of
 8) and AnonHugePages stayed 0. Read `anon_huge_kib` in the harness's
 mem.txt and samples.csv before calling an idle rise a leak. Decision 0533's
