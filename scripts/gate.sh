@@ -353,6 +353,18 @@ llvm_step() {
 llvm_done=0
 has_llvm=0
 for s in "$@"; do [ "$s" = llvm ] && has_llvm=1; done
+# repo: internal/repotest, the fast repo checks pushq runs before a push
+# (about 20 s), first in every gate unless short (which includes it) is
+# named; XO_GATE_REPO=0 skips it (lead, 2026-11-06 bottleneck review:
+# pushq refused 14 pushes in 3 hours on TestStdAPICovered,
+# TestThirdPartyOrigins, TestWasmUnsupportedListsNetGoldens,
+# TestOutsideBytesValidated, TestStdGenCurrent and TestWaitsClassified,
+# each found only after a whole gate had passed)
+has_short=0
+for s in "$@"; do [ "$s" = short ] && has_short=1; done
+if [ "${XO_GATE_REPO:-1}" != 0 ] && [ "$has_short" = 0 ]; then
+  full repo ./internal/repotest
+fi
 for step in "$@"; do
   case $step in
   short)
