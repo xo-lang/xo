@@ -3535,7 +3535,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
       return open_mem(c, req, raw)
     }
     // FakeNet: the whole response, read as a stream
-    let resp = send_mem(src_whole(req)?, raw)?
+    let resp = send_mem(src_whole(req)?, raw, c.roots)?
     let st = StreamState{conn: None, h2: None, read: http1.BodyRead{mode: 0, done: true}, https: false, addr: "", name: "", roots: c.roots, buffered: resp.body, off: 0, gz: None, pending: b"", done: false, idle_ns: 0}
     return Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: resp.status, headers: resp.headers}, st: Mutex[StreamState].new(st)}))
   }
@@ -3992,7 +3992,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   }
   if testworld.fake(4) {
     // FakeNet (a test without `uses net` and `xo test --real`)
-    return send_mem(src_whole(req)?, raw)
+    return send_mem(src_whole(req)?, raw, c.roots)
   }
   if wasiworld.component() && c.cert is Some(_) {
     return Err(http.ClientErr.Connect(msg: "a wasi:http component's host does TLS: with_cert has no place to go"))
@@ -4037,7 +4037,7 @@ fn open_mem(c: Client, req: Request, raw: Str) -> http.ClientStream ! http.Clien
   let q = req with {src: [], values: [ReqValue{name: STREAM_BODY, v: rt.any_of(body)}]}
   let ds = hserve.srv_new()
   let g = hserve.srv_group(ds)
-  g.spawn_background(fn() { mem_serve(q, raw, m) })
+  g.spawn_background(fn() { mem_serve(q, raw, m, c.roots) })
   let h = m.head.recv() ?? MemHead{status: 0, headers: {}, err: Some(http.ClientErr.Canceled)}
   if let Some(e) = h.err {
     close_src(req.src)
@@ -4050,8 +4050,8 @@ fn open_mem(c: Client, req: Request, raw: Str) -> http.ClientStream ! http.Clien
 
 /// The handler's side of open_mem: the response head at once, then the
 /// stream function's writes (or the whole body) as chunks, then the end.
-fn mem_serve(req: Request, raw: Str, m: MemOut) {
-  match send_mem(req, raw, true) {
+fn mem_serve(req: Request, raw: Str, m: MemOut, roots: rthttp.Roots) {
+  match send_mem(req, raw, roots, true) {
     Ok(resp0) => {
       let resp = rt.cast[http.Response, Response](resp0)
       m.head.send(MemHead{status: resp.status, headers: resp.headers, err: None})
@@ -4077,9 +4077,16 @@ fn mem_serve(req: Request, raw: Str, m: MemOut) {
   m.chunks.close()
 }
 
-fn send_mem(req0: Request, raw: Str, streamed: Bool = false) -> http.Response ! http.ClientErr {
-  // the handler sees the Host a real server would
-  let req = if req0.host_over.is_empty() { req0 } else { req0 with {raw_host: req0.host_over} }
+fn send_mem(req0: Request, raw: Str, roots: rthttp.Roots, streamed: Bool = false) -> http.Response ! http.ClientErr {
+  // the handler sees the Host a real server would: the request's own, else the URL's authority (Go's Request.Host)
+  var authority = req0.url.host
+  if authority.contains(":") {
+    authority = "[" + authority + "]"
+  }
+  if let Some(p) = req0.url.port {
+    authority = authority + ":${p}"
+  }
+  let req = if !req0.host_over.is_empty() { req0 with {raw_host: req0.host_over} } else { req0 with {raw_host: authority} }
   testworld.record(rt.any_of(req))
   for i in 0..testworld.fake_count(1) {
     if fake_match(1, i, req, raw) is Some(_) {
@@ -4103,10 +4110,29 @@ fn send_mem(req0: Request, raw: Str, streamed: Bool = false) -> http.Response ! 
     }
   }
   if best >= 0 {
-    if let Some(h) = rt.any_get[fn(Request) -> http.Response](testworld.fake_value(0, best)) {
+    let hv = testworld.fake_value(0, best)
+    var handler = rt.any_get[fn(Request) -> http.Response](hv)
+    var q = req with {params: best_params}
+    if handler is None {
+      // handle_tls (decision 0544): an https request is first checked as a handshake with the certificate would be
+      if let Some(t) = rt.any_get[testworld.FakeTlsH](hv) {
+        handler = rt.any_get[fn(Request) -> http.Response](t.h)
+        if req.url.scheme.to_lower() == "https" {
+          if let Some(cert) = rt.any_get[tls.TlsCert](t.cert) {
+            let why = tlsio.fake_verify(rt.obj_addr(roots), ntls.cert_data(cert).certs, req.url.host)
+            if !why.is_empty() {
+              return Err(http.ClientErr.Connect(msg: why))
+            }
+            let sni = tlsio.fake_sni(rt.obj_addr(roots), req.url.host)
+            q = q with {over_tls: true, tls_neg: [tlsneg.Negotiated{version: "TLS 1.3", cipher: "TLS_AES_128_GCM_SHA256", server_name: sni, resumed: false}]}
+          }
+        }
+      }
+    }
+    if let Some(h) = handler {
       // an http.stream body is made here, as Router.call does; open_mem
       // (streamed) runs it as chunks
-      let resp = h(req with {params: best_params})
+      let resp = h(q)
       return Ok(if streamed { resp } else { collect(resp) })
     }
   }

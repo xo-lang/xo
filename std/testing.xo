@@ -11,6 +11,7 @@
 use std/http
 use std/log
 use std/sql
+use std/tls
 use std/task
 
 struct TestOs {
@@ -45,6 +46,11 @@ fn (n: FakeNet) lookup_host(host: Str) -> List[Str] ! NetErr uses net.dial   // 
 fn (n: FakeNet) interfaces() -> List[NetInterface] ! NetErr uses net.listen   // decision 0426: one loopback, "lo"
 fn (n: FakeNet) only(hosts: List[Str]) -> Net
 fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response)
+/// Like handle for an https pattern, with the certificate the server presents: a request it matches first runs the
+/// client's checks against `cert` as a real handshake would (the roots, the server name, `with_verify`,
+/// `with_verify_conn`, with the handshake's error texts) and fails before the handler when one refuses; the handler's
+/// `tls_state()` reports the server name the client sent (decision 0544).
+fn (n: FakeNet) handle_tls(pattern: Str, cert: tls.TlsCert, h: fn(http.Request) -> http.Response)
 /// Every matching request fails with err, until clear_failures. The handler is skipped, so it never sees the
 /// request: use requests() to see what was sent.
 fn (n: FakeNet) fail(pattern: Str, err: http.ClientErr)

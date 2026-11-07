@@ -1,6 +1,6 @@
 # 0544: FakeNet TLS: handle_tls runs the client's certificate checks in memory
 
-Status: Proposed (Xo Lang 3, 2026-11-07; requested by Xo Azure 1 to test azidentity's Service Fabric thumbprint pin, whose wrong-pin case needs a client check that FakeNet never ran)
+Status: Accepted (owner, 2026-11-07; Xo Lang 3; requested by Xo Azure 1 to test azidentity's Service Fabric thumbprint pin, whose wrong-pin case needs a client check that FakeNet never ran)
 
 ## Context
 
@@ -21,7 +21,7 @@ request it matches, FakeNet first runs the client's checks against `cert` and on
 
 A failed check fails the request with the text of the real handshake (`ClientErr.Connect`) before the handler runs, and the
 request is not recorded as delivered. The handler's `req.tls_state()` reports `server_name` (the SNI the client sent),
-`version` "TLS 1.3", the cipher suite and the peer certificates (`cert`'s chain). A plain `handle` on an `https` URL keeps
+`version` "TLS 1.3" and the cipher suite (`peer_certificates` stays empty: it is the client's, as on a real server). A plain `handle` on an `https` URL keeps
 today's behavior (no checks). FakeNet handlers' `req.host()` defaults to the URL's host and port.
 
 ## Consequences

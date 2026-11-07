@@ -155,16 +155,16 @@ func (n *onlyNet) isFake() bool {
 	return ok && fd.isFake()
 }
 
-func (n *onlyNet) dispatch(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
-	return n.inner.(fakeDispatcher).dispatch(tk, req, rawURL)
+func (n *onlyNet) dispatch(tk *Task, c Http_Client, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
+	return n.inner.(fakeDispatcher).dispatch(tk, c, req, rawURL)
 }
 
 func (n *onlyNet) serveScope(tk *Task, req Http_Request) *Scope {
 	return n.inner.(fakeDispatcher).serveScope(tk, req)
 }
 
-func (n *onlyNet) dispatchRaw(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
-	return n.inner.(fakeDispatcher).dispatchRaw(tk, req, rawURL)
+func (n *onlyNet) dispatchRaw(tk *Task, c Http_Client, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
+	return n.inner.(fakeDispatcher).dispatchRaw(tk, c, req, rawURL)
 }
 
 // httpDenied is the error of an HTTP request a client's attenuated Net

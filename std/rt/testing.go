@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -913,6 +914,8 @@ type fakeHandler struct {
 	r      *route
 	rest   string // the path pattern as written
 	h      func(*Task, Http_Request) Result[Http_Response, Never]
+	// handle_tls (decision 0544): the certificate an https request is checked against
+	cert *tls.Certificate
 }
 
 type fakeFail struct {
@@ -1101,14 +1104,14 @@ func matchFake(method, prefix string, r *route, req Http_Request, rawURL string)
 }
 
 // dispatch serves a client request in process.
-func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
-	return f.dispatchWith(tk, req, rawURL, false)
+func (f Testing_FakeNet) dispatch(tk *Task, c Http_Client, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
+	return f.dispatchWith(tk, c, req, rawURL, false)
 }
 
 // dispatchRaw is dispatch whose served router's streamed response is left
 // to the caller to run (Client.open of a duplex request).
-func (f Testing_FakeNet) dispatchRaw(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
-	return f.dispatchWith(tk, req, rawURL, true)
+func (f Testing_FakeNet) dispatchRaw(tk *Task, c Http_Client, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
+	return f.dispatchWith(tk, c, req, rawURL, true)
 }
 
 // serveScope is the scope of the listener serving req's address, once its
@@ -1137,9 +1140,12 @@ func (f Testing_FakeNet) serveScope(tk *Task, req Http_Request) *Scope {
 	return srv.sc
 }
 
-func (f Testing_FakeNet) dispatchWith(tk *Task, req Http_Request, rawURL string, raw bool) Result[Http_Response, Http_ClientErr] {
+func (f Testing_FakeNet) dispatchWith(tk *Task, c Http_Client, req Http_Request, rawURL string, raw bool) Result[Http_Response, Http_ClientErr] {
 	tk.Yield()
 	n := f.n
+	if req.XHost == "" {
+		req.XHost = fakeAuthority(req.F_url)
+	}
 	n.mu.Lock()
 	n.reqs = append(n.reqs, req)
 	for i, fl := range n.fails {
@@ -1176,6 +1182,13 @@ func (f Testing_FakeNet) dispatchWith(tk *Task, req Http_Request, rawURL string,
 	}
 	n.mu.Unlock()
 	if best != nil {
+		if best.cert != nil && strings.EqualFold(req.F_url.F_scheme, "https") {
+			why, st := fakeTLS(tk, c, req, best.cert)
+			if why != "" {
+				return Err[Http_Response](clientErr(2, why))
+			}
+			req.XTLS, req.XTLSState = true, st
+		}
 		req.XParams = params
 		return Ok[Http_Response, Http_ClientErr](best.h(tk, req).V)
 	}

@@ -372,6 +372,82 @@ fn system_certs(cell: Int) -> List[x509.Cert] {
   rt.any_get[List[x509.Cert]](rt.obj_at[rt.Any](a)) ?? []
 }
 
+/// The checks of a real handshake for the client with roots against the server chain ders (FakeNet.handle_tls,
+/// decision 0544), for a request to host: the chain against the roots and the name (as the mode says), then the verify
+/// hook. The text of the failure, "" when the connection would be made. The server name the client sends is sni_of.
+pub fn fake_verify(roots: Int, ders: List[Bytes], host: Str) -> Str {
+  let data = match roots_data(roots) {
+    Some(d) => d
+    None => RootsData{certs: [], err: "", system: true}
+  }
+  if data.verify == VERIFY_NONE && data.vconn.is_none() {
+    return "tls: Verify.None needs a verify_conn (an unverified connection must be pinned)"
+  }
+  var certs: List[x509.Cert] = []
+  for d in ders {
+    let p = x509.parse(d)
+    if p.err != "" {
+      return "tls: failed to parse certificate from server: ${p.err}"
+    }
+    certs.push(p.cert)
+  }
+  if certs.is_empty() {
+    return "tls: received empty certificates message"
+  }
+  if data.verify != VERIFY_NONE {
+    var rootc = data.certs
+    if data.system {
+      rootc = []
+      for der in tlscert.system_ders() {
+        let p = x509.parse(der)
+        if p.err == "" {
+          rootc.push(p.cert)
+        }
+      }
+    }
+    let name = fake_name(data, host)
+    let why = tls13.chain_text(certs[0], certs[1..certs.len()], rootc, if data.verify == VERIFY_CHAIN { "" } else { name }, sysio.real_ns() / 1000000000)
+    if !why.is_empty() {
+      return why
+    }
+  }
+  if let Some(vf) = data.vconn {
+    let why = vf(ders)
+    if !why.is_empty() {
+      return why
+    }
+  }
+  ""
+}
+
+/// The name the client verifies and sends for a request to host: its server name, else the URL's host without brackets.
+fn fake_name(data: RootsData, host: Str) -> Str {
+  var name = if data.sni.is_empty() { host } else { data.sni }
+  if name.len() >= 2 && name.starts_with("[") && name.ends_with("]") {
+    name = raw.str_slice(name, 1, name.len() - 1)
+  }
+  name
+}
+
+/// The server name a client with roots sends (SNI) for a request to host: "" for an IP address.
+pub fn fake_sni(roots: Int, host: Str) -> Str {
+  let data = match roots_data(roots) {
+    Some(d) => d
+    None => RootsData{certs: [], err: "", system: true}
+  }
+  let name = fake_name(data, host)
+  if name.contains(":") {
+    return ""
+  }
+  var digits = !name.is_empty()
+  for c in name.bytes() {
+    if c != 46 && (c < 48 || c > 57) {
+      digits = false
+    }
+  }
+  if digits { "" } else { name }
+}
+
 /// The outcome of a handshake: CC_*, the connection (0 on a failure),
 /// the ClientErr tag of a failure (2 Connect for a server's alert, else
 /// 4 Protocol) and its text.

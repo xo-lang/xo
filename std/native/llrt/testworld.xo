@@ -1289,6 +1289,12 @@ fn fake_free(e: Int) {
   rt.heap_release(e - 8)
 }
 
+/// A FakeNet.handle_tls handler (decision 0544): the handler and its certificate, as kept values.
+pub struct FakeTlsH {
+  pub h: rt.Any
+  pub cert: rt.Any
+}
+
 /// FakeNet.handle: method ("" any), the URL prefix ("" any), the path
 /// pattern, and the handler.
 pub fn fake_handle(method: Str, prefix: Str, path: Str, h: rt.Any) { fake_add(0, method, prefix, path, h, false) }

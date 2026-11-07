@@ -2716,12 +2716,22 @@ library given `os.net.only([...])` fails with `Denied` elsewhere.
 fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response)
     // pattern: "[METHOD ]<absolute url pattern>", e.g. "GET https://api.test/users/{id}"
     // a second handle with the same method, URL prefix and path pattern replaces the first (last wins; Go's ServeMux panics)
+fn (n: FakeNet) handle_tls(pattern: Str, cert: tls.TlsCert, h: fn(http.Request) -> http.Response)
+    // handle for https with the server's certificate: the client's checks run first (decision 0544)
 fn (n: FakeNet) fail(pattern: Str, err: http.ClientErr)       // every matching request, until clear_failures
 fn (n: FakeNet) fail_next(pattern: Str, err: http.ClientErr)  // the next matching request only
 fn (n: FakeNet) clear_failures()
 fn (n: FakeNet) requests() -> List[http.Request]     // every request seen, including failed ones
 ```
 
+- `handle_tls` runs, for an `https` request it matches, the checks of a real handshake for the client against `cert`
+  before the handler: the chain against the client's roots (`with_roots`, else the system's) and the name against the
+  leaf (the URL's host, or `with_server_name`), as `with_verify` allows (`Verify.None` skips both and needs a
+  `with_verify_conn`, `ChainOnly` skips the name), then `with_verify_conn`. A refusal fails the request with
+  `ClientErr.Connect` and the handshake's text before the handler runs. The handler's `req.tls_state()` is `Some` with
+  version "TLS 1.3", the cipher suite and `server_name` (the SNI the client sent, "" for an IP address); a plain `handle`
+  on an `https` URL is not checked. A FakeNet handler's `req.host()` is the request's own (`with_host`), else the URL's
+  host and port as written (Go's `Request.Host`; decision 0544).
 - `http.client(os.net)` calls registered handlers in process. Unhandled
   requests fail with `ClientErr.Connect("no fake handler for GET ...")`.
 - `os.net.listen(":0")` gives an in memory listener, so a real `http.server`

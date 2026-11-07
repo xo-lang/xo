@@ -1,0 +1,79 @@
+// FakeNet.handle_tls (decision 0544): an https request runs the client's checks (roots, server name, with_verify,
+// with_verify_conn) against the handler's certificate before the handler, with the handshake's error texts; the handler's
+// tls_state() reports the server name the client sent; a FakeNet handler's host() is the URL's authority.
+use std/http
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn err_text(r: Result[http.Response, http.ClientErr]) -> Str {
+  match r {
+    Ok(resp) => "ok ${resp.status} ${resp.text() ?? "?"}"
+    Err(e) => "${e}"
+  }
+}
+
+test "handle_tls checks the client against the certificate before the handler" {
+  let now = os.clock.now()
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let t = x509.Template{subject: x509.Name{common_name: "api.test"}, not_before: now - 1h, not_after: now + 87600h, dns_names: ["api.test"], key_usage: [x509.KeyUsage.DigitalSignature], ext_key_usage: [x509.ExtKeyUsage.ServerAuth]}
+  let cert = x509.create_certificate(os.rand, t, key.public_key(), None, key).or_fault("cert")
+  let pair = tls.cert(cert.pem(), pem_block("PRIVATE KEY", crypto.marshal_private_key(key))).or_fault("pair")
+  let hits = Atomic[Int].new(0)
+  os.net.handle_tls("GET https://api.test/hi", pair, fn(r: http.Request) -> http.Response {
+    let _n = hits.add(1)
+    let sni = match r.tls_state() {
+      Some(s) => s.server_name
+      None => "no tls"
+    }
+    http.text(200, "sni=${sni} host=${r.host()}")
+  })
+  let base = http.client(os.net)
+  let trusted = base.with_roots(cert.pem()).or_fault("roots")
+  expect(err_text(trusted.get("https://api.test/hi"))) == "ok 200 sni=api.test host=api.test"
+  expect(hits.get()) == 1
+  // untrusted: the system roots do not hold the certificate
+  expect(err_text(base.get("https://api.test/hi")).contains("certificate signed by unknown authority")) == true
+  // the name: the server name set on the client is verified in place of the URL's host
+  expect(err_text(trusted.with_server_name("other.test").get("https://api.test/hi")).contains("other.test")) == true
+  expect(hits.get()) == 1
+  // the mode: ChainOnly skips the name, None skips everything but must be pinned
+  expect(err_text(trusted.with_server_name("other.test").with_verify(tls.Verify.ChainOnly).get("https://api.test/hi"))) == "ok 200 sni=other.test host=api.test"
+  expect(err_text(base.with_verify(tls.Verify.None).get("https://api.test/hi")).contains("Verify.None needs a verify_conn")) == true
+  let sha256 = crypto.digest(crypto.Hash.Sha256, cert.raw).to_hex()
+  let pinned = base.with_verify(tls.Verify.None).with_verify_conn(tls.pin_sha256(sha256).or_fault("pin"))
+  expect(err_text(pinned.get("https://api.test/hi"))) == "ok 200 sni=api.test host=api.test"
+  let before = hits.get()
+  let wrong = base.with_verify(tls.Verify.None).with_verify_conn(tls.pin_sha256("00".repeat(32)).or_fault("pin"))
+  expect(err_text(wrong.get("https://api.test/hi")).contains("does not match the pin")) == true
+  expect(hits.get()) == before
+  // an own verify hook sees the chain
+  let seen = Atomic[Int].new(0)
+  let hooked = trusted.with_verify_conn(fn(certs: List[x509.Certificate]) -> () ! Str {
+    if certs.len() == 1 && certs[0].raw == cert.raw {
+      let _n = seen.add(1)
+    }
+    Ok(())
+  })
+  expect(err_text(hooked.get("https://api.test/hi"))) == "ok 200 sni=api.test host=api.test"
+  expect(seen.get()) == 1
+  let refuse = trusted.with_verify_conn(fn(certs: List[x509.Certificate]) -> () ! Str { Err("custom refusal") })
+  expect(err_text(refuse.get("https://api.test/hi")).contains("custom refusal")) == true
+  // a plain handle on an https URL is not checked
+  os.net.handle("GET https://plain.test/hi", fn(r: http.Request) -> http.Response { http.text(200, "plain") })
+  expect(err_text(base.get("https://plain.test/hi"))) == "ok 200 plain"
+}
+
+test "a FakeNet handler's host() is the URL's authority unless the request sets one" {
+  os.net.handle("GET /h", fn(r: http.Request) -> http.Response { http.text(200, r.host()) })
+  let c = http.client(os.net)
+  expect(err_text(c.get("http://one.test/h"))) == "ok 200 one.test"
+  expect(err_text(c.get("http://two.test:8080/h"))) == "ok 200 two.test:8080"
+  let req = http.new_request("GET", "http://one.test/h").with_host("override.test")
+  expect(err_text(c.send(req))) == "ok 200 override.test"
+}

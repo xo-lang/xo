@@ -1,5 +1,19 @@
 # std/testing changes
 
+## 2026-11-07: feature: FakeNet.handle_tls runs the client's TLS checks, and a FakeNet handler's host() is the URL's authority
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (azidentity's Service Fabric wrong-pin case needs the client's pin to run against a FakeNet server), decision 0544
+- Go reference: httptest.NewTLSServer with tls.Config.ServerName, VerifyConnection, InsecureSkipVerify; http.Request.Host
+- Test: golden test_fakenet_tls (go and native `xo test`)
+- Shipped in: not yet released
+
+`os.net.handle_tls(pattern, cert, h)` registers an https handler with the certificate its server presents. A request first
+runs the client's roots, server name, `with_verify` and `with_verify_conn` checks against `cert` with the handshake's error
+texts and fails before the handler when one refuses; the handler's `tls_state()` shows the server name sent. A FakeNet
+handler's `host()` was "" unless the client called `with_host`; it is now the URL's host and port as written.
+
 ## 2026-10-26: fix: timers due at the same instant fire in scheduled order on the Go backend (FakeClock.advance, FakeClock.sleep)
 
 - Kind: fix

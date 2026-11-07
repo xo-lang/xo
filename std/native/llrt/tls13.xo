@@ -868,6 +868,16 @@ fn certificate(var c: Client, msg: Bytes) {
   c.state = WAIT_CV
 }
 
+/// The text of a client's failed verification of a server's chain (FakeNet.handle_tls, decision 0544), "" when it
+/// verifies: leaf and inters against roots for host ("" skips the name), the real handshake's words.
+pub fn chain_text(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int) -> Str {
+  let r = x509verify.verify(leaf, inters, roots, host, now, x509.EKU_SERVER)
+  if r.code == x509verify.OK {
+    return ""
+  }
+  "tls: failed to verify certificate: ${x509verify.full_text_zone(r, leaf, host, now, zone_of(ZONE_LAZY, now))}"
+}
+
 /// The text of x509.Verify's error.
 fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str { x509verify.full_text_zone(r, leaf, vhost(cf), cf.now, zone_of(cf.zone_off, cf.now)) }
 

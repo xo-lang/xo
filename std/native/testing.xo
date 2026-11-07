@@ -8,6 +8,7 @@ use std/http
 use std/log
 use std/path
 use std/sql
+use std/tls
 use std/testing
 use native/llrt/ctx
 use native/llrt/glob
@@ -74,6 +75,11 @@ fn split_fake(pattern: Str) -> (Str, Str, Str) {
 fn fakenet_handle(n: testing.FakeNet, pattern: Str, h: fn(http.Request) -> http.Response) {
   let (method, prefix, path) = split_fake(pattern)
   testworld.fake_handle(method, prefix, path, rt.any_of(h))
+}
+
+fn fakenet_handle_tls(n: testing.FakeNet, pattern: Str, cert: tls.TlsCert, h: fn(http.Request) -> http.Response) {
+  let (method, prefix, path) = split_fake(pattern)
+  testworld.fake_handle(method, prefix, path, rt.any_of(testworld.FakeTlsH{h: rt.any_of(h), cert: rt.any_of(cert)}))
 }
 
 fn fakenet_fail(n: testing.FakeNet, pattern: Str, err: http.ClientErr) {

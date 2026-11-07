@@ -133,7 +133,7 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 	if fd, ok := c.net.(fakeDispatcher); ok && fd.isFake() {
 		// the head at once, then the body as the handler writes it (an
 		// http.stream's flushes arrive one by one), a source body or not
-		return openMem(tk, fd, req, rawURL)
+		return openMem(tk, c, fd, req, rawURL)
 	}
 	return fx(tk, "http.open", true, func() []any { return []any{req.F_method, rawURL} }, func() Result[Http_ClientStream, Http_ClientErr] {
 		body, cancel, head, trailer, e := c.openNet(tk, req, rawURL)
@@ -334,7 +334,7 @@ func (w memChunkWriter) Write(p []byte) (int, error) {
 // request body, so it answers while the sender still writes, and the head
 // and the body chunks come back through channels, so the test scheduler's
 // record and replay hold (issue 9, 2026-11-04).
-func openMem(tk *Task, fd fakeDispatcher, req Http_Request, rawURL string) Result[Http_ClientStream, Http_ClientErr] {
+func openMem(tk *Task, c Http_Client, fd fakeDispatcher, req Http_Request, rawURL string) Result[Http_ClientStream, Http_ClientErr] {
 	src := req.XSrc
 	if src == nil {
 		src = strings.NewReader(string(req.F_body))
@@ -350,7 +350,7 @@ func openMem(tk *Task, fd fakeDispatcher, req Http_Request, rawURL string) Resul
 		sc = NewScope(tk)
 	}
 	Spawn(tk, sc, func(tk *Task) Result[Unit, IoErr] {
-		r := fd.dispatchRaw(tk, req, rawURL)
+		r := fd.dispatchRaw(tk, c, req, rawURL)
 		if !r.Ok {
 			Chan_send(tk, headCh, memHead{failed: true, err: r.E})
 		} else {
