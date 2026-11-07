@@ -88,3 +88,64 @@ pub fn sha1_ni_lines(st: Str, p: Str) -> List[Str] {
   }
   t + ["pextrd $3, %xmm2, %r11d", "movq %r11, 32(${st})"]
 }
+
+/// The V registers sha1_a64_loop_lines writes: sha1_a64_lines' (v16 to
+/// v20, v29 to v31) and the state before each block (v21, v22).
+pub fn sha1_a64_loop_vregs() -> List[Int] { [16, 17, 18, 19, 20, 21, 22, 29, 30, 31] }
+
+/// cpu.sha1_blocks on arm64 (as ssa a64sha256.xo for SHA-256): the n
+/// blocks at d, sha1_a64_lines' groups in a loop with abcd in v16 and e in
+/// s17 throughout (the 20 groups end with e in s17 again), the state
+/// before each block in v21 and v22; p and c are scratch registers for
+/// the data pointer and the blocks left.
+pub fn sha1_a64_loop_lines(st: Str, d: Str, n: Str, k: Str, p: Str, c: Str) -> List[Str] {
+  let m = ["v19", "v20", "v29", "v30"]
+  var t: List[Str] = ["ldr q16, [${st}]", "ldr q17, [${st}, #16]", "uzp1 v16.4s, v16.4s, v17.4s", "ldr d17, [${st}, #32]"]
+  t = t + ["mov ${p}, ${d}", "mov ${c}, ${n}", "cbz ${c}, 2f", "1:", "mov v21.16b, v16.16b", "mov v22.16b, v17.16b", "ldp q19, q20, [${p}], #32", "ldp q29, q30, [${p}], #32"]
+  for w in m {
+    t.push("rev32 ${w}.16b, ${w}.16b")
+  }
+  for i in 0..20 {
+    let w = m[i % 4]
+    let ec = if i % 2 == 0 { 17 } else { 18 }
+    let op = if i < 5 { "sha1c" } else if i >= 10 && i < 15 { "sha1m" } else { "sha1p" }
+    t.push("ldr q31, [${k}, #${16 * (i / 5)}]")
+    t.push("add v31.4s, v31.4s, ${w}.4s")
+    if i < 16 {
+      t.push("sha1su0 ${w}.4s, ${m[(i + 1) % 4]}.4s, ${m[(i + 2) % 4]}.4s")
+    }
+    t.push("sha1h s${35 - ec}, s16")
+    t.push("${op} q16, s${ec}, v31.4s")
+    if i < 16 {
+      t.push("sha1su1 ${w}.4s, ${m[(i + 3) % 4]}.4s")
+    }
+  }
+  // the sums with the state before (e's other lanes stay zero: a scalar
+  // write zeroes them, as ldr d17 did), then the next block
+  t = t + ["add v16.4s, v16.4s, v21.4s", "add v17.4s, v17.4s, v22.4s", "subs ${c}, ${c}, #1", "b.ne 1b", "2:"]
+  t + ["str d17, [${st}, #32]", "ushll v18.2d, v16.2s, #0", "ushll2 v31.2d, v16.4s, #0", "str q18, [${st}]", "str q31, [${st}, #16]"]
+}
+
+/// cpu.sha1_blocks on x86-64: sha1_ni_lines' groups in a loop with abcd
+/// in xmm1 and e in xmm2 throughout, its load, byte reverse mask and
+/// store once; p and c are scratch registers for the data pointer and the
+/// blocks left (r11 stays the lines' own scratch).
+pub fn sha1_ni_loop_lines(st: Str, d: Str, n: Str, p: Str, c: Str) -> List[Str] {
+  let ls = sha1_ni_lines(st, p)
+  var a = -1
+  var b = -1
+  var e = -1
+  for (i, l) in ls.indexed() {
+    if l == "movdqa %xmm1, %xmm9" && a < 0 {
+      a = i
+    } else if l == "movdqu 0(${p}), %xmm4" && b < 0 {
+      b = i
+    } else if l == "paddd %xmm9, %xmm1" && e < 0 {
+      e = i + 1
+    }
+  }
+  if a < 0 || b < a || e < b {
+    fault("sha1_ni_loop_lines: sha1_ni_lines changed shape")
+  }
+  ls[0..a] + ls[a + 2..b] + ["movq ${d}, ${p}", "movq ${n}, ${c}", "testq ${c}, ${c}", "jz 2f", "1:", "movdqa %xmm1, %xmm9", "movdqa %xmm2, %xmm10"] + ls[b..e] + ["addq $64, ${p}", "decq ${c}", "jnz 1b", "2:"] + ls[e..ls.len()]
+}

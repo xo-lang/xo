@@ -8,3 +8,50 @@ test "iterate is sum applied n times" {
   }
   expect(iterate(b"not twenty bytes", 3)) == sum(sum(sum(b"not twenty bytes")))
 }
+
+test "compress_blocks of n blocks is compress n times, at every count and offset" {
+  // the hardware loop (cpu.sha1_blocks on arm64 and x86-64) against one
+  // block a call, from 0 to 9 blocks at offsets 0, 1 and 64, from two
+  // states
+  var bb = BytesBuilder.with_capacity(64 * 10 + 1)
+  var r = 7
+  for _ in 0..(64 * 10 + 1) {
+    r = (r * 1103515245 + 12345) % 2147483648
+    bb.write_byte(UInt8((r >> 16) & 255))
+  }
+  let b = bb.freeze()
+  for start in [new().st, [1, 0xFFFFFFFF, 0x80000000, 0x7FFFFFFF, 0xDEADBEEF]] {
+    for off in [0, 1, 64] {
+      for n in 0..9 {
+        var want = start.map(fn(x: Int) { x })
+        for j in 0..n {
+          compress(want, b, off + 64 * j)
+        }
+        var got = start.map(fn(x: Int) { x })
+        compress_blocks(got, b, off, n)
+        expect(got) == want
+      }
+    }
+  }
+}
+
+test "a Hasher written in pieces sums as one write, for lengths 0 to 700" {
+  var bb = BytesBuilder.with_capacity(700)
+  for i in 0..700 {
+    bb.write_byte(UInt8((i * 31 + 7) & 255))
+  }
+  let b = bb.freeze()
+  for n in [0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 300, 640, 700] {
+    let one = sum(b[0..n])
+    for piece in [1, 7, 64, 100, 257] {
+      var h = new()
+      var i = 0
+      while i < n {
+        let e = if n - i < piece { n } else { i + piece }
+        h.write(b[i..e])
+        i = e
+      }
+      expect(h.sum()) == one
+    }
+  }
+}

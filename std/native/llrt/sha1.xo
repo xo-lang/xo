@@ -113,6 +113,24 @@ fn be32_slow(b: Bytes, i: Int) -> Int { Int(b[i]).wrapping_shl(24) | Int(b[i + 1
 /// The bytes lo..hi of b after a.
 fn cat(a: Bytes, b: Bytes, lo: Int, hi: Int) -> Bytes { rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(a.len() + hi - lo), a, 0, a.len(), 0), b, lo, hi, 0).bytes() }
 
+/// compress of the n blocks of b from i: with the CPU's instructions one
+/// cpu.sha1_blocks call (a loop with the state in registers).
+fn compress_blocks(var st: List[Int], b: Bytes, i: Int, n: Int) {
+  if n > 1 && target.arch != TargetArch.Wasm32 && (cpu.hw() & cpu.HW_SHA1) != 0 {
+    // as compress: an index store first, so the raw writes change only st
+    st[0] = st[0]
+    cpu.sha1_blocks(rt.obj_addr(st).wrapping_add(rt.layout(2)), raw.bytes_addr(b).wrapping_add(i), n, raw.bytes_addr(K1))
+    keep(b)
+    keep_ints(st)
+    return
+  }
+  var j = 0
+  while j < n {
+    compress(st, b, i + BLOCK * j)
+    j += 1
+  }
+}
+
 /// Hashes data after what was written.
 pub fn (var h: Hasher) write(data: Bytes) {
   let n = data.len()
@@ -129,6 +147,13 @@ pub fn (var h: Hasher) write(data: Bytes) {
     }
     compress(st, held, 0)
     h.held = b""
+  }
+  // two blocks or more in one loop; one (an HMAC pad, a short write) as
+  // before, with no extra call
+  let nb = (n - i) / BLOCK
+  if nb > 1 {
+    compress_blocks(st, data, i, nb)
+    i += nb * BLOCK
   }
   while n - i >= BLOCK {
     compress(st, data, i)

@@ -298,6 +298,7 @@ The remaining step 2 candidates (2026-11-07, host 1, --ab against main):
 | find_byte 32 byte steps | rt.bytes_skip32(b, i, to, c): the 32 byte steps of find_byte as one kernel (arm64 9 instructions a step where the loop around rt.bytes_any_eq32 took 15; x86-64 SSE2; LLVM an IR loop; wasm a loop over $bytes_any_eq32) | with find_byte on it (branch lang1-skip32, 0ff2882ae): simdscan index_byte 0.912 (0.857 to 0.948, n=6), index_byte_64 0.889 (0.86 to 0.899, n=6), find_rare and find_common within noise; the codegen pushed, find_byte moves after the next seed (std/native/scan.xo is in the self build) |
 | png up-unfilter | the row buffer as a Bytes written by address, the up filter a word at a time | 0.975 (0.962 to 0.985); dropped: std/png also builds on the Go backend from std/native/png.xo (std/go_compiled.txt), which has no raw addresses or rt intrinsics, and inflate is most of decode (branch lang1-pngup) |
 | SHA-256 over many blocks | cpu.sha256_blocks: one loop with the state in registers (arm64 SHA2, x86-64 SHA-NI), where each block was a call that saved and packed the state | simdscan sha256 0.884 (0.871 to 0.894, n=6); x86-64 (amd64 host, SHA-NI) 0.79 of main by medians of 9 runs; pushed |
+| SHA-1 over many blocks | cpu.sha1_blocks: one loop with abcd and e in registers (arm64 SHA1, x86-64 SHA-NI), as SHA-256 | simdscan sha1 0.884 (0.873 to 0.899, n=6), perf/sha1 (sums and HMAC-SHA1) 0.977 (0.973 to 0.984); x86-64 (amd64 host, SHA-NI) 74 to 64 ms, 0.86 of main by medians of 9 runs; pushed |
 
 ## Consequences
 

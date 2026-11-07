@@ -11,6 +11,7 @@
 - - base64_dec
 - - crc32
 - - sha256
+- - sha1
 - - fold
 - - fold_32
 - - lower

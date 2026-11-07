@@ -1988,6 +1988,34 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.sha1_blocks" if g.x86 => {
+      // ssa.sha1_ni_loop_lines: r9 and r10 its pointer and count, xmm0
+      // to xmm10 clobbered (r11 is the emitter's scratch); $u3, the
+      // round constants, is unused (SHA1RNDS4 has its own)
+      var cl = [9, 10]
+      for r in 0..11 {
+        cl.push(FP_BASE + r)
+      }
+      var us: List[Int] = []
+      for a in x.args {
+        us.push(g.real(g.word(a)))
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha1_ni_loop_lines("$u0", "$u1", "$u2", "%r9", "%r10").join("\n"), us: us, fl: IF_X86, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
+    "rt.sha1_blocks" => {
+      // ssa.sha1_a64_loop_lines: $u0 the state, $u1 the data, $u2 the
+      // blocks, $u3 the round constants; x9 and x10 its pointer and count,
+      // its V registers clobbered
+      var cl = [9, 10]
+      for r in ssa.sha1_a64_loop_vregs() {
+        cl.push(FP_BASE + r)
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha1_a64_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.ghash_blocks" => {
       // ssa.ghash_loop_lines: $u0 the state, $u1 the H powers, $u2 the
       // data, $u3 its length; x9 and x10 its pointer and count, its V

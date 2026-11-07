@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-07: perf: SHA-1 hashes many blocks in one loop
+
+- Kind: perf
+- Commit: this push
+- Found by: SHA-256's blocks loop the same day (the same per-block call cost)
+- Go reference: crypto/sha1 sha1block_arm64.s and sha1block_amd64.go (go1.26.1; one routine over every block)
+- Test: std/native/llrt/sha1_test.xo (compress_blocks against compress at 0 to 8 blocks, three offsets, two states; a Hasher written in pieces against one write); crypto and pkcs12 tests on arm64, LLVM and amd64 (SHA-NI natively); sha and crypto goldens on arm64, LLVM and wasm
+- Timing: bench/perf/simdscan sha1, linux/arm64 host 1, xo bench --ab against main: 0.884 (0.873 to 0.899, n=6; better); bench/perf/sha1 0.977 (0.973 to 0.984, n=6; better); linux/amd64 (SHA-NI) simdscan sha1 74 to 64 ms, 0.86, by medians of 9 alternating runs
+- Shipped in: not yet released
+
+A run of whole blocks (sha1 sums, a Hasher's write, HMAC-SHA1) goes to cpu.sha1_blocks: on arm64 and x86-64 (native and LLVM) one loop with the state in vector registers, where each block was a call that saved the vector registers and packed and unpacked the state; wasm and an older xo a block at a time as before. A write of one block (an HMAC pad) calls the one-block routine as before: the loop cost a call there (perf/sha1 was 1.022 of main before this).
+
 ## 2026-11-07: perf: SHA-256 hashes many blocks in one loop on arm64
 
 - Kind: perf

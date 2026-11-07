@@ -192,6 +192,13 @@ fn main(os: Os) {
         }
       }
     }
+    "sha1" => {
+      for _ in 0..passes / 8 {
+        for b in big {
+          sum += Int(crypto.digest(crypto.Hash.Sha1, b)[0])
+        }
+      }
+    }
     "find_common" => {
       // an absent needle whose first byte is a common letter (a start
       // to test every 26 bytes) and one whose first byte never occurs

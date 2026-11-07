@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -246,6 +247,13 @@ func main() {
 		for p := 0; p < passes/8; p++ {
 			for _, b := range big {
 				h := sha256.Sum256(b)
+				sum += int(h[0])
+			}
+		}
+	case "sha1":
+		for p := 0; p < passes/8; p++ {
+			for _, b := range big {
+				h := sha1.Sum(b)
 				sum += int(h[0])
 			}
 		}
