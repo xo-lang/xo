@@ -1,0 +1,4 @@
+# twincheck: jsonmap: Go's encoding/json sorts a map's keys too (decision 0543); the same three workloads.
+- - small
+- - large
+- - none

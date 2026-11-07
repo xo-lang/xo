@@ -1200,6 +1200,24 @@ pub fn sorted_order(keys: List[Str], live: List[Bool]) -> List[Int] {
     }
     i += 1
   }
+  let n = idx.len()
+  if n <= 16 {
+    // a small Map: insertion sort in place on the entry numbers, comparing the keys where they are (no key list, no
+    // closure, linear for keys that already come in order)
+    var i = 1
+    while i < n {
+      let x = idx[i]
+      let kx = keys[x]
+      var j = i
+      while j > 0 && keys[idx[j - 1]] > kx {
+        idx[j] = idx[j - 1]
+        j -= 1
+      }
+      idx[j] = x
+      i += 1
+    }
+    return idx
+  }
   idx.sort_by(fn(a: Int) -> Str { keys[a] })
 }
 
