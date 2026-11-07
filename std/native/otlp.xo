@@ -5,6 +5,7 @@ use std/http
 use std/metrics
 use std/otlp
 use std/protobuf
+use std/time
 use std/trace
 
 // Field writers: each takes the builder and gives it back (the put functions of std/protobuf); a scalar or
@@ -297,12 +298,19 @@ fn exporter_with_backoff(e: otlp.Exporter, b: backoff.Backoff) -> otlp.Exporter 
 
 fn retryable(status: Int) -> Bool { status == 429 || status == 502 || status == 503 || status == 504 }
 
-/// The seconds of a Retry-After value (the HTTP date form is not read), 0 when absent or not a number.
-fn retry_after(resp: http.Response) -> Int {
-  let v = resp.header("Retry-After") ?? return 0
-  match Int.parse(v.trim()) {
+/// The seconds a Retry-After value asks for: a number of seconds, or an HTTP date (RFC 9110) counted from
+/// `now`; 0 when absent, in the past or not understood.
+fn retry_after(resp: http.Response, now: Time) -> Int {
+  let v = (resp.header("Retry-After") ?? return 0).trim()
+  match Int.parse(v) {
     Some(n) => if n > 0 { n } else { 0 }
-    None => 0
+    None => match time.RFC1123_LAYOUT.parse(v, time.utc()) {
+      Ok(t) => {
+        let d = t.unix() - now.unix()
+        if d > 0 { d } else { 0 }
+      }
+      Err(_) => 0
+    }
   }
 }
 
@@ -334,7 +342,7 @@ fn post(e: otlp.Exporter, path: Str, body: Bytes) -> () ! otlp.ExportErr uses ne
       return Err(otlp.ExportErr.GaveUp(status: resp.status, tries: tries))
     }
     let wait = e.backoff.delay(tries - 1, e.rand)
-    let asked = Duration.from_secs_int(retry_after(resp))
+    let asked = Duration.from_secs_int(retry_after(resp, e.clock.now()))
     e.clock.sleep(if asked > wait { asked } else { wait })
   }
   Ok(())

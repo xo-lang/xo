@@ -1,6 +1,8 @@
 // Vectors by hand from opentelemetry-proto (trace.proto, common.proto, resource.proto); the generated corpus
 // (internal/stdtest/testdata/corpus/otlp) compares against protobuf-go.
+use std/http
 use std/otlp
+use std/time
 use std/trace
 
 test "trace ids: 32 hex digits are kept, other text is hashed" {
@@ -14,4 +16,16 @@ test "trace ids: 32 hex digits are kept, other text is hashed" {
 test "a span repeated after a retry has the same ids" {
   let s = trace.Span{id: "r1", name: "db", start_ms: 5, micros: 7, status: 0}
   expect(otlp.encode_traces(otlp.Resource{service: "x"}, [s])) == otlp.encode_traces(otlp.Resource{service: "x"}, [s])
+}
+
+test "retry-after: seconds, an HTTP date, and values that are ignored" {
+  let now = Time.from_unix(1700000000)
+  let with = fn(v: Str) -> http.Response { http.Response{status: 503, headers: {"Retry-After": v}, body: b""} }
+  expect(retry_after(with("7"), now)) == 7
+  expect(retry_after(with("-3"), now)) == 0
+  expect(retry_after(with("soon"), now)) == 0
+  // 1700000000 is Tue, 14 Nov 2023 22:13:20 GMT
+  expect(retry_after(with("Tue, 14 Nov 2023 22:13:50 GMT"), now)) == 30
+  expect(retry_after(with("Tue, 14 Nov 2023 22:13:00 GMT"), now)) == 0
+  expect(retry_after(http.Response{status: 503, headers: {}, body: b""}, now)) == 0
 }
