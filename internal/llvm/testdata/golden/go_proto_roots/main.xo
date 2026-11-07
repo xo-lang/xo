@@ -67,6 +67,25 @@ struct Loc {
 
 type Code struct(Loc)
 
+// reached only as the element a list searches for (the runtime's
+// List_contains and List_index_of compare with Eq)
+struct Wanted {
+  id: Int
+}
+
+struct Spot {
+  name: Str
+}
+
+// reached only through an unconstrained type parameter that is compared
+struct Plain {
+  v: Int
+}
+
+fn alike[T](x: T, y: T) -> Bool {
+  x == y
+}
+
 fn main(os: Os) {
   let o1 = Outer{name: "a", inner: Inner{tags: ["x", "y"]}}
   let o2 = Outer{name: "a", inner: Inner{tags: ["x", "y"]}}
@@ -93,4 +112,9 @@ fn main(os: Os) {
   seen.add(Code(Loc{line: 1}))
   seen.add(Code(Loc{line: 2}))
   os.stdio.println("codes: ${seen.len()} ${seen.contains(Code(Loc{line: 2}))}")
+  let ws = [Wanted{id: 1}, Wanted{id: 2}]
+  os.stdio.println("wanted: ${ws.contains(Wanted{id: 2})} ${ws.contains(Wanted{id: 3})}")
+  let sp = [Spot{name: "a"}, Spot{name: "b"}]
+  os.stdio.println("spot: ${sp.index_of(Spot{name: "b"}) ?? -1}")
+  os.stdio.println("plain: ${alike(Plain{v: 1}, Plain{v: 1})} ${alike(Plain{v: 1}, Plain{v: 2})}")
 }

@@ -7,4 +7,7 @@ named: true false
 boxed: true false
 unused: 7
 codes: 2 true
+wanted: true false
+spot: 1
+plain: true false
 --- stderr

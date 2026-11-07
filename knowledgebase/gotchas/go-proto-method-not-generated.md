@@ -1,6 +1,8 @@
 # Go backend: "xo internal: XoEq not generated for T"
 
-Status: Anticipated (2026-11-07, decision 0542)
+Status: Observed (2026-11-07, decision 0542: `xs.contains(x)` and
+`xs.index_of(x)` on a list of a user struct faulted on main c2f2c5617; the
+prelude's element searches were not roots)
 
 Symptom: a program built with `--backend=go` faults at run time with
 `xo internal: XoEq not generated for main.T (decision 0542; XO_GO_PROTO=all

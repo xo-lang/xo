@@ -48,9 +48,16 @@ fn (var g: Gen) proto_close_method() {
 
 /// Records t as a root of the protocols in bits.
 fn (var g: Gen) proto_root(t: Int, bits: Int) {
-  if t >= 0 {
-    g.proto_roots[t] = (g.proto_roots.get(t) ?? 0) | bits
+  if t < 0 {
+    return
   }
+  if g.c.tys[g.c.resolve(t)].kind == check.TyKind.Param {
+    // a generic body Go compiles once (past MAX_SPECS_PER_FUNC copies)
+    // compares or hashes values of any type its callers pass
+    g.proto_all = g.proto_all | bits
+    return
+  }
+  g.proto_roots[t] = (g.proto_roots.get(t) ?? 0) | bits
 }
 
 /// Whether the method bit of object o is written: XO_GO_PROTO=all, a
@@ -79,10 +86,19 @@ fn (var g: Gen) proto_call_roots() {
                   g.proto_root(t, P_GEN)
                 }
               }
+              // the prelude's element searches compare with the runtime's Eq
+              // (std/rt list.go List_contains, List_index_of)
+              if fo >= 0 && g.oprelude(fo) && g.oname(fo) is "contains" | "index_of" {
+                for (_, t) in ci.subst {
+                  g.proto_root(t, P_EQ)
+                }
+              }
               // a constrained type parameter's argument may be compared
               // or hashed in the callee (std's hand written ones too)
               for (p, t) in ci.subst {
-                if p >= 0 && g.c.objs[p].constraint >= 0 {
+                // (a type parameter passed on is constrained too, and its
+                // own callers' arguments are roots of their own)
+                if p >= 0 && g.c.objs[p].constraint >= 0 && g.c.tys[g.c.resolve(t)].kind != check.TyKind.Param {
                   g.proto_root(t, P_EQ | P_HASH)
                 }
               }
