@@ -19,6 +19,7 @@ use native/llrt/crashfile
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/heapos
+use native/llrt/ints
 use native/llrt/linux
 use native/llrt/obj
 use native/llrt/poll
@@ -26,6 +27,7 @@ use native/llrt/pool
 use native/llrt/poolsetup
 use native/llrt/process
 use native/llrt/prof
+use native/llrt/rand
 use native/llrt/raw
 use native/llrt/stdio
 use native/llrt/stop
@@ -233,6 +235,15 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   match target.os {
     TargetOs.Windows => win_start(argc, argv, envp)
     _ => process.start(argc, argv, envp)
+  }
+  // the Str hash's seed (decision 0545), before any map is built:
+  // XO_HASH_SEED's digits (a run to reproduce, a profile), else the
+  // system generator's
+  let hseed = process.env_real_at("XO_HASH_SEED")
+  if hseed != 0 {
+    ints.seed_hash(seed_digits(hseed))
+  } else {
+    let _ok = rand.system_seed_at(ints.seed_addr())
   }
   // no report reads the allocation counts: the heaps stop keeping them
   // (alloc.xo COUNT; a budget turns them on again)
@@ -714,3 +725,19 @@ pub fn parse_size(s0: Str) -> Int {
   if n < 0 { 0 } else { n * mul }
 }
 
+
+/// The decimal digits at the zero terminated text at a (0 for none; at
+/// most 18, so the value fits an Int).
+fn seed_digits(a: Int) -> Int {
+  var v = 0
+  var i = 0
+  while i < 18 {
+    let c = rt.mem_load(a, i, 1)
+    if c < 48 || c > 57 {
+      return v
+    }
+    v = v * 10 + (c - 48)
+    i += 1
+  }
+  v
+}

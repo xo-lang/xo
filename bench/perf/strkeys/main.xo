@@ -1,0 +1,35 @@
+// strkeys: Str keyed Map puts and lookups (ADR 0545). Usage:
+// `<program> short|hex|hdr` (short: 6 to 10 byte keys; hex: 64 byte keys
+// like the compiler's cache keys; hdr: 16 HTTP header names looked up
+// over and over). Prints `<workload> <count>`.
+fn hexkey(i: Int) -> Str {
+  var s = ""
+  var x = i.wrapping_mul(-7046029254386353131)
+  for _k in 0..4 {
+    s = "${s}${x}0000000000000000"
+    x = x.wrapping_mul(-7046029254386353131) ^ i
+  }
+  s[0..64]
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "short"
+  var keys: List[Str] = []
+  if w == "hex" {
+    for i in 0..20000 { keys.push(hexkey(i)) }
+  } else if w == "hdr" {
+    for k in ["Host", "User-Agent", "Accept", "Accept-Encoding", "Accept-Language", "Connection", "Content-Length", "Content-Type", "Cookie", "Authorization", "Cache-Control", "If-None-Match", "Referer", "Origin", "X-Request-Id", "X-Forwarded-For"] { keys.push(k) }
+  } else {
+    for i in 0..20000 { keys.push("k${i}") }
+  }
+  var count = 0
+  let rounds = if w == "hdr" { 200000 } else { 40 }
+  for _r in 0..rounds {
+    var m: Map[Str, Int] = {}
+    for i in 0..keys.len() { m[keys[i]] = i }
+    for k in keys {
+      if let Some(v) = m.get(k) { count += v & 1 }
+    }
+  }
+  os.stdio.println("${w} ${count}")
+}

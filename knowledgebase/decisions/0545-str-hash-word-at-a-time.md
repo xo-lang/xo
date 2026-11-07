@@ -1,7 +1,8 @@
 # 0545: Str keys hashed a word at a time
 
-Status: Proposed (Xo Lang 4, 2026-11-07; the lead approved this ADR and a
-prototype on a branch; the change waits for the owner).
+Status: Accepted (the owner, 2026-11-07: (a) with the seed; Xo Lang 4).
+Landed as l4-strhash-final's (a) v2 with the allocation-free seed; (b)
+became decision 0552, accepted the same day.
 
 ## Context
 

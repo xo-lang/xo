@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: perf, security: a Str Map key or Set element hashes eight bytes per multiply, from a per-process seed (decision 0545)
+
+- Kind: perf, security
+- Commit: this push
+- Found by: a 10 kHz profile of 20 warm builds of http_server_request (ints.str_hash 6.8% of the CPU, decision 0545's Context)
+- Go reference: runtime/hash64.go memhash (a word per multiply, a per-process seed against hash flooding)
+- Test: std prelude tests; internal/arm64 TestGoldenRun; the LLVM map goldens; TestSelfhostWasm's map, set, str, json and conc goldens
+- Timing: bench/perf/strkeys, linux/arm64 host 1, xo bench --ab against FNV-1a: hex (64 byte keys) 0.458, hdr (HTTP header names) 0.875, short (2 to 6 bytes) 0.942; the self build 0.990 (decision 0545's Results)
+- Shipped in: not yet released
+
+str_hash (std/native/llrt/ints.xo, and compiler/wasm's $str_hash) mixes a word per multiply instead of decision 0072's FNV-1a byte per multiply: a key under 8 bytes is one word of fixed loads, a longer key's tail its last 8 bytes shifted past the bytes already mixed. The start is folded with a seed read once at the process's start from the system's generator (Linux's AT_RANDOM bytes, else getrandom; darwin's getentropy; wasm's random_get at the first hash), so colliding keys cannot be computed offline; XO_HASH_SEED=N fixes it for reproducing a run. Map and Set iterate in insertion order, so no output depends on the values.
+
 ## 2026-11-07: perf: Str.quote and the Debug text of a Str skip printable ASCII 32 bytes a step
 
 - Kind: perf

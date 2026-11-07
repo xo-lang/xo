@@ -46,6 +46,27 @@ fn entropy(n: Int) -> Bytes {
   b
 }
 
+/// 8 bytes of the system's generator, the first lowest, even in a test
+/// binary (the Str hash's seed, entry.xo start).
+pub fn system_u64() -> Int { rt.bytes_word(entropy(8), 0) }
+
+/// 8 bytes of the system's generator written at addr, with no allocation
+/// (the Str hash's seed at the process's start, entry.xo; system_u64's
+/// Bytes there cost a small program 1.2 MB of resident memory): Linux's
+/// AT_RANDOM bytes, else getrandom; darwin's getentropy. False when the
+/// system gave none (the word is left as it was).
+pub fn system_seed_at(addr: Int) -> Bool {
+  match source() {
+    1 => linux.random_at(addr)
+    2 => darwin.random_at(addr)
+    3 => {
+      rt.mem_store(addr, 0, system_u64(), 8)
+      true
+    }
+    _ => false
+  }
+}
+
 /// A random word: the test world's seeded generator in a test binary,
 /// else 8 bytes of the system's, the first lowest.
 pub fn next_u64() -> Int {

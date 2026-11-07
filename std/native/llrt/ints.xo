@@ -17,6 +17,16 @@ use native/rt
 
 const MIN_INT: Int = -9223372036854775807 - 1
 
+/// rt.static_word: the Str hash's seed (decision 0545).
+const HSEED = 100
+
+/// Sets the Str hash's seed: once, at the process's start, before any
+/// map is built (entry.xo start).
+pub fn seed_hash(s: Int) { rt.mem_store(rt.static_word(HSEED), 0, s, 8) }
+
+/// The seed's word, for rand.system_seed_at to fill in place.
+pub fn seed_addr() -> Int { rt.static_word(HSEED) }
+
 /// The Xo name of the integer type of bits and uns (n_int_name).
 fn type_name(bits: Int, uns: Int) -> Str {
   if bits == 8 {
@@ -127,31 +137,40 @@ pub fn floor_div(a: Int, b: Int) -> Int {
   q
 }
 
-/// The hash of a Str Map key or Set element (decision 0072): FNV-1a over
-/// the bytes, then a final mix (xo_str_hash), eight bytes a word.
+/// The hash of a Str Map key or Set element (decision 0545;
+/// was decision 0072's FNV-1a, a multiply per byte): a multiply per
+/// eight byte word, the last 1 to 7 bytes as one more word, the length
+/// in the start, then decision 0072's final mix. Map and Set iterate in
+/// insertion order, so no output depends on these values.
 pub fn str_hash(s: Str) -> Int {
   let b = s.bytes()
   let n = b.len()
-  var h = 1469598103934665603
-  var i = 0
-  while i + 8 <= n {
-    let w = rt.bytes_word(b, i)
-    h = (h ^ (w & 0xFF)).wrapping_mul(1099511628211)
-    h = (h ^ ((w >> 8) & 0xFF)).wrapping_mul(1099511628211)
-    h = (h ^ ((w >> 16) & 0xFF)).wrapping_mul(1099511628211)
-    h = (h ^ ((w >> 24) & 0xFF)).wrapping_mul(1099511628211)
-    h = (h ^ ((w >> 32) & 0xFF)).wrapping_mul(1099511628211)
-    h = (h ^ ((w >> 40) & 0xFF)).wrapping_mul(1099511628211)
-    h = (h ^ ((w >> 48) & 0xFF)).wrapping_mul(1099511628211)
-    h = (h ^ ((w >> 56) & 0xFF)).wrapping_mul(1099511628211)
-    i += 8
-  }
-  while i < n {
-    h = (h ^ Int(b[i])).wrapping_mul(1099511628211)
-    i += 1
+  let k = -7046029254386353131
+  var h = (1469598103934665603 ^ rt.mem_load(rt.static_word(HSEED), 0, 8)) ^ n.wrapping_shl(56)
+  if n < 8 {
+    var w = 0
+    if n >= 4 {
+      w = Int(b[0]) | Int(b[1]).wrapping_shl(8) | Int(b[2]).wrapping_shl(16) | Int(b[3]).wrapping_shl(24) | Int(b[n - 4]).wrapping_shl(32) | Int(b[n - 3]).wrapping_shl(40) | Int(b[n - 2]).wrapping_shl(48) | Int(b[n - 1]).wrapping_shl(56)
+    } else if n > 0 {
+      w = Int(b[0]) | Int(b[n >> 1]).wrapping_shl(8) | Int(b[n - 1]).wrapping_shl(16)
+    }
+    h = (h ^ w).wrapping_mul(k)
+    h = h ^ h.shr_logical(32)
+  } else {
+    var i = 0
+    while i + 8 <= n {
+      h = (h ^ rt.bytes_word(b, i)).wrapping_mul(k)
+      h = h ^ h.shr_logical(32)
+      i += 8
+    }
+    if i < n {
+      // the last 8 bytes, overlapping the last whole word; keep the new ones
+      h = (h ^ rt.bytes_word(b, n - 8).shr_logical((8 - (n - i)) * 8)).wrapping_mul(k)
+      h = h ^ h.shr_logical(32)
+    }
   }
   h = h ^ h.shr_logical(31)
-  h = h.wrapping_mul(-7046029254386353131)
+  h = h.wrapping_mul(k)
   h ^ h.shr_logical(29)
 }
 

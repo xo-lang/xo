@@ -417,6 +417,10 @@ pub fn clock_ns(id: Int) -> Int {
   rt.mem_load(buf, 0, 8) * 1000000000 + rt.mem_load(buf, 8, 8)
 }
 
+/// 8 random bytes at addr with no allocation (getentropy); false on
+/// failure.
+pub fn random_at(addr: Int) -> Bool { ret(Int(sys_darwin.getentropy(addr, 8))) >= 0 }
+
 /// getentropy(2) of n bytes, 256 at a time (as the C runtime's
 /// cr_entropy did): the bytes and 0, or the errno.
 pub fn random(n: Int) -> (Bytes, Int) {

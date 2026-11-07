@@ -339,6 +339,19 @@ pub fn futex(addr: Int, op: Int, val: Int, timeout: Int) -> Int {
 /// exit_group(2): ends the process with status code.
 pub fn exit_group(code: Int) -> Int { rt.sys6(nr(94, 231), code, 0, 0, 0, 0, 0) }
 
+/// 8 random bytes at addr with no allocation: the kernel's AT_RANDOM
+/// bytes (16 at process start), else one getrandom; false on failure.
+pub fn random_at(addr: Int) -> Bool {
+  if auxv_kept() {
+    let r = auxval(25)
+    if r != 0 {
+      rt.mem_store(addr, 0, rt.mem_load(r, 0, 8) ^ rt.mem_load(r, 8, 8), 8)
+      return true
+    }
+  }
+  rt.sys6(nr(278, 318), addr, 8, 0, 0, 0, 0) == 8
+}
+
 /// getrandom(2) of n bytes (blocking until the pool is ready, as the C
 /// runtime's getentropy and getrandom): the bytes and 0, or the errno.
 pub fn random(n: Int) -> (Bytes, Int) {
