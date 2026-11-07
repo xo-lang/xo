@@ -38,7 +38,9 @@ test "handle_tls checks the client against the certificate before the handler" {
   expect(err_text(trusted.get("https://api.test/hi"))) == "ok 200 sni=api.test host=api.test"
   expect(hits.get()) == 1
   // untrusted: the system roots do not hold the certificate
-  expect(err_text(base.get("https://api.test/hi")).contains("certificate signed by unknown authority")) == true
+  // the text is the platform verifier's: Go on macOS reports "not standards compliant"
+  let untrusted = err_text(base.get("https://api.test/hi"))
+  expect(untrusted.contains("certificate signed by unknown authority") || untrusted.contains("not standards compliant") || untrusted.contains("not trusted")) == true
   // the name: the server name set on the client is verified in place of the URL's host
   expect(err_text(trusted.with_server_name("other.test").get("https://api.test/hi")).contains("other.test")) == true
   expect(hits.get()) == 1

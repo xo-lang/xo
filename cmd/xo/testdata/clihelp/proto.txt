@@ -1,0 +1,6 @@
+usage: xo proto gen [--out=<dir>] <file.proto...>
+
+Generate Xo source from .proto files (decision 0530): the messages, enums
+and oneofs of proto3 and proto2 files become structs and enums with derive
+Proto, written to <dir>/<name>.xo, or to standard output for one file
+without --out. Services and imports are not generated.
