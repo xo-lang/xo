@@ -1657,10 +1657,14 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
   var sh_segs: List[Str] = []
   var sh_held = 0
   if sh_on {
-    var need: Map[Str, Bool] = {}
-    for (k, _) in want {
-      if !entries.contains(k) && !neg.contains(k) {
-        need[k] = true
+    // want itself when nothing was found or listed (rc, inl and sum,
+    // which the shared pack alone holds: a copy of 3,500 keys each)
+    var need: Map[Str, Bool] = if entries.is_empty() && neg.is_empty() { want } else { {} }
+    if !entries.is_empty() || !neg.is_empty() {
+      for (k, _) in want {
+        if !entries.contains(k) && !neg.contains(k) {
+          need[k] = true
+        }
       }
     }
     if !need.is_empty() {
@@ -1874,9 +1878,10 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], src: StoreSrc) {
   }
   var used: List[(Str, Bytes)] = []
   var extra: List[(Str, Bytes)] = []
-  var seen: Map[Str, Bool] = {}
+  // the hits are entries' keys: a set of them cost a put each on every
+  // build (2026-11-07 profile, with cache_get_packed's sets 2.4% of a
+  // warm build)
   for (k, b) in entries {
-    seen[k] = true
     // an entry the shared pack served stays there: copying it into every
     // build target's pack wrote the same entries once per target (a
     // compiler build target: 443 MB of inl, rc, fe and sum segments, and
@@ -1897,7 +1902,7 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], src: StoreSrc) {
   // skips the seen and the repeats)
   var nnew = 0
   for (k, _) in src.keys() {
-    if !seen.contains(k) {
+    if !entries.contains(k) {
       nnew += 1
     }
   }
@@ -1914,12 +1919,12 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], src: StoreSrc) {
         old += fi.size
       }
     }
-    pack_write_src(os, p, used, src, seen, old)
+    pack_write_src(os, p, used, src, entries, old)
     for s in p.segs {
       os.fs.remove("${p.dir}/${s}").ignore_err("another build compacted it")
     }
   } else if !extra.is_empty() || nnew > 0 {
-    pack_write_src(os, p, extra, src, seen, 0)
+    pack_write_src(os, p, extra, src, entries, 0)
   }
 }
 
@@ -1953,21 +1958,21 @@ fn pack_write_counted(os: Os, p: Pack, items: List[(Str, Bytes)], replaced: Int)
 /// spilled part's entries are read as the writer reaches them); counts for
 /// the prune only the bytes past replaced (the segments a compaction
 /// removes).
-fn pack_write_src(os: Os, p: Pack, items: List[(Str, Bytes)], src: StoreSrc, skip: Map[Str, Bool], replaced: Int) {
+fn pack_write_src(os: Os, p: Pack, items: List[(Str, Bytes)], src: StoreSrc, skip: Map[Str, Bytes], replaced: Int) {
   var w = seg_begin(os, p) ?? return
   for (k, b) in items {
     w.add(os, k, b)
   }
-  var seen = skip
+  var seen: Map[Str, Bool] = {}
   for (k, b) in src.mem {
-    if !seen.contains(k) {
+    if !skip.contains(k) && !seen.contains(k) {
       seen[k] = true
       w.add(os, k, b)
     }
   }
   for (path, ranges) in src.spills {
     for (k, b) in spill_items(os, path, ranges) {
-      if !seen.contains(k) {
+      if !skip.contains(k) && !seen.contains(k) {
         seen[k] = true
         w.add(os, k, b)
       }

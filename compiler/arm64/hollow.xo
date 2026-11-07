@@ -346,7 +346,9 @@ pub fn hollow_live(facts: List[HFacts], elf: Bool) -> List[List[Bool]] {
     total += f.chunks.len()
   }
   var by_name: Map[Str, Int] = {}
-  var roots: Map[Str, Bool] = if elf { {"main": true, "_start": true} } else { {"_main": true} }
+  // a list: a name twice is marked once (live), and a set of every
+  // part's roots cost a put each on every build (2026-11-07 profile)
+  var roots: List[Str] = if elf { ["main", "_start"] } else { ["_main"] }
   var dwarf_names: Map[Str, Bool] = {}
   for (pi, f) in facts.indexed() {
     for (name, ci) in f.names {
@@ -356,7 +358,7 @@ pub fn hollow_live(facts: List[HFacts], elf: Bool) -> List[List[Bool]] {
     }
     for r in f.roots {
       if !is_marker(r) {
-        roots[r] = true
+        roots.push(r)
       }
     }
     for d in f.dwarf {
@@ -375,7 +377,7 @@ pub fn hollow_live(facts: List[HFacts], elf: Bool) -> List[List[Bool]] {
     }
   }
   var work: List[Int] = []
-  for (s, _) in roots {
+  for s in roots {
     if let Some(ci) = by_name.get(s) {
       if !live[ci] {
         live[ci] = true
