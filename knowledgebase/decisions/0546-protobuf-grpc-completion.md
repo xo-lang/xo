@@ -1,6 +1,13 @@
 # 0546: Protobuf and gRPC to full coverage: ProtoJSON, reflection and health, gRPC-Web, conformance and interop, speed against Go
 
-Status: Proposed (Xo Lang 3, 2026-11-07; requested by the owner through the Lead; design only, no code until the owner accepts)
+Status: Accepted (owner, 2026-11-07, "I'm good with your recommendations"; Xo Lang 3 drafted; requested by the owner through the Lead)
+
+Owner's answers to the open questions (2026-11-07):
+
+1. Conformance runner: approved. The protobuf release is downloaded and `conformance_test_runner` built on an offload host as a plain or bulk job, in a directory the builder owns (not /work/in); the release version and its sha256 are recorded in this decision when the build is done.
+2. gRPC-Web (item 6): dropped for now; recorded as deferred.
+3. Text format (item 3): out for now.
+4. Timing targets (item 9): unary within 1.5x and streaming within 1.2x of grpc-go as the first bar, parity as the later goal.
 
 ## Context
 
@@ -47,7 +54,7 @@ and any gRPC-Web implementation.
    of messages marshaled both ways, byte identical output (Go randomizes whitespace in `protojson`; the corpus uses
    `Multiline: false` and compares after `json.Compact`, as protojson's own tests do) and equal decoded messages for hand
    written and random JSON inputs, with the rejected inputs matched by error class.
-3. **Text format** (`std/prototext`) is out of scope except what the conformance suite requires (item 7), as an optional
+3. **Text format** (`std/prototext`) is out for now (owner, 2026-11-07), except what the conformance suite requires (item 7), as an optional
    stage at the end.
 4. **gRPC completion** in std/grpc: response headers and trailing metadata on both ends (`call.header()`, `call.trailer()`,
    `ctx.set_header`, `ctx.set_trailer`), `grpc-status-details-bin` as a `google.rpc.Status` with typed details (needs
@@ -59,7 +66,7 @@ and any gRPC-Web implementation.
    the descriptors registered by the generated code, so `grpcurl list`, `describe` and calls by name work against an Xo
    server. Oracle: grpc-go's `health` and `reflection` client packages (and their tests' expectations) against the Xo
    server; grpc-go servers against Xo's clients.
-6. **gRPC-Web** (cheap, kept in): `application/grpc-web` and `application/grpc-web+proto` on the same Server (trailers as a
+6. **gRPC-Web** (deferred by the owner, 2026-11-07; kept here for when it returns): `application/grpc-web` and `application/grpc-web+proto` on the same Server (trailers as a
    body frame with the 0x80 flag, no HTTP trailers, text mode with base64), plus CORS preflight left to the app's router.
    Server side first; a client for browsers is not Xo's job. There is no offline Go implementation to differ against, so the
    proof is the published protocol document (PROTOCOL-WEB.md): byte exact vectors written by hand from it, plus a
@@ -107,7 +114,7 @@ and any gRPC-Web implementation.
 - New std modules: protodesc, protojson, grpc/health, grpc/reflection (and prototext only if item 3 is taken), each with the
   std module bar (ADR, change log, coverage row, spec section, differential, fuzz, timing row).
 - `xo proto gen` grows from message structs to services and descriptors; generated files change shape once, early.
-- The owner's go is needed for exactly one thing: fetching and building Google's conformance runner.
+- The owner approved (2026-11-07) fetching and building Google's conformance runner on an offload host; gRPC-Web and text format are out for now.
 - Cost: large (protojson alone is about the size of protobuf's wire layer); the order above makes each step usable
   (reflection and ProtoJSON unlock the GCP SDK work first).
 
@@ -123,7 +130,7 @@ and any gRPC-Web implementation.
   cases of item 8 are the contract.
 - **gRPC-Web through an envoy style proxy**: rejected, it is a small framing difference on the same Server.
 
-## Open questions for the owner
+## Open questions for the owner (answered 2026-11-07, see the Status)
 
 - The conformance runner download and build (item 7): approve fetching the protobuf release on an offload host?
 - Keep gRPC-Web (item 6) or drop it?
