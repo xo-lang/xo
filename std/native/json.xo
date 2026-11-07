@@ -57,7 +57,9 @@ fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
     return Some(json.Value.Bool(b: k == 2))
   }
   if k == 3 {
-    if jsontext.int_ok(src, tape, i) {
+    // the text "-0" is a Num: an Int has no sign of zero, as Go's float64 keeps it
+    let neg_zero = tape[i + 2] == 2 && src[tape[i + 1]] == 45 && src[tape[i + 1] + 1] == 48
+    if !neg_zero && jsontext.int_ok(src, tape, i) {
       return Some(json.Value.Int(n: jsontext.int_at(src, tape, i)))
     }
     let f = jsontext.float_opt(src, tape, i) ?? return None
@@ -158,14 +160,15 @@ fn to_value[T: Json](v: T) -> json.Value { rtjson.json_val(v) }
 /// The Value of a Float field: null for NaN and the infinities (the
 /// encoder's text), an Int for a whole number above Int's minimum and
 /// below 2^63 (its text has no point; the text of -2^63 reads back as a
-/// Num, the parse's own bound), else the Num (the shortest text reads
+/// Num, the parse's own bound; -0 is a Num, written "-0"), else the Num (the shortest text reads
 /// back exactly).
 fn val_float(f: Float) -> json.Value {
   let d = f - f
   if d != d {
     return json.Value.Null
   }
-  if f.trunc() == f && f > -9223372036854775808.0 && f < 9223372036854775808.0 {
+  // -0 stays a Num: an Int has no sign of zero, and the encoder writes "-0"
+  if f.trunc() == f && f > -9223372036854775808.0 && f < 9223372036854775808.0 && !(f == 0.0 && f.to_bits() != 0) {
     return json.Value.Int(n: Int(f))
   }
   json.Value.Num(n: f)

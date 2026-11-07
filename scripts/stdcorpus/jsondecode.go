@@ -51,7 +51,8 @@ func xoCanonicalValue(v any) (string, error) {
 		return strconv.FormatBool(x), nil
 	case json.Number:
 		s := x.String()
-		if !strings.ContainsAny(s, ".eE") {
+		// "-0" stays a Num (negative zero), as json.Value keeps it
+		if !strings.ContainsAny(s, ".eE") && s != "-0" {
 			if n, err := strconv.ParseInt(s, 10, 64); err == nil {
 				return strconv.FormatInt(n, 10), nil
 			}
@@ -150,7 +151,8 @@ func xoCanonicalTokens(dec *json.Decoder) (string, error) {
 		}
 	case json.Number:
 		s := t.String()
-		if !strings.ContainsAny(s, ".eE") {
+		// "-0" stays a Num (negative zero), as json.Value keeps it
+		if !strings.ContainsAny(s, ".eE") && s != "-0" {
 			if n, err := strconv.ParseInt(s, 10, 64); err == nil {
 				return strconv.FormatInt(n, 10), nil
 			}
@@ -537,7 +539,7 @@ struct Patched {
 
 	// Value: the texts std/json reads into a Value, and the ones it refuses.
 	// A canonical text is decision 0299's reading, not Go's, which is why
-	// duplicates, -0 and an exponent all have their own rows.
+	// duplicates and an exponent all have their own rows.
 	type valueRow struct {
 		text string
 		ok   bool
@@ -563,7 +565,7 @@ struct Patched {
 		{text: `{"a":{"b":[true,null,{"c":"d"}]}}`, ok: true},
 		{text: ` {"a" : 1 } `, ok: true},
 		// decision 0299's Int rule and key order
-		{text: `-0`, ok: true, why: "Value's Int rule: -0 is Int 0 and encodes 0, where Go reads float64 and keeps the sign (decision 0299)"},
+		{text: `-0`, ok: true},
 		{text: `1e3`, ok: true, why: "an exponent is a Num: 1e3 is 1000.0 and encodes 1000, where Go with UseNumber keeps the text"},
 		{text: `9223372036854775808`, ok: true, why: "one past Int: a Num, so it encodes as the Float it reads (Go with UseNumber keeps the digits)"},
 		{text: `0.1`, ok: true},

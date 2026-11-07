@@ -210,7 +210,7 @@ const VALUE_CASES: List[(Str, Bool, Str, Str)] = [
   ("{\"a\":1,\"b\":2}", true, "{\"a\":1,\"b\":2}", ""),
   ("{\"a\":{\"b\":[true,null,{\"c\":\"d\"}]}}", true, "{\"a\":{\"b\":[true,null,{\"c\":\"d\"}]}}", ""),
   (" {\"a\" : 1 } ", true, "{\"a\":1}", ""),
-  ("-0", true, "0", "Value's Int rule: -0 is Int 0 and encodes 0, where Go reads float64 and keeps the sign (decision 0299)"),
+  ("-0", true, "-0", ""),
   ("1e3", true, "1000", "an exponent is a Num: 1e3 is 1000.0 and encodes 1000, where Go with UseNumber keeps the text"),
   ("9223372036854775808", true, "9223372036854776000", "one past Int: a Num, so it encodes as the Float it reads (Go with UseNumber keeps the digits)"),
   ("0.1", true, "0.1", ""),

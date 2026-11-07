@@ -519,3 +519,14 @@ camel)` (or snake, pascal, kebab) converts the other fields' keys
 A newtype such as `type Email struct(Str)` as a field of a `derive Json`
 struct was rejected with XO0404; it now encodes and decodes as its
 underlying value on every backend, as core 2.8 says.
+
+## 2026-11-07: fix: a Float -0 stays -0 through to_value and the writer
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Azure 1 (json.json_writer().value(json.to_value(v)) wrote a float -0 as 0, json.encode and Go's encoding/json write -0)
+- Go reference: encoding/json encodes float64 -0 as `-0`
+- Test: internal/stdtest/testdata/corpus/jsontoken ("a Float -0 is written -0 by encode, to_value and the writer")
+- Shipped in: not yet released
+
+`to_value` turned every whole Float into an Int, which has no sign of zero; -0 is now kept as a Num and written `-0`. The text `-0` read into a Value is a Num too (Go's float64 keeps its sign), where it was an Int 0.

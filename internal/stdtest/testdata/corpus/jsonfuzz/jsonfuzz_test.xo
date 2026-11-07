@@ -1971,7 +1971,7 @@ test "json fuzz 176" {
 
 test "json fuzz 177" {
   let got = jf_decode(b"\x0a-0  ")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("\n-0  ")
@@ -2037,7 +2037,7 @@ test "json fuzz 182" {
 
 test "json fuzz 183" {
   let got = jf_decode(b"-0")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("-0")
@@ -2743,7 +2743,7 @@ test "json fuzz 248" {
 
 test "json fuzz 249" {
   let got = jf_decode(b"-0")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("-0")
@@ -3196,7 +3196,7 @@ test "json fuzz 291" {
 
 test "json fuzz 292" {
   let got = jf_decode(b"-0")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("-0")
@@ -6668,7 +6668,7 @@ test "json fuzz 615" {
 
 test "json fuzz 616" {
   let got = jf_decode(b"-0")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("-0")
@@ -6763,7 +6763,7 @@ test "json fuzz 624" {
 
 test "json fuzz 625" {
   let got = jf_decode(b"[\x0d\x0a-0 ,\x09{\x0d\x0a\x22\x5cu0061\x22\x09:false} ]\x09")
-  if got != "ok [i0,{61:f}]" {
+  if got != "ok [d-9223372036854775808,{61:f}]" {
     fault("decode: got " + got)
   }
   let c = jf_compact("[\r\n-0 ,\t{\r\n\"\\u0061\"\t:false} ]\t")
@@ -6814,7 +6814,7 @@ test "json fuzz 629" {
 
 test "json fuzz 630" {
   let got = jf_decode(b"-0")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("-0")
@@ -7725,7 +7725,7 @@ test "json fuzz 714" {
 
 test "json fuzz 715" {
   let got = jf_decode(b"  -0")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("  -0")
@@ -9941,7 +9941,7 @@ test "json fuzz 918" {
 
 test "json fuzz 919" {
   let got = jf_decode(b" -0\x0a")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact(" -0\n")
@@ -10888,7 +10888,7 @@ test "json fuzz 1007" {
 
 test "json fuzz 1008" {
   let got = jf_decode(b"-0\x09")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("-0\t")
@@ -11086,7 +11086,7 @@ test "json fuzz 1025" {
 
 test "json fuzz 1026" {
   let got = jf_decode(b"  -0")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("  -0")
@@ -12102,7 +12102,7 @@ test "json fuzz 1121" {
 
 test "json fuzz 1122" {
   let got = jf_decode(b" -0")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact(" -0")
@@ -12995,7 +12995,7 @@ test "json fuzz 1204" {
 
 test "json fuzz 1205" {
   let got = jf_decode(b"\x0d\x0a-0\x09")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("\r\n-0\t")
@@ -13577,7 +13577,7 @@ test "json fuzz 1258" {
 
 test "json fuzz 1259" {
   let got = jf_decode(b"\x09-0")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("\t-0")
@@ -15877,7 +15877,7 @@ test "json fuzz 1470" {
 
 test "json fuzz 1471" {
   let got = jf_decode(b"  -0\x0d\x0a")
-  if got != "ok i0" {
+  if got != "ok d-9223372036854775808" {
     fault("decode: got " + got)
   }
   let c = jf_compact("  -0\r\n")
@@ -20093,7 +20093,7 @@ test "json fuzz 1862" {
 
 test "json fuzz 1863" {
   let got = jf_decode(b"  [ -0,true]\x0a")
-  if got != "ok [i0,t]" {
+  if got != "ok [d-9223372036854775808,t]" {
     fault("decode: got " + got)
   }
   let c = jf_compact("  [ -0,true]\n")

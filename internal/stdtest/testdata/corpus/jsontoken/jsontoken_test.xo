@@ -2359,3 +2359,14 @@ test "json.TokenReader refuses a token over max_token, and JsonWriter checks num
   u.object_end()
   expect(u.finish().to_str() ?? "") == "{\"k\":{\"<\":1}}"
 }
+
+test "json: a Float -0 is written -0 by encode, to_value and the writer, as encoding/json writes it" {
+  let z = -0.0
+  expect(json.encode(z)) == b"-0"
+  var w = json.json_writer()
+  expect(w.value(json.to_value(z)).is_ok()) == true
+  expect(w.finish().to_str() ?? "") == "-0"
+  var p = json.json_writer()
+  expect(p.value(json.to_value(0.0)).is_ok()) == true
+  expect(p.finish().to_str() ?? "") == "0"
+}

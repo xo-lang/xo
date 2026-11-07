@@ -3,8 +3,8 @@ exit 0
 ints same {i=I-7,u=I5,f=I1,f32=N0.10000000149011612,b=Btrue}
 big same {i=I9223372036854775807,u=N1.8446744073709552e+19,f=N1e+20,f32=I3,b=Bfalse}
 exp same {i=I0,u=N9.223372036854776e+18,f=N1e+21,f32=N1.5,b=Bfalse}
-small same {i=I0,u=I0,f=N1e-07,f32=I0,b=Bfalse}
-negz same {i=I0,u=I0,f=I0,f32=I0,b=Bfalse}
+small same {i=I0,u=I0,f=N1e-07,f32=N-0.0,b=Bfalse}
+negz same {i=I0,u=I0,f=N-0.0,f32=I0,b=Bfalse}
 nan same {i=I0,u=I0,f=null,f32=I0,b=Bfalse}
 inf same {i=I0,u=I0,f=null,f32=I0,b=Bfalse}
 huge same {i=I0,u=I0,f=N9.223372036854776e+18,f32=I0,b=Bfalse}

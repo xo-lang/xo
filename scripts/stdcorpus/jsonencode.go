@@ -309,14 +309,6 @@ struct IntBox {
 		`{"a":1}`, `{"a":1,"b":2}`, `{"a":{"b":[true,null]}}`,
 		`{"a":1,"b":[{"c":"d"}]}`, `[{"a":1},{"a":2}]`}
 	for _, t := range texts {
-		if t == "-0" {
-			// Value's Int rule (decision 0299): a number without a fraction
-			// or exponent that fits an Int is Int, and Int 0 encodes as 0.
-			// Go decodes into float64 instead and keeps the sign, so this is
-			// the one row the two do not share.
-			fmt.Fprintf(&o, "  (%s, %s),\n", xq(t), xq("0"))
-			continue
-		}
 		var v any
 		if err := json.Unmarshal([]byte(t), &v); err != nil {
 			fmt.Fprintf(os.Stderr, "stdcorpus: Go cannot read a json corpus text %q: %v\n", t, err)

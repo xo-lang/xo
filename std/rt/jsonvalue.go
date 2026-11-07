@@ -31,7 +31,7 @@ func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
 	case bool:
 		return Json_Value{Tag: 2, P: Json_Value_Bool{F_b: t}}, nil
 	case json.Number:
-		if n, err := strconv.ParseInt(string(t), 10, 64); err == nil {
+		if n, err := strconv.ParseInt(string(t), 10, 64); err == nil && string(t) != "-0" {
 			return Json_Value{Tag: 3, P: Json_Value_Int{F_n: n}}, nil
 		}
 		f, err := strconv.ParseFloat(string(t), 64)

@@ -247,7 +247,8 @@ func jfRender(v any) string {
 		return "f"
 	case json.Number:
 		t := string(v)
-		if !strings.ContainsAny(t, ".eE") {
+		// "-0" stays a Num (negative zero), as json.Value keeps it
+		if !strings.ContainsAny(t, ".eE") && t != "-0" {
 			if i, err := strconv.ParseInt(t, 10, 64); err == nil {
 				return "i" + strconv.FormatInt(i, 10)
 			}
