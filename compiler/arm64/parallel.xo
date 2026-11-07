@@ -410,6 +410,9 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
     return Program{asm: "", err: "arm64 backend: no main", skipped: []}
   }
   let taken = g.addr_taken
+  // every part's by name (new_gen_named): the shells below keep each
+  // function's index and name
+  let by_name = g.by_name
   let names = part_names(m, plist)
   if m.std_obj {
     // std's object: the program's own functions are its object's
@@ -448,7 +451,7 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
   let w = jobs.min(np)
   if w <= 1 {
     for p in 0..np {
-      parts.push(gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p])))
+      parts.push(gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p]), by_name))
     }
   } else {
     // each task takes the next part until none is left, the largest
@@ -494,7 +497,7 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
               }
             }
             let _up = running.add(1)
-            mine.push((p, gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p]))))
+            mine.push((p, gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p]), by_name)))
             let _down = running.add(-1)
             let _sent = finished.try_send(())
           }
@@ -622,8 +625,8 @@ fn part_key(fc: FnCache, p: Int) -> Str {
 /// namespace ns and its functions numbered from 0, as a file of its own.
 /// With pkey (partcache.xo), the part is read from its entry when the
 /// cache holds one (not with verify), else generated and encoded for it.
-fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: Str, fc: FnCache, pkey: Str, pi: Int, bodies: Map[Int, ssa.Func]) -> Part {
-  var g = new_gen(m, os)
+fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: Str, fc: FnCache, pkey: Str, pi: Int, bodies: Map[Int, ssa.Func], by_name: Map[Str, Int]) -> Part {
+  var g = new_gen_named(m, os, by_name)
   g.bodies = bodies
   let pentry = if pkey.is_empty() { None } else { fc.part_entries.get(pkey) }
   if !fc.verify {

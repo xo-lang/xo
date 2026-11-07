@@ -97,6 +97,27 @@ stage 2's 10 ms). The suites are no longer the target (above).
   needs the record's modules made as the program's imports reach them
   (the source check's order), and a gain of its own: xo's self build
   measured 0.995 wall with it.
+- Step 3a (std's front end body keys from one table entry, 2026-11-07)
+  is held, a negative result: correct (20 goldens equal with the table
+  and without it) but fe.keys went from 4.50 to 3.35 ms and 7.23 to
+  4.96 ms, under 1% of the builds' CPU, and the whole-build A/B was
+  within noise (CPU 0.993). The ceiling's "21 ms of SHA-256" was every
+  key's hashing (front end, reference counting, cleanup), not the front
+  end's alone.
+- Step 3b (2026-11-07), from a 10 kHz profile of 20 warm whole builds
+  each (linux/arm64, main e5ca9d617): the cleanup keys and the code
+  generator's setup, not std's records, were the largest parts left.
+  The inliner cache's head-only decode no longer builds the opcode
+  table per function (ops_by_name, about 2% of the CPU); generate_cached's
+  parts share the program's functions by name instead of each new_gen
+  making it again (new_gen_named, 2.6%); drop_weak_in finds the weak
+  lines with Str.find and returns the text unchanged when it drops none
+  (a byte by byte walk and a copy of every part, 5%); key_aux writes its
+  bytes in place. Output unchanged (scripts/identity, 156 programs).
+  Small whole builds with a back-end cache per side, 20 rounds:
+  json_decode_fields wall 0.964, CPU 0.938; http_server_request wall
+  0.952, CPU 0.908 (B/A, linux/arm64 host, the same in both run
+  positions).
 - Step 1's first gate failed separately compiled tests of the full
   internal/arm64 run; they were the suite's std builds killed for
   memory (`xo dev stdobj exit 137`, about twenty parallel std builds

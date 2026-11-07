@@ -487,18 +487,39 @@ fn write_ints(var b: BytesBuilder, xs: List[Int]) {
   }
 }
 
+/// The same bytes as the "i${n}" text it replaced, written in place: one
+/// call per value of every function the cleanup cache keys, and the
+/// interpolated strings were a tenth of key_replayed (2026-11-07 profile).
 fn key_aux(var b: BytesBuilder, a: Aux) {
   match a {
-    None => b.write_str("n")
-    I(n) => b.write_str("i${n}")
-    F(x) => b.write_str("f${float_bits(x)}")
-    B(x) => b.write_str("b${x}")
-    S(s) => b.write_str("s${s.len()}:${s}")
+    None => b.write_byte('n')
+    I(n) => {
+      b.write_byte('i')
+      write_int(b, n)
+    }
+    F(x) => {
+      b.write_byte('f')
+      write_int(b, float_bits(x))
+    }
+    B(x) => b.write_str(if x { "btrue" } else { "bfalse" })
+    S(s) => {
+      b.write_byte('s')
+      write_int(b, s.len())
+      b.write_byte(':')
+      b.write_str(s)
+    }
     Bs(x) => {
-      b.write_str("y${x.len()}:")
+      b.write_byte('y')
+      write_int(b, x.len())
+      b.write_byte(':')
       b.write(x)
     }
-    P(tag, field) => b.write_str("p${tag},${field}")
+    P(tag, field) => {
+      b.write_byte('p')
+      write_int(b, tag)
+      b.write_byte(',')
+      write_int(b, field)
+    }
   }
 }
 
@@ -843,7 +864,11 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] { decode_
 /// field before the blocks (name, results, `var` parameters, flags,
 /// unwind exit, captures, export, file, borrowed, skip), for the shell
 /// of a function not decoded (decision 0283 stage B).
-pub fn func_head_of_entry(m: Module, d: Bytes) -> Option[Func] { decode_func_at(m, d, ops_by_name(), true) }
+///
+/// No opcode table: making one per call (ops_by_name, a map of every
+/// opcode grown name by name) was about 2% of a warm whole build's CPU
+/// through the inliner's cache (2026-11-07 profile).
+pub fn func_head_of_entry(m: Module, d: Bytes) -> Option[Func] { decode_func_at(m, d, {}, true) }
 
 fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Option[Func] {
   var r = EntryR{d: d}
@@ -859,7 +884,8 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   for _ in 0..nt {
     let s = r.str()
     r.tys.push(m.type_at.get(s) ?? -1)
-    r.ops.push(ops.get(s))
+    // a head reads no opcode (it stops before the blocks)
+    r.ops.push(if head_only { None } else { ops.get(s) })
   }
   var f = Func{name: r.str()}
   f.results = r.types()

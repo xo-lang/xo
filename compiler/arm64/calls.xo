@@ -4137,29 +4137,38 @@ fn drop_weak_in(own: Map[Str, Bool], os: Str, text: Str) -> Str {
     return text
   }
   let d = if os == "darwin" { ".weak_reference" } else { ".weak" }
-  let pb = "\t${d} ".bytes()
-  let tb = text.bytes()
-  let n = tb.len()
+  // the weak lines found by Str.find, and text itself when none is
+  // dropped: a byte by byte walk and a copy of every part was 5% of a
+  // warm whole build's CPU (2026-11-07 profile)
+  let pat = "\n\t${d} "
+  let n = text.len()
   var out = StrBuilder.new()
   var from = 0
-  var i = 0
-  while i < n {
-    // the line [i, j)
-    var j = i
-    while j < n && tb[j] != '\n' {
-      j += 1
+  var dropped = false
+  var at = 0
+  var first = true
+  while at < n {
+    // the line [ls, le) after the pattern's newline
+    var ls = -1
+    if first && text.starts_with(pat[1..pat.len()]) {
+      ls = 0
+    } else if let Some(p) = text[at..n].find(pat) {
+      ls = at + p + 1
     }
-    if j - i > pb.len() && tb[i] == '\t' && tb[i + 1] == '.' && tb[i + 2] == 'w' {
-      var k = 0
-      while k < pb.len() && tb[i + k] == pb[k] {
-        k += 1
-      }
-      if k == pb.len() && own.contains(text[i + k..j]) {
-        out.write(text[from..i])
-        from = if j < n { j + 1 } else { j }
-      }
+    first = false
+    if ls < 0 {
+      break
     }
-    i = j + 1
+    let le = if let Some(q) = text[ls..n].find("\n") { ls + q } else { n }
+    if own.contains(text[ls + pat.len() - 1..le]) {
+      out.write(text[from..ls])
+      from = if le < n { le + 1 } else { le }
+      dropped = true
+    }
+    at = le
+  }
+  if !dropped {
+    return text
   }
   if from < n {
     out.write(text[from..n])

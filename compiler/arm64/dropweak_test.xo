@@ -1,0 +1,19 @@
+// drop_weak_in drops the weak references to the module's own exports and
+// nothing else (calls.xo; decision 0529 step 3b rewrote it with Str.find).
+
+test "drop_weak_in drops only the own exports' weak lines" {
+  var own: Map[Str, Bool] = {}
+  own["errno_loc"] = true
+  let text = "\t.weak errno_loc\nmain:\n\t.weak other\n\tbl errno_loc\n\t.weak errno_loc\n\t.weak errno_locx\n\t.weak errno_loc"
+  expect(drop_weak_in(own, "linux", text)) == "main:\n\t.weak other\n\tbl errno_loc\n\t.weak errno_locx\n"
+  // darwin's directive; linux's does not match it
+  let dt = "a:\n\t.weak_reference _x\n\t.weak _x\n"
+  var ox: Map[Str, Bool] = {}
+  ox["_x"] = true
+  expect(drop_weak_in(ox, "darwin", dt)) == "a:\n\t.weak _x\n"
+  expect(drop_weak_in(ox, "linux", dt)) == "a:\n\t.weak_reference _x\n"
+  // nothing to drop: the text unchanged
+  expect(drop_weak_in(own, "linux", "x:\n\tret\n")) == "x:\n\tret\n"
+  expect(drop_weak_in(own, "linux", "")) == ""
+  expect(drop_weak_in({}, "linux", "\t.weak errno_loc\n")) == "\t.weak errno_loc\n"
+}

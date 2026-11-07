@@ -14,6 +14,19 @@ const IMMORTAL = -9223372036854775807 - 1
 
 /// A new emitter for module m and os ("darwin" or "linux").
 fn new_gen(m: ssa.Module, os0: Str) -> G {
+  var by_name: Map[Str, Int] = {}
+  for (i, f) in m.funcs.indexed() {
+    by_name[f.name] = i
+  }
+  new_gen_named(m, os0, by_name)
+}
+
+/// new_gen with m's functions by name already made (by_name, as new_gen
+/// makes it: a name's last function): generate_cached's parts share their
+/// program's, since each part's new_gen made it again (about 21 ms of a
+/// warm whole build of http_server_request on the linux/arm64 host,
+/// 2026-11-07 profile).
+fn new_gen_named(m: ssa.Module, os0: Str, by_name: Map[Str, Int]) -> G {
   // "linux-amd64": x86_64 code for linux (decision 0254 stage 2)
   let x86 = os0.ends_with("-amd64")
   let os = if x86 { os0.trim_suffix("-amd64") } else { os0 }
@@ -29,9 +42,7 @@ fn new_gen(m: ssa.Module, os0: Str) -> G {
     g.lay.push([])
     g.heap_c.push(-1)
   }
-  for (i, f) in m.funcs.indexed() {
-    g.by_name[f.name] = i
-  }
+  g.by_name = by_name
   g
 }
 
