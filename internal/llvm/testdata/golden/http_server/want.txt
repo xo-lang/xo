@@ -6,8 +6,8 @@ note: 200 [application/json] [xo] {"id":7,"title":"seven","tags":["a","b"],"done
 note missing: 404 [application/json] [xo] {"error":"note 8 not found"}
 note not int: 400 [application/json] [xo] {"error":"path segment `id` must be an Int"}
 files: 200 [text/plain; charset=utf-8] [xo] file a/b/c.txt
-search: 200 [application/json] [xo] {"q":"xo lang","page":"2"}
-search empty: 200 [application/json] [xo] {"q":"-","page":"1"}
+search: 200 [application/json] [xo] {"page":"2","q":"xo lang"}
+search empty: 200 [application/json] [xo] {"page":"1","q":"-"}
 unknown: 404 [application/json] [xo] {"error":"not found"}
 wrong method: 405 [application/json] [xo] {"error":"method not allowed"}
 broken: 500 [application/json] [xo] {"error":"internal error"}
