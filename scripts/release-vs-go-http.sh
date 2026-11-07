@@ -18,6 +18,9 @@ a=$1 name=$2 seed=$3 P=$4 work=$5 bundle=$6 rounds=$7 pads=${8:-} basexo=${9:-$3
 W=$work/rvg$name
 L=$P.lockdir boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
 hp= hb=
+# the bundle goes on every exit, a stop while waiting for the lock
+# included (two 80 MB bundles of stopped runs stayed in /work/in, 2026-11-07)
+trap 'rm -f "$bundle" 2>/dev/null' EXIT
 until mkdir "$L" 2>/dev/null; do
 	read -r hp hb < "$L/holder" 2>/dev/null
 	if [ -n "$hp" ] && { [ "$hb" != "$boot" ] || ! kill -0 "$hp" 2>/dev/null; }; then
@@ -26,7 +29,7 @@ until mkdir "$L" 2>/dev/null; do
 	hp= hb=; sleep 1
 done
 echo "$$ $boot" > "$L/holder"
-trap 'rm -f "$L/holder"; rmdir "$L" 2>/dev/null' EXIT
+trap 'rm -f "$L/holder" "$bundle"; rmdir "$L" 2>/dev/null' EXIT
 cd "$P" || exit 2
 git for-each-ref --format='%(refname)' refs/ab 2>/dev/null | while read -r r; do git update-ref -d "$r"; done
 rm -rf .git/refs/ab .git/objects/pack/tmp_*
