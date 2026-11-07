@@ -141,10 +141,10 @@ struct Bag[T] {
   items: Set[T]
 }
 
-// reached only as the type argument of a generic that passes it to a
-// constrained std function (std's Go is pregenerated, so its body may
-// compare): under --no-mono that generic's form runs, and only the types
-// it is called with are roots, not every type (Unused keeps none)
+// passed only to a generic that hands it to json.encode_str, a std
+// function std/go_proto_free.txt lists as comparing nothing: it keeps no
+// XoEq (internal/gen TestGoProtoNotKept), and under --no-mono that
+// generic's form runs without keeping every type's (Unused keeps none)
 struct Sent {
   s: Int
 } derive Json

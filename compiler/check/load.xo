@@ -26,6 +26,9 @@ pub struct Checker {
   /// Where the std declaration files are read from.
   std_dir: Str
   pub objs: List[Obj] = []
+  /// The Go backend's std/go_proto_free.txt (decision 0542), read with
+  /// go_compiled.
+  pub go_proto_free: Map[Str, Bool] = {}
   /// The std tree's block in objs, tys, esets and evars (Checker.run,
   /// decision 0388): what std_export records
   pub std_block: StdBlock = StdBlock{}
@@ -784,6 +787,7 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
     c.load_native()
   } else {
     c.load_go_compiled()
+    c.go_proto_free = c.read_go_proto_free()
   }
   if c.unsupported.is_empty() {
     c.run()?
@@ -836,6 +840,7 @@ fn (var c: Checker) check_std_test() -> () ! Str uses fs.read {
     c.load_native()
   } else {
     c.load_go_compiled()
+    c.go_proto_free = c.read_go_proto_free()
   }
   let m = match c.mod_index.get(p) {
     Some(m) => m
@@ -1132,6 +1137,25 @@ fn (c: Checker) go_compiled() -> List[Str] {
     let t = l.trim()
     if !t.is_empty() && !t.starts_with("#") {
       out.push(t)
+    }
+  }
+  out
+}
+
+/// The std generic functions whose Go never compares or hashes a type
+/// parameter's value (decision 0542): std/go_proto_free.txt, one
+/// `module.name` a line, `#` comments.
+fn (c: Checker) read_go_proto_free() -> Map[Str, Bool] {
+  let data = c.fs.read("${c.std_dir}/go_proto_free.txt").ok() ?? None
+  let text = match data {
+    Some(b) => b.to_str() ?? ""
+    None => return {}
+  }
+  var out: Map[Str, Bool] = {}
+  for l in text.split("\n") {
+    let t = l.trim()
+    if !t.is_empty() && !t.starts_with("#") {
+      out[t] = true
     }
   }
   out

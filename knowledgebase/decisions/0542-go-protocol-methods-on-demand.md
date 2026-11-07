@@ -26,8 +26,11 @@ whole-program analysis is available.
      prelude's `contains` and `index_of` (std/rt List_contains and
      List_index_of compare with rt.Eq), every Map key and Set element
      type instance, every argument of a constrained type parameter of a
-     std function or type (std's Go is pregenerated, so its bodies are not
-     seen; a program's own generic needs no root at its calls, since each
+     std function or type, except the functions std/go_proto_free.txt lists
+     (std's Go is pregenerated, so its bodies are not seen; the list names
+     the hand written std/rt generics reviewed to compare and hash no value
+     of a type parameter, the JSON encoders and decoders first, and
+     internal/gen TestGoProtoFreeListed checks each line names one; a program's own generic needs no root at its calls, since each
      specialized copy roots what it compares), and every user type that
      derives Eq, Hash or Ord with what its fields reach.
    A type parameter as a root (in a key, a compare, a search or a std
@@ -96,6 +99,16 @@ whole-program analysis is available.
   functions compare or hash a type parameter (a fact stdgen could record) is the next lever.
   (A first count of 448,455 lines and 1,251 types, in 3b2ba02f6's message and this decision's
   first text, was generated from an older azure checkout on the Mac, not aws-19's tree.)
+- std/go_proto_free.txt (2026-11-07): the root dump (XO_GO_PROTO=why, `root T bits B (site): N
+  new types`) put every one of those types in the constrained std argument rule, through
+  std's json.decode (601 calls in armnetwork), json.from_value, json.to_value and json.encode
+  (azure's marshal_json), not marshal_json alone. With the JSON functions listed, a local
+  diagnostic build (an older azure checkout, not the measured tree) kept XoEq on 5 types
+  against 1,167. aws-19's run on the canonical tree (2026-11-07, `xo test --backend=go
+  --count=1` of armnetwork, every xo cache off, GOGC=15): tests 9/9, no fault; 447,375 lines
+  against 507,372; protocol methods 80 lines against 55,782 (XoEq on 5 types, XoEqT on 5,
+  XoHash on none: four enums and ProvisioningState, compared as Options); sampled tree peak
+  12,315 MB against 13,084, the compile process 5,758 MB against 8,742.
 - Golden internal/llvm/testdata/golden/go_proto_roots reaches a type through each root kind only;
   Go parity fails if the walk misses one.
 - A new root kind in the language must be added to the analysis (a test lists the roots).

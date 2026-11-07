@@ -205,6 +205,10 @@ pub struct Gen {
   proto_why_log: List[Str] = []
   /// why a generic form's protocol bits were recorded, the first reason
   proto_gwhy: Map[Int, Str] = {}
+  /// where each root was recorded (Opts.proto_why)
+  proto_root_at: Map[Int, Str] = {}
+  /// std/go_proto_free.txt: std generics that compare no type argument
+  proto_free: Map[Str, Bool] = {}
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +227,7 @@ fn (var g: Gen) run() -> Program {
     prog.tags.push("xo_nohttp")
   }
   g.init_adapt()
+  g.proto_free = g.c.go_proto_free
   var main_mod = -1
   for m in g.c.order {
     if g.c.mods[m].is_std {

@@ -65,6 +65,9 @@ fn (var g: Gen) proto_root(t: Int, bits: Int) {
     }
     return
   }
+  if g.opts.proto_why && !g.proto_root_at.contains(t) {
+    g.proto_root_at[t] = g.proto_where()
+  }
   g.proto_roots[t] = (g.proto_roots.get(t) ?? 0) | bits
 }
 
@@ -92,7 +95,7 @@ fn (g: Gen) proto_where() -> Str {
     return "no function"
   }
   let fo = g.f.frames[0].fo
-  "in ${if fo >= 0 { g.oname(fo) } else { "?" }}${if g.pkgs[g.p].ms.on { " copy" } else { "" }}"
+  "in ${if fo >= 0 { g.oname(fo) } else { "a test or top-level code" }}${if g.pkgs[g.p].ms.on { " copy" } else { "" }}"
 }
 
 /// Whether the method bit of object o is written: XO_GO_PROTO=all, a
@@ -137,7 +140,7 @@ fn (var g: Gen) proto_call_roots() {
               // to a prelude method keeps every type; to another std
               // function, the copy's call roots its concrete type
               // (proto_std_call)
-              if fo >= 0 && g.ostd(fo) {
+              if fo >= 0 && g.ostd(fo) && !g.proto_std_free(fo) {
                 for (p, t) in ci.subst {
                   if p >= 0 && g.c.objs[p].constraint >= 0 && g.c.tys[g.c.resolve(t)].kind != check.TyKind.Param {
                     g.proto_root(t, P_EQ | P_HASH)
@@ -205,11 +208,25 @@ fn (var g: Gen) proto_gform_call(fo: Int, sub: Map[Int, Int]) {
 /// a specialized copy a type parameter's argument is concrete here.
 fn (var g: Gen) proto_std_call(fo: Int, sub: Map[Int, Int]) {
   let search = g.oprelude(fo) && g.oname(fo) is "contains" | "index_of"
+  if !search && g.proto_std_free(fo) {
+    return
+  }
   for (p, t) in sub {
     if p >= 0 && (search || g.c.objs[p].constraint >= 0) && g.c.tys[g.c.resolve(t)].kind == check.TyKind.Param {
       g.proto_root(g.mono_type(t), if search { P_EQ } else { P_EQ | P_HASH })
     }
   }
+}
+
+/// Whether std function fo is listed in std/go_proto_free.txt: its Go
+/// compares and hashes no value of its type parameters.
+fn (g: Gen) proto_std_free(fo: Int) -> Bool {
+  let o = g.c.objs[fo]
+  if o.recv >= 0 || g.omod(fo) < 0 {
+    return false
+  }
+  let parts = g.c.mods[g.omod(fo)].path.split("/")
+  g.proto_free.contains("${parts[parts.len() - 1]}.${g.oname(fo)}")
 }
 
 /// The type parameters t holds (depth-limited: a type is finite, but a
@@ -375,7 +392,11 @@ fn (var g: Gen) proto_close() {
   }
   var walked: Map[Int, Int] = {}
   for (t, bits) in roots {
+    let before = g.proto_need.len()
     g.proto_walk(t, bits, walked)
+    if g.opts.proto_why && g.proto_need.len() > before {
+      g.proto_why_log.push("root ${g.c.show(t)} bits ${bits} (${g.proto_root_at.get(t) ?? "a key, constrained argument or running form"}): ${g.proto_need.len() - before} new types")
+    }
   }
   // a user type that derives Eq, Hash or Ord says it is compared: it and
   // what its fields reach (a type parameter in them reaches every type)

@@ -1,0 +1,24 @@
+# The std generic functions whose Go backend implementation (std/rt's
+# hand written Go) never compares or hashes a value of a type parameter
+# (decision 0542): the Go backend roots no XoEq or XoHash for their type
+# arguments, as it does for other std callees' constrained parameters,
+# whose bodies it does not see. One `module.name` a line. Reviewed by hand:
+# list a function only after reading its rt Go and every rt function it
+# calls with the value; a wrong line is a loud fault ("xo internal: XoEq
+# not generated"), never a wrong comparison. internal/gen
+# TestGoProtoFreeListed checks each line names an rt generic function.
+#
+# The encoders reach a value only through its XoJsonEnc method (JsonEnc,
+# jsonEncAny); a Map inside compares its keys, which the walk roots as
+# Map keys already. to_value parses the encoder's text. The decoders
+# (jsonDecodeFast, JsonDec) build a value through its XoJsonRead and
+# XoJsonDec methods; a Map or Set inside hashes its keys, rooted as keys.
+# No std/rt/json*.go file calls EqAny, HashAny, Eq or Hash (2026-11-07).
+json.decode
+json.decode_str
+json.from_value
+json.encode
+json.encode_str
+json.encode_indent
+json.encode_indent_str
+json.to_value
