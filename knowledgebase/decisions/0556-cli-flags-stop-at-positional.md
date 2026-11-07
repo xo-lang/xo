@@ -26,14 +26,17 @@ sets it, and every subcommand under it:
 1. The first argument that is not a flag, a flag's value, or (before any
    positional) a subcommand's name ends the flags of the whole line: it
    and every argument after it are positional, read by the command's
-   `arg`s and `rest` as written (`-64` included). `--` still ends the
-   flags too, and is dropped as today.
+   `arg`s and `rest` as written (`-64` included). A `--` before the
+   first positional still ends the flags and is dropped, as today; one
+   after it is an argument like any other (Go's `flag.Args()` keeps it
+   too).
 2. A lone `-` is positional (as in Go and as 0160 reads it), so it ends
    the flags as well.
 3. Arguments after the stop that look like flags are never usage errors;
    extra positionals without a `rest` are 0160's `unexpected argument`.
-4. Help text says so in the usage line (`[flags] ARGS...` with "flags
-   come before the arguments" under it), so `--help` explains it.
+4. `--help` says so under the usage line: "Flags come before the
+   arguments: everything from the first argument on is an argument."
+   Usage errors keep their text.
 5. Independent of `single_dash_long`; a Go port sets both.
 
 ## Consequences
@@ -41,6 +44,9 @@ sets it, and every subcommand under it:
 - goversioninfo's port reads `versioninfo.json -64` as Go does; its
   corpus generator can place flags after the file name.
 - Off by default; commands without it are unchanged.
+- A branch implements it (l2-0556, 2026-11-07, unpushed until the
+  owner decides): native and Go runtime, golden cli_stop_positional
+  equal on native, LLVM and the Go backend.
 - Implemented in std/native/cli.xo and std/rt/cli.go with a golden
   (cli_stop_positional) on every backend and Go parity, spec/std.md's
   cli section and std/changes/cli.md.
