@@ -78,9 +78,10 @@ var codegenEnv = map[string]inputClass{
 	"XO_GO":                   {"link", ""},
 	"XO_GOCACHE":              {"link", ""},
 	"XO_GOTIMERS":             {"link", ""},
-	"XO_EMIT_JOBS":            {"none", ""}, // the parts never depend on the task count
-	"XO_EMIT_MEM":             {"none", ""}, // how many parts run at once (a memory bound, decision 0448 stage 3); the parts never depend on it, as XO_EMIT_JOBS
-	"XO_HOST_CORES":           {"none", ""}, // the cores probed once a process (split.xo host_counts): job counts only, as XO_EMIT_JOBS
+	"XO_GO_PROTO":             {"content", ""}, // decision 0542: all keeps every protocol method; the generated Go's text says which
+	"XO_EMIT_JOBS":            {"none", ""},    // the parts never depend on the task count
+	"XO_EMIT_MEM":             {"none", ""},    // how many parts run at once (a memory bound, decision 0448 stage 3); the parts never depend on it, as XO_EMIT_JOBS
+	"XO_HOST_CORES":           {"none", ""},    // the cores probed once a process (split.xo host_counts): job counts only, as XO_EMIT_JOBS
 	"XO_BACKEND_CACHE":        {"none", ""},
 	"XO_BACKEND_CACHE_DIR":    {"none", ""},
 	"XO_BIN_CACHE":            {"none", ""},

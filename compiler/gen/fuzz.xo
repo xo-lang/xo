@@ -287,6 +287,7 @@ fn (var g: Gen) gen_fuzz(fo: Int) {
   for p in ps {
     tr.param_names.push(g.oname(p.v))
     tr.param_types.push(g.go_type(p.t))
+    g.proto_root(p.t, P_GEN)
     tr.param_caps.push(p.cap)
   }
   g.pkgs[g.p].tests.push(tr)

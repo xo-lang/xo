@@ -1,0 +1,96 @@
+// Every root kind of the Go backend's protocol method walk (decision
+// 0542), each reaching a type only through it: a type the walk missed has
+// no XoEq or XoHash on --backend=go, and the program faults with "xo
+// internal: XoEq not generated", so this golden's output is the same on
+// every backend only while the walk finds every root.
+
+// reached only through a field of a compared struct
+struct Inner {
+  tags: List[Str]
+}
+
+struct Outer {
+  name: Str
+  inner: Inner
+}
+
+// reached only as a Map key, and its payload type through it
+enum Color {
+  Red
+  Rgb(shade: Shade)
+}
+
+struct Shade {
+  level: Int
+}
+
+// reached only as a type argument of a constrained generic function
+struct Pair {
+  a: Int
+  b: Str
+}
+
+fn same[T: Eq](x: T, y: T) -> Bool {
+  x == y
+}
+
+// reached only through an interface value's dynamic type
+interface Named {
+  fn name(self) -> Str
+}
+
+struct Dog {
+  n: Str
+  owner: Owner
+}
+
+struct Owner {
+  id: Int
+}
+
+fn (d: Dog) name() -> Str { d.n }
+
+// reached only through an Option compared with ==
+struct Boxed {
+  v: Int
+}
+
+// never compared, hashed or generated: its methods may be left out
+struct Unused {
+  x: Int
+}
+
+// reached only as a Set element, through a newtype of a struct
+struct Loc {
+  line: Int
+}
+
+type Code struct(Loc)
+
+fn main(os: Os) {
+  let o1 = Outer{name: "a", inner: Inner{tags: ["x", "y"]}}
+  let o2 = Outer{name: "a", inner: Inner{tags: ["x", "y"]}}
+  let o3 = Outer{name: "a", inner: Inner{tags: ["x"]}}
+  os.stdio.println("outer: ${o1 == o2} ${o1 == o3} ${o1 != o3}")
+  var counts: Map[Color, Int] = {}
+  counts[Color.Rgb(Shade{level: 3})] = 1
+  counts[Color.Red] = 2
+  counts[Color.Rgb(Shade{level: 3})] = (counts.get(Color.Rgb(Shade{level: 3})) ?? 0) + 10
+  os.stdio.println("colors: ${counts.len()} ${counts.get(Color.Rgb(Shade{level: 3})) ?? -1} ${counts.get(Color.Rgb(Shade{level: 4})) ?? -1}")
+  os.stdio.println("pairs: ${same(Pair{a: 1, b: "x"}, Pair{a: 1, b: "x"})} ${same(Pair{a: 1, b: "x"}, Pair{a: 2, b: "x"})}")
+  let d1: Named = Dog{n: "rex", owner: Owner{id: 1}}
+  let d2: Named = Dog{n: "rex", owner: Owner{id: 1}}
+  let d3: Named = Dog{n: "rex", owner: Owner{id: 2}}
+  os.stdio.println("named: ${d1 == d2} ${d1 == d3}")
+  let b1: Boxed? = Some(Boxed{v: 1})
+  let b2: Boxed? = Some(Boxed{v: 1})
+  let b3: Boxed? = None
+  os.stdio.println("boxed: ${b1 == b2} ${b1 == b3}")
+  let u = Unused{x: 7}
+  os.stdio.println("unused: ${u.x}")
+  var seen: Set[Code] = #{}
+  seen.add(Code(Loc{line: 1}))
+  seen.add(Code(Loc{line: 1}))
+  seen.add(Code(Loc{line: 2}))
+  os.stdio.println("codes: ${seen.len()} ${seen.contains(Code(Loc{line: 2}))}")
+}

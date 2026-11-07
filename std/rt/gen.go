@@ -129,6 +129,12 @@ func Gen[T any](g *GenRand) T {
 	case generator:
 		return any(z).(generator).XoGenAny(g).(T)
 	}
+	if zt := reflect.TypeOf(&z).Elem(); zt.Kind() == reflect.Struct && zt.PkgPath() != reflect.TypeOf(GenRand{}).PkgPath() {
+		// a generated type always has XoGenAny unless decision 0542's walk
+		// found no root reaching it: a generator bug, not the program's
+		FaultHere("xo internal: XoGenAny not generated for %s (decision 0542; XO_GO_PROTO=all writes every one)", reflect.TypeOf(&z).Elem())
+		return z
+	}
 	FaultHere("cannot generate values of type %s for a property test", reflect.TypeOf(&z).Elem())
 	return z
 }

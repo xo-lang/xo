@@ -192,6 +192,7 @@ fn (var g: Gen) lit_cond(value: Expr, subj: Str, t: Int, var m: Match) {
   if g.is_scalar(t) {
     m.conds.push("${subj} == ${lit}")
   } else {
+    g.proto_root(t, P_EQ)
     m.conds.push("${g.rt()}Eq(${subj}, ${lit})")
   }
 }

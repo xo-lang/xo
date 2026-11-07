@@ -45,6 +45,15 @@ func Eq[T any](a, b T) bool {
 	return EqAny(any(a), any(b))
 }
 
+// protoType is a type the generator wrote (decision 0542): it has every
+// protocol method a root of the program reaches, so reaching one it
+// lacks is a generator bug, never a reason to compare by reflection.
+type protoType interface{ XoProto() }
+
+func protoMissing(method string, v any) {
+	FaultHere("xo internal: %s not generated for %T (decision 0542; XO_GO_PROTO=all writes every one)", method, v)
+}
+
 // EqAny compares two values of the same Xo type.
 func EqAny(a, b any) bool {
 	switch x := a.(type) {
@@ -103,6 +112,8 @@ func EqAny(a, b any) bool {
 		return ok
 	case Equaler:
 		return x.XoEq(b)
+	case protoType:
+		protoMissing("XoEq", a)
 	}
 	if holdsHandle(reflect.TypeOf(a)) {
 		// a value holding a handle (or a function) is not comparable
@@ -248,6 +259,8 @@ func HashAny(v any) uint64 {
 		return 7
 	case Hasher:
 		return x.XoHash()
+	case protoType:
+		protoMissing("XoHash", v)
 	}
 	return maphash.String(hashSeed, Debug(v))
 }

@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+outer: true false true
+colors: 2 11 -1
+pairs: true false
+named: true false
+boxed: true false
+unused: 7
+codes: 2 true
+--- stderr

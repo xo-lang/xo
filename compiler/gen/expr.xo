@@ -182,6 +182,7 @@ fn (var g: Gen) to_iface(code0: Str, from0: Int, to0: Int) -> Str {
   // inside a specialized copy the concrete types are known
   let from = g.mono_type(from0)
   let to = g.mono_type(to0)
+  g.proto_iface(from, to)
   // an interface value's type no longer says it holds lists (own.xo)
   let code = g.own_code(code0, from)
   let tt = g.go_type(to)
@@ -926,6 +927,9 @@ fn (var g: Gen) compare(op: Str, a: Str, b: Str, t0: Int) -> Str {
   // type (mono.xo)
   let t = g.mono_type(t0)
   let eq = op == "==" || op == "!="
+  if eq {
+    g.proto_root(t, P_EQ)
+  }
   if g.mono_on() {
     if g.is_float(t) && !eq {
       return "(${g.rt()}FloatCmp(float64(${a}), float64(${b})) ${op} 0)"

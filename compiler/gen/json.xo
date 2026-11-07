@@ -470,6 +470,12 @@ fn (var g: Gen) gen_sql_row_struct(t: Int) {
 
 /// XoGenAny for a struct (genGenStruct).
 fn (var g: Gen) gen_gen_struct(t: Int) {
+  g.proto_open(P_GEN, t)
+  g.gen_gen_struct1(t)
+  g.proto_close_method()
+}
+
+fn (var g: Gen) gen_gen_struct1(t: Int) {
   let rt = g.rt()
   let self = g.self_type(t)
   g.pl("func (${self}) XoGenAny(g *${rt}GenRand) any {")
@@ -492,6 +498,12 @@ fn (var g: Gen) gen_gen_struct(t: Int) {
 
 /// XoGenAny for an enum (genGenEnum).
 fn (var g: Gen) gen_gen_enum(t: Int) {
+  g.proto_open(P_GEN, t)
+  g.gen_gen_enum1(t)
+  g.proto_close_method()
+}
+
+fn (var g: Gen) gen_gen_enum1(t: Int) {
   let rt = g.rt()
   let self = g.self_type(t)
   let variants = g.c.objs[t].variants
@@ -528,5 +540,7 @@ fn (var g: Gen) gen_gen_enum(t: Int) {
 fn (var g: Gen) gen_gen_newtype(t: Int) {
   let rt = g.rt()
   let self = g.self_type(t)
+  g.proto_open(P_GEN, t)
   g.pl("func (${self}) XoGenAny(g *${rt}GenRand) any { return ${self}{F0: ${rt}Gen[${g.go_type(g.c.objs[t].target)}](g)} }\n")
+  g.proto_close_method()
 }

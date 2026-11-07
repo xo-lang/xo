@@ -200,6 +200,8 @@ fn (var g: Gen) gen_derived(t: Int, self: Str, fs: List[FieldRef], os: List[Fiel
   let rt = g.rt()
   g.import_std("strings")
   let tname = g.oname(t)
+  g.proto_mark(self)
+  g.proto_open(P_EQ, t)
   g.pl("func (v ${self}) XoEq(x any) bool {")
   g.pl("\to, ok := x.(${self})")
   g.pl("\tif !ok {\n\t\treturn false\n\t}")
@@ -207,12 +209,15 @@ fn (var g: Gen) gen_derived(t: Int, self: Str, fs: List[FieldRef], os: List[Fiel
     g.pl("\tif !${rt}Eq(${fs[i].code}, ${os[i].code}) {\n\t\treturn false\n\t}")
   }
   g.pl("\t_ = o\n\treturn true\n}\n")
+  g.proto_close_method()
+  g.proto_open(P_HASH, t)
   g.pl("func (v ${self}) XoHash() uint64 {")
   g.pl("\th := uint64(${hash_seed_of(tname)})")
   for f in fs {
     g.pl("\th = ${rt}MixHash(h, ${rt}Hash(${f.code}))")
   }
   g.pl("\treturn h\n}\n")
+  g.proto_close_method()
   if g.derives(t, "Ord") {
     g.pl("func (v ${self}) XoCmp(x any) int {")
     g.pl("\to := x.(${self})")
@@ -311,7 +316,9 @@ fn (var g: Gen) gen_enum(t: Int, sp: Span) {
     }
     g.pl("}\n")
   }
-  // Eq
+  // Eq and Hash, each only when a root reaches the type (decision 0542)
+  g.proto_mark(self)
+  g.proto_open(P_EQ, t)
   g.pl("func (v ${self}) XoEq(x any) bool {")
   g.pl("\to, ok := x.(${self})")
   g.pl("\tif !ok || o.Tag != v.Tag {\n\t\treturn false\n\t}")
@@ -331,7 +338,8 @@ fn (var g: Gen) gen_enum(t: Int, sp: Span) {
     g.pl("\t\treturn ${conds.join(" && ")}")
   }
   g.pl("\t}\n\treturn true\n}\n")
-  // Hash
+  g.proto_close_method()
+  g.proto_open(P_HASH, t)
   g.pl("func (v ${self}) XoHash() uint64 {")
   g.pl("\th := ${rt}MixHash(uint64(${hash_seed_of(g.oname(t))}), uint64(v.Tag))")
   g.pl("\tswitch v.Tag {")
@@ -346,6 +354,7 @@ fn (var g: Gen) gen_enum(t: Int, sp: Span) {
     }
   }
   g.pl("\t}\n\treturn h\n}\n")
+  g.proto_close_method()
   // Ord: variant order, then fields
   if g.derives(t, "Ord") {
     g.pl("func (v ${self}) XoCmp(x any) int {")

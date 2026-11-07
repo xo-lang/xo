@@ -38,6 +38,8 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   opts.test_mode = tests
   opts.holes = o.holes
   opts.no_mono = o.no_mono
+  // decision 0542: every protocol method of every type, as before
+  opts.proto_all = (os.env.get("XO_GO_PROTO") ?? "") == "all"
   opts.release = release
   // the settings --release presets, each overridable (decision 0354)
   opts.no_error_args = !error_args_eff(o)

@@ -1,6 +1,6 @@
 # 0542: Go backend emits protocol methods only for the types that can reach them
 
-Status: Proposed (Xo Lang 2, 2026-11-07; owner acceptance pending: the measured before and after for armnetwork is added before it)
+Status: Accepted (owner, 2026-11-07)
 
 ## Context
 aws-19's armnetwork (Azure SDK, 1132 models, 303 enums, 838 operations) generates one
@@ -14,22 +14,47 @@ One gen run sees every non-std module of the program (gen.xo: g.pkgs over c.orde
 whole-program analysis is available.
 
 ## Decision (proposed)
-1. Before generating, compute per protocol (eq, hash, debug, gen, mark) the set of user types
-   it can reach: roots are the static types of `==`/`!=`, map keys and Set elements, `${x:?}`,
-   debug(), expect's compared values, forall/gen, and mark; every type converted to `any`, to an
-   interface, or used as a type argument is a root of every protocol (rt reaches it through
-   EqAny, HashAny, DebugAny, Gen). The sets are closed over field types, enum payloads, newtype
-   targets and type arguments.
-2. gen_derived emits a protocol's methods only for a type in that protocol's set.
-3. Safety: rt's EqAny, HashAny, DebugTo and Gen fall back to reflection today; for a generated
-   struct type (one with an `XoProto` marker method) without the method they panic with
-   "xo internal: <protocol> not generated for <type>", so a missed root fails loudly (Go
-   parity goldens, xo test on the Go backend) instead of comparing by reflect.DeepEqual.
-4. XO_GO_PROTO=all turns pruning off (a bisect switch), in the codegen cache key.
+1. compiler/gen/proto.xo walks, after every module and generic copy is
+   generated, from each protocol's roots to the user type objects they
+   reach (fields, enum payloads, newtype targets, type arguments, with the
+   instance's substitution):
+   - XoGenAny (test builds only): the parameter types of property tests
+     and fuzz targets, and the type arguments of `testing.gen[T]` calls.
+   - XoEq, XoEqT and XoHash: the operand type of every `==` and `!=` the
+     generator writes (compare(): `expect(a) == b` too), the subject of a
+     literal pattern it compares with rt.Eq, every Map key and Set element
+     type instance, every type argument of a constrained type parameter
+     (a type instance or a call's substitution, std's hand written
+     functions included), and every user type that derives Eq, Hash or Ord
+     with what its fields reach.
+   An interface type reached by a protocol reaches every type the program
+   converts to it (each conversion the generator writes is recorded); a
+   type parameter converted to an interface, or one reached by XoGenAny,
+   keeps that protocol's methods on every type (its dynamic types are not
+   known). A type parameter reached by XoEq or XoHash adds nothing: it is
+   constrained, so each of its arguments is a root at the call. (The first
+   draft kept every method for any interface or type parameter reached;
+   std's own generic instances, such as `Map[K, V]`, reached one in every
+   program, so nothing was pruned.)
+   std's types in the runtime package keep every method.
+2. Each such method is written between two marker chunks of the package's
+   output; pkg_file keeps a method only when its object is reached (or the
+   protocol is kept for all). XoDebug, M_debug, XoCmp and the JSON methods
+   are unchanged (Debug's roots include every function's parameters through
+   error frames, so pruning it would keep nearly everything).
+3. Safety: every generated type has an empty `XoProto()` method; rt.EqAny
+   and rt.HashAny fault with "xo internal: XoEq (XoHash) not generated for
+   T (decision 0542; XO_GO_PROTO=all writes every one)" for a value with
+   XoProto and without the method, instead of falling back to
+   reflect.DeepEqual or the Debug text; rt.Gen faults the same way for a
+   generated struct without XoGenAny. A missed root is a loud fault, never
+   a wrong comparison.
+4. XO_GO_PROTO=all writes every method, as before (a bisect switch).
 
 ## Consequences
-- Expected: armnetwork drops most of the 172k lines (its models are compared or debugged only
-  in a few tests); measure lines and compile peak with aws-19 before and after.
+- armnetwork: lines and Go compile peak before and after, measured with aws-19 (to fill in).
+- Golden internal/llvm/testdata/golden/go_proto_roots reaches a type through each root kind only;
+  Go parity fails if the walk misses one.
 - A new root kind in the language must be added to the analysis (a test lists the roots).
 
 ## Alternatives

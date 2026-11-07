@@ -1,0 +1,276 @@
+// Protocol methods on demand (decision 0542): a protocol method of a
+// user type (XoGenAny, XoEq, XoEqT, XoHash) is written only when a whole-program walk
+// from that protocol's roots reaches the type, through fields, enum
+// payloads, newtype targets and type arguments. Each such method is
+// written between marker chunks that pkg_file keeps or drops.
+
+use github.com/xo-lang/xo/compiler/check
+
+/// XoGenAny: the values property tests and testing.gen generate.
+const P_GEN = 1
+/// XoEq and XoEqT: `==`, `!=`, literal patterns, Map keys, Set elements
+/// and constrained type parameters.
+const P_EQ = 2
+/// XoHash: Map keys, Set elements and constrained type parameters.
+const P_HASH = 4
+
+/// The chunk that starts a protocol method of object o, and the one that
+/// ends it (never valid Go, so a leak fails go build).
+fn proto_begin(bit: Int, o: Int) -> Str {
+  "\0xoproto ${bit} ${o}\n"
+}
+
+const PROTO_END = "\0xoproto end\n"
+
+/// Starts the protocol method bit of type object t (protoBegin).
+/// std's types in the runtime package keep every method: the walk stops
+/// at std types, and other programs share that package.
+fn (var g: Gen) proto_open(bit: Int, t: Int) {
+  if !g.pkgs[g.p].in_rt {
+    g.pkgs[g.p].out.push(proto_begin(bit, t))
+  }
+}
+
+/// Marks a user type whose protocol methods may be left out, so the
+/// runtime's EqAny and HashAny fault on a missing one instead of falling
+/// back to reflection; std's types keep every method and need no mark.
+fn (var g: Gen) proto_mark(self: Str) {
+  if !g.pkgs[g.p].in_rt {
+    g.pl("func (${self}) XoProto() {}\n")
+  }
+}
+
+fn (var g: Gen) proto_close_method() {
+  if !g.pkgs[g.p].in_rt {
+    g.pkgs[g.p].out.push(PROTO_END)
+  }
+}
+
+/// Records t as a root of the protocols in bits.
+fn (var g: Gen) proto_root(t: Int, bits: Int) {
+  if t >= 0 {
+    g.proto_roots[t] = (g.proto_roots.get(t) ?? 0) | bits
+  }
+}
+
+/// Whether the method bit of object o is written: XO_GO_PROTO=all, a
+/// generic body that reaches the protocol through a type parameter, or o
+/// reached from a root.
+fn (g: Gen) proto_kept(bit: Int, o: Int) -> Bool {
+  g.opts.proto_all || (g.proto_all & bit) != 0 || ((g.proto_need.get(o) ?? 0) & bit) != 0
+}
+
+/// The roots no generated code names: calls of testing.gen[T] (a type
+/// argument that is a type parameter reaches every type).
+fn (var g: Gen) proto_call_roots() {
+  for (fi, file) in g.c.files.indexed() {
+    let m = file.module
+    if m < 0 || g.c.mods[m].is_std {
+      continue
+    }
+    for n in decl_nodes(file.ast) {
+      for ne in flatten(n) {
+        if let E(e) = ne.node {
+          if let CallExpr(..) = e {
+            if let Some(ci) = g.c.call_in(fi, e) {
+              let fo = ci.fn_obj
+              if fo >= 0 && g.omod(fo) >= 0 && g.c.mods[g.omod(fo)].path == "std/testing" && g.oname(fo) == "gen" {
+                for (_, t) in ci.subst {
+                  g.proto_root(t, P_GEN)
+                }
+              }
+              // a constrained type parameter's argument may be compared
+              // or hashed in the callee (std's hand written ones too)
+              for (p, t) in ci.subst {
+                if p >= 0 && g.c.objs[p].constraint >= 0 {
+                  g.proto_root(t, P_EQ | P_HASH)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Records a conversion of a from value to interface type to: the
+/// interface's dynamic values reach from's protocol methods.
+fn (var g: Gen) proto_iface(from: Int, to: Int) {
+  let n = g.nobj(to)
+  if n < 0 || from < 0 {
+    return
+  }
+  var l = g.proto_ifs.get(n) ?? []
+  if !l.contains(from) {
+    l.push(from)
+    g.proto_ifs[n] = l
+  }
+}
+
+/// Walks a type converted to an interface: a type parameter there may be
+/// any type, compared through the interface without a constraint.
+fn (var g: Gen) proto_walk_any(t: Int, bits: Int, var walked: Map[Int, Int]) {
+  if t >= 0 && g.c.tys[g.c.resolve(t)].kind == check.TyKind.Param {
+    g.proto_all = g.proto_all | bits
+    return
+  }
+  g.proto_walk(t, bits, walked)
+}
+
+/// Closes the roots over the types they reach (after every module and
+/// copy is generated).
+fn (var g: Gen) proto_close() {
+  g.proto_call_roots()
+  var roots: List[(Int, Int)] = []
+  for (t, bits) in g.proto_roots {
+    roots.push((t, bits))
+  }
+  // every type instance: a Map's key and a Set's element are compared and
+  // hashed; a constrained parameter's argument may be
+  for t in 0..g.c.tys.len() {
+    let x = g.c.tys[t]
+    if x.kind != check.TyKind.Named || x.obj < 0 {
+      continue
+    }
+    let o = x.obj
+    let ps = g.c.objs[o].tparams
+    if g.oprelude(o) && (g.oname(o) == "Map" || g.oname(o) == "Set") && !x.args.is_empty() {
+      roots.push((x.args[0], P_EQ | P_HASH))
+    }
+    for (i, p) in ps.indexed() {
+      if i < x.args.len() && g.c.objs[p].constraint >= 0 {
+        roots.push((x.args[i], P_EQ | P_HASH))
+      }
+    }
+  }
+  var walked: Map[Int, Int] = {}
+  for (t, bits) in roots {
+    g.proto_walk(t, bits, walked)
+  }
+  // a user type that derives Eq, Hash or Ord says it is compared: it and
+  // what its fields reach (a type parameter in them reaches every type)
+  for (o, ob) in g.c.objs.indexed() {
+    if ob.derives.is_empty() || ob.tkind.is_empty() || g.ostd(o) {
+      continue
+    }
+    if !g.proto_derives_compare(o) {
+      continue
+    }
+    g.proto_need[o] = (g.proto_need.get(o) ?? 0) | P_EQ | P_HASH
+    for f in ob.fields {
+      g.proto_walk(f.ty, P_EQ | P_HASH, walked)
+    }
+    for v in ob.variants {
+      for f in v.fields {
+        g.proto_walk(f.ty, P_EQ | P_HASH, walked)
+      }
+    }
+    if ob.tkind == "newtype" {
+      g.proto_walk(ob.target, P_EQ | P_HASH, walked)
+    }
+  }
+}
+
+/// Whether user type o derives a comparing interface (the derivable
+/// table's Equality and Order markers: Eq, Hash, Ord).
+fn (g: Gen) proto_derives_compare(o: Int) -> Bool {
+  for n in g.c.objs[o].derives {
+    if let Some(d) = check.derivable(n) {
+      if d.marker && (d.kind == check.DeriveKind.Equality || d.kind == check.DeriveKind.Order) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn (var g: Gen) proto_walk(t0: Int, bits: Int, var walked: Map[Int, Int]) {
+  if t0 < 0 {
+    return
+  }
+  let t = g.c.resolve(t0)
+  let had = walked.get(t) ?? 0
+  if (had & bits) == bits {
+    return
+  }
+  walked[t] = had | bits
+  let x = g.c.tys[t]
+  match x.kind {
+    Param => {
+      // a compared or hashed type parameter is constrained, so each of
+      // its arguments is a root of its own (proto_call_roots); a
+      // generated one may be any type
+      g.proto_all = g.proto_all | (bits & P_GEN)
+    }
+    Tuple => {
+      for a in x.args {
+        g.proto_walk(a, bits, walked)
+      }
+    }
+    Func => {
+      for a in x.args {
+        g.proto_walk(a, bits, walked)
+      }
+      g.proto_walk(x.result, bits, walked)
+      g.proto_walk(x.err, bits, walked)
+    }
+    Named => {
+      let o = x.obj
+      for a in x.args {
+        g.proto_walk(a, bits, walked)
+      }
+      if g.tkind(o) == "interface" {
+        // its dynamic values are the types converted to it
+        for s in g.proto_ifs.get(o) ?? [] {
+          g.proto_walk_any(s, bits, walked)
+        }
+        return
+      }
+      if g.ostd(o) {
+        return
+      }
+      g.proto_need[o] = (g.proto_need.get(o) ?? 0) | bits
+      let s = g.subst_of(o, t)
+      let k = g.tkind(o)
+      if k == "struct" {
+        for f in g.c.objs[o].fields {
+          g.proto_walk(g.sub_apply(f.ty, s), bits, walked)
+        }
+      } else if k == "newtype" {
+        g.proto_walk(g.sub_apply(g.c.objs[o].target, s), bits, walked)
+      } else if k == "enum" {
+        for v in g.c.objs[o].variants {
+          for f in v.fields {
+            g.proto_walk(g.sub_apply(f.ty, s), bits, walked)
+          }
+        }
+      }
+    }
+    _ => ()
+  }
+}
+
+/// The package text with the protocol methods no root reaches left out
+/// (pkg_file's body).
+fn (g: Gen) proto_filter(out: List[Str]) -> Str {
+  var b = StrBuilder.new()
+  var drop = false
+  for s in out {
+    if s.starts_with("\0xoproto ") {
+      if s == PROTO_END {
+        drop = false
+        continue
+      }
+      let w = s.trim_suffix("\n").split(" ")
+      let bit = Int.parse(w[1]) ?? 0
+      let o = Int.parse(w[2]) ?? -1
+      drop = !g.proto_kept(bit, o)
+      continue
+    }
+    if !drop {
+      b.write(s)
+    }
+  }
+  b.freeze()
+}

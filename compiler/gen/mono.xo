@@ -397,11 +397,13 @@ fn (var g: Gen) gen_typed_eq(t: Int, self: Str, fs: List[FieldRef], os: List[Fie
     return
   }
   let types = g.field_types(t)
+  g.proto_open(P_EQ, t)
   g.pl("func (v ${self}) XoEqT(o ${self}) bool {")
   for i in 0..fs.len() {
     g.pl("\tif !${g.field_eq(fs[i].code, os[i].code, types[i])} {\n\t\treturn false\n\t}")
   }
   g.pl("\treturn true\n}\n")
+  g.proto_close_method()
   if !g.derives(t, "Ord") {
     return
   }
