@@ -40,6 +40,18 @@ fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Boo
   crypto.sha256("${std_key_head(id, tgoos, tgoarch, conc, tmode)}${tree}".bytes()).to_hex()
 }
 
+/// Why std_cache_key is empty: no identity, or std's tree not walked
+/// (with the error).
+fn std_key_why(os: Os, std: Str) -> Str {
+  if std_id(os).is_empty() {
+    return "no identity of this xo"
+  }
+  match os.fs.walk(std) {
+    Ok(_) => "std's tree walked on a second try: ${std}"
+    Err(e) => "std's tree not walked: ${std}: ${e}"
+  }
+}
+
 /// The identity std's entries key on: the code generation key and the
 /// driver's (the driver decides the settings std's build is handed,
 /// decision 0275), else xo's own binary.
@@ -299,6 +311,11 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmod
   }
   let key = std_cache_key(os, ctx, ctx.std, tgoos, tgoarch, conc, tmode)
   if key.is_empty() {
+    // the whole program, said (2026-11-07: TestSepcompDefault built whole
+    // with no std line only in the full suite on linux/arm64)
+    if phases {
+      os.stdio.eprintln("std variant: miss, no key (${std_key_why(os, ctx.std)})")
+    }
     return None
   }
   let store = "${dir}/std/${key}.store"
