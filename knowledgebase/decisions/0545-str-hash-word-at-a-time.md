@@ -84,6 +84,31 @@ hash with a stronger mix (wyhash's 64x64 to 128 bit multiply,
 `cpu.mul_hi`) is wanted, and whether the seed is part of (a) or a step
 of its own.
 
+**Every backend.** The four backends hash a Str key as follows, and
+with this decision they all hash it a word at a time and seeded:
+
+- **arm64 and amd64 (native)** and **LLVM** call the same function:
+  compiler/ssa map.xo lowers a Str key's hash to the native prelude's
+  `llrt_str_hash`, which is `ints.str_hash` in std/native/llrt (the
+  `rt.str_hash` arm is for a prelude without the sized integer helpers,
+  which no backend builds today). One change covers all three, seed
+  included (entry.xo start, which every native and LLVM program runs).
+- **wasm** has its own `$str_hash` in compiler/wasm/rt.xo, the same
+  algorithm written in WAT (the prototype's wasm port passes the map,
+  set, str and json goldens). The prototype does not seed it yet: the
+  wasm runtime's start reads 8 bytes from WASI `random_get` (already
+  imported for rand, rt2.xo) into a global that `$str_hash` folds into
+  C0, with the same XO_HASH_SEED override. That lands with the native
+  seed, so no backend is left unkeyed.
+- **Go** (std/rt) uses Go's own maps, whose hash Go already seeds per
+  process and per map (aeshash or memhash with a random seed); nothing
+  changes there, and it already resists precomputed collisions.
+
+The hash values differ between backends (word reads differ in wasm's
+fixed loads, and the seeds are random per process), which is fine:
+no value is stored, compared across processes or visible to a program
+(below).
+
 ## Where a hash value could leak (none found)
 
 - **Iteration order.** Map and Set iterate in insertion order (decision
