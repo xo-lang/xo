@@ -1,0 +1,53 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+type Rec struct {
+	Vals []float32 `json:"vals"`
+}
+
+func make_() Rec {
+	v := make([]float32, 0, 200)
+	x := 12345
+	for i := 0; i < 200; i++ {
+		x = (x*1103515245 + 12345) & 0x7fffffff
+		m := float32(x&0x7fffff)/8388608.0 + 1.0
+		e := ((x >> 23) & 0x3f) - 32
+		f := m
+		n := e
+		if n < 0 {
+			n = -n
+		}
+		for k := 0; k < n; k++ {
+			if e < 0 {
+				f = f / 2.0
+			} else {
+				f = f * 2.0
+			}
+		}
+		v = append(v, f)
+	}
+	return Rec{Vals: v}
+}
+
+func main() {
+	w := "encode"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	r := make_()
+	sum := 0
+	if w == "encode" {
+		for p := 0; p < 5000; p++ {
+			b, _ := json.Marshal(r)
+			sum += len(b)
+		}
+	} else {
+		sum = len(r.Vals)
+	}
+	fmt.Println(w, sum)
+}

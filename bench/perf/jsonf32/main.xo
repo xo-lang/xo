@@ -1,0 +1,45 @@
+// jsonf32: std/json's encode of Float32 fields against encoding/json (twin.go.txt): `encode` is encode_str of a
+// record of 200 Float32 values (a spread of magnitudes made by a fixed multiplier recurrence), 5,000 times; `none` is the
+// setup alone. Usage: `<program> none|encode`. Prints `<workload> <checksum>`; the twin prints the same.
+use std/json
+
+struct Rec {
+  vals: List[Float32]
+} derive Json
+
+fn make() -> Rec {
+  var v: List[Float32] = []
+  var x = 12345
+  var i = 0
+  while i < 200 {
+    x = (x * 1103515245 + 12345) & 0x7fffffff
+    // a float32 from the low 23 bits of the state and an exponent from the next bits
+    let m = Float32(x & 0x7fffff) / 8388608.0 + 1.0
+    let e = ((x >> 23) & 0x3f) - 32
+    var f = m
+    var k = 0
+    while k < e.abs() {
+      f = if e < 0 { f / 2.0 } else { f * 2.0 }
+      k += 1
+    }
+    v.push(f)
+    i += 1
+  }
+  Rec{vals: v}
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "encode"
+  let r = make()
+  var sum = 0
+  if w == "encode" {
+    var p = 0
+    while p < 5000 {
+      sum += json.encode_str(r).len()
+      p += 1
+    }
+  } else {
+    sum = r.vals.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}
