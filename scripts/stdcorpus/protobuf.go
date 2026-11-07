@@ -256,6 +256,11 @@ func protobufCorpus() string {
 			fl = uint64(math.Float32bits(float32(tr.Intn(2000)-1000) / 8))
 			if tr.Intn(3) == 0 {
 				fl = uint64(uint32(tr.Uint32()))
+				// a signaling NaN is quieted going through a double (the native backends keep a Float32 as
+				// one), not by the Go backend's float32: gotchas/float32-signaling-nan-backends.md
+				if b := uint32(fl); b&0x7f800000 == 0x7f800000 && b&0x007fffff != 0 {
+					fl = uint64(b | 0x00400000)
+				}
 			}
 		}
 		cases = append(cases, protoCase{fmt.Sprintf("smsg %d %d %d %d %d %d %d %d", sg(pick(32), 32), pick(32), pick(64), sg(pick(32), 32), pick(32), sg(pick(32), 32), pick(64), fl), nil})
