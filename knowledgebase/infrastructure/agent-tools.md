@@ -1098,6 +1098,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   worktree's bin/xo (about 2 s; owner, 2026-10-30, after an XO0804 in
   std/native/http.xo reached main), so build bin/xo before pushing a std
   change; without it pushq notes the check did not run.
+  Since 2026-11-06 scripts/gate.sh runs internal/repotest first (pushq's
+  fast repo checks, about 20 s) and a passing gate records the
+  codegen/wasm/selfbuild checks it ran, so pushq takes PUSHQ_RAN from it
+  when you leave it unset and the change is unchanged (rebases are fine).
+  Squash only onto your branch's own merge-base:
+  `git reset --soft "$(git merge-base HEAD origin/main)"`, commit, then let
+  pushq rebase. Squashing with `git reset --soft origin/main` after main
+  moved folds main's newer commits into yours as reverts, and pushq
+  refuses it ("the push undoes main's last change to ..."; 4 refusals
+  from 16:00 to 19:00 on 2026-11-06, lead bottleneck review).
   When the rebase brings commits into a compiler/ directory the push
   also changes, pushq type-checks those directories of the rebased tree
   (`go run ./scripts/xocheck DIRS`, about 2 s; lead, 2026-10-31: a field
