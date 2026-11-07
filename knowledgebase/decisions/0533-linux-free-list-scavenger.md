@@ -176,6 +176,30 @@ not the scavenger's: XO_THP's default (`dense` on Linux, decision 0456, which ev
 has it" row above ran under; `off` is decision 0454's) or host tuning, as Go's GC guide advises
 (max_ptes_none 0, or GODEBUG=disablethp=1). With XO_THP=off no run re-inflated (0 of 8, above).
 
+## Closed loop measurement (Xo Lang 2, 2026-11-07)
+
+harness soak on the linux/amd64 offload host: 8 closed loop workers,
+128 workers for 20 s at 15 and 35 min, 1 h, THP at its default (decision
+0456). Pair 2: base a1bbcb559, new 0be511f8b (harness 1f62f7555, which
+reports heap_aged_bytes). Chunks are 4 MiB; "carved" counts the chunks
+a spike mapped by 3 min after it.
+
+| side | pre spike 1 | +3 min | carved | pre spike 2 | +3 min | carved | end | chunks end | slope |
+|---|---|---|---|---|---|---|---|---|---|
+| base | 50.1 MB | 60.3 MB | 9 | 86.9 MB | 94.5 MB | 3 | 110.4 MB | 35 | 84.4 MB/h |
+| new | 43.3 MB | 63.7 MB | 8 | 75.9 MB | 76.2 MB | 0 | 77.3 MB | 29 | 39.7 MB/h |
+
+- The second spike carved no chunk on the new side (3 on the base), so
+  blocks the scavenger gave back are reused, not skipped. Pair 1 (base
+  7abeb366a, new 9d194e3b4), where the new side carved more chunks
+  (19 against 8), was run to run variance.
+- End RSS 30% lower (77.3 against 110.4 MB), 6 fewer chunks (24 MB of
+  address space), heap_aged_bytes 127.8 MB given back over the hour.
+- Both sides still drift by the harness's rule (a closed loop with
+  spikes grows the working set, decision 0520's limit is for the open
+  loop soak). Both had leakcheck 0 live and 0 errors (base 33.2M
+  requests, new 35.4M).
+
 ## Alternatives
 
 1. Lower SCAVENGE_KEEP on Linux: on the alloc path, the cost 0383 measured.
