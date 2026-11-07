@@ -1,0 +1,1053 @@
+// std/htmltok on the native backends (decision 0548): golang.org/x/net/html's
+// Tokenizer (token.go and the unescape of escape.go), BSD license, Copyright
+// 2010 The Go Authors. The input is in memory, so Go's refilling readByte is
+// an index; the spans, the error latch (EOF and the buffer limit) and every
+// state are Go's. The script data states are a numbered loop in place of
+// Go's gotos.
+use std/htmltok
+use native/html as nhtml
+
+/// The tokenizer: `src` the input, `rs`..`re` the raw span of the current
+/// token, `ds`..`de` its data span, `attr` four offsets per attribute (key
+/// start and end, value start and end), `err` 0 none, 1 EOF, 2 buffer
+/// exceeded.
+struct Tokenizer {
+  src: Bytes
+  tt: htmltok.TokenType
+  err: Int
+  rs: Int
+  re: Int
+  max_buf: Int
+  ds: Int
+  de: Int
+  pk0: Int
+  pk1: Int
+  pv0: Int
+  pv1: Int
+  attr: List[Int]
+  names: Map[Str, Bool]
+  raw_tag: Str
+  text_raw: Bool
+  convert_nul: Bool
+  cdata: Bool
+}
+
+fn new_tokenizer(text: Str, raw_tag: Str) -> Tokenizer {
+  Tokenizer{src: text.bytes(), tt: htmltok.TokenType.Error, err: 0, rs: 0, re: 0, max_buf: 0, ds: 0, de: 0, pk0: 0, pk1: 0, pv0: 0, pv1: 0, attr: [], names: {}, raw_tag: raw_tag, text_raw: false, convert_nul: false, cdata: false}
+}
+
+fn tokenizer(text: Str) -> Tokenizer { new_tokenizer(text, "") }
+
+fn tokenizer_fragment(text: Str, context_tag: Str) -> Tokenizer {
+  let s = context_tag.to_lower()
+  var raw = ""
+  if s == "title" || s == "textarea" {
+    raw = s
+  } else if s == "style" || s == "xmp" || s == "iframe" || s == "noembed" || s == "noframes" || s == "script" || s == "noscript" || s == "plaintext" {
+    raw = "plaintext"
+  }
+  new_tokenizer(text, raw)
+}
+
+fn is_alpha(c: Int) -> Bool { (c >= 97 && c <= 122) || (c >= 65 && c <= 90) }
+fn is_space(c: Int) -> Bool { c == 32 || c == 10 || c == 13 || c == 9 || c == 12 }
+
+fn (z: Tokenizer) err() -> Str? {
+  if z.tt != htmltok.TokenType.Error || z.err == 0 {
+    None
+  } else if z.err == 1 {
+    Some("EOF")
+  } else {
+    Some("max buffer exceeded")
+  }
+}
+
+fn (var z: Tokenizer) allow_cdata(allow: Bool) { z.cdata = allow }
+fn (var z: Tokenizer) next_is_not_raw_text() { z.raw_tag = "" }
+fn (var z: Tokenizer) set_max_buf(n: Int) { z.max_buf = n }
+fn (z: Tokenizer) buffered() -> Str { z.src[z.re..z.src.len()].to_str_lossy() }
+fn (z: Tokenizer) raw() -> Str { z.src[z.rs..z.re].to_str_lossy() }
+
+/// Go's readByte: the next byte, 0 with `err` set at the end of the input or
+/// when the token reaches the limit.
+fn (var z: Tokenizer) rb() -> Int {
+  if z.re >= z.src.len() {
+    z.err = 1
+    return 0
+  }
+  let x = Int(z.src[z.re])
+  z.re += 1
+  if z.max_buf > 0 && z.re - z.rs >= z.max_buf {
+    z.err = 2
+    return 0
+  }
+  x
+}
+
+fn (var z: Tokenizer) skip_white_space() {
+  if z.err != 0 {
+    return
+  }
+  while true {
+    let c = z.rb()
+    if z.err != 0 {
+      return
+    }
+    if !is_space(c) {
+      z.re -= 1
+      return
+    }
+  }
+}
+
+/// Go's readRawEndTag: "</foo" plus a delimiter, `foo` the raw tag; on
+/// success backs up to the "</".
+fn (var z: Tokenizer) read_raw_end_tag() -> Bool {
+  let tag = z.raw_tag.bytes()
+  var i = 0
+  while i < tag.len() {
+    let c = z.rb()
+    if z.err != 0 {
+      return false
+    }
+    if c != Int(tag[i]) && c != Int(tag[i]) - 32 {
+      z.re -= 1
+      return false
+    }
+    i += 1
+  }
+  let c = z.rb()
+  if z.err != 0 {
+    return false
+  }
+  if is_space(c) || c == 47 || c == 62 {
+    z.re -= 3 + tag.len()
+    return true
+  }
+  z.re -= 1
+  false
+}
+
+fn (var z: Tokenizer) read_raw_or_rcdata() {
+  if z.raw_tag == "script" {
+    z.read_script()
+    z.text_raw = true
+    z.raw_tag = ""
+    return
+  }
+  while true {
+    var c = z.rb()
+    if z.err != 0 {
+      break
+    }
+    if c != 60 {
+      continue
+    }
+    c = z.rb()
+    if z.err != 0 {
+      break
+    }
+    if c != 47 {
+      z.re -= 1
+      continue
+    }
+    if z.read_raw_end_tag() || z.err != 0 {
+      break
+    }
+  }
+  z.de = z.re
+  z.text_raw = z.raw_tag != "textarea" && z.raw_tag != "title"
+  z.raw_tag = ""
+}
+
+// the script data states of the HTML5 tokenizer, as Go's labels
+const S_DATA = 0
+const S_LT = 1
+const S_END_OPEN = 2
+const S_ESC_START = 3
+const S_ESC_START_DASH = 4
+const S_ESC = 5
+const S_ESC_DASH = 6
+const S_ESC_DASH_DASH = 7
+const S_ESC_LT = 8
+const S_ESC_END_OPEN = 9
+const S_DESC_START = 10
+const S_DESC = 11
+const S_DESC_DASH = 12
+const S_DESC_DASH_DASH = 13
+const S_DESC_LT = 14
+const S_DESC_END = 15
+
+fn (var z: Tokenizer) read_script() {
+  z.read_script_states()
+  z.de = z.re
+}
+
+fn (var z: Tokenizer) read_script_states() {
+  var st = S_DATA
+  while true {
+    if st == S_END_OPEN {
+      if z.read_raw_end_tag() || z.err != 0 {
+        return
+      }
+      st = S_DATA
+      continue
+    }
+    if st == S_ESC_END_OPEN {
+      if z.read_raw_end_tag() || z.err != 0 {
+        return
+      }
+      st = S_ESC
+      continue
+    }
+    if st == S_DESC_START {
+      z.re -= 1
+      let word = "script".bytes()
+      var i = 0
+      var ok = true
+      while i < word.len() {
+        let c = z.rb()
+        if z.err != 0 {
+          return
+        }
+        if c != Int(word[i]) && c != Int(word[i]) - 32 {
+          z.re -= 1
+          ok = false
+          break
+        }
+        i += 1
+      }
+      if !ok {
+        st = S_ESC
+        continue
+      }
+      let c = z.rb()
+      if z.err != 0 {
+        return
+      }
+      if is_space(c) || c == 47 || c == 62 {
+        st = S_DESC
+      } else {
+        z.re -= 1
+        st = S_ESC
+      }
+      continue
+    }
+    if st == S_DESC_END {
+      if z.read_raw_end_tag() {
+        z.re += 9
+        st = S_ESC
+        continue
+      }
+      if z.err != 0 {
+        return
+      }
+      st = S_DESC
+      continue
+    }
+    let c = z.rb()
+    if z.err != 0 {
+      return
+    }
+    if st == S_DATA {
+      if c == 60 { st = S_LT }
+    } else if st == S_LT {
+      if c == 47 {
+        st = S_END_OPEN
+      } else if c == 33 {
+        st = S_ESC_START
+      } else {
+        z.re -= 1
+        st = S_DATA
+      }
+    } else if st == S_ESC_START {
+      if c == 45 {
+        st = S_ESC_START_DASH
+      } else {
+        z.re -= 1
+        st = S_DATA
+      }
+    } else if st == S_ESC_START_DASH {
+      if c == 45 {
+        st = S_ESC_DASH_DASH
+      } else {
+        z.re -= 1
+        st = S_DATA
+      }
+    } else if st == S_ESC {
+      if c == 45 {
+        st = S_ESC_DASH
+      } else if c == 60 {
+        st = S_ESC_LT
+      }
+    } else if st == S_ESC_DASH {
+      if c == 45 {
+        st = S_ESC_DASH_DASH
+      } else if c == 60 {
+        st = S_ESC_LT
+      } else {
+        st = S_ESC
+      }
+    } else if st == S_ESC_DASH_DASH {
+      if c == 45 {
+        st = S_ESC_DASH_DASH
+      } else if c == 60 {
+        st = S_ESC_LT
+      } else if c == 62 {
+        st = S_DATA
+      } else {
+        st = S_ESC
+      }
+    } else if st == S_ESC_LT {
+      if c == 47 {
+        st = S_ESC_END_OPEN
+      } else if is_alpha(c) {
+        st = S_DESC_START
+      } else {
+        z.re -= 1
+        st = S_DATA
+      }
+    } else if st == S_DESC {
+      if c == 45 {
+        st = S_DESC_DASH
+      } else if c == 60 {
+        st = S_DESC_LT
+      }
+    } else if st == S_DESC_DASH {
+      if c == 45 {
+        st = S_DESC_DASH_DASH
+      } else if c == 60 {
+        st = S_DESC_LT
+      } else {
+        st = S_DESC
+      }
+    } else if st == S_DESC_DASH_DASH {
+      if c == 45 {
+        st = S_DESC_DASH_DASH
+      } else if c == 60 {
+        st = S_DESC_LT
+      } else if c == 62 {
+        st = S_DATA
+      } else {
+        st = S_DESC
+      }
+    } else {
+      // S_DESC_LT
+      if c == 47 {
+        st = S_DESC_END
+      } else {
+        z.re -= 1
+        st = S_DESC
+      }
+    }
+  }
+}
+
+fn (var z: Tokenizer) read_comment() {
+  z.ds = z.re
+  var dash = 0
+  var beginning = true
+  while true {
+    var c = z.rb()
+    if z.err != 0 {
+      z.de = z.abrupt_comment_data_end()
+      break
+    }
+    if c == 45 {
+      dash += 1
+      continue
+    }
+    if c == 62 {
+      if dash >= 2 || beginning {
+        z.de = z.re - 3
+        break
+      }
+    } else if c == 33 {
+      if dash >= 2 {
+        c = z.rb()
+        if z.err != 0 {
+          z.de = z.abrupt_comment_data_end()
+          break
+        } else if c == 62 {
+          z.de = z.re - 4
+          break
+        } else if c == 45 {
+          dash = 1
+          beginning = false
+          continue
+        }
+      }
+    }
+    dash = 0
+    beginning = false
+  }
+  if z.de < z.ds {
+    z.de = z.ds
+  }
+}
+
+fn has_suffix(b: Bytes, suffix: Str) -> Bool {
+  let s = suffix.bytes()
+  if b.len() < s.len() {
+    return false
+  }
+  b[b.len() - s.len()..b.len()] == s
+}
+
+fn (z: Tokenizer) abrupt_comment_data_end() -> Int {
+  let raw = z.src[z.rs..z.re]
+  if raw.len() >= 4 {
+    let r = raw[4..raw.len()]
+    if has_suffix(r, "--!") {
+      return z.re - 3
+    } else if has_suffix(r, "--") {
+      return z.re - 2
+    } else if has_suffix(r, "-") {
+      return z.re - 1
+    }
+  }
+  z.re
+}
+
+fn (var z: Tokenizer) read_until_close_angle() {
+  z.ds = z.re
+  while true {
+    let c = z.rb()
+    if z.err != 0 {
+      z.de = z.re
+      return
+    }
+    if c == 62 {
+      z.de = z.re - 1
+      return
+    }
+  }
+}
+
+fn (var z: Tokenizer) read_markup_declaration() -> htmltok.TokenType {
+  z.ds = z.re
+  var c0 = 0
+  var c1 = 0
+  var i = 0
+  while i < 2 {
+    let c = z.rb()
+    if z.err != 0 {
+      z.de = z.re
+      if i == 1 && c0 == 62 {
+        z.de -= 1
+      }
+      return htmltok.TokenType.Comment
+    }
+    if i == 0 { c0 = c } else { c1 = c }
+    i += 1
+  }
+  if c0 == 45 && c1 == 45 {
+    z.read_comment()
+    return htmltok.TokenType.Comment
+  }
+  z.re -= 2
+  if z.read_doctype() {
+    return htmltok.TokenType.Doctype
+  }
+  if z.cdata && z.read_cdata() {
+    z.convert_nul = true
+    return htmltok.TokenType.Text
+  }
+  z.read_until_close_angle()
+  htmltok.TokenType.Comment
+}
+
+fn (var z: Tokenizer) read_doctype() -> Bool {
+  let s = "DOCTYPE".bytes()
+  var i = 0
+  while i < s.len() {
+    let c = z.rb()
+    if z.err != 0 {
+      if z.err == 1 {
+        z.re = z.ds
+        z.err = 0
+        return false
+      }
+      z.de = z.re
+      return false
+    }
+    if c != Int(s[i]) && c != Int(s[i]) + 32 {
+      z.re = z.ds
+      return false
+    }
+    i += 1
+  }
+  z.skip_white_space()
+  if z.err != 0 {
+    z.ds = z.re
+    z.de = z.re
+    return true
+  }
+  z.read_until_close_angle()
+  true
+}
+
+fn (var z: Tokenizer) read_cdata() -> Bool {
+  let s = "[CDATA[".bytes()
+  var i = 0
+  while i < s.len() {
+    let c = z.rb()
+    if z.err != 0 {
+      if z.err == 1 {
+        z.re = z.ds
+        z.err = 0
+        return false
+      }
+      z.de = z.re
+      return false
+    }
+    if c != Int(s[i]) {
+      z.re = z.ds
+      return false
+    }
+    i += 1
+  }
+  z.ds = z.re
+  var brackets = 0
+  while true {
+    let c = z.rb()
+    if z.err != 0 {
+      z.de = z.re
+      return true
+    }
+    if c == 93 {
+      brackets += 1
+    } else if c == 62 {
+      if brackets >= 2 {
+        z.de = z.re - 3
+        return true
+      }
+      brackets = 0
+    } else {
+      brackets = 0
+    }
+  }
+  true
+}
+
+fn lower_bytes(b: Bytes) -> Bytes {
+  var out = BytesBuilder.with_capacity(b.len())
+  for c in b {
+    if c >= 65 && c <= 90 {
+      out.write_byte(c + 32)
+    } else {
+      out.write_byte(c)
+    }
+  }
+  out.freeze()
+}
+
+/// Go's bytes.ReplaceAll(s, "\x00", "�").
+fn replace_nul(b: Bytes) -> Bytes {
+  var has = false
+  for c in b {
+    if c == 0 {
+      has = true
+      break
+    }
+  }
+  if !has {
+    return b
+  }
+  var out = BytesBuilder.with_capacity(b.len() + 8)
+  for c in b {
+    if c == 0 {
+      out.write_str("\u{FFFD}")
+    } else {
+      out.write_byte(c)
+    }
+  }
+  out.freeze()
+}
+
+fn (z: Tokenizer) start_tag_in(names: List[Str]) -> Bool {
+  let name = lower_bytes(z.src[z.ds..z.de])
+  for n in names {
+    if name == n.bytes() {
+      return true
+    }
+  }
+  false
+}
+
+fn (var z: Tokenizer) read_start_tag() -> htmltok.TokenType {
+  z.read_tag(true)
+  if z.err != 0 {
+    return htmltok.TokenType.Error
+  }
+  var c = Int(z.src[z.ds])
+  if c >= 65 && c <= 90 {
+    c += 32
+  }
+  var raw = false
+  if c == 105 {
+    raw = z.start_tag_in(["iframe"])
+  } else if c == 110 {
+    raw = z.start_tag_in(["noembed", "noframes", "noscript"])
+  } else if c == 112 {
+    raw = z.start_tag_in(["plaintext"])
+  } else if c == 115 {
+    raw = z.start_tag_in(["script", "style"])
+  } else if c == 116 {
+    raw = z.start_tag_in(["textarea", "title"])
+  } else if c == 120 {
+    raw = z.start_tag_in(["xmp"])
+  }
+  if raw {
+    z.raw_tag = lower_bytes(z.src[z.ds..z.de]).to_str_lossy()
+  }
+  let n = z.attr.len() / 4
+  if z.err == 0 && Int(z.src[z.re - 2]) == 47 && (n == 0 || z.re - 2 != z.attr[(n - 1) * 4 + 3] - 1) {
+    return htmltok.TokenType.SelfClosingTag
+  }
+  htmltok.TokenType.StartTag
+}
+
+fn (var z: Tokenizer) read_tag(save_attr: Bool) {
+  z.attr = []
+  z.names = {}
+  z.read_tag_name()
+  z.skip_white_space()
+  if z.err != 0 {
+    return
+  }
+  while true {
+    let c = z.rb()
+    if z.err != 0 || c == 62 {
+      break
+    }
+    z.re -= 1
+    z.read_tag_attr_key()
+    z.read_tag_attr_val()
+    if save_attr && z.pk0 != z.pk1 {
+      let key = lower_bytes(z.src[z.pk0..z.pk1]).to_str_lossy()
+      if !z.names.contains(key) {
+        z.attr.push(z.pk0)
+        z.attr.push(z.pk1)
+        z.attr.push(z.pv0)
+        z.attr.push(z.pv1)
+        z.names.put(key, true)
+      }
+    }
+    z.skip_white_space()
+    if z.err != 0 {
+      break
+    }
+  }
+}
+
+fn (var z: Tokenizer) read_tag_name() {
+  z.ds = z.re - 1
+  while true {
+    let c = z.rb()
+    if z.err != 0 {
+      z.de = z.re
+      return
+    }
+    if is_space(c) {
+      z.de = z.re - 1
+      return
+    }
+    if c == 47 || c == 62 {
+      z.re -= 1
+      z.de = z.re
+      return
+    }
+  }
+}
+
+fn (var z: Tokenizer) read_tag_attr_key() {
+  z.pk0 = z.re
+  while true {
+    let c = z.rb()
+    if z.err != 0 {
+      z.pk1 = z.re
+      return
+    }
+    if c == 61 && z.pk0 + 1 == z.re {
+      continue
+    }
+    if c == 61 || is_space(c) || c == 47 || c == 62 {
+      z.re -= 1
+      z.pk1 = z.re
+      return
+    }
+  }
+}
+
+fn (var z: Tokenizer) read_tag_attr_val() {
+  z.pv0 = z.re
+  z.pv1 = z.re
+  z.skip_white_space()
+  if z.err != 0 {
+    return
+  }
+  var c = z.rb()
+  if z.err != 0 {
+    return
+  }
+  if c == 47 {
+    return
+  }
+  if c != 61 {
+    z.re -= 1
+    return
+  }
+  z.skip_white_space()
+  if z.err != 0 {
+    return
+  }
+  let quote = z.rb()
+  if z.err != 0 {
+    return
+  }
+  if quote == 62 {
+    z.re -= 1
+    return
+  }
+  if quote == 39 || quote == 34 {
+    z.pv0 = z.re
+    while true {
+      c = z.rb()
+      if z.err != 0 {
+        z.pv1 = z.re
+        return
+      }
+      if c == quote {
+        z.pv1 = z.re - 1
+        return
+      }
+    }
+  }
+  z.pv0 = z.re - 1
+  while true {
+    c = z.rb()
+    if z.err != 0 {
+      z.pv1 = z.re
+      return
+    }
+    if is_space(c) {
+      z.pv1 = z.re - 1
+      return
+    }
+    if c == 62 {
+      z.re -= 1
+      z.pv1 = z.re
+      return
+    }
+  }
+}
+
+fn (var z: Tokenizer) next() -> htmltok.TokenType {
+  z.rs = z.re
+  z.ds = z.re
+  z.de = z.re
+  if z.err != 0 {
+    z.tt = htmltok.TokenType.Error
+    return z.tt
+  }
+  if z.raw_tag != "" {
+    if z.raw_tag == "plaintext" {
+      while z.err == 0 {
+        let _ = z.rb()
+      }
+      z.de = z.re
+      z.text_raw = true
+    } else {
+      z.read_raw_or_rcdata()
+    }
+    if z.de > z.ds {
+      z.tt = htmltok.TokenType.Text
+      z.convert_nul = true
+      return z.tt
+    }
+  }
+  z.text_raw = false
+  z.convert_nul = false
+  while true {
+    let c0 = z.rb()
+    if z.err != 0 {
+      break
+    }
+    if c0 != 60 {
+      continue
+    }
+    var c = z.rb()
+    if z.err != 0 {
+      break
+    }
+    var kind = 0
+    if is_alpha(c) {
+      kind = 1
+    } else if c == 47 {
+      kind = 2
+    } else if c == 33 || c == 63 {
+      kind = 3
+    } else {
+      z.re -= 1
+      continue
+    }
+    let x = z.re - 2
+    if z.rs < x {
+      z.re = x
+      z.de = x
+      z.tt = htmltok.TokenType.Text
+      return z.tt
+    }
+    if kind == 1 {
+      z.tt = z.read_start_tag()
+      return z.tt
+    }
+    if kind == 2 {
+      c = z.rb()
+      if z.err != 0 {
+        break
+      }
+      if c == 62 {
+        z.tt = htmltok.TokenType.Comment
+        return z.tt
+      }
+      if is_alpha(c) {
+        z.read_tag(false)
+        if z.err != 0 {
+          z.tt = htmltok.TokenType.Error
+        } else {
+          z.tt = htmltok.TokenType.EndTag
+        }
+        return z.tt
+      }
+      z.re -= 1
+      z.read_until_close_angle()
+      z.tt = htmltok.TokenType.Comment
+      return z.tt
+    }
+    if c == 33 {
+      z.tt = z.read_markup_declaration()
+      return z.tt
+    }
+    z.re -= 1
+    z.read_until_close_angle()
+    z.tt = htmltok.TokenType.Comment
+    return z.tt
+  }
+  if z.rs < z.re {
+    z.de = z.re
+    z.tt = htmltok.TokenType.Text
+    return z.tt
+  }
+  z.tt = htmltok.TokenType.Error
+  z.tt
+}
+
+/// Go's convertNewlines: "\r" and "\r\n" become "\n".
+fn convert_newlines(b: Bytes) -> Bytes {
+  var has = false
+  for c in b {
+    if c == 13 {
+      has = true
+      break
+    }
+  }
+  if !has {
+    return b
+  }
+  var out = BytesBuilder.with_capacity(b.len())
+  var i = 0
+  while i < b.len() {
+    if b[i] == 13 {
+      out.write_byte(10)
+      if i + 1 < b.len() && b[i + 1] == 10 {
+        i += 1
+      }
+    } else {
+      out.write_byte(b[i])
+    }
+    i += 1
+  }
+  out.freeze()
+}
+
+/// Go's unescapeEntity at s[at] (a `&`): the replacement text and the length
+/// of the reference; ("", 1) when it is not one.
+fn unescape_entity(s: Bytes, at: Int, attribute: Bool) -> (Str, Int) {
+  let n = s.len() - at
+  if n <= 1 {
+    return ("&", 1)
+  }
+  var i = 1
+  if s[at + i] == 35 {
+    if n <= 2 {
+      return ("&", 1)
+    }
+    i += 1
+    var hex = false
+    if s[at + i] == 120 || s[at + i] == 88 {
+      hex = true
+      i += 1
+    }
+    let i0 = i
+    var x = 0
+    while i < n {
+      let c = Int(s[at + i])
+      var d = 0
+      var mult = 10
+      if hex {
+        mult = 16
+        if c >= 48 && c <= 57 {
+          d = c - 48
+        } else if c >= 97 && c <= 102 {
+          d = c - 97 + 10
+        } else if c >= 65 && c <= 70 {
+          d = c - 65 + 10
+        } else {
+          break
+        }
+      } else if c >= 48 && c <= 57 {
+        d = c - 48
+      } else {
+        break
+      }
+      if x <= 0x10FFFF {
+        x = mult * x + d
+      }
+      i += 1
+    }
+    if i == i0 {
+      return ("&", 1)
+    }
+    if i < n && s[at + i] == 59 {
+      i += 1
+    }
+    if x >= 0x80 && x <= 0x9F {
+      return (nhtml.REPLACEMENT[x - 0x80], i)
+    }
+    if x == 0 || (x >= 0xD800 && x <= 0xDFFF) || x > 0x10FFFF {
+      x = 0xFFFD
+    }
+    var rb = BytesBuilder.new()
+    rb.write_rune(Rune.try(x) ?? Rune.try(0xFFFD).or_fault("rune"))
+    return (rb.freeze().to_str_lossy(), i)
+  }
+  while i < n {
+    let c = Int(s[at + i])
+    i += 1
+    if is_alpha(c) || (c >= 48 && c <= 57) {
+      continue
+    }
+    if c != 59 {
+      i -= 1
+    }
+    break
+  }
+  let name = s[at + 1..at + i].to_str() ?? ""
+  if name.is_empty() {
+    return ("&", 1)
+  }
+  if attribute && Int(s[at + i - 1]) != 59 && n > i && s[at + i] == 61 {
+    return ("&", 1)
+  }
+  let one = nhtml.entity_of(name)
+  if !one.is_empty() {
+    return (one, i)
+  }
+  let two = nhtml.entity2_of(name)
+  if !two.is_empty() {
+    return (two, i)
+  }
+  if !attribute {
+    var max_len = name.len() - 1
+    if max_len > nhtml.LONGEST_ENTITY_WITHOUT_SEMICOLON {
+      max_len = nhtml.LONGEST_ENTITY_WITHOUT_SEMICOLON
+    }
+    var j = max_len
+    while j > 1 {
+      let pre = nhtml.entity_of(name[0..j])
+      if !pre.is_empty() {
+        return (pre, j + 1)
+      }
+      j -= 1
+    }
+  }
+  ("&", 1)
+}
+
+/// Go's unescape(b, attribute).
+fn unescape(b: Bytes, attribute: Bool) -> Bytes {
+  var first = -1
+  var k = 0
+  while k < b.len() {
+    if b[k] == 38 {
+      first = k
+      break
+    }
+    k += 1
+  }
+  if first < 0 {
+    return b
+  }
+  var out = BytesBuilder.with_capacity(b.len())
+  out.write(b[0..first])
+  var src = first
+  while src < b.len() {
+    if b[src] != 38 {
+      out.write_byte(b[src])
+      src += 1
+      continue
+    }
+    let (rep, len) = unescape_entity(b, src, attribute)
+    if len == 1 && rep == "&" {
+      out.write_byte(38)
+      src += 1
+      continue
+    }
+    out.write_str(rep)
+    src += len
+  }
+  out.freeze()
+}
+
+/// Go's Text: the data span unescaped (raw text is not), newlines converted,
+/// NUL replaced.
+fn (var z: Tokenizer) text() -> Str {
+  var s = z.src[z.ds..z.de]
+  z.ds = z.re
+  z.de = z.re
+  s = convert_newlines(s)
+  if z.convert_nul || z.tt == htmltok.TokenType.Comment {
+    s = replace_nul(s)
+  }
+  if !z.text_raw {
+    s = unescape(s, false)
+  }
+  s.to_str_lossy()
+}
+
+fn (var w: Tokenizer) token() -> htmltok.Token {
+  let tt = w.tt
+  if tt == htmltok.TokenType.Text || tt == htmltok.TokenType.Comment || tt == htmltok.TokenType.Doctype {
+    return htmltok.Token{typ: tt, data: w.text(), attrs: []}
+  }
+  if tt == htmltok.TokenType.StartTag || tt == htmltok.TokenType.SelfClosingTag || tt == htmltok.TokenType.EndTag {
+    var name = ""
+    if w.ds < w.de {
+      name = lower_bytes(replace_nul(w.src[w.ds..w.de])).to_str_lossy()
+    }
+    var attrs: List[htmltok.Attribute] = []
+    if tt != htmltok.TokenType.EndTag {
+      var i = 0
+      while i + 3 < w.attr.len() {
+        let key = lower_bytes(replace_nul(w.src[w.attr[i]..w.attr[i + 1]])).to_str_lossy()
+        let val = unescape(convert_newlines(replace_nul(w.src[w.attr[i + 2]..w.attr[i + 3]])), true).to_str_lossy()
+        attrs.push(htmltok.Attribute{key: key, val: val})
+        i += 4
+      }
+    }
+    return htmltok.Token{typ: tt, data: name, attrs: attrs}
+  }
+  htmltok.Token{typ: tt, data: "", attrs: []}
+}

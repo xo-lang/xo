@@ -1,0 +1,68 @@
+// std/htmltok (decision 0548). Declaration file; encoding rules are listed at
+// the top of std/prelude.xo. golang.org/x/net/html's Tokenizer (token.go, BSD
+// license, Copyright 2010 The Go Authors): the HTML5 tokenization of a text
+// into start tags, end tags, self closing tags, text, comments and doctypes,
+// with raw text elements (script, style, textarea, title, iframe, noembed,
+// noframes, noscript, plaintext, xmp), attribute and entity rules, CDATA on
+// request, and the buffer limit. No tree builder. Pure.
+
+/// Go's TokenType.
+enum TokenType {
+  Error
+  Text
+  StartTag
+  EndTag
+  SelfClosingTag
+  Comment
+  Doctype
+} derive Eq
+
+/// Go's Attribute without its namespace (the tokenizer never sets one): the
+/// key lower cased, the value unescaped.
+struct Attribute {
+  key: Str
+  val: Str
+} derive Eq
+
+/// Go's Token: `data` is the lower cased tag name of a tag, the unescaped text
+/// of a text, comment or doctype; `attrs` are a tag's attributes in order,
+/// duplicates (by lower cased key) and empty keys dropped.
+struct Token {
+  typ: TokenType
+  data: Str
+  attrs: List[Attribute]
+} derive Eq
+
+/// Go's Tokenizer over a text held in memory.
+struct Tokenizer {}
+
+/// Go's NewTokenizer.
+fn tokenizer(text: Str) -> Tokenizer
+/// Go's NewTokenizerFragment: tokenizing the inner HTML of an element with
+/// the tag `context_tag` (`title` and `textarea` start in RCDATA; `style`,
+/// `xmp`, `iframe`, `noembed`, `noframes`, `script`, `noscript`, `plaintext`
+/// in plain text).
+fn tokenizer_fragment(text: Str, context_tag: Str) -> Tokenizer
+
+/// Go's Next: scans the next token and returns its type; Error at the end of
+/// the input (see `err`) or when the buffer limit is exceeded.
+fn (var z: Tokenizer) next() -> TokenType
+/// Go's Token: the current token (it consumes the token's data, as Go's does:
+/// call it once per `next`).
+fn (var z: Tokenizer) token() -> Token
+/// Go's Raw: the unmodified text of the current token; the raw texts of the
+/// tokens partition the input up to the Error token.
+fn (z: Tokenizer) raw() -> Str
+/// Go's Err after an Error token: `EOF` at the end of the input, `max buffer
+/// exceeded` past the limit; None before one.
+fn (z: Tokenizer) err() -> Str?
+/// Go's AllowCDATA: `<![CDATA[x]]>` is the text `x` instead of a bogus
+/// comment (default false).
+fn (var z: Tokenizer) allow_cdata(allow: Bool)
+/// Go's NextIsNotRawText: the next token after a raw text start tag is
+/// scanned as ordinary markup.
+fn (var z: Tokenizer) next_is_not_raw_text()
+/// Go's SetMaxBuf: a token longer than n bytes is an Error (0 is no limit).
+fn (var z: Tokenizer) set_max_buf(n: Int)
+/// Go's Buffered: the input not yet tokenized.
+fn (z: Tokenizer) buffered() -> Str
