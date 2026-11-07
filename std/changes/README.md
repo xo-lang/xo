@@ -67,6 +67,8 @@ entries yet.
 - [cli.md](cli.md): std/cli (spec/std.md 14)
 - [html.md](html.md): std/html (escape_string, unescape_string)
 - [htmltok.md](htmltok.md): std/htmltok (x/net/html Tokenizer)
+- [protodesc.md](protodesc.md): std/protodesc (descriptor.proto as Xo values)
+- [protowkt.md](protowkt.md): std/protowkt (the well known types)
 - [png.md](png.md): std/png (spec/std.md 48)
 - [jpeg.md](jpeg.md): std/jpeg (spec/std.md 49)
 - [cbor.md](cbor.md): std/cbor (spec/std.md 50)

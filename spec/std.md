@@ -8057,3 +8057,33 @@ token raw text (RCDATA for `textarea` and `title`: entities are still read); `ne
 `allow_cdata` are the caller's tools for foreign content, as in Go. Differences from Go: the input is a `Str` (valid
 UTF-8, held in memory) rather than an `io.Reader`, so there is no read error, and `tag_name`, `tag_attr` and `text`
 (the allocation free accessors) are not offered: `token` is the one accessor.
+
+## 72. std/protodesc
+
+The descriptors of protobuf's `google/protobuf/descriptor.proto` as Xo values (decision 0546 item 1): `FileDesc` with
+`MessageDesc`, `FieldDesc`, `EnumDesc`, `EnumValueDesc`, `ServiceDesc`, `MethodDesc`, `OneofDesc` and the range types, the
+`LABEL_*` and `TYPE_*` constants, and a hand written wire codec over std/protobuf (derive Proto does not expand in std,
+decision 0549, which converts this module to generated code). Options messages are kept as their wire bytes and unknown
+fields of a `FieldDesc` as theirs, so a descriptor made by protoc or protobuf-go decodes and encodes back to the same
+bytes (checked on descriptor.proto, the well known types and grpc-go's health, reflection and test files: testdata/corpus/
+protodesc, byte for byte against protobuf-go).
+
+```xo
+fn encode(f: FileDesc) -> Bytes
+fn decode(data: Bytes) -> FileDesc ! protobuf.ProtoErr
+```
+
+`encode` writes fields in field number order, the order protobuf-go's Deterministic marshaling uses; a proto2 file has an
+empty `syntax`. Unknown fields other than a `FieldDesc`'s are dropped.
+
+## 73. std/protowkt
+
+The well known types of `google/protobuf/*.proto` as Xo values with hand written codecs (decision 0546 item 2):
+`Timestamp`, `Duration`, `Empty`, `FieldMask`, `Any`, the wrappers `DoubleValue`, `FloatValue`, `Int64Value`,
+`UInt64Value`, `Int32Value`, `UInt32Value`, `BoolValue`, `StringValue`, `BytesValue`, and `Struct`, `Value`, `ListValue`
+(`Value` is an enum: `Unset`, `Null`, `Number`, `Text`, `Flag`, `Object`, `Array`). Each type has
+`encode_NAME(m) -> Bytes` and `decode_NAME(b) -> NAME ! protobuf.ProtoErr` (`encode_timestamp`, `decode_field_mask`,
+`encode_value`, ...). Encoding is proto3: a zero scalar is not written, a `Value`'s member is, and a `Struct`'s entries
+are written in key order (protobuf-go's Deterministic marshaling); decoding keeps the last value of a field and skips
+unknown ones. Checked against protobuf-go's types marshaled for fixed and seeded random values (testdata/corpus/protowkt,
+byte for byte, and the decoded values). Decision 0549 converts the module to generated code.
