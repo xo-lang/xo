@@ -43,6 +43,7 @@ type sample struct {
 	dials             int64
 	huge              float64
 	heapLive, timers  float64
+	chunks, cacheB    float64
 	cpuPerReqUS       float64
 }
 
@@ -153,10 +154,13 @@ func slope(x, y []float64) float64 {
 	return (n*sxy - sx*sy) / d
 }
 
-// schedStats reads heap_live and timers_pending from the app's stats path
-// (/debug/sched); -1 for each it does not report.
-func schedStats(cl *http.Client, url, token string) (heapLive, timers float64) {
-	heapLive, timers = -1, -1
+// schedStats reads heap_live, timers_pending, heap_chunks (the 4 MiB
+// chunks the size classes are carved from) and heap_cache_bytes (the large
+// block cache's mapped bytes) from the app's stats path (/debug/sched); -1
+// for each it does not report. The two footprint figures tell a heap that
+// grows its mappings from RSS the kernel keeps for other reasons.
+func schedStats(cl *http.Client, url, token string) (heapLive, timers, chunks, cacheB float64) {
+	heapLive, timers, chunks, cacheB = -1, -1, -1, -1
 	req, _ := http.NewRequest("GET", url, nil)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -181,6 +185,10 @@ func schedStats(cl *http.Client, url, token string) (heapLive, timers float64) {
 			heapLive = n
 		case "timers_pending":
 			timers = n
+		case "heap_chunks":
+			chunks = n
+		case "heap_cache_bytes":
+			cacheB = n
 		}
 	}
 	return
@@ -260,7 +268,7 @@ func soakMain(args []string) int {
 	stopLoad := d.open(*rate)
 
 	f, _ := os.Create(filepath.Join(*out, "samples.csv"))
-	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks,client_socks,anon_huge_kib,client_dials")
+	fmt.Fprintln(f, "t_s,reqs,errs,drops,p50_us,p99_us,p999_us,rss_kib,fds,heap_live,timers,cpu_us_per_req,socks,client_socks,anon_huge_kib,client_dials,heap_chunks,heap_cache_bytes")
 	statsURL := ""
 	if app.Stats != "" {
 		statsURL = base + app.Stats
@@ -282,19 +290,19 @@ func soakMain(args []string) int {
 			os.WriteFile(filepath.Join(*out, "fds-first.txt"), []byte(strings.Join(fl, "\n")+"\n"), 0o644)
 		}
 		os.WriteFile(filepath.Join(*out, "fds-last.txt"), []byte(strings.Join(fl, "\n")+"\n"), 0o644)
-		hl, tm := -1.0, -1.0
+		hl, tm, ch, cb := -1.0, -1.0, -1.0, -1.0
 		if statsURL != "" {
-			hl, tm = schedStats(cl, statsURL, app.Tokens[app.StatsToken])
+			hl, tm, ch, cb = schedStats(cl, statsURL, app.Tokens[app.StatsToken])
 		}
 		n := atomic.LoadInt64(&d.reqs)
 		s := sample{t: time.Since(start).Seconds(), reqs: n, errs: atomic.LoadInt64(&d.errs), drops: atomic.LoadInt64(&d.drops),
-			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, socks: socks, csocks: csocks, dials: atomic.LoadInt64(&d.dials), huge: huge, heapLive: hl, timers: tm}
+			p50: pct(l, 0.5), p99: pct(l, 0.99), p999: pct(l, 0.999), rss: rss, fds: fds, socks: socks, csocks: csocks, dials: atomic.LoadInt64(&d.dials), huge: huge, heapLive: hl, timers: tm, chunks: ch, cacheB: cb}
 		if n > lastReqs {
 			s.cpuPerReqUS = (cpu - cpu0) / float64(n-lastReqs)
 		}
 		cpu0, lastReqs = cpu, n
 		samples = append(samples, s)
-		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f,%.0f,%.0f,%.0f,%d\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS, s.socks, s.csocks, s.huge, s.dials)
+		fmt.Fprintf(f, "%.0f,%d,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.2f,%.0f,%.0f,%.0f,%d,%.0f,%.0f\n", s.t, s.reqs, s.errs, s.drops, s.p50, s.p99, s.p999, s.rss, s.fds, s.heapLive, s.timers, s.cpuPerReqUS, s.socks, s.csocks, s.huge, s.dials, s.chunks, s.cacheB)
 		f.Sync()
 	}
 	stopLoad()
@@ -355,6 +363,12 @@ func soakMain(args []string) int {
 			}
 		} else {
 			rep.WriteString("heap_live: not reported by the app\n")
+		}
+		// the heap's mappings beside RSS: chunks and the large block cache
+		// flat while RSS climbs points past the heap's own growth (huge
+		// pages, stacks, retained pages); both climbing is the heap growing
+		if b0, b1 := body[0], body[len(body)-1]; b0.chunks >= 0 {
+			fmt.Fprintf(&rep, "heap_chunks: %.0f at warmup end, %.0f at the end (4 MiB each); heap_cache_bytes: %.0f KiB to %.0f KiB\n", b0.chunks, b1.chunks, b0.cacheB/1024, b1.cacheB/1024)
 		}
 		if ts[0] >= 0 {
 			// a server's timers follow its open connections' deadlines, so
