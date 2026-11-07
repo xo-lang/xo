@@ -301,6 +301,45 @@ The remaining step 2 candidates (2026-11-07, host 1, --ab against main):
 | SHA-1 over many blocks | cpu.sha1_blocks: one loop with abcd and e in registers (arm64 SHA1, x86-64 SHA-NI), as SHA-256 | simdscan sha1 0.884 (0.873 to 0.899, n=6), perf/sha1 (sums and HMAC-SHA1) 0.977 (0.973 to 0.984); x86-64 (amd64 host, SHA-NI) 74 to 64 ms, 0.86 of main by medians of 9 runs; pushed |
 | SHA-512 over many blocks | cpu.sha512_blocks: one loop with the state in four registers (arm64 SHA512); a one block write calls the one block routine again, for SHA-256 too | simdscan sha512 0.965 (0.958 to 0.976, n=6); hmac256 1.002, within noise; pushed |
 | Ed25519 SHA-512 | digest.xo sha512_at calls cpu.sha512_block when HW_SHA512 (it ran the Xo rounds) | ed25519 sign 0.985 (0.972 to 0.993, n=6), verify within noise; pushed |
+| memcmp's equal prefix | rt.mem_skip_eq32(a, b, i, n): the equal 32 byte blocks of a compare as one kernel (branch lang1-memskip); then its arm64 kernel 64 bytes a step with one move, Go's memequal shape (lang1-memskip64) | 32 a step: simdscan compare 1.085 (1.064 to 1.119, n=6, worse), equal 1.002; 64 a step: equal 1.023 (1.019 to 1.037, worse), compare 1.014 (1.006 to 1.031, worse), at 20000 passes; dropped, neither pushed |
+
+## Update (2026-11-07): step 2 closed, and step 3
+
+Step 2's candidates are all measured (the table above). Where the loop
+was the cost, a hand kernel won 0.87 to 0.91 (html escape sizing,
+find_byte's steps, the SHA block loops) or passed the 0366 bar (the
+continuation count, 0.42 to 0.46 on the loop alone); where it was not,
+nothing moved (websocket's mask, png's unfilter, memcmp).
+
+The last gap studied, simdscan equal at 1.28 times Go (host 1, 20000
+passes: Xo 0.131 s, Go 0.103 s; compare is at parity), is not the loop:
+
+- In C inline assembly over the same buffers, Go's memequal loop (ld1 of
+  four registers, four cmeq, two umov a 64 bytes), Xo's 64 byte kernel
+  (ldp q pairs, shrn, fmov) and ldp with Go's reduction run 0.389,
+  0.401 and 0.389 s; in the program the 64 byte kernel was 1.023 of
+  memcmp's loop.
+- Not the call: the same 256 KiB a pass in 256, 4096 and 65536 byte
+  buffers is about 1.25 times Go at every size (4 calls a pass at
+  65536).
+- Not alignment: Go's bytes.Equal at data offsets 0, 16 and 32 runs 101
+  to 103 ms (Xo's data is 16 bytes into its object).
+- Part of it is huge pages: under XO_THP=dense (decision 0456) the
+  program holds no AnonHugePages, under XO_THP=kernel 6 MB, and kernel
+  runs about 5 to 10% faster (Go without THP, GODEBUG=disablethp=1, 3 to
+  15% slower than with it). That is decision 0456's tradeoff, passed to
+  its owner as input; the rest, about 10%, was within host 1's noise in
+  that run (Go itself 0.36 to 0.48 s).
+
+Step 3 (a loop vectorizer) is not justified by these measurements. Every
+gap measured in steps 1 and 2 was a class C search or compare loop with
+an early exit, a lane mask and a locate, which a class A and B
+vectorizer would not produce and clang 23 does not vectorize either (the
+ceiling table); the hand kernels already cover them. No measured gap
+was a class A or B loop over an Int or Float list in user code. Step 3
+reopens only if a survey finds such a loop at the 0366 bar (2 times on
+the loop alone); a re-survey of bench/perf and simdscan against Go on
+host 1, now that the step 1 and 2 kernels landed, is the next input.
 
 ## Consequences
 
