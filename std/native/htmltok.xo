@@ -561,14 +561,24 @@ fn replace_nul(b: Bytes) -> Bytes {
   out.freeze()
 }
 
-fn tokenizer_start_tag_in(z: htmltok.Tokenizer, names: List[Str]) -> Bool {
-  let name = lower_bytes(z.src[z.ds..z.de])
-  for n in names {
-    if name == n.bytes() {
-      return true
-    }
+/// Whether the tag name src[lo..hi] is `want` (lower case) when ASCII lower cased, compared in place.
+fn tag_is(src: Bytes, lo: Int, hi: Int, want: Str) -> Bool {
+  if hi - lo != want.len() {
+    return false
   }
-  false
+  let w = want.bytes()
+  var i = 0
+  while i < w.len() {
+    var c = src[lo + i]
+    if c >= 65 && c <= 90 {
+      c += 32
+    }
+    if c != w[i] {
+      return false
+    }
+    i += 1
+  }
+  true
 }
 
 fn tokenizer_read_start_tag(var z: htmltok.Tokenizer) -> htmltok.TokenType {
@@ -582,17 +592,17 @@ fn tokenizer_read_start_tag(var z: htmltok.Tokenizer) -> htmltok.TokenType {
   }
   var raw = false
   if c == 105 {
-    raw = tokenizer_start_tag_in(z, ["iframe"])
+    raw = tag_is(z.src, z.ds, z.de, "iframe")
   } else if c == 110 {
-    raw = tokenizer_start_tag_in(z, ["noembed", "noframes", "noscript"])
+    raw = tag_is(z.src, z.ds, z.de, "noembed") || tag_is(z.src, z.ds, z.de, "noframes") || tag_is(z.src, z.ds, z.de, "noscript")
   } else if c == 112 {
-    raw = tokenizer_start_tag_in(z, ["plaintext"])
+    raw = tag_is(z.src, z.ds, z.de, "plaintext")
   } else if c == 115 {
-    raw = tokenizer_start_tag_in(z, ["script", "style"])
+    raw = tag_is(z.src, z.ds, z.de, "script") || tag_is(z.src, z.ds, z.de, "style")
   } else if c == 116 {
-    raw = tokenizer_start_tag_in(z, ["textarea", "title"])
+    raw = tag_is(z.src, z.ds, z.de, "textarea") || tag_is(z.src, z.ds, z.de, "title")
   } else if c == 120 {
-    raw = tokenizer_start_tag_in(z, ["xmp"])
+    raw = tag_is(z.src, z.ds, z.de, "xmp")
   }
   if raw {
     z.raw_tag = lower_bytes(z.src[z.ds..z.de]).to_str_lossy()
@@ -620,15 +630,17 @@ fn tokenizer_read_tag(var z: htmltok.Tokenizer, save_attr: Bool) {
     tokenizer_read_tag_attr_key(z)
     tokenizer_read_tag_attr_val(z)
     if save_attr && z.pend.k0 != z.pend.k1 {
-      let key = lower_bytes(z.src[z.pend.k0..z.pend.k1])
       var dup = false
       var j = 0
-      while j + 3 < z.attr.len() {
-        if lower_bytes(z.src[z.attr[j]..z.attr[j + 1]]) == key {
-          dup = true
-          break
+      if z.attr.len() > 0 {
+        let key = lower_bytes(z.src[z.pend.k0..z.pend.k1])
+        while j + 3 < z.attr.len() {
+          if lower_bytes(z.src[z.attr[j]..z.attr[j + 1]]) == key {
+            dup = true
+            break
+          }
+          j += 4
         }
-        j += 4
       }
       if !dup {
         z.attr.push(z.pend.k0)
