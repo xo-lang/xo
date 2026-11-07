@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+Svc{name: "x"}
+[Svc{name: "x"}]
+Some(Svc{name: "x"})
+Get(id: 3) [Stop]
+Holder{s: Svc{name: "x"}, ops: [Stop], maybe: None}
+Svc{name: "x"}
+Stop
+Loud{n: 2}
+debug x p z 1 true 2 c 1
+op (verbose)
+Page{title: "t"} Page{title: "t"} [Page{title: "t"}]
+t   |
+err negative
+--- stderr

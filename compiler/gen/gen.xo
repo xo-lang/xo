@@ -867,6 +867,22 @@ fn (g: Gen) method_named(o: Int, name: Str) -> Int {
   g.c.objs[o].methods.get(name.bytes()) ?? -1
 }
 
+/// Type o's `debug` or `display` method when it gives the Debug or
+/// Display text (`fn (self) name() -> Str`, core 2.4), else -1; a method
+/// of that name with another signature is an ordinary one (ssa
+/// text_method).
+fn (g: Gen) text_method(o: Int, name: Str) -> Int {
+  let m = g.method_named(o, name)
+  if m < 0 {
+    return m
+  }
+  let f = g.c.objs[m]
+  if !f.params.is_empty() || f.err >= 0 || !f.tparams.is_empty() || !g.is_prelude(f.result, "Str") {
+    return -1
+  }
+  m
+}
+
 /// A Local object's kind: a parameter or receiver (VParam, VRecv).
 fn (g: Gen) is_param_or_recv(v: Int) -> Bool {
   g.c.objs[v].local is "param" | "var-param" | "recv" | "var-recv"

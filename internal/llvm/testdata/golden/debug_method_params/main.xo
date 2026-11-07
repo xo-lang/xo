@@ -1,0 +1,75 @@
+// A method named debug or display with parameters (a generated API
+// client's `debug(project, ...)` call, 2026-11-07) is an ordinary method:
+// it does not implement Debug or Display (core 2.4: only `fn (self)
+// debug() -> Str` does), so `${x:?}`, a field's text, a List's, an
+// Option's and a generic Debug call give the derived text, and the
+// method is still called by name. A failing debug() is ordinary too.
+struct Svc {
+  name: Str
+} derive Debug
+
+pub fn (r: Svc) debug(project: Str, zone: Str, n: Int, a: Bool, b: Int, c: Str, options: List[Str]) -> Result[Str, Str] {
+  Ok("debug ${r.name} ${project} ${zone} ${n} ${a} ${b} ${c} ${options.len()}")
+}
+
+enum Op {
+  Get(id: Int)
+  Stop
+}
+
+fn (o: Op) debug(verbose: Bool) -> Str {
+  if verbose { "op (verbose)" } else { "op" }
+}
+
+struct Loud {
+  n: Int
+}
+
+fn (l: Loud) debug() -> Str ! Str {
+  if l.n < 0 { return Err("negative") }
+  Ok("loud ${l.n}")
+}
+
+struct Page {
+  title: Str
+} derive Display
+
+fn (p: Page) display(width: Int) -> Str {
+  p.title.pad_right(width) + "|"
+}
+
+struct Holder {
+  s: Svc
+  ops: List[Op]
+  maybe: Svc?
+}
+
+fn text[T: Debug](x: T) -> Str {
+  "${x:?}"
+}
+
+fn main(os: Os) {
+  let s = Svc{name: "x"}
+  os.stdio.println("${s:?}")
+  os.stdio.println("${[s]:?}")
+  let some: Svc? = Some(s)
+  os.stdio.println("${some:?}")
+  os.stdio.println("${Op.Get(id: 3):?} ${[Op.Stop]:?}")
+  os.stdio.println("${Holder{s: s, ops: [Op.Stop], maybe: None}:?}")
+  os.stdio.println(text(s))
+  os.stdio.println(text(Op.Stop))
+  os.stdio.println("${Loud{n: 2}:?}")
+  match s.debug("p", "z", 1, true, 2, "c", ["o"]) {
+    Ok(t) => os.stdio.println(t)
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  os.stdio.println(Op.Get(id: 1).debug(true))
+  let pg = Page{title: "t"}
+  os.stdio.println("${pg} ${pg:?} ${[pg]}")
+  os.stdio.println(pg.display(4))
+  let neg = Loud{n: -1}
+  match neg.debug() {
+    Ok(t) => os.stdio.println(t)
+    Err(e) => os.stdio.println("err ${e}")
+  }
+}

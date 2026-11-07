@@ -317,7 +317,7 @@ fn (var b: Builder) show_thunk(ct: Int, vt: Int, at: Expr?) -> Str {
   let me = b.add(Op.Capture, vt, Aux.I(n: 0), [b.param(0)])
   let (yes, no) = b.branch(b.param(2))
   b.s.cur = yes
-  let m = b.method_of(ct, "debug")
+  let m = b.text_method(ct, "debug")
   if m >= 0 && !b.displayable(ct) {
     let r = b.call_method(m, ct, me)
     b.retv(b.call("str.concat", st, "", [b.param(1), r]))
@@ -586,7 +586,7 @@ fn (var b: Builder) to_dyn(v: Int, ct0: Int, iface: Str) -> Int {
   var acc = b.const_str("")
   let ct = b.c.resolve(ct0)
   if iface == "Debug" && !b.displayable(ct) {
-    let m = b.method_of(ct, "debug")
+    let m = b.text_method(ct, "debug")
     if m >= 0 {
       let r = b.call_method(m, ct, v)
       acc = b.call("str.concat", st, "", [acc, r])
@@ -601,7 +601,7 @@ fn (var b: Builder) to_dyn(v: Int, ct0: Int, iface: Str) -> Int {
     raw = !b.is_prelude_named(ct, ["Duration", "Time"])
   }
   var dbg = b.const_str("")
-  if b.is_prelude_named(ct, ["Str", "Rune"]) || b.is_iface(vt) || b.method_of(ct, "display") >= 0 {
+  if b.is_prelude_named(ct, ["Str", "Rune"]) || b.is_iface(vt) || b.text_method(ct, "display") >= 0 {
     dbg = b.append_debug(dbg, v, ct)
   }
   let rv = b.cbool(raw)
@@ -642,7 +642,7 @@ fn (var b: Builder) displayable(ct: Int) -> Bool {
   if b.c.objs[o].tkind == "interface" {
     return true
   }
-  b.method_of(ct, "display") >= 0
+  b.text_method(ct, "display") >= 0
 }
 
 // ---------------------------------------------------------------------------

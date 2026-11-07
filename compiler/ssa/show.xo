@@ -34,6 +34,24 @@ fn (var b: Builder) method_of(ct: Int, name: Str) -> Int {
   m
 }
 
+/// The `debug` or `display` method of the named type ct that gives its
+/// Debug or Display text, or -1: only a method with the interface's
+/// signature, `fn (self) name() -> Str` (core 2.4), implements it; a
+/// method of that name with parameters, an error or another result is
+/// an ordinary method, and the text is the derived one (a generated
+/// client's `debug(a, b, ...)` call, 2026-11-07).
+fn (var b: Builder) text_method(ct: Int, name: Str) -> Int {
+  let m = b.method_of(ct, name)
+  if m < 0 || b.c.objs[m].recv < 0 {
+    return m
+  }
+  let o = b.c.objs[m]
+  if !o.params.is_empty() || o.err >= 0 || !o.tparams.is_empty() || !b.is_prelude_named(o.result, ["Str"]) {
+    return -1
+  }
+  m
+}
+
 /// Calls method m of the named type ct on v (callMethod).
 fn (var b: Builder) call_method(m: Int, ct: Int, v: Int) -> Int {
   let targs = b.recv_targs(m, ct)
@@ -82,7 +100,7 @@ fn (var b: Builder) append_display(acc: Int, v: Int, ct: Int) -> Int {
     Bool => return b.call("str.concat", st, "", [acc, b.call("str.of_bool", st, "", [v])])
     _ => {}
   }
-  let md = b.method_of(ct, "display")
+  let md = b.text_method(ct, "display")
   if md >= 0 {
     let r = b.call_method(md, ct, v)
     return b.call("str.concat", st, "", [acc, r])
@@ -209,7 +227,7 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
   // Option, a field or a frame; not a prelude type's, whose text this is
   let own = b.named_obj(ct)
   if own >= 0 && !b.is_prelude_mod(b.obj_mod(own)) {
-    let dm = b.method_of(ct, "debug")
+    let dm = b.text_method(ct, "debug")
     if dm >= 0 {
       b.retv(b.call("str.concat", st, "", [acc, b.call_method(dm, ct, v)]))
       return
@@ -353,7 +371,7 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
     if b.c.objs[obj].opaque {
       // its own Debug text (a native implementation's, as `Row(a: 1)`),
       // else its name
-      let dm = b.method_of(ct, "debug")
+      let dm = b.text_method(ct, "debug")
       if dm >= 0 {
         b.retv(b.call("str.concat", b.str_t(), "", [acc, b.call_method(dm, ct, v)]))
         return

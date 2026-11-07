@@ -227,7 +227,7 @@ fn (var g: Gen) gen_derived(t: Int, self: Str, fs: List[FieldRef], os: List[Fiel
     g.pl("\t_ = o\n\treturn 0\n}\n")
   }
   g.pl("func (v ${self}) XoDebug(b *strings.Builder) {")
-  if g.method_named(t, "debug") >= 0 {
+  if g.text_method(t, "debug") >= 0 {
     // its own Debug text (core 1.6: `${x:?}` is x.debug()), inside a
     // List, an Option or a field too; nil task, as the runtime's Error
     g.pl("\tb.WriteString(v.M_debug(nil))")
@@ -377,7 +377,7 @@ fn (var g: Gen) gen_enum(t: Int, sp: Span) {
   }
   // Debug: its own debug() when declared (core 1.6), as a struct's
   g.pl("func (v ${self}) XoDebug(b *strings.Builder) {")
-  let own_debug = g.method_named(t, "debug") >= 0
+  let own_debug = g.text_method(t, "debug") >= 0
   if own_debug {
     g.pl("\tb.WriteString(v.M_debug(nil))")
   } else {

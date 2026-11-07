@@ -945,6 +945,11 @@ pub interface Store {
   interface with its signature (`display` of `Display` or `Error`, `debug`
   of `Debug`), which is callable by name wherever the type is (decision
   0496); other interfaces' methods need `pub`.
+- A `debug` or `display` method with another signature (parameters, an
+  error, another result: a generated client's `debug(project, zone,
+  ...)`) is an ordinary method and implements neither interface: `${x:?}`,
+  `${x}`, a frame and a generic `T: Debug` call give the type's automatic
+  or derived text, and the method is called by name as any other.
 - A method whose parameter type leaves its effect arguments out (`next:
   Next`, an implicit effect variable, section 6.2) satisfies an interface
   method whose parameter type writes them (`next: Next[fx]`): the variable
