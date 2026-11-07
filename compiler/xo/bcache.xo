@@ -1010,12 +1010,39 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
     return arm64.inline_apply(mi, brk)
   }
   var t = os.clock.now()
-  let ik = arm64.inline_keys(mi, rc_keys, jobs)
+  let verify = backend_cache_mode(os) == "verify"
+  // the whole list of inline keys by its own key (inl-list): a warm
+  // build reads it instead of building every key's text; verify builds
+  // the keys and fails the build when the stored list differs
+  let lk = arm64.inline_list_key(mi, rc_keys)
+  var known: List[Str] = []
+  if !lk.is_empty() {
+    if let Some(d) = entry_get(os, dir, "inl-list", lk) {
+      let ls = (d.to_str() ?? "").split("\n")
+      if ls.len() == mi.funcs.len() + 1 && ls[mi.funcs.len()].is_empty() {
+        known = ls[0..mi.funcs.len()]
+      }
+    }
+  }
+  let ik = if known.is_empty() || verify { arm64.inline_keys(mi, rc_keys, jobs) } else { arm64.inline_keys_known(mi, known, jobs) }
   let keys = ik.keys
+  if !lk.is_empty() {
+    if known.is_empty() {
+      var b = StrBuilder.new()
+      for k in keys {
+        b.write(k)
+        b.write("\n")
+      }
+      let nb = entry_put(os, dir, "inl-list", lk, b.freeze().bytes())
+      prune_backend_cache(os, "inl-list", dir, nb)
+    } else if verify && known != keys {
+      fail(os, "XO_BACKEND_CACHE=verify: the stored list of inline keys differs from the keys built")
+    }
+  }
   t = lap(os, phases, "inline.keys", t)
   let (entries, pk) = cache_get_packed(os, dir, "inl", mi.goarch, keys, jobs)
   t = lap(os, phases, "inline.read", t)
-  let out = arm64.inline_cached(mi, ik, entries, backend_cache_mode(os) == "verify", brk, jobs, lazy)
+  let out = arm64.inline_cached(mi, ik, entries, verify, brk, jobs, lazy)
   pack_store(os, pk, entries, StoreSrc{mem: out.stores})
   let n = store_entries(os, dir, "inl", pk, StoreSrc{mem: out.stores})
   if !out.stores.is_empty() {

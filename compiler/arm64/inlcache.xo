@@ -47,7 +47,7 @@ pub fn inline_keys(m: ssa.Module, rc_keys: List[Str], jobs: Int) -> InlineKeys {
     return InlineKeys{}
   }
   let st = inline_state_jobs(m, jobs)
-  let head = "${INLINE_CACHE_VERSION}\npasses ${m.passes_off.join(",")}\ndeny ${m.inline_deny.join(",")}\nreaders ${m.reader_bodies}\n"
+  let head = inline_head(m)
   let texts = key_texts_all(st, rc_keys, head, jobs)
   var keys: List[Str] = []
   for i in 0..n {
@@ -58,6 +58,38 @@ pub fn inline_keys(m: ssa.Module, rc_keys: List[Str], jobs: Int) -> InlineKeys {
     keys.push(k)
   }
   InlineKeys{keys: keys, st: st}
+}
+
+/// The inliner's settings, the head of every inline key.
+fn inline_head(m: ssa.Module) -> Str {
+  "${INLINE_CACHE_VERSION}\npasses ${m.passes_off.join(",")}\ndeny ${m.inline_deny.join(",")}\nreaders ${m.reader_bodies}\n"
+}
+
+/// The key of m's whole list of inline keys: the inliner's settings and
+/// each function's name and reference counting key, in order. Every
+/// inline key is decided by them (a key's facts come from bodies before
+/// inlining, which the reference counting keys decide, and from names
+/// and call sites over the whole module), so a warm build reads the list
+/// (inline_keys_known) instead of building each key's text (key_text,
+/// 3.8% of a warm http_server_request build, 2026-11-07); "" when
+/// rc_keys does not match m.
+pub fn inline_list_key(m: ssa.Module, rc_keys: List[Str]) -> Str {
+  if rc_keys.len() != m.funcs.len() {
+    return ""
+  }
+  var b = BytesBuilder.new()
+  b.write_str(inline_head(m))
+  b.write_str("list ${rc_keys.len()}\n")
+  for (i, f) in m.funcs.indexed() {
+    b.write_str("${f.name.len()}:${f.name} ${rc_keys[i]}\n")
+  }
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+/// The inline keys of m when its list (inline_list_key's) was read from
+/// the cache: the inliner's view built as inline_keys builds it.
+pub fn inline_keys_known(m: ssa.Module, keys: List[Str], jobs: Int) -> InlineKeys {
+  InlineKeys{keys: keys, st: inline_state_jobs(m, jobs)}
 }
 
 /// A key's text: the key itself, or text pieces each followed by the
