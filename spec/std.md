@@ -7730,7 +7730,8 @@ SASL (any mechanism is accepted) or none.
   (its name without `com.microsoft:`) fail with `condition`, `status` and `description` (an attach, transfer or
   disposition is refused or rejected with the condition; a management reply carries `status` and the condition);
   `slow_management(ms)` delays management replies; `detach_links` detaches every link to an entity with an error;
-  `disconnect_all` closes every connection, with the error in a Close frame when given.
+  `disconnect_all` closes every connection, with the error in a Close frame when given. Both take effect before any frame a
+  client sends after the call returns is handled.
 - Time: locks, scheduled messages, session locks and token expiry use the clock given to `new`; an expired lock is noticed
   when the next operation looks at the message, not by a timer.
 

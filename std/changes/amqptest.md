@@ -1,5 +1,17 @@
 # std/amqptest changes
 
+## 2026-11-06: fix: a frame sent after disconnect_all or detach_links returns is never answered on what they ended
+
+- Kind: fix
+- Commit: this push
+- Found by: llvm TestGoldenTasks/amqptest_broker failing in 1.25 s in Lang 4's gate (750a25b71); under load 3 times in 8 rounds, "begin ok" for "begin failed"
+- Go reference: none (a test double)
+- Test: the golden under load, 8 native and 8 TSan copies at once pinned to 4 CPUs on linux/arm64: 3 failures in the first 8 rounds (128 runs) before, 0 in 60 rounds (960 runs) after
+- Timing: none
+- Shipped in: not yet released
+
+`disconnect_all` and `detach_links` record the request and wake each connection's loop, which selected between the peer's next frame and the wake; a Begin already read could be answered before the close was applied. Each connection now applies the pending detaches and closes before it handles a frame (knowledgebase/gotchas/test-control-races-peer-frame.md).
+
 ## 2026-11-06: feature: an event hub's READ reports georeplication_factor; the broker logs each attach's desired capabilities
 
 - Kind: feature

@@ -1985,7 +1985,13 @@ fn run_conn(b: amqptest.Broker, g: task.Group, sc: ServerConn, id: Int, wake: Ch
     select {
       m = frames.recv() => {
         match m {
-          Some(f) => { stop = handle_frame(b, sc, c, f)? }
+          Some(f) => {
+            // a detach or close the test asked for before this frame came is applied first:
+            // the frame and the wake race in the select, and a Begin read first was answered
+            // after disconnect_all had returned (amqptest_broker "begin ok", 3 in 8 rounds)
+            stop = control(b, sc, c)?
+            if !stop { stop = handle_frame(b, sc, c, f)? }
+          }
           None => { stop = true }
         }
       }
