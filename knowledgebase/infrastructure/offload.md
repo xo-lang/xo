@@ -61,6 +61,10 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   running builds' fresh work directories, gotchas/empty-dir-prune-removes-live-build-dir.md),
   and prints the free space after (lead, 2026-10-30: the cache regrew
   to 55 to 61 GB and filled /work three times that day).
+  The same pass removes whole checkout/ entries (xo builds, about
+  88 MB each) when none of their files was read or written for 12 hours
+  (owner, 2026-11-07: about 90 of them held 8 GB on host 1 while /work
+  fell to 5.7 GB free).
   The arm64 container runs 2 jobs at once (OFF_SLOTS=2 in offload.env;
   owner, 2026-10-30): slot 1 is `/work/offload.lock`, slot 2
   `/work/offload.lock.2`. A job that measures time or memory sets
