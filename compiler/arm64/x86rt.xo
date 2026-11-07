@@ -460,12 +460,12 @@ fn x86_unwind_resume() -> List[Str] {
 /// with compiler/llvm sched.xo's switch: rbp, rbx, r12 to r15, mxcsr and
 /// the x87 control word; a new fiber's argument in rbx, its function in
 /// r12).
-fn x86_sched_asm(os: Str, split: Bool) -> Str {
+fn x86_sched_asm(os: Str, split: Bool, nolibc: Bool) -> Str {
   if os == "darwin" {
     return x86_sched_asm_darwin(split)
   }
   if os == "windows" {
-    return x86_sched_asm_windows()
+    return x86_sched_asm_windows(nolibc)
   }
   var b: List[Str] = []
   b.push("\t.text\n")

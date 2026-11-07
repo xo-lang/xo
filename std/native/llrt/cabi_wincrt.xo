@@ -8,8 +8,10 @@
 // fault or allocate Xo values.
 use native/llrt/entry
 use native/llrt/libcmath
+use native/llrt/libcmem
 use native/llrt/libcstr
 use native/llrt/sanhook
+use native/llrt/windows
 use native/rt
 use native/sys_windows
 
@@ -25,6 +27,47 @@ fn fmod(x: Float, y: Float) -> Float { libcmath.fmod(x, y) }
 
 /// (rt.sym_addr("strlen"), std/native/internal.xo's test hook)
 fn strlen(s: Int) -> Int { libcstr.strlen(s) }
+
+// SQLite's prebuilt object for windows/amd64 (decision 0534 stage 2,
+// built with SQLITE_WIN32_MALLOC and no C runtime) calls these too
+
+fn memchr(s: Int, c: Int, n: Int) -> Int { libcstr.memchr(s, c, n) }
+
+fn strchr(s: Int, c: Int) -> Int { libcstr.strchr(s, c) }
+
+fn strrchr(s: Int, c: Int) -> Int { libcstr.strrchr(s, c) }
+
+fn strcmp(a: Int, b: Int) -> Int { libcstr.strcmp(a, b) }
+
+fn strncmp(a: Int, b: Int, n: Int) -> Int { libcstr.strncmp(a, b, n) }
+
+fn strspn(s: Int, set: Int) -> Int { libcstr.strspn(s, set) }
+
+fn strcspn(s: Int, set: Int) -> Int { libcstr.strcspn(s, set) }
+
+/// malloc and free of the `use c` adapter compiled into SQLite's object
+/// (its Str arguments' C copies): libcmem's, as an XO_NOLIBC Linux
+/// program's (no new import: the PE linker of an older xo, which builds
+/// xo on Windows, knows only its own import table).
+fn malloc(n: Int) -> Int { libcmem.malloc(n) }
+
+fn free(p: Int) { libcmem.free(p) }
+
+/// abort (SQLite's, on a broken invariant): the process ends with
+/// status 3, as MSVC's abort ends it.
+fn abort() {
+  sys_windows.ExitProcess(3)
+}
+
+/// _localtime64_s (SQLite's localtime modifier): the time *t in the
+/// system's zone as the struct tm at tm (windows.localtime_tm); 0, or
+/// EINVAL (22).
+fn _localtime64_s(tm: Int, t: Int) -> Int {
+  if tm == 0 {
+    return 22
+  }
+  windows.localtime_tm(tm, if t == 0 { -1 } else { rt.mem_load(t, 0, 8) })
+}
 
 /// The C runtime's getpid (std/native/sys_c.xo's strong reference):
 /// GetCurrentProcessId.

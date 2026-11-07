@@ -3,6 +3,11 @@
    parameter or result the binder skips (spec 4.5): an output pointer, a
    destructor function pointer, an unsigned char or void pointer result.
    sqlite3 and sqlite3_stmt stay opaque, so they bind as handles. */
+#ifndef XO_SQLITE_H
+#define XO_SQLITE_H
+/* guarded: the prebuilt object (decision 0534 stage 2) compiles
+   xo_sqlite.c and the binding's adapter, which both include it, as one
+   unit */
 #include <stdint.h>
 
 typedef struct sqlite3 sqlite3;
@@ -61,3 +66,5 @@ const char *sqlite3_errmsg(sqlite3 *db);
 int sqlite3_busy_timeout(sqlite3 *db, int ms);
 const char *sqlite3_libversion(void);
 int sqlite3_get_autocommit(sqlite3 *db);
+
+#endif

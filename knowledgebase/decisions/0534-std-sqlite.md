@@ -225,6 +225,43 @@ for the no C runtime link; the other seven are small ports for llrt/libcstr.xo.
 - Keep XO_WINSYSROOT as the only way: users install clang and xwin, the opposite of item 2.
 - Translate SQLite to Xo: still the long term path (Alternatives above), far larger.
 
+### Implementation (2026-11-07, Xo Lang 1)
+
+What the addendum needed beyond its text, found while building it:
+
+- **The `use c` adapter is C too.** The binding's generated adapter
+  (std/native/.xo/cbind/c_xo_sqlite_*.c) is compiled per build beside
+  sqlite3.c and xo_sqlite.c, and calls malloc, free and abort. The object is
+  one compile of the three (scripts/sqlite-prebuilt.sh writes a unit that
+  includes them; xo_sqlite.h gained an include guard for it), and
+  cabi_wincrt.xo defines malloc and free (the process heap) and abort
+  (ExitProcess(3), as MSVC's).
+- **Item 3 needed a different binding key.** cimport.xo named a binding by
+  its header's and link files' absolute paths, so the symbol prefix
+  (`c_xo_sqlite_<8 hex>_`) and with it every adapter symbol differed per
+  checkout, and the checker re-bound the header with clang on every run. A
+  std header's binding is now named by `bind.std_key`: the paths relative to
+  std plus the header's SHA-256. Its files are the same on every machine, a
+  binding that is there is not bound again (the key covers the header's
+  bytes), its adapter includes the header relative to the module (the
+  build's copy names this machine's path), and its decl names no path. The
+  release ships it in lib/xo/std/native/.xo/cbind, so a std/sqlite build
+  needs no clang.
+- **Lookup.** compiler/xo cffi.xo `sqlite_prebuilt`: lib/xo/sqlite/GOOS-ARCH/
+  sqlite.o (sqlite.obj) beside std whose `.key` equals `sqlite_key` (SHA-256
+  of the target, sqlite3.c, xo_sqlite.c, xo_sqlite.h and the adapter); a
+  windows/amd64 build whose every `use c` binding has one is a no C runtime
+  build (link.xo `nolibc`), and the PE link takes the object.
+- **`__chkstk`** is emitted with the other Windows stubs
+  (compiler/arm64 x86win.xo `w64_chkstk`, compiler-rt's probe loop) in a no C
+  runtime build. `_fltused` needs nothing: clang lists it with no relocation.
+- **`_localtime64_s`** converts by SystemTimeToTzSpecificLocalTime with the
+  tm as its scratch (cabi_wincrt.xo allocates nothing).
+- **Item 5.** sqlite-prebuilt.sh fails when the windows object needs a symbol
+  that is not in peimports.xo, cabi_wincrt.xo or the runtime (xo_x_*).
+- Linux objects are not built yet (the release runs on the Mac); a linux
+  build compiles sqlite3.c on first use as before.
+
 ## First experiments (2026-11-06)
 
 - exp1 (route 2): sqlite3.c 3.54.1 compiled to one object (`-O2 -DSQLITE_THREADSAFE=2

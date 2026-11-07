@@ -242,6 +242,19 @@ for plat in $race_plats; do
 	fi
 done
 
+# std/sqlite's prebuilt objects (decision 0534 stage 2) into the
+# checkout's lib/xo/sqlite, which layout copies: darwin's on the Mac, and
+# windows/amd64's (no C runtime, Xo's PE linker) when XO_CLANG and
+# XO_WINSYSROOT are set; linux's are not built yet (a linux build
+# compiles sqlite3.c on first use, as a checkout does)
+sq_plats="darwin-arm64 darwin-amd64"
+if [ -n "${XO_CLANG:-}" ] && [ -n "${XO_WINSYSROOT:-}" ]; then
+	sq_plats="$sq_plats windows-amd64"
+else
+	echo "== sqlite prebuilt: no windows-amd64 object (set XO_CLANG and XO_WINSYSROOT): a windows/amd64 std/sqlite build then needs XO_WINSYSROOT" >&2
+fi
+run bash scripts/sqlite-prebuilt.sh "$repo" "$host_xo" $sq_plats >&2
+
 stage_of() { echo "$dist/xo-$version-${1%/*}-${1#*/}"; }
 
 # the layout around bin/xo: lib/xo (the tracked files of std),
@@ -250,7 +263,7 @@ layout() {
 	local target=$1 stage
 	stage=$(stage_of "$target")
 	if [ "$dry" = 1 ]; then
-		echo "+ layout $stage: lib/xo/std (git ls-files std), bin/xo-gobind (go build ./cmd/xo-gobind for $target), lib/xo/{go.mod,cmd/xo-gobind,internal/gobind,internal/gotool} (its source, decision 0393), README.md, CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES, lib/xo/race/${target%/*}-${target#*/} when built, then scripts/release-licenses.sh (decision 0302)" >&2
+		echo "+ layout $stage: lib/xo/std (git ls-files std), bin/xo-gobind (go build ./cmd/xo-gobind for $target), lib/xo/{go.mod,cmd/xo-gobind,internal/gobind,internal/gotool} (its source, decision 0393), README.md, CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES, lib/xo/race/${target%/*}-${target#*/} when built, lib/xo/sqlite/{${target%/*}-${target#*/},windows-amd64} when built, then scripts/release-licenses.sh (decision 0302)" >&2
 		return
 	fi
 	mkdir -p "$stage/bin" "$stage/lib/xo"
@@ -283,6 +296,20 @@ layout() {
 		cp -R "lib/xo/race/$plat" "$stage/lib/xo/race/"
 		cp lib/xo/race/LICENSE.TXT "$stage/lib/xo/race/"
 	fi
+	# std/sqlite's binding (decision 0534 stage 2, compiler/cli/bind
+	# std_key: named by std relative paths and the header's bytes), so a
+	# build binds the header with no clang; sqlite-prebuilt.sh wrote it
+	mkdir -p "$stage/lib/xo/std/native/.xo/cbind"
+	cp std/native/.xo/cbind/c_xo_sqlite_*.xo std/native/.xo/cbind/c_xo_sqlite_*.c "$stage/lib/xo/std/native/.xo/cbind/"
+	# std/sqlite's prebuilt objects (decision 0534 stage 2): this
+	# target's, and windows/amd64's in every archive, since any host cross
+	# builds it with no C compiler
+	for sq in "$plat" windows-amd64; do
+		if [ -d "lib/xo/sqlite/$sq" ] && [ ! -d "$stage/lib/xo/sqlite/$sq" ]; then
+			mkdir -p "$stage/lib/xo/sqlite"
+			cp -R "lib/xo/sqlite/$sq" "$stage/lib/xo/sqlite/"
+		fi
+	done
 	# every [binary] item's license file beside what was staged (decision
 	# 0302, point 4)
 	scripts/release-licenses.sh "$stage" || exit 1

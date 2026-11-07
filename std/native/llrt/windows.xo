@@ -164,6 +164,116 @@ pub fn std_write_at(fd: Int, a: Int, n: Int) -> Int {
 /// system has a time zone setting (std/native/llrt/tzhost.xo).
 pub fn zone_info(z: Int) -> Bool { Int(sys_windows.GetDynamicTimeZoneInformation(z)) != -1 }
 
+/// The struct tm at tm (nine 32 bit fields: second, minute, hour, day of
+/// the month, month from 0, year from 1900, weekday from Sunday, day of
+/// the year from 0, daylight saving) of Unix time secs in the system's
+/// zone, for cabi_wincrt.xo's _localtime64_s (SQLite's localtime
+/// modifier): the rules GetDynamicTimeZoneInformation reports (Bias,
+/// StandardBias, DaylightBias, and the yearly change to daylight saving
+/// time, in standard time, and back, in daylight time), applied as
+/// SystemTimeToTzSpecificLocalTime applies them, with no import an older
+/// xo's PE linker lacks; UTC when the system has no zone. 0, or EINVAL
+/// (22) for a time before 1970 or after 3000 (MSVC's), the tm then all
+/// -1. No Xo value is allocated (a runtime block, rt.heap_large, holds
+/// the 432 bytes).
+pub fn localtime_tm(tm: Int, secs: Int) -> Int {
+  if secs < 0 || secs > 32535215999 {
+    for i in 0..9 {
+      rt.mem_store(tm, 4 * i, -1, 4)
+    }
+    return 22
+  }
+  var std_off = 0
+  var dst_off = 0
+  var dst = false
+  let z = rt.heap_large(432)
+  if zone_info(z) {
+    // DYNAMIC_TIME_ZONE_INFORMATION: Bias at 0, StandardDate at 68,
+    // StandardBias at 84, DaylightDate at 152, DaylightBias at 168
+    // (minutes; UTC = local + bias)
+    let bias = s32(rt.mem_load(z, 0, 4))
+    std_off = 0 - (bias + s32(rt.mem_load(z, 84, 4))) * 60
+    dst_off = 0 - (bias + s32(rt.mem_load(z, 168, 4))) * 60
+    if rt.mem_load(z, 152 + 2, 2) != 0 && rt.mem_load(z, 68 + 2, 2) != 0 {
+      let ls = secs + std_off
+      let ld = secs + dst_off
+      let y = year_of_days(fdiv(ls, 86400))
+      let start = tz_change(z + 152, y)
+      let end = tz_change(z + 68, y)
+      dst = if start <= end { ls >= start && ld < end } else { ls >= start || ld < end }
+    }
+  }
+  // its prefix's address (rt.heap_release, as anyval.xo's)
+  rt.heap_release(z - 8)
+  let local = secs + (if dst { dst_off } else { std_off })
+  let days = fdiv(local, 86400)
+  let sod = local - days * 86400
+  let (y, mo, d) = civil_days(days)
+  rt.mem_store(tm, 0, sod % 60, 4)
+  rt.mem_store(tm, 4, sod / 60 % 60, 4)
+  rt.mem_store(tm, 8, sod / 3600, 4)
+  rt.mem_store(tm, 12, d, 4)
+  rt.mem_store(tm, 16, mo - 1, 4)
+  rt.mem_store(tm, 20, y - 1900, 4)
+  rt.mem_store(tm, 24, fmod7(days + 4), 4)
+  rt.mem_store(tm, 28, days - days_civil(y, 1, 1), 4)
+  rt.mem_store(tm, 32, if dst { 1 } else { 0 }, 4)
+  0
+}
+
+/// The local second (from 1970, in the zone's time before the change) of
+/// the SYSTEMTIME rule at st in year y: wYear 0 is the wDay'th (5: the
+/// last) wDayOfWeek of wMonth at wHour:wMinute:wSecond; else that date.
+fn tz_change(st: Int, y: Int) -> Int {
+  let m = rt.mem_load(st, 2, 2)
+  let dow = rt.mem_load(st, 4, 2)
+  let n = rt.mem_load(st, 6, 2)
+  let tod = rt.mem_load(st, 8, 2) * 3600 + rt.mem_load(st, 10, 2) * 60 + rt.mem_load(st, 12, 2)
+  if rt.mem_load(st, 0, 2) != 0 {
+    return days_civil(rt.mem_load(st, 0, 2), m, n) * 86400 + tod
+  }
+  let first = days_civil(y, m, 1)
+  let next = if m == 12 { days_civil(y + 1, 1, 1) } else { days_civil(y, m + 1, 1) }
+  var d = first + fmod7(dow - fmod7(first + 4)) + 7 * (n - 1)
+  while d >= next {
+    d -= 7
+  }
+  d * 86400 + tod
+}
+
+fn s32(x: Int) -> Int { if x >= 2147483648 { x - 4294967296 } else { x } }
+
+/// a / b rounded down (b > 0).
+fn fdiv(a: Int, b: Int) -> Int { if a >= 0 { a / b } else { 0 - ((b - 1 - a) / b) } }
+
+fn fmod7(a: Int) -> Int { a - 7 * fdiv(a, 7) }
+
+/// The civil date of days since 1970-01-01 (Hinnant's civil_from_days).
+fn civil_days(z0: Int) -> (Int, Int, Int) {
+  let z = z0 + 719468
+  let era = fdiv(z, 146097)
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  (yoe + era * 400 + (if m <= 2 { 1 } else { 0 }), m, doy - (153 * mp + 2) / 5 + 1)
+}
+
+fn year_of_days(days: Int) -> Int {
+  let (y, _, _) = civil_days(days)
+  y
+}
+
+/// Days since 1970-01-01 of a civil date (Hinnant's days_from_civil).
+fn days_civil(year: Int, m: Int, d: Int) -> Int {
+  let y = if m <= 2 { year - 1 } else { year }
+  let era = fdiv(y, 400)
+  let yoe = y - era * 400
+  let mp = if m > 2 { m - 3 } else { m + 9 }
+  era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + (153 * mp + 2) / 5 + d - 1 - 719468
+}
+
 /// Proc.kill's KILL on Windows (std/rt's sendSignal): TerminateProcess of
 /// pid with exit code 137; "" or the error's text, prefixed by the call
 /// that failed. UNTESTED on Windows (the zero-C push, 2026-10-14).

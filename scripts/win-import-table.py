@@ -28,6 +28,11 @@ def import_objects(path):
 
 RACE = ['CreateDirectoryA', 'CreateFileA', 'GetCurrentProcess', 'GetFileAttributesA', 'GetNativeSystemInfo', 'IsDebuggerPresent', 'K32GetProcessMemoryInfo', 'OutputDebugStringA', 'Sleep', 'VirtualProtect', 'VirtualQuery', 'WakeByAddressAll']
 
+# the imports of std/sqlite's prebuilt windows/amd64 object (decision
+# 0534 stage 2, lib/xo/sqlite/windows-amd64/sqlite.obj, `llvm-nm -u`
+# without the C library functions cabi_wincrt.xo defines)
+SQLITE = ['AcquireSRWLockExclusive', 'AreFileApisANSI', 'CreateFileMappingW', 'DeleteCriticalSection', 'DeleteFileW', 'EnterCriticalSection', 'FlushViewOfFile', 'FormatMessageW', 'GetCurrentProcessId', 'GetDriveTypeW', 'GetFileAttributesExW', 'GetFileSizeEx', 'GetFullPathNameW', 'GetOverlappedResult', 'GetProcessHeap', 'GetSystemTimeAsFileTime', 'GetTempPathW', 'GetTickCount64', 'HeapAlloc', 'HeapCompact', 'HeapCreate', 'HeapDestroy', 'HeapFree', 'HeapReAlloc', 'HeapSize', 'HeapValidate', 'InitializeCriticalSection', 'InitializeSRWLock', 'LeaveCriticalSection', 'LocalFree', 'LockFileEx', 'MapViewOfFile', 'MultiByteToWideChar', 'OutputDebugStringA', 'QueryPerformanceCounter', 'ReleaseSRWLockExclusive', 'SetEndOfFile', 'SetFilePointerEx', 'Sleep', 'TryAcquireSRWLockExclusive', 'TryEnterCriticalSection', 'UnlockFileEx', 'UnmapViewOfFile', 'WaitForSingleObject', 'WaitForSingleObjectEx', 'WideCharToMultiByte']
+
 def main():
     root = sys.argv[1]
     libs = sorted(glob.glob(os.path.join(root, 'Windows Kits', '10', 'Lib', '*', 'um', 'x64', '*.[Ll]ib')))
@@ -38,7 +43,7 @@ def main():
     # lib/xo/race/windows-amd64/race_windows_amd64.syso, `llvm-nm -u`
     # without the C runtime's memmove and strlen, which cabi_wincrt.xo
     # defines), which sys_windows.xo does not declare
-    want = sorted(set(want) | set(RACE))
+    want = sorted(set(want) | set(RACE) | set(SQLITE))
     # the libraries the runtime links (compiler/xo link.xo sys_link_args),
     # first, then the rest, so the first library naming a symbol wins
     order = ['kernel32', 'ws2_32', 'bcrypt', 'synchronization', 'ntdll', 'shell32', 'crypt32']
@@ -55,7 +60,8 @@ def main():
     print('// import libraries; do not edit. The DLL that exports each Windows')
     print('// function std/native/sys_windows.xo declares (decision 0254 6b step 4:')
     print('// Xo\'s PE linker, pelink.xo, imports by it), and each one --race\'s')
-    print('// ThreadSanitizer object, race_windows_amd64.syso, imports (decision 0273).')
+    print('// ThreadSanitizer object, race_windows_amd64.syso, imports (decision 0273),')
+    print('// and each one std/sqlite\'s prebuilt object imports (decision 0534).')
     print()
     print('/// The DLL of each imported Windows function.')
     print('pub fn pe_imports() -> Map[Str, Str] {')

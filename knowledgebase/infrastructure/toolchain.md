@@ -3679,6 +3679,25 @@ spec core 4.5.
   `TestUseC`, cmd/xo `TestBindC`, internal/llvm `TestUseC` (archive
   built in the test with clang and ar, and C source; arm64 and LLVM,
   leak check) and `TestUseCZlib` (skips without zlib.h).
+- std bindings (decision 0534 Implementation, 2026-11-07): a header under
+  std/ binds pinned (compiler/cli/bind `std_key`): the key holds paths
+  relative to std plus the header's sha256, so the prefix is the same on
+  every checkout and install, and the adapter includes the header
+  relatively (c_inputs rewrites it to the absolute path for clang).
+- windows/amd64: a `use c` call goes through a Win64 thunk (calls.xo
+  rt_call, `xo_w64_rt...`), as platform calls do.
+- SQLite prebuilt objects (Last verified: 2026-11-07):
+  `scripts/sqlite-prebuilt.sh REPO XO PLAT...` compiles the amalgamation,
+  xo_sqlite.c and the std adapter as one unit into
+  `<root>/sqlite/rel/<plat>.o` with a `.key` (sha256 over the sources,
+  cffi.xo `sqlite_key`) and `.sha256`; windows-amd64 needs `XO_CLANG`
+  and `XO_WINSYSROOT` and checks every undefined symbol is in
+  peimports.xo or the CRT shim (cabi_wincrt.xo). xo uses the object when
+  its key matches (`<root>/sqlite/rel` or an install's
+  `lib/xo/sqlite/rel`), else compiles the C sources; a prebuilt object
+  lets a windows/amd64 build link with no clang or sysroot.
+  scripts/release.sh builds them (darwin both arches; windows when the
+  two variables are set) and ships the std binding files.
 
 ## Real-time mode (`uses realtime`, decision 0133)
 

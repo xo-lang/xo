@@ -2031,6 +2031,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           Err(e) => fail(os, "${e}")
         }
         tl = lap(os, phases, "link.binfo", tl)
+        // std/sqlite's prebuilt object (decision 0534 stage 2): the only
+        // `use c` a link with no C runtime takes (nolibc)
+        let ci = c_inputs(os, c, dir, o.std, tgoos, tgoarch)
+        if !ci.err.is_empty() {
+          fail(os, ci.err)
+        }
+        for s in ci.srcs {
+          zsrcs.push(s)
+        }
         if o.race {
           // ThreadSanitizer's Go flavor object (decision 0273's Windows
           // addendum)
@@ -2736,13 +2745,13 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     }
   }
   // the adapters, link files, and libraries of `use c` (cInputs)
-  let ci = c_inputs(os, c, dir)
+  let ci = c_inputs(os, c, dir, o.std, tgoos, tgoarch)
   if !ci.err.is_empty() {
     fail(os, ci.err)
   }
   if nolibc(os, o, c, tgoos) {
     // a static program with no C library (decisions 0203, 0206)
-    if !ci.srcs.is_empty() || !ci.flags.is_empty() {
+    if (!ci.srcs.is_empty() && !(ci.prebuilt && tgoos == "windows")) || !ci.flags.is_empty() {
       fail(os, "XO_NOLIBC=1: a program with `use c` links the C library (decision 0205)")
     }
     for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {

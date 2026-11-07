@@ -107,7 +107,7 @@ pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str us
         again = true
         continue
       }
-      match bind.bind_c(os, bind.Options{header: m.header, mod_dir: m.mod_dir, links: m.links, effects: m.effects, dir: m.cache, wd: wd}) {
+      match bind.bind_c(os, bind.Options{header: m.header, mod_dir: m.mod_dir, links: m.links, effects: m.effects, dir: m.cache, wd: wd, std_dir: c.std_dir}) {
         Ok(b) => {
           if b.decl != m.read {
             again = true

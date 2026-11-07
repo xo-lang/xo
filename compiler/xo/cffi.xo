@@ -17,11 +17,16 @@ struct CInputs {
   srcs: List[Str] = []
   flags: List[Str] = []
   err: Str = ""
+  /// Every source is a prebuilt object (sqlite_prebuilt): a link with no
+  /// C runtime takes them (decision 0534 stage 2).
+  prebuilt: Bool = false
 }
 
 /// cInputs: each binding's adapter written into dir/cffi (in the order
-/// of the prefixes), its link files after it, and the libraries sorted.
-fn c_inputs(os: Os, c: check.Checker, dir: Str) -> CInputs {
+/// of the prefixes), its link files after it, and the libraries sorted;
+/// std/sqlite's binding is its prebuilt object for tgoos/tgoarch when one
+/// matches (sqlite_prebuilt).
+fn c_inputs(os: Os, c: check.Checker, dir: Str, std: Str, tgoos: Str, tgoarch: Str) -> CInputs {
   var mods: List[check.Module] = []
   for m in c.mods {
     if !m.c_prefix.is_empty() {
@@ -36,15 +41,27 @@ fn c_inputs(os: Os, c: check.Checker, dir: Str) -> CInputs {
     Ok(_) => {}
     Err(e) => return CInputs{err: "${e}"}
   }
-  var out = CInputs{}
+  var out = CInputs{prebuilt: true}
   var seen: Map[Str, Bool] = {}
   var libs: List[Str] = []
   for m in mods.sort_by(fn(m) { m.c_prefix }) {
+    let pre = sqlite_prebuilt(os, std, m, tgoos, tgoarch)
+    if !pre.is_empty() {
+      out.srcs.push(pre)
+      continue
+    }
+    out.prebuilt = false
     let adapter = "${m.c_decl.trim_suffix(".xo")}.c"
-    let data = match os.fs.read(adapter) {
+    let data0 = match os.fs.read(adapter) {
       Ok(d) => d
       Err(e) => return CInputs{err: "the adapter of `use c \"${m.c_header}\"`: ${e} (a Go build or `xo bind --c` writes it)"}
     }
+    // a std binding's adapter names its header relative to the module
+    // (bind.std_key, decision 0534 stage 2): this build's copy names it
+    // where it is here, the key's first field
+    let hp = m.path.split("|")[0].trim_prefix("c:")
+    let inc = "#include \"${m.c_header}\"\n"
+    let data = if hostpath.is_abs(hp) && (data0.to_str() ?? "").contains(inc) { (data0.to_str() ?? "").replace(inc, "#include \"${hp}\"\n").bytes() } else { data0 }
     let p = "${cdir}/xo_${m.c_prefix.trim_suffix("_")}.c"
     // xo:allow XO0903 a failed read writes the same adapter bytes again
     let old = os.fs.read(p).ok() ?? b""
@@ -161,4 +178,65 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim
     out.push(obj)
   }
   (out, "")
+}
+
+/// std/sqlite's prebuilt object for tgoos/tgoarch (decision 0534 stage
+/// 2), or "" when there is none to use: m is std/sqlite's binding (its
+/// links end in native/sqlite/xo_sqlite.c and sqlite3.c), and
+/// sqlite/GOOS-ARCH/sqlite.o (sqlite.obj for windows) beside std (a
+/// release's lib/xo/sqlite, a checkout's lib/xo/sqlite: the release
+/// writes it) has a .key file equal to sqlite_key's. The object is the
+/// amalgamation, xo_sqlite.c and the binding's adapter compiled as one
+/// unit, so it replaces the three sources; a changed source or adapter
+/// changes the key, and the sources are compiled again.
+fn sqlite_prebuilt(os: Os, std: Str, m: check.Module, tgoos: Str, tgoarch: Str) -> Str {
+  let parts = m.path.split("|")
+  if parts.len() != 4 || m.c_header != "sqlite/xo_sqlite.h" {
+    return ""
+  }
+  let files = parts[1].split(",")
+  var amalg = ""
+  for f in files {
+    if f.ends_with("/native/sqlite/sqlite3.c") {
+      amalg = f
+    }
+  }
+  if amalg.is_empty() || files.len() != 2 {
+    return ""
+  }
+  let root = dir_name(std.trim_suffix("/"))
+  let rel = "${tgoos}-${tgoarch}/sqlite.${if tgoos == "windows" { "obj" } else { "o" }}"
+  for p in ["${root}/sqlite/${rel}", "${root}/lib/xo/sqlite/${rel}"] {
+    // xo:allow XO0903 a candidate with no key is not used
+    let want = os.fs.read("${p}.key").ok() ?? b""
+    if want.is_empty() {
+      continue
+    }
+    let key = sqlite_key(os, dir_name(amalg), "${m.c_decl.trim_suffix(".xo")}.c", tgoos, tgoarch)
+    if !key.is_empty() && (want.to_str() ?? "").trim() == key {
+      return p
+    }
+  }
+  ""
+}
+
+/// The key of std/sqlite's prebuilt object (sqlite_prebuilt): the
+/// SHA-256 of the target, then sqlite3.c, xo_sqlite.c, xo_sqlite.h and the
+/// binding's adapter at adapter, each after its length; "" when one
+/// cannot be read. The adapter includes the header by its absolute path,
+/// which is the machine's, so the key takes it as `dir/` removed: the
+/// release's and a user's adapters then key alike
+/// (scripts/sqlite-prebuilt.sh writes the .key the same way).
+fn sqlite_key(os: Os, dir: Str, adapter: Str, tgoos: Str, tgoarch: Str) -> Str {
+  var b = "xo sqlite prebuilt v1 ${tgoos}/${tgoarch}\n".bytes()
+  for f in ["${dir}/sqlite3.c", "${dir}/xo_sqlite.c", "${dir}/xo_sqlite.h", adapter] {
+    match os.fs.read(f) {
+      Ok(d0) => {
+        let d = if f == adapter { (d0.to_str() ?? "").replace("${dir}/", "").bytes() } else { d0 }
+        b = b + "${d.len()}\n".bytes() + d
+      }
+      Err(_) => return ""
+    }
+  }
+  crypto.sha256(b).to_hex()
 }

@@ -91,3 +91,23 @@ std/sqlite.xo	/// The SQLite library's version, e.g. "3.54.1".
 # a std module with a `use c` source (gotchas/std-use-c-cross-sample-miss.md); no SQLite code
 compiler/cli/dev/goldens.xo	/// a std module brings (std/sqlite) is not in the program's directory:
 compiler/xo/main.xo	/// such as std/sqlite's sqlite3.c)
+
+# std/sqlite on windows/amd64 and its prebuilt objects (decision 0534 stage
+# 2): the comments name SQLite, the library the object holds; no code copied.
+compiler/arm64/x86win.xo	/// Only a windows/amd64 build with no C runtime defines it: SQLite's
+compiler/macho/peimports.xo	// and each one std/sqlite's prebuilt object imports (decision 0534).
+compiler/xo/cffi.xo	/// std/sqlite's binding is its prebuilt object for tgoos/tgoarch when one
+compiler/xo/cffi.xo	/// std/sqlite's prebuilt object for tgoos/tgoarch (decision 0534 stage
+compiler/xo/cffi.xo	/// 2), or "" when there is none to use: m is std/sqlite's binding (its
+compiler/xo/cffi.xo	/// links end in native/sqlite/xo_sqlite.c and sqlite3.c), and
+compiler/xo/cffi.xo	/// sqlite/GOOS-ARCH/sqlite.o (sqlite.obj for windows) beside std (a
+compiler/xo/cffi.xo	/// release's lib/xo/sqlite, a checkout's lib/xo/sqlite: the release
+compiler/xo/cffi.xo	/// The key of std/sqlite's prebuilt object (sqlite_prebuilt): the
+compiler/xo/cffi.xo	/// (scripts/sqlite-prebuilt.sh writes the .key the same way).
+compiler/xo/link.xo	// program too when every binding is a prebuilt object (std/sqlite's,
+compiler/xo/main.xo	// std/sqlite's prebuilt object (decision 0534 stage 2): the only
+std/native/llrt/cabi_wincrt.xo	// SQLite's prebuilt object for windows/amd64 (decision 0534 stage 2,
+std/native/llrt/cabi_wincrt.xo	/// malloc and free of the `use c` adapter compiled into SQLite's object
+std/native/llrt/cabi_wincrt.xo	/// abort (SQLite's, on a broken invariant): the process ends with
+std/native/llrt/cabi_wincrt.xo	/// _localtime64_s (SQLite's localtime modifier): the time *t in the
+std/native/llrt/windows.xo	/// zone, for cabi_wincrt.xo's _localtime64_s (SQLite's localtime

@@ -9,6 +9,7 @@
 // again, as the Go checker binds on every run (decision 0178 stage 6).
 
 use std/crypto
+use github.com/xo-lang/xo/compiler/cli/bind
 use github.com/xo-lang/xo/compiler/lexer
 use github.com/xo-lang/xo/compiler/parser
 
@@ -111,7 +112,19 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
   if !header_path.is_empty() {
     key = "c:${header_path}|${link_files.join(",")}|${link_libs.join(",")}|${effs}"
   }
-  let sum = crypto.sha256(key.bytes()).to_hex()
+  // a std header's binding is named by bind.std_key (decision 0534
+  // stage 2): the same files on every machine, shipped with std
+  var pkey = key
+  var pinned = false
+  if !header_path.is_empty() && !c.std_dir.is_empty() {
+    // xo:allow XO0903 an unreadable header keys as empty and binds again
+    let hb = (c.fs.read(header_path).ok() ?? None) ?? b""
+    if let Some(k) = bind.std_key(c.abs(c.std_dir), header_path, link_files, link_libs, effs, hb) {
+      pkey = k
+      pinned = true
+    }
+  }
+  let sum = crypto.sha256(pkey.bytes()).to_hex()
   let prefix = "c_${name}_${sum[0..8]}_"
   var cache = join(root, ".xo/cbind")
   if !c.cbind_dir.is_empty() {
@@ -128,12 +141,17 @@ fn (var c: Checker) load_c_import(m: Int, f: Int, u: parser.UseDecl) {
   var dep = c.mod_index.get(key) ?? -1
   if dep < 0 {
     let src = c.fs.read(decl_path).ok() ?? None
-    // check_dirs_bound binds it again, as the Go checker does on every run
+    // check_dirs_bound binds it again, as the Go checker does on every
+    // run; not a std binding that is there (its key covers the header's
+    // bytes, and a release's std is read only, its user maybe without
+    // clang)
     let read = match src {
       Some(b) => b.to_str() ?? ""
       None => ""
     }
-    c.add_miss(BindMiss{key: key, header: header, mod_dir: mdir, links: links, effects: if has_uses { Some(eff_names) } else { None }, cache: cache, read: read})
+    if !(pinned && src != None) {
+      c.add_miss(BindMiss{key: key, header: header, mod_dir: mdir, links: links, effects: if has_uses { Some(eff_names) } else { None }, cache: cache, read: read})
+    }
     let data = match src {
       Some(b) => b
       None => {

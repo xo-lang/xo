@@ -410,14 +410,18 @@ fn next_op(text: Str, op: Str, pos: Int) -> Int {
 /// only Xo code calls it, whose System V convention keeps no xmm
 /// register, so xmm6 to xmm15 are neither saved nor restored (20
 /// instructions of the LLVM switch's 57); a new fiber's function is an export (rt.fn_addr), so
-/// xo_fiber_entry calls it with Win64.
-fn x86_sched_asm_windows() -> Str {
+/// xo_fiber_entry calls it with Win64. With no C runtime (nolibc) it
+/// also defines __chkstk (w64_chkstk).
+fn x86_sched_asm_windows(nolibc: Bool) -> Str {
   var b: List[Str] = []
   b.push("\t.text\n")
   b.push(w64_sched_fn("xo_stack_switch", ["pushq %rbp", "pushq %rbx", "pushq %rdi", "pushq %rsi", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $192, %rsp", "movq %gs:0x1478, %rax", "movq %rax, 184(%rsp)", "movq %gs:0x10, %rax", "movq %rax, 176(%rsp)", "movq %gs:0x08, %rax", "movq %rax, 168(%rsp)", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rdi)", "movq %rsi, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "movq 168(%rsp), %rax", "movq %rax, %gs:0x08", "movq 176(%rsp), %rax", "movq %rax, %gs:0x10", "movq 184(%rsp), %rax", "movq %rax, %gs:0x1478", "addq $192, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rsi", "popq %rdi", "popq %rbx", "popq %rbp", "retq"]))
   b.push(w64_sched_fn("xo_fiber_entry", ["subq $32, %rsp", "movq %rbx, %rcx", "callq *%r12", "ud2"]))
   b.push(w64_sched_fn("xo_preempt_stub", ssa.preempt_stub_amd64("windows")))
   b.push(w64_sched_fn("xo_async_stub", ssa.async_stub_amd64()))
+  if nolibc {
+    b.push(w64_sched_fn("__chkstk", w64_chkstk()))
+  }
   let tp = ["movl _tls_index(%rip), %eax", "movq %gs:88, %rcx", "movq (%rcx,%rax,8), %rax", "leaq xo_tlocal@SECREL32(%rax), %rax"]
   b.push(w64_sched_fn("xo_tlocal_get", tp + ["movq (%rax,%rdi,8), %rax", "retq"]))
   b.push(w64_sched_fn("xo_tlocal_set", tp + ["movq %rsi, (%rax,%rdi,8)", "retq"]))
@@ -428,6 +432,19 @@ fn x86_sched_asm_windows() -> Str {
   b.push("\t.quad 0\n".repeat(18))
   b.push("\t.text\n")
   b.join("")
+}
+
+/// The body of __chkstk, which a C object's function with a frame
+/// larger than a page calls first (MSVC's convention: the frame's size in
+/// rax; every register but the flags kept, rsp unchanged): it touches
+/// each page from the caller's rsp down to the frame's end in order, so
+/// the stack grows through its guard page one page at a time. The loop
+/// is compiler-rt's x86_64 chkstk2.S (Apache 2.0 with LLVM exceptions).
+/// Only a windows/amd64 build with no C runtime defines it: SQLite's
+/// prebuilt object calls it (decision 0534 stage 2); the C runtime has
+/// its own.
+fn w64_chkstk() -> List[Str] {
+  ["pushq %rcx", "pushq %rax", "cmpq $0x1000, %rax", "leaq 24(%rsp), %rcx", "jb .Lxo_chkstk_last", ".Lxo_chkstk_page:", "subq $0x1000, %rcx", "testq %rcx, (%rcx)", "subq $0x1000, %rax", "cmpq $0x1000, %rax", "ja .Lxo_chkstk_page", ".Lxo_chkstk_last:", "subq %rax, %rcx", "testq %rcx, (%rcx)", "popq %rax", "popq %rcx", "retq"]
 }
 
 fn w64_sched_fn(name: Str, body: List[Str]) -> Str {

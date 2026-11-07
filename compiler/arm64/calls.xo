@@ -4194,6 +4194,24 @@ fn (var g: G) rt_call(v: Int) {
     // (ssa/exports.xo, shared with LLVM)
     name = own
   }
+  if g.x86 && g.os == "windows" && name0.starts_with("rt.c_") {
+    // a `use c` binding's adapter (`rt.c_<module>_<hash>_<function>`,
+    // compiler/cli/bind gen.xo), which clang compiled for Win64: through
+    // a thunk, as a platform call (x86win.xo); its words as passed above,
+    // and a Str result's length slot last
+    var sig = StrBuilder.new()
+    for a in x.args {
+      sig.write(match g.vkind(a) {
+        Float => "f"
+        Str | Func => "ii"
+        _ => "i"
+      })
+    }
+    if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Str {
+      sig.write("i")
+    }
+    name = g.w64_sym(name, sig.freeze())
+  }
   match g.kind(ssa.ty_of(x.tb)) {
     Unit => {
       let _r = g.rt(name, args, [])

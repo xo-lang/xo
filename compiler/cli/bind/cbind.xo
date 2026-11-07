@@ -35,6 +35,8 @@ pub struct Options {
   pub dir: Str = ""
   /// The working directory relative paths are resolved against.
   pub wd: Str = ""
+  /// The std directory: a header under it binds under std_key's prefix.
+  pub std_dir: Str = ""
 }
 
 /// One bound header (cbind.Binding).
@@ -60,6 +62,31 @@ pub struct Binding {
   pub skipped: Map[Str, Str] = {}
   pub bound: Int = 0
   pub total: Int = 0
+  /// A std header's binding (std_key): its prefix and files name no
+  /// path of this machine.
+  pub std_pinned: Bool = false
+}
+
+/// The key a binding of std's header_path (an absolute path under the
+/// absolute std directory std) is named by, or None for another header
+/// (decision 0534 stage 2): the paths relative to std and the header's
+/// SHA-256 in place of the absolute paths, so the prefix and the files
+/// are the same on every machine and the binding can ship with std (a
+/// release's std is read only, and its user may have no clang); a
+/// changed header changes it.
+pub fn std_key(std: Str, header_path: Str, link_files: List[Str], libs: List[Str], effs: Str, header: Bytes) -> Str? {
+  let s = "${std.trim_suffix("/")}/"
+  if std == "" || !header_path.starts_with(s) {
+    return None
+  }
+  var rels: List[Str] = []
+  for l in link_files {
+    if !l.starts_with(s) {
+      return None
+    }
+    rels.push(l.trim_prefix(s))
+  }
+  Some("c:std:${header_path.trim_prefix(s)}|${rels.join(",")}|${libs.join(",")}|${effs}|${crypto.sha256(header).to_hex()}")
 }
 
 /// cbind.CacheDir: the binding cache of the Xo project rooted at root:
@@ -175,7 +202,16 @@ fn (var b: Binder) locate(os: Os) -> () ! Str uses (fs, proc, env) {
   if b.bnd.local {
     b.bnd.key = "c:${b.bnd.header_path}|${b.bnd.link_files.join(",")}|${b.bnd.link_libs.join(",")}|${effs}"
   }
-  let sum = crypto.sha256(b.bnd.key.bytes()).to_hex()
+  var pkey = b.bnd.key
+  if b.bnd.local && !o.std_dir.is_empty() {
+    // xo:allow XO0903 an unreadable header is reported by clang below
+    let hb = os.fs.read(b.bnd.header_path).ok() ?? b""
+    if let Some(k) = std_key(b.abs(o.std_dir), b.bnd.header_path, b.bnd.link_files, b.bnd.link_libs, effs, hb) {
+      pkey = k
+      b.bnd.std_pinned = true
+    }
+  }
+  let sum = crypto.sha256(pkey.bytes()).to_hex()
   b.bnd.prefix = "c_${b.bnd.name}_${sum[0..8]}_"
   b.clang = find_clang(os)?
   if !b.bnd.local {

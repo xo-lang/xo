@@ -343,8 +343,10 @@ fn nolibc(os: Os, o: Opts, c: check.Checker, tgoos: Str) -> Bool {
   if tgoos == "windows" {
     // the amd64 backend's windows/amd64 program with no `use c` has no C
     // runtime and is linked by Xo's PE linker (decision 0254 6b step 4);
-    // XO_WIN_NOCRT=0 keeps the MSVC C runtime and lld-link
-    return o.backend == "amd64" && (os.env.get("XO_WIN_NOCRT") ?? "") != "0" && !uses_c(c)
+    // XO_WIN_NOCRT=0 keeps the MSVC C runtime and lld-link; a `use c`
+    // program too when every binding is a prebuilt object (std/sqlite's,
+    // decision 0534 stage 2)
+    return o.backend == "amd64" && (os.env.get("XO_WIN_NOCRT") ?? "") != "0" && !uses_c_source(os, o.std, c, tgoos)
   }
   if tgoos != "linux" || o.race {
     return false
@@ -354,6 +356,17 @@ fn nolibc(os: Os, o: Opts, c: check.Checker, tgoos: Str) -> Bool {
     "1" => true
     _ => !uses_c(c)
   }
+}
+
+/// Whether a module of the program binds C (`use c`) with no prebuilt
+/// object for tgoos's amd64 (sqlite_prebuilt).
+fn uses_c_source(os: Os, std: Str, c: check.Checker, tgoos: Str) -> Bool {
+  for m in c.mods {
+    if !m.c_prefix.is_empty() && sqlite_prebuilt(os, std, m, tgoos, "amd64").is_empty() {
+      return true
+    }
+  }
+  false
 }
 
 /// Whether a module of the program binds C (`use c`).

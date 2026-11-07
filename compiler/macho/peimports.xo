@@ -2,7 +2,8 @@
 // import libraries; do not edit. The DLL that exports each Windows
 // function std/native/sys_windows.xo declares (decision 0254 6b step 4:
 // Xo's PE linker, pelink.xo, imports by it), and each one --race's
-// ThreadSanitizer object, race_windows_amd64.syso, imports (decision 0273).
+// ThreadSanitizer object, race_windows_amd64.syso, imports (decision 0273),
+// and each one std/sqlite's prebuilt object imports (decision 0534).
 
 /// The DLL of each imported Windows function.
 pub fn pe_imports() -> Map[Str, Str] {
@@ -153,5 +154,39 @@ pub fn pe_imports() -> Map[Str, Str] {
     "sendto": "WS2_32.dll",
     "setsockopt": "WS2_32.dll",
     "shutdown": "WS2_32.dll",
+    "AcquireSRWLockExclusive": "KERNEL32.dll",
+    "AreFileApisANSI": "KERNEL32.dll",
+    "CreateFileMappingW": "KERNEL32.dll",
+    "DeleteCriticalSection": "KERNEL32.dll",
+    "EnterCriticalSection": "KERNEL32.dll",
+    "FlushViewOfFile": "KERNEL32.dll",
+    "GetDriveTypeW": "KERNEL32.dll",
+    "GetFileAttributesExW": "KERNEL32.dll",
+    "GetFileSizeEx": "KERNEL32.dll",
+    "GetOverlappedResult": "KERNEL32.dll",
+    "GetProcessHeap": "KERNEL32.dll",
+    "GetSystemTimeAsFileTime": "KERNEL32.dll",
+    "GetTempPathW": "KERNEL32.dll",
+    "GetTickCount64": "KERNEL32.dll",
+    "HeapAlloc": "KERNEL32.dll",
+    "HeapCompact": "KERNEL32.dll",
+    "HeapCreate": "KERNEL32.dll",
+    "HeapDestroy": "KERNEL32.dll",
+    "HeapFree": "KERNEL32.dll",
+    "HeapReAlloc": "KERNEL32.dll",
+    "HeapSize": "KERNEL32.dll",
+    "HeapValidate": "KERNEL32.dll",
+    "InitializeCriticalSection": "KERNEL32.dll",
+    "InitializeSRWLock": "KERNEL32.dll",
+    "LeaveCriticalSection": "KERNEL32.dll",
+    "MapViewOfFile": "KERNEL32.dll",
+    "MultiByteToWideChar": "KERNEL32.dll",
+    "ReleaseSRWLockExclusive": "KERNEL32.dll",
+    "SetEndOfFile": "KERNEL32.dll",
+    "SetFilePointerEx": "KERNEL32.dll",
+    "TryAcquireSRWLockExclusive": "KERNEL32.dll",
+    "TryEnterCriticalSection": "KERNEL32.dll",
+    "UnmapViewOfFile": "KERNEL32.dll",
+    "WaitForSingleObjectEx": "KERNEL32.dll",
   }
 }

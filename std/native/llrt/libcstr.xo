@@ -305,6 +305,95 @@ pub fn strncmp(a: Int, b: Int, n: Int) -> Int {
   0
 }
 
+/// strcmp.
+pub fn strcmp(a: Int, b: Int) -> Int {
+  var i = 0
+  while true {
+    let x = byte(a, i)
+    let y = byte(b, i)
+    if x != y || x == 0 {
+      return subw(x, y)
+    }
+    i = addw(i, 1)
+  }
+  0
+}
+
+/// memchr: the address of the first c (low byte) in the n bytes at s,
+/// or 0.
+pub fn memchr(s: Int, c: Int, n: Int) -> Int {
+  let b = c & 255
+  var i = 0
+  while ult(i, n) {
+    if byte(s, i) == b {
+      return addw(s, i)
+    }
+    i = addw(i, 1)
+  }
+  0
+}
+
+/// strrchr: the address of the last c (low byte) in s, its terminator
+/// when c is 0, or 0.
+pub fn strrchr(s: Int, c: Int) -> Int {
+  let b = c & 255
+  var last = 0
+  var i = 0
+  while true {
+    let x = byte(s, i)
+    if x == b {
+      last = addw(s, i)
+    }
+    if x == 0 {
+      return last
+    }
+    i = addw(i, 1)
+  }
+  0
+}
+
+/// Whether byte x is in the zero terminated set at set.
+fn in_set(set: Int, x: Int) -> Bool {
+  var j = 0
+  while true {
+    let y = byte(set, j)
+    if y == 0 {
+      return false
+    }
+    if y == x {
+      return true
+    }
+    j = addw(j, 1)
+  }
+  false
+}
+
+/// strspn: the length of s's first run of bytes in set.
+pub fn strspn(s: Int, set: Int) -> Int {
+  var i = 0
+  while true {
+    let x = byte(s, i)
+    if x == 0 || !in_set(set, x) {
+      return i
+    }
+    i = addw(i, 1)
+  }
+  0
+}
+
+/// strcspn: the length of s's first run of bytes not in set.
+pub fn strcspn(s: Int, set: Int) -> Int {
+  var i = 0
+  while true {
+    let x = byte(s, i)
+    if x == 0 || in_set(set, x) {
+      return i
+    }
+    i = addw(i, 1)
+  }
+  0
+}
+
 // ---------------------------------------------------------------------------
 // strerror: linux.xo strerror's texts (Go's table, first letter
 // capitalized), as zero terminated C strings from malloc, made once per
