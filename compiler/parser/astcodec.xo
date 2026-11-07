@@ -917,6 +917,15 @@ pub fn encode_parse(r: ParseResult) -> Bytes {
   for d in f.decls {
     e.decl(d)
   }
+  // each top level item's range (decision 0428): std's record keeps them
+  // and ensure_decl parses one item by its range (v8, 2026-11-06: v7 and
+  // before left them out, so a decoded parse wrote a record without them)
+  e.int(f.ranges.len())
+  for dr in f.ranges {
+    e.pos(dr.start)
+    e.int(dr.end)
+    e.int(dr.n)
+  }
   e.int(r.diags.len())
   for d in r.diags {
     e.diag(d)
@@ -1982,6 +1991,17 @@ pub fn decode_parse(d: Bytes) -> ParseResult? {
     }
     decls.push(r.decl())
   }
+  let nr = r.count()
+  var ranges: List[DeclRange] = []
+  for _ in 0..nr {
+    if r.bad {
+      break
+    }
+    let st = r.pos()
+    let end = r.int()
+    let n = r.int()
+    ranges.push(DeclRange{start: st, end: end, n: n})
+  }
   let ng = r.count()
   var diags: List[Diag] = []
   for _ in 0..ng {
@@ -1995,7 +2015,7 @@ pub fn decode_parse(d: Bytes) -> ParseResult? {
   if r.bad || r.i != d.len() {
     return None
   }
-  Some(ParseResult{file: File{span: fs, name: name, imports: imports, decls: decls}, diags: diags, hard: hard, iface: iface})
+  Some(ParseResult{file: File{span: fs, name: name, imports: imports, decls: decls, ranges: ranges}, diags: diags, hard: hard, iface: iface})
 }
 
 fn kind_code(k: Kind) -> Int {

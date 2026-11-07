@@ -1586,6 +1586,15 @@ pub fn (c: Checker) parse_lazy_path(path: Str) -> Bool {
   c.lazy && c.lazy_parse && (path.starts_with("std/native/") || c.dep_lazy && !path.starts_with("std/")) && (c.std_test.is_empty() || !path.starts_with("std/${c.std_test}/") && path != "std/${c.std_test}.xo")
 }
 
+/// A parse_cache entry of a parse made elsewhere (the driver's back-end
+/// cache of std's parses, decision 0380).
+pub fn parse_entry_of(src: Bytes, sig: Bool, lazy: Bool, r: parser.ParseResult) -> ParseEntry {
+  ParseEntry{src: src, sig: sig, r: r, lazy: lazy}
+}
+
+/// The parse of a parse_cache entry.
+pub fn (e: ParseEntry) result() -> parser.ParseResult { e.r }
+
 /// A parse of src at path for parse_cache, made ahead of the check (the
 /// driver's parse prefetch parses on tasks).
 pub fn parse_entry(path: Str, src: Bytes, sig: Bool, lazy: Bool) -> ParseEntry {

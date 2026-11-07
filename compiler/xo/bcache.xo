@@ -1930,7 +1930,8 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], src: StoreSrc) {
 /// repeats of known ones (2026-10-22). KIND is fe, fn, inl, rc, sum,
 /// obj, hobj (a hollowed part's object and its undefined-symbol facts),
 /// hfacts (a part's hollow facts), hextra (an ELF part's extra labels),
-/// chk, or pack/KIND for a pack segment.
+/// ast (a std file's parse, decision 0380), chk, or pack/KIND for a pack
+/// segment.
 fn note_store(os: Os, kind: Str, dir: Str, n: Int) {
   if n <= 0 {
     return
@@ -2008,36 +2009,71 @@ fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
   if n == 0 {
     return
   }
+  // std's parses from the back-end cache (decision 0380 step b stage 2,
+  // on by default since decision 0529 step 1; XO_IFC_CACHE=0 turns it
+  // off): by the file's bytes, path and parse mode
+  let id = cache_id(os)
+  let ast = (os.env.get("XO_IFC_CACHE") ?? "") != "0" && !id.is_empty() && backend_cache_mode(os) != "verify"
   let next = Atomic[Int].new(0)
   let parsed = scope s {
     var ts = []
     // two tasks and one per 64 files more (small_jobs: each task's worker
     // keeps its own heap chunks; decision 0448, a small module's tasks)
     for _ in 0..small_jobs(os, 2 + n / 64).min(n).max(1) {
-      ts.push(s.spawn(fn() -> List[(Str, check.ParseEntry)] {
-        var mine: List[(Str, check.ParseEntry)] = []
+      ts.push(s.spawn(fn() -> List[(Str, check.ParseEntry, Int)] {
+        var mine: List[(Str, check.ParseEntry, Int)] = []
         while true {
           let i = next.add(1) - 1
           if i >= n {
             break
           }
           let (path, src, sig, lazy) = todo[i]
-          mine.push((path, check.parse_entry(path, src, sig, lazy)))
+          if ast && path.starts_with("std/") {
+            let (e, stored) = ast_cached_parse(os, dir, id, path, src, sig, lazy)
+            mine.push((path, e, stored))
+            continue
+          }
+          mine.push((path, check.parse_entry(path, src, sig, lazy), 0))
         }
         mine
       }))
     }
-    var all: List[(Str, check.ParseEntry)] = []
+    var all: List[(Str, check.ParseEntry, Int)] = []
     for t in ts {
       all = all + t.await
     }
     all
   }
-  for (path, e) in parsed {
+  var stored = 0
+  for (path, e, n) in parsed {
+    stored += n
     if !c.parse_cache.contains(path) {
       c.parse_cache[path] = e
     }
   }
+  // the ast/ entries stored, counted toward the prune and logged
+  if stored > 0 {
+    prune_backend_cache(os, "ast", dir, stored)
+  }
+}
+
+/// The parse of std file path (src) from the back-end cache's ast/ entry
+/// by its bytes, path and mode (parser astcodec.xo), or parsed and stored.
+fn ast_cached_parse(os: Os, dir: Str, id: Str, path: Str, src: Bytes, sig: Bool, lazy: Bool) -> (check.ParseEntry, Int) {
+  var b = BytesBuilder.new()
+  b.write_str("${parser.AST_CODEC_VERSION}\n${id}\nsig=${sig} lazy=${lazy}\n${path}\n")
+  b.write(src)
+  let k = crypto.sha256(b.freeze()).to_hex()
+  let p = entry_path(dir, "ast", k)
+  if let Some(d) = cache_get(os, p) {
+    if let Some(r) = parser.decode_parse(d) {
+      return (check.parse_entry_of(src, sig, lazy, r), 0)
+    }
+  }
+  let e = check.parse_entry(path, src, sig, lazy)
+  let enc = parser.encode_parse(e.result())
+  cache_put(os, p, enc)
+  (e, enc.len())
 }
 
 /// After the check: the files it parsed, as the build target's parse

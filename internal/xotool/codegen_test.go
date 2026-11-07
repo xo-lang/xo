@@ -108,6 +108,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_SEPCOMP_STORE_CONC":   {"none", ""},                                    // the concurrent variant's store (the default sets it; sepcomp_store)
 	"XO_SEPCOMP_DEFAULT":      {"keyed", "sepcomp ${crypto.sha256(b.freeze()"}, // separate compilation by default (decision 0388 step d): sets XO_SEPCOMP and the facts, which cache_id holds
 	"XO_SEPCOMP_OBJS":         {"link", ""},                                    // std's object files an XO_SEPCOMP build links (decision 0388 stage 3); the binary key holds their names, sizes and times
+	"XO_IFC_CACHE":            {"none", ""},                                    // std's parses from the back-end cache (decision 0380): the same trees
 	"XO_FE_CACHE":             {"none", ""},
 	"XO_FE_STATS":             {"none", ""},
 	"XO_LAZY_PARSE":           {"none", ""},

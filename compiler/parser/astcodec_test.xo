@@ -88,10 +88,21 @@ fn round_trip(path: Str, src: Bytes, lazy: Bool) -> Str {
       if d.iface != r.iface || d.hard != r.hard || d.diags.len() != r.diags.len() {
         return "${path}: the decoded interface, hard flag or diagnostics differ"
       }
+      if ranges_str(d.file.ranges) != ranges_str(r.file.ranges) {
+        return "${path}: the decoded item ranges differ (${d.file.ranges.len()} of ${r.file.ranges.len()})"
+      }
       ""
     }
     None => "${path}: encode_parse's bytes do not decode"
   }
+}
+
+fn ranges_str(rs: List[DeclRange]) -> Str {
+  var out: List[Str] = []
+  for dr in rs {
+    out.push("${dr.start.offset}:${dr.start.line}:${dr.start.col}-${dr.end}/${dr.n}")
+  }
+  out.join(" ")
 }
 
 test "a parse decodes to the same tree, lazy and full" {

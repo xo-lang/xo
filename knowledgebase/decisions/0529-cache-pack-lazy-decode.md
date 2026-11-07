@@ -80,6 +80,35 @@ Ceiling: about 180 ms of the 357 ms of CPU per warm golden build; for a
 single build's wall less (the parse is off the critical path: 0380
 stage 2's 10 ms). The suites are no longer the target (above).
 
+## Results (2026-11-06)
+
+- Step 1 (std's parses from the cache's ast/ entries, XO_IFC_CACHE on by
+  default): the arm64 goldens suite's CPU 110.3 to 105.1 s (-5%) on the
+  linux/arm64 host; xo's self build within noise. Small whole builds
+  with a back-end cache per side: json_decode_fields wall 0.924, CPU 0.840; http_server_request wall 0.963, CPU 0.885 (B/A, linux/arm64 host, the same in both run positions: wall 0.942/0.915 and 0.966/0.967).
+- Step 2 (std declared from decision 0388's records for whole-program
+  builds too) is held. load_std_record makes every module of the
+  record's closure (modules, files, check order) up front in the order
+  of the program that wrote the record, so a whole build's bytes
+  depended on which program wrote it: TestFrontCacheAcrossPrograms
+  (three orders) and TestChainKeysSharedCache failed with it and pass
+  with step 1 alone. It stays on for separately compiled builds, where
+  std's code comes from its object. To come back for whole builds it
+  needs the record's modules made as the program's imports reach them
+  (the source check's order), and a gain of its own: xo's self build
+  measured 0.995 wall with it.
+- Step 1's first gate failed separately compiled tests of the full
+  internal/arm64 run; they were the suite's std builds killed for
+  memory (`xo dev stdobj exit 137`, about twenty parallel std builds
+  past a 22 GB cgroup), which main failed the same way, and a cold std build's peak was
+  1.39 GB with and without step 1. The gate also found that the AST
+  codec dropped File.ranges (gotchas/ast-codec-dropped-decl-ranges.md),
+  fixed in codec v8 with step 1.
+- Measuring note: the first small-build A/Bs shared one back-end cache
+  between the two xos, which slowed the second build of each round by
+  about 25% (gotchas/bench-run-position-effect.md); the figures above
+  use a cache per side.
+
 ## Consequences
 
 - A cache format addition (new pack kinds); entries are keyed by
