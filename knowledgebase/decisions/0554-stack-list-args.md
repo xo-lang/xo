@@ -71,7 +71,11 @@ stack_small); LLVM, wasm and the Go backend keep the heap.
 4. **Which parameters are unstacking.** Only List parameters that some
    candidate in the program is passed to (a whole-program fact the native
    back end has after inlining: the call sites of each function), so a
-   function no literal reaches pays nothing. The caller rule accepts only
+   function no literal reaches pays nothing, and that some path of the
+   function does not keep (decision 0149's consumed on every path, for
+   Lists): a callee that keeps its List on every path (the compiler's
+   `b.add(op, t, aux, [args])`, which stores its arguments in the value)
+   would only pay a frame build and a copy. The caller rule accepts only
    arguments of parameters marked unstacking, and the mark is part of the
    callee's cache key, so a cached or separately compiled body without the
    checks (decision 0283's undecoded bodies, a std object built before the
@@ -91,9 +95,12 @@ stack_small); LLVM, wasm and the Go backend keep the heap.
 - A function with unstacking parameters pays one load and compare of the
   count word on each keeping use, on those paths only.
 - Every other call site that passes a small List literal to a function
-  that is not inlined gets the same treatment; how many there are in std
-  and in xo itself is to be counted (a dev listing of candidates) before
-  the implementation's measurements.
+  that is not inlined and does not always keep it gets the same
+  treatment. A text count (2026-11-07, lines with a bracketed literal
+  argument, slices included, so an upper bound) is 183 lines in std and
+  2,551 in the compiler, most of the latter `b.add(..., [args])` calls,
+  which keep their List on every path and are excluded by rule 4; the
+  implementation lists the sites the rule takes before measuring.
 - A List that is kept is built twice (in the frame, then the heap copy),
   on the keeping path only; series_of's miss runs once per label set.
 - Verification: goldens on every backend (the stack List and the copy
