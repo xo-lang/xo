@@ -10,6 +10,17 @@ import (
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
+// skipWholeTier skips a test of the separately compiled path under the
+// full tier (XO_TEST_SEPCOMP=0): xotool sets XO_SEPCOMP=0 for every xo
+// the tests start there (tierSepcomp, e905b271e), so such a test could
+// only fail (tier 57, 2026-11-07: seven tests); the gates run them.
+func skipWholeTier(t *testing.T) {
+	t.Helper()
+	if os.Getenv("XO_TEST_SEPCOMP") == "0" {
+		t.Skip("XO_TEST_SEPCOMP=0: every build is whole program")
+	}
+}
+
 // sepDarwinEnv is the environment of a darwin debug test's separately
 // compiled build (decision 0388's default, with std's variants built
 // first): os.Environ() without XO_SEPCOMP. Under the full tier

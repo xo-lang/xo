@@ -26,6 +26,7 @@ var sepcompGoldens = []string{"byref_struct"}
 // variant build off and their caches hold no variant, so a fault only
 // separate compilation has passed every golden test.
 func TestSepcompGoldens(t *testing.T) {
+	skipWholeTier(t)
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

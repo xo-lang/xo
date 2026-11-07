@@ -178,6 +178,7 @@ fn main(os: Os) {
 // longer holds them, since their list was held to the end of the check
 // (decision 0448 case (c)), so check_dirs_bound decodes them again.
 func TestStdRecordBindRetry(t *testing.T) {
+	skipWholeTier(t)
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")

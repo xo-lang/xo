@@ -20,6 +20,7 @@ import (
 // was) must not turn separate compilation off for the other, and a
 // failure marker past its hour is tried again.
 func TestStdFailedMarkerPerTree(t *testing.T) {
+	skipWholeTier(t)
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")

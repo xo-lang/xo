@@ -490,6 +490,7 @@ func TestSepcompDebugInfo(t *testing.T) {
 // when it is in the cache, and its tests, including one whose std
 // calls go through MemFs, pass as the whole program's do.
 func TestSepcompTestVariant(t *testing.T) {
+	skipWholeTier(t)
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -550,6 +551,7 @@ func TestSepcompTestVariant(t *testing.T) {
 // own source never runs the store's stale code (the probe sees the new
 // body).
 func TestSepcompStdModuleEdits(t *testing.T) {
+	skipWholeTier(t)
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -655,6 +657,7 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 // loop stayed whole program for about 15 builds (2026-11-05,
 // gotchas/sepcomp-one-variant-per-launch.md).
 func TestSepcompBackgroundBoth(t *testing.T) {
+	skipWholeTier(t)
 	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -745,6 +748,7 @@ func bgLocked(t *testing.T, xo, cache string) bool {
 // (2026-11-05: the second edit after a cold build checked and built
 // every body again, 0.58 s where 0.30 s was due).
 func TestSepcompStdxKeepsFrontCache(t *testing.T) {
+	skipWholeTier(t)
 	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
