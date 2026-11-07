@@ -128,6 +128,13 @@ pub fn wm(var o: BytesBuilder, num: Int, m: Bytes) {
 }
 
 /// Opaque bytes: an options message is written when it has any bytes.
+/// An options message, written when non empty or when it was present on the wire (`seen`).
+pub fn wop(var o: BytesBuilder, num: Int, m: Bytes, seen: Bool) {
+  if m.len() > 0 || seen {
+    wm(o, num, m)
+  }
+}
+
 pub fn wo(var o: BytesBuilder, num: Int, m: Bytes) {
   if !m.is_empty() {
     wm(o, num, m)
@@ -145,14 +152,14 @@ fn enc_ext_range(r: protodesc.ExtensionRange) -> Bytes {
   var o = BytesBuilder.new()
   wia(o, 1, r.start)
   wia(o, 2, r.end)
-  wo(o, 3, r.options)
+  wop(o, 3, r.options, r.options_set)
   o.freeze()
 }
 
 fn enc_oneof(d: protodesc.OneofDesc) -> Bytes {
   var o = BytesBuilder.new()
   ws(o, 1, d.name)
-  wo(o, 2, d.options)
+  wop(o, 2, d.options, d.options_set)
   o.freeze()
 }
 
@@ -165,7 +172,7 @@ fn enc_field(f: protodesc.FieldDesc) -> Bytes {
   wi(o, 5, f.kind)
   ws(o, 6, f.type_name)
   ws(o, 7, f.default_value)
-  wo(o, 8, f.options)
+  wop(o, 8, f.options, f.options_set)
   match f.oneof_index {
     Some(i) => wia(o, 9, i)
     None => {}
@@ -180,7 +187,7 @@ fn enc_value(v: protodesc.EnumValueDesc) -> Bytes {
   var o = BytesBuilder.new()
   ws(o, 1, v.name)
   wia(o, 2, v.number)
-  wo(o, 3, v.options)
+  wop(o, 3, v.options, v.options_set)
   o.freeze()
 }
 
@@ -190,7 +197,7 @@ fn enc_enum(e: protodesc.EnumDesc) -> Bytes {
   for v in e.value {
     wm(o, 2, enc_value(v))
   }
-  wo(o, 3, e.options)
+  wop(o, 3, e.options, e.options_set)
   for r in e.reserved_range {
     wm(o, 4, enc_range(r))
   }
@@ -218,7 +225,7 @@ fn enc_message(m: protodesc.MessageDesc) -> Bytes {
   for f in m.extension {
     wm(o, 6, enc_field(f))
   }
-  wo(o, 7, m.options)
+  wop(o, 7, m.options, m.options_set)
   for d in m.oneof_decl {
     wm(o, 8, enc_oneof(d))
   }
@@ -236,7 +243,7 @@ fn enc_method(m: protodesc.MethodDesc) -> Bytes {
   ws(o, 1, m.name)
   ws(o, 2, m.input_type)
   ws(o, 3, m.output_type)
-  wo(o, 4, m.options)
+  wop(o, 4, m.options, m.options_set)
   wbp(o, 5, m.client_streaming, (m.streaming_set & 1) != 0)
   wbp(o, 6, m.server_streaming, (m.streaming_set & 2) != 0)
   o.freeze()
@@ -248,7 +255,7 @@ fn enc_service(s: protodesc.ServiceDesc) -> Bytes {
   for m in s.method {
     wm(o, 2, enc_method(m))
   }
-  wo(o, 3, s.options)
+  wop(o, 3, s.options, s.options_set)
   o.freeze()
 }
 
@@ -271,7 +278,7 @@ fn encode(f: protodesc.FileDesc) -> Bytes {
   for x in f.extension {
     wm(o, 7, enc_field(x))
   }
-  wo(o, 8, f.options)
+  wop(o, 8, f.options, f.options_set)
   wo(o, 9, f.source_code_info)
   for i in f.public_dependency {
     wia(o, 10, i)
@@ -307,6 +314,7 @@ fn dec_ext_range(b: Bytes) -> protodesc.ExtensionRange ! protobuf.ProtoErr {
       r.end = f.v
     } else if f.num == 3 && is_s(f) {
       r.options = f.data
+      r.options_set = true
     }
   }
   Ok(r)
@@ -319,6 +327,7 @@ fn dec_oneof(b: Bytes) -> protodesc.OneofDesc ! protobuf.ProtoErr {
       d.name = text(f)?
     } else if f.num == 2 && is_s(f) {
       d.options = f.data
+      d.options_set = true
     }
   }
   Ok(d)
@@ -343,6 +352,7 @@ fn dec_field(b: Bytes) -> protodesc.FieldDesc ! protobuf.ProtoErr {
       d.default_value = text(f)?
     } else if f.num == 8 && is_s(f) {
       d.options = f.data
+      d.options_set = true
     } else if f.num == 9 && is_v(f) {
       d.oneof_index = Some(f.v)
     } else if f.num == 10 && is_s(f) {
@@ -365,6 +375,7 @@ fn dec_value(b: Bytes) -> protodesc.EnumValueDesc ! protobuf.ProtoErr {
       d.number = f.v
     } else if f.num == 3 && is_s(f) {
       d.options = f.data
+      d.options_set = true
     }
   }
   Ok(d)
@@ -379,6 +390,7 @@ fn dec_enum(b: Bytes) -> protodesc.EnumDesc ! protobuf.ProtoErr {
       d.value.push(dec_value(f.data)?)
     } else if f.num == 3 && is_s(f) {
       d.options = f.data
+      d.options_set = true
     } else if f.num == 4 && is_s(f) {
       d.reserved_range.push(dec_range(f.data)?)
     } else if f.num == 5 && is_s(f) {
@@ -405,6 +417,7 @@ fn dec_message(b: Bytes) -> protodesc.MessageDesc ! protobuf.ProtoErr {
       d.extension.push(dec_field(f.data)?)
     } else if f.num == 7 && is_s(f) {
       d.options = f.data
+      d.options_set = true
     } else if f.num == 8 && is_s(f) {
       d.oneof_decl.push(dec_oneof(f.data)?)
     } else if f.num == 9 && is_s(f) {
@@ -427,6 +440,7 @@ fn dec_method(b: Bytes) -> protodesc.MethodDesc ! protobuf.ProtoErr {
       d.output_type = text(f)?
     } else if f.num == 4 && is_s(f) {
       d.options = f.data
+      d.options_set = true
     } else if f.num == 5 && is_v(f) {
       d.client_streaming = f.v != 0
       d.streaming_set = d.streaming_set | 1
@@ -447,6 +461,7 @@ fn dec_service(b: Bytes) -> protodesc.ServiceDesc ! protobuf.ProtoErr {
       d.method.push(dec_method(f.data)?)
     } else if f.num == 3 && is_s(f) {
       d.options = f.data
+      d.options_set = true
     }
   }
   Ok(d)
@@ -471,6 +486,7 @@ fn decode(data: Bytes) -> protodesc.FileDesc ! protobuf.ProtoErr {
       d.extension.push(dec_field(f.data)?)
     } else if f.num == 8 && is_s(f) {
       d.options = f.data
+      d.options_set = true
     } else if f.num == 9 && is_s(f) {
       d.source_code_info = f.data
     } else if f.num == 10 && is_v(f) {

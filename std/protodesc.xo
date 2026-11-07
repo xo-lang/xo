@@ -44,11 +44,15 @@ struct ExtensionRange {
   start: Int
   end: Int
   options: Bytes = b""
+  /// The options message was on the wire, also when empty.
+  options_set: Bool = false
 } derive Eq
 
 struct OneofDesc {
   name: Str
   options: Bytes = b""
+  /// The options message was on the wire, also when empty.
+  options_set: Bool = false
 } derive Eq
 
 /// FieldDescriptorProto. `kind` is the proto `type` (TYPE_*), `type_name` the fully qualified name with
@@ -62,6 +66,8 @@ struct FieldDesc {
   type_name: Str = ""
   default_value: Str = ""
   options: Bytes = b""
+  /// The options message was on the wire, also when empty.
+  options_set: Bool = false
   oneof_index: Int? = None
   json_name: Str = ""
   proto3_optional: Bool = false
@@ -72,12 +78,16 @@ struct EnumValueDesc {
   name: Str
   number: Int
   options: Bytes = b""
+  /// The options message was on the wire, also when empty.
+  options_set: Bool = false
 } derive Eq
 
 struct EnumDesc {
   name: Str
   value: List[EnumValueDesc] = []
   options: Bytes = b""
+  /// The options message was on the wire, also when empty.
+  options_set: Bool = false
   reserved_range: List[ReservedRange] = []
   reserved_name: List[Str] = []
 } derive Eq
@@ -91,6 +101,8 @@ struct MessageDesc {
   extension_range: List[ExtensionRange] = []
   oneof_decl: List[OneofDesc] = []
   options: Bytes = b""
+  /// The options message was on the wire, also when empty.
+  options_set: Bool = false
   reserved_range: List[ReservedRange] = []
   reserved_name: List[Str] = []
 } derive Eq
@@ -100,6 +112,8 @@ struct MethodDesc {
   input_type: Str
   output_type: Str
   options: Bytes = b""
+  /// The options message was on the wire, also when empty.
+  options_set: Bool = false
   client_streaming: Bool = false
   server_streaming: Bool = false
   /// Bit 1: `client_streaming` and bit 2: `server_streaming` were present on the wire, also when false (a proto2
@@ -111,6 +125,8 @@ struct ServiceDesc {
   name: Str
   method: List[MethodDesc] = []
   options: Bytes = b""
+  /// The options message was on the wire, also when empty.
+  options_set: Bool = false
 } derive Eq
 
 /// FileDescriptorProto. `syntax` is `proto2` (written as empty), `proto3` or `editions`.
@@ -125,6 +141,8 @@ struct FileDesc {
   service: List[ServiceDesc] = []
   extension: List[FieldDesc] = []
   options: Bytes = b""
+  /// The options message was on the wire, also when empty.
+  options_set: Bool = false
   source_code_info: Bytes = b""
   syntax: Str = ""
   edition: Int = 0
