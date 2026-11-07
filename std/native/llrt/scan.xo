@@ -1079,6 +1079,12 @@ pub fn span(b: Bytes, from: Int, cls: Int) -> Int {
     }
     return i
   }
+  // 32 bytes a step while none stops the run: bytes_any_stop32 finds `"`,
+  // `\`, the controls and 0x80 and above (below 0x20 as signed bytes), one
+  // bytes_any_eq32 the DEL; the 8 byte steps below find which byte does
+  while subw(n, i) >= 32 && (rt.bytes_any_stop32(b, i, 34, 92, 32) | rt.bytes_any_eq32(b, i, 0x7F)) == 0 {
+    i = addw(i, 32)
+  }
   while n - i >= 8 {
     let m = stops8(rt.bytes_word(b, i))
     if m != 0 {

@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: perf: Str.quote and the Debug text of a Str skip printable ASCII 32 bytes a step
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey of std's byte paths (ADR 0532 step 1, the wider class scans)
+- Go reference: strconv.Quote (appendQuotedWith; Go escapes a rune at a time)
+- Test: std/native/llrt/scan_test.xo "span class 1 stops at each kind of byte at each place of 0 to 100"; std prelude tests; bench/perf/simdscan twincheck (quote)
+- Timing: bench/perf/simdscan quote, linux/arm64 host 1, xo bench --ab 5 rounds against main: quote 0.542 (better; 15.46 to 8.38 ms) (~/xo-lead/notes/lang1/ab-sp1.txt)
+- Shipped in: not yet released
+
+scan.xo span's class 1 (printable ASCII other than `"` and `\`, the runs Str.quote and Debug text copy at once) tests 32 bytes a step with rt.bytes_any_stop32 (`"`, `\`, the controls, 0x80 and above) and one rt.bytes_any_eq32 (DEL), before the 8 byte steps that find the stopping byte. Both intrinsics are in the 0.43.0 seed.
+
 ## 2026-11-07: perf: UTF-8 validation of text mixing ASCII and other runes finds each sequence with one word test
 
 - Kind: perf

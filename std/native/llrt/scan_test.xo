@@ -285,6 +285,28 @@ test "find_byte and span find a byte at each place of 0 to 100" {
   }
 }
 
+test "span class 1 stops at each kind of byte at each place of 0 to 100" {
+  // `"`, `\`, controls, DEL and 0x80 and above stop it; a space and `~`
+  // do not
+  for c in [34, 92, 0, 31, 127, 128, 255, 32, 126] {
+    let stops = c != 32 && c != 126
+    for n in [0, 1, 31, 32, 33, 63, 64, 65, 100] {
+      for p in 0..n {
+        var xs: List[Int] = []
+        for i in 0..n {
+          xs.push(if i == p { c } else { 97 + i % 26 })
+        }
+        let b = bytes_of(xs)
+        for from in [0, 1, 31, 33] {
+          if from <= n {
+            expect(span(b, from, 1)) == (if stops && p >= from { p } else { n })
+          }
+        }
+      }
+    }
+  }
+}
+
 test "bytes_any_eq32 and bytes_any_high32 see each of the 32 bytes" {
   for p in 0..40 {
     var xs: List[Int] = []

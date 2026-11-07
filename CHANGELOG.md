@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- native (perf): `Str.quote` and the Debug text of a Str skip runs of printable ASCII 32 bytes a step (rt.bytes_any_stop32 and bytes_any_eq32): simdscan quote 0.542 of main on linux/arm64.
 - native (perf): UTF-8 validation of text mixing ASCII and other runes finds each sequence with one 8 byte word test and checks the common 2 and 3 byte sequences inline: utf8_mixed 0.922 of main on linux/arm64, utf8_ascii within noise.
 - Go backend (fix): a fault raised inside a call whose result the generated Go wraps in a list marking closure (std `cli.parse`) is reported at the call's line, not the line of a later statement or one past the end of the file: each line gofmt splits a generated statement into keeps the statement's //line position (gotchas/gofmt-splits-line-directive-statements.md). Goldens fault_line_after_call and fault_line_match_scrutinee.
 - Prelude (perf, decision 0452 addendum): a List of word-sized elements (8 bytes or less) starts with room for 2 elements, not 4, on the native, LLVM and wasm backends: xo's self build peaks 4.4% lower (max RSS 0.956), wall time unchanged.

@@ -250,6 +250,18 @@ fn main(os: Os) {
         }
       }
     }
+    "quote" => {
+      // strconv.Quote of printable ASCII: one run of span class 1
+      var ss: List[Str] = []
+      for b in big {
+        ss.push(b.to_str() ?? "")
+      }
+      for _ in 0..passes {
+        for s in ss {
+          sum += s.quote().len()
+        }
+      }
+    }
     _ => {}
   }
   os.stdio.println("${w} ${sum}")

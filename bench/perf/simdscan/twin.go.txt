@@ -249,6 +249,16 @@ func main() {
 				sum += int(h[0])
 			}
 		}
+	case "quote":
+		ss := make([]string, len(big))
+		for i, b := range big {
+			ss[i] = string(b)
+		}
+		for p := 0; p < passes; p++ {
+			for _, s := range ss {
+				sum += len(strconv.Quote(s))
+			}
+		}
 	}
 	fmt.Printf("%s %d\n", w, sum)
 }
