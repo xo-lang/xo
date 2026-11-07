@@ -387,7 +387,7 @@ func TestProfHeap(t *testing.T) {
 					t.Fatalf("go tool pprof -top -lines: no inlined start: %v\n%s", err, p)
 				}
 				// each sample carries Go's bytes label (its object's size),
-				// so pprof -tags and -tagfocus=bytes=N work as on Go's
+				// so pprof -tags and -tagfocus=NB (the unit is required) work as on Go's
 				p, err = exec.Command(gobin, "tool", "pprof", "-tags", filepath.Join(dir, "xo-prof.heap.pprof")).CombinedOutput()
 				if err != nil || !strings.Contains(string(p), "bytes: Total") {
 					t.Fatalf("go tool pprof -tags: no bytes label: %v\n%s", err, p)

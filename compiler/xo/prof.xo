@@ -560,7 +560,7 @@ fn prof_heap_out(os: Os, h0: ProfHeap, out: Str, replace: Bool) -> () ! Str uses
       varint(vb, x)
     }
     // Go's heap profile label: the sampled object's size, which
-    // pprof -tags and -tagfocus=bytes=N read
+    // pprof -tags and -tagfocus=NB (unit required) read
     var lb = BytesBuilder.new()
     fint(lb, 1, 4)
     fint(lb, 3, h.sizes[i])
