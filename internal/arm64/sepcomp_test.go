@@ -1,6 +1,7 @@
 package arm64
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -721,7 +722,7 @@ func TestSepcompBackgroundBoth(t *testing.T) {
 	write("two")
 	log := build()
 	if n := strings.Count(log, "reused"); !strings.Contains(log, "conc=false reused") || !strings.Contains(log, "conc=true reused") {
-		t.Fatalf("the next build did not reuse both variants (%d reused):\n%s", n, log)
+		t.Fatalf("the next build did not reuse both variants (%d reused):\n%s\n%s", n, log, stdDirList(cache))
 	}
 	if !strings.Contains(log, "cache stdx record loaded") {
 		t.Errorf("the background child's warm build left no std record:\n%s", log)
@@ -796,10 +797,30 @@ func TestSepcompStdxKeepsFrontCache(t *testing.T) {
 	build("one")
 	log := build("two")
 	if !strings.Contains(log, "cache stdx record loaded") {
-		t.Fatalf("the second build did not load std's record:\n%s", log)
+		t.Fatalf("the second build did not load std's record:\n%s\n%s", log, stdDirList(cache))
 	}
 	m := fe.FindStringSubmatch(log)
 	if m == nil || m[1] == "0" {
 		t.Errorf("the first build with std's record replayed no front end cache entry of the build before it:\n%s", log)
 	}
+}
+
+// stdDirList is cache's std directory, one "NAME SIZE MTIME" line an
+// entry, for a test whose build missed std's variants right after they
+// were made (2026-11-07: TestSepcompStdxKeepsFrontCache and
+// TestSepcompBackgroundBoth, only in the full suite): a store under
+// another key than the build's miss line names, or none at all.
+func stdDirList(cache string) string {
+	es, err := os.ReadDir(filepath.Join(cache, "std"))
+	if err != nil {
+		return "std cache: " + err.Error()
+	}
+	var b strings.Builder
+	b.WriteString("std cache:\n")
+	for _, e := range es {
+		if fi, err := e.Info(); err == nil {
+			fmt.Fprintf(&b, "  %s %d %s\n", e.Name(), fi.Size(), fi.ModTime().Format("15:04:05.000"))
+		}
+	}
+	return b.String()
 }

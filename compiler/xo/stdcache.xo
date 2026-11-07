@@ -335,7 +335,9 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmod
   }
   let say = fn(why: Str) {
     if phases {
-      os.stdio.eprintln("std variant: miss, ${why}")
+      // the key and variant too: a store made under another key (2026-11-07,
+      // a miss right after xo dev stdcache only in the full suite)
+      os.stdio.eprintln("std variant: miss, ${why} (key ${key[0..12]} conc=${conc}${tv(tmode)})")
     }
   }
   // a build of this variant failed for this std less than an hour ago:
