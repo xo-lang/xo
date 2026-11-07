@@ -326,6 +326,16 @@ CPU-bound timings; HTTP throughput needs bare Linux. Last verified: 2026-11-02
   scripts/docker-amd64-sample.txt. Logs stay in `~/xo-ci/runNAME.out` in
   WSL. Unlike the Docker run on the Mac, nothing is emulated (no Rosetta)
   and xo is the native backend's, not a Go backend cross build.
+- `scripts/lead/amd64-run.sh REV NAME script PATH [ARG...]` (Xo Lang 2,
+  2026-11-07, the lead's bottleneck review: host 1 had 44 lease waits of
+  3 minutes or more in 3 hours while this host sat idle) runs any script
+  of REV's tree instead of the goldens, for pass/fail jobs: the same
+  bundle, priv lock and detached worktree, xo built with the host's seed,
+  then `bash PATH ARG...` from the tree's top with `XO_CLI` set to that
+  xo and its `bin` first on PATH. The output streams back and stays in
+  `~/xo-ci/runNAME.out/script.txt`; the exit status is the script's; the
+  tree is removed when the run ends, however it ends. Last verified:
+  2026-11-07.
 - `passes` (with or without goldens: `all passes`, which tier.sh runs
   every 8 hours) is the x86 counterpart of internal/arm64's
   TestGoldenPassesOff (2026-11-02): the pass hunt's goldens (`pass_*`,
