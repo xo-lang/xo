@@ -18,10 +18,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -42,6 +44,11 @@ type driver struct {
 	mu                sync.Mutex
 	lat               []float64
 	reqs, errs, drops int64
+	// dials counts the client's new connections to the app: a step in the
+	// client's sockets with as many dials is the client reconnecting (a
+	// reply slower than the pool's reuse, or a host starved by another
+	// job), not the app keeping connections it should close
+	dials int64
 	// c4xx counts 4xx answers: not errors (a mix expects some), but a
 	// target that answers a share of its requests 4xx does less work, so
 	// its row is not comparable with the twin's
@@ -52,7 +59,13 @@ type driver struct {
 // idle closes a pooled connection after that long unused (0: never,
 // a hand built Transport's default, so a burst's connections stay open)
 func newDriver(app *App, mix mixFn, base string, idle time.Duration) *driver {
-	d := &driver{base: base, cl: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256, MaxConnsPerHost: 256, IdleConnTimeout: idle}, Timeout: 10 * time.Second}}
+	d := &driver{base: base}
+	var dl net.Dialer
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		atomic.AddInt64(&d.dials, 1)
+		return dl.DialContext(ctx, network, addr)
+	}
+	d.cl = &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256, MaxConnsPerHost: 256, IdleConnTimeout: idle, DialContext: dial}, Timeout: 10 * time.Second}
 	d.op = mix(app, d.do)
 	return d
 }
