@@ -49,6 +49,22 @@ what changes (expected: only Maps written out of order), and time `json.encode` 
 (`xo bench --ab`, decision 0340). Toml and yaml map output move together with it (one decision for the three), their corpora
 regenerate against Go's and are the check.
 
+## Measurements (2026-11-07)
+
+Sorted keys with an in-place insertion sort for up to 16 keys (else a sort of the index list), built at 04d5c3ae9 and
+run on the first linux/arm64 offload host (bench/perf/jsonmap, descending-key Maps; the 10-key map is the "small" row):
+
+| case | Xo, sorted (us) | Go encoding/json (us) | Xo / Go |
+|------|-----------------|-----------------------|---------|
+| none (no Map) | 678 | 845 | 0.80 |
+| small | 9266 | 15958 | 0.58 |
+| large | 38298 | 56163 | 0.68 |
+
+Xo with sorted keys is faster than Go's `encoding/json` on all three. Against Xo's own unsorted insertion order
+(`ab-host`, 3 rounds, unloaded host) sorting costs 2.3x on the small case (4.4 ms to 10.2 ms); the no-Map case is within
+noise (0.94x). The goldens (arm64, llvm, stdtest) passed with the sorted order. The code stays on a branch until this
+decision is Accepted.
+
 ## Consequences
 
 - Needs the owner's decision between (a), (b) and (c) and on the Value split; nothing is implemented until then.
