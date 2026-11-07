@@ -150,9 +150,11 @@ func TestTracebackContract(t *testing.T) {
 // TestTracebackSeparate pins a separately compiled program's full
 // traceback, which want.txt does not (it keeps a fault's first line):
 // std's prelude.llrt_* wrappers are std's own functions there, never
-// inlined into the program, and each ends in a tail call, so its frame
-// is not in the trace (decision 0224); the whole program inlines them
-// ("[inlined]"). Every other frame is the same
+// inlined into the program; std's variant inlines the method into its
+// wrapper, so the wrapper is a frame of its own and the method is
+// "[inlined]" in it (since tier 58, 2026-11-07; before, the wrapper was
+// one tail call and its frame was missing, decision 0224); the whole
+// program inlines both ("[inlined]"). Every other frame is the same
 // (gotchas/sepcomp-trace-drops-std-wrapper-frame.md).
 func TestTracebackSeparate(t *testing.T) {
 	t.Parallel()
@@ -165,10 +167,10 @@ func TestTracebackSeparate(t *testing.T) {
 	golden := filepath.Join("..", "llvm", "testdata", "golden")
 	for _, c := range []struct{ name, sep, whole string }{
 		{"atomic_ops",
-			`traceback:\n  atomic\.add \(atomic\.xo:\d+\)\n  bump \(main\.xo:\d+\) \[inlined\]\n  main \(main\.xo:\d+\)\n$`,
+			`traceback:\n  atomic\.add \(atomic\.xo:\d+\) \[inlined\]\n  prelude\.llrt_atomic_add \(prelude\.xo:\d+\)\n  bump \(main\.xo:\d+\) \[inlined\]\n  main \(main\.xo:\d+\)\n$`,
 			`traceback:\n  atomic\.add \(atomic\.xo:\d+\) \[inlined\]\n  prelude\.llrt_atomic_add \(prelude\.xo:\d+\) \[inlined\]\n  bump \(main\.xo:\d+\) \[inlined\]\n  main \(main\.xo:\d+\)\n$`},
 		{"conc_send_closed",
-			`traceback:\n  chan\.send_w \(chan\.xo:\d+\)\n  main \(main\.xo:\d+\)\n$`,
+			`traceback:\n  chan\.send_w \(chan\.xo:\d+\) \[inlined\]\n  prelude\.llrt_chan_send_w \(prelude\.xo:\d+\)\n  main \(main\.xo:\d+\)\n$`,
 			`traceback:\n  chan\.send_w \(chan\.xo:\d+\) \[inlined\]\n  prelude\.llrt_chan_send_w \(prelude\.xo:\d+\) \[inlined\]\n  main \(main\.xo:\d+\)\n$`},
 	} {
 		for _, sep := range []bool{true, false} {

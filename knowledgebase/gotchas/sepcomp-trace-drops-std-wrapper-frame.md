@@ -1,6 +1,6 @@
 # A separately compiled program's traceback has no prelude.llrt_* frame
 
-Status: Observed, explained (2026-11-06, linux/arm64 host 2 and the Mac, xo-lang-4)
+Status: Observed, explained (2026-11-06, linux/arm64 host 2 and the Mac, xo-lang-4); no longer seen for atomic_ops and conc_send_closed since 2026-11-07 (Update below)
 
 ## Symptom
 
@@ -49,3 +49,25 @@ for atomic_ops and conc_send_closed. Keeping the wrappers' frames would
 mean no tail calls out of prelude.llrt_* (a frame on each such call in
 std, an amendment of 0224 for the owner); a compare of whole against
 separate traces should drop "[inlined]" and prelude.llrt_* lines first.
+
+## Update (2026-11-07)
+
+Tier 58's sep step (scripts/lead tier.sh, 9603cd3f3) and the Mac alone at
+5dc30fa68: std's variant now inlines the method into its wrapper, so
+the separately compiled traces have the wrapper back, as a frame of its
+own, with the method "[inlined]" in it:
+
+    atomic.add (atomic.xo:42) [inlined]
+    prelude.llrt_atomic_add (prelude.xo:4958)
+    bump (main.xo:8) [inlined]
+    main (main.xo:49)
+
+and the same for conc_send_closed (chan.send_w [inlined],
+prelude.llrt_chan_send_w, main). Every frame of the whole program's
+trace is there; only the wrapper's "[inlined]" differs. The wrapper is
+no longer a single tail call once its callee is inlined, so 0224's
+dropped frame no longer applies to these two.
+TestTracebackSeparate pins the new form. Which inliner change moved
+these callees into their wrappers in std's variant was not bisected; a
+later change that turns them back into tail calls fails the test the
+other way, and either form is a correct trace.
