@@ -1464,6 +1464,7 @@ pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
         mm[k] = o
       }
       c.mods[m].members = mm
+      c.mods[m].record_members = true
     }
   }
   for (p, ds) in e.decl_objs {

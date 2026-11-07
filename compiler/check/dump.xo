@@ -176,9 +176,13 @@ fn (var c: Checker) run() -> () ! Str {
     } else {
       // a std module the program imports that the record lacks (loaded
       // and parsed as before): declared after the records, its objects
-      // past the block
+      // past the block. Not one the record declared although it was
+      // loaded from source (the header's stamps failed, a std file touched
+      // with its bytes unchanged, and the fingerprint then matched): every
+      // name of each was declared twice (XO0603 on all of std, the
+      // 2026-11-07 tier's TestUnwind/fiber/sephalf)
       for m in std_mods {
-        if !c.mods[m].from_record {
+        if !c.mods[m].from_record && !c.mods[m].record_members {
           c.declare(m)
         }
       }
@@ -189,12 +193,12 @@ fn (var c: Checker) run() -> () ! Str {
     }
     if c.std_export_used {
       for m in std_mods {
-        if !c.mods[m].from_record {
+        if !c.mods[m].from_record && !c.mods[m].record_members {
           c.resolve_types(m)
         }
       }
       for m in std_mods {
-        if !c.mods[m].from_record {
+        if !c.mods[m].from_record && !c.mods[m].record_members {
           c.resolve_sigs(m)
         }
       }

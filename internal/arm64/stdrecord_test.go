@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
@@ -133,4 +134,85 @@ fn main(os: Os) {
 	if !bytes.Equal(writer, plain) {
 		t.Errorf("the build that wrote the record and the build without it differ in %d bytes", differing(writer, plain))
 	}
+}
+
+// TestStdRecordTouchedStd: a separately compiled build after a std file
+// was touched with its bytes unchanged. The record's header stamps fail,
+// so std loads from source, but the fingerprint of its bytes still
+// matches the record, which is installed into those modules; they were
+// then declared again from source, and every std name failed XO0603
+// ("already declared in this module", the previous declaration itself;
+// the 2026-11-07 tier's TestUnwind/fiber/sephalf, on a std checked out
+// minutes before). On a copy of std, so touching it changes no other
+// test's std.
+func TestStdRecordTouchedStd(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-stdtouched-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	std := filepath.Join(work, "std")
+	copyTreeTimes(t, filepath.Join(root, "std"), std)
+	cache := filepath.Join(work, "cache")
+	base := append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
+	cmd.Env = base
+	paths, err := stdRun(cmd.Output)
+	if err != nil {
+		t.Fatalf("xo dev stdcache: %v", err)
+	}
+	lines := strings.Fields(string(paths))
+	if len(lines) != 2 {
+		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
+	}
+	prog := filepath.Join(work, "prog")
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "fn main(os: Os) {\n  os.stdio.println(\"words ${\"a,b,c\".split(\",\").len()}\")\n}\n"
+	if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prog, "xo.mod"), []byte("module prog\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := append(base, "XO_CACHE_STATS=1", "XO_SEPCOMP=1", "XO_SEPCOMP_STORE="+lines[0], "XO_SEPCOMP_FACTS="+lines[1], "XO_STD_EXPORT=1")
+	build := func(name, want string) {
+		out := filepath.Join(work, name)
+		b := testtmp.Guard(exec.Command(xo, "build", "-o", out, "."))
+		b.Dir = prog
+		b.Env = env
+		msgs, err := b.CombinedOutput()
+		if err != nil {
+			t.Fatalf("build %s: %v\n%s", name, err, msgs)
+		}
+		if !strings.Contains(string(msgs), want) {
+			t.Fatalf("build %s: no %q:\n%s", name, want, msgs)
+		}
+		got, err := testtmp.Guard(exec.Command(out)).CombinedOutput()
+		if err != nil || string(got) != "words 3\n" {
+			t.Fatalf("%s printed %q (%v), want \"words 3\\n\"", name, got, err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(cache, "stdx")); err != nil {
+		t.Fatal(err)
+	}
+	build("writer", "cache stdx no entry")
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(std, "task.xo"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	build("touched", "cache stdx header failed")
 }
