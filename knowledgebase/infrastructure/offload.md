@@ -65,6 +65,9 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   88 MB each) when none of their files was read or written for 12 hours
   (owner, 2026-11-07: about 90 of them held 8 GB on host 1 while /work
   fell to 5.7 GB free).
+  It also removes `/work/in/*.bundle` files neither read nor written for
+  6 hours (lead, 2026-11-07: about 140 bundles of about 100 MB each held
+  14 GB on host 2 at 12 GB free).
   The arm64 container runs 2 jobs at once (OFF_SLOTS=2 in offload.env;
   owner, 2026-10-30): slot 1 is `/work/offload.lock`, slot 2
   `/work/offload.lock.2`. A job that measures time or memory sets
