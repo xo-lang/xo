@@ -58,7 +58,7 @@ fn tally(m: protodesc.MessageDesc) -> (Int, Int, Int) {
 }
 
 test "protoc and protobuf-go descriptors decode and encode back to the same bytes" {
-  for (name, pkg, msgs, fields, enums, services, methods, h) in FILES {
+  for (name, pkg, _, _, _, _, _, h) in FILES {
     let raw = unhex(h)
     let d = protodesc.decode(raw).or_fault("decode " + name)
     expect(d.name) == name
@@ -92,11 +92,11 @@ test "the counts agree with protodesc" {
 }
 
 test "a truncated descriptor is an error, never a panic" {
-  for (name, _, _, _, _, _, _, h) in FILES {
+  for (_, _, _, _, _, _, _, h) in FILES {
     let raw = unhex(h)
     var cut = 1
     while cut < raw.len() {
-      let _ = protodesc.decode(raw[0..cut])
+      let _ = protodesc.decode(raw[0..cut]).ignore_err("a truncated descriptor may be refused; only a panic fails")
       cut += 7
     }
   }
