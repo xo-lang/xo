@@ -135,7 +135,21 @@ fn str_end(b: Bytes, i0: Int, n: Int) -> Int {
   var i = i0
   var high = 0
   var esc = 0
+  // 32 plain bytes a step (one vector test: no quote, backslash, control
+  // byte or byte 0x80 and above, so high is unchanged); a block that has
+  // one goes to the words below, and the vector test waits until past it
+  // (text with non-ASCII bytes pays one test a block, not four); the
+  // first test waits for one plain word, so a short string (a key, a
+  // name) pays none
+  var vec = addw(i0, 8)
   while true {
+    if i >= vec && subw(n, i) >= 32 {
+      if rt.bytes_any_stop32(b, i, 34, 92, 32) == 0 {
+        i = addw(i, 32)
+        continue
+      }
+      vec = addw(i, 32)
+    }
     if i + 8 <= n {
       let w = rt.bytes_word(b, i)
       let m = str_stops(w)
@@ -1187,8 +1201,17 @@ pub fn append_str(out: Str, s: Str) -> Str { rt.rs_push_byte(append_body(rt.rs_p
 pub fn append_body(out: Str, s: Str) -> Str {
   let b = s.bytes()
   let n = b.len()
-  // the first byte to escape or check
+  // the first byte to escape or check: after a plain first word, 32
+  // plain bytes a step (one vector test stops at the same bytes as
+  // enc_stops), then the words; a string with an early escape or
+  // non-ASCII byte pays no vector test
   var i = 0
+  if n >= 40 && enc_stops(rt.bytes_word(b, 0)) == 0 {
+    i = 8
+    while subw(n, i) >= 32 && rt.bytes_any_stop32(b, i, 34, 92, 32) == 0 {
+      i = addw(i, 32)
+    }
+  }
   while i + 8 <= n {
     let m = enc_stops(rt.bytes_word(b, i))
     if m != 0 {

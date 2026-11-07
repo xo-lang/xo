@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/json (perf, native): a JSON string's end search and the encoder's string body copy scan 32 bytes a step with rt.bytes_any_stop32, after one clean 8 byte word: bench/perf/json enc_long 0.86 to 0.94 and long_strings 0.87 to 1.00 of before (new workloads), short strings unchanged; std/changes/json.md.
 - wasm (fix): a program that calls rt.bytes_any_stop32 assembles; the WAT assembler lacked `i32.extend8_s` and `i32.extend16_s` (only the i64 forms were in its table). internal/repotest TestWasmAsmOpcodes checks every mnemonic compiler/wasm writes against the table (gotchas/wasm-assembler-opcode-table.md).
 - Native backends (arm64, amd64, LLVM): a method of a struct with an effect parameter (`Bearer[fx]`) called through an interface value (`Policy[fx]`) compiles; it was XO1201 ("support is planned"), since SSA counted the receiver's effect argument as a type argument of the method (azure decision 0009, TokenCredential[fx]). Golden iface_effect_generic.
 - List targets of a destructuring assignment (decision 0538, owner 2026-11-06, option A): a list shaped target follows `let`'s list patterns, so `[a, b] = xs`, `[a, ..] = xs` and `[] = xs` are XO0303 (they were XO0502), alone or nested; `[..] = v` evaluates v and stores nothing; a list literal's trailing `..` is XO0160. The parser reads a trailing `..` in a list literal (ListLit.rest, AST codec v8). Golden destructure_list, test/errorcheck/list_target, checker test.

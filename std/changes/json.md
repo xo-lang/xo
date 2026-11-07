@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-06: perf: string scanning skips 32 bytes at a time
+
+- Kind: perf
+- Commit: this push
+- Found by: the SIMD survey's step 3b (bench/results/simd-survey-2026-11-06.md)
+- Go reference: encoding/json scans a string byte by byte against a 256 entry safe set (scanner.go, encode.go appendString); simdjson classifies 32 or 64 bytes per step; this follows simdjson's step, not Go's loop
+- Test: std json's tests and the json goldens (unchanged output); bench/perf/json long_strings and enc_long outputs equal before and after
+- Timing: xo bench --ab, 8 rounds per order, linux/arm64 offload host 2 (exclusive), 2026-11-07, base a22a76620 against 83cce14f9, same-position (first in round against first in round): enc_long 0.855 and 0.896 (new second), 0.94 and 0.91 (new first); long_strings 0.878 and 0.868, 1.00 and 0.91 in the swapped order (its B/B control spread up to 9%); strings, enc_strings, small, parse and invalid within 0.98 to 1.02 in both orders, like their controls (no slowdown on short strings); the run overlapped the last hour of an OFF_NO_LANE soak on that host
+- Shipped in: not yet released (needs a seed that knows rt.bytes_any_stop32)
+
+The decoder's string end search (jsontext.str_end) and the encoder's string body copy (append_body) test 32 bytes at once with rt.bytes_any_stop32 for a quote, a backslash, a control byte or a byte of 0x80 and above, and step over all 32 when none is there; the byte loop handles the rest as before.
+
 ## 2026-11-06: fix: json.indent keeps the whitespace after the value
 
 - Kind: fix

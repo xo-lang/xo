@@ -245,6 +245,19 @@ fn main(os: Os) {
     }
     mdocs.push("{" + parts.join(", ") + "}")
   }
+  // long plain strings (60 to 330 bytes), the vector scan's case, and
+  // one in eight with a non-ASCII byte near its end
+  var lstrs: List[Str] = []
+  for (k, v) in vs.indexed() {
+    if k < 1000 {
+      var t = "the quick brown fox ${v} jumps over the lazy dog, "
+      for _ in 0..(v % 6) {
+        t = t + "lorem ipsum dolor sit amet ${k}, consectetur adipiscing; "
+      }
+      lstrs.push(if k % 8 == 7 { t + "caf\u{e9}" } else { t })
+    }
+  }
+  let ldoc = json.encode_str(lstrs)
   let idoc = "[" + ipart.join(",") + "]"
   let fdoc = "[" + fpart.join(", ") + "]"
   let sdoc = "[" + spart.join(",") + "]"
@@ -261,6 +274,8 @@ fn main(os: Os) {
     "invalid" => invalid(bad)
     "enc_small" => enc_small(us)
     "enc_strings" => enc_strings(strs)
+    "long_strings" => strings(ldoc)
+    "enc_long" => enc_strings(lstrs)
     "enc_floats" => enc_floats(fs)
     "bytes" => bytes(bs)
     _ => -1
