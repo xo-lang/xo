@@ -30,7 +30,6 @@ struct Tokenizer {
   de: Int
   pend: Pend
   attr: List[Int]
-  names: Map[Str, Bool]
   raw_tag: Str
   text_raw: Bool
   convert_nul: Bool
@@ -38,7 +37,7 @@ struct Tokenizer {
 }
 
 fn new_tokenizer(text: Str, raw_tag: Str) -> Tokenizer {
-  Tokenizer{src: text.bytes(), tt: htmltok.TokenType.Error, errc: 0, rs: 0, re: 0, max_buf: 0, ds: 0, de: 0, pend: Pend{k0: 0, k1: 0, v0: 0, v1: 0}, attr: [], names: {}, raw_tag: raw_tag, text_raw: false, convert_nul: false, cdata: false}
+  Tokenizer{src: text.bytes(), tt: htmltok.TokenType.Error, errc: 0, rs: 0, re: 0, max_buf: 0, ds: 0, de: 0, pend: Pend{k0: 0, k1: 0, v0: 0, v1: 0}, attr: [], raw_tag: raw_tag, text_raw: false, convert_nul: false, cdata: false}
 }
 
 fn tokenizer(text: Str) -> Tokenizer { new_tokenizer(text, "") }
@@ -625,7 +624,6 @@ fn (var z: Tokenizer) read_start_tag() -> htmltok.TokenType {
 
 fn (var z: Tokenizer) read_tag(save_attr: Bool) {
   z.attr = []
-  z.names = {}
   z.read_tag_name()
   z.skip_white_space()
   if z.errc != 0 {
@@ -640,13 +638,21 @@ fn (var z: Tokenizer) read_tag(save_attr: Bool) {
     z.read_tag_attr_key()
     z.read_tag_attr_val()
     if save_attr && z.pend.k0 != z.pend.k1 {
-      let key = lower_bytes(z.src[z.pend.k0..z.pend.k1]).to_str_lossy()
-      if !z.names.contains(key) {
+      let key = lower_bytes(z.src[z.pend.k0..z.pend.k1])
+      var dup = false
+      var j = 0
+      while j + 3 < z.attr.len() {
+        if lower_bytes(z.src[z.attr[j]..z.attr[j + 1]]) == key {
+          dup = true
+          break
+        }
+        j += 4
+      }
+      if !dup {
         z.attr.push(z.pend.k0)
         z.attr.push(z.pend.k1)
         z.attr.push(z.pend.v0)
         z.attr.push(z.pend.v1)
-        z.names.put(key, true)
       }
     }
     z.skip_white_space()
