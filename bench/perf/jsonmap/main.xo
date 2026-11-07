@@ -1,0 +1,42 @@
+// jsonmap: json.encode of a Map[Str, Int] built in descending key order (so the sort of decision 0543 has work to do)
+// with 10 keys (20000 passes) and 1000 keys (200 passes), and of a struct holding the same two maps. Measures what
+// writing a Map's keys sorted costs against insertion order (decision 0543); `xo bench --ab` compares two xos.
+// Usage: `<program> small|large|none`. Prints `<workload> <checksum>`.
+use std/json
+
+struct Doc {
+  a: Map[Str, Int]
+  b: Map[Str, Int]
+} derive Json
+
+fn build(n: Int) -> Map[Str, Int] {
+  var m: Map[Str, Int] = {}
+  var i = n
+  while i > 0 {
+    i -= 1
+    m["key${i}"] = i
+  }
+  m
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "small"
+  let small = build(10)
+  let large = build(1000)
+  var sum = 0
+  if w == "small" {
+    var p = 0
+    while p < 20000 {
+      sum += json.encode_str(small).len()
+      p += 1
+    }
+  } else if w == "large" {
+    let d = Doc{a: small, b: large}
+    var p = 0
+    while p < 200 {
+      sum += json.encode_str(large).len() + json.encode_str(d).len()
+      p += 1
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
