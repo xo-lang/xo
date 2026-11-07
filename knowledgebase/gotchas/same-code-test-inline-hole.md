@@ -61,3 +61,30 @@ golden, and passes, as does TestAmd64DebugInfoSameCode.
 
 The reader's own calls stay calls in a build with debug information, which
 costs nothing at run time (they run only on a traceback).
+
+## Dead functions counted in one build only (2026-11-07)
+
+Observed 2026-11-07. Symptom: TestDebugInfoSameCode/go_proto_prelude
+failed on darwin/arm64 every time (5 of 5, `_xo_f_main: no function with
+its code in the build with debug information`): the build without debug
+information inlined `prelude.set_map[Int, SetMapped, ()]#spec...` into
+`main`, the build with it kept the call.
+
+Cause: specialize_args clones set_map for main's closure, so the generic
+set_map is called by nothing but stays in the module until the dead code
+pass. The release view, the reachability walk from main, the exports and
+the entry, ran only in the build with debug information, and left that
+generic function out of it. The build without debug information counted
+the call sites of every function, dead ones included. So
+`xo.mlog.eachpos[xo.MapLogK[Int]]` had two sites without debug
+information (not inlined: size) and one with it (inlined into the clone's
+cost, 141 + 102 - 1 = 242 instructions, 53 blocks: too big to inline into
+main), and the two builds decided differently. `XO_INLINE_REPORT=1` on
+both builds and a diff of the two reports showed it.
+
+Fix: the release view is every function but those only the DWARF readers
+reach (a second walk from the readers' bodies, through what the roots do
+not reach), so a function nothing reaches counts in both builds. The build
+without debug information is unchanged; making it walk too would have
+hidden every function in modules with no root (`xo asm`, unit test
+modules).

@@ -427,7 +427,9 @@ fn updates_in_place(s: FnSum) -> Bool {
 /// function only this walk reaches is in one module and not the other;
 /// the inliner ignores the ones only a build with DWARF has, so both
 /// builds count, cost and inline alike (decision 0252's same-code
-/// promise; 2026-10-25, gotchas/same-code-test-inline-hole.md).
+/// promise; 2026-10-25, gotchas/same-code-test-inline-hole.md). The view
+/// is every function but those only the readers reach: one nothing
+/// reaches is in both modules.
 fn release_view(m: ssa.Module, sums: List[FnSum]) -> Map[Str, Bool] {
   var seen: Map[Str, Bool] = {}
   if !m.reader_bodies {
@@ -467,7 +469,36 @@ fn release_view(m: ssa.Module, sums: List[FnSum]) -> Map[Str, Bool] {
       }
     }
   }
-  seen
+  // what only the readers reach: walked from the readers' bodies through
+  // the functions the roots do not reach. A function nothing reaches is
+  // in both builds' modules and stays in the view, so its call sites count
+  // in both (go_proto_prelude's generic set_map, whose one call
+  // specialize_args moved to its clone, called xo.mlog.eachpos: two sites
+  // without DWARF and one here, so only here was it inlined; 2026-11-07)
+  var only: Map[Str, Bool] = {}
+  for f in m.funcs {
+    if is_reader(f) && !only.contains(f.name) {
+      only[f.name] = true
+      work.push(f.name)
+    }
+  }
+  while let Some(n) = work.pop() {
+    for fi in by_name.get(n) ?? [] {
+      for s in sums[fi].names {
+        if by_name.contains(s) && !seen.contains(s) && !only.contains(s) {
+          only[s] = true
+          work.push(s)
+        }
+      }
+    }
+  }
+  var vis: Map[Str, Bool] = {}
+  for f in m.funcs {
+    if seen.contains(f.name) || !only.contains(f.name) {
+      vis[f.name] = true
+    }
+  }
+  vis
 }
 
 /// The expanded cost of each function of m and the call sites of each,
