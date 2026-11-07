@@ -237,36 +237,25 @@ pub fn roots_ders(ders: List[Bytes]) -> rthttp.Roots {
 /// The system's roots too: the copy shares their cell, which only the
 /// process's one record frees (roots_free).
 pub fn roots_with_cert(r: rthttp.Roots, certs: List[Bytes], key: Bytes) -> rthttp.Roots {
-  match roots_data(rt.obj_addr(r)) {
-    Some(d) => {
-      as_roots(rt.any_of(d with {ccerts: certs, ckey: key}))
-    }
-    None => r
-  }
+  let d = roots_base(r)
+  as_roots(rt.any_of(d with {ccerts: certs, ckey: key}))
 }
 
 /// roots r with a server name and a verify hook (Client.with_server_name, with_verify_conn): a new Roots, so the pool
 /// keeps the clients with and without them apart. A name of "" or no hook keeps r's.
 pub fn roots_with_tls(r: rthttp.Roots, sni: Str, vconn: (fn(List[Bytes]) -> Str)?) -> rthttp.Roots {
-  match roots_data(rt.obj_addr(r)) {
-    Some(d) => {
-      let n = if sni.is_empty() { d.sni } else { sni }
-      let v = match vconn {
-        Some(f) => Some(f)
-        None => d.vconn
-      }
-      as_roots(rt.any_of(d with {sni: n, vconn: v}))
-    }
-    None => r
+  let d = roots_base(r)
+  let n = if sni.is_empty() { d.sni } else { sni }
+  let v = match vconn {
+    Some(f) => Some(f)
+    None => d.vconn
   }
+  as_roots(rt.any_of(d with {sni: n, vconn: v}))
 }
 
 /// roots r with the verification mode v (Client.with_verify): its own pool key.
 pub fn roots_with_verify(r: rthttp.Roots, v: Int) -> rthttp.Roots {
-  match roots_data(rt.obj_addr(r)) {
-    Some(d) => as_roots(rt.any_of(d with {verify: v}))
-    None => r
-  }
+  as_roots(rt.any_of(roots_base(r) with {verify: v}))
 }
 
 /// The verification mode roots r carries (VERIFY_*).
@@ -280,9 +269,9 @@ pub fn roots_verify(r: rthttp.Roots) -> Int {
 /// roots r (a new pool) carrying the server name, verify hook and verification mode of old, so with_roots
 /// keeps them whatever the call order.
 pub fn roots_inherit(r: rthttp.Roots, old: rthttp.Roots) -> rthttp.Roots {
-  match (roots_data(rt.obj_addr(r)), roots_data(rt.obj_addr(old))) {
-    (Some(d), Some(o)) => as_roots(rt.any_of(d with {sni: o.sni, vconn: o.vconn, verify: o.verify}))
-    _ => r
+  match roots_data(rt.obj_addr(old)) {
+    Some(o) => as_roots(rt.any_of(roots_base(r) with {sni: o.sni, vconn: o.vconn, verify: o.verify}))
+    None => r
   }
 }
 
@@ -305,6 +294,16 @@ pub fn roots_certs(r: rthttp.Roots) -> List[x509.Cert] {
 }
 
 fn roots_data(r: Int) -> RootsData? { rt.any_get[RootsData](rt.obj_at[rt.Any](r)) }
+
+/// The data of roots r, or the system's roots with no certificates when r holds none (a wasm client's default roots:
+/// nothing is trusted, client_with fails with Go's "no roots provided"), so with_cert, with_server_name,
+/// with_verify_conn and with_verify also change such a client and it still reports the system's roots.
+fn roots_base(r: rthttp.Roots) -> RootsData {
+  match roots_data(rt.obj_addr(r)) {
+    Some(d) => d
+    None => RootsData{certs: [], err: "", system: true}
+  }
+}
 
 /// The error of with_roots's PEM, "" when it had certificates.
 pub fn roots_err(r: rthttp.Roots) -> Str {

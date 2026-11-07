@@ -1907,3 +1907,14 @@ any request byte, and send a Host that differs from the URL's. A client with a s
 - Shipped in: not yet released
 
 The native server took host() from the target's URL host, empty for an ordinary request, instead of the :authority (or Host) it had parsed.
+
+## 2026-11-07: security: with_verify, with_verify_conn, with_server_name and with_cert did nothing on wasm for a default client
+
+- Kind: security
+- Commit: this commit
+- Found by: lead tier 57, TestWasmCommandGoldens tls_verify_conn (decision 0541): on wasm the Verify.None and pin cases answered "certificate refused"
+- Go reference: net/http Transport with a tls.Config (InsecureSkipVerify, VerifyConnection, ServerName)
+- Test: golden tls_verify_conn on wasm ("none wrong pin" fails with a pin mismatch and delivers nothing, as on native)
+- Shipped in: not yet released (main only, from 4f1c83115 to this commit; no release holds it)
+
+A client with the default roots has no roots record on wasm, and the four Client methods returned it unchanged. A `with_verify_conn` pin or hook set on such a client was therefore never enforced, which fails open (the connection kept the default full verification, so it was not weaker than the default, but the extra check the caller asked for did not run), and a server name or Verify.None was ignored. They now start from the system's roots with no certificates, which is what a native default client reports.
