@@ -203,11 +203,11 @@ fn render(input: Str, mode: Int, max_buf: Int) -> (Str, Str) {
   while true {
     let tt = z.next()
     let raw = z.raw()
+    raws += raw
     if tt == htmltok.TokenType.Error {
       out += "E ${z.err() ?? "?"}\n"
       break
     }
-    raws += raw
     let t = z.token()
     out += "${type_name(tt)} ${q(t.data)}"
     for a in t.attrs {

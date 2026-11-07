@@ -1181,26 +1181,37 @@ fn (var c: Checker) load_go_compiled() {
     }
     for path in todo.sort() {
       done[path] = true
-      let name = path.trim_prefix("std/")
-      let src = c.fs.read("${c.std_dir}/native/${name}.xo").ok() ?? None
-      let data = match src {
-        Some(b) => b
-        None => continue
-      }
-      if c.skip_impl(data) {
-        continue
-      }
-      let m = c.new_module("native/${name}", name, "std/native", false)
-      c.mods[m].std_tree = true
-      c.mods[m].native = true
-      c.mods[m].implements = path
-      c.parse_into(m, "std/native/${name}.xo", data, false)
-      c.mods[m].state = 1
-      c.load_imports(m)
-      c.mods[m].state = 2
-      c.order.push(m)
+      let _m = c.load_go_impl(path)
     }
   }
+}
+
+/// The implementation module of the go_compiled std module `path` for the Go backend, loaded once; -1 when there is none.
+/// A go_compiled implementation's `use native/<name>` of another go_compiled module loads it here at once (Xo Lang 3,
+/// 2026-11-07: without it the import was an intrinsics module and its functions were `rt.Name_f` calls the Go runtime lacks).
+fn (var c: Checker) load_go_impl(path: Str) -> Int {
+  let name = path.trim_prefix("std/")
+  if let Some(m) = c.mod_index.get("native/${name}") {
+    return m
+  }
+  let src = c.fs.read("${c.std_dir}/native/${name}.xo").ok() ?? None
+  let data = match src {
+    Some(b) => b
+    None => return -1
+  }
+  if c.skip_impl(data) {
+    return -1
+  }
+  let m = c.new_module("native/${name}", name, "std/native", false)
+  c.mods[m].std_tree = true
+  c.mods[m].native = true
+  c.mods[m].implements = path
+  c.parse_into(m, "std/native/${name}.xo", data, false)
+  c.mods[m].state = 1
+  c.load_imports(m)
+  c.mods[m].state = 2
+  c.order.push(m)
+  m
 }
 
 /// Loads the implementation modules of the native backends (load.go
@@ -1862,6 +1873,9 @@ fn (var c: Checker) load_imports(m: Int) {
             // another std module's implementation (decision 0319), with
             // the std module it implements
             dep = c.load_impl("std/${name}")
+          } else if !c.native && c.mods[m].native && c.go_compiled().contains(name) && c.load_std(name) >= 0 {
+            // the same on the Go backend, between go_compiled modules
+            dep = c.load_go_impl("std/${name}")
           }
           if dep < 0 {
             dep = c.load_native_rt(p)

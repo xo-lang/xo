@@ -5,6 +5,7 @@ use std/html
 const UNESCAPE: List[(Str, Str, Str)] = [
   ("copy", "A\ttext\nstring", "A\ttext\nstring"),
   ("simple", "&amp; &gt; &lt;", "& > <"),
+  ("quot", "&quot;x&QUOT; &quot &QUOT", "\"x\" \" \""),
   ("stringEnd", "&amp &amp", "& &"),
   ("multiCodepoint", "text &gesl; blah", "text \u{22DB}\u{FE00} blah"),
   ("decimalEntity", "Delta = &#916; ", "Delta = \u{0394} "),

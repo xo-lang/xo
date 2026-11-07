@@ -12,6 +12,18 @@
 
 The size scan counts the five specials of 32 bytes with five lane compares (rt.bytes_count_eq32), then finishes a word a step as before.
 
+## 2026-11-07: fix: unescape_string made `&quot;` a backslash and a quote
+
+- Kind: fix
+- Commit: this push
+- Found by: the std/htmltok token corpus against x/net (an attribute value `&quot;` read back as two bytes)
+- Go reference: html escape.go UnescapeString (go1.26.1)
+- Test: `xo test --std-module=native/html` (the `quot` case of Go's list: `&quot;`, `&QUOT;` and their semicolon-less forms)
+- Timing: not affected
+- Shipped in: not yet released
+
+The entity table held a backslash and a quote (two bytes) for `quot` and `QUOT` where Go's table has one `"`; the table moved to std/native/htmlent.xo (shared with std/htmltok) with the four entries fixed.
+
 ## 2026-11-06: perf: escape_string scans 8 bytes a step
 
 - Kind: perf
