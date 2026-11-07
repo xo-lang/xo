@@ -2,7 +2,6 @@
 // (internal/stdtest/testdata/corpus/otlp) compares against protobuf-go.
 use std/http
 use std/otlp
-use std/time
 use std/trace
 
 test "trace ids: 32 hex digits are kept, other text is hashed" {
