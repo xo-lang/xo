@@ -24,6 +24,7 @@ commands:
   publish   check a release against the previous version tag
   audit     supply chain report of the dependencies
   bind      bind Go packages (use go) or C headers (use c)
+  proto     generate Xo derive Proto structs from .proto files (gen)
   dump      print the task tree of a running Xo program
   replay    rerun a recorded trace or crash bundle offline
   prof      pprof files and summaries of a native program's profile
