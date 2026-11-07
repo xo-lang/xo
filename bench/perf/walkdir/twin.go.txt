@@ -1,5 +1,6 @@
 // The Go twin of bench/perf/walkdir: the same tree, walked 200 times with
-// filepath.WalkDir, the directories named b7 skipped (fs.SkipDir), the
+// filepath.Walk (walk, walk_info: walk_dir's FileInfo per entry) or
+// filepath.WalkDir (walk_entries, walk_entries_info), the directories named b7 skipped (fs.SkipDir), the
 // root itself not counted (walk_dir does not visit it).
 package main
 
@@ -33,7 +34,34 @@ func main() {
 		}
 	}
 	s := 0
-	if w == "walk" || w == "walk_info" || w == "walk_entries" || w == "walk_entries_info" {
+	if w == "walk" || w == "walk_info" {
+		// walk_dir gives a FileInfo per entry, so it stats each one, as
+		// filepath.Walk does (WalkDir reads the type from the directory)
+		root := base + "/t"
+		for n := 0; n < 200; n++ {
+			err := filepath.Walk(root, func(p string, info fs.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if p == root {
+					return nil
+				}
+				rel, _ := filepath.Rel(base, p)
+				s += len(rel)
+				if w == "walk_info" && info.IsDir() {
+					s++
+				}
+				if info.Name() == "b7" {
+					return filepath.SkipDir
+				}
+				return nil
+			})
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+	if w == "walk_entries" || w == "walk_entries_info" {
 		root := base + "/t"
 		for n := 0; n < 200; n++ {
 			err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -45,7 +73,7 @@ func main() {
 				}
 				rel, _ := filepath.Rel(base, p)
 				s += len(rel)
-				if w == "walk_info" || w == "walk_entries_info" {
+				if w == "walk_entries_info" {
 					if info, err := d.Info(); err == nil && info.IsDir() {
 						s++
 					}

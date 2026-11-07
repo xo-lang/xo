@@ -57,7 +57,7 @@ Profiles of the next rows, for the queue after these:
 | Case | Ratio | Xo ms | Go ms | What dominates the Xo run |
 |---|---|---|---|---|
 | tabwriter/pad | 1.543 | 47.9 | 31.1 | `TabWriter.rune_len` 20% flat, `write`/`write_buf`/`write_lines` 50% flat |
-| walkdir/walk | 1.509 | 424.4 | 281.3 | not a like-for-like row: Xo's `walk_dir` returns a FileInfo per entry, so it stats each one (`statx` 36%), as Go's `filepath.Walk` does, while the twin runs `filepath.WalkDir` for every walk row; the matching Xo call, `walk_dir_entries` (walkdir/walk_entries), is 0.921 of Go. A twin fix (Walk for this row) is the follow-up |
+| walkdir/walk | 1.509 | 424.4 | 281.3 | not a like-for-like row: Xo's `walk_dir` returns a FileInfo per entry, so it stats each one (`statx` 36%), as Go's `filepath.Walk` does, while the twin runs `filepath.WalkDir` for every walk row; the matching Xo call, `walk_dir_entries` (walkdir/walk_entries), is 0.921 of Go. The twin runs filepath.Walk for walk and walk_info since this survey (bench/perf/walkdir) |
 | trimchars/trim_end | 1.468 | 20.7 | 14.1 | `scan.ascii_set_partial` 27% flat: the cut set's table built on every call |
 | netip/parse6 | 1.468 | 16.0 | 10.9 | `parse_ipv6` 69% flat |
 | charset/w1252_decode | 1.413 | 37.2 | 26.3 | `charset.decode` 63% flat (a rune at a time), `scan.utf8_valid` 23% cum |
