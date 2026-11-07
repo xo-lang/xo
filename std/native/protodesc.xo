@@ -5,7 +5,7 @@ use std/protobuf
 
 /// One field of a message as read off the wire: its number and wire type, the value of a varint
 /// field (`v`) or the bytes of a length delimited one (`data`), and the whole field (`raw`).
-struct Fld {
+pub struct Fld {
   num: Int
   wire: Int
   v: Int
@@ -13,7 +13,7 @@ struct Fld {
   raw: Bytes
 }
 
-fn walk(b: Bytes) -> List[Fld] ! protobuf.ProtoErr {
+pub fn walk(b: Bytes) -> List[Fld] ! protobuf.ProtoErr {
   var out: List[Fld] = []
   var at = 0
   while at < b.len() {
@@ -29,6 +29,14 @@ fn walk(b: Bytes) -> List[Fld] ! protobuf.ProtoErr {
       let (d, n2) = protobuf.read_bytes(b, next)?
       data = d
       at = n2
+    } else if wire == 1 {
+      let (x, n2) = protobuf.read_fixed64(b, next)?
+      v = x.to_bits()
+      at = n2
+    } else if wire == 5 {
+      let (x, n2) = protobuf.read_fixed32(b, next)?
+      v = Int(x)
+      at = n2
     } else {
       at = protobuf.skip_field(b, next, num, wire)?
     }
@@ -37,7 +45,7 @@ fn walk(b: Bytes) -> List[Fld] ! protobuf.ProtoErr {
   Ok(out)
 }
 
-fn text(f: Fld) -> Str ! protobuf.ProtoErr {
+pub fn text(f: Fld) -> Str ! protobuf.ProtoErr {
   match f.data.to_str() {
     Some(s) => Ok(s)
     None => Err(protobuf.ProtoErr.Utf8)
@@ -45,10 +53,10 @@ fn text(f: Fld) -> Str ! protobuf.ProtoErr {
 }
 
 /// Whether f has the wire type its field number is declared with.
-fn is_s(f: Fld) -> Bool { f.wire == 2 }
-fn is_v(f: Fld) -> Bool { f.wire == 0 }
+pub fn is_s(f: Fld) -> Bool { f.wire == 2 }
+pub fn is_v(f: Fld) -> Bool { f.wire == 0 }
 
-fn cat(a: Bytes, b: Bytes) -> Bytes {
+pub fn cat(a: Bytes, b: Bytes) -> Bytes {
   if a.is_empty() {
     return b
   }
@@ -60,7 +68,7 @@ fn cat(a: Bytes, b: Bytes) -> Bytes {
 
 // ---- writing -------------------------------------------------------------
 
-fn wv(var o: BytesBuilder, v: Int) {
+pub fn wv(var o: BytesBuilder, v: Int) {
   var x = UInt64.wrapping_from(v).to_bits()
   while x < 0 || x >= 128 {
     o.write_byte(UInt8.wrapping_from((x & 127) | 128))
@@ -69,9 +77,9 @@ fn wv(var o: BytesBuilder, v: Int) {
   o.write_byte(UInt8.wrapping_from(x))
 }
 
-fn wtag(var o: BytesBuilder, num: Int, wire: Int) { wv(o, (num << 3) | wire) }
+pub fn wtag(var o: BytesBuilder, num: Int, wire: Int) { wv(o, (num << 3) | wire) }
 
-fn ws(var o: BytesBuilder, num: Int, s: Str) {
+pub fn ws(var o: BytesBuilder, num: Int, s: Str) {
   if !s.is_empty() {
     wtag(o, num, 2)
     wv(o, s.len())
@@ -79,25 +87,25 @@ fn ws(var o: BytesBuilder, num: Int, s: Str) {
   }
 }
 
-fn wsa(var o: BytesBuilder, num: Int, s: Str) {
+pub fn wsa(var o: BytesBuilder, num: Int, s: Str) {
   wtag(o, num, 2)
   wv(o, s.len())
   o.write_str(s)
 }
 
-fn wi(var o: BytesBuilder, num: Int, v: Int) {
+pub fn wi(var o: BytesBuilder, num: Int, v: Int) {
   if v != 0 {
     wtag(o, num, 0)
     wv(o, v)
   }
 }
 
-fn wia(var o: BytesBuilder, num: Int, v: Int) {
+pub fn wia(var o: BytesBuilder, num: Int, v: Int) {
   wtag(o, num, 0)
   wv(o, v)
 }
 
-fn wb(var o: BytesBuilder, num: Int, v: Bool) {
+pub fn wb(var o: BytesBuilder, num: Int, v: Bool) {
   if v {
     wtag(o, num, 0)
     wv(o, 1)
@@ -105,14 +113,14 @@ fn wb(var o: BytesBuilder, num: Int, v: Bool) {
 }
 
 /// A message-valued field (always written, even when empty).
-fn wm(var o: BytesBuilder, num: Int, m: Bytes) {
+pub fn wm(var o: BytesBuilder, num: Int, m: Bytes) {
   wtag(o, num, 2)
   wv(o, m.len())
   o.write(m)
 }
 
 /// Opaque bytes: an options message is written when it has any bytes.
-fn wo(var o: BytesBuilder, num: Int, m: Bytes) {
+pub fn wo(var o: BytesBuilder, num: Int, m: Bytes) {
   if !m.is_empty() {
     wm(o, num, m)
   }

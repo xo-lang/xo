@@ -1,0 +1,98 @@
+// std/protowkt (decision 0546, item 2). Declaration file; encoding rules are
+// listed at the top of std/prelude.xo. The well known types of protobuf's
+// google/protobuf/*.proto as Xo values with their wire codecs written by hand
+// over std/protobuf (derive Proto does not expand in std, decision 0549):
+// Timestamp, Duration, Empty, FieldMask, Any, the nine wrappers, and Struct,
+// Value and ListValue. `encode_*` writes fields in field number order with
+// proto3 implicit presence (a zero value is not written; a Value's member and
+// a Struct's map entries are); `decode_*` keeps the last value of a field,
+// skips unknown fields, and is the wire reader's errors. Pure.
+use std/protobuf
+
+struct Timestamp {
+  seconds: Int = 0
+  nanos: Int = 0
+} derive Eq
+
+struct Duration {
+  seconds: Int = 0
+  nanos: Int = 0
+} derive Eq
+
+struct Empty {} derive Eq
+
+struct FieldMask {
+  paths: List[Str] = []
+} derive Eq
+
+/// google.protobuf.Any: `type_url` names the packed message (`type.googleapis.com/pkg.Msg`), `value` is
+/// its wire bytes.
+struct Any {
+  type_url: Str = ""
+  value: Bytes = b""
+} derive Eq
+
+struct DoubleValue { value: Float = 0.0 }
+struct FloatValue { value: Float32 = 0.0 }
+struct Int64Value { value: Int = 0 } derive Eq
+struct UInt64Value { value: UInt64 = 0 } derive Eq
+struct Int32Value { value: Int = 0 } derive Eq
+struct UInt32Value { value: Int = 0 } derive Eq
+struct BoolValue { value: Bool = false } derive Eq
+struct StringValue { value: Str = "" } derive Eq
+struct BytesValue { value: Bytes = b"" } derive Eq
+
+/// google.protobuf.Value: the kind that is set, `Unset` when none is.
+enum Value {
+  Unset
+  Null
+  Number(v: Float)
+  Text(v: Str)
+  Flag(v: Bool)
+  Object(v: Struct)
+  Array(v: ListValue)
+}
+
+struct Struct {
+  fields: Map[Str, Value] = {}
+}
+
+struct ListValue {
+  values: List[Value] = []
+}
+
+fn encode_timestamp(m: Timestamp) -> Bytes
+fn decode_timestamp(b: Bytes) -> Timestamp ! protobuf.ProtoErr
+fn encode_duration(m: Duration) -> Bytes
+fn decode_duration(b: Bytes) -> Duration ! protobuf.ProtoErr
+fn encode_empty(m: Empty) -> Bytes
+fn decode_empty(b: Bytes) -> Empty ! protobuf.ProtoErr
+fn encode_field_mask(m: FieldMask) -> Bytes
+fn decode_field_mask(b: Bytes) -> FieldMask ! protobuf.ProtoErr
+fn encode_any(m: Any) -> Bytes
+fn decode_any(b: Bytes) -> Any ! protobuf.ProtoErr
+fn encode_double_value(m: DoubleValue) -> Bytes
+fn decode_double_value(b: Bytes) -> DoubleValue ! protobuf.ProtoErr
+fn encode_float_value(m: FloatValue) -> Bytes
+fn decode_float_value(b: Bytes) -> FloatValue ! protobuf.ProtoErr
+fn encode_int64_value(m: Int64Value) -> Bytes
+fn decode_int64_value(b: Bytes) -> Int64Value ! protobuf.ProtoErr
+fn encode_uint64_value(m: UInt64Value) -> Bytes
+fn decode_uint64_value(b: Bytes) -> UInt64Value ! protobuf.ProtoErr
+fn encode_int32_value(m: Int32Value) -> Bytes
+fn decode_int32_value(b: Bytes) -> Int32Value ! protobuf.ProtoErr
+fn encode_uint32_value(m: UInt32Value) -> Bytes
+fn decode_uint32_value(b: Bytes) -> UInt32Value ! protobuf.ProtoErr
+fn encode_bool_value(m: BoolValue) -> Bytes
+fn decode_bool_value(b: Bytes) -> BoolValue ! protobuf.ProtoErr
+fn encode_string_value(m: StringValue) -> Bytes
+fn decode_string_value(b: Bytes) -> StringValue ! protobuf.ProtoErr
+fn encode_bytes_value(m: BytesValue) -> Bytes
+fn decode_bytes_value(b: Bytes) -> BytesValue ! protobuf.ProtoErr
+/// A Struct's entries are written in key order (protobuf-go's Deterministic marshaling).
+fn encode_value(m: Value) -> Bytes
+fn decode_value(b: Bytes) -> Value ! protobuf.ProtoErr
+fn encode_struct(m: Struct) -> Bytes
+fn decode_struct(b: Bytes) -> Struct ! protobuf.ProtoErr
+fn encode_list_value(m: ListValue) -> Bytes
+fn decode_list_value(b: Bytes) -> ListValue ! protobuf.ProtoErr

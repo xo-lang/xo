@@ -1,0 +1,341 @@
+// std/protowkt on the native backends (decision 0546): the well known types,
+// read and written by hand with std/native/protodesc's wire helpers.
+use std/protowkt
+use std/protobuf
+use native/protodesc as pd
+
+fn wfix64(var o: BytesBuilder, num: Int, v: Int) {
+  pd.wtag(o, num, 1)
+  for i in 0..8 {
+    o.write_byte(UInt8.wrapping_from(v.shr_logical(8 * i) & 255))
+  }
+}
+
+fn wfix32(var o: BytesBuilder, num: Int, v: Int) {
+  pd.wtag(o, num, 5)
+  for i in 0..4 {
+    o.write_byte(UInt8.wrapping_from(v.shr_logical(8 * i) & 255))
+  }
+}
+
+fn encode_timestamp(m: protowkt.Timestamp) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.wi(o, 1, m.seconds)
+  pd.wi(o, 2, m.nanos)
+  o.freeze()
+}
+
+fn decode_timestamp(b: Bytes) -> protowkt.Timestamp ! protobuf.ProtoErr {
+  var m = protowkt.Timestamp{seconds: 0, nanos: 0}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_v(f) {
+      m.seconds = f.v
+    } else if f.num == 2 && pd.is_v(f) {
+      m.nanos = int32(f.v)
+    }
+  }
+  Ok(m)
+}
+
+/// The low 32 bits of a varint as a signed int32 (Go's int32(v)).
+fn int32(v: Int) -> Int {
+  let x = v & 0xFFFFFFFF
+  if x >= 0x80000000 { x - 0x100000000 } else { x }
+}
+
+fn encode_duration(m: protowkt.Duration) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.wi(o, 1, m.seconds)
+  pd.wi(o, 2, m.nanos)
+  o.freeze()
+}
+
+fn decode_duration(b: Bytes) -> protowkt.Duration ! protobuf.ProtoErr {
+  var m = protowkt.Duration{seconds: 0, nanos: 0}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_v(f) {
+      m.seconds = f.v
+    } else if f.num == 2 && pd.is_v(f) {
+      m.nanos = int32(f.v)
+    }
+  }
+  Ok(m)
+}
+
+fn encode_empty(m: protowkt.Empty) -> Bytes { b"" }
+
+fn decode_empty(b: Bytes) -> protowkt.Empty ! protobuf.ProtoErr {
+  let _ = pd.walk(b)?
+  Ok(protowkt.Empty{})
+}
+
+fn encode_field_mask(m: protowkt.FieldMask) -> Bytes {
+  var o = BytesBuilder.new()
+  for p in m.paths {
+    pd.wsa(o, 1, p)
+  }
+  o.freeze()
+}
+
+fn decode_field_mask(b: Bytes) -> protowkt.FieldMask ! protobuf.ProtoErr {
+  var m = protowkt.FieldMask{paths: []}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_s(f) {
+      m.paths.push(pd.text(f)?)
+    }
+  }
+  Ok(m)
+}
+
+fn encode_any(m: protowkt.Any) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.ws(o, 1, m.type_url)
+  pd.wo(o, 2, m.value)
+  o.freeze()
+}
+
+fn decode_any(b: Bytes) -> protowkt.Any ! protobuf.ProtoErr {
+  var m = protowkt.Any{type_url: "", value: b""}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_s(f) {
+      m.type_url = pd.text(f)?
+    } else if f.num == 2 && pd.is_s(f) {
+      m.value = f.data
+    }
+  }
+  Ok(m)
+}
+
+fn encode_double_value(m: protowkt.DoubleValue) -> Bytes {
+  var o = BytesBuilder.new()
+  let bits = m.value.to_bits()
+  if bits != 0 {
+    wfix64(o, 1, bits)
+  }
+  o.freeze()
+}
+
+fn decode_double_value(b: Bytes) -> protowkt.DoubleValue ! protobuf.ProtoErr {
+  var m = protowkt.DoubleValue{value: 0.0}
+  for f in pd.walk(b)? {
+    if f.num == 1 && f.wire == 1 {
+      m.value = Float.from_bits(f.v)
+    }
+  }
+  Ok(m)
+}
+
+fn encode_float_value(m: protowkt.FloatValue) -> Bytes {
+  var o = BytesBuilder.new()
+  let bits = Int(m.value.to_bits())
+  if bits != 0 {
+    wfix32(o, 1, bits)
+  }
+  o.freeze()
+}
+
+fn decode_float_value(b: Bytes) -> protowkt.FloatValue ! protobuf.ProtoErr {
+  var m = protowkt.FloatValue{value: 0.0}
+  for f in pd.walk(b)? {
+    if f.num == 1 && f.wire == 5 {
+      m.value = Float32.from_bits(UInt32.wrapping_from(f.v))
+    }
+  }
+  Ok(m)
+}
+
+fn encode_int64_value(m: protowkt.Int64Value) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.wi(o, 1, m.value)
+  o.freeze()
+}
+
+fn decode_int64_value(b: Bytes) -> protowkt.Int64Value ! protobuf.ProtoErr {
+  var m = protowkt.Int64Value{value: 0}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_v(f) {
+      m.value = f.v
+    }
+  }
+  Ok(m)
+}
+
+fn encode_uint64_value(m: protowkt.UInt64Value) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.wi(o, 1, m.value.to_bits())
+  o.freeze()
+}
+
+fn decode_uint64_value(b: Bytes) -> protowkt.UInt64Value ! protobuf.ProtoErr {
+  var m = protowkt.UInt64Value{value: UInt64.from_bits(0)}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_v(f) {
+      m.value = UInt64.from_bits(f.v)
+    }
+  }
+  Ok(m)
+}
+
+fn encode_int32_value(m: protowkt.Int32Value) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.wi(o, 1, m.value)
+  o.freeze()
+}
+
+fn decode_int32_value(b: Bytes) -> protowkt.Int32Value ! protobuf.ProtoErr {
+  var m = protowkt.Int32Value{value: 0}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_v(f) {
+      m.value = int32(f.v)
+    }
+  }
+  Ok(m)
+}
+
+fn encode_uint32_value(m: protowkt.UInt32Value) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.wi(o, 1, m.value)
+  o.freeze()
+}
+
+fn decode_uint32_value(b: Bytes) -> protowkt.UInt32Value ! protobuf.ProtoErr {
+  var m = protowkt.UInt32Value{value: 0}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_v(f) {
+      m.value = f.v & 0xFFFFFFFF
+    }
+  }
+  Ok(m)
+}
+
+fn encode_bool_value(m: protowkt.BoolValue) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.wb(o, 1, m.value)
+  o.freeze()
+}
+
+fn decode_bool_value(b: Bytes) -> protowkt.BoolValue ! protobuf.ProtoErr {
+  var m = protowkt.BoolValue{value: false}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_v(f) {
+      m.value = f.v != 0
+    }
+  }
+  Ok(m)
+}
+
+fn encode_string_value(m: protowkt.StringValue) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.ws(o, 1, m.value)
+  o.freeze()
+}
+
+fn decode_string_value(b: Bytes) -> protowkt.StringValue ! protobuf.ProtoErr {
+  var m = protowkt.StringValue{value: ""}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_s(f) {
+      m.value = pd.text(f)?
+    }
+  }
+  Ok(m)
+}
+
+fn encode_bytes_value(m: protowkt.BytesValue) -> Bytes {
+  var o = BytesBuilder.new()
+  pd.wo(o, 1, m.value)
+  o.freeze()
+}
+
+fn decode_bytes_value(b: Bytes) -> protowkt.BytesValue ! protobuf.ProtoErr {
+  var m = protowkt.BytesValue{value: b""}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_s(f) {
+      m.value = f.data
+    }
+  }
+  Ok(m)
+}
+
+fn encode_value(m: protowkt.Value) -> Bytes {
+  var o = BytesBuilder.new()
+  match m {
+    Unset => {}
+    Null => pd.wia(o, 1, 0)
+    Number(v) => wfix64(o, 2, v.to_bits())
+    Text(v) => pd.wsa(o, 3, v)
+    Flag(v) => pd.wia(o, 4, if v { 1 } else { 0 })
+    Object(v) => pd.wm(o, 5, encode_struct(v))
+    Array(v) => pd.wm(o, 6, encode_list_value(v))
+  }
+  o.freeze()
+}
+
+fn decode_value(b: Bytes) -> protowkt.Value ! protobuf.ProtoErr {
+  var m = protowkt.Value.Unset
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_v(f) {
+      m = protowkt.Value.Null
+    } else if f.num == 2 && f.wire == 1 {
+      m = protowkt.Value.Number(Float.from_bits(f.v))
+    } else if f.num == 3 && pd.is_s(f) {
+      m = protowkt.Value.Text(pd.text(f)?)
+    } else if f.num == 4 && pd.is_v(f) {
+      m = protowkt.Value.Flag(f.v != 0)
+    } else if f.num == 5 && pd.is_s(f) {
+      m = protowkt.Value.Object(decode_struct(f.data)?)
+    } else if f.num == 6 && pd.is_s(f) {
+      m = protowkt.Value.Array(decode_list_value(f.data)?)
+    }
+  }
+  Ok(m)
+}
+
+fn encode_struct(m: protowkt.Struct) -> Bytes {
+  var o = BytesBuilder.new()
+  var keys = m.fields.keys()
+  keys.sort_by(fn(k: Str) -> Str { k })
+  for k in keys {
+    var e = BytesBuilder.new()
+    pd.wsa(e, 1, k)
+    pd.wm(e, 2, encode_value(m.fields.get(k) ?? protowkt.Value.Unset))
+    pd.wm(o, 1, e.freeze())
+  }
+  o.freeze()
+}
+
+fn decode_struct(b: Bytes) -> protowkt.Struct ! protobuf.ProtoErr {
+  var m = protowkt.Struct{fields: {}}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_s(f) {
+      var key = ""
+      var val = protowkt.Value.Unset
+      for g in pd.walk(f.data)? {
+        if g.num == 1 && pd.is_s(g) {
+          key = pd.text(g)?
+        } else if g.num == 2 && pd.is_s(g) {
+          val = decode_value(g.data)?
+        }
+      }
+      m.fields.put(key, val)
+    }
+  }
+  Ok(m)
+}
+
+fn encode_list_value(m: protowkt.ListValue) -> Bytes {
+  var o = BytesBuilder.new()
+  for v in m.values {
+    pd.wm(o, 1, encode_value(v))
+  }
+  o.freeze()
+}
+
+fn decode_list_value(b: Bytes) -> protowkt.ListValue ! protobuf.ProtoErr {
+  var m = protowkt.ListValue{values: []}
+  for f in pd.walk(b)? {
+    if f.num == 1 && pd.is_s(f) {
+      m.values.push(decode_value(f.data)?)
+    }
+  }
+  Ok(m)
+}
