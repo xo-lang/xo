@@ -11,6 +11,14 @@ use native/htmlent as nhtml
 /// token, `ds`..`de` its data span, `attr` four offsets per attribute (key
 /// start and end, value start and end), `err` 0 none, 1 EOF, 2 buffer
 /// exceeded.
+/// The key and value spans of the attribute being read.
+struct Pend {
+  k0: Int
+  k1: Int
+  v0: Int
+  v1: Int
+}
+
 struct Tokenizer {
   src: Bytes
   tt: htmltok.TokenType
@@ -20,10 +28,7 @@ struct Tokenizer {
   max_buf: Int
   ds: Int
   de: Int
-  pk0: Int
-  pk1: Int
-  pv0: Int
-  pv1: Int
+  pend: Pend
   attr: List[Int]
   names: Map[Str, Bool]
   raw_tag: Str
@@ -33,7 +38,7 @@ struct Tokenizer {
 }
 
 fn new_tokenizer(text: Str, raw_tag: Str) -> Tokenizer {
-  Tokenizer{src: text.bytes(), tt: htmltok.TokenType.Error, errc: 0, rs: 0, re: 0, max_buf: 0, ds: 0, de: 0, pk0: 0, pk1: 0, pv0: 0, pv1: 0, attr: [], names: {}, raw_tag: raw_tag, text_raw: false, convert_nul: false, cdata: false}
+  Tokenizer{src: text.bytes(), tt: htmltok.TokenType.Error, errc: 0, rs: 0, re: 0, max_buf: 0, ds: 0, de: 0, pend: Pend{k0: 0, k1: 0, v0: 0, v1: 0}, attr: [], names: {}, raw_tag: raw_tag, text_raw: false, convert_nul: false, cdata: false}
 }
 
 fn tokenizer(text: Str) -> Tokenizer { new_tokenizer(text, "") }
@@ -634,13 +639,13 @@ fn (var z: Tokenizer) read_tag(save_attr: Bool) {
     z.re -= 1
     z.read_tag_attr_key()
     z.read_tag_attr_val()
-    if save_attr && z.pk0 != z.pk1 {
-      let key = lower_bytes(z.src[z.pk0..z.pk1]).to_str_lossy()
+    if save_attr && z.pend.k0 != z.pend.k1 {
+      let key = lower_bytes(z.src[z.pend.k0..z.pend.k1]).to_str_lossy()
       if !z.names.contains(key) {
-        z.attr.push(z.pk0)
-        z.attr.push(z.pk1)
-        z.attr.push(z.pv0)
-        z.attr.push(z.pv1)
+        z.attr.push(z.pend.k0)
+        z.attr.push(z.pend.k1)
+        z.attr.push(z.pend.v0)
+        z.attr.push(z.pend.v1)
         z.names.put(key, true)
       }
     }
@@ -672,27 +677,27 @@ fn (var z: Tokenizer) read_tag_name() {
 }
 
 fn (var z: Tokenizer) read_tag_attr_key() {
-  z.pk0 = z.re
+  z.pend.k0 = z.re
   while true {
     let c = z.rb()
     if z.errc != 0 {
-      z.pk1 = z.re
+      z.pend.k1 = z.re
       return
     }
-    if c == 61 && z.pk0 + 1 == z.re {
+    if c == 61 && z.pend.k0 + 1 == z.re {
       continue
     }
     if c == 61 || is_space(c) || c == 47 || c == 62 {
       z.re -= 1
-      z.pk1 = z.re
+      z.pend.k1 = z.re
       return
     }
   }
 }
 
 fn (var z: Tokenizer) read_tag_attr_val() {
-  z.pv0 = z.re
-  z.pv1 = z.re
+  z.pend.v0 = z.re
+  z.pend.v1 = z.re
   z.skip_white_space()
   if z.errc != 0 {
     return
@@ -721,33 +726,33 @@ fn (var z: Tokenizer) read_tag_attr_val() {
     return
   }
   if quote == 39 || quote == 34 {
-    z.pv0 = z.re
+    z.pend.v0 = z.re
     while true {
       c = z.rb()
       if z.errc != 0 {
-        z.pv1 = z.re
+        z.pend.v1 = z.re
         return
       }
       if c == quote {
-        z.pv1 = z.re - 1
+        z.pend.v1 = z.re - 1
         return
       }
     }
   }
-  z.pv0 = z.re - 1
+  z.pend.v0 = z.re - 1
   while true {
     c = z.rb()
     if z.errc != 0 {
-      z.pv1 = z.re
+      z.pend.v1 = z.re
       return
     }
     if is_space(c) {
-      z.pv1 = z.re - 1
+      z.pend.v1 = z.re - 1
       return
     }
     if c == 62 {
       z.re -= 1
-      z.pv1 = z.re
+      z.pend.v1 = z.re
       return
     }
   }
