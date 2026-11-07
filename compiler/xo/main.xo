@@ -2051,6 +2051,16 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
       // the zone data (a C source clang compiles) and `use c`'s inputs
       let wlk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, false, tgoos, march, march, inl_fb)
+      let nsr = win_sysroot_missing(os, wlk, tg, cc_host)
+      if !nsr.is_empty() {
+        if o.skip_unsupported {
+          return Native{skipped: nsr}
+        }
+        if o.json {
+          os.stdio.print(build_json(false, [], []))
+        }
+        fail(os, nsr)
+      }
       let wst = stage(os, ctx, wbin)
       let why = win_amd64_link(os, wsrcs + wlk.srcs, wst.bin, wlk.flags + wlk.link_only)
       if !why.is_empty() {
@@ -2663,6 +2673,22 @@ struct LinkInputs {
   /// table out (ld -s on Linux; ld64 ignores -s, so -x there, which
   /// keeps the exports and imports dyld needs)
   link_only: List[Str] = []
+  /// a `use c` source is among srcs (the program's or a std module's,
+  /// such as std/sqlite's sqlite3.c)
+  use_c: Bool = false
+}
+
+/// Why a windows/amd64 cross build cannot compile its `use c` sources,
+/// "" when it can: clang compiles them against the MSVC C library and
+/// the Windows SDK, which a host other than Windows has only as the
+/// XO_WINSYSROOT sysroot (xwin's; toolchain.md "Windows cross builds on
+/// the Mac"). Without it clang stopped at "'stdlib.h' file not found"
+/// (hourly.sh's cross step on native_sqlite, 2026-11-07).
+fn win_sysroot_missing(os: Os, lk: LinkInputs, tg: Str, cc_host: Str) -> Str {
+  if !lk.use_c || tg == cc_host || !(os.env.get("XO_WINSYSROOT") ?? "").is_empty() {
+    return ""
+  }
+  "${tg} compiles a `use c` source (the program's, or a std module's such as std/sqlite's) with clang against the MSVC C library and the Windows SDK, which a ${cc_host} host has only as a sysroot: set XO_WINSYSROOT to one (xwin's), or build on ${tg} (a prebuilt std/sqlite for ${tg} is decision 0534 stage 2, not shipped yet)"
 }
 
 fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: tzsel.TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str, backend: Str, inline_fb: Str) -> LinkInputs {
@@ -2735,6 +2761,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
   }
   lk.flags = lk.flags + ci.flags
   lk.srcs = lk.srcs + ci.srcs
+  lk.use_c = !ci.srcs.is_empty()
   if tgoos == "darwin" && tgoarch == "amd64" {
     // the amd64 backend's darwin/amd64 program when the Mac's cc links it
     // (--as=cc, or `use c`; decision 0254 stage 6a)

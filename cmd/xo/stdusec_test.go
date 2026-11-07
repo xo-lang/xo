@@ -119,3 +119,38 @@ func TestStdSQLiteGoBackend(t *testing.T) {
 		t.Errorf("want XO1201 (C is impossible on the Go backend), got exit %d:\n%s", code, out)
 	}
 }
+
+// TestStdSQLiteCrossBuilds builds the native_sqlite golden for each
+// cross target hourly.sh checks, every time (its sample of every 4th
+// golden reached native_sqlite only after new goldens shifted the list,
+// and windows/amd64 had failed since std/sqlite landed on clang's
+// "'stdlib.h' file not found", 2026-11-07). A build either links, or
+// stops on a documented limit: no cross link with a C compiler
+// (linux/amd64 from another host), or no Windows sysroot for a `use c`
+// source (XO_WINSYSROOT unset; decision 0534 stage 2's prebuilt is not
+// shipped yet). Any other failure, such as a C compiler's error, fails.
+func TestStdSQLiteCrossBuilds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("cross builds a program with SQLite's C source")
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "internal", "llvm", "testdata", "golden", "native_sqlite")
+	setenv(t, "XO_WINSYSROOT", "")
+	limits := []string{"does not cross link", "set XO_WINSYSROOT"}
+	for _, tg := range []string{"windows/amd64", "linux/amd64", "darwin/amd64"} {
+		code, out := xoOut(t, "build", "--backend=amd64", "--target="+tg, "-o", filepath.Join(t.TempDir(), "p"), dir)
+		if code == 0 {
+			continue
+		}
+		limited := false
+		for _, l := range limits {
+			limited = limited || strings.Contains(out, l)
+		}
+		if !limited {
+			t.Errorf("%s: exit %d, not a documented limit:\n%s", tg, code, out)
+		}
+	}
+}

@@ -43,4 +43,8 @@ test "classify counts a cross build of a use c program and the cross link error 
   expect(classify(os.fs, host, fail("u/plain", "build: xo: linux/amd64 links with a C compiler and xo does not cross link with one")).status) == "unsupported"
   expect(classify(os.fs, host, fail("u/plain", "build: xo: the wasm backend does not support the call `rt.heap_big`")).status) == "unsupported"
   expect(classify(os.fs, cross, fail("u/c", "differs: line 1")).status) == "fail"
+  // a std module's `use c` (std/sqlite) is not in the directory: xo
+  // build's own message names the missing Windows sysroot
+  expect(classify(os.fs, cross, fail("u/plain", "build: xo: windows/amd64 compiles a `use c` source (the program's, or a std module's such as std/sqlite's) with clang against the MSVC C library and the Windows SDK, which a darwin/arm64 host has only as a sysroot: set XO_WINSYSROOT to one (xwin's), or build on windows/amd64")).status) == "unsupported"
+  expect(classify(os.fs, cross, fail("u/plain", "build: clang: fatal error: 'stdlib.h' file not found")).status) == "fail"
 }

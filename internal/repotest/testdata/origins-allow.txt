@@ -87,3 +87,7 @@ std/sqlite.xo	//   reads it: SQLite's own URI keys (`mode=ro|rw|rwc|memory`,
 std/sqlite.xo	//   extended result code's name (`SQLITE_BUSY`) and SQLite's message.
 std/sqlite.xo	// - Transactions are SQLite's (serializable); a read only one runs with
 std/sqlite.xo	/// The SQLite library's version, e.g. "3.54.1".
+# xo build's windows sysroot message and dev goldens' classify name std/sqlite as
+# a std module with a `use c` source (gotchas/std-use-c-cross-sample-miss.md); no SQLite code
+compiler/cli/dev/goldens.xo	/// a std module brings (std/sqlite) is not in the program's directory:
+compiler/xo/main.xo	/// such as std/sqlite's sqlite3.c)

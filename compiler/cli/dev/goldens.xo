@@ -481,12 +481,16 @@ pub fn run_goldens(os: Os, cfg0: Config, dirs: List[Str]) -> List[Outcome] uses 
 /// cross link with a C compiler: linux/amd64 says so, windows/amd64's
 /// clang cannot compile the host's C), and the wasm backend's own
 /// unsupported calls (stage 2, no sockets). 2026-10-24: new goldens
-/// shifted hourly.sh's every-4th sample onto use_c_add.
+/// shifted hourly.sh's every-4th sample onto use_c_add. A `use c` source
+/// a std module brings (std/sqlite) is not in the program's directory:
+/// xo build's own message names it (no XO_WINSYSROOT for windows/amd64;
+/// native_sqlite failed hourly.sh's cross step on clang's header error,
+/// 2026-11-07).
 fn classify(fs: Fs, cfg: Config, o: Outcome) -> Outcome uses fs.read {
   if o.status != "fail" || !o.why.starts_with("build: ") {
     return o
   }
-  let limit = o.why.contains("does not cross link") || o.why.contains("backend does not support") || (cross_target(cfg) && has_use_c(fs, o.dir))
+  let limit = o.why.contains("does not cross link") || o.why.contains("backend does not support") || o.why.contains("set XO_WINSYSROOT") || (cross_target(cfg) && has_use_c(fs, o.dir))
   if limit { o with {status: "unsupported"} } else { o }
 }
 
