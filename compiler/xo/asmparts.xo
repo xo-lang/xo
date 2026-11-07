@@ -274,6 +274,10 @@ struct IncrOut {
   live: List[List[Bool]] = []
   /// each object's key in the cache (hobj), which fixes its bytes
   okeys: List[Str] = []
+  /// the build's elf and hollow, for incr_texts when facts and live were
+  /// not read (a whole hit, incr_whole)
+  elf: Bool = false
+  hollow: Bool = false
 }
 
 /// The objects of parts (Mach-O, arm64 or amd64) with the functions
@@ -326,6 +330,18 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], tags: List[Str], march: Str, 
   for k in tk {
     fk.push(if elf { crypto.sha256("${k}\x00${eh}".bytes()).to_hex() } else { k })
   }
+  // the parts' facts keys fix every part's facts, so the reach and each
+  // part's dead set, so its object key: a build whose whole key hits
+  // reads the object keys and the objects without a part's facts or the
+  // reach (hollow_live and the facts' decode were most of a warm build's
+  // hollow, 2026-11-07 profile)
+  let wk = crypto.sha256("${HOLLOW_INCR_VERSION} whole ${id} amd64=${amd64} elf=${elf} hollow=${hollow}\x00${fk.join("\n")}".bytes()).to_hex()
+  if let Some(w) = incr_whole(os, dir, wk, fk.len()) {
+    var o = w
+    o.elf = elf
+    o.hollow = hollow
+    return Some(o)
+  }
   // each part's facts, from the cache or scanned (on tasks)
   var facts: List[arm64.HFacts] = []
   var miss: List[Int] = []
@@ -375,21 +391,10 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], tags: List[Str], march: Str, 
   }
   // counted toward the prune and logged (store-log), as every kind is
   prune_backend_cache(os, "hfacts", dir, fstored)
-  var live: List[List[Bool]] = []
-  if hollow {
-    live = arm64.hollow_live(facts, elf)
-  } else {
-    for f in facts {
-      var l: List[Bool] = []
-      for _ in 0..f.chunks.len() {
-        l.push(true)
-      }
-      live.push(l)
-    }
-  }
+  let live = incr_live(facts, elf, hollow)
   let trap = if amd64 { arm64.HOLLOW_UD2 } else { "brk #${arm64.HOLLOW_BRK}" }
   // each part's object and undefined-symbol facts, by its text and dead set
-  var out = IncrOut{facts: facts, live: live}
+  var out = IncrOut{facts: facts, live: live, elf: elf, hollow: hollow}
   var okeys: List[Str] = []
   var ufs: List[arm64.UFacts] = []
   var amiss: List[Int] = []
@@ -433,7 +438,56 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], tags: List[Str], march: Str, 
   out.nasm = amiss.len()
   out.okeys = okeys
   out.undef = arm64.undef_combine(ufs)
+  var all_ok = true
+  for r in out.objs {
+    if r is Err(_) {
+      all_ok = false
+    }
+  }
+  if all_ok {
+    prune_backend_cache(os, "hwhole", dir, entry_put(os, dir, "hwhole", wk, okeys.join("\n").bytes()))
+  }
   Some(out)
+}
+
+/// incr_hollow's result from the whole build's entry (its object keys,
+/// one per part, under wk): each object and its undefined-symbol facts
+/// read by its key; None when any is missing, and the build takes the
+/// part by part path.
+fn incr_whole(os: Os, dir: Str, wk: Str, n: Int) -> IncrOut? {
+  let b = entry_get(os, dir, "hwhole", wk)?
+  let ks = (b.to_str() ?? "").split("\n")
+  if ks.len() != n {
+    return None
+  }
+  var out = IncrOut{okeys: ks}
+  var ufs: List[arm64.UFacts] = []
+  for k in ks {
+    let ub = entry_get(os, dir, "hufacts", k)?
+    let u = arm64.ufacts_decode(ub.to_str() ?? "")?
+    let ob = entry_get(os, dir, "hobj", k)?
+    out.objs.push(Ok(ob))
+    ufs.push(u)
+  }
+  out.undef = arm64.undef_combine(ufs)
+  Some(out)
+}
+
+/// Whether each chunk of each part is kept: reached (hollow_live) when
+/// hollow, else every one.
+fn incr_live(facts: List[arm64.HFacts], elf: Bool, hollow: Bool) -> List[List[Bool]] {
+  if hollow {
+    return arm64.hollow_live(facts, elf)
+  }
+  var live: List[List[Bool]] = []
+  for f in facts {
+    var l: List[Bool] = []
+    for _ in 0..f.chunks.len() {
+      l.push(true)
+    }
+    live.push(l)
+  }
+  live
 }
 
 /// The objects and undefined-symbol facts of the parts amiss, hollowed, in
@@ -483,9 +537,26 @@ fn hollow_objects(parts: List[Str], facts: List[arm64.HFacts], live: List[List[B
 /// (--ld=cc, XO_KEEP_ASM=1).
 fn incr_texts(parts: List[Str], inc: IncrOut, march: Str) -> List[Str] {
   let trap = if march == "amd64" { arm64.HOLLOW_UD2 } else { "brk #${arm64.HOLLOW_BRK}" }
+  var facts = inc.facts
+  var live = inc.live
+  if facts.len() != parts.len() {
+    // a whole hit (incr_whole) read no facts: scan the parts again
+    var labels: List[Str] = []
+    if inc.elf {
+      for p in parts {
+        labels = labels + arm64.hollow_extra_of(p)
+      }
+    }
+    let (extra, first) = arm64.hollow_extra_from(labels)
+    facts = []
+    for p in parts {
+      facts.push(arm64.hollow_scan(p, inc.elf, extra, first))
+    }
+    live = incr_live(facts, inc.elf, inc.hollow)
+  }
   var out: List[Str] = []
   for (i, p) in parts.indexed() {
-    let (t, _, _) = arm64.hollow_rewrite(p, inc.facts[i], inc.live[i], trap)
+    let (t, _, _) = arm64.hollow_rewrite(p, facts[i], live[i], trap)
     out.push(t)
   }
   out

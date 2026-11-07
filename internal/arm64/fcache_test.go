@@ -3811,3 +3811,71 @@ func TestWindowsPDBPartKeys(t *testing.T) {
 		t.Error("with unreadable part entries: the PDB differs")
 	}
 }
+
+// TestHollowWholeHitTexts: a warm build whose parts' facts keys all match
+// a stored build (asmparts.xo incr_whole) reads its objects without the
+// parts' facts or the reach, so a tool that reads the hollowed texts after
+// all (XO_KEEP_ASM=1) gets them from a scan of the parts again
+// (incr_texts): they must equal a cold build's.
+func TestHollowWholeHitTexts(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds a program three times")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-hwhole-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	dir := filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")
+	// build in cache name, a build directory per call; the kept text
+	build := func(name, bd string, env ...string) string {
+		t.Helper()
+		bdir := filepath.Join(work, bd)
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog-"+bd), "."))
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BUILD_DIR="+bdir, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, name)), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo build: %v\n%s", err, log)
+		}
+		ss, _ := filepath.Glob(filepath.Join(bdir, "*", "arm64", "prog-"+runtime.GOOS+".s"))
+		if len(ss) != 1 {
+			return ""
+		}
+		b, err := os.ReadFile(ss[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	cold := build("cold", "b1", "XO_KEEP_ASM=1")
+	if cold == "" {
+		t.Fatal("the cold XO_KEEP_ASM=1 build kept no prog-" + runtime.GOOS + ".s")
+	}
+	build("warm", "b2")
+	whole := 0
+	filepath.WalkDir(filepath.Join(work, "warm"), func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() && d.Name() == "hwhole" {
+			whole++
+		}
+		return nil
+	})
+	if whole == 0 {
+		t.Fatal("the first warm build stored no hwhole entry, so the test checks nothing")
+	}
+	// the cold build's directory and output again: the text names them
+	if warm := build("warm", "b1", "XO_KEEP_ASM=1"); warm != cold {
+		t.Errorf("the kept text of a whole hit differs from a cold build's (%d bytes against %d)", len(warm), len(cold))
+	}
+}
