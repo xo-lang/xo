@@ -90,6 +90,12 @@ else
   [ -s "$notes" ] || die "$notes: write the tag's message first"
   head -1 "$notes" | grep -qx "Xo v$version" || die "$notes: its first line must be \"Xo v$version\""
 fi
+# heavy.sh takes NAME before the command: without it the first heavy step
+# ran `-c` as the command and failed after the 9 minute -short step
+# (2026-11-06, the 0.43.0 cut)
+case "${XO_HEAVY:-}" in
+  *heavy.sh) die "XO_HEAVY=$XO_HEAVY: give heavy.sh a job name (XO_HEAVY=\"\$HOME/xo-lead/agents/heavy.sh seed\")" ;;
+esac
 [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || die "run on the development Mac (darwin/arm64): the darwin-arm64 seed is built natively"
 command -v go >/dev/null && command -v clang >/dev/null || die "needs go and clang"
 # before anything is pushed: step 6 builds linux-arm64's race runtime in it
