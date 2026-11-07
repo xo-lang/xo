@@ -123,8 +123,15 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   // the runtime
   os.fs.create_dir_all("${tree}/rt")?
   for fi in os.fs.read_dir("${o.std}/rt")? {
-    if (fi.name.ends_with(".go") || fi.name.ends_with(".s")) && !fi.name.ends_with("_test.go") {
+    if fi.name.ends_with(".s") {
       os.fs.write("${tree}/rt/${fi.name}", os.fs.read("${o.std}/rt/${fi.name}")?)?
+    } else if fi.name.ends_with(".go") && !fi.name.ends_with("_test.go") {
+      // the generic types' protocol methods no root reaches are left out
+      // (decision 0551)
+      match gen.rt_proto_prune(fi.name, os.fs.read_text("${o.std}/rt/${fi.name}")?, prog.rt_proto) {
+        Ok(text) => write_file(os, "${tree}/rt/${fi.name}", text)?
+        Err(e) => fail(os, e)
+      }
     }
   }
   // a program with Go callbacks (an adapter that registers one) builds

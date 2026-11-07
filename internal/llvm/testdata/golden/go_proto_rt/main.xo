@@ -1,0 +1,35 @@
+// The runtime's generic types compared and hashed with no user type in
+// them (decision 0551): on --backend=go their XoEq and XoHash are kept
+// only when the protocol walk reaches the generic type, and rt faults
+// "xo internal: XoEq not generated" on a missed one, so this golden's
+// output equals the native one only while each of these is a root.
+
+fn same[T: Eq](a: T, b: T) -> Bool {
+  a == b
+}
+
+fn main(os: Os) {
+  let o: Int? = Some(1)
+  os.stdio.println("option ==: ${o == Some(1)} ${o == None}")
+  let r: Result[Int, Str] = Err("x")
+  os.stdio.println("result ==: ${r == Err("x")} ${r == Ok(1)}")
+  let l = [1, 2]
+  os.stdio.println("list ==: ${l == [1, 2]} ${l != [2, 1]}")
+  let t = (1, "a")
+  os.stdio.println("tuple ==: ${t == (1, "a")} ${t == (2, "a")}")
+  var byopt: Map[Int?, Str] = {}
+  byopt[Some(2)] = "two"
+  byopt[None] = "none"
+  os.stdio.println("option key: ${byopt.get(Some(2)) ?? "-"} ${byopt.get(None) ?? "-"} ${byopt.len()}")
+  var bytup: Map[(Int, Str), Int] = {}
+  bytup[(1, "a")] = 1
+  bytup[(1, "a")] = 2
+  os.stdio.println("tuple key: ${bytup.len()} ${bytup.get((1, "a")) ?? 0}")
+  let lists: Set[List[Int]] = #{[1], [1], [2]}
+  os.stdio.println("set of lists: ${lists.len()} ${lists.contains([2])}")
+  let maps: List[Map[Str, Int]] = [{"a": 1}]
+  os.stdio.println("contains map: ${maps.contains({"a": 1})} ${maps.index_of({"a": 2}) ?? -1}")
+  os.stdio.println("generic: ${same(Some(3), Some(3))} ${same([1], [2])} ${same((1, 2), (1, 2))}")
+  let nested: Result[Int?, List[Str]] = Ok(Some(1))
+  os.stdio.println("nested ==: ${nested == Ok(Some(1))} ${nested == Err(["e"])}")
+}

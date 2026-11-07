@@ -150,9 +150,13 @@ func (s Secret[T]) M_display(*Task) string { return "<redacted>" }
 func (s Secret[T]) XoDebug(b *strings.Builder) { b.WriteString("<redacted>") }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Secret
 func (s Secret[T]) XoEq(o any) bool { return Eq(s.v, o.(Secret[T]).v) }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Secret
 func (s Secret[T]) XoHash() uint64 { return Hash(s.v) }
 
 // Dbg is the predeclared `dbg(x)` (core 11.4): prints the source text and

@@ -1,0 +1,28 @@
+// rt_proto_prune: the runtime's generic types keep a marked protocol
+// method only when a root reaches it (decision 0551).
+
+const RT_SRC = "package rt\n\n// XoEq implements Eq.\n//\n//xo:proto eq List\nfunc (l List[T]) XoEq(o any) bool {\n\treturn true\n}\n\n//xo:proto hash Option\nfunc (o Option[T]) XoHash() uint64 { return 1 }\n\nfunc keep() {}\n"
+
+test "rt_proto_prune: an unreached method is left out" {
+  let r = rt_proto_prune("x.go", RT_SRC, {"*": 0})
+  expect(r.is_ok()) == true
+  let t = r.ok() ?? ""
+  expect(t.contains("XoEq")) == false
+  expect(t.contains("XoHash")) == false
+  expect(t.contains("func keep() {}")) == true
+  expect(t.contains("//xo:proto")) == false
+}
+
+test "rt_proto_prune: a reached type or protocol keeps its method" {
+  let t = rt_proto_prune("x.go", RT_SRC, {"List": 2}).ok() ?? ""
+  expect(t.contains("func (l List[T]) XoEq(o any) bool {\n\treturn true\n}")) == true
+  expect(t.contains("XoHash")) == false
+  let all = rt_proto_prune("x.go", RT_SRC, {"*": 6}).ok() ?? ""
+  expect(all) == RT_SRC
+}
+
+test "rt_proto_prune: a bad marker fails" {
+  expect(rt_proto_prune("x.go", "//xo:proto cmp List\nfunc (l List[T]) XoCmp() {}\n", {}).is_err()) == true
+  expect(rt_proto_prune("x.go", "//xo:proto eq List\n\nfunc f() {}\n", {}).is_err()) == true
+  expect(rt_proto_prune("x.go", "//xo:proto eq List\nfunc (l List[T]) XoEq(o any) bool {\n", {}).is_err()) == true
+}

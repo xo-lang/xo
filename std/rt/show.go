@@ -50,6 +50,22 @@ func Eq[T any](a, b T) bool {
 // lacks is a generator bug, never a reason to compare by reflection.
 type protoType interface{ XoProto() }
 
+// The runtime's generic types are protoTypes too: the Go backend leaves
+// out their XoEq, XoHash and XoGenAny when no root reaches them (decision
+// 0551). Box keeps every method (the generator boxes a recursive field,
+// which the walk sees as the field's own type).
+func (List[T]) XoProto()                  {}
+func (Set[T]) XoProto()                   {}
+func (Map[K, V]) XoProto()                {}
+func (Option[T]) XoProto()                {}
+func (Result[T, E]) XoProto()             {}
+func (Secret[T]) XoProto()                {}
+func (Tuple2[A, B]) XoProto()             {}
+func (Tuple3[A, B, C]) XoProto()          {}
+func (Tuple4[A, B, C, D]) XoProto()       {}
+func (Tuple5[A, B, C, D, E]) XoProto()    {}
+func (Tuple6[A, B, C, D, E, F]) XoProto() {}
+
 func protoMissing(method string, v any) {
 	FaultHere("xo internal: %s not generated for %T (decision 0542; XO_GO_PROTO=all writes every one)", method, v)
 }
@@ -549,12 +565,16 @@ func tupleCmp(xs, ys []any) int {
 func (t Tuple2[A, B]) XoDebug(b *strings.Builder) { tupleDebug(b, t.F0, t.F1) }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple2[A, B]) XoEq(o any) bool {
 	p, ok := o.(Tuple2[A, B])
 	return ok && Eq(t.F0, p.F0) && Eq(t.F1, p.F1)
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple2[A, B]) XoHash() uint64 { return tupleHash(t.F0, t.F1) }
 
 // XoCmp implements Ord.
@@ -567,12 +587,16 @@ func (t Tuple2[A, B]) XoCmp(o any) int {
 func (t Tuple3[A, B, C]) XoDebug(b *strings.Builder) { tupleDebug(b, t.F0, t.F1, t.F2) }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple3[A, B, C]) XoEq(o any) bool {
 	p, ok := o.(Tuple3[A, B, C])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2}, []any{p.F0, p.F1, p.F2})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple3[A, B, C]) XoHash() uint64 { return tupleHash(t.F0, t.F1, t.F2) }
 
 // XoCmp implements Ord.
@@ -585,12 +609,16 @@ func (t Tuple3[A, B, C]) XoCmp(o any) int {
 func (t Tuple4[A, B, C, D]) XoDebug(b *strings.Builder) { tupleDebug(b, t.F0, t.F1, t.F2, t.F3) }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple4[A, B, C, D]) XoEq(o any) bool {
 	p, ok := o.(Tuple4[A, B, C, D])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3}, []any{p.F0, p.F1, p.F2, p.F3})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple4[A, B, C, D]) XoHash() uint64 { return tupleHash(t.F0, t.F1, t.F2, t.F3) }
 
 // XoCmp implements Ord.
@@ -605,12 +633,16 @@ func (t Tuple5[A, B, C, D, E]) XoDebug(b *strings.Builder) {
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple5[A, B, C, D, E]) XoEq(o any) bool {
 	p, ok := o.(Tuple5[A, B, C, D, E])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4}, []any{p.F0, p.F1, p.F2, p.F3, p.F4})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple5[A, B, C, D, E]) XoHash() uint64 { return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4) }
 
 // XoCmp implements Ord.
@@ -625,12 +657,16 @@ func (t Tuple6[A, B, C, D, E, F]) XoDebug(b *strings.Builder) {
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple6[A, B, C, D, E, F]) XoEq(o any) bool {
 	p, ok := o.(Tuple6[A, B, C, D, E, F])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple6[A, B, C, D, E, F]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5)
 }

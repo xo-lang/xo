@@ -30,18 +30,25 @@ func (t *Tuple7[A, B, C, D, E, F, G]) XoMark() {
 	MarkP(&t.F6)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple7[A, B, C, D, E, F, G]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple7[A, B, C, D, E, F, G]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple7[A, B, C, D, E, F, G]) XoEq(o any) bool {
 	p, ok := o.(Tuple7[A, B, C, D, E, F, G])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple7[A, B, C, D, E, F, G]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6)
 }
@@ -109,18 +116,25 @@ func (t *Tuple8[A, B, C, D, E, F, G, H]) XoMark() {
 	MarkP(&t.F7)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple8[A, B, C, D, E, F, G, H]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple8[A, B, C, D, E, F, G, H]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple8[A, B, C, D, E, F, G, H]) XoEq(o any) bool {
 	p, ok := o.(Tuple8[A, B, C, D, E, F, G, H])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple8[A, B, C, D, E, F, G, H]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7)
 }
@@ -193,18 +207,25 @@ func (t *Tuple9[A, B, C, D, E, F, G, H, I]) XoMark() {
 	MarkP(&t.F8)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple9[A, B, C, D, E, F, G, H, I]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple9[A, B, C, D, E, F, G, H, I]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple9[A, B, C, D, E, F, G, H, I]) XoEq(o any) bool {
 	p, ok := o.(Tuple9[A, B, C, D, E, F, G, H, I])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple9[A, B, C, D, E, F, G, H, I]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8)
 }
@@ -282,18 +303,25 @@ func (t *Tuple10[A, B, C, D, E, F, G, H, I, J]) XoMark() {
 	MarkP(&t.F9)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple10[A, B, C, D, E, F, G, H, I, J]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple10[A, B, C, D, E, F, G, H, I, J]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple10[A, B, C, D, E, F, G, H, I, J]) XoEq(o any) bool {
 	p, ok := o.(Tuple10[A, B, C, D, E, F, G, H, I, J])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple10[A, B, C, D, E, F, G, H, I, J]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9)
 }
@@ -376,18 +404,25 @@ func (t *Tuple11[A, B, C, D, E, F, G, H, I, J, K]) XoMark() {
 	MarkP(&t.F10)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple11[A, B, C, D, E, F, G, H, I, J, K]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple11[A, B, C, D, E, F, G, H, I, J, K]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple11[A, B, C, D, E, F, G, H, I, J, K]) XoEq(o any) bool {
 	p, ok := o.(Tuple11[A, B, C, D, E, F, G, H, I, J, K])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple11[A, B, C, D, E, F, G, H, I, J, K]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10)
 }
@@ -475,18 +510,25 @@ func (t *Tuple12[A, B, C, D, E, F, G, H, I, J, K, L]) XoMark() {
 	MarkP(&t.F11)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple12[A, B, C, D, E, F, G, H, I, J, K, L]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple12[A, B, C, D, E, F, G, H, I, J, K, L]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple12[A, B, C, D, E, F, G, H, I, J, K, L]) XoEq(o any) bool {
 	p, ok := o.(Tuple12[A, B, C, D, E, F, G, H, I, J, K, L])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple12[A, B, C, D, E, F, G, H, I, J, K, L]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11)
 }
@@ -579,18 +621,25 @@ func (t *Tuple13[A, B, C, D, E, F, G, H, I, J, K, L, M]) XoMark() {
 	MarkP(&t.F12)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple13[A, B, C, D, E, F, G, H, I, J, K, L, M]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple13[A, B, C, D, E, F, G, H, I, J, K, L, M]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple13[A, B, C, D, E, F, G, H, I, J, K, L, M]) XoEq(o any) bool {
 	p, ok := o.(Tuple13[A, B, C, D, E, F, G, H, I, J, K, L, M])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple13[A, B, C, D, E, F, G, H, I, J, K, L, M]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12)
 }
@@ -688,18 +737,25 @@ func (t *Tuple14[A, B, C, D, E, F, G, H, I, J, K, L, M, N]) XoMark() {
 	MarkP(&t.F13)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple14[A, B, C, D, E, F, G, H, I, J, K, L, M, N]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple14[A, B, C, D, E, F, G, H, I, J, K, L, M, N]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple14[A, B, C, D, E, F, G, H, I, J, K, L, M, N]) XoEq(o any) bool {
 	p, ok := o.(Tuple14[A, B, C, D, E, F, G, H, I, J, K, L, M, N])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple14[A, B, C, D, E, F, G, H, I, J, K, L, M, N]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13)
 }
@@ -802,18 +858,25 @@ func (t *Tuple15[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O]) XoMark() {
 	MarkP(&t.F14)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple15[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple15[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple15[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O]) XoEq(o any) bool {
 	p, ok := o.(Tuple15[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple15[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14)
 }
@@ -921,18 +984,25 @@ func (t *Tuple16[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P]) XoMark() {
 	MarkP(&t.F15)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple16[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple16[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple16[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P]) XoEq(o any) bool {
 	p, ok := o.(Tuple16[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple16[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15)
 }
@@ -1045,18 +1115,25 @@ func (t *Tuple17[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q]) XoMark() {
 	MarkP(&t.F16)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple17[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple17[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple17[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q]) XoEq(o any) bool {
 	p, ok := o.(Tuple17[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple17[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16)
 }
@@ -1174,18 +1251,25 @@ func (t *Tuple18[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R]) XoMark()
 	MarkP(&t.F17)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple18[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple18[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple18[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R]) XoEq(o any) bool {
 	p, ok := o.(Tuple18[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple18[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17)
 }
@@ -1308,18 +1392,25 @@ func (t *Tuple19[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S]) XoMar
 	MarkP(&t.F18)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple19[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple19[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple19[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S]) XoEq(o any) bool {
 	p, ok := o.(Tuple19[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple19[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18)
 }
@@ -1447,18 +1538,25 @@ func (t *Tuple20[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T]) Xo
 	MarkP(&t.F19)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple20[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple20[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple20[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T]) XoEq(o any) bool {
 	p, ok := o.(Tuple20[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple20[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19)
 }
@@ -1591,18 +1689,25 @@ func (t *Tuple21[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U])
 	MarkP(&t.F20)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple21[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple21[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple21[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U]) XoEq(o any) bool {
 	p, ok := o.(Tuple21[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple21[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20)
 }
@@ -1740,18 +1845,25 @@ func (t *Tuple22[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F21)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple22[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple22[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple22[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V]) XoEq(o any) bool {
 	p, ok := o.(Tuple22[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple22[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21)
 }
@@ -1894,18 +2006,25 @@ func (t *Tuple23[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F22)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple23[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple23[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple23[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W]) XoEq(o any) bool {
 	p, ok := o.(Tuple23[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple23[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22)
 }
@@ -2053,18 +2172,25 @@ func (t *Tuple24[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F23)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple24[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple24[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple24[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X]) XoEq(o any) bool {
 	p, ok := o.(Tuple24[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple24[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23)
 }
@@ -2217,18 +2343,25 @@ func (t *Tuple25[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F24)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple25[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y]) XoProto() {}
+
 // XoDebug implements Debug.
 func (t Tuple25[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple25[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y]) XoEq(o any) bool {
 	p, ok := o.(Tuple25[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple25[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24)
 }
@@ -2386,18 +2519,26 @@ func (t *Tuple26[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F25)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple26[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple26[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple26[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z]) XoEq(o any) bool {
 	p, ok := o.(Tuple26[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple26[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25)
 }
@@ -2560,18 +2701,26 @@ func (t *Tuple27[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F26)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple27[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple27[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple27[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26]) XoEq(o any) bool {
 	p, ok := o.(Tuple27[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple27[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26)
 }
@@ -2739,18 +2888,26 @@ func (t *Tuple28[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F27)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple28[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple28[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple28[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27]) XoEq(o any) bool {
 	p, ok := o.(Tuple28[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple28[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27)
 }
@@ -2923,18 +3080,26 @@ func (t *Tuple29[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F28)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple29[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple29[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple29[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28]) XoEq(o any) bool {
 	p, ok := o.(Tuple29[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple29[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28)
 }
@@ -3112,18 +3277,26 @@ func (t *Tuple30[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F29)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple30[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple30[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple30[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29]) XoEq(o any) bool {
 	p, ok := o.(Tuple30[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple30[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29)
 }
@@ -3306,18 +3479,26 @@ func (t *Tuple31[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F30)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple31[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple31[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple31[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30]) XoEq(o any) bool {
 	p, ok := o.(Tuple31[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple31[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30)
 }
@@ -3505,18 +3686,26 @@ func (t *Tuple32[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F31)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple32[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple32[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple32[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31]) XoEq(o any) bool {
 	p, ok := o.(Tuple32[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple32[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31)
 }
@@ -3709,18 +3898,26 @@ func (t *Tuple33[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F32)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple33[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple33[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple33[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32]) XoEq(o any) bool {
 	p, ok := o.(Tuple33[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple33[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32)
 }
@@ -3918,18 +4115,26 @@ func (t *Tuple34[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F33)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple34[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple34[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple34[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33]) XoEq(o any) bool {
 	p, ok := o.(Tuple34[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple34[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33)
 }
@@ -4132,18 +4337,26 @@ func (t *Tuple35[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F34)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple35[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple35[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple35[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34]) XoEq(o any) bool {
 	p, ok := o.(Tuple35[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple35[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34)
 }
@@ -4351,18 +4564,26 @@ func (t *Tuple36[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F35)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple36[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple36[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple36[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35]) XoEq(o any) bool {
 	p, ok := o.(Tuple36[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple36[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35)
 }
@@ -4575,18 +4796,26 @@ func (t *Tuple37[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F36)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple37[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple37[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple37[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36]) XoEq(o any) bool {
 	p, ok := o.(Tuple37[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple37[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36)
 }
@@ -4804,18 +5033,26 @@ func (t *Tuple38[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F37)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple38[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple38[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple38[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37]) XoEq(o any) bool {
 	p, ok := o.(Tuple38[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple38[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37)
 }
@@ -5038,18 +5275,26 @@ func (t *Tuple39[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F38)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple39[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple39[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple39[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38]) XoEq(o any) bool {
 	p, ok := o.(Tuple39[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple39[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38)
 }
@@ -5277,18 +5522,26 @@ func (t *Tuple40[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F39)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple40[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple40[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple40[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39]) XoEq(o any) bool {
 	p, ok := o.(Tuple40[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple40[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39)
 }
@@ -5521,18 +5774,26 @@ func (t *Tuple41[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F40)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple41[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple41[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple41[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40]) XoEq(o any) bool {
 	p, ok := o.(Tuple41[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple41[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40)
 }
@@ -5770,18 +6031,26 @@ func (t *Tuple42[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F41)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple42[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple42[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple42[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41]) XoEq(o any) bool {
 	p, ok := o.(Tuple42[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple42[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41)
 }
@@ -6024,18 +6293,26 @@ func (t *Tuple43[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F42)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple43[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple43[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple43[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42]) XoEq(o any) bool {
 	p, ok := o.(Tuple43[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple43[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42)
 }
@@ -6283,18 +6560,26 @@ func (t *Tuple44[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F43)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple44[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple44[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple44[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43]) XoEq(o any) bool {
 	p, ok := o.(Tuple44[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple44[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43)
 }
@@ -6547,18 +6832,26 @@ func (t *Tuple45[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F44)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple45[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple45[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple45[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44]) XoEq(o any) bool {
 	p, ok := o.(Tuple45[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple45[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44)
 }
@@ -6816,18 +7109,26 @@ func (t *Tuple46[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F45)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple46[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple46[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple46[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45]) XoEq(o any) bool {
 	p, ok := o.(Tuple46[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple46[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45)
 }
@@ -7090,18 +7391,26 @@ func (t *Tuple47[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F46)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple47[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple47[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple47[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46]) XoEq(o any) bool {
 	p, ok := o.(Tuple47[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple47[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46)
 }
@@ -7369,18 +7678,26 @@ func (t *Tuple48[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F47)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple48[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple48[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple48[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47]) XoEq(o any) bool {
 	p, ok := o.(Tuple48[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple48[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47)
 }
@@ -7653,18 +7970,26 @@ func (t *Tuple49[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F48)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple49[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple49[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple49[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48]) XoEq(o any) bool {
 	p, ok := o.(Tuple49[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple49[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48)
 }
@@ -7942,18 +8267,26 @@ func (t *Tuple50[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F49)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple50[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple50[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple50[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49]) XoEq(o any) bool {
 	p, ok := o.(Tuple50[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple50[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49)
 }
@@ -8236,18 +8569,26 @@ func (t *Tuple51[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F50)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple51[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple51[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple51[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50]) XoEq(o any) bool {
 	p, ok := o.(Tuple51[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple51[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50)
 }
@@ -8535,18 +8876,26 @@ func (t *Tuple52[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F51)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple52[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple52[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple52[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51]) XoEq(o any) bool {
 	p, ok := o.(Tuple52[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple52[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51)
 }
@@ -8839,18 +9188,26 @@ func (t *Tuple53[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F52)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple53[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple53[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple53[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52]) XoEq(o any) bool {
 	p, ok := o.(Tuple53[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple53[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52)
 }
@@ -9148,18 +9505,26 @@ func (t *Tuple54[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F53)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple54[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple54[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple54[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53]) XoEq(o any) bool {
 	p, ok := o.(Tuple54[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple54[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53)
 }
@@ -9462,18 +9827,26 @@ func (t *Tuple55[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F54)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple55[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple55[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple55[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54]) XoEq(o any) bool {
 	p, ok := o.(Tuple55[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple55[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54)
 }
@@ -9781,18 +10154,26 @@ func (t *Tuple56[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F55)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple56[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple56[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple56[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55]) XoEq(o any) bool {
 	p, ok := o.(Tuple56[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54, p.F55})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple56[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55)
 }
@@ -10105,18 +10486,26 @@ func (t *Tuple57[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F56)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple57[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple57[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple57[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56]) XoEq(o any) bool {
 	p, ok := o.(Tuple57[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54, p.F55, p.F56})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple57[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56)
 }
@@ -10434,18 +10823,26 @@ func (t *Tuple58[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F57)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple58[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple58[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple58[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57]) XoEq(o any) bool {
 	p, ok := o.(Tuple58[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54, p.F55, p.F56, p.F57})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple58[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57)
 }
@@ -10768,18 +11165,26 @@ func (t *Tuple59[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F58)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple59[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple59[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple59[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58]) XoEq(o any) bool {
 	p, ok := o.(Tuple59[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54, p.F55, p.F56, p.F57, p.F58})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple59[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58)
 }
@@ -11107,18 +11512,26 @@ func (t *Tuple60[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F59)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple60[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple60[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple60[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59]) XoEq(o any) bool {
 	p, ok := o.(Tuple60[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54, p.F55, p.F56, p.F57, p.F58, p.F59})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple60[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59)
 }
@@ -11451,18 +11864,26 @@ func (t *Tuple61[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F60)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple61[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple61[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple61[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60]) XoEq(o any) bool {
 	p, ok := o.(Tuple61[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54, p.F55, p.F56, p.F57, p.F58, p.F59, p.F60})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple61[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60)
 }
@@ -11800,18 +12221,26 @@ func (t *Tuple62[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F61)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple62[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple62[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60, t.F61)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple62[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61]) XoEq(o any) bool {
 	p, ok := o.(Tuple62[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60, t.F61}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54, p.F55, p.F56, p.F57, p.F58, p.F59, p.F60, p.F61})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple62[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60, t.F61)
 }
@@ -12154,18 +12583,26 @@ func (t *Tuple63[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F62)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple63[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple63[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60, t.F61, t.F62)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple63[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62]) XoEq(o any) bool {
 	p, ok := o.(Tuple63[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60, t.F61, t.F62}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54, p.F55, p.F56, p.F57, p.F58, p.F59, p.F60, p.F61, p.F62})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple63[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60, t.F61, t.F62)
 }
@@ -12513,18 +12950,26 @@ func (t *Tuple64[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, 
 	MarkP(&t.F63)
 }
 
+// XoProto: XoEq and XoHash may be left out (decision 0551).
+func (Tuple64[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62, T63]) XoProto() {
+}
+
 // XoDebug implements Debug.
 func (t Tuple64[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62, T63]) XoDebug(b *strings.Builder) {
 	tupleDebug(b, t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60, t.F61, t.F62, t.F63)
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq Tuple
 func (t Tuple64[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62, T63]) XoEq(o any) bool {
 	p, ok := o.(Tuple64[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62, T63])
 	return ok && tupleEq([]any{t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60, t.F61, t.F62, t.F63}, []any{p.F0, p.F1, p.F2, p.F3, p.F4, p.F5, p.F6, p.F7, p.F8, p.F9, p.F10, p.F11, p.F12, p.F13, p.F14, p.F15, p.F16, p.F17, p.F18, p.F19, p.F20, p.F21, p.F22, p.F23, p.F24, p.F25, p.F26, p.F27, p.F28, p.F29, p.F30, p.F31, p.F32, p.F33, p.F34, p.F35, p.F36, p.F37, p.F38, p.F39, p.F40, p.F41, p.F42, p.F43, p.F44, p.F45, p.F46, p.F47, p.F48, p.F49, p.F50, p.F51, p.F52, p.F53, p.F54, p.F55, p.F56, p.F57, p.F58, p.F59, p.F60, p.F61, p.F62, p.F63})
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Tuple
 func (t Tuple64[A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z, T26, T27, T28, T29, T30, T31, T32, T33, T34, T35, T36, T37, T38, T39, T40, T41, T42, T43, T44, T45, T46, T47, T48, T49, T50, T51, T52, T53, T54, T55, T56, T57, T58, T59, T60, T61, T62, T63]) XoHash() uint64 {
 	return tupleHash(t.F0, t.F1, t.F2, t.F3, t.F4, t.F5, t.F6, t.F7, t.F8, t.F9, t.F10, t.F11, t.F12, t.F13, t.F14, t.F15, t.F16, t.F17, t.F18, t.F19, t.F20, t.F21, t.F22, t.F23, t.F24, t.F25, t.F26, t.F27, t.F28, t.F29, t.F30, t.F31, t.F32, t.F33, t.F34, t.F35, t.F36, t.F37, t.F38, t.F39, t.F40, t.F41, t.F42, t.F43, t.F44, t.F45, t.F46, t.F47, t.F48, t.F49, t.F50, t.F51, t.F52, t.F53, t.F54, t.F55, t.F56, t.F57, t.F58, t.F59, t.F60, t.F61, t.F62, t.F63)
 }

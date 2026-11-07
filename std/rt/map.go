@@ -853,6 +853,8 @@ func Map_update[K, V, R, E any](tk *Task, m *Map[K, V], k K, init V, f func(*Tas
 }
 
 // XoEq implements Eq: the same entries, in any order.
+//
+//xo:proto eq Map
 func (m Map[K, V]) XoEq(o any) bool {
 	p, ok := o.(Map[K, V])
 	if !ok || m.n != p.n {
@@ -868,6 +870,8 @@ func (m Map[K, V]) XoEq(o any) bool {
 }
 
 // XoHash implements Hash, independent of order.
+//
+//xo:proto hash Map
 func (m Map[K, V]) XoHash() uint64 {
 	h := uint64(0x6d6170)
 	for k, v := range Map_All(m) {
@@ -1025,12 +1029,16 @@ func Set_map[T, U, E any](tk *Task, s Set[T], f func(*Task, T) Result[U, E]) Res
 }
 
 // XoEq implements Eq: the same elements, in any order.
+//
+//xo:proto eq Set
 func (s Set[T]) XoEq(o any) bool {
 	p, ok := o.(Set[T])
 	return ok && s.m.XoEq(p.m)
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Set
 func (s Set[T]) XoHash() uint64 { return s.m.XoHash() ^ 0x736574 }
 
 // XoDebug implements Debug: `#{1, 2}`.

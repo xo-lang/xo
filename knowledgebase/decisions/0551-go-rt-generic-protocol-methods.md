@@ -1,6 +1,6 @@
 # 0551: Go backend keeps rt's generic types' protocol methods only when reached
 
-Status: Proposed (Xo Lang 2, 2026-11-07)
+Status: Accepted (owner, 2026-11-07; proposed by Xo Lang 2, 2026-11-07)
 
 ## Context
 After decision 0542, `xo test --backend=go` of azure's armnetwork still

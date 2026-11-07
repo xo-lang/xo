@@ -1507,7 +1507,7 @@ func requestURLString(req Http_Request) string {
 	}
 	pu := &url.URL{RawQuery: req.XRawQuery}
 	want := urlOf(nil, pu).F_query
-	if !EqAny(want, req.F_url.F_query) {
+	if !queryEq(want, req.F_url.F_query) {
 		return us(req.F_url)
 	}
 	u := req.F_url
@@ -1566,4 +1566,20 @@ func sortStrings(xs []string) {
 			xs[j], xs[j-1] = xs[j-1], xs[j]
 		}
 	}
+}
+
+// queryEq compares two query maps without Map's XoEq, which the Go
+// backend leaves out of a program whose own code compares no Map
+// (decision 0551).
+func queryEq(a, b Map[string, string]) bool {
+	if a.n != b.n {
+		return false
+	}
+	for k, v := range Map_All(a) {
+		s := Map_find(&b, Hash(k), k)
+		if s == nil || s.v != v {
+			return false
+		}
+	}
+	return true
 }

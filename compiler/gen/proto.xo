@@ -393,9 +393,13 @@ fn (var g: Gen) proto_close() {
   var walked: Map[Int, Int] = {}
   for (t, bits) in roots {
     let before = g.proto_need.len()
+    let rt_before = g.proto_rt_sig()
     g.proto_walk(t, bits, walked)
     if g.opts.proto_why && g.proto_need.len() > before {
       g.proto_why_log.push("root ${g.c.show(t)} bits ${bits} (${g.proto_root_at.get(t) ?? "a key, constrained argument or running form"}): ${g.proto_need.len() - before} new types")
+    }
+    if g.opts.proto_why && g.proto_rt_sig() != rt_before {
+      g.proto_why_log.push("root ${g.c.show(t)} bits ${bits} (${g.proto_root_at.get(t) ?? "a key, constrained argument or running form"}): runtime generics now ${g.proto_rt_sig()}")
     }
   }
   // a user type that derives Eq, Hash or Ord says it is compared: it and
@@ -454,6 +458,7 @@ fn (var g: Gen) proto_walk(t0: Int, bits: Int, var walked: Map[Int, Int]) {
       g.proto_set_all(bits & P_GEN, "testing.gen reaches type parameter ${g.c.show(t)}")
     }
     Tuple => {
+      g.proto_rt_reach("Tuple", bits)
       for a in x.args {
         g.proto_walk(a, bits, walked)
       }
@@ -478,27 +483,132 @@ fn (var g: Gen) proto_walk(t0: Int, bits: Int, var walked: Map[Int, Int]) {
         return
       }
       if g.ostd(o) {
+        if g.oprelude(o) {
+          g.proto_rt_reach(g.oname(o), bits)
+        }
+        // a std type keeps every method, and its XoEq and XoHash compare
+        // and hash its fields: the runtime's generic types among them are
+        // reached (decision 0551)
+        if g.tkind(o) is "struct" | "newtype" | "enum" {
+          g.proto_walk_fields(o, t, bits, walked)
+        }
         return
       }
       g.proto_need[o] = (g.proto_need.get(o) ?? 0) | bits
-      let s = g.subst_of(o, t)
-      let k = g.tkind(o)
-      if k == "struct" {
-        for f in g.c.objs[o].fields {
-          g.proto_walk(g.sub_apply(f.ty, s), bits, walked)
-        }
-      } else if k == "newtype" {
-        g.proto_walk(g.sub_apply(g.c.objs[o].target, s), bits, walked)
-      } else if k == "enum" {
-        for v in g.c.objs[o].variants {
-          for f in v.fields {
-            g.proto_walk(g.sub_apply(f.ty, s), bits, walked)
-          }
-        }
-      }
+      g.proto_walk_fields(o, t, bits, walked)
     }
     _ => ()
   }
+}
+
+/// Walks the fields of type object o as instance t: a struct's fields, a
+/// newtype's target, an enum's payloads.
+fn (var g: Gen) proto_walk_fields(o: Int, t: Int, bits: Int, var walked: Map[Int, Int]) {
+  let s = g.subst_of(o, t)
+  let k = g.tkind(o)
+  if k == "struct" {
+    for f in g.c.objs[o].fields {
+      g.proto_walk(g.sub_apply(f.ty, s), bits, walked)
+    }
+  } else if k == "newtype" {
+    g.proto_walk(g.sub_apply(g.c.objs[o].target, s), bits, walked)
+  } else if k == "enum" {
+    for v in g.c.objs[o].variants {
+      for f in v.fields {
+        g.proto_walk(g.sub_apply(f.ty, s), bits, walked)
+      }
+    }
+  }
+}
+
+/// Records that protocols bits reach the runtime's generic type name
+/// (decision 0551): its marked methods of those protocols are kept. A
+/// Set is a Map underneath, and its methods call the Map's (XoEq,
+/// XoHash) and the List's (XoGenAny).
+fn (var g: Gen) proto_rt_reach(name: Str, bits: Int) {
+  if !(name is "List" | "Set" | "Map" | "Option" | "Result" | "Secret" | "Tuple") {
+    return
+  }
+  g.proto_rt[name] = (g.proto_rt.get(name) ?? 0) | bits
+  if name == "Set" {
+    g.proto_rt["Map"] = (g.proto_rt.get("Map") ?? 0) | bits
+    g.proto_rt["List"] = (g.proto_rt.get("List") ?? 0) | bits
+  }
+}
+
+/// The runtime generic types reached so far with their bits, for
+/// XO_GO_PROTO=why.
+fn (g: Gen) proto_rt_sig() -> Str {
+  var parts: List[Str] = []
+  for k in g.proto_rt.keys().sort() {
+    parts.push("${k}:${g.proto_rt.get(k) ?? 0}")
+  }
+  parts.join(" ")
+}
+
+/// The protocols each of the runtime's generic types keeps, by type
+/// name, with "*" for those every type keeps (decision 0551).
+fn (g: Gen) proto_rt_kept() -> Map[Str, Int] {
+  var m = g.proto_rt
+  m["*"] = if g.opts.proto_all { P_GEN | P_EQ | P_HASH } else { g.proto_all }
+  m
+}
+
+/// The bit a `//xo:proto` marker of std/rt names.
+fn proto_marker_bit(name: Str) -> Int {
+  match name {
+    "gen" => P_GEN
+    "eq" => P_EQ
+    "hash" => P_HASH
+    _ => 0
+  }
+}
+
+/// The text of std/rt file name with each method marked `//xo:proto BIT
+/// TYPE` left out when kept (proto_rt_kept) has neither that bit for TYPE
+/// nor for "*" (decision 0551). A marked method runs from its doc comment
+/// to the next `}` in column 0 after the marker, or is the line after the
+/// marker when that ends with `}`.
+pub fn rt_proto_prune(name: Str, text: Str, kept: Map[Str, Int]) -> Result[Str, Str] {
+  if !text.contains("//xo:proto ") {
+    return Ok(text)
+  }
+  let lines = text.split("\n")
+  var out: List[Str] = []
+  var i = 0
+  while i < lines.len() {
+    let l = lines[i]
+    if !l.starts_with("//xo:proto ") {
+      out.push(l)
+      i += 1
+      continue
+    }
+    let f = l.fields()
+    let bit = if f.len() == 3 { proto_marker_bit(f[1]) } else { 0 }
+    if bit == 0 || i + 1 >= lines.len() || !lines[i + 1].starts_with("func (") {
+      return Err("rt/${name}:${i + 1}: a //xo:proto marker is `//xo:proto gen|eq|hash TYPE` before a method (decision 0551)")
+    }
+    if ((kept.get("*") ?? 0) & bit) != 0 || ((kept.get(f[2]) ?? 0) & bit) != 0 {
+      out.push(l)
+      i += 1
+      continue
+    }
+    // the method's doc comment goes with it
+    while !out.is_empty() && out[out.len() - 1].starts_with("//") {
+      out.pop()
+    }
+    var j = i + 1
+    if !lines[j].ends_with("}") {
+      while j < lines.len() && lines[j] != "}" {
+        j += 1
+      }
+      if j >= lines.len() {
+        return Err("rt/${name}:${i + 2}: the method after a //xo:proto marker has no closing `}` in column 0 (decision 0551)")
+      }
+    }
+    i = j + 1
+  }
+  Ok(out.join("\n"))
 }
 
 /// The package text with the protocol methods no root reaches left out

@@ -101,12 +101,16 @@ func Result_map_err[T, E, F any](tk *Task, r Result[T, E], f func(*Task, E) Resu
 // The Option and Result methods for Eq, Hash, Ord, and Debug.
 
 // XoEq implements Eq.
+//
+//xo:proto eq Option
 func (o Option[T]) XoEq(x any) bool {
 	p, ok := x.(Option[T])
 	return ok && o.Some == p.Some && (!o.Some || Eq(o.V, p.V))
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Option
 func (o Option[T]) XoHash() uint64 {
 	if !o.Some {
 		return 0x6e6f6e65
@@ -140,6 +144,8 @@ func (o Option[T]) XoDebug(b *strings.Builder) {
 }
 
 // XoEq implements Eq; error frames are not part of the value.
+//
+//xo:proto eq Result
 func (r Result[T, E]) XoEq(x any) bool {
 	p, ok := x.(Result[T, E])
 	if !ok || r.Ok != p.Ok {
@@ -152,6 +158,8 @@ func (r Result[T, E]) XoEq(x any) bool {
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash Result
 func (r Result[T, E]) XoHash() uint64 {
 	if r.Ok {
 		return mix(0x6f6b, Hash(r.V))

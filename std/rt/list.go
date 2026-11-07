@@ -833,6 +833,8 @@ func List_group_by[T, K, E any](tk *Task, l List[T], key func(*Task, T) Result[K
 }
 
 // XoEq implements Eq.
+//
+//xo:proto eq List
 func (l List[T]) XoEq(o any) bool {
 	m, ok := o.(List[T])
 	if !ok || len(l.s) != len(m.s) {
@@ -847,6 +849,8 @@ func (l List[T]) XoEq(o any) bool {
 }
 
 // XoHash implements Hash.
+//
+//xo:proto hash List
 func (l List[T]) XoHash() uint64 {
 	h := uint64(0x6c697374)
 	for _, x := range l.s {

@@ -18,11 +18,17 @@ hashing or generating a value that the walk does not know is not a root,
 so the method is missing and the runtime's EqAny, HashAny or Gen faults
 instead of using reflection (which gives wrong answers for Xo values).
 
+Since decision 0551 the same holds for the runtime's generic types: the
+fault names `rt.Option[int64]`, `rt.List[...]`, `rt.Tuple2[...]` and so
+on when no root reaches that generic type with the protocol (std/rt's
+`//xo:proto` marked methods are left out of the build tree).
+
 Fix: as a stopgap, build with `XO_GO_PROTO=all`, which writes every
 protocol method as before 0542. Then add the missing root to
 compiler/gen/proto.xo (proto_root at the generator site, or a case in
 proto_close or proto_walk) and a case to the golden
-internal/llvm/testdata/golden/go_proto_roots that fails without it.
+internal/llvm/testdata/golden/go_proto_roots (go_proto_rt for a runtime
+generic type) that fails without it.
 
 The other direction (Observed, 2026-11-07): a package keeps XoEq or
 XoHash on many types nothing compares (9257e25d8 kept all 3,290 of

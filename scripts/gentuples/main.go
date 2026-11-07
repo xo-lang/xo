@@ -71,9 +71,10 @@ import "strings"
 			fmt.Fprintf(&b, "\tMarkP(&t.F%d)\n", i)
 		}
 		b.WriteString("}\n")
+		fmt.Fprintf(&b, "\n// XoProto: XoEq and XoHash may be left out (decision 0551).\nfunc (%s) XoProto() {}\n", ty)
 		fmt.Fprintf(&b, "\n// XoDebug implements Debug.\nfunc (t %s) XoDebug(b *strings.Builder) {\n\ttupleDebug(b, %s)\n}\n", ty, fields("t", n))
-		fmt.Fprintf(&b, "\n// XoEq implements Eq.\nfunc (t %s) XoEq(o any) bool {\n\tp, ok := o.(%s)\n\treturn ok && tupleEq([]any{%s}, []any{%s})\n}\n", ty, ty, fields("t", n), fields("p", n))
-		fmt.Fprintf(&b, "\n// XoHash implements Hash.\nfunc (t %s) XoHash() uint64 {\n\treturn tupleHash(%s)\n}\n", ty, fields("t", n))
+		fmt.Fprintf(&b, "\n// XoEq implements Eq.\n//\n//xo:proto eq Tuple\nfunc (t %s) XoEq(o any) bool {\n\tp, ok := o.(%s)\n\treturn ok && tupleEq([]any{%s}, []any{%s})\n}\n", ty, ty, fields("t", n), fields("p", n))
+		fmt.Fprintf(&b, "\n// XoHash implements Hash.\n//\n//xo:proto hash Tuple\nfunc (t %s) XoHash() uint64 {\n\treturn tupleHash(%s)\n}\n", ty, fields("t", n))
 		fmt.Fprintf(&b, "\n// XoCmp implements Ord.\nfunc (t %s) XoCmp(o any) int {\n\tp := o.(%s)\n\treturn tupleCmp([]any{%s}, []any{%s})\n}\n", ty, ty, fields("t", n), fields("p", n))
 		fmt.Fprintf(&b, "\n// XoJsonEnc encodes a tuple as an array.\nfunc (t %s) XoJsonEnc(tk *Task, w *JsonW) {\n\tw.ArrStart()\n", ty)
 		for i := range ns {

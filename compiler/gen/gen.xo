@@ -73,6 +73,9 @@ pub struct Program {
   pub skipped: List[Str] = []
   /// Why every type keeps a protocol (XO_GO_PROTO=why).
   pub proto_why: List[Str] = []
+  /// The protocols each of the runtime's generic types keeps, by type
+  /// name, "*" for every type (decision 0551; rt_proto_prune).
+  pub rt_proto: Map[Str, Int] = {}
 }
 
 /// A reference to one test of the test table (support.go testRef).
@@ -190,6 +193,9 @@ pub struct Gen {
   /// object (proto.xo, decision 0542)
   proto_roots: Map[Int, Int] = {}
   proto_need: Map[Int, Int] = {}
+  /// the protocols that reach each of the runtime's generic types, by
+  /// name (decision 0551)
+  proto_rt: Map[Str, Int] = {}
   /// interface object: the types converted to it (proto.xo)
   proto_ifs: Map[Int, List[Int]] = {}
   /// a generic function's generic form: the protocols a type parameter in
@@ -254,6 +260,7 @@ fn (var g: Gen) run() -> Program {
     g.drain_specs()
   }
   g.proto_close()
+  prog.rt_proto = g.proto_rt_kept()
   prog.proto_why = g.proto_why_log
   if !g.errs.is_empty() {
     prog.err = g.errs.join("\n")

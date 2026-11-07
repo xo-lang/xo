@@ -194,6 +194,8 @@ func genStr(g *GenRand) string {
 }
 
 // XoGenAny generates a list.
+//
+//xo:proto gen List
 func (List[T]) XoGenAny(g *GenRand) any {
 	g.Enter()
 	defer g.Leave()
@@ -206,12 +208,16 @@ func (List[T]) XoGenAny(g *GenRand) any {
 }
 
 // XoGenAny generates a set.
+//
+//xo:proto gen Set
 func (Set[T]) XoGenAny(g *GenRand) any {
 	l := List[T]{}.XoGenAny(g).(List[T])
 	return List_to_set(nil, l)
 }
 
 // XoGenAny generates a map.
+//
+//xo:proto gen Map
 func (Map[K, V]) XoGenAny(g *GenRand) any {
 	g.Enter()
 	defer g.Leave()
@@ -223,6 +229,8 @@ func (Map[K, V]) XoGenAny(g *GenRand) any {
 }
 
 // XoGenAny generates an optional.
+//
+//xo:proto gen Option
 func (Option[T]) XoGenAny(g *GenRand) any {
 	if g.Deep() || g.Intn(4) == 0 {
 		return Option[T]{}
@@ -233,6 +241,8 @@ func (Option[T]) XoGenAny(g *GenRand) any {
 }
 
 // XoGenAny generates a Result.
+//
+//xo:proto gen Result
 func (Result[T, E]) XoGenAny(g *GenRand) any {
 	g.Enter()
 	defer g.Leave()
@@ -243,21 +253,29 @@ func (Result[T, E]) XoGenAny(g *GenRand) any {
 }
 
 // XoGenAny generates a tuple.
+//
+//xo:proto gen Tuple
 func (Tuple2[A, B]) XoGenAny(g *GenRand) any {
 	return Tuple2[A, B]{Gen[A](g), Gen[B](g)}
 }
 
 // XoGenAny generates a tuple.
+//
+//xo:proto gen Tuple
 func (Tuple3[A, B, C]) XoGenAny(g *GenRand) any {
 	return Tuple3[A, B, C]{Gen[A](g), Gen[B](g), Gen[C](g)}
 }
 
 // XoGenAny generates a tuple.
+//
+//xo:proto gen Tuple
 func (Tuple4[A, B, C, D]) XoGenAny(g *GenRand) any {
 	return Tuple4[A, B, C, D]{Gen[A](g), Gen[B](g), Gen[C](g), Gen[D](g)}
 }
 
 // XoGenAny generates a secret.
+//
+//xo:proto gen Secret
 func (Secret[T]) XoGenAny(g *GenRand) any { return Secret[T]{v: Gen[T](g)} }
 
 // XoGenAny generates a boxed field value.

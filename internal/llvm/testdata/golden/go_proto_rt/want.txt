@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+option ==: true false
+result ==: true false
+list ==: true true
+tuple ==: true false
+option key: two none 2
+tuple key: 1 2
+set of lists: 2 true
+contains map: true -1
+generic: true false true
+nested ==: true false
+--- stderr
