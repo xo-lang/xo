@@ -866,6 +866,18 @@ pub fn sha256_block_r16(st: Int, p: Int, k: Int) {
 /// sha512hw.xo's instructions.
 pub fn sha512_block(st: Int, p: Int, k: Int) { sha512_block_soft(st, p, k) }
 
+/// sha512_block of the n blocks at p, one after another. arm64 (native
+/// and LLVM, ssa sha512hw.xo): one loop with the state in vector
+/// registers throughout; elsewhere (and an xo that does not lower it) a
+/// sha512_block a block.
+pub fn sha512_blocks(st: Int, p: Int, n: Int, k: Int) {
+  var j = 0
+  while j < n {
+    sha512_block(st, p.wrapping_add(128 * j), k)
+    j += 1
+  }
+}
+
 /// The big endian 64 bit word at a + o.
 fn be64(a: Int, o: Int) -> Int { rt.mem_load(a, o, 8).swap_bytes() }
 

@@ -44,12 +44,13 @@ var x86Needs = map[string]string{
 // check of their own because every caller checks: file:function and the
 // check.
 var x86GateHelpers = map[string]string{
-	"aesgcm.xo:hw_n":        "encrypt_n and encrypt4 check c.hw & HW_AES",
-	"aesgcm.xo:enc_at":      "its callers ctr_at (from ctr_o), ctr_at_a (from seal_into_at) and tag_fin check HW_AES",
-	"aesgcm.xo:mul_hw":      "mul checks g.hw & HW_CLMUL",
-	"aesgcm.xo:ghash_hw":    "ghash_o checks HW_CLMUL",
-	"aesgcm.xo:sub_word_hw": "schedule calls it only under aes, its hw & HW_AES",
-	"aesgcm.xo:gcm_bulk":    "every caller checks g.fused() (HW_AES and HW_CLMUL), seal_fused's callers seal_into and seal_into_aad too",
+	"aesgcm.xo:hw_n":           "encrypt_n and encrypt4 check c.hw & HW_AES",
+	"aesgcm.xo:enc_at":         "its callers ctr_at (from ctr_o), ctr_at_a (from seal_into_at) and tag_fin check HW_AES",
+	"aesgcm.xo:mul_hw":         "mul checks g.hw & HW_CLMUL",
+	"aesgcm.xo:ghash_hw":       "ghash_o checks HW_CLMUL",
+	"aesgcm.xo:sub_word_hw":    "schedule calls it only under aes, its hw & HW_AES",
+	"aesgcm.xo:gcm_bulk":       "every caller checks g.fused() (HW_AES and HW_CLMUL), seal_fused's callers seal_into and seal_into_aad too",
+	"sha256.xo:block512_hw_at": "its one caller, digest.xo sha512_at, checks HW_SHA512",
 }
 
 var x86Call = regexp.MustCompile(`\bcpu\.([a-z0-9_]+)\(`)

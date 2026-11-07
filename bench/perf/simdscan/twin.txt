@@ -12,6 +12,8 @@
 - - crc32
 - - sha256
 - - sha1
+- - sha512
+- - hmac256
 - - fold
 - - fold_32
 - - lower

@@ -61,3 +61,41 @@ pub fn sha512_a64_lines(st: Str, p: Str, k: Str) -> List[Str] {
   }
   t
 }
+
+/// The V registers sha512_a64_loop_lines writes: sha512_a64_lines' (v0
+/// to v4, v16 to v24, v29 to v31) and the state before each block (v25
+/// to v28).
+pub fn sha512_loop_vregs() -> List[Int] { [0, 1, 2, 3, 4, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] }
+
+/// cpu.sha512_blocks on arm64 (as ssa a64sha256.xo for SHA-256): the n
+/// blocks at d, sha512_a64_lines' round pairs in a loop with the state in
+/// v0 to v3 throughout (the 40 pairs end where they began), the state
+/// before each block in v25 to v28; p and c are scratch registers for
+/// the data pointer and the blocks left.
+pub fn sha512_a64_loop_lines(st: Str, d: Str, n: Str, k: Str, p: Str, c: Str) -> List[Str] {
+  let ls = sha512_a64_lines(st, p, k)
+  // sha512_a64_lines: 4 state loads, 16 message lines, the round pairs,
+  // 12 lines of sums
+  let a = 20
+  let e = ls.len() - 12
+  if ls[a] != "ldr q24, [${k}, #0]" || ls[e] != "ldr q24, [${st}, #0]" {
+    fault("sha512_a64_loop_lines: sha512_a64_lines changed shape")
+  }
+  var t = ls[0..4] + ["mov ${p}, ${d}", "mov ${c}, ${n}", "cbz ${c}, 2f", "1:"]
+  for i in 0..4 {
+    t.push("mov v${25 + i}.16b, v${i}.16b")
+  }
+  t = t + ["ldp q16, q17, [${p}], #32", "ldp q18, q19, [${p}], #32", "ldp q20, q21, [${p}], #32", "ldp q22, q23, [${p}], #32"]
+  for i in 0..8 {
+    t.push("rev64 v${16 + i}.16b, v${16 + i}.16b")
+  }
+  t = t + ls[a..e]
+  for i in 0..4 {
+    t.push("add v${i}.2d, v${i}.2d, v${25 + i}.2d")
+  }
+  t = t + ["subs ${c}, ${c}, #1", "b.ne 1b", "2:"]
+  for i in 0..4 {
+    t.push("str q${i}, [${st}, #${16 * i}]")
+  }
+  t
+}

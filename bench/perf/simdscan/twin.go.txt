@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
+	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -255,6 +257,22 @@ func main() {
 			for _, b := range big {
 				h := sha1.Sum(b)
 				sum += int(h[0])
+			}
+		}
+	case "sha512":
+		for p := 0; p < passes/8; p++ {
+			for _, b := range big {
+				h := sha512.Sum512(b)
+				sum += int(h[0])
+			}
+		}
+	case "hmac256":
+		key := []byte("0123456789abcdef0123456789abcdef")
+		for p := 0; p < passes; p++ {
+			for _, b := range big {
+				m := hmac.New(sha256.New, key)
+				m.Write(b[:32])
+				sum += int(m.Sum(nil)[0])
 			}
 		}
 	case "quote":

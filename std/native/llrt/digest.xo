@@ -13,6 +13,7 @@
 // 64 bit word as the Int of the same bits; the arithmetic that wraps is
 // rt.int_wrap (0 add, 5 rotate right, 6 rotate the low 32 bits right, 7
 // reverse the bytes), which the native backends lower to one instruction.
+use native/llrt/cpu
 use native/llrt/ct
 use native/llrt/digest_tables
 use native/llrt/sha256 as sha2
@@ -545,12 +546,17 @@ pub fn verify_password(password: Str, hash: Str) -> Bool {
 }
 
 // ---------------------------------------------------------------------------
-/// SHA-512's compression of the block at p into st: digest_tables'
-/// unrolled rounds, or on wasm sha2.block512_at's loop of 16 (the
-/// unrolled are 38 KB of a module).
+/// SHA-512's compression of the block at p into st: the CPU's
+/// instructions when it has them (sha2.block512_hw_at), else
+/// digest_tables' unrolled rounds, or on wasm sha2.block512_at's loop of
+/// 16 (the unrolled are 38 KB of a module).
 fn sha512_at(var st: List[Int], p: Int) {
   if target.arch == TargetArch.Wasm32 {
     sha2.block512_at(st, p)
+    return
+  }
+  if (cpu.hw() & cpu.HW_SHA512) != 0 {
+    sha2.block512_hw_at(st, p)
     return
   }
   digest_tables.sha512_block(st, p)

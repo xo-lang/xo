@@ -111,6 +111,25 @@ pub fn blocks256(var st: List[Int], b: Bytes, i: Int, n: Int) {
   }
 }
 
+/// The SHA-384 and SHA-512 compression of the n blocks of b from i: with
+/// the CPU's instructions one cpu.sha512_blocks call (a loop with the
+/// state in registers on arm64), else compress a block.
+fn blocks512(hash: Int, var st: List[Int], b: Bytes, i: Int, n: Int) {
+  if n > 1 && target.arch != TargetArch.Wasm32 && (cpu.hw() & cpu.HW_SHA512) != 0 {
+    // as block256: an index store first, so the raw writes change only st
+    st[0] = st[0]
+    cpu.sha512_blocks(rt.obj_addr(st).wrapping_add(rt.layout(2)), raw.bytes_addr(b).wrapping_add(i), n, raw.bytes_addr(K512))
+    keep(b)
+    keep_ints(st)
+    return
+  }
+  var j = 0
+  while j < n {
+    compress(hash, st, b, i + 128 * j)
+    j += 1
+  }
+}
+
 /// SHA-256's compression of the block of the 16 words m (UInt32s, as
 /// digest_tables.sha256_words takes them) into st: with the CPU's
 /// instructions, the words packed big endian first.
@@ -132,6 +151,15 @@ pub fn words256(var st: List[Int], m: List[Int]) {
 pub fn block512_at(var st: List[Int], p: Int) {
   st[0] = st[0]
   cpu.sha512_block_r16(rt.obj_addr(st).wrapping_add(rt.layout(2)), p, raw.bytes_addr(K512))
+  keep_ints(st)
+}
+
+/// SHA-512's compression of the 128 bytes at address p into st with the
+/// CPU's instructions (cpu.sha512_block), for digest.xo's Ed25519 hash;
+/// call it only when cpu.hw() has HW_SHA512.
+pub fn block512_hw_at(var st: List[Int], p: Int) {
+  st[0] = st[0]
+  cpu.sha512_block(rt.obj_addr(st).wrapping_add(rt.layout(2)), p, raw.bytes_addr(K512))
   keep_ints(st)
 }
 
@@ -198,9 +226,15 @@ pub fn (var h: Hasher) write(data: Bytes) {
     compress(h.hash, st, held, 0)
     h.held = b""
   }
-  if is256(h.hash) {
-    let nb = (n - i) / bs
-    blocks256(st, data, i, nb)
+  // two blocks or more in one loop; one (an HMAC pad, a short write) as
+  // before, with no extra call
+  let nb = (n - i) / bs
+  if nb > 1 {
+    if is256(h.hash) {
+      blocks256(st, data, i, nb)
+    } else {
+      blocks512(h.hash, st, data, i, nb)
+    }
     i += nb * bs
   }
   while n - i >= bs {

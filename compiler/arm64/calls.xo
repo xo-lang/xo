@@ -2016,6 +2016,18 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.sha512_blocks" => {
+      // arm64 only (ssa call.xo): ssa.sha512_a64_loop_lines, $u0 the
+      // state, $u1 the data, $u2 the blocks, $u3 the round constants; x9
+      // and x10 its pointer and count, its V registers clobbered
+      var cl = [9, 10]
+      for r in ssa.sha512_loop_vregs() {
+        cl.push(FP_BASE + r)
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.sha512_a64_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.ghash_blocks" => {
       // ssa.ghash_loop_lines: $u0 the state, $u1 the H powers, $u2 the
       // data, $u3 its length; x9 and x10 its pointer and count, its V

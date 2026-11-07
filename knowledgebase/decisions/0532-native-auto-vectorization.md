@@ -299,6 +299,8 @@ The remaining step 2 candidates (2026-11-07, host 1, --ab against main):
 | png up-unfilter | the row buffer as a Bytes written by address, the up filter a word at a time | 0.975 (0.962 to 0.985); dropped: std/png also builds on the Go backend from std/native/png.xo (std/go_compiled.txt), which has no raw addresses or rt intrinsics, and inflate is most of decode (branch lang1-pngup) |
 | SHA-256 over many blocks | cpu.sha256_blocks: one loop with the state in registers (arm64 SHA2, x86-64 SHA-NI), where each block was a call that saved and packed the state | simdscan sha256 0.884 (0.871 to 0.894, n=6); x86-64 (amd64 host, SHA-NI) 0.79 of main by medians of 9 runs; pushed |
 | SHA-1 over many blocks | cpu.sha1_blocks: one loop with abcd and e in registers (arm64 SHA1, x86-64 SHA-NI), as SHA-256 | simdscan sha1 0.884 (0.873 to 0.899, n=6), perf/sha1 (sums and HMAC-SHA1) 0.977 (0.973 to 0.984); x86-64 (amd64 host, SHA-NI) 74 to 64 ms, 0.86 of main by medians of 9 runs; pushed |
+| SHA-512 over many blocks | cpu.sha512_blocks: one loop with the state in four registers (arm64 SHA512); a one block write calls the one block routine again, for SHA-256 too | simdscan sha512 0.965 (0.958 to 0.976, n=6); hmac256 1.002, within noise; pushed |
+| Ed25519 SHA-512 | digest.xo sha512_at calls cpu.sha512_block when HW_SHA512 (it ran the Xo rounds) | ed25519 sign 0.985 (0.972 to 0.993, n=6), verify within noise; pushed |
 
 ## Consequences
 
