@@ -648,7 +648,11 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(work)
+	// a cleanup, not a defer: the orders below are parallel subtests,
+	// which run after this function returns, so a deferred removal ran
+	// before them, deleted the first pass's cache and owner.pid, and left
+	// the 2 GB the orders wrote for no one to remove (2026-11-06, host 1)
+	t.Cleanup(func() { os.RemoveAll(work) })
 	runs, err := filepath.Glob(filepath.Join("testdata", "run", "*"))
 	if err != nil {
 		t.Fatal(err)
