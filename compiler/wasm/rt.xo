@@ -1854,11 +1854,17 @@ fn rt_text(var g: Gen) -> Str {
       i32.store offset=8
       local.get $p)
 
-    ;; the fewest elements a new list holds: 4, or 1 for elements over 256
-    ;; bytes (obj.xo min_cap, decision 0452's addendum)
+    ;; the fewest elements a new list holds: 1 for elements over 256 bytes,
+    ;; 2 for 8 bytes or less, else 4 (obj.xo min_cap, decision 0452's
+    ;; addendum, 0448)
     (func $min_cap (param $es i32) (result i32)
       i32.const 1
+      i32.const 2
       i32.const 4
+      local.get $es
+      i32.const 8
+      i32.le_u
+      select
       local.get $es
       i32.const 256
       i32.gt_u

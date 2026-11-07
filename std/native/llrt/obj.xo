@@ -268,12 +268,14 @@ fn try_pop(h: Int, cap: Int, esize: Int) -> Int {
   l
 }
 
-/// The fewest elements a new list holds: 4, or 1 for elements over 256
-/// bytes (decision 0452's addendum: four of them are over 1 KiB, and a
-/// list of one big struct, a connection's state, held four slots). The
-/// LLVM backend (compiler/llvm/call.xo list.new) and the wasm runtime
+/// The fewest elements a new list holds: 1 for elements over 256 bytes
+/// (decision 0452's addendum: four of them are over 1 KiB, and a list of
+/// one big struct, a connection's state, held four slots), 2 for elements
+/// of 8 bytes or less (0448: the compiler's SSA holds millions of one and
+/// two Int lists, 56 byte blocks with four slots, 40 with two), else 4.
+/// The LLVM backend (compiler/llvm/call.xo list.new) and the wasm runtime
 /// (compiler/wasm/rt.xo rl_new_n) state the same rule.
-pub fn min_cap(esize: Int) -> Int { if esize > 256 { 1 } else { 4 } }
+pub fn min_cap(esize: Int) -> Int { if esize > 256 { 1 } else if esize <= 8 { 2 } else { 4 } }
 
 /// A new empty list object with room for n elements (at least min_cap) of
 /// esize bytes (xo_rl_new_n).

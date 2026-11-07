@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: perf: a List of word-sized elements starts with room for 2, not 4 (decision 0452 addendum, accepted by the owner 2026-11-07)
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0448's heap profile of the self build (SSA renumbering's argument lists of one or two Int ids, each a 56 byte block)
+- Go reference: none (Go's append from nil grows 1, 2, 4, 8 for 8 byte elements; Xo keeps a floor)
+- Test: the native, LLVM and wasm goldens (capacity is not observable); internal/selfhost wasm, test/codegen patterns 36/36, selfbuild
+- Timing (ab-host, linux/arm64, 5 rounds): xo's self build max RSS 0.956 (0.927 to 0.97), wall 0.994 and CPU 0.995 within noise; bench/perf/alloc small and grow within noise.
+- Shipped in: not yet released
+
+A new list whose elements are 8 bytes or less (Int, Float, Bool, Rune, a reference) has room for 2 elements before it first grows, where it had 4; its first growth goes to 4, as before. A list of one or two words takes a 40 byte block instead of 56.
+
 ## 2026-11-07: fix: a stack overflow on Linux and macOS is reported as one
 
 - Kind: fix

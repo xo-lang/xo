@@ -92,11 +92,11 @@ fn (var g: Gen) call(v: Int) {
         g.emit("store i64 1, ptr ${p}${TBAA_RC}")
         let lp = g.def("getelementptr %xo.rlist, ptr ${p}, i32 0, i32 1")
         g.emit("store i64 0, ptr ${lp}${TBAA_HDR}")
-        // max(n, obj.min_cap(esize)): 1 for elements over 256 bytes, else 4
-        // (decision 0452's addendum). A constant folded here, else
-        // llvm.smax (no `select`: test/codegen consttime forbids one in
-        // sc_reduce)
-        let mc = if g.esize(et) > 256 { 1 } else { 4 }
+        // max(n, obj.min_cap(esize)): 1 for elements over 256 bytes, 2 for
+        // 8 bytes or less, else 4 (decision 0452's addendum, 0448). A
+        // constant folded here, else llvm.smax (no `select`: test/codegen
+        // consttime forbids one in sc_reduce)
+        let mc = if g.esize(et) > 256 { 1 } else if g.esize(et) <= 8 { 2 } else { 4 }
         let cap = if let Some(k) = Int.parse(a0) { "${k.max(mc)}" } else { g.def("call i64 @llvm.smax.i64(i64 ${a0}, i64 ${mc})") }
         let cp = g.def("getelementptr %xo.rlist, ptr ${p}, i32 0, i32 2")
         g.emit("store i64 ${cap}, ptr ${cp}${TBAA_HDR}")

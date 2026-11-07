@@ -122,3 +122,27 @@ table; the lists path's entry lists sized to the next rebuild): map1M
 curve stays; code that knows a length makes the list with it, as Go's
 runtime makes a map's buckets.
 
+## Addendum 2026-11-07: a list of word-sized elements starts at two slots (Accepted)
+
+Accepted (owner, 2026-11-07); proposed by Xo Lang 2 (decision 0448's memory work). The
+floor of 4 that the 2026-11-01 addendum kept for elements up to 256 bytes becomes 2 for
+elements of 8 bytes or less: `obj.min_cap(esize)` is 1 over 256 bytes, 2 at 8 bytes or less,
+else 4, and the same rule stands in compiler/llvm/call.xo (`list.new`) and compiler/wasm/rt.xo
+(`$min_cap`); arm64 calls obj.xo. Growth from 2 goes to 4 (grow's `cap < 4` step), so a list
+that grows past two elements costs one extra copy of at most 16 bytes.
+
+Why: past insert_rc in the self build, SSA renumbering's lists hold about 80% of the heap,
+most of them argument lists of one or two Int ids, each a 56 byte block (24 byte header and 4
+slots); with 2 slots, 40 bytes.
+
+Measured on linux/arm64 host 1 (ab-host, efdc37c8d against its parent, 5 rounds, an exclusive
+host; the loads of 6 to 8 are the parallel self build's own, baseline 0.98): the self build's
+max RSS 0.956 (0.927 to 0.97), wall 0.994 and CPU 0.995 (within noise). bench/perf/alloc small (34 ms) wall 1.021 and grow (2.6 ms) wall 0.994, max RSS 1.0 both, within noise (load 0.2 and 1.0). An earlier
+self run (b58fcc97c, native only, all 5 rounds loaded): max RSS 0.946 (0.93 to 0.984), wall
+0.995, CPU 1.0. Host 2 heap profile, one run: max RSS 3,640 against 3,915 MB, build peak 4,505
+against 4,753 MB.
+
+Gate (efdc37c8d, linux/arm64 host 1): every LLVM golden (615 and the -O2 sample), codegen
+patterns 36/36, wasm goldens, selfbuild (33 s, peak 4,800 MB); the arm64 step's failures were
+the known out of memory family (TestStdRecordBindRetry, TestSepcomp*, TestTracebackSeparate:
+exit 137, fixed by Lang 4's limiter 41fd45b08), not this change.
