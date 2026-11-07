@@ -18,6 +18,11 @@ func TestGenericMethodSets(t *testing.T) {
 		"XoEq": true, "XoHash": true, "XoCmp": true, "XoDebug": true,
 		"XoJsonEnc": true, "XoJsonDec": true, "XoJsonRead": true,
 		"XoGenAny": true, "XoMark": true, "M_display": true, "M_debug": true,
+		// the protoType marker (decision 0551): EqAny and the hash's type
+		// switch reach it through that interface, so a type the prune may
+		// have left without XoEq or XoHash faults instead of falling back
+		// to reflection; an empty method, one per instantiation
+		"XoProto": true,
 	}
 	for _, v := range []any{
 		List[int64]{}, Map[string, int64]{}, Set[string]{}, Option[int64]{},
