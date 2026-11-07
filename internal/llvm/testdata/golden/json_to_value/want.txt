@@ -16,7 +16,7 @@ shapes same [{circle={r=I2}},{moved={dx=I0,dy=I0,note=null}},S3:dot]
 frames same [{t=S3:Pos,c={dx=I5,dy=I6,note=null}},{t=S5:Close},{t=S4:Data,c={seq=I1,payload=S0:}}]
 inbound same [{type=S4:join,room=S1:r},{type=S4:ping}]
 opt same [I1,null]
-map same {k=[N1.5,I2],=[]}
+map same {=[],k=[N1.5,I2]}
 str same S5:plain
 unit same null
 value same {a=[I1,N2.5,I1,S1:x],b=null}

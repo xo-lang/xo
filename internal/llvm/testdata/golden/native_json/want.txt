@@ -21,7 +21,7 @@ err: at $[0]: unknown variant `Nope`
 err: at $[0].Rect: missing field `h`
 err: at $[0].Rect: expected object
 err: at $[0]: variant `Rect` needs fields
-ok: {"b":3,"a":2}
+ok: {"a":2,"b":3}
 err: at $.a: expected integer
 ok: "1h2m3.5s"
 ok: null
