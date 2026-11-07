@@ -3498,7 +3498,9 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     return Err(e)
   }
   if testworld.fake(4) {
-    if !req.src.is_empty() && !wasiworld.component() {
+    if !wasiworld.component() {
+      // the head at once, then the body as the handler writes it (an
+      // http.stream's flushes arrive one by one), a source body or not
       return open_mem(c, req, raw)
     }
     // FakeNet: the whole response, read as a stream
@@ -3988,13 +3990,14 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
 /// first, then the FakeNet.handle handler whose route has the most
 /// literal segments, then the router serving the in memory listener of
 /// the URL's host and port.
-/// Client.open under FakeNet for a request whose body is a source
-/// (http.pipe): the handler runs in a task with the source as its request
-/// body, so it can answer while the sender still writes; the head and the
-/// body come back through channels (MemOut).
+/// Client.open under FakeNet: the handler runs in a task with the request
+/// body (a source from http.pipe, or the whole body) as its body, so it
+/// can answer while the sender still writes; the head and the body come
+/// back through channels (MemOut), an http.stream body chunk by chunk.
 fn open_mem(c: Client, req: Request, raw: Str) -> http.ClientStream ! http.ClientErr {
   let m = MemOut{head: Chan[MemHead].new(1), chunks: Chan[Bytes].new(16), stop: Chan[Int].new(1)}
-  let body = BodyReader{st: Mutex[BodyState].new(BodyState{next: req.src, finish: [], data: b"", pos: 0, err: "", end: false})}
+  // a whole body is read from data (body_reader_of's default)
+  let body = BodyReader{st: Mutex[BodyState].new(BodyState{next: req.src, finish: [], data: if req.src.is_empty() { req.body } else { b"" }, pos: 0, err: "", end: false})}
   let q = req with {src: [], values: [ReqValue{name: STREAM_BODY, v: rt.any_of(body)}]}
   let ds = hserve.srv_new()
   let g = hserve.srv_group(ds)
@@ -4063,7 +4066,10 @@ fn send_mem(req: Request, raw: Str, streamed: Bool = false) -> http.Response ! h
   }
   if best >= 0 {
     if let Some(h) = rt.any_get[fn(Request) -> http.Response](testworld.fake_value(0, best)) {
-      return h(req with {params: best_params})
+      // an http.stream body is made here, as Router.call does; open_mem
+      // (streamed) runs it as chunks
+      let resp = h(req with {params: best_params})
+      return Ok(if streamed { resp } else { collect(resp) })
     }
   }
   // the default port when the URL has none, as a real dial would use

@@ -2710,15 +2710,18 @@ fn (n: FakeNet) requests() -> List[http.Request]     // every request seen, incl
   a real socket's backlog (a test that never serves it reports a deadlock
   naming the wait); after `serve` returns, requests fail with
   `ClientErr.Connect`.
-- A request reaches a handler or a served router as one call, and the
-  whole response comes back. `Client.open` of a request whose body is a
-  source (`http.pipe`, `with_body_reader`) is full duplex (2026-11-04): the
-  handler runs in its own task with the source as its request body, the
-  head comes back when the handler returns its response, and a streamed
-  response's writes reach `read` as they are made, so a test can write,
-  read the answer and write again before it closes the pipe. Only tasks and
-  channels carry it, so the test scheduler's seed and replay hold. A
-  FakeNet handler (`handle`) takes the request whole, as before.
+- `Client.send` reaches a handler or a served router as one call, and
+  the whole response comes back, an `http.stream` body made in full
+  (2026-11-07: a `handle` handler's stream came back empty natively).
+  `Client.open` runs the handler in its own task (2026-11-07 for every
+  request; from 2026-11-04 for one whose body is a source, `http.pipe` or
+  `with_body_reader`, which is then full duplex): the request body is the
+  source or the whole body, the head comes back when the handler returns
+  its response, and a streamed response's writes reach `read` as they are
+  flushed, so a test can read one server-sent event before the handler
+  writes the next, or write, read the answer and write again before it
+  closes the pipe. Only tasks and channels carry it, so the test
+  scheduler's seed and replay hold.
 - Raw connections (decision 0292): `os.net.dial(addr)` connects to the
   open in memory listener at `addr` and returns at once, the connection
   waiting in the listener's backlog until `accept()` returns its other

@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-07: fix: a FakeNet handler's http.stream body reaches Client.send and Client.open, and open reads it flush by flush
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19: azcore's server-sent events tests: a `FakeNet.handle` handler answering `http.stream(...)` gave an empty body through both `send` and `open` (natively)
+- Go reference: net/http/httptest ResponseRecorder for the whole body; an http.Response.Body that returns each flushed write for open
+- Test: cmd/xo TestFakeNetStreamBody (Go backend, arm64, LLVM)
+- Shipped in: not yet released
+
+Natively, `send` now runs a `handle` handler's `http.stream` function into the body, as a served router's call already did; before, the body came back empty. On both backends `Client.open` under FakeNet now runs the handler in its own task for every request, not only one with a source body, so a streamed response reaches `read` flush by flush: a test can read one event before the handler writes the next. A request's whole body reaches the handler as its body, read whole or as a stream.
+
 ## 2026-11-06: feature: http.status_text, net/http's StatusText
 
 - Kind: feature

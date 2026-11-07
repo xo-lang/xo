@@ -131,16 +131,9 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 		return Err[Http_ClientStream](e)
 	}
 	if fd, ok := c.net.(fakeDispatcher); ok && fd.isFake() {
-		if req.XSrc != nil {
-			return openMem(tk, fd, req, rawURL)
-		}
-		r := fd.dispatch(tk, req, rawURL)
-		if !r.Ok {
-			return Err[Http_ClientStream](r.E)
-		}
-		resp := r.V.collect(tk)
-		s := &clientStream{mem: []byte(resp.F_body)}
-		return Ok[Http_ClientStream, Http_ClientErr](Http_ClientStream{Xhead: Http_ResponseHead{F_status: resp.F_status, F_headers: resp.F_headers}, Xs: s})
+		// the head at once, then the body as the handler writes it (an
+		// http.stream's flushes arrive one by one), a source body or not
+		return openMem(tk, fd, req, rawURL)
 	}
 	return fx(tk, "http.open", true, func() []any { return []any{req.F_method, rawURL} }, func() Result[Http_ClientStream, Http_ClientErr] {
 		body, cancel, head, trailer, e := c.openNet(tk, req, rawURL)
@@ -336,13 +329,16 @@ func (w memChunkWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// openMem is Client.open under FakeNet for a request whose body is a
-// source (http.pipe): the handler runs in a task with the source as its
+// openMem is Client.open under FakeNet: the handler runs in a task with
+// the request body (a source from http.pipe, or the whole body) as its
 // request body, so it answers while the sender still writes, and the head
 // and the body chunks come back through channels, so the test scheduler's
 // record and replay hold (issue 9, 2026-11-04).
 func openMem(tk *Task, fd fakeDispatcher, req Http_Request, rawURL string) Result[Http_ClientStream, Http_ClientErr] {
 	src := req.XSrc
+	if src == nil {
+		src = strings.NewReader(string(req.F_body))
+	}
 	req = withStreamBody(req, src)
 	req.XSrc = nil
 	headCh := Chan_new[memHead](tk, 1)
