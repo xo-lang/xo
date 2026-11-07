@@ -1020,7 +1020,7 @@ fn tokenizer_text(var z: htmltok.Tokenizer) -> Str {
 fn tokenizer_token(var w: htmltok.Tokenizer) -> htmltok.Token {
   let tt = w.tt
   if tt == htmltok.TokenType.Text || tt == htmltok.TokenType.Comment || tt == htmltok.TokenType.Doctype {
-    return htmltok.Token{typ: tt, data: w.text(), attrs: []}
+    return htmltok.Token{typ: tt, data: tokenizer_text(w), attrs: []}
   }
   if tt == htmltok.TokenType.StartTag || tt == htmltok.TokenType.SelfClosingTag || tt == htmltok.TokenType.EndTag {
     var name = ""
