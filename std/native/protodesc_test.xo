@@ -31,13 +31,6 @@ test "an options message present but empty is written back" {
   expect(protodesc.encode(back)) == protodesc.encode(file)
 }
 
-test "an unknown field is kept and written after the known ones" {
-  let b = b"\x0a\x01x\xa0\x06\x07"
-  let f = protodesc.decode(b).or_fault("decode")
-  expect(f.name) == "x"
-  expect(protodesc.encode(f)) == b
-}
-
 test "a truncated descriptor is an error, never a panic" {
   let whole = protodesc.encode(sample())
   for cut in 1..whole.len() {

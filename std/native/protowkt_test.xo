@@ -1,7 +1,6 @@
 // Hand written cases for std/protowkt (decision 0546); the differential against protobuf-go's well known types is
 // internal/stdtest/testdata/corpus/protowkt.
 use std/protowkt
-use std/protobuf
 
 test "timestamp and duration write seconds then nanos" {
   expect(protowkt.encode_timestamp(protowkt.Timestamp{seconds: 1, nanos: 2})) == b"\x08\x01\x10\x02"
