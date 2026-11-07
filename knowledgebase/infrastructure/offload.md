@@ -410,8 +410,11 @@ Last verified: 2026-11-01
   first host's lane 14:29 to 15:15 while three exclusive jobs and the
   tier's host step waited up to 1h32m behind it): send it with
   `OFF_NO_LANE=1`. Last verified: 2026-11-06.
-- A plain job that carries its own inputs (a bundle in the script, no
-  earlier `--put`) goes with `OFF_LANE='arm64|pass2'`, so heavyd starts
+- A plain job that carries its own inputs (no files only one host has;
+  a branch goes as a bundle `--put` to both arm64 hosts, made from the
+  commit both have: gotchas/offload-bundle-base.md, since a bundle inside
+  the script passes Linux's 128 KB argument limit past a few commits)
+  goes with `OFF_LANE='arm64|pass2'`, so heavyd starts
   it on whichever arm64 host frees first (`arm64*` alone never reaches
   the second host, whose lane `pass2` stays out of it for `--ab` runs;
   lead, 2026-11-07: Xo Lang 1's -O2 bisect waited on the first host with
