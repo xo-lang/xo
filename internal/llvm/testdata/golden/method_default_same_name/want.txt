@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+11 12 1
+b c
+box 3 t s
+7 8
+--- stderr

@@ -1,0 +1,43 @@
+// Two types' methods with one name, each with a default argument: the Go
+// backend declared one default helper (M_delete_D_0) for both, and its go
+// build failed (Xo Azure 1, 2026-11-06, azblob). A generic receiver and a
+// second default parameter are covered too.
+
+struct AOptions {
+  n: Int = 1
+}
+
+struct BOptions {
+  s: Str = "b"
+}
+
+struct A {}
+
+struct B {}
+
+struct Box[T: Display] {
+  v: T
+}
+
+fn (a: A) delete(opts: AOptions = AOptions{}, k: Int = 10) -> Int {
+  opts.n + k
+}
+
+fn (b: B) delete(opts: BOptions = BOptions{}) -> Str {
+  opts.s
+}
+
+fn (x: Box[T]) delete(tag: Str = "box") -> Str {
+  "${tag} ${x.v}"
+}
+
+fn delete(n: Int = 7) -> Int {
+  n
+}
+
+fn main(os: Os) {
+  os.stdio.println("${A{}.delete()} ${A{}.delete(AOptions{n: 2})} ${A{}.delete(AOptions{}, 0)}")
+  os.stdio.println("${B{}.delete()} ${B{}.delete(BOptions{s: "c"})}")
+  os.stdio.println("${Box{v: 3}.delete()} ${Box{v: "s"}.delete("t")}")
+  os.stdio.println("${delete()} ${delete(8)}")
+}

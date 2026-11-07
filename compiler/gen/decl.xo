@@ -703,6 +703,18 @@ fn (g: Gen) func_go_name(fo: Int) -> Str {
   g.oname(o.recv) + "_M_" + g.oname(fo)
 }
 
+/// The Go function that computes parameter i's default value of fo. A
+/// method that is a Go method has a bare name (M_delete), so its helper
+/// names the receiver type too: two types' `delete` with defaults each
+/// declared M_delete_D_0 (Xo Azure 1, 2026-11-06, azblob).
+fn (g: Gen) default_fn_name(fo: Int, i: Int) -> Str {
+  let o = g.c.objs[fo]
+  if o.recv >= 0 && g.method_is_go_method(fo) {
+    return "${g.oname(o.recv)}_${g.func_go_name(fo)}_D_${i}"
+  }
+  "${g.func_go_name(fo)}_D_${i}"
+}
+
 /// A declared function or method (genFunc).
 fn (var g: Gen) gen_func(fo: Int) {
   g.gen_func_with(fo, None)
@@ -856,10 +868,11 @@ fn (var g: Gen) gen_func_with(fo: Int, sp: SpecReq?) {
     let dbody = g.f.out.join("")
     g.f = saved_f2
     let r = g.rt()
-    g.pl("func ${name}_D_${i}${g.tparam_decl(o.tparams)}(tk *${r}Task) ${g.go_type(p.ty)} {")
+    let dname = g.default_fn_name(fo, i)
+    g.pl("func ${dname}${g.tparam_decl(o.tparams)}(tk *${r}Task) ${g.go_type(p.ty)} {")
     g.pout(dbody)
     g.pl("\treturn ${code}\n}\n")
-    g.end_decl(dmark, ["${name}_D_${i}"])
+    g.end_decl(dmark, [dname])
   }
 }
 

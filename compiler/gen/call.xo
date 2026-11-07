@@ -540,7 +540,7 @@ fn (var g: Gen) param_default(fo: Int, i: Int, sub: Map[Int, Int]) -> Str {
   }
   let targs = g.targs_code(g.c.objs[fo].tparams, sub)
   let pr = g.pkg_ref(g.omod(fo))
-  "${pr}${g.func_go_name(fo)}_D_${i}${targs}(tk)"
+  "${pr}${g.default_fn_name(fo, i)}${targs}(tk)"
 }
 
 /// `[T1, T2]` for the non effect parameters under sub (targs).
