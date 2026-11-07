@@ -324,6 +324,11 @@ pub const PK_SIZE = 32
 pub const D_MU = 0
 pub const D_RREADY = 20
 pub const D_WREADY = 24
+/// whether the poller reported the peer's close or an error (Linux:
+/// EPOLLRDHUP, EPOLLHUP, EPOLLERR); it stays set, since a read after a
+/// short one still has the end of stream to find and no new edge comes
+/// for it (pd_read_ready)
+pub const D_RHUP = 28
 pub const D_RWAIT = 32
 pub const D_WWAIT = 40
 pub const D_NEXT = 48

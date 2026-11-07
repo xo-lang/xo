@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-11-07: fix: a native server on Linux answers pipelined requests whose sender closed its side right after them
+
+- Kind: fix
+- Commit: this push
+- Found by: internal/llvm TestHTTP1ParseDiff hung on linux/arm64 hosts (2026-11-07, at main and on every branch since 2026-11-06): each connection waited out its sender's 30 second deadline
+- Go reference: internal/poll fd_unix.go Read (Go reads first, so it never waits here)
+- Test: internal/llvm TestHTTP1HalfClose (64 half-closed connections of pipelined requests); TestHTTP1ParseDiff
+- Shipped in: not yet released
+- Affected: 0.43.0 (a seed, not a public release; 0.41.0, the latest public release, predates it), native backends on Linux; introduced by 1c9bc8e5f
+- Known issue: 0.43.0, a native server on Linux can leave pipelined requests (or a request followed by more bytes) unanswered when the sender half-closes right after sending them
+
+The read-skip of 2026-11-06 (the read after one that drained the socket waits for readiness first) waited forever when the requests and the sender's FIN came under one poller edge: the short read took the requests, the server answered the ones it had buffered, and the end of stream it left had no new edge to announce it. The poller now keeps a hangup mark per descriptor (EPOLLRDHUP, EPOLLHUP, EPOLLERR), and a read after a draining one does not wait once the peer has closed.
+
 ## 2026-11-07: fix: a FakeNet handler's http.stream body reaches Client.send and Client.open, and open reads it flush by flush
 
 - Kind: fix

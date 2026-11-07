@@ -384,6 +384,66 @@ func http1HeaderInputs(seed int64) []string {
 	return cases
 }
 
+// TestHTTP1HalfClose: a native server answers pipelined requests whose
+// sender closed its side right after writing them, on Linux too, where
+// the requests and the FIN often come under one poller edge: after the
+// buffered requests were answered, the read after the short one that took
+// them waited for an edge that never came (a lone request parks instead,
+// which does not wait), so every such connection stalled until the
+// sender's deadline (TestHTTP1ParseDiff ran for hours on linux/arm64,
+// 2026-11-07; poll.xo D_RHUP).
+func TestHTTP1HalfClose(t *testing.T) {
+	xotool.NeedPorts(t)
+	if testing.Short() {
+		t.Skip("builds an HTTP server")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(http1DiffProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	be := xotool.BackendLLVM
+	if runtime.GOARCH == "arm64" {
+		be = xotool.BackendArm64
+	}
+	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
+	if err != nil {
+		t.Fatalf("build (%s): %v", be, err)
+	}
+	if res.Failed {
+		t.Fatalf("build (%s) failed: %v", be, res.Output)
+	}
+	addr, stop := http1Server(t, res.Binaries[xotool.Host()])
+	defer stop()
+	inputs := []string{
+		"GET / HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n",
+		"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhelloGET / HTTP/1.1\r\nHost: x\r\n\r\n",
+		"POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n",
+		"GET / HTTP/1.1\r\nHost: x\r\n\r\nGARBAGE",
+	}
+	outs := make([]string, 64)
+	var wg sync.WaitGroup
+	for i := range outs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			outs[i] = http1Send(addr, inputs[i%len(inputs)])
+		}()
+	}
+	wg.Wait()
+	stalled := 0
+	for _, o := range outs {
+		if !strings.HasPrefix(o, "HTTP/1.1 ") || strings.HasSuffix(o, "<timeout>") {
+			stalled++
+			if stalled <= 3 {
+				t.Errorf("%s: %q", be, clip(o))
+			}
+		}
+	}
+	if stalled > 0 {
+		t.Errorf("%s: %d of %d half-closed connections not answered and closed", be, stalled, len(outs))
+	}
+}
+
 // TestHTTP1ParseDiff is the differential test of the native HTTP/1.1
 // server's request parsing in Xo (std/native/llrt/http1.xo, decision 0193
 // step 6) against the Go backend (net/http): the same server program

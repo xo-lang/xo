@@ -145,6 +145,7 @@ pub fn timer_first() -> Int {
 const D_MU = layout.D_MU
 const D_RREADY = layout.D_RREADY
 const D_WREADY = layout.D_WREADY
+const D_RHUP = layout.D_RHUP
 const D_RWAIT = layout.D_RWAIT
 const D_WWAIT = layout.D_WWAIT
 const D_NEXT = layout.D_NEXT
@@ -218,12 +219,16 @@ pub fn pd_kick(pd: Int, mode: Int) {
   unlk(addw(pd, D_MU))
 }
 
-/// Hands readiness mode (1 read, 2 write, 3 both) to the descriptor pd's
-/// waiters, or keeps it for the next wait (xo_rt.c pd_ready).
+/// Hands readiness mode (1 read, 2 write, 3 both; 4 added on Linux when
+/// the peer closed or an error came, kept in D_RHUP) to the descriptor
+/// pd's waiters, or keeps it for the next wait (xo_rt.c pd_ready).
 pub fn pd_ready(pd: Int, mode: Int) {
   stat(ST_POLL_EVENT)
   var cont = 0
   lk(addw(pd, D_MU))
+  if (mode & 4) != 0 {
+    rt.mem_store(pd, D_RHUP, 1, 4)
+  }
   if (mode & 1) != 0 {
     let w = rt.mem_load(pd, D_RWAIT, 8)
     if w != 0 {
@@ -600,13 +605,16 @@ pub fn pd_clear_read(pd: Int) {
   unlk(addw(pd, D_MU))
 }
 
-/// Whether an edge came for reading that no wait has taken yet, under the
-/// descriptor's lock as the poller sets it (an unlocked load was a data
-/// race under --race: TestGoldenTasks http_client_body_reader, 2026-11-06);
-/// a flag set just after this is still seen by the wait's own check.
+/// Whether an edge came for reading that no wait has taken yet, or the
+/// peer closed (D_RHUP: a FIN that came with the data under one edge is
+/// still to be read after a short read, and no edge announces it again;
+/// TestHTTP1ParseDiff hung on Linux, 2026-11-07), under the descriptor's
+/// lock as the poller sets it (an unlocked load was a data race under
+/// --race: TestGoldenTasks http_client_body_reader, 2026-11-06); a flag
+/// set just after this is still seen by the wait's own check.
 pub fn pd_read_ready(pd: Int) -> Bool {
   lk(addw(pd, D_MU))
-  let r = rt.mem_load(pd, D_RREADY, 4) != 0
+  let r = rt.mem_load(pd, D_RREADY, 4) != 0 || rt.mem_load(pd, D_RHUP, 4) != 0
   unlk(addw(pd, D_MU))
   r
 }
@@ -1826,7 +1834,8 @@ fn event(evs: Int, i: Int) -> (Int, Int) {
       let data = rt.mem_load(e, subw(size, 8), 8)
       let r = if (f & (1 | 8192 | 16 | 8)) != 0 { 1 } else { 0 }
       let w = if (f & (4 | 16 | 8)) != 0 { 2 } else { 0 }
-      (data, r | w)
+      let h = if (f & (8192 | 16 | 8)) != 0 { 4 } else { 0 }
+      (data, r | w | h)
     }
     TargetOs.Windows => (rt.mem_load(evs, addw(i.wrapping_mul(32), 8), 8), 0)
     TargetOs.Wasi => (0, 0)
