@@ -1,0 +1,47 @@
+// ADR 0532 step 2's kernel-vs-loop measurement (decision 0366's bar: a
+// kernel must beat the loop by 2x): std's count of UTF-8 continuation
+// bytes (Str.rune_count, scan.xo count_cont, 8 bytes a step) over 64
+// buffers of 4 KiB of mixed UTF-8, against the same count as a C loop
+// in NEON by hand (cont_c) and the C boundary alone (none_c, a call with
+// the same Bytes parameter and no loop, to subtract). Each workload is
+// timed on its own (xo bench, host 1). Usage:
+// `<program> cont|cont_c|none_c|none [passes]`; prints `<workload> <sum>`.
+use c "vk.h" link "vk.c"
+
+fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+/// 4 KiB of ASCII letters with a 2 or 3 byte rune every 7th place.
+fn text(seed: Int) -> Str {
+  var r = seed
+  var bb = BytesBuilder.with_capacity(4100)
+  while bb.len() < 4090 {
+    r = next(r)
+    if (r >> 8) % 7 == 0 {
+      bb.write_str(if (r >> 12) % 2 == 0 { "é" } else { "日" })
+    } else {
+      bb.write_byte(UInt8(97 + (r >> 8) % 26))
+    }
+  }
+  bb.freeze().to_str() ?? ""
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "none"
+  let passes = Int.parse(os.env.args().get(1) ?? "2000") ?? 2000
+  var ss: List[Str] = []
+  for i in 0..64 {
+    ss.push(text(i + 1))
+  }
+  var sum = 0
+  for _ in 0..passes {
+    for s in ss {
+      sum += match w {
+        "cont" => s.len() - s.rune_count()
+        "cont_c" => vk.vk_cont(s.bytes())
+        "none_c" => vk.vk_none(s.bytes())
+        _ => 0
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

@@ -242,6 +242,41 @@ concrete first target): websocket's mask xor and a count of UTF-8
 continuation bytes, hand kernels against the native loop, on host 1 with
 `xo bench --ab`; the 0366 bar (2 times on the loop alone) decides.
 
+## Update (2026-11-07): step 2's kernel-vs-loop measurement
+
+The bar is decision 0366's: a hand kernel must beat the native loop by 2x
+on the loop alone (kernel/loop at or below 0.5), or step 2 stops at that
+target. Measured on linux/arm64:
+
+| Target | Loop (std) | Hand kernel | Kernel/loop | Bar |
+|---|---|---|---:|---|
+| count of UTF-8 continuation bytes (scan.xo count_cont) | 8 bytes a step, SWAR | NEON, 16 a step, a byte counter widened every 255 steps (bench/perf/vecstep2, `use c`, the call's cost subtracted) | 0.46 (host 2), 0.42 (host 1: loop 38 ms, kernel 17 ms, each less the empty call's 2 ms; medians of 7 runs) | passes |
+| websocket mask xor (websocket.xo mask_to) | a word a step | arm64 eor of two q registers, 32 bytes a step (a scratch intrinsic, never pushed; bench/perf/websocket big as an --ab) | not separable: the program 1.012 of main (0.813 to 1.081, 10 rounds, host 1), within noise; the loopback round trip is the cost | stops (no gain where it lives) |
+
+Two step 1 intrinsics that wait for a seed were measured before asking
+for one (ab-host builds B's xo with A's, which already lowers them, so no
+seed is needed to measure); neither gained, so both std uses stay held
+and no seed was requested:
+
+| Intrinsic (on main, code generation only) | Held std use | Workload | New/base |
+|---|---|---|---:|
+| rt.mem_ne64 (f2efe635e) | memcmp's 64 byte step as one test (lang1-mc64b) | simdscan equal, compare | 0.981, 0.981 (within noise) |
+| rt.mem_any_eq32 (50510c1ba) | http1 head_len's newline scan 32 bytes a step (lang1-memb) | bench/perf/httphead, on the held branch (pipelined GETs, 8 to 20 header lines of 20 to 100 bytes) | 0.993 (within noise) |
+
+A user program cannot express the mask kernel (no word loads, and `use c`
+copies a Bytes argument), so it is measured where it lives: a scratch
+branch whose std calls the kernel, against main. A plain C loop is no
+bound for the count: gcc at -O2 (the linux host's cc) does not vectorize
+a loop of unknown trip count, and it read 1.9 times slower than std's
+SWAR loop; the kernel is NEON intrinsics by hand.
+
+Result: the count passes the bar on both hosts (0.42 and 0.46), so
+step 2's first kernel is a lane count of continuation bytes for
+scan.xo count_cont (an intrinsic as step 1's, 16 bytes a step with a
+widened byte counter), which waits for the owner's go as the
+Consequences say. The mask stops at step 2: its loop is not where
+bench/perf/websocket's time goes.
+
 ## Consequences
 
 - Step 1 is in std and the emitters already; steps 2 and 3 each need
