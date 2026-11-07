@@ -1,0 +1,46 @@
+// Hand written cases for std/protodesc (decision 0546); the differential against protoc and protobuf-go
+// descriptors is internal/stdtest/testdata/corpus/protodesc.
+use std/protodesc
+
+fn sample() -> protodesc.FileDesc {
+  let f = protodesc.FieldDesc{name: "id", number: 1, label: protodesc.LABEL_OPTIONAL, kind: protodesc.TYPE_INT64}
+  let m = protodesc.MessageDesc{name: "Item", field: [f]}
+  let rpc = protodesc.MethodDesc{name: "Get", input_type: ".p.Item", output_type: ".p.Item"}
+  let svc = protodesc.ServiceDesc{name: "Inv", method: [rpc]}
+  protodesc.FileDesc{name: "p/item.proto", package: "p", message_type: [m], service: [svc], syntax: "proto3"}
+}
+
+test "a descriptor encodes and decodes to an equal value" {
+  let f = sample()
+  let back = protodesc.decode(protodesc.encode(f)).or_fault("decode")
+  expect(back == f) == true
+  expect(back.service[0].method[0].name) == "Get"
+}
+
+test "the file name is field 1 and the package field 2" {
+  let b = protodesc.encode(protodesc.FileDesc{name: "a.proto", package: "p"})
+  expect(b) == b"\x0a\x07a.proto\x12\x01p"
+}
+
+test "an options message present but empty is written back" {
+  let f = protodesc.MethodDesc{name: "Get", input_type: "A", output_type: "B", options_set: true}
+  let svc = protodesc.ServiceDesc{name: "S", method: [f]}
+  let file = protodesc.FileDesc{name: "x", service: [svc]}
+  let back = protodesc.decode(protodesc.encode(file)).or_fault("decode")
+  expect(back.service[0].method[0].options_set) == true
+  expect(protodesc.encode(back)) == protodesc.encode(file)
+}
+
+test "an unknown field is kept and written after the known ones" {
+  let b = b"\x0a\x01x\xa0\x06\x07"
+  let f = protodesc.decode(b).or_fault("decode")
+  expect(f.name) == "x"
+  expect(protodesc.encode(f)) == b
+}
+
+test "a truncated descriptor is an error, never a panic" {
+  let whole = protodesc.encode(sample())
+  for cut in 1..whole.len() {
+    let _ = protodesc.decode(whole[0..cut]).ignore_err("a truncated descriptor may be refused; only a panic fails")
+  }
+}
