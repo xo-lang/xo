@@ -1962,7 +1962,7 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], src: StoreSrc) {
 /// repeats of known ones (2026-10-22). KIND is fe, fn, inl, rc, sum,
 /// obj, hobj (a hollowed part's object and its undefined-symbol facts),
 /// hfacts (a part's hollow facts), hextra (an ELF part's extra labels),
-/// ast (a std file's parse, decision 0380), chk, or pack/KIND for a pack
+/// inl-list (the inline keys of a module, inline_through_cache), ast (a std file's parse, decision 0380), chk, or pack/KIND for a pack
 /// segment.
 fn note_store(os: Os, kind: Str, dir: Str, n: Int) {
   if n <= 0 {
