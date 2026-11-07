@@ -34,7 +34,31 @@ struct Token {
 } derive Eq
 
 /// Go's Tokenizer over a text held in memory.
-struct Tokenizer {}
+/// The key and value spans of the attribute being read (internal).
+struct Pend {
+  k0: Int
+  k1: Int
+  v0: Int
+  v1: Int
+}
+
+struct Tokenizer {
+  // internal state; use the methods
+  src: Bytes
+  tt: TokenType
+  errc: Int
+  rs: Int
+  re: Int
+  max_buf: Int
+  ds: Int
+  de: Int
+  pend: Pend
+  attr: List[Int]
+  raw_tag: Str
+  text_raw: Bool
+  convert_nul: Bool
+  cdata: Bool
+}
 
 /// Go's NewTokenizer.
 fn tokenizer(text: Str) -> Tokenizer
