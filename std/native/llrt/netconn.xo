@@ -565,6 +565,10 @@ pub fn set_deadline(cn: Int, which: Int, set: Bool, d: Int) {
   if pd != 0 {
     poll.pd_kick(pd, which)
   }
+  let me = ld(cn, C_MEM)
+  if me != 0 {
+    twrun.me_kick(me, which)
+  }
 }
 
 /// The poll descriptor of connection handle cn (std/tls).
@@ -1376,7 +1380,7 @@ pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
   let me = ld(cn, C_MEM)
   if me != 0 {
     let buf = raw.bytes_buf(max)
-    let r = twrun.me_read(me, raw.bytes_addr(buf), max, ld(cn, C_RDL))
+    let r = twrun.me_read(me, raw.bytes_addr(buf), max, cn + C_RDL)
     if r > 0 {
       ok(c)
       return read_list(buf, r, np)
@@ -1459,9 +1463,11 @@ pub fn conn_write(cn: Int, p: Int, n: Int) {
   }
   let me = ld(cn, C_MEM)
   if me != 0 {
-    let r = twrun.me_write(me, p, n)
+    let r = twrun.me_write(me, p, n, cn + C_WDL)
     if r == 0 {
       ok(c)
+    } else if r == -4 {
+      fail(c, 3, "")
     } else if r == -1 {
       fail(c, 5, "")
     } else if r == -2 {

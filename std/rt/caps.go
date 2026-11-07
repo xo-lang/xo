@@ -621,9 +621,9 @@ func (c Conn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 			return Err[Option[Bytes]](netErr(4, upgradedText))
 		}
 		if m, ok := c.c.(*memEnd); ok {
-			// FakeNet: a deadline already passed fails at once; a waiting
-			// read is not woken by one (decision 0430)
-			if dl := userDeadline(c.c, false); !dl.IsZero() && !time.Now().Before(dl) {
+			// FakeNet: the deadline is on its own clock, which wakes a
+			// waiting read (decision 0430)
+			if m.timedOut(false) {
 				return Err[Option[Bytes]](netErr(3, ""))
 			}
 			return m.read(tk, max)
@@ -664,7 +664,7 @@ func (c Conn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
 			return Err[Unit](netErr(4, upgradedText))
 		}
 		if m, ok := c.c.(*memEnd); ok {
-			if dl := userDeadline(c.c, true); !dl.IsZero() && !time.Now().Before(dl) {
+			if m.timedOut(true) {
 				return Err[Unit](netErr(3, ""))
 			}
 			return m.write(tk, data)
@@ -721,6 +721,10 @@ func userDeadline(c net.Conn, write bool) time.Time {
 // the real clock from now (a past t fails the next operation at once).
 func (c Conn) setDeadline(tk *Task, clock Clock, t Option[Time], read, write bool) {
 	if c.c == nil {
+		return
+	}
+	if m, ok := c.c.(*memEnd); ok {
+		m.setDeadline(tk, clock, t, read, write)
 		return
 	}
 	var at time.Time

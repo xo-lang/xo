@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-11-07: fix: FakeNet deadlines wake a waiting read or write (Go backend), and a waiting write (native)
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19: three Azure SDK receive tests (azeventhubs, azservicebus) failed on the Go backend with XO-F001 "every task is blocked and no timer is pending" at a read with a deadline
+- Go reference: net.Conn SetReadDeadline (net/net.go go1.26.1); decision 0430 point 2
+- Test: cmd/xo TestFakeNetDeadlineWakes (Go backend, arm64, LLVM)
+- Shipped in: not yet released
+
+On the Go backend, a FakeNet connection (a test's `os.net`) keeps its deadlines on the clock they were set with. A read or write that waits is woken by its deadline, as `Timeout` (`i/o timeout`), so a test world's virtual clock moves to it. A deadline set while it waits wakes it too. Before, the deadline was converted to real time and a waiting operation was never woken: the test reported a deadlock. Natively, a FakeNet write that waits on a peer that does not read is now woken by its write deadline (reads already were); before it waited forever. Also noted in std 3.2: natively a connection dropped open (its last use passed) is closed at the drop, so a test that keeps only `peer.is_some()` of a received ServerConn sees its client read the end of the stream; the Go backend does not close it.
+
 ## 2026-11-06: feature: Fs.open_rw (read and write without truncating)
 
 - Kind: feature

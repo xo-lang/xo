@@ -1024,7 +1024,11 @@ there) and `None` at the end of the stream; `write` returns when every
 byte is written. All three are cancellation points that report
 cancellation as `Canceled` (core 7.2). `close` is idempotent and makes a
 waiting `accept`, `read`, or `write` on the same listener or connection
-fail with `Io`. A refused `dial` is `Refused`. `dial` gives up after 30
+fail with `Io`. A connection or listener dropped open (its last use
+passed, core 5.5) is closed at the drop natively, so its peer reads the
+end of the stream; on the Go backend only when it is collected (a
+FakeNet one never). Keep the value used, or `close` it, while the peer
+should see it open. A refused `dial` is `Refused`. `dial` gives up after 30
 seconds with `Io` (`dial tcp ADDR: i/o timeout`); `dial_timeout(addr, d)`
 gives up after `d`, over the lookup and the connect, with `Timeout`
 (decision 0406).
@@ -1044,9 +1048,11 @@ Deadlines (decision 0430) are Go's net.Conn deadlines.
 - Deadlines never cancel: cancellation stays `Canceled` (core 7.2), and
   a `task.with_timeout` around the call still cancels it.
 - On FakeNet's in-memory connections, a deadline already passed fails at
-  once, and a waiting read is woken by its deadline (the virtual clock
-  moves to it; 2026-11-05, it deadlocked before); a waiting write is not
-  woken by one.
+  once, and a waiting read or write is woken by its deadline, on every
+  backend: the test's virtual clock moves to it (native reads since
+  2026-11-05; Go backend reads and writes and native writes since
+  2026-11-07, which before deadlocked with "no timer is pending" or never
+  woke).
 - They are on the concrete types, not on `Stream` (decision 0430).
 
 Names (decision 0406): `lookup_host(host)` returns host's addresses as

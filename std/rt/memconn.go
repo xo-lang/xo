@@ -44,6 +44,103 @@ func (p *memPipe) notify() {
 type memEnd struct {
 	in, out     *memPipe
 	local, peer string
+
+	dlMu   sync.Mutex
+	rd, wr memDeadline // the user's deadlines (decision 0430)
+}
+
+// memDeadline is a FakeNet deadline. It is kept on the test world's
+// virtual clock when it was set on that clock, else in real time, and is
+// read without a clock call: clock.now yields the turn, and the reads
+// and writes below check it holding their pipe's lock.
+type memDeadline struct {
+	set bool
+	w   *World // the virtual clock at is on, nil for real time
+	at  Time   // w's virtual time, or real time in Unix ns
+}
+
+// left is the time until d, which is set.
+func (d memDeadline) left() Duration {
+	if d.w != nil {
+		return Duration(d.at - d.w.Now())
+	}
+	return Duration(int64(d.at) - time.Now().UnixNano())
+}
+
+// setDeadline sets e's user read and or write deadline, t on clock, and
+// wakes a waiting read or write to take it.
+func (e *memEnd) setDeadline(tk *Task, clock Clock, t Option[Time], read, write bool) {
+	var d memDeadline
+	if t.Some {
+		left := Duration(int64(t.V) - int64(clock.M_now(tk)))
+		if fc, ok := clock.(Testing_FakeClock); ok && !fc.real && fc.w != nil {
+			d = memDeadline{set: true, w: fc.w, at: fc.w.Now() + Time(left)}
+		} else {
+			d = memDeadline{set: true, at: Time(time.Now().UnixNano()) + Time(left)}
+		}
+	}
+	e.dlMu.Lock()
+	if read {
+		e.rd = d
+	}
+	if write {
+		e.wr = d
+	}
+	e.dlMu.Unlock()
+	for _, x := range []struct {
+		p  *memPipe
+		on bool
+	}{{e.in, read}, {e.out, write}} {
+		if x.on {
+			x.p.mu.Lock()
+			x.p.notify()
+			x.p.mu.Unlock()
+		}
+	}
+}
+
+// deadline is e's read (or write) deadline.
+func (e *memEnd) deadline(write bool) memDeadline {
+	e.dlMu.Lock()
+	defer e.dlMu.Unlock()
+	if write {
+		return e.wr
+	}
+	return e.rd
+}
+
+// timedOut reports whether e's read (or write) deadline has passed.
+func (e *memEnd) timedOut(write bool) bool {
+	d := e.deadline(write)
+	return d.set && d.left() <= 0
+}
+
+// waitChange waits for ev, a change of e's pipe, or until e's read (or
+// write) deadline: a waiting operation is woken by its deadline, on the
+// virtual clock when it was set on it, so a test world's time moves to
+// it (decision 0430; it reported a deadlock with "no timer is pending").
+// It reports false when tk was canceled.
+func (e *memEnd) waitChange(tk *Task, ev *event, write bool, k waitKind) bool {
+	if d := e.deadline(write); d.set {
+		var stop func()
+		if d.w != nil {
+			stop = d.w.timerFunc(d.left(), ev.fireLocked)
+		} else {
+			stop = realAfter(d.left(), ev.fire)
+		}
+		defer stop()
+	}
+	return ev.wait(tk, true, k, nil)
+}
+
+// changedEvent is the event a waiter of p waits on; p.mu is held. One a
+// deadline fired (waitChange) is replaced, or every later waiter would
+// return at once.
+func (p *memPipe) changedEvent() *event {
+	if p.changed.isSet() {
+		p.changed = newEvent()
+	}
+	return p.changed
 }
 
 func (e *memEnd) xoFakeNet() {}
@@ -95,9 +192,13 @@ func (e *memEnd) read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 			p.mu.Unlock()
 			return Ok[Option[Bytes], NetErr](Option[Bytes]{})
 		}
-		ev := p.changed
+		if e.timedOut(false) {
+			p.mu.Unlock()
+			return Err[Option[Bytes]](netErr(3, ""))
+		}
+		ev := p.changedEvent()
 		p.mu.Unlock()
-		if !ev.wait(tk, true, waitNetRead, nil) {
+		if !e.waitChange(tk, ev, false, waitNetRead) {
 			return Err[Option[Bytes]](netErr(5, ""))
 		}
 	}
@@ -127,9 +228,13 @@ func (e *memEnd) write(tk *Task, data Bytes) Result[Unit, NetErr] {
 			p.mu.Unlock()
 			return Ok[Unit, NetErr](Unit{})
 		}
-		ev := p.changed
+		if e.timedOut(true) {
+			p.mu.Unlock()
+			return Err[Unit](netErr(3, ""))
+		}
+		ev := p.changedEvent()
 		p.mu.Unlock()
-		if !ev.wait(tk, true, waitNetWrite, nil) {
+		if !e.waitChange(tk, ev, true, waitNetWrite) {
 			return Err[Unit](netErr(5, ""))
 		}
 	}

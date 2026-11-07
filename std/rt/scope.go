@@ -98,6 +98,29 @@ func (e *event) fire() {
 	close(e.ch)
 }
 
+// fireLocked is fire for a virtual timer's callback, which holds the
+// world lock (World.timerFunc). fire takes e.mu and then the world lock;
+// virtual time moves only while every task waits, so no task is inside
+// fire then.
+func (e *event) fireLocked() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.fired {
+		return
+	}
+	e.fired = true
+	for _, tk := range e.waiters {
+		if tk.w != nil {
+			tk.th.woken()
+			tk.w.wakeLocked(tk)
+		} else {
+			wakeTask(tk)
+		}
+	}
+	e.waiters = nil
+	close(e.ch)
+}
+
 func (e *event) isSet() bool {
 	select {
 	case <-e.ch:

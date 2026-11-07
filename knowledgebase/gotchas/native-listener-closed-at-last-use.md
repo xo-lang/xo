@@ -46,3 +46,27 @@ None (or garbage: a probe crashed with SIGBUS). The handshake finished,
 then the request never went out and the server logged "TLS handshake
 error: EOF". Fix as above: `fn keep(a: rt.Any) -> Int` takes the Any as
 a parameter.
+
+## A received connection kept only as `is_some()`
+
+Observed 2026-11-07 (aws-19's FakeNet deadline repro, Xo Lang 1).
+
+Symptom: a test accepts a `ServerConn`, sends it through a
+`Chan[ServerConn]` (from a task or not), receives it as `let sc =
+peer.recv()`, sets a read deadline on the client and reads: natively the
+read returns `Ok(None)` (the end of the stream) instead of `Timeout`; the
+Go backend gives `Timeout`. It looked like a use-after-free of the
+connection the Chan carried; five variants (if-let or match, listener
+kept, task kept alive, no task) all failed the same way, while every
+variant that used the connection after the read passed.
+
+Cause: the test's only later use was `expect(sc.is_some())`, which reads
+the Option's tag, so the connection inside it had its last use at the
+`recv`: it was released and closed there, before the read (std 3.2: a
+connection dropped open is closed at the drop natively). The Chan and the
+task were never involved. `let _sc = l.accept()...` does the same at
+once (a write deadline test saw a reset peer instead of `Timeout`).
+
+Fix: unwrap and use the connection after the code that needs its peer
+open, for example `let sc = peer.recv().or_fault("recv")` and
+`sc.close()` at the end.

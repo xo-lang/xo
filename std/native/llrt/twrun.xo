@@ -695,9 +695,11 @@ pub fn in_use(addr: Str) -> Bool {
 
 /// Reads at most max bytes from end me into a: the count, 0 at the end
 /// of the stream, -1 canceled, -2 when me is closed, -4 when the user's
-/// read deadline dl (timers' clock, 0 for none) passed while it waited
-/// (a timer wakes the wait, as the real network's does).
-pub fn me_read(me: Int, a: Int, max: Int, dl: Int) -> Int {
+/// read deadline passed while it waited (a timer wakes the wait, as the
+/// real network's does). dlp is the address of the deadline word
+/// (timers' clock, 0 for none, 1 for passed), read on every wake, so a
+/// deadline set while it waits (me_kick) applies to the wait.
+pub fn me_read(me: Int, a: Int, max: Int, dlp: Int) -> Int {
   lock()
   let p = ld(me, ME_IN)
   while true {
@@ -724,6 +726,11 @@ pub fn me_read(me: Int, a: Int, max: Int, dl: Int) -> Int {
       unlock()
       return 0
     }
+    let dl = ld(dlp, 0)
+    if dl_passed(dl) {
+      unlock()
+      return -4
+    }
     let c = ctx.cur()
     var tm = 0
     if dl != 0 {
@@ -747,9 +754,28 @@ pub fn me_read(me: Int, a: Int, max: Int, dl: Int) -> Int {
   0
 }
 
+/// Whether deadline word dl (0 for none) has passed (netconn.passed).
+fn dl_passed(dl: Int) -> Bool { dl == 1 || (dl != 0 && poll.now() >= dl) }
+
+/// Wakes the reads (which & 1) and writes (which & 2) waiting on end me,
+/// whose deadline changed (decision 0430: a deadline set while an
+/// operation waits applies to it).
+pub fn me_kick(me: Int, which: Int) {
+  lock()
+  if (which & 1) != 0 {
+    wake_list(ld(me, ME_IN) + P_WAITERS)
+  }
+  if (which & 2) != 0 {
+    wake_list(ld(me, ME_OUT) + P_WAITERS)
+  }
+  unlock()
+}
+
 /// Writes the n bytes at a to end me, waiting while its pipe is full: 0,
-/// or -1 canceled, -2 when me is closed, -3 when the peer closed.
-pub fn me_write(me: Int, a: Int, n: Int) -> Int {
+/// or -1 canceled, -2 when me is closed, -3 when the peer closed, -4
+/// when the user's write deadline passed while it waited (the bytes
+/// before it stay written, as Go's); dlp as me_read's.
+pub fn me_write(me: Int, a: Int, n: Int, dlp: Int) -> Int {
   lock()
   let p = ld(me, ME_OUT)
   var off = 0
@@ -780,9 +806,31 @@ pub fn me_write(me: Int, a: Int, n: Int) -> Int {
       unlock()
       return 0
     }
-    if !tasks.wl_wait_as(ctx.cur(), lock_word(), p + P_WAITERS, true, 0) {
+    // a write deadline wakes a writer whose peer does not read, through
+    // the virtual timer as me_read's (decision 0430)
+    let dl = ld(dlp, 0)
+    if dl_passed(dl) {
+      unlock()
+      return -4
+    }
+    let c = ctx.cur()
+    var tm = 0
+    if dl != 0 {
+      tm = poll.timer_park(dl, poll.park_of(c))
+    }
+    let live = tasks.wl_wait_as(c, lock_word(), p + P_WAITERS, true, 0)
+    var late = false
+    if tm != 0 {
+      late = poll.timer_fired(tm)
+      poll.timer_end(tm)
+    }
+    if !live {
       unlock()
       return -1
+    }
+    if late && PIPE_CAP - ld(p, P_LEN) == 0 && ld(p, P_WCLOSED) == 0 && ld(p, P_RCLOSED) == 0 {
+      unlock()
+      return -4
     }
   }
   0
