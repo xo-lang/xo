@@ -1,16 +1,29 @@
 // key_func writes its text straight into the builder; these check it
 // writes the bytes the interpolating version (kept here as key_func_ref)
-// wrote, so no cache key changed.
+// wrote, so no cache key changed, but for a type named again, which is
+// "@N" (its place in the order of first use) since 2026-11-07.
+
+/// tkey the first time, "@N" after (rccache.xo tkey_w).
+fn tkey_ref(tk: List[Str], var seen: Map[Int, Int], t: Int) -> Str {
+  if let Some(n) = seen.get(t) {
+    return "@${n}"
+  }
+  seen[t] = seen.len()
+  tkey(tk, t)
+}
 
 fn key_func_ref(var b: BytesBuilder, f: Func, tk: List[Str]) {
+  var seen: Map[Int, Int] = {}
   b.write_str("func ${f.name.len()}:${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[${ints_line(f.var_params)}] borrowed=${bools_text(f.borrowed)} rv=${f.ret_view}\n")
   b.write_str("results")
   for t in f.results {
-    b.write_str(" ${tkey(tk, t)}")
+    let k = tkey_ref(tk, seen, t)
+    b.write_str(" ${k}")
   }
   b.write_str("\ncaptures")
   for t in f.captures {
-    b.write_str(" ${tkey(tk, t)}")
+    let k = tkey_ref(tk, seen, t)
+    b.write_str(" ${k}")
   }
   var lr: List[Int] = []
   for (k, _) in f.land_rest {
@@ -21,7 +34,8 @@ fn key_func_ref(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_str("b${bi} [${ints_line(bl.params)}] [${ints_line(bl.instrs)}] [${ints_line(bl.preds)}]\n")
   }
   for (vi, x) in f.values.indexed() {
-    b.write_str("v${vi} ${op_name(x.op)} ${tkey(tk, ty_of(x.tb))} [${ints_line(x.args)}] ")
+    let k = tkey_ref(tk, seen, ty_of(x.tb))
+    b.write_str("v${vi} ${op_name(x.op)} ${k} [${ints_line(x.args)}] ")
     key_aux(b, x.aux)
     b.write_str(" ${block_of(x.tb)} [${ints_line(x.succs)}] ${pad_of(x.pi)} ${line_of(x.lp)} ${f.pos_of(x).len()}:${f.pos_of(x)}\n")
   }
@@ -29,7 +43,8 @@ fn key_func_ref(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_str("e${ei} ${e.from} ${e.to} [${ints_line(e.args)}]\n")
   }
   for d in f.dvars {
-    b.write_str("dvar ${d.name.len()}:${d.name} ${tkey(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
+    let k = tkey_ref(tk, seen, d.ty)
+    b.write_str("dvar ${d.name.len()}:${d.name} ${k} ${d.line} ${d.param} ${d.inl}\n")
   }
   for d in f.dbinds {
     b.write_str("dbind ${d.dvar} ${d.value} ${d.line}\n")

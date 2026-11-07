@@ -338,13 +338,29 @@ fn tkey(tk: List[Str], t: Int) -> Str {
 /// straight into b (no text per value: it ran on every function of every
 /// build, twice), the bytes ints_line and interpolation wrote before.
 fn key_func(var b: BytesBuilder, f: Func, tk: List[Str]) {
-  key_head(b, f, tk)
-  key_blocks(b, f, tk)
+  var seen: Map[Int, Int] = {}
+  key_head(b, f, tk, seen)
+  key_blocks(b, f, tk, seen)
+}
+
+/// Writes type t's key (tkey) the first time a function's key names it,
+/// and after that "@N", N its place in the order of first use: a key
+/// named a type in full on every value, and the type keys (a name and
+/// 32 hex digits) were most of the bytes the caches hashed (2026-11-07).
+/// No type key starts with '@', so the text stays one to one.
+fn tkey_w(var b: BytesBuilder, tk: List[Str], var seen: Map[Int, Int], t: Int) {
+  if let Some(n) = seen.get(t) {
+    b.write_byte('@')
+    write_int(b, n)
+    return
+  }
+  seen[t] = seen.len()
+  b.write_str(tkey(tk, t))
 }
 
 /// What key_func writes of f but its blocks, values and edges: its
 /// name, flags, signature by type key and land_rest.
-fn key_head(var b: BytesBuilder, f: Func, tk: List[Str]) {
+fn key_head(var b: BytesBuilder, f: Func, tk: List[Str], var seen: Map[Int, Int]) {
   b.write_str("func ")
   write_int(b, f.name.len())
   b.write_str(":${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[")
@@ -353,12 +369,12 @@ fn key_head(var b: BytesBuilder, f: Func, tk: List[Str]) {
   b.write_str("results")
   for t in f.results {
     b.write_byte(' ')
-    b.write_str(tkey(tk, t))
+    tkey_w(b, tk, seen, t)
   }
   b.write_str("\ncaptures")
   for t in f.captures {
     b.write_byte(' ')
-    b.write_str(tkey(tk, t))
+    tkey_w(b, tk, seen, t)
   }
   var lr: List[Int] = []
   for (k, _) in f.land_rest {
@@ -370,7 +386,7 @@ fn key_head(var b: BytesBuilder, f: Func, tk: List[Str]) {
 }
 
 /// What key_func writes of f after key_head.
-fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str]) {
+fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str], var seen: Map[Int, Int]) {
   for (bi, bl) in f.blocks.indexed() {
     b.write_byte('b')
     write_int(b, bi)
@@ -388,7 +404,7 @@ fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_byte(' ')
     b.write_str(op_name(x.op))
     b.write_byte(' ')
-    b.write_str(tkey(tk, ty_of(x.tb)))
+    tkey_w(b, tk, seen, ty_of(x.tb))
     b.write_str(" [")
     write_ints(b, x.args)
     b.write_str("] ")
@@ -419,7 +435,9 @@ fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_str("]\n")
   }
   for d in f.dvars {
-    b.write_str("dvar ${d.name.len()}:${d.name} ${tkey(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
+    b.write_str("dvar ${d.name.len()}:${d.name} ")
+    tkey_w(b, tk, seen, d.ty)
+    b.write_str(" ${d.line} ${d.param} ${d.inl}\n")
   }
   for d in f.dbinds {
     b.write_str("dbind ${d.dvar} ${d.value} ${d.line}\n")
@@ -436,7 +454,8 @@ fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str]) {
 /// by the entry alone took another build's numbering (2026-10-27: TLS
 /// goldens read the wrong constants, a moved body kept its old lines).
 fn key_replayed(var b: BytesBuilder, f: Func, tk: List[Str]) {
-  key_head(b, f, tk)
+  var seen: Map[Int, Int] = {}
+  key_head(b, f, tk, seen)
   for x in f.values {
     write_int(b, line_of(x.lp))
     b.write_byte(' ')
@@ -446,11 +465,13 @@ fn key_replayed(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_byte(' ')
     key_aux(b, x.aux)
     b.write_byte(' ')
-    b.write_str(tkey(tk, ty_of(x.tb)))
+    tkey_w(b, tk, seen, ty_of(x.tb))
     b.write_byte('\n')
   }
   for d in f.dvars {
-    b.write_str("dvar ${d.name.len()}:${d.name} ${tkey(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
+    b.write_str("dvar ${d.name.len()}:${d.name} ")
+    tkey_w(b, tk, seen, d.ty)
+    b.write_str(" ${d.line} ${d.param} ${d.inl}\n")
   }
   for d in f.dbinds {
     b.write_str("dbind ${d.dvar} ${d.value} ${d.line}\n")
