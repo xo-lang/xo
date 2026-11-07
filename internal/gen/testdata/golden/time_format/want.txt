@@ -31,7 +31,7 @@ parse 2026-10-9 -> at byte 8 of "2026-10-9": expected 2 digit day
 parse 26-10-09 -> at byte 0 of "26-10-09": expected 4 digit year
 parse 2026/10/09 -> at byte 4 of "2026/10/09": expected "-"
 parse 2026-10-09  -> at byte 10 of "2026-10-09 ": extra text after the layout: " "
-parse Thu, 09 Oct 2026 08:05:03 GMT -> at byte 0 of "Thu, 09 Oct 2026 08:05:03 GMT": weekday Thursday does not match 2026-10-09, a Friday
+parse Thu, 09 Oct 2026 08:05:03 GMT -> 2026-10-09T08:05:03Z
 parse Fri, 09 Okt 2026 08:05:03 GMT -> at byte 8 of "Fri, 09 Okt 2026 08:05:03 GMT": expected a month name such as "Jan"
 parse Fri, 09 Oct 2026 08:05:03 CET -> at byte 26 of "Fri, 09 Oct 2026 08:05:03 CET": zone abbreviation "CET" is not used by America/New_York at 2026-10-09T08:05:03
 parse 2026-10-09T10:00:00 -> at byte 19 of "2026-10-09T10:00:00": expected an offset: Z or +hh:mm
