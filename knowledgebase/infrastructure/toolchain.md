@@ -2051,6 +2051,11 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   separately (TestTierSepcompWarm). A test that sets XO_SEPCOMP in its
   Options.Env keeps its own choice; the tests of the separate path skip
   or drop the variable. Last verified: 2026-11-06.
+  internal/arm64's explicit std builds (`xo dev stdcache`, about twenty
+  tests) run a few at a time (stdslot_test.go stdRun: half the memory
+  limit, HEAVY_MAX_GB, else the cgroup's memory.max or MemTotal, over
+  one build's peak);
+  `XO_TEST_STD_BUILDS=N` sets the number. Last verified: 2026-11-06.
 - **No Go reference in TestGolden**: want.txt pins the output; the Go
   backend builds only under `-golden-update` (which writes want.txt).
   TestGoldenGoParity (XO_TEST_GO_PARITY=1) builds every golden with the

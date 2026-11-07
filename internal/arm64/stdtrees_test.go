@@ -34,7 +34,7 @@ func TestStdTreesRebuild(t *testing.T) {
 	cache := filepath.Join(work, "cache")
 	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
-	paths, err := cmd.Output()
+	paths, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestStdRecordDefaultArgs(t *testing.T) {
 	cache := filepath.Join(work, "cache")
 	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
-	paths, err := cmd.Output()
+	paths, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestStdRecordBindRetry(t *testing.T) {
 		c := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+string(rune('0'+k))))
 		c.Dir = prog
 		c.Env = env
-		if msgs, err := c.CombinedOutput(); err != nil {
+		if msgs, err := stdRun(c.CombinedOutput); err != nil {
 			t.Fatalf("xo dev stdcache: %v\n%s", err, msgs)
 		}
 	}

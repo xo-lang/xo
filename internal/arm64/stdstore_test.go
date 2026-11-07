@@ -38,7 +38,7 @@ func TestStdStoreBuilds(t *testing.T) {
 	// diagnostic) on standard error
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("std's store does not build: %v\n%s", err, stderr.String())
 	}

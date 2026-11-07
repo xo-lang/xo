@@ -75,7 +75,7 @@ func TestSepcompLinks(t *testing.T) {
 	// once per xo, target and concurrency, decision 0388)
 	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
-	paths, err := cmd.Output()
+	paths, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}
@@ -160,7 +160,7 @@ fn main(os: Os) {
 	// and both stores, as the default sets them
 	cmd = testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=1"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
-	paths1, err := cmd.Output()
+	paths1, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache --conc=1: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestSepcompDefault(t *testing.T) {
 	for _, c := range []string{"0", "1"} {
 		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+c))
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"))
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := stdRun(cmd.CombinedOutput); err != nil {
 			t.Fatalf("xo dev stdcache --conc=%s: %v\n%s", c, err, out)
 		}
 	}
@@ -315,7 +315,7 @@ func TestSepcompSharedMade(t *testing.T) {
 	defer os.RemoveAll(work)
 	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=1"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
-	paths, err := cmd.Output()
+	paths, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestSepcompZeroValWeak(t *testing.T) {
 	defer os.RemoveAll(work)
 	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
-	paths, err := cmd.Output()
+	paths, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestSepcompDebugInfo(t *testing.T) {
 	defer os.RemoveAll(work)
 	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
-	paths, err := cmd.Output()
+	paths, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestSepcompTestVariant(t *testing.T) {
 	for _, c := range []string{"0", "1"} {
 		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--test", "--conc="+c))
 		cmd.Env = env
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := stdRun(cmd.CombinedOutput); err != nil {
 			t.Fatalf("xo dev stdcache --test --conc=%s: %v\n%s", c, err, out)
 		}
 	}
@@ -585,7 +585,7 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 	for _, c := range []string{"0", "1"} {
 		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--test", "--conc="+c))
 		cmd.Env = env
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := stdRun(cmd.CombinedOutput); err != nil {
 			t.Fatalf("xo dev stdcache --test --conc=%s: %v\n%s", c, err, out)
 		}
 	}
@@ -774,7 +774,7 @@ func TestSepcompStdxKeepsFrontCache(t *testing.T) {
 	for _, c := range []string{"0", "1"} {
 		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+c))
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := stdRun(cmd.CombinedOutput); err != nil {
 			t.Fatalf("xo dev stdcache --conc=%s: %v\n%s", c, err, out)
 		}
 	}

@@ -44,7 +44,7 @@ func TestStdDebugMap(t *testing.T) {
 	env := append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_BIN_CACHE=off", "XO_INLINE_DENY=prelude.list_map*,cb,main.fn*")
 	sc := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
 	sc.Env = env
-	b, err := sc.Output()
+	b, err := stdRun(sc.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}

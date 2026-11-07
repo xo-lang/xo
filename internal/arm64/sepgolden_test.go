@@ -46,7 +46,7 @@ func TestSepcompGoldens(t *testing.T) {
 	for _, conc := range []string{"0", "1"} {
 		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+conc))
 		cmd.Env = append(os.Environ(), cache...)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := stdRun(cmd.CombinedOutput); err != nil {
 			t.Fatalf("xo dev stdcache --conc=%s: %v\n%s", conc, err, out)
 		}
 	}

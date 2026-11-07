@@ -34,7 +34,7 @@ func TestSepcompLinksWindows(t *testing.T) {
 	defer os.RemoveAll(work)
 	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--target=windows/amd64", "--conc=0"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
-	paths, err := cmd.Output()
+	paths, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}

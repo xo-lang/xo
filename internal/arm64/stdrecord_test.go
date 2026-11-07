@@ -37,7 +37,7 @@ func TestStdRecordIdentity(t *testing.T) {
 	cache := filepath.Join(work, "cache")
 	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
-	paths, err := cmd.Output()
+	paths, err := stdRun(cmd.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}

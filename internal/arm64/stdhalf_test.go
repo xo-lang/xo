@@ -28,7 +28,7 @@ func sepHalfEnv(t *testing.T, xo, root, out string) []string {
 	base := []string{"XO_STD=" + filepath.Join(root, "std"), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=" + cache}
 	sc := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=1"))
 	sc.Env = append(os.Environ(), base...)
-	b, err := sc.Output()
+	b, err := stdRun(sc.Output)
 	if err != nil {
 		t.Fatalf("xo dev stdcache: %v", err)
 	}

@@ -66,7 +66,7 @@ func TestStdFailedMarkerPerTree(t *testing.T) {
 	fail := func() string {
 		c := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
 		c.Env = env(a)
-		if out, err := c.CombinedOutput(); err == nil {
+		if out, err := stdRun(c.CombinedOutput); err == nil {
 			t.Fatalf("xo dev stdcache of the std without zoneinfo.zip succeeded:\n%s", out)
 		}
 		ms, _ := filepath.Glob(filepath.Join(cache, "std", "*.store.failed"))

@@ -38,7 +38,7 @@ func TestPDBGUIDFromContent(t *testing.T) {
 	for conc := 0; conc < 2; conc++ {
 		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+string(rune('0'+conc)), "--target=windows/amd64"))
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
-		paths, err := cmd.Output()
+		paths, err := stdRun(cmd.Output)
 		if err != nil {
 			t.Fatalf("xo dev stdcache --conc=%d: %v", conc, err)
 		}
