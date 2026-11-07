@@ -404,7 +404,12 @@ for step in "$@"; do
       # 2026-10-24: 7822046d4 made the Go backend's RFC 3339 parse strict,
       # passed its gate, and TestTimeDiff, a -short test the gate never
       # ran, kept main red for 1 h 30 min)
-      full diffs ./internal/llvm -run 'Diff$'
+      # -timeout 20m (later than full's 120m, so it wins): the step takes
+      # 161 s on the second host, and a hang prints its stacks at 20 min
+      # instead of holding a host for two hours (lead, 2026-11-07:
+      # TestHTTP1ParseDiff hung at afb174dc1 and three agents chased the
+      # wrong cause for 1 h 30 min before a stack named it)
+      full diffs ./internal/llvm -run 'Diff$' -timeout 20m
     else
       echo "corpora: skipped (no std/rt, compiler/gen or std module with a std/rt twin changed)"
     fi ;;

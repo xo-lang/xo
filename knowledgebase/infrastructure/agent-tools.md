@@ -206,6 +206,18 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- A gate step that hangs or runs far past its usual time (lead,
+  2026-11-07): before blaming your change or the gate, run the same
+  step at main as a control with a go test `-timeout` a few times its
+  usual length, so a hang prints every goroutine's stack. The stack
+  names the stuck test; a control that hangs too means a regression on
+  main (message the lead with both, who names one bisect owner). That
+  night a 50 minute internal/llvm step was blamed on clang -O2, then on
+  the Go parity sample, then on the change being gated, for 1 h 30 min
+  across three agents, before a control at main hung in
+  TestHTTP1ParseDiff and a bisect found 1c9bc8e5f in 20 minutes.
+  scripts/gate.sh's diffs step now has `-timeout 20m`. Last verified:
+  2026-11-07.
 - Testing a server's stop (2026-11-05; the owner approved this as the
   template): copy internal/llvm/testdata/golden/http_stop_keepalive.
   It covers the connection states a stop must handle, in one process,
