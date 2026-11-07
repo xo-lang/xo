@@ -65,6 +65,13 @@ fn (z: Tokenizer) err() -> Str? {
 fn (var z: Tokenizer) allow_cdata(allow: Bool) { z.cdata = allow }
 fn (var z: Tokenizer) next_is_not_raw_text() { z.raw_tag = "" }
 fn (var z: Tokenizer) set_max_buf(n: Int) { z.max_buf = n }
+
+// the Go backend compiles this module and routes a `var` method through a free function (decision 0312)
+fn tokenizer_next(var z: Tokenizer) -> htmltok.TokenType { z.next() }
+fn tokenizer_token(var z: Tokenizer) -> htmltok.Token { z.token() }
+fn tokenizer_allow_cdata(var z: Tokenizer, allow: Bool) { z.allow_cdata(allow) }
+fn tokenizer_next_is_not_raw_text(var z: Tokenizer) { z.next_is_not_raw_text() }
+fn tokenizer_set_max_buf(var z: Tokenizer, n: Int) { z.set_max_buf(n) }
 fn (z: Tokenizer) buffered() -> Str { z.src[z.re..z.src.len()].to_str_lossy() }
 fn (z: Tokenizer) raw() -> Str { z.src[z.rs..z.re].to_str_lossy() }
 
@@ -156,9 +163,12 @@ fn (var z: Tokenizer) read_raw_or_rcdata() {
     }
   }
   z.de = z.re
-  z.text_raw = z.raw_tag != "textarea" && z.raw_tag != "title"
+  z.text_raw = is_raw_text_tag(z.raw_tag)
   z.raw_tag = ""
 }
+
+/// Whether the content of tag is raw text rather than escapable raw text.
+fn is_raw_text_tag(tag: Str) -> Bool { tag != "textarea" && tag != "title" }
 
 // the script data states of the HTML5 tokenizer, as Go's labels
 const S_DATA = 0

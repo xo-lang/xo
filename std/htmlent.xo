@@ -1,0 +1,9 @@
+// std/htmlent: the HTML entity tables std/html and std/htmltok share (internal; use std/html's
+// escape_string and unescape_string). A declaration file so the Go backend compiles the lookups from
+// std/native/htmlent.xo. Pure.
+
+/// The character of an entity name without `&`, "" for none (`amp;` and the semicolon-less forms of Go's table).
+fn entity_of(name: Str) -> Str
+
+/// The two character expansion of an entity name, "" for none.
+fn entity2_of(name: Str) -> Str

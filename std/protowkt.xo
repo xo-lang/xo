@@ -19,7 +19,10 @@ struct Duration {
   nanos: Int = 0
 } derive Eq
 
-struct Empty {} derive Eq
+struct Empty {
+  /// Always empty: a struct without fields is an opaque handle.
+  unknown: Bytes = b""
+} derive Eq
 
 struct FieldMask {
   paths: List[Str] = []

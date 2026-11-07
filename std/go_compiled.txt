@@ -38,3 +38,4 @@ protoparse
 htmltok
 protodesc
 protowkt
+htmlent
