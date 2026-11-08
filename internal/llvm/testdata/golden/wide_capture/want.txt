@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+4
+error: bad name bad
+svc v0 v7
+--- stderr

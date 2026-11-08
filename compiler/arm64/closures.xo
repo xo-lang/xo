@@ -23,6 +23,15 @@ fn (var g: G) capture_words(fi: Int, i: Int) -> (Int, Int) {
   (off, g.nwords(caps[i]))
 }
 
+/// The words of the captured values of function ci's environment.
+fn (var g: G) env_words(ci: Int) -> Int {
+  var n = 0
+  for c in g.m.funcs[ci].captures {
+    n += g.nwords(c)
+  }
+  n
+}
+
 /// Lowers a closure: the code address, and a new environment holding the
 /// captured values (consumed) when there are any.
 fn (var g: G) closure_op(v: Int) {
@@ -39,13 +48,7 @@ fn (var g: G) closure_op(v: Int) {
     g.set(v, [code, 0])
     return
   }
-  var n = 0
-  for c in g.m.funcs[ci].captures {
-    n += g.nwords(c)
-  }
-  if ENV_HDR + 8 * n > 32760 {
-    g.fail("closure of `${name}` captures too many words")
-  }
+  let n = g.env_words(ci)
   if g.stack_closures().contains(v) {
     // in the frame: one area per closure, which its next run reuses (the
     // value is dead by then: it is never carried on an edge); the count
@@ -75,7 +78,8 @@ fn (var g: G) closure_fill(v: Int, ci: Int, env: Int) {
   var k = 0
   for a in x.args {
     for w in g.store_words(a) {
-      g.store("str $u0, [$u1, #${ENV_HDR + 8 * k}]", [w, env])
+      let (base, off) = g.mem_at(env, ENV_HDR + 8 * k)
+      g.store("str $u0, [$u1, #${off}]", [w, base])
       k += 1
     }
   }
@@ -97,6 +101,14 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
   var cand: Map[Int, Bool] = {}
   for (v, x) in g.f.values.indexed() {
     if x.op != ssa.Op.Closure || x.args.is_empty() || ssa.block_of(x.tb) < 0 {
+      continue
+    }
+    // past 32760 bytes an environment word's offset goes through an add
+    // (mem_at; a fault frame's parameters, 2026-11-07: generated GCP
+    // services hold thousands of words); such an environment stays on
+    // the heap
+    let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+    if ci < 0 || ENV_HDR + 8 * g.env_words(ci) > 32760 {
       continue
     }
     cand[v] = true
@@ -160,7 +172,8 @@ fn (var g: G) stack_env_release(v: Int) {
     if g.m.heap(t) {
       var ws: List[Int] = []
       for (k, fp) in lay.indexed() {
-        ws.push(g.def1(fp, "ldr $d0, [$u0, #${ENV_HDR + 8 * (off + k)}]", [env]))
+        let (base, o) = g.mem_at(env, ENV_HDR + 8 * (off + k))
+        ws.push(g.def1(fp, "ldr $d0, [$u0, #${o}]", [base]))
       }
       g.release(t, ws)
     }
@@ -176,7 +189,8 @@ fn (var g: G) capture_op(v: Int) {
   let (off, _) = g.capture_words(g.fi, aux_int(x.aux))
   var ws: List[Int] = []
   for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
-    ws.push(g.def1(fp, "ldr $d0, [$u0, #${ENV_HDR + 8 * (off + k)}]", [env]))
+    let (base, o) = g.mem_at(env, ENV_HDR + 8 * (off + k))
+    ws.push(g.def1(fp, "ldr $d0, [$u0, #${o}]", [base]))
   }
   g.set(v, ws)
 }

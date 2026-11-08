@@ -1,0 +1,77 @@
+// A value of more than 4,096 words (a struct nesting 8 x 8 x 8 structs of
+// 8 strings, like a generated API client whose services each hold its
+// core), captured by a fault frame's parameters (a method with `?`) and
+// by a closure: environment words past arm64's 32760 byte scaled offset
+// (2026-11-07: the native backend failed "captures too many words" on
+// generated GCP clients).
+struct L0 {
+  f0: Str = "v0"
+  f1: Str = "v1"
+  f2: Str = "v2"
+  f3: Str = "v3"
+  f4: Str = "v4"
+  f5: Str = "v5"
+  f6: Str = "v6"
+  f7: Str = "v7"
+}
+
+struct L1 {
+  s0: L0 = L0{}
+  s1: L0 = L0{}
+  s2: L0 = L0{}
+  s3: L0 = L0{}
+  s4: L0 = L0{}
+  s5: L0 = L0{}
+  s6: L0 = L0{}
+  s7: L0 = L0{}
+}
+
+struct L2 {
+  s0: L1 = L1{}
+  s1: L1 = L1{}
+  s2: L1 = L1{}
+  s3: L1 = L1{}
+  s4: L1 = L1{}
+  s5: L1 = L1{}
+  s6: L1 = L1{}
+  s7: L1 = L1{}
+}
+
+struct L3 {
+  s0: L2 = L2{}
+  s1: L2 = L2{}
+  s2: L2 = L2{}
+  s3: L2 = L2{}
+  s4: L2 = L2{}
+  s5: L2 = L2{}
+  s6: L2 = L2{}
+  s7: L2 = L2{}
+}
+
+struct Svc {
+  core: L3 = L3{}
+  name: Str = "svc"
+}
+
+fn check(n: Str) -> Int ! Str {
+  if n == "bad" {
+    return Err("bad name ${n}")
+  }
+  n.len()
+}
+
+fn (r: Svc) get(name: Str) -> Int ! Str {
+  let k = check(name)?
+  k + r.core.s7.s7.s7.f7.len()
+}
+
+fn main(os: Os) {
+  let s = Svc{}
+  os.stdio.println("${s.get("ok") ?? _ => -1}")
+  match s.get("bad") {
+    Ok(v) => os.stdio.println("${v}")
+    Err(e) => os.stdio.println("error: ${e}")
+  }
+  let f = fn() -> Str { "${s.name} ${s.core.s0.s0.s0.f0} ${s.core.s7.s7.s7.f7}" }
+  os.stdio.println(f())
+}
