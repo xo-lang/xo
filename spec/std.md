@@ -2543,6 +2543,15 @@ struct Record { level: Level, msg: Str, fields: Map[Str, Str], module: Str }   /
 log.info("listening", {"addr": addr, "port": port})
 ```
 
+`enabled(level: Level) -> Bool` (decision 0558) says whether a record of
+`level` would be written under the configured level. A call to `debug`,
+`info`, `warn` or `error` (and the same methods of a `Logger`) is compiled
+as `if enabled(level) { call }`: below the configured level its arguments
+(the message, the fields and everything inside them) are not evaluated,
+so an argument's side effect does not run, unlike Go's `log/slog`. A call
+through a function value is not guarded (the callee's own check drops the
+record). Golden `log_lazy` (every backend).
+
 A `Logger` carries fields onto every record it writes (decision 0413,
 log/slog's `Logger.With`):
 

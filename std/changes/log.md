@@ -1,5 +1,17 @@
 # std/log changes
 
+## 2026-11-07: feature: log calls below the level do not evaluate their arguments; `log.enabled`
+
+- Kind: feature
+- Commit: this push
+- Found by: Xo Lang 1's xo-vs-go survey, row 7 (log/filtered 1.79x Go)
+- Go reference: log/slog Logger.Enabled (Go builds a call's arguments before the level check; Xo now skips them)
+- Test: golden log_lazy (arm64, LLVM, Go backend parity, wasm)
+- Timing: pending, xo bench --ab on bench/perf/log filtered
+- Shipped in: not yet released
+
+`debug`, `info`, `warn` and `error` (and a `Logger`'s) are compiled as `if log.enabled(level) { call }` on every backend (decision 0558), so a record below the configured level builds no fields map, interpolation or `Debug` boxes. `log.enabled(level)` is new for work that is not an argument. An argument with a side effect does not run when the record is dropped.
+
 ## 2026-11-04: perf: a record's JSON keys are ordered by insertion, not sort_by
 
 - Kind: perf
