@@ -491,6 +491,9 @@ fn (var c: Checker) type_member(obj0: Int, targs0: List[Int], has_targs0: Bool, 
     what = "variant of `${c.qual_name(obj)}`"
   }
   let d = c.unresolved(sel.span, what, text(name), cands.sort())
+  if d >= 0 && nearest(text(name), cands).is_empty() {
+    c.statics_note(d, obj, text(name), cands)
+  }
   let is_method = c.objs[obj].methods.contains(name)
   if d >= 0 && is_method {
     c.note(d, "`${text(name)}` is a method; call it on a value of type `${text(c.objs[obj].name)}`")
@@ -508,6 +511,44 @@ fn (var c: Checker) type_member(obj0: Int, targs0: List[Int], has_targs0: Bool, 
     c.numeric_conversion_hint(d, obj, span, call[0])
   }
   c.bad_ty
+}
+
+/// The conversion a missing associated function of a prelude type was
+/// meant to be (agents wrote `Str.from_bytes`, `Bytes.from_list` and
+/// `Int.wrapping_from`, 2026-11-08: nine XO0601 in one file, each with no
+/// "did you mean" since no name is close), or "".
+fn conversion_hint(on: Str, name: Str) -> Str {
+  if on == "Str" && (name == "from_bytes" || name == "from_utf8" || name == "from_utf8_lossy") {
+    return "a Str from Bytes is `b.to_str()` (None if not valid UTF-8) or `b.to_str_lossy()` (spec/std.md 2.2)"
+  }
+  if on == "Bytes" && (name == "from_str" || name == "from_string" || name == "from" || name == "from_list" || name == "from_utf8") {
+    return "Bytes from a Str is `s.bytes()`; from numbers, write them to a `BytesBuilder` (`write_byte`) or use a literal `b\"...\"` (spec/std.md 2.2)"
+  }
+  if on == "Int" && name == "wrapping_from" {
+    return "`wrapping_from` belongs to the sized integer types (`UInt8.wrapping_from(n)`); to get an Int from any number write `Int(x)` (spec/std.md 2.1)"
+  }
+  ""
+}
+
+/// A note on d for an associated function no name is close to: the
+/// conversion it was meant to be, else the type's variants, associated
+/// functions and constants (the first 12, then `xo doc`), as neighbours_note
+/// does for a method.
+fn (var c: Checker) statics_note(d: Int, obj: Int, name: Str, cands: List[Str]) {
+  let on = text(c.objs[obj].name)
+  if c.objs[obj].module == c.prelude {
+    let h = conversion_hint(on, name)
+    if !h.is_empty() {
+      c.note(d, h)
+      return
+    }
+  }
+  if cands.is_empty() {
+    c.note(d, "`${on}` has no associated functions or constants (`xo doc ${on}` lists its methods)")
+    return
+  }
+  let shown = if cands.len() > 12 { "${cands[0..12].join(", ")}, ... (`xo doc ${on}` lists all ${cands.len()})" } else { cands.join(", ") }
+  c.note(d, "`${on}` has ${shown}")
 }
 
 /// `Float.from(n)` (call.go numericConversionHint): an associated

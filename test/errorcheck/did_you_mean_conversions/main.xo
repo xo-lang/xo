@@ -1,0 +1,14 @@
+// A conversion written as an associated function of another language's
+// shape (`Str.from_bytes`, `Bytes.from_list`, `Int.wrapping_from`) has no
+// close name to suggest, so the note names what to write instead.
+
+fn conversions(b: Bytes) -> Int {
+  let s = Str.from_bytes(b) // ERROR XO0601 "b.to_str"
+  let c = Bytes.from_list([1, 2]) // ERROR XO0601 "s.bytes"
+  let n = Int.wrapping_from(3) // ERROR XO0601 "UInt8.wrapping_from"
+  s.len() + c.len() + n
+}
+
+fn main(os: Os) {
+  os.stdio.println("${conversions(b"x")}")
+}
