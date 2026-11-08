@@ -638,6 +638,21 @@ pub fn entry_stub_arm64() -> Str {
     "\t.cfi_endproc\n\t.size _start, .-_start\n"
 }
 
+/// entry_stub_arm64 for riscv64 Linux (decision 0571): s1 and s2 (callee
+/// saved) keep the initial stack and environ across the calls, tp takes
+/// xo_x_nl_main_tp's thread pointer, and ra and s0 (the frame pointer)
+/// are zero in the outermost frame. gp stays unset: lld relaxes nothing
+/// to it unless asked (--relax-gp).
+pub fn entry_stub_riscv64() -> Str {
+  "\t.text\n\t.globl _start\n\t.type _start, @function\n\t.p2align 2\n_start:\n\t.cfi_startproc\n\t.cfi_undefined ra\n" +
+    "\tli s0, 0\n\tli ra, 0\n\tmv s1, sp\n\tandi sp, s1, -16\n" +
+    "\tmv a0, s1\n\tcall xo_x_nl_start\n\tmv s2, a0\n" +
+    "\tcall xo_x_nl_main_tp\n\tmv tp, a0\n" +
+    "\tcall xo_x_nl_main_stack\n\tbeqz a0, 1f\n\tmv sp, a0\n1:\n" +
+    "\tli s0, 0\n\tld a0, 0(s1)\n\taddi a1, s1, 8\n\tmv a2, s2\n\tcall main\n\tcall exit\n\tebreak\n" +
+    "\t.cfi_endproc\n\t.size _start, .-_start\n"
+}
+
 /// entry_stub_arm64 for x86_64 Linux: the thread pointer (fs) is set by
 /// xo_x_nl_main_tp itself (arch_prctl); rbx and r12 keep the initial
 /// stack and environ across the calls.
