@@ -1,5 +1,25 @@
 # std/metrics changes
 
+## 2026-11-08: perf: a labelled hit updates under the read share; counters add whole numbers with one atomic add
+
+- Kind: perf
+- Commit: this push
+- Found by: counting the atomic updates of a labelled Counter.inc hit (Xo Lang 1, path 1 of the lead's queue): five (the share's two, the cells list's share and release, the float's compare and swap) against client_golang's three
+- Go reference: prometheus/client_golang's counter (valInt, an atomic add for a whole increment, beside valBits) and its metricVec lookup under RLock
+- Test: goldens metrics_buckets, metrics_child, metrics_summary, metrics_text, otlp_export (arm64, LLVM, Go parity); std corpus metrics (go, arm64, llvm)
+- Timing: --ab on linux/arm64 host 1 against main without it, 7 rounds: bench/perf/metrics counter 0.972 (0.935 to 0.996), histogram 0.960 (0.942 to 0.987, n=6), counterheld within noise (0.978)
+- Shipped in: not yet released
+
+A hit (the series exists) now adds inside with_read's closure, reading
+the cells in place, so it no longer shares and releases the cells list
+(two atomic updates a call); a histogram finds its bucket before the
+share, so the closure captures no list of the Family (capturing the
+bounds made the Family owned: 1.76 times slower in a first try). A
+counter's whole increments below 2^53 (inc, and add of a whole number)
+go to cell 1, unused by a counter before, with one atomic add instead of
+the float's load and compare and swap loop; the text exposition and the
+OTLP exporter read the counter as cell 0's float plus cell 1.
+
 ## 2026-11-07: perf: a labelled update shares only the series' cells
 
 - Kind: perf

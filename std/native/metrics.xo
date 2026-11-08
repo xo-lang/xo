@@ -400,6 +400,49 @@ fn cells_of(f: metrics.Family, values: List[Str]) -> List[Atomic[Int]]? {
   }
 }
 
+/// Adds n >= 0 to a counter's cells: a whole n below 2^53 to cell 1 (an
+/// integer, unused by a counter otherwise) with one atomic add, else to
+/// cell 0's float with a compare and swap loop (client_golang's valInt
+/// and valBits); the value is their sum.
+fn counter_cells_add(cells: List[Atomic[Int]], n: Float) {
+  if n < 9007199254740992.0 && n == Float(Int(n)) {
+    let _n = cells[1].add(Int(n))
+    return
+  }
+  add_float(cells[0], n)
+}
+
+/// A counter's value: cell 0's float plus cell 1's whole part.
+fn counter_value(cells: List[Atomic[Int]]) -> Float {
+  load(cells[0]) + Float(cells[1].get())
+}
+
+/// Adds d to the label values' series (a counter's cells, else cell 0) when it exists, under
+/// the share of with_read: the cells are read in place, so a hit shares
+/// and releases no list (an atomic count each on a shared map: two of the
+/// five atomic updates of a Counter.inc, 2026-11-08). False when there is
+/// no such series yet or the label count is wrong (series_of then makes
+/// the series or faults).
+fn hit_add(f: metrics.Family, values: List[Str], counter: Bool, d: Float) -> Bool {
+  if values.len() != f.labels.len() {
+    return false
+  }
+  let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
+  f.series.with_read(fn(m: Map[Str, metrics.Series]) -> Bool {
+    match m.get(key) {
+      Some(s) => {
+        if counter {
+          counter_cells_add(s.cells, d)
+        } else {
+          add_float(s.cells[0], d)
+        }
+        true
+      }
+      None => false
+    }
+  })
+}
+
 /// The float whose bits a holds (the cells hold bits: the native
 /// backends' atomics are integers).
 fn load(a: Atomic[Int]) -> Float {
@@ -424,8 +467,11 @@ fn counter_add(c: metrics.Counter, n: Float, values: List[Str] = []) {
   if n < 0.0 {
     fault("metrics: a counter cannot decrease")
   }
+  if hit_add(c.f, values, true, n) {
+    return
+  }
   if let Some(cells) = cells_of(c.f, values) {
-    add_float(cells[0], n)
+    counter_cells_add(cells, n)
   }
 }
 
@@ -436,12 +482,36 @@ fn gauge_set(g: metrics.Gauge, v: Float, values: List[Str] = []) {
 }
 
 fn gauge_add(g: metrics.Gauge, v: Float, values: List[Str] = []) {
+  if hit_add(g.f, values, false, v) {
+    return
+  }
   if let Some(cells) = cells_of(g.f, values) {
     add_float(cells[0], v)
   }
 }
 
 fn histogram_observe(h: metrics.Histogram, v: Float, values: List[Str] = []) {
+  // a hit observes under the share, as hit_add adds
+  if values.len() == h.f.labels.len() {
+    let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
+    // the bucket found before the share, so the closure captures no list
+    // of h.f (a captured heap field makes the Family owned: every call
+    // retained and released its fields, histogram 1.76x, 2026-11-08)
+    let nb = h.f.bounds.len()
+    let b = bucket_of(h.f.bounds, v)
+    let done = h.f.series.with_read(fn(m: Map[Str, metrics.Series]) -> Bool {
+      match m.get(key) {
+        Some(s) => {
+          histogram_cell_add(s.cells, b, nb, v)
+          true
+        }
+        None => false
+      }
+    })
+    if done {
+      return
+    }
+  }
   if let Some(cells) = cells_of(h.f, values) {
     histogram_add(cells, h.f.bounds, v)
   }
@@ -451,11 +521,21 @@ fn histogram_observe(h: metrics.Histogram, v: Float, values: List[Str] = []) {
 /// findBucket: the cells count one bucket each and a scrape adds them up),
 /// the count and the sum.
 fn histogram_add(cells: List[Atomic[Int]], bounds: List[Float], v: Float) {
+  histogram_cell_add(cells, bucket_of(bounds, v), bounds.len(), v)
+}
+
+/// The first bucket of bounds that holds v (bounds.len() when none does).
+fn bucket_of(bounds: List[Float], v: Float) -> Int {
   var i = 0
   while i < bounds.len() && !(v <= bounds[i]) {
     i += 1
   }
-  if i < bounds.len() {
+  i
+}
+
+/// histogram_add with its bucket i of nb found.
+fn histogram_cell_add(cells: List[Atomic[Int]], i: Int, nb: Int, v: Float) {
+  if i < nb {
     let _n = cells[3 + i].add(1)
   }
   let _c = cells[1].add(1)
@@ -481,14 +561,14 @@ fn summary_child(s: metrics.Summary, values: List[Str] = []) -> metrics.SummaryC
 }
 
 fn counterchild_inc(c: metrics.CounterChild) {
-  add_float(c.s.cells[0], 1.0)
+  let _n = c.s.cells[1].add(1)
 }
 
 fn counterchild_add(c: metrics.CounterChild, n: Float) {
   if n < 0.0 {
     fault("metrics: a counter cannot decrease")
   }
-  add_float(c.s.cells[0], n)
+  counter_cells_add(c.s.cells, n)
 }
 
 fn gaugechild_set(g: metrics.GaugeChild, v: Float) {
@@ -570,7 +650,8 @@ fn expose(f: metrics.Family, now_ms: Int) -> List[Str] {
   for k in keys {
     let s = m.get(k) ?? continue
     if f.kind < 2 {
-      out.push("${head(f.name, f.labels, s.values, "")} ${num(load(s.cells[0]))}")
+      let v = if f.kind == 0 { counter_value(s.cells) } else { load(s.cells[0]) }
+      out.push("${head(f.name, f.labels, s.values, "")} ${num(v)}")
     } else if f.kind == 3 {
       let objs = f.objectives
       if !objs.is_empty() {

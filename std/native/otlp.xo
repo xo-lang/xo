@@ -206,7 +206,9 @@ fn encode_family(f: metrics.Family, start_ms: Int, now_ms: Int) -> Bytes {
     for k in sm.keys().sort() {
       let s = sm.get(k) ?? continue
       if f.kind < 2 {
-        pts = msg_field(pts, 1, number_point(f, s.values, load_cell(s.cells[0]), start_ms, now_ms, f.kind == 0))
+        // a counter's whole increments are in cell 1 (std/metrics counter_cells_add)
+        let v = if f.kind == 0 { load_cell(s.cells[0]) + Float(s.cells[1].get()) } else { load_cell(s.cells[0]) }
+        pts = msg_field(pts, 1, number_point(f, s.values, v, start_ms, now_ms, f.kind == 0))
       } else if f.kind == 3 {
         var p = BytesBuilder.new()
         p = fixed64_field(p, 2, start_ms * 1000000)
