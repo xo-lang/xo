@@ -97,6 +97,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_STD_STORE_CHECK":      {"none", ""},                                    // also links the parts and fails on a difference
 	"XO_STD_STORE_REPEAT":     {"none", ""},                                    // times N more store links (a measurement)
 	"XO_DATA_SHIFT":           {"link", ""},                                    // decision 0459: zeros before .data's first input section, a layout sensitivity check
+	"XO_BRANCH_REACH":         {"link", ""},                                    // a small reach for the linkers' branch islands: veneers in a small program (a test of what code keeps in x16 and x17 across a call)
 	"XO_STD_HALF":             {"link", ""},                                    // off: a store link keeps the program in std's sections and reuses no std half (decision 0409); the layout, not the behavior, changes
 	"XO_PREP_CACHE":           {"none", ""},                                    // off: a store link decides its kept atoms afresh (macho prepcache.xo); a hit links the same bytes
 	"XO_SEPCOMP_BG":           {"none", ""},                                    // 0: a miss of std's variant starts no background build (decision 0388); the build is whole program either way

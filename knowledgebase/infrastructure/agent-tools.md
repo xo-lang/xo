@@ -262,6 +262,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   scripts/docker-sepcomp-sample.txt's goldens plus sepcompGoldens against
   them (the default path of a build outside the tests). A fault that
   appears only with std's variants cached goes in sepcompGoldens.
+- Branch island goldens (2026-11-07): a linker veneer for a far `bl`
+  clobbers x16 and x17, and only programs past 128 MB of text get one, so
+  `TestGoldenRunIslands` (internal/arm64, not -short) builds goldens with
+  `XO_BRANCH_REACH=262144` (both linkers' islands and veneers in a small
+  program), plain and with XO_ARM64_REGS=4, and runs them. A change to
+  arm64 call sequences, thunks, stubs or the linkers' islands runs it in
+  its gate; a fault that appears only in huge binaries goes in its list
+  (gotchas/veneer-clobbers-x16-thunk.md).
 - Targeted pass goldens (2026-11-02): `pass_*` in
   internal/llvm/testdata/golden are programs aimed at what each optional
   native pass assumes (moves, loop-carried values, flags, spills, two

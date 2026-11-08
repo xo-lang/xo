@@ -1416,6 +1416,17 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
   if t == "mov $d0, $u0" && def_reg[0] == use_reg[0] && stores.is_empty() {
     return // a copy into the same register
   }
+  if !g.x86 && inst.us.len() == 1 && use_reg[0] == 16 && stores.is_empty() && !inst.has(IF_POLL) && !inst.has(IF_HAS_FAULT) && t.starts_with("bl ") && t.ends_with("_$u0") && !t.contains("\n") {
+    // a retain or release thunk's call with the object in x16 (rc.xo
+    // inc_thunk, drop_thunk) calls the x17 entry instead: a linker's
+    // branch island or veneer to a far thunk sets x16 (IP0, which AAPCS
+    // lets it clobber), so `bl thunk_x16` through one released the
+    // veneer's address, a write into the code (Azure 1's GCP
+    // compute/v0.alpha past 128 MB of text, 2026-11-07); the call
+    // clobbers x17 already
+    b.push("\tmov x17, x16\n\tbl ${t[3..tn - 4]}_x17\n")
+    return
+  }
   var out = StrBuilder.new()
   out.write("\t")
   var from = 0

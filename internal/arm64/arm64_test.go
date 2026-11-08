@@ -639,6 +639,60 @@ func TestGoldenRunSpill(t *testing.T) {
 	}
 }
 
+// TestGoldenRunIslands builds golden programs with the linker's branch
+// reach made small (XO_BRANCH_REACH), so their calls go through branch
+// island veneers (adrp x16, add x16, br x16) as a program past a bl's
+// 128 MiB does, and runs them: code that hands a callee a value in x16
+// or x17 (IP0, IP1, which a veneer may clobber) fails here. With
+// XO_ARM64_REGS=4 too, so spilled objects are reloaded into x16 for a
+// retain or release thunk's call (2026-11-07: `bl THUNK_x16` through a
+// veneer released the veneer's address, a write into the code, in Azure
+// 1's GCP compute/v0.alpha tests past 128 MB of text).
+func TestGoldenRunIslands(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	names := []string{"closures", "maps", "json_text", "conc_scopes", "fault_unwind", "value_semantics", "structs", "str_ops_table", "http_server", "chain_pads"}
+	for _, regs := range []string{"", "4"} {
+		for _, name := range names {
+			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
+			if _, err := os.Stat(dir); err != nil {
+				continue
+			}
+			regs, dir := regs, dir
+			env := []string{"XO_BRANCH_REACH=" + islandsReach, "XO_BACKEND_CACHE=off"}
+			label := "reach/" + name
+			if regs != "" {
+				env = append(env, "XO_ARM64_REGS="+regs)
+				label = "regs" + regs + "/" + name
+			}
+			t.Run(label, func(t *testing.T) {
+				t.Parallel()
+				got, err := buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64, Env: env})
+				if err != nil {
+					t.Fatalf("build: %v", err)
+				}
+				want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(want) != got.String() {
+					t.Errorf("output differs from want.txt with %v\n--- want\n%s\n--- got\n%s", env, want, got)
+				}
+			})
+		}
+	}
+}
+
+// islandsReach is TestGoldenRunIslands' branch reach: under the goldens'
+// code, so they get islands, and large enough that the islands of their
+// far targets fit in the reach's eighth.
+const islandsReach = "262144"
+
 // TestNoPreemptPolls: with XO_PREEMPT_POLLS=off (`--no-preempt`, decision
 // 0286 step 3's opt out for tight loop benchmarks) sieve's own loops have
 // no preemption poll (no `_ppN` stub label, no xo_preempt_stub call);

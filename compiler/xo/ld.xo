@@ -111,7 +111,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   }
   // std's half (decision 0409) puts the program after std, so a layout
   // file's order across both (decision 0403) turns it off
-  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, order: ctx.layout_order, entitlements: ctx.entitlements, embed_dwarf: !split && !strip, dsym: (dsym || split) && !strip, release: release, program_dwarf: !sep_store.is_empty(), std_parts: std_parts_dir(os, sep_store), prog_osos: prog_debug_objects(os, sep_store, ins), hash_pages: Some(par_page_hashes), split_prog: !sep_store.is_empty() && ctx.layout_order.is_empty() && (os.env.get("XO_STD_HALF") ?? "") != "off"}
+  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, order: ctx.layout_order, entitlements: ctx.entitlements, embed_dwarf: !split && !strip, dsym: (dsym || split) && !strip, release: release, program_dwarf: !sep_store.is_empty(), std_parts: std_parts_dir(os, sep_store), prog_osos: prog_debug_objects(os, sep_store, ins), hash_pages: Some(par_page_hashes), split_prog: !sep_store.is_empty() && ctx.layout_order.is_empty() && (os.env.get("XO_STD_HALF") ?? "") != "off", branch_reach: branch_reach(os.env.get("XO_BRANCH_REACH") ?? "")}
   let _in = lap(os, ctx.phases, "link.inputs", tin)
   let ts = os.clock.now()
   let linked = if store.is_empty() { macho.link_debug(parts + ins, opts) } else { link_store_laps(os, ctx, ins, store, opts, prep_dir(os, sep_store)) }
@@ -409,7 +409,7 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
   let debug_link = if split { "${base_name(out)}.debug" } else { "" }
   // the program's own sections after std's, and std's half (decision
   // 0420), unless XO_STD_HALF=off
-  let eopts = macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link, release: release, split_prog: !ctx.sep_store.is_empty() && (os.env.get("XO_STD_HALF") ?? "") != "off", data_shift: data_shift(os.env.get("XO_DATA_SHIFT") ?? "")}
+  let eopts = macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link, release: release, split_prog: !ctx.sep_store.is_empty() && (os.env.get("XO_STD_HALF") ?? "") != "off", data_shift: data_shift(os.env.get("XO_DATA_SHIFT") ?? ""), branch_reach: branch_reach(os.env.get("XO_BRANCH_REACH") ?? "")}
   let ts = os.clock.now()
   let linked = if !through { macho.link_elf_split(parts + ins, eopts) } else { elf_store_laps(os, ctx, ins, store, lazy, store_n, eopts) }
   if !store_path.is_empty() && !store.is_empty() {
@@ -1963,6 +1963,21 @@ fn prog_debug_objects(os: Os, store: Str, ins: List[macho.LinkInput]) -> List[(S
     out.push((inp.path, kept))
   }
   out
+}
+
+/// XO_BRANCH_REACH's bytes (macho.LinkOpts.branch_reach,
+/// ElfLinkOpts.branch_reach): the reach of a bl or b the linker's branch
+/// islands assume, a decimal count at least 65536 (smaller is 65536), 0
+/// (the instruction's ±128 MiB) when empty or not a count. A test: a
+/// small reach puts veneers in a small program, so a value its code keeps
+/// in x16 or x17 (IP0, IP1) across a call shows up in an ordinary run
+/// (2026-11-07: retain and release thunks took the object in x16).
+fn branch_reach(v: Str) -> Int {
+  let n = Int.parse(v.trim()) ?? 0
+  if n <= 0 {
+    return 0
+  }
+  n.max(65536) / 4 * 4
 }
 
 /// XO_DATA_SHIFT's bytes (decision 0459, macho.ElfLinkOpts.data_shift): a
