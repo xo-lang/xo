@@ -10,6 +10,7 @@ var (
 	_ func(*Task, string, Map[string, IDebug])                 = Log_info
 	_ func(*Task, string, Map[string, IDebug])                 = Log_warn
 	_ func(*Task, string, Map[string, IDebug])                 = Log_error
+	_ func(*Task, Log_Level) bool                              = Log_enabled
 	_ func(*Task, Stdio, Log_Level, Log_Format)                = Log_configure
 	_ func(*Task, Map[string, IDebug]) Log_Logger              = Log_with
 	_ func(*Log_Logger, *Task, Map[string, IDebug]) Log_Logger = (*Log_Logger).M_with
