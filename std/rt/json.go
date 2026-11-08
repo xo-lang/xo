@@ -324,6 +324,17 @@ func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 // take, is Go's `invalid use of ,string struct tag` error, except a
 // number's own error (an overflow). tn is the type's name in the message.
 func JsonDecQ[T any](tk *Task, dst *T, x any, path string, tn string) *Json_DecodeErr {
+	if dd, ok := x.(*jsonDup); ok {
+		// the values a duplicate key replaced decode first (JsonDec), as
+		// quoted values
+		for _, p := range dd.prev {
+			var s T
+			if err := JsonDecQ(tk, &s, p, path, tn); err != nil {
+				return err
+			}
+		}
+		x = dd.last
+	}
 	if x == nil {
 		return JsonDec(tk, dst, x, path)
 	}
