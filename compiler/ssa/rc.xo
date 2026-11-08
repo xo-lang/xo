@@ -56,6 +56,8 @@ struct Use {
 /// rcInfo.funcs), the borrowed parameters per function, and the function
 /// being worked on.
 struct Rc {
+  /// Module.land_bool: rc_func makes f's PAD_LAZY landings first
+  lazy_bool: Int = -1
   /// the paths' ranks by pid (path_ranks), [] until asked
   ranks: List[Int] = []
   /// std externs' borrowed flags and first parameter types (decision
@@ -1318,7 +1320,7 @@ pub fn (var b: Builder) insert_rc_jobs(jobs: Int) {
 /// The whole-program half of insert_rc: the `var` List parameters made
 /// unique, then borrow inference.
 pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
-  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc, ext: b.m.extern_borrows()}
+  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc, ext: b.m.extern_borrows(), lazy_bool: b.m.land_bool}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i
     if !f.var_params.is_empty() {
@@ -1357,7 +1359,7 @@ pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
 /// builder, made first) found the same flags (true without check).
 pub fn (var b: Builder) rc_prepare_incr(jobs: Int, id: Str, prev: Map[Str, List[Bool]], check: Bool) -> (Rc, Map[Str, List[Bool]], Int, Bool) {
   let full = if check { full_borrows(b, jobs) } else { [] }
-  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc, ext: b.m.extern_borrows()}
+  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc, ext: b.m.extern_borrows(), lazy_bool: b.m.land_bool}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i
     if !f.var_params.is_empty() {
@@ -1577,6 +1579,9 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
     f.borrowed = r.borrowed[fi]
     f.ret_view = if fi < r.rvp.len() { r.rvp[fi] } else { -1 }
     return
+  }
+  if r.lazy_bool >= 0 {
+    land_func(f, r.lazy_bool)
   }
   var c = RcFunc{}
   if r.addr_keep {

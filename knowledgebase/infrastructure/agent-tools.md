@@ -822,6 +822,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   starts at the load sampled before the first round plus 3 (at least 6);
   the load line prints that baseline (2026-10-28,
   gotchas/bench-fixed-load-limit.md).
+  A program that loads the machine itself (a cold self build, about 7 of
+  host 1's 12 CPUs) leaves the next round's 1 minute load above that
+  limit: every round is left out (`used 0`, `loaded: 7 of 7`, and an
+  empty `metrics`) and --load-wait does not help, since the load is the
+  bench's own. Interleaved A and B load it alike: pass --max-load near
+  the CPU count (11 on host 1) and read the per-round values (2026-11-08,
+  decision 0562's self build timing).
 
 - `xo vet --cost --cost-std DIR` notes the cost patterns (XO0907 to
   XO0914) in the std code program DIR reaches; cmd/xo TestVetCostStd runs

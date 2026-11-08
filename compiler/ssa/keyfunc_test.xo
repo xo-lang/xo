@@ -14,7 +14,7 @@ fn tkey_ref(tk: List[Str], var seen: Map[Int, Int], t: Int) -> Str {
 
 fn key_func_ref(var b: BytesBuilder, f: Func, tk: List[Str]) {
   var seen: Map[Int, Int] = {}
-  b.write_str("func ${f.name.len()}:${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[${ints_line(f.var_params)}] borrowed=${bools_text(f.borrowed)} rv=${f.ret_view}\n")
+  b.write_str("func ${f.name.len()}:${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} lazy=${f.lazy_lands} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[${ints_line(f.var_params)}] borrowed=${bools_text(f.borrowed)} rv=${f.ret_view}\n")
   b.write_str("results")
   for t in f.results {
     let k = tkey_ref(tk, seen, t)

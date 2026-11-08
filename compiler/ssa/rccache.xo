@@ -363,7 +363,7 @@ fn tkey_w(var b: BytesBuilder, tk: List[Str], var seen: Map[Int, Int], t: Int) {
 fn key_head(var b: BytesBuilder, f: Func, tk: List[Str], var seen: Map[Int, Int]) {
   b.write_str("func ")
   write_int(b, f.name.len())
-  b.write_str(":${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[")
+  b.write_str(":${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} lazy=${f.lazy_lands} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[")
   write_ints(b, f.var_params)
   b.write_str("] borrowed=${bools_text(f.borrowed)} rv=${f.ret_view}\n")
   b.write_str("results")
@@ -688,7 +688,7 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
   e.str(f.name)
   e.types(m, f.results)
   e.ints(f.var_params)
-  e.uv((if f.indirect { 1 } else { 0 }) + (if f.entry { 2 } else { 0 }) + (if f.catches { 4 } else { 0 }) + (if f.reader { 8 } else { 0 }))
+  e.uv((if f.indirect { 1 } else { 0 }) + (if f.entry { 2 } else { 0 }) + (if f.catches { 4 } else { 0 }) + (if f.reader { 8 } else { 0 }) + (if f.lazy_lands { 16 } else { 0 }))
   e.sv(f.unwind_exit)
   e.types(m, f.captures)
   e.uv(f.cap_borrowed.len())
@@ -942,6 +942,7 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   f.indirect = fl & 1 != 0
   f.entry = fl & 2 != 0
   f.catches = fl & 4 != 0
+  f.lazy_lands = fl & 16 != 0
   f.reader = fl & 8 != 0
   f.unwind_exit = r.sv()
   f.captures = r.types()

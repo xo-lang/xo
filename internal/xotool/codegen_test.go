@@ -45,6 +45,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_INLINE_BREAK":         {"none", ""}, // breaks the inlined module on purpose; verify then fails the build
 	"XO_DEBUG_VERIFY":         {"none", ""}, // 1 reruns decision 0554's frame list check before code generation and fails the build on an escape; the output is the same
 	"XO_DCE":                  {"content", ""},
+	"XO_LAZY_LANDINGS":        {"content", ""}, // decision 0562: landings made in rc_func; the bodies the caches key change, and cln_flags holds lazy=
 	"XO_LLRT_C":               {"content", ""},
 	"XO_CHECK_EAGER":          {"content", ""},
 	"XO_STD_ROOTS":            {"content", ""}, // decision 0388 1b: every std function a root; the module's content says so

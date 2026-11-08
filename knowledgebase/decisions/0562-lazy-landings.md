@@ -1,8 +1,9 @@
 # 0562: Landings are made per function in insert_rc, not for the whole module
 
 Status: Accepted (lead, delegated by the owner 2026-11-07), conditions below
-(Xo Lang 4, 2026-11-07). A prototype (XO_LAZY_LANDINGS=1, uncached builds only)
-is on branch l4-implland. Touches decision 0085 (landings and the unwind exit)
+(Xo Lang 4, 2026-11-07). Implemented behind XO_LAZY_LANDINGS=1, default off
+(2026-11-08), scoped to arithmetic-heavy code: the real modules measured show no
+gain (addendum 2). Touches decision 0085 (landings and the unwind exit)
 and decision 0382 (the cleanup cache).
 
 ## Context
@@ -112,6 +113,53 @@ today (pad -1 for a pruned landing, a real landing otherwise), so no backend cha
 4. The default flip is its own push under the default-change rule: the full
    suites of the touched packages, and a self build with the new xo
    (scripts/bootstrap-xo.sh s2) under XO_MAX_MEM=8G with --phase-times.
+
+### Addendum 2: measured (Xo Lang 4, 2026-11-08); lead's decision
+
+One xo built from l4-implland, cold, eager against XO_LAZY_LANDINGS=1:
+
+- g200 on linux/arm64 host 1: max RSS 2,349,172 KB to 910,428 KB (-61%),
+  outputs identical. On the Mac: 2,219 MB to 888 MB; add_landings 858 to 53 ms,
+  cleanup 340 to 70 ms.
+- Self build of compiler/xo, `xo bench --ab` on host 1, 7 rounds
+  (`--max-load=11`, since the build loads the host itself): wall 0.995 (33,670 to
+  33,488 ms), cpu 1.001, max RSS 1.0047. That meets restated condition 3.
+- Condition 2 passed on host 2 with the flag on. The only failures were three
+  goldens (json_sized_ints, json_to_value, pack_lists) that fail the same way
+  eager and lazy, from main's Float32 text.
+
+Real modules, a `xo test --count=1` build (the cached path) on linux/arm64 host 2,
+`--phase-times`. Heap in MB:
+
+| GCP compute/v0.alpha   | eager     | lazy      |
+|------------------------|----------:|----------:|
+| max RSS (KB)           | 3,443,688 | 3,507,868 |
+| heap after insert_rc   | 1,633     | 1,637     |
+| heap after inline      | 2,434     | 2,486     |
+| heap after emit        | 3,738     | 3,798     |
+| peak (link/assemble)   | 4,178     | 4,240     |
+| emit wall              | 185 s     | 213 s     |
+
+| GCP aiplatform/v1      | eager     | lazy      |
+|------------------------|----------:|----------:|
+| max RSS (KB)           | 4,815,412 | 4,814,640 |
+| heap after insert_rc   | 2,405     | 2,389     |
+| heap after inline      | 4,612     | 4,616     |
+| heap after emit        | 6,004     | 6,004     |
+| peak (link/assemble)   | 6,448     | 6,445     |
+| emit wall              | 870 s     | 681 s     |
+
+There is no effect on either module. Their peaks are set in emit and link, and
+ordinary code has few faulting operations per block, so the landing window is
+never the peak. The emit wall times differ by run, not by mode.
+
+Decision (lead, 2026-11-08):
+
+- 0562 lands behind the flag (default off), scoped to arithmetic-heavy code.
+- The default flip (condition 4) waits until a real module benefits.
+- The real-module memory item is decision 0448 stage 3 (emit and link
+  retention).
+- Before that, emit's time is profiled: emit is 92 to 98% of these builds.
 
 ## Effect on memory and compile time
 

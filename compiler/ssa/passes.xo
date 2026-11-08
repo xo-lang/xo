@@ -707,6 +707,111 @@ fn (var b: Builder) land_at(bl: Int, w: Int) -> Int {
   rest
 }
 
+/// The pad of an operation that can fault whose landing mark_landings
+/// left to rc_func (XO_LAZY_LANDINGS): land_func makes it just before
+/// the function's reference counting, so the module never holds every
+/// function's landings at once (they are 59% of the values and 98% of
+/// the blocks of arithmetic code, and prune_landings removes most of
+/// them again).
+pub const PAD_LAZY = -2
+
+/// add_landings_with for lazy landings: marks every operation that can
+/// fault and has no landing PAD_LAZY and makes the unwind exit of each
+/// function with one, splitting no block. Returns what
+/// add_landings_with does.
+pub fn (var b: Builder) mark_landings(faults: List[Bool], skip: Map[Int, Bool]) -> List[Bool] {
+  let n = b.m.funcs.len()
+  var grew: List[Bool] = []
+  b.m.land_bool = b.bool_t()
+  for fi in 0..n {
+    if skip.contains(fi) {
+      grew.push(false)
+      continue
+    }
+    let before = "${b.m.types.len()} ${b.m.funcs.len()} ${b.fe_fixed()}"
+    let saved = b.begin(fi, -1)
+    if b.mark_lazy(faults) {
+      b.s.f.lazy_lands = true
+      let _e = b.unwind_exit()
+      // the exit's own blocks, as add_landings walks them
+      let _m = b.mark_lazy(faults)
+    }
+    b.end(saved)
+    grew.push("${b.m.types.len()} ${b.m.funcs.len()} ${b.fe_fixed()}" != before)
+  }
+  grew
+}
+
+/// Marks the operations of the current function that can fault and have
+/// no landing PAD_LAZY; whether it marked one.
+fn (var b: Builder) mark_lazy(faults: List[Bool]) -> Bool {
+  var any = false
+  for bi in 0..b.s.f.blocks.len() {
+    for v in b.s.f.blocks[bi].instrs {
+      let x = b.s.f.values[v]
+      if pad_of(x.pi) == -1 && !is_terminator(x.op) && raises(b.m, b.s.f, x, faults) {
+        b.s.f.values[v].pi = with_pad(x.pi, PAD_LAZY)
+        any = true
+      }
+    }
+  }
+  any
+}
+
+/// Makes f's PAD_LAZY landings, as add_landings_with's walk does (each
+/// instruction moves once).
+pub fn land_func(var f: Func, bool_t: Int) {
+  if !f.lazy_lands {
+    return
+  }
+  f.lazy_lands = false
+  var lazy_src: Map[Int, List[Int]] = {}
+  var lazy_off: Map[Int, Int] = {}
+  var bi = 0
+  while bi < f.blocks.len() {
+    let lazy = lazy_src.contains(bi)
+    let src = if lazy { lazy_src.get(bi) ?? [] } else { f.blocks[bi].instrs }
+    let off = lazy_off.get(bi) ?? 0
+    var end = src.len()
+    var at = -1
+    var i = off
+    while i < src.len() {
+      if pad_of(f.values[src[i]].pi) == PAD_LAZY {
+        at = i
+        end = i + 1
+        break
+      }
+      i += 1
+    }
+    if lazy || at >= 0 {
+      f.blocks[bi].instrs = src[off..end]
+    }
+    if lazy {
+      for k in off..end {
+        let v = src[k]
+        f.values[v].tb = with_block(f.values[v].tb, bi)
+        for e in f.values[v].succs {
+          f.edges[e].from = bi
+        }
+      }
+      lazy_src.remove(bi)
+    }
+    if at >= 0 {
+      let w = src[at]
+      let rest = f.new_block()
+      f.land_rest[rest] = true
+      let u = f.add(bi, Op.Call, bool_t, Aux.S(s: "rt.landing"), [])
+      f.values[w].pi = with_pad(f.values[w].pi, u)
+      let pad = f.new_block()
+      f.branch(bi, u, pad, rest)
+      f.jump(pad, f.unwind_exit, [])
+      lazy_src[rest] = src
+      lazy_off[rest] = at + 1
+    }
+    bi += 1
+  }
+}
+
 /// The function's unwind exit, made when it has none: it hands a fault on
 /// and returns zero values (unwindExit).
 fn (var b: Builder) unwind_exit() -> Int {
@@ -755,6 +860,10 @@ fn prune_func(var f: Func) {
   }
   var stack = [0]
   reach[0] = true
+  if f.lazy_lands && f.unwind_exit > 0 && !reach[f.unwind_exit] {
+    reach[f.unwind_exit] = true
+    stack.push(f.unwind_exit)
+  }
   while !stack.is_empty() {
     let bl = stack.pop() ?? 0
     let t = f.term(bl)

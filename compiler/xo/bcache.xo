@@ -695,7 +695,13 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   let id = if (os.env.get("XO_CHAIN_KEYS") ?? "") == "0" || dir.is_empty() || release || b.m.funcs.len() < 256 || !b.m.passes_off.is_empty() { "" } else { cache_id(os) }
   if id.is_empty() {
-    b.add_landings()
+    // XO_LAZY_LANDINGS=1 (a prototype, ADR draft): mark the operations
+    // that can fault and make their landings in rc_func, per function
+    if (os.env.get("XO_LAZY_LANDINGS") ?? "") == "1" {
+      let _g = b.mark_landings(ssa.cln_faults(b.m), {})
+    } else {
+      b.add_landings()
+    }
     t = lap(os, phases, "add_landings", t)
     b.cleanup_all_jobs(jobs)
     let _t = lap(os, phases, "cleanup", t)
@@ -704,7 +710,8 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
   let verify = backend_cache_mode(os) == "verify"
   let faults = ssa.cln_faults(b.m)
   let tk = ssa.type_keys(b.m)
-  let flags = b.cln_flags("${settings}\nimm=${b.imm_rc} nolibc=${b.m.nolibc_start},${b.m.nolibc} opv=${b.m.op_verify}")
+  let lazy = (os.env.get("XO_LAZY_LANDINGS") ?? "") == "1"
+  let flags = b.cln_flags("${settings}\nimm=${b.imm_rc} nolibc=${b.m.nolibc_start},${b.m.nolibc} opv=${b.m.op_verify} lazy=${lazy}")
   let facts = b.cln_facts()
   let keys = ssa.cln_keys(b.m, faults, tk, id, flags, facts, jobs)
   t = lap(os, phases, "cln.keys", t)
@@ -737,7 +744,7 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
       skip[fi] = true
     }
   }
-  let grew = b.add_landings_with(faults, skip)
+  let grew = if lazy { b.mark_landings(faults, skip) } else { b.add_landings_with(faults, skip) }
   t = lap(os, phases, "add_landings", t)
   b.cleanup_skip_jobs(jobs, skip)
   t = lap(os, phases, "cleanup", t)

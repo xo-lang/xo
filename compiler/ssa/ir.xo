@@ -339,6 +339,10 @@ pub struct Func {
   /// The blocks split off after a check (Func.landRest: merged back when
   /// the check goes, mergeJumps).
   pub land_rest: Map[Int, Bool] = {}
+  /// Whether operations of the function carry PAD_LAZY (mark_landings):
+  /// its unwind exit, which no landing reaches yet, is kept by prune
+  /// until land_func makes them.
+  pub lazy_lands: Bool = false
   /// The payloads that take their enum's ownership (rc.xo walk): the
   /// enum dies there, so the payload's live leaves are not retained and
   /// the enum is not released (an Option matched and moved out of, where
@@ -400,11 +404,14 @@ pub fn (var f: Func) set_pos(v: Int, pos: Str) {
 }
 
 pub fn (f: Func) shell() -> Func {
-  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, ret_view: f.ret_view, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader}
+  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, cap_borrowed: f.cap_borrowed, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, ret_view: f.ret_view, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader, lazy_lands: f.lazy_lands}
 }
 
 /// A lowered program (ssa.Module).
 pub struct Module {
+  /// The Bool type of the landing checks mark_landings left to rc_func
+  /// (XO_LAZY_LANDINGS), -1 when every landing is made by add_landings.
+  pub land_bool: Int = -1
   /// write_func also prints each function's source variables and their
   /// binding records (`xo dev dump ssa --debug-vars`, decision 0252).
   pub show_dvars: Bool = false
