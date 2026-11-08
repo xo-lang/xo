@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-07: fix: the Go backend's `string` option decodes the values a duplicate key replaced as quoted
+
+- Kind: fix
+- Commit: this push
+- Found by: the jsonstring corpus (ADR 0555), a mutated document with a repeated `"i"` key
+- Go reference: encoding/json decode.go object() (every member is read, the last wins)
+- Test: internal/stdtest corpus jsonstring (go, arm64, LLVM): `,string` encode rows, omitempty, 5 decode tables (every field kind with quoted, unquoted and malformed texts) and 400 mutated documents, all against encoding/json
+- Timing: none
+- Shipped in: not yet released
+
+`rt.JsonDecQ` (the Go backend's decoder of a field with the `string` option, decision 0555) handed a duplicated key's earlier members to the plain decoder, so `{"i":"7","i":"1"}` failed where Go and the native backends decode it (the last value wins). Known differences kept, in the corpus header: Xo reads the quoted text as JSON, so the numbers only strconv accepts (`"007"`, `"2."`, hex floats) are errors where Go accepts them; a plain field given `null` is an error as an unquoted null is.
+
 ## 2026-11-07: feature: the `string` wire option, Go's `json:",string"`
 
 - Kind: feature
