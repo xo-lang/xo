@@ -1,0 +1,78 @@
+use std/json
+
+struct Case {
+  t: Str
+  in_ as "in": Str
+  go: Str
+  out: Str
+} derive Json
+
+struct Inner {
+  n: Int
+  s: Str
+} derive Json(match: fold)
+
+struct Outer {
+  name: Str
+  in_ as "in": Inner
+  items: List[Inner]
+  m: Map[Str, Int]
+  p: Int?
+  b: Bool
+  f: Float
+  u: UInt8
+} derive Json(match: fold)
+
+struct Base {
+  id: Int
+} derive Json(match: fold)
+
+struct Wrapper {
+  id: Int
+  x: Str
+} derive Json(match: fold)
+
+type Via struct(Int) derive Json(via: Int, to: via_to, from: via_from)
+
+fn via_to(v: Via) -> Int {
+  v.0
+}
+
+fn via_from(n: Int) -> Via ! Str {
+  if n == 7 {
+    return Via(7)
+  }
+  return Err("via: bad ${n}")
+}
+
+struct Hard {
+  v: Via
+  n: Int
+} derive Json(match: fold)
+
+fn report[T: Json](s: Str) -> Str {
+  match json.decode_str[T](s) {
+    Ok(v) => "OK " + json.encode_str(v)
+    Err(e) => "ERR " + e.display()
+  }
+}
+
+fn main(os: Os) uses stdio, env, fs {
+  let data = os.fs.read(os.env.args().get(0) ?? "") ?? _e => b""
+  for line in data.to_str_lossy().split("\n") {
+    if line == "" {
+      continue
+    }
+    match json.decode_str[Case](line) {
+      Err(e) => os.stdio.println("BADCASE ${e.display()}")
+      Ok(c) => {
+        let r = match c.t {
+          "Outer" => report[Outer](c.in_)
+          "Wrapper" => report[Wrapper](c.in_)
+          _ => report[Hard](c.in_)
+        }
+        os.stdio.println(json.encode_str(c.in_) + "\t" + r)
+      }
+    }
+  }
+}
