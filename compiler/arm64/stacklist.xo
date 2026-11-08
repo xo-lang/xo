@@ -397,7 +397,9 @@ fn param_keeps(f: ssa.Func, m: ssa.Module, p: Int, fx: SsFacts) -> List[(Int, In
         ssa.Op.Reuse => true
         ssa.Op.Call => {
           let name = aux_str(y.aux)
-          (list_read_call(name) && y.args.len() > 0 && y.args[0] == a && count_of(y.args, a) == 1) || module_call(m, name)
+          // its guard already (a body guarded before it was inlined,
+          // guarded_callee): copying again would copy the copy
+          (list_read_call(name) && y.args.len() > 0 && y.args[0] == a && count_of(y.args, a) == 1) || module_call(m, name) || name == "rt.rl_unstack"
         }
         _ => false
       }
@@ -597,10 +599,13 @@ fn stack_list_violations(f: ssa.Func, m: ssa.Module) -> List[Str] {
       let facts = fx ?? ss_facts(f)
       var cur = v
       var bad = false
+      // what made it bad, for the fault
+      var why = ""
       // the puts: each value used by the next put only
       while true {
         if !facts.euses[cur].is_empty() {
           bad = true
+          why = "v${cur} crosses an edge"
           break
         }
         // the next put, and drops (a landing pad's, of the elements put
@@ -624,22 +629,39 @@ fn stack_list_violations(f: ssa.Func, m: ssa.Module) -> List[Str] {
       if !bad {
         for u in facts.vuses[cur] {
           let y = f.values[u]
+          // an inlined callee's count of its parameter, made before its
+          // guard (below): a frame list's count is STACK, so it changes
+          // nothing, and each use that keeps the list is its own use here
+          if y.op is ssa.Op.Retain | ssa.Op.Release | ssa.Op.Drop {
+            continue
+          }
           if y.op != ssa.Op.Call {
             bad = true
+            why = "v${u} ${ssa.op_name(y.op)} uses v${cur}"
             break
           }
           let name = aux_str(y.aux)
           if name.starts_with("rt.rl_stack_drop ") || (list_read_call(name) && y.args[0] == cur && count_of(y.args, cur) == 1) {
             continue
           }
+          // a callee's guard of its List parameter (unstack_params), the
+          // callee inlined after the frame list was made: the copy that
+          // keeps the frame list out of what it is kept in (2026-11-07:
+          // azblob's core_with_token inlined new_storage_challenge_policy,
+          // whose frame list `[audience]` then met
+          // runtime.new_bearer_token_policy's guard)
+          if name == "rt.rl_unstack" && y.args.len() == 1 && y.args[0] == cur {
+            continue
+          }
           if !module_call(m, name) || count_of(y.args, cur) != 1 {
             bad = true
+            why = "v${u} ${name} uses v${cur}"
             break
           }
         }
       }
       if bad {
-        out.push("v${v}")
+        out.push("v${v} (${why})")
       }
     }
   }

@@ -1,0 +1,45 @@
+// decision 0554: the shape of azblob's core_with_token (2026-11-07):
+// a small literal passed to a function that keeps it in a struct the
+// caller returns, through a middle function, every body inlined. Each
+// inlined body has its List parameters guarded (rt.rl_unstack) before
+// it is inlined (arm64 guarded_callee), so a kept list is a heap copy and
+// never the frame list, whose slot every round of the loop reuses: the
+// stored lists print their own URLs. (This program does not reproduce
+// azblob's fault on 71308bd10, whose inlining order left the keeping
+// callee unguarded; storage/azblob and storage/azdatalake are the
+// reproduction.)
+
+struct Pol {
+  scopes: List[Str]
+  n: Int
+}
+
+fn keep_pol[fx: Effects](scopes: List[Str], n: Int, on: fn(Str) -> Int uses fx) -> Pol uses fx {
+  Pol{scopes: scopes, n: n + scopes.len() + on("ab")}
+}
+
+fn challenge[fx: Effects](aud: Str, k: Int) -> Pol {
+  let seen = Mutex[List[Str]].new([aud])
+  let on = fn(s: Str) -> Int {
+    seen.with_read(fn(xs: List[Str]) -> Int { xs.len() + s.len() })
+  }
+  keep_pol([aud], k, on)
+}
+
+fn core[fx: Effects](u: Str, k: Int) -> (Str, Pol) {
+  (u, challenge(u.trim(), k))
+}
+
+fn main(os: Os) {
+  // the frame list's slot is the same each time round: every stored
+  // list must be the copy rt.rl_unstack made, not the frame
+  var kept: List[Pol] = []
+  for i in 0..4 {
+    let (u, p) = core("https://storage${i}.example/ ", i)
+    os.stdio.println("${u.trim()} ${p.scopes.len()} ${p.n}")
+    kept.push(p)
+  }
+  for p in kept {
+    os.stdio.println("${p.scopes[0]} ${p.scopes.len()}")
+  }
+}

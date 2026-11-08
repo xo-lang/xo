@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+https://storage0.example/ 1 4
+https://storage1.example/ 1 5
+https://storage2.example/ 1 6
+https://storage3.example/ 1 7
+https://storage0.example/ 1
+https://storage1.example/ 1
+https://storage2.example/ 1
+https://storage3.example/ 1
+--- stderr

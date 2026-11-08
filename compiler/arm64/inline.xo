@@ -708,7 +708,7 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
       break
     }
     let ci = st.by_name.get(aux_str(f.values[v].aux)) ?? -1
-    inline_call(f, v, m.funcs[ci])
+    inline_call(f, v, guarded_callee(m, m.funcs[ci]))
     ch = true
     here = true
   }
@@ -731,7 +731,7 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
       break
     }
     let zi = st.by_name.get(aux_str(f.values[z].aux)) ?? -1
-    inline_call(f, z, m.funcs[zi])
+    inline_call(f, z, guarded_callee(m, m.funcs[zi]))
     ch = true
     here = true
   }
@@ -1255,6 +1255,21 @@ fn hands_back(g: ssa.Func, p: Int) -> Bool {
 struct Pending {
   e: Int
   args: List[Int]
+}
+
+/// callee as a body to inline: with its List parameters guarded
+/// (decision 0554's unstack_params) when its own inlining has not run
+/// yet, so a frame list of the caller, or one an inlined function made,
+/// meets the guard and not the use that keeps it (2026-11-07: azblob's
+/// core_with_token inlined new_storage_challenge_policy, whose frame list
+/// `[audience]` then went into runtime.new_bearer_token_policy's struct
+/// unguarded; a guarded body is left as it is).
+fn guarded_callee(m: ssa.Module, callee: ssa.Func) -> ssa.Func {
+  var c = callee
+  if m.goarch == "arm64" && pass_on(m, "stack_lists") {
+    let _g = unstack_params(c, m)
+  }
+  c
 }
 
 fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {

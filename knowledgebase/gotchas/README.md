@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [frame-list-unguarded-inlined-callee.md](frame-list-unguarded-inlined-callee.md): Observed 2026-11-07: azblob faulted 0554's verifier: a caller inlined a callee before the callee's own List parameter guards were added, so a frame list went into a struct; bodies are now guarded as they are inlined
 - [readme-status-flip-union-merge.md](readme-status-flip-union-merge.md): Observed 2026-11-07: flipping an ADR's line in decisions/README.md to Accepted, then rebasing, kept both versions (merge=union), and neighbours' flips came back doubled; TestDecisionNumbersUnique failed in pushq; check the count and amend
 - [std-record-touched-std-declares-twice.md](std-record-touched-std-declares-twice.md): Observed 2026-11-07: after a std file's mtime changed with its bytes unchanged, a separately compiled build failed XO0603 on every std name (the stdx header failed, the fingerprint matched, the record installed into source-loaded modules, which were declared again); install_std marks them (record_members)
 - [std-use-c-cross-sample-miss.md](std-use-c-cross-sample-miss.md): Observed 2026-11-07: native_sqlite's windows/amd64 cross build failed on clang's missing stdlib.h (no XO_WINSYSROOT) since std/sqlite landed, unseen until hourly.sh's every 4th sample reached it; xo build names the sysroot, dev goldens counts it unsupported, TestStdSQLiteCrossBuilds builds it every time
