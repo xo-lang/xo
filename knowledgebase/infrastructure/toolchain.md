@@ -3442,7 +3442,9 @@ Last verified: 2026-10-09.
   of each module root (used or not) and records which file that is
   (`mod.NearestWork`), so a new, removed, or edited workspace above the
   directories is noticed; `serve.Forward` checks in process when
-  XO_OFFLINE, XO_WORK, XO_MODCACHE, XO_GIT_BASE, or XO_GIT_REWRITE is set.
+  XO_OFFLINE, XO_WORK, XO_MODCACHE, XO_GIT_BASE, XO_GIT_REWRITE,
+  XO_GIT_TIMEOUT, XO_PROXY, XO_NOPROXY, XO_SUMDB or XO_NOSUMDB is set
+  (compiler/cli/servers serve.xo forward).
 - Effect ceilings (step 3): `internal/mod/ceiling.go` (`Ceiling`,
   `ParseCeiling`, `Ceilings(dir)`: xo.mod requires plus the workspace's
   `use ... uses` lines), `internal/check/ceiling.go` (`checkCeiling`,

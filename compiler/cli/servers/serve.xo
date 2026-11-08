@@ -179,7 +179,7 @@ pub fn forward(os: Os, args: List[Str]) -> (Int, Bool) uses (env, proc, net, fs,
   if !(os.env.get(DISABLE_ENV) ?? "").is_empty() {
     return (0, false)
   }
-  for k in ["XO_OFFLINE", "XO_WORK", "XO_MODCACHE", "XO_GIT_BASE", "XO_GIT_REWRITE", "XO_PROXY", "XO_NOPROXY", "XO_SUMDB", "XO_NOSUMDB"] {
+  for k in ["XO_OFFLINE", "XO_WORK", "XO_MODCACHE", "XO_GIT_BASE", "XO_GIT_REWRITE", "XO_GIT_TIMEOUT", "XO_PROXY", "XO_NOPROXY", "XO_SUMDB", "XO_NOSUMDB"] {
     if !(os.env.get(k) ?? "").is_empty() {
       return (0, false)
     }
