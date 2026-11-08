@@ -496,6 +496,35 @@ fn (var g: Gen) elem_ptr(et: Int, l: Str, i: Str) -> Str {
   g.def("getelementptr ${lt}, ptr ${data}, i64 ${i}")
 }
 
+/// The float of the double v (a Float32's register value, so exact), and
+/// the double of the float f. RISC-V's fcvt.s.d and fcvt.d.s return the
+/// canonical NaN, so on riscv64 a NaN goes through integers as arm64 and
+/// x86_64 convert it: quiet, with the payload's top bits (the prelude's
+/// Float32.from_bits and to_bits keep a payload; decision 0361's addendum).
+fn (var g: Gen) f32_narrow(v: Str) -> Str {
+  let t = g.def("fptrunc double ${v} to float")
+  if g.arch() != "riscv64" {
+    return t
+  }
+  let b = g.def("bitcast double ${v} to i64")
+  let sign = g.def("and i64 ${g.def("lshr i64 ${b}, 32")}, 2147483648")
+  let m = g.def("and i64 ${g.def("lshr i64 ${b}, 29")}, 8388607")
+  let nan = g.def("trunc i64 ${g.def("or i64 ${g.def("or i64 ${sign}, ${m}")}, 2143289344")} to i32")
+  g.def("select i1 ${g.def("fcmp uno double ${v}, 0.0")}, float ${g.def("bitcast i32 ${nan} to float")}, float ${t}")
+}
+
+fn (var g: Gen) f32_widen(f: Str) -> Str {
+  let e = g.def("fpext float ${f} to double")
+  if g.arch() != "riscv64" {
+    return e
+  }
+  let b = g.def("zext i32 ${g.def("bitcast float ${f} to i32")} to i64")
+  let sign = g.def("shl i64 ${g.def("lshr i64 ${b}, 31")}, 63")
+  let m = g.def("shl i64 ${g.def("and i64 ${b}, 8388607")}, 29")
+  let nan = g.def("or i64 ${g.def("or i64 ${sign}, ${m}")}, 9221120237041090560")
+  g.def("select i1 ${g.def("fcmp uno float ${f}, 0.0")}, double ${g.def("bitcast i64 ${nan} to double")}, double ${e}")
+}
+
 /// The register value of the list element of type et at p: a packed element
 /// (--pack-lists) is loaded at its width and widened.
 fn (var g: Gen) elem_load(et: Int, p: Str, md: Str) -> Str {
@@ -507,7 +536,7 @@ fn (var g: Gen) elem_load(et: Int, p: Str, md: Str) -> Str {
   let el = g.elem_ll(et)
   let raw = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
   if g.m.types[et].kind == ssa.Kind.Float {
-    return g.def("fpext float ${raw} to double")
+    return g.f32_widen(raw)
   }
   g.def("${if g.narrow_signed(et) { "sext" } else { "zext" }} ${el} ${raw} to i64")
 }
@@ -529,7 +558,7 @@ fn (var g: Gen) elem_store(et: Int, v: Str, p: Str, md: Str) {
   }
   var n = ""
   if g.m.types[et].kind == ssa.Kind.Float {
-    n = g.def("fptrunc double ${v} to float")
+    n = g.f32_narrow(v)
   } else {
     n = g.def("trunc i64 ${v} to ${el}")
   }
