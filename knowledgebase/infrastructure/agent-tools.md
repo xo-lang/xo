@@ -1150,6 +1150,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   prints the line `pushq: PUSHQ_RAN="..."` to push with (XO_GATE_PUSHQ=0
   skips them; lead, 2026-11-06 bottleneck review: two pushes were refused
   in three hours for a wasm run their gates never did).
+  Before gating, `pushq.sh WORKTREE --needs` prints the checks a gated
+  push of that worktree will ask for (from the merge base; nothing is
+  queued), so the gate runs them from the start (lead, 2026-11-07
+  bottleneck review: 6 refusals in 3 hours for an unnamed selfbuild,
+  codegen or wasm, one costing 37 minutes).
   A gated push that changes what compiler/xo builds from (compiler/ but
   compiler/macho, compiler/wasm and `_test.xo` files; std/native;
   std/llrt) must also name `selfbuild`: one cold build of compiler/xo
