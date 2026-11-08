@@ -801,7 +801,7 @@ fn after_end(c: Int, st: Int) {
 pub fn conn_open(why: Str, cfg: Int = 0) -> Int {
   let linger = match target.os {
     TargetOs.Windows => true
-    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   conn_new(why, linger, cfg)
 }

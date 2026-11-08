@@ -1825,6 +1825,7 @@ fn (b: Builder) target_os() -> Str {
     Linux => "linux"
     Windows => "windows"
     Wasi => "wasip1"
+    FreeBSD => "freebsd"
   }
 }
 

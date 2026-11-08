@@ -491,7 +491,7 @@ fn register(fd: Int, pd: Int, write: Bool) -> Int {
       // calls do not (gotchas/tsan-raw-epoll-no-edge.md)
       epoll_add(poll, fd, 2147483648 | 8192 | 1 | (if write { 4 } else { 0 }), pd)
     }
-    TargetOs.Windows | TargetOs.Wasi => -38
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => -38
   }
 }
 
@@ -528,7 +528,7 @@ fn fd_shut(fd: Int) {
       let _d = sock.epoll_ctl(s32(rt.mem_load(ev(), EV_POLL, 4)), 2, fd, 0)
       let _s = sock.shutdown(fd, 2)
     }
-    TargetOs.Windows | TargetOs.Wasi => {
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {
       // Windows resets a connection shut down for receiving while input
       // is unread, and the reset discards what the peer has not read of
       // ours yet (a 400 just written): drop the input first (the socket
@@ -1133,7 +1133,7 @@ pub fn poke() {
   let _w = match target.os {
     TargetOs.Darwin => sys_darwin.write(w, b, 1)
     TargetOs.Linux => linux.write_at(w, b, 1)
-    TargetOs.Windows | TargetOs.Wasi => 0
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
 }
 
@@ -1183,7 +1183,7 @@ pub fn on_signal(sig: Int) {
     TargetOs.Linux => {
       let _w = linux.write_at(w, raw.data(b), 1)
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 
@@ -1252,7 +1252,7 @@ pub fn on_quit() {
     TargetOs.Linux => {
       let _w = linux.write_at(w, raw.data(b), 1)
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 
@@ -1299,7 +1299,7 @@ pub fn on_console(kind0: Int) -> Int {
         let _s = sys_windows.send(rt.mem_load(e, EV_WW, 8), raw.data(b), 1, 0)
       }
     }
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   1
 }
@@ -1337,7 +1337,7 @@ fn ev_init() {
   // linux-epoll-inherited-socket); macOS has no pipe2
   let darwin = match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   let pr = if darwin { Int(sys_darwin.pipe(p)) } else { linux.pipe2(p, linux.O_CLOEXEC) }
   if pr < 0 {
@@ -1676,7 +1676,7 @@ fn np_wanted() -> Bool {
   let os_ok = match target.os {
     TargetOs.Darwin | TargetOs.Linux => true
     TargetOs.Windows => afd() != 0
-    TargetOs.Wasi => false
+    TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   if !os_ok || virt() {
     return false
@@ -1802,7 +1802,7 @@ fn wait_events(poll: Int, evs: Int, ts: Int, wait: Int) -> Int {
         0
       }
     }
-    TargetOs.Wasi => 0
+    TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
 }
 
@@ -1838,7 +1838,7 @@ fn event(evs: Int, i: Int) -> (Int, Int) {
       (data, r | w | h)
     }
     TargetOs.Windows => (rt.mem_load(evs, addw(i.wrapping_mul(32), 8), 8), 0)
-    TargetOs.Wasi => (0, 0)
+    TargetOs.Wasi | TargetOs.FreeBSD => (0, 0)
   }
 }
 
@@ -1863,7 +1863,7 @@ fn read_fd(fd: Int, a: Int, n: Int) -> Int {
   match target.os {
     TargetOs.Darwin => sys_darwin.read(fd, a, n)
     TargetOs.Linux => sock.read(fd, a, n)
-    TargetOs.Windows | TargetOs.Wasi => -1
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => -1
   }
 }
 
@@ -1897,7 +1897,7 @@ const INFINITE = 4294967295
 fn windows() -> Bool {
   match target.os {
     TargetOs.Windows => true
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 

@@ -10,6 +10,7 @@
 // pointer.
 use native/llrt/libcio
 use native/llrt/libcmem
+use native/llrt/freebsd
 use native/llrt/libcthr
 use native/llrt/linux
 use native/rt
@@ -61,6 +62,18 @@ fn thp_env_off() -> Int {
 /// which x86_64 sets here (arch_prctl ARCH_SET_FS) and arm64 in the C
 /// (msr tpidr_el0, a register no system call writes).
 fn nl_main_tp() -> Int {
+  if target.os == TargetOs.FreeBSD {
+    let area = freebsd.mmap(0, libcthr.tls_size(), 3, freebsd.MAP_PRIVATE | freebsd.MAP_ANON, -1, 0)
+    if area < 0 && area > -4096 {
+      libcio.die("mmap of the TLS block failed")
+    }
+    let tp = libcthr.tls_init(area)
+    if target.arch == TargetArch.Amd64 {
+      // the word at tp is tp itself (x86_64's TCB), what sysarch reads
+      let _r = freebsd.set_fsbase(tp, tp)
+    }
+    return tp
+  }
   // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
   let area = linux.mmap(0, libcthr.tls_size(), 3, 34, -1, 0)
   if area < 0 && area > -4096 {
@@ -85,6 +98,10 @@ fn nl_main_tp() -> Int {
 /// on a thread with one, and this thread waits for it), or 0.
 fn nl_main_stack() -> Int {
   let gb = 1073741824
+  if target.os == TargetOs.FreeBSD {
+    let fs = freebsd.mmap(0, gb, 3, freebsd.MAP_PRIVATE | freebsd.MAP_ANON, -1, 0)
+    return if fs < 0 && fs > -4096 { 0 } else { fs + gb }
+  }
   // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE
   let st = linux.mmap(0, gb, 3, 16418, -1, 0)
   if st < 0 && st > -4096 {

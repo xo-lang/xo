@@ -41,7 +41,7 @@ pub fn af_inet6() -> Int {
   match target.os {
     TargetOs.Darwin => 30
     TargetOs.Windows => 23
-    TargetOs.Linux | TargetOs.Wasi => 10
+    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => 10
   }
 }
 
@@ -49,7 +49,7 @@ pub fn af_inet6() -> Int {
 fn darwin() -> Bool {
   match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -65,7 +65,7 @@ fn dret(r: Int) -> Int {
 pub fn windows() -> Bool {
   match target.os {
     TargetOs.Windows => true
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 

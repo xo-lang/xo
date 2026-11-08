@@ -331,7 +331,7 @@ fn os() -> Int {
   match target.os {
     TargetOs.Darwin => 2
     TargetOs.Windows => 3
-    TargetOs.Linux | TargetOs.Wasi => 1
+    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => 1
   }
 }
 

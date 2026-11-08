@@ -16,6 +16,7 @@
 // the code instead (FakeProc.exit_code, twrun.xo exit), and in
 // testing.run_main the call returns with the context unwinding (decision
 // 0108).
+use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/raw
 use native/llrt/sanhook
@@ -61,6 +62,9 @@ pub fn os_exit(code: Int) {
     TargetOs.Windows => {
       sanhook.race_exit(code)
       sys_windows.ExitProcess(code)
+    }
+    TargetOs.FreeBSD => {
+      let _r = freebsd.exit(code)
     }
     TargetOs.Wasi => {}
   }

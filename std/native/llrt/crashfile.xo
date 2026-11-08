@@ -24,7 +24,7 @@ pub fn open() {
   let os = match target.os {
     TargetOs.Linux => 1
     TargetOs.Darwin => 2
-    TargetOs.Windows | TargetOs.Wasi => 0
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
   if os == 0 {
     return

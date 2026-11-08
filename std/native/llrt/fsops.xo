@@ -452,7 +452,7 @@ pub fn case_sensitive() -> Bool {
   }
   match target.os {
     TargetOs.Darwin | TargetOs.Windows => false
-    TargetOs.Linux | TargetOs.Wasi => true
+    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => true
   }
 }
 

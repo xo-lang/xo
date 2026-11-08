@@ -15,7 +15,7 @@ pub fn pid() -> Int {
     TargetOs.Darwin => Int(sys_darwin.getpid())
     TargetOs.Linux => linux.getpid()
     TargetOs.Windows => Int(sys_windows.GetCurrentProcessId())
-    TargetOs.Wasi => 0
+    TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
 }
 
@@ -49,7 +49,7 @@ pub fn usage(children: Bool) -> List[Int] {
       let u = if children { windows.children_usage() } else { windows.proc_usage(Int(sys_windows.GetCurrentProcess())) }
       [u[0] * 100, u[1] * 100, u[2]]
     }
-    TargetOs.Wasi => [0, 0, 0]
+    TargetOs.Wasi | TargetOs.FreeBSD => [0, 0, 0]
   }
 }
 
@@ -59,7 +59,7 @@ pub fn ppid() -> Int {
     TargetOs.Darwin => Int(sys_darwin.getppid())
     TargetOs.Linux => linux.getppid()
     TargetOs.Windows => windows_ppid()
-    TargetOs.Wasi => 0
+    TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
 }
 

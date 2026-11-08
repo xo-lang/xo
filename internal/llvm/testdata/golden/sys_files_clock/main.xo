@@ -61,13 +61,13 @@ fn main(os: Os) ! {
     Err(e) => {
       match target.os {
         TargetOs.Windows => out.println("long: Io")
-        TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => out.println("long: ${e}".replace(long, "x*300"))
+        TargetOs.Linux | TargetOs.FreeBSD | TargetOs.Darwin | TargetOs.Wasi => out.println("long: ${e}".replace(long, "x*300"))
       }
     }
   }
   // a file whose size statx gives as 0
   match target.os {
-    TargetOs.Linux => {
+    TargetOs.Linux | TargetOs.FreeBSD => {
       let st = os.fs.read_text("/proc/self/status")?
       out.println("proc ok ${st.len() > 512 && st.contains("Name:")}")
     }

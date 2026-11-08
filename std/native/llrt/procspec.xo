@@ -18,7 +18,7 @@ use native/llrt/raw
 fn windows() -> Bool {
   match target.os {
     TargetOs.Windows => true
-    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 

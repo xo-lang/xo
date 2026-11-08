@@ -246,7 +246,7 @@ fn scratch_copy(dst: Int, src: Int, n: Int) {
 pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
   match target.os {
     TargetOs.Windows => return win_raise(exc, boundary, pers, wcx)
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   match target.arch {
     // riscv64 (decision 0571 stage 2): the same CFI walk, its registers
@@ -256,7 +256,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   let s = scratch()
   if s == 0 {
@@ -346,7 +346,7 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
       }
       TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => return 0
     }
-    TargetOs.Wasi => return 0
+    TargetOs.Wasi | TargetOs.FreeBSD => return 0
   }
   match target.arch {
     // riscv64 (decision 0571 stage 2): the CFI walk, as raise's
@@ -355,7 +355,7 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   let s = scratch()
   if s == 0 {
@@ -411,7 +411,7 @@ pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
       sys_windows.RtlCaptureContext(s + W_CX)
       return win_walk(s, out, max, false)
     }
-    TargetOs.Wasi => return 0
+    TargetOs.Wasi | TargetOs.FreeBSD => return 0
   }
   match target.arch {
     // riscv64 (decision 0571 stage 2): the CFI walk, as raise's
@@ -420,7 +420,7 @@ pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   let cur = s + REGS_A
   rt.mem_set(cur, 0, PC + 8)
@@ -626,7 +626,7 @@ fn landing(lsda: Int, func: Int, ip: Int) -> Int {
 pub fn export_personality(version: Int, actions: Int, cls: Int, exc: Int, uc: Int) -> Int {
   match target.os {
     TargetOs.Windows => 1
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => URC_CONTINUE_UNWIND
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => URC_CONTINUE_UNWIND
   }
 }
 
@@ -654,7 +654,7 @@ fn scratch() -> Int {
     // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE; 0 on failure (decision
     // 0228's message buffer is here on every OS)
     TargetOs.Windows => sys_windows.VirtualAlloc(0, SCRATCH, 12288, 4)
-    TargetOs.Linux | TargetOs.Wasi => linux.mmap(0, SCRATCH, 3, 2 | 32, -1, 0)
+    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => linux.mmap(0, SCRATCH, 3, 2 | 32, -1, 0)
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
@@ -1899,7 +1899,7 @@ pub fn prof_init(s: Int) -> Bool {
       TargetArch.Amd64 => win_image(s)
       TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
     }
-    TargetOs.Wasi => false
+    TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -1941,7 +1941,7 @@ pub fn prof_text(s: Int) -> (Int, Int) {
       (lo, hi)
     }
     TargetOs.Windows => (rt.mem_load(s, W_PLO, 8), rt.mem_load(s, W_PHI, 8))
-    TargetOs.Wasi => (0, 0)
+    TargetOs.Wasi | TargetOs.FreeBSD => (0, 0)
   }
 }
 
@@ -1961,6 +1961,9 @@ pub fn prof_walk(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int, fib: Int
   let darwin = match target.os {
     TargetOs.Darwin => true
     TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    // FreeBSD's mcontext layout comes with decision 0573 stage 3: no
+    // frames until then
+    TargetOs.FreeBSD => return 0
   }
   let cur = s + REGS_A
   rt.mem_set(cur, 0, PC + 8)
@@ -1996,7 +1999,7 @@ pub fn fiber_walk(s: Int, saved: Int, out: Int, max: Int, lo: Int, hi: Int) -> I
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   let cur = s + REGS_A
   rt.mem_set(cur, 0, PC + 8)
@@ -2140,6 +2143,8 @@ pub fn crash_regs(uc: Int, regs: Int) -> Bool {
   let darwin = match target.os {
     TargetOs.Darwin => true
     TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    // no layout until decision 0573 stage 3 (FreeBSD's mcontext)
+    TargetOs.FreeBSD => return false
   }
   prof_regs(uc, regs, darwin)
 }

@@ -74,7 +74,7 @@ fn _localtime64_s(tm: Int, t: Int) -> Int {
 fn getpid() -> Int32 {
   match target.os {
     TargetOs.Windows => Int32(Int(sys_windows.GetCurrentProcessId()))
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => Int32(0)
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => Int32(0)
   }
 }
 
@@ -103,7 +103,7 @@ fn xo_win_start() -> Int {
       sanhook.race_exit(code)
       sys_windows.ExitProcess(code)
     }
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   code
 }

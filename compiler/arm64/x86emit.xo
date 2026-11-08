@@ -396,7 +396,7 @@ fn (var g: G) x86_emit_once() {
     return
   }
   b.push("\t.cfi_endproc\n")
-  if g.os == "linux" {
+  if (g.os is "linux" | "freebsd") {
     let fnm = g.fname(g.f.name)
     b.push("\t.size ${fnm}, .-${fnm}\n")
   }
@@ -580,6 +580,12 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
       b.push("\tcallq *%rdi\n")
     } else if inst.has(IF_SVC) {
       b.push("\tsyscall\n")
+      if g.os == "freebsd" {
+        // FreeBSD sets the carry flag on an error, with the positive
+        // errno in rax: rcx (which syscall clobbers) is -1 then, and rax
+        // becomes -errno, as Linux's (decision 0573)
+        b.push("\tsbbq %rcx, %rcx\n\txorq %rcx, %rax\n\tsubq %rcx, %rax\n")
+      }
     } else if inst.has(IF_CPTR) {
       b.push("\tcallq *${target}\n")
     } else {

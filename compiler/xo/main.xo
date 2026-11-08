@@ -80,7 +80,7 @@ fn main(os0: Os) ! {
   let os = host_counts(path_env(os0))
   match target.os {
     Wasi => wasi_gate(os, os.env.args())
-    Linux | Darwin | Windows => {}
+    Linux | Darwin | Windows | FreeBSD => {}
   }
   // decision 0349's default (owner, 2026-10-22): three quarters of
   // physical memory, at least 16 GiB (18 GiB on a 24 GB Mac), counting
@@ -602,8 +602,8 @@ struct Native {
 /// amd64 (decision 0254), wasm for wasip1/wasm, wasip2/wasm and wasip3/wasm.
 fn target_backend(tg: Str) -> Str {
   match tg {
-    "darwin/arm64" | "linux/arm64" => "arm64"
-    "linux/amd64" | "darwin/amd64" | "windows/amd64" => "amd64"
+    "darwin/arm64" | "linux/arm64" | "freebsd/arm64" => "arm64"
+    "linux/amd64" | "darwin/amd64" | "windows/amd64" | "freebsd/amd64" => "amd64"
     "wasip1/wasm" | "wasip2/wasm" | "wasip3/wasm" => "wasm"
     _ => ""
   }
@@ -1152,10 +1152,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   for tg in targets {
     // windows/arm64 only when --backend=arm64 is named (decision 0569
     // stage 1: assembly and cross builds, outside the default targets)
-    if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") && !(tg == "windows/arm64" && !o.backend_auto) {
+    if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64" | "freebsd/arm64") && !(tg == "windows/arm64" && !o.backend_auto) {
       fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg} (windows/arm64 is experimental: --backend=arm64 names it, decision 0569)")
     }
-    if backend == "amd64" && !(tg is "linux/amd64" | "darwin/amd64" | "windows/amd64") {
+    if backend == "amd64" && !(tg is "linux/amd64" | "darwin/amd64" | "windows/amd64" | "freebsd/amd64") {
       fail(os, "the amd64 backend builds for linux/amd64, darwin/amd64, and windows/amd64, not ${tg} (decision 0254)")
     }
     if backend == "llvm" && tg != host {
@@ -1856,7 +1856,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // (XO_SEPCOMP); its functions call the program's main, which a reach
     // over the program's parts alone cannot see, so no hollowing
     let (sep_objs, sep_key) = sepcomp_objs(os, b.conc)
-    let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow") && sepcomp_facts_path(os).is_empty()
+    let hollow_now = (tgoos is "darwin" | "linux" | "freebsd") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow") && sepcomp_facts_path(os).is_empty()
     // decision 0388's std store: the parts split into atoms, which the
     // link strips by symbol (every object path below assembles these)
     // (windows/amd64's COFF too: pelink strips by atom, pestrip.xo)
@@ -1869,7 +1869,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // a tool reads them (hollow_late)
     // (amd64 too: it has no per-function cache, fdir, but incr_hollow needs
     // only the back-end cache, which it checks)
-    let inc = if (tgoos is "darwin" | "linux") && o.cmd != "asm" && o.asm_path.is_empty() && p.parts.len() > 1 && backend_cache_mode(os) != "verify" && (os.env.get("XO_SIZE_CAUSES") ?? "").is_empty() { incr_hollow(os, ctx, p.parts, p.part_tags, march, hollow_now, tgoos == "linux", jobs) } else { None }
+    let inc = if (tgoos is "darwin" | "linux" | "freebsd") && o.cmd != "asm" && o.asm_path.is_empty() && p.parts.len() > 1 && backend_cache_mode(os) != "verify" && (os.env.get("XO_SIZE_CAUSES") ?? "").is_empty() { incr_hollow(os, ctx, p.parts, p.part_tags, march, hollow_now, elf_os(tgoos), jobs) } else { None }
     var hollow_late = false
     if inc.is_some() {
       hollow_late = hollow_now
@@ -1880,7 +1880,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // one is made (hollow_parts held both whole sets at once)
         // (a part's facts name its chunks by views of its text, so they go
         // with it)
-        var (hf, hl) = arm64.hollow_plan(p.parts, tgoos == "linux")
+        var (hf, hl) = arm64.hollow_plan(p.parts, elf_os(tgoos))
         let trap = arm64.hollow_trap(march)
         for i in 0..p.parts.len() {
           let (ht, _, _) = arm64.hollow_rewrite(p.parts[i], hf[i], hl[i], trap)
@@ -1888,7 +1888,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           p.parts[i] = ht
         }
       } else {
-        p.asm = hollow_parts([p.asm], march, tgoos == "linux")[0]
+        p.asm = hollow_parts([p.asm], march, elf_os(tgoos))[0]
       }
       t = lap(os, phases, "hollow", t)
     }
@@ -1935,7 +1935,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // as darwin/arm64's (--as=cc for Apple's cc, which then links too)
     let mac_x86 = march == "amd64" && tg == "darwin/amd64"
     var no_cc = o.linker == "macho"
-    if o.linker.is_empty() && (tg == host || tgoos == "linux" || tgoos == "darwin") {
+    if o.linker.is_empty() && (tg == host || elf_os(tgoos) || tgoos == "darwin") {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
     if o.race && tgoos == "windows" && !nolibc(os, o, c, tgoos) {
@@ -1953,7 +1953,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let mac_x86_links = mac_x86 && (goos == "darwin" || no_cc)
     let win = march == "amd64" && tgoos == "windows"
     // (windows/arm64 links with Xo's PE linker from any host, decision 0569)
-    let asm_only = !win && !(march == "arm64" && tgoos == "windows") && tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86_links
+    let asm_only = !win && !(march == "arm64" && tgoos == "windows") && tg != cc_host && !(no_cc && (elf_os(tgoos) || tgoos == "darwin")) && !mac_x86_links
     // a build that stops at the assembly leaves it as its product, in the
     // build directory itself, where the message names it
     let s = if asm_only { "${sdir}/prog-${tgoos}.s" } else { "${dir}/prog-${tgoos}.s" }
@@ -2254,7 +2254,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       bins.push((tg, wbin))
       continue
     }
-    if tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86_links {
+    if tg != cc_host && !(no_cc && (elf_os(tgoos) || tgoos == "darwin")) && !mac_x86_links {
       // another target that links with cc (a `use c` source, --ld=cc):
       // the host's cc does not link it, and the build stopped at its
       // assembly with exit 0 and no binary (Intel field report b04)
@@ -2370,7 +2370,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           okeys = r.okeys
         }
         None => {
-          let (a, n, ok) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", false, jobs)
+          let (a, n, ok) = cached_macho_objects(os, ctx, srcs, elf_os(tgoos), march == "amd64", false, jobs)
           assembled = a
           nasm = n
           okeys = ok
@@ -2378,7 +2378,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
       // linux: the objects stay in memory for Xo's ELF linker (Ctx
       // mem_objs) unless the files are kept or std's object is made
-      let in_mem = tgoos == "linux" && no_cc && !keep_asm && !gstd_obj && dir != sdir
+      let in_mem = elf_os(tgoos) && no_cc && !keep_asm && !gstd_obj && dir != sdir
       for (i, r) in assembled.indexed() {
         let obj = if progs.len() > 1 { "${dir}/prog-${tgoos}.${i}.o" } else { "${dir}/prog-${tgoos}.o" }
         match r {
@@ -2409,7 +2409,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // std's object: its parts and their indexed store in the
         // directory, not linked (the program's main is not in them)
         let sod = std_obj_dir(os)
-        write_std_obj(os, sod, objs, tgoos == "linux")
+        write_std_obj(os, sod, objs, elf_os(tgoos))
         os.stdio.eprintln("std object: ${objs.len()} parts and std.store in ${sod}")
         lap(os, phases, "std_obj", t)
         continue
@@ -2479,7 +2479,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // an earlier --dsym or split build's bundle, for another UUID
         // (decisions 0346, 0355), and a split build's PROG.debug
         os.fs.remove_all("${bin}.dSYM").ignore_err("none from an earlier build")
-        if tgoos == "linux" {
+        if elf_os(tgoos) {
           os.fs.remove("${bin}.debug").ignore_err("none from an earlier build")
         }
       }
@@ -2644,6 +2644,9 @@ fn small_jobs(os: Os, cap: Int) -> Int {
 fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str, uses_time: Bool) -> Bool {
   if o.assembler == "cc" {
     return false
+  }
+  if tgoos == "freebsd" {
+    return true
   }
   if tgoos == "linux" {
     // --race too: ThreadSanitizer's static archive, linked whole by Xo's

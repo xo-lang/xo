@@ -88,7 +88,7 @@ fn st(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
 pub fn now() -> Int {
   match target.os {
     TargetOs.Darwin => sys_darwin.clock_gettime_nsec_np(8)
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => sysio.mono_ns()
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => sysio.mono_ns()
   }
 }
 

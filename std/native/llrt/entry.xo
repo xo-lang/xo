@@ -288,7 +288,7 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   } else {
     match target.os {
       TargetOs.Linux => heapos.set_thp_dense()
-      TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => {}
+      TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
     }
   }
   let mid = process.env_real_at("XO_HEAP_MID_MAX")
@@ -391,7 +391,7 @@ fn signals() {
   // handler (poll.xo on_console)
   let h = match target.os {
     TargetOs.Windows => rt.fn_addr("on_console")
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => rt.fn_addr("on_signal")
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => rt.fn_addr("on_signal")
   }
   match target.os {
     TargetOs.Linux => {
@@ -418,7 +418,7 @@ fn signals() {
       let _g = sys_windows.SetThreadStackGuarantee(g)
       release(g)
     }
-    TargetOs.Wasi => {}
+    TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 

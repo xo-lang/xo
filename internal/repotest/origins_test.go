@@ -15,12 +15,14 @@ import (
 // file's comment needs an `Origin:` marker of the same key in that file,
 // or an allowlist line (decision 0302). zlib counts only as the project
 // ("zlib's", madler): Go's compress/zlib and the zlib format (RFC 1950)
-// are named everywhere in std/compress.
+// are named everywhere in std/compress. freebsd counts only as FreeBSD's
+// code (its libc, libm or msun, its source tree): FreeBSD is a target
+// (decision 0573), so its name alone describes the OS, as Linux's does.
 var originProjects = map[string]*regexp.Regexp{
 	"musl":       regexp.MustCompile(`(?i)\bmusl\b`),
 	"glibc":      regexp.MustCompile(`(?i)\bglibc\b`),
 	"bionic":     regexp.MustCompile(`(?i)\bbionic\b`),
-	"freebsd":    regexp.MustCompile(`(?i)\bfreebsd\b`),
+	"freebsd":    regexp.MustCompile(`(?i)\bfreebsd(?:'s)?\s+(?:libc|libm|msun|src|sources?|source tree)\b|\bmsun\b|freebsd\.org/src`),
 	"openbsd":    regexp.MustCompile(`(?i)\bopenbsd\b`),
 	"fdlibm":     regexp.MustCompile(`(?i)\bfdlibm\b`),
 	"cephes":     regexp.MustCompile(`(?i)\bcephes\b`),

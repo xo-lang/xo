@@ -153,7 +153,7 @@ fn (var g: G) alias(key: Str) -> Str {
   var named = ""
   if g.os != "windows" {
     let rd = g.fname(key)
-    let rty = if g.os == "linux" { "\t.type ${rd}, %function\n" } else { "" }
+    let rty = if (g.os is "linux" | "freebsd") { "\t.type ${rd}, %function\n" } else { "" }
     named = "${rty}${rd}:\n"
   }
   if !g.split {
@@ -169,7 +169,7 @@ fn (var g: G) alias(key: Str) -> Str {
   // a function symbol on ELF, as func_header's: without a type (and no
   // size) valgrind and perf dropped it, and profiles showed every
   // helper as ??? (Xo Lang 3, 2026-10-17)
-  let ty = if g.os == "linux" { "\t.type ${ext}, %function\n" } else { "" }
+  let ty = if (g.os is "linux" | "freebsd") { "\t.type ${ext}, %function\n" } else { "" }
   "${named}${g.hidden_global(ext)}${g.weak_def(ext)}${ty}${ext}:\n"
 }
 
@@ -183,14 +183,14 @@ fn (var g: G) alias_sub(key: Str, suffix: Str) -> Str {
   var named = ""
   if g.os != "windows" {
     let rd = "${g.fname(key)}_${suffix}"
-    let rty = if g.os == "linux" { "\t.type ${rd}, %function\n" } else { "" }
+    let rty = if (g.os is "linux" | "freebsd") { "\t.type ${rd}, %function\n" } else { "" }
     named = "${rty}${rd}:\n"
   }
   if !g.split {
     return named
   }
   let ext = "${g.helper_ext(key)}_${suffix}"
-  let ty = if g.os == "linux" { "\t.type ${ext}, %function\n" } else { "" }
+  let ty = if (g.os is "linux" | "freebsd") { "\t.type ${ext}, %function\n" } else { "" }
   "${named}${g.hidden_global(ext)}${g.weak_def(ext)}${ty}${ext}:\n"
 }
 
@@ -716,7 +716,7 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: S
   out.push(g.debug_sections(false))
   g.data(out)
   out.push(utbl)
-  if os == "linux" {
+  if (os is "linux" | "freebsd") {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
   }
   var part = Part{asm: out.join(""), err: g.err, dumps: g.dumps, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, static_ref: g.static_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref, w64: g.w64, wsyms: g.wsyms, wants: g.wants, stores: stores, reused: reused, mismatches: mismatches}

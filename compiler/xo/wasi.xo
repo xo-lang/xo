@@ -9,7 +9,7 @@
 fn on_wasi() -> Bool {
   match target.os {
     Wasi => true
-    Linux | Darwin | Windows => false
+    Linux | Darwin | Windows | FreeBSD => false
   }
 }
 

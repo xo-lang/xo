@@ -17,7 +17,7 @@ pub fn interfaces() -> (List[NetInterface], Str) {
     TargetOs.Linux => linux_ifaces()
     TargetOs.Darwin => darwin_ifaces()
     TargetOs.Windows => windows_ifaces()
-    TargetOs.Wasi => ([], "network interfaces are not supported on this system")
+    TargetOs.Wasi | TargetOs.FreeBSD => ([], "network interfaces are not supported on this system")
   }
 }
 

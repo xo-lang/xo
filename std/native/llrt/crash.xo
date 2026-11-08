@@ -120,14 +120,14 @@ fn st(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
 fn darwin() -> Bool {
   match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
 fn windows() -> Bool {
   match target.os {
     TargetOs.Windows => true
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -143,7 +143,7 @@ fn map(n: Int) -> Int {
     TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
     // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
     TargetOs.Windows => sys_windows.VirtualAlloc(0, n, 12288, 4)
-    TargetOs.Wasi => 0
+    TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
@@ -180,7 +180,7 @@ fn set(r: Int, sig: Int, h: Int, flags: Int) {
       }
       let _r = linux.rt_sigaction(sig, sa, 0)
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 
@@ -205,7 +205,7 @@ pub fn install() {
       TargetArch.Amd64 => {}
       TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => return
     }
-    TargetOs.Wasi => return
+    TargetOs.Wasi | TargetOs.FreeBSD => return
   }
   let v = process.env_real_at("XO_CRASH_REPORT")
   if v != 0 && rt.mem_load(v, 0, 1) == 48 && rt.mem_load(v, 1, 1) == 0 {

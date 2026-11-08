@@ -63,7 +63,7 @@ pub fn system_ders() -> List[Bytes] {
       out
     }
     TargetOs.Windows => windows_ders()
-    TargetOs.Darwin | TargetOs.Wasi => []
+    TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => []
   }
 }
 

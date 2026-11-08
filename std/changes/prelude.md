@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-08: feature: TargetOs gains FreeBSD (decision 0573 stage 1)
+
+- Kind: feature
+- Commit: this push
+- Found by: the lead's queue (FreeBSD after linux/riscv64)
+- Go reference: GOOS=freebsd
+- Test: internal/arm64 TestFreeBSDCrossBuilds (freebsd/amd64 and freebsd/arm64 cross builds, read with debug/elf)
+- Timing: none (a new variant; no code path of other targets changes)
+- Shipped in: not yet released
+
+`target.os` is `TargetOs.FreeBSD` for `--targets=freebsd/amd64` and `freebsd/arm64`; an exhaustive `match target.os` in user code needs its arm. The targets cross build and do not run yet (spec 12.1).
+
 ## 2026-11-07: perf: Str.rune_count counts continuation bytes 32 at a time
 
 - Kind: perf

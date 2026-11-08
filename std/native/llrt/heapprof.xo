@@ -125,7 +125,7 @@ fn map(n: Int) -> Int {
     TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
     // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
     TargetOs.Windows => sys_windows.VirtualAlloc(0, n, 12288, 4)
-    TargetOs.Wasi => 0
+    TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0

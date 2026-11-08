@@ -47,6 +47,6 @@ pub fn hostname() -> Str {
       s
     }
     TargetOs.Windows => windows.hostname()
-    TargetOs.Wasi => ""
+    TargetOs.Wasi | TargetOs.FreeBSD => ""
   }
 }

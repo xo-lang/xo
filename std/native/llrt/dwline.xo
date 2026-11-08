@@ -136,7 +136,7 @@ pub fn load(lo: Int, hi: Int) -> Lines {
     TargetOs.Linux => load_elf(lo, hi, out)
     TargetOs.Darwin => load_dsym(lo, hi, out)
     TargetOs.Windows => load_pe(lo, hi, out)
-    TargetOs.Wasi => {}
+    TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   out
 }
@@ -453,7 +453,7 @@ fn read_raw(path: Str) -> Bytes {
   match target.os {
     TargetOs.Darwin => fd = Int(sys_darwin.open("${path}\x00".bytes(), 0, 0))
     TargetOs.Linux => fd = linux.open(path, 524288, 0)
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   if fd >= 0 {
     while true {
@@ -466,7 +466,7 @@ fn read_raw(path: Str) -> Bytes {
             continue
           }
         }
-        TargetOs.Windows | TargetOs.Wasi => {}
+        TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
       }
       if r <= 0 {
         break
@@ -482,7 +482,7 @@ fn read_raw(path: Str) -> Bytes {
       TargetOs.Linux => {
         let _c = linux.close(fd)
       }
-      TargetOs.Windows | TargetOs.Wasi => {}
+      TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
     }
   }
   rt.heap_release(buf - 8)
@@ -1601,7 +1601,7 @@ pub fn vars_load() -> Vars {
       bias = b
       ok = c
     }
-    TargetOs.Wasi => {}
+    TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   if !ok || s.info_n == 0 || s.abbrev_n == 0 {
     return Vars{why: "no DWARF (a release or stripped build)"}
@@ -2283,7 +2283,7 @@ fn probe(a: Int, n: Int) -> Bool {
         let _c2 = sys_darwin.close(wr)
       }
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   rt.heap_release(fds - 8)
   ok

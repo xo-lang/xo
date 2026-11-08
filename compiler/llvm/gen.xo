@@ -1352,6 +1352,7 @@ fn (g: Gen) os() -> Str {
     Linux => "linux"
     Windows => "windows"
     Wasi => "wasip1"
+    FreeBSD => "freebsd"
   }
 }
 

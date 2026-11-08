@@ -2514,7 +2514,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let _r = g.call(g.tramp(if aux_str(x.aux) == "rt.unwind_save" { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(x.args[0]))], [])
       g.set(v, [])
     }
-    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if g.os == "linux" || g.os == "darwin" || g.os == "windows" => {
+    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if (g.os is "linux" | "freebsd") || g.os == "darwin" || g.os == "windows" => {
       // inline on Linux (2026-10-16): the thread pointer plus xo_tlocal's
       // local exec offset, then the slot; xo_tlocal_get's call, its
       // moves, and its clobbers cost the scheduler's pingpong 9M

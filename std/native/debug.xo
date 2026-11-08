@@ -82,7 +82,7 @@ fn fds_open() -> Int {
   let (names, err) = match target.os {
     TargetOs.Linux => linux.names("/proc/self/fd")
     TargetOs.Darwin => darwin.names("/dev/fd")
-    TargetOs.Windows | TargetOs.Wasi => return -1
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => return -1
   }
   if err != 0 || names.is_empty() {
     return -1

@@ -43,7 +43,7 @@ fn (e: CliErr) display() -> Str {
 /// Rules for the platform this binary is built for.
 fn host_platform() -> Platform {
   match target.os {
-    Linux => Platform{case_sensitive: true, ignored: #{}}
+    Linux | FreeBSD => Platform{case_sensitive: true, ignored: #{}}
     Darwin => Platform{case_sensitive: false, ignored: #{".DS_Store"}}
     Windows => Platform{case_sensitive: false, ignored: #{"Thumbs.db"}}
   }

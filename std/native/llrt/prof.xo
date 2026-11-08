@@ -144,7 +144,7 @@ fn st(p: Int, o: Int, v: Int) { rt.mem_store(p, o, v, 8) }
 fn darwin() -> Bool {
   match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -155,7 +155,7 @@ fn map(n: Int) -> Int {
     TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
     // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
     TargetOs.Windows => sys_windows.VirtualAlloc(0, n, 12288, 4)
-    TargetOs.Wasi => 0
+    TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
@@ -205,7 +205,7 @@ pub fn start() {
         return
       }
     }
-    TargetOs.Wasi => {
+    TargetOs.Wasi | TargetOs.FreeBSD => {
       stdio.eprint("xo profile: XO_PROF=cpu is not supported on this target yet", true)
       return
     }
@@ -258,7 +258,7 @@ fn arm(r: Int, hz: Int) {
       // handler, which must not look it up
       let _v = linux.vdso_clock()
     }
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   handler(rt.fn_addr("on_prof"))
   timer(1000000 / hz)
@@ -309,7 +309,7 @@ fn make_record(hz: Int) -> Int {
 pub fn live_supported() -> Bool {
   match target.os {
     TargetOs.Darwin | TargetOs.Linux => true
-    TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -413,7 +413,7 @@ fn release_ring(r: Int) {
       TargetOs.Darwin => {
         let _a = sys_darwin.madvise(ld(r, R_RING), n, 5)
       }
-      TargetOs.Windows | TargetOs.Wasi => {}
+      TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
     }
   }
   st(r, R_DUR, 0)
@@ -512,7 +512,7 @@ fn start_heap() {
       TargetArch.Amd64 => true
       TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
     }
-    TargetOs.Wasi => false
+    TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   if !ok {
     stdio.eprint("xo profile: XO_PROF=heap is not supported on this target yet", true)
@@ -579,7 +579,7 @@ fn handler(h: Int) {
       let _r = sys_darwin.sigaction(SIGPROF, sa, 0)
       rt.heap_release(sa - 8)
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 
@@ -607,7 +607,7 @@ fn timer(us: Int) {
       rt.mem_store(t, 28, 0, 4)
       let _r = sys_darwin.setitimer(ITIMER_PROF, t, 0)
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   rt.heap_release(t - 8)
 }
@@ -663,7 +663,7 @@ fn sample(r: Int, uc: Int) {
 fn weight(r: Int, s: Int) -> Int {
   match target.os {
     TargetOs.Linux => {}
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => return 1
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => return 1
   }
   let e = ld(r, R_WTS) + (s - ld(r, R_POOL)) / unwind.PROF_RECORD * WT
   // CLOCK_THREAD_CPUTIME_ID
@@ -787,7 +787,7 @@ fn build_raw(rc: Int, rh: Int) -> Raw {
     TargetOs.Linux => 1
     TargetOs.Darwin => 2
     TargetOs.Windows => 3
-    TargetOs.Wasi => 4
+    TargetOs.Wasi | TargetOs.FreeBSD => 4
   }
   let arch_id = match target.arch {
     TargetArch.Arm64 => 1
@@ -951,7 +951,7 @@ pub fn expand_pid(path: Str) -> Str {
       }
       rt.sys6(nr, 0, 0, 0, 0, 0, 0)
     }
-    TargetOs.Windows | TargetOs.Wasi => 0
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
   path.replace("%p", "${pid}")
 }
@@ -981,7 +981,7 @@ fn symbols(lo: Int, hi: Int) -> Syms {
   match target.os {
     TargetOs.Darwin => macho_symbols(lo, hi, addrs, names)
     TargetOs.Windows => coff_symbols(lo, hi, addrs, names)
-    TargetOs.Linux | TargetOs.Wasi => elf_symbols(lo, hi, addrs, names)
+    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => elf_symbols(lo, hi, addrs, names)
   }
   // sort by address: (offset from the lowest symbol << 24) | index. Not
   // from lo: trace_text passes 1, and the offset of a Linux PIE's address
@@ -1348,7 +1348,7 @@ fn outside_name(pc: Int) -> Str {
       name
     }
     TargetOs.Linux => linux_object_name(pc)
-    TargetOs.Windows | TargetOs.Wasi => "?"
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => "?"
   }
 }
 
@@ -1498,7 +1498,7 @@ pub fn write_file(path: Str, data: Bytes) -> Bool {
       let _c = windows.close(h)
       w == 0
     }
-    TargetOs.Wasi => false
+    TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 

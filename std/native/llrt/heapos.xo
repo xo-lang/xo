@@ -24,6 +24,7 @@
 // Nothing here allocates Xo values or faults: out of memory ends the
 // process as the C's xo_oom did (status 70).
 use native/llrt/alloc
+use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/membudget
 use native/llrt/obj
@@ -132,6 +133,12 @@ fn map_os(size: Int) -> Int {
         m = sys_windows.VirtualAlloc(0, size, 12288, 4)
       }
     }
+    TargetOs.FreeBSD => {
+      m = freebsd.mmap(0, size, 3, freebsd.MAP_PRIVATE | freebsd.MAP_ANON, -1, 0)
+      if m < 0 && m > -4096 {
+        m = 0
+      }
+    }
     TargetOs.Wasi => {}
   }
   if m == 0 {
@@ -209,7 +216,7 @@ pub fn phys_mem() -> Int {
       unmap(b, GRAIN)
       n
     }
-    TargetOs.Wasi => 0
+    TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
 }
 
@@ -242,6 +249,9 @@ fn unmap_os(m: Int, size: Int) {
       if !sanhook.gorace() {
         let _r = sys_windows.VirtualFree(m, 0, 32768)
       }
+    }
+    TargetOs.FreeBSD => {
+      let _r = freebsd.munmap(m, size)
     }
     TargetOs.Wasi => {}
   }
@@ -473,7 +483,7 @@ fn cache_advise(m: Int, size: Int, reuse: Bool) {
     TargetOs.Darwin => {
       let _a = sys_darwin.madvise(m + SCAV_PAGE, size - SCAV_PAGE, if reuse { 8 } else { 7 })
     }
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 
@@ -684,7 +694,7 @@ fn advise(p: Int, cw: Int, v: Int, size: Int, pg: Int) -> Bool {
       }
       false
     }
-    TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -840,7 +850,7 @@ fn small_chunks() -> Bool {
   }
   match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -852,7 +862,7 @@ fn set_prot(a: Int, n: Int, prot: Int) {
     TargetOs.Darwin => {
       let _r = sys_darwin.mprotect(a, n, prot)
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 
@@ -1010,7 +1020,7 @@ fn map_aligned(size: Int) -> Int {
         m = 0
       }
     }
-    TargetOs.Wasi => {}
+    TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   if m == 0 {
     oom()
@@ -1139,7 +1149,7 @@ const HALF = 2097152
 fn dense_halves() -> Bool {
   match target.os {
     TargetOs.Linux => thp_mode() == 2
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -1148,7 +1158,7 @@ fn thp_advise(a: Int, n: Int) {
     TargetOs.Linux => {
       let _h = linux.madvise(a, n, 14)
     }
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 
@@ -1855,7 +1865,7 @@ pub fn scavenge(m: Int, c: Int) {
         TargetOs.Darwin => {
           let _a = sys_darwin.madvise(lo, hi - lo, 7)
         }
-        TargetOs.Windows | TargetOs.Wasi => {}
+        TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
       }
     }
     r = if pg { rt.mem_load(pword(r, PT_LINK), 0, 8) } else { rt.mem_load(r, 0, 8) }

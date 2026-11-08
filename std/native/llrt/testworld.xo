@@ -441,7 +441,7 @@ fn read_real_line() -> Str {
       TargetOs.Linux => linux.read_at(0, b, 1)
       TargetOs.Darwin => darwin.read_at(0, b, 1)
       TargetOs.Windows => windows.read_at(sys_windows.GetStdHandle(-10), b, 1)
-      TargetOs.Wasi => 0
+      TargetOs.Wasi | TargetOs.FreeBSD => 0
     }
     if r == -linux.EINTR && target.os == TargetOs.Linux {
       continue
@@ -1525,6 +1525,6 @@ pub fn quit(code: Int) {
     }
     TargetOs.Darwin => sys_darwin.exit(code)
     TargetOs.Windows => sys_windows.ExitProcess(code)
-    TargetOs.Wasi => {}
+    TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }

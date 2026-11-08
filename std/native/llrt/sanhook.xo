@@ -51,7 +51,7 @@ pub fn tsan() -> Bool { rt.sym_present("__tsan_switch_to_fiber") }
 pub fn gorace() -> Bool {
   match target.os {
     TargetOs.Windows => rt.sym_present("__tsan_go_start")
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 

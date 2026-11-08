@@ -7,7 +7,7 @@
 fn sep() -> Str {
   match target.os {
     TargetOs.Windows => "\\"
-    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => "/"
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.FreeBSD | TargetOs.Wasi => "/"
   }
 }
 
@@ -32,11 +32,11 @@ fn main(os: Os) ! {
   // current drive without its letter (the harness runs on drive C:)
   let unc = match target.os {
     TargetOs.Windows => "\\\\localhost\\${root[0..1]}$${root[2..]}"
-    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => root
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.FreeBSD | TargetOs.Wasi => root
   }
   let rooted = match target.os {
     TargetOs.Windows => root[2..].replace("\\", "/")
-    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => root
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.FreeBSD | TargetOs.Wasi => root
   }
   out.println("UNC form: ${os.fs.exists(unc + sep() + "a")?} ${os.fs.sub(unc).read_text("a/b/f.txt")?.trim()}")
   out.println("rooted form: ${os.fs.exists(rooted + "/a")?} ${os.fs.sub(rooted).read_text("a/b/f.txt")?.trim()}")

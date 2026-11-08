@@ -17,6 +17,7 @@
 // Nothing here may fault: cabi.xo's exports call it. Sums use
 // rt.int_wrap (no overflow check: sizes are far below the Int range).
 use native/llrt/darwin
+use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/pool
 use native/llrt/raw
@@ -127,6 +128,7 @@ fn write(fd: Int, p: Int, n: Int) -> Int {
     TargetOs.Linux => linux.write_at(fd, p, n)
     TargetOs.Darwin => darwin.write_at(fd, p, n)
     TargetOs.Windows => windows.std_write_at(fd, p, n)
+    TargetOs.FreeBSD => freebsd.write_at(fd, p, n)
     TargetOs.Wasi => -1
   }
 }

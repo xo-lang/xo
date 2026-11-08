@@ -25,7 +25,7 @@ fn source() -> Int {
         TargetOs.Linux => 1
         TargetOs.Darwin => 2
         TargetOs.Windows => 3
-        TargetOs.Wasi => 0
+        TargetOs.Wasi | TargetOs.FreeBSD => 0
       }
     }
   }

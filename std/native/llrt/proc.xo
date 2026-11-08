@@ -42,7 +42,7 @@ fn signo(i: Int) -> Int {
   let darwin_nums = [1, 2, 3, 9, 15, 30, 31, 19, 17]
   match target.os {
     TargetOs.Darwin => darwin_nums[i]
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => linux_nums[i]
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => linux_nums[i]
   }
 }
 

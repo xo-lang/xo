@@ -28,7 +28,10 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     }
     // --race: ThreadSanitizer's static archive, whole (its __tsan_init
     // in a .preinit_array no symbol reaches, decision 0273 part 3)
-    return elf_link(os, ctx, flags, srcs, out, nolibc, strip, race_rt, split, release)
+    return elf_link(os, ctx, flags, srcs, out, nolibc, strip, race_rt, split, release, false)
+  }
+  if tgoos == "freebsd" {
+    return elf_link(os, ctx, flags, srcs, out, true, strip, "", split, release, true)
   }
   let (objs, bad) = ld_objects(srcs)
   if !bad.is_empty() {
@@ -342,7 +345,7 @@ fn ld_objects(srcs: List[Str]) -> (List[Str], Str) {
 /// not.
 /// split (decision 0355): the DWARF and symbols in out.debug, which
 /// out's .gnu_debuglink names, both with the same GNU build id.
-fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, static: Bool, strip: Bool, whole: Str, split: Bool, release: Bool) -> Str {
+fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, static: Bool, strip: Bool, whole: Str, split: Bool, release: Bool, freebsd: Bool) -> Str {
   let (objs, bad) = ld_objects(srcs)
   if !bad.is_empty() {
     return bad
@@ -514,10 +517,20 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
           Err(e) => return "cannot write the debug information to ${out}.debug: ${fs_reason(e)}"
         }
       }
-      write_exe(os, out, b)
+      write_exe(os, out, if freebsd { freebsd_brand(b) } else { b })
     }
     Err(e) => "link: ${e}"
   }
+}
+
+/// b, an ELF executable, branded FreeBSD: EI_OSABI 9 (ELFOSABI_FREEBSD),
+/// which FreeBSD's kernel reads to pick its ABI for a static executable
+/// with no .note.tag (decision 0573 stage 1).
+fn freebsd_brand(b: Bytes) -> Bytes {
+  var o = BytesBuilder.with_capacity(b.len())
+  o.write(b)
+  o.put_le(7, 9, 1)
+  o.freeze()
 }
 
 /// tzSource as an object: the zone data std/time reads (xo_tz_mode,
@@ -526,7 +539,7 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
 /// assembly for compiler/macho (Mach-O, or ELF for goos linux); the path
 /// of the object.
 fn tz_object(os: Os, dir: Str, sel: tzsel.TZSel, goos: Str, goarch: Str) -> Str ! FsErr {
-  if goos == "linux" {
+  if elf_os(goos) {
     return tz_object_elf(os, dir, sel, goarch == "amd64")
   }
   if goos == "windows" {

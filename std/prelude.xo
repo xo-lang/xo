@@ -142,6 +142,7 @@ enum TargetOs {
   Darwin
   Windows
   Wasi
+  FreeBSD
 }
 
 enum TargetArch {

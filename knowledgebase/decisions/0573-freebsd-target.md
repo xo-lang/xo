@@ -2,7 +2,8 @@
 
 Status: Proposed (Xo Lang 1, 2026-11-08; the owner decides). The lead
 queued a FreeBSD ADR on 2026-11-08 behind linux/riscv64 (decision 0571).
-This ADR is the plan; nothing is built yet. Go's FreeBSD port (amd64 and
+Stage 1's cross build landed behind the target on 2026-11-08
+(Progress below); the status stays Proposed. Go's FreeBSD port (amd64 and
 arm64, both first class in Go) is the reference for the system calls,
 structures and runtime glue.
 
@@ -126,3 +127,35 @@ not.
   amd64; the arm64 port shares everything but the stub, TLS and signal
   offsets, so the plan builds both and may ship amd64 first if arm64's
   VM lane lags.
+
+## Progress
+
+- **2026-11-08, stage 1, cross build (Xo Lang 1; the lead: cross build
+  only until a VM lane exists).** `TargetOs.FreeBSD` in the prelude and
+  every exhaustive `match target.os` of compiler/ and std/: the
+  compiler's arms (the target fold, host paths, the backend map:
+  freebsd/arm64 to the arm64 backend, freebsd/amd64 to amd64), and std's
+  117 runtime arms join Wasi's (a stub that reports "no" or does
+  nothing) except write, exit and the heap's map and unmap, which call
+  the new `std/native/llrt/freebsd.xo`. The driver treats freebsd as an
+  ELF OS (`elf_os`): Xo's ELF linker, no C library (`nolibc` is always
+  true; a `use c` program does not build), the nolibc `_start` and the
+  ELF sections of the native backends. The link brands the executable
+  with EI_OSABI 9 (ELFOSABI_FREEBSD), which FreeBSD's kernel accepts for
+  a static executable; the `.note.tag` ABI note is left for stage 2 if
+  the VM shows it is needed. `rt.sys6` adds FreeBSD's error convention
+  after the trap: `cneg x0, x0, cs` on arm64, `sbbq %rcx, %rcx; xorq
+  %rcx, %rax; subq %rcx, %rax` on amd64 (rcx is clobbered by `syscall`),
+  so every caller keeps Linux's negative errno. The main thread's TLS
+  block is mapped with FreeBSD's flags and amd64 sets its fs base with
+  sysarch(AMD64_SET_FSBASE). A hello world builds for freebsd/amd64 and
+  freebsd/arm64 from a Mac: ELF64, EI_OSABI 9, static, `_start` entry, a
+  PT_TLS segment (llvm-objdump). Nothing runs yet: threads (the main
+  runs on a thread of its own), the futex, the poller, signals, time and
+  the file system are stage 2, which needs the VM.
+  The goldens and bench programs with an exhaustive `match target.os`
+  put FreeBSD in Linux's arm (method_values, fs_paths_os,
+  sys_files_clock, gen's audit_second_pass, bench/xo/v0.4 and the
+  planted variants of 04-file-sync; the amd64 sample's method_values
+  found it); bench/paper's blind solutions are left as written, so they
+  no longer check, as user code of their age would not.

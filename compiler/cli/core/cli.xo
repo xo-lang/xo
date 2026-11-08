@@ -175,6 +175,7 @@ fn run_version(os: Os, args: List[Str]) -> Int {
     Darwin => "darwin"
     Windows => "windows"
     Wasi => "wasip1"
+    FreeBSD => "freebsd"
   }
   let arch = match target.arch {
     Amd64 => "amd64"

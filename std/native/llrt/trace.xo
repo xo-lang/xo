@@ -39,7 +39,7 @@ fn map(n: Int) -> Int {
   let m = match target.os {
     TargetOs.Darwin => sys_darwin.mmap(0, n, 3, 2 | 4096, -1, 0)
     TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
-    TargetOs.Windows | TargetOs.Wasi => 0
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
@@ -78,7 +78,7 @@ pub fn start() {
   }
   match target.os {
     TargetOs.Darwin | TargetOs.Linux => {}
-    TargetOs.Windows | TargetOs.Wasi => {
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {
       stdio.eprint("xo trace: XO_TRACE is not supported on this target yet", true)
       return
     }
@@ -136,7 +136,7 @@ fn create(path: Str) -> Int {
       // O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC
       Int(sys_darwin.open(z.freeze(), 1 | 512 | 2048 | 256 | 16777216, 384))
     }
-    TargetOs.Windows | TargetOs.Wasi => -1
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => -1
   }
 }
 
@@ -147,7 +147,7 @@ fn put(fd: Int, a: Int, n: Int) -> Bool {
     let w = match target.os {
       TargetOs.Linux => linux.write_at(fd, a + off, n - off)
       TargetOs.Darwin => sys_darwin.write(fd, a + off, raw.io_len(n - off))
-      TargetOs.Windows | TargetOs.Wasi => -1
+      TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => -1
     }
     if w == -4 {
       continue
@@ -170,7 +170,7 @@ fn close(fd: Int) {
     TargetOs.Darwin => {
       let _c = sys_darwin.close(fd)
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 
@@ -228,7 +228,7 @@ pub fn finish() {
     TargetOs.Linux => 1
     TargetOs.Darwin => 2
     TargetOs.Windows => 3
-    TargetOs.Wasi => 4
+    TargetOs.Wasi | TargetOs.FreeBSD => 4
   }
   let arch_id = match target.arch {
     TargetArch.Arm64 => 1

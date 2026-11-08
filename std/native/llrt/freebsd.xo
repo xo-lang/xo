@@ -1,0 +1,53 @@
+// The FreeBSD system call layer of the native runtime, written in Xo
+// (decision 0573): raw system calls through rt.sys6, as linux.xo's. The
+// emitters turn FreeBSD's error convention (the carry flag set and a
+// positive errno) into Linux's, so a call returns a result >= 0 or a
+// negative errno. FreeBSD has one system call table for amd64 and arm64
+// (sys/kern/syscalls.master), so no number depends on the architecture.
+//
+// Stage 1 of decision 0573 (hello world): write, exit, the memory
+// mappings and the main thread's TLS. Only the FreeBSD arms of llrt call
+// this module, so it is code generated only for FreeBSD targets (core
+// 12.2).
+use native/rt
+
+pub const EINTR: Int = 4
+pub const EAGAIN: Int = 35
+
+// mmap flags (sys/mman.h): MAP_PRIVATE, MAP_ANON; FreeBSD has no
+// MAP_NORESERVE (it never reserves swap for an anonymous mapping)
+pub const MAP_PRIVATE: Int = 2
+pub const MAP_ANON: Int = 4096
+
+/// write(2) of the n bytes at a: the bytes written, or the negative
+/// errno.
+pub fn write_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(4, fd, a, n, 0, 0, 0) }
+
+/// exit(2): ends the process with status code (every thread).
+pub fn exit(code: Int) -> Int { rt.sys6(1, code, 0, 0, 0, 0, 0) }
+
+/// mmap(2): the address, or the negative errno.
+pub fn mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int {
+  rt.sys6(477, addr, len, prot, flags, fd, off)
+}
+
+/// munmap(2).
+pub fn munmap(addr: Int, len: Int) -> Int { rt.sys6(73, addr, len, 0, 0, 0, 0) }
+
+/// mprotect(2).
+pub fn mprotect(addr: Int, len: Int, prot: Int) -> Int { rt.sys6(74, addr, len, prot, 0, 0, 0) }
+
+/// madvise(2) (MADV_DONTNEED 4, MADV_FREE 5).
+pub fn madvise(addr: Int, len: Int, advice: Int) -> Int { rt.sys6(75, addr, len, advice, 0, 0, 0) }
+
+/// getpid(2).
+pub fn getpid() -> Int { rt.sys6(20, 0, 0, 0, 0, 0, 0) }
+
+/// The amd64 thread pointer (the fs base) of the calling thread:
+/// sysarch(AMD64_SET_FSBASE, &tp), which reads the base from memory, so
+/// tp is stored in the 8 bytes at scratch first; 0 or the negative errno.
+/// (arm64's tpidr_el0 is a register user code writes.)
+pub fn set_fsbase(tp: Int, scratch: Int) -> Int {
+  rt.mem_store(scratch, 0, tp, 8)
+  rt.sys6(165, 129, scratch, 0, 0, 0, 0)
+}

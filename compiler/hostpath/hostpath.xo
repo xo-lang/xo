@@ -15,6 +15,7 @@ pub fn host() -> Str {
   match target.os {
     Windows => "windows"
     Linux => "linux"
+    FreeBSD => "freebsd"
     Darwin | Wasi => "darwin"
   }
 }
@@ -23,7 +24,7 @@ pub fn host() -> Str {
 pub fn windows() -> Bool {
   match target.os {
     Windows => true
-    Darwin | Linux | Wasi => false
+    Darwin | Linux | Wasi | FreeBSD => false
   }
 }
 
@@ -233,7 +234,7 @@ pub fn user_cache_dir(env: Env) -> Str uses env {
   let home = env.get("HOME") ?? ""
   match target.os {
     Darwin => return if home.is_empty() { "" } else { "${trim_slash_w(home, false)}/Library/Caches" }
-    Windows | Linux | Wasi => {}
+    Windows | Linux | Wasi | FreeBSD => {}
   }
   let x = env.get("XDG_CACHE_HOME") ?? ""
   if x.starts_with("/") {

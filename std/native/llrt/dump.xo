@@ -333,7 +333,7 @@ fn pid() -> Int {
       }
       rt.sys6(nr, 0, 0, 0, 0, 0, 0)
     }
-    TargetOs.Windows | TargetOs.Wasi => 0
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
 }
 
@@ -347,7 +347,7 @@ fn unlink(path: Str) {
     TargetOs.Linux => {
       let _r = linux.unlink(path, false)
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
 }
 

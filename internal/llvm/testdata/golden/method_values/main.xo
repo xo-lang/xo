@@ -76,7 +76,7 @@ fn main(os: Os) {
 
   // target: one arm per OS, chosen for this build
   let family = match target.os {
-    Linux => "unix"
+    Linux | FreeBSD => "unix"
     Darwin => "unix"
     Windows => "windows"
     Wasi => "wasi"

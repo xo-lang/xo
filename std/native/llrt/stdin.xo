@@ -284,7 +284,7 @@ fn open() -> Int {
   let (mode, e) = match target.os {
     TargetOs.Darwin => darwin_fstat_mode()
     TargetOs.Linux => linux_fstat_mode()
-    TargetOs.Windows | TargetOs.Wasi => (0, 1)
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => (0, 1)
   }
   if target.os == TargetOs.Windows {
     // the poller waits on sockets only: a pipe or the console is pumped
@@ -507,7 +507,7 @@ fn readable() -> Bool {
       rt.mem_store(q, 24, 0, 8)
       rt.sys6(lnr(73, 271), q, 1, q + 16, 0, 0, 0) != 0
     }
-    TargetOs.Windows | TargetOs.Wasi => true
+    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => true
   }
 }
 
@@ -567,7 +567,7 @@ pub fn isatty(fd: Int) -> Bool {
     TargetOs.Linux => rt.sys6(lnr(29, 16), fd, 21505, obj_scratch(), 0, 0, 0) == 0
     // the C runtime's _isatty: a character device
     TargetOs.Windows => Int(sys_windows.GetFileType(sys_windows.GetStdHandle(-10 - fd))) == 2
-    TargetOs.Wasi => false
+    TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -606,7 +606,7 @@ fn columns(fd: Int) -> Int {
       let w = i16(rt.mem_load(b, 14, 2)) - i16(rt.mem_load(b, 10, 2)) + 1
       if w > 0 { w } else { 0 }
     }
-    TargetOs.Wasi => 0
+    TargetOs.Wasi | TargetOs.FreeBSD => 0
   }
 }
 
@@ -640,7 +640,7 @@ pub fn echo(on: Bool) -> Bool {
     TargetOs.Darwin => rt.mem_store(t, 24, rt.mem_load(t, 24, 8) & -9, 8)
     TargetOs.Linux => rt.mem_store(t, 12, rt.mem_load(t, 12, 4) & -9, 4)
     TargetOs.Windows => rt.mem_store(t, 0, rt.mem_load(t, 0, 4) & -5, 4)
-    TargetOs.Wasi => {}
+    TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   if !set_tio(t) {
     return false
@@ -656,7 +656,7 @@ fn get_tio(a: Int) -> Bool {
     // TCGETS
     TargetOs.Linux => rt.sys6(lnr(29, 16), 0, 21505, a, 0, 0, 0) == 0
     TargetOs.Windows => Int(sys_windows.GetConsoleMode(sys_windows.GetStdHandle(-10), a)) != 0
-    TargetOs.Wasi => false
+    TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 
@@ -668,6 +668,6 @@ fn set_tio(a: Int) -> Bool {
     // TCSETS
     TargetOs.Linux => rt.sys6(lnr(29, 16), 0, 21506, a, 0, 0, 0) == 0
     TargetOs.Windows => Int(sys_windows.SetConsoleMode(sys_windows.GetStdHandle(-10), rt.mem_load(a, 0, 4))) != 0
-    TargetOs.Wasi => false
+    TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }

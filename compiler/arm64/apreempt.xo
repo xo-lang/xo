@@ -239,7 +239,7 @@ fn (g: G) unsafe_fn_table(f: Str, ls: List[Str]) -> Str {
     o.push("\t.long ${ls[i]} - ${f}\n\t.long ${ls[i + 1]} - ${f}\n")
     i += 2
   }
-  let isect = if g.os == "windows" { "\t.section .xounsafe$m,\"dw\"\n" } else if g.os == "linux" { "\t.section xounsafe,\"aw\",@progbits\n" } else { "\t.section __DATA,xounsafe\n" }
+  let isect = if g.os == "windows" { "\t.section .xounsafe$m,\"dw\"\n" } else if (g.os is "linux" | "freebsd") { "\t.section xounsafe,\"aw\",@progbits\n" } else { "\t.section __DATA,xounsafe\n" }
   o.push("${isect}\t.p2align 3\n${ix}:\n\t.quad ${f}\n\t.quad ${t}\n")
   o.join("")
 }

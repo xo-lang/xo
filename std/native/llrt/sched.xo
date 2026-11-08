@@ -209,7 +209,7 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
           rt.mem_store(fr, 176, mem, 8)
           fr
         }
-        TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => {
+        TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => {
           // x19 (f), x20 (main), x21 to x28, fp, lr (the start), d8 to d15
           let fr = top.wrapping_sub(160)
           rt.mem_store(fr, 80, 0, 8)
@@ -238,7 +238,7 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
           rt.mem_store(fr, 256, start, 8)
           fr
         }
-        TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => {
+        TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => {
           // MXCSR and the x87 control word, r15, r14, r13, r12 (main),
           // rbx (f), rbp, the return address (the start)
           let fr = top.wrapping_sub(64)

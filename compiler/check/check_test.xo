@@ -78,7 +78,7 @@ test "paths clean, join, and relate like Go's path package" {
 test "windows volumes: drives and UNC shares (hostpath's rule), on a windows target" {
   let win = match target.os {
     Windows => true
-    Darwin | Linux | Wasi => false
+    Darwin | Linux | Wasi | FreeBSD => false
   }
   if win {
     expect(path_volume("C:/x/y")) == "C:"

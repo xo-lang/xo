@@ -100,7 +100,7 @@ fn in_path(env: Env, fs: Fs, name: Str) -> Str uses (env, fs.read) {
 fn is_windows_target() -> Bool {
   match target.os {
     Windows => true
-    Darwin | Linux | Wasi => false
+    Darwin | Linux | Wasi | FreeBSD => false
   }
 }
 

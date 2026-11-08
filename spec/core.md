@@ -15,6 +15,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 - linux/riscv64 (12.1, 12.2; decision 0571 stage 1): `TargetArch` gains
   `Riscv64`, so an exhaustive `match target.arch` needs its arm; the
   target builds with `--backend=llvm` only and is not in `all`.
+- freebsd/amd64 and freebsd/arm64 (12.1, 12.2; decision 0573 stage 1):
+  `TargetOs` gains `FreeBSD`, so an exhaustive `match target.os` needs its
+  arm; the targets cross build and are not in `all`.
 - Checksum log server (4.3; decision 0124's addendum): `xo mod sumdb
   keygen` and `xo mod sumdb serve` make a log's key and run a log, its
   records kept in a data directory. `xo mod proxy fill` fills an
@@ -4170,6 +4173,14 @@ It cross links against a riscv64 glibc sysroot (`XO_LINUXSYSROOT`). Until
 stage 2 of 0571, its threads are not preempted asynchronously (loops poll),
 and a fault's trace and `XO_PROF` show the faulting function only.
 
+`--targets=freebsd/amd64` and `--targets=freebsd/arm64`, not part of
+`all`, build static FreeBSD 14 executables with the native backends and
+Xo's ELF linker, from any host (decision 0573). A `use c` program does not
+build for them. Until stage 2 of 0573 the runtime has FreeBSD's write,
+exit, memory mappings and main thread TLS only: threads, the poller,
+signals, time and the file system are not ported, so a program does not
+run yet.
+
 `--targets=wasip2/wasm`, not part of `all`, builds a WASI 0.2 component and
 is named alone (decision 0447). A program that calls `http.serve_component`
 is a `wasi:http` 0.2 component (the `wasi:http/proxy` world); any other
@@ -4233,7 +4244,7 @@ written yet.
 
 There are no build tags and no filename based platform selection.
 `target` is a predeclared compile time constant with fields
-`os: TargetOs` (`Linux Darwin Windows Wasi`) and `arch: TargetArch`
+`os: TargetOs` (`Linux Darwin Windows Wasi FreeBSD`) and `arch: TargetArch`
 (`Amd64 Arm64 Wasm32 Riscv64`):
 
 ```

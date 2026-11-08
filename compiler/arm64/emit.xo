@@ -1093,6 +1093,12 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
       b.push("\tblr x0\n")
     } else if inst.has(IF_SVC) {
       b.push("\tmov x8, x6\n\tsvc #0\n")
+      if g.os == "freebsd" {
+        // FreeBSD sets the carry flag on an error, with the positive
+        // errno in x0: rt.sys6's result is -errno, as Linux's (decision
+        // 0573)
+        b.push("\tcneg x0, x0, cs\n")
+      }
     } else if inst.has(IF_CPTR) {
       b.push("\tblr x${inst.srcs.len() - 1}\n")
     } else {

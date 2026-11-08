@@ -352,6 +352,12 @@ fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
   ["-lm", "-lpthread"]
 }
 
+/// Whether goos's executables are ELF, linked by Xo's ELF linker
+/// (compiler/macho/elflink.xo): linux, and freebsd (decision 0573).
+fn elf_os(goos: Str) -> Bool {
+  goos is "linux" | "freebsd"
+}
+
 /// Whether a link for tgoos has no C library (decisions 0203, 0206,
 /// 0243): on Linux, the default for a program with no `use c` module, as
 /// Go links static binaries with no libc; XO_NOLIBC=0 links the C
@@ -371,6 +377,11 @@ fn nolibc(os: Os, o: Opts, c: check.Checker, tgoos: Str) -> Bool {
       return true
     }
     return o.backend == "amd64" && (os.env.get("XO_WIN_NOCRT") ?? "") != "0" && !uses_c_source(os, o.std, c, tgoos)
+  }
+  if tgoos == "freebsd" {
+    // FreeBSD has only Xo's ELF linker and no C library (decision 0573
+    // stage 1): a `use c` program does not build for it yet
+    return true
   }
   if tgoos != "linux" || o.race {
     return false

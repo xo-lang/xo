@@ -883,7 +883,7 @@ pub fn free_mt(h: Int, p: Int) {
 fn scavenge_pages() -> Bool {
   match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
 }
 

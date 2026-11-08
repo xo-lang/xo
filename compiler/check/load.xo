@@ -2037,7 +2037,7 @@ fn major_suffix(path: Str) -> Str {
 pub fn path_volume(p: Str) -> Str {
   let windows = match target.os {
     Windows => true
-    Darwin | Linux | Wasi => false
+    Darwin | Linux | Wasi | FreeBSD => false
   }
   if !windows {
     return ""

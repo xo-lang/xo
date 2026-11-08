@@ -28,7 +28,7 @@ struct Login {
 
 fn os_name() -> Str {
   match target.os {
-    Linux => "unix"
+    Linux | FreeBSD => "unix"
     Darwin => "unix"
     Windows => "windows"
     Wasi => "wasi"

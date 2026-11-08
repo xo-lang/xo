@@ -143,7 +143,7 @@ fn sched_asm(os: Str, split: Bool) -> Str {
   // unwind entry whose return address is undefined, where gdb's
   // backtrace of the fiber ends
   let fiber = ["mov x0, x19", "blr x20", "brk #1"]
-  b.push(sched_fn(os, "xo_fiber_entry", false, if os == "linux" { [".cfi_startproc", OUTERMOST_CFI] + fiber + [".cfi_endproc"] } else { fiber }))
+  b.push(sched_fn(os, "xo_fiber_entry", false, if (os is "linux" | "freebsd") { [".cfi_startproc", OUTERMOST_CFI] + fiber + [".cfi_endproc"] } else { fiber }))
   b.push(sched_fn(os, "xo_preempt_stub", true, ssa.preempt_stub_arm64(os)))
   if os == "darwin" {
     // the TLV descriptor's thunk returns the table's address in x0 and

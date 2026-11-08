@@ -504,6 +504,7 @@ fn (b: Builder) target_names() -> (Str, Str) {
     Windows => "Windows"
     Wasi => "Wasi"
     Linux => "Linux"
+    FreeBSD => "FreeBSD"
   }
   var arch_name = match target.arch {
     Arm64 => "Arm64"
@@ -516,6 +517,7 @@ fn (b: Builder) target_names() -> (Str, Str) {
       "darwin" => "Darwin"
       "windows" => "Windows"
       "wasip1" | "wasi" => "Wasi"
+      "freebsd" => "FreeBSD"
       _ => "Linux"
     }
   }
