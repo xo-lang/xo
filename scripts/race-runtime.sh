@@ -37,6 +37,31 @@ LLVM_VERSION=23.1.3
 SUM_LLVM_PROJECT=c44186a7762ed28954be72e5ff6df9808e0779d4f1bf014ecc4e7e211d31ee34
 URL=https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION
 
+# fetch DEST: the pinned llvm-project source at DEST, checked against its
+# SHA-256. A copy verified once is kept in a cache shared by every WORKDIR
+# and seed cut ($XO_RACE_SRC_CACHE, else the user cache's xo/race-src), so a
+# seed cut downloads it at most once, and curl retries a 5xx (a GitHub 504
+# failed the 0.44.0 seed cut, gotchas/seed-cut-environment-failures.md).
+# Inside Docker the host has already put the file at DEST.
+fetch() {
+  local dest=$1 name=llvm-project-$LLVM_VERSION.src.tar.xz sum cache
+  if command -v shasum >/dev/null; then sum="shasum -a 256"; else sum=sha256sum; fi
+  ok() { echo "$SUM_LLVM_PROJECT  $1" | $sum -c - >/dev/null 2>&1; }
+  mkdir -p "$(dirname "$dest")"
+  if [ -f "$dest" ] && ok "$dest"; then return 0; fi
+  if [ "$(uname -s)" = Darwin ]; then cache=$HOME/Library/Caches; else cache=${XDG_CACHE_HOME:-$HOME/.cache}; fi
+  cache=${XO_RACE_SRC_CACHE:-$cache/xo/race-src}
+  mkdir -p "$cache"
+  if ! { [ -f "$cache/$name" ] && ok "$cache/$name"; }; then
+    rm -f "$cache/$name.part"
+    curl -fsSL --retry 5 --retry-delay 15 -o "$cache/$name.part" "$URL/$name" ||
+      { echo "race-runtime.sh: downloading $URL/$name failed (5 retries)" >&2; exit 1; }
+    ok "$cache/$name.part" || { echo "race-runtime.sh: $URL/$name: SHA-256 mismatch" >&2; rm -f "$cache/$name.part"; exit 1; }
+    mv "$cache/$name.part" "$cache/$name"
+  fi
+  cp "$cache/$name" "$dest"
+}
+
 work=${1:?WORKDIR}
 out=${2:?OUTDIR}
 mkdir -p "$work" "$out"
@@ -48,6 +73,7 @@ if [ "${3:-}" = windows-amd64 ]; then
   if [ "$(uname -s)" = Darwin ]; then
     cp "$0" "$work/race-runtime.sh"
     cp "$here/race-windows.cpp" "$work/race-windows.cpp"
+    fetch "$work/w/dl/llvm-project-$LLVM_VERSION.src.tar.xz"
     XO_DOCKER_ROOT=1 nice -n 10 "$here/docker-linux.sh" arm64 "$work" -- bash /work/race-runtime.sh /work/w /work/out windows-amd64
     o="$work/out/lib/xo/race/windows-amd64/race_windows_amd64.syso"
     [ -s "$o" ] || { echo "race-runtime.sh: Docker build wrote no $o" >&2; exit 1; }
@@ -60,9 +86,7 @@ if [ "${3:-}" = windows-amd64 ]; then
   fi
   command -v x86_64-w64-mingw32-g++ >/dev/null || (apt-get update -qq && apt-get install -y -qq g++-mingw-w64-x86-64 xz-utils curl) >/dev/null 2>&1
   tarball="$work/dl/llvm-project-$LLVM_VERSION.src.tar.xz"
-  mkdir -p "$work/dl"
-  [ -f "$tarball" ] || curl -fsSL -o "$tarball" "$URL/llvm-project-$LLVM_VERSION.src.tar.xz"
-  echo "$SUM_LLVM_PROJECT  $tarball" | sha256sum -c - >/dev/null || { echo "race-runtime.sh: $tarball: SHA-256 mismatch" >&2; exit 1; }
+  fetch "$tarball"
   top="llvm-project-$LLVM_VERSION.src"
   rm -rf "${work:?}/src"
   mkdir -p "$work/src"
@@ -91,6 +115,7 @@ if [ "${3:-}" = linux-arm64 ] || [ "${3:-}" = linux-amd64 ]; then
     da=${3#linux-}
     an=$([ "$da" = arm64 ] && echo aarch64 || echo x86_64)
     cp "$0" "$work/race-runtime.sh"
+    fetch "$work/w/dl/llvm-project-$LLVM_VERSION.src.tar.xz"
     XO_DOCKER_ROOT=1 nice -n 10 "$here/docker-linux.sh" "$da" "$work" -- bash /work/race-runtime.sh /work/w /work/out
     a="$work/out/lib/xo/race/$3/libclang_rt.tsan-$an.a"
     [ -s "$a" ] || { echo "race-runtime.sh: Docker build wrote no $a" >&2; exit 1; }
@@ -125,10 +150,7 @@ if [ "$goos" = linux ] && [ -n "$missing" ]; then
 fi
 
 tarball="$work/dl/llvm-project-$LLVM_VERSION.src.tar.xz"
-mkdir -p "$work/dl"
-[ -f "$tarball" ] || curl -fsSL -o "$tarball" "$URL/llvm-project-$LLVM_VERSION.src.tar.xz"
-if command -v shasum >/dev/null; then sum="shasum -a 256"; else sum=sha256sum; fi
-echo "$SUM_LLVM_PROJECT  $tarball" | $sum -c - >/dev/null || { echo "race-runtime.sh: $tarball: SHA-256 mismatch" >&2; exit 1; }
+fetch "$tarball"
 
 # compiler-rt, the shared cmake modules, and llvm's (compiler-rt's
 # standalone build reads them)

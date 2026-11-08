@@ -4850,7 +4850,14 @@ taken. Steps 2, 3, 5 and 6 (-short, the gate and fixed point, the
 darwin-arm64 build, the cross builds, race runtimes and packs) run as for
 X.Y.0, from the tag's own scripts. The running seed-cut.sh must still
 match origin/main's. Rehearse with `XO_SEED_DRY_RUN=1 XO_SEED_TAG=...`;
-the X.Y.0 path is unchanged. Docker must be up for step 6.
+the X.Y.0 path is unchanged. Docker must be up for step 6; seed-cut.sh
+waits up to a minute for it and, before step 1, refuses a WORKDIR with a
+worktree still registered under it, naming the `git worktree remove
+--force` to run. race-runtime.sh keeps the pinned llvm-project source,
+checked against its SHA-256, in `$XO_RACE_SRC_CACHE` (default
+`<user cache>/xo/race-src`, about 150 MB; maintainers only, not an `xo
+clean` cache), so a cut downloads it at most once, retrying a 5xx
+(gotchas/seed-cut-environment-failures.md; Last verified: 2026-11-08).
 
 Main need not freeze (lead, 2026-11-06; Last verified: 2026-11-06): when
 main moved during the gate, step 4 puts the version commit on the new main

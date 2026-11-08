@@ -99,7 +99,13 @@ esac
 [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || die "run on the development Mac (darwin/arm64): the darwin-arm64 seed is built natively"
 command -v go >/dev/null && command -v clang >/dev/null || die "needs go and clang"
 # before anything is pushed: step 6 builds linux-arm64's race runtime in it
-docker info >/dev/null 2>&1 || die "Docker is not running (step 6 builds the linux-arm64 race runtime in it)"
+# a daemon just started can answer once and then not for a few seconds
+# (the 0.44.0 cut's first try): one minute of retries, then the fix
+d=0
+until docker info >/dev/null 2>&1; do
+  [ $d -lt 12 ] || die "Docker is not answering after a minute (step 6 builds the linux-arm64 race runtime in it): start Docker Desktop (open -a Docker), wait for docker info to succeed, then rerun"
+  sleep 5; d=$((d + 1))
+done
 
 repo=$(git rev-parse --show-toplevel)
 # a stale copy of this script (e.g. the main checkout, kept at an old commit)
@@ -115,6 +121,11 @@ work=$(cd "$work" && pwd)
 # directory (seed-pack.sh; the TSan runtimes did through 0.33.0)
 export XO_SEED_FORBID=$work
 [ -z "$(ls -A "$work")" ] || die "$work is not empty"
+# a worktree a deleted WORKDIR left registered fails step 1's worktree
+# add after the checks (the 0.44.0 cut's third try,
+# gotchas/seed-cut-environment-failures.md): name it here, with its fix
+stale=$(git -C "$repo" worktree list --porcelain | sed -n "s|^worktree \($work/.*\)|\1|p")
+[ -z "$stale" ] || die "$(printf 'a worktree under the empty %s is still registered: %s; run: git -C %s worktree remove --force PATH (each)' "$work" "$(echo $stale)" "$repo")"
 log=$work/logs
 mkdir -p "$log"
 
