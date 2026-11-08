@@ -235,7 +235,9 @@ pub fn preempt_stub_arm64(os: Str) -> List[Str] {
 /// to t6, a0 to a7, ft0 to ft11, fa0 to fa7, fcsr) around xo_x_preempt.
 pub fn preempt_stub_riscv64() -> List[Str] {
   let l = ".Lxo_preempt"
-  var b = ["lui t0, %tprel_hi(xo_tlocal)", "add t0, t0, tp, %tprel_add(xo_tlocal)", "addi t0, t0, %tprel_lo(xo_tlocal)", "ld t0, 16(t0)", "beqz t0, ${l}_none", "li t1, 3456", "add t0, t0, t1", "ld t0, 0(t0)", "bnez t0, ${l}_asked", "${l}_none:", "ret", "${l}_asked:"]
+  // the D extension stated for the float saves (module asm is assembled
+  // without clang's -march; llvm sched.xo riscv64_switch)
+  var b = [".option push", ".option arch, +f, +d", "lui t0, %tprel_hi(xo_tlocal)", "add t0, t0, tp, %tprel_add(xo_tlocal)", "addi t0, t0, %tprel_lo(xo_tlocal)", "ld t0, 16(t0)", "beqz t0, ${l}_none", "li t1, 3456", "add t0, t0, t1", "ld t0, 0(t0)", "bnez t0, ${l}_asked", "${l}_none:", "ret", "${l}_asked:"]
   let xs = [1, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 28, 29, 30, 31]
   let fs = [0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 28, 29, 30, 31]
   // 16 integer and 20 float words, then fcsr: 296 bytes, 304 aligned
@@ -253,7 +255,7 @@ pub fn preempt_stub_riscv64() -> List[Str] {
   for (k, r) in xs.indexed() {
     b.push("ld x${r}, ${8 * k}(sp)")
   }
-  b + ["addi sp, sp, 304", "ret"]
+  b + ["addi sp, sp, 304", "ret", ".option pop"]
 }
 
 /// Whether module path p is the runtime's, which never polls (it holds

@@ -186,7 +186,10 @@ fn switch_asm(goos: Str, goarch: Str) -> (List[Str], List[Str]) {
 /// (lp64d's callee saved registers) in a 208 byte frame: s0 to s11 at 0
 /// to 88, ra at 96, fs0 to fs11 at 104 to 192.
 fn riscv64_switch() -> List[Str] {
-  var l = ["addi sp, sp, -208"]
+  // the D extension stated for the float saves: module and naked function
+  // asm is assembled without the -march=rv64gc of clang's command line
+  // ("instruction requires the following: 'D'", host 2, 2026-11-08)
+  var l = [".option push", ".option arch, +f, +d", "addi sp, sp, -208"]
   for i in 0..12 {
     l.push("sd s${i}, ${8 * i}(sp)")
   }
@@ -205,6 +208,7 @@ fn riscv64_switch() -> List[Str] {
   }
   l.push("addi sp, sp, 208")
   l.push("ret")
+  l.push(".option pop")
   l
 }
 
