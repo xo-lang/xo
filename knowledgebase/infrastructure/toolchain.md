@@ -336,6 +336,11 @@ and runs `gh release create`. The order:
    first offload host (for 0.37.0's report, v0.36.0's), required since
    2026-11-03 so the base no longer follows the host's seed (the section
    is skipped without it; the seed builds only Xo at HTTP_REV).
+   HTTP_SEED (default the host's OFF_SEED) is the xo that builds Xo at
+   HTTP_REV: a report run late, after the host's seed moved past the
+   release, sets it to that release's own linux/arm64 xo on the host,
+   since a newer seed may not build the older source (0.44.0's seed
+   fails on v0.41.0 with XO1201; last verified: 2026-11-08).
    An amd64 section (2026-11-04, Lead; REQUIRED for every release: 0.38.1
    shipped a json10kx20 that took 1.56 to 1.78 times as long as the
    releases before on linux/amd64 while the arm64 only report showed

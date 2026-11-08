@@ -40,6 +40,10 @@
 # v0.36.0's), which builds the base servers. The host's OFF_SEED only builds
 # Xo at HTTP_REV: it moves with every seed cut, so a base that followed it
 # would compare 0.37 against 0.37.
+# HTTP_SEED (default the host's OFF_SEED; Xo Lang 2, 2026-11-08): the
+# linux/arm64 xo on the first offload host that builds Xo at HTTP_REV. A late
+# report on an older release sets it to that release's own xo: 0.44.0's seed
+# cannot build v0.41.0 (XO1201, rs_json_order in std/native/json.xo).
 # amd64 (2026-11-04, Lead: json10kx20 1.78 times slower on linux/amd64 in
 # 0.38.1 than 0.35.0, unseen by the arm64 only report): bench/perf/micro13
 # (the owner's micro set: fib, map, strbuild, sort, json, spawn) built with
@@ -340,7 +344,7 @@ if section http; then
 			put=/work/in/rvg-http-$$.bundle
 			"$agents/offload.sh" --put "$bundle" "$put" || { rm -f "$bundle"; exit 4; }
 			rm -f "$bundle"
-			OFF_EXCLUSIVE=1 "$agents/offload.sh" "$root/scripts/release-vs-go-http.sh" "$rev" "rvg$$" "$OFF_SEED" /work/priv /work "$put" "$hrounds" "$hpads" "$HTTP_BASE_XO"
+			OFF_EXCLUSIVE=1 "$agents/offload.sh" "$root/scripts/release-vs-go-http.sh" "$rev" "rvg$$" "${HTTP_SEED:-$OFF_SEED}" /work/priv /work "$put" "$hrounds" "$hpads" "$HTTP_BASE_XO"
 		) >"$OUT/http.txt" 2>&1 || true
 		python3 - "$OUT/http.txt" >>"$report" <<'PY'
 import re, json, statistics as st, sys
