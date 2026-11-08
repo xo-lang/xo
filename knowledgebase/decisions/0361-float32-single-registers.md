@@ -136,3 +136,19 @@ forms, and they widen only where a double is needed. Stages:
 - Change 0101's representation (Float32 as a 32-bit value in memory and
   in calls): touches layouts, the C ABI, and every backend for the same
   instruction count in loops. Not needed for the speed.
+
+## Addendum (2026-11-08): riscv64
+
+RISC-V's F and D extensions never propagate a NaN payload: every NaN
+result is the canonical NaN (0x7FC00000 in single precision,
+0x7FF8000000000000 in double), whatever the operands' payloads. So on
+linux/riscv64 (decision 0571, LLVM only) point 3's propagation does not
+hold, and golden f32_bits' hash differs there for exactly the cases with
+one payload NaN operand. As point 3 already treats a NaN's bits as the
+hardware's (the default NaN's sign differs between arm64 and x86_64),
+this records a hardware fact, not a semantics change (lead, 2026-11-08).
+f32_bits keeps riscv64's run in want_linux_riscv64.txt: the golden
+runners take want_<goos>_<goarch>.txt before want_<goos>.txt and
+want.txt (internal/llvm wantFileFor). Propagating payloads in software
+(a class test and a select per operation) was rejected: it would tax
+every float operation for a property spec/core.md does not promise.

@@ -59,7 +59,7 @@ func TestGoldenWant(t *testing.T) {
 		}
 		target = v
 	}
-	hostOS, _, _ := strings.Cut(xotool.Host(), "/")
+	hostOS, hostArch, _ := strings.Cut(xotool.Host(), "/")
 	var mu sync.Mutex
 	outcome := map[string]string{}
 	t.Cleanup(func() {
@@ -92,11 +92,9 @@ func TestGoldenWant(t *testing.T) {
 				mu.Unlock()
 			}
 			// a program whose output names the target (`target.os`) has
-			// a want_<os>.txt for the other targets
-			want, err := os.ReadFile(filepath.Join(dir, "want_"+hostOS+".txt"))
-			if err != nil {
-				want, err = os.ReadFile(filepath.Join(dir, "want.txt"))
-			}
+			// a want_<os>.txt for the other targets, and one whose output
+			// depends on the CPU a want_<os>_<arch>.txt
+			want, err := os.ReadFile(wantFileFor(dir, hostOS, hostArch))
 			if err != nil {
 				set("fail (no want.txt)")
 				return

@@ -718,6 +718,15 @@ Float comparison (decision 0053; the same for `Float32`):
 - Unary `-` flips the sign of every Float, zero included: `-0.0` is
   negative zero.
 
+A NaN's bits (`to_bits()`, std.md 1) are the CPU's, not a language promise
+(decision 0361): an operation that makes a NaN from operands that are not
+(`0.0 / 0.0`, `inf - inf`) gives the architecture's default NaN (positive
+on arm64, negative on x86_64), and an operation on a NaN operand keeps that
+operand's payload on arm64 and x86_64. RISC-V's F and D extensions never
+propagate a payload: every NaN result there (linux/riscv64) is the
+canonical NaN, 0x7FC00000 as a `Float32` and 0x7FF8000000000000 as a
+`Float`.
+
 `Duration` may be negative (`d.abs()` gives the magnitude).
 
 Operators on `Duration` and `Time`:

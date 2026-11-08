@@ -227,12 +227,23 @@ func progStdin(dir string) io.Reader {
 	return bytes.NewReader(data)
 }
 
-// wantFile is a golden program's expected run: want_<goos>.txt when its
-// output depends on the target (TestGoldenWant), else want.txt.
+// wantFile is a golden program's expected run on this host: see
+// wantFileFor.
 func wantFile(dir string) string {
-	p := filepath.Join(dir, "want_"+runtime.GOOS+".txt")
-	if _, err := os.Stat(p); err == nil {
-		return p
+	return wantFileFor(dir, runtime.GOOS, runtime.GOARCH)
+}
+
+// wantFileFor is a golden program's expected run on goos/goarch:
+// want_<goos>_<goarch>.txt when its output depends on the CPU (f32_bits'
+// NaN payloads on riscv64, which never propagates one), else
+// want_<goos>.txt when it depends on the OS (TestGoldenWant), else
+// want.txt.
+func wantFileFor(dir, goos, goarch string) string {
+	for _, name := range []string{"want_" + goos + "_" + goarch + ".txt", "want_" + goos + ".txt"} {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
 	}
 	return filepath.Join(dir, "want.txt")
 }
