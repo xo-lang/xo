@@ -130,6 +130,11 @@ pub fn tls_init(area: Int) -> Int {
       rt.mem_store(tp, 0, tp, 8)
     }
     TargetArch.Arm64 => {}
+    // riscv64 (TLS variant I with no TCB before the block): tp points at
+    // the block itself
+    TargetArch.Riscv64 => {
+      data = area
+    }
   }
   if ph != 0 {
     // the initial image: p_filesz (at 32) bytes from p_vaddr (at 16),

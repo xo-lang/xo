@@ -755,7 +755,7 @@ fn hostname() -> Str {
   rt.mem_set(a, 0, 390)
   // uname: 160 on arm64, 63 on x86_64
   let nrv = match target.arch {
-    TargetArch.Arm64 => 160
+    TargetArch.Arm64 | TargetArch.Riscv64 => 160
     TargetArch.Amd64 => 63
     TargetArch.Wasm32 => -1
   }

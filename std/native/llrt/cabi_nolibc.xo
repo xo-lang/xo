@@ -37,7 +37,7 @@ fn nl_start(sp: Int) -> Int {
         rt.mem_store(rt.sym_addr("xo_lse"), 0, 1, 1)
       }
     }
-    TargetArch.Amd64 | TargetArch.Wasm32 => {}
+    TargetArch.Amd64 | TargetArch.Wasm32 | TargetArch.Riscv64 => {}
   }
   env
 }
@@ -74,7 +74,9 @@ fn nl_main_tp() -> Int {
     TargetArch.Amd64 => {
       let _r = rt.sys6(158, 4098, tp, 0, 0, 0, 0)
     }
-    TargetArch.Arm64 | TargetArch.Wasm32 => {}
+    // riscv64: the thread pointer register is set by its caller, as
+    // arm64's tpidr_el0 (decision 0571 stage 2 for nolibc builds)
+    TargetArch.Arm64 | TargetArch.Wasm32 | TargetArch.Riscv64 => {}
   }
   tp
 }

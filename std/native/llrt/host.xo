@@ -32,7 +32,7 @@ pub fn hostname() -> Str {
       let a = raw.bytes_addr(buf)
       rt.mem_set(a, 0, 390)
       let nr = match target.arch {
-        TargetArch.Arm64 => 160
+        TargetArch.Arm64 | TargetArch.Riscv64 => 160
         TargetArch.Amd64 => 63
         TargetArch.Wasm32 => -1
       }

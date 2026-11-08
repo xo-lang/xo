@@ -221,7 +221,8 @@ pub fn vdso_clock() -> Int {
   }
   let name = match target.arch {
     TargetArch.Arm64 => "__kernel_clock_gettime"
-    TargetArch.Amd64 | TargetArch.Wasm32 => "__vdso_clock_gettime"
+    // riscv64's vDSO names it as x86_64's does
+    TargetArch.Amd64 | TargetArch.Wasm32 | TargetArch.Riscv64 => "__vdso_clock_gettime"
   }
   var g = elf_dynsym(auxval(AT_SYSINFO_EHDR), name)
   if g == 0 {

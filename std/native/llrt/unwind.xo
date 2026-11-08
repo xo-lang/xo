@@ -1203,7 +1203,7 @@ fn win_raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
   }
   let arm = match target.arch {
     TargetArch.Arm64 => true
-    TargetArch.Amd64 | TargetArch.Wasm32 => false
+    TargetArch.Amd64 | TargetArch.Wasm32 | TargetArch.Riscv64 => false
   }
   let size = if arm { WA_SIZE } else { WX_SIZE }
   let o_pc = if arm { WA_PC } else { WX_PC }
