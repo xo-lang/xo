@@ -211,7 +211,7 @@ fn (var g: Gen) rc_val_call(h: Str, a: Int) {
 /// Writes value a to memory p. A struct, tuple or enum of WIDE_STORE_MIN
 /// bytes or more is copied from the memory that holds it, or, when this
 /// function builds it (a literal, a field set), written field by field,
-/// each field the same way, a part of BY_REF_MIN bytes or more whose
+/// each field the same way, a part of ssa.WIDE_MIN bytes or more whose
 /// fields are all constants (a struct's field defaults) copied from a
 /// constant global, so clang never sees one store of thousands of
 /// scalars; any other value is one store.
@@ -225,7 +225,7 @@ fn (var g: Gen) store_part(a0: Int, p: Str, in_wide: Bool) {
   let t = g.vty(a)
   let agg = g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple
   let size = g.size(t)
-  if agg && size >= BY_REF_MIN && (in_wide || size >= WIDE_STORE_MIN) {
+  if agg && ssa.wide_bytes(size) && (in_wide || size >= WIDE_STORE_MIN) {
     let ct = g.const_text(a)
     if !ct.is_empty() {
       let lt = g.ll(t)

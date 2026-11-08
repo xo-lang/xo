@@ -21,3 +21,12 @@ compiler/xo`, and point XO_CLI at it. The fixed point
 (scripts/bootstrap-xo.sh) then checks the self rebuild. The cache entry
 for that source key stays broken until the sources change or the entry
 is removed (ask before deleting caches).
+
+Observed again (2026-11-08, decision 0564 step 2, Xo Lang 1): a WIP commit
+whose native code generation segfaulted four goldens was built by
+xobuild and cached; the next commit's xobuild took that build as its
+seed (the newest cached build of an ancestor) and failed. Setting
+`XO_SEED` to a known good xo for the rebuild worked (XO_SEED comes first
+in xobuild's order), after removing the bad entry by its literal path
+under `<user cache>/xo/checkout/`. A WIP commit that changes code
+generation is built with `XO_SEED` set from the start.

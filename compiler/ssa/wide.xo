@@ -1,0 +1,20 @@
+// Wide values (decision 0564 point 5): the one threshold from which a
+// struct, tuple or enum lives in memory and moves by address, used by
+// compiler/arm64 (arm64 and x86-64) and compiler/llvm. Each backend
+// measures a type its own way (LLVM its layout's bytes, the native
+// backends 8 bytes a word), so the same type can be wide on one and not
+// the other until a later step of 0564 picks one measure.
+
+/// The size in bytes from which a struct, tuple or enum is wide.
+pub const WIDE_MIN = 256
+
+/// Whether a value of kind k is an aggregate that can be wide: a
+/// struct, a tuple or an enum.
+pub fn wide_kind(k: Kind) -> Bool {
+  k is Kind.Struct | Kind.Tuple | Kind.Enum
+}
+
+/// Whether an aggregate of the given size in bytes is wide.
+pub fn wide_bytes(bytes: Int) -> Bool {
+  bytes >= WIDE_MIN
+}

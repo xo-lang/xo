@@ -1,0 +1,81 @@
+// Tuple parameters of 256 bytes or more are passed by address on every
+// native backend and LLVM (decision 0564 step 2), as structs and enums
+// were (0145, 0151, 0153): read only parameters read in place, `var`
+// ones written back through the caller's memory, two in one call,
+// recursion, a loop, a wide tuple inside a wide tuple, one inside a
+// struct, and a function used as a value (the plain convention).
+
+type Row = (Str, Str, Str, Str, Str, Str, Str, Str, Str, Str, Str, Str, Str, Str, Str, Str, List[Int], Int)
+
+type Pair = (Row, Row, Int)
+
+struct Holder {
+  row: Row
+  tag: Str
+}
+
+fn row(n: Int) -> Row {
+  ("a${n}", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p${n}", [n, n + 1], n)
+}
+
+fn total(r: Row) -> Int {
+  var t = r.17
+  for x in r.16 {
+    t += x
+  }
+  t + r.0.len() + r.15.len()
+}
+
+fn both(a: Row, b: Row) -> Str {
+  "${a.0}${b.0} ${a.17 + b.17} ${a == b}"
+}
+
+fn bump(var r: Row, by: Int) {
+  r.16.push(by)
+  r.17 += by
+  r.0 = "${r.0}+"
+}
+
+fn depth(r: Row, n: Int) -> Int {
+  if n == 0 {
+    return total(r)
+  }
+  depth(r, n - 1) + 1
+}
+
+fn pair_sum(p: Pair) -> Int {
+  total(p.0) + total(p.1) + p.2
+}
+
+fn swap_into(var p: Pair) {
+  let t = p.0
+  p.0 = p.1
+  p.1 = t
+  p.2 += 1
+}
+
+fn held(h: Holder) -> Str {
+  "${h.tag}:${total(h.row)}"
+}
+
+fn main(os: Os) {
+  var r = row(3)
+  os.stdio.println("${total(r)} ${both(r, row(4))} ${both(r, r)}")
+  bump(r, 10)
+  bump(r, 20)
+  os.stdio.println("${r.0} ${r.16.debug()} ${r.17} ${total(r)}")
+  os.stdio.println("${depth(r, 5)}")
+  var sum = 0
+  for i in 0..4 {
+    sum += total(row(i))
+  }
+  os.stdio.println("${sum}")
+  var p: Pair = (row(1), row(2), 7)
+  os.stdio.println("${pair_sum(p)}")
+  swap_into(p)
+  os.stdio.println("${p.0.0} ${p.1.0} ${p.2} ${pair_sum(p)}")
+  let h = Holder{row: row(9), tag: "h"}
+  os.stdio.println(held(h))
+  let f = total
+  os.stdio.println("${f(r)} ${[row(5), row(6)].map(total).debug()}")
+}

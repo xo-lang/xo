@@ -2,7 +2,7 @@
 // memory (internal/arm64 byref.go, decisions 0151 and 0153).
 //
 // A parameter of a direct call whose type is a struct or enum of
-// BY_REF_MIN bytes or more is passed as one integer word, the address of
+// ssa.WIDE_MIN bytes or more is passed as one integer word, the address of
 // memory holding the value. A `var` one is updated in that memory; the
 // first such parameter of each type is the home of the type, and a
 // forward dataflow (compute_held) tells which SSA value the home holds
@@ -10,7 +10,6 @@
 
 use github.com/xo-lang/xo/compiler/ssa
 
-const BY_REF_MIN = 256
 
 /// Which parameters of function fi are passed by reference (empty: none).
 /// Functions called through function values, entries, functions used as
@@ -38,10 +37,10 @@ fn (var g: G) by_ref_of(fi: Int) -> List[Bool] {
   br
 }
 
-/// A struct (decision 0151) or an enum (decision 0153) of BY_REF_MIN
-/// bytes or more.
+/// A struct (decision 0151), an enum (decision 0153) or a tuple (decision
+/// 0564 step 2) of ssa.WIDE_MIN bytes or more.
 fn (var g: G) big_by_ref(t: Int) -> Bool {
-  (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Enum) && 8 * g.nwords(t) >= BY_REF_MIN
+  ssa.wide_kind(g.kind(t)) && ssa.wide_bytes(8 * g.nwords(t))
 }
 
 /// The memory value v is read from in place: a read only parameter
@@ -699,7 +698,7 @@ fn (var g: G) by_ref_entry(ptrs: Map[Int, Int]) {
   }
 }
 
-/// Adds a home in the frame for each type of BY_REF_MIN bytes or more
+/// Adds a home in the frame for each type of ssa.WIDE_MIN bytes or more
 /// the function passes as a `var` argument by reference and has no
 /// parameter home for (seen): a value kept there across calls and loops
 /// is passed in place, not copied in and out of an area at every call
@@ -729,7 +728,12 @@ fn (var g: G) frame_homes_of(var mems: List[HMem], var seen: Map[Int, Bool]) {
           if seen.contains(bt) {
             continue // a field of a value with a home: passed at its address there
           }
-          if g.big_by_ref(bt) {
+          // not a field of a wide tuple: the results of a call with `var`
+          // parameters are one, and taking its type as a home passed a
+          // field at that tuple's home (four native goldens segfaulted,
+          // byref_held, byref_home_loop, byref_struct and byref_tuple,
+          // decision 0564 step 2)
+          if g.big_by_ref(bt) && g.kind(bt) != ssa.Kind.Tuple {
             // the value the field is of takes the home, so the field is
             // passed at its address there: a `var` helper's `x.field`
             // argument inlined where x is a local (tlssrv's take of

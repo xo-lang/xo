@@ -8,11 +8,6 @@
 // releases include all of another pad's releases the rest and goes to
 // that pad instead.
 
-/// The size from which the native backends pass a struct or enum `var`
-/// parameter by reference and keep it in a memory home (compiler/arm64
-/// byref.xo BY_REF_MIN).
-const HOME_MIN_BYTES = 256
-
 /// The pads each pad is compared with: the nearest by block number, where
 /// the builder puts the pads of the calls around it.
 const CHAIN_WINDOW = 32
@@ -114,7 +109,7 @@ fn (var r: Rc) chain_pads(var f: Func) {
 }
 
 /// The types of f's values that the native backends may keep in a memory
-/// home (compiler/arm64 byref.xo): structs and enums of HOME_MIN_BYTES or
+/// home (compiler/arm64 byref.xo): structs, enums and tuples of WIDE_MIN bytes or
 /// more that f takes as `var` parameters or passes to a callee's `var`
 /// parameters. A pad that reads such a value is not a target: a second
 /// way into it, from a pad after a call that writes the home, would leave
@@ -146,7 +141,7 @@ fn (var r: Rc) home_types(f: Func) -> Set[Int] {
 }
 
 fn (var r: Rc) add_home(var out: Set[Int], t: Int) {
-  if t >= 0 && (r.types[t].kind is Kind.Struct | Kind.Enum) && 8 * r.words(t, 0) >= HOME_MIN_BYTES {
+  if t >= 0 && wide_kind(r.types[t].kind) && wide_bytes(8 * r.words(t, 0)) {
     out.add(t)
   }
 }

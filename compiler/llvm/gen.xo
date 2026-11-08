@@ -356,10 +356,6 @@ const SHARED_BIT = "4611686018427387904"
 /// The header fields of an environment (rc, drop, share) before the
 /// captures.
 const ENV_FIELDS = 3
-/// The size from which a struct or enum parameter of a direct call is
-/// passed by reference (decision 0145).
-const BY_REF_MIN = 256
-
 /// The size in bytes from which a struct or tuple value is written to
 /// memory a field at a time, or copied from the memory that holds it
 /// (store_value), instead of as one first class store: clang expands
@@ -820,8 +816,8 @@ fn (var g: Gen) full_res_ll(fi: Int) -> Str {
 }
 
 /// Which parameters of fi are passed by reference, or empty (byRefOf):
-/// structs and enums of BY_REF_MIN bytes or more of a function called
-/// directly.
+/// structs, enums and tuples (decision 0564 step 2) of ssa.WIDE_MIN
+/// bytes or more of a function called directly.
 fn (var g: Gen) by_ref_of(fi: Int) -> List[Bool] {
   if g.by_ref_done[fi] {
     return g.by_ref[fi]
@@ -832,7 +828,7 @@ fn (var g: Gen) by_ref_of(fi: Int) -> List[Bool] {
     let ps = f.blocks[0].params
     for (i, p) in ps.indexed() {
       let t = ssa.ty_of(f.values[p].tb)
-      if (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Enum) && g.size(t) >= BY_REF_MIN {
+      if ssa.wide_kind(g.kind(t)) && ssa.wide_bytes(g.size(t)) {
         if br.is_empty() {
           for _ in 0..ps.len() {
             br.push(false)
@@ -1021,13 +1017,13 @@ fn (var g: Gen) exports() {
 }
 
 /// Whether the count helpers of t take a pointer to the value instead of
-/// the value: a struct, tuple, or enum of BY_REF_MIN bytes or more, whose
+/// the value: a struct, tuple, or enum of ssa.WIDE_MIN bytes or more, whose
 /// helper reads only its counted fields where they are. By value, every
 /// release of a big struct copied all its words to the stack arguments
 /// first (xo built by LLVM: 11.15 MB of its 89.8, mostly xo.drop.Builder,
 /// .Gen, .Checker, .G; bench/results/xo-code-size-2026-10-18.md).
 fn (var g: Gen) rc_by_ptr(t: Int) -> Bool {
-  (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum) && g.size(t) >= BY_REF_MIN
+  ssa.wide_kind(g.kind(t)) && ssa.wide_bytes(g.size(t))
 }
 
 /// The text calling helper h of t on the value at pointer p (loaded into

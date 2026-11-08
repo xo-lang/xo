@@ -502,11 +502,11 @@ fn (var g: G) eq_aggregate(v: Int) -> Bool {
 
 /// Whether the equality helper of t takes the two values' addresses
 /// (x0, x1) instead of their words: a struct, tuple or enum of
-/// BY_REF_MIN bytes or more, whose words the caller would copy to the
+/// ssa.WIDE_MIN bytes or more, whose words the caller would copy to the
 /// stack and the helper back to its frame (2026-11-07: 61,000
 /// instructions for one `==` of a 4,096 word struct).
 fn (var g: G) eq_by_ref(t: Int) -> Bool {
-  (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum) && 8 * g.nwords(t) >= BY_REF_MIN
+  ssa.wide_kind(g.kind(t)) && ssa.wide_bytes(8 * g.nwords(t))
 }
 
 /// The address of v for a helper taking it by reference: the memory v

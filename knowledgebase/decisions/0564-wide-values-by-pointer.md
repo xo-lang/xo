@@ -235,6 +235,58 @@ self build `--ab` (stage2 self, the flag forced on in a throwaway
 commit) was 1.002 wall but on a loaded host (4 of 5 rounds), so it is
 rerun unloaded before the default changes.
 
+## Step 1 (2026-11-08): one predicate
+
+compiler/ssa wide.xo holds the threshold (WIDE_MIN, 256 bytes) and the
+predicates (wide_kind: struct, tuple or enum; wide_bytes), in place of
+compiler/llvm gen.xo's and compiler/arm64 byref.xo's BY_REF_MIN and
+compiler/ssa chainpads.xo's HOME_MIN_BYTES. Each site keeps the kinds it
+had (tuples where it took them) and each backend its measure: LLVM its
+layout's bytes, the native backends 8 bytes a word, so a type of many
+narrow fields can be wide natively and not on LLVM until a later step
+picks one measure. WIDE_STORE_MIN stays LLVM's store threshold (how a
+value is written to memory, not whether it is wide).
+
+Confirmed while doing it: compiler/arm64's count helpers take a wide
+struct's words by value (calls.xo retain and release call rc_helper's
+dup and drop with every word, unless the type has one heap leaf); point
+3 changes that.
+
+No output change: scripts/identity against its parent, linux/arm64,
+every second golden and compiler/xo, 322 programs, 0 differ (arm64).
+The LLVM identity run (every eighth golden) ran past its 90 minute
+limit on host 2; each LLVM site's change is the same comparison spelled
+through wide_bytes, and the LLVM goldens of step 2's gate pass.
+
+## Step 2 (2026-11-08): wide tuples by address in direct calls
+
+A tuple of ssa.WIDE_MIN bytes or more is now a by address parameter of a
+direct call on every native backend and LLVM, as structs (0145, 0151) and
+enums (0153) were: compiler/arm64 byref.xo big_by_ref and compiler/llvm
+gen.xo by_ref_of take wide_kind, and compiler/ssa chainpads' home types
+too. On the native backends a wide tuple field or payload is then also
+read in place where its parent is in memory, as a struct's is.
+
+One exception (byref.xo frame_homes_of): a `var` argument that is a field
+of a wide tuple does not make the tuple's type a frame home. The results
+of a call with `var` parameters are one tuple (the result and each `var`
+parameter's new value), and taking its type as a home passed the field
+at that tuple's home: byref_held, byref_home_loop, byref_struct and
+byref_tuple segfaulted (exit 139) on arm64 until that site skipped tuple
+parents. Open item: whether a wide tuple that is not a result tuple
+should get a home there (it does not now).
+
+Proof (the calling convention changes, so identity against step 1
+differs by design): golden byref_tuple (read only and `var` tuple
+parameters, two in one call, recursion, a loop, a wide tuple in a wide
+tuple and in a struct, a function value); the byref, tuple and wide
+goldens on arm64 and LLVM (15 of 15 each); codegen patterns (42 of 42);
+self build; fixed point; internal/arm64's full tests on host 2
+(linux/arm64, 1,134 s, pass); internal/llvm with the goldens
+the change touches and the -O2 sample. Against step 1 (scripts/identity, linux/arm64, every second golden
+and compiler/xo, 322 programs) only byref_tuple's output changes: xo
+itself passes no wide tuple.
+
 ## Alternatives
 
 - **Keep fixing case by case** (today). It works, but each new helper
