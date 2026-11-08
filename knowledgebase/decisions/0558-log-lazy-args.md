@@ -1,6 +1,6 @@
 # 0558: Log calls below the level do not evaluate their arguments
 
-Status: Proposed (Xo Lang 3, 2026-11-07; raised by Xo Lang 1's xo-vs-go survey, row 7, log/filtered 1.79x Go)
+Status: Accepted as opt-in (owner, 2026-11-07; built 2026-11-07 as 87542c788: the guard is keyed on the std/log callees, since Xo has no attributes, and the warning is XO0438; Xo Lang 3, 2026-11-07; raised by Xo Lang 1's xo-vs-go survey, row 7, log/filtered 1.79x Go)
 
 ## Context
 
