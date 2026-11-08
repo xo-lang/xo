@@ -1,0 +1,437 @@
+// `xo mod sumdb keygen <name> <key file>` and `xo mod sumdb serve
+// --key=<key file> [--addr=host:port] [--fetch] <data dir>` (decision
+// 0124): a checksum log over the protocol sumdb.xo's client reads, the
+// Go internal/sumdb Server and GenerateKey the Go compiler took with it
+// (decision 0215), with the records kept in <data dir>/records so a
+// restarted log serves the same tree (an in-memory log that restarts is
+// a rewrite every client of it reports as XO1313).
+//
+//   GET /latest                     the signed tree head
+//   GET /lookup/<path>@<version>    "<record id>\n<record>\n<signed tree head>"
+//   GET /proof/inclusion/<id>/<n>   audit path of record id in the tree of n records
+//   GET /proof/consistency/<m>/<n>  proof that the tree of m records prefixes that of n
+//
+// Paths and versions are escaped as in the module cache. A record is the
+// two xo.lock lines of a module version, newline terminated; proofs are
+// base64 hashes, one per line; an unknown version is 404.
+
+use github.com/xo-lang/xo/compiler/check
+use std/crypto
+use std/http
+
+/// A log's private key (sumdb.Signer): PRIVATE+KEY+<name>+<key id>+<base64
+/// Ed25519 seed>.
+struct Signer {
+  name: Str
+  id: Int
+  seed: Bytes
+}
+
+/// The records of a log and their leaf hashes (sumdb.Server's fields).
+struct LogState {
+  records: List[Str] = []
+  leaves: List[Bytes] = []
+  /// "<path>@<version>" to record id
+  index: Map[Str, Int] = {}
+  /// the tree hash of all the leaves
+  root: Bytes = b""
+}
+
+/// The 32 bit value id as 4 big endian bytes.
+fn be32_bytes(id: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_byte(UInt8((id >> 24) & 255))
+  b.write_byte(UInt8((id >> 16) & 255))
+  b.write_byte(UInt8((id >> 8) & 255))
+  b.write_byte(UInt8(id & 255))
+  b.freeze()
+}
+
+/// sumdb.GenerateKey's two keys for seed: (signer, verifier).
+fn log_keys(name: Str, seed: Bytes) -> (Str, Str) {
+  let pub_key = crypto.ed25519_public_key(seed)
+  let id = hex8(key_id(name, pub_key))
+  ("PRIVATE+KEY+${name}+${id}+${seed.to_base64()}", "${name}+${id}+${pub_key.to_base64()}")
+}
+
+/// sumdb.ParseSigner.
+fn parse_signer(s: Str) -> Signer ! Str {
+  let parts = split_n(s.trim(), "+", 5)
+  if parts.len() != 5 || parts[0] != "PRIVATE" || parts[1] != "KEY" || !valid_log_name(parts[2]) {
+    return Err("malformed signer key: want PRIVATE+KEY+<name>+<key id>+<base64 seed>")
+  }
+  let id = parse_key_id(parts[3])?
+  let seed = Bytes.from_base64(parts[4]) ?? b""
+  if seed.len() != 32 {
+    return Err("malformed signer key: the seed is not 32 base64 bytes")
+  }
+  if key_id(parts[2], crypto.ed25519_public_key(seed)) != id {
+    return Err("signer key: the key id does not match the name and key")
+  }
+  Ok(Signer{name: parts[2], id: id, seed: seed})
+}
+
+/// Signer.SignTree: the tree head text, a blank line, and the signature.
+fn sign_tree(s: Signer, t: Tree) -> Str {
+  let text = tree_text(s.name, t)
+  let sig = crypto.ed25519_sign(s.seed, text.bytes())
+  "${text}\nsig ${s.name} ${(be32_bytes(s.id) + sig).to_base64()}\n"
+}
+
+/// The empty tree's hash, SHA-256 of nothing.
+fn empty_tree_hash() -> Bytes {
+  crypto.sha256(b"")
+}
+
+/// The largest power of two below n (n >= 2).
+fn split_point(n: Int) -> Int {
+  var k = 1
+  while k * 2 < n {
+    k *= 2
+  }
+  k
+}
+
+/// TreeHash: the Merkle tree hash of leaves[lo..hi] (RFC 6962 2.1, MTH).
+fn tree_hash(leaves: List[Bytes], lo: Int, hi: Int) -> Bytes {
+  let n = hi - lo
+  if n == 0 {
+    return empty_tree_hash()
+  }
+  if n == 1 {
+    return leaves[lo]
+  }
+  let k = split_point(n)
+  node_hash(tree_hash(leaves, lo, lo + k), tree_hash(leaves, lo + k, hi))
+}
+
+/// InclusionProof: the audit path of leaf lo + i in the tree of
+/// leaves[lo..hi] (RFC 6962 2.1.1, PATH).
+fn inclusion_proof(leaves: List[Bytes], lo: Int, hi: Int, i: Int, var out: List[Bytes]) {
+  let n = hi - lo
+  if n <= 1 {
+    return
+  }
+  let k = split_point(n)
+  if i < k {
+    inclusion_proof(leaves, lo, lo + k, i, out)
+    out.push(tree_hash(leaves, lo + k, hi))
+  } else {
+    inclusion_proof(leaves, lo + k, hi, i - k, out)
+    out.push(tree_hash(leaves, lo, lo + k))
+  }
+}
+
+/// ConsistencyProof's subproof: the tree of the first m of leaves[lo..hi]
+/// against all of them (RFC 6962 2.1.2, SUBPROOF).
+fn subproof(leaves: List[Bytes], lo: Int, hi: Int, m: Int, whole: Bool, var out: List[Bytes]) {
+  let n = hi - lo
+  if m == n {
+    if !whole {
+      out.push(tree_hash(leaves, lo, hi))
+    }
+    return
+  }
+  let k = split_point(n)
+  if m <= k {
+    subproof(leaves, lo, lo + k, m, whole, out)
+    out.push(tree_hash(leaves, lo + k, hi))
+  } else {
+    subproof(leaves, lo + k, hi, m - k, false, out)
+    out.push(tree_hash(leaves, lo, lo + k))
+  }
+}
+
+/// ConsistencyProof: the tree of the first m of the first n leaves is a
+/// prefix of the tree of all n (empty when m is 0 or n).
+fn consistency_proof(leaves: List[Bytes], m: Int, n: Int) -> List[Bytes] {
+  var out: List[Bytes] = []
+  if m > 0 && m < n {
+    subproof(leaves, 0, n, m, true, out)
+  }
+  out
+}
+
+/// Server.add: appends the record of key unless the log holds one; the
+/// record's id either way. The caller updates root.
+fn (var st: LogState) add(key: Str, record: Str) -> Int {
+  if let Some(id) = st.index.get(key) {
+    return id
+  }
+  let id = st.records.len()
+  st.records.push(record)
+  st.leaves.push(record_hash(record.bytes()))
+  st.index[key] = id
+  id
+}
+
+/// The "<path>@<version>" of a record (its first line's first two fields),
+/// "" when the record is malformed.
+fn record_key(record: Str) -> Str {
+  let lines = record.trim_suffix("\n").split("\n")
+  if lines.len() != 2 {
+    return ""
+  }
+  let a = check.fields(lines[0])
+  let b = check.fields(lines[1])
+  if a.len() != 3 || b.len() != 3 || b[0] != a[0] || b[1] != "${a[1]}/xo.mod" {
+    return ""
+  }
+  "${a[0]}@${a[1]}"
+}
+
+/// The records file of a data directory: two lines per record, in log
+/// order. Read once at start; a record is appended (and synced) before
+/// any tree head that holds it is signed.
+fn records_file(data: Str) -> Str {
+  "${data}/records"
+}
+
+fn (c: ModCtx) load_log(data: Str) -> LogState ! Str uses fs.read {
+  var st = LogState{}
+  let p = records_file(data)
+  if !c.exists(p) {
+    st.root = empty_tree_hash()
+    return Ok(st)
+  }
+  let text = (c.os.fs.read(p).map_err(fs_msg)?).to_str() ?? ""
+  if !text.is_empty() && !text.ends_with("\n") {
+    return Err("${p}: the last record is incomplete (a write was cut short); restore the file from a backup")
+  }
+  let lines = check_lines(text.bytes())
+  if lines.len() % 2 != 0 {
+    return Err("${p}: an odd number of lines; every record is two")
+  }
+  var i = 0
+  while i < lines.len() {
+    let rec = "${lines[i]}\n${lines[i + 1]}\n"
+    let key = record_key(rec)
+    if key.is_empty() {
+      return Err("${p}:${i + 1}: malformed record")
+    }
+    if st.index.get(key) != None {
+      return Err("${p}:${i + 1}: a second record of ${key}")
+    }
+    st.add(key, rec)
+    i += 2
+  }
+  st.root = tree_hash(st.leaves, 0, st.leaves.len())
+  Ok(st)
+}
+
+fn (c: ModCtx) append_record(data: Str, record: Str) -> () ! Str uses fs {
+  let f = c.os.fs.open_append(records_file(data)).map_err(fs_msg)?
+  var r = f.write(record.bytes())
+  if r.is_ok() {
+    r = f.sync()
+  }
+  f.close().ignore_err("the write's own error, if any, is the one reported")
+  r.map_err(fs_msg)
+}
+
+fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
+  if args.len() >= 1 && args[0] == "keygen" {
+    return c.run_sumdb_keygen(args[1..])
+  }
+  if args.is_empty() || args[0] != "serve" {
+    c.os.stdio.eprintln("xo mod sumdb: want `keygen <name> <key file>` or `serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] <data dir>`")
+    return 2
+  }
+  var fl = FlagSet{name: "mod sumdb serve", defs: [flag_str("key", "", "the file holding the log's signer key (from xo mod sumdb keygen)"), flag_str("addr", "127.0.0.1:7071", "the address to listen on"), flag_bool("fetch", "add a module version the log lacks by fetching it from git")]}
+  if !c.parse_flags(fl, args[1..]) {
+    return 2
+  }
+  if fl.args.len() != 1 || fl.str("key").is_empty() {
+    c.os.stdio.eprintln("xo mod sumdb serve: want --key=<key file> and one data directory")
+    return 2
+  }
+  let key_text = match c.os.fs.read(c.abs(fl.str("key"))) {
+    Ok(b) => b.to_str() ?? ""
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb serve: ${fs_msg(e)}")
+      return 1
+    }
+  }
+  let signer = match parse_signer(key_text) {
+    Ok(s) => s
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb serve: ${fl.str("key")}: ${e}")
+      return 1
+    }
+  }
+  let data = c.abs(fl.args[0])
+  match c.os.fs.create_dir_all(data) {
+    Ok(_) => {}
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb serve: ${fs_msg(e)}")
+      return 1
+    }
+  }
+  let st = match c.load_log(data) {
+    Ok(s) => s
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb serve: ${e}")
+      return 1
+    }
+  }
+  let l = match c.os.net.listen(fl.str("addr")) {
+    Ok(x) => x
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb serve: ${e}")
+      return 1
+    }
+  }
+  let fetch = fl.on("fetch")
+  let (_, verifier) = log_keys(signer.name, signer.seed)
+  let mode = if fetch { "adding versions from git" } else { "serving its records only" }
+  c.out("checksum log ${signer.name} (${st.records.len()} records in ${data}, ${mode}) at http://${l.addr()}\nclients: XO_SUMDB='${verifier} http://${l.addr()}'\n")
+  let state = Mutex.new(st)
+  let cc = c
+  var r = http.router()
+  r.handle("/{rest...}", fn(req) { cc.sumdb_answer(req, state, signer, data, fetch) })
+  match http.server(l, r).serve() {
+    Ok(_) => 0
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb serve: ${e}")
+      1
+    }
+  }
+}
+
+/// `xo mod sumdb keygen <name> <key file>`: a new Ed25519 key; the signer
+/// key goes to the file (mode 0600, never overwritten), the verifier key
+/// (what clients put in XO_SUMDB) to standard output.
+fn (c: ModCtx) run_sumdb_keygen(args: List[Str]) -> Int uses (fs, stdio, rand) {
+  if args.len() != 2 {
+    c.os.stdio.eprintln("xo mod sumdb keygen: want <log name> <key file>")
+    return 2
+  }
+  let name = args[0]
+  if !valid_log_name(name) {
+    c.os.stdio.eprintln("xo mod sumdb keygen: invalid log name ${name.quote()}: no '+' or white space")
+    return 2
+  }
+  let p = c.abs(args[1])
+  if c.exists(p) {
+    c.os.stdio.eprintln("xo mod sumdb keygen: ${args[1]} exists; a log's key is never replaced")
+    return 1
+  }
+  let (signer, verifier) = log_keys(name, crypto.random_bytes(c.os.rand, 32))
+  let tmp = c.temp_name(dir_of(p), ".key.tmp")
+  var wrote = c.os.fs.write(tmp, "${signer}\n".bytes())
+  if wrote.is_ok() {
+    wrote = c.os.fs.set_mode(tmp, 0o600)
+  }
+  if wrote.is_ok() {
+    wrote = c.os.fs.rename(tmp, p)
+  }
+  match wrote {
+    Ok(_) => {}
+    Err(e) => {
+      c.os.fs.remove(tmp).ignore_err("cleanup")
+      c.os.stdio.eprintln("xo mod sumdb keygen: ${fs_msg(e)}")
+      return 1
+    }
+  }
+  c.out("${verifier}\n")
+  0
+}
+
+fn hashes_text(hs: List[Bytes]) -> Str {
+  var b = StrBuilder.new()
+  for h in hs {
+    b.write("${h.to_base64()}\n")
+  }
+  b.freeze()
+}
+
+fn plain(body: Str) -> http.Response {
+  http.text(200, body).with_header("Content-Type", "text/plain; charset=utf-8")
+}
+
+/// The lookup answer for key when the log holds its record.
+fn held(state: Mutex[LogState], signer: Signer, key: Str) -> Str? {
+  let found = state.with_read(fn(st) -> (Int, Str, Tree)? {
+    let id = st.index.get(key)?
+    Some((id, st.records[id], Tree{n: st.leaves.len(), hash: st.root}))
+  })
+  let (id, rec, t) = found?
+  Some("${id}\n${rec}\n${sign_tree(signer, t)}")
+}
+
+/// sumdb.Server.ServeHTTP for one request.
+fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], signer: Signer, data: Str, fetch: Bool) -> http.Response uses (fs, proc, rand, net) {
+  var cc = c
+  if req.method != "GET" && req.method != "HEAD" {
+    return http_error("the checksum log is read only", 405)
+  }
+  let p = req.path
+  if p == "/latest" {
+    let t = state.with_read(fn(st) { Tree{n: st.leaves.len(), hash: st.root} })
+    return plain(sign_tree(signer, t))
+  }
+  if p.starts_with("/lookup/") {
+    let (esc_path, esc_version, ok) = cut(p.trim_prefix("/lookup/"), "@")
+    let path = unescape_path(esc_path) ?? ""
+    let version = unescape_path(esc_version) ?? ""
+    if !ok || !check.valid_path(path) || !check.valid_version(version) {
+      return http_error("want /lookup/<module path>@<version>", 400)
+    }
+    let key = "${path}@${version}"
+    if let Some(body) = held(state, signer, key) {
+      return plain(body)
+    }
+    if !fetch {
+      return http_error("unknown module version", 404)
+    }
+    let dir = match cc.download_in("${data}/cache", path, version, Some(direct_only())) {
+      Ok(d) => d
+      Err(pr) => return http_error("${path} ${version}: ${pr.msg}", 404)
+    }
+    let rec = match cc.record(dir, path, version) {
+      Ok(lines) => lines.join("\n") + "\n"
+      Err(e) => return http_error("${path} ${version}: ${e}", 404)
+    }
+    // added unless another request added it meanwhile; on disk before
+    // any tree head that holds it is signed
+    let added = state.with(fn(var st) -> (Int, Str, Tree) ! Str {
+      var id = st.index.get(key) ?? -1
+      if id < 0 {
+        cc.append_record(data, rec)?
+        id = st.add(key, rec)
+        st.root = tree_hash(st.leaves, 0, st.leaves.len())
+      }
+      Ok((id, st.records[id], Tree{n: st.leaves.len(), hash: st.root}))
+    })
+    return match added {
+      Ok((id, r, t)) => plain("${id}\n${r}\n${sign_tree(signer, t)}")
+      Err(e) => http_error("cannot record ${path} ${version}: ${e}", 500)
+    }
+  }
+  let inclusion = p.starts_with("/proof/inclusion/")
+  if inclusion || p.starts_with("/proof/consistency/") {
+    let rest = p.trim_prefix("/proof/inclusion/").trim_prefix("/proof/consistency/")
+    let (a, b, ok) = cut(rest, "/")
+    let x = Int.parse(a) ?? -1
+    let n = Int.parse(b) ?? -1
+    if !ok || x < 0 || n < 0 {
+      return http_error("want /proof/inclusion/<id>/<n> or /proof/consistency/<m>/<n>", 400)
+    }
+    let proof = state.with_read(fn(st) -> List[Bytes]? {
+      if n > st.leaves.len() || x > n || (inclusion && x >= n) {
+        return None
+      }
+      if inclusion {
+        var out: List[Bytes] = []
+        inclusion_proof(st.leaves, 0, n, x, out)
+        return Some(out)
+      }
+      Some(consistency_proof(st.leaves, x, n))
+    })
+    return match proof {
+      Some(hs) => plain(hashes_text(hs))
+      None => http_error("the log has ${state.with_read(fn(st) { st.leaves.len() })} records", 404)
+    }
+  }
+  http_error("not found", 404)
+}

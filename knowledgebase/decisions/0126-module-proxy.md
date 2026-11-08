@@ -10,7 +10,11 @@ Spec: core 4.2. The Go implementation first cited here
 (`internal/mod/fetch.go`, `proxy.go`, `cmd/xo/mod.go`) and its tests
 (`internal/mod/proxy_test.go`) were deleted with the Go compiler
 (decision 0215). No public Xo proxy runs yet (maturity-gaps.md 2;
-verified 2026-10-29).
+verified 2026-10-29). Since 2026-11-08 cmd/xo TestChecksumLog also runs
+`xo mod proxy serve --fetch` with the checksum log server of decision
+0124's addendum: a tampered tree from the proxy is refused by the log
+(XO1313) and, with the log skipped, by xo.lock (XO1304), and XO_NOPROXY
+fetches from git with XO_PROXY=off.
 
 ## Context
 

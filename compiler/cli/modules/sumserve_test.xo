@@ -1,0 +1,77 @@
+// The log server's trees, proofs and signatures against the client's
+// checks (sumdb.xo): what `xo mod sumdb serve` answers must verify.
+
+use std/crypto
+
+fn leaves_of(n: Int) -> List[Bytes] {
+  var out: List[Bytes] = []
+  for i in 0..n {
+    out.push(record_hash("m${i} v1.0.0 h1:x\nm${i} v1.0.0/xo.mod h1:y\n".bytes()))
+  }
+  out
+}
+
+test "every inclusion proof verifies, and a wrong leaf does not" {
+  for n in 1..18 {
+    let ls = leaves_of(n)
+    let root = tree_hash(ls, 0, n)
+    for i in 0..n {
+      var proof: List[Bytes] = []
+      inclusion_proof(ls, 0, n, i, proof)
+      expect(verify_inclusion(proof, n, i, ls[i], root).is_ok()) == true
+      expect(verify_inclusion(proof, n, i, record_hash(b"other"), root).is_ok()) == false
+    }
+  }
+}
+
+test "every consistency proof verifies, and a rewritten prefix does not" {
+  for n in 1..18 {
+    let ls = leaves_of(n)
+    let root = tree_hash(ls, 0, n)
+    for m in 0..n + 1 {
+      let proof = consistency_proof(ls, m, n)
+      expect(verify_consistency(proof, m, n, tree_hash(ls, 0, m), root).is_ok()) == true
+      if m > 0 && m < n {
+        var other: List[Bytes] = [record_hash(b"rewritten")]
+        for k in 1..m {
+          other.push(ls[k])
+        }
+        expect(verify_consistency(proof, m, n, tree_hash(other, 0, m), root).is_ok()) == false
+      }
+    }
+  }
+}
+
+test "the empty tree is SHA-256 of nothing and one leaf is its own root" {
+  expect(tree_hash([], 0, 0)) == crypto.sha256(b"")
+  let ls = leaves_of(1)
+  expect(tree_hash(ls, 0, 1)) == ls[0]
+}
+
+test "a signed tree head verifies with the verifier key and not another" {
+  let seed = crypto.sha256(b"test seed")
+  let (signer_key, verifier_key) = log_keys("sum.test", seed)
+  let s = parse_signer(signer_key).or_fault("signer")
+  let v = parse_verifier(verifier_key).or_fault("verifier")
+  let t = Tree{n: 3, hash: tree_hash(leaves_of(3), 0, 3)}
+  let got = verify_tree(v, sign_tree(s, t).bytes()).or_fault("verify")
+  expect(got.n) == 3
+  expect(got.hash) == t.hash
+  let (_, other) = log_keys("sum.test", crypto.sha256(b"other seed"))
+  let v2 = parse_verifier(other).or_fault("other verifier")
+  expect(verify_tree(v2, sign_tree(s, t).bytes()).is_ok()) == false
+}
+
+test "a signer key with a wrong id or a short seed is refused" {
+  let (signer_key, _) = log_keys("sum.test", crypto.sha256(b"test seed"))
+  let parts = signer_key.split("+")
+  expect(parse_signer("PRIVATE+KEY+sum.test+00000000+${parts[4]}").is_ok()) == false
+  expect(parse_signer("PRIVATE+KEY+sum.test+${parts[3]}+AAAA").is_ok()) == false
+  expect(parse_signer("KEY+sum.test").is_ok()) == false
+}
+
+test "a record's key is its path and version, and malformed records have none" {
+  expect(record_key("a.com/m v1.2.0 h1:x\na.com/m v1.2.0/xo.mod h1:y\n")) == "a.com/m@v1.2.0"
+  expect(record_key("a.com/m v1.2.0 h1:x\nb.com/m v1.2.0/xo.mod h1:y\n")) == ""
+  expect(record_key("a.com/m v1.2.0 h1:x\n")) == ""
+}

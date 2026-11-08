@@ -3537,10 +3537,19 @@ Last verified: 2026-10-09.
   `XO_SUMDB=off` (default) or `<name>+<id>+<key> [<url>]`; checked in
   `download` on every first fetch unless `XO_NOSUMDB` matches; the
   latest verified head is kept in `<cache>/cache/sumdb/<name>/latest`.
-  `mod.LogRecord(root, path, v)` is what a log server records. There is
-  no CLI to run a log or generate keys yet (`sumdb.GenerateKey`,
-  `sumdb.NewServer` from Go). XO1313 security failure, XO1314
-  unreachable or malformed.
+  `mod.LogRecord(root, path, v)` is what a log server records. XO1313
+  security failure, XO1314 unreachable or malformed. Since 2026-11-08
+  the log server is Xo again (compiler/cli/modules sumserve.xo): `xo mod
+  sumdb keygen <name> <key file>` writes a signer key (mode 0600, never
+  overwritten) and prints the verifier key for XO_SUMDB; `xo mod sumdb
+  serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] <data dir>`
+  serves the log with its records appended and synced to
+  `<data dir>/records` before a head holding them is signed, and
+  `--fetch` adding a missing version from git into `<data dir>/cache`.
+  Flags come before the data directory. Tests: sumserve_test.xo (every
+  proof the server makes verifies with the client) and cmd/xo
+  TestChecksumLog (the client against both servers on loopback). Last
+  verified: 2026-11-08.
 - Definition hashes (decision 0125, step 5, 2026-10-10): package
   `internal/defhash` (`Module(dir, modPath)`, `Diff`, `Find`,
   `Nearest`), reflection over `internal/ast` with per field rules
@@ -3548,10 +3557,10 @@ Last verified: 2026-10-09.
   hashed by default, but a new binding or name field needs a rule.
   `xo query hash` runs without a check (`cmd/xo/hash.go`, before the
   query loader); `release.Publish` fills `Result.Definitions`.
-- Tests that stand up servers use `httptest` on loopback in the test
-  process (`internal/mod/proxy_test.go`, `log_test.go`,
-  `cmd/xo/proxy_test.go`, `hash_test.go`); `modtest.Setup` pins
-  XO_PROXY=direct and XO_SUMDB=off.
+- Tests that stand up the module servers run `xo mod proxy serve` and
+  `xo mod sumdb serve` as processes on free loopback ports
+  (cmd/xo/proxy_test.go startHTTPServe); `modtest.Setup` pins
+  XO_PROXY=direct and XO_SUMDB=off. Last verified: 2026-11-08.
 - Not yet: Go's "major subdirectory" layout (`/v2/` directories of one
   tag; major versions of a subdirectory module use the major branch way,
   tags `<dir>/v2.x.y`), `go-get` style HTML meta discovery of repository

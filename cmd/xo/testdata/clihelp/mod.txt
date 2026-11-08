@@ -3,6 +3,8 @@ usage: xo mod tidy [--dir=<dir>] [--json]
        xo mod accept-effects [--dir=<dir>] [--json] [<module path>...]
        xo mod clean
        xo mod proxy serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]
+       xo mod sumdb keygen <log name> <key file>
+       xo mod sumdb serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] <data dir>
 
 tidy requires every imported module, drops requirements nothing imports,
 and rewrites xo.lock with exactly the hashes the build uses.
@@ -13,3 +15,7 @@ accept-effects records the current effects of the named modules (all
 when none is named) in xo.lock (decision 0156). clean removes the module
 cache. proxy serve serves a module cache read only over the module proxy
 protocol (decision 0126); --fetch fills it from git on a miss.
+sumdb keygen writes a new checksum log key to the file and prints the
+key clients name in XO_SUMDB; sumdb serve runs a checksum log (decision
+0124) with its records in <data dir>; --fetch adds a version the log
+lacks from git.

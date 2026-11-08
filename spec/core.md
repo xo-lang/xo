@@ -12,7 +12,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.45
 
-None yet.
+- Checksum log server (4.3; decision 0124's addendum): `xo mod sumdb
+  keygen` and `xo mod sumdb serve` make a log's key and run a log, its
+  records kept in a data directory.
 
 ## Changes in 0.44
 
@@ -1951,6 +1953,10 @@ its content hash.
   failure is `XO1313` and nothing is cached; a log that cannot be
   consulted, or malformed settings, is `XO1314`. `XO_NOSUMDB=<patterns>`
   (as `XO_NOPROXY`, 4.2) names private modules that are never looked up.
+  `xo mod sumdb keygen <name> <key file>` makes a log's key (the
+  verifier key, printed, is what `XO_SUMDB` names) and `xo mod sumdb
+  serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] <data dir>`
+  runs a log, its records kept in the data directory (decision 0124).
 - **[P1]** Definition hashes (decision 0125, step 5 of decision 0086):
   every top level definition (function, method, type, constant) has a
   content hash `d1:<base64 SHA-256>` over its syntax tree with
@@ -3258,7 +3264,7 @@ test "retries after 503" {
 | `xo doc` | Docs from doc comments; `xo doc std` lists the std modules this xo ships, a line each |
 | `xo clean -cache [-n]` | Remove every cache under `<user cache>/xo` (build directories, the native back end's cache, GOCACHE, test binaries, watch builds, xo dev outputs, the test infrastructure's caches) and print the bytes freed per cache; `-n` prints what it would remove and removes nothing. Never touches anything outside `<user cache>/xo`; the module cache and the prebuilt seeds stay; an entry whose build lock a running process holds is left. `xo clean` without `-cache` is a usage error |
 | `xo debug [--batch] [--json] [--timeout=DUR] [-c CMD]... PROG [ARGS]`, `xo debug --dap` | Run a native program with its debug information under xo's own debugger (11.5; macOS arm64, Linux and Windows amd64): break, run, continue, step, next, finish, print, locals, backtrace, frame, threads, quit; `--json` gives the protocol of 11.5, `--dap` the Debug Adapter Protocol for editors |
-| `xo get [--accept-effects] <path>[@version]`, `xo mod tidy`, `xo mod accept-effects [<path>...]`, `xo vendor`, `xo mod clean`, `xo mod proxy serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, record wider effects of dependencies in xo.lock (decision 0156); `xo get` checks each newly required version in full once (`xo check`, recorded per version in the module cache) and warns about its errors, since a build checks a dependency's bodies only as it reaches them (decision 0517; XO_GET_CHECK=0 skips it), copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126). Every command takes `--offline` and `--workspace=off` |
+| `xo get [--accept-effects] <path>[@version]`, `xo mod tidy`, `xo mod accept-effects [<path>...]`, `xo vendor`, `xo mod clean`, `xo mod proxy serve`, `xo mod sumdb keygen`, `xo mod sumdb serve` | Dependencies (4.2, 4.3): require a module version, tidy xo.mod and xo.lock, record wider effects of dependencies in xo.lock (decision 0156); `xo get` checks each newly required version in full once (`xo check`, recorded per version in the module cache) and warns about its errors, since a build checks a dependency's bodies only as it reaches them (decision 0517; XO_GET_CHECK=0 skips it), copy dependencies into vendor/, empty the module cache, serve a module cache as a module proxy (decision 0126), make a checksum log key and run a checksum log (decision 0124). Every command takes `--offline` and `--workspace=off` |
 | `xo audit [--json] [--no-gc] [<dir>]` | Supply chain report (decision 0156): per dependency its effects, its xo.lock effects line (ok, widened, narrowed, unlocked), its ceiling, and its escape hatches (`use c`, impure `use go`) with the vouches covering them; this module's attenuations (`only`, `sub`, `read_only`, `write_only`, `cwd`) with constant arguments, the capabilities it passes into dependencies and whether each is attenuated, vouches that match nothing, and the check's diagnostics. JSON with `--json` or when stdout is not a terminal (an agent piping it gets JSON), text otherwise. Exit 1 when the check has errors |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
 | `xo explain <code>` | Long form explanation of a diagnostic |

@@ -468,9 +468,10 @@ fn (var c: ModCtx) run_mod(args: List[Str]) -> Int uses (fs, net, proc, stdio, r
       0
     }
     "proxy" => c.run_mod_proxy(rest)
+    "sumdb" => c.run_mod_sumdb(rest)
     "graph" => c.run_mod_graph(rest)
     _ => {
-      c.os.stdio.eprintln("xo mod: unknown subcommand ${args[0].quote()} (want tidy, graph, accept-effects, clean, or proxy)")
+      c.os.stdio.eprintln("xo mod: unknown subcommand ${args[0].quote()} (want tidy, graph, accept-effects, clean, proxy, or sumdb)")
       c.os.stdio.eprint(cmdhelp.usage("mod"))
       2
     }

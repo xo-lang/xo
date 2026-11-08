@@ -12,9 +12,11 @@ decision first cited (`internal/sumdb`, its log server, and
 tests (`internal/sumdb/sumdb_test.go`, `internal/mod/log_test.go`,
 TestChecksumLogCommand: its loopback log server was the Go one; decision
 0215, "Tests not carried over"). No public Xo log runs yet, so
-`XO_SUMDB` defaults to `off`, and the client has no end-to-end test
-against a log until a log server exists again (maturity-gaps.md 2;
-verified 2026-10-29).
+`XO_SUMDB` defaults to `off`. Gap closed 2026-11-08: the server is Xo
+(`compiler/cli/modules/sumserve.xo`, `xo mod sumdb keygen` and `xo mod
+sumdb serve`, see "Server" below), and cmd/xo TestChecksumLog runs the
+client end to end against it and `xo mod proxy serve --fetch` on
+loopback (maturity-gaps.md 2).
 
 ## Context
 
@@ -96,6 +98,44 @@ and adds unknown versions through a lookup function (`mod.LogRecord`
 fetches from git into its own cache). It is what tests run and the
 starting point for a team's log; persistence, key management commands,
 and a public deployment are not built.
+
+## Addendum (2026-11-08): the log server in Xo
+
+The Go server went with the Go compiler (decision 0215), which left the
+client with no end-to-end test. `compiler/cli/modules/sumserve.xo` ports
+it (the protocol above, unchanged) as two commands rather than a test
+only server: a team's log and any public one run the same code the tests
+run, and the commands sit beside `xo mod proxy serve` (decision 0126).
+
+- `xo mod sumdb keygen <name> <key file>`: a new Ed25519 key (std/crypto
+  random_bytes), the signer key `PRIVATE+KEY+<name>+<key id>+<base64
+  seed>` written to the file with mode 0600 and never over an existing
+  file, the verifier key printed for XO_SUMDB.
+- `xo mod sumdb serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch]
+  <data dir>`: the records persist in `<data dir>/records` (two lines
+  per record, in log order), each appended and synced before any tree
+  head holding it is signed, and read back at start (a torn last record
+  stops the start rather than being dropped). An in-memory log that
+  restarts would serve a smaller tree, which every client that saw the
+  larger one reports as a rewrite (XO1313), so persistence is part of
+  the server rather than a later feature. `--fetch` adds a version the
+  log lacks with a direct git fetch into `<data dir>/cache` (never
+  through XO_PROXY), as `xo mod proxy serve --fetch` fills its cache.
+  The state is behind one Mutex; the git fetch runs outside it, and the
+  add re-checks the index inside it.
+- Tests: sumserve_test.xo (inclusion and consistency proofs for every
+  tree of 1 to 17 records verify with the client's checks, and a wrong
+  leaf or a rewritten prefix does not; signed heads verify with the
+  verifier and not with another key; malformed signer keys refused).
+  cmd/xo TestChecksumLog, through `xo mod proxy serve --fetch` and the
+  log on loopback: fetch, verify and lock; a tampered tree from the
+  proxy is XO1313, and with XO_NOSUMDB naming it XO1304 (xo.lock);
+  XO_NOPROXY fetches from git with XO_PROXY=off; a restarted log on the
+  same data serves a tree the stored head extends; a tag moved after the
+  log recorded it is XO1313; a log under the same key that lost its
+  records is XO1313 (its tree does not extend the stored one).
+- Still not built: key rotation, tiles, gossip, a proxy passthrough for
+  the log, and a public deployment (the owner's decision).
 
 ## Threat model
 
