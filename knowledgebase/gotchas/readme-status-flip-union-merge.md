@@ -23,3 +23,9 @@ After any rebase of a change that edits an existing README line (a
 status flip), check `grep -c NNNN- knowledgebase/decisions/README.md` for
 the ADRs near it and keep the line main has plus your own change, then
 amend. Running TestDecisionNumbersUnique before pushq catches it.
+
+Repaired automatically since 2026-11-07 (Xo Lang 1 hit it again on
+0554): pushq passes the README at the push's merge base to adr-dedup.py,
+which keeps, of a decision's two lines, the one that differs from the
+base (the side that changed it). Two lines that both changed still stop
+the push for a hand fix.
