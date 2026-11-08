@@ -824,6 +824,12 @@ fn cont8(w: Int) -> Int { rt.popcount(w & (shl(w, 1) ^ -1) & HIGHS) }
 pub fn count_cont(b: Bytes, from: Int, to: Int) -> Int {
   var c = 0
   var i = from
+  // 32 bytes a step, the continuation bytes (below 0xC0 as signed
+  // bytes, -64) counted by lane (decision 0532 step 2), then a word a step
+  while to - i >= 32 {
+    c += rt.bytes_count_below32(b, i, -64)
+    i += 32
+  }
   while to - i >= 8 {
     c += cont8(rt.bytes_word(b, i))
     i += 8

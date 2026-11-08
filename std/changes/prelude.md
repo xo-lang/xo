@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-11-07: perf: Str.rune_count counts continuation bytes 32 at a time
+
+- Kind: perf
+- Commit: this push
+- Found by: ADR 0532 step 2 (a NEON count of continuation bytes measured 0.42 of std's SWAR loop on linux/arm64)
+- Go reference: unicode/utf8.RuneCountInString
+- Test: std/native/llrt/scan_test.xo "bytes_count_below32 matches a byte loop, from none to all 32 bytes" and count_cont's property test; std prelude tests
+- Timing: bench/perf/simdscan rune_count, linux/arm64 host 1, xo bench --ab against the code generation commit: 0.502 (0.485 to 0.537, n=6; better); rechecked on main 87542c788: 0.485 (0.474 to 0.493, n=6)
+- Shipped in: not yet released
+
+scan.xo count_cont (Str.rune_count, and the rune counts built on it) counts the bytes 0x80 to 0xBF of each 32 byte block with rt.bytes_count_below32 (two signed lane compares and a lane sum), then a word a step as before.
 ## 2026-11-07: feature: BytesBuilder.write_le and write_be append a word's n low bytes (decision 0561)
 
 - Kind: feature
