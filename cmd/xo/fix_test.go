@@ -141,3 +141,39 @@ func TestFixDropsQuestionMark(t *testing.T) {
 		t.Fatalf("check after fix: exit %d: %s%s\n%s", code, out.String(), errOut.String(), b)
 	}
 }
+
+// TestFixDeclaresMissingEffects: XO0701's fix on a declaration writes the
+// effects its body performs into its `uses` clause, appended to the
+// clause, or as a new clause after the result or error type, or before
+// the body, so `xo fix` leaves a file that checks clean (Azure's azquery
+// send(), 2026-11-08: a function generic over fx whose clause forgot fx).
+func TestFixDeclaresMissingEffects(t *testing.T) {
+	t.Parallel()
+	src := "pub fn send[fx: Effects](os: Os, f: fn() -> Int uses fx) -> Int uses stdio {\n  os.stdio.println(\"send\")\n  f()\n}\n\n" +
+		"pub fn twice[fx: Effects](f: fn() -> Int uses fx) -> Int {\n  f() + f()\n}\n\n" +
+		"pub fn run[fx: Effects](f: fn() uses fx) {\n  f()\n}\n\n" +
+		"pub fn both[fx: Effects](os: Os, f: fn() uses fx) -> () ! Str {\n  os.stdio.println(\"both\")\n  f()\n  Ok(())\n}\n\n" +
+		"fn main(os: Os) {\n  os.stdio.println(\"${send(os, fn() -> Int { 1 })} ${twice(fn() -> Int { 2 })}\")\n  run(fn() { os.stdio.println(\"run\") })\n  both(os, fn() {}) ?? _ => ()\n}\n"
+	dir := writeFiles(t, map[string]string{"m/main.xo": src})
+	mod := filepath.Join(dir, "m")
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"fix", mod}, &out, &errOut); code != 0 {
+		t.Fatalf("fix: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(mod, "main.xo"))
+	for _, want := range []string{
+		"-> Int uses stdio, fx {\n",
+		"-> Int uses fx {\n  f() + f()",
+		"(f: fn() uses fx) uses fx {\n",
+		"-> () ! Str uses stdio, fx {\n",
+	} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("fixed file lacks %q:\n%s", want, b)
+		}
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"check", mod}, &out, &errOut); code != 0 {
+		t.Fatalf("check after fix: exit %d: %s%s\n%s", code, out.String(), errOut.String(), b)
+	}
+}

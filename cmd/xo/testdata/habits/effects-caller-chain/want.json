@@ -12,6 +12,9 @@
     },
     "notes": [
       {
+        "message": "declare them: `uses clock` (`xo fix` writes it)"
+      },
+      {
         "message": "`Clock.now` uses `clock` here",
         "span": {
           "file": "main.xo",
@@ -25,6 +28,42 @@
         "message": "once `leaf` declares `clock`, these callers need it too: `mid` (main.xo:5), `top` (main.xo:13)"
       }
     ],
-    "fixes": []
+    "fixes": [
+      {
+        "title": "write the clause `uses clock`, and in its callers",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 30,
+              "end_line": 1,
+              "end_col": 37
+            },
+            "replace": "uses clock"
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 5,
+              "col": 29,
+              "end_line": 5,
+              "end_col": 36
+            },
+            "replace": "uses clock"
+          },
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 13,
+              "col": 33,
+              "end_line": 13,
+              "end_col": 40
+            },
+            "replace": "uses clock"
+          }
+        ]
+      }
+    ]
   }
 ]

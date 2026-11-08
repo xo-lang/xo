@@ -372,8 +372,9 @@ test "a pure caller performing a bare receiver's effect gets a note and a fix na
   expect(ds.len()) == 2
   expect(ds[0].notes.any(fn(n) { n.message.contains("only through `Box`") })) == true
   expect(ds[0].fixes.map(fn(f) { f.edits.map(fn(e) { e.replace }) })) == [["[fx]"]]
-  // run's body performs fx, so naming it would be wrong: no fix
-  expect(ds[1].fixes.len()) == 0
+  // run's body performs fx, so `Box[fx]` on run would be wrong: the fix
+  // declares it on count instead (the corrected clause, lead 2026-11-08)
+  expect(ds[1].fixes.map(fn(f) { f.edits.map(fn(e) { e.replace }) })) == [[" uses fx"]]
 }
 
 test "an integer literal must fit its type (XO0421)" {

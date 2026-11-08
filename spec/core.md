@@ -2611,7 +2611,12 @@ pub fn sync(src: Fs, out: Stdio) -> () ! SyncErr uses fs.read, stdio { ... }
   is the declared set, and no clause means pure. Non pub functions and
   closures have their effects inferred.
 - Performing an effect outside the declared set is error `XO0701`, which shows
-  the call chain that performs it. Declaring more is allowed (for interface
+  the call chain that performs it. On a declaration its note names the
+  corrected clause (`uses (stdio, fx)`: the written effects, then the
+  missing labels and effect parameters), and its fix writes it, with the
+  same labels in each declared caller that would miss them next, so one
+  `xo fix` checks clean. The effects are not inferred: the clause stays
+  what the source says. Declaring more is allowed (for interface
   stability) and noted by `xo vet`.
 - **Function types** carry effects. One effect: `fn(Int) -> Int uses clock`.
   Several effects are parenthesized: `fn(Int) -> Int uses (net, clock)`.
@@ -3442,7 +3447,8 @@ does (decision 0131).
     `XO0209` (a method of a `var` binding: `xs = xs.sort()`), `XO0169` (commas between
     match arms), `XO0173` (`use` after declarations), `XO0701` (an effect
     argument left out of a parameter type, which stays an abstract effect
-    variable), `XO0408` (TypeScript's `const x = f()`), `XO0110` (Kotlin's
+    variable; a declaration's corrected `uses` clause, in its declared
+    callers too), `XO0408` (TypeScript's `const x = f()`), `XO0110` (Kotlin's
     `"$name"`, literal text in Xo), `XO0205` (`x?.f` optional chaining in
     a function that does not return an optional), `XO0403` (a missing
     `reason`), `XO0404` (JSON for tuples), `XO0101`, `XO0502`, and the lexical

@@ -1,0 +1,29 @@
+// XO0701 on a declaration carries the whole corrected `uses` clause, as a
+// note and as `xo fix`'s edit: an effect variable the function forgot
+// (Azure's azquery send(), 2026-11-08), a label, both, with and without
+// a clause, a result, or an error type.
+
+pub fn send[fx: Effects](os: Os, f: fn() -> Int uses fx) -> Int uses stdio { // ERROR XO0701 "declare them: .uses .stdio, fx.."
+  os.stdio.println("send")
+  f()
+}
+
+pub fn twice[fx: Effects](f: fn() -> Int uses fx) -> Int { // ERROR XO0701 "declare them: .uses fx."
+  f() + f()
+}
+
+pub fn run[fx: Effects](f: fn() uses fx) { // ERROR XO0701 "declare them: .uses fx."
+  f()
+}
+
+pub fn both[fx: Effects](os: Os, f: fn() uses fx) -> () ! Str { // ERROR XO0701 "declare them: .uses .stdio, fx.."
+  os.stdio.println("both")
+  f()
+  Ok(())
+}
+
+fn main(os: Os) {
+  os.stdio.println("${send(os, fn() -> Int { 1 })} ${twice(fn() -> Int { 2 })}")
+  run(fn() { os.stdio.println("run") })
+  both(os, fn() {}) ?? _ => ()
+}

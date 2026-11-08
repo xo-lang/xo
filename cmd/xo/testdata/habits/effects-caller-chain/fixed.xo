@@ -1,0 +1,19 @@
+fn leaf(clock: Clock) -> Int uses clock {
+  clock.now().unix()
+}
+
+fn mid(clock: Clock) -> Int uses clock {
+  leaf(clock) + 1
+}
+
+fn helper(clock: Clock) -> Int {
+  mid(clock)
+}
+
+pub fn top(clock: Clock) -> Int uses clock {
+  helper(clock) * 2
+}
+
+fn main(os: Os) {
+  os.stdio.println("${top(os.clock)}")
+}

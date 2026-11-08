@@ -111,34 +111,96 @@ struct EffOb {
   /// remove so its effects are inferred.
   uses_file: Str = ""
   uses_clause: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
-  /// Decl: the fix that adds `log` to the `uses` clause when only `log`
-  /// is missing (decision 0156); empty when no fix applies.
-  log_title: Str = ""
-  log_edits: List[DEdit] = []
+  /// Decl: where the fix that declares the missing effects goes (UsesFix);
+  /// None when no fix applies (a declaration without a body).
+  uses_fix: UsesFix? = None
+}
+
+/// A declaration's `uses` clause as XO0701's fix edits it: the effects it
+/// writes, and where the missing ones go: after the last of them
+/// (append), else where a new clause goes, after the error or result
+/// type, or before the body (before_body: `uses ... {`). An empty
+/// clause (`uses ()`) is replaced whole, from start to at (replace).
+struct UsesFix {
+  written: List[Str]
+  start: parser.Pos = parser.Pos{offset: 0, line: 0, col: 0}
+  at: parser.Pos
+  append: Bool
+  before_body: Bool
+  replace: Bool = false
 }
 
 /// The fix that adds `log` to a function's `uses` clause when only `log`
 /// is missing (habits.go addLogFix, decision 0156): append `, log` to an
 /// existing clause, or a new `uses log` after the signature.
-fn (c: Checker) log_fix(fd: parser.FnDecl) -> (Str, List[DEdit]) {
+fn uses_fix_of(fd: parser.FnDecl) -> UsesFix? {
   for cl in fd.clauses {
     match cl {
-      parser.Clause.UsesClause(_, effects, _) => {
-        if !effects.is_empty() {
-          let last = effects[effects.len() - 1].span
-          return ("add `log` to the `uses` clause", [c.insert_edit(last.end, ", log")])
+      parser.Clause.UsesClause(span, effects, _) => {
+        if effects.is_empty() {
+          return Some(UsesFix{written: [], start: span.start, at: span.end, append: false, before_body: false, replace: true})
+        } else {
+          var written: List[Str] = []
+          for e in effects {
+            written.push(if let Some(sb) = e.sub { "${text(e.name.name)}.${text(sb.name)}" } else { text(e.name.name) })
+          }
+          return Some(UsesFix{written: written, at: effects[effects.len() - 1].span.end, append: true, before_body: false})
         }
       }
       _ => {}
     }
   }
   if let Some(es) = fd.err {
-    return ("add a `uses log` clause", [c.insert_edit(es.span.end, " uses log")])
+    return Some(UsesFix{written: [], at: es.span.end, append: false, before_body: false})
   }
   if let Some(t) = fd.result {
-    return ("add a `uses log` clause", [c.insert_edit(parser.type_span(t).end, " uses log")])
+    return Some(UsesFix{written: [], at: parser.type_span(t).end, append: false, before_body: false})
   }
-  ("", [])
+  if let Some(b) = fd.body {
+    return Some(UsesFix{written: [], at: b.span.start, append: false, before_body: true})
+  }
+  None
+}
+
+/// XO0701's fix on a declaration: the missing effects (labels and the
+/// function's own effect variables) added to its `uses` clause, or a new
+/// clause, titled with the whole corrected clause (`uses (net.dial,
+/// fx)`), so an agent applies it as it stands (Azure's azquery send(),
+/// 2026-11-08: a function generic over fx that forgot `fx`). None when a
+/// missing one is an omitted effect argument, which no `uses` list can
+/// name (elided_effect_note has its fix).
+fn (c: Checker) uses_fix_edit(ob: EffOb, missing: List[Str], sub: Flat, sup: Flat) -> (Str, DEdit, Str)? {
+  for p in sub.params {
+    if !sup.params.contains(p) && c.objs[p].elided {
+      return None
+    }
+  }
+  uses_edit(ob, missing)
+}
+
+/// The edit that adds missing to ob's `uses` clause, its title, and the
+/// corrected clause; None when ob has no place for one.
+fn uses_edit(ob: EffOb, missing: List[Str]) -> (Str, DEdit, Str)? {
+  let uf = ob.uses_fix ?? return None
+  var all = uf.written
+  for m in missing {
+    if !all.contains(m) {
+      all.push(m)
+    }
+  }
+  let clause = if all.len() == 1 { "uses ${all[0]}" } else { "uses (${all.join(", ")})" }
+  let added = missing.join(", ")
+  if uf.replace {
+    return Some(("write the clause `${clause}`", DEdit{span: JSpan{file: ob.file, line: uf.start.line, col: uf.start.col, end_line: uf.at.line, end_col: uf.at.col}, replace: clause}, clause))
+  }
+  let (title, ins) = if uf.append {
+    ("add `${missing.join("`, `")}` to the `uses` clause: `${clause}`", ", ${added}")
+  } else if uf.before_body {
+    ("add the clause `${clause}`", "uses ${added} ")
+  } else {
+    ("add the clause `${clause}`", " uses ${added}")
+  }
+  Some((title, DEdit{span: JSpan{file: ob.file, line: uf.at.line, col: uf.at.col, end_line: uf.at.line, end_col: uf.at.col}, replace: ins}, clause))
 }
 
 /// The note on an XO0701 whose missing effect is an elided effect
@@ -686,11 +748,18 @@ fn (var c: Checker) solve_effects() {
     if d < 0 {
       continue
     }
-    if missing.len() == 1 && missing[0] == "log" && !ob.log_title.is_empty() {
-      c.fix(d, ob.log_title, ob.log_edits)
-    }
     c.elided_effect_note(d, sub, sup, ob)
     c.implicit_callee_note(d, sub, sup)
+    // the corrected clause, when those notes gave no fix of their own
+    // (theirs name an effect argument instead; lead, 2026-11-08)
+    var uses_fix: (Str, DEdit, Str)? = None
+    if ob.kind == ObKind.Decl && c.diags[d].fixes.is_empty() {
+      uses_fix = c.uses_fix_edit(ob, missing, sub, sup)
+      if let Some((_, _, clause)) = uses_fix {
+        c.note(d, "declare them: `${clause}` (`xo fix` writes it)")
+      }
+    }
+    var chain_edits: List[DEdit] = []
     // the item witnessing the first missing effect: a label, else a
     // parameter (in the order of sub)
     var first = EffItem{}
@@ -733,8 +802,16 @@ fn (var c: Checker) solve_effects() {
         }
       }
       if !labels.is_empty() {
-        c.caller_chain_note(d, ob.fo, labels, callers, decl_ob)
+        chain_edits = c.caller_chain_note(d, ob.fo, labels, callers, decl_ob)
       }
+    }
+    if let Some((title, e, _)) = uses_fix {
+      // the callers' clauses in the same fix, so one `xo fix` checks clean
+      var edits = [e]
+      for ce in chain_edits {
+        edits.push(ce)
+      }
+      c.fix(d, if chain_edits.is_empty() { title } else { "${title}, and in its callers" }, edits)
     }
   }
 }
@@ -783,9 +860,11 @@ fn (c: Checker) decl_callers() -> (Map[Int, List[Int]], Map[Int, Int]) {
 
 /// A note on d naming the declared functions above fo that would miss
 /// labels once fo declares them (each caller's own declaration does not
-/// cover them), walking up through those callers, at most 12.
-fn (var c: Checker) caller_chain_note(d: Int, fo: Int, labels: List[Str], callers: Map[Int, List[Int]], decl_ob: Map[Int, Int]) {
+/// cover them), walking up through those callers, at most 12; returns
+/// the edits adding the labels each one lacks to its `uses` clause.
+fn (var c: Checker) caller_chain_note(d: Int, fo: Int, labels: List[Str], callers: Map[Int, List[Int]], decl_ob: Map[Int, Int]) -> List[DEdit] {
   var found: List[Str] = []
+  var edits: List[DEdit] = []
   var visited: Map[Int, Bool] = {}
   visited[fo] = true
   var queue: List[Int] = [fo]
@@ -811,14 +890,18 @@ fn (var c: Checker) caller_chain_note(d: Int, fo: Int, labels: List[Str], caller
         continue
       }
       found.push("`${c.display_name(g)}` (${gob.file}:${gob.span.start.line})")
+      if let Some((_, e, _)) = uses_edit(gob, labels.filter(fn(l) { !sup.covers_label(l) })) {
+        edits.push(e)
+      }
       queue.push(g)
     }
   }
   if found.is_empty() {
-    return
+    return edits
   }
   let list = "`${labels.join("`, `")}`"
   c.note(d, "once `${c.display_name(fo)}` declares ${list}, these callers need it too: ${found.join(", ")}")
+  edits
 }
 
 /// The call chain that performs effect key, from item w, as notes on d
