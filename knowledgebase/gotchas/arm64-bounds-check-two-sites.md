@@ -50,3 +50,12 @@ the call site, and `rt.list_swap` and `rt.list_swap2` joined
 through std's own `internal.crypto_op` probe and the two `internal`
 helpers (the golden `list_swap_guard` and the patterns
 `internal.list_swap_at` and `internal.list_swap_both`).
+
+2026-11-08, the same split again: `bytes.index` asked only
+`proved_index` and `div_of_len`, never `g.proof.proven`, so the decreasing
+index rule (fieldlicm.xo `sub_index`, `b[n - 1]` under `n > 0`) dropped
+the check for `List` and not for `Bytes`, and the lengths a `Bytes` index
+compares against are `Str.len` calls, which `FACT_LEN` and `len_is` did not
+record (they knew `list.len` only). `bytes.index` now asks
+`g.proof.proven` too, and both record `Str.len`; test/codegen/revbounds
+holds the shapes and the two that must keep their check.

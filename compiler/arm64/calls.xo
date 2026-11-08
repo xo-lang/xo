@@ -1605,7 +1605,9 @@ fn (var g: G) call_op(v: Int) {
       let alen = g.str_len(a)
       // len >> k and len / C are below len once len is at least 1 (2026-10-26)
       let short = g.proof.div_of_len(g.f, ssa.block_of(x.tb), x.args[1], x.args[0])
-      if ssa.has_pos(x.lp) && !short && !g.proved_index(x.args[1], alen, k) {
+      // and what the function's branches prove (Proof: a decreasing index
+      // under `n > 0`, 2026-11-08)
+      if ssa.has_pos(x.lp) && !short && !g.proved_index(x.args[1], alen, k) && !g.proof.proven(g.f, ssa.block_of(x.tb), x.args[1], x.args[0]) {
         g.check("cmp $u0, $u1", [i, alen], "hs", "xo_fault_bytes_index", [rsrc(i), rsrc(alen)] + g.loc_args(g.f.pos_of(x)))
       }
       if ssa.has_pos(x.lp) {

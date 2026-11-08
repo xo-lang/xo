@@ -1,0 +1,109 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a decreasing index
+// `b[n - 1]` under `n > 0` (or `n > lo` with lo never negative), n
+// starting at the length and only stepping down, needs no bounds check, as
+// Go's prove pass drops it (2026-11-08: trim's reverse scans kept `cmp;
+// b.hs` per byte). The last two keep theirs: the boundary of the proof.
+
+// std's trim_end_byte shape, over a Str's bytes.
+fn trim_end(s: Str, c: UInt8) -> Int {
+  // arm64: -"b\.hs"
+  let b = s.bytes()
+  var n = b.len()
+  while n > 0 && b[n - 1] == c {
+    n -= 1
+  }
+  n
+}
+
+// trim_chars' second loop: the end stops at a start that is never negative.
+fn trim_both(s: Str, c: UInt8) -> Int {
+  // arm64: -"b\.hs"
+  let b = s.bytes()
+  let n = b.len()
+  var lo = 0
+  while lo < n && b[lo] == c {
+    lo += 1
+  }
+  var hi = n
+  while hi > lo && b[hi - 1] == c {
+    hi -= 1
+  }
+  hi - lo
+}
+
+// A list summed from the back.
+fn sum_back(xs: List[Int]) -> Int {
+  // arm64: -"b\.hs"
+  var s = 0
+  var i = xs.len()
+  while i > 0 {
+    s += xs[i - 1]
+    i -= 1
+  }
+  s
+}
+
+// `n > -1` leaves n at 0, and b[n - 1] would be b[-1]: the check stays.
+fn below_zero(s: Str) -> Int {
+  // arm64: "b\.hs"
+  let b = s.bytes()
+  var n = b.len()
+  var t = 0
+  while n > -1 {
+    t += Int(b[n - 1])
+    n -= 1
+  }
+  t
+}
+
+// n starts one past the length, so b[n - 1] reads one past the end on the
+// first step: the check stays.
+fn past_end(s: Str) -> Int {
+  // arm64: "b\.hs"
+  let b = s.bytes()
+  var n = b.len() + 1
+  var t = 0
+  while n > 0 {
+    t += Int(b[n - 1])
+    n -= 1
+  }
+  t
+}
+
+// A list popped in the loop: i starts at the old length, so ys[i - 1]
+// reads past the end after the first pop: the check stays.
+fn pop_back(xs: List[Int]) -> Int {
+  // arm64: "b\.hs"
+  var ys = xs
+  var s = 0
+  var i = ys.len()
+  while i > 0 {
+    let _ = ys.pop()
+    s += ys[i - 1]
+    i -= 1
+  }
+  s
+}
+
+// The same through a `var` parameter the loop pops in place.
+fn pop_param(var xs: List[Int]) -> Int {
+  // arm64: "b\.hs"
+  var s = 0
+  var i = xs.len()
+  while i > 0 {
+    let _ = xs.pop()
+    s += xs[i - 1]
+    i -= 1
+  }
+  s
+}
+
+fn main(os: Os) {
+  let a = os.env.args()
+  let s = if a.is_empty() { "xx  abc  " } else { a[0] }
+  os.stdio.println("${trim_end(s, 32)} ${trim_both(s, 32)} ${sum_back([1, 2, a.len()])}")
+  if a.len() > 5 {
+    var p = [1]
+    os.stdio.println("${below_zero(s)} ${past_end(s)} ${pop_back([1])} ${pop_param(p)}")
+  }
+}

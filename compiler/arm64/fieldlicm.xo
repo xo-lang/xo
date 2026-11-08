@@ -380,6 +380,10 @@ const FACT_UNSTABLE = 4
 /// len(r) >= C: (C, the block from which on it holds), from a branch of
 /// `list.len(x) op C` (len_min).
 const FACT_MIN = 5
+/// n > x: (x, the block from which on it holds), the other side of each
+/// FACT_LT fact x < n, keyed by n (low_at: the least value n is known to
+/// have, for a decreasing index `xs[n - 1]` under `n > 0`).
+const FACT_ABOVE = 6
 /// The distance between the key spaces of the kinds of fact; fact ids are
 /// value indices and far below it.
 const FACT_SCALE = 1099511627776
@@ -393,7 +397,10 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
   var pr = Proof{idom: dominators_of(f, rpo), entry: rpo[0]}
   for i in 0..f.values.len() {
     let x = f.values[i]
-    if x.op != ssa.Op.Call || x.args.len() != 1 || aux_str(x.aux) != "list.len" {
+    // a Str's length (Bytes.len is Str.len of the same value) as well as
+    // a list's: a Str never changes its length (2026-11-08: trim's `while
+    // n > 0 && b[n - 1] == c` over s.bytes())
+    if x.op != ssa.Op.Call || x.args.len() != 1 || !(aux_str(x.aux) is "list.len" | "Str.len") {
       continue
     }
     let r = len_root(f, x.args[0], [], FIELD_DEPTH)
@@ -442,9 +449,7 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
       n = c.args[0]
     }
     if x >= 0 && f.blocks[tb].preds.len() == 1 {
-      var xs = pr.facts.get(fact_key(FACT_LT, x)) ?? []
-      xs.push((n, tb))
-      pr.facts[fact_key(FACT_LT, x)] = xs
+      pr.lt_fact(x, n, tb)
     }
     // the fact the other edge keeps: it is attached to the edge's block,
     // which only that edge enters, so it holds whatever the true edge does
@@ -466,17 +471,50 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
       pr.facts[fact_key(FACT_LE, c.args[0])] = ls
     } else if c.op == ssa.Op.Ge {
       // !(x >= n) is x < n
-      var ls = pr.facts.get(fact_key(FACT_LT, c.args[0])) ?? []
-      ls.push((c.args[1], fb))
-      pr.facts[fact_key(FACT_LT, c.args[0])] = ls
+      pr.lt_fact(c.args[0], c.args[1], fb)
     } else if c.op == ssa.Op.Le {
       // !(x <= n) is n < x
-      var ls = pr.facts.get(fact_key(FACT_LT, c.args[1])) ?? []
-      ls.push((c.args[0], fb))
-      pr.facts[fact_key(FACT_LT, c.args[1])] = ls
+      pr.lt_fact(c.args[1], c.args[0], fb)
     }
   }
   pr
+}
+
+/// Records x < n from block b on: FACT_LT under x and FACT_ABOVE under n.
+fn (var pr: Proof) lt_fact(x: Int, n: Int, b: Int) {
+  var xs = pr.facts.get(fact_key(FACT_LT, x)) ?? []
+  xs.push((n, b))
+  pr.facts[fact_key(FACT_LT, x)] = xs
+  var ns = pr.facts.get(fact_key(FACT_ABOVE, n)) ?? []
+  ns.push((x, b))
+  pr.facts[fact_key(FACT_ABOVE, n)] = ns
+}
+
+/// The least value Int v is known to have in block at from the branches
+/// `x < v` whose edge dominates at: x + 1 for a constant x, 1 for an x
+/// never negative; MIN_INT when none says.
+fn (pr: Proof) low_at(f: ssa.Func, at: Int, v: Int) -> Int {
+  var best = MIN_INT
+  for (x, b) in pr.facts.get(fact_key(FACT_ABOVE, v)) ?? [] {
+    if !dominates_b(pr.idom, pr.entry, b, at) {
+      continue
+    }
+    let xv = f.values[x]
+    var lo = MIN_INT
+    if xv.op == ssa.Op.Const {
+      if let I(k) = xv.aux {
+        if k < MAX_INT {
+          lo = k + 1
+        }
+      }
+    } else if pr.nonneg(f, x, [], FIELD_DEPTH) {
+      lo = 1
+    }
+    if lo > best {
+      best = lo
+    }
+  }
+  best
 }
 
 /// Records len(r) >= C for a branch on c, `list.len(x) op C` (either
@@ -577,6 +615,14 @@ fn (pr: Proof) proven_at(f: ssa.Func, at: Int, idx: Int, l: Int, seen: List[Int]
       return pr.nonneg(f, idx, [], FIELD_DEPTH)
     }
   }
+  // a decreasing index `xs[v - k]` (k at least 1): v at most a length of
+  // xs and at least k here (a dominating `v > k - 1`, or `v > x` with x
+  // never negative when k is 1), so 0 <= v - k < len; Go's prove pass
+  // drops this check (2026-11-08: `while n > 0 && b[n - 1] == c`, the
+  // reverse scans of trim)
+  if pr.sub_index(f, at, idx, r) {
+    return true
+  }
   // a joined copy of the index: every reachable edge into it must carry a
   // value proven the same way (a dead block, one no edge enters, is not a
   // way in at all)
@@ -618,6 +664,33 @@ fn (pr: Proof) proven_at(f: ssa.Func, at: Int, idx: Int, l: Int, seen: List[Int]
   any
 }
 
+/// Whether idx is `v - k`, k a constant of at least 1, with v at least k
+/// in block at (low_at) and at most a length of container root r.
+fn (pr: Proof) sub_index(f: ssa.Func, at: Int, idx: Int, r: Int) -> Bool {
+  let x = f.values[idx]
+  if x.op != ssa.Op.Sub || x.args.len() != 2 {
+    return false
+  }
+  let kv = f.values[x.args[1]]
+  if kv.op != ssa.Op.Const {
+    return false
+  }
+  let k = aux_int(kv.aux)
+  if k < 1 || k == MAX_INT {
+    return false
+  }
+  // v's length may be an earlier one, so nothing here may change r's
+  // (a pop in a loop that starts at the old length)
+  if !(pr.facts.get(fact_key(FACT_UNSTABLE, r)) ?? []).is_empty() {
+    return false
+  }
+  let v = x.args[0]
+  if pr.low_at(f, at, v) < k {
+    return false
+  }
+  pr.len_is(f, v, r) || pr.bound_at_most(f, v, r, at)
+}
+
 /// Whether the bound n is at most the length of container root r: n is a
 /// `list.len` of r itself, or at_most one of r's length values.
 fn (pr: Proof) bound_at_most(f: ssa.Func, n: Int, r: Int, at: Int) -> Bool {
@@ -629,16 +702,17 @@ fn (pr: Proof) bound_at_most(f: ssa.Func, n: Int, r: Int, at: Int) -> Bool {
   false
 }
 
-/// Whether value v is `list.len(xs)` with xs of the container root r.
+/// Whether value v is `list.len(xs)` (or `Str.len`) with xs of the
+/// container root r.
 fn (pr: Proof) len_is(f: ssa.Func, v: Int, r: Int) -> Bool {
   let x = f.values[v]
-  x.op == ssa.Op.Call && x.args.len() == 1 && aux_str(x.aux) == "list.len" && len_root(f, x.args[0], [], FIELD_DEPTH) == r
+  x.op == ssa.Op.Call && x.args.len() == 1 && (aux_str(x.aux) is "list.len" | "Str.len") && len_root(f, x.args[0], [], FIELD_DEPTH) == r
 }
 
 /// The container root of value v when v is a `list.len`, else -1.
 fn len_value_root(f: ssa.Func, v: Int) -> Int {
   let x = f.values[v]
-  if x.op != ssa.Op.Call || x.args.len() != 1 || aux_str(x.aux) != "list.len" {
+  if x.op != ssa.Op.Call || x.args.len() != 1 || !(aux_str(x.aux) is "list.len" | "Str.len") {
     return -1
   }
   len_root(f, x.args[0], [], FIELD_DEPTH)
@@ -677,6 +751,16 @@ fn (pr: Proof) at_most(f: ssa.Func, v: Int, n: Int, at: Int, seen: List[Int], d:
     }
   }
   let x = f.values[v]
+  // w - k for a constant k >= 0 is at most w when the subtraction cannot
+  // wrap: checked (it has a position, so an overflow faults) or w never
+  // negative (a loop's `n -= 1` back edge)
+  if x.op == ssa.Op.Sub && x.args.len() == 2 {
+    let kv = f.values[x.args[1]]
+    if kv.op == ssa.Op.Const && aux_int(kv.aux) >= 0 && (ssa.has_pos(x.lp) || pr.nonneg(f, x.args[0], [], FIELD_DEPTH)) {
+      return pr.at_most(f, x.args[0], n, at, seen, d - 1)
+    }
+    return false
+  }
   if x.op != ssa.Op.Param || ssa.block_of(x.tb) <= 0 {
     return false
   }
