@@ -53,3 +53,10 @@ fn marshal(r: Registry, name: Str, wire: Bytes, o: Opts = Opts{}) -> Str ! JsonE
 /// The wire bytes (fields in field number order, maps in key order: Go's Deterministic marshaling) of the JSON
 /// text as message `name`.
 fn unmarshal(r: Registry, name: Str, json: Str, o: Opts = Opts{}) -> Bytes ! JsonErr
+/// The wire bytes of message `name` as protobuf-go writes it after parsing `wire` (proto.Unmarshal then
+/// proto.Marshal on a dynamic message): the known fields in canonical form (field number order, repeated numbers
+/// packed in proto3, maps in key order), then the message's own unknown fields (a number the descriptor lacks, or a
+/// wire type it does not take) as they were on the wire. An invalid message, or one missing a proto2 required
+/// field, is an error. The known fields go through the JSON mapping, so the result is exact only
+/// for a message that mapping carries without loss, and unknown fields inside nested messages are not kept.
+fn normalize(r: Registry, name: Str, wire: Bytes) -> Bytes ! JsonErr

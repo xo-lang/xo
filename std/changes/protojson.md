@@ -1,5 +1,24 @@
 # std/protojson changes
 
+## 2026-11-08: feature: normalize keeps a message's unknown fields; fix: a wrong wire type no longer decides a oneof
+
+- Kind: feature
+- Commit: this push
+- Found by: the protobuf conformance runner's two listed failures (UnknownVarint and UnknownOrdering, protobuf to protobuf), test/protoconf
+- Go reference: google.golang.org/protobuf v1.36.12 (proto.Unmarshal then proto.Marshal on a dynamicpb message)
+- Test: testdata/corpus/protojson NORMALIZE (random messages of the corpus schema, each alone, with an unknown field before, after and around its known fields, with a known field sent in the wrong wire type, truncated, and empty; Go's bytes or error), on arm64, LLVM and the Go backend
+- Timing: not applicable
+- Shipped in: not yet released
+
+`protojson.normalize(r, name, wire)` returns the bytes protobuf-go writes after parsing `wire`: the known fields in canonical form,
+then the message's own unknown fields (a number the descriptor lacks, or a wire type it does not take) as they were on the wire.
+It is built on `marshal` and `unmarshal`, so it is exact for a message the JSON mapping carries without loss (the corpus leaves
+out an Any with no type URL, for one), and unknown fields inside nested messages are not kept. The conformance testee can use it
+for protobuf to protobuf requests.
+
+The same work found a `marshal` bug: a oneof member that arrived with the wrong wire type counted as the member that was set
+last, so the real member was left out of the JSON; such a field is now unknown and does not displace it.
+
 ## 2026-11-08: fix: proto2 required fields are checked
 
 - Kind: fix

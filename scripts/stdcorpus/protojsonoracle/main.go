@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -506,6 +507,107 @@ func main() {
 		emitU(u.name, u.in)
 	}
 	o.WriteString("]\n\n")
+	// normalize: Go's proto.Unmarshal then proto.Marshal on a dynamic message, with unknown fields before, after
+	// and between the known ones, and a known field sent with the wrong wire type
+	o.WriteString("/// (message full name, wire hex in, wire hex of Go's proto.Unmarshal then Marshal, or the text `error`)\nconst NORMALIZE: List[(Str, Str, Str)] = [\n")
+	unk := func(k int) []byte {
+		var b []byte
+		switch k % 4 {
+		case 0:
+			b = protowire.AppendTag(b, protowire.Number(1000+k), protowire.VarintType)
+			b = protowire.AppendVarint(b, uint64(300+k))
+		case 1:
+			b = protowire.AppendTag(b, protowire.Number(1000+k), protowire.BytesType)
+			b = protowire.AppendBytes(b, []byte("unk"))
+		case 2:
+			b = protowire.AppendTag(b, protowire.Number(1000+k), protowire.Fixed32Type)
+			b = protowire.AppendFixed32(b, 0xdeadbeef)
+		default:
+			b = protowire.AppendTag(b, protowire.Number(1000+k), protowire.Fixed64Type)
+			b = protowire.AppendFixed64(b, 0x0123456789abcdef)
+		}
+		return b
+	}
+	jsonCarries := func(name string, in []byte) bool {
+		d, _ := files.FindDescriptorByName(protoreflect.FullName(name))
+		md := d.(protoreflect.MessageDescriptor)
+		m := dynamicpb.NewMessage(md)
+		if proto.Unmarshal(in, m) != nil {
+			return false
+		}
+		want, err := proto.MarshalOptions{Deterministic: true}.Marshal(m)
+		if err != nil {
+			return false
+		}
+		js, err := (protojson.MarshalOptions{Resolver: resolver}).Marshal(m)
+		if err != nil {
+			return false
+		}
+		m2 := dynamicpb.NewMessage(md)
+		if (protojson.UnmarshalOptions{Resolver: resolver}).Unmarshal(js, m2) != nil {
+			return false
+		}
+		got, err := proto.MarshalOptions{Deterministic: true}.Marshal(m2)
+		return err == nil && bytes.Equal(got, want)
+	}
+	emitN := func(name string, in []byte) {
+		d, _ := files.FindDescriptorByName(protoreflect.FullName(name))
+		m := dynamicpb.NewMessage(d.(protoreflect.MessageDescriptor))
+		res := "error"
+		if err := (proto.UnmarshalOptions{Resolver: resolver}).Unmarshal(in, m); err == nil {
+			b, err := proto.MarshalOptions{Deterministic: true}.Marshal(m)
+			if err != nil {
+				panic(err)
+			}
+			res = fmt.Sprintf("%x", b)
+		}
+		fmt.Fprintf(&o, "  (\"%s\", \"%x\", \"%s\"),\n", name, in, res)
+	}
+	for i := 0; i < 300; i++ {
+		name := names[g.r.Intn(len(names))]
+		d, _ := files.FindDescriptorByName(protoreflect.FullName(name))
+		md := d.(protoreflect.MessageDescriptor)
+		m := g.msg(md, 0)
+		wire, err := proto.MarshalOptions{Deterministic: true}.Marshal(m.Interface())
+		if err != nil {
+			continue
+		}
+		// normalize goes through the JSON mapping for the known fields, so it is exact only for a message that
+		// mapping carries without loss (an Any with no type URL, for one, is not): leave the others out
+		if !jsonCarries(name, wire) {
+			continue
+		}
+		// normalize goes through the JSON mapping for the known fields, so it is exact only for a message that
+		// mapping carries without loss (an Any with no type URL, for one, is not): leave the others out
+		if !jsonCarries(name, wire) {
+			continue
+		}
+		u := unk(i)
+		emitN(name, wire)
+		emitN(name, append(append([]byte{}, wire...), u...))
+		emitN(name, append(append([]byte{}, u...), wire...))
+		emitN(name, append(append(append([]byte{}, u...), wire...), unk(i+1)...))
+		// a known field with the wrong wire type is unknown
+		if md.Fields().Len() > 0 {
+			f0 := md.Fields().Get(g.r.Intn(md.Fields().Len()))
+			var w []byte
+			if f0.Kind() == protoreflect.StringKind || f0.Kind() == protoreflect.BytesKind || f0.Kind() == protoreflect.MessageKind {
+				w = protowire.AppendTag(w, protowire.Number(f0.Number()), protowire.VarintType)
+				w = protowire.AppendVarint(w, 7)
+			} else {
+				w = protowire.AppendTag(w, protowire.Number(f0.Number()), protowire.BytesType)
+				w = protowire.AppendBytes(w, []byte("xy"))
+			}
+			emitN(name, append(append([]byte{}, wire...), w...))
+		}
+		if len(wire) > 1 && i%5 == 0 {
+			emitN(name, wire[:len(wire)-1])
+		}
+	}
+	emitN("pjt.Scalars", nil)
+	emitN("pjt.Scalars", unk(0))
+	emitN("pjt.Scalars", []byte{0x08})
+	o.WriteString("]\n\n")
 	// proto2 messages with required fields: the wire is made with AllowPartial, so a missing required field is
 	// on the wire as such; Go's protojson.Marshal either writes the JSON or errors
 	o.WriteString("/// (message full name, wire hex, Go's protojson output compacted, or the text `error` for a missing required field)\nconst MARSHAL2: List[(Str, Str, Str)] = [\n")
@@ -621,6 +723,19 @@ test "marshal of proto2 required fields equals Go's protojson, a missing one an 
     }
     if got != want {
       expect("${name} ${wire}: ${got}") == "${name} ${wire}: ${want}"
+    }
+  }
+}
+
+test "normalize equals Go's proto.Unmarshal then Marshal, unknown fields kept" {
+  let r = registry()
+  for (name, input, want) in NORMALIZE {
+    let got = match protojson.normalize(r, name, unhex(input)) {
+      Ok(b) => hex(b)
+      Err(_) => "error"
+    }
+    if got != want {
+      expect("${name} ${input}: ${got}") == "${name} ${input}: ${want}"
     }
   }
 }

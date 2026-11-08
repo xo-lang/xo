@@ -206,6 +206,43 @@ fn marshal(r: protojson.Registry, name: Str, wire: Bytes, o: protojson.Opts) -> 
   }
 }
 
+/// Whether the wire field f is one the descriptor of info takes (a number it has, with the wire type its kind is
+/// written with, or length delimited for a packed repeated number); anything else is an unknown field.
+fn is_known_field(info: protojson.MsgInfo, f: pd.Fld) -> Bool {
+  for fd in info.d.field {
+    if fd.number != f.num {
+      continue
+    }
+    let k = fd.kind
+    if f.wire == wire_of(k) {
+      return true
+    }
+    if k == protodesc.TYPE_GROUP && f.wire == 3 {
+      return true
+    }
+    if fd.label == protodesc.LABEL_REPEATED && is_numeric_kind(k) && f.wire == 2 {
+      return true
+    }
+    return false
+  }
+  false
+}
+
+fn normalize(r: protojson.Registry, name: Str, wire: Bytes) -> Bytes ! protojson.JsonErr {
+  let o = protojson.Opts{proto_names: false, emit_defaults: false, enum_numbers: false, discard_unknown: false}
+  let info = lookup(r, name)?
+  let json = marshal(r, name, wire, o)?
+  let known = unmarshal(r, name, json, o)?
+  var out = BytesBuilder.new()
+  out.write(known)
+  for f in walk_(wire)? {
+    if !is_known_field(info, f) {
+      out.write(f.raw)
+    }
+  }
+  Ok(out.freeze())
+}
+
 fn lookup(r: protojson.Registry, type_name: Str) -> protojson.MsgInfo ! protojson.JsonErr {
   let n = if type_name.starts_with(".") { type_name[1..type_name.len()] } else { type_name }
   match r.msgs.get(n) {
@@ -231,6 +268,10 @@ fn msg_json(r: protojson.Registry, info: protojson.MsgInfo, wire: Bytes, o: prot
   // the member of each oneof that was set last on the wire wins
   var win: Map[Int, Int] = {}
   for f in fl {
+    if !is_known_field(info, f) {
+      // a member with the wrong wire type is an unknown field: it does not displace the oneof's member
+      continue
+    }
     for fd in info.d.field {
       if fd.number == f.num {
         match fd.oneof_index {
