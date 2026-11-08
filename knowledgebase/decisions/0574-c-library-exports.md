@@ -365,13 +365,24 @@ accepted; 2026-11-08):
   the process's arguments and environment. Shared libraries skip the
   check (the loader runs a dependency's constructor first; the check
   cost 0.2 to 0.3 ns a call on the Mac).
-- Open: one TestCLibThreadExit run failed at its `xo build --lib=shared`
-  (exit 1) on 2026-11-08, the first run with a newly built xo; its error
-  text was lost to a log filter. About 400 later builds did not repeat
-  it: warm, 8 concurrent identical builds, cold caches (a fresh HOME),
-  and 10 cold full runs. Untested candidate: a shared backend cache entry
-  evicted mid-build by another session's prune. The tests now put xo's
-  last output lines on the failure line, so a repeat shows its cause.
+- Handles: a parameter or result of any type but `Bool` and function
+  types crosses as an `XoHandle` (`typedef uint64_t XoHandle`), a slot
+  of the library's table (std/native/llrt/clibh.xo) holding the value as
+  an `rt.Any` with one count, under a lock, with the slot's generation in
+  the handle's high bits: `xo_release(h)` drops it, and a released or
+  forged handle, or one holding another type, faults. A result is shared
+  before it is kept (any C thread may use it). cmd/xo TestCLibHandles;
+  8 C threads making, reading and releasing 320,000 handles: no wrong
+  result, max RSS flat at about 3 MB. A call through a handle costs 12.4
+  ns on the Mac (28 ns before `rt.any_get` read the Any's value in place
+  instead of copying it); the rest is the lock and the shared count.
+- The TestCLibThreadExit build failure of 2026-11-08 (exit 1): found.
+  Separate compilation linked a library against std's cached program
+  variant, which lacks the runtime's library entries; the first library
+  build missed the cache and started that variant's build in the
+  background, and a later one linked against it. A library is now always
+  built whole, and the front end cache's key has the library mode
+  (gotchas/clib-sepcomp-variant-link.md).
 
 ## Alternatives
 
