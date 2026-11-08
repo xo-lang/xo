@@ -680,6 +680,8 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   different modules do not conflict there; the -short `TestStdGenCurrent`
   fails until it is run. Never edit those files by hand, and resolve a
   conflict in one by regenerating.
+- `heavy.sh NAME CMD...` prints the last 20 lines of NAME-cmd.log (they end with `=== ... exit N`) to stdout when the job ends and exits with the job's status; `HEAVY_QUIET=1` keeps the old silence (lead, 2026-11-08: a call piped through `tail` showed nothing and a failed check read as passed). Read a result from the `exit N` line, never from a piped `$?`.
+- `tier.sh`: a linux offload step (llvm, cmd) that finds no slot in 20 minutes is retried once at the end with OFF_WAIT_MIN=45 and reported `SKIPPED after retry` only if that finds none either.
 - `scripts/gate.sh WORKTREE STEP...`: an agent's gate as named steps (its llvm step runs only the LLVM goldens the change touches, toolchain.md "A gate's goldens"). `codegen`, `selfbuild` and `wasm` (the words of PUSHQ_RAN) are accepted as steps and do nothing: gate.sh runs them by itself when the changed paths need them, and prints the PUSHQ_RAN line.
 - `scripts/bisect.sh [--pkg=PKG] [--timeout=D] [--keep] [--skip-verify]
   TEST GOOD BAD`:
