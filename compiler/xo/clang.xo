@@ -206,9 +206,25 @@ fn odd_backslashes(s: Str) -> Bool {
 
 /// withTargetAttrs: attrs added to the attribute groups of the
 /// generated function definitions (the first of each).
-fn with_target_attrs(ir: Str, attrs: Str) -> Str {
+fn with_target_attrs(ir: Str, attrs: Str, every: Bool = false) -> Str {
   if attrs.is_empty() {
     return ir
+  }
+  if every {
+    // riscv64 (decision 0571): every attribute group, since the triple's
+    // own default is RV64I (no M, A, F or D: an LTO build called
+    // __muldi3, __adddf3 and __atomic_load_8 and ignored the lp64d ABI,
+    // host 2, 2026-11-08), where arm64's and x86_64's defaults serve the
+    // groups #1 and #4 leave alone
+    var out: List[Str] = []
+    for l in ir.split("\n") {
+      if l.starts_with("attributes #") && l.ends_with(" }") {
+        out.push("${l.trim_suffix(" }")} ${attrs} }")
+      } else {
+        out.push(l)
+      }
+    }
+    return out.join("\n")
   }
   var s = ir
   for g in ["attributes #1 = { uwtable", "attributes #4 = { nounwind alwaysinline"] {

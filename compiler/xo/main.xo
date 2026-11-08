@@ -1439,7 +1439,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // with no C library, no libgcc: arm64 atomics call the outline helpers
     // the link writes (nolibc_atomics), which dispatch on xo_lse
     let attr_flags = if nolibc(os, o, c, lctx.tgoos) && tgoarch == "arm64" { cross + ["-moutline-atomics"] } else { cross }
-    let code = with_target_attrs(ir, clang_target_attrs(os, cc, attr_flags))
+    let code = with_target_attrs(ir, clang_target_attrs(os, cc, attr_flags), tgoarch == "riscv64")
     if o.cmd == "asm" {
       os.stdio.print(code)
       lap(os, phases, "print", t)
