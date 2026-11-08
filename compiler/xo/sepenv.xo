@@ -119,7 +119,7 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
 /// variables, and XO_LLRT_C and XO_STD_CONC): std's variants are
 /// built without them (stdcache.xo clears them), so a build that sets
 /// one compiles the whole program.
-const STD_CODE_ENV = ["XO_ARM64_FN_ALIGN", "XO_ARM64_PAD", "XO_ARM64_REGS", "XO_ASYNC_PREEMPT", "XO_HEAP_GUARD", "XO_INLINE_DENY", "XO_LOWER", "XO_MAP_LOG", "XO_NATIVE_RACE", "XO_NOLIBC", "XO_POISON_FRAMES", "XO_PREEMPT_POLLS", "XO_LLRT_C", "XO_STD_CONC"]
+const STD_CODE_ENV = ["XO_ARM64_FN_ALIGN", "XO_ARM64_PAD", "XO_ARM64_REGS", "XO_ASYNC_PREEMPT", "XO_FIELD_VIEW", "XO_HEAP_GUARD", "XO_INLINE_DENY", "XO_LOWER", "XO_MAP_LOG", "XO_NATIVE_RACE", "XO_NOLIBC", "XO_POISON_FRAMES", "XO_PREEMPT_POLLS", "XO_LLRT_C", "XO_STD_CONC"]
 
 /// Whether this build compiles std's functions to other code than its
 /// variants hold, which are built with the default settings: a variable
