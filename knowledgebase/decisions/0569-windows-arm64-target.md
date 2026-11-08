@@ -1,4 +1,329 @@
-# 0569: windows/arm64 as a target
+# 0569: windows/arm64 as a native target
 
-Status: Proposed (Xo Lang 2, 2026-11-08; stub, being written). The owner
-approved windows/arm64 as a new target on 2026-11-08, through the lead.
+Status: Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
+approved windows/arm64 as a new target on 2026-11-08, through the lead;
+this ADR is the plan. Stages 1 to 4 need no Windows machine and are
+verified by cross build. Running anything waits for the test host (a
+Windows 11 on Arm VM on the owner's coming Mac).
+
+## Context
+
+windows/arm64 is the one target of spec 12.1 that the native backends
+do not build:
+
+- `target_backend` (compiler/xo/main.xo:593) maps it to no backend, so
+  `--targets=all` leaves it out with a note and naming it is an error
+  (decision 0270's addendum).
+- The LLVM backend cross-builds it as `aarch64-pc-windows-msvc`
+  (decision 0197 stage 3; compiler/xo/clang.xo:108).
+  scripts/lead/windows-batch.sh builds the LLVM goldens for it, but none
+  has ever run ("not run: no host").
+
+Windows on Arm PCs (Snapdragon X and later) are now a large part of new
+Windows laptops. Go has had windows/arm64 since Go 1.17 (issue 36439).
+
+Most of what the target needs already exists for another target:
+
+| Part | Where it exists today | windows/arm64 |
+|---|---|---|
+| arm64 instruction selection, register allocation, frames, encoder | compiler/arm64 (darwin, linux) | reused; x18 is never allocated on any OS (regalloc.xo:17), which Windows requires |
+| PE/COFF linker, no C runtime, imports table, resources, manifest | compiler/macho pelink.xo, peimports.xo, peres.xo, llrt cabi_wincrt.xo (decision 0254 6b step 4) | reused; machine field, relocations and import thunks gain an arm64 form |
+| COFF object writer | compiler/macho coff.xo (x86 only: 0x8664, AMD64 relocations, x64 UNWIND_INFO) | new arm64 path |
+| Runtime Windows layer: file I/O, IOCP, threads, processes, errno | std/native sys_windows.xo, llrt windows.xo (no architecture references) | reused as is |
+| Windows arm64 fiber frame with the TEB stack fields | llrt sched.xo:199-210 (from the LLVM path) | reused |
+| Windows arm64 CONTEXT offsets for raising | llrt unwind.xo:1174-1196 (`WA_*`, from the LLVM path) | reused, extended |
+| Authenticode signing | scripts/sign-windows.sh (jsign, Azure Artifact Signing), verify-windows-sig.sh | machine neutral, reused |
+| `.syso` resources with an ARM64 machine | compiler/winres/coff.xo:14 (0xaa64) | reused |
+
+## What Windows on Arm64 asks of generated code
+
+Sources, retrieved 2026-11-08:
+
+- Microsoft's "Overview of ARM64 ABI conventions";
+- Microsoft's "ARM64 exception handling";
+- the PE format page (machine type and relocation types);
+- Go's runtime/sys_windows_arm64.s;
+- Go's race detector article.
+
+### Calling convention
+
+Non-variadic calls follow AAPCS64, the same as linux/arm64:
+
+- x0-x7 and v0-v7 carry arguments;
+- x8 holds the indirect result address;
+- x19-x28 and the low 64 bits of v8-v15 are callee saved.
+
+Xo's arm64 calls and the platform's are therefore the same convention.
+Unlike windows/amd64 (decision 0254 6b: Xo stays System V, and Win64
+appears only in generated thunks), arm64 needs no thunks for ordinary
+OS calls or callbacks. The differences:
+
+- **x18** holds the TEB pointer in user mode and must never be written.
+  Xo never allocates it; hand-written runtime assembly must not touch
+  it either (checked by stage 2's checker).
+- **Frame chain.** x29 must point at the caller's {fp, lr} pair, for ETW
+  and the stack walker. Xo's arm64 frames already chain this way on
+  darwin and linux.
+- **Variadic calls** pass every argument in x0-x7 and then on the
+  stack, floats and HFAs included; SIMD registers are not used. Linux
+  passes floats in v registers, and darwin passes variadic arguments on
+  the stack. This affects only `use c` adapters and the variadic C
+  calls cbind generates, a third case beside darwin's.
+- **No red zone.** Only 16 bytes below sp are reserved, and those are
+  for patching. Xo's arm64 code uses none (the survey found red-zone
+  code only in the x86 files); stage 2 keeps that true.
+- **Stack probes.** A frame of 4 KB or more touches its pages in order
+  (`__chkstk`, with x15 holding the size / 16). With no C runtime, Xo
+  supplies the probe in cabi_wincrt.xo, as `w64_chkstk` does for amd64
+  (x86win.xo:446).
+- SP alignment faults are always on, and FPCR's trap bits must stay 0.
+
+### Unwind data
+
+Every function that touches the stack needs a .pdata entry of 8 bytes:
+its start RVA, then a second word whose low two bits are a flag. Leaf
+functions with no frame and no saved registers have none.
+
+- **Flag 0:** an .xdata RVA. The .xdata holds:
+  - a header (function length / 4 in 18 bits, so at most 1 MB per
+    fragment);
+  - epilogue scopes;
+  - unwind codes that map 1:1 to the prologue and epilogue
+    instructions, so an exception mid-prologue or mid-epilogue still
+    unwinds.
+- **Flag 1:** packed. Usable when the function is under 8 KB, the frame
+  under 8 KB - 16, and the prologue and epilogue are canonical. The
+  fields are RegI (x19 upward), RegF (d8 upward), CR (the {fp, lr}
+  chain), H (homed arguments) and FrameSize.
+- **Flag 2:** a packed fragment with no prologue or epilogue.
+- **Flag 3:** a link record for a jump island.
+
+Functions over 1 MB split into fragments. Code generated at run time
+would register with RtlAddFunctionTable; Xo generates none.
+
+Xo's arm64 emitter writes `.cfi_*` directives (emit.xo:271-447,
+2079-2162). Mach-O turns them into compact unwind (compiler/macho
+cfi.xo), and ELF keeps eh_frame. Windows needs a third translation,
+from the same frame description to ARM64 unwind codes:
+
+- packed .pdata where the prologue is one of the canonical shapes;
+- otherwise .xdata.
+
+The emitter's prologue (`stp x29, x30, [sp, #-N]!`, `mov x29, sp`, then
+callee-saved pairs) maps to `save_fplr_x`, `set_fp`, `save_regp` and
+`save_fregp`. Where an Xo prologue has no unwind code (an order the
+codes cannot express), the Windows path emits the canonical order
+instead; stage 2 lists every such shape.
+
+Xo's own unwinder (decision 0221: faults, contracts and panics) reads
+the platform's tables on each OS. On Windows it already reads x64
+.pdata for amd64 (`win_walk`, unwind.xo:2251). An ARM64 reader of the
+same tables makes `xo debug`, profiles and crash traces work, and
+doubles as the checker.
+
+### Thread-local storage
+
+The static TLS sequence goes through x18:
+
+    ldr  x9, [x18, #0x58]          // TEB ThreadLocalStoragePointer
+    adrp x8, _tls_index
+    ldr  w8, [x8, :lo12:_tls_index]
+    ldr  x8, [x9, x8, lsl #3]
+    add  x8, x8, :secrel_hi12:var  // IMAGE_REL_ARM64_SECREL_HIGH12A
+    add  x8, x8, :secrel_lo12:var  // IMAGE_REL_ARM64_SECREL_LOW12A
+
+pelink already makes `_tls_index` and the TLS directory (pelink.xo:412,
+630-640, mostly machine neutral). The emitter's TLS sites in sched.xo
+(darwin's TLV descriptor at :129, ELF local-exec at :141) gain this
+third form.
+
+Go uses a TlsAlloc slot at TEB+0x1480 instead. Its bug #45138, the
+slot offset read from the wrong register, worked by luck and broke only
+on newer Windows. So the host runs the newest Windows 11 on Arm build,
+and a test reads a thread local from several threads.
+
+### COFF and PE
+
+- **Machine:** 0xAA64.
+- **Relocations** (PE format page):
+
+  | Type | Value |
+  |---|---|
+  | ADDR32NB | 0x2 |
+  | BRANCH26 | 0x3 |
+  | PAGEBASE_REL21 | 0x4 |
+  | PAGEOFFSET_12A | 0x6 |
+  | PAGEOFFSET_12L | 0x7 |
+  | SECREL | 0x8 |
+  | SECREL_LOW12A | 0x9 |
+  | SECREL_HIGH12A | 0xA |
+  | ADDR64 | 0xE |
+  | BRANCH19 | 0xF |
+  | BRANCH14 | 0x10 |
+
+- **Import thunks:** `adrp x16, __imp_f; ldr x16, [x16, :lo12:__imp_f];
+  br x16`, in place of amd64's `jmp *IAT(%rip)` (pelink.xo:446).
+- **Range thunks:** BRANCH26 reaches ±128 MB, so pelink needs them only
+  past that. xo itself is 84 MB on darwin/arm64, so the limit is
+  checked, not assumed.
+- Base relocations stay DIR64, the image base stays 0x140000000, and
+  the image stays PE32+.
+
+## Decision
+
+Build windows/arm64 on the arm64 backend in reviewable stages, each
+verified by cross build until the host exists:
+
+1. **Driver and assembly, objects from clang.** Steps:
+   - `target_backend` maps windows/arm64 to arm64;
+   - the emitter gets a Windows branch, wherever it now branches on
+     darwin or linux:
+     - COFF symbol and label names;
+     - `:lo12:`-style page addressing;
+     - `.rdata` and the other sections (gen.xo:360 already has the
+       branch);
+     - weak references through `/alternatename`, as amd64 does;
+     - the TLS sequence above;
+     - variadic C calls;
+   - the emitter writes `.seh_*` directives beside its CFI.
+
+   Objects come from `clang -target aarch64-windows-msvc`: Apple's clang
+   assembles ARM64 COFF with SEH directives, checked 2026-11-08 on a
+   test function with `.seh_save_fplr_x`, `.seh_save_reg` and
+   `.seh_set_fp`. pelink gains the arm64 machine, relocations and
+   import thunks, so the first images already link with no C runtime
+   and no SDK, as windows/amd64 does by default. This is unlike amd64's
+   step 1, which used lld-link first.
+2. **The unwind checker.** Extend `xo dev debug --unwind-check`
+   (compiler/debug/winunwind.xo, x64 only today) to ARM64 images. It:
+   - decodes every .pdata and .xdata entry, packed and unpacked;
+   - checks that each covers a whole function, with no overlaps, in
+     order;
+   - checks that the prologue and epilogue instructions match the
+     codes 1:1, decoding the image's own prologue and epilogue bytes
+     with a small decoder of the instruction forms they use (stp, ldp,
+     str, ldr, add, sub, mov). compiler/debug has no arm64 disassembler
+     today;
+   - checks that no function writes x18 and none stores below sp.
+
+   It runs on every golden's image in the gate. The same reader goes
+   into llrt's unwinder for faults, crash traces and `xo debug`, beside
+   the x64 `win_walk`. The ARM64 CONTEXT layout replaces the x64
+   constants in unwind.xo, crash.xo, dbgwin.xo and prof.xo by target:
+   X0 at 8, Fp 0xF0, Lr 0xF8, Sp 0x100, Pc 0x108, V at 0x110, 912
+   bytes, as unwind.xo's `WA_*` constants already have them. The
+   ContextFlags value comes from winnt.h's ARM64_NT_CONTEXT, and every
+   offset is checked against that header.
+3. **Xo's own COFF writer for arm64.** compiler/macho coff.xo gains an
+   arm64 path that reuses the arm64 assembler front end and encoder of
+   the Mach-O and ELF writers, writing ARM64 relocations and .xdata.
+   Its objects must be byte identical to clang's on every golden, as
+   the amd64 COFF writer's are to llvm-mc's (scripts/coff-compare.sh,
+   199 of 199 on 2026-10-19). Then no clang is needed: windows/arm64
+   cross-builds from any host with xo alone.
+4. **Release and seed plumbing,** behind `XO_RELEASE_WINDOWS_ARM64=1`
+   until the host passes:
+   - release.sh gains a sixth default archive, the windows/arm64 one
+     (today: darwin/arm64, darwin/amd64, linux/arm64, linux/amd64 and
+     windows/amd64; wasip1/wasm only with XO_RELEASE_WASI=1);
+   - SHA256SUMS, the signing step (release.sh:492) and the layout
+     lines that name windows-amd64 cover it;
+   - seed-cut.sh's platform loop (:276) builds a windows/arm64 seed
+     only once a host would build xo itself, which the test host does
+     not need, since it runs cross-built goldens;
+   - `--targets=all` includes windows/arm64, and spec 12.1's note is
+     removed. Stage 6 only.
+5. **On the host (waits for it),** in order:
+   - the Windows golden subset (scripts/wine-goldens-subset.txt: OS
+     calls, fs, net, threads, TLS, faults and unwinding, callbacks,
+     processes), then every golden. The LLVM build of the same goldens
+     is the reference;
+   - `xo test` of std's Windows modules;
+   - a fault in a thread, a panic through a callback, and IOCP under
+     load;
+   - xo itself cross-built for windows/arm64, running `xo build` there;
+   - one signed hello and http_server (billed, so the owner approves
+     them).
+6. **Default and release.** The owner decides whether the archive
+   ships, after stage 5 passes on the host and on one real Windows on
+   Arm machine, if the owner has one.
+
+**Race runtime: not in this plan.** Go's race detector does not
+support windows/arm64: windows/amd64 is its only Windows pair (go.dev
+race detector article, 2026-11-08). Xo's windows/amd64 runtime is TSan's
+Go flavor built with MinGW-w64 in Docker (scripts/race-runtime.sh,
+race-windows.cpp). ThreadSanitizer has no upstream windows/aarch64
+platform. `--race` for windows/arm64 stays the existing error for a
+target with no runtime in lib/xo/race (ld.xo:274 `race_files`). A port
+(llvm-mingw's aarch64 toolchain and the Go-flavor sources) is a later
+ADR, with its own measurement.
+
+**Not in scope:**
+- ARM64EC and ARM64X (x64 emulation interop);
+- PAC (`pacibsp`; unwind code `pac_sign_lr`);
+- SVE state.
+
+Windows does not require them for a normal arm64 process.
+
+## Test host
+
+A Windows 11 on Arm VM on the owner's coming Mac (Parallels or UTM),
+reached and scripted like ~/xo-lead/offload-win.env (OFF_KIND=win). It
+is for pass/fail runs only, never timing, since a VM on a busy Mac
+measures nothing. Setup notes and a script come when the Mac exists,
+with the VM's address and credentials kept out of tracked files, as for
+the amd64 Windows host.
+
+Until then:
+- every stage is verified by cross build: images link, the unwind
+  checker passes on every golden, the identity diff holds, and the
+  COFF writer matches clang;
+- every runtime claim is marked "waiting for the host" in this ADR and
+  in CHANGELOG entries;
+- the identity diff compares each golden's windows/arm64 code with its
+  linux/arm64 code: only symbol names, TLS, probe, variadic and unwind
+  sites may differ. It is a text test like internal/arm64
+  TestWindowsAmd64Identity.
+
+llvm-readobj (which decodes ARM64 unwind with `--unwind`) is not on the
+Mac, and Apple's llvm-objdump decodes AMD64 unwind only. The checker of
+stage 2 is Xo's own. llvm-readobj on an offload host is the second
+opinion, cross-checked once per stage.
+
+## Consequences
+
+- Every target of spec 12.1 gets a native backend. `--targets=all`
+  means the same with and without `--backend`, and 0270's note goes
+  away.
+- The arm64 emitter gets a third OS. The Windows sites are mostly
+  where darwin and linux already differ (symbol and label names,
+  addressing, sections, TLS, unwind), so the change is breadth, not a
+  new convention.
+- No SysV/Win64-style boundary layer: arm64's convention is the
+  platform's, so x86win.xo has no arm64 counterpart beyond the stack
+  probe and the variadic case.
+- pelink and coff.xo become two-architecture. Their tests run both
+  machines.
+- The release grows a sixth archive and the signing step a second
+  Windows executable, once stage 6 is decided.
+- The fault and debug paths (unwind.xo, crash.xo, dbgwin.xo, prof.xo)
+  stop assuming x64 on Windows.
+
+## Alternatives
+
+- **Keep windows/arm64 on the LLVM backend only.** That needs clang and
+  the Windows SDK sysroot for every build. It is the configuration that
+  0254 6b step 4 removed for amd64, and it is still untested on
+  hardware. Rejected as the end state; the LLVM build stays the
+  reference while the native one is checked.
+- **lld-link first, Xo's linker later,** as amd64 did. On arm64 the
+  import, TLS and relocation work in pelink is small against stage 1,
+  and lld-link would bring back the SDK dependency. Linking with
+  pelink from the start avoids a step that would be deleted.
+- **Hand-written .xdata only,** with no packed form. It is simpler, but
+  it costs 8 to 16 bytes per function more than packed .pdata, for
+  thousands of functions in xo. The checker handles both forms either
+  way.
+- **Wait for the host before any work.** Stages 1 to 4 are verifiable
+  without it, and the host arrives with the Mac. Working now means the
+  first host run tests finished code.
