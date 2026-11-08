@@ -114,6 +114,14 @@ Lean showed most values never leave their thread.
 - A thread's heap is never freed or handed to another thread; a program
   that starts and ends many threads keeps their free lists. A future
   task runtime with a thread pool reuses heaps per worker.
+- The shared release stays acq_rel (measured 2026-11-08, Xo Lang 1,
+  local branch lang1-rcrel, flag XO_RC_REL): a release-only decrement
+  with an acquire fence (`dmb ishld`) only when the count reaches zero,
+  as Rust's Arc and libc++'s shared_ptr do, measured worse on
+  linux/arm64 host 1 (`xo bench --ab` with the flag on by default:
+  bench/perf metrics counter 1.009, histogram 1.026). The extra compare
+  and branch cost more than the acquire half of `ldaddal` or `stlxr`
+  saved on the Neoverse cores there.
 
 ## Alternatives
 - **Atomic counts everywhere** (Swift): simplest, but every retain and
