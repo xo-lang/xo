@@ -14,11 +14,11 @@ fn encode_str[T: Json](v: T) -> Str { rtjson.json_enc("", v) }
 fn decode[T: Json](data: Bytes) -> T ! json.DecodeErr {
   let tape = jsontext.parse(data)
   if tape.is_empty() {
-    return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(data)}"})
+    return Err(syntax_failed(data))
   }
   match rtjson.json_dec[T](data, tape, 0) {
     Ok(v) => Ok(v)
-    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg})
+    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg, go: ""})
   }
 }
 
@@ -26,6 +26,23 @@ fn decode_str[T: Json](s: Str) -> T ! json.DecodeErr { decode(s.bytes()) }
 
 /// "at $.user.email: expected string" (std.md 5).
 fn decodeerr_display(e: json.DecodeErr) -> Str { "at ${e.path}: ${e.msg}" }
+
+/// encoding/json's text of a syntax error (decision 0553): e.go where the
+/// site recorded it, else msg without "invalid JSON: ".
+fn decodeerr_go_text(e: json.DecodeErr) -> Str {
+  if !e.go.is_empty() {
+    return e.go
+  }
+  if e.msg.starts_with("invalid JSON: ") {
+    return e.msg[14..]
+  }
+  e.msg
+}
+
+/// The DecodeErr of a text that is not JSON, with Go's text.
+fn syntax_failed(src: Bytes) -> json.DecodeErr {
+  json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(src)}", go: jsontext.go_err(src)}
+}
 
 fn patch_apply_to[T](p: json.Patch[T], current: T) -> T {
   match p {
@@ -139,14 +156,14 @@ fn parse_value(text: Str) -> json.Value ! json.DecodeErr { parse_bytes(text.byte
 fn parse_bytes(src: Bytes) -> json.Value ! json.DecodeErr {
   let tape = jsontext.parse(src)
   if tape.is_empty() {
-    return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(src)}"})
+    return Err(syntax_failed(src))
   }
   match value_at(src, tape, 0) {
     Some(v) => Ok(v)
     None => {
       // Go's wording (encoding/json's UnmarshalTypeError), Xo's type
       let (p, at) = bad_path(src, tape, 0) ?? ("", 0)
-      Err(json.DecodeErr{path: "$" + p, msg: jsontext.range_msg(src, tape, at, "Float")})
+      Err(json.DecodeErr{path: "$" + p, msg: jsontext.range_msg(src, tape, at, "Float"), go: ""})
     }
   }
 }
@@ -246,7 +263,7 @@ fn walk_text(text: Str, prefix: Str, indent: Str, pretty: Bool) -> Str ! json.De
   let src = text.bytes()
   let tape = jsontext.parse(src)
   if tape.is_empty() {
-    return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(src)}"})
+    return Err(syntax_failed(src))
   }
   var out = BytesBuilder.new()
   write_node(src, tape, 0, prefix, indent, 0, pretty, out)
@@ -490,7 +507,7 @@ fn value_end(b: Bytes, i: Int) -> Int {
   i + 1
 }
 
-fn stream_err(msg: Str) -> json.DecodeErr { json.DecodeErr{path: "$", msg: msg} }
+fn stream_err(msg: Str) -> json.DecodeErr { json.DecodeErr{path: "$", msg: msg, go: ""} }
 
 /// The values of d.buf; with last, an unfinished value is an error.
 fn (var d: Decoder) take(last: Bool) -> List[json.Value] ! json.DecodeErr {
@@ -565,7 +582,7 @@ fn from_value[T: Json](v: json.Value) -> T ! json.DecodeErr {
   value_tape(src, tape, v)
   match rtjson.json_dec[T](src.freeze(), tape, 0) {
     Ok(x) => Ok(x)
-    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg})
+    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg, go: ""})
   }
 }
 
@@ -1103,10 +1120,10 @@ fn (var w: JsonWriter) int(n: Int) {
 
 fn (var w: JsonWriter) float(f: Float) -> () ! json.DecodeErr {
   if f != f {
-    return Err(json.DecodeErr{path: "$", msg: "json: unsupported value: NaN"})
+    return Err(json.DecodeErr{path: "$", msg: "json: unsupported value: NaN", go: ""})
   }
   if f > 1.7976931348623157e308 || f < -1.7976931348623157e308 {
-    return Err(json.DecodeErr{path: "$", msg: "json: unsupported value: " + (if f > 0.0 { "+Inf" } else { "-Inf" })})
+    return Err(json.DecodeErr{path: "$", msg: "json: unsupported value: " + (if f > 0.0 { "+Inf" } else { "-Inf" }), go: ""})
   }
   w.begin_value()
   w.out.write_str(jsontext.append_float("", f))
@@ -1116,7 +1133,7 @@ fn (var w: JsonWriter) number(text: Str) -> () ! json.DecodeErr {
   let b = text.bytes()
   let n = b.len()
   if n == 0 || !(b[0] == 45 || digit(Int(b[0]))) || is_space(Int(b[n - 1])) || jsontext.parse(b).is_empty() {
-    return Err(json.DecodeErr{path: "$", msg: "json: invalid number literal " + "\"" + text + "\""})
+    return Err(json.DecodeErr{path: "$", msg: "json: invalid number literal " + "\"" + text + "\"", go: ""})
   }
   w.begin_value()
   w.out.write_str(text)

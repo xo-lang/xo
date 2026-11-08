@@ -3081,6 +3081,42 @@ test "parse_value accepts and rejects as Go's encoding/json, with its texts" {
   expect(bad[0..(if bad.len() < 30 { bad.len() } else { 30 })]) == []
 }
 
+test "DecodeErr.go_text is encoding/json's text of a syntax error (decision 0553)" {
+  let cases: List[(Str, Str)] = [
+    ("", "unexpected end of JSON input"),
+    ("{\"a\":", "unexpected end of JSON input"),
+    ("[1,2", "unexpected end of JSON input"),
+    ("\"abc", "unexpected end of JSON input"),
+    ("nul", "invalid character ' ' in literal null (expecting 'l')"),
+    ("tru", "invalid character ' ' in literal true (expecting 'e')"),
+    ("[1.", "invalid character ' ' after decimal point in numeric literal"),
+    ("1e", "invalid character ' ' in exponent of numeric literal"),
+    ("-", "invalid character ' ' in numeric literal"),
+    ("}", "invalid character '}' looking for beginning of value"),
+    ("[1 2]", "invalid character '2' after array element"),
+    ("{} x", "invalid character 'x' after top-level value"),
+  ]
+  var bad: List[(Str, Str)] = []
+  for (text, want) in cases {
+    let got = match json.parse_value(text) {
+      Ok(_) => "ok"
+      Err(e) => e.go_text()
+    }
+    if got != want {
+      bad.push((text, got))
+    }
+  }
+  expect(bad) == []
+  match json.decode_str[Int]("tru") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.go_text()) == "invalid character ' ' in literal true (expecting 'e')"
+  }
+  match json.decode_str[Int]("\"x\"") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.go_text()) == e.msg
+  }
+}
+
 test "Value.Trusted (decision 0408): encoded as the plain string, never parsed, a Str to get" {
   let v = json.Value.Object(fields: [("a", json.Value.Trusted(kind: "html", s: "<b>&</b>")), ("b", json.Value.Str(s: "y"))])
   expect(v.encode()) == "{\"a\":\"<b>&</b>\",\"b\":\"y\"}"

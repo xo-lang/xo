@@ -472,6 +472,25 @@ pub fn parse_err(src: Bytes) -> Str {
   err_text(err)
 }
 
+/// encoding/json's SyntaxError text for src, which Go's Unmarshal builds
+/// by scanning src and then one space: a text that ends inside a literal
+/// or a number names it (`in literal null (expecting 'l')`), any other
+/// truncation is "unexpected end of JSON input".
+pub fn go_err(src: Bytes) -> Str {
+  let (_, err) = scan(src)
+  if err != E_UEOF && err != E_EOF {
+    return err_text(err)
+  }
+  var b = BytesBuilder.new()
+  b.write(src)
+  b.write_byte(32)
+  let (_, e2) = scan(b.freeze())
+  if e2 == 0 || e2 == E_UEOF || e2 == E_EOF {
+    return "unexpected end of JSON input"
+  }
+  err_text(e2)
+}
+
 /// The text of an error of scan.
 fn err_text(e: Int) -> Str {
   if e == 0 {

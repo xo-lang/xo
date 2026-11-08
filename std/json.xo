@@ -22,7 +22,15 @@ fn decode_str[T: Json](s: Str) -> T ! DecodeErr
 struct DecodeErr {
   path: Str
   msg: Str
+  go: Str = ""
 } derive Display
+
+/// encoding/json's text for a syntax error (decision 0553): the text of
+/// Go's SyntaxError, `unexpected end of JSON input` for a truncated text
+/// and `invalid character ' ' in literal null (expecting 'l')` where the
+/// text ends inside a literal or number; a stream's `unexpected EOF`
+/// stays; any other error returns its msg.
+fn (e: DecodeErr) go_text() -> Str
 
 fn (p: Patch[T]) apply_to(current: T) -> T
 fn (p: Patch[T]) apply_opt(current: T?) -> T?
