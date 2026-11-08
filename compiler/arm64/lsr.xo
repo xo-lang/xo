@@ -761,6 +761,9 @@ fn copy_runs(text: Str) -> Str { copy_runs_l(text.split("\n")).join("\n") }
 /// goes, a change here is made in its port too, or XO_OP_VERIFY=1 builds
 /// fail (gotchas/arm64-line-pass-port-drift.md).
 fn copy_runs_l(lines: List[Str]) -> List[Str] {
+  // scratch_dead_m's memos, made at the first copy run
+  var m16: List[Int] = []
+  var m17: List[Int] = []
   if !any_has(lines, "\tstr x16, [") && !any_has(lines, "\tstr x17, [") {
     return lines
   }
@@ -817,7 +820,7 @@ fn copy_runs_l(lines: List[Str]) -> List[Str] {
         e = d + 1
         k += 1
       }
-      let ok = k >= 4 && scratch_dead(lines, e, "16") && scratch_dead(lines, e, "17")
+      let ok = k >= 4 && scratch_dead_m(lines, e, "16", m16) && scratch_dead_m(lines, e, "17", m17)
       let code = if ok { copy_block(r, ab, ao, bb, bo, k) } else { [] }
       if code.is_empty() {
         for l in lines[i..e] {
@@ -968,67 +971,115 @@ fn scratch_dead(lines: List[Str], i: Int, r: Str) -> Bool {
   let wr = "w${r}"
   var j = i
   while j < lines.len() {
-    let l = lines[j]
+    let v = sd_line(lines[j], xr, wr)
+    if v != SD_PASS {
+      return v == SD_DEAD
+    }
     j += 1
-    if l.is_empty() || l.starts_with("\t.") || l.starts_with("//") {
-      continue
-    }
-    if !l.starts_with("\t") {
-      let name = label_def(l)
-      if !name.is_empty() && is_row_label(name) {
-        continue
-      }
-      return !is_digits(l[0..1])
-    }
-    let body = l[1..l.len()]
-    let sp = body.find(" ") ?? body.len()
-    let op = body[0..sp]
-    let ops = if sp < body.len() { body[sp + 1..body.len()] } else { "" }
-    let named = ops.contains(xr) || ops.contains(wr)
-    let toks = if named { reg_tokens(ops) } else { [] }
-    var at = -1
-    var t = 0
-    while t < toks.len() {
-      if toks[t] == xr || toks[t] == wr {
-        at = t
-        break
-      }
-      t += 1
-    }
-    if at < 0 {
-      if op == "ret" || op == "bl" || op == "b" {
-        if op == "b" && is_digits(ops[0..1]) {
-          return false
-        }
-        return true
-      }
-      if op.starts_with("b.") || op is "cbz" | "cbnz" | "tbz" | "tbnz" {
-        let tgt = last_operand(ops)
-        if !tgt.is_empty() && is_digits(tgt[0..1]) {
-          return false // a local label of the same instruction's code
-        }
-      }
-      if op is "br" | "blr" | "svc" {
-        return true
-      }
-      continue
-    }
-    if op.starts_with("ld") && !op.starts_with("ldx") && !op.starts_with("lda") {
-      // a load writes the registers before its address and reads those in it
-      let br = ops.find("[") ?? ops.len()
-      let dst = reg_tokens(ops[0..br])
-      if dst.contains(xr) || dst.contains(wr) {
-        return !reg_tokens(ops[br..ops.len()]).contains(xr)
-      }
-      return false
-    }
-    if op is "mov" | "movz" | "movn" | "adr" | "adrp" | "add" | "sub" | "and" | "orr" | "eor" | "lsl" | "lsr" | "asr" | "mul" | "madd" | "msub" | "csel" | "csinc" | "neg" | "mvn" | "ubfx" | "sbfx" | "sxtw" | "uxtw" | "fmov" {
-      // a computation: its first operand is its result
-      return at == 0 && !toks[1..toks.len()].contains(xr) && !toks[1..toks.len()].contains(wr)
-    }
-    return false
   }
   true
+}
+
+/// scratch_dead with a memo of each line's answer (SD_DEAD, SD_LIVE, or
+/// SD_PASS for not known yet), made lazily as long as lines: a line
+/// scratch_dead passes over has the answer of the line after it, so each
+/// line is decided once. copy_runs_l asks at the end of every copy run, and
+/// in a long block of x16 runs each x17 question scanned to the block's end
+/// (quadratic in a wide struct move's words, gotchas/emit-parallel-moves-cubic.md).
+fn scratch_dead_m(lines: List[Str], i: Int, r: Str, var memo: List[Int]) -> Bool {
+  if memo.is_empty() {
+    for _ in 0..lines.len() {
+      memo.push(SD_PASS)
+    }
+  }
+  let xr = "x${r}"
+  let wr = "w${r}"
+  var seen: List[Int] = []
+  var j = i
+  var v = SD_DEAD
+  while j < lines.len() {
+    if memo[j] != SD_PASS {
+      v = memo[j]
+      break
+    }
+    let d = sd_line(lines[j], xr, wr)
+    seen.push(j)
+    if d != SD_PASS {
+      v = d
+      break
+    }
+    j += 1
+  }
+  for k in seen {
+    memo[k] = v
+  }
+  v == SD_DEAD
+}
+
+const SD_PASS = -1
+const SD_LIVE = 0
+const SD_DEAD = 1
+
+/// scratch_dead's answer at line l: SD_DEAD or SD_LIVE when l decides it,
+/// SD_PASS when l passes it to the next line.
+fn sd_line(l: Str, xr: Str, wr: Str) -> Int {
+  if l.is_empty() || l.starts_with("\t.") || l.starts_with("//") {
+    return SD_PASS
+  }
+  if !l.starts_with("\t") {
+    let name = label_def(l)
+    if !name.is_empty() && is_row_label(name) {
+      return SD_PASS
+    }
+    return if !is_digits(l[0..1]) { SD_DEAD } else { SD_LIVE }
+  }
+  let body = l[1..l.len()]
+  let sp = body.find(" ") ?? body.len()
+  let op = body[0..sp]
+  let ops = if sp < body.len() { body[sp + 1..body.len()] } else { "" }
+  let named = ops.contains(xr) || ops.contains(wr)
+  let toks = if named { reg_tokens(ops) } else { [] }
+  var at = -1
+  var t = 0
+  while t < toks.len() {
+    if toks[t] == xr || toks[t] == wr {
+      at = t
+      break
+    }
+    t += 1
+  }
+  if at < 0 {
+    if op == "ret" || op == "bl" || op == "b" {
+      if op == "b" && is_digits(ops[0..1]) {
+        return SD_LIVE
+      }
+      return SD_DEAD
+    }
+    if op.starts_with("b.") || op is "cbz" | "cbnz" | "tbz" | "tbnz" {
+      let tgt = last_operand(ops)
+      if !tgt.is_empty() && is_digits(tgt[0..1]) {
+        return SD_LIVE // a local label of the same instruction's code
+      }
+    }
+    if op is "br" | "blr" | "svc" {
+      return SD_DEAD
+    }
+    return SD_PASS
+  }
+  if op.starts_with("ld") && !op.starts_with("ldx") && !op.starts_with("lda") {
+    // a load writes the registers before its address and reads those in it
+    let br = ops.find("[") ?? ops.len()
+    let dst = reg_tokens(ops[0..br])
+    if dst.contains(xr) || dst.contains(wr) {
+      return if !reg_tokens(ops[br..ops.len()]).contains(xr) { SD_DEAD } else { SD_LIVE }
+    }
+    return SD_LIVE
+  }
+  if op is "mov" | "movz" | "movn" | "adr" | "adrp" | "add" | "sub" | "and" | "orr" | "eor" | "lsl" | "lsr" | "asr" | "mul" | "madd" | "msub" | "csel" | "csinc" | "neg" | "mvn" | "ubfx" | "sbfx" | "sxtw" | "uxtw" | "fmov" {
+    // a computation: its first operand is its result
+    return if at == 0 && !toks[1..toks.len()].contains(xr) && !toks[1..toks.len()].contains(wr) { SD_DEAD } else { SD_LIVE }
+  }
+  SD_LIVE
 }
 
 /// The register names among an instruction's operands, in order.

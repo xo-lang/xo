@@ -120,7 +120,13 @@ func main() {
 			a := filepath.Join(*out, "a", prog)
 			b := filepath.Join(*out, "b", prog)
 			if err := build(xos[0], d, *backend, t, a, env); err != nil {
+				// NEW is not built for it, so a whole target the base
+				// cannot build would otherwise pass unseen (2026-11-08: 323
+				// linux/amd64 builds on a linux/arm64 host)
 				baseFailed++
+				if baseFailed <= 3 {
+					fmt.Printf("BASE FAILED %s %s: %v\n", t, name, err)
+				}
 				cleanPair(*out)
 				continue
 			}
@@ -147,6 +153,9 @@ func main() {
 		}
 	}
 	fmt.Printf("identity: compared %d, differing %d, new failed %d, base failed %d\n", n, differ, newFailed, baseFailed)
+	if baseFailed > 0 {
+		fmt.Printf("identity: %d programs the base could not build were not compared (the first three are printed above)\n", baseFailed)
+	}
 	if differ > 0 || newFailed > 0 {
 		for _, c := range cleanups {
 			c()

@@ -1602,6 +1602,15 @@ fn (g: G) parallel(var b: List[Str], moves: List[Move]) {
     }
     pending.push(m)
   }
+  if pending.len() > PAR_SMALL {
+    for m in par_order(pending, MLoc{reg: SCRATCH0}, MLoc{reg: FSCRATCH}, true) {
+      g.move(b, m.dst, m.src)
+    }
+    for m in consts {
+      g.move(b, m.dst, m.src)
+    }
+    return
+  }
   while !pending.is_empty() {
     var progress = false
     for (i, m) in pending.indexed() {
@@ -1639,6 +1648,168 @@ fn (g: G) parallel(var b: List[Str], moves: List[Move]) {
   for m in consts {
     g.move(b, m.dst, m.src)
   }
+}
+
+/// Above this many moves, parallel and x86_parallel order them with
+/// par_order. Their own scan is O(n^3): GCP aiplatform/v1's calls and
+/// returns of wide structs spent 71% of a 14 minute build in it
+/// (gotchas/emit-parallel-moves-cubic.md).
+const PAR_SMALL = 16
+
+/// The moves parallel's (and x86_parallel's) scan would emit, in its
+/// order, in O(n log n): the lowest pending move whose destination no
+/// other pending move reads, else a cycle broken at the lowest pending move
+/// by saving its destination in tmp (ftmp for a Float register, and for a
+/// wide value when wide_f). Each location gets a dense id, a count of the
+/// pending moves reading it, and the moves writing and reading it; the
+/// candidates wait in a min-heap of move indices, checked again when
+/// popped.
+fn par_order(var ms: List[Move], tmp0: MLoc, ftmp: MLoc, wide_f: Bool) -> List[Move] {
+  var out: List[Move] = []
+  var ids: Map[Str, Int] = {}
+  var dst_id: List[Int] = []
+  var src_id: List[Int] = []
+  for m in ms {
+    dst_id.push(loc_id(ids, m.dst))
+    src_id.push(loc_id(ids, m.src.l))
+  }
+  let tid = loc_id(ids, tmp0)
+  let ftid = loc_id(ids, ftmp)
+  var reads: List[Int] = []
+  var by_dst: List[List[Int]] = []
+  var readers: List[List[Int]] = []
+  for _ in 0..ids.len() {
+    reads.push(0)
+    by_dst.push([])
+    readers.push([])
+  }
+  var done: List[Bool] = []
+  for (i, _) in ms.indexed() {
+    reads[src_id[i]] += 1
+    by_dst[dst_id[i]].push(i)
+    readers[src_id[i]].push(i)
+    done.push(false)
+  }
+  var heap: List[Int] = []
+  for (i, _) in ms.indexed() {
+    if pm_ready(reads, dst_id, src_id, i) {
+      pm_push(heap, i)
+    }
+  }
+  var left = ms.len()
+  var first = 0
+  while left > 0 {
+    var pick = -1
+    while !heap.is_empty() {
+      let i = pm_pop(heap)
+      if !done[i] && pm_ready(reads, dst_id, src_id, i) {
+        pick = i
+        break
+      }
+    }
+    if pick >= 0 {
+      out.push(ms[pick])
+      done[pick] = true
+      left -= 1
+      let s = src_id[pick]
+      reads[s] -= 1
+      for j in by_dst[s] {
+        if !done[j] {
+          pm_push(heap, j)
+        }
+      }
+      continue
+    }
+    while done[first] {
+      first += 1
+    }
+    let m = ms[first]
+    var tmp = tmp0
+    var t = tid
+    if m.dst.reg >= FP_BASE || (wide_f && m.dst.wide) {
+      tmp = ftmp
+      t = ftid
+    }
+    out.push(Move{dst: tmp, src: MSrc{kind: M_LOC, l: m.dst}})
+    let d = dst_id[first]
+    for j in readers[d] {
+      if !done[j] && src_id[j] == d {
+        ms[j].src.l = tmp
+        src_id[j] = t
+        reads[d] -= 1
+        reads[t] += 1
+        readers[t].push(j)
+      }
+    }
+    for j in by_dst[d] {
+      if !done[j] {
+        pm_push(heap, j)
+      }
+    }
+  }
+  out
+}
+
+/// The dense id of l in ids, which same_loc's equality keys: a register
+/// by its number, memory by base and offset.
+fn loc_id(var ids: Map[Str, Int], l: MLoc) -> Int {
+  let k = if l.reg >= 0 { "r${l.reg}" } else { "${l.base}:${l.off}" }
+  let i = ids.get(k) ?? -1
+  if i >= 0 {
+    return i
+  }
+  let n = ids.len()
+  ids[k] = n
+  n
+}
+
+/// Whether no other pending move reads move i's destination.
+fn pm_ready(reads: List[Int], dst_id: List[Int], src_id: List[Int], i: Int) -> Bool {
+  let own = if src_id[i] == dst_id[i] { 1 } else { 0 }
+  reads[dst_id[i]] - own == 0
+}
+
+fn pm_push(var h: List[Int], x: Int) {
+  h.push(x)
+  var i = h.len() - 1
+  while i > 0 {
+    let p = (i - 1) / 2
+    if h[p] <= h[i] {
+      break
+    }
+    let t = h[p]
+    h[p] = h[i]
+    h[i] = t
+    i = p
+  }
+}
+
+fn pm_pop(var h: List[Int]) -> Int {
+  let top = h[0]
+  let last = h.pop() ?? 0
+  if h.is_empty() {
+    return top
+  }
+  h[0] = last
+  var i = 0
+  while true {
+    let l = 2 * i + 1
+    if l >= h.len() {
+      break
+    }
+    var c = l
+    if l + 1 < h.len() && h[l + 1] < h[l] {
+      c = l + 1
+    }
+    if h[i] <= h[c] {
+      break
+    }
+    let t = h[i]
+    h[i] = h[c]
+    h[c] = t
+    i = c
+  }
+  top
 }
 
 /// Materializes sp + off in reg (two adds past 4095,

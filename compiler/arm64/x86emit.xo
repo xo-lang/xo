@@ -1497,6 +1497,12 @@ fn (g: G) x86_parallel(var b: List[Str], moves: List[Move]) {
     }
     pending.push(m)
   }
+  if pending.len() > PAR_SMALL {
+    for m in par_order(pending, MLoc{reg: XR_SCRATCH}, MLoc{reg: XF_SCRATCH}, false) {
+      g.x86_move(b, m.dst, m.src)
+    }
+    pending = []
+  }
   while !pending.is_empty() {
     var progress = false
     for (i, m) in pending.indexed() {

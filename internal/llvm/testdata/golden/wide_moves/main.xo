@@ -1,0 +1,50 @@
+// Wide structs passed and returned by value in swapped order, so a call's
+// result moves, a function's entry moves and its return moves are parallel
+// moves of more than 16 words with cycles (par_order,
+// gotchas/emit-parallel-moves-cubic.md).
+
+struct W {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+  e: Int
+  f: Int
+  g: Int
+  h: Int
+  i: Int
+  j: Int
+  k: Int
+  l: Int
+}
+
+fn mk(base: Int) -> W {
+  W{a: base, b: base + 1, c: base + 2, d: base + 3, e: base + 4, f: base + 5, g: base + 6, h: base + 7, i: base + 8, j: base + 9, k: base + 10, l: base + 11}
+}
+
+fn sum(w: W) -> Int {
+  w.a + 2 * w.b + 3 * w.c + 4 * w.d + 5 * w.e + 6 * w.f + 7 * w.g + 8 * w.h + 9 * w.i + 10 * w.j + 11 * w.k + 12 * w.l
+}
+
+fn swap3(x: W, y: W, z: W) -> (W, W, W) {
+  (z, x, y)
+}
+
+fn rot(x: W, y: W, z: W, n: Int) -> (W, W, W) {
+  if n == 0 {
+    return (x, y, z)
+  }
+  let (p, q, r) = swap3(y, z, x)
+  rot(q, r, p, n - 1)
+}
+
+fn main(os: Os) {
+  let (x, y, z) = (mk(1), mk(100), mk(10000))
+  for n in 0..7 {
+    let (p, q, r) = rot(x, y, z, n)
+    os.stdio.println("${n} ${sum(p)} ${sum(q)} ${sum(r)} ${p.a} ${q.l} ${r.f}")
+  }
+  let (p, q, r) = swap3(x, y, z)
+  let (p2, q2, r2) = swap3(r, p, q)
+  os.stdio.println("${sum(p2) - sum(x)} ${sum(q2) - sum(y)} ${sum(r2) - sum(z)}")
+}
