@@ -41,6 +41,23 @@ value:
 - Code size before 0145, 0151 and 0153: by value releases copied every
   word of a big struct to the stack first (xo built by LLVM: 11.15 MB of
   its 89.8, bench/results/xo-code-size-2026-10-18.md).
+- Field reads of a wide value held in registers (Xo Lang 4,
+  2026-11-08). On the native backend, a field read of a wide value that
+  is in neither a stable memory nor a held one copies the field's words
+  out of the value's word list (compiler/arm64 isel.xo field_op,
+  `g.set(v, ws[off..off + n])`). In the GCP aiplatform/v1 test build
+  (linux/arm64, cold, after b43fa8255), one value of the client's
+  Service struct (12,040 words, about 96 KB) is kept as 12,040 virtual
+  registers. Every read of its ProjectsService field copies 6,579
+  words, and the generated test main alone makes 20,269 such copies,
+  2.3 million words. A heap profile at the end of emit (16 MiB
+  sampling) counted 796 GB allocated by the build. 307 GB of that (38%)
+  is the List slices of these copies, 99.8% from field_op. The CPU
+  profile puts field_op at 35 s cumulative, 10% of the build's CPU.
+  Presizing the slice (l4-slice) removes only the regrowth; a home for
+  the value, with field reads loading from it, removes the copy. This
+  is point 4 on the native backend; Xo Lang 1 builds it with the LLVM
+  side, and Xo Lang 4 reruns these profiles as its proof.
 
 Each was a separate fix with its own threshold test (`g.size(t) >=
 BY_REF_MIN`, `8 * g.nwords(t) >= BY_REF_MIN`, `WIDE_STORE_MIN`), with
@@ -112,6 +129,70 @@ The language does not change: wide values stay values (copy semantics,
 4. Wide SSA values with homes in LLVM (point 4): clang time of wbN
    (target within 0.3 s of hello world) and of xo's own LLVM build.
 5. Indirect calls and closures (point 1), the ABI change, last.
+
+## Step 4 prototype (2026-11-08, branch lang1-0564p, not pushed)
+
+Two LLVM-only flags, both off by default and classified in
+TestCodegenInputsClassified; the default build's IR is unchanged.
+
+- `XO_WIDE_HOMES=1`: a struct, tuple or field set of 4 KiB or more
+  (WIDE_STORE_MIN) is written into its own alloca (its home) where it is
+  made, a field of it is a pointer into the home, and a wide variant
+  keeps the memory it is built in, with no load of the whole value.
+- `XO_WIDE_TAIL=1`: a wide variant zeroes only the payload past its own
+  fields (an llvm.memset sized by the gap) where it stored a
+  `zeroinitializer` of the whole enum before writing its fields.
+
+clang -O1 on the module's IR (darwin/arm64, flags off then on, two
+rounds each; hello world is 2.5 s):
+
+| Program | off | XO_WIDE_TAIL | both flags |
+|---|---|---|---|
+| wbN (4,096 word struct of nested defaults) | 3.52 / 3.59 s | 2.36 / 3.00 s | 2.29 / 2.24 s |
+| wbC (wide_box: the same with `==`) | 3.48 / 3.49 s | 2.36 / 3.47 s (noisy) | 2.28 / 2.27 s |
+| golden wide_store | 6.01 / 5.86 s | 4.19 / 4.22 s | 2.33 / 2.33 s |
+
+Both flags bring all three programs to hello world's time. Outputs are
+correct with them on (wbN, wbC, wide_store on LLVM).
+
+What did and did not matter, measured on the way:
+
+- Homes alone first gave nothing (wbN 3.41/3.62 off against 3.61/3.87
+  s on): each wide variant still loaded its whole value from the memory
+  it was built in. The load was dead, but SROA splits the alloca by
+  that use before anything deletes it, a load and store per word.
+  Dropping it: wbN 3.56 to 3.10 s.
+- The whole `zeroinitializer` store of a wide enum (32,800 bytes for
+  wide_store's `Node?`) was the rest: 8 of them in main became 8,086
+  `str` instructions. Zeroing only the tail: wbN 3.10 to 2.33 s.
+  Replacing the store with a memset of the whole enum instead was 5x
+  slower (wbN 3.6 to 17.8 s, the same final code): the memset and the
+  field writes over it keep MemCpyOpt and DSE busy; the tail memset
+  does not overlap the fields.
+- Aliasing every narrow all-constant literal to one constant operand
+  (IR 4.9 to 4.0 MB) gained nothing and changed every program's IR;
+  dropped.
+- Calling `memcpy` as an opaque function for the 4 KiB and larger
+  copies, so clang cannot expand them, was slower (3.6 to 4.6 s);
+  internal or externally initialized constant globals made no
+  difference or doubled the stores.
+
+So the cost of step 4 sits in two places only: whole loads and whole
+stores of wide aggregates. The point 4 homes matter once the whole
+loads go (wide_store 4.2 s with the tail alone, 2.3 s with homes).
+
+Native: both flags are LLVM only. The native self build's __text is
+38,439,548 bytes with the flags off, on, and at the base (cacc07cd0).
+The self build `--ab` on linux/arm64 host 1 (base cacc07cd0, prototype
+0d28dca5e, 3 rounds): wall 0.993, cpu 0.991, max RSS 1.017, on a host
+loaded through all three rounds (median load 6.3 to 6.6), so within
+noise, as expected of code that is byte for byte the same.
+
+xo's own LLVM IR does change with XO_WIDE_HOMES (376.8 to 377.6 MB):
+xo has types of 4 KiB and more (arm64.G at 5,696 bytes, check.Checker,
+and others of 4,688 to 8,600 bytes), copied by memcpy since ed685dd2f.
+The clang time of xo's LLVM build with the flags is the figure step 4
+still owes.
 
 ## Alternatives
 
