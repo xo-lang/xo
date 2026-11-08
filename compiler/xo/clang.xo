@@ -99,7 +99,7 @@ fn llvm_cross_triple(host: Str, t: Str, winsysroot: Str) -> Str {
     return "x86_64-linux-gnu"
   }
   if t == "linux/riscv64" && !winsysroot.is_empty() {
-    // decision 0571: from any host with a riscv64 glibc sysroot (clang's
+    // decision 0571: from any host with a riscv64 Debian sysroot (clang's
     // default for the triple is rv64gc, lp64d)
     return "riscv64-linux-gnu"
   }

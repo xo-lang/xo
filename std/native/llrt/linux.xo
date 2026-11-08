@@ -636,11 +636,16 @@ pub fn sched_getaffinity(a: Int, n: Int) -> Int { rt.sys6(nr(123, 204), 0, n, a,
 pub fn sysinfo(p: Int) -> Int { rt.sys6(nr(179, 99), p, 0, 0, 0, 0, 0) }
 
 /// renameat(2) of a to b (as written: "" is no file, as for the C
-/// runtime's rename).
+/// runtime's rename); renameat2 with no flags on riscv64, whose syscall
+/// table leaves renameat out (no __ARCH_WANT_RENAMEAT, decision 0571).
 pub fn rename(a: Str, b: Str) -> Int {
   let za = zpath(a)
   let zb = zpath(b)
-  let r = rt.sys6(nr(38, 264), AT_FDCWD, raw.bytes_addr(za), AT_FDCWD, raw.bytes_addr(zb), 0, 0)
+  let n = match target.arch {
+    TargetArch.Riscv64 => 276
+    _ => nr(38, 264)
+  }
+  let r = rt.sys6(n, AT_FDCWD, raw.bytes_addr(za), AT_FDCWD, raw.bytes_addr(zb), 0, 0)
   keep(za, keep(zb, r))
 }
 
