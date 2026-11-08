@@ -789,7 +789,11 @@ fn (var g: G) regalloc() {
     // words from the point its callee may write them
     var wcode: List[Int] = []
     var wocc: List[List[Int]] = []
+    // each stack word's index in wcode (a scan of wcode per hint was 20%
+    // of GCP aiplatform/v1's build: wide structs pass many words)
+    var wix: Map[Int, Int] = {}
     for (j, ps) in wclob.indexed() {
+      wix[SLOT_OUT + j] = wcode.len()
       wcode.push(SLOT_OUT + j)
       var rs: List[Int] = []
       for c in ps {
@@ -857,11 +861,10 @@ fn (var g: G) regalloc() {
         // a callee write it: the copy goes (src and destination equal)
         var w = -1
         for h in ghint[v] {
-          var i = 0
-          while i < wcode.len() && wcode[i] != h {
-            i += 1
-          }
-          if i == wcode.len() {
+          var i = wix.get(h) ?? -1
+          if i < 0 {
+            i = wcode.len()
+            wix[h] = i
             wcode.push(h)
             wocc.push([])
           }

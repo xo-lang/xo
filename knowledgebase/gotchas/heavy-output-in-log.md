@@ -1,6 +1,6 @@
 # heavy.sh prints the command's output to its log, not to your stdout
 
-Status: Observed (2026-11-05, twice: Xo Lang 4 and the lead)
+Status: Observed (2026-11-05, twice: Xo Lang 4 and the lead; 2026-11-08, Xo Lang 4 again, through a pipe)
 
 ## Symptom
 
@@ -30,3 +30,10 @@ sed -n '/ start /,$p' ~/xo-lead/agents/NAME-cmd.log | tail -40
 A NAME reused across runs appends to the same log, so read from the last
 `start` line. To keep the output in a file of your own, redirect inside the
 command (`sh -c 'exec CMD > "$0" 2>&1' OUT`), as pushq.sh does.
+
+Never pipe heavy.sh (`heavy.sh NAME CMD | tail; echo rc=$?`): `$?` is then
+tail's status, 0, so a failed check reads as a pass twice over, once from
+the empty output and once from the status. On 2026-11-08 a golden that
+called `println` without `Os` (XO0601) passed `scripts/xocheck` that way,
+and was reported as a checker gap until the log showed `exit 1`.
+
