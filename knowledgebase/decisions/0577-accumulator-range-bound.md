@@ -168,11 +168,30 @@ program's output is identical with and without the pass.
 | checksum fnv64a | 1.003 | 0.999 (noise) | 406.3 to 406.9 (noise) |
 
 The test removed is a predicted, never taken branch off the critical
-path, so wide cores gain nothing. The Intel loss is a layout effect
-under study (the Skylake-family JCC erratum: dropping `jo` moves the
-loop's closing branch). The pass stays off by default
-(`XO_PASSES=+acc_range` turns it on) until a layout fix or a loop where
-it measures faster; stage 2 (adler32's s2) waits on that too.
+path, so wide cores gain nothing.
+
+The Intel loss is not layout (checked 2026-11-08, so nobody re-chases
+it). The darwin/amd64 and linux/amd64 binaries put the inlined inner
+loop in one 32-byte window either way (darwin 0x100000a25 to
+0x100000a3c with the pass off, 0x100000a25 to 0x100000a37 with it on),
+so no jcc crosses or ends on a boundary and the Skylake-family JCC
+erratum does not apply. Nor is it the `leaq (%r9,%r8), %r9` that
+x86_addsub emits for the unchecked add: the pass-on binary patched by
+hand to `addq %r8, %r9; nop` (same length) ran slower still. On the
+i7-9750H, 7 rounds, ms:
+
+| bytesum | pass off (add, jo) | pass on (lea) | pass on patched (add, nop) |
+|---|---|---|---|
+| 63 bytes x 20M calls | 400.1 to 404.8 | 502.3 to 513.0 | 526.8 to 532.6 |
+| 4095 bytes x 307k calls | 396.1 to 408.1 | 420.0 to 428.1 | (off again, control: 397.5 to 431.3) |
+
+So on Coffee Lake the loop without the never-taken `jo` is slower per
+iteration (about 6% on long buffers) and much slower around the loop
+exit (27% at 63 bytes); a 5 uop body with a nop in its place is no
+better, so the not-taken branch itself matters there (an open question:
+the branch predictor or the front end). The pass stays off by default
+(`XO_PASSES=+acc_range` turns it on) until a loop where it measures
+faster; stage 2 (adler32's s2) waits on that too.
 
 ## Alternatives
 
