@@ -1,0 +1,71 @@
+// The `string` wire option (decision 0555): a scalar field is written as a
+// JSON string holding its literal and read back the same way, as Go's
+// `json:",string"` does (encoding/json's TestStringTag and
+// TestUnmarshalTypeError "unquoted value" cases).
+use std/json
+
+struct Quoted {
+  i as "i,string": Int = 0
+  i8 as "i8,string": Int8 = 0
+  u as "u,string": UInt64 = 0
+  f as "f,string": Float = 0.0
+  f32 as "f32,string": Float32 = 0.0
+  b as "b,string": Bool = false
+  s as "s,string": Str = ""
+  oi as "oi,string": Int? = None
+  os as "os,string": Str? = None
+  io as "io,omitempty,string": Int = 0
+  so as ",omitempty,string": Str = ""
+  plain: Int = 0
+} derive Json, Eq
+
+struct Over {
+  n as "n" json "id,string": Int = 0
+} derive Json, Eq
+
+fn show(out: Stdio, text: Str) {
+  match json.decode_str[Quoted](text) {
+    Ok(q) => out.println("ok ${json.encode_str(q)}")
+    Err(e) => out.println("err ${e}")
+  }
+}
+
+fn main(os: Os) {
+  let out = os.stdio
+  let q = Quoted{i: -5, i8: 7, u: 18446744073709551615, f: 1.5, f32: 0.5, b: true, s: "a\"b", oi: Some(3), os: Some("x"), io: 9, so: "z", plain: 4}
+  out.println(json.encode_str(q))
+  out.println(json.encode_str(Quoted{}))
+  out.println(json.encode_str(Quoted{oi: Some(0), os: Some("")}))
+  match json.decode_str[Quoted](json.encode_str(q)) {
+    Ok(back) => out.println("round trip: ${back == q}")
+    Err(e) => out.println("round trip: ${e}")
+  }
+  show(out, "{\"i\":\"12\"}")
+  show(out, "{\"i\":12}")
+  show(out, "{\"i\":\"\"}")
+  show(out, "{\"i\":\" 1\"}")
+  show(out, "{\"i\":\"1 \"}")
+  show(out, "{\"i\":\"0x10\"}")
+  show(out, "{\"i\":\"1.5\"}")
+  show(out, "{\"i\":\"99999999999999999999\"}")
+  show(out, "{\"i8\":\"300\"}")
+  show(out, "{\"u\":\"-1\"}")
+  show(out, "{\"b\":\"true\"}")
+  show(out, "{\"b\":\"yes\"}")
+  show(out, "{\"b\":true}")
+  show(out, "{\"s\":\"\\\"hi\\\"\"}")
+  show(out, "{\"s\":\"hi\"}")
+  show(out, "{\"f\":\"2.5e3\"}")
+  show(out, "{\"oi\":null}")
+  show(out, "{\"oi\":\"null\"}")
+  show(out, "{\"oi\":\"7\"}")
+  show(out, "{\"oi\":7}")
+  show(out, "{\"plain\":5}")
+  show(out, "{\"i\":[1]}")
+  out.println(json.encode_str(Over{n: 8}))
+  match json.decode_str[Over]("{\"id\":\"8\"}") {
+    Ok(o) => out.println("over ${o.n}")
+    Err(e) => out.println("over err ${e}")
+  }
+  out.println(json.encode_str(json.to_value(q)))
+}

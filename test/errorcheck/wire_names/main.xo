@@ -26,15 +26,19 @@ struct BadDerive {
 } derive Eq(case: camel) // ERROR XO0413 "takes no arguments"
 
 struct BadOption {
-  a as "a,string": Int // ERROR XO0422 "unknown wire name option `string`"
-  b as ",omitempty,bogus": Int // ERROR XO0422 "unknown wire name option `bogus`"
+  a as "a,omitzero": Int // ERROR XO0422 "unknown or repeated wire name option `omitzero`"
+  a2 as "a2,string,string": Int // ERROR XO0422 "unknown or repeated wire name option `string`"
+  a3 as "a3,string": List[Int] // ERROR XO0437 "applies to scalar fields only"
+  a4 as "a4,omitempty,string": Int?
+  a5 json "a5,string": Bool
+  b as ",omitempty,bogus": Int // ERROR XO0422 "unknown or repeated wire name option `bogus`"
   c as ",omitempty": Int
 } derive Json
 
 struct Formats {
   a json "a" json "b": Int // ERROR XO0423 "two `json` wire strings"
   b sql "b,omitempty": Int // ERROR XO0422 "takes no options"
-  c json "c,bogus": Int // ERROR XO0422 "unknown wire name option `bogus`"
+  c json "c,bogus": Int // ERROR XO0422 "unknown or repeated wire name option `bogus`"
   d xml "D,attr": Int // ERROR XO0424 "does not derive Xml"
   e as "e" json "": Int // ERROR XO0412 "empty `json` wire name"
 } derive Json, SqlRow

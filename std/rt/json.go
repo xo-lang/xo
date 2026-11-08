@@ -192,6 +192,23 @@ func JsonEnc[T any](tk *Task, w *JsonW, v T) {
 	JsonEncP(tk, w, p)
 }
 
+// JsonEncQ writes v for a field with the `string` wire option (decision
+// 0555): the value's literal inside quotes, a string literal quoted again
+// (Go quotes a string field twice), null as it is.
+func JsonEncQ[T any](tk *Task, w *JsonW, v T) {
+	var t JsonW
+	JsonEnc(tk, &t, v)
+	lit := string(t.b)
+	switch {
+	case lit == "null":
+		w.Raw(lit)
+	case len(lit) > 0 && lit[0] == '"':
+		w.str(lit)
+	default:
+		w.Raw(`"` + lit + `"`)
+	}
+}
+
 // JsonEncP writes *p. p is not kept; a p into memory that is on the heap
 // already (a list's array) costs no allocation.
 func JsonEncP[T any](tk *Task, w *JsonW, p *T) {
@@ -298,6 +315,37 @@ func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 		return nil
 	}
 	return jsonDecAny(tk, dst, x, path)
+}
+
+// JsonDecQ decodes x into dst for a field with the `string` wire option
+// (decision 0555): x must be a string (or null, which dst's own decoder
+// judges), its text parsed as JSON of its own with no space around it, and
+// dst decoded from that. A text that is not JSON, or that dst does not
+// take, is Go's `invalid use of ,string struct tag` error, except a
+// number's own error (an overflow). tn is the type's name in the message.
+func JsonDecQ[T any](tk *Task, dst *T, x any, path string, tn string) *Json_DecodeErr {
+	if x == nil {
+		return JsonDec(tk, dst, x, path)
+	}
+	s, ok := x.(string)
+	if !ok {
+		return JsonErr(path, "invalid use of ,string struct tag, trying to unmarshal unquoted value into "+tn)
+	}
+	bad := JsonErr(path, "invalid use of ,string struct tag, trying to unmarshal \""+s+"\" into "+tn)
+	if s == "" || strings.ContainsRune(" \t\n\r", rune(s[0])) || strings.ContainsRune(" \t\n\r", rune(s[len(s)-1])) {
+		return bad
+	}
+	y, perr := jsonParse([]byte(s))
+	if perr != nil {
+		return bad
+	}
+	if err := JsonDec(tk, dst, y, path); err != nil {
+		if _, isNum := y.(json.Number); !isNum {
+			return bad
+		}
+		return err
+	}
+	return nil
 }
 
 // jsonDecAny is JsonDec's body for the other kinds, not generic.

@@ -44,6 +44,21 @@ fn (var b: Builder) val_sub(x0: Int, xt: Int, vt: Int) -> Int {
   b.call(f, vt, "", [x])
 }
 
+/// val_sub for a field, which with the `string` option (decision 0555)
+/// holds the text of its literal as a Str (null stays Null).
+fn (var b: Builder) val_field(x0: Int, xt: Int, vt: Int, q: Bool) -> Int {
+  if !q {
+    return b.val_sub(x0, xt, vt)
+  }
+  let lit = b.json_sub(b.const_str(""), x0, xt)
+  let rv = b.local()
+  b.write_var(rv, b.jv(vt, "Str", [lit]))
+  let (no, join) = b.if_then_begin(b.compare(Op.Eq, lit, b.const_str("null")))
+  b.write_var(rv, b.jv(vt, "Null", []))
+  b.if_then_end(no, join)
+  b.read(rv)
+}
+
 /// Variant name of json.Value (SSA type vt) with fields args.
 fn (var b: Builder) jv(vt: Int, name: Str, args: List[Int]) -> Int { b.add(Op.Variant, vt, Aux.I(n: b.m.variant_index(vt, name)), args) }
 
@@ -364,10 +379,10 @@ fn (var b: Builder) val_struct_fields(lv: Int, v: Int, t: Int, obj: Int, sb: Map
         keep = b.add(Op.Not, bt, Aux.None, [b.json_empty(fv, ft)])
       }
       let (no, join) = b.if_then_begin(keep)
-      b.jv_push(lv, vt, key, b.val_sub(fv, ft, vt))
+      b.jv_push(lv, vt, key, b.val_field(fv, ft, vt, f.json_string))
       b.if_then_end(no, join)
       continue
     }
-    b.jv_push(lv, vt, key, b.val_sub(fv, ft, vt))
+    b.jv_push(lv, vt, key, b.val_field(fv, ft, vt, f.json_string))
   }
 }

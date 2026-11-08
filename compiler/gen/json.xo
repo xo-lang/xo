@@ -76,9 +76,9 @@ fn (var g: Gen) gen_json_struct(t: Int) {
     let n = check.text(f.name)
     let d = g.json_default(t, i)
     if fold {
-      g.json_field_fold(i, check.text(f.json_key), go_field(n), f.ty, d)
+      g.json_field_fold(i, check.text(f.json_key), go_field(n), f.ty, d, f.json_string)
     } else {
-      g.json_field(check.text(f.json_key), go_field(n), f.ty, d)
+      g.json_field(check.text(f.json_key), go_field(n), f.ty, d, f.json_string)
     }
   }
   if fold {
@@ -115,9 +115,9 @@ fn (var g: Gen) json_variant_fields(t: Int, v: check.VariantInfo) {
   }
   for (i, f) in v.fields.indexed() {
     if fold {
-      g.json_field_fold(i, check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "")
+      g.json_field_fold(i, check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "", false)
     } else {
-      g.json_field(check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "")
+      g.json_field(check.text(check.vfield_json_key(f)), g.vfield_name(f, i), f.ty, "", false)
     }
   }
   g.pl(if fold { "\t\t\treturn fe.Err()" } else { "\t\t\treturn nil" })
@@ -126,11 +126,11 @@ fn (var g: Gen) json_variant_fields(t: Int, v: check.VariantInfo) {
 /// json_field for a folding type (decision 0550): every member the field
 /// selected (obj[i], rt.JsonObjectFold's) decodes, and fe keeps the error
 /// in Go's order; a missing field's error comes after every member's.
-fn (var g: Gen) json_field_fold(i: Int, name: Str, go_name: Str, t: Int, dflt: Str) {
+fn (var g: Gen) json_field_fold(i: Int, name: Str, go_name: Str, t: Int, dflt: Str, q: Bool) {
   let rt = g.rt()
   let hard = if g.json_hard(t) { "true" } else { "false" }
   g.pl("\tif ms := obj[${i}]; len(ms) > 0 {")
-  g.pl("\t\tfor _, m := range ms {\n\t\t\tfe.Note(m.Pos, ${hard}, ${rt}JsonDec(tk, &v.${go_name}, m.V, path+${("." + name).quote()}))\n\t\t}")
+  g.pl("\t\tfor _, m := range ms {\n\t\t\tfe.Note(m.Pos, ${hard}, ${g.json_dec_call(go_name, "m.V", name, t, q)})\n\t\t}")
   g.pl("\t} else {")
   if !dflt.is_empty() {
     g.pl("\t\t${dflt}")
@@ -215,6 +215,10 @@ fn json_key_text(key: Bytes) -> Str {
 
 /// The statement that writes field fi held in expr (jsonEncValue).
 fn (var g: Gen) json_enc_value(t: Int, fi: Int, expr: Str) -> Str {
+  if g.c.objs[t].fields[fi].json_string {
+    // the `string` wire option (decision 0555)
+    return "${g.rt()}JsonEncQ(tk, w, ${expr})"
+  }
   if g.is_boxed_field(t, fi) {
     return "${g.rt()}JsonEnc(tk, w, ${expr})"
   }
@@ -262,9 +266,14 @@ fn (var g: Gen) gen_json_read(t: Int) {
   let self = g.self_type(t)
   let fields = g.c.objs[t].fields
   g.pl("func (v *${self}) XoJsonRead(tk *${rt}Task, r *${rt}JsonR) bool {")
-  if g.c.objs[t].json_fold {
+  var any_q = false
+  for f in fields {
+    any_q = any_q || f.json_string
+  }
+  if g.c.objs[t].json_fold || any_q {
     // the direct reader matches keys exactly; a folding type (decision
-    // 0550) leaves the decode to the tree decoder's JsonObjectFold
+    // 0550) leaves the decode to the tree decoder's JsonObjectFold, and a
+    // `string` field (decision 0555) to the tree decoder's JsonDecQ
     g.pl("\treturn false\n}\n")
     return
   }
@@ -307,12 +316,22 @@ fn (var g: Gen) gen_json_read(t: Int) {
   g.pl("\treturn true\n}\n")
 }
 
+/// The call that decodes member x of key name into v.<go_name> of type t:
+/// rt.JsonDec, or rt.JsonDecQ with the `string` option (decision 0555).
+fn (var g: Gen) json_dec_call(go_name: Str, x: Str, name: Str, t: Int, q: Bool) -> Str {
+  let rt = g.rt()
+  if q {
+    return "${rt}JsonDecQ(tk, &v.${go_name}, ${x}, path+${("." + name).quote()}, ${g.c.show(t).quote()})"
+  }
+  "${rt}JsonDec(tk, &v.${go_name}, ${x}, path+${("." + name).quote()})"
+}
+
 /// The decoding of one object field, key name (the JSON key), into
 /// v.<go_name> (jsonField); dflt is the default statement ("" for none).
-fn (var g: Gen) json_field(name: Str, go_name: Str, t: Int, dflt: Str) {
+fn (var g: Gen) json_field(name: Str, go_name: Str, t: Int, dflt: Str, q: Bool) {
   let rt = g.rt()
   g.pl("\tif e, ok := obj[${name.quote()}]; ok {")
-  g.pl("\t\tif err := ${rt}JsonDec(tk, &v.${go_name}, e, path+${("." + name).quote()}); err != nil {\n\t\t\treturn err\n\t\t}")
+  g.pl("\t\tif err := ${g.json_dec_call(go_name, "e", name, t, q)}; err != nil {\n\t\t\treturn err\n\t\t}")
   g.pl("\t} else {")
   if !dflt.is_empty() {
     g.pl("\t\t${dflt}")

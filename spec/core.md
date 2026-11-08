@@ -758,8 +758,19 @@ pub struct User {
   field out when its value is empty as Go defines it: `None`, `false`, a
   zero number, `""`, or an empty `List`, `Map`, `Set`, or `Bytes`. A
   struct or an enum value is never empty. Decoding is unchanged: a
-  missing key takes the field's default. Another option is `XO0422`.
-  Unlike Go, `as "-"` is the key `-`, not a skipped field.
+  missing key takes the field's default. Another option, or a repeated
+  one, is `XO0422`. Unlike Go, `as "-"` is the key `-`, not a skipped
+  field.
+- The option `string` (decision 0555), `n as "n,omitempty,string": Int?`
+  or `as ",string"`, makes `derive Json` write a scalar field as a JSON
+  string holding the value's literal (`5` as `"5"`, `true` as `"true"`,
+  a `Str` quoted twice as Go does) and read it back the same way: the
+  JSON value must be a string or `null`, and its text exactly a JSON
+  literal of the field's type (an unquoted number is an error, as in
+  Go). `None` is `null`; `omitempty` is decided before quoting. It
+  applies to `Bool`, the integers, `Float`, `Float32`, `Str` and an
+  `Option` of one; on any other field type it is `XO0437` (Go ignores
+  it there).
 - A field may override the shared wire name for one format (decision
   0315), after its name or its `as` string: `json "..."`, `sql "..."`,
   `xml "..."` (`json`, `sql`, and `xml` are contextual words, not
@@ -770,7 +781,7 @@ pub struct User {
   - Examples: `created_at as "createdAt" sql "created": Int?` has the JSON
     key `createdAt` and the column `created`; `note json "memo,omitempty"
     sql "note": Str?` names each format alone.
-  - A `json` string takes `omitempty`. A `sql` string takes no options
+  - A `json` string takes `omitempty` and `string`. A `sql` string takes no options
     (`XO0422` for one). An `xml` string is Go's tag text, for `derive Xml`
     (decision 0315; below, 2.9).
   - A format given twice on a field is `XO0423`. A string for a format the
@@ -3620,7 +3631,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0416` | error | checker | a constant's value holds a handle (`Mutex`, `Chan`, `Atomic`, `Task`, a file) (core 3.1, decision 0332) |
 | `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
 | `XO0421` | error | checker | integer literal does not fit the integer type it takes in context (1.6) |
-| `XO0422` | error | checker | unknown wire name option; the only one is `omitempty` (core 2.2, decision 0309); for `derive Proto`, a bad field number, a repeated number or an unknown option (decision 0530) |
+| `XO0422` | error | checker | unknown or repeated wire name option; the options are `omitempty` and `string` (core 2.2, decisions 0309, 0555); for `derive Proto`, a bad field number, a repeated number or an unknown option (decision 0530) |
 | `XO0423` | error | checker | a field has two wire strings for one format (`json "a" json "b"`) (core 2.2, decision 0315) |
 | `XO0424` | error | checker | a format's wire string (`json`, `sql`, `xml`) on a struct that does not derive that format (core 2.2, decision 0315) |
 | `XO0425` | error | checker | a field type, a type parameter list, or a nested struct that `derive Xml` cannot map (core 2.9, decision 0315) |
@@ -3635,6 +3646,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0434` | error | checker | a variant with fields in a valued enum that is not its catch-all: the catch-all is the last variant, with one field of the value type and no value (core 2.3, decision 0493) |
 | `XO0435` | error | checker | a valued enum's catch-all built from a constant that a named variant has (`StorageClass.Unknown("STANDARD")`): a second spelling of that variant, unequal to it (core 2.3, decision 0493) |
 | `XO0436` | error | checker | `for` over a type with `next()` whose `?` does not match it: `for x in v` where `next()` can fail (write `for x? in v`), `for x? in v` where it cannot or over a builtin iteration, or a `next()` that does not return `T?` (core 3.5, decision 0494) |
+| `XO0437` | error | checker | the `string` wire option on a field that is not a Bool, integer, float or Str, or an Option of one (core 2.2, decision 0555) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |

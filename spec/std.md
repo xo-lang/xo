@@ -2456,6 +2456,19 @@ pub fn from_value[T: Json](v: Value) -> T ! DecodeErr
 - `derive Json` fields marked `as "key,omitempty"` (core 2.2) are left
   out of `encode`'s output when empty.
 - Goldens `json_stream` and `json_omitempty` (every backend).
+- The wire option `string` (decision 0555, core 2.2), `as "n,string"`,
+  writes a scalar field (`Bool`, an integer, `Float`, `Float32`, `Str`,
+  or an `Option` of one) as a JSON string holding its literal, as Go's
+  `json:",string"` does: `5` as `"5"`, `true` as `"true"`, a `Str` quoted
+  twice (`"\"abc\""`), `None` as `null`. `omitempty` is decided before
+  quoting. Decoding wants a JSON string or `null`: its text, with no
+  space around it, must be exactly a JSON literal of the field's type;
+  otherwise `DecodeErr` with `invalid use of ,string struct tag, trying to
+  unmarshal "TEXT" into T` (an unquoted value: `... unquoted value into
+  T`), a number out of range keeping its own message. `null`, or the
+  string `"null"`, goes to the field's own decoder as `null` does (an
+  `Option` becomes `None`). `to_value` and `from_value` follow.
+  Golden `json_string` (every backend).
 
 ### 5.3 Tokens (decision 0495)
 

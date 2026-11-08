@@ -1,6 +1,6 @@
 # 0555: The `string` option of a JSON wire name
 
-Status: Proposed (Xo Lang 3, 2026-11-07; requested by xo-lead for Xo Azure 1's GCP generator, which meets tens of thousands of Discovery fields with `format: int64` and similar)
+Status: Accepted (owner, 2026-11-07; Xo Lang 3, 2026-11-07; requested by xo-lead for Xo Azure 1's GCP generator, which meets tens of thousands of Discovery fields with `format: int64` and similar)
 
 ## Context
 
@@ -30,10 +30,10 @@ What Go does (encoding/json go1.26.6, encode.go `typeFields`, decode.go `object`
    default key, `json "id,string"`. A `sql` string still takes no options (`XO0422`). A repeated option is `XO0422` (as
    Go's tag parser would not mind, this is stricter on purpose: a generator bug shows up at once).
 2. **Types.** `string` applies to `Bool`, `Int`, `Int8` to `Int64`, `UInt8` to `UInt64`, `Float`, `Float32` and `Str`, and
-   to an `Option` of one of them (Go's one pointer level). On any other field type it is a new checker error, `XO0431`
+   to an `Option` of one of them (Go's one pointer level). On any other field type it is a new checker error, `XO0437`
    ("the string option applies to scalar fields only"), where Go ignores it. Reason: a silently ignored option is a wire
    format bug found in production; the generator knows the field's type, so refusing costs it nothing. If the owner wants
-   Go's silent ignore, `XO0431` becomes a warning with the same text and nothing else changes.
+   Go's silent ignore, `XO0437` becomes a warning with the same text and nothing else changes.
 3. **Encoding** (`derive Json`, `json.encode`, `json.to_value`, `json.json_writer`): the same literal the field writes
    without the option, inside quotes; a `Str` is written as the quoted form of its quoted JSON text (Go's double
    quoting); `None` is `null`; a NaN or an infinity is the error the unquoted encoder already gives. `omitempty` tests
@@ -43,11 +43,11 @@ What Go does (encoding/json go1.26.6, encode.go `typeFields`, decode.go `object`
    unquoted value into Int` (Go's words, as 0553 words the rest in its opt-in mode; here there is no mode: this
    error exists only for `string` fields). A string whose text is empty or is not a literal of the field's type is
    `invalid use of ,string struct tag, trying to unmarshal "TEXT" into Int`; an out of range integer is the message the
-   unquoted decoder gives for overflow. `null` and the string `"null"` leave a plain field at its default and make an
-   `Option` `None`. The text is parsed with the JSON number grammar (no leading `+`, no hex, no surrounding space),
+   unquoted decoder gives for overflow. `null` and the string `"null"` go to the field's own decoder as an unquoted `null` does (an
+   `Option` becomes `None`; a plain field gives that decoder's error, as Xo's unquoted `null` into an `Int` does). The text is parsed with the JSON number grammar (no leading `+`, no hex, no surrounding space),
    as Go's `literalStore` does.
 5. **Codes.** `XO0422` keeps its meaning (an unknown or repeated option; its table text now names `omitempty` and `string`
-   as the known ones). `XO0431` is new (checker; `string` on a non scalar field). No existing code changes meaning;
+   as the known ones). `XO0437` is new (checker; `string` on a non scalar field). No existing code changes meaning;
    `xo explain`, the code table of spec/core.md and spec/std.md's json section gain the entries.
 6. **Other formats.** `derive Cbor`, `Yaml`, `Toml` and `Xml` do not take the option (`XO0422`), as they take no
    `omitempty` today unless their own decisions say so. `json.Value` objects are unaffected.

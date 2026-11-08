@@ -199,17 +199,24 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
         }
         var wire = b""
         var omit = false
+        var qstr = false
         if let Some(w) = fl.wire {
           // Go's tag options after a comma (decision 0309)
           let (key, opts) = wire_parts(w)
           if w.is_empty() {
             c.error("XO0412", fl.wire_span ?? fl.name.span, "field `${text(fl.name.name)}` has an empty wire name; write a key, or leave out `as \"\"` to use the field's name")
           }
+          var seen_omit = false
+          var seen_str = false
           for o in opts {
-            if o == b"omitempty" {
+            if o == b"omitempty" && !seen_omit {
               omit = true
+              seen_omit = true
+            } else if o == b"string" && !seen_str {
+              qstr = true
+              seen_str = true
             } else {
-              c.error("XO0422", fl.wire_span ?? fl.name.span, "unknown wire name option `${text(o)}` of field `${text(fl.name.name)}`; the only option is `omitempty` (decision 0309)")
+              c.error("XO0422", fl.wire_span ?? fl.name.span, "unknown or repeated wire name option `${text(o)}` of field `${text(fl.name.name)}`; the options are `omitempty` and `string` (decisions 0309, 0555)")
             }
           }
           wire = key
@@ -233,11 +240,18 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
           if fw.format == b"json" {
             json_wire = key
             omit = false
+            qstr = false
+            var seen_omit = false
+            var seen_str = false
             for o in opts {
-              if o == b"omitempty" {
+              if o == b"omitempty" && !seen_omit {
                 omit = true
+                seen_omit = true
+              } else if o == b"string" && !seen_str {
+                qstr = true
+                seen_str = true
               } else {
-                c.error("XO0422", fw.span, "unknown wire name option `${text(o)}` of field `${text(fl.name.name)}`; the only json option is `omitempty` (decision 0309)")
+                c.error("XO0422", fw.span, "unknown or repeated wire name option `${text(o)}` of field `${text(fl.name.name)}`; the json options are `omitempty` and `string` (decisions 0309, 0555)")
               }
             }
           } else if fw.format == b"sql" {
@@ -249,7 +263,11 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
             xml_wire = fw.wire
           }
         }
-        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.mods[c.objs[t].module].is_std && !c.objs[t].std_internal), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
+        if qstr && !c.json_string_type(ft) {
+          c.error("XO0437", fl.wire_span ?? fl.name.span, "the `string` option applies to scalar fields only: field `${text(fl.name.name)}` is not a Bool, Int, Float, Str or an Option of one (decision 0555)")
+          qstr = false
+        }
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.mods[c.objs[t].module].is_std && !c.objs[t].std_internal), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_string: qstr, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
       }
       c.objs[t].derives = c.derives_of(sd.derive)
       c.objs[t].fields = c.wire_keys(t, sd, fields, c.objs[t].derives)
@@ -401,7 +419,7 @@ fn (var c: Checker) wire_keys(t: Int, sd: parser.StructDecl, fields0: List[Field
   var any_wire = false
   for i in 0..fields.len() {
     let f = fields[i]
-    any_wire = any_wire || !f.wire.is_empty() || f.omit_empty
+    any_wire = any_wire || !f.wire.is_empty() || f.omit_empty || f.json_string
     // the format's own string, else the shared `as`, else the field's
     // name under the case rule (decision 0315)
     fields[i].json_key = if !f.json_wire.is_empty() { f.json_wire } else if !f.wire.is_empty() { f.wire } else { wire_case(f.name, json_case) }
@@ -593,6 +611,15 @@ pub fn snake_of(name: Bytes) -> Bytes {
     }
   }
   b.freeze()
+}
+
+/// Whether t takes the `string` wire option (decision 0555): a Bool, an
+/// integer, a float or a Str, or an Option of one.
+fn (c: Checker) json_string_type(t: Int) -> Bool {
+  let e = c.option_elem(t)
+  let u = if e >= 0 { e } else { t }
+  let r = c.resolve(u)
+  c.is_int(r) || c.is_float(r) || c.is_prelude(r, "Bool") || c.is_prelude(r, "Str")
 }
 
 /// A wire string's key and its comma separated options (Go's struct tag

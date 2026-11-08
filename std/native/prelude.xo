@@ -5183,6 +5183,10 @@ fn llrt_rs_json_order(keys: List[Str], live: List[Bool]) -> List[Int] { jsontext
 
 fn llrt_rs_json_order_all(keys: List[Str]) -> List[Int] { jsontext.sorted_order(keys, []) }
 
+fn llrt_rs_append_json_quoted(s: Str, t: Str) -> Str { jsontext.append_quoted(s, t) }
+
+fn llrt_json_text_tape(s: Str) -> List[Int] { jsontext.text_tape(s) }
+
 fn llrt_rs_append_json_body(s: Str, t: Str) -> Str { jsontext.append_body(s, t) }
 
 fn llrt_rs_append_json_float(s: Str, f: Float) -> Str { jsontext.append_float(s, f) }

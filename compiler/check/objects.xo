@@ -46,6 +46,9 @@ pub struct FieldInfo {
   /// `as "key,omitempty"`: derive Json leaves the field out when it is
   /// empty (decision 0309)
   pub omit_empty: Bool = false
+  /// `as "key,string"`: derive Json writes and reads the scalar as a JSON
+  /// string holding its literal (decision 0555)
+  pub json_string: Bool = false
   /// per-format overrides of the wire name (decision 0315): the key, empty
   /// for none (`json ",omitempty"` keeps the default key)
   pub json_wire: Bytes = b""

@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-07: feature: the `string` wire option, Go's `json:",string"`
+
+- Kind: feature
+- Commit: this push
+- Found by: Xo Azure 1's GCP generator (about 9,500 Discovery int64 and uint64 fields generated as Str; lead, 2026-11-07)
+- Go reference: encoding/json encode.go typeFields and decode.go literalStore, valueQuoted (go1.26.6)
+- Test: golden json_string (arm64, LLVM, Go backend parity, wasm); test/errorcheck/wire_names
+- Timing: none (a field without the option generates the code it did before)
+- Shipped in: not yet released
+
+`as "n,string"` (also `as ",string"`, `json "n,omitempty,string"`) writes a Bool, integer, Float, Float32 or Str field, or an Option of one, as a JSON string holding its literal, and reads it back the same way (decision 0555). The encoder writes the value's literal to a text of its own and quotes it (a string literal is quoted again, null stays null); the decoder reads a string, parses its text as JSON with no space around it and decodes that as the field's type. `to_value` writes the text as a `Str`. The option on any other field type is `XO0437`; a repeated or unknown option is still `XO0422`.
+
 ## 2026-11-07: feature: `derive Json(match: fold)`, Go's case-insensitive key matching
 
 - Kind: feature

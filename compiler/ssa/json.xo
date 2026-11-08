@@ -620,7 +620,7 @@ fn (var b: Builder) json_struct_obj(acc: Int, v: Int, t: Int, obj: Int, sb: Map[
         keep = b.add(Op.Not, bt, Aux.None, [b.json_empty(fv, ft)])
       }
       let (no0, join0) = b.if_then_begin(keep)
-      b.json_field(av, first, fname, fv, ft)
+      b.json_field(av, first, fname, fv, ft, f.json_string)
       b.if_then_end(no0, join0)
       continue
     }
@@ -628,6 +628,12 @@ fn (var b: Builder) json_struct_obj(acc: Int, v: Int, t: Int, obj: Int, sb: Map[
       let comma = if any { "," } else { "" }
       let key = "${pend}${comma}\"${fname}\":"
       let cur = b.read(av)
+      if f.json_string {
+        b.write_var(av, b.json_sub_q(b.lit(cur, key), fv, ft))
+        pend = ""
+        any = true
+        continue
+      }
       if b.is_prelude_named(ft, ["Str"]) && b.prelude_impl("llrt_rs_append_json_body") >= 0 {
         // a Str field's quotes go with the literals around it: the
         // opening one ends the key, the closing one starts the next
@@ -643,7 +649,7 @@ fn (var b: Builder) json_struct_obj(acc: Int, v: Int, t: Int, obj: Int, sb: Map[
       any = true
       continue
     }
-    b.json_field(av, first, fname, fv, ft)
+    b.json_field(av, first, fname, fv, ft, f.json_string)
   }
   if fixed {
     return b.lit(b.read(av), "${pend}}")
@@ -706,14 +712,22 @@ fn (var b: Builder) json_empty(fv: Int, ft: Int) -> Int {
   b.inline_method("is_empty", fv, [])
 }
 
-fn (var b: Builder) json_field(av: Int, first: Int, fname: Str, fv: Int, ft: Int) {
+fn (var b: Builder) json_field(av: Int, first: Int, fname: Str, fv: Int, ft: Int, q: Bool) {
   let bt = b.bool_t()
   let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.read(first)]))
   b.write_var(av, b.lit(b.read(av), ","))
   b.if_then_end(no, join)
   b.write_var(first, b.cbool(false))
   let l = b.lit(b.read(av), "\"${fname}\":")
-  b.write_var(av, b.json_sub(l, fv, ft))
+  b.write_var(av, if q { b.json_sub_q(l, fv, ft) } else { b.json_sub(l, fv, ft) })
+}
+
+/// json_sub for a field with the `string` option (decision 0555): the
+/// value's literal written to a text of its own, then quoted (a string
+/// literal is quoted again, null stays null; jsontext.append_quoted).
+fn (var b: Builder) json_sub_q(a: Int, x0: Int, xt: Int) -> Int {
+  let lit = b.json_sub(b.const_str(""), x0, xt)
+  b.json_rt("rs_append_json_quoted", b.str_t(), [a, lit])
 }
 
 /// A field of an object a decoder reads (jsonDec's fieldSpec).
@@ -727,6 +741,8 @@ struct JField {
   /// The default value (zero or one) and its file.
   dflt: List[Expr] = []
   dfile: Int = -1
+  /// the `string` wire option (decision 0555)
+  strq: Bool = false
 }
 
 /// The state of a decoder under construction: its parameters and result
@@ -813,10 +829,15 @@ fn (var b: Builder) dec_child_idx(d: Dec, xt: Int, j: Int, k: Int) -> Int {
 }
 
 fn (var b: Builder) dec_child_at(d: Dec, xt: Int, j: Int, seg0: Int, idx: Int) -> Int {
+  b.dec_child_q(d, xt, j, seg0, idx, false)
+}
+
+/// dec_child_at for a field with the `string` option when q (decision 0555).
+fn (var b: Builder) dec_child_q(d: Dec, xt: Int, j: Int, seg0: Int, idx: Int, q: Bool) -> Int {
   let st = b.str_t()
   let it = b.int_t()
   let bt = b.bool_t()
-  let cn = b.json_dec(xt)
+  let cn = if q { b.json_dec_q(xt) } else { b.json_dec(xt) }
   let cf = b.fidx(cn)
   if cf < 0 {
     return b.undef(b.typ(xt))
@@ -874,6 +895,64 @@ fn (var b: Builder) json_dec(ct: Int) -> Str {
   let kind = b.call("list.index", it, "", [tape, i])
   let d = Dec{src: src, tape: tape, i: i, rt: rt, t: t, kind: kind}
   b.json_dec_body(d, ct)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.json.decq[ct]: json_dec's function for a field with the `string`
+/// option (decision 0555). The node must be a string (or null, which ct's
+/// own decoder judges); its text is parsed as JSON of its own, with no
+/// space around it, and ct's decoder reads that. A text that is not JSON
+/// or whose decoder fails is Go's `invalid use of ,string struct tag`
+/// error, except a number's own error (an overflow).
+fn (var b: Builder) json_dec_q(ct: Int) -> Str {
+  let st = b.str_t()
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let t = b.typ(ct)
+  let det = b.decode_err_type()
+  if det < 0 {
+    b.unsupported("JSON decoding without std/json")
+    return "?"
+  }
+  let list_int = b.m.list(it)
+  let rt = b.typ(b.result_of(ct, det))
+  let name = "xo.json.decq[${b.type_name(ct)}]"
+  let fi = b.thunk_func(name, [st, list_int, it], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let src = b.param(0)
+  let tape = b.param(1)
+  let i = b.param(2)
+  let kind = b.call("list.index", it, "", [tape, i])
+  let d = Dec{src: src, tape: tape, i: i, rt: rt, t: t, kind: kind}
+  let inner = b.json_dec(ct)
+  let tn = b.type_name(ct)
+  let (nn, jn) = b.if_then_begin(b.dec_is(d, JK_NULL))
+  b.retv(b.call(inner, rt, "", [src, tape, i]))
+  b.if_then_end(nn, jn)
+  b.dec_need(d, JK_STR, "invalid use of ,string struct tag, trying to unmarshal unquoted value into ${tn}")
+  let txt = b.dec_str(d, i)
+  let tape2 = b.json_rt("json_text_tape", list_int, [txt])
+  let bad = b.add(Op.Eq, bt, Aux.None, [b.call("list.len", it, "", [tape2]), b.cint(0)])
+  let bad_msg = b.call("str.concat", st, "", [b.call("str.concat", st, "", [b.const_str("invalid use of ,string struct tag, trying to unmarshal \""), txt]), b.const_str("\" into ${tn}")])
+  let (nb, jb) = b.if_then_begin(bad)
+  b.retv(b.dec_err(d, b.const_str(""), bad_msg))
+  b.if_then_end(nb, jb)
+  let r = b.call(inner, rt, "", [txt, tape2, b.cint(0)])
+  let ce = b.m.variant_index(rt, "Err")
+  let (ne, je) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [b.add(Op.Tag, it, Aux.None, [r]), b.cint(ce)]))
+  // a number keeps its own error (an overflow); any other text is not a
+  // literal of the type
+  let root = b.call("list.index", it, "", [tape2, b.cint(0)])
+  let (nm, jm) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [root, b.cint(JK_NUM)]))
+  b.retv(b.dec_err(d, b.const_str(""), bad_msg))
+  b.if_then_end(nm, jm)
+  b.if_then_end(ne, je)
+  b.retv(r)
   b.finish_fn()
   b.end(saved)
   name
@@ -1135,7 +1214,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       if fi < 0 {
         continue
       }
-      fs.push(JField{name: fname, key: check.text(f.json_key), ct: b.c.subst(f.ty, sb), st: b.m.types[t].fields[fi].ty, dflt: f.default, dfile: df})
+      fs.push(JField{name: fname, key: check.text(f.json_key), ct: b.c.subst(f.ty, sb), st: b.m.types[t].fields[fi].ty, dflt: f.default, dfile: df, strq: f.json_string})
     }
     let vals = b.dec_fields(d, i, "", fs, !b.is_std_mod(om), b.c.objs[obj].json_fold)
     // the struct in SSA field order
@@ -1438,7 +1517,7 @@ fn (var b: Builder) dec_fields_fold(d: Dec, o: Int, seg: Str, fs: List[JField], 
     let fi = b.call("list.index", it, "", [idx, at])
     let (nom, joinm) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [fi, b.cint(fk)]))
     let dn = b.call("list.index", it, "", [idx, b.add(Op.Add, it, Aux.None, [at, b.cint(1)])])
-    let _dup = b.dec_or_jump(d, f.ct, b.typ(f.ct), dn, slow)
+    let _dup = b.dec_or_jump(d, f.ct, b.typ(f.ct), dn, slow, f.strq)
     b.if_then_end(nom, joinm)
     b.for_up_to_end(q, dv, headd, exitd)
     b.if_then_end(nod, joind)
@@ -1447,7 +1526,7 @@ fn (var b: Builder) dec_fields_fold(d: Dec, o: Int, seg: Str, fs: List[JField], 
     let res = b.s.f.add_param(join, f.st)
     let (found, missing) = b.branch(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
     b.s.cur = found
-    let v = b.dec_or_jump(d, f.ct, f.st, j, slow)
+    let v = b.dec_or_jump(d, f.ct, f.st, j, slow, f.strq)
     b.jump(join, [v])
     b.s.cur = missing
     if with_defaults && !f.dflt.is_empty() {
@@ -1478,10 +1557,10 @@ fn (var b: Builder) dec_fields_fold(d: Dec, o: Int, seg: Str, fs: List[JField], 
 
 /// The member at tape index j decoded as xt (dec_child), its value as st;
 /// on an error, a jump to slow (dec_fields_fold's error block).
-fn (var b: Builder) dec_or_jump(d: Dec, xt: Int, st: Int, j: Int, slow: Int) -> Int {
+fn (var b: Builder) dec_or_jump(d: Dec, xt: Int, st: Int, j: Int, slow: Int, q: Bool) -> Int {
   let it = b.int_t()
   let bt = b.bool_t()
-  let cn = b.json_dec(xt)
+  let cn = if q { b.json_dec_q(xt) } else { b.json_dec(xt) }
   let cf = b.fidx(cn)
   if cf < 0 {
     return b.undef(st)
@@ -1530,7 +1609,7 @@ fn (var b: Builder) dec_fields_fold_err(d: Dec, seg: Str, fs: List[JField], with
     let fi = b.call("list.index", it, "", [idx, at])
     let (nom, joinm) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [fi, b.cint(fk)]))
     let dn = b.call("list.index", it, "", [idx, b.add(Op.Add, it, Aux.None, [at, b.cint(1)])])
-    let _dup = b.dec_try(d, ev, f.ct, b.typ(f.ct), dn, fseg, hard)
+    let _dup = b.dec_try(d, ev, f.ct, b.typ(f.ct), dn, fseg, hard, f.strq)
     b.if_then_end(nom, joinm)
     b.for_up_to_end(q, dv, headd, exitd)
     b.if_then_end(nod, joind)
@@ -1539,7 +1618,7 @@ fn (var b: Builder) dec_fields_fold_err(d: Dec, seg: Str, fs: List[JField], with
     let res = b.s.f.add_param(join, f.st)
     let (found, missing) = b.branch(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
     b.s.cur = found
-    let v = b.dec_try(d, ev, f.ct, f.st, j, fseg, hard)
+    let v = b.dec_try(d, ev, f.ct, f.st, j, fseg, hard, f.strq)
     b.jump(join, [v])
     b.s.cur = missing
     if with_defaults && !f.dflt.is_empty() {
@@ -1595,10 +1674,10 @@ fn (var b: Builder) json_hard(ct: Int) -> Bool {
 /// The member at tape index j decoded as xt (dec_child), its value as st;
 /// on an error, the error is recorded in ev (fold_err) and the value is
 /// st's zero: dec_fields_fold decodes on to find the earliest error.
-fn (var b: Builder) dec_try(d: Dec, ev: FoldErr, xt: Int, st: Int, j: Int, seg: Int, hard: Bool) -> Int {
+fn (var b: Builder) dec_try(d: Dec, ev: FoldErr, xt: Int, st: Int, j: Int, seg: Int, hard: Bool, q: Bool) -> Int {
   let it = b.int_t()
   let bt = b.bool_t()
-  let cn = b.json_dec(xt)
+  let cn = if q { b.json_dec_q(xt) } else { b.json_dec(xt) }
   let cf = b.fidx(cn)
   if cf < 0 {
     return b.undef(st)
@@ -1714,7 +1793,7 @@ fn (var b: Builder) dec_fields_in(d: Dec, o: Int, seg: Str, fs: List[JField], wi
       let fi = b.call("list.index", it, "", [idx, at])
       let (nom, joinm) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [fi, b.cint(fk)]))
       let dn = b.call("list.index", it, "", [idx, b.add(Op.Add, it, Aux.None, [at, b.cint(1)])])
-      let _dup = b.dec_child(d, f.ct, dn, fseg)
+      let _dup = b.dec_child_q(d, f.ct, dn, fseg, -1, f.strq)
       b.if_then_end(nom, joinm)
       b.for_up_to_end(q, dv, headd, exitd)
       b.if_then_end(nod, joind)
@@ -1723,10 +1802,10 @@ fn (var b: Builder) dec_fields_in(d: Dec, o: Int, seg: Str, fs: List[JField], wi
       let dv = b.local()
       let (q, headd, exitd) = b.for_up_to_begin(b.call("list.len", it, "", [dups]), dv)
       let dn = b.call("list.index", it, "", [dups, q])
-      let _dup = b.dec_child(d, f.ct, dn, fseg)
+      let _dup = b.dec_child_q(d, f.ct, dn, fseg, -1, f.strq)
       b.for_up_to_end(q, dv, headd, exitd)
     }
-    let v = b.dec_child(d, f.ct, j, fseg)
+    let v = b.dec_child_q(d, f.ct, j, fseg, -1, f.strq)
     let cv = b.coerce(v, f.st)
     b.jump(join, [cv])
     b.s.cur = missing

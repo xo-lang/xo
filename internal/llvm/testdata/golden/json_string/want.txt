@@ -1,0 +1,32 @@
+exit 0
+--- stdout
+{"i":"-5","i8":"7","u":"18446744073709551615","f":"1.5","f32":"0.5","b":"true","s":"\"a\\\"b\"","oi":"3","os":"\"x\"","io":"9","so":"\"z\"","plain":4}
+{"i":"0","i8":"0","u":"0","f":"0","f32":"0","b":"false","s":"\"\"","oi":null,"os":null,"plain":0}
+{"i":"0","i8":"0","u":"0","f":"0","f32":"0","b":"false","s":"\"\"","oi":"0","os":"\"\"","plain":0}
+round trip: true
+ok {"i":"12","i8":"0","u":"0","f":"0","f32":"0","b":"false","s":"\"\"","oi":null,"os":null,"plain":0}
+err at $.i: invalid use of ,string struct tag, trying to unmarshal unquoted value into Int
+err at $.i: invalid use of ,string struct tag, trying to unmarshal "" into Int
+err at $.i: invalid use of ,string struct tag, trying to unmarshal " 1" into Int
+err at $.i: invalid use of ,string struct tag, trying to unmarshal "1 " into Int
+err at $.i: invalid use of ,string struct tag, trying to unmarshal "0x10" into Int
+err at $.i: expected integer
+err at $.i: expected integer
+err at $.i8: expected integer
+err at $.u: expected non negative integer
+ok {"i":"0","i8":"0","u":"0","f":"0","f32":"0","b":"true","s":"\"\"","oi":null,"os":null,"plain":0}
+err at $.b: invalid use of ,string struct tag, trying to unmarshal "yes" into Bool
+err at $.b: invalid use of ,string struct tag, trying to unmarshal unquoted value into Bool
+ok {"i":"0","i8":"0","u":"0","f":"0","f32":"0","b":"false","s":"\"hi\"","oi":null,"os":null,"plain":0}
+err at $.s: invalid use of ,string struct tag, trying to unmarshal "hi" into Str
+ok {"i":"0","i8":"0","u":"0","f":"2500","f32":"0","b":"false","s":"\"\"","oi":null,"os":null,"plain":0}
+ok {"i":"0","i8":"0","u":"0","f":"0","f32":"0","b":"false","s":"\"\"","oi":null,"os":null,"plain":0}
+ok {"i":"0","i8":"0","u":"0","f":"0","f32":"0","b":"false","s":"\"\"","oi":null,"os":null,"plain":0}
+ok {"i":"0","i8":"0","u":"0","f":"0","f32":"0","b":"false","s":"\"\"","oi":"7","os":null,"plain":0}
+err at $.oi: invalid use of ,string struct tag, trying to unmarshal unquoted value into Int?
+ok {"i":"0","i8":"0","u":"0","f":"0","f32":"0","b":"false","s":"\"\"","oi":null,"os":null,"plain":5}
+err at $.i: invalid use of ,string struct tag, trying to unmarshal unquoted value into Int
+{"id":"8"}
+over 8
+{"i":"-5","i8":"7","u":"18446744073709551615","f":"1.5","f32":"0.5","b":"true","s":"\"a\\\"b\"","oi":"3","os":"\"x\"","io":"9","so":"\"z\"","plain":4}
+--- stderr

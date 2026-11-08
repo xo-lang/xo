@@ -1666,6 +1666,37 @@ pub fn append_escaped(out: Str, s: Str, from: Int, html: Bool) -> Str {
 }
 
 /// out + f as std/json writes a Float (num.append_json_float).
+/// out and lit, a JSON value's text, as the value of a `string` wire field
+/// (decision 0555): `null` as it is, a string literal as a JSON string
+/// holding it (Go quotes a string field twice), any other literal inside
+/// quotes.
+pub fn append_quoted(out: Str, lit: Str) -> Str {
+  if lit == "null" {
+    return rt.rs_append(out, lit)
+  }
+  if lit.len() > 0 && lit.bytes()[0] == 34 {
+    return append_str(out, lit)
+  }
+  rt.rs_push_byte(rt.rs_append(rt.rs_push_byte(out, 34), lit), 34)
+}
+
+/// The tape of s read as a JSON value of its own for a `string` wire field
+/// (decision 0555), or the empty list when it is not one: no space around
+/// it, as Go's literalStore reads the text.
+pub fn text_tape(s: Str) -> List[Int] {
+  let b = s.bytes()
+  let n = b.len()
+  if n == 0 {
+    return []
+  }
+  let first = b[0]
+  let last = b[n - 1]
+  if first == 32 || first == 9 || first == 10 || first == 13 || last == 32 || last == 9 || last == 10 || last == 13 {
+    return []
+  }
+  parse(b)
+}
+
 pub fn append_float(out: Str, f: Float) -> Str { num.append_json_float(out, f) }
 
 /// out + b as std/json writes Bytes: its standard base64, padded, in
