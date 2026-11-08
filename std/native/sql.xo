@@ -2936,36 +2936,68 @@ fn row_less(a: List[sql.SqlValue], b: List[sql.SqlValue], orders: List[OrderKey]
   false
 }
 
-/// A stable merge sort of the indexes 0..keys.len() by the keys.
-fn sort_idx(idx: List[Int], keys: List[List[sql.SqlValue]], orders: List[OrderKey]) -> List[Int] {
-  if idx.len() <= 1 {
-    return idx
-  }
-  let mid = idx.len() / 2
-  let l = sort_idx(idx[0..mid], keys, orders)
-  let r = sort_idx(idx[mid..idx.len()], keys, orders)
-  var out: List[Int] = []
-  var i = 0
-  var j = 0
-  while i < l.len() && j < r.len() {
-    // take from the right only when it is strictly less (stable)
-    if row_less(keys[r[j]], keys[l[i]], orders) {
-      out.push(r[j])
-      j += 1
-    } else {
-      out.push(l[i])
-      i += 1
+/// Whether the keys are already in order: no row sorts strictly before
+/// the one ahead of it, so the stable sort would keep every row where it
+/// is (an ORDER BY over the insertion order, the usual case).
+fn keys_in_order(keys: List[List[sql.SqlValue]], orders: List[OrderKey]) -> Bool {
+  for i in 1..keys.len() {
+    if row_less(keys[i], keys[i - 1], orders) {
+      return false
     }
   }
-  while i < l.len() {
-    out.push(l[i])
-    i += 1
+  true
+}
+
+/// A stable merge sort of the indexes 0..keys.len() by the keys:
+/// bottom up, runs of 1, 2, 4, ... merged between two buffers, so it
+/// allocates two lists where the recursive form sliced and built one per
+/// call.
+fn sort_idx(keys: List[List[sql.SqlValue]], orders: List[OrderKey]) -> List[Int] {
+  let n = keys.len()
+  var a = List[Int].with_capacity(n)
+  var b = List[Int].with_capacity(n)
+  for i in 0..n {
+    a.push(i)
+    b.push(i)
   }
-  while j < r.len() {
-    out.push(r[j])
-    j += 1
+  var w = 1
+  while w < n {
+    var lo = 0
+    while lo < n {
+      let mid = if lo + w < n { lo + w } else { n }
+      let hi = if lo + 2 * w < n { lo + 2 * w } else { n }
+      var i = lo
+      var j = mid
+      var o = lo
+      while i < mid && j < hi {
+        // take from the right only when it is strictly less (stable)
+        if row_less(keys[a[j]], keys[a[i]], orders) {
+          b[o] = a[j]
+          j += 1
+        } else {
+          b[o] = a[i]
+          i += 1
+        }
+        o += 1
+      }
+      while i < mid {
+        b[o] = a[i]
+        i += 1
+        o += 1
+      }
+      while j < hi {
+        b[o] = a[j]
+        j += 1
+        o += 1
+      }
+      lo = hi
+    }
+    let t = a
+    a = b
+    b = t
+    w = w * 2
   }
-  out
+  a
 }
 
 fn int_arg(n: Node, args: List[sql.SqlValue]) -> Int ! sql.SqlErr {
@@ -3064,15 +3096,13 @@ fn mem_select(tables: Map[Str, Table], var p: Parser, args: List[sql.SqlValue]) 
         }
       }
     }
-    var idx: List[Int] = []
-    for i in 0..rows.len() {
-      idx.push(i)
+    if !keys_in_order(keys, orders) {
+      var sorted = List[List[sql.SqlValue]].with_capacity(rows.len())
+      for i in sort_idx(keys, orders) {
+        sorted.push(rows[i])
+      }
+      rows = sorted
     }
-    var sorted: List[List[sql.SqlValue]] = []
-    for i in sort_idx(idx, keys, orders) {
-      sorted.push(rows[i])
-    }
-    rows = sorted
   }
   // offset, limit
   if let Some(o) = offset {

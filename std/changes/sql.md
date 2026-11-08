@@ -263,3 +263,17 @@ memory driver has `BYTEA`, `JSON`, and `TYPE[]` columns.
 `23505`, not null `23502`, a value of another type `42804`), and the new
 `Server(code, msg)` carries other server errors. A pattern
 `Constraint(m)` becomes `Constraint(m, _, _)`.
+
+## 2026-11-07: perf: ORDER BY skips rows already in order and sorts with two buffers
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Xo-vs-Go survey (bench/results/xo-vs-go-survey-2026-11-07.md, sqlrow/scan 1.40x Go; host 1 profile: the memory driver's sort_idx 38% cumulative)
+- Go reference: none (database/sql has no engine; the twin's stub driver serves rows in order); sort.Stable's contract
+- Test: the sql corpus on go, arm64 and llvm; the sql goldens on arm64, LLVM and Go parity; xo test --std-module=native/sql; a probe of 8 ORDER BY queries over 777 shuffled rows (several keys, DESC, NULLs, ties, WHERE, LIMIT and OFFSET) identical to main's and the Go backend's
+- Timing: bench/perf/sqlrow scan on linux/arm64 host 1, --ab against main (7 rounds, n=6): 0.574 (0.568 to 0.585; 81.0 to 46.5 ms; the survey's Go 60.8 ms), max RSS 0.949; the same bench ordered by `n DESC, id DESC` (every query sorts): 0.895 (0.876 to 0.918, n=7)
+
+The memory driver's ORDER BY checks whether the rows are already in key order (n - 1 compares) and keeps
+them as they are when they are, since a stable sort would not move any; otherwise its merge sort runs bottom
+up between two index buffers, where the recursive form sliced the index list and built a new one per call.
+Results unchanged.
