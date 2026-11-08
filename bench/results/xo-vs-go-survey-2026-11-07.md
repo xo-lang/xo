@@ -69,6 +69,7 @@ Profiles of the next rows, for the queue after these:
 | charset/w1252_decode | 1.413 | 37.2 | 26.3 | `charset.decode` 63% flat (a rune at a time), `scan.utf8_valid` 23% cum |
 | strconv/itoa | 1.385 | 119.5 | 86.3 | `num.append_int` 31% flat, the Str's allocation and word pushes (`rs_push_words`, `rs_new_n`, `alloc_fast`, `obj_rc_free`) about 35% |
 | csv/reader | 1.343 | 39.6 | 29.5 | `read_record` 77% cum, `drop Str` 11% |
+| ed25519/sign | 1.171 | 80.1 | 68.4 | not a like-for-like row (Xo Lang 2, 2026-11-07): Xo signs with the 32 byte seed, so each `ed25519_sign` derives the public key (a second base multiplication, std/native/llrt/ed25519.xo `sign`), while the twin signs with Go's 64 byte key made once by `NewKeyFromSeed` outside the loop; the matching Xo call, signing with the 64 byte key (ed25519/signkey), was 0.648 of Go (bench/results/std-twin-rows2-2026-11-03.md:139) |
 
 ## Other cases more than 10% slower (5 ms or more)
 
