@@ -44,7 +44,7 @@ fn add_msg(var r: Registry, m: protodesc.MessageDesc, pre: Str, p3: Bool) {
   let full = pre + m.name
   var is_map = false
   if !m.options.is_empty() {
-    for f in pd.walk(m.options) ?? [] {
+    for f in (pd.walk(m.options) ?? _e => []) {
       if f.num == 7 && f.wire == 0 && f.v != 0 {
         is_map = true
       }
@@ -786,16 +786,12 @@ fn wkt_json(r: Registry, info: MsgInfo, wire: Bytes, o: protojson.Opts) -> Str? 
   if short == "Any" {
     let fl = walk_(wire)?
     var url = ""
-    var has_url = false
     var value = b""
-    var has_value = false
     for f in fl {
       if f.num == 1 && f.wire == 2 {
         url = f.data.to_str_lossy()
-        has_url = true
       } else if f.num == 2 && f.wire == 2 {
         value = f.data
-        has_value = true
       }
     }
     if url.is_empty() {
@@ -1375,11 +1371,11 @@ fn enc_scalar(r: Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -
     match jv {
       Text(s) => {
         let enc = if s.contains("-") || s.contains("_") {
-          if s.len() % 4 != 0 { base64.RawUrl } else { base64.Url }
+          if s.len() % 4 != 0 { base64.Base64.RawUrl } else { base64.Base64.Url }
         } else if s.len() % 4 != 0 {
-          base64.RawStd
+          base64.Base64.RawStd
         } else {
-          base64.Std
+          base64.Base64.Std
         }
         match base64.decode(s, enc) {
           Ok(b) => return Ok(Some(Sv{v: 0, data: b}))
@@ -1467,7 +1463,7 @@ fn is_packed(info: MsgInfo, fd: protodesc.FieldDesc) -> Bool {
   }
   var packed = info.proto3
   if !fd.options.is_empty() {
-    for f in pd.walk(fd.options) ?? [] {
+    for f in (pd.walk(fd.options) ?? _e => []) {
       if f.num == 2 && f.wire == 0 {
         packed = f.v != 0
       }
