@@ -31,6 +31,7 @@ A run of whole blocks (sha1 sums, a Hasher's write, HMAC-SHA1) goes to cpu.sha1_
 ## 2026-11-07: perf: SHA-512 hashes many blocks in one loop on arm64
 
 - Kind: perf
+- Commit: 5dc30fa68
 - Go reference: crypto/sha512 sha512block_arm64.s (go1.26.1; one routine over every block)
 - Test: std/native/llrt/sha256_test.xo (blocks512 against block512 at 0 to 8 blocks and three offsets; a SHA-512 Hasher written in pieces against one write); crypto tests; sha and crypto goldens on arm64, LLVM and wasm
 - Timing: bench/perf/simdscan sha512, linux/arm64 host 1, xo bench --ab against main: 0.965 (0.958 to 0.976, n=6; better); simdscan sha256 1.006 (0.972 to 1.022, within noise); HMAC-SHA256 of 32 bytes (simdscan hmac256) 1.002 (0.99 to 1.014, n=7; within noise)
@@ -40,6 +41,7 @@ A run of whole blocks (crypto's sha512 and sha384 sums, a Hasher's write, HMAC-S
 ## 2026-11-07: perf: Ed25519 hashes with the SHA512 instructions
 
 - Kind: perf
+- Commit: 5dc30fa68
 - Found by: reading digest.xo sha512_at while adding the SHA-512 loop: it ran the rounds in Xo (digest_tables) even when the CPU has SHA512
 - Go reference: crypto/ed25519 through crypto/sha512 (go1.26.1)
 - Test: crypto tests (Ed25519 sign and verify vectors) on arm64 and LLVM; ed25519 goldens

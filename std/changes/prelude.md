@@ -27,6 +27,7 @@ On the native backends a List[Str] or List[List] literal of a few elements that 
 ## 2026-11-07: fix: a freed 32 KiB block's scavenge no longer discards its neighbor's pages under 64 KiB pages
 
 - Kind: fix
+- Commit: 2e032017b
 - Found by: reading heapos.xo scavenge for decision 0533 (gotchas/madvise-rounds-over-neighbor.md, anticipated: no 64 KiB page host)
 - Go reference: none (runtime/mem_linux.go sysUnused works on whole physical pages of a span)
 - Test: none on these hosts (4 KiB pages on linux, 16 KiB on darwin, where the rule changes nothing); heapos_test's age test passes through the same advice
@@ -35,6 +36,7 @@ On the native backends a List[Str] or List[List] literal of a few elements that 
 ## 2026-11-07: perf: free heap blocks of 16 KiB and over go back to the system after 30 to 60 s unused, on Linux too
 
 - Kind: perf
+- Commit: 2e032017b
 - Found by: the stability soak and load sweep (decision 0533's Context): stability/notes' RSS outside huge pages rose 8 to 10 MB/h with leakcheck 0, and the free lists held 32.7 MB more at 256 workers than at 8, pages Linux never got back
 - Go reference: runtime/mgcscavenge.go (the background scavenger returns pages free for a while; MADV_DONTNEED on Linux since Go 1.16)
 - Test: std/native/llrt/heapos_test.xo "an age pass marks a free page block and the next gives its pages back"
@@ -207,6 +209,7 @@ The large block cache served a request only from a mapping of at most four times
 ## 2026-11-06: perf: a one byte find, the ASCII run of UTF-8 validation and the linux memcmp test 32 bytes with one vector compare
 
 - Kind: perf
+- Commit: b20b09406
 - Found by: the SIMD survey of std's byte paths (bench/results/simd-survey-2026-11-06.md), step 2
 - Go reference: bytes.IndexByte, utf8.Valid, bytes.Equal, bytes.Compare (go1.26.1)
 - Test: std/native/llrt/scan_test.xo "find_byte and span find a byte at each place of 0 to 100", libcstr_test.xo "memcmp of 0 to 80 bytes differing at each byte"
