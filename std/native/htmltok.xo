@@ -897,25 +897,38 @@ fn tokenizer_next(var z: htmltok.Tokenizer) -> htmltok.TokenType {
   z.text_raw = false
   z.convert_nul = false
   while true {
+    var c = 0
     if z.max_buf == 0 {
-      // no limit: jump to the next '<' (or the end) instead of reading byte by byte
+      // no limit: jump to the next '<' (or the end) and read it and the byte after it in place
       var i = z.re
       let n = z.src.len()
       while i < n && z.src[i] != 60 {
         i += 1
       }
-      z.re = i
-    }
-    let c0 = tokenizer_rb(z)
-    if z.errc != 0 {
-      break
-    }
-    if c0 != 60 {
-      continue
-    }
-    var c = tokenizer_rb(z)
-    if z.errc != 0 {
-      break
+      if i >= n {
+        z.re = n
+        z.errc = 1
+        break
+      }
+      z.re = i + 1
+      if z.re >= n {
+        z.errc = 1
+        break
+      }
+      c = Int(z.src[z.re])
+      z.re += 1
+    } else {
+      let c0 = tokenizer_rb(z)
+      if z.errc != 0 {
+        break
+      }
+      if c0 != 60 {
+        continue
+      }
+      c = tokenizer_rb(z)
+      if z.errc != 0 {
+        break
+      }
     }
     var kind = 0
     if is_alpha(c) {
