@@ -473,6 +473,11 @@ for step in "$@"; do
   cross)
     cross_ran=1
     full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$' ;;
+  codegen|selfbuild|wasm)
+    # the names pushq's PUSHQ_RAN uses: gate.sh runs them by the paths the
+    # change touches after the named steps, so naming one is a no-op
+    # (lead, 2026-11-08: a run exited 1 for `selfbuild codegen`)
+    echo "gate.sh: step $step runs by itself when the change's paths need it (the PUSHQ_RAN line at the end names what ran)" ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
 done
