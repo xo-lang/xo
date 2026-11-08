@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-08: perf: time's put_num writes two and four digit fields in one store
+
+- Kind: perf
+- Commit: this push
+- Found by: xo prof of bench/perf/time (put_num 33% of format_layout)
+- Go reference: time/format.go appendInt (Go writes the digits into the buffer directly)
+- Test: internal/stdtest corpora time, timego, timeformat (arm64, LLVM, Go backend; all pass); bench/perf/time output unchanged
+- Timing: bench/perf/time on linux/arm64 host 1, --ab against the parent (6 rounds, stopped early): format_layout 0.899 (0.874 to 0.917), format 0.927 (0.912 to 0.94)
+- Shipped in: not yet released
+
+`put_num` (std/native/time.xo) wrote a zero padded field of width 2 or 4 by slicing a digit table and `write_str`; it now computes the ASCII digits of a value in range and writes them with one `write_le`. Other widths and out of range values keep the earlier path.
+
 ## 2026-11-08: perf: time.format and time.parse write and read the RFC 3339 layout in one pass
 
 - Kind: perf
