@@ -78,6 +78,21 @@ Pending the owner.
 
 ## Results
 
-To measure after the release window (lead, 2026-11-08): `xo bench --ab` of
-(a) against main on darwin/arm64, for xo's self build and one large
-program.
+Option (a) (branch l2-0563a: `Ctx.no_debug_map = trimpath_eff(o)`, the bin
+cache key gains `debug-map=off`) against its parent c6b3a9d6b, darwin/arm64
+(the Mac), a warm rebuild as ab-host.sh's edit mode does it (private HOME, a
+back-end cache per side, std half on, no bin or run cache, no background
+separate compilation), `xo bench --ab`, 2026-11-08:
+
+| program | wall | cpu | max RSS | link phase (one build) | binary | $HOME in binary |
+|---|---|---|---|---|---|---|
+| internal/llvm golden http_server_request (n=11, load 9.8) | 0.997 (0.958 to 1.015, within noise) | 0.998 | 1.025 (1.005 to 1.032, worse) | 13.7 to 14.2 ms | 5,597,346 to 7,366,738 bytes (+32%) | yes, then no |
+| compiler/xo, the self build (n=7, load 28.6) | 1.129 (0.919 to 1.471, within noise: spreads 12% and 21%) | 1.009 (0.958 to 1.038) | 0.998 | 835 to 702 ms | 87,035,154 to 85,345,538 bytes | yes, then no |
+
+On these numbers (a) costs no build time that the measurements can see.
+The cost is in the binary: a small program grows by a third, since std's
+DWARF is embedded instead of mapped, and peak memory rises 2.5%. The self
+build ran on a loaded Mac (load median 28.6), so its wall row settles
+nothing; its cpu row is flat. To rerun in a quiet window:
+`~/xo-lead/notes/xo-lang-2/ab-0563a.sh compiler/xo 11`. Logs:
+~/xo-lead/agents/l2-ab0563b-cmd.log.
