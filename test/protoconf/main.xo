@@ -15,6 +15,8 @@ struct Req {
   fmt: Int = 0
   typ: Str = ""
   other: Bool = false
+  /// test_category 3: JSON_IGNORE_UNKNOWN_PARSING_TEST
+  ignore_unknown: Bool = false
 }
 
 /// Reads exactly `n` bytes from standard input; None at a clean end of input.
@@ -45,6 +47,10 @@ fn parse_req(m: Bytes) -> Req ! protobuf.ProtoErr {
       let (v, n) = protobuf.read_varint(m, at)?
       r.fmt = Int(v)
       at = n
+    } else if num == 5 && wire == 0 {
+      let (v, n) = protobuf.read_varint(m, at)?
+      r.ignore_unknown = Int(v) == 3
+      at = n
     } else if num == 4 && wire == 2 {
       let (d, n) = protobuf.read_bytes(m, at)?
       r.typ = d.to_str_lossy()
@@ -59,8 +65,8 @@ fn parse_req(m: Bytes) -> Req ! protobuf.ProtoErr {
   r
 }
 
-fn opts() -> protojson.Opts {
-  protojson.Opts{proto_names: false, emit_defaults: false, enum_numbers: false, discard_unknown: false}
+fn opts(discard: Bool) -> protojson.Opts {
+  protojson.Opts{proto_names: false, emit_defaults: false, enum_numbers: false, discard_unknown: discard}
 }
 
 /// A ConformanceResponse with one bytes or string member `num`.
@@ -75,14 +81,18 @@ fn respond(reg: protojson.Registry, q: Req) -> Bytes {
   var wire: Bytes = b""
   match q.proto {
     Some(p) => {
-      // A protobuf input is parsed by converting it to JSON (an invalid message fails there).
-      match protojson.marshal(reg, q.typ, p, opts()) {
-        Ok(_) => wire = p
-        Err(e) => return resp(1, e.display().bytes())
+      // A protobuf input for protobuf output is parsed by converting it to JSON (an invalid message fails
+      // there); for JSON output the one conversion below reports its failure as a serialize error.
+      if q.fmt == PROTOBUF {
+        match protojson.marshal(reg, q.typ, p, opts(false)) {
+          Ok(_) => {}
+          Err(e) => return resp(1, e.display().bytes())
+        }
       }
+      wire = p
     }
     None => {
-      match protojson.unmarshal(reg, q.typ, q.json ?? "", opts()) {
+      match protojson.unmarshal(reg, q.typ, q.json ?? "", opts(q.ignore_unknown)) {
         Ok(w) => wire = w
         Err(e) => return resp(1, e.display().bytes())
       }
@@ -91,7 +101,7 @@ fn respond(reg: protojson.Registry, q: Req) -> Bytes {
   if q.fmt == PROTOBUF {
     resp(3, wire)
   } else if q.fmt == JSON {
-    match protojson.marshal(reg, q.typ, wire, opts()) {
+    match protojson.marshal(reg, q.typ, wire, opts(false)) {
       Ok(s) => resp(4, s.bytes())
       Err(e) => resp(6, e.display().bytes())
     }
