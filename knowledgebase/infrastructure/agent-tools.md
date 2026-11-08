@@ -1124,6 +1124,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   A change's arm64 tests gate on arm64 (the Mac or that host); the
   linux/amd64 host skips them and is an addition, not a substitute
   (lead, 2026-10-30; gotchas/amd64-gate-skips-arm64-tests.md).
+- One Go test on another OS: `scripts/go-test-host.sh PKG RUNREGEX
+  [FLAGS...]` runs `go test -count=1 -v -run RUNREGEX PKG` with the
+  built xo as XO_CLI, through an offload host's script mode:
+  `~/xo-lead/agents/amd64-run.sh REV NAME script scripts/go-test-host.sh
+  ./cmd/xo '^TestName$'` (linux/amd64), with
+  `OFFLOAD_ENV=offload-win.env` on Windows itself (Git Bash). REV must be
+  committed (lead, 2026-11-08: a windows-only branch of a cmd/xo test).
 - Pushes: `~/xo-lead/agents/pushq.sh WORKTREE [--base SHA] [-- GATE...]`.
   A push touching `std/*.xo` also runs cmd/xo's TestStdChecks with the
   worktree's bin/xo (about 2 s; owner, 2026-10-30, after an XO0804 in
