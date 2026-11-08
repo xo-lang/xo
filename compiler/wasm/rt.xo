@@ -3870,6 +3870,65 @@ fn rt_text(var g: Gen) -> Str {
       i32.wrap_i64
       call $sapp)
 
+    ;; BytesBuilder.write_le and write_be (decision 0561): the n (0 to 8)
+    ;; low bytes of v appended, lowest first, or highest first when be is
+    ;; not 0 (the bytes reordered into w a byte at a time: wasm has no byte
+    ;; swap); any other width traps
+    (func $rs_write (param $a i32) (param $an i32) (param $v i64) (param $n i64) (param $be i64) (result i32 i32) (local $w i64) (local $i i64)
+      local.get $n
+      i64.const 8
+      i64.gt_u
+      if
+        unreachable
+      end
+      local.get $v
+      local.set $w
+      local.get $be
+      i64.eqz
+      i32.eqz
+      if
+        i64.const 0
+        local.set $w
+        i64.const 0
+        local.set $i
+        block $done
+          loop $next
+            local.get $i
+            local.get $n
+            i64.ge_u
+            br_if $done
+            local.get $w
+            local.get $v
+            local.get $n
+            i64.const 1
+            i64.sub
+            local.get $i
+            i64.sub
+            i64.const 8
+            i64.mul
+            i64.shr_u
+            i64.const 255
+            i64.and
+            local.get $i
+            i64.const 8
+            i64.mul
+            i64.shl
+            i64.or
+            local.set $w
+            local.get $i
+            i64.const 1
+            i64.add
+            local.set $i
+            br $next
+          end
+        end
+      end
+      local.get $a
+      local.get $an
+      local.get $w
+      local.get $n
+      call $rs_push_word)
+
     ;; s + four words of up to 8 bytes, their lengths in the nibbles of
     ;; lens (xo_rs_push_words, decision 0193)
     (func $rs_push_words (param $a i32) (param $an i32) (param $w0 i64) (param $w1 i64) (param $w2 i64) (param $w3 i64) (param $lens i64) (result i32 i32)

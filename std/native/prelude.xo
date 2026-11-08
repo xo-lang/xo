@@ -5126,6 +5126,27 @@ fn llrt_rs_put(s: Str, at: Int, v: Int, n: Int, be: Int, loc: Str) -> Str {
   raw.put(s, at, v, n, be)
 }
 
+/// BytesBuilder.write_le and write_be (decision 0561): the n (0 to 8)
+/// low bytes of v appended, lowest first (be 0) or highest first: one
+/// word push.
+fn llrt_rs_write(s: Str, v: Int, n: Int, be: Int, loc: Str) -> Str {
+  if n < 0 || n > 8 {
+    write_fail(loc)
+  }
+  if n == 0 {
+    return s
+  }
+  var w = v
+  if be != 0 {
+    w = v.swap_bytes().shr_logical(64 - 8 * n)
+  }
+  rt.rs_push_word(s, w, n)
+}
+
+fn write_fail(loc: Str) {
+  fault.raise_str_at("BytesBuilder.write_le and write_be: width must be 0 to 8", raw.data(loc), loc.len())
+}
+
 /// llrt_rs_put's fault, out of line.
 fn put_fail(loc: Str) {
   fault.raise_str_at("BytesBuilder.put: width must be 1, 2, 4 or 8 and at..at + width must lie within the builder", raw.data(loc), loc.len())

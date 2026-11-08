@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- prelude (feature, decision 0561): `BytesBuilder.write_le(v, n)` and `write_be(v, n)` append the n (0 to 8) low bytes of a word in one step, on every backend; std/netip's IPv4 text uses it (bench/perf/netip display4 within noise, no speedup claimed).
 - std/path (perf): `dir`, `base`, `ext` and `split` return byte views with no UTF-8 boundary check, and `clean` no longer revalidates its result: bench/perf/path parts 0.918, clean 0.934, join 0.942 of main on linux/arm64 (--ab, n=6); results unchanged.
 - std/crypto (perf): an AES key's schedule does SubWord in a vector register (cpu.aes_sub_word, decision 0231 addendum): bench/perf/aesgcm key 0.717 of main on linux/arm64 (--ab, n=7), seal 0.944; round keys unchanged.
 - std/cbor (perf, decision 0559): `cbor.marshal` of a type that derives Cbor writes its encoding directly, with no `cbor.Value` tree: bench/perf/cbor umarshal 0.46 of before on linux/arm64 (2.8 ms, Go's 4.3 ms), output byte identical; new helpers for the generated code (`put_head`, `put_int`, `put_float`, `put_text`, `put_bytes`, `put_value`, `det_keys`).

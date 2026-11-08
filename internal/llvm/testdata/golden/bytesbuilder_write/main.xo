@@ -1,0 +1,33 @@
+// BytesBuilder.write_le and write_be (decision 0561): every width 0 to 8 in
+// both orders, truncation of v, a negative v, and a builder that grows past a
+// small string while written to.
+
+fn dump(os: Os, b: Bytes) {
+  var s = ""
+  for x in b {
+    s = s + "${x} "
+  }
+  os.stdio.println(s)
+}
+
+fn main(os: Os) {
+  for n in 0..9 {
+    var b = BytesBuilder.new()
+    b.write_le(0x1122334455667788, n)
+    b.write_byte(0)
+    b.write_be(0x1122334455667788, n)
+    os.stdio.print("${n}: ")
+    dump(os, b.freeze())
+  }
+  var c = BytesBuilder.new()
+  c.write_le(-2, 3)
+  c.write_be(-2, 2)
+  c.write_le(0x1FF, 1)
+  dump(os, c.freeze())
+  var d = BytesBuilder.new()
+  for i in 0..10 {
+    d.write_be(0x30313233 + i, 4)
+    d.write_le(0x2C, 1)
+  }
+  os.stdio.println(d.freeze().to_str() ?? "?")
+}

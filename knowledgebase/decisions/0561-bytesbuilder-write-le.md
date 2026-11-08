@@ -1,6 +1,6 @@
 # 0561: BytesBuilder.write_le and write_be append a word's low bytes
 
-Status: Proposed (Xo Lang 2, 2026-11-07, at the lead's request)
+Status: Accepted (owner, 2026-11-07). Drafted by Xo Lang 2 at the lead's request.
 
 ## Context
 
@@ -48,3 +48,21 @@ needs wasm) unless it is written in Xo over existing primitives.
    rt.cast becomes a new rule, and it serves only Str building.
 2. A netip-only Str constructor from two words: one caller.
 3. Keep the builder dance: display4 stays at 1.41x.
+
+## Landed (2026-11-07)
+
+- Prelude `BytesBuilder.write_le(v, n)` and `write_be(v, n)` on every
+  backend: native (llrt rs_write, one capacity check and one store),
+  LLVM, wasm (`$rs_write`) and Go (std/rt M_write_le, M_write_be); a
+  width outside 0 to 8 faults ("BytesBuilder.write_le and write_be:
+  width must be 0 to 8"). Golden bytesbuilder_write (widths 0 to 8 in
+  both orders, a negative value, growth across the capacity), checked on
+  arm64, LLVM and Go parity.
+- netip's string4 appends with write_le; ZERO16 and its overwrite are
+  gone.
+- Measured: bench/perf/netip on linux/arm64 host 1, --ab against main,
+  7 rounds: display4 1.006 (0.963 to 1.079), parse4 0.946 (0.921 to
+  1.008), both within noise. The write primitive does not move display4
+  measurably (its 9 ms run is noisy); where the rest of the gap to Go
+  (1.41x in the survey) goes is not yet profiled. No speedup is claimed;
+  the primitive stays for fixed width writers.

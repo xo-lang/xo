@@ -2434,7 +2434,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     b.unsupported("`${b.c.display_name(fo)}`")
     return Some(b.undef(nt))
   }
-  if key is "StrBuilder.write" | "BytesBuilder.write" | "BytesBuilder.write_str" | "BytesBuilder.write_byte" | "BytesBuilder.write_rune" | "BytesBuilder.put_le" | "BytesBuilder.put_be" {
+  if key is "StrBuilder.write" | "BytesBuilder.write" | "BytesBuilder.write_str" | "BytesBuilder.write_byte" | "BytesBuilder.write_rune" | "BytesBuilder.put_le" | "BytesBuilder.put_be" | "BytesBuilder.write_le" | "BytesBuilder.write_be" {
     var p = b.place(ci.recv[0])
     if !p.ok {
       return Some(b.undef(nt))
@@ -2464,6 +2464,18 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
           b.place_set(p, r)
         } else {
           b.place_set(p, b.rt("rs_put", st, [cb, at, v, n, be]))
+        }
+      }
+      "write_le" | "write_be" => {
+        // decision 0561: the n low bytes of v appended, one word push
+        let v = b.io_arg(fo, es, 0, it)
+        let n = b.io_arg(fo, es, 1, it)
+        let be = b.cint(if fname == "write_be" { 1 } else { 0 })
+        if let Some(r) = b.llrt_or_none("rs_write", st, [cur, v, n, be, b.const_str(pos)]) {
+          b.place_set(p, r)
+        } else {
+          // wasm: $rs_write in rt.xo
+          b.place_set(p, b.rt("rs_write", st, [cur, v, n, be]))
         }
       }
       "write_byte" => {

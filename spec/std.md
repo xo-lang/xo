@@ -572,6 +572,9 @@ write); `peek` and `find` copy when the bytes they cover span pieces. A count `n
 first (`put_le`) or highest first (`put_be`), the rest of `v` dropped. `n` is
 1, 2, 4 or 8 and the range must lie within `len()`; any other `n`, or a range
 outside, is a fault. The length does not change and nothing is copied.
+`write_le` and `write_be` (decision 0561) append the low `n` bytes of `v`
+instead (Go's `binary.LittleEndian.AppendUint64` cut to `n`), lowest or
+highest first; `n` is 0 to 8, any other is a fault.
 
 A fault that unwinds out of a `with` closure poisons the mutex (core 5.4,
 decision 0482): from then on `with` and `with_read` fault with `XO-F010`.
@@ -5395,7 +5398,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-518 declarations.
+520 declarations.
 
 ### Range
 
@@ -5918,6 +5921,8 @@ fn (var b: BytesBuilder) write_str(s: Str)
 fn (var b: BytesBuilder) write_rune(r: Rune)
 fn (var b: BytesBuilder) put_le(at: Int, v: Int, n: Int)
 fn (var b: BytesBuilder) put_be(at: Int, v: Int, n: Int)
+fn (var b: BytesBuilder) write_le(v: Int, n: Int)
+fn (var b: BytesBuilder) write_be(v: Int, n: Int)
 fn (b: BytesBuilder) len() -> Int
 fn (b: BytesBuilder) freeze() -> Bytes
 ```

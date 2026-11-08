@@ -771,6 +771,8 @@ fn (var b: BytesBuilder) write_str(s: Str)
 fn (var b: BytesBuilder) write_rune(r: Rune)
 fn (var b: BytesBuilder) put_le(at: Int, v: Int, n: Int)
 fn (var b: BytesBuilder) put_be(at: Int, v: Int, n: Int)
+fn (var b: BytesBuilder) write_le(v: Int, n: Int)
+fn (var b: BytesBuilder) write_be(v: Int, n: Int)
 fn (b: BytesBuilder) len() -> Int
 /// @moves
 fn (b: BytesBuilder) freeze() -> Bytes

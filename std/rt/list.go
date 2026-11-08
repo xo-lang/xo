@@ -973,6 +973,26 @@ func (b *BytesBuilder) M_put_le(_ *Task, at, v, n int64) { b.put(at, v, n, false
 // M_put_be is `b.put_be(at, v, n)`: highest byte first.
 func (b *BytesBuilder) M_put_be(_ *Task, at, v, n int64) { b.put(at, v, n, true) }
 
+// M_write_le is `b.write_le(v, n)`: the n (0 to 8) low bytes of v
+// appended, lowest first (decision 0561).
+func (b *BytesBuilder) M_write_le(_ *Task, v, n int64) { b.write(v, n, false) }
+
+// M_write_be is `b.write_be(v, n)`: highest byte first.
+func (b *BytesBuilder) M_write_be(_ *Task, v, n int64) { b.write(v, n, true) }
+
+func (b *BytesBuilder) write(v, n int64, be bool) {
+	if n < 0 || n > 8 {
+		FaultHere("BytesBuilder.write_le and write_be: width must be 0 to 8")
+	}
+	for i := int64(0); i < n; i++ {
+		if be {
+			b.b = append(b.b, byte(v>>(8*uint(n-1-i))))
+		} else {
+			b.b = append(b.b, byte(v>>(8*uint(i))))
+		}
+	}
+}
+
 func (b *BytesBuilder) put(at, v, n int64, be bool) {
 	if (n != 1 && n != 2 && n != 4 && n != 8) || at < 0 || at > int64(len(b.b))-n {
 		FaultHere("BytesBuilder.put: width must be 1, 2, 4 or 8 and at..at + width must lie within the builder")

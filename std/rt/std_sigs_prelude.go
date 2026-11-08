@@ -251,6 +251,8 @@ var (
 	_ func(*BytesBuilder, *Task, Rune)                                                                     = (*BytesBuilder).M_write_rune
 	_ func(*BytesBuilder, *Task, int64, int64, int64)                                                      = (*BytesBuilder).M_put_le
 	_ func(*BytesBuilder, *Task, int64, int64, int64)                                                      = (*BytesBuilder).M_put_be
+	_ func(*BytesBuilder, *Task, int64, int64)                                                             = (*BytesBuilder).M_write_le
+	_ func(*BytesBuilder, *Task, int64, int64)                                                             = (*BytesBuilder).M_write_be
 	_ func(*BytesBuilder, *Task) int64                                                                     = (*BytesBuilder).M_len
 	_ func(*BytesBuilder, *Task) Bytes                                                                     = (*BytesBuilder).M_freeze
 	_ func(*Task) ByteBuffer                                                                               = ByteBuffer_new

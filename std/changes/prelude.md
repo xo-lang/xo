@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: feature: BytesBuilder.write_le and write_be append a word's n low bytes (decision 0561)
+
+- Kind: feature
+- Commit: this push
+- Found by: the 2026-11-07 Xo vs Go survey (netip display4 at 1.41x Go wrote zeros to overwrite them)
+- Go reference: encoding/binary's AppendUint16, AppendUint32, AppendUint64 (LittleEndian and BigEndian)
+- Test: internal/llvm golden bytesbuilder_write (arm64 TestGoldenRun, llvm TestGolden, TestGoldenGoParity); wasm goldens
+- Timing: bench/perf/netip display4 1.006 (0.963 to 1.079, n=7), within noise; no speedup claimed (decision 0561's Landed)
+- Shipped in: not yet released
+
+`b.write_le(v, n)` appends the n (0 to 8) low bytes of v, least significant first, and `b.write_be(v, n)` most significant first, with one capacity check; any other width faults. netip's IPv4 text uses it in place of writing zeros and overwriting them.
+
 ## 2026-11-07: perf: a small List literal passed to a function stays in the caller's frame; the callee copies it only to keep it (decision 0554)
 
 - Kind: perf
