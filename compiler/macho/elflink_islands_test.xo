@@ -1,0 +1,127 @@
+// The ELF linker's branch islands (as link_islands_test.xo's for
+// Mach-O): calls past a bl's reach (ElfLinkOpts.branch_reach made small,
+// 8 KiB, so the program stays small) go through veneers, followed from
+// each bl to its target.
+
+const EISL_A = "\t.text\n\t.globl main\n\t.p2align 2\n\t.type main, %function\nmain:\n\tmovz x1, #777\n\tbl far\n\tbl write\n\tret\n"
+const EISL_B = "\t.text\n\t.globl mid\n\t.p2align 2\nmid:\n\tret\n"
+const EISL_C = "\t.text\n\t.globl far\n\t.p2align 2\n\t.type far, %function\nfar:\n\tmovz x0, #4242\n\tbl main\n\tb mid\n"
+
+/// 1500 nops (6000 bytes): a gap of code.
+fn eisl_gap() -> Str {
+  var b: List[Str] = []
+  for _ in 0..1500 {
+    b.push("\tnop\n")
+  }
+  b.join("")
+}
+
+/// The 4 byte instruction of ELF executable b at virtual address a.
+fn eisl_ins(b: Bytes, a: Int) -> Int { elf_word_at(b, a) & 0xffffffff }
+
+/// The target of the bl or b at address p of exe, through a veneer (adrp
+/// x16, add x16, br x16) if it lands on one; and whether it did.
+fn eisl_follow(exe: Bytes, p: Int) -> (Int, Bool) {
+  var imm = eisl_ins(exe, p) & 0x3ffffff
+  if imm >= 0x2000000 {
+    imm -= 0x4000000
+  }
+  let v = p + 4 * imm
+  let w0 = eisl_ins(exe, v)
+  if (w0 & 0x9f00001f) != 0x90000010 || eisl_ins(exe, v + 8) != 0xd61f0200 {
+    return (v, false)
+  }
+  var page = ((w0 >> 29) & 3) | (((w0 >> 5) & 0x7ffff) * 4)
+  if page >= 0x100000 {
+    page -= 0x200000
+  }
+  let lo = (eisl_ins(exe, v + 4) >> 10) & 4095
+  ((v & ~4095) + page * 4096 + lo, true)
+}
+
+/// The address of section name in ELF executable b (-1 for none).
+fn eisl_sect_addr(b: Bytes, name: Str) -> Int {
+  let shoff = rd64(b, 40)
+  let shstr = shoff + 64 * rd16(b, 62)
+  let stroff = rd64(b, shstr + 24)
+  for i in 0..rd16(b, 60) {
+    let sh = shoff + 64 * i
+    var e = stroff + rd32(b, sh)
+    let start = e
+    while Int(b[e]) != 0 {
+      e += 1
+    }
+    if bstr(b[start..e]) == name {
+      return rd64(b, sh + 16)
+    }
+  }
+  -1
+}
+
+fn eisl_inputs(srcs: List[(Str, Str)]) -> List[LinkInput] {
+  var ins: List[LinkInput] = []
+  for (name, src) in srcs {
+    ins.push(LinkInput{path: name, data: assemble_elf(src.bytes()).or_fault("assemble ${name}")})
+  }
+  ins
+}
+
+test "an ELF link reaches calls past a bl's reach through branch islands" {
+  let ins = eisl_inputs([("a.o", EISL_A + eisl_gap()), ("b.o", EISL_B + eisl_gap()), ("c.o", EISL_C)])
+  let exe = match link_elf(ins, ElfLinkOpts{branch_reach: 8192}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  let main = elf_sym_value(exe, "main")
+  let far = elf_sym_value(exe, "far")
+  let mid = elf_sym_value(exe, "mid")
+  expect(eisl_ins(exe, main)) == 0xd2800000 | (777 * 32) | 1
+  expect(eisl_ins(exe, far)) == 0xd2800000 | (4242 * 32)
+  expect(far - main > 8192) == true
+  // each far call and tail call through a veneer, to its callee
+  let (t1, via1) = eisl_follow(exe, main + 4)
+  expect(via1) == true
+  expect(t1) == far
+  let (t2, via2) = eisl_follow(exe, far + 4)
+  expect(via2) == true
+  expect(t2) == main
+  // mid is near far: no veneer
+  let (t3, via3) = eisl_follow(exe, far + 8)
+  expect(via3) == false
+  expect(t3) == mid
+  // an import's call reaches its .plt stub through a veneer
+  let plt = eisl_sect_addr(exe, ".plt")
+  expect(plt > 0) == true
+  let (t4, via4) = eisl_follow(exe, main + 8)
+  expect(via4) == true
+  expect(t4 >= plt && t4 < plt + 64) == true
+}
+
+test "an ELF link within a bl's reach adds no branch islands" {
+  let ins = eisl_inputs([("a.o", EISL_A + eisl_gap()), ("c.o", EISL_C)])
+  let exe = match link_elf(ins, ElfLinkOpts{}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  let (t1, via1) = eisl_follow(exe, elf_sym_value(exe, "main") + 4)
+  expect(via1) == false
+  expect(t1) == elf_sym_value(exe, "far")
+}
+
+test "an ELF link with too many far targets for its islands fails" {
+  // a reach of 1 KiB: the 6000 byte gap alone is past it, and the
+  // islands' 1/8 (128 bytes) cannot hold a veneer per target
+  var a = "\t.text\n\t.globl main\n\t.p2align 2\nmain:\n"
+  for i in 0..20 {
+    a = a + "\tbl f${i}\n"
+  }
+  var c = "\t.text\n"
+  for i in 0..20 {
+    c = c + "\t.globl f${i}\n\t.p2align 2\nf${i}:\n\tret\n"
+  }
+  let ins = eisl_inputs([("a.o", a + "\tret\n" + eisl_gap()), ("c.o", c)])
+  match link_elf(ins, ElfLinkOpts{static: true, entry: "main", branch_reach: 1024}) {
+    Ok(_) => expect("a link error") == "a program"
+    Err(e) => expect(e.contains("branch islands of")) == true
+  }
+}

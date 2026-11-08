@@ -150,6 +150,10 @@ pub struct ElfLinkOpts {
   /// bytes on, a check of how much its speed depends on where its
   /// writable words fall in the cache lines
   pub data_shift: Int = 0
+  /// The reach of a bl or b the branch islands assume, 0 for the
+  /// instruction's ±128 MiB (BRANCH_REACH): a test's smaller value makes
+  /// islands in a small program (LinkOpts.branch_reach)
+  pub branch_reach: Int = 0
 }
 
 /// An input section, by its header index.
@@ -285,6 +289,15 @@ struct ELinker {
   dbg_at: Map[(Int, Int), Int] = {}
   half_und: List[(Bytes, Bool)] = []
   half_und_gc: List[(Bytes, Bool)] = []
+  /// branch islands (islands): each island's input section (object,
+  /// section), its veneers by branch key, the island each code input
+  /// section's far branches use, the veneers written, and whether std's
+  /// .text got one (its sections then moved: no half)
+  isl_sects: List[(Int, Int)] = []
+  isl_ix: List[Map[Str, Int]] = []
+  isl_of: Map[(Int, Int), Int] = {}
+  isl_done: Set[Int] = #{}
+  isl_text: Bool = false
 }
 
 /// link_elf: the linux/arm64 executable of the inputs (objects and
@@ -378,6 +391,10 @@ fn (var l: ELinker) rest_layout() -> Str {
     return l.err
   }
   l.layout()
+  l.islands()
+  if !l.err.is_empty() {
+    return l.err
+  }
   // the linker's own symbols, now that the layout has placed them
   // __start_NAME and __stop_NAME: the bounds of NAME's sections (an
   // empty range at 0 when none was placed)
@@ -1559,7 +1576,7 @@ fn (var l: ELinker) relocate() {
         if l.amd64 {
           l.reloc_x86(o, s, base, r)
         } else {
-          l.reloc(o, s, base, r)
+          l.reloc(o, k, s, base, r)
         }
         if !l.err.is_empty() {
           return
@@ -1667,7 +1684,7 @@ fn (var l: ELinker) reloc_x86(o: Int, s: ESect, base: Int, r: ERel) {
   }
 }
 
-fn (var l: ELinker) reloc(o: Int, s: ESect, base: Int, r: ERel) {
+fn (var l: ELinker) reloc(o: Int, k: Int, s: ESect, base: Int, r: ERel) {
   let p = base + r.off
   let (d, i) = l.def_of(o, r.sym)
   let imp = d < 0
@@ -1735,8 +1752,11 @@ fn (var l: ELinker) reloc(o: Int, s: ESect, base: Int, r: ERel) {
     l.patches.push(Patch{addr: p, size: 4, value: if t == R_AARCH64_CALL26 { NOP } else { 0xd65f03c0 }})
   } else if t == R_AARCH64_CALL26 || t == R_AARCH64_JUMP26 {
     let target = if imp { l.osects[O_PLT].addr + 16 * l.imports[i].plt } else { v }
-    let x = target - p
-    if x < -134217728 || x >= 134217728 {
+    var x = target - p
+    if x < -l.reach() || x >= l.reach() {
+      x = l.veneer(o, k, d, i, r.addend, target) - p
+    }
+    if x < -l.reach() || x >= l.reach() {
       return l.fail("${l.objs[o].path}: branch out of range")
     }
     l.patches.push(Patch{addr: p, size: 4, value: (ins & 0xfc000000) | ((x >> 2) & 0x3ffffff)})
@@ -1776,6 +1796,188 @@ fn (var l: ELinker) reloc(o: Int, s: ESect, base: Int, r: ERel) {
   } else {
     l.fail("${l.objs[o].path}: relocation type ${t} in ${s.name} is not supported")
   }
+}
+
+/// The reach of a bl or b (ElfLinkOpts.branch_reach, BRANCH_REACH).
+fn (l: ELinker) reach() -> Int {
+  if l.opts.branch_reach > 0 { l.opts.branch_reach } else { BRANCH_REACH }
+}
+
+/// The target of a bl or b to symbol i of object d (def_of's; d < 0: an
+/// import) plus addend, the same before and after the islands move the
+/// addresses.
+fn elf_branch_key(d: Int, i: Int, addend: Int) -> Str { "${d}.${i}+${addend}" }
+
+/// Branch islands (as compiler/macho link.xo's for Mach-O, ld64's and GNU
+/// ld's stubs): when the code (.text, .plt, a split link's .text.xoprog)
+/// spans more than 7/8 of a bl's reach, each code output section gets a
+/// section of veneers after the input section that ends past each half
+/// reach and one after its last, for the bl and b whose target is past
+/// the reach (Azure 1's GCP compute/v0.alpha tests, 2026-11-07). An
+/// input section's far branches go through the island after it, which
+/// holds a veneer for every target of a branch in the sections since the
+/// last island farther than the reach less 1/8 before the islands go in;
+/// the islands together stay under that 1/8, the most they move a
+/// target. Then the output is laid out again.
+fn (var l: ELinker) islands() {
+  if l.amd64 {
+    return
+  }
+  let slack = l.reach() / 8
+  let spacing = l.reach() / 2
+  let far = l.reach() - slack
+  var lo = -1
+  var hi = 0
+  for ti in [O_TEXT, O_PLT, O_PTEXT] {
+    let s = l.osects[ti]
+    if s.size > 0 {
+      lo = if lo < 0 { s.addr } else { lo.min(s.addr) }
+      hi = hi.max(s.addr + s.size)
+    }
+  }
+  if lo < 0 || hi - lo <= far {
+    return
+  }
+  var ix: List[Map[Str, Int]] = []
+  var at: List[(Int, Int)] = []
+  for ti in [O_TEXT, O_PTEXT] {
+    let chunks = l.osects[ti].chunks
+    if chunks.is_empty() {
+      continue
+    }
+    let base = l.osects[ti].addr
+    // the regions: the input sections up to the one that ends past the
+    // next half reach, and the rest
+    var next = spacing
+    var first = ix.len()
+    ix.push({})
+    for (j, (o, k)) in chunks.indexed() {
+      let s = l.objs[o].sects[k]
+      let isl = ix.len() - 1
+      l.isl_of.put((o, k), isl)
+      for r in s.relocs {
+        if r.typ != R_AARCH64_CALL26 && r.typ != R_AARCH64_JUMP26 {
+          continue
+        }
+        let (d, i) = l.def_of(o, r.sym)
+        if d < 0 && l.opts.static {
+          continue
+        }
+        let dest = if d < 0 { l.osects[O_PLT].addr + 16 * l.imports[i].plt } else { l.sym_addr(d, i) + r.addend }
+        let x = dest - (base + s.off + r.off)
+        if x <= -far || x >= far {
+          let key = elf_branch_key(d, i, r.addend)
+          if !ix[isl].contains(key) {
+            ix[isl].put(key, ix[isl].len())
+          }
+        }
+      }
+      if s.off + s.size >= next && j < chunks.len() - 1 {
+        at.push((ti, j))
+        ix.push({})
+        next = s.off + s.size + spacing
+      }
+    }
+    at.push((ti, chunks.len() - 1))
+    if ti == O_TEXT {
+      for m in ix[first..] {
+        if !m.is_empty() {
+          l.isl_text = true
+        }
+      }
+    }
+  }
+  var total = 0
+  for m in ix {
+    total += 12 * m.len()
+  }
+  if total == 0 {
+    l.isl_of = {}
+    return
+  }
+  if total >= slack {
+    l.fail("branch islands of ${total} bytes (more than ${slack})")
+    return
+  }
+  // the islands: input sections of an object of their own, each after
+  // its region's last input section
+  let io = l.objs.len()
+  var iobj = EObj{path: "<branch islands>"}
+  for (n, (ti, _)) in at.indexed() {
+    let size = 12 * ix[n].len()
+    iobj.sects.push(ESect{name: l.osects[ti].name, typ: SHT_PROGBITS, flags: SHF_ALLOC + SHF_EXECINSTR, align: 4, data: zeros(size), size: size, out: ti})
+    l.isl_sects.push((io, n))
+  }
+  l.objs.push(iobj)
+  for ti in [O_TEXT, O_PTEXT] {
+    var nc: List[(Int, Int)] = []
+    for (j, ch) in l.osects[ti].chunks.indexed() {
+      nc.push(ch)
+      for (n, (t, cj)) in at.indexed() {
+        if t == ti && cj == j {
+          nc.push((io, n))
+        }
+      }
+    }
+    // the input sections placed again, the islands among them (as place)
+    var size = 0
+    for (o, k) in nc {
+      let s = l.objs[o].sects[k]
+      let off = align_up(size, s.align.max(1))
+      l.objs[o].sects[k].off = off
+      size = off + s.size
+    }
+    l.osects[ti].chunks = nc
+    l.osects[ti].size = size
+    // __start_/__stop_ bounds of sections here
+    for (name, (bo, _, _)) in l.bounds.entries() {
+      if bo != ti {
+        continue
+      }
+      var bs = -1
+      var be = 0
+      for (o, k) in nc {
+        let s = l.objs[o].sects[k]
+        if s.name == name && o != io {
+          bs = if bs < 0 { s.off } else { bs.min(s.off) }
+          be = be.max(s.off + s.size)
+        }
+      }
+      l.bounds[name] = (ti, bs.max(0), be)
+    }
+  }
+  l.isl_ix = ix
+  // layout adds .eh_frame's zero terminator again
+  if l.osects[O_EH].size > 0 {
+    l.osects[O_EH].size -= 4
+  }
+  l.layout()
+}
+
+/// The address of the veneer for a far branch of input section (o, k) to
+/// symbol i of object d plus addend at dest (islands), written once: adrp
+/// x16, add x16, br x16 (x16 is the intra procedure call scratch register
+/// a call may clobber). dest itself when there is none.
+fn (var l: ELinker) veneer(o: Int, k: Int, d: Int, i: Int, addend: Int, dest: Int) -> Int {
+  let isl = l.isl_of.get((o, k)) ?? -1
+  if isl < 0 {
+    return dest
+  }
+  let n = l.isl_ix[isl].get(elf_branch_key(d, i, addend)) ?? -1
+  if n < 0 {
+    return dest
+  }
+  let (io, ik) = l.isl_sects[isl]
+  let s = l.objs[io].sects[ik]
+  let v = l.osects[s.out].addr + s.off + 12 * n
+  if !l.isl_done.contains(v) {
+    l.isl_done.add(v)
+    let imm = ((dest >> 12) - (v >> 12)) & 0x1fffff
+    l.patches.push(Patch{addr: v, size: 4, value: 0x90000010 | ((imm & 3) * 0x20000000) | ((imm >> 2) * 32)})
+    l.patches.push(Patch{addr: v + 4, size: 4, value: 0x91000210 | ((dest & 4095) * 1024)})
+    l.patches.push(Patch{addr: v + 8, size: 4, value: 0xd61f0200})
+  }
+  v
 }
 
 // ---------------------------------------------------------------------------

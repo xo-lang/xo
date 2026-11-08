@@ -83,6 +83,9 @@ pub fn (s: ElfStoreLink) half_refused() -> Str {
   if l.prog_from != s.n {
     return "the program's sections are not their own (XO_STD_HALF)"
   }
+  if l.isl_text {
+    return "branch islands in std's .text"
+  }
   if !s.shadows.is_empty() {
     return "the program defines ${s.shadows}, which std defines too"
   }
@@ -217,9 +220,10 @@ fn (l: ELinker) half_pins() -> List[Int] {
 }
 
 /// After layout: whether std's fixed sections are where the half had
-/// them (else the link from the half is not the full link's).
+/// them (else the link from the half is not the full link's): branch
+/// islands in .text move them.
 pub fn (s: ElfStoreLink) half_pins_ok(h: ElfHalf) -> Bool {
-  s.l.half_pins() == h.pins
+  s.l.half_pins() == h.pins && !s.l.isl_text
 }
 
 /// A store link of the program's objects with std's half (the prepare
