@@ -35,6 +35,22 @@ struct LogState {
   index: Map[Str, Int] = {}
   /// the tree hash of all the leaves
   root: Bytes = b""
+  /// when each record was added, Unix seconds (0 for a record from
+  /// before the log kept times)
+  times: List[Int] = []
+}
+
+/// What `xo mod sumdb serve` was started with.
+struct LogConf {
+  signer: Signer
+  data: Str
+  fetch: Bool
+  /// the bucket every new record is copied to before it is added
+  copy: Bucket? = None
+  /// lookups that add a version, per client and minute; 0 is no limit
+  rate: Int = 0
+  /// the proxy bucket each version the log adds is written to
+  fill: Bucket? = None
 }
 
 /// The 32 bit value id as 4 big endian bytes.
@@ -187,6 +203,20 @@ fn records_file(data: Str) -> Str {
   "${data}/records"
 }
 
+/// One Unix time per line, the time each record was added.
+fn times_file(data: Str) -> Str {
+  "${data}/times"
+}
+
+/// The bucket object holding a copy of record id: "<time>\n<record>".
+fn record_object(id: Int) -> Str {
+  var s = "${id}"
+  while s.len() < 10 {
+    s = "0${s}"
+  }
+  "records/${s}"
+}
+
 fn (c: ModCtx) load_log(data: Str) -> LogState ! Str uses fs.read {
   var st = LogState{}
   let p = records_file(data)
@@ -216,12 +246,29 @@ fn (c: ModCtx) load_log(data: Str) -> LogState ! Str uses fs.read {
     i += 2
   }
   st.root = tree_hash(st.leaves, 0, st.leaves.len())
+  let tp = times_file(data)
+  if c.exists(tp) {
+    let tl = check_lines(c.os.fs.read(tp).map_err(fs_msg)?)
+    if tl.len() > st.records.len() {
+      return Err("${tp}: more lines than ${p} has records")
+    }
+    for (k, l) in tl.indexed() {
+      match Int.parse(l) {
+        Some(t) => st.times.push(t)
+        None => return Err("${tp}:${k + 1}: not a Unix time")
+      }
+    }
+  }
+  while st.times.len() < st.records.len() {
+    st.times.push(0)
+  }
   Ok(st)
 }
 
-fn (c: ModCtx) append_record(data: Str, record: Str) -> () ! Str uses fs {
-  let f = c.os.fs.open_append(records_file(data)).map_err(fs_msg)?
-  var r = f.write(record.bytes())
+/// Appends data to the file at p and syncs it.
+fn (c: ModCtx) append_synced(p: Str, data: Bytes) -> () ! Str uses fs {
+  let f = c.os.fs.open_append(p).map_err(fs_msg)?
+  var r = f.write(data)
   if r.is_ok() {
     r = f.sync()
   }
@@ -229,15 +276,25 @@ fn (c: ModCtx) append_record(data: Str, record: Str) -> () ! Str uses fs {
   r.map_err(fs_msg)
 }
 
-fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
+/// The record, then its time (a time lost to a crash between the two
+/// reads back as 0).
+fn (c: ModCtx) append_record(data: Str, record: Str, time: Int) -> () ! Str uses fs {
+  c.append_synced(records_file(data), record.bytes())?
+  c.append_synced(times_file(data), "${time}\n".bytes())
+}
+
+fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, clock) {
   if args.len() >= 1 && args[0] == "keygen" {
     return c.run_sumdb_keygen(args[1..])
   }
+  if args.len() >= 1 && args[0] == "restore" {
+    return c.run_sumdb_restore(args[1..])
+  }
   if args.is_empty() || args[0] != "serve" {
-    c.os.stdio.eprintln("xo mod sumdb: want `keygen <name> <key file>` or `serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] <data dir>`")
+    c.os.stdio.eprintln("xo mod sumdb: want `keygen <name> <key file>`, `serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] [--copy-to=<bucket URL>] [--rate=60] <data dir>`, or `restore --from=<bucket URL> <data dir>`")
     return 2
   }
-  var fl = FlagSet{name: "mod sumdb serve", defs: [flag_str("key", "", "the file holding the log's signer key (from xo mod sumdb keygen)"), flag_str("addr", "127.0.0.1:7071", "the address to listen on"), flag_bool("fetch", "add a module version the log lacks by fetching it from git")]}
+  var fl = FlagSet{name: "mod sumdb serve", defs: [flag_str("key", "", "the file holding the log's signer key (from xo mod sumdb keygen)"), flag_str("addr", "127.0.0.1:7071", "the address to listen on"), flag_bool("fetch", "add a module version the log lacks by fetching it from git"), flag_str("copy-to", "", "a bucket (https://<endpoint>/<bucket>) every new record is copied to before it is added"), flag_str("region", "auto", "the region bucket requests are signed for"), flag_str("rate", "60", "lookups that add a version, per client and minute (0: no limit)"), flag_str("fill-to", "", "a proxy bucket (https://<endpoint>/<bucket>) each version the log adds is written to, as xo mod proxy fill does")]}
   if !c.parse_flags(fl, args[1..]) {
     return 2
   }
@@ -257,6 +314,31 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
     Err(e) => {
       c.os.stdio.eprintln("xo mod sumdb serve: ${fl.str("key")}: ${e}")
       return 1
+    }
+  }
+  let rate = Int.parse(fl.str("rate")) ?? -1
+  if rate < 0 {
+    c.os.stdio.eprintln("xo mod sumdb serve: --rate=${fl.str("rate")} is not a count")
+    return 2
+  }
+  var copy: Bucket? = None
+  if !fl.str("copy-to").is_empty() {
+    match c.bucket_of(fl.str("copy-to"), fl.str("region")) {
+      Ok(b) => copy = Some(b)
+      Err(e) => {
+        c.os.stdio.eprintln("xo mod sumdb serve: --copy-to: ${e}")
+        return 2
+      }
+    }
+  }
+  var fill: Bucket? = None
+  if !fl.str("fill-to").is_empty() {
+    match c.bucket_of(fl.str("fill-to"), fl.str("region")) {
+      Ok(b) => fill = Some(b)
+      Err(e) => {
+        c.os.stdio.eprintln("xo mod sumdb serve: --fill-to: ${e}")
+        return 2
+      }
     }
   }
   let data = c.abs(fl.args[0])
@@ -286,9 +368,11 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
   let mode = if fetch { "adding versions from git" } else { "serving its records only" }
   c.out("checksum log ${signer.name} (${st.records.len()} records in ${data}, ${mode}) at http://${l.addr()}\nclients: XO_SUMDB='${verifier} http://${l.addr()}'\n")
   let state = Mutex.new(st)
+  let limits: Mutex[Map[Str, (Int, Int)]] = Mutex.new({})
+  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill}
   let cc = c
   var r = http.router()
-  r.handle("/{rest...}", fn(req) { cc.sumdb_answer(req, state, signer, data, fetch) })
+  r.handle("/{rest...}", fn(req) { cc.sumdb_answer(req, state, limits, conf) })
   match http.server(l, r).serve() {
     Ok(_) => 0
     Err(e) => {
@@ -359,16 +443,83 @@ fn held(state: Mutex[LogState], signer: Signer, key: Str) -> Str? {
   Some("${id}\n${rec}\n${sign_tree(signer, t)}")
 }
 
+/// The client a lookup is counted against: Cloudflare's
+/// CF-Connecting-IP when the request came through a local tunnel, else
+/// the peer's address.
+fn client_of(req: http.Request) -> Str {
+  if req.remote_ip == "127.0.0.1" || req.remote_ip == "::1" {
+    if let Some(ip) = req.headers.get("Cf-Connecting-Ip") {
+      return ip
+    }
+  }
+  req.remote_ip
+}
+
+/// Counts one lookup that adds a version for client in this minute; false
+/// when the client already made rate of them.
+fn allow(limits: Mutex[Map[Str, (Int, Int)]], client: Str, minute: Int, rate: Int) -> Bool {
+  limits.with(fn(var m) -> Bool {
+    if m.len() > 100000 {
+      // a new minute's worth of clients; the old counts no longer matter
+      m = {}
+    }
+    let (w, n) = m.get(client) ?? (minute, 0)
+    let count = if w == minute { n } else { 0 }
+    if count >= rate {
+      return false
+    }
+    m[client] = (minute, count + 1)
+    true
+  })
+}
+
+/// The index feed (index.golang.org's form): the records added at or
+/// after since, in log order, at most limit, as JSON lines.
+fn index_lines(st: LogState, since: Int, limit: Int) -> Str {
+  var b = StrBuilder.new()
+  var n = 0
+  for id in 0..st.records.len() {
+    if n >= limit {
+      break
+    }
+    if st.times[id] < since {
+      continue
+    }
+    let (path, version, _) = cut(record_key(st.records[id]), "@")
+    b.write("{\"Path\":${path.quote()},\"Version\":${version.quote()},\"Timestamp\":\"${Time.from_unix(st.times[id]).format_rfc3339()}\"}\n")
+    n += 1
+  }
+  b.freeze()
+}
+
+const NO_STORE = "no-store"
+
 /// sumdb.Server.ServeHTTP for one request.
-fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], signer: Signer, data: Str, fetch: Bool) -> http.Response uses (fs, proc, rand, net) {
+fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: Mutex[Map[Str, (Int, Int)]], conf: LogConf) -> http.Response uses (fs, proc, rand, net, clock, stdio) {
   var cc = c
+  let signer = conf.signer
   if req.method != "GET" && req.method != "HEAD" {
     return http_error("the checksum log is read only", 405)
   }
   let p = req.path
   if p == "/latest" {
     let t = state.with_read(fn(st) { Tree{n: st.leaves.len(), hash: st.root} })
-    return plain(sign_tree(signer, t))
+    return plain(sign_tree(signer, t)).with_header("Cache-Control", NO_STORE)
+  }
+  if p == "/index" {
+    var since = 0
+    if let Some(s) = req.query("since") {
+      match Time.parse_rfc3339(s) {
+        Some(t) => since = t.unix()
+        None => return http_error("since=${s.quote()} is not an RFC 3339 time", 400)
+      }
+    }
+    var limit = Int.parse(req.query("limit") ?? "2000") ?? 2000
+    if limit < 1 || limit > 2000 {
+      limit = 2000
+    }
+    let body = state.with_read(fn(st) { index_lines(st, since, limit) })
+    return http.text(200, body).with_header("Content-Type", "application/json").with_header("Cache-Control", "public, max-age=60")
   }
   if p.starts_with("/lookup/") {
     let (esc_path, esc_version, ok) = cut(p.trim_prefix("/lookup/"), "@")
@@ -379,12 +530,17 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], signer: S
     }
     let key = "${path}@${version}"
     if let Some(body) = held(state, signer, key) {
-      return plain(body)
+      return plain(body).with_header("Cache-Control", NO_STORE)
     }
-    if !fetch {
+    if !conf.fetch {
       return http_error("unknown module version", 404)
     }
-    let dir = match cc.download_in("${data}/cache", path, version, Some(direct_only())) {
+    let now = cc.os.clock.now().unix()
+    let client = client_of(req)
+    if conf.rate > 0 && !allow(limits, client, now / 60, conf.rate) {
+      return http_error("${client} added ${conf.rate} module versions this minute; try again in a minute", 429).with_header("Retry-After", "60")
+    }
+    let dir = match cc.download_in("${conf.data}/cache", path, version, Some(direct_only())) {
       Ok(d) => d
       Err(pr) => return http_error("${path} ${version}: ${pr.msg}", 404)
     }
@@ -392,19 +548,45 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], signer: S
       Ok(lines) => lines.join("\n") + "\n"
       Err(e) => return http_error("${path} ${version}: ${e}", 404)
     }
-    // added unless another request added it meanwhile; on disk before
-    // any tree head that holds it is signed
-    let added = state.with(fn(var st) -> (Int, Str, Tree) ! Str {
+    // added unless another request added it meanwhile; copied to the
+    // bucket and on disk before any tree head that holds it is signed
+    let added = state.with(fn(var st) -> (Int, Str, Tree, Bool) ! Str {
       var id = st.index.get(key) ?? -1
-      if id < 0 {
-        cc.append_record(data, rec)?
+      let is_new = id < 0
+      if is_new {
+        if let Some(b) = conf.copy {
+          cc.s3_put(b, record_object(st.records.len()), "${now}\n${rec}".bytes(), "text/plain; charset=utf-8", IMMUTABLE)?
+        }
+        cc.append_record(conf.data, rec, now)?
         id = st.add(key, rec)
+        st.times.push(now)
         st.root = tree_hash(st.leaves, 0, st.leaves.len())
       }
-      Ok((id, st.records[id], Tree{n: st.leaves.len(), hash: st.root}))
+      Ok((id, st.records[id], Tree{n: st.leaves.len(), hash: st.root}, is_new))
     })
     return match added {
-      Ok((id, r, t)) => plain("${id}\n${r}\n${sign_tree(signer, t)}")
+      Ok((id, r, t, is_new)) => {
+        if is_new {
+          if let Some(fb) = conf.fill {
+            // the tree is in the log's cache already; the answer does not
+            // wait for the upload, and a failed one is logged (a later
+            // xo mod proxy fill repairs it)
+            let root = "${conf.data}/cache"
+            cc.os.tasks.spawn_background(fn() {
+              var fc = cc
+              match fc.fill_files(fb, version_dir_in(root, path, version), path, version) {
+                Ok(_) => {}
+                Err(e) => fc.os.stdio.eprintln("xo mod sumdb serve: fill ${path} ${version}: ${e}")
+              }
+              match fc.fill_list(fb, root, path) {
+                Ok(_) => {}
+                Err(e) => fc.os.stdio.eprintln("xo mod sumdb serve: fill ${path} list: ${e}")
+              }
+            })
+          }
+        }
+        plain("${id}\n${r}\n${sign_tree(signer, t)}").with_header("Cache-Control", NO_STORE)
+      }
       Err(e) => http_error("cannot record ${path} ${version}: ${e}", 500)
     }
   }
@@ -429,9 +611,80 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], signer: S
       Some(consistency_proof(st.leaves, x, n))
     })
     return match proof {
-      Some(hs) => plain(hashes_text(hs))
+      // a proof for fixed sizes never changes
+      Some(hs) => plain(hashes_text(hs)).with_header("Cache-Control", IMMUTABLE)
       None => http_error("the log has ${state.with_read(fn(st) { st.leaves.len() })} records", 404)
     }
   }
   http_error("not found", 404)
+}
+
+/// `xo mod sumdb restore --from=<bucket URL> [--region=auto] <data dir>`:
+/// a log's records and times from the copies `serve --copy-to` made, into
+/// a data directory that holds none.
+fn (c: ModCtx) run_sumdb_restore(args: List[Str]) -> Int uses (fs, net, stdio, clock) {
+  var fl = FlagSet{name: "mod sumdb restore", defs: [flag_str("from", "", "the bucket serve --copy-to wrote, https://<endpoint>/<bucket>"), flag_str("region", "auto", "the region bucket requests are signed for")]}
+  if !c.parse_flags(fl, args) {
+    return 2
+  }
+  if fl.args.len() != 1 {
+    c.os.stdio.eprintln("xo mod sumdb restore: want --from=<bucket URL> and one data directory")
+    return 2
+  }
+  let b = match c.bucket_of(fl.str("from"), fl.str("region")) {
+    Ok(x) => x
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb restore: --from: ${e}")
+      return 2
+    }
+  }
+  let data = c.abs(fl.args[0])
+  if c.exists(records_file(data)) || c.exists(times_file(data)) {
+    c.os.stdio.eprintln("xo mod sumdb restore: ${data} already holds a log; restore into an empty directory")
+    return 1
+  }
+  match c.os.fs.create_dir_all(data) {
+    Ok(_) => {}
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb restore: ${fs_msg(e)}")
+      return 1
+    }
+  }
+  var recs = StrBuilder.new()
+  var times = StrBuilder.new()
+  var n = 0
+  while true {
+    let body = match c.s3_get(b, record_object(n)) {
+      Ok(Some(x)) => x.to_str() ?? ""
+      Ok(None) => break
+      Err(e) => {
+        c.os.stdio.eprintln("xo mod sumdb restore: ${e}")
+        return 1
+      }
+    }
+    let (t, rec, ok) = cut(body, "\n")
+    if !ok || Int.parse(t) == None || record_key(rec).is_empty() {
+      c.os.stdio.eprintln("xo mod sumdb restore: ${record_object(n)} is not a record copy")
+      return 1
+    }
+    recs.write(rec)
+    times.write("${t}\n")
+    n += 1
+  }
+  match c.append_synced(times_file(data), times.freeze().bytes()) {
+    Ok(_) => {}
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb restore: ${e}")
+      return 1
+    }
+  }
+  match c.append_synced(records_file(data), recs.freeze().bytes()) {
+    Ok(_) => {}
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod sumdb restore: ${e}")
+      return 1
+    }
+  }
+  c.out("restored ${n} records into ${data}\n")
+  0
 }

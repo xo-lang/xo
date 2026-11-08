@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,7 +22,7 @@ import (
 // valid AWS Signature Version 4 (checked here with Go's crypto, apart
 // from xo's signer), a GET or HEAD reads an object as a public bucket
 // served over a custom domain does, with its Cache-Control and
-// Content-Type.
+// Content-Type, and a signed GET must verify too.
 type fakeS3 struct {
 	keyID, secret, region string
 
@@ -57,7 +58,7 @@ func (s *fakeS3) verify(r *http.Request, body []byte) string {
 	}
 	day := date[:8]
 	scope := day + "/" + s.region + "/s3/aws4_request"
-	canonical := "PUT\n" + r.URL.EscapedPath() + "\n\nhost:" + r.Host + "\nx-amz-content-sha256:" + payload + "\nx-amz-date:" + date + "\n\nhost;x-amz-content-sha256;x-amz-date\n" + payload
+	canonical := r.Method + "\n" + r.URL.EscapedPath() + "\n\nhost:" + r.Host + "\nx-amz-content-sha256:" + payload + "\nx-amz-date:" + date + "\n\nhost;x-amz-content-sha256;x-amz-date\n" + payload
 	ch := sha256.Sum256([]byte(canonical))
 	toSign := "AWS4-HMAC-SHA256\n" + date + "\n" + scope + "\n" + hex.EncodeToString(ch[:])
 	k := hmacSHA256([]byte("AWS4"+s.secret), day)
@@ -88,6 +89,13 @@ func (s *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.puts++
 		s.mu.Unlock()
 	case http.MethodGet, http.MethodHead:
+		// public reads carry no signature; a signed read must verify
+		if r.Header.Get("Authorization") != "" {
+			if msg := s.verify(r, nil); msg != "" {
+				http.Error(w, msg, http.StatusForbidden)
+				return
+			}
+		}
 		s.mu.Lock()
 		o, ok := s.objects[r.URL.Path]
 		s.mu.Unlock()
@@ -180,5 +188,135 @@ func TestProxyFill(t *testing.T) {
 	r = xo(t, "mod", "proxy", "fill", "--to="+bucket, "github.com/acme/money@v1.1.0").want(1)
 	if !strings.Contains(r.err, "XO1313") || s3.puts != n {
 		t.Errorf("moved tag: %d puts, stderr %s", s3.puts-n, r.err)
+	}
+}
+
+// get is an HTTP GET of url with extra headers: the status, the
+// Cache-Control and the body.
+func get(t *testing.T, url string, headers map[string]string) (int, string, string) {
+	t.Helper()
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, resp.Header.Get("Cache-Control"), string(b)
+}
+
+// TestChecksumLogOps: the log's phase 1 operations (decision 0568): each
+// version the log adds is written to the proxy bucket (--fill-to); each
+// new record is copied to a bucket before it is added and `xo mod sumdb
+// restore` rebuilds the same log from the copies; the index feed lists
+// records by time; lookups that add a version are limited per client
+// (Cloudflare's CF-Connecting-IP behind a local tunnel); the head is
+// never cached and proofs are.
+func TestChecksumLogOps(t *testing.T) {
+	xotool.NeedPorts(t)
+	t.Parallel()
+	modSetup(t, "../../internal/mod/testdata/repos")
+	ws := t.TempDir()
+	app := filepath.Join(ws, "app")
+	modtest.WriteFiles(t, app, map[string]string{
+		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\n",
+		"main/main.xo": appMain,
+	})
+	key := filepath.Join(ws, "log.key")
+	verifier := strings.TrimSpace(xo(t, "mod", "sumdb", "keygen", "sum.test", key).want(0).out)
+	s3 := &fakeS3{keyID: "test-key", secret: "test-secret", region: "auto", objects: map[string]fakeObject{}}
+	srv := httptest.NewServer(s3)
+	defer srv.Close()
+	bucket := srv.URL + "/logcopy"
+	setenv(t, "XO_FILL_ACCESS_KEY_ID", s3.keyID)
+	setenv(t, "XO_FILL_SECRET_ACCESS_KEY", s3.secret)
+	logData := t.TempDir()
+	t.Cleanup(func() { modtest.MakeWritable(logData) })
+	logURL, stopLog := startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", "--copy-to="+bucket, "--fill-to="+srv.URL+"/modules", "--rate=2", logData)
+	setenv(t, "XO_SUMDB", verifier+" "+logURL)
+
+	emptyCache(t)
+	xo(t, "mod", "tidy", "--dir", app).want(0) // adds billing and money: this client's 2
+	for _, id := range []string{"0000000000", "0000000001"} {
+		o, ok := s3.object("/logcopy/records/" + id)
+		if !ok || !strings.Contains(string(o.body), "\ngithub.com/acme/") {
+			t.Errorf("record copy %s: present %v, %q", id, ok, o.body)
+		}
+	}
+
+	// --fill-to: the versions the log added reach the proxy bucket (in the
+	// background), and a client with no git in reach builds from it
+	for _, f := range []string{"/modules/github.com/acme/billing/@v/v1.2.0.mod", "/modules/github.com/acme/money/@v/v1.1.0.mod", "/modules/github.com/acme/money/@v/list"} {
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			if _, ok := s3.object(f); ok {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the log did not fill %s", f)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	gitBase := getenv(t, "XO_GIT_BASE")
+	setenv(t, "XO_PROXY", srv.URL+"/modules")
+	setenv(t, "XO_GIT_BASE", filepath.Join(ws, "no-repositories"))
+	emptyCache(t)
+	xo(t, "check", app+"/...").want(0)
+	setenv(t, "XO_PROXY", "direct")
+	setenv(t, "XO_GIT_BASE", gitBase)
+
+	// the rate limit: a third new version from this client waits; one
+	// through the tunnel from another address does not
+	if code, _, body := get(t, logURL+"/lookup/github.com/acme/money@v1.3.0", nil); code != 429 {
+		t.Errorf("third new version from one client: %d %s", code, body)
+	}
+	if code, _, body := get(t, logURL+"/lookup/github.com/acme/money@v1.3.0", map[string]string{"CF-Connecting-IP": "192.0.2.7"}); code != 200 {
+		t.Errorf("a new version from another client: %d %s", code, body)
+	}
+	if code, _, _ := get(t, logURL+"/lookup/github.com/acme/billing@v1.2.0", nil); code != 200 {
+		t.Errorf("a version the log holds is not limited: %d", code)
+	}
+
+	// caching and the index
+	code, cache, head := get(t, logURL+"/latest", nil)
+	if code != 200 || cache != "no-store" {
+		t.Errorf("/latest: %d, Cache-Control %q", code, cache)
+	}
+	if _, cache, _ := get(t, logURL+"/proof/consistency/1/3", nil); cache != "public, max-age=31536000, immutable" {
+		t.Errorf("a proof's Cache-Control %q", cache)
+	}
+	code, _, index := get(t, logURL+"/index", nil)
+	if code != 200 || strings.Count(index, "\n") != 3 || !strings.Contains(index, `{"Path":"github.com/acme/money","Version":"v1.3.0","Timestamp":"`) {
+		t.Errorf("/index: %d\n%s", code, index)
+	}
+	if _, _, later := get(t, logURL+"/index?since=2200-01-01T00:00:00Z", nil); later != "" {
+		t.Errorf("/index after every record: %q", later)
+	}
+	if code, _, _ := get(t, logURL+"/index?since=yesterday", nil); code != 400 {
+		t.Errorf("/index with a bad since: %d", code)
+	}
+
+	// restore: the same records, times and tree from the copies
+	stopLog()
+	restored := filepath.Join(ws, "restored")
+	xo(t, "mod", "sumdb", "restore", "--from="+bucket, restored).want(0)
+	xo(t, "mod", "sumdb", "restore", "--from="+bucket, restored).want(1) // never over a log
+	for _, f := range []string{"records", "times"} {
+		a, _ := os.ReadFile(filepath.Join(logData, f))
+		b, err := os.ReadFile(filepath.Join(restored, f))
+		if err != nil || string(a) != string(b) {
+			t.Errorf("restored %s differs: %v\n%q\n%q", f, err, a, b)
+		}
+	}
+	logURL, _ = startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, restored)
+	if _, _, again := get(t, logURL+"/latest", nil); again != head {
+		t.Errorf("the restored log's head:\n%s\nwant\n%s", again, head)
 	}
 }

@@ -3562,6 +3562,16 @@ Last verified: 2026-10-09.
   in-test S3 fake that checks the signature with Go's crypto, then
   builds a client from the bucket with no git in reach. Last verified:
   2026-11-08.
+- Log operations (decision 0568 phase 1, 2026-11-08): `xo mod sumdb serve
+  --copy-to=<bucket URL>` copies each new record to
+  `records/<10 digit id>` before adding it (same XO_FILL_* credentials),
+  `xo mod sumdb restore --from=<bucket URL> <data dir>` rebuilds a log
+  from them, `--rate=60` limits lookups that add a version per client and
+  minute (CF-Connecting-IP only from a loopback peer), `--fill-to=<bucket
+  URL>` writes each version the log adds to the proxy bucket in the
+  background, `<data dir>/times`
+  holds each record's Unix time, and `GET /index?since=<RFC 3339>` is the
+  index feed. Test: cmd/xo TestChecksumLogOps. Last verified: 2026-11-08.
 - Definition hashes (decision 0125, step 5, 2026-10-10): package
   `internal/defhash` (`Module(dir, modPath)`, `Diff`, `Find`,
   `Nearest`), reflection over `internal/ast` with per field rules

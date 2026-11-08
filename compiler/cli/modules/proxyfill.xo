@@ -36,18 +36,16 @@ fn (var c: ModCtx) run_proxy_fill(args: List[Str]) -> Int uses (fs, net, proc, s
   if !c.parse_flags(fl, args) {
     return 2
   }
-  var url = fl.str("to")
-  while url.ends_with("/") {
-    url = url.trim_suffix("/")
-  }
-  if fl.args.is_empty() || !(url.starts_with("https://") || url.starts_with("http://")) || url.split("/").len() < 4 {
+  if fl.args.is_empty() {
     c.os.stdio.eprintln("xo mod proxy fill: want --to=https://<endpoint>/<bucket> and at least one <module path>[@version]")
     return 2
   }
-  let b = Bucket{url: url, region: fl.str("region"), key_id: c.getenv("XO_FILL_ACCESS_KEY_ID"), secret: c.getenv("XO_FILL_SECRET_ACCESS_KEY")}
-  if b.key_id.is_empty() || b.secret.is_empty() {
-    c.os.stdio.eprintln("xo mod proxy fill: set XO_FILL_ACCESS_KEY_ID and XO_FILL_SECRET_ACCESS_KEY (a token that can write the bucket)")
-    return 2
+  let b = match c.bucket_of(fl.str("to"), fl.str("region")) {
+    Ok(x) => x
+    Err(e) => {
+      c.os.stdio.eprintln("xo mod proxy fill: --to: ${e}")
+      return 2
+    }
   }
   let root = c.cache_dir()
   var failed = 0
@@ -91,6 +89,12 @@ fn (var c: ModCtx) fill_version(b: Bucket, root: Str, mod_path: Str, version: St
     Ok(d) => d
     Err(p) => return Err("${p.code}: ${p.msg}")
   }
+  c.fill_files(b, dir, mod_path, version)
+}
+
+/// Writes the three files of the version whose tree is dir: the .mod
+/// last, so a version with a .mod is whole.
+fn (c: ModCtx) fill_files(b: Bucket, dir: Str, mod_path: Str, version: Str) -> () ! Str uses (fs.read, net, clock) {
   let lines = c.record(dir, mod_path, version)?
   let zip = c.zip_module(dir, mod_path, version)?
   let modf = c.os.fs.read("${dir}/xo.mod").map_err(fs_msg)?
@@ -170,22 +174,59 @@ fn sigv4_auth(b: Bucket, method: Str, host: Str, path: Str, date: Str, payload_h
   "AWS4-HMAC-SHA256 Credential=${b.key_id}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=${sig}"
 }
 
-/// PUTs body at key in the bucket.
-fn (c: ModCtx) s3_put(b: Bucket, key: Str, body: Bytes, content_type: Str, cache: Str) -> () ! Str uses (net, clock) {
+/// A signed request for key in the bucket, with extra headers.
+fn (c: ModCtx) s3_send(b: Bucket, method: Str, key: Str, body: Bytes, extra: Map[Str, Str]) -> http.Response ! Str uses (net, clock) {
   let rest = b.url.trim_prefix("https://").trim_prefix("http://")
   let (host, bucket_path, _) = cut(rest, "/")
   let path = s3_uri_encode("/${bucket_path}/${key}")
   let scheme = if b.url.starts_with("https://") { "https" } else { "http" }
   let date = amz_date(c.os.clock.now().format_rfc3339())
   let payload_hash = crypto.sha256(body).to_hex()
-  let headers = {"Authorization": sigv4_auth(b, "PUT", host, path, date, payload_hash), "X-Amz-Date": date, "X-Amz-Content-Sha256": payload_hash, "Content-Type": content_type, "Cache-Control": cache}
+  var headers = extra
+  headers["Authorization"] = sigv4_auth(b, method, host, path, date, payload_hash)
+  headers["X-Amz-Date"] = date
+  headers["X-Amz-Content-Sha256"] = payload_hash
   let hc = http.client(c.os.net, timeout: 120s)
-  let resp = match hc.send(http.new_request("PUT", "${scheme}://${host}${path}", headers, body)) {
-    Ok(r) => r
-    Err(e) => return Err("PUT ${key}: ${client_msg(e)}")
+  match hc.send(http.new_request(method, "${scheme}://${host}${path}", headers, body)) {
+    Ok(r) => Ok(r)
+    Err(e) => Err("${method} ${key}: ${client_msg(e)}")
   }
+}
+
+/// PUTs body at key in the bucket.
+fn (c: ModCtx) s3_put(b: Bucket, key: Str, body: Bytes, content_type: Str, cache: Str) -> () ! Str uses (net, clock) {
+  let resp = c.s3_send(b, "PUT", key, body, {"Content-Type": content_type, "Cache-Control": cache})?
   if resp.status != 200 {
     return Err("PUT ${key}: ${status_text(resp.status)}: ${(resp.body.to_str() ?? "").trim()}")
   }
   Ok(())
+}
+
+/// GETs key from the bucket: None when there is no such object.
+fn (c: ModCtx) s3_get(b: Bucket, key: Str) -> Bytes? ! Str uses (net, clock) {
+  let resp = c.s3_send(b, "GET", key, b"", {})?
+  if resp.status == 404 {
+    return Ok(None)
+  }
+  if resp.status != 200 {
+    return Err("GET ${key}: ${status_text(resp.status)}: ${(resp.body.to_str() ?? "").trim()}")
+  }
+  Ok(Some(resp.body))
+}
+
+/// The bucket of --to (or --copy-to, --from) with the fill credentials,
+/// or the usage error.
+fn (c: ModCtx) bucket_of(url0: Str, region: Str) -> Bucket ! Str {
+  var url = url0
+  while url.ends_with("/") {
+    url = url.trim_suffix("/")
+  }
+  if !(url.starts_with("https://") || url.starts_with("http://")) || url.split("/").len() < 4 {
+    return Err("want a bucket URL, path style: https://<endpoint>/<bucket>")
+  }
+  let b = Bucket{url: url, region: region, key_id: c.getenv("XO_FILL_ACCESS_KEY_ID"), secret: c.getenv("XO_FILL_SECRET_ACCESS_KEY")}
+  if b.key_id.is_empty() || b.secret.is_empty() {
+    return Err("set XO_FILL_ACCESS_KEY_ID and XO_FILL_SECRET_ACCESS_KEY (a token for the bucket)")
+  }
+  Ok(b)
 }

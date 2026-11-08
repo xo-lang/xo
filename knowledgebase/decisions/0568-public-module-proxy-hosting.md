@@ -282,7 +282,13 @@ host.
 
 ### Phases
 
-1. Build (no cloud):
+1. Build (no cloud). Progress: `xo mod proxy fill` (2026-11-08), and
+   the log's record copies, restore, times, index feed, rate limit and
+   cache headers, and the log writing each version it adds to the proxy
+   bucket (`--fill-to`), all 2026-11-08; the systemd units and install
+   script remain.
+
+   The items:
    - `xo mod proxy fill` with the R2 (S3) upload;
    - the records copy;
    - the log's rate limit;

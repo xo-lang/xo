@@ -136,6 +136,27 @@ run, and the commands sit beside `xo mod proxy serve` (decision 0126).
   records is XO1313 (its tree does not extend the stored one).
 - Still not built: key rotation, tiles, gossip, a proxy passthrough for
   the log, and a public deployment (the owner's decision).
+- Phase 1 of decision 0568 (2026-11-08) adds, for a public log:
+  - `--copy-to=<bucket URL>`: each new record is PUT to
+    `records/<10 digit id>` as `<unix time>\n<record>` before it is
+    appended locally, so a host's loss loses nothing a head signed;
+    `xo mod sumdb restore --from=<bucket URL> <data dir>` rebuilds the
+    records and times files from the copies (into an empty directory);
+  - `<data dir>/times`, the Unix time of each record (a log from before
+    reads its records as time 0), and `GET /index?since=&limit=` (at
+    most 2,000) as JSON lines `{"Path","Version","Timestamp"}`, cached
+    60 s;
+  - `--rate=N` (default 60): lookups that add a version, per client and
+    minute, 429 past it; the client is CF-Connecting-IP when the peer is
+    loopback (a local Cloudflare Tunnel), else the peer's address;
+  - Cache-Control `no-store` on `/latest` and lookups, immutable on
+    proofs;
+  - `--fill-to=<bucket URL>`: each version the log adds is written to the
+    proxy bucket from the tree already in the log's cache (fill_files,
+    then the module's list), in a background task, so the first fetch
+    anywhere fills the public proxy; a failure is logged and a later
+    `xo mod proxy fill` repairs it.
+  cmd/xo TestChecksumLogOps checks each against an in-test S3 fake.
 
 ## Threat model
 

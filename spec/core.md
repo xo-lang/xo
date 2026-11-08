@@ -1957,7 +1957,15 @@ its content hash.
   `xo mod sumdb keygen <name> <key file>` makes a log's key (the
   verifier key, printed, is what `XO_SUMDB` names) and `xo mod sumdb
   serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] <data dir>`
-  runs a log, its records kept in the data directory (decision 0124).
+  runs a log, its records kept in the data directory (decision 0124);
+  `--copy-to=<bucket URL>` copies each new record to an S3-compatible
+  bucket before adding it, `--fill-to=<bucket URL>` writes each version
+  it adds to a proxy bucket as `xo mod proxy fill` does, `xo mod sumdb
+  restore --from=<bucket URL>
+  <data dir>` rebuilds the log from the copies, `--rate` limits the
+  lookups that add a version per client and minute (default 60), and
+  `GET /index?since=<RFC 3339 time>` lists records added since as JSON
+  lines (decision 0568).
   `xo mod proxy fill --to=<bucket URL> <module path>[@version]...`
   writes versions, checked against the log, and their lists into an
   S3-compatible bucket that serves the proxy protocol as static files

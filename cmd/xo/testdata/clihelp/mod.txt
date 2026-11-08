@@ -5,7 +5,8 @@ usage: xo mod tidy [--dir=<dir>] [--json]
        xo mod proxy serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]
        xo mod proxy fill --to=<bucket URL> [--region=auto] <module path>[@version]...
        xo mod sumdb keygen <log name> <key file>
-       xo mod sumdb serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] <data dir>
+       xo mod sumdb serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] [--copy-to=<bucket URL>] [--fill-to=<bucket URL>] [--rate=60] <data dir>
+       xo mod sumdb restore --from=<bucket URL> <data dir>
 
 tidy requires every imported module, drops requirements nothing imports,
 and rewrites xo.lock with exactly the hashes the build uses.
@@ -24,4 +25,8 @@ credentials are XO_FILL_ACCESS_KEY_ID and XO_FILL_SECRET_ACCESS_KEY.
 sumdb keygen writes a new checksum log key to the file and prints the
 key clients name in XO_SUMDB; sumdb serve runs a checksum log (decision
 0124) with its records in <data dir>; --fetch adds a version the log
-lacks from git.
+lacks from git, at most --rate a minute per client; --copy-to copies
+each new record to a bucket before adding it, --fill-to writes each
+version it adds to a proxy bucket as proxy fill does, and sumdb restore rebuilds
+a data directory from those copies. GET /index?since=<RFC 3339 time>
+lists the records added since, as JSON lines.
