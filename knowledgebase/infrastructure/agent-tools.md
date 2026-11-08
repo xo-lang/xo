@@ -1129,6 +1129,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `~/xo-lead/notes/NAME/gate-*.log` on a failure, and ends with the PUSHQ_RAN value to give pushq.sh
   --gated; its exit status is the gate's. A step that needs the Mac (darwin output) still runs there.
   Last verified: 2026-11-07.
+- SDK stress (owner, 2026-11-08): `scripts/lead/sdk-stress.sh XO_DIR [big|limits|downstream...]` on host 2
+  (see scripts/lead/README.md for the offload.sh line) builds the largest generated modules of the public
+  xo-lang aws, azure and gcp repos with a given xo, under a wall and memory budget per module, and runs the
+  SDK tests that pin xo's output against Go's (JSON key order, Float32 text, wire formats). It is in the
+  lead's full tier; an agent can run it on its own xo build to see whether a change breaks a downstream
+  repo before pushing (decision 0543's sorted keys and the Float32 JSON change each failed an SDK pin hours
+  after their push; 0554's stack lists faulted the compiler on azblob). Each repo is tested at its main
+  (printed); `SDK_REV="REPO=HASH ..."` pins one for a bisect. Last verified: 2026-11-08.
 - Heavy runs: `~/xo-lead/agents/heavy.sh NAME CMD...`. Slot order:
   pushq's runs, then gates, then `HEAVY_CLASS=bulk` runs (measurements,
   profiles, suites). While `~/xo-lead/merge-first` exists, gates are the
