@@ -1,0 +1,28 @@
+# protobuf conformance with proto2, std/protojson against protobuf-go (2026-11-08)
+
+Runner: Google's conformance_test_runner of protobuf v29.3, linux/arm64 offload host 2, `--maximum_edition 2023`. Schema: a
+FileDescriptorSet from the runner's protoc holding test_messages_proto3.proto and test_messages_proto2.proto (set2.bin). Both
+testees (test/protoconf) share one envelope handler; see [2026-11-07](protobuf-conformance-2026-11-07.md) for the setup.
+Revision c6e81c6b7 (std/native/protojson.xo with the required-field checks).
+
+| testee | successes | skipped | expected failures | unexpected failures |
+| --- | --- | --- | --- | --- |
+| std/protojson (Xo) | 2670 | 2689 | 4 (listed) | 0 |
+| protobuf-go v1.36.12 | 2675 | 2689 | 0 | 0 |
+
+Against 2026-11-07 (1411 and 1412 successes) the proto2 message type adds 1259 passing tests; the runner's skipped count falls from
+3951 to 2689 (text format and JSPB). The editions message types (843 tests) are still answered `skipped`.
+
+The 4 listed failures (test/protoconf/expected_failures.txt) are the unknown field round trips `UnknownVarint` and `UnknownOrdering`
+with protobuf output, for proto3 and proto2: the Xo testee re-serializes through JSON, which keeps no unknown fields. The Go testee
+passes them (the runner reports its 4 listed names as stale, "errors: 4"). Go's testee drops the proto2 MessageSet messages and
+their extensions from its descriptors (protobuf-go refuses them), so those cases are not compared against Go.
+
+Fixed on the way: proto2 required fields now fail a parse when missing in `msg_json` and `msg_wire_obj`, with corpus rows from Go's
+protojson (scripts/stdcorpus/protojsonoracle, pjtest2.proto).
+
+## Gaps
+
+- Text format and JSPB: skipped, as before.
+- Editions message types: 843 tests skipped; next step is the editions descriptors in the set.
+- Unknown field retention across protobuf round trips (the 4 listed failures).
