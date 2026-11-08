@@ -1,0 +1,3 @@
+# protobuf-in, protobuf-out: the testee re-serializes through std/protojson, which keeps no unknown fields (Go's proto.Message does).
+Required.Proto3.ProtobufInput.UnknownVarint.ProtobufOutput
+Required.Proto3.ProtobufInput.UnknownOrdering.ProtobufOutput
