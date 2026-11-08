@@ -1,7 +1,7 @@
 // Testee of Google's protobuf conformance runner (ADR 0546 item 7): reads ConformanceRequest frames
 // (4 byte little endian length, then the message) from standard input and writes ConformanceResponse
 // frames to standard output. The schema is a FileDescriptorSet given as the first argument (built with
-// protoc --include_imports from conformance/test_protos/test_messages_proto3.proto); only the proto3 message
+// protoc --include_imports from conformance/test_protos/test_messages_proto3.proto); the proto3 and proto2 messages
 // and the protobuf and JSON formats are handled, anything else is answered `skipped`.
 use std/protobuf
 use std/protojson
@@ -75,7 +75,7 @@ fn resp(num: Int, data: Bytes) -> Bytes {
 }
 
 fn respond(reg: protojson.Registry, q: Req) -> Bytes {
-  if q.other || q.typ != "protobuf_test_messages.proto3.TestAllTypesProto3" {
+  if q.other || (q.typ != "protobuf_test_messages.proto3.TestAllTypesProto3" && q.typ != "protobuf_test_messages.proto2.TestAllTypesProto2") {
     return resp(5, b"unsupported")
   }
   var wire: Bytes = b""

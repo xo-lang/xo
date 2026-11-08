@@ -67,8 +67,8 @@ func parse(m []byte) (r req, err error) {
 }
 
 func respond(files *protoregistry.Files, types *dynamicpb.Types, q req) []byte {
-	const name = "protobuf_test_messages.proto3.TestAllTypesProto3"
-	if q.other || q.typ != name {
+	name := q.typ
+	if q.other || (name != "protobuf_test_messages.proto3.TestAllTypesProto3" && name != "protobuf_test_messages.proto2.TestAllTypesProto2") {
 		return resp(5, []byte("unsupported"))
 	}
 	d, err := files.FindDescriptorByName(protoreflect.FullName(name))
