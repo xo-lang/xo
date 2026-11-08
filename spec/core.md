@@ -12,6 +12,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.45
 
+- linux/riscv64 (12.1, 12.2; decision 0571 stage 1): `TargetArch` gains
+  `Riscv64`, so an exhaustive `match target.arch` needs its arm; the
+  target builds with `--backend=llvm` only and is not in `all`.
 - Checksum log server (4.3; decision 0124's addendum): `xo mod sumdb
   keygen` and `xo mod sumdb serve` make a log's key and run a log, its
   records kept in a data directory. `xo mod proxy fill` fills an
@@ -4148,6 +4151,14 @@ after the other targets are built (exit status 1). Several targets write
 directory; `-o NAME` for a windows target with no extension writes
 `NAME.exe`.
 
+`--targets=linux/riscv64`, not part of `all`, builds for 64-bit RISC-V
+Linux (RV64GC, the lp64d ABI) with `--backend=llvm` only (decision 0571);
+naming it with no `--backend` is an error that names `--backend=llvm`,
+reported after the other targets are built (exit status 1).
+It cross links against a riscv64 glibc sysroot (`XO_LINUXSYSROOT`). Until
+stage 2 of 0571, its threads are not preempted asynchronously (loops poll),
+and a fault's trace and `XO_PROF` show the faulting function only.
+
 `--targets=wasip2/wasm`, not part of `all`, builds a WASI 0.2 component and
 is named alone (decision 0447). A program that calls `http.serve_component`
 is a `wasi:http` 0.2 component (the `wasi:http/proxy` world); any other
@@ -4212,7 +4223,7 @@ written yet.
 There are no build tags and no filename based platform selection.
 `target` is a predeclared compile time constant with fields
 `os: TargetOs` (`Linux Darwin Windows Wasi`) and `arch: TargetArch`
-(`Amd64 Arm64 Wasm32`):
+(`Amd64 Arm64 Wasm32 Riscv64`):
 
 ```
 pub fn config_dir(env: Env) -> Str ! Error uses env {

@@ -637,7 +637,7 @@ fn backend_groups(targets: List[Str]) -> List[(Str, List[Str])] {
 /// targets as one build_native, then one report of every binary; a
 /// target no native backend builds (windows/arm64, when named:
 /// --targets=all leaves it out) is an error naming --backend=go, after
-/// the others are built.
+/// the others are built (linux/riscv64: --backend=llvm).
 fn build_by_backend(os: Os, ctx: Ctx, o: Opts, groups: List[(Str, List[Str])]) {
   var bins: List[(Str, Str)] = []
   var none: List[Str] = []
@@ -673,7 +673,15 @@ fn build_by_backend(os: Os, ctx: Ctx, o: Opts, groups: List[(Str, List[Str])]) {
     }
   }
   if !none.is_empty() {
-    os.stdio.eprintln("xo build: no native backend builds ${none.join(", ")}: build it with --backend=go (the other targets are built)")
+    // linux/riscv64 builds with the LLVM backend only (decision 0571)
+    let llvm_only = none.filter(fn(t) { t == "linux/riscv64" })
+    let go_only = none.filter(fn(t) { t != "linux/riscv64" })
+    if !go_only.is_empty() {
+      os.stdio.eprintln("xo build: no native backend builds ${go_only.join(", ")}: build it with --backend=go (the other targets are built)")
+    }
+    if !llvm_only.is_empty() {
+      os.stdio.eprintln("xo build: no native backend builds ${llvm_only.join(", ")}: build it with --backend=llvm (the other targets are built)")
+    }
     os.proc.exit(1)
   }
 }
