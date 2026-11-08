@@ -33,3 +33,15 @@ branch is open (cabi_wincrt.xo's xo_win_start, 2026-11-08) has no arm
 for the new variant, and only a build that reaches it fails (the
 gate's wasm goldens and windows/amd64 cross builds, not the riscv64
 runs).
+
+## A generated block: fix its generator
+
+Observed 2026-11-08 (tier 61): 63e4ddb63 added `TargetArch.Riscv64` to
+sha3.xo's portable rounds arm by hand, but that arm is
+scripts/gen/keccaklazy's output, so TestFieldGeneratorsInSync/keccaklazy
+failed until the generator emitted the arm too (c2bd0dfc5). Before editing
+a match, check whether the file holds a generator's output
+(internal/llvm/fieldgen_test.go lists them: x25519fe64, nistecmul4p,
+keccaklazy; `grep -rl 'TargetOs\|TargetArch' scripts/gen` finds the ones
+that emit a target match), and fix the generator, then regenerate; gate
+on TestFieldGeneratorsInSync.
