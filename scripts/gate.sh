@@ -85,7 +85,10 @@
 #            std/native/rt*.xo, and one cold build of compiler/xo with
 #            the new xo under XO_MAX_MEM=8G with --phase-times for what
 #            compiler/xo builds from (compiler/ but macho and wasm,
-#            std/native, std/llrt; "selfbuild"), printing the PUSHQ_RAN
+#            std/native, std/llrt; "selfbuild"), and internal/llvm
+#            TestFieldGeneratorsInSync for scripts/gen or a file holding a
+#            generated block (its table; "fieldgen", lead, 2026-11-08),
+#            printing the PUSHQ_RAN
 #            value to push with (XO_GATE_PUSHQ=0 skips them; lead,
 #            2026-11-06)
 #   warm    the backend caches across xo builds (decision 0275): the
@@ -477,7 +480,7 @@ for step in "$@"; do
   chkcache)
     chkcache_ran=1
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
-  codegen|selfbuild|wasm|cross)
+  codegen|selfbuild|wasm|cross|fieldgen)
     # pushq's proving checks: run after the named steps with the ones the
     # change's paths require (gate_plan), each once, and named in the
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
@@ -553,6 +556,18 @@ if [[ "$plan" == *" selfbuild "* ]]; then
     failed=1; echo "selfbuild: FAIL ($logs/selfbuild.txt: $(grep -m1 -E 'memory budget|error' "$logs/selfbuild.txt"))"
   fi
   rm -f "$logs/selfbuild-xo"
+fi
+# a generated block (scripts/gen's output in the runtime) against its
+# generator, run by this xo (lead, 2026-11-08: a hand edit of sha3.xo's
+# Keccak reached main)
+if [[ "$plan" == *" fieldgen "* ]]; then
+  f0=$failed; failed=0
+  full fieldgen ./internal/llvm -run '^TestFieldGeneratorsInSync$'
+  if [ "$failed" = 0 ] && ! grep -q -- '--- PASS: TestFieldGeneratorsInSync' "$logs/fieldgen.txt"; then
+    failed=1; echo "fieldgen: FAIL (TestFieldGeneratorsInSync did not run: $logs/fieldgen.txt)"
+  fi
+  [ "$failed" = 0 ] && ran="$ran fieldgen"
+  [ "$f0" = 1 ] && failed=1
 fi
 [ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
 # pushq-ran (lead, 2026-11-06 bottleneck review: 6 pushes in 3 hours were
