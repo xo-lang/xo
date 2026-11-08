@@ -57,10 +57,15 @@
 #            default of xo build and run (owner, 2026-10-22; two warm and
 #            cold differences slipped past the per-push gates before);
 #            XO_GATE_CHKCACHE=0 skips that
-#   cross    internal/arm64 TestAmd64CrossBuilds (four programs built for
-#            linux, windows and darwin amd64): run after the steps named
-#            when the branch changes compiler/arm64 or compiler/ssa;
-#            XO_GATE_CROSS=0 skips that; and internal/arm64
+#   cross, codegen, wasm, selfbuild
+#            pushq.sh's proving checks (below): named, each runs after
+#            the other steps even when the paths do not require it, and
+#            is named in the PUSHQ_RAN line when it passes
+#   (after the steps named)
+#            internal/arm64 TestAmd64CrossBuilds (four programs built for
+#            linux, windows and darwin amd64, "cross") when the branch
+#            changes compiler/arm64 or ssa .xo or std/native/llrt
+#            (XO_GATE_CROSS=0 skips that); and internal/arm64
 #            TestSwitch65535Arms when it changes compiler/arm64/jumptab.xo
 #            (the match lowering; XO_GATE_SCALE=0 skips that); and
 #            internal/arm64's cache tests (-run 'Cache|BinCache',
@@ -74,7 +79,8 @@
 #            internal/llvm's TestRaceSyncTable and TestRaceSyncTableArm64
 #            on darwin when it changes llrt's task, scheduler or race
 #            runtime (XO_GATE_RACE=0 skips that; lead, 2026-10-31); and
-#            the checks pushq.sh requires by path, `xo dev codegen` for
+#            the checks pushq.sh requires by path (gatelib.sh
+#            gate_required_steps, the function pushq.sh asks with), `xo dev codegen` for
 #            compiler/ssa, arm64 or llvm and TestSelfhostWasm for llrt or
 #            std/native/rt*.xo, and one cold build of compiler/xo with
 #            the new xo under XO_MAX_MEM=8G with --phase-times for what
@@ -105,6 +111,9 @@ shift
 logs=${XO_GATE_LOGS:-${TMPDIR:-/tmp}/xo-gate-$(basename "$wt")}
 mkdir -p "$logs"
 cd "$wt" || exit 1
+# gate_required_steps and gate_plan: the proving checks, as pushq.sh asks
+# for them (the tree's own copy, so a gate and its pushq agree)
+. scripts/lead/gatelib.sh || exit 1
 t0=$(date +%s)
 rm -f bin/xo
 go run ./scripts/xobuild >"$logs/xobuild.txt" 2>&1 || { echo "XOBUILD-FAIL ($logs/xobuild.txt)"; exit 1; }
@@ -223,22 +232,16 @@ check_change() {
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(check|ssa|xo)/'
 }
 chkcache_ran=0
-# native_change: the branch changes the native backend (compiler/arm64
-# holds the amd64 emitter and the shared MIR passes), so the cross step
-# runs after the steps named (lead, 2026-10-23: daed94d4d, a mir.xo
+# the cross step (internal/arm64 TestAmd64CrossBuilds) runs when the
+# branch changes the native backend (compiler/arm64 holds the amd64
+# emitter and the shared MIR passes; lead, 2026-10-23: daed94d4d, a mir.xo
 # change, passed its arm64 gate and broke every amd64 build of three
-# goldens on main for an hour; the x86-only Docker sample rule did not
-# apply to a shared file). std/native/llrt (the runtime xo's native code
-# generator compiles with each program, cpu.xo and num.xo among it) counts
-# too (lead, 2026-11-08: a762dc2e3's num.append_json_float32 fused a
-# multiply and an add that the amd64 emitter had no template for, and main
-# was red on amd64 for 2 hours). XO_GATE_CROSS=0 skips it.
-native_change() {
-  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
-  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(compiler/(arm64|ssa)/|std/native/llrt/)'
-}
-cross_ran=0
-cross_ok=0
+# goldens on main for an hour) or std/native/llrt (the runtime xo's native
+# code generator compiles with each program; lead, 2026-11-08: a762dc2e3's
+# num.append_json_float32 left main red on amd64 for 2 hours):
+# gatelib.sh gate_required_steps decides, as for pushq.sh. XO_GATE_CROSS=0
+# skips it unless named.
+named=""
 # scale_change: the branch changes the match lowering (compiler/arm64
 # jumptab.xo), so internal/arm64's TestSwitch65535Arms (about 100 s) runs
 # after the steps named (lead, 2026-10-24: 9479f31cd's compare tree made
@@ -474,27 +477,18 @@ for step in "$@"; do
   chkcache)
     chkcache_ran=1
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
-  cross)
-    cross_ran=1
-    full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$' ;;
-  codegen|selfbuild|wasm)
-    # the names pushq's PUSHQ_RAN uses: gate.sh runs them by the paths the
-    # change touches after the named steps, so naming one is a no-op
-    # (lead, 2026-11-08: a run exited 1 for `selfbuild codegen`)
-    echo "gate.sh: step $step runs by itself when the change's paths need it (the PUSHQ_RAN line at the end names what ran)" ;;
+  codegen|selfbuild|wasm|cross)
+    # pushq's proving checks: run after the named steps with the ones the
+    # change's paths require (gate_plan), each once, and named in the
+    # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
+    # codegen` ran neither, then pushq refused the push for cross)
+    named="$named $step" ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
 done
 if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change; then
   chkcache_ran=1
   full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
-fi
-if [ "$cross_ran" = 0 ] && [ "${XO_GATE_CROSS:-1}" != 0 ] && native_change; then
-  cross_ran=1
-  f0=$failed; failed=0
-  full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$'
-  [ "$failed" = 0 ] && cross_ok=1
-  [ "$f0" = 1 ] && failed=1
 fi
 if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
   full scale ./internal/arm64 -run '^TestSwitch65535Arms$'
@@ -517,14 +511,23 @@ fi
 ran=""
 base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
 ch=$({ git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -v '_test\.xo$')
-if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -qE '^compiler/(ssa|arm64|llvm)/.*\.xo$'; then
+# the checks: those the paths require (none with XO_GATE_PUSHQ=0; no
+# cross with XO_GATE_CROSS=0) and every one named
+req=""
+if [ "${XO_GATE_PUSHQ:-1}" != 0 ]; then
+  req=$(echo "$ch" | gate_required_steps)
+  [ "${XO_GATE_CROSS:-1}" = 0 ] && req=$(echo " $req " | sed 's/ cross / /')
+fi
+plan=" $(gate_plan "$req" $named) "
+echo "gate.sh: proving checks:${plan% }${plan:+ }(required by the paths: ${req:-none}; named:${named:- none})"
+if [[ "$plan" == *" codegen "* ]]; then
   if "$XO_CLI" dev codegen --backend=arm64,llvm test/codegen >"$logs/codegen.txt" 2>&1; then
     echo "codegen: $(tail -1 "$logs/codegen.txt")"; ran="$ran codegen"
   else
     failed=1; echo "codegen: FAIL ($logs/codegen.txt)"
   fi
 fi
-if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -qE '^std/native/(llrt/|rt[^/]*\.xo$)'; then
+if [[ "$plan" == *" wasm "* ]]; then
   # the goldens the branch touches, and the concurrency, atomics and map
   # sets pushq.sh names
   g=$(echo "$ch" | sed -n 's|^internal/[a-z0-9]*/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -)
@@ -536,7 +539,13 @@ fi
 # what compiler/xo builds from: one cold self build with the new xo under
 # an 8 GB budget (owner, 2026-11-06: 11a08a448's inliner runaway passed
 # 22 GB building xo and reached main, found only when builders failed)
-if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -E '^(compiler/|std/native/|std/llrt/)' | grep -qvE '^compiler/(macho|wasm)/'; then
+if [[ "$plan" == *" cross "* ]]; then
+  f0=$failed; failed=0
+  full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$'
+  [ "$failed" = 0 ] && ran="$ran cross"
+  [ "$f0" = 1 ] && failed=1
+fi
+if [[ "$plan" == *" selfbuild "* ]]; then
   t1=$(date +%s)
   if XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_WHOLE_BUILD=off "$XO_CLI" build --phase-times -o "$logs/selfbuild-xo" ./compiler/xo >"$logs/selfbuild.txt" 2>&1; then
     echo "selfbuild: $(($(date +%s) - t1)) s, $(grep -o 'peak [0-9]* MB' "$logs/selfbuild.txt" | sort -k2 -n | tail -1)"; ran="$ran selfbuild"
@@ -545,7 +554,6 @@ if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -E '^(compiler/|std/nativ
   fi
   rm -f "$logs/selfbuild-xo"
 fi
-[ "$cross_ok" = 1 ] && ran="$ran cross"
 [ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
 # pushq-ran (lead, 2026-11-06 bottleneck review: 6 pushes in 3 hours were
 # refused for a PUSHQ_RAN their gate had printed but the agent did not
