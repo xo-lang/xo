@@ -1,6 +1,6 @@
 # 0564: One convention for wide values (by pointer across arm64, x86-64 and LLVM)
 
-Status: Proposed (Xo Lang 1, 2026-11-08; owner decides)
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation). Proposed (Xo Lang 1, 2026-11-08; owner decides)
 
 ## Context
 

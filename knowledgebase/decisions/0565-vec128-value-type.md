@@ -1,6 +1,6 @@
 # 0565: a Vec128 value type for vector intrinsics
 
-Status: Proposed (Xo Lang 2, 2026-11-08; the owner decides: it adds a
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation). Proposed (Xo Lang 2, 2026-11-08; the owner decides: it adds a
 type class to the SSA and to every native register allocator)
 
 ## Context

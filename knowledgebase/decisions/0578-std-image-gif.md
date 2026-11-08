@@ -1,6 +1,6 @@
 # 0578: std/image (a shared Image, color, draw, scalers), std/gif and compress's LZW
 
-Status: Proposed (Xo Lang 3, 2026-11-08; the lead approved writing it, owner decides, design only: no code until the owner answers)
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation: questions 1 to 4 take the recommendations (A in the same push as std/image, then B one minor later with a Breaking note; port x/image/draw's CatmullRom and NearestNeighbor first; LZW in std/compress; WebP, TIFF, BMP and an `image.Image` interface stay out)). Proposed (Xo Lang 3, 2026-11-08; the lead approved writing it, owner decides, design only: no code until the owner answers)
 
 ## Context
 

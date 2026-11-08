@@ -1,6 +1,6 @@
 # 0573: FreeBSD as a target (freebsd/amd64 and freebsd/arm64)
 
-Status: Proposed (Xo Lang 1, 2026-11-08; the owner decides). The lead
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation). Proposed (Xo Lang 1, 2026-11-08; the owner decides). The lead
 queued a FreeBSD ADR on 2026-11-08 behind linux/riscv64 (decision 0571).
 Stage 1's cross build landed behind the target on 2026-11-08
 (Progress below); the status stays Proposed. Go's FreeBSD port (amd64 and

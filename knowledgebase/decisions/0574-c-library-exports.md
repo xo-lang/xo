@@ -1,6 +1,6 @@
 # 0574: C library build modes (exported functions, shared and static libraries)
 
-Status: Proposed (Xo Lang 4, 2026-11-08; owner decides). The owner
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation, with a separate `XoStr` header type (same layout as the string header) so the UTF-8 rule is visible to C programmers). Proposed (Xo Lang 4, 2026-11-08; owner decides). The owner
 approved the direction, an ADR, and a stage 1 prototype (2026-11-08,
 through the lead); the prototype's measurements fill in the
 Consequences.

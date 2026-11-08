@@ -1,6 +1,6 @@
 # 0553: Go-worded JSON decode errors as an opt-in mode
 
-Status: Proposed (Xo Lang 3, 2026-11-07; raised by goversioninfo's FEEDBACK.md items 5 and 6 and Xo Lang 2's differential, 1,920 cases)
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation: Go mode answers: 1 yes, null into a non optional field is a no op under `decode_go` only; 2 yes, zero fill missing fields under the same flag; 3 `go_text()` first (literal truncations fixed by recording the failure offset), then `decode_go`; 4 embedded structs deferred to a separate decision). Proposed (Xo Lang 3, 2026-11-07; raised by goversioninfo's FEEDBACK.md items 5 and 6 and Xo Lang 2's differential, 1,920 cases)
 
 ## Context
 

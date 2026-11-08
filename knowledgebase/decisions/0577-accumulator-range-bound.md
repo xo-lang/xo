@@ -1,6 +1,6 @@
 # 0577: Induction bounds for loop accumulators (checked adds without a fault)
 
-Status: Proposed (Xo Lang 4, 2026-11-08; the lead asked for it, design
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation, as a prototype behind XO_ACC_RANGE=1, off by default (2026-11-08 measurements: no gain on Zen 5 and arm64, Intel bytesum slower)). Proposed (Xo Lang 4, 2026-11-08; the lead asked for it, design
 first, prototype behind a flag). Extends decision 0054's value ranges.
 
 ## Context

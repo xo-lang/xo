@@ -1,6 +1,6 @@
 # 0569: windows/arm64 as a native target
 
-Status: Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation; windows/arm64 stays out of releases until it runs in a VM). Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
 approved windows/arm64 as a new target on 2026-11-08, through the lead;
 this ADR is the plan. Stages 1 to 4 need no Windows machine and are
 verified by cross build. Running anything waits for the test host (a

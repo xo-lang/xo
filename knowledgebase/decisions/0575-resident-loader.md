@@ -1,6 +1,6 @@
 # 0575: a resident runner that loads xo's objects into a running process
 
-Status: Proposed (Xo Lang 2, 2026-11-08; the owner decides). Design
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation, as a later stage of 0572). Proposed (Xo Lang 2, 2026-11-08; the owner decides). Design
 only: no code until the owner decides 0572 (the REPL), which this
 serves first. The lead asked for it after the MAP_JIT measurements, as
 a stage of 0572 or its own ADR; it is its own because `xo run` and

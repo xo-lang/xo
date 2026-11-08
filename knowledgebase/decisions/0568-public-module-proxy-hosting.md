@@ -1,6 +1,6 @@
 # 0568: hosting the public module proxy and checksum log
 
-Status: Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation; conditional on the owner confirming the OCI console shows the checksum log VM as Always Free; key rotation: yes to a standby key built into xo, two offline copies kept by the owner). Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
 approved a public proxy plan on 2026-11-08 and chose its direction the
 same day, through the lead:
 

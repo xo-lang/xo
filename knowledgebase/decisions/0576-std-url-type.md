@@ -1,6 +1,6 @@
 # 0576: std/url gains Go's URL type (Parse, String, ResolveReference, JoinPath)
 
-Status: Proposed (Xo Lang 3, 2026-11-08; owner decides, design only: no code until the owner answers)
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation). Proposed (Xo Lang 3, 2026-11-08; owner decides, design only: no code until the owner answers)
 
 ## Context
 

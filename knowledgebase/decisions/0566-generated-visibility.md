@@ -1,6 +1,6 @@
 # 0566: @generated visibility for derive helpers
 
-Status: Proposed (Xo Lang 2, 2026-11-08; the owner decides: it narrows
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation). Proposed (Xo Lang 2, 2026-11-08; the owner decides: it narrows
 what user code may call in std, and adds a diagnostic)
 
 ## Context
