@@ -1,8 +1,8 @@
 # 0562: Landings are made per function in insert_rc, not for the whole module
 
-Status: Proposed (Xo Lang 4, 2026-11-07). The owner delegated the decision to the
-lead. A prototype (XO_LAZY_LANDINGS=1, uncached builds only) is on branch
-l4-implland for measurement. Touches decision 0085 (landings and the unwind exit)
+Status: Accepted (lead, delegated by the owner 2026-11-07), conditions below
+(Xo Lang 4, 2026-11-07). A prototype (XO_LAZY_LANDINGS=1, uncached builds only)
+is on branch l4-implland. Touches decision 0085 (landings and the unwind exit)
 and decision 0382 (the cleanup cache).
 
 ## Context
@@ -81,6 +81,25 @@ today (pad -1 for a pruned landing, a real landing otherwise), so no backend cha
   main.xo) switch when the default does.
 - **Verifier.** The post-rc verifier (verify.xo) runs after rc_func. An earlier check
   that finds PAD_LAZY reports a compiler bug.
+
+### Addendum: conditions of acceptance (lead, 2026-11-07)
+
+1. Built behind XO_LAZY_LANDINGS (classified in TestCodegenInputsClassified),
+   default off until 3 and 4 hold. The cached path (cleanup cache) is covered
+   before the flip, or shown never to see landings.
+2. Correctness: every golden on arm64, LLVM, wasm and Go parity; the fixed point;
+   `xo test` on std, native and LLVM; `xo dev codegen --backend=arm64,llvm`; and a
+   fault and traceback set (fault_unwind, float_int_fault, the overflow traces)
+   with tracebacks byte-identical to main.
+3. Payoff, measured before the default flips: g200 peak RSS at least 30% lower,
+   the self build's peak RSS lower, and compile wall time not worse (an s1ab or
+   `--ab` self build, n >= 5, on linux/arm64 host 1: within noise or better). A
+   cost from the serial unwind exit creation in add_landings that shows in
+   parallel wall time is a fail. If this misses (for example a peak only 15%
+   lower), the numbers go to the lead and the decision is revisited.
+4. The default flip is its own push under the default-change rule: the full
+   suites of the touched packages, and a self build with the new xo
+   (scripts/bootstrap-xo.sh s2) under XO_MAX_MEM=8G with --phase-times.
 
 ## Effect on memory and compile time
 
