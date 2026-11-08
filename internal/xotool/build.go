@@ -518,7 +518,11 @@ func hasEnv(env []string, name string) bool {
 // sep=true cases and the sepcomp tests failed in the full suite and
 // passed alone).
 // XO_TEST_SEPCOMP=0 keeps every build whole (the full tier's coverage of
-// the whole-program path).
+// the whole-program path), and so does a backend cache that is off
+// (stdCacheOff): xo then builds no variant and every build is whole, so
+// `xo dev stdcache`'s exit 1 is no failure (2026-11-08: under gate.sh's
+// XO_BACKEND_CACHE=off every internal/arm64 build failed with "cache std
+// off", gotchas/stdcache-off-fails-every-build.md).
 // StdVariants builds std's variants as a native build would (stdVariants),
 // for a test that runs xo itself and wants the separately compiled path.
 func StdVariants() error {
@@ -529,8 +533,15 @@ func StdVariants() error {
 	return stdVariants(cli)
 }
 
+// stdCacheOff reports whether xo's backend cache is off, as
+// compiler/xo bcache.xo backend_cache_mode reads it: then std_variant
+// keeps no variant and `xo dev stdcache` exits 1.
+func stdCacheOff() bool {
+	return os.Getenv("XO_BACKEND_CACHE") == "off" || os.Getenv("XO_DUMP_FN") != ""
+}
+
 func stdVariants(cli []string) error {
-	if os.Getenv("XO_TEST_SEPCOMP") == "0" {
+	if os.Getenv("XO_TEST_SEPCOMP") == "0" || stdCacheOff() {
 		return nil
 	}
 	stdVariantsOnce.Do(func() {
