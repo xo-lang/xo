@@ -353,6 +353,18 @@ host 1, now that the step 1 and 2 kernels landed, is the next input.
   knows them (gotchas/seed-older-than-intrinsics.md): every new kernel
   lands in two steps, code generation first.
 
+## Update (2026-11-08): the held std uses landed with seed 0.44.0
+
+Seed 0.44.0 lowers rt.bytes_skip32 and rt.bytes_count_below32, so the two
+std uses that waited for it are on main: scan.xo find_byte's 32 byte
+steps as rt.bytes_skip32 (c441ae206; bench/perf/simdscan index_byte
+0.935 on linux/arm64) and count_cont as rt.bytes_count_below32
+(7c638d005; rune_count 0.485 to 0.502). Both gated on linux/arm64 (short,
+cross, wasm, the self build) with the llrt scan tests on arm64 and LLVM.
+rt.mem_ne64 and rt.mem_any_eq32's uses stay held (within noise). Step 3,
+a loop vectorizer, stays unstarted: step 2's measurements show no loop
+left that needs one.
+
 ## Alternatives
 
 - A general loop vectorizer first (LLVM's LoopVectorize shape): the
