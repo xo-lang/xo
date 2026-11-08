@@ -198,9 +198,9 @@ fn pd_fd(pd: Int) -> Int {
 /// 140 that sock.xo maps WSAEWOULDBLOCK to).
 fn would_block(e: Int) -> Bool {
   match target.os {
-    TargetOs.Darwin => e == -35
+    TargetOs.Darwin | TargetOs.FreeBSD => e == -35
     TargetOs.Windows => e == -140 || e == -11
-    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => e == -11
+    TargetOs.Linux | TargetOs.Wasi => e == -11
   }
 }
 
@@ -257,10 +257,11 @@ fn peer_ip_at(fd: Int, sa: Int) -> Str {
     return ""
   }
   let n = rt.mem_load(lp, 0, 4)
-  // macOS's sockaddr starts with its length, then a byte of family
+  // the BSDs' sockaddr (macOS, FreeBSD) starts with its length, then a
+  // byte of family
   let fam = match target.os {
-    TargetOs.Darwin => rt.mem_load(sa, 1, 1)
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => rt.mem_load(sa, 0, 2)
+    TargetOs.Darwin | TargetOs.FreeBSD => rt.mem_load(sa, 1, 1)
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => rt.mem_load(sa, 0, 2)
   }
   if fam == sock.AF_INET && n >= 8 {
     return dns.ntop(raw.str_at(sa + 4, 4).bytes())

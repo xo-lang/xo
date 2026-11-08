@@ -36,12 +36,14 @@ pub const EAGAIN: Int = 11
 pub const EINPROGRESS: Int = 115
 pub const ECONNREFUSED: Int = 111
 
-/// AF_INET6 of the target OS (10 on Linux, 30 on macOS, 23 on Windows).
+/// AF_INET6 of the target OS (10 on Linux, 30 on macOS, 28 on FreeBSD,
+/// 23 on Windows).
 pub fn af_inet6() -> Int {
   match target.os {
     TargetOs.Darwin => 30
+    TargetOs.FreeBSD => 28
     TargetOs.Windows => 23
-    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => 10
+    TargetOs.Linux | TargetOs.Wasi => 10
   }
 }
 

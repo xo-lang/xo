@@ -13,6 +13,7 @@
 // deleted the selectable C path (`XO_LLRT_C=sysio`); the C functions stay
 // for those cases.
 use native/llrt/darwin
+use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/obj
 use native/llrt/raw
@@ -39,7 +40,8 @@ pub struct Info {
 /// `target.os`, gotchas/wasm-target-os-is-the-host.md), 2 libSystem
 /// (macOS, arm64 and x86_64: the stat and directory calls are the 64 bit
 /// inode ones under plain names, gotchas/darwin-amd64-stat-inode64.md),
-/// 3 kernel32 (Windows), 0 the wasm runtime. The SSA builders fold a call
+/// 3 kernel32 (Windows), 4 FreeBSD system calls (decision 0573), 0 the
+/// wasm runtime. The SSA builders fold a call
 /// of layer() compared with a literal (`layer() == 2`), as they fold
 /// `target` tests (decision 0246; compiler/ssa expr.xo layer_call keeps
 /// these numbers): the helpers below test `target.os` so another OS's
@@ -52,7 +54,8 @@ pub fn layer() -> Int {
         TargetOs.Linux => 1
         TargetOs.Darwin => 2
         TargetOs.Windows => 3
-        TargetOs.Wasi | TargetOs.FreeBSD => 0
+        TargetOs.FreeBSD => 4
+        TargetOs.Wasi => 0
       }
     }
   }
@@ -335,6 +338,11 @@ fn clock_read(real: Bool, a: Int) -> Int {
   if target.os == TargetOs.Darwin || target.os == TargetOs.Windows {
     fault("the clock chosen is not this OS's")
   }
+  if target.os == TargetOs.FreeBSD {
+    // the system call (decision 0573 stage 2; AT_TIMEKEEP's shared page,
+    // FreeBSD's vDSO clock, later)
+    return freebsd.clock_ns(if real { freebsd.CLOCK_REALTIME } else { freebsd.CLOCK_MONOTONIC }, a)
+  }
   linux.clock_ns(if real { linux.CLOCK_REALTIME } else { linux.CLOCK_MONOTONIC }, a)
 }
 
@@ -345,7 +353,7 @@ fn clock_choose() -> Int {
   if target.os == TargetOs.Linux || target.os == TargetOs.Wasi {
     return linux.vdso_clock()
   }
-  let l = if target.os == TargetOs.Darwin { CLOCK_LIBSYSTEM } else { CLOCK_KERNEL32 }
+  let l = if target.os == TargetOs.Darwin { CLOCK_LIBSYSTEM } else if target.os == TargetOs.FreeBSD { CLOCK_SYSCALL } else { CLOCK_KERNEL32 }
   rt.slot_store[Int](rt.sys_words(), 0, l, 0)
   l
 }
@@ -363,6 +371,9 @@ fn open_read(l: Int, op: Str) -> Int {
   if target.os == TargetOs.Darwin {
     return darwin.open(op, darwin.O_RDONLY | darwin.O_CLOEXEC, 0)
   }
+  if target.os == TargetOs.FreeBSD {
+    return freebsd.open(op, freebsd.O_RDONLY | freebsd.O_CLOEXEC, 0)
+  }
   linux.open(op, linux.O_RDONLY | linux.O_CLOEXEC, 0)
 }
 
@@ -374,6 +385,9 @@ fn open_write(l: Int, op: Str) -> Int {
   if target.os == TargetOs.Darwin {
     return darwin.open(op, darwin.O_WRONLY | darwin.O_CREAT | darwin.O_TRUNC | darwin.O_CLOEXEC, 420)
   }
+  if target.os == TargetOs.FreeBSD {
+    return freebsd.open(op, freebsd.O_WRONLY | freebsd.O_CREAT | freebsd.O_TRUNC | freebsd.O_CLOEXEC, 420)
+  }
   linux.open(op, linux.O_WRONLY | linux.O_CREAT | linux.O_TRUNC | linux.O_CLOEXEC, 420)
 }
 
@@ -383,6 +397,9 @@ fn read(l: Int, fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
   }
   if target.os == TargetOs.Darwin {
     return darwin.read(fd, buf, off, n)
+  }
+  if target.os == TargetOs.FreeBSD {
+    return freebsd.read(fd, buf, off, n)
   }
   linux.read(fd, buf, off, n)
 }
@@ -395,6 +412,9 @@ fn write_all(l: Int, fd: Int, b: Bytes) -> Int {
   if target.os == TargetOs.Darwin {
     return darwin.write_all(fd, b)
   }
+  if target.os == TargetOs.FreeBSD {
+    return freebsd.write_all(fd, b)
+  }
   linux.write_all(fd, b)
 }
 
@@ -404,6 +424,9 @@ fn close(l: Int, fd: Int) -> Int {
   }
   if target.os == TargetOs.Darwin {
     return darwin.close(fd)
+  }
+  if target.os == TargetOs.FreeBSD {
+    return freebsd.close(fd)
   }
   linux.close(fd)
 }
@@ -415,6 +438,10 @@ fn file_size(l: Int, fd: Int) -> Int {
   }
   if target.os == TargetOs.Darwin {
     let (s, e) = darwin.fstat(fd)
+    return if e == 0 { s.size } else { -1 }
+  }
+  if target.os == TargetOs.FreeBSD {
+    let (s, e) = freebsd.fstat(fd)
     return if e == 0 { s.size } else { -1 }
   }
   let (s, e) = linux.fstat(fd)
@@ -431,6 +458,10 @@ fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
     let (s, e) = darwin.stat(op, follow)
     return (Info{st: 0, is_dir: darwin.is_dir(s), is_link: darwin.is_link(s), size: s.size, modified: s.mtime}, e)
   }
+  if target.os == TargetOs.FreeBSD {
+    let (s, e) = freebsd.stat(op, follow)
+    return (Info{st: 0, is_dir: freebsd.is_dir(s), is_link: freebsd.is_link(s), size: s.size, modified: s.mtime}, e)
+  }
   let (s, e) = linux.stat(op, follow)
   (Info{st: 0, is_dir: linux.is_dir(s), is_link: linux.is_link(s), size: s.size, modified: s.mtime}, e)
 }
@@ -440,7 +471,8 @@ fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
 /// its message (7, Io, under WASI, which has no statfs).
 pub fn disk_usage(op: Str) -> (List[Int], Int, Str) {
   let l = layer()
-  if l == 0 {
+  if l == 0 || target.os == TargetOs.FreeBSD {
+    // FreeBSD's statfs: stage 2 of decision 0573, after the VM lane
     return ([], 7, "disk usage is not supported on this system")
   }
   let (v, e) = if target.os == TargetOs.Windows {
@@ -461,7 +493,8 @@ pub fn err_msg(l: Int, e: Int) -> Str {
   if target.os == TargetOs.Windows {
     return windows.err_msg(e)
   }
-  if target.os == TargetOs.Darwin {
+  // FreeBSD's errno values and messages are the BSDs' (macOS's table)
+  if target.os == TargetOs.Darwin || target.os == TargetOs.FreeBSD {
     return darwin.err_msg(e)
   }
   linux.err_msg(e)
@@ -472,7 +505,7 @@ pub fn fs_status(l: Int, e: Int) -> Int {
   if target.os == TargetOs.Windows {
     return windows.fs_status(e)
   }
-  if target.os == TargetOs.Darwin {
+  if target.os == TargetOs.Darwin || target.os == TargetOs.FreeBSD {
     return darwin.fs_status(e)
   }
   linux.fs_status(e)

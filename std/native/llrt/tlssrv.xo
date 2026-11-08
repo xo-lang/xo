@@ -1114,9 +1114,9 @@ fn deadline(d: Int) -> Int {
 
 fn would_block(e: Int) -> Bool {
   match target.os {
-    TargetOs.Darwin => e == -35
+    TargetOs.Darwin | TargetOs.FreeBSD => e == -35
     TargetOs.Windows => e == -140 || e == -11
-    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => e == -11
+    TargetOs.Linux | TargetOs.Wasi => e == -11
   }
 }
 

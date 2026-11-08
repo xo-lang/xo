@@ -684,6 +684,7 @@ fn (var b: Builder) layer_call(e: Expr) -> Int? {
     "Linux" => 1
     "Darwin" => 2
     "Windows" => 3
+    "FreeBSD" => 4
     _ => 0
   })
 }

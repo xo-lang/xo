@@ -159,3 +159,24 @@ not.
   planted variants of 04-file-sync; the amd64 sample's method_values
   found it); bench/paper's blind solutions are left as written, so they
   no longer check, as user code of their age would not.
+- **2026-11-08, stage 2 part 1: what the host can check (Xo Lang 1; the
+  lead: cross built code with host unit tests only, kernel-only behavior
+  parked for the VM lane).** `sysio.layer()` is 4 on FreeBSD (it was 0,
+  the wasm runtime's layer, so the 52 `layer() == N` sites took WASI's
+  paths), in llrt and the SSA builder's fold. freebsd.xo gains read,
+  write, open (openat), close, fsync, stat (fstatat), fstat, the clock
+  (clock_gettime 232, the system call: AT_TIMEKEEP's shared page later),
+  nanosleep, and wrappers for _umtx_op, thr_new, thr_self, thr_exit and
+  thr_kill, with the struct offsets as named constants; sysio's file
+  calls and clock use them, and errno messages and FsErr come from the
+  BSD table (darwin's). EAGAIN is 35 in the HTTP and TLS retry tests,
+  AF_INET6 is 28, and a sockaddr's family is its second byte, as on
+  macOS. Checked on the host: `TestFreeBSDABI` (internal/repotest)
+  compares every constant and system call number of freebsd.xo with
+  testdata/freebsd-abi.txt, which scripts/freebsdabi/gen.sh computes with
+  clang for x86_64 and aarch64 from the 14.5-RELEASE src.txz (sha256
+  267fb92d..., its MANIFEST's); a wrong offset fails it (checked by
+  mutation). Parked for the VM: the threads on thr_new, the futex on
+  _umtx_op (the wrappers exist, nothing calls them), the kqueue poller,
+  signals and faults, and statfs.
+

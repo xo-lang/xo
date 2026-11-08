@@ -9,6 +9,8 @@
 // mappings and the main thread's TLS. Only the FreeBSD arms of llrt call
 // this module, so it is code generated only for FreeBSD targets (core
 // 12.2).
+use native/llrt/obj
+use native/llrt/raw
 use native/rt
 
 pub const EINTR: Int = 4
@@ -50,4 +52,202 @@ pub fn getpid() -> Int { rt.sys6(20, 0, 0, 0, 0, 0, 0) }
 pub fn set_fsbase(tp: Int, scratch: Int) -> Int {
   rt.mem_store(scratch, 0, tp, 8)
   rt.sys6(165, 129, scratch, 0, 0, 0, 0)
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2 of decision 0573: threads, the futex, time
+
+pub const CLOCK_REALTIME: Int = 0
+pub const CLOCK_MONOTONIC: Int = 4
+
+// _umtx_op's operations on a private 32 bit word (sys/umtx.h)
+pub const UMTX_OP_WAIT_UINT_PRIVATE: Int = 15
+pub const UMTX_OP_WAKE_PRIVATE: Int = 16
+
+/// clock_gettime(2) into the timespec at ts.
+pub fn clock_gettime(id: Int, ts: Int) -> Int { rt.sys6(232, id, ts, 0, 0, 0, 0) }
+
+/// nanosleep(2) of the timespec at ts.
+pub fn nanosleep_at(ts: Int) -> Int { rt.sys6(240, ts, 0, 0, 0, 0, 0) }
+
+/// _umtx_op(2) on the 32 bit word at addr: op, val, and uaddr/uaddr2
+/// (for a wait with a timeout: uaddr the size of the timespec as an
+/// address, uaddr2 the timespec's address; 0 and 0 for none).
+pub fn umtx_op(addr: Int, op: Int, val: Int, uaddr: Int, uaddr2: Int) -> Int {
+  rt.sys6(454, addr, op, val, uaddr, uaddr2, 0)
+}
+
+/// Waits while the 32 bit word at addr holds val (the futex's
+/// FUTEX_WAIT), with the relative timespec at ts or none for 0.
+pub fn futex_wait(addr: Int, val: Int, ts: Int) -> Int {
+  umtx_op(addr, UMTX_OP_WAIT_UINT_PRIVATE, val, if ts == 0 { 0 } else { 16 }, ts)
+}
+
+/// Wakes up to n waiters of the word at addr (FUTEX_WAKE).
+pub fn futex_wake(addr: Int, n: Int) -> Int { umtx_op(addr, UMTX_OP_WAKE_PRIVATE, n, 0, 0) }
+
+// struct thr_param (sys/thr.h), the same on amd64 and arm64
+pub const TP_START_FUNC: Int = 0
+pub const TP_ARG: Int = 8
+pub const TP_STACK_BASE: Int = 16
+pub const TP_STACK_SIZE: Int = 24
+pub const TP_TLS_BASE: Int = 32
+pub const TP_TLS_SIZE: Int = 40
+pub const TP_CHILD_TID: Int = 48
+pub const TP_PARENT_TID: Int = 56
+pub const TP_FLAGS: Int = 64
+pub const TP_RTP: Int = 72
+pub const TP_SIZE: Int = 104
+
+/// thr_new(2) with the struct thr_param at p (TP_*): 0 or the negative
+/// errno.
+pub fn thr_new(p: Int) -> Int { rt.sys6(455, p, TP_SIZE, 0, 0, 0, 0) }
+
+/// thr_self(2): stores the calling thread's id at the 8 bytes at a.
+pub fn thr_self(a: Int) -> Int { rt.sys6(432, a, 0, 0, 0, 0, 0) }
+
+/// thr_exit(2): ends the calling thread, storing 0 to the long at state
+/// and waking its waiters (0 for none).
+pub fn thr_exit(state: Int) -> Int { rt.sys6(431, state, 0, 0, 0, 0, 0) }
+
+/// thr_kill(2): sends sig to the thread id.
+pub fn thr_kill(id: Int, sig: Int) -> Int { rt.sys6(433, id, sig, 0, 0, 0, 0) }
+
+/// Clock id's time in nanoseconds, with the 16 bytes at a for the
+/// timespec, or the negative errno.
+pub fn clock_ns(id: Int, a: Int) -> Int {
+  let r = clock_gettime(id, a)
+  if r < 0 {
+    return r
+  }
+  rt.mem_load(a, 0, 8).wrapping_mul(1000000000).wrapping_add(rt.mem_load(a, 8, 8))
+}
+
+// ---------------------------------------------------------------------------
+// Files (stage 2 of decision 0573): the *at calls relative to the working
+// directory, as linux.xo's. errno values below 35 are Linux's; the
+// messages and the FsErr mapping are the BSDs' (darwin.err_msg and
+// darwin.fs_status, pure tables).
+
+pub const AT_FDCWD: Int = -100
+const AT_SYMLINK_NOFOLLOW: Int = 512
+
+// open flags (sys/fcntl.h)
+pub const O_RDONLY: Int = 0
+pub const O_WRONLY: Int = 1
+pub const O_RDWR: Int = 2
+pub const O_APPEND: Int = 8
+pub const O_CREAT: Int = 512
+pub const O_TRUNC: Int = 1024
+pub const O_EXCL: Int = 2048
+pub const O_CLOEXEC: Int = 1048576
+
+/// The facts of a stat: the kind and permission bits, the size, and the
+/// modification time in Unix nanoseconds (linux.Stat's).
+pub struct Stat {
+  pub mode: Int
+  pub size: Int
+  pub mtime: Int
+}
+
+/// Whether st is a directory (S_IFDIR).
+pub fn is_dir(st: Stat) -> Bool { (st.mode & 61440) == 16384 }
+
+/// Whether st is a symbolic link (S_IFLNK).
+pub fn is_link(st: Stat) -> Bool { (st.mode & 61440) == 40960 }
+
+fn cpath(path: Str) -> Bytes {
+  let p = if path.is_empty() { "." } else { path }
+  var s = BytesBuilder.with_capacity(p.len() + 1)
+  s.write(p.bytes())
+  s.write_byte(UInt8(0))
+  s.freeze()
+}
+
+/// r, after b's last use (the buffer stays alive across the call).
+fn keep(b: Bytes, r: Int) -> Int {
+  if b.len() < 0 {
+    return -1
+  }
+  r
+}
+
+/// read(2) into the bytes of buf from off on (at most n of them).
+pub fn read(fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
+  let r = rt.sys6(3, fd, raw.bytes_addr(buf) + off, raw.io_len(n), 0, 0, 0)
+  keep(buf, r)
+}
+
+/// read(2) of at most n bytes to the address a.
+pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(3, fd, a, raw.io_len(n), 0, 0, 0) }
+
+/// write(2) of the bytes lo..hi of b.
+pub fn write(fd: Int, b: Bytes, lo: Int, hi: Int) -> Int {
+  let r = rt.sys6(4, fd, raw.bytes_addr(b) + lo, raw.io_len(hi - lo), 0, 0, 0)
+  keep(b, r)
+}
+
+/// Writes all of b (retrying after EINTR and short writes): 0, or the
+/// errno.
+pub fn write_all(fd: Int, b: Bytes) -> Int {
+  var off = 0
+  let n = b.len()
+  while off < n {
+    let w = write(fd, b, off, n)
+    if w < 0 {
+      if -w == EINTR {
+        continue
+      }
+      return -w
+    }
+    off += w
+  }
+  0
+}
+
+/// openat(2) of path: the descriptor, or the negative errno.
+pub fn open(path: Str, flags: Int, mode: Int) -> Int {
+  let z = cpath(path)
+  let r = rt.sys6(499, AT_FDCWD, raw.bytes_addr(z), flags, mode, 0, 0)
+  keep(z, r)
+}
+
+/// close(2).
+pub fn close(fd: Int) -> Int { rt.sys6(6, fd, 0, 0, 0, 0, 0) }
+
+/// fsync(2).
+pub fn fsync(fd: Int) -> Int { rt.sys6(95, fd, 0, 0, 0, 0, 0) }
+
+/// fstatat(2) of path (following a final symbolic link when follow): the
+/// facts and 0, or the errno.
+pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
+  let z = cpath(path)
+  let buf = obj.scratch()
+  let r = rt.sys6(552, AT_FDCWD, raw.bytes_addr(z), buf, if follow { 0 } else { AT_SYMLINK_NOFOLLOW }, 0, 0)
+  keep(z, 0)
+  stat_of(buf, r)
+}
+
+/// fstat(2) of the open descriptor fd.
+pub fn fstat(fd: Int) -> (Stat, Int) {
+  let buf = obj.scratch()
+  stat_of(buf, rt.sys6(551, fd, buf, 0, 0, 0, 0))
+}
+
+// struct stat (sys/stat.h, FreeBSD 12 and later), the same on amd64 and
+// arm64: st_mode is 16 bits, st_mtim a timespec
+pub const ST_MODE: Int = 24
+pub const ST_MTIM: Int = 64
+pub const ST_SIZE: Int = 112
+pub const ST_SIZEOF: Int = 224
+
+/// The facts of the struct stat at buf, or the errno of r < 0.
+fn stat_of(buf: Int, r: Int) -> (Stat, Int) {
+  if r < 0 {
+    return (Stat{mode: 0, size: 0, mtime: 0}, -r)
+  }
+  let mode = rt.mem_load(buf, ST_MODE, 2)
+  let sec = rt.mem_load(buf, ST_MTIM, 8)
+  let nsec = rt.mem_load(buf, ST_MTIM + 8, 8)
+  (Stat{mode: mode, size: rt.mem_load(buf, ST_SIZE, 8), mtime: sec * 1000000000 + nsec}, 0)
 }
