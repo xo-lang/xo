@@ -1,5 +1,26 @@
 # std/protojson changes
 
+## 2026-11-08: feature: editions 2023 descriptors, and groups read and written as JSON objects
+
+- Kind: feature
+- Commit: this push
+- Found by: the protobuf conformance runner's editions test messages (843 tests the testee answered `skipped`), test/protoconf
+- Go reference: google.golang.org/protobuf v1.36.12 (protodesc editions, encoding/protojson, dynamicpb)
+- Test: testdata/corpus/protojson: two editions 2023 files in the oracle schema (pjted.proto: per-field presence IMPLICIT and
+  LEGACY_REQUIRED, repeated EXPANDED and PACKED, message_encoding DELIMITED, an implicit file with an EXPLICIT field), random
+  messages of them in MARSHAL, UNMARSHAL and NORMALIZE against Go on arm64, LLVM and the Go backend; the conformance runner of
+  protobuf v29.3 over the four test message files: 5348 successes, 0 failures (was 2674 with proto3 and proto2 only)
+- Timing: not applicable
+- Shipped in: not yet released
+
+A file with `syntax: editions` is read as its proto2 or proto3 form: the FeatureSet of the file, message and field
+(descriptor.proto fields 50, 12, 21) resolves field presence (a LEGACY_REQUIRED field becomes required, an IMPLICIT one in an
+explicit message is implicit, an EXPLICIT one in an implicit message explicit), repeated number encoding (the `packed`
+option), and message_encoding DELIMITED (a message field becomes a group). Not read: enum_type (closed enums) and
+utf8_validation. Groups, which the JSON side refused before ("groups are not supported"), are now read and written as
+JSON objects (`native/protodesc.walk` gives a group field's contents as `data`); the group's start and end tags are written
+on the wire. `MsgInfo` gains `implicit_nums`.
+
 ## 2026-11-08: feature: normalize keeps a message's unknown fields; fix: a wrong wire type no longer decides a oneof
 
 - Kind: feature

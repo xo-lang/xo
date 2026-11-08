@@ -41,6 +41,8 @@ struct MsgInfo {
   full: Str
   proto3: Bool
   is_map: Bool
+  /// Field numbers of an editions message whose presence is implicit although the message's is explicit.
+  implicit_nums: List[Int] = []
 }
 
 /// A registry of the files (a file's dependencies must be in the list).

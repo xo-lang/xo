@@ -34,7 +34,17 @@ Runner rebuilt in /work/conf on host 2 (see offload.md "Kept directories"), set.
 The 4 listed failures all pass (the runner flags them as stale until they are removed), and test/protoconf/expected_failures.txt is
 now empty. The runner's second pass (text format) skips all 843 of its tests, as before.
 
+## Update: editions 2023 (later 2026-11-08)
+
+set.bin now also holds test_messages_proto3_editions.proto and test_messages_proto2_editions.proto (editions/golden), and the
+testee answers their four message types. std/protojson reads the files' features (presence, packed encoding, delimited groups).
+
+| testee | successes | skipped | expected failures | unexpected failures |
+| --- | --- | --- | --- | --- |
+| std/protojson (Xo) | 5348 | 14 | 0 | 0 |
+
+The second pass of the runner (text format) still skips all 843 of its tests.
+
 ## Gaps
 
 - Text format and JSPB: skipped, as before.
-- Editions message types: 843 tests skipped; next step is the editions descriptors in the set.

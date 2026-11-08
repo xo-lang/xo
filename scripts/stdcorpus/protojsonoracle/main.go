@@ -182,6 +182,50 @@ func schema() *descriptorpb.FileDescriptorSet {
 		Name: proto.String("pjtest2.proto"), Package: proto.String("pjt2"), Syntax: proto.String("proto2"),
 		MessageType: []*descriptorpb.DescriptorProto{leaf, rq},
 	})
+	// an editions file (2023): per-field presence, packed encoding and delimited message encoding, written as protoc
+	// writes them (the unresolved features of each field)
+	fs := func(f func(*descriptorpb.FeatureSet)) *descriptorpb.FieldOptions {
+		x := &descriptorpb.FeatureSet{}
+		f(x)
+		return &descriptorpb.FieldOptions{Features: x}
+	}
+	withOpts := func(fd *descriptorpb.FieldDescriptorProto, o *descriptorpb.FieldOptions) *descriptorpb.FieldDescriptorProto {
+		fd.Options = o
+		return fd
+	}
+	i32 := descriptorpb.FieldDescriptorProto_TYPE_INT32
+	msgT := descriptorpb.FieldDescriptorProto_TYPE_MESSAGE
+	sub := &descriptorpb.DescriptorProto{Name: proto.String("Sub"), Field: []*descriptorpb.FieldDescriptorProto{field("x", 1, i32, opt, "")}}
+	edm := &descriptorpb.DescriptorProto{Name: proto.String("EdMsg"), Field: []*descriptorpb.FieldDescriptorProto{
+		withOpts(field("a", 1, i32, opt, ""), fs(func(x *descriptorpb.FeatureSet) { x.FieldPresence = descriptorpb.FeatureSet_IMPLICIT.Enum() })),
+		field("b", 2, i32, opt, ""),
+		field("p", 3, i32, rep, ""),
+		withOpts(field("e", 4, i32, rep, ""), fs(func(x *descriptorpb.FeatureSet) { x.RepeatedFieldEncoding = descriptorpb.FeatureSet_EXPANDED.Enum() })),
+		withOpts(field("d", 5, msgT, opt, ".pjed.Sub"), fs(func(x *descriptorpb.FeatureSet) { x.MessageEncoding = descriptorpb.FeatureSet_DELIMITED.Enum() })),
+		withOpts(field("r", 6, i32, opt, ""), fs(func(x *descriptorpb.FeatureSet) { x.FieldPresence = descriptorpb.FeatureSet_LEGACY_REQUIRED.Enum() })),
+		field("s", 7, descriptorpb.FieldDescriptorProto_TYPE_STRING, opt, ""),
+		field("i", 8, msgT, opt, ".pjed.Sub"),
+		withOpts(field("imp", 9, descriptorpb.FieldDescriptorProto_TYPE_STRING, opt, ""), fs(func(x *descriptorpb.FeatureSet) { x.FieldPresence = descriptorpb.FeatureSet_IMPLICIT.Enum() })),
+		withOpts(field("ds", 10, msgT, rep, ".pjed.Sub"), fs(func(x *descriptorpb.FeatureSet) { x.MessageEncoding = descriptorpb.FeatureSet_DELIMITED.Enum() })),
+		withOpts(field("pd", 11, descriptorpb.FieldDescriptorProto_TYPE_DOUBLE, rep, ""), fs(func(x *descriptorpb.FeatureSet) { x.RepeatedFieldEncoding = descriptorpb.FeatureSet_PACKED.Enum() })),
+	}}
+	// an implicit file: no presence for scalars, packed by default, a field made explicit by its feature
+	imp := &descriptorpb.DescriptorProto{Name: proto.String("ImpMsg"), Field: []*descriptorpb.FieldDescriptorProto{
+		field("n", 1, i32, opt, ""),
+		withOpts(field("o", 2, i32, opt, ""), fs(func(x *descriptorpb.FeatureSet) { x.FieldPresence = descriptorpb.FeatureSet_EXPLICIT.Enum() })),
+		field("r", 3, i32, rep, ""),
+		field("t", 4, descriptorpb.FieldDescriptorProto_TYPE_STRING, opt, ""),
+	}}
+	set.File = append(set.File, &descriptorpb.FileDescriptorProto{
+		Name: proto.String("pjted.proto"), Package: proto.String("pjed"), Syntax: proto.String("editions"),
+		Edition:     descriptorpb.Edition_EDITION_2023.Enum(),
+		MessageType: []*descriptorpb.DescriptorProto{sub, edm},
+	}, &descriptorpb.FileDescriptorProto{
+		Name: proto.String("pjtedimp.proto"), Package: proto.String("pjedi"), Syntax: proto.String("editions"),
+		Edition:     descriptorpb.Edition_EDITION_2023.Enum(),
+		Options:     &descriptorpb.FileOptions{Features: &descriptorpb.FeatureSet{FieldPresence: descriptorpb.FeatureSet_IMPLICIT.Enum()}},
+		MessageType: []*descriptorpb.DescriptorProto{imp},
+	})
 	return set
 }
 
@@ -418,7 +462,7 @@ func main() {
 	}
 	fmt.Fprintf(&o, "/// the schema: a FileDescriptorSet, files in dependency order, as hex\nconst SCHEMA: Str = \"%x\"\n\n", sb)
 	o.WriteString("/// (message full name, flags: 1 proto names, 2 emit defaults, 4 enum numbers; wire hex, Go's protojson output compacted)\nconst MARSHAL: List[(Str, Int, Str, Str)] = [\n")
-	names := []string{"pjt.Scalars", "pjt.Wkt", "pjt.Inner"}
+	names := []string{"pjt.Scalars", "pjt.Wkt", "pjt.Inner", "pjed.EdMsg", "pjedi.ImpMsg"}
 	var rows []string
 	type unm struct{ name, in, wire string }
 	var umRows []unm

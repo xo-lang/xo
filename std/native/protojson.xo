@@ -21,6 +21,13 @@ fn registry(files: List[protodesc.FileDesc]) -> protojson.Registry {
     for e in f.enum_type {
       r.enums.put(pre + e.name, e)
     }
+    if f.syntax == "editions" {
+      let ff = feat_in(Feat{presence: 1, packed: true, delimited: false}, f.options, 50)
+      for m in f.message_type {
+        add_msg_ed(r, m, pre, ff)
+      }
+      continue
+    }
     for m in f.message_type {
       add_msg(r, m, pre, p3)
     }
@@ -28,17 +35,110 @@ fn registry(files: List[protodesc.FileDesc]) -> protojson.Registry {
   r
 }
 
-fn add_msg(var r: protojson.Registry, m: protodesc.MessageDesc, pre: Str, p3: Bool) {
-  let full = pre + m.name
-  var is_map = false
+fn msg_is_map(m: protodesc.MessageDesc) -> Bool {
   if !m.options.is_empty() {
     for f in (pd.walk(m.options) ?? _e => []) {
       if f.num == 7 && f.wire == 0 && f.v != 0 {
-        is_map = true
+        return true
       }
     }
   }
-  r.msgs.put(full, protojson.MsgInfo{d: m, full: full, proto3: p3, is_map: is_map})
+  false
+}
+
+/// The features an editions file, message or field resolves to that this module reads (FeatureSet in descriptor.proto,
+/// edition 2023 defaults): field presence (1 explicit, 2 implicit, 3 legacy required), repeated numbers packed, and
+/// message fields written as groups (message_encoding DELIMITED). enum_type and utf8_validation are not read.
+struct Feat {
+  presence: Int
+  packed: Bool
+  delimited: Bool
+}
+
+fn feat_apply(base: Feat, set: Bytes) -> Feat {
+  var out = base
+  for f in (pd.walk(set) ?? _e => []) {
+    if f.wire != 0 {
+      continue
+    }
+    if f.num == 1 && f.v != 0 {
+      out.presence = f.v
+    } else if f.num == 3 && f.v != 0 {
+      out.packed = f.v == 1
+    } else if f.num == 5 && f.v != 0 {
+      out.delimited = f.v == 2
+    }
+  }
+  out
+}
+
+/// base with the FeatureSet in field `num` (a length delimited member) of the options message applied.
+fn feat_in(base: Feat, options: Bytes, num: Int) -> Feat {
+  var out = base
+  if options.is_empty() {
+    return out
+  }
+  for f in (pd.walk(options) ?? _e => []) {
+    if f.num == num && f.wire == 2 {
+      out = feat_apply(out, f.data)
+    }
+  }
+  out
+}
+
+/// options with the `packed` member (field 2) set to v, any earlier one dropped.
+fn with_packed(options: Bytes, v: Bool) -> Bytes {
+  var out: Bytes = b""
+  for f in (pd.walk(options) ?? _e => []) {
+    if f.num != 2 {
+      out = out + f.raw
+    }
+  }
+  protobuf.append_varint(protobuf.append_tag(out, 2, 0), if v { 1 } else { 0 })
+}
+
+/// An editions message as its proto2 or proto3 form: LEGACY_REQUIRED fields become required, DELIMITED message fields
+/// groups, a repeated number field gets the `packed` option its encoding feature resolves to, and a field whose presence
+/// differs from the message's (implicit message, explicit field) is marked proto3_optional.
+fn add_msg_ed(var r: protojson.Registry, m0: protodesc.MessageDesc, pre: Str, parent: Feat) {
+  let mf = feat_in(parent, m0.options, 12)
+  var m = m0
+  var fields: List[protodesc.FieldDesc] = []
+  var implicit_nums: List[Int] = []
+  for fd0 in m0.field {
+    var fd = fd0
+    let ff = feat_in(mf, fd.options, 21)
+    if ff.presence == 3 {
+      fd.label = protodesc.LABEL_REQUIRED
+    }
+    if fd.kind == protodesc.TYPE_MESSAGE && ff.delimited {
+      fd.kind = protodesc.TYPE_GROUP
+    }
+    if fd.label == protodesc.LABEL_REPEATED && is_numeric_kind(fd.kind) {
+      fd.options = with_packed(fd.options, ff.packed)
+    }
+    if mf.presence == 2 && ff.presence == 1 && fd.label != protodesc.LABEL_REPEATED && fd.oneof_index == None {
+      fd.proto3_optional = true
+    }
+    if mf.presence != 2 && ff.presence == 2 && fd.label != protodesc.LABEL_REPEATED && fd.oneof_index == None {
+      implicit_nums.push(fd.number)
+    }
+    fields.push(fd)
+  }
+  m.field = fields
+  let full = pre + m.name
+  r.msgs.put(full, protojson.MsgInfo{d: m, full: full, proto3: mf.presence == 2, is_map: msg_is_map(m), implicit_nums: implicit_nums})
+  for e in m.enum_type {
+    r.enums.put(full + "." + e.name, e)
+  }
+  for n in m.nested_type {
+    add_msg_ed(r, n, full + ".", mf)
+  }
+}
+
+fn add_msg(var r: protojson.Registry, m: protodesc.MessageDesc, pre: Str, p3: Bool) {
+  let full = pre + m.name
+  r.msgs.put(full, protojson.MsgInfo{d: m, full: full, proto3: p3, is_map: msg_is_map(m)})
   for e in m.enum_type {
     r.enums.put(full + "." + e.name, e)
   }
@@ -316,12 +416,17 @@ fn msg_json(r: protojson.Registry, info: protojson.MsgInfo, wire: Bytes, o: prot
 fn is_numeric_kind(k: Int) -> Bool { k != 9 && k != 10 && k != 11 && k != 12 }
 
 /// The wire type a field of kind k is written with (not packed).
+/// A message field written length prefixed (kind 11) or as a group (kind 10, proto2 groups and delimited editions fields).
+fn is_msg(fd: protodesc.FieldDesc) -> Bool { fd.kind == protodesc.TYPE_MESSAGE || fd.kind == protodesc.TYPE_GROUP }
+
 fn wire_of(k: Int) -> Int {
   if k == 1 || k == 6 || k == 16 {
     1
   } else if k == 2 || k == 7 || k == 15 {
     5
-  } else if k == 9 || k == 11 || k == 12 || k == 10 {
+  } else if k == 10 {
+    3
+  } else if k == 9 || k == 11 || k == 12 {
     2
   } else {
     0
@@ -389,7 +494,7 @@ fn field_text(r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.Fiel
       last.push(f)
     }
   }
-  let implicit = info.proto3 && fd.kind != protodesc.TYPE_MESSAGE && fd.kind != protodesc.TYPE_GROUP && !real_oneof && !fd.proto3_optional
+  let implicit = (info.proto3 || info.implicit_nums.contains(fd.number)) && fd.kind != protodesc.TYPE_MESSAGE && fd.kind != protodesc.TYPE_GROUP && !real_oneof && !fd.proto3_optional
   if last.is_empty() {
     if o.emit_defaults && implicit {
       return Ok(Some(default_text(r, fd, o)))
@@ -398,7 +503,7 @@ fn field_text(r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.Fiel
   }
   var data = b""
   var pick = last[last.len() - 1]
-  if fd.kind == protodesc.TYPE_MESSAGE {
+  if is_msg(fd) {
     for f in last {
       data = pd.cat(data, f.data)
     }
@@ -461,7 +566,7 @@ fn default_text(r: protojson.Registry, fd: protodesc.FieldDesc, o: protojson.Opt
 }
 
 fn single_text(r: protojson.Registry, fd: protodesc.FieldDesc, data: Bytes, f: pd.Fld, o: protojson.Opts) -> Str ! protojson.JsonErr {
-  if fd.kind == protodesc.TYPE_MESSAGE {
+  if is_msg(fd) {
     let info = lookup(r, fd.type_name)?
     return msg_json(r, info, data, o, "")
   }
@@ -1456,12 +1561,9 @@ fn enc_scalar(r: protojson.Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojs
 
 /// A field's single value, a message converted through its descriptor.
 fn enc_single(r: protojson.Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -> Sv? ! protojson.JsonErr {
-  if fd.kind == protodesc.TYPE_MESSAGE {
+  if is_msg(fd) {
     let mi = lookup(r, fd.type_name)?
     return Ok(Some(Sv{v: 0, data: msg_wire(r, mi, jv, o)?}))
-  }
-  if fd.kind == protodesc.TYPE_GROUP {
-    return Err(jerr("field ${fd.name}: groups are not supported"))
   }
   enc_scalar(r, fd, jv, o)
 }
@@ -1486,6 +1588,9 @@ fn emit(var out: BytesBuilder, num: Int, k: Int, sv: Sv, tagged: Bool) {
     w_fixed(out, sv.v, 8)
   } else if w == 5 {
     w_fixed(out, sv.v, 4)
+  } else if w == 3 {
+    out.write(sv.data)
+    pd.wtag(out, num, 4)
   } else {
     pd.wv(out, sv.data.len())
     out.write(sv.data)
@@ -1654,7 +1759,7 @@ fn enc_field(r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.Field
     Some(x) => x
     None => return Ok(b"")
   }
-  let implicit = info.proto3 && fd.kind != protodesc.TYPE_MESSAGE && fd.kind != protodesc.TYPE_GROUP && !real_oneof && !fd.proto3_optional
+  let implicit = (info.proto3 || info.implicit_nums.contains(fd.number)) && fd.kind != protodesc.TYPE_MESSAGE && fd.kind != protodesc.TYPE_GROUP && !real_oneof && !fd.proto3_optional
   if implicit {
     let zero = if wire_of(fd.kind) == 2 { sv.data.is_empty() } else { sv.v == 0 }
     if zero {

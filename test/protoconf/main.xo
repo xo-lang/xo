@@ -75,7 +75,8 @@ fn resp(num: Int, data: Bytes) -> Bytes {
 }
 
 fn respond(reg: protojson.Registry, q: Req) -> Bytes {
-  if q.other || (q.typ != "protobuf_test_messages.proto3.TestAllTypesProto3" && q.typ != "protobuf_test_messages.proto2.TestAllTypesProto2") {
+  if q.other || !(q.typ == "protobuf_test_messages.proto3.TestAllTypesProto3" || q.typ == "protobuf_test_messages.proto2.TestAllTypesProto2" ||
+      q.typ == "protobuf_test_messages.editions.proto3.TestAllTypesProto3" || q.typ == "protobuf_test_messages.editions.proto2.TestAllTypesProto2") {
     return resp(5, b"unsupported")
   }
   var wire: Bytes = b""

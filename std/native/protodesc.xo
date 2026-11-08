@@ -39,6 +39,16 @@ pub fn walk(b: Bytes) -> List[Fld] ! protobuf.ProtoErr {
       at = n2
     } else {
       at = protobuf.skip_field(b, next, num, wire)?
+      if wire == 3 {
+        // a group: data is what lies between its start tag and its end tag
+        var end_tag = (num << 3) | 4
+        var tag_len = 1
+        while end_tag >= 128 {
+          end_tag = end_tag >> 7
+          tag_len += 1
+        }
+        data = b[next..at - tag_len]
+      }
     }
     out.push(Fld{num: num, wire: wire, v: v, data: data, raw: b[start..at]})
   }

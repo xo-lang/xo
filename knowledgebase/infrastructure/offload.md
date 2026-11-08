@@ -365,7 +365,7 @@ Last verified: 2026-11-08.
 
 - `/work/conf` (452 MB, rebuilt 2026-11-08; Last verified: 2026-11-08): Google's protobuf v29.3 `conformance_test_runner` and
   `protoc` (cmake build tree with abseil 20240116.0 and jsoncpp 1.9.6 as modules), plus `run/` with `set.bin` (FileDescriptorSet of
-  test_messages_proto3.proto and test_messages_proto2.proto, `protoc -I src/src -I src --include_imports`). It is a tool, not scratch:
+  test_messages_proto3.proto, test_messages_proto2.proto and editions/golden's two editions files, `protoc -I src/src -I src --include_imports`). It is a tool, not scratch:
   do not delete it in a cleanup. Rebuild (about 10 minutes, plain lease on host 2): unpack the Kitware cmake 3.31.6 linux-aarch64
   tarball into `/work/conf/cmake`, extract protobuf-29.3.tar.gz into `src` (strip 1), `git clone --depth 1` jsoncpp 1.9.6 and abseil-cpp
   20240116.0 into `src/third_party`, then `cmake -S src -B build -DCMAKE_BUILD_TYPE=Release -Dprotobuf_BUILD_CONFORMANCE=ON
