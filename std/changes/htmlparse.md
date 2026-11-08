@@ -1,5 +1,17 @@
 # std/htmlparse changes
 
+## 2026-11-08: perf: Parse follows the tokenizer's speedup
+
+- Kind: perf
+- Commit: this push
+- Found by: the lead's queue after the port (tokenizer 55% of Parse at 1.65x x/net)
+- Go reference: golang.org/x/net v0.62.0 html (parse.go)
+- Test: internal/stdtest/testdata/corpus/htmlparse unchanged on arm64, LLVM and the Go backend
+- Timing: host 1 (linux/arm64) A/B against the push's parent, 7 rounds, bench/perf/htmlparse `parse` workload: 0.749 of the parent (0.743 to 0.752, n=6; 315.5 to 236.2 ms; x/net 209 ms in the port's run, about 1.1x Go on this host); the changes are in std/htmltok (see its log)
+- Shipped in: not yet released
+
+No change to the parser itself; the tokenizer it drives is faster (std/changes/htmltok.md).
+
 ## 2026-11-08: port: std/htmlparse, golang.org/x/net/html's tree builder and Render
 
 - Kind: port

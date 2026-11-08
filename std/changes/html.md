@@ -1,5 +1,17 @@
 # std/html changes
 
+## 2026-11-08: perf: entity_of answers the common references before the search
+
+- Kind: perf
+- Commit: this push
+- Found by: a host 1 profile of std/htmltok (entity_of 16% of the samples), which shares the lookup
+- Go reference: html entity.go (go1.26.1)
+- Test: `xo test --std-module=native/html`; the htmltok and htmlparse corpora
+- Timing: host 1 A/B 0.879 of the parent (0.874 to 0.89, n=6; bench/perf/htmlparse `tok`, a page with `&amp;`, `&copy;`, `&lt;` and `&gt;`)
+- Shipped in: not yet released
+
+`amp;`, `lt;`, `gt;`, `quot;`, `apos;`, `nbsp;` and `copy;` return their table values from a match before the binary search of the entity table; the results are the table's.
+
 ## 2026-11-07: perf: escape_string sizes 32 bytes a step
 
 - Kind: perf
