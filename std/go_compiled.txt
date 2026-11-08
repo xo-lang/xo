@@ -39,3 +39,4 @@ htmltok
 protodesc
 protowkt
 htmlent
+protojson
