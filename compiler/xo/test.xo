@@ -955,8 +955,13 @@ fn trace_path(o: TestOpts) -> Str {
 }
 
 fn test_cmd(os: Os, bin: Str, dir: Str, words: List[Str]) -> Cmd {
+  // XO_TEST_EXEC runs the test binary through a program, as `go test
+  // -exec` does: the program's words, then the binary (decision 0571
+  // stage 3: XO_TEST_EXEC=qemu-riscv64 for --targets=linux/riscv64)
+  let ex = (os.env.get("XO_TEST_EXEC") ?? "").fields()
   // PWD as the shell's cd left it
-  var c = os.proc.cmd(bin, []).dir(dir).set_env("PWD", dir)
+  var c = if ex.is_empty() { os.proc.cmd(bin, []) } else { os.proc.cmd(ex[0], ex[1..ex.len()] + [bin]) }
+  c = c.dir(dir).set_env("PWD", dir)
   if os.env.get("XO_TRACEBACK") == None {
     // a failing test's uncaught fault shows its frames (decision 0239;
     // XO_TRACEBACK=0 turns it off)
