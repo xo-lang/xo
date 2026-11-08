@@ -34,8 +34,26 @@ parent's on 8 programs (12 for arm64). What it has:
   test/codegen/winx18 checks the whole program (`// arm64@windows:`
   patterns of `xo dev codegen`); cmd/xo TestWindowsArm64Assembly.
 
-Not done in stage 1 yet: pelink's arm64 (relocations, import thunks), so
-no image; variadic C calls; the C ABI exports beyond Str results. To
+The link half (2026-11-08): `xo build --backend=arm64
+--targets=windows/arm64` writes an ARM64 PE from any host. clang
+(`--target=aarch64-pc-windows-msvc`) assembles each part, the zone
+data, the build information and the outline atomics
+(link.xo win_arm64_atomics: the load and store exclusive loops only,
+since nothing sets xo_lse on Windows yet; IsProcessorFeaturePresent's
+PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE would). Xo's PE linker links
+them with no C runtime (link.xo nolibc is always true for
+windows/arm64, so cabi_wincrt.xo's xo_win_start is the entry). pelink
+reads 0xAA64 objects and applies the ARM64 relocations as lld-link does
+(compiler/macho pearm64.xo: the field holds the addend; a page offset
+keeps its 12 bits, the carry being the adrp's), with ADDR64 as a
+DIR64 base relocation, and writes 16 byte import thunks (adrp x16; ldr
+x16; br x16; brk). Variadic C calls pass every argument in x0 to x7 and
+then the stack (vfix -4 in compiler/arm64 call_locs); no `use c` source
+links yet, so no program reaches them.
+
+Not done in stage 1 yet: `use c`, --race and a PDB for windows/arm64;
+a split link and the std object; the C ABI exports beyond Str results;
+running an image (stage 2's host). To
 measure in stage 5: `save_regp` needs ascending pairs (`stp x19, x20`),
 the order gotchas/arm64-stp-pair-order.md found 1.4x slower on recursive
 fib on Apple M4 than Linux's `stp x20, x19`.

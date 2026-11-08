@@ -1,0 +1,74 @@
+// pearm64.xo's ARM64 relocations, against encodings worked by hand (as
+// lld-link applies them: the field's addend added, an RVA's page
+// relative to the site's page).
+
+fn le4(w: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for k in 0..4 {
+    b.write_byte(UInt8((w >> (8 * k)) & 0xff))
+  }
+  b.freeze()
+}
+
+fn rel(w: Int, typ: Int, s: Int, p: Int, secrel: Int) -> Int {
+  match a64_reloc(le4(w), 0, typ, s, p, secrel) {
+    Ok((v, _, _)) => v
+    Err(_) => -1
+  }
+}
+
+test "adrp, add and ldr page offsets" {
+  // adrp x0 at 0x1000 to 0x5123: 4 pages, immhi 1
+  expect(rel(0x90000000, IMAGE_REL_ARM64_PAGEBASE_REL21, 0x5123, 0x1000, 0) == 0x90000020)
+  // backwards: -1 page, immlo 3 and immhi all ones
+  expect(rel(0x90000000, IMAGE_REL_ARM64_PAGEBASE_REL21, 0x0ff8, 0x1000, 0) == 0xf0ffffe0)
+  // add x0, x0, #:lo12: of 0x5123
+  expect(rel(0x91000000, IMAGE_REL_ARM64_PAGEOFFSET_12A, 0x5123, 0x1000, 0) == 0x91048c00)
+  // ldr x16, [x16, #:lo12:] of 0x2008: scaled by 8
+  expect(rel(0xf9400210, IMAGE_REL_ARM64_PAGEOFFSET_12L, 0x2008, 0x1000, 0) == 0xf9400610)
+  // ldr w17 of 0x2004: scaled by 4
+  expect(rel(0xb9400231, IMAGE_REL_ARM64_PAGEOFFSET_12L, 0x2004, 0x1000, 0) == 0xb9400631)
+  // a 64 bit load of an address not a multiple of 8 does not encode
+  expect(rel(0xf9400210, IMAGE_REL_ARM64_PAGEOFFSET_12L, 0x2004, 0x1000, 0) == -1)
+}
+
+test "branches" {
+  // bl at 0x1000 to 0x2000
+  expect(rel(0x94000000, IMAGE_REL_ARM64_BRANCH26, 0x2000, 0x1000, 0) == 0x94000400)
+  // b backwards by 4
+  expect(rel(0x14000000, IMAGE_REL_ARM64_BRANCH26, 0x0ffc, 0x1000, 0) == 0x17ffffff)
+  // b.ne 8 ahead: imm19 2 at bit 5
+  expect(rel(0x54000001, IMAGE_REL_ARM64_BRANCH19, 0x1008, 0x1000, 0) == 0x54000041)
+  // past bl's 128 MB
+  expect(rel(0x94000000, IMAGE_REL_ARM64_BRANCH26, 0x9000000, 0x1000, 0) == -1)
+}
+
+test "section relative and data" {
+  // the TLS sequence: add :secrel_hi12: and :secrel_lo12: of 0x12345
+  expect(rel(0x91400000, IMAGE_REL_ARM64_SECREL_HIGH12A, 0, 0, 0x12345) == 0x91404800)
+  expect(rel(0x91000000, IMAGE_REL_ARM64_SECREL_LOW12A, 0, 0, 0x12345) == 0x910d1400)
+  expect(rel(4, IMAGE_REL_ARM64_SECREL, 0, 0, 0x100) == 0x104)
+  expect(rel(8, IMAGE_REL_ARM64_ADDR32NB, 0x3000, 0, 0) == 0x3008)
+  match a64_reloc(Bytes.zeroed(8), 0, IMAGE_REL_ARM64_ADDR64, 0x3000, 0, 0) {
+    Ok((v, w, based)) => expect(v == PE_BASE + 0x3000 && w == 8 && based)
+    Err(_) => expect(false)
+  }
+  expect(rel(0, 99, 0, 0, 0) == -1)
+}
+
+test "import thunk" {
+  // the thunk at 0x3000, its IAT slot at 0x5010: adrp 2 pages (immlo 2),
+  // ldr offset 0x10 (scaled 2)
+  match a64_thunk(0x3000, 0x5010) {
+    Ok((adrp, ldr)) => expect(adrp == 0xd0000010 && ldr == 0xf9400a10)
+    Err(_) => expect(false)
+  }
+}
+
+test "a page offset whose addend carries into the next page" {
+  // add x0, x0, #0x10 to 0x1ff8: 0x2008's offset 8 (the adrp takes the
+  // page, 2: lld's applyArm64Imm keeps the field's bits)
+  expect(rel(0x91004000, IMAGE_REL_ARM64_PAGEOFFSET_12A, 0x1ff8, 0x1000, 0) == 0x91002000)
+  // adrp x0 with the same addend (its field 0x10: page 2, one past the site's, immlo 1)
+  expect(rel(0x90000000 | (4 << 5), IMAGE_REL_ARM64_PAGEBASE_REL21, 0x1ff8, 0x1000, 0) == 0xb0000000)
+}

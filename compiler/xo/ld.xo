@@ -530,7 +530,7 @@ fn tz_object(os: Os, dir: Str, sel: tzsel.TZSel, goos: Str, goarch: Str) -> Str 
     return tz_object_elf(os, dir, sel, goarch == "amd64")
   }
   if goos == "windows" {
-    return tz_object_coff(os, dir, sel)
+    return tz_object_coff(os, dir, sel, goarch == "arm64")
   }
   var b = BytesBuilder.new()
   b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
@@ -658,7 +658,7 @@ fn asm_bytes(var b: BytesBuilder, data: Bytes) {
 
 /// tz_object's COFF x86-64 form (windows/amd64 with Xo's PE linker,
 /// decision 0254 6b step 4): the ELF form's symbols in .rdata and .data.
-fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
+fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel, arm: Bool) -> Str ! FsErr {
   var b = BytesBuilder.new()
   b.write_str("// The zone data of the program (decisions 0094, 0157, 0182).\n")
   b.write_str("\t.section .rdata,\"dr\"\n\t.globl xo_tz_mode\n\t.p2align 3\nxo_tz_mode:\n\t.quad ${sel.mode}\n")
@@ -690,6 +690,14 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
   }
   b.write_str("\t.quad 0\n\t.quad 0\n\t.quad 0\n")
   b.write_str("\t.p2align 3\n.Lxo_tzt:\n\t.quad ${sel.mode}\n\t.quad xo_tz_zip\n\t.quad ${zip.len()}\n\t.quad xo_tz_blobs\n")
+  if arm {
+    // windows/arm64 (decision 0569): the text clang assembles with the
+    // program's parts
+    b.write_str("\t.text\n\t.globl xo_tz_table\n\t.p2align 2\nxo_tz_table:\n\tadrp x0, .Lxo_tzt\n\tadd x0, x0, :lo12:.Lxo_tzt\n\tret\n")
+    let spath = "${dir}/xo_tzdata.s"
+    os.fs.write(spath, b.freeze())?
+    return Ok(spath)
+  }
   b.write_str("\t.text\n\t.globl xo_tz_table\n\t.p2align 4\nxo_tz_table:\n\tleaq .Lxo_tzt(%rip), %rax\n\tretq\n")
   let obj = match macho.assemble_coff_amd64(b.freeze()) {
     Ok(o) => o

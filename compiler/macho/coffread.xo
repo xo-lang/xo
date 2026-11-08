@@ -40,6 +40,8 @@ pub struct CObj {
   pub path: Str
   pub sects: List[CSect]
   pub syms: List[CSym]
+  /// the COFF header's machine: x86-64 or ARM64 (pearm64.xo)
+  pub machine: Int = IMAGE_FILE_MACHINE_AMD64
 }
 
 const IMAGE_SYM_CLASS_WEAK_EXTERNAL = 105
@@ -72,11 +74,12 @@ fn coff_cstr(b: Bytes, at: Int) -> Str {
 }
 
 /// read_coff: the object b (from path, for messages), or why it is not
-/// an x86-64 COFF object.
+/// an x86-64 or ARM64 COFF object.
 pub fn read_coff(path: Str, b: Bytes) -> Result[CObj, Str] {
-  if b.len() < 20 || rd16(b, 0) != IMAGE_FILE_MACHINE_AMD64 {
-    return Err("${path}: not an x86-64 COFF object")
+  if b.len() < 20 || !(rd16(b, 0) == IMAGE_FILE_MACHINE_AMD64 || rd16(b, 0) == IMAGE_FILE_MACHINE_ARM64) {
+    return Err("${path}: not an x86-64 or ARM64 COFF object")
   }
+  let machine = rd16(b, 0)
   let nsect = rd16(b, 2)
   let symtab = rd32(b, 8)
   let nsym = rd32(b, 12)
@@ -129,7 +132,7 @@ pub fn read_coff(path: Str, b: Bytes) -> Result[CObj, Str] {
     }
     i += 1 + naux
   }
-  Ok(CObj{path: path, sects: sects, syms: syms})
+  Ok(CObj{path: path, sects: sects, syms: syms, machine: machine})
 }
 
 /// The linker options of an object's .drectve section, split at spaces

@@ -1,0 +1,130 @@
+// windows/arm64 in Xo's PE linker (decision 0569 stage 1): ARM64 COFF
+// objects (clang -target aarch64-windows-msvc's) into an ARM64 PE32+
+// image. What differs from x86-64 is the machine, the relocations (the
+// IMAGE_REL_ARM64_ types, applied as lld-link applies them: an
+// instruction's immediate field holds the addend) and the import thunk
+// (adrp, ldr and br through x16, which AAPCS64 lets a veneer clobber).
+// Not yet: atoms mode objects and split links (pestrip.xo, pehalf.xo are
+// x86-64's).
+
+const IMAGE_FILE_MACHINE_ARM64 = 0xAA64
+const IMAGE_REL_ARM64_ADDR32 = 1
+const IMAGE_REL_ARM64_ADDR32NB = 2
+const IMAGE_REL_ARM64_BRANCH26 = 3
+const IMAGE_REL_ARM64_PAGEBASE_REL21 = 4
+const IMAGE_REL_ARM64_REL21 = 5
+const IMAGE_REL_ARM64_PAGEOFFSET_12A = 6
+const IMAGE_REL_ARM64_PAGEOFFSET_12L = 7
+const IMAGE_REL_ARM64_SECREL = 8
+const IMAGE_REL_ARM64_SECREL_LOW12A = 9
+const IMAGE_REL_ARM64_SECREL_HIGH12A = 10
+const IMAGE_REL_ARM64_SECREL_LOW12L = 11
+const IMAGE_REL_ARM64_ADDR64 = 14
+const IMAGE_REL_ARM64_BRANCH19 = 15
+const IMAGE_REL_ARM64_BRANCH14 = 16
+const IMAGE_REL_ARM64_REL32 = 17
+
+/// The import thunk's words: adrp x16, IAT slot; ldr x16, [x16, slot's
+/// page offset]; br x16; and a brk to pad it to 16 bytes (a64_thunk
+/// patches the first two).
+const A64_THUNK = [0x90000010, 0xf9400210, 0xd61f0200, 0xd4200020]
+
+fn sext(v: Int, bits: Int) -> Int {
+  let m = 1 << (bits - 1)
+  (v ^ m) - m
+}
+
+/// adrp (page true) or adr at site p, its field's addend added to s.
+fn a64_adr(ins: Int, s: Int, p: Int, page: Bool) -> Result[Int, Str] {
+  let imm = sext(((ins >> 29) & 3) | (((ins >> 5) & 0x7ffff) << 2), 21)
+  let v = if page { ((s + imm) >> 12) - (p >> 12) } else { s + imm - p }
+  if v < -(1 << 20) || v >= (1 << 20) {
+    return Err("adrp or adr out of range")
+  }
+  Ok((ins & 0x9f00001f) | ((v & 3) << 29) | (((v >> 2) & 0x7ffff) << 5))
+}
+
+/// An add's or a load's 12 bit immediate plus imm (scaled for a load by
+/// its access size, which must divide it), modulo the field.
+fn a64_imm12(ins: Int, imm0: Int, load: Bool) -> Result[Int, Str] {
+  var imm = imm0
+  if load {
+    var size = ins >> 30
+    if (ins & 0x4800000) == 0x4800000 {
+      // a 128 bit SIMD and FP register
+      size += 4
+    }
+    if (imm & ((1 << size) - 1)) != 0 {
+      return Err("misaligned ldr or str offset")
+    }
+    imm = imm >> size
+  }
+  // the field's addend plus imm, kept to the field's bits as lld's
+  // applyArm64Imm does: a carry past the page is the adrp's (its own
+  // addend crossed into the next page)
+  let f = (((ins >> 10) & 0xfff) + imm) & 0xfff
+  Ok((ins & ~(0xfff << 10)) | (f << 10))
+}
+
+/// A branch's displacement field of bits bits at bit lo, to s (its
+/// field's addend added) from p.
+fn a64_branch(ins: Int, s: Int, p: Int, bits: Int, lo: Int) -> Result[Int, Str] {
+  let mask = (1 << bits) - 1
+  let v = (s + 4 * sext((ins >> lo) & mask, bits) - p) >> 2
+  if v < -(1 << (bits - 1)) || v >= (1 << (bits - 1)) {
+    return Err("branch out of range")
+  }
+  Ok((ins & ~(mask << lo)) | ((v & mask) << lo))
+}
+
+/// The value relocation typ writes at site p (an RVA) of data d at at:
+/// (value, width in bytes), for target RVA s and the target's offset in
+/// its output section secrel; based: the field needs a base relocation.
+fn a64_reloc(d: Bytes, at: Int, typ: Int, s: Int, p: Int, secrel: Int) -> Result[(Int, Int, Bool), Str] {
+  let ins = get_le(d, at, 4) & 0xffffffff
+  let a = get_le(d, at, 4)
+  let r = if typ == IMAGE_REL_ARM64_ADDR32NB {
+    return Ok((a + s, 4, false))
+  } else if typ == IMAGE_REL_ARM64_ADDR64 {
+    return Ok((get_le(d, at, 8) + PE_BASE + s, 8, true))
+  } else if typ == IMAGE_REL_ARM64_SECREL {
+    return Ok((a + secrel, 4, false))
+  } else if typ == IMAGE_REL_ARM64_REL32 {
+    return Ok((a + s - p - 4, 4, false))
+  } else if typ == IMAGE_REL_ARM64_BRANCH26 {
+    a64_branch(ins, s, p, 26, 0)
+  } else if typ == IMAGE_REL_ARM64_BRANCH19 {
+    a64_branch(ins, s, p, 19, 5)
+  } else if typ == IMAGE_REL_ARM64_BRANCH14 {
+    a64_branch(ins, s, p, 14, 5)
+  } else if typ == IMAGE_REL_ARM64_PAGEBASE_REL21 {
+    a64_adr(ins, s, p, true)
+  } else if typ == IMAGE_REL_ARM64_REL21 {
+    a64_adr(ins, s, p, false)
+  } else if typ == IMAGE_REL_ARM64_PAGEOFFSET_12A {
+    a64_imm12(ins, s & 0xfff, false)
+  } else if typ == IMAGE_REL_ARM64_PAGEOFFSET_12L {
+    a64_imm12(ins, s & 0xfff, true)
+  } else if typ == IMAGE_REL_ARM64_SECREL_LOW12A {
+    a64_imm12(ins, secrel & 0xfff, false)
+  } else if typ == IMAGE_REL_ARM64_SECREL_HIGH12A {
+    a64_imm12(ins, (secrel >> 12) & 0xfff, false)
+  } else if typ == IMAGE_REL_ARM64_SECREL_LOW12L {
+    a64_imm12(ins, secrel & 0xfff, true)
+  } else {
+    return Err("relocation type ${typ}")
+  }
+  match r {
+    Ok(v) => Ok((v, 4, false))
+    Err(e) => Err(e)
+  }
+}
+
+/// The patched first two words of the import thunk at RVA p whose IAT
+/// slot is at RVA slot.
+fn a64_thunk(p: Int, slot: Int) -> Result[(Int, Int), Str] {
+  match (a64_adr(A64_THUNK[0], slot, p, true), a64_imm12(A64_THUNK[1], slot & 0xfff, true)) {
+    (Ok(adrp), Ok(ldr)) => Ok((adrp, ldr))
+    (Err(e), _) | (_, Err(e)) => Err(e)
+  }
+}

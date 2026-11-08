@@ -215,9 +215,22 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
   // decision 0388: objects in atoms mode split into their atoms, the ones
   // nothing reaches left unplaced
   var objs = objs0
+  // ARM64 objects make an ARM64 image (pearm64.xo); the machines agree
+  let arm = !objs.is_empty() && objs[0].machine == IMAGE_FILE_MACHINE_ARM64
+  for ob in objs {
+    if ob.machine != objs[0].machine {
+      return Err("${ob.path}: an object of another machine (0x${ob.machine.to_str_base(16)}) than ${objs[0].path}'s")
+    }
+  }
+  if arm && o.prog_from >= 0 {
+    return Err("a split link of ARM64 objects is not supported yet (decision 0569)")
+  }
   var any_atoms = false
   for i in 0..objs.len() {
     if coff_atoms(objs[i]) {
+      if arm {
+        return Err("${objs[i].path}: an atoms mode ARM64 object is not supported yet (decision 0569)")
+      }
       objs[i] = coff_split(objs[i])
       any_atoms = true
     }
@@ -443,6 +456,15 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
   for d in dlls {
     for f in by_dll.get(d) ?? [] {
       thunk_at[f] = bufs[tk].len()
+      if arm {
+        // adrp, ldr, br x16 (pearm64.xo), patched below
+        for w in A64_THUNK {
+          for k in 0..4 {
+            bufs[tk].write_byte(UInt8((w >> (8 * k)) & 0xff))
+          }
+        }
+        continue
+      }
       // jmp *IAT(%rip), its displacement patched below
       for x in [0xff, 0x25, 0, 0, 0, 0, 0xcc, 0xcc] {
         bufs[tk].write_byte(UInt8(x))
@@ -582,6 +604,29 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
           return Err("${ob.path}: ${ob.syms[r.sym].name} was stripped but ${s.name} refers to it")
         }
         let site = rva[p.out] + at
+        if arm {
+          // an absolute symbol's value is its address (a 64 bit field's
+          // only, as on x86-64)
+          if t.abs && r.typ == IMAGE_REL_ARM64_ADDR64 {
+            put_le(pats[p.out], at, t.off + get_le(s.data, r.addr, 8), 8)
+            continue
+          }
+          if t.abs {
+            return Err("${ob.path}: absolute ${ob.syms[r.sym].name} in a relocation of type ${r.typ}")
+          }
+          let secrel = if t.obj >= 0 { places[t.obj][t.sect].off + t.off } else { 0 }
+          match a64_reloc(s.data, r.addr, r.typ, sym_rva(t), site, secrel) {
+            Ok((v, w, b)) => {
+              put_le(pats[p.out], at, v, w)
+              // (DWARF's addresses are not loaded: no base relocation)
+              if b && p.out < PO_DEBUG {
+                based.push(site)
+              }
+            }
+            Err(e) => return Err("${ob.path}: ${ob.syms[r.sym].name} in ${s.name}: ${e}")
+          }
+          continue
+        }
         if r.typ >= IMAGE_REL_AMD64_REL32 && r.typ <= IMAGE_REL_AMD64_REL32 + 5 {
           let n = r.typ - IMAGE_REL_AMD64_REL32
           let a = get_le(s.data, r.addr, 4)
@@ -613,6 +658,16 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
   }
   // the thunks' displacements, the import tables, the TLS directory
   for (f, at) in thunk_at {
+    if arm {
+      match a64_thunk(rva[tk] + at, rva[lt] + (iat_at.get(f) ?? 0)) {
+        Ok((adrp, ldr)) => {
+          put_le(pats[tk], at, adrp, 4)
+          put_le(pats[tk], at + 4, ldr, 4)
+        }
+        Err(e) => return Err("the import thunk of ${f}: ${e}")
+      }
+      continue
+    }
     let site = rva[tk] + at + 2
     put_le(pats[tk], at + 2, rva[lt] + (iat_at.get(f) ?? 0) - (site + 4), 4)
   }
@@ -821,7 +876,7 @@ fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[In
   w.zeros(58)
   w.u32(64)
   w.bytes("PE\0\0".bytes())
-  w.u16(IMAGE_FILE_MACHINE_AMD64)
+  w.u16(if !objs.is_empty() && objs[0].machine == IMAGE_FILE_MACHINE_ARM64 { IMAGE_FILE_MACHINE_ARM64 } else { IMAGE_FILE_MACHINE_AMD64 })
   w.u16(present.len())
   w.u32(0)
   w.u32(symtab)

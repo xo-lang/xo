@@ -164,6 +164,10 @@ fn sched_asm(os: Str, split: Bool) -> Str {
   }
   if os == "windows" {
     let wtp = win_tls_base("x9", "x10", "w10")
+    // pool.xo win_kick names it; windows/arm64 has no asynchronous
+    // preemption yet (ssa build.xo async_preempt: polls only; its CONTEXT
+    // is not amd64's), so async_on is false and it never runs
+    b.push(sched_fn(os, "xo_async_stub", true, ["brk #1"]))
     b.push(sched_fn(os, "xo_tlocal_get", true, wtp + ["ldr x0, [x9, x0, lsl #3]", "ret"]))
     b.push(sched_fn(os, "xo_tlocal_set", true, wtp + ["str x1, [x9, x0, lsl #3]", "ret"]))
     b.push(sched_fn(os, "xo_tlocal_addr", true, wtp + ["mov x0, x9", "ret"]))

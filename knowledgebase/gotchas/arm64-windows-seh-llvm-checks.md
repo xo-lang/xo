@@ -37,3 +37,24 @@ through x17 below sp and then moves sp once with one `sub` and its
 `.seh_stackalloc`, writes a fault stub fragment's two prologue
 instructions once at its start (never run), and leaves the jump table's
 `.p2align 2` out on windows/arm64 (code is 4 byte aligned anyway).
+
+## Linking: a page offset's addend carries (Observed, 2026-11-08)
+
+Symptom: pelink's first windows/arm64 link stopped with ".rdata in
+.text: 12 bit immediate out of range" on an `add` after an `adrp`.
+
+Cause: in a COFF ARM64 object the instruction's field holds the
+addend (`adrp x0, sym+0x10` / `add x0, x0, :lo12:sym+0x10`). When
+`sym`'s page offset plus the addend passes 0xfff, the carry belongs to
+the adrp, whose own addend already moved it to the next page; the add
+keeps only the low 12 bits. lld-link's applyArm64Imm masks the sum
+silently; pearm64.xo rejected it.
+
+Fix: a64_imm12 keeps the sum modulo the field (a load's scaled by its
+size), as lld does; pearm64_test.xo's carry test.
+
+Also on the first link: a cross target with no C link is `asm_only` in
+compiler/xo main.xo (it stops at the assembly and the "does not link it
+yet" message), so windows/arm64 is excluded from it there; and pool.xo
+names xo_async_stub on every Windows build, so windows/arm64, which has
+no asynchronous preemption yet, defines it as a `brk` (sched.xo).

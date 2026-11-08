@@ -1944,7 +1944,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // 2026-11-07)
     let mac_x86_links = mac_x86 && (goos == "darwin" || no_cc)
     let win = march == "amd64" && tgoos == "windows"
-    let asm_only = !win && tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86_links
+    // (windows/arm64 links with Xo's PE linker from any host, decision 0569)
+    let asm_only = !win && !(march == "arm64" && tgoos == "windows") && tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86_links
     // a build that stops at the assembly leaves it as its product, in the
     // build directory itself, where the message names it
     let s = if asm_only { "${sdir}/prog-${tgoos}.s" } else { "${dir}/prog-${tgoos}.s" }
@@ -2124,6 +2125,82 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         rsrc.push(ro)
       }
       let why = win_amd64_link(os, wsrcs + wlk.srcs + rsrc, wst.bin, wlk.flags + wlk.link_only)
+      if !why.is_empty() {
+        fail_stage(os, wst, why)
+      }
+      let werr = wst.commit(os)
+      if !werr.is_empty() {
+        fail(os, werr)
+      }
+      t = lap(os, phases, "link", t)
+      bins.push((tg, wbin))
+      continue
+    }
+    if march == "arm64" && tgoos == "windows" {
+      // the arm64 backend's windows/arm64 program (decision 0569 stage
+      // 1): clang's assembler for each part, then Xo's PE linker with no
+      // C runtime; no `use c`, --race or PDB yet
+      if o.race || uses_c_source(os, o.std, c, tgoos) {
+        fail(os, "windows/arm64 is experimental (decision 0569): it links no `use c` source and no --race yet")
+      }
+      let clang = find_clang(os)
+      if clang.is_empty() {
+        fail(os, "windows/arm64 needs clang to assemble (decision 0569): install LLVM's clang or set XO_CLANG")
+      }
+      let wbin = bin_path(sdir, out, name, tg, o.many_targets)
+      if hollow_late && !(keep_asm || !macho_as) {
+        // clang reads every part's text (the hollow ones above did not)
+        if let Some(r) = inc {
+          p.parts = incr_texts(p.parts, r, march)
+        }
+      }
+      var asrcs: List[Str] = []
+      let texts = if p.parts.len() > 1 { p.parts } else { [code] }
+      for (i, part) in texts.indexed() {
+        let ps = "${dir}/prog-${tgoos}.${i}.s"
+        let txt = dw_real(gdw, part)
+        write_or_fail(os, dir, ps, txt.bytes())
+        asrcs.push(ps)
+      }
+      if uses_time || !sepcomp_facts_path(os).is_empty() {
+        let sel = tzsel.tz_select(os, ctx.std, cur_tu, o.tzdata, tgoos)
+        if !sel.err.is_empty() {
+          fail(os, sel.err)
+        }
+        if !(o.json && o.cmd == "build") {
+          for n in sel.notes {
+            os.stdio.eprintln(n)
+          }
+        }
+        match tz_object(os, dir, sel, tgoos, tgoarch) {
+          Ok(zp) => asrcs.push(zp)
+          Err(e) => fail(os, "${e}")
+        }
+      }
+      match binfo_object(os, dir, native_build_info(os, ctx, o, "arm64", "${tgoos}/${tgoarch}", inl_fb), tgoos, tgoarch, true) {
+        Ok(bp) => asrcs.push(bp)
+        Err(e) => fail(os, "${e}")
+      }
+      match win_arm64_atomics(os, dir) {
+        Ok(ap) => asrcs.push(ap)
+        Err(e) => fail(os, "${e}")
+      }
+      let (wobjs, awhy) = cc_assemble(os, clang, ["--target=aarch64-pc-windows-msvc"], asrcs, jobs)
+      if !awhy.is_empty() {
+        fail(os, "assembler: ${awhy}")
+      }
+      t = lap(os, phases, "assemble", t)
+      write_or_fail(os, dir_name(wbin), "", b"")
+      let wst = stage(os, ctx, wbin)
+      let (wres, wwarn, rerr) = win_resources(os, o, wst.bin)
+      for w in wwarn {
+        os.stdio.eprintln("xo: --versioninfo: ${w}")
+      }
+      if !rerr.is_empty() {
+        wst.abandon(os)
+        fail_code(os, "XO1517", rerr)
+      }
+      let why = pe_link(os, wobjs, wst.bin, wbin, wres, false, phases, trimpath_eff(o), backend_cache_dir(os, ctx), [], false, None)
       if !why.is_empty() {
         fail_stage(os, wst, why)
       }

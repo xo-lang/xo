@@ -4485,6 +4485,11 @@ fn (var g: G) platform_call(v: Int) {
     // System V passes them as the others, with the vector registers'
     // count in al (-3: the emitter zeroes al before the call)
     vfix = if g.x86 { -3 } else { nfixed }
+  } else if g.os == "windows" && !g.x86 && nfixed >= 0 {
+    // windows/arm64 passes every argument of a variadic call in x0 to
+    // x7 and then on the stack, floats too (decision 0569; -4:
+    // call_locs)
+    vfix = -4
   }
   let defs = g.new_vregs(res)
   var real: List[Int] = []

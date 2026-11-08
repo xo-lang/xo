@@ -153,7 +153,8 @@ struct Inst {
   bit: Int = 0
   /// K_CALL: a variadic C function on Apple arm64 (decision 0213): the
   /// arguments from this index on go on the stack, 8 bytes each; -1 for
-  /// none
+  /// none; -4 for a variadic C function on windows/arm64 (every argument
+  /// in x0 to x7, then the stack; decision 0569)
   vfix: Int = -1
   /// the landing pad block of a call or of a fault stub's call (decision
   /// 0085), -1 for none

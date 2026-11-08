@@ -182,6 +182,13 @@ fn binfo_object(os: Os, dir: Str, info: (Str, Str), goos: Str, goarch: Str, no_c
     b.write_str("\tadrp x0, ${lbl}\n\tadd x0, x0, :lo12:${lbl}\n\tret\n")
   }
   let src = b.freeze()
+  if goos == "windows" && !amd64 {
+    // windows/arm64 (decision 0569): the text clang assembles with the
+    // program's parts
+    let spath = "${dir}/xo_buildinfo.s"
+    os.fs.write(spath, src)?
+    return Ok(spath)
+  }
   let res = if goos == "darwin" {
     if amd64 { macho.assemble_macho_amd64(src, (11, 0)) } else { macho.assemble(src) }
   } else if goos == "windows" {

@@ -1228,7 +1228,9 @@ fn (g: G) abi_locs(srcs: List[Src]) -> List[Loc] {
 
 /// abi_locs of a call whose arguments from index vfix on are the
 /// variadic ones of a C function on Apple arm64, which go on the stack
-/// (decision 0213); vfix -1 for none.
+/// (decision 0213); vfix -1 for none, -4 for a variadic call on
+/// windows/arm64, whose arguments all take x0 to x7 and then the stack
+/// (decision 0569).
 fn (g: G) call_locs(srcs: List[Src], vfix: Int) -> List[Loc] {
   if g.x86 {
     return g.x86_call_locs(srcs, vfix)
@@ -1238,7 +1240,8 @@ fn (g: G) call_locs(srcs: List[Src], vfix: Int) -> List[Loc] {
   var nfp = 0
   var nst = 0
   for (k, a) in srcs.indexed() {
-    let fp = a.kind == S_REG && g.fp[a.v]
+    // (-4, a windows/arm64 variadic call: no vector registers)
+    let fp = a.kind == S_REG && g.fp[a.v] && vfix != -4
     if vfix >= 0 && k >= vfix {
       out.push(Loc{reg: -1, slot: nst})
       nst += 1
