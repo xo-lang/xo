@@ -296,6 +296,12 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "lowered" => "lowered"
     _ => ""
   }
+  // riscv64 (decision 0571): no instruction lowerings yet but the
+  // arithmetic ones, which LLVM's IR states; the hardware paths' bodies
+  // run (cpu.hw() is 0 there, so std takes its portable forms)
+  if b.goarch == "riscv64" && !["u64_carry", "u64_borrow", "u64_adc", "u64_adc_carry", "i64_mul_hi", "lowered"].contains(name) {
+    return None
+  }
   // amd64 (decision 0254 stage 3): every one, SHA-256's compression too
   // (SHA-NI, found by CPUID leaf 7: the owner's approval, 2026-10-17)
   if name.is_empty() {
