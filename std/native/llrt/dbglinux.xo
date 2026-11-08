@@ -275,7 +275,7 @@ fn task_ids(pid: Int) -> List[Int] {
   var out: List[Int] = []
   let path = "/proc/${pid}/task\u{0}"
   // openat(AT_FDCWD, path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-  let fd = rt.sys6(nr(56, 257), -100, raw.data(path), (if target.arch == TargetArch.Amd64 { 0x10000 } else { 0x4000 }) | 0x80000, 0, 0, 0)
+  let fd = rt.sys6(nr(56, 257), -100, raw.data(path), (if target.arch == TargetArch.Arm64 { 0x4000 } else { 0x10000 }) | 0x80000, 0, 0, 0)
   let _z = path.len()
   if fd < 0 {
     return out
