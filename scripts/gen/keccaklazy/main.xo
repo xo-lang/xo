@@ -176,7 +176,7 @@ fn main(os: Os) {
   lines.push(r#"  // const_once)"#)
   lines.push(r#"  let rcs = RCS"#)
   lines.push(r#"  match target.arch {"#)
-  for (arm, lazy) in [("TargetArch.Amd64", false), ("TargetArch.Arm64 | TargetArch.Wasm32", true)] {
+  for (arm, lazy) in [("TargetArch.Amd64", false), ("TargetArch.Arm64 | TargetArch.Wasm32 | TargetArch.Riscv64", true)] {
     lines.push("    ${arm} => {")
     lines.push("      var round = 0")
     lines.push("      while round < 24 {")
