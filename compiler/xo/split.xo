@@ -37,6 +37,10 @@ struct SplitConfig {
   /// a stable split with a module per source file (at most modules of
   /// them; XO_LLVM_TEST_SPLIT=files), not files hashed into modules
   by_file: Bool = false
+  /// the target's OS and architecture (split_build's giant function
+  /// options, giant_fn_flags)
+  goos: Str = ""
+  arch: Str = ""
 }
 
 /// The clang jobs a split build runs at once by default: the cores, and
@@ -285,6 +289,57 @@ fn unroll_flags(opt: Str, goos: Str, lto: Str, cap: Bool) -> List[Str] {
     if lto != "none" {
       out.push(if goos == "darwin" { "-Wl,-mllvm,${u}" } else { "-Wl,-plugin-opt=${u}" })
     }
+  }
+  out
+}
+
+/// The basic blocks of a function past which giant_fn_flags applies to
+/// its module. pass_const_edges' main (9,673 blocks, 4,750 conditional
+/// branches, 44,589 lines) kept clang -O1 over 10 CPU minutes on Apple
+/// clang 21, all of it in the AArch64 machine combiner; without it the
+/// module compiled in 85 s (2026-11-08). Lines are no measure: xo's own
+/// build_native has 95,297 lines in 4,749 blocks and its largest function
+/// by blocks 5,944 (arm64 G.inline_rt), and xo's LLVM build compiles them
+/// in minutes, with the combiner on.
+const GIANT_FN_BLOCKS = 8000
+
+/// Whether ir holds a function of more than GIANT_FN_BLOCKS labelled
+/// blocks (a line of a body that is not indented and not its `}`).
+fn ir_has_giant_fn(ir: Str) -> Bool {
+  // -1 outside a function, else the blocks of the current one so far
+  var n = -1
+  for line in ir.split("\n") {
+    if n < 0 {
+      if line.starts_with("define ") {
+        n = 0
+      }
+    } else if line.starts_with("}") {
+      n = -1
+    } else if !line.is_empty() && !line.starts_with(" ") && !line.starts_with(";") {
+      n += 1
+      if n > GIANT_FN_BLOCKS {
+        return true
+      }
+    }
+  }
+  false
+}
+
+/// clang's options for a module holding a giant function
+/// (ir_has_giant_fn) on arch: the AArch64 machine combiner off, whose
+/// time grows faster than linearly in a function's size (a module of
+/// pass_const_edges: over 10 minutes with it, 85 s without). For a
+/// compile, and with lto not "none" for the link too, which generates the
+/// code then (darwin's ld64 takes `-mllvm`, a Linux linker the plugin's
+/// option, as unroll_flags). Other architectures: none.
+fn giant_fn_flags(goos: Str, arch: Str, lto: Str) -> List[Str] {
+  if arch != "arm64" {
+    return []
+  }
+  let opt = "-aarch64-enable-mcr=false"
+  var out = ["-mllvm", opt]
+  if lto != "none" {
+    out.push(if goos == "darwin" { "-Wl,-mllvm,${opt}" } else { "-Wl,-plugin-opt=${opt}" })
   }
   out
 }
@@ -850,8 +905,23 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
   // its arguments) are not compiled
   var keys: List[Str] = []
   var todo: List[Int] = []
+  // each module's giant function options (giant_fn_flags), and whether
+  // any module has them (the LTO link's code generation then needs them)
+  var giants: List[List[Str]] = []
+  var any_giant = false
+  let gflags = if c.opt == "-O0" { [] } else { giant_fn_flags(c.goos, c.arch, "none") }
   for (i, ll) in lls.indexed() {
-    let args = [c.opt] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables"]
+    var gf: List[Str] = []
+    if !gflags.is_empty() {
+      // xo:allow XO0903 an unreadable module fails its compile below
+      let t = os.fs.read_text(ll).ok() ?? ""
+      if ir_has_giant_fn(t) {
+        gf = gflags
+        any_giant = true
+      }
+    }
+    giants.push(gf)
+    let args = [c.opt] + lto_flags(c.lto) + target + gf + ["-Wno-override-module", "-fexceptions", "-funwind-tables"]
     var k = ""
     if !c.objcache.is_empty() {
       match os.fs.read(ll) {
@@ -887,7 +957,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
       // its source file's name, which ThinLTO's names of promoted locals
       // hash, so the build's random directory made two builds of the same
       // IR differ (gotchas/windows-thinlto-module-path.md)
-      let args = [c.opt] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", base_name(lls[next]), "-o", base_name(objs[next])]
+      let args = [c.opt] + lto_flags(c.lto) + target + giants[next] + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", base_name(lls[next]), "-o", base_name(objs[next])]
       match os.proc.cmd(clang, args).dir(dir_name(lls[next])).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${lls[next]}: ${e}\n")
@@ -924,7 +994,8 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
     return fails[0]
   }
   let lf = ["-O2"] + lto_flags(c.lto) + ["-Wno-override-module"]
-  cc_build(os, ctx, clang, lf + flags, objs + others, bin)
+  let lg = if any_giant && c.lto != "none" { giant_fn_flags(c.goos, c.arch, c.lto) } else { [] }
+  cc_build(os, ctx, clang, lf + flags + lg, objs + others, bin)
 }
 
 /// The online CPUs' numbers (/sys/devices/system/cpu/online: "0-63" or

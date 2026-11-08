@@ -1444,6 +1444,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !split.err.is_empty() {
       fail(os, split.err)
     }
+    split.goos = lctx.tgoos
+    split.arch = tgoarch
     if !o.opt.is_empty() {
       // --opt (decision 0354): in any build, release included
       split.opt = "-${o.opt}"
@@ -1616,7 +1618,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       } else if multi {
         split_build(os, lctx, cc, lls, lk.srcs, st.bin, split, lflags)
       } else {
-        cc_build(os, lctx, cc, [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + lflags, srcs, st.bin)
+        // a giant function's module (split_build does the same per module)
+        let gf = if tgoarch == "arm64" && split.opt != "-O0" && ir_has_giant_fn(code) { giant_fn_flags(lctx.tgoos, tgoarch, lto1) } else { [] }
+        cc_build(os, lctx, cc, [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + gf + lflags, srcs, st.bin)
       }
       if !msg.is_empty() {
         os.stdio.eprint(msg)

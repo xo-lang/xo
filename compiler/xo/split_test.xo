@@ -26,3 +26,28 @@ test "the unroll iteration cap goes only to a clang that knows it" {
   expect(unroll_flags("-O2", "linux", "none", false)) == ["-mllvm", "-pragma-unroll-threshold=300"]
   expect(unroll_flags("-O2", "linux", "none", true).len()) == 4
 }
+
+test "a module with a giant function compiles without the AArch64 machine combiner" {
+  var big = StrBuilder.new()
+  big.write("define hidden void @\"x.main\"() {\n")
+  for i in 0..GIANT_FN_BLOCKS + 1 {
+    big.write("b${i}:\n  br label %b${i + 1}\n")
+  }
+  big.write("b${GIANT_FN_BLOCKS + 1}:\n")
+  big.write("  ret void\n}\n")
+  let small = "define hidden i64 @f() {\n  ret i64 0\n}\n"
+  expect(ir_has_giant_fn(small + big.freeze())) == true
+  // blocks in several smaller functions do not add up, and a long
+  // function of few blocks is no giant
+  var long = StrBuilder.new()
+  long.write("define hidden void @g() {\n")
+  for i in 0..GIANT_FN_BLOCKS * 4 {
+    long.write("  %v${i} = add i64 0, ${i}\n")
+  }
+  long.write("  ret void\n}\n")
+  expect(ir_has_giant_fn(small + small + long.freeze())) == false
+  expect(giant_fn_flags("darwin", "arm64", "none")) == ["-mllvm", "-aarch64-enable-mcr=false"]
+  expect(giant_fn_flags("darwin", "arm64", "thin")) == ["-mllvm", "-aarch64-enable-mcr=false", "-Wl,-mllvm,-aarch64-enable-mcr=false"]
+  expect(giant_fn_flags("linux", "arm64", "full")) == ["-mllvm", "-aarch64-enable-mcr=false", "-Wl,-plugin-opt=-aarch64-enable-mcr=false"]
+  expect(giant_fn_flags("linux", "amd64", "none")) == []
+}
