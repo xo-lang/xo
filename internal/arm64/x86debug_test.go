@@ -108,7 +108,7 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 func TestAmd64CrossBuilds(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
-		t.Skip("cross builds four programs for three targets")
+		t.Skip("cross builds seven programs for three targets")
 	}
 	cli, err := xotool.Command()
 	if err != nil {
@@ -120,6 +120,13 @@ func TestAmd64CrossBuilds(t *testing.T) {
 		"sql_conv":       filepath.Join(golden, "sql_conv"),
 		"sql_wire_names": filepath.Join(golden, "sql_wire_names"),
 		"xml_basic":      filepath.Join(golden, "xml_basic"),
+		// llrt's number, crypto and TLS code, which every program with a
+		// Float32 JSON write, a hash or a handshake compiles in
+		// (2026-11-08: num.addw's umaddl had no x86 template, and no
+		// program above reached it)
+		"json_sized_ints": filepath.Join(golden, "json_sized_ints"),
+		"crypto_hash":     filepath.Join(golden, "crypto_hash"),
+		"tls12_client":    filepath.Join(golden, "tls12_client"),
 	}
 	for name, dir := range dirs {
 		for _, target := range []string{"linux/amd64", "windows/amd64", "darwin/amd64"} {

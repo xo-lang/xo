@@ -224,12 +224,17 @@ chkcache_ran=0
 # runs after the steps named (lead, 2026-10-23: daed94d4d, a mir.xo
 # change, passed its arm64 gate and broke every amd64 build of three
 # goldens on main for an hour; the x86-only Docker sample rule did not
-# apply to a shared file). XO_GATE_CROSS=0 skips it.
+# apply to a shared file). std/native/llrt (the runtime xo's native code
+# generator compiles with each program, cpu.xo and num.xo among it) counts
+# too (lead, 2026-11-08: a762dc2e3's num.append_json_float32 fused a
+# multiply and an add that the amd64 emitter had no template for, and main
+# was red on amd64 for 2 hours). XO_GATE_CROSS=0 skips it.
 native_change() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
-  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(arm64|ssa)/'
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(compiler/(arm64|ssa)/|std/native/llrt/)'
 }
 cross_ran=0
+cross_ok=0
 # scale_change: the branch changes the match lowering (compiler/arm64
 # jumptab.xo), so internal/arm64's TestSwitch65535Arms (about 100 s) runs
 # after the steps named (lead, 2026-10-24: 9479f31cd's compare tree made
@@ -477,7 +482,10 @@ if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change;
 fi
 if [ "$cross_ran" = 0 ] && [ "${XO_GATE_CROSS:-1}" != 0 ] && native_change; then
   cross_ran=1
+  f0=$failed; failed=0
   full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$'
+  [ "$failed" = 0 ] && cross_ok=1
+  [ "$f0" = 1 ] && failed=1
 fi
 if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
   full scale ./internal/arm64 -run '^TestSwitch65535Arms$'
@@ -528,6 +536,7 @@ if [ "${XO_GATE_PUSHQ:-1}" != 0 ] && echo "$ch" | grep -E '^(compiler/|std/nativ
   fi
   rm -f "$logs/selfbuild-xo"
 fi
+[ "$cross_ok" = 1 ] && ran="$ran cross"
 [ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
 # pushq-ran (lead, 2026-11-06 bottleneck review: 6 pushes in 3 hours were
 # refused for a PUSHQ_RAN their gate had printed but the agent did not
