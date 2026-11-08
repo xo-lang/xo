@@ -44,3 +44,11 @@ runtime keeps the monotonic clock to itself (rt3.xo `$mono`). Fix: std
 code that a wasm program reaches gates on `sysio.layer() == 0` and takes
 `sysio.real_ns()` there (std/native/sql.xo `pool_now`), and its change
 runs TestSelfhostWasm.
+
+The Go backend has the same trap for the std modules it compiles from
+their native implementation (std/go_compiled.txt, decision 0312): a call
+of rt.NAME there needs std/rt's `func Rt_NAME`, or the Go backend build
+fails `undefined rt.Rt_NAME` (netip's rt.rs_push_words, 2026-11-07).
+internal/repotest TestStdRuntimeCallsHaveGoLowering checks it, with
+testdata/go_rt_gaps.txt for a module that never builds on the Go backend
+(2026-11-08).

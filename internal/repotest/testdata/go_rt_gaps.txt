@@ -1,0 +1,7 @@
+# The rt.* intrinsics a std module the Go backend compiles (std/go_compiled.txt) calls that
+# std/rt, the Go backend's runtime, does not define as Rt_NAME, and why
+# (internal/repotest TestStdRuntimeCallsHaveGoLowering): `name reason`.
+# A std module the Go backend builds needs std/rt's Rt_NAME instead.
+
+fs_mode std/sqlite only: it binds C, and the Go backend reports XO1201 for it (std/go_compiled.txt, decision 0534), so it never builds there
+fs_root std/sqlite only: it binds C, and the Go backend reports XO1201 for it (std/go_compiled.txt, decision 0534), so it never builds there
