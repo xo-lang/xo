@@ -125,6 +125,13 @@ fn llvm_cross_flags(host: Str, triple: Str, winsysroot: Str) -> List[Str] {
   if triple.contains("linux") {
     // a glibc sysroot (Debian's libc6-dev, linux-libc-dev, libgcc-10-dev
     // unpacked), linked with lld (clang $XO_CLANG must carry it)
+    if triple.starts_with("riscv64") {
+      // RV64GC and lp64d stated, and a CPU after the config file's: a
+      // host's clang.cfg `-mcpu=generic` (an arm64 or x86 name) is
+      // refused for riscv64 ("unsupported argument 'generic'", host 2,
+      // 2026-11-08); the last -mcpu wins
+      return ["--target=${triple}", "--sysroot=${winsysroot}", "-fuse-ld=lld", "-march=rv64gc", "-mabi=lp64d", "-mcpu=generic-rv64"]
+    }
     return ["--target=${triple}", "--sysroot=${winsysroot}", "-fuse-ld=lld"]
   }
   if host.starts_with("windows/") || !triple.contains("windows") {
