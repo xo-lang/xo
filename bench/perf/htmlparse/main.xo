@@ -1,8 +1,8 @@
 // htmlparse: std/htmlparse against golang.org/x/net/html's Parse and Render (go/): a 12 KB page of
 // posts (paragraphs closed implicitly, misnested formatting, a table, links with attributes, entities,
-// comments, a script and a style) parsed 1,000 times, and its tree rendered 1,000 times; `tok` only
+// comments, a script and a style) parsed 1,000 times, and its tree rendered 1,000 times; `ent` tokenizes a page of uncommon named references; `tok` only
 // tokenizes it (std/htmltok, Token per token) 1,000 times; `none` is the
-// setup alone. Usage: `<program> none|parse|tok|render`. Prints `<workload> <checksum>`; the twin prints
+// setup alone. Usage: `<program> none|parse|tok|ent|render`. Prints `<workload> <checksum>`; the twin prints
 // the same.
 use std/htmlparse
 use std/htmltok
@@ -14,6 +14,22 @@ fn page() -> Str {
     b.write("<!-- item ${i} --><div class=\"post\" id=p${i}><h2>Post ${i}</h2><p>Tom &amp; Jerry's <a href=\"/x?a=1&amp;b=2\" title='show ${i}'>show</a> &copy; text &lt;b&gt; more words here.<p><b>bold <i>both</b> italic</i><table><tr><td>cell<td>two</table><img src=a.png alt=\"\"><br/></div>\n")
   }
   b.write("<script>if (a < b && c > d) { document.write('<p>x</p>'); }</script></body></html>")
+  b.freeze()
+}
+
+/// A page of uncommon named references (none of the seven the fast path answers) and a few numeric ones.
+fn ent_page() -> Str {
+  let names = ["hellip", "mdash", "ndash", "eacute", "Aacute", "ouml", "szlig", "laquo", "raquo", "euro", "trade", "reg", "deg", "plusmn", "frac12", "times", "divide", "larr", "rarr", "hearts", "alpha", "beta", "Omega", "infin", "ne", "le", "ge", "sum", "radic", "bull"]
+  var b = StrBuilder.new()
+  b.write("<html><body>")
+  for i in 0..400 {
+    b.write("<p title=\"a &${names[i % 30]}; b\">")
+    for j in 0..6 {
+      b.write("word &${names[(i + j * 7) % 30]}; &#${65 + (i + j) % 26}; text ")
+    }
+    b.write("</p>\n")
+  }
+  b.write("</body></html>")
   b.freeze()
 }
 
@@ -40,6 +56,16 @@ fn main(os: Os) uses stdio, env {
   } else if w == "tok" {
     for i in 0..1000 {
       var z = htmltok.tokenizer(t)
+      while z.next() != htmltok.TokenType.Error {
+        let tk = z.token()
+        sum += tk.data.len() + tk.attrs.len()
+      }
+      sum += i % 3
+    }
+  } else if w == "ent" {
+    let e = ent_page()
+    for i in 0..1000 {
+      var z = htmltok.tokenizer(e)
       while z.next() != htmltok.TokenType.Error {
         let tk = z.token()
         sum += tk.data.len() + tk.attrs.len()

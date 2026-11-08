@@ -19,6 +19,21 @@ func page() string {
 	return b.String()
 }
 
+func entPage() string {
+	names := []string{"hellip", "mdash", "ndash", "eacute", "Aacute", "ouml", "szlig", "laquo", "raquo", "euro", "trade", "reg", "deg", "plusmn", "frac12", "times", "divide", "larr", "rarr", "hearts", "alpha", "beta", "Omega", "infin", "ne", "le", "ge", "sum", "radic", "bull"}
+	var b strings.Builder
+	b.WriteString("<html><body>")
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&b, "<p title=\"a &%s; b\">", names[i%30])
+		for j := 0; j < 6; j++ {
+			fmt.Fprintf(&b, "word &%s; &#%d; text ", names[(i+j*7)%30], 65+(i+j)%26)
+		}
+		b.WriteString("</p>\n")
+	}
+	b.WriteString("</body></html>")
+	return b.String()
+}
+
 func count(n *html.Node) int {
 	c := 1 + len(n.Data) + len(n.Attr)
 	for k := n.FirstChild; k != nil; k = k.NextSibling {
@@ -46,6 +61,16 @@ func main() {
 	case "tok":
 		for i := 0; i < 1000; i++ {
 			z := html.NewTokenizer(strings.NewReader(t))
+			for z.Next() != html.ErrorToken {
+				tk := z.Token()
+				sum += len(tk.Data) + len(tk.Attr)
+			}
+			sum += i % 3
+		}
+	case "ent":
+		e := entPage()
+		for i := 0; i < 1000; i++ {
+			z := html.NewTokenizer(strings.NewReader(e))
 			for z.Next() != html.ErrorToken {
 				tk := z.Token()
 				sum += len(tk.Data) + len(tk.Attr)
