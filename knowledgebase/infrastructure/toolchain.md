@@ -293,8 +293,10 @@ and runs `gh release create`. The order:
    side's new OFF_SEED or why one failed;
 7. the Xo against Go comparison on the released darwin/arm64 binary
    (owner, 2026-10-22, every release): unpack the archive, then
-   `HEAVY_CLASS=measure heavy.sh vsgo scripts/release-vs-go.sh
-   UNPACKED/bin/xo OUT` in the private checkout, and commit
+   `HEAVY_CLASS=measure HEAVY_DARWIN=1 heavy.sh vsgo scripts/release-vs-go.sh
+   UNPACKED/bin/xo OUT` in the private checkout (measure, not bulk:
+   bulk refuses `xo bench --ab`, which every section uses; HEAVY_DARWIN=1
+   keeps it on the Mac; last verified: 2026-11-08), and commit
    OUT/report.md as `bench/results/release-vs-go-vX.Y.Z.md`. Reports
    through v0.35.0 ran xo's timed builds under XO_CACHE_STATS=1, so xo's
    peak MB steps down after them with no compiler change (about 28 MB on
