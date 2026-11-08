@@ -1,6 +1,6 @@
 # 0559: derive Cbor writes the wire form directly, without a cbor.Value tree
 
-Status: Proposed (Xo Lang 2, 2026-11-07)
+Status: Accepted (owner, 2026-11-07)
 
 ## Context
 
@@ -98,6 +98,14 @@ deterministic sort stays for Value trees and Map fields.
 - A difference: a derived value nested past 1,000 levels was an error
   from enc_item's depth limit; the direct writer has none (a recursive
   type through List or Option would recurse until the stack guard).
+
+## Landed (2026-11-07)
+
+The prototype as it was measured, rebased on main, with the golden
+cbor_direct (the probe: Person, Pair toarray, Deep, and a struct with enum
+fields, in both modes; want.txt is main's output before this change) and
+the helpers listed in spec/std.md section 50. The depth difference above
+stays: only a recursive derived type nests that deep.
 
 ## Alternatives
 

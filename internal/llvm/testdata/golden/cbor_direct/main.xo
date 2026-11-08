@@ -1,0 +1,78 @@
+// derive Cbor's direct writers (decision 0559): marshal of derived structs and
+// enums, in both modes, byte for byte as the Value tree path wrote them
+// (want.txt from main's xo before 0559): keyasint, omitempty, toarray, Option,
+// List, Map, nested types, Time, Duration and enum fields.
+use std/cbor
+
+struct Addr {
+  city: Str
+  zip: Int
+} derive Cbor
+
+struct Person {
+  name: Str
+  age cbor "7,keyasint": Int
+  tags as "tags,omitempty": List[Str]
+  addr: Addr?
+  ratio: Float
+  ok: Bool
+  raw: Bytes
+  attrs: Map[Str, Int]
+  skip as "-": Str
+} derive Cbor
+struct Pair {
+  a cbor ",toarray": Int
+  b: Str
+  c: Int?
+  d: List[Str]
+} derive Cbor
+struct Deep {
+  addrs: List[Addr]
+  by: Map[Str, Addr]
+  opt: Int?
+  grid: List[List[Int]]
+  maybe: Float?
+  flag: Bool?
+  nested: Person?
+  count as "count,omitempty": Int
+  when: Time?
+  dur: Duration?
+  spent as "spent,omitempty": Duration
+} derive Cbor
+
+enum Shape {
+  Dot
+  Circle(r: Float)
+  Box(w: Int, h: Int)
+} derive Cbor
+
+struct Wrap {
+  zeta: Int
+  al: Shape
+  bb as "b,omitempty": Str
+  shapes: List[Shape]
+} derive Cbor
+
+fn show(os: Os, tag: Str, a: Result[Bytes, cbor.CborErr], b: Result[Bytes, cbor.CborErr]) {
+  let x = if let Ok(v) = a { v.to_hex() } else { "ERR" }
+  let y = if let Ok(v) = b { v.to_hex() } else { "ERR" }
+  os.stdio.println("${tag} det=${x}")
+  os.stdio.println("${tag} pref=${y}")
+}
+
+fn main(os: Os) {
+  let a1 = Addr{city: "Zürich", zip: 8000}
+  let p1 = Person{name: "Ann", age: 3, tags: [], addr: None, ratio: 1.5, ok: true, raw: b"", attrs: {}, skip: "x"}
+  let p2 = Person{name: "", age: -70000, tags: ["a", "bb", ""], addr: Some(a1), ratio: -0.0, ok: false, raw: b"\x00\xff", attrs: {"zz": 1, "a": -1, "bbb": 300, "b": 2}, skip: ""}
+  for (i, p) in [p1, p2].indexed() {
+    show(os, "person${i}", cbor.marshal(p), cbor.marshal(p, deterministic: false))
+  }
+  let q = Pair{a: 1, b: "x", c: None, d: ["p", "q"]}
+  show(os, "pair", cbor.marshal(q), cbor.marshal(q, deterministic: false))
+  let d = Deep{addrs: [a1, a1], by: {"k2": a1, "k": a1, "aaa": a1}, opt: Some(5), grid: [[1, 2], [], [3]], maybe: Some(1.0e300), flag: None, nested: Some(p2), count: 0, when: None, dur: Some(Duration.from_secs_int(3)), spent: Duration.from_secs_int(0)}
+  show(os, "deep", cbor.marshal(d), cbor.marshal(d, deterministic: false))
+  let w = Wrap{zeta: 9, al: Shape.Box(w: 1, h: 2), bb: "", shapes: [Shape.Dot, Shape.Circle(r: 0.5)]}
+  show(os, "wrap", cbor.marshal(w), cbor.marshal(w, deterministic: false))
+  let w2 = Wrap{zeta: -1, al: Shape.Dot, bb: "set", shapes: []}
+  show(os, "wrap2", cbor.marshal(w2), cbor.marshal(w2, deterministic: false))
+}

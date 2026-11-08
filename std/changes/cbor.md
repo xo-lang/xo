@@ -1,5 +1,23 @@
 # std/cbor changes
 
+## 2026-11-07: perf: marshal of a derived type writes its encoding directly, without a Value tree
+
+- Kind: perf
+- Commit: this push
+- Found by: the Xo-vs-Go survey (bench/results/xo-vs-go-survey-2026-11-07.md row 2, cbor/umarshal); decision 0559
+- Go reference: github.com/fxamacker/cbor/v2's struct encoder (a field list per type, one buffer)
+- Test: the cbor corpora on go, arm64 and llvm (both modes); the goldens cbor_case, cbor_enum and the new cbor_direct (keyasint, omitempty, toarray, Option, List, Map, nested, Time, Duration, enum fields; main's bytes before this change) on arm64, LLVM, Go and wasm
+- Timing: bench/perf/cbor on linux/arm64 host 1, ab-host 064a0f08f against the prototype f875ed5fc (7 rounds): umarshal 0.46 (0.445 to 0.468, n=6; 6.107 to 2.809 ms, Go's survey row 4.3 ms), canon 0.982 (control, the tree encoder); __text of bench/perf/cbor 433,196 to 427,988 bytes (darwin/arm64)
+- Shipped in: not yet released
+
+`derive Cbor` generates `cbor_put__T`, which writes a struct's map (or toarray array) into the output with
+its keys as constant bytes, both field orders computed at derive time, and omitted fields counted before the
+head; `marshal` calls it instead of building and encoding a `cbor.Value` tree. Enum and `cbor.Value` fields
+still go through the tree encoder (`put_value`). Output byte identical in both modes. One difference: the
+tree encoder's depth limit no longer applies to marshal of a derived value (only a recursive type nests that
+deep). New std/cbor helpers for the generated code: `put_head`, `put_int`, `put_float`, `put_text`,
+`put_bytes`, `put_value`, `det_keys`.
+
 ## 2026-11-03: feature: std/cbor, RFC 8949 encode, decode, diagnostic notation and the JSON bridge
 
 - Kind: feature

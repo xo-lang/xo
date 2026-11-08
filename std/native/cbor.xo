@@ -1208,6 +1208,42 @@ fn from_time(t: Time) -> cbor.Value {
 
 fn from_duration(d: Duration) -> cbor.Value { from_int(d.nanos()) }
 
+fn put_int(var out: BytesBuilder, n: Int) {
+  if n >= 0 {
+    put_head(out, 0, n)
+  } else {
+    put_head(out, 1, -1 - n)
+  }
+}
+
+fn put_text(var out: BytesBuilder, s: Str) {
+  put_head(out, 3, s.len())
+  out.write_str(s)
+}
+
+fn put_bytes(var out: BytesBuilder, b: Bytes) {
+  put_head(out, 2, b.len())
+  out.write(b)
+}
+
+fn put_value(var out: BytesBuilder, v: cbor.Value, deterministic: Bool) -> () ! cbor.CborErr {
+  enc_item(v, deterministic, 0, out)
+}
+
+/// Text keys in the deterministic order (RFC 8949 4.2.1 on their encodings:
+/// shorter first, then by bytes), as enc_item's key_less orders them.
+fn det_keys(keys: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for k in keys {
+    var at = out.len()
+    while at > 0 && (k.len() < out[at - 1].len() || (k.len() == out[at - 1].len() && k < out[at - 1])) {
+      at -= 1
+    }
+    out.insert(at, k)
+  }
+  out
+}
+
 /// A Time from integer or float seconds since the epoch, or an RFC 3339 text.
 fn to_time(v0: cbor.Value, var st: cbor.Unm) -> (Bool, Time) {
   let (okt, v) = untag(v0, st)

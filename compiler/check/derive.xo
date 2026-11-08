@@ -1295,6 +1295,168 @@ fn (var c: Checker) cbor_writer(t: parser.Type, sp: Span, em: Emit, var done: Ma
   }
 }
 
+/// The function that writes a value of type t's encoding into a BytesBuilder,
+/// `(v: T, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr` (defined
+/// once into em; decision 0559); None for a type derive Cbor does not map.
+fn (var c: Checker) cbor_putter(t: parser.Type, sp: Span, em: Emit, var done: Map[Str, Bool]) -> (Str, Emit)? {
+  let tx = yaml_type_text(t) ?? return None
+  var e = em
+  let h = "cbor_pt__${yaml_mangle(tx)}"
+  let sig = "fn ${h}(v: ${tx}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr"
+  var elem: parser.Type? = None
+  match t {
+    OptionalType(_, el) => elem = Some(el)
+    NamedType(_, path, args) => {
+      let n = text(path[path.len() - 1].name)
+      if path.len() == 1 && args.len() == 1 && n == "Option" {
+        elem = Some(args[0])
+      }
+    }
+    _ => return None
+  }
+  if let Some(el) = elem {
+    let (inner, e2) = c.cbor_putter(el, sp, e, done) ?? return None
+    e = e2
+    if !done.contains(h) {
+      done[h] = true
+      e.ln("${sig} {", sp)
+      e.ln("  if let Some(x) = v { ${inner}(x, det, out)? } else { out.write_byte(UInt8(246)) }", sp)
+      e.ln("  Ok(())", sp)
+      e.ln("}", sp)
+    }
+    return Some((h, e))
+  }
+  match t {
+    NamedType(_, path, args) => {
+      let n = text(path[path.len() - 1].name)
+      if path.len() == 1 && args.is_empty() && (is_scalar_name(n) || n == "Bytes" || n == "Time" || n == "Duration") {
+        if !done.contains(h) {
+          done[h] = true
+          let body = match n {
+            "Str" => "cbor.put_text(out, v)"
+            "Int" => "cbor.put_int(out, v)"
+            "Float" => "cbor.put_float(out, v)"
+            "Bytes" => "cbor.put_bytes(out, v)"
+            "Time" => "cbor.put_value(out, cbor.from_time(v), det)?"
+            "Duration" => "cbor.put_value(out, cbor.from_duration(v), det)?"
+            _ => "out.write_byte(UInt8(if v { 245 } else { 244 }))"
+          }
+          e.ln("${sig} {", sp)
+          e.ln("  ${body}", sp)
+          e.ln("  Ok(())", sp)
+          e.ln("}", sp)
+        }
+        return Some((h, e))
+      }
+      if path.len() == 2 && args.is_empty() && n == "Value" && text(path[0].name) == "cbor" {
+        if !done.contains(h) {
+          done[h] = true
+          e.ln("${sig} { cbor.put_value(out, v, det) }", sp)
+        }
+        return Some((h, e))
+      }
+      if path.len() == 1 && args.len() == 1 && n == "List" {
+        let (inner, e2) = c.cbor_putter(args[0], sp, e, done) ?? return None
+        e = e2
+        if !done.contains(h) {
+          done[h] = true
+          e.ln("${sig} {", sp)
+          e.ln("  cbor.put_head(out, 4, v.len())", sp)
+          e.ln("  for x in v { ${inner}(x, det, out)? }", sp)
+          e.ln("  Ok(())", sp)
+          e.ln("}", sp)
+        }
+        return Some((h, e))
+      }
+      if path.len() == 1 && args.len() == 2 && n == "Map" {
+        let (inner, e2) = c.cbor_putter(args[1], sp, e, done) ?? return None
+        e = e2
+        if !done.contains(h) {
+          done[h] = true
+          // cbor_wr__'s order (sorted_keys), and the encoder's when det
+          e.ln("${sig} {", sp)
+          e.ln("  cbor.put_head(out, 5, v.len())", sp)
+          e.ln("  let ks = if det { cbor.det_keys(v.keys()) } else { cbor.sorted_keys(v.keys()) }", sp)
+          e.ln("  for k in ks {", sp)
+          e.ln("    cbor.put_text(out, k)", sp)
+          e.ln("    ${inner}(v.get(k) ?? fault(\"cbor: map key\"), det, out)?", sp)
+          e.ln("  }", sp)
+          e.ln("  Ok(())", sp)
+          e.ln("}", sp)
+        }
+        return Some((h, e))
+      }
+      let q = if path.len() == 2 { "${text(path[0].name)}." } else { "" }
+      return Some(("${q}cbor_put__${n}", e))
+    }
+    _ => return None
+  }
+}
+
+/// A CBOR head's bytes (major type, argument n >= 0), for keys written at derive time.
+fn cbor_head_bytes(major: Int, n: Int) -> List[Int] {
+  let m = major << 5
+  if n < 24 {
+    return [m | n]
+  }
+  var w = 8
+  var ai = 27
+  if n < 256 {
+    w = 1
+    ai = 24
+  } else if n < 65536 {
+    w = 2
+    ai = 25
+  } else if n < 4294967296 {
+    w = 4
+    ai = 26
+  }
+  var out = [m | ai]
+  var i = w - 1
+  while i >= 0 {
+    out.push((n >> (8 * i)) & 255)
+    i -= 1
+  }
+  out
+}
+
+/// A key's encoding: the text key's head and bytes, or the integer's.
+fn cbor_key_bytes(key: Str, asint: Bool, ki: Int) -> List[Int] {
+  if asint {
+    if ki >= 0 {
+      return cbor_head_bytes(0, ki)
+    }
+    return cbor_head_bytes(1, -1 - ki)
+  }
+  var out = cbor_head_bytes(3, key.len())
+  for b in key.bytes() {
+    out.push(Int(b))
+  }
+  out
+}
+
+/// Bytes literal source for bs (every byte as \xNN).
+fn cbor_bytes_lit(bs: List[Int]) -> Str {
+  let hex = "0123456789abcdef"
+  var out = "b\""
+  for b in bs {
+    out = "${out}\\x${hex[(b >> 4)..(b >> 4) + 1]}${hex[(b & 15)..(b & 15) + 1]}"
+  }
+  "${out}\""
+}
+
+/// RFC 8949 4.2.1's order of two encoded keys: bytewise, a prefix first.
+fn cbor_key_less(a: List[Int], b: List[Int]) -> Bool {
+  var i = 0
+  while i < a.len() && i < b.len() {
+    if a[i] != b[i] {
+      return a[i] < b[i]
+    }
+    i += 1
+  }
+  a.len() < b.len()
+}
+
 /// A field's CBOR struct tag, from its shared `as "name,options"` wire name or
 /// its own `cbor "name,options"`: the key, and the options omitempty, omitzero,
 /// keyasint; a wire name `-` leaves the field out.
@@ -1392,6 +1554,11 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   var pos_rd: List[Str] = []
   var pos_wr: List[Str] = []
   var pos_f: List[Str] = []
+  var pos_pt: List[Str] = []
+  // the direct writer's fields (decision 0559): key encoding, write line, omit test
+  var put_keys: List[List[Int]] = []
+  var put_lines: List[Str] = []
+  var put_omit: List[Str] = []
   for fl in sd.fields {
     let f = text(fl.name.name)
     let co = cbor_opts(fl, rule)
@@ -1411,6 +1578,8 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
     e = e2
     let (wr, e3) = c.cbor_writer(fl.typ, fl.name.span, e, done) ?? return None
     e = e3
+    let (pt, e4) = c.cbor_putter(fl.typ, fl.name.span, e, done) ?? return None
+    e = e4
     zeros.push("${f}: ${zero}")
     inits.push("${f}: f_${f}")
     if co.skip {
@@ -1419,10 +1588,12 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
     }
     pos_rd.push(rd)
     pos_wr.push(wr)
+    pos_pt.push(pt)
     pos_f.push(f)
     let tx = yaml_type_text(fl.typ) ?? "Str"
     decls.push("  var f_${f}: ${tx} = base.${f}")
     var keyval = ""
+    var kb = cbor_key_bytes(co.key, false, 0)
     if co.keyasint {
       let ki = Int.parse(co.key) ?? {
         c.error_at(file, "XO0425", fl.name.span, "`keyasint` needs an integer wire name; `${co.key}` is not one (decision 0527)")
@@ -1430,6 +1601,7 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
         continue
       }
       keyval = "cbor.from_int(${ki})"
+      kb = cbor_key_bytes("", true, ki)
       iarms.push("      ${if iarms.is_empty() { "" } else { "else " }}if i == ${ki} { idx = ${nfound} }")
     } else {
       keyval = "cbor.Value.TextString(s: ${quote_str(co.key)})"
@@ -1452,8 +1624,13 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
         continue
       }
       line = "  if !(${zt}) { ps.push((${keyval}, ${wr}(v.${f}))) }"
+      put_omit.push(zt)
+    } else {
+      put_omit.push("")
     }
     puts.push(line)
+    put_keys.push(kb)
+    put_lines.push("out.write(${cbor_bytes_lit(kb)}); ${pt}(v.${f}, det, out)?")
   }
   if !ok {
     return None
@@ -1484,6 +1661,13 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
       e.ln("  out.push(${pos_wr[j]}(v.${f}))", sp)
     }
     e.ln("  cbor.Value.Array(items: out)", sp)
+    e.ln("}", sp)
+    e.ln("${pub_}fn cbor_put__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr {", sp)
+    e.ln("  cbor.put_head(out, 4, ${pos_f.len()})", sp)
+    for (j, f) in pos_f.indexed() {
+      e.ln("  ${pos_pt[j]}(v.${f}, det, out)?", sp)
+    }
+    e.ln("  Ok(())", sp)
     e.ln("}", sp)
     return Some(c.cbor_entries(n, pub_, sp, e))
   }
@@ -1532,6 +1716,7 @@ fn (var c: Checker) cbor_codec(sd: parser.StructDecl, em: Emit, var done: Map[St
   }
   e.ln("  cbor.Value.Map(pairs: ps)", sp)
   e.ln("}", sp)
+  e = c.cbor_struct_put(n, pub_, sp, e, put_keys, put_lines, put_omit)
   Some(c.cbor_entries(n, pub_, sp, e))
 }
 
@@ -1900,12 +2085,75 @@ fn (var c: Checker) proto_codec(sd: parser.StructDecl, em: Emit, file: Int, enum
   Some(e)
 }
 
+/// A map struct's direct writer `cbor_put__N` (decision 0559): the key of each
+/// field a constant, the fields in declaration order, and when det in RFC 8949
+/// 4.2.1's order of their encoded keys, both computed here; a field with an omit
+/// test is counted out of the map's head before the fields are written.
+fn (var c: Checker) cbor_struct_put(n: Str, pub_: Str, sp: Span, em: Emit, keys: List[List[Int]], lines: List[Str], omit: List[Str]) -> Emit {
+  var e = em
+  var canon: List[Int] = []
+  for i in 0..keys.len() {
+    var at = canon.len()
+    while at > 0 && cbor_key_less(keys[i], keys[canon[at - 1]]) {
+      at -= 1
+    }
+    canon.insert(at, i)
+  }
+  var same = true
+  for (j, i) in canon.indexed() {
+    if i != j {
+      same = false
+    }
+  }
+  e.ln("${pub_}fn cbor_put__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr {", sp)
+  var any_omit = false
+  for t in omit {
+    if !t.is_empty() {
+      any_omit = true
+    }
+  }
+  if any_omit {
+    e.ln("  var cnt = ${keys.len()}", sp)
+    for t in omit {
+      if !t.is_empty() {
+        e.ln("  if ${t} { cnt -= 1 }", sp)
+      }
+    }
+    e.ln("  cbor.put_head(out, 5, cnt)", sp)
+  } else {
+    e.ln("  cbor.put_head(out, 5, ${keys.len()})", sp)
+  }
+  let one = fn(i: Int) -> Str {
+    if omit[i].is_empty() { "  ${lines[i]}" } else { "  if !(${omit[i]}) { ${lines[i]} }" }
+  }
+  if same {
+    for i in 0..keys.len() {
+      e.ln(one(i), sp)
+    }
+  } else {
+    e.ln("  if det {", sp)
+    for i in canon {
+      e.ln("  ${one(i)}", sp)
+    }
+    e.ln("  } else {", sp)
+    for i in 0..keys.len() {
+      e.ln("  ${one(i)}", sp)
+    }
+    e.ln("  }", sp)
+  }
+  e.ln("  Ok(())", sp)
+  e.ln("}", sp)
+  e
+}
+
 /// `cbor_marshal__N`, `cbor_unmarshal__N` and `cbor_unmarshal_prefix__N`, over the
 /// struct's `cbor_wr__N` and `cbor_rd__N`.
 fn (var c: Checker) cbor_entries(n: Str, pub_: Str, sp: Span, em: Emit) -> Emit {
   var e = em
   e.ln("${pub_}fn cbor_marshal__${n}(v: ${n}, deterministic: Bool = true) -> Bytes ! cbor.CborErr {", sp)
-  e.ln("  cbor.encode(cbor_wr__${n}(v), deterministic)", sp)
+  e.ln("  var out = BytesBuilder.new()", sp)
+  e.ln("  cbor_put__${n}(v, deterministic, out)?", sp)
+  e.ln("  Ok(out.freeze())", sp)
   e.ln("}", sp)
   e.ln("${pub_}fn cbor_unmarshal__${n}(data: Bytes, strict: Bool = false, max_depth: Int = 128) -> ${n} ! cbor.CborErr {", sp)
   e.ln("  let x = cbor.decode(data, max_depth, false)?", sp)
@@ -2033,6 +2281,7 @@ fn (var c: Checker) cbor_enum_codec(ed: parser.EnumDecl, em: Emit, var done: Map
     return None
   }
   e.ln("fn cbor_zero__${n}() -> ${n} { ${zero} }", sp)
+  e.ln("fn cbor_put__${n}(v: ${n}, det: Bool, var out: BytesBuilder) -> () ! cbor.CborErr { cbor.put_value(out, cbor_wr__${n}(v), det) }", sp)
   e.ln("fn cbor_wr__${n}(v: ${n}) -> cbor.Value {", sp)
   e.ln("  match v {", sp)
   for w in wr {

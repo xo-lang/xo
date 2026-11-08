@@ -7164,7 +7164,12 @@ fn from_json(j: json.Value) -> Value
   - `marshal` writes a map of the fields (keys sorted when `deterministic`),
     Float in the shortest form, Time as integer seconds or, with a fraction,
     a float (fxamacker's TimeUnixDynamic), Duration as integer nanoseconds,
-    None as null.
+    None as null. Its generated code writes the encoding directly, with no
+    `Value` tree (decision 0559), through std/cbor's helpers for generated
+    code: `put_head(out, major, n)`, `put_int`, `put_float`, `put_text`,
+    `put_bytes` (each appends one item to a `BytesBuilder`), `put_value(out,
+    v, deterministic)` (a `Value` field, as `encode` writes it) and
+    `det_keys(keys)` (text keys in the deterministic order).
   - `unmarshal` matches a text key exactly, then ignoring case, and the first
     key to reach a field wins; a `keyasint` field also takes its number as
     text. Null leaves a field alone; tags are transparent after fxamacker's

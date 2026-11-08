@@ -144,5 +144,14 @@ fn to_time(v: Value, var st: Unm) -> (Bool, Time)
 fn to_duration(v: Value, var st: Unm) -> (Bool, Duration)
 fn from_time(t: Time) -> Value
 fn from_duration(d: Duration) -> Value
+// The direct writers of the generated code (decision 0559): `marshal` of a
+// derived type writes its encoding with these, without a Value tree.
+fn put_head(var out: BytesBuilder, major: Int, n: Int)
+fn put_int(var out: BytesBuilder, n: Int)
+fn put_float(var out: BytesBuilder, f: Float)
+fn put_text(var out: BytesBuilder, s: Str)
+fn put_bytes(var out: BytesBuilder, b: Bytes)
+fn put_value(var out: BytesBuilder, v: Value, deterministic: Bool) -> () ! CborErr
+fn det_keys(keys: List[Str]) -> List[Str]
 fn bad_arity(var st: Unm, want: Str, got: Int, need: Int)
 fn bad_variant(var st: Unm, want: Str, got: Str)
