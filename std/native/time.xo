@@ -1283,14 +1283,14 @@ const TWO_DIGITS: Str = "0001020304050607080910111213141516171819202122232425262
 /// digits of -n padded to w - 1), as pad.
 fn put_num(var out: BytesBuilder, n: Int, w: Int) {
   if w == 2 && n >= 0 && n < 100 {
-    out.write_str(TWO_DIGITS[n * 2..n * 2 + 2])
+    // both digit bytes in one little endian store
+    out.write_le(0x3030 + n / 10 + (n % 10 << 8), 2)
     return
   }
   if w == 4 && n >= 0 && n < 10000 {
     let hi = n / 100
     let lo = n % 100
-    out.write_str(TWO_DIGITS[hi * 2..hi * 2 + 2])
-    out.write_str(TWO_DIGITS[lo * 2..lo * 2 + 2])
+    out.write_le(0x30303030 + hi / 10 + (hi % 10 << 8) + (lo / 10 << 16) + (lo % 10 << 24), 4)
     return
   }
   if n < 0 {
