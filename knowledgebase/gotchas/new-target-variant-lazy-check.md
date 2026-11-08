@@ -22,8 +22,8 @@ code it never calls stays unchecked.
 
 After adding a variant, list every exhaustive match on the enum, not the
 checker's errors: a scan of each `match target.arch {` block for an arm
-naming the variant or `_ =>` (stage 1 of 0571 used a short Python scan;
-`xo refs TargetArch.Amd64` lists the arms of the old variants). Then give
+naming the variant or `_ =>` (stage 1 of 0571 used a short Python scan
+over std/ and compiler/). Then give
 each the right arm by reading it: most take an existing arch's value
 (the asm-generic system call numbers are arm64's), some differ (the
 generic open flags are x86_64's).
