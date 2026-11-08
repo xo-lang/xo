@@ -357,13 +357,13 @@ fn (var g: G) box_op(v: Int) {
   let x = g.f.values[v]
   let a = x.args[0]
   let n = g.nwords(g.vty(a))
-  if BOX_HDR + 8 * n > 32760 {
-    g.fail("box of `${g.tname(g.vty(a))}` (too many words)")
-  }
   let p = g.rt("xo_x_obj_rc_alloc", [isrc(BOX_HDR + 8 * n)], [false])[0]
   g.store("str $u0, [$u1]", [g.cimm(1), p])
   for (k, w) in g.store_words(a).indexed() {
-    g.store("str $u0, [$u1, #${BOX_HDR + 8 * k}]", [w, p])
+    // past 32760 bytes through an add (mem_at; a recursive value of
+    // thousands of words, 2026-11-07)
+    let (base, off) = g.mem_at(p, BOX_HDR + 8 * k)
+    g.store("str $u0, [$u1, #${off}]", [w, base])
   }
   g.set(v, [p])
 }
@@ -374,7 +374,8 @@ fn (var g: G) unbox_op(v: Int) {
   let p = g.word(x.args[0])
   var ws: List[Int] = []
   for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
-    ws.push(g.def1(fp, "ldr $d0, [$u0, #${BOX_HDR + 8 * k}]", [p]))
+    let (base, off) = g.mem_at(p, BOX_HDR + 8 * k)
+    ws.push(g.def1(fp, "ldr $d0, [$u0, #${off}]", [base]))
   }
   g.set(v, ws)
 }
@@ -502,11 +503,8 @@ fn (var g: G) eq_helper(t: Int) -> Str {
     Struct | Tuple | Enum => {
       let n = g.nwords(t)
       frame = align16(32 + 16 * n)
-      // eq_at reads both values at scaled offsets of at most 32760; a
-      // frame of 4 KiB or more is lowered page by page (frame_down)
-      if 8 * n > 32760 {
-        g.fail("equality of `${g.tname(t)}` (too many words)")
-      }
+      // eq_at reads both values at any offset (mem_at); a frame of 4
+      // KiB or more is lowered page by page (frame_down)
       g.frame_down(b, frame, "")
       b.push("\tstp x29, x30, [sp]\n\tmov x29, sp\n\tstp x20, x19, [sp, #16]\n")
       for w in 0..2 * n {
@@ -548,30 +546,30 @@ fn (var g: G) eq_at(var b: List[Str], t: Int, ra: Str, rb: Str, off: Int, no: St
       if byte {
         b.push("\tldrb w9, [${ra}, #${off}]\n\tldrb w10, [${rb}, #${off}]\n")
       } else {
-        b.push("\tldr x9, [${ra}, #${off}]\n\tldr x10, [${rb}, #${off}]\n")
+        b.push("${mem_at("ldr", "x9", ra, off)}${mem_at("ldr", "x10", rb, off)}")
       }
       b.push("\tcmp x9, x10\n\tb.ne ${no}\n")
     }
     Float => {
       // unordered (NaN) sets ne: NaN is unequal to everything
-      b.push("\tldr d0, [${ra}, #${off}]\n\tldr d1, [${rb}, #${off}]\n\tfcmp d0, d1\n\tb.ne ${no}\n")
+      b.push("${mem_at("ldr", "d0", ra, off)}${mem_at("ldr", "d1", rb, off)}\tfcmp d0, d1\n\tb.ne ${no}\n")
     }
     Str => {
       // the data of a view starts off bytes in, its length is the low half of
       // the second word (decision 0330)
       if g.inl_str() {
         // a field may be an inline Str (decision 0370): the runtime compares the words
-        b.push("\tldr x0, [${ra}, #${off}]\n\tldr x1, [${ra}, #${off + 8}]\n\tldr x2, [${rb}, #${off}]\n\tldr x3, [${rb}, #${off + 8}]\n")
+        b.push("${mem_at("ldr", "x0", ra, off)}${mem_at("ldr", "x1", ra, off + 8)}${mem_at("ldr", "x2", rb, off)}${mem_at("ldr", "x3", rb, off + 8)}")
         b.push("\tbl ${g.sym("xo_x_inl_eq")}\n\tcbz w0, ${no}\n")
       } else {
-        b.push("\tldr x0, [${ra}, #${off}]\n\tldr x1, [${ra}, #${off + 8}]\n\tadd x0, x0, x1, lsr #32\n\tadd x0, x0, #16\n\tmov w1, w1\n")
-        b.push("\tldr x2, [${rb}, #${off}]\n\tldr x3, [${rb}, #${off + 8}]\n\tadd x2, x2, x3, lsr #32\n\tadd x2, x2, #16\n\tmov w3, w3\n")
+        b.push("${mem_at("ldr", "x0", ra, off)}${mem_at("ldr", "x1", ra, off + 8)}\tadd x0, x0, x1, lsr #32\n\tadd x0, x0, #16\n\tmov w1, w1\n")
+        b.push("${mem_at("ldr", "x2", rb, off)}${mem_at("ldr", "x3", rb, off + 8)}\tadd x2, x2, x3, lsr #32\n\tadd x2, x2, #16\n\tmov w3, w3\n")
         b.push("\tbl ${g.sym("xo_x_obj_str_eq")}\n\tcbz w0, ${no}\n")
       }
     }
     List | Box => {
       let h = g.eq_helper(t)
-      b.push("\tldr x0, [${ra}, #${off}]\n\tldr x1, [${rb}, #${off}]\n\tbl ${h}\n\tcbz x0, ${no}\n")
+      b.push("${mem_at("ldr", "x0", ra, off)}${mem_at("ldr", "x1", rb, off)}\tbl ${h}\n\tcbz x0, ${no}\n")
     }
     Struct => {
       for i in 0..x.fields.len() {
@@ -586,7 +584,7 @@ fn (var g: G) eq_at(var b: List[Str], t: Int, ra: Str, rb: Str, off: Int, no: St
       }
     }
     Enum => {
-      b.push("\tldr x9, [${ra}, #${off}]\n\tldr x10, [${rb}, #${off}]\n\tcmp x9, x10\n\tb.ne ${no}\n")
+      b.push("${mem_at("ldr", "x9", ra, off)}${mem_at("ldr", "x10", rb, off)}\tcmp x9, x10\n\tb.ne ${no}\n")
       let end = g.helper_label("eq_tag")
       for (vi, vr) in x.variants.indexed() {
         var words = 0
@@ -598,7 +596,7 @@ fn (var g: G) eq_at(var b: List[Str], t: Int, ra: Str, rb: Str, off: Int, no: St
         }
         let next = g.helper_label("eq_var")
         // the tag again: comparing a field may have called a function
-        b.push("\tldr x9, [${ra}, #${off}]\n\tcmp x9, #${vi}\n\tb.ne ${next}\n")
+        b.push("${mem_at("ldr", "x9", ra, off)}\tcmp x9, #${vi}\n\tb.ne ${next}\n")
         for (fi, f) in vr.fields.indexed() {
           let (po, _) = g.payload_words(t, vi, fi)
           g.eq_at(b, f.ty, ra, rb, off + 8 * po, no, false)

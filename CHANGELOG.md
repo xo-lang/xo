@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- compiler (fix): the native backends build a recursive value (a Box) of more than 32760 bytes of words and compare structs, tuples and enums of that size (`box of ... (too many words)`, `equality of ... (too many words)`); LLVM already did
 - std/cli (feature): `cli.command(..., stop_at_positional: true)` ends the flags at the first positional argument, as Go's flag package does, so a ported Go tool reads `tool file -64` as Go did (decision 0556); off by default.
 - compiler (fix): the native backends (arm64 and amd64) build a closure that captures more than 32760 bytes of words, such as a fault frame's parameters over a generated GCP client's service (aiplatform/v1 `ProjectsService.get_cache_config` failed "captures too many words"); LLVM already did
 - compiler (perf): a small List[Str] or List[List] literal passed to a function stays in the caller's frame, and the callee copies it to the heap only on a path that keeps it (decision 0554, native backends): bench/perf/metrics counter 0.760 and histogram 0.756 of their wall time on linux/arm64 (`c.inc([label])` no longer allocates); xo's self build within noise
