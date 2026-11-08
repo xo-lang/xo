@@ -103,6 +103,7 @@ pub fn pe_imports() -> Map[Str, Str] {
     "InitializeProcThreadAttributeList": "KERNEL32.dll",
     "InitializeSRWLock": "KERNEL32.dll",
     "IsDebuggerPresent": "KERNEL32.dll",
+    "IsProcessorFeaturePresent": "KERNEL32.dll",
     "K32GetProcessMemoryInfo": "KERNEL32.dll",
     "LeaveCriticalSection": "KERNEL32.dll",
     "LocalFree": "KERNEL32.dll",

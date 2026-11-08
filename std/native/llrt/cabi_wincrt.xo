@@ -83,6 +83,18 @@ fn getpid() -> Int32 {
 /// command line and environment, entry.xo), then the process ends with
 /// its status (returning would end only this thread).
 fn xo_win_start() -> Int {
+  match target.arch {
+    TargetArch.Arm64 => {
+      // ARMv8.1's LSE atomics (PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE)
+      // for the outline atomics' dispatch (compiler/xo link.xo
+      // win_arm64_atomics defines xo_lse), as Linux's AT_HWCAP test
+      // (cabi_nolibc.xo nl_start)
+      if Int(sys_windows.IsProcessorFeaturePresent(34)) != 0 {
+        rt.mem_store(rt.sym_addr("xo_lse"), 0, 1, 1)
+      }
+    }
+    TargetArch.Amd64 | TargetArch.Wasm32 => {}
+  }
   entry.init()
   let code = entry.main(0, 0, 0, rt.sym_addr("xo_entry"), 1)
   match target.os {

@@ -329,6 +329,9 @@ fn GetComputerNameExW(kind: Int, buf: Int, size: Int) -> Int32
 fn Process32FirstW(snap: Int, e: Int) -> Int32
 fn Process32NextW(snap: Int, e: Int) -> Int32
 fn GetCurrentThreadId() -> UInt32
+/// IsProcessorFeaturePresent: nonzero when the CPU has the feature
+/// (PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE 34: ARMv8.1's LSE atomics).
+fn IsProcessorFeaturePresent(feature: Int) -> Int32
 /// CreateWaitableTimerExW: a timer handle, or 0
 /// (CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 2 in flags, Windows 10 1803).
 fn CreateWaitableTimerExW(security: Int, name: Int, flags: Int, access: Int) -> Int

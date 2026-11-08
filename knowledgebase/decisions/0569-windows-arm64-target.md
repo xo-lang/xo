@@ -38,9 +38,11 @@ The link half (2026-11-08): `xo build --backend=arm64
 --targets=windows/arm64` writes an ARM64 PE from any host. clang
 (`--target=aarch64-pc-windows-msvc`) assembles each part, the zone
 data, the build information and the outline atomics
-(link.xo win_arm64_atomics: the load and store exclusive loops only,
-since nothing sets xo_lse on Windows yet; IsProcessorFeaturePresent's
-PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE would). Xo's PE linker links
+(link.xo win_arm64_atomics: each tests xo_lse and takes the LSE
+instruction or the load and store exclusive loop, as on Linux;
+cabi_wincrt.xo xo_win_start sets xo_lse from IsProcessorFeaturePresent's
+PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE, 34; no XO_LSE=0 override
+there yet). Xo's PE linker links
 them with no C runtime (link.xo nolibc is always true for
 windows/arm64, so cabi_wincrt.xo's xo_win_start is the entry). pelink
 reads 0xAA64 objects and applies the ARM64 relocations as lld-link does
