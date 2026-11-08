@@ -223,6 +223,11 @@ fn msg_json(r: protojson.Registry, info: protojson.MsgInfo, wire: Bytes, o: prot
     }
   }
   let fl = walk_(wire)?
+  for fd in info.d.field {
+    if fd.label == protodesc.LABEL_REQUIRED && !fl.any(fn(f: pd.Fld) -> Bool { f.num == fd.number }) {
+      return Err(jerr("required field ${fd.name} not set"))
+    }
+  }
   // the member of each oneof that was set last on the wire wins
   var win: Map[Int, Int] = {}
   for f in fl {
@@ -1656,6 +1661,7 @@ fn msg_wire_obj(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: proto
     Null | Bool(_) | Num(_) | Text(_) | Arr(_) => return Err(jerr("unexpected token"))
   }
   var seen: Map[Int, Bool] = {}
+  var given: Map[Int, Bool] = {}
   var oneofs: Map[Int, Bool] = {}
   var recs: List[(Int, Bytes)] = []
   for m in members {
@@ -1679,6 +1685,7 @@ fn msg_wire_obj(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: proto
     if is_null(v) && !is_value_field(fd) && !is_nullvalue_field(fd) {
       continue
     }
+    given.put(fd.number, true)
     var order = fd.number
     var real_oneof = false
     match fd.oneof_index {
@@ -1699,6 +1706,13 @@ fn msg_wire_obj(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: proto
     let b = enc_field(r, info, fd, v, o, real_oneof)?
     if !b.is_empty() {
       recs.push((order, b))
+    }
+  }
+  // proto2's required fields (Go's protojson reports the first missing one; a message of an Any is checked
+  // too, as proto.CheckInitialized does)
+  for fd in info.d.field {
+    if fd.label == protodesc.LABEL_REQUIRED && !given.contains(fd.number) {
+      return Err(jerr("required field ${fd.name} not set"))
     }
   }
   let sorted = recs.sort_by(fn(e: (Int, Bytes)) -> Int { e.0 })

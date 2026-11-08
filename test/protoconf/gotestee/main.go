@@ -109,6 +109,13 @@ func main() {
 	if err := proto.Unmarshal(setb, &set); err != nil {
 		panic(err)
 	}
+	// protobuf-go refuses a MessageSet (a legacy proto1 feature) when it builds descriptors, and the proto2
+	// conformance file has two: their option is cleared so the other messages load
+	for _, f := range set.File {
+		for _, m := range f.MessageType {
+			clearMessageSet(m)
+		}
+	}
 	files, err := protodesc.NewFiles(&set)
 	if err != nil {
 		panic(err)
@@ -132,5 +139,14 @@ func main() {
 		binary.LittleEndian.PutUint32(head[:], uint32(len(out)))
 		os.Stdout.Write(head[:])
 		os.Stdout.Write(out)
+	}
+}
+
+func clearMessageSet(m *descriptorpb.DescriptorProto) {
+	if m.Options != nil {
+		m.Options.MessageSetWireFormat = nil
+	}
+	for _, n := range m.NestedType {
+		clearMessageSet(n)
 	}
 }
