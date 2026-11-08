@@ -235,6 +235,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [snprintf-int-formatting-cost.md](snprintf-int-formatting-cost.md): `snprintf("%lld")` dominated Int interpolation in the LLVM runtime (4x slower workload); use a digit loop.
 - [arm64-stp-pair-order.md](arm64-stp-pair-order.md): on Apple M4, `stp x19, x20` for callee saved registers made recursive fib 1.4x slower than `stp x20, x19`; store pairs high register first.
 - [arm64-loop-carried-store-forwarding.md](arm64-loop-carried-store-forwarding.md): a list length stored and reloaded every push iteration bound the native sieve on store to load forwarding; keep loop carried values in registers.
+- [arm64-windows-seh-llvm-checks.md](arm64-windows-seh-llvm-checks.md): llvm checks ARM64 .seh directives one per instruction, and a .p2align in a function fails the whole file
 - [arm64-zero-word-values.md](arm64-zero-word-values.md): `()` and capabilities have no words in the native backend; check the type before reading word 0.
 - [arm64-cheap-constants-across-blocks.md](arm64-cheap-constants-across-blocks.md): sharing one instruction constants across blocks blocks coalescing and costs a register and a copy; make them again per block.
 - [arm64-nested-helper-labels.md](arm64-nested-helper-labels.md): a helper generator that recurses must take its label number before the recursion advances the shared counter (duplicate `Lxo_drop6_v1`).

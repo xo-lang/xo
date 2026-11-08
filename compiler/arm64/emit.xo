@@ -242,6 +242,22 @@ fn (var g: G) emit() {
     fr.mem_off = fr.spill_base + 8 * g.slots
     fr.size = align16(fr.mem_off + g.mem_bytes)
   }
+  if g.win_a64() {
+    // windows/arm64 (decision 0569): the saved registers and the frame
+    // record at the frame's top, made by a first allocation so every
+    // unwind code's offset is small (save_regp reaches 504 bytes), then
+    // the rest by a second (win_prologue); a far frame's slots past sp's
+    // reach go through x28 as elsewhere (far_slots_l), its saves do not
+    fr.out_off = fr.out_args
+    fr.spill_base = fr.out_off
+    if g.out {
+      fr.spill_base += 8
+    }
+    fr.mem_off = align16(fr.spill_base + 8 * g.slots)
+    fr.save_base = align16(fr.mem_off + g.mem_bytes)
+    fr.rec = align16(fr.save_base + 8 * g.saved.len())
+    fr.size = fr.rec + 16
+  }
   if fr.leaf {
     fr.size = 0
   }
@@ -406,13 +422,29 @@ fn (var g: G) emit() {
     // personality and its own call site table, whose offsets count from
     // the region's start, and each stub lands on a pad entry there that
     // undoes the stub's frame record (leaf_pad_entry)
-    b.push("\t.cfi_endproc\n\t.cfi_startproc\n")
-    if !g.stub_sites.is_empty() {
-      b.push("${g.stubs_begin()}:\n")
-      g.cfi_personality(b)
-      stub_lsda = true
+    if g.win_a64() {
+      // windows/arm64: the stubs are a function fragment of their own
+      // (its own .pdata entry), whose codes say each stub's frame record.
+      // The fragment's prologue is the two instructions every stub starts
+      // with, written once at its start for the codes (the assembler
+      // counts them) and never run: only branches to a stub enter it
+      b.push("\t.seh_endproc\n")
+      let fs = "${g.fname(g.f.name)}_xofs"
+      b.push("${fs}:\n${g.stubs_begin()}:\n\t.seh_proc ${fs}\n")
+      if !g.stub_sites.is_empty() {
+        b.push("\t.seh_handler ${g.sym(personality_name(g.os))}, @unwind, @except\n")
+        stub_lsda = true
+      }
+      b.push("\tstp x29, x30, [sp, #-16]!\n\t.seh_save_fplr_x 16\n\tmov x29, sp\n\t.seh_set_fp\n\t.seh_endprologue\n")
+    } else {
+      b.push("\t.cfi_endproc\n\t.cfi_startproc\n")
+      if !g.stub_sites.is_empty() {
+        b.push("${g.stubs_begin()}:\n")
+        g.cfi_personality(b)
+        stub_lsda = true
+      }
+      b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
     }
-    b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
   }
   // the body's end, before the fault stubs: the variables' ranges past
   // its last instruction end here (at the function's end, past the
@@ -444,16 +476,25 @@ fn (var g: G) emit() {
     }
     g.dbgs.push("${g.f.file}\t${g.f.name}\t${g.func_begin()}\t${end}\t${(g.dl_rows + g.dl_stub_rows).join(";")}\t${sites.join(";")}\t${g.dv_field(dvp, dv_labels)}")
   }
-  b.push("\t.cfi_endproc\n")
   let sites = g.sites + g.stub_sites
   var ext = ""
-  // cfi_start named the table whenever an instruction has a pad, also
-  // when no call site with one was emitted (2026-10-22: with every
-  // optional pass off, G.str_data's table was missing and the link failed
-  // on a difference with an undefined label): an empty table then
-  if (pads && !g.fr.leaf) || stub_lsda || !sites.is_empty() {
-    g.lsda(sites, if stub_lsda { g.stubs_begin() } else { g.func_begin() })
-    ext = g.lsdas[g.lsdas.len() - 1]
+  if g.win_a64() {
+    // the call site table as the handler's data (x86win.xo seh_end's
+    // form), from the region's start
+    if (pads && !g.fr.leaf) || stub_lsda {
+      g.win_sites(b, sites, if stub_lsda { g.stubs_begin() } else { g.func_begin() })
+    }
+    b.push("\t.seh_endproc\n")
+  } else {
+    b.push("\t.cfi_endproc\n")
+    // cfi_start named the table whenever an instruction has a pad, also
+    // when no call site with one was emitted (2026-10-22: with every
+    // optional pass off, G.str_data's table was missing and the link failed
+    // on a difference with an undefined label): an empty table then
+    if (pads && !g.fr.leaf) || stub_lsda || !sites.is_empty() {
+      g.lsda(sites, if stub_lsda { g.stubs_begin() } else { g.func_begin() })
+      ext = g.lsdas[g.lsdas.len() - 1]
+    }
   }
   b.push("\n")
   // the function's text split into lines once for the passes after it,
@@ -814,6 +855,11 @@ fn (g: G) prologue(var b: List[Str]) {
   if fr.leaf {
     return
   }
+  if g.win_a64() {
+    g.win_prologue(b)
+    g.poison_frame(b)
+    return
+  }
   if fr.rec == 0 && fr.size <= 504 {
     b.push("\tstp x29, x30, [sp, #-${fr.size}]!\n\tmov x29, sp\n")
   } else {
@@ -933,6 +979,10 @@ fn (g: G) framed_here() -> Bool {
 fn (g: G) unframe(var b: List[Str]) {
   let fr = g.fr
   if !g.framed_here() {
+    return
+  }
+  if g.win_a64() {
+    g.win_unframe(b)
     return
   }
   g.saves(b, "ldr", "ldp")
@@ -2076,6 +2126,14 @@ fn (var g: G) call_site_labels() -> (Str, Str) {
 /// and the call site table.
 fn (var g: G) cfi_start(var b: List[Str], pads: Bool) {
   b.push("${g.func_begin()}:\n")
+  if g.win_a64() {
+    // windows/arm64: .seh directives (win_prologue) in place of CFI
+    b.push("\t.seh_proc ${g.fname(g.f.name)}\n")
+    if pads {
+      b.push("\t.seh_handler ${g.sym(personality_name(g.os))}, @unwind, @except\n")
+    }
+    return
+  }
   b.push("\t.cfi_startproc\n")
   if pads {
     g.cfi_personality(b)
@@ -2125,6 +2183,10 @@ fn (g: G) lsda_label() -> Str {
 
 /// Describes the frame the prologue made.
 fn (g: G) cfi_frame(var b: List[Str]) {
+  if g.win_a64() {
+    b.push("\t.seh_endprologue\n")
+    return
+  }
   let fr = g.fr
   if fr.leaf {
     return

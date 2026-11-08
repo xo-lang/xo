@@ -34,10 +34,34 @@ pub fn unwind_resume_body() -> List[Str] {
   ["mov x16, x0", "ldp x19, x20, [x16, #152]", "ldp x21, x22, [x16, #168]", "ldp x23, x24, [x16, #184]", "ldp x25, x26, [x16, #200]", "ldp x27, x28, [x16, #216]", "ldp x29, x30, [x16, #232]", "ldr d8, [x16, #576]", "ldr d9, [x16, #584]", "ldr d10, [x16, #592]", "ldr d11, [x16, #600]", "ldr d12, [x16, #608]", "ldr d13, [x16, #616]", "ldr d14, [x16, #624]", "ldr d15, [x16, #632]", "ldr x17, [x16, #248]", "mov sp, x17", "ldp x0, x1, [x16, #0]", "ldr x17, [x16, #768]", "br x17"]
 }
 
+/// The body of xo_stack_switch on windows/arm64 (decision 0569, the
+/// LLVM emitter's arm64_win_switch): also the TEB's stack bounds (x18 + 8
+/// and + 16) and DeallocationStack (+ 0x1478) at 160, 168 and 176, as
+/// std/native/llrt/sched.xo fiber_frame lays out a new fiber's frame.
+fn stack_switch_body_windows() -> List[Str] {
+  ["sub sp, sp, #192", "stp x19, x20, [sp, #0]", "stp x21, x22, [sp, #16]", "stp x23, x24, [sp, #32]", "stp x25, x26, [sp, #48]", "stp x27, x28, [sp, #64]", "stp x29, x30, [sp, #80]", "stp d8, d9, [sp, #96]", "stp d10, d11, [sp, #112]", "stp d12, d13, [sp, #128]", "stp d14, d15, [sp, #144]", "ldr x9, [x18, #8]", "ldr x10, [x18, #16]", "stp x9, x10, [sp, #160]", "ldr x9, [x18, #0x1478]", "str x9, [sp, #176]", "mov x9, sp", "str x9, [x0]", "mov sp, x1", "ldp x9, x10, [sp, #160]", "str x9, [x18, #8]", "str x10, [x18, #16]", "ldr x9, [sp, #176]", "str x9, [x18, #0x1478]", "ldp x19, x20, [sp, #0]", "ldp x21, x22, [sp, #16]", "ldp x23, x24, [sp, #32]", "ldp x25, x26, [sp, #48]", "ldp x27, x28, [sp, #64]", "ldp x29, x30, [sp, #80]", "ldp d8, d9, [sp, #96]", "ldp d10, d11, [sp, #112]", "ldp d12, d13, [sp, #128]", "ldp d14, d15, [sp, #144]", "add sp, sp, #192", "ret"]
+}
+
+/// The address of this thread's xo_tlocal table in x9 on windows/arm64:
+/// the TEB's ThreadLocalStoragePointer (x18 + 88) at the module's
+/// _tls_index, plus xo_tlocal's offset in the TLS section (COFF has no
+/// tprel relocations; ssa.preempt_stub_arm64's windows form).
+/// (t and tw: a scratch register, as x and as w)
+fn win_tls_base(r: Str, t: Str, tw: Str) -> List[Str] {
+  ["ldr ${r}, [x18, #88]", "adrp ${t}, _tls_index", "ldr ${tw}, [${t}, :lo12:_tls_index]", "ldr ${r}, [${r}, ${t}, lsl #3]", "add ${r}, ${r}, :secrel_hi12:xo_tlocal", "add ${r}, ${r}, :secrel_lo12:xo_tlocal"]
+}
+
 /// One function of sched_asm: its symbol (global or not) and body.
 fn sched_fn(os: Str, name: Str, global: Bool, body: List[Str]) -> Str {
   var b: List[Str] = []
-  if os == "darwin" {
+  if os == "windows" {
+    // COFF: no symbol types, no hidden visibility (the image exports
+    // nothing it does not list)
+    if global {
+      b.push("\t.globl ${name}\n")
+    }
+    b.push("\t.p2align 2\n${name}:\n")
+  } else if os == "darwin" {
     if global {
       b.push("\t.globl _${name}\n")
     }
@@ -109,11 +133,11 @@ fn tlv_slow_body() -> List[Str] {
 fn sched_asm(os: Str, split: Bool) -> Str {
   var b: List[Str] = []
   b.push(if os == "darwin" { "\t.section __TEXT,__text,regular,pure_instructions\n" } else { "\t.text\n" })
-  b.push(sched_fn(os, "xo_stack_switch", true, stack_switch_body()))
+  b.push(sched_fn(os, "xo_stack_switch", true, if os == "windows" { stack_switch_body_windows() } else { stack_switch_body() }))
   // a new fiber's first frame holds its argument in x19 and its function
   // in x20 (std/native/llrt/sched.xo fiber_frame)
   if split {
-    b.push(if os == "darwin" { "\t.globl _xo_fiber_entry\n\t.private_extern _xo_fiber_entry\n" } else { "\t.globl xo_fiber_entry\n\t.hidden xo_fiber_entry\n" })
+    b.push(if os == "darwin" { "\t.globl _xo_fiber_entry\n\t.private_extern _xo_fiber_entry\n" } else if os == "windows" { "\t.globl xo_fiber_entry\n" } else { "\t.globl xo_fiber_entry\n\t.hidden xo_fiber_entry\n" })
   }
   // a fiber's outermost frame (fiber_frame zeroes its fp): on ELF, an
   // unwind entry whose return address is undefined, where gdb's
@@ -136,6 +160,18 @@ fn sched_asm(os: Str, split: Bool) -> Str {
     b.push("\t.quad 0\n".repeat(16))
     b.push("\t.section __DATA,__thread_vars,thread_local_variables\n\t.globl _xo_tlocal\n\t.p2align 3\n_xo_tlocal:\n")
     b.push("\t.quad __tlv_bootstrap\n\t.quad 0\n\t.quad _xo_tlocal_init\n")
+    return b.join("")
+  }
+  if os == "windows" {
+    let wtp = win_tls_base("x9", "x10", "w10")
+    b.push(sched_fn(os, "xo_tlocal_get", true, wtp + ["ldr x0, [x9, x0, lsl #3]", "ret"]))
+    b.push(sched_fn(os, "xo_tlocal_set", true, wtp + ["str x1, [x9, x0, lsl #3]", "ret"]))
+    b.push(sched_fn(os, "xo_tlocal_addr", true, wtp + ["mov x0, x9", "ret"]))
+    // 18 words, as windows/amd64's table (x86win.xo): the 16 of every
+    // table and --race's two
+    b.push("\t.section .tls$,\"dw\"\n\t.globl xo_tlocal\n\t.p2align 3\nxo_tlocal:\n")
+    b.push("\t.xword 0\n".repeat(18))
+    b.push("\t.text\n")
     return b.join("")
   }
   let tp = ["mrs x9, tpidr_el0", "add x9, x9, :tprel_hi12:xo_tlocal", "add x9, x9, :tprel_lo12_nc:xo_tlocal"]

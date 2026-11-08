@@ -430,7 +430,9 @@ fn (var g: G) shrink_plan() {
     return
   }
   g.shrink = false
-  if g.fr.leaf || g.base != 0 {
+  // windows/arm64: a prologue past the function's start is a fragment of
+  // its own to the unwind data (not written yet, decision 0569)
+  if g.fr.leaf || g.base != 0 || g.win_a64() {
     return
   }
   for b in g.order {

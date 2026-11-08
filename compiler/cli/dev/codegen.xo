@@ -24,7 +24,10 @@
 // its object in x16, which a linker veneer clobbers). A backend
 // key with an architecture, `// llvm/arm64: ...`, is checked only where
 // `xo asm` targets it (the host: LLVM's IR holds the target's inline
-// assembly, so arm64's AES rounds are not an x86_64 host's).
+// assembly, so arm64's AES rounds are not an x86_64 host's). A key with
+// a target, `// arm64@windows: ...`, is checked on the code `xo asm
+// --targets=windows/arm64` emits, on any host (decision 0569: the
+// windows/arm64 invariants, such as no write of x18, the TEB).
 
 use std/regexp
 use std/task
@@ -38,6 +41,8 @@ pub struct Pattern {
   pub backend: Str
   /// the architecture the pattern needs ("" for any)
   pub arch: Str = ""
+  /// the target whose code it checks ("" for the host's)
+  pub target: Str = ""
   pub re: Str
   /// true: the code must not match.
   pub negate: Bool = false
@@ -61,19 +66,21 @@ pub fn patterns(file: Str, src: Str) -> List[Pattern] {
       cur = t.trim_prefix("// func ").trim()
       continue
     }
-    for key in ["arm64", "amd64", "llvm", "llvm/arm64", "llvm/amd64"] {
+    for key in ["arm64", "amd64", "llvm", "llvm/arm64", "llvm/amd64", "arm64@windows"] {
       let head = "// ${key}: "
       if !t.starts_with(head) {
         continue
       }
-      let parts = key.split("/")
+      let (k, tgos) = key.cut("@") ?? (key, "")
+      let parts = k.split("/")
       let be = parts[0]
       let arch = parts.get(1) ?? ""
+      let target = if tgos.is_empty() { "" } else { "${tgos}/${be}" }
       for m in item.find_all(t[head.len()..]) {
         match item.captures(m) {
           Some(c) => {
             let re = unescape(c[2] ?? "")
-            out.push(Pattern{file: file, line: i + 1, func: cur, backend: be, arch: arch, re: re, negate: (c[1] ?? "") == "-"})
+            out.push(Pattern{file: file, line: i + 1, func: cur, backend: be, arch: arch, target: target, re: re, negate: (c[1] ?? "") == "-"})
           }
           None => {}
         }
@@ -259,18 +266,39 @@ fn codegen_one(os: Os, h: Host, xo: Str, d: Str, backend: Str) -> (Int, List[Str
   if ps.is_empty() {
     return (0, [])
   }
-  // the inline verify as the Go tests and xo dev goldens run it
-  let strict = os.env.get("XO_INLINE_STRICT") ?? "1"
-  let out = match os.proc.cmd(xo, ["asm", "--backend=${backend}", "--std=${h.std}", d]).set_env("XO_LLVM_SPLIT", "1").set_env("XO_INLINE_STRICT", strict).output() {
-    Ok(o) => o
-    Err(e) => return (ps.len(), ["xo asm: ${e}"])
+  // the host's code, then each other target's the patterns name
+  var targets: List[Str] = []
+  for p in ps {
+    if !targets.contains(p.target) {
+      targets.push(p.target)
+    }
   }
-  if out.code != 0 {
-    return (ps.len(), ["xo asm: ${(out.stderr.to_str() ?? "").trim()}"])
+  var fails: List[Str] = []
+  for tg in targets {
+    let tps = ps.filter(fn(p) { p.target == tg })
+    var args = ["asm", "--backend=${backend}", "--std=${h.std}"]
+    if !tg.is_empty() {
+      args.push("--targets=${tg}")
+    }
+    args.push(d)
+    // the inline verify as the Go tests and xo dev goldens run it
+    let strict = os.env.get("XO_INLINE_STRICT") ?? "1"
+    let out = match os.proc.cmd(xo, args).set_env("XO_LLVM_SPLIT", "1").set_env("XO_INLINE_STRICT", strict).output() {
+      Ok(o) => o
+      Err(e) => {
+        fails.push("xo asm: ${e}")
+        continue
+      }
+    }
+    if out.code != 0 {
+      fails.push("xo asm${if tg.is_empty() { "" } else { " --targets=${tg}" }}: ${(out.stderr.to_str() ?? "").trim()}")
+      continue
+    }
+    let code = out.stdout.to_str() ?? ""
+    var fns = functions(backend, code)
+    // `// func *`: the whole program
+    fns["*"] = code
+    fails = fails + verify(tps, fns)
   }
-  let code = out.stdout.to_str() ?? ""
-  var fns = functions(backend, code)
-  // `// func *`: the whole program
-  fns["*"] = code
-  (ps.len(), verify(ps, fns))
+  (ps.len(), fails)
 }

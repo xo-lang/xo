@@ -2514,7 +2514,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let _r = g.call(g.tramp(if aux_str(x.aux) == "rt.unwind_save" { "xo_unwind_save" } else { "xo_unwind_resume" }), [rsrc(g.word(x.args[0]))], [])
       g.set(v, [])
     }
-    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if g.os == "linux" || g.os == "darwin" || (g.x86 && g.os == "windows") => {
+    "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" if g.os == "linux" || g.os == "darwin" || g.os == "windows" => {
       // inline on Linux (2026-10-16): the thread pointer plus xo_tlocal's
       // local exec offset, then the slot; xo_tlocal_get's call, its
       // moves, and its clobbers cost the scheduler's pingpong 9M
@@ -3250,6 +3250,16 @@ fn (var g: G) tl_base() -> Int {
     // frame (rsp aligned to 16 for the thunk's slow path)
     let d = g.new_vreg(false)
     let i = g.add(Inst{kind: K_PLAIN, text: "movq _xo_tlocal@TLVP(%rip), %rdi\ncallq *(%rdi)\nmovq %rax, $d0", defs: [d], us: [], fl: IF_X86 | IF_KEEP | IF_FRAME, clobbers: [0, 7]})
+    let _i = i
+    return d
+  }
+  if g.os == "windows" {
+    // windows/arm64 (decision 0569): the TEB's TLS slots (x18 + 88) at
+    // _tls_index, plus xo_tlocal's section relative offset (sched.xo
+    // win_tls_base)
+    let d = g.new_vreg(false)
+    let t = g.new_vreg(false)
+    let i = g.add(Inst{kind: K_PLAIN, text: win_tls_base("$d0", "$d1", "$wd1").join("\n"), defs: [d, t], us: [], fl: IF_KEEP})
     let _i = i
     return d
   }

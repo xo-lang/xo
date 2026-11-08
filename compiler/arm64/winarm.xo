@@ -1,0 +1,119 @@
+// windows/arm64 (decision 0569 stage 1): what differs from linux/arm64 in
+// a function's frame. The unwind data is the assembler's, from .seh
+// directives (Windows reads .pdata and .xdata, not CFI):
+//
+//   - the saved registers and the frame record sit at the frame's top
+//     (emit.xo's layout), made by a first allocation, so each save's
+//     unwind code reaches it (save_regp and save_reg take offsets up to
+//     504 bytes; the save area is at most 176);
+//   - then x29 points at the record (add_fp), and the rest of the frame
+//     is a second allocation, probed a page at a time as on Linux;
+//   - since add_fp is undone before the saves, the unwinder takes sp from
+//     x29, so a fault stub that moves sp below the frame unwinds right;
+//   - a function with landing pads names the personality as its handler,
+//     with the GCC call site table as the handler's data (x86win.xo's
+//     form, which std/native/llrt/unwind.xo reads);
+//   - x18 is the TEB: no function writes it (regalloc.xo allocates it on
+//     no target).
+
+/// Whether the function is windows/arm64 code.
+fn (g: G) win_a64() -> Bool { g.os == "windows" && !g.x86 }
+
+/// The prologue of a windows/arm64 frame, each instruction with its
+/// unwind code.
+fn (g: G) win_prologue(var b: List[Str]) {
+  let fr = g.fr
+  let top = fr.size - fr.save_base
+  if g.saved.is_empty() {
+    b.push("\tstp x29, x30, [sp, #-16]!\n\t.seh_save_fplr_x 16\n\tmov x29, sp\n\t.seh_set_fp\n")
+  } else {
+    let r = top - 16
+    b.push("\tsub sp, sp, #${top}\n\t.seh_stackalloc ${top}\n")
+    g.win_saves(b, false)
+    b.push("\tstp x29, x30, [sp, #${r}]\n\t.seh_save_fplr ${r}\n\tadd x29, sp, #${r}\n\t.seh_add_fp ${r}\n")
+  }
+  win_alloc(b, fr.save_base, g.local("${g.lbl_prefix()}_probe"))
+}
+
+/// The second allocation of n bytes (probe_sp's pages), each instruction
+/// with one code, as the assembler checks: a loop's pages are probed
+/// through x17 below sp, which then moves once (MSVC's __chkstk also
+/// touches the pages before sp moves).
+fn win_alloc(var b: List[Str], n0: Int, loop: Str) {
+  var n = n0
+  let pages = if n > 0 { (n - 1) / PROBE_PAGE } else { 0 }
+  if pages > PROBE_UNROLL {
+    b.push("\tmov x16, #${pages}\n\t.seh_nop\n\tmov x17, sp\n\t.seh_nop\n${loop}:\n\tsub x17, x17, #${PROBE_PAGE >> 12}, lsl #12\n\t.seh_nop\n\tstr xzr, [x17]\n\t.seh_nop\n\tsubs x16, x16, #1\n\t.seh_nop\n\tb.ne ${loop}\n\t.seh_nop\n")
+    win_adjust(b, "sub", pages * PROBE_PAGE)
+    n -= pages * PROBE_PAGE
+  }
+  while n > PROBE_PAGE {
+    b.push("\tsub sp, sp, #${PROBE_PAGE >> 12}, lsl #12\n\t.seh_stackalloc ${PROBE_PAGE}\n\tstr xzr, [sp]\n\t.seh_nop\n")
+    n -= PROBE_PAGE
+  }
+  win_adjust(b, "sub", n)
+}
+
+/// sp moved by n bytes (op sub or add), each instruction with its code.
+fn win_adjust(var b: List[Str], op: Str, n0: Int) {
+  var n = n0
+  if n >= 4096 {
+    b.push("\t${op} sp, sp, #${n >> 12}, lsl #12\n\t.seh_stackalloc ${(n >> 12) << 12}\n")
+    n = n & 4095
+  }
+  if n > 0 {
+    b.push("\t${op} sp, sp, #${n}\n\t.seh_stackalloc ${n}\n")
+  }
+}
+
+/// The frame undone (the epilogue but its `ret` or tail branch), as an
+/// epilogue the unwind data describes.
+fn (g: G) win_unframe(var b: List[Str]) {
+  let fr = g.fr
+  b.push("\t.seh_startepilogue\n")
+  win_adjust(b, "add", fr.save_base)
+  if g.saved.is_empty() {
+    b.push("\tldp x29, x30, [sp], #16\n\t.seh_save_fplr_x 16\n")
+  } else {
+    let top = fr.size - fr.save_base
+    let r = top - 16
+    g.win_saves(b, true)
+    b.push("\tldp x29, x30, [sp, #${r}]\n\t.seh_save_fplr ${r}\n\tadd sp, sp, #${top}\n\t.seh_stackalloc ${top}\n")
+  }
+  b.push("\t.seh_endepilogue\n")
+}
+
+/// The saved registers stored (or loaded) at the save area's start, in
+/// register order: two consecutive registers of a kind as a pair (one
+/// save_regp or save_fregp code), others alone.
+fn (g: G) win_saves(var b: List[Str], load: Bool) {
+  let sv = g.saved.sort()
+  let n = sv.len()
+  var k = 0
+  while k < n {
+    let r = sv[k]
+    let fp = r >= FP_BASE
+    let off = 8 * k
+    let kind = if fp { "freg" } else { "reg" }
+    if k + 1 < n && sv[k + 1] == r + 1 && (sv[k + 1] >= FP_BASE) == fp {
+      b.push("\t${if load { "ldp" } else { "stp" }} ${reg_name(r, false)}, ${reg_name(r + 1, false)}, [sp, #${off}]\n\t.seh_save_${kind}p ${reg_name(r, false)}, ${off}\n")
+      k += 2
+      continue
+    }
+    b.push("\t${if load { "ldr" } else { "str" }} ${reg_name(r, false)}, [sp, #${off}]\n\t.seh_save_${kind} ${reg_name(r, false)}, ${off}\n")
+    k += 1
+  }
+}
+
+/// The call site table (lsda's GCC format) as the handler's data of the
+/// unwind region starting at fb, then back to the text.
+fn (g: G) win_sites(var b: List[Str], sites: List[CallSite], fb: Str) {
+  let beg = g.local("${g.lbl_prefix()}_cst")
+  let end = g.local("${g.lbl_prefix()}_cste")
+  b.push("\t.seh_handlerdata\n\t.byte 255\n\t.byte 255\n\t.byte 1\n\t.uleb128 ${end}-${beg}\n${beg}:\n")
+  for c in sites {
+    let pad = if c.entry.is_empty() { g.label(g.fwd(c.pad)) } else { c.entry }
+    b.push("\t.uleb128 ${c.from}-${fb}\n\t.uleb128 ${c.to}-${c.from}\n\t.uleb128 ${pad}-${fb}\n\t.byte 0\n")
+  }
+  b.push("${end}:\n\t.text\n")
+}

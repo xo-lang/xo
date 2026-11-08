@@ -364,7 +364,9 @@ fn (var g: G) emit_switch(var b: List[Str], inst: Inst) {
   b.push("\tadr x16, ${tab}\n")
   b.push("\tldrsw x17, [x16, ${idx}, lsl #2]\n")
   b.push("\tadd x16, x16, x17\n\tbr x16\n")
-  var s: List[Str] = ["\t.p2align 2\n${tab}:\n"]
+  // (code is 4 byte aligned: windows/arm64 leaves the directive out,
+  // which llvm's .seh function length cannot evaluate past)
+  var s: List[Str] = [if g.win_a64() { "${tab}:\n" } else { "\t.p2align 2\n${tab}:\n" }]
   for t in inst.targets[0..n] {
     s.push("\t.long ${g.label(g.fwd(t))}-${tab}\n")
   }

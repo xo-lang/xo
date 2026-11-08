@@ -148,6 +148,11 @@ fn (g: G) file_header(var out: List[Str]) {
       out.push("\t.arch_extension crypto\n\t.arch_extension aes\n\t.arch_extension sha2\n\t.arch_extension crc\n")
     }
   }
+  if g.win_a64() {
+    // the same for clang's aarch64-windows-msvc assembler, which also
+    // wants sha3 for the Keccak instructions (eor3, rax1, xar, bcax)
+    out.push("\t.arch_extension crypto\n\t.arch_extension aes\n\t.arch_extension sha2\n\t.arch_extension sha3\n\t.arch_extension crc\n")
+  }
 }
 
 /// The system call trampolines the code uses (rt.sys_restorer,
@@ -543,8 +548,13 @@ fn (var g: G) entry(main: Int) {
   }
   var b: List[Str] = []
   g.func_header(b, g.sym("xo_entry"), true)
-  b.push("\t.cfi_startproc\n\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")
-  b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
+  if g.win_a64() {
+    let e = g.sym("xo_entry")
+    b.push("\t.seh_proc ${e}\n\tstp x29, x30, [sp, #-16]!\n\t.seh_save_fplr_x 16\n\tmov x29, sp\n\t.seh_set_fp\n\t.seh_endprologue\n")
+  } else {
+    b.push("\t.cfi_startproc\n\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n")
+    b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
+  }
   var ngp = 0
   var nfp = 0
   for pt in g.m.param_types(main) {
@@ -565,7 +575,11 @@ fn (var g: G) entry(main: Int) {
   if ngp > 8 || nfp > 8 {
     g.fail("main takes too many words")
   }
-  b.push("\tbl ${g.fname(g.m.funcs[main].name)}\n\tldp x29, x30, [sp], #16\n\tret\n\t.cfi_endproc\n\n")
+  if g.win_a64() {
+    b.push("\tbl ${g.fname(g.m.funcs[main].name)}\n\t.seh_startepilogue\n\tldp x29, x30, [sp], #16\n\t.seh_save_fplr_x 16\n\t.seh_endepilogue\n\tret\n\t.seh_endproc\n\n")
+  } else {
+    b.push("\tbl ${g.fname(g.m.funcs[main].name)}\n\tldp x29, x30, [sp], #16\n\tret\n\t.cfi_endproc\n\n")
+  }
   g.text.push(b.join(""))
 }
 
@@ -600,10 +614,17 @@ fn (var g: G) exports() {
     if ngp >= 8 {
       g.fail("the C ABI export ${f.export} takes too many words")
     }
-    b.push("\t.cfi_startproc\n\tstp x29, x30, [sp, #-32]!\n\tmov x29, sp\n\tstr x19, [sp, #16]\n")
-    b.push("\t.cfi_def_cfa w29, 32\n\t.cfi_offset w30, -24\n\t.cfi_offset w29, -32\n\t.cfi_offset w19, -16\n")
-    b.push("\tmov x19, x${ngp}\n\tbl ${g.fname(f.name)}\n\tstr x1, [x19]\n")
-    b.push("\tldr x19, [sp, #16]\n\tldp x29, x30, [sp], #32\n\tret\n\t.cfi_endproc\n\n")
+    if g.win_a64() {
+      let e = g.sym(f.export)
+      b.push("\t.seh_proc ${e}\n\tstp x29, x30, [sp, #-32]!\n\t.seh_save_fplr_x 32\n\tmov x29, sp\n\t.seh_set_fp\n\tstr x19, [sp, #16]\n\t.seh_save_reg x19, 16\n\t.seh_endprologue\n")
+      b.push("\tmov x19, x${ngp}\n\tbl ${g.fname(f.name)}\n\tstr x1, [x19]\n")
+      b.push("\t.seh_startepilogue\n\tldr x19, [sp, #16]\n\t.seh_save_reg x19, 16\n\tldp x29, x30, [sp], #32\n\t.seh_save_fplr_x 32\n\t.seh_endepilogue\n\tret\n\t.seh_endproc\n\n")
+    } else {
+      b.push("\t.cfi_startproc\n\tstp x29, x30, [sp, #-32]!\n\tmov x29, sp\n\tstr x19, [sp, #16]\n")
+      b.push("\t.cfi_def_cfa w29, 32\n\t.cfi_offset w30, -24\n\t.cfi_offset w29, -32\n\t.cfi_offset w19, -16\n")
+      b.push("\tmov x19, x${ngp}\n\tbl ${g.fname(f.name)}\n\tstr x1, [x19]\n")
+      b.push("\tldr x19, [sp, #16]\n\tldp x29, x30, [sp], #32\n\tret\n\t.cfi_endproc\n\n")
+    }
     g.text.push(b.join(""))
   }
 }

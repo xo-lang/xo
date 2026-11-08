@@ -199,7 +199,9 @@ pub fn preempt_stub_arm64(os: Str) -> List[Str] {
   }
   b.push("mrs x9, nzcv")
   b.push("str x9, [sp, #144]")
-  if os != "darwin" {
+  // Linux's x18 is a caller saved register; Darwin's and Windows' is the
+  // platform's (Windows: the TEB), which no code writes
+  if os == "linux" {
     b.push("str x18, [sp, #152]")
   }
   i = 0
@@ -213,7 +215,7 @@ pub fn preempt_stub_arm64(os: Str) -> List[Str] {
     b.push("ldp q${i}, q${i + 1}, [sp, #${160 + 16 * i}]")
     i += 2
   }
-  if os != "darwin" {
+  if os == "linux" {
     b.push("ldr x18, [sp, #152]")
   }
   b.push("ldr x9, [sp, #144]")

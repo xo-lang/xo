@@ -1,0 +1,26 @@
+// Codegen patterns (decision 0569 stage 1): windows/arm64 invariants of
+// the whole program's code, std's and the runtime's included. x18 is the
+// TEB there: no instruction writes it (regalloc.xo allocates it on no
+// target, and the preemption stub does not save and restore it as on
+// Linux); thread locals go through the TEB's TLS slots, not tpidr_el0;
+// the unwind data is .seh directives, not CFI.
+
+fn work(n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    s += i * i
+  }
+  s
+}
+
+fn main(os: Os) {
+  // func *
+  // arm64@windows: "ldr x[0-9]+, \[x18, #88\]" "\.seh_endprologue" -"\t[a-z0-9.]+ [xw]18," -"\tldp [xw][0-9]+, [xw]18," -"tpidr" -"\.cfi_" -":tprel" -":got"
+  let ch = Chan[Int].new(1)
+  let n = scope s {
+    s.spawn(fn() { ch.send(work(100)) })
+    ch.recv() ?? 0
+  }
+  let xs = [1, 2, 3]
+  os.stdio.println("${n + xs[os.env.args().len() % 3]}")
+}

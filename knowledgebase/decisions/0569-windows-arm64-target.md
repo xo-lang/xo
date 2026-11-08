@@ -6,6 +6,40 @@ this ADR is the plan. Stages 1 to 4 need no Windows machine and are
 verified by cross build. Running anything waits for the test host (a
 Windows 11 on Arm VM on the owner's coming Mac).
 
+Stage 1 progress (2026-11-08, Xo Lang 2): the assembly half is done.
+`xo build --backend=arm64 --targets=windows/arm64` (only with the
+backend named: `--targets=all` and the default build still leave the
+target out, and it is in no release) writes assembly that `clang
+-target aarch64-windows-msvc` assembles: hello, all 28 arm64 run
+goldens and a sample of 64 of the 640 LLVM goldens (every tenth), then
+stops with "does not link it yet". llvm-readobj --unwind (host 1)
+decodes the .pdata and .xdata of every function with no warning. The
+darwin, linux and windows/amd64 assembly is byte-identical to the
+parent's on 8 programs (12 for arm64). What it has:
+
+- the frame: the saved registers and the frame record at the top,
+  allocated first, then `add_fp`, then the rest of the frame probed a page
+  at a time (compiler/arm64 winarm.xo); each prologue and epilogue
+  instruction carries one `.seh_*` directive, as llvm checks;
+- shrink wrapping off (a later prologue would need its own fragment);
+- a leaf's fault stubs as a function fragment of their own;
+- landing pads: the personality as `.seh_handler`, the GCC call site
+  table as its handler data (x86win.xo's form);
+- TLS through `[x18, #88]`, `_tls_index` and secrel, an 18 word `.tls$`
+  table, the TEB's stack bounds in the task switch (the LLVM emitter's
+  arm64_win_switch);
+- DWARF in COFF sections (`"dr"`, `.secrel32` offsets);
+- x18 never written: the preemption stub no longer saves and restores it
+  off Linux (the LLVM backend's windows/arm64 output changes too), and
+  test/codegen/winx18 checks the whole program (`// arm64@windows:`
+  patterns of `xo dev codegen`); cmd/xo TestWindowsArm64Assembly.
+
+Not done in stage 1 yet: pelink's arm64 (relocations, import thunks), so
+no image; variadic C calls; the C ABI exports beyond Str results. To
+measure in stage 5: `save_regp` needs ascending pairs (`stp x19, x20`),
+the order gotchas/arm64-stp-pair-order.md found 1.4x slower on recursive
+fib on Apple M4 than Linux's `stp x20, x19`.
+
 ## Context
 
 windows/arm64 is the one target of spec 12.1 that the native backends

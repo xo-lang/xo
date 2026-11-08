@@ -1142,8 +1142,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   var cross: List[Str] = []
   let winsysroot = os.env.get("XO_WINSYSROOT") ?? ""
   for tg in targets {
-    if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") {
-      fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg}")
+    // windows/arm64 only when --backend=arm64 is named (decision 0569
+    // stage 1: assembly and cross builds, outside the default targets)
+    if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64") && !(tg == "windows/arm64" && !o.backend_auto) {
+      fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg} (windows/arm64 is experimental: --backend=arm64 names it, decision 0569)")
     }
     if backend == "amd64" && !(tg is "linux/amd64" | "darwin/amd64" | "windows/amd64") {
       fail(os, "the amd64 backend builds for linux/amd64, darwin/amd64, and windows/amd64, not ${tg} (decision 0254)")
@@ -2137,7 +2139,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // another target that links with cc (a `use c` source, --ld=cc):
       // the host's cc does not link it, and the build stopped at its
       // assembly with exit 0 and no binary (Intel field report b04)
-      let why = "${tg} links with a C compiler (a `use c` source, --ld=cc, or a ${tgoos} program from ${cc_host}), and xo does not cross link with one: build it on ${tg} (its assembly: ${s})"
+      let why = if march == "arm64" && tgoos == "windows" {
+        // decision 0569 stage 1: the assembly (clang -target
+        // aarch64-windows-msvc assembles it); pelink's arm64 is next
+        "windows/arm64 is experimental (decision 0569): xo writes its assembly but does not link it yet: ${s}"
+      } else {
+        "${tg} links with a C compiler (a `use c` source, --ld=cc, or a ${tgoos} program from ${cc_host}), and xo does not cross link with one: build it on ${tg} (its assembly: ${s})"
+      }
       if o.skip_unsupported {
         return Native{skipped: why}
       }

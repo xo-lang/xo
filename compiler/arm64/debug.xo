@@ -72,6 +72,23 @@ pub fn dw_slots_obj(obj: Bytes, comp_dir: Str, std_root: Str) -> Bytes {
   b
 }
 
+/// The section directive of DWARF section name (debug_info, ...) on the
+/// target's object format: COFF's discardable read only form on
+/// windows/arm64 (windows/amd64's go to Xo's COFF writer in ELF's form,
+/// which it reads).
+fn (g: G) dwarf_section(name: Str) -> Str {
+  if g.os == "darwin" {
+    return "\t.section __DWARF,__${name},regular,debug\n"
+  }
+  if g.os == "windows" && !g.x86 {
+    return "\t.section .${name},\"dr\"\n"
+  }
+  if name == "debug_str" || name == "debug_line_str" {
+    return "\t.section .${name},\"MS\",@progbits,1\n"
+  }
+  "\t.section .${name},\"\",@progbits\n"
+}
+
 /// The debug sections of the part, or "" with none.
 fn (g: G) debug_sections(with_static: Bool) -> Str {
   if !g.m.debug_info || (g.dbgs.is_empty() && !with_static) {
@@ -146,7 +163,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   let lcomp_lab = g.local("xo_dwlcomp_${g.ns}")
   let lstd_lab = g.local("xo_dwlstd_${g.ns}")
   // .debug_line
-  var hdr = Dw{}
+  var hdr = Dw{secrel: g.win_a64()}
   hdr.u8(1)   // minimum_instruction_length
   hdr.u8(1)   // maximum_operations_per_instruction
   hdr.u8(1)   // default_is_stmt
@@ -184,7 +201,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   hdr.uleb(2)    // DW_LNCT_directory_index
   hdr.uleb(15)   // DW_FORM_udata
   hdr.uleb(files.len())
-  var fstrs = Dw{}
+  var fstrs = Dw{secrel: g.win_a64()}
   var foff = 2 * DW_SLOT
   for (i, f) in files.indexed() {
     if mac {
@@ -198,7 +215,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     foff += f.len() + 1
     hdr.uleb(if stdd && f.starts_with("std/") { 1 } else { 0 })
   }
-  var prog = Dw{}
+  var prog = Dw{secrel: g.win_a64()}
   for fr in recs {
     prog.u8(4) // DW_LNS_set_file
     prog.uleb(fr.file)
@@ -265,14 +282,14 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // unit_length covers version (2), sizes (2), header_length (4), the
   // header, and the program
   let line_len = 2 + 2 + 4 + hdr.n + prog.n
-  out.write(if mac { "\t.section __DWARF,__debug_line,regular,debug\n" } else { "\t.section .debug_line,\"\",@progbits\n" })
+  out.write(g.dwarf_section("debug_line"))
   let line_lab = g.local("xo_dwline_${g.ns}")
   out.write("${line_lab}:\n")
   out.write("\t.long ${line_len}\n\t.short 5\n\t.byte 8\n\t.byte 0\n\t.long ${hdr.n}\n")
   out.write(hdr.text())
   out.write(prog.text())
   // .debug_abbrev
-  out.write(if mac { "\t.section __DWARF,__debug_abbrev,regular,debug\n" } else { "\t.section .debug_abbrev,\"\",@progbits\n" })
+  out.write(g.dwarf_section("debug_abbrev"))
   let abbrev_lab = g.local("xo_dwabbrev_${g.ns}")
   out.write("${abbrev_lab}:\n")
   // 1: compile_unit, children: stmt_list, low_pc, high_pc (the part's
@@ -318,7 +335,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   out.write("\t.byte 19, 0x16, 0, 0x03, 0x08, 0x49, 0x13, 0, 0\n")
   out.write("\t.byte 0\n")
   // .debug_info
-  var die = Dw{}
+  var die = Dw{secrel: g.win_a64()}
   die.uleb(1)
   die.offset(if mac { "0" } else { line_lab })
   let st = g.tramp("xo_static")
@@ -405,9 +422,9 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   die.u8(0)
   // unit_length covers version (2), unit_type (1), address_size (1),
   // debug_abbrev_offset (4), and the entries
-  out.write(if mac { "\t.section __DWARF,__debug_info,regular,debug\n" } else { "\t.section .debug_info,\"\",@progbits\n" })
+  out.write(g.dwarf_section("debug_info"))
   out.write("\t.long ${2 + 1 + 1 + 4 + die.n}\n\t.short 5\n\t.byte 1\n\t.byte 8\n")
-  out.write("\t.long ${if mac { "0" } else { abbrev_lab }}\n")
+  out.write(if mac { "\t.long 0\n" } else if g.win_a64() { "\t.secrel32 ${abbrev_lab}\n" } else { "\t.long ${abbrev_lab}\n" })
   out.write(die.text())
   // .debug_loclists: the header, an offset per list (from the end of the
   // header, DW_AT_loclists_base), then each list: its function's start
@@ -418,7 +435,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // assembler knows the ULEB128s' lengths
   let ll_start = g.local("xo_dwllstart_${g.ns}")
   let ll_end = g.local("xo_dwllend_${g.ns}")
-  var body = Dw{}
+  var body = Dw{secrel: g.win_a64()}
   var offs: List[Str] = []
   // the addresses of DW_OP_addrx operands: .debug_addr's entries
   var addr_ix: Map[Str, Int] = {}
@@ -460,7 +477,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     }
     body.u8(0) // DW_LLE_end_of_list
   }
-  out.write(if mac { "\t.section __DWARF,__debug_loclists,regular,debug\n" } else { "\t.section .debug_loclists,\"\",@progbits\n" })
+  out.write(g.dwarf_section("debug_loclists"))
   out.write("\t.long ${ll_end}-${ll_start}\n${ll_start}:\n\t.short 5\n\t.byte 8\n\t.byte 0\n\t.long ${lists.len()}\n")
   out.write("${ll_base}:\n")
   for o in offs {
@@ -470,7 +487,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   out.write("${ll_end}:\n")
   // .debug_addr: the address table (addr_base above) of the constant
   // words' DW_OP_addrx (dwvars.xo)
-  out.write(if mac { "\t.section __DWARF,__debug_addr,regular,debug\n" } else { "\t.section .debug_addr,\"\",@progbits\n" })
+  out.write(g.dwarf_section("debug_addr"))
   out.write("\t.long ${4 + 8 * addr_syms.len()}\n\t.short 5\n\t.byte 8\n\t.byte 0\n${addr_base}:\n")
   for a in addr_syms {
     out.write("\t.quad ${a}\n")
@@ -478,10 +495,10 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // .debug_str: the path slots (placeholders, dw_slots_obj); on ELF
   // mergeable strings ("MS", entry size 1), the flags clang's assembler
   // gives the section and requires of every .section of it
-  out.write(if mac { "\t.section __DWARF,__debug_str,regular,debug\n" } else { "\t.section .debug_str,\"MS\",@progbits,1\n" })
+  out.write(g.dwarf_section("debug_str"))
   out.write("${comp_lab}:\n${dw_slot_text(DW_SLOT_COMP)}${std_lab}:\n${dw_slot_text(DW_SLOT_STD)}")
   // .debug_line_str: the same slots, for the line table's directories
-  out.write(if mac { "\t.section __DWARF,__debug_line_str,regular,debug\n" } else { "\t.section .debug_line_str,\"MS\",@progbits,1\n" })
+  out.write(g.dwarf_section("debug_line_str"))
   out.write("${lcomp_lab}:\n${dw_slot_text(DW_SLOT_COMP)}${lstd_lab}:\n${dw_slot_text(DW_SLOT_STD)}")
   out.write(fstrs.text())
   out.write(g.section("text"))
@@ -901,6 +918,9 @@ fn site_chain(fr: DbgFunc, s: Int) -> List[Int] {
 struct Dw {
   lines: List[Str] = []
   n: Int = 0
+  /// a section offset is `.secrel32` (COFF, windows/arm64: `.long` of a
+  /// label there is an address)
+  secrel: Bool = false
 }
 
 fn (var d: Dw) u8(v: Int) {
@@ -919,7 +939,8 @@ fn (var d: Dw) u32(v: Int) {
 }
 
 fn (var d: Dw) offset(sym: Str) {
-  d.lines.push("\t.long ${sym}\n")
+  let num = sym.is_empty() || (sym.bytes()[0] >= 0x30 && sym.bytes()[0] <= 0x39)
+  d.lines.push(if d.secrel && !num { "\t.secrel32 ${sym}\n" } else { "\t.long ${sym}\n" })
   d.n += 4
 }
 
