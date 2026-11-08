@@ -74,12 +74,9 @@ fn eq8(w: Int, r: Int) -> Int {
 /// The index of the first byte c (0 to 255) of b from `from` to `to`
 /// (to <= b.len()), or -1.
 pub fn find_byte(b: Bytes, from: Int, to: Int, c: Int) -> Int {
-  var i = from
-  // 32 bytes a step while they hold no c (one move from the vector
-  // unit a step); the 16 byte steps below find it
-  while subw(to, i) >= 32 && rt.bytes_any_eq32(b, i, c) == 0 {
-    i = addw(i, 32)
-  }
+  // 32 bytes a step while they hold no c, as one loop with the byte
+  // broadcast once (rt.bytes_skip32); the 16 byte steps below find it
+  var i = rt.bytes_skip32(b, from, to, c)
   while subw(to, i) >= 16 {
     let m = eq16_1(b, i, c)
     if m != 0 {

@@ -12,6 +12,18 @@
 
 `b.write_le(v, n)` appends the n (0 to 8) low bytes of v, least significant first, and `b.write_be(v, n)` most significant first, with one capacity check; any other width faults. netip's IPv4 text uses it in place of writing zeros and overwriting them.
 
+## 2026-11-07: perf: a byte search skips 32 bytes a step in one loop with the byte broadcast once
+
+- Kind: perf
+- Commit: this push
+- Found by: ADR 0532's scan survey (find_byte's 32 byte step reloaded and broadcast the byte each step, 15 instructions a block against a 9 instruction kernel)
+- Go reference: internal/bytealg.IndexByteString
+- Test: std/native/llrt/scan_test.xo (find_byte and bytes_skip32 against a byte loop); std prelude tests; the str, bytes and utf8 goldens on arm64, LLVM and wasm
+- Timing: bench/perf/simdscan index_byte, linux/arm64 host 1, xo bench --ab on main 87542c788: 0.935 (0.885 to 0.962, n=7; better)
+- Shipped in: not yet released
+
+scan.xo find_byte (a Bytes substring search's scan for its first byte, ByteBuffer.read_until, std/csv's line and byte scans, URL unescaping's `%` scan) skips the blocks of 32 bytes that hold no match with rt.bytes_skip32, one loop that broadcasts the byte once, then finds the byte 16 bytes a step as before.
+
 ## 2026-11-07: perf: a small List literal passed to a function stays in the caller's frame; the callee copies it only to keep it (decision 0554)
 
 - Kind: perf
