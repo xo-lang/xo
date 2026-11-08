@@ -35,6 +35,7 @@ A run of whole blocks (sha1 sums, a Hasher's write, HMAC-SHA1) goes to cpu.sha1_
 - Go reference: crypto/sha512 sha512block_arm64.s (go1.26.1; one routine over every block)
 - Test: std/native/llrt/sha256_test.xo (blocks512 against block512 at 0 to 8 blocks and three offsets; a SHA-512 Hasher written in pieces against one write); crypto tests; sha and crypto goldens on arm64, LLVM and wasm
 - Timing: bench/perf/simdscan sha512, linux/arm64 host 1, xo bench --ab against main: 0.965 (0.958 to 0.976, n=6; better); simdscan sha256 1.006 (0.972 to 1.022, within noise); HMAC-SHA256 of 32 bytes (simdscan hmac256) 1.002 (0.99 to 1.014, n=7; within noise)
+- Shipped in: 0.44.0
 
 A run of whole blocks (crypto's sha512 and sha384 sums, a Hasher's write, HMAC-SHA512) goes to cpu.sha512_blocks: on arm64 (native and LLVM) one loop with the state in four vector registers; elsewhere a block at a time as before. A write of a single block, SHA-256's too, calls the one-block routine as before the SHA-256 loop: going through the loop for one block cost a call (HMAC-SHA1 was 1.022 of main).
 
@@ -46,6 +47,7 @@ A run of whole blocks (crypto's sha512 and sha384 sums, a Hasher's write, HMAC-S
 - Go reference: crypto/ed25519 through crypto/sha512 (go1.26.1)
 - Test: crypto tests (Ed25519 sign and verify vectors) on arm64 and LLVM; ed25519 goldens
 - Timing: Ed25519 sign, linux/arm64 host 1, xo bench --ab against main: 0.985 (0.972 to 0.993, n=6; better); verify 0.999 (0.994 to 1.005, within noise)
+- Shipped in: 0.44.0
 
 sha512_at, the hash under Ed25519's sign and verify, calls cpu.sha512_block when cpu.hw() has HW_SHA512 and runs the Xo rounds otherwise.
 

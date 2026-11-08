@@ -32,6 +32,7 @@ On the native backends a List[Str] or List[List] literal of a few elements that 
 - Go reference: none (runtime/mem_linux.go sysUnused works on whole physical pages of a span)
 - Test: none on these hosts (4 KiB pages on linux, 16 KiB on darwin, where the rule changes nothing); heapos_test's age test passes through the same advice
 - Timing: none (a page size read per scavenged magazine)
+- Shipped in: 0.44.0
 
 ## 2026-11-07: perf: free heap blocks of 16 KiB and over go back to the system after 30 to 60 s unused, on Linux too
 
@@ -41,6 +42,7 @@ On the native backends a List[Str] or List[List] literal of a few elements that 
 - Go reference: runtime/mgcscavenge.go (the background scavenger returns pages free for a while; MADV_DONTNEED on Linux since Go 1.16)
 - Test: std/native/llrt/heapos_test.xo "an age pass marks a free page block and the next gives its pages back"
 - Timing: self build --ab on linux/arm64 host 1 (3 rounds, before age_sparse): wall 1.002 and cpu 1.000 within noise, max RSS 0.990; closed loop soak on linux/amd64 (1 h, 8 workers, 128 worker spikes at 15 and 35 min): end RSS 0.70 of the base (77.3 against 110.4 MB), slope 0.47 (39.7 against 84.4 MB/h), 127.8 MB given back (decision 0533)
+- Shipped in: 0.44.0
 
 ## 2026-11-07: perf: a Map lookup skips the key compare on a hash tag mismatch, and a rebuild does not rehash Str keys (decision 0552)
 
@@ -214,6 +216,7 @@ The large block cache served a request only from a mapping of at most four times
 - Go reference: bytes.IndexByte, utf8.Valid, bytes.Equal, bytes.Compare (go1.26.1)
 - Test: std/native/llrt/scan_test.xo "find_byte and span find a byte at each place of 0 to 100", libcstr_test.xo "memcmp of 0 to 80 bytes differing at each byte"
 - Timing: bench/perf/simdscan on linux/arm64, against step 1's std (the same xo): index_byte 0.679, index_byte_64 0.730, utf8_ascii 0.839, equal 0.831, compare 0.873, utf8_mixed 1.06 of the wall; against Go 1.26.1 index_byte 1.35, index_byte_64 0.98, utf8_ascii 1.06, equal 1.37, compare 1.16
+- Shipped in: 0.44.0
 
 std/native/llrt/scan.xo find_byte and span, and libcstr.xo memcmp, call rt.bytes_any_eq32, rt.bytes_any_high32 and rt.mem_ne32 for their 32 byte steps (one load pair, compare and mask move on arm64; SSE2 on x86_64) in place of two 16 byte masks or four word xors.
 
