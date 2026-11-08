@@ -200,7 +200,11 @@ func TestStdRecordBindRetry(t *testing.T) {
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_CACHE_STATS=1", "XO_BIN_CACHE=off", "XO_CBIND_DIR=")
+	// the bindings in the test's own directory, empty at the start, so the
+	// first check still restarts for the missing one; never std's
+	// .xo/cbind, whose files are in std's tree key
+	// (gotchas/cbind-writes-into-std.md)
+	env := append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_CACHE_STATS=1", "XO_BIN_CACHE=off", "XO_CBIND_DIR="+filepath.Join(work, "cbind"))
 	write := func(name, text string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(prog, name), []byte(text), 0o644); err != nil {

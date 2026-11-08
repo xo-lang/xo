@@ -298,6 +298,18 @@ func init() {
 	if k, v, ok := tierSepcomp(os.Getenv); ok {
 		os.Setenv(k, v)
 	}
+	// `use c` bindings in one test cache, not in a module's .xo/cbind:
+	// a std module's binding (std/sqlite) went to std/native/.xo/cbind,
+	// which changed std's tree key under a parallel test and made its
+	// default build miss the std variant it had just built (tier 60,
+	// TestSepcompDefault, 2026-11-08; gotchas/cbind-writes-into-std.md).
+	// The files are named by their content, so the processes share it. A
+	// test that sets XO_CBIND_DIR, even to "", keeps its own.
+	if _, ok := os.LookupEnv("XO_CBIND_DIR"); !ok {
+		if c, err := os.UserCacheDir(); err == nil {
+			os.Setenv("XO_CBIND_DIR", filepath.Join(c, "xo", "test-cbind"))
+		}
+	}
 }
 
 // tierSepcomp: XO_TEST_SEPCOMP=0 (the full tier's whole-program run) also
