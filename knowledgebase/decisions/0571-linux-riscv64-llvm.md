@@ -104,16 +104,25 @@ What a new architecture touches today (main feb9f7323):
 - 2026-11-08, stage 1 and stage 2's frame step land together:
   hello world runs under qemu-user on host 2 (a 1.3 MB static ELF);
   the toolchain is scripts/riscv64-toolchain.sh (offload.md). Of the
-  523 LLVM goldens that need no network, all of the first 350 pass under
-  qemu (each batch at the branch's commit of its day). On the way: the
+  523 LLVM goldens that need no network, all 523 pass under qemu (each
+  batch at the branch's commit of its day; zip_entry_limit takes over
+  two minutes there). On the way: the
   22 caught-fault goldens pass with the riscv64 unwinder (unwind.xo's
   register offsets, sched.xo's save and resume); four fs goldens needed
   renameat2 (gotchas/riscv64-syscall-table-not-arm64.md); f32_bits keeps
   riscv64's canonical NaNs from arithmetic in want_linux_riscv64.txt,
   while conversions keep a NaN's payload in integers (num_wrapping, and
   the new f32_nan_list; decision 0361's addendum). The build fixes are
-  in gotchas/riscv64-llvm-default-rv64i.md. The rest run in batches of
-  about 90 on host 2.
+  in gotchas/riscv64-llvm-default-rv64i.md.
+- 2026-11-08, stage 3 started: `xo test` runs std's tests under qemu
+  through XO_TEST_EXEC (toolchain.md); test binaries (PIE, no LTO)
+  needed the thread local table as initial exec
+  (gotchas/riscv64-tls-get-addr-in-tests.md). Std's 60 test modules
+  (35 under std/native, 25 under llrt) pass, about 4 minutes in three
+  batches. `--targets=all` stays as it is: the LLVM backend builds one
+  target per build, the native backends' `all` leaves out targets they
+  do not build, and only `--backend=go` would add linux/riscv64, where
+  the Go backend's runtime is untested.
 
 ## Consequences
 
