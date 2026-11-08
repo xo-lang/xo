@@ -1,0 +1,39 @@
+// frame_list_audit (XO_DEBUG_VERIFY=1): decision 0554's check of every
+// function's frame lists, as code generation takes the module.
+//
+// The values carry no type (-1): the check reads ops, arguments and aux.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// f(s): a one element frame list `[s]`, then either kept in a struct the
+/// function returns (keep) or released (its drop). Returns the module and
+/// the list's and its put's values.
+fn frame_list_module(keep: Bool) -> (ssa.Module, Int, Int) {
+  var m = ssa.Module{goarch: "arm64"}
+  let fi = m.new_func("f", [-1], [])
+  var f = m.funcs[fi]
+  let l = f.add(0, ssa.Op.Call, -1, ssa.Aux.S(s: "rt.rl_stack 1"), [])
+  let p = f.add(0, ssa.Op.Call, -1, ssa.Aux.S(s: "rt.rl_stack_put 0"), [l, 0])
+  if keep {
+    let st = f.add(0, ssa.Op.Struct, -1, ssa.Aux.None, [p])
+    let _r = f.add(0, ssa.Op.Return, -1, ssa.Aux.None, [st])
+  } else {
+    let _d = f.add(0, ssa.Op.Call, -1, ssa.Aux.S(s: "rt.rl_stack_drop 1"), [p])
+    let _r = f.add(0, ssa.Op.Return, -1, ssa.Aux.None, [])
+  }
+  m.funcs[fi] = f
+  (m, l, p)
+}
+
+test "a frame list kept in a struct is reported with the use that keeps it" {
+  let (m, l, p) = frame_list_module(true)
+  expect(frame_list_audit(m)) == ["f: v${l} (v${p + 1} struct uses v${p})"]
+}
+
+test "a frame list only released passes, and only arm64 is checked" {
+  let (m, _l, _p) = frame_list_module(false)
+  expect(frame_list_audit(m)) == []
+  var a = frame_list_module(true).0
+  a.goarch = "amd64"
+  expect(frame_list_audit(a)) == []
+}

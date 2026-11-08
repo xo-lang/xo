@@ -1799,6 +1799,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
       }
     }
+    if (os.env.get("XO_DEBUG_VERIFY") ?? "") == "1" {
+      // decision 0554's frame list check again, after the passes that
+      // follow inlining (lead, 2026-11-08: an audit that none of them
+      // gives a frame list a use that keeps it)
+      let bad = arm64.frame_list_audit(gm)
+      if !bad.is_empty() {
+        fail(os, "XO_DEBUG_VERIFY: ${bad.len()} frame lists escape before code generation (decision 0554), the first ${bad[0]}")
+      }
+    }
     var p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc, emit_mem_limit(os))
     t = lap(os, phases, "emit", t)
     if !fdir.is_empty() {

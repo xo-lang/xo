@@ -43,6 +43,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_PREEMPT_POLLS":        {"keyed", "nopreempt=${m.no_preempt}"},
 	"XO_ASYNC_PREEMPT":        {"keyed", "async=${m.async_preempt}"},
 	"XO_INLINE_BREAK":         {"none", ""}, // breaks the inlined module on purpose; verify then fails the build
+	"XO_DEBUG_VERIFY":         {"none", ""}, // 1 reruns decision 0554's frame list check before code generation and fails the build on an escape; the output is the same
 	"XO_DCE":                  {"content", ""},
 	"XO_LLRT_C":               {"content", ""},
 	"XO_CHECK_EAGER":          {"content", ""},

@@ -668,6 +668,28 @@ fn stack_list_violations(f: ssa.Func, m: ssa.Module) -> List[Str] {
   out
 }
 
+/// Every function's frame lists the rule no longer allows, as
+/// "NAME: v<n> (why)" texts: the end of inline_one's check
+/// (stack_list_violations) run again over the module code generation
+/// takes, after the module passes that follow inlining (XO_DEBUG_VERIFY=1,
+/// compiler/xo build_native). A body left undecoded (an inline cache hit
+/// no reader needed) has no blocks here and is not looked at.
+pub fn frame_list_audit(m: ssa.Module) -> List[Str] {
+  var out: List[Str] = []
+  if m.goarch != "arm64" {
+    return out
+  }
+  for f in m.funcs {
+    if f.blocks.is_empty() {
+      continue
+    }
+    for b in stack_list_violations(f, m) {
+      out.push("${f.name}: ${b}")
+    }
+  }
+  out
+}
+
 // ---------------------------------------------------------------------------
 // The emitter
 
