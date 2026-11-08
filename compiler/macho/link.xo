@@ -222,11 +222,11 @@ struct Linker {
   dw_sizes: List[Int] = []
   /// an x86_64 link (every object x86_64)
   x86: Bool = false
-  /// branch islands (islands): the __text output section, each island's
-  /// input section (object, section), its veneers by branch_key, the
-  /// island each __text input section's far branches use, and the
-  /// veneers written
-  isl_text: Int = -1
+  /// branch islands (islands): whether std's __text got one (its
+  /// sections then moved: no half), each island's input section (object,
+  /// section), its veneers by branch_key, the island each code input
+  /// section's far branches use, and the veneers written
+  isl_text: Bool = false
   isl_sects: List[(Int, Int)] = []
   isl_ix: List[Map[Str, Int]] = []
   isl_of: Map[(Int, Int), Int] = {}
@@ -1340,15 +1340,18 @@ fn (l: Linker) reach() -> Int {
   if l.opts.branch_reach > 0 { l.opts.branch_reach } else { BRANCH_REACH }
 }
 
-/// Branch islands (ld64's): an arm64 __text past 7/8 of a branch's reach
-/// gets a section of veneers after each half reach of its input sections,
-/// for the bl and b whose target is past the reach (xo with every
-/// optional pass off: 182 MB of text, 2026-10-22). Each island follows
-/// the input section that ends past the next half reach and holds a
-/// veneer for every target of a branch in the sections before it (the
-/// last ones: the island before them) farther than the reach less 1/8
-/// before the islands go in; the islands together stay under that 1/8,
-/// the most they move a target. Then the output is laid out again.
+/// Branch islands (ld64's): when the code (__text, a split link's _ptext,
+/// __stubs) spans more than 7/8 of a branch's reach, each code output
+/// section gets a section of veneers after the input section that ends
+/// past each half reach and one after its last, for the bl and b whose
+/// target is past the reach (xo with every optional pass off: 182 MB of
+/// text, 2026-10-22; a split link's _ptext past std's __text, Azure 1's
+/// GCP compute/v0.alpha tests, 2026-11-08). An input section's far
+/// branches go through the island after it, which holds a veneer for
+/// every target of a branch in the sections since the last island
+/// farther than the reach less 1/8 before the islands go in; the islands
+/// together stay under that 1/8, the most they move a target. Then the
+/// output is laid out again.
 fn (var l: Linker) islands() {
   if l.x86 {
     return
@@ -1356,96 +1359,112 @@ fn (var l: Linker) islands() {
   let slack = l.reach() / 8
   let spacing = l.reach() / 2
   let far = l.reach() - slack
-  var ti = -1
+  var code: List[Int] = []
+  var lo = -1
+  var hi = 0
   for (i, s) in l.osects.indexed() {
-    if s.seg == "__TEXT" && s.name == "__text" {
-      ti = i
+    if s.seg != "__TEXT" || !(s.name == "__text" || s.name == "_ptext" || s.name == "__stubs") {
+      continue
+    }
+    if s.name != "__stubs" {
+      code.push(i)
+    }
+    if s.size > 0 {
+      lo = if lo < 0 { s.addr } else { lo.min(s.addr) }
+      hi = hi.max(s.addr + s.size)
     }
   }
-  if ti < 0 || l.osects[ti].size <= l.reach() - slack {
+  if lo < 0 || hi - lo <= far {
     return
   }
-  let chunks = l.osects[ti].chunks
-  // the input sections each island follows
-  var cuts: List[Int] = []
-  var next = spacing
-  for (j, (o, k)) in chunks.indexed() {
-    let s = l.objs[o].sects[k]
-    if s.off + s.size >= next && j < chunks.len() - 1 {
-      cuts.push(j)
-      next = s.off + s.size + spacing
-    }
-  }
-  if cuts.is_empty() {
-    return
-  }
-  var region = 0
-  for (j, (o, k)) in chunks.indexed() {
-    l.isl_of.put((o, k), imin(region, cuts.len() - 1))
-    if region < cuts.len() && j == cuts[region] {
-      region += 1
-    }
-  }
-  // the far branches' targets, by island
   var ix: List[Map[Str, Int]] = []
-  for _ in cuts {
+  var at: List[(Int, Int)] = []
+  for ti in code {
+    let chunks = l.osects[ti].chunks
+    if chunks.is_empty() {
+      continue
+    }
+    let base = l.osects[ti].addr
+    // the regions: the input sections up to the one that ends past the
+    // next half reach, and the rest
+    var next = spacing
+    let first = ix.len()
     ix.push({})
-  }
-  let base = l.osects[ti].addr
-  for (o, k) in chunks {
-    let s = l.objs[o].sects[k]
-    let isl = l.isl_of.get((o, k)) ?? 0
-    var addend = 0
-    var has_addend = false
-    for r in s.relocs {
-      if r.typ() == R_ADDEND {
-        addend = sext24(r.sym())
-        has_addend = true
-        continue
-      }
-      if r.typ() == R_BRANCH26 {
-        let a = if has_addend { addend } else { 0 }
-        let t = l.target(o, r, a)
-        let dest = if t.imp >= 0 { l.stub_addr(t.imp) } else { t.addr }
-        let d = dest - (base + s.off + r.addr)
-        if d <= -far || d >= far {
-          let key = l.branch_key(o, r, a)
-          if !ix[isl].contains(key) {
-            ix[isl].put(key, ix[isl].len())
+    for (j, (o, k)) in chunks.indexed() {
+      let s = l.objs[o].sects[k]
+      let isl = ix.len() - 1
+      l.isl_of.put((o, k), isl)
+      var addend = 0
+      var has_addend = false
+      for r in s.relocs {
+        if r.typ() == R_ADDEND {
+          addend = sext24(r.sym())
+          has_addend = true
+          continue
+        }
+        if r.typ() == R_BRANCH26 {
+          let a = if has_addend { addend } else { 0 }
+          let t = l.target(o, r, a)
+          let dest = if t.imp >= 0 { l.stub_addr(t.imp) } else { t.addr }
+          let d = dest - (base + s.off + r.addr)
+          if d <= -far || d >= far {
+            let key = l.branch_key(o, r, a)
+            if !ix[isl].contains(key) {
+              ix[isl].put(key, ix[isl].len())
+            }
           }
         }
+        has_addend = false
       }
-      has_addend = false
+      if s.off + s.size >= next && j < chunks.len() - 1 {
+        at.push((ti, j))
+        ix.push({})
+        next = s.off + s.size + spacing
+      }
+    }
+    at.push((ti, chunks.len() - 1))
+    if l.osects[ti].name == "__text" {
+      for m in ix[first..] {
+        l.isl_text = l.isl_text || !m.is_empty()
+      }
     }
   }
-  // the islands: input sections of an object of their own, after their
-  // cuts
-  let (o0, k0) = chunks[0]
-  var iobj = IObj{path: "<branch islands>"}
   var total = 0
   for m in ix {
-    let n = 12 * m.len()
-    total += n
-    iobj.sects.push(ISect{seg: "__TEXT", name: "__text", addr: 0, size: n, align: 2, flags: l.objs[o0].sects[k0].flags, data: zeros(n), out: ti})
+    total += 12 * m.len()
+  }
+  if total == 0 {
+    l.isl_of = {}
+    l.isl_text = false
+    return
   }
   if total >= slack {
     l.fail("branch islands of ${total} bytes (more than ${slack})")
     return
   }
+  // the islands: input sections of an object of their own, each after
+  // its region's last input section
+  let (o0, k0) = l.osects[code[0]].chunks[0]
   let io = l.objs.len()
-  l.objs.push(iobj)
-  var nc: List[(Int, Int)] = []
-  var c = 0
-  for (j, ch) in chunks.indexed() {
-    nc.push(ch)
-    if c < cuts.len() && j == cuts[c] {
-      nc.push((io, c))
-      l.isl_sects.push((io, c))
-      c += 1
-    }
+  var iobj = IObj{path: "<branch islands>"}
+  for (n, (ti, _)) in at.indexed() {
+    let size = 12 * ix[n].len()
+    iobj.sects.push(ISect{seg: "__TEXT", name: l.osects[ti].name, addr: 0, size: size, align: 2, flags: l.objs[o0].sects[k0].flags, data: zeros(size), out: ti})
+    l.isl_sects.push((io, n))
   }
-  l.osects[ti].chunks = nc
-  l.isl_text = ti
+  l.objs.push(iobj)
+  for ti in code {
+    var nc: List[(Int, Int)] = []
+    for (j, ch) in l.osects[ti].chunks.indexed() {
+      nc.push(ch)
+      for (n, (t, cj)) in at.indexed() {
+        if t == ti && cj == j {
+          nc.push((io, n))
+        }
+      }
+    }
+    l.osects[ti].chunks = nc
+  }
   l.isl_ix = ix
   l.tlv_start = -1
   l.layout()
@@ -1465,7 +1484,8 @@ fn (var l: Linker) veneer(o: Int, k: Int, r: IReloc, addend: Int, dest: Int) -> 
     return dest
   }
   let (io, ik) = l.isl_sects[isl]
-  let v = l.osects[l.isl_text].addr + l.objs[io].sects[ik].off + 12 * n
+  let x = l.objs[io].sects[ik]
+  let v = l.osects[x.out].addr + x.off + 12 * n
   if !l.isl_done.contains(v) {
     l.isl_done.add(v)
     let imm = ((dest >> 12) - (v >> 12)) & 0x1fffff

@@ -688,6 +688,51 @@ func TestGoldenRunIslands(t *testing.T) {
 	}
 }
 
+// TestGoldenRunIslandsSplit is TestGoldenRunIslands through the default
+// link, separately compiled: std's store linked with the program's own
+// sections (_ptext on darwin, .text.xoprog on linux) past std's code,
+// twice, so the second link starts from std's half (goldens outside the
+// amd64 sample, which xotool builds whole). The program's far calls need islands of their own (2026-11-08:
+// Azure 1's GCP compute/v0.alpha and aiplatform/v1 tests failed to link
+// on darwin/arm64, `prog-darwin.0.o: branch out of range`, as only
+// std's __text got islands).
+func TestGoldenRunIslandsSplit(t *testing.T) {
+	t.Parallel()
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	if xotool.WholeOnly() {
+		t.Skip("every build is whole program (XO_TEST_SEPCOMP=0 or the backend cache off)")
+	}
+	for _, name := range []string{"structs", "value_semantics", "conc_scopes"} {
+		dir := filepath.Join("..", "llvm", "testdata", "golden", name)
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, round := range []string{"first", "from the half"} {
+				// the round only keeps sharedBuild from reusing the first
+				env := []string{"XO_BRANCH_REACH=" + islandsReach, "XO_TEST_ROUND=" + round}
+				got, err := buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64, Env: env})
+				if err != nil {
+					t.Fatalf("%s build: %v", round, err)
+				}
+				if string(want) != got.String() {
+					t.Errorf("%s: output differs from want.txt with %v\n--- want\n%s\n--- got\n%s", round, env, want, got)
+				}
+			}
+		})
+	}
+}
+
 // islandsReach is TestGoldenRunIslands' branch reach: under the goldens'
 // code, so they get islands, and large enough that the islands of their
 // far targets fit in the reach's eighth.

@@ -29,3 +29,19 @@ store links: rest_layout). An island in std's .text moves std's
 sections, so that link keeps no half and a link from a half that would
 need one falls back to the full link (half_refused, half_pins_ok);
 islands in .text.xoprog alone keep the half.
+
+Mach-O split link (Observed 2026-11-08): the same GCP tests (and
+aiplatform/v1) failed on darwin/arm64 with xo 0.44.0's default,
+separately compiled link (`prog-darwin.0.o: branch out of range`;
+XO_SEPCOMP=0 linked). A split link puts the program's code in its own
+output section, `__TEXT,_ptext` (prog_name, decision 0409), after std's
+whole __text, and `islands` looked only at `__text`, so the program's
+far calls got no veneers. The Mach-O islands now work as the ELF ones:
+the span of __text, _ptext and __stubs decides, each code section gets
+an island after every half reach and one at its end, and only an island
+in std's __text refuses the half or rejects a link from one
+(`isl_text`). The assumption to keep: every output section that holds
+code must be in the islands' list; a new code section (as _ptext was)
+needs adding there. The islands goldens only ran whole program
+(XO_BACKEND_CACHE=off); internal/arm64 TestGoldenRunIslandsSplit runs
+them through the split link and from std's half.

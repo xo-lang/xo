@@ -68,11 +68,11 @@ fn (l: Linker) half_moves(o: Int, x: ISect, r: IReloc) -> Bool {
 
 /// Why this link (after finish) can have no half, "" when it can:
 /// x86_64, the program's own thread locals (they would move the
-/// template std's descriptors count from), branch islands, a layout
-/// order, a link without the program's own sections, a program
-/// definition of a name std defines (the half's globals keep only std's,
-/// so a next program with the same prepare key that does not define it
-/// would find none), or a failed one.
+/// template std's descriptors count from), branch islands in std's
+/// __text, a layout order, a link without the program's own sections, a
+/// program definition of a name std defines (the half's globals keep
+/// only std's, so a next program with the same prepare key that does not
+/// define it would find none), or a failed one.
 pub fn (s: StoreLink) half_refused() -> Str {
   let l = s.l
   if l.x86 {
@@ -81,8 +81,8 @@ pub fn (s: StoreLink) half_refused() -> Str {
   if l.prog_from != s.n {
     return "the program's sections are not their own (XO_STD_HALF)"
   }
-  if !l.isl_sects.is_empty() {
-    return "branch islands"
+  if l.isl_text {
+    return "branch islands in std's __text"
   }
   if !l.opts.order.is_empty() {
     return "a layout order"
@@ -182,8 +182,12 @@ pub fn (s: StoreLink) capture_half() -> StdHalf? {
 }
 
 /// After layout: whether std's fixed sections are where the half had
-/// them (else the link from the half is not the full link's).
+/// them (else the link from the half is not the full link's): branch
+/// islands in __text move them.
 pub fn (s: StoreLink) half_pins_ok(h: StdHalf) -> Bool {
+  if s.l.isl_text {
+    return false
+  }
   var got: List[(Str, Str, Int)] = []
   for (i, x) in s.l.osects.indexed() {
     if s.l.half_pinned(i) {
