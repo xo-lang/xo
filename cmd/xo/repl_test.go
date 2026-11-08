@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,5 +70,30 @@ func TestRepl(t *testing.T) {
 	}, "\n")).want(1)
 	if !strings.Contains(r.err, "entry:1:") || !strings.Contains(r.err, "error XO") {
 		t.Errorf("a type error: want a diagnostic at entry:1, got:\n%s", r.err)
+	}
+}
+
+// TestReplWarmup: an interactive `xo repl` starts a warm-up build of a
+// session program while the person types (decision 0572 stage 2), waits
+// for it before the first entry's build, and removes its directory and
+// the session's at the end, also when the session ends before any entry.
+func TestReplWarmup(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{"1 + 2\n:quit\n", ":quit\n"} {
+		tmp := t.TempDir()
+		cmd := exec.Command(xoBin(t), "repl")
+		cmd.Env = append(os.Environ(), "XO_REPL=1", "XO_REPL_TIMES=1", "TMPDIR="+tmp)
+		cmd.Stdin = strings.NewReader(input)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("xo repl with %q: %v", input, err)
+		}
+		if strings.HasPrefix(input, "1 + 2") && string(out) != "3\n" {
+			t.Errorf("xo repl with %q: output %q, want \"3\\n\"", input, out)
+		}
+		left, _ := filepath.Glob(filepath.Join(tmp, "xo-repl-*"))
+		if len(left) != 0 {
+			t.Errorf("xo repl with %q left %v", input, left)
+		}
 	}
 }

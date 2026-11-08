@@ -44,6 +44,10 @@ struct State {
   dir: Str
   xo: Str
   pc: Map[Str, check.ParseEntry]
+  /// the warm-up build (warm_start) and its directory, waited for before
+  /// the first entry's build
+  warm: Child? = None
+  warm_dir: Str = ""
 }
 
 pub fn run(os: Os, args: List[Str]) -> Int uses (clock, env, fs, proc, rand, stdio) {
@@ -86,6 +90,8 @@ pub fn run(os: Os, args: List[Str]) -> Int uses (clock, env, fs, proc, rand, std
     Some(text) => eval_all(os, st, text)
     None => interact(os, st)
   }
+  // a session that ended before its first entry: the warm-up's end
+  warm_wait(os, st)
   if !o.session.is_empty() {
     match os.fs.write(o.session, json.encode(st.sess)) {
       Ok(_) => {}
@@ -175,6 +181,7 @@ fn eval_all(os: Os, var st: State, text: Str) -> Int uses (clock, env, fs, proc,
 
 fn interact(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand, stdio) {
   os.stdio.eprintln("xo repl (experimental, decision 0572): :quit to end, :type EXPR, :doc NAME, :undo, :reset")
+  warm_start(os, st)
   var cur = ""
   while {
     os.stdio.eprint(if cur.is_empty() { "xo> " } else { "... " })
@@ -204,6 +211,59 @@ fn interact(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand, stdi
   0
 }
 
+/// Starts the warm-up (decision 0572 stage 2): a build, in a directory of
+/// its own, of a session program with one entry that prints values the
+/// way an entry does, so std's functions that every entry uses are in the
+/// front end and back end caches (a fresh xo's are empty: its first
+/// entry took 165 to 320 ms more) and the cache's hint names the
+/// session's variant, while the person types the first entry.
+/// XO_REPL_WARM=0 starts none.
+fn warm_start(os: Os, var st: State) uses (env, fs, proc, rand) {
+  if (os.env.get("XO_REPL_WARM") ?? "") == "0" {
+    return
+  }
+  let wd = match new_dir(os) {
+    Ok(d) => d
+    Err(_) => return
+  }
+  let s0 = Sess{entries: []}
+  let (prog, _) = s0.program(Entry{src: "[1, 2].len() + \"ab\".len()", kind: Kind.Expr, pin: "", typ: ""})
+  if os.fs.write("${wd}/main.xo", prog.bytes()).is_err() {
+    os.fs.remove_all(wd).ok()
+    return
+  }
+  // std's two concurrency variants first, in the foreground: a fresh xo
+  // misses them, and a plain build would start their build in a detached
+  // child the first entry cannot wait for (host 1, 2026-11-08: entries
+  // raced it and took 0.5 to 1.2 s); then the sample program, which
+  // fills the front end and back end caches the entries read
+  let script = "\"$0\" dev stdcache --conc=0 >/dev/null; \"$0\" dev stdcache --conc=1 >/dev/null; XO_SEPCOMP_BG=0 \"$0\" build -o \"$1/session\" \"$1\""
+  match os.proc.cmd("/bin/sh", ["-c", script, st.xo, wd]).merge_stderr().spawn() {
+    Ok(ch) => {
+      st.warm = Some(ch)
+      st.warm_dir = wd
+    }
+    Err(_) => os.fs.remove_all(wd).ok()
+  }
+}
+
+/// Waits for the warm-up build to end (its output read and dropped) and
+/// removes its directory; nothing when none runs.
+fn warm_wait(os: Os, var st: State) uses (fs, proc) {
+  if let Some(ch) = st.warm {
+    while {
+      match ch.read(65536) {
+        Ok(Some(_)) => {}
+        _ => break
+      }
+    }
+    ch.wait().ok()
+    st.warm = None
+    os.fs.remove_all(st.warm_dir).ok()
+    st.warm_dir = ""
+  }
+}
+
 /// Runs one entry or command; false when it failed.
 fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, rand, stdio) {
   let t = src.trim()
@@ -222,6 +282,12 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
       return false
     }
     let bin = "${st.dir}/session"
+    // (the warm-up first: two builds at once share the work of neither)
+    let tw = os.clock.now()
+    warm_wait(os, st)
+    if timing && tries == 0 && os.clock.since(tw).nanos() > 1000000 {
+      os.stdio.eprintln("xo repl: waited ${os.clock.since(tw).nanos() / 1000000} ms for the warm-up")
+    }
     let tb = os.clock.now()
     let b = match os.proc.cmd(st.xo, ["build", "-o", bin, st.dir]).output() {
       Ok(r) => r
