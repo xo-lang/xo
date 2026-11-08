@@ -54,3 +54,9 @@ infra/ci-runners/lambda/*.zip
 terraform.tfvars
 backend.hcl
 CLAUDE.local.md
+
+# Go programs built in their own directory (`go build` names the binary
+# after it): two were committed, carrying the builder's home path, which
+# publish.sh's leftover check refuses (2026-11-08)
+/internal/stdtest/grpcref/grpcref
+/stability/harness/harness
