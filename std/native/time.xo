@@ -1771,9 +1771,79 @@ fn layout_simple(layout: Str) -> Bool {
 
 /// parse_items for a layout_simple text, reading the layout as it parses (Go's
 /// parse loop) with no list of items.
+/// The w digits of b at pos as a number, or -1 when one is not a digit.
+fn fixed_digits(b: Bytes, pos: Int, w: Int) -> Int {
+  var v = 0
+  var k = 0
+  while k < w {
+    let c = Int(b[pos + k])
+    if c < 48 || c > 57 {
+      return -1
+    }
+    v = v * 10 + c - 48
+    k += 1
+  }
+  v
+}
+
+/// The RFC 3339 shape `YYYY-MM-DDTHH:MM:SSZ` or `...+HH:MM` read in place for ISO_LAYOUT: the instant in seconds, or
+/// MIN_TIME_SECS when the text is anything else (the general reader then decides and words the error).
+fn parse_iso_fast(b: Bytes) -> Int {
+  let n = b.len()
+  if n != 20 && n != 25 {
+    return MIN_TIME_SECS
+  }
+  if b[4] != 45 || b[7] != 45 || b[10] != 84 || b[13] != 58 || b[16] != 58 {
+    return MIN_TIME_SECS
+  }
+  let year = fixed_digits(b, 0, 4)
+  let month = fixed_digits(b, 5, 2)
+  let day = fixed_digits(b, 8, 2)
+  let hh = fixed_digits(b, 11, 2)
+  let mi = fixed_digits(b, 14, 2)
+  let ss = fixed_digits(b, 17, 2)
+  if year < 0 || month < 0 || day < 0 || hh < 0 || mi < 0 || ss < 0 {
+    return MIN_TIME_SECS
+  }
+  if month < 1 || month > 12 || day < 1 || day > days_in(year, month) || hh > 23 || mi > 59 || ss > 59 {
+    return MIN_TIME_SECS
+  }
+  var off = 0
+  if n == 20 {
+    if b[19] != 90 {
+      return MIN_TIME_SECS
+    }
+  } else {
+    let sign = Int(b[19])
+    if (sign != 43 && sign != 45) || b[22] != 58 {
+      return MIN_TIME_SECS
+    }
+    let (oh, ohn) = read_digits(b, 20, 2)
+    let (om, omn) = read_digits(b, 23, 2)
+    if ohn != 2 || omn != 2 || oh > 23 || om > 59 {
+      return MIN_TIME_SECS
+    }
+    off = oh * 3600 + om * 60
+    if sign == 45 {
+      off = -off
+    }
+  }
+  let secs = days_from_civil(year, month, day) * 86400 + hh * 3600 + mi * 60 + ss - off
+  if secs <= MIN_TIME_SECS || secs >= MAX_TIME_SECS {
+    return MIN_TIME_SECS
+  }
+  secs
+}
+
 fn parse_stream(s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
   let b = s.bytes()
   let n = b.len()
+  if layout == ISO_LAYOUT {
+    let fast = parse_iso_fast(b)
+    if fast != MIN_TIME_SECS {
+      return Ok(time_of(fast * 1000000000))
+    }
+  }
   var pos = 0
   var year = 1970
   var month = 1
