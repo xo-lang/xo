@@ -707,6 +707,9 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       let d = xop(ops[0], 8)
       if ops[1].starts_with(":got:") {
         x.lines.push("movq ${ops[1][5..ops[1].len()]}@GOTPCREL(%rip), ${d}")
+      } else if ops[1].starts_with(":gottprel:") {
+        // initial exec (a library): the offset from the thread pointer
+        x.lines.push("movq ${ops[1][10..ops[1].len()]}@GOTTPOFF(%rip), ${d}")
       } else if ops[1].ends_with("@GOTPAGE") {
         // Mach-O's GOT entry (darwin)
         x.lines.push("movq ${ops[1][0..ops[1].len() - 8]}@GOTPCREL(%rip), ${d}")
@@ -724,10 +727,15 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
         return false
       }
       let at = next.find(":tprel_hi12:") ?? -1
-      if at < 0 {
-        return false
-      }
       let d = xop(ops[0], 8)
+      if at < 0 {
+        // initial exec: the add of the GOT's offset follows
+        if !next.trim().starts_with("add ") {
+          return false
+        }
+        x.lines.push("movq %fs:0, ${d}")
+        return true
+      }
       x.lines.push("movq %fs:0, ${d}")
       x.lines.push("leaq ${next[at + 12..next.len()]}@TPOFF(${d}), ${d}")
       x.skip = 2

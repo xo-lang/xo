@@ -318,6 +318,7 @@ pub fn (var w: Walk) clauses(cls: List[parser.Clause]) {
         }
       }
       EnsuresClause(_, _, cond) => w.expr(cond, "Cond", -1, SiteCtx.Other, [])
+      CExportClause(..) => {}
     }
   }
 }

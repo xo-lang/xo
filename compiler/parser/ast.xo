@@ -150,6 +150,9 @@ pub enum Clause {
   UsesClause(span: Span, effects: List[Effect], parens: Bool)
   RequiresClause(span: Span, debug: Bool, cond: Expr, els: Expr?)
   EnsuresClause(span: Span, debug: Bool, cond: Expr)
+  /// `as c "name"`: the function is the C export name in a library
+  /// build (decision 0574)
+  CExportClause(span: Span, name: Bytes)
 }
 
 pub struct StructDecl {

@@ -60,7 +60,7 @@ fn sepcomp_store(os: Os, conc: Bool) -> Str {
 /// XO_SEPCOMP set (1 or 0) is the user's choice and wins. Only a native
 /// darwin or linux, arm64 or amd64, or windows/amd64, build or run for
 /// the host, not
-/// --release, --race or a cc link,
+/// --release, --race, a cc link or a C library (--lib),
 /// with the passes as they are; std's variants from the std cache
 /// (std_variant_peek: a release's prebuilt ones, else the cache's; a
 /// miss builds the whole program, as before, and starts the variant's
@@ -68,6 +68,12 @@ fn sepcomp_store(os: Os, conc: Bool) -> Str {
 /// ADR 0388 Progress). On by default since 2026-10-28;
 /// XO_SEPCOMP_DEFAULT=0 (or XO_SEPCOMP=0) turns it off.
 fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
+  if !o.lib.is_empty() {
+    // a C library (--lib, decision 0574) is built whole, even with
+    // XO_SEPCOMP=1: std's variants are a program's, without the runtime's
+    // library entries (xo_init's callees), and its link is cc's
+    return with_env(os, {"XO_SEPCOMP": "0", "XO_SEPCOMP_FACTS": "", "XO_SEPCOMP_FACTS_CONC": "", "XO_SEPCOMP_STORE": "", "XO_SEPCOMP_STORE_CONC": ""})
+  }
   if os.env.get("XO_SEPCOMP") != None || (os.env.get("XO_SEPCOMP_DEFAULT") ?? "") == "0" {
     return os
   }

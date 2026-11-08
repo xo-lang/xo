@@ -778,6 +778,10 @@ fn (var c: Enc) clause(var b: BytesBuilder, cl: parser.Clause) {
       bool(b, debug)
       c.expr(b, cond)
     }
+    CExportClause(_, name) => {
+      open(b, "CExportClause")
+      str(b, name)
+    }
   }
 }
 

@@ -153,6 +153,13 @@ pub struct Checker {
   /// `xo check`'s support check (decision 0523), so XO1201 shows in a
   /// library and in functions main does not reach
   pub lib_roots: Bool = false
+  /// A C library build (`xo build --lib`, decision 0574): the root
+  /// package's `as c` functions are the roots, under their C names, and
+  /// the program's C `main` gives way to xo_init
+  pub clib: Bool = false
+  /// A static C library (`--lib=static`): its constructor runs in the
+  /// program's link order, so each export checks that the runtime started
+  pub clib_static: Bool = false
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false
@@ -2240,6 +2247,9 @@ pub fn (c: Checker) link_view(keep_parse: Bool) -> Checker {
   v.inline_str = c.inline_str
   v.det = c.det
   v.race = c.race
+  // a library's link (no hollowing, decision 0574)
+  v.clib = c.clib
+  v.clib_static = c.clib_static
   // what a module check cache retry reads after the lowering (build_native)
   v.mod_skip = c.mod_skip
   v.mod_skip_auto = c.mod_skip_auto

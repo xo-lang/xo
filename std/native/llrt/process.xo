@@ -146,6 +146,10 @@ fn next_wstr(p0: Int) -> Int {
   p + 2
 }
 
+/// Whether start kept the process's arguments (a C library's runtime
+/// may start before them, cabi_c xo_start_early).
+pub fn has_args() -> Bool { rt.mem_load(rt.static_word(WORDS), ARGV, 8) != 0 }
+
 /// The zero terminated string at address a.
 fn cstr(a: Int) -> Str { raw.str_at(a, raw.cstr_len(a)) }
 

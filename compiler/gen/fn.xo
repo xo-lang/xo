@@ -410,7 +410,7 @@ fn (var g: Gen) func_body(fd: parser.FnDecl) -> Str {
           ens_l.push(cl)
         }
       }
-      UsesClause(..) => {}
+      UsesClause(..) | CExportClause(..) => {}
     }
   }
   let body = fd.body ?? parser.Block{span: fd.span}

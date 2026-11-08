@@ -383,7 +383,7 @@ fn nolibc(os: Os, o: Opts, c: check.Checker, tgoos: Str) -> Bool {
     // stage 1): a `use c` program does not build for it yet
     return true
   }
-  if tgoos != "linux" || o.race {
+  if tgoos != "linux" || o.race || !o.lib.is_empty() {
     return false
   }
   match os.env.get("XO_NOLIBC") ?? "" {

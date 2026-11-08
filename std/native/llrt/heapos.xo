@@ -1418,7 +1418,15 @@ const W_HSIZE = 29
 /// 0484); then (decision 0506, 85 classes) each class's free list, its
 /// length, its spare magazine and its magazine size (alloc.xo FREE_LISTS,
 /// NFREE, MAG, MAG_CAP; the 73 class arrays before them are unused).
-const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73 + 24 + 16 + 24 + 4 * 8 * 85
+const H_SIZE = H_CERR + 8
+/// A C library's (decision 0574): 1 while the record's thread has exited,
+/// so a new thread takes it (thread_heap; orphan); the pthread key of the
+/// thread exit hook plus 1 (0 none), which each record copies from the
+/// list's head; the thread's last error text (c_error: a C malloc'd,
+/// zero terminated copy, 0 none).
+const H_ORPHAN = 2152 + 32 * 256 + 24 + 8 * 73 + 24 + 16 + 24 + 4 * 8 * 85
+pub const H_TKEY = H_ORPHAN + 8
+const H_CERR = H_TKEY + 8
 /// The first word of the per class magazine sizes (alloc.xo MAG_CAP).
 const H_MAG_CAP = 13056
 /// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).
@@ -1642,6 +1650,51 @@ pub fn counting_on(h: Int) {
   hlock_give()
 }
 
+/// Marks record h free for the next new thread (a C library's thread
+/// exit hook, decision 0574): its thread has exited.
+pub fn orphan(h: Int) {
+  let e = rt.mem_load(h, H_CERR, 8)
+  if e != 0 {
+    sys_c.weak_free(e)
+    rt.mem_store(h, H_CERR, 0, 8)
+  }
+  hlock_take()
+  rt.mem_store(h, H_ORPHAN, 1, 8)
+  hlock_give()
+}
+
+/// A C export's error (decision 0574): msg becomes the calling thread's
+/// last error text (c_last_error) and 1 is stored through errp (a C
+/// int32_t *, 0 none).
+pub fn c_error(errp: Int, msg: Str) {
+  let h = thread_heap()
+  let old = rt.mem_load(h, H_CERR, 8)
+  if old != 0 {
+    sys_c.weak_free(old)
+  }
+  let p = sys_c.weak_malloc(msg.len() + 1)
+  if p != 0 {
+    let _n = raw.put_cstr(p, msg)
+  }
+  rt.mem_store(h, H_CERR, p, 8)
+  if errp != 0 {
+    rt.mem_store(errp, 0, 1, 4)
+  }
+}
+
+/// A C export's success (decision 0574): 0 through errp (0 none).
+pub fn c_ok(errp: Int) {
+  if errp != 0 {
+    rt.mem_store(errp, 0, 0, 4)
+  }
+}
+
+/// The calling thread's last error text (c_error), or 0.
+pub fn c_last_error() -> Int {
+  let h = rt.tlocal_get(TLS_HEAP)
+  if h == 0 { 0 } else { rt.mem_load(h, H_CERR, 8) }
+}
+
 /// Sets the size classes' limit to m (XO_HEAP_MID_MAX, at start: the
 /// main record, which the others copy; mid_default() otherwise).
 pub fn set_mid_max(m: Int) { rt.mem_store(heaps_head(), H_MID_MAX, m, 8) }
@@ -1657,6 +1710,22 @@ pub fn thread_heap() -> Int {
   if t != 0 {
     return t
   }
+  // a C library's: the record of a C thread that exited (orphan), with
+  // its blocks and magazines as it left them
+  if rt.mem_load(heaps_head(), H_TKEY, 8) != 0 {
+    hlock_take()
+    var r = heaps_head()
+    while r != 0 {
+      if rt.mem_load(r, H_ORPHAN, 8) != 0 {
+        rt.mem_store(r, H_ORPHAN, 0, 8)
+        hlock_give()
+        rt.tlocal_set(TLS_HEAP, r)
+        return r
+      }
+      r = rt.mem_load(r, H_NEXT, 8)
+    }
+    hlock_give()
+  }
   let h = map(rt.mem_load(rt.static_word(W_HSIZE), 0, 8))
   mag_caps(h)
   hlock_take()
@@ -1665,6 +1734,7 @@ pub fn thread_heap() -> Int {
   rt.mem_store(h, H_PAGES, rt.mem_load(first, H_PAGES, 8), 8)
   rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
   rt.mem_store(h, H_COUNT, rt.mem_load(first, H_COUNT, 8), 8)
+  rt.mem_store(h, H_TKEY, rt.mem_load(first, H_TKEY, 8), 8)
   if rt.mem_load(first, H_FQ, 8) != 0 {
     check_record(h)
   }

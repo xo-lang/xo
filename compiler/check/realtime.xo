@@ -55,7 +55,7 @@ fn (var c: Checker) check_realtime() {
       match cl {
         RequiresClause(cond: cond, ..) => c.rt_expr(w, cond)
         EnsuresClause(cond: cond, ..) => c.rt_expr(w, cond)
-        UsesClause(..) => {}
+        UsesClause(..) | CExportClause(..) => {}
       }
     }
     c.rt_block(w, body)

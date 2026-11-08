@@ -169,7 +169,11 @@ fn (var b: Builder) budget_exceeded(k: Int, nt: Int, ei: Int, bud_t: Int, join: 
 /// Windows' TEB pointer) around the runtime's
 /// xo_x_preempt, so a poll in a loop clobbers nothing; x30 is the
 /// caller's to keep (the poll's stub).
-pub fn preempt_stub_arm64(os: Str) -> List[Str] {
+pub fn preempt_stub_arm64(os: Str) -> List[Str] { preempt_stub_arm64_tls(os, false) }
+
+/// preempt_stub_arm64, with xo_tlocal by initial exec when tls_ie (a
+/// linux shared library, decision 0574).
+pub fn preempt_stub_arm64_tls(os: Str, tls_ie: Bool) -> List[Str] {
   // first, with x16 (and on Darwin x17, which the TLV thunk changes) only:
   // whether this worker was asked (its record, xo_tlocal slot TLS_W, word
   // W_PREEMPT_I of pool.xo: bytes 16 and 3456); a poll of every other
@@ -187,6 +191,9 @@ pub fn preempt_stub_arm64(os: Str) -> List[Str] {
     // COFF, lld-link: "relocation specifier :tprel_hi12: unsupported", CI
     // run 39671368960); x17 too, which the LLVM poll's call clobbers
     b = ["ldr x16, [x18, #88]", "adrp x17, _tls_index", "ldr w17, [x17, :lo12:_tls_index]", "ldr x16, [x16, x17, lsl #3]", "add x16, x16, :secrel_hi12:xo_tlocal", "add x16, x16, :secrel_lo12:xo_tlocal", "ldr x16, [x16, #16]"]
+  } else if tls_ie {
+    // initial exec: the offset from a GOT slot, x0 kept around it
+    b = ["str x0, [sp, #-16]!", "adrp x16, :gottprel:xo_tlocal", "ldr x16, [x16, :gottprel_lo12:xo_tlocal]", "mrs x0, tpidr_el0", "add x16, x16, x0", "ldr x16, [x16, #16]", "ldr x0, [sp], #16"]
   } else {
     b = ["mrs x16, tpidr_el0", "add x16, x16, :tprel_hi12:xo_tlocal", "add x16, x16, :tprel_lo12_nc:xo_tlocal", "ldr x16, [x16, #16]"]
   }
@@ -300,7 +307,11 @@ pub fn async_stub_amd64() -> List[Str] {
 /// the flags, xmm0 to xmm15) around the runtime's xo_x_preempt, in a
 /// frame it aligns itself (a poll may be in a leaf), with Win64's shadow
 /// space below the saves (on Windows the export takes Win64).
-pub fn preempt_stub_amd64(os: Str) -> List[Str] {
+pub fn preempt_stub_amd64(os: Str) -> List[Str] { preempt_stub_amd64_tls(os, false) }
+
+/// preempt_stub_amd64, with xo_tlocal by initial exec when tls_ie (a
+/// linux shared library, decision 0574).
+pub fn preempt_stub_amd64_tls(os: Str, tls_ie: Bool) -> List[Str] {
   let gp = ["rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11"]
   // first, with r11 only (the poll's scratch; the flags are the poll's
   // test's): whether this worker was asked (its record, xo_tlocal slot
@@ -313,6 +324,8 @@ pub fn preempt_stub_amd64(os: Str) -> List[Str] {
     b = ["pushq %rbp", "movq %rsp, %rbp", "andq $-16, %rsp", "pushq %rax", "pushq %rdi", "movq _xo_tlocal@TLVP(%rip), %rdi", "callq *(%rdi)", "movq 16(%rax), %r11", "popq %rdi", "popq %rax", "movq %rbp, %rsp", "popq %rbp"]
   } else if os == "windows" {
     b = ["pushq %rax", "movl _tls_index(%rip), %eax", "movq %gs:88, %r11", "movq (%r11,%rax,8), %r11", "leaq xo_tlocal@SECREL32(%r11), %r11", "popq %rax", "movq 16(%r11), %r11"]
+  } else if tls_ie {
+    b = ["movq xo_tlocal@GOTTPOFF(%rip), %r11", "addq %fs:0, %r11", "movq 16(%r11), %r11"]
   } else {
     b = ["movq %fs:0, %r11", "leaq xo_tlocal@TPOFF(%r11), %r11", "movq 16(%r11), %r11"]
   }

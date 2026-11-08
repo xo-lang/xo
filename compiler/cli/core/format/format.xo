@@ -726,6 +726,7 @@ fn clause_span(cl: parser.Clause) -> Span {
     UsesClause(span, ..) => span
     RequiresClause(span, ..) => span
     EnsuresClause(span, ..) => span
+    CExportClause(span, ..) => span
   }
 }
 
@@ -821,6 +822,8 @@ fn (var p: Printer) cont(header_end: Int, start: Int, base: Int) -> Bool {
 
 fn (var p: Printer) clause(cl: parser.Clause) {
   match cl {
+    // as written (decision 0574)
+    CExportClause(span, _) => p.w(p.text(span))
     UsesClause(_, effects, parens) => {
       p.w("uses ")
       if parens {

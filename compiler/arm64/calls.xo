@@ -3263,6 +3263,14 @@ fn (var g: G) tl_base() -> Int {
     let _i = i
     return d
   }
+  if g.os != "darwin" && g.m.tls_ie {
+    // initial exec (a shared library, decision 0574): xo_tlocal's offset
+    // from the thread pointer in a GOT slot the loader fills
+    let d = g.new_vreg(false)
+    let t = g.new_vreg(false)
+    let _i = g.add(Inst{kind: K_PLAIN, text: "adrp $d1, :gottprel:xo_tlocal\nldr $d1, [$d1, :gottprel_lo12:xo_tlocal]\nmrs $d0, tpidr_el0\nadd $d0, $d0, $d1", defs: [d, t], us: [], fl: IF_KEEP})
+    return d
+  }
   if g.os != "darwin" {
     return g.def1(false, "mrs $d0, tpidr_el0\nadd $d0, $d0, :tprel_hi12:xo_tlocal\nadd $d0, $d0, :tprel_lo12_nc:xo_tlocal", [])
   }

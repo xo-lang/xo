@@ -1227,12 +1227,30 @@ fn (var p: Parser) parse_err_spec() -> ErrSpec {
 fn (var p: Parser) parse_clauses() -> List[Clause] {
   var out: List[Clause] = []
   while {
-    if !(p.peek_past_newlines().kind is Uses | Requires | Ensures) {
+    if !(p.peek_past_newlines().kind is Uses | Requires | Ensures | As) {
       return out
     }
     p.skip_newlines()
     let start = p.tok.span.start
     match p.tok.kind {
+      As => {
+        // `as c "name"` (decision 0574)
+        p.next()
+        if !p.at_ident(b"c") {
+          p.error_expected("`c` and a string literal, the function's C export name (`as c \"name\"`)")
+          return out
+        }
+        p.next()
+        if !p.at(Kind.String) && !p.at(Kind.RawString) {
+          p.error_expected("a string literal, the function's C export name")
+          return out
+        }
+        let (n, nsp, ok) = p.plain_string()
+        if !ok {
+          p.fail(UNEXPECTED_TOKEN, nsp, "a C export name is a plain string literal, without interpolation")
+        }
+        out.push(Clause.CExportClause(span: p.span_from(start), name: n))
+      }
       Uses => {
         p.next()
         let (effs, parens) = p.parse_effect_clause()

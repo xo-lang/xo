@@ -86,7 +86,7 @@ Go"; runtime/cgo):
      (windows).
    - `xo build --lib=static` writes `libNAME.a`.
    - Both write `NAME.h`: the exports' C prototypes, the boundary
-     typedefs (`XoBytes`, `XoHandle`), and `xo_init`, `xo_free` and
+     typedefs (`XoBytes`, `XoStr`, `XoHandle`), and `xo_init`, `xo_free` and
      `xo_last_error`.
    - A library has no entry: `--lib` on a package that declares
      `fn main` is an error (a new XO code), so a program is not shipped
@@ -104,7 +104,8 @@ Go"; runtime/cgo):
    | Int | int64_t | value |
    | Float | double | value |
    | Bool | bool (uint8) | value |
-   | Bytes, Str (parameter) | `XoBytes {const uint8_t *p; int64_t n}` | borrowed for the call; Xo copies what it keeps (a view would outlive the C buffer) |
+   | Bytes (parameter) | `XoBytes {const uint8_t *p; int64_t n}` | borrowed for the call; Xo copies what it keeps (a view would outlive the C buffer) |
+   | Str (parameter) | `XoStr {const char *p; int64_t n}` (the owner's acceptance, 2026-11-08: its own type, same layout, so the UTF-8 rule shows in the header) | borrowed and copied as Bytes; n bytes of UTF-8, no NUL needed; each byte of an invalid sequence arrives as U+FFFD (scan.text_at, decision 0259) |
    | Bytes, Str (result) | `XoBytes` | owned by the caller, freed with `xo_free(p)`; a Str is UTF-8, n bytes, with a NUL past n for convenience |
    | any other type | `XoHandle` (uint64) | an index into a per library table holding a counted reference; `xo_release(h)` drops it; a stale handle faults |
    | `T ! E` result | T's C type, with `int32_t *err` appended | 0 on success, else an error code; `xo_last_error()` returns the text (thread local, owned by the library) |
@@ -211,7 +212,9 @@ What it has:
   and TestCLibStatic);
 - Bytes and Str parameters: a generated wrapper `xo_cx_NAME` takes
   `XoBytes {p, n}` as two words and copies the bytes (raw.str_at)
-  before calling the function;
+  before calling the function; a Str parameter is `XoStr` in the header
+  and is copied by scan.text_at, which makes invalid UTF-8 U+FFFD
+  (2026-11-08, on the owner's acceptance);
 - only `xo_init` and the exports are the shared library's symbols
   (decision 2's hidden runtime names, brought forward from stage 2);
 - linux: thread locals by initial exec (`:gottprel:`, a `tls_ie` flag

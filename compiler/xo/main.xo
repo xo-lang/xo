@@ -770,6 +770,8 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.overlay = ov
   c.parse_cache = o.parse_cache
   c.native = native
+  c.clib = !o.lib.is_empty()
+  c.clib_static = o.lib == "static"
   // a native build checks the runtime's bodies as it builds them
   // (decision 0247); XO_CHECK_EAGER=1 checks them all first, as before
   c.lazy = native && (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
@@ -1115,6 +1117,26 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     o.backend_auto = true
     o.backend = backend
   }
+  if !o.lib.is_empty() {
+    // a C library (decision 0574): stage 1 links with cc, with the C
+    // library, on darwin and linux, arm64 and amd64
+    if (os.env.get("XO_CLIB") ?? "") != "1" {
+      fail(os, "--lib is stage 1 of decision 0574, behind XO_CLIB=1")
+    }
+    if !(o.lib is "shared" | "static") {
+      fail(os, "--lib=${o.lib}: a library is --lib=shared or --lib=static")
+    }
+    if !(backend is "arm64" | "amd64") {
+      fail(os, "--lib builds with the native arm64 or amd64 backend (not ${backend})")
+    }
+    o.linker = "cc"
+    o.assembler = "cc"
+    // no embedded DWARF: xo's segment added after cc's link breaks a
+    // dylib's chained fixups (stage 2: a dSYM beside it)
+    if o.debug_info.is_empty() {
+      o.debug_info = "off"
+    }
+  }
   let phases = o.phases
   let goos = ctx.goos
   // LLVM builds for the host; the arm64 backend for arm64 (on an amd64
@@ -1176,6 +1198,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let release = o.release && !tests
   var t = os.clock.now()
   var c = check_program(os, o, true)
+  if !o.lib.is_empty() && !o.out.is_empty() {
+    // the library's header beside it (decision 0574)
+    o.lib_exports = c_export_names(c)
+    let (hp, guard) = c_header_path(o.out)
+    if let Err(e) = os.fs.write(hp, c_header(c, guard).bytes()) {
+      fail(os, "write ${hp}: ${e}")
+    }
+  }
   var fz = FuzzSet{}
   if o.cmd == "test" {
     // contract fuzzing as generated property tests (decision 0250)
@@ -1856,7 +1886,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // (XO_SEPCOMP); its functions call the program's main, which a reach
     // over the program's parts alone cannot see, so no hollowing
     let (sep_objs, sep_key) = sepcomp_objs(os, b.conc)
-    let hollow_now = (tgoos is "darwin" | "linux" | "freebsd") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow") && sepcomp_facts_path(os).is_empty()
+    // a library (decision 0574): C calls its exports by name, and its
+    // reach has no _main to start from
+    let hollow_now = (tgoos is "darwin" | "linux" | "freebsd") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow") && sepcomp_facts_path(os).is_empty() && !c.clib
     // decision 0388's std store: the parts split into atoms, which the
     // link strips by symbol (every object path below assembles these)
     // (windows/amd64's COFF too: pelink strips by atom, pestrip.xo)
@@ -2499,7 +2531,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // (TestDebugInfoSameCode); the key tells the two apart
     let cpad: List[Str] = if tgoos == "darwin" { [DWARF_HEADERPAD] } else { [] }
     let pad = cpad + (if cdsym { ["dwarf-embed"] + (if o.dsym { ["dsym"] } else { [] }) } else { [] })
-    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, [march] + flags + pad + lk.link_only, srcs) }
+    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, [march] + flags + pad + lk.link_only + (if o.lib == "static" { ["lib=static"] } else { [] }), srcs) }
     let cst = stage(os, ctx, bin)
     let (hit, entry) = fetch_bin(os, ctx, key, cst.bin)
     if !hit {
@@ -2521,7 +2553,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // program are byte for byte equal (TestModuleCheckAuto)
       let oso_prefix = if tgoos == "darwin" && dir != sdir { "${dir}/" } else { "" }
       let opad: List[Str] = if oso_prefix.is_empty() { [] } else { wl_path("-oso_prefix", oso_prefix) }
-      let msg = cc_build(os, ctx, cc, flags + cpad + opad + lk.link_only, lsrcs, cst.bin)
+      // a static library (decision 0574): the objects in an archive, which
+      // the C program's link joins with the C library
+      let msg = if o.lib == "static" { ar_static(os, tgoos, cc, flags + memo_sysroot(os, ctx), lsrcs, cst.bin) } else { cc_build(os, ctx, cc, flags + cpad + opad + lk.link_only, lsrcs, cst.bin) }
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail_stage(os, cst, "${cc} failed")
@@ -2704,6 +2738,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
   b.imm_rc = o.backend != "llvm"
   b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
   b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)
+  b.m.tls_ie = !o.lib.is_empty() && tgoos == "linux"
   b.m.op_verify = (os.env.get("XO_OP_VERIFY") ?? "") == "1"
   var t = lap(os, o.phases, "ssa", t0)
   if (os.env.get("XO_FE_STATS") ?? "") == "1" {
@@ -2887,6 +2922,27 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
   var lk = LinkInputs{}
   if o.strip {
     lk.link_only = if tgoos == "darwin" { ["-Wl,-x"] } else { ["-s"] }
+  }
+  if o.lib == "shared" {
+    // a shared library (decision 0574): no entry, the exports' symbols
+    // its install name and soname the output's file name under the
+    // loader's search path, not the staged path cc wrote
+    let base = o.out[(o.out.rfind("/") ?? -1) + 1..o.out.len()]
+    lk.link_only = lk.link_only + (if tgoos == "darwin" { ["-dynamiclib", "-Wl,-install_name,@rpath/${base}"] } else { ["-shared", "-Wl,-Bsymbolic", "-Wl,-soname,${base}"] })
+    // only the exports and xo_init are the library's symbols: the
+    // runtime's C names (xo_x_*, malloc's hooks) stay inside it
+    let (lp, ltext) = c_exports_list(o.lib_exports, dir, tgoos)
+    if let Err(e) = os.fs.write(lp, ltext.bytes()) {
+      fail(os, "write ${lp}: ${e}")
+    }
+    lk.link_only = lk.link_only + [if tgoos == "darwin" { "-Wl,-exported_symbols_list,${lp}" } else { "-Wl,--version-script,${lp}" }]
+    // xo_init as the library's constructor: the loader starts the
+    // runtime with the process's argc, argv and envp, so C need not
+    let cp = "${dir}/xo_ctor.s"
+    if let Err(e) = os.fs.write(cp, c_ctor_asm(tgoos).bytes()) {
+      fail(os, "write ${cp}: ${e}")
+    }
+    lk.srcs.push(cp)
   }
   // the build information (decision 0354 stage 2)
   match binfo_object(os, dir, native_build_info(os, ctx, o, backend, "${tgoos}/${tgoarch}", inline_fb), tgoos, tgoarch, no_cc) {

@@ -9,7 +9,7 @@
 use github.com/xo-lang/xo/compiler/lexer
 
 /// The version of the form: a change to the AST or this file changes it.
-pub const AST_CODEC_VERSION = "xo ast codec v8"
+pub const AST_CODEC_VERSION = "xo ast codec v9"
 
 struct Enc {
   b: BytesBuilder = BytesBuilder.new()
@@ -212,6 +212,11 @@ fn (var e: Enc) clause(c: Clause) {
       e.span(span)
       e.bool(debug)
       e.expr(cond)
+    }
+    CExportClause(span, name) => {
+      e.int(3)
+      e.span(span)
+      e.bytes(name)
     }
   }
 }
@@ -1233,6 +1238,11 @@ fn (var r: Dec) clause() -> Clause {
       let c = r.expr()
       let el = r.oexpr()
       Clause.RequiresClause(span: s, debug: db, cond: c, els: el)
+    }
+    3 => {
+      let s = r.span()
+      let n = r.bytes()
+      Clause.CExportClause(span: s, name: n)
     }
     _ => {
       if tag != 2 {

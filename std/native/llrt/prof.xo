@@ -1054,7 +1054,7 @@ fn cstr(p: Int) -> Str {
 /// macOS: the N_SECT symbols of the program's image (its LC_SYMTAB, read
 /// through __LINKEDIT, which is mapped) whose address is in the text.
 fn macho_symbols(lo: Int, hi: Int, var addrs: List[Int], var names: List[Str]) {
-  let mh = sys_darwin._dyld_get_image_header(0)
+  let mh = dwline.own_header()
   if mh == 0 || rt.mem_load(mh, 0, 4) != 4277009103 {
     return
   }
@@ -1125,18 +1125,22 @@ fn macho_symbols(lo: Int, hi: Int, var addrs: List[Int], var names: List[Str]) {
 /// file (/proc/self/exe), placed by the load bias (AT_PHDR against
 /// PT_PHDR).
 fn elf_symbols(lo: Int, hi: Int, var addrs: List[Int], var names: List[Str]) {
-  let data = read_file("/proc/self/exe")
+  // a C library's own file (decision 0574), else the program's
+  let (lib, lbase) = dwline.own_elf()
+  let data = read_file(if lib.is_empty() { "/proc/self/exe" } else { lib })
   if data.len() < 64 {
     return
   }
   let f = raw.bytes_addr(data)
-  let ph = linux.auxval(linux.AT_PHDR)
-  let phn = linux.auxval(linux.AT_PHNUM)
-  var bias = 0
-  for i in 0..phn {
-    let p = ph + 56 * i
-    if rt.mem_load(p, 0, 4) == 6 {
-      bias = ph - ld(p, 16)
+  var bias = lbase
+  if lib.is_empty() {
+    let ph = linux.auxval(linux.AT_PHDR)
+    let phn = linux.auxval(linux.AT_PHNUM)
+    for i in 0..phn {
+      let p = ph + 56 * i
+      if rt.mem_load(p, 0, 4) == 6 {
+        bias = ph - ld(p, 16)
+      }
     }
   }
   // Elf64_Ehdr: e_shoff 40, e_shentsize 58, e_shnum 60
@@ -1324,6 +1328,36 @@ fn func_of(syms: Syms, pc: Int, var names: List[Str]) -> Int {
   names.len() - 1
 }
 
+/// The Mach-O header of the C library holding Xo's code (decision 0574),
+/// or 0 in a program (or off macOS).
+fn lib_header() -> Int {
+  match target.os {
+    TargetOs.Darwin => {
+      let mh = dwline.own_header()
+      if mh == sys_darwin._dyld_get_image_header(0) { 0 } else { mh }
+    }
+    TargetOs.Linux => dwline.own_elf().1
+    _ => 0
+  }
+}
+
+/// The Mach-O header of the image holding pc (macOS), the base of the
+/// loaded object holding it (Linux), or 0.
+fn image_of(pc: Int) -> Int {
+  if target.os == TargetOs.Linux {
+    return dwline.elf_object_of(pc).2
+  }
+  // Dl_info: dli_fbase at 8
+  let info = rt.heap_large(32)
+  rt.mem_set(info, 0, 32)
+  var mh = 0
+  if Int(sys_darwin.dladdr(pc, info)) != 0 {
+    mh = ld(info, 8)
+  }
+  rt.heap_release(info - 8)
+  mh
+}
+
 /// The name of a pc outside the program: macOS, dladdr's symbol (else
 /// its image's file name); Linux, the file name of the shared object
 /// holding it ([vdso] for the kernel's); "?" when nothing holds it.
@@ -1365,61 +1399,19 @@ fn base_name(p: Str) -> Str {
 /// Linux: "[name]" of the shared object whose PT_LOAD holds pc (the
 /// dynamic loader's link_map, through the program's DT_DEBUG), else "?".
 fn linux_object_name(pc: Int) -> Str {
-  let ph = linux.auxval(linux.AT_PHDR)
-  let n = linux.auxval(linux.AT_PHNUM)
-  if ph == 0 {
+  let (found, nm, _) = dwline.elf_object_of(pc)
+  if !found {
     return "?"
   }
-  var bias = 0
-  var dynv = 0
-  for i in 0..n {
-    let p = ph + 56 * i
-    let t = rt.mem_load(p, 0, 4)
-    if t == 6 {
-      bias = ph - ld(p, 16)
-    } else if t == 2 {
-      dynv = ld(p, 16)
-    }
+  if nm == "[vdso]" {
+    return nm
   }
-  if dynv == 0 {
-    return "?"
+  if nm.is_empty() {
+    // the executable (a C library's caller, decision 0574)
+    let (exe, err) = linux.readlink("/proc/self/exe")
+    return if err == 0 { "[${base_name(exe)}]" } else { "[exe]" }
   }
-  var d = dynv + bias
-  var dbg = 0
-  while ld(d, 0) != 0 {
-    if ld(d, 0) == 21 {
-      dbg = ld(d, 8)
-    }
-    d += 16
-  }
-  if dbg == 0 {
-    return "?"
-  }
-  // struct r_debug: r_version, r_map; struct link_map: l_addr, l_name,
-  // l_ld, l_next
-  var lm = ld(dbg, 8)
-  var left = 4096
-  while lm != 0 && left > 0 {
-    left -= 1
-    let base = ld(lm, 0)
-    if base != 0 && rt.mem_load(base, 0, 4) == 1179403647 {
-      // Elf64_Ehdr: e_phoff 32, e_phnum 56
-      let oph = base + ld(base, 32)
-      let on = rt.mem_load(base, 56, 2)
-      for i in 0..on {
-        let p = oph + 56 * i
-        if rt.mem_load(p, 0, 4) == 1 {
-          let a = base + ld(p, 16)
-          if pc >= a && pc < a + ld(p, 40) {
-            let nm = if ld(lm, 8) != 0 { cstr(ld(lm, 8)) } else { "" }
-            return if nm.is_empty() { "[vdso]" } else { "[${base_name(nm)}]" }
-          }
-        }
-      }
-    }
-    lm = ld(lm, 24)
-  }
-  "?"
+  "[${base_name(nm)}]"
 }
 
 /// Frame j of the sample at p as a location: a return address, or for
@@ -1542,7 +1534,15 @@ pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
     TargetArch.Riscv64 => 2
   }
   var started = false
+  // a C library (decision 0574): the frames past its exports are the C
+  // program's, which its own symbols cannot name; the first is named by
+  // the dynamic linker and ends the traceback
+  let lib = lib_header()
   for (fi, pc) in pcs.indexed() {
+    if started && lib != 0 && image_of(pc - 1) != lib {
+      b.write("  ${outside_name(pc - 1)} (C)\n")
+      break
+    }
     // a return address: its call is at pc - 1
     let f = func_of(syms, pc - 1, names)
     let name = names[f]

@@ -218,6 +218,11 @@ fn dump_fn_decl(var out: StrBuilder, depth: Int, label: Str, f: FnDecl) {
         out.write("\n")
         dump_expr(out, d + 1, "cond", cond)
       }
+      CExportClause(span, name) => {
+        head(out, d, label, "CExportClause", span)
+        attr(out, "name", name)
+        out.write("\n")
+      }
     }
   }
   dump_block_opt(out, d, "body", f.body)

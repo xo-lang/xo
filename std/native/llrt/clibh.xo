@@ -1,0 +1,150 @@
+// C library handles (decision 0574 stage 2): a value of a type C cannot
+// hold (a struct, an enum, a List, ...) crosses to C as an XoHandle, a
+// slot of one table per library that keeps the value as an rt.Any with
+// one count of its own. The handle is the slot plus one in its low 32
+// bits and the slot's generation in its high bits, so a handle used
+// after xo_release (or never made) faults instead of reading another
+// value. The table is C memory (malloc: a library links the C library)
+// behind a lock; the generated wrappers (compiler/ssa declare_c_export)
+// call hput and hget.
+use native/llrt/pool
+use native/llrt/rc
+use native/llrt/tasks
+use native/rt
+use native/sys_c
+
+/// The table's address (0 until the first handle) and its lock (static
+/// words, rt.xo's table).
+const W_TAB = 101
+const W_LOCK = 102
+const ACQUIRE = 1
+const RELEASE = 2
+/// The table: its slots, the slots used so far, the first free slot plus
+/// one (0 none), then two words a slot: the Any's address (a free slot:
+/// the next free slot plus one, shifted left once, with bit 0 set) and
+/// the slot's generation.
+const T_CAP = 0
+const T_LEN = 8
+const T_FREE = 16
+const T_SLOTS = 24
+
+fn lock() {
+  let l = rt.static_word(W_LOCK)
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+  pool.held(1)
+}
+
+fn unlock() {
+  let l = rt.static_word(W_LOCK)
+  pool.held(-1)
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+/// v as a handle: the table keeps it (the caller shared it first, since
+/// any C thread may use the handle).
+pub fn hput[T](v: T) -> Int { put(rt.any_of(v)) }
+
+/// The value of handle h, which must be a T; a fault otherwise.
+pub fn hget[T](h: Int) -> T {
+  match rt.any_get[T](get(h)) {
+    Some(v) => v
+    None => rt.fault_raise("XoHandle ${h} holds a value of another type", "")
+  }
+}
+
+/// a as a handle: the table holds one count of it.
+pub fn put(a: rt.Any) -> Int {
+  let p = rt.obj_addr(a)
+  rc.inc(p)
+  lock()
+  var t = rt.mem_load(rt.static_word(W_TAB), 0, 8)
+  var s = -1
+  if t != 0 && rt.mem_load(t, T_FREE, 8) != 0 {
+    s = rt.mem_load(t, T_FREE, 8) - 1
+    let w = rt.mem_load(t, T_SLOTS + 16 * s, 8)
+    rt.mem_store(t, T_FREE, w.shr_logical(1), 8)
+  } else {
+    if t == 0 || rt.mem_load(t, T_LEN, 8) == rt.mem_load(t, T_CAP, 8) {
+      t = grow(t)
+    }
+    s = rt.mem_load(t, T_LEN, 8)
+    rt.mem_store(t, T_LEN, s + 1, 8)
+  }
+  rt.mem_store(t, T_SLOTS + 16 * s, p, 8)
+  let g = rt.mem_load(t, T_SLOTS + 16 * s + 8, 8)
+  unlock()
+  g.wrapping_shl(32) | (s + 1)
+}
+
+/// The value of handle h, counted once more for the caller; a fault for
+/// a handle that is not live.
+pub fn get(h: Int) -> rt.Any {
+  lock()
+  let p = live(h)
+  if p == 0 {
+    unlock()
+    rt.fault_raise("XoHandle ${h} is not live (released, or never made)", "")
+  }
+  let a = rt.obj_at[rt.Any](p)
+  unlock()
+  a
+}
+
+/// Drops handle h (xo_release): its slot goes back, and the value goes
+/// when nothing else holds it. 0 does nothing; a handle that is not live
+/// faults.
+pub fn release(h: Int) {
+  if h == 0 {
+    return
+  }
+  lock()
+  let p = live(h)
+  if p == 0 {
+    unlock()
+    rt.fault_raise("XoHandle ${h} is not live (released twice, or never made)", "")
+  }
+  let t = rt.mem_load(rt.static_word(W_TAB), 0, 8)
+  let s = (h & 4294967295) - 1
+  rt.mem_store(t, T_SLOTS + 16 * s, rt.mem_load(t, T_FREE, 8).wrapping_shl(1) | 1, 8)
+  rt.mem_store(t, T_SLOTS + 16 * s + 8, (h.shr_logical(32) + 1) & 2147483647, 8)
+  rt.mem_store(t, T_FREE, s + 1, 8)
+  unlock()
+  tasks.h_release(p)
+}
+
+/// The Any address of live handle h, else 0 (the lock held).
+fn live(h: Int) -> Int {
+  let t = rt.mem_load(rt.static_word(W_TAB), 0, 8)
+  let s = (h & 4294967295) - 1
+  if t == 0 || s < 0 || s >= rt.mem_load(t, T_LEN, 8) {
+    return 0
+  }
+  let p = rt.mem_load(t, T_SLOTS + 16 * s, 8)
+  if p & 1 != 0 || rt.mem_load(t, T_SLOTS + 16 * s + 8, 8) != h.shr_logical(32) {
+    return 0
+  }
+  p
+}
+
+/// A table twice t's size (64 slots first) with t's slots, which it
+/// frees (the lock held).
+fn grow(t: Int) -> Int {
+  let cap = if t == 0 { 64 } else { 2 * rt.mem_load(t, T_CAP, 8) }
+  let n = sys_c.weak_malloc(T_SLOTS + 16 * cap)
+  if n == 0 {
+    unlock()
+    rt.fault_raise("no memory for the XoHandle table", "")
+  }
+  rt.mem_set(n, 0, T_SLOTS + 16 * cap)
+  rt.mem_store(n, T_CAP, cap, 8)
+  if t != 0 {
+    rt.mem_copy(n.wrapping_add(T_LEN), t.wrapping_add(T_LEN), T_SLOTS - T_LEN + 16 * rt.mem_load(t, T_CAP, 8))
+    sys_c.weak_free(t)
+  }
+  rt.mem_store(rt.static_word(W_TAB), 0, n, 8)
+  n
+}

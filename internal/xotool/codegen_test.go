@@ -34,6 +34,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_THREAD_SWITCH":        {"bypass", "passes_changed(os)"}, // decision 0397's per function filter, for bisecting
 	"XO_POISON_FRAMES":        {"keyed", "poison=${m.poison_frames}"},
 	"XO_HEAP_GUARD":           {"keyed", "guard=${m.heap_guard}"},
+	"XO_CLIB":                 {"none", ""}, // decision 0574 stage 1's switch for --lib: a build without it fails before code generation
 	"XO_NOLIBC":               {"keyed", "nolibc=${m.nolibc}"},
 	"XO_INLINE_DENY":          {"keyed", "deny ${m.inline_deny"},
 	"XO_PASSES":               {"bypass", "passes_changed(os)"}, // either a - or a + entry (main.xo passes_changed, from arm64.parse_passes)
@@ -184,6 +185,7 @@ var codegenFields = map[string]inputClass{
 	"std_obj":             {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_STD_OBJ), whose " weak=1" keys the parts it leaves the program's functions out of
 	"sepcomp_program":     {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_SEPCOMP): changes the entry file, which no cache holds, and the parts as weak_shared and std_store key them
 	"std_store":           {"keyed", "${if m.std_store"},   // " store=1" in the part key: a part's per-function unsafe tables
+	"tls_ie":              {"keyed", "${if m.tls_ie"},      // " tlsie=1" in the fn and part keys: a linux shared library's initial exec thread locals (decision 0574)
 	"fn_order":            {"none", ""},                    // decision 0403: the functions' order across the parts; a function's own code is the same at any position, and a part's key hashes its text, so another order is another part key by itself
 }
 

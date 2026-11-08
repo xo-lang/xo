@@ -791,6 +791,10 @@ fn heap_word() -> Int {
   t | 1
 }
 
+/// Whether the runtime's heap words are set (heap_init ran): a C
+/// library's xo_init runs once (decision 0574).
+pub fn heap_started() -> Bool { rt.mem_load(rt.static_word(HEAP), H_SLOW, 8) != 0 }
+
 /// The single threaded heap record, 0 once other threads run.
 pub fn solo_heap() -> Int { rt.mem_load(rt.static_word(HEAP), 0, 8) }
 

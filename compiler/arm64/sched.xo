@@ -130,7 +130,7 @@ fn tlv_slow_body() -> List[Str] {
 /// The text of the functions and the thread local table on os; with
 /// split (a split generation, generate_parallel) the fiber entry is a
 /// hidden global symbol, which the other files reach.
-fn sched_asm(os: Str, split: Bool) -> Str {
+fn sched_asm(os: Str, split: Bool, tls_ie: Bool) -> Str {
   var b: List[Str] = []
   b.push(if os == "darwin" { "\t.section __TEXT,__text,regular,pure_instructions\n" } else { "\t.text\n" })
   b.push(sched_fn(os, "xo_stack_switch", true, if os == "windows" { stack_switch_body_windows() } else { stack_switch_body() }))
@@ -144,7 +144,7 @@ fn sched_asm(os: Str, split: Bool) -> Str {
   // backtrace of the fiber ends
   let fiber = ["mov x0, x19", "blr x20", "brk #1"]
   b.push(sched_fn(os, "xo_fiber_entry", false, if (os is "linux" | "freebsd") { [".cfi_startproc", OUTERMOST_CFI] + fiber + [".cfi_endproc"] } else { fiber }))
-  b.push(sched_fn(os, "xo_preempt_stub", true, ssa.preempt_stub_arm64(os)))
+  b.push(sched_fn(os, "xo_preempt_stub", true, ssa.preempt_stub_arm64_tls(os, tls_ie)))
   if os == "darwin" {
     // the TLV descriptor's thunk returns the table's address in x0 and
     // keeps every register but x0, x16, x17, and lr (Darwin's TLV
@@ -178,7 +178,11 @@ fn sched_asm(os: Str, split: Bool) -> Str {
     b.push("\t.text\n")
     return b.join("")
   }
-  let tp = ["mrs x9, tpidr_el0", "add x9, x9, :tprel_hi12:xo_tlocal", "add x9, x9, :tprel_lo12_nc:xo_tlocal"]
+  let tp = if tls_ie {
+    ["adrp x9, :gottprel:xo_tlocal", "ldr x9, [x9, :gottprel_lo12:xo_tlocal]", "mrs x12, tpidr_el0", "add x9, x9, x12"]
+  } else {
+    ["mrs x9, tpidr_el0", "add x9, x9, :tprel_hi12:xo_tlocal", "add x9, x9, :tprel_lo12_nc:xo_tlocal"]
+  }
   b.push(sched_fn(os, "xo_tlocal_get", true, tp + ["ldr x0, [x9, x0, lsl #3]", "ret"]))
   b.push(sched_fn(os, "xo_tlocal_set", true, tp + ["str x1, [x9, x0, lsl #3]", "ret"]))
   b.push(sched_fn(os, "xo_tlocal_addr", true, tp + ["mov x0, x9", "ret"]))

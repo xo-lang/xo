@@ -565,6 +565,9 @@ pub struct Module {
   /// object and a program's may both define one (std_obj; separate
   /// compilation): the link keeps the first
   pub weak_shared: Bool = false
+  /// Thread locals by initial exec (a GOT slot with the offset), not
+  /// local exec: a linux shared library (decision 0574) cannot use local exec.
+  pub tls_ie: Bool = false
   /// decision 0388 stage 3: the program's side of a separately compiled
   /// build (XO_SEPCOMP): its entry file leaves out what std's object
   /// defines (the system call trampolines, the task switch code, the

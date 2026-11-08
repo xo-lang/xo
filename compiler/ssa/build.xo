@@ -579,6 +579,17 @@ pub fn (var b: Builder) build() uses fs.read {
       }
     }
   }
+  if b.c.clib {
+    if main_fo >= 0 {
+      b.why = "a library (--lib) has no `main` function (decision 0574)"
+      return
+    }
+    b.declare_c_exports()
+    b.run_queue()
+    b.declare_exports()
+    b.run_queue()
+    return
+  }
   if main_fo < 0 {
     if b.c.lib_roots {
       // a library's support check (`xo check`, decision 0523): its
@@ -710,8 +721,9 @@ fn (var b: Builder) declare_exports() {
       }
     } else if p == "native/llrt/cabi_c" {
       // the C names every native program defines (main, decision 0234),
-      // in place of std/llrt's C
-      b.declare_exports_of(mi, true)
+      // in place of std/llrt's C; a library's xo_init in place of main
+      // (decision 0574)
+      b.declare_exports_of_only(mi, true, if b.c.clib { ["xo_init", "xo_heap_attach", "xo_thread_exit", "xo_last_error", "xo_release"] } else { [] }, if b.c.clib { ["main"] } else { ["xo_init", "xo_heap_attach", "xo_thread_exit", "xo_last_error", "xo_start_early", "xo_release"] })
     } else if p == "native/llrt/cabi_race" {
       // --race on windows (decision 0273's Windows addendum): the
       // functions the instrumented code calls (compiler/arm64 race.xo
@@ -780,37 +792,253 @@ fn (var b: Builder) importer_built(mi: Int) -> Bool {
 /// xo_x_<name>, or the bare name (bare: the C library of an XO_NOLIBC
 /// build, cabi_libc.xo, and main, cabi_c.xo).
 fn (var b: Builder) declare_exports_of(mi: Int, bare: Bool) {
+  b.declare_exports_of_only(mi, bare, [], [])
+}
+
+/// declare_exports_of with only the functions named in only (every one
+/// when empty), less those named in skip.
+fn (var b: Builder) declare_exports_of_only(mi: Int, bare: Bool, only: List[Str], skip: List[Str]) {
   var names: List[Str] = []
   for (n, o) in b.c.mods[mi].members {
-    if b.c.objs[o].kind == check.ObjKind.Func && b.c.objs[o].recv < 0 {
-      names.push(n.to_str() ?? "")
+    let s = n.to_str() ?? ""
+    if b.c.objs[o].kind == check.ObjKind.Func && b.c.objs[o].recv < 0 && (only.is_empty() || only.contains(s)) && !skip.contains(s) {
+      names.push(s)
     }
   }
   for n in names.sort() {
     let o = b.c.mods[mi].members.get(n.bytes()) ?? -1
-    if !b.type_params(o).is_empty() {
-      b.unsupported("a generic C ABI export")
-      continue
-    }
-    let fi = b.declare(o, [])
-    b.m.funcs[fi].entry = true
-    b.m.funcs[fi].export = if bare { n } else { "xo_x_${n}" }
-    for p in b.m.funcs[fi].blocks[0].params {
-      let t = ty_of(b.m.funcs[fi].values[p].tb)
-      if !(b.tkind(t) is Kind.Int | Kind.Float) {
-        b.unsupported("a C ABI export with a `${b.m.types[t].name}` parameter")
+    b.declare_export(o, if bare { n } else { "xo_x_${n}" })
+  }
+}
+
+/// Declares the root package's `as c "name"` functions (decision 0574)
+/// as C exports under their names, then an empty `main`, which the
+/// backends' xo_entry calls and nothing calls in a library.
+fn (var b: Builder) declare_c_exports() {
+  var file = -1
+  for m in b.c.root_mods {
+    var names: List[Str] = []
+    for (n, o) in b.c.mods[m].members {
+      if b.c.objs[o].kind == check.ObjKind.Func && b.c.objs[o].recv < 0 && !b.c.objs[o].fn_decl.is_empty() {
+        names.push(n.to_str() ?? "")
       }
     }
-    let rs = b.m.funcs[fi].results
-    if rs.len() != 1 || !b.m.funcs[fi].var_params.is_empty() {
-      b.unsupported("a C ABI export with `var` parameters")
-    } else if b.tkind(rs[0]) == Kind.Str {
-      // a Str may be a view (decision 0330): its second word packs the
-      // offset, which C would read as part of the length
-      b.unsupported("a C ABI export with a `Str` result (a Str may be a view of a larger buffer, decision 0330)")
-    } else if !(b.tkind(rs[0]) is Kind.Int | Kind.Float | Kind.Unit) {
-      b.unsupported("a C ABI export with a `${b.m.types[rs[0]].name}` result")
+    for n in names.sort() {
+      let o = b.c.mods[m].members.get(n.bytes()) ?? -1
+      for cl in b.c.objs[o].fn_decl[0].clauses {
+        if let parser.Clause.CExportClause(name: cn, ..) = cl {
+          b.declare_c_export(o, cn.to_str() ?? "")
+          if file < 0 {
+            file = b.decl_file(o)
+          }
+        }
+      }
     }
+  }
+  let fi = b.m.new_func("main", [], [b.unit_t()])
+  let saved = b.begin(fi, file)
+  b.retv(b.unit())
+  b.finish_fn()
+  b.end(saved)
+}
+
+/// Function object o as the C export name (decision 0574): a wrapper
+/// that starts the runtime when no constructor has yet, takes a Bytes or
+/// Str parameter as two words (C's XoBytes or XoStr {p, n}) and copies
+/// the bytes into a new value (C's buffer is borrowed for the call only; a
+/// Str's invalid UTF-8 becomes U+FFFD per byte, decision 0259), takes an
+/// error result's int32_t *err last, and calls o.
+fn (var b: Builder) declare_c_export(o: Int, name: Str) {
+  if !b.type_params(o).is_empty() {
+    b.unsupported("a generic C ABI export")
+    return
+  }
+  let fi = b.declare(o, [])
+  var ps: List[Int] = []
+  var wide = false
+  // a parameter of another type: an XoHandle (clibh hget), by the
+  // checker's type
+  var held: List[Int] = []
+  var hold = false
+  for (k, p) in b.m.funcs[fi].blocks[0].params.indexed() {
+    let t = ty_of(b.m.funcs[fi].values[p].tb)
+    if b.tkind(t) == Kind.Str {
+      wide = true
+      ps.push(b.int_t())
+    }
+    let h = !(b.tkind(t) is Kind.Str | Kind.Int | Kind.Float) && k < b.c.objs[o].params.len()
+    held.push(if h { b.c.objs[o].params[k].ty } else { -1 })
+    hold = hold || h
+    ps.push(if b.tkind(t) == Kind.Str || h { b.int_t() } else { t })
+  }
+  // an error result: the Result's Ok value, and the C caller's int32_t
+  // *err last (heapos c_ok, c_error; xo_last_error the text)
+  let et = b.fail_err(b.c.objs[o].err)
+  var rs = b.m.funcs[fi].results
+  let rt = if rs.len() == 1 { rs[0] } else { b.unit_t() }
+  if et >= 0 {
+    ps.push(b.int_t())
+    let ok = b.m.variant_index(rt, "Ok")
+    rs = [b.m.types[rt].variants[ok].fields[0].ty]
+  }
+  // a result of another type: an XoHandle (clibh hput)
+  let hres = rs.len() == 1 && !(b.tkind(rs[0]) is Kind.Int | Kind.Float | Kind.Unit)
+  let vt = if rs.len() == 1 { rs[0] } else { b.unit_t() }
+  if hres {
+    rs = [b.int_t()]
+  }
+  if !wide && et < 0 && !b.c.clib_static && !hold && !hres {
+    b.declare_export(o, name)
+    return
+  }
+  // their indexes may not be in m.funcs yet (a recording declares them
+  // in the commit), so their calls are by name
+  let copy = if wide { b.llrt_fn("native/llrt/raw", "str_at") } else { "" }
+  let text = if wide { b.llrt_fn("native/llrt/scan", "text_at") } else { "" }
+  let c_ok = if et >= 0 { b.llrt_fn("native/llrt/heapos", "c_ok") } else { "" }
+  let c_error = if et >= 0 { b.llrt_fn("native/llrt/heapos", "c_error") } else { "" }
+  let started = if b.c.clib_static { b.llrt_fn("native/llrt/obj", "heap_started") } else { "" }
+  let early = if b.c.clib_static { b.llrt_fn("native/llrt/cabi_c", "xo_start_early") } else { "" }
+  var gets: List[Str] = []
+  for ct in held {
+    gets.push(if ct >= 0 { b.llrt_inst("native/llrt/clibh", "hget", ct) } else { "" })
+  }
+  let put = if hres { b.llrt_inst("native/llrt/clibh", "hput", b.c.objs[o].result) } else { "" }
+  if (wide && (copy.is_empty() || text.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (b.c.clib_static && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || gets.any(fn(g) { g == "-" }) {
+    b.unsupported("a C export with no native/llrt")
+    return
+  }
+  let w = b.m.new_func("xo_cx_${name}", ps, rs)
+  b.m.funcs[w].entry = true
+  b.m.funcs[w].export = name
+  let saved = b.begin(w, b.decl_file(o))
+  let wp = b.s.f.blocks[0].params
+  // a static library's: a call before its constructor ran (another
+  // constructor's, which runs first in the program's link order) starts
+  // the runtime first; a shared library's constructor runs before its
+  // dependents' (about 0.25 ns a call on the Mac when checked)
+  if b.c.clib_static {
+    let (on, off) = b.branch(b.call(started, b.bool_t(), "", []))
+    let go = b.new_block()
+    b.s.cur = off
+    let _s = b.call(early, b.unit_t(), "", [])
+    b.jump(go, [])
+    b.s.cur = on
+    b.jump(go, [])
+    b.seal(go)
+    b.s.cur = go
+  }
+  var args: List[Int] = []
+  var i = 0
+  for (k, p) in b.m.funcs[fi].blocks[0].params.indexed() {
+    let t = ty_of(b.m.funcs[fi].values[p].tb)
+    if b.tkind(t) == Kind.Str {
+      // a Str holds valid UTF-8; a Bytes any bytes
+      let str = k < b.c.objs[o].params.len() && b.c.show(b.c.objs[o].params[k].ty) == "Str"
+      args.push(b.call(if str { text } else { copy }, t, "", [wp[i], wp[i + 1]]))
+      i += 2
+    } else if held[k] >= 0 {
+      args.push(b.call(gets[k], t, "", [wp[i]]))
+      i += 1
+    } else {
+      args.push(wp[i])
+      i += 1
+    }
+  }
+  let r = b.call(b.m.funcs[fi].name, rt, "", args)
+  if et < 0 {
+    b.retv(if hres { b.c_hold(put, r) } else { r })
+  } else {
+    let errp = wp[wp.len() - 1]
+    let ok = b.m.variant_index(rt, "Ok")
+    let ei = b.m.variant_index(rt, "Err")
+    let (yes, no) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [r]), b.cint(ok)]))
+    b.s.cur = yes
+    let _o = b.call(c_ok, b.unit_t(), "", [errp])
+    let v = b.add(Op.Payload, vt, Aux.P(tag: ok, field: 0), [r])
+    b.retv(if hres { b.c_hold(put, v) } else { v })
+    b.s.cur = no
+    let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
+    let msg = b.append_display(b.const_str(""), e, et)
+    let _e = b.call(c_error, b.unit_t(), "", [errp, msg])
+    b.retv(b.zero(rs[0], []))
+  }
+  b.finish_fn()
+  b.end(saved)
+  b.check_c_result(w)
+}
+
+/// v as an XoHandle (decision 0574): shared, since any C thread may use
+/// it, then kept by clibh's table through put, the hput instance.
+fn (var b: Builder) c_hold(put: Str, v: Int) -> Int {
+  b.add(Op.Share, -1, Aux.None, [v])
+  b.call(put, b.int_t(), "", [v])
+}
+
+/// The name of the instance of generic function `name` of the native
+/// module path for checker type ct, "" when the program has no such
+/// module, "-" when it has no such function.
+fn (var b: Builder) llrt_inst(path: Str, name: Str, ct: Int) -> Str {
+  for m in b.c.mods {
+    if m.path == path {
+      let o = m.members.get(name.bytes()) ?? -1
+      if o < 0 {
+        return "-"
+      }
+      let f = b.declare(o, [ct])
+      return b.m.funcs[f].name
+    }
+  }
+  "-"
+}
+
+/// The name of the function `name` of the native module path (declared,
+/// so a recording commits it), or "" when the program has no such
+/// module.
+fn (var b: Builder) llrt_fn(path: Str, name: Str) -> Str {
+  for m in b.c.mods {
+    if m.path == path {
+      let o = m.members.get(name.bytes()) ?? -1
+      if o < 0 {
+        return ""
+      }
+      let _r = b.declare(o, [])
+      return b.func_name(o)
+    }
+  }
+  ""
+}
+
+/// Function object o as a C ABI export named name: an entry, Int and
+/// Float parameters, an Int, Float or no result.
+fn (var b: Builder) declare_export(o: Int, name: Str) {
+  if !b.type_params(o).is_empty() {
+    b.unsupported("a generic C ABI export")
+    return
+  }
+  let fi = b.declare(o, [])
+  b.m.funcs[fi].entry = true
+  b.m.funcs[fi].export = name
+  for p in b.m.funcs[fi].blocks[0].params {
+    let t = ty_of(b.m.funcs[fi].values[p].tb)
+    if !(b.tkind(t) is Kind.Int | Kind.Float) {
+      b.unsupported("a C ABI export with a `${b.m.types[t].name}` parameter")
+    }
+  }
+  b.check_c_result(fi)
+}
+
+/// Reports a C ABI export fi's result C cannot take.
+fn (var b: Builder) check_c_result(fi: Int) {
+  let rs = b.m.funcs[fi].results
+  if rs.len() != 1 || !b.m.funcs[fi].var_params.is_empty() {
+    b.unsupported("a C ABI export with `var` parameters")
+  } else if b.tkind(rs[0]) == Kind.Str {
+    // a Str may be a view (decision 0330): its second word packs the
+    // offset, which C would read as part of the length
+    b.unsupported("a C ABI export with a `Str` result (a Str may be a view of a larger buffer, decision 0330)")
+  } else if !(b.tkind(rs[0]) is Kind.Int | Kind.Float | Kind.Unit) {
+    b.unsupported("a C ABI export with a `${b.m.types[rs[0]].name}` result")
   }
 }
 

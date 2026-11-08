@@ -170,6 +170,11 @@ fn clause_json(cl: parser.Clause) -> Str {
       o.put("cond", expr_json(cond))
       o.done()
     }
+    CExportClause(span, name) => {
+      var o = node("CExportClause", span)
+      o.str("name", name)
+      o.done()
+    }
   }
 }
 

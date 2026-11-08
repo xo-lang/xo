@@ -45,6 +45,11 @@ struct Opts {
   /// macho for a darwin/arm64 host link the pack covers, else cc.
   assembler: Str = ""
   linker: Str = ""
+  /// --lib=shared|static (decision 0574, stage 1 behind XO_CLIB=1): a C
+  /// library of the root package's `as c` functions, "" for a program
+  lib: Str = ""
+  /// a library's C exports (c_export_names, after the check)
+  lib_exports: List[Str] = []
   phases: Bool = false
   /// The run cache's key of a native `xo test` (testcache.xo), "" for
   /// none, and when the build started (Unix milliseconds).
@@ -172,7 +177,7 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace", "opt"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "lib", "profile", "std-module", "grace", "opt"]
 }
 
 /// The boolean flags.
@@ -184,7 +189,7 @@ fn bool_flags() -> List[Str] {
 /// build, run, and test print `xo`'s usage (compiler/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=native|arm64|amd64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --versioninfo=FILE.json --icon=FILE.ico --manifest=FILE --entitlement=KEY --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=native|arm64|amd64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho --lib=shared|static -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --versioninfo=FILE.json --icon=FILE.ico --manifest=FILE --entitlement=KEY --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
 }
 
 /// usage prints why and the usage of the command cmd on standard error
@@ -712,6 +717,8 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.asm_path = v
   } else if name == "as" {
     o.assembler = v
+  } else if name == "lib" {
+    o.lib = v
   } else if name == "ld" {
     o.linker = v
     if v == "macho" {

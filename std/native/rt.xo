@@ -354,6 +354,7 @@ fn prefetch(a: Int)
 ///   84-88 std/native/llrt/membudget.xo: the memory budget (decision 0349): the bytes in use, the budget, the label's buffer, the stop's digit, the high-water mark
 ///   64-66 std/native/llrt/fault.xo: the address of cabi.xo fault_raise_msg (decision 0228; word 14 until 2026-10-16), XO_TRACEBACK's printer (0 not looked up, 1 off, else cabi.xo fault_traceback's address; decision 0239), and the address of cabi.xo fault_raise_pos, the raise of a generated code position (a file name, line and column) as fault.xo fire_pos calls it (decision 0228's 2026-10-25 addendum)
 ///   99 std/native/llrt/crashfile.xo: XO_CRASH_FILE's descriptor plus one (decision 0520), 0 when the reports go to standard error alone
+///   101-102 std/native/llrt/clibh.xo: a C library's XoHandle table (decision 0574 stage 2), 0 until its first handle, and its lock
 ///   100 std/native/llrt/ints.xo: the Str hash's seed (decision 0545), set once by entry.xo start before the program runs (XO_HASH_SEED's digits, else the system generator's), 0 before
 ///   98 std/native/llrt/alloc.xo: XO_HEAPSTATS=waste's table of the size classes' asked and handed bytes (decision 0506's measurement), 0 when off
 fn static_word(k: Int) -> Int uses realtime

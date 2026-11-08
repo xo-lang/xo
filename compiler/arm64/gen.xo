@@ -192,7 +192,7 @@ fn (g: G) trampolines(var out: List[Str]) {
 /// once per program.
 fn (g: G) shared_code(var out: List[Str]) {
   if g.sched_ref {
-    out.push(if g.x86 { x86_sched_asm(g.os, g.split, g.m.nolibc) } else { sched_asm(g.os, g.split) })
+    out.push(if g.x86 { x86_sched_asm(g.os, g.split, g.m.nolibc, g.m.tls_ie) } else { sched_asm(g.os, g.split, g.m.tls_ie) })
   }
   if g.personality_ref && g.os != "windows" {
     // the personality routine through a data word, as ELF compilers

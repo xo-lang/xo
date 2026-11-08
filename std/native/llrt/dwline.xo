@@ -178,11 +178,98 @@ fn load_elf(lo: Int, hi: Int, var out: Lines) {
   }
 }
 
+/// Linux: the loaded object holding pc, from the dynamic linker's list
+/// (r_debug through the executable's DT_DEBUG): whether one does, its
+/// file name ("" for the executable and the vdso) and its base (l_addr).
+pub fn elf_object_of(pc: Int) -> (Bool, Str, Int) {
+  let ph = linux.auxval(linux.AT_PHDR)
+  let n = linux.auxval(linux.AT_PHNUM)
+  if ph == 0 {
+    return (false, "", 0)
+  }
+  var bias = 0
+  var dynv = 0
+  for i in 0..n {
+    let p = ph + 56 * i
+    let t = rt.mem_load(p, 0, 4)
+    if t == 6 {
+      bias = ph - ld(p, 16)
+    } else if t == 2 {
+      dynv = ld(p, 16)
+    }
+  }
+  // the executable's own segments (its link map entry has no name, as
+  // the vdso's has none)
+  for i in 0..n {
+    let p = ph + 56 * i
+    if rt.mem_load(p, 0, 4) == 1 {
+      let a = bias + ld(p, 16)
+      if pc >= a && pc < a + ld(p, 40) {
+        return (true, "", bias)
+      }
+    }
+  }
+  if dynv == 0 {
+    return (false, "", 0)
+  }
+  var d = dynv + bias
+  var dbg = 0
+  while ld(d, 0) != 0 {
+    if ld(d, 0) == 21 {
+      dbg = ld(d, 8)
+    }
+    d += 16
+  }
+  if dbg == 0 {
+    return (false, "", 0)
+  }
+  // struct r_debug: r_version, r_map; struct link_map: l_addr, l_name,
+  // l_ld, l_next
+  var lm = ld(dbg, 8)
+  var left = 4096
+  while lm != 0 && left > 0 {
+    left -= 1
+    let base = ld(lm, 0)
+    // (the executable, its l_addr 0 when not PIE, was looked up above)
+    if base != 0 && rt.mem_load(base, 0, 4) == 1179403647 {
+      // Elf64_Ehdr: e_phoff 32, e_phnum 56
+      let oph = base + ld(base, 32)
+      let on = rt.mem_load(base, 56, 2)
+      for i in 0..on {
+        let p = oph + 56 * i
+        if rt.mem_load(p, 0, 4) == 1 {
+          let a = base + ld(p, 16)
+          if pc >= a && pc < a + ld(p, 40) {
+            // the vdso: no name; marked so it is not the executable's
+            let nm = if ld(lm, 8) != 0 { cstr(ld(lm, 8), 4096) } else { "" }
+            return (true, if nm.is_empty() { "[vdso]" } else { nm }, base)
+          }
+        }
+      }
+    }
+    lm = ld(lm, 24)
+  }
+  (false, "", 0)
+}
+
+/// Linux: the file and base of the shared object holding Xo's code, a C
+/// library (decision 0574); ("", 0) in a program, whose file is
+/// /proc/self/exe.
+pub fn own_elf() -> (Str, Int) {
+  let (found, nm, base) = elf_object_of(rt.sym_addr("xo_entry"))
+  if found && !nm.is_empty() && nm != "[vdso]" { (nm, base) } else { ("", 0) }
+}
+
 /// Linux: the debug sections of /proc/self/exe and the load bias (ok
 /// false when the file or its section headers cannot be read); a split
 /// program's (decision 0355) from the file its .gnu_debuglink names in
 /// the executable's directory, when its GNU build id is the program's.
 fn elf_sects() -> (Sects, Int, Bool) {
+  let (lib, lbase) = own_elf()
+  if !lib.is_empty() {
+    let (s, _, _, ok) = elf_debug(read_raw(lib))
+    return (s, lbase, ok)
+  }
   let data = read_raw("/proc/self/exe")
   if data.len() < 64 {
     return (Sects{}, 0, false)
@@ -267,8 +354,23 @@ fn load_dsym(lo: Int, hi: Int, var out: Lines) {
 /// macOS: the debug sections of the program and the image's slide (ok
 /// false without any): the executable's own __DWARF segment (decision
 /// 0346), else PROG.dSYM's whose LC_UUID is the running image's.
+/// The Mach-O header of the image holding Xo's code (macOS): the
+/// program's (image 0), or a C library's (decision 0574), whose symbols
+/// and lines the traceback reads.
+pub fn own_header() -> Int {
+  // Dl_info: dli_fbase at 8
+  let info = rt.heap_large(32)
+  rt.mem_set(info, 0, 32)
+  var mh = 0
+  if Int(sys_darwin.dladdr(rt.sym_addr("xo_entry"), info)) != 0 {
+    mh = ld(info, 8)
+  }
+  rt.heap_release(info - 8)
+  if mh == 0 { sys_darwin._dyld_get_image_header(0) } else { mh }
+}
+
 fn dsym_sects() -> (Sects, Int, Bool) {
-  let mh = sys_darwin._dyld_get_image_header(0)
+  let mh = own_header()
   if mh == 0 || u32(mh) != 4277009103 {
     return (Sects{}, 0, false)
   }

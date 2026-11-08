@@ -860,6 +860,9 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
   var use_list: List[parser.Effect] = []
   var has_uses = false
   for cl in fd.clauses {
+    if let CExportClause(span: sp, name: n) = cl {
+      c.check_c_export(fo, fd, sp, n, iface)
+    }
     if let UsesClause(effects: es, ..) = cl {
       has_uses = true
       for e in es {
@@ -1527,3 +1530,78 @@ fn module_prefix(path: Str) -> Str {
   if out.is_empty() { "Module" } else { out }
 }
 
+/// The rules of a function's `as c "name"` clause (decision 0574): a
+/// top level `pub fn`, not generic, its parameters Int, Float or Bytes
+/// (not `var`), its result Int, Float or none, with no error type, and a
+/// C identifier outside the runtime's `xo_` names. XO1518.
+fn (var c: Checker) check_c_export(fo: Int, fd: parser.FnDecl, sp: Span, name: Bytes, iface: Bool) {
+  let n = text(name)
+  var why = ""
+  if iface || fd.recv != None {
+    why = "a method cannot be one"
+  } else if !fd.is_pub {
+    why = "it must be `pub fn`"
+  } else if !fd.type_params.is_empty() {
+    why = "a generic function cannot be one"
+  } else if !c_ident(name) {
+    why = "`${n}` is not a C identifier"
+  } else if n.starts_with("xo_") {
+    why = "the `xo_` names are the runtime's"
+  } else {
+    // C passes an XoBytes {p, n} in two registers only while two are
+    // left, and on the stack whole otherwise, where two words would split
+    // an error result takes one more: the C caller's int32_t *err
+    var words = if c.objs[fo].err >= 0 { 1 } else { 0 }
+    for p in c.objs[fo].params {
+      words += if c.show(p.ty) is "Bytes" | "Str" { 2 } else if c.show(p.ty) == "Float" { 0 } else { 1 }
+    }
+    if words > 8 {
+      why = "its parameters need ${words} integer registers; a C export takes at most 8 (a Bytes or Str takes 2)"
+    }
+    for p in c.objs[fo].params {
+      if !why.is_empty() {
+        break
+      }
+      if p.is_var {
+        why = "a `var` parameter cannot cross to C"
+        break
+      }
+      if !c.c_boundary(p.ty) {
+        why = "parameter `${text(p.name)}` is `${c.show(p.ty)}`; a C export takes Int, Float, Bytes, Str and values held by XoHandle (not Bool or a function)"
+        break
+      }
+    }
+    let r = c.objs[fo].result
+    if why.is_empty() && r != c.unit_ty && (c.show(r) is "Bytes" | "Str" || !c.c_boundary(r)) {
+      why = "its result is `${c.show(r)}`; a C export returns Int, Float, a value held by XoHandle, or nothing (not Bytes, Str, Bool or a function)"
+    }
+  }
+  if !why.is_empty() {
+    let _d = c.error("XO1518", sp, "`as c \"${n}\"` on `${text(fd.name.name)}`: ${why} (decision 0574)")
+  }
+}
+
+/// Whether a C export can take a value of type t (decision 0574): Int,
+/// Float, Bytes and Str as themselves, other types as an XoHandle, but
+/// not Bool (no C form yet) or a function.
+fn (c: Checker) c_boundary(t: Int) -> Bool {
+  if c.show(t) == "Bool" {
+    return false
+  }
+  c.tys[c.resolve(t)].kind != TyKind.Func
+}
+
+/// Whether s is a C identifier: a letter or `_`, then letters, digits
+/// and `_`.
+fn c_ident(s: Bytes) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for (i, b) in s.indexed() {
+    let alpha = (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
+    if !(alpha || (i > 0 && b >= '0' && b <= '9')) {
+      return false
+    }
+  }
+  true
+}

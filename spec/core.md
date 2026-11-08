@@ -1389,6 +1389,32 @@ pub fn fetch_user(db: Db, id: Int) -> User ! LoadErr
   arguments must come before named ones.
 - Default parameter values are allowed: `fn listen(addr: Str, backlog: Int = 128)`.
 - No variadic functions. Pass a `List` or `Map`.
+- **C exports** (decision 0574, behind `XO_CLIB=1` while its stages land): a top
+  level `pub fn` of the root package with the clause `as c "name"` is the C
+  function `name` of a library built with `xo build --lib=shared`:
+  `pub fn add(a: Int, b: Int) -> Int as c "geo_add" { a + b }`. Its
+  parameters are `Int` (C `int64_t`), `Float` (`double`), `Bytes`
+  (`XoBytes {const uint8_t *p; int64_t n}`) or `Str` (`XoStr
+  {const char *p; int64_t n}`, n bytes of UTF-8, no NUL needed), borrowed
+  for the call: Xo copies the bytes, and a `Str`'s invalid UTF-8 arrives
+  as U+FFFD per byte of an invalid sequence), or a value of any other type but `Bool` and
+  function types, which C holds as an `XoHandle` (a `uint64_t` the
+  library's table keeps the value under until `xo_release(h)`; using a
+  released handle, or one holding another type, faults), at most 8
+  integer words (a `Bytes` takes 2); its result is `Int`, `Float`, a
+  value held by an `XoHandle`, or none, with or without an error type: a
+  function that can fail (`-> T ! E`) takes a last C parameter
+  `int32_t *err`, set to 0 on success and to 1 on failure (NULL: not
+  set), returns 0 on failure, and leaves the error's text (its `Display`)
+  for `xo_last_error()`, the calling thread's last error (a NUL terminated
+  string the thread's next error replaces). The name is a C identifier
+  outside the `xo_` names. It is not a method, generic, or a function with
+  `var` parameters (XO1518). The library starts the runtime
+  when it is loaded (its constructor, `xo_init(argc, argv, envp)`, which
+  a C caller may also call; a second call does nothing). `--lib` writes the
+  header `NAME.h` beside the library, and a package with `fn main` is not
+  a library. A fault in an export aborts the process. A program build
+  ignores the clause.
 
 ### 3.3 Closures
 
@@ -3792,6 +3818,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1515` | error | build | a program built for wasip2/wasm reaches what its world does not have: processes, or files or sockets in a `wasi:http` component (a command has `wasi:filesystem` since 2026-11-02 and `wasi:sockets` since 2026-11-03); the message names the call and how it is reached (decision 0447); on wasip3/wasm also a program that is not a `wasi:http` component (stage 5) |
 | `XO1516` | error | build | a program built for wasip2/wasm whose main never calls `http.serve_component` (decision 0447); no longer reported since stage 3 (2026-11-02), when such a program became a `wasi:cli/command` component |
 | `XO1517` | error | build | a windows program's resource input that cannot be used: the `--versioninfo` JSON cannot be read or parsed, an `--icon` file cannot be read or is not an icon, a `--manifest` file cannot be read; the message carries goversioninfo's text (decision 0560) |
+| `XO1518` | error | checker | a function's `as c "name"` clause breaks a C export rule: not a top level `pub fn`, generic, a `var` parameter, a parameter other than Int, Float or Bytes, a result other than Int, Float or none, an error type, a name that is not a C identifier or starts with `xo_` (decision 0574, stage 1 behind XO_CLIB=1) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.
@@ -4357,7 +4384,8 @@ Param       = [ "var" ] ( ident ":" Type [ "=" Expr ] | "self" ) .   // self: in
 ErrSpec     = "!" [ Type ] .
 FnClause    = "uses" ( EffectList | "(" EffectList ")" )
             | "requires" [ "(" "debug" ")" ] Expr [ "else" Expr ]
-            | "ensures" [ "(" "debug" ")" ] Expr .
+            | "ensures" [ "(" "debug" ")" ] Expr
+            | "as" "c" string .                      // a C export (3.2, decision 0574)
 EffectList  = Effect { "," Effect } .
 Effect      = ident [ "." ident ] .
 

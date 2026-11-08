@@ -58,7 +58,7 @@ fn decl_nodes(f: parser.File) -> List[Node] {
               }
             }
             EnsuresClause(cond: cond, ..) => out.push(Node.E(cond))
-            UsesClause(..) => {}
+            UsesClause(..) | CExportClause(..) => {}
           }
         }
         if let Some(b) = fd.body {

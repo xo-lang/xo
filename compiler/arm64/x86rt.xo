@@ -471,7 +471,7 @@ fn x86_unwind_resume() -> List[Str] {
 /// with compiler/llvm sched.xo's switch: rbp, rbx, r12 to r15, mxcsr and
 /// the x87 control word; a new fiber's argument in rbx, its function in
 /// r12).
-fn x86_sched_asm(os: Str, split: Bool, nolibc: Bool) -> Str {
+fn x86_sched_asm(os: Str, split: Bool, nolibc: Bool, tls_ie: Bool) -> Str {
   if os == "darwin" {
     return x86_sched_asm_darwin(split)
   }
@@ -485,8 +485,9 @@ fn x86_sched_asm(os: Str, split: Bool, nolibc: Bool) -> Str {
     b.push("\t.globl xo_fiber_entry\n\t.hidden xo_fiber_entry\n")
   }
   b.push(x86_sched_fn("xo_fiber_entry", false, ["movq %rbx, %rdi", "callq *%r12", "ud2"]))
-  b.push(x86_sched_fn("xo_preempt_stub", true, ssa.preempt_stub_amd64("linux")))
-  let tp = ["movq %fs:0, %rax", "leaq xo_tlocal@TPOFF(%rax), %rax"]
+  b.push(x86_sched_fn("xo_preempt_stub", true, ssa.preempt_stub_amd64_tls("linux", tls_ie)))
+  // initial exec in a library (local exec cannot link into one)
+  let tp = if tls_ie { ["movq xo_tlocal@GOTTPOFF(%rip), %rax", "addq %fs:0, %rax"] } else { ["movq %fs:0, %rax", "leaq xo_tlocal@TPOFF(%rax), %rax"] }
   b.push(x86_sched_fn("xo_tlocal_get", true, tp + ["movq (%rax,%rdi,8), %rax", "retq"]))
   b.push(x86_sched_fn("xo_tlocal_set", true, tp + ["movq %rsi, (%rax,%rdi,8)", "retq"]))
   b.push(x86_sched_fn("xo_tlocal_addr", true, tp + ["retq"]))
