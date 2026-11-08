@@ -1,0 +1,29 @@
+// A std function whose parameter defaults to a struct literal (std/protojson's `o: Opts = Opts{}`) is called
+// with the argument left out on the native backends, as on the Go backend: the declaration file's literal has
+// no type recorded by the checker (decl files are not checked as bodies), so the field defaults of the
+// std struct were not found (XO1201 "a struct literal without the field `proto_names`", 2026-11-08).
+use std/protojson
+
+const SCHEMA: Str = "0a440a07742e70726f746f120174222e0a014d120c0a0161180120012805520161121b0a09757365725f6e616d651802200128095208757365724e616d65620670726f746f33"
+
+fn unhex(s: Str) -> Bytes {
+  var o = BytesBuilder.new()
+  let b = s.bytes()
+  var i = 0
+  while i + 1 < b.len() {
+    let hi = Int(b[i])
+    let lo = Int(b[i + 1])
+    o.write_byte(UInt8.wrapping_from((if hi >= 97 { hi - 87 } else { hi - 48 }) * 16 + (if lo >= 97 { lo - 87 } else { lo - 48 })))
+    i += 2
+  }
+  o.freeze()
+}
+
+fn main(os: Os) {
+  let r = protojson.registry_from_set(unhex(SCHEMA)).or_fault("schema")
+  let wire = b"\x08\x07\x12\x02hi"
+  os.stdio.println(protojson.marshal(r, "t.M", wire).or_fault("marshal"))
+  os.stdio.println(protojson.marshal(r, "t.M", wire, protojson.Opts{proto_names: true}).or_fault("marshal"))
+  let back = protojson.unmarshal(r, "t.M", "{\"a\":3,\"userName\":\"yo\"}").or_fault("unmarshal")
+  os.stdio.println("${back.len()} ${back[0]} ${back[1]} ${back[2]}")
+}

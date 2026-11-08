@@ -1301,7 +1301,7 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
         vals[i] = b.undef(ps[off + i])
         continue
       }
-      vals[i] = b.foreign_value(d[0], dfile, ps[off + i], b.s.sub)
+      vals[i] = b.foreign_value(d[0], dfile, ps[off + i], b.s.sub, p.ty)
     }
     if arg_places[i] >= 0 {
       places.push(aplaces[arg_places[i]])

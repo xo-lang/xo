@@ -1,5 +1,17 @@
 # std/protojson changes
 
+## 2026-11-08: fix: marshal and unmarshal without the options on native builds
+
+- Kind: fix
+- Commit: this push
+- Found by: Xo Lang 3 (the conformance testee, test/protoconf)
+- Go reference: none (a compiler limit, not a protojson behavior)
+- Test: internal/llvm/testdata/golden/std_struct_default_arg (arm64, LLVM, Go backend)
+- Timing: not applicable
+- Shipped in: not yet released
+
+`protojson.marshal(r, name, wire)` with the `o: Opts = Opts{}` argument left out failed to build on the native backends with XO1201 ("a struct literal without the field `proto_names`"): the declaration file's default literal has no type recorded by the checker, so the std struct's field defaults were not found. The SSA builder now takes the type from the parameter's declaration (compiler/ssa call.xo and expr.xo), so any std function with a struct literal default works on native as on the Go backend.
+
 ## 2026-11-07: port: std/protojson, the canonical JSON mapping
 
 - Kind: port

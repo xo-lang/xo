@@ -1355,7 +1355,11 @@ fn (var b: Builder) struct_lit(e: Expr) -> Int { b.struct_lit_as(e, -1) }
 /// A struct literal; want, when it is a struct, is its type when the
 /// checker recorded none (a std declaration file's default, which is not
 /// checked as a body: ProcOutput's `usage: ProcUsage = ProcUsage{...}`).
-fn (var b: Builder) struct_lit_as(e: Expr, want: Int) -> Int {
+///
+/// ct, when given, is the checker type of that value (a parameter's, from its
+/// declaration), which names the struct's field defaults when the checker
+/// recorded no type for the literal: std/protojson's `o: Opts = Opts{}`.
+fn (var b: Builder) struct_lit_as(e: Expr, want: Int, ct: Int = -1) -> Int {
   let fields = match e {
     StructLit(fields: fields, ..) => fields
     _ => fault("struct literal")
@@ -1371,7 +1375,10 @@ fn (var b: Builder) struct_lit_as(e: Expr, want: Int) -> Int {
     b.unsupported("this struct literal")
     return b.undef(t)
   }
-  let nt = b.nat_check(e)
+  var nt = b.nat_check(e)
+  if b.named_obj(nt) < 0 && ct >= 0 {
+    nt = b.apply(ct)
+  }
   let named = b.named_obj(nt)
   let n = b.m.types[t].fields.len()
   var vals: List[Int] = []
@@ -1455,7 +1462,7 @@ fn (var b: Builder) os_lit(fields: List[parser.FieldInit], t: Int, e: Expr) -> I
 
 
 /// e of file f (a default value, a constant) as a value of type t.
-fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int, sub: Map[Int, Int]) -> Int {
+fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int, sub: Map[Int, Int], ct: Int = -1) -> Int {
   // a variant without fields, written as `None` or `Enum.Variant`: from
   // t itself (a std declaration file's defaults, std/http's Cookie, are
   // not checked as bodies, so the checker records no constructor there)
@@ -1523,7 +1530,7 @@ fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int, sub: Map[Int, Int]) -
     StructLit(..) => b.tkind(t) == Kind.Struct
     _ => false
   }
-  let v = if lit { b.struct_lit_as(e, t) } else { b.value_as(e, t) }
+  let v = if lit { b.struct_lit_as(e, t, ct) } else { b.value_as(e, t) }
   b.s.file = saved
   b.s.sub = saved_sub
   v

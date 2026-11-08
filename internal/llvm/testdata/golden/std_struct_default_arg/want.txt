@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+{"a":7,"userName":"hi"}
+{"a":7,"user_name":"hi"}
+6 8 3 18
+--- stderr
