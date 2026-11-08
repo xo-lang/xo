@@ -497,7 +497,7 @@ pub fn (var vi: VersionInfo) parse_json(data: Bytes) -> () ! ParseErr {
   let text = data.to_str_lossy()
   let v = match json.parse_value(text) {
     Ok(v) => v
-    Err(e) => return Err(ParseErr{msg: syntax_msg("${e}")})
+    Err(e) => return Err(ParseErr{msg: e.go_text()})
   }
   let fields = match v {
     json.Value.Null => return Ok(())
@@ -533,12 +533,4 @@ pub fn (var vi: VersionInfo) parse_json(data: Bytes) -> () ! ParseErr {
     Some(m) => Err(ParseErr{msg: m})
     None => Ok(())
   }
-}
-
-/// std json's syntax error in Go's words: std prefixes its path and
-/// "invalid JSON", and says EOF where Go's Unmarshal says "unexpected end
-/// of JSON input".
-fn syntax_msg(e: Str) -> Str {
-  let m = e.trim_prefix("at $: invalid JSON: ")
-  if m == "EOF" || m == "unexpected EOF" { "unexpected end of JSON input" } else { m }
 }
