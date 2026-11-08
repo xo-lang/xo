@@ -46,8 +46,11 @@ in detail; check before starting one.
    2026-10-29:* editors/vscode is a complete extension (TextMate grammar,
    an `xo lsp` client; decision 0113) that is not published; no tree-sitter
    grammar exists. *2026-11-05:* the extension moved to its own repository,
-   xo-lang/vscode, and debugs through `xo debug --dap` (decision 0516); it
-   is still not published.
+   xo-lang/vscode, and debugs through `xo debug --dap` (decision 0516).
+   *Verified 2026-11-08:* published on 2026-11-05 as "Xo Language"
+   (`xo-lang.xo`, version 0.1.1) on the VS Code Marketplace (verified
+   publisher) and on Open VSX; the repository is public. Open: a
+   tree-sitter grammar.
 6. **More platforms.** FreeBSD and Linux riscv64 are the common asks
    after the five current targets; 32-bit and mobile matter less for a
    backend language.
