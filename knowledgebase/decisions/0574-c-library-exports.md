@@ -358,6 +358,20 @@ accepted; 2026-11-08):
   `xo_last_error()`, kept in the calling thread's heap record (freed by
   the thread's next error or its exit). cmd/xo TestCLibErrors (Int,
   Float and unit results, a NULL err).
+- Constructor order: an export of a static library called from a
+  constructor that runs before the library's own (the program's link
+  order) crashed; a static library's exports now start the runtime
+  first (`xo_start_early`), and the constructor's later `xo_init` adds
+  the process's arguments and environment. Shared libraries skip the
+  check (the loader runs a dependency's constructor first; the check
+  cost 0.2 to 0.3 ns a call on the Mac).
+- Open: one TestCLibThreadExit run failed at its `xo build --lib=shared`
+  (exit 1) on 2026-11-08, the first run with a newly built xo; its error
+  text was lost to a log filter. About 400 later builds did not repeat
+  it: warm, 8 concurrent identical builds, cold caches (a fresh HOME),
+  and 10 cold full runs. Untested candidate: a shared backend cache entry
+  evicted mid-build by another session's prune. The tests now put xo's
+  last output lines on the failure line, so a repeat shows its cause.
 
 ## Alternatives
 
