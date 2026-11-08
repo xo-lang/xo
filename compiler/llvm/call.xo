@@ -2042,7 +2042,12 @@ fn (var g: Gen) atomic(v: Int) {
     let ok = g.new_label("ppr")
     g.emit("br i1 ${c}, label %${slow}, label %${ok}, !prof !0")
     g.start(slow)
-    g.emit("call void asm sideeffect \"bl ${stub}\", \"~{x16},~{x17},~{lr}\"() #18")
+    if g.arch() == "riscv64" {
+      // `call` goes through ra; the stub's test writes t0 and t1
+      g.emit("call void asm sideeffect \"call ${stub}\", \"~{x1},~{x5},~{x6}\"() #18")
+    } else {
+      g.emit("call void asm sideeffect \"bl ${stub}\", \"~{x16},~{x17},~{lr}\"() #18")
+    }
     g.emit("br label %${ok}")
     g.start(ok)
     return

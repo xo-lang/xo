@@ -228,6 +228,34 @@ pub fn preempt_stub_arm64(os: Str) -> List[Str] {
   b + ["add sp, sp, #672", "ldp x29, x30, [sp], #16", "ret"]
 }
 
+/// preempt_stub_arm64 for riscv64 Linux (decision 0571): the ask's test
+/// with t0 and t1 only (the poll site's `call` clobbers them and ra),
+/// the worker record at xo_tlocal's word 2 by local exec TLS, then the
+/// save of every register the C convention lets a callee change (ra, t0
+/// to t6, a0 to a7, ft0 to ft11, fa0 to fa7, fcsr) around xo_x_preempt.
+pub fn preempt_stub_riscv64() -> List[Str] {
+  let l = ".Lxo_preempt"
+  var b = ["lui t0, %tprel_hi(xo_tlocal)", "add t0, t0, tp, %tprel_add(xo_tlocal)", "addi t0, t0, %tprel_lo(xo_tlocal)", "ld t0, 16(t0)", "beqz t0, ${l}_none", "li t1, 3456", "add t0, t0, t1", "ld t0, 0(t0)", "bnez t0, ${l}_asked", "${l}_none:", "ret", "${l}_asked:"]
+  let xs = [1, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 28, 29, 30, 31]
+  let fs = [0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 28, 29, 30, 31]
+  // 16 integer and 20 float words, then fcsr: 296 bytes, 304 aligned
+  b.push("addi sp, sp, -304")
+  for (k, r) in xs.indexed() {
+    b.push("sd x${r}, ${8 * k}(sp)")
+  }
+  for (k, r) in fs.indexed() {
+    b.push("fsd f${r}, ${128 + 8 * k}(sp)")
+  }
+  b = b + ["frcsr t0", "sd t0, 288(sp)", "call xo_x_preempt", "ld t0, 288(sp)", "fscsr t0"]
+  for (k, r) in fs.indexed() {
+    b.push("fld f${r}, ${128 + 8 * k}(sp)")
+  }
+  for (k, r) in xs.indexed() {
+    b.push("ld x${r}, ${8 * k}(sp)")
+  }
+  b + ["addi sp, sp, 304", "ret"]
+}
+
 /// Whether module path p is the runtime's, which never polls (it holds
 /// spin locks; decision 0286 step 3): native/llrt (std/native/llrt), the
 /// rt modules, and the system call wrappers.
