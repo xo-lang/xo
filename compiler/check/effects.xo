@@ -453,6 +453,34 @@ fn (var c: Checker) subst_eff(s: Int, sm: Subst, depth: Int) -> Int {
   c.new_eset(out)
 }
 
+/// The number of effect items the current body has performed so far.
+fn (c: Checker) ctx_eff_len() -> Int {
+  if c.ctx < 0 || c.ctxs[c.ctx].eff < 0 {
+    return 0
+  }
+  c.esets[c.ctxs[c.ctx].eff].len()
+}
+
+/// XO0438 (decision 0558): the arguments of a log call, performed since
+/// effect item eff0, include an effect other than `log`; they only run
+/// when the record is written.
+fn (var c: Checker) warn_lazy_log_args(call: Expr, fo: Int, eff0: Int) {
+  if c.ctx < 0 || c.ctxs[c.ctx].eff < 0 {
+    return
+  }
+  let items = c.esets[c.ctxs[c.ctx].eff]
+  var i = eff0
+  while i < items.len() {
+    let it = items[i]
+    if it.label != "" && it.label != "log" {
+      let (span, _, _) = call_parts(call)
+      c.warn("XO0438", span, "an argument of `${c.display_name(fo)}` performs `${it.label}`, but arguments are evaluated only when the record is at or above the configured level (decision 0558); do the work before the call if it must always run")
+      return
+    }
+    i += 1
+  }
+}
+
 /// The span of no place: an obligation needs a place to be recorded.
 fn no_span() -> Span {
   Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}

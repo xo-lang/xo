@@ -1,0 +1,13 @@
+// A log call's arguments run only when the record is written (decision
+// 0558): an argument that performs an effect other than `log` is XO0438.
+use std/log
+
+fn count() -> Int {
+  1
+}
+
+fn main(os: Os) uses fs.read, log {
+  log.info("pure", {"n": count()})
+  log.info("effect", {"n": os.fs.read_file("x").len()}) // ERROR XO0438 "arguments are evaluated only when the record"
+  log.debug("effect ${os.fs.read_file("y").len()}") // ERROR XO0438 "arguments are evaluated only when the record"
+}

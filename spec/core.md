@@ -3647,6 +3647,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0435` | error | checker | a valued enum's catch-all built from a constant that a named variant has (`StorageClass.Unknown("STANDARD")`): a second spelling of that variant, unequal to it (core 2.3, decision 0493) |
 | `XO0436` | error | checker | `for` over a type with `next()` whose `?` does not match it: `for x in v` where `next()` can fail (write `for x? in v`), `for x? in v` where it cannot or over a builtin iteration, or a `next()` that does not return `T?` (core 3.5, decision 0494) |
 | `XO0437` | error | checker | the `string` wire option on a field that is not a Bool, integer, float or Str, or an Option of one (core 2.2, decision 0555) |
+| `XO0438` | warning | checker | an argument of a `log.debug`, `log.info`, `log.warn` or `log.error` call (or a Logger's) performs an effect other than `log`; it runs only when the record is at or above the configured level (decision 0558, std.md 6) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |

@@ -1349,7 +1349,12 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
   } else {
     c.xml_calls.push((c.expr_key(call), call, fo, c.cur_file))
   }
+  let lazy_log = c.objs[fo].module >= 0 && c.mods[c.objs[fo].module].path == "std/log" && (text(c.objs[fo].name) is "debug" | "info" | "warn" | "error")
+  let eff0 = c.ctx_eff_len()
   c.check_args(params, call, c.display_name(fo), false, fo, -1, -1)
+  if lazy_log {
+    c.warn_lazy_log_args(call, fo, eff0)
+  }
   // constraints
   for p in c.objs[fo].tparams {
     let ct = c.objs[p].constraint
