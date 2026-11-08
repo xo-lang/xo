@@ -794,7 +794,11 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     let k = r.str()
     let n = k[2..k.len()]
     if k.starts_with("t ") {
-      if !b.m.type_at.contains(n) {
+      // a sized integer or Float32 is made at its first use, so the build
+      // that recorded the entry may have had it where this one has not
+      // yet (UInt8 in a closure of bench/perf/http, `xo check` with
+      // decision 0428's declaration parse, 2026-11-08)
+      if !b.m.type_at.contains(n) && b.m.int_type(n) < 0 && !(n == "Float32" && b.m.float32() >= 0) {
         return b.fe_miss("read")
       }
     } else if k.starts_with("a ") {

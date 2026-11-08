@@ -898,30 +898,13 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
         // xo:allow XO0903 the working directory from $PWD when getcwd fails
         let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
         let std_abs = if check.is_rooted(o.std) { o.std } else { "${wd}/${o.std}" }
-        c.std_export_key = crypto.sha256("stdx\n${c.mod_flags}\nnative=${c.native} skip_tests=${c.skip_tests}\nstd=${std_abs}".bytes()).to_hex()
-        c.std_export_in = entry_get(os, dir, "stdx", c.std_export_key) ?? b""
+        c.std_export_key = c.std_export_key_of(std_abs)
         c.std_now_ms = os.clock.now().unix_millis()
         // the entry's header: when its stamps of std's files and
         // directories hold, its fingerprint is std's without a read
-        if !c.std_export_verify {
-          var why = "no entry"
-          if let Some((h, _)) = check.decode_std_header(c.std_export_in) {
-            why = "header failed"
-            if check.header_holds(os.fs, h) {
-              c.std_header_fp = h.fp
-              why = "header held, no record"
-              // piece 1: std's modules from the record's closure, no std
-              // file read or parsed until a tree is needed
-              if let Some(e) = check.decode_std_record(c.std_export_in, h.fp) {
-                c.load_std_record(e)
-                c.std_record = Some(e)
-                why = "record loaded (${e.closure.len()} modules)"
-              }
-            }
-          }
-          if (os.env.get("XO_CACHE_STATS") ?? "") == "1" {
-            os.stdio.eprintln("cache stdx ${why}")
-          }
+        let why = c.load_std_entry(os.fs, entry_get(os, dir, "stdx", c.std_export_key) ?? b"")
+        if !c.std_export_verify && (os.env.get("XO_CACHE_STATS") ?? "") == "1" {
+          os.stdio.eprintln("cache stdx ${why}")
         }
       }
     }

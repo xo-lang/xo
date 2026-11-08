@@ -1752,6 +1752,35 @@ pub fn (c: Checker) std_header(std_mods: List[Int], fp: Str, now: Int) -> StdHea
 
 /// Whether the std tree is as header h stamped it: every file and
 /// directory holds (stamps_hold, dir_stamps_hold).
+/// The key of std's declaration record for this checker's flags
+/// (decision 0388 stage 1a-ii): mod_flags (the driver's: a build's or
+/// `xo check`'s, so the two never share one), native, skip_tests, and
+/// std's directory, one entry per std tree (stage 2 piece 2: agents'
+/// worktrees share one user cache).
+pub fn (c: Checker) std_export_key_of(std_abs: Str) -> Str {
+  crypto.sha256("stdx\n${c.mod_flags}\nnative=${c.native} skip_tests=${c.skip_tests}\nstd=${std_abs}".bytes()).to_hex()
+}
+
+/// Loads std's modules from the record entry data when its header's
+/// stamps of std's files and directories hold (piece 1: no std file read
+/// or parsed until a tree is needed); why it did or did not, for
+/// XO_CACHE_STATS. c.std_export_on and the key are the caller's.
+pub fn (var c: Checker) load_std_entry(fs: Fs, data: Bytes) -> Str uses fs.read {
+  c.std_export_in = data
+  if c.std_export_verify {
+    return "verify"
+  }
+  let (h, _) = decode_std_header(data) ?? return "no entry"
+  if !header_holds(fs, h) {
+    return "header failed"
+  }
+  c.std_header_fp = h.fp
+  let e = decode_std_record(data, h.fp) ?? return "header held, no record"
+  c.load_std_record(e)
+  c.std_record = Some(e)
+  "record loaded (${e.closure.len()} modules)"
+}
+
 pub fn header_holds(fs: Fs, h: StdHeader) -> Bool uses fs.read {
   !h.files.is_empty() && stamps_hold(fs, h.files) && dir_stamps_hold(fs, h.dirs)
 }

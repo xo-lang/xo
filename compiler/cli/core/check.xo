@@ -230,6 +230,30 @@ fn load_walked(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str,
     // named directory is in std (checking std itself checks them all)
     let std_abs = abs_path(ctx, ctx.std)
     c.lazy = (os.env.get("XO_CHECK_EAGER") ?? "") != "1" && !dirs.any(fn(d) { let a = abs_path(ctx, d); a == std_abs || a.starts_with("${std_abs}/") })
+    // std's declarations from their record, as a build that compiles
+    // separately reads them (decision 0388 stage 1a-ii): a check of a
+    // small program parsed and declared all of std every run, 235 of its
+    // 250 ms (fib, 2026-11-08; the build's check phase 17 ms). Not when a
+    // named directory is in std (its own trees are the ones checked);
+    // XO_STD_EXPORT=0 turns it off, verify compares
+    let sx = os.env.get("XO_STD_EXPORT") ?? ""
+    if sx != "0" && c.lazy {
+      c.std_export_on = true
+      c.std_export_verify = sx == "verify"
+      c.std_export_key = c.std_export_key_of(std_abs)
+      c.std_now_ms = os.clock.now().unix_millis()
+      // std's trees joined only where the check needs them (stage 2
+      // pieces 3 and 4, and decision 0428's declaration parsed alone), as
+      // a separately compiled build does: a check lowers no std body, and
+      // the record without them still parsed every std file (79% of the
+      // check, 2026-11-08)
+      c.trees_lazy = true
+      c.decl_parse = (os.env.get("XO_STD_DECL_PARSE") ?? "") != "off"
+      let why = c.load_std_entry(os.fs, os.fs.read(stdx_path(c)).ok() ?? b"")
+      if (os.env.get("XO_CACHE_STATS") ?? "") == "1" {
+        os.stdio.eprintln("cache stdx ${why}")
+      }
+    }
   }
   c.overlay = overlay
   c.preload = preload
@@ -272,6 +296,12 @@ fn load_walked(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str,
   }
   if chk {
     store_check_entries(os, c)
+    if !c.std_export_bad.is_empty() {
+      return Err("XO_STD_EXPORT=verify: std's records differ from its declarations: ${c.std_export_bad}")
+    }
+    if !c.std_export_out.is_empty() {
+      store_entry(os, stdx_path(c), c.std_export_out)
+    }
   }
   var all_diags = c.diags
   // each module left out for its module path, checked on its own: its
@@ -514,6 +544,34 @@ fn shared_imports(os: Os, ctx: Ctx, root: Str, member_dirs: List[Str]) -> List[S
     }
   }
   out.sort()
+}
+
+/// Where `xo check` keeps std's declaration record (an entry of its own
+/// key, uncompressed as its chk entries are).
+fn stdx_path(c: check.Checker) -> Str {
+  let k = c.std_export_key
+  "${c.mod_cache_dir}/stdx/${k[0..2]}/${k}"
+}
+
+/// Writes data to path through a temporary file and a rename; a cache it
+/// cannot write is only slower.
+fn store_entry(os: Os, path: Str, data: Bytes) uses fs, rand {
+  let i = path.rfind("/") ?? return
+  match os.fs.create_dir_all(path[0..i]) {
+    Ok(_) => {}
+    // xo:allow XO0903 a cache it cannot write is only slower
+    Err(_) => return
+  }
+  let tmp = "${path}.tmp-${os.rand.bytes(6).to_hex()}"
+  match os.fs.write(tmp, data) {
+    Ok(_) => {
+      match os.fs.rename(tmp, path) {
+        Ok(_) => {}
+        Err(_) => os.fs.remove(tmp).ignore_err("another process stored it")
+      }
+    }
+    Err(_) => os.fs.remove(tmp).ignore_err("a failed store")
+  }
 }
 
 /// Stores the module check cache entries of the modules c checked in

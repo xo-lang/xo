@@ -858,3 +858,32 @@ point with it on, and a new user's first build against the plain one
 (bench/results/sepcomp-edit-stage2-2026-10-28.md, "Readiness for a
 default"). The default change's own gate: the full suites of the touched
 packages, cmd/xo, and a self build with the new xo (bootstrap s2).
+
+## xo check uses std's record (xo-lang-4, 2026-11-08)
+
+`xo check` read and checked std's trees on every run: the module check
+cache (decision 0351's addendum) skips the program's unchanged modules,
+but std was parsed again each time (a profile of a warm check of fib:
+`ensure_tree` under Checker.run), about 320 ms of a 330 ms check. A
+check with the lazy native runtime (the default) now takes the build's
+std record path: it loads std's declaration record (an `stdx` entry
+under the backend cache's `stdx/`, keyed on the check flags and the std
+directory, its header fingerprinting std's files) and checks with
+`trees_lazy` on, so std's trees are joined only when a body is needed;
+a miss checks std and stores the record. XO_STD_EXPORT=0 turns it off
+(the earlier path), XO_CACHE_STATS=1 prints `cache stdx ...`. Warm check
+on the Mac under load, median of 7 against XO_STD_EXPORT=0: fib 386 to
+99 ms, bench/perf/http 547 to 125 ms; the first check (no record) is
+unchanged (800 and 1,670 ms). Decision 0428's declaration parse
+(`decl_parse`, XO_STD_DECL_PARSE=off turns it off) first stayed off in a
+check: with it the support build's front end cache missed the entry of
+a closure (Store.list_json's) on every warm check of bench/perf/http,
+printed a warning and built it again. The entry read UInt8, which the
+builder makes at its first use (Module.int_type) and which the
+recording build had made before the closure and the replaying one had
+not; fe_replay now makes a sized integer or Float32 it reads. With it
+on: fib 352 to 56 ms, http 365 to 52 ms (Mac, median of 7, the same
+load), no warning over 9 warm checks. Diagnostics and exit status are identical
+with and without it over 62 errorcheck programs, the HTTP service and
+160 goldens. cmd/xo TestCheckStdRecord: a second check loads the record,
+a std edit fails its header and the next check sees the edit.
