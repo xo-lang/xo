@@ -266,11 +266,12 @@ func (g *gen) msg(md protoreflect.MessageDescriptor, depth int) protoreflect.Mes
 		default:
 			inner = wrapperspb.Int64(1 << 40)
 		}
-		a, err := anypb.New(inner)
-		if err != nil {
+		// Deterministic: the field order of a dynamic message otherwise changes from run to run.
+		a := &anypb.Any{}
+		if err := anypb.MarshalFrom(a, inner, proto.MarshalOptions{Deterministic: true}); err != nil {
 			panic(err)
 		}
-		b, _ := proto.Marshal(a)
+		b, _ := proto.MarshalOptions{Deterministic: true}.Marshal(a)
 		proto.Unmarshal(b, m.Interface())
 		return m
 	case "google.protobuf.Empty":
