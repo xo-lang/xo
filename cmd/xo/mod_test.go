@@ -177,3 +177,32 @@ func TestModules(t *testing.T) {
 		t.Errorf("--workspace=off: %s", got)
 	}
 }
+
+// TestSubpackageFromItsDir: a package below the module root, checked and
+// run from its own directory, keeps its own import path, so its import
+// of the module's root package is no cycle (2026-11-08: azure's
+// messaging/azservicebus/admin reported XO0604, the module importing
+// itself).
+func TestSubpackageFromItsDir(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"app/xo.mod":        "module example.com/app\n",
+		"app/lib.xo":        "pub fn f() -> Int { 1 }\n",
+		"app/admin/main.xo": "use example.com/app\n\nfn main(os: Os) {\n  os.stdio.println(\"${app.f()}\")\n}\n",
+	})
+	for _, args := range [][]string{{"check", "."}, {"run", "."}} {
+		if args[0] == "run" && testing.Short() {
+			continue
+		}
+		w := xoCmd(t, args...)
+		cmd := command(t, w[0], w[1:]...)
+		cmd.Dir = filepath.Join(dir, "app", "admin")
+		b, err := cmd.CombinedOutput()
+		if err != nil || strings.Contains(string(b), "XO0604") {
+			t.Errorf("xo %s in app/admin: %v\n%s", strings.Join(args, " "), err, b)
+		}
+		if args[0] == "run" && strings.TrimSpace(string(b)) != "1" {
+			t.Errorf("xo run . in app/admin printed %q, want 1", b)
+		}
+	}
+}

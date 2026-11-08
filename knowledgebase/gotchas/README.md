@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [subpackage-dot-took-module-path.md](subpackage-dot-took-module-path.md): Observed 2026-11-08: `xo check .` in a package below its module root gave it the module's import path (two relative paths compared), so importing the root package was XO0604; module_path_for compares absolute paths
 - [frame-list-unguarded-inlined-callee.md](frame-list-unguarded-inlined-callee.md): Observed 2026-11-07: azblob faulted 0554's verifier: a caller inlined a callee before the callee's own List parameter guards were added, so a frame list went into a struct; bodies are now guarded as they are inlined
 - [readme-status-flip-union-merge.md](readme-status-flip-union-merge.md): Observed 2026-11-07: flipping an ADR's line in decisions/README.md to Accepted, then rebasing, kept both versions (merge=union), and neighbours' flips came back doubled; TestDecisionNumbersUnique failed in pushq; check the count and amend
 - [std-record-touched-std-declares-twice.md](std-record-touched-std-declares-twice.md): Observed 2026-11-07: after a std file's mtime changed with its bytes unchanged, a separately compiled build failed XO0603 on every std name (the stdx header failed, the fingerprint matched, the record installed into source-loaded modules, which were declared again); install_std marks them (record_members)

@@ -1735,7 +1735,11 @@ fn (var c: Checker) find_mod_root(dir: Str) -> ModRoot? {
 /// The import path of the module in dir.
 fn (var c: Checker) module_path_for(dir: Str) -> Str {
   if let Some(r) = c.find_mod_root(dir) {
-    let rel = rel_path(r.dir, c.display(dir))
+    // absolute paths: from a package below the module root (`xo check .`
+    // in app/admin) the root is `..` and dir `.`, which share no prefix,
+    // and the package took the module's own path (2026-11-08: azure's
+    // azservicebus/admin, XO0604 "imports itself")
+    let rel = rel_path(c.abs(r.dir), c.abs(dir))
     if rel == "." {
       return r.path
     }
