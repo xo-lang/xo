@@ -40,3 +40,4 @@ protodesc
 protowkt
 htmlent
 protojson
+htmlparse

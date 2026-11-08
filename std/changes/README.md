@@ -67,6 +67,7 @@ entries yet.
 - [cli.md](cli.md): std/cli (spec/std.md 14)
 - [html.md](html.md): std/html (escape_string, unescape_string)
 - [htmltok.md](htmltok.md): std/htmltok (x/net/html Tokenizer)
+- [htmlparse.md](htmlparse.md): std/htmlparse (x/net/html tree builder and Render)
 - [protodesc.md](protodesc.md): std/protodesc (descriptor.proto as Xo values)
 - [protowkt.md](protowkt.md): std/protowkt (the well known types)
 - [protojson.md](protojson.md): std/protojson (canonical JSON mapping)

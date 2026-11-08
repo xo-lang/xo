@@ -8084,7 +8084,7 @@ fn gen(f: File) -> Str ! ParseErr
 
 The HTML5 tokenizer of golang.org/x/net/html (decision 0548; token.go and the unescape of escape.go, BSD license): a text
 in memory becomes a stream of tokens with Go's rules for raw text elements, comments, doctypes, attributes, entities
-and the buffer limit. There is no tree builder. The token streams are checked against x/net v0.62.0's Tokenizer
+and the buffer limit. The tree builder is std/htmlparse (section 75). The token streams are checked against x/net v0.62.0's Tokenizer
 (testdata/corpus/htmltok: curated and seeded random inputs in plain, AllowCDATA and fragment modes, and with buffer
 limits). The entity tables are shared with std/html through `std/htmlent` (`entity_of(name)` and `entity2_of(name)`, "" for none;
 internal, use std/html for escaping).

@@ -1,0 +1,50 @@
+// htmlparse: std/htmlparse against golang.org/x/net/html's Parse and Render (go/): a 12 KB page of
+// posts (paragraphs closed implicitly, misnested formatting, a table, links with attributes, entities,
+// comments, a script and a style) parsed 1,000 times, and its tree rendered 1,000 times; `none` is the
+// setup alone. Usage: `<program> none|parse|render`. Prints `<workload> <checksum>`; the twin prints
+// the same.
+use std/htmlparse
+
+fn page() -> Str {
+  var b = StrBuilder.new()
+  b.write("<!DOCTYPE html><html><head><title>Bench &amp; page</title><style>p{color:red}</style></head><body>")
+  for i in 0..60 {
+    b.write("<!-- item ${i} --><div class=\"post\" id=p${i}><h2>Post ${i}</h2><p>Tom &amp; Jerry's <a href=\"/x?a=1&amp;b=2\" title='show ${i}'>show</a> &copy; text &lt;b&gt; more words here.<p><b>bold <i>both</b> italic</i><table><tr><td>cell<td>two</table><img src=a.png alt=\"\"><br/></div>\n")
+  }
+  b.write("<script>if (a < b && c > d) { document.write('<p>x</p>'); }</script></body></html>")
+  b.freeze()
+}
+
+fn count(t: htmlparse.Tree, n: Int) -> Int {
+  let node = t.nodes[n]
+  var c = 1 + node.data.len() + node.attrs.len()
+  var k = node.first_child
+  while k != -1 {
+    c += count(t, k)
+    k = t.nodes[k].next
+  }
+  c
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let t = page()
+  var sum = 0
+  if w == "parse" {
+    for i in 0..1000 {
+      let doc = htmlparse.parse(t) ?? _e => fault("parse")
+      sum += count(doc, doc.root) + i % 3
+    }
+  } else if w == "render" {
+    let doc = htmlparse.parse(t) ?? _e => fault("parse")
+    for i in 0..1000 {
+      let s = doc.render() ?? _e => fault("render")
+      sum += s.len() + i % 3
+    }
+  } else {
+    for i in 0..1000 {
+      sum += t.len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

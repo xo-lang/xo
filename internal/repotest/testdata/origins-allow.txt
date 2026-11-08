@@ -111,3 +111,5 @@ std/native/llrt/cabi_wincrt.xo	/// malloc and free of the `use c` adapter compil
 std/native/llrt/cabi_wincrt.xo	/// abort (SQLite's, on a broken invariant): the process ends with
 std/native/llrt/cabi_wincrt.xo	/// _localtime64_s (SQLite's localtime modifier): the time *t in the
 std/native/llrt/windows.xo	/// zone, for cabi_wincrt.xo's _localtime64_s (SQLite's localtime
+std/native/htmlparse.xo	//webtechs//dtd mozilla html 2.0//",
+std/native/htmlparse.xo	//webtechs//dtd mozilla html//",

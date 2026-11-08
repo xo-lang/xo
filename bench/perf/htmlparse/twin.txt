@@ -1,0 +1,4 @@
+# twincheck: htmlparse: three workloads (none is the setup alone); Go is golang.org/x/net/html (BSD-3, vendored under go/vendor) Parse and Render.
+- - none
+- - parse
+- - render

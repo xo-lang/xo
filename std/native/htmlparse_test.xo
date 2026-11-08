@@ -1,0 +1,103 @@
+// Tests of std/htmlparse (decision 0570). The cases follow golang.org/x/net/html's parse_test.go and render_test.go
+// (BSD license, Copyright 2010 The Go Authors); the html5lib tree-construction files and a differential against Go
+// are internal/stdtest/testdata/corpus/htmlparse.
+use std/htmlparse
+
+fn dump_of(text: Str) -> Str {
+  let t = htmlparse.parse(text) ?? e => fault("parse: ${e.display()}")
+  t.dump()
+}
+
+fn render_of(text: Str) -> Str {
+  let t = htmlparse.parse(text) ?? e => fault("parse: ${e.display()}")
+  t.render() ?? e => fault("render: ${e.display()}")
+}
+
+test "parse builds the implied elements" {
+  expect(dump_of("<p>a<p>b")) == "| <html>\n|   <head>\n|   <body>\n|     <p>\n|       \"a\"\n|     <p>\n|       \"b\"\n"
+}
+
+test "parse without scripting keeps noscript content as elements (Go issue 16318)" {
+  let text = "<noscript><img src='https://golang.org/doc/gopher/frontpage.png' /></noscript><p><img src='https://golang.org/doc/gopher/doc.png' /></p>"
+  let t = htmlparse.parse_with(text, false) ?? _e => fault("parse")
+  expect(t.dump()) == "| <html>\n|   <head>\n|     <noscript>\n|   <body>\n|     <img>\n|       src=\"https://golang.org/doc/gopher/frontpage.png\"\n|     <p>\n|       <img>\n|         src=\"https://golang.org/doc/gopher/doc.png\"\n"
+}
+
+test "the adoption agency algorithm reparents misnested formatting" {
+  expect(render_of("<b>1<p>2</b>3</p>")) == "<html><head></head><body><b>1</b><p><b>2</b>3</p></body></html>"
+}
+
+test "table content is foster parented" {
+  expect(render_of("<table>x<tr><td>y</table>")) == "<html><head></head><body>x<table><tbody><tr><td>y</td></tr></tbody></table></body></html>"
+}
+
+test "svg and math are foreign content with adjusted names" {
+  expect(dump_of("<svg viewbox=0><clippath/></svg>")) == "| <html>\n|   <head>\n|   <body>\n|     <svg svg>\n|       viewBox=\"0\"\n|       <svg clipPath>\n"
+}
+
+test "a fragment parses in its context" {
+  let t = htmlparse.parse_fragment("<tr><td>x", "", "table") ?? _e => fault("parse")
+  expect(t.dump()) == "| <tbody>\n|   <tr>\n|     <td>\n|       \"x\"\n"
+  let u = htmlparse.parse_fragment("a<b>c", "", "textarea") ?? _e => fault("parse")
+  expect(u.dump()) == "| \"a<b>c\"\n"
+}
+
+test "doctypes set quirks mode and keep their identifiers" {
+  expect(dump_of("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://x\">")) == "| <!DOCTYPE html \"-//W3C//DTD HTML 4.01//EN\" \"http://x\">\n| <html>\n|   <head>\n|   <body>\n"
+}
+
+test "nesting deeper than 512 elements is an error" {
+  var s = ""
+  for _ in 0..600 {
+    s += "<div>"
+  }
+  match htmlparse.parse(s) {
+    Ok(_) => expect("parsed") == "an error"
+    Err(e) => expect(e.display()) == "html: open stack of elements exceeds 512 nodes"
+  }
+}
+
+test "render escapes text and attribute values" {
+  expect(render_of("<p title=\"a&quot;b'c\">1 < 2 &amp; 3 > 2&#13;</p>")) == "<html><head></head><body><p title=\"a&#34;b&#39;c\">1 &lt; 2 &amp; 3 &gt; 2&#13;</p></body></html>"
+}
+
+test "render writes script text and void elements as Go does" {
+  expect(render_of("<script>if (a < b && c) {}</script><br><img src=a>")) == "<html><head><script>if (a < b && c) {}</script></head><body><br/><img src=\"a\"/></body></html>"
+}
+
+test "render keeps the newline after pre and comments with less escaping" {
+  expect(render_of("<pre>\n\nx</pre><!--a>b-->")) == "<html><head></head><body><pre>\n\nx</pre><!--a>b--></body></html>"
+}
+
+test "escape is x/net's" {
+  expect(htmlparse.escape("&'<>\"\r")) == "&amp;&#39;&lt;&gt;&#34;&#13;"
+}
+
+test "rendering and parsing again gives the same tree" {
+  let docs = ["<p>a<p>b", "<b>1<p>2</b>3</p>", "<table><tr><td>1<td>2</table>", "<ul><li>a<li>b</ul>", "<select><option>x<option>y</select>", "<h1>t<h2>u"]
+  for d in docs {
+    let once = dump_of(d)
+    expect(dump_of(render_of(d))) == once
+  }
+}
+
+test "a seeded mix of markup never faults" {
+  let pieces = ["<p>", "</p>", "<b>", "</b>", "<table>", "<tr>", "<td>", "</table>", "<select>", "<option>", "<svg>", "<math>", "<mi>", "<template>", "</template>", "<frameset>", "<noscript>", "text", "&amp;", "<!--", "-->", "<", "\u{0}", "<form>", "<a>", "</a>", "<li>", "<caption>", "<col>"]
+  var seed = 570
+  for _ in 0..400 {
+    var s = ""
+    for _ in 0..12 {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      s += pieces[seed / 65536 % pieces.len()]
+    }
+    match htmlparse.parse(s) {
+      Ok(t) => {
+        match t.render() {
+          Ok(_) => {}
+          Err(_) => {}
+        }
+      }
+      Err(_) => {}
+    }
+  }
+}

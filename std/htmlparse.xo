@@ -1,0 +1,94 @@
+// std/htmlparse (decision 0570). Declaration file; encoding rules are listed at
+// the top of std/prelude.xo. golang.org/x/net/html's tree builder (parse.go,
+// node.go, const.go, foreign.go, doctype.go, render.go and escape.go, BSD
+// license, Copyright 2010 The Go Authors) on the tokens of std/htmltok: the
+// HTML5 tree construction algorithm (insertion modes, the adoption agency
+// algorithm, foster parenting, foreign content for svg and math, quirks mode
+// from doctypes, fragment parsing with a context element) and Render. Pure.
+//
+// The tree is an arena: `Tree.nodes` holds every node and a node is its index,
+// -1 standing for Go's nil. Node 0 of a parse is the document.
+
+/// Go's html.NodeType (without the internal scope marker).
+enum NodeType {
+  Error
+  Text
+  Document
+  Element
+  Comment
+  Doctype
+  Raw
+} derive Eq
+
+/// Go's html.Attribute: `namespace` is "" except for the adjusted foreign
+/// attributes (`xlink`, `xml`, `xmlns`).
+struct Attr {
+  namespace: Str
+  key: Str
+  val: Str
+} derive Eq
+
+/// Go's html.Node: `data` is the tag name of an element (lower case, with the
+/// svg camel case adjustments), the text of a text or comment node, the name of
+/// a doctype (its public and system identifiers are the attributes `public`
+/// and `system`). `namespace` is "" for html, `math` or `svg`. Tree links are
+/// indexes into `Tree.nodes`, -1 for none.
+struct Node {
+  typ: NodeType
+  data: Str
+  namespace: Str
+  attrs: List[Attr]
+  parent: Int
+  first_child: Int
+  last_child: Int
+  prev: Int
+  next: Int
+}
+
+/// The result of a parse: the nodes and `root`, the node whose children are the
+/// result (the document, or for a fragment the html element Go's ParseFragment
+/// takes its nodes from).
+struct Tree {
+  nodes: List[Node]
+  root: Int
+}
+
+/// A parse failure: the open elements nest deeper than 512 (Go's error and
+/// panic text), or the tokenizer's buffer limit.
+struct ParseErr {
+  msg: Str
+}
+
+fn (e: ParseErr) display() -> Str
+
+/// A tree Render refuses: an error node, a void element with children, a
+/// doctype identifier with both quote types.
+struct RenderErr {
+  msg: Str
+}
+
+fn (e: RenderErr) display() -> Str
+
+/// html.Parse: the document of `text` (UTF-8), scripting enabled.
+fn parse(text: Str) -> Tree ! ParseErr
+/// html.ParseWithOptions with ParseOptionEnableScripting(scripting).
+fn parse_with(text: Str, scripting: Bool) -> Tree ! ParseErr
+/// html.ParseFragment: `text` as the inner html of an element of `context_tag`
+/// in `context_namespace` ("", `math` or `svg`); an empty tag parses a
+/// document. The nodes are the children of the result's `root`.
+fn parse_fragment(text: Str, context_namespace: Str, context_tag: Str) -> Tree ! ParseErr
+/// html.ParseFragmentWithOptions with the scripting flag.
+fn parse_fragment_with(text: Str, context_namespace: Str, context_tag: Str, scripting: Bool) -> Tree ! ParseErr
+
+/// html.Render of the whole result: the children of `root` in order.
+fn (t: Tree) render() -> Str ! RenderErr
+/// html.Render of one node (a document renders its children).
+fn (t: Tree) render_node(n: Int) -> Str ! RenderErr
+/// The tree in the html5lib tree-construction format Go's tests compare (`| `
+/// lines, two spaces per level, attributes sorted by key, `content` under a
+/// template).
+fn (t: Tree) dump() -> Str
+
+/// html.EscapeString as x/net's renderer applies it: `&`, `'`, `<`, `>`, `"`
+/// and carriage return as `&amp;`, `&#39;`, `&lt;`, `&gt;`, `&#34;`, `&#13;`.
+fn escape(s: Str) -> Str
