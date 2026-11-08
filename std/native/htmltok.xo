@@ -633,11 +633,23 @@ fn tokenizer_read_tag(var z: htmltok.Tokenizer, save_attr: Bool) {
     return
   }
   while true {
-    let c = tokenizer_rb(z)
-    if z.errc != 0 || c == 62 {
-      break
+    if z.max_buf == 0 {
+      // no limit: look at the next byte in place instead of reading it and backing up
+      if z.re >= z.src.len() {
+        z.errc = 1
+        break
+      }
+      if z.src[z.re] == 62 {
+        z.re += 1
+        break
+      }
+    } else {
+      let c = tokenizer_rb(z)
+      if z.errc != 0 || c == 62 {
+        break
+      }
+      z.re -= 1
     }
-    z.re -= 1
     tokenizer_read_tag_attr_key(z)
     tokenizer_read_tag_attr_val(z)
     if save_attr && z.pend.k0 != z.pend.k1 {
@@ -756,28 +768,58 @@ fn tokenizer_read_tag_attr_val(var z: htmltok.Tokenizer) {
   if z.errc != 0 {
     return
   }
-  var c = tokenizer_rb(z)
-  if z.errc != 0 {
-    return
-  }
-  if c == 47 {
-    return
-  }
-  if c != 61 {
-    z.re -= 1
-    return
+  var c = 0
+  if z.max_buf == 0 {
+    if z.re >= z.src.len() {
+      z.errc = 1
+      return
+    }
+    c = Int(z.src[z.re])
+    if c == 47 {
+      z.re += 1
+      return
+    }
+    if c != 61 {
+      return
+    }
+    z.re += 1
+  } else {
+    c = tokenizer_rb(z)
+    if z.errc != 0 {
+      return
+    }
+    if c == 47 {
+      return
+    }
+    if c != 61 {
+      z.re -= 1
+      return
+    }
   }
   tokenizer_skip_white_space(z)
   if z.errc != 0 {
     return
   }
-  let quote = tokenizer_rb(z)
-  if z.errc != 0 {
-    return
-  }
-  if quote == 62 {
-    z.re -= 1
-    return
+  var quote = 0
+  if z.max_buf == 0 {
+    if z.re >= z.src.len() {
+      z.errc = 1
+      return
+    }
+    quote = Int(z.src[z.re])
+    if quote == 62 {
+      return
+    }
+    z.re += 1
+  } else {
+    quote = tokenizer_rb(z)
+    if z.errc != 0 {
+      return
+    }
+    if quote == 62 {
+      z.re -= 1
+      return
+    }
   }
   if quote == 39 || quote == 34 {
     z.pend.v0 = z.re
