@@ -1019,13 +1019,21 @@ fn (var g: G) x86_binop(inst: Inst, var x: XT, dt: Str, at: Str, b: Str, op: Str
   if single && di >= 0 {
     if let Some(s0) = tie_src(inst, at) {
       var s = s0
-      if x86_commutes(op) && s.kind == S_REG && s.v != 0 && !g.x86_dead.contains(s.v) {
-        // the tied operand lives on, the other dies here: tie that one
-        // (its copy coalesces away)
+      let dv = if di < inst.defs.len() { inst.defs[di] } else { 0 }
+      // the tied operand lives on, the other dies here: tie that one (its
+      // copy coalesces away); both die, and a copy later in the block
+      // carries the result back into the other (a loop's accumulator,
+      // `s += Int(x)`): tie that one too, so the result, the tied operand
+      // and the copy share a register (2026-11-08: byte_sum's loop on
+      // amd64 added into the byte's register and copied it back each
+      // iteration)
+      let swap_live = s.kind == S_REG && s.v != 0 && !g.x86_dead.contains(s.v)
+      let swap_carry = s.kind == S_REG && s.v != 0 && g.x86_dead.contains(s.v) && !g.x86_pm.contains((s.v, dv))
+      if x86_commutes(op) && (swap_live || swap_carry) {
         let (bb, _) = tpl_ref(b)
         if bb.starts_with("u") {
           let k = Int.parse(bb[1..bb.len()]) ?? -1
-          if k >= 0 && k < inst.us.len() && inst.us[k] != 0 && g.x86_dead.contains(inst.us[k]) {
+          if k >= 0 && k < inst.us.len() && inst.us[k] != 0 && g.x86_dead.contains(inst.us[k]) && (swap_live || g.x86_pm.contains((inst.us[k], dv))) {
             let a2 = xop(at, if b.starts_with("$w") { 4 } else { 8 })
             if !a2.is_empty() && !a2.starts_with("$0") {
               s = rsrc(inst.us[k])
@@ -1458,22 +1466,56 @@ fn (var g: G) x86_retarget() {
     var out: List[Inst] = []
     // CF holds not ARM's C (x86_carry_polarity)
     var inv = false
-    // each use's last instruction in the block, for x86_dead
-    var last: Map[Int, Int] = {}
-    for (i, inst) in g.blocks[b].insts.indexed() {
-      for u in inst.us {
-        last[u] = i
+    // each instruction's uses that die there, for x86_dead: liveness
+    // backwards from the block's end, where a copy (K_PMOVE, which writes
+    // all its definitions) ends its definitions' earlier values, so a
+    // loop's accumulator that is live out but copied over at the block's
+    // end dies at its last read (2026-11-08: byte_sum's add kept its
+    // accumulator live and tied the loaded byte instead)
+    let insts = g.blocks[b].insts
+    var live: Map[Int, Bool] = {}
+    for r in lout[b] {
+      live[Int(r)] = true
+    }
+    var dies: List[List[Int]] = List.with_capacity(insts.len())
+    for _ in 0..insts.len() {
+      dies.push([])
+    }
+    var j = insts.len() - 1
+    while j >= 0 {
+      var dl: List[Int] = []
+      for u in insts[j].us {
+        if u != 0 && !(live.get(u) ?? false) && !dl.contains(u) {
+          dl.push(u)
+        }
+      }
+      dies[j] = dl
+      if insts[j].kind == K_PMOVE {
+        for d in insts[j].defs {
+          live[d] = false
+        }
+      }
+      for u in insts[j].us {
+        if u != 0 {
+          live[u] = true
+        }
+      }
+      j -= 1
+    }
+    g.x86_pm = []
+    for inst in g.blocks[b].insts {
+      if inst.kind == K_PMOVE {
+        for (k, d) in inst.defs.indexed() {
+          if k < inst.srcs.len() && inst.srcs[k].kind == S_REG && inst.srcs[k].v != 0 {
+            g.x86_pm.push((d, inst.srcs[k].v))
+          }
+        }
       }
     }
     var ii = -1
     for inst in g.blocks[b].insts {
       ii += 1
-      g.x86_dead = []
-      for u in inst.us {
-        if u != 0 && (last.get(u) ?? -1) == ii && !lout[b].contains(Int32(u)) && !g.x86_dead.contains(u) {
-          g.x86_dead.push(u)
-        }
-      }
+      g.x86_dead = dies[ii]
       if inst.kind != K_PLAIN && inst.kind != K_PMOVE {
         inv = false
       }
