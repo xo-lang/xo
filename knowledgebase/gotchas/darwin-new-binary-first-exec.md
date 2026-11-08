@@ -40,11 +40,28 @@ it, or measure on Linux. A loop that runs new code on every step, such
 as a REPL or `xo run` in an edit loop, pays the cost each step on macOS
 unless it runs no new file: an interpreter, or code in memory.
 
-Next experiment (needs the owner, since it is a system setting):
-1. Add the terminal app under System Settings, Privacy & Security,
-   Developer Tools.
-2. Rerun the fresh C binary test.
+Developer Tools listing (measured 2026-11-08): it does not remove the
+cost. The terminal apps were already listed under System Settings,
+Privacy & Security, Developer Tools (`DevToolsSecurity -status`:
+"Developer mode is currently enabled"). The fresh C binary test
+(~/xo-lead/notes/xo-lang-2/fe.sh: five new `cc` binaries, each run
+twice) still paid on its first run:
 
-Apple's tools exempt processes started from a developer tool from this
-assessment, which is believed to remove the delay. That is not yet
-measured here.
+- the owner's own terminal session: 148.9 to 164.3 ms first, 3.0 to 6.9
+  ms again;
+- an agent's shell (under Crosswalk's ptyhost): 181 to 186 ms first, 3
+  to 8 ms again;
+- the same through heavy.sh (heavyd's job): 182 to 251 ms first, 2 to 4
+  ms again.
+
+So how heavyd launches jobs is not the cause, and the exemption is not
+the fix.
+
+Next experiments, ranked (measure only, no setting changes):
+1. Code with no new file: a long-lived runner maps an entry's linked code
+   into MAP_JIT memory (pthread_jit_write_protect_np) and calls it. Xo's
+   binaries are not hardened runtime, so no entitlement should be needed.
+   Time a tiny C runner's load against the 155 ms.
+2. An ad hoc re-sign (`codesign -s - -f`) of a binary rewritten in place:
+   whether it avoids both the SIGKILL and the assessment.
+3. A binary on another volume type (a read-only RAM disk from hdiutil).
