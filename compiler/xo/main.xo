@@ -3146,7 +3146,7 @@ fn check_assumptions(os: Os, var m: ssa.Module, phases: Bool, t: Time) -> Time {
   }
   var ds: List[check.Diag] = []
   for e in errs[0..errs.len().min(5)] {
-    ds.push(check.Diag{code: "XO1510", file: "", line: 0, col: 0, end_line: 0, end_col: 0, message: "a function disagrees with this build's definitions (a stale cached piece; decision 0342): ${e}; rebuild with XO_BACKEND_CACHE=off and report it"})
+    ds.push(check.Diag{code: "XO1510", file: "", line: 0, col: 0, end_line: 0, end_col: 0, message: "a function disagrees with this build's definitions (a stale cached piece, or a compiler bug when it repeats with XO_BACKEND_CACHE=off; decision 0342): ${e}; rebuild with XO_BACKEND_CACHE=off and report it"})
   }
   print_diags(os, ds)
   os.proc.exit(1)

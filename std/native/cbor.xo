@@ -186,7 +186,23 @@ fn enc_item(v: cbor.Value, det: Bool, depth: Int, var out: BytesBuilder) -> () !
     }
     cbor.Value.Map(pairs) => {
       put_head(out, 5, pairs.len())
-      if det {
+      let direct = det && pairs.len() > 1 && direct_keys(pairs)
+      let sorted = direct && keys_sorted(pairs)
+      if sorted || (direct && pairs.len() <= 16) {
+        // text and unsigned keys order without encoding them (key_less);
+        // a derived struct's map is a handful of them
+        if sorted {
+          for p in pairs {
+            enc_item(p.0, det, depth + 1, out)?
+            enc_item(p.1, det, depth + 1, out)?
+          }
+        } else {
+          for i in key_order(pairs) {
+            enc_item(pairs[i].0, det, depth + 1, out)?
+            enc_item(pairs[i].1, det, depth + 1, out)?
+          }
+        }
+      } else if det {
         var keys: List[Bytes] = []
         var hexes: List[Str] = []
         for p in pairs {
@@ -231,6 +247,66 @@ fn enc_item(v: cbor.Value, det: Bool, depth: Int, var out: BytesBuilder) -> () !
     cbor.Value.Undefined => out.write_byte(UInt8(247))
     cbor.Value.Float(f) => put_float(out, f)
   }
+}
+
+/// Whether every key of pairs is a text string or an unsigned integer,
+/// which key_less orders as their encodings; any other map takes the
+/// encoding sort.
+fn direct_keys(pairs: List[(cbor.Value, cbor.Value)]) -> Bool {
+  for p in pairs {
+    if !(p.0 is cbor.Value.TextString(_) | cbor.Value.Uint(_)) {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether key a's encoding sorts before b's (RFC 8949 4.2.1, bytewise):
+/// an unsigned integer (major 0) before any text (major 3), integers by
+/// value and text by length, then by bytes, since a longer argument
+/// encodes a greater head.
+fn key_less(a: cbor.Value, b: cbor.Value) -> Bool {
+  match a {
+    cbor.Value.Uint(x) => {
+      if let cbor.Value.Uint(y) = b { x < y } else { true }
+    }
+    cbor.Value.TextString(s) => {
+      if let cbor.Value.TextString(t) = b {
+        s.len() < t.len() || (s.len() == t.len() && s < t)
+      } else {
+        false
+      }
+    }
+    _ => false
+  }
+}
+
+fn keys_sorted(pairs: List[(cbor.Value, cbor.Value)]) -> Bool {
+  for i in 1..pairs.len() {
+    if !key_less(pairs[i - 1].0, pairs[i].0) {
+      return false
+    }
+  }
+  true
+}
+
+/// The indexes of pairs (16 or fewer) in key order, by insertion, which
+/// keeps equal keys in their order as the encoding sort does.
+fn key_order(pairs: List[(cbor.Value, cbor.Value)]) -> List[Int] {
+  var idx = List[Int].with_capacity(pairs.len())
+  for i in 0..pairs.len() {
+    idx.push(i)
+  }
+  for i in 1..idx.len() {
+    let x = idx[i]
+    var j = i
+    while j > 0 && key_less(pairs[x].0, pairs[idx[j - 1]].0) {
+      idx[j] = idx[j - 1]
+      j -= 1
+    }
+    idx[j] = x
+  }
+  idx
 }
 
 fn encode(v: cbor.Value, deterministic: Bool) -> Bytes ! cbor.CborErr {

@@ -69,3 +69,19 @@ On an enum, `derive Cbor(case: snake | camel | pascal | kebab)` converts the var
 
 `diag_float` stripped the leading and trailing zeros of the digit text with a Str slice per step; it now walks the bytes and
 slices once. No output change (cbor corpus 16 and cborfuzz 1,500 pass).
+
+## 2026-11-07: perf: deterministic map order without encoding the keys
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Xo-vs-Go survey (bench/results/xo-vs-go-survey-2026-11-07.md row 2: cbor/umarshal 3.49x Go; the key sort and the per-key builders)
+- Go reference: github.com/fxamacker/cbor/v2's deterministic (core) sort: it orders a struct's fields once by their encoded keys
+- Test: testdata/corpus/cbor and cborfuzz on go, arm64 and llvm; TestCborFuzz (2,000 cases against the oracle, arm64 and llvm); the bench program's marshal and canon output, a 40-key mixed map and a Map field byte identical to main's
+- Timing: bench/perf/cbor on linux/arm64 host 1, --ab against main (7 rounds, n=6): umarshal 0.442 (0.433 to 0.45; 14.12 to 6.24 ms; the survey's Go is 4.3 ms), canon 0.353 (0.346 to 0.36)
+
+A deterministic map whose keys are all text strings or unsigned integers (every derived struct's) is ordered
+by comparing the keys themselves: an integer before text, integers by value, text by length and then bytes,
+which is the bytewise order of their encodings (RFC 8949 4.2.1). Keys already in order are written as they
+come, and up to 16 keys are sorted by insertion. Other maps (byte string, negative, float or nested keys, or
+more than 16 unsorted keys) keep the sort by encoded key. No package-level cache: the order is decided per
+call, as fxamacker caches per type.
