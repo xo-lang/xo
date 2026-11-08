@@ -285,8 +285,18 @@ host.
 1. Build (no cloud). Progress: `xo mod proxy fill` (2026-11-08), and
    the log's record copies, restore, times, index feed, rate limit and
    cache headers, and the log writing each version it adds to the proxy
-   bucket (`--fill-to`), all 2026-11-08; the systemd units and install
-   script remain.
+   bucket (`--fill-to`), all 2026-11-08; and `scripts/modservices/`
+   (the `xo-sumdb` unit, cloudflared's ingress, `install.sh` and the
+   owner's steps in its README), 2026-11-08. Phase 1 is complete. The
+   owner's OCI host runs Oracle Linux 9 with SELinux enforcing:
+   `install.sh` labels the release `bin_t` (systemd may not execute the
+   `var_lib_t` default under `/srv`; it runs `bin_t` as
+   `unconfined_service_t`) and the data `var_lib_t`, and the README lists
+   the checks (`ausearch -m avc`). Tested in Debian 12 and Oracle Linux
+   9.8 arm64 containers under systemd with a cross-built xo, a real
+   module fetched with git and a PUT sink for R2; SELinux was checked
+   against the targeted policy offline, not enforced, so the owner's
+   first install is its first enforcing run.
 
    The items:
    - `xo mod proxy fill` with the R2 (S3) upload;

@@ -3583,6 +3583,14 @@ Last verified: 2026-10-09.
   continues), `--session=FILE` (JSON), `--keep`, and `:type`, `:doc`,
   `:undo`, `:reset`, `:quit` interactively. Test: cmd/xo TestRepl, xo
   test compiler/cli/repl. Last verified: 2026-11-08.
+- Module services (decision 0568 phase 1, 2026-11-08):
+  `scripts/modservices/` holds the `xo-sumdb` systemd unit (the log with
+  `--copy-to` and `--fill-to`, hardened, `systemd-analyze security` 1.7),
+  cloudflared's ingress config and `install.sh` (root, linux/arm64,
+  labels SELinux contexts when enabled; starts nothing, makes no key).
+  Its README has the owner's steps, the SELinux checks, restore and
+  moving out, and how it was tested (systemd containers, Debian 12 and
+  Oracle Linux 9.8). Last verified: 2026-11-08.
 - Definition hashes (decision 0125, step 5, 2026-10-10): package
   `internal/defhash` (`Module(dir, modPath)`, `Diff`, `Find`,
   `Nearest`), reflection over `internal/ast` with per field rules

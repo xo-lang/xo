@@ -1,0 +1,50 @@
+# The checksum log for sum.xolang.org and index.xolang.org (decision 0568).
+# It also writes every version it adds to the proxy bucket (--fill-to), so
+# it is the fill service as well. Installed by install.sh; the owner
+# generates the key (README.md) before the first start.
+[Unit]
+Description=Xo checksum log and proxy fill (decision 0568)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xomod
+Group=xomod
+# XO_FILL_ACCESS_KEY_ID, XO_FILL_SECRET_ACCESS_KEY (an R2 token scoped to
+# the two buckets), XO_R2_ENDPOINT (https://<account id>.r2.cloudflarestorage.com),
+# XO_PROXY_BUCKET and XO_LOG_BUCKET (bucket names); mode 0600, owner xomod
+EnvironmentFile=/srv/xomod/xomod.env
+Environment=HOME=/srv/xomod XO_MODCACHE=/srv/xomod/modcache XO_PROXY=direct XO_SUMDB=off
+ExecStart=/srv/xomod/xo/bin/xo mod sumdb serve --key=/srv/xomod/log.key --addr=127.0.0.1:7071 --fetch --rate=60 --copy-to=${XO_R2_ENDPOINT}/${XO_LOG_BUCKET} --fill-to=${XO_R2_ENDPOINT}/${XO_PROXY_BUCKET} /srv/xomod/log
+Restart=on-failure
+RestartSec=5s
+# beside the host's existing work: git fetches and zips are the large part
+MemoryMax=3G
+CPUQuota=100%
+TasksMax=256
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/srv/xomod
+CapabilityBoundingSet=
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

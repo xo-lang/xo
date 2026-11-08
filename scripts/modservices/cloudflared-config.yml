@@ -1,0 +1,14 @@
+# Cloudflare Tunnel for the module services (decision 0568): the host opens
+# no inbound port; cloudflared connects out and Cloudflare routes the two
+# hostnames to the log on loopback. install.sh copies this to
+# /etc/cloudflared/config.yml; replace TUNNEL_ID with the tunnel's id
+# (`cloudflared tunnel create xomod` prints it) before starting.
+tunnel: TUNNEL_ID
+credentials-file: /etc/cloudflared/TUNNEL_ID.json
+ingress:
+  - hostname: sum.xolang.org
+    service: http://127.0.0.1:7071
+  - hostname: index.xolang.org
+    path: ^/index$
+    service: http://127.0.0.1:7071
+  - service: http_status:404
