@@ -125,7 +125,7 @@ fn create(path: Str) -> Int {
       // is 0x8000 on arm64, 0x20000 on x86_64)
       let nofollow = match target.arch {
         TargetArch.Arm64 => 32768
-        TargetArch.Amd64 | TargetArch.Wasm32 => 131072
+        TargetArch.Amd64 | TargetArch.Riscv64 | TargetArch.Wasm32 => 131072
       }
       linux.open(path, 1 | 64 | 128 | nofollow | 524288, 384)
     }
@@ -234,6 +234,7 @@ pub fn finish() {
     TargetArch.Arm64 => 1
     TargetArch.Amd64 => 2
     TargetArch.Wasm32 => 3
+    TargetArch.Riscv64 => 4
   }
   u64(h, os_id | arch_id.wrapping_shl(8))
   u64(h, 0)

@@ -197,7 +197,7 @@ pub fn install() {
     TargetOs.Linux | TargetOs.Darwin => {}
     TargetOs.Windows => match target.arch {
       TargetArch.Amd64 => {}
-      TargetArch.Arm64 | TargetArch.Wasm32 => return
+      TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => return
     }
     TargetOs.Wasi => return
   }
@@ -750,7 +750,7 @@ fn w_regs(r: Int) {
   w_str(r, ")\n\nregisters:\n")
   let x64 = match target.arch {
     TargetArch.Amd64 => true
-    TargetArch.Arm64 | TargetArch.Wasm32 => false
+    TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
   }
   let nreg = if x64 { 16 } else { 32 }
   for i in 0..nreg {

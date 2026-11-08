@@ -148,6 +148,7 @@ enum TargetArch {
   Amd64
   Arm64
   Wasm32
+  Riscv64
 }
 
 struct Target {

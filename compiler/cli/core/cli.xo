@@ -180,6 +180,7 @@ fn run_version(os: Os, args: List[Str]) -> Int {
     Amd64 => "amd64"
     Arm64 => "arm64"
     Wasm32 => "wasm"
+    Riscv64 => "riscv64"
   }
   os.stdio.println("xo ${VERSION} ${goos}/${arch}")
   0

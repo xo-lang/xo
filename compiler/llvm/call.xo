@@ -1934,6 +1934,7 @@ fn spin_hint_asm(goarch: Str) -> Str {
       Arm64 => "arm64"
       Wasm32 => "wasm"
       Amd64 => "amd64"
+      Riscv64 => "riscv64"
     }
   }
   match arch {

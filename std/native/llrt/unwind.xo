@@ -133,7 +133,7 @@ const NREG = 96
 fn x64() -> Bool {
   match target.arch {
     TargetArch.Amd64 => true
-    TargetArch.Arm64 | TargetArch.Wasm32 => false
+    TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
   }
 }
 
@@ -236,7 +236,8 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
   }
   match target.arch {
     TargetArch.Arm64 | TargetArch.Amd64 => {}
-    TargetArch.Wasm32 => return 0
+    // decision 0571 stage 2: riscv64's frame step
+    TargetArch.Wasm32 | TargetArch.Riscv64 => return 0
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
@@ -328,13 +329,14 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
         }
         return win_walk(s, out, max, false)
       }
-      TargetArch.Arm64 | TargetArch.Wasm32 => return 0
+      TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => return 0
     }
     TargetOs.Wasi => return 0
   }
   match target.arch {
     TargetArch.Arm64 | TargetArch.Amd64 => {}
-    TargetArch.Wasm32 => return 0
+    // decision 0571 stage 2: riscv64's frame step
+    TargetArch.Wasm32 | TargetArch.Riscv64 => return 0
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
@@ -398,7 +400,8 @@ pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
   }
   match target.arch {
     TargetArch.Arm64 | TargetArch.Amd64 => {}
-    TargetArch.Wasm32 => return 0
+    // decision 0571 stage 2: riscv64's frame step
+    TargetArch.Wasm32 | TargetArch.Riscv64 => return 0
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
@@ -1879,7 +1882,7 @@ pub fn prof_init(s: Int) -> Bool {
     }
     TargetOs.Windows => match target.arch {
       TargetArch.Amd64 => win_image(s)
-      TargetArch.Arm64 | TargetArch.Wasm32 => false
+      TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
     }
     TargetOs.Wasi => false
   }

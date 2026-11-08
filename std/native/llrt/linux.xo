@@ -50,7 +50,7 @@ const STATX_BASIC_STATS: Int = 2047
 /// asm-generic table) or x86_64.
 fn nr(arm64: Int, amd64: Int) -> Int {
   match target.arch {
-    TargetArch.Arm64 => arm64
+    TargetArch.Arm64 | TargetArch.Riscv64 => arm64
     TargetArch.Amd64 => amd64
     TargetArch.Wasm32 => -1
   }

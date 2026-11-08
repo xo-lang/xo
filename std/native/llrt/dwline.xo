@@ -1913,6 +1913,9 @@ pub fn callee_saved() -> List[Bool] {
     let yes = match target.arch {
       TargetArch.Amd64 => i == 3 || i == 6 || i == 7 || (i >= 12 && i <= 15)
       TargetArch.Arm64 | TargetArch.Wasm32 => (i >= 19 && i <= 29) || i == 31 || (i >= 72 && i <= 79)
+      // s0 to s11 (x8, x9, x18 to x27), sp (x2), fs0 to fs11 (f8, f9,
+      // f18 to f27: DWARF 40, 41, 50 to 59)
+      TargetArch.Riscv64 => i == 2 || i == 8 || i == 9 || (i >= 18 && i <= 27) || i == 40 || i == 41 || (i >= 50 && i <= 59)
     }
     h.push(yes)
   }
@@ -2214,6 +2217,7 @@ fn frame_base(v: Vars, f: VFn, ui: Int, rg: Regs) -> W {
   let k = match target.arch {
     TargetArch.Amd64 => 6
     TargetArch.Arm64 | TargetArch.Wasm32 => 29
+    TargetArch.Riscv64 => 8
   }
   W{ok: rg.have[k], v: rt.mem_load(rg.at, 8 * k, 8)}
 }
@@ -2254,7 +2258,7 @@ fn probe(a: Int, n: Int) -> Bool {
       // pipe2(fds, O_CLOEXEC)
       let nr = match target.arch {
         TargetArch.Amd64 => 293
-        TargetArch.Arm64 | TargetArch.Wasm32 => 59
+        TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => 59
       }
       if rt.sys6(nr, fds, 524288, 0, 0, 0, 0) == 0 {
         let rd = rt.mem_load(fds, 0, 4)

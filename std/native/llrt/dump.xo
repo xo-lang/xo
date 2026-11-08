@@ -329,7 +329,7 @@ fn pid() -> Int {
     TargetOs.Linux => {
       let nr = match target.arch {
         TargetArch.Amd64 => 39
-        TargetArch.Arm64 | TargetArch.Wasm32 => 172
+        TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => 172
       }
       rt.sys6(nr, 0, 0, 0, 0, 0, 0)
     }

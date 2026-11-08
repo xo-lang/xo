@@ -200,7 +200,7 @@ pub fn start() {
     TargetOs.Darwin | TargetOs.Linux => false
     TargetOs.Windows => match target.arch {
       TargetArch.Amd64 => true
-      TargetArch.Arm64 | TargetArch.Wasm32 => {
+      TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => {
         stdio.eprint("xo profile: XO_PROF=cpu is not supported on windows/arm64 yet", true)
         return
       }
@@ -510,7 +510,7 @@ fn start_heap() {
     TargetOs.Darwin | TargetOs.Linux => true
     TargetOs.Windows => match target.arch {
       TargetArch.Amd64 => true
-      TargetArch.Arm64 | TargetArch.Wasm32 => false
+      TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
     }
     TargetOs.Wasi => false
   }
@@ -596,7 +596,7 @@ fn timer(us: Int) {
     TargetOs.Linux => {
       let nr = match target.arch {
         TargetArch.Amd64 => 38
-        TargetArch.Arm64 | TargetArch.Wasm32 => 103
+        TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => 103
       }
       let _r = rt.sys6(nr, ITIMER_PROF, t, 0, 0, 0, 0)
     }
@@ -793,6 +793,7 @@ fn build_raw(rc: Int, rh: Int) -> Raw {
     TargetArch.Arm64 => 1
     TargetArch.Amd64 => 2
     TargetArch.Wasm32 => 3
+    TargetArch.Riscv64 => 4
   }
   put(b, os_id | arch_id.wrapping_shl(8))
   put(b, 0)
@@ -946,7 +947,7 @@ pub fn expand_pid(path: Str) -> Str {
     TargetOs.Linux => {
       let nr = match target.arch {
         TargetArch.Amd64 => 39
-        TargetArch.Arm64 | TargetArch.Wasm32 => 172
+        TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => 172
       }
       rt.sys6(nr, 0, 0, 0, 0, 0, 0)
     }
@@ -1452,7 +1453,7 @@ pub fn write_file(path: Str, data: Bytes) -> Bool {
       // file or a symbolic link already there is not written through
       // (O_NOFOLLOW is 0100000 on arm64, 0400000 on x86_64)
       let nofollow = match target.arch {
-        TargetArch.Amd64 => 131072
+        TargetArch.Amd64 | TargetArch.Riscv64 => 131072
         TargetArch.Arm64 | TargetArch.Wasm32 => 32768
       }
       let fd = linux.open(path, 1 | 64 | 128 | nofollow | 524288, 384)
@@ -1538,6 +1539,7 @@ pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
   let sp_reg = match target.arch {
     TargetArch.Amd64 => 7
     TargetArch.Arm64 | TargetArch.Wasm32 => 31
+    TargetArch.Riscv64 => 2
   }
   var started = false
   for (fi, pc) in pcs.indexed() {
@@ -1927,7 +1929,7 @@ fn mac_sample(r: Int, d: Int, t: Int, gen: Int) {
   }
   let x64 = match target.arch {
     TargetArch.Amd64 => true
-    TargetArch.Arm64 | TargetArch.Wasm32 => false
+    TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
   }
   // ARM_THREAD_STATE64 (6) of 68 words, x86_THREAD_STATE64 (4) of 42
   rt.mem_store(d, DB_ICNT, if x64 { 42 } else { 68 }, 4)

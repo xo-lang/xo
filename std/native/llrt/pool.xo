@@ -282,7 +282,7 @@ const THREAD_STACK = 67108864
 fn layer() -> Int {
   match target.arch {
     TargetArch.Wasm32 => 0
-    TargetArch.Arm64 | TargetArch.Amd64 => {
+    TargetArch.Arm64 | TargetArch.Amd64 | TargetArch.Riscv64 => {
       match target.os {
         TargetOs.Linux => 1
         TargetOs.Darwin => 2
@@ -1953,7 +1953,7 @@ fn map_stack(size: Int, page: Int, hooks: Int) -> Int {
 /// 1 on arm64, 2 on x86_64.
 fn layer_arch() -> Int {
   match target.arch {
-    TargetArch.Arm64 => 1
+    TargetArch.Arm64 | TargetArch.Riscv64 => 1
     TargetArch.Amd64 => 2
     TargetArch.Wasm32 => 0
   }

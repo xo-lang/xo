@@ -503,7 +503,7 @@ fn epoll_add(poll: Int, fd: Int, events: Int, pd: Int) -> Int {
   rt.mem_store(e, 0, events, 4)
   let off = match target.arch {
     TargetArch.Amd64 => 4
-    TargetArch.Arm64 | TargetArch.Wasm32 => 8
+    TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => 8
   }
   rt.mem_store(e, off, pd, 8)
   sanhook.release(ev())
@@ -1827,7 +1827,7 @@ fn event(evs: Int, i: Int) -> (Int, Int) {
       // EPOLLRDHUP 0x2000
       let size = match target.arch {
         TargetArch.Amd64 => 12
-        TargetArch.Arm64 | TargetArch.Wasm32 => 16
+        TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => 16
       }
       let e = addw(evs, i.wrapping_mul(size))
       let f = rt.mem_load(e, 0, 4)

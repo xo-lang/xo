@@ -509,6 +509,7 @@ fn (b: Builder) target_names() -> (Str, Str) {
     Arm64 => "Arm64"
     Wasm32 => "Wasm32"
     Amd64 => "Amd64"
+    Riscv64 => "Riscv64"
   }
   if !b.goos.is_empty() {
     os_name = match b.goos {
@@ -522,6 +523,7 @@ fn (b: Builder) target_names() -> (Str, Str) {
     arch_name = match b.goarch {
       "arm64" => "Arm64"
       "wasm" => "Wasm32"
+      "riscv64" => "Riscv64"
       _ => "Amd64"
     }
   }

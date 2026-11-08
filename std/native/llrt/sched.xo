@@ -252,6 +252,17 @@ pub fn fiber_frame(f: Int, mem: Int, size: Int, commit: Int, main: Int) -> Int {
         }
       }
     }
+    TargetArch.Riscv64 => {
+      // s0 (the frame pointer, zero), s1 (f), s2 (main), s3 to s11, ra
+      // (the start), fs0 to fs11, a pad: compiler/llvm sched.xo
+      // riscv64_switch's frame
+      let fr = top.wrapping_sub(208)
+      rt.mem_store(fr, 0, 0, 8)
+      rt.mem_store(fr, 8, f, 8)
+      rt.mem_store(fr, 16, main, 8)
+      rt.mem_store(fr, 96, start, 8)
+      fr
+    }
     TargetArch.Wasm32 => 0
   }
 }
