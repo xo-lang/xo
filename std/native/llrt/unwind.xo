@@ -349,9 +349,9 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
     TargetOs.Wasi => return 0
   }
   match target.arch {
-    TargetArch.Arm64 | TargetArch.Amd64 => {}
-    // decision 0571 stage 2: riscv64's frame step
-    TargetArch.Wasm32 | TargetArch.Riscv64 => return 0
+    // riscv64 (decision 0571 stage 2): the CFI walk, as raise's
+    TargetArch.Arm64 | TargetArch.Amd64 | TargetArch.Riscv64 => {}
+    TargetArch.Wasm32 => return 0
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
@@ -414,9 +414,9 @@ pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
     TargetOs.Wasi => return 0
   }
   match target.arch {
-    TargetArch.Arm64 | TargetArch.Amd64 => {}
-    // decision 0571 stage 2: riscv64's frame step
-    TargetArch.Wasm32 | TargetArch.Riscv64 => return 0
+    // riscv64 (decision 0571 stage 2): the CFI walk, as raise's
+    TargetArch.Arm64 | TargetArch.Amd64 | TargetArch.Riscv64 => {}
+    TargetArch.Wasm32 => return 0
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
@@ -1991,7 +1991,7 @@ pub fn cur_fiber() -> Int { rt.tlocal_get(TLS_FIB) }
 /// return address. s is a profiler record (prof_init). arm64 only (0 on
 /// x86_64).
 pub fn fiber_walk(s: Int, saved: Int, out: Int, max: Int, lo: Int, hi: Int) -> Int {
-  if x64() || saved == 0 {
+  if x64() || rv64() || saved == 0 {
     return 0
   }
   let darwin = match target.os {
@@ -2038,6 +2038,17 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
         if outside > OUTSIDE_MAX || fp < sp || fp - sp > PROF_SPAN || fp > top - 16 || (fp & 7) != 0 {
           break
         }
+        if rv64() {
+          // riscv64's record is below the frame pointer, which is the
+          // caller's stack pointer: ra at fp - 8, the caller's fp at fp - 16
+          if fp - 16 < sp {
+            break
+          }
+          rt.mem_store(cur, PC, rt.mem_load(fp - 8, 0, 8), 8)
+          rt.mem_store(cur, fp_off(), rt.mem_load(fp - 16, 0, 8), 8)
+          rt.mem_store(cur, spo, fp, 8)
+          continue
+        }
         rt.mem_store(cur, PC, rt.mem_load(fp, 8, 8) & 281474976710655, 8)
         rt.mem_store(cur, fp_off(), rt.mem_load(fp, 0, 8), 8)
         rt.mem_store(cur, spo, fp + 16, 8)
@@ -2052,7 +2063,8 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
         rt.mem_store(cur, PC, rt.mem_load(sp, 0, 8), 8)
         rt.mem_store(cur, spo, sp + 8, 8)
       } else {
-        rt.mem_store(cur, PC, rt.mem_load(cur, 8 * 30, 8) & 281474976710655, 8)
+        // the link register: x30 on arm64, ra on riscv64
+        rt.mem_store(cur, PC, rt.mem_load(cur, ra_off(), 8) & 281474976710655, 8)
       }
       continue
     }
@@ -2077,7 +2089,8 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
         rt.mem_store(cur, PC, rt.mem_load(sp, 0, 8), 8)
         rt.mem_store(cur, spo, sp + 8, 8)
       } else {
-        rt.mem_store(cur, PC, rt.mem_load(cur, 8 * 30, 8) & 281474976710655, 8)
+        // the link register: x30 on arm64, ra on riscv64
+        rt.mem_store(cur, PC, rt.mem_load(cur, ra_off(), 8) & 281474976710655, 8)
       }
       continue
     }
@@ -2135,6 +2148,15 @@ pub fn crash_regs(uc: Int, regs: Int) -> Bool {
 /// set regs (DWARF numbering, the pc at PC). Whether this target has a
 /// layout here.
 fn prof_regs(uc: Int, regs: Int, darwin: Bool) -> Bool {
+  if rv64() {
+    // the kernel's ucontext: struct sigcontext at 176 (as arm64's), its
+    // user_regs_struct the pc, then x1 to x31 in order
+    for r in 1..32 {
+      rt.mem_store(regs, 8 * r, rt.mem_load(uc, 176 + 8 * r, 8), 8)
+    }
+    rt.mem_store(regs, PC, rt.mem_load(uc, 176, 8), 8)
+    return true
+  }
   if !x64() {
     if darwin {
       // ucontext: uc_mcontext (a pointer) at 48; arm_thread_state64 at
