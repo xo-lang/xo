@@ -346,6 +346,10 @@ qemu: `/work/riscv64/qemu/usr/bin/qemu-riscv64 BINARY` (the script
 prints the path), with `-L /work/riscv64/sysroot` for a binary
 that is not static. Rerunning the script rebuilds the directory from
 scratch (it unpacks into /work/riscv64.new, then renames it).
+sqv is the host's own /usr/bin/sqv, already installed before this setup
+(a diagnostic run on 2026-11-08 found it there and no gpgv); the script
+installs no system package and fetches no verifier, so the chain of trust
+is the host's Debian install (its sqv and debian-archive-keyring).
 Installed on host 2 on 2026-11-08: Debian 13.7's qemu-user
 1:10.0.13+ds-0+deb13u1, libc6 2.41-12+deb13u4, linux-libc-dev
 6.12.94-1, libgcc 14.2.0-19.
