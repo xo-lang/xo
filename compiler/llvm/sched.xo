@@ -132,7 +132,12 @@ fn (var g: Gen) sched_tlocal() {
   g.emitted["@xo_tlocal_get"] = true
   g.emitted["@xo_tlocal_set"] = true
   g.emitted["@xo_tlocal_addr"] = true
-  g.helpers.push("@xo_tlocal = hidden thread_local global [16 x i64] zeroinitializer, align 8\n\n" +
+  // riscv64: initial exec, since lld does not relax a general dynamic
+  // access to local exec there, and a test binary (-O0, no LTO, so
+  // compiled as PIE) then needed __tls_get_addr, which a static link
+  // without a C library has not (decision 0571 stage 3)
+  let model = if g.arch() == "riscv64" { "thread_local(initialexec)" } else { "thread_local" }
+  g.helpers.push("@xo_tlocal = hidden ${model} global [16 x i64] zeroinitializer, align 8\n\n" +
     "declare nonnull ptr @llvm.threadlocal.address.p0(ptr nonnull)\n\n" +
     "define internal ptr @xo_tlocal_at(i64 %k) nounwind {\n  %b = call ptr @llvm.threadlocal.address.p0(ptr @xo_tlocal)\n  %p = getelementptr [16 x i64], ptr %b, i64 0, i64 %k\n  ret ptr %p\n}\n\n" +
     "define i64 @xo_tlocal_get(i64 %k) noinline nounwind {\n  call void asm sideeffect \"\", \"~{memory}\"()\n  %p = call ptr @xo_tlocal_at(i64 %k)\n  %v = load i64, ptr %p, align 8\n  ret i64 %v\n}\n\n" +
