@@ -1,5 +1,19 @@
 # std/netip changes
 
+## 2026-11-07: perf: a plain IPv4 address parses in one pass
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Xo-vs-Go survey (bench/results/xo-vs-go-survey-2026-11-07.md: netip/parse4 1.44x Go)
+- Go reference: net/netip ParseAddr (go1.26.1)
+- Test: the netip corpus on go, arm64 and llvm; `xo test --std-module=native/netip`; a probe of 281 inputs (valid quads, leading zeros, >255, too short or long, empty fields, zones, v4-in-v6, v6, junk) whose results and error texts equal main's on native and LLVM
+- Timing: bench/perf/netip on linux/arm64 host 1, --ab against main d75ec0647: parse4 0.816 (0.771 to 0.843, n=6); parse6 0.998 and mixed 0.985 within noise (n=7); a first version that tried the plain parse before the dispatch made parse6 1.035 and mixed 1.029
+- Shipped in: not yet released
+
+`parse_addr`, once its dispatch finds a dot, first tries a plain dotted quad (four fields of 1 to 3 digits,
+no leading zero, each at most 255) in one pass over the bytes, falling back to the general path (and its Go
+error texts) for anything else. Results unchanged.
+
 ## 2026-11-04: perf: display of an IPv4 address packs its octets in two words; IPv6 hex digits come from a table
 
 - Kind: perf
