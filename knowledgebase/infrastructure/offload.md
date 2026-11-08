@@ -361,6 +361,18 @@ Installed on host 2 on 2026-11-08: Debian 13.7's qemu-user
 6.12.94-1, libgcc 14.2.0-19.
 Last verified: 2026-11-08.
 
+### Kept directories on host 2
+
+- `/work/conf` (452 MB, rebuilt 2026-11-08; Last verified: 2026-11-08): Google's protobuf v29.3 `conformance_test_runner` and
+  `protoc` (cmake build tree with abseil 20240116.0 and jsoncpp 1.9.6 as modules), plus `run/` with `set.bin` (FileDescriptorSet of
+  test_messages_proto3.proto and test_messages_proto2.proto, `protoc -I src/src -I src --include_imports`). It is a tool, not scratch:
+  do not delete it in a cleanup. Rebuild (about 10 minutes, plain lease on host 2): unpack the Kitware cmake 3.31.6 linux-aarch64
+  tarball into `/work/conf/cmake`, extract protobuf-29.3.tar.gz into `src` (strip 1), `git clone --depth 1` jsoncpp 1.9.6 and abseil-cpp
+  20240116.0 into `src/third_party`, then `cmake -S src -B build -DCMAKE_BUILD_TYPE=Release -Dprotobuf_BUILD_CONFORMANCE=ON
+  -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_ABSL_PROVIDER=module -Dprotobuf_JSONCPP_PROVIDER=module` and `cmake --build build --target
+  conformance_test_runner protoc -j10`. Run: see test/protoconf/README.md; `offload.sh --put` files are root owned, so copy the
+  testee before chmod +x.
+
 ## The linux/amd64 host
 
 The owner's second machine (2026-10-29): a 16-core x86-64 box running

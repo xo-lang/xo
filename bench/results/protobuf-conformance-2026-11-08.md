@@ -21,8 +21,20 @@ their extensions from its descriptors (protobuf-go refuses them), so those cases
 Fixed on the way: proto2 required fields now fail a parse when missing in `msg_json` and `msg_wire_obj`, with corpus rows from Go's
 protojson (scripts/stdcorpus/protojsonoracle, pjtest2.proto).
 
+## Update: unknown fields kept (later 2026-11-08)
+
+The testee's protobuf-in, protobuf-out path now calls `protojson.normalize` (wire bytes to wire bytes as protobuf-go's
+Unmarshal then Marshal: known fields canonical, unknown fields kept) instead of marshal then unmarshal through JSON.
+Runner rebuilt in /work/conf on host 2 (see offload.md "Kept directories"), set.bin from the same two descriptor files.
+
+| testee | successes | skipped | expected failures | unexpected failures |
+| --- | --- | --- | --- | --- |
+| std/protojson (Xo) | 2674 | 2689 | 0 | 0 |
+
+The 4 listed failures all pass (the runner flags them as stale until they are removed), and test/protoconf/expected_failures.txt is
+now empty. The runner's second pass (text format) skips all 843 of its tests, as before.
+
 ## Gaps
 
 - Text format and JSPB: skipped, as before.
 - Editions message types: 843 tests skipped; next step is the editions descriptors in the set.
-- Unknown field retention across protobuf round trips (the 4 listed failures).

@@ -81,16 +81,12 @@ fn respond(reg: protojson.Registry, q: Req) -> Bytes {
   var wire: Bytes = b""
   match q.proto {
     Some(p) => {
-      // A protobuf input for protobuf output is parsed by converting it to JSON (an invalid message fails
-      // there); for JSON output the one conversion below reports its failure as a serialize error.
+      // A protobuf input for protobuf output is re-serialized as protobuf-go does (proto.Unmarshal then
+      // proto.Marshal): known fields canonical, unknown fields kept. For JSON output the one conversion below
+      // reports its failure as a serialize error.
       if q.fmt == PROTOBUF {
-        // Re-serialized through JSON, so the output is canonical (Go re-serializes the parsed message);
-        // unknown fields do not survive that.
-        match protojson.marshal(reg, q.typ, p, opts(false)) {
-          Ok(j) => match protojson.unmarshal(reg, q.typ, j, opts(false)) {
-            Ok(w) => wire = w
-            Err(e) => return resp(2, e.display().bytes())
-          }
+        match protojson.normalize(reg, q.typ, p) {
+          Ok(w) => wire = w
           Err(e) => return resp(1, e.display().bytes())
         }
       } else {
