@@ -50,6 +50,8 @@ struct Command {
   cmds: List[Command]
   /// `-name` reads as `--name` for a declared long flag (decision 0547).
   dash: Bool
+  /// The first positional argument ends the flags (decision 0556).
+  stop: Bool
 }
 
 struct Val {
@@ -95,8 +97,8 @@ fn clierr_exit_code(e: cli.CliErr) -> Int {
   }
 }
 
-fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], commands: List[Command] = [], version: Str = "", single_dash_long: Bool = false) -> Command {
-  Command{name: name, help: help, version: version, flags: flags, args: args, cmds: commands, dash: single_dash_long}
+fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], commands: List[Command] = [], version: Str = "", single_dash_long: Bool = false, stop_at_positional: Bool = false) -> Command {
+  Command{name: name, help: help, version: version, flags: flags, args: args, cmds: commands, dash: single_dash_long, stop: stop_at_positional}
 }
 
 /// Whether `-` followed by name parses as a cluster of the short flags in
@@ -410,6 +412,9 @@ fn help_text(path: List[Command]) -> Str {
     b.write(c.help + "\n\n")
   }
   b.write(usage_line(path))
+  if path.any(fn(c) { c.stop }) {
+    b.write("\n\nFlags come before the arguments: everything from the first argument on is an argument.")
+  }
   for s in secs {
     b.write("\n\n" + s.title)
     for r in s.rows {
@@ -698,6 +703,10 @@ fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! c
       }
     } else {
       pos.push(a)
+      if path.any(fn(c) { c.stop }) {
+        // decision 0556: Go's flag package stops at the first positional
+        dashes = true
+      }
     }
     i += 1
   }

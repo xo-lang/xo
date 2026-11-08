@@ -1,5 +1,18 @@
 # std/cli changes
 
+## 2026-11-07: feature: stop_at_positional, Go style flags end at the first argument
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Lang 2's port of goversioninfo (`goversioninfo v.json -64` ignores `-64` in Go; std cli read it as a flag)
+- Go reference: flag (go1.26.1): FlagSet.Parse stops at the first non-flag argument; Args() keeps a later `--`
+- Test: internal/llvm/testdata/golden/cli_stop_positional (Go parity): a flag after a positional, a lone `-`, `--` before and after the first positional, a subcommand under the option, the help note, and the same arguments without the option
+
+`cli.command(..., stop_at_positional: true)`: the first positional
+argument ends the flags (decision 0556), so a Go tool ported to Xo reads
+its command lines as Go did. Off by default. No timing row: a command
+line is parsed once a run.
+
 ## 2026-11-07: feature: single_dash_long, Go style -name long flags on an opt-in command
 
 - Kind: feature

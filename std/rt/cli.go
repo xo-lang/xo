@@ -51,6 +51,7 @@ type cliCmd struct {
 	args                []*cliArg
 	cmds                []*cliCmd
 	dash                bool // -name reads as --name for a declared long flag (decision 0547)
+	stop                bool // the first positional argument ends the flags (decision 0556)
 }
 
 // Cli_Command is `cli.Command`.
@@ -124,8 +125,8 @@ func cliVersionErr(text string) Cli_CliErr {
 }
 
 // Cli_command is `cli.command(...)`.
-func Cli_command(_ *Task, name, help string, flags List[Cli_Flag], args List[Cli_Arg], commands List[Cli_Command], version string, singleDashLong bool) Cli_Command {
-	c := &cliCmd{name: name, help: help, version: version, dash: singleDashLong}
+func Cli_command(_ *Task, name, help string, flags List[Cli_Flag], args List[Cli_Arg], commands List[Cli_Command], version string, singleDashLong bool, stopAtPositional bool) Cli_Command {
+	c := &cliCmd{name: name, help: help, version: version, dash: singleDashLong, stop: stopAtPositional}
 	for _, f := range flags.s {
 		c.flags = append(c.flags, f.f)
 	}
@@ -485,6 +486,9 @@ func cliHelpText(path []*cliCmd) string {
 		b.WriteString(c.help + "\n\n")
 	}
 	b.WriteString(cliUsageLine(path))
+	if cliStop(path) {
+		b.WriteString("\n\nFlags come before the arguments: everything from the first argument on is an argument.")
+	}
 	for _, s := range secs {
 		b.WriteString("\n\n" + s.title)
 		for _, r := range s.rows {
@@ -774,6 +778,10 @@ func cliParse(tk *Task, root *cliCmd, args []string, env Env) (*cliParsed, *Cli_
 				continue
 			}
 			pos = append(pos, a)
+			if cliStop(p.path) {
+				// decision 0556: Go's flag package stops at the first positional
+				dashes = true
+			}
 		}
 	}
 	cur := p.path[len(p.path)-1]
@@ -1054,6 +1062,16 @@ func (p Cli_Parsed) M_rest(_ *Task, name string) List[string] {
 		FaultHere("cli: <%s> is not a rest argument; read it with arg or arg_opt", name)
 	}
 	return ListOf(v...)
+}
+
+// cliStop reports whether a command on the path has stop_at_positional.
+func cliStop(path []*cliCmd) bool {
+	for _, c := range path {
+		if c.stop {
+			return true
+		}
+	}
+	return false
 }
 
 // cliDash reports whether a command on the path has single_dash_long.

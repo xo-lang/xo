@@ -41,7 +41,7 @@ fn (e: CliErr) exit_code() -> Int
 /// A command. `name` is the program's name for the root command and the
 /// word that selects a subcommand. A command with subcommands takes no
 /// positional arguments of its own.
-fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], commands: List[Command] = [], version: Str = "", single_dash_long: Bool = false) -> Command
+fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], commands: List[Command] = [], version: Str = "", single_dash_long: Bool = false, stop_at_positional: Bool = false) -> Command
 
 /// A flag that is true when given (`--verbose`, `-v`, `--verbose=false`),
 /// else `default`.

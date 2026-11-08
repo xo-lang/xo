@@ -3971,7 +3971,7 @@ struct Arg {}
 
 pub fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [],
                commands: List[Command] = [], version: Str = "",
-               single_dash_long: Bool = false) -> Command
+               single_dash_long: Bool = false, stop_at_positional: Bool = false) -> Command
 
 pub fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "", default: Bool = false) -> Flag
 pub fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str = "",
@@ -4090,7 +4090,14 @@ Rules, in order:
   value, `--vq` beside bool `-v` and `-q`) is a declaration fault, except
   a one letter long flag whose short is that letter. Flags still come
   before or after positional arguments (Go's flag package stops at the
-  first one). Help text keeps the `--` forms.
+  first one; see `stop_at_positional`). Help text keeps the `--` forms.
+- `stop_at_positional: true` (decision 0556; Go's flag package): the
+  first positional argument (a lone `-` included) ends the flags, so it
+  and every later argument are positional as written, `-64` included. A
+  `--` before it ends the flags and is dropped; one after it is an
+  argument. It applies to the command that sets it and every subcommand
+  under it (a subcommand's name is not a positional), and `--help` says
+  so under the usage line. Independent of `single_dash_long`.
 - Flags may come before or after positional arguments. A subcommand is
   selected by the first positional argument of a command with
   subcommands; after it, the flags of every command on the path are

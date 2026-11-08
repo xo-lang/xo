@@ -1,0 +1,72 @@
+// std/cli (decision 0556): a command with stop_at_positional ends its
+// flags at the first positional argument, as Go's flag package does, so
+// `gvi v.json -64` passes -64 as an argument; `--` and a lone `-` still
+// work, subcommand names are not positionals, and a command without the
+// option reads flags anywhere (decision 0160).
+use std/cli
+
+fn app(stop: Bool) -> cli.Command {
+  cli.command("gvi", "Writes a resource.",
+    flags: [
+      cli.str_flag("icon", "icon files"),
+      cli.bool_flag("64", "64-bit"),
+      cli.bool_flag("verbose", "more output", short: "v"),
+    ],
+    args: [cli.rest("files", "the configurations")],
+    single_dash_long: true,
+    stop_at_positional: stop)
+}
+
+fn tool() -> cli.Command {
+  cli.command("tool", "Has subcommands.",
+    flags: [cli.bool_flag("verbose", "more output", short: "v")],
+    commands: [
+      cli.command("run", "Runs.", flags: [cli.str_flag("mode", "a mode")], args: [cli.rest("args", "its arguments")]),
+    ],
+    stop_at_positional: true)
+}
+
+fn show(stop: Bool, args: List[Str], os: Os) {
+  let line = args.join(" ")
+  match cli.parse(app(stop), args, os.env) {
+    Ok(p) => os.stdio.println("${line} => icon=${p.str("icon")} 64=${p.bool("64")} v=${p.bool("verbose")} files=[${p.rest("files").join(",")}]")
+    Err(e) => os.stdio.println("${line} => exit ${e.exit_code()}: ${e.display().lines()[0]}")
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("with stop_at_positional:")
+  for args in [
+    ["-64", "v.json"],
+    ["v.json", "-64"],
+    ["-icon=x.ico", "v.json", "-icon=y.ico", "--verbose"],
+    ["-", "-64"],
+    ["--", "-64", "v.json"],
+    ["v.json", "--", "-64"],
+    ["-v", "a", "b", "-x"],
+    ["v.json", "--help"],
+    ["-x", "v.json"],
+  ] {
+    show(true, args, os)
+  }
+  os.stdio.println("without:")
+  for args in [["v.json", "-64"], ["v.json", "-x"]] {
+    show(false, args, os)
+  }
+  os.stdio.println("subcommands:")
+  for args in [["-v", "run", "--mode=a", "x", "--mode=b"], ["run", "x", "-v"]] {
+    let line = args.join(" ")
+    match cli.parse(tool(), args, os.env) {
+      Ok(p) => os.stdio.println("${line} => command=${p.command()} v=${p.bool("verbose")} mode=${p.str("mode")} args=[${p.rest("args").join(",")}]")
+      Err(e) => os.stdio.println("${line} => exit ${e.exit_code()}: ${e.display().lines()[0]}")
+    }
+  }
+  match cli.parse(app(true), ["--help"], os.env) {
+    Ok(_) => ()
+    Err(e) => {
+      let ls = e.display().lines()
+      os.stdio.println(ls[2])
+      os.stdio.println(ls[4])
+    }
+  }
+}

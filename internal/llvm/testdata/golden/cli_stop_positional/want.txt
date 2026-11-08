@@ -1,0 +1,21 @@
+exit 0
+--- stdout
+with stop_at_positional:
+-64 v.json => icon= 64=true v=false files=[v.json]
+v.json -64 => icon= 64=false v=false files=[v.json,-64]
+-icon=x.ico v.json -icon=y.ico --verbose => icon=x.ico 64=false v=false files=[v.json,-icon=y.ico,--verbose]
+- -64 => icon= 64=false v=false files=[-,-64]
+-- -64 v.json => icon= 64=false v=false files=[-64,v.json]
+v.json -- -64 => icon= 64=false v=false files=[v.json,--,-64]
+-v a b -x => icon= 64=false v=true files=[a,b,-x]
+v.json --help => icon= 64=false v=false files=[v.json,--help]
+-x v.json => exit 2: unknown flag -x
+without:
+v.json -64 => icon= 64=true v=false files=[v.json]
+v.json -x => exit 2: unknown flag -x
+subcommands:
+-v run --mode=a x --mode=b => command=run v=true mode=a args=[x,--mode=b]
+run x -v => command=run v=false mode= args=[x,-v]
+Usage: gvi [flags] [<files>...]
+Flags come before the arguments: everything from the first argument on is an argument.
+--- stderr
