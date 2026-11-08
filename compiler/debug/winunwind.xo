@@ -251,8 +251,11 @@ fn (m: WordMem) mem(a: Int, n: Int) -> Bytes? {
 /// apart, each UNWIND_INFO readable, of version 1 or 2, its operations
 /// known and inside the prolog, newest first, its chain ending; and each
 /// function unwinds from the end of its prolog to a caller's rsp above
-/// its own by a whole number of words.
+/// its own by a whole number of words. An arm64 PE's is a64_pdata_check's.
 pub fn pdata_check(tab: Tables) -> (Int, List[Str]) {
+  if !tab.x86 {
+    return a64_pdata_check(tab)
+  }
   var errs: List[Str] = []
   let n = tab.pdata.len() / 12
   var prev_end = 0

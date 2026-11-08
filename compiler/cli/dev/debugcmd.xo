@@ -238,7 +238,8 @@ fn prompt_loop(os: Os, var s: debug.Session, json: Bool) -> Int uses (stdio, pro
 }
 
 /// xo dev debug --unwind-check EXE: a Windows executable's .pdata checked
-/// (debug.pdata_check); 0 when it has functions and nothing is wrong.
+/// (debug.pdata_check: x64's, or arm64's with its .xdata); 0 when it has
+/// functions and nothing is wrong.
 fn unwind_check(os: Os, path: Str) -> Int uses (fs.read, stdio) {
   let exe = match os.fs.read(path) {
     Ok(d) => d

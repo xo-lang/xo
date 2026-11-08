@@ -68,6 +68,30 @@ USER32.dll import and the C function's load from its IAT slot. A binding
 is still made with the host's clang (`xo bind --c`), so a header's
 `long` binds as Int though Windows' is 32 bits (Anticipated).
 
+Stage 2 progress (2026-11-08, Xo Lang 2): `xo dev debug --unwind-check`
+reads ARM64 images (compiler/debug a64unwind.xo, with no llvm-readobj):
+each .pdata entry in order and apart; packed entries expanded into the
+codes the canonical prolog stands for (the order llvm-readobj prints,
+its dumpPackedARM64Entry); each .xdata record of version 0, its epilog
+scopes in order inside the function, its codes known and ending, with
+save_next resolved against the pair after it; every code matched with
+its instruction (prolog codes newest first, an epilog's in instruction
+order, the end code with ret, b or br; `__chkstk`'s `sub sp, sp, x15,
+uxtx #4` with x15 from its movz and movk); each prolog's frame a
+multiple of 16 with every save inside it; every epilog freeing the whole
+frame (through x29 when it restores sp from it); and no instruction of
+.text writing x18 (data processing destinations, loads, mrs). A cross
+built hello (678 functions) and a clang built program (the C
+runtime and a 133 KB function: 686, 10 of them packed) pass with no problem; with every
+function's first instruction made a nop the check finds 533 prologs
+that no longer match, and one more 16 bytes in an alloc_s code is
+found in the prolog and in both its epilogs. cmd/xo
+TestWindowsArm64Assembly runs it on hello, and a nop'd copy. Still to do: the
+goldens in the gate, and the same reader in llrt's unwinder (with the
+ARM64 CONTEXT offsets), which waits for the host. Codes the checker
+refuses: alloc_z, save_any_reg and the custom stack cases (0xe8 to
+0xec), none of which the emitter or clang's C output uses.
+
 Not done in stage 1 yet: --race and a PDB for windows/arm64;
 a split link and the std object; the C ABI exports beyond Str results;
 running an image (stage 2's host). To

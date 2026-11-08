@@ -1,0 +1,102 @@
+// Tests of a64unwind.xo: .xdata unwind codes and packed unwind data read
+// as the instructions they stand for, and instructions decoded to them.
+
+fn ops_text(ops: List[A64Op], err: Str) -> Str {
+  var parts: List[Str] = []
+  for o in ops {
+    parts.push(a64_op_text(o, false))
+  }
+  if err != "" {
+    parts.push("error: ${err}")
+  }
+  parts.join("; ")
+}
+
+fn codes_text(hexs: Str) -> Str {
+  let (ops, err) = a64_codes(Bytes.from_hex(hexs) ?? b"", 0)
+  ops_text(ops, err)
+}
+
+fn packed_text(w: Int) -> Str {
+  let (ops, err) = a64_packed(w)
+  ops_text(ops, err)
+}
+
+fn insn_text(w: Int, epi: Bool) -> Str { a64_op_text(a64_insn(w, epi), epi) }
+
+test "xdata unwind codes" {
+  // clang's for a function saving x19 to x22 and the frame record
+  // (llvm-readobj: sub sp, #16; add fp, sp, #32; stp x29, x30, [sp, #32];
+  // save next; stp x19, x20, [sp, #0]; sub sp, #48; end)
+  expect(codes_text("01e20444e6c80003e4")) == "sub sp, sp, #16; add x29, sp, #32; stp x29, lr, [sp, #32]; stp x21, x22, [sp, #16]; stp x19, x20, [sp, #0]; sub sp, sp, #48; end"
+  // save_r19r20_x, save_fplr_x, save_reg_x, save_fregp, save_freg_x,
+  // save_lrpair, alloc_m, alloc_l, set_fp, nop, pac_sign_lr, end_c
+  expect(codes_text("24")) == "stp x19, x20, [sp, #-32]!; error: the unwind codes from code byte 0 have no end"
+  expect(codes_text("2481d441d802de41d641c101e0000100e1e3fce5")) == "stp x19, x20, [sp, #-32]!; stp x29, lr, [sp, #-16]!; str x21, [sp, #-16]!; stp d8, d9, [sp, #16]; str d10, [sp, #-16]!; stp x21, lr, [sp, #8]; sub sp, sp, #4112; sub sp, sp, #4096; mov x29, sp; nop; pacibsp; end_c"
+  // save_next after the d register pair it extends
+  expect(codes_text("e6da01e4")) == "stp d10, d11, [sp, #16]; stp d8, d9, [sp, #-16]!; end"
+  // save_next with nothing to extend, an unknown code, a code cut short
+  expect(codes_text("e6e4")) == "save_next; end; error: save_next at code 0 follows end"
+  expect(codes_text("e8e4")) == "error: unwind code 0xe8 at code byte 0 is not one xo checks"
+  expect(codes_text("c8")) == "error: unwind code 0xc8 at code byte 0 runs past the codes"
+}
+
+test "packed unwind data" {
+  // CR 3, 16 byte frame (llvm-readobj: mov x29, sp; stp x29, lr, [sp, #-16]!; end)
+  expect(packed_text(1 | 22 << 2 | 3 << 21 | 1 << 23)) == "mov x29, sp; stp x29, lr, [sp, #-16]!; end"
+  // RegI 3, RegF 1 (d8, d9), CR 0, 96 bytes: 24 + 16 saved, 48 locals
+  expect(packed_text(1 | 1 << 13 | 3 << 16 | 6 << 23)) == "sub sp, sp, #48; stp d8, d9, [sp, #24]; str x21, [sp, #16]; stp x19, x20, [sp, #-48]!; end"
+  // CR 1 (lr after RegI 2), H: the homed parameters
+  expect(packed_text(1 | 2 << 16 | 1 << 20 | 1 << 21 | 6 << 23)) == "stp x6, x7, [sp, #80]; stp x4, x5, [sp, #64]; stp x2, x3, [sp, #48]; stp x0, x1, [sp, #32]; str lr, [sp, #16]; stp x19, x20, [sp, #-96]!; end"
+  // CR 3 with a frame over 4080 bytes; CR 2 signs lr
+  expect(packed_text(1 | 3 << 21 | 300 << 23)) == "mov x29, sp; stp x29, lr, [sp, #0]; sub sp, sp, #720; sub sp, sp, #4080; end"
+  expect(packed_text(1 | 2 << 21 | 1 << 23)) == "mov x29, sp; stp x29, lr, [sp, #-16]!; pacibsp; end"
+  expect(packed_text(1 | 1 << 16 | 1 << 21 | 1 << 23)) == "error: packed CR 1 with RegI 1 (no unwind code stands for it)"
+}
+
+test "arm64 stack instructions" {
+  expect(insn_text(0xA9BF7BFD, false)) == "stp x29, lr, [sp, #-16]!"
+  expect(insn_text(0xA8C17BFD, true)) == "ldp x29, lr, [sp], #16"
+  expect(insn_text(0x910003FD, false)) == "mov x29, sp"
+  expect(insn_text(0x910003BF, true)) == "mov sp, x29"
+  expect(insn_text(0xD100C3FF, false)) == "sub sp, sp, #48"
+  expect(insn_text(0x9100C3FF, true)) == "add sp, sp, #48"
+  expect(insn_text(0xD14007FF, false)) == "sub sp, sp, #4096"
+  expect(insn_text(0xF81F0FF3, false)) == "str x19, [sp, #-16]!"
+  expect(insn_text(0xF84107F3, true)) == "ldr x19, [sp], #16"
+  expect(insn_text(0x6D0127E8, false)) == "stp d8, d9, [sp, #16]"
+  expect(insn_text(0xF9000BF5, false)) == "str x21, [sp, #16]"
+  expect(insn_text(0xD65F03C0, true)) == "ret"
+  expect(insn_text(0xD503237F, false)) == "pacibsp"
+  // not a stack operation: add x0, x1, #1
+  expect(insn_text(0x91000420, false)) == "nop"
+}
+
+test "arm64 frames" {
+  // the prolog above: 96 bytes, x29 set up 16 bytes before the end at +32
+  let (ops, _) = a64_codes(Bytes.from_hex("01e20444e6c80003e4") ?? b"", 0)
+  let (errs, size, fp_at, fp_off) = a64_frame(ops)
+  expect(errs.len()) == 0
+  expect(size) == 64
+  expect(fp_at) == 48
+  expect(fp_off) == 32
+  // its epilog frees all of it; one that skips the last add does not
+  let (epi, _) = a64_codes(Bytes.from_hex("01c800c8824403e4") ?? b"", 0)
+  expect(a64_epilog_frame(epi, size, fp_at, fp_off).len()) == 0
+  let (short, _) = a64_codes(Bytes.from_hex("01c800c88244e4") ?? b"", 0)
+  expect(a64_epilog_frame(short, size, fp_at, fp_off)) == ["the epilog leaves 48 bytes of the frame on the stack"]
+  // a save above the frame allocated so far
+  let (high, _) = a64_codes(Bytes.from_hex("c80201e4") ?? b"", 0)
+  expect(a64_frame(high).0) == ["stp x19, x20, [sp, #16] stores outside the frame (16 bytes there)"]
+}
+
+test "x18 writes" {
+  // mov x18, x0 (orr); add x18, x18, #1; ldr x18, [sp, #8]; ldp x17, x18, [sp]; mrs x18, tpidr_el0
+  for w in [0xAA0003F2, 0x91000652, 0xF94007F2, 0xA9404BF1, 0xD53BD052] {
+    expect(a64_writes_x18(w)) == true
+  }
+  // ldr x0, [x18, #88]; str x18, [sp]; mov x0, x18; cmp x18, #0
+  for w in [0xF9402E40, 0xF90003F2, 0xAA1203E0, 0xF100025F] {
+    expect(a64_writes_x18(w)) == false
+  }
+}

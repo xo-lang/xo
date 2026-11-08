@@ -1,0 +1,645 @@
+// A Windows arm64 executable's unwind data checked (decision 0569 stage
+// 2), without llvm-readobj: each .pdata entry is 8 bytes, the function's
+// begin RVA and a word whose low 2 bits say what the other 30 are. Flag 0:
+// the RVA of an .xdata record (a header, its epilog scopes and its unwind
+// codes); flags 1 and 2: packed unwind data (a canonical prolog described
+// by a few fields; 2 a fragment, whose prolog is elsewhere). Every unwind
+// code stands for one instruction: the prolog's codes run newest first
+// (the last instruction's code first), an epilog's in instruction order,
+// and its end code stands for the ret. The check expands packed entries
+// into the codes the Windows unwinder reads them as, decodes every code,
+// matches each against the instruction it stands for, and follows the
+// frame: every save inside it, sp 16 byte aligned, every epilog freeing the
+// whole frame.
+
+const A_ALLOC = 1 // sub sp, sp, #off (an epilog's add)
+const A_PAIR = 2 // stp r, r2, [sp, #off] (wb: [sp, #-off]!)
+const A_ONE = 3 // str r, [sp, #off] (wb: [sp, #-off]!)
+const A_SETFP = 4 // mov x29, sp (an epilog's mov sp, x29)
+const A_ADDFP = 5 // add x29, sp, #off (an epilog's sub sp, x29, #off)
+const A_NOP = 6 // any instruction
+const A_END = 7 // the prolog's end; an epilog's ret (or tail branch)
+const A_ENDC = 8 // end_c: the codes go on in the chained entry's
+const A_PAC = 9 // pacibsp (an epilog's autibsp)
+const A_NEXT = 10 // save_next, before it is resolved
+
+/// One unwind code as the instruction it stands for; r and r2 are x
+/// register numbers (lr is 30), or d register numbers when fp is set.
+struct A64Op {
+  kind: Int
+  r: Int = 0
+  r2: Int = 0
+  off: Int = 0
+  wb: Bool = false
+  fp: Bool = false
+}
+
+fn sx(v: Int, bits: Int) -> Int {
+  if v >= 1 << (bits - 1) { v - (1 << bits) } else { v }
+}
+
+fn a64_reg(r: Int, fp: Bool) -> Str {
+  if fp {
+    return "d${r}"
+  }
+  if r == 30 { "lr" } else { "x${r}" }
+}
+
+/// The instruction op stands for, in a prolog or (epi) an epilog.
+fn a64_op_text(o: A64Op, epi: Bool) -> Str {
+  let regs = if o.kind == A_PAIR {
+    "${a64_reg(o.r, o.fp)}, ${a64_reg(o.r2, o.fp)}"
+  } else {
+    a64_reg(o.r, o.fp)
+  }
+  let mem = if o.kind == A_PAIR { if epi { "ldp" } else { "stp" } } else { if epi { "ldr" } else { "str" } }
+  match o.kind {
+    A_ALLOC => if epi { "add sp, sp, #${o.off}" } else { "sub sp, sp, #${o.off}" }
+    A_PAIR | A_ONE => {
+      if !o.wb {
+        "${mem} ${regs}, [sp, #${o.off}]"
+      } else if epi {
+        "${mem} ${regs}, [sp], #${o.off}"
+      } else {
+        "${mem} ${regs}, [sp, #-${o.off}]!"
+      }
+    }
+    A_SETFP => if epi { "mov sp, x29" } else { "mov x29, sp" }
+    A_ADDFP => if epi { "sub sp, x29, #${o.off}" } else { "add x29, sp, #${o.off}" }
+    A_NOP => "nop"
+    A_END => if epi { "ret" } else { "end" }
+    A_ENDC => "end_c"
+    A_PAC => if epi { "autibsp" } else { "pacibsp" }
+    _ => "save_next"
+  }
+}
+
+/// The unwind codes in c from byte start to their end (or end_c), that
+/// end included, with save_next resolved; or what is wrong with them.
+fn a64_codes(c: Bytes, start: Int) -> (List[A64Op], Str) {
+  var ops: List[A64Op] = []
+  var i = start
+  var done = false
+  while i < c.len() && !done {
+    let b = Int(c[i])
+    var n = 1
+    if b >= 0xC0 && b < 0xE0 || b == 0xE2 {
+      n = 2
+    } else if b == 0xE0 {
+      n = 4
+    }
+    if i + n > c.len() {
+      return (ops, "unwind code 0x${hex(b)} at code byte ${i} runs past the codes")
+    }
+    let w = if n == 2 { (b << 8) | Int(c[i + 1]) } else { b }
+    let z6 = w & 63
+    let x4 = (w >> 6) & 15
+    let x3 = (w >> 6) & 7
+    var op = A64Op{kind: A_NOP}
+    if b < 0x20 {
+      op = A64Op{kind: A_ALLOC, off: 16 * b}
+    } else if b < 0x40 {
+      op = A64Op{kind: A_PAIR, r: 19, r2: 20, off: 8 * (b & 31), wb: true}
+    } else if b < 0x80 {
+      op = A64Op{kind: A_PAIR, r: 29, r2: 30, off: 8 * (b & 63)}
+    } else if b < 0xC0 {
+      op = A64Op{kind: A_PAIR, r: 29, r2: 30, off: 8 * ((b & 63) + 1), wb: true}
+    } else if b < 0xC8 {
+      op = A64Op{kind: A_ALLOC, off: 16 * (w & 0x7FF)}
+    } else if b < 0xCC {
+      op = A64Op{kind: A_PAIR, r: 19 + x4, r2: 20 + x4, off: 8 * z6}
+    } else if b < 0xD0 {
+      op = A64Op{kind: A_PAIR, r: 19 + x4, r2: 20 + x4, off: 8 * (z6 + 1), wb: true}
+    } else if b < 0xD4 {
+      op = A64Op{kind: A_ONE, r: 19 + x4, off: 8 * z6}
+    } else if b < 0xD6 {
+      op = A64Op{kind: A_ONE, r: 19 + ((w >> 5) & 15), off: 8 * ((w & 31) + 1), wb: true}
+    } else if b < 0xD8 {
+      op = A64Op{kind: A_PAIR, r: 19 + 2 * x3, r2: 30, off: 8 * z6}
+    } else if b < 0xDA {
+      op = A64Op{kind: A_PAIR, r: 8 + x3, r2: 9 + x3, off: 8 * z6, fp: true}
+    } else if b < 0xDC {
+      op = A64Op{kind: A_PAIR, r: 8 + x3, r2: 9 + x3, off: 8 * (z6 + 1), wb: true, fp: true}
+    } else if b < 0xDE {
+      op = A64Op{kind: A_ONE, r: 8 + x3, off: 8 * z6, fp: true}
+    } else if b == 0xDE {
+      op = A64Op{kind: A_ONE, r: 8 + ((w >> 5) & 7), off: 8 * ((w & 31) + 1), wb: true, fp: true}
+    } else if b == 0xE0 {
+      op = A64Op{kind: A_ALLOC, off: 16 * ((Int(c[i + 1]) << 16) | (Int(c[i + 2]) << 8) | Int(c[i + 3]))}
+    } else if b == 0xE1 {
+      op = A64Op{kind: A_SETFP}
+    } else if b == 0xE2 {
+      op = A64Op{kind: A_ADDFP, off: 8 * (w & 255)}
+    } else if b == 0xE3 {
+      op = A64Op{kind: A_NOP}
+    } else if b == 0xE4 {
+      op = A64Op{kind: A_END}
+      done = true
+    } else if b == 0xE5 {
+      op = A64Op{kind: A_ENDC}
+      done = true
+    } else if b == 0xE6 {
+      op = A64Op{kind: A_NEXT}
+    } else if b == 0xFC {
+      op = A64Op{kind: A_PAC}
+    } else {
+      // alloc_z (0xdf), save_any_reg (0xe7), the custom stack cases
+      // (0xe8 to 0xec) and the reserved codes
+      return (ops, "unwind code 0x${hex(w)} at code byte ${i} is not one xo checks")
+    }
+    ops.push(op)
+    i += n
+  }
+  if !done {
+    return (ops, "the unwind codes from code byte ${start} have no end")
+  }
+  // save_next saves the pair after the one the code after it saves
+  var k = ops.len() - 1
+  while k >= 0 {
+    if ops[k].kind == A_NEXT {
+      let nb = if k + 1 < ops.len() { ops[k + 1] } else { A64Op{kind: A_END} }
+      if nb.kind != A_PAIR || (!nb.fp && nb.r2 != nb.r + 1) {
+        return (ops, "save_next at code ${k} follows ${a64_op_text(nb, false)}")
+      }
+      ops[k] = A64Op{kind: A_PAIR, r: nb.r + 2, r2: nb.r2 + 2, off: if nb.wb { 16 } else { nb.off + 16 }, fp: nb.fp}
+    }
+    k -= 1
+  }
+  (ops, "")
+}
+
+/// The codes packed unwind data w stands for (the order llvm-readobj
+/// prints them in, the canonical prolog of Microsoft's "ARM64 exception
+/// handling", newest first), or what is wrong with it.
+fn a64_packed(w: Int) -> (List[A64Op], Str) {
+  let regf = (w >> 13) & 7
+  let regi = (w >> 16) & 15
+  let h = (w >> 20) & 1
+  let cr = (w >> 21) & 3
+  let intsz = 8 * regi + if cr == 1 { 8 } else { 0 }
+  let fpsz = if regf > 0 { 8 * regf + 8 } else { 0 }
+  let savsz = (intsz + fpsz + 64 * h + 15) & -16
+  let locsz = 16 * ((w >> 23) & 0x1FF) - savsz
+  var ops: List[A64Op] = []
+  if locsz < 0 {
+    return (ops, "packed frame size ${16 * ((w >> 23) & 0x1FF)} is below its saves' ${savsz}")
+  }
+  if cr >= 2 {
+    ops.push(A64Op{kind: A_SETFP})
+    if locsz <= 512 {
+      ops.push(A64Op{kind: A_PAIR, r: 29, r2: 30, off: locsz, wb: true})
+    } else {
+      ops.push(A64Op{kind: A_PAIR, r: 29, r2: 30, off: 0})
+    }
+  }
+  if locsz > 4080 {
+    ops.push(A64Op{kind: A_ALLOC, off: locsz - 4080})
+    ops.push(A64Op{kind: A_ALLOC, off: 4080})
+  } else if cr < 2 && locsz > 0 || locsz > 512 {
+    ops.push(A64Op{kind: A_ALLOC, off: locsz})
+  }
+  if h == 1 {
+    ops.push(A64Op{kind: A_PAIR, r: 6, r2: 7, off: savsz - 16})
+    ops.push(A64Op{kind: A_PAIR, r: 4, r2: 5, off: savsz - 32})
+    ops.push(A64Op{kind: A_PAIR, r: 2, r2: 3, off: savsz - 48})
+    if regi > 0 || regf > 0 || cr == 1 {
+      ops.push(A64Op{kind: A_PAIR, r: 0, r2: 1, off: savsz - 64})
+    } else {
+      ops.push(A64Op{kind: A_PAIR, r: 0, r2: 1, off: savsz, wb: true})
+    }
+  }
+  let fregs = if regf > 0 { regf + 1 } else { 0 }
+  var f = (fregs + 1) / 2 - 1
+  while f >= 0 {
+    if f == (fregs + 1) / 2 - 1 && fregs % 2 == 1 {
+      ops.push(A64Op{kind: A_ONE, r: 8 + 2 * f, off: intsz + 16 * f, fp: true})
+    } else if f == 0 && regi == 0 && cr != 1 {
+      ops.push(A64Op{kind: A_PAIR, r: 8, r2: 9, off: savsz, wb: true, fp: true})
+    } else {
+      ops.push(A64Op{kind: A_PAIR, r: 8 + 2 * f, r2: 9 + 2 * f, off: intsz + 16 * f, fp: true})
+    }
+    f -= 1
+  }
+  if cr == 1 && regi % 2 == 0 {
+    if regi == 0 {
+      ops.push(A64Op{kind: A_ONE, r: 30, off: savsz, wb: true})
+    } else {
+      ops.push(A64Op{kind: A_ONE, r: 30, off: intsz - 8})
+    }
+  }
+  var g = (regi + 1) / 2 - 1
+  while g >= 0 {
+    if g == (regi + 1) / 2 - 1 && regi % 2 == 1 {
+      if cr == 1 {
+        if g == 0 {
+          return (ops, "packed CR 1 with RegI 1 (no unwind code stands for it)")
+        }
+        ops.push(A64Op{kind: A_PAIR, r: 19 + 2 * g, r2: 30, off: 16 * g})
+      } else if g == 0 {
+        ops.push(A64Op{kind: A_ONE, r: 19, off: savsz, wb: true})
+      } else {
+        ops.push(A64Op{kind: A_ONE, r: 19 + 2 * g, off: 16 * g})
+      }
+    } else if g == 0 {
+      ops.push(A64Op{kind: A_PAIR, r: 19, r2: 20, off: savsz, wb: true})
+    } else {
+      ops.push(A64Op{kind: A_PAIR, r: 19 + 2 * g, r2: 20 + 2 * g, off: 16 * g})
+    }
+    g -= 1
+  }
+  if cr == 2 {
+    ops.push(A64Op{kind: A_PAC})
+  }
+  ops.push(A64Op{kind: A_END})
+  (ops, "")
+}
+
+/// The stack operation instruction word w is in a prolog or (epi) an
+/// epilog, as an unwind code would describe it; A_NOP when it is none.
+/// `sub sp, sp, x15, uxtx #4` (after __chkstk) is an allocation of off
+/// -1, its size in x15.
+fn a64_insn(w: Int, epi: Bool) -> A64Op {
+  let top = w & 0xFFC00000
+  let rn_sp = (w >> 5) & 31 == 31
+  let rt = w & 31
+  let rt2 = (w >> 10) & 31
+  let imm7 = 8 * sx((w >> 15) & 127, 7)
+  let imm9 = sx((w >> 12) & 511, 9)
+  let imm12 = (w >> 10) & 0xFFF
+  let alloc = if epi { 0x910003FF } else { 0xD10003FF }
+  let setfp = if epi { 0x910003BF } else { 0x910003FD }
+  let addfp = if epi { 0xD10003BF } else { 0x910003FD }
+  let pac = if epi { 0xD50323FF } else { 0xD503237F }
+  let load = if epi { 0x400000 } else { 0 }
+  if (w & 0xFF8003FF) == alloc {
+    return A64Op{kind: A_ALLOC, off: imm12 << (12 * ((w >> 22) & 1))}
+  }
+  if !epi && w == 0xCB2F73FF {
+    return A64Op{kind: A_ALLOC, off: -1}
+  }
+  if w == setfp {
+    return A64Op{kind: A_SETFP}
+  }
+  if (w & 0xFFC003FF) == addfp {
+    return A64Op{kind: A_ADDFP, off: imm12}
+  }
+  if w == pac {
+    return A64Op{kind: A_PAC}
+  }
+  if epi && (w == 0xD65F03C0 || (w & 0xFC000000) == 0x14000000 || (w & 0xFFFFFC1F) == 0xD61F0000) {
+    return A64Op{kind: A_END}
+  }
+  if !rn_sp {
+    return A64Op{kind: A_NOP}
+  }
+  for fp in [false, true] {
+    // stp/ldp: signed offset, then pre index (prolog) or post index (epilog)
+    let base = if fp { 0x6D000000 } else { 0xA9000000 }
+    if top == base + load {
+      return A64Op{kind: A_PAIR, r: rt, r2: rt2, off: imm7, fp: fp}
+    }
+    if !epi && top == base + 0x800000 {
+      return A64Op{kind: A_PAIR, r: rt, r2: rt2, off: -imm7, wb: true, fp: fp}
+    }
+    if epi && top == base - 0x1000000 + 0xC00000 {
+      return A64Op{kind: A_PAIR, r: rt, r2: rt2, off: imm7, wb: true, fp: fp}
+    }
+    // str/ldr: unsigned offset, then pre index (prolog) or post index (epilog)
+    let one = if fp { 0xFD000000 } else { 0xF9000000 }
+    if top == one + load {
+      return A64Op{kind: A_ONE, r: rt, off: 8 * imm12, fp: fp}
+    }
+    let idx = w & 0xFFE00C00
+    if !epi && idx == one - 0x1000000 + 0xC00 {
+      return A64Op{kind: A_ONE, r: rt, off: -imm9, wb: true, fp: fp}
+    }
+    if epi && idx == one - 0x1000000 + 0x400400 {
+      return A64Op{kind: A_ONE, r: rt, off: imm9, wb: true, fp: fp}
+    }
+  }
+  A64Op{kind: A_NOP}
+}
+
+fn a64_same(a: A64Op, b: A64Op) -> Bool {
+  a.kind == b.kind && a.off == b.off && a.wb == b.wb && a.fp == b.fp &&
+    (a.kind != A_PAIR && a.kind != A_ONE || a.r == b.r && (a.kind == A_ONE || a.r2 == b.r2))
+}
+
+/// The instruction word at address a, from .text.
+fn a64_word(tab: Tables, a: Int) -> Int? {
+  if a < tab.text_addr || a + 4 > tab.text_addr + tab.text.len() {
+    return None
+  }
+  Some(rd32(tab.text, a - tab.text_addr))
+}
+
+/// What is wrong when the instructions from address at are matched with
+/// ops (a prolog's: instruction k with code n-1-k, ends left out; an
+/// epilog's: instruction k with code k, its end with the ret).
+fn a64_match(tab: Tables, at: Int, ops: List[A64Op], epi: Bool) -> List[Str] {
+  var errs: List[Str] = []
+  var x15 = 0
+  for k in 0..ops.len() {
+    let o = if epi { ops[k] } else { ops[ops.len() - 1 - k] }
+    let a = at + 4 * k
+    let w = match a64_word(tab, a) {
+      Some(v) => v
+      None => {
+        errs.push("its ${if epi { "epilog" } else { "prolog" }} runs outside .text at 0x${hex(a)}")
+        return errs
+      }
+    }
+    // __chkstk's size: mov x15, #imm (movz then movk), in nop codes
+    if (w & 0xFF80001F) == 0xD280000F {
+      x15 = ((w >> 5) & 0xFFFF) << (16 * ((w >> 21) & 3))
+    } else if (w & 0xFF80001F) == 0xF280000F {
+      let sh = 16 * ((w >> 21) & 3)
+      x15 = (x15 & (-1 - (0xFFFF << sh))) | (((w >> 5) & 0xFFFF) << sh)
+    }
+    if o.kind == A_NOP {
+      continue
+    }
+    var got = a64_insn(w, epi)
+    if got.kind == A_ALLOC && got.off == -1 {
+      got = A64Op{kind: A_ALLOC, off: 16 * x15}
+    }
+    if !a64_same(got, o) {
+      errs.push("${if epi { "epilog" } else { "prolog" }} instruction at +0x${hex(a - at)} (0x${hex(w)}) is not the unwind code's ${a64_op_text(o, epi)}")
+    }
+  }
+  errs
+}
+
+/// The prolog's frame in instruction order: what is wrong with its saves,
+/// its size, and where x29 was set up (the frame size then and x29's
+/// offset from sp), or -1 when it is not.
+fn a64_frame(ops: List[A64Op]) -> (List[Str], Int, Int, Int) {
+  var errs: List[Str] = []
+  var size = 0
+  var fp_at = -1
+  var fp_off = 0
+  var k = ops.len() - 1
+  while k >= 0 {
+    let o = ops[k]
+    let n = if o.kind == A_PAIR { 16 } else { 8 }
+    if o.kind == A_ALLOC {
+      size += o.off
+    } else if o.kind == A_PAIR || o.kind == A_ONE {
+      let ok = if o.fp { o.r >= 8 && o.r2 <= 15 } else { o.r >= 19 && o.r <= 30 || o.r <= 7 }
+      if !ok {
+        errs.push("the prolog saves ${a64_reg(o.r, o.fp)}, not a callee saved register")
+      }
+      if o.wb {
+        if o.off < n {
+          errs.push("${a64_op_text(o, false)} moves sp by less than it stores")
+        }
+        size += o.off
+      } else if o.off + n > size {
+        errs.push("${a64_op_text(o, false)} stores outside the frame (${size} bytes there)")
+      }
+    } else if o.kind == A_SETFP || o.kind == A_ADDFP {
+      fp_at = size
+      fp_off = o.off
+      if o.off > size {
+        errs.push("${a64_op_text(o, false)} points above the frame (${size} bytes)")
+      }
+    }
+    k -= 1
+  }
+  if size % 16 != 0 {
+    errs.push("the frame is ${size} bytes, not a multiple of 16")
+  }
+  (errs, size, fp_at, fp_off)
+}
+
+/// What is wrong with an epilog's ops (instruction order) undoing a frame
+/// of size bytes whose x29 was set up at fp_at with offset fp_off.
+fn a64_epilog_frame(ops: List[A64Op], size: Int, fp_at: Int, fp_off: Int) -> List[Str] {
+  var errs: List[Str] = []
+  var left = size
+  for o in ops {
+    let n = if o.kind == A_PAIR { 16 } else { 8 }
+    if o.kind == A_SETFP || o.kind == A_ADDFP {
+      if fp_at < 0 {
+        errs.push("the epilog restores sp from x29, which the prolog does not set up")
+        return errs
+      }
+      left = fp_at - fp_off + o.off
+    } else if o.kind == A_ALLOC {
+      left -= o.off
+    } else if o.kind == A_PAIR || o.kind == A_ONE {
+      if o.wb {
+        left -= o.off
+      } else if o.off + n > left {
+        errs.push("${a64_op_text(o, true)} loads outside the frame (${left} bytes left)")
+      }
+    } else if o.kind == A_END && left != 0 {
+      errs.push("the epilog leaves ${left} bytes of the frame on the stack")
+    }
+    if left < 0 {
+      errs.push("the epilog frees ${-left} bytes more than the frame has")
+      return errs
+    }
+  }
+  errs
+}
+
+/// Whether instruction w writes x18 (Windows' TEB pointer, which no
+/// function may change): a data processing instruction's destination, a
+/// load's (single, pair, exclusive, literal, or an atomic's), or mrs's.
+/// It errs on the side of silence (an ldrsw or a base register's
+/// writeback is not seen), never of a false alarm.
+fn a64_writes_x18(w: Int) -> Bool {
+  let rd = w & 31
+  let rt2 = (w >> 10) & 31
+  // data processing, immediate (100x) and register (x101)
+  if (w >> 26) & 7 == 4 || (w >> 25) & 7 == 5 {
+    return rd == 18
+  }
+  // mrs
+  if (w & 0xFFF00000) == 0xD5300000 {
+    return rd == 18
+  }
+  // loads and stores of general registers: bit 27 set, 25 and 26 clear
+  if (w >> 25) & 7 == 4 && (w >> 27) & 1 == 1 {
+    if (w >> 27) & 7 == 3 && (w >> 24) & 1 == 0 {
+      // a literal load
+      return rd == 18
+    }
+    if (w >> 22) & 1 == 1 {
+      return rd == 18 || ((w >> 27) & 7 == 5 && rt2 == 18)
+    }
+  }
+  false
+}
+
+/// The instructions of .text that write x18, at most 8 of them.
+fn a64_x18(tab: Tables) -> List[Str] {
+  var errs: List[Str] = []
+  var o = 0
+  while o + 4 <= tab.text.len() && errs.len() < 8 {
+    let w = rd32(tab.text, o)
+    if a64_writes_x18(w) {
+      errs.push("the instruction at 0x${hex(tab.text_addr + o)} (0x${hex(w)}) writes x18")
+    }
+    o += 4
+  }
+  errs
+}
+
+/// What is wrong with an arm64 PE's unwind data, and how many functions
+/// it has (xo dev debug --unwind-check): the .pdata entries in order and
+/// apart; each .xdata record readable, of version 0, its epilog scopes in
+/// order and inside the function, its codes known and ending; every code
+/// matching its instruction; and each prolog's frame aligned with every
+/// save inside it, which every epilog frees; and no instruction of .text
+/// writing x18.
+pub fn a64_pdata_check(tab: Tables) -> (Int, List[Str]) {
+  var errs: List[Str] = []
+  let n = tab.pdata.len() / 8
+  var prev_end = 0
+  for k in 0..n {
+    let begin = rd32(tab.pdata, 8 * k)
+    let word = rd32(tab.pdata, 8 * k + 4)
+    let at = "function at rva 0x${hex(begin)}"
+    let flag = word & 3
+    let fa = tab.base + begin
+    var ops: List[A64Op] = []
+    var len = 0
+    // the epilogs: where each starts and its ops
+    var epilogs: List[(Int, List[A64Op])] = []
+    var fragment = false
+    if flag == 3 {
+      errs.push("${at}: .pdata flag 3 (reserved)")
+      continue
+    } else if flag != 0 {
+      len = 4 * ((word >> 2) & 0x7FF)
+      fragment = flag == 2
+      let (p, e) = a64_packed(word)
+      if e != "" {
+        errs.push("${at}: ${e}")
+        continue
+      }
+      ops = p
+      // the one epilog, at the end: the prolog's codes forward, without
+      // the frame pointer's set up when the epilog does not restore sp
+      // from x29
+      var epi: List[A64Op] = []
+      for o in p {
+        if o.kind != A_SETFP {
+          epi.push(o)
+        }
+      }
+      epilogs.push((fa + len - 4 * epi.len(), epi))
+    } else {
+      let xa = tab.base + word
+      let h8 = match pe_bytes(tab, xa, 8) {
+        Some(h) => h
+        None => {
+          errs.push("${at}: its .xdata at 0x${hex(xa)} is outside the image")
+          continue
+        }
+      }
+      let head = rd32(h8, 0)
+      len = 4 * (head & 0x3FFFF)
+      if (head >> 18) & 3 != 0 {
+        errs.push("${at}: .xdata version ${(head >> 18) & 3}")
+        continue
+      }
+      let e1 = (head >> 21) & 1 == 1
+      var epc = (head >> 22) & 31
+      var cw = (head >> 27) & 31
+      var hl = 4
+      if epc == 0 && cw == 0 {
+        let ext = rd32(h8, 4)
+        epc = ext & 0xFFFF
+        cw = (ext >> 16) & 0xFF
+        hl = 8
+      }
+      let nscopes = if e1 { 0 } else { epc }
+      let rec = match pe_bytes(tab, xa, hl + 4 * nscopes + 4 * cw) {
+        Some(r) => r
+        None => {
+          errs.push("${at}: its ${nscopes} epilog scopes and ${cw} code words run outside the image")
+          continue
+        }
+      }
+      let codes = rec[hl + 4 * nscopes..rec.len()]
+      let (p, e) = a64_codes(codes, 0)
+      if e != "" {
+        errs.push("${at}: prolog: ${e}")
+        continue
+      }
+      ops = p
+      var bad = false
+      if e1 {
+        let (q, qe) = a64_codes(codes, epc)
+        if qe != "" {
+          errs.push("${at}: epilog: ${qe}")
+          bad = true
+        } else {
+          epilogs.push((fa + len - 4 * q.len(), q))
+        }
+      }
+      var last = -1
+      for s in 0..nscopes {
+        let sw = rd32(rec, hl + 4 * s)
+        let start = 4 * (sw & 0x3FFFF)
+        let idx = (sw >> 22) & 0x3FF
+        if (sw >> 18) & 15 != 0 || start <= last || start >= len || idx >= codes.len() {
+          errs.push("${at}: epilog scope ${s} (offset ${start}, code ${idx}, reserved ${(sw >> 18) & 15}) after ${last} in ${len} bytes of function and ${codes.len()} code bytes")
+          bad = true
+          continue
+        }
+        last = start
+        let (q, qe) = a64_codes(codes, idx)
+        if qe != "" {
+          errs.push("${at}: epilog scope ${s}: ${qe}")
+          bad = true
+          continue
+        }
+        epilogs.push((fa + start, q))
+      }
+      if bad {
+        continue
+      }
+    }
+    if len == 0 || begin < prev_end {
+      errs.push("${at}: ${len} bytes long, the function before ends at 0x${hex(prev_end)}")
+    }
+    prev_end = begin + len
+    var pro: List[A64Op] = []
+    for o in ops {
+      if o.kind != A_END && o.kind != A_ENDC {
+        pro.push(o)
+      }
+    }
+    if !fragment {
+      for m in a64_match(tab, fa, pro, false) {
+        errs.push("${at}: ${m}")
+      }
+    }
+    let (fe, size, fp_at, fp_off) = a64_frame(ops)
+    for m in fe {
+      errs.push("${at}: ${m}")
+    }
+    for (ea, eops) in epilogs {
+      if ea < fa || ea >= fa + len {
+        errs.push("${at}: its epilog at 0x${hex(ea)} is outside the function")
+        continue
+      }
+      for m in a64_match(tab, ea, eops, true) {
+        errs.push("${at}: epilog at +0x${hex(ea - fa)}: ${m}")
+      }
+      if eops.len() > 0 && eops[eops.len() - 1].kind == A_END {
+        for m in a64_epilog_frame(eops, size, fp_at, fp_off) {
+          errs.push("${at}: epilog at +0x${hex(ea - fa)}: ${m}")
+        }
+      }
+    }
+  }
+  for m in a64_x18(tab) {
+    errs.push(m)
+  }
+  (n, errs)
+}

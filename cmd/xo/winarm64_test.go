@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"debug/pe"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +54,51 @@ func TestWindowsArm64Assembly(t *testing.T) {
 	pe := int(binary.LittleEndian.Uint32(b[0x3c:]))
 	if pe+6 > len(b) || string(b[pe:pe+4]) != "PE\x00\x00" || binary.LittleEndian.Uint16(b[pe+4:]) != 0xaa64 {
 		t.Errorf("not an ARM64 PE image (machine 0xAA64)")
+	}
+	checkArm64Unwind(t, exe, b)
+}
+
+// checkArm64Unwind: decision 0569 stage 2. The ARM64 PE's .pdata and
+// .xdata pass xo dev debug --unwind-check (every unwind code matches the
+// instruction it stands for, each frame aligned with its saves inside it
+// and freed by every epilog), with no llvm-readobj; with each function's
+// first instruction made a nop, the check finds the prologs that no
+// longer match.
+func checkArm64Unwind(t *testing.T, exe string, b []byte) {
+	t.Helper()
+	r := xo(t, "dev", "debug", "--unwind-check", exe)
+	var n, problems int
+	if _, err := fmt.Sscanf(r.out, "%d functions, %d problems", &n, &problems); err != nil || n < 100 || r.code != 0 {
+		t.Fatalf("xo dev debug --unwind-check: exit %d, want at least 100 functions and no problems:\n%s%s", r.code, r.out, r.err)
+	}
+	f, err := pe.NewFile(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pd := f.Section(".pdata")
+	if pd == nil {
+		t.Fatal("no .pdata")
+	}
+	data, err := pd.Data()
+	if err != nil {
+		t.Fatalf(".pdata: %v", err)
+	}
+	bad := append([]byte(nil), b...)
+	for i := 0; i+8 <= len(data); i += 8 {
+		rva := binary.LittleEndian.Uint32(data[i:])
+		for _, sc := range f.Sections {
+			if rva >= sc.VirtualAddress && rva+4 <= sc.VirtualAddress+sc.Size {
+				binary.LittleEndian.PutUint32(bad[sc.Offset+rva-sc.VirtualAddress:], 0xd503201f)
+			}
+		}
+	}
+	mut := exe + ".nop.exe"
+	if err := os.WriteFile(mut, bad, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r = xo(t, "dev", "debug", "--unwind-check", mut).want(1)
+	if !strings.Contains(r.err, "prolog instruction at +0x0 (0xd503201f)") {
+		t.Errorf("the nop prologs were not found:\n%s%s", r.out, r.err)
 	}
 }
 
