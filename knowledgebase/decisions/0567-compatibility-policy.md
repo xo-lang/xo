@@ -66,6 +66,17 @@ window for an old edition.
 The criteria of decision 0089 (the Go backend is the supported 1.0 path; the native backends ship as preview; native TLS is
 not required) still stand.
 
+### Proposed addendum (Xo Lang 1, 2026-11-08; the owner decides)
+
+Not yet policy. Proposed line for "What 0.x promises today", rule 2:
+**a new variant of a std enum that user code can match exhaustively (`TargetOs`, `TargetArch`, any `pub` std enum) is a
+breaking change**: it ships only in a minor release, is marked **Breaking** in CHANGELOG.md with the migration (an arm for
+the variant, or `_ =>`), and is listed in the spec's "Changes in 0.N". XO0301 names the missing variant, which counts as the
+diagnostic naming the replacement, so no `xo fix` rewrite is required. Found by `TargetArch.Riscv64` (0571) and
+`TargetOs.FreeBSD` (0573), which broke four goldens, two bench programs and three frozen blind solutions
+(gotchas/std-enum-variant-breaks-exhaustive-matches.md). For 1.0 the owner also decides whether such enums are declared open
+(a required `_ =>` arm outside std) so that adding a target stops being a break.
+
 ## Consequences
 
 - Spec 13 links this decision, and maturity-gaps.md item 1 records that the policy is written.
