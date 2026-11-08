@@ -109,12 +109,19 @@ func main() {
 	if err := proto.Unmarshal(setb, &set); err != nil {
 		panic(err)
 	}
-	// protobuf-go refuses a MessageSet (a legacy proto1 feature) when it builds descriptors, and the proto2
-	// conformance file has two: their option is cleared so the other messages load
+	// protobuf-go refuses a MessageSet (a legacy proto1 feature) when it builds descriptors: the proto2
+	// conformance file's two, and the extensions of them, are dropped so the other messages load
+	gone := map[string]bool{}
 	for _, f := range set.File {
 		for _, m := range f.MessageType {
-			clearMessageSet(m)
+			dropMessageSets(f.GetPackage(), m, gone)
 		}
+	}
+	for _, f := range set.File {
+		for _, m := range f.MessageType {
+			dropExtensions(m, gone)
+		}
+		f.Extension = keepExtensions(f.Extension, gone)
 	}
 	files, err := protodesc.NewFiles(&set)
 	if err != nil {
@@ -142,13 +149,36 @@ func main() {
 	}
 }
 
-func clearMessageSet(m *descriptorpb.DescriptorProto) {
-	if m.Options != nil && m.Options.GetMessageSetWireFormat() {
-		m.Options.MessageSetWireFormat = nil
-		// a MessageSet's extension range reaches 2^31-2, past what a plain message may extend
-		m.ExtensionRange = nil
-	}
+func dropMessageSets(scope string, m *descriptorpb.DescriptorProto, gone map[string]bool) {
+	full := scope + "." + m.GetName()
+	var keep []*descriptorpb.DescriptorProto
 	for _, n := range m.NestedType {
-		clearMessageSet(n)
+		if n.GetOptions().GetMessageSetWireFormat() {
+			gone["."+full+"."+n.GetName()] = true
+			continue
+		}
+		keep = append(keep, n)
 	}
+	m.NestedType = keep
+	for _, n := range m.NestedType {
+		dropMessageSets(full, n, gone)
+	}
+}
+
+func dropExtensions(m *descriptorpb.DescriptorProto, gone map[string]bool) {
+	m.Extension = keepExtensions(m.Extension, gone)
+	for _, n := range m.NestedType {
+		dropExtensions(n, gone)
+	}
+}
+
+func keepExtensions(xs []*descriptorpb.FieldDescriptorProto, gone map[string]bool) []*descriptorpb.FieldDescriptorProto {
+	var keep []*descriptorpb.FieldDescriptorProto
+	for _, x := range xs {
+		if gone[x.GetExtendee()] {
+			continue
+		}
+		keep = append(keep, x)
+	}
+	return keep
 }
