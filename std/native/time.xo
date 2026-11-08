@@ -1110,6 +1110,34 @@ fn format_stream(layout: Str, t: Time, z: Zone) -> Str? {
   let b = layout.bytes()
   let n = b.len()
   var out = BytesBuilder.with_capacity(40)
+  if layout == ISO_LAYOUT {
+    // Go's RFC 3339 fast path: the one common layout written without scanning it
+    put_num(out, d.year, 4)
+    out.write_byte(45)
+    put_num(out, d.month % 100, 2)
+    out.write_byte(45)
+    put_num(out, d.day % 100, 2)
+    out.write_byte(84)
+    put_num(out, hour, 2)
+    out.write_byte(58)
+    put_num(out, rem / 60 % 60, 2)
+    out.write_byte(58)
+    put_num(out, rem % 60, 2)
+    if off == 0 {
+      out.write_byte(90)
+    } else {
+      var o = off
+      let neg = o / 60 < 0
+      if o < 0 {
+        o = -o
+      }
+      out.write_byte(if neg { 45 } else { 43 })
+      put_num(out, o / 3600 % 100, 2)
+      out.write_byte(58)
+      put_num(out, o / 60 % 60, 2)
+    }
+    return Some(rt.cast[Bytes, Str](out.freeze()))
+  }
   var hour12 = false
   var ampm = false
   var i = 0
@@ -1235,6 +1263,8 @@ fn format_stream(layout: Str, t: Time, z: Zone) -> Str? {
   }
   Some(rt.cast[Bytes, Str](out.freeze()))
 }
+
+const ISO_LAYOUT: Str = "{year}-{month}-{day}T{hour}:{minute}:{second}{offset}"
 
 const MONTHS_SHORT: Str = "JanFebMarAprMayJunJulAugSepOctNovDec"
 
