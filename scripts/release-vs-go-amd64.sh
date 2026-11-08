@@ -11,6 +11,13 @@ set -u -o pipefail
 dir=${1:?usage: release-vs-go-amd64.sh DIR XO ROUNDS}
 xo=${2:?usage: release-vs-go-amd64.sh DIR XO ROUNDS}
 rounds=${3:-5}
+# DIR is the Windows home under /mnt/c; a program run from there pays about
+# 6 ms of exec on drvfs (fib32: 13.8 ms against 7.9 ms from ext4, 2026-11-08),
+# which hides small changes and adds a size dependent cost, so run copies.
+src=$dir
+dir=$(mktemp -d "$HOME/rvg-amd64.XXXXXX") || exit 1
+trap 'rm -rf "${dir:?}"' EXIT
+cp "$src"/rvg-micro13.base "$src"/rvg-micro13.new "$src"/rvg-micro13.go "$dir"/ || exit 1
 chmod +x "$dir"/rvg-micro13.base "$dir"/rvg-micro13.new "$dir"/rvg-micro13.go
 echo "host $(uname -sm), $(nproc) CPUs, load $(cut -d' ' -f1 /proc/loadavg)"
 for w in fib32 map1M strbuild1M sort1M sort1M_copy json10kx20 spawn100k; do
