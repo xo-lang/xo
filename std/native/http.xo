@@ -3991,8 +3991,17 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
     return Err(e)
   }
   if testworld.fake(4) {
-    // FakeNet (a test without `uses net` and `xo test --real`)
-    return send_mem(src_whole(req)?, raw, c.roots)
+    // FakeNet (a test without `uses net` and `xo test --real`); a bare
+    // Listener another task accepts on is reached by the dial below, over
+    // the fake TCP
+    match send_mem(src_whole(req)?, raw, c.roots) {
+      Ok(resp) => return Ok(resp)
+      Err(e) => if is_raw_listener(e) {
+        return send_raw(c, req)
+      } else {
+        return Err(e)
+      }
+    }
   }
   if wasiworld.component() && c.cert is Some(_) {
     return Err(http.ClientErr.Connect(msg: "a wasi:http component's host does TLS: with_cert has no place to go"))
@@ -4147,6 +4156,9 @@ fn send_mem(req0: Request, raw: Str, roots: rthttp.Roots, streamed: Bool = false
   }
   let found = twrun.mem_begin(hp)
   if found.is_empty() {
+    if twrun.mem_raw(hp) {
+      return Err(http.ClientErr.Connect(msg: RAW_LISTENER))
+    }
     return Err(http.ClientErr.Connect(msg: "no fake handler for ${req.method} ${raw}"))
   }
   defer twrun.mem_end(hp)
@@ -4154,6 +4166,120 @@ fn send_mem(req0: Request, raw: Str, roots: rthttp.Roots, streamed: Bool = false
     Some(r) => if streamed { call_raw(r, req) } else { r.call(req) }
     None => Err(http.ClientErr.Connect(msg: "no fake handler for ${req.method} ${raw}"))
   }
+}
+
+/// send_mem's answer for a host:port that a task accepts on raw (no
+/// http.server serves it): send goes on to dial it.
+const RAW_LISTENER: Str = "fakenet: raw listener"
+
+fn is_raw_listener(e: http.ClientErr) -> Bool {
+  match e {
+    http.ClientErr.Connect(msg: m) => m == RAW_LISTENER
+    _ => false
+  }
+}
+
+/// A request to a bare Listener in a test (a task accepts on it, no
+/// http.server serves it): HTTP/1.1 over a dial of the fake TCP, with
+/// Connection: close, the response read to the end of the connection.
+/// A body is sent whole, a chunked or sized response is cut as net/http
+/// would; redirects and compression are not followed.
+fn send_raw(c: Client, req0: Request) -> http.Response ! http.ClientErr {
+  let req = src_whole(req0)?
+  var hp = req.url.host
+  if let Some(p) = req.url.port {
+    hp = hp + ":${p}"
+  } else if req.url.scheme.to_lower() == "https" {
+    hp = hp + ":443"
+  } else {
+    hp = hp + ":80"
+  }
+  let conn = match rt.net_new(c.lists).dial(hp) {
+    Ok(cn) => cn
+    Err(e) => return Err(http.ClientErr.Connect(msg: "dial tcp ${hp}: ${e}"))
+  }
+  var path = http1.escaped_path(req.url.path, req.raw_path)
+  if path.is_empty() {
+    path = "/"
+  }
+  if !req.raw_query.is_empty() {
+    path = path + "?" + req.raw_query
+  }
+  var head = "${req.method} ${path} HTTP/1.1\r\nHost: ${if req.host_over.is_empty() { req.url.host } else { req.host_over }}\r\nConnection: close\r\n"
+  let (names, values) = header_lists(req)
+  for (i, k) in names.indexed() {
+    if !k.starts_with(":") && k.to_lower() != "host" && k.to_lower() != "content-length" {
+      head = head + k + ": " + values[i] + "\r\n"
+    }
+  }
+  if !req.body.is_empty() || req.method == "POST" || req.method == "PUT" || req.method == "PATCH" {
+    head = head + "Content-Length: ${req.body.len()}\r\n"
+  }
+  var out = BytesBuilder.new()
+  out.write_str(head + "\r\n")
+  out.write(req.body)
+  match conn.write(out.freeze()) {
+    Ok(_) => ()
+    Err(e) => {
+      conn.close()
+      return Err(http.ClientErr.Connect(msg: "write: ${e}"))
+    }
+  }
+  var got = BytesBuilder.new()
+  while true {
+    match conn.read(65536) {
+      Ok(Some(b)) => got.write(b)
+      Ok(None) => break
+      Err(e) => {
+        conn.close()
+        return Err(http.ClientErr.Protocol(msg: "read: ${e}"))
+      }
+    }
+  }
+  conn.close()
+  let all = got.freeze()
+  let rh = http1.parse_response(all.to_str_lossy(), true, req.method)
+  // res 1 is http1's OK (0 needs more bytes, 3 and up are errors)
+  if rh.res != 1 {
+    return Err(http.ClientErr.Protocol(msg: if rh.why.is_empty() { "unexpected EOF" } else { rh.why }))
+  }
+  var body = all[rh.used..all.len()]
+  if rh.chunked {
+    body = dechunk(body)
+  } else if rh.clen >= 0 && rh.clen < body.len() {
+    body = body[0..rh.clen]
+  }
+  let (h, fs) = fields_in(rh.headers)
+  Ok(rt.cast[Response, http.Response](Response{status: rh.status, headers: h, body: body, fields: fs}))
+}
+
+/// The body of a chunked message (no trailers kept; a short message ends at what was read).
+fn dechunk(b: Bytes) -> Bytes {
+  var out = BytesBuilder.new()
+  var i = 0
+  let n = b.len()
+  while i < n {
+    var j = i
+    while j < n && b[j] != 13 && b[j] != 59 {
+      j += 1
+    }
+    var size = 0
+    for k in i..j {
+      let d = Int(b[k])
+      size = size * 16 + (if d >= 97 { d - 87 } else if d >= 65 { d - 55 } else { d - 48 })
+    }
+    while j < n && b[j] != 10 {
+      j += 1
+    }
+    i = j + 1
+    if size == 0 || i >= n {
+      break
+    }
+    let end = if i + size > n { n } else { i + size }
+    out.write(b[i..end])
+    i = end + 2
+  }
+  out.freeze()
 }
 
 /// Whether handler (kind 0) or failure (1) i matches the request: the

@@ -1013,7 +1013,8 @@ func (f Testing_FakeNet) M_listen(tk *Task, addr string) Result[Listener, NetErr
 		if old := f.n.listeners[addr]; old != nil && !old.closed {
 			return Err[Listener](netErr(4, "address already in use"))
 		}
-		l := &memListener{n: f.n, addr: addr, served: newEvent(), q: memQueue{changed: newEvent()}}
+		rd := newEvent()
+		l := &memListener{n: f.n, addr: addr, served: newEvent(), ready: rd, q: memQueue{changed: newEvent(), accepted: rd}}
 		f.n.listeners[addr] = l
 		return Ok[Listener, NetErr](Listener{mem: l})
 	}
@@ -1029,7 +1030,8 @@ func (f Testing_FakeNet) M_listen(tk *Task, addr string) Result[Listener, NetErr
 		return Err[Listener](netErr(4, "address already in use"))
 	}
 	pn, _ := strconv.Atoi(port)
-	l := &memListener{n: f.n, addr: host + ":" + port, served: newEvent(), q: memQueue{changed: newEvent()}, port: pn}
+	rd := newEvent()
+	l := &memListener{n: f.n, addr: host + ":" + port, served: newEvent(), ready: rd, q: memQueue{changed: newEvent(), accepted: rd}, port: pn}
 	f.n.listeners[l.addr] = l
 	if host == "127.0.0.1" {
 		f.n.listeners["localhost:"+port] = l
@@ -1132,7 +1134,10 @@ func (f Testing_FakeNet) serveScope(tk *Task, req Http_Request) *Scope {
 	if srv == nil {
 		return nil
 	}
-	if !srv.served.isSet() && !srv.served.wait(tk, true, waitAccept, nil) {
+	if !srv.served.isSet() && !srv.ready.isSet() && !srv.ready.wait(tk, true, waitAccept, nil) {
+		return nil
+	}
+	if !srv.served.isSet() {
 		return nil
 	}
 	srv.mu.Lock()
@@ -1194,9 +1199,13 @@ func (f Testing_FakeNet) dispatchWith(tk *Task, c Http_Client, req Http_Request,
 	}
 	if srv != nil && !srv.served.isSet() {
 		// like a real socket after listen: the connection waits in the
-		// backlog until http.server(l, r).serve() starts
-		if !srv.served.wait(tk, true, waitAccept, nil) {
+		// backlog until http.server(l, r).serve() starts or a task accepts
+		if !srv.ready.isSet() && !srv.ready.wait(tk, true, waitAccept, nil) {
 			return Err[Http_Response](clientErr(5, ""))
+		}
+		if !srv.served.isSet() {
+			// a bare Listener: HTTP/1.1 over the fake TCP
+			return f.rawExchange(tk, req, srv.addr)
 		}
 	}
 	if srv != nil {
@@ -1221,6 +1230,7 @@ type memListener struct {
 	n      *fakeNet
 	addr   string
 	served *event // fired when serve starts
+	ready  *event // fired when serve starts or a task first accepts
 	// the raw connections dialed to it (decision 0292)
 	q      memQueue
 	port   int
@@ -1282,6 +1292,7 @@ func (l *memListener) serve(tk *Task, r Http_Router) Result[Unit, Http_HttpErr] 
 	l.mu.Unlock()
 	defer func() { sc.Close(nil, true, 0) }()
 	l.served.fire()
+	l.ready.fire()
 	stopped := false
 	if tk.stop != nil {
 		stopped = tk.stop.ev.wait(tk, true, waitStop, nil)

@@ -265,6 +265,9 @@ type memQueue struct {
 	pending []*memEnd
 	closed  bool
 	changed *event
+	// fired by the first accept, as the listener's ready event: a client
+	// request to a listener no http.server serves goes on as a raw dial
+	accepted *event
 }
 
 // push queues the server end of a dialed connection; false when the
@@ -284,6 +287,9 @@ func (q *memQueue) push(e *memEnd) bool {
 
 // accept waits for the next dialed connection.
 func (q *memQueue) accept(tk *Task) Result[Conn, NetErr] {
+	if q.accepted != nil {
+		q.accepted.fire()
+	}
 	for {
 		q.mu.Lock()
 		if q.closed {

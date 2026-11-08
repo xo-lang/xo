@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-08: fix: under FakeNet, a client request reaches a bare Listener's accept loop
+
+- Kind: fix
+- Commit: this push
+- Found by: Xo Azure 1 (aws repo docs/reports/xo-feedback.md, the test browser; lead, 2026-11-08)
+- Go reference: net/http Client over net.Listen (a real socket); httptest-style servers
+- Test: std/native/http_test.xo "a client request in a test reaches a bare Listener's accept loop" (was XO-F001 deadlock: every task is blocked)
+- Timing: none (test world only)
+- Shipped in: not yet released
+
+In a test (FakeNet), `Client.send` and `get` waited for a router on a listener nobody served, as a real backlog does, so a request to a raw `Net.listen` accept loop deadlocked while a raw `Net.dial` worked. A listener a task accepts on (and no http.server serves) now takes the request as HTTP/1.1 over the fake TCP: `Connection: close`, the body sent whole, the response read to the end of the connection (Content-Length, chunked and close delimited bodies). Redirects, compression and streamed request bodies are not followed on this path. http.server listeners, FakeNet.handle and fail routes are unchanged.
+
 ## 2026-11-07: fix: a native server on Linux answers pipelined requests whose sender closed its side right after them
 
 - Kind: fix

@@ -89,7 +89,8 @@ const ML_WAITERS = 72
 const ML_NEXT = 88
 const ML_QHEAD = 96
 const ML_QTAIL = 104
-const ML_SIZE = 112
+const ML_ACCEPTED = 112
+const ML_SIZE = 120
 
 /// One direction of a raw in memory connection (decision 0292, std/rt's
 /// memPipe): a ring of PIPE_CAP bytes (a heap block), the offset of its
@@ -561,6 +562,11 @@ pub fn ml_close(ml: Int) {
 /// connections.
 pub fn ml_accept(ml: Int) -> Int {
   lock()
+  // a task accepts here: a client request waiting for a router goes on as a raw dial
+  if ld(ml, ML_ACCEPTED) == 0 {
+    st(ml, ML_ACCEPTED, 1)
+    wake(ml)
+  }
   while true {
     let q = ld(ml, ML_QHEAD)
     if q != 0 {
@@ -925,7 +931,7 @@ fn find(hp: Str, all: Bool) -> Int {
 pub fn mem_begin(hp: Str) -> List[rt.Any] {
   lock()
   var ml = find(hp, false)
-  while ml != 0 && ld(ml, ML_ROUTER) == 0 && ld(ml, ML_SERVED) == 0 && ld(ml, ML_CLOSED) == 0 {
+  while ml != 0 && ld(ml, ML_ROUTER) == 0 && ld(ml, ML_SERVED) == 0 && ld(ml, ML_CLOSED) == 0 && ld(ml, ML_ACCEPTED) == 0 {
     st(ml, ML_NBEGIN, ld(ml, ML_NBEGIN) + 1)
     let ok = wait(ml)
     st(ml, ML_NBEGIN, ld(ml, ML_NBEGIN) - 1)
@@ -950,6 +956,16 @@ pub fn mem_begin(hp: Str) -> List[rt.Any] {
   }
   unlock()
   []
+}
+
+/// Whether hp names a listener a task accepts on raw (no http.server serves
+/// it): an HTTP request to it is a dial of the fake TCP, not a router call.
+pub fn mem_raw(hp: Str) -> Bool {
+  lock()
+  let ml = find(hp, false)
+  let raw = ml != 0 && ld(ml, ML_ROUTER) == 0 && ld(ml, ML_SERVED) == 0 && ld(ml, ML_ACCEPTED) != 0 && ld(ml, ML_CLOSED) == 0
+  unlock()
+  raw
 }
 
 /// Ends a request mem_begin started.

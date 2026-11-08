@@ -1816,3 +1816,45 @@ test "a second FakeNet.handle for the same pattern replaces the first, and param
   let b = c.send(http.new_request("GET", "http://dup.test/other")).or_fault("send other")
   expect(b.body.to_str_lossy()) == "other"
 }
+
+test "a client request in a test reaches a bare Listener's accept loop" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  scope s {
+    s.group().spawn(fn() {
+      let c = l.accept().or_fault("accept")
+      c.read(4096).ignore_err("the request bytes are not inspected")
+      c.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").or_fault("write")
+      c.close()
+    })
+    let r = http.client(os.net).get("http://${l.addr()}/x").or_fault("get")
+    expect(r.status) == 200
+    expect(r.text()) == Some("ok")
+  }
+}
+
+test "a bare Listener's chunked and close delimited responses, and the request it receives" {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let seen: Chan[Str] = Chan.new(2)
+  scope s {
+    s.group().spawn(fn() {
+      let c1 = l.accept().or_fault("accept 1")
+      let q1 = c1.read(4096).or_fault("read 1") ?? b""
+      seen.send(q1.to_str_lossy())
+      c1.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n").or_fault("write 1")
+      c1.close()
+      let c2 = l.accept().or_fault("accept 2")
+      c2.read(4096).ignore_err("the second request is not inspected")
+      c2.write(b"HTTP/1.0 201 Created\r\nX-A: b\r\n\r\nrest of the stream").or_fault("write 2")
+      c2.close()
+    })
+    let c = http.client(os.net)
+    let a = c.get("http://${l.addr()}/one?x=1").or_fault("get one")
+    expect(a.body.to_str_lossy()) == "abcde"
+    let b = c.get("http://${l.addr()}/two").or_fault("get two")
+    expect(b.status) == 201
+    expect(b.headers.get("X-A")) == Some("b")
+    expect(b.body.to_str_lossy()) == "rest of the stream"
+    let req = seen.recv() ?? ""
+    expect(req.starts_with("GET /one?x=1 HTTP/1.1\r\nHost: ")) == true
+  }
+}
