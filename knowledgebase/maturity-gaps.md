@@ -18,8 +18,10 @@ in detail; check before starting one.
    compatibility guarantee or Rust's editions: what may change between
    versions, how deprecations work (0.33.0's uuid `u.0` deprecation then
    removal is the first instance), and how long a deprecated form keeps
-   working. Xo has `edition preview` but no written policy. The owner
-   decides when 1.0 is; this is the step before it.
+   working. *Written 2026-11-08:* decision 0567 states what 0.x promises
+   today and what 1.0 will promise (spec 13), with Road to 1.0 entry
+   criteria for the owner to edit; it is frozen when the owner declares
+   1.0, and the website page and post are with the owner for review.
 2. **A package registry and module discovery.** Xo modules can be
    required by version, but there is no index to find them, and no module
    proxy or checksum database (Go's proxy.golang.org and sum.golang.org)

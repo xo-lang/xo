@@ -4221,6 +4221,9 @@ pub fn config_dir(env: Env) -> Str ! Error uses env {
 
 ## 13. Editions and compatibility [P1]
 
+The written policy, what 0.x promises today and what 1.0 will promise, is
+decision 0567; this section is its source for the 1.0 promise.
+
 - `xo.mod` declares an `edition`. The compiler supports every edition ever
   released. Modules on different editions link together.
 - Before 1.0 the only edition is `preview` (decision 0155). It is not
@@ -4229,6 +4232,11 @@ pub fn config_dir(env: Env) -> Str ! Error uses env {
   before decision 0155, is an alias of `preview` during the 0.x releases;
   `xo check` reports the fixable note `XO1315` on it and `xo fix`
   rewrites it.
+- During 0.x every breaking change ships with an `xo fix` rewrite (or a
+  diagnostic that names the replacement) and a CHANGELOG entry marked
+  **Breaking**; a deprecated form is removed no sooner than one minor release
+  after its deprecation is announced; a diagnostic code never changes meaning
+  (decision 0567).
 - At 1.0 the first frozen edition is named and `xo fix` rewrites
   `edition preview` to it mechanically. The compatibility promise below
   starts with that edition, not with `preview`.
