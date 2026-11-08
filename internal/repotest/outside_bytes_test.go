@@ -90,6 +90,7 @@ func TestOutsideBytesValidated(t *testing.T) {
 	// rt.cast[Bytes, Str] in std/native: the current uses, each internal
 	// or already validated
 	casts := map[string]int{
+		"std/native/path.xo":         3, // cut and clean: ranges of the Str path cut at `/` and `.` bytes, and `/` and `.`, valid as the path is
 		"std/native/csv.xo":          1, // field_str: a slice of the Str text at a field boundary, valid as the text is
 		"std/native/idna.xo":         1, // encode: the Punycode prefix, the ASCII runes and the digits of a valid Str label, valid by construction
 		"std/native/norm.xo":         1, // normalize: normalized runes and copied runs of a valid Str, valid by construction

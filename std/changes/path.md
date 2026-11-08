@@ -1,5 +1,20 @@
 # std/path changes
 
+## 2026-11-07: perf: path cuts are views with no UTF-8 boundary check, and clean's result is not revalidated
+
+- Kind: perf
+- Commit: this push
+- Found by: the Xo-vs-Go survey (bench/results/xo-vs-go-survey-2026-11-07.md: path/parts 1.33x Go)
+- Go reference: path Clean, Dir, Base, Ext, Split (go1.26.1)
+- Test: the path corpus on go, arm64 and llvm; `xo test --std-module=native/path`; the self build
+- Timing: bench/perf/path on linux/arm64 host 1, --ab against main e705f53ad (7 rounds): parts 0.918 (0.881 to 0.952, n=6), clean 0.934 (0.922 to 0.945, n=6), join 0.942 (0.933 to 0.959, n=6)
+- Shipped in: not yet released
+
+`dir`, `base`, `ext` and `split` cut the path at `/` and `.` bytes, which are never inside a UTF-8 sequence,
+so their pieces are byte views (`rt.cast[Bytes, Str]`) instead of Str slices that check both ends
+(llrt_str_slice_chk was 7.5% of the parts row, as a call). `clean` builds its result from such ranges and
+`/` and `.`, so it no longer revalidates it as UTF-8 (utf8_valid was 9.3%). Results unchanged.
+
 ## 2026-10-29: perf: clean writes a short kept element a byte at a time
 
 - Kind: perf

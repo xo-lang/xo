@@ -4,6 +4,13 @@
 // separator.
 
 use std/path
+use native/rt
+
+/// p[a..b] where both ends are at a `/` or `.` byte or an end of p (every
+/// cut path makes): a view with no UTF-8 boundary check, which a Str slice
+/// makes at each end (2026-11-07: llrt_str_slice_chk 7.5% of the parts
+/// row, as a call).
+fn cut(p: Str, a: Int, b: Int) -> Str { rt.cast[Bytes, Str](p.bytes()[a..b]) }
 
 /// Whether path has no empty, `.` or `..` element and no trailing `/`
 /// (`/` alone counts as clean): clean returns such a path as it is.
@@ -164,7 +171,9 @@ fn clean(p: Str) -> Str {
       }
     }
   }
-  b.freeze().to_str() ?? ""
+  // ranges of p cut at `/` bytes, and `/` and `.`: valid UTF-8, so no
+  // validation (utf8_valid was 9.3% of the parts row)
+  rt.cast[Bytes, Str](b.freeze())
 }
 
 /// clean of a path that keeps more than 8 elements at once: their ranges
@@ -249,7 +258,9 @@ fn clean_list(p: Str) -> Str {
     }
     k += 2
   }
-  b.freeze().to_str() ?? ""
+  // ranges of p cut at `/` bytes, and `/` and `.`: valid UTF-8, so no
+  // validation (utf8_valid was 9.3% of the parts row)
+  rt.cast[Bytes, Str](b.freeze())
 }
 
 /// Go's Join of two elements: the non-empty ones joined by "/", cleaned.
@@ -287,9 +298,9 @@ fn last_slash(p: Str) -> Int {
 fn dir(p: Str) -> Str {
   let i = last_slash(p)
   if i <= 0 {
-    return clean(p[0..i + 1])
+    return clean(cut(p, 0, i + 1))
   }
-  clean(p[0..i])
+  clean(cut(p, 0, i))
 }
 
 /// Go's Base: the last element, trailing slashes dropped; found by index
@@ -313,7 +324,7 @@ fn base(p: Str) -> Str {
   if i < 0 && e == b.len() {
     return p
   }
-  p[i + 1..e]
+  cut(p, i + 1, e)
 }
 
 fn ext(p: Str) -> Str {
@@ -321,7 +332,7 @@ fn ext(p: Str) -> Str {
   var i = b.len() - 1
   while i >= 0 && b[i] != 47 {
     if b[i] == 46 {
-      return p[i..]
+      return cut(p, i, b.len())
     }
     i -= 1
   }
@@ -332,7 +343,7 @@ fn ext(p: Str) -> Str {
 /// the file after it.
 fn split(p: Str) -> (Str, Str) {
   let i = last_slash(p)
-  (p[0..i + 1], p[i + 1..])
+  (cut(p, 0, i + 1), cut(p, i + 1, p.len()))
 }
 
 /// Go's IsAbs: p starts with `/`.
