@@ -1313,7 +1313,7 @@ fn enum_of(r: protojson.Registry, fd: protodesc.FieldDesc) -> protodesc.EnumDesc
 
 fn zz32(n: Int) -> Int { ((n << 1) ^ (n >> 31)) & 0xFFFFFFFF }
 
-fn zz64(n: Int) -> Int { (n << 1) ^ (n >> 63) }
+fn zz64(n: Int) -> Int { n.wrapping_shl(1) ^ (n >> 63) }
 
 /// A scalar field's value; None when it is skipped (an unknown enum name with discard_unknown).
 fn enc_scalar(r: protojson.Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -> Sv? ! protojson.JsonErr {
