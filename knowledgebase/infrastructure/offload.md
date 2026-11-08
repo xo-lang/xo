@@ -84,7 +84,13 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   only when no other lease runs on its lane, and no lease starts beside it
   while it runs, as an exclusive one, but it does not wait for the host's
   no-lane runs (soaks), and the remote side takes one slot lock, not all;
-  `heavyd status` shows it as `memory`. After heavyd starts (a restart, an
+  `heavyd status` shows it as `memory`. Gate aging (lead, 2026-11-08
+  bottleneck review: gates waited 36 to 60+ minutes behind exclusive runs
+  on host 2): once a memory lease (offload-gate.sh's gates) has waited
+  HEAVYD_GATE_AGE_MIN (20; 0 off), no waiting exclusive lease starts on
+  that lane before it, and the exclusive one says why in `heavyd status`;
+  a running exclusive lease is not stopped (heavyd lanes.go GateAge,
+  TestLaneDecide; Last verified: 2026-11-08). After heavyd starts (a restart, an
   install), it grants no lane lease for 15 s (AdoptGrace), so the runs
   still going from before re-adopt their slots first (lead, 2026-11-07: a
   new lease took pass2's slot 1 in the same second an adopted run came
