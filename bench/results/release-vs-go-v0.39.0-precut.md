@@ -539,6 +539,13 @@ pad sweep verdict (reference base): each cell is the median over pads of each pa
 
 ### linux/amd64 micro set (bench/perf/micro13, the linux/amd64 offload host)
 
+Note (2026-11-08): release-vs-go-amd64.sh ran these binaries from /mnt/c,
+where drvfs adds about 6 ms of exec to every run (fib32 13.8 against 7.9 ms
+from ext4), more for Go's larger binary, so the short rows' ratios against Go
+read too favorable to Xo and small changes against the release before are
+hidden. gotchas/wsl-drvfs-exec-cost.md; fixed in f26b951fb. The "micro13 on
+four platforms" section above ran from ext4 and is not affected.
+
 - base: xo 0.38.1 darwin/arm64; new: xo 0.38.1 darwin/arm64; Go go1.26.1; all built for linux/amd64 (xo with --release, as the owner's tests/13-perf)
 - each block is xo bench --ab, A = base or go, B = new; ratio is new over A; a row more than 3% slower than base is FLAGGED
 

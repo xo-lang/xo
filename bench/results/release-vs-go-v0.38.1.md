@@ -508,6 +508,12 @@ pad sweep verdict (reference base): each cell is the median over pads of each pa
 
 ## linux/amd64 micro set (added 2026-11-04)
 
+Note (2026-11-08): release-vs-go-amd64.sh ran these binaries from /mnt/c,
+where drvfs adds about 6 ms of exec to every run (fib32 13.8 against 7.9 ms
+from ext4), more for Go's larger binary, so the short rows' ratios against Go
+read too favorable to Xo and small changes against the release before are
+hidden. gotchas/wsl-drvfs-exec-cost.md; fixed in f26b951fb.
+
 The section this report did not have (Lead, 2026-11-04: Xo Lang 1 found
 json10kx20 1.78 times slower on linux/amd64 than in 0.35.0, unseen here):
 scripts/release-vs-go.sh SECTIONS=amd64 with the released darwin/arm64 xo of

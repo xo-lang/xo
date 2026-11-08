@@ -20,6 +20,13 @@ rerun's HTTP and amd64 sections.
 - HTTP, xo 0.40.0 against 0.39.0: every row is "placement" in the pad
   sweep, with req/s medians from 0.996 to 1.000 and CPU per request from
   0.995 to 1.001. Against Go: /alloc c32 5.98x req/s, /hello c256 1.81x.
+
+Note (2026-11-08): release-vs-go-amd64.sh ran these binaries from /mnt/c,
+where drvfs adds about 6 ms of exec to every run (fib32 13.8 against 7.9 ms
+from ext4), more for Go's larger binary, so the short rows' ratios against Go
+read too favorable to Xo and small changes against the release before are
+hidden. gotchas/wsl-drvfs-exec-cost.md; fixed in f26b951fb.
+
 - amd64 micro set: no row is flagged (none is more than 3% slower than
   0.39.0). One memory note: json10kx20's max RSS is 1.047x 0.39.0's
   (43,096 to 45,100 KB) at the same wall time.

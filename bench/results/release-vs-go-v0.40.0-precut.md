@@ -44,6 +44,12 @@ req/s on every row, "placement" by the pad sweep (no row slower or faster);
 against Go, /hello 1.284 (c32) and 1.798 (c256) of its req/s, /alloc 5.983
 (c32) and 3.130 (c256).
 
+Note (2026-11-08): release-vs-go-amd64.sh ran these binaries from /mnt/c,
+where drvfs adds about 6 ms of exec to every run (fib32 13.8 against 7.9 ms
+from ext4), more for Go's larger binary, so the short rows' ratios against Go
+read too favorable to Xo and small changes against the release before are
+hidden. gotchas/wsl-drvfs-exec-cost.md; fixed in f26b951fb.
+
 linux/amd64 micro13 (`xo bench --ab`, 5 rounds, nothing FLAGGED): main
 against 0.39.0 is better on map1M 0.904, sort1M 0.645, sort1M_copy 0.912
 and spawn100k 0.937, within noise on fib32 1.024, strbuild1M 1.006 and
