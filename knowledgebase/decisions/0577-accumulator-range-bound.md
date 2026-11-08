@@ -189,7 +189,11 @@ So on Coffee Lake the loop without the never-taken `jo` is slower per
 iteration (about 6% on long buffers) and much slower around the loop
 exit (27% at 63 bytes); a 5 uop body with a nop in its place is no
 better, so the not-taken branch itself matters there (an open question:
-the branch predictor or the front end). The pass stays off by default
+the branch predictor or the front end). Later the same day: it is
+placement. The pass-off layout with `jo` turned into a 6 byte nop ran
+388.7 ms and with `jb` (fused with the add, 4 uops) 316.0 ms, against
+403.5 off and 507.9 on (medians); aligning the loop head to 32 bytes
+(decision 0579's experiment) ran the pass-on loop in 328.5 ms. The pass stays off by default
 (`XO_PASSES=+acc_range` turns it on) until a loop where it measures
 faster; stage 2 (adler32's s2) waits on that too.
 
