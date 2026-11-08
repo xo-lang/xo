@@ -1,6 +1,6 @@
 # 0570: std/htmlparse: the HTML5 tree builder (port of golang.org/x/net/html's Parse)
 
-Status: Proposed (Xo Lang 3, 2026-11-08; needed by the Polar Bear Blog port's html2text, a std module is the owner's decision)
+Status: Accepted (owner, 2026-11-08, option 1 of the lead's question; Xo Lang 3; needed by the Polar Bear Blog port's html2text)
 
 ## Context
 
