@@ -108,6 +108,34 @@ fn (c: ModCtx) fill_files(b: Bucket, dir: Str, mod_path: Str, version: Str) -> (
 /// Writes path's @v/list: the versions in the cache and the repository's
 /// tags; the number written.
 fn (var c: ModCtx) fill_list(b: Bucket, root: Str, mod_path: Str) -> Int ! Str uses (fs, net, proc, rand, clock) {
+  let (body, n) = c.list_body(root, mod_path)?
+  c.s3_put(b, "${escape(mod_path)}/@v/list", body.bytes(), "text/plain; charset=utf-8", LIST_CACHE)?
+  Ok(n)
+}
+
+/// Writes path's @v/list as fill_list does when it differs from the last
+/// one written (lists: module path to that body), so a refresh of an
+/// unchanged module costs a git ls-remote and no bucket write; true when
+/// it wrote.
+fn (var c: ModCtx) refresh_list(b: Bucket, root: Str, mod_path: Str, lists: Mutex[Map[Str, Str]]) -> Bool ! Str uses (fs, net, proc, rand, clock) {
+  let cc = c
+  // held over the write, so two refreshes of one module cannot write an
+  // older list after a newer one
+  lists.with(fn(var m) -> Bool ! Str {
+    var lc = cc
+    let (body, _) = lc.list_body(root, mod_path)?
+    if m.get(mod_path) == Some(body) {
+      return Ok(false)
+    }
+    lc.s3_put(b, "${escape(mod_path)}/@v/list", body.bytes(), "text/plain; charset=utf-8", LIST_CACHE)?
+    m[mod_path] = body
+    Ok(true)
+  })
+}
+
+/// The @v/list body of path (the versions in the cache and the
+/// repository's tags, sorted, one per line) and the number of versions.
+fn (var c: ModCtx) list_body(root: Str, mod_path: Str) -> (Str, Int) ! Str uses (fs, proc, rand) {
   var vs = c.cache_versions(root, mod_path)
   match c.git_versions(root, mod_path) {
     Ok(more) => vs = vs + more
@@ -128,8 +156,7 @@ fn (var c: ModCtx) fill_list(b: Bucket, root: Str, mod_path: Str) -> Int ! Str u
   if !body.is_empty() {
     body += "\n"
   }
-  c.s3_put(b, "${escape(mod_path)}/@v/list", body.bytes(), "text/plain; charset=utf-8", LIST_CACHE)?
-  Ok(out.len())
+  Ok((body, out.len()))
 }
 
 // ---------------------------------------------------------------------------

@@ -320,3 +320,83 @@ func TestChecksumLogOps(t *testing.T) {
 		t.Errorf("the restored log's head:\n%s\nwant\n%s", again, head)
 	}
 }
+
+// TestChecksumLogRefresh: a new tag reaches the proxy bucket's @v/list
+// without a lookup of it (decision 0568): `GET /refresh/<path>` rewrites
+// the list of a module the log holds at once, and only when it changed;
+// --refresh rewrites every module's list on its interval. A stale list
+// would answer @latest with an older version, since a client falls back
+// to git only on a 404.
+func TestChecksumLogRefresh(t *testing.T) {
+	xotool.NeedPorts(t)
+	t.Parallel()
+	env := modSetup(t, "../../internal/mod/testdata/repos")
+	ws := t.TempDir()
+	app := filepath.Join(ws, "app")
+	modtest.WriteFiles(t, app, map[string]string{
+		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\n",
+		"main/main.xo": appMain,
+	})
+	key := filepath.Join(ws, "log.key")
+	verifier := strings.TrimSpace(xo(t, "mod", "sumdb", "keygen", "sum.test", key).want(0).out)
+	s3 := &fakeS3{keyID: "test-key", secret: "test-secret", region: "auto", objects: map[string]fakeObject{}}
+	srv := httptest.NewServer(s3)
+	defer srv.Close()
+	fill := "--fill-to=" + srv.URL + "/modules"
+	setenv(t, "XO_FILL_ACCESS_KEY_ID", s3.keyID)
+	setenv(t, "XO_FILL_SECRET_ACCESS_KEY", s3.secret)
+	logData := t.TempDir()
+	t.Cleanup(func() { modtest.MakeWritable(logData) })
+	xo(t, "mod", "sumdb", "serve", "--key="+key, "--refresh=1s", logData).want(2)
+	xo(t, "mod", "sumdb", "serve", "--key="+key, fill, "--refresh=10ms", logData).want(2)
+	logURL, stopLog := startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", fill, logData)
+	setenv(t, "XO_SUMDB", verifier+" "+logURL)
+	emptyCache(t)
+	xo(t, "mod", "tidy", "--dir", app).want(0) // the log adds billing and money
+	list := "/modules/github.com/acme/money/@v/list"
+	waitList := func(want string) {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			if o, ok := s3.object(list); ok && strings.Contains(string(o.body), want) {
+				return
+			}
+			if time.Now().After(deadline) {
+				o, _ := s3.object(list)
+				t.Fatalf("money's list never held %s: %q", want, o.body)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	waitList("v1.3.0\n")
+	tag := func(version string) {
+		dir := t.TempDir()
+		modtest.WriteFiles(t, dir, map[string]string{"xo.mod": "module github.com/acme/money\nedition preview\n", "money.xo": "pub fn cents(n: Int) -> Int { n * 100 }\n"})
+		env.Commit(t, "github.com/acme/money", version, dir, false)
+	}
+
+	// /refresh: at once, and no write when nothing changed
+	tag("v1.4.0")
+	if code, cache, body := get(t, logURL+"/refresh/github.com/acme/money", nil); code != 200 || body != "refreshed\n" || cache != "no-store" {
+		t.Errorf("/refresh after a new tag: %d %q, Cache-Control %q", code, body, cache)
+	}
+	if o, _ := s3.object(list); !strings.HasSuffix(string(o.body), "v1.3.0\nv1.4.0\n") || o.caching != "public, max-age=60" {
+		t.Errorf("money's list after /refresh: %q, Cache-Control %q", o.body, o.caching)
+	}
+	n := s3.puts
+	if code, _, body := get(t, logURL+"/refresh/github.com/acme/money", nil); code != 200 || body != "unchanged\n" || s3.puts != n {
+		t.Errorf("/refresh with no new tag: %d %q, %d puts", code, body, s3.puts-n)
+	}
+	if code, _, _ := get(t, logURL+"/refresh/github.com/acme/unknown", nil); code != 404 {
+		t.Errorf("/refresh of a module the log does not hold: %d", code)
+	}
+
+	// --refresh: every module's list on the interval, with no request
+	stopLog()
+	logURL, _ = startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", fill, "--refresh=1s", logData)
+	tag("v1.5.0")
+	waitList("v1.4.0\nv1.5.0\n")
+	if code, _, _ := get(t, logURL+"/latest", nil); code != 200 {
+		t.Errorf("/latest beside the refresh: %d", code)
+	}
+}

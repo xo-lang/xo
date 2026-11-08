@@ -51,6 +51,11 @@ struct LogConf {
   rate: Int = 0
   /// the proxy bucket each version the log adds is written to
   fill: Bucket? = None
+  /// how often every module's @v/list in the fill bucket is refreshed
+  /// from its repository's tags (--refresh); None for never
+  refresh: Duration? = None
+  /// the @v/list body last written per module path (refresh_list)
+  lists: Mutex[Map[Str, Str]]
 }
 
 /// The 32 bit value id as 4 big endian bytes.
@@ -294,7 +299,7 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
     c.os.stdio.eprintln("xo mod sumdb: want `keygen <name> <key file>`, `serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] [--copy-to=<bucket URL>] [--rate=60] <data dir>`, or `restore --from=<bucket URL> <data dir>`")
     return 2
   }
-  var fl = FlagSet{name: "mod sumdb serve", defs: [flag_str("key", "", "the file holding the log's signer key (from xo mod sumdb keygen)"), flag_str("addr", "127.0.0.1:7071", "the address to listen on"), flag_bool("fetch", "add a module version the log lacks by fetching it from git"), flag_str("copy-to", "", "a bucket (https://<endpoint>/<bucket>) every new record is copied to before it is added"), flag_str("region", "auto", "the region bucket requests are signed for"), flag_str("rate", "60", "lookups that add a version, per client and minute (0: no limit)"), flag_str("fill-to", "", "a proxy bucket (https://<endpoint>/<bucket>) each version the log adds is written to, as xo mod proxy fill does")]}
+  var fl = FlagSet{name: "mod sumdb serve", defs: [flag_str("key", "", "the file holding the log's signer key (from xo mod sumdb keygen)"), flag_str("addr", "127.0.0.1:7071", "the address to listen on"), flag_bool("fetch", "add a module version the log lacks by fetching it from git"), flag_str("copy-to", "", "a bucket (https://<endpoint>/<bucket>) every new record is copied to before it is added"), flag_str("region", "auto", "the region bucket requests are signed for"), flag_str("rate", "60", "lookups that add a version, per client and minute (0: no limit)"), flag_str("fill-to", "", "a proxy bucket (https://<endpoint>/<bucket>) each version the log adds is written to, as xo mod proxy fill does"), flag_str("refresh", "", "how often (a duration: 30m) every module's @v/list in the --fill-to bucket is rewritten from its repository's tags; never when empty")]}
   if !c.parse_flags(fl, args[1..]) {
     return 2
   }
@@ -341,6 +346,20 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
       }
     }
   }
+  var refresh: Duration? = None
+  if !fl.str("refresh").is_empty() {
+    match Duration.parse(fl.str("refresh")) {
+      Ok(d) if d.millis() >= 1000 => refresh = Some(d)
+      _ => {
+        c.os.stdio.eprintln("xo mod sumdb serve: --refresh=${fl.str("refresh")} is not a duration of 1s or more")
+        return 2
+      }
+    }
+    if fill is None {
+      c.os.stdio.eprintln("xo mod sumdb serve: --refresh needs --fill-to (the bucket whose lists it refreshes)")
+      return 2
+    }
+  }
   let data = c.abs(fl.args[0])
   match c.os.fs.create_dir_all(data) {
     Ok(_) => {}
@@ -369,8 +388,28 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
   c.out("checksum log ${signer.name} (${st.records.len()} records in ${data}, ${mode}) at http://${l.addr()}\nclients: XO_SUMDB='${verifier} http://${l.addr()}'\n")
   let state = Mutex.new(st)
   let limits: Mutex[Map[Str, (Int, Int)]] = Mutex.new({})
-  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill}
+  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill, refresh: refresh, lists: Mutex.new({})}
   let cc = c
+  if let Some(d) = refresh {
+    if let Some(fb) = fill {
+      // a new tag reaches @v/list within d, whether or not anyone looked
+      // the version up (a stale list would answer @latest with an older
+      // version, and a client falls back to git only on a 404)
+      c.os.tasks.spawn_background(fn() {
+        var rc = cc
+        while true {
+          rc.os.clock.sleep(d)
+          let paths = state.with_read(fn(st) { log_paths(st) })
+          for p in paths {
+            match rc.refresh_list(fb, "${data}/cache", p, conf.lists) {
+              Ok(_) => {}
+              Err(e) => rc.os.stdio.eprintln("xo mod sumdb serve: refresh ${p} list: ${e}")
+            }
+          }
+        }
+      })
+    }
+  }
   var r = http.router()
   r.handle("/{rest...}", fn(req) { cc.sumdb_answer(req, state, limits, conf) })
   match http.server(l, r).serve() {
@@ -473,6 +512,16 @@ fn allow(limits: Mutex[Map[Str, (Int, Int)]], client: Str, minute: Int, rate: In
   })
 }
 
+/// The module paths the log holds a version of, sorted.
+fn log_paths(st: LogState) -> List[Str] {
+  var set: Map[Str, Bool] = {}
+  for k in st.index.keys() {
+    let (p, _, _) = cut(k, "@")
+    set[p] = true
+  }
+  set.keys().sort()
+}
+
 /// The index feed (index.golang.org's form): the records added at or
 /// after since, in log order, at most limit, as JSON lines.
 fn index_lines(st: LogState, since: Int, limit: Int) -> Str {
@@ -520,6 +569,28 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
     }
     let body = state.with_read(fn(st) { index_lines(st, since, limit) })
     return http.text(200, body).with_header("Content-Type", "application/json").with_header("Cache-Control", "public, max-age=60")
+  }
+  if p.starts_with("/refresh/") {
+    // GET /refresh/<path>: rewrite the module's @v/list from its tags now
+    // (a new release need not wait for --refresh); only for a module the
+    // log holds, and counted against the client's rate as a lookup that
+    // adds a version is, since each one runs git ls-remote
+    let path = unescape_path(p.trim_prefix("/refresh/")) ?? ""
+    let fb = match conf.fill {
+      Some(b) => b
+      None => return http_error("this log fills no proxy bucket", 404)
+    }
+    if !check.valid_path(path) || !state.with_read(fn(st) { log_paths(st).contains(path) }) {
+      return http_error("the log holds no version of ${path.quote()}", 404)
+    }
+    let client = client_of(req)
+    if conf.rate > 0 && !allow(limits, client, cc.os.clock.now().unix() / 60, conf.rate) {
+      return http_error("${client} made ${conf.rate} requests that reach git this minute; try again in a minute", 429).with_header("Retry-After", "60")
+    }
+    return match cc.refresh_list(fb, "${conf.data}/cache", path, conf.lists) {
+      Ok(wrote) => plain(if wrote { "refreshed\n" } else { "unchanged\n" }).with_header("Cache-Control", NO_STORE)
+      Err(e) => http_error("${path} list: ${e}", 502)
+    }
   }
   if p.starts_with("/lookup/") {
     let (esc_path, esc_version, ok) = cut(p.trim_prefix("/lookup/"), "@")
@@ -578,7 +649,7 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
                 Ok(_) => {}
                 Err(e) => fc.os.stdio.eprintln("xo mod sumdb serve: fill ${path} ${version}: ${e}")
               }
-              match fc.fill_list(fb, root, path) {
+              match fc.refresh_list(fb, root, path, conf.lists) {
                 Ok(_) => {}
                 Err(e) => fc.os.stdio.eprintln("xo mod sumdb serve: fill ${path} list: ${e}")
               }

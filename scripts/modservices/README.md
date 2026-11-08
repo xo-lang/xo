@@ -12,8 +12,12 @@ owner runs every step below by hand.
   `/etc/cloudflared/config.yml` (kept when one exists). It starts
   nothing and makes no key.
 - `xo-sumdb.service`: `xo mod sumdb serve` on 127.0.0.1:7071 with
-  `--fetch`, `--rate=60`, `--copy-to` (the log bucket) and `--fill-to`
-  (the proxy bucket), confined to `/srv/xomod` (3 GB, one CPU).
+  `--fetch`, `--rate=60`, `--copy-to` (the log bucket), `--fill-to`
+  (the proxy bucket) and `--refresh=30m` (every module's `@v/list`
+  rewritten from its tags, written only when it changed), confined to
+  `/srv/xomod` (3 GB, one CPU). `https://sum.xolang.org/refresh/<module
+  path>` rewrites one module's list at once, for a release that should
+  not wait the 30 minutes.
 - `cloudflared-config.yml`: the tunnel's ingress: sum.xolang.org to the
   log, index.xolang.org's `/index` to the same port, anything else 404.
 

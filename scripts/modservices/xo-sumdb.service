@@ -16,7 +16,7 @@ Group=xomod
 # XO_PROXY_BUCKET and XO_LOG_BUCKET (bucket names); mode 0600, owner xomod
 EnvironmentFile=/srv/xomod/xomod.env
 Environment=HOME=/srv/xomod XO_MODCACHE=/srv/xomod/modcache XO_PROXY=direct XO_SUMDB=off
-ExecStart=/srv/xomod/xo/bin/xo mod sumdb serve --key=/srv/xomod/log.key --addr=127.0.0.1:7071 --fetch --rate=60 --copy-to=${XO_R2_ENDPOINT}/${XO_LOG_BUCKET} --fill-to=${XO_R2_ENDPOINT}/${XO_PROXY_BUCKET} /srv/xomod/log
+ExecStart=/srv/xomod/xo/bin/xo mod sumdb serve --key=/srv/xomod/log.key --addr=127.0.0.1:7071 --fetch --rate=60 --copy-to=${XO_R2_ENDPOINT}/${XO_LOG_BUCKET} --fill-to=${XO_R2_ENDPOINT}/${XO_PROXY_BUCKET} --refresh=30m /srv/xomod/log
 Restart=on-failure
 RestartSec=5s
 # beside the host's existing work: git fetches and zips are the large part

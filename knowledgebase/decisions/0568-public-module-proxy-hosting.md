@@ -199,12 +199,23 @@ host.
   4. uploads `.mod`, `.lock` and `.zip` to R2, in that order;
   5. refreshes `@v/list` from `git ls-remote`.
 
-  It is driven two ways:
+  It is driven three ways:
   - by the log: every lookup of a version the log adds queues a fill,
     so the first `direct` fetch anywhere fills the proxy for the next
     user;
-  - by a small queue endpoint on the tunnel, for `@v/list` refreshes
-    and the index.
+  - by the log's `--refresh=30m` (2026-11-08): every module the log
+    holds has its `@v/list` rewritten from its repository's tags on
+    that interval, and written only when it changed. Without it a tag
+    nobody looked up never reached the list, and a proxy client's
+    `@latest` stayed on the older version, since a client falls back
+    to git only on a 404. The cost is one git fetch of tags per module
+    per interval (48 a day each; at the launch size about 33 a minute,
+    inside the unit's one core) and an R2 write only per new tag;
+  - by `GET sum.xolang.org/refresh/<module path>` (2026-11-08): the
+    same rewrite for one module at once, through the tunnel, for a
+    module the log holds (404 otherwise), counted in the client's
+    `--rate` since each one runs git. It is also what a phase 3 Worker
+    would call.
 - The log: `xo mod sumdb serve --fetch /srv/xomod/log`, whose records
   file is appended and synced before a tree head holding it is signed
   (0124's addendum).
@@ -223,7 +234,8 @@ host.
   - the log's lookups that start a git fetch: 60 a minute per client
     address (the CF-Connecting-IP header), in the log server, not yet
     built;
-  - a Cloudflare rate limiting rule on `sum.xolang.org/lookup/`;
+  - a Cloudflare rate limiting rule on `sum.xolang.org/lookup/` and
+    `/refresh/`;
   - git fetches: a timeout, and the existing 500 MB cap per module
     version.
 
@@ -285,7 +297,8 @@ host.
 1. Build (no cloud). Progress: `xo mod proxy fill` (2026-11-08), and
    the log's record copies, restore, times, index feed, rate limit and
    cache headers, and the log writing each version it adds to the proxy
-   bucket (`--fill-to`), all 2026-11-08; and `scripts/modservices/`
+   bucket (`--fill-to`), all 2026-11-08; the list refresh (`--refresh`
+   and `/refresh/<path>`, cmd/xo TestChecksumLogRefresh), 2026-11-08; and `scripts/modservices/`
    (the `xo-sumdb` unit, cloudflared's ingress, `install.sh` and the
    owner's steps in its README), 2026-11-08. Phase 1 is complete. The
    owner's OCI host runs Oracle Linux 9 with SELinux enforcing:
