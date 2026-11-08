@@ -1123,16 +1123,28 @@ fn tokenizer_text(var z: htmltok.Tokenizer) -> Str {
 
 fn tokenizer_token(var w: htmltok.Tokenizer) -> htmltok.Token {
   let tt = w.tt
-  if tt == htmltok.TokenType.Text || tt == htmltok.TokenType.Comment || tt == htmltok.TokenType.Doctype {
+  // one match, not a chain of enum equality calls
+  var kind = 0
+  var is_end = false
+  match tt {
+    htmltok.TokenType.Text | htmltok.TokenType.Comment | htmltok.TokenType.Doctype => kind = 1
+    htmltok.TokenType.StartTag | htmltok.TokenType.SelfClosingTag => kind = 2
+    htmltok.TokenType.EndTag => {
+      kind = 2
+      is_end = true
+    }
+    htmltok.TokenType.Error => {}
+  }
+  if kind == 1 {
     return htmltok.Token{typ: tt, data: tokenizer_text(w), attrs: []}
   }
-  if tt == htmltok.TokenType.StartTag || tt == htmltok.TokenType.SelfClosingTag || tt == htmltok.TokenType.EndTag {
+  if kind == 2 {
     var name = ""
     if w.ds < w.de {
       name = lowered(w.src[w.ds..w.de])
     }
     var attrs: List[htmltok.Attribute] = []
-    if tt != htmltok.TokenType.EndTag {
+    if !is_end {
       var i = 0
       while i + 3 < w.attr.len() {
         let key = lowered(w.src[w.attr[i]..w.attr[i + 1]])
