@@ -21,26 +21,26 @@ fn (var c: Checker) check_name(id: Ident, kind: Str) {
   if name.is_empty() || name == b"_" || c.cur_mod < 0 || c.mods[c.cur_mod].is_std {
     return
   }
-  var ok = false
+  let camel = kind is "type" | "variant" | "interface" | "type parameter"
+  let ok = if camel { is_upper_camel(name) } else if kind == "constant" { is_upper_snake(name) } else { is_snake(name) }
+  if ok {
+    return
+  }
+  // the fix's spelling only for a name that breaks the convention (each
+  // name's to_snake was most of declare's check_name, 2026-11-07 profile)
   var want = ""
   var conv = "snake_case"
-  if kind is "type" | "variant" | "interface" | "type parameter" {
-    ok = is_upper_camel(name)
+  if camel {
     want = to_upper_camel(name)
     conv = "UpperCamel"
   } else if kind == "constant" {
-    ok = is_upper_snake(name)
     want = to_snake(name).to_upper()
     conv = "UPPER_SNAKE"
   } else {
-    ok = is_snake(name)
     want = to_snake(name)
     if name[0] == '_' {
       want = "_${want}"
     }
-  }
-  if ok {
-    return
   }
   let n = text(name)
   let d = c.error("XO0101", id.span, "${kind} name `${n}` must be ${conv}")

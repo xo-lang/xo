@@ -154,7 +154,11 @@ fn (var c: Checker) check_module(m: Int) {
         }
         TestDecl(d: td) => c.check_test(td)
         ConstDecl(d: cd) => {
-          if c.is_scope_entry(f, i, cd.name.name) {
+          // a lazy std module's constant is typed at its first use
+          // (const_type), as its functions are checked when called
+          // (typing every one was most of check_module in a warm build,
+          // 2026-11-07 profile)
+          if !(lazy && c.mods[m].native) && c.is_scope_entry(f, i, cd.name.name) {
             c.const_type(c.files[f].decl_objs[i])
           }
         }

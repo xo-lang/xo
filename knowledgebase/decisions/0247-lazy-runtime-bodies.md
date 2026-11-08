@@ -86,3 +86,11 @@ The checker's share of a build is large. Profiles
 - **Snapshot a checked std** (decision 0242's alternative): restore a
   checker with std already checked. Far more machinery (serializing the
   checker) for the same saving.
+
+## Addendum (2026-11-07, Xo Lang 4): constants too
+
+A lazy std module's constants are typed at their first use (check const_type), as its function
+bodies are checked when called, not every one in check_module: typing them was 84% of
+check_module in a warm http_server_request build (s1ab on linux/arm64: wall 0.968, CPU 0.972).
+An unused std constant with a bad initializer is no longer reported by a build; TestStdChecks
+checks std with XO_CHECK_EAGER=1 and still types every constant.
