@@ -333,6 +333,9 @@ struct G {
   /// the registers of each SSA value
   vals: List[List[Int]] = []
   has_val: List[Bool] = []
+  /// Field reads that are views (decision 0564 step 4, Module.field_view):
+  /// value to (the value whose words hold it, the first word's offset)
+  fview: Map[Int, (Int, Int)] = {}
   /// the machine block of each SSA block
   bmap: List[Int] = []
   nuses: List[Int] = []
@@ -566,6 +569,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.cur = -1
   g.vals = []
   g.has_val = []
+  g.fview = {}
   g.nuses = []
   g.escapes = []
   g.users = []

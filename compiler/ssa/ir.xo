@@ -503,6 +503,10 @@ pub struct Module {
   /// instead of reading a stale word (2026-10-18: a frame home left
   /// unwritten on one loop entry read old return addresses).
   pub poison_frames: Bool = false
+  /// XO_FIELD_VIEW=1 (decision 0564 step 4, native): a field read of a
+  /// wide value held in registers is a view of its words, copied only
+  /// where a use needs the field's words
+  pub field_view: Bool = false
   /// The build guards the runtime's records (XO_HEAP_GUARD=1, Builder
   /// heap_guard): in the fn and part cache keys.
   pub heap_guard: Bool = false

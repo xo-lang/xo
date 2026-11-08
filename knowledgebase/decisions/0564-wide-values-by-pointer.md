@@ -198,6 +198,43 @@ and others of 4,688 to 8,600 bytes), copied by memcpy since ed685dd2f.
 The clang time of xo's LLVM build with the flags is the figure step 4
 still owes.
 
+## Native field views (2026-11-08, behind XO_FIELD_VIEW=1, default off)
+
+A fresh profile at main (fbc2c5c19, a stage 2 xo, linux/arm64 host 1,
+the aiplatform/v1 test build: wall 1:07, emit 44.5 s) put 127.4 GB of
+the build's 497 GB allocated, and 49 s (13.3%) of its CPU, in one
+slice: compiler/arm64 isel.xo field_op's `ws[off..off + n]`, which
+copies a field's words out of its aggregate's word list (99.7% of
+xo.slice[List[Int]]). That is point 4's native half for values in
+registers.
+
+`XO_FIELD_VIEW=1` keeps a field of 8 words or more (FIELD_VIEW_MIN)
+that is not a bound value as a view, (root value, word offset) in
+G.fview, and slices the root's words only where a use needs them
+(words()); a view whose root is in registers keeps that slice for its
+next use. The flag is keyed in the function and part caches (` fview=1`)
+and classified in TestCodegenInputsClassified.
+
+Measured on host 1 (stage 2 xo of 3642d3ad7, before the slice is kept
+for later uses; one run each):
+
+| aiplatform/v1 test build | off | XO_FIELD_VIEW=1 |
+|---|---|---|
+| xo.slice[List[Int]] allocated | 126.2 GB (25.8%) | 0.5 GB (0.14%) |
+| its CPU | 51.7 s (13.9%) | 0.1 s |
+| CPU samples, whole build | 37,355 | 26,962 |
+| emit phase | 45.0 s | 35.7 s |
+| heap at emit (peak) | 6,748 MB (6,874) | 4,668 MB (4,794) |
+| max RSS | 6.94 GB | 6.26 GB |
+| wall | 1:08.0 | 0:58.2 |
+
+Output: scripts/identity of the xo at f3aa48965 against itself with the
+flag on (host 2, linux/arm64, every second golden and compiler/xo): 322
+programs, 0 differ. Codegen patterns pass with the flag off and on. The
+self build `--ab` (stage2 self, the flag forced on in a throwaway
+commit) was 1.002 wall but on a loaded host (4 of 5 rounds), so it is
+rerun unloaded before the default changes.
+
 ## Alternatives
 
 - **Keep fixing case by case** (today). It works, but each new helper

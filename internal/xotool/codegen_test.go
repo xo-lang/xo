@@ -33,6 +33,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_ARM64_FN_ALIGN":       {"keyed", "fnalign=${m.arm64_fn_align}"},
 	"XO_THREAD_SWITCH":        {"bypass", "passes_changed(os)"}, // decision 0397's per function filter, for bisecting
 	"XO_POISON_FRAMES":        {"keyed", "poison=${m.poison_frames}"},
+	"XO_FIELD_VIEW":           {"keyed", "fview=1"},
 	"XO_HEAP_GUARD":           {"keyed", "guard=${m.heap_guard}"},
 	"XO_CLIB":                 {"none", ""}, // decision 0574 stage 1's switch for --lib: a build without it fails before code generation
 	"XO_NOLIBC":               {"keyed", "nolibc=${m.nolibc}"},
@@ -181,6 +182,7 @@ var codegenFields = map[string]inputClass{
 	"thread_switch_names": {"bypass", "passes_changed(os)"},
 	"jobs":                {"none", ""},                    // the tasks of may_fault's scan; its result does not depend on them
 	"op_verify":           {"none", ""},                    // XO_OP_VERIFY: checks, never changes, the emitter's output
+	"field_view":          {"keyed", "${if m.field_view"},  // " fview=1" in the fn and part keys (XO_FIELD_VIEW, decision 0564)
 	"weak_shared":         {"keyed", "${if m.weak_shared"}, // " weak=1" in the fn and part keys (decision 0388 stage 4)
 	"std_obj":             {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_STD_OBJ), whose " weak=1" keys the parts it leaves the program's functions out of
 	"sepcomp_program":     {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_SEPCOMP): changes the entry file, which no cache holds, and the parts as weak_shared and std_store key them

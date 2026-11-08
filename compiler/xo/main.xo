@@ -3329,6 +3329,7 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
     }
   }
   gm.poison_frames = (os.env.get("XO_POISON_FRAMES") ?? "") == "1"
+  gm.field_view = (os.env.get("XO_FIELD_VIEW") ?? "") == "1"
   // DWARF line tables (decision 0239): on, except for `xo asm`, -s, and
   // a release build without --debug-info
   gm.debug_info = o.cmd != "asm" && !o.strip && debug_info_eff(o, release) != "off"

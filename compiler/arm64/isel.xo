@@ -534,6 +534,20 @@ fn (var g: G) words(v: Int) -> List[Int] {
   if g.has_val[v] {
     return g.vals[v]
   }
+  if !g.fview.is_empty() {
+    if let Some((r, o)) = g.fview.get(v) {
+      // a field view (field_op): the field's words of its root, copied
+      // here, at a use that needs them; kept for the next use when the
+      // root is in registers (a slice that emits nothing), not when its
+      // words are loaded, whose registers hold only where they are
+      if g.has_val[r] {
+        let ws = g.vals[r][o..o + g.nwords(ssa.ty_of(x.tb))]
+        g.set(v, ws)
+        return ws
+      }
+      return g.words(r)[o..o + g.nwords(ssa.ty_of(x.tb))]
+    }
+  }
   if ssa.ty_of(x.tb) < 0 || g.nwords(ssa.ty_of(x.tb)) == 0 {
     return []
   }
@@ -3909,9 +3923,29 @@ fn (var g: G) field_op(v: Int) {
   if g.lazy_res.contains((u, fi)) {
     g.fail("v${v} in ${g.f.name}: a result left in memory read out of place")
   }
+  if g.m.field_view && n >= FIELD_VIEW_MIN && !g.dbound().contains(v) {
+    // a field of a value in registers: a view of its words (decision 0564
+    // step 4), so a chain of field reads copies only the last field's
+    // words, where a use needs them; aiplatform/v1's tests read a 6,579
+    // word field of a 12,040 word struct 20,269 times, a List copy each
+    let (r, o) = g.fview.get(u) ?? (u, 0)
+    g.fview[v] = (r, o + off)
+    return
+  }
+  if !g.fview.is_empty() {
+    if let Some((r, o)) = g.fview.get(u) {
+      // a small field of a view: from its root's words, not the view's
+      g.set(v, g.words(r)[o + off..o + off + n])
+      return
+    }
+  }
   let ws = g.words(u)
   g.set(v, ws[off..off + n])
 }
+
+/// The smallest field (in words) a field read keeps as a view
+/// (Module.field_view).
+const FIELD_VIEW_MIN = 8
 
 /// The words of field read v (layout lay, at word w0 of the memory at
 /// base) loaded for its uses: only the words its uses read when each is
