@@ -152,3 +152,12 @@ runners take want_<goos>_<goarch>.txt before want_<goos>.txt and
 want.txt (internal/llvm wantFileFor). Propagating payloads in software
 (a class test and a select per operation) was rejected: it would tax
 every float operation for a property spec/core.md does not promise.
+Conversions are different: the prelude promises that
+`Float32.from_bits` and `to_bits` keep a NaN's payload, and they pass
+through `Float32(Float)`, whose fcvt pair also returns the canonical NaN
+on RISC-V (golden num_wrapping: 0x7FC00001 came back 0x7FC00000). So on
+riscv64 the LLVM backend converts a NaN in integers wherever a Float32
+narrows or widens (`rt.f32_round`, and a packed `List[Float32]`'s
+stores and loads, decision 0369), as arm64's and x86_64's conversions
+give it: quiet, with the payload's top bits; other values take fcvt
+(compiler/llvm func.xo f32_narrow, f32_widen).

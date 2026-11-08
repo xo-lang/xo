@@ -99,6 +99,22 @@ What a new architecture touches today (main feb9f7323):
    owner wants xo itself to run there (xo built by LLVM for riscv64).
 4. **Later: a native backend**, in its own ADR (Decision 2).
 
+## Progress
+
+- 2026-11-08, stage 1 and stage 2's frame step land together:
+  hello world runs under qemu-user on host 2 (a 1.3 MB static ELF);
+  the toolchain is scripts/riscv64-toolchain.sh (offload.md). Of the
+  523 LLVM goldens that need no network, all of the first 350 pass under
+  qemu (each batch at the branch's commit of its day). On the way: the
+  22 caught-fault goldens pass with the riscv64 unwinder (unwind.xo's
+  register offsets, sched.xo's save and resume); four fs goldens needed
+  renameat2 (gotchas/riscv64-syscall-table-not-arm64.md); f32_bits keeps
+  riscv64's canonical NaNs from arithmetic in want_linux_riscv64.txt,
+  while conversions keep a NaN's payload in integers (num_wrapping, and
+  the new f32_nan_list; decision 0361's addendum). The build fixes are
+  in gotchas/riscv64-llvm-default-rv64i.md. The rest run in batches of
+  about 90 on host 2.
+
 ## Consequences
 
 - One more target to keep green, on a backend that is not the default:
