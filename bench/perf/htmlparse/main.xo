@@ -1,9 +1,11 @@
 // htmlparse: std/htmlparse against golang.org/x/net/html's Parse and Render (go/): a 12 KB page of
 // posts (paragraphs closed implicitly, misnested formatting, a table, links with attributes, entities,
-// comments, a script and a style) parsed 1,000 times, and its tree rendered 1,000 times; `none` is the
-// setup alone. Usage: `<program> none|parse|render`. Prints `<workload> <checksum>`; the twin prints
+// comments, a script and a style) parsed 1,000 times, and its tree rendered 1,000 times; `tok` only
+// tokenizes it (std/htmltok, Token per token) 1,000 times; `none` is the
+// setup alone. Usage: `<program> none|parse|tok|render`. Prints `<workload> <checksum>`; the twin prints
 // the same.
 use std/htmlparse
+use std/htmltok
 
 fn page() -> Str {
   var b = StrBuilder.new()
@@ -34,6 +36,15 @@ fn main(os: Os) uses stdio, env {
     for i in 0..1000 {
       let doc = htmlparse.parse(t) ?? _e => fault("parse")
       sum += count(doc, doc.root) + i % 3
+    }
+  } else if w == "tok" {
+    for i in 0..1000 {
+      var z = htmltok.tokenizer(t)
+      while z.next() != htmltok.TokenType.Error {
+        let tk = z.token()
+        sum += tk.data.len() + tk.attrs.len()
+      }
+      sum += i % 3
     }
   } else if w == "render" {
     let doc = htmlparse.parse(t) ?? _e => fault("parse")

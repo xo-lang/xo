@@ -43,6 +43,15 @@ func main() {
 			}
 			sum += count(doc) + i%3
 		}
+	case "tok":
+		for i := 0; i < 1000; i++ {
+			z := html.NewTokenizer(strings.NewReader(t))
+			for z.Next() != html.ErrorToken {
+				tk := z.Token()
+				sum += len(tk.Data) + len(tk.Attr)
+			}
+			sum += i % 3
+		}
 	case "render":
 		doc, err := html.Parse(strings.NewReader(t))
 		if err != nil {
