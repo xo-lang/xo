@@ -1,6 +1,6 @@
 # 0557: A warm build keeps the cleanup cache's hits undecoded
 
-Status: Proposed (Xo Lang 4, 2026-11-07). Extends decision 0382 (the chained cleanup keys, the
+Status: Proposed, held by the owner 2026-11-07 (Xo Lang 4, 2026-11-07; held on the step 1 finding below: apply_uniq's facts depend on callers and callees both, so an incremental cache helps only an unchanged build, which the binary cache already skips). Extends decision 0382 (the chained cleanup keys, the
 "cln" cache) and decision 0283 stage B (lazy reference counting and inline hits, BodyFacts).
 Step 1 (an incremental uniqueness analysis) is a prerequisite found by measurement, below.
 
