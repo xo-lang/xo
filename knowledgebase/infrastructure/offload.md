@@ -319,6 +319,38 @@ cause. Three more controls in the same conditions read wall 0.994, 0.987, 1.059.
 Rerun the controls with that Mac idle before routing `--ab` there; timing runs
 are only valid while it is idle. Last verified: 2026-11-01.
 
+### linux/riscv64 under qemu-user (lead-approved 2026-11-08, decision 0571)
+
+`scripts/riscv64-toolchain.sh` installs, under /work/riscv64 only (no
+root, no system packages, no binfmt registration), the static qemu-user
+for the host's architecture (trixie's qemu-user, which is static since
+qemu 10; qemu-user-static is a transitional package there with no
+binaries, and the script takes whichever holds qemu-riscv64) and a
+riscv64 glibc sysroot: libc6,
+libc6-dev, linux-libc-dev, libgcc-s1, libgcc-14-dev and libstdc++6 from
+Debian trixie. Everything comes from deb.debian.org and is checked:
+Release by its detached signature (Release.gpg) against the host's
+debian-archive-keyring with sqv (the host has no gpgv: trixie's apt
+verifies with Sequoia's sqv; the script takes gpgv where sqv is
+missing), the Packages indexes by their SHA256 in Release, each .deb by
+its SHA256 in the index; `dpkg-deb -x` unpacks them, so no maintainer script runs.
+Run it through offload.sh with a lease, as job user xo:
+
+```
+OFFLOAD_ENV=offload-arm64b.env OFF_LANE=pass2 ~/xo-lead/agents/offload.sh scripts/riscv64-toolchain.sh /work/riscv64
+```
+
+A job then builds with `XO_LINUXSYSROOT=/work/riscv64/sysroot xo build
+--backend=llvm --targets=linux/riscv64` and runs the binary by naming
+qemu: `/work/riscv64/qemu/usr/bin/qemu-riscv64 BINARY` (the script
+prints the path), with `-L /work/riscv64/sysroot` for a binary
+that is not static. Rerunning the script rebuilds the directory from
+scratch (it unpacks into /work/riscv64.new, then renames it).
+Installed on host 2 on 2026-11-08: Debian 13.7's qemu-user
+1:10.0.13+ds-0+deb13u1, libc6 2.41-12+deb13u4, linux-libc-dev
+6.12.94-1, libgcc 14.2.0-19.
+Last verified: 2026-11-08.
+
 ## The linux/amd64 host
 
 The owner's second machine (2026-10-29): a 16-core x86-64 box running
