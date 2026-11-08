@@ -35,7 +35,6 @@ var codegenEnv = map[string]inputClass{
 	"XO_POISON_FRAMES":        {"keyed", "poison=${m.poison_frames}"},
 	"XO_FIELD_VIEW":           {"keyed", "fview=1"},
 	"XO_HEAP_GUARD":           {"keyed", "guard=${m.heap_guard}"},
-	"XO_CLIB":                 {"none", ""}, // decision 0574 stage 1's switch for --lib: a build without it fails before code generation
 	"XO_NOLIBC":               {"keyed", "nolibc=${m.nolibc}"},
 	"XO_INLINE_DENY":          {"keyed", "deny ${m.inline_deny"},
 	"XO_PASSES":               {"bypass", "passes_changed(os)"}, // either a - or a + entry (main.xo passes_changed, from arm64.parse_passes)

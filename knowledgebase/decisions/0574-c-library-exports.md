@@ -165,8 +165,10 @@ Go"; runtime/cgo):
 ## Consequences
 
 - A new public surface (spec, XO codes, header format) that has to stay
-  stable once released. Stage 1 ships behind `XO_CLIB=1` until the
-  owner accepts the header format.
+  stable once released. Stage 1 shipped behind `XO_CLIB=1` until the
+  owner accepted the header format; the owner accepted it on 2026-11-08
+  (with XoStr) and the flag is gone (2026-11-08): `--lib` and the `as c`
+  clause work without it.
 - Library builds keep a second runtime start path (`xo_init`) in sync
   with entry.init; a test builds both.
 - Handles add a table and a lock per library; Int, Float and Bytes calls

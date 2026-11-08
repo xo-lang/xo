@@ -1,4 +1,4 @@
-// C library builds (decision 0574, stage 1 behind XO_CLIB=1): the header
+// C library builds (decision 0574): the header
 // of a library's exports, and a static library's archive.
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/parser

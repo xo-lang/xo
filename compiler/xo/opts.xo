@@ -45,7 +45,7 @@ struct Opts {
   /// macho for a darwin/arm64 host link the pack covers, else cc.
   assembler: Str = ""
   linker: Str = ""
-  /// --lib=shared|static (decision 0574, stage 1 behind XO_CLIB=1): a C
+  /// --lib=shared|static (decision 0574): a C
   /// library of the root package's `as c` functions, "" for a program
   lib: Str = ""
   /// a library's C exports (c_export_names, after the check)

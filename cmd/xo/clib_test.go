@@ -106,7 +106,7 @@ func clibSkip(t *testing.T) {
 }
 
 // TestCLibShared builds a C library with `xo build --lib=shared`
-// (decision 0574 stage 1, XO_CLIB=1) and calls it from C through the
+// (decision 0574) and calls it from C through the
 // generated header: Int, Float, Bytes and Str arguments, and the heap.
 func TestCLibShared(t *testing.T) {
 	t.Parallel()
@@ -120,7 +120,6 @@ func TestCLibShared(t *testing.T) {
 		"geo.xo": clibSrc,
 		"main.c": clibCaller,
 	})
-	setenv(t, "XO_CLIB", "1")
 	lib := filepath.Join(dir, "libgeo.so")
 	if runtime.GOOS == "darwin" {
 		lib = filepath.Join(dir, "libgeo.dylib")
@@ -180,7 +179,6 @@ func TestCLibStatic(t *testing.T) {
 		"geo.xo": clibSrc,
 		"main.c": clibCaller,
 	})
-	setenv(t, "XO_CLIB", "1")
 	lib := filepath.Join(dir, "libgeo.a")
 	var out, errOut bytes.Buffer
 	if code := run(t, []string{"build", "--lib=static", "-o", lib, dir}, &out, &errOut); code != 0 {
@@ -265,7 +263,6 @@ func TestCLibRejects(t *testing.T) {
 			"xo.mod":  "module example.com/lib\nedition preview\n",
 			"main.xo": "pub fn add(a: Int, b: Int) -> Int as c \"lib_add\" { a + b }\n\nfn main() {}\n",
 		})
-		setenv(t, "XO_CLIB", "1")
 		var out, errOut bytes.Buffer
 		code := run(t, []string{"build", "--lib=shared", "-o", filepath.Join(dir, "liblib.so"), dir}, &out, &errOut)
 		if code == 0 {
@@ -312,7 +309,6 @@ func TestCLibThreads(t *testing.T) {
 		"geo.xo":    clibSrc,
 		"threads.c": clibThreads,
 	})
-	setenv(t, "XO_CLIB", "1")
 	lib := filepath.Join(dir, "libgeo.so")
 	if runtime.GOOS == "darwin" {
 		lib = filepath.Join(dir, "libgeo.dylib")
@@ -346,7 +342,6 @@ func TestCLibFault(t *testing.T) {
 		"boom.xo": "/// Element n of a two element list.\npub fn boom(n: Int) -> Int as c \"boom_at\" {\n  let xs = [10, 20]\n  xs[n]\n}\n",
 		"main.c":  "#include <stdio.h>\n#include \"boom.h\"\nint main(int argc, char **argv, char **envp) {\n  xo_init(argc, argv, envp);\n  printf(\"%lld\\n\", (long long)boom_at(5));\n  return 0;\n}\n",
 	})
-	setenv(t, "XO_CLIB", "1")
 	lib := filepath.Join(dir, "libboom.so")
 	if runtime.GOOS == "darwin" {
 		lib = filepath.Join(dir, "libboom.dylib")
@@ -389,7 +384,6 @@ func TestCLibNoInit(t *testing.T) {
 		"geo.xo": clibSrc,
 		"main.c": "#include <stdio.h>\n#include \"geo.h\"\nint main(int argc, char **argv, char **envp) {\n  if (geo_list_sum(1000) != 499500) { puts(\"before\"); return 1; }\n  if (xo_init(argc, argv, envp) != 0) { puts(\"xo_init\"); return 1; }\n  if (geo_list_sum(1000) != 499500) { puts(\"after\"); return 1; }\n  puts(\"ok\");\n  return 0;\n}\n",
 	})
-	setenv(t, "XO_CLIB", "1")
 	// a library is built whole even when separate compilation is asked
 	// for: std's variants are a program's, without xo_init's callees (a
 	// cached variant made every --lib link fail, 2026-11-08)
@@ -449,7 +443,6 @@ int main(void) {
 }
 `,
 	})
-	setenv(t, "XO_CLIB", "1")
 	lib := filepath.Join(dir, "libcalc.so")
 	if runtime.GOOS == "darwin" {
 		lib = filepath.Join(dir, "libcalc.dylib")
@@ -546,7 +539,6 @@ int main(int argc, char **argv) {
 }
 `,
 	})
-	setenv(t, "XO_CLIB", "1")
 	lib := filepath.Join(dir, "libctr.so")
 	if runtime.GOOS == "darwin" {
 		lib = filepath.Join(dir, "libctr.dylib")
@@ -626,7 +618,6 @@ func TestCLibThreadExit(t *testing.T) {
 		"geo.xo":   clibSrc,
 		"thexit.c": clibThreadExit,
 	})
-	setenv(t, "XO_CLIB", "1")
 	lib := filepath.Join(dir, "libgeo.so")
 	if runtime.GOOS == "darwin" {
 		lib = filepath.Join(dir, "libgeo.dylib")

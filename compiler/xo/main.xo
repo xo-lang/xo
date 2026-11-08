@@ -1120,9 +1120,6 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   if !o.lib.is_empty() {
     // a C library (decision 0574): stage 1 links with cc, with the C
     // library, on darwin and linux, arm64 and amd64
-    if (os.env.get("XO_CLIB") ?? "") != "1" {
-      fail(os, "--lib is stage 1 of decision 0574, behind XO_CLIB=1")
-    }
     if !(o.lib is "shared" | "static") {
       fail(os, "--lib=${o.lib}: a library is --lib=shared or --lib=static")
     }

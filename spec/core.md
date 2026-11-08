@@ -1389,7 +1389,7 @@ pub fn fetch_user(db: Db, id: Int) -> User ! LoadErr
   arguments must come before named ones.
 - Default parameter values are allowed: `fn listen(addr: Str, backlog: Int = 128)`.
 - No variadic functions. Pass a `List` or `Map`.
-- **C exports** (decision 0574, behind `XO_CLIB=1` while its stages land): a top
+- **C exports** (decision 0574): a top
   level `pub fn` of the root package with the clause `as c "name"` is the C
   function `name` of a library built with `xo build --lib=shared`:
   `pub fn add(a: Int, b: Int) -> Int as c "geo_add" { a + b }`. Its
@@ -3818,7 +3818,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1515` | error | build | a program built for wasip2/wasm reaches what its world does not have: processes, or files or sockets in a `wasi:http` component (a command has `wasi:filesystem` since 2026-11-02 and `wasi:sockets` since 2026-11-03); the message names the call and how it is reached (decision 0447); on wasip3/wasm also a program that is not a `wasi:http` component (stage 5) |
 | `XO1516` | error | build | a program built for wasip2/wasm whose main never calls `http.serve_component` (decision 0447); no longer reported since stage 3 (2026-11-02), when such a program became a `wasi:cli/command` component |
 | `XO1517` | error | build | a windows program's resource input that cannot be used: the `--versioninfo` JSON cannot be read or parsed, an `--icon` file cannot be read or is not an icon, a `--manifest` file cannot be read; the message carries goversioninfo's text (decision 0560) |
-| `XO1518` | error | checker | a function's `as c "name"` clause breaks a C export rule: not a top level `pub fn`, generic, a `var` parameter, a parameter other than Int, Float or Bytes, a result other than Int, Float or none, an error type, a name that is not a C identifier or starts with `xo_` (decision 0574, stage 1 behind XO_CLIB=1) |
+| `XO1518` | error | checker | a function's `as c "name"` clause breaks a C export rule: a method, not `pub fn`, generic, a `var` parameter, a Bool or function type parameter, more than 8 integer parameter words, a Bytes, Str, Bool or function type result, a name that is not a C identifier or starts with `xo_` (decision 0574) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.
