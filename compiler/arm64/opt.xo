@@ -2106,6 +2106,12 @@ fn (var g: G) hoist_consts() {
   for b in 0..g.blocks.len() {
     var ins = g.take_insts(b)
     for k in 0..ins.len() {
+      if !reads_moved(ins[k], roots) {
+        // unchanged: the writes below copied its lists (us, srcs, the
+        // call's arguments), shared with ins, every instruction
+        // (copy_prop allocated 128 GB in GCP aiplatform/v1's build)
+        continue
+      }
       var inst = ins[k]
       for i in 0..inst.us.len() {
         inst.us[i] = root_of(roots, inst.us[i])
@@ -2183,6 +2189,29 @@ fn root_of(roots: List[Int], v: Int) -> Int {
   v
 }
 
+/// Whether inst reads a register roots moves (root_of): a use, a
+/// register source, or a register argument of its call.
+fn reads_moved(inst: Inst, roots: List[Int]) -> Bool {
+  for u in inst.us {
+    if root_of(roots, u) != u {
+      return true
+    }
+  }
+  for sr in inst.srcs {
+    if sr.kind == S_REG && root_of(roots, sr.v) != sr.v {
+      return true
+    }
+  }
+  if !inst.fx.is_empty() {
+    for a in inst.fx[0].fargs {
+      if a.kind == S_REG && root_of(roots, a.v) != a.v {
+        return true
+      }
+    }
+  }
+  false
+}
+
 /// Copies of a register that never changes: a parallel move's b <- a
 /// where b and a each have one definition and a's is in the entry block
 /// or earlier in the move's block (so no later definition of a is read
@@ -2249,6 +2278,12 @@ fn (var g: G) copy_prop() {
   for b in 0..g.blocks.len() {
     var ins = g.take_insts(b)
     for k in 0..ins.len() {
+      if !reads_moved(ins[k], roots) {
+        // unchanged: the writes below copied its lists (us, srcs, the
+        // call's arguments), shared with ins, every instruction
+        // (copy_prop allocated 128 GB in GCP aiplatform/v1's build)
+        continue
+      }
       var inst = ins[k]
       for i in 0..inst.us.len() {
         inst.us[i] = root_of(roots, inst.us[i])
@@ -2276,19 +2311,30 @@ fn (var g: G) copy_prop() {
   // its source (2026-10-21: a string parameter of a function inlined
   // into a loop printed <unavailable> in tracebacks, TestFaultLocals)
   for v in 0..g.vals.len() {
-    var ws = g.vals[v]
-    var moved = false
-    for i in 0..ws.len() {
-      let r = root_of(roots, ws[i])
-      if r != ws[i] {
-        ws[i] = r
-        moved = true
-      }
+    if !any_moved(g.vals[v], roots) {
+      continue
     }
-    if moved {
-      g.vals[v] = ws
+    // taken out of g.vals first, so the writes are in place: written
+    // while g.vals still held it, the list was copied whole, a wide
+    // value's thousands of words per value (125 GB in GCP
+    // aiplatform/v1's build, a 12,040 word struct in registers)
+    var ws = g.vals[v]
+    g.vals[v] = []
+    for i in 0..ws.len() {
+      ws[i] = root_of(roots, ws[i])
+    }
+    g.vals[v] = ws
+  }
+}
+
+/// Whether a register of ws has a root (root_of) other than itself.
+fn any_moved(ws: List[Int], roots: List[Int]) -> Bool {
+  for w in ws {
+    if root_of(roots, w) != w {
+      return true
     }
   }
+  false
 }
 
 /// The most constants hoist_consts moves out of a loop that calls on its

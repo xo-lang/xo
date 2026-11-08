@@ -1,0 +1,41 @@
+// List slices (xo.slice, List[T][lo..hi], a copy): `small` takes 0 to 7
+// Ints of a 16-Int list 4M times and 2 Strs of 4 1M times, consumed at
+// once (the presized result must not cost the short ones); `mid` 64 of
+// 256 Ints 500k times; `big` 100k of 1M Ints 400 times (it grew from
+// empty through about 17 copies before 2026-11-08).
+fn main(os: Os) {
+  let args = os.env.args()
+  let mode = if args.is_empty() { "big" } else { args[0] }
+  var total = 0
+  if mode == "small" {
+    let xs = (0..16).to_list()
+    for i in 0..4_000_000 {
+      let lo = i % 9
+      let ys = xs[lo..lo + i % 8]
+      total += ys.len()
+      if !ys.is_empty() {
+        total += ys[0]
+      }
+    }
+    let ss = ["a", "bb", "ccc", "dddd"]
+    for i in 0..1_000_000 {
+      let ts = ss[i % 3..i % 3 + 2]
+      total += ts[1].len()
+    }
+  } else if mode == "mid" {
+    let xs = (0..256).to_list()
+    for i in 0..500_000 {
+      let lo = i % 192
+      let ys = xs[lo..lo + 64]
+      total += ys[63]
+    }
+  } else {
+    let xs = (0..1_000_000).to_list()
+    for i in 0..400 {
+      let lo = (i * 7919) % 900_000
+      let ys = xs[lo..lo + 100_000]
+      total += ys[99_999]
+    }
+  }
+  os.stdio.println("${mode} ${total}")
+}

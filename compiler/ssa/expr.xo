@@ -992,10 +992,13 @@ fn (var b: Builder) slice_body(lt: Int) {
   b.add(Op.Unreachable, -1, Aux.None, [])
   b.dead()
   b.if_then_end(no, join)
-  let out = b.local()
-  b.write_var(out, b.call("list.new", lt, "", []))
-  let iv = b.local()
   let cnt = b.add(Op.Sub, it, Aux.None, [hi, lo])
+  // room for the cnt elements at once: from empty, a slice of n grew
+  // through about log2(n) copies (G.field_op's word slices, 10 percent
+  // of GCP aiplatform/v1's build, 2026-11-08)
+  let out = b.local()
+  b.write_var(out, b.call("list.new", lt, "", [cnt]))
+  let iv = b.local()
   let (i, head, exit) = b.for_up_to_begin(cnt, iv)
   let idx = b.add(Op.Add, it, Aux.None, [lo, i])
   let el = b.call("list.index", b.m.types[lt].elems[0], "", [l, idx])
