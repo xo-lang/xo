@@ -1572,6 +1572,99 @@ pub fn append_body(out: Str, s: Str) -> Str {
   o
 }
 
+const LTS: Int = 4340410370284600380
+const GTS: Int = 4485090715960753726
+const AMPS: Int = 2748926567846913574
+
+/// The high bit of each byte of w that is `<`, `>` or `&` (encoding/json's
+/// HTML escapes; the lowest exact).
+fn html_stops(w: Int) -> Int {
+  let a = w ^ LTS
+  let b = w ^ GTS
+  let c = w ^ AMPS
+  (subw(a, ONES) | subw(b, ONES) | subw(c, ONES)) & ((a & b & c) ^ -1) & HIGHS
+}
+
+/// The index of the first byte of s that a JSON string cannot keep as it
+/// is (append_body's stops, and `<`, `>`, `&` when html), or s.len(): a
+/// word at a time, as Go's encodeState.string walks its safe set.
+pub fn first_stop(s: Str, html: Bool) -> Int {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i + 8 <= n {
+    let x = rt.bytes_word(b, i)
+    var m = enc_stops(x)
+    if html {
+      m = m | html_stops(x)
+    }
+    if m != 0 {
+      return i + low_byte(m)
+    }
+    i += 8
+  }
+  while i < n {
+    let c = Int(b[i])
+    if c < 32 || c == 34 || c == 92 || c >= 128 || (html && (c == 60 || c == 62 || c == 38)) {
+      return i
+    }
+    i += 1
+  }
+  n
+}
+
+/// out + s's JSON body as append_body writes it, with `<`, `>` and `&`
+/// as `\u003c`, `\u003e`, `\u0026` when html; from is first_stop's
+/// index (the bytes before it are plain). One pass, as Go's
+/// encodeState.string: a run of plain bytes is copied at once.
+pub fn append_escaped(out: Str, s: Str, from: Int, html: Bool) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  var o = out
+  var start = 0
+  var i = from
+  while i < n {
+    let c = Int(b[i])
+    if c < 128 {
+      if c >= 32 && c != 34 && c != 92 && !(html && (c == 60 || c == 62 || c == 38)) {
+        i += 1
+        continue
+      }
+      if i > start {
+        o = rt.rs_append_bytes(o, b, start, i, 0)
+      }
+      let e = short_escape(c)
+      if e != 0 {
+        o = rt.rs_push_word(o, e, 2)
+      } else {
+        // \u00XX
+        o = rt.rs_push_word(o, 0x3030755C | (Int(HEX[c >> 4]) << 32) | (Int(HEX[c & 15]) << 40), 6)
+      }
+      i += 1
+      start = i
+      continue
+    }
+    let p = unicode.decode(b, i)
+    let r = p >> 3
+    let size = p & 7
+    if (r == 0xFFFD && size == 1) || r == 0x2028 || r == 0x2029 {
+      if i > start {
+        o = rt.rs_append_bytes(o, b, start, i, 0)
+      }
+      let w = if r == 0xFFFD { 0x64666666755C } else if r == 0x2028 { 0x38323032755C } else { 0x39323032755C }
+      o = rt.rs_push_word(o, w, 6)
+      i += size
+      start = i
+      continue
+    }
+    i += size
+  }
+  if n > start {
+    o = rt.rs_append_bytes(o, b, start, n, 0)
+  }
+  o
+}
+
 /// out + f as std/json writes a Float (num.append_json_float).
 pub fn append_float(out: Str, f: Float) -> Str { num.append_json_float(out, f) }
 

@@ -565,3 +565,18 @@ underlying value on every backend, as core 2.8 says.
 - Shipped in: not yet released
 
 `json.encode`, `derive Json` struct fields of type `Map[Str, V]` and `json.to_value` write a Map's keys sorted by their bytes, not in insertion order, on every backend; the output no longer depends on how the Map was built. A `json.Value` object keeps its order (a parsed document round trips unchanged), and `Set` still writes insertion order. toml's `encode` goes through `to_value`, so its maps are sorted too. A Map read from an object and written back no longer keeps the document's key order; use a `json.Value` for that.
+
+## 2026-11-07: perf: JsonWriter writes a string with one word scan and one escaping pass
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Xo-vs-Go survey (bench/results/xo-vs-go-survey-2026-11-07.md row 9: jsontoken/write 1.73x Go; write_string 70% cum)
+- Go reference: encoding/json encodeState.string (go1.26.1): a safe-set walk that copies each run of plain bytes at once, `<`, `>`, `&` escaped in the same pass under SetEscapeHTML
+- Test: testdata/corpus/jsontoken STRINGS (400 cases, and 160 new long strings with up to two bytes to escape at every offset, from Go's encoder with and without HTML escaping) on go, arm64 and llvm
+- Timing: bench/perf/jsontoken on linux/arm64 host 1, --ab against main (7 rounds): write 0.75 (0.737 to 0.767, n=6; 103.2 to 77.4 ms; the survey's Go is 61.6 ms), read within noise (1.015, n=7; the control)
+
+`JsonWriter.write_string` found the first byte to escape a byte at a time and, when there was one, built
+the body with jsontext.append_body and then ran three `Str.replace` calls for the HTML escapes. It now finds
+that byte a word at a time (jsontext.first_stop, the HTML bytes included when the writer escapes them),
+writes the string as it is when there is none, and otherwise escapes from that byte in one pass
+(jsontext.append_escaped). Output unchanged.

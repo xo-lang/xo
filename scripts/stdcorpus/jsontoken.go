@@ -192,6 +192,38 @@ func jsonTokenCorpus() string {
 		}
 		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xq(s), xq(enc(true)), xq(enc(false)))
 	}
+	// long strings (Xo Lang 2, 2026-11-07): a plain run of 0 to 70 bytes
+	// with up to two of alpha's bytes at random places, so a word scan
+	// meets its first stop at every offset and in the tail; their own
+	// generator, so the cases above stay as they were
+	rl := rand.New(rand.NewSource(20261107))
+	for i := 0; i < 160; i++ {
+		run := []byte(strings.Repeat("abcdefghijklmnopqrstuvwxyz0123456789", 2)[:rl.Intn(71)])
+		var b strings.Builder
+		at := []int{-1, -1}
+		for k := 0; k < rl.Intn(3); k++ {
+			at[k] = rl.Intn(len(run) + 1)
+		}
+		for j := 0; j <= len(run); j++ {
+			for _, a := range at {
+				if a == j {
+					b.WriteString(alpha[rl.Intn(len(alpha))])
+				}
+			}
+			if j < len(run) {
+				b.WriteByte(run[j])
+			}
+		}
+		s := b.String()
+		enc := func(html bool) string {
+			var out bytes.Buffer
+			e := json.NewEncoder(&out)
+			e.SetEscapeHTML(html)
+			e.Encode(s)
+			return strings.TrimSuffix(out.String(), "\n")
+		}
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xq(s), xq(enc(true)), xq(enc(false)))
+	}
 	o.WriteString("]\n\n")
 	// floatEncoder: the number forms
 	o.WriteString("/// (the float as Float.parse reads it, Go's encoding)\nconst FLOATS: List[(Str, Str)] = [\n")
