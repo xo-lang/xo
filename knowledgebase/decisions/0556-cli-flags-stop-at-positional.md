@@ -1,6 +1,6 @@
 # 0556: std cli can end flags at the first positional argument, as Go's flag package
 
-Status: Proposed (Xo Lang 2, 2026-11-07, at the lead's request; for the owner to decide)
+Status: Accepted (owner, 2026-11-07)
 
 Extends decisions 0160 (std cli grammar) and 0547 (single-dash long flags).
 

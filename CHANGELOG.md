@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/cli (feature): `cli.command(..., stop_at_positional: true)` ends the flags at the first positional argument, as Go's flag package does, so a ported Go tool reads `tool file -64` as Go did (decision 0556); off by default.
 - compiler (perf): a one-element List literal (`[x]`) is made at its size in one call, as longer literals were, instead of from the shared empty list grown by its first push: bench/perf/metrics counter 0.961 and histogram 0.978 of their wall time on linux/arm64 (each `inc([name])` builds one)
 - std/sql (perf): the memory driver's ORDER BY keeps rows already in order without sorting them and sorts the others bottom up with two buffers: bench/perf/sqlrow scan 0.574 of main on linux/arm64 (--ab), and 0.895 with an order every query must sort; results unchanged.
 - std/metrics (perf): a labelled `inc`, `set`, `add` or `observe` takes only the series' cells from the map on a hit, one shared count where the whole series was three: bench/perf/metrics counter 0.900, histogram 0.866 of their wall time on linux/arm64
