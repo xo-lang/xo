@@ -109,6 +109,10 @@ t0=$(date +%s)
 rm -f bin/xo
 go run ./scripts/xobuild >"$logs/xobuild.txt" 2>&1 || { echo "XOBUILD-FAIL ($logs/xobuild.txt)"; exit 1; }
 echo "xobuild $(($(date +%s) - t0)) s"
+# the xo every step runs is the one this tree's sources key (owner,
+# 2026-11-08): xobuild serves a cached build by key, so this confirms the
+# cache entry, in a second or two
+go run ./scripts/xoclicheck "$wt/bin/xo" || { echo "XOBUILD-STALE: $wt/bin/xo is not built from this tree's sources"; exit 1; }
 # XO_INLINE_STRICT=1: an inlined module that does not verify fails the
 # step instead of building slower with a warning (decision 0342)
 export XO_CLI=$wt/bin/xo XO_BACKEND_CACHE=off XO_INLINE_STRICT=1

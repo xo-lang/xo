@@ -1219,9 +1219,19 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   std and goldens against the older compiler (Xo lang 5 lost a 60 minute
   suite to that, 2026-10-21). Rebuild (`go run ./scripts/xobuild` in that
   tree) or, for a deliberate cross version run, `XO_CLI_STALE_OK=1`.
-  heavy.sh refuses such a `go test` before it queues (exit 65, through
-  `go run ./scripts/xoclicheck`, the same check; 2026-11-07: a stale
-  control run waited for a gate slot, then failed in 0.26 s).
+  heavy.sh exit 65 means "not queued: a stale xo" (2026-11-07: a stale
+  control run waited for a gate slot, then failed in 0.26 s; owner,
+  2026-11-08), decided in about a second by `go run ./scripts/xoclicheck
+  [PATH]`, the same check. Only an xo of the job's own worktree is judged,
+  against that worktree's source key: `XO_CLI`, or the job's command,
+  when it lies inside the worktree (its bin/xo). An xo from elsewhere (an
+  identity base, a bisect step, a seed, a release, another worktree)
+  passes; under `go test` an `XO_CLI` of another key is refused wherever
+  it lies, since xotool refuses it at the tests' start anyway.
+  `XO_CLI_STALE_OK=1` skips the check for a deliberate cross version run.
+  gate.sh checks the bin/xo it built the same way (`XOBUILD-STALE`), and
+  offload-gate.sh refuses a worktree with uncommitted changes to tracked
+  files, since its host builds xo from HEAD. Last verified: 2026-11-08.
   Every such run's log starts with `xotool: xo PATH (key ..., commit ...);
   tree key ...`: check it when a run's failures look unrelated.
 - Checking a compiler edit: `go run ./scripts/xocheck [--no-gc] DIR...`
