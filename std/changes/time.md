@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-08: perf: time.format and time.parse write and read the RFC 3339 layout in one pass
+
+- Kind: perf
+- Commit: this push
+- Found by: lead's queue (std timing rows against Go)
+- Go reference: time.Time.AppendFormat and time.Parse's RFC 3339 fast paths (format_rfc3339.go, parseRFC3339; go1.26.1)
+- Test: testdata/corpus/time and the std/native/time_test.xo cases (unchanged, all pass); bench/perf/time output unchanged
+- Timing: bench/perf/time on linux/arm64 host 1, --ab against main (7 rounds): format 0.785 (0.767 to 0.802), format_layout 0.964 (0.936 to 0.977), parse 0.367 (0.359 to 0.374)
+- Shipped in: not yet released
+
+`time.format` of the layout `{year}-{month}-{day}T{hour}:{minute}:{second}{offset}` writes the 20 to 25 bytes directly instead of scanning the layout text, `time.parse` of the common RFC 3339 texts reads them in place and sends any other text to the general reader, and `read_digits` runs over a local index. Output is unchanged on every input.
+
 ## 2026-11-06: feature: Time.rfc3339_offset keeps the offset parse_rfc3339 drops
 
 - Kind: feature
