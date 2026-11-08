@@ -34,7 +34,7 @@ in detail; check before starting one.
    0124's addendum), and cmd/xo TestChecksumLog runs the proxy and the
    log end to end on loopback (fetch, verify, lock; XO1313 and XO1304 on
    a tampered tree; XO_NOSUMDB and XO_NOPROXY), so what a public service
-   would run is built and tested; hosting it is the owner's decision.
+   would run is built and tested; hosting it is the owner's decision (decision 0568, Proposed: R2 and Cloudflare's CDN, the owner's OCI host).
 3. **A security process.** A vulnerability database, a `xo vuln` checker
    for a module's dependencies (as `govulncheck`), and a published
    security policy (how to report, response times).
