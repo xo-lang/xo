@@ -32,29 +32,8 @@ type jsStrGo struct {
 	OF  *float64 `json:"of,string"`
 }
 
-// jsStrWire is jsStrGo with the Float32 held as the Float of its value,
-// which is how Xo writes a Float32 (std/rt json.go: Float32 is written as
-// the Float of its value), so the rows compare the string option and not
-// that rule.
-type jsStrWire struct {
-	I   int64    `json:"i,string"`
-	I8  int8     `json:"i8,string"`
-	U   uint64   `json:"u,string"`
-	F   float64  `json:"f,string"`
-	F32 float64  `json:"f32,string"`
-	B   bool     `json:"b,string"`
-	S   string   `json:"s,string"`
-	OI  *int64   `json:"oi,string"`
-	OS  *string  `json:"os,string"`
-	OB  *bool    `json:"ob,string"`
-	OF  *float64 `json:"of,string"`
-}
-
 // jsStrText is Go's encoding of v, as Xo writes it (no HTML escaping).
 func jsStrText(v any) string {
-	if g, ok := v.(jsStrGo); ok {
-		v = jsStrWire{g.I, g.I8, g.U, g.F, float64(g.F32), g.B, g.S, g.OI, g.OS, g.OB, g.OF}
-	}
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
