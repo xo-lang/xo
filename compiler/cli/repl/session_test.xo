@@ -1,0 +1,113 @@
+fn entry(src: Str) -> Entry {
+  Entry{src: src, kind: classify(src), pin: "", typ: ""}
+}
+
+test "classify entries" {
+  expect(classify("1 + 2") is Expr)
+  expect(classify("os.stdio.println(\"hi\")") is Expr)
+  expect(classify("fn sq(x: Int) -> Int { x * x }") is Def)
+  expect(classify("struct P { x: Int }") is Def)
+  expect(classify("use std/json") is Use)
+  expect(classify("let x = 3") is Bind(name: "x", mutable: false))
+  expect(classify("let x: Int = 3") is Bind(name: "x", mutable: false))
+  expect(classify("var n2 = 0") is Bind(name: "n2", mutable: true))
+  // a pattern is not a simple binding: it runs as a statement
+  expect(classify("let (a, b) = (1, 2)") is Stmt)
+  expect(classify("n = n + 1") is Stmt)
+  expect(classify("xs[0] += 2") is Stmt)
+  expect(classify("p.x = 4") is Stmt)
+  expect(classify("n == 1") is Expr)
+  expect(classify("for i in 0..3 { n += i }") is Stmt)
+}
+
+test "plain types" {
+  expect(plain_type("Int", []))
+  expect(plain_type("List[Str]", []))
+  expect(plain_type("Map[Str, List[Int]]", []))
+  expect(plain_type("Option[(Int, Bool)]", []))
+  expect(plain_type("Int?", []))
+  expect(plain_type("Point", ["Point"]))
+  expect(!plain_type("Point", []))
+  expect(!plain_type("File", []))
+  expect(!plain_type("fn(Int) -> Int", []))
+  expect(!plain_type("", []))
+}
+
+test "program runs only the newest entry" {
+  var s = Sess{entries: []}
+  let e1 = entry("let x = 40 + 2")
+  let (p1, at1) = s.program(e1)
+  expect(p1.contains("fn main(os: Os) {\nos.stdio.println(\"${MARK} begin\")\nlet x = 40 + 2\n"))
+  expect(p1.contains("os.stdio.println(\"${MARK} pin x ${"$"}{x:?}\")"))
+  expect(at1 == 3)
+  s = s.after(e1, {"x": "42"}, {"x": "Int"})
+  expect(s.entries.len() == 1)
+  expect(s.entries[0].pin == "42")
+  let e2 = entry("x * 2")
+  let (p2, _) = s.program(e2)
+  // x comes back pinned: its expression is not run again
+  expect(p2.contains("let x: Int = 42\n"))
+  expect(!p2.contains("40 + 2"))
+  expect(p2.contains("let ${VALUE} = x * 2\n"))
+}
+
+test "definitions go first and rebinding replaces" {
+  var s = Sess{entries: []}
+  let d = entry("fn sq(n: Int) -> Int { n * n }")
+  s = s.after(d, {}, {})
+  let b1 = entry("let y = sq(3)")
+  s = s.after(b1, {"y": "9"}, {"y": "Int"})
+  let b2 = entry("let y = \"text\"")
+  s = s.after(b2, {"y": "\"text\""}, {"y": "Str"})
+  expect(s.entries.len() == 2)
+  // while y is made again, the old y is not declared beside it
+  let (q, _) = s.program(entry("let y = 1"))
+  expect(!q.contains("let y: Str"))
+  expect(q.contains("let y = 1\n"))
+  let (p, _) = s.program(entry("y"))
+  expect(p.starts_with("fn sq(n: Int) -> Int { n * n }\nfn main(os: Os) {\n"))
+  expect(p.contains("let y: Str = \"text\"\n"))
+  expect(!p.contains("sq(3)"))
+}
+
+test "a handle binding reruns, and statements with it" {
+  var s = Sess{entries: []}
+  let f = entry("let f = open_it()")
+  s = s.after(f, {"f": "File(3)"}, {"f": "File"})
+  expect(s.entries[0].pin.is_empty())
+  expect(!s.all_pinned())
+  let st = entry("use_it(f)")
+  let st2 = Entry{src: "n = use_it(f)", kind: Kind.Stmt, pin: "", typ: ""}
+  s = s.after(st2, {"f": "File(3)"}, {})
+  let (p, _) = s.program(st)
+  expect(p.contains("let f = open_it()\nn = use_it(f)\n"))
+}
+
+test "statements on pinned state run once" {
+  var s = Sess{entries: []}
+  let v = entry("var n = 1")
+  s = s.after(v, {"n": "1"}, {"n": "Int"})
+  let st = entry("n += 5")
+  s = s.after(st, {"n": "6"}, {})
+  expect(s.entries.len() == 1)
+  expect(s.entries[0].pin == "6")
+  let (p, _) = s.program(entry("n"))
+  expect(p.contains("var n: Int = 6\n"))
+  expect(!p.contains("n += 5"))
+}
+
+test "unpin" {
+  var s = Sess{entries: []}
+  s = s.after(entry("let x = 1"), {"x": "1"}, {"x": "Int"})
+  s = s.unpin("x")
+  let (p, _) = s.program(entry("x"))
+  expect(p.contains("let x = 1\n"))
+}
+
+test "parse a run's output" {
+  let out = "earlier\n${MARK} begin\nhello\n${MARK} value 42\n${MARK} pin x \"a b\"\n"
+  let r = parse_run(out)
+  expect(r.out == "hello\n")
+  expect(r.value == Some("42"))
+  expect(r.pins.get("x") == Some("\"a b\""))
+}

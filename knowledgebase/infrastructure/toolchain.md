@@ -3572,6 +3572,17 @@ Last verified: 2026-10-09.
   background, `<data dir>/times`
   holds each record's Unix time, and `GET /index?since=<RFC 3339>` is the
   index feed. Test: cmd/xo TestChecksumLogOps. Last verified: 2026-11-08.
+- `xo repl` (decision 0572 stage 1, experimental, 2026-11-08): off unless
+  XO_REPL=1 while 0572 is Proposed. compiler/cli/repl: session.xo writes
+  the session as a generated program (definitions first, earlier plain
+  bindings as `let NAME: TYPE = <Debug text>`, the newest entry after a
+  protocol mark), repl.xo builds it with this xo (`xo build -o BIN DIR`)
+  in a temp directory, runs it, and reads the value and pins back; types
+  come from an in-process check (semantic.load_session_pc with std's
+  parses kept). `--eval=ENTRIES` (one per line, an open bracket
+  continues), `--session=FILE` (JSON), `--keep`, and `:type`, `:doc`,
+  `:undo`, `:reset`, `:quit` interactively. Test: cmd/xo TestRepl, xo
+  test compiler/cli/repl. Last verified: 2026-11-08.
 - Definition hashes (decision 0125, step 5, 2026-10-10): package
   `internal/defhash` (`Module(dir, modPath)`, `Diff`, `Find`,
   `Nearest`), reflection over `internal/ast` with per field rules

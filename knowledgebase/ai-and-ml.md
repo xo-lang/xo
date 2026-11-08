@@ -110,4 +110,6 @@ checker-only mode) is the start of. Open questions for an ADR: native
 code loaded into a running process (a JIT, which wasm-and-jit.md argued
 against for general use) or a small interpreter over Xo's SSA; how state
 carries between entries under value semantics; and what effects a REPL
-grants.
+grants. Answered in [decision 0572](decisions/0572-repl.md) (Proposed,
+2026-11-08): a hidden session module rebuilt and rerun per entry,
+plain bindings pinned as literals; stage 1 is `xo repl` behind XO_REPL=1.

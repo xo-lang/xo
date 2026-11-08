@@ -1,0 +1,388 @@
+// The session of `xo repl` (decision 0572, stage 1, experimental): the
+// entries so far as a generated Xo program. Each run executes only the
+// newest entry; earlier bindings of plain data come back as literals
+// (pinned), so their effects never repeat.
+
+/// What an entry is, from its first words.
+pub enum Kind {
+  /// fn, struct, enum, type or const: a top-level item of the module
+  Def
+  /// `use PATH`
+  Use
+  /// `let NAME ...` or `var NAME ...`
+  Bind(name: Str, mutable: Bool)
+  /// an assignment, a loop, or anything else run for its effect
+  Stmt
+  /// an expression, whose value is printed
+  Expr
+} derive Json
+
+/// One entry of the session.
+pub struct Entry {
+  pub src: Str
+  pub kind: Kind
+  /// the Debug text of the binding's value, when it is plain data
+  pub pin: Str
+  /// the binding's type, as the checker shows it
+  pub typ: Str
+} derive Json
+
+/// The session: every entry kept so far, in order.
+pub struct Sess {
+  pub entries: List[Entry]
+} derive Json
+
+/// The protocol lines the generated program writes after the newest
+/// entry starts (a byte no Debug text holds at a line's start).
+pub const MARK = "\u{1}xorepl"
+/// The name an expression entry's value is bound to.
+pub const VALUE = "xo_repl_value"
+
+fn def_words() -> List[Str] {
+  ["fn ", "pub fn ", "struct ", "pub struct ", "enum ", "pub enum ", "type ", "pub type ", "const ", "pub const ", "trait ", "pub trait "]
+}
+
+fn stmt_words() -> List[Str] {
+  ["for ", "while ", "while{", "loop ", "loop{", "return", "break", "continue", "defer "]
+}
+
+fn assign_ops() -> List[Str] {
+  ["=", "+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
+}
+
+/// The kind of src (an entry as typed, possibly several lines).
+pub fn classify(src: Str) -> Kind {
+  let s = src.trim()
+  if s.starts_with("use ") {
+    return Kind.Use
+  }
+  for w in def_words() {
+    if s.starts_with(w) {
+      return Kind.Def
+    }
+  }
+  for w in ["let ", "var "] {
+    if s.starts_with(w) {
+      let name = ident_at(s, w.len())
+      if !name.is_empty() {
+        return Kind.Bind(name: name, mutable: w == "var ")
+      }
+      return Kind.Stmt
+    }
+  }
+  for w in stmt_words() {
+    if s.starts_with(w) {
+      return Kind.Stmt
+    }
+  }
+  if is_assignment(s) {
+    return Kind.Stmt
+  }
+  Kind.Expr
+}
+
+/// The identifier starting at byte i of s, if a type annotation, `=` or
+/// the end follows it (a simple binding, not a pattern).
+fn ident_at(s: Str, i: Int) -> Str {
+  var j = i
+  let b = s.bytes()
+  while j < b.len() && (is_ident_byte(b[j]) || (j > i && b[j] >= 0x30 && b[j] <= 0x39)) {
+    j += 1
+  }
+  if j == i {
+    return ""
+  }
+  let rest = s[j..].trim_start()
+  if rest.is_empty() || rest.starts_with(":") || (rest.starts_with("=") && !rest.starts_with("==")) {
+    return s[i..j]
+  }
+  ""
+}
+
+fn is_ident_byte(c: UInt8) -> Bool {
+  (c >= 0x61 && c <= 0x7a) || (c >= 0x41 && c <= 0x5a) || c == 0x5f
+}
+
+/// s begins `PLACE OP ...` with PLACE a name, field or index chain and OP
+/// an assignment operator (not `==`).
+fn is_assignment(s: Str) -> Bool {
+  let b = s.bytes()
+  var i = 0
+  var depth = 0
+  while i < b.len() {
+    let c = b[i]
+    if c == 0x5b {
+      depth += 1
+    } else if c == 0x5d {
+      depth -= 1
+    } else if depth == 0 && !(is_ident_byte(c) || (c >= 0x30 && c <= 0x39) || c == 0x2e) {
+      break
+    }
+    i += 1
+  }
+  if i == 0 {
+    return false
+  }
+  let rest = s[i..].trim_start()
+  for op in assign_ops() {
+    if rest.starts_with(op) && !rest.starts_with("==") && !rest.starts_with("=>") {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether a value of type t (the checker's text) is plain data whose
+/// Debug text reads back as a literal: scalars, Str, Bytes, Option,
+/// Result, List, Map, Set and tuples of those, and the session's own
+/// types (checked when the literal is: one that does not check is
+/// unpinned again).
+pub fn plain_type(t: Str, own: List[Str]) -> Bool {
+  if t.is_empty() {
+    return false
+  }
+  let ok = ["Int", "Float", "Str", "Bool", "Rune", "Bytes", "Byte", "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Float32", "Option", "Result", "List", "Map", "Set"]
+  let b = t.bytes()
+  var start = -1
+  var i = 0
+  while i <= b.len() {
+    let word_byte = i < b.len() && (is_ident_byte(b[i]) || (b[i] >= 0x30 && b[i] <= 0x39) || b[i] == 0x2e)
+    if word_byte {
+      if start < 0 {
+        start = i
+      }
+      i += 1
+      continue
+    }
+    if start >= 0 {
+      let w = t[start..i]
+      if !ok.contains(w) && !own.contains(w) {
+        return false
+      }
+      start = -1
+    }
+    if i < b.len() && !(b[i] is 0x5b | 0x5d | 0x28 | 0x29 | 0x2c | 0x20 | 0x3f) {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// The type names the session's definitions declare.
+pub fn (s: Sess) own_types() -> List[Str] {
+  var out: List[Str] = []
+  for e in s.entries {
+    if e.kind is Def {
+      let t = e.src.trim()
+      for w in ["struct ", "pub struct ", "enum ", "pub enum ", "type ", "pub type "] {
+        if t.starts_with(w) {
+          let name = ident_at_word(t, w.len())
+          if !name.is_empty() {
+            out.push(name)
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+fn ident_at_word(s: Str, i: Int) -> Str {
+  let b = s.bytes()
+  var j = i
+  while j < b.len() && (is_ident_byte(b[j]) || (j > i && b[j] >= 0x30 && b[j] <= 0x39)) {
+    j += 1
+  }
+  s[i..j]
+}
+
+/// The binding names of the kept entries, latest last, each once.
+pub fn (s: Sess) bound() -> List[Str] {
+  var out: List[Str] = []
+  for e in s.entries {
+    if let Bind(name: n, mutable: _) = e.kind {
+      if !out.contains(n) {
+        out.push(n)
+      }
+    }
+  }
+  out
+}
+
+/// The generated program with next as its newest entry, and the line
+/// (1-based) where next's own text starts.
+pub fn (s: Sess) program(next: Entry) -> (Str, Int) {
+  var b = StrBuilder.new()
+  var line = 1
+  let all = s.entries + [next]
+  for e in all {
+    if e.kind is Use {
+      add(b, line, e.src.trim())
+    }
+  }
+  for e in all {
+    if e.kind is Def {
+      add(b, line, e.src)
+    }
+  }
+  add(b, line, "fn main(os: Os) {")
+  // a binding next makes again replaces the earlier one (one block
+  // cannot declare a name twice)
+  let rebound = if let Bind(name: n, mutable: _) = next.kind { n } else { "" }
+  for e in s.entries {
+    match e.kind {
+      Bind(name: n, mutable: m) => {
+        if n == rebound {
+          continue
+        }
+        if !e.pin.is_empty() {
+          let kw = if m { "var" } else { "let" }
+          add(b, line, "${kw} ${n}: ${e.typ} = ${e.pin}")
+        } else {
+          add(b, line, e.src)
+        }
+      }
+      Stmt => add(b, line, e.src)
+      Def | Use | Expr => {}
+    }
+  }
+  add(b, line, "os.stdio.println(\"${MARK} begin\")")
+  let at = line
+  match next.kind {
+    Expr => {
+      add(b, line, "let ${VALUE} = ${next.src.trim()}")
+      add(b, line, "os.stdio.println(\"${MARK} value ${dollar()}{${VALUE}:?}\")")
+    }
+    Bind(name: _, mutable: _) | Stmt => add(b, line, next.src)
+    Def | Use => {}
+  }
+  var names = s.bound()
+  if let Bind(name: n, mutable: _) = next.kind {
+    if !names.contains(n) {
+      names.push(n)
+    }
+  }
+  for n in names {
+    add(b, line, "os.stdio.println(\"${MARK} pin ${n} ${dollar()}{${n}:?}\")")
+  }
+  add(b, line, "}")
+  (b.freeze(), at)
+}
+
+fn dollar() -> Str {
+  "$"
+}
+
+/// Writes text and a newline to b, counting its lines into line.
+fn add(var b: StrBuilder, var line: Int, text: Str) {
+  b.write(text)
+  b.write("\n")
+  line += text.split("\n").len()
+}
+
+/// The session after next ran: next kept or not by its kind, an earlier
+/// binding of the same name replaced, and every binding's pin taken from
+/// the program's protocol lines (pins: name to Debug text) when its type
+/// is plain (types: name to type text).
+pub fn (s: Sess) after(next: Entry, pins: Map[Str, Str], types: Map[Str, Str]) -> Sess {
+  var kept: List[Entry] = []
+  let nb = if let Bind(name: n, mutable: _) = next.kind { n } else { "" }
+  for e in s.entries {
+    if let Bind(name: n, mutable: _) = e.kind {
+      if n == nb {
+        continue
+      }
+    }
+    // a statement ran once; what it changed lives on in the pins
+    if e.kind is Stmt && s.all_pinned() {
+      continue
+    }
+    kept.push(e)
+  }
+  if next.kind is Def | Use | Bind(name: _, mutable: _) {
+    kept.push(next)
+  } else if next.kind is Stmt && !s.all_pinned() {
+    kept.push(next)
+  }
+  var out = Sess{entries: kept}
+  let own = out.own_types()
+  var i = 0
+  while i < out.entries.len() {
+    if let Bind(name: n, mutable: _) = out.entries[i].kind {
+      let t = types.get(n) ?? out.entries[i].typ
+      if let Some(v) = pins.get(n) {
+        if plain_type(t, own) {
+          out.entries[i].pin = v
+          out.entries[i].typ = t
+        } else {
+          out.entries[i].pin = ""
+          out.entries[i].typ = t
+        }
+      }
+    }
+    i += 1
+  }
+  out
+}
+
+/// Every binding kept is pinned (so a statement need not run again).
+pub fn (s: Sess) all_pinned() -> Bool {
+  s.entries.all(fn(e) { if let Bind(name: _, mutable: _) = e.kind { !e.pin.is_empty() } else { true } })
+}
+
+/// The session with the binding of name unpinned (its literal did not
+/// check): its entry runs again from then on.
+pub fn (s: Sess) unpin(name: Str) -> Sess {
+  var out = s
+  var i = 0
+  while i < out.entries.len() {
+    if let Bind(name: n, mutable: _) = out.entries[i].kind {
+      if n == name {
+        out.entries[i].pin = ""
+      }
+    }
+    i += 1
+  }
+  out
+}
+
+/// The protocol lines of a run's stdout: the user's output after the
+/// begin mark, the value of an expression entry, and the pins.
+pub struct Ran {
+  pub out: Str
+  pub value: Str?
+  pub pins: Map[Str, Str]
+}
+
+pub fn parse_run(stdout: Str) -> Ran {
+  var r = Ran{out: "", value: None, pins: {}}
+  var begun = false
+  var b = StrBuilder.new()
+  let lines = stdout.split("\n")
+  var i = 0
+  while i < lines.len() {
+    let l = lines[i]
+    i += 1
+    if l == "${MARK} begin" {
+      begun = true
+      continue
+    }
+    if !begun {
+      continue
+    }
+    if l.starts_with("${MARK} value ") {
+      r.value = Some(l["${MARK} value ".len()..])
+    } else if l.starts_with("${MARK} pin ") {
+      let rest = l["${MARK} pin ".len()..]
+      if let Some((n, v)) = rest.cut(" ") {
+        r.pins[n] = v
+      }
+    } else if i < lines.len() || !l.is_empty() {
+      b.write(l)
+      b.write("\n")
+    }
+  }
+  r.out = b.freeze()
+  r
+}

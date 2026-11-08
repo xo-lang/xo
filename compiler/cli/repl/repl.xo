@@ -1,0 +1,379 @@
+// `xo repl` (decision 0572, stage 1, experimental): read an entry, add
+// it to the session's generated program, build it with this xo, run it,
+// and print what the newest entry wrote and its value. Bindings of plain
+// data are pinned as literals (session.xo), so earlier entries do not run
+// again. The check for types runs in process; the build and the run are
+// child processes, the loop decision 0572 measured.
+//
+//   xo repl [--session=FILE] [--keep] [--eval=ENTRIES]
+
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/semantic
+use github.com/xo-lang/xo/compiler/hostpath
+use std/json
+
+pub fn usage() -> Str {
+  [
+    "usage: xo repl [--session=FILE] [--keep] [--eval=ENTRIES]",
+    "",
+    "Experimental (decision 0572). Reads Xo entries (an expression, a let or",
+    "var, a statement, a fn, struct or enum, a use line), runs each at once,",
+    "and prints its output and value. `os` is the program's Os. Bindings of",
+    "plain data carry to later entries as values, so an entry's effects run",
+    "once; a binding that holds a handle runs its entry again each time.",
+    "",
+    "  --eval=ENTRIES   run ENTRIES (one per line; an open bracket continues",
+    "                   an entry) and exit: 1 at the first that fails",
+    "  --session=FILE   read the session from FILE and write it back after",
+    "  --keep           keep the session directory and print its path",
+    "",
+    "Commands: :type EXPR, :doc NAME, :undo, :reset, :quit.",
+  ].join("\n") + "\n"
+}
+
+struct Opts {
+  eval: Str?
+  session: Str
+  keep: Bool
+}
+
+struct State {
+  sess: Sess
+  /// the sessions before each kept change, for :undo
+  undo: List[Sess]
+  dir: Str
+  xo: Str
+  pc: Map[Str, check.ParseEntry]
+}
+
+pub fn run(os: Os, args: List[Str]) -> Int uses (clock, env, fs, proc, rand, stdio) {
+  var o = Opts{eval: None, session: "", keep: false}
+  for a in args {
+    if let Some(v) = a.cut_prefix("--eval=") {
+      o.eval = Some(v)
+    } else if let Some(v) = a.cut_prefix("--session=") {
+      o.session = v
+    } else if a == "--keep" {
+      o.keep = true
+    } else if a is "-h" | "--help" {
+      os.stdio.print(usage())
+      return 0
+    } else {
+      os.stdio.eprint("xo repl: unknown argument ${a}\n${usage()}")
+      return 2
+    }
+  }
+  let dir = match new_dir(os) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.eprintln("xo repl: ${e}")
+      return 1
+    }
+  }
+  var st = State{sess: Sess{entries: []}, undo: [], dir: dir, xo: os.env.program(), pc: {}}
+  if !o.session.is_empty() {
+    if let Ok(b) = os.fs.read(o.session) {
+      match json.decode[Sess](b) {
+        Ok(s) => st.sess = s
+        Err(e) => {
+          os.stdio.eprintln("xo repl: ${o.session}: ${e}")
+          return 1
+        }
+      }
+    }
+  }
+  let code = match o.eval {
+    Some(text) => eval_all(os, st, text)
+    None => interact(os, st)
+  }
+  if !o.session.is_empty() {
+    match os.fs.write(o.session, json.encode(st.sess)) {
+      Ok(_) => {}
+      Err(e) => os.stdio.eprintln("xo repl: ${o.session}: ${e}")
+    }
+  }
+  if o.keep {
+    os.stdio.eprintln("xo repl: session directory ${dir}")
+  } else {
+    os.fs.remove_all(dir).ok()
+  }
+  code
+}
+
+fn new_dir(os: Os) -> Str ! Str uses (env, fs) {
+  let t = os.fs.create_temp(hostpath.temp_dir(os.env), "xo-repl-").map_err(fn(e) { "${e}" })?
+  // create_temp makes a file: a directory of that name instead
+  os.fs.remove(t).ok()
+  os.fs.create_dir_all(t).map_err(fn(e) { "${e}" })?
+  os.fs.write("${t}/xo.mod", "module repl.local/session\nedition preview\n".bytes()).map_err(fn(e) { "${e}" })?
+  Ok(t)
+}
+
+/// Whether src is a whole entry: every bracket it opens is closed and no
+/// string is left open.
+pub fn complete(src: Str) -> Bool {
+  let b = src.bytes()
+  var depth = 0
+  var i = 0
+  while i < b.len() {
+    let c = b[i]
+    if c == 0x22 {
+      // a string, with its escapes (a ${...} inside is part of it)
+      i += 1
+      while i < b.len() && b[i] != 0x22 {
+        if b[i] == 0x5c {
+          i += 1
+        }
+        i += 1
+      }
+      if i >= b.len() {
+        return false
+      }
+    } else if c == 0x2f && i + 1 < b.len() && b[i + 1] == 0x2f {
+      while i < b.len() && b[i] != 0x0a {
+        i += 1
+      }
+    } else if c is 0x28 | 0x5b | 0x7b {
+      depth += 1
+    } else if c is 0x29 | 0x5d | 0x7d {
+      depth -= 1
+    }
+    i += 1
+  }
+  depth <= 0
+}
+
+/// ENTRIES split into entries: lines, an entry continuing while it is
+/// not complete.
+pub fn split_entries(text: Str) -> List[Str] {
+  var out: List[Str] = []
+  var cur = ""
+  for l in text.split("\n") {
+    if cur.is_empty() && l.trim().is_empty() {
+      continue
+    }
+    cur = if cur.is_empty() { l } else { "${cur}\n${l}" }
+    if complete(cur) {
+      out.push(cur)
+      cur = ""
+    }
+  }
+  if !cur.trim().is_empty() {
+    out.push(cur)
+  }
+  out
+}
+
+fn eval_all(os: Os, var st: State, text: Str) -> Int uses (clock, env, fs, proc, rand, stdio) {
+  for e in split_entries(text) {
+    if !step(os, st, e) {
+      return 1
+    }
+  }
+  0
+}
+
+fn interact(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand, stdio) {
+  os.stdio.eprintln("xo repl (experimental, decision 0572): :quit to end, :type EXPR, :doc NAME, :undo, :reset")
+  var cur = ""
+  while {
+    os.stdio.eprint(if cur.is_empty() { "xo> " } else { "... " })
+    let line = match os.stdio.read_line() {
+      Ok(Some(l)) => l
+      Ok(None) => return 0
+      Err(e) => {
+        os.stdio.eprintln("xo repl: ${e}")
+        return 1
+      }
+    }
+    if cur.is_empty() && line.trim().is_empty() {
+      continue
+    }
+    // a blank line ends an open entry (it is run as it is)
+    cur = if cur.is_empty() { line } else if line.trim().is_empty() { cur } else { "${cur}\n${line}" }
+    if !complete(cur) && !line.trim().is_empty() {
+      continue
+    }
+    let e = cur
+    cur = ""
+    if e.trim() == ":quit" || e.trim() == ":q" {
+      return 0
+    }
+    step(os, st, e)
+  }
+  0
+}
+
+/// Runs one entry or command; false when it failed.
+fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, rand, stdio) {
+  let t = src.trim()
+  if t.starts_with(":") {
+    return command(os, st, t)
+  }
+  let e = Entry{src: src, kind: classify(src), pin: "", typ: ""}
+  // XO_REPL_TIMES=1: each step's wall time on stderr
+  let timing = (os.env.get("XO_REPL_TIMES") ?? "") == "1"
+  var tries = 0
+  while {
+    let (prog, at) = st.sess.program(e)
+    let main = "${st.dir}/main.xo"
+    if let Err(err) = os.fs.write(main, prog.bytes()) {
+      os.stdio.eprintln("xo repl: ${err}")
+      return false
+    }
+    let bin = "${st.dir}/session"
+    let tb = os.clock.now()
+    let b = match os.proc.cmd(st.xo, ["build", "-o", bin, st.dir]).output() {
+      Ok(r) => r
+      Err(err) => {
+        os.stdio.eprintln("xo repl: ${st.xo} build: ${err}")
+        return false
+      }
+    }
+    if b.code != 0 {
+      let msg = (b.stderr.to_str() ?? "") + (b.stdout.to_str() ?? "")
+      let (text, earlier) = map_diags(msg, main, at)
+      if earlier && tries == 0 && st.sess.entries.any(fn(x) { !x.pin.is_empty() }) {
+        // a pinned literal did not check (a Debug text that is not a
+        // literal): those bindings run their entries again from now on
+        for n in st.sess.bound() {
+          st.sess = st.sess.unpin(n)
+        }
+        tries += 1
+        continue
+      }
+      os.stdio.eprint(text)
+      return false
+    }
+    let build_ms = os.clock.since(tb).nanos() / 1000000
+    let tr = os.clock.now()
+    let r = match os.proc.cmd(bin, []).output() {
+      Ok(r) => r
+      Err(err) => {
+        os.stdio.eprintln("xo repl: run: ${err}")
+        return false
+      }
+    }
+    let run_ms = os.clock.since(tr).nanos() / 1000000
+    let ran = parse_run(r.stdout.to_str() ?? "")
+    os.stdio.print(ran.out)
+    os.stdio.eprint(r.stderr.to_str() ?? "")
+    if r.code != 0 {
+      os.stdio.eprintln("(exit status ${r.code}; the entry is not kept)")
+      return false
+    }
+    if let Some(v) = ran.value {
+      if v != "()" {
+        os.stdio.println(v)
+      }
+    }
+    var types: Map[Str, Str] = {}
+    let tt = os.clock.now()
+    if let Bind(name: n, mutable: _) = e.kind {
+      let first = src.split("\n")[0]
+      let col = (first.find(n) ?? 0) + 1
+      match type_of(os, st, main, at, col) {
+        Ok(ty) => types[n] = ty
+        Err(_) => {}
+      }
+    }
+    if timing {
+      os.stdio.eprintln("xo repl: build ${build_ms} ms, run ${run_ms} ms, types ${os.clock.since(tt).nanos() / 1000000} ms")
+    }
+    if !(e.kind is Expr) {
+      st.undo.push(st.sess)
+    }
+    st.sess = st.sess.after(e, ran.pins, types)
+    return true
+  }
+  false
+}
+
+/// The type at line:col of the session's main.xo, from an in-process
+/// check (std's parsed files kept across entries).
+fn type_of(os: Os, var st: State, main: Str, line: Int, col: Int) -> Str ! Str uses (env, fs, proc) {
+  let s = semantic.load_session_pc(os, [st.dir], true, {}, [], false, st.pc, semantic.Bodies.All)?
+  st.pc = s.c.parse_cache
+  let r = s.type_at(main, line, col)?
+  Ok(r.typ)
+}
+
+/// The build's diagnostics with main.xo's lines given as the entry's
+/// (`entry:L:C`) or the session's; and whether one points before the
+/// entry (at an earlier entry or a pinned literal).
+pub fn map_diags(msg: Str, main: Str, at: Int) -> (Str, Bool) {
+  var b = StrBuilder.new()
+  var earlier = false
+  for l in msg.split("\n") {
+    var out = l
+    for p in [main, "main.xo"] {
+      if let Some(rest) = l.cut_prefix("${p}:") {
+        if let Some((ln, tail)) = rest.cut(":") {
+          if let Some(n) = Int.parse(ln) {
+            if n >= at {
+              out = "entry:${n - at + 1}:${tail}"
+            } else {
+              out = "session:${n}:${tail}"
+              earlier = true
+            }
+          }
+        }
+        break
+      }
+    }
+    b.write(out)
+    b.write("\n")
+  }
+  (b.freeze().trim_end() + "\n", earlier)
+}
+
+fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, rand, stdio) {
+  if t == ":reset" {
+    st.undo.push(st.sess)
+    st.sess = Sess{entries: []}
+    return true
+  }
+  if t == ":undo" {
+    if st.undo.is_empty() {
+      os.stdio.eprintln("xo repl: nothing to undo")
+      return false
+    }
+    st.sess = st.undo[st.undo.len() - 1]
+    st.undo = st.undo[..st.undo.len() - 1]
+    return true
+  }
+  if let Some(x) = t.cut_prefix(":type ") {
+    let e = Entry{src: x, kind: Kind.Expr, pin: "", typ: ""}
+    let (prog, at) = st.sess.program(e)
+    let main = "${st.dir}/main.xo"
+    if let Err(err) = os.fs.write(main, prog.bytes()) {
+      os.stdio.eprintln("xo repl: ${err}")
+      return false
+    }
+    match type_of(os, st, main, at, 5) {
+      Ok(ty) => {
+        os.stdio.println(ty)
+        return true
+      }
+      Err(err) => {
+        os.stdio.eprintln("xo repl: :type: ${err}")
+        return false
+      }
+    }
+  }
+  if let Some(x) = t.cut_prefix(":doc ") {
+    match os.proc.cmd(st.xo, ["doc", x.trim()]).output() {
+      Ok(r) => {
+        os.stdio.print(r.stdout.to_str() ?? "")
+        os.stdio.eprint(r.stderr.to_str() ?? "")
+        return r.code == 0
+      }
+      Err(err) => {
+        os.stdio.eprintln("xo repl: :doc: ${err}")
+        return false
+      }
+    }
+  }
+  os.stdio.eprintln("xo repl: unknown command ${t} (:type EXPR, :doc NAME, :undo, :reset, :quit)")
+  false
+}
