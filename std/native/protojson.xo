@@ -1256,7 +1256,7 @@ fn num_text(v: Jv) -> Str? {
   match v {
     Num(raw) => Some(raw)
     Text(s) => str_number(s)
-    _ => None
+    Null | Bool(_) | Arr(_) | Obj(_) => None
   }
 }
 
@@ -1275,7 +1275,7 @@ fn parse_float(v: Jv, bits: Int) -> Float? {
         return Some(-1.0 / 0.0)
       }
     }
-    _ => {}
+    Null | Bool(_) | Num(_) | Arr(_) | Obj(_) => {}
   }
   let raw = num_text(v) ?? return None
   let f = Float.parse(raw) ?? return None
@@ -1347,13 +1347,13 @@ fn enc_scalar(r: protojson.Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojs
   if k == protodesc.TYPE_BOOL {
     match jv {
       Bool(b) => return Ok(Some(Sv{v: if b { 1 } else { 0 }, data: b""}))
-      _ => return Err(bad(fd))
+      Null | Num(_) | Text(_) | Arr(_) | Obj(_) => return Err(bad(fd))
     }
   }
   if k == protodesc.TYPE_STRING {
     match jv {
       Text(s) => return Ok(Some(Sv{v: 0, data: s.bytes()}))
-      _ => return Err(bad(fd))
+      Null | Bool(_) | Num(_) | Arr(_) | Obj(_) => return Err(bad(fd))
     }
   }
   if k == protodesc.TYPE_BYTES {
@@ -1371,7 +1371,7 @@ fn enc_scalar(r: protojson.Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojs
           Err(_) => return Err(bad(fd))
         }
       }
-      _ => return Err(bad(fd))
+      Null | Bool(_) | Num(_) | Arr(_) | Obj(_) => return Err(bad(fd))
     }
   }
   if k == protodesc.TYPE_ENUM {
@@ -1402,7 +1402,7 @@ fn enc_scalar(r: protojson.Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojs
         }
         return Err(bad(fd))
       }
-      _ => return Err(bad(fd))
+      Bool(_) | Arr(_) | Obj(_) => return Err(bad(fd))
     }
   }
   Err(jerr("field ${fd.name}: unsupported kind ${k}"))
@@ -1464,7 +1464,7 @@ fn is_packed(info: protojson.MsgInfo, fd: protodesc.FieldDesc) -> Bool {
 fn is_null(jv: Jv) -> Bool {
   match jv {
     Null => true
-    _ => false
+    Bool(_) | Num(_) | Text(_) | Arr(_) | Obj(_) => false
   }
 }
 
@@ -1567,13 +1567,13 @@ fn enc_field(r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.Field
       if mi.is_map {
         match jv {
           Obj(members) => return enc_map(r, fd, mi, members, o)
-          _ => return Err(bad(fd))
+          Null | Bool(_) | Num(_) | Text(_) | Arr(_) => return Err(bad(fd))
         }
       }
     }
     let items = match jv {
       Arr(items) => items
-      _ => return Err(bad(fd))
+      Null | Bool(_) | Num(_) | Text(_) | Obj(_) => return Err(bad(fd))
     }
     var svs: List[Sv] = []
     for it in items {
@@ -1653,7 +1653,7 @@ fn msg_wire(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson
 fn msg_wire_obj(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson.Opts, in_any: Bool) -> Bytes ! protojson.JsonErr {
   let members = match jv {
     Obj(m) => m
-    _ => return Err(jerr("unexpected token"))
+    Null | Bool(_) | Num(_) | Text(_) | Arr(_) => return Err(jerr("unexpected token"))
   }
   var seen: Map[Int, Bool] = {}
   var oneofs: Map[Int, Bool] = {}
@@ -1892,7 +1892,7 @@ fn parse_duration(s: Str) -> Bytes ! protojson.JsonErr {
 fn text_of(jv: Jv, what: Str) -> Str ! protojson.JsonErr {
   match jv {
     Text(s) => Ok(s)
-    _ => Err(jerr("invalid ${what} value"))
+    Null | Bool(_) | Num(_) | Arr(_) | Obj(_) => Err(jerr("invalid ${what} value"))
   }
 }
 
@@ -1987,13 +1987,13 @@ fn wkt_wire(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson
   if short == "Struct" {
     match jv {
       Obj(m) => return Ok(Some(struct_wire(m, o)?))
-      _ => return Err(jerr("unexpected token"))
+      Null | Bool(_) | Num(_) | Text(_) | Arr(_) => return Err(jerr("unexpected token"))
     }
   }
   if short == "ListValue" {
     match jv {
       Arr(items) => return Ok(Some(list_wire(items, o)?))
-      _ => return Err(jerr("unexpected token"))
+      Null | Bool(_) | Num(_) | Text(_) | Obj(_) => return Err(jerr("unexpected token"))
     }
   }
   if short == "Value" {
@@ -2010,7 +2010,7 @@ fn wkt_wire(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson
         }
         return Ok(Some(b""))
       }
-      _ => return Err(jerr("unexpected token"))
+      Null | Bool(_) | Num(_) | Text(_) | Arr(_) => return Err(jerr("unexpected token"))
     }
   }
   if short == "Any" {
@@ -2022,7 +2022,7 @@ fn wkt_wire(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson
 fn any_wire(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
   let members = match jv {
     Obj(m) => m
-    _ => return Err(jerr("unexpected token"))
+    Null | Bool(_) | Num(_) | Text(_) | Arr(_) => return Err(jerr("unexpected token"))
   }
   if members.is_empty() {
     return Ok(b"")
@@ -2040,7 +2040,7 @@ fn any_wire(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson
           }
           url = s
         }
-        _ => return Err(jerr("@type field value is not a string"))
+        Null | Bool(_) | Num(_) | Arr(_) | Obj(_) => return Err(jerr("@type field value is not a string"))
       }
     }
   }
