@@ -70,6 +70,35 @@ deterministic sort stays for Value trees and Map fields.
   llvm with both modes, the goldens cbor_case and cbor_enum, and a golden
   with omitempty, keyasint, toarray, a Map field and a nested type.
 
+## Prototype (Xo Lang 2, 2026-11-07; branch l2-0559, for the owner's measurement)
+
+- compiler/check/derive.xo: `cbor_putter` (a writer per field type: Str,
+  Int, Float, Bool, Bytes, Time, Duration, cbor.Value, Option, List,
+  Map[Str, V], a derived type's `cbor_put__`), `cbor_struct_put` (map
+  structs: key encodings as constant Bytes, canonical order computed at
+  derive time and written as a second branch only when it differs from
+  declaration order, omit tests counted out of the head first), toarray
+  structs, and enums through their tree (`put_value(cbor_wr__E(v))`).
+  `marshal` calls `cbor_put__T`; `cbor_wr__T` stays for `to_value` and
+  enum fields.
+- std/cbor: put_head, put_int, put_float, put_text, put_bytes, put_value,
+  det_keys (a Map field's deterministic order without a tree).
+- Same bytes: the cbor corpora on go, arm64 and llvm (det mode, Person's
+  keyasint key sorting before its text keys, omitempty, Map, Option,
+  nested, Time, Duration), the goldens cbor_case and cbor_enum, and a
+  probe of 12 outputs in both modes (Person, Pair toarray, Deep, a struct
+  with enum fields) equal to main's xo.
+- __text (darwin/arm64): bench/perf/cbor 433,196 to 427,988 bytes; the
+  probe 413,360 to 401,260 (marshal no longer reaches the tree writers).
+- Timing, linux/arm64 host 1, ab-host 064a0f08f against f875ed5fc,
+  7 rounds: umarshal 0.46 (6.107 to 2.809 ms, 0.445 to 0.468, n=6), under
+  the survey's Go row (4.3 ms, bench/results/xo-vs-go-survey-2026-11-07.md);
+  canon 0.982 (0.961 to 0.995, n=7; the tree encoder, unchanged, as a
+  control); max RSS within noise.
+- A difference: a derived value nested past 1,000 levels was an error
+  from enc_item's depth limit; the direct writer has none (a recursive
+  type through List or Option would recurse until the stack guard).
+
 ## Alternatives
 
 1. Keep the tree and make it cheaper (pooled or arena Values): the drop and
