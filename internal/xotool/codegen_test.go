@@ -137,6 +137,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_EDGES_CACHE":          {"none", ""}, // off: xo dev edges checks std's bodies with every program instead of reading the cached std graph (decision 0381); no build reads it
 	"XO_TEST_JOBS":            {"none", ""},
 	"XO_TEST_ONLY":            {"none", ""},
+	"XO_TEST_EXEC":            {"none", ""}, // the program a test binary runs through (decision 0571 stage 3); it runs the binary, never builds it
 	"XO_TRACEBACK":            {"none", ""},
 	"XO_MAX_MEM":              {"none", ""},
 	"XO_WARNINGS":             {"none", ""},
