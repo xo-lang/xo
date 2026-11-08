@@ -127,7 +127,10 @@ Go"; runtime/cgo):
    author but hides the capability flow from C.)
 6. **Runtime start and threads.**
    - `xo_init` runs entry.init's steps and starts the scheduler's pool
-     without a main fiber. It is idempotent and thread safe.
+     without a main fiber, and switches the allocator to one heap record
+     per thread (the stage 1 prototype found the single threaded record
+     crashes under concurrent C callers). It is idempotent and thread
+     safe.
    - Stage 1 requires `xo_init`. Stage 2 runs it lazily from the first
      export call (a once flag in the stub) and from a library
      constructor on darwin and linux, as Go's c-shared does.
@@ -174,6 +177,165 @@ Go"; runtime/cgo):
   TypeScript syntax; Xo exports a declaration with `pub`") stays as it
   is. A keyword `export fn` would have turned that habit into a C symbol
   without a diagnostic.
+
+## Stage 1 prototype (2026-11-08, branch l4-clib, not on main)
+
+The prototype is built and passing; it does not push until the owner
+accepts this ADR, and then pushes with spec/core.md's grammar and 3.2
+text and the XO1518 row in the same change.
+
+What it has:
+- the `as c "NAME"` clause (parser `CExportClause`, AST codec v9) and
+  its checks (XO1518: not `pub`, a method, generic, `var` parameters, an
+  error result, a parameter or result outside the boundary types, a name
+  that is not a C identifier or starts with `xo_`, more than 8 integer
+  words of parameters);
+- `xo build --lib=shared` behind `XO_CLIB=1`, arm64 native backend,
+  linked with cc (`-dynamiclib -install_name @rpath/libNAME.dylib`;
+  `-shared -Bsymbolic -soname libNAME.so`), no DWARF segment, no hollow
+  pass (it roots at `_main`), `NAME.h` beside the library;
+- `xo build --lib=static`: each part assembled with cc, the parts and
+  the constructor joined into one object (`cc -r`: a C link takes an
+  archive member only for a symbol it needs), then `ar rcs`; on darwin
+  the runtime's weak references the object leaves undefined (the
+  ThreadSanitizer fiber hooks, which a program's link passes as `-U`)
+  are absolute symbols at 0 in a member of their own, so the C
+  program's link resolves them as a program's link would; on linux the
+  C program links with `-lm -lpthread -ldl`;
+- `xo_init(argc, argv, envp)` in cabi_c.xo (entry.init, then
+  entry.start), in place of `main`, and an empty SSA `main` for the
+  backends' xo_entry; in a shared library it is also the constructor
+  (`__mod_init_func`, `.init_array`), which the loader calls with the
+  process's arguments, and a second call does nothing, so C need not
+  call it (stage 2's lazy start, brought forward; cmd/xo TestCLibNoInit
+  and TestCLibStatic);
+- Bytes and Str parameters: a generated wrapper `xo_cx_NAME` takes
+  `XoBytes {p, n}` as two words and copies the bytes (raw.str_at)
+  before calling the function;
+- only `xo_init` and the exports are the shared library's symbols
+  (decision 2's hidden runtime names, brought forward from stage 2);
+- linux: thread locals by initial exec (`:gottprel:`, a `tls_ie` flag
+  in the function and part cache keys) in calls.xo tl_base, the
+  scheduler's xo_tlocal_* and the preempt stub; local exec
+  (`:tprel_hi12:`) cannot link into a shared object (ld.lld:
+  "relocation R_AARCH64_TLSLE_ADD_TPREL_HI12 against xo_tlocal cannot
+  be used with -shared").
+
+The proof is the library below, called from C and from Python:
+
+```
+pub fn add(a: Int, b: Int) -> Int as c "geo_add" { a + b }
+pub fn norm(x: Float, y: Float) -> Float as c "geo_norm" { (x * x + y * y).sqrt() }
+pub fn list_sum(n: Int) -> Int as c "geo_list_sum" { ... a List of n Ints, summed ... }
+pub fn byte_sum(b: Bytes) -> Int as c "geo_byte_sum" { ... }
+pub fn str_len(w: Float, s: Str, k: Int) -> Float as c "geo_str_len" { w * Float(s.len() + k) }
+```
+
+- The C test (cmd/xo TestCLibShared on the branch) includes the
+  generated `geo.h`, calls `xo_init`, and checks each export: 42 from
+  `geo_add(2, 40)`, 5.0 from `geo_norm(3, 4)`, 4999950000 from
+  `geo_list_sum(100000)` (the heap from xo_init), a 64 byte buffer's sum
+  and an empty `{NULL, 0}` through `geo_byte_sum`, and a Str's words
+  between a double and an int64 through `geo_str_len`.
+- The Python test (`python3 -I test_ctypes.py LIBPATH`):
+
+  ```python
+  # Stage 1 Python caller of libgeo through ctypes (decision 0574):
+  # python3 -I test_ctypes.py LIBPATH
+  import ctypes, math, sys
+  lib = ctypes.CDLL(sys.argv[1])
+  lib.xo_init.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+  lib.xo_init.restype = ctypes.c_int64
+  lib.geo_add.argtypes = [ctypes.c_int64, ctypes.c_int64]
+  lib.geo_add.restype = ctypes.c_int64
+  lib.geo_norm.argtypes = [ctypes.c_double, ctypes.c_double]
+  lib.geo_norm.restype = ctypes.c_double
+  lib.geo_list_sum.argtypes = [ctypes.c_int64]
+  lib.geo_list_sum.restype = ctypes.c_int64
+  class XoBytes(ctypes.Structure):
+      _fields_ = [("p", ctypes.c_char_p), ("n", ctypes.c_int64)]
+  lib.geo_byte_sum.argtypes = [XoBytes]
+  lib.geo_byte_sum.restype = ctypes.c_int64
+  lib.geo_str_len.argtypes = [ctypes.c_double, XoBytes, ctypes.c_int64]
+  lib.geo_str_len.restype = ctypes.c_double
+  assert lib.xo_init(0, None, None) == 0
+  assert lib.geo_add(2, 40) == 42
+  assert lib.geo_add(-5, 3) == -2
+  assert math.isclose(lib.geo_norm(3.0, 4.0), 5.0)
+  assert lib.geo_list_sum(100000) == 4999950000
+  data = bytes(range(200))
+  assert lib.geo_byte_sum(XoBytes(data, len(data))) == sum(data)
+  assert lib.geo_str_len(2.0, XoBytes(b"h\xc3\xa9llo", 6), 1) == 14.0
+  print("ok")
+  ```
+- TestCLibStatic links the same library and C test from `--lib=static`,
+  and a C caller that never calls `xo_init`.
+- TestCLibRejects checks XO1518 for seven bad exports and that
+  `--lib=shared` refuses a package with `fn main`.
+
+Both pass on darwin/arm64 (the Mac) and linux/arm64 (offload host 2,
+glibc, ld.lld; the .so has its SONAME, no TEXTREL, and needs only libc
+and libm). The shared library exports only `xo_init` and the exports
+(an exported symbols list on darwin, a version script with `local: *`
+on linux; TestCLibShared checks the list with nm); without them the
+linux library exported 201 symbols, the runtime's C names among them.
+
+Threads: an export called from a C thread Xo did not start ran (one
+thread at a time), but four C threads calling an allocating export at
+once crashed (SIGSEGV): after entry.start the runtime is still single
+threaded, and the allocator hands every thread the main thread's heap
+record (obj.heap_word's single threaded word). The prototype's xo_init
+now makes the switch pool.xo makes before its second thread
+(cabi.xo heap_threads: one heap record per thread, made on the thread's
+first allocation by heap_thread, and standard output's lock).
+With it, four C threads making 20000 allocating calls each return
+the right sums (3 runs on the Mac; cmd/xo TestCLibThreads on the branch).
+A thread's record is never freed in stage 1: heapos.thread_heap maps
+one and links it into the records' list for good (Xo's own threads live
+as long as the process). A C thread that calls an allocating export and
+exits costs about 32 KB (max RSS 2.4 MB, then 34.6 MB after 1000 such
+threads, on the Mac); stage 2 reuses a record freed by a pthread key
+destructor. A fault in an export (`[10, 20][5]`) prints the fault
+report and exits 70, from the main thread and from a foreign one, as
+decision 4 has it for stage 1. Its traceback first named every frame
+from the C executable's symbols (`run`, `main`): the symbolizer read
+image 0 (macOS) or /proc/self/exe (Linux). The prototype reads the
+image holding Xo's code (dladdr of xo_entry on macOS, the dynamic
+linker's link map on Linux) for the names and lines, and ends the
+traceback at the first frame outside it, named by the dynamic linker:
+`boom.boom`, then `main (C)` (cmd/xo TestCLibFault).
+
+Call overhead (100M calls of `geo_add`, 10M calls of `geo_byte_sum`
+over 64 bytes; against the same functions in C, `noinline` in the
+executable (c_) and in a C shared library called through the dynamic
+linker as the Xo library is (cs_); the C caller at -O2):
+
+| host | geo_add | cs_add | c_add | geo_byte_sum (64 B) | geo_byte_len (64 B) | cs_byte_sum | c_byte_sum |
+|---|---|---|---|---|---|---|---|
+| darwin/arm64 (Mac, 1 run) | 1.27 ns | 1.02 ns | 0.76 ns | 24.6 ns | 20.6 ns | 4.1 ns | 4.1 ns |
+| linux/arm64 (offload host 2, the pass/fail host, under load; median of 5 runs) | 0.94 ns | not run | 0.47 ns | 24.8 ns | not run | not run | 16.3 ns |
+
+The linux/arm64 row on host 1 (the timing host), with the cs_ baseline
+and geo_byte_len, is queued behind other measurements and is added when
+it lands.
+
+(`geo_byte_len` returns `b.len()`: the boundary's copy alone.)
+
+An Int call into the Xo library costs about a quarter nanosecond more
+than the same call into a C library. The export's body is C's plus Xo's
+overflow check (`adds x0, x0, x1; b.vs <fault>; ret`, no frame, no
+saved registers), and the export's symbol is a `b` to the function's own
+label: one more branch than C's. The Bytes call's extra cost is the copy:
+on the Mac, `geo_byte_sum` less `geo_byte_len` is C's loop time, so the
+20 ns over C
+is the wrapper's allocation, memcpy and free of the 64 bytes (all
+inlined into `xo_cx_geo_byte_sum` but the allocator's call). A plain Xo
+program's `b.clone()` of 64 bytes takes 16 to 17 ns on the same Mac (3
+runs of 10M), so the library path adds about 4 ns and the rest is Xo's
+own allocation, copy and free. Stage 2 measures where they go and
+whether a borrowed Bytes for the call's length is sound (Xo cannot keep
+a view of C memory past the call, so the function would have to be
+checked not to store it).
 
 ## Alternatives
 
