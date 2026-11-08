@@ -1,0 +1,14 @@
+use std/json
+
+fn main(os: Os) {
+  for t in ["", "{\"a\":", "nul", "[1.", "1e", "}", "[1 2]", "{} x"] {
+    match json.parse_value(t) {
+      Ok(_) => os.stdio.println("ok")
+      Err(e) => os.stdio.println(e.go_text())
+    }
+  }
+  match json.decode_str[Int]("tru") {
+    Ok(_) => os.stdio.println("ok")
+    Err(e) => os.stdio.println(e.go_text())
+  }
+}

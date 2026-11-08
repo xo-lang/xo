@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+unexpected end of JSON input
+unexpected end of JSON input
+invalid character ' ' in literal null (expecting 'l')
+invalid character ' ' after decimal point in numeric literal
+invalid character ' ' in exponent of numeric literal
+invalid character '}' looking for beginning of value
+invalid character '2' after array element
+invalid character 'x' after top-level value
+invalid character ' ' in literal true (expecting 'e')
+--- stderr
