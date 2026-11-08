@@ -1,0 +1,22 @@
+// bytesum: a byte sum loop (`for x in b { s += Int(x) }`) over a 63 byte
+// Bytes, called 20 million times, the shape of ADR 0574's geo_byte_sum
+// (2026-11-08: on amd64 the loop added into the byte's register and
+// copied the sum back each iteration; LLVM's loop took about half the
+// time). Prints `sum <total>`.
+fn byte_sum(b: Bytes) -> Int {
+  var s = 0
+  for x in b {
+    s += Int(x)
+  }
+  s
+}
+
+fn main(os: Os) uses stdio, env {
+  let b = "the quick brown fox jumps over the lazy dog, 0123456789 ABCDEFG".bytes()
+  let n = Int.parse(os.env.args().get(0) ?? "20000000") ?? 20000000
+  var t = 0
+  for _ in 0..n {
+    t += byte_sum(b)
+  }
+  os.stdio.println("sum ${t}")
+}
