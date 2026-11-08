@@ -12,6 +12,8 @@
 
 `debug`, `info`, `warn` and `error` (and a `Logger`'s) are compiled as `if log.enabled(level) { call }` on every backend (decision 0558), so a record below the configured level builds no fields map, interpolation or `Debug` boxes. `log.enabled(level)` is new for work that is not an argument. An argument with a side effect does not run when the record is dropped.
 
+bench/perf/log `filtered` (100,000 records below the level, two fields each) on linux/arm64 host 1, `--ab` against the commit before, 6 rounds: wall 13.5 ms to 0.54 ms (B/A 0.04, 0.039 to 0.047), max RSS unchanged (1260 kB).
+
 ## 2026-11-04: perf: a record's JSON keys are ordered by insertion, not sort_by
 
 - Kind: perf
