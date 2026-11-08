@@ -1,0 +1,49 @@
+// Tests of num.xo's private helpers: `xo test --std-module=native/llrt/num`,
+// run by internal/stdtest.
+
+/// The values each side of append_int's cases (one word below 10^8, two
+/// words below 10^16, append_wide past them) with their text.
+const INTS: List[(Int, Str)] = [
+  (0, "0"),
+  (-1, "-1"),
+  (-9999999, "-9999999"),
+  (-10000000, "-10000000"),
+  (-99999999 + 1, "-99999998"),
+  (-10000001, "-10000001"),
+  (99999999, "99999999"),
+  (100000000, "100000000"),
+  (-99999999, "-99999999"),
+  (-100000000, "-100000000"),
+  (123456789, "123456789"),
+  (-123456789, "-123456789"),
+  (1999999999, "1999999999"),
+  (-1999999999, "-1999999999"),
+  (4294967296, "4294967296"),
+  (1234567890123456, "1234567890123456"),
+  (-1234567890123456, "-1234567890123456"),
+  (9999999999999999, "9999999999999999"),
+  (-9999999999999999, "-9999999999999999"),
+  (10000000000000000, "10000000000000000"),
+  (-10000000000000000, "-10000000000000000"),
+  (-12345678901234567, "-12345678901234567"),
+  (9223372036854775807, "9223372036854775807"),
+  (-9223372036854775807 - 1, "-9223372036854775808"),
+]
+
+test "append_int writes each case's text, alone and after other text" {
+  for (v, want) in INTS {
+    expect(append_int("", v) == want)
+    expect(append_int("ab", v) == "ab${want}")
+  }
+}
+
+test "append_int appends many to one string" {
+  var s = "x"
+  var want = "x"
+  for (v, t) in INTS {
+    s = append_int(s, v)
+    s = append_int(s, v)
+    want = "${want}${t}${t}"
+  }
+  expect(s == want)
+}

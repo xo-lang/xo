@@ -107,6 +107,27 @@ pub fn append_int(out: Str, v: Int) -> Str {
     }
     return rt.rs_push_word(out, (w & 0x7FFFFFFFFFFFFF).wrapping_shl(8) | 45, k + 1)
   }
+  if v >= 100000000 && v < 10000000000000000 || v <= -100000000 && v > -10000000000000000 {
+    // 10^8 <= |v| < 10^16 (not -10^8 < v <= -10^7, which the common
+    // case leaves to append_wide too): the top digits (after "-") in one
+    // word, the low 8 in a second, two pushes where append_wide's
+    // rs_push_words took four words, 32 bytes of room and 64 fresh ones
+    var u = v
+    if v < 0 {
+      u = 0 - v
+    }
+    let q = u / 100000000
+    let k = ndigits8(q)
+    let w = digits_k(q, k)
+    let lo = digits8(u % 100000000)
+    if v >= 0 {
+      return rt.rs_push_word(rt.rs_push_word(out, w, k), lo, 8)
+    }
+    if k < 8 {
+      let s = rt.rs_push_word(out, (w & 0xFFFFFFFFFFFFFF).wrapping_shl(8) | 45, k + 1)
+      return rt.rs_push_word(s, lo, 8)
+    }
+  }
   append_wide(out, v)
 }
 

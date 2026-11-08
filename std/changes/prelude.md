@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-08: perf: "${n}" of a 9 to 16 digit Int is two word pushes
+
+- Kind: perf
+- Commit: this push
+- Found by: the 2026-11-07 Xo vs Go survey (strconv itoa at 1.50x Go; about 85% of its ints have 9 or 10 digits)
+- Go reference: strconv.FormatInt
+- Test: std/native/llrt/num_test.xo (each side of append_int's cases, -10^7 and MIN_INT included, alone, after text, and many appended; native and LLVM); a boundary list against Go's output on arm64 and LLVM
+- Timing: bench/perf/strconv itoa, linux/arm64 host 1, xo bench --ab against 6a5b2fce9: 0.983 (0.946 to 0.991, n=5; better)
+- Shipped in: not yet released
+
+num.append_int writes 10^8 <= |v| < 10^16 itself: the top digits (after "-") in one word and the low 8 in a second, two rs_push_word calls, where append_wide's rs_push_words took four words, 32 bytes of room and 64 fresh bytes.
+
 ## 2026-11-08: feature: TargetOs gains FreeBSD (decision 0573 stage 1)
 
 - Kind: feature
