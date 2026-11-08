@@ -608,6 +608,24 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       x.lines.push("imulq %r11, ${xop(ops[0], 8)}")
       true
     }
+    "smaddl" | "umaddl" => {
+      // Xd = (extended Wn) * (extended Wm) + Xa (isel's long multiply add, decision 0208): the product in
+      // rax (clobbered, as umulh does), then the add, which also serves Xa tied to Xd
+      if n != 4 {
+        return false
+      }
+      x.clobbers = x.clobbers + [XR_AX]
+      if m == "smaddl" {
+        x.lines.push("movslq ${xop(ops[1], 4)}, %rax")
+        x.lines.push("movslq ${xop(ops[2], 4)}, %r11")
+      } else {
+        x.lines.push("movl ${xop(ops[1], 4)}, %eax")
+        x.lines.push("movl ${xop(ops[2], 4)}, %r11d")
+      }
+      x.lines.push("imulq %r11, %rax")
+      g.x86_binop(inst, x, ops[0], ops[3], "%rax", "addq", single)
+      true
+    }
     "sdiv" => {
       if n != 3 {
         return false

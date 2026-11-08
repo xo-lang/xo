@@ -1,6 +1,6 @@
 exit 0
 --- stdout
-ints same {i=I-7,u=I5,f=I1,f32=N0.10000000149011612,b=Btrue}
+ints same {i=I-7,u=I5,f=I1,f32=N0.1,b=Btrue}
 big same {i=I9223372036854775807,u=N1.8446744073709552e+19,f=N1e+20,f32=I3,b=Bfalse}
 exp same {i=I0,u=N9.223372036854776e+18,f=N1e+21,f32=N1.5,b=Bfalse}
 small same {i=I0,u=I0,f=N1e-07,f32=N-0.0,b=Bfalse}
