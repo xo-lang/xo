@@ -16,6 +16,11 @@ struct Ctx {
   // 0388 stage 3: sepcomp_store, for the build's concurrency); "" for
   // a whole program
   sep_store: Str = ""
+  // decision 0563: a darwin store link of a build meant to leave this
+  // machine (--release, an explicit --trimpath; opts.xo ship_build) writes
+  // no debug map (decision 0401), whose objects are named by their paths
+  // in the back-end cache, and embeds std's DWARF as a whole program does
+  no_debug_map: Bool = false
   // the text atoms' order for a store link (decision 0403 stage 1b):
   // symbols, hot first; empty for the store's order
   layout_order: List[Str] = []

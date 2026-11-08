@@ -178,3 +178,16 @@ turns those rules off where the readers are stubs, so a build without debug
 information is byte for byte what it was), so both builds inline alike
 (2026-10-25, gotchas/same-code-test-inline-hole.md; the arm64 test built
 without inlining as a stopgap until then).
+
+## Addendum (2026-11-08): the debug map of a default darwin build
+
+Decision 0563 (owner, option (b)) narrows the 2026-10-25 promise for
+darwin. A default build that compiles separately (decision 0388) keeps
+decision 0401's debug map, whose N_OSO entries name object files in the
+builder's own back-end cache (`~/Library/Caches/xo/backend/dbgobj/` and
+std's parts), so that binary names the builder's home directory, as a dSYM
+beside it would; no other machine can use those paths. Builds meant to
+leave the machine carry no build path: --release and an explicit
+--trimpath write no debug map and embed the DWARF instead, and release.sh
+builds whole (XO_SEPCOMP=0). cmd/xo TestBuildCarriesNoBuildPaths checks
+each of the three.

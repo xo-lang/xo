@@ -492,12 +492,11 @@ func TestBuildCarriesNoBuildPaths(t *testing.T) {
 	if data, err := os.ReadFile(bin); err != nil || !bytes.Contains(data, []byte(app)) {
 		t.Errorf("--trimpath=off: the binary lacks the program's directory %s (%v)", app, err)
 	}
-	// Expected to fail, until decision 0563 (Proposed) is decided: a
-	// separately compiled darwin build's debug map (decision 0401) names
-	// the program's and std's objects in the back-end cache by absolute
-	// path, whatever --trimpath says (the 0.44.0 release build refused its
-	// xo for it; gotchas/debug-map-names-cache-paths.md). This case
-	// requires today's leak, so main stays green and the fix flips it.
+	// A separately compiled darwin build (decision 0563, option (b)): the
+	// default build's debug map (decision 0401) names the program's and
+	// std's objects in the builder's back-end cache, as decision 0354's
+	// addendum of 2026-11-08 says; --release and an explicit --trimpath
+	// write no map and carry no path of the build.
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		return
 	}
@@ -516,12 +515,31 @@ func TestBuildCarriesNoBuildPaths(t *testing.T) {
 	setenv(t, "XO_SEPCOMP", "1")
 	setenv(t, "XO_SEPCOMP_STORE", paths[0])
 	setenv(t, "XO_SEPCOMP_FACTS", paths[1])
-	bin = filepath.Join(dir, "sepcomp")
-	if code := run(t, []string{"build", "-o", bin, app}, &out, &errOut); code != 0 {
-		t.Fatalf("sepcomp: build exit %d\n%s", code, errOut.String())
-	}
-	if data, err := os.ReadFile(bin); err != nil || !bytes.Contains(data, []byte(cache)) {
-		t.Errorf("sepcomp: the binary no longer names the back-end cache %s (%v): decision 0563's leak is fixed, so require no path here as for the other builds", cache, err)
+	for _, c := range []struct {
+		name  string
+		flags []string
+		want  bool // the binary names the cache (the debug map)
+	}{{"sepcomp", nil, true}, {"sepcomp-trimpath", []string{"--trimpath"}, false}, {"sepcomp-release", []string{"--release"}, false}} {
+		bin := filepath.Join(dir, c.name)
+		out.Reset()
+		errOut.Reset()
+		if code := run(t, append(append([]string{"build"}, c.flags...), "-o", bin, app), &out, &errOut); code != 0 {
+			t.Fatalf("%s: build exit %d\n%s", c.name, code, errOut.String())
+		}
+		data, err := os.ReadFile(bin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := bytes.Contains(data, []byte(cache)); got != c.want {
+			t.Errorf("%s: the binary names the back-end cache %s: %v, want %v", c.name, cache, got, c.want)
+		}
+		if !c.want {
+			for _, p := range []string{dir, home} {
+				if p != "" && p != "/" && bytes.Contains(data, []byte(p)) {
+					t.Errorf("%s: the binary holds %s", c.name, p)
+				}
+			}
+		}
 	}
 }
 

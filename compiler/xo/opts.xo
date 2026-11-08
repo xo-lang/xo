@@ -819,6 +819,12 @@ fn profile_support_eff(o: Opts, release: Bool) -> Bool { setting(o.profile_suppo
 /// Go's -trimpath, clang's -fdebug-prefix-map)
 fn trimpath_eff(o: Opts) -> Bool { setting(o.trimpath, true) }
 
+/// A build meant to leave this machine (decision 0563 option (b)):
+/// --release, or a --trimpath the command line gives. Its darwin store
+/// link writes no debug map, whose objects are named by their paths in
+/// this machine's back-end cache, and embeds std's DWARF instead.
+fn ship_build(o: Opts, release: Bool) -> Bool { release || o.trimpath == 1 }
+
 /// target relative to the working directory cwd for a debugger started in
 /// it, "." when target is not below it (no path of the build is kept)
 fn rel_or_dot(cwd: Str, target: Str) -> Str { hostpath.rel_below(cwd, target) ?? "." }

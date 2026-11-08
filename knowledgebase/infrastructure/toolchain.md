@@ -1882,10 +1882,11 @@ target.source-map ./app /path/to/app` (the directory in `DW_AT_comp_dir`,
 verified 2026-10-25 with a program built as `xo build app`). scripts/
 release.sh builds the shipped darwin/arm64 xo with xo1 and fails if a
 release executable holds the checkout's or the home directory's path
-(cmd/xo TestBuildCarriesNoBuildPaths). It builds whole (XO_SEPCOMP=0):
-a separately compiled darwin build's debug map names objects in the
-back-end cache by absolute path whatever --trimpath says (decision 0563,
-Proposed; gotchas/debug-map-names-cache-paths.md).
+(cmd/xo TestBuildCarriesNoBuildPaths). It builds whole (XO_SEPCOMP=0).
+A separately compiled default darwin build keeps its debug map, which
+names objects in the back-end cache by absolute path; --release and an
+explicit --trimpath write none and embed the DWARF instead (decision
+0563, option (b); gotchas/debug-map-names-cache-paths.md).
 Last verified: 2026-11-08.
 
 ### HTTP callgrind: short or full

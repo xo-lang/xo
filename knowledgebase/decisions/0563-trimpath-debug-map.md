@@ -1,7 +1,7 @@
 # 0563: --trimpath and the darwin debug map's cache paths
 
-Status: Proposed (Xo Lang 2, 2026-11-08; the owner decides, since either
-option narrows a decided promise: decision 0354's or decision 0401's)
+Status: Accepted (owner, 2026-11-08: option (b); drafted by Xo Lang 2.
+Decision 0354 gains an addendum.)
 
 ## Context
 
@@ -66,7 +66,15 @@ keep 0401's link time.
 
 ## Decision
 
-Pending the owner.
+(b), accepted by the owner on 2026-11-08. A darwin link writes no debug map
+under --release or a --trimpath the command line gives (compiler/xo opts.xo
+`ship_build`, `Ctx.no_debug_map`); it embeds std's and the program's DWARF
+as a whole build does, and the bin cache key gains `debug-map=off`. A
+default build keeps 0401's map, which names the builder's own cache.
+Decision 0354's addendum of 2026-11-08 records the narrowed promise. cmd/xo
+TestBuildCarriesNoBuildPaths' separately compiled case requires no build
+path under --release and under an explicit --trimpath, and the cache path
+in a default build.
 
 ## Consequences
 

@@ -2321,7 +2321,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       for e in ents {
         ekey.push("entitlement=${e}")
       }
-      let mkey = macho_bin_key(os, mctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }) + (if sep_key.is_empty() { [] } else { [sep_key] }) + ekey, srcs, o.strip, nl, race_rt, o.dsym, release, obj_keys)
+      let mkey = macho_bin_key(os, mctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }) + (if sep_key.is_empty() { [] } else { [sep_key] }) + (if ship_build(o, release) { ["debug-map=off"] } else { [] }) + ekey, srcs, o.strip, nl, race_rt, o.dsym, release, obj_keys)
       tl = lap(os, phases, "link.key", tl)
       let mst = stage(os, ctx, bin)
       let (mhit, mentry) = fetch_bin(os, ctx, mkey, mst.bin)
@@ -2329,6 +2329,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       if !mhit {
         var lctx = mctx
         lctx.sep_store = sepcomp_store(os, b.conc)
+        lctx.no_debug_map = ship_build(o, release)
         // decision 0403 stage 1b: the layout's symbol order for the store
         // link (read after lctx was made, so set here)
         lctx.layout_order = o.layout_syms

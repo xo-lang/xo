@@ -36,6 +36,12 @@ XO_SEPCOMP=0.
   the cache state.
 - To check any shipped binary: `grep -aqF "$HOME" BIN`. The `strings -a`
   output can miss the entries.
+- Decision 0563 (owner, 2026-11-08, option (b)): --release and an
+  explicit --trimpath write no debug map and embed the DWARF, so a build
+  meant to leave the machine carries no build path even when it compiles
+  separately. A default build keeps the map and names the builder's cache
+  (decision 0354's addendum of 2026-11-08): build with --release or
+  --trimpath before sharing a binary.
 
 ## The same build's second leak: the prebuilt SQLite objects
 
