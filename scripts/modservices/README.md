@@ -127,4 +127,7 @@ the unit 1.7 (OK). The containers run with SELinux off: the file
 context rules and the policy rules above were checked offline against
 Oracle Linux 9's targeted policy (`matchpathcon`, `sesearch`), not
 enforced; the first enforcing run is the owner's install (the checks
-above). Last verified: 2026-11-08.
+above). internal/repotest TestModServicesConsistent keeps the files in
+step: the ingress goes to the unit's loopback address, every flag the
+unit passes is in `xo mod sumdb serve`'s usage, and install.sh installs
+both. Last verified: 2026-11-08.
