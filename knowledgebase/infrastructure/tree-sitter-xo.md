@@ -4,8 +4,10 @@ Last verified: 2026-11-08
 
 A tree-sitter grammar for Xo, written from spec/core.md by Xo Lang 3 (owner approval 2026-11-08, name confirmed by the owner).
 
-- Location: `~/godev/claude-space/xolang/tree-sitter-xo`, a local git repository. Nothing is published: no GitHub repository, npm
-  package or crate until the owner approves (ask the lead first). The intended home is xo-lang/tree-sitter-xo.
+- Location: `~/godev/claude-space/xolang/tree-sitter-xo`, public since 2026-11-08 at https://github.com/xo-lang/tree-sitter-xo
+  (main, no rulesets, like xo-lang/vscode; gitleaks and the scrub list ran before the push, commit emails are the github@
+  address of the other public repos). Not published yet: the npm package, the crate and the editor-list submissions wait
+  for the owner (ask the lead first).
 - Contents: `grammar.js`, the external scanner `src/scanner.c` (Go's newline rule, raw strings), generated `src/`, queries
   (highlights, locals, indents, folds, injections), corpus tests (`test/corpus`) and highlight assertions
   (`test/highlight`), bindings (Node, Rust, C, Go, Python, Swift), README with Neovim, Helix and Zed setup, MIT license.

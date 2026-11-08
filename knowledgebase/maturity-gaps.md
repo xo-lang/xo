@@ -57,9 +57,10 @@ in detail; check before starting one.
    *Verified 2026-11-08:* published on 2026-11-05 as "Xo Language"
    (`xo-lang.xo`, version 0.1.1) on the VS Code Marketplace (verified
    publisher) and on Open VSX; the repository is public. *2026-11-08:*
-   a tree-sitter grammar exists locally, `tree-sitter-xo` (infrastructure/
-   tree-sitter-xo.md); not published, awaiting the owner's approval of a
-   public repository, npm package and crate.
+   a tree-sitter grammar, `tree-sitter-xo` (infrastructure/
+   tree-sitter-xo.md), is public at https://github.com/xo-lang/tree-sitter-xo;
+   the npm package, the crate and the editor-list submissions await the
+   owner's approval.
 6. **More platforms.** FreeBSD and Linux riscv64 are the common asks
    after the five current targets; 32-bit and mobile matter less for a
    backend language.
