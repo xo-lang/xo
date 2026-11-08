@@ -1241,3 +1241,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [fe-replay-lazy-types.md](fe-replay-lazy-types.md): Observed 2026-11-08: a front end cache entry read UInt8, which the builder makes at first use; a build that had not made it yet missed the entry every time (xo check of bench/perf/http); fe_replay now makes sized ints and Float32 it reads.
 - [new-target-variant-lazy-check.md](new-target-variant-lazy-check.md): a new TargetArch/TargetOs variant passes a check while unreached exhaustive matches still lack its arm (lazy checking); scan every match
 - [riscv64-llvm-default-rv64i.md](riscv64-llvm-default-rv64i.md): riscv64 under LLVM: a host clang.cfg -mcpu, module asm without -march, and attribute groups without features made an RV64I build calling libgcc helpers
+- [riscv64-syscall-table-not-arm64.md](riscv64-syscall-table-not-arm64.md): riscv64 takes arm64's asm-generic numbers, but has no renameat (38): rename goes through renameat2 there
