@@ -187,6 +187,10 @@ pub struct Gen {
   stable_memo: List[Int] = []
   /// Per value: the memory it is read from at every use, or -1.
   lazy: List[Int] = []
+  /// Per value: its constant text (const_text), once computed.
+  const_memo: Map[Int, Str] = {}
+  /// The constant globals of wide stores (store_part), by `type text`.
+  wide_consts: Map[Str, Str] = {}
   /// Per value: the instructions that use it (users), once computed.
   users_of: List[List[Int]] = []
   users_done: Bool = false
@@ -355,6 +359,15 @@ const ENV_FIELDS = 3
 /// The size from which a struct or enum parameter of a direct call is
 /// passed by reference (decision 0145).
 const BY_REF_MIN = 256
+
+/// The size in bytes from which a struct or tuple value is written to
+/// memory a field at a time, or copied from the memory that holds it
+/// (store_value), instead of as one first class store: clang expands
+/// such a store into a store per scalar in InstCombine and instruction
+/// selection (2026-11-08: eight stores of a 4,096 word struct took 4.1 s
+/// of clang -O1's 7.0 s on wbC; as memcpys, 2.85 s against hello's
+/// 2.22 s). Above every struct xo itself has, so its IR is unchanged.
+const WIDE_STORE_MIN = 4096
 
 // ---------------------------------------------------------------------------
 // The program

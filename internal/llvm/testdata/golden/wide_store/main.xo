@@ -1,0 +1,106 @@
+// Wide values written to memory (compiler/llvm store_value, 2026-11-08):
+// a 4,096 word struct of field defaults, built, changed through nested
+// fields, boxed, wrapped in an optional, put in a tuple, passed by
+// reference, and compared. LLVM writes such a value a field at a time
+// and copies its constant parts from a global, where one first class
+// store of it took clang seconds; every path must keep its words.
+struct L0 {
+  f0: Int = 0
+  f1: Int = 1
+  f2: Int = 2
+  f3: Int = 3
+  f4: Int = 4
+  f5: Int = 5
+  f6: Int = 6
+  f7: Int = 7
+}
+struct L1 {
+  s0: L0 = L0{}
+  s1: L0 = L0{}
+  s2: L0 = L0{}
+  s3: L0 = L0{}
+  s4: L0 = L0{}
+  s5: L0 = L0{}
+  s6: L0 = L0{}
+  s7: L0 = L0{}
+}
+struct L2 {
+  s0: L1 = L1{}
+  s1: L1 = L1{}
+  s2: L1 = L1{}
+  s3: L1 = L1{}
+  s4: L1 = L1{}
+  s5: L1 = L1{}
+  s6: L1 = L1{}
+  s7: L1 = L1{}
+}
+struct L3 {
+  s0: L2 = L2{}
+  s1: L2 = L2{}
+  s2: L2 = L2{}
+  s3: L2 = L2{}
+  s4: L2 = L2{}
+  s5: L2 = L2{}
+  s6: L2 = L2{}
+  s7: L2 = L2{}
+}
+struct Node {
+  core: L3 = L3{}
+  name: Str
+  next: Node? = None
+}
+
+fn sum0(x: L0) -> Int {
+  x.f0 + x.f1 + x.f2 + x.f3 + x.f4 + x.f5 + x.f6 + x.f7
+}
+
+fn sum1(x: L1) -> Int {
+  sum0(x.s0) + sum0(x.s1) + sum0(x.s2) + sum0(x.s3) + sum0(x.s4) + sum0(x.s5) + sum0(x.s6) + sum0(x.s7)
+}
+
+fn sum2(x: L2) -> Int {
+  sum1(x.s0) + sum1(x.s1) + sum1(x.s2) + sum1(x.s3) + sum1(x.s4) + sum1(x.s5) + sum1(x.s6) + sum1(x.s7)
+}
+
+fn sum3(x: L3) -> Int {
+  sum2(x.s0) + sum2(x.s1) + sum2(x.s2) + sum2(x.s3) + sum2(x.s4) + sum2(x.s5) + sum2(x.s6) + sum2(x.s7)
+}
+
+fn depth(n: Node) -> Int {
+  match n.next {
+    Some(m) => 1 + depth(m)
+    None => 0
+  }
+}
+
+fn describe(n: Node) -> Str {
+  "${n.name} ${sum3(n.core)} ${n.core.s7.s7.s7.f7} ${n.core.s0.s0.s0.f0} ${depth(n)}"
+}
+
+fn main(os: Os) {
+  // constant defaults only
+  let a = Node{name: "a"}
+  os.stdio.println(describe(a))
+  // a nested field set on a var, then boxed in the next node
+  var b = Node{name: "b"}
+  b.core.s7.s7.s7.f7 = 77
+  b.core.s0.s3 = L1{s2: L0{f5: 500}}
+  let c = Node{name: "c", next: b}
+  os.stdio.println(describe(b))
+  os.stdio.println(describe(c))
+  // a field computed at run time among constant ones
+  let k = os.env.args().len() + 40
+  let d = Node{core: L3{s1: L2{s4: L1{s6: L0{f3: k}}}}, name: "d", next: Node{name: "e"}}
+  os.stdio.println(describe(d))
+  // an optional and a tuple of wide values
+  let o: Node? = Some(d)
+  let t = (a, c)
+  match o {
+    Some(n) => os.stdio.println("some ${n.name} ${sum3(n.core)}")
+    None => os.stdio.println("none")
+  }
+  os.stdio.println("${t.0.name}${t.1.name} ${sum3(t.1.core) - sum3(t.0.core)}")
+  // equality by address
+  let b2 = Node{name: "b", core: b.core}
+  os.stdio.println("${a == a} ${a == b} ${b == b2} ${c == Node{name: "c", next: b2}} ${d == a}")
+}

@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+a 14336 7 0 0
+b 14901 77 0 0
+c 14336 7 0 1
+d 14373 7 0 1
+some d 14373
+ac 0
+true false true true false
+--- stderr

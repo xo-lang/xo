@@ -536,6 +536,8 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
   // memory is loaded before another argument overwrites it
   var st_ts: List[Int] = []
   var st_xs: List[Str] = []
+  // the argument values, for a wide one (store_value)
+  var st_as: List[Int] = []
   var st_ps: List[Str] = []
   for (i, a) in x.args.indexed() {
     slots.push("")
@@ -571,14 +573,19 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
         continue // already in its slot (decision 0148)
       }
       st_ts.push(g.vty(a))
-      st_xs.push(g.op(a))
+      st_xs.push(if g.size(g.vty(a)) >= WIDE_STORE_MIN { "" } else { g.op(a) })
+      st_as.push(a)
       st_ps.push(sl)
       continue
     }
     args.push(g.typed(a))
   }
   for k in 0..st_ts.len() {
-    g.store_ref(st_ts[k], st_xs[k], st_ps[k])
+    if st_xs[k].is_empty() {
+      g.store_value(st_as[k], st_ps[k])
+    } else {
+      g.store_ref(st_ts[k], st_xs[k], st_ps[k])
+    }
   }
   let rl = g.res_ll(callee)
   var c = "${rl} ${fname(aux_str(x.aux))}(${args.join(", ")})"

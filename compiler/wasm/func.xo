@@ -1950,10 +1950,27 @@ fn (var g: Gen) compare(v: Int) {
         g.fail("the wasm backend does not order `${g.m.types[at].name}`")
         return
       }
-      let fname = g.eq_fn(at)
-      g.push(a)
-      g.push(x.args[1])
-      g.e("call ${fname}")
+      if g.eq_wide(at) {
+        // the helper would take more parameters than an engine accepts:
+        // both values' leaves go to locals, compared here field by field
+        let ls = g.leaves(at)
+        let ta = g.tmps(ls)
+        let tb = g.tmps(ls)
+        g.push(a)
+        for k in 0..ls.len() {
+          g.set(ta + ls.len() - 1 - k)
+        }
+        g.push(x.args[1])
+        for k in 0..ls.len() {
+          g.set(tb + ls.len() - 1 - k)
+        }
+        g.eq_fields(at, ta, tb)
+      } else {
+        let fname = g.eq_fn(at)
+        g.push(a)
+        g.push(x.args[1])
+        g.e("call ${fname}")
+      }
       if opn == "ne" {
         g.e("i32.eqz")
       }

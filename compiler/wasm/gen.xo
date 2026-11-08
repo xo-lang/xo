@@ -1368,6 +1368,77 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
   name
 }
 
+/// Whether `==` on a struct, tuple or enum of type t compares in place
+/// (eq_fields): its helper would take more than the 1,000 parameters an
+/// engine accepts, two per leaf.
+fn (var g: Gen) eq_wide(t: Int) -> Bool {
+  (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum) && 2 * g.nleaves(t) > 1000
+}
+
+/// Pushes whether the values of type t in locals from a and from b are
+/// equal, a wide struct or tuple (eq_wide) field by field in place, so
+/// that no helper takes all its leaves.
+fn (var g: Gen) eq_fields(t: Int, a: Int, b: Int) {
+  if !g.eq_wide(t) {
+    g.eq_leaves(t, a, b)
+    return
+  }
+  if g.kind(t) == ssa.Kind.Enum {
+    // as eq_fn's enum case, the result in a local: the tags, then the
+    // payload words of the variant both hold, as their fields' leaves
+    let r = g.tmp("i32")
+    g.get(a)
+    g.get(b)
+    g.e("i64.eq")
+    g.set(r)
+    for (vi, v) in g.m.types[t].variants.indexed() {
+      if v.fields.is_empty() {
+        continue
+      }
+      g.get(r)
+      g.get(a)
+      g.e("i64.const ${vi}")
+      g.e("i64.eq")
+      g.e("i32.and")
+      g.e("if")
+      g.e("i32.const 1")
+      var off = 1
+      for fd in v.fields {
+        let fl = g.leaves(fd.ty)
+        if !fl.is_empty() {
+          let ta = g.tmps(fl)
+          let tb = g.tmps(fl)
+          for (k, l) in fl.indexed() {
+            g.get(a + off + k)
+            g.from_word(l)
+            g.set(ta + k)
+            g.get(b + off + k)
+            g.from_word(l)
+            g.set(tb + k)
+          }
+          g.eq_fields(fd.ty, ta, tb)
+          g.e("i32.and")
+        }
+        off += fl.len()
+      }
+      g.set(r)
+      g.e("end")
+    }
+    g.get(r)
+    return
+  }
+  g.e("i32.const 1")
+  var off = 0
+  for ft in g.field_tys(t) {
+    let k = g.nleaves(ft)
+    if k > 0 {
+      g.eq_fields(ft, a + off, b + off)
+      g.e("i32.and")
+    }
+    off += k
+  }
+}
+
 /// Pushes whether the values of type t in locals from a and from b are
 /// equal.
 fn (var g: Gen) eq_leaves(t: Int, a: Int, b: Int) {
@@ -1390,6 +1461,10 @@ fn (var g: Gen) eq_leaves(t: Int, a: Int, b: Int) {
       g.e("f64.eq")
     }
     _ => {
+      if g.eq_wide(t) {
+        g.eq_fields(t, a, b)
+        return
+      }
       g.push_range(a, n)
       g.push_range(b, n)
       g.e("call ${g.eq_fn(t)}")

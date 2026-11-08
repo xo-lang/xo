@@ -204,9 +204,151 @@ fn (var g: Gen) rc_val_call(h: Str, a: Int) {
     p = g.alloca(lt)
     g.rc_tmp[lt] = p
   }
+  g.store_value(a, p)
+  g.emit("call void ${h}(ptr ${p})${ca}")
+}
+
+/// Writes value a to memory p. A struct, tuple or enum of WIDE_STORE_MIN
+/// bytes or more is copied from the memory that holds it, or, when this
+/// function builds it (a literal, a field set), written field by field,
+/// each field the same way, a part of BY_REF_MIN bytes or more whose
+/// fields are all constants (a struct's field defaults) copied from a
+/// constant global, so clang never sees one store of thousands of
+/// scalars; any other value is one store.
+fn (var g: Gen) store_value(a: Int, p: Str) {
+  g.store_part(a, p, false)
+}
+
+/// store_value of value a at p, inside a wide value when in_wide.
+fn (var g: Gen) store_part(a0: Int, p: Str, in_wide: Bool) {
+  let a = g.look_through(a0)
+  let t = g.vty(a)
+  let agg = g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple
+  let size = g.size(t)
+  if agg && size >= BY_REF_MIN && (in_wide || size >= WIDE_STORE_MIN) {
+    let ct = g.const_text(a)
+    if !ct.is_empty() {
+      let lt = g.ll(t)
+      let key = "${lt} ${ct}"
+      var gl = g.wide_consts.get(key) ?? ""
+      if gl.is_empty() {
+        gl = "@.wc.${g.wide_consts.len()}"
+        g.wide_consts[key] = gl
+        g.globals.push("${gl} = private unnamed_addr constant ${key}, align 8\n")
+      }
+      g.mem_copy(p, gl, size)
+      return
+    }
+  }
+  if (agg || g.kind(t) == ssa.Kind.Enum) && size >= WIDE_STORE_MIN {
+    let lt = g.ll(t)
+    let m = g.lazy[a]
+    let src = if m >= 0 { g.held.mems[m].ptr } else if a < g.addr.len() && !g.addr[a].is_empty() { g.addr[a] } else { "" }
+    if !src.is_empty() {
+      g.mem_copy(p, src, size)
+      return
+    }
+    let x = g.f.values[a]
+    if (x.op == ssa.Op.Struct || x.op == ssa.Op.Tuple) && !x.args.is_empty() {
+      for (i, f) in x.args.indexed() {
+        if g.is_void(g.vty(f)) {
+          continue
+        }
+        let fp = g.def("getelementptr ${lt}, ptr ${p}, i32 0, i32 ${i}")
+        g.store_part(f, fp, true)
+      }
+      return
+    }
+    if x.op == ssa.Op.SetField && x.args.len() == 2 {
+      g.store_part(x.args[0], p, true)
+      let fp = g.def("getelementptr ${lt}, ptr ${p}, i32 0, i32 ${aux_int(x.aux)}")
+      g.store_part(x.args[1], fp, true)
+      return
+    }
+  }
   let ta = g.typed(a)
   g.emit("store ${ta}, ptr ${p}")
-  g.emit("call void ${h}(ptr ${p})${ca}")
+}
+
+/// Value a, or for a field of a struct or tuple this function builds
+/// (Field of a Struct, Tuple or SetField), the value that field holds.
+fn (var g: Gen) look_through(a: Int) -> Int {
+  var v = a
+  for _ in 0..64 {
+    let x = g.f.values[v]
+    if x.op != ssa.Op.Field || g.lazy[v] >= 0 || (v < g.addr.len() && !g.addr[v].is_empty()) {
+      return v
+    }
+    let fi = aux_int(x.aux)
+    var b = x.args[0]
+    var found = -1
+    for _ in 0..64 {
+      let y = g.f.values[b]
+      if y.op == ssa.Op.SetField && y.args.len() == 2 && g.lazy[b] < 0 {
+        if aux_int(y.aux) == fi {
+          found = y.args[1]
+          break
+        }
+        b = y.args[0]
+        continue
+      }
+      if (y.op == ssa.Op.Struct || y.op == ssa.Op.Tuple) && fi < y.args.len() && g.lazy[b] < 0 {
+        found = y.args[fi]
+      }
+      break
+    }
+    if found < 0 {
+      return v
+    }
+    v = found
+  }
+  v
+}
+
+/// The constant text of value a (`{ i64 0, ... }`, without its type)
+/// when it is an integer, float or bool constant, or a struct or tuple
+/// of them; "" otherwise.
+fn (var g: Gen) const_text(a: Int) -> Str {
+  if let Some(c) = g.const_memo.get(a) {
+    return c
+  }
+  let x = g.f.values[a]
+  let t = g.vty(a)
+  var out = ""
+  if x.op == ssa.Op.Const && g.lazy[a] < 0 && !g.is_void(t) && g.names[a].is_empty() {
+    match x.aux {
+      I(_) | F(_) | B(_) => out = g.op(a)
+      _ => {}
+    }
+  } else if (x.op == ssa.Op.Struct || x.op == ssa.Op.Tuple) && !x.args.is_empty() && !g.ll(t).starts_with("<") {
+    var fs: List[Str] = []
+    var ok = true
+    for f in x.args {
+      let ft = g.vty(f)
+      let fl = g.ll(ft)
+      if g.is_void(ft) {
+        fs.push("${fl} zeroinitializer")
+        continue
+      }
+      let c = g.const_text(g.look_through(f))
+      if c.is_empty() {
+        ok = false
+        break
+      }
+      fs.push("${fl} ${c}")
+    }
+    if ok {
+      out = "{ ${fs.join(", ")} }"
+    }
+  }
+  g.const_memo[a] = out
+  out
+}
+
+/// A copy of n bytes from src to p (llvm.memcpy).
+fn (var g: Gen) mem_copy(p: Str, src: Str, n: Int) {
+  g.llvm_decl("@llvm.memcpy.p0.p0.i64", "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)")
+  g.emit("call void @llvm.memcpy.p0.p0.i64(ptr ${p}, ptr ${src}, i64 ${n}, i1 false)")
 }
 
 /// A pointer to value a for a helper taking it by pointer (eq_by_ptr):
@@ -227,8 +369,7 @@ fn (var g: Gen) val_ptr(a: Int, k: Int) -> Str {
     p = g.alloca(lt)
     g.rc_tmp[key] = p
   }
-  let ta = g.typed(a)
-  g.emit("store ${ta}, ptr ${p}")
+  g.store_value(a, p)
   p
 }
 
@@ -423,6 +564,22 @@ fn (var g: Gen) variant(t: Int, tag: Int, fields: List[Str]) -> Str {
   g.def("load ${lt}, ptr ${a}")
 }
 
+/// variant with the field values args written by store_value, for a
+/// field of WIDE_STORE_MIN bytes or more.
+fn (var g: Gen) variant_vals(t: Int, tag: Int, args: List[Int]) -> (Str, Str) {
+  let lt = g.ll(t)
+  let a = g.alloca(lt)
+  g.emit("store ${lt} zeroinitializer, ptr ${a}")
+  g.emit("store i64 ${tag}, ptr ${a}")
+  let vl = g.variant_ll(t, tag)
+  let pay = g.def("getelementptr ${lt}, ptr ${a}, i32 0, i32 1")
+  for (i, fv) in args.indexed() {
+    let fp = g.def("getelementptr ${vl}, ptr ${pay}, i32 0, i32 ${i}")
+    g.store_value(fv, fp)
+  }
+  (a, g.def("load ${lt}, ptr ${a}"))
+}
+
 /// Loads field fi of variant tag of enum value x (payload).
 fn (var g: Gen) payload(t: Int, x: Str, tag: Int, fi: Int) -> Str {
   let lt = g.ll(t)
@@ -539,6 +696,7 @@ fn (var g: Gen) lower_func(fi: Int) {
   g.names = []
   g.addr = []
   g.lazy = []
+  g.const_memo = {}
   g.stable_memo = []
   for _ in 0..g.f.values.len() {
     g.names.push("")
@@ -1220,6 +1378,22 @@ fn (var g: Gen) instr_body(v: Int) {
     Field => g.field(v)
     SetField => g.set_field(v)
     Variant => {
+      // a wide enum, or a payload of a wide field, is built in memory
+      // (store_value)
+      var wide = g.size(vt) >= WIDE_STORE_MIN
+      for a in args {
+        if g.size(g.vty(a)) >= WIDE_STORE_MIN {
+          wide = true
+        }
+      }
+      if wide {
+        // its memory is the value's address, so a store of it copies
+        // from there (store_part) rather than storing the loaded enum
+        let (mp, lv) = g.variant_vals(vt, aux_int(x.aux), args)
+        g.alias(v, lv)
+        g.addr[v] = mp
+        return
+      }
       var fs: List[Str] = []
       for a in args {
         fs.push(g.op(a))
@@ -1301,8 +1475,7 @@ fn (var g: Gen) instr_body(v: Int) {
             continue
           }
           let p = g.def("getelementptr ${el}, ptr ${env}, i32 0, i32 ${i + ENV_FIELDS}")
-          let ta = g.typed(a)
-          g.emit("store ${ta}, ptr ${p}")
+          g.store_value(a, p)
         }
       }
       let t0 = g.def("insertvalue { ptr, ptr } undef, ptr ${fname(g.m.funcs[callee].name)}, 0")
@@ -1337,8 +1510,7 @@ fn (var g: Gen) instr_body(v: Int) {
       if !g.is_void(et) {
         let bl = g.box_ll(vt)
         let vp = g.def("getelementptr ${bl}, ptr ${p}, i32 0, i32 1")
-        let ta = g.typed(args[0])
-        g.emit("store ${ta}, ptr ${vp}")
+        g.store_value(args[0], vp)
       }
       g.alias(v, p)
     }
