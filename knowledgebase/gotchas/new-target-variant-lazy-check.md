@@ -1,0 +1,29 @@
+# A new TargetArch or TargetOs variant: a clean check misses matches
+
+Status: Observed (Xo Lang 1, 2026-11-08, decision 0571 stage 1)
+
+## Symptom
+
+`go run ./scripts/xocheck compiler/xo` passed with `TargetArch.Riscv64`
+added, yet 11 `match target.arch` blocks in std/native/llrt still had no
+arm for it (libcthr, libcsys, libcio, ifaces, host, dns, cabi_nolibc
+twice, linux.xo's vDSO name, unwind.xo's win_raise). Each is XO0301 the
+first time a build reaches it: a riscv64 build reaching libcsys, or a
+windows/amd64 build reaching win_raise.
+
+## Cause
+
+Checking is lazy: a function body is checked when something the checked
+program uses reaches it. A check of compiler/xo reaches only the llrt
+files the compiler links for the host; nolibc, Windows only and network
+code it never calls stays unchecked.
+
+## Fix
+
+After adding a variant, list every exhaustive match on the enum, not the
+checker's errors: a scan of each `match target.arch {` block for an arm
+naming the variant or `_ =>` (stage 1 of 0571 used a short Python scan;
+`xo refs TargetArch.Amd64` lists the arms of the old variants). Then give
+each the right arm by reading it: most take an existing arch's value
+(the asm-generic system call numbers are arm64's), some differ (the
+generic open flags are x86_64's).
