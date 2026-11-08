@@ -93,7 +93,7 @@ fn xo_win_start() -> Int {
         rt.mem_store(rt.sym_addr("xo_lse"), 0, 1, 1)
       }
     }
-    TargetArch.Amd64 | TargetArch.Wasm32 => {}
+    TargetArch.Amd64 | TargetArch.Wasm32 | TargetArch.Riscv64 => {}
   }
   entry.init()
   let code = entry.main(0, 0, 0, rt.sym_addr("xo_entry"), 1)
