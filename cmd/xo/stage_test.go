@@ -429,6 +429,10 @@ func TestBuildCarriesNoBuildPaths(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	dir := writeFiles(t, map[string]string{"app/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n"})
 	setenv(t, "XO_BUILD_DIR", filepath.Join(dir, "build"))
+	// whole builds: the separately compiled one is the last case (decision
+	// 0563); with std's variants cached, a default darwin build is
+	// separately compiled and its debug map names the cache
+	setenv(t, "XO_SEPCOMP", "0")
 	app := filepath.Join(dir, "app")
 	chdir(t, dir)
 	for _, c := range []struct {
@@ -471,6 +475,37 @@ func TestBuildCarriesNoBuildPaths(t *testing.T) {
 	}
 	if data, err := os.ReadFile(bin); err != nil || !bytes.Contains(data, []byte(app)) {
 		t.Errorf("--trimpath=off: the binary lacks the program's directory %s (%v)", app, err)
+	}
+	// Expected to fail, until decision 0563 (Proposed) is decided: a
+	// separately compiled darwin build's debug map (decision 0401) names
+	// the program's and std's objects in the back-end cache by absolute
+	// path, whatever --trimpath says (the 0.44.0 release build refused its
+	// xo for it; gotchas/debug-map-names-cache-paths.md). This case
+	// requires today's leak, so main stays green and the fix flips it.
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		return
+	}
+	cache := filepath.Join(dir, "cache")
+	setenv(t, "XO_BACKEND_CACHE", "on")
+	setenv(t, "XO_BACKEND_CACHE_DIR", cache)
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"dev", "stdcache", "--conc=0"}, &out, &errOut); code != 0 {
+		t.Fatalf("xo dev stdcache: exit %d\n%s", code, errOut.String())
+	}
+	paths := strings.Fields(out.String())
+	if len(paths) != 2 {
+		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", out.String())
+	}
+	setenv(t, "XO_SEPCOMP", "1")
+	setenv(t, "XO_SEPCOMP_STORE", paths[0])
+	setenv(t, "XO_SEPCOMP_FACTS", paths[1])
+	bin = filepath.Join(dir, "sepcomp")
+	if code := run(t, []string{"build", "-o", bin, app}, &out, &errOut); code != 0 {
+		t.Fatalf("sepcomp: build exit %d\n%s", code, errOut.String())
+	}
+	if data, err := os.ReadFile(bin); err != nil || !bytes.Contains(data, []byte(cache)) {
+		t.Errorf("sepcomp: the binary no longer names the back-end cache %s (%v): decision 0563's leak is fixed, so require no path here as for the other builds", cache, err)
 	}
 }
 

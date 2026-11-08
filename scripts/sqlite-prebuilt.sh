@@ -17,6 +17,9 @@
 #     KERNEL32 and the C functions cabi_wincrt.xo defines (Xo's PE linker).
 # darwin and linux keep a checkout's flags (-g -O2, SQLite's defaults), so
 # a prebuilt and a compiled program behave alike.
+# Their debug information names the checkout as . (-ffile-prefix-map): the
+# 0.44.0 build's objects held the release checkout's path under $HOME
+# (gotchas/debug-map-names-cache-paths.md).
 set -euo pipefail
 repo=${1:?usage: sqlite-prebuilt.sh REPO XO PLAT...}
 xo=${2:?usage: sqlite-prebuilt.sh REPO XO PLAT...}
@@ -45,9 +48,9 @@ for plat in "$@"; do
 	mkdir -p "$out"
 	ext=o
 	case $plat in
-	darwin-arm64) cmd=(cc -arch arm64 -g -O2) ;;
-	darwin-amd64) cmd=(cc -arch x86_64 -g -O2) ;;
-	linux-arm64|linux-amd64) cmd=(${XO_SQLITE_CC:-cc} -g -O2 -fPIC) ;;
+	darwin-arm64) cmd=(cc -arch arm64 -g -O2 "-ffile-prefix-map=$repo=.") ;;
+	darwin-amd64) cmd=(cc -arch x86_64 -g -O2 "-ffile-prefix-map=$repo=.") ;;
+	linux-arm64|linux-amd64) cmd=(${XO_SQLITE_CC:-cc} -g -O2 -fPIC "-ffile-prefix-map=$repo=.") ;;
 	windows-amd64)
 		ext=obj
 		cmd=("${XO_CLANG:?windows-amd64 needs XO_CLANG}" --target=x86_64-pc-windows-msvc -Xmicrosoft-windows-sys-root "${XO_WINSYSROOT:?windows-amd64 needs XO_WINSYSROOT}" -O2 -DSQLITE_THREADSAFE=2 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_WIN32_MALLOC=1 -DSQLITE_MAX_WORKER_THREADS=0 -DSQLITE_OMIT_SEH)

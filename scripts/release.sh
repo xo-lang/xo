@@ -213,6 +213,13 @@ unset XO_STD XO_RTPACK XO_CLI
 # a release's inlined module must verify; no silent slower build
 # (decision 0342)
 export XO_INLINE_STRICT=1
+# whole program builds: a separately compiled darwin build (decision 0388's
+# default once std's variants are cached) carries a debug map (decision
+# 0401) naming objects in the builder's back-end cache, under $HOME, which
+# the path check below refuses (the 0.44.0 build's first try,
+# gotchas/debug-map-names-cache-paths.md); a release must not depend on
+# what the cache holds
+export XO_SEPCOMP=0
 # the seed: an existing xo (decision 0215: no Go compiler to build one)
 if [ -n "${XO_SEED:-}" ]; then
 	host_xo="$XO_SEED"
@@ -491,6 +498,20 @@ if [ "$winsign" = 1 ]; then
 fi
 
 [ "$wasi" = 1 ] && targets="$targets wasip1/wasm"
+# no file of any archive holds this checkout's or the home directory's
+# path, not only the executables: the 0.44.0 build's prebuilt SQLite
+# objects named the checkout in their DWARF (gotchas/debug-map-names-cache-paths.md)
+if [ "$dry" != 1 ]; then
+	for target in $targets; do
+		for p in "$repo" "$HOME"; do
+			if hit=$(grep -rlaF -- "$p" "$(stage_of "$target")"); then
+				echo "release.sh: these files hold the path $p:" >&2
+				echo "$hit" >&2
+				exit 1
+			fi
+		done
+	done
+fi
 for target in $targets; do
 	stage=$(stage_of "$target")
 	run go run ./scripts/disttar -o "$stage.tar.gz" "$stage"
