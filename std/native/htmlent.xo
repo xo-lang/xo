@@ -8,6 +8,17 @@ pub const REPLACEMENT: List[Str] = ["\u{20AC}", "\u{0081}", "\u{201A}", "\u{0192
 /// The character of entity name, "" for none (a binary search of the
 /// generated table).
 pub fn entity_of(name: Str) -> Str {
+  // the references a page uses most, answered without the search (the table's own values)
+  match name {
+    "amp;" => return "&"
+    "lt;" => return "<"
+    "gt;" => return ">"
+    "quot;" => return "\""
+    "apos;" => return "'"
+    "nbsp;" => return "\u{A0}"
+    "copy;" => return "\u{A9}"
+    _ => {}
+  }
   var lo = 0
   var hi = ENTITY.len()
   while lo < hi {
