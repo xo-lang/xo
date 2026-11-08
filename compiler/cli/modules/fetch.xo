@@ -10,6 +10,7 @@ use github.com/xo-lang/xo/compiler/check
 use std/archive
 use std/crypto
 use std/http
+use std/task
 
 /// One entry of XO_PROXY (mod source).
 struct Source {
@@ -326,27 +327,70 @@ fn tag_prefix(l: Location) -> Str {
 /// git runs git with no prompts and no hooks in dir ("" for the working
 /// directory) and returns its standard output; a failure carries its
 /// standard error.
-fn (c: ModCtx) git(dir: Str, args: List[Str]) -> Bytes ! Str uses proc {
+fn (c: ModCtx) git(dir: Str, args: List[Str]) -> Bytes ! Str uses (proc, clock) {
   // a transfer under 1 KB/s for a minute is abandoned: a stalled remote
   // otherwise held a fetch, a checksum log lookup or its --refresh loop
-  // for good (decision 0568; there is no process timeout to set)
+  // for good (decision 0568)
   let full = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always", "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"] + args
   var cmd = c.os.proc.cmd("git", full).set_env("GIT_TERMINAL_PROMPT", "0").set_env("GIT_ASKPASS", "").set_env("SSH_ASKPASS", "").set_env("GIT_CONFIG_NOSYSTEM", "1")
   if !dir.is_empty() {
     cmd = cmd.dir(dir)
   }
-  let out = match cmd.output() {
-    Ok(o) => o
+  let ch = match cmd.spawn() {
+    Ok(x) => x
     Err(e) => return Err("${e}")
   }
-  if out.code != 0 {
-    var msg = (out.stderr.to_str() ?? "").trim()
+  // and a remote that drips just above that limit is stopped after the
+  // deadline: the kill is of this child only, the one spawned here
+  let limit = c.git_deadline()
+  let r = task.with_timeout(c.os.clock, limit, fn() -> (Bytes, Bytes, Int) ! ProcErr {
+    // stdout to its end first: git's own error output is a few lines
+    // (no progress: every fetch and clone is --quiet), under any pipe's
+    // buffer, so it cannot block git while stdout is read
+    var out = BytesBuilder.new()
+    while let Some(b) = ch.read(65536)? {
+      out.write(b)
+    }
+    var err = BytesBuilder.new()
+    while let Some(b) = ch.read_err(65536)? {
+      err.write(b)
+    }
+    let code = ch.wait()?
+    Ok((out.freeze(), err.freeze(), code))
+  })
+  let (stdout, stderr, code) = match r {
+    Ok(x) => x
+    Err(task.Timed.TimedOut) => {
+      ch.kill()
+      ch.wait().ok()
+      return Err("git ${args[0]}: stopped after ${limit.ceil_seconds()} s (XO_GIT_TIMEOUT)")
+    }
+    Err(task.Timed.Failed(e)) => {
+      ch.kill()
+      ch.wait().ok()
+      return Err("${e}")
+    }
+  }
+  if code != 0 {
+    var msg = (stderr.to_str() ?? "").trim()
     if msg.is_empty() {
-      msg = "exit status ${out.code}"
+      msg = "exit status ${code}"
     }
     return Err(msg)
   }
-  Ok(out.stdout)
+  Ok(stdout)
+}
+
+/// The longest one git command xo runs may take (a clone of a large
+/// repository on a slow link is minutes; the module zip cap is 500 MB).
+const GIT_DEADLINE = 30m
+
+/// GIT_DEADLINE, or XO_GIT_TIMEOUT when it is a positive duration.
+fn (c: ModCtx) git_deadline() -> Duration {
+  match Duration.parse(c.getenv("XO_GIT_TIMEOUT")) {
+    Ok(d) if d.millis() > 0 => d
+    _ => GIT_DEADLINE
+  }
 }
 
 /// mod vcsDir: the bare clone of the repository at module path repo.
@@ -357,7 +401,7 @@ fn (c: ModCtx) vcs_dir(root: Str, repo: Str) -> Str {
 
 /// mod locateIn: the repository of a module path and the module's
 /// directory in it.
-fn (var c: ModCtx) locate_in(root: Str, path: Str) -> Location uses (fs.read, proc) {
+fn (var c: ModCtx) locate_in(root: Str, path: Str) -> Location uses (fs.read, proc, clock) {
   let p = repo_path(path)
   let elems = p.split("/")
   if elems[0] == "github.com" || elems[0] == "gitlab.com" || elems[0] == "bitbucket.org" {
@@ -404,7 +448,7 @@ fn (var c: ModCtx) locate_in(root: Str, path: Str) -> Location uses (fs.read, pr
 
 /// mod repoDir: the bare clone of repo in the cache at root, created or
 /// refreshed (tags fetched) when refresh is set.
-fn (c: ModCtx) repo_dir(root: Str, repo: Str, refresh: Bool) -> Str ! Str uses (fs, proc, rand) {
+fn (c: ModCtx) repo_dir(root: Str, repo: Str, refresh: Bool) -> Str ! Str uses (fs, proc, rand, clock) {
   let url = c.repo_url(repo)
   let dir = c.vcs_dir(root, repo)
   if c.exists("${dir}/HEAD") {
@@ -497,7 +541,7 @@ fn (c: ModCtx) cache_versions(root: Str, mod_path: Str) -> List[Str] uses fs.rea
 }
 
 /// mod gitVersions: the version tags of a module's repository.
-fn (var c: ModCtx) git_versions(root: Str, mod_path: Str) -> List[Str] ! Str uses (fs, proc, rand) {
+fn (var c: ModCtx) git_versions(root: Str, mod_path: Str) -> List[Str] ! Str uses (fs, proc, rand, clock) {
   let loc = c.locate_in(root, mod_path)
   let dir = c.repo_dir(root, loc.repo, true)?
   let out = c.git(dir, ["tag", "--list", "${tag_prefix(loc)}v*"])?
@@ -528,7 +572,7 @@ fn sort_versions(mod_path: Str, vs: List[Str]) -> List[Str] {
 
 /// mod.Versions: the versions of a module, lowest first, from the first
 /// XO_PROXY source that knows it; offline, those in the module cache.
-fn (var c: ModCtx) versions(mod_path: Str) -> List[Str] ! Str uses (fs, proc, rand, net) {
+fn (var c: ModCtx) versions(mod_path: Str) -> List[Str] ! Str uses (fs, proc, rand, net, clock) {
   let root = c.cache_dir()
   if c.offline() {
     return Ok(sort_versions(mod_path, c.cache_versions(root, mod_path)))
@@ -540,7 +584,7 @@ fn (var c: ModCtx) versions(mod_path: Str) -> List[Str] ! Str uses (fs, proc, ra
   c.versions_from(root, mod_path, st)
 }
 
-fn (var c: ModCtx) versions_from(root: Str, mod_path: Str, st: Settings) -> List[Str] ! Str uses (fs, proc, rand, net) {
+fn (var c: ModCtx) versions_from(root: Str, mod_path: Str, st: Settings) -> List[Str] ! Str uses (fs, proc, rand, net, clock) {
   var errs: List[Str] = []
   for s in st.sources {
     var not_found = false
@@ -575,7 +619,7 @@ fn (var c: ModCtx) versions_from(root: Str, mod_path: Str, st: Settings) -> List
 
 /// mod.Latest: the highest release version (prereleases only when there
 /// is no release).
-fn (var c: ModCtx) latest(mod_path: Str) -> Str ! Str uses (fs, proc, rand, net) {
+fn (var c: ModCtx) latest(mod_path: Str) -> Str ! Str uses (fs, proc, rand, net, clock) {
   let vs = c.versions(mod_path)?
   var best = ""
   for v in vs {
@@ -599,7 +643,7 @@ fn (var c: ModCtx) latest(mod_path: Str) -> Str ! Str uses (fs, proc, rand, net)
 /// mod gitFetch: the tree of a module version from its repository into
 /// dst (`git archive` of the tag, of the module's directory for a module
 /// in a subdirectory).
-fn (var c: ModCtx) git_fetch(root: Str, mod_path: Str, version: Str, dst: Str) -> () ! Str uses (fs, proc, rand) {
+fn (var c: ModCtx) git_fetch(root: Str, mod_path: Str, version: Str, dst: Str) -> () ! Str uses (fs, proc, rand, clock) {
   let loc = c.locate_in(root, mod_path)
   let tag = tag_prefix(loc) + version
   let ref = "refs/tags/${tag}^{commit}"
@@ -634,14 +678,14 @@ fn (var c: ModCtx) git_fetch(root: Str, mod_path: Str, version: Str, dst: Str) -
 
 /// mod.Download: the module version's directory in the cache, fetched
 /// from the XO_PROXY sources unless offline (XO1303 then).
-fn (var c: ModCtx) download(mod_path: Str, version: Str) -> Str ! check.Problem uses (fs, proc, rand, net) {
+fn (var c: ModCtx) download(mod_path: Str, version: Str) -> Str ! check.Problem uses (fs, proc, rand, net, clock) {
   let root = c.cache_dir()
   c.download_in(root, mod_path, version, None)
 }
 
 /// mod download: Download into the cache at root; st None reads the
 /// settings from the environment.
-fn (var c: ModCtx) download_in(root: Str, mod_path: Str, version: Str, st0: Settings?) -> Str ! check.Problem uses (fs, proc, rand, net) {
+fn (var c: ModCtx) download_in(root: Str, mod_path: Str, version: Str, st0: Settings?) -> Str ! check.Problem uses (fs, proc, rand, net, clock) {
   let dir = version_dir_in(root, mod_path, version)
   if c.exists("${dir}/xo.mod") {
     return Ok(dir)

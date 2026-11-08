@@ -137,7 +137,7 @@ fn (var c: ModCtx) refresh_list(b: Bucket, root: Str, mod_path: Str, lists: Mute
 /// repository's tags, sorted, one per line), the number of versions, and
 /// git's error when the repository could not be read (the list is then
 /// the cache's versions; an error when there are none).
-fn (var c: ModCtx) list_body(root: Str, mod_path: Str) -> (Str, Int, Str) ! Str uses (fs, proc, rand) {
+fn (var c: ModCtx) list_body(root: Str, mod_path: Str) -> (Str, Int, Str) ! Str uses (fs, proc, rand, clock) {
   var vs = c.cache_versions(root, mod_path)
   var git_err = ""
   match c.git_versions(root, mod_path) {

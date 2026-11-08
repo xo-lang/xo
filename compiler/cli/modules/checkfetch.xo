@@ -9,7 +9,7 @@ use github.com/xo-lang/xo/compiler/check
 /// mod.Download of path at version into the module cache of the
 /// environment, for a command run in wd: the version's directory, or the
 /// problem as mod.Load reports it.
-pub fn fetch(os: Os, wd: Str, path: Str, version: Str) -> Str ! check.Problem uses (fs, proc, net, rand, env) {
+pub fn fetch(os: Os, wd: Str, path: Str, version: Str) -> Str ! check.Problem uses (fs, proc, net, rand, env, clock) {
   var c = new_ctx(os, wd)
   c.download(path, version)
 }

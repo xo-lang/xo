@@ -253,8 +253,9 @@ host.
     `http.lowSpeedTime=60` (2026-11-08, cmd/xo TestGitStalledRemote): a
     transfer under 1 KB/s for a minute is abandoned, where a remote that
     stopped sending held a lookup, and the `--refresh` loop behind it,
-    for good. The process API has no timeout, so a remote that drips
-    just over 1 KB/s is bounded only by the size cap.
+    for good. A remote that drips just over 1 KB/s is stopped by a
+    deadline per git command, `XO_GIT_TIMEOUT` (default 30m): xo kills
+    the git it spawned (cmd/xo TestGitDeadline).
 
 ### Ed25519 key custody
 

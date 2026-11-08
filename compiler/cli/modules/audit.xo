@@ -96,7 +96,7 @@ fn is_attenuator(name: Str) -> Bool {
   name is "only" | "sub" | "read_only" | "write_only" | "cwd"
 }
 
-fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, env) {
+fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, env, clock) {
   var fl = FlagSet{name: "audit", defs: [flag_str("dir", ".", "a directory of the main module"), flag_bool("json", "print the report as JSON"), flag_bool("no-gc", "check as a native build (needed for `use c` dependencies)")]}
   if !c.parse_flags(fl, args) {
     return 2
@@ -225,7 +225,7 @@ fn diag_less(a: check.Diag, b: check.Diag) -> Bool {
 }
 
 /// The audit report of the module at root from its check (cmd/xo audit).
-fn (var c: ModCtx) audit(root: Str, var chk: check.Checker, ds: List[check.Diag]) -> AuditReport uses (fs, net, proc, rand) {
+fn (var c: ModCtx) audit(root: Str, var chk: check.Checker, ds: List[check.Diag]) -> AuditReport uses (fs, net, proc, rand, clock) {
   var rep = AuditReport{dir: root, diags: ds}
   let (f0, _) = c.chk.read_mod_file(root)
   if let Some(f) = f0 {

@@ -12,7 +12,7 @@ use std/crypto
 /// builds with) unless a record of an earlier check exists; returns the
 /// warning to print, "" when the version checks clean or was checked
 /// before. XO_GET_CHECK=0 turns it off.
-fn (var c: ModCtx) check_fetched(root: Str, path: Str, v: Str) -> Str uses (env, fs, proc, rand, net) {
+fn (var c: ModCtx) check_fetched(root: Str, path: Str, v: Str) -> Str uses (env, fs, proc, rand, net, clock) {
   if (c.env.get("XO_GET_CHECK") ?? "") == "0" {
     return ""
   }

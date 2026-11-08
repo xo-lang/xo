@@ -11,7 +11,7 @@ use github.com/xo-lang/xo/compiler/cli/semantic
 /// cmd/xo upgradeDiffs: the API and effect changes of every upgraded or
 /// downgraded requirement of the main module in root, with the exports
 /// whose effects exceed the requirement's ceiling.
-fn (var c: ModCtx) upgrade_diffs(root: Str, changes: List[ModChange]) -> List[ApiChanges] uses (fs, proc, rand, net) {
+fn (var c: ModCtx) upgrade_diffs(root: Str, changes: List[ModChange]) -> List[ApiChanges] uses (fs, proc, rand, net, clock) {
   var out: List[ApiChanges] = []
   let (f, _) = c.chk.read_mod_file(root)
   for ch in changes {
@@ -93,7 +93,7 @@ fn jval(v: semantic.JVal) -> J {
 /// (decision 0086 step 4): compares the exports and effects with the
 /// previous tag and rejects a minor or patch release that breaks them.
 /// It prints the tag command and never runs git tag or git push.
-fn (var c: ModCtx) run_publish(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, env) {
+fn (var c: ModCtx) run_publish(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, env, clock) {
   var fl = FlagSet{name: "publish", defs: [flag_str("dir", ".", "a directory of the module"), flag_str("version", "", "the version to release (default: the next minor, or the next patch before v1.0.0)"), flag_bool("check", "compare only: allow uncommitted changes and compare the working tree"), flag_bool("json", "print the result as JSON")]}
   if !c.parse_flags(fl, args) {
     return 2
@@ -140,7 +140,7 @@ fn (var c: ModCtx) run_publish(args: List[Str]) -> Int uses (fs, net, proc, stdi
 /// is clean, the module's own requirements load (mod.Load with
 /// NoWorkspace), and it checks clean with workspaces off (cmd/xo's
 /// Verify), each error a diagnostic of r.
-fn (var c: ModCtx) publish_verify(var r: semantic.PublishResult, dir: Str) uses (fs, net, proc, rand, env) {
+fn (var c: ModCtx) publish_verify(var r: semantic.PublishResult, dir: Str) uses (fs, net, proc, rand, env, clock) {
   let root = semantic.mod_root(c.os.fs, c.wd, dir)
   if root.is_empty() {
     return

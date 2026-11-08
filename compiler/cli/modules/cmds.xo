@@ -132,7 +132,7 @@ fn owner(mods: List[check.DepModule], path: Str) -> check.DepModule? {
 /// mod findModule: the module holding a package path (the longest prefix,
 /// of at least two elements, whose repository has version tags) and its
 /// latest version.
-fn (var c: ModCtx) find_module(pkg: Str) -> (Str, Str) ! Str uses (fs, proc, rand, net) {
+fn (var c: ModCtx) find_module(pkg: Str) -> (Str, Str) ! Str uses (fs, proc, rand, net, clock) {
   let elems = pkg.split("/")
   var first = ""
   var n = elems.len()
@@ -174,7 +174,7 @@ fn accept_opts(path: Str, accept: Bool) -> Options {
 
 /// mod.GetAccept: `xo get <path>[@version]` in the main module in
 /// main_dir; with accept the module's wider effects are recorded.
-fn (var c: ModCtx) get(main_dir: Str, arg: Str, accept: Bool) -> (List[ModChange], List[check.Problem]) uses (fs, proc, rand, net) {
+fn (var c: ModCtx) get(main_dir: Str, arg: Str, accept: Bool) -> (List[ModChange], List[check.Problem]) uses (fs, proc, rand, net, clock) {
   let (path0, version0, _) = cut(arg, "@")
   var path = path0
   var version = version0
@@ -246,7 +246,7 @@ fn (var c: ModCtx) get(main_dir: Str, arg: Str, accept: Bool) -> (List[ModChange
 /// and a dependency ("path@version") whose xo.mod requires that version,
 /// "" when none does (aws report entry 7: `xo get sts@v1.0.0` printed
 /// "v1.1.0 => v1.0.0" while the root's v1.2.0 kept sts at v1.1.0).
-fn (var c: ModCtx) selected_by(main_dir: Str, path: Str) -> (Str, Str) uses (fs, proc, rand, net) {
+fn (var c: ModCtx) selected_by(main_dir: Str, path: Str) -> (Str, Str) uses (fs, proc, rand, net, clock) {
   let b = c.load(main_dir, Options{no_workspace: true, no_vendor: true})
   var sel = ""
   for m in b.modules {
@@ -276,7 +276,7 @@ fn (var c: ModCtx) selected_by(main_dir: Str, path: Str) -> (Str, Str) uses (fs,
 /// mod writeLockChanges: resolves the main module without workspace or
 /// vendor and writes its xo.lock (hashes and effects), returning the
 /// effect lines that changed.
-fn (var c: ModCtx) write_lock_changes(main_dir: Str, accept: Options) -> (List[EffectChange], List[check.Problem]) uses (fs, proc, rand, net) {
+fn (var c: ModCtx) write_lock_changes(main_dir: Str, accept: Options) -> (List[EffectChange], List[check.Problem]) uses (fs, proc, rand, net, clock) {
   let opts = Options{no_workspace: true, no_vendor: true, update: true, accept_effects: accept.accept_effects, accept_all: accept.accept_all, check_hatches: accept.check_hatches}
   var b = c.load(main_dir, opts)
   if opts.check_hatches && errs(b.problems).is_empty() {
@@ -312,7 +312,7 @@ fn (var c: ModCtx) write_lock_changes(main_dir: Str, accept: Options) -> (List[E
 
 /// mod.AcceptEffects: the current effects of the named modules (all when
 /// none is named) recorded in xo.lock.
-fn (var c: ModCtx) accept_effects(main_dir: Str, paths: List[Str]) -> (List[EffectChange], List[check.Problem]) uses (fs, proc, rand, net) {
+fn (var c: ModCtx) accept_effects(main_dir: Str, paths: List[Str]) -> (List[EffectChange], List[check.Problem]) uses (fs, proc, rand, net, clock) {
   var m: Map[Str, Bool] = {}
   for p in paths {
     m[p] = true
@@ -323,7 +323,7 @@ fn (var c: ModCtx) accept_effects(main_dir: Str, paths: List[Str]) -> (List[Effe
 /// mod.Tidy: requires the latest version of every imported module xo.mod
 /// does not require, drops requirements nothing imports (unless the rest
 /// of the graph needs their version), and rewrites xo.lock.
-fn (var c: ModCtx) tidy(main_dir: Str) -> (List[ModChange], List[check.Problem]) uses (fs, proc, rand, net) {
+fn (var c: ModCtx) tidy(main_dir: Str) -> (List[ModChange], List[check.Problem]) uses (fs, proc, rand, net, clock) {
   let (main0, probs) = c.chk.read_mod_file(main_dir)
   if !errs(probs).is_empty() {
     return ([], probs)
@@ -464,7 +464,7 @@ fn (var c: ModCtx) tidy(main_dir: Str) -> (List[ModChange], List[check.Problem])
 
 /// mod.Vendor: copies every selected module version into vendor/<path>/
 /// and lists them in vendor/modules.txt.
-fn (var c: ModCtx) vendor(main_dir0: Str) -> (List[check.DepModule], List[check.Problem]) uses (fs, proc, rand, net) {
+fn (var c: ModCtx) vendor(main_dir0: Str) -> (List[check.DepModule], List[check.Problem]) uses (fs, proc, rand, net, clock) {
   let main_dir = c.abs(main_dir0)
   let b = c.load(main_dir, Options{no_workspace: true, no_vendor: true})
   if !errs(b.problems).is_empty() {

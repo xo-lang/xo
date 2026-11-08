@@ -69,7 +69,7 @@ struct Item {
 }
 
 /// mod.Load: the dependencies of the main module in main_dir.
-fn (var c: ModCtx) load(main_dir0: Str, opts: Options) -> BuildList uses (fs, proc, rand, net) {
+fn (var c: ModCtx) load(main_dir0: Str, opts: Options) -> BuildList uses (fs, proc, rand, net, clock) {
   let main_dir = c.abs(main_dir0)
   var b = BuildList{}
   let (main0, probs) = c.chk.read_mod_file(main_dir)

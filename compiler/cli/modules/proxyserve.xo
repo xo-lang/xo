@@ -94,7 +94,7 @@ fn unescape_path(s: Str) -> Str? {
 }
 
 /// mod.ProxyHandler for one request.
-fn (c: ModCtx) proxy_answer(req: http.Request, root: Str, fetch: Bool) -> http.Response uses (fs, proc, rand, net) {
+fn (c: ModCtx) proxy_answer(req: http.Request, root: Str, fetch: Bool) -> http.Response uses (fs, proc, rand, net, clock) {
   var cc = c
   if req.method != "GET" && req.method != "HEAD" {
     return http_error("the module proxy is read only", 405)

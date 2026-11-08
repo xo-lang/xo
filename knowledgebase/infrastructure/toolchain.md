@@ -3383,8 +3383,13 @@ Last verified: 2026-10-09.
   over XO_GIT_BASE). Every git xo runs (fetch.xo `git`) sets
   `http.lowSpeedLimit=1000` and `http.lowSpeedTime=60`, so an http(s)
   remote that stalls fails that git after a minute (decision 0568; `xo
-  get` from a stalled remote makes a few such attempts). Last verified:
-  2026-11-08.
+  get` from a stalled remote makes a few such attempts); git's
+  `GIT_HTTP_LOW_SPEED_TIME` and `GIT_HTTP_LOW_SPEED_LIMIT=0` take
+  precedence over them. Each git also runs under a deadline,
+  `XO_GIT_TIMEOUT` (a duration, default 30m): past it xo kills that git
+  (the child it spawned, by its handle) and fails with "stopped after N
+  s (XO_GIT_TIMEOUT)", for a remote that drips just above the low speed
+  limit. Last verified: 2026-11-08.
 - Subdirectory modules (`internal/mod/repo.go` `Locate`): on the three
   known hosts the repository is the first three path elements and the
   rest (without `/vN`) is the directory; elsewhere `git ls-remote <url>

@@ -339,7 +339,7 @@ fn (c: ModCtx) report_changes(changes: List[ModChange], probs: List[check.Proble
 }
 
 /// `xo get [--dir=<dir>] [--json] [-u] [--accept-effects] <path>[@version]...`.
-fn (var c: ModCtx) run_get(args: List[Str]) -> Int uses (env, fs, net, proc, stdio, rand) {
+fn (var c: ModCtx) run_get(args: List[Str]) -> Int uses (env, fs, net, proc, stdio, rand, clock) {
   var fl = FlagSet{name: "get", defs: [flag_str("dir", ".", "a directory of the main module"), flag_bool("json", "print the result as JSON"), flag_bool("u", "upgrade to the latest versions (every requirement when no path is given)"), flag_bool("accept-effects", "record the new versions' effects in xo.lock even when they are wider than the locked ones (decision 0156)")]}
   if !c.parse_flags(fl, args) {
     return 2
@@ -396,7 +396,7 @@ fn (var c: ModCtx) run_get(args: List[Str]) -> Int uses (env, fs, net, proc, std
 /// requirements first, then every reached version's, in the order the
 /// minimal version selection walk reads them, without repeats; --json
 /// adds the selected version of every module (aws report entry 7).
-fn (var c: ModCtx) run_mod_graph(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
+fn (var c: ModCtx) run_mod_graph(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, clock) {
   var fl = FlagSet{name: "mod graph", defs: dir_json_flags()}
   if !c.parse_flags(fl, args) {
     return 2
@@ -487,7 +487,7 @@ fn effect_change_json(ch: EffectChange) -> J {
 }
 
 /// `xo mod accept-effects [--dir=<dir>] [--json] [<module path>...]`.
-fn (var c: ModCtx) run_accept_effects(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
+fn (var c: ModCtx) run_accept_effects(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, clock) {
   var fl = FlagSet{name: "mod accept-effects", defs: dir_json_flags()}
   if !c.parse_flags(fl, args) {
     return 2
@@ -513,7 +513,7 @@ fn (var c: ModCtx) run_accept_effects(args: List[Str]) -> Int uses (fs, net, pro
 }
 
 /// `xo vendor [--dir=<dir>] [--json]`.
-fn (var c: ModCtx) run_vendor(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
+fn (var c: ModCtx) run_vendor(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, clock) {
   var fl = FlagSet{name: "vendor", defs: dir_json_flags()}
   if !c.parse_flags(fl, args) {
     return 2
