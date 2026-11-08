@@ -209,6 +209,29 @@ fn (var g: Gen) rc_val_call(h: Str, a: Int) {
   g.emit("call void ${h}(ptr ${p})${ca}")
 }
 
+/// A pointer to value a for a helper taking it by pointer (eq_by_ptr):
+/// the memory that holds it, as rc_val_call finds it, else the k-th
+/// slot of its type after a store.
+fn (var g: Gen) val_ptr(a: Int, k: Int) -> Str {
+  let m = g.lazy[a]
+  if m >= 0 {
+    return g.held.mems[m].ptr
+  }
+  if a < g.addr.len() && !g.addr[a].is_empty() {
+    return g.addr[a]
+  }
+  let lt = g.ll(g.vty(a))
+  let key = if k == 0 { lt } else { "${lt} ${k}" }
+  var p = g.rc_tmp.get(key) ?? ""
+  if p.is_empty() {
+    p = g.alloca(lt)
+    g.rc_tmp[key] = p
+  }
+  let ta = g.typed(a)
+  g.emit("store ${ta}, ptr ${p}")
+  p
+}
+
 /// The blocks of f that only a fault's cleanup reaches: from the blocks
 /// a landing check sends a fault to (instr: the first successor of the
 /// check's block), the blocks the entry does not reach without passing
@@ -1134,9 +1157,16 @@ fn (var g: Gen) instr_body(v: Int) {
             return
           }
           let ef = g.eq_fn(at)
-          let t0 = g.typed(args[0])
-          let t1 = g.typed(args[1])
-          let eq = g.def("call i1 ${ef}(${t0}, ${t1})")
+          var eq = ""
+          if g.eq_by_ptr(at) {
+            let p0 = g.val_ptr(args[0], 0)
+            let p1 = g.val_ptr(args[1], 1)
+            eq = g.def("call i1 ${ef}(ptr ${p0}, ptr ${p1})")
+          } else {
+            let t0 = g.typed(args[0])
+            let t1 = g.typed(args[1])
+            eq = g.def("call i1 ${ef}(${t0}, ${t1})")
+          }
           if x.op == ssa.Op.Ne {
             g.set(v, "xor i1 ${eq}, true")
           } else {

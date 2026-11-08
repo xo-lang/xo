@@ -304,7 +304,8 @@ fn (var g: G) x86_leaves_and_then(var b: List[Str], kind: Str, ls: List[Leaf], h
 }
 
 /// The equality helper body (eq_helper) of t on x86_64: the two values'
-/// words in the arguments; rax 1 when equal.
+/// words in the arguments (their addresses when eq_by_ref); rax 1 when
+/// equal.
 fn (var g: G) x86_eq_body(var b: List[Str], sym: Str, t: Int, yes: Str, no: Str, done: Str) {
   let k = g.kind(t)
   // rbx and r12 the two values' addresses; r13 to r15 the list loop's
@@ -342,6 +343,11 @@ fn (var g: G) x86_eq_body(var b: List[Str], sym: Str, t: Int, yes: Str, no: Str,
         }
         b.push("\taddq $${es}, %rbx\n\taddq $${es}, %r12\n\taddq $1, %r14\n\tjmp ${lp}\n")
       }
+    }
+    Struct | Tuple | Enum if g.eq_by_ref(t) => {
+      // the two values' addresses (eq_by_ref)
+      b.push("\tsubq $8, %rsp\n\tmovq %rdi, %rbx\n\tmovq %rsi, %r12\n")
+      g.x86_eq_at(b, t, "%rbx", "%r12", 0, no, false)
     }
     Struct | Tuple | Enum => {
       let n = g.nwords(t)
@@ -390,16 +396,21 @@ fn (var g: G) x86_eq_at(var b: List[Str], t: Int, ra: Str, rb: Str, off: Int, no
       let h = g.eq_helper(t)
       b.push("\tmovq ${off}(${ra}), %rdi\n\tmovq ${off}(${rb}), %rsi\n\tcallq ${h}\n\ttestq %rax, %rax\n\tjz ${no}\n")
     }
-    Struct => {
-      for i in 0..x.fields.len() {
+    Struct | Tuple => {
+      let fts = g.part_types(t)
+      var i = 0
+      while i < fts.len() {
         let (fo, _) = g.field_words(t, i)
-        g.x86_eq_at(b, x.fields[i].ty, ra, rb, off + 8 * fo, no, false)
-      }
-    }
-    Tuple => {
-      for i in 0..x.elems.len() {
-        let (fo, _) = g.field_words(t, i)
-        g.x86_eq_at(b, x.elems[i], ra, rb, off + 8 * fo, no, false)
+        let (j, words) = g.plain_run(t, fts, i)
+        if words >= EQ_RUN {
+          // a run of plain words: one byte compare (eq_at's)
+          b.push("\tleaq ${off + 8 * fo}(${ra}), %rdi\n\tmovl $${8 * words}, %esi\n\tleaq ${off + 8 * fo}(${rb}), %rdx\n\tmovl $${8 * words}, %ecx\n")
+          b.push("\tcallq ${g.sym("xo_x_obj_str_eq")}\n\ttestl %eax, %eax\n\tjz ${no}\n")
+          i = j
+          continue
+        }
+        g.x86_eq_at(b, fts[i], ra, rb, off + 8 * fo, no, false)
+        i += 1
       }
     }
     Enum => {

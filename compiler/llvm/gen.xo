@@ -1576,6 +1576,60 @@ fn (var g: Gen) eq_of(var e: E, ft: Int, x: Str, y: Str) -> Str {
   e.def("call i1 ${f}(${l1} ${x}, ${l2} ${y})")
 }
 
+/// Whether the equality helper of t takes pointers to the two values
+/// instead of the values (rc_by_ptr's types): by value, `==` of a struct
+/// of 4,096 Int fields took clang 86 s, copying both into the call and
+/// each into memory again in the helper (2026-11-07).
+fn (var g: Gen) eq_by_ptr(t: Int) -> Bool {
+  g.rc_by_ptr(t)
+}
+
+/// The comparison of the values of type ft at pa and pb in an equality
+/// helper: by pointer when its helper takes them so (eq_by_ptr), else
+/// loaded.
+fn (var g: Gen) eq_at_ptr(var e: E, ft: Int, pa: Str, pb: Str) -> Str {
+  if g.eq_by_ptr(ft) {
+    let f = g.eq_fn(ft)
+    return e.def("call i1 ${f}(ptr ${pa}, ptr ${pb})")
+  }
+  let x = e.def("load ${g.ll(ft)}, ptr ${pa}")
+  let y = e.def("load ${g.ll(ft)}, ptr ${pb}")
+  g.eq_of(e, ft, x, y)
+}
+
+/// The fewest i64 words an equality helper compares as bytes in one call
+/// (compiler/arm64's EQ_RUN).
+const EQ_RUN = 16
+
+/// The i64 words of a value of type t when it is only Int words (Int, or
+/// a struct or tuple of them), else 0.
+fn (var g: Gen) i64_words(t: Int) -> Int {
+  match g.kind(t) {
+    Int => return 1
+    Struct | Tuple => {
+      let x = g.m.types[t]
+      var parts: List[Int] = []
+      if x.kind == ssa.Kind.Struct {
+        for f in x.fields {
+          parts.push(f.ty)
+        }
+      } else {
+        parts = x.elems
+      }
+      var n = 0
+      for p in parts {
+        let k = g.i64_words(p)
+        if k == 0 {
+          return 0
+        }
+        n += k
+      }
+      return n
+    }
+    _ => return 0
+  }
+}
+
 /// The helper that compares two values of type t structurally (`==` on
 /// strings, structs, tuples, enums, and lists), written at its first use
 /// (eqFn).
@@ -1605,9 +1659,7 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
       let pa = e.def("getelementptr ${bl1}, ptr %a, i32 0, i32 1")
       let bl2 = g.box_ll(t)
       let pb = e.def("getelementptr ${bl2}, ptr %b, i32 0, i32 1")
-      let x = e.def("load ${g.ll(et)}, ptr ${pa}")
-      let y = e.def("load ${g.ll(et)}, ptr ${pb}")
-      let r = g.eq_of(e, et, x, y)
+      let r = g.eq_at_ptr(e, et, pa, pb)
       e.emit("ret i1 ${r}")
       e.w.push("yes:\n  ret i1 true\n")
     }
@@ -1632,28 +1684,81 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
         fts = g.m.types[t].elems
       }
       var acc = "true"
-      for (i, ft) in fts.indexed() {
+      let byp = g.eq_by_ptr(t)
+      var pa = if byp { "%a" } else { "" }
+      var pb = if byp { "%b" } else { "" }
+      var i = 0
+      while i < fts.len() {
+        let ft = fts[i]
+        // a run of i64 words (Int, and structs and tuples of them, which
+        // lie end to end): one byte compare of the values in memory
+        // (2026-11-07: a struct of 4,096 Int fields took clang 177 s
+        // compared field by field)
+        var j = i
+        var words = 0
+        while j < fts.len() && g.i64_words(fts[j]) > 0 {
+          words += g.i64_words(fts[j])
+          j += 1
+        }
+        if words >= EQ_RUN {
+          if pa.is_empty() {
+            pa = e.tmp()
+            pb = e.tmp()
+            allocas = "  ${pa} = alloca ${lt}\n  ${pb} = alloca ${lt}\n"
+            e.emit("store ${lt} %a, ptr ${pa}")
+            e.emit("store ${lt} %b, ptr ${pb}")
+          }
+          let fa = e.def("getelementptr ${lt}, ptr ${pa}, i32 0, i32 ${i}")
+          let fb = e.def("getelementptr ${lt}, ptr ${pb}, i32 0, i32 ${i}")
+          let ia = e.def("ptrtoint ptr ${fa} to i64")
+          let ib = e.def("ptrtoint ptr ${fb} to i64")
+          let r = e.def("call i64 @xo_x_obj_str_eq(i64 ${ia}, i64 ${8 * words}, i64 ${ib}, i64 ${8 * words}) #6")
+          let c = e.def("icmp ne i64 ${r}, 0")
+          acc = e.def("and i1 ${acc}, ${c}")
+          i = j
+          continue
+        }
+        i += 1
         if g.is_void(ft) {
           continue
         }
-        let x = e.def("extractvalue ${lt} %a, ${i}")
-        let y = e.def("extractvalue ${lt} %b, ${i}")
+        if byp {
+          let fa = e.def("getelementptr ${lt}, ptr %a, i32 0, i32 ${i - 1}")
+          let fb = e.def("getelementptr ${lt}, ptr %b, i32 0, i32 ${i - 1}")
+          let r = g.eq_at_ptr(e, ft, fa, fb)
+          acc = e.def("and i1 ${acc}, ${r}")
+          continue
+        }
+        let x = e.def("extractvalue ${lt} %a, ${i - 1}")
+        let y = e.def("extractvalue ${lt} %b, ${i - 1}")
         let r = g.eq_of(e, ft, x, y)
         acc = e.def("and i1 ${acc}, ${r}")
       }
       e.emit("ret i1 ${acc}")
     }
     Enum => {
-      let ta = e.def("extractvalue ${lt} %a, 0")
-      let tb = e.def("extractvalue ${lt} %b, 0")
+      let byp = g.eq_by_ptr(t)
+      var ta = ""
+      var tb = ""
+      if byp {
+        ta = e.def("load i64, ptr %a")
+        tb = e.def("load i64, ptr %b")
+      } else {
+        ta = e.def("extractvalue ${lt} %a, 0")
+        tb = e.def("extractvalue ${lt} %b, 0")
+      }
       let same = e.def("icmp eq i64 ${ta}, ${tb}")
       e.emit("br i1 ${same}, label %tags, label %no")
       e.w.push("tags:\n")
-      let pa = e.tmp()
-      let pb = e.tmp()
-      allocas = "  ${pa} = alloca ${lt}\n  ${pb} = alloca ${lt}\n"
-      e.emit("store ${lt} %a, ptr ${pa}")
-      e.emit("store ${lt} %b, ptr ${pb}")
+      var pa = "%a"
+      var pb = "%b"
+      if !byp {
+        pa = e.tmp()
+        pb = e.tmp()
+        allocas = "  ${pa} = alloca ${lt}\n  ${pb} = alloca ${lt}\n"
+        e.emit("store ${lt} %a, ptr ${pa}")
+        e.emit("store ${lt} %b, ptr ${pb}")
+      }
       let head = e.w
       e.w = []
       var cases: List[Str] = []
@@ -1675,9 +1780,7 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
           }
           let fa = e.def("getelementptr ${vl}, ptr ${pay_a}, i32 0, i32 ${fi}")
           let fb = e.def("getelementptr ${vl}, ptr ${pay_b}, i32 0, i32 ${fi}")
-          let x = e.def("load ${g.ll(f.ty)}, ptr ${fa}")
-          let y = e.def("load ${g.ll(f.ty)}, ptr ${fb}")
-          let r = g.eq_of(e, f.ty, x, y)
+          let r = g.eq_at_ptr(e, f.ty, fa, fb)
           acc = e.def("and i1 ${acc}, ${r}")
         }
         e.emit("ret i1 ${acc}")
@@ -1702,7 +1805,13 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
       e.emit("br i1 ${done}, label %yes, label %body")
       e.w.push("body:\n")
       var r = "true"
-      if !g.is_void(et) {
+      if g.eq_by_ptr(et) {
+        let da = e.def("getelementptr %xo.rlist, ptr %a, i64 1")
+        let db = e.def("getelementptr %xo.rlist, ptr %b, i64 1")
+        let xa = e.def("getelementptr ${g.elem_ll(et)}, ptr ${da}, i64 %i")
+        let xb = e.def("getelementptr ${g.elem_ll(et)}, ptr ${db}, i64 %i")
+        r = g.eq_at_ptr(e, et, xa, xb)
+      } else if !g.is_void(et) {
         let da = e.def("getelementptr %xo.rlist, ptr %a, i64 1")
         let db = e.def("getelementptr %xo.rlist, ptr %b, i64 1")
         let xa = e.def("getelementptr ${g.elem_ll(et)}, ptr ${da}, i64 %i")
@@ -1730,6 +1839,7 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
     }
     _ => g.fail("the SSA lowering does not compare `${g.m.types[t].name}`")
   }
-  g.helpers.push("define internal i1 ${name}(${lt} %a, ${lt} %b) #1 {\nentry:\n${allocas}${e.w.join("")}}\n\n")
+  let pt = if g.eq_by_ptr(t) { "ptr" } else { lt }
+  g.helpers.push("define internal i1 ${name}(${pt} %a, ${pt} %b) #1 {\nentry:\n${allocas}${e.w.join("")}}\n\n")
   name
 }
