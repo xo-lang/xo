@@ -8,6 +8,6 @@ fn count() -> Int {
 
 fn main(os: Os) uses fs.read, log {
   log.info("pure", {"n": count()})
-  log.info("effect", {"n": (os.fs.read_text("x") ?? "").len()}) // ERROR XO0438 "arguments are evaluated only when the record"
-  log.debug("effect ${(os.fs.read_text("y") ?? "").len()}") // ERROR XO0438 "arguments are evaluated only when the record"
+  log.info("effect", {"n": (os.fs.read_text("x") ?? _e => "").len()}) // ERROR XO0438 "arguments are evaluated only when the record"
+  log.debug("effect ${(os.fs.read_text("y") ?? _e => "").len()}") // ERROR XO0438 "arguments are evaluated only when the record"
 }
