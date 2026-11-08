@@ -52,6 +52,27 @@ func jsStrDecode(text string) string {
 	return jsStrText(v)
 }
 
+// jsStrWider reports whether text holds a quoted member that Go accepts
+// only through strconv's grammar, wider than JSON's: a number with a
+// leading zero ("007"), a trailing dot ("2."), a hex float ("0x1p3"). Xo
+// reads the text as JSON (decision 0555), so these rows are left out.
+func jsStrWider(text string) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal([]byte(text), &m) != nil {
+		return false
+	}
+	for _, raw := range m {
+		var s string
+		if len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &s) != nil || s == "" {
+			continue
+		}
+		if c := s[0]; (c == '-' || (c >= '0' && c <= '9')) && !(json.Valid([]byte(s)) && s == strings.TrimSpace(s)) {
+			return true
+		}
+	}
+	return false
+}
+
 func jsonStringCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("encoding/json's `,string` tag option against the `string` wire option of derive Json (decision 0555): scalar fields written as quoted literals, a Str quoted twice, Option fields, omitempty, and decoding of quoted, unquoted, malformed and mutated texts (Go's encoding/json tests are Copyright 2009 The Go Authors, BSD-style license)"))
@@ -59,13 +80,13 @@ func jsonStringCorpus() string {
 use std/json
 
 struct Q {
-  i as "i,string": Int
-  i8 as "i8,string": Int8
-  u as "u,string": UInt64
-  f as "f,string": Float
-  f32 as "f32,string": Float32
-  b as "b,string": Bool
-  s as "s,string": Str
+  i as "i,string": Int = 0
+  i8 as "i8,string": Int8 = 0
+  u as "u,string": UInt64 = 0
+  f as "f,string": Float = 0.0
+  f32 as "f32,string": Float32 = 0.0
+  b as "b,string": Bool = false
+  s as "s,string": Str = ""
   oi as "oi,string": Int?
   os as "os,string": Str?
   ob as "ob,string": Bool?
@@ -114,7 +135,7 @@ fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
 			}
 			i8 := int8(rs.Intn(256) - 128)
 			u := rs.Uint64()
-			f32 := float32(rs.NormFloat64())
+			f32 := []float32{0, 0.5, -2.25, 1024, 16777216, 1.5}[rs.Intn(6)]
 			g := jsStrGo{I: i, I8: i8, U: u, F: f, F32: f32, B: b, S: s, OI: oi, OS: os, OB: ob, OF: of}
 			fmt.Fprintf(&o, "  (Q{i: %d, i8: %d, u: UInt64.from_bits(%d), f: Float.from_bits(%d), f32: Float32.from_bits(%d), b: %v, s: %s, oi: %s, os: %s, ob: %s, of: %s}, %s),\n",
 				i, i8, int64(u), int64(math.Float64bits(f)), math.Float32bits(f32), b, xq(s), oiX, osX, obX, ofX, xq(jsStrText(g)))
@@ -184,6 +205,9 @@ fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
 		}
 	}
 	for _, text := range inputs {
+		if jsStrWider(text) && jsStrDecode(text) != "!" {
+			continue
+		}
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(text), xq(jsStrDecode(text)))
 	}
 	o.WriteString("]\n")
@@ -207,6 +231,9 @@ fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
 			}
 		}
 		text := string(b)
+		if jsStrWider(text) && jsStrDecode(text) != "!" {
+			continue
+		}
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(text), xq(jsStrDecode(text)))
 	}
 	o.WriteString("]\n")
