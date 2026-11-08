@@ -186,7 +186,11 @@ Native: both flags are LLVM only. The native self build's __text is
 The self build `--ab` on linux/arm64 host 1 (base cacc07cd0, prototype
 0d28dca5e, 3 rounds): wall 0.993, cpu 0.991, max RSS 1.017, on a host
 loaded through all three rounds (median load 6.3 to 6.6), so within
-noise, as expected of code that is byte for byte the same.
+noise, as expected of code that is byte for byte the same. That run
+measured the base's xo building the tree, not each xo building itself;
+the rerun with `stage2 self` (prototype 5094fd78f, 3 rounds, 2 loaded)
+gives wall 1.002 (0.997 to 1.008, within noise), cpu 1.002, max RSS
+1.008.
 
 xo's own LLVM IR does change with XO_WIDE_HOMES (376.8 to 377.6 MB):
 xo has types of 4 KiB and more (arm64.G at 5,696 bytes, check.Checker,
