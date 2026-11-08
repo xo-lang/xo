@@ -301,8 +301,10 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
       }
       // room for every element at once: from empty, the pushes grew the
       // list 4 times for 8 elements (sha256.new's state, aesgcm's
-      // sub_word: 180 growths a TLS handshake, 2026-10-18)
-      var l = if elems.len() >= 2 { b.call("list.new", t, "", [b.cint(elems.len())]) } else { b.call("list.new", t, "", []) }
+      // sub_word: 180 growths a TLS handshake, 2026-10-18); one element
+      // too, made at its size in one call rather than grown by its push
+      // (bench/perf/metrics counter's `[name]`, 2026-11-07)
+      var l = if elems.len() >= 1 { b.call("list.new", t, "", [b.cint(elems.len())]) } else { b.call("list.new", t, "", []) }
       for el in elems {
         let v = b.value_as(el, b.m.types[t].elems[0])
         l = b.call("list.push", t, "", [l, v])
