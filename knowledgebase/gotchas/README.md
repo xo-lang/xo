@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [warmup-build-races-std-variant-child.md](warmup-build-races-std-variant-child.md): Observed 2026-11-08: the REPL's warm-up `xo build` returned before std's variants existed (a miss starts their build in a detached child), so first entries raced it on host 1 (0.26 to 0.73 s, rising); build the variants in the foreground (`xo dev stdcache --conc=0/1`), then the sample with XO_SEPCOMP_BG=0
 - [subpackage-dot-took-module-path.md](subpackage-dot-took-module-path.md): Observed 2026-11-08: `xo check .` in a package below its module root gave it the module's import path (two relative paths compared), so importing the root package was XO0604; module_path_for compares absolute paths
 - [frame-list-unguarded-inlined-callee.md](frame-list-unguarded-inlined-callee.md): Observed 2026-11-07: azblob faulted 0554's verifier: a caller inlined a callee before the callee's own List parameter guards were added, so a frame list went into a struct; bodies are now guarded as they are inlined
 - [head-cuts-golden-diff.md](head-cuts-golden-diff.md): Observed 2026-11-08: `| head -30` on a golden failure cut its got block, so a stale want.txt (pack_lists) looked like a run that stopped early; grep or diff the got text instead
