@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - std/path (perf): `dir`, `base`, `ext` and `split` return byte views with no UTF-8 boundary check, and `clean` no longer revalidates its result: bench/perf/path parts 0.918, clean 0.934, join 0.942 of main on linux/arm64 (--ab, n=6); results unchanged.
+- std/crypto (perf): an AES key's schedule does SubWord in a vector register (cpu.aes_sub_word, decision 0231 addendum): bench/perf/aesgcm key 0.717 of main on linux/arm64 (--ab, n=7), seal 0.944; round keys unchanged.
 - compiler (fix): the native backends build a recursive value (a Box) of more than 32760 bytes of words and compare structs, tuples and enums of that size (`box of ... (too many words)`, `equality of ... (too many words)`); LLVM already did
 - std/cli (feature): `cli.command(..., stop_at_positional: true)` ends the flags at the first positional argument, as Go's flag package does, so a ported Go tool reads `tool file -64` as Go did (decision 0556); off by default.
 - compiler (fix): the native backends (arm64 and amd64) build a closure that captures more than 32760 bytes of words, such as a fault frame's parameters over a generated GCP client's service (aiplatform/v1 `ProjectsService.get_cache_config` failed "captures too many words"); LLVM already did

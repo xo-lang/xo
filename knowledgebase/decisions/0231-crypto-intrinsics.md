@@ -427,3 +427,25 @@ lowerings:
   as HMAC against crypto/sha512 on every length from 0 to 300 and
   around 4096, on both arm64 backends; the cpu_sha512 golden.
 - Timing: `xo bench --ab` on the first linux/arm64 offload host, 2026-11-03, bench/perf/sha512 (SHA-512 and SHA-384 of 64 KiB 1,000 times each, HMAC-SHA512 of an 8 byte counter 600,000 times), A b19877176 (the parent with only the program) and B 4e10c4b77: wall 624.8 ms to 412.5 ms, B/A 0.66 (95% interval 0.657 to 0.661, 3 rounds); the HMAC loop's per MAC work (pads, Hasher state copies) is what is left
+
+## Addendum (2026-11-07): SubWord in a register (aes_sub_word)
+
+- `cpu.aes_sub_word(x) -> Int`: AES's SubWord of x's low 32 bits, in
+  both halves of the result. The word goes into each of a block's four
+  columns (arm64: `fmov`, `dup v.4s, v.s[0]`; x86-64: `movq`, `pshufd
+  $0`), one AESE or AESENCLAST with a zero key (ShiftRows moves nothing
+  when the columns are equal), and the low 8 bytes back (`fmov`,
+  `movq`). LLVM: the splat and the same instruction as inline asm.
+  Needs HW_AES (x86gate_test); a leaf intrinsic (arm64 inline.xo).
+  cpu.xo's aes_sub_word_soft (sub_shift on the repeated word) is the
+  body wasm and the Go backend's test op run and the tests' reference.
+- Why: aesgcm.xo's key schedule did SubWord with `cpu.aes_last` on a
+  two word list: two 8 byte stores, then a 16 byte load of both, which
+  store forwarding cannot serve, ten times in a chain for AES-128
+  (sub_word_hw 14.4% of bench/perf/aesgcm key on the Mac, 2026-11-07).
+  The schedule also loads the key's first 16 bytes as two words and
+  allocates no scratch lists.
+- Checks: the cpu_prims golden's `subword` lines (the instruction
+  against the body, both against a Go S-box) on arm64, LLVM and Go, the
+  crypto goldens, wasm, and the amd64 sample on the linux/amd64 host.
+- Timing: bench/perf/aesgcm on linux/arm64 host 1, --ab against main c45abe320 (7 rounds): key 0.717 (0.709 to 0.731, n=7; 8.11 to 5.82 ms, survey row 1.27x of Go), seal 0.944 (0.941 to 0.952, n=6)

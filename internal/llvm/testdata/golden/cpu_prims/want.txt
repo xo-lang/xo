@@ -154,6 +154,20 @@ ghash4 13 51a1dad577be812d2e86369da1fb49cf 51a1dad577be812d2e86369da1fb49cf
 12_soft carry 0101 clmul 0a0cd3eba8bb8bc3f5f32c145744743c round 433ce05261e429a8ab04d6e2c0526c61 last 335e7e3c5bef620f302e76c889e36e02 enc 1575939e3bfeee0e833a66603a62b240
 13 carry 0100 clmul 14a0f1d83293cabd54a2f2c532aacd32 round f429736a3cefae2f50285ab1400cb8ec last e0139c0cc3e93c95d2a7d0cec99d911b enc 0ad3785ef948f0ae88f326900c25e86a
 13_soft carry 0100 clmul 14a0f1d83293cabd54a2f2c532aacd32 round f429736a3cefae2f50285ab1400cb8ec last e0139c0cc3e93c95d2a7d0cec99d911b enc 0ad3785ef948f0ae88f326900c25e86a
+subword 0 6363636363636363 same
+subword 1 1616161616161616 same
+subword 2 1865090618650906 same
+subword 3 1f5e49ca1f5e49ca same
+subword 4 fdcc3b9bfdcc3b9b same
+subword 5 a912fbbaa912fbba same
+subword 6 9399345893993458 same
+subword 7 7a9d13b27a9d13b2 same
+subword 8 eb0f2d89eb0f2d89 same
+subword 9 163f20ec163f20ec same
+subword 10 29ece15e29ece15e same
+subword 11 eb310f82eb310f82 same
+subword 12 72fa9deb72fa9deb same
+subword 13 1ec03ca61ec03ca6 same
 ghashn 0 0 00000000000000000000000000000000 same
 ghashn 0 64 5dd8059e861451b893e0d4898c3e030e same
 ghashn 0 128 f9f7f1053f5c0ae5688d65677f729870 same

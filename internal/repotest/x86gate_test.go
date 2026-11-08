@@ -17,6 +17,7 @@ import (
 var x86Needs = map[string]string{
 	"aes_round":         "HW_AES",
 	"aes_last":          "HW_AES",
+	"aes_sub_word":      "HW_AES",
 	"aes_enc10":         "HW_AES",
 	"aes_enc12":         "HW_AES",
 	"aes_enc14":         "HW_AES",

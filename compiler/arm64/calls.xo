@@ -1923,6 +1923,15 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let out = if lo { "fmov $d0, d30" } else { "umov $d0, v30.d[1]" }
       g.set(v, [g.def1(false, "fmov d30, $u0\nfmov d31, $u1\npmull v30.1q, v30.1d, v31.1d\n${out}", [g.word(x.args[0]), g.word(x.args[1])])])
     }
+    "rt.aes_sub_word" => {
+      // the word in each of a block's four columns, AESENCLAST (x86-64)
+      // or AESE (arm64) with a zero key: SubWord twice in the low 8 bytes
+      if g.x86 {
+        g.set(v, [g.x86_def1("movq $u0, %xmm15\npshufd $0, %xmm15, %xmm15\npxor %xmm14, %xmm14\naesenclast %xmm14, %xmm15\nmovq %xmm15, $d0", [g.word(x.args[0])])])
+      } else {
+        g.set(v, [g.def1(false, "fmov d30, $u0\ndup v30.4s, v30.s[0]\nmovi v31.16b, #0\naese v30.16b, v31.16b\nfmov $d0, d30", [g.word(x.args[0])])])
+      }
+    }
     "rt.aes_round" if g.x86 => {
       // AES-NI (cpu.hw()'s HW_AES): arm64's aese then aesmc is
       // MixColumns(ShiftRows(SubBytes(st ^ rk))), aesenc's rounds with

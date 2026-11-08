@@ -1107,6 +1107,16 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, i64 ${g.op(x.args[3])})")
     }
+    "rt.aes_sub_word" => {
+      // the word in each of the four columns, one AESE (arm64) or
+      // AESENCLAST (amd64) with a zero key; the low 8 bytes
+      let w = g.def("trunc i64 ${g.op(x.args[0])} to i32")
+      let c = g.def("insertelement <4 x i32> undef, i32 ${w}, i32 0")
+      let s = g.def("bitcast <4 x i32> ${g.def("shufflevector <4 x i32> ${c}, <4 x i32> undef, <4 x i32> zeroinitializer")} to <16 x i8>")
+      let asm = if g.arch() == "amd64" { "asm \"aesenclast $2, $0\", \"=x,0,x\"" } else { "asm \".arch_extension crypto\\0Aaese $0.16b, $2.16b\", \"=w,0,w\"" }
+      let r = g.def("call <16 x i8> ${asm}(<16 x i8> ${s}, <16 x i8> zeroinitializer)")
+      g.set(v, "extractelement <2 x i64> ${g.def("bitcast <16 x i8> ${r} to <2 x i64>")}, i32 0")
+    }
     "rt.aes_round" | "rt.aes_last" => {
       let last = aux_str(x.aux) == "rt.aes_last"
       let p = g.raw_ptr(x.args[0])

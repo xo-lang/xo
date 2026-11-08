@@ -380,6 +380,21 @@ pub fn aes_last_soft(st: Int, rk: Int, rk2: Int) {
   rt.mem_store(st, 8, b ^ rt.mem_load(rk2, 8, 8), 8)
 }
 
+/// AES's SubWord (the S-box on each byte of x's low 32 bits, the key
+/// schedule's step), in both halves of the result: a block whose four
+/// columns are that word, one last round with a zero key (ShiftRows then
+/// moves nothing) with the value in a vector register, where aes_last
+/// goes through memory (2026-11-07: storing the word as two halves and
+/// loading the block whole was 14% of an AES-GCM key's setup).
+pub fn aes_sub_word(x: Int) -> Int { aes_sub_word_soft(x) }
+
+/// aes_sub_word's body.
+pub fn aes_sub_word_soft(x: Int) -> Int {
+  let w = x & 0xFFFFFFFF
+  let (a, _) = sub_shift(w | w.wrapping_shl(32), w | w.wrapping_shl(32))
+  (a & 0xFFFFFFFF) | (a & 0xFFFFFFFF).wrapping_shl(32)
+}
+
 /// The encryption of the 16 byte block at st in place with the nr + 1
 /// round keys at rk (FIPS 197's byte order, 16 bytes each): AES-128 (nr
 /// 10), AES-192 (12), AES-256 (14). The native emitters unroll the
@@ -1108,7 +1123,7 @@ fn block(b: Bytes) -> List[Int] { [rt.bytes_word(b, 0), rt.bytes_word(b, 8)] }
 /// internal.crypto_op's "cpu." ops (std/internal.xo): carry (the 8
 /// byte little endian words a and b; the carry and the borrow, a byte
 /// each), clmul (the product's low then high word), aes_round (the 16
-/// byte state a, round key b), aes_last (state a, round keys b and c),
+/// byte state a, round key b), aes_last (state a, round keys b and c), aes_sub_word (SubWord of a's first four bytes; 8 bytes, the word twice),
 /// sha256_block (the state a as 8 four byte little endian words, the 64
 /// byte block b, the round constants c as sha256_block takes them; the
 /// new state as a was), sha1_block (the state a as 5 four byte little
@@ -1361,6 +1376,11 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       keep(st)
       keep(k)
       Some(o.bytes())
+    }
+    "aes_sub_word" => {
+      // SubWord of a's first four bytes (little endian); the 8 byte result
+      let x = rt.bytes_word(a, 0) & 0xFFFFFFFF
+      Some(words16(if soft { aes_sub_word_soft(x) } else { aes_sub_word(x) }, 0)[0..8])
     }
     "aes_round" | "aes_last" => {
       let st = block(a)

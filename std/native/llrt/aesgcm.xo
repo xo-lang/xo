@@ -241,15 +241,9 @@ fn sub_word(x: Int) -> Int {
   q[0] & 0xFFFFFFFF
 }
 
-/// sub_word with the CPU's AES instructions (cpu.aes_last): x in each of
-/// the block's four columns at sw, the last round with zk's zero key.
-fn sub_word_hw(x: Int, var sw: List[Int], zk: List[Int]) -> Int {
-  let c = x | shl(x, 32)
-  sw[0] = c
-  sw[1] = c
-  cpu.aes_last(addr(sw), addr(zk), addr(zk))
-  sw[0] & 0xFFFFFFFF
-}
+/// sub_word with the CPU's AES instructions (cpu.aes_sub_word, in a
+/// vector register).
+fn sub_word_hw(x: Int) -> Int { cpu.aes_sub_word(x) & 0xFFFFFFFF }
 
 /// The bitsliced round keys of the 32 bit words c holds in its lanes.
 fn expand(var sk: List[Int], c: Int) {
@@ -278,18 +272,19 @@ fn rot_word(x: Int) -> Int { (shl(x, 24) | shr(x, 8)) & 0xFFFFFFFF }
 /// (2026-10-29: that loop was 36% of an AES-GCM key's setup).
 fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
   var rk = raw.zero_ints(2 * (nr + 1))
-  var sw = [0, 0]
-  let zk = [0, 0]
-  var w0 = le32(key, 0)
-  var w1 = le32(key, 4)
-  var w2 = le32(key, 8)
-  var w3 = le32(key, 12)
-  rk[0] = w0 | shl(w1, 32)
-  rk[1] = w2 | shl(w3, 32)
+  // the key's words two at a time (16 bytes or more: the caller checks)
+  let k0 = rt.bytes_word(key, 0)
+  let k1 = rt.bytes_word(key, 8)
+  rk[0] = k0
+  rk[1] = k1
+  var w0 = k0 & 0xFFFFFFFF
+  var w1 = shr(k0, 32)
+  var w2 = k1 & 0xFFFFFFFF
+  var w3 = shr(k1, 32)
   var rcon = 1
   if nk == 4 {
     for r in 1..11 {
-      w0 = w0 ^ sub_word_hw(rot_word(w3), sw, zk) ^ rcon
+      w0 = w0 ^ sub_word_hw(rot_word(w3)) ^ rcon
       w1 = w1 ^ w0
       w2 = w2 ^ w1
       w3 = w3 ^ w2
@@ -304,7 +299,7 @@ fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
     var w5 = le32(key, 20)
     rk[2] = w4 | shl(w5, 32)
     for g in 1..9 {
-      w0 = w0 ^ sub_word_hw(rot_word(w5), sw, zk) ^ rcon
+      w0 = w0 ^ sub_word_hw(rot_word(w5)) ^ rcon
       w1 = w1 ^ w0
       w2 = w2 ^ w1
       w3 = w3 ^ w2
@@ -327,14 +322,14 @@ fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
     rk[2] = w4 | shl(w5, 32)
     rk[3] = w6 | shl(w7, 32)
     for g in 1..8 {
-      w0 = w0 ^ sub_word_hw(rot_word(w7), sw, zk) ^ rcon
+      w0 = w0 ^ sub_word_hw(rot_word(w7)) ^ rcon
       w1 = w1 ^ w0
       w2 = w2 ^ w1
       w3 = w3 ^ w2
       rk[4 * g] = w0 | shl(w1, 32)
       rk[4 * g + 1] = w2 | shl(w3, 32)
       if g < 7 {
-        w4 = w4 ^ sub_word_hw(w3, sw, zk)
+        w4 = w4 ^ sub_word_hw(w3)
         w5 = w5 ^ w4
         w6 = w6 ^ w5
         w7 = w7 ^ w6
@@ -344,8 +339,6 @@ fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
       rcon = shl(rcon, 1)
     }
   }
-  keep(sw)
-  keep(zk)
   rk
 }
 
@@ -376,17 +369,15 @@ fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
   // the bitsliced S-box was most of a key's setup (about 1.8 us of each
   // AES-GCM key on an i7-9750H, 2026-10-27)
   let aes = (hw & cpu.HW_AES) != 0
-  var sw = [0, 0]
-  let zk = [0, 0]
   var tmp = w[nk - 1]
   var j = 0
   var k = 0
   for i in nk..nkf {
     if j == 0 {
       tmp = (shl(tmp, 24) | shr(tmp, 8)) & 0xFFFFFFFF
-      tmp = (if aes { sub_word_hw(tmp, sw, zk) } else { sub_word(tmp) }) ^ RCON[k]
+      tmp = (if aes { sub_word_hw(tmp) } else { sub_word(tmp) }) ^ RCON[k]
     } else if nk > 6 && j == 4 {
-      tmp = if aes { sub_word_hw(tmp, sw, zk) } else { sub_word(tmp) }
+      tmp = if aes { sub_word_hw(tmp) } else { sub_word(tmp) }
     }
     tmp = tmp ^ w[i - nk]
     w.push(tmp)
@@ -401,8 +392,6 @@ fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
     rk[2 * r] = w[4 * r] | shl(w[4 * r + 1], 32)
     rk[2 * r + 1] = w[4 * r + 2] | shl(w[4 * r + 3], 32)
   }
-  keep(sw)
-  keep(zk)
   var sk: List[Int] = []
   var i = if bitsliced || (hw & cpu.HW_AES) == 0 { 0 } else { nkf }
   var q: List[Int] = if i < nkf { [0, 0, 0, 0, 0, 0, 0, 0] } else { [] }

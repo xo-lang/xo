@@ -1,5 +1,21 @@
 # std/crypto changes
 
+## 2026-11-07: perf: an AES key's schedule does SubWord in a register
+
+- Kind: perf
+- Commit: this push
+- Found by: the Xo-vs-Go survey (bench/results/xo-vs-go-survey-2026-11-07.md: aesgcm/key 1.27x Go; sub_word_hw 14.4% flat in its profile)
+- Go reference: crypto/internal/fips140/aes expandKeyAsm (aes_arm64.s ks128, ks192, ks256: SubWord with AESE on a duplicated word in a vector register)
+- Test: the cpu_prims golden's subword lines (the instruction, the body and a Go S-box) on arm64, LLVM and Go; cpu_prims, crypto_prims, native_crypto, crypto_keys and tls13_rfc8448 on arm64 and LLVM; wasm goldens; the amd64 sample on the linux/amd64 host (AES-NI)
+- Timing: bench/perf/aesgcm on linux/arm64 host 1, --ab against main c45abe320 (7 rounds): key 0.717 (0.709 to 0.731, n=7; 8.11 to 5.82 ms), seal 0.944 (0.941 to 0.952, n=6)
+- Shipped in: not yet released
+
+The key schedule's SubWord was `cpu.aes_last` on a two word list: two 8 byte stores and a 16 byte load of
+both, which store forwarding cannot serve, ten times in a chain for AES-128. The new `cpu.aes_sub_word`
+(decision 0231 addendum) puts the word in a vector register's four columns and runs one AESE (arm64) or
+AESENCLAST (x86-64) with a zero key. The schedule also loads the key's first 16 bytes as two words and
+allocates no scratch lists. Round keys unchanged.
+
 ## 2026-11-07: perf: SHA-1 hashes many blocks in one loop
 
 - Kind: perf

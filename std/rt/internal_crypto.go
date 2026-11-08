@@ -1066,6 +1066,13 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 			out = append(out, o...)
 		}
 		return Bytes(out), true
+	case "aes_sub_word":
+		// SubWord of a's first four bytes, twice (cpu.aes_sub_word)
+		var t [8]byte
+		for i := range t {
+			t[i] = aesSbox(a[i%4])
+		}
+		return Bytes(t[:]), true
 	case "aes_round", "aes_last":
 		var s [16]byte
 		for i := range s {

@@ -90,6 +90,13 @@ fn main(os: Os) {
       os.stdio.println("${i}${sfx} carry ${k.to_hex()} clmul ${m.to_hex()} round ${r.to_hex()} last ${l.to_hex()} enc ${e.to_hex()}")
     }
   }
+  // AES's SubWord (cpu.aes_sub_word, the key schedule's step) in a vector
+  // register, against the portable body
+  for (i, a) in inputs.indexed() {
+    let w = internal.crypto_op("cpu.aes_sub_word", a, b"", b"", b"")
+    let ws = internal.crypto_op("cpu.aes_sub_word_soft", a, b"", b"", b"")
+    os.stdio.println("subword ${i} ${w.to_hex()} ${if w == ws { "same" } else { "soft ${ws.to_hex()}" }}")
+  }
   // the GHASH loop (cpu.ghash_blocks): several 64 byte steps with the
   // state and H powers in registers on arm64 and LLVM, against the
   // portable body
