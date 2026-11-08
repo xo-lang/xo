@@ -292,10 +292,13 @@ pub fn hollow_scan(p: Str, elf: Bool, extra: Map[Str, Bool], first: List[Bool]) 
           body = true
         }
         // an instruction or directive: the symbols it names (global ones
-        // and the shared local Lxo_ ones)
+        // and the shared local Lxo_ ones); only where a name can start:
+        // elf_extra_at reads to the end of the run of name bytes, so
+        // trying it inside the run read a long .ascii line (a 20 MB
+        // string constant) once per byte
         var k = i + 1
         while k < j {
-          if (starts_at(b, k, j, gpre) || starts_at(b, k, j, loc) || (elf && first[Int(b[k])] && elf_extra_at(b, k, j, p, extra))) && !ident_byte(b[k - 1]) {
+          if !ident_byte(b[k - 1]) && (starts_at(b, k, j, gpre) || starts_at(b, k, j, loc) || (elf && first[Int(b[k])] && elf_extra_at(b, k, j, p, extra))) {
             var e = k + 1
             while e < j && ident_byte(b[e]) {
               e += 1

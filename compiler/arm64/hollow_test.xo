@@ -357,3 +357,26 @@ test "on amd64 ELF an unreached export becomes one ud2, and a libc symbol stays 
   expect(out.contains(".Lxo_t_str0:\n\t.quad 0")) == true
   expect(msg.starts_with("hollowed 1 functions and dropped 1 data objects of 6,")) == true
 }
+
+test "on ELF a long string constant's line is scanned once" {
+  // 4 MB of name bytes on one .ascii line: the scan tried a name at every
+  // byte and read to the end of the run each time (a 20 MB string
+  // constant kept a linux/arm64 build in hollow_scan for over 10 minutes)
+  let run = "abcdefghijklmnopqrstuvwxyz0123456789".repeat(116509)
+  let asm = [
+    "\t.text",
+    "\t.p2align 2",
+    "\t.globl main",
+    "\t.type main, %function",
+    "main:",
+    "\tadrp x0, .Lxo_t_str0",
+    "\tret",
+    "\t.size main, .-main",
+    "\t.section .rodata",
+    ".Lxo_t_str0:",
+    "\t.ascii \"${run}\"",
+    "",
+  ].join("\n")
+  let (parts, _msg) = hollow_unreached_elf([asm])
+  expect(parts[0].contains(".Lxo_t_str0:\n\t.ascii \"abcdef")) == true
+}
