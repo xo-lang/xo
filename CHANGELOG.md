@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo build (fix): a stop during a build no longer leaves a `.xo-stop.NAME.tmp-*` tomb beside the output: the build's own failure after the stop took its stage waits for the stop's exit 130 instead of exiting 1 while the tomb was still being removed, and the next build of the output removes a tomb an earlier process left. A stop during a --dsym build, or during dsymutil in a cc or LLVM link, no longer lets the bundle's directories make a removed stage again: those steps skip once the stop watcher has begun, and the watcher waits up to 2 s for one already running (ld.xo StageStop). gotchas/stop-watcher-races-link-writes.md.
 - xo build (fix): a SIGINT or SIGTERM during a build no longer leaves the output's hidden stage (DIR/.NAME.tmp-...) when the link is still writing into it: the stop watcher renames the stage first, removes it with retries, and warns naming any path it could not remove (one remove_all raced the write, cmd/xo TestBuildStagedOutputs under load). gotchas/stop-watcher-races-link-writes.md.
 - native (perf, decision 0532 step 2): Str.rune_count counts UTF-8 continuation bytes 32 at a time with the new rt.bytes_count_below32 (arm64 cmgt and addv, x86_64 pcmpgtb and popcnt, LLVM a <32 x i8> compare, wasm a byte loop): bench/perf/simdscan rune_count 0.502 of before on linux/arm64.
 

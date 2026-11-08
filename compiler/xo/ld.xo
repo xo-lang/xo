@@ -213,13 +213,20 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
         // --dsym: the DWARF as a bundle too (decision 0239), for tools
         // that want one: PROG.dSYM/Contents/Resources/DWARF/PROG
         let dir = "${out}.dSYM/Contents/Resources/DWARF"
-        match os.fs.create_dir_all(dir) {
-          Ok(_) => {}
-          Err(e) => return "cannot write the debug information to ${out}.dSYM: ${fs_reason(e)}"
+        // its directories would make a stage the stop removed again
+        if !stage_enter(ctx) {
+          return "stopped"
         }
-        match os.fs.write("${dir}/${base_name(out)}", dsym) {
-          Ok(_) => {}
-          Err(e) => return "cannot write the debug information to ${out}.dSYM: ${fs_reason(e)}"
+        let werr2 = match os.fs.create_dir_all(dir) {
+          Ok(_) => match os.fs.write("${dir}/${base_name(out)}", dsym) {
+            Ok(_) => ""
+            Err(e) => "cannot write the debug information to ${out}.dSYM: ${fs_reason(e)}"
+          }
+          Err(e) => "cannot write the debug information to ${out}.dSYM: ${fs_reason(e)}"
+        }
+        stage_leave(ctx)
+        if !werr2.is_empty() {
+          return werr2
         }
       }
       ""
@@ -1338,6 +1345,9 @@ struct Stage {
   /// staged away from out (its directory cannot hold the stage: -o
   /// /dev/null): commit writes the program's bytes to out, no rename
   copy: Bool = false
+  /// the stop watcher's handshake (ctx.stage_stop): a build that fails
+  /// because a stop took its stage waits for the watcher's exit
+  stop: StageStop? = None
 }
 
 /// The stage of final output out, its directory created and announced
@@ -1348,8 +1358,9 @@ fn stage(os: Os, ctx: Ctx, out: Str) -> Stage {
   if let Some(ch) = ctx.stages {
     let _ = ch.try_send(d)
   }
+  remove_tombs(os.fs, out)
   match os.fs.create_dir_all(d) {
-    Ok(_) => Stage{dir: d, out: out, bin: "${d}/${base_name(out)}"}
+    Ok(_) => Stage{dir: d, out: out, bin: "${d}/${base_name(out)}", stop: ctx.stage_stop}
     Err(e) => {
       // the output's directory takes no stage (-o /dev/null: /dev is not
       // writable, though /dev/null is; dfd47760e's stages broke that
@@ -1359,7 +1370,7 @@ fn stage(os: Os, ctx: Ctx, out: Str) -> Stage {
         if let Some(ch) = ctx.stages {
           let _ = ch.try_send(away)
         }
-        return Stage{dir: away, out: out, bin: "${away}/${base_name(out)}", copy: true}
+        return Stage{dir: away, out: out, bin: "${away}/${base_name(out)}", copy: true, stop: ctx.stage_stop}
       }
       fail(os, "cannot write the program to ${out}: ${fs_reason(e)}")
     }
@@ -1431,9 +1442,36 @@ fn (s: Stage) commit(os: Os) -> Str {
   ""
 }
 
-/// Removes the stage and whatever is in it.
+/// Removes the stage and whatever is in it. Once the stop watcher has
+/// begun, it waits for the watcher to exit 130: the stage's failure is the
+/// stop's (the watcher renamed it), and an exit 1 here would end the
+/// process while the watcher still removes the stage's tomb (a SIGINT left
+/// one in cmd/xo TestBuildStagedOutputs under load, 2026-11-08).
 fn (s: Stage) abandon(os: Os) {
   os.fs.remove_all(s.dir).ignore_err("the stop watcher or another process removed it")
+  if let Some(st) = s.stop {
+    if st.stopped.get() {
+      // the watcher waits 2 s for the stage steps, then removes the
+      // stages with retries (well under 1 s), then exits
+      for _ in 0..100 {
+        os.clock.sleep_or_cancel(100ms).ignore_err("the watcher exits the process")
+      }
+    }
+  }
+}
+
+/// Removes the tombs (DIR/.xo-stop.NAME.tmp-..., remove_stage) an earlier
+/// stopped build of out left beside it, when its process ended before the
+/// tomb was gone.
+fn remove_tombs(fs: Fs, out: Str) {
+  let pre = ".xo-stop.${base_name(out)}.tmp-"
+  if let Ok(es) = fs.read_dir(dir_name(out)) {
+    for e in es {
+      if e.name.starts_with(pre) {
+        fs.remove_all(e.path).ignore_err("another build removes it too")
+      }
+    }
+  }
 }
 
 /// fail, after removing the stage.
@@ -1445,7 +1483,7 @@ fn fail_stage(os: Os, s: Stage, msg: Str) -> Never {
 /// The stop watcher: on the first SIGINT or SIGTERM (a stop request,
 /// core 7.5) it removes every stage this process announced and exits
 /// 130, so an interrupted build leaves no temporary behind.
-fn watch_stages(os: Os, ch: Chan[Str], done: Chan[()]) {
+fn watch_stages(os: Os, ch: Chan[Str], done: Chan[()], stop: StageStop) {
   // the WASI build has no signals, and its task.stopping() is the handle 0
   // (compiler/wasm call.xo): a recv on it read a channel at address 0
   // (decision 0405)
@@ -1458,12 +1496,50 @@ fn watch_stages(os: Os, ch: Chan[Str], done: Chan[()]) {
       // built: the stop is the program's (xo run, xo test)
       return
     }
+    // no step that writes a stage's directories starts from here on;
+    // wait for those running (dsymutil) up to 2 s
+    stop.stopped.set(true)
+    for _ in 0..200 {
+      if stop.busy.get() == 0 {
+        break
+      }
+      os.clock.sleep_or_cancel(10ms).ignore_err("the stages are removed next anyway")
+    }
     while let Some(d) = ch.try_recv() {
       remove_stage(os.fs, os.clock, os.stdio, d)
     }
     os.stdio.eprintln("xo: interrupted")
     os.proc.exit(130)
   })
+}
+
+/// The stop watcher's handshake with the steps that write a stage's
+/// directories: a step counts itself in busy, then reads stopped; the
+/// watcher sets stopped, then waits for busy to drain. Both are sequentially
+/// consistent, so a step either sees the stop or is waited for.
+struct StageStop {
+  busy: Atomic[Int]
+  stopped: Atomic[Bool]
+}
+
+/// Before a step that makes directories in a stage or runs a child that
+/// writes one: false when the stop watcher has begun removing the stages
+/// (the step is skipped), else true, and stage_leave follows the step.
+fn stage_enter(ctx: Ctx) -> Bool {
+  if let Some(s) = ctx.stage_stop {
+    s.busy.add(1)
+    if s.stopped.get() {
+      s.busy.add(-1)
+      return false
+    }
+  }
+  true
+}
+
+fn stage_leave(ctx: Ctx) {
+  if let Some(s) = ctx.stage_stop {
+    s.busy.add(-1)
+  }
 }
 
 /// Removes stage d for the stop watcher. The link may still be writing

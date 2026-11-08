@@ -22,3 +22,13 @@ test "a stop removes a stage and its tomb, and a stage already gone is no error"
   remove_stage(os.fs, os.clock, os.stdio, "o/.p.tmp-1-b")
   expect(os.fs.walk("o")?.map(fn(e: FileInfo) -> Str { e.path })) == ["o/keep"]
 }
+
+test "a build removes the tombs an earlier stopped build of its output left" {
+  os.fs.create_dir_all("o/.xo-stop.p.tmp-1-a/p.dSYM")?
+  os.fs.write("o/.xo-stop.p.tmp-1-a/p", b"bin")?
+  os.fs.create_dir_all("o/.xo-stop.q.tmp-1-a")?
+  os.fs.write("o/p", b"old")?
+  remove_tombs(os.fs, "o/p")
+  // q's tomb is another output's
+  expect(os.fs.read_dir("o")?.map(fn(e: FileInfo) -> Str { e.name })) == [".xo-stop.q.tmp-1-a", "p"]
+}

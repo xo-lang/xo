@@ -244,7 +244,9 @@ fn main(os0: Os) ! {
     ctx.tmp_tag = os.rand.bytes(4).to_hex()
     ctx.stages = Some(stages)
     ctx.build_done = Some(done)
-    watch_stages(os, stages, done)
+    let sstop = StageStop{busy: Atomic[Int].new(0), stopped: Atomic[Bool].new(false)}
+    ctx.stage_stop = Some(sstop)
+    watch_stages(os, stages, done, sstop)
   }
   if o.cmd is "run" | "test" {
     ctx.pdb_later = Some(Mutex[List[PdbLater]].new([]))
@@ -1627,7 +1629,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail_stage(os, st, "${cc} failed${ir_failure_sources(os, lm, msg)}")
       }
       if dsym {
-        cc_dsym(os, st.bin, o.dsym, lsplit, oso_prefix, macho_ents(o, release, true))
+        cc_dsym(os, ctx, st.bin, o.dsym, lsplit, oso_prefix, macho_ents(o, release, true))
       }
       store_bin(os, ctx, entry, st.bin)
     }
@@ -2404,7 +2406,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail_stage(os, cst, "${cc} failed")
       }
       if cdsym {
-        cc_dsym(os, cst.bin, o.dsym, csplit, oso_prefix, macho_ents(o, release, true))
+        cc_dsym(os, ctx, cst.bin, o.dsym, csplit, oso_prefix, macho_ents(o, release, true))
       }
       store_bin(os, ctx, entry, cst.bin)
     }

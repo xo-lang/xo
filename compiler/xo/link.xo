@@ -35,6 +35,10 @@ struct Ctx {
   // sent once the outputs are in place (finish): the stop watcher then
   // leaves a SIGINT to the program xo run or xo test runs
   build_done: Chan[()]? = None
+  // the stop watcher's handshake with the steps that make directories in a
+  // stage or run a child writing one (stage_enter: cc_dsym's dsymutil,
+  // --dsym's bundle), which could make a removed stage again
+  stage_stop: StageStop? = None
   // xo run's and xo test's windows/amd64 PDBs, made while the program
   // runs (ld.xo PdbLater, finish_pdbs); None: made in the link
   pdb_later: Mutex[List[PdbLater]]? = None
@@ -95,7 +99,17 @@ const DWARF_HEADERPAD = "-Wl,-headerpad,0x1000"
 /// executable, as compiler/macho's link writes it, and the bundle kept
 /// only for --dsym (keep); when embedding fails the bundle stays and a
 /// warning says why.
-fn cc_dsym(os: Os, bin: Str, keep: Bool, split: Bool, oso_prefix: Str, ents: List[Str]) {
+fn cc_dsym(os: Os, ctx: Ctx, bin: Str, keep: Bool, split: Bool, oso_prefix: Str, ents: List[Str]) {
+  // dsymutil is a child the stop does not reach, and it makes the
+  // bundle's directories itself: the stop watcher waits for it
+  if !stage_enter(ctx) {
+    return
+  }
+  cc_dsym_run(os, bin, keep, split, oso_prefix, ents)
+  stage_leave(ctx)
+}
+
+fn cc_dsym_run(os: Os, bin: Str, keep: Bool, split: Bool, oso_prefix: Str, ents: List[Str]) {
   let d = "${bin}.dSYM"
   os.fs.remove_all(d).ignore_err("none from an earlier link")
   // the object paths in bin are relative to oso_prefix when the link was given

@@ -92,13 +92,24 @@ func TestBuildStagedOutputs(t *testing.T) {
 		t.Errorf("no executable %s: %v", final, err)
 	}
 
-	// a SIGINT while a stage exists: the stage goes, xo exits 130
+	// a SIGINT while a stage exists: the stage goes, xo exits 130; with
+	// --dsym too, whose bundle directories would make a removed stage
+	// again (ld.xo stage_enter)
 	cli, err := xoCommand()
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, extra := range [][]string{nil, {"--dsym"}} {
+		interruptStage(t, cli, outDir, extra)
+	}
+}
+
+// interruptStage builds into outDir/int with the flags extra, sends a
+// SIGINT once its stage exists, and fails on any stage or tomb left.
+func interruptStage(t *testing.T, cli []string, outDir string, extra []string) {
 	for try := 0; try < 5; try++ {
-		cmd := command(t, cli[0], append(append([]string{}, cli[1:]...), "build", "-o", filepath.Join(outDir, "int"), ".")...)
+		args := append(append(append([]string{}, cli[1:]...), "build"), extra...)
+		cmd := command(t, cli[0], append(args, "-o", filepath.Join(outDir, "int"), ".")...)
 		var errOut bytes.Buffer
 		cmd.Stderr = &errOut
 		if err := cmd.Start(); err != nil {
@@ -120,7 +131,10 @@ func TestBuildStagedOutputs(t *testing.T) {
 		tombs, _ := filepath.Glob(filepath.Join(outDir, ".xo-stop*")) // ld.xo remove_stage
 		ms = append(ms, tombs...)
 		if len(ms) > 0 {
-			t.Errorf("a SIGINT left %v", ms)
+			t.Errorf("%v: a SIGINT left %v (exit %d)\n%s", extra, ms, cmd.ProcessState.ExitCode(), errOut.String())
+			for _, m := range ms {
+				os.RemoveAll(m) // the next try's check is its own
+			}
 		}
 		if staged && cmd.ProcessState.ExitCode() == 130 {
 			return
@@ -128,7 +142,7 @@ func TestBuildStagedOutputs(t *testing.T) {
 		os.Remove(filepath.Join(outDir, "int"))
 		os.RemoveAll(filepath.Join(outDir, "int.dSYM"))
 	}
-	t.Log("the SIGINT never fell inside a stage in 5 tries (the link was too quick); only the no-leftover checks ran")
+	t.Logf("%v: the SIGINT never fell inside a stage in 5 tries (the link was too quick); only the no-leftover checks ran", extra)
 }
 
 // TestBuildDevNull: `xo build -o /dev/null` builds and writes the program
