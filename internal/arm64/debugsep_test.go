@@ -24,11 +24,12 @@ func skipWholeTier(t *testing.T) {
 // sepDarwinEnv is the environment of a darwin debug test's separately
 // compiled build (decision 0388's default, with std's variants built
 // first): os.Environ() without XO_SEPCOMP. Under the full tier
-// (XO_TEST_SEPCOMP=0) every build is whole, so the case skips.
+// (XO_TEST_SEPCOMP=0), or with xo's backend cache off (gate.sh), every
+// build is whole, so the case skips.
 func sepDarwinEnv(t *testing.T) []string {
 	t.Helper()
-	if os.Getenv("XO_TEST_SEPCOMP") == "0" {
-		t.Skip("XO_TEST_SEPCOMP=0: every build is whole program")
+	if xotool.WholeOnly() {
+		t.Skip("XO_TEST_SEPCOMP=0 or XO_BACKEND_CACHE=off: every build is whole program")
 	}
 	if err := xotool.StdVariants(); err != nil {
 		t.Fatal(err)

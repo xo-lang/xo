@@ -540,8 +540,16 @@ func stdCacheOff() bool {
 	return os.Getenv("XO_BACKEND_CACHE") == "off" || os.Getenv("XO_DUMP_FN") != ""
 }
 
+// WholeOnly reports whether every native build of this test process is
+// whole program: XO_TEST_SEPCOMP=0 (the full tier), or xo's backend cache
+// off (stdCacheOff), where no std variant exists. A test of the separately
+// compiled path skips then.
+func WholeOnly() bool {
+	return os.Getenv("XO_TEST_SEPCOMP") == "0" || stdCacheOff()
+}
+
 func stdVariants(cli []string) error {
-	if os.Getenv("XO_TEST_SEPCOMP") == "0" || stdCacheOff() {
+	if WholeOnly() {
 		return nil
 	}
 	stdVariantsOnce.Do(func() {

@@ -26,3 +26,13 @@ Fix: stdVariants skips the variants when xo's cache is off
 them); TestStdVariantsCacheOff. To tell this from a real variant failure:
 the output after the colon is the "cache std off" line, not a compile
 error.
+
+Second half (2026-11-08, the gate after the fix): with the variants
+skipped, the tests of the separately compiled path that build with the
+caller's environment (TestTracebackSeparate's sep=true cases, the darwin
+debug tests' sep cases through sepDarwinEnv) got whole builds and failed
+"separately compiled false, want true". They skipped only under
+XO_TEST_SEPCOMP=0; they now skip on `xotool.WholeOnly()` (that, or the
+cache off). Tests that set `XO_BACKEND_CACHE=on` and their own cache
+directory for their xo (TestStdRecordBindRetry, TestSepcompBackgroundBoth)
+are unaffected and keep skipWholeTier.
