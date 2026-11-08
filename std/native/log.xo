@@ -52,6 +52,16 @@ fn (l: Logger) warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, mer
 
 fn (l: Logger) error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, merged(l.fields, fields), l.from) }
 
+fn enabled(level: log.Level) -> Bool {
+  let n = match level {
+    log.Level.Debug => 1
+    log.Level.Info => 2
+    log.Level.Warn => 3
+    log.Level.Error => 4
+  }
+  n >= logstate.level()
+}
+
 fn configure(out: Stdio, level: log.Level = log.Level.Info, format: log.Format = log.Format.Text) uses stdio {
   let n = match level {
     log.Level.Debug => 1

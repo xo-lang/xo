@@ -218,6 +218,32 @@ func Log_errorFrom(tk *Task, from, msg string, fields Map[string, IDebug]) {
 	logRecord(tk, levelError, msg, logFields(tk, fields), from)
 }
 
+// Log_enabled is `log.enabled(level)`: whether logRecord would write a
+// record of level under the logger's configured level (decision 0558).
+func Log_enabled(tk *Task, level Log_Level) bool {
+	s := logger
+	if tk != nil && tk.w != nil && tk.w.log != nil {
+		s = tk.w.log
+	}
+	s.mu.Lock()
+	min := s.level
+	s.mu.Unlock()
+	return level.Tag >= min
+}
+
+// LogEnabledN is Log_enabled for a level written as its number (1 debug
+// to 4 error), as the generated code guards a log call (decision 0558).
+func LogEnabledN(tk *Task, level int) bool {
+	s := logger
+	if tk != nil && tk.w != nil && tk.w.log != nil {
+		s = tk.w.log
+	}
+	s.mu.Lock()
+	min := s.level
+	s.mu.Unlock()
+	return level >= int(min)
+}
+
 // Log_configure is `log.configure(out, level, format)`: records go to the
 // standard error of out.
 func Log_configure(tk *Task, out Stdio, level Log_Level, format Log_Format) {

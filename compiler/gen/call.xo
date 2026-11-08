@@ -88,6 +88,22 @@ fn (var g: Gen) call_core(x: Expr) -> (Str, Int) {
       if ci.fn_obj < 0 {
         return g.value_call(x)
       }
+      let lvl = g.lazy_log_level(ci.fn_obj)
+      if lvl > 0 {
+        // a record below the configured level does not evaluate its
+        // arguments, nor the statements they need (decision 0558)
+        g.line("if ${g.rt()}LogEnabledN(tk, ${lvl}) {")
+        g.f.ind += 1
+        let (code, kind) = g.decl_call(x, ci)
+        if kind == CK_VOID {
+          g.line(code)
+        } else {
+          g.line("_ = ${code}")
+        }
+        g.f.ind -= 1
+        g.line("}")
+        return (g.rt() + "Unit{}", CK_VALUE)
+      }
       g.decl_call(x, ci)
     }
   }

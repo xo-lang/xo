@@ -4999,6 +4999,9 @@ fn llrt_prop_report(g: Int, input: Str) { report.prop_report(g, input) }
 
 fn llrt_log_from(s: Str) { logstate.set_from(s) }
 
+/// Whether a record of level (1 debug to 4 error) is written (decision 0558).
+fn llrt_log_enabled(level: Int) -> Bool { level >= logstate.level() }
+
 // Stdio.print, println, eprint, and eprintln, and the SSA builder's own
 // messages to standard error (an error main returned, a fault's trace):
 // in Xo (std/native/llrt/stdio.xo, the zero-C audit's work item B03).

@@ -6,6 +6,12 @@ fn debug(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn info(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn warn(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn error(msg: Str, fields: Map[Str, Debug] = {}) uses log
+/// Whether a record of `level` would be written under the configured
+/// level (decision 0558): a call to `debug`, `info`, `warn` or `error`
+/// is compiled as `if enabled(level) { call }`, so its arguments are not
+/// evaluated otherwise; also for work that is not an argument (a costly
+/// dump).
+fn enabled(level: Level) -> Bool uses log
 fn configure(out: Stdio, level: Level = Level.Info, format: Format = Format.Text) uses stdio
 
 /// A logger that adds fields to every record it writes (log/slog's

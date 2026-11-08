@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+debug false info false warn false error true
+debug true error true
+--- stderr

@@ -388,6 +388,18 @@ fn (var b: Builder) log_from(fo: Int) -> Str {
   b.c.mods[m].dependency
 }
 
+/// The level (1 debug to 4 error) of the log record the std/log function
+/// or Logger method fo writes, or 0 for any other function (decision
+/// 0558: those calls skip their arguments below the configured level).
+fn (var b: Builder) lazy_log_level(fo: Int) -> Int {
+  let o = b.c.objs[fo]
+  if o.module < 0 || b.c.mods[o.module].path != "std/log" {
+    return 0
+  }
+  let n = check.text(o.name)
+  if n == "debug" { 1 } else if n == "info" { 2 } else if n == "warn" { 3 } else if n == "error" { 4 } else { 0 }
+}
+
 /// Builds the program c checked (BuildOpts): once, and when it uses a
 /// concurrency construct again with unwinding checks.
 pub fn build_program(c: check.Checker, line_root: Str, tests: Bool) -> Builder uses fs.read {

@@ -176,6 +176,17 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
       // a dependency's log record carries the dependency (decision
       // 0173): set just before the call, after its arguments (call_as)
       b.pend_log_from = b.log_from(fo)
+      let lvl = b.lazy_log_level(fo)
+      if lvl > 0 && b.prelude_impl("llrt_log_enabled") >= 0 {
+        // a record below the configured level does not evaluate its
+        // arguments (decision 0558)
+        let f = b.declare(b.prelude_impl("llrt_log_enabled"), [])
+        let en = b.call(b.m.funcs[f].name, b.bool_t(), "", [b.cint(lvl)])
+        let (no, join) = b.if_then_begin(en)
+        let _r = b.call_as(x, ci, impl)
+        b.if_then_end(no, join)
+        return b.unit()
+      }
       return b.call_as(x, ci, impl)
     }
     if let Some(v) = b.io_call(x, ci) {

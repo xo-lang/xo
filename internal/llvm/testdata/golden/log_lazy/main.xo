@@ -1,0 +1,23 @@
+// A log call below the configured level does not evaluate its arguments
+// (decision 0558): the message, the fields and anything inside them are
+// skipped, and log.enabled answers whether a record would be written.
+use std/log
+
+fn side(out: Stdio, what: Str) -> Int {
+  out.println("evaluated ${what}")
+  1
+}
+
+fn main(os: Os) {
+  let out = os.stdio
+  log.configure(out, Level.Error)
+  log.debug("d", {"n": side(out, "debug")})
+  log.info("i", {"n": side(out, "info")})
+  log.warn("w ${side(out, "warn")}")
+  let lg = log.with({"k": 1})
+  lg.debug("d", {"n": side(out, "logger debug")})
+  lg.info("i", {"n": side(out, "logger info")})
+  out.println("debug ${log.enabled(Level.Debug)} info ${log.enabled(Level.Info)} warn ${log.enabled(Level.Warn)} error ${log.enabled(Level.Error)}")
+  log.configure(out, Level.Debug)
+  out.println("debug ${log.enabled(Level.Debug)} error ${log.enabled(Level.Error)}")
+}
