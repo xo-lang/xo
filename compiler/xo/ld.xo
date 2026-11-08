@@ -765,7 +765,17 @@ fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PE
   // or for one with none its bytes' hash
   var seed = BytesBuilder.new()
   seed.write_str("xo pdb guid v1\n")
+  // import libraries (a `use c` library's, windows/arm64: decision 0569):
+  // their functions' DLLs, read after the objects (their machine)
+  var libs: List[(Str, Bytes)] = []
   for (pi, p) in paths.indexed() {
+    if p.to_lower().ends_with(".lib") {
+      match os.fs.read(p) {
+        Ok(b) => libs.push((p, b))
+        Err(e) => return "${p}: ${e}"
+      }
+      continue
+    }
     let part = !store_path.is_empty() && base_name(p).starts_with("prog-windows.") && p.ends_with(".obj")
     if part && !store.is_empty() && !store_check {
       continue
@@ -907,7 +917,21 @@ fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PE
   // the debug directory names it with backslashes, as MSVC's and lld's
   // linkers do: dbghelp finds a PDB moved since by its base name, which
   // an older one takes after the last backslash only
-  let peo = macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: res, fixed_base: race, pdb: pdb_named.replace("/", "\\"), debug: debug, prog_from: prog_from, std_syms: match half {
+  var imports = macho.pe_imports()
+  let lib_machine = if objs.is_empty() { 0x8664 } else { objs[0].machine }
+  for (lp, lb) in libs {
+    match macho.import_lib(lp, lb, lib_machine) {
+      Ok(m) => {
+        for (k, v) in m {
+          if !imports.contains(k) {
+            imports[k] = v
+          }
+        }
+      }
+      Err(e) => return e
+    }
+  }
+  let peo = macho.PEOpts{entry: "xo_win_start", imports: imports, resources: res, fixed_base: race, pdb: pdb_named.replace("/", "\\"), debug: debug, prog_from: prog_from, std_syms: match half {
     Some(h) => h.syms
     None => None
   }}

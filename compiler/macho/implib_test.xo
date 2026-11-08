@@ -1,0 +1,99 @@
+// implib.xo's import libraries, on archives built here: short import
+// objects for two machines (an ARM64X library's), a linker member, and a
+// static library's code member.
+
+fn pad(s: Str, n: Int) -> Str { s + " ".repeat(n - s.len()) }
+
+fn member(name: Str, body: Bytes) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_str(pad(name, 16) + pad("0", 12) + pad("0", 6) + pad("0", 6) + pad("644", 8) + pad("${body.len()}", 10) + "`\n")
+  b.write(body)
+  if body.len() % 2 == 1 {
+    b.write_byte(UInt8(10))
+  }
+  b.freeze()
+}
+
+fn w16(var b: BytesBuilder, v: Int) {
+  b.write_byte(UInt8(v & 0xff))
+  b.write_byte(UInt8((v >> 8) & 0xff))
+}
+
+fn w32(var b: BytesBuilder, v: Int) {
+  w16(b, v & 0xffff)
+  w16(b, (v >> 16) & 0xffff)
+}
+
+/// A short import object: machine, name type ntype, sym from dll.
+fn short_import(machine: Int, ntype: Int, sym: Str, dll: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  w16(b, 0)
+  w16(b, 0xffff)
+  w16(b, 0)
+  w16(b, machine)
+  w32(b, 0)
+  w32(b, sym.len() + dll.len() + 2)
+  w16(b, 0)
+  w16(b, ntype << 2)
+  b.write_str(sym)
+  b.write_byte(UInt8(0))
+  b.write_str(dll)
+  b.write_byte(UInt8(0))
+  b.freeze()
+}
+
+/// A COFF object of one section with characteristics chars.
+fn coff_obj(machine: Int, chars: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  w16(b, machine)
+  w16(b, 1)
+  for _ in 0..4 {
+    w32(b, 0)
+  }
+  b.write_str(".sect\x00\x00\x00")
+  for _ in 0..7 {
+    w32(b, 0)
+  }
+  w32(b, chars)
+  b.freeze()
+}
+
+fn archive(members: List[Bytes]) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_str("!<arch>\n")
+  for m in members {
+    b.write(m)
+  }
+  b.freeze()
+}
+
+test "an ARM64X import library's ARM64 imports" {
+  let lib = archive([
+    member("/", b"\x00\x00\x00\x00"),
+    member("/<ECSYMBOLS>/", b"\x00\x00\x00\x00"),
+    member("USER32.dll/", short_import(IMAGE_FILE_MACHINE_ARM64, 1, "GetSystemMetrics", "USER32.dll")),
+    member("USER32.dll/", short_import(0xa641, 4, "#GetSystemMetrics", "USER32.dll")),
+    member("USER32.dll/", short_import(IMAGE_FILE_MACHINE_ARM64, 1, "MessageBeep", "USER32.dll")),
+    // the descriptor object: .idata$ data, no code
+    member("USER32.dll/", coff_obj(IMAGE_FILE_MACHINE_ARM64, 0x40)),
+  ])
+  match import_lib("User32.Lib", lib, IMAGE_FILE_MACHINE_ARM64) {
+    Ok(m) => {
+      expect(m.len()) == 2
+      expect(m.get("GetSystemMetrics") ?? "") == "USER32.dll"
+      expect(m.get("MessageBeep") ?? "") == "USER32.dll"
+      expect(m.contains("#GetSystemMetrics")) == false
+    }
+    Err(e) => fault(e)
+  }
+  match import_lib("User32.Lib", lib, IMAGE_FILE_MACHINE_AMD64) {
+    Ok(m) => expect(m.len()) == 0
+    Err(e) => fault(e)
+  }
+}
+
+test "a static library and a non-archive are refused" {
+  let lib = archive([member("tiny.obj/", coff_obj(IMAGE_FILE_MACHINE_ARM64, 0x20))])
+  expect(import_lib("tiny.lib", lib, IMAGE_FILE_MACHINE_ARM64).is_err()) == true
+  expect(import_lib("x.lib", b"MZ", IMAGE_FILE_MACHINE_ARM64).is_err()) == true
+}

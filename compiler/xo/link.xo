@@ -472,6 +472,64 @@ fn win_arm64_atomics(os: Os, dir: Str) -> Str ! FsErr {
   Ok(path)
 }
 
+/// The directories of a Windows sysroot (root, XO_WINSYSROOT: xwin's
+/// --use-winsysroot-style layout) for arch (arm64 or x64): the include
+/// directories (MSVC's, then the SDK's ucrt, um and shared) and the
+/// library directories (the SDK's um and ucrt, then MSVC's), the newest
+/// version of each first (decision 0569: `use c` on windows/arm64).
+fn win_sdk_dirs(os: Os, root: Str, arch: Str) -> (List[Str], List[Str]) {
+  var inc: List[Str] = []
+  var lib: List[Str] = []
+  let msvc = sub_dirs(os, "${root}/VC/Tools/MSVC")
+  for m in msvc {
+    inc.push("${m}/include")
+  }
+  for k in sub_dirs(os, "${root}/Windows Kits/10/Include") {
+    for part in ["ucrt", "um", "shared"] {
+      inc.push("${k}/${part}")
+    }
+  }
+  for k in sub_dirs(os, "${root}/Windows Kits/10/Lib") {
+    lib.push("${k}/um/${arch}")
+    lib.push("${k}/ucrt/${arch}")
+  }
+  for m in msvc {
+    lib.push("${m}/lib/${arch}")
+  }
+  (inc, lib)
+}
+
+/// The directories in dir by path, the greatest name (the newest
+/// version) first; none when dir cannot be read.
+fn sub_dirs(os: Os, dir: Str) -> List[Str] {
+  var names: List[Str] = []
+  if let Ok(fis) = os.fs.read_dir(dir) {
+    for f in fis {
+      if f.is_dir {
+        names.push(f.name)
+      }
+    }
+  }
+  names.sort().reverse().map(fn(n) { "${dir}/${n}" })
+}
+
+/// The import library of `link "name"` in dirs (name.lib, the file
+/// name's case ignored: the SDK has User32.Lib and kernel32.Lib), or ""
+/// when none has it.
+fn win_find_lib(os: Os, dirs: List[Str], name: Str) -> Str {
+  let want = "${name.to_lower()}.lib"
+  for d in dirs {
+    if let Ok(fis) = os.fs.read_dir(d) {
+      for f in fis {
+        if !f.is_dir && f.name.to_lower() == want {
+          return "${d}/${f.name}"
+        }
+      }
+    }
+  }
+  ""
+}
+
 /// sysrootCandidates: $XO_SYSROOT alone, else (macOS) the default, the
 /// SDK xcrun names, Xcode's, and the Command Line Tools' newest first.
 fn sysroot_candidates(os: Os, ctx: Ctx) -> List[Str] {

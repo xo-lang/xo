@@ -53,7 +53,22 @@ x16; br x16; brk). Variadic C calls pass every argument in x0 to x7 and
 then the stack (vfix -4 in compiler/arm64 call_locs); no `use c` source
 links yet, so no program reaches them.
 
-Not done in stage 1 yet: `use c`, --race and a PDB for windows/arm64;
+`use c` (2026-11-08): with XO_WINSYSROOT set (an xwin sysroot with
+arm64), clang compiles the adapters and `link` C files for
+aarch64-pc-windows-msvc with `-isystem` the sysroot's MSVC and SDK
+include directories (link.xo win_sdk_dirs; Apple's clang does too), the
+C library functions they call being cabi_wincrt.xo's, and `link "NAME"`
+is the sysroot's arm64 NAME.lib (the file name's case ignored), whose
+short import objects of machine 0xAA64 pelink adds to its import table
+(compiler/macho implib.xo; the SDK's ARM64X libraries also hold ARM64EC
+members, skipped; a static library is refused). cmd/xo
+TestWindowsArm64UseC links a program whose C calls user32's
+GetSystemMetrics; llvm-readobj (LLVM 23.1.3 on the Mac) shows the
+USER32.dll import and the C function's load from its IAT slot. A binding
+is still made with the host's clang (`xo bind --c`), so a header's
+`long` binds as Int though Windows' is 32 bits (Anticipated).
+
+Not done in stage 1 yet: --race and a PDB for windows/arm64;
 a split link and the std object; the C ABI exports beyond Str results;
 running an image (stage 2's host). To
 measure in stage 5: `save_regp` needs ascending pairs (`stp x19, x20`),

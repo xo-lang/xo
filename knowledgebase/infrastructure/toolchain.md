@@ -937,9 +937,11 @@ says windows/arm64 needs --backend=go (decision 0270 addendum, owner
 after the rest are built (exit 1). `--backend=arm64 --targets=windows/arm64`
 (experimental, decision 0569 stage 1) links an ARM64 PE from any host:
 clang (`--target=aarch64-pc-windows-msvc`, on PATH or XO_CLANG)
-assembles the parts and Xo's PE linker links them with no C runtime; no
-`use c`, --race or PDB yet, and nothing runs it in the tests (last
-verified: 2026-11-08). Binaries go
+assembles the parts and Xo's PE linker links them with no C runtime;
+`use c` needs XO_WINSYSROOT (an xwin sysroot with arm64: clang compiles
+the C against its headers, `link "NAME"` reads its arm64 NAME.lib); no
+--race or PDB yet, and nothing runs it in the tests (last verified:
+2026-11-08). Binaries go
 to `-o` (a file for one target, a directory for several, each
 `NAME-OS-ARCH[.exe|.wasm]`) or the build directory's `bin/`; `-o NAME`
 for windows with no extension writes NAME.exe. Last verified: 2026-10-22. `xo run`

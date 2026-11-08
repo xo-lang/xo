@@ -2139,9 +2139,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if march == "arm64" && tgoos == "windows" {
       // the arm64 backend's windows/arm64 program (decision 0569 stage
       // 1): clang's assembler for each part, then Xo's PE linker with no
-      // C runtime; no `use c`, --race or PDB yet
-      if o.race || uses_c_source(os, o.std, c, tgoos) {
-        fail(os, "windows/arm64 is experimental (decision 0569): it links no `use c` source and no --race yet")
+      // C runtime (`use c` sources compiled by clang against
+      // XO_WINSYSROOT's headers, its libraries' import libraries read by
+      // the linker); no --race or PDB yet
+      if o.race {
+        fail(os, "windows/arm64 is experimental (decision 0569): it links no --race yet")
       }
       let clang = find_clang(os)
       if clang.is_empty() {
@@ -2185,6 +2187,38 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         Ok(ap) => asrcs.push(ap)
         Err(e) => fail(os, "${e}")
       }
+      // `use c`: the adapters and link files compiled for
+      // aarch64-windows-msvc (the C library functions they call are
+      // cabi_wincrt.xo's), `link "NAME"` the sysroot's NAME.lib
+      let ci = c_inputs(os, c, dir, o.std, tgoos, tgoarch)
+      if !ci.err.is_empty() {
+        fail(os, ci.err)
+      }
+      var cobjs: List[Str] = []
+      if !ci.srcs.is_empty() || !ci.flags.is_empty() {
+        let wroot = os.env.get("XO_WINSYSROOT") ?? ""
+        if wroot.is_empty() {
+          fail(os, "windows/arm64 compiles a `use c` source with clang against the Windows SDK's headers and links its libraries' import libraries: set XO_WINSYSROOT to a Windows sysroot (xwin splat --use-winsysroot-style --preserve-ms-arch-notation, with --arch aarch64)")
+        }
+        let (incs, libdirs) = win_sdk_dirs(os, wroot, "arm64")
+        var cflags = ["--target=aarch64-pc-windows-msvc", "-fno-stack-protector"]
+        for d in incs {
+          cflags = cflags + ["-isystem", d]
+        }
+        let (objs, cwhy) = c_objects(os, clang, cflags, ci.srcs, dir, trimpath_eff(o))
+        if !cwhy.is_empty() {
+          fail(os, cwhy)
+        }
+        cobjs = objs
+        for f in ci.flags {
+          let lname = f.trim_prefix("-l")
+          let lp = win_find_lib(os, libdirs, lname)
+          if lp.is_empty() {
+            fail(os, "`link \"${lname}\"`: no ${lname}.lib for arm64 in XO_WINSYSROOT ${wroot} (${libdirs.join(", ")})")
+          }
+          cobjs.push(lp)
+        }
+      }
       let (wobjs, awhy) = cc_assemble(os, clang, ["--target=aarch64-pc-windows-msvc"], asrcs, jobs)
       if !awhy.is_empty() {
         fail(os, "assembler: ${awhy}")
@@ -2200,7 +2234,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wst.abandon(os)
         fail_code(os, "XO1517", rerr)
       }
-      let why = pe_link(os, wobjs, wst.bin, wbin, wres, false, phases, trimpath_eff(o), backend_cache_dir(os, ctx), [], false, None)
+      let why = pe_link(os, wobjs + cobjs, wst.bin, wbin, wres, false, phases, trimpath_eff(o), backend_cache_dir(os, ctx), [], false, None)
       if !why.is_empty() {
         fail_stage(os, wst, why)
       }

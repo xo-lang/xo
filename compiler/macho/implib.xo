@@ -1,0 +1,72 @@
+// Reading Windows import libraries (decision 0569 stage 1): the short
+// import objects of a .lib archive (the Windows SDK's User32.Lib), each
+// naming a function and the DLL that exports it, so Xo's PE linker
+// imports what a `use c` library's code calls (`link "user32"`) with no
+// lld-link. The format is the PE/COFF specification's "Import Library
+// Format": an archive member that starts with Sig1 0 and Sig2 0xFFFF,
+// then the machine, the sizes, the type, and the symbol's and the DLL's
+// names as C strings. An ARM64X library (the SDK's arm64 ones) holds
+// ARM64EC members (machine 0xA641, names like `#Name`) beside the ARM64
+// ones; only machine's are read.
+
+/// The DLL of each function an import library b imports for machine
+/// (IMAGE_FILE_MACHINE_ARM64 or _AMD64), by its symbol name (also the
+/// name imported: types NAME, NOPREFIX and UNDECORATE, whose names carry
+/// no decoration on these machines); why not when b is not an archive or
+/// holds an object member (a static library, which xo does not link
+/// yet).
+pub fn import_lib(path: Str, b: Bytes, machine: Int) -> Result[Map[Str, Str], Str] {
+  if b.len() < 8 || b[0..8] != "!<arch>\n".bytes() {
+    return Err("${path}: not an archive (an import library)")
+  }
+  var out: Map[Str, Str] = {}
+  var i = 8
+  while i + 60 <= b.len() {
+    let size = Int.parse((b[i + 48..i + 58].to_str() ?? "").trim()) ?? -1
+    if size < 0 || i + 60 + size > b.len() {
+      return Err("${path}: a member's size is out of range")
+    }
+    let name = (b[i..i + 16].to_str() ?? "").trim()
+    let at = i + 60
+    if size > 20 && rd16(b, at) == 0 && rd16(b, at + 2) == 0xffff {
+      let typ = rd16(b, at + 18)
+      let ntype = (typ >> 2) & 7
+      if rd16(b, at + 6) == machine && ntype >= 1 && ntype <= 3 {
+        let sym = coff_cstr(b, at + 20)
+        let dll = coff_cstr(b, at + 20 + sym.len() + 1)
+        if !sym.is_empty() && !dll.is_empty() {
+          out[sym] = dll
+        }
+      }
+    } else if !(name is "/" | "//" | "/<ECSYMBOLS>/" | "/<HYBRIDMAP>/") {
+      // (the linker members: the symbol indexes, ARM64EC's, long names)
+      // a regular member: an import library's own descriptor objects
+      // (the DLL's __IMPORT_DESCRIPTOR_ and null thunk), which name no
+      // function, or a static library's code
+      if size >= 20 && (rd16(b, at) == IMAGE_FILE_MACHINE_ARM64 || rd16(b, at) == IMAGE_FILE_MACHINE_AMD64) && !coff_has_text(b[at..at + size]) {
+        // descriptor objects: no code
+      } else {
+        return Err("${path}: member ${name} is not an import (a static library: xo links import libraries only on windows/arm64 yet)")
+      }
+    }
+    i = at + size + (size & 1)
+  }
+  Ok(out)
+}
+
+/// Whether the COFF object b has a section with code
+/// (IMAGE_SCN_CNT_CODE).
+fn coff_has_text(b: Bytes) -> Bool {
+  let n = rd16(b, 2)
+  let opt = rd16(b, 16)
+  for k in 0..n {
+    let s = 20 + opt + 40 * k
+    if s + 40 > b.len() {
+      return false
+    }
+    if (rd32(b, s + 36) & 0x20) != 0 {
+      return true
+    }
+  }
+  false
+}
