@@ -73,3 +73,22 @@ callers are nearly every function.
 - Skip the second decode by keeping fe_replay's decoded body and redoing the cleanup: the cleanup
   is what the cache saves (decision 0382 stage 2 measured it a wash).
 - Leave it: decode_func stays the largest single cost of a warm build.
+
+## Finding on step 1 (2026-11-07, Xo Lang 4, before any build)
+
+The incremental uniqueness analysis cannot be scoped like the borrow inference's. A borrow flag
+depends on the function's body and its callees' flags, so an edit dirties the edited function and
+its callers, transitively. A uniqueness fact depends both ways: a candidate's entry facts on every
+caller's body (each call must pass a unique list), its out and result facts on its own body and on
+its callees' out facts (origin through a call). An edit dirties the connected component of the
+call graph among candidates and their callers, which on http_server_request is nearly every
+function (the 3,146 above). So step 1 helps only a build with nothing changed, and that build
+never reaches the back end when the binary cache is on (XO_BIN_CACHE, the default).
+
+What would make step 2 pay on an edit: per-function summaries of the analysis's inputs, so that a
+clean function contributes its part of the fixpoint without its body (for each call of a candidate,
+whether the argument is owned there and which origin it has, as a formula over other functions'
+facts; for each Return, the same of its outs). That is a rewrite of uniqvar.xo's walk into a
+summary pass plus a solver, not a cache over it. Ceiling unchanged (cln_hits, 6.5%); cost and risk
+higher than this ADR assumed. Recommendation: hold 0557 at Proposed with this finding, and take the
+next profile items (the type check, the function cache's load) first.
