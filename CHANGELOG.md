@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo build (fix): a SIGINT or SIGTERM during a build no longer leaves the output's hidden stage (DIR/.NAME.tmp-...) when the link is still writing into it: the stop watcher renames the stage first, removes it with retries, and warns naming any path it could not remove (one remove_all raced the write, cmd/xo TestBuildStagedOutputs under load). gotchas/stop-watcher-races-link-writes.md.
 - native (perf, decision 0532 step 2): Str.rune_count counts UTF-8 continuation bytes 32 at a time with the new rt.bytes_count_below32 (arm64 cmgt and addv, x86_64 pcmpgtb and popcnt, LLVM a <32 x i8> compare, wasm a byte loop): bench/perf/simdscan rune_count 0.502 of before on linux/arm64.
 
 - compiler (perf): the arm64 backend drops the bounds check of a decreasing index, `b[n - 1]` under a dominating `n > 0` (or `n > lo` with lo never negative) with n at most the length, as Go's prove pass does, for Bytes and List: std's reverse scans (llrt's trim_end_byte and trim_chars) no longer compare and branch per byte. retired instructions (darwin/arm64, against an xo built at the parent) bench/perf/trimchars one 0.941, trim_end 0.965, trim 0.970, path parts, join and clean unchanged; --ab on linux/arm64 wall time, 11 rounds against the parent, trimchars one 0.984 (0.970 to 1.000, better), trim_end 0.988 and path parts 1.004 within noise; test/codegen/revbounds holds the shapes and the ones that keep their check.

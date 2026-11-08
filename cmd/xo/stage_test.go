@@ -117,6 +117,8 @@ func TestBuildStagedOutputs(t *testing.T) {
 		}
 		cmd.Wait()
 		ms, _ := filepath.Glob(filepath.Join(outDir, ".int.tmp-*"))
+		tombs, _ := filepath.Glob(filepath.Join(outDir, ".xo-stop*")) // ld.xo remove_stage
+		ms = append(ms, tombs...)
 		if len(ms) > 0 {
 			t.Errorf("a SIGINT left %v", ms)
 		}

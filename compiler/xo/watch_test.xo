@@ -8,3 +8,17 @@ test "a built binary that cannot be installed is reported, not run as the old on
   // no next (a failed move): the reason, which the cycle reports as failed
   expect(install(os.fs, "w/next", "w/prog").contains("install w/prog")) == true
 }
+
+test "a stop removes a stage and its tomb, and a stage already gone is no error" {
+  // (a writer racing the removal is not modelled: MemFs's write makes
+  // missing parents, the real filesystem's does not, std.md 8.3)
+  os.fs.create_dir_all("o/.p.tmp-1-a/p.dSYM/Contents")?
+  os.fs.write("o/.p.tmp-1-a/p", b"bin")?
+  os.fs.write("o/.p.tmp-1-a/p.dSYM/Contents/f", b"dwarf")?
+  os.fs.write("o/keep", b"k")?
+  remove_stage(os.fs, os.clock, os.stdio, "o/.p.tmp-1-a")
+  // neither the stage nor its tomb (o/.xo-stop.p.tmp-1-a) is left
+  expect(os.fs.walk("o")?.map(fn(e: FileInfo) -> Str { e.path })) == ["o/keep"]
+  remove_stage(os.fs, os.clock, os.stdio, "o/.p.tmp-1-b")
+  expect(os.fs.walk("o")?.map(fn(e: FileInfo) -> Str { e.path })) == ["o/keep"]
+}

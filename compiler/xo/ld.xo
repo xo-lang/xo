@@ -1459,11 +1459,36 @@ fn watch_stages(os: Os, ch: Chan[Str], done: Chan[()]) {
       return
     }
     while let Some(d) = ch.try_recv() {
-      os.fs.remove_all(d).ignore_err("committed or abandoned already")
+      remove_stage(os.fs, os.clock, os.stdio, d)
     }
     os.stdio.eprintln("xo: interrupted")
     os.proc.exit(130)
   })
+}
+
+/// Removes stage d for the stop watcher. The link may still be writing
+/// into it (ld64 or dsymutil, a child the stop does not reach), and a
+/// file it makes while remove_all walks the stage leaves the stage's
+/// directory not empty (a SIGINT left one in cmd/xo
+/// TestBuildStagedOutputs under load, 2026-11-08): the stage is renamed
+/// first (to DIR/.xo-stop.NAME.tmp-TAG-RAND), so nothing makes a path in
+/// it by name any more, then its tomb is removed until it is gone.
+fn remove_stage(fs: Fs, clock: Clock, stdio: Stdio, d: Str) {
+  if !(fs.exists(d).ok() ?? false) {
+    // committed or abandoned already
+    return
+  }
+  // the stage's name is unique, so its tomb's is
+  let tomb = "${dir_name(d)}/.xo-stop${base_name(d)}"
+  let gone = if fs.rename(d, tomb).is_ok() { tomb } else { d }
+  for _ in 0..50 {
+    fs.remove_all(gone).ignore_err("retried until the stage is gone")
+    if !(fs.exists(gone).ok() ?? false) {
+      return
+    }
+    clock.sleep_or_cancel(2ms).ignore_err("the watcher exits next anyway")
+  }
+  stdio.eprintln("xo: warning: could not remove ${gone} after the stop")
 }
 
 /// A windows/amd64 PDB pe_link leaves for after the link (xo run and
