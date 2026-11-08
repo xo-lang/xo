@@ -200,7 +200,7 @@ fn truncate(var s: List[Int], n: Int) {
 /// nodeStack.contains: an html element with the tag.
 fn oe_contains(p: Parser, tag: Str) -> Bool {
   for n in p.oe {
-    if p.nodes[n].data == tag && p.nodes[n].namespace == "" {
+    if p.nodes[n].data == tag && p.nodes[n].namespace.len() == 0 {
       return true
     }
   }
@@ -511,7 +511,7 @@ fn add_formatting_element(var p: Parser) {
       i -= 1
       continue
     }
-    if p.nodes[n].namespace != "" {
+    if p.nodes[n].namespace.len() != 0 {
       i -= 1
       continue
     }
@@ -604,7 +604,7 @@ fn reset_insertion_mode(var p: Parser) {
     } else if d == "table" {
       p.im = IM_IN_TABLE
     } else if d == "template" {
-      if p.nodes[n].namespace != "" {
+      if p.nodes[n].namespace.len() != 0 {
         i -= 1
         continue
       }
@@ -893,7 +893,7 @@ fn close_template_end(var p: Parser) {
   var i = p.oe.len() - 1
   while i >= 0 {
     let n = p.oe[i]
-    if p.nodes[n].namespace == "" && p.nodes[n].data == "template" {
+    if p.nodes[n].namespace.len() == 0 && p.nodes[n].data == "template" {
       truncate(p.oe, i)
       break
     }
@@ -952,7 +952,7 @@ fn in_head_im(var p: Parser) -> Bool {
       }
       "template" => {
         for e in p.oe {
-          if p.nodes[e].namespace != "" {
+          if p.nodes[e].namespace.len() != 0 {
             p.im = IM_IGNORE_REMAINING
             return true
           }
@@ -1629,7 +1629,7 @@ fn in_body_end_tag_formatting(var p: Parser, tag: Str) {
 fn in_body_end_tag_other(var p: Parser, tag: Str) {
   var i = p.oe.len() - 1
   while i >= 0 {
-    if p.nodes[p.oe[i]].namespace == "" && p.nodes[p.oe[i]].data == tag {
+    if p.nodes[p.oe[i]].namespace.len() == 0 && p.nodes[p.oe[i]].data == tag {
       truncate(p.oe, i)
       break
     }
@@ -2301,7 +2301,7 @@ fn in_foreign_content(p: Parser) -> Bool {
     return false
   }
   let n = adjusted_current_node(p)
-  if p.nodes[n].namespace == "" {
+  if p.nodes[n].namespace.len() == 0 {
     return false
   }
   let t = p.tok.typ
@@ -2350,7 +2350,7 @@ fn parse_foreign_content(var p: Parser) -> Bool {
       var i = p.oe.len() - 1
       while i >= 0 {
         let n = p.oe[i]
-        if p.nodes[n].namespace == "" || html_integration_point(p, n) || mathml_text_integration_point(p, n) {
+        if p.nodes[n].namespace.len() == 0 || html_integration_point(p, n) || mathml_text_integration_point(p, n) {
           truncate(p.oe, i + 1)
           break
         }
@@ -2395,7 +2395,7 @@ fn parse_foreign_content(var p: Parser) -> Bool {
         truncate(p.oe, i)
         return true
       }
-      if i > 0 && p.nodes[p.oe[i - 1]].namespace == "" {
+      if i > 0 && p.nodes[p.oe[i - 1]].namespace.len() == 0 {
         break
       }
       i -= 1
@@ -2443,7 +2443,7 @@ fn run(var p: Parser) -> Str {
   var done = false
   while !done {
     let n = stack_top(p.oe)
-    p.tz.allow_cdata(n != -1 && p.nodes[n].namespace != "")
+    p.tz.allow_cdata(n != -1 && p.nodes[n].namespace.len() != 0)
     p.tz.next()
     let tk = p.tz.token()
     p.tok = Tok{typ: kind_of(tk.typ), data: tk.data, attrs: convert_attrs(tk.attrs)}
@@ -2501,7 +2501,7 @@ fn parse_tree(text: Str, scripting: Bool) -> Result[htmlparse.Tree, Str] {
 /// ParseFragment with a context element (an unattached node of that namespace and tag).
 fn parse_fragment_tree(text: Str, ctx_namespace: Str, ctx_tag: Str, scripting: Bool) -> Result[htmlparse.Tree, Str] {
   var tz = htmltok.tokenizer(text)
-  if ctx_namespace == "" {
+  if ctx_namespace.len() == 0 {
     tz = htmltok.tokenizer_fragment(text, ctx_tag)
   }
   var p = new_parser(tz)
@@ -2543,7 +2543,7 @@ fn dump_level(t: htmlparse.Tree, var sb: List[Str], n: Int, lvl: Int) {
   let node = t.nodes[n]
   match node.typ {
     htmlparse.NodeType.Element => {
-      if node.namespace != "" {
+      if node.namespace.len() != 0 {
         sb.push("<${node.namespace} ${node.data}>")
       } else {
         sb.push("<${node.data}>")
@@ -2552,13 +2552,13 @@ fn dump_level(t: htmlparse.Tree, var sb: List[Str], n: Int, lvl: Int) {
       for a in attrs {
         sb.push("\n")
         indent(sb, level)
-        if a.namespace != "" {
+        if a.namespace.len() != 0 {
           sb.push("${a.namespace} ${a.key}=\"${a.val}\"")
         } else {
           sb.push("${a.key}=\"${a.val}\"")
         }
       }
-      if node.namespace == "" && node.data == "template" {
+      if node.namespace.len() == 0 && node.data == "template" {
         sb.push("\n")
         indent(sb, level)
         level += 1
@@ -2902,7 +2902,7 @@ fn is_void_element(d: Str) -> Bool {
 /// childTextNodesAreLiteral: the text of a script-like element is written as is, when the parser would keep the
 /// element in the html namespace on re-parse.
 fn child_text_nodes_are_literal(p: htmlparse.Tree, n: Int) -> Bool {
-  if p.nodes[n].namespace != "" {
+  if p.nodes[n].namespace.len() != 0 {
     return false
   }
   match p.nodes[n].data {
@@ -2910,7 +2910,7 @@ fn child_text_nodes_are_literal(p: htmlparse.Tree, n: Int) -> Bool {
       var c = n
       var par = p.nodes[n].parent
       while par != -1 {
-        if p.nodes[par].namespace != "" && p.nodes[par].namespace != p.nodes[c].namespace && !html_integration_point_t(p, par) {
+        if p.nodes[par].namespace.len() != 0 && p.nodes[par].namespace != p.nodes[c].namespace && !html_integration_point_t(p, par) {
           return false
         }
         c = par
@@ -3033,7 +3033,7 @@ fn render1(t: htmlparse.Tree, var out: StrBuilder, n: Int) -> Str {
   out.write(node.data)
   for a in node.attrs {
     out.write(" ")
-    if a.namespace != "" {
+    if a.namespace.len() != 0 {
       out.write(a.namespace)
       out.write(":")
     }

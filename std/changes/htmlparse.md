@@ -1,5 +1,19 @@
 # std/htmlparse changes
 
+## 2026-11-08: perf: a node's namespace is tested empty by its length
+
+- Kind: perf
+- Commit: this push
+- Found by: profile of `parse` on host 1 (XO_PROF=cpu, 5 kHz): obj.str_eq 4.6% of samples across 11 callers, 3 of 11 ms from `run`'s `namespace != ""`
+- Go reference: golang.org/x/net v0.62.0 html (parse.go)
+- Test: internal/stdtest/testdata/corpus/htmlparse unchanged on arm64, LLVM and the Go backend
+- Timing: host 1 (linux/arm64) A/B against the parent, bench/perf/htmlparse `parse`: 0.989 (0.981 to 0.994, n=6; 247.2 to 244.4 ms)
+- Shipped in: not yet released
+
+The 17 `namespace == ""` and `!= ""` tests (every element visit in `run`, the scope walk and the adoption agency) compare lengths
+instead of calling the string compare. Measured and not done: integer atoms for tags would save at most the remaining str_eq (about 3.5%, spread over
+11 callers, none above 1.3%); a per-node flag needs a field on the public `Node`.
+
 ## 2026-11-08: perf: Parse follows the tokenizer's speedup
 
 - Kind: perf
