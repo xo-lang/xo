@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-07: perf: a small List literal passed to a function stays in the caller's frame; the callee copies it only to keep it (decision 0554)
+
+- Kind: perf
+- Commit: this push
+- Found by: the 2026-11-07 Xo vs Go survey (bench/perf/metrics counter about 3 times Go; the one-label List was 27% of it)
+- Go reference: cmd/compile's escape analysis keeping a `...string` backing array on the stack
+- Test: internal/arm64 TestGoldenRun (stack_list_args, metrics_*, closures); xo dev codegen; a strict self build and the fixed point
+- Timing: bench/perf/metrics, linux/arm64 host 1, xo bench --ab over the List literal presize: counter 0.760, histogram 0.756; xo's self build wall 1.011 (noise, n=7); regexp compile, path join, template render, strsplit within noise (decision 0554's Addendum)
+- Shipped in: not yet released
+
+On the native backends a List[Str] or List[List] literal of a few elements that a call only reads, releases or passes on is built in the caller's frame (rt.rl_stack), and a function about to keep such a List parameter (store, capture, return it) copies one built in a frame to the heap first (the runtime's rl_unstack_n, behind an inline count compare). No program can observe where the List lives.
+
 ## 2026-11-07: perf: a Map lookup skips the key compare on a hash tag mismatch, and a rebuild does not rehash Str keys (decision 0552)
 
 - Kind: perf

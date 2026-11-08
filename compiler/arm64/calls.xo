@@ -1234,6 +1234,11 @@ fn (var g: G) call_op(v: Int) {
     g.set(v, [0])
     return
   }
+  if name == "rt.rl_unstack" || name.starts_with("rt.rl_stack") {
+    // decision 0554's frame lists (stacklist.xo)
+    g.stack_list_op(v, name)
+    return
+  }
   // a push run (pushrun.xo): its first pushes make nothing (the next
   // push of the run reads their list only), its last pushes them all
   if name == "list.push" && g.push_skip.contains(v) {

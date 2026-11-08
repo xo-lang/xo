@@ -368,6 +368,7 @@ fn obj_rl_grow_n(l: Int, esize: Int) -> Int { obj.rl_grow_n(l, esize) }
 fn obj_rl_free_n(l: Int, esize: Int, drop: Int) { obj.rl_free_n(l, esize, drop) }
 
 fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n(l, esize, dup, drop) }
+fn obj_rl_unstack_n(l: Int, esize: Int, dup: Int) -> Int { obj.rl_unstack_n(l, esize, dup) }
 
 fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
 

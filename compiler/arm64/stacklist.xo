@@ -1,0 +1,730 @@
+// Small List literals passed to calls, in the caller's frame (decision
+// 0554, prototype): after inlining, a literal of at most STACK_LIST_MAX
+// elements (`list.new` and its pushes) whose list is only read here,
+// released, or passed to calls of this module's functions becomes
+// `rt.rl_stack N` and `rt.rl_stack_put I`, built in a frame slot with the
+// STACK count (obj.xo), on which the emitted retains and releases change
+// nothing. Its releases become `rt.rl_stack_drop N`, which releases the
+// elements in place, and so does each call that takes it as an owned
+// argument (the callee's release of it changes nothing).
+//
+// Every function protects its own List parameters (unstack_params): a
+// use that may keep one (anything but a read, a release, or a call of a
+// module function, which protects its own) goes through `rt.rl_unstack`,
+// a heap copy when the list is in a caller's frame. The rule reads only
+// the function's own post-inline SSA, so cold and warm builds decide
+// alike, and a caller needs no fact of its callee but its borrowed flags.
+//
+// One slot serves every execution of a site, as in stacksmall.xo: the
+// literal's list never crosses an edge, so it is dead before the site
+// runs again.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// The most elements a list made in the frame holds.
+const STACK_LIST_MAX = 4
+
+/// The calls that read a List (their first argument) and keep nothing.
+fn list_read_call(name: Str) -> Bool {
+  name is "list.len" | "list.index" | "list.get" || name.starts_with("list.getf ")
+}
+
+/// Whether t is a List whose elements are whole words the frame slot
+/// stores as they are (Str, List).
+fn stack_list_type(m: ssa.Module, t: Int) -> Bool {
+  if t < 0 || t >= m.types.len() || m.types[t].kind != ssa.Kind.List || m.types[t].elems.is_empty() {
+    return false
+  }
+  let et = m.types[t].elems[0]
+  et >= 0 && et < m.types.len() && (m.types[et].kind is ssa.Kind.Str | ssa.Kind.List)
+}
+
+/// Whether name is a function of the module (its body protects its List
+/// parameters), not an intrinsic or a runtime call.
+fn module_call(m: ssa.Module, name: Str) -> Bool {
+  !name.starts_with("rt.") && !name.starts_with("list.") && m.func_index(name) >= 0
+}
+
+/// How many times v is in xs.
+fn count_of(xs: List[Int], v: Int) -> Int {
+  var n = 0
+  for x in xs {
+    if x == v {
+      n += 1
+    }
+  }
+  n
+}
+
+/// Inserts value w (made by the caller) before instruction u in its block.
+fn insert_before(var f: ssa.Func, u: Int, w: Int) {
+  let b = ssa.block_of(f.values[u].tb)
+  let is = f.blocks[b].instrs
+  let at = is.index_of(u) ?? is.len()
+  f.blocks[b].instrs.insert(at, w)
+}
+
+fn insert_after(var f: ssa.Func, u: Int, w: Int) {
+  let b = ssa.block_of(f.values[u].tb)
+  let is = f.blocks[b].instrs
+  let at = is.index_of(u) ?? (is.len() - 1)
+  f.blocks[b].instrs.insert(at + 1, w)
+}
+
+/// A new value not yet in any block's instructions.
+fn new_value(var f: ssa.Func, b: Int, op: ssa.Op, t: Int, aux: ssa.Aux, args: List[Int]) -> Int {
+  let v = f.values.len()
+  f.values.push(ssa.Value{op: op, tb: ssa.pack_tb(t, b), args: args, aux: aux})
+  v
+}
+
+// ---------------------------------------------------------------------------
+// The callee: its List parameters copied before a use that may keep one
+
+/// Copies f's frame list parameters (List[Str] or List[List], the
+/// literals a caller puts in its frame) where f may keep one: an operand
+/// a use consumes (Module.consumed_operands; a borrowed one is not kept
+/// past the use), of the parameter or a block parameter it flows into.
+/// An owned parameter is copied once, at the entry (`rt.rl_unstack`, which
+/// every use then names: a fault's cleanup releases the same value on
+/// every path); a borrowed one before each such use, which a retain
+/// precedes. Whether it changed f.
+fn unstack_params(var f: ssa.Func, m: ssa.Module) -> Bool {
+  if f.blocks.is_empty() {
+    return false
+  }
+  var fx: SsFacts? = None
+  var changed = false
+  for (k, p) in f.blocks[0].params.indexed() {
+    if !stack_list_type(m, ssa.ty_of(f.values[p].tb)) {
+      continue
+    }
+    if fx is None {
+      fx = Some(ss_facts(f))
+    }
+    let facts = fx ?? ss_facts(f)
+    let keeps = param_keeps(f, m, p, facts)
+    if keeps.is_empty() {
+      continue
+    }
+    changed = true
+    let t = ssa.ty_of(f.values[p].tb)
+    if k < f.borrowed.len() && !f.borrowed[k] && keeps.len() == 1 && keeps[0].2 == p && !has_retain(f, facts, p) {
+      // one keeping use of the parameter itself: copied there, so the
+      // paths that keep nothing (a lookup's hit) copy nothing; the uses
+      // after it name the copy, or a block parameter where the paths meet
+      for (u, _i, a) in keeps {
+        let w = new_value(f, ssa.block_of(f.values[u].tb), ssa.Op.Call, t, ssa.Aux.S("rt.rl_unstack"), [a])
+        insert_before(f, u, w)
+        redefine(f, a, w)
+      }
+      fx = None
+      continue
+    }
+    if k < f.borrowed.len() && !f.borrowed[k] {
+      let w = new_value(f, 0, ssa.Op.Call, t, ssa.Aux.S("rt.rl_unstack"), [p])
+      for v in 0..f.values.len() {
+        if v != w && f.values[v].args.contains(p) {
+          var args = f.values[v].args
+          for i in 0..args.len() {
+            if args[i] == p {
+              args[i] = w
+            }
+          }
+          f.values[v].args = args
+        }
+      }
+      for e in 0..f.edges.len() {
+        if f.edges[e].args.contains(p) {
+          var args = f.edges[e].args
+          for i in 0..args.len() {
+            if args[i] == p {
+              args[i] = w
+            }
+          }
+          f.edges[e].args = args
+        }
+      }
+      f.blocks[0].instrs.insert(0, w)
+      // the facts name p's uses, which are now w's
+      fx = None
+      continue
+    }
+    for (u, i, a) in keeps {
+      let w = new_value(f, ssa.block_of(f.values[u].tb), ssa.Op.Call, t, ssa.Aux.S("rt.rl_unstack"), [a])
+      insert_before(f, u, w)
+      var args = f.values[u].args
+      args[i] = w
+      f.values[u].args = args
+      // a use that can fault lands where the operand it did not take is
+      // released (the verifier's keeps_operands): that release is now w's
+      let pb = landing_block(f, u)
+      if pb >= 0 && f.blocks[pb].preds.len() == 1 {
+        for r in f.blocks[pb].instrs {
+          let z = f.values[r]
+          if (z.op == ssa.Op.Release || z.op == ssa.Op.Drop) && z.args.len() == 1 && z.args[0] == a {
+            f.values[r].args = [w]
+            break
+          }
+        }
+      }
+    }
+    fx = None
+  }
+  changed
+}
+
+/// Whether a use of v is a Retain.
+fn has_retain(f: ssa.Func, fx: SsFacts, v: Int) -> Bool {
+  for u in fx.vuses[v] {
+    if f.values[u].op == ssa.Op.Retain {
+      return true
+    }
+  }
+  false
+}
+
+/// The successor blocks of block b.
+fn succ_blocks(f: ssa.Func, b: Int) -> List[Int] {
+  let is = f.blocks[b].instrs
+  var out: List[Int] = []
+  if is.is_empty() {
+    return out
+  }
+  for e in f.values[is[is.len() - 1]].succs {
+    out.push(f.edges[e].to)
+  }
+  out
+}
+
+/// One redefinition being repaired: a's uses after w name w.
+struct Redef {
+  a: Int
+  w: Int
+  bw: Int
+  t: Int
+  // the blocks a path from w reaches
+  reach: Map[Int, Bool]
+  // the value at the start of a block, once looked up
+  at_in: Map[Int, Int]
+}
+
+/// Makes w, inserted in its block to take over owned value a (it consumes
+/// a), a's definition from there on: each later use of a names the value
+/// that reaches it, w where only paths through w do, a where none does,
+/// and a new parameter of the block where both meet, made only where a
+/// use needs one (SSA repair of one redefinition, Braun et al.'s lookup:
+/// a meeting no use reads gets none, so a path that released a before it
+/// passes nothing).
+fn redefine(var f: ssa.Func, a: Int, w: Int) {
+  let bw = ssa.block_of(f.values[w].tb)
+  var reach: Map[Int, Bool] = {}
+  var work = succ_blocks(f, bw)
+  while !work.is_empty() {
+    let b = work.pop() ?? -1
+    if reach.contains(b) {
+      continue
+    }
+    reach[b] = true
+    for s in succ_blocks(f, b) {
+      work.push(s)
+    }
+  }
+  var r = Redef{a: a, w: w, bw: bw, t: ssa.ty_of(f.values[a].tb), reach: reach, at_in: {}}
+  let at = f.blocks[bw].instrs.index_of(w) ?? 0
+  // the uses (their list first: the lookups add parameters and arguments)
+  var vus: List[(Int, Int, Int)] = []
+  for b in 0..f.blocks.len() {
+    for (j, v) in f.blocks[b].instrs.indexed() {
+      if v != w && f.values[v].args.contains(a) {
+        vus.push((b, j, v))
+      }
+    }
+  }
+  var euses: List[Int] = []
+  for e in 0..f.edges.len() {
+    if f.edges[e].args.contains(a) {
+      euses.push(e)
+    }
+  }
+  for (b, j, v) in vus {
+    let x = if b == bw && j > at { w } else { value_in(f, r, b) }
+    if x != a {
+      var args = f.values[v].args
+      for i in 0..args.len() {
+        if args[i] == a {
+          args[i] = x
+        }
+      }
+      f.values[v].args = args
+    }
+  }
+  for e in euses {
+    let x = value_out(f, r, f.edges[e].from)
+    if x != a {
+      var args = f.edges[e].args
+      for i in 0..args.len() {
+        if args[i] == a {
+          args[i] = x
+        }
+      }
+      f.edges[e].args = args
+    }
+  }
+}
+
+/// The value of r's variable at the end of block b.
+fn value_out(var f: ssa.Func, var r: Redef, b: Int) -> Int {
+  if b == r.bw {
+    return r.w
+  }
+  // a removed edge's from is -1
+  if b < 0 || b >= f.blocks.len() {
+    return r.a
+  }
+  value_in(f, r, b)
+}
+
+/// The value of r's variable at the start of block b: a new parameter
+/// where paths from w and paths without it meet, dropped again when every
+/// edge gives it the same value.
+fn value_in(var f: ssa.Func, var r: Redef, b: Int) -> Int {
+  if !r.reach.contains(b) {
+    return r.a
+  }
+  if let Some(x) = r.at_in.get(b) {
+    return x
+  }
+  let ps = f.blocks[b].preds
+  if ps.len() == 1 {
+    let x = value_out(f, r, f.edges[ps[0]].from)
+    r.at_in[b] = x
+    return x
+  }
+  if ps.is_empty() {
+    return r.a
+  }
+  let q = f.add_param(b, r.t)
+  r.at_in[b] = q
+  var same = -1
+  var one = true
+  for e in ps {
+    let x = value_out(f, r, f.edges[e].from)
+    var args = f.edges[e].args
+    args.push(x)
+    f.edges[e].args = args
+    if x != q {
+      if same < 0 {
+        same = x
+      } else if x != same {
+        one = false
+      }
+    }
+  }
+  let nps = f.blocks[b].params
+  if one && same >= 0 && !nps.is_empty() && nps[nps.len() - 1] == q {
+    var keep = nps
+    let _q = keep.pop()
+    f.blocks[b].params = keep
+    for e in ps {
+      var args = f.edges[e].args
+      let _x = args.pop()
+      f.edges[e].args = args
+    }
+    replace_value(f, q, same)
+    r.at_in[b] = same
+    return same
+  }
+  q
+}
+
+/// Replaces value q with r in every operand and edge argument.
+fn replace_value(var f: ssa.Func, q: Int, r: Int) {
+  for v in 0..f.values.len() {
+    if f.values[v].args.contains(q) {
+      var args = f.values[v].args
+      for i in 0..args.len() {
+        if args[i] == q {
+          args[i] = r
+        }
+      }
+      f.values[v].args = args
+    }
+  }
+  for e in 0..f.edges.len() {
+    if f.edges[e].args.contains(q) {
+      var args = f.edges[e].args
+      for i in 0..args.len() {
+        if args[i] == q {
+          args[i] = r
+        }
+      }
+      f.edges[e].args = args
+    }
+  }
+}
+
+/// The uses of parameter p, and of the block parameters it flows into,
+/// that may keep it: (use, operand, the value it names).
+fn param_keeps(f: ssa.Func, m: ssa.Module, p: Int, fx: SsFacts) -> List[(Int, Int, Int)] {
+  var seen: Map[Int, Bool] = {}
+  var work = [p]
+  var keeps: List[(Int, Int, Int)] = []
+  while !work.is_empty() {
+    let a = work.pop() ?? -1
+    if seen.contains(a) {
+      continue
+    }
+    seen[a] = true
+    for (e, k) in fx.euses[a] {
+      let to = f.edges[e].to
+      if k < f.blocks[to].params.len() {
+        work.push(f.blocks[to].params[k])
+      }
+    }
+    var done: Map[Int, Bool] = {}
+    for u in fx.vuses[a] {
+      // vuses names a use once per operand that is a; its operands are
+      // all looked at below, once
+      if done.contains(u) {
+        continue
+      }
+      done[u] = true
+      let y = f.values[u]
+      let ok = match y.op {
+        ssa.Op.Retain | ssa.Op.Release | ssa.Op.Drop => true
+        // a reuse copies a list whose count is not 1, as a frame list's is
+        ssa.Op.Reuse => true
+        ssa.Op.Call => {
+          let name = aux_str(y.aux)
+          (list_read_call(name) && y.args.len() > 0 && y.args[0] == a && count_of(y.args, a) == 1) || module_call(m, name)
+        }
+        _ => false
+      }
+      if !ok {
+        let cons = m.consumed_operands(f, u)
+        for (i, x) in y.args.indexed() {
+          if x == a && i < cons.len() && cons[i] {
+            keeps.push((u, i, a))
+          }
+        }
+      }
+    }
+  }
+  keeps
+}
+
+/// The block u's landing check branches to on a fault, or -1.
+fn landing_block(f: ssa.Func, u: Int) -> Int {
+  let l = ssa.pad_of(f.values[u].pi)
+  if l < 0 || l >= f.values.len() {
+    return -1
+  }
+  let b = ssa.block_of(f.values[l].tb)
+  let is = f.blocks[b].instrs
+  if is.is_empty() {
+    return -1
+  }
+  let t = f.values[is[is.len() - 1]]
+  if t.op != ssa.Op.Branch || t.args.is_empty() || t.args[0] != l || t.succs.is_empty() {
+    return -1
+  }
+  f.edges[t.succs[0]].to
+}
+
+// ---------------------------------------------------------------------------
+// The caller: its small literals in the frame
+
+/// A literal's values: the `list.new`, its pushes in order, and the
+/// list's final value (the last push).
+struct StackLit {
+  new: Int
+  pushes: List[Int]
+  // the releases of the list before its last push (a landing pad's, when
+  // an element's expression faults), with the elements it holds there
+  mids: List[(Int, Int)]
+}
+
+/// The literal that starts at `list.new` v, when v and each push but the
+/// last are used only by the next push, and by releases (the landing pad
+/// of an element that faults releases the list made so far), and none
+/// crosses an edge.
+fn stack_lit(f: ssa.Func, m: ssa.Module, v: Int, fx: SsFacts) -> StackLit? {
+  let x = f.values[v]
+  if x.op != ssa.Op.Call || aux_str(x.aux) != "list.new" || !stack_list_type(m, ssa.ty_of(x.tb)) {
+    return None
+  }
+  let n = if x.args.len() == 1 { const_through(f, x.args[0], fx) } else { 1 }
+  if n < 1 || n > STACK_LIST_MAX {
+    return None
+  }
+  var pushes: List[Int] = []
+  var mids: List[(Int, Int)] = []
+  var cur = v
+  while pushes.len() < n {
+    if !fx.euses[cur].is_empty() {
+      return None
+    }
+    var next = -1
+    for u in fx.vuses[cur] {
+      let y = f.values[u]
+      if (y.op == ssa.Op.Release || y.op == ssa.Op.Drop) && y.args.len() == 1 {
+        mids.push((u, pushes.len()))
+        continue
+      }
+      if next >= 0 || y.op != ssa.Op.Call || aux_str(y.aux) != "list.push" || y.args.len() != 2 || y.args[0] != cur || y.args[1] == cur {
+        return None
+      }
+      next = u
+    }
+    if next < 0 {
+      return None
+    }
+    pushes.push(next)
+    cur = next
+  }
+  Some(StackLit{new: v, pushes: pushes, mids: mids})
+}
+
+/// The uses of literal list l that end it (its releases, and the calls
+/// that take it as an owned argument), or None when a use is not allowed:
+/// a retain, an edge, anything but a read, a release, or one argument of
+/// a call of a module function whose borrowed flags are known.
+fn stack_lit_ends(f: ssa.Func, m: ssa.Module, l: Int, fx: SsFacts) -> (List[Int], List[Int])? {
+  if !fx.euses[l].is_empty() {
+    return None
+  }
+  var rels: List[Int] = []
+  var owned: List[Int] = []
+  for u in fx.vuses[l] {
+    let y = f.values[u]
+    match y.op {
+      ssa.Op.Release | ssa.Op.Drop => rels.push(u)
+      ssa.Op.Call => {
+        let name = aux_str(y.aux)
+        if list_read_call(name) && y.args.len() > 0 && y.args[0] == l && count_of(y.args, l) == 1 {
+          continue
+        }
+        if !module_call(m, name) || count_of(y.args, l) != 1 {
+          return None
+        }
+        let g = m.func_index(name)
+        let k = y.args.index_of(l) ?? -1
+        let bs = m.funcs[g].borrowed
+        // a var parameter is changed in place: a push there grows the
+        // frame list and frees its frame memory
+        if k < 0 || k >= bs.len() || m.funcs[g].var_params.contains(k) {
+          return None
+        }
+        if !bs[k] {
+          owned.push(u)
+        }
+      }
+      _ => return None
+    }
+  }
+  if rels.is_empty() && owned.is_empty() {
+    return None
+  }
+  Some((rels, owned))
+}
+
+/// Rewrites f's small literals that only reads, releases and calls of
+/// module functions use into frame lists; whether it changed f.
+fn stack_lists(var f: ssa.Func, m: ssa.Module) -> Bool {
+  var fx: SsFacts? = None
+  var lits: List[(StackLit, List[Int], List[Int])] = []
+  for b in 0..f.blocks.len() {
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || aux_str(x.aux) != "list.new" {
+        continue
+      }
+      if fx is None {
+        fx = Some(ss_facts(f))
+      }
+      let facts = fx ?? ss_facts(f)
+      if let Some(lit) = stack_lit(f, m, v, facts) {
+        let l = lit.pushes[lit.pushes.len() - 1]
+        if let Some((rels, owned)) = stack_lit_ends(f, m, l, facts) {
+          lits.push((lit, rels, owned))
+        }
+      }
+    }
+  }
+  for (lit, rels, owned) in lits {
+    let n = lit.pushes.len()
+    let l = lit.pushes[n - 1]
+    f.values[lit.new].aux = ssa.Aux.S("rt.rl_stack ${n}")
+    f.values[lit.new].args = []
+    for (i, p) in lit.pushes.indexed() {
+      f.values[p].aux = ssa.Aux.S("rt.rl_stack_put ${i}")
+    }
+    for u in rels {
+      f.values[u].op = ssa.Op.Call
+      f.values[u].aux = ssa.Aux.S("rt.rl_stack_drop ${n}")
+      f.values[u].tb = ssa.pack_tb(-1, ssa.block_of(f.values[u].tb))
+    }
+    for (u, k) in lit.mids {
+      f.values[u].op = ssa.Op.Call
+      f.values[u].aux = ssa.Aux.S("rt.rl_stack_drop ${k}")
+      f.values[u].tb = ssa.pack_tb(-1, ssa.block_of(f.values[u].tb))
+    }
+    for u in owned {
+      let w = new_value(f, ssa.block_of(f.values[u].tb), ssa.Op.Call, -1, ssa.Aux.S("rt.rl_stack_drop ${n}"), [l])
+      insert_after(f, u, w)
+    }
+  }
+  !lits.is_empty()
+}
+
+/// The frame lists of f that the rule no longer allows (a later pass gave
+/// one a use that keeps it), as "v<n>" texts; the module verifier fails
+/// the build on any (decision 0554: a frame list that escapes is a use
+/// after return).
+fn stack_list_violations(f: ssa.Func, m: ssa.Module) -> List[Str] {
+  var out: List[Str] = []
+  var fx: SsFacts? = None
+  for b in 0..f.blocks.len() {
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || !aux_str(x.aux).starts_with("rt.rl_stack ") {
+        continue
+      }
+      if fx is None {
+        fx = Some(ss_facts(f))
+      }
+      let facts = fx ?? ss_facts(f)
+      var cur = v
+      var bad = false
+      // the puts: each value used by the next put only
+      while true {
+        if !facts.euses[cur].is_empty() {
+          bad = true
+          break
+        }
+        // the next put, and drops (a landing pad's, of the elements put
+        // so far)
+        var next = -1
+        var others = false
+        for u in facts.vuses[cur] {
+          let name = aux_str(f.values[u].aux)
+          if name.starts_with("rt.rl_stack_put ") && f.values[u].args[0] == cur && next < 0 {
+            next = u
+          } else if !name.starts_with("rt.rl_stack_drop ") {
+            others = true
+          }
+        }
+        if next >= 0 && !others {
+          cur = next
+          continue
+        }
+        break
+      }
+      if !bad {
+        for u in facts.vuses[cur] {
+          let y = f.values[u]
+          if y.op != ssa.Op.Call {
+            bad = true
+            break
+          }
+          let name = aux_str(y.aux)
+          if name.starts_with("rt.rl_stack_drop ") || (list_read_call(name) && y.args[0] == cur && count_of(y.args, cur) == 1) {
+            continue
+          }
+          if !module_call(m, name) || count_of(y.args, cur) != 1 {
+            bad = true
+            break
+          }
+        }
+      }
+      if bad {
+        out.push("v${v}")
+      }
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The emitter
+
+/// Lowers the frame list calls (`rt.rl_stack N`, `rt.rl_stack_put I`,
+/// `rt.rl_stack_drop N`) and `rt.rl_unstack`.
+fn (var g: G) stack_list_op(v: Int, name: Str) {
+  let x = g.f.values[v]
+  if name == "rt.rl_unstack" {
+    // the frame list's count is STACK (IMMORTAL + 1, obj.xo): only it is
+    // copied, in the call; any other list moves through
+    let t = g.vty(x.args[0])
+    let et = g.m.types[t].elems[0]
+    let l = g.word(x.args[0])
+    let r = g.new_vreg(false)
+    let c = g.def1(false, "ldr $d0, [$u0]", [l])
+    let s = g.def1(false, mov_imm(-9223372036854775807), [])
+    let before = g.m_()
+    let slow = g.new_block(true)
+    let fast = g.new_block(false)
+    let cont = g.new_block(false)
+    let _b = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [c, s], cond: "eq", targets: [slow, fast]})
+    g.cur = fast
+    g.pmove([r], regs([l]))
+    let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+    g.cur = slow
+    let dup = g.elem_fn("dup", et)
+    let cp = g.rt("xo_x_obj_rl_unstack_n", [rsrc(l), isrc(g.esize(et)), dup], [false])
+    g.pmove([r], regs([cp[0]]))
+    let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+    g.cur = cont
+    g.inherit(before)
+    g.clobber()
+    g.set(v, [r])
+    return
+  }
+  let sp = name.find(" ") ?? -1
+  let k = if sp < 0 { -1 } else { Int.parse(name[sp + 1..name.len()]) ?? -1 }
+  if name.starts_with("rt.rl_stack ") {
+    let t = ssa.ty_of(x.tb)
+    let et = g.m.types[t].elems[0]
+    let es = g.esize(et)
+    if es != 8 * g.nwords(et) || k < 1 {
+      g.fail("rl_stack of `${g.tname(t)}`")
+    }
+    let off = g.mem_bytes
+    g.mem_bytes += 24 + es * k
+    let a = g.area_addr(off)
+    let c = g.def1(false, mov_imm(-9223372036854775807), [])
+    g.store("str $u0, [$u1, #0]", [c, a])
+    let n = g.def1(false, mov_imm(k), [])
+    g.store("str $u0, [$u1, #8]", [n, a])
+    g.store("str $u0, [$u1, #16]", [n, a])
+    g.set(v, [a])
+    return
+  }
+  if name.starts_with("rt.rl_stack_put ") {
+    let l = g.word(x.args[0])
+    let et = g.m.types[g.vty(x.args[0])].elems[0]
+    let es = g.esize(et)
+    var w = 0
+    for s in g.store_words(x.args[1]) {
+      g.store("str $u0, [$u1, #${24 + k * es + 8 * w}]", [s, l])
+      w += 1
+    }
+    g.set(v, [l])
+    return
+  }
+  // rt.rl_stack_drop N: the elements' references, the list itself in the
+  // frame
+  let l = g.real(g.word(x.args[0]))
+  let et = g.m.types[g.vty(x.args[0])].elems[0]
+  let es = g.esize(et)
+  let lay = g.layout(et)
+  for i in 0..k {
+    var ws: List[Int] = []
+    for (j, fp) in lay.indexed() {
+      ws.push(g.def1(fp, "ldr $d0, [$u0, #${24 + i * es + 8 * j}]", [l]))
+    }
+    g.release(et, ws)
+  }
+  g.set(v, [])
+}

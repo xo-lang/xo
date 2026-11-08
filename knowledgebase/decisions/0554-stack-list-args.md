@@ -1,7 +1,7 @@
 # 0554: Small List literals passed to a call stay on the stack; the callee copies one it keeps
 
-Status: Proposed (Xo Lang 1, 2026-11-07; the lead asked for the ADR with the
-measured ceiling before any code)
+Status: Accepted with addendum (owner, 2026-11-07); proposed by Xo Lang 1 the
+same day, the lead asked for the ADR with the measured ceiling before any code
 
 ## Context
 
@@ -86,6 +86,114 @@ stack_small); LLVM, wasm and the Go backend keep the heap.
    is checked again against rule 2 and every unstacking parameter's
    function against rule 3; a violation fails the build naming the
    function and value.
+
+### As implemented (prototype, 2026-11-07): changes from the text above
+
+The prototype (compiler/arm64/stacklist.xo, arm64 only, pass
+`stack_lists`) differs from rules 1, 3 and 4 in three ways; these change
+what was accepted and are reported to the lead with their numbers before
+landing.
+
+- **Element types.** Only List[Str] and List[List] literals and
+  parameters (stack_list_type): their elements are whole words the frame
+  slot stores as they are. Other element types keep the heap.
+- **Every function protects its parameters (rule 4 replaced).** Each
+  function's List[Str] and List[List] parameters with a consuming use get
+  the copy-on-keep check, whether or not a literal reaches the function,
+  and a caller passes a literal to any module function. Rule 4's
+  whole-program mark would make a function's body depend on its callers,
+  so the inline cache (which serves a function's post-inline body by its
+  own key) would hand a warm build a body compiled for a different set of
+  callers than a cold build: a stack List could reach a body without the
+  checks. Protecting every function keeps each body a function of its own
+  key. The cost moves from "functions a literal reaches" to "every
+  function with such a parameter and a keeping use"; its size is in the
+  measurements below.
+- **Where the check goes (rule 3 refined).** A parameter with one
+  keeping use, owned or borrowed, is copied right before that use
+  (`rt.rl_unstack`), so the paths that keep nothing (series_of's hit)
+  copy nothing. For an owned parameter the copy consumes it and every
+  later use names the value that reaches it: the copy where only the
+  copy's paths reach, the parameter where none does, and a new block
+  parameter where both meet (stacklist.xo redefine, SSA repair of one
+  redefinition), so a fault's shared cleanup releases one value on every
+  path. An owned parameter with several keeping uses, or one that is
+  retained, is copied once at the entry instead (the first prototype did
+  this for every owned parameter: series_of then copied on every call and
+  the metrics counter measured 0.987, noise, against the 0.733 ceiling).
+  A borrowed parameter's copy takes the retain insert_rc put before the
+  use; a single-predecessor landing pad's release moves to the copy.
+  `rt.rl_unstack` is an inline count compare with a call
+  (`xo_x_obj_rl_unstack_n`) only for a frame list.
+- **Verifier (rule 6).** The existing RC verifier checks the result:
+  `rt.rl_stack` and `rt.rl_stack_put` are immortal roots (imm_at),
+  `rl_stack_put` consumes its element, `rl_unstack` consumes its operand;
+  the self build verifies under XO_INLINE_STRICT=1.
+- **Landing pad releases (rule 1 widened).** A literal whose element
+  expression can fault has the list made so far released in that
+  element's landing pad, so the single-use rule rejected it (the metrics
+  counter's `[value]` among them: the first measurements ran with the
+  pass taking no literal there). Each value of the literal's chain may
+  now have releases besides its next push; they become
+  `rt.rl_stack_drop K` for the K elements put by then.
+- **Var parameters.** A literal passed as a callee's `var` parameter is
+  not a candidate: the callee changes it in place, and a push there
+  grows the frame list and frees its frame memory (found by the self
+  build: closures.xo env_drop's `var b: List[Str] = [...]` reached
+  frame_down's push once landing pad releases were allowed).
+
+## Addendum (owner, 2026-11-07): the local rule as built, and its numbers
+
+The owner accepted the prototype's local rule in place of rule 4's
+whole-program mark, on the follow-up numbers below. As built
+(compiler/arm64/stacklist.xo, arm64 and amd64 native backends):
+
+- **Every function protects its parameters.** Each List[Str] or
+  List[List] parameter with a keeping use (stored, captured, returned,
+  consumed by a call that keeps it) is checked before it is kept,
+  whether or not a literal reaches the function, so a function's body
+  depends only on its own inline cache key.
+- **The copy sits at a single keeping use.** With one keeping use the
+  `rt.rl_unstack` goes right before it, and for an owned parameter the
+  SSA is repaired (on-demand block parameters where the copied and the
+  original value meet), so a path that keeps nothing copies nothing;
+  several keeping uses, or a retain, copy once at the entry.
+- **Landing pad releases are allowed in the literal's chain.** An
+  element expression that can fault releases the list made so far in
+  its landing pad; those releases become `rt.rl_stack_drop K` for the K
+  elements put by then. Without this the metrics counter's `[value]` was
+  never taken (the first measurements below ran with the pass taking no
+  literal there).
+- **A literal passed as a `var` parameter is excluded.** The callee
+  changes it in place, and a push there grows the frame list and frees
+  its frame memory (the self build found it: closures.xo env_drop's
+  `var b: List[Str] = [...]` reached frame_down's push).
+
+Numbers (`xo bench --ab` on the first linux/arm64 host, base presize
+b686b0392, which made `[x]` at its size, against presize plus this
+rule 87bec9ab7):
+
+| row | wall | 95% interval | n |
+|---|---|---|---|
+| bench/perf/metrics counter | 0.760 | 0.747 to 0.794 | 6 |
+| bench/perf/metrics histogram | 0.756 | 0.738 to 0.773 | 6 |
+| xo self build | 1.011 (noise) | 0.999 to 1.034 | 7 |
+| xo self build cpu | 1.007 (noise) | 0.992 to 1.019 | 7 |
+| xo self build max RSS | 0.999 (noise) | 0.989 to 1.004 | 7 |
+| regexp compile | 0.996 | 0.987 to 1.0 | 7 |
+| path join | 0.994 (noise) | 0.979 to 1.015 | 7 |
+| template render | 1.001 (noise) | 0.998 to 1.005 | 6 |
+| strsplit split | 0.950 (noise) | 0.9 to 1.026 | 7 |
+
+`rt.rl_unstack` runs 3,720,660 times in one self build of xo by the
+built xo (an instrumented scratch build counting every call), and copies
+a frame list 0 times: the compiler pays only the inline count compare.
+An earlier n=3 self build run read 1.012 (1.012 to 1.049), so the cost
+is at most about 1 to 2% of xo's wall, against 24% on the metrics hot
+path. xo's __text grew 0.15% at the first prototype (37,630,892 to
+37,686,848 bytes, 307 rl_unstack sites); it was not measured again after
+the two fixes, and no byte-identity run was made for a program with no
+candidate (every function with a keeping parameter changes).
 
 ## Consequences
 

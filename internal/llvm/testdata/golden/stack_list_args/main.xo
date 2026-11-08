@@ -1,0 +1,109 @@
+// Decision 0554: small List literals passed to calls, built in the
+// caller's frame where the callee only reads them, and copied by a callee
+// that keeps them (returned, stored, captured, through an alias), on some
+// calls and not others; the leak check sees every element released.
+
+struct Keep {
+  xs: List[Str]
+  tag: Str
+}
+
+fn total(xs: List[Str]) -> Int {
+  var n = 0
+  for x in xs {
+    n += x.len()
+    if x == "stop" {
+      return -1
+    }
+  }
+  n
+}
+
+fn maybe_keep(xs: List[Str], k: Bool) -> List[Str]? {
+  if k {
+    return Some(xs)
+  }
+  var n = 0
+  for x in xs {
+    n += x.len()
+  }
+  if n < 0 {
+    return Some(xs)
+  }
+  None
+}
+
+fn make(xs: List[Str], tag: Str) -> Keep {
+  if xs.len() > 3 {
+    return Keep{xs: [], tag: tag}
+  }
+  Keep{xs: xs, tag: tag}
+}
+
+fn alias(xs: List[Str], k: Int) -> List[List[Str]] {
+  let ys = xs
+  if k > 0 {
+    return [ys, ys]
+  }
+  var n = 0
+  for y in ys {
+    n += y.len()
+  }
+  if n == 12345 {
+    return [ys]
+  }
+  []
+}
+
+fn cap(xs: List[Str]) -> fn() -> Int {
+  fn() { xs.len() + xs[0].len() }
+}
+
+fn first(xs: List[Str]) -> Str {
+  if xs.is_empty() {
+    return ""
+  }
+  xs[0]
+}
+
+fn main(os: Os) {
+  var kept: List[List[Str]] = []
+  var ks: List[Keep] = []
+  var fs: List[fn() -> Int] = []
+  var n = 0
+  for i in 0..300 {
+    let s = "s${i}"
+    let t = "t${i * 7}"
+    n += total([s, t])
+    n += total([s])
+    if let Some(l) = maybe_keep([s, t], i % 3 == 0) {
+      kept.push(l)
+    }
+    if i % 50 == 0 {
+      ks.push(make([s, t, s], "k${i}"))
+    }
+    let al = alias([t], i % 7)
+    for l in al {
+      kept.push(l)
+    }
+    if i % 100 == 0 {
+      fs.push(cap([s, t]))
+    }
+    n += first([t, s]).len()
+  }
+  var m = 0
+  for l in kept {
+    m += l.len()
+    for x in l {
+      m += x.len()
+    }
+  }
+  for k in ks {
+    m += k.xs.len() + k.tag.len()
+  }
+  for f in fs {
+    m += f()
+  }
+  os.stdio.println("n ${n} m ${m} kept ${kept.len()} ks ${ks.len()} fs ${fs.len()}")
+  os.stdio.println("${kept[0]} ${kept[kept.len() - 1]} ${ks[1].xs} ${ks[5].tag}")
+}

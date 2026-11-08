@@ -684,6 +684,31 @@ pub fn rs_of_int(v: Int, lenp: Int) -> Int {
 /// rl_copy for generated code (xo_rl_copy).
 pub fn rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { rl_copy(heap_word(), l, esize, dup, drop) }
 
+/// The count of a list in its caller's frame (decision 0554): immortal
+/// to the emitted retains and releases (negative, bit 62 clear), one
+/// above IMMORTAL so a static literal is never taken for one.
+const STACK: Int = -9223372036854775807
+
+/// l, or a heap copy of it when it is in a caller's frame (decision 0554,
+/// xo_rl_unstack): a function about to keep a List parameter (store,
+/// capture, return it) copies one that a caller built on its stack; the
+/// copy holds its own references to the elements (dup, when not 0) and
+/// the caller's frame releases its own.
+pub fn rl_unstack_n(l: Int, esize: Int, dup: Int) -> Int {
+  if count(l) != STACK {
+    return l
+  }
+  let hw = heap_word()
+  let len = rt.mem_load(l, 8, 8)
+  let c = rl_new(hw, if len < min_cap(esize) { min_cap(esize) } else { len }, esize)
+  rt.mem_store(c, 8, len, 8)
+  rt.mem_copy(addw(c, L_HDR), addw(l, L_HDR), mulw(len, esize))
+  if dup != 0 {
+    each(c, esize, dup)
+  }
+  c
+}
+
 /// rc_defer for generated code (xo_rc_defer); a real-time section defers
 /// the object (its queue) unless a drain runs.
 pub fn rc_defer_n(obj: Int, drop: Int) {

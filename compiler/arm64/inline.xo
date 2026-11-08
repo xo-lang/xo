@@ -776,6 +776,19 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
       ch = true
     }
   }
+  // decision 0554 (prototype): every function copies a List parameter a
+  // caller built in its frame before keeping it, and a small literal only
+  // read, released or passed to module functions is built in the frame
+  // (arm64). Every function, not only one that inlined a call: a callee
+  // that inlines nothing still keeps what it is passed
+  if m.goarch == "arm64" && pass_on(m, "stack_lists") {
+    if unstack_params(f, m) {
+      ch = true
+    }
+    if stack_lists(f, m) {
+      ch = true
+    }
+  }
   // decision 0257: after inlining, which brings the loops' list reads
   // into one function
   if pass_on(m, "hoist_fields") && hoist_fields(f, m.types) {
@@ -805,6 +818,10 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
     let bad = stack_small_violations(f)
     if !bad.is_empty() {
       fault("stack_small: ${f.name}: ${bad.join(", ")} escape after the later passes (decision 0395)")
+    }
+    let badl = stack_list_violations(f, m)
+    if !badl.is_empty() {
+      fault("stack_lists: ${f.name}: ${badl.join(", ")} escape after the later passes (decision 0554)")
     }
   }
   m.funcs[fi] = f

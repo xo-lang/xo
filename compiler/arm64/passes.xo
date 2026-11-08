@@ -61,6 +61,9 @@ pub fn passes() -> List[Str] {
     // stacksmall.xo (decision 0395): a small Str or Bytes this function
     // only reads, in its frame (arm64)
     "stack_small",
+    // stacklist.xo (decision 0554): small List literals passed to
+    // calls, in the frame; List parameters copied before a keep (arm64)
+    "stack_lists",
     "hoist_fields",
     "fold_tuples",
     "cse",

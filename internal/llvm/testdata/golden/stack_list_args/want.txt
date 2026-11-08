@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+n 4860 m 3877 kept 614 ks 6 fs 3
+["s0", "t0"] ["t2093"] ["s50", "t350", "s50"] k250
+--- stderr

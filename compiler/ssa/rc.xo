@@ -256,6 +256,11 @@ fn runtime_modes(name: Str) -> List[Mode]? {
   if name.starts_with("list.setf ") {
     return Some([c, n, c])
   }
+  // decision 0554's frame list (compiler/arm64 stacklist.xo): the element
+  // moves in; rt.rl_stack_drop releases it with the list
+  if name.starts_with("rt.rl_stack_put ") {
+    return Some([c, c])
+  }
   match name {
     "str.concat" | "str.concat_obj" => Some([c, w])
     "str.concat_int" => Some([c, n])
@@ -270,6 +275,8 @@ fn runtime_modes(name: Str) -> List[Mode]? {
     // (maplog.xo's put fast path): borrowed list, the element moves in
     "log.set" => Some([w, n, c])
     "list.pop" => Some([c])
+    // decision 0554: the list moves through, or its frame copy is made
+    "rt.rl_unstack" => Some([c])
     "list.take" => Some([c, n])
     "rt.task_spawn" | "rt.task_spawn_fn" => Some([w, c, n, n, n, n, n, w])
     "rt.task_done" => Some([w, c, n])
@@ -689,6 +696,32 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
     _ => {}
   }
   ms
+}
+
+/// Whether each operand of v in f is consumed (Rc.modes), for a pass
+/// after reference counting that puts a value before a use: compiler/arm64
+/// stacklist.xo copies a frame list only where a use takes it (decision
+/// 0554). Calls and closures read their function's flags in m.
+pub fn (m: Module) consumed_operands(f: Func, v: Int) -> List[Bool] {
+  var r = Rc{types: m.types}
+  let x = f.values[v]
+  if x.op == Op.Call || x.op == Op.Closure {
+    let fi = m.func_index(aux_name(x.aux))
+    if fi >= 0 {
+      r.fidx[aux_name(x.aux)] = 0
+      r.borrowed.push(m.funcs[fi].borrowed)
+      r.capb.push(m.funcs[fi].cap_borrowed)
+    }
+  }
+  if x.op == Op.Return {
+    r.fi = 0
+    r.rvp.push(f.ret_view)
+  }
+  var out: List[Bool] = []
+  for md in r.modes(f, v) {
+    out.push(md == Mode.Consume)
+  }
+  out
 }
 
 fn fill_modes(n: Int, m: Mode) -> List[Mode] {
@@ -1814,7 +1847,9 @@ fn imm_value(x: Value) -> Bool {
       }
       false
     }
-    Call => aux_name(x.aux) is "rt.rl_empty" | "rt.h_zero"
+    // decision 0554's frame list (compiler/arm64 stacklist.xo) is
+    // uncounted as the empty list is
+    Call => aux_name(x.aux) is "rt.rl_empty" | "rt.h_zero" || aux_name(x.aux).starts_with("rt.rl_stack ") || aux_name(x.aux).starts_with("rt.rl_stack_put ")
     Closure => x.args.is_empty()
     _ => false
   }
