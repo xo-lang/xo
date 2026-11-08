@@ -784,6 +784,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   compiler/xo; when NEW adds a std function the compiler calls, BASE
   cannot build it ("round 0: A: exit 1"), so use `self=a` (BASE's
   sources, which NEW's std also builds; 2026-10-30).
+  `stage2` before the mode (`-- stage2 self`) rebuilds each side's xo
+  with itself first: use it whenever a self, self=a or edit claim comes
+  from a change to code generation or the runtime, which a seed-built xo
+  lacks in its own code (gotchas/measure-xo-speed-needs-self-built-xo.md,
+  hit 2026-11-04 and 2026-11-08); those modes warn without it (lead,
+  2026-11-08). A pass change (a compiler/ source the xo runs) needs no
+  stage2: the seed compiles the new pass code into xo.
   Rounds (owner, 2026-10-31: "Do 3 rounds"): ab-host.sh runs 3 rounds
   after 1 warmup (3 for `edit`), and xo bench gives a verdict from 3
   rounds (decision 0340's addendum). A 3-round verdict needs all three

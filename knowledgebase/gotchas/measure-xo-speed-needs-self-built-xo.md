@@ -1,6 +1,6 @@
 # Measuring xo's own speed needs each xo built by itself
 
-Status: Observed (2026-11-04)
+Status: Observed (2026-11-04; again 2026-11-08, Xo Lang 4, in a heap profile)
 
 Symptom: a cold `xo test --std-module=native/json` --ab against 0.38.1
 was 1.13 to 1.14 in instructions on the Mac for every xo from 1f648265b
@@ -20,6 +20,14 @@ test; the published 0.38.1 (370 to 375 ms) and an s2 of v0.38.1 (371 to
 candidate, which has the regression, 573 to 575 ms (linux/arm64,
 2026-11-04). Check `xo version -m` (XO_COMMIT, XO_BUILT_BY) of any xo used
 as a release base; a release's archive is checked against its SHA256SUMS.
+
+Again 2026-11-08: List slices lowered with their capacity (xo.slice
+pushed from empty before) left the GCP aiplatform/v1 test build's heap
+profile unchanged with xobuild's xo: 307 GB in xo.slice[List[Int]], all
+from xo's own arm64 field_op, whose slice code the seed had compiled.
+The bench/perf/listslice rows, built by that same xo, were 0.2 to 0.73
+of before. The same holds for allocation counts and heap profiles, not
+only wall and CPU time.
 
 Cause: `go run ./scripts/xobuild` (and ab-host.sh's own builds) compile
 the xo under test with a seed or an earlier xo. That xo then emits the
