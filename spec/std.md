@@ -8171,4 +8171,5 @@ leading `@type` (the type must be in the registry). `unmarshal` accepts both nam
 valued forms such as `1e2` and `1.0`), base64 with or without padding in the standard or URL alphabet, enum names or
 numbers, rejects unknown fields (skipped with `discard_unknown`), duplicate fields and a second member of a oneof, treats
 `null` as unset (except for `Value` and `NullValue`), and writes the wire fields in protobuf-go's order (fields by number,
-then oneofs), maps in key order. Checked against protobuf-go's `protojson` (testdata/corpus/protojson).
+then oneofs), maps in key order. A proto2 `required` field that is missing (or `null`) is an error in both directions, at any depth, as
+protobuf-go's protojson reports it (a message of an `Any` too). Checked against protobuf-go's `protojson` (testdata/corpus/protojson).

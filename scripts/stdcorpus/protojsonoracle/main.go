@@ -164,6 +164,23 @@ func schema() *descriptorpb.FileDescriptorSet {
 		set.File = append(set.File, protodesc.ToFileDescriptorProto(f))
 	}
 	set.File = append(set.File, fd)
+	// a proto2 file with required fields, plain and nested (Go's protojson reports a missing one)
+	req := descriptorpb.FieldDescriptorProto_LABEL_REQUIRED
+	leaf := &descriptorpb.DescriptorProto{Name: proto.String("Leaf"), Field: []*descriptorpb.FieldDescriptorProto{
+		field("a", 1, descriptorpb.FieldDescriptorProto_TYPE_INT32, req, ""),
+		field("b", 2, descriptorpb.FieldDescriptorProto_TYPE_STRING, opt, ""),
+	}}
+	rq := &descriptorpb.DescriptorProto{Name: proto.String("Req"), Field: []*descriptorpb.FieldDescriptorProto{
+		field("id", 1, descriptorpb.FieldDescriptorProto_TYPE_INT32, req, ""),
+		field("name", 2, descriptorpb.FieldDescriptorProto_TYPE_STRING, opt, ""),
+		field("leaf", 3, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, req, ".pjt2.Leaf"),
+		field("leaves", 4, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, rep, ".pjt2.Leaf"),
+		field("opt_leaf", 5, descriptorpb.FieldDescriptorProto_TYPE_MESSAGE, opt, ".pjt2.Leaf"),
+	}}
+	set.File = append(set.File, &descriptorpb.FileDescriptorProto{
+		Name: proto.String("pjtest2.proto"), Package: proto.String("pjt2"), Syntax: proto.String("proto2"),
+		MessageType: []*descriptorpb.DescriptorProto{leaf, rq},
+	})
 	return set
 }
 
@@ -476,12 +493,78 @@ func main() {
 		}
 		fmt.Fprintf(&o, "  (\"%s\", \"%s\", \"%s\"),\n", name, q(in), res)
 	}
+	cur = append(cur, []struct{ name, in string }{
+		{"pjt2.Req", `{"id":1,"leaf":{"a":2}}`}, {"pjt2.Req", `{"id":1}`}, {"pjt2.Req", `{"leaf":{"a":2}}`}, {"pjt2.Req", `{"id":1,"leaf":{}}`},
+		{"pjt2.Req", `{"id":1,"leaf":{"a":2},"leaves":[{"a":3},{"b":"x"}]}`}, {"pjt2.Req", `{"id":1,"leaf":{"a":2},"optLeaf":{"b":"x"}}`},
+		{"pjt2.Req", `{"id":null,"leaf":{"a":2}}`}, {"pjt2.Req", `{"id":1,"leaf":null}`}, {"pjt2.Req", `{}`}, {"pjt2.Leaf", `{"a":1,"b":"x"}`},
+		{"pjt2.Leaf", `{"b":"x"}`}, {"pjt2.Req", `{"id":1,"leaf":{"a":2},"name":"n"}`},
+	}...)
 	for _, c := range cur {
 		emitU(c.name, c.in)
 	}
 	for _, u := range umRows {
 		emitU(u.name, u.in)
 	}
+	o.WriteString("]\n\n")
+	// proto2 messages with required fields: the wire is made with AllowPartial, so a missing required field is
+	// on the wire as such; Go's protojson.Marshal either writes the JSON or errors
+	o.WriteString("/// (message full name, wire hex, Go's protojson output compacted, or the text `error` for a missing required field)\nconst MARSHAL2: List[(Str, Str, Str)] = [\n")
+	rdd, _ := files.FindDescriptorByName("pjt2.Req")
+	ldd, _ := files.FindDescriptorByName("pjt2.Leaf")
+	rd, ld := rdd.(protoreflect.MessageDescriptor), ldd.(protoreflect.MessageDescriptor)
+	mk := func(md protoreflect.MessageDescriptor, set func(m *dynamicpb.Message)) {
+		m := dynamicpb.NewMessage(md)
+		set(m)
+		wire, err := proto.MarshalOptions{Deterministic: true, AllowPartial: true}.Marshal(m)
+		if err != nil {
+			panic(err)
+		}
+		res := "error"
+		if js, err := (protojson.MarshalOptions{Resolver: resolver}).Marshal(m); err == nil {
+			res = q(compact(js))
+		}
+		fmt.Fprintf(&o, "  (\"%s\", \"%x\", \"%s\"),\n", md.FullName(), wire, res)
+	}
+	field_ := func(md protoreflect.MessageDescriptor, n string) protoreflect.FieldDescriptor {
+		return md.Fields().ByName(protoreflect.Name(n))
+	}
+	leafOf := func(a int32, hasA bool, b string) *dynamicpb.Message {
+		l := dynamicpb.NewMessage(ld)
+		if hasA {
+			l.Set(field_(ld, "a"), protoreflect.ValueOfInt32(a))
+		}
+		if b != "" {
+			l.Set(field_(ld, "b"), protoreflect.ValueOfString(b))
+		}
+		return l
+	}
+	mk(rd, func(m *dynamicpb.Message) {
+		m.Set(field_(rd, "id"), protoreflect.ValueOfInt32(1))
+		m.Set(field_(rd, "leaf"), protoreflect.ValueOfMessage(leafOf(2, true, "")))
+	})
+	mk(rd, func(m *dynamicpb.Message) { m.Set(field_(rd, "id"), protoreflect.ValueOfInt32(1)) })
+	mk(rd, func(m *dynamicpb.Message) {
+		m.Set(field_(rd, "leaf"), protoreflect.ValueOfMessage(leafOf(2, true, "")))
+	})
+	mk(rd, func(m *dynamicpb.Message) {
+		m.Set(field_(rd, "id"), protoreflect.ValueOfInt32(1))
+		m.Set(field_(rd, "leaf"), protoreflect.ValueOfMessage(leafOf(0, false, "x")))
+	})
+	mk(rd, func(m *dynamicpb.Message) {
+		m.Set(field_(rd, "id"), protoreflect.ValueOfInt32(1))
+		m.Set(field_(rd, "leaf"), protoreflect.ValueOfMessage(leafOf(2, true, "")))
+		ls := m.Mutable(field_(rd, "leaves")).List()
+		ls.Append(protoreflect.ValueOfMessage(leafOf(3, true, "y")))
+		ls.Append(protoreflect.ValueOfMessage(leafOf(0, false, "z")))
+	})
+	mk(rd, func(m *dynamicpb.Message) {
+		m.Set(field_(rd, "id"), protoreflect.ValueOfInt32(1))
+		m.Set(field_(rd, "leaf"), protoreflect.ValueOfMessage(leafOf(2, true, "")))
+		m.Set(field_(rd, "opt_leaf"), protoreflect.ValueOfMessage(leafOf(0, false, "w")))
+	})
+	mk(rd, func(m *dynamicpb.Message) {})
+	mk(ld, func(m *dynamicpb.Message) { m.Set(field_(ld, "a"), protoreflect.ValueOfInt32(7)) })
+	mk(ld, func(m *dynamicpb.Message) { m.Set(field_(ld, "b"), protoreflect.ValueOfString("q")) })
 	o.WriteString("]\n")
 	o.WriteString(xoTests)
 	os.Stdout.WriteString(o.String())
@@ -525,6 +608,19 @@ test "marshal equals Go's protojson" {
     let got = protojson.marshal(r, name, unhex(wire), opts(flags)).or_fault("marshal " + name)
     if got != want {
       expect("${name} ${flags} ${wire}: ${got}") == "${name} ${flags} ${wire}: ${want}"
+    }
+  }
+}
+
+test "marshal of proto2 required fields equals Go's protojson, a missing one an error" {
+  let r = registry()
+  for (name, wire, want) in MARSHAL2 {
+    let got = match protojson.marshal(r, name, unhex(wire), opts(0)) {
+      Ok(j) => j
+      Err(_) => "error"
+    }
+    if got != want {
+      expect("${name} ${wire}: ${got}") == "${name} ${wire}: ${want}"
     }
   }
 }

@@ -1,5 +1,17 @@
 # std/protojson changes
 
+## 2026-11-08: fix: proto2 required fields are checked
+
+- Kind: fix
+- Commit: this push
+- Found by: the protobuf conformance runner with TestAllTypesProto2 (test/protoconf)
+- Go reference: google.golang.org/protobuf v1.36.12 (encoding/protojson, proto.CheckInitialized)
+- Test: testdata/corpus/protojson (proto2 Req and Leaf: 12 unmarshal inputs and 9 marshal wires, Go's result or error)
+- Timing: not applicable
+- Shipped in: not yet released
+
+`marshal` of wire bytes missing a proto2 `required` field, and `unmarshal` of JSON missing one (or giving `null`), now fail with `required field NAME not set`, at any depth, as protobuf-go does; before, both succeeded. Conformance (test/protoconf, proto3 and proto2 messages): 2670 successes, 4 listed failures (unknown fields of protobuf input re-serialized through JSON), 0 unexpected.
+
 ## 2026-11-08: fix: marshal and unmarshal without the options on native builds
 
 - Kind: fix
