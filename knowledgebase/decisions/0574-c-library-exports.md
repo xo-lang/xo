@@ -314,10 +314,15 @@ linker as the Xo library is (cs_); the C caller at -O2):
 |---|---|---|---|---|---|---|---|
 | darwin/arm64 (Mac, 1 run) | 1.27 ns | 1.02 ns | 0.76 ns | 24.6 ns | 20.6 ns | 4.1 ns | 4.1 ns |
 | linux/arm64 (offload host 2, the pass/fail host, under load; median of 5 runs) | 0.94 ns | not run | 0.47 ns | 24.8 ns | not run | not run | 16.3 ns |
+| linux/arm64 (offload host 1, the timing host; median of 5 runs, 2026-11-08) | 1.28 ns | 1.02 ns | 0.77 ns | 34.3 ns | not run | 18.1 ns | 17.9 ns |
+| darwin/amd64 (the Intel laptop, cross built on the Mac; median of 3 runs, 2026-11-08) | 2.14 ns | 1.45 ns | 0.94 ns | 46.4 ns | 15.4 ns | 10.4 ns | 10.5 ns |
 
-The linux/arm64 row on host 1 (the timing host), with the cs_ baseline
-and geo_byte_len, is queued behind other measurements and is added when
-it lands.
+On host 1 the Int call costs a quarter nanosecond over a C library's, as
+on the Mac. On the Intel laptop it costs 0.7 ns over a C library's, and
+`geo_byte_sum` less `geo_byte_len` (31 ns) is the x86 backend's 64 byte
+loop, not the boundary: the arm64 backend's loop is about 4 ns on the
+Mac, C's 10 ns on the laptop. That loop is an x86 code generation item,
+outside this decision.
 
 (`geo_byte_len` returns `b.len()`: the boundary's copy alone.)
 
@@ -332,10 +337,27 @@ is the wrapper's allocation, memcpy and free of the 64 bytes (all
 inlined into `xo_cx_geo_byte_sum` but the allocator's call). A plain Xo
 program's `b.clone()` of 64 bytes takes 16 to 17 ns on the same Mac (3
 runs of 10M), so the library path adds about 4 ns and the rest is Xo's
-own allocation, copy and free. Stage 2 measures where they go and
-whether a borrowed Bytes for the call's length is sound (Xo cannot keep
-a view of C memory past the call, so the function would have to be
-checked not to store it).
+own allocation, copy and free. C's malloc, memcpy and free of 64 bytes
+takes 15.5 to 16.6 ns on the same Mac (a profile of the Xo clone: the
+allocation 37%, libc's memmove 27%), so Xo's allocator is at C's speed
+and the only saving left is not copying: a borrowed Bytes over the C
+buffer for the call, when the function is checked not to keep it (Xo
+cannot keep a view of C memory past the call), else the copy.
+
+Stage 2 progress (branch, held with stage 1 until this decision is
+accepted; 2026-11-08):
+
+- amd64: `--lib` builds with the amd64 backend (linux thread locals by
+  initial exec, `movq xo_tlocal@GOTTPOFF(%rip)`, as arm64's `:gottprel:`).
+  The seven cmd/xo TestCLib tests pass on the linux/amd64 offload host;
+  on the Intel laptop the C caller, four concurrent C threads, and 1000
+  exiting C threads (max RSS 1032 to 1116 KB) pass.
+- Error results: `-> T ! E` exports as table row `T ! E` above, with 1
+  as the code: `int32_t *err` last (0 on success, 1 on failure, NULL
+  not set), 0 returned on failure, and the error's Display text for
+  `xo_last_error()`, kept in the calling thread's heap record (freed by
+  the thread's next error or its exit). cmd/xo TestCLibErrors (Int,
+  Float and unit results, a NULL err).
 
 ## Alternatives
 
