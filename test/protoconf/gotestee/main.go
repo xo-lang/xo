@@ -143,8 +143,10 @@ func main() {
 }
 
 func clearMessageSet(m *descriptorpb.DescriptorProto) {
-	if m.Options != nil {
+	if m.Options != nil && m.Options.GetMessageSetWireFormat() {
 		m.Options.MessageSetWireFormat = nil
+		// a MessageSet's extension range reaches 2^31-2, past what a plain message may extend
+		m.ExtensionRange = nil
 	}
 	for _, n := range m.NestedType {
 		clearMessageSet(n)
