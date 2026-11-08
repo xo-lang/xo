@@ -1,0 +1,13 @@
+use github.com/xo-lang/xo/test/stack_list_tail_callee/runtime
+
+pub fn new_storage_challenge_policy(aud: Str, allow: Bool) -> runtime.Bearer {
+  let seen = Mutex[List[Str]].new([aud])
+  let on = fn(s: Str) -> Int {
+    seen.with_read(fn(xs: List[Str]) -> Int { xs.len() + s.len() })
+  }
+  let reset = fn(xs: List[Str]) -> Int {
+    seen.reset(xs)
+    xs.len()
+  }
+  runtime.new_bearer_token_policy([aud], runtime.Opts{handler: runtime.Handler{on: Some(on), reset: Some(reset)}, allow: allow})
+}

@@ -1,0 +1,30 @@
+pub struct Cache {
+  pub scopes: List[Str]
+  pub n: Int
+}
+
+pub struct Handler {
+  pub on: Option[fn(Str) -> Int] = None
+  pub reset: Option[fn(List[Str]) -> Int] = None
+}
+
+pub struct Opts {
+  pub handler: Handler = Handler{}
+  pub allow: Bool = false
+}
+
+pub struct Bearer {
+  pub scopes: List[Str]
+  pub cache: Cache
+  pub on: Option[fn(Str) -> Int]
+  pub reset: Option[fn(List[Str]) -> Int]
+  pub allow: Bool
+}
+
+pub fn new_bearer_token_policy(scopes: List[Str], opts: Opts) -> Bearer {
+  Bearer{scopes: scopes, cache: token_cache(scopes, 1), on: opts.handler.on, reset: opts.handler.reset, allow: opts.allow}
+}
+
+fn token_cache(scopes: List[Str], n: Int) -> Cache {
+  Cache{scopes: scopes, n: n + scopes.len()}
+}

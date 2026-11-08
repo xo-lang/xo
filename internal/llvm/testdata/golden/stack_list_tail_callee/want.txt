@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+https://a0.example https://storage.example/.default https://storage.example/.default 2 true 3 2
+https://b0.example/c0 https://acct.example/.default https://acct.example/.default 2 false 3 2
+https://a1.example https://storage.example/.default https://storage.example/.default 2 true 3 2
+https://b1.example/c1 https://acct.example/.default https://acct.example/.default 2 false 3 2
+https://a2.example https://storage.example/.default https://storage.example/.default 2 true 3 2
+https://b2.example/c2 https://acct.example/.default https://acct.example/.default 2 false 3 2
+--- stderr

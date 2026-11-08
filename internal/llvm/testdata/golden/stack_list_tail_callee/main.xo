@@ -1,0 +1,58 @@
+// decision 0554: azblob's frame list fault reduced (2026-11-08; the
+// fix is 1670a356e, gotchas/frame-list-unguarded-inlined-callee.md). On
+// 71308bd10 the arm64 build failed with `stack_lists: core_with_token:
+// v63 escape after the later passes`. Every condition below is needed:
+//  - new_storage_challenge_policy has more than INLINE_TAIL_MAX (8)
+//    instructions of its own (the second closure), so its tail call of
+//    new_bearer_token_policy, a callee over 8 instructions, stays a call
+//    (find_call's tailbig rule), and its stack_lists builds `[aud]` in
+//    the frame before that call;
+//  - the closures reach the callee inside an options struct (nested or
+//    not), not as arguments (tail_at inlines a call that passes a
+//    closure literal);
+//  - the functions get their indices breadth first from main, and new_a
+//    calls the policy directly, so the order is policy < core_with_token <
+//    bearer: core_with_token inlines the policy's stacked body and then
+//    the bearer, before the bearer's own List parameter guards exist.
+// Fixed, every Bearer keeps a heap copy of its scopes: each line prints
+// its own audience.
+
+use github.com/xo-lang/xo/test/stack_list_tail_callee/runtime
+use github.com/xo-lang/xo/test/stack_list_tail_callee/exported
+
+struct Core {
+  url: Str
+  b: runtime.Bearer
+}
+
+fn core_with_token(u: Str, audience: Str, allow: Bool) -> Core {
+  let a = if audience.trim() == "" { "https://storage.example/.default" } else { "${audience.trim_end_chars("/")}/.default" }
+  Core{url: u, b: exported.new_storage_challenge_policy(a, allow)}
+}
+
+fn new_a(u: Str) -> Core {
+  Core{url: u, b: exported.new_storage_challenge_policy("https://storage.example/.default", true)}
+}
+
+fn new_b(u: Str, name: Str) -> Core {
+  core_with_token("${u}/${name}", "https://acct.example/", false)
+}
+
+fn main(os: Os) {
+  var kept: List[Core] = []
+  for i in 0..3 {
+    kept.push(new_a("https://a${i}.example"))
+    kept.push(new_b("https://b${i}.example", "c${i}"))
+  }
+  for c in kept {
+    let onv = match c.b.on {
+      Some(f) => f("ab")
+      None => -1
+    }
+    let rv = match c.b.reset {
+      Some(f) => f(["x", "yz"])
+      None => -1
+    }
+    os.stdio.println("${c.url} ${c.b.scopes[0]} ${c.b.cache.scopes[0]} ${c.b.cache.n} ${c.b.allow} ${onv} ${rv}")
+  }
+}

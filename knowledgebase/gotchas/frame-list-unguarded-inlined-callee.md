@@ -32,3 +32,27 @@ existing `rt.rl_unstack` as the guard). The verifier
 `rt.rl_unstack` of the frame list itself, and Retain, Release and Drop
 of it (a frame list's count is STACK: they change nothing); and its
 fault now names the use (`v231 struct uses v184`).
+
+## Reduction (2026-11-08)
+
+The golden internal/llvm/testdata/golden/stack_list_tail_callee faults
+the same way on 849fcb52f. Three conditions together make the order
+that leaves the callee unguarded; a reduction missing any one of them
+runs clean, which is why the earlier attempts (and
+stack_list_inlined_guard) did not reproduce it:
+
+- the middle function (the challenge policy) has more than
+  INLINE_TAIL_MAX (8) instructions of its own, so its tail call of a
+  callee over 8 instructions stays a call (find_call's tailbig rule)
+  and its own stack_lists builds the literal in the frame;
+- the closures it passes sit in an options struct (nested or flat;
+  passed as arguments they run clean), since tail_at inlines a tail
+  call that passes a closure literal as an argument;
+- the functions take their indices breadth first from main (instances
+  in the order they are found, not the declaration order), and another
+  caller reaches the middle function directly, so it is processed
+  before the outer caller while the kept callee comes after it.
+
+Tracing an inlining question: `f.values` keeps dead values after
+inline_call, so a call found there may already be inlined; walk the
+blocks' instrs instead.

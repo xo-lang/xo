@@ -6,8 +6,7 @@
 // never the frame list, whose slot every round of the loop reuses: the
 // stored lists print their own URLs. (This program does not reproduce
 // azblob's fault on 71308bd10, whose inlining order left the keeping
-// callee unguarded; storage/azblob and storage/azdatalake are the
-// reproduction.)
+// callee unguarded; stack_list_tail_callee does.)
 
 struct Pol {
   scopes: List[Str]
