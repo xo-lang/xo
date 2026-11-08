@@ -62,10 +62,49 @@ CLOCK_MONOTONIC CLOCK_MONOTONIC
 UMTX_OP_WAIT_UINT_PRIVATE UMTX_OP_WAIT_UINT_PRIVATE
 UMTX_OP_WAKE_PRIVATE UMTX_OP_WAKE_PRIVATE
 EINTR EINTR
-EAGAIN EAGAIN'
+EAGAIN EAGAIN
+KEV_IDENT offsetof(struct kevent, ident)
+KEV_FILTER offsetof(struct kevent, filter)
+KEV_FLAGS offsetof(struct kevent, flags)
+KEV_FFLAGS offsetof(struct kevent, fflags)
+KEV_DATA offsetof(struct kevent, data)
+KEV_UDATA offsetof(struct kevent, udata)
+KEV_SIZE sizeof(struct kevent)
+EVFILT_READ EVFILT_READ
+EVFILT_WRITE EVFILT_WRITE
+EVFILT_USER EVFILT_USER
+EV_ADD EV_ADD
+EV_DELETE EV_DELETE
+EV_ENABLE EV_ENABLE
+EV_DISABLE EV_DISABLE
+EV_ONESHOT EV_ONESHOT
+EV_CLEAR EV_CLEAR
+EV_EOF EV_EOF
+EV_ERROR EV_ERROR
+NOTE_TRIGGER NOTE_TRIGGER
+SA_HANDLER offsetof(struct sigaction, sa_handler)
+SA_FLAGS_AT offsetof(struct sigaction, sa_flags)
+SA_MASK offsetof(struct sigaction, sa_mask)
+SA_SIZE sizeof(struct sigaction)
+SA_ONSTACK SA_ONSTACK
+SA_RESTART SA_RESTART
+SA_SIGINFO SA_SIGINFO
+SIGBUS SIGBUS
+SIGSEGV SIGSEGV
+SIGPIPE SIGPIPE
+SIGURG SIGURG
+SIGCHLD SIGCHLD
+SIGPROF SIGPROF
+SIG_BLOCK SIG_BLOCK
+SIG_SETMASK SIG_SETMASK
+SS_SIZE_AT offsetof(stack_t, ss_size)
+SS_FLAGS_AT offsetof(stack_t, ss_flags)
+SS_SIZEOF sizeof(stack_t)
+UC_MCONTEXT offsetof(ucontext_t, uc_mcontext)
+MC_SIZEOF sizeof(mcontext_t)'
 {
   echo '#include <sys/types.h>'
-  for h in sys/stat.h sys/thr.h sys/umtx.h sys/mman.h sys/fcntl.h sys/errno.h sys/time.h stddef.h; do echo "#include <$h>"; done
+  for h in sys/stat.h sys/thr.h sys/umtx.h sys/mman.h sys/fcntl.h sys/errno.h sys/time.h sys/event.h sys/signal.h sys/ucontext.h stddef.h; do echo "#include <$h>"; done
   echo 'long abi[] = {'
   echo "$facts" | while read -r _ e; do echo "  $e,"; done
   echo '};'

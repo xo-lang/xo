@@ -251,3 +251,50 @@ fn stat_of(buf: Int, r: Int) -> (Stat, Int) {
   let nsec = rt.mem_load(buf, ST_MTIM + 8, 8)
   (Stat{mode: mode, size: rt.mem_load(buf, ST_SIZE, 8), mtime: sec * 1000000000 + nsec}, 0)
 }
+
+// ---------------------------------------------------------------------------
+// Layouts for the poller and signals (stage 2 of decision 0573, parked
+// for the VM lane: nothing uses them yet). TestFreeBSDABI checks them
+// against FreeBSD's headers.
+
+// struct kevent (sys/event.h, FreeBSD 12 and later)
+pub const KEV_IDENT: Int = 0
+pub const KEV_FILTER: Int = 8
+pub const KEV_FLAGS: Int = 10
+pub const KEV_FFLAGS: Int = 12
+pub const KEV_DATA: Int = 16
+pub const KEV_UDATA: Int = 24
+pub const KEV_SIZE: Int = 64
+pub const EVFILT_READ: Int = -1
+pub const EVFILT_WRITE: Int = -2
+pub const EVFILT_USER: Int = -11
+pub const EV_ADD: Int = 1
+pub const EV_DELETE: Int = 2
+pub const EV_ENABLE: Int = 4
+pub const EV_DISABLE: Int = 8
+pub const EV_ONESHOT: Int = 16
+pub const EV_CLEAR: Int = 32
+pub const EV_EOF: Int = 32768
+pub const EV_ERROR: Int = 16384
+pub const NOTE_TRIGGER: Int = 16777216
+
+// struct sigaction and stack_t (sys/signal.h)
+pub const SA_HANDLER: Int = 0
+pub const SA_FLAGS_AT: Int = 8
+pub const SA_MASK: Int = 12
+pub const SA_SIZE: Int = 32
+pub const SA_ONSTACK: Int = 1
+pub const SA_RESTART: Int = 2
+pub const SA_SIGINFO: Int = 64
+pub const SIGBUS: Int = 10
+pub const SIGSEGV: Int = 11
+pub const SIGPIPE: Int = 13
+pub const SIGURG: Int = 16
+pub const SIGCHLD: Int = 20
+pub const SIGPROF: Int = 27
+pub const SIG_BLOCK: Int = 1
+pub const SIG_SETMASK: Int = 3
+pub const SS_SIZE_AT: Int = 8
+pub const SS_FLAGS_AT: Int = 16
+pub const SS_SIZEOF: Int = 24
+pub const UC_MCONTEXT: Int = 16
