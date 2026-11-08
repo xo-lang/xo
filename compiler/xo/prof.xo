@@ -518,10 +518,25 @@ fn prof_cpu_out(os: Os, c: ProfCpu, out: Str, replace: Bool) -> () ! Str uses (f
       }
     }
   }
+  // each function's busiest leaf pc, for skid_notes
+  var top_n: List[Int] = []
+  var top_pc: List[Int] = []
+  for _ in 0..names.len() {
+    top_n.push(0)
+    top_pc.push(0)
+  }
+  for li in 0..t.locs.len() {
+    let f = t.cf[li][0]
+    if lleaf[li] > top_n[f] {
+      top_n[f] = lleaf[li]
+      top_pc[f] = t.locs[li]
+    }
+  }
   let total = c.samples.len()
   let pb = cpu_pprof(c.samples, t, c.period, c.dur)
   let txt = text_path(out)
-  let ok = prof_write(os, out, gzip(pb), replace) && prof_write(os, txt, top_text(flat, cum, names, hot, total, c.lost, c.dur, c.hz, c.period).bytes(), replace)
+  let summary = top_text(flat, cum, names, hot, total, c.lost, c.dur, c.hz, c.period) + skid_notes(flat, top_n, top_pc, names, hot, total)
+  let ok = prof_write(os, out, gzip(pb), replace) && prof_write(os, txt, summary.bytes(), replace)
   if !ok {
     return Err("could not write ${out} (it must not exist: a profile never overwrites a file)")
   }
@@ -687,6 +702,38 @@ fn top_text(flat: List[Int], cum: List[Int], names: List[Str], hot: List[Str], t
       shown += 1
       i -= 1
     }
+  }
+  b.freeze()
+}
+
+/// Notes on functions whose flat samples sit nearly all on one pc (at
+/// least 3% of the profile, 50 samples, and 70% of the function's): a
+/// timer sample is taken at the instruction after the one that stalls,
+/// and a load waits for an atomic before it, so such a pc is often an
+/// atomic's wait in the caller (a reference release, an Atomic, a Mutex)
+/// or a cache miss on the load before it, not the work of its line
+/// (gotchas/xo-prof-atomic-cost-at-next-load.md: 9 to 13% of
+/// bench/perf/metrics counter in ctx.unwinding, 2026-11-08). At most
+/// three, the largest first.
+fn skid_notes(flat: List[Int], top_n: List[Int], top_pc: List[Int], names: List[Str], hot: List[Str], total: Int) -> Str {
+  var keys: List[Int] = []
+  for f in 0..flat.len() {
+    if flat[f] >= 50 && flat[f] * 100 >= total * 3 && top_n[f] * 100 >= flat[f] * 70 {
+      keys.push((flat[f] << 24) | f)
+    }
+  }
+  if keys.is_empty() {
+    return ""
+  }
+  keys = keys.sort()
+  var b = StrBuilder.new()
+  b.write("\nskid (timer samples)\n")
+  var i = keys.len() - 1
+  while i >= 0 && i >= keys.len() - 3 {
+    let f = keys[i] & 16777215
+    let at = if hot[f].is_empty() { "" } else { " (${hot[f]})" }
+    b.write("note: ${pct(top_n[f], flat[f])} of ${names[f]}'s flat samples are on one instruction, pc 0x${top_pc[f].to_str_base(16)}${at}. A sample lands after the instruction that stalls: if it follows a load, the wait is likely an atomic just before it, often in the caller (a reference release, an Atomic, a Mutex), or that load's cache miss; check the caller's instructions before the call (pprof -peek ${names[f]} -addresses). See knowledgebase/gotchas/xo-prof-atomic-cost-at-next-load.md.\n")
+    i -= 1
   }
   b.freeze()
 }
