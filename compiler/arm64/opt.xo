@@ -1106,6 +1106,17 @@ fn (var g: G) safe_add(a: Int, n0: Int, o: ssa.Op) -> Bool {
   lo >= MIN_INT - n
 }
 
+/// Whether a + b (or a - b) cannot overflow, by both operands' bounds
+/// (decision 0577: an accumulator's induction bound and its step).
+fn (var g: G) safe_add2(a: Int, b: Int, o: ssa.Op) -> Bool {
+  let (alo, ahi) = g.bounds(a)
+  let (blo, bhi) = g.bounds(b)
+  if o == ssa.Op.Sub {
+    return ahi.checked_sub(blo).is_some() && alo.checked_sub(bhi).is_some()
+  }
+  ahi.checked_add(bhi).is_some() && alo.checked_add(blo).is_some()
+}
+
 /// Sends a jump to a block that only tests a register straight to the
 /// test's outcome when the jumping block set that register to a constant.
 fn (var g: G) thread_const() {

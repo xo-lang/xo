@@ -3341,6 +3341,9 @@ fn (var g: G) add_sub(v: Int) {
   if bconst && checked && g.safe_add(a, n0, x.op) {
     checked = false // the bounds of a prove it
   }
+  if !bconst && checked && g.m.passes_on.contains("acc_range") && g.safe_add2(a, b, x.op) {
+    checked = false // both operands' bounds prove it (decision 0577)
+  }
   var flag = if checked { "s" } else { "" }
   if bconst && (addsub_imm(n0) || (n0 != MIN_INT && addsub_imm(-n0))) {
     var o = ins

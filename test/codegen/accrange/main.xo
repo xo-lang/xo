@@ -1,0 +1,124 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): induction bounds of
+// loop accumulators (decision 0577, the optional pass acc_range). An add
+// into an accumulator loses its overflow test (arm64 `b.vs`, amd64 `jo`)
+// only where the accumulator's entry value, the trips and the step bound
+// it inside Int; each case below pins one side of that line.
+// passes: +acc_range
+
+// A byte sum over a Bytes: under 255 * 2^32, no test.
+fn byte_sum(b: Bytes) -> Int {
+  // arm64: -"b\.vs"
+  // amd64: -"\tjo "
+  var s = 0
+  for x in b {
+    s += Int(x)
+  }
+  s
+}
+
+// A subtracting accumulator: above -255 * 2^32, no test.
+fn byte_debt(b: Bytes) -> Int {
+  // arm64: -"b\.vs"
+  // amd64: -"\tjo "
+  var s = 0
+  for x in b {
+    s -= Int(x)
+  }
+  s
+}
+
+// A step of 4 from 3 (d > 1, c > 0): no test.
+fn every_fourth(b: Bytes) -> Int {
+  // arm64: -"b\.vs"
+  // amd64: -"\tjo "
+  var s = 0
+  var i = 3
+  while i < b.len() {
+    s += Int(b[i])
+    i += 4
+  }
+  s
+}
+
+// A step that arithmetic widens but keeps bounded (x * 1000 < 2^18): no
+// test.
+fn scaled(b: Bytes) -> Int {
+  // arm64: -"b\.vs"
+  // amd64: -"\tjo "
+  var s = 0
+  for x in b {
+    s += Int(x) * 1000
+  }
+  s
+}
+
+// A step of up to 2.55 x 10^13 over 2^32 trips can pass Int: the test
+// stays.
+fn scaled_far(b: Bytes) -> Int {
+  // arm64: "b\.vs"
+  // amd64: "\tjo "
+  var s = 0
+  for x in b {
+    s += Int(x) * 100000000000
+  }
+  s
+}
+
+// A bound with no length behind it (a parameter, any Int): the test
+// stays.
+fn param_bound(n: Int) -> Int {
+  // arm64: "b\.vs"
+  // amd64: "\tjo "
+  var s = 0
+  var i = 0
+  while i < n {
+    s += i & 255
+    i += 1
+  }
+  s
+}
+
+// A byte step with n = MAX_INT: 2^63 trips, the test stays.
+fn max_bound(k: Int) -> Int {
+  // arm64: "b\.vs"
+  // amd64: "\tjo "
+  var s = 0
+  var i = 0
+  while i < 9223372036854775807 {
+    s += i & 255
+    if s > k {
+      return s
+    }
+    i += 1
+  }
+  s
+}
+
+// An unbounded step (an Int parameter): the test stays.
+fn int_step(b: Bytes, y: Int) -> Int {
+  // arm64: "b\.vs"
+  // amd64: "\tjo "
+  var s = 0
+  for _x in b {
+    s += y
+  }
+  s
+}
+
+// An entry value near MAX_INT (MAX_INT - 2^20): the test stays.
+fn near_max(b: Bytes) -> Int {
+  // arm64: "b\.vs"
+  // amd64: "\tjo "
+  var s = 9223372036853727231
+  for x in b {
+    s += Int(x)
+  }
+  s
+}
+
+fn main(os: Os) {
+  let b = "the quick brown fox jumps over the lazy dog ${os.env.args().len()}".bytes()
+  let n = os.env.args().len() + 40
+  os.stdio.println("${byte_sum(b)} ${byte_debt(b)} ${every_fourth(b)} ${scaled(b)} ${scaled_far(b)}")
+  os.stdio.println("${param_bound(n)} ${max_bound(n * 1000)} ${int_step(b, n)} ${near_max(b)}")
+}

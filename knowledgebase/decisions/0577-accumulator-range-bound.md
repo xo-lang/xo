@@ -1,7 +1,12 @@
 # 0577: Induction bounds for loop accumulators (checked adds without a fault)
 
-Status: Accepted (owner, 2026-11-08, on the lead's recommendation, as a prototype behind XO_ACC_RANGE=1, off by default (2026-11-08 measurements: no gain on Zen 5 and arm64, Intel bytesum slower)). Proposed (Xo Lang 4, 2026-11-08; the lead asked for it, design
-first, prototype behind a flag). Extends decision 0054's value ranges.
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation, as a
+prototype off by default (2026-11-08 measurements: no gain on Zen 5 and
+arm64, Intel bytesum slower)). The owner's text named the flag
+XO_ACC_RANGE=1; the prototype is the optional pass `XO_PASSES=+acc_range`
+(the lead's choice, 2026-11-08, so it follows the other optional passes).
+Proposed (Xo Lang 4, 2026-11-08; the lead asked for it, design first,
+prototype behind a flag). Extends decision 0054's value ranges.
 
 ## Context
 
@@ -116,10 +121,11 @@ whose result interval fits in Int needs no test.
   as `add nsw` instead of sadd.with.overflow (the LLVM emitter reads the
   same SSA, not arm64's ranges; it would need the analysis moved to
   compiler/ssa or recomputed there).
-- Prototype flag: `XO_ACC_RANGE=1` (classified in
-  TestCodegenInputsClassified as a codegen input), off by default until
-  measured; the default flip is its own push with the touched packages'
-  full suites (owner, 2026-10-22).
+- Prototype flag: the optional pass `acc_range`, off unless
+  `XO_PASSES=+acc_range` (compiler/arm64 passes.xo; the caches already
+  key on XO_PASSES, so no new codegen input), until measured; the
+  default flip is its own push with the touched packages' full suites
+  (owner, 2026-10-22).
 
 ### Stages
 
@@ -147,6 +153,26 @@ whose result interval fits in Int needs no test.
   self build (--phase-times).
 - A fault message for an overflow that can no longer happen is gone;
   no program's observable behavior changes.
+
+## Results (stage 1 prototype, 2026-11-08)
+
+A = 229e8d4aa (pass off), B = the same with the pass on by default.
+Codegen: test/codegen/accrange's 18 patterns pass on arm64 and amd64
+(removing `// passes: +acc_range` fails the no-test patterns); the
+program's output is identical with and without the pass.
+
+| bench | Zen 5 (amd64 host, --ab) | arm64 host 1 (--ab) | i7-9750H (7 rounds, median ms) |
+|---|---|---|---|
+| bench/perf/bytesum | 0.999 (noise) | 0.998 (noise) | 403.7 to 514.1 (B 27% slower) |
+| checksum adler32 | 1.028 (noise) | 1.017 (worse, n=3) | 424.3 to 424.3 (noise) |
+| checksum fnv64a | 1.003 | 0.999 (noise) | 406.3 to 406.9 (noise) |
+
+The test removed is a predicted, never taken branch off the critical
+path, so wide cores gain nothing. The Intel loss is a layout effect
+under study (the Skylake-family JCC erratum: dropping `jo` moves the
+loop's closing branch). The pass stays off by default
+(`XO_PASSES=+acc_range` turns it on) until a layout fix or a loop where
+it measures faster; stage 2 (adler32's s2) waits on that too.
 
 ## Alternatives
 

@@ -27,7 +27,10 @@
 // assembly, so arm64's AES rounds are not an x86_64 host's). A key with
 // a target, `// arm64@windows: ...`, is checked on the code `xo asm
 // --targets=windows/arm64` emits, on any host (decision 0569: the
-// windows/arm64 invariants, such as no write of x18, the TEB).
+// windows/arm64 invariants, such as no write of x18, the TEB). A line
+// `// passes: SPEC` in a directory's file builds that directory with
+// XO_PASSES=SPEC, for an optional pass's patterns (`+acc_range`,
+// decision 0577).
 
 use std/regexp
 use std/task
@@ -253,9 +256,16 @@ fn codegen_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.rea
 
 fn codegen_one(os: Os, h: Host, xo: Str, d: Str, backend: Str) -> (Int, List[Str]) uses (env, fs.read, proc) {
   var ps: List[Pattern] = []
+  var passes = ""
   for e in os.fs.read_dir(d).ok() ?? [] {
     if !e.is_dir && e.name.ends_with(".xo") {
-      for p in patterns("${d}/${e.name}", os.fs.read_text("${d}/${e.name}").ok() ?? "") {
+      let src = os.fs.read_text("${d}/${e.name}").ok() ?? ""
+      for l in src.split("\n") {
+        if l.starts_with("// passes: ") {
+          passes = l["// passes: ".len()..l.len()].trim()
+        }
+      }
+      for p in patterns("${d}/${e.name}", src) {
         // an architecture's pattern only where the host is it
         if p.backend == backend && (p.arch.is_empty() || h.host.ends_with("/${p.arch}")) {
           ps.push(p)
@@ -283,7 +293,11 @@ fn codegen_one(os: Os, h: Host, xo: Str, d: Str, backend: Str) -> (Int, List[Str
     args.push(d)
     // the inline verify as the Go tests and xo dev goldens run it
     let strict = os.env.get("XO_INLINE_STRICT") ?? "1"
-    let out = match os.proc.cmd(xo, args).set_env("XO_LLVM_SPLIT", "1").set_env("XO_INLINE_STRICT", strict).output() {
+    var cmd = os.proc.cmd(xo, args).set_env("XO_LLVM_SPLIT", "1").set_env("XO_INLINE_STRICT", strict)
+    if !passes.is_empty() {
+      cmd = cmd.set_env("XO_PASSES", passes)
+    }
+    let out = match cmd.output() {
       Ok(o) => o
       Err(e) => {
         fails.push("xo asm: ${e}")

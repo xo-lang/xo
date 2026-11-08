@@ -373,6 +373,10 @@ struct G {
   /// intervals of Int values (ranges.xo)
   ranges: List[Interval] = []
   has_range: List[Bool] = []
+  /// induction bounds of loop accumulators (ranges.xo acc_caps, decision
+  /// 0577; XO_PASSES=+acc_range): a header parameter's interval is kept
+  /// within its cap
+  acc_caps: Map[Int, Interval] = {}
   /// what proves list indexes in range across blocks (decision 0257)
   proof: Proof = Proof{idom: [], entry: 0}
   /// registers that are another plus a constant (lsr.xo)

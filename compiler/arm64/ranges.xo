@@ -85,6 +85,35 @@ fn (var g: G) compute_ranges(blocks: List[Int], idom: List[Int]) {
       }
     }
   }
+  g.acc_caps = {}
+  if g.ranges_fix(blocks, mids, ups, downs) {
+    if !g.m.passes_on.contains("acc_range") {
+      return
+    }
+    // decision 0577: the induction bounds from the settled intervals,
+    // then the fixed point again within them
+    let caps = g.acc_bounds(blocks, idom)
+    if caps.is_empty() {
+      return
+    }
+    g.acc_caps = caps
+    for i in 0..nv {
+      g.has_range[i] = false
+    }
+    if g.ranges_fix(blocks, mids, ups, downs) {
+      return
+    }
+  }
+  // did not settle: know nothing
+  g.acc_caps = {}
+  for i in 0..nv {
+    g.has_range[i] = false
+  }
+}
+
+/// Iterates the intervals to a fixed point; whether they settled.
+fn (var g: G) ranges_fix(blocks: List[Int], mids: Map[Int, (Int, Int)], ups: List[Int], downs: List[Int]) -> Bool {
+  let nv = g.f.values.len()
   var grown: List[Int] = []
   for _ in 0..nv {
     grown.push(0)
@@ -145,13 +174,10 @@ fn (var g: G) compute_ranges(blocks: List[Int], idom: List[Int]) {
       }
     }
     if !changed {
-      return
+      return true
     }
   }
-  // did not settle: know nothing
-  for i in 0..nv {
-    g.has_range[i] = false
-  }
+  false
 }
 
 /// The values m = a + (b - a) / 2 (or `>> 1`) computed where a < b
@@ -278,6 +304,17 @@ fn (var g: G) range_set(v: Int, r0: Interval, ups: List[Int], downs: List[Int], 
         }
         r.lo = best
       }
+    }
+  }
+  if let Some(c) = g.acc_caps.get(v) {
+    // within its induction bound (decision 0577), which holds for every
+    // value v takes
+    let k = Interval{lo: imax(r.lo, c.lo), hi: imin(r.hi, c.hi)}
+    if k.lo <= k.hi {
+      r = k
+    }
+    if had && old == r {
+      return false
     }
   }
   g.ranges[v] = r
@@ -513,4 +550,208 @@ fn (var g: G) call_bound(x: ssa.Value) -> (Interval, Bool) {
     }
   }
   (r, true)
+}
+
+/// The induction bounds of decision 0577, from the settled intervals: for
+/// each loop header h whose branch leaves the loop unless `i < n`, with i
+/// a header parameter stepping by a constant d > 0 on every back edge,
+/// each other Int parameter s that every back edge passes as s or as a
+/// chain of adds and subtractions of s with bounded operands is within
+/// [lo0 + T * steplo, hi0 + T * stephi]: T the trips, at most
+/// ceil((N - c) / d) for i from c and n at most N, [lo0, hi0] its entry
+/// values, [steplo, stephi] what a trip adds (a byte sum over a Bytes
+/// length stays under 2^40).
+fn (var g: G) acc_bounds(blocks: List[Int], idom: List[Int]) -> Map[Int, Interval] {
+  var caps: Map[Int, Interval] = {}
+  for h in blocks {
+    let hb = g.f.blocks[h]
+    if hb.params.len() < 2 {
+      continue
+    }
+    var back: List[Int] = []
+    var entry: List[Int] = []
+    for e in hb.preds {
+      if dominates(idom, h, g.f.edges[e].from) {
+        back.push(e)
+      } else {
+        entry.push(e)
+      }
+    }
+    if back.is_empty() || entry.is_empty() {
+      continue
+    }
+    // the test: the loop goes on only while i < n
+    let t = g.f.term(h)
+    if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 || g.f.values[t].args.len() != 1 {
+      continue
+    }
+    let tv = g.f.values[t]
+    let cv = g.f.values[tv.args[0]]
+    if cv.args.len() != 2 || !(cv.op is ssa.Op.Lt | ssa.Op.Gt) {
+      continue
+    }
+    let iv = if cv.op == ssa.Op.Lt { cv.args[0] } else { cv.args[1] }
+    let nv = if cv.op == ssa.Op.Lt { cv.args[1] } else { cv.args[0] }
+    let pi = hb.params.index_of(iv) ?? -1
+    if pi < 0 || !g.plain_int(iv) {
+      continue
+    }
+    // the false edge must leave the loop: its target reaches no back
+    // edge without passing h
+    let body = g.loop_body(h, back)
+    let out = g.f.edges[tv.succs[1]].to
+    if out == h || body[out] {
+      continue
+    }
+    // i's constant step d > 0 on every back edge
+    var d = 0
+    var counted = true
+    for e in back {
+      let a = g.f.edges[e].args[pi]
+      let x = g.f.values[a]
+      var k = 0
+      if x.op == ssa.Op.Add && x.args.len() == 2 && (x.args[0] == iv || x.args[1] == iv) {
+        let (k1, ok1) = g.const_int(x.args[if x.args[0] == iv { 1 } else { 0 }])
+        if ok1 {
+          k = k1
+        }
+      }
+      if k <= 0 || (d != 0 && k != d) {
+        counted = false
+        break
+      }
+      d = k
+    }
+    if !counted {
+      continue
+    }
+    let (rn, nok) = g.range_get(nv)
+    var c = MAX_INT
+    var cok = nok
+    for e in entry {
+      let (r, ok) = g.range_get(g.f.edges[e].args[pi])
+      if !ok {
+        cok = false
+        break
+      }
+      c = imin(c, r.lo)
+    }
+    // i and n never negative: a signed and an unsigned `<` agree
+    if !cok || c < 0 || rn.lo < 0 {
+      continue
+    }
+    // the trips that reach a back edge
+    var trips = 0
+    if rn.hi > c {
+      let span = match rn.hi.checked_sub(c) {
+        Some(x) => x
+        None => continue
+      }
+      trips = span / d + (if span % d != 0 { 1 } else { 0 })
+    }
+    for (k, s) in hb.params.indexed() {
+      if k == pi || !g.plain_int(s) {
+        continue
+      }
+      var lo0 = MAX_INT
+      var hi0 = MIN_INT
+      var ok = true
+      for e in entry {
+        let (r, rok) = g.range_get(g.f.edges[e].args[k])
+        if !rok {
+          ok = false
+          break
+        }
+        lo0 = imin(lo0, r.lo)
+        hi0 = imax(hi0, r.hi)
+      }
+      var slo = 0
+      var shi = 0
+      for e in back {
+        if !ok {
+          break
+        }
+        let (l, hh, cok2) = g.acc_step(g.f.edges[e].args[k], s, 16)
+        ok = cok2
+        slo = imin(slo, l)
+        shi = imax(shi, hh)
+      }
+      if !ok {
+        continue
+      }
+      let hi = if shi <= 0 { hi0 } else { sat_add(hi0, sat_mul(trips, shi)) }
+      let lo = if slo >= 0 { lo0 } else { sat_add(lo0, sat_mul(trips, slo)) }
+      if hi < MAX_INT || lo > MIN_INT {
+        caps[s] = Interval{lo: lo, hi: hi}
+      }
+    }
+  }
+  caps
+}
+
+/// What v adds to s: v is s, or a chain of Int adds and subtractions of s
+/// with operands whose intervals are known; the interval of v - s.
+fn (g: G) acc_step(v: Int, s: Int, depth: Int) -> (Int, Int, Bool) {
+  if v == s {
+    return (0, 0, true)
+  }
+  let x = g.f.values[v]
+  if depth <= 0 || x.args.len() != 2 || !(x.op is ssa.Op.Add | ssa.Op.Sub) || !g.plain_int(v) {
+    return (0, 0, false)
+  }
+  for j in 0..2 {
+    if j == 1 && x.op == ssa.Op.Sub {
+      break // s - ... only, not ... - s
+    }
+    let (lo, hi, ok) = g.acc_step(x.args[j], s, depth - 1)
+    if !ok {
+      continue
+    }
+    let (r, rok) = g.range_get(x.args[1 - j])
+    if !rok {
+      return (0, 0, false)
+    }
+    if x.op == ssa.Op.Add {
+      return (sat_add(lo, r.lo), sat_add(hi, r.hi), true)
+    }
+    if r.hi == MIN_INT || r.lo == MIN_INT {
+      return (0, 0, false)
+    }
+    return (sat_add(lo, -r.hi), sat_add(hi, -r.lo), true)
+  }
+  (0, 0, false)
+}
+
+/// The blocks that reach one of the back edges' sources without passing
+/// through h (the loop's body, h not in it).
+fn (g: G) loop_body(h: Int, back: List[Int]) -> List[Bool] {
+  var body: List[Bool] = []
+  for _ in 0..g.f.blocks.len() {
+    body.push(false)
+  }
+  var work: List[Int] = []
+  for e in back {
+    let b = g.f.edges[e].from
+    if b != h && !body[b] {
+      body[b] = true
+      work.push(b)
+    }
+  }
+  while !work.is_empty() {
+    let b = work.pop() ?? -1
+    for e in g.f.blocks[b].preds {
+      let p = g.f.edges[e].from
+      if p != h && !body[p] {
+        body[p] = true
+        work.push(p)
+      }
+    }
+  }
+  body
+}
+
+/// Whether v is an Int (not a sized integer, whose arithmetic wraps).
+fn (g: G) plain_int(v: Int) -> Bool {
+  let t = ssa.ty_of(g.f.values[v].tb)
+  t >= 0 && g.kind(t) == ssa.Kind.Int && g.m.types[t].bits == 0
 }
