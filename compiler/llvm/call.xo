@@ -1396,7 +1396,20 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     // decision 0195: the conversions of UInt64 and Float32
     "rt.u64_to_float" => g.set(v, "uitofp i64 ${g.op(x.args[0])} to double")
-    "rt.f32_round" => g.set(v, "fpext float ${g.def("fptrunc double ${g.op(x.args[0])} to float")} to double")
+    "rt.f32_round" => {
+      let a = g.op(x.args[0])
+      if g.arch() == "riscv64" {
+        // RISC-V's fcvt.s.d and fcvt.d.s return the canonical NaN, so
+        // a NaN takes arm64's and x86_64's narrowing in integers: quiet,
+        // with the payload's top 22 bits, which Float32.from_bits and
+        // to_bits keep (prelude; decision 0361's addendum)
+        let r = g.def("fpext float ${g.def("fptrunc double ${a} to float")} to double")
+        let q = g.def("or i64 ${g.def("and i64 ${g.def("bitcast double ${a} to i64")}, -536870912")}, 2251799813685248")
+        g.set(v, "select i1 ${g.def("fcmp uno double ${a}, 0.0")}, double ${g.def("bitcast i64 ${q} to double")}, double ${r}")
+      } else {
+        g.set(v, "fpext float ${g.def("fptrunc double ${a} to float")} to double")
+      }
+    }
     "rt.i64_to_f32" => g.set(v, "fpext float ${g.def("sitofp i64 ${g.op(x.args[0])} to float")} to double")
     "rt.u64_to_f32" => g.set(v, "fpext float ${g.def("uitofp i64 ${g.op(x.args[0])} to float")} to double")
     "rt.float_bits" => g.set(v, "bitcast double ${g.op(x.args[0])} to i64")
