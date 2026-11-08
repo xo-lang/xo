@@ -1004,6 +1004,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   x86 win adds its pattern, and checks that it fails with the win
   turned off (`XO_PASSES=-x86_...`) or on the parent's xo
   (gotchas/codegen-absent-pattern-never-matches.md).
+  A line `// func *` points the patterns below it at the whole program's
+  code (std's and the runtime's included), for an invariant of the
+  emitter rather than an optimization of one function (2026-11-07:
+  test/codegen/retains forbids `bl ..._x16`, the thunk call a veneer
+  breaks; it fails on an xo from before 386a19f3a). Pair an absent
+  whole-program pattern with a present one, so a change in how the
+  emitter spells the call cannot make it pass vacuously.
 - Which tool answers what (owner, 2026-10-22): `xo bench --ab` decides
   "is it faster" (real time, interleaved, with an interval; threads,
   waits and I/O included); callgrind (instruction counts, deterministic)
@@ -1188,6 +1195,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   std and goldens against the older compiler (Xo lang 5 lost a 60 minute
   suite to that, 2026-10-21). Rebuild (`go run ./scripts/xobuild` in that
   tree) or, for a deliberate cross version run, `XO_CLI_STALE_OK=1`.
+  heavy.sh refuses such a `go test` before it queues (exit 65, through
+  `go run ./scripts/xoclicheck`, the same check; 2026-11-07: a stale
+  control run waited for a gate slot, then failed in 0.26 s).
   Every such run's log starts with `xotool: xo PATH (key ..., commit ...);
   tree key ...`: check it when a run's failures look unrelated.
 - Checking a compiler edit: `go run ./scripts/xocheck [--no-gc] DIR...`

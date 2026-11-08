@@ -17,7 +17,11 @@
 // `// func NAME` line, amd64 ones (AT&T syntax, the host's object
 // format) at `# func NAME` (since 2026-10-27), LLVM ones at `define ... @"x.NAME"(` and end at a
 // line `}`. A line `// func MOD.NAME` names a function of another
-// module (a std runtime module's) for the patterns below it. A backend
+// module (a std runtime module's) for the patterns below it, and `// func
+// *` the whole program's code, every function the build emits, std's and
+// the runtime's included: an absent pattern there is an invariant of the
+// emitter (test/codegen/thunkregs: no retain or release thunk call takes
+// its object in x16, which a linker veneer clobbers). A backend
 // key with an architecture, `// llvm/arm64: ...`, is checked only where
 // `xo asm` targets it (the host: LLVM's IR holds the target's inline
 // assembly, so arm64's AES rounds are not an x86_64 host's).
@@ -264,5 +268,9 @@ fn codegen_one(os: Os, h: Host, xo: Str, d: Str, backend: Str) -> (Int, List[Str
   if out.code != 0 {
     return (ps.len(), ["xo asm: ${(out.stderr.to_str() ?? "").trim()}"])
   }
-  (ps.len(), verify(ps, functions(backend, out.stdout.to_str() ?? "")))
+  let code = out.stdout.to_str() ?? ""
+  var fns = functions(backend, code)
+  // `// func *`: the whole program
+  fns["*"] = code
+  (ps.len(), verify(ps, fns))
 }

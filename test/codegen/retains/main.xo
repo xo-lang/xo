@@ -141,3 +141,11 @@ fn main(os: Os) {
   var g = Segs{segs: ["ab", "${n}"], head: 1, pos: 0}
   os.stdio.println("${seg_head_len(g)} ${seg_head_len(g)} ${g.pos}")
 }
+
+// The whole program (std and the runtime included): no retain or release
+// thunk call takes its object in x16. A linker's branch island or veneer
+// for a far call sets x16, so past 128 MB of text the thunk released the
+// veneer's address (65d22de49, gotchas/veneer-clobbers-x16-thunk.md);
+// the object goes in x17 instead.
+// func *
+// arm64: -"\tbl [^ \n]*_x16\n" "\tbl [^ \n]*_x17\n"
