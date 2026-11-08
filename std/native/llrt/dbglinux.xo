@@ -82,7 +82,8 @@ const EXC_BREAKPOINT = 6
 /// The system call numbers of linux/arm64 and linux/amd64.
 fn nr(arm64: Int, amd64: Int) -> Int {
   match target.arch {
-    TargetArch.Arm64 => arm64
+    // riscv64's are the asm-generic numbers, as arm64's (decision 0571)
+    TargetArch.Arm64 | TargetArch.Riscv64 => arm64
     TargetArch.Amd64 => amd64
     TargetArch.Wasm32 => -1
   }

@@ -609,7 +609,8 @@ const AT_REMOVEDIR: Int = 512
 fn o_directory() -> Int {
   match target.arch {
     TargetArch.Arm64 => 16384
-    TargetArch.Amd64 | TargetArch.Wasm32 => 65536
+    // riscv64 takes the generic value, as x86_64 does
+    TargetArch.Amd64 | TargetArch.Wasm32 | TargetArch.Riscv64 => 65536
   }
 }
 

@@ -617,7 +617,7 @@ fn keccak(var a: List[Int]) {
         round += 4
       }
     }
-    TargetArch.Arm64 | TargetArch.Wasm32 => {
+    TargetArch.Arm64 | TargetArch.Wasm32 | TargetArch.Riscv64 => {
       var round = 0
       while round < 24 {
         let t1 = a0 ^ a5
