@@ -1165,3 +1165,27 @@ insert_rc, after link_view freed the trees anyway, so it gains nothing
 and pays the second parse. Shipped default-on (lead, 2026-11-05: on,
 provided the edit loop stays within about 2%). Output identical
 (scripts/identity, 75 programs, 0 differing).
+
+## Addendum: huge programs, cleanup's peak (xo-lang-4, 2026-11-07)
+
+A generated program past a bl's reach (Azure 1's GCP compute/v0.alpha
+is the largest real case; a synthetic one of about 170 MB of text) ran
+past host 2's 15 GB budget (exit 70) in the middle passes, before any
+link: every function's SSA is live from fe.build through emit, about 140
+heap bytes per byte of text. A 2,000 instance sample (13 MB of text) on
+the Mac: fe.build 553 MB, add_landings 1,429, cleanup 2,132 (peak 2,594),
+emit 1,899. A heap profile at cleanup (`XO_PROF_HEAP_AT=cleanup`) put
+880 MB of 1.32 GB in use in renumber's value tables (`vals.push`), about
+10 M values of 88 bytes, some 25 a source line.
+
+Landed: cleanup in waves of 1,024 functions, each taken out of the
+module before its cleaned form is made (the whole module was held twice
+at the peak), and renumber's tables made at their size: peak 2,594 to
+2,160 MB, after cleanup 1,921, at emit 1,723. Output unchanged.
+
+Next: a census of the values by op after cleanup, to size what the
+landings (an `rt.landing` call, a branch and two blocks for each
+operation that can fault) and the rest of a line add; then fewer values
+or a part-wise pass pipeline (insert_rc's apply through emit by part,
+each part's SSA freed after its emit), with an ADR of its own if it
+changes the pipeline.

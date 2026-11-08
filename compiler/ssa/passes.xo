@@ -1334,10 +1334,10 @@ fn renumber(var f: Func) {
       order.push(v)
     }
   }
-  var vals: List[Value] = []
+  var vals: List[Value] = List.with_capacity(order.len())
   for v in order {
     var x = f.values[v]
-    var args: List[Int] = []
+    var args: List[Int] = List.with_capacity(x.args.len())
     for a in x.args {
       args.push(if a >= 0 { map[a] } else { -1 })
     }
@@ -1405,8 +1405,27 @@ pub fn (var b: Builder) cleanup_all_jobs(jobs: Int) {
     }
     return
   }
-  b.m.funcs = cleanup_funcs(b.m.funcs, jobs)
+  // in waves, each function taken out of the module before its cleaned
+  // form is made: the whole module twice (the old and the cleaned) was
+  // the cleanup's peak (a program of 2,000 large functions: 2.1 GB live,
+  // 2.6 GB at the peak)
+  var w = 0
+  while w < n {
+    let hi = (w + CLEANUP_WAVE).min(n)
+    var sub: List[Func] = List.with_capacity(hi - w)
+    for fi in w..hi {
+      sub.push(b.m.funcs[fi])
+      b.m.funcs[fi] = Func{name: ""}
+    }
+    for (k, f) in cleanup_funcs(sub, jobs).indexed() {
+      b.m.funcs[w + k] = f
+    }
+    w = hi
+  }
 }
+
+/// The functions cleanup_all_jobs cleans at a time.
+const CLEANUP_WAVE = 1024
 
 /// cleanup_all_jobs but for the functions in skip (the cleanup cache's
 /// hits, decision 0382, which stand in for their cleaned form).
@@ -1421,13 +1440,20 @@ pub fn (var b: Builder) cleanup_skip_jobs(jobs: Int, skip: Map[Int, Bool]) {
       idx.push(fi)
     }
   }
-  var sub: List[Func] = []
-  for fi in idx {
-    sub.push(b.m.funcs[fi])
-  }
-  let done = if jobs <= 1 || sub.len() < 256 || target.arch == TargetArch.Wasm32 { cleanup_funcs(sub, 1) } else { cleanup_funcs(sub, jobs) }
-  for (i, fi) in idx.indexed() {
-    b.m.funcs[fi] = done[i]
+  // in waves, as cleanup_all_jobs
+  let par = jobs > 1 && idx.len() >= 256 && target.arch != TargetArch.Wasm32
+  var w = 0
+  while w < idx.len() {
+    let hi = (w + CLEANUP_WAVE).min(idx.len())
+    var sub: List[Func] = List.with_capacity(hi - w)
+    for fi in idx[w..hi] {
+      sub.push(b.m.funcs[fi])
+      b.m.funcs[fi] = Func{name: ""}
+    }
+    for (k, f) in cleanup_funcs(sub, if par { jobs } else { 1 }).indexed() {
+      b.m.funcs[idx[w + k]] = f
+    }
+    w = hi
   }
 }
 
