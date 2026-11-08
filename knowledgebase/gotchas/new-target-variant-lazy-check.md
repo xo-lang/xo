@@ -27,3 +27,9 @@ over std/ and compiler/). Then give
 each the right arm by reading it: most take an existing arch's value
 (the asm-generic system call numbers are arm64's), some differ (the
 generic open flags are x86_64's).
+
+Repeat the scan after every rebase: a match that main adds while the
+branch is open (cabi_wincrt.xo's xo_win_start, 2026-11-08) has no arm
+for the new variant, and only a build that reaches it fails (the
+gate's wasm goldens and windows/amd64 cross builds, not the riscv64
+runs).
