@@ -97,6 +97,18 @@ today (pad -1 for a pruned landing, a real landing otherwise), so no backend cha
    cost from the serial unwind exit creation in add_landings that shows in
    parallel wall time is a fail. If this misses (for example a peak only 15%
    lower), the numbers go to the lead and the decision is revisited.
+   Restated (lead, 2026-11-08), after the first host 1 measurement (one xo at
+   l4-implland f80dbac8e, eager against XO_LAZY_LANDINGS=1, cold, cache off):
+   g200 max RSS 2,349,172 KB to 910,428 KB (-61%, outputs identical), but the
+   self build's max RSS did not move (4,210,640 KB to 4,210,728 KB). The self
+   build's peak is set in insert_rc and emit (4.2 to 4.9 GB of heap), outside
+   the landing window; its add_landings heap is only 1.35 GB, since ordinary
+   code has few faulting operations per block. The clause now reads: the self
+   build's peak RSS is not higher (the median of at least 5 within +1%), and
+   compile wall time is not worse (an `--ab` self build, n >= 5 on host 1,
+   within noise). In its place, peak RSS is measured on one real large
+   generated module that motivated this (GCP compute/v0.alpha or armnetwork,
+   from Azure 1's pins) and must show a real reduction.
 4. The default flip is its own push under the default-change rule: the full
    suites of the touched packages, and a self build with the new xo
    (scripts/bootstrap-xo.sh s2) under XO_MAX_MEM=8G with --phase-times.
