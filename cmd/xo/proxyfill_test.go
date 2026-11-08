@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -486,4 +487,96 @@ func TestChecksumLogFillRetry(t *testing.T) {
 	startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", fill, logData)
 	waitFor("money v1.3.0 filled after the restart", has("github.com/acme/money/@v/v1.3.0.mod"))
 	waitFor("fill-pending emptied after the restart", func() bool { return pending() == "" })
+}
+
+// TestChecksumLogRefreshBackoff: a module whose repository the --refresh
+// loop cannot read waits 2^n ticks between tries, so dead repositories
+// (a stalled one costs a minute of git) do not hold up the others, and
+// GET /healthz shows the loop's ticks, the failures and the uploads still
+// pending (decision 0568).
+func TestChecksumLogRefreshBackoff(t *testing.T) {
+	xotool.NeedPorts(t)
+	t.Parallel()
+	env := modSetup(t, "../../internal/mod/testdata/repos")
+	ws := t.TempDir()
+	app := filepath.Join(ws, "app")
+	modtest.WriteFiles(t, app, map[string]string{
+		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\n",
+		"main/main.xo": appMain,
+	})
+	key := filepath.Join(ws, "log.key")
+	verifier := strings.TrimSpace(xo(t, "mod", "sumdb", "keygen", "sum.test", key).want(0).out)
+	s3 := &fakeS3{keyID: "test-key", secret: "test-secret", region: "auto", objects: map[string]fakeObject{}}
+	srv := httptest.NewServer(s3)
+	defer srv.Close()
+	setenv(t, "XO_FILL_ACCESS_KEY_ID", s3.keyID)
+	setenv(t, "XO_FILL_SECRET_ACCESS_KEY", s3.secret)
+	logData := t.TempDir()
+	t.Cleanup(func() { modtest.MakeWritable(logData) })
+	logURL, _ := startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", "--fill-to="+srv.URL+"/modules", "--refresh=1s", logData)
+	setenv(t, "XO_SUMDB", verifier+" "+logURL)
+	emptyCache(t)
+	xo(t, "mod", "tidy", "--dir", app).want(0) // the log adds billing and money
+
+	type health struct {
+		Records      int
+		Pending      []string
+		RefreshTicks int
+		Failing      []struct {
+			Path     string
+			Fails    int
+			NextTick int
+			Error    string
+		}
+	}
+	read := func() health {
+		t.Helper()
+		code, cache, body := get(t, logURL+"/healthz", nil)
+		var h health
+		if err := json.Unmarshal([]byte(body), &h); code != 200 || cache != "no-store" || err != nil {
+			t.Fatalf("/healthz: %d, Cache-Control %q, %v\n%s", code, cache, err, body)
+		}
+		return h
+	}
+	if h := read(); h.Records != 2 || len(h.Failing) != 0 {
+		t.Fatalf("/healthz before: %+v", h)
+	}
+
+	// money's repository goes away: its tries back off, billing's go on
+	money := filepath.Join(env.Repos, "github.com", "acme", "money")
+	if err := os.Rename(money, money+".gone"); err != nil {
+		t.Fatal(err)
+	}
+	start := read().RefreshTicks
+	deadline := time.Now().Add(60 * time.Second)
+	var h health
+	for {
+		h = read()
+		if h.RefreshTicks >= start+7 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the refresh loop ran %d ticks in 60 s", h.RefreshTicks-start)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// 7 ticks: tries at the first, 2 and then 4 ticks later, so at most 3
+	if len(h.Failing) != 1 || h.Failing[0].Path != "github.com/acme/money" || h.Failing[0].Fails < 1 || h.Failing[0].Fails > 3 || h.Failing[0].Error == "" {
+		t.Errorf("/healthz after 7 ticks with money's repository gone: %+v", h)
+	}
+	if code, _, body := get(t, logURL+"/refresh/github.com/acme/money", nil); code != 200 || !strings.Contains(body, "from the log's cache: git:") {
+		t.Errorf("/refresh with the repository gone: %d %q", code, body)
+	}
+
+	// back: the next try clears it
+	if err := os.Rename(money+".gone", money); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(60 * time.Second)
+	for len(read().Failing) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("money still failing after its repository came back: %+v", read())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

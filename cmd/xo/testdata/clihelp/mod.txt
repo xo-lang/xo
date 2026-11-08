@@ -31,4 +31,6 @@ version it adds to a proxy bucket as proxy fill does, and sumdb restore rebuilds
 a data directory from those copies. GET /index?since=<RFC 3339 time>
 lists the records added since, as JSON lines. --refresh rewrites every
 module's @v/list in the --fill-to bucket from its tags on that interval,
-and GET /refresh/<module path> rewrites one at once (counted in --rate).
+and GET /refresh/<module path> rewrites one at once (counted in --rate);
+a module whose repository cannot be read waits 2^n ticks between tries.
+GET /healthz reports the records, pending uploads and refresh failures.

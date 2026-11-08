@@ -40,6 +40,18 @@ struct LogState {
   times: List[Int] = []
 }
 
+/// The --refresh loop's state, for GET /healthz.
+struct RefreshHealth {
+  /// the ticks run so far, and when the last one ended (Unix seconds)
+  ticks: Int = 0
+  last: Int = 0
+  /// module path to (fetches failed in a row, the tick it is tried
+  /// again at, the last error): a module whose refresh fails waits 2^n
+  /// ticks (at most 64) before the next try, so dead repositories (a
+  /// stalled one costs a minute of git) do not hold up the others
+  failing: Map[Str, (Int, Int, Str)] = {}
+}
+
 /// What `xo mod sumdb serve` was started with.
 struct LogConf {
   signer: Signer
@@ -59,6 +71,7 @@ struct LogConf {
   /// the "<path>@<version>" uploads to the fill bucket not yet finished,
   /// as in <data dir>/fill-pending (fill_logged)
   pending: Mutex[Map[Str, Bool]]
+  health: Mutex[RefreshHealth]
 }
 
 /// The 32 bit value id as 4 big endian bytes.
@@ -467,7 +480,7 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
   c.out("checksum log ${signer.name} (${st.records.len()} records in ${data}, ${mode}) at http://${l.addr()}\nclients: XO_SUMDB='${verifier} http://${l.addr()}'\n")
   let state = Mutex.new(st)
   let limits: Mutex[Map[Str, (Int, Int)]] = Mutex.new({})
-  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill, refresh: refresh, lists: Mutex.new({}), pending: Mutex.new(c.load_pending(data))}
+  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill, refresh: refresh, lists: Mutex.new({}), pending: Mutex.new(c.load_pending(data)), health: Mutex.new(RefreshHealth{})}
   let cc = c
   if let Some(fb) = fill {
     // uploads a restart or an error interrupted
@@ -488,13 +501,39 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
         while true {
           rc.os.clock.sleep(d)
           rc.retry_pending(conf, fb)
+          let tick = conf.health.with_read(fn(h) { h.ticks }) + 1
           let paths = state.with_read(fn(st) { log_paths(st) })
           for p in paths {
-            match rc.refresh_list(fb, "${data}/cache", p, conf.lists) {
-              Ok(_) => {}
-              Err(e) => rc.os.stdio.eprintln("xo mod sumdb serve: refresh ${p} list: ${e}")
+            let (n, next, _) = conf.health.with_read(fn(h) { h.failing.get(p) ?? (0, 0, "") })
+            if tick < next {
+              continue
+            }
+            let failed = match rc.refresh_list(fb, "${data}/cache", p, conf.lists) {
+              Ok((_, git_err)) => git_err
+              Err(e) => e
+            }
+            if !failed.is_empty() {
+              let e = failed
+              let fails = n + 1
+              var wait = 1
+              for _ in 0..(if fails > 6 { 6 } else { fails }) {
+                wait *= 2
+              }
+              rc.os.stdio.eprintln("xo mod sumdb serve: refresh ${p} list: ${e} (failed ${fails} in a row; next try in ${wait} ticks)")
+              conf.health.with(fn(var h) {
+                h.failing[p] = (fails, tick + wait, e)
+              })
+            } else if n > 0 {
+              conf.health.with(fn(var h) {
+                h.failing.remove(p)
+              })
             }
           }
+          let now = rc.os.clock.now().unix()
+          conf.health.with(fn(var h) {
+            h.ticks = tick
+            h.last = now
+          })
         }
       })
     }
@@ -644,6 +683,24 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
     let t = state.with_read(fn(st) { Tree{n: st.leaves.len(), hash: st.root} })
     return plain(sign_tree(signer, t)).with_header("Cache-Control", NO_STORE)
   }
+  if p == "/healthz" {
+    // for the owner's monitor through the tunnel: the log's size, the
+    // uploads still pending, and the refresh loop's progress and failures
+    let n = state.with_read(fn(st) { st.records.len() })
+    let pend = conf.pending.with_read(fn(m) { m.keys().sort() })
+    let h = conf.health.with_read(fn(x) { x })
+    var fails: List[Str] = []
+    for k in h.failing.keys().sort() {
+      let (f, next, e) = h.failing.get(k) ?? (0, 0, "")
+      fails.push("{\"Path\":${k.quote()},\"Fails\":${f},\"NextTick\":${next},\"Error\":${e.quote()}}")
+    }
+    var pq: List[Str] = []
+    for k in pend {
+      pq.push(k.quote())
+    }
+    let body = "{\"Records\":${n},\"Pending\":[${pq.join(",")}],\"RefreshTicks\":${h.ticks},\"RefreshLast\":${h.last},\"Failing\":[${fails.join(",")}]}\n"
+    return http.text(200, body).with_header("Content-Type", "application/json").with_header("Cache-Control", NO_STORE)
+  }
   if p == "/index" {
     var since = 0
     if let Some(s) = req.query("since") {
@@ -677,7 +734,10 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
       return http_error("${client} made ${conf.rate} requests that reach git this minute; try again in a minute", 429).with_header("Retry-After", "60")
     }
     return match cc.refresh_list(fb, "${conf.data}/cache", path, conf.lists) {
-      Ok(wrote) => plain(if wrote { "refreshed\n" } else { "unchanged\n" }).with_header("Cache-Control", NO_STORE)
+      Ok((wrote, git_err)) => {
+        let note = if git_err.is_empty() { "" } else { " (from the log's cache: git: ${git_err})" }
+        plain(if wrote { "refreshed${note}\n" } else { "unchanged${note}\n" }).with_header("Cache-Control", NO_STORE)
+      }
       Err(e) => http_error("${path} list: ${e}", 502)
     }
   }

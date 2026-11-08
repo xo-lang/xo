@@ -19,7 +19,10 @@ owner runs every step below by hand.
   fails waits in `/srv/xomod/log/fill-pending` (one `path@version` per
   line) and is retried on each refresh and at the next start; a line
   that stays there names a version R2 keeps refusing (its error is in
-  `journalctl -u xo-sumdb`). `https://sum.xolang.org/refresh/<module
+  `journalctl -u xo-sumdb`). `curl -s https://sum.xolang.org/healthz`
+  shows the records, the pending uploads, the refresh loop's ticks and
+  the modules whose repository it cannot read (each tried again after
+  2^n ticks). `https://sum.xolang.org/refresh/<module
   path>` rewrites one module's list at once, for a release that should
   not wait the 30 minutes.
 - `cloudflared-config.yml`: the tunnel's ingress: sum.xolang.org to the

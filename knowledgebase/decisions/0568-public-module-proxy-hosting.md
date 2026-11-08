@@ -216,7 +216,13 @@ host.
     `@latest` stayed on the older version, since a client falls back
     to git only on a 404. The cost is one git fetch of tags per module
     per interval (48 a day each; at the launch size about 33 a minute,
-    inside the unit's one core) and an R2 write only per new tag;
+    inside the unit's one core) and an R2 write only per new tag. A
+    module whose repository cannot be read waits 2^n ticks (at most 64)
+    before its next try, so dead repositories do not hold up the
+    sequential loop (2026-11-08, cmd/xo TestChecksumLogRefreshBackoff);
+    `GET /healthz` (no-store) shows the record count, the uploads still
+    pending, the loop's ticks and the failing modules with their last
+    error, for the owner's monitor through the tunnel;
   - by `GET sum.xolang.org/refresh/<module path>` (2026-11-08): the
     same rewrite for one module at once, through the tunnel, for a
     module the log holds (404 otherwise), counted in the client's
@@ -309,8 +315,9 @@ host.
    the log's record copies, restore, times, index feed, rate limit and
    cache headers, and the log writing each version it adds to the proxy
    bucket (`--fill-to`), all 2026-11-08; the list refresh (`--refresh`
-   and `/refresh/<path>`, cmd/xo TestChecksumLogRefresh) and the
-   retried uploads (`fill-pending`), 2026-11-08; and `scripts/modservices/`
+   and `/refresh/<path>`, cmd/xo TestChecksumLogRefresh) the
+   retried uploads (`fill-pending`), the refresh backoff and
+   `/healthz`, 2026-11-08; and `scripts/modservices/`
    (the `xo-sumdb` unit, cloudflared's ingress, `install.sh` and the
    owner's steps in its README), 2026-11-08. Phase 1 is complete. The
    owner's OCI host runs Oracle Linux 9 with SELinux enforcing:
