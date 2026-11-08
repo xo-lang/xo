@@ -1,0 +1,191 @@
+// `xo mod proxy fill --to=<bucket URL> [--region=auto] <path>[@version]...`
+// (decision 0568, phase 1): fills an S3-compatible bucket (Cloudflare R2
+// in the public service) with the module proxy protocol's files, so the
+// bucket served as static files is a module proxy (decision 0126). Each
+// version is fetched from git (never through XO_PROXY) and, with
+// XO_SUMDB, checked against the checksum log first (decision 0124);
+// then its .zip, .lock and .mod are written, the .mod last, so a
+// version with a .mod is whole. A path alone, or after a version,
+// rewrites its @v/list from the cache and the repository's tags.
+//
+// The bucket URL is path style, `https://<endpoint>/<bucket>`. The
+// credentials come from XO_FILL_ACCESS_KEY_ID and
+// XO_FILL_SECRET_ACCESS_KEY (an R2 token scoped to the bucket), and
+// requests are signed with AWS Signature Version 4.
+
+use github.com/xo-lang/xo/compiler/check
+use std/crypto
+use std/http
+
+/// Where and as whom the fill writes.
+struct Bucket {
+  /// https://host/bucket, no trailing slash
+  url: Str
+  region: Str
+  key_id: Str
+  secret: Str
+}
+
+/// The version files never change (a moved tag is the log's business).
+const IMMUTABLE = "public, max-age=31536000, immutable"
+/// A list follows new tags.
+const LIST_CACHE = "public, max-age=60"
+
+fn (var c: ModCtx) run_proxy_fill(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, clock) {
+  var fl = FlagSet{name: "mod proxy fill", defs: [flag_str("to", "", "the bucket, path style: https://<endpoint>/<bucket>"), flag_str("region", "auto", "the region requests are signed for (auto for R2)")]}
+  if !c.parse_flags(fl, args) {
+    return 2
+  }
+  var url = fl.str("to")
+  while url.ends_with("/") {
+    url = url.trim_suffix("/")
+  }
+  if fl.args.is_empty() || !(url.starts_with("https://") || url.starts_with("http://")) || url.split("/").len() < 4 {
+    c.os.stdio.eprintln("xo mod proxy fill: want --to=https://<endpoint>/<bucket> and at least one <module path>[@version]")
+    return 2
+  }
+  let b = Bucket{url: url, region: fl.str("region"), key_id: c.getenv("XO_FILL_ACCESS_KEY_ID"), secret: c.getenv("XO_FILL_SECRET_ACCESS_KEY")}
+  if b.key_id.is_empty() || b.secret.is_empty() {
+    c.os.stdio.eprintln("xo mod proxy fill: set XO_FILL_ACCESS_KEY_ID and XO_FILL_SECRET_ACCESS_KEY (a token that can write the bucket)")
+    return 2
+  }
+  let root = c.cache_dir()
+  var failed = 0
+  for a in fl.args {
+    let (mod_path, version, has_version) = cut(a, "@")
+    if !check.valid_path(mod_path) || (has_version && !check.valid_version(version)) {
+      c.os.stdio.eprintln("xo mod proxy fill: ${a.quote()} is not <module path>[@vX.Y.Z]")
+      failed += 1
+      continue
+    }
+    if has_version {
+      match c.fill_version(b, root, mod_path, version) {
+        Ok(_) => c.out("filled ${mod_path} ${version}\n")
+        Err(e) => {
+          c.os.stdio.eprintln("xo mod proxy fill: ${mod_path} ${version}: ${e}")
+          failed += 1
+          continue
+        }
+      }
+    }
+    match c.fill_list(b, root, mod_path) {
+      Ok(n) => c.out("listed ${mod_path} (${n} versions)\n")
+      Err(e) => {
+        c.os.stdio.eprintln("xo mod proxy fill: ${mod_path} list: ${e}")
+        failed += 1
+      }
+    }
+  }
+  if failed > 0 { 1 } else { 0 }
+}
+
+/// Fetches path@version from git (checked against XO_SUMDB's log when
+/// set) and writes its three files.
+fn (var c: ModCtx) fill_version(b: Bucket, root: Str, mod_path: Str, version: Str) -> () ! Str uses (fs, net, proc, rand, clock) {
+  var st = c.settings_for(root, mod_path)
+  if !st.err.is_empty() {
+    return Err(st.err)
+  }
+  st.sources = [Source{direct: true}]
+  let dir = match c.download_in(root, mod_path, version, Some(st)) {
+    Ok(d) => d
+    Err(p) => return Err("${p.code}: ${p.msg}")
+  }
+  let lines = c.record(dir, mod_path, version)?
+  let zip = c.zip_module(dir, mod_path, version)?
+  let modf = c.os.fs.read("${dir}/xo.mod").map_err(fs_msg)?
+  let base = "${escape(mod_path)}/@v/${escape(version)}"
+  c.s3_put(b, "${base}.zip", zip, "application/zip", IMMUTABLE)?
+  c.s3_put(b, "${base}.lock", (lines.join("\n") + "\n").bytes(), "text/plain; charset=utf-8", IMMUTABLE)?
+  c.s3_put(b, "${base}.mod", modf, "text/plain; charset=utf-8", IMMUTABLE)?
+  Ok(())
+}
+
+/// Writes path's @v/list: the versions in the cache and the repository's
+/// tags; the number written.
+fn (var c: ModCtx) fill_list(b: Bucket, root: Str, mod_path: Str) -> Int ! Str uses (fs, net, proc, rand, clock) {
+  var vs = c.cache_versions(root, mod_path)
+  match c.git_versions(root, mod_path) {
+    Ok(more) => vs = vs + more
+    Err(e) => {
+      if vs.is_empty() {
+        return Err(e)
+      }
+    }
+  }
+  vs = sort_versions(mod_path, vs)
+  var out: List[Str] = []
+  for v in vs {
+    if out.is_empty() || out[out.len() - 1] != v {
+      out.push(v)
+    }
+  }
+  var body = out.join("\n")
+  if !body.is_empty() {
+    body += "\n"
+  }
+  c.s3_put(b, "${escape(mod_path)}/@v/list", body.bytes(), "text/plain; charset=utf-8", LIST_CACHE)?
+  Ok(out.len())
+}
+
+// ---------------------------------------------------------------------------
+// S3 PUT with AWS Signature Version 4
+
+/// S3's URI encoding of one path: every byte but the unreserved ones and
+/// '/' as %XX, upper case hex.
+fn s3_uri_encode(s: Str) -> Str {
+  var b = BytesBuilder.new()
+  let hex = "0123456789ABCDEF".bytes()
+  for ch in s.bytes() {
+    let unreserved = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' || ch == '~' || ch == '/'
+    if unreserved {
+      b.write_byte(ch)
+    } else {
+      b.write_byte('%')
+      b.write_byte(hex[Int(ch) >> 4])
+      b.write_byte(hex[Int(ch) & 15])
+    }
+  }
+  b.freeze().to_str() ?? ""
+}
+
+/// The `x-amz-date` form of an RFC 3339 UTC time: 20261108T075500Z.
+fn amz_date(rfc3339: Str) -> Str {
+  rfc3339[..19].replace("-", "").replace(":", "") + "Z"
+}
+
+/// The Authorization header of a SigV4 request whose host, path (already
+/// URI encoded), amz date and payload hash are given; the signed headers
+/// are host, x-amz-content-sha256 and x-amz-date.
+fn sigv4_auth(b: Bucket, method: Str, host: Str, path: Str, date: Str, payload_hash: Str) -> Str {
+  let day = date[..8]
+  let canonical = "${method}\n${path}\n\nhost:${host}\nx-amz-content-sha256:${payload_hash}\nx-amz-date:${date}\n\nhost;x-amz-content-sha256;x-amz-date\n${payload_hash}"
+  let scope = "${day}/${b.region}/s3/aws4_request"
+  let to_sign = "AWS4-HMAC-SHA256\n${date}\n${scope}\n${crypto.sha256(canonical.bytes()).to_hex()}"
+  var k = crypto.hmac_sha256("AWS4${b.secret}".bytes(), day.bytes())
+  k = crypto.hmac_sha256(k, b.region.bytes())
+  k = crypto.hmac_sha256(k, b"s3")
+  k = crypto.hmac_sha256(k, b"aws4_request")
+  let sig = crypto.hmac_sha256(k, to_sign.bytes()).to_hex()
+  "AWS4-HMAC-SHA256 Credential=${b.key_id}/${scope}, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=${sig}"
+}
+
+/// PUTs body at key in the bucket.
+fn (c: ModCtx) s3_put(b: Bucket, key: Str, body: Bytes, content_type: Str, cache: Str) -> () ! Str uses (net, clock) {
+  let rest = b.url.trim_prefix("https://").trim_prefix("http://")
+  let (host, bucket_path, _) = cut(rest, "/")
+  let path = s3_uri_encode("/${bucket_path}/${key}")
+  let scheme = if b.url.starts_with("https://") { "https" } else { "http" }
+  let date = amz_date(c.os.clock.now().format_rfc3339())
+  let payload_hash = crypto.sha256(body).to_hex()
+  let headers = {"Authorization": sigv4_auth(b, "PUT", host, path, date, payload_hash), "X-Amz-Date": date, "X-Amz-Content-Sha256": payload_hash, "Content-Type": content_type, "Cache-Control": cache}
+  let hc = http.client(c.os.net, timeout: 120s)
+  let resp = match hc.send(http.new_request("PUT", "${scheme}://${host}${path}", headers, body)) {
+    Ok(r) => r
+    Err(e) => return Err("PUT ${key}: ${client_msg(e)}")
+  }
+  if resp.status != 200 {
+    return Err("PUT ${key}: ${status_text(resp.status)}: ${(resp.body.to_str() ?? "").trim()}")
+  }
+  Ok(())
+}

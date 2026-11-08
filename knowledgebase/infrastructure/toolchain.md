@@ -3550,6 +3550,18 @@ Last verified: 2026-10-09.
   proof the server makes verifies with the client) and cmd/xo
   TestChecksumLog (the client against both servers on loopback). Last
   verified: 2026-11-08.
+- Proxy fill (decision 0568, phase 1, 2026-11-08): `xo mod proxy fill
+  --to=https://<endpoint>/<bucket> [--region=auto] <path>[@version]...`
+  (compiler/cli/modules proxyfill.xo) fetches each version from git
+  (direct only, with XO_SUMDB's log check), PUTs `.zip`, `.lock`, then
+  `.mod` (a version with a `.mod` is whole) with Cache-Control
+  `public, max-age=31536000, immutable`, then `@v/list` with
+  `public, max-age=60`, signed with AWS SigV4 (path style; region
+  `auto` for R2) from XO_FILL_ACCESS_KEY_ID and
+  XO_FILL_SECRET_ACCESS_KEY. cmd/xo TestProxyFill runs it against an
+  in-test S3 fake that checks the signature with Go's crypto, then
+  builds a client from the bucket with no git in reach. Last verified:
+  2026-11-08.
 - Definition hashes (decision 0125, step 5, 2026-10-10): package
   `internal/defhash` (`Module(dir, modPath)`, `Diff`, `Find`,
   `Nearest`), reflection over `internal/ast` with per field rules

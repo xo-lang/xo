@@ -1,0 +1,11 @@
+// The S3 request pieces of `xo mod proxy fill` (SigV4 itself is checked
+// end to end against Go's crypto by cmd/xo TestProxyFill).
+
+test "S3 URI encoding keeps unreserved bytes and slashes" {
+  expect(s3_uri_encode("/b/github.com/acme/m/@v/v1.2.0.zip")) == "/b/github.com/acme/m/%40v/v1.2.0.zip"
+  expect(s3_uri_encode("/b/!acme/x y~_-")) == "/b/%21acme/x%20y~_-"
+}
+
+test "the x-amz-date form of an RFC 3339 time" {
+  expect(amz_date("2026-11-08T07:55:00Z")) == "20261108T075500Z"
+}

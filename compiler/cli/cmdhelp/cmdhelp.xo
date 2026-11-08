@@ -35,7 +35,7 @@ pub fn commands() -> List[Command] {
     Command{name: "explain", purpose: "long form explanation of a diagnostic code"},
     Command{name: "init", purpose: "write xo.mod for a new module"},
     Command{name: "get", purpose: "require, upgrade, or remove a module"},
-    Command{name: "mod", purpose: "tidy, graph, accept-effects, clean, proxy serve, sumdb"},
+    Command{name: "mod", purpose: "tidy, graph, accept-effects, clean, proxy serve and fill, sumdb"},
     Command{name: "vendor", purpose: "copy every selected module version into vendor/"},
     Command{name: "publish", purpose: "check a release against the previous version tag"},
     Command{name: "audit", purpose: "supply chain report of the dependencies"},
@@ -665,6 +665,7 @@ usage: xo mod tidy [--dir=<dir>] [--json]
        xo mod accept-effects [--dir=<dir>] [--json] [<module path>...]
        xo mod clean
        xo mod proxy serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]
+       xo mod proxy fill --to=<bucket URL> [--region=auto] <module path>[@version]...
        xo mod sumdb keygen <log name> <key file>
        xo mod sumdb serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] <data dir>
 
@@ -677,6 +678,11 @@ accept-effects records the current effects of the named modules (all
 when none is named) in xo.lock (decision 0156). clean removes the module
 cache. proxy serve serves a module cache read only over the module proxy
 protocol (decision 0126); --fetch fills it from git on a miss.
+proxy fill fetches each version from git (checked against XO_SUMDB's
+log) and writes its .zip, .lock and .mod, then the module's @v/list,
+into an S3-compatible bucket (path style, https://<endpoint>/<bucket>)
+that serves the proxy protocol as static files (decision 0568); the
+credentials are XO_FILL_ACCESS_KEY_ID and XO_FILL_SECRET_ACCESS_KEY.
 sumdb keygen writes a new checksum log key to the file and prints the
 key clients name in XO_SUMDB; sumdb serve runs a checksum log (decision
 0124) with its records in <data dir>; --fetch adds a version the log

@@ -12,7 +12,7 @@ pub fn is_command(name: Str) -> Bool {
 
 /// Runs `xo <args>` for a module command (args[0] is the command) in the
 /// working directory wd and returns the exit status.
-pub fn run(os: Os, wd: Str, args: List[Str]) -> Int uses (fs, net, proc, env, stdio, rand) {
+pub fn run(os: Os, wd: Str, args: List[Str]) -> Int uses (fs, net, proc, env, stdio, rand, clock) {
   var c = new_ctx(os, wd)
   let rest = match c.module_flags(args.len() > 0, if args.is_empty() { [] } else { args[1..] }) {
     Ok(r) => r
@@ -434,7 +434,7 @@ fn (var c: ModCtx) run_mod_graph(args: List[Str]) -> Int uses (fs, net, proc, st
 }
 
 /// `xo mod tidy|graph|accept-effects|clean|proxy`.
-fn (var c: ModCtx) run_mod(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
+fn (var c: ModCtx) run_mod(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, clock) {
   if args.is_empty() {
     c.os.stdio.eprintln("xo mod: want a subcommand: tidy, graph, accept-effects, clean, proxy")
     c.os.stdio.eprint(cmdhelp.usage("mod"))

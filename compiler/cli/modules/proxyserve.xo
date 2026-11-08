@@ -8,9 +8,12 @@ use github.com/xo-lang/xo/compiler/check
 use std/archive
 use std/http
 
-fn (var c: ModCtx) run_mod_proxy(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand) {
+fn (var c: ModCtx) run_mod_proxy(args: List[Str]) -> Int uses (fs, net, proc, stdio, rand, clock) {
+  if args.len() >= 1 && args[0] == "fill" {
+    return c.run_proxy_fill(args[1..])
+  }
   if args.is_empty() || args[0] != "serve" {
-    c.os.stdio.eprintln("xo mod proxy: want `serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]`")
+    c.os.stdio.eprintln("xo mod proxy: want `serve [--addr=127.0.0.1:7070] [--fetch] [<cache dir>]` or `fill --to=<bucket URL> <module path>[@version]...`")
     return 2
   }
   var fl = FlagSet{name: "mod proxy serve", defs: [flag_str("addr", "127.0.0.1:7070", "the address to listen on"), flag_bool("fetch", "fetch module versions the cache lacks from git (a caching proxy)")]}

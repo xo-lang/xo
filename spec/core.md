@@ -14,7 +14,8 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 - Checksum log server (4.3; decision 0124's addendum): `xo mod sumdb
   keygen` and `xo mod sumdb serve` make a log's key and run a log, its
-  records kept in a data directory.
+  records kept in a data directory. `xo mod proxy fill` fills an
+  S3-compatible bucket with the proxy protocol's files (decision 0568).
 
 ## Changes in 0.44
 
@@ -1957,6 +1958,10 @@ its content hash.
   verifier key, printed, is what `XO_SUMDB` names) and `xo mod sumdb
   serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] <data dir>`
   runs a log, its records kept in the data directory (decision 0124).
+  `xo mod proxy fill --to=<bucket URL> <module path>[@version]...`
+  writes versions, checked against the log, and their lists into an
+  S3-compatible bucket that serves the proxy protocol as static files
+  (4.2; decision 0568).
 - **[P1]** Definition hashes (decision 0125, step 5 of decision 0086):
   every top level definition (function, method, type, constant) has a
   content hash `d1:<base64 SHA-256>` over its syntax tree with

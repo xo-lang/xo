@@ -8,7 +8,7 @@
 
 use github.com/xo-lang/xo/compiler/cli/modules
 
-fn main(os: Os) uses (fs, net, proc, env, stdio, rand) {
+fn main(os: Os) uses (fs, net, proc, env, stdio, rand, clock) {
   let args = os.env.args()
   let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   if !args.is_empty() && modules.is_command(args[0]) {
