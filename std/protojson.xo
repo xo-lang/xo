@@ -30,7 +30,18 @@ struct Opts {
 }
 
 /// The messages and enums of a set of files, by full name (no leading dot).
-struct Registry {}
+struct Registry {
+  msgs: Map[Str, MsgInfo]
+  enums: Map[Str, protodesc.EnumDesc]
+}
+
+/// A message of a registry: its descriptor, full name, syntax and whether it is a map entry. Internal.
+struct MsgInfo {
+  d: protodesc.MessageDesc
+  full: Str
+  proto3: Bool
+  is_map: Bool
+}
 
 /// A registry of the files (a file's dependencies must be in the list).
 fn registry(files: List[protodesc.FileDesc]) -> Registry

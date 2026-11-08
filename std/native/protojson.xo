@@ -9,24 +9,12 @@ use std/base64
 use std/json
 use native/protodesc as pd
 
-struct MsgInfo {
-  d: protodesc.MessageDesc
-  full: Str
-  proto3: Bool
-  is_map: Bool
-}
-
-struct Registry {
-  msgs: Map[Str, MsgInfo]
-  enums: Map[Str, protodesc.EnumDesc]
-}
-
 fn jerr(text: Str) -> protojson.JsonErr { protojson.JsonErr{text: text} }
 
 fn jsonerr_display(e: protojson.JsonErr) -> Str { e.text }
 
-fn registry(files: List[protodesc.FileDesc]) -> Registry {
-  var r = Registry{msgs: {}, enums: {}}
+fn registry(files: List[protodesc.FileDesc]) -> protojson.Registry {
+  var r = protojson.Registry{msgs: {}, enums: {}}
   for f in files {
     let p3 = f.syntax == "proto3"
     let pre = if f.package.is_empty() { "" } else { f.package + "." }
@@ -40,7 +28,7 @@ fn registry(files: List[protodesc.FileDesc]) -> Registry {
   r
 }
 
-fn add_msg(var r: Registry, m: protodesc.MessageDesc, pre: Str, p3: Bool) {
+fn add_msg(var r: protojson.Registry, m: protodesc.MessageDesc, pre: Str, p3: Bool) {
   let full = pre + m.name
   var is_map = false
   if !m.options.is_empty() {
@@ -50,7 +38,7 @@ fn add_msg(var r: Registry, m: protodesc.MessageDesc, pre: Str, p3: Bool) {
       }
     }
   }
-  r.msgs.put(full, MsgInfo{d: m, full: full, proto3: p3, is_map: is_map})
+  r.msgs.put(full, protojson.MsgInfo{d: m, full: full, proto3: p3, is_map: is_map})
   for e in m.enum_type {
     r.enums.put(full + "." + e.name, e)
   }
@@ -59,7 +47,7 @@ fn add_msg(var r: Registry, m: protodesc.MessageDesc, pre: Str, p3: Bool) {
   }
 }
 
-fn registry_from_set(set: Bytes) -> Registry ! protobuf.ProtoErr {
+fn registry_from_set(set: Bytes) -> protojson.Registry ! protobuf.ProtoErr {
   var files: List[protodesc.FileDesc] = []
   for f in pd.walk(set)? {
     if f.num == 1 && f.wire == 2 {
@@ -211,14 +199,14 @@ fn valid_full_name(s: Str) -> Bool {
 
 // ---- marshal --------------------------------------------------------------
 
-fn marshal(r: Registry, name: Str, wire: Bytes, o: protojson.Opts) -> Str ! protojson.JsonErr {
+fn marshal(r: protojson.Registry, name: Str, wire: Bytes, o: protojson.Opts) -> Str ! protojson.JsonErr {
   match r.msgs.get(name) {
     Some(info) => msg_json(r, info, wire, o, "")
     None => Err(jerr("unknown message ${name}"))
   }
 }
 
-fn lookup(r: Registry, type_name: Str) -> MsgInfo ! protojson.JsonErr {
+fn lookup(r: protojson.Registry, type_name: Str) -> protojson.MsgInfo ! protojson.JsonErr {
   let n = if type_name.starts_with(".") { type_name[1..type_name.len()] } else { type_name }
   match r.msgs.get(n) {
     Some(i) => Ok(i)
@@ -227,7 +215,7 @@ fn lookup(r: Registry, type_name: Str) -> MsgInfo ! protojson.JsonErr {
 }
 
 /// The JSON of a message; `first` is a member written before the fields (Any's @type).
-fn msg_json(r: Registry, info: MsgInfo, wire: Bytes, o: protojson.Opts, first: Str) -> Str ! protojson.JsonErr {
+fn msg_json(r: protojson.Registry, info: protojson.MsgInfo, wire: Bytes, o: protojson.Opts, first: Str) -> Str ! protojson.JsonErr {
   if first.is_empty() {
     match wkt_json(r, info, wire, o)? {
       Some(t) => return Ok(t)
@@ -294,7 +282,7 @@ fn wire_of(k: Int) -> Int {
   }
 }
 
-fn field_text(r: Registry, info: MsgInfo, fd: protodesc.FieldDesc, fl: List[pd.Fld], o: protojson.Opts, real_oneof: Bool) -> Str? ! protojson.JsonErr {
+fn field_text(r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.FieldDesc, fl: List[pd.Fld], o: protojson.Opts, real_oneof: Bool) -> Str? ! protojson.JsonErr {
   var occ: List[pd.Fld] = []
   for f in fl {
     if f.num == fd.number {
@@ -411,7 +399,7 @@ fn is_zero(fd: protodesc.FieldDesc, f: pd.Fld) -> Bool {
   }
 }
 
-fn default_text(r: Registry, fd: protodesc.FieldDesc, o: protojson.Opts) -> Str {
+fn default_text(r: protojson.Registry, fd: protodesc.FieldDesc, o: protojson.Opts) -> Str {
   let k = fd.kind
   if k == protodesc.TYPE_STRING || k == protodesc.TYPE_BYTES {
     "\"\""
@@ -426,7 +414,7 @@ fn default_text(r: Registry, fd: protodesc.FieldDesc, o: protojson.Opts) -> Str 
   }
 }
 
-fn single_text(r: Registry, fd: protodesc.FieldDesc, data: Bytes, f: pd.Fld, o: protojson.Opts) -> Str ! protojson.JsonErr {
+fn single_text(r: protojson.Registry, fd: protodesc.FieldDesc, data: Bytes, f: pd.Fld, o: protojson.Opts) -> Str ! protojson.JsonErr {
   if fd.kind == protodesc.TYPE_MESSAGE {
     let info = lookup(r, fd.type_name)?
     return msg_json(r, info, data, o, "")
@@ -434,7 +422,7 @@ fn single_text(r: Registry, fd: protodesc.FieldDesc, data: Bytes, f: pd.Fld, o: 
   scalar_text(r, fd, f, o)
 }
 
-fn scalar_text(r: Registry, fd: protodesc.FieldDesc, f: pd.Fld, o: protojson.Opts) -> Str ! protojson.JsonErr {
+fn scalar_text(r: protojson.Registry, fd: protodesc.FieldDesc, f: pd.Fld, o: protojson.Opts) -> Str ! protojson.JsonErr {
   let k = fd.kind
   if k == protodesc.TYPE_DOUBLE {
     Ok(dbl_text(Float.from_bits(f.v)))
@@ -469,7 +457,7 @@ fn scalar_text(r: Registry, fd: protodesc.FieldDesc, f: pd.Fld, o: protojson.Opt
   }
 }
 
-fn enum_text(r: Registry, fd: protodesc.FieldDesc, n: Int, o: protojson.Opts) -> Str {
+fn enum_text(r: protojson.Registry, fd: protodesc.FieldDesc, n: Int, o: protojson.Opts) -> Str {
   let tn = if fd.type_name.starts_with(".") { fd.type_name[1..fd.type_name.len()] } else { fd.type_name }
   if tn == "google.protobuf.NullValue" {
     return "null"
@@ -491,7 +479,7 @@ fn enum_text(r: Registry, fd: protodesc.FieldDesc, n: Int, o: protojson.Opts) ->
 }
 
 /// A map field: the entries of its occurrences, the last of a key winning, in key order.
-fn map_text(r: Registry, entry: MsgInfo, occ: List[pd.Fld], o: protojson.Opts) -> Str ! protojson.JsonErr {
+fn map_text(r: protojson.Registry, entry: protojson.MsgInfo, occ: List[pd.Fld], o: protojson.Opts) -> Str ! protojson.JsonErr {
   var kfd = entry.d.field[0]
   var vfd = entry.d.field[1]
   for f in entry.d.field {
@@ -582,7 +570,7 @@ fn hex16(x: Int) -> Str {
 
 // ---- the well known types ---------------------------------------------------
 
-fn pick_field(info: MsgInfo, num: Int) -> protodesc.FieldDesc {
+fn pick_field(info: protojson.MsgInfo, num: Int) -> protodesc.FieldDesc {
   for f in info.d.field {
     if f.number == num {
       return f
@@ -684,7 +672,7 @@ fn duration_text(wire: Bytes) -> Str ! protojson.JsonErr {
   Ok("\"${sign}${secs}${frac(nanos)}s\"")
 }
 
-fn wkt_json(r: Registry, info: MsgInfo, wire: Bytes, o: protojson.Opts) -> Str? ! protojson.JsonErr {
+fn wkt_json(r: protojson.Registry, info: protojson.MsgInfo, wire: Bytes, o: protojson.Opts) -> Str? ! protojson.JsonErr {
   let n = info.full
   if !n.starts_with("google.protobuf.") {
     return Ok(None)
@@ -1277,7 +1265,8 @@ fn parse_float(v: Jv, bits: Int) -> Float? {
   match v {
     Text(s) => {
       if s == "NaN" {
-        return Some(0.0 / 0.0)
+        // Go's math.NaN() bits, so the wire bytes match protojson's.
+        return Some(Float.from_bits(0x7FF8000000000001))
       }
       if s == "Infinity" {
         return Some(1.0 / 0.0)
@@ -1320,14 +1309,14 @@ fn bad(fd: protodesc.FieldDesc) -> protojson.JsonErr { jerr("invalid value for f
 
 fn trim_dot(s: Str) -> Str { if s.starts_with(".") { s[1..s.len()] } else { s } }
 
-fn enum_of(r: Registry, fd: protodesc.FieldDesc) -> protodesc.EnumDesc? { r.enums.get(trim_dot(fd.type_name)) }
+fn enum_of(r: protojson.Registry, fd: protodesc.FieldDesc) -> protodesc.EnumDesc? { r.enums.get(trim_dot(fd.type_name)) }
 
 fn zz32(n: Int) -> Int { ((n << 1) ^ (n >> 31)) & 0xFFFFFFFF }
 
 fn zz64(n: Int) -> Int { (n << 1) ^ (n >> 63) }
 
 /// A scalar field's value; None when it is skipped (an unknown enum name with discard_unknown).
-fn enc_scalar(r: Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -> Sv? ! protojson.JsonErr {
+fn enc_scalar(r: protojson.Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -> Sv? ! protojson.JsonErr {
   let k = fd.kind
   if k == protodesc.TYPE_DOUBLE {
     let f = parse_float(jv, 64) ?? return Err(bad(fd))
@@ -1420,7 +1409,7 @@ fn enc_scalar(r: Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -
 }
 
 /// A field's single value, a message converted through its descriptor.
-fn enc_single(r: Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -> Sv? ! protojson.JsonErr {
+fn enc_single(r: protojson.Registry, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts) -> Sv? ! protojson.JsonErr {
   if fd.kind == protodesc.TYPE_MESSAGE {
     let mi = lookup(r, fd.type_name)?
     return Ok(Some(Sv{v: 0, data: msg_wire(r, mi, jv, o)?}))
@@ -1457,7 +1446,7 @@ fn emit(var out: BytesBuilder, num: Int, k: Int, sv: Sv, tagged: Bool) {
   }
 }
 
-fn is_packed(info: MsgInfo, fd: protodesc.FieldDesc) -> Bool {
+fn is_packed(info: protojson.MsgInfo, fd: protodesc.FieldDesc) -> Bool {
   if !is_numeric_kind(fd.kind) {
     return false
   }
@@ -1501,7 +1490,7 @@ fn key_sv(kfd: protodesc.FieldDesc, ks: Str) -> (Sv, Str) ! protojson.JsonErr {
     }
     return Err(bad(kfd))
   }
-  let sv = enc_scalar(Registry{msgs: {}, enums: {}}, kfd, Jv.Text(ks), protojson.Opts{})?
+  let sv = enc_scalar(protojson.Registry{msgs: {}, enums: {}}, kfd, Jv.Text(ks), protojson.Opts{})?
   let x = match sv {
     Some(x) => x
     None => return Err(bad(kfd))
@@ -1521,7 +1510,7 @@ fn key_sv(kfd: protodesc.FieldDesc, ks: Str) -> (Sv, Str) ! protojson.JsonErr {
   Ok((x, sk))
 }
 
-fn map_entry_fields(entry: MsgInfo) -> (protodesc.FieldDesc, protodesc.FieldDesc) {
+fn map_entry_fields(entry: protojson.MsgInfo) -> (protodesc.FieldDesc, protodesc.FieldDesc) {
   var kfd = entry.d.field[0]
   var vfd = entry.d.field[1]
   for f in entry.d.field {
@@ -1535,7 +1524,7 @@ fn map_entry_fields(entry: MsgInfo) -> (protodesc.FieldDesc, protodesc.FieldDesc
 }
 
 /// The records of a map field: entries in key order, key and value both written.
-fn enc_map(r: Registry, fd: protodesc.FieldDesc, entry: MsgInfo, members: List[(Str, Jv)], o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+fn enc_map(r: protojson.Registry, fd: protodesc.FieldDesc, entry: protojson.MsgInfo, members: List[(Str, Jv)], o: protojson.Opts) -> Bytes ! protojson.JsonErr {
   let (kfd, vfd) = map_entry_fields(entry)
   var seen: Map[Str, Bool] = {}
   var recs: List[(Str, Bytes)] = []
@@ -1570,7 +1559,7 @@ fn enc_map(r: Registry, fd: protodesc.FieldDesc, entry: MsgInfo, members: List[(
 }
 
 /// The wire bytes of one field from its JSON value.
-fn enc_field(r: Registry, info: MsgInfo, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts, real_oneof: Bool) -> Bytes ! protojson.JsonErr {
+fn enc_field(r: protojson.Registry, info: protojson.MsgInfo, fd: protodesc.FieldDesc, jv: Jv, o: protojson.Opts, real_oneof: Bool) -> Bytes ! protojson.JsonErr {
   var out = BytesBuilder.new()
   if fd.label == protodesc.LABEL_REPEATED {
     if fd.kind == protodesc.TYPE_MESSAGE {
@@ -1630,7 +1619,7 @@ fn enc_field(r: Registry, info: MsgInfo, fd: protodesc.FieldDesc, jv: Jv, o: pro
   Ok(out.freeze())
 }
 
-fn unmarshal(r: Registry, name: Str, json: Str, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+fn unmarshal(r: protojson.Registry, name: Str, json: Str, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
   let jv = parse_json(json)?
   match r.msgs.get(name) {
     Some(info) => msg_wire(r, info, jv, o)
@@ -1638,7 +1627,7 @@ fn unmarshal(r: Registry, name: Str, json: Str, o: protojson.Opts) -> Bytes ! pr
   }
 }
 
-fn field_for(info: MsgInfo, key: Str) -> protodesc.FieldDesc? {
+fn field_for(info: protojson.MsgInfo, key: Str) -> protodesc.FieldDesc? {
   for fd in info.d.field {
     if json_name(fd) == key {
       return Some(fd)
@@ -1653,7 +1642,7 @@ fn field_for(info: MsgInfo, key: Str) -> protodesc.FieldDesc? {
 }
 
 /// The wire bytes of the message `info` from its JSON value.
-fn msg_wire(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+fn msg_wire(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
   match wkt_wire(r, info, jv, o)? {
     Some(b) => return Ok(b)
     None => {}
@@ -1661,7 +1650,7 @@ fn msg_wire(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes ! pr
   msg_wire_obj(r, info, jv, o, false)
 }
 
-fn msg_wire_obj(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts, in_any: Bool) -> Bytes ! protojson.JsonErr {
+fn msg_wire_obj(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson.Opts, in_any: Bool) -> Bytes ! protojson.JsonErr {
   let members = match jv {
     Obj(m) => m
     _ => return Err(jerr("unexpected token"))
@@ -1969,7 +1958,7 @@ fn fieldmask_wire(s0: Str) -> Bytes ! protojson.JsonErr {
   Ok(out.freeze())
 }
 
-fn wkt_wire(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes? ! protojson.JsonErr {
+fn wkt_wire(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes? ! protojson.JsonErr {
   let n = info.full
   if !n.starts_with("google.protobuf.") {
     return Ok(None)
@@ -2030,7 +2019,7 @@ fn wkt_wire(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes? ! p
   Ok(None)
 }
 
-fn any_wire(r: Registry, info: MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
+fn any_wire(r: protojson.Registry, info: protojson.MsgInfo, jv: Jv, o: protojson.Opts) -> Bytes ! protojson.JsonErr {
   let members = match jv {
     Obj(m) => m
     _ => return Err(jerr("unexpected token"))
