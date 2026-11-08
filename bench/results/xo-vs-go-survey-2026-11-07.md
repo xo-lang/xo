@@ -46,6 +46,12 @@ By cause, the ten rows are five items:
 
 - metrics label lookup (rows 1, 5): an unwind guarded closure and a
   List per call where client_golang hashes the values under RLock.
+  The `ctx.unwinding` share left after decision 0554 (counter, about
+  13%) is skid from the atomic add before each check
+  (`__aarch64_ldadd8_acq_rel`), not the check: inlining `rt.unwinding`
+  as a TLS load and compare (141 of 142 calls gone) measured counter
+  1.021 worse (1.004 to 1.035, n=6) and histogram within noise
+  (0.992, n=7) on linux/arm64 host 1, 2026-11-07; dropped.
 - time layouts (rows 3, 4, 6, 8, 10): the layout scanned per call, and
   the compiled layout's digit and item loops.
 - cbor deterministic marshal (row 2): key sort and output growth.
