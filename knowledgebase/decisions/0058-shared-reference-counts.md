@@ -120,8 +120,8 @@ Lean showed most values never leave their thread.
   as Rust's Arc and libc++'s shared_ptr do, measured worse on
   linux/arm64 host 1 (`xo bench --ab` with the flag on by default:
   bench/perf metrics counter 1.009, histogram 1.026). The extra compare
-  and branch cost more than the acquire half of `ldaddal` or `stlxr`
-  saved on the Neoverse cores there.
+  and branch cost more than dropping the acquire half of the atomic
+  saved on that host.
 
 ## Alternatives
 - **Atomic counts everywhere** (Swift): simplest, but every retain and
