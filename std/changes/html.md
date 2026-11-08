@@ -7,7 +7,7 @@
 - Found by: a host 1 profile of std/htmltok (entity_of 16% of the samples), which shares the lookup
 - Go reference: html entity.go (go1.26.1)
 - Test: `xo test --std-module=native/html`; the htmltok and htmlparse corpora
-- Timing: host 1 A/B 0.879 of the parent (0.874 to 0.89, n=6; bench/perf/htmlparse `tok`, a page with `&amp;`, `&copy;`, `&lt;` and `&gt;`)
+- Timing: host 1 A/B 0.879 of the parent (0.874 to 0.89, n=6; bench/perf/htmlparse `tok`, a page with `&amp;`, `&copy;`, `&lt;` and `&gt;`); the general case, a page of only uncommon references (bench/perf/htmlparse `ent`, none of the seven answered first): 1.017 (1.012 to 1.03, n=7; 538.0 to 547.3 ms), the cost of the seven failed compares
 - Shipped in: not yet released
 
 `amp;`, `lt;`, `gt;`, `quot;`, `apos;`, `nbsp;` and `copy;` return their table values from a match before the binary search of the entity table; the results are the table's.
