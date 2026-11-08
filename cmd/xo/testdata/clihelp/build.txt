@@ -5,6 +5,7 @@ usage: xo build [--targets=all|os/arch,...] [--backend=native|go|llvm|arm64|amd6
                 [--profile-support=on|off] [--trace-support=on|off] [--opt=O0..O3]
                 [--trimpath=on|off] [-s] [--dsym] [--ld=macho|cc] [--race]
                 [--stamp NAME=VALUE]... [--entitlement=KEY]... [--hybrid] [--pack-lists=on|off]
+                [--versioninfo=FILE.json] [--icon=FILE.ico]... [--manifest=FILE]
                 [--inline-str] [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
@@ -47,7 +48,14 @@ also writes NAME.dSYM); -s leaves them and the local symbols out.
 linker: macho (Xo's own; the default on darwin/arm64) or cc. --race (also
 on run and test) builds with ThreadSanitizer on the LLVM backend. --stamp (repeatable, also on run)
 sets a `const NAME: Str` of the main module for this build (XO1501
-otherwise). A darwin build with debug information that is not --release
+otherwise). A windows build's version information, icons and manifest
+(decision 0560): --versioninfo=FILE.json reads goversioninfo's JSON (its
+IconPath and ManifestPath relative to the file), --icon=FILE.ico
+(repeatable, or comma separated; the first is the application icon) and
+--manifest=FILE replace its icons and Xo's default manifest; without
+--versioninfo, --stamp VERSION= still sets the versions. They apply to
+the windows targets of a build, and with no windows target they are a
+usage error; a bad file is XO1517. A darwin build with debug information that is not --release
 or -s carries the get-task-allow entitlement in its ad hoc signature, so
 xo debug can control it; --entitlement=KEY (repeatable) adds KEY set to
 true (decision 0253; xo itself carries com.apple.security.cs.debugger).
