@@ -6,9 +6,5 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Protojson_JsonErr, *Task) string                                                           = (*Protojson_JsonErr).M_display
-	_ func(*Task, List[Protodesc_FileDesc]) Protojson_Registry                                         = Protojson_registry
-	_ func(*Task, Bytes) Result[Protojson_Registry, Protobuf_ProtoErr]                                 = Protojson_registry_from_set
-	_ func(*Task, Protojson_Registry, string, Bytes, Protojson_Opts) Result[string, Protojson_JsonErr] = Protojson_marshal
-	_ func(*Task, Protojson_Registry, string, string, Protojson_Opts) Result[Bytes, Protojson_JsonErr] = Protojson_unmarshal
+	_ func(*Protojson_JsonErr, *Task) string = (*Protojson_JsonErr).M_display
 )
