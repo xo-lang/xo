@@ -57,11 +57,30 @@ twice) still paid on its first run:
 So how heavyd launches jobs is not the cause, and the exemption is not
 the fix.
 
-Next experiments, ranked (measure only, no setting changes):
-1. Code with no new file: a long-lived runner maps an entry's linked code
-   into MAP_JIT memory (pthread_jit_write_protect_np) and calls it. Xo's
-   binaries are not hardened runtime, so no entitlement should be needed.
-   Time a tiny C runner's load against the 155 ms.
-2. An ad hoc re-sign (`codesign -s - -f`) of a binary rewritten in place:
-   whether it avoids both the SIGKILL and the assessment.
-3. A binary on another volume type (a read-only RAM disk from hdiutil).
+The three experiments that followed (2026-11-08, Xo Lang 2, the
+development Mac at a lighter load, when a fresh `cc` binary's first run
+took 56 to 79 ms):
+
+1. Code with no new executable file: a C runner
+   (~/xo-lead/notes/xo-lang-2/runner.c) reads code from a new file each
+   time, copies it into MAP_JIT memory
+   (`pthread_jit_write_protect_np`, `sys_icache_invalidate`) and calls
+   it. A load took 0.015 to 0.054 ms for 64 bytes, 0.33 to 0.35 ms for 1
+   MB and 2.0 to 2.6 ms for 8 MB: no assessment. No entitlement was
+   needed (the runner is ad hoc signed, not hardened runtime). `read()`
+   straight into the MAP_JIT pages left them zero (SIGILL on the call);
+   read into a buffer and `memcpy` with writes enabled.
+2. An in-place rewrite, then `codesign -s - -f`
+   (~/xo-lead/notes/xo-lang-2/inplace.sh): codesign writes a new file
+   (a new inode), which pays again (58 to 106 ms). Without the re-sign,
+   two Xo binaries of the same size (1.8 MB, one constant apart) written
+   over each other ran correctly at 2 to 11 ms, while a 1.4 MB binary
+   written over a 1.8 MB one was killed (signal 9) on every run. So the
+   kill depends on more than an in-place write; it is not a fix to rely
+   on.
+3. A RAM disk (hdiutil, APFS): 56 to 79 ms first, the same as the local
+   disk measured beside it (63 to 73 ms).
+
+So a REPL on macOS avoids the cost only by loading code into a running
+process: a resident runner that maps each entry's linked code (relocated
+against the runner's own runtime) into MAP_JIT memory.
