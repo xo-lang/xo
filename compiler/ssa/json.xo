@@ -769,7 +769,14 @@ struct Dec {
 fn (var b: Builder) dec_err(d: Dec, path: Int, msg: Int) -> Int {
   let err_i = b.m.variant_index(d.rt, "Err")
   let dt = b.m.types[d.rt].variants[err_i].fields[0].ty
-  let e = b.add(Op.Struct, dt, Aux.None, [path, msg])
+  var vals = [path, msg]
+  // fields past path and msg (json.DecodeErr.go, decision 0553) are Str, empty here
+  var k = 2
+  while k < b.m.types[dt].fields.len() {
+    vals.push(b.const_str(""))
+    k += 1
+  }
+  let e = b.add(Op.Struct, dt, Aux.None, vals)
   b.add(Op.Variant, d.rt, Aux.I(n: err_i), [e])
 }
 
