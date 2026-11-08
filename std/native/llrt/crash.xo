@@ -167,11 +167,17 @@ fn set(r: Int, sig: Int, h: Int, flags: Int) {
     }
     TargetOs.Linux => {
       // the kernel's: the handler, the flags (SA_RESTORER 0x04000000),
-      // the restorer, the mask
+      // the restorer, the mask; riscv64's has no restorer (the kernel
+      // returns through the vDSO's sigreturn)
       st(sa, 0, h)
-      st(sa, 8, flags | 67108864)
-      st(sa, 16, rt.sys_restorer())
-      st(sa, 24, 0)
+      if target.arch == TargetArch.Riscv64 {
+        st(sa, 8, flags)
+        st(sa, 16, 0)
+      } else {
+        st(sa, 8, flags | 67108864)
+        st(sa, 16, rt.sys_restorer())
+        st(sa, 24, 0)
+      }
       let _r = linux.rt_sigaction(sig, sa, 0)
     }
     TargetOs.Windows | TargetOs.Wasi => {}

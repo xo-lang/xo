@@ -93,6 +93,12 @@ fn (var g: Gen) unwind_fns() {
   }
   g.emitted["@xo_unwind_save"] = true
   g.emitted["@xo_unwind_resume"] = true
+  if g.arch() == "riscv64" {
+    // decision 0571 stage 2: unwinding on riscv64
+    g.helpers.push(naked_fn("void @xo_unwind_save(i64 %0)", ["ret"]))
+    g.helpers.push(naked_fn("void @xo_unwind_resume(i64 %0)", ["ebreak"]))
+    return
+  }
   if g.os() == "windows" && g.arch() == "amd64" {
     g.helpers.push(naked_fn("void @xo_unwind_save(i64 %0)", ["retq"]))
     g.helpers.push(naked_fn("void @xo_unwind_resume(i64 %0)", ["ud2"]))
@@ -154,6 +160,11 @@ fn switch_asm(goos: Str, goarch: Str) -> (List[Str], List[Str]) {
     }
     return (amd64_switch(), ["movq %rbx, %rdi", "callq *%r12", "ud2"])
   }
+  if goarch == "riscv64" {
+    // decision 0571: s1 the fiber, s2 its main (std/native/llrt sched.xo
+    // fiber_frame)
+    return (riscv64_switch(), ["mv a0, s1", "jalr s2", "ebreak"])
+  }
   let start = ["mov x0, x19", "blr x20", "brk #1"]
   if goos == "windows" {
     return (arm64_win_switch(), start)
@@ -169,6 +180,32 @@ fn switch_asm(goos: Str, goarch: Str) -> (List[Str], List[Str]) {
     return (arm64_switch(), [".cfi_escape 0x07, 30"] + start)
   }
   (arm64_switch(), start)
+}
+
+/// The riscv64 switch (decision 0571): ra, s0 to s11 and fs0 to fs11
+/// (lp64d's callee saved registers) in a 208 byte frame: s0 to s11 at 0
+/// to 88, ra at 96, fs0 to fs11 at 104 to 192.
+fn riscv64_switch() -> List[Str] {
+  var l = ["addi sp, sp, -208"]
+  for i in 0..12 {
+    l.push("sd s${i}, ${8 * i}(sp)")
+  }
+  l.push("sd ra, 96(sp)")
+  for i in 0..12 {
+    l.push("fsd fs${i}, ${104 + 8 * i}(sp)")
+  }
+  l.push("sd sp, 0(a0)")
+  l.push("mv sp, a1")
+  for i in 0..12 {
+    l.push("ld s${i}, ${8 * i}(sp)")
+  }
+  l.push("ld ra, 96(sp)")
+  for i in 0..12 {
+    l.push("fld fs${i}, ${104 + 8 * i}(sp)")
+  }
+  l.push("addi sp, sp, 208")
+  l.push("ret")
+  l
 }
 
 fn arm64_switch() -> List[Str] {

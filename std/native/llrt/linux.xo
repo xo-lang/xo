@@ -377,8 +377,9 @@ pub fn random(n: Int) -> (Bytes, Int) {
 /// in Xo need a C ABI entry (decision 0206, stage 2).
 pub fn sigaction(sig: Int, handler: Int, flags: Int) -> Int {
   // struct sigaction of the kernel: handler, flags, restorer, mask
-  // (SA_RESTORER is 0x04000000)
-  let act = words([handler, flags | 67108864, rt.sys_restorer(), 0])
+  // (SA_RESTORER is 0x04000000); riscv64's is handler, flags, mask, and
+  // the kernel returns through the vDSO's sigreturn
+  let act = if target.arch == TargetArch.Riscv64 { words([handler, flags, 0, 0]) } else { words([handler, flags | 67108864, rt.sys_restorer(), 0]) }
   let old = raw.bytes_buf(32)
   let r = rt.sys6(nr(134, 13), sig, raw.bytes_addr(act), raw.bytes_addr(old), 8, 0, 0)
   keep(act, r)
