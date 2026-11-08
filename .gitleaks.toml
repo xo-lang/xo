@@ -5,7 +5,9 @@
 # in the TLS goldens, TLS code that compares key types, and the vendored
 # SQLite amalgamation (decision 0534: sqlite3_api-> and iKey== lines read
 # as generic API keys; its bytes are pinned by TestSQLiteVendored's
-# SHA-256, so it cannot change unseen).
+# SHA-256, so it cannot change unseen), and the protowkt corpus (protobuf
+# wire hex vectors whose map key text, "kay," plus the hex of a double,
+# reads as a generic API key; Go's own marshal output, nothing secret).
 [extend]
 useDefault = true
 
@@ -18,6 +20,7 @@ paths = [
   '''third_party/mbedtls/''',
   '''std/native/sqlite/sqlite3\.c''',
   '''internal/llvm/time_diff_test\.go''',
+  '''internal/stdtest/testdata/corpus/protowkt/protowkt_test\.xo''',
 ]
 
 # Values that must never be committed again (the private account, its
