@@ -1,0 +1,30 @@
+// A Float32 NaN keeps its payload through Float32.from_bits, a packed
+// List[Float32] (decision 0369) and to_bits on every target (prelude;
+// decision 0361's addendum: riscv64's fcvt returns the canonical NaN, so
+// the LLVM backend converts a NaN in integers there). Quiet NaNs only:
+// a signaling one comes back quiet from a conversion on the native
+// backends and unchanged on the Go backend.
+
+fn hex(n: Int) -> Str {
+  let digits = "0123456789abcdef"
+  var s = ""
+  for k in 0..8 {
+    let d = n.shr_logical(28 - 4 * k) & 15
+    s = s + digits[d..d + 1]
+  }
+  s
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let bits = [0x7fc00001, 0xffc12345, 0x7fffffff, 0x7fc00000, 0x3f800000, 0x00000001]
+  var xs: List[Float32] = []
+  for b in bits {
+    xs.push(Float32.from_bits(UInt32(b)))
+  }
+  for i in 0..xs.len() {
+    io.println("${hex(bits[i])} -> ${hex(Int(xs[i].to_bits()))}")
+  }
+  xs[0] = xs[1]
+  io.println("moved ${hex(Int(xs[0].to_bits()))}")
+}

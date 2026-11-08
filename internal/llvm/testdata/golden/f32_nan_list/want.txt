@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+7fc00001 -> 7fc00001
+ffc12345 -> ffc12345
+7fffffff -> 7fffffff
+7fc00000 -> 7fc00000
+3f800000 -> 3f800000
+00000001 -> 00000001
+moved ffc12345
+--- stderr
