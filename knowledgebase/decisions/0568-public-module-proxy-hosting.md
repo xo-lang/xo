@@ -112,9 +112,10 @@ fifty times as much.
   records (eforward1 to 5.registrar-servers.com, checked with dig on
   2026-11-08), not only the parking A record. Namecheap documents its
   free forwarding only for domains on its own DNS, so it stops when the
-  nameservers move. Either the owner confirms nothing uses @xolang.org
-  mail, or Cloudflare Email Routing (free) replaces it in the same
-  change.
+  nameservers move. Settled (owner, 2026-11-08): xolang.org is unused,
+  mail included, so the forwarding MX records (eforward1 to 5) and the
+  SPF record are dropped when the zone moves, with no Email Routing
+  replacement.
 - If DNSSEC is on at Namecheap, turn it off before the nameserver change
   and turn it back on with Cloudflare's DS record afterwards.
 - xolang.dev stays on Namecheap DNS, unchanged.
@@ -289,8 +290,8 @@ host.
    - systemd unit files and an install script, all tested against a
      local S3-compatible server and loopback.
 2. Private beta, after the owner accepts this ADR:
-   - xolang.org's nameservers move to Cloudflare (the email question
-     settled first);
+   - xolang.org's nameservers move to Cloudflare (its mail records
+     dropped, owner 2026-11-08);
    - the R2 bucket, the scoped token and the tunnel are created;
    - the owner generates the key on the host and the services are
      installed;
