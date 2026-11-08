@@ -136,7 +136,8 @@ fn std_key_head(id: Str, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bool) -> S
   "xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n${if tmode { "test=1\n" } else { "" }}"
 }
 
-/// std's .xo files under std (not its tests), one "PATH SIZE SHA" line each (SHA the first 32 hex digits of the content's SHA-256) in path
+/// std's .xo files under std (not its tests, not the bindings under .xo/)
+/// and its C headers, one "PATH SIZE SHA" line each (SHA the first 32 hex digits of the content's SHA-256) in path
 /// order, the part of std_cache_key every variant shares: walked once a
 /// process (Ctx.std_trees); "" when std cannot be walked.
 fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
@@ -165,7 +166,7 @@ fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
     // 0348; a test variant is a program's test build, and only
     // --std-module loads a module's tests), so editing one keeps the
     // variants (`xo test --std-module` after a test edit)
-    if !f.is_dir && f.path.ends_with(".xo") && !f.path.ends_with("_test.xo") {
+    if !f.is_dir && std_tree_file(f.path) {
       let rel = f.path.trim_prefix(std)
       let ms = f.modified.unix_millis()
       var sha = old.get("${rel} ${f.size} ${ms}") ?? ""
@@ -196,6 +197,18 @@ fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
     m.with(fn(var tr) { tr[std] = t })
   }
   t
+}
+
+/// A file of std that std_tree_lines keys: its .xo sources but its tests,
+/// and its C headers; not the `use c` bindings a build writes under std's
+/// .xo/cbind, which are made from those headers (a checkout's first
+/// build of a std module with `use c` wrote one and changed the key, so
+/// every variant was built again; gotchas/cbind-writes-into-std.md).
+fn std_tree_file(path: Str) -> Bool {
+  if path.contains("/.xo/") {
+    return false
+  }
+  path.ends_with(".xo") && !path.ends_with("_test.xo") || path.ends_with(".h")
 }
 
 /// The paths of std's store and facts for the target and variant, built

@@ -14,15 +14,23 @@ Cause: a binding's cache is `<module root>/.xo/cbind` unless
 module root is std itself. A parallel test that built std/sqlite (a std
 variant build binds it too) wrote its binding there, and std's tree key
 (stdcache.xo std_tree_lines) counts every `.xo` file under std, so the
-key changed between the test's variant build and its own build. Users
-meet the same once: a release's std ships no binding, so a first
-std/sqlite build writes into the installed std and the next default build
-rebuilds std's variants.
+key changed between the test's variant build and its own build. A
+checkout's std (a seed's, a developer's) meets the same once: a first
+std/sqlite build writes the binding into std, and the next default build
+rebuilds std's variants. A release's std does not: release.sh ships the
+binding in lib/xo/std/native/.xo/cbind (decision 0534 stage 2). Checked
+2026-11-08 with the 0.44.0 darwin-arm64 archive and its std made
+read-only: a std/sqlite program builds and runs, writes nothing under std,
+and binds no header again.
 
 Fix (tests): internal/xotool's init sets `XO_CBIND_DIR` to
 `<user cache>/xo/test-cbind` when it is unset (bindings are named by their
 content, so processes share it), and TestStdRecordBindRetry, which set it
 empty, uses a directory of its own. A test that sets `XO_CBIND_DIR=""` on
 purpose (the default location's tests) uses a copied std or its own
-module. Users: the release's std to ship the std/sqlite binding prebuilt
-(lead, 2026-11-08, after 0.44.0).
+module.
+
+Fix (the key, 2026-11-08): std_tree_lines keys std's C headers and no file
+under a `.xo/` directory (stdcache.xo std_tree_file). A binding is made
+from its header and link paths (bind.std_key), so the headers stand for
+it, and writing it no longer changes the key.

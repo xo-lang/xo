@@ -33,3 +33,13 @@ test "cache_id names a facts cache entry by its key, not its time" {
   expect(p) == "12:/w/mine.stdf 10 1000 \n"
   expect(facts_id_line(check.FileStamp{path: "/w/mine.stdf", size: 10, mtime: 2000})) != p
 }
+
+test "std's tree key covers its sources and headers, not its bindings" {
+  expect(std_tree_file("/s/std/native/http.xo")) == true
+  expect(std_tree_file("/s/std/native/sqlite/sqlite3.h")) == true
+  expect(std_tree_file("/s/std/native/http_test.xo")) == false
+  // the binding a std/sqlite build writes (gotchas/cbind-writes-into-std.md)
+  expect(std_tree_file("/s/std/native/.xo/cbind/c_xo_sqlite_045d638a.xo")) == false
+  expect(std_tree_file("/s/std/native/.xo/cbind/c_xo_sqlite_045d638a.c")) == false
+  expect(std_tree_file("/s/std/native/sqlite/sqlite3.c")) == false
+}
