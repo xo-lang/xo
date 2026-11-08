@@ -1,0 +1,357 @@
+// goversioninfo's goversioninfo_test.go and icon_test.go, ported from the
+// Xo port (decision 0560; its Go source generator, gofile, is not part of
+// xo, so TestFile1 checks the hex goldens only). Outputs go to temp
+// files under testdata/ that each test removes.
+
+use std/binary
+use std/embed
+
+/// Go's testdata, which the test's in memory file system gets a copy of.
+const TESTDATA: embed.Dir = embed("testdata")
+
+/// Copies testdata into a test's file system.
+fn seed(fs: Fs) -> () ! Error uses fs.write {
+  for p in TESTDATA.paths() {
+    let full = p
+    if let Some(i) = full.rfind("/") {
+      fs.create_dir_all(full[0..i])?
+    }
+    fs.write(full, TESTDATA.read(p) ?? Bytes.zeroed(0))?
+  }
+  Ok(())
+}
+
+fn load(fs: Fs, name: Str) -> VersionInfo ! Error uses fs.read {
+  var vi = new_version_info()
+  vi.parse_json(fs.read("testdata/json/${name}.json")?)?
+  Ok(vi)
+}
+
+fn check_file(fs: Fs, name: Str) -> () ! Error uses fs.read {
+  var vi = load(fs, name)?
+  let _ = vi.build()
+  vi.walk()
+  expect(vi.buffer == fs.read("testdata/hex/${name}.hex")?) == true
+  Ok(())
+}
+
+test "TestFile1: the hex goldens" {
+  seed(os.fs)?
+  for name in ["cmd", "explorer", "control", "simple"] {
+    check_file(os.fs, name)?
+  }
+}
+
+/// A temp file under testdata for one output; the caller removes it.
+fn temp(fs: Fs) -> Str ! Error uses fs.write {
+  Ok(fs.create_temp("testdata", "out-")?)
+}
+
+fn write_arch(fs: Fs, arch: Str) -> () ! Error uses fs {
+  var vi = load(fs, "cmd")?
+  let _ = vi.build()
+  vi.walk()
+  let file = temp(fs)?
+  let r = vi.write_syso(fs, file, arch)
+  let data = fs.read(file)
+  fs.remove(file)?
+  r?
+  expect(data?.len() > 0) == true
+  Ok(())
+}
+
+test "TestWrite32, TestWrite64, TestWriteArm32, TestWriteArm64" {
+  seed(os.fs)?
+  for arch in ["386", "amd64", "arm", "arm64"] {
+    write_arch(os.fs, arch)?
+  }
+}
+
+test "TestMalformedJSON" {
+  seed(os.fs)?
+  var vi = new_version_info()
+  expect(vi.parse_json(os.fs.read("testdata/json/bad.json")?) is Err(_)) == true
+}
+
+/// The section relative offset of every resource's data in the .rsrc
+/// raw data (resourceLeaves).
+fn resource_leaves(data: Bytes, va: Int) -> List[Int] {
+  var offsets: List[Int] = []
+  var dirs = [(0, 1)]
+  while !dirs.is_empty() {
+    let (dir, depth) = dirs[0]
+    dirs = dirs[1..]
+    expect(depth <= 3) == true
+    let counts = binary.get_u32_le(data, dir + 12)
+    let total = (counts & 0xffff) + (counts >> 16)
+    for i in 0..total {
+      let entry = dir + 16 + i * 8
+      let off = binary.get_u32_le(data, entry + 4)
+      if off & 0x80000000 != 0 {
+        dirs.push((off & 0x7fffffff, depth + 1))
+      } else {
+        offsets.push(binary.get_u32_le(data, off) - va)
+      }
+    }
+  }
+  offsets
+}
+
+test "TestSysoResourceAlignment: every resource starts on 8 bytes (issue 39)" {
+  seed(os.fs)?
+  var vi = load(os.fs, "cmd")?
+  vi.icon_path = "testdata/resource/icon.ico"
+  vi.manifest_path = "testdata/resource/goversioninfo.exe.manifest"
+  let _ = vi.build()
+  vi.walk()
+  for arch in ["386", "amd64", "arm", "arm64"] {
+    let f = vi.syso(os.fs, arch)?
+    // IMAGE_SECTION_HEADER after the 20 byte file header
+    let va = binary.get_u32_le(f, 20 + 12)
+    let size = binary.get_u32_le(f, 20 + 16)
+    let raw = binary.get_u32_le(f, 20 + 20)
+    let relocs = binary.get_u32_le(f, 20 + 24)
+    let nrelocs = binary.get_u16_le(f, 20 + 32)
+    let leaves = resource_leaves(f[raw..raw + size], va)
+    expect(leaves.is_empty()) == false
+    for leaf in leaves {
+      expect(leaf % 8) == 0
+    }
+    expect(raw + size) == relocs
+    expect(relocs + nrelocs * 10) == binary.get_u32_le(f, 8)
+  }
+}
+
+fn syso_with(fs: Fs, icon: Str, app_icon: Str) -> Result[Bytes, WriteErr] uses fs.read {
+  var vi = match load(fs, "cmd") {
+    Ok(v) => v
+    Err(_) => return Err(WriteErr{msg: "load"})
+  }
+  vi.icon_path = icon
+  vi.application_icon_path = app_icon
+  let _ = vi.build()
+  vi.walk()
+  vi.syso(fs, "386")
+}
+
+test "TestIcon, TestApplicationIconDefault, TestApplicationIconExplicit" {
+  seed(os.fs)?
+  expect(syso_with(os.fs, "testdata/resource/icon.ico", "") is Ok(_)) == true
+  expect(syso_with(os.fs, "testdata/resource/icon.ico", "testdata/resource/icon.ico") is Ok(_)) == true
+}
+
+test "TestBadIcon: an error and no file" {
+  seed(os.fs)?
+  var vi = load(os.fs, "cmd")?
+  vi.icon_path = "icon2.ico"
+  let _ = vi.build()
+  vi.walk()
+  let file = temp(os.fs)?
+  os.fs.remove(file)?
+  expect(vi.write_syso(os.fs, file, "386") is Err(_)) == true
+  expect(os.fs.exists(file)?) == false
+}
+
+test "TestBadApplicationIcon" {
+  seed(os.fs)?
+  expect(syso_with(os.fs, "", "nonexistent.ico") is Err(_)) == true
+}
+
+test "TestTimestamp: the timestamp changes nothing" {
+  seed(os.fs)?
+  var vi = load(os.fs, "cmd")?
+  vi.timestamp = true
+  let _ = vi.build()
+  vi.walk()
+  expect(vi.syso(os.fs, "386") is Ok(_)) == true
+}
+
+test "TestVersionString" {
+  seed(os.fs)?
+  let vi = load(os.fs, "cmd")?
+  expect(vi.fixed.file_version.version_string()) == "6.3.9600.16384"
+}
+
+test "TestWriteHex" {
+  seed(os.fs)?
+  var vi = load(os.fs, "cmd")?
+  let _ = vi.build()
+  vi.walk()
+  let file = temp(os.fs)?
+  let r = vi.write_hex(os.fs, file)
+  let data = os.fs.read(file)
+  os.fs.remove(file)?
+  r?
+  expect(data? == vi.buffer) == true
+}
+
+test "TestStr2Uint32" {
+  seed(os.fs)?
+  var w: List[Str] = []
+  expect(str_to_u32("0", w)) == 0
+  expect(str_to_u32("", w)) == 0
+  expect(str_to_u32("FFEF", w)) == 65519
+  expect(str_to_u32("\0\0", w)) == 0
+  expect(w.len()) == 1
+}
+
+/// lang_cs_test's cases through the JSON decoder: (text, an error wanted).
+const UNMARSHALS: List[(Str, Bool)] = [("1", false), ("\"FfeF\"", false), ("\"FXXX\"", true), ("null", false), ("70000", true), ("1.5", true), ("true", true), ("\"\"", true)]
+
+test "TestLangID and TestCharsetID" {
+  seed(os.fs)?
+  for (text, need_err) in UNMARSHALS {
+    for key in ["LangID", "CharsetID"] {
+      var vi = new_version_info()
+      let r = vi.parse_json("{\"VarFileInfo\": {\"Translation\": {\"${key}\": ${text}}}}".bytes())
+      expect(r is Err(_)) == need_err
+    }
+  }
+  var vi = new_version_info()
+  vi.parse_json("{\"VarFileInfo\": {\"Translation\": {\"LangID\": \"FfeF\", \"CharsetID\": 1200}}}".bytes())?
+  expect(vi.var_info.translation.lang_id) == 0xffef
+  expect(vi.var_info.translation.charset_id) == 1200
+}
+
+test "TestWriteCoff: an unknown architecture and an unwritable path" {
+  seed(os.fs)?
+  expect(new_rsrc("mips") is Err(_)) == true
+  var vi = new_version_info()
+  let _ = vi.build()
+  vi.walk()
+  expect(vi.write_syso(os.fs, "", "386") is Err(_)) == true
+}
+
+test "TestNewFileVersion" {
+  seed(os.fs)?
+  let ok = [
+    ("1.2.3", FileVersion{major: 1, minor: 2, patch: 3, build: 0}),
+    ("1.2.3.a", FileVersion{major: 1, minor: 2, patch: 3, build: 0}),
+    ("1.2.3.4", FileVersion{major: 1, minor: 2, patch: 3, build: 4}),
+    ("1.2.3.4-RC.1", FileVersion{major: 1, minor: 2, patch: 3, build: 4}),
+    ("1.2.3.4 (final)", FileVersion{major: 1, minor: 2, patch: 3, build: 4}),
+    ("6.3.9600.17284 (aaa.140822-1915)", FileVersion{major: 6, minor: 3, patch: 9600, build: 17284}),
+  ]
+  for (s, want) in ok {
+    expect(new_file_version(s)?) == want
+  }
+  let bad = [
+    ("1.2", "version expected to start from x.y.z"),
+    ("1.3.a", "version expected to start from x.y.z"),
+    ("v1.2.3", "version expected to start from x.y.z"),
+    ("1.1.1.9223372036854775808", "9223372036854775808"),
+  ]
+  for (s, sub) in bad {
+    match new_file_version(s) {
+      Ok(v) => expect("${s} parsed as ${v.version_string()}") == "an error"
+      Err(e) => expect(e.msg.contains(sub)) == true
+    }
+  }
+}
+
+test "TestFillVersions_FixedToString" {
+  seed(os.fs)?
+  var vi = new_version_info()
+  vi.fixed.file_version = FileVersion{major: 2, minor: 0, patch: 0, build: 0}
+  vi.fixed.product_version = FileVersion{major: 3, minor: 1, patch: 0, build: 0}
+  let _ = vi.build()
+  expect(vi.strings.file_version) == "2.0.0.0"
+  expect(vi.strings.product_version) == "3.1.0.0"
+}
+
+test "TestFillVersions_StringToFixed" {
+  seed(os.fs)?
+  var vi = new_version_info()
+  vi.strings.file_version = "2.0.0.0"
+  vi.strings.product_version = "3.1.4.1"
+  let _ = vi.build()
+  expect(vi.fixed.file_version) == FileVersion{major: 2, minor: 0, patch: 0, build: 0}
+  expect(vi.fixed.product_version) == FileVersion{major: 3, minor: 1, patch: 4, build: 1}
+}
+
+test "TestFillVersions_BothPresent" {
+  seed(os.fs)?
+  var vi = new_version_info()
+  vi.fixed.file_version = FileVersion{major: 1, minor: 0, patch: 0, build: 0}
+  vi.fixed.product_version = FileVersion{major: 1, minor: 0, patch: 0, build: 0}
+  vi.strings.file_version = "1.0.0.0 (custom build)"
+  vi.strings.product_version = "1.0"
+  let _ = vi.build()
+  expect(vi.strings.file_version) == "1.0.0.0 (custom build)"
+  expect(vi.strings.product_version) == "1.0"
+  expect(vi.fixed.file_version) == FileVersion{major: 1, minor: 0, patch: 0, build: 0}
+  expect(vi.fixed.product_version) == FileVersion{major: 1, minor: 0, patch: 0, build: 0}
+}
+
+test "TestFillVersions_InvalidStringVersion" {
+  seed(os.fs)?
+  var vi = new_version_info()
+  vi.strings.file_version = "not-a-version"
+  let w = vi.build()
+  expect(vi.fixed.file_version) == FileVersion{major: 0, minor: 0, patch: 0, build: 0}
+  expect(vi.strings.file_version) == "not-a-version"
+  expect(w.join("\n").contains("could not be parsed")) == true
+}
+
+test "TestFillVersions_Conflict" {
+  seed(os.fs)?
+  var vi = new_version_info()
+  vi.fixed.file_version = FileVersion{major: 2, minor: 0, patch: 0, build: 0}
+  vi.strings.file_version = "3.0.0.0"
+  expect(vi.build().join("\n").contains("do not match")) == true
+}
+
+test "TestFillVersions_MatchingVersionsNoWarning" {
+  seed(os.fs)?
+  var vi = new_version_info()
+  vi.fixed.file_version = FileVersion{major: 6, minor: 3, patch: 9600, build: 16384}
+  vi.strings.file_version = "6.3.9600.16384 (winblue_rtm.130821-1623)"
+  expect(vi.build().is_empty()) == true
+}
+
+test "TestPadStringEmoji: a surrogate pair" {
+  seed(os.fs)?
+  expect(pad_string("😀", 0).to_hex()) == "3dd800de"
+}
+
+test "TestPadStringMixed" {
+  seed(os.fs)?
+  expect(pad_string("a©😀", 0).to_hex()) == "6100a9003dd800de"
+}
+
+test "TestCopyrightSymbolCharset" {
+  seed(os.fs)?
+  let copyright = "© 2024 Contoso Ltd."
+  let encoded = pad_string(copyright, 0)
+  expect(Int(encoded[0])) == 0xa9
+  expect(Int(encoded[1])) == 0
+  let build = fn(charset: Int) -> Bytes {
+    var vi = new_version_info()
+    vi.strings.legal_copyright = copyright
+    vi.var_info.translation = Translation{lang_id: 0x0409, charset_id: charset}
+    let _ = vi.build()
+    vi.walk()
+    vi.buffer
+  }
+  let correct = build(1200)
+  let wrong = build(0)
+  expect(correct.contains(encoded)) == true
+  expect(wrong.contains(encoded)) == true
+  expect(correct == wrong) == false
+  expect(Translation{lang_id: 0x0409, charset_id: 1200}.key()) == "040904B0"
+  expect(Translation{lang_id: 0x0409, charset_id: 0}.key()) == "04090000"
+}
+
+test "TestIconReleaseFileHandle: the icon can be renamed after writing" {
+  seed(os.fs)?
+  var vi = new_version_info()
+  vi.icon_path = "testdata/resource/icon.ico"
+  let _ = vi.build()
+  vi.walk()
+  let file = temp(os.fs)?
+  let r = vi.write_syso(os.fs, file, "arm64")
+  os.fs.remove(file)?
+  r?
+  os.fs.rename("testdata/resource/icon.ico", "testdata/resource/icon2.ico")?
+  os.fs.rename("testdata/resource/icon2.ico", "testdata/resource/icon.ico")?
+}

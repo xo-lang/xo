@@ -1,0 +1,80 @@
+// The Windows ICO file header, ported from github.com/akavel/rsrc v0.10.2
+// (package ico), MIT licensed, Copyright (c) 2013-2017 The rsrc Authors
+// (LICENSE.rsrc, AUTHORS.rsrc). Only DecodeHeaders, which goversioninfo
+// uses, is ported.
+
+/// The fields an icon file and an icon group resource share
+/// (IconDirEntryCommon).
+pub struct IconDirEntryCommon {
+  pub width: Int
+  pub height: Int
+  pub color_count: Int
+  pub reserved: Int
+  pub planes: Int
+  pub bit_count: Int
+  pub bytes_in_res: Int
+}
+
+/// One image of an icon file (ICONDIRENTRY).
+pub struct IconDirEntry {
+  pub common: IconDirEntryCommon
+  pub image_offset: Int
+}
+
+/// Why an icon file's header could not be read: Go's io.EOF and
+/// io.ErrUnexpectedEOF from binary.Read, or the magic number check.
+pub struct IcoErr {
+  pub msg: Str
+}
+
+pub fn (e: IcoErr) display() -> Str { e.msg }
+
+const ICONDIR_SIZE: Int = 6
+const ENTRY_SIZE: Int = 16
+
+fn ico_u16(b: Bytes, at: Int) -> Int { Int(b[at]) | (Int(b[at + 1]) << 8) }
+
+fn ico_u32(b: Bytes, at: Int) -> Int { ico_u16(b, at) | (ico_u16(b, at + 2) << 16) }
+
+/// binary.Read's error for a struct of size bytes at offset at of data:
+/// EOF when nothing is left, unexpected EOF when part of it is.
+fn short_read(data: Bytes, at: Int, size: Int) -> IcoErr? {
+  if at >= data.len() {
+    return Some(IcoErr{msg: "EOF"})
+  }
+  if at + size > data.len() {
+    return Some(IcoErr{msg: "unexpected EOF"})
+  }
+  None
+}
+
+/// The image entries of an icon file (ico.DecodeHeaders).
+pub fn decode_headers(data: Bytes) -> List[IconDirEntry] ! IcoErr {
+  if let Some(e) = short_read(data, 0, ICONDIR_SIZE) {
+    return Err(e)
+  }
+  if ico_u16(data, 0) != 0 || ico_u16(data, 2) != 1 {
+    return Err(IcoErr{msg: "bad magic number"})
+  }
+  let count = ico_u16(data, 4)
+  var entries: List[IconDirEntry] = []
+  for i in 0..count {
+    let at = ICONDIR_SIZE + i * ENTRY_SIZE
+    if let Some(e) = short_read(data, at, ENTRY_SIZE) {
+      return Err(e)
+    }
+    entries.push(IconDirEntry{
+      common: IconDirEntryCommon{
+        width: Int(data[at]),
+        height: Int(data[at + 1]),
+        color_count: Int(data[at + 2]),
+        reserved: Int(data[at + 3]),
+        planes: ico_u16(data, at + 4),
+        bit_count: ico_u16(data, at + 6),
+        bytes_in_res: ico_u32(data, at + 8),
+      },
+      image_offset: ico_u32(data, at + 12),
+    })
+  }
+  Ok(entries)
+}

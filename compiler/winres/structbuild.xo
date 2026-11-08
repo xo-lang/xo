@@ -1,0 +1,170 @@
+// The VS_VERSIONINFO resource (structbuild.go).
+//
+// Version Information Structures:
+// http://msdn.microsoft.com/en-us/library/windows/desktop/ff468916.aspx
+//
+// The Go code builds the VS_* structs and walks them with reflect to write
+// each field little endian; here each struct writes itself in the same
+// field order. Lengths are 16 bit fields and wrap as Go's uint16 does.
+
+/// Go's strconv.Quote, as the warnings print strings.
+fn go_quote(s: Str) -> Str { s.quote() }
+
+fn u16(n: Int) -> Int { n & 65535 }
+
+/// s as UTF-16 little endian, then zeros zero bytes (padString).
+fn pad_string(s: Str, zeros: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(s.len() * 2 + zeros)
+  for r in s.runes() {
+    var c = Int(r)
+    if c >= 0x10000 {
+      c -= 0x10000
+      put16(b, 0xd800 + (c >> 10))
+      put16(b, 0xdc00 + (c & 0x3ff))
+    } else {
+      put16(b, c)
+    }
+  }
+  for _ in 0..zeros {
+    b.write_byte(0)
+  }
+  b.freeze()
+}
+
+fn put16(var b: BytesBuilder, v: Int) {
+  b.write_byte(UInt8(v & 255))
+  b.write_byte(UInt8((v >> 8) & 255))
+}
+
+fn put32(var b: BytesBuilder, v: Int) {
+  put16(b, v & 65535)
+  put16(b, (v >> 16) & 65535)
+}
+
+/// The zero padding after a key that aligns what follows to 32 bits,
+/// counting the three 16 bit header words (soFar in the Go code).
+fn key_padding(key: Bytes) -> Int {
+  var so_far = 2
+  while (key.len() + 6 + so_far) % 4 != 0 {
+    so_far += 2
+  }
+  so_far
+}
+
+/// One header and key: wLength, wValueLength, wType, szKey, Padding.
+fn put_head(var b: BytesBuilder, length: Int, value_length: Int, typ: Int, key: Bytes) {
+  put16(b, u16(length))
+  put16(b, u16(value_length))
+  put16(b, typ)
+  b.write(key)
+  b.write(Bytes.zeroed(key_padding(key)))
+}
+
+/// A String structure (buildString): None for an empty value.
+fn build_string(name: Str, value: Str) -> Bytes? {
+  if value == "" {
+    return None
+  }
+  let key = pad_string(name, 0)
+  let so_far = key_padding(key) + key.len()
+  let text = pad_string(value, 0)
+  var zeros = 2
+  while (6 + so_far + text.len() + zeros) % 4 != 0 {
+    zeros += 2
+  }
+  let val = pad_string(value, zeros)
+  let value_length = u16(text.len() / 2) + 1
+  var b = BytesBuilder.new()
+  put_head(b, 6 + so_far + val.len(), value_length, 1, key)
+  b.write(val)
+  Some(b.freeze())
+}
+
+/// The StringTable structure: its key is the translation, its children
+/// the strings that are set (buildStringTable).
+fn build_string_table(vi: VersionInfo) -> Bytes {
+  let key = pad_string(vi.var_info.translation.key(), 0)
+  var children = BytesBuilder.new()
+  var length = 0
+  for (i, name) in STRING_NAMES.indexed() {
+    if let Some(s) = build_string(name, vi.strings.values()[i]) {
+      children.write(s)
+      length = u16(length + u16(s.len()))
+    }
+  }
+  length = u16(length + 6 + key_padding(key) + key.len())
+  var b = BytesBuilder.new()
+  put_head(b, length, 0, 1, key)
+  b.write(children.freeze())
+  b.freeze()
+}
+
+fn build_string_file_info(vi: VersionInfo) -> Bytes {
+  let key = pad_string("StringFileInfo", 0)
+  let table = build_string_table(vi)
+  // the table's own wLength, as Go adds st.WLength
+  let table_length = Int(table[0]) | (Int(table[1]) << 8)
+  var b = BytesBuilder.new()
+  put_head(b, 6 + key_padding(key) + key.len() + table_length, 0, 1, key)
+  b.write(table)
+  b.freeze()
+}
+
+/// The VarFileInfo structure with its one Var, the translation
+/// (buildVarFileInfo, buildVar).
+fn build_var_file_info(t: Translation, var warnings: List[Str]) -> Bytes {
+  let vkey = pad_string("Translation", 0)
+  let var_length = 6 + 4 + key_padding(vkey) + vkey.len()
+  let key = pad_string("VarFileInfo", 0)
+  var b = BytesBuilder.new()
+  put_head(b, 6 + var_length + key_padding(key) + key.len(), 0, 1, key)
+  put_head(b, var_length, 4, 0, vkey)
+  put32(b, str_to_u32(t.value_hex(), warnings))
+  b.freeze()
+}
+
+/// VS_FIXEDFILEINFO (buildFixedFileInfo); the file date stays zero.
+fn build_fixed_file_info(vi: VersionInfo, var warnings: List[Str]) -> Bytes {
+  let f = vi.fixed
+  var b = BytesBuilder.with_capacity(52)
+  put32(b, 0xfeef04bd)
+  put32(b, 0x00010000)
+  put32(b, str_to_u32(f.file_version.high(), warnings))
+  put32(b, str_to_u32(f.file_version.low(), warnings))
+  put32(b, str_to_u32(f.product_version.high(), warnings))
+  put32(b, str_to_u32(f.product_version.low(), warnings))
+  put32(b, str_to_u32(f.file_flags_mask, warnings))
+  put32(b, str_to_u32(f.file_flags, warnings))
+  put32(b, str_to_u32(f.file_os, warnings))
+  put32(b, str_to_u32(f.file_type, warnings))
+  put32(b, str_to_u32(f.file_sub_type, warnings))
+  put32(b, 0)
+  put32(b, 0)
+  b.freeze()
+}
+
+/// Fills the structures from the configuration (Build); returns the
+/// warnings Go's version logs, in its order.
+pub fn (var vi: VersionInfo) build() -> List[Str] {
+  var warnings: List[Str] = []
+  vi.fill_versions(warnings)
+  let key = pad_string("VS_VERSION_INFO", 0)
+  let fixed = build_fixed_file_info(vi, warnings)
+  let strings = build_string_file_info(vi)
+  let vars = build_var_file_info(vi.var_info.translation, warnings)
+  let sf_length = Int(strings[0]) | (Int(strings[1]) << 8)
+  let vf_length = Int(vars[0]) | (Int(vars[1]) << 8)
+  let length = u16(6 + key_padding(key) + key.len() + 0x34 + sf_length + vf_length)
+  var b = BytesBuilder.new()
+  put_head(b, length, 0x34, 0, key)
+  b.write(fixed)
+  b.write(strings)
+  b.write(vars)
+  vi.structure = b.freeze()
+  warnings
+}
+
+/// Writes the structures into the buffer (Walk).
+pub fn (var vi: VersionInfo) walk() {
+  vi.buffer = vi.structure
+}

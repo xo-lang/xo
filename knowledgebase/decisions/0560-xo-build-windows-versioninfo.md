@@ -1,6 +1,6 @@
 # 0560: xo build writes full Windows version information, icons and a manifest
 
-Status: Proposed (Xo Lang 2, 2026-11-07, at the lead's request)
+Status: Accepted (owner, 2026-11-07). Drafted by Xo Lang 2 at the lead's request.
 
 ## Context
 
@@ -108,3 +108,31 @@ Implementation, reusing the port:
    (dialogs, menus, string tables) than a CLI program needs.
 4. Keep only `macho pelink --icon`: no version strings, and the linker
    tool is not something users call.
+
+## Landed (2026-11-08)
+
+- compiler/winres: goversioninfo's versioninfo.xo and structbuild.xo,
+  and akavel/rsrc's ico, coff and syso writers (MIT; LICENSE,
+  LICENSE.rsrc, AUTHORS.rsrc), with the port's tests (winres_test.xo,
+  testdata).
+- `xo build --versioninfo=FILE.json --icon=FILE.ico... --manifest=FILE`
+  (compiler/xo opts.xo; ld.xo win_resources, win_rsrc_object).
+  - The PE linker gets win_resources' list.
+  - The lld-link paths (amd64 with `use c`, LLVM windows) get xo-rsrc.obj,
+    a COFF object with a .rsrc section.
+  - XO1517 for an unreadable or bad input; goversioninfo's warnings print
+    as `xo: --versioninfo: ...`.
+  - The flags with no windows target are a usage error (exit 2).
+- Differs from the Decision: peres.xo keeps pe_version and pe_icon for
+  builds without the flags (the stamped version information, byte for
+  byte as before). With --icon or --manifest but no --versioninfo, the
+  stamped version resource is kept, and winres gives the icons and the
+  manifest.
+- The run cache sees the files: they are read through the build's
+  recording Fs, so an edited JSON builds again.
+- Test: cmd/xo TestBuildWindowsVersionInfo checks that:
+  - the strings, the manifest and the icon's image are in the .exe;
+  - an edited JSON rebuilds;
+  - a bad JSON gives XO1517;
+  - no windows target gives exit 2.
+  The port's xo unit tests are in compiler/winres.

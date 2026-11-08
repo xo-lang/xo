@@ -1127,6 +1127,18 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let cc_host = if goos == "darwin" { "darwin/${march}" } else { "${goos}/${host_arch()}" }
   let targets = parse_targets(os, o.targets, host)
   o.many_targets = o.many_targets || targets.len() > 1
+  // --versioninfo, --icon and --manifest set a windows program's
+  // resources (decision 0560): with no windows target they are a usage
+  // error, as an unknown flag is
+  if !o.versioninfo.is_empty() || !o.icons.is_empty() || !o.manifest.is_empty() {
+    var win = false
+    for t in targets {
+      win = win || t.starts_with("windows/")
+    }
+    if !win {
+      usage(os, o.cmd, "--versioninfo, --icon and --manifest need a windows target (--targets=windows/amd64)")
+    }
+  }
   // the LLVM backend: the host, or one other target clang cross
   // compiles for with the host's SDK (llvm_cross_triple: windows/arm64 on
   // windows/amd64, decision 0197), or Windows from any host given a
@@ -1510,6 +1522,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let bin = bin_path(sdir, out, name, ltarget, o.many_targets)
     var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch, "llvm", "")
     lk.flags = cross + lk.flags
+    if lctx.tgoos == "windows" {
+      // --versioninfo, --icon, --manifest (decision 0560)
+      let ro = win_rsrc_object(os, o, bin, dir, tgoarch)
+      if !ro.is_empty() {
+        lk.srcs.push(ro)
+      }
+    }
     var race_rt = ""
     if o.race {
       // without the instrumentation of function entry and exit: it gives
@@ -2052,7 +2071,17 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
         let wst = stage(os, ctx, wbin)
         tl = lap(os, phases, "link.stage", tl)
-        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, o.stamps, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys, !o.strip && debug_info_eff(o, release) != "off", if wst.copy { None } else { ctx.pdb_later })
+        // the manifest and version information, and --versioninfo's,
+        // --icon's and --manifest's resources (decision 0560)
+        let (wres, wwarn, rerr) = win_resources(os, o, wst.bin)
+        for w in wwarn {
+          os.stdio.eprintln("xo: --versioninfo: ${w}")
+        }
+        if !rerr.is_empty() {
+          wst.abandon(os)
+          fail_code(os, "XO1517", rerr)
+        }
+        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, wres, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys, !o.strip && debug_info_eff(o, release) != "off", if wst.copy { None } else { ctx.pdb_later })
         tl = lap(os, phases, "link.pe_link", tl)
         if !why.is_empty() {
           fail_stage(os, wst, why)
@@ -2079,7 +2108,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail(os, nsr)
       }
       let wst = stage(os, ctx, wbin)
-      let why = win_amd64_link(os, wsrcs + wlk.srcs, wst.bin, wlk.flags + wlk.link_only)
+      var rsrc: List[Str] = []
+      let ro = win_rsrc_object(os, o, wst.bin, dir, march)
+      if !ro.is_empty() {
+        rsrc.push(ro)
+      }
+      let why = win_amd64_link(os, wsrcs + wlk.srcs + rsrc, wst.bin, wlk.flags + wlk.link_only)
       if !why.is_empty() {
         fail_stage(os, wst, why)
       }

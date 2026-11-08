@@ -5,10 +5,12 @@
 // for
 // linux/arm64 (stage 3) into an ELF executable that imports glibc.
 
+use github.com/xo-lang/xo/compiler/hostpath
 use github.com/xo-lang/xo/compiler/macho
 use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 use github.com/xo-lang/xo/compiler/tzsel
+use github.com/xo-lang/xo/compiler/winres
 use std/task
 
 /// Links prog (an object) into out for tgoos; "" on success, else why
@@ -704,11 +706,11 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
 /// cdir and keys: the back-end cache and the first objects' keys for their
 /// PDB parts (the PDB from each object's cached part, pdb_parts, unless
 /// XO_PDB_OBJ=0).
-fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?) -> Str { pe_link_half(os, paths, bin, out, stamps, race, phases, trim, cdir, keys0, debug, later, true) }
+fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PERes], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?) -> Str { pe_link_half(os, paths, bin, out, res, race, phases, trim, cdir, keys0, debug, later, true) }
 
 /// pe_link, through std's half when use_half and one is cached (decision
 /// 0409 on PE); a link the half cannot serve is made again without it.
-fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?, use_half: Bool) -> Str {
+fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PERes], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?, use_half: Bool) -> Str {
   var t = os.clock.now()
   var keys = keys0
   // decision 0388 stage 4's store for windows/amd64: XO_STD_STORE=PATH on
@@ -890,7 +892,6 @@ fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str,
   // the debug directory names it with backslashes, as MSVC's and lld's
   // linkers do: dbghelp finds a PDB moved since by its base name, which
   // an older one takes after the last backslash only
-  let res = pe_resources(bin, stamps)
   let peo = macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: res, fixed_base: race, pdb: pdb_named.replace("/", "\\"), debug: debug, prog_from: prog_from, std_syms: match half {
     Some(h) => h.syms
     None => None
@@ -912,7 +913,7 @@ fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str,
         Some(h) => if !macho.pe_half_pins_ok(h, layout) {
           // std's sections moved (the program grew the headers): the full
           // link, whose half replaces this one
-          return pe_link_half(os, paths, bin, out, stamps, race, phases, trim, cdir, keys0, debug, later, false)
+          return pe_link_half(os, paths, bin, out, res, race, phases, trim, cdir, keys0, debug, later, false)
         } else {
           half_id = h.id
         }
@@ -1120,6 +1121,158 @@ fn pe_resources(bin: Str, stamps: List[(Str, Str)]) -> List[macho.PERes] {
   let strings = [("FileDescription", name), ("FileVersion", text), ("InternalName", name), ("OriginalFilename", file), ("ProductName", name), ("ProductVersion", text)]
   [macho.PERes{typ: 24, id: 1, data: macho.pe_manifest()}, macho.PERes{typ: 16, id: 1, data: macho.pe_version(parts, strings)}]
 }
+
+/// A windows program's resources with --versioninfo, --icon and
+/// --manifest (decision 0560): goversioninfo's version information from
+/// the JSON (its IconPath and ManifestPath relative to the JSON file),
+/// the stamp VERSION filling a zero file or product version, the icons of
+/// --icon in place of IconPath, and the --manifest file (else ManifestPath,
+/// else Xo's manifest). Without --versioninfo the version information is
+/// pe_resources'. Without any of the three, pe_resources. The resources,
+/// goversioninfo's warnings, and "" or the XO1517 message.
+fn win_resources(os: Os, o: Opts, bin: Str) -> (List[macho.PERes], List[Str], Str) {
+  let base = pe_resources(bin, o.stamps)
+  if o.versioninfo.is_empty() && o.icons.is_empty() && o.manifest.is_empty() {
+    return (base, [], "")
+  }
+  var vi = winres.new_version_info()
+  if !o.versioninfo.is_empty() {
+    let jp = abs_of(o.wd, o.versioninfo)
+    let data = match os.fs.read(jp) {
+      Ok(d) => d
+      Err(e) => return ([], [], "--versioninfo: cannot open ${o.versioninfo.quote()}: ${winres.fs_msg(e)}")
+    }
+    match vi.parse_json(data) {
+      Ok(_) => ()
+      Err(e) => return ([], [], "--versioninfo ${o.versioninfo}: could not parse the .json file: ${e}")
+    }
+    let dir = dir_part(jp)
+    vi.icon_path = rel_paths(dir, vi.icon_path)
+    vi.application_icon_path = rel_paths(dir, vi.application_icon_path)
+    vi.manifest_path = rel_paths(dir, vi.manifest_path)
+    let parts = stamp_version(o.stamps)
+    if !parts.is_empty() {
+      let sv = winres.FileVersion{major: part_at(parts, 0), minor: part_at(parts, 1), patch: part_at(parts, 2), build: part_at(parts, 3)}
+      if vi.fixed.file_version.is_zero() && vi.strings.file_version.is_empty() {
+        vi.fixed.file_version = sv
+      }
+      if vi.fixed.product_version.is_zero() && vi.strings.product_version.is_empty() {
+        vi.fixed.product_version = sv
+      }
+    }
+  }
+  if !o.icons.is_empty() {
+    var ps: List[Str] = []
+    for i in o.icons {
+      ps.push(abs_of(o.wd, i))
+    }
+    vi.icon_path = ps.join(",")
+  }
+  if !o.manifest.is_empty() {
+    vi.manifest_path = abs_of(o.wd, o.manifest)
+  }
+  let warnings = vi.build()
+  vi.walk()
+  let coff = match vi.coff(os.fs, "amd64") {
+    Ok(c) => c
+    Err(e) => return ([], [], e.msg)
+  }
+  var out: List[macho.PERes] = []
+  if vi.manifest_path.is_empty() {
+    // Xo's manifest
+    out.push(base[0])
+  }
+  for (typ, id, data) in coff.entries() {
+    if typ == 16 && o.versioninfo.is_empty() {
+      // the stamped version information of pe_resources instead
+      out.push(base[1])
+    } else {
+      out.push(macho.PERes{typ: typ, id: id, data: data})
+    }
+  }
+  (out, warnings, "")
+}
+
+/// The lld-link paths' resources (decision 0560): with --versioninfo,
+/// --icon or --manifest, win_resources' resources as a COFF object with a
+/// .rsrc section in dir, for arch (amd64 or arm64), so both linkers write
+/// the same resources; "" without them (those links carry none, as
+/// before). An unusable input stops the build with XO1517.
+fn win_rsrc_object(os: Os, o: Opts, bin: Str, dir: Str, arch: Str) -> Str {
+  if o.versioninfo.is_empty() && o.icons.is_empty() && o.manifest.is_empty() {
+    return ""
+  }
+  let (res, warns, err) = win_resources(os, o, bin)
+  for w in warns {
+    os.stdio.eprintln("xo: --versioninfo: ${w}")
+  }
+  if !err.is_empty() {
+    fail_code(os, "XO1517", err)
+  }
+  var c = match winres.new_rsrc(arch) {
+    Ok(c) => c
+    Err(e) => fail(os, "${e}")
+  }
+  for r in res {
+    c.add_resource(r.typ, r.id, r.data)
+  }
+  let p = "${dir}/xo-rsrc.obj"
+  match os.fs.write(p, c.bytes()) {
+    Ok(_) => p
+    Err(e) => fail(os, "${p}: ${e}")
+  }
+}
+
+/// The directory of the path p, with its separator ("" for none).
+fn dir_part(p: Str) -> Str {
+  let b = p.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != 47 && b[i] != 92 {
+    i -= 1
+  }
+  p[0..i + 1]
+}
+
+/// The comma separated paths of ps, each relative one under dir.
+fn rel_paths(dir: Str, ps: Str) -> Str {
+  if ps.is_empty() {
+    return ""
+  }
+  var out: List[Str] = []
+  for x in ps.split(",") {
+    out.push(if x.is_empty() || hostpath.is_abs(x) { x } else { dir + x })
+  }
+  out.join(",")
+}
+
+/// The parts of the stamp VERSION (any case, a leading v dropped; up to
+/// four), as pe_resources reads them; [] without one.
+fn stamp_version(stamps: List[(Str, Str)]) -> List[Int] {
+  var parts: List[Int] = []
+  for (k, v) in stamps {
+    if k.to_lower() == "version" {
+      parts = []
+      for f in v.trim_prefix("v").split(".") {
+        var n = 0
+        var any = false
+        for c in f.bytes() {
+          if c < '0' || c > '9' {
+            break
+          }
+          n = n * 10 + Int(c - '0')
+          any = true
+        }
+        if !any || parts.len() == 4 {
+          break
+        }
+        parts.push(n)
+      }
+    }
+  }
+  parts
+}
+
+fn part_at(parts: List[Int], i: Int) -> Int { if i < parts.len() { parts[i] } else { 0 } }
 
 /// Writes the program b to out: a new file OUT.tmp, made executable and
 /// renamed over out (the kernel caches the signature of a file it ran).

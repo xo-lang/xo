@@ -113,6 +113,12 @@ struct Opts {
   workspace: Str = ""
   /// --stamp NAME=VALUE, in command line order.
   stamps: List[(Str, Str)] = []
+  /// --versioninfo=FILE.json, --icon=FILE.ico (repeatable, or comma
+  /// separated) and --manifest=FILE: a windows program's version
+  /// information, icons and manifest (decision 0560); "" and [] for none.
+  versioninfo: Str = ""
+  icons: List[Str] = []
+  manifest: Str = ""
   /// --entitlement=KEY: an entitlement (set to true) of a macOS
   /// program's ad hoc signature, besides a development build's
   /// get-task-allow (decision 0253 point 5)
@@ -166,7 +172,7 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace", "opt"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "versioninfo", "icon", "manifest", "entitlement", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace", "opt"]
 }
 
 /// The boolean flags.
@@ -178,7 +184,7 @@ fn bool_flags() -> List[Str] {
 /// build, run, and test print `xo`'s usage (compiler/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=native|arm64|amd64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --entitlement=KEY --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=native|arm64|amd64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --versioninfo=FILE.json --icon=FILE.ico --manifest=FILE --entitlement=KEY --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
 }
 
 /// usage prints why and the usage of the command cmd on standard error
@@ -642,6 +648,16 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     }
     kept.push((parts[0], parts[1..parts.len()].join("=")))
     o.stamps = kept
+  } else if name == "versioninfo" {
+    o.versioninfo = v
+  } else if name == "icon" {
+    for p in v.split(",") {
+      if !p.is_empty() {
+        o.icons.push(p)
+      }
+    }
+  } else if name == "manifest" {
+    o.manifest = v
   } else if name == "entitlement" {
     o.entitlements.push(v)
   } else if name == "seed" {

@@ -4479,7 +4479,15 @@ entry xo_win_start): no clang, no lld-link, no Windows SDK.
 `XO_WIN_NOCRT=0` links with the MSVC C runtime and lld-link instead.
 Every such program gets a manifest (UTF-8 code page, long paths) and
 version information (`--stamp VERSION=1.2.3` sets the version), as
-.rsrc (compiler/macho peres.xo). Imports by
+.rsrc (compiler/macho peres.xo). `--versioninfo=FILE.json`
+(goversioninfo's JSON), `--icon=FILE.ico` (repeatable) and
+`--manifest=FILE` set them from files (decision 0560): compiler/winres,
+ported from goversioninfo and akavel/rsrc (MIT, attributed in its
+LICENSE files), builds the resources; the lld-link path
+(`XO_WIN_NOCRT=0`, `use c`) gets them as a COFF object with a .rsrc
+section (xo-rsrc.obj in the build directory), so both links carry the
+same resources. A bad file is XO1517. Last verified: 2026-11-07 (Mac
+cross build only). Imports by
 compiler/macho/peimports.xo, generated with `python3 -I
 scripts/win-import-table.py SYSROOT > compiler/macho/peimports.xo` from
 an SDK's import libraries when std/native/sys_windows.xo gains a

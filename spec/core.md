@@ -3745,6 +3745,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1514` | error | build | a program that calls `http.serve_component` built for wasip1/wasm, which `--backend=wasm` alone is; it builds with `--targets=wasip2/wasm` (decision 0447) |
 | `XO1515` | error | build | a program built for wasip2/wasm reaches what its world does not have: processes, or files or sockets in a `wasi:http` component (a command has `wasi:filesystem` since 2026-11-02 and `wasi:sockets` since 2026-11-03); the message names the call and how it is reached (decision 0447); on wasip3/wasm also a program that is not a `wasi:http` component (stage 5) |
 | `XO1516` | error | build | a program built for wasip2/wasm whose main never calls `http.serve_component` (decision 0447); no longer reported since stage 3 (2026-11-02), when such a program became a `wasi:cli/command` component |
+| `XO1517` | error | build | a windows program's resource input that cannot be used: the `--versioninfo` JSON cannot be read or parsed, an `--icon` file cannot be read or is not an icon, a `--manifest` file cannot be read; the message carries goversioninfo's text (decision 0560) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

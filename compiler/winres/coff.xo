@@ -1,0 +1,241 @@
+// A COFF object holding one .rsrc section, ported from
+// github.com/akavel/rsrc v0.10.2 (packages coff and binutil), MIT
+// licensed, Copyright (c) 2013-2017 The rsrc Authors (LICENSE.rsrc,
+// AUTHORS.rsrc).
+//
+// The Go code lays the file out by walking its structs with reflect and
+// matching each field's path against regexps in Freeze. Here the layout is
+// written out: `bytes` emits the same fields in the same depth first order
+// and computes every offset Freeze fills in on the way.
+
+/// IMAGE_FILE_MACHINE_* values.
+pub const MACHINE_I386: Int = 0x14c
+pub const MACHINE_AMD64: Int = 0x8664
+pub const MACHINE_ARMNT: Int = 0x1c4
+pub const MACHINE_ARM64: Int = 0xaa64
+
+/// Resource types.
+pub const RT_ICON: Int = 3
+pub const RT_GROUP_ICON: Int = 14
+pub const RT_MANIFEST: Int = 24
+
+const MASK_SUBDIRECTORY: Int = 0x80000000
+
+// Relocation types, reverse engineered from windres output by 
+const REL_AMD64_ADDR32NB: Int = 0x03
+const REL_I386_DIR32NB: Int = 0x07
+const REL_ARM64_ADDR32NB: Int = 0x02
+const REL_ARM_ADDR32NB: Int = 0x02
+
+// The language of every resource (rsrc's LANG_ENTRY).
+const LANG_ID: Int = 0x0409
+
+const FILE_HEADER_SIZE: Int = 20
+const SECTION_HEADER_SIZE: Int = 40
+const DIR_SIZE: Int = 16
+const DIR_ENTRY_SIZE: Int = 8
+const DATA_ENTRY_SIZE: Int = 16
+const RELOCATION_SIZE: Int = 10
+
+/// One resource: its type, its ID, and its bytes.
+pub struct Resource {
+  pub kind: Int
+  pub id: Int
+  pub data: Bytes
+}
+
+/// The resources of one type, in the order they were added.
+struct Kind {
+  kind: Int
+  resources: List[Resource]
+}
+
+/// A COFF object with a .rsrc section (rsrc's coff.Coff from NewRSRC).
+pub struct Coff {
+  machine: Int
+  kinds: List[Kind]
+  count: Int
+}
+
+pub struct ArchErr {
+  pub arch: Str
+}
+
+pub fn (e: ArchErr) display() -> Str { "coff: unknown architecture: ${e.arch}" }
+
+/// A new object for arch ("386", "amd64", "arm", "arm64"; rsrc's NewRSRC
+/// then Arch).
+pub fn new_rsrc(arch: Str) -> Coff ! ArchErr {
+  let machine = match arch {
+    "386" => MACHINE_I386
+    "amd64" => MACHINE_AMD64
+    "arm" => MACHINE_ARMNT
+    "arm64" => MACHINE_ARM64
+    _ => return Err(ArchErr{arch: arch})
+  }
+  Ok(Coff{machine: machine, kinds: [], count: 0})
+}
+
+/// Adds a resource. Types are kept sorted; within a type, resources keep
+/// the order they were added in (rsrc assumes the IDs increase).
+pub fn (var c: Coff) add_resource(kind: Int, id: Int, data: Bytes) {
+  var i = 0
+  while i < c.kinds.len() && c.kinds[i].kind < kind {
+    i += 1
+  }
+  if i >= c.kinds.len() || c.kinds[i].kind != kind {
+    c.kinds.insert(i, Kind{kind: kind, resources: []})
+  }
+  var k = c.kinds[i]
+  k.resources.push(Resource{kind: kind, id: id, data: data})
+  c.kinds.set(i, k)
+  c.count += 1
+}
+
+/// Every resource as (type, id, data), types in increasing order and each
+/// type's in the order added: what a PE image's .rsrc tree holds.
+pub fn (c: Coff) entries() -> List[(Int, Int, Bytes)] {
+  var out: List[(Int, Int, Bytes)] = []
+  for k in c.kinds {
+    for r in k.resources {
+      out.push((r.kind, r.id, r.data))
+    }
+  }
+  out
+}
+
+fn relocation_type(machine: Int) -> Int {
+  match machine {
+    0x14c => REL_I386_DIR32NB
+    0x8664 => REL_AMD64_ADDR32NB
+    0x1c4 => REL_ARM_ADDR32NB
+    _ => REL_ARM64_ADDR32NB
+  }
+}
+
+/// The bytes after a resource's data that align the next one to 8.
+fn padding(n: Int) -> Int { (0 - n) & 7 }
+
+/// The object file (rsrc's Freeze and then the walk that writes it).
+pub fn (c: Coff) bytes() -> Bytes {
+  // The layout: file header, section header, then the raw data (the
+  // directory tree depth first, the data entries, the padded data), the
+  // relocations, the symbol, and the string table header.
+  let diroff = FILE_HEADER_SIZE + SECTION_HEADER_SIZE
+  var tree = DIR_SIZE + c.kinds.len() * DIR_ENTRY_SIZE
+  for k in c.kinds {
+    tree += DIR_SIZE + k.resources.len() * DIR_ENTRY_SIZE
+    tree += k.resources.len() * (DIR_SIZE + DIR_ENTRY_SIZE)
+  }
+  let entries_at = diroff + tree
+  let data_at = entries_at + c.count * DATA_ENTRY_SIZE
+  var data_len = 0
+  for k in c.kinds {
+    for r in k.resources {
+      data_len += r.data.len() + padding(r.data.len())
+    }
+  }
+  let relocs_at = data_at + data_len
+  let symbols_at = relocs_at + c.count * RELOCATION_SIZE
+
+  var b = BytesBuilder.with_capacity(symbols_at + 22)
+
+  // IMAGE_FILE_HEADER
+  put16(b, c.machine)
+  put16(b, 1)       // NumberOfSections
+  put32(b, 0)       // TimeDateStamp
+  put32(b, symbols_at)
+  put32(b, 1)       // NumberOfSymbols
+  put16(b, 0)       // SizeOfOptionalHeader
+  put16(b, 0x0104)  // Characteristics, as windres writes
+
+  // IMAGE_SECTION_HEADER
+  b.write(".rsrc\0\0\0".bytes())
+  put32(b, 0)       // VirtualSize
+  put32(b, 0)       // VirtualAddress
+  put32(b, relocs_at - diroff)
+  put32(b, diroff)  // PointerToRawData
+  put32(b, relocs_at)
+  put32(b, 0)       // PointerToLineNumbers
+  put16(b, c.count) // NumberOfRelocations
+  put16(b, 0)       // NumberOfLineNumbers
+  put32(b, 0x40000040)
+
+  // The directory tree. Each type's directory follows the root's entries;
+  // within it, each resource's language directory follows the type's
+  // entries, so the offsets are computed walking the same order.
+  var type_dirs: List[Int] = []
+  var at = diroff + DIR_SIZE + c.kinds.len() * DIR_ENTRY_SIZE
+  for k in c.kinds {
+    type_dirs.push(at)
+    at += DIR_SIZE + k.resources.len() * DIR_ENTRY_SIZE + k.resources.len() * (DIR_SIZE + DIR_ENTRY_SIZE)
+  }
+  put_dir(b, c.kinds.len())
+  for (i, k) in c.kinds.indexed() {
+    put32(b, k.kind)
+    put32(b, MASK_SUBDIRECTORY | (type_dirs[i] - diroff))
+  }
+  var leaf = 0
+  for (i, k) in c.kinds.indexed() {
+    put_dir(b, k.resources.len())
+    let langs_at = type_dirs[i] + DIR_SIZE + k.resources.len() * DIR_ENTRY_SIZE
+    for (j, r) in k.resources.indexed() {
+      put32(b, r.id)
+      put32(b, MASK_SUBDIRECTORY | (langs_at + j * (DIR_SIZE + DIR_ENTRY_SIZE) - diroff))
+    }
+    for _ in k.resources {
+      put_dir(b, 1)
+      put32(b, LANG_ID)
+      put32(b, entries_at + leaf * DATA_ENTRY_SIZE - diroff)
+      leaf += 1
+    }
+  }
+
+  // IMAGE_RESOURCE_DATA_ENTRY for each resource, in leaf order.
+  var data_off = data_at
+  for k in c.kinds {
+    for r in k.resources {
+      put32(b, data_off - diroff)
+      put32(b, r.data.len())
+      put32(b, 0) // CodePage
+      put32(b, 0) // Reserved
+      data_off += r.data.len() + padding(r.data.len())
+    }
+  }
+
+  for k in c.kinds {
+    for r in k.resources {
+      b.write(r.data)
+      b.write(Bytes.zeroed(padding(r.data.len())))
+    }
+  }
+
+  // One relocation per data entry, at its OffsetToData field.
+  let rel = relocation_type(c.machine)
+  for n in 0..c.count {
+    put32(b, entries_at + n * DATA_ENTRY_SIZE - diroff)
+    put32(b, 0) // SymbolIndex
+    put16(b, rel)
+  }
+
+  // The section symbol.
+  b.write(".rsrc\0\0\0".bytes())
+  put32(b, 0)       // Value
+  put16(b, 1)       // SectionNumber
+  put16(b, 0)       // Type
+  b.write_byte(3)   // StorageClass
+  b.write_byte(0)   // AuxiliaryCount
+
+  // An empty string table: only its length field.
+  put32(b, 4)
+  b.freeze()
+}
+
+fn put_dir(var b: BytesBuilder, ids: Int) {
+  put32(b, 0) // Characteristics
+  put32(b, 0) // TimeDateStamp
+  put16(b, 0) // MajorVersion
+  put16(b, 0) // MinorVersion
+  put16(b, 0) // NumberOfNamedEntries
+  put16(b, ids)
+}

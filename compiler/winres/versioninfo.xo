@@ -1,0 +1,544 @@
+// Package goversioninfo writes a .syso file holding Microsoft Version
+// Information and optional icons and a manifest. A port of
+// github.com/josephspurrier/goversioninfo (MIT, LICENSE) to Xo.
+
+use std/json
+
+/// A version with four parts (FileVersion).
+pub struct FileVersion {
+  pub major: Int
+  pub minor: Int
+  pub patch: Int
+  pub build: Int
+}
+
+/// File characteristics; leave most of them at their defaults
+/// (FixedFileInfo). The flags are hex strings.
+pub struct FixedFileInfo {
+  pub file_version: FileVersion
+  pub product_version: FileVersion
+  pub file_flags_mask: Str
+  pub file_flags: Str
+  pub file_os: Str
+  pub file_type: Str
+  pub file_sub_type: Str
+}
+
+/// The strings shown in a file's properties (StringFileInfo), in the
+/// order they are written.
+pub struct StringFileInfo {
+  pub comments: Str
+  pub company_name: Str
+  pub file_description: Str
+  pub file_version: Str
+  pub internal_name: Str
+  pub legal_copyright: Str
+  pub legal_trademarks: Str
+  pub original_filename: Str
+  pub private_build: Str
+  pub product_name: Str
+  pub product_version: Str
+  pub special_build: Str
+}
+
+/// A language and character set pair (Translation): LangID and
+/// CharsetID, each 16 bits.
+pub struct Translation {
+  pub lang_id: Int
+  pub charset_id: Int
+}
+
+/// The translation container (VarFileInfo).
+pub struct VarFileInfo {
+  pub translation: Translation
+}
+
+/// The version information of one file and the resources written with it.
+pub struct VersionInfo {
+  pub fixed: FixedFileInfo
+  pub strings: StringFileInfo
+  pub var_info: VarFileInfo
+  pub timestamp: Bool
+  pub icon_path: Str
+  pub manifest_path: Str
+  pub application_icon_path: Str
+  /// The VS_VERSIONINFO resource, written by `walk` after `build`.
+  pub buffer: Bytes
+  /// What `build` made, for `walk`.
+  structure: Bytes
+}
+
+pub fn new_version_info() -> VersionInfo {
+  let zero = FileVersion{major: 0, minor: 0, patch: 0, build: 0}
+  VersionInfo{
+    fixed: FixedFileInfo{file_version: zero, product_version: zero, file_flags_mask: "", file_flags: "", file_os: "", file_type: "", file_sub_type: ""},
+    strings: StringFileInfo{comments: "", company_name: "", file_description: "", file_version: "", internal_name: "", legal_copyright: "", legal_trademarks: "", original_filename: "", private_build: "", product_name: "", product_version: "", special_build: ""},
+    var_info: VarFileInfo{translation: Translation{lang_id: 0, charset_id: 0}},
+    timestamp: false,
+    icon_path: "",
+    manifest_path: "",
+    application_icon_path: "",
+    buffer: Bytes.zeroed(0),
+    structure: Bytes.zeroed(0),
+  }
+}
+
+/// A version string that does not start with x.y.z, or a part out of
+/// range.
+pub struct VersionErr {
+  pub msg: Str
+}
+
+pub fn (e: VersionErr) display() -> Str { e.msg }
+
+fn is_digit(c: Int) -> Bool { c >= 48 && c <= 57 }
+
+/// The digits at the start of s from i on, as an end offset.
+fn digits_end(s: Bytes, i: Int) -> Int {
+  var j = i
+  while j < s.len() && is_digit(Int(s[j])) {
+    j += 1
+  }
+  j
+}
+
+/// Go's strconv.Atoi on a run of ASCII digits.
+fn atoi(d: Str) -> Int ! VersionErr {
+  match Int.parse(d) {
+    Some(n) => Ok(n)
+    None => Err(VersionErr{msg: "${d}: strconv.Atoi: parsing ${go_quote(d)}: value out of range"})
+  }
+}
+
+/// The version at the start of version (NewFileVersion: Go's regexp
+/// `^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?`, `\d` being ASCII digits).
+pub fn new_file_version(version: Str) -> FileVersion ! VersionErr {
+  let s = version.bytes()
+  var parts: List[Str] = []
+  var i = 0
+  for k in 0..3 {
+    let j = digits_end(s, i)
+    if j == i {
+      return Err(VersionErr{msg: "version expected to start from x.y.z"})
+    }
+    parts.push(s[i..j].to_str() ?? "")
+    i = j
+    if k < 2 {
+      if i >= s.len() || s[i] != 46 {
+        return Err(VersionErr{msg: "version expected to start from x.y.z"})
+      }
+      i += 1
+    }
+  }
+  if i < s.len() && s[i] == 46 {
+    let j = digits_end(s, i + 1)
+    if j > i + 1 {
+      parts.push(s[i + 1..j].to_str() ?? "")
+    }
+  }
+  var nums: List[Int] = []
+  for p in parts {
+    nums.push(atoi(p)?)
+  }
+  Ok(FileVersion{major: nums[0], minor: nums[1], patch: nums[2], build: if nums.len() == 4 { nums[3] } else { 0 }})
+}
+
+/// Go's %04x of an int: at least four lower case hex digits, a minus sign
+/// counted in the width.
+fn hex04(n: Int) -> Str {
+  if n < 0 {
+    return "-" + (0 - n).to_str_width(3, base: 16, zero: true)
+  }
+  n.to_str_width(4, base: 16, zero: true)
+}
+
+fn hex04_upper(n: Int) -> Str { hex04(n).to_upper() }
+
+pub fn (f: FileVersion) is_zero() -> Bool {
+  f.major == 0 && f.minor == 0 && f.patch == 0 && f.build == 0
+}
+
+/// "major.minor.patch.build" (GetVersionString).
+pub fn (f: FileVersion) version_string() -> Str {
+  "${f.major}.${f.minor}.${f.patch}.${f.build}"
+}
+
+fn (f: FileVersion) high() -> Str { hex04(f.major) + hex04(f.minor) }
+
+fn (f: FileVersion) low() -> Str { hex04(f.patch) + hex04(f.build) }
+
+/// The translation's string table key, LangID then CharsetID in upper
+/// case hex (getTranslationString).
+pub fn (t: Translation) key() -> Str { hex04_upper(t.lang_id) + hex04_upper(t.charset_id) }
+
+/// CharsetID then LangID in lower case hex (getTranslation).
+fn (t: Translation) value_hex() -> Str { hex04(t.charset_id) + hex04(t.lang_id) }
+
+/// Go's strconv.ParseUint(s, 16, bits) error, or the value.
+fn parse_hex(fname: Str, s: Str, bits: Int) -> Int ! Str {
+  let b = s.bytes()
+  if b.is_empty() {
+    return Err("strconv.${fname}: parsing ${go_quote(s)}: invalid syntax")
+  }
+  var n = 0
+  var over = false
+  for c in b {
+    let d = Int(c)
+    let v = if d >= 48 && d <= 57 {
+      d - 48
+    } else if d >= 97 && d <= 102 {
+      d - 87
+    } else if d >= 65 && d <= 70 {
+      d - 55
+    } else {
+      return Err("strconv.${fname}: parsing ${go_quote(s)}: invalid syntax")
+    }
+    if !over {
+      if n >= (1 << (bits - 4)) {
+        over = true
+      } else {
+        n = n * 16 + v
+      }
+    }
+  }
+  if over || n >= (1 << bits) {
+    return Err("strconv.${fname}: parsing ${go_quote(s)}: value out of range")
+  }
+  Ok(n)
+}
+
+/// str2Uint32: s as a 32 bit hex number, 0 for "", and 0 with a warning
+/// for anything else that does not parse.
+fn str_to_u32(s: Str, var warnings: List[Str]) -> Int {
+  if s == "" {
+    return 0
+  }
+  match parse_hex("ParseUint", s, 32) {
+    Ok(n) => n
+    Err(e) => {
+      warnings.push("Error parsing ${go_quote(s)} as uint32: ${e}")
+      0
+    }
+  }
+}
+
+/// Syncs FixedFileInfo's and StringFileInfo's versions (fillVersions):
+/// one missing is filled from the other; the warnings say what could not
+/// be parsed or does not match.
+fn (var vi: VersionInfo) fill_versions(var warnings: List[Str]) {
+  let (f, s) = fill_version("FileVersion", vi.fixed.file_version, vi.strings.file_version, warnings)
+  vi.fixed.file_version = f
+  vi.strings.file_version = s
+  let (pf, ps) = fill_version("ProductVersion", vi.fixed.product_version, vi.strings.product_version, warnings)
+  vi.fixed.product_version = pf
+  vi.strings.product_version = ps
+}
+
+fn fill_version(name: Str, fixed: FileVersion, str: Str, var warnings: List[Str]) -> (FileVersion, Str) {
+  let fixed_zero = fixed.is_zero()
+  if !fixed_zero && str == "" {
+    return (fixed, fixed.version_string())
+  }
+  if str == "" {
+    return (fixed, str)
+  }
+  match new_file_version(str) {
+    Err(e) => {
+      warnings.push("Warning: StringFileInfo.${name} ${go_quote(str)} could not be parsed: ${e}")
+      (fixed, str)
+    }
+    Ok(v) => {
+      if fixed_zero {
+        return (v, str)
+      }
+      if fixed != v {
+        warnings.push("Warning: FixedFileInfo.${name} (${fixed.version_string()}) and StringFileInfo.${name} (${str}) do not match")
+      }
+      (fixed, str)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Decoding versioninfo.json with Go's encoding/json rules: keys match
+// field names exactly or else case insensitively, unknown keys are
+// ignored, null leaves a field as it is, and a value of the wrong type is
+// an error.
+
+/// Why versioninfo.json could not be read.
+pub struct ParseErr {
+  pub msg: Str
+}
+
+pub fn (e: ParseErr) display() -> Str { e.msg }
+
+fn kind_of(v: json.Value) -> Str {
+  match v {
+    json.Value.Null => "null"
+    json.Value.Bool(_) => "bool"
+    json.Value.Int(_) => "number"
+    json.Value.Num(_) => "number"
+    json.Value.Str(_) => "string"
+    json.Value.List(_) => "array"
+    json.Value.Object(_) => "object"
+    json.Value.Trusted(_, _) => "string"
+  }
+}
+
+/// The state of one decode (Go's decodeState): the first type error is
+/// kept and decoding goes on, as Go's saveError does; an error from
+/// LangID's or CharsetID's own UnmarshalJSON stops the decode and wins.
+struct Dec {
+  saved: Str?
+}
+
+/// Records Go's UnmarshalTypeError for v into a field of Go type go_type:
+/// `st` is the struct holding the field, `path` its field path from
+/// VersionInfo (addErrorContext). The value names a number only when the
+/// target is numeric (Go's "number 1.5" from a failed parse; "number"
+/// otherwise).
+fn (var d: Dec) type_err(v: json.Value, st: Str, path: Str, go_type: Str, numeric: Bool) {
+  if d.saved == None {
+    d.saved = Some(type_msg(v, st, path, go_type, numeric))
+  }
+}
+
+fn type_msg(v: json.Value, st: Str, path: Str, go_type: Str, numeric: Bool) -> Str {
+  let what = match v {
+    json.Value.Int(n) if numeric => "number ${n}"
+    json.Value.Num(n) if numeric => "number ${n}"
+    _ => kind_of(v)
+  }
+  "json: cannot unmarshal ${what} into Go struct field ${st}.${path} of type ${go_type}"
+}
+
+/// The field of names that key selects: an exact match, else the first
+/// case insensitive one (Go's field selection, decision 0550's rule).
+fn match_key(key: Str, names: List[Str]) -> Str? {
+  for n in names {
+    if n == key {
+      return Some(n)
+    }
+  }
+  for n in names {
+    if n.equal_fold(key) {
+      return Some(n)
+    }
+  }
+  None
+}
+
+/// An object's members, None for null (the field keeps its value) or for
+/// a value of another kind, which records the type error.
+fn (var d: Dec) fields_of(v: json.Value, st: Str, path: Str, go_type: Str) -> List[(Str, json.Value)]? {
+  match v {
+    json.Value.Null => None
+    json.Value.Object(fields) => Some(fields)
+    _ => {
+      d.type_err(v, st, path, go_type, false)
+      None
+    }
+  }
+}
+
+fn (var d: Dec) dec_int(v: json.Value, old: Int, st: Str, path: Str) -> Int {
+  match v {
+    json.Value.Null => old
+    json.Value.Int(n) => n
+    _ => {
+      d.type_err(v, st, path, "int", true)
+      old
+    }
+  }
+}
+
+fn (var d: Dec) dec_str(v: json.Value, old: Str, st: Str, path: Str) -> Str {
+  match v {
+    json.Value.Null => old
+    json.Value.Str(s) => s
+    _ => {
+      d.type_err(v, st, path, "string", false)
+      old
+    }
+  }
+}
+
+/// LangID and CharsetID (lang_cs.go's UnmarshalJSON): a number from 0 to
+/// 65535, or a string of hex digits; null is 0. Its errors stop the
+/// decode; a type error gets the field's context (addErrorContext), a
+/// ParseUint error does not.
+fn dec_id(v: json.Value, path: Str) -> Int ! ParseErr {
+  let ctx = "json: cannot unmarshal"
+  let at = "into Go struct field Translation.${path} of type uint16"
+  match v {
+    json.Value.Null => Ok(0)
+    json.Value.Int(n) => {
+      if n < 0 || n > 65535 {
+        return Err(ParseErr{msg: "${ctx} number ${n} ${at}"})
+      }
+      Ok(n)
+    }
+    json.Value.Str(s) => match parse_hex("ParseUint", s, 16) {
+      Ok(n) => Ok(n)
+      Err(e) => Err(ParseErr{msg: e})
+    }
+    json.Value.Num(n) => Err(ParseErr{msg: "${ctx} number ${n} ${at}"})
+    _ => Err(ParseErr{msg: "${ctx} ${kind_of(v)} ${at}"})
+  }
+}
+
+fn (var d: Dec) dec_file_version(v: json.Value, old: FileVersion, path: Str) -> FileVersion {
+  let fields = match d.fields_of(v, "FixedFileInfo", path, "goversioninfo.FileVersion") {
+    Some(x) => x
+    None => return old
+  }
+  var f = old
+  for (k, x) in fields {
+    match match_key(k, ["Major", "Minor", "Patch", "Build"]) {
+      Some("Major") => f.major = d.dec_int(x, f.major, "FileVersion", "${path}.Major")
+      Some("Minor") => f.minor = d.dec_int(x, f.minor, "FileVersion", "${path}.Minor")
+      Some("Patch") => f.patch = d.dec_int(x, f.patch, "FileVersion", "${path}.Patch")
+      Some("Build") => f.build = d.dec_int(x, f.build, "FileVersion", "${path}.Build")
+      _ => ()
+    }
+  }
+  f
+}
+
+fn (var d: Dec) dec_fixed(v: json.Value, old: FixedFileInfo) -> FixedFileInfo {
+  let p = "FixedFileInfo"
+  let fields = match d.fields_of(v, "VersionInfo", p, "goversioninfo.FixedFileInfo") {
+    Some(x) => x
+    None => return old
+  }
+  var f = old
+  for (k, x) in fields {
+    match match_key(k, ["FileVersion", "ProductVersion", "FileFlagsMask", "FileFlags", "FileOS", "FileType", "FileSubType"]) {
+      Some("FileVersion") => f.file_version = d.dec_file_version(x, f.file_version, "${p}.FileVersion")
+      Some("ProductVersion") => f.product_version = d.dec_file_version(x, f.product_version, "${p}.ProductVersion")
+      Some("FileFlagsMask") => f.file_flags_mask = d.dec_str(x, f.file_flags_mask, p, "${p}.FileFlagsMask")
+      Some("FileFlags") => f.file_flags = d.dec_str(x, f.file_flags, p, "${p}.FileFlags")
+      Some("FileOS") => f.file_os = d.dec_str(x, f.file_os, p, "${p}.FileOS")
+      Some("FileType") => f.file_type = d.dec_str(x, f.file_type, p, "${p}.FileType")
+      Some("FileSubType") => f.file_sub_type = d.dec_str(x, f.file_sub_type, p, "${p}.FileSubType")
+      _ => ()
+    }
+  }
+  f
+}
+
+const STRING_NAMES: List[Str] = ["Comments", "CompanyName", "FileDescription", "FileVersion", "InternalName", "LegalCopyright", "LegalTrademarks", "OriginalFilename", "PrivateBuild", "ProductName", "ProductVersion", "SpecialBuild"]
+
+/// The strings in their written order (the Go struct's field order).
+pub fn (s: StringFileInfo) values() -> List[Str] {
+  [s.comments, s.company_name, s.file_description, s.file_version, s.internal_name, s.legal_copyright, s.legal_trademarks, s.original_filename, s.private_build, s.product_name, s.product_version, s.special_build]
+}
+
+fn (s: StringFileInfo) with_value(name: Str, v: Str) -> StringFileInfo {
+  match name {
+    "Comments" => s with {comments: v}
+    "CompanyName" => s with {company_name: v}
+    "FileDescription" => s with {file_description: v}
+    "FileVersion" => s with {file_version: v}
+    "InternalName" => s with {internal_name: v}
+    "LegalCopyright" => s with {legal_copyright: v}
+    "LegalTrademarks" => s with {legal_trademarks: v}
+    "OriginalFilename" => s with {original_filename: v}
+    "PrivateBuild" => s with {private_build: v}
+    "ProductName" => s with {product_name: v}
+    "ProductVersion" => s with {product_version: v}
+    _ => s with {special_build: v}
+  }
+}
+
+fn (var d: Dec) dec_strings(v: json.Value, old: StringFileInfo) -> StringFileInfo {
+  let p = "StringFileInfo"
+  let fields = match d.fields_of(v, "VersionInfo", p, "goversioninfo.StringFileInfo") {
+    Some(x) => x
+    None => return old
+  }
+  var s = old
+  for (k, x) in fields {
+    if let Some(name) = match_key(k, STRING_NAMES) {
+      let i = STRING_NAMES.index_of(name) ?? 0
+      s = s.with_value(name, d.dec_str(x, s.values()[i], p, "${p}.${name}"))
+    }
+  }
+  s
+}
+
+fn (var d: Dec) dec_var(v: json.Value, old: VarFileInfo) -> VarFileInfo ! ParseErr {
+  let p = "VarFileInfo"
+  let fields = match d.fields_of(v, "VersionInfo", p, "goversioninfo.VarFileInfo") {
+    Some(x) => x
+    None => return Ok(old)
+  }
+  var t = old.translation
+  for (k, x) in fields {
+    if match_key(k, ["Translation"]) == Some("Translation") {
+      let tf = match d.fields_of(x, p, "${p}.Translation", "goversioninfo.Translation") {
+        Some(x) => x
+        None => continue
+      }
+      for (tk, tx) in tf {
+        match match_key(tk, ["LangID", "CharsetID"]) {
+          Some("LangID") => t.lang_id = dec_id(tx, "${p}.Translation.LangID")?
+          Some("CharsetID") => t.charset_id = dec_id(tx, "${p}.Translation.CharsetID")?
+          _ => ()
+        }
+      }
+    }
+  }
+  Ok(VarFileInfo{translation: t})
+}
+
+/// Reads versioninfo.json into vi (ParseJSON).
+pub fn (var vi: VersionInfo) parse_json(data: Bytes) -> () ! ParseErr {
+  let text = data.to_str_lossy()
+  let v = match json.parse_value(text) {
+    Ok(v) => v
+    Err(e) => return Err(ParseErr{msg: syntax_msg("${e}")})
+  }
+  let fields = match v {
+    json.Value.Null => return Ok(())
+    json.Value.Object(fields) => fields
+    _ => return Err(ParseErr{msg: "json: cannot unmarshal ${kind_of(v)} into Go value of type goversioninfo.VersionInfo"})
+  }
+  var d = Dec{saved: None}
+  for (k, x) in fields {
+    match match_key(k, ["FixedFileInfo", "StringFileInfo", "VarFileInfo", "Timestamp", "Buffer", "Structure", "IconPath", "ManifestPath", "ApplicationIconPath"]) {
+      Some("FixedFileInfo") => vi.fixed = d.dec_fixed(x, vi.fixed)
+      Some("StringFileInfo") => vi.strings = d.dec_strings(x, vi.strings)
+      Some("VarFileInfo") => vi.var_info = d.dec_var(x, vi.var_info)?
+      Some("Timestamp") => match x {
+        json.Value.Null => ()
+        json.Value.Bool(b) => vi.timestamp = b
+        _ => d.type_err(x, "VersionInfo", "Timestamp", "bool", false)
+      }
+      Some("Buffer") => {
+        // bytes.Buffer has no exported fields: an object's keys are ignored
+        let _ = d.fields_of(x, "VersionInfo", "Buffer", "bytes.Buffer")
+      }
+      Some("Structure") => {
+        // build overwrites it; only its shape is checked
+        let _ = d.fields_of(x, "VersionInfo", "Structure", "goversioninfo.VSVersionInfo")
+      }
+      Some("IconPath") => vi.icon_path = d.dec_str(x, vi.icon_path, "VersionInfo", "IconPath")
+      Some("ManifestPath") => vi.manifest_path = d.dec_str(x, vi.manifest_path, "VersionInfo", "ManifestPath")
+      Some("ApplicationIconPath") => vi.application_icon_path = d.dec_str(x, vi.application_icon_path, "VersionInfo", "ApplicationIconPath")
+      _ => ()
+    }
+  }
+  match d.saved {
+    Some(m) => Err(ParseErr{msg: m})
+    None => Ok(())
+  }
+}
+
+/// std json's syntax error in Go's words: std prefixes its path and
+/// "invalid JSON", and says EOF where Go's Unmarshal says "unexpected end
+/// of JSON input".
+fn syntax_msg(e: Str) -> Str {
+  let m = e.trim_prefix("at $: invalid JSON: ")
+  if m == "EOF" || m == "unexpected EOF" { "unexpected end of JSON input" } else { m }
+}

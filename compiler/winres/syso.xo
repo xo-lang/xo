@@ -1,0 +1,142 @@
+// Writing the .syso (goversioninfo.go's WriteSyso and icon.go). The icon
+// code comes from github.com/akavel/rsrc, MIT licensed, Copyright (c)
+// 2013-2014 The rsrc Authors (LICENSE.rsrc, AUTHORS.rsrc).
+
+
+/// Why a resource could not be written: the message Go's version returns.
+pub struct WriteErr {
+  pub msg: Str
+}
+
+pub fn (e: WriteErr) display() -> Str { e.msg }
+
+/// The resource IDs handed out so far (WriteSyso's newID).
+struct Ids {
+  last: Int
+}
+
+fn (var ids: Ids) next() -> Int {
+  ids.last += 1
+  ids.last
+}
+
+/// The RT_GROUP_ICON resource of icons with the given IDs
+/// (GRPICONDIR: ICONDIR then each entry's common fields and ID).
+fn group_icon(icons: List[IconDirEntry], ids: List[Int]) -> Bytes {
+  var b = BytesBuilder.with_capacity(6 + 14 * icons.len())
+  put16(b, 0)
+  put16(b, 1)
+  put16(b, icons.len())
+  for (i, icon) in icons.indexed() {
+    let c = icon.common
+    b.write_byte(UInt8(c.width))
+    b.write_byte(UInt8(c.height))
+    b.write_byte(UInt8(c.color_count))
+    b.write_byte(UInt8(c.reserved))
+    put16(b, c.planes)
+    put16(b, c.bit_count)
+    put32(b, c.bytes_in_res)
+    put16(b, ids[i])
+  }
+  b.freeze()
+}
+
+/// Adds the icons of the comma separated files (addIcon).
+fn add_icons(var coff: Coff, fs: Fs, fnames: Str, var ids: Ids) -> () ! WriteErr uses fs.read {
+  for name in fnames.split(",") {
+    if name != "" {
+      match add_icon(coff, fs, name, ids, 0) {
+        Ok(_) => ()
+        Err(e) => return Err(WriteErr{msg: "${name}: ${e.msg}"})
+      }
+    }
+  }
+  Ok(())
+}
+
+/// Adds one icon file's images and their group, the group under group_id
+/// or a new ID when it is 0 (addOneIconWithGroupID).
+fn add_icon(var coff: Coff, fs: Fs, name: Str, var ids: Ids, group_id: Int) -> () ! WriteErr uses fs.read {
+  let data = match fs.read(name) {
+    Ok(d) => d
+    Err(e) => return Err(WriteErr{msg: fs_msg(e)})
+  }
+  let icons = match decode_headers(data) {
+    Ok(l) => l
+    Err(e) => return Err(WriteErr{msg: e.msg})
+  }
+  if icons.is_empty() {
+    return Ok(())
+  }
+  let gid = if group_id == 0 { ids.next() } else { group_id }
+  var image_ids: List[Int] = []
+  for icon in icons {
+    let id = ids.next()
+    let at = icon.image_offset
+    let n = icon.common.bytes_in_res
+    // os.File.ReadAt: fewer bytes than asked is io.EOF
+    if at + n > data.len() {
+      return Err(WriteErr{msg: "EOF"})
+    }
+    coff.add_resource(RT_ICON, id, data[at..at + n])
+    image_ids.push(id)
+  }
+  coff.add_resource(RT_GROUP_ICON, gid, group_icon(icons, image_ids))
+  Ok(())
+}
+
+/// A file system error as Go's os package words it: os.Open, ReadFile,
+/// Create and WriteFile all fail in their open, a PathError with Op "open".
+pub fn fs_msg(e: FsErr) -> Str { "open ${e}" }
+
+/// The .syso for arch ("386", "amd64", "arm" or "arm64") with the version
+/// information, the manifest and the icons (WriteSyso).
+pub fn (vi: VersionInfo) syso(fs: Fs, arch: Str) -> Bytes ! WriteErr uses fs.read { Ok(vi.coff(fs, arch)?.bytes()) }
+
+/// The resources of the .syso (syso without the object's layout): xo's PE
+/// linker writes them into its own .rsrc section, and its lld-link path
+/// links coff's bytes as an object (decision 0560).
+pub fn (vi: VersionInfo) coff(fs: Fs, arch: Str) -> Coff ! WriteErr uses fs.read {
+  var coff = match new_rsrc(arch) {
+    Ok(c) => c
+    Err(e) => return Err(WriteErr{msg: "${e}"})
+  }
+  var ids = Ids{last: 0}
+  // ID 16 is Version Information
+  coff.add_resource(16, 1, vi.buffer)
+  if vi.manifest_path != "" {
+    let m = match fs.read(vi.manifest_path) {
+      Ok(d) => d
+      Err(e) => return Err(WriteErr{msg: fs_msg(e)})
+    }
+    coff.add_resource(RT_MANIFEST, ids.next(), m)
+  }
+  if vi.icon_path != "" {
+    add_icons(coff, fs, vi.icon_path, ids)?
+  }
+  // IDI_APPLICATION (32512), the window title bar's icon, defaults to the
+  // icon
+  let app_icon = if vi.application_icon_path != "" { vi.application_icon_path } else { vi.icon_path }
+  if app_icon != "" {
+    add_icon(coff, fs, app_icon, ids, 32512)?
+  }
+  Ok(coff)
+}
+
+/// Writes the .syso to filename (WriteSyso).
+pub fn (vi: VersionInfo) write_syso(fs: Fs, filename: Str, arch: Str) -> () ! WriteErr uses fs {
+  let data = vi.syso(fs, arch)?
+  match fs.write(filename, data) {
+    Ok(_) => Ok(())
+    Err(e) => Err(WriteErr{msg: fs_msg(e)})
+  }
+}
+
+/// Writes the version information resource alone, for debugging
+/// (WriteHex).
+pub fn (vi: VersionInfo) write_hex(fs: Fs, filename: Str) -> () ! WriteErr uses fs.write {
+  match fs.write(filename, vi.buffer) {
+    Ok(_) => Ok(())
+    Err(e) => Err(WriteErr{msg: fs_msg(e)})
+  }
+}
