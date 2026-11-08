@@ -29,6 +29,13 @@ type fakeS3 struct {
 	mu      sync.Mutex
 	objects map[string]fakeObject
 	puts    int
+	down    bool // every PUT answers 503 (an R2 outage)
+}
+
+func (s *fakeS3) setDown(down bool) {
+	s.mu.Lock()
+	s.down = down
+	s.mu.Unlock()
 }
 
 type fakeObject struct {
@@ -85,9 +92,13 @@ func (s *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.down {
+			http.Error(w, "ServiceUnavailable", http.StatusServiceUnavailable)
+			return
+		}
 		s.objects[r.URL.Path] = fakeObject{body, r.Header.Get("Content-Type"), r.Header.Get("Cache-Control")}
 		s.puts++
-		s.mu.Unlock()
 	case http.MethodGet, http.MethodHead:
 		// public reads carry no signature; a signed read must verify
 		if r.Header.Get("Authorization") != "" {
@@ -399,4 +410,80 @@ func TestChecksumLogRefresh(t *testing.T) {
 	if code, _, _ := get(t, logURL+"/latest", nil); code != 200 {
 		t.Errorf("/latest beside the refresh: %d", code)
 	}
+}
+
+// TestChecksumLogFillRetry: an upload to the proxy bucket that fails (an
+// R2 outage) or that a restart cuts off stays in <data dir>/fill-pending
+// and is retried, on the next --refresh tick and when the log starts
+// (decision 0568), so a version the log added always reaches the bucket.
+func TestChecksumLogFillRetry(t *testing.T) {
+	xotool.NeedPorts(t)
+	t.Parallel()
+	modSetup(t, "../../internal/mod/testdata/repos")
+	ws := t.TempDir()
+	app := filepath.Join(ws, "app")
+	modtest.WriteFiles(t, app, map[string]string{
+		"xo.mod":       "module example.com/app\nedition preview\n\nrequire github.com/acme/billing v1.2.0\n",
+		"main/main.xo": appMain,
+	})
+	key := filepath.Join(ws, "log.key")
+	verifier := strings.TrimSpace(xo(t, "mod", "sumdb", "keygen", "sum.test", key).want(0).out)
+	s3 := &fakeS3{keyID: "test-key", secret: "test-secret", region: "auto", objects: map[string]fakeObject{}}
+	srv := httptest.NewServer(s3)
+	defer srv.Close()
+	fill := "--fill-to=" + srv.URL + "/modules"
+	setenv(t, "XO_FILL_ACCESS_KEY_ID", s3.keyID)
+	setenv(t, "XO_FILL_SECRET_ACCESS_KEY", s3.secret)
+	logData := t.TempDir()
+	t.Cleanup(func() { modtest.MakeWritable(logData) })
+	pending := func() string {
+		b, _ := os.ReadFile(filepath.Join(logData, "fill-pending"))
+		return string(b)
+	}
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: never (fill-pending %q)", what, pending())
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	has := func(f string) func() bool {
+		return func() bool { _, ok := s3.object("/modules/" + f); return ok }
+	}
+
+	// an outage: the uploads wait in fill-pending, the next tick writes them
+	s3.setDown(true)
+	logURL, stopLog := startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", fill, "--refresh=1s", logData)
+	setenv(t, "XO_SUMDB", verifier+" "+logURL)
+	emptyCache(t)
+	xo(t, "mod", "tidy", "--dir", app).want(0) // the log adds billing and money
+	waitFor("both versions pending", func() bool {
+		p := pending()
+		return strings.Contains(p, "github.com/acme/billing@v1.2.0\n") && strings.Contains(p, "github.com/acme/money@v1.1.0\n")
+	})
+	if has("github.com/acme/billing/@v/v1.2.0.mod")() {
+		t.Fatalf("a .mod was written during the outage")
+	}
+	s3.setDown(false)
+	waitFor("billing filled after the outage", has("github.com/acme/billing/@v/v1.2.0.mod"))
+	waitFor("money filled after the outage", has("github.com/acme/money/@v/v1.1.0.mod"))
+	waitFor("fill-pending emptied", func() bool { return pending() == "" })
+
+	// a restart: an upload left pending is retried when the log starts,
+	// with no --refresh
+	stopLog()
+	s3.setDown(true)
+	logURL, stopLog = startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", fill, logData)
+	if code, _, body := get(t, logURL+"/lookup/github.com/acme/money@v1.3.0", nil); code != 200 {
+		t.Fatalf("lookup of a new version: %d %s", code, body)
+	}
+	waitFor("money v1.3.0 pending", func() bool { return strings.Contains(pending(), "github.com/acme/money@v1.3.0\n") })
+	stopLog()
+	s3.setDown(false)
+	startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", fill, logData)
+	waitFor("money v1.3.0 filled after the restart", has("github.com/acme/money/@v/v1.3.0.mod"))
+	waitFor("fill-pending emptied after the restart", func() bool { return pending() == "" })
 }

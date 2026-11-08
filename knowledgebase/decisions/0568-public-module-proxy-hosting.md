@@ -202,7 +202,13 @@ host.
   It is driven three ways:
   - by the log: every lookup of a version the log adds queues a fill,
     so the first `direct` fetch anywhere fills the proxy for the next
-    user;
+    user. The version is written to `<data dir>/fill-pending` before
+    its upload starts and removed once the files are written, so an
+    upload an R2 error or a restart cut off is retried when the log
+    starts and on every `--refresh` tick (2026-11-08, cmd/xo
+    TestChecksumLogFillRetry); before, a failed one was only logged and
+    the version stayed out of the bucket until someone ran `xo mod
+    proxy fill`;
   - by the log's `--refresh=30m` (2026-11-08): every module the log
     holds has its `@v/list` rewritten from its repository's tags on
     that interval, and written only when it changed. Without it a tag
@@ -298,7 +304,8 @@ host.
    the log's record copies, restore, times, index feed, rate limit and
    cache headers, and the log writing each version it adds to the proxy
    bucket (`--fill-to`), all 2026-11-08; the list refresh (`--refresh`
-   and `/refresh/<path>`, cmd/xo TestChecksumLogRefresh), 2026-11-08; and `scripts/modservices/`
+   and `/refresh/<path>`, cmd/xo TestChecksumLogRefresh) and the
+   retried uploads (`fill-pending`), 2026-11-08; and `scripts/modservices/`
    (the `xo-sumdb` unit, cloudflared's ingress, `install.sh` and the
    owner's steps in its README), 2026-11-08. Phase 1 is complete. The
    owner's OCI host runs Oracle Linux 9 with SELinux enforcing:

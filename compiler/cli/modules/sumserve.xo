@@ -56,6 +56,9 @@ struct LogConf {
   refresh: Duration? = None
   /// the @v/list body last written per module path (refresh_list)
   lists: Mutex[Map[Str, Str]]
+  /// the "<path>@<version>" uploads to the fill bucket not yet finished,
+  /// as in <data dir>/fill-pending (fill_logged)
+  pending: Mutex[Map[Str, Bool]]
 }
 
 /// The 32 bit value id as 4 big endian bytes.
@@ -211,6 +214,82 @@ fn records_file(data: Str) -> Str {
 /// One Unix time per line, the time each record was added.
 fn times_file(data: Str) -> Str {
   "${data}/times"
+}
+
+/// The versions the log added whose upload to the --fill-to bucket has
+/// not finished, one "<path>@<version>" per line, sorted: rewritten with
+/// the version before its upload starts and without it once the upload
+/// succeeds, so a failed or interrupted one (an R2 error, a restart) is
+/// retried at the start and on every --refresh tick.
+fn pending_file(data: Str) -> Str {
+  "${data}/fill-pending"
+}
+
+/// The pending uploads in data's fill-pending (none when it is missing).
+fn (c: ModCtx) load_pending(data: Str) -> Map[Str, Bool] uses fs.read {
+  var m: Map[Str, Bool] = {}
+  let text = (c.os.fs.read(pending_file(data)).ok() ?? b"").to_str() ?? ""
+  for l in text.split("\n") {
+    if !l.trim().is_empty() {
+      m[l.trim()] = true
+    }
+  }
+  m
+}
+
+/// Replaces data's fill-pending with m (a temporary file renamed over it).
+fn (c: ModCtx) save_pending(data: Str, m: Map[Str, Bool]) -> () ! Str uses fs {
+  var body = ""
+  for k in m.keys().sort() {
+    body += "${k}\n"
+  }
+  let tmp = "${pending_file(data)}.tmp"
+  c.os.fs.write(tmp, body.bytes()).map_err(fs_msg)?
+  c.os.fs.rename(tmp, pending_file(data)).map_err(fs_msg)
+}
+
+/// Uploads path@version to the fill bucket (from the log's cache, fetched
+/// again when the cache lost it) and rewrites its @v/list, recorded in
+/// fill-pending until the files are written; errors go to standard error.
+fn (var c: ModCtx) fill_logged(conf: LogConf, fb: Bucket, path: Str, version: Str) uses (fs, net, proc, rand, clock, stdio) {
+  let key = "${path}@${version}"
+  let data = conf.data
+  let root = "${data}/cache"
+  let cc = c
+  let mark = fn(on: Bool) {
+    conf.pending.with(fn(var m) {
+      if on {
+        m[key] = true
+      } else {
+        m.remove(key)
+      }
+      if let Err(e) = cc.save_pending(data, m) {
+        cc.os.stdio.eprintln("xo mod sumdb serve: ${pending_file(data)}: ${e}")
+      }
+    })
+  }
+  mark(true)
+  let dir = version_dir_in(root, path, version)
+  let done = if c.exists("${dir}/xo.mod") { c.fill_files(fb, dir, path, version) } else { c.fill_version(fb, root, path, version) }
+  match done {
+    Ok(_) => mark(false)
+    Err(e) => c.os.stdio.eprintln("xo mod sumdb serve: fill ${path} ${version}: ${e} (retried later; ${pending_file(data)})")
+  }
+  match c.refresh_list(fb, root, path, conf.lists) {
+    Ok(_) => {}
+    Err(e) => c.os.stdio.eprintln("xo mod sumdb serve: fill ${path} list: ${e}")
+  }
+}
+
+/// Retries every upload in fill-pending, oldest name first.
+fn (var c: ModCtx) retry_pending(conf: LogConf, fb: Bucket) uses (fs, net, proc, rand, clock, stdio) {
+  let keys = conf.pending.with_read(fn(m) { m.keys().sort() })
+  for k in keys {
+    let (path, version, ok) = cut(k, "@")
+    if ok {
+      c.fill_logged(conf, fb, path, version)
+    }
+  }
 }
 
 /// The bucket object holding a copy of record id: "<time>\n<record>".
@@ -388,8 +467,17 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
   c.out("checksum log ${signer.name} (${st.records.len()} records in ${data}, ${mode}) at http://${l.addr()}\nclients: XO_SUMDB='${verifier} http://${l.addr()}'\n")
   let state = Mutex.new(st)
   let limits: Mutex[Map[Str, (Int, Int)]] = Mutex.new({})
-  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill, refresh: refresh, lists: Mutex.new({})}
+  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill, refresh: refresh, lists: Mutex.new({}), pending: Mutex.new(c.load_pending(data))}
   let cc = c
+  if let Some(fb) = fill {
+    // uploads a restart or an error interrupted
+    if conf.pending.with_read(fn(m) { m.len() }) > 0 {
+      c.os.tasks.spawn_background(fn() {
+        var rc = cc
+        rc.retry_pending(conf, fb)
+      })
+    }
+  }
   if let Some(d) = refresh {
     if let Some(fb) = fill {
       // a new tag reaches @v/list within d, whether or not anyone looked
@@ -399,6 +487,7 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
         var rc = cc
         while true {
           rc.os.clock.sleep(d)
+          rc.retry_pending(conf, fb)
           let paths = state.with_read(fn(st) { log_paths(st) })
           for p in paths {
             match rc.refresh_list(fb, "${data}/cache", p, conf.lists) {
@@ -640,19 +729,11 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
         if is_new {
           if let Some(fb) = conf.fill {
             // the tree is in the log's cache already; the answer does not
-            // wait for the upload, and a failed one is logged (a later
-            // xo mod proxy fill repairs it)
-            let root = "${conf.data}/cache"
+            // wait for the upload, and a failed one stays in fill-pending
+            // and is retried (at the start and on each --refresh tick)
             cc.os.tasks.spawn_background(fn() {
               var fc = cc
-              match fc.fill_files(fb, version_dir_in(root, path, version), path, version) {
-                Ok(_) => {}
-                Err(e) => fc.os.stdio.eprintln("xo mod sumdb serve: fill ${path} ${version}: ${e}")
-              }
-              match fc.refresh_list(fb, root, path, conf.lists) {
-                Ok(_) => {}
-                Err(e) => fc.os.stdio.eprintln("xo mod sumdb serve: fill ${path} list: ${e}")
-              }
+              fc.fill_logged(conf, fb, path, version)
             })
           }
         }
