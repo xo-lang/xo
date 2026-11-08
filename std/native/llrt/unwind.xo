@@ -137,13 +137,27 @@ fn x64() -> Bool {
   }
 }
 
+/// Whether the target is riscv64 (decision 0571 stage 2: DWARF x0 to x31
+/// at 0 to 31, f0 to f31 at 32 to 63).
+fn rv64() -> Bool {
+  match target.arch {
+    TargetArch.Riscv64 => true
+    TargetArch.Arm64 | TargetArch.Amd64 | TargetArch.Wasm32 => false
+  }
+}
+
 /// The stack pointer's word in the register set (DWARF 31 on arm64, 7
-/// on x86_64).
-fn sp_off() -> Int { if x64() { 56 } else { SP } }
+/// on x86_64, 2 on riscv64).
+fn sp_off() -> Int { if x64() { 56 } else if rv64() { 16 } else { SP } }
+
+/// The word of the landing pad's first argument register (the exception;
+/// the second is the next word): DWARF 0 and 1 on arm64 (x0, x1) and
+/// x86_64 (rax, rdx), 10 and 11 on riscv64 (a0, a1).
+fn eh_off() -> Int { if rv64() { 80 } else { 0 } }
 
 /// The word of the frame pointer (x29 on arm64, rbp, DWARF register 6,
 /// on x86_64).
-fn fp_off() -> Int { if x64() { 48 } else { 232 } }
+fn fp_off() -> Int { if x64() { 48 } else if rv64() { 64 } else { 232 } }
 
 /// The frames outside the program a profile walk follows by their frame
 /// records past the leaf (walk_regs).
@@ -151,7 +165,7 @@ const OUTSIDE_MAX = 4
 
 /// The word where rt.unwind_save leaves its return address (x30 on
 /// arm64, the return address column 16 on x86_64).
-fn ra_off() -> Int { if x64() { 128 } else { 240 } }
+fn ra_off() -> Int { if x64() { 128 } else if rv64() { 8 } else { 240 } }
 /// The rule sets: the rule kind of register n at word n, its operand at
 /// S_VAL + 8 * n, then the CFA's register and offset, whether the return
 /// address is signed (DW_CFA_AARCH64_negate_ra_state), whether the CFA
@@ -235,9 +249,10 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
     TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
   }
   match target.arch {
-    TargetArch.Arm64 | TargetArch.Amd64 => {}
-    // decision 0571 stage 2: riscv64's frame step
-    TargetArch.Wasm32 | TargetArch.Riscv64 => return 0
+    // riscv64 (decision 0571 stage 2): the same CFI walk, its registers
+    // by eh_off, sp_off and ra_off
+    TargetArch.Arm64 | TargetArch.Amd64 | TargetArch.Riscv64 => {}
+    TargetArch.Wasm32 => return 0
   }
   let darwin = match target.os {
     TargetOs.Darwin => true
@@ -548,8 +563,8 @@ fn personality(version: Int, actions: Int, cls: Int, exc: Int, ctx: Int) -> Int 
   if lp == 0 {
     return URC_CONTINUE_UNWIND
   }
-  rt.mem_store(regs, 0, exc, 8)
-  rt.mem_store(regs, 8, 0, 8)
+  rt.mem_store(regs, eh_off(), exc, 8)
+  rt.mem_store(regs, eh_off() + 8, 0, 8)
   rt.mem_store(regs, PC, lp, 8)
   let args = rt.mem_load(ctx, H_ARGS, 8)
   if args != 0 {

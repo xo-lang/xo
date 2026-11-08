@@ -94,9 +94,11 @@ fn (var g: Gen) unwind_fns() {
   g.emitted["@xo_unwind_save"] = true
   g.emitted["@xo_unwind_resume"] = true
   if g.arch() == "riscv64" {
-    // decision 0571 stage 2: unwinding on riscv64
-    g.helpers.push(naked_fn("void @xo_unwind_save(i64 %0)", ["ret"]))
-    g.helpers.push(naked_fn("void @xo_unwind_resume(i64 %0)", ["ebreak"]))
+    // decision 0571 stage 2: the register set's words are DWARF numbers
+    // (x8, x9, x18 to x27 callee saved; f8, f9, f18 to f27 at 256 + 8 n;
+    // sp 16, ra 8; the landing pad's a0 and a1 at 80 and 88; the pc 768)
+    g.helpers.push(naked_fn("void @xo_unwind_save(i64 %0)", [".option push", ".option arch, +f, +d", "sd ra, 8(a0)", "sd sp, 16(a0)", "sd x8, 64(a0)", "sd x9, 72(a0)", "sd x18, 144(a0)", "sd x19, 152(a0)", "sd x20, 160(a0)", "sd x21, 168(a0)", "sd x22, 176(a0)", "sd x23, 184(a0)", "sd x24, 192(a0)", "sd x25, 200(a0)", "sd x26, 208(a0)", "sd x27, 216(a0)", "fsd f8, 320(a0)", "fsd f9, 328(a0)", "fsd f18, 400(a0)", "fsd f19, 408(a0)", "fsd f20, 416(a0)", "fsd f21, 424(a0)", "fsd f22, 432(a0)", "fsd f23, 440(a0)", "fsd f24, 448(a0)", "fsd f25, 456(a0)", "fsd f26, 464(a0)", "fsd f27, 472(a0)", "ret", ".option pop"]))
+    g.helpers.push(naked_fn("void @xo_unwind_resume(i64 %0)", [".option push", ".option arch, +f, +d", "mv t1, a0", "ld x8, 64(t1)", "ld x9, 72(t1)", "ld x18, 144(t1)", "ld x19, 152(t1)", "ld x20, 160(t1)", "ld x21, 168(t1)", "ld x22, 176(t1)", "ld x23, 184(t1)", "ld x24, 192(t1)", "ld x25, 200(t1)", "ld x26, 208(t1)", "ld x27, 216(t1)", "fld f8, 320(t1)", "fld f9, 328(t1)", "fld f18, 400(t1)", "fld f19, 408(t1)", "fld f20, 416(t1)", "fld f21, 424(t1)", "fld f22, 432(t1)", "fld f23, 440(t1)", "fld f24, 448(t1)", "fld f25, 456(t1)", "fld f26, 464(t1)", "fld f27, 472(t1)", "ld ra, 8(t1)", "ld sp, 16(t1)", "ld a0, 80(t1)", "ld a1, 88(t1)", "ld t0, 768(t1)", "jr t0", ".option pop"]))
     return
   }
   if g.os() == "windows" && g.arch() == "amd64" {
