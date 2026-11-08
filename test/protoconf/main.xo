@@ -1,0 +1,119 @@
+// Testee of Google's protobuf conformance runner (ADR 0546 item 7): reads ConformanceRequest frames
+// (4 byte little endian length, then the message) from standard input and writes ConformanceResponse
+// frames to standard output. The schema is a FileDescriptorSet given as the first argument (built with
+// protoc --include_imports from conformance/test_protos/test_messages_proto3.proto); only the proto3 message
+// and the protobuf and JSON formats are handled, anything else is answered `skipped`.
+use std/protobuf
+use std/protojson
+
+const PROTOBUF: Int = 1
+const JSON: Int = 2
+
+struct Req {
+  proto: Bytes? = None
+  json: Str? = None
+  fmt: Int = 0
+  typ: Str = ""
+  other: Bool = false
+}
+
+/// Reads exactly `n` bytes from standard input; None at a clean end of input.
+fn read_n(os: Os, n: Int) -> Bytes? uses stdio {
+  var b = BytesBuilder.new()
+  while b.len() < n {
+    let chunk = (os.stdio.read_bytes(n - b.len()) ?? _e => None) ?? { return None }
+    b.write(chunk)
+  }
+  Some(b.freeze())
+}
+
+fn parse_req(m: Bytes) -> Req ! protobuf.ProtoErr {
+  var r = Req{}
+  var at = 0
+  while at < m.len() {
+    let (num, wire, next) = protobuf.read_tag(m, at)?
+    at = next
+    if num == 1 && wire == 2 {
+      let (d, n) = protobuf.read_bytes(m, at)?
+      r.proto = Some(d)
+      at = n
+    } else if num == 2 && wire == 2 {
+      let (d, n) = protobuf.read_bytes(m, at)?
+      r.json = Some(d.to_str_lossy())
+      at = n
+    } else if num == 3 && wire == 0 {
+      let (v, n) = protobuf.read_varint(m, at)?
+      r.fmt = Int(v)
+      at = n
+    } else if num == 4 && wire == 2 {
+      let (d, n) = protobuf.read_bytes(m, at)?
+      r.typ = d.to_str_lossy()
+      at = n
+    } else {
+      if num == 7 || num == 8 {
+        r.other = true
+      }
+      at = protobuf.skip_field(m, at, num, wire)?
+    }
+  }
+  r
+}
+
+fn opts() -> protojson.Opts {
+  protojson.Opts{proto_names: false, emit_defaults: false, enum_numbers: false, discard_unknown: false}
+}
+
+/// A ConformanceResponse with one bytes or string member `num`.
+fn resp(num: Int, data: Bytes) -> Bytes {
+  protobuf.append_bytes(protobuf.append_tag(b"", num, 2), data)
+}
+
+fn respond(reg: protojson.Registry, q: Req) -> Bytes {
+  if q.other || q.typ != "protobuf_test_messages.proto3.TestAllTypesProto3" {
+    return resp(5, b"unsupported")
+  }
+  var wire: Bytes = b""
+  match q.proto {
+    Some(p) => {
+      // A protobuf input is parsed by converting it to JSON (an invalid message fails there).
+      match protojson.marshal(reg, q.typ, p, opts()) {
+        Ok(_) => wire = p
+        Err(e) => return resp(1, e.display().bytes())
+      }
+    }
+    None => {
+      match protojson.unmarshal(reg, q.typ, q.json ?? "", opts()) {
+        Ok(w) => wire = w
+        Err(e) => return resp(1, e.display().bytes())
+      }
+    }
+  }
+  if q.fmt == PROTOBUF {
+    resp(3, wire)
+  } else if q.fmt == JSON {
+    match protojson.marshal(reg, q.typ, wire, opts()) {
+      Ok(s) => resp(4, s.bytes())
+      Err(e) => resp(6, e.display().bytes())
+    }
+  } else {
+    resp(5, b"unsupported output format")
+  }
+}
+
+fn main(os: Os) uses stdio, env, fs {
+  let set = os.fs.read(os.env.args().get(0) ?? "") ?? _e => b""
+  let reg = protojson.registry_from_set(set) ?? _e => fault("bad descriptor set")
+  while true {
+    let head = read_n(os, 4) ?? { return }
+    let n = Int(head[0]) + Int(head[1]) * 256 + Int(head[2]) * 65536 + Int(head[3]) * 16777216
+    let body = read_n(os, n) ?? { return }
+    let out = match parse_req(body) {
+      Ok(q) => respond(reg, q)
+      Err(e) => resp(2, "parse: ${e}".bytes())
+    }
+    var f = BytesBuilder.new()
+    f.write(protobuf.append_fixed32(b"", UInt32.wrapping_from(out.len())))
+    f.write(out)
+    os.stdio.write(f.freeze()) ?? _e => ()
+  }
+}
