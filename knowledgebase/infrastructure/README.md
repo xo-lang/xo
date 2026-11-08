@@ -16,3 +16,4 @@
 - [memory-footprint.md](memory-footprint.md): where Strs and Lists cost more memory than Go (a Str 56 bytes against 36, a sized int list element 8 bytes, the Str sort's 5n scratch), what XO_HEAPSTATS shows, and the Proposed ADRs 0369 and 0370
 - [amqp-interop.md](amqp-interop.md): the opt-in std/amqp test against a local Artemis broker in Docker: command, image digest, what passed, what is not covered
 - [offload.md](offload.md): the offload host (a Linux arm64 container on the owner's network): which tier steps run there, scripts/lead/offload.sh and offload-tier.sh, the host's setup, the 2026-10-29 findings
+- [tree-sitter-xo.md](tree-sitter-xo.md): the local tree-sitter grammar for Xo (grammar, scanner, queries, tests, bindings), where it lives, how to check it against the repo's .xo files; unpublished until the owner approves
