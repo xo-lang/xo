@@ -6418,7 +6418,12 @@ fn mem_trim()
   switch, which may come after `mem_trim` returns. The pages come back on
   the next use (a page fault each), and the next such large block maps
   anew. Nothing on the Go backend, whose runtime's scavenger does this
-  itself.
+  itself. Without a call, a program with worker threads gives back the
+  same blocks once they stay free long enough (decision 0533, Linux and
+  darwin): about every 30 s an idle worker marks the free blocks of 16
+  KiB and over it finds, and a block still free and marked at the next
+  pass, 30 to 60 s unused, goes back; so a server's memory falls after a
+  burst ends, and blocks a busy program reuses keep their pages.
 
 ## 37. std/metrics
 

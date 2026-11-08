@@ -172,6 +172,10 @@ const PSAMPLED = 128
 /// scavenge) carries this bit until it is freed again (decision 0448
 /// stage 1), so a trim advises each block once.
 pub const PADVISED = 256
+/// A free page block an age pass found free (heapos.xo age, decision
+/// 0533): the next pass that finds it still free and the bit still set
+/// gives its pages back. Cleared when the block is freed again.
+pub const PSEEN = 512
 const PCUR = 10952
 const PEND = 10960
 const PAGES = 10968
@@ -224,8 +228,9 @@ fn page_class(p: Int) -> Int {
   if c & PSAMPLED != 0 {
     rt.mem_store(w, 0, c & 127, 8)
     let _f = rt.heap_grow(p, PFREED)
-  } else if c & PADVISED != 0 {
-    // freed again after a trim: its pages were touched while it lived
+  } else if c & (PADVISED | PSEEN) != 0 {
+    // freed again after a trim or an age pass: its pages were touched
+    // while it lived
     rt.mem_store(w, 0, c & 127, 8)
   }
   c & 127

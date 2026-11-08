@@ -45,6 +45,16 @@ const HEAP_TRIM = 144115188075855872
 /// rt.heap_grow's explicit trim (cabi.xo TRIM_X): the calling thread's
 /// free page blocks given back on Linux too (decision 0505).
 const HEAP_TRIM_X = 144115188075855874
+/// rt.heap_grow(central, HEAP_AGE): an age pass (cabi.xo AGE, heapos.xo
+/// age; decision 0533).
+const HEAP_AGE = 144115188075855875
+/// The period of the age passes (decision 0533): a free page block goes
+/// back after one to two periods unused.
+const SCAV_EVERY_NS = 30000000000
+const P_AGE_AT_I = layout.P_AGE_AT_I
+const P_AGE_BYTES_I = layout.P_AGE_BYTES_I
+const W_AGE_AT = layout.W_AGE_AT
+const W_AGE_MORE = layout.W_AGE_MORE
 const W_TRIM_SEEN = layout.W_TRIM_SEEN
 const P_TRIM_EPOCH_I = layout.P_TRIM_EPOCH_I
 const ACQUIRE = 1
@@ -712,7 +722,9 @@ fn np_block(p: Int, w: Int, mf: Int) -> Int {
   // spun the idle workers through 2.7 million empty polls in three
   // HTTP/2 downloads of 256 MiB on linux/arm64 (2026-10-22); epoll rounds
   // the wait up to 1 ms
-  let n = np_poll(p, w, if aw == 2 { NEXT_GRACE_NS } else { -1 })
+  // a worker whose age pass marked blocks waits at most a period, so the
+  // next pass runs (age_check)
+  let n = np_poll(p, w, if aw == 2 { NEXT_GRACE_NS } else if rt.mem_load(w, W_AGE_MORE, 8) != 0 { SCAV_EVERY_NS } else { -1 })
   rt.slot_add(dlk, DLK_NPBLK, -1, SEQ_CST)
   n
 }
@@ -1242,6 +1254,7 @@ pub fn grace_begin() {
 /// counting itself a spinner (decision 0502).
 fn go_idle(p: Int, w: Int) -> Int {
   count_main(p)
+  age_check(p, w)
   // decision 0324: wait in the network poller when no one does
   let n = np_block(p, w, 0)
   if n >= 0 {
@@ -1324,12 +1337,56 @@ fn go_idle(p: Int, w: Int) -> Int {
   }
   while rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
     stat(ST_IDLE_SLEEP)
-    futex_wait(w.wrapping_add(W_WAKEW), 0)
+    if rt.mem_load(w, W_AGE_MORE, 8) != 0 {
+      // the blocks its last age pass marked go back at the next one, a
+      // period on, unless they are used first (age_check)
+      futex_wait_us(w.wrapping_add(W_WAKEW), 0, SCAV_EVERY_NS / 1000)
+      if rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
+        age_check(p, w)
+      }
+    } else {
+      futex_wait(w.wrapping_add(W_WAKEW), 0)
+    }
   }
   if tracerec.built() && tracerec.on() {
     tracerec.ev(tracerec.K_IDLE, 1, w, 0)
   }
   1
+}
+
+/// The age passes (decision 0533), at most one each SCAV_EVERY_NS: the
+/// first worker to go idle after the period claims the pass over the
+/// central lists (a compare and swap of its time), and each worker ages
+/// its own heap record once a period (a record's lists are its thread's
+/// alone). An idle point, not a timer thread: under load workers still go
+/// idle between tasks, and the monitor thread sleeps when the pool is
+/// quiet; a worker whose pass marked blocks sleeps at most a period
+/// (W_AGE_MORE, go_idle), so the pass that gives them back runs in a
+/// quiet process too.
+fn age_check(p: Int, w: Int) {
+  let now = sysio.mono_ns()
+  if now.wrapping_sub(rt.mem_load(w, W_AGE_AT, 8)) < SCAV_EVERY_NS {
+    return
+  }
+  rt.mem_store(w, W_AGE_AT, now, 8)
+  let last = rt.slot_load(p, P_AGE_AT_I, RELAXED)
+  let central = now.wrapping_sub(last) >= SCAV_EVERY_NS && rt.slot_cas(p, P_AGE_AT_I, last, now, RELAXED)
+  let k = rt.heap_grow(if central { 1 } else { 0 }, HEAP_AGE)
+  rt.mem_store(w, W_AGE_MORE, if k & 4294967295 > 0 { 1 } else { 0 }, 8)
+  if k.shr_logical(32) > 0 {
+    let _g = rt.slot_add(p, P_AGE_BYTES_I, k.shr_logical(32).wrapping_shl(14), RELAXED)
+  }
+}
+
+/// The bytes the age passes gave back to the system since the start
+/// (decision 0533; /debug/sched heap_aged_bytes), 0 without a pool.
+pub fn aged_bytes() -> Int {
+  let me = rt.tlocal_get(TLS_W)
+  if me == 0 {
+    return 0
+  }
+  let p = rt.mem_load(me, W_POOL, 8)
+  if p == 0 { 0 } else { rt.slot_load(p, P_AGE_BYTES_I, RELAXED) }
 }
 
 /// The run loop of a worker thread (the C function its thread starts

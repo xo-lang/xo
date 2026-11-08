@@ -255,7 +255,14 @@ pub const W_TRIM_SEEN = 3576
 /// those woken on it (poll.xo pd_wait_ctx; one worker's word may go below
 /// zero, the sum over workers is the count): pool.xo quiet_peers.
 pub const W_NETWAIT = 3584
-pub const W_SIZE = 3592
+/// When this worker last aged its own heap record (pool.xo age_check,
+/// decision 0533), by sysio.mono_ns; 0 never.
+pub const W_AGE_AT = 3592
+/// Whether this worker's last age pass marked blocks (pool.xo age_check):
+/// it then sleeps at most a period when idle, so the next pass runs even
+/// in a quiet process, and at most once more.
+pub const W_AGE_MORE = 3600
+pub const W_SIZE = 3608
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 /// The spawn sites' average run times (pool.xo site_note): 256 words after
@@ -265,7 +272,13 @@ pub const P_SITES = 32928
 /// and each worker trims its own heap record when it sees it change
 /// (pool.xo trim_all, trim_check; decision 0505's addendum).
 pub const P_TRIM_EPOCH_I = 4372
-pub const P_SIZE = 34984
+/// When the last age pass over the central lists of page blocks ran (a
+/// word index; pool.xo age_check, decision 0533), by sysio.mono_ns, 0
+/// never.
+pub const P_AGE_AT_I = 4373
+/// The bytes the age passes gave back (a word index; pool.xo aged_bytes).
+pub const P_AGE_BYTES_I = 4374
+pub const P_SIZE = 35000
 
 /// xo_node, a cancellation node (pool.xo; xo_rt.c before; ctx.xo makes the
 /// context's, twrun.xo and pool.xo the others): its parent, first child,

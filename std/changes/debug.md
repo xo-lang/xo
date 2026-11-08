@@ -1,5 +1,19 @@
 # std/debug changes
 
+## 2026-11-06: feature: /debug/sched reports heap_aged_bytes
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0533 (the idle age passes give free page blocks back to the OS; a soak needs to see how much while the program runs)
+- Go reference: runtime/metrics /memory/classes/heap/released:bytes
+- Test: cmd/xo TestDebugSchedHeapFootprint (the line is present)
+- Timing: none (one atomic load per GET)
+- Shipped in: not yet released
+
+`GET /sched` of `debug.router` on the native backends adds
+`heap_aged_bytes N`, the bytes the idle age passes have given back to the
+OS so far (a running total, decision 0533).
+
 ## 2026-11-06: feature: /debug/sched reports heap_chunks and heap_cache_bytes
 
 - Kind: feature

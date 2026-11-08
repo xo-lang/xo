@@ -1,6 +1,11 @@
 // Tests of heapos.xo's large block cache (`xo test
 // --std-module=native/llrt/heapos`, run by internal/stdtest).
 
+use native/llrt/alloc
+use native/llrt/linux
+use native/llrt/obj
+use native/rt
+
 test "a block grown past 1 MiB reuses the mapping its last growth made" {
   // n = 1,048,496 bytes asks for need 1,048,512 and large_resize maps
   // room for four times n, rounded up to GRAIN: 4,194,304, past four
@@ -21,4 +26,38 @@ test "a block grown past 1 MiB reuses the mapping its last growth made" {
   expect(after_first >= 1)
   expect(cache_count() <= after_first)
   release(held - 8)
+}
+
+test "an age pass marks a free page block and the next gives its pages back" {
+  // decision 0533: the first pass that finds a block free marks it PSEEN,
+  // the next one advises it (PADVISED), and its free clears both
+  if !pages_on() {
+    return
+  }
+  var h = obj.solo_heap()
+  if h == 0 {
+    h = rt.tlocal_get(TLS_HEAP)
+  }
+  let p = alloc.alloc(h, 60000)
+  let q = alloc.alloc(h, 60000)
+  alloc.free(h, p)
+  let cw = pword(p, PT_CLASS)
+  expect(rt.mem_load(cw, 0, 8) & (alloc.PSEEN | alloc.PADVISED)) == 0
+  expect(age(false) >= 1)
+  expect(rt.mem_load(cw, 0, 8) & alloc.PSEEN) == alloc.PSEEN
+  expect(rt.mem_load(cw, 0, 8) & alloc.PADVISED) == 0
+  let _k = age(false)
+  let pg = match target.os {
+    TargetOs.Linux => linux.auxval(linux.AT_PAGESZ)
+    _ => 16384
+  }
+  if target.os != TargetOs.Windows && p % pg == 0 {
+    expect(rt.mem_load(cw, 0, 8) & alloc.PADVISED) == alloc.PADVISED
+  }
+  // taken again and freed: both marks clear, the block is young again
+  let r = alloc.alloc(h, 60000)
+  expect(r) == p
+  alloc.free(h, r)
+  expect(rt.mem_load(cw, 0, 8) & (alloc.PSEEN | alloc.PADVISED)) == 0
+  alloc.free(h, q)
 }

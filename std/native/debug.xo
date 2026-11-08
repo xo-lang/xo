@@ -126,6 +126,9 @@ fn sched(req: http.Request) -> http.Response {
     // atomic load, no walk of another thread's lists
     lines.push("heap_chunks ${heapos.chunks()}")
     lines.push("heap_cache_bytes ${heapos.cache_bytes()}")
+    // the bytes the idle age passes gave back to the OS so far (decision
+    // 0533), so a soak tells a returned footprint from a leak
+    lines.push("heap_aged_bytes ${pool.aged_bytes()}")
   }
   http.Response{status: 200, headers: {"Content-Type": "text/plain; charset=utf-8"}, body: "${lines.join("\n")}\n".bytes()}
 }

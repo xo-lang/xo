@@ -657,22 +657,144 @@ fn trim_list(p0: Int, c: Int, pg: Int) {
       // every phase (ab-host stage1-v1/v2, 2026-10-31), so there only an
       // explicit trim gives the pages (MADV_DONTNEED 4), and a block not
       // advised stays unmarked for the next one
-      match target.os {
-        TargetOs.Darwin => {
-          rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
-          let _a = sys_darwin.madvise(p, size, 7)
+      let _a = advise(p, cw, v, size, pg)
+    }
+    p = rt.mem_load(pword(p, PT_LINK), 0, 8)
+  }
+}
+
+/// Gives the system the pages of free page block p of size bytes (its
+/// class word cw holding v) and marks it PADVISED: darwin
+/// MADV_FREE_REUSABLE (7); Linux MADV_DONTNEED (4) when pg, the page size,
+/// is not 0 and covers the block exactly (madvise rounds its length up, so
+/// a 16 KiB block under 64 KiB pages is skipped, never rounded over a live
+/// neighbor), else the block stays as it is.
+fn advise(p: Int, cw: Int, v: Int, size: Int, pg: Int) -> Bool {
+  match target.os {
+    TargetOs.Darwin => {
+      rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
+      let _a = sys_darwin.madvise(p, size, 7)
+      true
+    }
+    TargetOs.Linux => {
+      if pg > 0 && p % pg == 0 && size % pg == 0 {
+        rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
+        let _a = linux.madvise(p, size, 4)
+        return true
+      }
+      false
+    }
+    TargetOs.Windows | TargetOs.Wasi => false
+  }
+}
+
+/// An age pass (decision 0533, pool.xo age_check): over the calling
+/// thread's free page blocks and, when central, over the central lists'
+/// magazines of page blocks, under each class's lock. A block found free
+/// and not marked is marked PSEEN; one already PSEEN (free since the
+/// previous pass, at least SCAV_EVERY ago, since its free clears the bit)
+/// gives its pages back (advise, Linux too). So pages go back only from
+/// blocks a whole period untouched, as Go's scavenger returns only what
+/// stayed unused, and a build's churn between phases never reaches the
+/// second mark (the refaults decision 0448 measured). The blocks it
+/// marked (which the next pass gives back if they stay free) in the low
+/// 32 bits, and the 16 KiB units it gave back above them (pool.xo
+/// age_check counts them for /debug/sched).
+pub fn age(central: Bool) -> Int {
+  if !pages_on() || sanhook.sanitized() || sanhook.gorace() {
+    return 0
+  }
+  let pg = match target.os {
+    TargetOs.Linux => linux.auxval(linux.AT_PAGESZ)
+    _ => 0
+  }
+  var h = obj.solo_heap()
+  if h == 0 {
+    h = rt.tlocal_get(TLS_HEAP)
+  }
+  var k = 0
+  var gave = 0
+  if h != 0 {
+    for c in PAGE_CLASS..NCLASS1 {
+      let fl = h.wrapping_add(c.wrapping_shl(3))
+      k += age_list(rt.mem_load(fl, H_FREE_LISTS, 8), c, pg, gave)
+      k += age_list(rt.mem_load(fl, H_MAG, 8), c, pg, gave)
+    }
+  }
+  if central {
+    let hc = heaps_head()
+    if hc != 0 && rt.mem_load(hc, H_CENTRAL, 8) != 0 {
+      for c in PAGE_CLASS..NCLASS1 {
+        alloc.central_lock(hc, c)
+        var m = alloc.central_first(hc, c)
+        while m != 0 {
+          k += age_list(m, c, pg, gave)
+          m = alloc.cnext(true, m)
         }
-        TargetOs.Linux => {
-          if pg > 0 && p % pg == 0 && size % pg == 0 {
-            rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
-            let _a = linux.madvise(p, size, 4)
-          }
+        alloc.central_unlock(hc, c)
+      }
+    }
+  }
+  (k & 4294967295) | gave.shr_logical(14).wrapping_shl(32)
+}
+
+/// age's walk of one list of page blocks of class c (trim_list's links):
+/// the blocks it marked; gave adds the bytes it gave back.
+fn age_list(p0: Int, c: Int, pg: Int, var gave: Int) -> Int {
+  let size = alloc.class_size(c).wrapping_add(8)
+  var k = 0
+  var p = p0
+  while p != 0 {
+    let cw = pword(p, PT_CLASS)
+    let v = rt.mem_load(cw, 0, 8)
+    if v & alloc.PADVISED == 0 {
+      if v & alloc.PSEEN != 0 {
+        if age_sparse(p) && advise(p, cw, v, size, pg) {
+          gave += size
         }
-        TargetOs.Windows | TargetOs.Wasi => {}
+      } else {
+        rt.mem_store(cw, 0, v | alloc.PSEEN, 8)
+        k += 1
       }
     }
     p = rt.mem_load(pword(p, PT_LINK), 0, 8)
   }
+  k
+}
+
+/// Whether an age pass may give back page block p's pages: always, except
+/// on Linux with huge pages possible (THP=always and the heap not XO_THP=
+/// off), where only a block whose 2 MiB range is at least half free (its
+/// blocks seen free by an age pass or given back) is. Under THP=always
+/// khugepaged refills a hole in a mostly live 2 MiB range with a whole
+/// huge page (max_ptes_none 511), so giving back a block there raised the
+/// footprint (decision 0533: sat8 idle RSS +10 MB); Go's scavenger skips
+/// dense chunks the same way (mgcscavenge.go, about 96% used). A block
+/// left keeps PSEEN, so a later pass gives it back once its range empties.
+fn age_sparse(p: Int) -> Bool {
+  match target.os {
+    TargetOs.Linux => {}
+    _ => return true
+  }
+  if thp_off() {
+    return true
+  }
+  let huge = 2097152
+  let r = p & (0).wrapping_sub(huge)
+  let base = p & (0).wrapping_sub(CHUNK)
+  var free = 0
+  var q = r
+  while q < r.wrapping_add(huge) {
+    let v = if q == base { 0 } else { rt.mem_load(pword(q, PT_CLASS), 0, 8) }
+    let c = v & 127
+    if v > 0 && c >= PAGE_CLASS && v & (alloc.PSEEN | alloc.PADVISED) != 0 {
+      // a free block: its pages, from its start (a block never crosses its
+      // chunk, and a 2 MiB range is half a chunk)
+      free += alloc.class_size(c).wrapping_add(8)
+    }
+    q = q.wrapping_add(PAGE)
+  }
+  free.wrapping_shl(1) >= huge
 }
 
 /// Takes and releases the cache's lock.
@@ -1693,21 +1815,33 @@ pub fn scavenge(m: Int, c: Int) {
     return
   }
   let size = alloc.class_size(c)
+  // the system's page, at least SCAV_PAGE: madvise rounds its length up
+  // to whole pages, so a range is advised only from a page boundary and
+  // in whole pages, never rounded over a live neighbor (a 32 KiB block
+  // under Linux's 64 KiB pages; gotchas/madvise-rounds-over-neighbor.md)
+  let gran = match target.os {
+    TargetOs.Linux => {
+      let ps = linux.auxval(linux.AT_PAGESZ)
+      if ps > SCAV_PAGE { ps } else { SCAV_PAGE }
+    }
+    _ => SCAV_PAGE
+  }
   var r = m
   while r != 0 {
     // a page block (class PAGE_CLASS and up, decision 0425) holds no link
     // and no prefix: every page of it goes back, and its successor is in
     // its chunk's table
-    var lo = (r + 16 + SCAV_PAGE - 1).shr_logical(14).wrapping_shl(14)
-    var hi = (r + size).shr_logical(14).wrapping_shl(14)
+    var lo = (r + 16 + gran - 1) / gran * gran
+    var hi = (r + size) / gran * gran
     let pg = c >= PAGE_CLASS && pages_on()
     if pg {
       lo = r
       hi = r + size + 8
-      // once per free (alloc.xo PADVISED, cleared when it is freed again)
+      // once per free (alloc.xo PADVISED, cleared when it is freed again),
+      // and only a block the system's pages cover exactly
       let cw = pword(r, PT_CLASS)
       let v = rt.mem_load(cw, 0, 8)
-      if v & alloc.PADVISED != 0 {
+      if v & alloc.PADVISED != 0 || r % gran != 0 || (size + 8) % gran != 0 {
         hi = lo
       } else {
         rt.mem_store(cw, 0, v | alloc.PADVISED, 8)

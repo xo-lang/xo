@@ -244,7 +244,7 @@ fn main(os: Os) {
   os.stdio.println("big ${big.len()} keep ${keep.len()}")
   big = Bytes.zeroed(1)
   let cache = stat(r, "heap_cache_bytes")
-  os.stdio.println("heap ${before} ${during} ${cache} ${big.len()}")
+  os.stdio.println("heap ${before} ${during} ${cache} ${big.len()} ${stat(r, "heap_aged_bytes")}")
 }
 `
 
@@ -269,12 +269,16 @@ func TestDebugSchedHeapFootprint(t *testing.T) {
 		}
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 		f := strings.Fields(lines[len(lines)-1])
-		if len(f) != 5 || f[0] != "heap" {
+		if len(f) != 6 || f[0] != "heap" {
 			t.Fatalf("%s: output %q", be, out)
 		}
 		before, _ := strconv.Atoi(f[1])
 		during, _ := strconv.Atoi(f[2])
 		cache, _ := strconv.Atoi(f[3])
+		aged, _ := strconv.Atoi(f[5])
+		if aged < 0 {
+			t.Errorf("%s: heap_aged_bytes %d: want the line present (0 or more)", be, aged)
+		}
 		t.Logf("%s: heap_chunks %d before, %d with 24 MiB live; heap_cache_bytes %d after a 2 MiB block is freed", be, before, during, cache)
 		if before < 0 || during-before < 4 || cache < 2097152 {
 			t.Errorf("%s: heap_chunks %d, %d, heap_cache_bytes %d: want a rise of at least 4 chunks and the freed 2 MiB block cached", be, before, during, cache)

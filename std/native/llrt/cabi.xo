@@ -309,6 +309,9 @@ fn heap_grow(h: Int, n: Int) -> Int {
     heapos.trim_thread(true)
     return 0
   }
+  if n == AGE {
+    return heapos.age(h != 0)
+  }
   if prof.supported() && n >= SAMPLE {
     return heapprof.sampled(h, rt.mem_load(h, PSAMPLE, 8), n - SAMPLE)
   }
@@ -343,6 +346,10 @@ const TRIM = 144115188075855872
 /// record, run by each worker for the pool's trim epoch (pool.xo
 /// trim_check): on Linux too (decision 0505).
 const TRIM_X = 144115188075855874
+/// rt.heap_grow(central, AGE): an age pass (heapos.xo age, decision 0533)
+/// over the calling thread's free page blocks, and the central lists'
+/// when central is not 0 (pool.xo age_check): the blocks it marked.
+const AGE = 144115188075855875
 /// alloc.xo's FHOLD: XO_FREE_CHECK holds the block free_mt left in h's
 /// FQP word (decision 0484).
 const FHOLD = 144115188075855873

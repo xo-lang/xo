@@ -12,6 +12,22 @@
 
 On the native backends a List[Str] or List[List] literal of a few elements that a call only reads, releases or passes on is built in the caller's frame (rt.rl_stack), and a function about to keep such a List parameter (store, capture, return it) copies one built in a frame to the heap first (the runtime's rl_unstack_n, behind an inline count compare). No program can observe where the List lives.
 
+## 2026-11-07: fix: a freed 32 KiB block's scavenge no longer discards its neighbor's pages under 64 KiB pages
+
+- Kind: fix
+- Found by: reading heapos.xo scavenge for decision 0533 (gotchas/madvise-rounds-over-neighbor.md, anticipated: no 64 KiB page host)
+- Go reference: none (runtime/mem_linux.go sysUnused works on whole physical pages of a span)
+- Test: none on these hosts (4 KiB pages on linux, 16 KiB on darwin, where the rule changes nothing); heapos_test's age test passes through the same advice
+- Timing: none (a page size read per scavenged magazine)
+
+## 2026-11-07: perf: free heap blocks of 16 KiB and over go back to the system after 30 to 60 s unused, on Linux too
+
+- Kind: perf
+- Found by: the stability soak and load sweep (decision 0533's Context): stability/notes' RSS outside huge pages rose 8 to 10 MB/h with leakcheck 0, and the free lists held 32.7 MB more at 256 workers than at 8, pages Linux never got back
+- Go reference: runtime/mgcscavenge.go (the background scavenger returns pages free for a while; MADV_DONTNEED on Linux since Go 1.16)
+- Test: std/native/llrt/heapos_test.xo "an age pass marks a free page block and the next gives its pages back"
+- Timing: self build --ab on linux/arm64 host 1 (3 rounds, before age_sparse): wall 1.002 and cpu 1.000 within noise, max RSS 0.990; closed loop soak on linux/amd64 (1 h, 8 workers, 128 worker spikes at 15 and 35 min): end RSS 0.70 of the base (77.3 against 110.4 MB), slope 0.47 (39.7 against 84.4 MB/h), 127.8 MB given back (decision 0533)
+
 ## 2026-11-07: perf: a Map lookup skips the key compare on a hash tag mismatch, and a rebuild does not rehash Str keys (decision 0552)
 
 - Kind: perf

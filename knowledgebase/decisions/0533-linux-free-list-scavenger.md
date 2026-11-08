@@ -1,6 +1,6 @@
 # 0533: Return the pages of long free class blocks on Linux (a time based scavenger)
 
-Status: Proposed (Xo Lang 2, 2026-11-06; direction approved by the owner 2026-11-06: Go-style, a background pass; this text reported for acceptance)
+Status: Accepted (owner, 2026-11-07)
 
 ## Context
 
