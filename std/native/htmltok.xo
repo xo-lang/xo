@@ -526,6 +526,17 @@ fn tokenizer_read_cdata(var z: htmltok.Tokenizer) -> Bool {
   true
 }
 
+/// A tag or attribute name as text: lower-cased with NUL replaced; a name with neither (the usual one) is not copied
+/// through the byte builders.
+fn lowered(b: Bytes) -> Str {
+  for c in b {
+    if c == 0 || (c >= 65 && c <= 90) {
+      return lower_bytes(replace_nul(b)).to_str_lossy()
+    }
+  }
+  b.to_str_lossy()
+}
+
 fn lower_bytes(b: Bytes) -> Bytes {
   var out = BytesBuilder.with_capacity(b.len())
   for c in b {
@@ -1118,13 +1129,13 @@ fn tokenizer_token(var w: htmltok.Tokenizer) -> htmltok.Token {
   if tt == htmltok.TokenType.StartTag || tt == htmltok.TokenType.SelfClosingTag || tt == htmltok.TokenType.EndTag {
     var name = ""
     if w.ds < w.de {
-      name = lower_bytes(replace_nul(w.src[w.ds..w.de])).to_str_lossy()
+      name = lowered(w.src[w.ds..w.de])
     }
     var attrs: List[htmltok.Attribute] = []
     if tt != htmltok.TokenType.EndTag {
       var i = 0
       while i + 3 < w.attr.len() {
-        let key = lower_bytes(replace_nul(w.src[w.attr[i]..w.attr[i + 1]])).to_str_lossy()
+        let key = lowered(w.src[w.attr[i]..w.attr[i + 1]])
         let val = unescape(convert_newlines(replace_nul(w.src[w.attr[i + 2]..w.attr[i + 3]])), true).to_str_lossy()
         attrs.push(htmltok.Attribute{key: key, val: val})
         i += 4
