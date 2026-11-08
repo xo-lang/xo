@@ -23,3 +23,7 @@ func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.Read
 }
 
 func clientTransport(c Http_Client) any { panic(noHTTP) }
+
+func (f Testing_FakeNet) rawExchange(tk *Task, req Http_Request, hostport string) Result[Http_Response, Http_ClientErr] {
+	panic(noHTTP)
+}
