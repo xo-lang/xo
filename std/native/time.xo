@@ -646,12 +646,7 @@ fn eq_range(b: Bytes, lo: Int, hi: Int, want: Bytes) -> Bool {
   if hi - lo != want.len() {
     return false
   }
-  for k in 0..want.len() {
-    if b[lo + k] != want[k] {
-      return false
-    }
-  }
-  true
+  b[lo..hi] == want
 }
 
 /// field_code over b[lo..hi]: the length and first byte pick the candidate
@@ -1294,13 +1289,18 @@ fn put_num(var out: BytesBuilder, n: Int, w: Int) {
 
 /// The digits of b at pos, at most hi: (value, count).
 fn read_digits(b: Bytes, pos: Int, hi: Int) -> (Int, Int) {
-  var n = 0
   var v = 0
-  while n < hi && pos + n < b.len() && b[pos + n] >= 48 && b[pos + n] <= 57 {
-    v = v * 10 + Int(b[pos + n]) - 48
-    n += 1
+  var i = pos
+  let end = if pos + hi < b.len() { pos + hi } else { b.len() }
+  while i < end {
+    let c = Int(b[i])
+    if c < 48 || c > 57 {
+      break
+    }
+    v = v * 10 + c - 48
+    i += 1
   }
-  (v, n)
+  (v, i - pos)
 }
 
 /// The index of the width w name of packed (the names side by side) that
