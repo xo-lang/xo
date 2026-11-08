@@ -327,7 +327,10 @@ fn tag_prefix(l: Location) -> Str {
 /// directory) and returns its standard output; a failure carries its
 /// standard error.
 fn (c: ModCtx) git(dir: Str, args: List[Str]) -> Bytes ! Str uses proc {
-  let full = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always"] + args
+  // a transfer under 1 KB/s for a minute is abandoned: a stalled remote
+  // otherwise held a fetch, a checksum log lookup or its --refresh loop
+  // for good (decision 0568; there is no process timeout to set)
+  let full = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.file.allow=always", "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"] + args
   var cmd = c.os.proc.cmd("git", full).set_env("GIT_TERMINAL_PROMPT", "0").set_env("GIT_ASKPASS", "").set_env("SSH_ASKPASS", "").set_env("GIT_CONFIG_NOSYSTEM", "1")
   if !dir.is_empty() {
     cmd = cmd.dir(dir)

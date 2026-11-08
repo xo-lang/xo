@@ -242,8 +242,13 @@ host.
     built;
   - a Cloudflare rate limiting rule on `sum.xolang.org/lookup/` and
     `/refresh/`;
-  - git fetches: a timeout, and the existing 500 MB cap per module
-    version.
+  - git fetches: a stall limit, and the existing 500 MB cap per module
+    version. Every git xo runs carries `http.lowSpeedLimit=1000` and
+    `http.lowSpeedTime=60` (2026-11-08, cmd/xo TestGitStalledRemote): a
+    transfer under 1 KB/s for a minute is abandoned, where a remote that
+    stopped sending held a lookup, and the `--refresh` loop behind it,
+    for good. The process API has no timeout, so a remote that drips
+    just over 1 KB/s is bounded only by the size cap.
 
 ### Ed25519 key custody
 

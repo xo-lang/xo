@@ -3380,7 +3380,11 @@ Last verified: 2026-10-09.
   gitlab.com, bitbucket.org), any other path `https://<path>`.
   `XO_GIT_BASE=<dir or URL>` maps every path to `<base>/<path>`;
   `XO_GIT_REWRITE=<prefix>=<url>,...` rewrites by longest prefix (wins
-  over XO_GIT_BASE).
+  over XO_GIT_BASE). Every git xo runs (fetch.xo `git`) sets
+  `http.lowSpeedLimit=1000` and `http.lowSpeedTime=60`, so an http(s)
+  remote that stalls fails that git after a minute (decision 0568; `xo
+  get` from a stalled remote makes a few such attempts). Last verified:
+  2026-11-08.
 - Subdirectory modules (`internal/mod/repo.go` `Locate`): on the three
   known hosts the repository is the first three path elements and the
   rest (without `/vN`) is the directory; elsewhere `git ls-remote <url>
