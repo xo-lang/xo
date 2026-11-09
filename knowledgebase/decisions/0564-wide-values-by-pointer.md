@@ -287,6 +287,41 @@ the change touches and the -O2 sample. Against step 1 (scripts/identity, linux/a
 and compiler/xo, 322 programs) only byref_tuple's output changes: xo
 itself passes no wide tuple.
 
+## Step 3 (2026-11-09): wide results through the caller's memory, held
+
+Branches lang1-0564s3 (native) and lang1-0564s3l (LLVM), not pushed. A
+wide declared result of a function called directly (not indirect, not an
+entry, not address taken, not main) is returned through memory: the
+caller passes a slot's address after the arguments, the callee stores
+the result there (native: an extra entry def; LLVM: a trailing
+`ptr noalias %xo.sret` parameter, `void` when nothing else is returned).
+The caller reads a result in place (its slot planned per call by block
+liveness, shared between calls whose results do not overlap) or loads
+it at once from one slot per type. xo's own build has 226 functions with
+wide declared results.
+
+Measured (2026-11-09): all 644 goldens pass on arm64, also with the
+self-built xo; the 16 wide goldens on llvm and on darwin/amd64. xo's
+__text 0.94% smaller; bench/perf/x509 parse --ab 0.992 (host 1,
+unloaded); the self build within noise (loaded rounds). But xo's stack
+frames grow 11% in total, the parser's recursion most: parse_stmt from
+2,288 to 8,400 bytes. Before step 3 a wide result came back in the
+outgoing area past the registers, and the register allocator's
+arg_slots pass used those words as their spill homes at no frame cost;
+in a slot of the caller's frame its words take ordinary spill slots
+(parse_stmt 12 to about 170). The code is smaller and does less stack
+traffic (parse_stmt's stores to sp 1,788 to 505), so the cost is
+recursion depth, which matters on ThreadSanitizer's 2 MB fiber stacks.
+
+Owner decision (2026-11-09): step 3 is held until the spill slot work
+restores those homes; it lands when frames are back to their size
+before step 3 (parse_stmt about 2.3 KB) with the gain kept. Next, in
+order: find which wide value is live across a call as words (parse_stmt
+has about one 171 word Stmt spilled); give words loaded from a result
+slot that slot as their spill home (an arg_slots like hint, ended by the
+next call writing the slot); store a constructed wide value's fields
+straight to the result slot.
+
 ## Alternatives
 
 - **Keep fixing case by case** (today). It works, but each new helper
