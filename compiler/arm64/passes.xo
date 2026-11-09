@@ -128,6 +128,13 @@ pub fn passes() -> List[Str] {
     // accumulators, so their checked adds lose the overflow test; off
     // unless XO_PASSES=+acc_range
     "acc_range",
+    // x86emit.xo (decision 0579, an experiment): loop heads aligned to 16
+    // or 32 bytes, 32 at innermost heads only (32i), or 32 with at most 10
+    // bytes of padding (32c); off unless named in XO_PASSES with a `+`
+    "x86_loop_align16",
+    "x86_loop_align32",
+    "x86_loop_align32i",
+    "x86_loop_align32c",
   ]
 }
 

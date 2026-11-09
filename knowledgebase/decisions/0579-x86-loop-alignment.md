@@ -30,7 +30,14 @@ To be decided by measurement:
 - __text size of xo on amd64 for each variant;
 - the amd64 sample with the chosen variant on;
 - a follow-up row for arm64 (Apple M on the Mac, Graviton on host 1),
-  where the same placement effect may exist.
+  where the same placement effect may exist: measured 2026-11-08, no
+  case (Graviton mostly worse: bytesum 1.056 at 16 and 1.104 at 32,
+  base64 1.014 to 1.017; Apple M4 Pro within noise), so arm64 is out of
+  the options and its experiment was not kept.
+
+The x86 passes are on main as opt-in experiments (no output change
+unless named; the identity check against the parent showed it), so the
+sweeps measure what main builds.
 
 A default flip is a default change: its gate runs the touched packages'
 full suites.

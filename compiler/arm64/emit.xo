@@ -2250,6 +2250,33 @@ fn (var g: G) lsda(sites: List[CallSite], fb: Str) {
   g.lsdas.push(b.join(""))
 }
 
+/// The blocks block b's jumps, branches and switches go to, each through
+/// jump-only blocks (fwd), as the emitters write them (decision 0579's
+/// loop heads).
+fn (g: G) jump_targets(b: Int) -> List[Int] {
+  var out: List[Int] = []
+  for inst in g.blocks[b].insts {
+    if inst.kind == K_JUMP && g.x86 {
+      // x86_emit's jump to a header that only tests emits that test in
+      // place, so the jump goes where the test does
+      let t = g.fwd(inst.targets[0])
+      let ti = g.blocks[t].insts
+      if ti.len() == 1 && ti[0].kind == K_CONDBR && t != b {
+        for t2 in ti[0].targets {
+          out.push(g.fwd(t2))
+        }
+        continue
+      }
+    }
+    if inst.kind == K_JUMP || inst.kind == K_CONDBR || inst.kind == K_SWITCH {
+      for t in inst.targets {
+        out.push(g.fwd(t))
+      }
+    }
+  }
+  out
+}
+
 /// Follows blocks that do nothing but jump (their parallel moves are all
 /// between the same locations after allocation).
 fn (g: G) fwd(b0: Int) -> Int {

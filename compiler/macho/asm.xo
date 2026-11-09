@@ -786,6 +786,24 @@ fn (var a: Asm) directive(l: Bytes) {
       // explicit fill (no fill: its long NOPs); `.p2align P, 0x0` in data:
       // zeros as with no fill
       let ps = split_operands(rest)
+      // `.p2align P,,MAX` in code (GNU as): the long NOPs only when at
+      // most MAX bytes reach the boundary (decision 0579's capped loop
+      // alignment)
+      if ps.len() == 3 && ps[1].is_empty() && a.cur >= 0 && a.sects[a.cur].code {
+        let p = parse_int(ps[0]) ?? -1
+        let mx = parse_int(ps[2]) ?? -1
+        if p < 0 || p > 15 || mx < 0 {
+          a.fail("bad .p2align ${bstr(rest)}")
+          return
+        }
+        if (pow2(p) - a.code_len(a.cur) % pow2(p)) % pow2(p) <= mx {
+          if p > a.sects[a.cur].align {
+            a.sects[a.cur].align = p
+          }
+          a.x86_pad(p)
+        }
+        return
+      }
       if ps.len() == 2 && a.cur >= 0 {
         let fill = parse_int(ps[1]) ?? -1
         if fill == 0x90 && a.sects[a.cur].code {

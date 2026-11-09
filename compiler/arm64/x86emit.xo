@@ -277,10 +277,44 @@ fn (var g: G) x86_emit_once() {
   let dvp = g.dv_plan()
   var dv_labels: Map[Int, Str] = {}
   var dv_next = 0
+  // loop heads (a block a later emitted block jumps back to) aligned to
+  // 16 or 32 bytes, the opt-in passes x86_loop_align16, 32, 32i and 32c
+  // (decision 0579, an experiment: an i7-9750H ran one byte loop 316 to
+  // 530 ms by its bytes' placement alone)
+  let la = if g.m.passes_on.contains("x86_loop_align32") || g.m.passes_on.contains("x86_loop_align32i") || g.m.passes_on.contains("x86_loop_align32c") { 5 } else if g.m.passes_on.contains("x86_loop_align16") { 4 } else { 0 }
+  // the heads, each with the last block that jumps back to it; innermost
+  // only (32i): no other head inside that span; capped (32c): at most 10
+  // bytes of padding
+  var span: Map[Int, Int] = {}
+  if la > 0 {
+    var at: Map[Int, Int] = {}
+    for (bi, mb) in emitted.indexed() {
+      at[mb] = bi
+    }
+    // the targets the jumps are emitted to: through jump-only blocks
+    // (fwd), not the MIR successor lists, which name blocks the emitter
+    // threads past
+    for (bj, o) in emitted.indexed() {
+      for t in g.jump_targets(o) {
+        let bi = at.get(t) ?? -1
+        if bi >= 0 && bi <= bj && (span.get(bi) ?? -1) < bj {
+          span[bi] = bj
+        }
+      }
+    }
+  }
+  let inner = g.m.passes_on.contains("x86_loop_align32i")
+  let skip = if g.m.passes_on.contains("x86_loop_align32c") { ",,10" } else { "" }
   for (bi, mb) in emitted.indexed() {
     var next = -1
     if bi + 1 < emitted.len() {
       next = emitted[bi + 1]
+    }
+    if la > 0 && bi > 0 && span.contains(bi) {
+      let end = span.get(bi) ?? bi
+      if !inner || !span.keys().any(fn(k) { k > bi && k <= end }) {
+        b.push("\t.p2align ${la}${skip}\n")
+      }
     }
     b.push("${g.label(mb)}:\n")
     g.cur = mb
