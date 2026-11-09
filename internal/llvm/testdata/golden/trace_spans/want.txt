@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+ids 32 16
+same trace true distinct span true
+spans 2
+op parent=true attrs=2 events=1 ok=true msg=0 ordered=true
+child parent=false attrs=0 events=0 ok=false msg=0 ordered=true
+encoded true
+--- stderr

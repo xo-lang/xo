@@ -1,0 +1,27 @@
+use std/otlp
+use std/trace
+
+fn main(os: Os) uses stdio, clock, rand {
+  let ring = trace.ring(10)
+  let rec = trace.recorder(ring, os.clock, os.rand)
+  let root = rec.start("op", None, trace.SpanKind.Server, [trace.Attr{key: "k", value: trace.AttrValue.Str("1")}], "scope", "v1", "schema")
+  let (tid, sid) = root.ids()
+  os.stdio.println("ids ${tid.len()} ${sid.len()}")
+  let kid = rec.start("child", Some((tid, sid)), trace.SpanKind.Internal)
+  os.stdio.println("same trace ${kid.ids().0 == tid} distinct span ${kid.ids().1 != sid}")
+  root.set_attributes([trace.Attr{key: "k", value: trace.AttrValue.Str("2")}, trace.Attr{key: "z", value: trace.AttrValue.Bool(true)}])
+  root.add_event("ev", [trace.Attr{key: "x", value: trace.AttrValue.Int(1)}])
+  root.set_status(trace.StatusCode.Error, "boom")
+  root.set_status(trace.StatusCode.Ok, "dropped")
+  root.set_status(trace.StatusCode.Error, "late")
+  kid.end()
+  root.end()
+  root.end()
+  let got = ring.spans(Duration.from_nanos(0), 0)
+  os.stdio.println("spans ${got.len()}")
+  for s in got {
+    os.stdio.println("${s.name} parent=${s.parent_id == "root"} attrs=${s.attributes.len()} events=${s.events.len()} ok=${s.status_code == Some(trace.StatusCode.Ok)} msg=${s.status_message.len()} ordered=${s.end_ns >= s.start_ns}")
+  }
+  let body = otlp.encode_traces(otlp.Resource{service: "svc"}, got)
+  os.stdio.println("encoded ${body.len() > 0}")
+}
