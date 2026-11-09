@@ -474,6 +474,47 @@ CPU-bound timings; HTTP throughput needs bare Linux. Last verified: 2026-11-02
   net_lookup_dial_timeout fails there until its output stops naming the
   error (Lang 2, 2026-10-30).
 
+### FreeBSD VMs under QEMU (owner-approved 2026-11-08, decision 0573)
+
+The amd64 host runs FreeBSD guests for what a cross build cannot prove
+(the kernel's answers: syscalls, umtx, thr_new, kqueue, signals). The
+owner set it up on 2026-11-08: the WSL user `xo` is in the `kvm` group
+(`/dev/kvm` read-write from an offload job), and qemu-system-x86,
+qemu-system-arm, qemu-efi-aarch64 and ovmf 8.2.2 are installed
+(`/usr/share/ovmf/OVMF.fd`, `/usr/share/qemu-efi-aarch64/QEMU_EFI.fd`).
+There is no dosfstools, mtools or ISO writer, so a guest's input is an
+ISO 9660 image the Mac makes. Last verified: 2026-11-08
+
+- Image: FreeBSD 14.5-RELEASE `BASIC-CLOUDINIT-ufs.qcow2` from
+  download.freebsd.org VM-IMAGES (amd64, and arm64-aarch64 for a TCG
+  guest), its sha256 checked against the directory's CHECKSUM.SHA256,
+  cached unpacked in WSL's `/home/xo/xo-ci/l1fbvm/fbvm-cache` (WSL's own
+  disk; the Windows home `/mnt/c/Users/xo` is slow for a VM disk). Each
+  run boots a qcow2 overlay of it, removed after.
+- Input: a NoCloud seed, an ISO 9660 image labeled `cidata`
+  (`hdiutil makehybrid -iso -joliet -default-volume-name cidata` on the
+  Mac) with `meta-data`, a `#!/bin/sh` `user-data` and the cross-built
+  programs. FreeBSD's nuageinit finds it (`/dev/iso9660/CIDATA`, any
+  case), runs the user-data late in boot, and has unmounted the seed by
+  then, so the script mounts it again, copies the programs to /tmp, runs
+  `run.sh`, prints between `XO-FB-BEGIN` and `XO-FB-END` on
+  `/dev/console`, and powers off (`-nographic -no-reboot`: the serial
+  console is QEMU's stdout).
+- Run: `qemu-system-x86_64 -enable-kvm -cpu host -m 4096 -smp 4`, the
+  overlay and the seed as virtio disks, user networking. A boot to the
+  user-data takes about a minute under KVM. `truss` is in the base
+  system, so a failing program is rerun under it in the same boot.
+- Tools (Xo Lang 1, not yet in scripts/lead): `fbvm-seed.sh PAYDIR
+  OUT.iso` on the Mac, `fbvm-run.sh ARCH SEED.iso [TIMEOUT_S]`, which
+  puts the seed and `fbvm-remote.sh` up through the Windows home's
+  `xo-ci/l1fbvm` (offload.sh `--put` paths are relative to the Windows
+  home) and runs it under the host's offload lock, in
+  `~/xo-lead/notes/lang1/`.
+- First result (2026-11-08, xo of main 739e256b6): a freebsd/amd64 hello
+  maps memory and sets its FS base, then calls syscall 293 (Linux's
+  `pipe2`) from the poller's start (std/native/llrt poll.xo ev_init) and
+  dies with SIGSYS.
+
 ## The tier's host steps (lead, 2026-11-01)
 
 `tier.sh` runs `offload-tier.sh` as one `offload.sh` call per step
