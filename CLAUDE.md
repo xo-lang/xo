@@ -157,8 +157,10 @@ Update the knowledgebase in the same change as the work, not later:
     merges each report (`-short` and vet after each merge) and runs the
     merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
-  - heavy runs stay on the Mac (owner, 2026-10-20); it has 24 GB, so
-    heavy.sh runs up to two heavy jobs, the second only when 60% of memory is free (HEAVY_MIN_FREE)
+  - heavy runs stay on the Mac (owner, 2026-10-20); since 2026-11-09 it is a
+    Mac Studio (30 cores, 96 GB; owner: "raise the limits"), so heavy.sh runs up
+    to three heavy jobs (HEAVY_SLOTS), each stopped past 32 GB (HEAVY_MAX_GB),
+    the second and third only when 60% of memory is free (HEAVY_MIN_FREE)
     (HEAVY_MIN_FREE). CI is used only with the owner's approval for that
     use: ask the lead, who asks the owner.
   - batch mode is standing (owner, 2026-10-20); per push only the bare
@@ -208,8 +210,9 @@ Update the knowledgebase in the same change as the work, not later:
     `ulimit -v`.
   - gates take no slot (owner, 2026-10-21): run your gate as
     `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`; it starts
-    as soon as 55% of memory is free and fewer than 2 gates run (owner,
-    2026-10-21; starts staggered by 20 s), with no queue. The two heavy
+    as soon as 55% of memory is free, fewer than 4 gates run and the load
+    is under 28 (owner, 2026-11-09; was 2 gates and load 16 on the 24 GB
+    Mac; starts staggered by 20 s), with no queue. The heavy
     slots are for hourly.sh, bulk runs and suites. A job the memory
     reaper stops is reported to the lead, who restarts it (owner,
     2026-10-21: no owner go needed any more).

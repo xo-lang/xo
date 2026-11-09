@@ -1120,7 +1120,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 - Gates: `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`: no slot,
   no queue; starts when 55% of memory is free (HEAVY_GATE_MIN_FREE) and
-  fewer than 3 gates run (HEAVY_GATE_MAX).
+  fewer than 4 gates run (HEAVY_GATE_MAX) with the load under 28
+  (HEAVY_GATE_MAX_LOAD); heavy runs take one of 3 slots (HEAVY_SLOTS) and are
+  stopped past 32 GB (HEAVY_MAX_GB). Owner, 2026-11-09, for the 96 GB, 30-core
+  Mac Studio. Last verified: 2026-11-09.
 - Gates on an offload host (owner, 2026-11-07): `OFFGATE_AGENT=NAME ~/xo-lead/agents/offload-gate.sh WORKTREE
   [STEP...]` runs `scripts/gate.sh` on the pass/fail host for a committed worktree, with no hand made bundle or
   host script: it bundles HEAD and origin/main (only the commits the host lacks, so no detached HEAD or
