@@ -41,6 +41,13 @@ fn main(os: Os) {
       n += t.unix() % 7
     }
   }
+  if mode == "parse_long" {
+    for i in 0..300000 {
+      let s = "Sat, ${10 + i % 20} Oct 2026 12:34:56 UTC"
+      let t = LONG.parse(s, utc).ok() ?? fault("parse_long")
+      n += t.unix() % 7
+    }
+  }
   if mode == "civil" {
     for i in 0..300000 {
       let c = time.civil(Time.from_unix(1760000000 + i * 3601), ny)
