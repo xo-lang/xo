@@ -497,6 +497,16 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
       st.undo.push(st.sess)
     }
     st.sess = st.sess.after(e, ran.pins, types)
+    // a binding that is not plain data (a handle, a closure) has no pin:
+    // say once, when it is bound, that its entry runs again
+    if let Bind(name: n, mutable: _) = e.kind {
+      for x in st.sess.entries {
+        let same = if let Bind(name: m, mutable: _) = x.kind { m == n } else { false }
+        if same && x.pin.is_empty() && !x.typ.is_empty() {
+          os.stdio.eprintln("xo repl: `${n}` is a ${x.typ}, not plain data: its entry runs again before each later entry (its effects too)")
+        }
+      }
+    }
     return true
   }
   false

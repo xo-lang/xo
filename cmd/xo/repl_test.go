@@ -88,6 +88,15 @@ func TestRepl(t *testing.T) {
 		t.Errorf("redefinitions:\n%s\nwant:\n%s\nstderr:\n%s", r.out, want, r.err)
 	}
 
+	// a binding that is not plain data says that its entry reruns
+	r = xo(t, "repl", "--eval="+strings.Join([]string{
+		`let f = fn(x: Int) -> Int { x + 1 }`,
+		`f(1)`,
+	}, "\n")).want(0)
+	if r.out != "2\n" || strings.Count(r.err, "`f` is a") != 1 || !strings.Contains(r.err, "runs again") {
+		t.Errorf("a rerun binding: %q, stderr %q", r.out, r.err)
+	}
+
 	// :defs, :save and :load (decision 0572 stage 2)
 	saved := filepath.Join(t.TempDir(), "saved.xo")
 	r = xo(t, "repl", "--eval="+strings.Join([]string{
