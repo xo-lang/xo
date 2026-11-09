@@ -5,28 +5,47 @@
 // bits and the slot's generation in its high bits, so a handle used
 // after xo_release (or never made) faults instead of reading another
 // value. The table is C memory (malloc: a library links the C library)
-// behind a lock; the generated wrappers (compiler/ssa declare_c_export)
-// call hput and hget.
+// in chunks that never move or go; hput and release take its lock, and a
+// read takes none: the generated wrapper (compiler/ssa declare_c_export)
+// starts a read (read_begin: the thread's heap record shows the table's
+// epoch), takes a handle parameter's value in place (addr,
+// anyval.clib_peek, rt.obj_peek: no count unless the function keeps it),
+// and ends the read after the call; a released value waits on a list
+// until no read began before its release. Results go through hput.
+use native/llrt/heapos
 use native/llrt/pool
 use native/llrt/rc
 use native/llrt/tasks
 use native/rt
 use native/sys_c
 
-/// The table's address (0 until the first handle) and its lock (static
-/// words, rt.xo's table).
+/// The table's address (0 until the first handle), its lock, its epoch
+/// (1 at first; each release adds 1) and the released values' list
+/// (static words, rt.xo's table).
 const W_TAB = 101
 const W_LOCK = 102
+const W_EPOCH = 103
+const W_RETIRED = 104
+const RELAXED = 0
 const ACQUIRE = 1
 const RELEASE = 2
-/// The table: its slots, the slots used so far, the first free slot plus
-/// one (0 none), then two words a slot: the Any's address (a free slot:
-/// the next free slot plus one, shifted left once, with bit 0 set) and
-/// the slot's generation.
-const T_CAP = 0
-const T_LEN = 8
-const T_FREE = 16
-const T_SLOTS = 24
+const SEQ_CST = 4
+/// The table: the slots used so far, the first free slot plus one (0
+/// none), then CHUNKS chunk addresses (0 not made yet), each of CHUNK
+/// slots of two words: the Any's address (a free slot: the next free
+/// slot plus one, shifted left once, with bit 0 set) and the slot's
+/// generation. Chunks are never freed, so a read needs no lock to reach
+/// a slot.
+const T_LEN = 0
+const T_FREE = 8
+const T_CHUNKS = 16
+const CHUNKS = 4096
+const CHUNK = 1024
+/// The released values' list: its capacity, its length, then pairs of a
+/// value's address and the epoch it was released at.
+const R_CAP = 0
+const R_LEN = 8
+const R_PAIRS = 16
 
 fn lock() {
   let l = rt.static_word(W_LOCK)
@@ -48,12 +67,9 @@ fn unlock() {
 /// any C thread may use the handle).
 pub fn hput[T](v: T) -> Int { put(rt.any_of(v)) }
 
-/// The value of handle h, which must be a T; a fault otherwise.
-pub fn hget[T](h: Int) -> T {
-  match rt.any_get[T](get(h)) {
-    Some(v) => v
-    None => rt.fault_raise("XoHandle ${h} holds a value of another type", "")
-  }
+/// The address of slot s's first word in table t (its chunk made).
+fn slot(t: Int, s: Int) -> Int {
+  rt.mem_load(t, T_CHUNKS + 8 * (s / CHUNK), 8) + 16 * (s % CHUNK)
 }
 
 /// a as a handle: the table holds one count of it.
@@ -62,41 +78,57 @@ pub fn put(a: rt.Any) -> Int {
   rc.inc(p)
   lock()
   var t = rt.mem_load(rt.static_word(W_TAB), 0, 8)
-  var s = -1
-  if t != 0 && rt.mem_load(t, T_FREE, 8) != 0 {
-    s = rt.mem_load(t, T_FREE, 8) - 1
-    let w = rt.mem_load(t, T_SLOTS + 16 * s, 8)
-    rt.mem_store(t, T_FREE, w.shr_logical(1), 8)
-  } else {
-    if t == 0 || rt.mem_load(t, T_LEN, 8) == rt.mem_load(t, T_CAP, 8) {
-      t = grow(t)
-    }
-    s = rt.mem_load(t, T_LEN, 8)
-    rt.mem_store(t, T_LEN, s + 1, 8)
+  if t == 0 {
+    t = make_table()
   }
-  rt.mem_store(t, T_SLOTS + 16 * s, p, 8)
-  let g = rt.mem_load(t, T_SLOTS + 16 * s + 8, 8)
+  var s = -1
+  if rt.mem_load(t, T_FREE, 8) != 0 {
+    s = rt.mem_load(t, T_FREE, 8) - 1
+    rt.mem_store(t, T_FREE, rt.mem_load(slot(t, s), 0, 8).shr_logical(1), 8)
+  } else {
+    s = rt.mem_load(t, T_LEN, 8)
+    if s % CHUNK == 0 {
+      make_chunk(t, s / CHUNK)
+    }
+    // a slot's words before the length that shows it (release)
+    rt.slot_store(t + T_LEN, 0, s + 1, RELEASE)
+  }
+  let w = slot(t, s)
+  rt.slot_store(w, 0, p, RELEASE)
+  let g = rt.mem_load(w, 8, 8)
   unlock()
   g.wrapping_shl(32) | (s + 1)
 }
 
-/// The value of handle h, counted once more for the caller; a fault for
+/// Starts a C export's read of its handle parameters (the generated
+/// wrapper, compiler/ssa declare_c_export): a value released from now
+/// on stays until read_end. Returns what read_end takes.
+pub fn read_begin() -> Int {
+  heapos.c_read_begin(rt.slot_load(rt.static_word(W_EPOCH), 0, ACQUIRE))
+}
+
+/// Ends the read read_begin started (old: what it returned).
+pub fn read_end(old: Int) { heapos.c_read_end(old) }
+
+/// The Any address of handle h, inside a read (read_begin); a fault for
 /// a handle that is not live.
-pub fn get(h: Int) -> rt.Any {
-  lock()
+pub fn addr(h: Int) -> Int {
   let p = live(h)
   if p == 0 {
-    unlock()
     rt.fault_raise("XoHandle ${h} is not live (released, or never made)", "")
   }
-  let a = rt.obj_at[rt.Any](p)
-  unlock()
-  a
+  p
+}
+
+/// The fault for handle h holding a value of another type than the
+/// parameter's.
+pub fn wrong_type(h: Int) {
+  rt.fault_raise("XoHandle ${h} holds a value of another type", "")
 }
 
 /// Drops handle h (xo_release): its slot goes back, and the value goes
-/// when nothing else holds it. 0 does nothing; a handle that is not live
-/// faults.
+/// when nothing else holds it and no read that began before this one
+/// ended. 0 does nothing; a handle that is not live faults.
 pub fn release(h: Int) {
   if h == 0 {
     return
@@ -109,42 +141,124 @@ pub fn release(h: Int) {
   }
   let t = rt.mem_load(rt.static_word(W_TAB), 0, 8)
   let s = (h & 4294967295) - 1
-  rt.mem_store(t, T_SLOTS + 16 * s, rt.mem_load(t, T_FREE, 8).wrapping_shl(1) | 1, 8)
-  rt.mem_store(t, T_SLOTS + 16 * s + 8, (h.shr_logical(32) + 1) & 2147483647, 8)
+  let w = slot(t, s)
+  rt.slot_store(w, 0, rt.mem_load(t, T_FREE, 8).wrapping_shl(1) | 1, RELEASE)
+  rt.slot_store(w, 1, (h.shr_logical(32) + 1) & 2147483647, RELEASE)
   rt.mem_store(t, T_FREE, s + 1, 8)
+  let ew = rt.static_word(W_EPOCH)
+  let e = rt.slot_load(ew, 0, RELAXED)
+  // a read that saw the new epoch sees the slot freed (release); then
+  // the full fence orders this store before the records' epochs are read
+  rt.slot_store(ew, 0, e + 1, RELEASE)
+  rt.fence(SEQ_CST)
+  let m = heapos.c_read_min(e + 1)
+  let r = rt.mem_load(rt.static_word(W_RETIRED), 0, 8)
+  if m > e && (r == 0 || rt.mem_load(r, R_LEN, 8) == 0) {
+    // no read began before this release and nothing waits: drop it now
+    unlock()
+    tasks.h_release(p)
+    return
+  }
+  retire(p, e)
+  let done = reclaim(m)
   unlock()
-  tasks.h_release(p)
+  for q in done {
+    tasks.h_release(q)
+  }
 }
 
-/// The Any address of live handle h, else 0 (the lock held).
+/// The Any address of live handle h, else 0 (acquire loads: a read
+/// without the lock sees a slot's words as put or release wrote them).
 fn live(h: Int) -> Int {
-  let t = rt.mem_load(rt.static_word(W_TAB), 0, 8)
+  let t = rt.slot_load(rt.static_word(W_TAB), 0, ACQUIRE)
   let s = (h & 4294967295) - 1
-  if t == 0 || s < 0 || s >= rt.mem_load(t, T_LEN, 8) {
+  if t == 0 || s < 0 || s >= rt.slot_load(t + T_LEN, 0, ACQUIRE) {
     return 0
   }
-  let p = rt.mem_load(t, T_SLOTS + 16 * s, 8)
-  if p & 1 != 0 || rt.mem_load(t, T_SLOTS + 16 * s + 8, 8) != h.shr_logical(32) {
+  let w = slot(t, s)
+  let p = rt.slot_load(w, 0, ACQUIRE)
+  if p & 1 != 0 || rt.slot_load(w, 1, ACQUIRE) != h.shr_logical(32) {
     return 0
   }
   p
 }
 
-/// A table twice t's size (64 slots first) with t's slots, which it
-/// frees (the lock held).
-fn grow(t: Int) -> Int {
-  let cap = if t == 0 { 64 } else { 2 * rt.mem_load(t, T_CAP, 8) }
-  let n = sys_c.weak_malloc(T_SLOTS + 16 * cap)
+/// A new table, published (the lock held).
+fn make_table() -> Int {
+  let n = sys_c.weak_malloc(T_CHUNKS + 8 * CHUNKS)
   if n == 0 {
     unlock()
     rt.fault_raise("no memory for the XoHandle table", "")
   }
-  rt.mem_set(n, 0, T_SLOTS + 16 * cap)
-  rt.mem_store(n, T_CAP, cap, 8)
-  if t != 0 {
-    rt.mem_copy(n.wrapping_add(T_LEN), t.wrapping_add(T_LEN), T_SLOTS - T_LEN + 16 * rt.mem_load(t, T_CAP, 8))
-    sys_c.weak_free(t)
-  }
-  rt.mem_store(rt.static_word(W_TAB), 0, n, 8)
+  rt.mem_set(n, 0, T_CHUNKS + 8 * CHUNKS)
+  rt.slot_store(rt.static_word(W_EPOCH), 0, 1, RELEASE)
+  rt.slot_store(rt.static_word(W_TAB), 0, n, RELEASE)
   n
+}
+
+/// Chunk k of table t, made and published (the lock held).
+fn make_chunk(t: Int, k: Int) {
+  if k >= CHUNKS {
+    unlock()
+    rt.fault_raise("too many live XoHandles (${CHUNKS * CHUNK})", "")
+  }
+  let c = sys_c.weak_malloc(16 * CHUNK)
+  if c == 0 {
+    unlock()
+    rt.fault_raise("no memory for the XoHandle table", "")
+  }
+  rt.mem_set(c, 0, 16 * CHUNK)
+  rt.slot_store(t + T_CHUNKS + 8 * k, 0, c, RELEASE)
+}
+
+/// Adds value p, released at epoch e, to the released list (the lock
+/// held).
+fn retire(p: Int, e: Int) {
+  let rw = rt.static_word(W_RETIRED)
+  var r = rt.mem_load(rw, 0, 8)
+  if r == 0 || rt.mem_load(r, R_LEN, 8) == rt.mem_load(r, R_CAP, 8) {
+    let cap = if r == 0 { 64 } else { 2 * rt.mem_load(r, R_CAP, 8) }
+    let n = sys_c.weak_malloc(R_PAIRS + 16 * cap)
+    if n == 0 {
+      unlock()
+      rt.fault_raise("no memory for the XoHandle table", "")
+    }
+    rt.mem_store(n, R_CAP, cap, 8)
+    rt.mem_store(n, R_LEN, 0, 8)
+    if r != 0 {
+      rt.mem_copy(n.wrapping_add(R_LEN), r.wrapping_add(R_LEN), 8 + 16 * rt.mem_load(r, R_LEN, 8))
+      sys_c.weak_free(r)
+    }
+    rt.mem_store(rw, 0, n, 8)
+    r = n
+  }
+  let k = rt.mem_load(r, R_LEN, 8)
+  rt.mem_store(r, R_PAIRS + 16 * k, p, 8)
+  rt.mem_store(r, R_PAIRS + 16 * k + 8, e, 8)
+  rt.mem_store(r, R_LEN, k + 1, 8)
+}
+
+/// Takes the released values whose epoch is below m (no read that began
+/// at or before it is running) off the list and returns them, to drop
+/// after the lock is given (the lock held).
+fn reclaim(m: Int) -> List[Int] {
+  var out: List[Int] = []
+  let r = rt.mem_load(rt.static_word(W_RETIRED), 0, 8)
+  let n = rt.mem_load(r, R_LEN, 8)
+  var keep = 0
+  var i = 0
+  while i < n {
+    let p = rt.mem_load(r, R_PAIRS + 16 * i, 8)
+    let e = rt.mem_load(r, R_PAIRS + 16 * i + 8, 8)
+    if e >= m {
+      rt.mem_store(r, R_PAIRS + 16 * keep, p, 8)
+      rt.mem_store(r, R_PAIRS + 16 * keep + 8, e, 8)
+      keep += 1
+    } else {
+      out.push(p)
+    }
+    i += 1
+  }
+  rt.mem_store(r, R_LEN, keep, 8)
+  out
 }

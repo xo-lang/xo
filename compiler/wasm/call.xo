@@ -95,6 +95,12 @@ fn (var g: Gen) call(v: Int) {
       g.push(v)
       g.e("call ${g.rc_fn("dup", ssa.ty_of(x.tb))}")
     }
+    "rt.obj_peek" => {
+      // rt.obj_at with no count (a borrowed root, ssa rc.xo)
+      g.push(x.args[0])
+      g.e("i32.wrap_i64")
+      g.def(v)
+    }
     "rt.prefetch" => {} // a hint; wasm has none (decision 0207 stage 3)
     "rt.static_word" => {
       // word k of the process globals, a static table (work item B02)

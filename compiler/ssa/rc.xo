@@ -557,6 +557,12 @@ fn (var r: Rc) kind(f: Func, v: Int) -> RootKind {
     Call => {
       // rt.str_borrow is always one (only view_proj makes it, and the
       // verifier's Rc reads the module after it)
+      // the object at an address, with no count (rt.obj_peek: a C export's
+      // handle parameter's list, kept alive by the wrapper's read epoch;
+      // decision 0574)
+      if aux_name(x.aux) == "rt.obj_peek" {
+        return RootKind.Borrowed
+      }
       if is_proj_call(aux_name(x.aux)) || aux_name(x.aux) == "rt.str_borrow" || (r.view_proj && aux_name(x.aux) == "rt.str_view") || r.ret_view_at(x) >= 0 {
         return r.proj_kind(f, v)
       }

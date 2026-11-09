@@ -902,10 +902,15 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   let c_error = if et >= 0 { b.llrt_fn("native/llrt/heapos", "c_error") } else { "" }
   let started = if b.c.clib_static { b.llrt_fn("native/llrt/obj", "heap_started") } else { "" }
   let early = if b.c.clib_static { b.llrt_fn("native/llrt/cabi_c", "xo_start_early") } else { "" }
-  var gets: List[Str] = []
-  for ct in held {
-    gets.push(if ct >= 0 { b.llrt_inst("native/llrt/clibh", "hget", ct) } else { "" })
-  }
+  // handle parameters: read in place inside the table's read epoch
+  // (clibh read_begin, addr, anyval.clib_peek, rt.obj_peek, read_end),
+  // so a value is counted only where the function keeps it
+  let rbeg = if hold { b.llrt_fn("native/llrt/clibh", "read_begin") } else { "" }
+  let rend = if hold { b.llrt_fn("native/llrt/clibh", "read_end") } else { "" }
+  let haddr = if hold { b.llrt_fn("native/llrt/clibh", "addr") } else { "" }
+  let hbad = if hold { b.llrt_fn("native/llrt/clibh", "wrong_type") } else { "" }
+  let peek = if hold { b.llrt_fn("native/llrt/anyval", "clib_peek") } else { "" }
+  let gets: List[Str] = if hold && (rbeg.is_empty() || rend.is_empty() || haddr.is_empty() || hbad.is_empty() || peek.is_empty()) { ["-"] } else { [] }
   let put = if hres { b.llrt_inst("native/llrt/clibh", "hput", b.c.objs[o].result) } else { "" }
   if (wide && (copy.is_empty() || text.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (b.c.clib_static && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || gets.any(fn(g) { g == "-" }) {
     b.unsupported("a C export with no native/llrt")
@@ -931,6 +936,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     b.seal(go)
     b.s.cur = go
   }
+  let rd = if hold { b.call(rbeg, b.int_t(), "", []) } else { -1 }
   var args: List[Int] = []
   var i = 0
   for (k, p) in b.m.funcs[fi].blocks[0].params.indexed() {
@@ -941,7 +947,16 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
       args.push(b.call(if str { text } else { copy }, t, "", [wp[i], wp[i + 1]]))
       i += 2
     } else if held[k] >= 0 {
-      args.push(b.call(gets[k], t, "", [wp[i]]))
+      let a = b.call(haddr, b.int_t(), "", [wp[i]])
+      let lp = b.call(peek, b.int_t(), "", [a, b.const_str(b.m.types[t].name)])
+      let (bad, good) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [lp, b.cint(0)]))
+      b.s.cur = bad
+      let _f = b.call(hbad, b.unit_t(), "", [wp[i]])
+      b.add(Op.Unreachable, -1, Aux.None, [])
+      b.s.cur = good
+      // the list uncounted (rt.obj_peek: a borrowed root to rc.xo)
+      let l = b.rt("obj_peek", b.m.list(t), [lp])
+      args.push(b.call("list.index", t, "", [l, b.cint(0)]))
       i += 1
     } else {
       args.push(wp[i])
@@ -949,6 +964,9 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     }
   }
   let r = b.call(b.m.funcs[fi].name, rt, "", args)
+  if hold {
+    let _e = b.call(rend, b.unit_t(), "", [rd])
+  }
   if et < 0 {
     b.retv(if hres { b.c_hold(put, r) } else { r })
   } else {

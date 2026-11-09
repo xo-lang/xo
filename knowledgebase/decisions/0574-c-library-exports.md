@@ -392,26 +392,48 @@ accepted; 2026-11-08):
 Stage 2 call costs (2026-11-09; a C caller at -O2 against the same
 functions in a C shared library; 20M calls a row, 2M for the error, make
 and List rows; ns a call; host 1 = the linux/arm64 timing host, median
-of 5 runs; Mac Studio = the M-series Mac Studio, 3 runs, under load):
+of 5 runs; Mac Studio = the M-series Mac Studio, 3 runs, under load,
+its handle rows from the build before the release fast path below):
 
 | row | host 1 | host 1, C | Mac Studio | Mac Studio, C |
 |---|---|---|---|---|
 | `Int ! Str`, success | 2.26 | 2.24 | 2.24 | 2.26 |
 | `Int ! Str`, error | 5.4 (30.0 before) | 1.74 | 6.5 (31.8 before) | 1.52 |
 | error, then `xo_last_error()` | 6.7 (30.1 before) | 2.99 | 7.8 (32.2 before) | 2.43 |
-| a read through a handle | 18.7 | 0.89 | 10.5 | 0.56 |
-| make a struct handle, read it, release it | 107.2 | 12.0 | 69.3 | 27.3 |
-| make a List[Int] handle (10 items), sum it, release it | 129.1 | 15.9 | 92.5 | 32.7 |
+| a read through a handle | 6.4 (18.7 before) | 0.99 | 4.7 (10.5 before) | 0.69 |
+| make a struct handle, read it, release it | 92 (107 before) | 12.3 | 53 to 65 (69 before) | 28 to 32 |
+| make a List[Int] handle (10 items), sum it, release it | 132 (129 before) | 16.3 | 81 to 92 (93 before) | 30 to 36 |
 
-An error result now keeps the thread's error text buffer for the next
-error (its capacity in the block's first word) and passes a Str error
-as its own text, where it formatted the error into a new Str and
-allocated and freed the C copy on every error. A read through a handle
-still takes the table's lock and counts the value (four atomic
-operations, against C's one load); a lock free read with deferred frees
-is the next step. rt.Any keeping its type's tag as the generated
-constant instead of a heap copy (no allocation per Any, the tag compared
-by address first) made no difference on host 1 and was left out.
+An error result keeps the thread's error text buffer for the next error
+(its capacity in the block's first word) and passes a Str error as its
+own text, where it formatted the error into a new Str and allocated and
+freed the C copy on every error.
+
+A handle parameter is read in place (the "after" rows): the export's
+wrapper starts a read of the handle table (clibh.read_begin: the
+thread's heap record shows the table's epoch, then a full fence), takes
+the value's list with no count (anyval.clib_peek, then rt.obj_peek, an
+rt.obj_at that takes no count and that the SSA's reference counting
+treats as a borrowed root), passes its element as the argument (counted
+only where the function keeps it) and ends the read after the call.
+xo_release puts the released value on a list, freed once no read that
+began before the release is running, and the table is chunks that never
+move, so a read takes no lock; a release with no read running and
+nothing waiting drops its value at once (the List row was 141 ns on
+host 1 while each release built a list of what it freed). cmd/xo
+TestCLibHandleChurn: 4 C threads
+read one handle while 4 make, read and release their own.
+
+Tried and dropped on the way (2026-11-09):
+- The lock alone: a read without the table's lock, but still counting
+  the Any, its list and the value (4 reading and 4 releasing C threads:
+  no wrong value, max RSS flat at 3.7 MB), measured 20.8 ns against 21.0
+  on host 1 and 10.7 against 10.5 on the Mac Studio. perf on host 1 put
+  the time in the counts: six atomic operations a read (the Any, its list
+  and the value each counted and dropped), about 3 ns each on Graviton.
+- rt.Any keeping its type's tag as the generated constant (no heap copy
+  per Any, the tag compared by address first): no change on host 1, and
+  it touches every program's rt.Any.
 
 ## Alternatives
 

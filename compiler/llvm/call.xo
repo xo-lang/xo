@@ -1956,6 +1956,10 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       g.emit("call void ${g.rc_fn("dup", ssa.ty_of(x.tb))}(ptr ${p})")
       g.alias(v, p)
     }
+    "rt.obj_peek" => {
+      // rt.obj_at with no count (a borrowed root, ssa rc.xo)
+      g.alias(v, g.raw_ptr(x.args[0]))
+    }
     "rt.str_at" => {
       // the two words as a Str, no count taken (decision 0402), as arm64
       g.mk_str(v, g.raw_ptr(x.args[0]), g.op(x.args[1]))

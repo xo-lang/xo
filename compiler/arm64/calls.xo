@@ -3239,6 +3239,10 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       g.retain(ssa.ty_of(x.tb), [a])
       g.set(v, [a])
     }
+    "rt.obj_peek" => {
+      // rt.obj_at with no count (a borrowed root, ssa rc.xo)
+      g.set(v, [g.real(g.word(x.args[0]))])
+    }
     "rt.str_at" => {
       // the two words as a Str, no count taken (decision 0402): the caller's
       // reference becomes the value's

@@ -571,6 +571,85 @@ int main(int argc, char **argv) {
 	}
 }
 
+// clibHandleChurn reads one long lived handle from 4 C threads while 4
+// others make, read and release their own (decision 0574 stage 2: a
+// handle parameter is read in place inside the table's read epoch, and a
+// released value waits until the reads that began before its release
+// end).
+const clibHandleChurn = `#include <pthread.h>
+#include <stdio.h>
+#include "ctr.h"
+
+static XoHandle shared;
+static volatile int bad;
+
+static void *reader(void *arg) {
+  (void)arg;
+  for (int i = 0; i < 200000; i++) if (ctr_count(shared) != 7 || ctr_name_len(shared) != 6) bad++;
+  return NULL;
+}
+
+static void *churn(void *arg) {
+  long k = (long)arg;
+  XoStr nm = {"churn", 5};
+  XoHandle base = ctr_new(nm);
+  for (int i = 0; i < 50000; i++) {
+    XoHandle d = ctr_add(base, k + i);
+    if (ctr_count(d) != k + i || ctr_name_len(d) != 5) bad++;
+    xo_release(d);
+  }
+  xo_release(base);
+  return NULL;
+}
+
+int main(void) {
+  XoStr nm = {"shared", 6};
+  XoHandle z = ctr_new(nm);
+  shared = ctr_add(z, 7);
+  xo_release(z);
+  pthread_t t[8];
+  for (long i = 0; i < 4; i++) pthread_create(&t[i], NULL, reader, NULL);
+  for (long i = 0; i < 4; i++) pthread_create(&t[4 + i], NULL, churn, (void *)(i * 1000000));
+  for (int i = 0; i < 8; i++) pthread_join(t[i], NULL);
+  xo_release(shared);
+  if (bad) { printf("bad %d\n", bad); return 1; }
+  puts("ok");
+  return 0;
+}
+`
+
+// TestCLibHandleChurn runs clibHandleChurn: no read sees a wrong value
+// or a freed one while other threads release.
+func TestCLibHandleChurn(t *testing.T) {
+	t.Parallel()
+	clibSkip(t)
+	cc, err := exec.LookPath("cc")
+	if err != nil {
+		t.Skip("no cc")
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module example.com/ctr\nedition preview\n",
+		"ctr.xo":  clibHandles,
+		"churn.c": clibHandleChurn,
+	})
+	lib := filepath.Join(dir, "libctr.so")
+	if runtime.GOOS == "darwin" {
+		lib = filepath.Join(dir, "libctr.dylib")
+	}
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"build", "--lib=shared", "-o", lib, dir}, &out, &errOut); code != 0 {
+		t.Fatalf("xo build --lib=shared: exit %d: %s\n%s%s", code, clibTail(out.String()+errOut.String()), out.String(), errOut.String())
+	}
+	exe := filepath.Join(dir, "churn")
+	if b, err := exec.Command(cc, "-O2", "-pthread", "-I"+dir, "-o", exe, filepath.Join(dir, "churn.c"), "-L"+dir, "-lctr", "-Wl,-rpath,"+dir).CombinedOutput(); err != nil {
+		t.Fatalf("cc: %v\n%s", err, b)
+	}
+	b, err := exec.Command(exe).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(b)) != "ok" {
+		t.Fatalf("handle churn: %v\n%s", err, b)
+	}
+}
+
 const clibThreadExit = `#include <pthread.h>
 #include <stdio.h>
 #include <sys/resource.h>

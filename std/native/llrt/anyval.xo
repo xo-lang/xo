@@ -6,6 +6,7 @@
 // xo_any_get, which forward to cabi.xo's exports (older xo's code calls
 // those names).
 use native/llrt/obj
+use native/llrt/raw
 use native/llrt/rc
 use native/llrt/tasks
 use native/rt
@@ -36,6 +37,11 @@ pub fn new(l: Int, drop: Int, tag: Int, tn: Int) -> Int {
   a
 }
 
+/// Whether a's type's tag is the tn bytes at tag.
+fn same_tag(a: Int, tag: Int, tn: Int) -> Bool {
+  ld(a, A_TN) == tn && (tn == 0 || rt.mem_cmp(ld(a, A_TAG), tag, tn) == 0)
+}
+
 /// The list of one holding a's value (a reference) when its type's tag
 /// is the tn bytes at tag, else the empty list.
 pub fn get(a: Int, tag: Int, tn: Int) -> Int {
@@ -45,6 +51,16 @@ pub fn get(a: Int, tag: Int, tn: Int) -> Int {
   let l = ld(a, A_L)
   rc.inc(l)
   l
+}
+
+/// The address of a's list of one when its type's tag is tag, else 0,
+/// with no count: a C library export's handle parameter (decision 0574),
+/// read inside clibh's read epoch, which keeps a from being freed until
+/// the call returns. The SSA's reference counting
+/// takes the result as borrowed (compiler/ssa rc.xo kind), so the value
+/// it holds is counted only where the export keeps it.
+pub fn clib_peek(a: Int, tag: Str) -> Int {
+  if same_tag(a, raw.data(tag), tag.len()) { ld(a, A_L) } else { 0 }
 }
 
 /// The list of one holding a's value, moved out (a holds the empty list
