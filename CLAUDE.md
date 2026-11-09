@@ -211,8 +211,8 @@ Update the knowledgebase in the same change as the work, not later:
   - gates take no slot (owner, 2026-10-21): run your gate as
     `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`; it starts
     as soon as 55% of memory is free, fewer than 4 gates run and the load
-    is under 28 (owner, 2026-11-09; was 2 gates and load 16 on the 24 GB
-    Mac; starts staggered by 20 s), with no queue. The heavy
+    is under 48 (owner, 2026-11-09; was 2 gates and load 16 on the 24 GB
+    Mac, then 28, which queued gates at the Studio's normal load; starts staggered by 20 s), with no queue. The heavy
     slots are for hourly.sh, bulk runs and suites. A job the memory
     reaper stops is reported to the lead, who restarts it (owner,
     2026-10-21: no owner go needed any more).
