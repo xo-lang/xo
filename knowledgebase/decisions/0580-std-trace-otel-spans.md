@@ -1,6 +1,6 @@
 # 0580: OpenTelemetry-shaped spans in std/trace and std/otlp
 
-Status: Proposed (Xo Lang 3, 2026-11-09; asked by Xo Azure 1 for tracing/azotel, notes/aws-43/PROPOSAL-std-trace-spans.md)
+Status: Accepted (implemented 2026-11-09, 1f66d67cb; proposed by Xo Lang 3, asked by Xo Azure 1 for tracing/azotel, notes/aws-43/PROPOSAL-std-trace-spans.md). As built: `Attr` is a struct (key, value), not a tuple, so `derive Json` works; a span with its own span id is written as the OpenTelemetry Go SDK writes it (flags 257, Status always present, an unspecified kind as internal); `set_status` follows the SDK (Unset ignored, Ok final, Error keeps the last message). Proof: Xo Azure 1's OTel Go oracle, 7 cases byte for byte (scripts/oteloracle).
 
 ## Context
 
