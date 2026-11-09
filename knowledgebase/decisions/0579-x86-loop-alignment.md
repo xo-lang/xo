@@ -91,6 +91,18 @@ placement matters too).
   noise; 32: bytesum 1.104 worse, base64 1.017 worse, the rest within
   noise. Apple M4 Pro (7 rounds): all variants within noise on all six
   (bytesum noisy, 350 to 626 ms). No arm64 case.
+- Rerun with fixed heads (591a83f8b), default code (0577 off):
+  xo's __text (122,161,032 bytes with none): 32 +5.6%, 32c +0.57%, 32i
+  +0.26%. Zen 5 (--ab, 3 rounds): 32c: mapops 0.937 better, bytesum
+  0.996 better, base64 0.978 better, adler32 1.025 worse, strconv,
+  fnv64a, sort within noise; 32: mapops 0.934 better, bytesum 0.994
+  better, strconv 1.054 worse, adler32 1.01 worse, the rest within
+  noise. i7-9750H (7 rounds after a warm run, median ms; none, 32, 32c,
+  32i): bytesum 401.6, 402.5, 611.7 (+52%), 406.3; mapops 416.7, 420.1,
+  424.8, 419.2; sort 231.4, 233.1, 228.4, 234.8; strconv 286.4, 297.5,
+  279.6, 298.6 (noisy); adler32, base64, fnv64a within noise. 32c's
+  capped padding lands today's bytesum loop on a slow placement: the
+  cap is itself a placement gamble on Coffee Lake.
 - The lead's lean (2026-11-08): no default (option c) unless the
   evidence changes; 32c the candidate (+0.54% __text) if one is taken,
   32 only together with 0577 if 0577 ever earns a place.
@@ -100,9 +112,9 @@ placement matters too).
 Today's code neither gains nor loses much from alignment on either
 core; the large Intel effect shows when a change shortens a hot loop
 (0577), where the placement decides between a 27% loss and a 19% gain
-over today. Open: whether 32's 5.6% __text is worth that for loops that
-change shape, or 32 only together with 0577 (the owner decides; the
-lead recommends after the arm64 row).
+over today. With fixed heads 32c costs today's bytesum 52% on the i7-9750H, so
+no variant is a safe default; the lead recommends (c), no default, the
+passes kept opt-in for measuring (the owner decides).
 
 ## Alternatives
 

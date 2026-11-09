@@ -197,6 +197,12 @@ placement. The pass-off layout with `jo` turned into a 6 byte nop ran
 (`XO_PASSES=+acc_range` turns it on) until a loop where it measures
 faster; stage 2 (adler32's s2) waits on that too.
 
+Tie re-test (2026-11-08, Zen 5, --ab 3 rounds): with acc_range on, does
+the accumulator tie (swap_carry, gotchas/amd64-accumulator-live-out.md)
+still pay? Forcing swap_carry off: bytesum 1.004 and adler32 1.004
+within noise, fnv64a 1.019 worse (1.005 to 1.019). The tie stays; the
+range bound does not make it redundant.
+
 ## Alternatives
 
 - Widening thresholds from Bytes lengths (add 255 * 2^32 to ups):
