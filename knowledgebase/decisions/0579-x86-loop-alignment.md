@@ -1,7 +1,9 @@
 # 0579: Loop head alignment on x86
 
-Status: Proposed (Xo Lang 4, 2026-11-08; the lead asked for it after
-0577's Intel result; measurement first).
+Status: Accepted (owner, 2026-11-09): option (c), no default; the
+alignment passes (x86_loop_align16, 32, 32i, 32c) stay opt-in, for
+measuring. (Proposed by Xo Lang 4, 2026-11-08, after 0577's Intel
+result.)
 
 ## Context
 
