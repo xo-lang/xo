@@ -357,8 +357,8 @@ struct PdbLocal {
 /// at most 0xffff bytes of one section, its holes as gaps (a location
 /// list repeats a stack slot in every entry where another piece moves:
 /// xo.exe had 2.1 million S_DEFRANGE_REGISTER_REL, 42 MB, before).
-fn cv_locals(var t: CvTypes, info: debug.Info, vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbSect], base: Int) -> List[PdbLocal] {
-  var out = cv_locals_at(vars, whole, sects, base)
+fn cv_locals(var t: CvTypes, info: debug.Info, vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbSect], base: Int, arm: Bool) -> List[PdbLocal] {
+  var out = cv_locals_at(vars, whole, sects, base, arm)
   for i in 0..out.len() {
     var l = out[i]
     l.ty = cv_index(t, info, l.ty)
@@ -369,7 +369,7 @@ fn cv_locals(var t: CvTypes, info: debug.Info, vars: List[debug.Var], whole: Lis
 
 /// cv_locals with each local's type its DWARF offset (cv_index converts
 /// it): a function's locals made from its own object (cvobj obj_pdb).
-fn cv_locals_at(vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbSect], base: Int) -> List[PdbLocal] {
+fn cv_locals_at(vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbSect], base: Int, arm: Bool) -> List[PdbLocal] {
   var out: List[PdbLocal] = []
   for v in vars {
     // the places in first seen order (kind, register, offset, the
@@ -384,10 +384,10 @@ fn cv_locals_at(vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbS
         var key = (0, 0, 0, 0)
         match pc.place {
           debug.Place.Reg(r) => {
-            key = (if multi { S_DEFRANGE_SUBFIELD_REGISTER } else { S_DEFRANGE_REGISTER }, cv_reg(r), 0, poff)
+            key = (if multi { S_DEFRANGE_SUBFIELD_REGISTER } else { S_DEFRANGE_REGISTER }, cv_reg_of(arm, r, pc.size), 0, poff)
           }
           debug.Place.Breg(r, o) => {
-            key = (S_DEFRANGE_REGISTER_REL, cv_reg(r), o, poff)
+            key = (S_DEFRANGE_REGISTER_REL, cv_reg_of(arm, r, 8), o, poff)
           }
           _ => {}
         }
@@ -547,5 +547,32 @@ fn cv_reg(r: Int) -> Int {
     6 => 334
     7 => 335
     _ => if r >= 8 && r <= 15 { 336 + r - 8 } else if r >= 17 && r <= 24 { 154 + r - 17 } else if r >= 25 && r <= 32 { 252 + r - 25 } else { 0 }
+  }
+}
+
+/// The CodeView register of DWARF register r of an x86-64 image, or of
+/// an ARM64 one (decision 0569); size: the piece's bytes, which picks a
+/// vector register's view.
+fn cv_reg_of(arm: Bool, r: Int, size: Int) -> Int { if arm { cv_reg_arm64(r, size) } else { cv_reg(r) } }
+
+/// ARM64's DWARF registers (x0 to x30 0 to 30, sp 31, v0 to v31 64 to
+/// 95) as CodeView's (LLVM's CodeViewRegisters.def: ARM64_X0 50 to
+/// ARM64_X28 78, FP 79, LR 80, SP 81; S0 100, D0 140, Q0 180): a general
+/// register as its 64 bit X form, as LLVM's CodeView writer names one, a
+/// vector register as S for 4 bytes, Q for 16, else D; 0 (none) for
+/// another.
+fn cv_reg_arm64(r: Int, size: Int) -> Int {
+  if r >= 0 && r <= 28 {
+    50 + r
+  } else if r == 29 {
+    79
+  } else if r == 30 {
+    80
+  } else if r == 31 {
+    81
+  } else if r >= 64 && r <= 95 {
+    (if size == 4 { 100 } else if size == 16 { 180 } else { 140 }) + r - 64
+  } else {
+    0
   }
 }

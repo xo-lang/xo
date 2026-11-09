@@ -2298,7 +2298,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wst.abandon(os)
         fail_code(os, "XO1517", rerr)
       }
-      let why = pe_link(os, wobjs + cobjs, wst.bin, wbin, wres, false, phases, trimpath_eff(o), backend_cache_dir(os, ctx), [], false, None)
+      let why = pe_link(os, wobjs + cobjs, wst.bin, wbin, wres, false, phases, trimpath_eff(o), backend_cache_dir(os, ctx), [], !o.strip && debug_info_eff(o, release) != "off", None)
       if !why.is_empty() {
         fail_stage(os, wst, why)
       }

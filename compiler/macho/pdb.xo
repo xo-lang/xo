@@ -196,6 +196,9 @@ pub fn pe_pdb_std(img: Bytes, pp: PreProcs, seed: Bytes, std: PdbStd?) -> Result
 }
 
 /// The image's sections for the PDB, and its image base.
+/// The COFF header's machine of PE image img.
+fn pe_machine(img: Bytes) -> Int { le_b(img, le_b(img, 60, 4) + 4, 2) }
+
 fn pe_pdb_sects(img: Bytes) -> (List[PdbSect], Int) {
   let pe = le_b(img, 60, 4)
   let coff = pe + 4
@@ -272,7 +275,7 @@ fn pdb_of_pre(img: Bytes, guid: Bytes, stamp: Int, sects: List[PdbSect], base: I
       pubs.push(PdbProc{name: n, seg: seg, off: off, size: 0})
     }
   }
-  let (pdb, made) = pdb_file(guid, stamp, sects, procs, pubs, pp.files, types, pstd, std)
+  let (pdb, made) = pdb_file(guid, stamp, sects, procs, pubs, pp.files, types, pstd, std, pe_machine(img))
   (pdb, match made {
     Some(m) => Some(m with {types: std_types})
     None => None
@@ -305,6 +308,7 @@ fn pe_pdb_dwarf(img: Bytes, facts: (debug.Info, debug.Lines)?, out: Bytes, guid:
     file_of[f] = i
   }
   var types = cv_types(info)
+  let arm = pe_machine(img) == IMAGE_FILE_MACHINE_ARM64
   var procs: List[PdbProc] = []
   for f in info.funcs {
     if f.hi <= f.lo {
@@ -324,10 +328,10 @@ fn pe_pdb_dwarf(img: Bytes, facts: (debug.Info, debug.Lines)?, out: Bytes, guid:
       var sites = inline_sites(lns, by_addr, file_of, f)
       for i in 0..sites.len() {
         var st = sites[i]
-        st.locals = cv_locals(types, info, st.vars, st.ranges, sects, base)
+        st.locals = cv_locals(types, info, st.vars, st.ranges, sects, base, arm)
         sites[i] = st
       }
-      procs.push(PdbProc{name: f.name, seg: seg, off: off, size: f.hi - f.lo, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), lo: f.lo, sites: sites, locals: cv_locals(types, info, f.vars, [(f.lo, f.hi)], sects, base)})
+      procs.push(PdbProc{name: f.name, seg: seg, off: off, size: f.hi - f.lo, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), lo: f.lo, sites: sites, locals: cv_locals(types, info, f.vars, [(f.lo, f.hi)], sects, base, arm)})
     }
   }
   // the publics: the COFF symbol table's functions
@@ -338,7 +342,7 @@ fn pe_pdb_dwarf(img: Bytes, facts: (debug.Info, debug.Lines)?, out: Bytes, guid:
       pubs.push(PdbProc{name: n, seg: seg, off: off, size: 0})
     }
   }
-  let (pdb, _) = pdb_file(guid, stamp, sects, procs, pubs, lns.files, types, 0, None)
+  let (pdb, _) = pdb_file(guid, stamp, sects, procs, pubs, lns.files, types, 0, None, pe_machine(img))
   Ok((out, pdb))
 }
 
@@ -617,7 +621,7 @@ fn pdb_inlinees_add(procs: List[PdbProc], var fid: Map[Str, Int], var inlinees: 
 /// The PDB's bytes: its streams in the MSF container. The first pstd of
 /// procs are std's: their part is std's when given, else made and
 /// returned (None when pstd is 0 or std was given).
-fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc], pubs: List[PdbProc], dfiles: List[Str], types: CvTypes, pstd: Int, std: PdbStd?) -> (Bytes, PdbStd?) {
+fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc], pubs: List[PdbProc], dfiles: List[Str], types: CvTypes, pstd: Int, std: PdbStd?, machine: Int) -> (Bytes, PdbStd?) {
   var streams: List[Bytes] = []
   for _ in 0..PS_COUNT {
     streams.push(b"")
@@ -693,7 +697,7 @@ fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc],
     pnames.push(p.name)
   }
   streams[PS_GLOBALS] = gsi(pnames, ref_at)
-  streams[PS_DBI] = dbi_stream(sects, modsyms.len() - c13.len(), c13.len(), files)
+  streams[PS_DBI] = dbi_stream(sects, modsyms.len() - c13.len(), c13.len(), files, machine)
   (msf(streams), made)
 }
 
@@ -1444,7 +1448,7 @@ fn lower(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
 /// contributions (the module's: the first code section), the section
 /// map, the file info (the module's files), the EC names, and the
 /// optional debug header (the section header stream).
-fn dbi_stream(sects: List[PdbSect], symsize: Int, c13size: Int, files: List[Str]) -> Bytes {
+fn dbi_stream(sects: List[PdbSect], symsize: Int, c13size: Int, files: List[Str], machine: Int) -> Bytes {
   // the module: its first code section
   var text = 0
   for (i, s) in sects.indexed() {
@@ -1559,7 +1563,8 @@ fn dbi_stream(sects: List[PdbSect], symsize: Int, c13size: Int, files: List[Str]
   w.u32(dbg.len())
   w.u32(ec.len())
   w.u16(0)
-  w.u16(0x8664)
+  // the image's machine: x86-64 (0x8664) or ARM64 (0xAA64)
+  w.u16(machine)
   w.u32(0)
   w.bytes(modi)
   w.bytes(scs)

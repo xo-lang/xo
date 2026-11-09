@@ -129,6 +129,12 @@ test "compressed annotation numbers" {
   expect(w.done()) == b"\x7f\x80\x80\xc0\x00\x40\x00"
 }
 
+test "ARM64 CodeView registers (decision 0569)" {
+  // x0, x28, fp, lr, sp; s1, d2, q3 (v1, v2, v3 by size); an unknown register
+  expect([cv_reg_arm64(0, 8), cv_reg_arm64(28, 8), cv_reg_arm64(29, 8), cv_reg_arm64(30, 8), cv_reg_arm64(31, 8), cv_reg_arm64(65, 4), cv_reg_arm64(66, 8), cv_reg_arm64(67, 16), cv_reg_arm64(40, 8)]) == [50, 78, 79, 80, 81, 101, 142, 183, 0]
+  expect([cv_reg_of(false, 0, 8), cv_reg_of(true, 0, 8)]) == [328, 50]
+}
+
 test "CodeView registers, primitives, numeric leaves and ranges" {
   // rax, rdx, rbp, r8, r15, xmm0, xmm8; an unknown register
   expect([cv_reg(0), cv_reg(1), cv_reg(6), cv_reg(8), cv_reg(15), cv_reg(17), cv_reg(25), cv_reg(99)]) == [328, 331, 334, 336, 343, 154, 252, 0]

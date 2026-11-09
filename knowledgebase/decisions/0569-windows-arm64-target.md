@@ -137,7 +137,33 @@ directory, the version resource, no debug directory (no PDB yet) and no
 load configuration, and all 678 .pdata entries decode with their
 unwind codes. Whether Windows runs it waits for a windows/arm64 machine.
 
-Not done in stage 1 yet: --race and a PDB for windows/arm64;
+PDB progress (2026-11-09, Xo Lang 2): a windows/arm64 program with
+debug information gets a PDB beside it, as windows/amd64's does
+(decision 0344), and its image a debug directory naming it. The build
+passed the link no debug flag (main.xo), so the link wrote no PDB;
+pdb.xo, cvobj.xo and cvtypes.xo read DWARF, not machine code, so only
+three parts were x86-64's: the DWARF relocations applied to an object's
+sections (ARM64's ADDR64, SECREL and ADDR32NB), the CodeView registers
+of the locals' locations (cvtypes.xo cv_reg_arm64: x0 to x28 as
+ARM64_X0 to X28, 50 to 78, fp 79, lr 80, sp 81, a vector register as
+S, D or Q by size, from LLVM's CodeViewRegisters.def) and the DBI
+header's machine (0xAA64, the image's). A debugger maps lines with the
+info stream (GUID and age, matching the image's RSDS record), the DBI
+module with its section contributions, the module's S_GPROC32 records
+with their C13 line blocks and file checksums, and the publics; the
+types, locals and inline sites come with them. Unwinding needs nothing
+from the PDB (.pdata and .xdata). Checked without Windows on the
+linux/arm64 host (LLVM 23.1.3, 2026-11-09, a two function hello):
+the image's RSDS GUID and age equal the PDB's (`llvm-readobj
+--coff-debug-directory`, `llvm-pdbutil dump --summary`: debug info,
+types, IDs, globals and publics), `llvm-pdbutil dump --all` reads its
+13 streams with no error, and each of its 8,920 line rows (`dump -l`)
+names the file and line `llvm-symbolizer` gives from the image's DWARF
+for that address's outermost frame (the PDB, as MSVC's, puts inlined
+code at its call's line and the callee's lines in S_INLINESITE). A debugger on Windows reading it waits for
+the windows/arm64 machine, as running the image does.
+
+Not done in stage 1 yet: --race for windows/arm64;
 a split link and the std object; the C ABI exports beyond Str results;
 running an image (stage 2's host). To
 measure in stage 5: `save_regp` needs ascending pairs (`stp x19, x20`),

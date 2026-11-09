@@ -55,6 +55,14 @@ func TestWindowsArm64Assembly(t *testing.T) {
 		t.Errorf("not an ARM64 PE image (machine 0xAA64)")
 	}
 	checkArm64Unwind(t, exe, b)
+	// its PDB (decision 0569, as windows/amd64's, decision 0344)
+	pdb, err := os.ReadFile(filepath.Join(dir, "hello.pdb"))
+	if err != nil || !strings.HasPrefix(string(pdb), "Microsoft C/C++ MSF 7.00\r\n\x1aDS") {
+		t.Errorf("no MSF 7.0 PDB beside the image: %v", err)
+	}
+	if !strings.Contains(string(b), "RSDS") || !strings.Contains(string(b), "hello.pdb\x00") {
+		t.Errorf("the image's debug directory names no hello.pdb")
+	}
 	if _, err := exec.LookPath("clang"); err != nil {
 		t.Skip("no clang to compare with its assembler")
 	}
@@ -71,6 +79,9 @@ func TestWindowsArm64Assembly(t *testing.T) {
 	}
 	if string(cb) != string(b) {
 		t.Errorf("the image from clang's objects (%d bytes) differs from the one from Xo's COFF writer (%d bytes)", len(cb), len(b))
+	}
+	if cpdb, err := os.ReadFile(filepath.Join(dir, "cc", "hello.pdb")); err != nil || string(cpdb) != string(pdb) {
+		t.Errorf("the PDB from clang's objects differs from the one from Xo's COFF writer: %v", err)
 	}
 }
 

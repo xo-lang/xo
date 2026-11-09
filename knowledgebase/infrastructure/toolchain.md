@@ -963,8 +963,10 @@ the parts and Xo's PE linker links them with no C runtime; `--as=cc`
 assembles with clang (`--target=aarch64-pc-windows-msvc`, on PATH or
 XO_CLANG) instead; `use c` needs clang and XO_WINSYSROOT (an xwin
 sysroot with arm64: clang compiles the C against its headers, `link
-"NAME"` reads its arm64 NAME.lib); no --race or PDB yet, and nothing
-runs it in the tests (last verified: 2026-11-08). Binaries go
+"NAME"` reads its arm64 NAME.lib); with debug information PROG.pdb
+beside PROG.exe, as on windows/amd64 (the PDB is made in the link;
+xo run and xo test do not run windows/arm64 programs); no --race yet,
+and nothing runs it in the tests (last verified: 2026-11-09). Binaries go
 to `-o` (a file for one target, a directory for several, each
 `NAME-OS-ARCH[.exe|.wasm]`) or the build directory's `bin/`; `-o NAME`
 for windows with no extension writes NAME.exe. Last verified: 2026-10-22. `xo run`

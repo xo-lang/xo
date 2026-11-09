@@ -78,9 +78,12 @@ fn relocated(o: CObj, bases: List[Int], sec: CSect) -> Bytes ! Str {
   var last = 0
   for r in rs {
     var n = 0
-    if r.typ == IMAGE_REL_AMD64_ADDR64 {
+    // x86-64's or ARM64's (decision 0569) ADDR64, SECREL, ADDR32NB
+    let arm = o.machine == IMAGE_FILE_MACHINE_ARM64
+    let secrel = if arm { r.typ == IMAGE_REL_ARM64_SECREL } else { r.typ == IMAGE_REL_AMD64_SECREL }
+    if r.typ == (if arm { IMAGE_REL_ARM64_ADDR64 } else { IMAGE_REL_AMD64_ADDR64 }) {
       n = 8
-    } else if r.typ == IMAGE_REL_AMD64_SECREL || r.typ == IMAGE_REL_AMD64_ADDR32NB {
+    } else if secrel || r.typ == (if arm { IMAGE_REL_ARM64_ADDR32NB } else { IMAGE_REL_AMD64_ADDR32NB }) {
       n = 4
     } else {
       return Err("${o.path}: ${sec.name}: relocation type ${r.typ} at ${r.addr} in DWARF")
@@ -94,7 +97,7 @@ fn relocated(o: CObj, bases: List[Int], sec: CSect) -> Bytes ! Str {
       addend = addend | Int(sec.data[r.addr + k]).wrapping_shl(8 * k)
     }
     var v = sym.value + addend
-    if r.typ != IMAGE_REL_AMD64_SECREL && sym.sect >= 1 && sym.sect <= bases.len() {
+    if !secrel && sym.sect >= 1 && sym.sect <= bases.len() {
       v = v + bases[sym.sect - 1]
     }
     b.write(sec.data[last..r.addr])
@@ -466,12 +469,12 @@ pub fn obj_pdb(o: CObj) -> ObjPdb ! Str {
     var sites = inline_sites(lns, by_addr, file_of, f)
     for i in 0..sites.len() {
       var st = sites[i]
-      st.locals = cv_locals_at(st.vars, st.ranges, osects, 0)
+      st.locals = cv_locals_at(st.vars, st.ranges, osects, 0, o.machine == IMAGE_FILE_MACHINE_ARM64)
       st.vars = []
       sites[i] = st
     }
     let (_, so) = seg_off(osects, f.lo)
-    fns.push(ObjFn{name: f.name, lo: f.lo, hi: f.hi, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), sites: sites, locals: cv_locals_at(f.vars, [(f.lo, f.hi)], osects, 0), sect_off: so})
+    fns.push(ObjFn{name: f.name, lo: f.lo, hi: f.hi, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), sites: sites, locals: cv_locals_at(f.vars, [(f.lo, f.hi)], osects, 0, o.machine == IMAGE_FILE_MACHINE_ARM64), sect_off: so})
   }
   var fn_tys: List[(Int, Int)] = []
   for f in info.funcs {
