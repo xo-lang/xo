@@ -1009,6 +1009,10 @@ func (v Trace_Attr) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 func (v *Trace_Attr) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "Attr", path)
+}
+
+func (v *Trace_Attr) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
@@ -1135,6 +1139,10 @@ func (v Trace_Event) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 func (v *Trace_Event) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "Event", path)
+}
+
+func (v *Trace_Event) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
