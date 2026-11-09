@@ -18,8 +18,7 @@ to map onto.
    defaults: `trace_id`, `span_id`, `parent_id` (hex, "" derives as otlp does today; `"root"` marks a root), `kind: SpanKind`
    (Unspecified keeps today's rule), `attributes: List[(Str, AttrValue)]`, `events: List[Event]`, `status_code: StatusCode` (Unset keeps
    today's HTTP-status rule) with `status_message`, `start_ns` and `end_ns` (Unix nanoseconds when > 0), and the instrumentation scope
-   (`scope`, `scope_version`, `schema_url`). The new fields are skipped by `derive Json` when at their defaults, so the Ring's JSON
-   bytes do not change (a test pins that). The alternative, a separate `OtelSpan` plus a second encoder, duplicates the encoder and
+   (`scope`, `scope_version`, `schema_url`). Every new field is written `as ",omitempty"` (spec/core.md 2.9: left out when empty), so the Ring's JSON bytes do not change (a test pins that). An enum value is never empty, so `kind` and `status_code` are Options (`SpanKind?`, `StatusCode?`, `None` meaning today's rule) rather than enums with an Unspecified/Unset default; the encoder maps `None` to OTLP's 0. The alternative, a separate `OtelSpan` plus a second encoder, duplicates the encoder and
    splits the Ring; rejected.
 2. **`enum SpanKind`, `enum StatusCode`, `enum AttrValue {Str, Int, Float, Bool}`, `struct Event`** with OTLP's numbers (kind 0 to 5,
    status 0 to 2).
