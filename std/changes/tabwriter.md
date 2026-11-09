@@ -1,5 +1,17 @@
 # std/tabwriter changes
 
+## 2026-11-08: perf: update_width counts ASCII bytes inline
+
+- Kind: perf
+- Commit: this push
+- Found by: xo prof of bench/perf/tabwriter (rune_len 19% flat, update_width 26% cumulative)
+- Go reference: text/tabwriter's updateWidth (utf8.RuneCount over the new text; Go counts ASCII bytes without a decode call)
+- Test: internal/stdtest corpus tabwriter (arm64, LLVM, Go backend); bench/perf/tabwriter output unchanged
+- Timing: bench/perf/tabwriter on linux/arm64 host 1, --ab against the parent (6 rounds, stopped early): pad 0.957 (0.951 to 0.962), right 0.949 (0.945 to 0.954), none within noise (1.001)
+- Shipped in: not yet released
+
+`update_width` (std/native/tabwriter.xo) called `rune_len` for every byte; it now tests for an ASCII byte in the loop and calls `rune_len` only for a multi byte one, and keeps the width in a local. Output is unchanged.
+
 ## 2026-10-29: port: std/tabwriter, Go's text/tabwriter
 
 - Kind: port
