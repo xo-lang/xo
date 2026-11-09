@@ -6551,6 +6551,33 @@ fn (r: Ring) handler(auth: fn(http.Request) -> Bool) -> fn(http.Request) -> http
   of at least `min` newest first, at most `n` (all when n <= 0).
   `handler(auth)` answers them as JSON (`?slow=MILLIS&n=N`, defaults 0 and
   100); 403 when `auth` answers false.
+- OpenTelemetry spans (decision 0580): `Span` has defaulted fields after
+  `status`, each `omitempty` in its JSON so an old span reads and writes as
+  before (a strict `json.decode` wants every key; `json.decode_go` takes the
+  missing ones as zero):
+
+```xo
+enum SpanKind { Unspecified, Internal, Server, Client, Producer, Consumer }   // OTLP's numbers
+enum StatusCode { Unset, Ok, Error }
+enum AttrValue { Str(v: Str), Int(v: Int), Float(v: Float), Bool(v: Bool) }
+struct Attr { key: Str, value: AttrValue }
+struct Event { name: Str, time_ns: Int, attributes: List[Attr] = [] }
+// Span after status: trace_id, span_id, parent_id: Str = "" (hex; "root" = no parent), kind: SpanKind? = None,
+// attributes: List[Attr], events: List[Event], status_code: StatusCode? = None, status_message: Str,
+// start_ns, end_ns: Int = 0 (Unix nanoseconds), scope, scope_version, schema_url: Str
+struct Recorder { ring: Ring, clock: Clock, rand: Rand }
+fn recorder(ring: Ring, clock: Clock, rand: Rand) -> Recorder
+fn (r: Recorder) start(name: Str, parent: (Str, Str)? = None, kind: SpanKind = SpanKind.Internal, attributes: List[Attr] = [],
+    scope: Str = "", scope_version: Str = "", schema_url: Str = "") -> Active uses (clock, rand)
+fn (a: Active) ids() -> (Str, Str)                        // (trace id, span id) as hex
+fn (a: Active) set_attributes(attrs: List[Attr])          // the last value per key wins
+fn (a: Active) add_event(name: Str, attributes: List[Attr] = []) uses clock
+fn (a: Active) set_status(code: StatusCode, message: Str = "")   // the message is kept for Error only
+fn (a: Active) end() uses clock                           // records into the Ring once
+```
+
+  A started span has a random 16 byte trace id (or its parent's) and an 8 byte
+  span id, never all zero; its `id` is the trace id.
 
 ## 39. std/html
 

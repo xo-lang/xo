@@ -1,5 +1,16 @@
 # std/trace changes
 
+## 2026-11-09: feature: OpenTelemetry span fields and a Recorder (decision 0580)
+
+- Kind: feature
+- Commit: this push
+- Found by: Xo Azure 1 (tracing/azotel needs ids, parents, kinds, attributes, events, status and nanosecond times)
+- Go reference: the OpenTelemetry Go SDK's span (sdk/trace), checked through std/otlp's oracle
+- Test: std/native/trace_test.xo (a default Span's JSON is the old bytes; a full Span round-trips; a Recorder nests, merges attributes and records once)
+- Shipped in: not yet released
+
+`trace.Span` gains defaulted `omitempty` fields (ids, parent, kind, attributes, events, status, ns times, scope) and the module gains `SpanKind`, `StatusCode`, `AttrValue`, `Attr`, `Event`, `Recorder` and `Active`. The Ring and its JSON are unchanged for spans that set none of them.
+
 ## 2026-10-30: perf: a ring past its cap no longer copies every span on each record
 
 - Kind: perf

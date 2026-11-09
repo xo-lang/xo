@@ -1,5 +1,16 @@
 # std/otlp changes
 
+## 2026-11-09: feature: encode_traces writes the OpenTelemetry span fields (decision 0580)
+
+- Kind: feature
+- Commit: this push
+- Found by: Xo Azure 1 (tracing/azotel)
+- Go reference: opentelemetry-proto trace.proto (Span 1 to 15, Event, Status, KeyValue, AnyValue) and the OpenTelemetry Go exporter
+- Test: std/native/otlp_test.xo (hand vectors: ids, kind, a false attribute, events, the status message for Error only, scope groups and the schema URL)
+- Shipped in: not yet released
+
+`encode_traces` writes a span's own trace, span and parent ids, kind, attributes, events, status, nanosecond times, and groups spans by (scope, version, schema URL) into ScopeSpans (a span with no scope uses the Resource's); a span that leaves them at their defaults encodes as before.
+
 ## 2026-11-06: feature: std/otlp, OTLP trace and metrics encoders
 
 - Kind: feature
