@@ -7,7 +7,7 @@
 - Found by: Xo Azure 1 (azidentity's persistent token cache reads and writes Go's JWE files)
 - Go reference: RFC 7518 5.2.3 and azidentity/cache v0.4.0 internal/aescbc (the tag is HMAC-SHA-256(aad || iv || ciphertext || AL)[:16]; azidentity passes a nil aad)
 - Test: std/native/crypto_test.xo (13 seals and 14 opens from Go's oracle, RFC 7518 B.1 among them); golden aead_cbc_hmac (native, LLVM, Go backend)
-- Timing: bench/perf/aead cbc_small and cbc_big against Go's crypto/cipher CBC plus crypto/hmac: see the row in bench/results
+- Timing: bench/perf/aead (twincheck -time 5, darwin/arm64 Mac Studio, Xo / Go): cbc_small 1.18 (358 and 304 ms), cbc_big 3.66 (422 and 116 ms). Profile of cbc_big: CBC decrypt 79% (the software bitsliced decrypt4: inv_shift_rows, inv_affine, sbox, inv_mix_columns), encrypt 12%, SHA-256 7%. Only encryption has the AES instruction path (hw_n); the next step is an aesd/aesimc (aesdec) prim like the encryption one, then a --ab on host 1
 - Shipped in: not yet released
 
 `crypto.Aead` gains `Aes128CbcHmacSha256`: a 32 byte key (the first 16 bytes the MAC key, the last 16 the AES-128 key), a 16 byte nonce (the IV), PKCS#7 padding, and a sealed message of `ciphertext || tag`. `open` checks the tag in constant time before it decrypts, and a bad tag, padding or length is the one `cipher: message authentication failed` error (an empty ciphertext and one that is not whole blocks are refused, where Go's aescbc opens the first as empty and panics on the second). `nonce_size` is 16 for it and `overhead` the maximum, 32.
