@@ -14,7 +14,7 @@ use std/json
 
 pub fn usage() -> Str {
   [
-    "usage: xo repl [--session=FILE] [--keep] [--eval=ENTRIES]",
+    "usage: xo repl [--session=FILE] [--keep] [--effects=LIST] [--eval=ENTRIES]",
     "",
     "Experimental (decision 0572). Reads Xo entries (an expression, a let or",
     "var, a statement, a fn, struct or enum, a use line), runs each at once,",
@@ -29,6 +29,9 @@ pub fn usage() -> Str {
     "                   an entry) and exit: 1 at the first that fails",
     "  --session=FILE   read the session from FILE and write it back after",
     "  --keep           keep the session directory and print its path",
+    "  --effects=LIST   the effects entries may use (`uses (LIST)`, such as",
+    "                   stdio,clock or none; stdio always): an entry that",
+    "                   needs another is rejected by the checker",
     "",
     "Commands: :type EXPR, :doc NAME, :undo, :reset, :quit; :defs prints the",
     "session's use lines, definitions and bindings; :save FILE writes its",
@@ -47,6 +50,7 @@ pub fn usage() -> Str {
 }
 
 struct Opts {
+  effects: Str? = None
   eval: Str?
   session: Str
   keep: Bool
@@ -63,6 +67,8 @@ struct State {
   /// the first entry's build
   warm: Child? = None
   warm_dir: Str = ""
+  /// --effects: the entries' `uses` list (decision 0572); None: all of Os
+  effects: Str? = None
 }
 
 pub fn run(os: Os, args: List[Str]) -> Int uses (clock, env, fs, proc, rand, stdio) {
@@ -70,6 +76,8 @@ pub fn run(os: Os, args: List[Str]) -> Int uses (clock, env, fs, proc, rand, std
   for a in args {
     if let Some(v) = a.cut_prefix("--eval=") {
       o.eval = Some(v)
+    } else if let Some(v) = a.cut_prefix("--effects=") {
+      o.effects = Some(v)
     } else if let Some(v) = a.cut_prefix("--session=") {
       o.session = v
     } else if a == "--keep" {
@@ -89,7 +97,7 @@ pub fn run(os: Os, args: List[Str]) -> Int uses (clock, env, fs, proc, rand, std
       return 1
     }
   }
-  var st = State{sess: Sess{entries: []}, undo: [], dir: dir, xo: os.env.program(), pc: {}}
+  var st = State{sess: Sess{entries: []}, undo: [], dir: dir, xo: os.env.program(), pc: {}, effects: o.effects}
   if !o.session.is_empty() {
     if let Ok(b) = os.fs.read(o.session) {
       match json.decode[Sess](b) {
@@ -400,7 +408,8 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
     }
   }
   while {
-    let (prog, at) = st.sess.program(e)
+    let (prog0, at0) = st.sess.program(e)
+    let (prog, at) = with_effects(prog0, at0, st.effects)
     let main = "${st.dir}/main.xo"
     if let Err(err) = os.fs.write(main, prog.bytes()) {
       os.stdio.eprintln("xo repl: ${err}")
@@ -581,7 +590,8 @@ fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, ra
   }
   if let Some(x) = t.cut_prefix(":type ") {
     let e = Entry{src: x, kind: Kind.Expr, pin: "", typ: ""}
-    let (prog, at) = st.sess.program(e)
+    let (prog0, at0) = st.sess.program(e)
+    let (prog, at) = with_effects(prog0, at0, st.effects)
     let main = "${st.dir}/main.xo"
     if let Err(err) = os.fs.write(main, prog.bytes()) {
       os.stdio.eprintln("xo repl: ${err}")

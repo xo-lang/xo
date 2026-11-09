@@ -97,6 +97,16 @@ func TestRepl(t *testing.T) {
 		t.Errorf("a rerun binding: %q, stderr %q", r.out, r.err)
 	}
 
+	// --effects: an entry that needs another effect does not check
+	r = xo(t, "repl", "--effects=stdio", "--eval="+strings.Join([]string{
+		`os.stdio.println("ok")`,
+		`os.fs.exists("/")`,
+	}, "\n")).want(1)
+	if r.out != "ok\n" || !strings.Contains(r.err, "error XO") || !strings.Contains(r.err, "fs") {
+		t.Errorf("--effects=stdio: %q, stderr %q", r.out, r.err)
+	}
+	xo(t, "repl", "--effects=stdio,fs", "--eval="+`os.fs.exists("/")`).want(0)
+
 	// :defs, :save and :load (decision 0572 stage 2)
 	saved := filepath.Join(t.TempDir(), "saved.xo")
 	r = xo(t, "repl", "--eval="+strings.Join([]string{

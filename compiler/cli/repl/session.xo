@@ -441,6 +441,35 @@ fn dollar() -> Str {
   "$"
 }
 
+/// The program prog (from program, its entry at line at) with the
+/// entries in a function of their own, `uses (LIST)` (--effects, decision
+/// 0572): an entry that needs another effect gets the checker's effect
+/// diagnostic. stdio is always in the list (the REPL prints values and
+/// pins through it); "none" adds nothing else. None: prog as it is.
+pub fn with_effects(prog: Str, at: Int, effects: Str?) -> (Str, Int) {
+  let list = match effects {
+    Some(l) => l
+    None => return (prog, at)
+  }
+  var names = ["stdio"]
+  for x in list.split(",") {
+    let n = x.trim()
+    if !n.is_empty() && n != "none" && !names.contains(n) {
+      names.push(n)
+    }
+  }
+  let head = "fn main(os: Os) {\n"
+  let i = match prog.find(head) {
+    Some(i) => i
+    None => return (prog, at)
+  }
+  let body = "fn main(os: Os) {\n${BODY}(os)\n}\nfn ${BODY}(os: Os) uses (${names.join(", ")}) {\n"
+  ("${prog[..i]}${body}${prog[i + head.len()..]}", at + 3)
+}
+
+/// The function --effects puts the entries in.
+pub const BODY = "xo_repl_body"
+
 /// Writes text and a newline to b, counting its lines into line.
 fn add(var b: StrBuilder, var line: Int, text: Str) {
   b.write(text)

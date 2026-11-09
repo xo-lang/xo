@@ -143,3 +143,13 @@ test "use names" {
   expect(use_name("use std/json as j") == "j")
   expect(use_name("use \"example.com/m/pkg\"") == "pkg")
 }
+
+test "with effects" {
+  let s = Sess{entries: []}
+  let (p, at) = s.program(entry("1 + 2"))
+  expect(with_effects(p, at, None) == (p, at))
+  let (q, at2) = with_effects(p, at, Some("clock, none"))
+  expect(at2 == at + 3)
+  expect(q.contains("fn xo_repl_body(os: Os) uses (stdio, clock) {"))
+  expect(q.lines()[at2 - 1].contains("1 + 2"))
+}

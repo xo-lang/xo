@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo repl (experimental, decision 0572 stage 2): `--effects=LIST` limits what entries may use (`uses (LIST)`, stdio always included), so an entry that touches the file system or network under `--effects=stdio` is rejected by the checker.
 - xo repl (experimental, decision 0572 stage 2): a binding that is not plain data (a handle, a closure) says once that its entry runs again before each later entry.
 - xo repl (experimental, decision 0572 stage 2): `:defs` lists the session's use lines, definitions and bindings with their types; `:save FILE` and `:load FILE` write and replay a session's entries; a `use` entry no longer fails before an entry uses the module.
 - xo repl (experimental, decision 0572 stage 2): defining a fn, method, struct or enum again replaces the earlier definition; bindings of a redefined type run their entries again with the new type, and those (and definitions using the type) that no longer check are dropped with a note.
