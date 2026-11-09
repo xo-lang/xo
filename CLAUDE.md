@@ -159,8 +159,8 @@ Update the knowledgebase in the same change as the work, not later:
     merge commits when it fails, and the owning agent fixes forward.
   - heavy runs stay on the Mac (owner, 2026-10-20); since 2026-11-09 it is a
     Mac Studio (30 cores, 96 GB; owner: "raise the limits"), so heavy.sh runs up
-    to three heavy jobs (HEAVY_SLOTS), each stopped past 32 GB (HEAVY_MAX_GB),
-    the second and third only when 60% of memory is free (HEAVY_MIN_FREE)
+    to four heavy jobs (HEAVY_SLOTS), each stopped past 32 GB (HEAVY_MAX_GB),
+    the second to fourth only when 60% of memory is free (HEAVY_MIN_FREE)
     (HEAVY_MIN_FREE). CI is used only with the owner's approval for that
     use: ask the lead, who asks the owner.
   - batch mode is standing (owner, 2026-10-20); per push only the bare
@@ -210,7 +210,7 @@ Update the knowledgebase in the same change as the work, not later:
     `ulimit -v`.
   - gates take no slot (owner, 2026-10-21): run your gate as
     `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`; it starts
-    as soon as 55% of memory is free, fewer than 4 gates run and the load
+    as soon as 55% of memory is free, fewer than 5 gates run and the load
     is under 48 (owner, 2026-11-09; was 2 gates and load 16 on the 24 GB
     Mac, then 28, which queued gates at the Studio's normal load; starts staggered by 20 s), with no queue. The heavy
     slots are for hourly.sh, bulk runs and suites. A job the memory
