@@ -237,10 +237,16 @@ fn (w: TabWriter) rune_len(i: Int, end: Int) -> Int {
 fn (var w: TabWriter) update_width() {
   var i = w.pos
   let end = w.buf.len()
+  var width = w.cell.width
   while i < end {
-    i += w.rune_len(i, end)
-    w.cell.width += 1
+    if w.buf[i] < 0x80 {
+      i += 1
+    } else {
+      i += w.rune_len(i, end)
+    }
+    width += 1
   }
+  w.cell.width = width
   w.pos = end
 }
 
