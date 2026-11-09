@@ -7,7 +7,7 @@
 - Found by: bench/perf/aead cbc_big (3.66x Go's time; 79% of its profile in the bitsliced decrypt4)
 - Go reference: crypto/aes (decryptBlockAsm: AESD and AESIMC on arm64, AESDEC on amd64)
 - Test: cpu_prims golden's dec lines (a decrypted block is the encrypted one back, and the instruction path equals the portable body, on arm64, LLVM and the Go backend); Aes128CbcHmacSha256's vectors
-- Timing: see the --ab row below
+- Timing: bench/perf/aead cbc_big on linux/arm64 host 1, --ab against main, 7 rounds: wall 0.321 (0.317 to 0.323, n=6; 365.2 to 117.1 ms; Go 115.5 ms on the Mac Studio run), no load. amd64 not measured (host down; ~/xo-lead/notes/deferred.md)
 - Shipped in: not yet released
 
 New prims `cpu.aes_dec10`, `aes_dec12`, `aes_dec14` (the inverse cipher over the encryption round keys; AESD and AESIMC on arm64 and LLVM, AESDEC with AESIMC on the middle keys on x86) and a portable body; `Cipher.cbc_decrypt` (and `decrypt4`) use them when the CPU has AES.
