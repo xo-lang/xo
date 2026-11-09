@@ -49,6 +49,7 @@ var x86Needs = map[string]string{
 // check.
 var x86GateHelpers = map[string]string{
 	"aesgcm.xo:hw_n":           "encrypt_n and encrypt4 check c.hw & HW_AES",
+	"aesgcm.xo:hw_dec_n":       "decrypt_n and decrypt4 check c.hw & HW_AES",
 	"aesgcm.xo:enc_at":         "its callers ctr_at (from ctr_o), ctr_at_a (from seal_into_at) and tag_fin check HW_AES",
 	"aesgcm.xo:mul_hw":         "mul checks g.hw & HW_CLMUL",
 	"aesgcm.xo:ghash_hw":       "ghash_o checks HW_CLMUL",
