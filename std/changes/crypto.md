@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-09: perf: CBC decryption runs on the CPU's AES instructions
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/aead cbc_big (3.66x Go's time; 79% of its profile in the bitsliced decrypt4)
+- Go reference: crypto/aes (decryptBlockAsm: AESD and AESIMC on arm64, AESDEC on amd64)
+- Test: cpu_prims golden's dec lines (a decrypted block is the encrypted one back, and the instruction path equals the portable body, on arm64, LLVM and the Go backend); Aes128CbcHmacSha256's vectors
+- Timing: see the --ab row below
+- Shipped in: not yet released
+
+New prims `cpu.aes_dec10`, `aes_dec12`, `aes_dec14` (the inverse cipher over the encryption round keys; AESD and AESIMC on arm64 and LLVM, AESDEC with AESIMC on the middle keys on x86) and a portable body; `Cipher.cbc_decrypt` (and `decrypt4`) use them when the CPU has AES.
+
 ## 2026-11-09: feature: `Aead.Aes128CbcHmacSha256`, JWE's A128CBC-HS256
 
 - Kind: feature
