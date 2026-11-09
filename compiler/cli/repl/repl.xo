@@ -21,6 +21,9 @@ pub fn usage() -> Str {
     "and prints its output and value. `os` is the program's Os. Bindings of",
     "plain data carry to later entries as values, so an entry's effects run",
     "once; a binding that holds a handle runs its entry again each time.",
+    "A fn, struct or enum defined again replaces the earlier one; bindings",
+    "and definitions that no longer check with a changed type are dropped,",
+    "with a note.",
     "",
     "  --eval=ENTRIES   run ENTRIES (one per line; an open bracket continues",
     "                   an entry) and exit: 1 at the first that fails",
@@ -379,6 +382,21 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
   // XO_REPL_TIMES=1: each step's wall time on stderr
   let timing = (os.env.get("XO_REPL_TIMES") ?? "") == "1"
   var tries = 0
+  // a type defined again (decision 0572 stage 2): the bindings of the old
+  // type run their entries again (a pin's Debug text is the old shape)
+  let redef = if e.kind is Def && defines_type(src) { def_name(src) } else { "" }
+  let before = st.sess
+  var stale: List[Str] = []
+  if !redef.is_empty() {
+    for x in st.sess.entries {
+      if let Bind(name: n, mutable: _) = x.kind {
+        if mentions_type(x.typ, redef) && !stale.contains(n) {
+          stale.push(n)
+          st.sess = st.sess.unpin(n)
+        }
+      }
+    }
+  }
   while {
     let (prog, at) = st.sess.program(e)
     let main = "${st.dir}/main.xo"
@@ -413,7 +431,23 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
         tries += 1
         continue
       }
+      if earlier && !redef.is_empty() && tries < 2 {
+        // earlier entries do not check with the new type: the bindings of
+        // the type and the definitions that use it go (define them again)
+        for n in stale {
+          os.stdio.eprintln("xo repl: dropped `${n}`: its type ${redef} changed and its entry does not check with the new one")
+        }
+        let defs = st.sess.defs_using(redef)
+        for n in defs {
+          os.stdio.eprintln("xo repl: dropped the definition of `${n}`: it uses ${redef}, which changed; define it again")
+        }
+        st.sess = st.sess.drop_bindings(stale).drop_defs(defs)
+        stale = []
+        tries = 2
+        continue
+      }
       os.stdio.eprint(text)
+      st.sess = before
       return false
     }
     let build_ms = os.clock.since(tb).nanos() / 1000000

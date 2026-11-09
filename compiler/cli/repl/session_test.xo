@@ -111,3 +111,29 @@ test "parse a run's output" {
   expect(r.value == Some("42"))
   expect(r.pins.get("x") == Some("\"a b\""))
 }
+
+test "definition names" {
+  expect(def_name("fn sq(x: Int) -> Int { x * x }") == "sq")
+  expect(def_name("pub fn id[T](x: T) -> T { x }") == "id")
+  expect(def_name("fn (p: Point) area() -> Int { p.x * p.y }") == "Point.area")
+  expect(def_name("fn (var p: Point) grow() { p.x += 1 }") == "Point.grow")
+  expect(def_name("struct Point { x: Int, y: Int }") == "Point")
+  expect(def_name("enum Color { Red, Green }") == "Color")
+  expect(def_name("1 + 2") == "")
+  expect(defines_type("pub struct P {}"))
+  expect(!defines_type("fn f() {}"))
+  expect(mentions_type("List[Point]", "Point"))
+  expect(mentions_type("Point?", "Point"))
+  expect(!mentions_type("Point3", "Point"))
+  expect(!mentions_type("MyPoint", "Point"))
+}
+
+test "a definition replaces the earlier one of its name" {
+  let s = Sess{entries: [entry("fn sq(x: Int) -> Int { x }"), entry("fn cube(x: Int) -> Int { x }")]}
+  let (prog, _at) = s.program(entry("fn sq(x: Int) -> Int { x * x }"))
+  expect(prog.count("fn sq(") == 1)
+  expect(prog.contains("x * x"))
+  let after = s.after(entry("fn sq(x: Int) -> Int { x * x }"), {}, {})
+  expect(after.entries.len() == 2)
+  expect(after.entries[1].src.contains("x * x"))
+}

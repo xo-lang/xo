@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo repl (experimental, decision 0572 stage 2): defining a fn, method, struct or enum again replaces the earlier definition; bindings of a redefined type run their entries again with the new type, and those (and definitions using the type) that no longer check are dropped with a note.
 - xo repl (experimental, decision 0572 stage 2): on a terminal, entries are edited in place (cursor and word moves, ctrl-w, ctrl-k, ctrl-u, ctrl-y), an open bracket continues an entry on a new line that stays editable, and up and down recall earlier entries (prefix search), kept in `<config dir>/xo/repl_history` (XO_REPL_HISTORY=off keeps none); ctrl-c drops the entry, ctrl-d quits.
 - std (decision 0581): `Stdio.raw_input(on)` sets standard input's terminal to raw input (keys as typed, no echo, ctrl-c as a byte) and back; the terminal is restored when the program exits, faults or crashes. Linux, macOS and Windows (Windows not yet verified on a console); false on FreeBSD, WASI, pipes and a test's FakeStdio.
 - xo build (windows/arm64, experimental, decision 0569): a program built with debug information gets PROG.pdb beside PROG.exe, as on windows/amd64, with its functions, lines, inlined calls, locals and types, and the image's debug directory names it (`-s` or `--debug-info=off` leave both out).

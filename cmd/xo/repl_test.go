@@ -66,6 +66,28 @@ func TestRepl(t *testing.T) {
 		t.Errorf("second call:\n%s\nwant:\n%s\nstderr:\n%s", r.out, want, r.err)
 	}
 
+	// definitions again (decision 0572 stage 2): a fn replaces the
+	// earlier one; a struct's binding runs its entry again with the new
+	// struct, and one whose entry no longer checks is dropped
+	r = xo(t, "repl", "--eval="+strings.Join([]string{
+		`fn sq(x: Int) -> Int { x + x }`,
+		`sq(5)`,
+		`fn sq(x: Int) -> Int { x * x }`,
+		`sq(5)`,
+		`struct P { x: Int }`,
+		`let p = P{x: 1}`,
+		`let q = P{x: 2}`,
+		`fn mk() -> P { P{x: 3} }`,
+		`let m = mk()`,
+		`struct P { x: Int, y: Int }`,
+		`fn mk() -> P { P{x: 3, y: 4} }`,
+		`let p = P{x: 1, y: 2}`,
+		`p.x + p.y`,
+	}, "\n")).want(0)
+	if want := "10\n25\n3\n"; r.out != want || !strings.Contains(r.err, "dropped `p`") || !strings.Contains(r.err, "dropped `q`") || !strings.Contains(r.err, "definition of `mk`") {
+		t.Errorf("redefinitions:\n%s\nwant:\n%s\nstderr:\n%s", r.out, want, r.err)
+	}
+
 	// an entry that does not check: the diagnostic names the entry's line
 	r = xo(t, "repl", "--eval="+strings.Join([]string{
 		`let a = 1`,

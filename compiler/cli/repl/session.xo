@@ -169,6 +169,104 @@ pub fn plain_type(t: Str, own: List[Str]) -> Bool {
   true
 }
 
+/// The name a definition declares, for replacing an earlier one of the
+/// same name (decision 0572 stage 2): `sq` for `fn sq`, `Point.area`
+/// for a method `fn (p: Point) area`, `Point` for `struct Point`; "" when
+/// src is not a definition.
+pub fn def_name(src: Str) -> Str {
+  let t = src.trim()
+  for w in def_words() {
+    if t.starts_with(w) {
+      let rest = t[w.len()..].trim_start()
+      if w.ends_with("fn ") && rest.starts_with("(") {
+        // a method: the receiver's type and the method's name
+        let close = rest.find(")") ?? -1
+        if close < 0 {
+          return ""
+        }
+        let recv = rest[1..close]
+        let ty = recv[(recv.find(":") ?? -1) + 1..].trim().trim_prefix("var ").trim()
+        let tname = ident_at_word(ty, 0)
+        let m = ident_at_word(rest[close + 1..].trim_start(), 0)
+        if tname.is_empty() || m.is_empty() {
+          return ""
+        }
+        return "${tname}.${m}"
+      }
+      return ident_at_word(rest, 0)
+    }
+  }
+  ""
+}
+
+/// Whether a definition of w declares a type (struct, enum, type, trait).
+pub fn defines_type(src: Str) -> Bool {
+  let t = src.trim().trim_prefix("pub ")
+  t.starts_with("struct ") || t.starts_with("enum ") || t.starts_with("type ") || t.starts_with("trait ")
+}
+
+/// Whether the type text ty names the type name (as a whole word).
+pub fn mentions_type(ty: Str, name: Str) -> Bool {
+  let b = ty.bytes()
+  var at = 0
+  while at < ty.len() {
+    let i = match ty[at..].find(name) {
+      Some(i) => at + i
+      None => return false
+    }
+    let j = i + name.len()
+    let before = i == 0 || !is_ident_byte(b[i - 1])
+    let after = j >= b.len() || !(is_ident_byte(b[j]) || (b[j] >= 0x30 && b[j] <= 0x39))
+    if before && after {
+      return true
+    }
+    at = j
+  }
+  false
+}
+
+/// The session with the bindings named in names removed (and the
+/// statements, which may use them).
+pub fn (s: Sess) drop_bindings(names: List[Str]) -> Sess {
+  var kept: List[Entry] = []
+  for e in s.entries {
+    if let Bind(name: n, mutable: _) = e.kind {
+      if names.contains(n) {
+        continue
+      }
+    }
+    kept.push(e)
+  }
+  Sess{entries: kept}
+}
+
+/// The names of the definitions whose text mentions the type name (other
+/// than the type's own definition).
+pub fn (s: Sess) defs_using(name: Str) -> List[Str] {
+  var out: List[Str] = []
+  for e in s.entries {
+    if e.kind is Def {
+      let n = def_name(e.src)
+      if n != name && !n.is_empty() && mentions_type(e.src, name) && !out.contains(n) {
+        out.push(n)
+      }
+    }
+  }
+  out
+}
+
+/// The session without the definitions named in names.
+pub fn (s: Sess) drop_defs(names: List[Str]) -> Sess {
+  var kept: List[Entry] = []
+  for e in s.entries {
+    if e.kind is Def && names.contains(def_name(e.src)) {
+      continue
+    }
+    kept.push(e)
+  }
+  Sess{entries: kept}
+}
+
 /// The type names the session's definitions declare.
 pub fn (s: Sess) own_types() -> List[Str] {
   var out: List[Str] = []
@@ -221,10 +319,23 @@ pub fn (s: Sess) program(next: Entry) -> (Str, Int) {
       add(b, line, e.src.trim())
     }
   }
-  for e in all {
+  // a definition replaced by a later one of the same name is left out
+  var i = 0
+  while i < all.len() {
+    let e = all[i]
     if e.kind is Def {
-      add(b, line, e.src)
+      let n = def_name(e.src)
+      var later = false
+      var j = i + 1
+      while j < all.len() && !later {
+        later = all[j].kind is Def && !n.is_empty() && def_name(all[j].src) == n
+        j += 1
+      }
+      if !later {
+        add(b, line, e.src)
+      }
     }
+    i += 1
   }
   add(b, line, "fn main(os: Os) {")
   // a binding next makes again replaces the earlier one (one block
@@ -288,11 +399,16 @@ fn add(var b: StrBuilder, var line: Int, text: Str) {
 pub fn (s: Sess) after(next: Entry, pins: Map[Str, Str], types: Map[Str, Str]) -> Sess {
   var kept: List[Entry] = []
   let nb = if let Bind(name: n, mutable: _) = next.kind { n } else { "" }
+  let nd = if next.kind is Def { def_name(next.src) } else { "" }
   for e in s.entries {
     if let Bind(name: n, mutable: _) = e.kind {
       if n == nb {
         continue
       }
+    }
+    // a definition next replaces
+    if e.kind is Def && !nd.is_empty() && def_name(e.src) == nd {
+      continue
     }
     // a statement ran once; what it changed lives on in the pins
     if e.kind is Stmt && s.all_pinned() {
