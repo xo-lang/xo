@@ -158,6 +158,11 @@ test "list_swap: a two word tuple swaps both words" {
 }
 
 test "list_swap: a Str swap changes no reference count" {
+  // once first, so the strings' size classes have free blocks: the run
+  // measured takes its blocks from those lists and gives them back, where
+  // blocks carved fresh from the heap would add to the total (the Mac
+  // Studio's heap had none left: before 5, after 7, 2026-11-09)
+  expect(swap_heap_strs())
   let before = swap_free_total()
   expect(swap_heap_strs())
   let after = swap_free_total()
