@@ -242,8 +242,8 @@ fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
 /// Go's cipher error text, the same for every check that fails.
 const AEAD_FAIL = "cipher: message authentication failed"
 
-fn aead_nonce_size(a: crypto.Aead) -> Int { 12 }
-fn aead_overhead(a: crypto.Aead) -> Int { 16 }
+fn aead_nonce_size(a: crypto.Aead) -> Int { if a == crypto.Aead.Aes128CbcHmacSha256 { 16 } else { 12 } }
+fn aead_overhead(a: crypto.Aead) -> Int { if a == crypto.Aead.Aes128CbcHmacSha256 { 32 } else { 16 } }
 fn aeaderr_display(e: crypto.AeadErr) -> Str { e.msg }
 
 /// The key: AES-GCM's ready Gcm, or ChaCha20-Poly1305's 32 bytes. Never
@@ -252,6 +252,8 @@ struct AeadKey {
   which: crypto.Aead
   gcm: aesgcm.Gcm?
   key: Bytes
+  /// Aes128CbcHmacSha256: the AES-128 key schedule (key is the MAC key)
+  cbc: aesgcm.Cipher?
 }
 
 fn aead_key(alg: crypto.Aead, key: Bytes) -> AeadKey ! crypto.AeadErr {
@@ -260,22 +262,85 @@ fn aead_key(alg: crypto.Aead, key: Bytes) -> AeadKey ! crypto.AeadErr {
       if !(key.len() is 16 | 24 | 32) {
         return Err(crypto.AeadErr{msg: "crypto/aes: invalid key size ${key.len()}"})
       }
-      Ok(AeadKey{which: alg, gcm: Some(aesgcm.new_gcm(key)), key: b""})
+      Ok(AeadKey{which: alg, gcm: Some(aesgcm.new_gcm(key)), key: b"", cbc: None})
     }
     ChaCha20Poly1305 => {
       if key.len() != 32 {
         return Err(crypto.AeadErr{msg: "chacha20poly1305: bad key length"})
       }
-      Ok(AeadKey{which: alg, gcm: None, key: key})
+      Ok(AeadKey{which: alg, gcm: None, key: key, cbc: None})
+    }
+    Aes128CbcHmacSha256 => {
+      if key.len() != 32 {
+        return Err(crypto.AeadErr{msg: "crypto: AES-128-CBC-HMAC-SHA-256 wants a 32 byte key, got ${key.len()}"})
+      }
+      Ok(AeadKey{which: alg, gcm: None, key: key[0..16], cbc: Some(aesgcm.new(key[16..32]))})
     }
   }
+}
+
+/// HMAC-SHA-256(aad || iv || ct || AL)[0..16], AL the aad's bit length as
+/// a big endian 64 bit integer (RFC 7518 5.2.2.1).
+fn cbc_tag(mac_key: Bytes, iv: Bytes, ct: Bytes, aad: Bytes) -> Bytes {
+  var m = BytesBuilder.with_capacity(aad.len() + 16 + ct.len() + 8)
+  m.write(aad)
+  m.write(iv)
+  m.write(ct)
+  let bits = aad.len() * 8
+  var s = 56
+  while s >= 0 {
+    m.write_byte(UInt8((bits >> s) & 255))
+    s -= 8
+  }
+  hmac(crypto.Hash.Sha256, mac_key, m.freeze())[0..16]
+}
+
+fn cbc_seal(c: aesgcm.Cipher, mac_key: Bytes, iv: Bytes, pt: Bytes, aad: Bytes) -> Bytes {
+  let pad = 16 - pt.len() % 16
+  var b = BytesBuilder.with_capacity(pt.len() + pad + 16)
+  b.write(pt)
+  for _ in 0..pad {
+    b.write_byte(UInt8(pad))
+  }
+  let ct = c.cbc_encrypt(iv, b.freeze())
+  var out = BytesBuilder.with_capacity(ct.len() + 16)
+  out.write(ct)
+  out.write(cbc_tag(mac_key, iv, ct, aad))
+  out.freeze()
+}
+
+fn cbc_open(c: aesgcm.Cipher, mac_key: Bytes, iv: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? {
+  let n = sealed.len() - 16
+  if n < 16 || n % 16 != 0 {
+    return None
+  }
+  let ct = sealed[0..n]
+  if !equal(cbc_tag(mac_key, iv, ct, aad), sealed[n..sealed.len()]) {
+    return None
+  }
+  let pt = c.cbc_decrypt(iv, ct)
+  let pad = Int(pt[n - 1])
+  if pad < 1 || pad > 16 {
+    return None
+  }
+  for j in n - pad..n {
+    if Int(pt[j]) != pad {
+      return None
+    }
+  }
+  Some(pt[0..n - pad])
 }
 
 fn (k: AeadKey) alg() -> crypto.Aead { k.which }
 
 fn (k: AeadKey) seal(nonce: Bytes, plaintext: Bytes, aad: Bytes = b"") -> Bytes {
-  if nonce.len() != 12 {
-    fault("crypto: AEAD nonce of ${nonce.len()} bytes, want 12")
+  let want = aead_nonce_size(k.which)
+  if nonce.len() != want {
+    fault("crypto: AEAD nonce of ${nonce.len()} bytes, want ${want}")
+  }
+  match k.cbc {
+    Some(c) => return cbc_seal(c, k.key, nonce, plaintext, aad)
+    None => {}
   }
   match k.gcm {
     Some(g) => g.seal(nonce, plaintext, aad)
@@ -284,11 +349,21 @@ fn (k: AeadKey) seal(nonce: Bytes, plaintext: Bytes, aad: Bytes = b"") -> Bytes 
 }
 
 fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! crypto.AeadErr {
-  if nonce.len() != 12 {
-    fault("crypto: AEAD nonce of ${nonce.len()} bytes, want 12")
+  let want = aead_nonce_size(k.which)
+  if nonce.len() != want {
+    fault("crypto: AEAD nonce of ${nonce.len()} bytes, want ${want}")
   }
   if sealed.len() < 16 {
     return Err(crypto.AeadErr{msg: AEAD_FAIL})
+  }
+  match k.cbc {
+    Some(c) => {
+      return match cbc_open(c, k.key, nonce, sealed, aad) {
+        Some(pt) => Ok(pt)
+        None => Err(crypto.AeadErr{msg: AEAD_FAIL})
+      }
+    }
+    None => {}
   }
   let got = match k.gcm {
     Some(g) => g.open(nonce, sealed, aad)
@@ -301,18 +376,20 @@ fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! c
 }
 
 fn (k: AeadKey) seal_random(r: Rand, plaintext: Bytes, aad: Bytes = b"") -> Bytes uses rand {
-  let nonce = r.bytes(12)
-  var b = BytesBuilder.with_capacity(12 + plaintext.len() + 16)
+  let nn = aead_nonce_size(k.which)
+  let nonce = r.bytes(nn)
+  var b = BytesBuilder.with_capacity(nn + plaintext.len() + 32)
   b.write(nonce)
   b.write(k.seal(nonce, plaintext, aad))
   b.freeze()
 }
 
 fn (k: AeadKey) open_random(sealed: Bytes, aad: Bytes = b"") -> Bytes ! crypto.AeadErr {
-  if sealed.len() < 12 + 16 {
+  let nn = aead_nonce_size(k.which)
+  if sealed.len() < nn + 16 {
     return Err(crypto.AeadErr{msg: AEAD_FAIL})
   }
-  k.open(sealed[0..12], sealed[12..sealed.len()], aad)
+  k.open(sealed[0..nn], sealed[nn..sealed.len()], aad)
 }
 
 /// The TLS stack's hash number for SHA-2 (its HKDF's fast path), else -1.

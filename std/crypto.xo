@@ -79,11 +79,22 @@ enum Aead {
   AesGcm
   /// ChaCha20-Poly1305 (RFC 8439): a 32 byte key.
   ChaCha20Poly1305
+  /// AES-CBC with HMAC-SHA-256 (RFC 7518 5.2.3, JWE A128CBC-HS256): a 32
+  /// byte key, its first half the MAC key and its second the AES-128 key;
+  /// a 16 byte nonce (the IV); PKCS#7 padding; the tag is
+  /// HMAC-SHA-256(aad || iv || ciphertext || AL) cut to 16 bytes, AL the
+  /// aad's length in bits as a big endian 64 bit integer. A sealed message
+  /// is `ciphertext || tag`. Every failure to open (tag, padding, length) is
+  /// the same error, after the tag is checked in constant time.
+  Aes128CbcHmacSha256
 }
 
-/// The nonce's size in bytes: 12 for both.
+/// The nonce's size in bytes: 12 for AesGcm and ChaCha20Poly1305, 16 for
+/// Aes128CbcHmacSha256.
 fn (a: Aead) nonce_size() -> Int
-/// The bytes a sealed message is longer than its plaintext: 16 (the tag).
+/// The bytes a sealed message is longer than its plaintext: 16 (the tag);
+/// for Aes128CbcHmacSha256 at most 32 (1 to 16 bytes of padding, then the
+/// tag).
 fn (a: Aead) overhead() -> Int
 
 /// A key ready to seal and open messages: its key schedule is made once,
