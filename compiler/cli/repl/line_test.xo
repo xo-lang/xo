@@ -124,3 +124,23 @@ test "draw puts the cursor on its row and column" {
   expect(draw(e, "xo> ", "... ").starts_with("\x1b[1A\r\x1b[J"))
   expect(leave(e) == "\x1b[1B\n")
 }
+
+test "draw follows a line wider than the terminal" {
+  var e = editor([])
+  e.width = 10
+  // "xo> " and 12 characters: two rows, the cursor on the second
+  let _a = feed(e, "abcdefghijkl".bytes())
+  let out = draw(e, "xo> ", "... ")
+  expect(out == "\r\x1b[Jxo> abcdefghijkl\r\x1b[6C")
+  expect(e.rows == 1)
+  // home: the first row, column 4
+  let _b = feed(e, b"\x01")
+  expect(draw(e, "xo> ", "... ") == "\x1b[1A\r\x1b[Jxo> abcdefghijkl\x1b[1A\r\x1b[4C")
+  expect(leave(e) == "\x1b[1B\n")
+  // a line that fills its row exactly starts the next row
+  var f = editor([])
+  f.width = 10
+  let _c = feed(f, "abcdef".bytes())
+  expect(draw(f, "xo> ", "... ") == "\r\x1b[Jxo> abcdef\n\r")
+  expect(f.rows == 1)
+}

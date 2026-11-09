@@ -396,6 +396,7 @@ fn interact_edit(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand,
     }
   }
   var e = editor(hist)
+  e.width = os.stdio.width() ?? 0
   os.stdio.eprint(draw(e, "xo> ", "... "))
   var pend: Bytes = b""
   var code = 0

@@ -69,8 +69,12 @@ pub struct Ed {
   prefix: Str
   /// the text the last kill removed (ctrl-y puts it back)
   killed: Str
-  /// the cursor's row in the last draw, counted from the entry's first
+  /// the cursor's row in the last draw, counted from the entry's first,
+  /// and the last row's
   rows: Int
+  end: Int = 0
+  /// the terminal's columns (Stdio.width; 0 when unknown)
+  pub width: Int = 0
 }
 
 /// A new editor with history hist (oldest first).
@@ -86,11 +90,13 @@ pub fn reset(var e: Ed) {
   e.draft = ""
   e.prefix = ""
   e.rows = 0
+  e.end = 0
 }
 
 /// The screen was cleared: the next draw starts at the top row.
 pub fn cleared(var e: Ed) {
   e.rows = 0
+  e.end = 0
 }
 
 /// Adds entry to the history: not an empty one, nor the same as the last.
@@ -331,8 +337,9 @@ pub fn key(var e: Ed, k: Key) -> Act {
 /// The text that redraws the entry (prompt before its first line, more
 /// before the others, both as wide) and puts the terminal's cursor at the
 /// editor's. It relies on output processing ("\n" starts the next row at
-/// column 1), which raw input keeps (decision 0581). A line wider than
-/// the terminal wraps, which the row count does not follow yet.
+/// column 1), which raw input keeps (decision 0581). With e.width (the
+/// terminal's columns; 0 unknown) a line wider than the terminal takes
+/// several rows, which the cursor's row and column follow.
 pub fn draw(var e: Ed, prompt: Str, more: Str) -> Str {
   var out = ""
   if e.rows > 0 {
@@ -340,21 +347,35 @@ pub fn draw(var e: Ed, prompt: Str, more: Str) -> Str {
   }
   out = "${out}\r\x1b[J"
   let lines = e.text.split("\n")
-  var row = 0
+  var i = 0
   var start = 0
+  // the visual row each line starts at, and the cursor's
+  var vrow = 0
   var crow = 0
   var ccol = 0
+  var last = 0
   for l in lines {
-    let p = if row == 0 { prompt } else { more }
-    out = if row > 0 { "${out}\n${p}${l}" } else { "${out}${p}${l}" }
+    let p = if i == 0 { prompt } else { more }
+    out = if i > 0 { "${out}\n${p}${l}" } else { "${out}${p}${l}" }
+    let w = p.rune_count() + l.rune_count()
     if e.at >= start && e.at <= start + l.len() {
-      crow = row
-      ccol = p.rune_count() + cols(e.text, start, e.at)
+      let c = p.rune_count() + cols(e.text, start, e.at)
+      crow = vrow + (if e.width > 0 { c / e.width } else { 0 })
+      ccol = if e.width > 0 { c % e.width } else { c }
     }
+    last = vrow + (if e.width > 0 { w / e.width } else { 0 })
+    vrow += if e.width > 0 && w > 0 { (w + e.width - 1) / e.width } else { 1 }
     start += l.len() + 1
-    row += 1
+    i += 1
   }
-  let up = lines.len() - 1 - crow
+  // a last line that fills its row exactly: the terminal holds the
+  // cursor at the row's end until the next character, so start the next
+  // row now (the row the cursor may be moved to must exist)
+  let lw = (if lines.len() == 1 { prompt } else { more }).rune_count() + lines[lines.len() - 1].rune_count()
+  if e.width > 0 && lw > 0 && lw % e.width == 0 {
+    out = "${out}\n"
+  }
+  let up = last - crow
   if up > 0 {
     out = "${out}\x1b[${up}A"
   }
@@ -363,13 +384,13 @@ pub fn draw(var e: Ed, prompt: Str, more: Str) -> Str {
     out = "${out}\x1b[${ccol}C"
   }
   e.rows = crow
+  e.end = last
   out
 }
 
-/// The text that leaves the drawn entry: the cursor below its last line.
+/// The text that leaves the drawn entry: the cursor below its last row.
 pub fn leave(e: Ed) -> Str {
-  let lines = e.text.split("\n").len()
-  let down = lines - 1 - e.rows
+  let down = e.end - e.rows
   if down > 0 { "\x1b[${down}B\n" } else { "\n" }
 }
 
