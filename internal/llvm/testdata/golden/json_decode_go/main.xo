@@ -27,6 +27,10 @@ fn main(os: Os) {
   show(os, "{}")
   show(os, "null")
   show(os, "{\"id\":\"x\"}")
+  match json.decode_go[Row]("{\"id\":9}".bytes()) {
+    Ok(r) => os.stdio.println("bytes ${r.id}")
+    Err(e) => os.stdio.println("bytes ${e}")
+  }
   match json.decode_str[Row]("{\"id\":1}") {
     Ok(_) => os.stdio.println("strict ok")
     Err(e) => os.stdio.println("strict ${e}")

@@ -6,5 +6,6 @@ ok 3 [a] 2 0 [] false
 ok 0 [] 0 0 [] true
 ok 0 [] 0 0 [] true
 err at $.id: expected integer
+bytes 9
 strict at $: missing field `name`
 --- stderr
