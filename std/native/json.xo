@@ -31,11 +31,55 @@ fn decode_go[T: Json](data: Bytes) -> T ! json.DecodeErr {
   }
   match rtjson.json_dec_go[T](data, tape, 0) {
     Ok(v) => Ok(v)
-    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg})
+    Err(e) => Err(go_final(json.DecodeErr{path: "$" + e.path, msg: e.msg}))
   }
 }
 
 fn decode_go_str[T: Json](s: Str) -> T ! json.DecodeErr { decode_go(s.bytes()) }
+
+/// A decode_go error as encoding/json words it (decision 0553): the
+/// decoder's marker "@@go|STRUCT|KIND|LITERAL|TYPE" at path becomes
+/// `json: cannot unmarshal KIND into Go struct field STRUCT.PATH of type TYPE`
+/// (`Go value of type TYPE` outside a struct; the PATH has no list indices).
+fn go_final(e: json.DecodeErr) -> json.DecodeErr {
+  if !e.msg.starts_with("@@go|") {
+    return e
+  }
+  let parts = e.msg[5..].split("|")
+  if parts.len() < 4 {
+    return e
+  }
+  let sname = parts[0]
+  let lit = if parts[2] == "" { "" } else { " " + parts[2] }
+  var ty = parts[3]
+  var k = 4
+  while k < parts.len() {
+    ty = ty + "|" + parts[k]
+    k += 1
+  }
+  var field = ""
+  var in_idx = false
+  let pb = e.path.bytes()
+  var j = 1
+  while j < pb.len() {
+    if pb[j] == 91 {
+      in_idx = true
+    } else if pb[j] == 93 {
+      in_idx = false
+    } else if !in_idx {
+      field = field + e.path[j..j + 1]
+    }
+    j += 1
+  }
+  if field.starts_with(".") {
+    field = field[1..]
+  }
+  let head = "json: cannot unmarshal ${parts[1]}${lit}"
+  if sname == "" {
+    return json.DecodeErr{path: e.path, msg: "${head} into Go value of type ${ty}"}
+  }
+  json.DecodeErr{path: e.path, msg: "${head} into Go struct field ${sname}.${field} of type ${ty}"}
+}
 
 /// "at $.user.email: expected string" (std.md 5).
 fn decodeerr_display(e: json.DecodeErr) -> Str { "at ${e.path}: ${e.msg}" }

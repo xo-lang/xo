@@ -5,7 +5,13 @@ ok 7 [] 0 0 [x] true
 ok 3 [a] 2 0 [] false
 ok 0 [] 0 0 [] true
 ok 0 [] 0 0 [] true
-err at $.id: expected integer
+err at $.id: json: cannot unmarshal string into Go struct field Row.id of type int
+err at $.id: json: cannot unmarshal number 1.5 into Go struct field Row.id of type int
+err at $.inner.n: json: cannot unmarshal string into Go struct field Inner.inner.n of type int
+err at $.inner: json: cannot unmarshal number into Go struct field Row.inner of type main.Inner
+err at $.tags[1]: json: cannot unmarshal number into Go struct field Row.tags of type string
+err at $: json: cannot unmarshal array into Go value of type main.Row
+err at $.name: json: cannot unmarshal bool into Go struct field Row.name of type string
 bytes 9
 strict at $: missing field `name`
 --- stderr

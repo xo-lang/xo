@@ -27,6 +27,12 @@ fn main(os: Os) {
   show(os, "{}")
   show(os, "null")
   show(os, "{\"id\":\"x\"}")
+  show(os, "{\"id\":1.5}")
+  show(os, "{\"inner\":{\"n\":\"x\"}}")
+  show(os, "{\"inner\":3}")
+  show(os, "{\"tags\":[\"a\",1]}")
+  show(os, "[1]")
+  show(os, "{\"name\":true}")
   match json.decode_go[Row]("{\"id\":9}".bytes()) {
     Ok(r) => os.stdio.println("bytes ${r.id}")
     Err(e) => os.stdio.println("bytes ${e}")

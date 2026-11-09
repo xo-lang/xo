@@ -298,6 +298,116 @@ func jsonFloat32(f float32) string {
 
 // JsonDec decodes the parsed JSON value x into dst.
 func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
+	e := jsonDec0(tk, dst, x, path)
+	if e != nil && tk != nil && tk.jsonGo {
+		return jsonGoLeaf(dst, x, path, e)
+	}
+	return e
+}
+
+// jsonGoLeaf words a type error of the value at path the way encoding/json
+// does (decision 0553), as the marker the native decoder builds
+// ("@@go|STRUCT|KIND|LITERAL|TYPE", jsontext.go_tag, go_final): only an
+// error at path itself, not one a child reported.
+func jsonGoLeaf(dst any, x any, path string, e *Json_DecodeErr) *Json_DecodeErr {
+	if e.F_path != path || !(strings.HasPrefix(e.F_msg, "expected ") || strings.HasPrefix(e.F_msg, "cannot unmarshal number ")) {
+		return e
+	}
+	var kind, lit string
+	switch v := x.(type) {
+	case json.Number:
+		kind = "number"
+		lit = string(v)
+	case string:
+		kind = "string"
+	case bool:
+		kind = "bool"
+	case []any:
+		kind = "array"
+	default:
+		kind = "object"
+	}
+	t := reflect.TypeOf(dst).Elem()
+	gt := jsonGoTypeName(t)
+	if !(strings.HasPrefix(gt, "int") || strings.HasPrefix(gt, "uint") || strings.HasPrefix(gt, "float")) {
+		lit = ""
+	}
+	return JsonErr(path, "@@go||"+kind+"|"+lit+"|"+gt)
+}
+
+// jsonGoTypeName is the Go name of the type of a decoded value
+// (native: Builder.go_type_name).
+func jsonGoTypeName(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.Int64:
+		return "int"
+	case reflect.Int8, reflect.Int16, reflect.Int32:
+		return t.Kind().String()
+	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return t.Kind().String()
+	case reflect.Float32, reflect.Float64, reflect.String, reflect.Bool:
+		return t.Kind().String()
+	case reflect.Struct:
+		n := t.Name()
+		switch {
+		case strings.HasPrefix(n, "List["):
+			return "[]" + jsonGoTypeName(t.Field(0).Type.Elem())
+		case strings.HasPrefix(n, "Option["):
+			return jsonGoTypeName(t.Field(1).Type)
+		case strings.HasPrefix(n, "Map["):
+			if f, ok := t.Field(1).Type.Elem().FieldByName("v"); ok {
+				return "map[string]" + jsonGoTypeName(f.Type)
+			}
+			return "map[string]interface {}"
+		}
+		return "main." + n
+	}
+	return "main." + t.Name()
+}
+
+// JsonGoTag names the struct whose field e is about under json.decode_go:
+// an error of a field (not the struct itself) takes the innermost struct's
+// name, as encoding/json words it.
+func JsonGoTag(tk *Task, e *Json_DecodeErr, sname string, path string) *Json_DecodeErr {
+	if e == nil || tk == nil || !tk.jsonGo || e.F_path == path || !strings.HasPrefix(e.F_msg, "@@go||") {
+		return e
+	}
+	return JsonErr(e.F_path, "@@go|"+sname+e.F_msg[5:])
+}
+
+// jsonGoFinal turns the marker into encoding/json's text (native: go_final).
+func jsonGoFinal(e *Json_DecodeErr) *Json_DecodeErr {
+	if !strings.HasPrefix(e.F_msg, "@@go|") {
+		return e
+	}
+	parts := strings.SplitN(e.F_msg[5:], "|", 4)
+	if len(parts) < 4 {
+		return e
+	}
+	lit := ""
+	if parts[2] != "" {
+		lit = " " + parts[2]
+	}
+	head := "json: cannot unmarshal " + parts[1] + lit
+	if parts[0] == "" {
+		return JsonErr(e.F_path, head+" into Go value of type "+parts[3])
+	}
+	var sb strings.Builder
+	in := false
+	for _, c := range e.F_path[1:] {
+		switch {
+		case c == '[':
+			in = true
+		case c == ']':
+			in = false
+		case !in:
+			sb.WriteRune(c)
+		}
+	}
+	return JsonErr(e.F_path, head+" into Go struct field "+parts[0]+"."+strings.TrimPrefix(sb.String(), ".")+" of type "+parts[3])
+}
+
+func jsonDec0[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 	if dd, ok := x.(*jsonDup); ok {
 		// the values a duplicate key replaced decode first, their results
 		// dropped, as Go's decoder reads every member
@@ -803,7 +913,7 @@ func Json_decode_go[T any](tk *Task, data Bytes) Result[T, Json_DecodeErr] {
 	}
 	var v T
 	if e := JsonDec(tk, &v, x, "$"); e != nil {
-		return Err[T](*e)
+		return Err[T](*jsonGoFinal(e))
 	}
 	return Ok[T, Json_DecodeErr](v)
 }

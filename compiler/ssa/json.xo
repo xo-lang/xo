@@ -766,6 +766,10 @@ struct Dec {
   rt: Int
   t: Int
   kind: Int
+  /// decode_go (decision 0553): the Go type of the value being decoded, and
+  /// the struct whose fields are being decoded (for Go's error words)
+  gt: Str = ""
+  sname: Str = ""
 }
 
 /// The error result of a decoder (mkErr).
@@ -773,6 +777,10 @@ fn (var b: Builder) dec_err(d: Dec, path: Int, msg: Int) -> Int {
   let err_i = b.m.variant_index(d.rt, "Err")
   let dt = b.m.types[d.rt].variants[err_i].fields[0].ty
   var vals = [path, msg]
+  if b.dec_go && !d.sname.is_empty() {
+    // a Go worded error takes the innermost struct (jsontext.go_tag)
+    vals = [path, b.json_rt("json_go_tag", b.str_t(), [msg, b.const_str(d.sname)])]
+  }
   // fields past path and msg (json.DecodeErr.go, decision 0553) are Str, empty here
   var k = 2
   while k < b.m.types[dt].fields.len() {
@@ -783,10 +791,76 @@ fn (var b: Builder) dec_err(d: Dec, path: Int, msg: Int) -> Int {
   b.add(Op.Variant, d.rt, Aux.I(n: err_i), [e])
 }
 
+/// Go's `cannot unmarshal KIND into Go ... of type T` as a marker the
+/// struct decoders tag with their name and decode_go finishes
+/// (jsontext.go_tag, go_final): "@@go|STRUCT|KIND|LITERAL|TYPE".
+fn (var b: Builder) go_marker(d: Dec) -> Int {
+  let st = b.str_t()
+  let numeric = d.gt.starts_with("int") || d.gt.starts_with("uint") || d.gt.starts_with("float")
+  let kind = b.json_rt("json_go_kind", st, [d.kind])
+  let lit = if numeric { b.json_rt("json_go_lit", st, [d.src, d.tape, d.i]) } else { b.const_str("") }
+  let a = b.call("str.concat", st, "", [b.const_str("@@go||"), kind])
+  let a2 = b.call("str.concat", st, "", [a, b.const_str("|")])
+  let a3 = b.call("str.concat", st, "", [a2, lit])
+  b.call("str.concat", st, "", [a3, b.const_str("|${d.gt}")])
+}
+
+/// The message of a Float out of range: Go's words under decode_go.
+fn (var b: Builder) float_range_msg(d: Dec, i: Int, tyname: Str) -> Int {
+  if b.dec_go && !d.gt.is_empty() {
+    return b.go_marker(d)
+  }
+  b.json_rt("json_range_msg", b.str_t(), [d.src, d.tape, i, b.const_str(tyname)])
+}
+
+/// The Go name of checker type ct (decode_go's `of type`).
+fn (var b: Builder) go_type_name(ct: Int) -> Str {
+  let t = b.typ(ct)
+  if b.is_prelude_named(ct, ["Time"]) {
+    return "time.Time"
+  }
+  if b.is_prelude_named(ct, ["Duration"]) {
+    return "time.Duration"
+  }
+  if b.is_prelude_named(ct, ["Bytes"]) {
+    return "[]uint8"
+  }
+  if b.option_elem(ct) >= 0 {
+    return b.go_type_name(b.option_elem(ct))
+  }
+  if b.is_prelude_named(ct, ["List"]) {
+    let a = b.ty_args(ct)
+    return if a.len() == 1 { "[]${b.go_type_name(a[0])}" } else { "[]interface {}" }
+  }
+  if b.is_prelude_named(ct, ["Map"]) {
+    let a = b.ty_args(ct)
+    return if a.len() == 2 { "map[string]${b.go_type_name(a[1])}" } else { "map[string]interface {}" }
+  }
+  match b.tkind(t) {
+    Str => "string"
+    Bool => "bool"
+    Float => if b.m.is_f32(t) { "float32" } else { "float64" }
+    Int => {
+      let bits = b.m.types[t].bits
+      if bits == 0 {
+        "int"
+      } else if b.m.types[t].unsigned {
+        "uint${bits}"
+      } else {
+        "int${bits}"
+      }
+    }
+    _ => "main.${b.type_name(ct)}"
+  }
+}
+
 /// Returns the error msg with an empty path (fail).
 fn (var b: Builder) dec_fail(d: Dec, msg: Str) {
   let p = b.const_str("")
-  let m = b.const_str(msg)
+  var m = b.const_str(msg)
+  if b.dec_go && msg.starts_with("expected ") && !d.gt.is_empty() {
+    m = b.go_marker(d)
+  }
   b.retv(b.dec_err(d, p, m))
 }
 
@@ -912,7 +986,7 @@ fn (var b: Builder) json_dec(ct: Int) -> Str {
   let tape = b.param(1)
   let i = b.param(2)
   let kind = b.call("list.index", it, "", [tape, i])
-  let d = Dec{src: src, tape: tape, i: i, rt: rt, t: t, kind: kind}
+  let d = Dec{src: src, tape: tape, i: i, rt: rt, t: t, kind: kind, gt: if b.dec_go { b.go_type_name(ct) } else { "" }}
   b.json_dec_body(d, ct)
   b.finish_fn()
   b.end(saved)
@@ -1054,7 +1128,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       let ot = b.vty(o)
       let some = b.m.variant_index(ot, "Some")
       let (no1, join1) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [o]), b.cint(some)]))
-      b.retv(b.dec_err(d, b.const_str(""), b.json_rt("json_range_msg", b.str_t(), [d.src, d.tape, i, b.const_str(tyname)])))
+      b.retv(b.dec_err(d, b.const_str(""), b.float_range_msg(d, i, tyname)))
       b.if_then_end(no1, join1)
       let f = b.add(Op.Payload, b.m.types[ot].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [o])
       if f32 {
@@ -1067,7 +1141,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
         let nlim = b.add(Op.Const, ft, Aux.F(f: -340282356779733661637539395458142568448.0), [])
         let over = b.add(Op.Or, bt, Aux.None, [b.add(Op.Gt, bt, Aux.None, [f, lim]), b.add(Op.Lt, bt, Aux.None, [f, nlim])])
         let (no2, join2) = b.if_then_begin(over)
-        b.retv(b.dec_err(d, b.const_str(""), b.json_rt("json_range_msg", b.str_t(), [d.src, d.tape, i, b.const_str(tyname)])))
+        b.retv(b.dec_err(d, b.const_str(""), b.float_range_msg(d, i, tyname)))
         b.if_then_end(no2, join2)
         b.dec_ok(d, b.rt("f32_round", t, [f]))
         return
@@ -1231,6 +1305,8 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   let tk = b.c.objs[obj].tkind
   if b.tkind(t) == Kind.Struct && tk == "struct" && !b.c.objs[obj].opaque {
     b.dec_need(d, JK_OBJ, "expected object")
+    // the fields' errors name this struct (decode_go)
+    let d = Dec{src: d.src, tape: d.tape, i: d.i, rt: d.rt, t: d.t, kind: d.kind, gt: d.gt, sname: if b.dec_go { check.text(b.c.objs[obj].name) } else { "" }}
     var fs: List[JField] = []
     let df = b.decl_file(obj)
     for f in b.c.objs[obj].fields {

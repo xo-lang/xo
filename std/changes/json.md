@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-09: feature: `json.decode_go` words a type error as encoding/json does
+
+- Kind: feature
+- Commit: this push
+- Found by: goversioninfo's FEEDBACK.md (ADR 0553, answer 4); scripts/jsonerrdiff
+- Go reference: encoding/json decode.go UnmarshalTypeError.Error (`json: cannot unmarshal KIND[ LITERAL] into Go struct field STRUCT.PATH of type TYPE`, `Go value of type TYPE` at the top)
+- Test: golden json_decode_go (native, LLVM, Go backend); scripts/jsonerrdiff with decode_go as the twin: the 50 type error cases that differed are the same text but 3 (a map value's key stays in the field path, an embedded struct's field lacks `Base.`, a `via` conversion error is not Go's)
+- Timing: none (error path only)
+- Shipped in: not yet released
+
+Under `decode_go` a value of the wrong JSON kind fails with encoding/json's text: the kind of the value (`number`, `string`, `bool`, `array`, `object`), the number's own text for a number that does not fit (`number 1.5`), the innermost struct and the key path from the root (list indices dropped), and the Go type (`int` for Int, `uint8`, `float64`, `string`, `[]T`, `map[string]T`, `main.Name` for a struct). The path of the DecodeErr is unchanged. Known gaps: map keys stay in the field path, embedded structs, `via` conversion errors.
+
 ## 2026-11-09: feature: `json.decode_go`, encoding/json's rules for null and missing fields
 
 - Kind: feature

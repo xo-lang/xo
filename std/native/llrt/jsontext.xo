@@ -1400,6 +1400,38 @@ pub fn range_msg(src: Bytes, tape: List[Int], i: Int, ty: Str) -> Str {
   "cannot unmarshal number ${src[lo..lo + tape[i + 2]].to_str() ?? ""} into ${ty}"
 }
 
+/// The JSON kind of a node as encoding/json names it in an
+/// UnmarshalTypeError ("number", "string", "bool", "array", "object").
+pub fn go_kind(kind: Int) -> Str {
+  match kind {
+    1 | 2 => "bool"
+    3 => "number"
+    4 => "string"
+    5 => "array"
+    6 => "object"
+    _ => "null"
+  }
+}
+
+/// The text of the number node at i (empty for any other node).
+pub fn go_lit(src: Bytes, tape: List[Int], i: Int) -> Str {
+  if tape[i] != 3 {
+    return ""
+  }
+  let lo = tape[i + 1]
+  src[lo..lo + tape[i + 2]].to_str() ?? ""
+}
+
+/// A decode_go marker "@@go||KIND|LIT|TYPE" with the struct name filled in
+/// ("@@go|STRUCT|..."), unless a struct is already named: the innermost
+/// struct names the field, as in encoding/json. Any other message is as it is.
+pub fn go_tag(msg: Str, sname: Str) -> Str {
+  if msg.starts_with("@@go||") {
+    return "@@go|" + sname + msg[5..]
+  }
+  msg
+}
+
 /// The Float of the number node at i (0.0 when it is not one).
 pub fn float_at(src: Bytes, tape: List[Int], i: Int) -> Float {
   let lo = tape[i + 1]

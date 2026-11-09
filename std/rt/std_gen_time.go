@@ -138,6 +138,10 @@ func (v Time_Date) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 func (v *Time_Date) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "Date", path)
+}
+
+func (v *Time_Date) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
@@ -300,6 +304,10 @@ func (v Time_ClockTime) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 func (v *Time_ClockTime) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "ClockTime", path)
+}
+
+func (v *Time_ClockTime) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
@@ -461,6 +469,10 @@ func (v Time_Civil) XoJsonEnc(tk *Task, w *JsonW) {
 }
 
 func (v *Time_Civil) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	return JsonGoTag(tk, v.xoJsonDec0(tk, x, path), "Civil", path)
+}
+
+func (v *Time_Civil) xoJsonDec0(tk *Task, x any, path string) *Json_DecodeErr {
 	obj, err := JsonObject(x, path)
 	if err != nil {
 		return err
