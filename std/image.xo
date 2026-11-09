@@ -1,0 +1,75 @@
+// std/image (decision 0578). Declaration file. Go's image and image/color
+// over one Image: the pixel models of std/png and std/jpeg in one enum, Go's
+// exact integer color conversions, and the accessors a decoder's output
+// needs. Pure.
+
+/// Go's image.Rectangle: x0 <= x < x1 and y0 <= y < y1.
+struct Rect {
+  x0: Int
+  y0: Int
+  x1: Int
+  y1: Int
+} derive Eq
+
+/// Go's color.Color.RGBA(): 16 bit channels, alpha premultiplied (each of
+/// r, g and b is at most a).
+struct Color {
+  r: Int
+  g: Int
+  b: Int
+  a: Int
+} derive Eq
+
+/// The pixel models of image/png and image/jpeg, with Go's layouts:
+/// Gray (1 byte), Gray16 (2, big endian), Paletted (1, an index),
+/// RGBA (4, premultiplied), NRGBA (4), RGBA64 (8, big endian), NRGBA64 (8),
+/// CMYK (4, 255 is full ink) and YCbCr (the planes `y`, `cb` and `cr`).
+enum Model {
+  Gray
+  Gray16
+  Paletted
+  RGBA
+  NRGBA
+  RGBA64
+  NRGBA64
+  CMYK
+  YCbCr
+} derive Eq, Display
+
+/// A raster image. `pix` holds rows of `stride` bytes; a view made by
+/// `sub_image` keeps the parent's stride. `palette` is for Paletted, one
+/// `0xRRGGBBAA` (not premultiplied) per index.
+struct Image {
+  width: Int
+  height: Int
+  model: Model
+  pix: Bytes
+  stride: Int = 0
+  palette: List[Int] = []
+}
+
+/// Go's color.GrayModel: the 8 bit luma of c, (19595 r + 38470 g + 7471 b +
+/// 1<<15) >> 24 over the 16 bit premultiplied channels.
+fn (c: Color) gray() -> Int
+
+/// Go's color.Gray16Model: the same sum >> 16.
+fn (c: Color) gray16() -> Int
+
+/// Go's color.NRGBAModel: 8 bit channels, not premultiplied, as 0xRRGGBBAA.
+fn (c: Color) nrgba() -> Int
+
+/// Go's color.RGBToYCbCr over 8 bit channels: (y, cb, cr).
+fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
+
+/// Go's color.YCbCrToRGB: 8 bit (r, g, b).
+fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int)
+
+/// Go's color.RGBToCMYK: 8 bit (c, m, y, k).
+fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int)
+
+/// Go's color.CMYKToRGB: 8 bit (r, g, b).
+fn cmyk_to_rgb(c: Int, m: Int, y: Int, k: Int) -> (Int, Int, Int)
+
+/// The color.Color of a 0xRRGGBBAA value that is not premultiplied (Go's
+/// color.NRGBA.RGBA()).
+fn from_nrgba(v: Int) -> Color

@@ -241,7 +241,8 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | runtime, runtime/debug, runtime/metrics, runtime/pprof, runtime/trace, runtime/race, runtime/coverage, runtime/cgo | not planned | The runtime is Xo's own; profiling (0238), tracing (0240), race (0273) are toolchain features. |
 | plugin | not planned | Static binaries only. |
 | reflect, unsafe | not planned | No reflection; derive replaces it. |
-| image, image/color, image/draw, image/gif | not planned | image/png and image/jpeg (decode) are done (std/png 0466, std/jpeg 0467); the rest stay a module's job. |
+| image/color | std/image | partial | The conversions (Gray, Gray16, NRGBA, YCbCr, CMYK) as functions (0578 step 1). |
+| image, image/draw, image/gif | planned | 0578: Image over png and jpeg, draw, gif follow; image/png and image/jpeg (decode) are done (std/png 0466, std/jpeg 0467). |
 
 ## Outside Go's standard library
 

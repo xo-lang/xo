@@ -8236,3 +8236,27 @@ numbers, rejects unknown fields (skipped with `discard_unknown`), duplicate fiel
 `null` as unset (except for `Value` and `NullValue`), and writes the wire fields in protobuf-go's order (fields by number,
 then oneofs), maps in key order. A proto2 `required` field that is missing (or `null`) is an error in both directions, at any depth, as
 protobuf-go's protojson reports it (a message of an `Any` too). Checked against protobuf-go's `protojson` (testdata/corpus/protojson).
+
+## 75. std/image
+
+Go's `image` and `image/color` conversions in one module (decision 0578 step 1): the pixel model enum shared by std/png and
+std/jpeg, `Rect`, `Color`, `Image`, and the integer color conversions Go computes, bit for bit.
+
+```xo
+struct Rect { x0: Int, y0: Int, x1: Int, y1: Int }
+struct Color { r: Int, g: Int, b: Int, a: Int }       // 16 bit channels, alpha premultiplied (Go's RGBA())
+enum Model { Gray, Gray16, Paletted, RGBA, NRGBA, RGBA64, NRGBA64, CMYK, YCbCr }
+struct Image { width: Int, height: Int, model: Model, pix: Bytes, stride: Int = 0, palette: List[Int] = [] }
+fn (c: Color) gray() -> Int                      // color.GrayModel: (19595 r + 38470 g + 7471 b + 1<<15) >> 24
+fn (c: Color) gray16() -> Int                    // color.Gray16Model: the same sum >> 16
+fn (c: Color) nrgba() -> Int                     // color.NRGBAModel as 0xRRGGBBAA
+fn from_nrgba(v: Int) -> Color                   // color.NRGBA.RGBA()
+fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
+fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int)
+fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int)
+fn cmyk_to_rgb(c: Int, m: Int, y: Int, k: Int) -> (Int, Int, Int)
+```
+
+The conversions are Go's (`image/color`: RGBToYCbCr and YCbCrToRGB with their clamps, RGBToCMYK, CMYKToRGB); the 8 bit
+functions take and return 0 to 255. Checked against Go's `image/color` (testdata/corpus/image). Later steps of 0578 add the
+draw and scaling parts and make std/png and std/jpeg return an `image.Image`.

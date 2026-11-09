@@ -1,0 +1,85 @@
+// std/image on the native backends and, through std/go_compiled.txt, on
+// the Go backend (decision 0578): Go's image/color conversions
+// (Copyright 2009 The Go Authors, BSD-style license) in integer
+// arithmetic, so the values are the bytes Go computes.
+use std/image
+
+/// Go's color.GrayModel: (19595 r + 38470 g + 7471 b + 1<<15) >> 24 over the
+/// 16 bit premultiplied channels.
+fn color_gray(c: image.Color) -> Int { (19595 * c.r + 38470 * c.g + 7471 * c.b + (1 << 15)) >> 24 }
+
+/// Go's color.Gray16Model: the same sum >> 16.
+fn color_gray16(c: image.Color) -> Int { (19595 * c.r + 38470 * c.g + 7471 * c.b + (1 << 15)) >> 16 }
+
+/// Go's color.NRGBAModel as 0xRRGGBBAA: opaque and clear pixels directly,
+/// else the channels divided by alpha.
+fn color_nrgba(c: image.Color) -> Int {
+  if c.a == 65535 {
+    return ((c.r >> 8) << 24) | ((c.g >> 8) << 16) | ((c.b >> 8) << 8) | 255
+  }
+  if c.a == 0 {
+    return 0
+  }
+  let r = (c.r * 65535) / c.a
+  let g = (c.g * 65535) / c.a
+  let b = (c.b * 65535) / c.a
+  ((r >> 8) << 24) | ((g >> 8) << 16) | ((b >> 8) << 8) | (c.a >> 8)
+}
+
+/// Go's color.NRGBA.RGBA() of 0xRRGGBBAA.
+fn from_nrgba(v: Int) -> image.Color {
+  let a8 = v & 255
+  let r = (((v >> 24) & 255) * 257 * a8) / 255
+  let g = (((v >> 16) & 255) * 257 * a8) / 255
+  let b = (((v >> 8) & 255) * 257 * a8) / 255
+  image.Color{r: r, g: g, b: b, a: a8 * 257}
+}
+
+/// An int32 sum scaled by 1<<16 to 8 bits as color.RGBToYCbCr clamps it:
+/// out of the 24 bit range is 0 below and 255 above.
+fn clamp16(v: Int) -> Int {
+  if v < 0 {
+    return 0
+  }
+  if v >= (1 << 24) {
+    return 255
+  }
+  v >> 16
+}
+
+/// Go's color.RGBToYCbCr.
+fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int) {
+  let y = (19595 * r + 38470 * g + 7471 * b + (1 << 15)) >> 16
+  let cb = clamp16(-11056 * r - 21712 * g + 32768 * b + (257 << 15))
+  let cr = clamp16(32768 * r - 27440 * g - 5328 * b + (257 << 15))
+  (y, cb, cr)
+}
+
+/// Go's color.YCbCrToRGB.
+fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int) {
+  let yy1 = y * 65793
+  let cb1 = cb - 128
+  let cr1 = cr - 128
+  (clamp16(yy1 + 91881 * cr1), clamp16(yy1 - 22554 * cb1 - 46802 * cr1), clamp16(yy1 + 116130 * cb1))
+}
+
+/// Go's color.RGBToCMYK.
+fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int) {
+  var w = r
+  if g > w {
+    w = g
+  }
+  if b > w {
+    w = b
+  }
+  if w == 0 {
+    return (0, 0, 0, 255)
+  }
+  ((w - r) * 255 / w, (w - g) * 255 / w, (w - b) * 255 / w, 255 - w)
+}
+
+/// Go's color.CMYKToRGB.
+fn cmyk_to_rgb(c: Int, m: Int, y: Int, k: Int) -> (Int, Int, Int) {
+  let w = 65535 - k * 257
+  (((65535 - c * 257) * w / 65535) >> 8, ((65535 - m * 257) * w / 65535) >> 8, ((65535 - y * 257) * w / 65535) >> 8)
+}

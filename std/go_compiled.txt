@@ -41,3 +41,4 @@ protowkt
 htmlent
 protojson
 htmlparse
+image
