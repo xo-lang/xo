@@ -114,23 +114,129 @@ fn span_id(seed: Str) -> Bytes {
 
 fn root_id(id: Str) -> Bytes { span_id("${id}/request") }
 
+/// The bytes of a hex text (lower or upper case), or None when it is not whole hex pairs.
+fn unhex_text(t: Str) -> Bytes? {
+  let b = t.bytes()
+  if b.len() % 2 != 0 {
+    return None
+  }
+  var out = BytesBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let h = hex_val(b[i])
+    let l = hex_val(b[i + 1])
+    if h < 0 || l < 0 {
+      return None
+    }
+    out.write_byte(UInt8.wrapping_from(h * 16 + l))
+    i += 2
+  }
+  Some(out.freeze())
+}
+
+fn kind_num(k: trace.SpanKind) -> Int {
+  match k {
+    trace.SpanKind.Unspecified => 0
+    trace.SpanKind.Internal => 1
+    trace.SpanKind.Server => 2
+    trace.SpanKind.Client => 3
+    trace.SpanKind.Producer => 4
+    trace.SpanKind.Consumer => 5
+  }
+}
+
+fn status_num(c: trace.StatusCode) -> Int {
+  match c {
+    trace.StatusCode.Unset => 0
+    trace.StatusCode.Ok => 1
+    trace.StatusCode.Error => 2
+  }
+}
+
+/// KeyValue with AnyValue's oneof written even at its default (a false, 0 or "" value is still a value).
+fn kv_any(a: trace.Attr) -> Bytes {
+  var v = BytesBuilder.new()
+  match a.value {
+    trace.AttrValue.Str(x) => {
+      v = protobuf.put_bytes(protobuf.put_tag(v, 1, 2), x.bytes())
+    }
+    trace.AttrValue.Bool(x) => {
+      v = protobuf.put_varint(protobuf.put_tag(v, 2, 0), if x { 1 } else { 0 })
+    }
+    trace.AttrValue.Int(x) => {
+      v = protobuf.put_varint(protobuf.put_tag(v, 3, 0), UInt64.wrapping_from(x))
+    }
+    trace.AttrValue.Float(x) => {
+      v = protobuf.put_fixed64(protobuf.put_tag(v, 4, 1), double_bits(x))
+    }
+  }
+  var kv = BytesBuilder.new()
+  kv = str_field(kv, 1, a.key)
+  kv = msg_field(kv, 2, v.freeze())
+  kv.freeze()
+}
+
+fn encode_event(e: trace.Event) -> Bytes {
+  var ev = BytesBuilder.new()
+  ev = fixed64_field(ev, 1, e.time_ns)
+  ev = str_field(ev, 2, e.name)
+  for a in e.attributes {
+    ev = msg_field(ev, 3, kv_any(a))
+  }
+  ev.freeze()
+}
+
 fn encode_span(s: trace.Span) -> Bytes {
-  let root = s.name == "request"
+  let root = s.name == "request" && s.parent_id.is_empty()
   var sp = BytesBuilder.new()
-  sp = bytes_field(sp, 1, trace_id(s.id))
-  sp = bytes_field(sp, 2, if root { root_id(s.id) } else { span_id("${s.id}/${s.name}/${s.start_ms}/${s.micros}") })
-  if !root {
-    sp = bytes_field(sp, 4, root_id(s.id))
+  sp = bytes_field(sp, 1, if s.trace_id.is_empty() { trace_id(s.id) } else { unhex_text(s.trace_id) ?? trace_id(s.id) })
+  let own = if s.span_id.is_empty() { None } else { unhex_text(s.span_id) }
+  sp = bytes_field(sp, 2, own ?? (if root { root_id(s.id) } else { span_id("${s.id}/${s.name}/${s.start_ms}/${s.micros}") }))
+  if s.parent_id == "root" {
+  } else if s.parent_id.is_empty() {
+    if !root {
+      sp = bytes_field(sp, 4, root_id(s.id))
+    }
+  } else {
+    sp = bytes_field(sp, 4, unhex_text(s.parent_id) ?? root_id(s.id))
   }
   sp = str_field(sp, 5, s.name)
-  sp = varint_field(sp, 6, if root { 2 } else { 1 })
-  let start = s.start_ms * 1000000
+  sp = varint_field(sp, 6, match s.kind {
+    Some(k) => kind_num(k)
+    None => if root { 2 } else { 1 }
+  })
+  let start = if s.start_ns > 0 { s.start_ns } else { s.start_ms * 1000000 }
+  let end = if s.end_ns > 0 { s.end_ns } else { start + s.micros * 1000 }
   sp = fixed64_field(sp, 7, start)
-  sp = fixed64_field(sp, 8, start + s.micros * 1000)
-  if root && s.status > 0 {
+  sp = fixed64_field(sp, 8, end)
+  let http_status = s.status > 0 && s.name == "request" && s.parent_id.is_empty()
+  if http_status {
     sp = msg_field(sp, 9, kv_int("http.response.status_code", s.status))
-    var st = BytesBuilder.new()
-    st = varint_field(st, 3, if s.status >= 500 { 2 } else { 1 })
+  }
+  for a in s.attributes {
+    sp = msg_field(sp, 9, kv_any(a))
+  }
+  for e in s.events {
+    sp = msg_field(sp, 11, encode_event(e))
+  }
+  var st = BytesBuilder.new()
+  var has_status = false
+  match s.status_code {
+    Some(c) => {
+      has_status = true
+      if c == trace.StatusCode.Error {
+        st = str_field(st, 2, s.status_message)
+      }
+      st = varint_field(st, 3, status_num(c))
+    }
+    None => {
+      if http_status {
+        has_status = true
+        st = varint_field(st, 3, if s.status >= 500 { 2 } else { 1 })
+      }
+    }
+  }
+  if has_status {
     sp = msg_field(sp, 15, st.freeze())
   }
   sp.freeze()
@@ -142,17 +248,47 @@ fn encode_traces(res: otlp.Resource, spans: List[trace.Span]) -> Bytes {
   for (k, v) in res.attributes {
     r = msg_field(r, 1, kv_str(k, v))
   }
-  var sc = BytesBuilder.new()
-  sc = str_field(sc, 1, res.scope)
-  sc = str_field(sc, 2, res.version)
-  var ss = BytesBuilder.new()
-  ss = msg_field(ss, 1, sc.freeze())
+  // ScopeSpans groups, in order of first appearance; a span with no scope joins the Resource's.
+  var names: List[Str] = []
+  var versions: List[Str] = []
+  var schemas: List[Str] = []
+  var bodies: List[BytesBuilder] = []
+  if spans.is_empty() {
+    names.push(res.scope)
+    versions.push(res.version)
+    schemas.push("")
+    bodies.push(BytesBuilder.new())
+  }
   for s in spans {
-    ss = msg_field(ss, 2, encode_span(s))
+    let n = if s.scope.is_empty() { res.scope } else { s.scope }
+    let v = if s.scope.is_empty() { res.version } else { s.scope_version }
+    var at = -1
+    for (i, _) in names.indexed() {
+      if at < 0 && names[i] == n && versions[i] == v && schemas[i] == s.schema_url {
+        at = i
+      }
+    }
+    if at < 0 {
+      names.push(n)
+      versions.push(v)
+      schemas.push(s.schema_url)
+      bodies.push(BytesBuilder.new())
+      at = names.len() - 1
+    }
+    bodies[at] = msg_field(bodies[at], 2, encode_span(s))
   }
   var rs = BytesBuilder.new()
   rs = msg_field(rs, 1, r.freeze())
-  rs = msg_field(rs, 2, ss.freeze())
+  for (i, _) in names.indexed() {
+    var sc = BytesBuilder.new()
+    sc = str_field(sc, 1, names[i])
+    sc = str_field(sc, 2, versions[i])
+    var ss = BytesBuilder.new()
+    ss = msg_field(ss, 1, sc.freeze())
+    ss.write(bodies[i].freeze())
+    ss = str_field(ss, 3, schemas[i])
+    rs = msg_field(rs, 2, ss.freeze())
+  }
   var req = BytesBuilder.new()
   req = msg_field(req, 1, rs.freeze())
   req.freeze()

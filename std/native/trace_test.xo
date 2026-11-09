@@ -1,0 +1,53 @@
+use std/json
+use std/trace
+
+test "a Span that sets none of the OpenTelemetry fields reads and writes as before" {
+  let s = trace.Span{id: "r1", name: "request", start_ms: 5, micros: 7, status: 200}
+  let text = json.encode_str(s)
+  expect(text) == "{\"id\":\"r1\",\"name\":\"request\",\"start_ms\":5,\"micros\":7,\"status\":200}"
+  match json.decode_go_str[trace.Span](text) {
+    Ok(got) => expect(got) == s
+    Err(e) => fault("decode: ${e.display()}")
+  }
+}
+
+test "a Span with attributes, events and a status round-trips through JSON" {
+  let s = trace.Span{
+    id: "t", name: "n", start_ms: 1, micros: 2, status: 0, trace_id: "00112233445566778899aabbccddeeff",
+    span_id: "0011223344556677", parent_id: "root", kind: Some(trace.SpanKind.Client),
+    attributes: [trace.Attr{key: "a", value: trace.AttrValue.Int(-3)}, trace.Attr{key: "b", value: trace.AttrValue.Bool(false)}],
+    events: [trace.Event{name: "e", time_ns: 9, attributes: [trace.Attr{key: "f", value: trace.AttrValue.Float(1.5)}]}],
+    status_code: Some(trace.StatusCode.Error), status_message: "boom", start_ns: 10, end_ns: 20,
+    scope: "sc", scope_version: "1", schema_url: "u",
+  }
+  expect(json.decode_str[trace.Span](json.encode_str(s)).ok() ?? fault("decode")) == s
+}
+
+test "a recorder makes ids, nests a child, keeps the last attribute value and records once" uses (clock, rand) {
+  let ring = trace.ring(10)
+  let rec = trace.recorder(ring, os.clock, os.rand)
+  let root = rec.start("op", None, trace.SpanKind.Server, [trace.Attr{key: "k", value: trace.AttrValue.Str("1")}], "scope", "v1", "schema")
+  let (tid, sid) = root.ids()
+  expect(tid.len()) == 32
+  expect(sid.len()) == 16
+  let kid = rec.start("child", Some((tid, sid)), trace.SpanKind.Internal)
+  expect(kid.ids().0) == tid
+  expect(kid.ids().1 != sid) == true
+  root.set_attributes([trace.Attr{key: "k", value: trace.AttrValue.Str("2")}, trace.Attr{key: "z", value: trace.AttrValue.Bool(true)}])
+  root.add_event("ev", [trace.Attr{key: "x", value: trace.AttrValue.Int(1)}])
+  root.set_status(trace.StatusCode.Ok, "dropped")
+  kid.end()
+  root.end()
+  root.end()
+  let got = ring.spans(Duration.from_nanos(0), 0)
+  expect(got.len()) == 2
+  let r = got[0]
+  expect(r.name) == "op"
+  expect(r.parent_id) == "root"
+  expect(r.attributes) == [trace.Attr{key: "k", value: trace.AttrValue.Str("2")}, trace.Attr{key: "z", value: trace.AttrValue.Bool(true)}]
+  expect(r.events.len()) == 1
+  expect(r.status_code) == Some(trace.StatusCode.Ok)
+  expect(r.status_message) == ""
+  expect(r.end_ns >= r.start_ns) == true
+  expect(got[1].parent_id) == sid
+}

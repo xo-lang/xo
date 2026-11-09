@@ -88,3 +88,124 @@ fn ring_handler(r: trace.Ring, auth: fn(http.Request) -> Bool) -> fn(http.Reques
     http.json(200, ring_spans(r, Duration.from_millis(slow), n))
   }
 }
+
+// ---------------------------------------------------------------------------
+// Recorder and Active (decision 0580)
+
+/// Unix nanoseconds of an instant.
+fn unix_nanos(t: Time) -> Int {
+  let s = t.unix()
+  s * 1000000000 + (t - Time.from_unix(s)).nanos()
+}
+
+fn recorder(ring: trace.Ring, clock: Clock, rand: Rand) -> trace.Recorder {
+  trace.Recorder{ring: ring, clock: clock, rand: rand}
+}
+
+/// n random bytes as hex, never all zero.
+fn rand_hex(rand: Rand, n: Int) -> Str {
+  var b = rand.bytes(n)
+  var zero = true
+  for c in b {
+    if c != 0 {
+      zero = false
+    }
+  }
+  if zero {
+    b = rand.bytes(n)
+    if b[0] == 0 && b[n - 1] == 0 {
+      return "0".repeat(2 * n - 1) + "1"
+    }
+  }
+  b.to_hex()
+}
+
+fn recorder_start(r: trace.Recorder, name: Str, parent: (Str, Str)?, kind: trace.SpanKind, attributes: List[trace.Attr], scope: Str, scope_version: Str, schema_url: Str) -> trace.Active uses (clock, rand) {
+  let t = r.clock.now()
+  let ns = unix_nanos(t)
+  var tid = ""
+  var pid = "root"
+  match parent {
+    Some((pt, ps)) => {
+      tid = pt
+      pid = ps
+    }
+    None => {
+      tid = rand_hex(r.rand, 16)
+    }
+  }
+  let s = trace.Span{
+    id: tid, name: name, start_ms: ns / 1000000, micros: 0, status: 0,
+    trace_id: tid, span_id: rand_hex(r.rand, 8), parent_id: pid, kind: Some(kind),
+    attributes: attributes, start_ns: ns, end_ns: ns, scope: scope, scope_version: scope_version, schema_url: schema_url,
+  }
+  trace.Active{ring: r.ring, clock: r.clock, span: Mutex[trace.Span].new(s), done: Mutex[Bool].new(false)}
+}
+
+fn active_ids(a: trace.Active) -> (Str, Str) {
+  a.span.with_read(fn(s: trace.Span) -> (Str, Str) { (s.trace_id, s.span_id) })
+}
+
+/// attrs merged into base: a key already there takes the new value in place.
+fn merge_attrs(base: List[trace.Attr], attrs: List[trace.Attr]) -> List[trace.Attr] {
+  var out = base
+  for a in attrs {
+    var at = -1
+    for (i, o) in out.indexed() {
+      if o.key == a.key {
+        at = i
+      }
+    }
+    if at >= 0 {
+      out[at] = a
+    } else {
+      out.push(a)
+    }
+  }
+  out
+}
+
+fn active_set_attributes(a: trace.Active, attrs: List[trace.Attr]) {
+  a.span.with(fn(var s: trace.Span) {
+    s = s with {attributes: merge_attrs(s.attributes, attrs)}
+  })
+}
+
+fn active_add_event(a: trace.Active, name: Str, attributes: List[trace.Attr]) uses clock {
+  let ns = unix_nanos(a.clock.now())
+  a.span.with(fn(var s: trace.Span) {
+    var ev = s.events
+    ev.push(trace.Event{name: name, time_ns: ns, attributes: attributes})
+    s = s with {events: ev}
+  })
+}
+
+fn active_set_status(a: trace.Active, code: trace.StatusCode, message: Str) {
+  a.span.with(fn(var s: trace.Span) {
+    let keep = match code {
+      trace.StatusCode.Error => message
+      _ => ""
+    }
+    s = s with {status_code: Some(code), status_message: keep}
+  })
+}
+
+fn active_end(a: trace.Active) uses clock {
+  let first = a.done.with(fn(var d: Bool) -> Bool {
+    if d {
+      return false
+    }
+    d = true
+    true
+  })
+  if !first {
+    return
+  }
+  let ns = unix_nanos(a.clock.now())
+  let s = a.span.with(fn(var s: trace.Span) -> trace.Span {
+    let end = if ns < s.start_ns { s.start_ns } else { ns }
+    s = s with {end_ns: end, micros: (end - s.start_ns) / 1000}
+    s
+  })
+  push(a.ring, s)
+}

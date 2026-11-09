@@ -9,12 +9,60 @@ use std/http
 /// (`request` for the whole request, a program's own for the rest), when it
 /// started (Unix milliseconds), how long it took (microseconds), and the
 /// response status for `request` spans (0 otherwise).
+///
+/// The fields after `status` are OpenTelemetry's (decision 0580); all default to "as before" and
+/// are left out of the JSON when empty, so a span that sets none of them reads and writes as it
+/// did. `trace_id` (32 hex digits), `span_id` and `parent_id` (16; "root" makes a root span) name
+/// the span; "" derives them as std/otlp always has. `kind` None keeps the request/internal rule,
+/// `status_code` None the HTTP status rule. `start_ns` and `end_ns` (Unix nanoseconds, when
+/// above 0) replace `start_ms` and `micros` in an export. `scope`, `scope_version` and
+/// `schema_url` name the instrumentation scope ("" is the exporter's Resource scope).
 struct Span {
   id: Str
   name: Str
   start_ms: Int
   micros: Int
   status: Int
+  trace_id as ",omitempty": Str = ""
+  span_id as ",omitempty": Str = ""
+  parent_id as ",omitempty": Str = ""
+  kind as ",omitempty": SpanKind? = None
+  attributes as ",omitempty": List[Attr] = []
+  events as ",omitempty": List[Event] = []
+  status_code as ",omitempty": StatusCode? = None
+  status_message as ",omitempty": Str = ""
+  start_ns as ",omitempty": Int = 0
+  end_ns as ",omitempty": Int = 0
+  scope as ",omitempty": Str = ""
+  scope_version as ",omitempty": Str = ""
+  schema_url as ",omitempty": Str = ""
+} derive Json
+
+/// OTLP's SpanKind (the declaration order is OTLP's numbers).
+enum SpanKind { Unspecified, Internal, Server, Client, Producer, Consumer } derive Json
+
+/// OTLP's Status.code.
+enum StatusCode { Unset, Ok, Error } derive Json
+
+/// An attribute value: OTLP's scalar AnyValue kinds.
+enum AttrValue {
+  Str(v: Str)
+  Int(v: Int)
+  Float(v: Float)
+  Bool(v: Bool)
+} derive Json
+
+/// One attribute: a key and its value.
+struct Attr {
+  key: Str
+  value: AttrValue
+} derive Json
+
+/// A timestamped event inside a span (`time_ns` is Unix nanoseconds).
+struct Event {
+  name: Str
+  time_ns: Int
+  attributes as ",omitempty": List[Attr] = []
 } derive Json
 
 /// A bounded ring of the last `cap` spans. Cloning shares it. Its fields
@@ -44,6 +92,45 @@ fn (r: Ring) record(id: Str, name: Str, start: Time, d: Duration)
 /// The spans, newest first, of at most `n` (all when n <= 0) whose
 /// duration is at least `min`.
 fn (r: Ring) spans(min: Duration, n: Int) -> List[Span]
+
+/// Starts and ends spans into a Ring with ids from `rand` and times from `clock`. Cloning shares it.
+struct Recorder {
+  ring: Ring
+  clock: Clock
+  rand: Rand
+}
+
+/// A recorder writing into `ring`.
+fn recorder(ring: Ring, clock: Clock, rand: Rand) -> Recorder
+
+/// A span in progress. Its ids are known at start, so a caller can hand them to children. Cloning
+/// shares it. Its fields are internal.
+struct Active {
+  ring: Ring
+  clock: Clock
+  span: Mutex[Span]
+  done: Mutex[Bool]
+}
+
+/// Starts a span. `parent` is the (trace id, span id) of its parent; None starts a new trace (16
+/// random bytes; span ids are 8; never all zero). The span's id (the request id of the Ring) is
+/// its trace id.
+fn (r: Recorder) start(name: Str, parent: (Str, Str)? = None, kind: SpanKind = SpanKind.Internal, attributes: List[Attr] = [], scope: Str = "", scope_version: Str = "", schema_url: Str = "") -> Active uses (clock, rand)
+
+/// The (trace id, span id) of the span, as hex.
+fn (a: Active) ids() -> (Str, Str)
+
+/// Adds attributes; a key already set takes the new value (OpenTelemetry's last value wins).
+fn (a: Active) set_attributes(attrs: List[Attr])
+
+/// Adds an event stamped now.
+fn (a: Active) add_event(name: Str, attributes: List[Attr] = []) uses clock
+
+/// Sets the status. A message is kept for Error only, as OpenTelemetry Go does.
+fn (a: Active) set_status(code: StatusCode, message: Str = "")
+
+/// Ends the span now and records it into the Ring; ending again does nothing.
+fn (a: Active) end() uses clock
 
 /// A handler answering the spans as JSON (`?slow=MILLIS&n=N`; defaults 0
 /// and 100): `router.handle("GET /debug/requests", ring.handler(auth))`;

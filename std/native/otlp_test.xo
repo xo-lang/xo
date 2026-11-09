@@ -28,3 +28,25 @@ test "retry-after: seconds, an HTTP date, and values that are ignored" {
   expect(retry_after(with("Tue, 14 Nov 2023 22:13:00 GMT"), now)) == 0
   expect(retry_after(http.Response{status: 503, headers: {}, body: b""}, now)) == 0
 }
+
+test "OpenTelemetry fields: ids, kind, attributes, events, status and scope groups" {
+  let base = trace.Span{id: "x", name: "op", start_ms: 0, micros: 0, status: 0, trace_id: "000102030405060708090a0b0c0d0e0f", span_id: "0001020304050607", parent_id: "root", start_ns: 1000, end_ns: 3000}
+  let hex = fn(spans: List[trace.Span]) -> Str { otlp.encode_traces(otlp.Resource{service: "s"}, spans).to_hex() }
+  let plain = hex([base])
+  // trace id, span id, no parent (root), name, then kind internal by the default rule
+  expect(plain.contains("0a10000102030405060708090a0b0c0d0e0f12080001020304050607" + "2a026f70" + "3001")) == true
+  expect(hex([base with {kind: Some(trace.SpanKind.Client)}]).contains("3003")) == true
+  // a false attribute keeps its value: KeyValue{b, AnyValue{bool_value: false}}
+  let attr = hex([base with {attributes: [trace.Attr{key: "b", value: trace.AttrValue.Bool(false)}]}])
+  expect(attr.contains("4a070a016212021000")) == true
+  // the status message goes with Error only
+  expect(hex([base with {status_code: Some(trace.StatusCode.Error), status_message: "boom"}]).contains("7a081204626f6f6d1802")) == true
+  expect(hex([base with {status_code: Some(trace.StatusCode.Ok), status_message: "boom"}]).contains("7a021801")) == true
+  // an event: Event{time 1, name "e"} is field 11
+  expect(hex([base with {events: [trace.Event{name: "e", time_ns: 5}]}]).contains("5a0c090500000000000000120165")) == true
+  // spans of two scopes go to two ScopeSpans; the schema URL is field 3
+  let two = hex([base with {scope: "a", scope_version: "1", schema_url: "u"}, base])
+  expect(two.contains("1a0175")) == true
+  expect(two.contains("0a0161120131")) == true
+  expect(two.contains("0a0b" + "7374642f7472616365") == false) == true
+}
