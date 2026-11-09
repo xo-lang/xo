@@ -264,7 +264,7 @@ fn (g: G) end_data(var out: List[Str]) {
     }
   }
   if (g.os is "linux" | "freebsd") && g.m.nolibc_start {
-    out.push(if g.x86 { ssa.entry_stub_amd64() } else { ssa.entry_stub_arm64() })
+    out.push(if g.x86 { ssa.entry_stub_amd64(g.os == "freebsd") } else { ssa.entry_stub_arm64(g.os == "freebsd") })
   }
   if (g.os is "linux" | "freebsd") {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")

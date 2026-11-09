@@ -369,7 +369,13 @@ fn atoll(a: Int) -> Int {
 /// and SIGTERM, and a stack overflow ends the program with "fatal error:
 /// stack overflow" and status 2 (decision 0197, stage 5).
 fn signals() {
-  if !concflag.built() {
+  // FreeBSD has no worker threads or kqueue poller yet (decision 0573
+  // stage 2): it takes the no-poller path until they land
+  let freebsd = match target.os {
+    TargetOs.FreeBSD => true
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => false
+  }
+  if !concflag.built() || freebsd {
     // a program that cannot use concurrency (concflag.xo) has no poller to
     // count a signal: SIGINT and SIGTERM end it as the system does, SIGQUIT
     // is not the task tree's dump (`xo dump` needs the poller), and a write

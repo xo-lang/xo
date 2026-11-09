@@ -473,7 +473,7 @@ pub fn (var g: Gen) generate() -> Str {
     // the process entry (ssa.entry_stub_arm64), as module asm: no
     // function, so no unwind information (the split build puts it in
     // its first module only, split.xo parse_ir)
-    let stub = if g.arch() == "amd64" { ssa.entry_stub_amd64() } else if g.arch() == "riscv64" { ssa.entry_stub_riscv64() } else { ssa.entry_stub_arm64() }
+    let stub = if g.arch() == "amd64" { ssa.entry_stub_amd64(g.os() == "freebsd") } else if g.arch() == "riscv64" { ssa.entry_stub_riscv64() } else { ssa.entry_stub_arm64(g.os() == "freebsd") }
     for l in stub.split("\n") {
       if !l.is_empty() {
         out.push("module asm \"${l.replace("\t", "\\09")}\"\n")

@@ -180,3 +180,17 @@ not.
   _umtx_op (the wrappers exist, nothing calls them), the kqueue poller,
   signals and faults, and statfs.
 
+- 2026-11-09, the first VM runs (offload.md "FreeBSD VMs under QEMU"):
+  a hello on freebsd/amd64 reached the poller's Linux pipe2 (SIGSYS),
+  then, with the poller skipped, Linux's mmap (FreeBSD's link) from
+  libcthr's thread_create and a fault 0x1050 below the TLS block. The
+  cause of the fault: `_start` read the initial stack from rsp (sp),
+  but FreeBSD passes it in rdi (x0) and starts rsp 8 bytes below it
+  when it is 16 byte aligned (sp rounded down on arm64; exec_setregs),
+  so argc was off by a word, the auxiliary vector was missed, and the
+  TLS block was mapped for no PT_TLS (96 bytes, not 224). Fixed in
+  ssa.entry_stub_amd64 and entry_stub_arm64; until stage 2's threads
+  and kqueue poller land, entry.xo's signals() takes the no-poller path
+  on FreeBSD and thread_create fails (main runs on the first thread),
+  and unwind.xo's scratch maps with FreeBSD's mmap. VM confirmation of
+  this step waits for the amd64 host.

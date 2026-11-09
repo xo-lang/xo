@@ -159,6 +159,11 @@ pub fn tls_init(area: Int) -> Int {
 /// pthread_create of the C function f with arg on a stack of at least
 /// stack bytes: the thread's handle, or the negative errno.
 pub fn thread_create(stack: Int, f: Int, arg: Int) -> Int {
+  // FreeBSD's threads (thr_new) are decision 0573's stage 2: none yet,
+  // so the callers run the work on the calling thread
+  if target.os == TargetOs.FreeBSD {
+    return -linux.EAGAIN
+  }
   var page = libcmem.auxval(linux.AT_PAGESZ)
   if page <= 0 {
     page = 4096

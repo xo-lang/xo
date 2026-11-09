@@ -34,6 +34,7 @@
 // Nothing here allocates, faults, or keeps a counted value: the scratch
 // record is one mapping per thread, kept in thread local word UNW_TLS;
 // arithmetic that could overflow on bad tables wraps (rt.int_wrap).
+use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/sanhook
 use native/rt
@@ -648,13 +649,14 @@ fn scratch() -> Int {
     return s
   }
   // PROT_READ | PROT_WRITE; MAP_PRIVATE | MAP_ANONYMOUS (0x20 on
-  // Linux, 0x1000 on macOS)
+  // Linux, 0x1000 on macOS and FreeBSD)
   let m = match target.os {
     TargetOs.Darwin => sys_darwin.mmap(0, SCRATCH, 3, 2 | 4096, -1, 0)
     // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE; 0 on failure (decision
     // 0228's message buffer is here on every OS)
     TargetOs.Windows => sys_windows.VirtualAlloc(0, SCRATCH, 12288, 4)
-    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => linux.mmap(0, SCRATCH, 3, 2 | 32, -1, 0)
+    TargetOs.FreeBSD => freebsd.mmap(0, SCRATCH, 3, freebsd.MAP_PRIVATE | freebsd.MAP_ANON, -1, 0)
+    TargetOs.Linux | TargetOs.Wasi => linux.mmap(0, SCRATCH, 3, 2 | 32, -1, 0)
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
