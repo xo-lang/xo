@@ -962,7 +962,8 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     b.retv(if hres { b.c_hold(put, v) } else { v })
     b.s.cur = no
     let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
-    let msg = b.append_display(b.const_str(""), e, et)
+    // a Str error is its own text; others build their Display form
+    let msg = if b.vty(e) == b.str_t() { e } else { b.append_display(b.const_str(""), e, et) }
     let _e = b.call(c_error, b.unit_t(), "", [errp, msg])
     b.retv(b.zero(rs[0], []))
   }

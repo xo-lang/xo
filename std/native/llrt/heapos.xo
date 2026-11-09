@@ -1422,8 +1422,9 @@ const H_SIZE = H_CERR + 8
 /// A C library's (decision 0574): 1 while the record's thread has exited,
 /// so a new thread takes it (thread_heap; orphan); the pthread key of the
 /// thread exit hook plus 1 (0 none), which each record copies from the
-/// list's head; the thread's last error text (c_error: a C malloc'd,
-/// zero terminated copy, 0 none).
+/// list's head; the thread's last error text (c_error: a C malloc'd
+/// block, its capacity in the first word and the zero terminated text
+/// after it, kept for the next error; 0 none).
 const H_ORPHAN = 2152 + 32 * 256 + 24 + 8 * 73 + 24 + 16 + 24 + 4 * 8 * 85
 pub const H_TKEY = H_ORPHAN + 8
 const H_CERR = H_TKEY + 8
@@ -1668,15 +1669,21 @@ pub fn orphan(h: Int) {
 /// int32_t *, 0 none).
 pub fn c_error(errp: Int, msg: Str) {
   let h = thread_heap()
-  let old = rt.mem_load(h, H_CERR, 8)
-  if old != 0 {
-    sys_c.weak_free(old)
+  var p = rt.mem_load(h, H_CERR, 8)
+  if p == 0 || rt.mem_load(p, 0, 8) < msg.len() + 1 {
+    if p != 0 {
+      sys_c.weak_free(p)
+    }
+    let cap = if msg.len() < 120 { 120 } else { msg.len() + 1 }
+    p = sys_c.weak_malloc(cap + 8)
+    if p != 0 {
+      rt.mem_store(p, 0, cap, 8)
+    }
+    rt.mem_store(h, H_CERR, p, 8)
   }
-  let p = sys_c.weak_malloc(msg.len() + 1)
   if p != 0 {
-    let _n = raw.put_cstr(p, msg)
+    let _n = raw.put_cstr(p + 8, msg)
   }
-  rt.mem_store(h, H_CERR, p, 8)
   if errp != 0 {
     rt.mem_store(errp, 0, 1, 4)
   }
@@ -1692,7 +1699,8 @@ pub fn c_ok(errp: Int) {
 /// The calling thread's last error text (c_error), or 0.
 pub fn c_last_error() -> Int {
   let h = rt.tlocal_get(TLS_HEAP)
-  if h == 0 { 0 } else { rt.mem_load(h, H_CERR, 8) }
+  let p = if h == 0 { 0 } else { rt.mem_load(h, H_CERR, 8) }
+  if p == 0 { 0 } else { p + 8 }
 }
 
 /// Sets the size classes' limit to m (XO_HEAP_MID_MAX, at start: the

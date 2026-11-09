@@ -389,6 +389,30 @@ accepted; 2026-11-08):
   built whole, and the front end cache's key has the library mode
   (gotchas/clib-sepcomp-variant-link.md).
 
+Stage 2 call costs (2026-11-09; a C caller at -O2 against the same
+functions in a C shared library; 20M calls a row, 2M for the error, make
+and List rows; ns a call; host 1 = the linux/arm64 timing host, median
+of 5 runs; Mac Studio = the M-series Mac Studio, 3 runs, under load):
+
+| row | host 1 | host 1, C | Mac Studio | Mac Studio, C |
+|---|---|---|---|---|
+| `Int ! Str`, success | 2.26 | 2.24 | 2.24 | 2.26 |
+| `Int ! Str`, error | 5.4 (30.0 before) | 1.74 | 6.5 (31.8 before) | 1.52 |
+| error, then `xo_last_error()` | 6.7 (30.1 before) | 2.99 | 7.8 (32.2 before) | 2.43 |
+| a read through a handle | 18.7 | 0.89 | 10.5 | 0.56 |
+| make a struct handle, read it, release it | 107.2 | 12.0 | 69.3 | 27.3 |
+| make a List[Int] handle (10 items), sum it, release it | 129.1 | 15.9 | 92.5 | 32.7 |
+
+An error result now keeps the thread's error text buffer for the next
+error (its capacity in the block's first word) and passes a Str error
+as its own text, where it formatted the error into a new Str and
+allocated and freed the C copy on every error. A read through a handle
+still takes the table's lock and counts the value (four atomic
+operations, against C's one load); a lock free read with deferred frees
+is the next step. rt.Any keeping its type's tag as the generated
+constant instead of a heap copy (no allocation per Any, the tag compared
+by address first) made no difference on host 1 and was left out.
+
 ## Alternatives
 
 - **`export fn` / `export "c_name" fn`** (this ADR's first draft): reads
