@@ -1339,16 +1339,15 @@ fn read_fixed(b: Bytes, pos: Int, packed: Bytes, w: Int) -> Int {
   if pos + w > b.len() {
     return -1
   }
+  let want = b[pos..pos + w]
   var i = 0
-  while i * w < packed.len() {
-    var k = 0
-    while k < w && b[pos + k] == packed[i * w + k] {
-      k += 1
-    }
-    if k == w {
+  var at = 0
+  while at < packed.len() {
+    if packed[at] == want[0] && packed[at..at + w] == want {
       return i
     }
     i += 1
+    at += w
   }
   -1
 }
