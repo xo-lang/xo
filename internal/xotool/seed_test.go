@@ -578,6 +578,29 @@ func TestFetchSeedForAncestor(t *testing.T) {
 			t.Errorf("seedPlaced of a cli.xo change %q = %v, want %v", c.text, got, c.want)
 		}
 	}
+	// a release commit on a testdata or docs fix made off main (0.44.0 on
+	// 43f0e8e70, 2026-11-09) is placed, counting from the fix's parent; on
+	// a code fix it is not
+	for _, c := range []struct {
+		file string
+		want bool
+	}{{"cmd/xo/testdata/clihelp/build.txt", true}, {"x_test.go", true}, {"knowledgebase/a.md", true}, {"compiler/xo/main.xo", false}} {
+		git("checkout", "-q", "--detach", b)
+		os.MkdirAll(filepath.Join(root, filepath.Dir(c.file)), 0o755)
+		os.WriteFile(filepath.Join(root, c.file), []byte("fix\n"), 0o644)
+		git("add", c.file)
+		git("commit", "-q", "-m", "fix")
+		os.MkdirAll(filepath.Join(root, "std"), 0o755)
+		os.WriteFile(filepath.Join(root, "std", "VERSION"), []byte("0.13.0\n"), 0o644)
+		git("add", "std/VERSION")
+		git("commit", "-q", "-m", "Version 0.13.0")
+		r := git("rev-parse", "HEAD")
+		git("checkout", "-q", "main")
+		got, base := seedPlaced(root, r), seedBase(root, r)
+		if got != c.want || c.want && base != r+"^^" {
+			t.Errorf("release commit on a fix to %s: seedPlaced = %v, seedBase = %q; want %v, %q", c.file, got, base, c.want, r+"^^")
+		}
+	}
 	git("checkout", "-q", "main")
 	if got, err := FetchSeedFor(root, &log); err != nil || got != seedBin(vr) {
 		t.Errorf("release seed off main: FetchSeedFor = %q, %v; want %q\n%s", got, err, seedBin(vr), log.String())

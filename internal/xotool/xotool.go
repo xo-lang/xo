@@ -1054,14 +1054,11 @@ func commitsBehind(root, seed string) int {
 	if json.Unmarshal(bytes.TrimSpace(o), &v) != nil || v.Commit == "" {
 		return -1
 	}
-	base := v.Commit
-	if exec.Command("git", "-C", root, "merge-base", "--is-ancestor", v.Commit, head).Run() != nil {
-		// a release commit tagged off main counts from its parent
-		// (seedPlaced; gotchas/off-main-release-seed-skipped.md)
-		if !seedPlaced(root, v.Commit) {
-			return -1
-		}
-		base = v.Commit + "^"
+	// a release commit tagged off main counts from the ancestor it
+	// stands for (seedBase; gotchas/off-main-release-seed-skipped.md)
+	base := seedBase(root, v.Commit)
+	if base == "" {
+		return -1
 	}
 	out, err := exec.Command("git", "-C", root, "rev-list", "--count", base+".."+head).Output()
 	if err != nil {

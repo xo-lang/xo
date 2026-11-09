@@ -274,7 +274,13 @@ runs the same check on the draft notes before handing them over:
 (`--strict` fails on a suspect too). It also fails on a MISFILED entry: one in a released section (vPREV or older) that vPREV's tagged CHANGELOG does not have, so it was filed under a release it did not ship in and the notes would miss it (Xo Lang 2, 2026-11-05: five changes after 0.39.0 under v0.39.0, std/jpeg encode under v0.38.0; last verified 2026-11-05). Then it asks for the word `release`
 and runs `gh release create`. The order:
 
-1. a private commit bumps the version;
+1. a private commit bumps the version, on a commit of main: a fix the
+   candidate needs (a test, a golden, code) lands on main first and the
+   release commit's parent is that main commit, never a fix made only on
+   the release branch (lead, 2026-11-09: 0.44.0's release commit sat on
+   e0f436271, a testdata fix made off main, so xotool refused the 0.44.0
+   seed and a clean Mac fell back to 0.43.0, which cannot build main;
+   gotchas/off-main-release-seed-skipped.md);
 2. tag `vX.Y.Z`;
 3. `publish.sh prepare`;
 4. in `../xo-publish`, `scripts/release.sh`, then release-verify.sh per
@@ -4828,7 +4834,10 @@ exports a commit before it lacks,
 gotchas/xobuild-seed-newer-than-commit.md). A release seed tagged off main
 (a release commit, version strings and docs only, on a main commit;
 0.39.0, 0.40.0) counts as its parent's (seedPlaced, 2026-11-05,
-gotchas/off-main-release-seed-skipped.md). A seed that fails, or whose
+gotchas/off-main-release-seed-skipped.md), walking first parents over
+up to 20 commits off main that change only release files or tests,
+testdata and docs (seedBase, 2026-11-09: 0.44.0 on the testdata fix
+e0f436271). A seed that fails, or whose
 built xo does not run `xo version`, is reported and the next one tried, and the log names the path taken ("xotool: building
 xo ... with the prebuilt seed of s3://..."). When none builds, xobuild
 exits non-zero with every cause, the bucket path, and the opt in (owner,

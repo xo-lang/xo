@@ -280,36 +280,71 @@ var releaseFiles = map[string]bool{
 }
 
 // seedPlaced reports whether a seed cut at commit c can build root's
-// HEAD: c is an ancestor of HEAD, or c is a release commit whose parent
-// is: its change from its first parent is only releaseFiles, and in
-// compiler/ only the version constants (std/VERSION is the version too),
-// so no compiler or std code differs from the parent's. A release
-// tagged off main (0.39.0, 0.40.0: main moved on after the candidate) is
-// never an ancestor of main, so without the second rule main skipped
-// those seeds for 0.37.0's (2026-11-05).
+// HEAD: seedBase finds the ancestor of HEAD it stands for.
 func seedPlaced(root, c string) bool {
-	if isAncestor(root, c) {
-		return true
+	return seedBase(root, c) != ""
+}
+
+// seedBaseMax is how many commits off HEAD's history seedBase walks.
+const seedBaseMax = 20
+
+// seedBase is the ancestor of root's HEAD whose compiler and std a seed
+// cut at commit c builds as, or "": c itself when it is an ancestor, or
+// else the first ancestor reached by walking c's first parents over
+// commits off HEAD's history that change no compiler or std code. Such
+// a commit is a release commit (its change from its first parent is
+// only releaseFiles, and in compiler/ only the version constants;
+// std/VERSION is the version too) or touches only tests, testdata and
+// docs (testOnlyFile). A release tagged off main (0.39.0, 0.40.0: main
+// moved on after the candidate) is never an ancestor of main, so
+// without the walk main skipped those seeds for 0.37.0's (2026-11-05);
+// 0.44.0's release commit sat on a testdata fix made on the candidate
+// (43f0e8e70), so a release-commit rule alone refused it and a clean
+// machine fell back to 0.43.0, which cannot build main (2026-11-09).
+func seedBase(root, c string) string {
+	for i := 0; i <= seedBaseMax; i++ {
+		if isAncestor(root, c) {
+			return c
+		}
+		if i == seedBaseMax || !codeFree(root, c) {
+			return ""
+		}
+		c += "^"
 	}
-	if !isAncestor(root, c+"^") {
-		return false
-	}
+	return ""
+}
+
+// codeFree reports whether commit c changes no compiler or std code: a
+// release commit, or one touching only tests, testdata and docs.
+func codeFree(root, c string) bool {
 	out, err := exec.Command("git", "-C", root, "diff", "--name-only", c+"^", c).Output()
 	if err != nil {
 		return false
 	}
 	files := strings.Fields(string(out))
+	if len(files) == 0 {
+		return false
+	}
+	release, tests := true, true
 	for _, f := range files {
-		if !releaseFiles[f] {
-			return false
-		}
 		// in compiler/ only the version constants may change: every
 		// changed line is `pub const VERSION = "..."` or XO_VERSION
-		if strings.HasPrefix(f, "compiler/") && !versionOnly(root, c, f) {
-			return false
+		if !releaseFiles[f] || strings.HasPrefix(f, "compiler/") && !versionOnly(root, c, f) {
+			release = false
+		}
+		if !testOnlyFile(f) {
+			tests = false
 		}
 	}
-	return len(files) > 0
+	return release || tests
+}
+
+// testOnlyFile reports whether path f is a test, test data or a document,
+// which no build of xo reads.
+func testOnlyFile(f string) bool {
+	return strings.HasSuffix(f, "_test.go") || strings.HasSuffix(f, "_test.xo") ||
+		strings.HasPrefix(f, "testdata/") || strings.Contains(f, "/testdata/") ||
+		strings.HasPrefix(f, "knowledgebase/") || strings.HasSuffix(f, ".md")
 }
 
 // versionOnly reports whether every line commit c changes in file f is a
