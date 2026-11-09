@@ -3,7 +3,9 @@
 // seal then open of 64 bytes 200,000 times and of 1 MiB 40 times for each
 // cipher, an AES-256 key made 100,000 times, and HKDF-SHA-256 of 32 bytes
 // 200,000 times; `none` is the setup alone. Usage: `<program>
-// none|gcm_small|gcm_big|chacha_small|chacha_big|gcm_key|hkdf`. Prints
+// none|gcm_small|gcm_big|chacha_small|chacha_big|cbc_small|cbc_big|gcm_key|hkdf`
+// (cbc: AES-128-CBC with HMAC-SHA-256, RFC 7518 5.2.3, against Go's crypto/aes,
+// crypto/cipher CBC and crypto/hmac). Prints
 // `<workload> <checksum>`; the twin prints the same.
 use std/crypto
 
@@ -17,9 +19,11 @@ fn data(n: Int) -> Bytes {
   b.freeze()
 }
 
-fn nonce(i: Int) -> Bytes {
-  var b = BytesBuilder.with_capacity(12)
-  for k in 0..12 {
+fn nonce(i: Int) -> Bytes { nonce_n(12, i) }
+
+fn nonce_n(n: Int, i: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for k in 0..n {
     b.write_byte(UInt8((i >> (8 * (k % 8))) & 255))
   }
   b.freeze()
@@ -30,7 +34,7 @@ fn round(alg: crypto.Aead, msg: Bytes, times: Int) -> Int {
   let aad = b"header"
   var s = 0
   for i in 0..times {
-    let n = nonce(i)
+    let n = nonce_n(alg.nonce_size(), i)
     let sealed = k.seal(n, msg, aad)
     let back = k.open(n, sealed, aad).ok() ?? fault("open")
     s += Int(sealed[sealed.len() - 1]) + back.len()
@@ -51,6 +55,10 @@ fn main(os: Os) uses stdio, env {
     s = round(crypto.Aead.ChaCha20Poly1305, small, 200000)
   } else if w == "chacha_big" {
     s = round(crypto.Aead.ChaCha20Poly1305, big, 40)
+  } else if w == "cbc_small" {
+    s = round(crypto.Aead.Aes128CbcHmacSha256, small, 200000)
+  } else if w == "cbc_big" {
+    s = round(crypto.Aead.Aes128CbcHmacSha256, big, 40)
   } else if w == "gcm_key" {
     let key = data(32)
     for i in 0..100000 {

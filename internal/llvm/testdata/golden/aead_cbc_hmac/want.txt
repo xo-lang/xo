@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+sizes 16 32 160
+tag 652c3fa36b0a7c5b3219fab3a30bc1c4
+open true
+aad cipher: message authentication failed
+empty 32 0
+short cipher: message authentication failed
+key crypto: AES-128-CBC-HMAC-SHA-256 wants a 32 byte key, got 1
+--- stderr

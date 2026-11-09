@@ -1,0 +1,32 @@
+use std/crypto
+
+fn unhex(s: Str) -> Bytes { Bytes.from_hex(s).or_fault("hex") }
+
+fn main(os: Os) {
+  let a = crypto.Aead.Aes128CbcHmacSha256
+  let k = crypto.aead_key(a, unhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")).ok() ?? fault("key")
+  let iv = unhex("1af38c2dc2b96ffdd86694092341bc04")
+  let aad = unhex("546865207365636f6e64207072696e6369706c65206f662041756775737465204b6572636b686f666673")
+  let pt = unhex("41206369706865722073797374656d206d757374206e6f7420626520726571756972656420746f206265207365637265742c20616e64206974206d7573742062652061626c6520746f2066616c6c20696e746f207468652068616e6473206f662074686520656e656d7920776974686f757420696e636f6e76656e69656e6365")
+  let sealed = k.seal(iv, pt, aad)
+  os.stdio.println("sizes ${a.nonce_size()} ${a.overhead()} ${sealed.len()}")
+  os.stdio.println("tag ${sealed[sealed.len() - 16..sealed.len()].to_hex()}")
+  match k.open(iv, sealed, aad) {
+    Ok(got) => os.stdio.println("open ${got == pt}")
+    Err(e) => os.stdio.println("open err ${e.display()}")
+  }
+  match k.open(iv, sealed, b"x") {
+    Ok(_) => os.stdio.println("aad ok")
+    Err(e) => os.stdio.println("aad ${e.display()}")
+  }
+  let empty = k.seal(iv, b"", b"")
+  os.stdio.println("empty ${empty.len()} ${(k.open(iv, empty, b"").ok() ?? fault("empty")).len()}")
+  match k.open(iv, sealed[0..16], b"") {
+    Ok(_) => os.stdio.println("short ok")
+    Err(e) => os.stdio.println("short ${e.display()}")
+  }
+  match crypto.aead_key(a, unhex("00")) {
+    Ok(_) => os.stdio.println("key ok")
+    Err(e) => os.stdio.println("key ${e.display()}")
+  }
+}

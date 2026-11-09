@@ -3528,12 +3528,12 @@ let k = crypto.aead_key(crypto.Aead.AesGcm, key)?        // key from a KDF or a 
 let sealed = k.seal_random(rand, b"user=42", b"session")
 let plain = k.open_random(sealed, b"session")?           // Err if anything changed
 
-enum Aead { AesGcm, ChaCha20Poly1305 }
-fn (a: Aead) nonce_size() -> Int                         // 12
-fn (a: Aead) overhead() -> Int                           // 16: the tag
+enum Aead { AesGcm, ChaCha20Poly1305, Aes128CbcHmacSha256 }
+fn (a: Aead) nonce_size() -> Int                         // 12; 16 for Aes128CbcHmacSha256 (the IV)
+fn (a: Aead) overhead() -> Int                           // 16: the tag; at most 32 for Aes128CbcHmacSha256 (padding, then the tag)
 struct AeadKey {}                                        // Debug text `<aeadkey>`: never key material
 struct AeadErr { msg: Str }
-fn aead_key(alg: Aead, key: Bytes) -> AeadKey ! AeadErr  // AES: 16, 24, 32 bytes; ChaCha20-Poly1305: 32
+fn aead_key(alg: Aead, key: Bytes) -> AeadKey ! AeadErr  // AES: 16, 24, 32 bytes; ChaCha20-Poly1305: 32; Aes128CbcHmacSha256: 32 (MAC key, then AES key; RFC 7518 5.2.3, JWE A128CBC-HS256; seal gives ciphertext || tag; every open failure is the one error)
 fn (k: AeadKey) alg() -> Aead
 fn (k: AeadKey) seal_random(r: Rand, plaintext: Bytes, aad: Bytes = b"") -> Bytes uses rand
 fn (k: AeadKey) open_random(sealed: Bytes, aad: Bytes = b"") -> Bytes ! AeadErr

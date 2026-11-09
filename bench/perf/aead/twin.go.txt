@@ -4,7 +4,10 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hkdf"
+	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/binary"
 	"fmt"
 	"os"
 
@@ -21,8 +24,10 @@ func data(n int) []byte {
 	return b
 }
 
-func nonce(i int) []byte {
-	b := make([]byte, 12)
+func nonce(i int) []byte { return nonceN(12, i) }
+
+func nonceN(n, i int) []byte {
+	b := make([]byte, n)
 	for k := range b {
 		b[k] = byte((i >> (8 * (k % 8))) & 255)
 	}
@@ -41,11 +46,63 @@ func gcm(key []byte) cipher.AEAD {
 	return g
 }
 
+// cbcHmac is RFC 7518 5.2.3's A128CBC-HS256 as a cipher.AEAD (what
+// azidentity/cache's internal aescbc does).
+type cbcHmac struct {
+	mac []byte
+	blk cipher.Block
+}
+
+func newCbc(key []byte) *cbcHmac {
+	b, err := aes.NewCipher(key[16:])
+	if err != nil {
+		panic(err)
+	}
+	return &cbcHmac{mac: key[:16], blk: b}
+}
+
+func (c *cbcHmac) NonceSize() int { return 16 }
+func (c *cbcHmac) Overhead() int  { return 32 }
+
+func (c *cbcHmac) tag(iv, ct, aad []byte) []byte {
+	m := hmac.New(sha256.New, c.mac)
+	m.Write(aad)
+	m.Write(iv)
+	m.Write(ct)
+	var al [8]byte
+	binary.BigEndian.PutUint64(al[:], uint64(len(aad))*8)
+	m.Write(al[:])
+	return m.Sum(nil)[:16]
+}
+
+func (c *cbcHmac) Seal(dst, iv, pt, aad []byte) []byte {
+	pad := 16 - len(pt)%16
+	buf := make([]byte, len(pt)+pad)
+	copy(buf, pt)
+	for i := len(pt); i < len(buf); i++ {
+		buf[i] = byte(pad)
+	}
+	cipher.NewCBCEncrypter(c.blk, iv).CryptBlocks(buf, buf)
+	return append(append(dst, buf...), c.tag(iv, buf, aad)...)
+}
+
+func (c *cbcHmac) Open(dst, iv, sealed, aad []byte) ([]byte, error) {
+	n := len(sealed) - 16
+	ct := sealed[:n]
+	if subtle.ConstantTimeCompare(c.tag(iv, ct, aad), sealed[n:]) != 1 {
+		return nil, fmt.Errorf("auth")
+	}
+	pt := make([]byte, n)
+	cipher.NewCBCDecrypter(c.blk, iv).CryptBlocks(pt, ct)
+	pad := int(pt[n-1])
+	return append(dst, pt[:n-pad]...), nil
+}
+
 func round(a cipher.AEAD, msg []byte, times int) int {
 	aad := []byte("header")
 	s := 0
 	for i := 0; i < times; i++ {
-		n := nonce(i)
+		n := nonceN(a.NonceSize(), i)
 		sealed := a.Seal(nil, n, msg, aad)
 		back, err := a.Open(nil, n, sealed, aad)
 		if err != nil {
@@ -69,6 +126,10 @@ func main() {
 		s = round(gcm(data(32)), small, 200000)
 	case "gcm_big":
 		s = round(gcm(data(32)), big, 40)
+	case "cbc_small":
+		s = round(newCbc(data(32)), small, 200000)
+	case "cbc_big":
+		s = round(newCbc(data(32)), big, 40)
 	case "chacha_small", "chacha_big":
 		c, err := chacha20poly1305.New(data(32))
 		if err != nil {
