@@ -40,7 +40,8 @@ const W_ERR = 59
 
 /// The state record's words: whether the descriptor was opened (under
 /// the turn), the fake terminals' width of a test binary (set_tty), whether
-/// echo is off, and the terminal settings echo restores (a struct termios:
+/// echo or raw input changed the terminal (0 no, 1 echo off, 2 raw; decision
+/// 0581), and the settings they restore (a struct termios:
 /// 36 bytes on Linux, 72 on macOS; a console mode on Windows).
 const R_OPEN = 0
 const R_TTY = 8
@@ -623,13 +624,12 @@ pub fn echo(on: Bool) -> Bool {
   }
   let r = rec()
   if on {
-    if rt.mem_load(r, R_ECHO_OFF, 8) != 0 {
-      let _s = set_tio(r + R_TIO)
-      rt.mem_store(r, R_ECHO_OFF, 0, 8)
-    }
+    restore_tty()
     return false
   }
-  if !get_tio(r + R_TIO) {
+  // the settings to restore: the cooked ones, saved by the first of
+  // echo and raw to change them (R_ECHO_OFF: the mode, 0 cooked)
+  if rt.mem_load(r, R_ECHO_OFF, 8) == 0 && !get_tio(r + R_TIO) {
     return false
   }
   let t = obj_scratch()
@@ -647,6 +647,72 @@ pub fn echo(on: Bool) -> Bool {
   }
   rt.mem_store(r, R_ECHO_OFF, 1, 8)
   true
+}
+
+/// Sets standard input's terminal to raw input (on false: each byte as
+/// it is typed, no echo, no line editing, ctrl-c and ctrl-z as bytes,
+/// output processing kept), remembering the settings, or restores them
+/// (on true); decision 0581, golang.org/x/term MakeRaw's input flags.
+/// Setting it returns true when standard input is a terminal it changed.
+pub fn raw(on: Bool) -> Bool {
+  if twflags.fake(TW_REAL_STDIO) || sysio.layer() == 0 {
+    return false
+  }
+  let r = rec()
+  if on {
+    restore_tty()
+    return false
+  }
+  if rt.mem_load(r, R_ECHO_OFF, 8) == 0 && !get_tio(r + R_TIO) {
+    return false
+  }
+  let t = obj_scratch()
+  rt.mem_copy(t, r + R_TIO, R_TIO_SIZE)
+  match target.os {
+    TargetOs.Darwin => {
+      // tcflag_t is 64 bits: c_iflag at 0, c_lflag at 24, c_cc at 32
+      // (VMIN 16, VTIME 17). BRKINT 2, INPCK 16, ISTRIP 32, ICRNL 256,
+      // IXON 512; ECHO 8, ISIG 128, ICANON 256, IEXTEN 1024
+      rt.mem_store(t, 0, rt.mem_load(t, 0, 8) & -(2 + 16 + 32 + 256 + 512 + 1), 8)
+      rt.mem_store(t, 24, rt.mem_load(t, 24, 8) & -(8 + 128 + 256 + 1024 + 1), 8)
+      rt.mem_store(t, 32 + 16, 1, 1)
+      rt.mem_store(t, 32 + 17, 0, 1)
+    }
+    TargetOs.Linux => {
+      // the kernel's termios: 32 bit flags, c_iflag at 0, c_lflag at 12,
+      // c_cc at 17 (VTIME 5, VMIN 6). BRKINT 2, INPCK 16, ISTRIP 32,
+      // ICRNL 256, IXON 1024; ISIG 1, ICANON 2, ECHO 8, IEXTEN 32768
+      rt.mem_store(t, 0, rt.mem_load(t, 0, 4) & -(2 + 16 + 32 + 256 + 1024 + 1), 4)
+      rt.mem_store(t, 12, rt.mem_load(t, 12, 4) & -(1 + 2 + 8 + 32768 + 1), 4)
+      rt.mem_store(t, 17 + 6, 1, 1)
+      rt.mem_store(t, 17 + 5, 0, 1)
+    }
+    TargetOs.Windows => {
+      // the console's input mode: PROCESSED_INPUT 1, LINE_INPUT 2 and
+      // ECHO_INPUT 4 off, VIRTUAL_TERMINAL_INPUT 512 on (keys as VT
+      // sequences, as a Unix terminal sends them)
+      rt.mem_store(t, 0, (rt.mem_load(t, 0, 4) & -(1 + 2 + 4 + 1)) | 512, 4)
+    }
+    TargetOs.Wasi | TargetOs.FreeBSD => {}
+  }
+  if !set_tio(t) {
+    return false
+  }
+  rt.mem_store(r, R_ECHO_OFF, 2, 8)
+  true
+}
+
+/// Restores standard input's terminal settings when echo or raw changed
+/// them: process.exit, fault.exit and the crash handler call it (through
+/// rt.fn_addr), so no way out leaves the terminal raw. It allocates
+/// nothing: one tcsetattr, ioctl or SetConsoleMode from the saved record.
+pub fn restore_tty() {
+  let r = rt.slot_load[Int](rt.static_word(W_REC), 0, ACQUIRE)
+  if r == 0 || rt.mem_load(r, R_ECHO_OFF, 8) == 0 {
+    return
+  }
+  let _s = set_tio(r + R_TIO)
+  rt.mem_store(r, R_ECHO_OFF, 0, 8)
 }
 
 /// Reads standard input's terminal settings to a: whether it is a terminal.

@@ -32,6 +32,8 @@ use native/sys_windows
 /// os.proc.exit goes to twrun.xo exit instead (the prelude's llrt_exit).
 pub fn exit(code: Int) {
   stdio.flush()
+  // the terminal as the program found it (decision 0581: raw input)
+  let _tty = rt.call_c2(rt.fn_addr("tty_restore"), 0, 0)
   // the sampling profile (prof.xo, through cabi.xo: it imports this module)
   let _p = rt.call_c2(rt.fn_addr("prof_finish"), 0, 0)
   // the execution trace's file (trace.xo, through cabi.xo)

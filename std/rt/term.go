@@ -3,6 +3,7 @@ package rt
 import (
 	"os"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -24,6 +25,42 @@ func (realStdio) M_width(*Task) Option[int64] {
 		}
 	}
 	return None[int64]()
+}
+
+// rawRestore restores standard input's terminal after M_raw_input(true).
+var (
+	rawMu      sync.Mutex
+	rawRestore func()
+)
+
+// M_raw_input sets standard input's terminal to raw input (on true) or
+// restores it (on false), decision 0581: whether it changed a terminal.
+func (realStdio) M_raw_input(_ *Task, on bool) bool {
+	rawMu.Lock()
+	defer rawMu.Unlock()
+	if !on {
+		if rawRestore != nil {
+			rawRestore()
+			rawRestore = nil
+		}
+		return false
+	}
+	if rawRestore != nil {
+		return true
+	}
+	rawRestore = rawOn(os.Stdin)
+	return rawRestore != nil
+}
+
+// rawReset restores the terminal if raw input is on (fxFinish: every
+// exit, fault and interrupt).
+func rawReset() {
+	rawMu.Lock()
+	defer rawMu.Unlock()
+	if rawRestore != nil {
+		rawRestore()
+		rawRestore = nil
+	}
 }
 
 // M_read_secret writes prompt to standard error and reads a line with
@@ -76,6 +113,14 @@ func (s realStdio) M_read_all_bytes(tk *Task) Result[Bytes, IoErr] {
 
 // ---------------------------------------------------------------------------
 // A test's FakeStdio: not a terminal unless set_tty
+
+// M_raw_input: a test's FakeStdio has no terminal to set.
+func (f Testing_FakeStdio) M_raw_input(tk *Task, on bool) bool {
+	if f.s.real != nil {
+		return f.s.real.M_raw_input(tk, on)
+	}
+	return false
+}
 
 func (f Testing_FakeStdio) M_stdin_is_tty(tk *Task) bool {
 	if f.s.real != nil {

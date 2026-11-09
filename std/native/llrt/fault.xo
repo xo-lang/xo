@@ -247,6 +247,8 @@ pub fn loc(c: Int, lenp: Int) -> Int {
 /// LOC" and the detail line, if any, on standard error in one write.
 pub fn exit(c: Int) {
   stdio.flush()
+  // the terminal as the program found it (decision 0581: raw input)
+  let _tty = rt.call_c2(rt.fn_addr("tty_restore"), 0, 0)
   let m = rt.mem_load(c, C_FAULT_MSG, 8)
   let l = rt.mem_load(c, C_LOC, 8)
   let d = rt.mem_load(c, C_DETAIL, 8)

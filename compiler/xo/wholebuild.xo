@@ -66,6 +66,10 @@ fn (t: Tee) stdout_is_tty() -> Bool uses stdio { t.inner.stdout_is_tty() }
 fn (t: Tee) stderr_is_tty() -> Bool uses stdio { t.inner.stderr_is_tty() }
 fn (t: Tee) width() -> Int? uses stdio { t.inner.width() }
 fn (t: Tee) read_secret(prompt: Str) -> Str? ! IoErr uses stdio { t.inner.read_secret(prompt) }
+// no raw input through the capture (decision 0581); it does not call
+// t.inner.raw_input: seeds before 0581's know no Stdio.raw_input, and
+// they build this file (gotchas/seed-older-than-intrinsics.md)
+fn (t: Tee) raw_input(_on: Bool) -> Bool uses stdio { false }
 fn (t: Tee) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio { t.inner.read_bytes(max) }
 fn (t: Tee) read_all_bytes() -> Bytes ! IoErr uses stdio { t.inner.read_all_bytes() }
 

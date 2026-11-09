@@ -80,6 +80,7 @@ fn (s: PrefixStdio) stdout_is_tty() -> Bool uses stdio { s.inner.stdout_is_tty()
 fn (s: PrefixStdio) stderr_is_tty() -> Bool uses stdio { s.inner.stderr_is_tty() }
 fn (s: PrefixStdio) width() -> Int? uses stdio { s.inner.width() }
 fn (s: PrefixStdio) read_secret(prompt: Str) -> Str? ! IoErr uses stdio { s.inner.read_secret(prompt) }
+fn (s: PrefixStdio) raw_input(on: Bool) -> Bool uses stdio { s.inner.raw_input(on) }
 fn (s: PrefixStdio) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio { s.inner.read_bytes(max) }
 fn (s: PrefixStdio) read_all_bytes() -> Bytes ! IoErr uses stdio { s.inner.read_all_bytes() }
 

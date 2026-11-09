@@ -20,6 +20,7 @@ fn (p: Prefix) stdout_is_tty() -> Bool uses stdio { false }
 fn (p: Prefix) stderr_is_tty() -> Bool uses stdio { false }
 fn (p: Prefix) width() -> Int? uses stdio { None }
 fn (p: Prefix) read_secret(prompt: Str) -> Str? ! IoErr uses stdio { Ok(None) }
+fn (p: Prefix) raw_input(on: Bool) -> Bool uses stdio { false }
 fn (p: Prefix) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio { Ok(None) }
 fn (p: Prefix) read_all_bytes() -> Bytes ! IoErr uses stdio { Ok(b"") }
 

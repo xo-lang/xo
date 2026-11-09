@@ -4770,6 +4770,10 @@ fn env_cache_dir(e: Env) -> Str ! EnvErr uses env { env_user_dir(e, true) }
 
 fn stdio_stdin_is_tty(_s: Stdio) -> Bool { stdinrt.isatty(0) }
 
+/// Raw input on standard input's terminal (on true) or its settings back
+/// (decision 0581).
+fn stdio_raw_input(_s: Stdio, on: Bool) -> Bool { stdinrt.raw(!on) }
+
 fn stdio_stdout_is_tty(_s: Stdio) -> Bool { stdinrt.isatty(1) }
 
 fn stdio_stderr_is_tty(_s: Stdio) -> Bool { stdinrt.isatty(2) }

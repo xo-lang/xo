@@ -1236,6 +1236,12 @@ interface Stdio {
   /// Writes prompt to standard error and reads a line of standard input
   /// without echoing it (a password); None at the end of input.
   fn read_secret(self, prompt: Str) -> Str? ! IoErr uses stdio
+  /// Sets standard input's terminal to raw input (on true): each key as
+  /// it is typed, no echo, no line editing, ctrl-c and ctrl-z as bytes,
+  /// output unchanged; false restores the settings (decision 0581). True
+  /// when standard input is a terminal it set. The settings are restored
+  /// when the program exits, faults or crashes.
+  fn raw_input(self, on: Bool) -> Bool uses stdio
   /// At most max bytes of standard input, any bytes; None at the end.
   fn read_bytes(self, max: Int) -> Bytes? ! IoErr uses stdio
   /// The rest of standard input, any bytes.

@@ -46,3 +46,25 @@ func echoOff(f *os.File) func() {
 		syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlSetTermios, uintptr(unsafe.Pointer(&old)))
 	}
 }
+
+// rawOn sets f's terminal to raw input (decision 0581): no echo, no
+// line editing, no signals from keys, each byte as typed, output
+// processing kept; golang.org/x/term MakeRaw's input flags. It returns the
+// function that restores the settings, or nil when f is no terminal.
+func rawOn(f *os.File) func() {
+	t, ok := termios(f)
+	if !ok {
+		return nil
+	}
+	old := t
+	t.Iflag &^= syscall.BRKINT | syscall.INPCK | syscall.ISTRIP | syscall.ICRNL | syscall.IXON
+	t.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.ISIG | syscall.IEXTEN
+	t.Cc[syscall.VMIN] = 1
+	t.Cc[syscall.VTIME] = 0
+	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlSetTermios, uintptr(unsafe.Pointer(&t))); e != 0 {
+		return nil
+	}
+	return func() {
+		syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), ioctlSetTermios, uintptr(unsafe.Pointer(&old)))
+	}
+}

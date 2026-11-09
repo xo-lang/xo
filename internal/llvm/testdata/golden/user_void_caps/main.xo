@@ -21,6 +21,7 @@ fn (t: Tee) stdout_is_tty() -> Bool uses stdio { true }
 fn (t: Tee) stderr_is_tty() -> Bool uses stdio { false }
 fn (t: Tee) width() -> Int? uses stdio { Some(80) }
 fn (t: Tee) read_secret(prompt: Str) -> Str? ! IoErr uses stdio { Ok(Some("pw:${prompt}")) }
+fn (t: Tee) raw_input(on: Bool) -> Bool uses stdio { false }
 fn (t: Tee) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio { Ok(Some(Bytes.zeroed(max))) }
 fn (t: Tee) read_all_bytes() -> Bytes ! IoErr uses stdio { Ok(b"xyz") }
 

@@ -652,14 +652,22 @@ fn on_prof(sig: Int, info: Int, uc: Int) {
 
 /// The hardware fault handler that crash.xo installs (decision 0343;
 /// SA_SIGINFO: the signal, its siginfo, the faulting thread's ucontext).
-fn on_crash(sig: Int, info: Int, uc: Int) { crash.on_crash(sig, info, uc) }
+fn on_crash(sig: Int, info: Int, uc: Int) {
+  // a crash leaves the terminal as it found it (decision 0581)
+  stdin.restore_tty()
+  crash.on_crash(sig, info, uc)
+}
 
 /// The crash report's watchdog (SIGALRM, crash.xo on_alarm).
 fn on_crash_alarm(sig: Int) { crash.on_alarm(sig) }
 
 /// Windows' unhandled exception filter (crash.xo on_crash_win; the
 /// EXCEPTION_POINTERS, the filter's answer).
-fn on_crash_win(e: Int) -> Int { crash.on_crash_win(e) }
+fn on_crash_win(e: Int) -> Int {
+  // an unhandled exception leaves the console as it found it (decision 0581)
+  stdin.restore_tty()
+  crash.on_crash_win(e)
+}
 
 /// Windows' last vectored exception handler (crash.xo on_crash_veh).
 fn on_crash_veh(e: Int) -> Int { crash.on_crash_veh(e) }
@@ -682,6 +690,11 @@ fn prof_sampler(r: Int) -> Int {
   }
   0
 }
+
+/// Restores standard input's terminal settings if raw input or echo off
+/// changed them (decision 0581): process.xo exit and fault.xo exit, which
+/// do not import stdin.xo.
+fn tty_restore() { stdin.restore_tty() }
 
 /// Writes the sampling profile now (process.xo exit: os.proc.exit does
 /// not return to entry.xo main's end).

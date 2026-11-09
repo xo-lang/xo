@@ -150,6 +150,7 @@ fn (s: FakeStdio) stdout_is_tty() -> Bool uses stdio
 fn (s: FakeStdio) stderr_is_tty() -> Bool uses stdio
 fn (s: FakeStdio) width() -> Int? uses stdio
 fn (s: FakeStdio) read_secret(prompt: Str) -> Str? ! IoErr uses stdio
+fn (s: FakeStdio) raw_input(on: Bool) -> Bool uses stdio
 fn (s: FakeStdio) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio
 fn (s: FakeStdio) read_all_bytes() -> Bytes ! IoErr uses stdio
 fn (s: FakeStdio) set_input(text: Str)

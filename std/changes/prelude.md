@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-09: feature: Stdio.raw_input
+
+- Kind: feature
+- Commit: this push
+- Found by: the REPL's line editing (decision 0572 stage 2) needs keys as typed; decision 0581
+- Go reference: golang.org/x/term MakeRaw (its input flags; output processing kept)
+- Test: cmd/xo TestStdioRawInput (a key with no Enter under script(1), false on a pipe, a cooked terminal after a fault with raw input on; native and Go backends)
+- Timing: none (a terminal settings call)
+- Shipped in: not yet released
+
 ## 2026-11-08: perf: "${n}" of a 9 to 16 digit Int is two word pushes
 
 - Kind: perf

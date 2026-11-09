@@ -488,6 +488,9 @@ fn win_start(argc: Int, argv: Int, envp: Int) {
 /// collection constants and the zones are freed) and XO_HEAPSTATS' free
 /// lists and chunks, on standard error.
 pub fn finish() {
+  // main returned: the terminal as the program found it (decision 0581,
+  // raw input or echo off left on)
+  let _tty = rt.call_c2(rt.fn_addr("tty_restore"), 0, 0)
   // XO_FREE_CHECK (decision 0484): the blocks still held are checked too
   heapos.free_check_end()
   if process.env_real_at("XO_LEAKCHECK") != 0 {

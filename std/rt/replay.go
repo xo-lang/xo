@@ -1228,6 +1228,9 @@ var fxFinishOnce sync.Once
 
 // fxFinish writes the trace of a recording or checks the end of a replay.
 func fxFinish(code int, c *crashInfo) {
+	// every way out of the program passes here: the terminal as the
+	// program found it (decision 0581)
+	rawReset()
 	fxFinishOnce.Do(func() {
 		switch fxMode {
 		case fxRecord:

@@ -1246,6 +1246,7 @@ fn (s: Stdio) lines() -> List[Str] ! IoErr   // reads all input
 fn (s: Stdio) stdin_is_tty() -> Bool         // also stdout_is_tty, stderr_is_tty
 fn (s: Stdio) width() -> Int?                // columns of the terminal; None without one
 fn (s: Stdio) read_secret(prompt: Str) -> Str? ! IoErr   // a line without echo (passwords)
+fn (s: Stdio) raw_input(on: Bool) -> Bool              // keys as typed (decision 0581)
 fn (s: Stdio) read_bytes(max: Int) -> Bytes? ! IoErr     // any bytes; None at end of input
 fn (s: Stdio) read_all_bytes() -> Bytes ! IoErr
 ```
@@ -1270,6 +1271,20 @@ Terminals (decision 0162), on every backend:
   `read_line`), restores it (also when the read is cancelled), and then
   writes the newline the user typed, which was not echoed. When standard
   input is not a terminal it reads a line without touching anything.
+- `raw_input(true)` sets standard input's terminal to raw input
+  (decision 0581): each byte arrives as it is typed (`read_bytes(1)`
+  returns a key with no Enter), nothing is echoed, the terminal does no
+  line editing, and ctrl-c and ctrl-z arrive as bytes 3 and 26 instead of
+  signals; output is unchanged (`println` still starts the next line at
+  its first column). `raw_input(false)` restores the settings. It returns
+  true when standard input is a terminal it set, false otherwise (a
+  pipe, a file, a test's `FakeStdio`, WASI, FreeBSD for now). The
+  settings are also restored when the program exits, returns from
+  `main`, faults or crashes, so no way out leaves the terminal raw (a
+  signal sent from outside, such as SIGKILL, is not covered). Arrow and
+  function keys arrive as the terminal's escape sequences (`ESC [ A` for
+  up); decoding them is the program's (Windows: the console's virtual
+  terminal input sends the same sequences).
 - `read_bytes(max)` returns at most `max` bytes (at most 1 MiB) of
   standard input as they arrive, any bytes, `None` at the end;
   `read_all_bytes()` the rest of the input. They share the input buffer
@@ -5405,7 +5420,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-520 declarations.
+521 declarations.
 
 ### Range
 
@@ -6159,6 +6174,7 @@ fn stdout_is_tty(self) -> Bool uses stdio
 fn stderr_is_tty(self) -> Bool uses stdio
 fn width(self) -> Int? uses stdio
 fn read_secret(self, prompt: Str) -> Str? ! IoErr uses stdio
+fn raw_input(self, on: Bool) -> Bool uses stdio
 fn read_bytes(self, max: Int) -> Bytes? ! IoErr uses stdio
 fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
 ```

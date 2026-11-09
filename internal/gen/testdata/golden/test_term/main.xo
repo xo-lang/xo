@@ -22,6 +22,9 @@ test "set_tty makes the streams terminals" {
   expect(os.stdio.stderr_is_tty()) == true
   expect(os.stdio.width()) == Some(4)
   expect(banner(os.stdio, os.env)) == "\u{1b}[1m====\u{1b}[0m"
+  // a fake terminal has no settings to make raw (decision 0581)
+  expect(os.stdio.raw_input(true)) == false
+  expect(os.stdio.raw_input(false)) == false
 }
 
 test "NO_COLOR wins over a terminal, FORCE_COLOR over none" {

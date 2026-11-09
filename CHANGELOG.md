@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std (decision 0581): `Stdio.raw_input(on)` sets standard input's terminal to raw input (keys as typed, no echo, ctrl-c as a byte) and back; the terminal is restored when the program exits, faults or crashes. Linux, macOS and Windows (Windows not yet verified on a console); false on FreeBSD, WASI, pipes and a test's FakeStdio.
 - xo build (windows/arm64, experimental, decision 0569): a program built with debug information gets PROG.pdb beside PROG.exe, as on windows/amd64, with its functions, lines, inlined calls, locals and types, and the image's debug directory names it (`-s` or `--debug-info=off` leave both out).
 - xo build --asm (windows/amd64): the assembly's DWARF sections are written in COFF's form (`.section .debug_info,"dr"`, `.secrel32` for offsets between them), as on windows/arm64, so llvm-mc and clang assemble it too (they rejected the ELF form `"",@progbits`). Xo's COFF objects match llvm-mc 23's on all 644 goldens (a .debug section discardable, an empty .data aligned to 4 with a data pointer); images run the same, only the PDB GUID changes.
 - xo build (windows/arm64, experimental, decision 0569): `--backend=arm64 --targets=windows/arm64` assembles with Xo's own COFF writer, whose objects are byte identical to clang's, so the build needs no clang unless it has a `use c` source; `--as=cc` assembles with clang as before.

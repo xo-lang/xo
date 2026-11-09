@@ -89,6 +89,7 @@ var (
 	_ func(*Testing_FakeStdio, *Task) bool                                                                       = (*Testing_FakeStdio).M_stderr_is_tty
 	_ func(*Testing_FakeStdio, *Task) Option[int64]                                                              = (*Testing_FakeStdio).M_width
 	_ func(*Testing_FakeStdio, *Task, string) Result[Option[string], IoErr]                                      = (*Testing_FakeStdio).M_read_secret
+	_ func(*Testing_FakeStdio, *Task, bool) bool                                                                 = (*Testing_FakeStdio).M_raw_input
 	_ func(*Testing_FakeStdio, *Task, int64) Result[Option[Bytes], IoErr]                                        = (*Testing_FakeStdio).M_read_bytes
 	_ func(*Testing_FakeStdio, *Task) Result[Bytes, IoErr]                                                       = (*Testing_FakeStdio).M_read_all_bytes
 	_ func(*Testing_FakeStdio, *Task, string)                                                                    = (*Testing_FakeStdio).M_set_input

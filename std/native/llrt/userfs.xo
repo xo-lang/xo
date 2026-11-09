@@ -142,6 +142,7 @@ pub interface UserStdio {
   fn stderr_is_tty(self) -> Bool uses stdio
   fn width(self) -> Int? uses stdio
   fn read_secret(self, prompt: Str) -> Str? ! IoErr uses stdio
+  fn raw_input(self, on: Bool) -> Bool uses stdio
   fn read_bytes(self, max: Int) -> Bytes? ! IoErr uses stdio
   fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
 }

@@ -2,6 +2,7 @@ exit 0
 --- stdout
 tty: in false out false err false
 width: -1
+raw: false false
 secret: "hunter2"
 chunks: 4,4,3 hex 0001fffe61626364656667
 after the end: 0 bytes

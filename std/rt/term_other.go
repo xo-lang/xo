@@ -10,3 +10,5 @@ import "os"
 func isTerminal(*os.File) bool { return false }
 func termWidth(*os.File) int   { return 0 }
 func echoOff(*os.File) func()  { return nil }
+
+func rawOn(*os.File) func() { return nil }

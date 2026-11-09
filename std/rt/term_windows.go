@@ -48,3 +48,18 @@ func echoOff(f *os.File) func() {
 	}
 	return func() { procSetConsoleMode.Call(uintptr(h), uintptr(mode)) }
 }
+
+// rawOn sets the console's input to raw (decision 0581): processed,
+// line and echo input off, virtual terminal input on (keys as VT
+// sequences); the function restoring the mode, or nil.
+func rawOn(f *os.File) func() {
+	h := syscall.Handle(f.Fd())
+	var mode uint32
+	if syscall.GetConsoleMode(h, &mode) != nil {
+		return nil
+	}
+	if r, _, _ := procSetConsoleMode.Call(uintptr(h), uintptr(mode&^(0x1|0x2|enableEchoInput)|0x200)); r == 0 {
+		return nil
+	}
+	return func() { procSetConsoleMode.Call(uintptr(h), uintptr(mode)) }
+}
