@@ -1946,6 +1946,17 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.x86_store("movdqu ($u0), %xmm15\nmovdqu ($u1), %xmm14\npxor %xmm14, %xmm15\nmovdqu ($u2), %xmm14\naesenclast %xmm14, %xmm15\nmovdqu %xmm15, ($u0)", [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
       g.set(v, [])
     }
+    "rt.aes_dec10" | "rt.aes_dec12" | "rt.aes_dec14" if g.x86 => {
+      // the last key added, nr - 1 aesdec with the middle keys through aesimc, aesdeclast with the first
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_dec")) ?? 10
+      var t = "movdqu ($u0), %xmm15\nmovdqu ${16 * nr}($u1), %xmm14\npxor %xmm14, %xmm15"
+      for r in 1..nr {
+        t = t + "\nmovdqu ${16 * (nr - r)}($u1), %xmm14\naesimc %xmm14, %xmm14\naesdec %xmm14, %xmm15"
+      }
+      t = t + "\nmovdqu ($u1), %xmm14\naesdeclast %xmm14, %xmm15\nmovdqu %xmm15, ($u0)"
+      g.x86_store(t, [g.word(x.args[0]), g.word(x.args[1])])
+      g.set(v, [])
+    }
     "rt.aes_enc10" | "rt.aes_enc12" | "rt.aes_enc14" if g.x86 => {
       // the block: the first key added, nr - 1 aesenc, aesenclast with
       // the last (round keys loaded with movdqu: no alignment assumed)
@@ -2143,6 +2154,18 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         t = t + "\nldr q31, [$u1, #${16 * r}]\naese v30.16b, v31.16b\naesmc v30.16b, v30.16b"
       }
       t = t + "\nldr q31, [$u1, #${16 * (nr - 1)}]\naese v30.16b, v31.16b\nldr q31, [$u1, #${16 * nr}]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0]"
+      g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
+      g.set(v, [])
+    }
+    "rt.aes_dec10" | "rt.aes_dec12" | "rt.aes_dec14" => {
+      // the inverse cipher with the encryption round keys (see aes_dec10): AESD and AESIMC, each middle key
+      // through AESIMC first (the state in v30, the key in v31)
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_dec")) ?? 10
+      var t = "ldr q30, [$u0]\nldr q31, [$u1, #${16 * nr}]\naesd v30.16b, v31.16b\naesimc v30.16b, v30.16b"
+      for r in 1..nr - 1 {
+        t = t + "\nldr q31, [$u1, #${16 * (nr - r)}]\naesimc v31.16b, v31.16b\naesd v30.16b, v31.16b\naesimc v30.16b, v30.16b"
+      }
+      t = t + "\nldr q31, [$u1, #16]\naesimc v31.16b, v31.16b\naesd v30.16b, v31.16b\nldr q31, [$u1]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0]"
       g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
       g.set(v, [])
     }

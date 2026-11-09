@@ -1205,6 +1205,38 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
       g.emit("store <16 x i8> ${s}, ptr ${p}, align 1")
     }
+    "rt.aes_dec10" | "rt.aes_dec12" | "rt.aes_dec14" => {
+      // the inverse cipher with the encryption round keys: AddRoundKey of the last key, then rounds of
+      // (inverse shift rows and sub bytes, the next key with InvMixColumns, InvMixColumns of the state)
+      // as AESD with AESIMC on arm64 and AESDEC with AESIMC on x86
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_dec")) ?? 10
+      let p = g.raw_ptr(x.args[0])
+      let kp = g.raw_ptr(x.args[1])
+      var ks: List[Str] = []
+      for r in 0..nr + 1 {
+        let q = g.def("getelementptr i8, ptr ${kp}, i64 ${16 * r}")
+        ks.push(g.def("load <16 x i8>, ptr ${q}, align 1"))
+      }
+      var s = g.def("load <16 x i8>, ptr ${p}, align 1")
+      if g.arch() == "amd64" {
+        s = g.def("xor <16 x i8> ${s}, ${ks[nr]}")
+        for r in 1..nr {
+          let k = g.def("call <16 x i8> asm \"aesimc $1, $0\", \"=x,x\"(<16 x i8> ${ks[nr - r]})")
+          s = g.def("call <16 x i8> asm \"aesdec $2, $0\", \"=x,0,x\"(<16 x i8> ${s}, <16 x i8> ${k})")
+        }
+        s = g.def("call <16 x i8> asm \"aesdeclast $2, $0\", \"=x,0,x\"(<16 x i8> ${s}, <16 x i8> ${ks[0]})")
+      } else {
+        s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaesd $0.16b, $2.16b\\0Aaesimc $0.16b, $0.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${ks[nr]})")
+        for r in 1..nr - 1 {
+          let k = g.def("call <16 x i8> asm \"aesimc $0.16b, $1.16b\", \"=w,w\"(<16 x i8> ${ks[nr - r]})")
+          s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaesd $0.16b, $2.16b\\0Aaesimc $0.16b, $0.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
+        }
+        let k = g.def("call <16 x i8> asm \"aesimc $0.16b, $1.16b\", \"=w,w\"(<16 x i8> ${ks[1]})")
+        s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaesd $0.16b, $2.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
+        s = g.def("xor <16 x i8> ${s}, ${ks[0]}")
+      }
+      g.emit("store <16 x i8> ${s}, ptr ${p}, align 1")
+    }
     "rt.mlkem_mul_acc" if g.arch() == "amd64" => {
       // amd64 only, as rt.mlkem_ntt
       var t: List[Str] = []

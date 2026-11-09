@@ -534,6 +534,25 @@ fn hw_n(c: Cipher, var io: List[Int], blocks: Int) {
   keep(c.rk)
 }
 
+/// hw_n's inverse: the first blocks (1 to 4) of io decrypted with the CPU's rounds (cpu.aes_dec10, 12, 14: the
+/// encryption round keys c.rk, InvMixColumns of the middle ones taken by the instruction sequence).
+fn hw_dec_n(c: Cipher, var io: List[Int], blocks: Int) {
+  let kp = addr(c.rk)
+  var st = addr(io)
+  let end = st.wrapping_add(16 * blocks)
+  let nr = c.nr
+  while st != end {
+    match nr {
+      10 => cpu.aes_dec10(st, kp)
+      12 => cpu.aes_dec12(st, kp)
+      _ => cpu.aes_dec14(st, kp)
+    }
+    st = st.wrapping_add(16)
+  }
+  keep(io)
+  keep(c.rk)
+}
+
 /// The encryption of the 16 byte block b (crypto/aes's Encrypt).
 pub fn (c: Cipher) encrypt_block(b: Bytes) -> Bytes {
   var io = [rt.bytes_word(b, 0), rt.bytes_word(b, 8), 0, 0, 0, 0, 0, 0]
@@ -609,8 +628,19 @@ fn inv_mix_columns(var q: List[Int]) {
   q[7] = q4 ^ q5 ^ q6 ^ r4 ^ r6 ^ r7 ^ rotr32(q4 ^ q5 ^ q7 ^ r4 ^ r7)
 }
 
+/// decrypt4 when only the first blocks (1 to 4) of io are wanted (encrypt_n's inverse).
+fn decrypt_n(c: Cipher, var io: List[Int], blocks: Int) {
+  if (c.hw & cpu.HW_AES) != 0 {
+    return hw_dec_n(c, io, blocks)
+  }
+  decrypt4(c, io)
+}
+
 /// Decrypts the four blocks of io in place (encrypt4's layout).
 fn decrypt4(c: Cipher, var io: List[Int]) {
+  if (c.hw & cpu.HW_AES) != 0 {
+    return hw_dec_n(c, io, 4)
+  }
   var q = [0, 0, 0, 0, 0, 0, 0, 0]
   for b in 0..4 {
     let lo = io[2 * b]
@@ -682,7 +712,7 @@ pub fn (c: Cipher) cbc_decrypt(iv: Bytes, data: Bytes) -> Bytes {
       io[2 * j] = rt.bytes_word(data, 16 * (b + j))
       io[2 * j + 1] = rt.bytes_word(data, 16 * (b + j) + 8)
     }
-    decrypt4(c, io)
+    decrypt_n(c, io, k)
     for j in 0..k {
       out = rt.rs_push_word(rt.rs_push_word(out, io[2 * j] ^ p0, 8), io[2 * j + 1] ^ p1, 8)
       p0 = rt.bytes_word(data, 16 * (b + j))

@@ -418,6 +418,33 @@ pub fn aes_enc12x4(st: Int, rk: Int) { aes_enc_x4(st, rk, 12) }
 
 pub fn aes_enc14x4(st: Int, rk: Int) { aes_enc_x4(st, rk, 14) }
 
+/// The decryption of the 16 byte block at st in place with the same nr +
+/// 1 encryption round keys at rk (FIPS 197's inverse cipher: the keys
+/// walked backwards, InvMixColumns applied to the middle ones as the
+/// instructions need: arm64's AESD and AESIMC, x86-64's AESDEC and
+/// AESDECLAST with AESIMC on each middle key).
+pub fn aes_dec10(st: Int, rk: Int) { aes_dec_soft(st, rk, 10) }
+
+pub fn aes_dec12(st: Int, rk: Int) { aes_dec_soft(st, rk, 12) }
+
+pub fn aes_dec14(st: Int, rk: Int) { aes_dec_soft(st, rk, 14) }
+
+/// aes_dec10's, aes_dec12's, and aes_dec14's body: FIPS 197 5.3.
+pub fn aes_dec_soft(st: Int, rk: Int, nr: Int) {
+  var a = rt.mem_load(st, 0, 8) ^ rt.mem_load(rk, 16 * nr, 8)
+  var b = rt.mem_load(st, 8, 8) ^ rt.mem_load(rk, 16 * nr + 8, 8)
+  var r = nr - 1
+  while r >= 1 {
+    let (x, y) = inv_sub_shift(a, b)
+    a = inv_mix(x ^ rt.mem_load(rk, 16 * r, 8))
+    b = inv_mix(y ^ rt.mem_load(rk, 16 * r + 8, 8))
+    r -= 1
+  }
+  let (x, y) = inv_sub_shift(a, b)
+  rt.mem_store(st, 0, x ^ rt.mem_load(rk, 0, 8), 8)
+  rt.mem_store(st, 8, y ^ rt.mem_load(rk, 8, 8), 8)
+}
+
 /// aes_enc10x4's, aes_enc12x4's, and aes_enc14x4's body: the blocks one
 /// at a time through the one block intrinsics.
 fn aes_enc_x4(st: Int, rk: Int, nr: Int) {
@@ -637,6 +664,51 @@ fn sub8(x: Int) -> Int {
   }
   let inv = gmul(gmul(t, x12), x2)
   inv ^ rotb(inv, 1) ^ rotb(inv, 2) ^ rotb(inv, 3) ^ rotb(inv, 4) ^ 0x6363636363636363
+}
+
+/// The multiplicative inverse in AES's field of each byte of x (0 for 0): x^254.
+fn finv(x: Int) -> Int {
+  let x2 = gmul(x, x)
+  let x3 = gmul(x2, x)
+  let x6 = gmul(x3, x3)
+  let x12 = gmul(x6, x6)
+  let x15 = gmul(x12, x3)
+  var t = x15
+  for _ in 0..4 {
+    t = gmul(t, t)
+  }
+  gmul(gmul(t, x12), x2)
+}
+
+/// The inverse S-box on each byte of x: the inverse affine map, then the field inverse.
+fn inv_sub8(x: Int) -> Int {
+  finv(rotb(x, 1) ^ rotb(x, 3) ^ rotb(x, 6) ^ 0x0505050505050505)
+}
+
+/// InvShiftRows then InvSubBytes of the state in two words (as sub_shift).
+fn inv_sub_shift(a0: Int, b0: Int) -> (Int, Int) {
+  var lo = 0
+  var hi = 0
+  for i in 0..16 {
+    let r = i & 3
+    let j = r + 4 * ((i / 4 + 4 - r) & 3)
+    let w = if j < 8 { a0 } else { b0 }
+    let v = (w.shr_logical(8 * (j & 7)) & 0xFF).wrapping_shl(8 * (i & 7))
+    if i < 8 {
+      lo = lo | v
+    } else {
+      hi = hi | v
+    }
+  }
+  (inv_sub8(lo), inv_sub8(hi))
+}
+
+/// InvMixColumns of the two columns in x (as mix): 14, 11, 13, 9 times the bytes of a column.
+fn inv_mix(x: Int) -> Int {
+  let r1 = rotc(x)
+  let r2 = rotc(r1)
+  let r3 = rotc(r2)
+  gmul(x, B01.wrapping_mul(14)) ^ gmul(r1, B01.wrapping_mul(11)) ^ gmul(r2, B01.wrapping_mul(13)) ^ gmul(r3, B01.wrapping_mul(9))
 }
 
 /// SubBytes then ShiftRows of the state in two words (bytes 0 to 7 and
@@ -1188,6 +1260,28 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
         aes_enc_soft(addr(st), addr(k), 10)
       } else {
         aes_enc10(addr(st), addr(k))
+      }
+      let r = words16(rt.mem_load(addr(st), 0, 8), rt.mem_load(addr(st), 8, 8))
+      keep(st)
+      keep(k)
+      Some(r)
+    }
+    "aes_dec" => {
+      // the block a decrypted under the round keys b (11, 13 or 15 keys)
+      let st = block(a)
+      var k: List[Int] = []
+      for i in 0..b.len() / 8 {
+        k.push(rt.bytes_word(b, 8 * i))
+      }
+      let nr = b.len() / 16 - 1
+      if soft {
+        aes_dec_soft(addr(st), addr(k), nr)
+      } else if nr == 10 {
+        aes_dec10(addr(st), addr(k))
+      } else if nr == 12 {
+        aes_dec12(addr(st), addr(k))
+      } else {
+        aes_dec14(addr(st), addr(k))
       }
       let r = words16(rt.mem_load(addr(st), 0, 8), rt.mem_load(addr(st), 8, 8))
       keep(st)

@@ -1051,6 +1051,56 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 			}
 		}
 		return Bytes(out), true
+	case "aes_dec":
+		// the inverse cipher (FIPS 197 5.3) of the block a under the
+		// encryption round keys b (176, 208 or 240 bytes)
+		nr := len(b)/16 - 1
+		var inv [256]byte
+		for i := 0; i < 256; i++ {
+			inv[aesSbox(byte(i))] = byte(i)
+		}
+		mul := func(x, y byte) byte {
+			var p byte
+			for ; y != 0; y >>= 1 {
+				if y&1 != 0 {
+					p ^= x
+				}
+				hi := x & 0x80
+				x <<= 1
+				if hi != 0 {
+					x ^= 0x1b
+				}
+			}
+			return p
+		}
+		var s [16]byte
+		for i := range s {
+			s[i] = a[i] ^ b[16*nr+i]
+		}
+		for r := nr - 1; r >= 0; r-- {
+			var t [16]byte
+			for c := 0; c < 4; c++ {
+				for row := 0; row < 4; row++ {
+					t[row+4*((c+row)&3)] = inv[s[row+4*c]]
+				}
+			}
+			for i := range t {
+				t[i] ^= b[16*r+i]
+			}
+			if r > 0 {
+				for c := 0; c < 4; c++ {
+					x := t[4*c : 4*c+4]
+					a0, a1, a2, a3 := x[0], x[1], x[2], x[3]
+					s[4*c] = mul(a0, 14) ^ mul(a1, 11) ^ mul(a2, 13) ^ mul(a3, 9)
+					s[4*c+1] = mul(a0, 9) ^ mul(a1, 14) ^ mul(a2, 11) ^ mul(a3, 13)
+					s[4*c+2] = mul(a0, 13) ^ mul(a1, 9) ^ mul(a2, 14) ^ mul(a3, 11)
+					s[4*c+3] = mul(a0, 11) ^ mul(a1, 13) ^ mul(a2, 9) ^ mul(a3, 14)
+				}
+			} else {
+				s = t
+			}
+		}
+		return Bytes(s[:]), true
 	case "aes_enc4":
 		// four blocks a (64 bytes) under the round keys b (176, 208 or
 		// 240 bytes: AES-128, -192, -256)

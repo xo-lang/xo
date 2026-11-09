@@ -235,6 +235,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "aes_enc10" => "aes_enc10"
     "aes_enc12" => "aes_enc12"
     "aes_enc14" => "aes_enc14"
+    "aes_dec10" => "aes_dec10"
+    "aes_dec12" => "aes_dec12"
+    "aes_dec14" => "aes_dec14"
     // four blocks side by side: arm64 (NEON's AESE, AESMC) and LLVM
     // there; amd64 and wasm run the body (four aes_enc calls)
     "aes_enc10x4" | "aes_enc12x4" | "aes_enc14x4" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
