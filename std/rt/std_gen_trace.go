@@ -89,35 +89,45 @@ func (v *Trace_Span) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `id`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `id`")
+		}
 	}
 	if e, ok := obj["name"]; ok {
 		if err := JsonDec(tk, &v.F_name, e, path+".name"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `name`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `name`")
+		}
 	}
 	if e, ok := obj["start_ms"]; ok {
 		if err := JsonDec(tk, &v.F_start_ms, e, path+".start_ms"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `start_ms`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `start_ms`")
+		}
 	}
 	if e, ok := obj["micros"]; ok {
 		if err := JsonDec(tk, &v.F_micros, e, path+".micros"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `micros`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `micros`")
+		}
 	}
 	if e, ok := obj["status"]; ok {
 		if err := JsonDec(tk, &v.F_status, e, path+".status"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `status`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `status`")
+		}
 	}
 	return nil
 }

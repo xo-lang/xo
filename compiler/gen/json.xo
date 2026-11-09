@@ -139,7 +139,7 @@ fn (var g: Gen) json_field_fold(i: Int, name: Str, go_name: Str, t: Int, dflt: S
   } else if g.is_patch(t) {
     g.pl("\t\tv.${go_name} = ${g.go_type(t)}{Tag: 1}")
   } else {
-    g.pl("\t\tfe.Note(${rt}JsonFoldMissing, false, ${rt}JsonErr(path, ${("missing field `" + name + "`").quote()}))")
+    g.pl("\t\tif !${rt}JsonGoMode(tk) {\n\t\t\tfe.Note(${rt}JsonFoldMissing, false, ${rt}JsonErr(path, ${("missing field `" + name + "`").quote()}))\n\t\t}")
   }
   g.pl("\t}")
 }
@@ -340,7 +340,7 @@ fn (var g: Gen) json_field(name: Str, go_name: Str, t: Int, dflt: Str, q: Bool) 
   } else if g.is_patch(t) {
     g.pl("\t\tv.${go_name} = ${g.go_type(t)}{Tag: 1}")
   } else {
-    g.pl("\t\treturn ${rt}JsonErr(path, ${("missing field `" + name + "`").quote()})")
+    g.pl("\t\tif !${rt}JsonGoMode(tk) {\n\t\t\treturn ${rt}JsonErr(path, ${("missing field `" + name + "`").quote()})\n\t\t}")
   }
   g.pl("\t}")
 }

@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-09: feature: `json.decode_go`, encoding/json's rules for null and missing fields
+
+- Kind: feature
+- Commit: this push
+- Found by: goversioninfo's FEEDBACK.md (ADR 0553, answers 1 and 2)
+- Go reference: encoding/json decode.go (a null into a non pointer value is a no op; a missing key leaves the field)
+- Test: std/native/json_test.xo "decode_go"; golden json_decode_go (native, LLVM, Go backend)
+- Timing: none (decode is unchanged)
+- Shipped in: not yet released
+
+`json.decode_go[T](data)` and `decode_go_str` decode like `decode` except that a null leaves the value at its zero (Option, json.Patch and json.Value keep their own null) and a missing field takes its zero value (a declared default still wins). Go's type error wording is a later step.
+
 ## 2026-11-08: feature: `DecodeErr.go_text()`, encoding/json's text of a syntax error
 
 - Kind: feature

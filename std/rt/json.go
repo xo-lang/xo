@@ -309,6 +309,11 @@ func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 		}
 		x = dd.last
 	}
+	if x == nil && tk != nil && tk.jsonGo {
+		if _, own := any(dst).(jsonNullOwner); !own {
+			return nil
+		}
+	}
 	// the commonest kinds here, which Go resolves per type; every other
 	// kind in jsonDecAny, compiled once rather than once per decoded type
 	// (each struct is a type shape of its own: armnetwork's Go backend
@@ -772,6 +777,41 @@ func putJsonW(w *JsonW) {
 
 // Json_encode_str is `json.encode_str(v)`.
 func Json_encode_str[T any](tk *Task, v T) string { return string(Json_encode(tk, v)) }
+
+// JsonGoMode reports whether tk runs json.decode_go (generated decoders
+// read it for a missing field).
+func JsonGoMode(tk *Task) bool { return tk != nil && tk.jsonGo }
+
+// jsonNullOwner marks the types that decode a null themselves (Option,
+// Patch, Value), which json.decode_go leaves to them.
+type jsonNullOwner interface{ xoJsonNullOwn() }
+
+func (*Option[T]) xoJsonNullOwn()     {}
+func (*Json_Patch[T]) xoJsonNullOwn() {}
+func (*Json_Value) xoJsonNullOwn()    {}
+
+// Json_decode_go is `json.decode_go[T](data)`: Go's rules for null and
+// for a missing field (decision 0553).
+func Json_decode_go[T any](tk *Task, data Bytes) Result[T, Json_DecodeErr] {
+	old := tk.jsonGo
+	tk.jsonGo = true
+	defer func() { tk.jsonGo = old }()
+	b := []byte(data)
+	x, err := jsonParse(b)
+	if err != nil {
+		return Err[T](*err)
+	}
+	var v T
+	if e := JsonDec(tk, &v, x, "$"); e != nil {
+		return Err[T](*e)
+	}
+	return Ok[T, Json_DecodeErr](v)
+}
+
+// Json_decode_go_str is `json.decode_go_str[T](s)`.
+func Json_decode_go_str[T any](tk *Task, s string) Result[T, Json_DecodeErr] {
+	return Json_decode_go[T](tk, Bytes(s))
+}
 
 // Json_decode is `json.decode[T](data)`.
 func Json_decode[T any](tk *Task, data Bytes) Result[T, Json_DecodeErr] {

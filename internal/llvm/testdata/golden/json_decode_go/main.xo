@@ -1,0 +1,34 @@
+use std/json
+
+struct Inner {
+  n: Int
+  s: Str
+} derive Json
+
+struct Row {
+  id: Int
+  name: Str
+  tags: List[Str]
+  inner: Inner
+  maybe: Int?
+} derive Json
+
+fn show(os: Os, text: Str) {
+  match json.decode_go_str[Row](text) {
+    Ok(r) => os.stdio.println("ok ${r.id} [${r.name}] ${r.tags.len()} ${r.inner.n} [${r.inner.s}] ${r.maybe.is_none()}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+}
+
+fn main(os: Os) {
+  show(os, "{\"id\":null,\"name\":null,\"tags\":null,\"inner\":null,\"maybe\":null}")
+  show(os, "{\"id\":7,\"inner\":{\"s\":\"x\"}}")
+  show(os, "{\"id\":3,\"name\":\"a\",\"tags\":[\"p\",null],\"maybe\":5}")
+  show(os, "{}")
+  show(os, "null")
+  show(os, "{\"id\":\"x\"}")
+  match json.decode_str[Row]("{\"id\":1}") {
+    Ok(_) => os.stdio.println("strict ok")
+    Err(e) => os.stdio.println("strict ${e}")
+  }
+}

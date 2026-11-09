@@ -30,6 +30,9 @@ type Task struct {
 	// dl is the nearest task.with_timeout deadline the task works under
 	// (decision 0430), nil when none; a spawned task keeps its spawner's
 	dl *taskDeadline
+	// jsonGo is set while json.decode_go runs (decision 0553): a null leaves a
+	// value at its zero and a missing field takes it.
+	jsonGo bool
 }
 
 // taskDeadline is a with_timeout deadline: the instant at on clock.

@@ -2344,6 +2344,12 @@ pub fn encode[T: Json](v: T) -> Bytes
 pub fn encode_str[T: Json](v: T) -> Str
 pub fn decode[T: Json](data: Bytes) -> T ! DecodeErr
 pub fn decode_str[T: Json](s: Str) -> T ! DecodeErr
+/// decode with encoding/json's rules for null and missing fields (decision
+/// 0553): a null leaves the value at its zero (Option, json.Patch and
+/// json.Value keep their own null), and a missing field takes its zero
+/// value (a declared default still wins). Other errors are decode's.
+pub fn decode_go[T: Json](data: Bytes) -> T ! DecodeErr
+pub fn decode_go_str[T: Json](s: Str) -> T ! DecodeErr
 pub fn encode_indent[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Bytes      // Go's MarshalIndent
 pub fn encode_indent_str[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Str
 pub fn indent(text: Str, prefix: Str = "", indent: Str = "  ") -> Str ! DecodeErr      // Go's Indent over a text (the whitespace after the value is kept)

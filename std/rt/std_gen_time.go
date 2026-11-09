@@ -147,21 +147,27 @@ func (v *Time_Date) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `year`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `year`")
+		}
 	}
 	if e, ok := obj["month"]; ok {
 		if err := JsonDec(tk, &v.F_month, e, path+".month"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `month`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `month`")
+		}
 	}
 	if e, ok := obj["day"]; ok {
 		if err := JsonDec(tk, &v.F_day, e, path+".day"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `day`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `day`")
+		}
 	}
 	return nil
 }
@@ -303,28 +309,36 @@ func (v *Time_ClockTime) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `hour`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `hour`")
+		}
 	}
 	if e, ok := obj["minute"]; ok {
 		if err := JsonDec(tk, &v.F_minute, e, path+".minute"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `minute`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `minute`")
+		}
 	}
 	if e, ok := obj["second"]; ok {
 		if err := JsonDec(tk, &v.F_second, e, path+".second"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `second`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `second`")
+		}
 	}
 	if e, ok := obj["nanos"]; ok {
 		if err := JsonDec(tk, &v.F_nanos, e, path+".nanos"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `nanos`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `nanos`")
+		}
 	}
 	return nil
 }
@@ -456,28 +470,36 @@ func (v *Time_Civil) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `date`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `date`")
+		}
 	}
 	if e, ok := obj["time"]; ok {
 		if err := JsonDec(tk, &v.F_time, e, path+".time"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `time`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `time`")
+		}
 	}
 	if e, ok := obj["offset"]; ok {
 		if err := JsonDec(tk, &v.F_offset, e, path+".offset"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `offset`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `offset`")
+		}
 	}
 	if e, ok := obj["zone"]; ok {
 		if err := JsonDec(tk, &v.F_zone, e, path+".zone"); err != nil {
 			return err
 		}
 	} else {
-		return JsonErr(path, "missing field `zone`")
+		if !JsonGoMode(tk) {
+			return JsonErr(path, "missing field `zone`")
+		}
 	}
 	return nil
 }
