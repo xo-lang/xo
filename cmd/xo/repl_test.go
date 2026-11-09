@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -132,7 +134,8 @@ func TestRepl(t *testing.T) {
 		`let a = 1`,
 		`a + "x"`,
 	}, "\n")).want(1)
-	if !strings.Contains(r.err, "entry:1:") || !strings.Contains(r.err, "error XO") {
+	// (the column is the entry's own: `"x"` starts at column 5 of `a + "x"`)
+	if !strings.Contains(r.err, "entry:1:1:") && !strings.Contains(r.err, "entry:1:5:") || !strings.Contains(r.err, "error XO") {
 		t.Errorf("a type error: want a diagnostic at entry:1, got:\n%s", r.err)
 	}
 }
@@ -191,19 +194,40 @@ func TestReplLineEditing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out strings.Builder
-	c.Stdout = &out
-	c.Stderr = &out
+	out := &syncBuf{}
+	c.Stdout = out
+	c.Stderr = out
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
 	}
-	// each key group after the REPL has set raw input and run the entry
-	// before (bytes the terminal gets earlier are read cooked)
-	for _, k := range []string{"1 + 3\x7f2\r", "fn sq(x: Int) -> Int {\r", "  x * x\r}\r", "sq(5)\r", "\x1b[A\x7f\x7f6)\r", "\x04"} {
-		time.Sleep(4 * time.Second)
-		in.Write([]byte(k))
+	// each key group once the session shows what the one before did (the
+	// first after the prompt: bytes before raw input is set are cooked)
+	// a fresh prompt: the line before it ended (the banner, an entry, a
+	// value)
+	const fresh = "\n\r\x1b[Jxo> "
+	wait := func(n int) {
+		for end := time.Now().Add(90 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
+			if strings.Count(out.String(), fresh) >= n {
+				return
+			}
+		}
+		t.Fatalf("no prompt %d in the session: %q", n, out.String())
 	}
-	time.Sleep(2 * time.Second)
+	for _, k := range []struct {
+		prompts int
+		keys    string
+	}{
+		{1, "1 + 3\x7f2\r"},
+		{2, "fn sq(x: Int) -> Int {\r  x * x\r}\r"},
+		{3, "sq(5)\r"},
+		{4, "\x1b[A\x7f\x7f6)\r"},
+		{5, "\x04"},
+	} {
+		wait(k.prompts)
+		time.Sleep(300 * time.Millisecond)
+		in.Write([]byte(k.keys))
+	}
+	time.Sleep(time.Second)
 	in.Close()
 	done := make(chan error, 1)
 	go func() { done <- c.Wait() }()
@@ -229,4 +253,81 @@ func TestReplLineEditing(t *testing.T) {
 	if got := strings.Split(string(hist), "\x00"); len(got) != 4 || got[1] != "fn sq(x: Int) -> Int {\n  x * x\n}" || got[3] != "sq(6)" {
 		t.Errorf("history: %q", got)
 	}
+}
+
+// TestReplJSON: `xo repl --json` (decision 0572 stage 2): one JSON request
+// per line, one reply per line with the value, its type, the entry's
+// output, and diagnostics at the entry's own line and column.
+func TestReplJSON(t *testing.T) {
+	t.Parallel()
+	c := exec.Command(xoBin(t), "repl", "--json")
+	c.Env = append(os.Environ(), "XO_REPL=1")
+	c.Stdin = strings.NewReader(strings.Join([]string{
+		`{"in": "1 + 2"}`,
+		`{"in": "let a = 3"}`,
+		`{"in": "os.stdio.println(\"hi\")"}`,
+		`{"in": "a + \"x\""}`,
+		`{"cmd": "type", "arg": "a"}`,
+		`not json`,
+	}, "\n") + "\n")
+	out, err := c.Output()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	type span struct {
+		File      string
+		Line, Col int
+	}
+	type reply struct {
+		OK          bool
+		Value       *string
+		Type        string
+		Out         string
+		Diagnostics []struct {
+			Code string
+			Span span
+		}
+	}
+	var rs []reply
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		var r reply
+		if err := json.Unmarshal([]byte(l), &r); err != nil {
+			t.Fatalf("a reply that is not JSON: %q", l)
+		}
+		rs = append(rs, r)
+	}
+	if len(rs) != 6 {
+		t.Fatalf("%d replies, want 6: %s", len(rs), out)
+	}
+	if !rs[0].OK || rs[0].Value == nil || *rs[0].Value != "3" || rs[0].Type != "Int" {
+		t.Errorf("1 + 2: %+v", rs[0])
+	}
+	if !rs[1].OK || rs[1].Type != "Int" || !rs[2].OK || rs[2].Out != "hi\n" {
+		t.Errorf("let and println: %+v %+v", rs[1], rs[2])
+	}
+	if rs[3].OK || len(rs[3].Diagnostics) == 0 || rs[3].Diagnostics[0].Span != (span{File: "entry", Line: 1, Col: 1}) {
+		t.Errorf("a type error: %+v", rs[3])
+	}
+	if !rs[4].OK || rs[4].Type != "Int" || rs[5].OK {
+		t.Errorf(":type and a bad request: %+v %+v", rs[4], rs[5])
+	}
+}
+
+// syncBuf is a strings.Builder safe for a command's writes and a test's
+// reads at once.
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

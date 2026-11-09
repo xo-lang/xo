@@ -14,7 +14,7 @@ use std/json
 
 pub fn usage() -> Str {
   [
-    "usage: xo repl [--session=FILE] [--keep] [--effects=LIST] [--eval=ENTRIES]",
+    "usage: xo repl [--session=FILE] [--keep] [--effects=LIST] [--json | --eval=ENTRIES]",
     "",
     "Experimental (decision 0572). Reads Xo entries (an expression, a let or",
     "var, a statement, a fn, struct or enum, a use line), runs each at once,",
@@ -27,6 +27,9 @@ pub fn usage() -> Str {
     "",
     "  --eval=ENTRIES   run ENTRIES (one per line; an open bracket continues",
     "                   an entry) and exit: 1 at the first that fails",
+    "  --json           read one JSON request per line ({\"in\": ENTRY} or",
+    "                   {\"cmd\": \"type\", \"arg\": EXPR}) and write one reply",
+    "                   per line: ok, value, type, out, err, ms, diagnostics",
     "  --session=FILE   read the session from FILE and write it back after",
     "  --keep           keep the session directory and print its path",
     "  --effects=LIST   the effects entries may use (`uses (LIST)`, such as",
@@ -51,6 +54,7 @@ pub fn usage() -> Str {
 
 struct Opts {
   effects: Str? = None
+  json: Bool = false
   eval: Str?
   session: Str
   keep: Bool
@@ -69,6 +73,145 @@ struct State {
   warm_dir: Str = ""
   /// --effects: the entries' `uses` list (decision 0572); None: all of Os
   effects: Str? = None
+  /// --json (decision 0572): an entry's output, errors, value, type and
+  /// diagnostics are collected for its reply instead of printed
+  json: Bool = false
+  /// the line editor is on: raw input goes off while an entry runs
+  raw: Bool = false
+  j_out: Str = ""
+  j_err: Str = ""
+  j_value: Str? = None
+  j_type: Str = ""
+  j_diags: List[JDiag] = []
+}
+
+/// A diagnostic of the JSON protocol (spec 10's form; its file is
+/// "entry", its line the entry's own, or "session" for an earlier entry).
+pub struct JDiag {
+  pub code: Str
+  pub severity: Str
+  pub message: Str
+  pub span: JSpan
+} derive Json
+
+pub struct JSpan {
+  pub file: Str
+  pub line: Int
+  pub col: Int
+  pub end_line: Int
+  pub end_col: Int
+} derive Json
+
+struct JCheck {
+  diagnostics: List[JDiag]
+} derive Json
+
+/// A request of the JSON protocol: an entry, or a command and its
+/// argument (`{"cmd": "type", "arg": "1 + 2"}` is `:type 1 + 2`).
+pub struct JIn {
+  pub src as "in": Str? = None
+  pub cmd: Str? = None
+  pub arg: Str = ""
+} derive Json
+
+/// A reply of the JSON protocol, one line per request.
+pub struct JOut {
+  pub ok: Bool
+  pub value: Str?
+  pub typ as "type": Str
+  pub out: Str
+  pub err: Str
+  pub ms: Int
+  pub diagnostics: List[JDiag]
+} derive Json
+
+fn say(os: Os, var st: State, s: Str) uses stdio {
+  if st.json {
+    st.j_out = st.j_out + s
+  } else {
+    os.stdio.print(s)
+  }
+}
+
+fn esay(os: Os, var st: State, s: Str) uses stdio {
+  if st.json {
+    st.j_err = st.j_err + s
+  } else {
+    os.stdio.eprint(s)
+  }
+}
+
+/// The diagnostics of the session program in JSON (xo check --json),
+/// their positions mapped to the entry (from line at) or the session.
+fn check_json(os: Os, st: State, main: Str, at: Int, shift: Int) -> List[JDiag] uses proc {
+  let r = match os.proc.cmd(st.xo, ["check", "--json", st.dir]).output() {
+    Ok(r) => r
+    Err(_) => return []
+  }
+  let c = match json.decode[JCheck](r.stdout) {
+    Ok(c) => c
+    Err(_) => return []
+  }
+  var out: List[JDiag] = []
+  for x in c.diagnostics {
+    var d = x
+    if d.span.file == main || d.span.file.ends_with("/main.xo") {
+      if d.span.line >= at {
+        let c0 = if d.span.line == at { d.span.col - shift } else { d.span.col }
+        let c1 = if d.span.end_line == at { d.span.end_col - shift } else { d.span.end_col }
+        d.span = JSpan{file: "entry", line: d.span.line - at + 1, col: c0, end_line: d.span.end_line - at + 1, end_col: c1}
+      } else {
+        d.span.file = "session"
+      }
+    }
+    out.push(d)
+  }
+  out
+}
+
+/// --json: one request per line of standard input, one reply per line of
+/// standard output (decision 0572).
+fn interact_json(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand, stdio) {
+  st.json = true
+  warm_start(os, st)
+  while {
+    let line = match os.stdio.read_line() {
+      Ok(Some(l)) => l
+      Ok(None) => return 0
+      Err(e) => {
+        os.stdio.eprintln("xo repl: ${e}")
+        return 1
+      }
+    }
+    if line.trim().is_empty() {
+      continue
+    }
+    st.j_out = ""
+    st.j_err = ""
+    st.j_value = None
+    st.j_type = ""
+    st.j_diags = []
+    let t0 = os.clock.now()
+    let ok = match json.decode_str[JIn](line) {
+      Ok(r) => {
+        let src = match r.cmd {
+          Some(c) => ":${c} ${r.arg}".trim()
+          None => r.src ?? ""
+        }
+        if src.trim() == ":quit" {
+          return 0
+        }
+        step(os, st, src)
+      }
+      Err(e) => {
+        st.j_err = "xo repl: a request is a JSON object ({\"in\": ...} or {\"cmd\": ...}): ${e}\n"
+        false
+      }
+    }
+    let reply = JOut{ok: ok, value: st.j_value, typ: st.j_type, out: st.j_out, err: st.j_err, ms: os.clock.since(t0).nanos() / 1000000, diagnostics: st.j_diags}
+    os.stdio.println(json.encode_str(reply))
+  }
+  0
 }
 
 pub fn run(os: Os, args: List[Str]) -> Int uses (clock, env, fs, proc, rand, stdio) {
@@ -80,6 +223,8 @@ pub fn run(os: Os, args: List[Str]) -> Int uses (clock, env, fs, proc, rand, std
       o.effects = Some(v)
     } else if let Some(v) = a.cut_prefix("--session=") {
       o.session = v
+    } else if a == "--json" {
+      o.json = true
     } else if a == "--keep" {
       o.keep = true
     } else if a is "-h" | "--help" {
@@ -111,7 +256,7 @@ pub fn run(os: Os, args: List[Str]) -> Int uses (clock, env, fs, proc, rand, std
   }
   let code = match o.eval {
     Some(text) => eval_all(os, st, text)
-    None => interact(os, st)
+    None => if o.json { interact_json(os, st) } else { interact(os, st) }
   }
   // a session that ended before its first entry: the warm-up's end
   warm_wait(os, st)
@@ -282,9 +427,9 @@ fn interact_edit(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand,
           if t.trim() == ":quit" || t.trim() == ":q" {
             done = true
           } else {
-            let _off = os.stdio.raw_input(false)
+            st.raw = true
             step(os, st, t)
-            let _on = os.stdio.raw_input(true)
+            st.raw = false
             os.stdio.eprint(draw(e, "xo> ", "... "))
           }
         }
@@ -412,7 +557,7 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
     let (prog, at) = with_effects(prog0, at0, st.effects)
     let main = "${st.dir}/main.xo"
     if let Err(err) = os.fs.write(main, prog.bytes()) {
-      os.stdio.eprintln("xo repl: ${err}")
+      esay(os, st, "xo repl: ${err}\n")
       return false
     }
     let bin = "${st.dir}/session"
@@ -420,13 +565,13 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
     let tw = os.clock.now()
     warm_wait(os, st)
     if timing && tries == 0 && os.clock.since(tw).nanos() > 1000000 {
-      os.stdio.eprintln("xo repl: waited ${os.clock.since(tw).nanos() / 1000000} ms for the warm-up")
+      esay(os, st, "xo repl: waited ${os.clock.since(tw).nanos() / 1000000} ms for the warm-up\n")
     }
     let tb = os.clock.now()
     let b = match os.proc.cmd(st.xo, ["build", "-o", bin, st.dir]).output() {
       Ok(r) => r
       Err(err) => {
-        os.stdio.eprintln("xo repl: ${st.xo} build: ${err}")
+        esay(os, st, "xo repl: ${st.xo} build: ${err}\n")
         return false
       }
     }
@@ -438,7 +583,7 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
       return true
     }
     if b.code != 0 {
-      let (text, earlier) = map_diags(msg, main, at)
+      let (text, earlier) = map_diags(msg, main, at, col_shift(e))
       if earlier && tries == 0 && st.sess.entries.any(fn(x) { !x.pin.is_empty() }) {
         // a pinned literal did not check (a Debug text that is not a
         // literal): those bindings run their entries again from now on
@@ -452,41 +597,58 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
         // earlier entries do not check with the new type: the bindings of
         // the type and the definitions that use it go (define them again)
         for n in stale {
-          os.stdio.eprintln("xo repl: dropped `${n}`: its type ${redef} changed and its entry does not check with the new one")
+          esay(os, st, "xo repl: dropped `${n}`: its type ${redef} changed and its entry does not check with the new one\n")
         }
         let defs = st.sess.defs_using(redef)
         for n in defs {
-          os.stdio.eprintln("xo repl: dropped the definition of `${n}`: it uses ${redef}, which changed; define it again")
+          esay(os, st, "xo repl: dropped the definition of `${n}`: it uses ${redef}, which changed; define it again\n")
         }
         st.sess = st.sess.drop_bindings(stale).drop_defs(defs)
         stale = []
         tries = 2
         continue
       }
-      os.stdio.eprint(text)
+      esay(os, st, text)
+      if st.json {
+        st.j_diags = check_json(os, st, main, at, col_shift(e))
+      }
       st.sess = before
       return false
     }
     let build_ms = os.clock.since(tb).nanos() / 1000000
     let tr = os.clock.now()
-    let r = match os.proc.cmd(bin, []).output() {
+    // the line editor's raw input is off while the entry's program runs
+    // (ctrl-c interrupts it; it reads lines), and on while it builds, so
+    // keys typed ahead are read as keys
+    if st.raw {
+      let _off = os.stdio.raw_input(false)
+    }
+    let ro = os.proc.cmd(bin, []).output()
+    if st.raw {
+      let _on = os.stdio.raw_input(true)
+    }
+    let r = match ro {
       Ok(r) => r
       Err(err) => {
-        os.stdio.eprintln("xo repl: run: ${err}")
+        esay(os, st, "xo repl: run: ${err}\n")
         return false
       }
     }
     let run_ms = os.clock.since(tr).nanos() / 1000000
     let ran = parse_run(r.stdout.to_str() ?? "")
-    os.stdio.print(ran.out)
-    os.stdio.eprint(r.stderr.to_str() ?? "")
+    say(os, st, ran.out)
+    esay(os, st, r.stderr.to_str() ?? "")
     if r.code != 0 {
-      os.stdio.eprintln("(exit status ${r.code}; the entry is not kept)")
+      esay(os, st, "(exit status ${r.code}; the entry is not kept)\n")
       return false
     }
     if let Some(v) = ran.value {
       if v != "()" {
-        os.stdio.println(v)
+        if st.json {
+          st.j_value = Some(v)
+        } else {
+          say(os, st, "${v}\n")
+        }
       }
     }
     var types: Map[Str, Str] = {}
@@ -495,12 +657,21 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
       let first = src.split("\n")[0]
       let col = (first.find(n) ?? 0) + 1
       match type_of(os, st, main, at, col) {
-        Ok(ty) => types[n] = ty
+        Ok(ty) => {
+          types[n] = ty
+          st.j_type = ty
+        }
         Err(_) => {}
       }
     }
+    if st.json && e.kind is Expr {
+      // the value's type: the name it is bound to, at column 5
+      if let Ok(ty) = type_of(os, st, main, at, 5) {
+        st.j_type = ty
+      }
+    }
     if timing {
-      os.stdio.eprintln("xo repl: build ${build_ms} ms, run ${run_ms} ms, types ${os.clock.since(tt).nanos() / 1000000} ms")
+      esay(os, st, "xo repl: build ${build_ms} ms, run ${run_ms} ms, types ${os.clock.since(tt).nanos() / 1000000} ms\n")
     }
     if !(e.kind is Expr) {
       st.undo.push(st.sess)
@@ -512,7 +683,7 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
       for x in st.sess.entries {
         let same = if let Bind(name: m, mutable: _) = x.kind { m == n } else { false }
         if same && x.pin.is_empty() && !x.typ.is_empty() {
-          os.stdio.eprintln("xo repl: `${n}` is a ${x.typ}, not plain data: its entry runs again before each later entry (its effects too)")
+          esay(os, st, "xo repl: `${n}` is a ${x.typ}, not plain data: its entry runs again before each later entry (its effects too)\n")
         }
       }
     }
@@ -547,7 +718,17 @@ pub fn unused_only(msg: Str) -> Bool {
   any
 }
 
-pub fn map_diags(msg: Str, main: Str, at: Int) -> (Str, Bool) {
+/// The columns the session program adds before an entry's first line:
+/// an expression is written `let xo_repl_value = EXPR`, EXPR trimmed (its
+/// leading spaces are the entry's own columns).
+fn col_shift(e: Entry) -> Int {
+  if e.kind is Expr { "let ${VALUE} = ".len() - (e.src.len() - e.src.trim_start().len()) } else { 0 }
+}
+
+/// A build's diagnostics with main.xo's positions as the entry's
+/// (entry:LINE:COL, the columns of its first line less shift) or the
+/// session's (session:LINE), and whether one is in an earlier entry.
+pub fn map_diags(msg: Str, main: Str, at: Int, shift: Int) -> (Str, Bool) {
   var b = StrBuilder.new()
   var earlier = false
   for l in msg.split("\n") {
@@ -557,7 +738,15 @@ pub fn map_diags(msg: Str, main: Str, at: Int) -> (Str, Bool) {
         if let Some((ln, tail)) = rest.cut(":") {
           if let Some(n) = Int.parse(ln) {
             if n >= at {
-              out = "entry:${n - at + 1}:${tail}"
+              var t2 = tail
+              if n == at && shift > 0 {
+                if let Some((c, rest2)) = tail.cut(":") {
+                  if let Some(cn) = Int.parse(c) {
+                    t2 = "${cn - shift}:${rest2}"
+                  }
+                }
+              }
+              out = "entry:${n - at + 1}:${t2}"
             } else {
               out = "session:${n}:${tail}"
               earlier = true
@@ -581,7 +770,7 @@ fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, ra
   }
   if t == ":undo" {
     if st.undo.is_empty() {
-      os.stdio.eprintln("xo repl: nothing to undo")
+      esay(os, st, "xo repl: nothing to undo\n")
       return false
     }
     st.sess = st.undo[st.undo.len() - 1]
@@ -594,33 +783,34 @@ fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, ra
     let (prog, at) = with_effects(prog0, at0, st.effects)
     let main = "${st.dir}/main.xo"
     if let Err(err) = os.fs.write(main, prog.bytes()) {
-      os.stdio.eprintln("xo repl: ${err}")
+      esay(os, st, "xo repl: ${err}\n")
       return false
     }
     match type_of(os, st, main, at, 5) {
       Ok(ty) => {
-        os.stdio.println(ty)
+        st.j_type = ty
+        say(os, st, "${ty}\n")
         return true
       }
       Err(err) => {
-        os.stdio.eprintln("xo repl: :type: ${err}")
+        esay(os, st, "xo repl: :type: ${err}\n")
         return false
       }
     }
   }
   if t == ":defs" {
-    os.stdio.print(st.sess.defs_text())
+    say(os, st, st.sess.defs_text())
     return true
   }
   if let Some(x) = t.cut_prefix(":save ") {
     let path = x.trim()
     match os.fs.write(path, st.sess.source().bytes()) {
       Ok(_) => {
-        os.stdio.eprintln("xo repl: saved ${st.sess.entries.len()} entries to ${path}")
+        esay(os, st, "xo repl: saved ${st.sess.entries.len()} entries to ${path}\n")
         return true
       }
       Err(err) => {
-        os.stdio.eprintln("xo repl: :save: ${err}")
+        esay(os, st, "xo repl: :save: ${err}\n")
         return false
       }
     }
@@ -630,7 +820,7 @@ fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, ra
     let text = match os.fs.read_text(path) {
       Ok(s) => s
       Err(err) => {
-        os.stdio.eprintln("xo repl: :load: ${err}")
+        esay(os, st, "xo repl: :load: ${err}\n")
         return false
       }
     }
@@ -641,27 +831,27 @@ fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, ra
         continue
       }
       if !step(os, st, e) {
-        os.stdio.eprintln("xo repl: :load ${path}: stopped at entry ${n + 1}; the ${n} before it are kept")
+        esay(os, st, "xo repl: :load ${path}: stopped at entry ${n + 1}; the ${n} before it are kept\n")
         return false
       }
       n += 1
     }
-    os.stdio.eprintln("xo repl: loaded ${n} entries from ${path}")
+    esay(os, st, "xo repl: loaded ${n} entries from ${path}\n")
     return true
   }
   if let Some(x) = t.cut_prefix(":doc ") {
     match os.proc.cmd(st.xo, ["doc", x.trim()]).output() {
       Ok(r) => {
-        os.stdio.print(r.stdout.to_str() ?? "")
-        os.stdio.eprint(r.stderr.to_str() ?? "")
+        say(os, st, r.stdout.to_str() ?? "")
+        esay(os, st, r.stderr.to_str() ?? "")
         return r.code == 0
       }
       Err(err) => {
-        os.stdio.eprintln("xo repl: :doc: ${err}")
+        esay(os, st, "xo repl: :doc: ${err}\n")
         return false
       }
     }
   }
-  os.stdio.eprintln("xo repl: unknown command ${t} (:type EXPR, :doc NAME, :defs, :save FILE, :load FILE, :undo, :reset, :quit)")
+  esay(os, st, "xo repl: unknown command ${t} (:type EXPR, :doc NAME, :defs, :save FILE, :load FILE, :undo, :reset, :quit)\n")
   false
 }
