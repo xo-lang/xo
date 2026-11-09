@@ -122,3 +122,7 @@ What the corpus shows:
   covers cases 1 to 3 cheaply but cannot give case 4 or the innermost struct name, which the failed decode has already
   discarded; could be a first step.
 - **Leave it to the ports** (status quo): every port writes the same translation again.
+
+## Update 2026-11-08: go_text shipped without the literal truncation text
+
+`DecodeErr.go_text()` landed (e929fee96, 11137d8be) with a `go: Str` field that recorded Go's text for a text that ends inside a literal or number. The hosts that build xo from the 0.44 seed could not build it (the seed's decoder builds the old two field struct; gotchas/std-error-struct-field-needs-compiler-first.md), so the field was removed again. `go_text` is now computed from `msg`: exact for the 24 syntax errors and the 123 plain truncations, and it gives `unexpected end of JSON input` for the 10 truncations inside a literal or number, where Go names the literal. Putting the field back (set by `decode`, `parse_value`, `indent`, `compact`, from `jsontext.go_err`) is the first push after the next seed cut; `decode_go` covers the same gap earlier if it lands first.

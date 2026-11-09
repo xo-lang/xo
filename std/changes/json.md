@@ -6,11 +6,11 @@
 - Commit: this push
 - Found by: goversioninfo's FEEDBACK.md items 5 and 6 and Xo Lang 2's differential (ADR 0553)
 - Go reference: encoding/json scanner.go (SyntaxError texts), decode.go checkValid (the scan of the data and the trailing space)
-- Test: std/native/json_test.xo "DecodeErr.go_text"; scripts/jsonerrdiff (233 inputs against encoding/json)
+- Test: std/native/json_test.xo "DecodeErr.go_text"; golden json_go_text; scripts/jsonerrdiff (233 inputs against encoding/json)
 - Timing: none (the text is built on the error path only)
 - Shipped in: not yet released
 
-`e.go_text()` returns Go's text where `msg` is `invalid JSON: ...`: `unexpected end of JSON input` for a truncated text, and for a text that ends inside a literal or number the text Go's scan of the data and one space gives (`invalid character ' ' in literal null (expecting 'l')`, `after decimal point in numeric literal`, `in exponent of numeric literal`). `DecodeErr` gains `go: Str = ""`, set by `decode`, `parse_value`, `indent` and `compact` at the syntax-error sites on the native and Go backends; a stream's `unexpected EOF` is Go's Decoder text and stays. Type errors keep Xo's words until `decode_go`.
+`e.go_text()` returns Go's text where `msg` is `invalid JSON: ...`: the SyntaxError text, and `unexpected end of JSON input` for a truncated text. A text that ends inside a literal or number (`nul`, `1.`, `1e`) still gives the truncation text, where Go's scan of the data and a space names it (`in literal null (expecting 'l')`): that needs a field on `DecodeErr` (a first version had `go: Str`, e929fee96), which seeds older than the compiler's `dec_err` padding (53fda70eb) cannot build, so the field waits for the next seed (gotchas/std-error-struct-field-needs-compiler-first.md). A stream's `unexpected EOF` also maps to the truncation text; type errors keep Xo's words until `decode_go`.
 
 ## 2026-11-07: fix: the Go backend's `string` option decodes the values a duplicate key replaced as quoted
 

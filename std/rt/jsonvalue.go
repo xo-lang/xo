@@ -196,7 +196,7 @@ func Json_indent(tk *Task, text string, prefix string, indent string) Result[str
 	}
 	var b bytes.Buffer
 	if err := json.Indent(&b, []byte(text), prefix, indent); err != nil {
-		return Err[string](Json_DecodeErr{F_path: "$", F_msg: "invalid JSON: " + err.Error(), F_go: err.Error()})
+		return Err[string](Json_DecodeErr{F_path: "$", F_msg: "invalid JSON: " + err.Error()})
 	}
 	return Ok[string, Json_DecodeErr](b.String())
 }
@@ -210,7 +210,7 @@ func Json_compact(tk *Task, text string) Result[string, Json_DecodeErr] {
 	}
 	var b bytes.Buffer
 	if err := json.Compact(&b, []byte(text)); err != nil {
-		return Err[string](Json_DecodeErr{F_path: "$", F_msg: "invalid JSON: " + err.Error(), F_go: err.Error()})
+		return Err[string](Json_DecodeErr{F_path: "$", F_msg: "invalid JSON: " + err.Error()})
 	}
 	return Ok[string, Json_DecodeErr](b.String())
 }

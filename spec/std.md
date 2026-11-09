@@ -2349,8 +2349,8 @@ pub fn encode_indent_str[T: Json](v: T, prefix: Str = "", indent: Str = "  ") ->
 pub fn indent(text: Str, prefix: Str = "", indent: Str = "  ") -> Str ! DecodeErr      // Go's Indent over a text (the whitespace after the value is kept)
 pub fn compact(text: Str) -> Str ! DecodeErr                                            // Go's Compact
 
-struct DecodeErr { path: Str, msg: Str, go: Str = "" }    // displays as "at $.user.email: expected string"
-fn (e: DecodeErr) go_text() -> Str    // encoding/json's text of a syntax error (decision 0553): "unexpected end of JSON input", "invalid character ' ' in literal null (expecting 'l')"; any other error returns msg
+struct DecodeErr { path: Str, msg: Str }    // displays as "at $.user.email: expected string"
+fn (e: DecodeErr) go_text() -> Str    // encoding/json's text of a syntax error (decision 0553): "unexpected end of JSON input", "invalid character '}' looking for beginning of value"; a text that ends inside a literal or number gives the truncation text (Go names the literal) until DecodeErr gains a field; any other error returns msg
 
 enum Patch[T] { Absent, Null, Value(v: T) } derive Json
 fn (p: Patch[T]) apply_to(current: T) -> T    // Value(v) gives v; Absent and Null keep current

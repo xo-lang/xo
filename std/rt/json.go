@@ -166,12 +166,17 @@ func (e Json_DecodeErr) M_display(*Task) string {
 }
 
 // M_go_text is encoding/json's text of a syntax error (decision 0553):
-// F_go where the site recorded it, else F_msg without "invalid JSON: ".
+// F_msg without "invalid JSON: ", the end of a text as "unexpected end of
+// JSON input".
 func (e Json_DecodeErr) M_go_text(*Task) string {
-	if e.F_go != "" {
-		return e.F_go
+	m, ok := strings.CutPrefix(e.F_msg, "invalid JSON: ")
+	if !ok {
+		return e.F_msg
 	}
-	return strings.TrimPrefix(e.F_msg, "invalid JSON: ")
+	if m == "EOF" || m == "unexpected EOF" {
+		return "unexpected end of JSON input"
+	}
+	return m
 }
 
 // JsonEnc writes v.
@@ -616,21 +621,6 @@ func jsonQuoteChar(c byte) string {
 // io.EOF where it ends between tokens (white space, a delimiter, a
 // closed string, a whole number or literal), io.ErrUnexpectedEOF inside one.
 func jsonEOFErr(data []byte) *Json_DecodeErr {
-	e := jsonEOFErr0(data)
-	e.F_go = jsonGoEOF(data)
-	return e
-}
-
-// jsonGoEOF is Unmarshal's text for a text that ran out: the scan of the
-// data and one space names a literal or number it ended in.
-func jsonGoEOF(data []byte) string {
-	if se := jsCheck(append(append([]byte(nil), data...), ' ')); se != nil && se.Error() != "unexpected end of JSON input" {
-		return se.Error()
-	}
-	return "unexpected end of JSON input"
-}
-
-func jsonEOFErr0(data []byte) *Json_DecodeErr {
 	inStr := false
 	for i := 0; i < len(data); i++ {
 		switch {
@@ -688,9 +678,7 @@ func jsonErrOf(se *jsSyntaxError, data []byte) *Json_DecodeErr {
 	if i := int(se.Offset) - 1; strings.HasPrefix(msg, "invalid character ") && (i < 0 || i >= len(data) || !strings.HasPrefix(msg[len("invalid character "):], jsonQuoteChar(data[i]))) {
 		return jsonEOFErr(data)
 	}
-	e := JsonErr("$", "invalid JSON: "+msg)
-	e.F_go = msg
-	return e
+	return JsonErr("$", "invalid JSON: "+msg)
 }
 
 // jsonParseSlow is jsonParse by the token decoder: any text, and the

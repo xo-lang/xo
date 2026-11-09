@@ -138,3 +138,5 @@ release seed is uploaded, a windows/amd64 build of the new std needs an
 xo at or after 123e03243. That means no native bootstrap on the Windows
 host from the 0.39.0 seed or an older cached xo: cross-build xo.exe on
 the Mac with the checkout's bin/xo instead.
+
+See also std-error-struct-field-needs-compiler-first.md: a new field on json.DecodeErr broke the seed built hosts the same way (2026-11-08).

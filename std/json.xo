@@ -22,14 +22,14 @@ fn decode_str[T: Json](s: Str) -> T ! DecodeErr
 struct DecodeErr {
   path: Str
   msg: Str
-  go: Str = ""
 } derive Display
 
 /// encoding/json's text for a syntax error (decision 0553): the text of
-/// Go's SyntaxError, `unexpected end of JSON input` for a truncated text
-/// and `invalid character ' ' in literal null (expecting 'l')` where the
-/// text ends inside a literal or number; a stream's `unexpected EOF`
-/// stays; any other error returns its msg.
+/// Go's SyntaxError, `unexpected end of JSON input` for a truncated text;
+/// any other error returns its msg. A text that ends inside a literal or
+/// a number still gives the truncation text, where Go names the literal
+/// (`in literal null (expecting 'l')`): that needs a field on DecodeErr,
+/// which waits for the next seed (gotchas/std-error-struct-field-needs-compiler-first.md).
 fn (e: DecodeErr) go_text() -> Str
 
 fn (p: Patch[T]) apply_to(current: T) -> T
