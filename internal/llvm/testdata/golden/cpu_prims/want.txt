@@ -1568,4 +1568,46 @@ enc4 12 15 a6f4f97832471dcca237db4d2a8a384ff373bc8d13ddb162fae706593d16a14ebcdb5
 enc4 13 11 a5b8a3b706efddb836f4f91902cca2245458725222049fab72764701e490521098ccf5d9fe091443fad34a9146c4c8f21fdc51f1e6995e5a8205ac185358b394 same
 enc4 13 13 ce315fb618489b6dc7eb740402c320d1433c07f15a9810e82d6cf758a6ea6daa0f579636a4e3f7013bec7e581717ed81983e5a022f67590bc57650761b1ffa6f same
 enc4 13 15 7437014b5598f86de6fed3b12cc9f3e2e8bd5d31d79ac225fdf8ad50f40941e8307b7617f04bcad3e79ad377379a866d6d10fdae22652f1bb5388d0eea0fbf55 same
+dec 0 11 back=true soft=true raw=58dc022e11c4f8fe5b969eee7e48c005 same
+dec 0 13 back=true soft=true raw=fd80e3ccb63b1afb881d964dcc55453a same
+dec 0 15 back=true soft=true raw=4c701d7e10b7f78d5edf1997fe3a7cba same
+dec 1 11 back=true soft=true raw=9ba8830cc99b96b47fa5666909759496 same
+dec 1 13 back=true soft=true raw=99d6b063960ed70e1cb4c8a719ae32fe same
+dec 1 15 back=true soft=true raw=284c38579fcae162aff544ab16779077 same
+dec 2 11 back=true soft=true raw=2a51031149fa26e0f9a9190146bc1750 same
+dec 2 13 back=true soft=true raw=a7c8cc48038fb1d739e77641a1fb8ad2 same
+dec 2 15 back=true soft=true raw=b5afc26ccda0d78fb1bf4ab5aec40a69 same
+dec 3 11 back=true soft=true raw=bceb044217611f353872df4d196b0b93 same
+dec 3 13 back=true soft=true raw=5207745cfe2a77c412cf18d1220b0a16 same
+dec 3 15 back=true soft=true raw=7602df4890539ab0abc9adb6e9dcf525 same
+dec 4 11 back=true soft=true raw=ab2c0a344582f799c4506e438e970229 same
+dec 4 13 back=true soft=true raw=639e583dc32910590f2eb329d934640b same
+dec 4 15 back=true soft=true raw=a878a4ec1c4b851be0f3753ef9e76baf same
+dec 5 11 back=true soft=true raw=6126f53725d2b78a70680d547246a950 same
+dec 5 13 back=true soft=true raw=9b8457862a456e6db3381d15b0e96829 same
+dec 5 15 back=true soft=true raw=5d23fd144105489802a445077d70613d same
+dec 6 11 back=true soft=true raw=2f671ae1938da1871ec5b39f244e6043 same
+dec 6 13 back=true soft=true raw=e40dde891cb1ce0e8e9e23cbb14109b4 same
+dec 6 15 back=true soft=true raw=4456501b29d5375d9c163fffb79bd25f same
+dec 7 11 back=true soft=true raw=d0e8f935bb17e498064266d5b077f40b same
+dec 7 13 back=true soft=true raw=de1d02bc8705b12f512e87550192caca same
+dec 7 15 back=true soft=true raw=9e74ef15e5e6713b5ad79e2c04844e07 same
+dec 8 11 back=true soft=true raw=e6da30ad9b224619aefea8b719a11771 same
+dec 8 13 back=true soft=true raw=d915e0834f100eebfaa2c1cf572c1070 same
+dec 8 15 back=true soft=true raw=97177f523b567851d0fc10917c1734a9 same
+dec 9 11 back=true soft=true raw=847e89568cd7e84be07c7a12902a2ac4 same
+dec 9 13 back=true soft=true raw=17b7aaf033c060fa5965e148a2f9125e same
+dec 9 15 back=true soft=true raw=7a7a3b5c2c354d6cc79689a5c57d8ab1 same
+dec 10 11 back=true soft=true raw=d611f9e06c812d53f2f400ef00672bbe same
+dec 10 13 back=true soft=true raw=78b8734bceabf38b4e320b27bf188c96 same
+dec 10 15 back=true soft=true raw=8d20ebecaae5c5bd5bf87282ff01c61f same
+dec 11 11 back=true soft=true raw=1fe0625dbcf2bd42581d5684cad6e18c same
+dec 11 13 back=true soft=true raw=777d212082a1dd894ad6ddfcc34eed91 same
+dec 11 15 back=true soft=true raw=3393641728dece440261221dca18227b same
+dec 12 11 back=true soft=true raw=3c4e108c899ae375c8033ee025e05fd2 same
+dec 12 13 back=true soft=true raw=52e5772b9250a222227a87f5639b7b94 same
+dec 12 15 back=true soft=true raw=ff1ddcb8c25e041a7a4e0af64a4b2b60 same
+dec 13 11 back=true soft=true raw=3f5c31855031e789be3275fba7e75937 same
+dec 13 13 back=true soft=true raw=efe82e0b440563d325ce18151ba44722 same
+dec 13 15 back=true soft=true raw=3c524c028d9c1a2f3305f163a4c4b948 same
 --- stderr
