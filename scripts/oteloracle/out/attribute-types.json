@@ -1,0 +1,103 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "oracle"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "oracle"
+          },
+          "spans": [
+            {
+              "attributes": [
+                {
+                  "key": "s",
+                  "value": {
+                    "stringValue": "v"
+                  }
+                },
+                {
+                  "key": "s.empty",
+                  "value": {
+                    "stringValue": ""
+                  }
+                },
+                {
+                  "key": "i.zero",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "i.neg",
+                  "value": {
+                    "intValue": "-42"
+                  }
+                },
+                {
+                  "key": "i.max",
+                  "value": {
+                    "intValue": "9223372036854775807"
+                  }
+                },
+                {
+                  "key": "i.min",
+                  "value": {
+                    "intValue": "-9223372036854775808"
+                  }
+                },
+                {
+                  "key": "f",
+                  "value": {
+                    "doubleValue": 1.5
+                  }
+                },
+                {
+                  "key": "f.zero",
+                  "value": {
+                    "doubleValue": 0
+                  }
+                },
+                {
+                  "key": "f.neg",
+                  "value": {
+                    "doubleValue": -2.25
+                  }
+                },
+                {
+                  "key": "b.true",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "b.false",
+                  "value": {
+                    "boolValue": false
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1700000000000005000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "attrs",
+              "spanId": "oAAAAAAAAAE=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eAQ=="
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

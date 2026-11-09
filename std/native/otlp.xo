@@ -201,8 +201,9 @@ fn encode_span(s: trace.Span) -> Bytes {
     sp = bytes_field(sp, 4, unhex_text(s.parent_id) ?? root_id(s.id))
   }
   sp = str_field(sp, 5, s.name)
+  // OpenTelemetry Go exports an unspecified kind as internal
   sp = varint_field(sp, 6, match s.kind {
-    Some(k) => kind_num(k)
+    Some(k) => if k == trace.SpanKind.Unspecified { 1 } else { kind_num(k) }
     None => if root { 2 } else { 1 }
   })
   let start = if s.start_ns > 0 { s.start_ns } else { s.start_ms * 1000000 }
@@ -236,8 +237,15 @@ fn encode_span(s: trace.Span) -> Bytes {
       }
     }
   }
-  if has_status {
+  // A span made by a Recorder (it has its own span id) is written as OpenTelemetry Go's SDK does: its status is
+  // always present, even empty, and its flags say the parent is known not to be remote (0x100) and sampled (0x01).
+  let otel = !s.span_id.is_empty()
+  if has_status || otel {
     sp = msg_field(sp, 15, st.freeze())
+  }
+  if otel {
+    let t = protobuf.put_tag(sp, 16, 5)
+    sp = protobuf.put_fixed32(t, UInt32.wrapping_from(257))
   }
   sp.freeze()
 }

@@ -6,10 +6,10 @@
 - Commit: this push
 - Found by: Xo Azure 1 (tracing/azotel)
 - Go reference: opentelemetry-proto trace.proto (Span 1 to 15, Event, Status, KeyValue, AnyValue) and the OpenTelemetry Go exporter
-- Test: std/native/otlp_test.xo (hand vectors: ids, kind, a false attribute, events, the status message for Error only, scope groups and the schema URL)
+- Test: std/native/otlp_test.xo (hand vectors) and the OpenTelemetry Go oracle (otel v1.47.0 through otlptracehttp; Xo Azure 1): std/native/trace_test.xo's generated tests (scripts/oteloracle/gen.py) compare the request bodies of 7 cases (root and child, every kind, every attribute type, attribute overwrite, events, ten status sequences, scopes with versions and schema URLs) byte for byte
 - Shipped in: not yet released
 
-`encode_traces` writes a span's own trace, span and parent ids, kind, attributes, events, status, nanosecond times, and groups spans by (scope, version, schema URL) into ScopeSpans (a span with no scope uses the Resource's); a span that leaves them at their defaults encodes as before.
+`encode_traces` writes a span's own trace, span and parent ids, kind, attributes, events, status, nanosecond times, and groups spans by (scope, version, schema URL) into ScopeSpans (a span with no scope uses the Resource's); a span that leaves them at their defaults encodes as before. A span with its own span id is written as the OpenTelemetry Go SDK writes it: Status always present (empty when unset), `flags` 257 (field 16), an unspecified kind as internal.
 
 ## 2026-11-06: feature: std/otlp, OTLP trace and metrics encoders
 

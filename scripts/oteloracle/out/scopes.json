@@ -1,0 +1,90 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "oracle"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "schemaUrl": "https://opentelemetry.io/schemas/1.17.0",
+          "scope": {
+            "name": "github.com/xo-lang/azure/storage/azblob",
+            "version": "1.8.3"
+          },
+          "spans": [
+            {
+              "attributes": [
+                {
+                  "key": "az.namespace",
+                  "value": {
+                    "stringValue": "Microsoft.Storage"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1700000000000010000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "BlobClient.Download",
+              "spanId": "oAAAAAAAAAE=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eAQ=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000008000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "first-scope-again",
+              "spanId": "oAAAAAAAAAM=",
+              "startTimeUnixNano": "1700000000000002000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eAw=="
+            }
+          ]
+        },
+        {
+          "scope": {
+            "name": "Microsoft.Storage",
+            "version": "2.1.0"
+          },
+          "spans": [
+            {
+              "endTimeUnixNano": "1700000000000009000",
+              "flags": 257,
+              "kind": "SPAN_KIND_CLIENT",
+              "name": "second-scope",
+              "spanId": "oAAAAAAAAAI=",
+              "startTimeUnixNano": "1700000000000001000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eAg=="
+            }
+          ]
+        },
+        {
+          "scope": {
+            "name": "bare"
+          },
+          "spans": [
+            {
+              "endTimeUnixNano": "1700000000000007000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "no-version-no-schema",
+              "spanId": "oAAAAAAAAAQ=",
+              "startTimeUnixNano": "1700000000000003000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eBA=="
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -137,7 +137,7 @@ fn recorder_start(r: trace.Recorder, name: Str, parent: (Str, Str)?, kind: trace
   let s = trace.Span{
     id: tid, name: name, start_ms: ns / 1000000, micros: 0, status: 0,
     trace_id: tid, span_id: rand_hex(r.rand, 8), parent_id: pid, kind: Some(kind),
-    attributes: attributes, start_ns: ns, end_ns: ns, scope: scope, scope_version: scope_version, schema_url: schema_url,
+    attributes: merge_attrs([], attributes), start_ns: ns, end_ns: ns, scope: scope, scope_version: scope_version, schema_url: schema_url,
   }
   trace.Active{ring: r.ring, clock: r.clock, span: Mutex[trace.Span].new(s), done: Mutex[Bool].new(false)}
 }
@@ -180,13 +180,22 @@ fn active_add_event(a: trace.Active, name: Str, attributes: List[trace.Attr]) us
   })
 }
 
+/// OpenTelemetry Go's SetStatus: Unset changes nothing, Ok is final and drops its description, Error keeps the last message
+/// (until an Ok).
+fn span_set_status(s: trace.Span, code: trace.StatusCode, message: Str) -> trace.Span {
+  if s.status_code == Some(trace.StatusCode.Ok) {
+    return s
+  }
+  match code {
+    trace.StatusCode.Unset => s
+    trace.StatusCode.Ok => s with {status_code: Some(code), status_message: ""}
+    trace.StatusCode.Error => s with {status_code: Some(code), status_message: message}
+  }
+}
+
 fn active_set_status(a: trace.Active, code: trace.StatusCode, message: Str) {
   a.span.with(fn(var s: trace.Span) {
-    let keep = match code {
-      trace.StatusCode.Error => message
-      _ => ""
-    }
-    s = s with {status_code: Some(code), status_message: keep}
+    s = span_set_status(s, code, message)
   })
 }
 

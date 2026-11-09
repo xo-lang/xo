@@ -1,0 +1,144 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "oracle"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "oracle"
+          },
+          "spans": [
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "unset-never-set",
+              "spanId": "oAAAAAAAAAE=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eAQ=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "unset-with-desc",
+              "spanId": "oAAAAAAAAAI=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eAg=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "ok",
+              "spanId": "oAAAAAAAAAM=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "traceId": "EBESExQVFhcYGRobHB0eAw=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "ok-with-desc",
+              "spanId": "oAAAAAAAAAQ=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "traceId": "EBESExQVFhcYGRobHB0eBA=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "error",
+              "spanId": "oAAAAAAAAAU=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {
+                "code": "STATUS_CODE_ERROR"
+              },
+              "traceId": "EBESExQVFhcYGRobHB0eBQ=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "error-with-desc",
+              "spanId": "oAAAAAAAAAY=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {
+                "code": "STATUS_CODE_ERROR",
+                "message": "*azcore.ResponseError:\nGET https://svc.example.test/x\nRESPONSE 404"
+              },
+              "traceId": "EBESExQVFhcYGRobHB0eBg=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "error-then-ok",
+              "spanId": "oAAAAAAAAAc=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "traceId": "EBESExQVFhcYGRobHB0eBw=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "ok-then-error",
+              "spanId": "oAAAAAAAAAg=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {
+                "code": "STATUS_CODE_OK"
+              },
+              "traceId": "EBESExQVFhcYGRobHB0eCA=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "error-then-error",
+              "spanId": "oAAAAAAAAAk=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {
+                "code": "STATUS_CODE_ERROR",
+                "message": "second"
+              },
+              "traceId": "EBESExQVFhcYGRobHB0eCQ=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "error-then-unset",
+              "spanId": "oAAAAAAAAAo=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {
+                "code": "STATUS_CODE_ERROR",
+                "message": "kept?"
+              },
+              "traceId": "EBESExQVFhcYGRobHB0eCg=="
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

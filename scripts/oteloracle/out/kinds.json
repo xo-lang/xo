@@ -1,0 +1,85 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "oracle"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "oracle"
+          },
+          "spans": [
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "unspecified",
+              "spanId": "oAAAAAAAAAE=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eAQ=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_INTERNAL",
+              "name": "internal",
+              "spanId": "oAAAAAAAAAI=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eAg=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_SERVER",
+              "name": "server",
+              "spanId": "oAAAAAAAAAM=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eAw=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_CLIENT",
+              "name": "client",
+              "spanId": "oAAAAAAAAAQ=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eBA=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_PRODUCER",
+              "name": "producer",
+              "spanId": "oAAAAAAAAAU=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eBQ=="
+            },
+            {
+              "endTimeUnixNano": "1700000000000001000",
+              "flags": 257,
+              "kind": "SPAN_KIND_CONSUMER",
+              "name": "consumer",
+              "spanId": "oAAAAAAAAAY=",
+              "startTimeUnixNano": "1700000000000000000",
+              "status": {},
+              "traceId": "EBESExQVFhcYGRobHB0eBg=="
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
