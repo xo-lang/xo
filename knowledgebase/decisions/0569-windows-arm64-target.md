@@ -124,7 +124,18 @@ section header bits: a .debug section is discardable whatever its
 flags, .data's default alignment is 4 and every section but .bss has a
 data pointer, empty or not (ARM64 only: amd64's COFF bytes are
 unchanged until its own compare with clang). Back-end cache keys of these
-objects are their own (`coff=arm64`).
+objects are their own (`coff=arm64`). The linked image (2026-11-09, main
+f484fc4af, hello, 549,351 bytes, the same bytes with `--as=cc`) reads
+cleanly with llvm-readobj 23.1.3 on the linux/arm64 host
+(`--file-headers --sections --coff-imports --coff-debug-directory
+--coff-load-config --coff-resources`, and `--unwind`): no warnings,
+machine ARM64 (0xAA64), console subsystem 6.0, DYNAMIC_BASE,
+HIGH_ENTROPY_VA, NX_COMPAT and TERMINAL_SERVER_AWARE, sections .text,
+.rdata, .data, .pdata, .tls, .rsrc and .reloc, imports from KERNEL32,
+api-ms-win-core-synch-l1-2-0, WS2_32, ntdll, SHELL32 and bcrypt, a TLS
+directory, the version resource, no debug directory (no PDB yet) and no
+load configuration, and all 678 .pdata entries decode with their
+unwind codes. Whether Windows runs it waits for a windows/arm64 machine.
 
 Not done in stage 1 yet: --race and a PDB for windows/arm64;
 a split link and the std object; the C ABI exports beyond Str results;
