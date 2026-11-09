@@ -16,6 +16,18 @@ implementation the language started with was deleted (decision 0215).
   through the harness.
 - Subagent prompts must repeat these rules.
 
+## Token budget (owner, 2026-11-09: subscription usage)
+
+- Reports to the lead are at most 5 lines (commit, next, decision or
+  block); details go in a file under `~/xo-lead/notes/AGENT/`, named in
+  the report.
+- Never read a full log into context: tests and builds write to a file,
+  then read `tail -20` or `grep -E 'FAIL|panic|error'`; no `go test -v`
+  to the terminal; heavy.sh and pushq output is grepped, not printed.
+- No polling: outside CI and registries at most once a day; wait on
+  gates and background runs through their notification, never a sleep
+  loop. Compact after each finished item.
+
 ## Where things live
 
 - [`knowledgebase/infrastructure/agent-tools.md`](knowledgebase/infrastructure/agent-tools.md):
