@@ -682,7 +682,7 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   conflict in one by regenerating.
 - `heavy.sh NAME CMD...` prints the last 20 lines of NAME-cmd.log (they end with `=== ... exit N`) to stdout when the job ends and exits with the job's status; `HEAVY_QUIET=1` keeps the old silence (lead, 2026-11-08: a call piped through `tail` showed nothing and a failed check read as passed). Read a result from the `exit N` line, never from a piped `$?`.
 - `tier.sh`: a linux offload step (llvm, cmd) that finds no slot in 20 minutes is retried once at the end with OFF_WAIT_MIN=45 and reported `SKIPPED after retry` only if that finds none either.
-- `scripts/gate.sh WORKTREE STEP...`: an agent's gate as named steps (its llvm step runs only the LLVM goldens the change touches, toolchain.md "A gate's goldens"). `codegen`, `wasm`, `cross`, `selfbuild` and `fieldgen` (the words of PUSHQ_RAN, pushq's proving checks; `fieldgen` is internal/llvm TestFieldGeneratorsInSync with the push's xo, required by scripts/gen/, the test, or a file in its table holding a generated block, lead 2026-11-08: a hand edit of sha3.xo's generated Keccak reached main) run after the other steps: those the changed paths require and every one named, each once, and the PUSHQ_RAN line names those that passed. gate.sh and pushq.sh take the required set from one function, scripts/lead/gatelib.sh gate_required_steps, so a gate's plan covers what pushq asks for (lead, 2026-11-08: a gate named `cross codegen`, ran neither, and pushq refused the push for cross); scripts/lead/gatesteps_test.sh (internal/repotest TestGateStepsShared) tests it. Last verified: 2026-11-08.
+- `scripts/gate.sh WORKTREE STEP...`: an agent's gate as named steps (its llvm step runs only the LLVM goldens the change touches, toolchain.md "A gate's goldens"). `codegen`, `wasm`, `cross`, `selfbuild`, `seedbuild` (offload hosts only) and `fieldgen` (the words of PUSHQ_RAN, pushq's proving checks; `fieldgen` is internal/llvm TestFieldGeneratorsInSync with the push's xo, required by scripts/gen/, the test, or a file in its table holding a generated block, lead 2026-11-08: a hand edit of sha3.xo's generated Keccak reached main) run after the other steps: those the changed paths require and every one named, each once, and the PUSHQ_RAN line names those that passed. gate.sh and pushq.sh take the required set from one function, scripts/lead/gatelib.sh gate_required_steps, so a gate's plan covers what pushq asks for (lead, 2026-11-08: a gate named `cross codegen`, ran neither, and pushq refused the push for cross); scripts/lead/gatesteps_test.sh (internal/repotest TestGateStepsShared) tests it. Last verified: 2026-11-08.
 - `scripts/bisect.sh [--pkg=PKG] [--timeout=D] [--keep] [--skip-verify]
   TEST GOOD BAD`:
   the first commit between GOOD (passes) and BAD (fails) where TEST
@@ -1216,7 +1216,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   xo build --phase-times -o OUT ./compiler/xo`, which gate.sh runs and
   reports with its wall and the peak heap of its phases (owner,
   2026-11-06: b29c306c8's inliner runaway passed 22 GB building xo and
-  reached main; builders found it, not a gate).
+  reached main; builders found it, not a gate). The same pushes name
+  `seedbuild`: compiler/xo built by the offload host's seed (XO_SEED,
+  exported by offload-gate-remote.sh) under XO_INLINE_STRICT=1 with
+  caches of its own, the hourly fixed point's s1, so a change the
+  current seed cannot build fails its own gate (lead, 2026-11-08:
+  a98d1d71c passed a gate whose xo came from a cached ancestor build and
+  failed s1 on the hosts); gate.sh prints its time and the seed's
+  version. It runs only on an offload host: `offload-gate.sh WORKTREE
+  seedbuild`. Last verified: 2026-11-08.
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision

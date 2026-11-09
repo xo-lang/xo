@@ -57,7 +57,7 @@
 #            default of xo build and run (owner, 2026-10-22; two warm and
 #            cold differences slipped past the per-push gates before);
 #            XO_GATE_CHKCACHE=0 skips that
-#   cross, codegen, wasm, selfbuild
+#   cross, codegen, wasm, selfbuild, seedbuild
 #            pushq.sh's proving checks (below): named, each runs after
 #            the other steps even when the paths do not require it, and
 #            is named in the PUSHQ_RAN line when it passes
@@ -85,7 +85,11 @@
 #            std/native/rt*.xo, and one cold build of compiler/xo with
 #            the new xo under XO_MAX_MEM=8G with --phase-times for what
 #            compiler/xo builds from (compiler/ but macho and wasm,
-#            std/native, std/llrt; "selfbuild"), and internal/llvm
+#            std/native, std/llrt; "selfbuild") and, for the same paths,
+#            one build of compiler/xo by the offload host's seed
+#            (XO_SEED) under XO_INLINE_STRICT=1, the hourly fixed
+#            point's s1 (on an offload host only; "seedbuild", lead,
+#            2026-11-08), and internal/llvm
 #            TestFieldGeneratorsInSync for scripts/gen or a file holding a
 #            generated block (its table; "fieldgen", lead, 2026-11-08),
 #            printing the PUSHQ_RAN
@@ -480,7 +484,7 @@ for step in "$@"; do
   chkcache)
     chkcache_ran=1
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
-  codegen|selfbuild|wasm|cross|fieldgen)
+  codegen|selfbuild|seedbuild|wasm|cross|fieldgen)
     # pushq's proving checks: run after the named steps with the ones the
     # change's paths require (gate_plan), each once, and named in the
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
@@ -560,6 +564,31 @@ fi
 # a generated block (scripts/gen's output in the runtime) against its
 # generator, run by this xo (lead, 2026-11-08: a hand edit of sha3.xo's
 # Keccak reached main)
+# seedbuild: compiler/xo built by the offload host's seed (XO_SEED,
+# which offload-gate-remote.sh exports) under XO_INLINE_STRICT=1, the
+# hourly fixed point's s1, with caches of its own so no cached build of
+# an ancestor stands in (lead, 2026-11-08: db70f6030 passed its gate,
+# whose xo came from the newest cached ancestor, and failed
+# XO_INLINE_STRICT from the 0.44 seed on the hosts). The Mac has no
+# XO_SEED: run it there with offload-gate.sh WORKTREE seedbuild.
+if [[ "$plan" == *" seedbuild "* ]]; then
+  if [ -z "${XO_SEED:-}" ] || [ ! -x "${XO_SEED:-}" ]; then
+    failed=1; echo "seedbuild: FAIL (no XO_SEED: it runs on an offload host, ~/xo-lead/agents/offload-gate.sh WORKTREE seedbuild)"
+  else
+    t1=$(date +%s) sb=$logs/seedbuild nolibc=${XO_NOLIBC:-}
+    # as xobuild (internal/xotool hostBackend): xo links with the C
+    # library on Linux
+    [ "$(uname -s)" = Linux ] && [ -z "$nolibc" ] && nolibc=0
+    rm -rf "${sb:?}" && mkdir -p "$sb"
+    if XO_NOLIBC=$nolibc XO_INLINE_STRICT=1 XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_BUILD_DIR="$sb/build" XO_RTOBJ_CACHE="$sb/rtobj" \
+      XO_BACKEND_CACHE_DIR="$sb/backend" "$XO_SEED" build --std="$wt/std" -o "$sb/xo" ./compiler/xo >"$logs/seedbuild.txt" 2>&1; then
+      echo "seedbuild: $(($(date +%s) - t1)) s with $("$XO_SEED" version 2>/dev/null)"; ran="$ran seedbuild"
+    else
+      failed=1; echo "seedbuild: FAIL ($logs/seedbuild.txt: $(grep -m1 -E 'XO[0-9]{4}|error|verif|panic' "$logs/seedbuild.txt")) with $("$XO_SEED" version 2>/dev/null)"
+    fi
+    rm -rf "${sb:?}/build" "${sb:?}/rtobj" "${sb:?}/backend" "${sb:?}/xo"
+  fi
+fi
 if [[ "$plan" == *" fieldgen "* ]]; then
   f0=$failed; failed=0
   full fieldgen ./internal/llvm -run '^TestFieldGeneratorsInSync$'
