@@ -1,6 +1,6 @@
 # 0568: hosting the public module proxy and checksum log
 
-Status: Accepted (owner, 2026-11-08, on the lead's recommendation; conditional on the owner confirming the OCI console shows the checksum log VM as Always Free; key rotation: yes to a standby key built into xo, two offline copies kept by the owner). Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation; owner, 2026-11-09: the OCI host is for hosting only, never a test or pass/fail host; conditional on the owner confirming the OCI console shows the checksum log VM as Always Free; key rotation: yes to a standby key built into xo, two offline copies kept by the owner). Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
 approved a public proxy plan on 2026-11-08 and chose its direction the
 same day, through the lead:
 
@@ -144,6 +144,14 @@ fifty times as much.
     pointed at the R2 endpoint is the first candidate.
 
 ### The fill service and the log on the owner's OCI host
+
+Hosting only (owner, 2026-11-09): the OCI host runs the fill service,
+the log and cloudflared, and nothing else of the project. It is never a
+test, gate, benchmark or pass/fail host: no offload env, no heavyd lane,
+no gates, goldens, soaks or measurements run there, and its Always Free
+state is confirmed in the OCI console (the three checks below), not by a
+run on the host. Testing of the services stays on the Mac, the offload
+hosts and containers (phase 1 below).
 
 The host was read only checked by the lead on 2026-11-08:
 
