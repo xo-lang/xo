@@ -351,25 +351,26 @@ import re, json, statistics as st, sys
 lines = open(sys.argv[1], errors="replace").read().splitlines()
 R = {}
 for l in lines:
-    m = re.match(r"(xo|base|go)(?:\.p\d+)? (\S+) c(\d+) rate(\d+) r(\d+) (\{.*\})", l)
+    m = re.match(r"(xo|base|go-tuned|go)(?:\.p\d+)? (\S+) c(\d+) rate(\d+) r(\d+) (\{.*\})", l)
     if m:
         R.setdefault((m[2], int(m[3]), int(m[4])), {}).setdefault(m[1], []).append(json.loads(m[6]))
 for l in lines:
-    if l.startswith(("host load", "release-vs-go-http ", "xo ", "loadgen flags")) and not re.match(r"(xo|base|go) \S+ c\d+ ", l):
+    if l.startswith(("host load", "release-vs-go-http ", "xo ", "go-tuned env", "loadgen flags")) and not re.match(r"(xo|base|go-tuned|go) \S+ c\d+ ", l):
         print("- " + l)
 if not R:
     print("\n(no runs: see http.txt)\n" + "\n".join("    " + l for l in lines[-15:]))
     sys.exit()
 print("- Go's /alloc rows are its /alloc-hand (json.Marshal written by hand, as Xo's derive encodes).")
+print("- go is Go at its defaults (GOGC=100); go-tuned is the same server with the env above (a memory limit in place of GOGC): quote both.")
 if any(re.match(r"(xo|base)\.p\d+ ", l) for l in lines):
     print("- Built at each XO_ARM64_PAD of HTTP_PADS: the table pools every pad's rounds; the pad sweep verdict below judges xo against base.")
 print("- Rounds: %d per row; each cell is the median, its range in brackets; CPU is the server's CPU microseconds per request.\n" % max(len(v) for x in R.values() for v in x.values()))
-F = [("rps", "req/s", 0), ("p50_us", "p50 us", 0), ("p99_us", "p99 us", 0), ("p999_us", "p99.9 us", 0), ("max_us", "max us", 0), ("cpu_us_per_req", "CPU us/req", 1), ("errors", "errors", 0)]
+F = [("rps", "req/s", 0), ("p50_us", "p50 us", 0), ("p99_us", "p99 us", 0), ("p999_us", "p99.9 us", 0), ("max_us", "max us", 0), ("cpu_us_per_req", "CPU us/req", 1), ("rss_kb", "peak RSS KB", 0), ("errors", "errors", 0)]
 print("| row | server | " + " | ".join(f[1] for f in F) + " |")
 print("|---|---|" + "---|" * len(F))
 for k in sorted(R):
     row = f"{k[0]} c{k[1]}" + (f" open {k[2]}/s" if k[2] else "")
-    for s in ("xo", "base", "go"):
+    for s in ("xo", "base", "go", "go-tuned"):
         v = R[k].get(s)
         if not v:
             continue
@@ -382,7 +383,7 @@ print()
 for k in sorted(R):
     med = {(s, n): st.median([a.get(n, 0) for a in v]) for s, v in R[k].items() for n, _, _ in F}
     row = f"{k[0]} c{k[1]}" + (f" open {k[2]}/s" if k[2] else "")
-    for b, a in (("xo", "go"), ("xo", "base")):
+    for b, a in (("xo", "go"), ("xo", "go-tuned"), ("xo", "base")):
         if (a, "rps") in med and (b, "rps") in med:
             print(f"- {row}, {b}/{a} medians: " + ", ".join(f"{lab} {med[(b, n)] / med[(a, n)]:.3f}" for n, lab, _ in F if n != "errors" and med[(a, n)]))
 PY

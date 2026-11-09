@@ -325,7 +325,11 @@ and runs `gh release create`. The order:
    the module under test, in copies of GOROOT and the release's std;
    An http section (2026-11-02, Lead) runs bench/perf/jitter's server
    (Xo at HTTP_REV, default HEAD; Xo the offload host's seed, the
-   release before; Go with the hand encoder) under its loadgen with
+   release before; Go with the hand encoder, at its defaults (go) and
+   with GO_TUNED_ENV, default `GOGC=off GOMEMLIMIT=1GiB` (go-tuned,
+   2026-11-09: at the defaults Go's /alloc server collects about 1,250
+   times a second, so quote both rows; each row also records the server's
+   peak RSS, gotchas/go-default-gc-http-baseline.md)) under its loadgen with
    `-awake`, through scripts/release-vs-go-http.sh on the first
    linux/arm64 offload host (OFF_EXCLUSIVE=1; loopback HTTP on the Mac
    runs out of ports): closed loop /hello and /alloc at 32 and 256
