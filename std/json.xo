@@ -17,6 +17,10 @@ fn indent(text: Str, prefix: Str = "", indent: Str = "  ") -> Str ! DecodeErr
 fn compact(text: Str) -> Str ! DecodeErr
 fn decode[T: Json](data: Bytes) -> T ! DecodeErr
 fn decode_str[T: Json](s: Str) -> T ! DecodeErr
+/// decode with Go's decoder rules (decision 0553): a null leaves a field's
+/// zero value and a missing field takes it, as encoding/json does.
+fn decode_go[T: Json](data: Bytes) -> T ! DecodeErr
+fn decode_go_str[T: Json](s: Str) -> T ! DecodeErr
 
 /// Displays as "at $.user.email: expected string".
 struct DecodeErr {

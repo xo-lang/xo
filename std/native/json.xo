@@ -24,6 +24,19 @@ fn decode[T: Json](data: Bytes) -> T ! json.DecodeErr {
 
 fn decode_str[T: Json](s: Str) -> T ! json.DecodeErr { decode(s.bytes()) }
 
+fn decode_go[T: Json](data: Bytes) -> T ! json.DecodeErr {
+  let tape = jsontext.parse(data)
+  if tape.is_empty() {
+    return Err(syntax_failed(data))
+  }
+  match rtjson.json_dec_go[T](data, tape, 0) {
+    Ok(v) => Ok(v)
+    Err(e) => Err(json.DecodeErr{path: "$" + e.path, msg: e.msg})
+  }
+}
+
+fn decode_go_str[T: Json](s: Str) -> T ! json.DecodeErr { decode_go(s.bytes()) }
+
 /// "at $.user.email: expected string" (std.md 5).
 fn decodeerr_display(e: json.DecodeErr) -> Str { "at ${e.path}: ${e.msg}" }
 

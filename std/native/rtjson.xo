@@ -14,3 +14,6 @@ fn json_enc[T](acc: Str, v: T) -> Str
 fn json_val[T](v: T) -> json.Value
 /// The value of the tape node at i; the error's path is relative to it.
 fn json_dec[T](src: Bytes, tape: List[Int], i: Int) -> T ! json.DecodeErr
+/// json_dec with Go's decoder rules (decode_go, decision 0553): a null leaves
+/// the zero value, a missing field takes it.
+fn json_dec_go[T](src: Bytes, tape: List[Int], i: Int) -> T ! json.DecodeErr

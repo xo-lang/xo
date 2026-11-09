@@ -309,6 +309,9 @@ pub struct Builder {
   /// them (llrt libcmem.xo heap_large), and an rt.slot_* on a List checks
   /// its index against the length (json.xo slot_bounds).
   pub heap_guard: Bool = false
+  /// Building the decoders of json.decode_go (decision 0553): a null leaves the
+  /// zero value and a missing field takes it.
+  dec_go: Bool = false
   /// `xo test --real` (core 9.2, decision 0120): the tests that declare
   /// `uses` are built, with the real Fs (Options.RealTests).
   pub real_tests: Bool = false

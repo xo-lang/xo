@@ -52,7 +52,7 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     let v = b.value_as(es[0] ?? fault("arg"), b.typ(ct))
     return b.call(b.json_val(ct), b.typ(b.json_value_ct()), "", [v])
   }
-  if tps.len() == 1 && !ci.subst.is_empty() && (name is "json_enc" | "json_dec") {
+  if tps.len() == 1 && !ci.subst.is_empty() && (name is "json_enc" | "json_dec" | "json_dec_go") {
     let st = b.str_t()
     let it = b.int_t()
     let ct = b.intrinsic_targ(ci, 0)
@@ -65,7 +65,10 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     let src = b.value_as(es[0] ?? fault("arg"), st)
     let tape = b.value_as(es[1] ?? fault("arg"), b.m.list(it))
     let i = b.value_as(es[2] ?? fault("arg"), it)
+    let saved_go = b.dec_go
+    b.dec_go = name == "json_dec_go"
     let f = b.json_dec(ct)
+    b.dec_go = saved_go
     let fi = b.fidx(f)
     return b.call(f, b.m.funcs[fi].results[0], "", [src, tape, i])
   }
@@ -899,7 +902,7 @@ fn (var b: Builder) json_dec(ct: Int) -> Str {
   }
   let rt = b.typ(b.result_of(ct, det))
   let list_int = b.m.list(it)
-  let name = "xo.json.dec[${b.type_name(ct)}]"
+  let name = "xo.json.dec${if b.dec_go { "g" } else { "" }}[${b.type_name(ct)}]"
   let fi = b.thunk_func(name, [st, list_int, it], [rt], [])
   if fi < 0 {
     return name
@@ -934,7 +937,7 @@ fn (var b: Builder) json_dec_q(ct: Int) -> Str {
   }
   let list_int = b.m.list(it)
   let rt = b.typ(b.result_of(ct, det))
-  let name = "xo.json.decq[${b.type_name(ct)}]"
+  let name = "xo.json.decq${if b.dec_go { "g" } else { "" }}[${b.type_name(ct)}]"
   let fi = b.thunk_func(name, [st, list_int, it], [rt], [])
   if fi < 0 {
     return name
@@ -980,6 +983,12 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   let bt = b.bool_t()
   let t = d.t
   let i = d.i
+  if b.dec_go && b.option_elem(ct) < 0 && !b.is_json_patch(ct) && b.tkind(t) != Kind.Enum {
+    // decode_go (decision 0553): a null leaves the zero value, as in Go
+    let (nn, jn) = b.if_then_begin(b.dec_is(d, JK_NULL))
+    b.dec_ok(d, b.zero(t, []))
+    b.if_then_end(nn, jn)
+  }
   if b.is_json_value(ct) {
     // a json.Value field: the node as it is (None only for a number out
     // of Float's range, parse_value's error)
@@ -1556,6 +1565,8 @@ fn (var b: Builder) dec_fields_fold(d: Dec, o: Int, seg: Str, fs: List[JField], 
       let pt = b.unbox_type(f.st)
       let a = b.add(Op.Variant, pt, Aux.I(n: b.m.variant_index(pt, "None")), [])
       b.jump(join, [b.coerce(a, f.st)])
+    } else if b.dec_go {
+      b.jump(join, [b.zero(f.st, [])])
     } else {
       b.jump(slow, [])
     }
@@ -1648,6 +1659,8 @@ fn (var b: Builder) dec_fields_fold_err(d: Dec, seg: Str, fs: List[JField], with
       let pt = b.unbox_type(f.st)
       let a = b.add(Op.Variant, pt, Aux.I(n: b.m.variant_index(pt, "None")), [])
       b.jump(join, [b.coerce(a, f.st)])
+    } else if b.dec_go {
+      b.jump(join, [b.zero(f.st, [])])
     } else {
       b.fold_err(ev, b.cint(1 << 62), false, b.const_str(seg), b.const_str("missing field `${f.key}`"))
       b.jump(join, [b.zero(f.st, [])])
@@ -1836,6 +1849,8 @@ fn (var b: Builder) dec_fields_in(d: Dec, o: Int, seg: Str, fs: List[JField], wi
       let pt = b.unbox_type(f.st)
       let a = b.add(Op.Variant, pt, Aux.I(n: b.m.variant_index(pt, "None")), [])
       b.jump(join, [b.coerce(a, f.st)])
+    } else if b.dec_go {
+      b.jump(join, [b.zero(f.st, [])])
     } else {
       let p = b.const_str(seg)
       let m = b.const_str("missing field `${f.key}`")

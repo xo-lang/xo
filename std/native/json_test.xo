@@ -3282,3 +3282,38 @@ test "json writer smoke" {
   w.object_end()
   expect(w.finish().to_str() ?? "") == "{\"a\\u003cb\":[1,2.5,\"x\\n\"]}"
 }
+
+struct GoDecInner {
+  n: Int
+  s: Str
+} derive Json
+
+struct GoDecRow {
+  id: Int
+  name: Str
+  tags: List[Str]
+  inner: GoDecInner
+  maybe: Int?
+} derive Json
+
+test "decode_go: null leaves the zero value and a missing field takes it (decision 0553)" {
+  let a = json.decode_go_str[GoDecRow]("{\"id\":null,\"name\":null,\"tags\":null,\"inner\":null,\"maybe\":null}").ok() ?? fault("a")
+  expect(a.id) == 0
+  expect(a.name) == ""
+  expect(a.tags.len()) == 0
+  expect(a.inner.n) == 0
+  expect(a.maybe.is_none()) == true
+  let b = json.decode_go_str[GoDecRow]("{\"id\":7,\"inner\":{\"s\":\"x\"}}").ok() ?? fault("b")
+  expect(b.id) == 7
+  expect(b.name) == ""
+  expect(b.inner.s) == "x"
+  expect(b.inner.n) == 0
+  let c = json.decode_go_str[List[Int]]("[1,null,3]").ok() ?? fault("c")
+  expect(c.len()) == 3
+  expect(c[1]) == 0
+  // the strict decoder still rejects both
+  expect(json.decode_str[GoDecRow]("{\"id\":null,\"name\":\"\",\"tags\":[],\"inner\":{\"n\":0,\"s\":\"\"}}").is_err()) == true
+  expect(json.decode_str[GoDecRow]("{\"id\":1}").is_err()) == true
+  // a wrong kind is still an error
+  expect(json.decode_go_str[GoDecRow]("{\"id\":\"x\"}").is_err()) == true
+}
