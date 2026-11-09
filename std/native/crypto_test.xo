@@ -2930,7 +2930,7 @@ test "Aes128CbcHmacSha256 seals Go's bytes (RFC 7518 B.1 and azidentity's nil-aa
 }
 
 test "Aes128CbcHmacSha256 opens as Go does and refuses everything else" {
-  for (name, key, iv, aad, sealed, opens, pt) in CBC_OPEN {
+  for (_name, key, iv, aad, sealed, opens, pt) in CBC_OPEN {
     let k = crypto.aead_key(crypto.Aead.Aes128CbcHmacSha256, unhex(key)).ok() ?? fault("key")
     match k.open(unhex(iv), unhex(sealed), unhex(aad)) {
       Ok(got) => {
