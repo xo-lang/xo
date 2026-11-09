@@ -35,6 +35,7 @@ const IMAGE_SCN_MEM_READ = 0x40000000
 const IMAGE_SCN_MEM_WRITE = 0x80000000
 const IMAGE_SYM_CLASS_EXTERNAL = 2
 const IMAGE_SYM_CLASS_STATIC = 3
+const IMAGE_SYM_CLASS_LABEL = 6
 /// UNWIND_INFO's flags and codes (the x64 exception handling ABI)
 const UNW_FLAG_EHANDLER = 1
 const UNW_FLAG_UHANDLER = 2
@@ -106,10 +107,10 @@ fn assemble_coff(src: Bytes, jpad: Bool) -> Result[Bytes, Str] {
 }
 
 /// .text, .data and .bss, the sections LLVM's COFF streamer makes first,
-/// with their default alignments.
+/// with their default alignments (ARM64's .text 4 bytes, x86-64's 16).
 fn (var a: Asm) coff_defaults() {
-  a.coff_section(".text", IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, 4)
-  a.coff_section(".data", IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, 0)
+  a.coff_section(".text", IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, if a.amd64 { 4 } else { 2 })
+  a.coff_section(".data", IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, if a.amd64 { 0 } else { 2 })
   a.coff_section(".bss", IMAGE_SCN_CNT_UNINITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, 2)
   a.cur = -1
 }
@@ -180,6 +181,9 @@ fn coff_flags(name: Str, fl: Str) -> Int {
 
 /// The COFF directives; false for the ones the ELF path handles too.
 fn (var a: Asm) coff_directive(d: Str, rest: Bytes) -> Bool {
+  if !a.amd64 && d.starts_with(".seh_") {
+    return a.a64_seh(d, rest)
+  }
   match d {
     ".text" => {
       a.coff_section(".text", 0, 4)
@@ -210,7 +214,14 @@ fn (var a: Asm) coff_directive(d: Str, rest: Bytes) -> Bool {
           }
         }
       }
-      a.coff_section(name, coff_flags(name, fl), 0)
+      var ch = coff_flags(name, fl)
+      // LLVM's COFF parser marks a .debug section discardable whatever
+      // its flags (clang 21's windows/arm64 objects; amd64 keeps its
+      // bytes until its own compare with clang)
+      if !a.amd64 && name.starts_with(".debug") {
+        ch = ch | IMAGE_SCN_MEM_DISCARDABLE
+      }
+      a.coff_section(name, ch, 0)
       true
     }
     ".seh_proc" => {
@@ -526,8 +537,11 @@ fn (var a: Asm) coff_data_reloc(si: Int, off: Int, n: Int, sym: Int, k: Int) -> 
   }
   a.register(target)
   a.syms[target].used = true
-  let typ = if n == 8 { IMAGE_REL_AMD64_ADDR64 } else if a.sects[si].name.starts_with(".debug_") { IMAGE_REL_AMD64_SECREL } else { IMAGE_REL_AMD64_ADDR32NB }
-  a.sects[si].relocs.push(Reloc{addr: off, typ: typ, pcrel: false, len: if n == 8 { 3 } else { 2 }, sym: target})
+  let typ = if !a.amd64 {
+    if n == 8 { IMAGE_REL_ARM64_ADDR64 } else if a.sects[si].name.starts_with(".debug_") { IMAGE_REL_ARM64_SECREL } else { IMAGE_REL_ARM64_ADDR32NB }
+  } else if n == 8 { IMAGE_REL_AMD64_ADDR64 } else if a.sects[si].name.starts_with(".debug_") { IMAGE_REL_AMD64_SECREL } else { IMAGE_REL_AMD64_ADDR32NB }
+  let fixed = !a.amd64 && a.syms[target].secsym
+  a.sects[si].relocs.push(Reloc{addr: off, typ: typ, pcrel: false, len: if n == 8 { 3 } else { 2 }, sym: target, addend: v, fixed: fixed})
   v
 }
 
@@ -557,6 +571,9 @@ fn (var a: Asm) write_coff() -> Bytes {
   var order: List[Int] = []
   for s in a.sects {
     order.push(s.ltmp)
+    for l in s.labels {
+      order.push(l)
+    }
   }
   for i in a.reg_order {
     let s = a.syms[i]
@@ -594,14 +611,17 @@ fn (var a: Asm) write_coff() -> Bytes {
   for s in a.sects {
     let bss = (s.cchar & IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0
     let size = if bss { 0 } else { a.coff_bytes(s).len() }
-    data_at.push(if size == 0 { 0 } else { off })
+    // LLVM gives every section but .bss a data pointer, empty or not
+    // (clang 21's windows/arm64 objects; amd64 keeps its bytes until its
+    // own compare with clang)
+    data_at.push(if bss || size == 0 && a.amd64 { 0 } else { off })
     off += size
     rel_at.push(if s.relocs.is_empty() { 0 } else { off })
     off += 10 * (s.relocs.len() + (if s.relocs.len() >= COFF_NRELOC_MAX { 1 } else { 0 }))
   }
   let symtab = off
   var o = new_out(off + 18 * n + strs.len())
-  o.u16(IMAGE_FILE_MACHINE_AMD64)
+  o.u16(if a.amd64 { IMAGE_FILE_MACHINE_AMD64 } else { IMAGE_FILE_MACHINE_ARM64 })
   o.u16(a.sects.len())
   o.u32(0)
   o.u32(symtab)
@@ -655,7 +675,7 @@ fn (var a: Asm) write_coff() -> Bytes {
     o.u32(if s.secsym || s.sect < 0 { 0 } else { s.off })
     o.u16(if s.sect < 0 { 0 } else { s.sect + 1 })
     o.u16(0)
-    o.u8(if s.global || s.sect < 0 { IMAGE_SYM_CLASS_EXTERNAL } else { IMAGE_SYM_CLASS_STATIC })
+    o.u8(if s.clabel { IMAGE_SYM_CLASS_LABEL } else if s.global || s.sect < 0 { IMAGE_SYM_CLASS_EXTERNAL } else { IMAGE_SYM_CLASS_STATIC })
     o.u8(if s.secsym { 1 } else { 0 })
     if s.secsym {
       let sc = a.sects[s.sect]
@@ -674,10 +694,18 @@ fn (var a: Asm) write_coff() -> Bytes {
   o.done()
 }
 
-/// A section's contents: its code bytes, or its data.
+/// A section's contents: its code bytes (ARM64's words little endian),
+/// or its data.
 fn (a: Asm) coff_bytes(s: Sect) -> Bytes {
-  if s.code {
+  if s.code && a.amd64 {
     return int_bytes(s.words)
+  }
+  if s.code {
+    var o = new_out(s.words.len() * 4)
+    for w in s.words {
+      o.u32(w)
+    }
+    return o.done()
   }
   s.bytes
 }

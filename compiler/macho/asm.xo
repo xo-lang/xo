@@ -89,6 +89,8 @@ struct Sym {
   /// ELF (elf.xo): the symbol type (STT_*), weak binding, hidden
   /// visibility, .size, a mapping symbol ($x, $d) or section symbol
   kind: Int = 0
+  /// ARM64 COFF: an offset label ($L<section>_N, IMAGE_SYM_CLASS_LABEL)
+  clabel: Bool = false
   weak: Bool = false
   /// Mach-O `.weak_definition` (N_WEAK_DEF): another object may define
   /// it too, and the link keeps the first
@@ -122,8 +124,12 @@ struct Reloc {
   /// a symbol index (extern), or with sect true the section ordinal
   sym: Int
   sect: Bool = false
-  /// ELF: the addend of the RELA entry
+  /// ELF: the addend of the RELA entry; ARM64 COFF with fixed: the
+  /// target's offset in its section (LLVM's FixedValue)
   addend: Int = 0
+  /// ARM64 COFF: relative to a section's symbol for a temporary label,
+  /// so coff_a64_labels may move it to an offset label
+  fixed: Bool = false
 }
 
 struct Sect {
@@ -136,6 +142,8 @@ struct Sect {
   /// log2 alignment
   align: Int = 0
   words: List[Int] = []
+  /// ARM64 COFF: the offset labels' symbols (coff_a64_labels)
+  labels: List[Int] = []
   items: List[Item] = []
   size: Int = 0
   addr: Int = 0
@@ -280,6 +288,8 @@ pub struct Asm {
   /// functions' .seh unwind data
   coff: Bool = false
   sehs: List[Seh] = []
+  /// windows/arm64: the functions' unwind frames (coffseh64.xo)
+  a64w: List[A64Win] = []
 }
 
 /// The bytes of code in section si so far: 4 a word, or the bytes of an
@@ -899,6 +909,19 @@ fn (var a: Asm) directive(l: Bytes) {
     a.push_item(a.cur, Item.Raw(b.freeze()))
     return
   }
+  // .secrel32: a 4 byte offset in the target's section, which
+  // coff_data_reloc writes as SECREL in a .debug_ section (DWARF's
+  // references between its sections on windows/arm64, compiler/arm64
+  // debug.xo); elsewhere it is not supported
+  if d == ".secrel32" {
+    if !a.coff || !a.sects[a.cur].name.starts_with(".debug_") {
+      a.fail(".secrel32 outside a COFF .debug_ section")
+    }
+    let (x, y, k) = a.expr(rest)
+    a.register_expr(x, y)
+    a.push_item(a.cur, Item.Word(n: 4, a: x, b: y, k: k))
+    return
+  }
   if d == ".byte" || d == ".short" || d == ".long" || d == ".quad" || (a.elf && d == ".xword") {
     if a.elf {
       a.map_data()
@@ -1182,6 +1205,8 @@ fn (var a: Asm) finish() {
     a.x86_macho_fixes()
   } else if a.amd64 {
     a.x86_apply_fixes()
+  } else if a.coff {
+    a.coff_a64_fixes()
   } else if a.elf {
     a.elf_apply_fixes()
   } else {

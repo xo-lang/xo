@@ -1,0 +1,249 @@
+// windows/arm64 objects from Xo's own assembler (decision 0569 stage 3):
+// the arm64 parser and encoder of the Mach-O and ELF writers, with
+// coff.xo's sections, symbols and writer, and the IMAGE_REL_ARM64_
+// relocations as LLVM's COFF streamer writes them: a reference to a
+// temporary label is to its section's symbol, the label's offset the
+// addend, which (as for every ARM64 COFF relocation) the instruction's
+// own field holds (pearm64.xo reads them so). A branch to a symbol of
+// its own section that is not weak is resolved here, a global's too.
+// The .seh_ directives become .xdata and .pdata as LLVM 21's
+// MCWin64EH.cpp writes them (its ARM64 half, ported in coffseh64.xo);
+// clang's objects are the reference.
+
+/// assemble_coff_arm64: the COFF object of src (the arm64 emitter's
+/// windows/arm64 assembly), or the first error as "line N: why".
+pub fn assemble_coff_arm64(src: Bytes) -> Result[Bytes, Str] {
+  var a = Asm{elf: true, coff: true}
+  a.coff_defaults()
+  a.parse(src)
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  a.a64_unwind_tables()
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  a.finish()
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  a.coff_a64_labels()
+  Ok(a.write_coff())
+}
+
+/// The symbol a relocation names for sym and the addend: a temporary
+/// label's section symbol and the label's offset.
+fn (var a: Asm) a64_target(sym: Int) -> (Int, Int) {
+  let s = a.syms[sym]
+  var target = sym
+  var addend = 0
+  if s.temp && s.sect >= 0 {
+    target = a.sects[s.sect].ltmp
+    addend = s.off
+  }
+  a.register(target)
+  a.syms[target].used = true
+  (target, addend)
+}
+
+fn (var a: Asm) a64_reloc(si: Int, pc: Int, typ: Int, target: Int, k: Int) {
+  a.sects[si].relocs.push(Reloc{addr: pc, typ: typ, pcrel: false, len: 2, sym: target, addend: k, fixed: a.syms[target].secsym})
+}
+
+/// The access size's log2 of a load or store with an unsigned 12 bit
+/// offset (a 128 bit SIMD and FP register's 4), as pearm64.xo a64_imm12.
+fn a64_ldst_scale(w: Int) -> Int {
+  var size = w >> 30
+  if (w & 0x4800000) == 0x4800000 {
+    size += 4
+  }
+  size
+}
+
+/// Whether w is an add (immediate), whose page offset relocation is
+/// PAGEOFFSET_12A, not a load's or a store's 12L.
+fn a64_is_add_imm(w: Int) -> Bool { (w & 0x1f000000) == 0x11000000 }
+
+/// The fixups as relocations or resolved values (elf_apply_fixes' COFF
+/// counterpart).
+fn (var a: Asm) coff_a64_fixes() {
+  for f in a.fixes {
+    let s = a.syms[f.sym]
+    let pc = f.at * 4
+    var w = a.sects[f.sect].words[f.at]
+    if f.kind == FX_DIFF32 {
+      match a.rel_value(f.sym, f.sym2, 0) {
+        Some(v) => w = v & 0xffffffff
+        None => {
+          a.err = "line ${f.line}: a .long of symbols in different sections"
+          return
+        }
+      }
+      a.sects[f.sect].words[f.at] = w
+      continue
+    }
+    if f.kind == FX_PAGE21 {
+      let (t, k) = a.a64_target(f.sym)
+      a.a64_reloc(f.sect, pc, IMAGE_REL_ARM64_PAGEBASE_REL21, t, k)
+      let imm = k & 0x1fffff
+      a.sects[f.sect].words[f.at] = w | ((imm & 3) << 29) | ((imm >> 2) << 5)
+      continue
+    }
+    if f.kind == FX_PAGEOFF12 || f.kind == FX_TPREL_HI12 || f.kind == FX_TPREL_LO12 {
+      let (t, k) = a.a64_target(f.sym)
+      let add = a64_is_add_imm(w)
+      var typ = if add { IMAGE_REL_ARM64_PAGEOFFSET_12A } else { IMAGE_REL_ARM64_PAGEOFFSET_12L }
+      var field = k & 0xfff
+      if f.kind == FX_TPREL_HI12 {
+        // :secrel_hi12: (the thread local's offset in .tls$)
+        typ = IMAGE_REL_ARM64_SECREL_HIGH12A
+        field = (k >> 12) & 0xfff
+      } else if f.kind == FX_TPREL_LO12 {
+        typ = if add { IMAGE_REL_ARM64_SECREL_LOW12A } else { IMAGE_REL_ARM64_SECREL_LOW12L }
+      }
+      if !add {
+        let sc = a64_ldst_scale(w)
+        if (field & ((1 << sc) - 1)) != 0 {
+          a.err = "line ${f.line}: a misaligned page offset of ${bstr(s.name)}"
+          return
+        }
+        field = field >> sc
+      }
+      a.a64_reloc(f.sect, pc, typ, t, k)
+      a.sects[f.sect].words[f.at] = w | (field << 10)
+      continue
+    }
+    if f.kind != FX_B26 && f.kind != FX_BL26 && f.kind != FX_COND19 && f.kind != FX_TB14 && f.kind != FX_ADR21 {
+      a.err = "line ${f.line}: a relocation COFF has none for (fixup ${f.kind})"
+      return
+    }
+    let local = s.sect == f.sect && !s.weak
+    if !local {
+      let (t, k) = a.a64_target(f.sym)
+      if k % 4 != 0 {
+        a.err = "line ${f.line}: a branch to a misaligned label"
+        return
+      }
+      if f.kind == FX_B26 || f.kind == FX_BL26 {
+        a.a64_reloc(f.sect, pc, IMAGE_REL_ARM64_BRANCH26, t, k)
+        a.sects[f.sect].words[f.at] = w | ((k / 4) & 0x3ffffff)
+      } else if f.kind == FX_COND19 {
+        a.a64_reloc(f.sect, pc, IMAGE_REL_ARM64_BRANCH19, t, k)
+        a.sects[f.sect].words[f.at] = w | (((k / 4) & 0x7ffff) << 5)
+      } else if f.kind == FX_TB14 {
+        a.a64_reloc(f.sect, pc, IMAGE_REL_ARM64_BRANCH14, t, k)
+        a.sects[f.sect].words[f.at] = w | (((k / 4) & 0x3fff) << 5)
+      } else {
+        a.a64_reloc(f.sect, pc, IMAGE_REL_ARM64_REL21, t, k)
+        let imm = k & 0x1fffff
+        a.sects[f.sect].words[f.at] = w | ((imm & 3) << 29) | ((imm >> 2) << 5)
+      }
+      continue
+    }
+    let d = s.off - pc
+    if f.kind == FX_B26 || f.kind == FX_BL26 {
+      if d % 4 != 0 || d < -134217728 || d >= 134217728 {
+        a.err = "line ${f.line}: branch out of range"
+        return
+      }
+      w = w | ((d / 4) & 0x3ffffff)
+    } else if f.kind == FX_COND19 {
+      if d % 4 != 0 || d < -1048576 || d >= 1048576 {
+        a.err = "line ${f.line}: conditional branch out of range"
+        return
+      }
+      w = w | (((d / 4) & 0x7ffff) * 32)
+    } else if f.kind == FX_TB14 {
+      if d % 4 != 0 || d < -32768 || d >= 32768 {
+        a.err = "line ${f.line}: test and branch out of range"
+        return
+      }
+      w = w | (((d / 4) & 0x3fff) * 32)
+    } else {
+      if d < -1048576 || d >= 1048576 {
+        a.err = "line ${f.line}: adr out of range"
+        return
+      }
+      let imm = d & 0x1fffff
+      w = w | ((imm & 3) * 0x20000000) | ((imm >> 2) * 32)
+    }
+    a.sects[f.sect].words[f.at] = w
+  }
+}
+
+/// LLVM's offset labels (WinCOFFObjectWriter, UseOffsetLabels for ARM64):
+/// a symbol `$L<section>_N` (IMAGE_SYM_CLASS_LABEL) at every 1 MiB of a
+/// section below its size, after the section's own symbol, and a
+/// relocation made against a section's symbol for a temporary label
+/// whose offset is 1 MiB or more moved to the label below it (the last
+/// one past them), the label's offset taken from the addend the field
+/// holds, so a branch's or an adrp's addend fits its field.
+fn (var a: Asm) coff_a64_labels() {
+  for si in 0..a.sects.len() {
+    let sc = a.sects[si]
+    let bss = (sc.cchar & IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0
+    let size = if bss { sc.size } else { a.coff_bytes(sc).len() }
+    var labels: List[Int] = []
+    var off = 1 << 20
+    var n = 1
+    while off < size {
+      labels.push(a.syms.len())
+      a.syms.push(Sym{name: "$L${sc.name}_${n}".bytes(), sect: si, off: off, clabel: true})
+      off += 1 << 20
+      n += 1
+    }
+    a.sects[si].labels = labels
+  }
+  for si in 0..a.sects.len() {
+    for ri in 0..a.sects[si].relocs.len() {
+      let r = a.sects[si].relocs[ri]
+      if !r.fixed {
+        continue
+      }
+      let ls = a.sects[a.syms[r.sym].sect].labels
+      let idx = r.addend >> 20
+      if ls.is_empty() || idx <= 0 {
+        continue
+      }
+      let l = ls[idx.min(ls.len()) - 1]
+      let k = r.addend - a.syms[l].off
+      a.sects[si].relocs[ri].sym = l
+      a.sects[si].relocs[ri].addend = k
+      a.a64_set_field(si, r.addr, r.typ, k)
+    }
+  }
+}
+
+/// Writes addend k into the field of the relocation of type typ at
+/// offset at of section si (the forms coff_a64_fixes and
+/// coff_data_reloc write; a page offset's low 12 bits do not change by a
+/// multiple of 1 MiB).
+fn (var a: Asm) a64_set_field(si: Int, at: Int, typ: Int, k: Int) {
+  if typ == IMAGE_REL_ARM64_ADDR32NB || typ == IMAGE_REL_ARM64_ADDR64 || typ == IMAGE_REL_ARM64_SECREL {
+    let n = if typ == IMAGE_REL_ARM64_ADDR64 { 8 } else { 4 }
+    let old = a.sects[si].bytes
+    var o = new_out(old.len())
+    o.bytes(old[0..at])
+    for i in 0..n {
+      o.u8((k >> (8 * i)) & 0xff)
+    }
+    o.bytes(old[at + n..old.len()])
+    a.sects[si].bytes = o.done()
+    return
+  }
+  let wi = at / 4
+  var w = a.sects[si].words[wi]
+  if typ == IMAGE_REL_ARM64_BRANCH26 {
+    w = (w & ~0x3ffffff) | ((k / 4) & 0x3ffffff)
+  } else if typ == IMAGE_REL_ARM64_BRANCH19 {
+    w = (w & ~(0x7ffff << 5)) | (((k / 4) & 0x7ffff) << 5)
+  } else if typ == IMAGE_REL_ARM64_BRANCH14 {
+    w = (w & ~(0x3fff << 5)) | (((k / 4) & 0x3fff) << 5)
+  } else if typ == IMAGE_REL_ARM64_PAGEBASE_REL21 || typ == IMAGE_REL_ARM64_REL21 {
+    let imm = k & 0x1fffff
+    w = (w & ~((3 << 29) | (0x7ffff << 5))) | ((imm & 3) << 29) | ((imm >> 2) << 5)
+  } else if typ == IMAGE_REL_ARM64_SECREL_HIGH12A {
+    w = (w & ~(0xfff << 10)) | (((k >> 12) & 0xfff) << 10)
+  }
+  a.sects[si].words[wi] = w
+}

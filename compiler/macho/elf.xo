@@ -335,8 +335,9 @@ fn (var a: Asm) elf_section_directive(rest: Bytes) {
 /// A mapping symbol ($x before instructions, $d before data) when the
 /// section's state changes.
 fn (var a: Asm) map_code() {
-  if a.amd64 {
-    // mapping symbols are AArch64's
+  if a.amd64 || a.coff {
+    // mapping symbols are AArch64 ELF's (LLVM 21's ARM64 COFF streamer
+    // writes none)
     return
   }
   if a.sects[a.cur].mapstate != 1 {
@@ -346,7 +347,7 @@ fn (var a: Asm) map_code() {
 }
 
 fn (var a: Asm) map_data() {
-  if a.amd64 {
+  if a.amd64 || a.coff {
     return
   }
   if a.sects[a.cur].mapstate != 2 {

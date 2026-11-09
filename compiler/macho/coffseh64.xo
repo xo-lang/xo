@@ -1,0 +1,722 @@
+// windows/arm64 unwind data (decision 0569 stage 3): the .seh_
+// directives into .xdata records and .pdata entries, byte for byte as
+// LLVM's COFF streamer writes them. A port of llvm/lib/MC/MCWin64EH.cpp's
+// ARM64 half (release/21.x: simplifyARM64Opcodes, ARM64CountOfUnwindCodes,
+// ARM64EmitUnwindCode, getARM64OffsetInProlog, checkARM64PackedEpilog,
+// tryARM64PackedUnwind, ARM64ProcessEpilogs, ARM64EmitUnwindInfoForSegment,
+// ARM64EmitRuntimeFunction) and AArch64WinCOFFStreamer.cpp's directive
+// handling, Apache-2.0 WITH LLVM-exception, the LLVM Project. One
+// segment per function: a function over 0xFFFFC bytes is refused, as is
+// any code but the ones the arm64 emitter writes.
+
+// the unwind operations, by LLVM's Win64EH::UnwindOpcodes names
+const U_ALLOC_SMALL = 1
+const U_ALLOC_MEDIUM = 2
+const U_ALLOC_LARGE = 3
+const U_R19R20X = 4
+const U_FPLRX = 5
+const U_FPLR = 6
+const U_REG = 7
+const U_REGX = 8
+const U_REGP = 9
+const U_REGPX = 10
+const U_LRPAIR = 11
+const U_FREG = 12
+const U_FREGX = 13
+const U_FREGP = 14
+const U_FREGPX = 15
+const U_SETFP = 16
+const U_ADDFP = 17
+const U_NOP = 18
+const U_END = 19
+const U_NEXT = 20
+const U_PAC = 21
+
+/// One unwind operation (WinEH::Instruction): a register (-1 none) and an
+/// offset or size.
+struct A64Ins {
+  op: Int
+  reg: Int = -1
+  off: Int = 0
+}
+
+/// An epilog: its start in the function's section and its operations
+/// (ending with U_END).
+struct A64Epi {
+  start: Int
+  ins: List[A64Ins] = []
+}
+
+/// A function's unwind frame (WinEH::FrameInfo).
+struct A64Win {
+  sect: Int
+  /// the function's start (Begin) and end (FuncletOrFuncEnd), as offsets
+  /// in sect; end -1 until known
+  begin: Int
+  end: Int = -1
+  /// a temporary symbol at begin, the .pdata entry's target
+  bsym: Int = -1
+  ins: List[A64Ins] = []
+  epis: List[A64Epi] = []
+  in_epi: Bool = false
+  handler: Int = -1
+  handles: Bool = false
+  /// the .xdata record's label once written (Symbol), and the packed
+  /// .pdata word when the record is packed
+  xsym: Int = -1
+  packed: Int = 0
+}
+
+fn a64_ins_eq(x: A64Ins, y: A64Ins) -> Bool { x.op == y.op && x.reg == y.reg && x.off == y.off }
+
+fn a64_ins_list_eq(x: List[A64Ins], y: List[A64Ins]) -> Bool {
+  if x.len() != y.len() {
+    return false
+  }
+  for i in 0..x.len() {
+    if !a64_ins_eq(x[i], y[i]) {
+      return false
+    }
+  }
+  true
+}
+
+/// The register number of a .seh_ operand (x0 to x30, lr, d0 to d31), or
+/// -1.
+fn a64_seh_reg(b: Bytes, fp: Bool) -> Int {
+  let s = bstr(trim(b))
+  if s == "lr" && !fp {
+    return 30
+  }
+  if s == "fp" && !fp {
+    return 29
+  }
+  let pre = if fp { "d" } else { "x" }
+  if !s.starts_with(pre) {
+    return -1
+  }
+  match Int.parse(s.trim_prefix(pre)) {
+    Some(n) => if n >= 0 && n <= 30 { n } else { -1 }
+    None => -1
+  }
+}
+
+/// An arm64 .seh_ directive (AArch64AsmParser's parseDirectiveSEH* and
+/// AArch64TargetWinCOFFStreamer's emitARM64WinCFI*).
+fn (var a: Asm) a64_seh(d: Str, rest: Bytes) -> Bool {
+  if d == ".seh_proc" {
+    let _ = a.sym(rest)
+    let b = a.new_numeric(".Lfunc_begin".bytes())
+    a.syms[b].sect = a.cur
+    a.syms[b].off = a.code_len(a.cur)
+    a.a64w.push(A64Win{sect: a.cur, begin: a.code_len(a.cur), bsym: b})
+    return true
+  }
+  if a.a64w.is_empty() {
+    a.fail("${d} outside a .seh_proc")
+    return true
+  }
+  let k = a.a64w.len() - 1
+  let ps = split_operands(rest)
+  let r0 = if ps.len() >= 2 { ps[0] } else { b"" }
+  let n0 = if ps.len() >= 1 { parse_int(trim(ps[ps.len() - 1])) ?? -1 } else { -1 }
+  var code = A64Ins{op: 0}
+  match d {
+    ".seh_endproc" => {
+      // the record now, in function order (MCStreamer::emitWinCFIEndProc
+      // calls emitWindowsUnwindTables for the procedure's frame), then
+      // back to the function's section
+      if a.a64w[k].end < 0 {
+        a.a64w[k].end = a.code_len(a.a64w[k].sect)
+      }
+      a.a64_unwind_info(k, true)
+      a.cur = a.a64w[k].sect
+      return true
+    }
+    ".seh_endprologue" => {
+      // the prolog's end: an end code first (the last one written)
+      var ins: List[A64Ins] = [A64Ins{op: U_END}]
+      for i in a.a64w[k].ins {
+        ins.push(i)
+      }
+      a.a64w[k].ins = ins
+      return true
+    }
+    ".seh_startepilogue" => {
+      a.a64w[k].in_epi = true
+      a.a64w[k].epis.push(A64Epi{start: a.code_len(a.cur)})
+      return true
+    }
+    ".seh_endepilogue" => {
+      if a.a64w[k].in_epi {
+        let e = a.a64w[k].epis.len() - 1
+        a.a64w[k].epis[e].ins.push(A64Ins{op: U_END})
+      }
+      a.a64w[k].in_epi = false
+      return true
+    }
+    ".seh_handler" => {
+      if ps.is_empty() {
+        a.fail(".seh_handler needs a handler")
+        return true
+      }
+      a.a64w[k].handler = a.sym(ps[0])
+      for p in ps[1..ps.len()] {
+        let s = bstr(trim(p))
+        if s == "@except" {
+          a.a64w[k].handles = true
+        } else if s != "@unwind" {
+          a.fail(".seh_handler ${s}")
+        }
+      }
+      return true
+    }
+    ".seh_handlerdata" => {
+      // the record now, the handler's data after it in .xdata (LLVM's
+      // EmitUnwindInfo with HandlerData: never packed, and the function's
+      // length up to here when its end is not marked yet)
+      if a.a64w[k].end < 0 {
+        a.a64w[k].end = a.code_len(a.a64w[k].sect)
+      }
+      a.a64_unwind_info(k, false)
+      return true
+    }
+    ".seh_stackalloc" => {
+      if n0 < 0 {
+        a.fail(".seh_stackalloc ${bstr(rest)}")
+        return true
+      }
+      code = A64Ins{op: if n0 >= 16384 { U_ALLOC_LARGE } else if n0 >= 512 { U_ALLOC_MEDIUM } else { U_ALLOC_SMALL }, off: n0}
+    }
+    ".seh_save_r19r20_x" => code = A64Ins{op: U_R19R20X, off: n0}
+    ".seh_save_fplr" => code = A64Ins{op: U_FPLR, off: n0}
+    ".seh_save_fplr_x" => code = A64Ins{op: U_FPLRX, off: n0}
+    ".seh_save_reg" => code = A64Ins{op: U_REG, reg: a64_seh_reg(r0, false), off: n0}
+    ".seh_save_reg_x" => code = A64Ins{op: U_REGX, reg: a64_seh_reg(r0, false), off: n0}
+    ".seh_save_regp" => code = A64Ins{op: U_REGP, reg: a64_seh_reg(r0, false), off: n0}
+    ".seh_save_regp_x" => code = A64Ins{op: U_REGPX, reg: a64_seh_reg(r0, false), off: n0}
+    ".seh_save_lrpair" => code = A64Ins{op: U_LRPAIR, reg: a64_seh_reg(r0, false), off: n0}
+    ".seh_save_freg" => code = A64Ins{op: U_FREG, reg: a64_seh_reg(r0, true), off: n0}
+    ".seh_save_freg_x" => code = A64Ins{op: U_FREGX, reg: a64_seh_reg(r0, true), off: n0}
+    ".seh_save_fregp" => code = A64Ins{op: U_FREGP, reg: a64_seh_reg(r0, true), off: n0}
+    ".seh_save_fregp_x" => code = A64Ins{op: U_FREGPX, reg: a64_seh_reg(r0, true), off: n0}
+    ".seh_set_fp" => code = A64Ins{op: U_SETFP, off: 0}
+    ".seh_add_fp" => code = A64Ins{op: U_ADDFP, off: n0}
+    ".seh_nop" => code = A64Ins{op: U_NOP}
+    ".seh_save_next" => code = A64Ins{op: U_NEXT}
+    ".seh_pac_sign_lr" => code = A64Ins{op: U_PAC}
+    _ => {
+      a.fail("the windows/arm64 directive ${d}")
+      return true
+    }
+  }
+  if code.op != U_SETFP && code.op != U_NOP && code.op != U_NEXT && code.op != U_PAC && code.off < 0 {
+    a.fail("${d} ${bstr(rest)}")
+    return true
+  }
+  if (code.op == U_REG || code.op == U_REGX || code.op == U_REGP || code.op == U_REGPX || code.op == U_LRPAIR) && code.reg < 19 {
+    a.fail("${d} ${bstr(rest)}: a register x19 to x30")
+    return true
+  }
+  if (code.op == U_FREG || code.op == U_FREGX || code.op == U_FREGP || code.op == U_FREGPX) && code.reg < 8 {
+    a.fail("${d} ${bstr(rest)}: a register d8 to d15")
+    return true
+  }
+  if a.a64w[k].in_epi {
+    let e = a.a64w[k].epis.len() - 1
+    a.a64w[k].epis[e].ins.push(code)
+  } else {
+    a.a64w[k].ins.push(code)
+  }
+  true
+}
+
+/// The bytes of ins's codes (ARM64CountOfUnwindCodes).
+fn a64_count(ins: List[A64Ins]) -> Int {
+  var n = 0
+  for i in ins {
+    n += match i.op {
+      U_ALLOC_MEDIUM | U_REG | U_REGP | U_REGPX | U_REGX | U_LRPAIR | U_FREG | U_FREGP | U_FREGX | U_FREGPX | U_ADDFP => 2
+      U_ALLOC_LARGE => 4
+      _ => 1
+    }
+  }
+  n
+}
+
+/// Code i's bytes appended to b (ARM64EmitUnwindCode).
+fn a64_code_bytes(b0: List[Int], i: A64Ins) -> List[Int] {
+  var b = b0
+  let r = i.reg - 19
+  let f = i.reg - 8
+  match i.op {
+    U_ALLOC_SMALL => b.push((i.off >> 4) & 0x1f)
+    U_ALLOC_MEDIUM => {
+      let hw = (i.off >> 4) & 0x7ff
+      b.push(0xc0 | (hw >> 8))
+      b.push(hw & 0xff)
+    }
+    U_ALLOC_LARGE => {
+      let w = i.off >> 4
+      b.push(0xe0)
+      b.push((w >> 16) & 0xff)
+      b.push((w >> 8) & 0xff)
+      b.push(w & 0xff)
+    }
+    U_SETFP => b.push(0xe1)
+    U_ADDFP => {
+      b.push(0xe2)
+      b.push((i.off >> 3) & 0xff)
+    }
+    U_NOP => b.push(0xe3)
+    U_R19R20X => b.push(0x20 | ((i.off >> 3) & 0x1f))
+    U_FPLRX => b.push(0x80 | (((i.off - 1) >> 3) & 0x3f))
+    U_FPLR => b.push(0x40 | ((i.off >> 3) & 0x3f))
+    U_REG => {
+      b.push(0xd0 | ((r & 0xc) >> 2))
+      b.push((((r & 3) << 6) | (i.off >> 3)) & 0xff)
+    }
+    U_REGX => {
+      b.push(0xd4 | ((r & 8) >> 3))
+      b.push((((r & 7) << 5) | ((i.off >> 3) - 1)) & 0xff)
+    }
+    U_REGP => {
+      b.push(0xc8 | ((r & 0xc) >> 2))
+      b.push((((r & 3) << 6) | (i.off >> 3)) & 0xff)
+    }
+    U_REGPX => {
+      b.push(0xcc | ((r & 0xc) >> 2))
+      b.push((((r & 3) << 6) | ((i.off >> 3) - 1)) & 0xff)
+    }
+    U_LRPAIR => {
+      let q = r / 2
+      b.push(0xd6 | ((q & 7) >> 2))
+      b.push((((q & 3) << 6) | (i.off >> 3)) & 0xff)
+    }
+    U_FREG => {
+      b.push(0xdc | ((f & 4) >> 2))
+      b.push((((f & 3) << 6) | (i.off >> 3)) & 0xff)
+    }
+    U_FREGX => {
+      b.push(0xde)
+      b.push((((f & 7) << 5) | ((i.off >> 3) - 1)) & 0xff)
+    }
+    U_FREGP => {
+      b.push(0xd8 | ((f & 4) >> 2))
+      b.push((((f & 3) << 6) | (i.off >> 3)) & 0xff)
+    }
+    U_FREGPX => {
+      b.push(0xda | ((f & 4) >> 2))
+      b.push((((f & 3) << 6) | ((i.off >> 3) - 1)) & 0xff)
+    }
+    U_END => b.push(0xe4)
+    U_NEXT => b.push(0xe6)
+    U_PAC => b.push(0xfc)
+    _ => b.push(0xe3)
+  }
+  b
+}
+
+/// simplifyARM64Opcodes: the two byte codes with one byte forms in them,
+/// and a pair after the one before (in instruction order) as save_next;
+/// an epilog's (rev) visited backwards.
+fn a64_simplify(ins0: List[A64Ins], rev: Bool) -> List[A64Ins] {
+  var ins = ins0
+  var prev_off = -1
+  var prev_reg = -1
+  let n = ins.len()
+  for j in 0..n {
+    let k = if rev { n - 1 - j } else { j }
+    var i = ins[k]
+    if i.op == U_REGP && i.reg == 29 {
+      i = A64Ins{op: U_FPLR, off: i.off}
+    } else if i.op == U_REGPX && i.reg == 29 {
+      i = A64Ins{op: U_FPLRX, off: i.off}
+    } else if i.op == U_REGPX && i.reg == 19 && i.off <= 248 {
+      i = A64Ins{op: U_R19R20X, off: i.off}
+    } else if i.op == U_ADDFP && i.off == 0 {
+      i = A64Ins{op: U_SETFP, off: 0}
+    } else if i.op == U_REGP && prev_reg >= 0 && i.reg == prev_reg + 2 && i.off == prev_off + 16 {
+      i = A64Ins{op: U_NEXT}
+    }
+    if i.op == U_R19R20X {
+      prev_off = 0
+      prev_reg = 19
+    } else if i.op == U_REGPX {
+      prev_off = 0
+      prev_reg = i.reg
+    } else if i.op == U_REGP {
+      prev_off = i.off
+      prev_reg = i.reg
+    } else if i.op == U_NEXT {
+      prev_reg += 2
+      prev_off += 16
+    } else {
+      prev_reg = -1
+      prev_off = -1
+    }
+    ins[k] = i
+  }
+  ins
+}
+
+/// getARM64OffsetInProlog: where in the prolog's codes the epilog's are
+/// (the epilog the prolog's last instructions undone), or -1.
+fn a64_offset_in_prolog(pro: List[A64Ins], epi: List[A64Ins]) -> Int {
+  if epi.len() > pro.len() {
+    return -1
+  }
+  var i = epi.len() - 1
+  while i >= 0 {
+    if !a64_ins_eq(pro[i], epi[epi.len() - 1 - i]) {
+      return -1
+    }
+    i -= 1
+  }
+  if epi.len() == pro.len() {
+    return 0
+  }
+  a64_count(pro[epi.len()..pro.len()])
+}
+
+/// tryARM64PackedUnwind: the packed .pdata word for the frame, or 0.
+fn a64_try_packed(pro: List[A64Ins], flen: Int, peo: Int) -> Int {
+  if peo == 1 {
+    if pro[pro.len() - 1].op != U_SETFP {
+      return 0
+    }
+  } else if peo != 0 {
+    return 0
+  }
+  // Location: 0 Start, 1 Start2, 2 Start3, 3 IntRegs, 4 FloatRegs,
+  // 5 InputArgs, 6 StackAdjust, 7 FrameRecord, 8 End
+  var regi = 0
+  var regf = 0
+  var predec = 0
+  var loc = 0
+  var lr = false
+  var fplr = false
+  var pac = false
+  var stack = 0
+  var nops = 0
+  for i in pro {
+    let st = loc == 1 || loc == 2
+    if i.op == U_END {
+      if loc != 0 { return 0 }
+      loc = 1
+    } else if i.op == U_PAC {
+      if loc != 1 { return 0 }
+      pac = true
+      loc = 2
+    } else if i.op == U_R19R20X {
+      if !st { return 0 }
+      predec = i.off
+      regi = 2
+      loc = 3
+    } else if i.op == U_REGX {
+      if !st { return 0 }
+      predec = i.off
+      if i.reg == 19 {
+        regi += 1
+      } else if i.reg == 30 {
+        lr = true
+      } else {
+        return 0
+      }
+      loc = 4
+    } else if i.op == U_REGPX {
+      return 0
+    } else if i.op == U_REGP {
+      if loc != 3 || i.off != 8 * regi || i.reg != 19 + regi { return 0 }
+      regi += 2
+    } else if i.op == U_REG {
+      if loc != 3 || i.off != 8 * regi { return 0 }
+      if i.reg == 19 + regi {
+        regi += 1
+      } else if i.reg == 30 {
+        lr = true
+      } else {
+        return 0
+      }
+      loc = 4
+    } else if i.op == U_LRPAIR {
+      if loc != 3 || i.off != 8 * regi || i.reg != 19 + regi { return 0 }
+      regi += 1
+      lr = true
+      loc = 4
+    } else if i.op == U_FREGX {
+      return 0
+    } else if i.op == U_FREG {
+      if loc != 4 || regf == 0 || i.reg != 8 + regf || i.off != 8 * (regi + (if lr { 1 } else { 0 }) + regf) { return 0 }
+      regf += 1
+      loc = 5
+    } else if i.op == U_FREGPX {
+      if !st || i.reg != 8 { return 0 }
+      predec = i.off
+      regf = 2
+      loc = 4
+    } else if i.op == U_FREGP {
+      if (loc != 3 && loc != 4) || i.reg != 8 + regf || i.off != 8 * (regi + (if lr { 1 } else { 0 }) + regf) { return 0 }
+      regf += 2
+      loc = 4
+    } else if i.op == U_NEXT {
+      if loc == 3 {
+        regi += 2
+      } else if loc == 4 {
+        regf += 2
+      } else {
+        return 0
+      }
+    } else if i.op == U_NOP {
+      if loc != 3 && loc != 4 && loc != 5 { return 0 }
+      loc = 5
+      nops += 1
+    } else if i.op == U_ALLOC_SMALL || i.op == U_ALLOC_MEDIUM {
+      if !(st || loc == 3 || loc == 4 || loc == 5 || loc == 6) { return 0 }
+      if stack == 0 {
+        stack = i.off
+      } else if stack != 4080 {
+        return 0
+      } else {
+        stack += i.off
+      }
+      loc = 6
+    } else if i.op == U_FPLRX {
+      if !(st || loc == 3 || loc == 4 || loc == 5) { return 0 }
+      stack = i.off
+      loc = 7
+      fplr = true
+    } else if i.op == U_FPLR {
+      if loc != 6 || i.off != 0 { return 0 }
+      loc = 7
+      fplr = true
+    } else if i.op == U_SETFP {
+      if loc != 7 { return 0 }
+      loc = 8
+    } else {
+      // alloc_l, add_fp and the rest are never canonical
+      return 0
+    }
+  }
+  if regi > 10 || regf > 8 || (lr && fplr) || (fplr && loc != 8) || (nops != 0 && nops != 4) || (pac && !fplr) {
+    return 0
+  }
+  // homed parameters (four nops) are never packed (llvm-project issue
+  // 54879)
+  if nops == 4 {
+    return 0
+  }
+  let intsz = 8 * regi + if lr { 8 } else { 0 }
+  let savsz = (intsz + 8 * regf + 15) & -16
+  if predec != savsz || (fplr && stack < 16) || stack % 16 != 0 {
+    return 0
+  }
+  let fsz = (stack + savsz) / 16
+  if fsz > 0x1ff {
+    return 0
+  }
+  if regf > 0 {
+    regf -= 1
+  }
+  let cr = if pac { 2 } else if fplr { 3 } else if lr { 1 } else { 0 }
+  1 | ((flen & 0x7ff) << 2) | ((regf & 7) << 13) | ((regi & 15) << 16) | ((cr & 3) << 21) | ((fsz & 0x1ff) << 23)
+}
+
+/// Frame k's .xdata record, written in .xdata now (ARM64EmitUnwindInfo,
+/// one segment), unless written already; packed (no record) when
+/// try_packed and its prolog and epilog are canonical. Leaves .xdata the
+/// current section, as LLVM's streamer does.
+fn (var a: Asm) a64_unwind_info(k: Int, try_packed: Bool) {
+  a.coff_section(".xdata", IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, 2)
+  var w = a.a64w[k]
+  if w.xsym >= 0 {
+    return
+  }
+  var empty = w.ins.is_empty()
+  for e in w.epis {
+    empty = empty && e.ins.is_empty()
+  }
+  if empty {
+    return
+  }
+  w.ins = a64_simplify(w.ins, false)
+  for j in 0..w.epis.len() {
+    w.epis[j].ins = a64_simplify(w.epis[j].ins, true)
+  }
+  if w.end < 0 {
+    a.fail("a .seh_proc with no end")
+    return
+  }
+  let raw = w.end - w.begin
+  if raw > 0xffffc {
+    a.fail("a function of ${raw} bytes: windows/arm64 unwind data for one over 0xffffc is not written yet")
+    return
+  }
+  let si = a.cur
+  a.push_item(si, Item.Align(2))
+  let lab = a.new_numeric(".Lxdata".bytes())
+  a.syms[lab].sect = si
+  a.push_item(si, Item.Label(lab))
+  w.xsym = lab
+  let seglen = raw / 4
+  var pro_bytes = a64_count(w.ins)
+  // checkARM64PackedEpilog: one epilog, at the very end
+  var peo = -1
+  var shared = -1
+  if w.epis.len() == 1 {
+    let e = w.epis[0]
+    if (raw - (e.start - w.begin)) / 4 == e.ins.len() {
+      if pro_bytes <= 31 && pro_bytes + a64_count(e.ins) <= 124 {
+        peo = pro_bytes
+      }
+      let off = a64_offset_in_prolog(w.ins, e.ins)
+      if off >= 0 && off <= 31 && pro_bytes <= 124 {
+        peo = off
+        shared = 0
+      }
+    }
+  }
+  if shared == 0 {
+    // the epilog is the prolog's codes: not written (erased from
+    // EpilogMap; a later lookup sees no codes)
+    w.epis[0].ins = []
+  }
+  if peo >= 0 && peo < pro_bytes && !w.handles && seglen <= 0x7ff && try_packed {
+    let p = a64_try_packed(w.ins, seglen, peo)
+    if p != 0 {
+      w.packed = p
+      a.a64w[k] = w
+      return
+    }
+  }
+  // ARM64ProcessEpilogs
+  var total = pro_bytes
+  var index: List[Int] = []
+  var added: List[Int] = []
+  for j in 0..w.epis.len() {
+    let ei = w.epis[j].ins
+    var found = -1
+    for q in added {
+      if found < 0 && a64_ins_list_eq(w.epis[q].ins, ei) {
+        found = q
+      }
+    }
+    if found >= 0 {
+      index.push(index[found])
+      w.epis[j].ins = []
+      continue
+    }
+    let po = a64_offset_in_prolog(w.ins, ei)
+    if po >= 0 {
+      index.push(po)
+      w.epis[j].ins = []
+      continue
+    }
+    index.push(total)
+    total += a64_count(ei)
+    added.push(j)
+  }
+  var words = total / 4
+  if total % 4 != 0 {
+    words += 1
+  }
+  let count = if peo >= 0 { peo } else { w.epis.len() }
+  let ext = count > 31 || total > 124
+  var row1 = seglen & 0x3ffff
+  if !ext {
+    row1 = row1 | ((count & 0x1f) << 22) | ((words & 0x1f) << 27)
+  }
+  if w.handles {
+    row1 = row1 | (1 << 20)
+  }
+  if peo >= 0 {
+    row1 = row1 | (1 << 21)
+  }
+  var b: List[Int] = []
+  b = a64_le32(b, row1)
+  if ext {
+    if words > 0xff || count > 0xffff {
+      a.fail("windows/arm64 unwind data of ${words} code words and ${count} epilogs")
+      return
+    }
+    b = a64_le32(b, ((words & 0xff) << 16) | (count & 0xffff))
+  }
+  if peo < 0 {
+    for j in 0..w.epis.len() {
+      b = a64_le32(b, ((w.epis[j].start - w.begin) / 4) | ((index[j] & 0x3ff) << 22))
+    }
+  }
+  var j = w.ins.len() - 1
+  while j >= 0 {
+    b = a64_code_bytes(b, w.ins[j])
+    j -= 1
+  }
+  for e in w.epis {
+    for i in e.ins {
+      b = a64_code_bytes(b, i)
+    }
+  }
+  for _ in 0..(words * 4 - total) {
+    b.push(0xe3)
+  }
+  a.push_item(si, Item.Raw(int_bytes(b)))
+  if w.handles {
+    a.register(w.handler)
+    a.push_item(si, Item.Word(n: 4, a: w.handler, b: -1, k: 0))
+  }
+  a.a64w[k] = w
+}
+
+fn a64_le32(b0: List[Int], v: Int) -> List[Int] {
+  var b = b0
+  b.push(v & 0xff)
+  b.push((v >> 8) & 0xff)
+  b.push((v >> 16) & 0xff)
+  b.push((v >> 24) & 0xff)
+  b
+}
+
+/// ARM64UnwindEmitter::Emit at the end of the file: every frame's record
+/// not written yet (one with no .seh_endproc), in their order, then
+/// .pdata: each frame's start and its record (or its packed word).
+fn (var a: Asm) a64_unwind_tables() {
+  if a.a64w.is_empty() {
+    return
+  }
+  let back = a.cur
+  for k in 0..a.a64w.len() {
+    var empty = a.a64w[k].ins.is_empty()
+    for e in a.a64w[k].epis {
+      empty = empty && e.ins.is_empty()
+    }
+    if empty || a.a64w[k].xsym >= 0 {
+      continue
+    }
+    a.a64_unwind_info(k, true)
+    if !a.err.is_empty() {
+      return
+    }
+  }
+  var any = false
+  for w in a.a64w {
+    any = any || w.xsym >= 0
+  }
+  if any {
+    a.coff_section(".pdata", IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, 2)
+    let si = a.cur
+    for w in a.a64w {
+      if w.xsym < 0 {
+        continue
+      }
+      a.push_item(si, Item.Align(2))
+      a.register(w.bsym)
+      a.push_item(si, Item.Word(n: 4, a: w.bsym, b: -1, k: 0))
+      if w.packed != 0 {
+        a.push_item(si, Item.Raw(int_bytes(a64_le32([], w.packed))))
+      } else {
+        a.push_item(si, Item.Word(n: 4, a: w.xsym, b: -1, k: 0))
+      }
+    }
+  }
+  a.cur = back
+}

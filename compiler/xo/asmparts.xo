@@ -8,7 +8,7 @@ use github.com/xo-lang/xo/compiler/macho
 use std/crypto
 
 /// The objects of the assembly files srcs (ELF when elf, else Mach-O; a
-/// windows/amd64 COFF object when coff) by compiler/macho, on up to jobs
+/// windows COFF object when coff) by compiler/macho, on up to jobs
 /// tasks, in the order of srcs.
 fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> List[Result[Bytes, Str]] {
   let n = srcs.len()
@@ -16,7 +16,7 @@ fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int)
   if w <= 1 {
     var out: List[Result[Bytes, Str]] = []
     for s in srcs {
-      out.push(if coff { assemble_coff(s) } else { assemble_one(s, elf, amd64) })
+      out.push(if coff { assemble_coff(s, amd64) } else { assemble_one(s, elf, amd64) })
     }
     return out
   }
@@ -31,7 +31,7 @@ fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int)
           if i >= n {
             break
           }
-          mine.push((i, if coff { assemble_coff(srcs[i]) } else { assemble_one(srcs[i], elf, amd64) }))
+          mine.push((i, if coff { assemble_coff(srcs[i], amd64) } else { assemble_one(srcs[i], elf, amd64) }))
         }
         mine
       }))
@@ -53,9 +53,10 @@ fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int)
 }
 
 /// A windows/amd64 COFF object of the amd64 backend's text src (decision
-/// 0254 6b step 3).
-fn assemble_coff(src: Str) -> Result[Bytes, Str] {
-  macho.assemble_coff_amd64(src.bytes())
+/// 0254 6b step 3), or a windows/arm64 one of the arm64 backend's
+/// (decision 0569 stage 3).
+fn assemble_coff(src: Str, amd64: Bool) -> Result[Bytes, Str] {
+  if amd64 { macho.assemble_coff_amd64(src.bytes()) } else { macho.assemble_coff_arm64(src.bytes()) }
 }
 
 fn assemble_one(src: Str, elf: Bool, amd64: Bool) -> Result[Bytes, Str] {
@@ -191,14 +192,14 @@ fn part_keys(prefix: Str, tags: List[Str], srcs: List[Str], jobs: Int) -> List[S
 /// records (tail_put).
 /// The back-end cache's keys of the objects of srcs (cached_macho_objects'),
 /// computed with the cache on or off; [] for one part or no xo identity.
-/// windows/amd64's COFF objects since 2026-10-27 (their own keys; the
-/// Mach-O and ELF keys as before).
-fn macho_object_keys(os: Os, srcs: List[Str], elf: Bool, coff: Bool, jobs: Int) -> List[Str] {
+/// windows/amd64's COFF objects since 2026-10-27 and windows/arm64's
+/// since 2026-11-08 (their own keys; the Mach-O and ELF keys as before).
+fn macho_object_keys(os: Os, srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> List[Str] {
   let id = cache_id(os)
   if srcs.len() < 2 || id.is_empty() {
     return []
   }
-  part_keys("xo backend v1 obj macho elf=${elf}${if coff { " coff=true" } else { "" }} ${id}", [], srcs, jobs)
+  part_keys("xo backend v1 obj macho elf=${elf}${if coff && amd64 { " coff=true" } else if coff { " coff=arm64" } else { "" }} ${id}", [], srcs, jobs)
 }
 
 fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int, List[Str]) {
@@ -217,7 +218,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
   if id.is_empty() {
     return (macho_objects(srcs, elf, amd64, coff, jobs), srcs.len(), [])
   }
-  let keys = macho_object_keys(os, srcs, elf, coff, jobs)
+  let keys = macho_object_keys(os, srcs, elf, amd64, coff, jobs)
   var out: List[Result[Bytes, Str]] = []
   var miss: List[Int] = []
   var msrcs: List[Str] = []

@@ -129,6 +129,14 @@ fn label_op(b: Bytes) -> (Bytes, Str) {
   if b.len() > 15 && bstr(b[0..15]) == ":tprel_lo12_nc:" {
     return (b[15..], "TPREL_LO12")
   }
+  // COFF's thread local offsets in .tls$ (decision 0569), relocated as
+  // SECREL_HIGH12A and SECREL_LOW12A (coffa64.xo)
+  if b.len() > 13 && bstr(b[0..13]) == ":secrel_hi12:" {
+    return (b[13..], "TPREL_HI12")
+  }
+  if b.len() > 13 && bstr(b[0..13]) == ":secrel_lo12:" {
+    return (b[13..], "TPREL_LO12")
+  }
   for i in 0..b.len() {
     if b[i] == '@' {
       return (b[0..i], bstr(b[i + 1..]))

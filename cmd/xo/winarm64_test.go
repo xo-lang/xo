@@ -15,9 +15,11 @@ import (
 
 // TestWindowsArm64Assembly: decision 0569 stage 1. windows/arm64 builds
 // only with --backend=arm64 named. Its assembly has .seh unwind data
-// and no write of x18 (the TEB); where clang is on PATH (its assembler),
-// xo build links an ARM64 PE (machine 0xAA64) with Xo's PE linker. The
-// default build still names --backend=go (TestTargetsAllNative).
+// and no write of x18 (the TEB); xo build links an ARM64 PE (machine
+// 0xAA64) from Xo's own COFF objects (stage 3) with Xo's PE linker, and
+// where clang is on PATH the image from clang's objects (--as=cc) is the
+// same bytes. The default build still names --backend=go
+// (TestTargetsAllNative).
 func TestWindowsArm64Assembly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program")
@@ -42,9 +44,6 @@ func TestWindowsArm64Assembly(t *testing.T) {
 	if regexp.MustCompile(`(?m)^\t[a-z0-9.]+ [xw]18,|^\tldp [xw][0-9]+, [xw]18,`).MatchString(text) {
 		t.Errorf("an instruction writes x18")
 	}
-	if _, err := exec.LookPath("clang"); err != nil {
-		t.Skip("no clang to assemble it")
-	}
 	exe := filepath.Join(dir, "hello.exe")
 	xo(t, "build", "--backend=arm64", "--targets=windows/arm64", "-o", exe, ".").want(0)
 	b, err := os.ReadFile(exe)
@@ -56,6 +55,23 @@ func TestWindowsArm64Assembly(t *testing.T) {
 		t.Errorf("not an ARM64 PE image (machine 0xAA64)")
 	}
 	checkArm64Unwind(t, exe, b)
+	if _, err := exec.LookPath("clang"); err != nil {
+		t.Skip("no clang to compare with its assembler")
+	}
+	// the same file name: the version information resource (decision
+	// 0560) carries it
+	ccexe := filepath.Join(dir, "cc", "hello.exe")
+	if err := os.MkdirAll(filepath.Dir(ccexe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	xo(t, "build", "--backend=arm64", "--targets=windows/arm64", "--as=cc", "-o", ccexe, ".").want(0)
+	cb, err := os.ReadFile(ccexe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(cb) != string(b) {
+		t.Errorf("the image from clang's objects (%d bytes) differs from the one from Xo's COFF writer (%d bytes)", len(cb), len(b))
+	}
 }
 
 // checkArm64Unwind: decision 0569 stage 2. The ARM64 PE's .pdata and

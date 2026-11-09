@@ -955,13 +955,16 @@ backend_groups and build_by_backend: arm64, amd64, wasm), and a note
 says windows/arm64 needs --backend=go (decision 0270 addendum, owner
 2026-10-22); windows/arm64 named in a list with no --backend is an error
 after the rest are built (exit 1). `--backend=arm64 --targets=windows/arm64`
-(experimental, decision 0569 stage 1) links an ARM64 PE from any host:
-clang (`--target=aarch64-pc-windows-msvc`, on PATH or XO_CLANG)
-assembles the parts and Xo's PE linker links them with no C runtime;
-`use c` needs XO_WINSYSROOT (an xwin sysroot with arm64: clang compiles
-the C against its headers, `link "NAME"` reads its arm64 NAME.lib); no
---race or PDB yet, and nothing runs it in the tests (last verified:
-2026-11-08). Binaries go
+(experimental, decision 0569) links an ARM64 PE from any host with xo
+alone: Xo's COFF writer (compiler/macho coffa64.xo and coffseh64.xo,
+stage 3; its objects byte identical to Apple clang 21's, checked by
+scripts/coff-compare-arm64.sh XO MACHO CLANG WORK [NAME...]) assembles
+the parts and Xo's PE linker links them with no C runtime; `--as=cc`
+assembles with clang (`--target=aarch64-pc-windows-msvc`, on PATH or
+XO_CLANG) instead; `use c` needs clang and XO_WINSYSROOT (an xwin
+sysroot with arm64: clang compiles the C against its headers, `link
+"NAME"` reads its arm64 NAME.lib); no --race or PDB yet, and nothing
+runs it in the tests (last verified: 2026-11-08). Binaries go
 to `-o` (a file for one target, a directory for several, each
 `NAME-OS-ARCH[.exe|.wasm]`) or the build directory's `bin/`; `-o NAME`
 for windows with no extension writes NAME.exe. Last verified: 2026-10-22. `xo run`

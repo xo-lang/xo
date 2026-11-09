@@ -914,16 +914,21 @@ pub fn encode_op_fix(o: Op, elf: Bool) -> Enc {
     // 0212) and [base, sym@GOTPAGEOFF]: not memory operands mem_op takes
     if let Operand.Raw(b: b) = o.ops[1] {
       let (t, kt) = rk_of(o.ops[0])
-      if kt == RX && b.len() > 2 && b[0] == '[' && b[b.len() - 1] == ']' {
+      if (kt == RX || kt == RW) && b.len() > 2 && b[0] == '[' && b[b.len() - 1] == ']' {
         let parts = split_operands(b[1..b.len() - 1])
         if parts.len() == 2 {
           let (name, op) = label_op(parts[1])
           let (base, kb) = reg(parts[0])
-          if op == "TLVPPAGEOFF" && kb == RX && !elf {
+          if op == "TLVPPAGEOFF" && kt == RX && kb == RX && !elf {
             return Enc{w: 0xf9400000 | (base * 32) | t, fx: FX_TLVP_PAGEOFF12, name: name}
           }
-          if op == "GOTPAGEOFF" && kb == RX {
+          if op == "GOTPAGEOFF" && kt == RX && kb == RX {
             return Enc{w: 0xf9400000 | (base * 32) | t, fx: FX_GOT_PAGEOFF12, name: name}
+          }
+          // [base, :lo12:sym] (COFF's load of _tls_index, decision 0569):
+          // a page offset load, its scaled offset the relocation's
+          if op == "PAGEOFF" && kb == RX && elf {
+            return Enc{w: (if kt == RX { 0xf9400000 } else { 0xb9400000 }) | (base * 32) | t, fx: FX_PAGEOFF12, name: name}
           }
         }
       }

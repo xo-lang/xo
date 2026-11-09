@@ -2174,21 +2174,23 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       continue
     }
     if march == "arm64" && tgoos == "windows" {
-      // the arm64 backend's windows/arm64 program (decision 0569 stage
-      // 1): clang's assembler for each part, then Xo's PE linker with no
-      // C runtime (`use c` sources compiled by clang against
+      // the arm64 backend's windows/arm64 program (decision 0569): Xo's
+      // COFF writer for each part (compiler/macho coffa64.xo, stage 3;
+      // --as=cc for clang's assembler, stage 1's), then Xo's PE linker
+      // with no C runtime (`use c` sources compiled by clang against
       // XO_WINSYSROOT's headers, its libraries' import libraries read by
       // the linker); no --race or PDB yet
       if o.race {
         fail(os, "windows/arm64 is experimental (decision 0569): it links no --race yet")
       }
+      let xo_as = o.assembler != "cc"
       let clang = find_clang(os)
-      if clang.is_empty() {
-        fail(os, "windows/arm64 needs clang to assemble (decision 0569): install LLVM's clang or set XO_CLANG")
+      if clang.is_empty() && !xo_as {
+        fail(os, "windows/arm64 --as=cc needs clang to assemble (decision 0569): install LLVM's clang or set XO_CLANG")
       }
       let wbin = bin_path(sdir, out, name, tg, o.many_targets)
       if hollow_late && !(keep_asm || !macho_as) {
-        // clang reads every part's text (the hollow ones above did not)
+        // the assembler reads every part's text (the hollow ones above did not)
         if let Some(r) = inc {
           p.parts = incr_texts(p.parts, r, march)
         }
@@ -2237,6 +2239,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         if wroot.is_empty() {
           fail(os, "windows/arm64 compiles a `use c` source with clang against the Windows SDK's headers and links its libraries' import libraries: set XO_WINSYSROOT to a Windows sysroot (xwin splat --use-winsysroot-style --preserve-ms-arch-notation, with --arch aarch64)")
         }
+        if clang.is_empty() {
+          fail(os, "windows/arm64 compiles a `use c` source with clang (decision 0569): install LLVM's clang or set XO_CLANG")
+        }
         let (incs, libdirs) = win_sdk_dirs(os, wroot, "arm64")
         var cflags = ["--target=aarch64-pc-windows-msvc", "-fno-stack-protector"]
         for d in incs {
@@ -2256,9 +2261,31 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           cobjs.push(lp)
         }
       }
-      let (wobjs, awhy) = cc_assemble(os, clang, ["--target=aarch64-pc-windows-msvc"], asrcs, jobs)
-      if !awhy.is_empty() {
-        fail(os, "assembler: ${awhy}")
+      var wobjs: List[Str] = []
+      if xo_as {
+        // the parts through the back-end cache's objects, as windows/amd64's
+        var atexts: List[Str] = []
+        for a in asrcs {
+          match os.fs.read_text(a) {
+            Ok(x) => atexts.push(x)
+            Err(e) => fail(os, "${a}: ${e}")
+          }
+        }
+        let (assembled, _, _) = cached_macho_objects(os, ctx, atexts, false, false, true, jobs)
+        for (i, r) in assembled.indexed() {
+          let obj = asrcs[i].trim_suffix(".s") + ".obj"
+          match r {
+            Ok(b) => write_or_fail(os, dir, obj, b)
+            Err(e) => fail(os, "assembler: ${base_name(asrcs[i])}: ${e}")
+          }
+          wobjs.push(obj)
+        }
+      } else {
+        let (cobjs2, awhy) = cc_assemble(os, clang, ["--target=aarch64-pc-windows-msvc"], asrcs, jobs)
+        if !awhy.is_empty() {
+          fail(os, "assembler: ${awhy}")
+        }
+        wobjs = cobjs2
       }
       t = lap(os, phases, "assemble", t)
       write_or_fail(os, dir_name(wbin), "", b"")

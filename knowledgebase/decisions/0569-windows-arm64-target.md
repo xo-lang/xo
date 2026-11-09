@@ -92,6 +92,40 @@ ARM64 CONTEXT offsets), which waits for the host. Codes the checker
 refuses: alloc_z, save_any_reg and the custom stack cases (0xe8 to
 0xec), none of which the emitter or clang's C output uses.
 
+Stage 3 progress (2026-11-08, Xo Lang 2): Xo's own COFF writer for
+windows/arm64 (compiler/macho coffa64.xo, coffseh64.xo), the default:
+`xo build --backend=arm64 --targets=windows/arm64` needs no clang
+except for `use c` (`--as=cc` keeps stage 1's clang assembler). It
+reuses the Mach-O and ELF writers' arm64 parser and encoder, with
+coff.xo's sections, symbols and writer, and writes the relocations as
+LLVM's COFF streamer does: a temporary label's reference is to its
+section's symbol with the offset in the instruction's field
+(PAGEBASE_REL21, PAGEOFFSET_12A for an add, 12L scaled for a load or
+store, SECREL_HIGH12A and LOW12A for `:secrel_hi12:` and `:secrel_lo12:`,
+BRANCH26, 19 and 14, ADDR32NB); a branch to a symbol of its own section
+that is not weak is resolved. The .seh_ directives become .xdata and
+.pdata as LLVM 21's MCWin64EH.cpp writes them (its ARM64 half, ported):
+the codes simplified to their one byte forms and save_next, a packed
+.pdata word when the prolog and its one epilog are canonical, an epilog
+sharing the prolog's codes or an earlier epilog's, padding with 0xE3,
+the handler as an IMGREL word; each record at its `.seh_endproc` (a
+`.seh_handlerdata` one at that directive, never packed), then .pdata
+at the end. No mapping symbols ($x, $d: ELF's); LLVM's offset labels
+(`$L<section>_N` at every 1 MiB of a larger section, a relocation
+through a temporary label past 1 MiB moved to the label below it, so a
+branch's or an adrp's addend fits its field). Objects are byte
+identical to Apple clang 21's (`--target=aarch64-pc-windows-msvc`):
+hello with its DWARF (426,508 bytes of .text, 678 .pdata entries,
+2026-11-09) and 671 of 671 goldens' assembly (the arm64 run and LLVM
+goldens, scripts/coff-compare-arm64.sh, 2026-11-09); compiler/macho
+coffa64_test.xo holds two samples with clang's objects. The DWARF
+sections need `.secrel32` (SECREL in a .debug section) and clang's
+section header bits: a .debug section is discardable whatever its
+flags, .data's default alignment is 4 and every section but .bss has a
+data pointer, empty or not (ARM64 only: amd64's COFF bytes are
+unchanged until its own compare with clang). Back-end cache keys of these
+objects are their own (`coff=arm64`).
+
 Not done in stage 1 yet: --race and a PDB for windows/arm64;
 a split link and the std object; the C ABI exports beyond Str results;
 running an image (stage 2's host). To
