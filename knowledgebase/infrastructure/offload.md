@@ -569,3 +569,23 @@ Last verified: 2026-11-01
   soak's p99 rose from 2 ms to 291 ms with its client sockets 95 to 204
   seven minutes later, so the soak did not clear 0533). Last verified:
   2026-11-06.
+
+## The third linux/arm64 host
+
+A container on the Mac Studio itself (owner, 2026-11-09), lane `pass3`,
+settings in `~/xo-lead/offload-arm64c.env` (ssh to a local port). Docker
+Desktop 4.99.0 (4.47.0 did not start on macOS 27.2) with 12 CPUs, 32 GB,
+1 GB swap and a 250 GB disk; the container `xo-host3` runs
+`golang:1.26.1-trixie` with `--init --restart unless-stopped --security-opt
+seccomp=unconfined --cap-add=SYS_NICE --ulimit rtprio=99` and the named
+volume `xo-host3-work` on /work. Same setup as the hosts above (openssh,
+the user xo, LLVM 23.1.3 in /opt/llvm checked against the release's
+SHA-256, clang.cfg, xo-cc, /etc/profile.d/xo.sh, tini, the 0.44.0 seed),
+plus what offload.sh needs on a fresh /work: /work mode 1777 and
+`offload.q`, `offload.runs` and `offload.lock*` owned by xo (without them
+a job fails with "Permission denied" on /work/offload.runs). A lane for it
+is one line in `heavyd-lanes.conf` (`pass3 3 2 offload-arm64c.env`); a job
+asking for a lane no line names waits forever. First gate (selfbuild of
+main): 35 s. Use it for pass/fail runs with `OFFLOAD_ENV=offload-arm64c.env`;
+it shares the Mac's cores, so no timing runs. No WebAssembly tools yet.
+Last verified: 2026-11-09.
