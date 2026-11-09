@@ -9,6 +9,7 @@ fn os_name(o: TargetOs) -> Str {
     Darwin => "Darwin"
     Windows => "Windows"
     Wasi => "Wasi"
+    FreeBSD => "FreeBSD"
   }
 }
 
@@ -17,6 +18,7 @@ fn arch_name(a: TargetArch) -> Str {
     Amd64 => "Amd64"
     Arm64 => "Arm64"
     Wasm32 => "Wasm32"
+    Riscv64 => "Riscv64"
   }
 }
 
