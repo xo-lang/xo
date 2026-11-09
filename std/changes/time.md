@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-08: perf: read_fixed compares the first byte, then the name as one slice
+
+- Kind: perf
+- Commit: this push
+- Found by: xo prof of bench/perf/time parse_long (read_fixed 24% flat)
+- Go reference: time/format.go lookup (Go compares names with a prefix test on the whole string, not byte by byte)
+- Test: internal/stdtest corpora time, timego, timeformat (arm64, LLVM, Go backend); bench/perf/time parse_long output unchanged
+- Timing: bench/perf/time parse_long (new workload: weekday, month and zone names) on linux/arm64 host 1, --ab against the parent (6 rounds, stopped early): 0.957 (0.951 to 0.97)
+- Shipped in: not yet released
+
+`read_fixed` (std/native/time.xo) matched a month, weekday or zone name against the packed names one byte at a time with index arithmetic per byte; it now skips a name whose first byte differs and compares the rest as one slice. Results are unchanged.
+
 ## 2026-11-08: perf: time's put_num writes two and four digit fields in one store
 
 - Kind: perf
