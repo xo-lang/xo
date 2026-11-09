@@ -74,13 +74,13 @@ pub fn dw_slots_obj(obj: Bytes, comp_dir: Str, std_root: Str) -> Bytes {
 
 /// The section directive of DWARF section name (debug_info, ...) on the
 /// target's object format: COFF's discardable read only form on
-/// windows/arm64 (windows/amd64's go to Xo's COFF writer in ELF's form,
-/// which it reads).
+/// windows (both architectures, as clang writes them, so LLVM's
+/// assemblers read the assembly too).
 fn (g: G) dwarf_section(name: Str) -> Str {
   if g.os == "darwin" {
     return "\t.section __DWARF,__${name},regular,debug\n"
   }
-  if g.os == "windows" && !g.x86 {
+  if g.os == "windows" {
     return "\t.section .${name},\"dr\"\n"
   }
   if name == "debug_str" || name == "debug_line_str" {
@@ -163,7 +163,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   let lcomp_lab = g.local("xo_dwlcomp_${g.ns}")
   let lstd_lab = g.local("xo_dwlstd_${g.ns}")
   // .debug_line
-  var hdr = Dw{secrel: g.win_a64()}
+  var hdr = Dw{secrel: g.os == "windows"}
   hdr.u8(1)   // minimum_instruction_length
   hdr.u8(1)   // maximum_operations_per_instruction
   hdr.u8(1)   // default_is_stmt
@@ -201,7 +201,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   hdr.uleb(2)    // DW_LNCT_directory_index
   hdr.uleb(15)   // DW_FORM_udata
   hdr.uleb(files.len())
-  var fstrs = Dw{secrel: g.win_a64()}
+  var fstrs = Dw{secrel: g.os == "windows"}
   var foff = 2 * DW_SLOT
   for (i, f) in files.indexed() {
     if mac {
@@ -215,7 +215,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     foff += f.len() + 1
     hdr.uleb(if stdd && f.starts_with("std/") { 1 } else { 0 })
   }
-  var prog = Dw{secrel: g.win_a64()}
+  var prog = Dw{secrel: g.os == "windows"}
   for fr in recs {
     prog.u8(4) // DW_LNS_set_file
     prog.uleb(fr.file)
@@ -335,7 +335,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   out.write("\t.byte 19, 0x16, 0, 0x03, 0x08, 0x49, 0x13, 0, 0\n")
   out.write("\t.byte 0\n")
   // .debug_info
-  var die = Dw{secrel: g.win_a64()}
+  var die = Dw{secrel: g.os == "windows"}
   die.uleb(1)
   die.offset(if mac { "0" } else { line_lab })
   let st = g.tramp("xo_static")
@@ -424,7 +424,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // debug_abbrev_offset (4), and the entries
   out.write(g.dwarf_section("debug_info"))
   out.write("\t.long ${2 + 1 + 1 + 4 + die.n}\n\t.short 5\n\t.byte 1\n\t.byte 8\n")
-  out.write(if mac { "\t.long 0\n" } else if g.win_a64() { "\t.secrel32 ${abbrev_lab}\n" } else { "\t.long ${abbrev_lab}\n" })
+  out.write(if mac { "\t.long 0\n" } else if g.os == "windows" { "\t.secrel32 ${abbrev_lab}\n" } else { "\t.long ${abbrev_lab}\n" })
   out.write(die.text())
   // .debug_loclists: the header, an offset per list (from the end of the
   // header, DW_AT_loclists_base), then each list: its function's start
@@ -435,7 +435,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // assembler knows the ULEB128s' lengths
   let ll_start = g.local("xo_dwllstart_${g.ns}")
   let ll_end = g.local("xo_dwllend_${g.ns}")
-  var body = Dw{secrel: g.win_a64()}
+  var body = Dw{secrel: g.os == "windows"}
   var offs: List[Str] = []
   // the addresses of DW_OP_addrx operands: .debug_addr's entries
   var addr_ix: Map[Str, Int] = {}
@@ -918,7 +918,7 @@ fn site_chain(fr: DbgFunc, s: Int) -> List[Int] {
 struct Dw {
   lines: List[Str] = []
   n: Int = 0
-  /// a section offset is `.secrel32` (COFF, windows/arm64: `.long` of a
+  /// a section offset is `.secrel32` (COFF, windows: `.long` of a
   /// label there is an address)
   secrel: Bool = false
 }

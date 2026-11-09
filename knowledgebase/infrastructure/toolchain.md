@@ -4565,8 +4565,11 @@ the windows/amd64 and linux/amd64 code of the goldens' own functions
 objects are Xo's (compiler/macho coff.xo; `--as=cc` assembles with
 clang); `macho asm --windows-amd64 -o OUT.obj IN.s` runs the COFF writer
 alone, and `scripts/coff-compare.sh XO MACHO LLVM_MC WORK [NAME...]`
-compares its objects with llvm-mc's on the goldens (199 of 199 the same
-on 2026-10-19). Last verified: 2026-10-19.
+compares its objects with llvm-mc's on the goldens. It assembles with
+`macho asm --no-jump-pad` (decision 0398's jump padding off, which
+llvm-mc does not do; padded, every golden differed after 0398,
+gotchas/coff-compare-jump-padding.md): 644 of 644 the same with llvm-mc
+23 on 2026-11-09 (199 of 199 on 2026-10-19). Last verified: 2026-11-09.
 
 A windows/amd64 program of the native backend with no `use c` links by
 default (decision 0254 6b step 4, owner 2026-10-19) with Xo's PE linker

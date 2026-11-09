@@ -107,10 +107,11 @@ fn assemble_coff(src: Bytes, jpad: Bool) -> Result[Bytes, Str] {
 }
 
 /// .text, .data and .bss, the sections LLVM's COFF streamer makes first,
-/// with their default alignments (ARM64's .text 4 bytes, x86-64's 16).
+/// with their default alignments (ARM64's .text 4 bytes, x86-64's 16;
+/// .data 4 on both, as LLVM's).
 fn (var a: Asm) coff_defaults() {
   a.coff_section(".text", IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, if a.amd64 { 4 } else { 2 })
-  a.coff_section(".data", IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, if a.amd64 { 0 } else { 2 })
+  a.coff_section(".data", IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, 2)
   a.coff_section(".bss", IMAGE_SCN_CNT_UNINITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, 2)
   a.cur = -1
 }
@@ -216,9 +217,9 @@ fn (var a: Asm) coff_directive(d: Str, rest: Bytes) -> Bool {
       }
       var ch = coff_flags(name, fl)
       // LLVM's COFF parser marks a .debug section discardable whatever
-      // its flags (clang 21's windows/arm64 objects; amd64 keeps its
-      // bytes until its own compare with clang)
-      if !a.amd64 && name.starts_with(".debug") {
+      // its flags (clang 21's and llvm-mc 23's objects, both
+      // architectures)
+      if name.starts_with(".debug") {
         ch = ch | IMAGE_SCN_MEM_DISCARDABLE
       }
       a.coff_section(name, ch, 0)
@@ -612,9 +613,8 @@ fn (var a: Asm) write_coff() -> Bytes {
     let bss = (s.cchar & IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0
     let size = if bss { 0 } else { a.coff_bytes(s).len() }
     // LLVM gives every section but .bss a data pointer, empty or not
-    // (clang 21's windows/arm64 objects; amd64 keeps its bytes until its
-    // own compare with clang)
-    data_at.push(if bss || size == 0 && a.amd64 { 0 } else { off })
+    // (clang 21's windows/arm64 objects, llvm-mc 23's windows/amd64 ones)
+    data_at.push(if bss { 0 } else { off })
     off += size
     rel_at.push(if s.relocs.is_empty() { 0 } else { off })
     off += 10 * (s.relocs.len() + (if s.relocs.len() >= COFF_NRELOC_MAX { 1 } else { 0 }))

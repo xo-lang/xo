@@ -9,7 +9,8 @@
 # compiler/macho`), LLVM_MC winxc's (~/xo-tools/winxc/LLVM-*/bin/
 # llvm-mc), WORK a scratch directory; a differing golden's assembly and
 # both objects stay in WORK. Prints the count the same and each that
-# differs.
+# differs. Xo's object is assembled with --no-jump-pad: llvm-mc does
+# not pad jumps as decision 0398 does (padded, every object differs).
 set -u
 xo=$1; macho=$2; mc=$3; work=$4; shift 4
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -23,7 +24,7 @@ for n in "${names[@]}"; do
   d="$root/internal/llvm/testdata/golden/$n"
   (cd "$d" && "$xo" asm --backend=amd64 --target=windows/amd64 . > "$work/$n.s" 2>/dev/null)
   "$mc" -triple=x86_64-pc-windows-msvc -filetype=obj -o "$work/$n.ref.obj" "$work/$n.s" 2>"$work/$n.mcerr"
-  if "$macho" asm --windows-amd64 -o "$work/$n.obj" "$work/$n.s" 2>"$work/$n.err" && cmp -s "$work/$n.ref.obj" "$work/$n.obj"; then
+  if "$macho" asm --windows-amd64 --no-jump-pad -o "$work/$n.obj" "$work/$n.s" 2>"$work/$n.err" && cmp -s "$work/$n.ref.obj" "$work/$n.obj"; then
     same=$((same + 1))
     rm -f "$work/$n.s" "$work/$n.obj" "$work/$n.ref.obj" "$work/$n.err" "$work/$n.mcerr"
   else
