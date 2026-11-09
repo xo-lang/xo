@@ -28,6 +28,16 @@ pub fn usage() -> Str {
     "  --keep           keep the session directory and print its path",
     "",
     "Commands: :type EXPR, :doc NAME, :undo, :reset, :quit.",
+    "",
+    "On a terminal, entries are edited in place: left and right, home and",
+    "end (ctrl-a, ctrl-e), alt-b and alt-f by word, backspace, delete,",
+    "ctrl-w, ctrl-k and ctrl-u (ctrl-y puts the text back), up and down",
+    "between an entry's lines and then through the history (the entries that",
+    "start with what is typed), Enter to run a complete entry (an open",
+    "bracket continues it; Enter on an empty last line runs it as it is),",
+    "ctrl-c to drop the entry, ctrl-d on an empty one to quit, ctrl-l to",
+    "clear the screen. The history is <config dir>/xo/repl_history (the last",
+    "1000 entries); XO_REPL_HISTORY=off keeps none.",
   ].join("\n") + "\n"
 }
 
@@ -182,6 +192,10 @@ fn eval_all(os: Os, var st: State, text: Str) -> Int uses (clock, env, fs, proc,
 fn interact(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand, stdio) {
   os.stdio.eprintln("xo repl (experimental, decision 0572): :quit to end, :type EXPR, :doc NAME, :undo, :reset")
   warm_start(os, st)
+  // a terminal: the line editor on raw input (decision 0581); else lines
+  if os.stdio.stdin_is_tty() && os.stdio.raw_input(true) {
+    return interact_edit(os, st)
+  }
   var cur = ""
   while {
     os.stdio.eprint(if cur.is_empty() { "xo> " } else { "... " })
@@ -209,6 +223,97 @@ fn interact(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand, stdi
     step(os, st, e)
   }
   0
+}
+
+/// The session on a terminal in raw input (decision 0572 stage 2 step 1):
+/// line.xo edits each entry with history and continuation lines; raw
+/// input is off while an entry runs, so ctrl-c interrupts it and a
+/// program that reads standard input reads lines.
+fn interact_edit(os: Os, var st: State) -> Int uses (clock, env, fs, proc, rand, stdio) {
+  let hpath = hist_path(os)
+  var hist: List[Str] = []
+  if let Some(p) = hpath {
+    if let Ok(t) = os.fs.read_text(p) {
+      hist = hist_parse(t)
+    }
+  }
+  var e = editor(hist)
+  os.stdio.eprint(draw(e, "xo> ", "... "))
+  var pend: Bytes = b""
+  var code = 0
+  var done = false
+  while !done {
+    let got = match os.stdio.read_bytes(64) {
+      Ok(Some(b)) => b
+      Ok(None) => break
+      Err(err) => {
+        os.stdio.eprintln("xo repl: ${err}")
+        code = 1
+        break
+      }
+    }
+    pend = pend + got
+    while !pend.is_empty() && !done {
+      let (k, n) = decode(pend)
+      if n == 0 {
+        break
+      }
+      pend = pend[n..]
+      match key(e, k) {
+        Act.None => os.stdio.eprint(draw(e, "xo> ", "... "))
+        Act.Submit(text: t) => {
+          os.stdio.eprint("${draw(e, "xo> ", "... ")}${leave(e)}")
+          remember(e, t)
+          save_hist(os, hpath, e.hist)
+          reset(e)
+          if t.trim() == ":quit" || t.trim() == ":q" {
+            done = true
+          } else {
+            let _off = os.stdio.raw_input(false)
+            step(os, st, t)
+            let _on = os.stdio.raw_input(true)
+            os.stdio.eprint(draw(e, "xo> ", "... "))
+          }
+        }
+        Act.Cancel => {
+          os.stdio.eprint("^C${leave(e)}")
+          reset(e)
+          os.stdio.eprint(draw(e, "xo> ", "... "))
+        }
+        Act.Eof => {
+          os.stdio.eprint(leave(e))
+          done = true
+        }
+        Act.Clear => {
+          os.stdio.eprint("\x1b[H\x1b[2J")
+          cleared(e)
+          os.stdio.eprint(draw(e, "xo> ", "... "))
+        }
+      }
+    }
+  }
+  let _r = os.stdio.raw_input(false)
+  code
+}
+
+/// The history file, <config dir>/xo/repl_history; None when
+/// XO_REPL_HISTORY=off or there is no config directory.
+fn hist_path(os: Os) -> Str? uses env {
+  if os.env.get("XO_REPL_HISTORY") == Some("off") {
+    return None
+  }
+  match os.env.config_dir() {
+    Ok(d) => Some("${d}/xo/repl_history")
+    Err(_) => None
+  }
+}
+
+fn save_hist(os: Os, path: Str?, hist: List[Str]) uses fs {
+  if let Some(p) = path {
+    let dir = p.rfind("/").map(fn(i) { p[..i] }) ?? "."
+    os.fs.create_dir_all(dir).ok()
+    os.fs.write(p, hist_text(hist).bytes()).ok()
+  }
 }
 
 /// Starts the warm-up (decision 0572 stage 2): a build, in a directory of

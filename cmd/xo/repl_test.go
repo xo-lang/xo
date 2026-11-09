@@ -4,8 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestRepl: the experimental `xo repl` (decision 0572 stage 1) with
@@ -95,5 +98,74 @@ func TestReplWarmup(t *testing.T) {
 		if len(left) != 0 {
 			t.Errorf("xo repl with %q left %v", input, left)
 		}
+	}
+}
+
+// TestReplLineEditing: on a terminal, `xo repl` edits entries with the
+// line editor on raw input (decision 0572 stage 2 step 1, decision 0581),
+// under script(1): a backspace edits an entry, an open brace continues
+// it on a new line, up recalls the last entry for editing, ctrl-d ends
+// the session, and the history file keeps the entries.
+func TestReplLineEditing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs builds")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("script(1) on darwin and linux")
+	}
+	if _, err := exec.LookPath("script"); err != nil {
+		t.Skip("no script(1) for a pseudo terminal")
+	}
+	t.Parallel()
+	cfg := t.TempDir()
+	x := xoBin(t)
+	var c *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		c = exec.Command("script", "-q", "/dev/null", x, "repl")
+	} else {
+		c = exec.Command("script", "-qec", x+" repl", "/dev/null")
+	}
+	c.Env = append(os.Environ(), "XO_REPL=1", "XDG_CONFIG_HOME="+cfg, "HOME="+cfg)
+	in, err := c.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	c.Stdout = &out
+	c.Stderr = &out
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// each key group after the REPL has set raw input and run the entry
+	// before (bytes the terminal gets earlier are read cooked)
+	for _, k := range []string{"1 + 3\x7f2\r", "fn sq(x: Int) -> Int {\r", "  x * x\r}\r", "sq(5)\r", "\x1b[A\x7f\x7f6)\r", "\x04"} {
+		time.Sleep(4 * time.Second)
+		in.Write([]byte(k))
+	}
+	time.Sleep(2 * time.Second)
+	in.Close()
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		c.Process.Kill()
+		t.Fatalf("the session did not end: %q", out.String())
+	}
+	text := regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]").ReplaceAllString(strings.ReplaceAll(out.String(), "\r", ""), "")
+	for _, want := range []string{"\n3\n", "\n25\n", "\n36\n"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the session's output has no %q: %q", want, text)
+		}
+	}
+	var hist []byte
+	filepath.WalkDir(cfg, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.Name() == "repl_history" {
+			hist, _ = os.ReadFile(p)
+		}
+		return nil
+	})
+	if got := strings.Split(string(hist), "\x00"); len(got) != 4 || got[1] != "fn sq(x: Int) -> Int {\n  x * x\n}" || got[3] != "sq(6)" {
+		t.Errorf("history: %q", got)
 	}
 }

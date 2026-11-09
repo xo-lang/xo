@@ -3615,6 +3615,12 @@ Last verified: 2026-10-09.
   background, `<data dir>/times`
   holds each record's Unix time, and `GET /index?since=<RFC 3339>` is the
   index feed. Test: cmd/xo TestChecksumLogOps. Last verified: 2026-11-08.
+- `xo repl` line editing (decision 0572 stage 2 step 1, 2026-11-09): on
+  a terminal, compiler/cli/repl/line.xo edits entries on raw input
+  (decision 0581); history in `<config dir>/xo/repl_history`,
+  XO_REPL_HISTORY=off for none. Tests: line_test.xo (`xo test
+  ./compiler/cli/repl`), cmd/xo TestReplLineEditing (script(1)). Last
+  verified: 2026-11-09.
 - `xo repl` (decision 0572 stage 1, experimental, 2026-11-08): off unless
   XO_REPL=1 while 0572 is Proposed. compiler/cli/repl: session.xo writes
   the session as a generated program (definitions first, earlier plain

@@ -1,0 +1,126 @@
+// The line editor (line.xo) driven by the bytes a terminal sends.
+
+/// Feeds the bytes in to e, key by key; the acts other than None.
+fn feed(var e: Ed, input: Bytes) -> List[Act] {
+  var acts: List[Act] = []
+  var b = input
+  while !b.is_empty() {
+    let (k, n) = decode(b)
+    if n == 0 {
+      break
+    }
+    b = b[n..]
+    let a = key(e, k)
+    if !(a is None) {
+      acts.push(a)
+    }
+  }
+  acts
+}
+
+test "decode keys" {
+  expect(decode(b"a") == (Key.Char(text: "a"), 1))
+  expect(decode(b"\x1b[A") == (Key.Up, 3))
+  expect(decode(b"\x1bOD") == (Key.Left, 3))
+  expect(decode(b"\x1b[3~") == (Key.Del, 4))
+  expect(decode(b"\x1b[1;5C") == (Key.WordRight, 6))
+  expect(decode(b"\x1bb") == (Key.WordLeft, 2))
+  expect(decode(b"\r") == (Key.Enter, 1))
+  expect(decode(b"\x7f") == (Key.Back, 1))
+  expect(decode(b"\x03") == (Key.Cancel, 1))
+  // a partial sequence waits for more bytes
+  expect(decode(b"\x1b[") == (Key.Other, 0))
+  expect(decode(b"\xc3") == (Key.Other, 0))
+  expect(decode(b"\xc3\xa9") == (Key.Char(text: "é"), 2))
+}
+
+test "editing a line" {
+  var e = editor([])
+  let _a = feed(e, b"1 + 3\x7f2")
+  expect(e.text == "1 + 2")
+  // home, then a character before the rest
+  let _b = feed(e, b"\x01(\x05)")
+  expect(e.text == "(1 + 2)")
+  expect(e.at == 7)
+  // a word back, then the kill put back
+  let _c = feed(e, b"\x1b[D\x17")
+  expect(e.text == "(1 + )")
+  let _d = feed(e, b"\x19")
+  expect(e.text == "(1 + 2)")
+  let _k = feed(e, b"\x01\x0b")
+  expect(e.text == "")
+}
+
+test "multi-byte characters move as one" {
+  var e = editor([])
+  let _a = feed(e, "aé".bytes())
+  let _b = feed(e, b"\x1b[D\x7f")
+  expect(e.text == "é")
+  expect(e.at == 0)
+}
+
+test "submit, continuation lines and a blank line" {
+  var e = editor([])
+  expect(feed(e, b"1 + 2\r") == [Act.Submit(text: "1 + 2")])
+  reset(e)
+  // an open brace continues the entry on a new line
+  expect(feed(e, b"fn f() {\r").is_empty())
+  expect(e.text == "fn f() {\n")
+  expect(feed(e, b"  1\r}\r") == [Act.Submit(text: "fn f() {\n  1\n}")])
+  reset(e)
+  // a blank last line ends an open entry as it is
+  expect(feed(e, b"(1 +\r\r") == [Act.Submit(text: "(1 +")])
+}
+
+test "up and down move between lines before history" {
+  var e = editor(["old"])
+  let _a = feed(e, b"fn f() {\r  12\r}")
+  let _b = feed(e, b"\x1b[A")
+  expect(e.at == "fn f() {\n".len() + 1)
+  let _c = feed(e, b"\x1b[A\x1b[A")
+  expect(e.text == "old")
+  let _d = feed(e, b"\x1b[B")
+  expect(e.text == "fn f() {\n  12\n}")
+}
+
+test "history with a prefix" {
+  var e = editor(["let a = 1", "1 + 1", "let b = 2"])
+  let _a = feed(e, b"let\x1b[A")
+  expect(e.text == "let b = 2")
+  let _b = feed(e, b"\x1b[A")
+  expect(e.text == "let a = 1")
+  let _c = feed(e, b"\x1b[A")
+  expect(e.text == "let a = 1")
+  let _d = feed(e, b"\x1b[B\x1b[B")
+  expect(e.text == "let")
+  remember(e, "x")
+  remember(e, "x")
+  remember(e, "  ")
+  expect(e.hist.len() == 4)
+}
+
+test "ctrl-c, ctrl-d, ctrl-l" {
+  var e = editor([])
+  expect(feed(e, b"\x04") == [Act.Eof])
+  expect(feed(e, b"ab\x01\x04") == [])
+  expect(e.text == "b")
+  expect(feed(e, b"\x03") == [Act.Cancel])
+  expect(feed(e, b"\x0c") == [Act.Clear])
+}
+
+test "history file" {
+  let h = ["1 + 1", "fn f() {\n  1\n}"]
+  expect(hist_parse(hist_text(h)) == h)
+  expect(hist_parse("").is_empty())
+}
+
+test "draw puts the cursor on its row and column" {
+  var e = editor([])
+  let _a = feed(e, b"fn f() {\r  1\r}")
+  let _b = feed(e, b"\x1b[A")
+  let out = draw(e, "xo> ", "... ")
+  expect(out == "\r\x1b[Jxo> fn f() {\n...   1\n... }\x1b[1A\r\x1b[5C")
+  // the next draw starts from the cursor's row
+  expect(draw(e, "xo> ", "... ").starts_with("\x1b[1A\r\x1b[J"))
+  expect(leave(e) == "\x1b[1B\n")
+}

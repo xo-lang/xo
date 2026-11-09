@@ -1,0 +1,506 @@
+// The REPL's line editor (decision 0572 stage 2, step 1): an entry edited
+// key by key on a terminal in raw input (decision 0581), with history and
+// entries of several lines. Pure logic over bytes: decode turns the
+// terminal's bytes into keys, key applies one to the editor, and draw
+// returns the text that redraws the entry, so line_test.xo runs it with
+// no terminal.
+
+/// A key, decoded from the bytes a terminal sends.
+pub enum Key {
+  /// text typed: one character (a UTF-8 sequence)
+  Char(text: Str)
+  Enter
+  Back
+  Del
+  Left
+  Right
+  Up
+  Down
+  Home
+  End
+  WordLeft
+  WordRight
+  /// ctrl-w and alt-backspace: the word before the cursor
+  WordBack
+  /// ctrl-k: to the end of the line
+  KillEnd
+  /// ctrl-u: to the start of the line
+  KillStart
+  /// ctrl-y: the text the last kill removed
+  Yank
+  /// ctrl-c
+  Cancel
+  /// ctrl-d
+  Eof
+  /// ctrl-l
+  Clear
+  /// a key the editor ignores
+  Other
+}
+
+/// What a key asks of the REPL.
+pub enum Act {
+  /// nothing: redraw the entry
+  None
+  /// the entry is complete: run it
+  Submit(text: Str)
+  /// ctrl-c: drop the entry
+  Cancel
+  /// ctrl-d on an empty entry: end the session
+  Eof
+  /// ctrl-l: clear the screen, then redraw
+  Clear
+}
+
+/// The history the editor keeps, at most this many entries.
+pub const HISTORY_MAX = 1000
+
+/// The editor: the entry's text (its lines joined by "\n") and the
+/// cursor (a byte offset), the history, and what draw last drew.
+pub struct Ed {
+  pub text: Str
+  pub at: Int
+  pub hist: List[Str]
+  /// the history entry shown (hist.len(): none, the entry being typed)
+  hi: Int
+  /// the entry being typed, kept while history is shown
+  draft: Str
+  /// what history entries must start with (the draft, when one line)
+  prefix: Str
+  /// the text the last kill removed (ctrl-y puts it back)
+  killed: Str
+  /// the cursor's row in the last draw, counted from the entry's first
+  rows: Int
+}
+
+/// A new editor with history hist (oldest first).
+pub fn editor(hist: List[Str]) -> Ed {
+  Ed{text: "", at: 0, hist: hist, hi: hist.len(), draft: "", prefix: "", killed: "", rows: 0}
+}
+
+/// Clears the entry for the next one (after a submit or a cancel).
+pub fn reset(var e: Ed) {
+  e.text = ""
+  e.at = 0
+  e.hi = e.hist.len()
+  e.draft = ""
+  e.prefix = ""
+  e.rows = 0
+}
+
+/// The screen was cleared: the next draw starts at the top row.
+pub fn cleared(var e: Ed) {
+  e.rows = 0
+}
+
+/// Adds entry to the history: not an empty one, nor the same as the last.
+pub fn remember(var e: Ed, entry: Str) {
+  if entry.trim().is_empty() || e.hist.last() == Some(entry) {
+    return
+  }
+  e.hist.push(entry)
+  if e.hist.len() > HISTORY_MAX {
+    e.hist = e.hist[e.hist.len() - HISTORY_MAX..]
+  }
+  e.hi = e.hist.len()
+}
+
+/// The history file's entries (NUL separated, so an entry keeps its
+/// lines), the last HISTORY_MAX.
+pub fn hist_parse(text: Str) -> List[Str] {
+  var out: List[Str] = []
+  for s in text.split("\x00") {
+    if !s.trim().is_empty() {
+      out.push(s)
+    }
+  }
+  if out.len() > HISTORY_MAX {
+    return out[out.len() - HISTORY_MAX..]
+  }
+  out
+}
+
+/// The history file's text for hist.
+pub fn hist_text(hist: List[Str]) -> Str {
+  let from = if hist.len() > HISTORY_MAX { hist.len() - HISTORY_MAX } else { 0 }
+  hist[from..].join("\x00")
+}
+
+/// The key at the start of b and the bytes it took; 0 bytes when b holds
+/// only the start of a key (read another byte and decode again).
+pub fn decode(b: Bytes) -> (Key, Int) {
+  if b.is_empty() {
+    return (Key.Other, 0)
+  }
+  let c = b[0]
+  if c == 0x1b {
+    return decode_esc(b)
+  }
+  if c is 0x0d | 0x0a {
+    return (Key.Enter, 1)
+  }
+  if c is 0x7f | 0x08 {
+    return (Key.Back, 1)
+  }
+  if c < 0x20 {
+    let k = match c {
+      0x01 => Key.Home
+      0x02 => Key.Left
+      0x03 => Key.Cancel
+      0x04 => Key.Eof
+      0x05 => Key.End
+      0x06 => Key.Right
+      0x0b => Key.KillEnd
+      0x0c => Key.Clear
+      0x0e => Key.Down
+      0x10 => Key.Up
+      0x15 => Key.KillStart
+      0x17 => Key.WordBack
+      0x19 => Key.Yank
+      _ => Key.Other
+    }
+    return (k, 1)
+  }
+  // a UTF-8 sequence: its length from the lead byte
+  let n = if c < 0x80 { 1 } else if c >= 0xf0 { 4 } else if c >= 0xe0 { 3 } else if c >= 0xc0 { 2 } else { 1 }
+  if b.len() < n {
+    return (Key.Other, 0)
+  }
+  match b[..n].to_str() {
+    Some(s) => (Key.Char(text: s), n)
+    None => (Key.Other, n)
+  }
+}
+
+/// An escape sequence: CSI (ESC [ ...), SS3 (ESC O x) or ESC and a key
+/// (alt and the key).
+fn decode_esc(b: Bytes) -> (Key, Int) {
+  if b.len() < 2 {
+    return (Key.Other, 0)
+  }
+  let c = b[1]
+  if c == 0x5b {
+    // ESC [ parameters final: the final byte is 0x40 to 0x7e
+    var i = 2
+    while i < b.len() && !(b[i] >= 0x40 && b[i] <= 0x7e) {
+      i += 1
+    }
+    if i >= b.len() {
+      return (Key.Other, 0)
+    }
+    let p = b[2..i].to_str() ?? ""
+    let k = match b[i] {
+      0x41 => Key.Up
+      0x42 => Key.Down
+      0x43 => if p.ends_with(";5") || p.ends_with(";3") { Key.WordRight } else { Key.Right }
+      0x44 => if p.ends_with(";5") || p.ends_with(";3") { Key.WordLeft } else { Key.Left }
+      0x48 => Key.Home
+      0x46 => Key.End
+      0x7e => match p {
+        "1" | "7" => Key.Home
+        "4" | "8" => Key.End
+        "3" => Key.Del
+        _ => Key.Other
+      }
+      _ => Key.Other
+    }
+    return (k, i + 1)
+  }
+  if c == 0x4f {
+    if b.len() < 3 {
+      return (Key.Other, 0)
+    }
+    let k = match b[2] {
+      0x41 => Key.Up
+      0x42 => Key.Down
+      0x43 => Key.Right
+      0x44 => Key.Left
+      0x48 => Key.Home
+      0x46 => Key.End
+      _ => Key.Other
+    }
+    return (k, 3)
+  }
+  let k = match c {
+    0x62 => Key.WordLeft
+    0x66 => Key.WordRight
+    0x7f | 0x08 => Key.WordBack
+    0x0d => Key.Enter
+    _ => Key.Other
+  }
+  (k, 2)
+}
+
+/// Applies key k to the editor.
+pub fn key(var e: Ed, k: Key) -> Act {
+  match k {
+    Key.Char(text: t) => {
+      insert(e, t)
+    }
+    Key.Enter => {
+      // the entry runs when it is complete, or when Enter comes on an
+      // empty last line (as a blank line ended an open entry before)
+      let last = e.text.rfind("\n").map(fn(i) { i + 1 }) ?? 0
+      let blank = e.at == e.text.len() && e.text[last..].trim().is_empty() && last > 0
+      if complete(e.text) || blank {
+        e.at = e.text.len()
+        return Act.Submit(text: if blank { e.text[..last - 1] } else { e.text })
+      }
+      insert(e, "\n")
+    }
+    Key.Back => {
+      if e.at > 0 {
+        let p = prev(e.text, e.at)
+        cut(e, p, e.at, false)
+      }
+    }
+    Key.Del => {
+      if e.at < e.text.len() {
+        cut(e, e.at, next(e.text, e.at), false)
+      }
+    }
+    Key.Left => {
+      if e.at > 0 {
+        e.at = prev(e.text, e.at)
+      }
+    }
+    Key.Right => {
+      if e.at < e.text.len() {
+        e.at = next(e.text, e.at)
+      }
+    }
+    Key.Home => {
+      e.at = line_start(e.text, e.at)
+    }
+    Key.End => {
+      e.at = line_end(e.text, e.at)
+    }
+    Key.WordLeft => {
+      e.at = word_left(e.text, e.at)
+    }
+    Key.WordRight => {
+      e.at = word_right(e.text, e.at)
+    }
+    Key.WordBack => {
+      cut(e, word_left(e.text, e.at), e.at, true)
+    }
+    Key.KillEnd => {
+      cut(e, e.at, line_end(e.text, e.at), true)
+    }
+    Key.KillStart => {
+      cut(e, line_start(e.text, e.at), e.at, true)
+    }
+    Key.Yank => {
+      insert(e, e.killed)
+    }
+    Key.Up => {
+      let s = line_start(e.text, e.at)
+      if s > 0 {
+        e.at = column_at(e.text, line_start(e.text, s - 1), cols(e.text, s, e.at))
+      } else {
+        older(e)
+      }
+    }
+    Key.Down => {
+      let end = line_end(e.text, e.at)
+      if end < e.text.len() {
+        e.at = column_at(e.text, end + 1, cols(e.text, line_start(e.text, e.at), e.at))
+      } else {
+        newer(e)
+      }
+    }
+    Key.Cancel => {
+      return Act.Cancel
+    }
+    Key.Eof => {
+      if e.text.is_empty() {
+        return Act.Eof
+      }
+      if e.at < e.text.len() {
+        cut(e, e.at, next(e.text, e.at), false)
+      }
+    }
+    Key.Clear => {
+      return Act.Clear
+    }
+    Key.Other => {}
+  }
+  Act.None
+}
+
+/// The text that redraws the entry (prompt before its first line, more
+/// before the others, both as wide) and puts the terminal's cursor at the
+/// editor's. It relies on output processing ("\n" starts the next row at
+/// column 1), which raw input keeps (decision 0581). A line wider than
+/// the terminal wraps, which the row count does not follow yet.
+pub fn draw(var e: Ed, prompt: Str, more: Str) -> Str {
+  var out = ""
+  if e.rows > 0 {
+    out = "\x1b[${e.rows}A"
+  }
+  out = "${out}\r\x1b[J"
+  let lines = e.text.split("\n")
+  var row = 0
+  var start = 0
+  var crow = 0
+  var ccol = 0
+  for l in lines {
+    let p = if row == 0 { prompt } else { more }
+    out = if row > 0 { "${out}\n${p}${l}" } else { "${out}${p}${l}" }
+    if e.at >= start && e.at <= start + l.len() {
+      crow = row
+      ccol = p.rune_count() + cols(e.text, start, e.at)
+    }
+    start += l.len() + 1
+    row += 1
+  }
+  let up = lines.len() - 1 - crow
+  if up > 0 {
+    out = "${out}\x1b[${up}A"
+  }
+  out = "${out}\r"
+  if ccol > 0 {
+    out = "${out}\x1b[${ccol}C"
+  }
+  e.rows = crow
+  out
+}
+
+/// The text that leaves the drawn entry: the cursor below its last line.
+pub fn leave(e: Ed) -> Str {
+  let lines = e.text.split("\n").len()
+  let down = lines - 1 - e.rows
+  if down > 0 { "\x1b[${down}B\n" } else { "\n" }
+}
+
+fn insert(var e: Ed, t: Str) {
+  e.text = "${e.text[..e.at]}${t}${e.text[e.at..]}"
+  e.at += t.len()
+  e.hi = e.hist.len()
+}
+
+/// Removes text[from..to]; a kill keeps it for ctrl-y.
+fn cut(var e: Ed, from: Int, to: Int, kill: Bool) {
+  if from >= to {
+    return
+  }
+  if kill {
+    e.killed = e.text[from..to]
+  }
+  e.text = "${e.text[..from]}${e.text[to..]}"
+  e.at = from
+  e.hi = e.hist.len()
+}
+
+/// The previous history entry that starts with the prefix.
+fn older(var e: Ed) {
+  if e.hi == e.hist.len() {
+    e.draft = e.text
+    e.prefix = if e.text.contains("\n") { "" } else { e.text }
+  }
+  var i = e.hi - 1
+  while i >= 0 {
+    if e.hist[i].starts_with(e.prefix) && e.hist[i] != e.text {
+      e.hi = i
+      e.text = e.hist[i]
+      e.at = e.text.len()
+      return
+    }
+    i -= 1
+  }
+}
+
+/// The next history entry that starts with the prefix, else the draft.
+fn newer(var e: Ed) {
+  if e.hi == e.hist.len() {
+    return
+  }
+  var i = e.hi + 1
+  while i < e.hist.len() {
+    if e.hist[i].starts_with(e.prefix) && e.hist[i] != e.text {
+      e.hi = i
+      e.text = e.hist[i]
+      e.at = e.text.len()
+      return
+    }
+    i += 1
+  }
+  e.hi = e.hist.len()
+  e.text = e.draft
+  e.at = e.text.len()
+}
+
+/// The offset of the character before at (UTF-8 continuation bytes are
+/// 0x80 to 0xbf).
+fn prev(s: Str, at: Int) -> Int {
+  let b = s.bytes()
+  var i = at - 1
+  while i > 0 && b[i] >= 0x80 && b[i] < 0xc0 {
+    i -= 1
+  }
+  i
+}
+
+fn next(s: Str, at: Int) -> Int {
+  let b = s.bytes()
+  var i = at + 1
+  while i < b.len() && b[i] >= 0x80 && b[i] < 0xc0 {
+    i += 1
+  }
+  i
+}
+
+fn line_start(s: Str, at: Int) -> Int {
+  s[..at].rfind("\n").map(fn(i) { i + 1 }) ?? 0
+}
+
+fn line_end(s: Str, at: Int) -> Int {
+  s[at..].find("\n").map(fn(i) { at + i }) ?? s.len()
+}
+
+/// The characters between from and to.
+fn cols(s: Str, from: Int, to: Int) -> Int {
+  s[from..to].rune_count()
+}
+
+/// The offset col characters into the line at start, or its end.
+fn column_at(s: Str, start: Int, col: Int) -> Int {
+  let end = line_end(s, start)
+  var at = start
+  var n = 0
+  while n < col && at < end {
+    at = next(s, at)
+    n += 1
+  }
+  at
+}
+
+fn word_byte(c: UInt8) -> Bool {
+  (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || c == 0x5f || c >= 0x80
+}
+
+/// The start of the word before at (spaces and punctuation skipped).
+fn word_left(s: Str, at: Int) -> Int {
+  let b = s.bytes()
+  var i = at
+  while i > 0 && !word_byte(b[i - 1]) {
+    i -= 1
+  }
+  while i > 0 && word_byte(b[i - 1]) {
+    i -= 1
+  }
+  i
+}
+
+/// The end of the word after at.
+fn word_right(s: Str, at: Int) -> Int {
+  let b = s.bytes()
+  var i = at
+  while i < b.len() && !word_byte(b[i]) {
+    i += 1
+  }
+  while i < b.len() && word_byte(b[i]) {
+    i += 1
+  }
+  i
+}
