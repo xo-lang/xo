@@ -30,7 +30,9 @@ pub fn usage() -> Str {
     "  --session=FILE   read the session from FILE and write it back after",
     "  --keep           keep the session directory and print its path",
     "",
-    "Commands: :type EXPR, :doc NAME, :undo, :reset, :quit.",
+    "Commands: :type EXPR, :doc NAME, :undo, :reset, :quit; :defs prints the",
+    "session's use lines, definitions and bindings; :save FILE writes its",
+    "entries to FILE, and :load FILE runs FILE's entries as if typed.",
     "",
     "On a terminal, entries are edited in place: left and right, home and",
     "end (ctrl-a, ctrl-e), alt-b and alt-f by word, backspace, delete,",
@@ -419,8 +421,14 @@ fn step(os: Os, var st: State, src: Str) -> Bool uses (clock, env, fs, proc, ran
         return false
       }
     }
+    let msg = (b.stderr.to_str() ?? "") + (b.stdout.to_str() ?? "")
+    if b.code != 0 && e.kind is Use && unused_only(msg) {
+      // a use line no entry refers to yet: its path checked, it is kept
+      st.undo.push(st.sess)
+      st.sess = st.sess.after(e, {}, {})
+      return true
+    }
     if b.code != 0 {
-      let msg = (b.stderr.to_str() ?? "") + (b.stdout.to_str() ?? "")
       let (text, earlier) = map_diags(msg, main, at)
       if earlier && tries == 0 && st.sess.entries.any(fn(x) { !x.pin.is_empty() }) {
         // a pinned literal did not check (a Debug text that is not a
@@ -506,6 +514,20 @@ fn type_of(os: Os, var st: State, main: Str, line: Int, col: Int) -> Str ! Str u
 /// The build's diagnostics with main.xo's lines given as the entry's
 /// (`entry:L:C`) or the session's; and whether one points before the
 /// entry (at an earlier entry or a pinned literal).
+/// Whether every error in a build's output is an unused import.
+pub fn unused_only(msg: Str) -> Bool {
+  var any = false
+  for l in msg.lines() {
+    if l.contains(": error XO") {
+      if !(l.contains("error XO0110") && l.contains("import")) {
+        return false
+      }
+      any = true
+    }
+  }
+  any
+}
+
 pub fn map_diags(msg: Str, main: Str, at: Int) -> (Str, Bool) {
   var b = StrBuilder.new()
   var earlier = false
@@ -566,6 +588,47 @@ fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, ra
       }
     }
   }
+  if t == ":defs" {
+    os.stdio.print(st.sess.defs_text())
+    return true
+  }
+  if let Some(x) = t.cut_prefix(":save ") {
+    let path = x.trim()
+    match os.fs.write(path, st.sess.source().bytes()) {
+      Ok(_) => {
+        os.stdio.eprintln("xo repl: saved ${st.sess.entries.len()} entries to ${path}")
+        return true
+      }
+      Err(err) => {
+        os.stdio.eprintln("xo repl: :save: ${err}")
+        return false
+      }
+    }
+  }
+  if let Some(x) = t.cut_prefix(":load ") {
+    let path = x.trim()
+    let text = match os.fs.read_text(path) {
+      Ok(s) => s
+      Err(err) => {
+        os.stdio.eprintln("xo repl: :load: ${err}")
+        return false
+      }
+    }
+    // each entry as if typed; the first that fails stops the load
+    var n = 0
+    for e in split_entries(text) {
+      if e.trim().starts_with(":") {
+        continue
+      }
+      if !step(os, st, e) {
+        os.stdio.eprintln("xo repl: :load ${path}: stopped at entry ${n + 1}; the ${n} before it are kept")
+        return false
+      }
+      n += 1
+    }
+    os.stdio.eprintln("xo repl: loaded ${n} entries from ${path}")
+    return true
+  }
   if let Some(x) = t.cut_prefix(":doc ") {
     match os.proc.cmd(st.xo, ["doc", x.trim()]).output() {
       Ok(r) => {
@@ -579,6 +642,6 @@ fn command(os: Os, var st: State, t: Str) -> Bool uses (clock, env, fs, proc, ra
       }
     }
   }
-  os.stdio.eprintln("xo repl: unknown command ${t} (:type EXPR, :doc NAME, :undo, :reset, :quit)")
+  os.stdio.eprintln("xo repl: unknown command ${t} (:type EXPR, :doc NAME, :defs, :save FILE, :load FILE, :undo, :reset, :quit)")
   false
 }

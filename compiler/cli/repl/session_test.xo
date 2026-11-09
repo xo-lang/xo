@@ -137,3 +137,9 @@ test "a definition replaces the earlier one of its name" {
   expect(after.entries.len() == 2)
   expect(after.entries[1].src.contains("x * x"))
 }
+
+test "use names" {
+  expect(use_name("use std/json") == "json")
+  expect(use_name("use std/json as j") == "j")
+  expect(use_name("use \"example.com/m/pkg\"") == "pkg")
+}

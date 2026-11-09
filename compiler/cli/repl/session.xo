@@ -169,6 +169,17 @@ pub fn plain_type(t: Str, own: List[Str]) -> Bool {
   true
 }
 
+/// The name a use line binds: its alias (`use std/json as j`) or its
+/// path's last part.
+pub fn use_name(src: Str) -> Str {
+  let t = src.trim().trim_prefix("use ").trim()
+  if let Some(i) = t.find(" as ") {
+    return t[i + 4..].trim()
+  }
+  let p = t.trim_chars("\"")
+  p[(p.rfind("/") ?? -1) + 1..]
+}
+
 /// The name a definition declares, for replacing an earlier one of the
 /// same name (decision 0572 stage 2): `sq` for `fn sq`, `Point.area`
 /// for a method `fn (p: Point) area`, `Point` for `struct Point`; "" when
@@ -238,6 +249,45 @@ pub fn (s: Sess) drop_bindings(names: List[Str]) -> Sess {
     kept.push(e)
   }
   Sess{entries: kept}
+}
+
+/// The session's use lines and definitions as source, then its bindings
+/// as `let NAME: TYPE` lines (:defs).
+pub fn (s: Sess) defs_text() -> Str {
+  var out: List[Str] = []
+  for e in s.entries {
+    if e.kind is Use {
+      out.push(e.src.trim())
+    }
+  }
+  for e in s.entries {
+    if e.kind is Def {
+      out.push(e.src.trim())
+    }
+  }
+  for e in s.entries {
+    if let Bind(name: n, mutable: m) = e.kind {
+      let kw = if m { "var" } else { "let" }
+      out.push(if e.typ.is_empty() { "${kw} ${n}" } else { "${kw} ${n}: ${e.typ}" })
+    }
+  }
+  if out.is_empty() {
+    return ""
+  }
+  out.join("\n") + "\n"
+}
+
+/// The session's entries as typed, a blank line between them (:save;
+/// :load reads it back).
+pub fn (s: Sess) source() -> Str {
+  var out: List[Str] = []
+  for e in s.entries {
+    out.push(e.src.trim())
+  }
+  if out.is_empty() {
+    return ""
+  }
+  out.join("\n\n") + "\n"
 }
 
 /// The names of the definitions whose text mentions the type name (other
@@ -314,9 +364,15 @@ pub fn (s: Sess) program(next: Entry) -> (Str, Int) {
   var b = StrBuilder.new()
   var line = 1
   let all = s.entries + [next]
+  // a use line only when an entry refers to its module (an unused import
+  // is an error, XO0110), or when it is next (to check its path)
   for e in all {
     if e.kind is Use {
-      add(b, line, e.src.trim())
+      let m = use_name(e.src)
+      let used = all.any(fn(x) { !(x.kind is Use) && x.src.contains("${m}.") })
+      if used || e.src == next.src {
+        add(b, line, e.src.trim())
+      }
     }
   }
   // a definition replaced by a later one of the same name is left out

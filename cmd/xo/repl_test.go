@@ -88,6 +88,26 @@ func TestRepl(t *testing.T) {
 		t.Errorf("redefinitions:\n%s\nwant:\n%s\nstderr:\n%s", r.out, want, r.err)
 	}
 
+	// :defs, :save and :load (decision 0572 stage 2)
+	saved := filepath.Join(t.TempDir(), "saved.xo")
+	r = xo(t, "repl", "--eval="+strings.Join([]string{
+		`use std/adler32`,
+		`fn sq(x: Int) -> Int {`,
+		`  x * x`,
+		`}`,
+		`let n = sq(3)`,
+		`adler32.checksum(b"a")`,
+		`:defs`,
+		`:save ` + saved,
+	}, "\n")).want(0)
+	if want := "use std/adler32\nfn sq(x: Int) -> Int {\n  x * x\n}\nlet n: Int\n"; !strings.HasSuffix(r.out, want) {
+		t.Errorf(":defs:\n%s\nwant:\n%s\nstderr:\n%s", r.out, want, r.err)
+	}
+	r = xo(t, "repl", "--eval=:load "+saved+"\nsq(n)").want(0)
+	if r.out != "81\n" || !strings.Contains(r.err, "loaded 3 entries") {
+		t.Errorf(":load: %q, stderr %q", r.out, r.err)
+	}
+
 	// an entry that does not check: the diagnostic names the entry's line
 	r = xo(t, "repl", "--eval="+strings.Join([]string{
 		`let a = 1`,
