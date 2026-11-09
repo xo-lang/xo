@@ -62,6 +62,32 @@ Only aligning every loop head gives the 36% gain; aligning only the
 innermost head recovers the loss but not more (the outer loop's
 placement matters too).
 
+### Follow-ups (2026-11-08 evening)
+
+- Zen 5 reruns: mapops at 32c 0.937 (0.899 to 0.972; cpu 0.931; both
+  better, stopped at 6 of 10 rounds); jsontoken at 32c 1.111 (0.959 to
+  1.381, 10 rounds, a 1 ms program): within noise.
+- Head detection was imprecise. The first version took heads from the
+  MIR successor lists, but the emitters jump through jump-only blocks
+  (fwd) and x86_emit writes a jump to a test-only loop header as that
+  header's test in place, so the outer loop of bytesum had its guard
+  aligned and not its head. Heads now come from the emitted targets
+  (jump_targets: through fwd, and on x86 through an in-place header
+  test). With that, on the i7-9750H (7 rounds, median ms) 0577's loop:
+  off 405.5, on 510.8, on+32 327.4, on+32c 397.6 (511.8 before the
+  fix), on+32i 403.1. Aligning the outer head is part of 32's gain; the
+  innermost-only variant does not get it.
+- arm64 row (opt-in arm64_loop_align16, 32, 32c in emit.xo; the
+  assembler's `.p2align P,,MAX` in arm64 code too): Graviton (host 1,
+  --ab, 3 rounds): 16: bytesum 1.056 worse, mapops 0.963 better, base64
+  1.014 worse, strconv 1.02 worse (wide), adler32 and fnv64a within
+  noise; 32: bytesum 1.104 worse, base64 1.017 worse, the rest within
+  noise. Apple M4 Pro (7 rounds): all variants within noise on all six
+  (bytesum noisy, 350 to 626 ms). No arm64 case.
+- The lead's lean (2026-11-08): no default (option c) unless the
+  evidence changes; 32c the candidate (+0.54% __text) if one is taken,
+  32 only together with 0577 if 0577 ever earns a place.
+
 ## Consequences
 
 Today's code neither gains nor loses much from alignment on either
