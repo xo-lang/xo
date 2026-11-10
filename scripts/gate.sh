@@ -118,6 +118,18 @@ wt=$(cd "${1:?usage: gate.sh WORKTREE STEP...}" 2>/dev/null && pwd) || { echo "g
 shift
 logs=${XO_GATE_LOGS:-${TMPDIR:-/tmp}/xo-gate-$(basename "$wt")}
 mkdir -p "$logs"
+# one gate per log directory (lead, 2026-11-10: a dry run of tier.sh
+# wrote into a running tier's xo-gate-lead-tierN): $logs/.gate.pid names
+# the gate using it; a live gate.sh there refuses this one (exit 2). The
+# pid is only checked for liveness and that it is a gate.sh, never signaled.
+gp=$logs/.gate.pid
+if read -r op <"$gp" 2>/dev/null && [ -n "$op" ] && [ "$op" != $$ ] &&
+  ps -p "$op" -o command= 2>/dev/null | grep -q 'gate\.sh'; then
+  echo "gate.sh: $logs belongs to the running gate pid $op; set XO_GATE_LOGS to a directory of your own"
+  exit 2
+fi
+echo $$ >"$gp"
+trap 'rm -f "$gp"' EXIT
 cd "$wt" || exit 1
 # gate_required_steps and gate_plan: the proving checks, as pushq.sh asks
 # for them (the tree's own copy, so a gate and its pushq agree)
