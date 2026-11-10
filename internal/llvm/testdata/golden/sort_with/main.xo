@@ -1,0 +1,68 @@
+// sort_with, sort_by_desc and Ordering (decision 0586).
+
+struct Word {
+  name: Str
+  count: Int
+}
+
+enum Bad {
+  Cmp(msg: Str)
+}
+
+fn checked(a: Int, b: Int) -> Ordering ! Bad {
+  if a == 13 || b == 13 {
+    return Err(Bad.Cmp(msg: "13"))
+  }
+  a.cmp(b)
+}
+
+fn ints(xs: List[Int]) -> Str {
+  xs.map(fn(x) { "${x}" }).join(" ")
+}
+
+fn show(o: Ordering) -> Str {
+  match o {
+    Less => "Less"
+    Equal => "Equal"
+    Greater => "Greater"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${show(1.cmp(2))} ${show(2.cmp(2))} ${show(3.cmp(2))}")
+  os.stdio.println("${show("a".cmp("b"))} ${show(1.5.cmp(0.5))} ${show(1.cmp(2).reverse())}")
+  os.stdio.println("${show(Ordering.Equal.then(Ordering.Less))} ${show(Ordering.Greater.then(Ordering.Less))}")
+  let ws = [Word{name: "b", count: 2}, Word{name: "a", count: 2}, Word{name: "c", count: 5}, Word{name: "d", count: 1}]
+  // count descending, then name ascending
+  let s = ws.sort_with(fn(x, y) { y.count.cmp(x.count).then(x.name.cmp(y.name)) })
+  os.stdio.println(s.map(fn(w) { "${w.name}${w.count}" }).join(" "))
+  // stable: equal keys keep their input order
+  let st = ws.sort_with(fn(x, y) { y.count.cmp(x.count) })
+  os.stdio.println(st.map(fn(w) { w.name }).join(" "))
+  let d = ws.sort_by_desc(fn(w) { w.count })
+  os.stdio.println(d.map(fn(w) { w.name }).join(" "))
+  // keys negation would overflow; by_desc does not negate
+  let big = [0, 9223372036854775807, -1, -9223372036854775807 - 1, 7]
+  os.stdio.println(ints(big.sort_by_desc(fn(x) { x })))
+  os.stdio.println(["pear", "apple", "fig"].sort_by_desc(fn(x) { x }).join(" "))
+  var xs = [5, 3, 9, 1, 3]
+  xs.sort_in_place_with(fn(a, b) { b.cmp(a) })
+  os.stdio.println(ints(xs))
+  var ys = ["b", "c", "a"]
+  ys.sort_in_place_by_desc(fn(x) { x })
+  os.stdio.println(ys.join(" "))
+  var many: List[Int] = []
+  for i in 0..100 {
+    many.push((i * 37) % 101)
+  }
+  let up = many.sort_with(fn(a, b) { a.cmp(b) })
+  os.stdio.println("${up == many.sort()} ${up[0]} ${up[99]}")
+  match [3, 1, 2].sort_with(checked) {
+    Ok(v) => os.stdio.println("ok ${ints(v)}")
+    Err(_) => os.stdio.println("err")
+  }
+  match [3, 13, 2].sort_with(checked) {
+    Ok(v) => os.stdio.println("ok ${ints(v)}")
+    Err(Cmp(msg)) => os.stdio.println("err ${msg}")
+  }
+}

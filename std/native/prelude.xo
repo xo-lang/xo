@@ -2269,6 +2269,145 @@ fn list_sort_in_place_by[T, K: Ord, E, fx: Effects](var xs: List[T], key: fn(T) 
   }
 }
 
+/// Less and Greater swapped (decision 0586).
+fn ordering_reverse(o: Ordering) -> Ordering {
+  match o {
+    Less => Ordering.Greater
+    Equal => Ordering.Equal
+    Greater => Ordering.Less
+  }
+}
+
+/// o, or next when o is Equal.
+fn ordering_then(o: Ordering, next: Ordering) -> Ordering {
+  match o {
+    Equal => next
+    _ => o
+  }
+}
+
+/// xs sorted by cmp, stable (decision 0586).
+fn list_sort_with[T, E, fx: Effects](xs: List[T], cmp: fn(T, T) -> Ordering ! E uses fx) -> List[T] ! E uses fx {
+  var a = xs
+  list_sort_in_place_with(a, cmp)?
+  a
+}
+
+/// A stable bottom up merge sort of the positions by cmp, the comparator
+/// called in the loop (a closure cannot keep its error), then xs permuted
+/// by cycles as list_sort_in_place_by does. An error from cmp returns
+/// before xs is touched.
+fn list_sort_in_place_with[T, E, fx: Effects](var xs: List[T], cmp: fn(T, T) -> Ordering ! E uses fx) -> () ! E uses fx {
+  let n = xs.len()
+  if n < 2 {
+    return
+  }
+  var a: List[Int] = List.with_capacity(n)
+  var t: List[Int] = List.with_capacity(n)
+  for i in 0..n {
+    a.push(i)
+    t.push(0)
+  }
+  var w = 1
+  while w < n {
+    var lo = 0
+    while lo < n {
+      let mid = (lo + w).min(n)
+      let hi = (lo + 2 * w).min(n)
+      var i = lo
+      var j = mid
+      var k = lo
+      while i < mid && j < hi {
+        // the right run's element goes first only when strictly less
+        let right_first = match cmp(xs[a[j]], xs[a[i]])? {
+          Less => true
+          _ => false
+        }
+        if right_first {
+          t[k] = a[j]
+          j += 1
+        } else {
+          t[k] = a[i]
+          i += 1
+        }
+        k += 1
+      }
+      while i < mid {
+        t[k] = a[i]
+        i += 1
+        k += 1
+      }
+      while j < hi {
+        t[k] = a[j]
+        j += 1
+        k += 1
+      }
+      lo = hi
+    }
+    let sw = a
+    a = t
+    t = sw
+    w *= 2
+  }
+  // the cycle swaps write the receiver's array as raw words, so make the
+  // list unique first with one counted element write
+  // (gotchas/list-swap-bypasses-copy-on-write.md)
+  let first = xs[0]
+  xs[0] = first
+  var k = 0
+  while k < n {
+    var cur = k
+    while a[cur] != k {
+      let nxt = a[cur]
+      rt.list_swap(xs, cur, nxt)
+      a[cur] = cur
+      cur = nxt
+    }
+    a[cur] = cur
+    k += 1
+  }
+}
+
+/// xs sorted by key from greatest to least, stable (decision 0586).
+fn list_sort_by_desc[T, K: Ord, E, fx: Effects](xs: List[T], key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx {
+  var a = xs
+  list_sort_in_place_by_desc(a, key)?
+  a
+}
+
+/// list_sort_in_place_by with the keys compared the other way: the right
+/// run's element goes first only when its key is strictly greater, so
+/// equal keys keep their order.
+fn list_sort_in_place_by_desc[T, K: Ord, E, fx: Effects](var xs: List[T], key: fn(T) -> K ! E uses fx) -> () ! E uses fx {
+  let n = xs.len()
+  if n < 2 {
+    return
+  }
+  let first = xs[0]
+  xs[0] = first
+  var keys: List[K] = if n >= PRESIZE_MIN { List[K].with_capacity(n) } else { [] }
+  for x in xs {
+    keys.push(key(x)?)
+  }
+  var idx: List[Int] = if n >= PRESIZE_MIN { List[Int].with_capacity(n) } else { [] }
+  for i in 0..n {
+    idx.push(i)
+  }
+  merge_sort_in_place(idx, fn(a, b) { keys[b] < keys[a] })
+  var k = 0
+  while k < n {
+    var cur = k
+    while idx[cur] != k {
+      let nxt = idx[cur]
+      rt.list_swap(xs, cur, nxt)
+      idx[cur] = cur
+      cur = nxt
+    }
+    idx[cur] = cur
+    k += 1
+  }
+}
+
 /// The first seven bytes of s as a big endian number, short strings padded
 /// with zeros: a < b when the prefix of a is less than b's, and equal
 /// prefixes are decided by comparing the strings.

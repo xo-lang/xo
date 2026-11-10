@@ -12,6 +12,18 @@
 - Shipped in: not yet released
 
 `Int.max`, `Int.min`, `Int8.max` ... `UInt64.max` are type constants, declared in the prelude as constants documented `@static T.name` (core 4.6).
+## 2026-11-10: feature: Ordering, cmp, sort_with, sort_by_desc
+
+- Kind: feature
+- Commit: this push
+- Found by: an owner tester wrote `xs.sort(fn(a, b) { a > b })` (decision 0586)
+- Go reference: slices.SortStableFunc, cmp.Compare, cmp.Or
+- Test: internal/llvm golden sort_with (multi-key, stability, Int.min and Str keys descending, in place, a comparator's error)
+- Compatibility: `Ordering` is a new prelude name and `cmp` a built in method of Ord types; a program's own `Ordering` type or `cmp` method shadows them
+- Timing: none (sort_with is the index merge sort of sort_by with the comparator in place of the key compare)
+- Shipped in: not yet released
+
+`a.cmp(b)` is built in on every Ord type as min and max are; sort_with and sort_in_place_with are stable and propagate the comparator's errors and effects; sort_by_desc and sort_in_place_by_desc order by key from greatest to least without negating it.
 
 ## 2026-11-10: feature: an omitted Os literal field is its no-access value
 

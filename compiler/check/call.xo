@@ -1256,6 +1256,16 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
       }
       return r
     }
+    if name == b"cmp" && c.is_ord(r) {
+      // `a.cmp(b)`, the order `<` uses as an Ordering (decision 0586)
+      if args.len() != 1 {
+        c.error("XO0403", span, "`cmp` takes 1 argument, found ${args.len()}")
+      }
+      for a in args {
+        c.check_ty(a.value, r)
+      }
+      return c.named("Ordering")
+    }
     if name == b"display" && args.is_empty() && targs.is_empty() && c.implements_name(r, "Display", sel.span) {
       return c.named("Str")
     }

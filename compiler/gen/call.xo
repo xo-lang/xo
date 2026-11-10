@@ -67,7 +67,7 @@ fn (var g: Gen) call_core(x: Expr) -> (Str, Int) {
     None => {
       if let SelectorExpr(x: sx, sel: sel, ..) = fun {
         let name = check.text(sel.name)
-        if name is "min" | "max" | "clamp" {
+        if name is "min" | "max" | "clamp" | "cmp" {
           return (g.ord_call(sx, name, x), CK_VALUE)
         }
         if name == "display" {
@@ -1185,7 +1185,8 @@ fn int_shape(t: Str) -> (Int, Bool) {
 /// `a.min(b)`, `a.max(b)`, `a.clamp(lo, hi)` on an Ord type (ordCall).
 fn (var g: Gen) ord_call(sx: Expr, name: Str, x: Expr) -> Str {
   let (_, _, args) = call_parts(x)
-  let t = g.type_of(x)
+  // the operands' type: cmp's result is an Ordering (decision 0586)
+  let t = if name == "cmp" { g.type_of(sx) } else { g.type_of(x) }
   var ops = Ops{}
   for i in 0..args.len() + 1 {
     let sv = g.cap_begin()
@@ -1198,6 +1199,9 @@ fn (var g: Gen) ord_call(sx: Expr, name: Str, x: Expr) -> Str {
   }
   if name == "max" {
     return "${g.rt()}Max(${c[0]}, ${c[1]})"
+  }
+  if name == "cmp" {
+    return "${g.rt()}OrdCmp(${c[0]}, ${c[1]})"
   }
   "${g.rt()}Clamp(${c[0]}, ${c[1]}, ${c[2]})"
 }

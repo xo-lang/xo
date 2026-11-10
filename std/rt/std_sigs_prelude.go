@@ -35,6 +35,8 @@ var (
 	_ func(*Task, int64, int64) List[int64]                                                                = Internal_dbg_wait
 	_ func(*Task, int64)                                                                                   = Internal_dbg_kill
 	_ func(*Task, int64)                                                                                   = Internal_dbg_close
+	_ func(*Ordering, *Task) Ordering                                                                      = (*Ordering).M_reverse
+	_ func(*Ordering, *Task, Ordering) Ordering                                                            = (*Ordering).M_then
 	_ func(*Task, string) Option[int64]                                                                    = Int_parse
 	_ func(*Task, string, int64) Option[int64]                                                             = Int_parse_base
 	_ func(*Task, int64, int64) string                                                                     = Int_to_str_base

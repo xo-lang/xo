@@ -5,6 +5,7 @@
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/lexer
 
 fn call_parts(e: Expr) -> (Span, Expr, List[parser.Arg]) {
   match e {
@@ -68,6 +69,17 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
               return r
             }
           }
+        }
+        if args.len() == 1 && sn == b"cmp" {
+          // `a.cmp(b)` on an Ord type (decision 0586)
+          let late = recv_after_args(recv)
+          var a = if late { -1 } else { b.expr(recv) }
+          let at = if late { b.nat_of(recv) } else { b.vty(a) }
+          let o = b.value_as(args[0].value, at)
+          if late {
+            a = b.expr(recv)
+          }
+          return b.ord_cmp(b.nat_of(x), a, o)
         }
         if args.is_empty() && sn == b"display" {
           let ct = b.nat_check(recv)
@@ -1950,6 +1962,27 @@ fn (var b: Builder) ord_min_max(name: Str, a: Int, c: Int) -> Int {
     return res
   }
   -1
+}
+
+/// `a.cmp(c)`, an Ordering of type t: Less when a < c, Greater when c < a,
+/// else Equal (a NaN compares Equal), by the comparison `<` uses.
+fn (var b: Builder) ord_cmp(t: Int, a: Int, c: Int) -> Int {
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, t)
+  let lt = b.compare_values(lexer.Kind.Lt, a, c)
+  let (yes, no) = b.branch(lt)
+  b.s.cur = yes
+  b.jump(join, [b.variant(t, "Less", [])])
+  b.s.cur = no
+  let gt = b.compare_values(lexer.Kind.Lt, c, a)
+  let (y2, n2) = b.branch(gt)
+  b.s.cur = y2
+  b.jump(join, [b.variant(t, "Greater", [])])
+  b.s.cur = n2
+  b.jump(join, [b.variant(t, "Equal", [])])
+  b.seal(join)
+  b.s.cur = join
+  res
 }
 
 /// Whether e is the expression of a `var` receiver or argument that is a

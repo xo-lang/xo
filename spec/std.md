@@ -354,6 +354,8 @@ fn (xs: List[T]) find(f: fn(T) -> Bool) -> T?
 fn (xs: List[T]) any(f: fn(T) -> Bool) -> Bool   // also all
 fn (xs: List[T]) sort() -> List[T]           // T: Ord, stable
 fn (xs: List[T]) sort_by[K: Ord](key: fn(T) -> K) -> List[T]
+fn (xs: List[T]) sort_by_desc[K: Ord](key: fn(T) -> K) -> List[T]   // greatest key first, stable
+fn (xs: List[T]) sort_with(cmp: fn(T, T) -> Ordering) -> List[T]     // stable (decision 0586)
 fn (xs: List[T]) group_by[K: Hash](key: fn(T) -> K) -> List[(K, List[T])]   // keys in first appearance order, each group in input order
 fn (xs: List[T]) reverse() -> List[T]
 fn (xs: List[T]) to_set() -> Set[T]
@@ -373,7 +375,28 @@ fn (var xs: List[T]) heapify()                  // make any list a heap
 fn ([var] xs: List[T]) set(i: Int, x: T)     // also xs[i] = x on a var list
 fn (var xs: List[T]) sort_in_place()         // T: Ord, stable, sorts the receiver
 fn (var xs: List[T]) sort_in_place_by[K: Ord](key: fn(T) -> K)   // stable
+fn (var xs: List[T]) sort_in_place_by_desc[K: Ord](key: fn(T) -> K)
+fn (var xs: List[T]) sort_in_place_with(cmp: fn(T, T) -> Ordering)
+
+enum Ordering { Less, Equal, Greater }
+a.cmp(b) -> Ordering                         // every Ord type, built in as min and max are
+fn (o: Ordering) reverse() -> Ordering
+fn (o: Ordering) then(next: Ordering) -> Ordering   // o, or next when o is Equal
 ```
+
+A comparator sort (decision 0586): `sort_with(cmp)` orders by a function
+of two elements returning an `Ordering`, stable like Go's
+`slices.SortStableFunc`: equal elements keep their input order, and a
+comparator that is not a strict weak order gives some permutation, never a
+fault. Its errors and effects propagate as `sort_by`'s do: the first error
+stops the sort and is returned, and `sort_in_place_with` leaves the
+receiver unchanged then. A multi-key order chains `then`:
+`ws.sort_with(fn(a, b) { b.count.cmp(a.count).then(a.name.cmp(b.name)) })`
+is count descending, then name ascending. `sort_by_desc(key)` orders by key
+from greatest to least, stable, without negating the key (so `Int.min` and
+`Str` keys work). `a.cmp(b)` is `Less` when `a < b`, `Greater` when `b < a`,
+else `Equal` (a NaN compares Equal); `cmp` is a method name, so a type's own
+`cmp` shadows it as any method does.
 
 `sort` of a `List[Int]` runs Go's pattern-defeating quicksort (the
 algorithm of `slices.Sort`), which does not keep equal elements in input
@@ -5464,7 +5487,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-521 declarations.
+527 declarations.
 
 ### Range
 
@@ -5488,6 +5511,13 @@ fn display(self) -> Str
 
 ```
 fn debug(self) -> Str
+```
+
+### Ordering
+
+```
+fn (o: Ordering) reverse() -> Ordering
+fn (o: Ordering) then(next: Ordering) -> Ordering
 ```
 
 ### Int
@@ -5792,6 +5822,10 @@ fn (xs: List[T]) sort() -> List[T]
 fn (xs: List[T]) sort_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
 fn (var xs: List[T]) sort_in_place()
 fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> () ! E uses fx
+fn (xs: List[T]) sort_with[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> List[T] ! E uses fx
+fn (var xs: List[T]) sort_in_place_with[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> () ! E uses fx
+fn (xs: List[T]) sort_by_desc[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
+fn (var xs: List[T]) sort_in_place_by_desc[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> () ! E uses fx
 fn (xs: List[T]) group_by[K: Hash, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx
 fn (xs: List[T]) reverse() -> List[T]
 fn (xs: List[T]) to_set() -> Set[T]

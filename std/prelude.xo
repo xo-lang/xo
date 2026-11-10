@@ -144,6 +144,23 @@ fn dbg[T](x: T) -> T
 // ---------------------------------------------------------------------------
 // Targets (core 12.2). `target` is a predeclared value of type Target.
 
+// ---------------------------------------------------------------------------
+// Ordering (decision 0586): `a.cmp(b)` on every Ord type (built in, as
+// min and max are), the comparator of sort_with.
+
+/// The result of comparing two values: `a.cmp(b)` is Less when a < b.
+enum Ordering {
+  Less
+  Equal
+  Greater
+}
+
+/// Less and Greater swapped: `a.cmp(b).reverse()` is `b.cmp(a)`.
+fn (o: Ordering) reverse() -> Ordering
+/// o, or next when o is Equal: the next key of a multi-key order (Go's
+/// cmp.Or, Rust's then): `a.n.cmp(b.n).then(a.s.cmp(b.s))`.
+fn (o: Ordering) then(next: Ordering) -> Ordering
+
 enum TargetOs {
   Linux
   Darwin
@@ -811,6 +828,16 @@ fn (xs: List[T]) sort_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) ->
 fn (var xs: List[T]) sort_in_place()
 /// Sorts xs itself by key(x), ascending and stable; returns nothing.
 fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> () ! E uses fx
+/// Sorted by the comparator, stable: equal elements keep their order (Go's
+/// slices.SortStableFunc; decision 0586). A comparator that is not a strict
+/// weak order gives some permutation, never a fault. The first error the
+/// comparator returns stops the sort and is returned.
+fn (xs: List[T]) sort_with[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> List[T] ! E uses fx
+fn (var xs: List[T]) sort_in_place_with[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> () ! E uses fx
+/// Sorted by key from greatest to least, stable (no key negation, so
+/// `Int.min` and Str keys work; decision 0586).
+fn (xs: List[T]) sort_by_desc[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
+fn (var xs: List[T]) sort_in_place_by_desc[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> () ! E uses fx
 /// The elements grouped by key(x): keys in order of first appearance, each
 /// group in input order.
 fn (xs: List[T]) group_by[K: Hash, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx

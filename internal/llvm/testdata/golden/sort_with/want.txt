@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+Less Equal Greater
+Less Greater Greater
+Less Greater
+c5 a2 b2 d1
+c b a d
+c b a d
+9223372036854775807 7 0 -1 -9223372036854775808
+pear fig apple
+9 5 3 3 1
+c b a
+true 0 100
+ok 1 2 3
+err 13
+--- stderr
