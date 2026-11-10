@@ -1,4 +1,4 @@
-# 0589: pkg.xolang.dev, package documentation for std and published modules
+# 0589: pkg.xolang.org, package documentation for std and published modules
 
 Status: Proposed (lead, 2026-11-10, at the owner's request)
 
@@ -24,9 +24,15 @@ module, so std and user modules document the same way.
 
 ## Decision (proposed)
 
-1. **Name: pkg.xolang.dev.** People-facing pages stay under the .dev brand
-   (xolang.dev, the playground, the docs); services for tools stay on
-   xolang.org (0568). The split mirrors go.dev / golang.org.
+1. **Name: pkg.xolang.org** (revised 2026-11-10). The first draft chose
+   pkg.xolang.dev to keep people-facing pages under the .dev brand, but
+   xolang.dev stays on Namecheap DNS (owner decision), and an R2 custom
+   domain, a Worker route and Cloudflare's cache rules need the zone on
+   Cloudflare. xolang.org is already a Cloudflare zone (0568), so
+   pkg.xolang.org is served like proxy.xolang.org with no new zone. The
+   .dev name could still point at Cloudflare Pages through a Namecheap
+   CNAME, but Pages caps a deployment's file count (20,000 on the Free
+   plan), which a site with a page per module version outgrows.
 2. **What it shows**, per module version: the module's doc, its packages'
    exported types, functions, methods, constants and their doc comments
    (from `xo doc --json`), the signature with effects and errors, links to
@@ -34,21 +40,21 @@ module, so std and user modules document the same way.
    importers known to the index, the license (detected from the module's
    LICENSE file; no license, no rendered docs, as pkg.go.dev does), and
    the `xo get` line. Std is a module like any other, versioned by Xo
-   release (pkg.xolang.dev/std/charset@0.46.0), and /docs/stdlib on
+   release (pkg.xolang.org/std/charset@0.46.0), and /docs/stdlib on
    xolang.dev redirects to it.
 3. **How it is built:** static pages. A builder reads index.xolang.org's
    feed for new versions, fetches each zip through proxy.xolang.org
    (verified against sum.xolang.org), runs `xo doc --json` from the
    released xo in a sandbox with no network, and renders HTML plus a
    search index. Built pages are written to an R2 bucket served on
-   pkg.xolang.dev through Cloudflare, like the proxy. The builder never
+   pkg.xolang.org through Cloudflare, like the proxy. The builder never
    runs a module's code (doc extraction parses and checks only).
 4. **Where the builder runs:** not on the OCI host, which is hosting only
    (0568). Options for the owner: a Cloudflare Worker cron that queues
    versions plus a small container run (Cloudflare Containers) for
    `xo doc`; or a scheduled job on an offload host that uploads to R2.
    The first keeps everything on Cloudflare; the second costs nothing new.
-5. **Editors:** xo lsp's hover link points at pkg.xolang.dev for std and
+5. **Editors:** xo lsp's hover link points at pkg.xolang.org for std and
    for any module the index knows; user code in the open workspace gets no
    link.
 6. **Takedowns and abuse** follow 0568's policy and contact
@@ -63,8 +69,7 @@ module, so std and user modules document the same way.
 - Module authors get documentation pages without doing anything but
   tagging a version, which rewards doc comments.
 - One more public service to run: its builder's sandbox, an R2 bucket, DNS
-  for pkg.xolang.dev (a zone the owner adds to Cloudflare if xolang.dev is
-  not there yet), and a release step for std's pages.
+  for pkg.xolang.org (a record in the existing Cloudflare zone), and a release step for std's pages.
 - xolang.dev/docs/stdlib's URLs change; redirects keep old links working.
 - `xo doc --json` becomes a public format, versioned with a schema field.
 
@@ -72,8 +77,9 @@ module, so std and user modules document the same way.
 
 - **Keep std pages on xolang.dev and nothing for modules:** no cost, but
   third-party modules stay undocumented.
-- **pkg.xolang.org:** fits the services domain, but splits people-facing
-  pages across two brands.
+- **pkg.xolang.dev:** keeps people-facing pages under one brand, but
+  xolang.dev stays on Namecheap DNS, so only a Cloudflare Pages CNAME could
+  serve it (file cap above).
 - **A path on the main site (xolang.dev/pkg/...):** one site, but the main
   site's Hugo build would depend on the module index and grow with every
   published module.
@@ -84,5 +90,5 @@ module, so std and user modules document the same way.
 
 - Accept the name and the stages.
 - The builder's home (decision item 4).
-- Whether pkg.xolang.dev also hosts the module search that `xo search`
+- Whether pkg.xolang.org also hosts the module search that `xo search`
   might call later.
