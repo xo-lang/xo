@@ -1023,9 +1023,10 @@ fn new_distrib(kind: Int, dw: Int, sw: Int) -> Distrib {
   d
 }
 
-/// x/image's ftou: [0, 1] scaled to [0, 0xffff], rounded, clamped. A NaN (a
-/// source whose kernel weights all vanish gives 0 times an infinite inverse
-/// weight) is 0, as Go's arm64 conversion makes it; Int(NaN) faults in Xo.
+/// x/image's ftou: [0, 1] scaled to [0, 0xffff], rounded, clamped. A NaN
+/// (0 times an infinite inverse weight) is 0, as Go's int32(NaN) makes it
+/// on arm64; Xo orders NaN above +Inf, so the plain comparisons would give
+/// 65535.
 fn ftou(f: Float) -> Int {
   let x = 65535.0 * f + 0.5
   if x.is_nan() || x < 1.0 {
