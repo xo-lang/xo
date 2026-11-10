@@ -14,7 +14,9 @@
 // until no read began before its release. Results go through hput.
 use native/llrt/heapos
 use native/llrt/pool
+use native/llrt/raw
 use native/llrt/rc
+use native/llrt/scan
 use native/llrt/tasks
 use native/rt
 use native/sys_c
@@ -261,4 +263,50 @@ fn reclaim(m: Int) -> List[Int] {
   }
   rt.mem_store(r, R_LEN, keep, 8)
   out
+}
+
+/// The largest buffer bytes_back keeps for the next call: a larger one
+/// is freed, so one large argument does not stay with its thread.
+const BUF_KEEP = 65536
+
+/// A C export's Bytes parameter k (decision 0574; k < heapos.C_BUFS):
+/// the n bytes at a copied into the calling thread's buffer for k when
+/// it has room (no allocation: the buffer bytes_back kept after the last
+/// call), else into a new Str.
+pub fn bytes_in(k: Int, a: Int, n: Int) -> Str {
+  let t = heapos.c_bufs()
+  if t != 0 {
+    let p = rt.mem_load(t, 8 * k, 8)
+    if p != 0 && rt.mem_load(p, 8, 8) >= n {
+      // taken: a call from inside the function (a C callback into
+      // another export) finds no buffer and copies
+      rt.mem_store(t, 8 * k, 0, 8)
+      rt.mem_copy(p + rt.layout(0), a, n)
+      // the table's reference, handed over
+      return rt.str_at(p, n)
+    }
+  }
+  raw.str_at(a, n)
+}
+
+/// A C export's Str parameter k: bytes_in's, valid UTF-8 (each byte of
+/// an invalid sequence U+FFFD, decision 0259; a new Str then).
+pub fn text_in(k: Int, a: Int, n: Int) -> Str { scan.text(bytes_in(k, a, n)) }
+
+/// After the call: s, parameter k's Str, kept as the thread's buffer for
+/// k when nothing else holds it (the function kept no reference, its
+/// count is the wrapper's 1), the slot is empty and it is at most
+/// BUF_KEEP bytes; otherwise the wrapper's release frees it as usual.
+pub fn bytes_back(k: Int, s: Str) {
+  let p = rt.obj_addr(s)
+  if rt.mem_load(p, 0, 8) != 1 || rt.mem_load(p, 8, 8) > BUF_KEEP {
+    return
+  }
+  let t = heapos.c_bufs()
+  if t == 0 || rt.mem_load(t, 8 * k, 8) != 0 {
+    return
+  }
+  // the table's reference; the wrapper then drops its own
+  rc.inc(p)
+  rt.mem_store(t, 8 * k, p, 8)
 }

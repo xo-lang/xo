@@ -509,6 +509,24 @@ pub fn count_or(c: Option[Counter], dflt: Int) -> Int as c "ctr_count_or" {
 
 pub fn maybe_n(c: Counter) -> Option[Int] as c "ctr_maybe_n" { Some(c.n) }
 
+pub struct Held {
+  b: Bytes
+}
+
+pub fn hold(b: Bytes) -> Held as c "ctr_hold" { Held{b: b} }
+
+pub fn hold_tail(b: Bytes) -> Held as c "ctr_hold_tail" { Held{b: b[1..b.len()]} }
+
+pub fn held_sum(h: Held) -> Int as c "ctr_held_sum" {
+  var t = 0
+  for x in h.b {
+    t += Int(x)
+  }
+  t
+}
+
+pub fn both_len(a: Bytes, s: Str) -> Int as c "ctr_both_len" { a.len() * 100 + s.len() }
+
 pub fn label(c: Counter) -> Str as c "ctr_label" { "${c.name}=${c.n}" }
 
 pub fn tail(b: Bytes, k: Int) -> Bytes as c "ctr_tail" { b[k..b.len()] }
@@ -573,6 +591,17 @@ int main(int argc, char **argv) {
   xo_free(lo.p);
   lo = ctr_label_or(e, 0, &err);
   if (err != 1 || lo.p != NULL || lo.n != 0 || strcmp(xo_last_error(), "no label") != 0) { puts("label_or error"); return 1; }
+  /* a Bytes the function keeps, whole or as a view, is never a later call's buffer */
+  XoBytes abc = {(const uint8_t *)"abc", 3}, xyz = {(const uint8_t *)"xyzw", 4};
+  XoHandle h1 = ctr_hold(abc), h2 = ctr_hold_tail(abc);
+  for (int i = 0; i < 1000; i++) {
+    XoStr st = {"hello", 5};
+    if (ctr_both_len(xyz, st) != 405) { puts("both_len"); return 1; }
+    xo_release(ctr_hold(xyz));
+  }
+  if (ctr_held_sum(h1) != 'a' + 'b' + 'c' || ctr_held_sum(h2) != 'b' + 'c') { printf("held %lld %lld\n", (long long)ctr_held_sum(h1), (long long)ctr_held_sum(h2)); return 1; }
+  xo_release(h1);
+  xo_release(h2);
   XoHandle m = ctr_maybe_n(e);
   if (m == 0) { puts("option int"); return 1; }
   xo_release(m);

@@ -1427,7 +1427,7 @@ const W_HSIZE = 29
 /// 0484); then (decision 0506, 85 classes) each class's free list, its
 /// length, its spare magazine and its magazine size (alloc.xo FREE_LISTS,
 /// NFREE, MAG, MAG_CAP; the 73 class arrays before them are unused).
-const H_SIZE = H_CREAD + 8
+const H_SIZE = H_CBUF + 8
 /// A C library's (decision 0574): 1 while the record's thread has exited,
 /// so a new thread takes it (thread_heap; orphan); the pthread key of the
 /// thread exit hook plus 1 (0 none), which each record copies from the
@@ -1435,11 +1435,17 @@ const H_SIZE = H_CREAD + 8
 /// block, its capacity in the first word and the zero terminated text
 /// after it, kept for the next error; 0 none); the XoHandle table's
 /// epoch while the thread reads a handle without the table's lock
-/// (clibh.read_begin; 0 none).
+/// (clibh.read_begin; 0 none); the thread's buffers for C exports'
+/// Bytes and Str parameters (clibh.bytes_in: a C malloc'd block of
+/// C_BUFS words, each a Str object kept for the next call or 0; 0 none).
 const H_ORPHAN = 2152 + 32 * 256 + 24 + 8 * 73 + 24 + 16 + 24 + 4 * 8 * 85
 pub const H_TKEY = H_ORPHAN + 8
 const H_CERR = H_TKEY + 8
 const H_CREAD = H_CERR + 8
+const H_CBUF = H_CREAD + 8
+/// The Bytes and Str parameters of a C export that reuse a buffer
+/// (clibh.bytes_in): the first 4.
+pub const C_BUFS = 4
 /// The first word of the per class magazine sizes (alloc.xo MAG_CAP).
 const H_MAG_CAP = 13056
 /// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).
@@ -1699,6 +1705,27 @@ pub fn c_error(errp: Int, msg: Str) {
   if errp != 0 {
     rt.mem_store(errp, 0, 1, 4)
   }
+}
+
+/// The calling thread's table of C_BUFS buffer words for C exports'
+/// Bytes and Str parameters (H_CBUF, made zeroed on first use), or 0
+/// when malloc fails.
+pub fn c_bufs() -> Int {
+  let h = thread_heap()
+  var t = rt.mem_load(h, H_CBUF, 8)
+  if t == 0 {
+    t = sys_c.weak_malloc(8 * C_BUFS)
+    if t == 0 {
+      return 0
+    }
+    var i = 0
+    while i < C_BUFS {
+      rt.mem_store(t, 8 * i, 0, 8)
+      i += 1
+    }
+    rt.mem_store(h, H_CBUF, t, 8)
+  }
+  t
 }
 
 /// The bytes of a C library export's Bytes or Str result s (decision
