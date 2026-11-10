@@ -32,12 +32,12 @@ fn needs_frame0(inst: Inst) -> Bool {
     return true
   }
   for a in inst.srcs {
-    if a.kind == S_FRAME || a.kind == S_MEM || a.kind == S_OUTW {
+    if a.kind == S_FRAME || a.kind == S_MEM {
       return true
     }
   }
   for a in inst.fargs() {
-    if a.kind == S_FRAME || a.kind == S_MEM || a.kind == S_OUTW {
+    if a.kind == S_FRAME || a.kind == S_MEM {
       return true
     }
   }
@@ -490,13 +490,6 @@ fn (var g: G) mark_tails() {
   if g.mem_bytes != 0 || g.out || g.frame_read {
     return
   }
-  if !g.sret_fwd.is_empty() || !g.sret_outw.is_empty() {
-    // a callee given the caller's sret memory or an outgoing area word
-    // (byref.xo sret_slot; decision 0564 step 3): as a tail call it
-    // runs after the frame is undone (http_client_body_reader read a
-    // callee saved register after its restore, 2026-11-09)
-    return
-  }
   for b in g.hot + g.cold {
     let n = g.blocks[b].insts.len()
     for k in 0..n {
@@ -514,7 +507,7 @@ fn (g: G) tail_call(b: Int, k: Int) -> Bool {
     return false
   }
   for a in c.srcs {
-    if a.kind == S_FRAME || a.kind == S_MEM || a.kind == S_OUTW {
+    if a.kind == S_FRAME || a.kind == S_MEM {
       return false
     }
   }

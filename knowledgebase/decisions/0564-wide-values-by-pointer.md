@@ -324,6 +324,17 @@ straight to the result slot.
 
 ## Step 3 (2026-11-10): native sret for wide results
 
+**Reverted (2026-11-10, lead's go, owner priority: it blocked the 0.46.0
+candidate).** Pushed as 686ba3565 for its size (frames +0.16%, __text
+-0.12%), with no speed claim; its `xo bench --ab` self build afterwards
+(linux/arm64 host 1, exclusive, A = its parent 0699743b2, B = 686ba3565,
+stage2 self, 7 of 7 rounds) read wall 1.136 (95% 1.126 to 1.14; spread
+0.36% / 0.54%), cpu 1.048 (1.039 to 1.051), max RSS 1.015: a 13.6% wall
+and 4.8% cpu slowdown of xo building itself. Wall worse than cpu points to
+a serial phase; it is to be found (--phase-times, XO_PROF) before any
+reland, and the reland carries an `--ab` row. The section below records
+what was built.
+
 A wide result (big_by_ref) of a direct call is written by the callee
 through an address the caller passes after the arguments, as one more
 integer word (byref.xo sret_of; not for indirect, entry or address-taken

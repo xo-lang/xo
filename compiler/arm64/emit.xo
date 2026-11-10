@@ -19,8 +19,6 @@ const M_FRAME = 3
 const M_ZERO = 4
 /// the address of byte imm of the frame's memory
 const M_MEM = 5
-/// the address of byte imm of the calls' outgoing area (S_OUTW)
-const M_OUTW = 6
 
 struct MSrc {
   kind: Int
@@ -111,7 +109,7 @@ fn (g: G) out_arg_bytes() -> Int {
   for b in g.order {
     for inst in g.blocks[b].insts {
       if inst.kind == K_CALL {
-        var n = inst.ow
+        var n = 0
         for l in g.call_locs(inst.srcs, inst.vfix) + g.abi_locs(regs(inst.defs)) {
           if l.reg < 0 {
             n = imax(n, l.slot + 1)
@@ -1021,9 +1019,6 @@ fn (g: G) msrc_of(a: Src) -> MSrc {
   }
   if a.kind == S_MEM {
     return MSrc{kind: M_MEM, imm: a.imm}
-  }
-  if a.kind == S_OUTW {
-    return MSrc{kind: M_OUTW, imm: a.imm}
   }
   MSrc{kind: M_FRAME}
 }
@@ -1938,8 +1933,6 @@ fn (g: G) put(var b: List[Str], r: Int, src: MSrc) {
     add_sp(b, reg_name(r, false), g.fr.out_off)
   } else if src.kind == M_MEM {
     add_sp(b, reg_name(r, false), g.fr.mem_off + src.imm)
-  } else if src.kind == M_OUTW {
-    add_sp(b, reg_name(r, false), src.imm - g.fr.rz)
   }
 }
 
