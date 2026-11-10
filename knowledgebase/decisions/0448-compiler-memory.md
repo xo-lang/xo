@@ -1189,3 +1189,43 @@ operation that can fault) and the rest of a line add; then fewer values
 or a part-wise pass pipeline (insert_rc's apply through emit by part,
 each part's SSA freed after its emit), with an ADR of its own if it
 changes the pipeline.
+
+## Addendum: stage 3's step 1, the peak is the inliner (xo-lang-2, 2026-11-09)
+
+Stage 3 started from "emit and link hold 6.0 to 6.44 GB" (the phase
+lines' heap figures). Measured again on GCP aiplatform/v1, a cold test
+build (backend and binary caches off), xo at 2e07e3aee, linux/arm64 host
+3, resident size sampled every 0.5 s beside the phase ends:
+
+| phase end | phase line "heap" | resident |
+|---|---|---|
+| insert_rc (6.0 s) | 2,365 MB | about 2.7 GB |
+| inline (12.9 s) | 4,616 MB | 5.2 to 5.9 GB |
+| inline.verify (14.0 s) | 4,660 MB | about 5.9 GB |
+| emit (56.9 s) | 6,545 MB | 3.9 to 4.2 GB |
+| assemble (64.0 s) | 6,544 MB | about 4.5 GB |
+
+`/usr/bin/time` max 6.77 GB. The phase lines' "heap" is the memory the
+allocator has mapped, not what is resident: through emit the scavenger
+and the age passes (decisions 0383, 0425, 0533) give back most of it
+(XO_HEAPSTATS at exit: 4.6 GB on free lists, 2.0 GB of it 64 KiB
+blocks, 1.5 GB of 48 byte blocks). The resident peak is the inliner.
+
+In use (XO_PROF_HEAP_AT, 16 MiB rate): at the end of inline.apply
+4.06 GB in 26.4 M objects: ssa.renumber's value tables (passes.xo
+1446) 1.51 GB, arm64.inline_call (inline.xo 1288) 1.06 GB,
+Func.add_param 686 MB, ssa.cse 320 MB. At the end of emit 1.54 GB,
+97.6% the parts' assembly text (raw.str_join in gen_part). So spilling
+the parts' text (the c1 design) would lower a phase that is not the
+peak; it is not stage 3's first step.
+
+Next step (proposed): the inlined module's values. A census by op and
+by function after inline.apply (Lang 4's census after cleanup, extended
+to the inliner's copies), then the largest of: (a) Value's args and
+succs as ranges of one per-function table instead of a List each (26 M
+objects; small lists are likely much of the 1.5 GB of 48 byte blocks freed
+at exit), (b) a callee's body dropped once its last call site is
+inlined and it is not otherwise reached, (c) inline in waves as cleanup
+does (2026-11-07), each wave's functions lowered to parts before the
+next. Measured with scripts in ~/xo-lead/notes/xo-lang-2/0448
+(heapat.sh, rss.sh) on host 3, peak resident and wall against main.
