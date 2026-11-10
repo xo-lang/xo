@@ -605,7 +605,17 @@ logs in with the key `~/.ssh/xo_winarm` (in
 administrator); offload.sh uses the password. Developer mode is on (git
 symlinks without elevation). Installed: OpenSSH Server, PortableGit
 2.56.0.4 arm64 in `%USERPROFILE%\tools\git`, Go 1.26.1 windows/arm64 in
-`tools\go` (both checked against their published SHA-256), `xo-ci\off`.
+`tools\go` (both checked against their published SHA-256), `xo-ci\off`. Then (2026-11-09
+evening): LLVM 23.1.3 aarch64-pc-windows-msvc (clang, lld-link, llvm-mc)
+unpacked in `tools\llvm` (release SHA-256 checked); Visual Studio Build
+Tools 2022 by winget (`--source winget` is required: the id is also in
+msstore, and without it winget stops to ask) with MSVC 14.44.35207 for
+arm64, arm64ec and x64 and the Windows 11 SDK 10.0.26100 (arm64 import
+libraries in `Windows Kits\10\Lib\10.0.26100.0\um\arm64`); WinDbg
+1.2611 by winget, whose package carries `arm64\cdb.exe` under
+`C:\Program Files\WindowsApps\Microsoft.WinDbg_*` (the SDK's own
+Debugging Tools feature was not installed: winget only upgrades an SDK
+that is already present).
 Git Bash's runtime is x64 under emulation (`uname -m` says x86_64); Go and
 the jobs' programs run natively. No xo seed for windows/arm64 yet, so it
 runs programs cross-built on the Mac. Fusion's "vmware-vdiskmanager -x"
