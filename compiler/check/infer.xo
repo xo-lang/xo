@@ -62,11 +62,18 @@ fn (var c: Checker) unify(a0: Int, b0: Int) -> Bool {
   let y = c.tys[b]
   match ka {
     Named => {
+      let top = c.cov_top
+      c.cov_top = false
       if kb != TyKind.Named || x.obj != y.obj || x.args.len() != y.args.len() {
         return false
       }
+      let cov = if top { c.iface_covariant(x.obj) } else { [] }
       for i in 0..x.args.len() {
-        if !c.unify(x.args[i], y.args[i]) {
+        let was = c.cov_arg
+        c.cov_arg = i < cov.len() && cov[i]
+        let ok = c.unify(x.args[i], y.args[i])
+        c.cov_arg = was
+        if !ok {
           return false
         }
       }
@@ -161,7 +168,12 @@ fn (var c: Checker) assignable(src0: Int, dst0: Int, sp: Span) -> Bool {
     }
     return ok
   }
-  if c.unify_tracked(src, dst) {
+  // an interface's covariant effect arguments widen at the converted
+  // type's top only (decision 0582: not inside a List or other type)
+  c.cov_top = c.tys[dst].kind == TyKind.Named && c.objs[c.tys[dst].obj].tkind == "interface"
+  let uok = c.unify_tracked(src, dst)
+  c.cov_top = false
+  if uok {
     c.same_effects(n, dst, sp)
     return true
   }

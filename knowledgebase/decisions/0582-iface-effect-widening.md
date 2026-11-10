@@ -1,7 +1,8 @@
 # 0582: an interface value's effect argument widens where it is only covariant
 
-Status: Proposed (Xo Lang 1, 2026-11-09; asked by Xo Azure 1, ask 3 of
-~/xo-lead/notes/aws-43/PROPOSAL-std-devcred-asks.md, through the lead).
+Status: Accepted (owner, 2026-11-09, through the lead); implemented by Xo
+Lang 1. Asked by Xo Azure 1, ask 3 of
+~/xo-lead/notes/aws-43/PROPOSAL-std-devcred-asks.md.
 
 ## Context
 

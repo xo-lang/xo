@@ -110,6 +110,8 @@ struct EffOb {
   /// Same: sub is the expected type's set and sup the value's (the
   /// pair's second obligation); otherwise sub is the value's.
   rev: Bool = false
+  /// A covariant interface effect argument's one way check (0582).
+  cov: Bool = false
   /// Closure: its ` uses ...` clause (file "" for none), which a fix may
   /// remove so its effects are inferred.
   uses_file: Str = ""
@@ -433,8 +435,13 @@ fn (var c: Checker) same_effects(n: Int, dst: Int, sp: Span) {
   while i < c.eff_eqs.len() {
     let (a, b) = c.eff_eqs[i]
     if sp.start.line > 0 {
-      c.obligations.push(EffOb{kind: ObKind.Same, sub: a, sup: b, file: c.path, span: sp, ty: dst})
-      c.obligations.push(EffOb{kind: ObKind.Same, sub: b, sup: a, file: c.path, span: sp, ty: dst, rev: true})
+      // a covariant effect argument of an interface widens: the value's
+      // set within the expected one only (decision 0582)
+      let cov = c.eff_cov[i]
+      c.obligations.push(EffOb{kind: ObKind.Same, sub: a, sup: b, file: c.path, span: sp, ty: dst, cov: cov})
+      if !cov {
+        c.obligations.push(EffOb{kind: ObKind.Same, sub: b, sup: a, file: c.path, span: sp, ty: dst, rev: true})
+      }
     }
     i += 1
   }
@@ -446,6 +453,7 @@ fn (var c: Checker) same_effects(n: Int, dst: Int, sp: Span) {
 fn (var c: Checker) eff_pair(a: Int, b: Int) {
   if c.eff_track > 0 {
     c.eff_eqs.push((a, b))
+    c.eff_cov.push(c.cov_arg)
   }
 }
 
@@ -461,6 +469,7 @@ fn (var c: Checker) unify_tracked(a: Int, b: Int) -> Bool {
 fn (var c: Checker) drop_eff_eqs(n: Int) {
   while c.eff_eqs.len() > n {
     c.eff_eqs.pop()
+    c.eff_cov.pop()
   }
 }
 
@@ -746,7 +755,11 @@ fn (var c: Checker) solve_effects() {
       let et = c.flat_text(if ob.rev { sub } else { sup })
       let vs = if vt.is_empty() { "is pure" } else { "has effects `${vt}`" }
       let es = if et.is_empty() { "is pure" } else { "has `${et}`" }
-      "this value's type ${vs}, but the expected type `${c.show(ob.ty)}` ${es}; a type's effects must match exactly, neither widened nor narrowed (core 6.2)"
+      if ob.cov {
+        "this value's type ${vs}, but the expected type `${c.show(ob.ty)}` ${es}; an interface's effect argument may widen but not narrow (core 6.2)"
+      } else {
+        "this value's type ${vs}, but the expected type `${c.show(ob.ty)}` ${es}; a type's effects must match exactly, neither widened nor narrowed (core 6.2)"
+      }
     } else if ob.kind == ObKind.Pure {
       "contract clauses must be pure, but this one performs ${list}"
     } else if ob.kind == ObKind.Const {
@@ -1017,4 +1030,74 @@ fn (var c: Checker) pure_end(saved: Int, sp: Span) {
   if !c.esets[sink].is_empty() {
     c.obligations.push(EffOb{kind: ObKind.Pure, sub: sink, sup: c.new_eset([]), file: c.path, span: sp})
   }
+}
+
+/// Which type parameters of interface t are covariant effect parameters
+/// (decision 0582): an effect parameter its methods name only in their
+/// `uses`, never in a parameter, result or error type. A value of
+/// `I[e1]` may then be used as `I[e2]` with e1 within e2.
+fn (var c: Checker) iface_covariant(t: Int) -> List[Bool] {
+  if let Some(v) = c.iface_cov.get(t) {
+    return v
+  }
+  var out: List[Bool] = []
+  for p in c.objs[t].tparams {
+    var cov = c.objs[p].effect
+    if cov {
+      for m in c.objs[t].iface_meths {
+        for pi in c.objs[m].params {
+          if c.ty_mentions(pi.ty, p, 0) {
+            cov = false
+          }
+        }
+        if c.ty_mentions(c.objs[m].result, p, 0) || c.ty_mentions(c.objs[m].err, p, 0) {
+          cov = false
+        }
+      }
+    }
+    out.push(cov)
+  }
+  c.iface_cov[t] = out
+  out
+}
+
+/// Whether type t names type parameter p anywhere (as a type, or as an
+/// effect parameter in a set inside it).
+fn (c: Checker) ty_mentions(t0: Int, p: Int, depth: Int) -> Bool {
+  if t0 < 0 || depth > 64 {
+    return t0 >= 0
+  }
+  var t = t0
+  while c.tys[t].kind == TyKind.Var && c.tys[t].ref >= 0 {
+    t = c.tys[t].ref
+  }
+  let x = c.tys[t]
+  match x.kind {
+    TyKind.Param => x.obj == p
+    TyKind.Var | TyKind.Bad => false
+    TyKind.EffArg => c.eset_mentions(x.eff, p)
+    TyKind.Named | TyKind.Tuple => c.tys_mention(x.args, p, depth + 1)
+    TyKind.Func => c.tys_mention(x.args, p, depth + 1) || c.ty_mentions(x.result, p, depth + 1) || c.ty_mentions(x.err, p, depth + 1) || c.eset_mentions(x.eff, p)
+  }
+}
+
+fn (c: Checker) tys_mention(ts: List[Int], p: Int, depth: Int) -> Bool {
+  for a in ts {
+    if c.ty_mentions(a, p, depth) {
+      return true
+    }
+  }
+  false
+}
+
+fn (c: Checker) eset_mentions(s: Int, p: Int) -> Bool {
+  if s < 0 || s >= c.esets.len() {
+    return false
+  }
+  for it in c.esets[s] {
+    if it.param == p {
+      return true
+    }
+  }
+  false
 }

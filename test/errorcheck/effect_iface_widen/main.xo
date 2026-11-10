@@ -1,0 +1,51 @@
+// Decision 0582: an interface value's effect argument widens (I[e1] used
+// as I[e2], e1 within e2) where the parameter is covariant: named only in
+// the methods' `uses`. A parameter a method takes in a parameter type is
+// exact, a List of interface values is invariant, and nothing narrows.
+interface Cred[fx: Effects] {
+  fn get(self) -> Str uses fx
+}
+
+// fx in a parameter's type: widening would let a caller pass a function
+// performing more than the value's type allows
+interface Runner[fx: Effects] {
+  fn run(self, f: fn() -> Int uses fx) -> Int uses fx
+}
+
+struct FileCred {}
+
+fn (c: FileCred) get() -> Str uses fs.read {
+  "f"
+}
+
+struct R {}
+
+fn (r: R) run(f: fn() -> Int uses fs.read) -> Int uses fs.read {
+  f()
+}
+
+fn take(c: Cred[(fs.read, proc)]) -> Str uses fs.read, proc {
+  c.get()
+}
+
+fn widen_ret(c: Cred[fs.read]) -> Cred[(fs.read, proc)] {
+  c
+}
+
+fn runner(r: Runner[(fs.read, proc)]) -> Int { 0 }
+
+fn lists(cs: List[Cred[(fs.read, proc)]]) -> Int { cs.len() }
+
+fn main() uses fs.read, proc {
+  let one: Cred[fs.read] = FileCred{}
+  let _a = take(one)
+  let _b = widen_ret(one)
+  let wide: Cred[(fs.read, proc)] = one
+  let _c: Cred[fs.read] = wide // ERROR XO0701 "may widen but not narrow"
+  let pure: Cred[()] = FileCred{} // ERROR XO0701
+  let _d = take(pure)
+  let r: Runner[fs.read] = R{}
+  let _e = runner(r) // ERROR XO0701 "neither widened nor narrowed"
+  let narrow_list: List[Cred[fs.read]] = [one]
+  let _f = lists(narrow_list) // ERROR XO0701 "neither widened nor narrowed"
+}

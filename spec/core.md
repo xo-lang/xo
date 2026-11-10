@@ -12,7 +12,8 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.46
 
-None yet.
+- An interface value's covariant effect argument widens: `Cred[fs.read]` is
+  usable as `Cred[(fs.read, proc)]` (section 6.2, decision 0582).
 
 ## Changes in 0.45
 
@@ -2713,6 +2714,15 @@ pub fn sync(src: Fs, out: Stdio) -> () ! SyncErr uses fs.read, stdio { ... }
   function parameters, it is the union of the effects of those arguments
   (decision 0432). Elsewhere (an effect argument of a type, `Cache[K, V, fx]`)
   the variable is bound exactly, and a conflict is an error.
+- **A type's effect arguments are exact**, with one exception (decision
+  0582): an interface's effect parameter that its methods name only in their
+  `uses` clauses (never in a parameter, result or error type) is covariant,
+  so a value of `Cred[fs.read]` may be used as a `Cred[(fs.read, proc)]`
+  (assignment, argument, return, `push`): its methods perform at most what
+  the wider type allows. It never narrows. The widening is at the converted
+  value's own type only: `List[Cred[fs.read]]` is not a
+  `List[Cred[(fs.read, proc)]]`. Every other effect argument must match
+  exactly (XO0701).
 - **Structs may take effect parameters** (`struct Cache[K, V, fx: Effects]`),
   and effect sets may be written as type arguments (`Cache[Int, Item, net.dial]`).
 - **Effect arguments may be omitted.** Writing `Cache[Int, Item]` leaves the

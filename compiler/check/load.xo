@@ -429,6 +429,16 @@ pub struct Checker {
   /// of a type, a function type inside one): assignable turns them into
   /// obligations both ways at its span (core 6.2).
   eff_eqs: List[(Int, Int)] = []
+  /// Beside eff_eqs: the pair is a covariant effect argument of an
+  /// interface at a conversion's top (decision 0582), checked one way.
+  eff_cov: List[Bool] = []
+  /// assignable's unify is at the converted type's top (cov_top), and the
+  /// argument being unified is a covariant effect parameter (cov_arg).
+  cov_top: Bool = false
+  cov_arg: Bool = false
+  /// Per interface: which type parameters are covariant effect
+  /// parameters (iface_covariant).
+  iface_cov: Map[Int, List[Bool]] = {}
   /// Effect variables a call instantiated for its own effect parameters
   /// (call_effarg), and the tails a function argument leaves open on
   /// them: a function argument's effects are a lower bound until an
