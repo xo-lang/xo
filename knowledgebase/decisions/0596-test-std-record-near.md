@@ -47,6 +47,22 @@ every std module importing it, std_source_set) is left out on both sides.
 - A per-module record (one entry per std module, stamped alone): reuses more across unrelated std
   edits, but rewrites decision 0388's record format.
 - Drop parse trees after check: the trees feed the SSA builder; lazy_parse already skips std bodies.
-- Build only the importers the test program reaches: the importer set (15 for base64, 22 for json)
-  is not the cost: a csv edit (one module from source) holds 148 to 152 MB after check, json's
-  (22) 155 to 168 MB.
+- Build only the importers the test program reaches: after check the importer set (15 for
+  base64, 22 for json) is not the cost (a csv edit, one module from source, holds 148 to 152 MB,
+  json's 155 to 168 MB), but at the SSA phase it is (prototype below).
+
+## Prototype (2026-11-10, branch l2-testlazy, unpushed; Mac, json edit, 10 of 10 tests pass)
+- check/dump.xo run() splits std's modules into the record's and the from-source set's
+  (sep_source); the record and its fingerprint and header cover the first, the set is declared
+  after the block; export.xo leaves the set's modules out of the record. Gated by XO_TEST_STDX=1;
+  XO_TEST_TREES_LAZY=1 also joins std's trees lazily for the test.
+- The record now hits on every edit ("cache stdx record loaded (207 modules)": a test build
+  declares all of std, a build of coll 112).
+- Heap after check / at SSA, max RSS: neither 164 / 196 MB, 184 MB; record only 169 / 197 MB,
+  184 MB; record and lazy trees 59 / 167 MB, 202 MB (the Mac under load 115, wall not comparable).
+  So check's heap falls by 105 MB, but the peak moves to SSA: a heap snapshot at the end of the
+  front end holds 83 MB of parse trees, now those of the 22 from-source modules (json and every std
+  module importing it, parsed whole for the SSA builder).
+- Next: the from-source set limited to the modules the test program reaches (their store code is
+  stale only if linked), then measure the peak again; without that, items 1 to 2 move the peak
+  rather than lower it.
