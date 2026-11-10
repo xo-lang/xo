@@ -5,6 +5,7 @@
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/lexer
 use github.com/xo-lang/xo/compiler/cli/core/format
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// fix.MaxRounds: a fix that keeps producing new diagnostics with fixes
 /// stops here instead of looping forever.
@@ -474,10 +475,14 @@ pub fn mod_root(os: Os, ctx: Ctx, dir: Str) -> Str uses fs.read {
     if os.fs.exists(join_path(d, "xo.mod")).ok() ?? false {
       return d
     }
-    if d == "/" {
+    // the root of the volume (/, C:/), where dir_of gives back d: a
+    // drive path's climb never reached "/" and xo fix (check --fix)
+    // looped for good on Windows outside a module (2026-11-10)
+    let up = dir_of(d)
+    if up == d || hostpath.is_root(d) {
       return ""
     }
-    d = dir_of(d)
+    d = up
   }
   ""
 }

@@ -264,10 +264,13 @@ fn (c: ModCtx) mod_root_of(dir: Str, cmd: Str) -> Str? uses (fs.read, stdio) {
     if c.exists("${d}/xo.mod") {
       return Some(d)
     }
-    if d == "/" {
+    // the root: "/", or a drive's (C:/x climbs to C:, which has no /
+    // left; it never reached "/" and looped on Windows, 2026-11-10)
+    let up = dir_of(d)
+    if d == "/" || !d.contains("/") || up == d {
       break
     }
-    d = dir_of(d)
+    d = up
   }
   c.os.stdio.eprintln("xo ${cmd}: no xo.mod in ${dir} or above")
   None
