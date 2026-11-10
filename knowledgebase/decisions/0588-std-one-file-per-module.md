@@ -253,3 +253,7 @@ commit (the lead cuts it).
   golden std_opaque_copy). The merge script now also takes an opaque
   declaration (`struct Deque[T] {}`) from the native struct (fields stay
   private) and native methods defined as methods.
+- `std/heap` merged the same way as deque (std/rt/heap.go removed; the
+  generated prelude loses Heap_Heap's Eq, Hash and Debug); its declared
+  `_items`, `_less`, `_moved` fields become the native struct's private
+  ones.

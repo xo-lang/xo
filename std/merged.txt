@@ -8,3 +8,4 @@ std/timego
 std/xmlcodec
 std/amqptest
 std/deque
+std/heap

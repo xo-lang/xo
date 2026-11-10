@@ -1,45 +1,140 @@
-// std/heap (spec/std.md 56, decision 0472). Declaration file; encoding rules
+// std/heap (spec/std.md 56, decision 0472). Encoding rules
 // are listed at the top of std/prelude.xo. A binary heap ordered by a
 // comparison the caller gives, after Go's container/heap (heap.go: Init,
 // Push, Pop, Remove, Fix), with a callback that reports where each element
 // lands in place of Go's Swap bookkeeping. Its own module, not the prelude:
 // a program's own Heap keeps compiling.
+//
+// std/heap on the native backends (spec/std.md 56; the Go backend has
+// std/rt/heap.go): Go's container/heap algorithm (heap.go; Copyright 2009
+// The Go Authors, BSD-style license; THIRD_PARTY_NOTICES) over a List.
 
 /// A binary heap: the element for which `less` holds against all others
 /// comes out first. A value, as List: a copy shares the elements until one
 /// of them is written. Equal elements come out in no particular order.
-struct Heap[T] {
-  /// private: the elements in heap order, and the two functions given
-  /// (declared so that a copy of a heap shares its elements as a List does
-  /// on the Go backend too; use the methods)
+pub struct Heap[T] {
   _items: List[T]
   _less: fn(T, T) -> Bool
   _moved: fn(T, Int)
 }
 
 /// An empty heap; less(a, b) is true when a comes out before b.
-fn new[T](less: fn(T, T) -> Bool) -> Heap[T]
+pub fn new[T](less: fn(T, T) -> Bool) -> Heap[T] {
+  Heap[T]{_items: [], _less: less, _moved: fn(_x: T, _i: Int) {}}
+}
+
 /// An empty heap that calls moved(x, i) each time an element x lands at
 /// position i (a push, a sift, the element a remove moves into the gap), so
 /// a caller can keep the position of each element for `remove` and `fix`.
-fn tracked[T](less: fn(T, T) -> Bool, moved: fn(T, Int)) -> Heap[T]
+pub fn tracked[T](less: fn(T, T) -> Bool, moved: fn(T, Int)) -> Heap[T] {
+  Heap[T]{_items: [], _less: less, _moved: moved}
+}
+
 /// The heap of items, in O(n) (heap.Init).
-fn from_list[T](items: List[T], less: fn(T, T) -> Bool) -> Heap[T]
+pub fn from_list[T](items: List[T], less: fn(T, T) -> Bool) -> Heap[T] {
+  var h = Heap[T]{_items: items, _less: less, _moved: fn(_x: T, _i: Int) {}}
+  var i = h._items.len() / 2 - 1
+  while i >= 0 {
+    h.down(i, h._items.len())
+    i -= 1
+  }
+  h
+}
+
 /// Adds x in O(log n) (heap.Push).
-fn (var h: Heap[T]) push(x: T)
+pub fn (var h: Heap[T]) push(x: T) {
+  h._items.push(x)
+  (h._moved)(x, h._items.len() - 1)
+  h.up(h._items.len() - 1)
+}
+
 /// The least element, removed, in O(log n); None when empty (heap.Pop).
-fn (var h: Heap[T]) pop() -> T?
+pub fn (var h: Heap[T]) pop() -> T? {
+  h.remove(0)
+}
+
 /// The least element, kept; None when empty.
-fn (h: Heap[T]) peek() -> T?
+pub fn (h: Heap[T]) peek() -> T? { h._items.get(0) }
+
 /// The element at heap position i (0 is the least); None out of range.
-fn (h: Heap[T]) get(i: Int) -> T?
+pub fn (h: Heap[T]) get(i: Int) -> T? { h._items.get(i) }
+
 /// The element at position i, removed, in O(log n); None out of range
 /// (heap.Remove).
-fn (var h: Heap[T]) remove(i: Int) -> T?
+pub fn (var h: Heap[T]) remove(i: Int) -> T? {
+  let n = h._items.len() - 1
+  if i < 0 || i > n {
+    return None
+  }
+  if n != i {
+    h.swap(i, n)
+    if !h.down(i, n) {
+      h.up(i)
+    }
+  }
+  h._items.pop()
+}
+
 /// Replaces the element at position i by x and restores the order, in
 /// O(log n) (heap.Fix after changing it); a fault when i is out of range.
-fn (var h: Heap[T]) fix(i: Int, x: T)
-fn (h: Heap[T]) len() -> Int
-fn (h: Heap[T]) is_empty() -> Bool
+pub fn (var h: Heap[T]) fix(i: Int, x: T) {
+  if i < 0 || i >= h._items.len() {
+    fault("fix: position out of range")
+  }
+  h._items[i] = x
+  (h._moved)(x, i)
+  if !h.down(i, h._items.len()) {
+    h.up(i)
+  }
+}
+
+pub fn (h: Heap[T]) len() -> Int { h._items.len() }
+
+pub fn (h: Heap[T]) is_empty() -> Bool { h._items.len() == 0 }
+
 /// The elements in heap order (the least first, the rest not sorted).
-fn (h: Heap[T]) to_list() -> List[T]
+pub fn (h: Heap[T]) to_list() -> List[T] { h._items }
+
+/// Swaps positions i and j and reports both.
+fn (var h: Heap[T]) swap(i: Int, j: Int) {
+  let a = h._items[i]
+  let b = h._items[j]
+  h._items[i] = b
+  h._items[j] = a
+  (h._moved)(b, i)
+  (h._moved)(a, j)
+}
+
+fn (var h: Heap[T]) up(j0: Int) {
+  var j = j0
+  while j > 0 {
+    let i = (j - 1) / 2
+    if i == j || !(h._less)(h._items[j], h._items[i]) {
+      break
+    }
+    h.swap(i, j)
+    j = i
+  }
+}
+
+/// Go's down: sifts position i0 down within the first n; true if it moved.
+fn (var h: Heap[T]) down(i0: Int, n: Int) -> Bool {
+  var i = i0
+  while true {
+    let j1 = 2 * i + 1
+    if j1 >= n {
+      break
+    }
+    var j = j1
+    let j2 = j1 + 1
+    if j2 < n && (h._less)(h._items[j2], h._items[j1]) {
+      j = j2
+    }
+    if !(h._less)(h._items[j], h._items[i]) {
+      break
+    }
+    h.swap(i, j)
+    i = j
+  }
+  i > i0
+}

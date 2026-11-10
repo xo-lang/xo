@@ -6,50 +6,6 @@ package rt
 
 import "strings"
 
-func (v Heap_Heap[tp_T]) XoEq(x any) bool {
-	o, ok := x.(Heap_Heap[tp_T])
-	if !ok {
-		return false
-	}
-	if !Eq(v.F__items, o.F__items) {
-		return false
-	}
-	if !Eq(v.F__less, o.F__less) {
-		return false
-	}
-	if !Eq(v.F__moved, o.F__moved) {
-		return false
-	}
-	_ = o
-	return true
-}
-
-func (v Heap_Heap[tp_T]) XoHash() uint64 {
-	h := uint64(324267949906110266)
-	h = MixHash(h, Hash(v.F__items))
-	h = MixHash(h, Hash(v.F__less))
-	h = MixHash(h, Hash(v.F__moved))
-	return h
-}
-
-func (v Heap_Heap[tp_T]) XoDebug(b *strings.Builder) {
-	b.WriteString("Heap{")
-	b.WriteString("_items: ")
-	DebugTo(b, v.F__items)
-	b.WriteString(", _less: ")
-	DebugTo(b, v.F__less)
-	b.WriteString(", _moved: ")
-	DebugTo(b, v.F__moved)
-	b.WriteString("}")
-}
-
-func (v Heap_Heap[tp_T]) M_debug(*Task) string { return Debug(v) }
-
-// XoMark marks the lists held by the fields (see rt.List).
-func (v *Heap_Heap[tp_T]) XoMark() {
-	v.F__items.XoMark()
-}
-
 func (v Json_Patch[tp_T]) XoEq(x any) bool {
 	o, ok := x.(Json_Patch[tp_T])
 	if !ok || o.Tag != v.Tag {
