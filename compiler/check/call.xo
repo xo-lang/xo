@@ -933,6 +933,7 @@ fn fake_field(fake: Str) -> Str {
     "MemFs" => "fs"
     "FakeEnv" => "env"
     "FakeStdio" => "stdio"
+    "FakeSecrets" => "secrets"
     _ => "proc"
   }
 }

@@ -204,3 +204,19 @@ Recommendation: B if Lang 1 agrees the `os_lit` change is small, else A.
 - Check before code: a default parameter in an interface method
   (`Dpapi.protect(data, entropy: Bytes = b"")`) must work for impls and
   fakes (Proc.cmd's `args = []` does, 0307); if not, two methods.
+
+## Addendum (2026-11-10): staging behind a seed
+
+The prelude declarations (`Keyring`'s `uses secrets.read`) are compiled by
+the seed that builds the next xo, and a seed whose checker does not know
+`secrets` rejects them (XO0702, found on the first stdgen run of the
+secrets2 branch). So the work lands in two steps:
+
+- Stage A (this commit): `secrets`, `secrets.read`, `secrets.write` are
+  effect labels (compiler/check decl.xo is_effect_label and its
+  did-you-mean list, modfile.xo EFFECT_LABELS, cli/modules publish.xo
+  is_label, check/call.xo fake_field `FakeSecrets`), core 6.1's table
+  lists them; test/errorcheck/effect_secrets. Nothing in std uses them.
+- Stage B (after a seed cut that contains stage A): the prelude's
+  `Secrets`, `Keyring`, `KeyErr`, `Os.secrets`, the native and Go
+  backends, the fakes and the golden.

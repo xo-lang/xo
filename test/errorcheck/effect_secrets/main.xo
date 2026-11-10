@@ -1,0 +1,21 @@
+// The secrets effect and its sub effects (decision 0584) are effect
+// labels: `secrets` covers `secrets.read` and `secrets.write`, and a
+// misspelling suggests them.
+fn read_key() uses secrets.read {}
+
+fn write_key() uses secrets.write {}
+
+fn both() uses secrets {
+  read_key()
+  write_key()
+}
+
+fn only_read() uses secrets.read { // ERROR XO0701 "performs `secrets.write`"
+  write_key()
+}
+
+fn typo() uses secret {} // ERROR XO0702 "did you mean `secrets`"
+
+fn main(os: Os) {
+  os.stdio.println("ok")
+}

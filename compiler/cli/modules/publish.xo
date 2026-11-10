@@ -61,7 +61,7 @@ fn (var c: ModCtx) upgrade_diffs(root: Str, changes: List[ModChange]) -> List[Ap
 
 /// mod.EffectLabels.
 fn is_label(e: Str) -> Bool {
-  e is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "ffi" | "log" | "go"
+  e is "net" | "net.dial" | "net.listen" | "fs" | "fs.read" | "fs.write" | "clock" | "rand" | "env" | "proc" | "stdio" | "secrets" | "secrets.read" | "secrets.write" | "ffi" | "log" | "go"
 }
 
 /// A JSON value of compiler/cli/semantic as this package's J.

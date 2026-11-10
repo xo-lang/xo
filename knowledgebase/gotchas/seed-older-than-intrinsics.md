@@ -140,3 +140,10 @@ host from the 0.39.0 seed or an older cached xo: cross-build xo.exe on
 the Mac with the checkout's bin/xo instead.
 
 See also std-error-struct-field-needs-compiler-first.md: a new field on json.DecodeErr broke the seed built hosts the same way (2026-11-08).
+
+## The same for a new effect label (Observed, 2026-11-10)
+
+A std file (the prelude) that writes `uses LABEL` for a label the seed's
+checker does not know fails the build of the next xo with XO0702 (decision
+0584's `secrets`). Land the label in the compiler first, have the seed cut
+from a commit with it, then use it in std (0584's staging addendum).

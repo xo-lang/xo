@@ -2685,6 +2685,7 @@ The builtin effects are:
 | `env` | | Environment variables, args |
 | `proc` | | Spawn processes, signals, exit |
 | `stdio` | | Standard input, output, error |
+| `secrets` | `secrets.read`, `secrets.write` | The user's OS secret stores: Linux keyring, macOS Keychain, Windows DPAPI (decision 0584) |
 | `ffi` | | Calls into C through `use c` (4.5, native builds) |
 | `log` | | Writing a `std/log` record (`debug`, `info`, `warn`, `error`) |
 

@@ -136,7 +136,7 @@ pub struct DepState {
 }
 
 /// The effect labels a ceiling may name (mod.EffectLabels).
-pub const EFFECT_LABELS = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "ffi", "log", "go"]
+pub const EFFECT_LABELS = ["net", "net.dial", "net.listen", "fs", "fs.read", "fs.write", "clock", "rand", "env", "proc", "stdio", "secrets", "secrets.read", "secrets.write", "ffi", "log", "go"]
 
 // ---------------------------------------------------------------------------
 // Paths of the file system
