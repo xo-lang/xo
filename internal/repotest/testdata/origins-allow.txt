@@ -6,6 +6,14 @@
 # References: the comment names an outside project's behavior, ABI,
 # layout, or a name, to explain Xo's own code; no code or text copied.
 compiler/arm64/calls.xo	/// GOT, as one in a shared library (libSystem, glibc) has no fixed
+compiler/xo/cffi.xo	/// The defines std/sqlite's amalgamation is compiled with for a Windows
+compiler/xo/cffi.xo	/// program linked with no C runtime (decision 0534 stage 2): SQLite's
+compiler/xo/cffi.xo	/// as scripts/sqlite-prebuilt.sh's windows recipes.
+compiler/xo/link.xo	// without a C runtime lacks (SQLite's sqlite3.c, 2026-11-09). From LLVM
+compiler/xo/main.xo	// std/sqlite's amalgamation with the defines of its windows/amd64
+compiler/xo/main.xo	// prebuilt object (scripts/sqlite-prebuilt.sh, decision 0534 stage
+compiler/xo/main.xo	// structured exception handler for SQLite to call
+compiler/xo/main.xo	// call the Windows API without a `link` line (SQLite's
 compiler/llvm/call.xo	// decision 0222: a value barrier, as BoringSSL's value_barrier_w: an
 compiler/macho/elflink.xo	// ET_EXEC for glibc, as `cc` links them on Linux, with no C toolchain:
 compiler/macho/elflink.xo	//   - synthesized: `_start` (glibc's crt1 entry, calling
