@@ -44,7 +44,13 @@ fn c_type(t: Str) -> Str {
     "Float" => "double"
     "Bytes" => "XoBytes"
     "Str" => "XoStr"
-    _ => "XoHandle /* ${t} */"
+    _ => if t.ends_with("?") && !(t[0..t.len() - 1] is "Int" | "Float" | "Bool" | "Str" | "Bytes") && !t.starts_with("fn") {
+      // an Option (the checker shows Option[T] as T?), decision 0574: 0
+      // for None, else the value's handle
+      "XoHandle /* ${t[0..t.len() - 1]} or 0 */"
+    } else {
+      "XoHandle /* ${t} */"
+    }
   }
 }
 

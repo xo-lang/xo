@@ -381,6 +381,16 @@ accepted; 2026-11-08):
   result, max RSS flat at about 3 MB. A call through a handle costs 12.4
   ns on the Mac (28 ns before `rt.any_get` read the Any's value in place
   instead of copying it); the rest is the lock and the shared count.
+- Optional results and parameters (2026-11-10): an `Option[T]` whose T
+  crosses as a handle is 0 for `None`, else T's own handle (the header
+  writes `XoHandle /* T or 0 */`), so C tests it against 0 and reads it
+  with T's exports; a C caller passes 0 for `None`. An Option of `Int`,
+  `Float`, `Str` or `Bytes` stays a handle of the Option until an
+  accessor API (stage 3). A handle result of a type with nothing on the
+  heap (an `Option[Int]`, a struct of Ints) failed the build (the
+  verifier: a share of a value not on the heap); it is shared only when
+  it holds a heap value now. List results were already handles (the
+  `List[Int]` rows below). cmd/xo TestCLibHandles.
 - The TestCLibThreadExit build failure of 2026-11-08 (exit 1): found.
   Separate compilation linked a library against std's cached program
   variant, which lacks the runtime's library entries; the first library

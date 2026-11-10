@@ -868,6 +868,8 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   // a parameter of another type: an XoHandle (clibh hget), by the
   // checker's type
   var held: List[Int] = []
+  // an Option[T] of a handle type T: 0 for None, else T's handle
+  var nulls: List[Bool] = []
   var hold = false
   for (k, p) in b.m.funcs[fi].blocks[0].params.indexed() {
     let t = ty_of(b.m.funcs[fi].values[p].tb)
@@ -876,7 +878,9 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
       ps.push(b.int_t())
     }
     let h = !(b.tkind(t) is Kind.Str | Kind.Int | Kind.Float) && k < b.c.objs[o].params.len()
-    held.push(if h { b.c.objs[o].params[k].ty } else { -1 })
+    let ne = if h { b.c_nullable(b.c.objs[o].params[k].ty) } else { -1 }
+    nulls.push(ne >= 0)
+    held.push(if ne >= 0 { ne } else if h { b.c.objs[o].params[k].ty } else { -1 })
     hold = hold || h
     ps.push(if b.tkind(t) == Kind.Str || h { b.int_t() } else { t })
   }
@@ -917,7 +921,9 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   let hbad = if hold { b.llrt_fn("native/llrt/clibh", "wrong_type") } else { "" }
   let peek = if hold { b.llrt_fn("native/llrt/anyval", "clib_peek") } else { "" }
   let gets: List[Str] = if hold && (rbeg.is_empty() || rend.is_empty() || haddr.is_empty() || hbad.is_empty() || peek.is_empty()) { ["-"] } else { [] }
-  let put = if hres { b.llrt_inst("native/llrt/clibh", "hput", b.c.objs[o].result) } else { "" }
+  // an Option[T] result of a handle type T: 0 for None, else T's handle
+  let rnull = if hres { b.c_nullable(b.c.objs[o].result) } else { -1 }
+  let put = if hres { b.llrt_inst("native/llrt/clibh", "hput", if rnull >= 0 { rnull } else { b.c.objs[o].result }) } else { "" }
   if (wide && (copy.is_empty() || text.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (b.c.clib_static && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || gets.any(fn(g) { g == "-" }) {
     b.unsupported("a C export with no native/llrt")
     return
@@ -953,16 +959,23 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
       args.push(b.call(if str { text } else { copy }, t, "", [wp[i], wp[i + 1]]))
       i += 2
     } else if held[k] >= 0 {
-      let a = b.call(haddr, b.int_t(), "", [wp[i]])
-      let lp = b.call(peek, b.int_t(), "", [a, b.const_str(b.m.types[t].name)])
-      let (bad, good) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [lp, b.cint(0)]))
-      b.s.cur = bad
-      let _f = b.call(hbad, b.unit_t(), "", [wp[i]])
-      b.add(Op.Unreachable, -1, Aux.None, [])
-      b.s.cur = good
-      // the list uncounted (rt.obj_peek: a borrowed root to rc.xo)
-      let l = b.rt("obj_peek", b.m.list(t), [lp])
-      args.push(b.call("list.index", t, "", [l, b.cint(0)]))
+      if nulls[k] {
+        let some = b.m.variant_index(t, "Some")
+        let none = b.m.variant_index(t, "None")
+        let join = b.new_block()
+        let res = b.s.f.add_param(join, t)
+        let (zero, set) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [wp[i], b.cint(0)]))
+        b.s.cur = zero
+        b.jump(join, [b.add(Op.Variant, t, Aux.I(n: none), [])])
+        b.s.cur = set
+        let v = b.c_held_arg(haddr, peek, hbad, wp[i], b.m.types[t].variants[some].fields[0].ty)
+        b.jump(join, [b.add(Op.Variant, t, Aux.I(n: some), [v])])
+        b.seal(join)
+        b.s.cur = join
+        args.push(res)
+      } else {
+        args.push(b.c_held_arg(haddr, peek, hbad, wp[i], t))
+      }
       i += 1
     } else {
       args.push(wp[i])
@@ -974,7 +987,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     let _e = b.call(rend, b.unit_t(), "", [rd])
   }
   if et < 0 {
-    b.retv(if hres { b.c_hold(put, r) } else { r })
+    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, r) } else { r })
   } else {
     let errp = wp[wp.len() - 1]
     let ok = b.m.variant_index(rt, "Ok")
@@ -983,7 +996,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     b.s.cur = yes
     let _o = b.call(c_ok, b.unit_t(), "", [errp])
     let v = b.add(Op.Payload, vt, Aux.P(tag: ok, field: 0), [r])
-    b.retv(if hres { b.c_hold(put, v) } else { v })
+    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, v) } else { v })
     b.s.cur = no
     let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
     // a Str error is its own text; others build their Display form
@@ -996,10 +1009,68 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   b.check_c_result(w)
 }
 
+/// Handle h's value of type t (an SSA type), read in place inside the
+/// wrapper's read of the table (decision 0574): a fault when h is not
+/// live or holds another type; the value is borrowed (its list taken by
+/// rt.obj_peek, which rc.xo treats as a borrowed root), so it is counted
+/// only where the function keeps it.
+fn (var b: Builder) c_held_arg(haddr: Str, peek: Str, hbad: Str, h: Int, t: Int) -> Int {
+  let a = b.call(haddr, b.int_t(), "", [h])
+  let lp = b.call(peek, b.int_t(), "", [a, b.const_str(b.m.types[t].name)])
+  let (bad, good) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [lp, b.cint(0)]))
+  b.s.cur = bad
+  let _f = b.call(hbad, b.unit_t(), "", [h])
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.s.cur = good
+  let l = b.rt("obj_peek", b.m.list(t), [lp])
+  b.call("list.index", t, "", [l, b.cint(0)])
+}
+
+/// T of a C export's Option[T] parameter or result (checker types) when
+/// T crosses as an XoHandle (decision 0574: the Option as 0 for None,
+/// else T's handle), else -1. An Option of Int, Float, Str or Bytes
+/// stays a handle of the Option.
+fn (var b: Builder) c_nullable(ct: Int) -> Int {
+  let e = b.option_elem(ct)
+  if e < 0 {
+    return -1
+  }
+  let n = b.c.show(e)
+  if n is "Int" | "Float" | "Bool" | "Str" | "Bytes" || b.c.tys[b.c.resolve(e)].kind == check.TyKind.Func {
+    return -1
+  }
+  e
+}
+
+/// v as an XoHandle (c_hold), or, when null (v is an Option[T] whose T
+/// crosses as a handle), 0 for None and T's handle for Some.
+fn (var b: Builder) c_hold_opt(put: Str, null: Bool, v: Int) -> Int {
+  if !null {
+    return b.c_hold(put, v)
+  }
+  let t = b.vty(v)
+  let some = b.m.variant_index(t, "Some")
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, b.int_t())
+  let (yes, no) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [v]), b.cint(some)]))
+  b.s.cur = yes
+  let x = b.add(Op.Payload, b.m.types[t].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [v])
+  b.jump(join, [b.c_hold(put, x)])
+  b.s.cur = no
+  b.jump(join, [b.cint(0)])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
 /// v as an XoHandle (decision 0574): shared, since any C thread may use
 /// it, then kept by clibh's table through put, the hput instance.
 fn (var b: Builder) c_hold(put: Str, v: Int) -> Int {
-  b.add(Op.Share, -1, Aux.None, [v])
+  // a value with nothing on the heap (an Option[Int], a struct of Ints)
+  // has no count to share
+  if b.m.heap(b.vty(v)) {
+    b.add(Op.Share, -1, Aux.None, [v])
+  }
   b.call(put, b.int_t(), "", [v])
 }
 

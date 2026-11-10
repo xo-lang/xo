@@ -1412,7 +1412,9 @@ pub fn fetch_user(db: Db, id: Int) -> User ! LoadErr
   as U+FFFD per byte of an invalid sequence), or a value of any other type but `Bool` and
   function types, which C holds as an `XoHandle` (a `uint64_t` the
   library's table keeps the value under until `xo_release(h)`; using a
-  released handle, or one holding another type, faults), at most 8
+  released handle, or one holding another type, faults; an `Option[T]`
+  of such a T is 0 for `None`, else T's handle, while an Option of
+  `Int`, `Float`, `Str` or `Bytes` is a handle of the Option), at most 8
   integer words (a `Bytes` takes 2); its result is `Int`, `Float`, a
   value held by an `XoHandle`, or none, with or without an error type: a
   function that can fail (`-> T ! E`) takes a last C parameter

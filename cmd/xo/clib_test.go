@@ -495,6 +495,19 @@ pub fn total(xs: List[Int]) -> Int as c "ctr_total" {
   }
   t
 }
+
+pub fn above(c: Counter, min: Int) -> Option[Counter] as c "ctr_above" {
+  if c.n > min { Some(c) } else { None }
+}
+
+pub fn count_or(c: Option[Counter], dflt: Int) -> Int as c "ctr_count_or" {
+  match c {
+    Some(x) => x.n
+    None => dflt
+  }
+}
+
+pub fn maybe_n(c: Counter) -> Option[Int] as c "ctr_maybe_n" { Some(c.n) }
 `
 
 // TestCLibHandles passes a struct and a List through XoHandles: made by
@@ -530,6 +543,12 @@ int main(int argc, char **argv) {
     xo_release(xs);
   }
   if (sum != 2850000) { printf("squares %ld\n", sum); return 1; }
+  XoHandle a = ctr_above(e, 10), n = ctr_above(e, 12);
+  if (a == 0 || n != 0 || ctr_count(a) != 12 || ctr_count_or(a, -1) != 12 || ctr_count_or(0, -1) != -1) { puts("option"); return 1; }
+  xo_release(a);
+  XoHandle m = ctr_maybe_n(e);
+  if (m == 0) { puts("option int"); return 1; }
+  xo_release(m);
   xo_release(0);
   if (argc > 1 && strcmp(argv[1], "stale") == 0) { ctr_count(c); puts("no fault"); return 1; }
   if (argc > 1 && strcmp(argv[1], "type") == 0) { XoHandle xs = ctr_squares(3); ctr_count(xs); puts("no fault"); return 1; }
@@ -548,7 +567,7 @@ int main(int argc, char **argv) {
 		t.Fatalf("xo build --lib=shared: exit %d: %s\n%s%s", code, clibTail(out.String()+errOut.String()), out.String(), errOut.String())
 	}
 	h, err := os.ReadFile(filepath.Join(dir, "ctr.h"))
-	if err != nil || !strings.Contains(string(h), "XoHandle /* Counter */ ctr_add(XoHandle /* Counter */ c, int64_t k);") || !strings.Contains(string(h), "void xo_release(XoHandle h);") {
+	if err != nil || !strings.Contains(string(h), "XoHandle /* Counter */ ctr_add(XoHandle /* Counter */ c, int64_t k);") || !strings.Contains(string(h), "void xo_release(XoHandle h);") || !strings.Contains(string(h), "XoHandle /* Counter or 0 */ ctr_above(XoHandle /* Counter */ c, int64_t min);") || !strings.Contains(string(h), "int64_t ctr_count_or(XoHandle /* Counter or 0 */ c, int64_t dflt);") || !strings.Contains(string(h), "XoHandle /* Int? */ ctr_maybe_n(") {
 		t.Fatalf("ctr.h: %v\n%s", err, h)
 	}
 	exe := filepath.Join(dir, "ctr")
