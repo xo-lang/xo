@@ -86,7 +86,16 @@ fn play_check(os: Os, std_dir: Str, wd: Str, dir: Str, native: Bool) -> (check.C
 
 /// Builds dir to the module out: the JSON line.
 fn play_build(os: Os, std_dir: Str, wd: Str, dir: Str, out: Str) -> Str {
+  // XO_PLAY_TIMES=1: each phase's milliseconds on stderr (decision 0583's
+  // measurements: where an entry's time goes)
+  let times = (os.env.get("XO_PLAY_TIMES") ?? "") == "1"
+  var t = os.clock.now().unix_millis()
   let (c, err) = play_check(os, std_dir, wd, dir, true)
+  if times {
+    let n = os.clock.now().unix_millis()
+    os.stdio.eprintln("play check ${n - t} ms")
+    t = n
+  }
   if !err.is_empty() {
     return "{\"ok\":false,\"error\":${json_text(err)}}"
   }
@@ -115,6 +124,11 @@ fn play_build(os: Os, std_dir: Str, wd: Str, dir: Str, out: Str) -> Str {
   }
   let root = line_root(os, wd, dir)
   var b = ssa.build_program_for(c, root, false, false, false, "", "wasm", true)
+  if times {
+    let n = os.clock.now().unix_millis()
+    os.stdio.eprintln("play ssa ${n - t} ms, ${b.m.funcs.len()} functions")
+    t = n
+  }
   if !b.why.is_empty() {
     return "{\"ok\":false,\"unsupported\":${json_text(b.why)},\"diagnostics\":${ds}}"
   }
@@ -124,7 +138,16 @@ fn play_build(os: Os, std_dir: Str, wd: Str, dir: Str, out: Str) -> Str {
     }
   }
   b.run_passes()
+  if times {
+    let n = os.clock.now().unix_millis()
+    os.stdio.eprintln("play passes ${n - t} ms")
+    t = n
+  }
   let p = generate_with(b.m, false, false, false)
+  if times {
+    let n = os.clock.now().unix_millis()
+    os.stdio.eprintln("play gen ${n - t} ms")
+  }
   if !p.err.is_empty() {
     return "{\"ok\":false,\"unsupported\":${json_text(p.err)},\"diagnostics\":${ds}}"
   }

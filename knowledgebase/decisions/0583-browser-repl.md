@@ -40,6 +40,15 @@ Status: Proposed (owner request via the lead, 2026-11-09; measurements first, no
    page's script runs (lead): fix the test first, since the measurements
    in a real tab go through it.
 
+## Step 1 results (2026-11-09, Node proxy)
+bench/results/browser-repl-2026-11-09.md: under Node's WASI the
+playground compiler builds each tour example in 2.0-2.2 s (load 0.34 s);
+the check is about 1.5 s of it whatever the program's size (std), SSA,
+passes and gen 150-320 ms. Level 2a (keep the checker's std modules in
+one instance) is the lever: about 0.25-0.45 s per entry if an entry's own
+check stays under about 100 ms. Next: the `--play repl` loop with 2a, then
+the same in Chrome's worker.
+
 ## Decision (proposed, pending the numbers)
 - `--play repl` in compiler/wasm/play.xo: a loop over JSON entries on
   stdin, one JSON reply per entry, reusing compiler/cli/repl's Sess
