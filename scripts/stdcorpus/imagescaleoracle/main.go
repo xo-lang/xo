@@ -98,56 +98,83 @@ func main() {
 		{image.Rect(1, 0, 5, 3), image.Rect(0, 0, 4, 3)},
 	}
 	var o strings.Builder
-	o.WriteString("\n/// (dst model, dst pix, src model, src pix, dst rect, src rect, op, pix after): x/image/draw NearestNeighbor.Scale (5 by 4 destination, 4 by 3 source).\nconst NN_CASES: List[(Str, Bytes, Str, Bytes, (Int, Int, Int, Int), (Int, Int, Int, Int), Int, Bytes)] = [\n")
-	for _, dn := range dstNames {
-		for _, sn := range srcNames {
-			for _, op := range []xdraw.Op{xdraw.Over, xdraw.Src} {
-				for _, c := range cases {
-					dimg, dpix := mk(dn, image.Rect(0, 0, 5, 4))
-					randPix(dn, dpix)
-					before := append([]byte(nil), dpix...)
-					simg, spix := mk(sn, image.Rect(0, 0, 4, 3))
-					randPix(sn, spix)
-					xdraw.NearestNeighbor.Scale(dimg, c.dr, simg, c.sr, op, nil)
-					opi := 0
-					if op == xdraw.Src {
-						opi = 1
+	o.WriteString("\n/// (kernel, dst model, dst pix, src model, src pix, dst rect, src rect, op, pix after): x/image/draw Scale (5 by 4 destination, 4 by 3 source).\nconst NN_CASES: List[(Int, Str, Bytes, Str, Bytes, (Int, Int, Int, Int), (Int, Int, Int, Int), Int, Bytes)] = [\n")
+	type kn struct {
+		sc xdraw.Scaler
+	}
+	ks := []kn{{xdraw.NearestNeighbor}, {xdraw.BiLinear}, {xdraw.CatmullRom}, {xdraw.ApproxBiLinear}}
+	for ki, k := range ks {
+		dns, sns := dstNames, srcNames
+		if ki > 0 {
+			dns = []string{"RGBA", "NRGBA", "Gray", "Paletted"}
+			sns = []string{"RGBA", "NRGBA", "Gray", "RGBA64", "CMYK", "Paletted"}
+		}
+		for _, dn := range dns {
+			for _, sn := range sns {
+				for _, op := range []xdraw.Op{xdraw.Over, xdraw.Src} {
+					for _, c := range cases {
+						dimg, dpix := mk(dn, image.Rect(0, 0, 5, 4))
+						randPix(dn, dpix)
+						before := append([]byte(nil), dpix...)
+						simg, spix := mk(sn, image.Rect(0, 0, 4, 3))
+						randPix(sn, spix)
+						k.sc.Scale(dimg, c.dr, simg, c.sr, op, nil)
+						opi := 0
+						if op == xdraw.Src {
+							opi = 1
+						}
+						var after []byte
+						switch v := dimg.(type) {
+						case *image.RGBA:
+							after = v.Pix
+						case *image.NRGBA:
+							after = v.Pix
+						case *image.Gray:
+							after = v.Pix
+						case *image.Gray16:
+							after = v.Pix
+						case *image.RGBA64:
+							after = v.Pix
+						case *image.NRGBA64:
+							after = v.Pix
+						case *image.CMYK:
+							after = v.Pix
+						case *image.Paletted:
+							after = v.Pix
+						}
+						fmt.Fprintf(&o, "  (%d, %q, %s, %q, %s, (%d, %d, %d, %d), (%d, %d, %d, %d), %d, %s),\n", ki, dn, bytesLit(before), sn, bytesLit(spix),
+							c.dr.Min.X, c.dr.Min.Y, c.dr.Max.X, c.dr.Max.Y, c.sr.Min.X, c.sr.Min.Y, c.sr.Max.X, c.sr.Max.Y, opi, bytesLit(after))
 					}
-					var after []byte
-					switch v := dimg.(type) {
-					case *image.RGBA:
-						after = v.Pix
-					case *image.NRGBA:
-						after = v.Pix
-					case *image.Gray:
-						after = v.Pix
-					case *image.Gray16:
-						after = v.Pix
-					case *image.RGBA64:
-						after = v.Pix
-					case *image.NRGBA64:
-						after = v.Pix
-					case *image.CMYK:
-						after = v.Pix
-					case *image.Paletted:
-						after = v.Pix
-					}
-					fmt.Fprintf(&o, "  (%q, %s, %q, %s, (%d, %d, %d, %d), (%d, %d, %d, %d), %d, %s),\n", dn, bytesLit(before), sn, bytesLit(spix),
-						c.dr.Min.X, c.dr.Min.Y, c.dr.Max.X, c.dr.Max.Y, c.sr.Min.X, c.sr.Min.Y, c.sr.Max.X, c.sr.Max.Y, opi, bytesLit(after))
 				}
 			}
 		}
 	}
 	o.WriteString("]\n")
 	o.WriteString(`
-test "Image.scale is x/image/draw NearestNeighbor.Scale" {
-  for (dn, dpix, sn, spix, drc, src_rc, opi, want) in NN_CASES {
+test "Image.scale is x/image/draw Scale" {
+  for (ki, dn, dpix, sn, spix, drc, src_rc, opi, want) in NN_CASES {
     var dst = image.Image{width: 5, height: 4, model: model_of(dn), pix: dpix, palette: if dn == "Paletted" { DRAW_PAL } else { [] }}
     let src = image.Image{width: 4, height: 3, model: model_of(sn), pix: spix, palette: if sn == "Paletted" { DRAW_PAL } else { [] }}
     let (dx0, dy0, dx1, dy1) = drc
     let (sx0, sy0, sx1, sy1) = src_rc
-    dst.scale(image.Rect{x0: dx0, y0: dy0, x1: dx1, y1: dy1}, src, image.Rect{x0: sx0, y0: sy0, x1: sx1, y1: sy1}, if opi == 0 { image.Op.Over } else { image.Op.Src }, image.Kernel.NearestNeighbor)
-    expect((dn, sn, opi, dst.pix)) == (dn, sn, opi, want)
+    dst.scale(image.Rect{x0: dx0, y0: dy0, x1: dx1, y1: dy1}, src, image.Rect{x0: sx0, y0: sy0, x1: sx1, y1: sy1}, if opi == 0 { image.Op.Over } else { image.Op.Src }, if ki == 0 { image.Kernel.NearestNeighbor } else if ki == 1 { image.Kernel.BiLinear } else if ki == 2 { image.Kernel.CatmullRom } else { image.Kernel.ApproxBiLinear })
+    var bad = -1
+    for i in 0..want.len() {
+      if dst.pix[i] != want[i] {
+        bad = i
+        break
+      }
+    }
+    var got4: List[Int] = []
+    var want4: List[Int] = []
+    if bad >= 0 {
+      let q = bad - bad % 4
+      for k in 0..4 {
+        got4.push(Int(dst.pix[q + k]))
+        want4.push(Int(want[q + k]))
+      }
+    }
+    expect((ki, dn, sn, opi, bad, got4, want4)) == (ki, dn, sn, opi, -1, [], [])
   }
 }
 `)

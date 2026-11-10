@@ -185,6 +185,9 @@ fn (var dst: Image) fill(r: Rect, c: Color, op: Op)
 /// The interpolation algorithms of golang.org/x/image/draw.
 enum Kernel {
   NearestNeighbor
+  ApproxBiLinear
+  BiLinear
+  CatmullRom
 } derive Eq, Display
 
 /// golang.org/x/image/draw's Scale: scales the part of src over sr to the
@@ -193,7 +196,11 @@ enum Kernel {
 /// the Go function does. NearestNeighbor picks, for destination pixel
 /// (dx, dy) of dr, the source pixel at ((2 dx + 1) sw / (2 dw), (2 dy + 1) sh /
 /// (2 dh)) from sr's corner; source pixels outside the source image read as
-/// transparent black (or the palette's first entry).
+/// transparent black (or the palette's first entry). ApproxBiLinear blends the
+/// four nearest source pixels by the fractions of the source position. BiLinear (the tent
+/// kernel, support 1) and CatmullRom (support 2) blend the source pixels the
+/// kernel reaches in two passes, columns then rows, in float64 as x/image does,
+/// and round each channel to 16 bits; an opaque source takes Src for Over.
 fn (var dst: Image) scale(dr: Rect, src: Image, sr: Rect, op: Op, kernel: Kernel)
 
 /// Go's draw.FloydSteinberg.Draw (the Src op with Floyd-Steinberg error

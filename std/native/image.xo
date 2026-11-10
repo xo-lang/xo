@@ -935,14 +935,185 @@ fn image_fill(var dst: image.Image, r: image.Rect, c: image.Color, op: image.Op)
   draw_general(dst, r, dst, true, c, 0, 0, None, 0, 0, op)
 }
 
+/// The kernels of x/image/draw: BiLinear (kind 0, support 1) and CatmullRom
+/// (kind 1, support 2), as the float64 expressions Go writes (no fused
+/// multiply adds).
+fn kern_support(kind: Int) -> Float {
+  if kind == 0 { 1.0 } else { 2.0 }
+}
+
+fn kern_at(kind: Int, t: Float) -> Float {
+  if kind == 0 {
+    return 1.0 - t
+  }
+  if t < 1.0 {
+    return ((1.5 * t) - 2.5) * t * t + 1.0
+  }
+  (((-0.5 * t) + 2.5) * t - 4.0) * t + 2.0
+}
+
+/// x/image's distrib: how the sw source columns (or rows) distribute over the
+/// dw destination ones. Source k owns contribs si[k]..sj[k] (coordinates cc,
+/// weights cw), itw[k] is the inverse total weight and itw_ffff[k] that over
+/// 0xffff.
+struct Distrib {
+  si: List[Int]
+  sj: List[Int]
+  itw: List[Float]
+  itw_ffff: List[Float]
+  cc: List[Int]
+  cw: List[Float]
+}
+
+fn new_distrib(kind: Int, dw: Int, sw: Int) -> Distrib {
+  let support = kern_support(kind)
+  let scale = Float(sw) / Float(dw)
+  var half_width = support
+  var arg_scale = 1.0
+  if scale > 1.0 {
+    half_width = half_width * scale
+    arg_scale = 1.0 / scale
+  }
+  var lo: List[Int] = []
+  var hi: List[Int] = []
+  var center: List[Float] = []
+  for x in 0..dw {
+    let c = (Float(x) + 0.5) * scale - 0.5
+    var i = Int((c - half_width).floor())
+    if i < 0 {
+      i = 0
+    }
+    var j = Int((c + half_width).ceil())
+    if j > sw {
+      j = sw
+      if j < i {
+        j = i
+      }
+    }
+    lo.push(i)
+    hi.push(j)
+    center.push(c)
+  }
+  var d = Distrib{si: [], sj: [], itw: [], itw_ffff: [], cc: [], cw: []}
+  for k in 0..dw {
+    var total = 0.0
+    let l = d.cc.len()
+    for coord in lo[k]..hi[k] {
+      var t = (center[k] - Float(coord)) * arg_scale
+      if t < 0.0 {
+        t = -t
+      }
+      if t >= support {
+        continue
+      }
+      let w = kern_at(kind, t)
+      if w == 0.0 {
+        continue
+      }
+      total = total + w
+      d.cc.push(coord)
+      d.cw.push(w)
+    }
+    total = 1.0 / total
+    d.si.push(l)
+    d.sj.push(d.cc.len())
+    d.itw.push(total)
+    d.itw_ffff.push(total / 65535.0)
+  }
+  d
+}
+
+/// x/image's ftou: [0, 1] scaled to [0, 0xffff], rounded, clamped. A NaN (a
+/// source whose kernel weights all vanish gives 0 times an infinite inverse
+/// weight) is 0, as Go's arm64 conversion makes it; Int(NaN) faults in Xo.
+fn ftou(f: Float) -> Int {
+  let x = 65535.0 * f + 0.5
+  if x.is_nan() || x < 1.0 {
+    return 0
+  }
+  if x >= 65536.0 {
+    return 65535
+  }
+  Int(x)
+}
+
+/// Whether every pixel of the image is opaque (the Opaque method of Go's
+/// image types).
+fn image_opaque(im: image.Image) -> Bool {
+  if im.model == image.Model.Gray || im.model == image.Model.Gray16 || im.model == image.Model.CMYK || im.model == image.Model.YCbCr {
+    return true
+  }
+  if im.model == image.Model.Paletted {
+    for v in im.palette {
+      if v & 255 != 255 {
+        return false
+      }
+    }
+    return true
+  }
+  for y in 0..im.height {
+    for x in 0..im.width {
+      if image_at(im, im.min_x + x, im.min_y + y).a != 65535 {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// x/image's ApproxBiLinear scaler (see the declaration): the four nearest
+/// source pixels blended with the fractions of the source position, in float64
+/// as x/image does, the result truncated to 16 bits.
+fn abl_tap(src: image.Image, sx: Int, sy: Int) -> (Float, Float, Float, Float) {
+  let c = image_at(src, sx, sy)
+  (Float(c.r), Float(c.g), Float(c.b), Float(c.a))
+}
+
+fn abl_pos(d: Int, scale: Float, n: Int) -> (Int, Int, Float, Float) {
+  let s = (Float(d) + 0.5) * scale - 0.5
+  var s0 = Int(s)
+  var f0 = s - Float(s0)
+  var f1 = 1.0 - f0
+  var s1 = s0 + 1
+  if s < 0.0 {
+    s0 = 0
+    s1 = 0
+    f0 = 0.0
+    f1 = 1.0
+  } else if s1 > n - 1 {
+    s0 = n - 1
+    s1 = n - 1
+    f0 = 1.0
+    f1 = 0.0
+  }
+  (s0, s1, f0, f1)
+}
+
+fn abl_pixel(src: image.Image, sr: image.Rect, sx0: Int, sx1: Int, xf0: Float, xf1: Float, sy0: Int, sy1: Int, yf0: Float, yf1: Float) -> image.Color {
+  let (r00, g00, b00, a00) = abl_tap(src, sr.x0 + sx0, sr.y0 + sy0)
+  let (r10, g10, b10, a10) = abl_tap(src, sr.x0 + sx1, sr.y0 + sy0)
+  let (r01, g01, b01, a01) = abl_tap(src, sr.x0 + sx0, sr.y0 + sy1)
+  let (r11, g11, b11, a11) = abl_tap(src, sr.x0 + sx1, sr.y0 + sy1)
+  let hr0 = xf1 * r00 + xf0 * r10
+  let hg0 = xf1 * g00 + xf0 * g10
+  let hb0 = xf1 * b00 + xf0 * b10
+  let ha0 = xf1 * a00 + xf0 * a10
+  let hr1 = xf1 * r01 + xf0 * r11
+  let hg1 = xf1 * g01 + xf0 * g11
+  let hb1 = xf1 * b01 + xf0 * b11
+  let ha1 = xf1 * a01 + xf0 * a11
+  image.Color{r: Int(yf1 * hr0 + yf0 * hr1) & 65535, g: Int(yf1 * hg0 + yf0 * hg1) & 65535, b: Int(yf1 * hb0 + yf0 * hb1) & 65535, a: Int(yf1 * ha0 + yf0 * ha1) & 65535}
+}
+
 /// x/image/draw's Scale (see the declaration).
-fn image_scale(var dst: image.Image, dr: image.Rect, src: image.Image, sr: image.Rect, op: image.Op, kernel: image.Kernel) -> () {
+fn image_scale(var dst: image.Image, dr: image.Rect, src: image.Image, sr: image.Rect, op0: image.Op, kernel: image.Kernel) -> () {
   let dw = dr.x1 - dr.x0
   let dh = dr.y1 - dr.y0
   let sw = sr.x1 - sr.x0
   let sh = sr.y1 - sr.y0
-  if dw == sw && dh == sh {
-    image_draw(dst, dr, src, sr.x0, sr.y0, op)
+  if dw == sw && dh == sh && kernel == image.Kernel.NearestNeighbor {
+    // only the nearest neighbor Scale turns equal sizes into a Copy
+    image_draw(dst, dr, src, sr.x0, sr.y0, op0)
     return
   }
   if dst.model == image.Model.YCbCr || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0 {
@@ -955,13 +1126,111 @@ fn image_scale(var dst: image.Image, dr: image.Rect, src: image.Image, sr: image
   if ax0 >= ax1 || ay0 >= ay1 {
     return
   }
+  var op = op0
+  if op == image.Op.Over && image_opaque(src) {
+    op = image.Op.Src
+  }
   var b = BytesBuilder.with_capacity(dst.pix.len())
   b.write(dst.pix)
-  for y in ay0..ay1 {
-    let sy = sr.y0 + (2 * (y - dr.y0) + 1) * sh / (2 * dh)
-    for x in ax0..ax1 {
-      let sx = sr.x0 + (2 * (x - dr.x0) + 1) * sw / (2 * dw)
-      let sc = image_at(src, sx, sy)
+  if kernel == image.Kernel.NearestNeighbor {
+    for y in ay0..ay1 {
+      let sy = sr.y0 + (2 * (y - dr.y0) + 1) * sh / (2 * dh)
+      for x in ax0..ax1 {
+        let sx = sr.x0 + (2 * (x - dr.x0) + 1) * sw / (2 * dw)
+        let sc = image_at(src, sx, sy)
+        if op == image.Op.Over {
+          let dc = image_at(dst, x, y)
+          let pa1 = 65535 - sc.a
+          store_color(b, dst, x, y, image.Color{r: (dc.r * pa1 / 65535 + sc.r) & 65535, g: (dc.g * pa1 / 65535 + sc.g) & 65535, b: (dc.b * pa1 / 65535 + sc.b) & 65535, a: (dc.a * pa1 / 65535 + sc.a) & 65535})
+        } else {
+          store_color(b, dst, x, y, sc)
+        }
+      }
+    }
+    dst.pix = b.freeze()
+    return
+  }
+  if kernel == image.Kernel.ApproxBiLinear {
+    let yscale = Float(sh) / Float(dh)
+    let xscale = Float(sw) / Float(dw)
+    for y in ay0..ay1 {
+      let (sy0, sy1, yf0, yf1) = abl_pos(y - dr.y0, yscale, sh)
+      for x in ax0..ax1 {
+        let (sx0, sx1, xf0, xf1) = abl_pos(x - dr.x0, xscale, sw)
+        let sc = abl_pixel(src, sr, sx0, sx1, xf0, xf1, sy0, sy1, yf0, yf1)
+        if op == image.Op.Over {
+          let dc = image_at(dst, x, y)
+          let pa1 = 65535 - sc.a
+          store_color(b, dst, x, y, image.Color{r: (dc.r * pa1 / 65535 + sc.r) & 65535, g: (dc.g * pa1 / 65535 + sc.g) & 65535, b: (dc.b * pa1 / 65535 + sc.b) & 65535, a: (dc.a * pa1 / 65535 + sc.a) & 65535})
+        } else {
+          store_color(b, dst, x, y, sc)
+        }
+      }
+    }
+    dst.pix = b.freeze()
+    return
+  }
+  let kind = if kernel == image.Kernel.BiLinear { 0 } else { 1 }
+  let hz = new_distrib(kind, dw, sw)
+  let vt = new_distrib(kind, dh, sh)
+  // scaleX: the source columns distributed over a dw by sh buffer, four channels each
+  let nrgba_fast = src.model == image.Model.NRGBA && sr.x0 >= src.min_x && sr.y0 >= src.min_y && sr.x1 <= src.min_x + src.width && sr.y1 <= src.min_y + src.height
+  var tmp: List[Float] = []
+  for y in 0..sh {
+    for k in 0..dw {
+      var pr = 0.0
+      var pg = 0.0
+      var pb = 0.0
+      var pa = 0.0
+      for n in hz.si[k]..hz.sj[k] {
+        var c = image.Color{r: 0, g: 0, b: 0, a: 0}
+        if nrgba_fast {
+          // x/image's scaleX_NRGBA widens the alpha only and divides by 0xff once
+          let o = pix_off(src, sr.x0 + hz.cc[n] - src.min_x, sr.y0 + y - src.min_y, 4)
+          let pau = Int(src.pix[o + 3]) * 257
+          c = image.Color{r: Int(src.pix[o]) * pau / 255, g: Int(src.pix[o + 1]) * pau / 255, b: Int(src.pix[o + 2]) * pau / 255, a: pau}
+        } else {
+          c = image_at(src, sr.x0 + hz.cc[n], sr.y0 + y)
+        }
+        let w = hz.cw[n]
+        pr = pr + Float(c.r) * w
+        pg = pg + Float(c.g) * w
+        pb = pb + Float(c.b) * w
+        pa = pa + Float(c.a) * w
+      }
+      tmp.push(pr * hz.itw_ffff[k])
+      tmp.push(pg * hz.itw_ffff[k])
+      tmp.push(pb * hz.itw_ffff[k])
+      tmp.push(pa * hz.itw_ffff[k])
+    }
+  }
+  // scaleY: the buffer's rows distributed over the destination
+  for x in ax0..ax1 {
+    let dx = x - dr.x0
+    for y in ay0..ay1 {
+      let k = y - dr.y0
+      var pr = 0.0
+      var pg = 0.0
+      var pb = 0.0
+      var pa = 0.0
+      for n in vt.si[k]..vt.sj[k] {
+        let o = (vt.cc[n] * dw + dx) * 4
+        let w = vt.cw[n]
+        pr = pr + tmp[o] * w
+        pg = pg + tmp[o + 1] * w
+        pb = pb + tmp[o + 2] * w
+        pa = pa + tmp[o + 3] * w
+      }
+      if pr > pa {
+        pr = pa
+      }
+      if pg > pa {
+        pg = pa
+      }
+      if pb > pa {
+        pb = pa
+      }
+      let sc = image.Color{r: ftou(pr * vt.itw[k]), g: ftou(pg * vt.itw[k]), b: ftou(pb * vt.itw[k]), a: ftou(pa * vt.itw[k])}
       if op == image.Op.Over {
         let dc = image_at(dst, x, y)
         let pa1 = 65535 - sc.a

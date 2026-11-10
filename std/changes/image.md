@@ -1,5 +1,17 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image Image.scale with BiLinear, CatmullRom and ApproxBiLinear (decision 0578 step 3b, 3c)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: golang.org/x/image v0.46.0 draw (Kernel.Scale, ablInterpolator; BSD license)
+- Test: testdata/corpus/image: scale cases per interpolator (nearest neighbor 320; the others 4 destination models, 6 source models, both ops, five rectangles) byte for byte with x/image on arm64, LLVM and the Go backend
+- Timing: none yet
+- Shipped in: not yet released
+
+`Kernel` gains `BiLinear`, `CatmullRom` (two pass float64 scalers with x/image's weights) and `ApproxBiLinear`. Details that the corpus caught: x/image computes an NRGBA source's premultiplied channels as R*(A*257)/255 in its specialised path (not NRGBA.RGBA()'s rounding), and only the nearest neighbor Scale turns equal sizes into a Copy (a kernel runs its weights even then).
+
 ## 2026-11-09: feature: std/image Image.scale with Kernel.NearestNeighbor (decision 0578 step 3a)
 
 - Kind: feature
