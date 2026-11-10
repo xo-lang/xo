@@ -283,7 +283,7 @@ pub fn apple_trust(_svc: Int, ders: List[Bytes], host: Str) -> AppleRes {
 /// Security, which loads CoreFoundation), not linked, so a program that
 /// verifies nothing does not load them at start (about 14M instructions
 /// of its launch, bench/results/zero-c-perf-sweep-2026-10-15.md).
-fn fw(name: Str) -> Int {
+pub fn fw(name: Str) -> Int {
   let h = security()
   if h == 0 {
     return 0

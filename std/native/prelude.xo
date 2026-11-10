@@ -6579,6 +6579,14 @@ fn enverr_display(e: EnvErr) -> Str {
   }
 }
 
+/// KeychainErr's twin (gotchas/new-prelude-struct-needs-native-twin.md).
+struct KeychainErr {
+  status: Int
+  msg: Str
+}
+
+fn keychainerr_display(e: KeychainErr) -> Str { "keychain: ${e.msg} (${e.status})" }
+
 fn keyerr_display(e: KeyErr) -> Str {
   match e {
     NotFound => "key not found"

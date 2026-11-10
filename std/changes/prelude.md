@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-11-10: feature: `os.secrets.keychain()`, the macOS Keychain
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0584 (Azure 1's azidentity/cache)
+- Go reference: keybase/go-keychain (GetGenericPassword, AddItem, UpdateItem, DeleteItem over SecItem)
+- Test: cmd/xo TestFakeSecrets (keychain cases on Go, arm64, LLVM), golden secrets_keychain on arm64, LLVM, Go and wasm
+- Shipped in: not yet released
+
+`Secrets.keychain() -> Keychain?` with `get_generic`, `set_generic` and
+`delete_generic` by service and account, errors `KeychainErr { status, msg }`.
+Native darwin calls Security.framework's SecItemCopyMatching, SecItemUpdate,
+SecItemAdd and SecItemDelete, the framework loaded at the first call. `None`
+off macOS and on the Go backend. A test's os.secrets has an in-memory
+keychain on every OS. The real login keychain is not exercised by any test
+(decision 0584 section 8: a throwaway keychain with the owner's go).
+
 ## 2026-11-10: perf: `List.clone` copies in one block for every element type
 
 - Kind: perf

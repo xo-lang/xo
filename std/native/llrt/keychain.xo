@@ -1,0 +1,162 @@
+// The macOS login keychain's generic passwords (decision 0584 stage D):
+// Security.framework's SecItem calls with CoreFoundation dictionaries, as
+// keybase/go-keychain makes them. The framework is loaded at the first
+// call (tlscert.fw: dlopen of Security, which loads CoreFoundation), not
+// linked, so a program that reads no keychain does not load it.
+
+use native/llrt/raw
+use native/llrt/tlscert
+use native/rt
+
+/// kCFStringEncodingUTF8.
+const CF_UTF8 = 134217984
+
+/// errSecItemNotFound, errSecNoSuchKeychain.
+const ERR_NOT_FOUND = -25300
+
+const ERR_NO_KEYCHAIN = -25294
+
+/// The status a call returns when the framework did not load.
+const ERR_NO_FRAMEWORK = -4
+
+/// Whether the target has the keychain.
+pub fn available() -> Bool { target.os == TargetOs.Darwin }
+
+fn sym(name: Str) -> Int { tlscert.fw(name) }
+
+/// The value of the framework's global constant name (a CFTypeRef).
+fn gval(name: Str) -> Int {
+  let a = sym(name)
+  if a == 0 { 0 } else { rt.mem_load(a, 0, 8) }
+}
+
+fn cf_release(x: Int) {
+  if x != 0 {
+    let _r = rt.call_c2(sym("CFRelease"), x, 0)
+  }
+}
+
+/// An OSStatus: the low 32 bits, signed.
+fn status(r: Int) -> Int {
+  let v = r & 4294967295
+  if v >= 2147483648 { v - 4294967296 } else { v }
+}
+
+fn cfstr(s: Str) -> Int {
+  let c = "${s}\x00".bytes()
+  let r = rt.call_c4(sym("CFStringCreateWithCString"), 0, raw.bytes_addr(c), CF_UTF8, 0)
+  raw.alive(c)
+  r
+}
+
+fn put(d: Int, k: Int, v: Int) {
+  let _r = rt.call_c4(sym("CFDictionarySetValue"), d, k, v, 0)
+}
+
+/// The query dictionary of a generic password of service and account
+/// (0 when the framework did not load).
+fn query(service: Str, account: Str) -> Int {
+  if sym("SecItemAdd") == 0 {
+    return 0
+  }
+  let d = rt.call_c4(sym("CFDictionaryCreateMutable"), 0, 0, sym("kCFTypeDictionaryKeyCallBacks"), sym("kCFTypeDictionaryValueCallBacks"))
+  put(d, gval("kSecClass"), gval("kSecClassGenericPassword"))
+  let sv = cfstr(service)
+  put(d, gval("kSecAttrService"), sv)
+  cf_release(sv)
+  let ac = cfstr(account)
+  put(d, gval("kSecAttrAccount"), ac)
+  cf_release(ac)
+  d
+}
+
+fn cfdata(b: Bytes) -> Int {
+  let r = rt.call_c4(sym("CFDataCreate"), 0, raw.bytes_addr(b), b.len(), 0)
+  raw.alive(b)
+  r
+}
+
+/// SecItemCopyMatching of the item: (0, its data), (0, None) when there
+/// is none, or (status, None).
+pub fn get(service: Str, account: Str) -> (Int, Bytes?) {
+  let q = query(service, account)
+  if q == 0 {
+    return (ERR_NO_FRAMEWORK, None)
+  }
+  put(q, gval("kSecReturnData"), gval("kCFBooleanTrue"))
+  put(q, gval("kSecMatchLimit"), gval("kSecMatchLimitOne"))
+  let out = rt.heap_large(8)
+  rt.mem_store(out, 0, 0, 8)
+  let st = status(rt.call_c2(sym("SecItemCopyMatching"), q, out))
+  cf_release(q)
+  let r = rt.mem_load(out, 0, 8)
+  rt.heap_release(out - 8)
+  if st == ERR_NOT_FOUND {
+    return (0, None)
+  }
+  if st != 0 || r == 0 {
+    cf_release(r)
+    return (if st != 0 { st } else { ERR_NOT_FOUND }, None)
+  }
+  let n = rt.call_c2(sym("CFDataGetLength"), r, 0)
+  let p = rt.call_c2(sym("CFDataGetBytePtr"), r, 0)
+  let b = rt.cast[Str, Bytes](raw.str_at(p, n))
+  cf_release(r)
+  (0, Some(b))
+}
+
+/// SecItemUpdate of the item's data, or SecItemAdd when there is none:
+/// 0 or the status.
+pub fn set(service: Str, account: Str, data: Bytes) -> Int {
+  let q = query(service, account)
+  if q == 0 {
+    return ERR_NO_FRAMEWORK
+  }
+  let dv = cfdata(data)
+  let attrs = rt.call_c4(sym("CFDictionaryCreateMutable"), 0, 0, sym("kCFTypeDictionaryKeyCallBacks"), sym("kCFTypeDictionaryValueCallBacks"))
+  put(attrs, gval("kSecValueData"), dv)
+  var st = status(rt.call_c2(sym("SecItemUpdate"), q, attrs))
+  cf_release(attrs)
+  if st == ERR_NOT_FOUND {
+    put(q, gval("kSecValueData"), dv)
+    st = status(rt.call_c2(sym("SecItemAdd"), q, 0))
+  }
+  cf_release(dv)
+  cf_release(q)
+  st
+}
+
+/// SecItemDelete of the item: 0 (a missing item or keychain too) or the
+/// status.
+pub fn delete(service: Str, account: Str) -> Int {
+  let q = query(service, account)
+  if q == 0 {
+    return ERR_NO_FRAMEWORK
+  }
+  let st = status(rt.call_c2(sym("SecItemDelete"), q, 0))
+  cf_release(q)
+  if st == ERR_NOT_FOUND || st == ERR_NO_KEYCHAIN { 0 } else { st }
+}
+
+/// SecCopyErrorMessageString's text for st.
+pub fn message(st: Int) -> Str {
+  if st == ERR_NO_FRAMEWORK {
+    return "the Security framework did not load"
+  }
+  let f = sym("SecCopyErrorMessageString")
+  if f == 0 {
+    return "OSStatus ${st}"
+  }
+  let s = rt.call_c2(f, st, 0)
+  if s == 0 {
+    return "OSStatus ${st}"
+  }
+  let buf = rt.heap_large(600)
+  var out = "OSStatus ${st}"
+  if rt.call_c4(sym("CFStringGetCString"), s, buf, 600, CF_UTF8) & 255 != 0 {
+    out = raw.str_at(buf, raw.cstr_len(buf))
+  }
+  rt.heap_release(buf - 8)
+  cf_release(s)
+  out
+}

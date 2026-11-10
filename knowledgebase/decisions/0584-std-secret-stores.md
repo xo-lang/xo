@@ -235,4 +235,12 @@ secrets2 branch). So the work lands in two steps:
   llrt/userfs.xo over testworld.xo's key vectors (reset per test), chosen
   by own_os_field in a test build; Go: realSecrets.fake, a fakeKeyring per
   newTestOs. cmd/xo TestFakeSecrets on Go and every native backend.
-- Stage D: the macOS Keychain and Windows DPAPI members.
+- Stage D (2026-11-10, Keychain): `Secrets.keychain()`, `Keychain`,
+  `KeychainErr`; std/native/llrt/keychain.xo calls SecItem* through the
+  lazily opened Security framework (tlscert.fw, dlsym through the
+  handle), not linked as `opts.dylibs` as section 7 planned: a program
+  that never reaches the keychain loads nothing, as the TLS verifier.
+  The fake keychain keeps items in the test keyring's table under ring
+  -100. Not done: `keychain_at(path)` and a real round trip against a
+  throwaway keychain (section 8, needs the owner's go).
+- Stage E: Windows DPAPI and `Env.local_app_data()`.

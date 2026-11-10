@@ -45,8 +45,9 @@ func keyErrOf(e syscall.Errno) KeyErr {
 // realSecrets is os.secrets; fake (a test's, decision 0584 stage C) keeps
 // its keys in memory on every OS.
 type realSecrets struct {
-	ring bool
-	fake *fakeKeyring
+	ring  bool
+	chain bool
+	fake  *fakeKeyring
 }
 
 func (s realSecrets) M_keyring(*Task) Option[Keyring] {
@@ -59,19 +60,32 @@ func (s realSecrets) M_keyring(*Task) Option[Keyring] {
 	return None[Keyring]()
 }
 
+// M_keychain is a test's keychain; None otherwise: the Go backend has no
+// cgo for Security.framework (decision 0584).
+func (s realSecrets) M_keychain(*Task) Option[Keychain] {
+	if s.chain && s.fake != nil {
+		return Some[Keychain](fakeKeychain{s.fake})
+	}
+	return None[Keychain]()
+}
+
 func (s realSecrets) M_only(_ *Task, stores List[string]) Secrets {
-	ring := false
+	ring, chain := false, false
 	for _, x := range stores.s {
-		if x == "keyring" {
+		switch x {
+		case "keyring":
 			ring = true
+		case "keychain":
+			chain = true
 		}
 	}
-	return realSecrets{ring: s.ring && ring, fake: s.fake}
+	return realSecrets{ring: s.ring && ring, chain: s.chain && chain, fake: s.fake}
 }
 
 type noSecrets struct{}
 
 func (noSecrets) M_keyring(*Task) Option[Keyring]      { return None[Keyring]() }
+func (noSecrets) M_keychain(*Task) Option[Keychain]    { return None[Keychain]() }
 func (s noSecrets) M_only(*Task, List[string]) Secrets { return s }
 
 // NoAccess_secrets is the Secrets an Os literal without `secrets` holds
@@ -186,4 +200,37 @@ func (k *fakeKeyring) M_unlink(_ *Task, id, ring int64) Result[Unit, KeyErr] {
 		}
 	}
 	return Err[Unit](KeyErr{Tag: 1})
+}
+
+func (e KeychainErr) M_display(*Task) string {
+	return "keychain: " + e.F_msg + " (" + strconv.FormatInt(e.F_status, 10) + ")"
+}
+
+// fakeKeychain is a test's keychain: items in the test keyring under ring
+// -100 (testworld.xo CHAIN_RING), kind the service, description the account.
+type fakeKeychain struct{ k *fakeKeyring }
+
+const fakeChainRing = -100
+
+func (c fakeKeychain) M_get_generic(_ *Task, service, account string) Result[Option[Bytes], KeychainErr] {
+	c.k.mu.Lock()
+	defer c.k.mu.Unlock()
+	if i := c.k.find(fakeChainRing, service, account); i >= 0 {
+		return Ok[Option[Bytes], KeychainErr](Some(c.k.keys[i].data))
+	}
+	return Ok[Option[Bytes], KeychainErr](None[Bytes]())
+}
+
+func (c fakeKeychain) M_set_generic(tk *Task, service, account string, data Bytes) Result[Unit, KeychainErr] {
+	c.k.M_add(tk, fakeChainRing, service, account, data)
+	return Ok[Unit, KeychainErr](Unit{})
+}
+
+func (c fakeKeychain) M_delete_generic(_ *Task, service, account string) Result[Unit, KeychainErr] {
+	c.k.mu.Lock()
+	defer c.k.mu.Unlock()
+	if i := c.k.find(fakeChainRing, service, account); i >= 0 {
+		c.k.keys = append(c.k.keys[:i], c.k.keys[i+1:]...)
+	}
+	return Ok[Unit, KeychainErr](Unit{})
 }

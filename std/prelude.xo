@@ -1813,12 +1813,36 @@ interface Keyring {
   fn unlink(self, id: Int, ring: Int) -> () ! KeyErr uses secrets.write
 }
 
+/// Why a Keychain call failed (decision 0584): the Security framework's
+/// OSStatus and its text (SecCopyErrorMessageString).
+struct KeychainErr {
+  status: Int
+  msg: Str
+}
+
+/// `keychain: MSG (STATUS)`.
+fn (e: KeychainErr) display() -> Str
+
+/// The macOS login keychain's generic passwords (Security.framework's
+/// SecItem calls, as Go's keybase/go-keychain), by service and account.
+interface Keychain {
+  /// The password data, or None when there is no such item.
+  fn get_generic(self, service: Str, account: Str) -> Bytes? ! KeychainErr uses secrets.read
+  /// Adds the item, or replaces the data of the existing one.
+  fn set_generic(self, service: Str, account: Str, data: Bytes) -> () ! KeychainErr uses secrets.write
+  /// Removes the item; removing a missing one is not an error.
+  fn delete_generic(self, service: Str, account: Str) -> () ! KeychainErr uses secrets.write
+}
+
 /// The user's secret stores (decisions 0584, 0585): the member for an OS is
 /// None on the others. `Os.secrets`; an omitted field of an Os literal is
 /// `only([])`.
 interface Secrets {
   /// The Linux kernel keyring; None on other OSes.
   fn keyring(self) -> Keyring?
+  /// The macOS login keychain's generic passwords; None on other OSes
+  /// (and on the Go backend, which has no cgo).
+  fn keychain(self) -> Keychain?
   /// A Secrets with only the named stores ("keyring", "keychain", "dpapi").
   fn only(self, stores: List[Str]) -> Secrets
 }

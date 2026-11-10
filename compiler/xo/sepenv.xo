@@ -141,4 +141,6 @@ struct NoSecretStores {}
 
 fn (s: NoSecretStores) keyring() -> Keyring? { None }
 
+fn (s: NoSecretStores) keychain() -> Keychain? { None }
+
 fn (s: NoSecretStores) only(stores: List[Str]) -> Secrets { s }

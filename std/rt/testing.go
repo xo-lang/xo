@@ -443,15 +443,15 @@ func newTestOs(w *World, seed int64, tasks Task_Group) Testing_TestOs {
 	fs := &memFs{w: w, caseSensitive: true, nodes: map[string]*memNode{"": {dir: true}}}
 	stdio := &fakeStdio{}
 	return Testing_TestOs{
-		F_net:   Testing_FakeNet{n: &fakeNet{listeners: map[string]*memListener{}}},
-		F_fs:    Testing_MemFs{v: &memView{fs: fs}},
-		F_clock: Testing_FakeClock{w: w},
-		F_rand:  &seededRand{r: rand.New(rand.NewPCG(uint64(seed), uint64(seed)^0x9e3779b97f4a7c15))},
-		F_env:   Testing_FakeEnv{e: &fakeEnv{}},
-		F_stdio: Testing_FakeStdio{s: stdio},
-		F_proc:  Testing_FakeProc{p: &fakeProc{runs: map[string]ProcOutput{}, stdio: stdio}},
-		F_secrets: realSecrets{ring: true, fake: &fakeKeyring{}},
-		F_tasks: tasks,
+		F_net:     Testing_FakeNet{n: &fakeNet{listeners: map[string]*memListener{}}},
+		F_fs:      Testing_MemFs{v: &memView{fs: fs}},
+		F_clock:   Testing_FakeClock{w: w},
+		F_rand:    &seededRand{r: rand.New(rand.NewPCG(uint64(seed), uint64(seed)^0x9e3779b97f4a7c15))},
+		F_env:     Testing_FakeEnv{e: &fakeEnv{}},
+		F_stdio:   Testing_FakeStdio{s: stdio},
+		F_proc:    Testing_FakeProc{p: &fakeProc{runs: map[string]ProcOutput{}, stdio: stdio}},
+		F_secrets: realSecrets{ring: true, chain: true, fake: &fakeKeyring{}},
+		F_tasks:   tasks,
 	}
 }
 

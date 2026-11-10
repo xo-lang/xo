@@ -32,7 +32,7 @@ func RealOs(tasks Task_Group) Os {
 		F_env:     realEnv{},
 		F_proc:    realProc{},
 		F_stdio:   realStdio{},
-		F_secrets: realSecrets{ring: true},
+		F_secrets: realSecrets{ring: true, chain: true},
 		F_tasks:   tasks,
 	}
 }

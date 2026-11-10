@@ -1602,6 +1602,8 @@ pub fn quit(code: Int) {
 
 /// The test's persistent keyring (Keyring.user_persistent()).
 pub const KEY_RING = 7
+/// The ring the test keychain keeps its items in (stage D).
+pub const CHAIN_RING = -100
 const ENOKEY = 126
 
 fn key_free(r: Int) {

@@ -1,0 +1,13 @@
+// decision 0584 stage D: the Keychain member of os.secrets. It is Some on
+// macOS native builds only, so the output does not depend on it; only()
+// narrows it and KeychainErr displays its status. No keychain is read or
+// written (the owner's go and a throwaway keychain are needed for that).
+fn main(os: Os) {
+  let has = os.secrets.keychain() != None
+  let none_off_mac = target.os == TargetOs.Darwin || !has
+  os.stdio.println("none off macOS: ${none_off_mac}")
+  os.stdio.println("only keyring drops it: ${os.secrets.only(["keyring"]).keychain() == None}")
+  os.stdio.println("only([]) drops it: ${os.secrets.only([]).keychain() == None}")
+  let e = KeychainErr{status: -25300, msg: "The specified item could not be found in the keychain."}
+  os.stdio.println(e.display())
+}

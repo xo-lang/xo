@@ -1378,11 +1378,12 @@ OS store, `None` on an OS without it:
 ```
 interface Secrets {
   fn keyring(self) -> Keyring?                // the Linux kernel keyring
+  fn keychain(self) -> Keychain?              // the macOS login keychain
   fn only(self, stores: List[Str]) -> Secrets // keep the named stores
 }
 ```
 
-`only(["keyring"])` keeps the keyring; an `Os` literal without `secrets`
+`only(["keyring"])` keeps the keyring, `only(["keychain"])` the keychain; an `Os` literal without `secrets`
 holds `only([])`, so every store is `None` (decision 0585).
 
 `Keyring` (keyrings(7)) names keyrings and keys by serial number:
@@ -1393,8 +1394,19 @@ keyring linked to the user keyring, else the user keyring);
 `unlink(id, ring)` removes it from the ring. Errors are `KeyErr`:
 `NotFound` (ENOKEY, ENOENT), `Expired`, `Revoked`, `Denied` (EACCES,
 EPERM), `Io(msg)`. A container whose seccomp profile blocks keyctl reports
-`Denied` or `Io`. The macOS Keychain and Windows DPAPI members are later
-stages of 0584.
+`Denied` or `Io`.
+
+`Keychain` (macOS, Security.framework's SecItem calls, as Go's
+keybase/go-keychain) holds generic passwords by service and account:
+`get_generic(service, account)` is the data or `None`;
+`set_generic(service, account, data)` updates the item's data, or adds the
+item when there is none; `delete_generic(service, account)` removes it (a
+missing item or keychain is not an error). Errors are
+`KeychainErr { status, msg }`: the OSStatus and SecCopyErrorMessageString's
+text, displayed as `keychain: MSG (STATUS)`. It is `None` off macOS and on
+the Go backend (no cgo). The framework is loaded at the first call, so a
+program that reads no keychain does not load it. The Windows DPAPI member
+is a later stage of 0584.
 
 ### 3.7 Proc (`uses proc`)
 
@@ -2888,7 +2900,9 @@ keyring, empty when each test starts, whose `user_persistent()` is ring 7
 and whose keys behave as the kernel's (an `add` of an existing ring, kind
 and description replaces the payload; `search`, `read` and `unlink` of a
 missing key fail with `NotFound`). `testing.run_main`'s Os shares it.
-`only([])` drops it as on the real Secrets.
+`only([])` drops it as on the real Secrets. `os.secrets.keychain()` is
+`Some` on every OS too, an in-memory keychain kept with the test's keys
+(apart from every keyring), with the real keychain's semantics.
 
 ### 8.1 FakeNet
 
@@ -5562,7 +5576,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-556 declarations.
+561 declarations.
 
 ### Range
 
@@ -6373,10 +6387,25 @@ fn read(self, id: Int) -> Bytes ! KeyErr uses secrets.read
 fn unlink(self, id: Int, ring: Int) -> () ! KeyErr uses secrets.write
 ```
 
+### KeychainErr
+
+```
+fn (e: KeychainErr) display() -> Str
+```
+
+### Keychain
+
+```
+fn get_generic(self, service: Str, account: Str) -> Bytes? ! KeychainErr uses secrets.read
+fn set_generic(self, service: Str, account: Str, data: Bytes) -> () ! KeychainErr uses secrets.write
+fn delete_generic(self, service: Str, account: Str) -> () ! KeychainErr uses secrets.write
+```
+
 ### Secrets
 
 ```
 fn keyring(self) -> Keyring?
+fn keychain(self) -> Keychain?
 fn only(self, stores: List[Str]) -> Secrets
 ```
 
