@@ -1,0 +1,35 @@
+fn show(m: Map[Int, Str]) -> Str {
+  m.entries().map(fn(e) { "${e.0}=${e.1}" }).join(",")
+}
+
+fn main(os: Os) {
+  var m: Map[Str, Int] = {}
+  for i in 0..20 { m["k${i}"] = i }
+  var c = m.clone()
+  c["k3"] = 300
+  c["new"] = 1
+  let _ = c.remove("k5")
+  os.stdio.println("m: ${m.len()} ${m.get("k3") ?? -1} ${m.get("new") ?? -1} ${m.get("k5") ?? -1}")
+  os.stdio.println("c: ${c.len()} ${c.get("k3") ?? -1} ${c.get("new") ?? -1} ${c.get("k5") ?? -1} ${c.keys()[0..4].join(",")} ${c.keys()[18]}")
+  // a log-mode map: written while shared twice
+  var a: Map[Int, Str] = {1: "a"}
+  let s1 = a
+  a[2] = "b"
+  let s2 = a
+  a[3] = "c"
+  let _ = a.remove(1)
+  let ac = a.clone()
+  a[9] = "z"
+  a[2] = "B"
+  os.stdio.println("ac: ${show(ac)} a: ${show(a)} ${show(s1)} ${show(s2)}")
+  let e: Map[Int, Int] = {}
+  let ec = e.clone()
+  os.stdio.println("empty: ${ec.len()}")
+  var big: Map[Int, List[Int]] = {}
+  for i in 0..1000 { big[i] = [i, i] }
+  let bc = big.clone()
+  big[0] = []
+  var sum = 0
+  for (k, v) in bc { sum += k + v.len() }
+  os.stdio.println("big: ${bc.len()} ${sum} ${(bc.get(0) ?? []).len()} ${(big.get(0) ?? [1]).len()}")
+}

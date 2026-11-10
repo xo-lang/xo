@@ -78,3 +78,8 @@ ported from Go and for dropping a large shared buffer.
   copy (a memory copy plus a retain per element for counted elements)
   for every element type, `+` on lists and Map.clone's four lists;
   rt.cast between List[Float] and List[Int] is not native yet (XO1201).
+- 2026-11-10: `Map.clone` on the native backends copies storage in bulk
+  (compiler/ssa maphyb.xo maph_clone, maplog.xo mlog_clone; call.xo
+  routes the call there before the native body): `xo bench --ab`
+  bench/perf/mapclone wall 0.182 on linux/arm64. The Go backend keeps
+  Map_clone (std/rt/map.go).

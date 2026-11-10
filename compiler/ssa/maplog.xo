@@ -1453,6 +1453,32 @@ fn (var b: Builder) mlog_flatten(t: Int) -> Str {
   name
 }
 
+/// xo.mlog.clone[T](m) -> T: m's live entries in a fresh table of their
+/// own, as a record's flatten makes it (Map.clone, decision 0592): the
+/// key side by its xo.mlog.each with the hashes it stored, the values by
+/// their find results, no parents.
+fn (var b: Builder) mlog_clone(t: Int) -> Str {
+  let kt = mlog_k(b.m, t)
+  let wl = b.m.list(b.int_t())
+  let flatten = b.mlog_flatten(kt)
+  let vals = b.mlog_vals(t)
+  let vd = b.m.types[t].fields[1].ty
+  let vtab = b.mlog_vtable(vd)
+  let name = "xo.mlog.clone[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let fr = b.call(flatten, b.m.tuple([kt, wl]), "", [b.mf(t, 0, mp)])
+  let vs = b.call(vals, b.m.types[vd].elems[0], "", [mp, b.add(Op.Field, wl, Aux.I(n: 1), [fr])])
+  b.retv(b.add(Op.Struct, t, Aux.None, [b.add(Op.Field, kt, Aux.I(n: 0), [fr]), b.call(vtab, vd, "", [vs]), b.call("list.new", b.m.types[t].fields[2].ty, "", [])]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
 /// xo.mlog.record[T](m, h, k, v, del) -> T: an entry of k (a tombstone when
 /// del, v then the removed value, kept so the value log follows the key
 /// side's positions) appended at the position m claimed (xo.mlog.recordk),

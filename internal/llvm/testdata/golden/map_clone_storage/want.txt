@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+m: 20 3 -1 5
+c: 20 300 1 -1 k0,k1,k2,k3 k19
+ac: 2=b,3=c a: 2=B,3=c,9=z 1=a 1=a,2=b
+empty: 0
+big: 1000 501500 2 0
+--- stderr

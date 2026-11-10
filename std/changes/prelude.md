@@ -60,6 +60,22 @@ Decision 0592: `xs.clone()`, `List.concat(lists)`, `xs.binary_search(x)`, `xs.ma
 Decision 0593: copies between streams and files, 32 KiB at a time, returning the bytes copied; `CopyErr[R, W]`
 says which side failed and carries its error.
 
+## 2026-11-10: perf: `Map.clone` copies the table's storage in bulk
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0592's timing row (clone 3.3 ms against maps.Clone's 0.31)
+- Go reference: maps.Clone (runtime clone of the table)
+- Test: golden map_clone_storage (a list-form and a log-form map, an empty map, values of a heap type; the clone and the original diverge after writes) on arm64, LLVM and Go
+- Timing: bench/perf/mapclone (300 clones of a 100000 entry Map[Int, Int] and Map[Str, Str]) on linux/arm64 host 1, `xo bench --ab`: wall 0.182 (0.14 to 0.19, n=6), 2952 to 537 ms, max RSS 0.79. Mac, one clone of 100000 entries: Int 2.7 ms to 0.19 (Go 0.13), Str 5.0 ms to 0.60 (Go 0.20; each Str is counted up)
+- Shipped in: not yet released
+
+The native backends lower `m.clone()` to xo.maph.clone: a list-form map
+writes each of its four lists once in place, so the runtime's copy on
+write copies a shared one as a block (rl_copy) instead of a put per entry
+that hashed every key again; a log-form map flattens into a fresh table
+with the hashes it stored (xo.mlog.clone, a record's flatten).
+
 ## 2026-11-10: feature: `Replacer` (Go's strings.Replacer)
 
 - Kind: feature

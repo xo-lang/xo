@@ -1,0 +1,15 @@
+// Map.clone (decision 0592): clones of a 100000-entry Map[Int, Int] and
+// Map[Str, Str], Go's maps.Clone's case; the clones dominate the run.
+fn main(os: Os) {
+  var m: Map[Int, Int] = {}
+  for i in 0..100000 { m[i * 7] = i }
+  var s: Map[Str, Str] = {}
+  for i in 0..100000 { s["key${i}"] = "v${i}" }
+  var chk = 0
+  for _ in 0..300 {
+    let c = m.clone()
+    let c2 = s.clone()
+    chk += c.len() + c2.len()
+  }
+  os.stdio.println("${chk}")
+}

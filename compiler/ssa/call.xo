@@ -181,6 +181,15 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if let Some(v) = b.list_move_call(x, ci) {
       return v
     }
+    // Map.clone copies the hybrid map's storage in bulk (xo.maph.clone),
+    // where the native body puts each entry (decision 0592)
+    if b.m.map_log && b.c.display_name(fo) == "Map.clone" {
+      let ct = b.nat_of(ci.recv[0])
+      if b.m.types[ct].coll && b.m.types[ct].fields.len() == 6 {
+        let f = b.maph_clone(ct)
+        return b.call(f, ct, "", [b.expr(ci.recv[0])])
+      }
+    }
     // Float.fma on arm64 is one instruction (decision 0385 stage 2): the
     // native body (gomath.fma) is the other targets'
     let impl = if b.goarch == "arm64" && b.c.display_name(fo) == "Float.fma" { -1 } else { b.impl_of(fo) }

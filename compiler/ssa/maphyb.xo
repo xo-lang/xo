@@ -728,3 +728,44 @@ fn (var b: Builder) maph_goback(t: Int) -> Str {
   name
 }
 
+
+/// xo.maph.clone[T](m) -> T: Map.clone of the hybrid map m (decision
+/// 0592) with storage of its own at once. A lists value's four lists are
+/// each written once in place (an element stored back over itself), so
+/// the runtime's copy on write copies a shared one as one block with its
+/// elements counted up (rl_copy), Go's maps.Clone's bulk copy, where a
+/// put per entry hashed each key again; its log field is a fresh empty
+/// list (not the mark: the clone's lists were never shared). A log value
+/// flattens into a fresh table (xo.mlog.clone).
+fn (var b: Builder) maph_clone(t: Int) -> Str {
+  let it = b.int_t()
+  let lt = b.maph_lt(t)
+  let clone_log = b.mlog_clone(lt)
+  let name = "xo.maph.clone[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let (nl, jl) = b.if_then_begin(b.maph_is_log(t, mp))
+  let lv = b.call("list.index", lt, "", [b.mfield(t, 5, mp), b.cint(0)])
+  b.retv(b.maph_of_log_body(t, b.call(clone_log, lt, "", [lv])))
+  b.if_then_end(nl, jl)
+  var fs: List[Int] = []
+  for i in 0..4 {
+    let l = b.mfield(t, i, mp)
+    let lty = b.m.types[t].fields[i].ty
+    let et = b.m.types[lty].elems[0]
+    let res = b.local()
+    b.write_var(res, l)
+    let (ne, je) = b.if_then_begin(b.bop(Op.Gt, b.call("list.len", it, "", [l]), b.cint(0)))
+    b.write_var(res, b.call("list.set", lty, "", [l, b.cint(0), b.call("list.index", et, "", [l, b.cint(0)])]))
+    b.if_then_end(ne, je)
+    fs.push(b.read(res))
+  }
+  b.retv(b.add(Op.Struct, t, Aux.None, fs + [b.mfield(t, 4, mp), b.call("list.new", b.m.types[t].fields[5].ty, "", [])]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
