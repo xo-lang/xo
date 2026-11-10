@@ -52,9 +52,11 @@ fn (s: Session) is_std_copy(path: Str) -> Bool {
 }
 
 /// The std file path ("std/json.xo") of a file of the std directory the
-/// checker reads, else "".
+/// checker reads, else "". The editor's server only: an agent session
+/// (quiet: xo refs, xo def --dir=std/native/llrt) checks std directories
+/// as the code it was pointed at.
 fn (s: Session) toolchain_std_key(path: Str) -> Str {
-  if !s.std_dir.starts_with("/") {
+  if s.quiet || !s.std_dir.starts_with("/") {
     return ""
   }
   let k = std_key(s.std_dir, path)
