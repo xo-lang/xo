@@ -246,3 +246,10 @@ commit (the lead cuts it).
 - internal/stdcoverage reads `pub fn (` methods since 3dd0401cf, and its
   walk now reaches cbor.put_int (its allow.txt line, added at the same
   time, removed here).
+- `std/deque` merged with its hand Go twin removed (std/rt/deque.go): a
+  merged module is generated as its own Go package whether or not it is
+  in std/go_compiled.txt, generic and `var` methods included, so the Go
+  backend compiles the Xo deque (corpus deque on go, arm64, llvm; gen
+  golden std_opaque_copy). The merge script now also takes an opaque
+  declaration (`struct Deque[T] {}`) from the native struct (fields stay
+  private) and native methods defined as methods.
