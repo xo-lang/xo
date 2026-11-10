@@ -40,6 +40,12 @@ pub fn is_agent_command(os: Os, args: List[Str]) -> Bool uses fs {
   if name.is_empty() || name == "." || name == "std" || name == "std/" {
     return false
   }
+  // DIR/... is a walk of modules (decision 0345), core's like a directory;
+  // its last segment's dots once sent it here as a name (`no declaration
+  // named ./...`, the pkgsite builder's report, 2026-11-10)
+  if name == "..." || name.ends_with("/...") {
+    return false
+  }
   // a module path names a module (`xo doc std/tls`) unless its last
   // segment names a declaration in it (`xo doc std/tls.client`)
   if name.contains("/") {

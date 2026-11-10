@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -119,5 +121,54 @@ func TestDocPreludeHidden(t *testing.T) {
 	errb.Reset()
 	if code := runXo(t, []string{"doc", "--dir=.", "--text", "Map"}, &out, &errb); code != 0 || strings.Contains(out.String(), "note: the prelude") {
 		t.Errorf("xo doc Map: exit %d, want no note (nothing hides it):\n%s%s", code, out.String(), errb.String())
+	}
+}
+
+// TestDocWalk: `xo doc DIR/...` documents every module at and below DIR
+// (decision 0345), as xo check and xo vet read the walk; 0.45.0 looked
+// `./...` up as a declaration name (the pkgsite builder's report,
+// 2026-11-10). A walk with no .xo file is an error, not a name lookup.
+func TestDocWalk(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":      "module example.com/walk\nedition preview\n",
+		"top.xo":      "/// At the top.\npub fn top() -> Int { 1 }\n",
+		"sub/sub.xo":  "/// Below.\npub fn below() -> Int { 2 }\n",
+		"sub/x/x.xo":  "/// Deeper.\npub fn deeper() -> Int { 3 }\n",
+		"empty/a.txt": "not xo\n",
+	})
+	chdir(t, dir)
+	for _, arg := range []string{"./...", dir + "/...", "sub/..."} {
+		var out, errb bytes.Buffer
+		if code := runXo(t, []string{"doc", "--json", arg}, &out, &errb); code != 0 {
+			t.Fatalf("xo doc --json %s: exit %d\n%s%s", arg, code, out.String(), errb.String())
+		}
+		var docs []struct {
+			Module    string `json:"module"`
+			Functions []struct {
+				Name string `json:"name"`
+			} `json:"functions"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &docs); err != nil {
+			t.Fatalf("xo doc --json %s: %v\n%s", arg, err, out.String())
+		}
+		var got []string
+		for _, d := range docs {
+			for _, f := range d.Functions {
+				got = append(got, d.Module+"."+f.Name)
+			}
+		}
+		sort.Strings(got)
+		want := "example.com/walk.top example.com/walk/sub.below example.com/walk/sub/x.deeper"
+		if arg == "sub/..." {
+			want = "example.com/walk/sub.below example.com/walk/sub/x.deeper"
+		}
+		if strings.Join(got, " ") != want {
+			t.Errorf("xo doc --json %s: %v, want %s", arg, got, want)
+		}
+	}
+	var out, errb bytes.Buffer
+	code := runXo(t, []string{"doc", "empty/..."}, &out, &errb)
+	if code == 0 || strings.Contains(out.String()+errb.String(), "no declaration named") {
+		t.Errorf("xo doc empty/...: exit %d\n%s%s", code, out.String(), errb.String())
 	}
 }
