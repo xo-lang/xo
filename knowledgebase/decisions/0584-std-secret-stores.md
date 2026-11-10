@@ -219,4 +219,14 @@ secrets2 branch). So the work lands in two steps:
   lists them; test/errorcheck/effect_secrets. Nothing in std uses them.
 - Stage B (after a seed cut that contains stage A): the prelude's
   `Secrets`, `Keyring`, `KeyErr`, `Os.secrets`, the native and Go
-  backends, the fakes and the golden.
+  backends, the fakes and the golden. Done 2026-11-10 except the fakes:
+  RealSecrets, RealKeyring and NoSecrets in std/native/llrt/userfs.xo
+  (SSA boxes them into the interface: own_os_field, os_no_access,
+  secrets_rec; Secrets and Keyring dispatch as ordinary interfaces),
+  std/rt/secrets.go and keyring_linux.go, golden secrets_keyring (a real
+  round trip on the linux/arm64 host, native and Go). compiler/xo's Os
+  wrappers name their own empty Secrets (NoSecretStores) because the
+  0.47.0 seed lowers no read of `os.secrets`; a later seed lets them pass
+  `os.secrets` on.
+- Stage C: FakeSecrets and FakeKeyring in std/testing (TestOs.secrets),
+  then the macOS Keychain and Windows DPAPI members.

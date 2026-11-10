@@ -499,7 +499,7 @@ func realCaps(tos *Testing_TestOs, uses []string) {
 // two phase shutdown of core 7.5 as in RunMain.
 func Testing_run_main(tk *Task, main func(*Task, Os) Result[Unit, IError], tos Testing_TestOs, args List[string]) (code int64) {
 	tos.F_env.e.setArgs(args)
-	osv := Os{F_net: tos.F_net, F_fs: tos.F_fs, F_clock: tos.F_clock, F_rand: tos.F_rand, F_env: tos.F_env, F_proc: tos.F_proc, F_stdio: tos.F_stdio, F_tasks: tos.F_tasks}
+	osv := Os{F_net: tos.F_net, F_fs: tos.F_fs, F_clock: tos.F_clock, F_rand: tos.F_rand, F_env: tos.F_env, F_proc: tos.F_proc, F_stdio: tos.F_stdio, F_secrets: noSecrets{}, F_tasks: tos.F_tasks}
 	p := tos.F_proc.p
 	st := newStopState(tk.w)
 	st.proc = p

@@ -302,5 +302,5 @@ func PropInput(pairs ...any) string {
 // TestOsAsOs gives a test's fakes as an Os (for contract fuzzing of a
 // function that takes `os: Os`).
 func TestOsAsOs(t Testing_TestOs) Os {
-	return Os{F_net: t.F_net, F_fs: t.F_fs, F_clock: t.F_clock, F_rand: t.F_rand, F_env: t.F_env, F_proc: t.F_proc, F_stdio: t.F_stdio, F_tasks: t.F_tasks}
+	return Os{F_net: t.F_net, F_fs: t.F_fs, F_clock: t.F_clock, F_rand: t.F_rand, F_env: t.F_env, F_proc: t.F_proc, F_stdio: t.F_stdio, F_secrets: noSecrets{}, F_tasks: t.F_tasks}
 }

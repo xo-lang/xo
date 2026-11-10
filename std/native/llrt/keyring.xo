@@ -1,0 +1,83 @@
+// The kernel keyring of Linux (keyrings(7); decision 0584): the calls
+// Go's azidentity makes through golang.org/x/sys/unix, by raw system calls.
+// Every function returns the result, or a negative errno; off Linux they
+// return -38 (ENOSYS), and Secrets.keyring() is None there.
+use native/llrt/linux
+
+const KEYCTL_GET_KEYRING_ID: Int = 0
+const KEYCTL_LINK: Int = 8
+const KEYCTL_UNLINK: Int = 9
+const KEY_SPEC_SESSION_KEYRING: Int = -3
+const KEY_SPEC_USER_KEYRING: Int = -4
+const KEYCTL_GET_PERSISTENT: Int = 22
+const ENOSYS: Int = 38
+
+/// Whether the target has the kernel keyring.
+pub fn available() -> Bool { target.os == TargetOs.Linux }
+
+/// The persistent keyring of the user, linked to the user keyring; else the
+/// user keyring (the session keyring linked to it first, errors ignored).
+pub fn user_persistent() -> Int {
+  if !available() {
+    return -ENOSYS
+  }
+  let user = linux.keyctl(KEYCTL_GET_KEYRING_ID, KEY_SPEC_USER_KEYRING, 1, 0, 0)
+  if user < 0 {
+    return user
+  }
+  let sess = linux.keyctl(KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING, 1, 0, 0)
+  if sess >= 0 {
+    let _ = linux.keyctl(KEYCTL_LINK, user, sess, 0, 0)
+  }
+  let p = linux.keyctl(KEYCTL_GET_PERSISTENT, -1, user, 0, 0)
+  if p >= 0 { p } else { user }
+}
+
+pub fn add(ring: Int, kind: Str, desc: Str, payload: Bytes) -> Int {
+  if !available() {
+    return -ENOSYS
+  }
+  linux.add_key(kind, desc, payload, ring)
+}
+
+pub fn search(ring: Int, kind: Str, desc: Str) -> Int {
+  if !available() {
+    return -ENOSYS
+  }
+  linux.keyctl_search(ring, kind, desc)
+}
+
+fn zero_bytes(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for _ in 0..n {
+    b.write_byte(UInt8(0))
+  }
+  b.freeze()
+}
+
+/// The payload of key id; its length is the second result, or the negative
+/// errno is the first (an empty Bytes).
+pub fn read(id: Int) -> (Int, Bytes) {
+  if !available() {
+    return (-ENOSYS, b"")
+  }
+  var buf = zero_bytes(512)
+  while {
+    let n = linux.keyctl_read(id, buf)
+    if n < 0 {
+      return (n, b"")
+    }
+    if n <= buf.len() {
+      return (n, buf[0..n])
+    }
+    buf = zero_bytes(n)
+  }
+  (0, b"")
+}
+
+pub fn unlink(id: Int, ring: Int) -> Int {
+  if !available() {
+    return -ENOSYS
+  }
+  linux.keyctl(KEYCTL_UNLINK, id, ring, 0, 0)
+}

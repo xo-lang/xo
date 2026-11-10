@@ -1155,7 +1155,23 @@ fn (var b: Builder) own_os_field(e: Expr, v: Int, name: Str) -> Int {
     // os.stdio, os.clock, os.rand: the runtime's own (decision 0307)
     return b.own_void_cap(t)
   }
+  if name == "secrets" {
+    // os.secrets: every store the target has (decision 0584)
+    return b.secrets_rec("RealSecrets", [b.cbool(true)], t, e)
+  }
   b.add(Op.Cap, t, Aux.S(s: name), [v])
+}
+
+/// The record tn of native/llrt/userfs (NoSecrets, RealSecrets) with
+/// fields, as the Secrets interface value t (decision 0584).
+fn (var b: Builder) secrets_rec(tn: Str, fields: List[Int], t: Int, e: Expr) -> Int {
+  let dt = b.user_cap_check(tn)
+  if dt < 0 {
+    b.unsupported("`Secrets` without the native runtime's ${tn}")
+    return b.undef(t)
+  }
+  let rec = b.add(Op.Struct, b.typ(dt), Aux.None, fields)
+  b.to_iface(rec, dt, t, Some(e))
 }
 
 /// Field name of the lowered Os v (decision 0307): the method of that
@@ -1485,10 +1501,15 @@ fn (var b: Builder) os_no_access(t: Int, fname: Str, e: Expr) -> Int {
     // one empty list: only([]) (user_to_lists)
     return b.add(Op.Struct, t, Aux.None, b.lists_fields(t, b.const_str("\u{1}")))
   }
+  if name == "secrets" {
+    // NoSecrets as the Secrets interface (decision 0584)
+    return b.secrets_rec("NoSecrets", [], t, e)
+  }
   if name == "stdio" {
-    let dt = b.user_cap_check("NoStdio")
+    let tn = "NoStdio"
+    let dt = b.user_cap_check(tn)
     if dt < 0 {
-      b.unsupported("an Os literal without `stdio` and without the native runtime's NoStdio")
+      b.unsupported("an Os literal without `${name}` and without the native runtime's ${tn}")
       return b.undef(t)
     }
     let rec = b.add(Op.Struct, b.typ(dt), Aux.None, [])

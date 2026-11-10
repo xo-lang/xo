@@ -101,10 +101,10 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     return b.value_call(x)
   }
   let fr = b.c.objs[fo].recv
-  if b.c.objs[fo].iface && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr) || b.obj_name(fr) == "Stream" || b.obj_name(fr) == "NetConn") {
+  if b.c.objs[fo].iface && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr) || (b.obj_name(fr) is "Stream" | "NetConn" | "Secrets" | "Keyring")) {
     // not a capability's method (those are lowered as std calls); the
-    // prelude's Stream (decision 0280) and NetConn (decision 0481) are
-    // ordinary interfaces
+    // prelude's Stream (decision 0280), NetConn (decision 0481), Secrets
+    // and Keyring (decision 0584) are ordinary interfaces
     return b.iface_call(x, ci)
   }
   let fm = b.obj_mod(fo)

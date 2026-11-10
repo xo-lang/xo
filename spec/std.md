@@ -1370,6 +1370,32 @@ Terminals (decision 0162), on every backend:
 - Targets without terminal support (wasip1, js, plan9, Linux on mips and
   ppc) report no terminal and read secrets with echo on.
 
+### 3.6a Secrets (`uses secrets.read` / `secrets.write`)
+
+`os.secrets` is the user's secret stores (decision 0584), one member per
+OS store, `None` on an OS without it:
+
+```
+interface Secrets {
+  fn keyring(self) -> Keyring?                // the Linux kernel keyring
+  fn only(self, stores: List[Str]) -> Secrets // keep the named stores
+}
+```
+
+`only(["keyring"])` keeps the keyring; an `Os` literal without `secrets`
+holds `only([])`, so every store is `None` (decision 0585).
+
+`Keyring` (keyrings(7)) names keyrings and keys by serial number:
+`user_persistent()` is the keyring Go's azidentity uses (the persistent
+keyring linked to the user keyring, else the user keyring);
+`add(ring, kind, desc, payload)` adds or updates a key and returns its id;
+`search(ring, kind, desc)` finds one; `read(id)` is its payload;
+`unlink(id, ring)` removes it from the ring. Errors are `KeyErr`:
+`NotFound` (ENOKEY, ENOENT), `Expired`, `Revoked`, `Denied` (EACCES,
+EPERM), `Io(msg)`. A container whose seccomp profile blocks keyctl reports
+`Denied` or `Io`. The macOS Keychain and Windows DPAPI members are later
+stages of 0584.
+
 ### 3.7 Proc (`uses proc`)
 
 ```
@@ -5528,7 +5554,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-548 declarations.
+556 declarations.
 
 ### Range
 
@@ -6321,6 +6347,29 @@ fn read_secret(self, prompt: Str) -> Str? ! IoErr uses stdio
 fn raw_input(self, on: Bool) -> Bool uses stdio
 fn read_bytes(self, max: Int) -> Bytes? ! IoErr uses stdio
 fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
+```
+
+### KeyErr
+
+```
+fn (e: KeyErr) display() -> Str
+```
+
+### Keyring
+
+```
+fn user_persistent(self) -> Int ! KeyErr uses secrets.read
+fn add(self, ring: Int, kind: Str, desc: Str, payload: Bytes) -> Int ! KeyErr uses secrets.write
+fn search(self, ring: Int, kind: Str, desc: Str) -> Int ! KeyErr uses secrets.read
+fn read(self, id: Int) -> Bytes ! KeyErr uses secrets.read
+fn unlink(self, id: Int, ring: Int) -> () ! KeyErr uses secrets.write
+```
+
+### Secrets
+
+```
+fn keyring(self) -> Keyring?
+fn only(self, stores: List[Str]) -> Secrets
 ```
 
 ### ProcErr

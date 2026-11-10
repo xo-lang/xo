@@ -6579,6 +6579,16 @@ fn enverr_display(e: EnvErr) -> Str {
   }
 }
 
+fn keyerr_display(e: KeyErr) -> Str {
+  match e {
+    NotFound => "key not found"
+    Expired => "key expired"
+    Revoked => "key revoked"
+    Denied => "permission denied"
+    Io(m) => m
+  }
+}
+
 fn procerr_display(e: ProcErr) -> Str {
   match e {
     NotFound(cmd) => "${cmd}: executable file not found"

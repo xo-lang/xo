@@ -180,7 +180,7 @@ pub fn (c: Checker) is_prelude(t: Int, name: Str) -> Bool {
 /// `Os { ... }` literal that leaves the field out takes (decision 0585):
 /// clock, rand and tasks have none and stay required.
 pub fn os_no_access(name: Str) -> Bool {
-  name is "fs" | "net" | "env" | "proc" | "stdio"
+  name is "fs" | "net" | "env" | "proc" | "stdio" | "secrets"
 }
 
 /// Whether object o is the prelude's Os struct.

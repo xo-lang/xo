@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+literal keyring: false
+only([]) keyring: false
+only([]).only keyring: false
+key not found
+key expired
+key revoked
+permission denied
+errno 5
+round trip ok; after unlink: key not found
+--- stderr

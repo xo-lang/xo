@@ -30,7 +30,7 @@ fn (t: Tee) keep(err: Bool, text: Str) {
 
 /// os with its standard output and error through tee.
 fn tee_os(os: Os, tee: Tee) -> Os {
-  Os{net: os.net, fs: os.fs, clock: os.clock, rand: os.rand, env: os.env, proc: os.proc, stdio: tee, tasks: os.tasks}
+  Os{net: os.net, fs: os.fs, clock: os.clock, rand: os.rand, env: os.env, proc: os.proc, stdio: tee, secrets: NoSecretStores{}, tasks: os.tasks}
 }
 
 fn (t: Tee) print(text: Str) uses stdio {

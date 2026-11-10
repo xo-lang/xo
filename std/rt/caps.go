@@ -25,14 +25,15 @@ import (
 // RealOs returns the real capabilities given to `main` (core 6.3).
 func RealOs(tasks Task_Group) Os {
 	return Os{
-		F_net:   realNet{},
-		F_fs:    &realFs{},
-		F_clock: realClock{},
-		F_rand:  realRand{},
-		F_env:   realEnv{},
-		F_proc:  realProc{},
-		F_stdio: realStdio{},
-		F_tasks: tasks,
+		F_net:     realNet{},
+		F_fs:      &realFs{},
+		F_clock:   realClock{},
+		F_rand:    realRand{},
+		F_env:     realEnv{},
+		F_proc:    realProc{},
+		F_stdio:   realStdio{},
+		F_secrets: realSecrets{ring: true},
+		F_tasks:   tasks,
 	}
 }
 

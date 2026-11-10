@@ -1311,6 +1311,8 @@ struct Os {
   env: Env
   proc: Proc
   stdio: Stdio
+  /// The user's secret stores (decision 0584).
+  secrets: Secrets
   /// Program lifetime task group (core 6.3, 7.1).
   tasks: task.Group
 }
@@ -1776,6 +1778,49 @@ struct ProcOutput {
   /// addendum; a pipeline's: the commands' times added, the largest
   /// peak); zeros from a fake Proc and under WASI.
   usage: ProcUsage = ProcUsage{user: 0s, system: 0s, max_rss: 0}
+}
+
+/// Why a Keyring call failed (decision 0584).
+enum KeyErr {
+  /// ENOKEY or ENOENT: no such key or keyring.
+  NotFound
+  /// EKEYEXPIRED.
+  Expired
+  /// EKEYREVOKED.
+  Revoked
+  /// EACCES or EPERM.
+  Denied
+  /// Any other errno, as its text.
+  Io(msg: Str)
+}
+
+/// Plain text: `key not found`, `key expired`, `key revoked`, `permission
+/// denied`, or the message of an Io.
+fn (e: KeyErr) display() -> Str
+
+/// The calling user's kernel keyring (Linux keyrings(7), decision 0584).
+/// `Secrets.keyring()` is None on other OSes. A keyring or key is its
+/// serial number (an Int).
+interface Keyring {
+  /// The keyring Go's azidentity uses: the persistent keyring linked to
+  /// the user keyring, else the user keyring (the session keyring linked
+  /// to it first, errors ignored).
+  fn user_persistent(self) -> Int ! KeyErr uses secrets.read
+  /// Adds (or updates) the key of type kind and description desc in ring.
+  fn add(self, ring: Int, kind: Str, desc: Str, payload: Bytes) -> Int ! KeyErr uses secrets.write
+  fn search(self, ring: Int, kind: Str, desc: Str) -> Int ! KeyErr uses secrets.read
+  fn read(self, id: Int) -> Bytes ! KeyErr uses secrets.read
+  fn unlink(self, id: Int, ring: Int) -> () ! KeyErr uses secrets.write
+}
+
+/// The user's secret stores (decisions 0584, 0585): the member for an OS is
+/// None on the others. `Os.secrets`; an omitted field of an Os literal is
+/// `only([])`.
+interface Secrets {
+  /// The Linux kernel keyring; None on other OSes.
+  fn keyring(self) -> Keyring?
+  /// A Secrets with only the named stores ("keyring", "keychain", "dpapi").
+  fn only(self, stores: List[Str]) -> Secrets
 }
 
 enum ProcErr {

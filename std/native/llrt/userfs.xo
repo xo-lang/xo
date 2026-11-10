@@ -6,6 +6,7 @@
 
 use native/rt
 use std/task
+use native/llrt/keyring
 
 /// The Fs methods of a user value converted to Fs: the same methods as
 /// the prelude's Fs.
@@ -147,6 +148,63 @@ pub interface UserStdio {
   fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
 }
 
+/// The Secrets an `Os` literal that leaves `secrets` out holds (decisions
+/// 0584, 0585): no store.
+pub struct NoSecrets {}
+
+fn (s: NoSecrets) keyring() -> Keyring? { None }
+fn (s: NoSecrets) only(stores: List[Str]) -> Secrets { s }
+
+/// The runtime's own Secrets (decision 0584): the stores the target has,
+/// narrowed by only().
+pub struct RealSecrets {
+  ring: Bool
+}
+
+fn (s: RealSecrets) keyring() -> Keyring? {
+  if s.ring && keyring.available() { Some(RealKeyring{}) } else { None }
+}
+
+fn (s: RealSecrets) only(stores: List[Str]) -> Secrets {
+  RealSecrets{ring: s.ring && stores.contains("keyring")}
+}
+
+/// The Linux kernel keyring (keyrings(7)) behind RealSecrets.keyring().
+pub struct RealKeyring {}
+
+/// KeyErr of the negative errno e.
+fn key_err(e: Int) -> KeyErr {
+  match -e {
+    2 | 126 => KeyErr.NotFound
+    127 => KeyErr.Expired
+    128 => KeyErr.Revoked
+    1 | 13 => KeyErr.Denied
+    38 => KeyErr.Io(msg: "the kernel keyring is not available")
+    n => KeyErr.Io(msg: "errno ${n}")
+  }
+}
+
+fn key_id(r: Int) -> Int ! KeyErr {
+  if r < 0 { return Err(key_err(r)) }
+  r
+}
+
+fn (k: RealKeyring) user_persistent() -> Int ! KeyErr uses secrets.read { key_id(keyring.user_persistent())? }
+fn (k: RealKeyring) add(ring: Int, kind: Str, desc: Str, payload: Bytes) -> Int ! KeyErr uses secrets.write {
+  key_id(keyring.add(ring, kind, desc, payload))?
+}
+fn (k: RealKeyring) search(ring: Int, kind: Str, desc: Str) -> Int ! KeyErr uses secrets.read {
+  key_id(keyring.search(ring, kind, desc))?
+}
+fn (k: RealKeyring) read(id: Int) -> Bytes ! KeyErr uses secrets.read {
+  let (n, b) = keyring.read(id)
+  let _ = key_id(n)?
+  b
+}
+fn (k: RealKeyring) unlink(id: Int, ring: Int) -> () ! KeyErr uses secrets.write {
+  let _ = key_id(keyring.unlink(id, ring))?
+}
+
 /// The Stdio an `Os` literal that leaves `stdio` out holds (decision
 /// 0585): output dropped, input at its end, no terminal.
 pub struct NoStdio {}
@@ -210,6 +268,7 @@ pub interface UserOs {
   fn env(self) -> Env
   fn proc(self) -> Proc
   fn stdio(self) -> Stdio
+  fn secrets(self) -> Secrets
   fn tasks(self) -> task.Group
 }
 
@@ -223,6 +282,7 @@ pub struct OsFields {
   env_v: Env
   proc_v: Proc
   stdio_v: Stdio
+  secrets_v: Secrets
   tasks_v: task.Group
 }
 
@@ -233,6 +293,7 @@ fn (o: OsFields) rand() -> Rand { o.rand_v }
 fn (o: OsFields) env() -> Env { o.env_v }
 fn (o: OsFields) proc() -> Proc { o.proc_v }
 fn (o: OsFields) stdio() -> Stdio { o.stdio_v }
+fn (o: OsFields) secrets() -> Secrets { o.secrets_v }
 fn (o: OsFields) tasks() -> task.Group { o.tasks_v }
 
 

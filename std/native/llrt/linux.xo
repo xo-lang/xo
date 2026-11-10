@@ -906,6 +906,38 @@ pub fn getpid() -> Int { rt.sys6(nrf(172, 39, 20), 0, 0, 0, 0, 0, 0) }
 /// negative errno.
 pub fn getrusage(who: Int, buf: Int) -> Int { rt.sys6(nrf(165, 98, 117), who, buf, 0, 0, 0, 0) }
 
+/// add_key(2) (decision 0584): a key of type kind and description desc with
+/// the bytes of payload in the keyring ring; the key's serial number, or the
+/// negative errno. Linux only (keyrings(7)); the arm64 and amd64 numbers.
+pub fn add_key(kind: Str, desc: Str, payload: Bytes, ring: Int) -> Int {
+  let k = cpath(kind)
+  let d = cpath(desc)
+  let r = rt.sys6(nr(217, 248), raw.bytes_addr(k), raw.bytes_addr(d), raw.bytes_addr(payload), raw.io_len(payload.len()), ring, 0)
+  keep(k, keep(d, keep(payload, r)))
+}
+
+/// keyctl(2) (decision 0584) with the integer arguments a..d: the result, or
+/// the negative errno.
+pub fn keyctl(op: Int, a: Int, b: Int, c: Int, d: Int) -> Int {
+  rt.sys6(nr(219, 250), op, a, b, c, d, 0)
+}
+
+/// keyctl(KEYCTL_SEARCH) of the key of type kind and description desc in ring
+/// (decision 0584).
+pub fn keyctl_search(ring: Int, kind: Str, desc: Str) -> Int {
+  let k = cpath(kind)
+  let d = cpath(desc)
+  let r = rt.sys6(nr(219, 250), 10, ring, raw.bytes_addr(k), raw.bytes_addr(d), 0, 0)
+  keep(k, keep(d, r))
+}
+
+/// keyctl(KEYCTL_READ) of key id into buf (decision 0584): the key's length
+/// (more than buf's when it did not fit), or the negative errno.
+pub fn keyctl_read(id: Int, buf: Bytes) -> Int {
+  let r = rt.sys6(nr(219, 250), 11, id, raw.bytes_addr(buf), raw.io_len(buf.len()), 0, 0)
+  keep(buf, r)
+}
+
 /// getppid(2) (std/native/llrt/procid.xo).
 pub fn getppid() -> Int { rt.sys6(nrf(173, 110, 39), 0, 0, 0, 0, 0, 0) }
 

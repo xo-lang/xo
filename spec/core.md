@@ -2854,7 +2854,8 @@ A program narrows what code may do by building an `Os` with a literal
 (decision 0307). A field the literal leaves out is that capability's
 no-access value (decision 0585): `fs` denies every read and write
 (`read_only().write_only()`), `net`, `env` and `proc` admit nothing
-(`only([])`), and `stdio` drops output and has no input and no terminal.
+(`only([])`), `secrets` holds no store (`Secrets.only([])`, decision 0584: every
+store answers `None`), and `stdio` drops output and has no input and no terminal.
 `clock`, `rand` and `tasks` have no no-access value and must be written
 (`XO0403` otherwise). A written field is the value given, so leaving a
 field out can only take authority away; adding a field to `Os` never

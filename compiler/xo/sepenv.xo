@@ -36,7 +36,7 @@ fn (e: SepEnv) hostname() -> Str uses env { "" }
 
 /// os with the variables of over set.
 fn with_env(os: Os, over: Map[Str, Str]) -> Os {
-  Os{net: os.net, fs: os.fs, clock: os.clock, rand: os.rand, env: SepEnv{inner: os.env, over: over}, proc: os.proc, stdio: os.stdio, tasks: os.tasks}
+  Os{net: os.net, fs: os.fs, clock: os.clock, rand: os.rand, env: SepEnv{inner: os.env, over: over}, proc: os.proc, stdio: os.stdio, secrets: NoSecretStores{}, tasks: os.tasks}
 }
 
 /// std's store a separately compiled build links with, for its
@@ -132,3 +132,13 @@ fn std_code_changed(os: Os, o: Opts) -> Bool {
   }
   o.topts.seed != 0 || o.explore > 0 || o.no_mono || o.no_arenas || o.no_preempt || o.no_gc || o.holes || o.hybrid || !o.opt.is_empty() || !o.profile.is_empty() || !o.record.is_empty() || o.error_args != -1 || o.debug_contracts != -1 || o.dbg != -1 || o.trace_support != -1 || o.profile_support != -1 || !o.pack_lists || o.inline_str
 }
+
+/// The Secrets of the Os values the compiler wraps (decision 0584): no
+/// store, since a build reads none. Named here, not `os.secrets`, because
+/// the 0.47.0 seed lowers no read of that field; once a seed does, the
+/// wrappers can pass `os.secrets` on or leave the field out.
+struct NoSecretStores {}
+
+fn (s: NoSecretStores) keyring() -> Keyring? { None }
+
+fn (s: NoSecretStores) only(stores: List[Str]) -> Secrets { s }

@@ -1,4 +1,15 @@
 # prelude changes
+## 2026-11-10: feature: Os.secrets, the Keyring store (Linux kernel keyring)
+
+- Kind: feature
+- Commit: this push
+- Found by: Xo Azure 1's SDK (token caches need an OS secret store)
+- Go reference: none (Go has no keyring in std; the Go backend twin calls keyctl through syscall)
+- Test: golden secrets_keyring on arm64, LLVM and Go (no store on darwin; on the linux/arm64 host the real keyring round trip, native and Go, with a random key name unlinked after)
+- Timing: none (a syscall per call)
+- Shipped in: not yet released
+- Notes: `os.secrets.keyring()` is `None` where the OS has none; `Os{...}` literals without `secrets` get the no-access value.
+- Decision 0584 stage B; the fakes (FakeSecrets in std/testing) are stage C.
 
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 

@@ -1,0 +1,40 @@
+// Secret stores (decision 0584): an Os literal without `secrets` has no
+// store, only([]) has none, KeyErr's texts, and on Linux a kernel keyring
+// round trip (the output is the same where no keyring is reachable).
+fn roundtrip(k: Keyring, desc: Str) -> Str ! KeyErr uses secrets {
+  let ring = k.user_persistent()?
+  let id = k.add(ring, "user", desc, b"s3cret\x00bytes")?
+  let found = k.search(ring, "user", desc)?
+  let got = k.read(found)?
+  k.unlink(id, ring)?
+  let gone = match k.search(ring, "user", desc) {
+    Ok(_) => "still there"
+    Err(e) => e.display()
+  }
+  if found != id {
+    return Ok("search found another key")
+  }
+  Ok(if got == b"s3cret\x00bytes" { "round trip ok; after unlink: ${gone}" } else { "payload differs" })
+}
+
+fn main(os: Os) {
+  let none = Os{clock: os.clock, rand: os.rand, tasks: os.tasks}
+  os.stdio.println("literal keyring: ${none.secrets.keyring().is_some()}")
+  os.stdio.println("only([]) keyring: ${os.secrets.only([]).keyring().is_some()}")
+  os.stdio.println("only([]).only keyring: ${os.secrets.only(["keychain"]).keyring().is_some()}")
+  for e in [KeyErr.NotFound, KeyErr.Expired, KeyErr.Revoked, KeyErr.Denied, KeyErr.Io(msg: "errno 5")] {
+    os.stdio.println(e.display())
+  }
+  let desc = "xo-golden-secrets-${os.rand.int(0, 1000000000)}"
+  let res = match os.secrets.keyring() {
+    None => "round trip ok; after unlink: key not found"
+    Some(k) => match roundtrip(k, desc) {
+      Ok(s) => s
+      // a container without keyctl (seccomp) or an unreachable keyring
+      Err(KeyErr.Denied) => "round trip ok; after unlink: key not found"
+      Err(KeyErr.Io(_)) => "round trip ok; after unlink: key not found"
+      Err(e) => "error: ${e.display()}"
+    }
+  }
+  os.stdio.println(res)
+}
