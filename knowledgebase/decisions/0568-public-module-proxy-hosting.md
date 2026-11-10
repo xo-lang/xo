@@ -316,7 +316,7 @@ host.
   - The log's records file gains a timestamp per record (a sidecar
     file, so the records stay the hashed bytes).
   - Answers are served through the tunnel with `public, max-age=60`.
-  - Not built yet.
+  - Built in phase 1 (2026-11-08; `GET /index` of `xo mod sumdb serve`).
 
 ### Phases
 
