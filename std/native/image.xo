@@ -396,3 +396,40 @@ fn image_crop(im: image.Image, r: image.Rect) -> image.Image {
   }
   image.Image{width: s.width, height: s.height, model: s.model, pix: b.freeze(), stride: 0, palette: s.palette, min_x: s.min_x, min_y: s.min_y}
 }
+
+/// Image.to_rgba and to_nrgba: every pixel through at(), then the model of
+/// the result (to_nrgba true for NRGBA).
+fn image_convert(im: image.Image, nrgba: Bool) -> image.Image {
+  var b = BytesBuilder.with_capacity(im.width * im.height * 4)
+  for yy in 0..im.height {
+    for xx in 0..im.width {
+      let c = image_at(im, im.min_x + xx, im.min_y + yy)
+      if nrgba {
+        // Go's NRGBAModel hands an NRGBA color back as it is: NRGBA samples and
+        // palette entries (color.NRGBA) skip the premultiplied round trip
+        if im.model == image.Model.NRGBA {
+          let st = if im.stride > 0 { im.stride } else { im.width * 4 }
+          b.write(im.pix[yy * st + xx * 4..yy * st + xx * 4 + 4])
+        } else if im.model == image.Model.Paletted && im.palette.len() > 0 {
+          let st = if im.stride > 0 { im.stride } else { im.width }
+          var idx = Int(im.pix[yy * st + xx])
+          if idx >= im.palette.len() {
+            idx = 0
+          }
+          b.write_be(im.palette[idx], 4)
+        } else {
+          b.write_be(color_nrgba(c), 4)
+        }
+      } else {
+        b.write_be(((c.r >> 8) << 24) | ((c.g >> 8) << 16) | ((c.b >> 8) << 8) | (c.a >> 8), 4)
+      }
+    }
+  }
+  let m = if nrgba { image.Model.NRGBA } else { image.Model.RGBA }
+  image.Image{width: im.width, height: im.height, model: m, pix: b.freeze(), stride: 0, min_x: im.min_x, min_y: im.min_y}
+}
+
+fn image_to_rgba(im: image.Image) -> image.Image { image_convert(im, false) }
+
+fn image_to_nrgba(im: image.Image) -> image.Image { image_convert(im, true) }
+

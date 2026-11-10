@@ -8257,6 +8257,8 @@ fn plan9() -> List[Int]                           // palette.Plan9 as 0xRRGGBBAA
 fn (var im: Image) set(x: Int, y: Int, c: Color)  // Go's Set: the model's conversion of c; outside the image is ignored; linear in the image (Bytes is immutable)
 fn (im: Image) sub_image(r: Rect) -> Image  // Go's SubImage: clipped, shares pix, keeps coordinates (min_x, min_y) and stride; not YCbCr yet
 fn (im: Image) crop(r: Rect) -> Image       // sub_image with the rows packed tightly (stride 0)
+fn (im: Image) to_rgba() -> Image                // every pixel through color.RGBAModel: premultiplied 8 bit, tight rows; not YCbCr yet
+fn (im: Image) to_nrgba() -> Image               // color.NRGBAModel (an NRGBA sample or palette entry is kept as it is)
 fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
 fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int)
 fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int)

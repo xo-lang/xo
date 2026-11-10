@@ -111,3 +111,11 @@ fn (im: Image) sub_image(r: Rect) -> Image
 /// A tightly packed copy of the part of the image inside r (stride 0, min
 /// at r's corner after clipping).
 fn (im: Image) crop(r: Rect) -> Image
+
+/// The image as an RGBA image (Go's draw.Draw of it onto image.NewRGBA with
+/// Src, i.e. color.RGBAModel on every pixel): premultiplied 8 bit samples,
+/// tight rows, the same size and corner. Not YCbCr yet.
+fn (im: Image) to_rgba() -> Image
+
+/// The image as an NRGBA image (color.NRGBAModel on every pixel).
+fn (im: Image) to_nrgba() -> Image

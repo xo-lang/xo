@@ -1,5 +1,15 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image Image.to_rgba and to_nrgba (decision 0578 step 1)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: image/color (RGBAModel, NRGBAModel) applied pixel by pixel, as draw.Draw with Src does
+- Test: testdata/corpus/image: 5 rounds of each of the 8 models, both conversions compared with Go's pix (NRGBA samples and palette entries are returned as they are, as Go's NRGBAModel does), on arm64, LLVM and the Go backend
+- Timing: one at() per pixel; no Go-package timing row yet (the draw step of 0578 carries the fast paths)
+- Shipped in: not yet released
+
 ## 2026-11-09: feature: std/image Image.sub_image and crop, Image.min_x/min_y (decision 0578 step 1)
 
 - Kind: feature

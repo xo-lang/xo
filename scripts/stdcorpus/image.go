@@ -512,5 +512,91 @@ test "Image.sub_image is Go's SubImage" {
   }
 }
 `)
+	// to_rgba and to_nrgba: 3 by 2 images of each model through
+	// color.RGBAModel and color.NRGBAModel pixel by pixel.
+	o.WriteString("\n/// (model, pix, palette, RGBA pix, NRGBA pix): to_rgba and to_nrgba.\nconst CONV_CASES: List[(Str, Bytes, List[Int], Bytes, Bytes)] = [\n")
+	for rep := 0; rep < 5; rep++ {
+		var cpal color.Palette
+		var cpalv []int
+		for k := 0; k < 5; k++ {
+			nc := color.NRGBA{uint8(r.Intn(256)), uint8(r.Intn(256)), uint8(r.Intn(256)), uint8(r.Intn(256))}
+			cpal = append(cpal, nc)
+			cpalv = append(cpalv, int(nc.R)<<24|int(nc.G)<<16|int(nc.B)<<8|int(nc.A))
+		}
+		cimgs := map[string]subImg{
+			"Gray": image.NewGray(rect), "Gray16": image.NewGray16(rect), "NRGBA": image.NewNRGBA(rect),
+			"NRGBA64": image.NewNRGBA64(rect), "CMYK": image.NewCMYK(rect), "RGBA": image.NewRGBA(rect),
+			"RGBA64": image.NewRGBA64(rect), "Paletted": image.NewPaletted(rect, cpal),
+		}
+		for _, name := range []string{"Gray", "Gray16", "NRGBA", "NRGBA64", "CMYK", "RGBA", "RGBA64", "Paletted"} {
+			img := cimgs[name]
+			px, _ := subPix(img)
+			if name == "Paletted" {
+				for i := range px {
+					px[i] = byte(r.Intn(5))
+				}
+			} else if name == "RGBA" {
+				for i := 0; i < len(px); i += 4 {
+					a := r.Intn(256)
+					px[i], px[i+1], px[i+2], px[i+3] = byte(r.Intn(a+1)), byte(r.Intn(a+1)), byte(r.Intn(a+1)), byte(a)
+				}
+			} else if name == "RGBA64" {
+				for i := 0; i < len(px); i += 8 {
+					a := r.Intn(65536)
+					vals := [4]int{r.Intn(a + 1), r.Intn(a + 1), r.Intn(a + 1), a}
+					for k, v := range vals {
+						px[i+2*k], px[i+2*k+1] = byte(v>>8), byte(v)
+					}
+				}
+			} else {
+				copy(px, fill(len(px)))
+			}
+			var rg, ng []byte
+			for y := 0; y < 2; y++ {
+				for x := 0; x < 3; x++ {
+					c1 := color.RGBAModel.Convert(img.At(x, y)).(color.RGBA)
+					rg = append(rg, c1.R, c1.G, c1.B, c1.A)
+					c2 := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+					ng = append(ng, c2.R, c2.G, c2.B, c2.A)
+				}
+			}
+			cpt := "[]"
+			if name == "Paletted" {
+				var sb strings.Builder
+				sb.WriteString("[")
+				for i, v := range cpalv {
+					if i > 0 {
+						sb.WriteString(", ")
+					}
+					fmt.Fprintf(&sb, "%d", v)
+				}
+				sb.WriteString("]")
+				cpt = sb.String()
+			}
+			fmt.Fprintf(&o, "  (%q, %s, %s, %s, %s),\n", name, bytesLit(px), cpt, bytesLit(rg), bytesLit(ng))
+		}
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+test "Image.to_rgba and to_nrgba are Go's models pixel by pixel" {
+  for (name, pix, pal, rgba, nrgba) in CONV_CASES {
+    let model = match name {
+      "Gray" => image.Model.Gray
+      "Gray16" => image.Model.Gray16
+      "NRGBA" => image.Model.NRGBA
+      "NRGBA64" => image.Model.NRGBA64
+      "CMYK" => image.Model.CMYK
+      "RGBA" => image.Model.RGBA
+      "RGBA64" => image.Model.RGBA64
+      _ => image.Model.Paletted
+    }
+    let im = image.Image{width: 3, height: 2, model: model, pix: pix, palette: pal}
+    let a = im.to_rgba()
+    expect((a.model, a.width, a.height, a.pix)) == (image.Model.RGBA, 3, 2, rgba)
+    let b = im.to_nrgba()
+    expect((b.model, b.width, b.height, b.pix)) == (image.Model.NRGBA, 3, 2, nrgba)
+  }
+}
+`)
 	return o.String()
 }
