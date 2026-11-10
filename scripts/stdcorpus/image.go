@@ -18,7 +18,7 @@ func imageCorpus() string {
 	edge := []int{0, 1, 127, 128, 255, 256, 257, 32767, 32768, 65534, 65535}
 	var o strings.Builder
 	o.WriteString(header("image/color: GrayModel, Gray16Model, NRGBAModel, RGBToYCbCr, YCbCrToRGB, RGBToCMYK, CMYKToRGB and NRGBA.RGBA() (std/image, decision 0578)"))
-	o.WriteString("use std/image\nuse std/png\n\n")
+	o.WriteString("use std/image\nuse std/png\nuse std/jpeg\n\n")
 
 	o.WriteString("/// (r, g, b, a, gray, gray16, nrgba) for a premultiplied color.\nconst COLORS: List[(Int, Int, Int, Int, Int, Int, Int)] = [\n")
 	emitColor := func(cr, cg, cb, ca int) {
@@ -615,6 +615,87 @@ test "to_png crops a sub image and refuses CMYK and YCbCr" {
   expect((p.width, p.height, p.pix)) == (2, 2, b"\x05\x06\x08\x09")
   let c = image.Image{width: 1, height: 1, model: image.Model.CMYK, pix: b"\x00\x00\x00\x00"}
   expect(c.to_png().is_none()) == true
+}
+`)
+	// YCbCr At and SubImage for every subsampling ratio: a 5 by 4 image with
+	// random planes, probed whole and through two sub images (one clipped).
+	o.WriteString("\n/// (ratio, y, cb, cr, rect, (w, h, min_x, min_y), [(x, y, r, g, b, a)]): YCbCr At and SubImage.\nconst YCC_CASES: List[(Str, Bytes, Bytes, Bytes, (Int, Int, Int, Int), (Int, Int, Int, Int), List[(Int, Int, Int, Int, Int, Int)])] = [\n")
+	ratios := []struct {
+		name string
+		r    image.YCbCrSubsampleRatio
+	}{
+		{"S444", image.YCbCrSubsampleRatio444}, {"S422", image.YCbCrSubsampleRatio422}, {"S420", image.YCbCrSubsampleRatio420},
+		{"S440", image.YCbCrSubsampleRatio440}, {"S411", image.YCbCrSubsampleRatio411}, {"S410", image.YCbCrSubsampleRatio410},
+	}
+	for rep := 0; rep < 3; rep++ {
+		for _, ra := range ratios {
+			yc := image.NewYCbCr(big, ra.r)
+			copy(yc.Y, fill(len(yc.Y)))
+			copy(yc.Cb, fill(len(yc.Cb)))
+			copy(yc.Cr, fill(len(yc.Cr)))
+			for _, rc := range []image.Rectangle{big, image.Rect(1, 1, 4, 3), image.Rect(-1, 2, 3, 9), image.Rect(3, 1, 5, 4)} {
+				var sub image.Image = yc
+				if rc != big {
+					sub = yc.SubImage(rc)
+				}
+				b := sub.Bounds()
+				var probes strings.Builder
+				first := true
+				for y := b.Min.Y - 1; y <= b.Max.Y; y++ {
+					for x := b.Min.X - 1; x <= b.Max.X; x++ {
+						cr, cg, cb, ca := sub.At(x, y).RGBA()
+						if !first {
+							probes.WriteString(", ")
+						}
+						first = false
+						fmt.Fprintf(&probes, "(%d, %d, %d, %d, %d, %d)", x, y, cr, cg, cb, ca)
+					}
+				}
+				fmt.Fprintf(&o, "  (%q, %s, %s, %s, (%d, %d, %d, %d), (%d, %d, %d, %d), [%s]),\n", ra.name, bytesLit(yc.Y), bytesLit(yc.Cb), bytesLit(yc.Cr),
+					rc.Min.X, rc.Min.Y, rc.Max.X, rc.Max.Y, b.Dx(), b.Dy(), b.Min.X, b.Min.Y, probes.String())
+			}
+		}
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+test "YCbCr images: at and sub_image are Go's" {
+  for (name, yp, cbp, crp, rc, dims, probes) in YCC_CASES {
+    let ss = match name {
+      "S444" => jpeg.Subsample.S444
+      "S422" => jpeg.Subsample.S422
+      "S420" => jpeg.Subsample.S420
+      "S440" => jpeg.Subsample.S440
+      "S411" => jpeg.Subsample.S411
+      _ => jpeg.Subsample.S410
+    }
+    let im = image.Image{width: 5, height: 4, model: image.Model.YCbCr, pix: b"", y: yp, cb: cbp, cr: crp, subsample: ss}
+    let (x0, y0, x1, y1) = rc
+    let sub = im.sub_image(image.Rect{x0: x0, y0: y0, x1: x1, y1: y1})
+    let (w, h, mx, my) = dims
+    expect((sub.width, sub.height)) == (w, h)
+    if w > 0 {
+      expect((sub.min_x, sub.min_y)) == (mx, my)
+      for (x, y, r, g, b, a) in probes {
+        expect(sub.at(x, y)) == image.Color{r: r, g: g, b: b, a: a}
+      }
+    }
+  }
+}
+`)
+	o.WriteString(`
+test "from_jpeg and to_jpeg keep the samples and the chroma subsampling" {
+  let j = jpeg.Image{width: 2, height: 2, model: jpeg.Model.YCbCr, subsample: jpeg.Subsample.S420, y: b"\x10\x20\x30\x40", cb: b"\x80", cr: b"\x90"}
+  let im = image.from_jpeg(j)
+  expect((im.width, im.height, im.model, im.subsample, im.y, im.cb, im.cr)) == (2, 2, image.Model.YCbCr, jpeg.Subsample.S420, j.y, j.cb, j.cr)
+  let back = im.to_jpeg() ?? fault("a tight YCbCr image has a JPEG form")
+  expect((back.model, back.subsample, back.y, back.cb, back.cr)) == (jpeg.Model.YCbCr, jpeg.Subsample.S420, j.y, j.cb, j.cr)
+  let g = jpeg.Image{width: 2, height: 1, model: jpeg.Model.Gray, pix: b"\x07\x09"}
+  let gi = image.from_jpeg(g)
+  expect(gi.model) == image.Model.Gray
+  let gb = gi.to_jpeg() ?? fault("a Gray image has a JPEG form")
+  expect((gb.model, gb.pix)) == (jpeg.Model.Gray, g.pix)
+  let n = image.Image{width: 1, height: 1, model: image.Model.NRGBA, pix: b"\x00\x00\x00\x00"}
+  expect(n.to_jpeg().is_none()) == true
 }
 `)
 	return o.String()

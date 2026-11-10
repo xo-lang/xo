@@ -1,5 +1,19 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image YCbCr (planes, at, sub_image) and from_jpeg, Image.to_jpeg (decision 0578 step 1)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: image (YCbCr At and SubImage for the six subsampling ratios), image/color (YCbCr.RGBA)
+- Test: testdata/corpus/image: 3 random 5 by 4 images for each of the six ratios, probed whole and through three sub images (inside, clipped, at the edge) with At from Go, on arm64, LLVM and the Go backend; from_jpeg and to_jpeg keep samples and subsampling
+- Timing: at() is per pixel; the YCbCr fast paths come with draw (step 2)
+- Shipped in: not yet released
+
+`Image` gains the planes `y`, `cb`, `cr`, their strides `y_stride`, `c_stride` and `subsample` (std/jpeg's enum) for the YCbCr model. `at` and `sub_image` handle YCbCr;
+`crop` returns the sub image for YCbCr (planes are not packed yet). `image.from_jpeg(j)` and `Image.to_jpeg()` convert to and from `jpeg.Image`
+(`jpeg.Image` is unchanged, option A of decision 0578).
+
 ## 2026-11-09: feature: std/image from_png and Image.to_png (decision 0578 step 1, option A)
 
 - Kind: feature

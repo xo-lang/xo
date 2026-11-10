@@ -8246,21 +8246,24 @@ std/jpeg, `Rect`, `Color`, `Image`, and the integer color conversions Go compute
 struct Rect { x0: Int, y0: Int, x1: Int, y1: Int }
 struct Color { r: Int, g: Int, b: Int, a: Int }       // 16 bit channels, alpha premultiplied (Go's RGBA())
 enum Model { Gray, Gray16, Paletted, RGBA, NRGBA, RGBA64, NRGBA64, CMYK, YCbCr }
-struct Image { width: Int, height: Int, model: Model, pix: Bytes, stride: Int = 0, palette: List[Int] = [], min_x: Int = 0, min_y: Int = 0 }
+struct Image { width: Int, height: Int, model: Model, pix: Bytes, stride: Int = 0, palette: List[Int] = [], min_x: Int = 0, min_y: Int = 0,
+               y: Bytes = b"", cb: Bytes = b"", cr: Bytes = b"", y_stride: Int = 0, c_stride: Int = 0, subsample: jpeg.Subsample = S444 }
 fn (c: Color) gray() -> Int                      // color.GrayModel: (19595 r + 38470 g + 7471 b + 1<<15) >> 24
 fn (c: Color) gray16() -> Int                    // color.Gray16Model: the same sum >> 16
 fn (c: Color) nrgba() -> Int                     // color.NRGBAModel as 0xRRGGBBAA
 fn from_nrgba(v: Int) -> Color                   // color.NRGBA.RGBA()
-fn (im: Image) at(x: Int, y: Int) -> Color  // Go's At(x, y).RGBA(); not YCbCr yet; outside the image Go's zero values
+fn (im: Image) at(x: Int, y: Int) -> Color  // Go's At(x, y).RGBA(); outside the image Go's zero values
 fn web_safe() -> List[Int]                        // palette.WebSafe as 0xRRGGBBAA
 fn plan9() -> List[Int]                           // palette.Plan9 as 0xRRGGBBAA
 fn (var im: Image) set(x: Int, y: Int, c: Color)  // Go's Set: the model's conversion of c; outside the image is ignored; linear in the image (Bytes is immutable)
-fn (im: Image) sub_image(r: Rect) -> Image  // Go's SubImage: clipped, shares pix, keeps coordinates (min_x, min_y) and stride; not YCbCr yet
+fn (im: Image) sub_image(r: Rect) -> Image  // Go's SubImage: clipped, shares the samples, keeps coordinates (min_x, min_y) and strides
 fn (im: Image) crop(r: Rect) -> Image       // sub_image with the rows packed tightly (stride 0)
-fn (im: Image) to_rgba() -> Image                // every pixel through color.RGBAModel: premultiplied 8 bit, tight rows; not YCbCr yet
+fn (im: Image) to_rgba() -> Image                // every pixel through color.RGBAModel: premultiplied 8 bit, tight rows
 fn (im: Image) to_nrgba() -> Image               // color.NRGBAModel (an NRGBA sample or palette entry is kept as it is)
 fn from_png(p: png.Image) -> Image              // the same model and pixels (moved), corner (0, 0)
 fn (im: Image) to_png() -> png.Image?            // tight rows (a sub image is cropped); None for CMYK and YCbCr
+fn from_jpeg(j: jpeg.Image) -> Image            // Gray, CMYK, RGBA and YCbCr (planes and subsample) move without a copy
+fn (im: Image) to_jpeg() -> jpeg.Image?          // None for models JPEG lacks and for a YCbCr sub image
 fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
 fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int)
 fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int)

@@ -4,6 +4,7 @@
 // needs. Pure.
 
 use std/png
+use std/jpeg
 
 /// Go's image.Rectangle: x0 <= x < x1 and y0 <= y < y1.
 struct Rect {
@@ -42,7 +43,9 @@ enum Model {
 /// Rect().Min; 0, 0 for a decoded image) and whose size is `width` by
 /// `height`. `pix` holds rows of `stride` bytes; a view made by
 /// `sub_image` keeps the parent's stride. `palette` is for Paletted, one
-/// `0xRRGGBBAA` (not premultiplied) per index.
+/// `0xRRGGBBAA` (not premultiplied) per index. A YCbCr image keeps its samples
+/// in the planes `y`, `cb` and `cr` (rows of `y_stride` and `c_stride` bytes,
+/// 0 for tight rows; the chroma subsampled by `subsample`) and `pix` is empty.
 struct Image {
   width: Int
   height: Int
@@ -52,6 +55,12 @@ struct Image {
   palette: List[Int] = []
   min_x: Int = 0
   min_y: Int = 0
+  y: Bytes = b""
+  cb: Bytes = b""
+  cr: Bytes = b""
+  y_stride: Int = 0
+  c_stride: Int = 0
+  subsample: jpeg.Subsample = jpeg.Subsample.S444
 }
 
 /// Go's color.GrayModel: the 8 bit luma of c, (19595 r + 38470 g + 7471 b +
@@ -130,3 +139,12 @@ fn from_png(p: png.Image) -> Image
 /// (0, 0): a sub image is cropped first), or None for a model PNG has no
 /// layout for (CMYK, YCbCr).
 fn (im: Image) to_png() -> png.Image?
+
+/// The image of a decoded JPEG (the samples move, no copy): Gray, CMYK and
+/// RGBA keep their layout, YCbCr keeps its planes and chroma subsampling.
+fn from_jpeg(j: jpeg.Image) -> Image
+
+/// The JPEG form of the image (std/jpeg's Image, tight rows from (0, 0)), or
+/// None for a model JPEG has no layout for (everything but Gray, YCbCr, CMYK
+/// and RGBA) and for a YCbCr sub image (crop does not pack planes yet).
+fn (im: Image) to_jpeg() -> jpeg.Image?

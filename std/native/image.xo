@@ -4,6 +4,7 @@
 // arithmetic, so the values are the bytes Go computes.
 use std/image
 use std/png
+use std/jpeg
 
 /// Go's color.GrayModel: (19595 r + 38470 g + 7471 b + 1<<15) >> 24 over the
 /// 16 bit premultiplied channels.
@@ -178,7 +179,66 @@ fn image_at(im: image.Image, ax: Int, ay: Int) -> image.Color {
       let w = 65535 - k * 257
       image.Color{r: ((65535 - c * 257) * w) / 65535, g: ((65535 - m * 257) * w) / 65535, b: ((65535 - yy * 257) * w) / 65535, a: 65535}
     }
-    image.Model.YCbCr => image.Color{r: 0, g: 0, b: 0, a: 65535}
+    image.Model.YCbCr => {
+      var yy = 0
+      var cb = 0
+      var cr = 0
+      if inside {
+        let ys = if im.y_stride > 0 { im.y_stride } else { im.width }
+        let yi = y * ys + x
+        let ci = chroma_index(im, ax, ay)
+        yy = Int(im.y[yi])
+        cb = Int(im.cb[ci])
+        cr = Int(im.cr[ci])
+      }
+      ycc_color(yy, cb, cr)
+    }
+  }
+}
+
+/// Go's color.YCbCr.RGBA: 16 bit channels with the clamp of its int32 math.
+fn ycc_color(y: Int, cb: Int, cr: Int) -> image.Color {
+  let yy1 = y * 65793
+  let cb1 = cb - 128
+  let cr1 = cr - 128
+  image.Color{r: ycc_clamp(yy1 + 91881 * cr1), g: ycc_clamp(yy1 - 22554 * cb1 - 46802 * cr1), b: ycc_clamp(yy1 + 116130 * cb1), a: 65535}
+}
+
+fn ycc_clamp(v: Int) -> Int {
+  if (v & 4278190080) == 0 {
+    return v >> 8
+  }
+  if v < 0 {
+    return 0
+  }
+  65535
+}
+
+/// Go's YCbCr.COffset: the index of the chroma sample of the absolute pixel
+/// (ax, ay), for the subsampling ratio.
+fn chroma_index(im: image.Image, ax: Int, ay: Int) -> Int {
+  let cs = if im.c_stride > 0 { im.c_stride } else { chroma_width(im.width, im.subsample) }
+  let rx = ax - im.min_x
+  let ry = ay - im.min_y
+  match im.subsample {
+    jpeg.Subsample.S444 => ry * cs + rx
+    jpeg.Subsample.S422 => ry * cs + (ax / 2 - im.min_x / 2)
+    jpeg.Subsample.S420 => (ay / 2 - im.min_y / 2) * cs + (ax / 2 - im.min_x / 2)
+    jpeg.Subsample.S440 => (ay / 2 - im.min_y / 2) * cs + rx
+    jpeg.Subsample.S411 => ry * cs + (ax / 4 - im.min_x / 4)
+    jpeg.Subsample.S410 => (ay / 2 - im.min_y / 2) * cs + (ax / 4 - im.min_x / 4)
+  }
+}
+
+/// The width of a chroma row of a tight YCbCr image (Go's CStride).
+fn chroma_width(w: Int, s: jpeg.Subsample) -> Int {
+  match s {
+    jpeg.Subsample.S444 => w
+    jpeg.Subsample.S440 => w
+    jpeg.Subsample.S422 => (w + 1) / 2
+    jpeg.Subsample.S420 => (w + 1) / 2
+    jpeg.Subsample.S411 => (w + 3) / 4
+    jpeg.Subsample.S410 => (w + 3) / 4
   }
 }
 
@@ -375,8 +435,16 @@ fn image_sub_image(im: image.Image, r: image.Rect) -> image.Image {
   let y0 = if r.y0 > im.min_y { r.y0 } else { im.min_y }
   let x1 = if r.x1 < im.min_x + im.width { r.x1 } else { im.min_x + im.width }
   let y1 = if r.y1 < im.min_y + im.height { r.y1 } else { im.min_y + im.height }
-  if bpp == 0 || x0 >= x1 || y0 >= y1 {
+  if x0 >= x1 || y0 >= y1 || (bpp == 0 && im.model != image.Model.YCbCr) {
     return image.Image{width: 0, height: 0, model: im.model, pix: b"", palette: im.palette}
+  }
+  if im.model == image.Model.YCbCr {
+    let ys = if im.y_stride > 0 { im.y_stride } else { im.width }
+    let cs = if im.c_stride > 0 { im.c_stride } else { chroma_width(im.width, im.subsample) }
+    let sub = image.Image{width: x1 - x0, height: y1 - y0, model: im.model, pix: b"", min_x: x0, min_y: y0, y_stride: ys, c_stride: cs, subsample: im.subsample}
+    let yi = (y0 - im.min_y) * ys + (x0 - im.min_x)
+    let ci = chroma_index(im, x0, y0)
+    return sub with {y: im.y[yi..im.y.len()], cb: im.cb[ci..im.cb.len()], cr: im.cr[ci..im.cr.len()]}
   }
   let stride = if im.stride > 0 { im.stride } else { im.width * bpp }
   let off = (y0 - im.min_y) * stride + (x0 - im.min_x) * bpp
@@ -387,7 +455,7 @@ fn image_sub_image(im: image.Image, r: image.Rect) -> image.Image {
 fn image_crop(im: image.Image, r: image.Rect) -> image.Image {
   let s = image_sub_image(im, r)
   let bpp = model_bpp(s.model)
-  if s.width == 0 {
+  if s.width == 0 || s.model == image.Model.YCbCr {
     return s
   }
   var b = BytesBuilder.with_capacity(s.width * s.height * bpp)
@@ -469,5 +537,40 @@ fn image_to_png(im: image.Image) -> png.Image? {
   let tight = im.stride == 0 && im.min_x == 0 && im.min_y == 0
   let src = if tight { im } else { image_crop(im, image.Rect{x0: im.min_x, y0: im.min_y, x1: im.min_x + im.width, y1: im.min_y + im.height}) }
   Some(png.Image{width: src.width, height: src.height, model: m, pix: src.pix, palette: src.palette})
+}
+
+fn from_jpeg(j: jpeg.Image) -> image.Image {
+  let m = match j.model {
+    jpeg.Model.Gray => image.Model.Gray
+    jpeg.Model.YCbCr => image.Model.YCbCr
+    jpeg.Model.CMYK => image.Model.CMYK
+    jpeg.Model.RGBA => image.Model.RGBA
+  }
+  image.Image{width: j.width, height: j.height, model: m, pix: j.pix, y: j.y, cb: j.cb, cr: j.cr, subsample: j.subsample}
+}
+
+fn image_to_jpeg(im: image.Image) -> jpeg.Image? {
+  let tight = im.stride == 0 && im.min_x == 0 && im.min_y == 0 && im.y_stride == 0 && im.c_stride == 0
+  match im.model {
+    image.Model.YCbCr => {
+      if !tight {
+        return None
+      }
+      Some(jpeg.Image{width: im.width, height: im.height, model: jpeg.Model.YCbCr, subsample: im.subsample, y: im.y, cb: im.cb, cr: im.cr})
+    }
+    image.Model.Gray => {
+      let src = if tight { im } else { image_crop(im, image.Rect{x0: im.min_x, y0: im.min_y, x1: im.min_x + im.width, y1: im.min_y + im.height}) }
+      Some(jpeg.Image{width: src.width, height: src.height, model: jpeg.Model.Gray, pix: src.pix})
+    }
+    image.Model.CMYK => {
+      let src = if tight { im } else { image_crop(im, image.Rect{x0: im.min_x, y0: im.min_y, x1: im.min_x + im.width, y1: im.min_y + im.height}) }
+      Some(jpeg.Image{width: src.width, height: src.height, model: jpeg.Model.CMYK, pix: src.pix})
+    }
+    image.Model.RGBA => {
+      let src = if tight { im } else { image_crop(im, image.Rect{x0: im.min_x, y0: im.min_y, x1: im.min_x + im.width, y1: im.min_y + im.height}) }
+      Some(jpeg.Image{width: src.width, height: src.height, model: jpeg.Model.RGBA, pix: src.pix})
+    }
+    _ => None
+  }
 }
 
