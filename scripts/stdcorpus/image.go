@@ -7,6 +7,9 @@ import (
 	"image/color/palette"
 	"image/draw"
 	"math/rand"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -962,6 +965,18 @@ test "Image.fill is Go's draw.Draw from a Uniform" {
   }
 }
 `)
+
+	// x/image/draw scaling, from its own module (imagescaleoracle).
+	{
+		cmd := exec.Command("go", "run", ".")
+		cmd.Dir = filepath.Join("scripts", "stdcorpus", "imagescaleoracle")
+		cmd.Stderr = os.Stderr
+		out, err := cmd.Output()
+		if err != nil {
+			panic("imagescaleoracle: " + err.Error())
+		}
+		o.Write(out)
+	}
 
 	// draw.FloydSteinberg onto a Paletted image of the 216 web safe colors.
 	o.WriteString("\n/// (src model, src pix, palette, (y, cb, cr), rect, sp, pix after): draw.FloydSteinberg onto a Paletted image of palette.WebSafe.\nconst FS_CASES: List[(Str, Bytes, List[Int], (Bytes, Bytes, Bytes), (Int, Int, Int, Int), (Int, Int), Bytes)] = [\n")

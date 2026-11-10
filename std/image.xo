@@ -182,6 +182,20 @@ fn (var dst: Image) draw_mask(r: Rect, src: Image, sp_x: Int, sp_y: Int, mask: I
 /// image, with Src or Over (an opaque c fills as Src either way).
 fn (var dst: Image) fill(r: Rect, c: Color, op: Op)
 
+/// The interpolation algorithms of golang.org/x/image/draw.
+enum Kernel {
+  NearestNeighbor
+} derive Eq, Display
+
+/// golang.org/x/image/draw's Scale: scales the part of src over sr to the
+/// part of the image over dr (clipped to the image), with the Porter-Duff op
+/// and the interpolator. Equal sizes of dr and sr draw without scaling, as
+/// the Go function does. NearestNeighbor picks, for destination pixel
+/// (dx, dy) of dr, the source pixel at ((2 dx + 1) sw / (2 dw), (2 dy + 1) sh /
+/// (2 dh)) from sr's corner; source pixels outside the source image read as
+/// transparent black (or the palette's first entry).
+fn (var dst: Image) scale(dr: Rect, src: Image, sr: Rect, op: Op, kernel: Kernel)
+
 /// Go's draw.FloydSteinberg.Draw (the Src op with Floyd-Steinberg error
 /// diffusion) onto a Paletted image: the part of src over r, clipped as draw
 /// clips it, quantized to the nearest palette entry (Go's sum of squared

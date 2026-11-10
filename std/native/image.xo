@@ -934,3 +934,42 @@ fn image_draw_mask(var dst: image.Image, r: image.Rect, src: image.Image, spx: I
 fn image_fill(var dst: image.Image, r: image.Rect, c: image.Color, op: image.Op) -> () {
   draw_general(dst, r, dst, true, c, 0, 0, None, 0, 0, op)
 }
+
+/// x/image/draw's Scale (see the declaration).
+fn image_scale(var dst: image.Image, dr: image.Rect, src: image.Image, sr: image.Rect, op: image.Op, kernel: image.Kernel) -> () {
+  let dw = dr.x1 - dr.x0
+  let dh = dr.y1 - dr.y0
+  let sw = sr.x1 - sr.x0
+  let sh = sr.y1 - sr.y0
+  if dw == sw && dh == sh {
+    image_draw(dst, dr, src, sr.x0, sr.y0, op)
+    return
+  }
+  if dst.model == image.Model.YCbCr || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0 {
+    return
+  }
+  let ax0 = imax(dr.x0, dst.min_x)
+  let ay0 = imax(dr.y0, dst.min_y)
+  let ax1 = imin(dr.x1, dst.min_x + dst.width)
+  let ay1 = imin(dr.y1, dst.min_y + dst.height)
+  if ax0 >= ax1 || ay0 >= ay1 {
+    return
+  }
+  var b = BytesBuilder.with_capacity(dst.pix.len())
+  b.write(dst.pix)
+  for y in ay0..ay1 {
+    let sy = sr.y0 + (2 * (y - dr.y0) + 1) * sh / (2 * dh)
+    for x in ax0..ax1 {
+      let sx = sr.x0 + (2 * (x - dr.x0) + 1) * sw / (2 * dw)
+      let sc = image_at(src, sx, sy)
+      if op == image.Op.Over {
+        let dc = image_at(dst, x, y)
+        let pa1 = 65535 - sc.a
+        store_color(b, dst, x, y, image.Color{r: (dc.r * pa1 / 65535 + sc.r) & 65535, g: (dc.g * pa1 / 65535 + sc.g) & 65535, b: (dc.b * pa1 / 65535 + sc.b) & 65535, a: (dc.a * pa1 / 65535 + sc.a) & 65535})
+      } else {
+        store_color(b, dst, x, y, sc)
+      }
+    }
+  }
+  dst.pix = b.freeze()
+}

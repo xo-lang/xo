@@ -8268,6 +8268,8 @@ enum Op { Over, Src }                                    // draw.Op
 fn (var dst: Image) draw(r: Rect, src: Image, sp_x: Int, sp_y: Int, op: Op)  // draw.Draw with a nil mask; Go's results per model pair; a YCbCr destination is left alone
 fn (var dst: Image) draw_mask(r: Rect, src: Image, sp_x: Int, sp_y: Int, mask: Image, mp_x: Int, mp_y: Int, op: Op)  // draw.DrawMask; the mask's alpha scales the source
 fn (var dst: Image) fill(r: Rect, c: Color, op: Op)  // draw.Draw from an image.Uniform
+enum Kernel { NearestNeighbor }  // golang.org/x/image/draw interpolators (more to follow)
+fn (var dst: Image) scale(dr: Rect, src: Image, sr: Rect, op: Op, kernel: Kernel)  // x/image/draw Scale: src over sr onto dr
 fn (var dst: Image) floyd_steinberg(r: Rect, src: Image, sp_x: Int, sp_y: Int)  // draw.FloydSteinberg onto a Paletted image; other models are left alone
 fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
 fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int)

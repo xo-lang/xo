@@ -1,5 +1,17 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image Image.scale with Kernel.NearestNeighbor (decision 0578 step 3a)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: golang.org/x/image v0.46.0 draw, NearestNeighbor.Scale (BSD license; std/image follows its generic paths, the type specific ones compute the same)
+- Test: testdata/corpus/image: 320 scale cases (8 destination models, 8 source models, both ops, five rectangles including up and down scaling, a source sub rectangle, clipping and equal sizes, which draw) byte for byte with x/image on arm64, LLVM and the Go backend; the oracle is scripts/stdcorpus/imagescaleoracle, its own module so the repository's go.mod keeps no third party requirement
+- Timing: none yet
+- Shipped in: not yet released
+
+`Image.scale(dr, src, sr, op, kernel)` with `Kernel.NearestNeighbor`; BiLinear, CatmullRom and ApproxBiLinear follow (3b).
+
 ## 2026-11-09: feature: std/image Image.draw_mask and Image.fill (decision 0578 step 2, part 3)
 
 - Kind: feature
