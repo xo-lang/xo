@@ -4213,8 +4213,10 @@ that is not a command), and `ok`. With `ok` false the object has `error`
   step or next that reached its line) or `"finish"` with `thread` and
   `frame`; `"breakpoint"` with `id`, `thread` and
   `frame` (the innermost, as in `backtrace`); `"exception"` with
-  `exception`, `code`, `subcode` (the Mach exception's), `thread` and
-  `frame`; `"exited"` with `status`; `"signaled"` with `signal`;
+  `exception`, `code`, `subcode` (the Mach exception's; on Windows the
+  faulting instruction's address), `slide` (the executable's load address
+  less its linked one, so `subcode - slide` is the address in its
+  disassembly), `thread` and `frame`; `"exited"` with `status`; `"signaled"` with `signal`;
   `"timeout"` with `ms` (`--timeout`: no stop within it, the program
   ended or, attached, detached and left running);
   `"ended"` (an attached program's end).

@@ -280,8 +280,11 @@ fn (var s: Session) stopped(r: List[Int]) -> Str uses proc {
       return "stopped at breakpoint ${id}: ${at}"
     }
   }
-  s.stopj = "\"stop\":\"exception\",\"exception\":${r[2]},\"code\":${r[3]},\"subcode\":${r[4]},\"thread\":${s.thread}${s.top_json()}"
-  "stopped by exception ${r[2]} (code ${r[3]}, subcode 0x${hex(r[4])}): ${at}"
+  // the slide too, so an address the exception names (Windows: the
+  // faulting instruction's) maps to the executable's own addresses (its
+  // disassembly, objdump) when the registers or frames do not
+  s.stopj = "\"stop\":\"exception\",\"exception\":${r[2]},\"code\":${r[3]},\"subcode\":${r[4]},\"slide\":${s.slide},\"thread\":${s.thread}${s.top_json()}"
+  "stopped by exception ${r[2]} (code ${r[3]}, subcode 0x${hex(r[4])}, slide 0x${hex(s.slide)}): ${at}"
 }
 
 fn (s: Session) top_json() -> Str {
