@@ -1,53 +1,387 @@
-// std/cookiejar (spec/std.md 58, decision 0475). Declaration file. A cookie
+// std/cookiejar (spec/std.md 58, decision 0475). A cookie
 // jar with net/http/cookiejar's rules (RFC 6265 section 5): the cookies a
 // server sets for a URL are kept, and the ones to send with a request for a
 // URL are chosen by domain, path and Secure, in Go's order. No public suffix
 // list is consulted (Go's default too). The time is a parameter, so a test
 // passes a fixed instant.
+//
+// Origin: go
+// std/cookiejar on the native backends and, through std/go_compiled.txt, on
+// the Go backend (decision 0312): one source, go1.26.1's net/http/cookiejar
+// (jar.go, punycode excluded; Copyright 2012 The Go Authors, BSD-style
+// license; THIRD_PARTY_NOTICES) with the clock a parameter and no public
+// suffix list.
+
 use std/http
+use std/netip
 
 /// One stored cookie (net/http/cookiejar's entry). Internal: use the jar.
-struct Entry {
-  name: Str
-  value: Str
-  quoted: Bool
-  domain: Str
-  path: Str
-  secure: Bool
+pub struct Entry {
+  pub name: Str
+  pub value: Str
+  pub quoted: Bool
+  pub domain: Str
+  pub path: Str
+  pub secure: Bool
   /// false for a session cookie (expires is then not used)
-  persistent: Bool
-  host_only: Bool
-  expires: Time
-  creation: Time
-  last_access: Time
-  seq: Int
+  pub persistent: Bool
+  pub host_only: Bool
+  pub expires: Time
+  pub creation: Time
+  pub last_access: Time
+  pub seq: Int
 }
 
 /// A jar's state. Internal: use the methods.
-struct JarState {
+pub struct JarState {
   /// by the registrable domain key, then by `domain;path;name`
-  entries: Map[Str, Map[Str, Entry]]
-  next_seq: Int
+  pub entries: Map[Str, Map[Str, Entry]]
+  pub next_seq: Int
 }
 
 /// A cookie jar. A handle: copies share the cookies, and tasks may use it
 /// at once.
-struct Jar {
-  st: Mutex[JarState]
+pub struct Jar {
+  pub st: Mutex[JarState]
 }
 
 /// An empty jar (cookiejar.New(nil)).
-fn new() -> Jar
+pub fn new() -> Jar {
+  Jar{st: Mutex[JarState].new(JarState{entries: {}, next_seq: 0})}
+}
 
 /// Stores the cookies a server set for url (Jar.SetCookies): none for a
 /// scheme other than http and https, one that has a bad Domain attribute
 /// (not the host or a parent of it, or an IP host with a Domain) is
 /// ignored, a Max-Age below 0 or an Expires not after now deletes. A host
 /// that is not ASCII is ignored (no IDNA yet).
-fn (j: Jar) set_cookies(url: http.Url, cookies: List[http.Cookie], now: Time)
+pub fn (j: Jar) set_cookies(url: http.Url, cookies: List[http.Cookie], now: Time) {
+  if cookies.is_empty() {
+    return
+  }
+  let host = url_host(url) ?? ""
+  if host.is_empty() {
+    return
+  }
+  let key = jar_key(host)
+  let def_path = default_path(url.path)
+  j.st.with(fn(var s: JarState) {
+    let base = s.next_seq
+    // changed in place through update, as in jar_cookies; the closure
+    // returns how many sequence numbers it took
+    let (used, empty) = s.entries.update(key, {}, fn(var sub: Map[Str, Entry]) -> (Int, Bool) {
+      var used = 0
+      for c in cookies {
+        let r = new_entry(c, now, def_path, host) ?? continue
+        var e = r.0
+        let id = entry_id(e.domain, e.path, e.name)
+        if r.1 {
+          let _old = sub.remove(id)
+          continue
+        }
+        match sub.get(id) {
+          Some(old) => {
+            e.creation = old.creation
+            e.seq = old.seq
+          }
+          None => {
+            e.creation = now
+            e.seq = base + used
+            used += 1
+          }
+        }
+        e.last_access = now
+        sub[id] = e
+      }
+      (used, sub.is_empty())
+    })
+    s.next_seq += used
+    if empty {
+      let _old = s.entries.remove(key)
+    }
+  })
+}
+
 /// The cookies to send with a request for url (Jar.Cookies): name, value
 /// and quoted only, the longest path first, then the earliest created.
 /// Expired cookies are dropped.
-fn (j: Jar) cookies(url: http.Url, now: Time) -> List[http.Cookie]
+pub fn (j: Jar) cookies(url: http.Url, now: Time) -> List[http.Cookie] {
+  let host = url_host(url) ?? ""
+  if host.is_empty() {
+    return []
+  }
+  let key = jar_key(host)
+  let https = url.scheme == "https"
+  let path = if url.path.is_empty() { "/" } else { url.path }
+  let selected = j.st.with(fn(var s: JarState) -> List[Entry] {
+    if !s.entries.contains(key) {
+      return []
+    }
+    // changed in place through update (a get would share the domain's map,
+    // and the first write would copy it)
+    let (chosen, empty) = s.entries.update(key, {}, fn(var sub: Map[Str, Entry]) -> (List[Entry], Bool) {
+      var chosen: List[Entry] = []
+      var dead: List[Str] = []
+      var touched: List[Str] = []
+      for (id, e) in sub {
+        if e.persistent && !(e.expires > now) {
+          dead.push(id)
+          continue
+        }
+        if !should_send(e, https, host, path) {
+          continue
+        }
+        chosen.push(e)
+        touched.push(id)
+      }
+      for id in dead {
+        let _old = sub.remove(id)
+      }
+      for id in touched {
+        var e = sub.get(id) ?? fault("cookiejar: entry")
+        e.last_access = now
+        sub[id] = e
+      }
+      (chosen, sub.is_empty())
+    })
+    if empty {
+      let _old = s.entries.remove(key)
+    }
+    chosen
+  })
+  // by path, descending as strings, then the earliest created (RFC 6265
+  // section 5.4, as Go sorts them)
+  var sorted: List[Entry] = []
+  for e in selected {
+    var at = sorted.len()
+    while at > 0 && sends_before(e, sorted[at - 1]) {
+      at -= 1
+    }
+    sorted.insert(at, e)
+  }
+  var out: List[http.Cookie] = []
+  for e in sorted {
+    out.push(http.Cookie{name: e.name, value: e.value, quoted: e.quoted})
+  }
+  out
+}
+
 /// Forgets every cookie.
-fn (j: Jar) clear()
+pub fn (j: Jar) clear() {
+  j.st.with(fn(var s: JarState) {
+    s.entries = {}
+  })
+}
+
+/// hasDotSuffix: s ends in ".suffix".
+fn has_dot_suffix(s: Str, suffix: Str) -> Bool {
+  s.len() > suffix.len() && s.ends_with("." + suffix)
+}
+
+fn is_ascii(s: Str) -> Bool {
+  for c in s.bytes() {
+    if c >= 0x80 {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether s has only digits and dots, as an IPv4 address does: a host
+/// name fails here without a parse and its error (Go's ParseIP fails
+/// without one).
+fn ipv4_chars(s: Str) -> Bool {
+  for c in s.bytes() {
+    if !((c >= 0x30 && c <= 0x39) || c == 0x2e) {
+      return false
+    }
+  }
+  !s.is_empty()
+}
+
+/// isIP: a host with a colon or a percent is an IPv6 address, else an
+/// address that parses.
+fn is_ip(host: Str) -> Bool {
+  if host.contains(":") || host.contains("%") {
+    return true
+  }
+  if !ipv4_chars(host) {
+    return false
+  }
+  match netip.parse_addr(host) {
+    Ok(_) => true
+    Err(_) => false
+  }
+}
+
+/// canonicalHost: the host without a trailing dot, lower case; None for a
+/// host that is not ASCII. Go strips the brackets of an IPv6 host only with
+/// a port (SplitHostPort), so does this when the Url has one.
+fn canonical_host(host0: Str, has_port: Bool) -> Str? {
+  var host = host0
+  if has_port && host.starts_with("[") && host.ends_with("]") {
+    host = host[1..host.len() - 1]
+  }
+  host = host.trim_suffix(".")
+  if !is_ascii(host) {
+    return None
+  }
+  Some(host.to_lower())
+}
+
+/// jarKey with no public suffix list: the last two labels, or the host.
+fn jar_key(host: Str) -> Str {
+  if is_ip(host) {
+    return host
+  }
+  let i = host.rfind(".") ?? -1
+  if i <= 0 {
+    return host
+  }
+  let prev = host[0..i - 1].rfind(".") ?? -1
+  host[prev + 1..host.len()]
+}
+
+fn default_path(path: Str) -> Str {
+  if path.is_empty() || path[0..1] != "/" {
+    return "/"
+  }
+  let i = path.rfind("/") ?? 0
+  if i == 0 {
+    return "/"
+  }
+  path[0..i]
+}
+
+fn entry_id(domain: Str, path: Str, name: Str) -> Str { "${domain};${path};${name}" }
+
+fn domain_match(e: Entry, host: Str) -> Bool {
+  if e.domain == host {
+    return true
+  }
+  !e.host_only && has_dot_suffix(host, e.domain)
+}
+
+fn path_match(e: Entry, request_path: Str) -> Bool {
+  if request_path == e.path {
+    return true
+  }
+  if request_path.starts_with(e.path) {
+    if e.path.ends_with("/") {
+      return true
+    }
+    if request_path[e.path.len()..e.path.len() + 1] == "/" {
+      return true
+    }
+  }
+  false
+}
+
+/// isLocalhost: the last label of host is "localhost" (any case).
+fn is_localhost(host0: Str) -> Bool {
+  var host = host0.trim_suffix(".")
+  let i = host.rfind(".") ?? -1
+  if i >= 0 {
+    host = host[i + 1..host.len()]
+  }
+  host.to_lower() == "localhost"
+}
+
+/// secureMatch: a Secure cookie goes to https, and to localhost and loopback
+/// addresses over any scheme (as browsers do).
+fn secure_match(e: Entry, https: Bool) -> Bool {
+  if !e.secure || https || is_localhost(e.domain) {
+    return true
+  }
+  if !e.domain.contains(":") && !ipv4_chars(e.domain) {
+    return false
+  }
+  match netip.parse_addr(e.domain) {
+    Ok(a) => a.is_loopback()
+    Err(_) => false
+  }
+}
+
+fn should_send(e: Entry, https: Bool, host: Str, path: Str) -> Bool {
+  domain_match(e, host) && path_match(e, path) && secure_match(e, https)
+}
+
+/// The URL's host, port dropped (the Url holds it apart), if the scheme is
+/// http or https.
+fn url_host(u: http.Url) -> Str? {
+  if u.scheme != "http" && u.scheme != "https" {
+    return None
+  }
+  canonical_host(u.host, u.port != None)
+}
+
+/// Whether a goes before b: the greater path first, then the earlier
+/// creation, then the lower sequence number.
+fn sends_before(a: Entry, b: Entry) -> Bool {
+  if a.path != b.path {
+    return a.path > b.path
+  }
+  if a.creation != b.creation {
+    return a.creation < b.creation
+  }
+  a.seq < b.seq
+}
+
+/// domainAndType: the cookie's domain and whether it is host only, or None
+/// when the Domain attribute is not allowed.
+fn domain_and_type(host: Str, domain0: Str) -> (Str, Bool)? {
+  if domain0.is_empty() {
+    return Some((host, true))
+  }
+  if is_ip(host) {
+    if host != domain0 {
+      return None
+    }
+    return Some((host, true))
+  }
+  var domain = domain0
+  if domain.starts_with(".") {
+    domain = domain[1..domain.len()]
+  }
+  if domain.is_empty() || domain.starts_with(".") {
+    return None
+  }
+  if !is_ascii(domain) {
+    return None
+  }
+  domain = domain.to_lower()
+  if domain.ends_with(".") {
+    return None
+  }
+  if host != domain && !has_dot_suffix(host, domain) {
+    return None
+  }
+  Some((domain, false))
+}
+
+/// newEntry: the entry of a cookie, or (when remove is true) a request to
+/// delete it; None for an illegal Domain.
+fn new_entry(c: http.Cookie, now: Time, def_path: Str, host: Str) -> (Entry, Bool)? {
+  let dt = domain_and_type(host, c.domain) ?? return None
+  let path = if c.path.is_empty() || c.path[0..1] != "/" { def_path } else { c.path }
+  var e = Entry{name: c.name, value: c.value, quoted: c.quoted, domain: dt.0, path: path, secure: c.secure, persistent: false, host_only: dt.1, expires: now, creation: now, last_access: now, seq: 0}
+  if c.max_age < 0 {
+    return Some((e, true))
+  }
+  if c.max_age > 0 {
+    e.expires = now + Duration.from_secs_int(c.max_age)
+    e.persistent = true
+  } else {
+    match c.expires {
+      None => {}
+      Some(t) => {
+        if !(t > now) {
+          return Some((e, true))
+        }
+        e.expires = t
+        e.persistent = true
+      }
+    }
+  }
+  Some((e, false))
+}

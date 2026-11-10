@@ -1,22 +1,39 @@
-// std/smtp (spec/std.md 29, decision 0290). Declaration file; encoding
+// std/smtp (spec/std.md 29, decision 0290). Encoding
 // rules are listed at the top of std/prelude.xo. Go's net/smtp SendMail
 // as one call: STARTTLS through std/tls, PLAIN and CRAM-MD5, Go's checks
 // and texts.
+//
+// std/smtp on the native backends (decision 0290): Go's net/smtp
+// SendMail (smtp.go of go1.26: Client.hello, ehlo, StartTLS, Auth, Mail,
+// Rcpt, Data, Quit; auth.go's PlainAuth and CRAMMD5Auth) with
+// net/textproto's reply reader (ReadResponse) and dot writer, ported with
+// Go's checks and texts. STARTTLS is required unless Security says
+// otherwise, and plain text goes only to a loopback host (decision 0290).
+
+use std/base64
+use std/crypto
+use std/netip
+use std/tls
 
 /// A failed send: the server's reply code and text (`550 5.1.1 no such
 /// user`), or code 0 for an error found before or outside a reply (a
 /// connection error, a CR or LF in an address, `smtp: server doesn't
 /// support STARTTLS`).
-struct SmtpErr {
-  code: Int
-  msg: Str
+pub struct SmtpErr {
+  pub code: Int
+  pub msg: Str
 }
 
 /// `CODE MSG` (net/textproto's Error), or MSG alone for code 0 (decision 0358).
-fn (e: SmtpErr) display() -> Str
+pub fn (e: SmtpErr) display() -> Str {
+  if e.code == 0 {
+    return e.msg
+  }
+  "${e.code} ${e.msg}"
+}
 
 /// How the client authenticates (net/smtp PlainAuth, CRAMMD5Auth).
-enum Auth {
+pub enum Auth {
   None
   Plain(user: Str, password: Secret[Str])
   CramMd5(user: Str, secret: Secret[Str])
@@ -26,7 +43,7 @@ enum Auth {
 /// server's STARTTLS (the default); `Tls` is implicit TLS from the first
 /// byte (port 465); `None` sends in plain text, allowed only to a
 /// loopback host.
-enum Security {
+pub enum Security {
   StartTls
   Tls
   None
@@ -38,4 +55,344 @@ enum Security {
 /// EHLO (HELO when refused), STARTTLS with the server's name verified
 /// (against roots, a PEM bundle, when given; else the system roots), AUTH,
 /// MAIL FROM, RCPT TO for each, DATA (dot stuffed, CRLF), QUIT.
-fn send(net: Net, addr: Str, from: Str, to: List[Str], msg: Bytes, auth: Auth = Auth.None, security: Security = Security.StartTls, roots: Bytes = b"", hello: Str = "localhost") -> () ! SmtpErr uses net.dial
+pub fn send(net: Net, addr: Str, from: Str, to: List[Str], msg: Bytes, auth: Auth = Auth.None, security: Security = Security.StartTls, roots: Bytes = b"", hello: Str = "localhost") -> () ! SmtpErr uses net.dial {
+  validate_line(from)?
+  for r in to {
+    validate_line(r)?
+  }
+  validate_line(hello)?
+  let host = host_of(addr)
+  if security is None && !is_loopback_host(host) {
+    return Err(fail(0, "smtp: plain text only to a loopback host (Security.None); use StartTls or Tls"))
+  }
+  let rs = if roots.is_empty() { None } else { Some(tls.roots(roots).map_err(fn(e) { fail(0, "${e}") })?) }
+  let conn = net.dial(addr).map_err(net_fail)?
+  var c = match security {
+    Tls => Client{link: Link.Tls(tls.client(conn, host, roots: rs).map_err(net_fail)?), is_tls: true, host: host}
+    StartTls | None => Client{link: Link.Plain(conn), host: host}
+  }
+  let r = run(c, from, to, msg, auth, security, rs, hello)
+  c.link.close()
+  r
+}
+
+fn fail(code: Int, msg: Str) -> SmtpErr { SmtpErr{code: code, msg: msg} }
+
+fn net_fail(e: NetErr) -> SmtpErr { fail(0, "${e}") }
+
+/// The connection, plain or after STARTTLS (std/sql's Postgres Link).
+enum Link {
+  Plain(c: Conn)
+  Tls(t: tls.TlsConn)
+}
+
+fn (l: Link) read(max: Int) -> Bytes? ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.read(max)
+    Tls(t) => t.read(max)
+  }
+}
+
+fn (l: Link) write(data: Bytes) -> () ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.write(data)
+    Tls(t) => t.write(data)
+  }
+}
+
+fn (l: Link) close() {
+  match l {
+    Plain(c) => c.close()
+    Tls(t) => t.close()
+  }
+}
+
+/// A client (go Client): the connection, the bytes read and not yet
+/// taken, the server's EHLO extensions (upper case keyword to its
+/// parameters), whether the connection is TLS, and the server's name.
+struct Client {
+  link: Link
+  buf: Bytes = b""
+  ext: Map[Str, Str] = {}
+  /// whether EHLO succeeded (Go's c.ext != nil): after the HELO fallback
+  /// there are no extensions, so no AUTH and no BODY=8BITMIME
+  has_ext: Bool = false
+  is_tls: Bool = false
+  host: Str
+}
+
+/// One line of the server, without its CRLF (textproto.Reader.ReadLine).
+fn (var c: Client) line() -> Str ! SmtpErr uses net.dial {
+  while true {
+    var i = 0
+    while i < c.buf.len() && c.buf[i] != '\n' {
+      i += 1
+    }
+    if i < c.buf.len() {
+      let raw = c.buf[0..i]
+      c.buf = c.buf[i + 1..]
+      let s = raw.to_str() ?? ""
+      return Ok(s.trim_suffix("\r"))
+    }
+    match c.link.read(4096).map_err(net_fail)? {
+      Some(b) => c.buf = c.buf + b
+      None => return Err(fail(0, "EOF"))
+    }
+  }
+  Err(fail(0, "EOF"))
+}
+
+/// parseCodeLine: the code, whether it goes on, the text, and whether
+/// the line is a protocol error ("short response", "invalid response
+/// code").
+fn parse_code_line(l: Str) -> (Int, Bool, Str, Str) {
+  let b = l.bytes()
+  if b.len() < 4 || !(b[3] == ' ' || b[3] == '-') {
+    return (0, false, "", "short response: ${l}")
+  }
+  let n = Int.parse(l[0..3]) ?? -1
+  if n < 100 {
+    return (0, false, "", "invalid response code: ${l}")
+  }
+  (n, b[3] == '-', l[4..], "")
+}
+
+/// Whether code meets expect (parseCodeLine: 1 to 9 the first digit, 10
+/// to 99 the first two, 100 to 999 all; 0 any).
+fn code_ok(code: Int, expect: Int) -> Bool {
+  if expect >= 1 && expect < 10 {
+    return code / 100 == expect
+  }
+  if expect >= 10 && expect < 100 {
+    return code / 10 == expect
+  }
+  if expect >= 100 && expect < 1000 {
+    return code == expect
+  }
+  true
+}
+
+/// A reply (textproto.Reader.ReadResponse): its code and its text, the
+/// lines of a multi-line reply joined by "\n" (a continuation line with
+/// another code, or not a code line, is kept whole and reading goes on);
+/// an error unless the code meets expect (code_ok).
+fn (var c: Client) reply(expect: Int) -> (Int, Str) ! SmtpErr uses net.dial {
+  let first = c.line()?
+  let (code, cont0, msg0, perr) = parse_code_line(first)
+  if !perr.is_empty() {
+    return Err(fail(0, perr))
+  }
+  var msg = msg0
+  var continued = cont0
+  while continued {
+    let l = c.line()?
+    let (code2, cont2, more, perr2) = parse_code_line(l)
+    if !perr2.is_empty() || code2 != code {
+      msg = "${msg}\n${l}"
+      continued = true
+      continue
+    }
+    msg = "${msg}\n${more}"
+    continued = cont2
+  }
+  if !code_ok(code, expect) {
+    return Err(fail(code, msg))
+  }
+  Ok((code, msg))
+}
+
+/// Sends a command line and reads its reply (Client.cmd).
+fn (var c: Client) cmd(expect: Int, line: Str) -> (Int, Str) ! SmtpErr uses net.dial {
+  c.link.write("${line}\r\n".bytes()).map_err(net_fail)?
+  c.reply(expect)
+}
+
+/// EHLO, the extensions from its reply (Client.ehlo).
+fn (var c: Client) ehlo(name: Str) -> () ! SmtpErr uses net.dial {
+  let (_, msg) = c.cmd(250, "EHLO ${name}")?
+  // the names as the server writes them (Go's ext map; SendMail looks
+  // up "AUTH" and "8BITMIME" as written)
+  var ext: Map[Str, Str] = {}
+  let lines = msg.split("\n")
+  for l in lines[1..] {
+    match l.find(" ") {
+      Some(i) => ext[l[0..i]] = l[i + 1..]
+      None => ext[l] = ""
+    }
+  }
+  c.ext = ext
+  c.has_ext = true
+  Ok(())
+}
+
+/// EHLO, then HELO when the server refuses it (Client.hello).
+fn (var c: Client) hello(name: Str) -> () ! SmtpErr uses net.dial {
+  match c.ehlo(name) {
+    Ok(_) => Ok(())
+    Err(_) => {
+      c.ext = {}
+      c.has_ext = false
+      let _ = c.cmd(250, "HELO ${name}")?
+      Ok(())
+    }
+  }
+}
+
+/// go validateLine: no CR or LF in a line the client sends.
+fn validate_line(s: Str) -> () ! SmtpErr {
+  if s.contains("\r") || s.contains("\n") {
+    return Err(fail(0, "smtp: A line must not contain CR or LF"))
+  }
+  Ok(())
+}
+
+/// auth.go isLocalhost, and a loopback IP address (decision 0290's plain
+/// text rule).
+fn is_loopback_host(host: Str) -> Bool {
+  if host == "localhost" {
+    return true
+  }
+  let h = host.trim_prefix("[").trim_suffix("]")
+  match netip.parse_addr(h) {
+    Ok(a) => a.is_loopback()
+    Err(_) => false
+  }
+}
+
+/// The host of `host:port` (net.SplitHostPort's host, brackets removed).
+fn host_of(addr: Str) -> Str {
+  let b = addr.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != ':' {
+    i -= 1
+  }
+  let h = if i < 0 { addr } else { addr[0..i] }
+  h.trim_prefix("[").trim_suffix("]")
+}
+
+/// Client.Auth's abort: "*", then QUIT, their replies ignored.
+fn (var c: Client) abort_auth() uses net.dial {
+  let _ = c.cmd(501, "*").ignore_err("the exchange's own error is the one reported")
+  let _ = c.cmd(221, "QUIT").ignore_err("quitting after a failed AUTH")
+}
+
+/// AUTH (Client.Auth with auth.go's PlainAuth and CRAMMD5Auth): the
+/// mechanism and its first response, then while the server answers 334,
+/// the answer to its challenge; 235 ends it; another reply, a challenge
+/// that is not base64, or a challenge PLAIN does not expect cancels the
+/// exchange ("*", then QUIT) and is the error.
+fn (var c: Client) auth(a: Auth) -> () ! SmtpErr uses net.dial {
+  var line = ""
+  match a {
+    None => return Ok(())
+    Plain(user, password) => {
+      if !c.is_tls && !is_loopback_host(c.host) {
+        // PlainAuth.Start's error: Auth quits
+        let _ = c.cmd(221, "QUIT").ignore_err("quitting after a refused AUTH")
+        return Err(fail(0, "unencrypted connection"))
+      }
+      let resp = b"\x00" + user.bytes() + b"\x00" + password.reveal().bytes()
+      line = "AUTH PLAIN ${base64.encode(resp)}"
+    }
+    CramMd5(_, _) => line = "AUTH CRAM-MD5"
+  }
+  let r0 = c.cmd(0, line)?
+  var code = r0.0
+  var msg = r0.1
+  while true {
+    if code == 235 {
+      // Next(msg, false): both mechanisms are done
+      return Ok(())
+    }
+    if code != 334 {
+      c.abort_auth()
+      return Err(fail(code, msg))
+    }
+    let challenge = match base64.decode(msg) {
+      Ok(x) => x
+      Err(e) => {
+        c.abort_auth()
+        return Err(fail(0, "${e}"))
+      }
+    }
+    let answer = match a {
+      CramMd5(user, secret) => "${user} ${crypto.hmac(crypto.Hash.Md5, secret.reveal().bytes(), challenge).to_hex()}"
+      None | Plain(..) => {
+        c.abort_auth()
+        return Err(fail(0, "unexpected server challenge"))
+      }
+    }
+    let r = c.cmd(0, base64.encode(answer.bytes()))?
+    code = r.0
+    msg = r.1
+  }
+  Ok(())
+}
+
+/// The message as DATA sends it (textproto.DotWriter): CRLF line
+/// endings, a line starting with "." doubled, and "\r\n.\r\n" at the end.
+fn dot_stuff(msg: Bytes) -> Bytes {
+  var b = BytesBuilder.with_capacity(msg.len() + 16)
+  var at_start = true
+  var prev_cr = false
+  for x in msg {
+    if at_start && x == '.' {
+      b.write_byte('.')
+    }
+    if x == '\n' && !prev_cr {
+      b.write_byte('\r')
+    }
+    b.write_byte(x)
+    prev_cr = x == '\r'
+    at_start = x == '\n'
+  }
+  // dotWriter.Close: a line in progress, or an empty message (its begin
+  // state), ends with CRLF before the dot
+  if !at_start || msg.is_empty() {
+    b.write(b"\r\n")
+  }
+  b.write(b".\r\n")
+  b.freeze()
+}
+
+fn run(var c: Client, from: Str, to: List[Str], msg: Bytes, auth: Auth, security: Security, rs: tls.Roots?, hello: Str) -> () ! SmtpErr uses net.dial {
+  let _ = c.reply(220)?
+  c.hello(hello)?
+  if security is StartTls {
+    if !c.ext.contains("STARTTLS") {
+      return Err(fail(0, "smtp: server doesn't support STARTTLS"))
+    }
+    let _ = c.cmd(220, "STARTTLS")?
+    let plain = match c.link {
+      Plain(x) => x
+      Tls(_) => return Err(fail(0, "smtp: STARTTLS on a TLS connection"))
+    }
+    c.link = Link.Tls(tls.client(plain, c.host, roots: rs).map_err(net_fail)?)
+    c.is_tls = true
+    c.buf = b""
+    c.ehlo(hello)?
+  }
+  // SendMail: AUTH only after EHLO (c.ext != nil)
+  if !(auth is None) && c.has_ext {
+    if !c.ext.contains("AUTH") {
+      return Err(fail(0, "smtp: server doesn't support AUTH"))
+    }
+    c.auth(auth)?
+  }
+  var mail = "MAIL FROM:<${from}>"
+  if c.has_ext && c.ext.contains("8BITMIME") {
+    mail = mail + " BODY=8BITMIME"
+  }
+  if c.has_ext && c.ext.contains("SMTPUTF8") {
+    mail = mail + " SMTPUTF8"
+  }
+  let _ = c.cmd(250, mail)?
+  for r in to {
+    let _ = c.cmd(25, "RCPT TO:<${r}>")?
+  }
+  let _ = c.cmd(354, "DATA")?
+  c.link.write(dot_stuff(msg)).map_err(net_fail)?
+  let _ = c.reply(250)?
+  let _ = c.cmd(221, "QUIT")?
+  Ok(())
+}

@@ -1,10 +1,9 @@
 package rt
 
-import "strconv"
-
 // Plain error messages (decision 0358): the same texts as the native
 // functions (httperr_display and the others in std/native/http.xo, tls.xo,
-// smtp.xo, template.xo). Variants without fields are told by Tag
+// template.xo; std/smtp's SmtpErr is merged, decision 0588, and the Go
+// backend compiles its display). Variants without fields are told by Tag
 // (declaration order, from 1).
 
 // M_display is `e.display()`.
@@ -45,11 +44,3 @@ func (v Tls_TlsErr) M_display(*Task) string { return v.F_msg }
 
 // M_display is `e.display()`.
 func (v Template_TemplateErr) M_display(*Task) string { return v.F_msg }
-
-// M_display is `e.display()`.
-func (v Smtp_SmtpErr) M_display(*Task) string {
-	if v.F_code == 0 {
-		return v.F_msg
-	}
-	return strconv.FormatInt(v.F_code, 10) + " " + v.F_msg
-}

@@ -47,6 +47,12 @@ type decl struct {
 	body string
 	path string
 	line int
+	// pub is a declaration marked `pub`
+	pub bool
+	// priv is a declaration without `pub` in a module merged with its
+	// implementation (decision 0588): a body helper the walk follows but
+	// not API, so neither listed nor counted
+	priv bool
 }
 
 var (
@@ -54,7 +60,7 @@ var (
 	// `[` starts a generic function's or interface method's type parameters
 	// (TestDeclaredGenericFunctions)
 	fnRe       = regexp.MustCompile(`^(?:pub\s+)?fn\s+([a-z_][A-Za-z0-9_]*)\s*[(<\[]`)
-	methodRe   = regexp.MustCompile(`^fn\s*\(\s*(?:var\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*([A-Za-z0-9_\[\]?, ]+?)\s*\)\s+([a-z_][A-Za-z0-9_]*)`)
+	methodRe   = regexp.MustCompile(`^(?:pub\s+)?fn\s*\(\s*(?:var\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*([A-Za-z0-9_\[\]?, ]+?)\s*\)\s+([a-z_][A-Za-z0-9_]*)`)
 	ifaceRe    = regexp.MustCompile(`^(?:pub\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)`)
 	ifaceMeth  = regexp.MustCompile(`^\s+fn\s+([a-z_][A-Za-z0-9_]*)\s*[(\[]`)
 	genericRe  = regexp.MustCompile(`\[.*`)
@@ -97,12 +103,14 @@ func declared(mod, path string) ([]decl, error) {
 		if m := methodRe.FindStringSubmatch(head); m != nil {
 			recv := genericRe.ReplaceAllString(strings.TrimSpace(m[1]), "")
 			out = append(out, decl{Entry: Entry{Module: mod, Symbol: recv + "." + m[2], Kind: "method"},
-				bare: m[2], recv: recv, body: body, path: path, line: bounds[0] + 1})
+				bare: m[2], recv: recv, body: body, path: path, line: bounds[0] + 1,
+				pub: strings.HasPrefix(head, "pub ")})
 			continue
 		}
 		if m := fnRe.FindStringSubmatch(head); m != nil {
 			out = append(out, decl{Entry: Entry{Module: mod, Symbol: m[1], Kind: "fn"},
-				bare: m[1], body: body, path: path, line: bounds[0] + 1})
+				bare: m[1], body: body, path: path, line: bounds[0] + 1,
+				pub: strings.HasPrefix(head, "pub ")})
 		}
 	}
 	return out, nil
@@ -292,6 +300,10 @@ func loadDecls(root string) ([]decl, error) {
 		return nil, err
 	}
 	sort.Strings(paths)
+	merged, err := mergedModules(root)
+	if err != nil {
+		return nil, err
+	}
 	var decls []decl
 	for _, p := range paths {
 		if strings.HasSuffix(p, "_test.xo") {
@@ -304,6 +316,7 @@ func loadDecls(root string) ([]decl, error) {
 		}
 		for i := range ds {
 			ds[i].path = relPath(root, p)
+			ds[i].priv = merged[mod] && !ds[i].pub
 		}
 		decls = append(decls, ds...)
 	}
@@ -354,6 +367,37 @@ func loadImplDecls(root string) ([]decl, error) {
 			ds[i].path = relPath(root, p)
 		}
 		out = append(out, ds...)
+	}
+	return out, nil
+}
+
+// apiCount is the number of decls that are API (not priv).
+func apiCount(decls []decl) int {
+	n := 0
+	for _, d := range decls {
+		if !d.priv {
+			n++
+		}
+	}
+	return n
+}
+
+// mergedModules reads std/merged.txt: the modules whose std/M.xo holds their
+// bodies (decision 0588), where only `pub` items are API.
+func mergedModules(root string) (map[string]bool, error) {
+	data, err := os.ReadFile(filepath.Join(root, "std", "merged.txt"))
+	if os.IsNotExist(err) {
+		return map[string]bool{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, l := range strings.Split(string(data), "\n") {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "std/") {
+			out[strings.TrimPrefix(l, "std/")] = true
+		}
 	}
 	return out, nil
 }
@@ -451,7 +495,7 @@ func UncoveredIn(root, text string) (entries []Entry, total int, err error) {
 		}
 	}
 	for i, d := range decls {
-		if !covered[i] {
+		if !covered[i] && !d.priv {
 			entries = append(entries, d.Entry)
 		}
 	}
@@ -461,7 +505,7 @@ func UncoveredIn(root, text string) (entries []Entry, total int, err error) {
 		}
 		return entries[i].Symbol < entries[j].Symbol
 	})
-	return entries, len(decls), nil
+	return entries, apiCount(decls), nil
 }
 
 // Edge is one resolved reference, as `xo dev edges` writes it: the
@@ -725,7 +769,7 @@ func UncoveredResolved(root string, edges []Edge) (entries []Entry, total int, i
 	}
 	impls = map[string]bool{}
 	for i, d := range decls {
-		if covered[i] {
+		if covered[i] || d.priv {
 			continue
 		}
 		entries = append(entries, d.Entry)
@@ -747,7 +791,7 @@ func UncoveredResolved(root string, edges []Edge) (entries []Entry, total int, i
 		}
 		return entries[i].Symbol < entries[j].Symbol
 	})
-	return entries, len(decls), impls, nil
+	return entries, apiCount(decls), impls, nil
 }
 
 // Rule is one allowlist line: a symbol (with a trailing * for a family) and

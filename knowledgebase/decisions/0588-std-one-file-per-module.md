@@ -216,3 +216,19 @@ commit (the lead cuts it).
 - A merged module needs an xo with the stage 1 loader: an older bin/xo on
   a newer std reads std/M.xo as declarations and fails with XO1201 on the
   first body call (gotchas/merged-std-module-needs-current-xo.md).
+- `std/otp`, `std/smtp` and `std/cookiejar` merged the same way, with a
+  script (merge_mod.py in the lead's notes) that keeps each declaration's
+  signature, including its parameter names (they are API: named
+  arguments), and renames the body's uses of the native names. std/rt's
+  hand Go `Smtp_SmtpErr.M_display` (errtext_http.go) went with it: the Go
+  backend compiles the merged module's own `display`.
+- Two limits found on the way, for choosing the next modules:
+  - a module whose types another unmerged declaration file names cannot
+    merge alone: `std/backoff` was dropped from the batch because
+    std/otlp.xo's `Exporter.backoff: backoff.Backoff` made std_gen_otlp.go
+    refer to a type std/rt no longer has. Merge such a module together
+    with the declaration files that name it (backoff, metrics and trace
+    with otlp; protobuf with protodesc, protojson and protowkt), or after
+    them.
+  - a module with a hand written Go twin in std/rt (bcrypt.go, cron.go,
+    deque.go, ...) needs that file removed or reduced in the same change.
