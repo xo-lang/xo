@@ -185,7 +185,11 @@ fn (s: Session) std_location(os: Os, rel: Str, src: Bytes, a: Int, b: Int) -> J?
   }
   if !same {
     // read only, so the editor shows it cannot be edited; the old copy
-    // is removed first because it is read only too
+    // is removed first because it is read only too, and made writable
+    // before that: windows removes no read only file, so a copy from an
+    // older std stayed, the write failed, and definition answered the
+    // declaration (cmd/xo TestLSPStdImplementation, 2026-11-10)
+    let _ = os.fs.set_mode(dst, 0o644).ignore_err("there may be no old copy")
     let _ = os.fs.remove(dst).ignore_err("there may be no old copy")
     if os.fs.create_dir_all(dir_of(dst)).is_err() || os.fs.write(dst, src).is_err() || os.fs.set_mode(dst, 0o444).is_err() {
       return None
