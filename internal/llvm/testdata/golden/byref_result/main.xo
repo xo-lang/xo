@@ -1,0 +1,123 @@
+// Results of 256 bytes or more are returned through memory the caller
+// gives (decision 0564 step 3): a struct, an enum (a Result holding one)
+// and a tuple used whole, read field by field, passed on by reference,
+// stored in a List, returned again from another call, built in a
+// recursion and a loop, through `?`, with a `var` parameter beside the
+// result, and through a closure (a function value keeps the plain
+// convention).
+
+struct Big {
+  a: Str
+  b: Str
+  c: Str
+  d: Str
+  e: Str
+  f: Str
+  g: Str
+  h: Str
+  i: Str
+  j: Str
+  k: Str
+  l: Str
+  m: Str
+  n: Str
+  o: Str
+  p: Str
+  xs: List[Int]
+  id: Int
+}
+
+type Wide = (Big, Int)
+
+fn big(n: Int) -> Big {
+  Big{a: "a${n}", b: "b", c: "c", d: "d", e: "e", f: "f", g: "g", h: "h", i: "i", j: "j", k: "k", l: "l", m: "m", n: "n", o: "o", p: "p${n}", xs: [n, n * 2], id: n}
+}
+
+fn again(n: Int) -> Big {
+  big(n + 1)
+}
+
+fn sum(b: Big) -> Int {
+  var t = b.id
+  for x in b.xs {
+    t += x
+  }
+  t + b.a.len() + b.p.len()
+}
+
+fn chain(n: Int) -> Big {
+  if n == 0 {
+    return big(100)
+  }
+  var b = chain(n - 1)
+  b.id += 1
+  b.xs.push(n)
+  b
+}
+
+fn check(n: Int) -> Big ! Str {
+  if n < 0 {
+    return Err("negative ${n}")
+  }
+  big(n)
+}
+
+fn twice(n: Int) -> Big ! Str {
+  let b = check(n)?
+  let c = check(b.id - 1)?
+  var r = c
+  r.a = "${b.a}${c.a}"
+  r
+}
+
+fn pair(n: Int) -> Wide {
+  (big(n), n * 10)
+}
+
+fn counted(var count: Int, n: Int) -> Big {
+  count += 1
+  big(n)
+}
+
+fn pick(n: Int) -> Big {
+  if n % 2 == 0 { big(n) } else { again(n) }
+}
+
+fn main(os: Os) {
+  let b = big(1)
+  os.stdio.println("${b.a} ${b.p} ${b.id} ${sum(b)}")
+  let c = again(1)
+  os.stdio.println("again ${c.a} ${sum(c)} ${b == c}")
+  var l: List[Big] = []
+  for i in 0..4 {
+    l.push(big(i))
+  }
+  var t = 0
+  for x in l {
+    t += sum(x)
+  }
+  os.stdio.println("list ${l.len()} ${t}")
+  let d = chain(5)
+  os.stdio.println("chain ${d.id} ${d.xs}")
+  match twice(7) {
+    Ok(v) => os.stdio.println("ok ${v.a} ${v.id}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match twice(0) {
+    Ok(v) => os.stdio.println("ok ${v.a} ${v.id}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  let (w, k) = pair(3)
+  os.stdio.println("pair ${w.a} ${k}")
+  var count = 0
+  let e = counted(count, 4)
+  let f = counted(count, 5)
+  os.stdio.println("counted ${count} ${e.id + f.id}")
+  let mk = fn(n: Int) -> Big { big(n * 3) }
+  os.stdio.println("closure ${mk(2).id} ${sum(mk(1))}")
+  var acc = 0
+  for i in 0..6 {
+    acc += pick(i).id
+  }
+  os.stdio.println("pick ${acc}")
+}

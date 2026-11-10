@@ -1273,13 +1273,24 @@ fn (var g: G) call_op(v: Int) {
         args.push(rsrc(w))
       }
     }
+    let sret = g.sret_of(ci)
+    let sad = if sret { g.sret_slot(v, ci, args) } else { 0 }
     var res: List[Bool] = []
-    for r in g.m.funcs[ci].results {
+    for (k, r) in g.m.funcs[ci].results.indexed() {
+      if k == 0 && sret {
+        continue
+      }
       for fp in g.layout(r) {
         res.push(fp)
       }
     }
-    g.set(v, g.call(g.fname(name), args, res))
+    let defs = g.call(g.fname(name), args, res)
+    if sret {
+      g.sret_set(v, ci, sad, defs)
+      g.mark_cold_call(name)
+      return
+    }
+    g.set(v, defs)
     g.mark_cold_call(name)
     return
   }
