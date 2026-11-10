@@ -20,7 +20,7 @@ quantizes by Go's nearest palette entry.
 - Found by: lead request (draw over 1.50, src 1.50, gray 1.79 of Go)
 - Go reference: image/draw drawCopyOver, drawCopySrc, drawNRGBAOver, drawGray
 - Test: testdata/corpus/image unchanged and passing on arm64, LLVM and Go (output identical)
-- Timing: bench/perf/image, Mac twincheck, Xo over Go: over 1.50 to 1.31, src 1.50 to 1.09, gray 1.79 to 1.32, copy 0.98 (host 1 figures to follow)
+- Timing: bench/perf/image, Mac twincheck, Xo over Go: over 1.50 to 1.31, src 1.50 to 1.09, gray 1.79 to 1.32, copy 0.98; host 1 linux/arm64 --ab of bench/perf/image against the parent, 3 rounds: wall 0.85 (0.767 to 0.889), max RSS 0.73
 - Shipped in: not yet released
 
 The per-pixel work is one function over the source bytes (model tests hoisted out of the loop), two pixels are appended per 8 byte write, and a Src copy of RGBA samples is a row slice copy. Loading a pixel as one 32 bit word was slower and was dropped.
