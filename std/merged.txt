@@ -6,3 +6,4 @@ std/smtp
 std/cookiejar
 std/timego
 std/xmlcodec
+std/amqptest

@@ -1,6 +1,4 @@
 use std/amqp
-use std/amqptest
-
 fn text(m: amqp.Message) -> Str {
   match m.body {
     Data(sections) => (sections[0]).to_str_lossy()
@@ -15,7 +13,7 @@ fn opts(clk: Clock) -> amqp.ConnOptions {
 }
 
 /// Waits for `cond` to hold, up to two seconds.
-fn until(clk: Clock, cond: fn() -> Bool) uses clock {
+fn until(clk: Clock, cond: fn() -> Bool uses clock) uses clock {
   for _ in 0..400 {
     if cond() { return }
     clk.sleep(5ms)
@@ -104,7 +102,7 @@ fn dial_broker(n: Net, clk: Clock, l: Listener) -> amqp.Connection uses (net, cl
 }
 
 test "send, receive and complete through the broker, with CBS" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("orders")
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -139,7 +137,7 @@ test "send, receive and complete through the broker, with CBS" uses (net, clock)
 // needs a loaded machine, so this rarely fails on the old code; see
 // gotchas/reader-task-applies-reply-between-locks.md.
 test "every unsettled send gets its outcome with the reader task running" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("q")
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -157,8 +155,8 @@ test "every unsettled send gets its outcome with the reader task running" uses (
 }
 
 test "abandon redelivers, reject and the delivery limit dead letter" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("q", amqptest.QueueOptions{max_delivery_count: 2})
+  let b = new(os.clock)
+  b.queue("q", QueueOptions{max_delivery_count: 2})
   b.put("q", msg("a"))
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -186,8 +184,8 @@ test "abandon redelivers, reject and the delivery limit dead letter" uses (net, 
 }
 
 test "management: renew-lock, peek, schedule and cancel" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("q", amqptest.QueueOptions{lock_ms: 300})
+  let b = new(os.clock)
+  b.queue("q", QueueOptions{lock_ms: 300})
   b.put("q", msg("m1"))
   b.put("q", msg("m2"))
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
@@ -230,8 +228,8 @@ test "management: renew-lock, peek, schedule and cancel" uses (net, clock) {
 }
 
 test "an expired lock returns the message and a stale renew is lock lost" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("q", amqptest.QueueOptions{lock_ms: 100})
+  let b = new(os.clock)
+  b.queue("q", QueueOptions{lock_ms: 100})
   b.put("q", msg("x"))
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -252,7 +250,7 @@ test "an expired lock returns the message and a stale renew is lock lost" uses (
 }
 
 test "receive and delete, and a topic fans out to subscriptions" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.topic("events")
   b.subscription("events", "s1")
   b.subscription("events", "s2")
@@ -278,7 +276,7 @@ test "receive and delete, and a topic fans out to subscriptions" uses (net, cloc
 }
 
 test "defer, receive by sequence number and update disposition" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("q")
   b.put("q", msg("later"))
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
@@ -335,8 +333,8 @@ test "defer, receive by sequence number and update disposition" uses (net, clock
 }
 
 test "session queues, session state and the session lock" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("sq", amqptest.QueueOptions{sessions: true})
+  let b = new(os.clock)
+  b.queue("sq", QueueOptions{sessions: true})
   b.put("sq", amqp.Message{properties: Some(amqp.Properties{group_id: Some("s-a")}), body: amqp.Body.Data(sections: [b"a1"])})
   b.put("sq", amqp.Message{properties: Some(amqp.Properties{group_id: Some("s-b")}), body: amqp.Body.Data(sections: [b"b1"])})
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
@@ -372,7 +370,7 @@ test "session queues, session state and the session lock" uses (net, clock) {
 }
 
 test "faults: unknown entity, missing token, injected errors, forced detach and close" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("q")
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -436,8 +434,8 @@ fn is_attach(b: amqp.FrameBody) -> Bool {
 }
 
 test "raw links: a null session filter takes the next session and the attach says which" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("sq", amqptest.QueueOptions{sessions: true, lock_ms: 5000})
+  let b = new(os.clock)
+  b.queue("sq", QueueOptions{sessions: true, lock_ms: 5000})
   b.put("sq", amqp.Message{properties: Some(amqp.Properties{group_id: Some("s-a")}), body: amqp.Body.Data(sections: [b"a1"])})
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -473,7 +471,7 @@ test "raw links: a null session filter takes the next session and the attach say
 }
 
 test "raw links: a batch is unpacked and a drain gives up the credit" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("q")
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -533,7 +531,7 @@ test "raw links: a batch is unpacked and a drain gives up the credit" uses (net,
 }
 
 test "a scheduled message appears at its time on the broker's clock" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("q")
   let at = os.clock.now().unix_millis() + 200
   b.put("q", amqp.Message{annotations: Some([(amqp.Value.Symbol(v: "x-opt-scheduled-enqueue-time"), amqp.Value.Timestamp(ms: at))]), body: amqp.Body.Data(sections: [b"soon"])})
@@ -545,7 +543,7 @@ test "a scheduled message appears at its time on the broker's clock" uses (net, 
 }
 
 test "receive on an empty queue times out in the test world" {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("q")
   let l = os.net.listen("broker.example.test:5672").or_fault("listen")
   scope s {
@@ -567,7 +565,7 @@ test "receive on an empty queue times out in the test world" {
 }
 
 test "Sender.send with a message format sends a Service Bus batch as one transfer" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("q")
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -588,7 +586,7 @@ test "Sender.send with a message format sends a Service Bus batch as one transfe
 }
 
 test "manual credit: issue_credit grants exactly that much and drain leaves nothing locked" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("q")
   for t in ["a", "b", "c"] { b.put("q", msg(t)) }
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
@@ -621,8 +619,8 @@ test "manual credit: issue_credit grants exactly that much and drain leaves noth
 }
 
 test "settle mode Second: accept waits for the peer, a lost lock is reported, modify carries annotations" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("q", amqptest.QueueOptions{lock_ms: 100})
+  let b = new(os.clock)
+  b.queue("q", QueueOptions{lock_ms: 100})
   b.put("q", msg("x"))
   b.put("q", msg("y"))
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
@@ -652,8 +650,8 @@ test "settle mode Second: accept waits for the peer, a lost lock is reported, mo
 }
 
 test "settle mode Second: a dead letter is settled without an error, so reject succeeds" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("q", amqptest.QueueOptions{lock_ms: 5000})
+  let b = new(os.clock)
+  b.queue("q", QueueOptions{lock_ms: 5000})
   b.put("q", msg("x"))
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -671,8 +669,8 @@ test "settle mode Second: a dead letter is settled without an error, so reject s
 }
 
 test "a Modified outcome's annotations land in the message's application properties" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("q", amqptest.QueueOptions{lock_ms: 5000})
+  let b = new(os.clock)
+  b.queue("q", QueueOptions{lock_ms: 5000})
   b.put("q", msg("x"))
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -691,12 +689,12 @@ test "a Modified outcome's annotations land in the message's application propert
 }
 
 test "get-message-sessions lists the sessions with messages, pages by skip and top, and answers 204 when none" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("sq", amqptest.QueueOptions{sessions: true, lock_ms: 5000})
+  let b = new(os.clock)
+  b.queue("sq", QueueOptions{sessions: true, lock_ms: 5000})
   for id in ["s-c", "s-a", "s-b"] {
     b.put("sq", amqp.Message{properties: Some(amqp.Properties{group_id: Some(id)}), body: amqp.Body.Data(sections: [b"x"])})
   }
-  b.queue("empty", amqptest.QueueOptions{sessions: true})
+  b.queue("empty", QueueOptions{sessions: true})
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
     b.serve(s.group(), l)
@@ -731,7 +729,7 @@ fn ann_of(m: amqp.Message, k: Str) -> amqp.Value {
 }
 
 test "an event hub stores events per partition with x-opt annotations and serves selector reads" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.event_hub("hub", 2)
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -785,7 +783,7 @@ test "an event hub stores events per partition with x-opt annotations and serves
 }
 
 test "an event hub link under require_token accepts a claim on the hub or on its own path" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.event_hub("eh1", 2)
   b.require_token(true)
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
@@ -813,7 +811,7 @@ test "an event hub link under require_token accepts a claim on the hub or on its
 }
 
 test "an event hub receiver with a higher epoch takes the partition with amqp:link:stolen" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.event_hub("hub", 1)
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -843,7 +841,7 @@ test "an event hub receiver with a higher epoch takes the partition with amqp:li
 }
 
 test "an event hub answers the hub and partition properties on the namespace management link, and the broker logs each attach" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.event_hub("hub", 3)
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {
@@ -893,7 +891,7 @@ fn key_of(m: amqp.Message, k: Str) -> amqp.Value {
 }
 
 test "put-token takes expiration as a string of Unix seconds, as Go's clients send it" uses (net, clock) {
-  let b = amqptest.new(os.clock)
+  let b = new(os.clock)
   b.queue("q")
   b.require_token(true)
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
@@ -915,8 +913,8 @@ test "put-token takes expiration as a string of Unix seconds, as Go's clients se
 }
 
 test "a typed receiver exposes the peer's attach: the echoed session filter and locked-until" uses (net, clock) {
-  let b = amqptest.new(os.clock)
-  b.queue("sq", amqptest.QueueOptions{sessions: true, lock_ms: 5000})
+  let b = new(os.clock)
+  b.queue("sq", QueueOptions{sessions: true, lock_ms: 5000})
   b.put("sq", amqp.Message{properties: Some(amqp.Properties{group_id: Some("s-a")}), body: amqp.Body.Data(sections: [b"a1"])})
   let l = os.net.listen("127.0.0.1:0").or_fault("listen")
   scope s {

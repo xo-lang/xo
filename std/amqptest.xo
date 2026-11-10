@@ -1,247 +1,2244 @@
 // std/amqptest: an in-process AMQP 1.0 broker that behaves like Azure Service Bus for the parts a
 // client library uses, for tests (decision 0521; the shape of Go's net/http/httptest). Serve it on a
 // listener (the test world's in memory listeners work) and dial it with std/amqp.
+//
+// std/amqptest: an in-process AMQP 1.0 broker that behaves like Azure Service Bus for the parts a
+// client library uses (decision 0521). The state is one Mutex; every connection runs in a task that
+// reads frames, applies them to its links and to the shared queues, and writes the answers.
+
 use std/amqp
 use std/task
 
 /// One entity's settings.
-struct QueueOptions {
+pub struct QueueOptions {
   /// messages carry a session id (properties.group_id); a receiver locks one session
-  sessions: Bool = false
+  pub sessions: Bool = false
   /// how long a delivered message stays locked, in milliseconds
-  lock_ms: Int = 60000
+  pub lock_ms: Int = 60000
   /// abandons after which a message goes to the dead letter queue
-  max_delivery_count: Int = 10
+  pub max_delivery_count: Int = 10
 }
 
 /// A message held by a queue. Internal: use the Broker's methods.
-struct FakeMsg {
-  seq: Int
-  m: amqp.Message
-  delivery_count: Int = 0
-  lock_token: Bytes = b""
+pub struct FakeMsg {
+  pub seq: Int
+  pub m: amqp.Message
+  pub delivery_count: Int = 0
+  pub lock_token: Bytes = b""
   /// 0 when not locked
-  locked_until: Int = 0
-  lock_conn: Int = 0
+  pub locked_until: Int = 0
+  pub lock_conn: Int = 0
   /// not deliverable before this time (milliseconds since the Unix epoch), 0 for none
-  scheduled_ms: Int = 0
-  enqueued_ms: Int = 0
-  session: Str = ""
-  deferred: Bool = false
-  dead_reason: Str = ""
-  dead_description: Str = ""
+  pub scheduled_ms: Int = 0
+  pub enqueued_ms: Int = 0
+  pub session: Str = ""
+  pub deferred: Bool = false
+  pub dead_reason: Str = ""
+  pub dead_description: Str = ""
 }
 
 /// A session of a session enabled queue. Internal.
-struct FakeSession {
-  id: Str
-  state: Bytes = b""
-  locked_until: Int = 0
-  owner: Int = 0
+pub struct FakeSession {
+  pub id: Str
+  pub state: Bytes = b""
+  pub locked_until: Int = 0
+  pub owner: Int = 0
   /// when a client last set the state, milliseconds since the Unix epoch
-  updated_ms: Int = 0
+  pub updated_ms: Int = 0
 }
 
 /// A queue, or a topic's subscription (named `topic/Subscriptions/name`), or a topic (no messages).
 /// Internal.
-struct FakeQueue {
-  name: Str
-  opts: QueueOptions
-  is_topic: Bool = false
-  msgs: List[FakeMsg] = []
-  dead: List[FakeMsg] = []
-  next_seq: Int = 1
-  sessions: List[FakeSession] = []
+pub struct FakeQueue {
+  pub name: Str
+  pub opts: QueueOptions
+  pub is_topic: Bool = false
+  pub msgs: List[FakeMsg] = []
+  pub dead: List[FakeMsg] = []
+  pub next_seq: Int = 1
+  pub sessions: List[FakeSession] = []
 }
 
 /// An injected failure. Internal.
-struct FakeFail {
+pub struct FakeFail {
   /// the operation: attach, transfer, disposition, put-token, or a management operation without
   /// its `com.microsoft:` prefix (renew-lock, peek-message, ...)
-  op: Str
-  status: Int
-  condition: Str
-  description: Str
+  pub op: Str
+  pub status: Int
+  pub condition: Str
+  pub description: Str
   /// left uses, -1 until cleared
-  left: Int
+  pub left: Int
 }
 
 /// One partition of an event hub: the events in order, each with its x-opt annotations. Internal.
-struct FakePart {
-  events: List[amqp.Message] = []
+pub struct FakePart {
+  pub events: List[amqp.Message] = []
 }
 
 /// An event hub (decision 0521). Internal.
-struct FakeHub {
-  name: Str
-  groups: List[Str]
-  parts: List[FakePart]
-  created_ms: Int
+pub struct FakeHub {
+  pub name: Str
+  pub groups: List[Str]
+  pub parts: List[FakePart]
+  pub created_ms: Int
   /// the next partition for an event with no partition key
-  rr: Int = 0
+  pub rr: Int = 0
   /// the READ reply's georeplication_factor (above 1: geo-replication enabled)
-  geo_factor: Int = 1
+  pub geo_factor: Int = 1
 }
 
 /// A receiver link that owns a partition of a consumer group at an epoch. Internal.
-struct HubOwner {
+pub struct HubOwner {
   /// `hub/ConsumerGroups/cg/Partitions/id`
-  path: Str
+  pub path: Str
   /// the link's own key, the target of a forced detach
-  key: Str
-  epoch: Int
+  pub key: Str
+  pub epoch: Int
 }
 
 /// The broker's state. Internal.
-struct BrokerState {
-  queues: List[FakeQueue] = []
-  hubs: List[FakeHub] = []
-  owners: List[HubOwner] = []
-  tokens: List[(Str, Str)] = []
+pub struct BrokerState {
+  pub queues: List[FakeQueue] = []
+  pub hubs: List[FakeHub] = []
+  pub owners: List[HubOwner] = []
+  pub tokens: List[(Str, Str)] = []
   /// every link attached by a client: address, role and desired capabilities
-  attaches: List[(Str, Str, List[Str])] = []
+  pub attaches: List[(Str, Str, List[Str])] = []
   /// token expiry per audience in milliseconds since the Unix epoch, 0 for none
-  expiries: List[(Str, Int)] = []
-  rejected: List[Str] = []
-  require_token: Bool = false
-  fails: List[FakeFail] = []
+  pub expiries: List[(Str, Int)] = []
+  pub rejected: List[Str] = []
+  pub require_token: Bool = false
+  pub fails: List[FakeFail] = []
   /// connection id and the channel that wakes its loop
-  wakes: List[(Int, Chan[Bool])] = []
-  conns: List[(Int, ServerConn)] = []
-  next_conn: Int = 1
-  next_lock: Int = 1
+  pub wakes: List[(Int, Chan[Bool])] = []
+  pub conns: List[(Int, ServerConn)] = []
+  pub next_conn: Int = 1
+  pub next_lock: Int = 1
   /// a management reply is held back this long, in milliseconds
-  slow_mgmt_ms: Int = 0
+  pub slow_mgmt_ms: Int = 0
   /// forced link detaches and connection closes, each connection acts on those it has not seen
-  gen: Int = 0
-  detaches: List[(Int, Str, amqp.WireError)] = []
-  closes: List[(Int, amqp.WireError?)] = []
+  pub gen: Int = 0
+  pub detaches: List[(Int, Str, amqp.WireError)] = []
+  pub closes: List[(Int, amqp.WireError?)] = []
 }
 
 /// A broker. A handle: copies share it.
-struct Broker {
-  st: Mutex[BrokerState]
-  clock: Clock
+pub struct Broker {
+  pub st: Mutex[BrokerState]
+  pub clock: Clock
 }
 
 /// A link of one connection. Internal.
-struct SvLink {
-  handle: Int
-  remote: Int
-  channel: Int
-  name: Str
+pub struct SvLink {
+  pub handle: Int
+  pub remote: Int
+  pub channel: Int
+  pub name: Str
   /// the broker sends on this link (the client receives)
-  sends: Bool
+  pub sends: Bool
   /// 0 an entity, 1 $cbs, 2 $management, 3 dead letter queue
-  kind: Int
-  queue: Str
-  credit: Int = 0
-  delivery_count: Int = 0
+  pub kind: Int
+  pub queue: Str
+  pub credit: Int = 0
+  pub delivery_count: Int = 0
   /// the client asked for settled transfers: receive and delete
-  presettled: Bool = false
-  session_id: Str = ""
-  partial: Bytes = b""
-  partial_id: Int = 0
-  partial_settled: Bool = false
-  partial_active: Bool = false
-  partial_format: Int = 0
+  pub presettled: Bool = false
+  pub session_id: Str = ""
+  pub partial: Bytes = b""
+  pub partial_id: Int = 0
+  pub partial_settled: Bool = false
+  pub partial_active: Bool = false
+  pub partial_format: Int = 0
   /// replies waiting for credit ($cbs and $management)
-  replies: List[amqp.Message] = []
+  pub replies: List[amqp.Message] = []
   /// delivery id and sequence number of deliveries the client has not settled
-  unsettled: List[(Int, Int)] = []
-  detached: Bool = false
+  pub unsettled: List[(Int, Int)] = []
+  pub detached: Bool = false
   /// event hub links: 4 receives a partition, 5 sends to a hub or one partition (`part` -1 for any)
-  hub: Str = ""
-  cg: Str = ""
-  part: Int = -1
+  pub hub: Str = ""
+  pub cg: Str = ""
+  pub part: Int = -1
   /// the next event of the partition this receiver gets
-  pos: Int = 0
-  epoch: Int = 0
+  pub pos: Int = 0
+  pub epoch: Int = 0
   /// `path#connection.handle`, unique to the link
-  hkey: Str = ""
+  pub hkey: Str = ""
 }
 
 /// A session of one connection. Internal.
-struct SvSession {
-  channel: Int
-  next_in: Int = 0
-  next_out: Int = 0
-  remote_window: Int = 0
-  ended: Bool = false
+pub struct SvSession {
+  pub channel: Int
+  pub next_in: Int = 0
+  pub next_out: Int = 0
+  pub remote_window: Int = 0
+  pub ended: Bool = false
   /// transfers received since the last session Flow
-  in_used: Int = 0
+  pub in_used: Int = 0
 }
 
 /// One connection's state. Internal.
-struct SvConn {
-  id: Int
-  max_frame: Int = 65536
-  sess: List[SvSession] = []
-  links: List[SvLink] = []
-  seen_gen: Int = 0
+pub struct SvConn {
+  pub id: Int
+  pub max_frame: Int = 65536
+  pub sess: List[SvSession] = []
+  pub links: List[SvLink] = []
+  pub seen_gen: Int = 0
 }
 
 /// A new broker; `clock` times message locks, scheduled messages and token expiry.
-fn new(clock: Clock) -> Broker
+pub fn new(clock: Clock) -> Broker {
+  Broker{st: Mutex[BrokerState].new(BrokerState{}), clock: clock}
+}
 
 /// Serves the connections `l` accepts, each in a task of `g`; returns at once. The tasks end when
 /// `g` is cancelled or `l` is closed.
-fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock)
+pub fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock) {
+  g.spawn_background(fn() uses (net.listen, clock) { accept_loop(b, g, l) })
+}
 
 /// Declares a queue (a queue is also created, with the defaults, by the first link to it).
-fn (b: Broker) queue(name: Str, opts: QueueOptions = QueueOptions{})
+pub fn (b: Broker) queue(name: Str, opts: QueueOptions = QueueOptions{}) {
+  b.st.with(fn(var s: BrokerState) {
+    let i = find_queue(s, name)
+    if i >= 0 {
+      var q = s.queues[i]
+      q.opts = opts
+      put_queue(s, i, q)
+    } else {
+      s.queues.push(FakeQueue{name: name, opts: opts})
+    }
+  })
+}
+
 /// Declares an event hub with `partitions` partitions (ids "0", "1", ...), receivable by each consumer group
 /// at `hub/ConsumerGroups/cg/Partitions/id` and sendable at `hub` or `hub/Partitions/id`.
-fn (b: Broker) event_hub(name: Str, partitions: Int, consumer_groups: List[Str] = ["$Default"])
+pub fn (b: Broker) event_hub(name: Str, partitions: Int, consumer_groups: List[Str] = ["$Default"]) uses clock {
+  let now = now_ms(b)
+  b.st.with(fn(var s: BrokerState) {
+    var parts: List[FakePart] = []
+    for _ in 0..partitions { parts.push(FakePart{}) }
+    let h = FakeHub{name: name, groups: consumer_groups, parts: parts, created_ms: now}
+    let i = find_hub(s, name)
+    if i >= 0 { s.hubs[i] = h } else { s.hubs.push(h) }
+  })
+}
+
 /// Sets the georeplication_factor an event hub's READ reports (1 when declared; above 1 means
 /// geo-replication is enabled, as Event Hubs v2 reads it).
-fn (b: Broker) event_hub_geo_factor(hub: Str, factor: Int)
+pub fn (b: Broker) event_hub_geo_factor(hub: Str, factor: Int) {
+  b.st.with(fn(var s: BrokerState) {
+    let i = find_hub(s, hub)
+    if i >= 0 {
+      var h = s.hubs[i]
+      h.geo_factor = factor
+      s.hubs[i] = h
+    }
+  })
+}
+
 /// The events a partition holds, with their x-opt-sequence-number, x-opt-offset and x-opt-enqueued-time
 /// message annotations.
-fn (b: Broker) events(hub: Str, partition: Int) -> List[amqp.Message]
+pub fn (b: Broker) events(hub: Str, partition: Int) -> List[amqp.Message] {
+  b.st.with_read(fn(s: BrokerState) -> List[amqp.Message] {
+    let hi = find_hub(s, hub)
+    if hi < 0 || partition < 0 || partition >= s.hubs[hi].parts.len() { return [] }
+    s.hubs[hi].parts[partition].events
+  })
+}
+
 /// Declares a topic: a message sent to it is copied to every subscription.
-fn (b: Broker) topic(name: Str)
+pub fn (b: Broker) topic(name: Str) {
+  b.st.with(fn(var s: BrokerState) {
+    let i = ensure_queue(s, name)
+    var q = s.queues[i]
+    q.is_topic = true
+    put_queue(s, i, q)
+  })
+}
+
 /// Declares the subscription `topic/Subscriptions/name`, receivable at that address.
-fn (b: Broker) subscription(topic: Str, name: Str, opts: QueueOptions = QueueOptions{})
+pub fn (b: Broker) subscription(topic: Str, name: Str, opts: QueueOptions = QueueOptions{}) {
+  b.topic(topic)
+  b.queue(topic + "/Subscriptions/" + name, opts)
+}
 
 /// Puts a message on a queue (or a topic) as if a client had sent it.
-fn (b: Broker) put(queue: Str, m: amqp.Message)
+pub fn (b: Broker) put(queue: Str, m: amqp.Message) uses clock {
+  let now = now_ms(b)
+  b.st.with(fn(var s: BrokerState) {
+    let i = ensure_queue(s, queue)
+    let _ = enqueue(s, i, m, now)
+  })
+}
+
 /// The messages that can be delivered now, in order, as a client would receive them.
-fn (b: Broker) ready(queue: Str) -> List[amqp.Message]
+pub fn (b: Broker) ready(queue: Str) -> List[amqp.Message] uses clock {
+  let now = now_ms(b)
+  b.st.with_read(fn(s: BrokerState) -> List[amqp.Message] {
+    let i = find_queue(s, queue)
+    if i < 0 { return [] }
+    let q = s.queues[i]
+    var out: List[amqp.Message] = []
+    for m in q.msgs {
+      if !m.deferred && m.scheduled_ms <= now && (m.locked_until == 0 || m.locked_until <= now) { out.push(m.m) }
+    }
+    out
+  })
+}
+
 /// The number of messages locked by a receiver.
-fn (b: Broker) locked(queue: Str) -> Int
+pub fn (b: Broker) locked(queue: Str) -> Int uses clock {
+  let now = now_ms(b)
+  b.st.with_read(fn(s: BrokerState) -> Int {
+    let i = find_queue(s, queue)
+    if i < 0 { return 0 }
+    var n = 0
+    for m in s.queues[i].msgs {
+      if m.locked_until > now { n += 1 }
+    }
+    n
+  })
+}
+
 /// The messages in the dead letter queue.
-fn (b: Broker) dead_letters(queue: Str) -> List[amqp.Message]
+pub fn (b: Broker) dead_letters(queue: Str) -> List[amqp.Message] {
+  b.st.with_read(fn(s: BrokerState) -> List[amqp.Message] {
+    let i = find_queue(s, queue)
+    if i < 0 { return [] }
+    var out: List[amqp.Message] = []
+    for m in s.queues[i].dead { out.push(m.m) }
+    out
+  })
+}
+
 /// The messages scheduled for later.
-fn (b: Broker) scheduled(queue: Str) -> List[amqp.Message]
+pub fn (b: Broker) scheduled(queue: Str) -> List[amqp.Message] uses clock {
+  let now = now_ms(b)
+  b.st.with_read(fn(s: BrokerState) -> List[amqp.Message] {
+    let i = find_queue(s, queue)
+    if i < 0 { return [] }
+    var out: List[amqp.Message] = []
+    for m in s.queues[i].msgs {
+      if m.scheduled_ms > now { out.push(m.m) }
+    }
+    out
+  })
+}
+
 /// The deferred messages.
-fn (b: Broker) deferred(queue: Str) -> List[amqp.Message]
+pub fn (b: Broker) deferred(queue: Str) -> List[amqp.Message] {
+  b.st.with_read(fn(s: BrokerState) -> List[amqp.Message] {
+    let i = find_queue(s, queue)
+    if i < 0 { return [] }
+    var out: List[amqp.Message] = []
+    for m in s.queues[i].msgs {
+      if m.deferred { out.push(m.m) }
+    }
+    out
+  })
+}
+
 /// The `(audience, token)` pairs the broker accepted through $cbs, in order.
-fn (b: Broker) tokens() -> List[(Str, Str)]
+pub fn (b: Broker) tokens() -> List[(Str, Str)] {
+  b.st.with_read(fn(s: BrokerState) -> List[(Str, Str)] { s.tokens })
+}
+
 /// Every link a client attached, in order: its address (a sender's target, a receiver's source),
 /// the client's role ("sender" or "receiver") and the Attach's desired capabilities.
-fn (b: Broker) attaches() -> List[(Str, Str, List[Str])]
+pub fn (b: Broker) attaches() -> List[(Str, Str, List[Str])] {
+  b.st.with_read(fn(s: BrokerState) -> List[(Str, Str, List[Str])] { s.attaches })
+}
+
 /// A put-token with this token is answered with 401.
-fn (b: Broker) reject_token(token: Str)
+pub fn (b: Broker) reject_token(token: Str) {
+  b.st.with(fn(var s: BrokerState) { s.rejected.push(token) })
+}
+
 /// Links to entities are refused (`amqp:unauthorized-access`) until a put-token whose audience
 /// ends with the entity's name was accepted and has not expired.
-fn (b: Broker) require_token(on: Bool)
+pub fn (b: Broker) require_token(on: Bool) {
+  b.st.with(fn(var s: BrokerState) { s.require_token = on })
+}
+
 /// The state of a session of a session enabled queue, as set by a client.
-fn (b: Broker) session_state(queue: Str, session: Str) -> Bytes
+pub fn (b: Broker) session_state(queue: Str, session: Str) -> Bytes {
+  b.st.with_read(fn(s: BrokerState) -> Bytes {
+    let i = find_queue(s, queue)
+    if i < 0 { return b"" }
+    let q = s.queues[i]
+    let si = session_idx(q, session)
+    if si < 0 { return b"" }
+    q.sessions[si].state
+  })
+}
 
 /// The next use of operation `op` fails with an error: an attach, a transfer, a disposition or a
 /// put-token is refused with `condition`; a management operation (`renew-lock`, `peek-message`,
 /// `schedule-message`, `cancel-scheduled-message`, `receive-by-sequence-number`,
 /// `update-disposition`, `renew-session-lock`, `get-session-state`, `set-session-state`) answers
 /// `status` with `condition` and `description`.
-fn (b: Broker) fail_next(op: Str, status: Int, condition: Str, description: Str)
+pub fn (b: Broker) fail_next(op: Str, status: Int, condition: Str, description: Str) {
+  add_fail(b, op, status, condition, description, 1)
+}
+
 /// Like `fail_next`, until `clear_failures`.
-fn (b: Broker) fail(op: Str, status: Int, condition: Str, description: Str)
-fn (b: Broker) clear_failures()
+pub fn (b: Broker) fail(op: Str, status: Int, condition: Str, description: Str) {
+  add_fail(b, op, status, condition, description, -1)
+}
+
+pub fn (b: Broker) clear_failures() {
+  b.st.with(fn(var s: BrokerState) { s.fails = [] })
+}
+
 /// Holds every management reply back by `ms` milliseconds.
-fn (b: Broker) slow_management(ms: Int)
+pub fn (b: Broker) slow_management(ms: Int) {
+  b.st.with(fn(var s: BrokerState) { s.slow_mgmt_ms = ms })
+}
+
 /// Detaches every link to `queue` with `error` (for example `amqp:link:detach-forced`).
-fn (b: Broker) detach_links(queue: Str, error: amqp.WireError)
+pub fn (b: Broker) detach_links(queue: Str, error: amqp.WireError) {
+  b.st.with(fn(var s: BrokerState) {
+    s.gen += 1
+    s.detaches.push((s.gen, queue, error))
+    notify_all(s)
+  })
+}
+
 /// Closes every connection, with `error` in the Close frame when given, otherwise by dropping the
 /// transport.
-fn (b: Broker) disconnect_all(error: amqp.WireError? = None)
+pub fn (b: Broker) disconnect_all(error: amqp.WireError? = None) {
+  b.st.with(fn(var s: BrokerState) {
+    s.gen += 1
+    s.closes.push((s.gen, error))
+    notify_all(s)
+  })
+}
+
+fn u32w(x: Int) -> UInt32 { UInt32.wrapping_from(x & 4294967295) }
+
+fn frame_on(ch: Int, body: amqp.FrameBody) -> amqp.Frame {
+  amqp.Frame{channel: UInt16.wrapping_from(ch), body: body}
+}
+
+fn werr(condition: Str, description: Str) -> amqp.WireError {
+  amqp.WireError{condition: condition, description: description}
+}
+
+fn now_ms(b: Broker) -> Int uses clock { b.clock.now().unix_millis() }
+
+fn find_queue(s: BrokerState, name: Str) -> Int {
+  var i = 0
+  while i < s.queues.len() {
+    if s.queues[i].name == name { return i }
+    i += 1
+  }
+  -1
+}
+
+/// The queue's index, creating it with the defaults when it does not exist.
+fn ensure_queue(var s: BrokerState, name: Str) -> Int {
+  let i = find_queue(s, name)
+  if i >= 0 { return i }
+  s.queues.push(FakeQueue{name: name, opts: QueueOptions{}})
+  s.queues.len() - 1
+}
+
+fn put_queue(var s: BrokerState, i: Int, q: FakeQueue) {
+  var qs = s.queues
+  qs[i] = q
+  s.queues = qs
+}
+
+fn put_msg(var q: FakeQueue, i: Int, m: FakeMsg) {
+  var ms = q.msgs
+  ms[i] = m
+  q.msgs = ms
+}
+
+fn notify_all(s: BrokerState) {
+  for w in s.wakes {
+    // a full channel already holds a wake-up
+    let _ = w.1.try_send(true)
+  }
+}
+
+fn sym(k: Str) -> amqp.Value { amqp.Value.Symbol(v: k) }
+
+fn ann_get(m: amqp.Message, key: Str) -> amqp.Value? {
+  match m.annotations {
+    Some(ps) => {
+      for (k, v) in ps {
+        match k {
+          Symbol(x) => { if x == key { return Some(v) } }
+          _ => {}
+        }
+      }
+      None
+    }
+    None => None
+  }
+}
+
+fn ann_set(m: amqp.Message, key: Str, v: amqp.Value) -> amqp.Message {
+  var out: List[(amqp.Value, amqp.Value)] = []
+  match m.annotations {
+    Some(ps) => {
+      for (k, x) in ps {
+        var same = false
+        match k {
+          Symbol(n) => { same = n == key }
+          _ => {}
+        }
+        if !same { out.push((k, x)) }
+      }
+    }
+    None => {}
+  }
+  out.push((sym(key), v))
+  m with {annotations: Some(out)}
+}
+
+fn group_of(m: amqp.Message) -> Str {
+  match m.properties {
+    Some(p) => p.group_id ?? ""
+    None => ""
+  }
+}
+
+/// A 16 byte lock token from a counter.
+fn token_bytes(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  // a fixed prefix whose first three groups are not palindromes, so GUID byte order shows
+  for x in [10, 11, 12, 13, 26, 27, 42, 43] { b.write_byte(UInt8(x)) }
+  var k = 7
+  while k >= 0 {
+    b.write_byte(UInt8.wrapping_from((n >> (8 * k)) & 255))
+    k -= 1
+  }
+  b.freeze()
+}
+
+/// Stores a message on queue `qi`: sequence number, enqueue time, scheduled time and session. A
+/// topic copies it to every subscription.
+fn enqueue(var s: BrokerState, qi: Int, m0: amqp.Message, now: Int) -> Int {
+  if s.queues[qi].is_topic {
+    let prefix = s.queues[qi].name + "/Subscriptions/"
+    var last = 0
+    var i = 0
+    while i < s.queues.len() {
+      if s.queues[i].name.starts_with(prefix) { last = enqueue(s, i, m0, now) }
+      i += 1
+    }
+    return last
+  }
+  var q = s.queues[qi]
+  let seq = q.next_seq
+  q.next_seq += 1
+  var m = ann_set(m0, "x-opt-sequence-number", amqp.Value.Long(v: Int64(seq)))
+  m = ann_set(m, "x-opt-enqueued-time", amqp.Value.Timestamp(ms: now))
+  var sched = 0
+  match ann_get(m0, "x-opt-scheduled-enqueue-time") {
+    Some(Timestamp(t)) => { sched = t }
+    _ => {}
+  }
+  q.msgs.push(FakeMsg{seq: seq, m: m, scheduled_ms: sched, enqueued_ms: now, session: group_of(m0)})
+  put_queue(s, qi, q)
+  notify_all(s)
+  seq
+}
+
+/// Clears locks that ran out.
+fn expire_locks(var s: BrokerState, qi: Int, now: Int) {
+  var q = s.queues[qi]
+  var i = 0
+  var changed = false
+  while i < q.msgs.len() {
+    var m = q.msgs[i]
+    if m.locked_until > 0 && m.locked_until <= now {
+      m.locked_until = 0
+      m.lock_token = b""
+      put_msg(q, i, m)
+      changed = true
+    }
+    i += 1
+  }
+  if changed { put_queue(s, qi, q) }
+}
+
+fn session_idx(q: FakeQueue, id: Str) -> Int {
+  var i = 0
+  while i < q.sessions.len() {
+    if q.sessions[i].id == id { return i }
+    i += 1
+  }
+  -1
+}
+
+/// Whether message `m` can be handed to a receiver with session `sess` (any message for a queue
+/// without sessions) now.
+fn available(q: FakeQueue, m: FakeMsg, now: Int, sess: Str) -> Bool {
+  if m.locked_until > 0 && m.locked_until > now { return false }
+  if m.deferred { return false }
+  if m.scheduled_ms > now { return false }
+  if q.opts.sessions && m.session != sess { return false }
+  true
+}
+
+/// Locks the next available message of queue `qi` for connection `conn`, or removes it when
+/// `settle` is true (receive and delete).
+fn take(var s: BrokerState, qi: Int, conn: Int, now: Int, sess: Str, settle: Bool) -> FakeMsg? {
+  expire_locks(s, qi, now)
+  var q = s.queues[qi]
+  var i = 0
+  while i < q.msgs.len() {
+    var m = q.msgs[i]
+    if available(q, m, now, sess) {
+      let before = m
+      m.delivery_count += 1
+      if settle {
+        q.msgs = q.msgs.filter(fn(x: FakeMsg) { x.seq != m.seq })
+        put_queue(s, qi, q)
+        return Some(m)
+      }
+      m.lock_token = token_bytes(s.next_lock)
+      s.next_lock += 1
+      m.locked_until = now + q.opts.lock_ms
+      m.lock_conn = conn
+      put_msg(q, i, m)
+      put_queue(s, qi, q)
+      let _ = before
+      return Some(m)
+    }
+    i += 1
+  }
+  None
+}
+
+fn find_seq(q: FakeQueue, seq: Int) -> Int {
+  var i = 0
+  while i < q.msgs.len() {
+    if q.msgs[i].seq == seq { return i }
+    i += 1
+  }
+  -1
+}
+
+fn find_token(q: FakeQueue, tok: Bytes) -> Int {
+  var i = 0
+  while i < q.msgs.len() {
+    if q.msgs[i].lock_token == tok && tok.len() > 0 { return i }
+    i += 1
+  }
+  -1
+}
+
+/// Moves the message to the dead letter queue.
+fn dead_letter(var s: BrokerState, qi: Int, seq: Int, reason: Str, description: Str) {
+  var q = s.queues[qi]
+  let i = find_seq(q, seq)
+  if i < 0 { return }
+  var m = q.msgs[i]
+  m.locked_until = 0
+  m.lock_token = b""
+  m.dead_reason = reason
+  m.dead_description = description
+  q.dead.push(m)
+  q.msgs = q.msgs.filter(fn(x: FakeMsg) { x.seq != seq })
+  put_queue(s, qi, q)
+  notify_all(s)
+}
+
+/// Gives a locked message back; past the maximum delivery count it is dead lettered.
+fn unlock(var s: BrokerState, qi: Int, seq: Int, count_it: Bool) {
+  var q = s.queues[qi]
+  let i = find_seq(q, seq)
+  if i < 0 { return }
+  var m = q.msgs[i]
+  m.locked_until = 0
+  m.lock_token = b""
+  if !count_it && m.delivery_count > 0 { m.delivery_count -= 1 }
+  put_msg(q, i, m)
+  put_queue(s, qi, q)
+  if m.delivery_count >= q.opts.max_delivery_count {
+    dead_letter(s, qi, seq, "MaxDeliveryCountExceeded", "Message could not be consumed after ${q.opts.max_delivery_count} delivery attempts.")
+  }
+  notify_all(s)
+}
+
+/// Service Bus applies an abandon or defer's properties to modify to the message's application
+/// properties; a key is a symbol or a string, a later one replaces an earlier one.
+fn apply_modified(var s: BrokerState, qi: Int, seq: Int, ann: List[(amqp.Value, amqp.Value)]) {
+  if ann.is_empty() { return }
+  var q = s.queues[qi]
+  let i = find_seq(q, seq)
+  if i < 0 { return }
+  var m = q.msgs[i]
+  var props: List[(Str, amqp.Value)] = m.m.app_properties ?? []
+  for (k, v) in ann {
+    var name = ""
+    match k {
+      Symbol(sv) => name = sv
+      Str(sv) => name = sv
+      _ => continue
+    }
+    var found = false
+    for j in 0..props.len() {
+      if props[j].0 == name {
+        props[j] = (name, v)
+        found = true
+      }
+    }
+    if !found { props.push((name, v)) }
+  }
+  m.m.app_properties = Some(props)
+  put_msg(q, i, m)
+  put_queue(s, qi, q)
+}
+
+fn complete(var s: BrokerState, qi: Int, seq: Int) {
+  var q = s.queues[qi]
+  q.msgs = q.msgs.filter(fn(x: FakeMsg) { x.seq != seq })
+  put_queue(s, qi, q)
+}
+
+fn defer_msg(var s: BrokerState, qi: Int, seq: Int) {
+  var q = s.queues[qi]
+  let i = find_seq(q, seq)
+  if i < 0 { return }
+  var m = q.msgs[i]
+  m.locked_until = 0
+  m.lock_token = b""
+  m.deferred = true
+  put_msg(q, i, m)
+  put_queue(s, qi, q)
+}
+
+/// Gives back everything connection `conn` holds locked (it went away).
+fn release_conn(var s: BrokerState, conn: Int) {
+  s.owners = s.owners.filter(fn(o: HubOwner) -> Bool { !o.key.contains("#${conn}.") })
+  var qi = 0
+  while qi < s.queues.len() {
+    var q = s.queues[qi]
+    var i = 0
+    var changed = false
+    while i < q.msgs.len() {
+      var m = q.msgs[i]
+      if m.lock_conn == conn && m.locked_until > 0 {
+        m.locked_until = 0
+        m.lock_token = b""
+        m.lock_conn = 0
+        put_msg(q, i, m)
+        changed = true
+      }
+      i += 1
+    }
+    var j = 0
+    var sess = q.sessions
+    while j < sess.len() {
+      if sess[j].owner == conn {
+        var z = sess[j]
+        z.owner = 0
+        z.locked_until = 0
+        sess[j] = z
+        changed = true
+      }
+      j += 1
+    }
+    q.sessions = sess
+    if changed { put_queue(s, qi, q) }
+    qi += 1
+  }
+  s.wakes = s.wakes.filter(fn(w: (Int, Chan[Bool])) { w.0 != conn })
+  s.conns = s.conns.filter(fn(w: (Int, ServerConn)) { w.0 != conn })
+  notify_all(s)
+}
+
+/// Picks and locks a session of a session enabled queue for connection `conn`: the named one, or
+/// the first with an available message. Returns its id, or None when there is none.
+fn lock_session(var s: BrokerState, qi: Int, conn: Int, now: Int, want: Str) -> Str? {
+  expire_locks(s, qi, now)
+  var q = s.queues[qi]
+  var id = want
+  if id == "" {
+    var i = 0
+    while i < q.msgs.len() {
+      let m = q.msgs[i]
+      let free = session_idx(q, m.session)
+      let held = free >= 0 && q.sessions[free].owner != 0 && q.sessions[free].locked_until > now
+      if !held && m.scheduled_ms <= now && !m.deferred && m.locked_until <= now {
+        id = m.session
+        break
+      }
+      i += 1
+    }
+    if id == "" { return None }
+  }
+  let si = session_idx(q, id)
+  if si >= 0 {
+    let z = q.sessions[si]
+    if z.owner != 0 && z.owner != conn && z.locked_until > now { return None }
+    var z2 = z
+    z2.owner = conn
+    z2.locked_until = now + q.opts.lock_ms
+    var ss = q.sessions
+    ss[si] = z2
+    q.sessions = ss
+  } else {
+    q.sessions.push(FakeSession{id: id, owner: conn, locked_until: now + q.opts.lock_ms})
+  }
+  put_queue(s, qi, q)
+  Some(id)
+}
+
+/// Releases connection `conn`'s lock on a session.
+fn unlock_session(var s: BrokerState, qi: Int, conn: Int, id: Str) {
+  var q = s.queues[qi]
+  let si = session_idx(q, id)
+  if si < 0 { return }
+  if q.sessions[si].owner != conn { return }
+  var ss = q.sessions
+  var z = ss[si]
+  z.owner = 0
+  z.locked_until = 0
+  ss[si] = z
+  q.sessions = ss
+  put_queue(s, qi, q)
+  notify_all(s)
+}
+
+/// The injected failure for `op`, if any (a `fail_next` one is used up).
+fn take_fail(var s: BrokerState, op: Str) -> FakeFail? {
+  var i = 0
+  while i < s.fails.len() {
+    if s.fails[i].op == op {
+      let f = s.fails[i]
+      if f.left > 0 {
+        var fs = s.fails
+        if f.left == 1 {
+          fs = fs.filter(fn(x: FakeFail) { x.op != op || x.left != 1 })
+        } else {
+          var g = f
+          g.left -= 1
+          fs[i] = g
+        }
+        s.fails = fs
+      }
+      return Some(f)
+    }
+    i += 1
+  }
+  None
+}
+
+fn add_fail(b: Broker, op: Str, status: Int, condition: Str, description: Str, left: Int) {
+  b.st.with(fn(var s: BrokerState) {
+    s.fails.push(FakeFail{op: op, status: status, condition: condition, description: description, left: left})
+  })
+}
+
+fn find_hub(s: BrokerState, name: Str) -> Int {
+  var i = 0
+  while i < s.hubs.len() {
+    if s.hubs[i].name == name { return i }
+    i += 1
+  }
+  -1
+}
+
+/// The kind, hub, consumer group and partition of an event hub address: 4 for
+/// `hub/ConsumerGroups/cg/Partitions/id` (a receiver), 5 for `hub` or `hub/Partitions/id` (a sender, partition -1
+/// for any), 0 for anything else.
+fn hub_parse(addr: Str) -> (Int, Str, Str, Int) {
+  let p = addr.split("/")
+  if p.len() == 5 && p[1] == "ConsumerGroups" && p[3] == "Partitions" {
+    return (4, p[0], p[2], Int.parse(p[4]) ?? -2)
+  }
+  if p.len() == 3 && p[1] == "Partitions" { return (5, p[0], "", Int.parse(p[2]) ?? -2) }
+  if p.len() == 1 && p[0] != "" && p[0] != "$cbs" && p[0] != "$management" { return (5, p[0], "", -1) }
+  (0, "", "", -1)
+}
+
+fn part_hash(key: Str) -> Int {
+  var h = 0
+  for c in key.bytes() { h = (h * 31 + Int(c)) & 1048575 }
+  h
+}
+
+/// Stores events sent to hub `hi`: the partition is the link's, else by the partition key, else round robin.
+/// Each event gets the x-opt-sequence-number, x-opt-offset and x-opt-enqueued-time annotations.
+fn hub_store(var s: BrokerState, hi: Int, part: Int, msgs: List[amqp.Message], now: Int) -> amqp.DeliveryState {
+  var h = s.hubs[hi]
+  let n = h.parts.len()
+  for m in msgs {
+    var pi = part
+    if pi < 0 {
+      match ann_get(m, "x-opt-partition-key") {
+        Some(k) => pi = part_hash(val_str(Some(k))) % n
+        None => {
+          pi = h.rr % n
+          h.rr += 1
+        }
+      }
+    }
+    var p = h.parts[pi]
+    let seq = p.events.len()
+    var e = ann_set(m, "x-opt-sequence-number", amqp.Value.Long(v: Int64(seq)))
+    e = ann_set(e, "x-opt-offset", amqp.Value.Str(v: "${hub_offset(seq)}"))
+    e = ann_set(e, "x-opt-enqueued-time", amqp.Value.Timestamp(ms: now))
+    p.events.push(e)
+    h.parts[pi] = p
+  }
+  s.hubs[hi] = h
+  notify_all(s)
+  amqp.DeliveryState.Accepted
+}
+
+fn hub_offset(seq: Int) -> Int { 128 * seq + 64 }
+
+/// Where a receiver with selector `expr` starts in `events`: after the matching event (`>`) or at it (`>=`).
+fn start_pos(events: List[amqp.Message], expr: Str) -> Int {
+  if expr.contains("@latest") { return events.len() }
+  let key = if expr.contains("x-opt-sequence-number") { 1 } else if expr.contains("x-opt-enqueued-time") { 2 } else { 0 }
+  let ge = expr.contains(">=")
+  var lo = 0
+  var hi = 0
+  match expr.find("'") {
+    Some(a) => {
+      match expr[a + 1..].find("'") {
+        Some(z) => { lo = Int.parse(expr[a + 1..a + 1 + z]) ?? -1 }
+        None => {}
+      }
+    }
+    None => {}
+  }
+  hi = lo
+  var i = 0
+  while i < events.len() {
+    var v = i
+    if key == 0 { v = hub_offset(i) }
+    if key == 2 {
+      match ann_get(events[i], "x-opt-enqueued-time") {
+        Some(Timestamp(t)) => { v = t }
+        _ => {}
+      }
+    }
+    if v > hi || (ge && v == hi) { return i }
+    i += 1
+  }
+  events.len()
+}
+
+fn hub_selector(src: amqp.Source?) -> Str {
+  match src {
+    Some(x) => {
+      for (k, v) in x.filter {
+        if k.contains("selector-filter") {
+          match v {
+            Described(_, inner) => return val_str(Some(inner))
+            _ => return val_str(Some(v))
+          }
+        }
+      }
+      ""
+    }
+    None => ""
+  }
+}
+
+fn hub_epoch(a: amqp.Attach) -> Int {
+  for (k, v) in a.properties {
+    if k == "com.microsoft:epoch" { return val_int(Some(v)) }
+  }
+  0
+}
+
+fn net_err(e: NetErr) -> amqp.AmqpErr { amqp.AmqpErr.Net(msg: "${e}") }
+
+fn out(sc: ServerConn, ch: Int, body: amqp.FrameBody) -> () ! amqp.AmqpErr uses net.listen {
+  let bytes = amqp.encode_frame(frame_on(ch, body))?
+  match sc.write(bytes) {
+    Ok(_) => Ok(())
+    Err(e) => Err(net_err(e))
+  }
+}
+
+fn read_n(sc: ServerConn, buf: Bytes, n: Int) -> Bytes ! amqp.AmqpErr uses net.listen {
+  var b = buf
+  while b.len() < n {
+    match sc.read(65536) {
+      Ok(Some(x)) => { b = b + x }
+      Ok(None) => return Err(amqp.AmqpErr.Net(msg: "end of stream"))
+      Err(e) => return Err(net_err(e))
+    }
+  }
+  Ok(b)
+}
+
+fn read_frame_sync(sc: ServerConn, buf: Bytes) -> (amqp.Frame, Bytes) ! amqp.AmqpErr uses net.listen {
+  var b = read_n(sc, buf, 4)?
+  var size = 0
+  for i in 0..4 { size = size * 256 + Int(b[i]) }
+  if size < 8 { return Err(amqp.AmqpErr.Decode(msg: "bad frame header")) }
+  b = read_n(sc, b, size)?
+  let (f, _) = amqp.decode_frame(b[0..size])?
+  Ok((f, b[size..]))
+}
+
+fn ss_idx(c: SvConn, ch: Int) -> Int {
+  var i = 0
+  while i < c.sess.len() {
+    if c.sess[i].channel == ch { return i }
+    i += 1
+  }
+  -1
+}
+
+fn put_sess(var c: SvConn, i: Int, z: SvSession) {
+  var ss = c.sess
+  ss[i] = z
+  c.sess = ss
+}
+
+fn put_link(var c: SvConn, l: SvLink) {
+  var ls = c.links
+  ls[l.handle] = l
+  c.links = ls
+}
+
+fn lk_remote(c: SvConn, ch: Int, remote: Int) -> Int {
+  var i = 0
+  while i < c.links.len() {
+    let l = c.links[i]
+    if l.channel == ch && l.remote == remote && !l.detached { return i }
+    i += 1
+  }
+  -1
+}
+
+fn mget(pairs: List[(amqp.Value, amqp.Value)], key: Str) -> amqp.Value? {
+  for (k, v) in pairs {
+    match k {
+      Str(x) => { if x == key { return Some(v) } }
+      _ => {}
+    }
+  }
+  None
+}
+
+fn app_get(m: amqp.Message, key: Str) -> amqp.Value? {
+  match m.app_properties {
+    Some(ps) => {
+      for (k, v) in ps {
+        if k == key { return Some(v) }
+      }
+      None
+    }
+    None => None
+  }
+}
+
+fn val_str(v: amqp.Value?) -> Str {
+  match v {
+    Some(Str(x)) => x
+    Some(Symbol(x)) => x
+    _ => ""
+  }
+}
+
+fn val_int(v: amqp.Value?) -> Int {
+  match v {
+    Some(Int(x)) => Int(x)
+    Some(Long(x)) => Int(x)
+    Some(UInt(x)) => Int(x)
+    Some(ULong(x)) => Int(x)
+    Some(Short(x)) => Int(x)
+    Some(UShort(x)) => Int(x)
+    Some(Byte(x)) => Int(x)
+    Some(UByte(x)) => Int(x)
+    _ => 0
+  }
+}
+
+fn val_items(v: amqp.Value?) -> List[amqp.Value] {
+  match v {
+    Some(Array(xs)) => xs
+    Some(List(xs)) => xs
+    _ => []
+  }
+}
+
+fn val_map(v: amqp.Value) -> List[(amqp.Value, amqp.Value)] {
+  match v {
+    Map(ps) => ps
+    _ => []
+  }
+}
+
+fn body_value(m: amqp.Message) -> amqp.Value {
+  match m.body {
+    Value(v) => v
+    Data(xs) => {
+      if xs.len() > 0 { amqp.Value.Str(v: (xs[0]).to_str_lossy()) } else { amqp.Value.Null }
+    }
+    _ => amqp.Value.Null
+  }
+}
+
+/// How the audience of a link is classified: the kind and the entity name.
+fn classify(addr: Str) -> (Int, Str) {
+  if addr == "$cbs" { return (1, "$cbs") }
+  if addr == "$management" { return (2, "") }
+  if addr.ends_with("/$management") { return (2, addr.trim_suffix("/$management")) }
+  if addr.ends_with("/$DeadLetterQueue") { return (3, addr.trim_suffix("/$DeadLetterQueue")) }
+  (0, addr)
+}
+
+fn auth_ok(s: BrokerState, entity: Str, now: Int) -> Bool {
+  if !s.require_token { return true }
+  for (aud, _) in s.tokens {
+    if aud.ends_with(entity) {
+      var exp = 0
+      for (a, e) in s.expiries {
+        if a == aud { exp = e }
+      }
+      if exp == 0 || exp > now { return true }
+    }
+  }
+  false
+}
+
+fn settle_reply(sc: ServerConn, ch: Int, id: Int, settled: Bool, state: amqp.DeliveryState) -> () ! amqp.AmqpErr uses net.listen {
+  if settled { return Ok(()) }
+  out(sc, ch, amqp.FrameBody.Disposition(v: amqp.Disposition{role: amqp.Role.Receiver, first: u32w(id), last: None, settled: true, state: Some(state)}))
+}
+
+/// Sends a message to the client on sending link `li`, fragmented to the client's frame size. The
+/// message is settled by the broker when `settled`.
+fn send_message(sc: ServerConn, var c: SvConn, li: Int, msg: amqp.Message, tag: Bytes, settled: Bool) -> Int ! amqp.AmqpErr uses net.listen {
+  let payload = amqp.encode_message(msg)?
+  var l = c.links[li]
+  let si = ss_idx(c, l.channel)
+  var z = c.sess[si]
+  let id = z.next_out
+  z.next_out += 1
+  let probe = amqp.Transfer{handle: u32w(l.handle), delivery_id: Some(u32w(id)), delivery_tag: tag, message_format: Some(UInt32(0)), more: true, receiver_settle_mode: None, state: None, payload: b""}
+  var chunk = c.max_frame - amqp.encode_frame(frame_on(l.channel, amqp.FrameBody.Transfer(v: probe)))?.len()
+  if chunk < 1 { chunk = 1 }
+  var off = 0
+  var first = true
+  while first || off < payload.len() {
+    var end = off + chunk
+    if end > payload.len() { end = payload.len() }
+    let t = amqp.Transfer{handle: u32w(l.handle), delivery_id: if first { Some(u32w(id)) } else { None }, delivery_tag: if first { tag } else { b"" },
+      message_format: if first { Some(UInt32(0)) } else { None }, settled: settled, more: end < payload.len(),
+      receiver_settle_mode: None, state: None, payload: payload[off..end]}
+    out(sc, l.channel, amqp.FrameBody.Transfer(v: t))?
+    z.remote_window -= 1
+    first = false
+    off = end
+  }
+  l.delivery_count += 1
+  l.credit -= 1
+  put_link(c, l)
+  put_sess(c, si, z)
+  Ok(id)
+}
+
+/// A 16 byte lock token in .NET GUID byte order (the first three groups little endian), which is how
+/// Service Bus writes it as the delivery tag; the swap is its own inverse.
+fn guid_order(t: Bytes) -> Bytes {
+  if t.len() != 16 { return t }
+  var b = BytesBuilder.new()
+  for i in [3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15] {
+    b.write_byte(t[i])
+  }
+  b.freeze()
+}
+
+fn with_delivery_annotations(m: FakeMsg) -> amqp.Message {
+  var msg = m.m
+  if m.locked_until > 0 {
+    msg = ann_set(msg, "x-opt-locked-until", amqp.Value.Timestamp(ms: m.locked_until))
+    msg = ann_set(msg, "x-opt-lock-token", amqp.Value.Uuid(bytes: m.lock_token))
+  }
+  let h = msg.header ?? amqp.Header{}
+  var out = msg with {header: Some(h with {delivery_count: if m.delivery_count > 0 { m.delivery_count - 1 } else { 0 }})}
+  if m.locked_until > 0 {
+    // Service Bus also puts the token in the delivery annotations, where Go's azservicebus reads it
+    out = out with {delivery_annotations: Some([(amqp.Value.Symbol(v: "x-opt-lock-token"), amqp.Value.Uuid(bytes: m.lock_token))])}
+  }
+  out
+}
+
+/// Sends the entity's deliverable messages while the link has credit and the client's window allows.
+fn deliver_link(b: Broker, sc: ServerConn, var c: SvConn, li: Int) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  while true {
+    let l = c.links[li]
+    if l.kind == 4 { return deliver_hub(b, sc, c, li) }
+    if !l.sends || l.detached || l.kind == 1 || l.kind == 2 { break }
+    let si = ss_idx(c, l.channel)
+    if si < 0 || c.sess[si].ended { break }
+    if l.credit <= 0 || c.sess[si].remote_window <= 0 { break }
+    let now = now_ms(b)
+    let conn = c.id
+    let got = b.st.with(fn(var s: BrokerState) -> FakeMsg? {
+      let qi = find_queue(s, l.queue)
+      if qi < 0 { return None }
+      if l.kind == 3 {
+        var q = s.queues[qi]
+        if q.dead.len() == 0 { return None }
+        let m = q.dead[0]
+        q.dead = q.dead[1..]
+        put_queue(s, qi, q)
+        return Some(m)
+      }
+      take(s, qi, conn, now, l.session_id, l.presettled)
+    })
+    match got {
+      None => break
+      Some(m) => {
+        var msg = with_delivery_annotations(m)
+        if l.kind == 3 {
+          msg = ann_set(msg, "x-opt-deadletter-reason", amqp.Value.Str(v: m.dead_reason))
+        }
+        let tag = if m.lock_token.len() > 0 { guid_order(m.lock_token) } else { token_bytes(m.seq) }
+        let id = send_message(sc, c, li, msg, tag, l.presettled || l.kind == 3)?
+        if !l.presettled && l.kind != 3 {
+          var l2 = c.links[li]
+          l2.unsettled.push((id, m.seq))
+          put_link(c, l2)
+        }
+      }
+    }
+  }
+  Ok(())
+}
+
+/// Sends the replies waiting on a $cbs or $management link while it has credit.
+fn flush_replies(sc: ServerConn, var c: SvConn, li: Int) -> () ! amqp.AmqpErr uses net.listen {
+  while true {
+    let l = c.links[li]
+    if l.replies.len() == 0 || l.credit <= 0 || l.detached { break }
+    let si = ss_idx(c, l.channel)
+    if si < 0 || c.sess[si].remote_window <= 0 { break }
+    var l2 = l
+    let m = l2.replies[0]
+    l2.replies = l2.replies[1..]
+    put_link(c, l2)
+    let _ = send_message(sc, c, li, m, b"r", true)?
+  }
+  Ok(())
+}
+
+fn deliver_all(b: Broker, sc: ServerConn, var c: SvConn) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  var i = 0
+  while i < c.links.len() {
+    if c.links[i].kind == 1 || c.links[i].kind == 2 {
+      flush_replies(sc, c, i)?
+    } else {
+      deliver_link(b, sc, c, i)?
+    }
+    i += 1
+  }
+  Ok(())
+}
+
+/// Queues a reply on the connection's reply link of the same kind and entity.
+fn push_reply(var c: SvConn, from: SvLink, m: amqp.Message) {
+  var i = 0
+  while i < c.links.len() {
+    let l = c.links[i]
+    if l.sends && !l.detached && l.kind == from.kind && l.queue == from.queue && l.channel == from.channel {
+      var l2 = l
+      l2.replies.push(m)
+      put_link(c, l2)
+      return
+    }
+    i += 1
+  }
+}
+
+fn reply_message(req: amqp.Message, status_key: Str, desc_key: Str, status: Int, desc: Str, cond: Str, body: amqp.Value) -> amqp.Message {
+  var props: List[(Str, amqp.Value)] = [(status_key, amqp.Value.Int(v: Int32.wrapping_from(status))), (desc_key, amqp.Value.Str(v: desc))]
+  if cond != "" { props.push(("errorCondition", amqp.Value.Str(v: cond))) }
+  let id = match req.properties {
+    Some(p) => p.message_id
+    None => amqp.Value.Null
+  }
+  amqp.Message{properties: Some(amqp.Properties{correlation_id: id}), app_properties: Some(props), body: amqp.Body.Value(v: body)}
+}
+
+fn pair(k: Str, v: amqp.Value) -> (amqp.Value, amqp.Value) { (amqp.Value.Str(v: k), v) }
+
+fn uuid_tokens(v: amqp.Value?) -> List[Bytes] {
+  var out: List[Bytes] = []
+  for x in val_items(v) {
+    match x {
+      Uuid(bs) => out.push(bs)
+      Binary(bs) => out.push(bs)
+      _ => {}
+    }
+  }
+  out
+}
+
+fn ok_out(body: amqp.Value) -> (Int, Str, Str, amqp.Value) { (200, "", "OK", body) }
+
+fn lock_lost() -> (Int, Str, Str, amqp.Value) {
+  (410, "com.microsoft:message-lock-lost", "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue.", amqp.Value.Null)
+}
+
+/// One management operation on queue `qi`: status, error condition, description, body.
+fn mgmt_op(var s: BrokerState, qi: Int, conn: Int, now: Int, op: Str, req: amqp.Message) -> (Int, Str, Str, amqp.Value) {
+  match take_fail(s, op) {
+    Some(f) => return (f.status, f.condition, f.description, amqp.Value.Null)
+    None => {}
+  }
+  let body = val_map(body_value(req))
+  expire_locks(s, qi, now)
+  var q = s.queues[qi]
+  if op == "renew-lock" {
+    var exps: List[amqp.Value] = []
+    for tok in uuid_tokens(mget(body, "lock-tokens")) {
+      let i = find_token(q, tok)
+      if i < 0 || q.msgs[i].locked_until <= now { return lock_lost() }
+      var m = q.msgs[i]
+      m.locked_until = now + q.opts.lock_ms
+      put_msg(q, i, m)
+      exps.push(amqp.Value.Timestamp(ms: m.locked_until))
+    }
+    put_queue(s, qi, q)
+    return ok_out(amqp.Value.Map(pairs: [pair("expirations", amqp.Value.Array(items: exps))]))
+  }
+  if op == "peek-message" {
+    let from = val_int(mget(body, "from-sequence-number"))
+    var count = val_int(mget(body, "message-count"))
+    if count <= 0 { count = 1 }
+    var found: List[amqp.Value] = []
+    for m in q.msgs {
+      if m.seq >= from && found.len() < count {
+        match amqp.encode_message(m.m) {
+          Ok(bs) => found.push(amqp.Value.Map(pairs: [pair("message", amqp.Value.Binary(v: bs))]))
+          Err(_) => {}
+        }
+      }
+    }
+    if found.len() == 0 { return (204, "", "No Content", amqp.Value.Null) }
+    return ok_out(amqp.Value.Map(pairs: [pair("messages", amqp.Value.List(items: found))]))
+  }
+  if op == "schedule-message" {
+    var seqs: List[amqp.Value] = []
+    for item in val_items(mget(body, "messages")) {
+      let fields = val_map(item)
+      match mget(fields, "message") {
+        Some(Binary(bs)) => {
+          match amqp.decode_message(bs) {
+            Ok(m) => {
+              let seq = enqueue(s, qi, m, now)
+              seqs.push(amqp.Value.Long(v: Int64(seq)))
+            }
+            Err(_) => return (400, "amqp:decode-error", "the scheduled message does not decode", amqp.Value.Null)
+          }
+        }
+        _ => {}
+      }
+    }
+    return ok_out(amqp.Value.Map(pairs: [pair("sequence-numbers", amqp.Value.Array(items: seqs))]))
+  }
+  if op == "cancel-scheduled-message" {
+    var drop: List[Int] = []
+    for x in val_items(mget(body, "sequence-numbers")) { drop.push(val_int(Some(x))) }
+    var q2 = s.queues[qi]
+    q2.msgs = q2.msgs.filter(fn(m: FakeMsg) -> Bool { !(drop.contains(m.seq) && m.scheduled_ms > now) })
+    put_queue(s, qi, q2)
+    return ok_out(amqp.Value.Map(pairs: []))
+  }
+  if op == "receive-by-sequence-number" {
+    var found: List[amqp.Value] = []
+    for x in val_items(mget(body, "sequence-numbers")) {
+      let i = find_seq(q, val_int(Some(x)))
+      if i >= 0 && q.msgs[i].deferred {
+        var m = q.msgs[i]
+        m.delivery_count += 1
+        m.lock_token = token_bytes(s.next_lock)
+        s.next_lock += 1
+        m.locked_until = now + q.opts.lock_ms
+        m.lock_conn = conn
+        put_msg(q, i, m)
+        match amqp.encode_message(with_delivery_annotations(m)) {
+          Ok(bs) => found.push(amqp.Value.Map(pairs: [pair("message", amqp.Value.Binary(v: bs)), pair("lock-token", amqp.Value.Uuid(bytes: m.lock_token))]))
+          Err(_) => {}
+        }
+      }
+    }
+    put_queue(s, qi, q)
+    if found.len() == 0 { return (204, "", "No Content", amqp.Value.Null) }
+    return ok_out(amqp.Value.Map(pairs: [pair("messages", amqp.Value.List(items: found))]))
+  }
+  if op == "update-disposition" {
+    let status = val_str(mget(body, "disposition-status"))
+    let reason = val_str(mget(body, "deadletter-reason"))
+    let desc = val_str(mget(body, "deadletter-description"))
+    for tok in uuid_tokens(mget(body, "lock-tokens")) {
+      let i = find_token(q, tok)
+      if i < 0 || q.msgs[i].locked_until <= now { return lock_lost() }
+      let seq = q.msgs[i].seq
+      if status == "completed" {
+        complete(s, qi, seq)
+      } else if status == "abandoned" {
+        unlock(s, qi, seq, true)
+      } else if status == "suspended" {
+        dead_letter(s, qi, seq, if reason == "" { "DeadLetter" } else { reason }, desc)
+      } else if status == "defered" {
+        defer_msg(s, qi, seq)
+      } else {
+        return (400, "amqp:invalid-field", "unknown disposition-status " + status, amqp.Value.Null)
+      }
+      q = s.queues[qi]
+    }
+    return ok_out(amqp.Value.Map(pairs: []))
+  }
+  if op == "renew-session-lock" {
+    let id = val_str(mget(body, "session-id"))
+    let si = session_idx(q, id)
+    if si < 0 || q.sessions[si].owner != conn || q.sessions[si].locked_until <= now {
+      return (410, "com.microsoft:session-lock-lost", "The session lock was lost.", amqp.Value.Null)
+    }
+    var ss = q.sessions
+    var z = ss[si]
+    z.locked_until = now + q.opts.lock_ms
+    ss[si] = z
+    q.sessions = ss
+    put_queue(s, qi, q)
+    return ok_out(amqp.Value.Map(pairs: [pair("expiration", amqp.Value.Timestamp(ms: z.locked_until))]))
+  }
+  if op == "get-session-state" || op == "set-session-state" {
+    let id = val_str(mget(body, "session-id"))
+    let si = session_idx(q, id)
+    if si < 0 || q.sessions[si].owner != conn || q.sessions[si].locked_until <= now {
+      return (410, "com.microsoft:session-lock-lost", "The session lock was lost.", amqp.Value.Null)
+    }
+    if op == "get-session-state" {
+      let st = q.sessions[si].state
+      let v = if st.len() == 0 { amqp.Value.Null } else { amqp.Value.Binary(v: st) }
+      return ok_out(amqp.Value.Map(pairs: [pair("session-state", v)]))
+    }
+    var ss = q.sessions
+    var z = ss[si]
+    z.state = match mget(body, "session-state") {
+      Some(Binary(bs)) => bs
+      _ => b""
+    }
+    z.updated_ms = now
+    ss[si] = z
+    q.sessions = ss
+    put_queue(s, qi, q)
+    return ok_out(amqp.Value.Map(pairs: []))
+  }
+  if op == "get-message-sessions" {
+    // the sessions that have messages (last-updated-time at the year 10000 is Go's "no filter") or whose
+    // state changed after that time, in name order, then skip and top
+    let since = match mget(body, "last-updated-time") {
+      Some(Timestamp(t)) => t
+      _ => 253402300800000
+    }
+    var ids: List[Str] = []
+    if since >= 253402300799000 {
+      for m in q.msgs {
+        if m.session != "" && !ids.contains(m.session) { ids.push(m.session) }
+      }
+    }
+    for z in q.sessions {
+      if z.updated_ms > since && !ids.contains(z.id) { ids.push(z.id) }
+    }
+    ids = ids.sort()
+    let skip = val_int(mget(body, "skip"))
+    let top = val_int(mget(body, "top"))
+    var page: List[amqp.Value] = []
+    var i = skip
+    while i < ids.len() && (top <= 0 || page.len() < top) {
+      page.push(amqp.Value.Str(v: ids[i]))
+      i += 1
+    }
+    if page.is_empty() { return (204, "", "No Content", amqp.Value.Null) }
+    return ok_out(amqp.Value.Map(pairs: [pair("sessions-ids", amqp.Value.Array(items: page)), pair("skip", amqp.Value.Int(v: Int32.wrapping_from(skip + page.len())))]))
+  }
+  (501, "amqp:not-implemented", "the fake broker does not implement " + op, amqp.Value.Null)
+}
+
+fn process_mgmt(b: Broker, sc: ServerConn, var c: SvConn, li: Int, req: amqp.Message) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let l = c.links[li]
+  let op = val_str(app_get(req, "operation")).trim_prefix("com.microsoft:")
+  let now = now_ms(b)
+  let conn = c.id
+  if l.queue == "" { return hub_mgmt(b, c, li, req) }
+  let r = b.st.with(fn(var s: BrokerState) -> (Int, Str, Str, amqp.Value, Int) {
+    let qi = find_queue(s, l.queue)
+    if qi < 0 { return (404, "amqp:not-found", "no such entity " + l.queue, amqp.Value.Null, s.slow_mgmt_ms) }
+    let o = mgmt_op(s, qi, conn, now, op, req)
+    (o.0, o.1, o.2, o.3, s.slow_mgmt_ms)
+  })
+  if r.4 > 0 { b.clock.sleep(1ms * r.4) }
+  push_reply(c, l, reply_message(req, "statusCode", "statusDescription", r.0, r.2, r.1, r.3))
+  Ok(())
+}
+
+fn process_cbs(b: Broker, sc: ServerConn, var c: SvConn, li: Int, req: amqp.Message) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let l = c.links[li]
+  let aud = val_str(app_get(req, "name"))
+  let token = val_str(Some(body_value(req)))
+  var expiry = 0
+  match app_get(req, "expiration") {
+    Some(Timestamp(t)) => { expiry = t }
+    // Go's clients send a string of Unix seconds
+    Some(Str(sv)) => { expiry = (Int.parse(sv) ?? 0) * 1000 }
+    _ => {}
+  }
+  let r = b.st.with(fn(var s: BrokerState) -> (Int, Str, Str) {
+    match take_fail(s, "put-token") {
+      Some(f) => return (f.status, f.condition, f.description)
+      None => {}
+    }
+    if s.rejected.contains(token) { return (401, "amqp:unauthorized-access", "The token was rejected.") }
+    s.tokens.push((aud, token))
+    s.expiries = s.expiries.filter(fn(e: (Str, Int)) -> Bool { e.0 != aud })
+    s.expiries.push((aud, expiry))
+    (202, "", "Accepted")
+  })
+  push_reply(c, l, reply_message(req, "status-code", "status-description", r.0, r.2, r.1, amqp.Value.Null))
+  Ok(())
+}
+
+fn process_send(b: Broker, sc: ServerConn, var c: SvConn, li: Int, id: Int, settled: Bool, msgs: List[amqp.Message]) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let l = c.links[li]
+  let now = now_ms(b)
+  if l.kind == 5 {
+    let hs = b.st.with(fn(var s: BrokerState) -> amqp.DeliveryState {
+      match take_fail(s, "transfer") {
+        Some(f) => return amqp.DeliveryState.Rejected(error: Some(werr(f.condition, f.description)))
+        None => {}
+      }
+      let hi = find_hub(s, l.hub)
+      if hi < 0 { return amqp.DeliveryState.Rejected(error: Some(werr("amqp:not-found", "no such entity " + l.hub))) }
+      hub_store(s, hi, l.part, msgs, now)
+    })
+    return settle_reply(sc, l.channel, id, settled, hs)
+  }
+  let state = b.st.with(fn(var s: BrokerState) -> amqp.DeliveryState {
+    match take_fail(s, "transfer") {
+      Some(f) => return amqp.DeliveryState.Rejected(error: Some(werr(f.condition, f.description)))
+      None => {}
+    }
+    let qi = find_queue(s, l.queue)
+    if qi < 0 { return amqp.DeliveryState.Rejected(error: Some(werr("amqp:not-found", "no such entity " + l.queue))) }
+    if s.queues[qi].opts.sessions {
+      for m in msgs {
+        if group_of(m) == "" { return amqp.DeliveryState.Rejected(error: Some(werr("amqp:invalid-field", "a session id is required"))) }
+      }
+    }
+    for m in msgs {
+      let _ = enqueue(s, qi, m, now)
+    }
+    amqp.DeliveryState.Accepted
+  })
+  settle_reply(sc, l.channel, id, settled, state)
+}
+
+fn process_message(b: Broker, sc: ServerConn, var c: SvConn, li: Int, id: Int, settled: Bool, fmt: Int, payload: Bytes) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let l = c.links[li]
+  let m = match amqp.decode_message(payload) {
+    Ok(x) => x
+    Err(_) => return settle_reply(sc, l.channel, id, settled, amqp.DeliveryState.Rejected(error: Some(werr("amqp:decode-error", "the message does not decode"))))
+  }
+  if l.kind == 0 || l.kind == 5 {
+    var msgs = [m]
+    // a batch (message format 0x80013700): each data section is one encoded message
+    if fmt == 2147563264 {
+      msgs = []
+      match m.body {
+        Data(sections) => {
+          for sec in sections {
+            match amqp.decode_message(sec) {
+              Ok(inner) => msgs.push(inner)
+              Err(_) => return settle_reply(sc, l.channel, id, settled, amqp.DeliveryState.Rejected(error: Some(werr("amqp:decode-error", "a message of the batch does not decode"))))
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+    return process_send(b, sc, c, li, id, settled, msgs)
+  }
+  if l.kind == 1 || l.kind == 2 {
+    if l.kind == 1 { process_cbs(b, sc, c, li, m)? } else { process_mgmt(b, sc, c, li, m)? }
+    settle_reply(sc, l.channel, id, settled, amqp.DeliveryState.Accepted)?
+    return deliver_all(b, sc, c)
+  }
+  settle_reply(sc, l.channel, id, settled, amqp.DeliveryState.Rejected(error: Some(werr("amqp:not-allowed", "the dead letter queue is read only"))))
+}
+
+fn filter_key(src: amqp.Source?) -> (Str, amqp.Value)? {
+  match src {
+    Some(x) => {
+      for (k, v) in x.filter {
+        if k.contains("session-filter") { return Some((k, v)) }
+      }
+      None
+    }
+    None => None
+  }
+}
+
+fn session_want(v: amqp.Value) -> Str {
+  match v {
+    Described(_, inner) => val_str(Some(inner))
+    _ => val_str(Some(v))
+  }
+}
+
+fn session_echo(v: amqp.Value, id: Str) -> amqp.Value {
+  match v {
+    Described(d, _) => amqp.Value.Described(descriptor: d, value: amqp.Value.Str(v: id))
+    _ => amqp.Value.Str(v: id)
+  }
+}
+
+fn hub_link_match(l: SvLink, q: Str) -> Bool {
+  l.kind == 4 && (l.hkey == q || l.hkey.split("#")[0] == q)
+}
+
+/// Attaches a link to an event hub: a receiver of one partition of a consumer group (kind 4) or a sender to a
+/// hub or one of its partitions (kind 5).
+fn on_hub_attach(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, a: amqp.Attach, client_sends: Bool, hp: (Int, Str, Str, Int)) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let si = ss_idx(c, ch)
+  if si < 0 { return Ok(()) }
+  let (kind, hub, cg, part) = hp
+  let now = now_ms(b)
+  let conn = c.id
+  let h = c.links.len()
+  let path = "${hub}/ConsumerGroups/${cg}/Partitions/${part}"
+  let hkey = "${path}#${conn}.${h}"
+  let epoch = hub_epoch(a)
+  let sel = hub_selector(a.source)
+  let r = b.st.with(fn(var s: BrokerState) -> (amqp.WireError?, Int) {
+    match take_fail(s, "attach") {
+      Some(f) => return (Some(werr(f.condition, f.description)), 0)
+      None => {}
+    }
+    // a claim on the hub covers its sub-paths; a claim on the link's own path (Go's NegotiateClaim) covers it too
+    let link_path = if kind == 4 { path } else if part >= 0 { "${hub}/Partitions/${part}" } else { hub }
+    if !auth_ok(s, hub, now) && !auth_ok(s, link_path, now) {
+      return (Some(werr("amqp:unauthorized-access", "A valid claim is required for " + hub)), 0)
+    }
+    let hi = find_hub(s, hub)
+    if hi < 0 { return (Some(werr("amqp:not-found", "The messaging entity '" + hub + "' could not be found.")), 0) }
+    let n = s.hubs[hi].parts.len()
+    if (kind == 4) == client_sends { return (Some(werr("amqp:not-allowed", "the link has the wrong direction for " + hub)), 0) }
+    if part < -1 || part >= n { return (Some(werr("com.microsoft:argument-out-of-range", "The partition does not exist.")), 0) }
+    if kind == 5 { return (None, 0) }
+    if !s.hubs[hi].groups.contains(cg) {
+      return (Some(werr("amqp:not-found", "The consumer group '" + cg + "' could not be found.")), 0)
+    }
+    if part < 0 { return (Some(werr("com.microsoft:argument-out-of-range", "A receiver needs a partition.")), 0) }
+    for o in s.owners {
+      if o.path == path && o.epoch > epoch {
+        return (Some(werr("amqp:link:stolen", "A receiver with a higher epoch owns the partition.")), 0)
+      }
+    }
+    var keep: List[HubOwner] = []
+    for o in s.owners {
+      if o.path == path && o.epoch < epoch {
+        s.gen += 1
+        s.detaches.push((s.gen, o.key, werr("amqp:link:stolen", "A receiver with a higher epoch took the partition.")))
+      } else {
+        keep.push(o)
+      }
+    }
+    keep.push(HubOwner{path: path, key: hkey, epoch: epoch})
+    s.owners = keep
+    notify_all(s)
+    (None, start_pos(s.hubs[hi].parts[part].events, sel))
+  })
+  var link = SvLink{handle: h, remote: Int(a.handle), channel: ch, name: a.name, sends: !client_sends, kind: kind, queue: hub,
+    hub: hub, cg: cg, part: part, pos: r.1, epoch: epoch, hkey: hkey, presettled: true}
+  match r.0 {
+    Some(e) => {
+      link.detached = true
+      c.links.push(link)
+      let role = if client_sends { amqp.Role.Receiver } else { amqp.Role.Sender }
+      out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: role, sender_settle_mode: None, receiver_settle_mode: None, source: None, target: None}))?
+      return out(sc, ch, amqp.FrameBody.Detach(v: amqp.Detach{handle: u32w(h), closed: true, error: Some(e)}))
+    }
+    None => {}
+  }
+  if client_sends {
+    link.presettled = false
+    link.credit = 100000
+    c.links.push(link)
+    out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Receiver, sender_settle_mode: a.sender_settle_mode,
+      receiver_settle_mode: a.receiver_settle_mode, source: a.source, target: a.target, max_message_size: 0}))?
+    let z = c.sess[si]
+    return out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z.next_out),
+      outgoing_window: UInt32(2048), handle: Some(u32w(h)), delivery_count: Some(u32w(0)), link_credit: Some(u32w(100000)), available: None}))
+  }
+  c.links.push(link)
+  out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Sender, sender_settle_mode: a.sender_settle_mode,
+    receiver_settle_mode: a.receiver_settle_mode, source: a.source, target: a.target, initial_delivery_count: 0}))
+}
+
+/// Sends the events a hub receiver has not got yet while it has credit; reading removes nothing.
+fn deliver_hub(b: Broker, sc: ServerConn, var c: SvConn, li: Int) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  while true {
+    let l = c.links[li]
+    if l.detached || l.credit <= 0 { break }
+    let si = ss_idx(c, l.channel)
+    if si < 0 || c.sess[si].ended || c.sess[si].remote_window <= 0 { break }
+    let ev = b.st.with_read(fn(s: BrokerState) -> amqp.Message? {
+      let hi = find_hub(s, l.hub)
+      if hi < 0 { return None }
+      let evs = s.hubs[hi].parts[l.part].events
+      if l.pos >= evs.len() { return None }
+      Some(evs[l.pos])
+    })
+    match ev {
+      None => break
+      Some(m) => {
+        let seq = l.pos
+        var l2 = c.links[li]
+        l2.pos += 1
+        put_link(c, l2)
+        send_message(sc, c, li, m, token_bytes(seq), true)?
+      }
+    }
+  }
+  Ok(())
+}
+
+fn hub_mgmt(b: Broker, var c: SvConn, li: Int, req: amqp.Message) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let l = c.links[li]
+  let name = val_str(app_get(req, "name"))
+  let typ = val_str(app_get(req, "type"))
+  let part = val_str(app_get(req, "partition"))
+  let r = b.st.with(fn(var s: BrokerState) -> (Int, Str, Str, amqp.Value) {
+    match take_fail(s, "read") {
+      Some(f) => return (f.status, f.condition, f.description, amqp.Value.Null)
+      None => {}
+    }
+    let hi = find_hub(s, name)
+    if hi < 0 { return (404, "amqp:not-found", "The messaging entity '" + name + "' could not be found.", amqp.Value.Null) }
+    let h = s.hubs[hi]
+    if typ == "com.microsoft:eventhub" {
+      var ids: List[amqp.Value] = []
+      for i in 0..h.parts.len() { ids.push(amqp.Value.Str(v: "${i}")) }
+      return ok_out(amqp.Value.Map(pairs: [pair("name", amqp.Value.Str(v: h.name)), pair("created_at", amqp.Value.Timestamp(ms: h.created_ms)),
+        pair("partition_count", amqp.Value.Int(v: Int32.wrapping_from(h.parts.len()))), pair("partition_ids", amqp.Value.Array(items: ids)),
+        pair("georeplication_factor", amqp.Value.Long(v: Int64(h.geo_factor)))]))
+    }
+    if typ == "com.microsoft:partition" {
+      let pi = Int.parse(part) ?? -1
+      if pi < 0 || pi >= h.parts.len() { return (404, "com.microsoft:argument-out-of-range", "The partition does not exist.", amqp.Value.Null) }
+      let evs = h.parts[pi].events
+      let n = evs.len()
+      var last_time = h.created_ms
+      if n > 0 {
+        match ann_get(evs[n - 1], "x-opt-enqueued-time") {
+          Some(Timestamp(t)) => { last_time = t }
+          _ => {}
+        }
+      }
+      return ok_out(amqp.Value.Map(pairs: [pair("name", amqp.Value.Str(v: h.name)), pair("partition", amqp.Value.Str(v: part)),
+        pair("begin_sequence_number", amqp.Value.Long(v: Int64(if n > 0 { 0 } else { -1 }))),
+        pair("last_enqueued_sequence_number", amqp.Value.Long(v: Int64(n - 1))),
+        pair("last_enqueued_offset", amqp.Value.Str(v: if n > 0 { "${hub_offset(n - 1)}" } else { "-1" })),
+        pair("last_enqueued_time_utc", amqp.Value.Timestamp(ms: last_time)), pair("is_partition_empty", amqp.Value.Bool(v: n == 0))]))
+    }
+    (400, "amqp:invalid-field", "unknown type " + typ, amqp.Value.Null)
+  })
+  push_reply(c, l, reply_message(req, "status-code", "status-description", r.0, r.2, r.1, r.3))
+  Ok(())
+}
+
+fn on_attach(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, a: amqp.Attach) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let si = ss_idx(c, ch)
+  if si < 0 { return Ok(()) }
+  let client_sends = match a.role {
+    Sender => true
+    Receiver => false
+  }
+  let addr = if client_sends {
+    match a.target {
+      Some(t) => t.address
+      None => ""
+    }
+  } else {
+    match a.source {
+      Some(s) => s.address
+      None => ""
+    }
+  }
+  let hp = hub_parse(addr)
+  if hp.0 != 0 && b.st.with_read(fn(s: BrokerState) -> Bool { find_hub(s, hp.1) >= 0 }) {
+    return on_hub_attach(b, sc, c, ch, a, client_sends, hp)
+  }
+  let (kind, entity) = classify(addr)
+  let now = now_ms(b)
+  let conn = c.id
+  let fk = filter_key(a.source)
+  let sessions_wanted = !client_sends && kind == 0
+  // refusal, or the session chosen for a receiver
+  let r = b.st.with(fn(var s: BrokerState) -> (amqp.WireError?, Str, Int) {
+    match take_fail(s, "attach") {
+      Some(f) => return (Some(werr(f.condition, f.description)), "", 0)
+      None => {}
+    }
+    if kind == 1 || (kind == 2 && entity == "") { return (None, "", 0) }
+    if !auth_ok(s, entity, now) {
+      return (Some(werr("amqp:unauthorized-access", "A valid claim is required for " + entity)), "", 0)
+    }
+    let qi = find_queue(s, entity)
+    if qi < 0 || (s.queues[qi].is_topic && !client_sends) {
+      return (Some(werr("amqp:not-found", "The messaging entity '" + entity + "' could not be found.")), "", 0)
+    }
+    if sessions_wanted && s.queues[qi].opts.sessions {
+      match fk {
+        None => return (Some(werr("amqp:not-allowed", "a session filter is required")), "", 0)
+        Some(kv) => {
+          match lock_session(s, qi, conn, now, session_want(kv.1)) {
+            Some(id) => return (None, id, now + s.queues[qi].opts.lock_ms)
+            None => return (Some(werr("com.microsoft:timeout", "No session is available.")), "", 0)
+          }
+        }
+      }
+    }
+    (None, "", 0)
+  })
+  let h = c.links.len()
+  var link = SvLink{handle: h, remote: Int(a.handle), channel: ch, name: a.name, sends: !client_sends, kind: kind, queue: entity, session_id: r.1}
+  link.presettled = match a.sender_settle_mode {
+    Some(Settled) => true
+    _ => false
+  }
+  match r.0 {
+    Some(e) => {
+      link.detached = true
+      c.links.push(link)
+      let role = if client_sends { amqp.Role.Receiver } else { amqp.Role.Sender }
+      out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: role, sender_settle_mode: None, receiver_settle_mode: None, source: None, target: None}))?
+      return out(sc, ch, amqp.FrameBody.Detach(v: amqp.Detach{handle: u32w(h), closed: true, error: Some(e)}))
+    }
+    None => {}
+  }
+  if client_sends { link.credit = 100000 }
+  c.links.push(link)
+  if client_sends {
+    out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Receiver, sender_settle_mode: a.sender_settle_mode,
+      receiver_settle_mode: a.receiver_settle_mode, source: a.source, target: a.target, max_message_size: 0}))?
+    let z = c.sess[si]
+    return out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z.next_out),
+      outgoing_window: UInt32(2048), handle: Some(u32w(h)), delivery_count: Some(u32w(0)), link_credit: Some(u32w(100000)), available: None}))
+  }
+  var src = a.source
+  match fk {
+    Some(kv) => {
+      match src {
+        Some(x) => { src = Some(x with {filter: [(kv.0, session_echo(kv.1, r.1))]}) }
+        None => {}
+      }
+    }
+    None => {}
+  }
+  out(sc, ch, amqp.FrameBody.Attach(v: amqp.Attach{name: a.name, handle: u32w(h), role: amqp.Role.Sender, sender_settle_mode: a.sender_settle_mode,
+    receiver_settle_mode: a.receiver_settle_mode, source: src, target: a.target, initial_delivery_count: 0,
+    properties: if r.1 != "" { [("com.microsoft:locked-until-utc", amqp.Value.Timestamp(ms: r.2))] } else { [] }}))
+}
+
+fn on_flow(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, x: amqp.Flow) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let si = ss_idx(c, ch)
+  if si < 0 { return Ok(()) }
+  var z = c.sess[si]
+  let nin = match x.next_incoming_id {
+    Some(n) => Int(n)
+    None => 0
+  }
+  z.remote_window = (nin + Int(x.incoming_window) - z.next_out) & 4294967295
+  put_sess(c, si, z)
+  match x.handle {
+    Some(h) => {
+      let li = lk_remote(c, ch, Int(h))
+      if li >= 0 && c.links[li].sends {
+        var l = c.links[li]
+        let dc = match x.delivery_count {
+          Some(n) => Int(n)
+          None => l.delivery_count
+        }
+        let lc = match x.link_credit {
+          Some(n) => Int(n)
+          None => 0
+        }
+        l.credit = (dc + lc - l.delivery_count) & 4294967295
+        put_link(c, l)
+      }
+    }
+    None => {}
+  }
+  deliver_all(b, sc, c)?
+  // drain: what could not be sent is given up, and the link says so
+  if x.drain {
+    match x.handle {
+      Some(h) => {
+        let li = lk_remote(c, ch, Int(h))
+        if li >= 0 && c.links[li].sends {
+          var l = c.links[li]
+          l.delivery_count = (l.delivery_count + l.credit) & 4294967295
+          l.credit = 0
+          put_link(c, l)
+          let z2 = c.sess[si]
+          out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z2.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z2.next_out),
+            outgoing_window: UInt32(2048), handle: Some(u32w(l.handle)), delivery_count: Some(u32w(l.delivery_count)), link_credit: Some(UInt32(0)), available: None, drain: true}))?
+        }
+      }
+      None => {}
+    }
+  }
+  Ok(())
+}
+
+fn on_transfer(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, t: amqp.Transfer) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let li = lk_remote(c, ch, Int(t.handle))
+  let si = ss_idx(c, ch)
+  if li < 0 || si < 0 { return Ok(()) }
+  var z = c.sess[si]
+  z.in_used += 1
+  var l = c.links[li]
+  match t.delivery_id {
+    Some(id) => {
+      z.next_in = (Int(id) + 1) & 4294967295
+      if !l.partial_active {
+        l.partial_active = true
+        l.partial_id = Int(id)
+        l.partial_settled = t.settled
+        l.partial = b""
+        l.partial_format = match t.message_format {
+          Some(n) => Int(n)
+          None => 0
+        }
+      }
+    }
+    None => {}
+  }
+  var done = false
+  if t.aborted {
+    l.partial_active = false
+    l.partial = b""
+  } else if l.partial_active {
+    l.partial = l.partial + t.payload
+    if t.settled { l.partial_settled = true }
+    if !t.more { done = true }
+  }
+  let id = l.partial_id
+  let settled = l.partial_settled
+  let payload = l.partial
+  let fmt = l.partial_format
+  if done {
+    l.partial_active = false
+    l.partial = b""
+    l.delivery_count += 1
+  }
+  put_link(c, l)
+  var flow = false
+  if z.in_used >= 1000 {
+    z.in_used = 0
+    flow = true
+  }
+  put_sess(c, si, z)
+  if done { process_message(b, sc, c, li, id, settled, fmt, payload)? }
+  if flow {
+    let z2 = c.sess[si]
+    out(sc, ch, amqp.FrameBody.Flow(v: amqp.Flow{next_incoming_id: Some(u32w(z2.next_in)), incoming_window: UInt32(2048), next_outgoing_id: u32w(z2.next_out), outgoing_window: UInt32(2048), handle: None, delivery_count: None, link_credit: None, available: None}))?
+  }
+  Ok(())
+}
+
+fn on_disposition(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, d: amqp.Disposition) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  match d.role {
+    Sender => return Ok(())
+    Receiver => {}
+  }
+  let first = Int(d.first)
+  let last = match d.last {
+    Some(n) => Int(n)
+    None => first
+  }
+  let state = d.state ?? amqp.DeliveryState.Accepted
+  let now = now_ms(b)
+  let conn = c.id
+  var answer = state
+  var i = 0
+  while i < c.links.len() {
+    var l = c.links[i]
+    if l.channel == ch && l.sends && l.unsettled.len() > 0 {
+      var keep: List[(Int, Int)] = []
+      for (id, seq) in l.unsettled {
+        if id < first || id > last {
+          keep.push((id, seq))
+        } else {
+          let r = b.st.with(fn(var s: BrokerState) -> amqp.DeliveryState {
+            let qi = find_queue(s, l.queue)
+            if qi < 0 { return state }
+            match take_fail(s, "disposition") {
+              Some(f) => return amqp.DeliveryState.Rejected(error: Some(werr(f.condition, f.description)))
+              None => {}
+            }
+            expire_locks(s, qi, now)
+            let q = s.queues[qi]
+            let mi = find_seq(q, seq)
+            if mi < 0 || q.msgs[mi].locked_until == 0 || q.msgs[mi].lock_conn != conn {
+              return amqp.DeliveryState.Rejected(error: Some(werr("com.microsoft:message-lock-lost", "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue.")))
+            }
+            match state {
+              Accepted => complete(s, qi, seq)
+              Released => unlock(s, qi, seq, false)
+              Modified(_, undeliverable_here, ann) => {
+                apply_modified(s, qi, seq, ann)
+                if undeliverable_here { defer_msg(s, qi, seq) } else { unlock(s, qi, seq, true) }
+              }
+              Rejected(error) => {
+                let e = error ?? werr("DeadLetter", "")
+                dead_letter(s, qi, seq, e.condition, e.description)
+              }
+              _ => {}
+            }
+            // the service answers a dead letter with a rejected response that carries no error (go-amqp
+            // receiver.go); an error is for a refusal such as a lost lock
+            match state {
+              Rejected(_) => amqp.DeliveryState.Rejected(error: None)
+              _ => state
+            }
+          })
+          answer = r
+        }
+      }
+      l.unsettled = keep
+      put_link(c, l)
+    }
+    i += 1
+  }
+  if !d.settled {
+    out(sc, ch, amqp.FrameBody.Disposition(v: amqp.Disposition{role: amqp.Role.Sender, first: d.first, last: d.last, settled: true, state: Some(answer)}))?
+  }
+  deliver_all(b, sc, c)
+}
+
+/// Gives back what a link held: its unsettled deliveries and its session lock.
+fn drop_link(b: Broker, var c: SvConn, li: Int) {
+  var l = c.links[li]
+  if l.detached { return }
+  let conn = c.id
+  if l.kind == 4 {
+    b.st.with(fn(var s: BrokerState) { s.owners = s.owners.filter(fn(o: HubOwner) -> Bool { o.key != l.hkey }) })
+  }
+  b.st.with(fn(var s: BrokerState) {
+    let qi = find_queue(s, l.queue)
+    if qi < 0 { return }
+    for (_, seq) in l.unsettled { unlock(s, qi, seq, false) }
+    if l.session_id != "" { unlock_session(s, qi, conn, l.session_id) }
+  })
+  l.unsettled = []
+  l.detached = true
+  put_link(c, l)
+}
+
+fn on_detach(b: Broker, sc: ServerConn, var c: SvConn, ch: Int, x: amqp.Detach) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  let li = lk_remote(c, ch, Int(x.handle))
+  if li < 0 { return Ok(()) }
+  let h = c.links[li].handle
+  drop_link(b, c, li)
+  out(sc, ch, amqp.FrameBody.Detach(v: amqp.Detach{handle: u32w(h), closed: true, error: None}))
+}
+
+fn on_end(b: Broker, sc: ServerConn, var c: SvConn, ch: Int) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  var i = 0
+  while i < c.links.len() {
+    if c.links[i].channel == ch { drop_link(b, c, i) }
+    i += 1
+  }
+  let si = ss_idx(c, ch)
+  if si >= 0 {
+    var z = c.sess[si]
+    z.ended = true
+    put_sess(c, si, z)
+  }
+  out(sc, ch, amqp.FrameBody.End(v: amqp.End{error: None}))
+}
+
+/// Acts on forced detaches and closes the test asked for. Returns true when the connection ends.
+fn control(b: Broker, sc: ServerConn, var c: SvConn) -> Bool ! amqp.AmqpErr uses (net.listen, clock) {
+  let seen = c.seen_gen
+  let r = b.st.with_read(fn(s: BrokerState) -> (Int, List[(Int, Str, amqp.WireError)], List[(Int, amqp.WireError?)]) {
+    (s.gen, s.detaches.filter(fn(d: (Int, Str, amqp.WireError)) -> Bool { d.0 > seen }), s.closes.filter(fn(d: (Int, amqp.WireError?)) -> Bool { d.0 > seen }))
+  })
+  c.seen_gen = r.0
+  for (_, q, e) in r.1 {
+    var i = 0
+    while i < c.links.len() {
+      let l = c.links[i]
+      if !l.detached && l.kind != 1 && (l.queue == q || hub_link_match(l, q)) {
+        let h = l.handle
+        let ch = l.channel
+        drop_link(b, c, i)
+        out(sc, ch, amqp.FrameBody.Detach(v: amqp.Detach{handle: u32w(h), closed: true, error: Some(e)}))?
+      }
+      i += 1
+    }
+  }
+  if r.2.len() > 0 {
+    match r.2[0].1 {
+      Some(e) => out(sc, 0, amqp.FrameBody.Close(v: amqp.Close{error: Some(e)}))?
+      None => {}
+    }
+    return Ok(true)
+  }
+  Ok(false)
+}
+
+/// Handles one frame; true when the connection ends.
+fn handle_frame(b: Broker, sc: ServerConn, var c: SvConn, f: amqp.Frame) -> Bool ! amqp.AmqpErr uses (net.listen, clock) {
+  let ch = Int(f.channel)
+  match f.body {
+    Begin(x) => {
+      c.sess.push(SvSession{channel: ch, next_in: Int(x.next_outgoing_id), remote_window: Int(x.incoming_window)})
+      out(sc, ch, amqp.FrameBody.Begin(v: amqp.Begin{remote_channel: Some(f.channel), next_outgoing_id: UInt32(0), incoming_window: UInt32(2048), outgoing_window: UInt32(2048)}))?
+    }
+    Attach(a) => {
+      let (addr, role) = match a.role {
+        Sender => (match a.target {
+          Some(t) => t.address
+          None => ""
+        }, "sender")
+        Receiver => (match a.source {
+          Some(x) => x.address
+          None => ""
+        }, "receiver")
+      }
+      b.st.with(fn(var s: BrokerState) { s.attaches.push((addr, role, a.desired_capabilities)) })
+      on_attach(b, sc, c, ch, a)?
+    }
+    Flow(x) => on_flow(b, sc, c, ch, x)?
+    Transfer(t) => on_transfer(b, sc, c, ch, t)?
+    Disposition(d) => on_disposition(b, sc, c, ch, d)?
+    Detach(x) => on_detach(b, sc, c, ch, x)?
+    End(_) => on_end(b, sc, c, ch)?
+    Close(_) => {
+      out(sc, 0, amqp.FrameBody.Close(v: amqp.Close{error: None}))?
+      return Ok(true)
+    }
+    _ => {}
+  }
+  Ok(false)
+}
+
+fn handshake(sc: ServerConn, var c: SvConn) -> Bytes ! amqp.AmqpErr uses net.listen {
+  var buf = read_n(sc, b"", 8)?
+  if buf[4] == UInt8(3) {
+    match sc.write(buf[0..8]) {
+      Ok(_) => {}
+      Err(e) => return Err(net_err(e))
+    }
+    buf = buf[8..]
+    out(sc, 0, amqp.FrameBody.SaslMechanisms(v: amqp.SaslMechanisms{mechanisms: ["ANONYMOUS", "PLAIN", "MSSBCBS"]}))?
+    let (init, rest) = read_frame_sync(sc, buf)?
+    match init.body {
+      SaslInit(_) => {}
+      _ => return Err(amqp.AmqpErr.Protocol(msg: "expected sasl-init"))
+    }
+    out(sc, 0, amqp.FrameBody.SaslOutcome(v: amqp.SaslOutcome{code: UInt8(0), additional_data: b""}))?
+    buf = read_n(sc, rest, 8)?
+  }
+  match sc.write(buf[0..8]) {
+    Ok(_) => {}
+    Err(e) => return Err(net_err(e))
+  }
+  buf = buf[8..]
+  let (o, rest) = read_frame_sync(sc, buf)?
+  match o.body {
+    Open(x) => {
+      if x.max_frame_size > 0 && x.max_frame_size < c.max_frame { c.max_frame = x.max_frame_size }
+    }
+    _ => return Err(amqp.AmqpErr.Protocol(msg: "expected open"))
+  }
+  out(sc, 0, amqp.FrameBody.Open(v: amqp.Open{container_id: "xo-amqptest", max_frame_size: 65536, channel_max: 255}))?
+  Ok(rest)
+}
+
+fn frame_reader(sc: ServerConn, start: Bytes, frames: Chan[amqp.Frame]) uses net.listen {
+  var buf = start
+  while true {
+    match read_frame_sync(sc, buf) {
+      Ok(r) => {
+        buf = r.1
+        frames.send(r.0)
+      }
+      Err(_) => break
+    }
+  }
+  frames.close()
+}
+
+fn run_conn(b: Broker, g: task.Group, sc: ServerConn, id: Int, wake: Chan[Bool]) -> () ! amqp.AmqpErr uses (net.listen, clock) {
+  var c = SvConn{id: id}
+  let rest = handshake(sc, c)?
+  let frames = Chan[amqp.Frame].new(cap: 64)
+  g.spawn_background(fn() uses net.listen { frame_reader(sc, rest, frames) })
+  c.seen_gen = b.st.with_read(fn(s: BrokerState) -> Int { s.gen })
+  var stop = false
+  while !stop {
+    select {
+      m = frames.recv() => {
+        match m {
+          Some(f) => {
+            // a detach or close the test asked for before this frame came is applied first:
+            // the frame and the wake race in the select, and a Begin read first was answered
+            // after disconnect_all had returned (amqptest_broker "begin ok", 3 in 8 rounds)
+            stop = control(b, sc, c)?
+            if !stop { stop = handle_frame(b, sc, c, f)? }
+          }
+          None => { stop = true }
+        }
+      }
+      _ = wake.recv() => {
+        stop = control(b, sc, c)?
+        if !stop { deliver_all(b, sc, c)? }
+      }
+    }
+  }
+  Ok(())
+}
+
+fn serve_conn(b: Broker, g: task.Group, sc: ServerConn, id: Int, wake: Chan[Bool]) uses (net.listen, clock) {
+  match run_conn(b, g, sc, id, wake) {
+    Ok(_) => {}
+    Err(_) => {}
+  }
+  b.st.with(fn(var s: BrokerState) { release_conn(s, id) })
+  sc.close()
+}
+
+fn accept_loop(b: Broker, g: task.Group, l: Listener) uses (net.listen, clock) {
+  while true {
+    match l.accept() {
+      Ok(sc) => {
+        let wake = Chan[Bool].new(cap: 1)
+        let id = b.st.with(fn(var s: BrokerState) -> Int {
+          let n = s.next_conn
+          s.next_conn += 1
+          s.wakes.push((n, wake))
+          s.conns.push((n, sc))
+          n
+        })
+        g.spawn_background(fn() uses (net.listen, clock) { serve_conn(b, g, sc, id, wake) })
+      }
+      Err(_) => return
+    }
+  }
+}

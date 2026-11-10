@@ -7893,15 +7893,15 @@ fn amqptest.new(clock: Clock) -> Broker
 fn (b: Broker) serve(g: task.Group, l: Listener) uses (net.listen, clock)
 fn (b: Broker) queue(name: Str, opts: QueueOptions = QueueOptions{})      // QueueOptions{sessions, lock_ms, max_delivery_count}
 fn (b: Broker) topic(name: Str)
-fn (b: Broker) event_hub(name: Str, partitions: Int, consumer_groups: List[Str] = ["$Default"])
+fn (b: Broker) event_hub(name: Str, partitions: Int, consumer_groups: List[Str] = ["$Default"]) uses clock
 fn (b: Broker) event_hub_geo_factor(hub: Str, factor: Int)
 fn (b: Broker) events(hub: Str, partition: Int) -> List[amqp.Message]
 fn (b: Broker) subscription(topic: Str, name: Str, opts: QueueOptions = QueueOptions{})
-fn (b: Broker) put(queue: Str, m: amqp.Message)
-fn (b: Broker) ready(queue: Str) -> List[amqp.Message]
-fn (b: Broker) locked(queue: Str) -> Int
+fn (b: Broker) put(queue: Str, m: amqp.Message) uses clock
+fn (b: Broker) ready(queue: Str) -> List[amqp.Message] uses clock
+fn (b: Broker) locked(queue: Str) -> Int uses clock
 fn (b: Broker) dead_letters(queue: Str) -> List[amqp.Message]
-fn (b: Broker) scheduled(queue: Str) -> List[amqp.Message]
+fn (b: Broker) scheduled(queue: Str) -> List[amqp.Message] uses clock
 fn (b: Broker) deferred(queue: Str) -> List[amqp.Message]
 fn (b: Broker) tokens() -> List[(Str, Str)]
 fn (b: Broker) attaches() -> List[(Str, Str, List[Str])]

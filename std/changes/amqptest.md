@@ -1,5 +1,16 @@
 # std/amqptest changes
 
+## 2026-11-10: behavior: broker methods that read the clock declare `uses clock` (decision 0591)
+
+- Kind: behavior (breaking)
+- Commit: this commit
+- Found by: decision 0588 stage 2 (merging the module checked its bodies against their declarations)
+- Go reference: none
+- Test: std/amqptest_test.xo (`xo test --std-module=amqptest` on native and llvm); golden amqptest_broker
+
+`Broker.event_hub`, `put`, `ready`, `locked` and `scheduled` were declared pure but read the broker's clock; they now
+declare `uses clock`. std/amqptest.xo also holds its bodies now (std/native/amqptest.xo removed, decision 0588).
+
 ## 2026-11-06: fix: a frame sent after disconnect_all or detach_links returns is never answered on what they ended
 
 - Kind: fix

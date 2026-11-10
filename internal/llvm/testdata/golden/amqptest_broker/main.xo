@@ -18,7 +18,7 @@ fn cond(e: amqp.AmqpErr) -> Str {
   }
 }
 
-fn wait_for(os: Os, ok: fn() -> Bool) {
+fn wait_for(os: Os, ok: fn() -> Bool uses clock) {
   for _ in 0..400 {
     if ok() { return }
     os.clock.sleep(5ms)
