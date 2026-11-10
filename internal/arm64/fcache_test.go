@@ -130,7 +130,13 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 	}
 	build := func(t *testing.T, name, target string, env ...string) ([]byte, string) {
 		// the same file name in both directories: a Mach-O signature names it
-		out := filepath.Join(work, name, strings.ReplaceAll(target, "/", "-"), progExe)
+		// a cross build's name as given (a windows target's .exe added
+		// below), the host's with its .exe on Windows
+		pname := progExe
+		if target != "" {
+			pname = "prog"
+		}
+		out := filepath.Join(work, name, strings.ReplaceAll(target, "/", "-"), pname)
 		backend := "--backend=arm64"
 		if strings.HasSuffix(target, "/amd64") {
 			backend = "--backend=amd64"
@@ -3509,7 +3515,7 @@ func TestWindowsWarmEditEntryShims(t *testing.T) {
 	build := func(mode string) ([]byte, string) {
 		t.Helper()
 		n++
-		out := filepath.Join(work, fmt.Sprintf("out%d", n), progExe)
+		out := filepath.Join(work, fmt.Sprintf("out%d", n), "prog")
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "--phase-times", "-o", out, "."))
 		cmd.Dir = src
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache-"+mode), "XO_BACKEND_CACHE="+mode, "XO_WHOLE_BUILD=off")

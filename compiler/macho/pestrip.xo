@@ -345,6 +345,32 @@ fn coff_live(objs: List[CObj], entry: Str, weaks: List[Map[Str, Bool]]) -> List[
       globals[s.name] = (oi, s.sect - 1)
     }
   }
+  // the alternate names (/alternatename:A=B in .drectve), followed as
+  // link_pe_layout follows them: windows/arm64's absent symbols resolve
+  // to their default so (rt.sym_present, decision 0569), and the default's
+  // atom was stripped ("__tsan_destroy_fiber was stripped", winarm VM,
+  // 2026-11-10)
+  var alt: Map[Str, Str] = {}
+  for ob in objs {
+    for d in coff_directives(ob) {
+      let lo = d.to_lower()
+      if lo.starts_with("/alternatename:") || lo.starts_with("-alternatename:") {
+        let kv = d[15..d.len()].split("=")
+        if kv.len() == 2 {
+          alt[kv[0]] = kv[1]
+        }
+      }
+    }
+  }
+  let resolve = fn(name0: Str) -> (Int, Int) {
+    var name = name0
+    var tries = 0
+    while !globals.contains(name) && alt.contains(name) && tries < 8 {
+      name = alt.get(name) ?? name
+      tries += 1
+    }
+    globals.get(name) ?? (-1, -1)
+  }
   // a function's .pdata records and its unsafe range index record
   // (.xounsafe$m, decision 0388): by the section their first field names
   var assoc: Map[Int, List[Int]] = {}
@@ -397,7 +423,7 @@ fn coff_live(objs: List[CObj], entry: Str, weaks: List[Map[Str, Bool]]) -> List[
       if t.sect > 0 {
         to = (oi, t.sect - 1)
       } else if t.sect == 0 {
-        to = globals.get(t.name) ?? (-1, -1)
+        to = resolve(t.name)
       }
       if to.0 >= 0 {
         coff_mark(live, work, to.0, to.1)
