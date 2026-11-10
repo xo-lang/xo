@@ -150,3 +150,33 @@ identical (9184, 99920 and 19525 bytes) and print the same.
 Headless Chrome 157, the step 4 probe page (one long-lived instance, JSPI)
 with this std: memory 608 MB (off), 304 MB (lazy_parse), 265 MB (both), the
 same at every entry after the second; entries 44 to 116 ms with the run.
+
+### Step 5 in the tab: memory per entry and the one-shot build (2026-11-10)
+
+One run of the step 4 probe page (0583/jspi2 index-mem.html, headless Chrome 157 on
+the Mac Studio, this branch's compiler and std; one long-lived instance, 30 entries).
+wasm memory only grows, so the last figure is the peak.
+
+| point | wasm memory |
+|---|---|
+| after instantiate | 1 MB |
+| entry 1 (warm check included) | 212 MB |
+| entry 2 | 265 MB |
+| entry 10 | 265 MB |
+| entry 20 | 265 MB |
+| entry 30 (peak) | 265 MB |
+
+Every entry in order (MB): 212 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265 265.
+
+The same measurement as the 1920 MB baseline (0583/jspi index-base.html: a fresh
+compiler instance per program, `--play build`, headless Chrome 157, one run each):
+
+| compiler | hello | tour program |
+|---|---|---|
+| live /play/ (xoc-20e5db5939ae, the 1920 MB baseline) | 1920 MB, 891 ms | 1920 MB, 717 ms (XO0404: its std predates the program) |
+| this change with XO_LAZY_PARSE=off (25% growth only) | 414 MB, 704 ms | 517 MB, 668 ms |
+| this change | 212 MB, 581 ms | 265 MB, 544 ms |
+
+So a one-shot /play/ build drops from 1920 to 212 MB (hello) on a rebuilt
+playground compiler; the live figure also includes the compiler versions since
+xoc-20e5db5939ae, which this table does not separate.
