@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Native and LLVM backends: `UInt64(f)` of a Float (or Float32) from 2^63 up to 2^64 converts, as the Go backend and core 3 say; it faulted ("out of range for Int"). New golden float_int_edges pins NaN, +Inf, -Inf and every range edge of Int, Int32, UInt8, UInt32 and UInt64 on every backend.
 - xo check: a walk of a workspace of 8 or more modules (`xo check ./...`) no longer reports "expected `Str`, found `Str`" in members that import a std module the shared base does not, once std's record is cached (each such member had installed std's whole record again, a second prelude); builds were not affected.
 - xo check: XO0701 for a value whose type's effects differ from the expected type's names the value's effects first and the expected type's second ("this value's type has effects `fs.read`, but the expected type `Cred[(fs.read, proc)]` has `fs.read, proc`"); it read "the expected type ... fixes these effects as `fs.read`, but performs `proc`", the value's set as the expected one. Same code, wording only.
 - xo build (windows/amd64 and windows/arm64): WinDbg and cdb load the PDB xo writes (its info stream names /LinkInfo, as MSVC's and lld's do); before, current dbghelp reported "file system or network error reading pdb" and showed no symbols.

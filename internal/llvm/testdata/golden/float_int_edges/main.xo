@@ -1,0 +1,38 @@
+// Float to integer conversions at their edges (core 3: Int(f) truncates
+// toward zero and faults on NaN or out of range; each sized integer
+// type the same, UInt64 up to 2^64). Each conversion runs under
+// task.isolate so one program shows every case; a fault prints as
+// `fault`. UInt64 from [2^63, 2^64) faulted on the native and LLVM
+// backends until 2026-11-09 (the Go backend converted it).
+use std/task
+
+fn show(r: Result[Int, task.Isolated[()]]) -> Str {
+  match r {
+    Ok(v) => "${v}"
+    Err(_) => "fault"
+  }
+}
+
+fn show_u(r: Result[UInt64, task.Isolated[()]]) -> Str {
+  match r {
+    Ok(v) => "${v}"
+    Err(_) => "fault"
+  }
+}
+
+fn main(os: Os) {
+  let zero = 0.0
+  let nan = zero / zero
+  let inf = 1.0 / zero
+  let xs = [nan, inf, -inf, 2.9, -2.9, -0.9, -0.0, 9223372036854775807.0, -9223372036854775808.0, 9.3e18, -9.3e18, 1.8e19, 18446744073709549568.0, 18446744073709551616.0, 1e300, 4294967295.9, 4294967296.0, -1.0, 255.9, 256.0, 2147483647.9, -2147483648.9, -2147483649.0]
+  for x in xs {
+    let i = show(task.isolate(fn() -> Int ! () { Int(x) }))
+    let i32 = show(task.isolate(fn() -> Int ! () { Int(Int32(x)) }))
+    let u8 = show(task.isolate(fn() -> Int ! () { Int(UInt8(x)) }))
+    let u32 = show(task.isolate(fn() -> Int ! () { Int(UInt32(x)) }))
+    let u64 = show_u(task.isolate(fn() -> UInt64 ! () { UInt64(x) }))
+    let f32 = show(task.isolate(fn() -> Int ! () { Int(Float32(x)) }))
+    let u64f32 = show_u(task.isolate(fn() -> UInt64 ! () { UInt64(Float32(x)) }))
+    os.stdio.println("${x}: Int ${i} | Int32 ${i32} | UInt8 ${u8} | UInt32 ${u32} | UInt64 ${u64} | Float32 then Int ${f32} | Float32 then UInt64 ${u64f32}")
+  }
+}

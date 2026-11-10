@@ -1139,6 +1139,9 @@ fn (var b: Builder) type_call(obj: Int, x: Expr) -> Int {
   if tk == Kind.Float && vk == Kind.Int {
     return b.add(Op.IntToFloat, to, Aux.None, [v])
   }
+  if tk == Kind.Int && vk == Kind.Float && b.m.is_u64(to) {
+    return b.float_to_u64(v, to, span)
+  }
   if tk == Kind.Int && vk == Kind.Float {
     let r = b.add(Op.FloatToInt, it, Aux.None, [v])
     b.set_pos(r, b.pos(span))
@@ -2915,4 +2918,41 @@ fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
 /// of its own, so it is an ordinary call, not a C extern or a std function.
 fn (var b: Builder) derived_in_c(fm: Int, fo: Int) -> Bool {
   fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() && b.c.objs[fo].file.ends_with("#derive")
+}
+
+/// UInt64(f): f truncated, in range from 0 up to 2^64 (core 3: faults on
+/// NaN or out of range). FloatToInt stops at 2^63, which faulted every
+/// value from 2^63 up (9.3e18) on the native and LLVM backends while the
+/// Go backend converted it (2026-11-09): at 2^63 or above the value less
+/// 2^63 is converted and the top bit set; 2^64 or above (and NaN, in
+/// either arm) faults through FloatToInt of f itself.
+fn (var b: Builder) float_to_u64(v: Int, to: Int, span: Span) -> Int {
+  let vt = b.vty(v)
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let two63 = b.add(Op.Const, vt, Aux.F(f: 9223372036854775808.0), [])
+  let big = b.add(Op.Ge, bt, Aux.None, [v, two63])
+  let (yes, no) = b.branch(big)
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, to)
+  b.s.cur = yes
+  let d = b.add(Op.Sub, vt, Aux.None, [v, two63])
+  let over = b.add(Op.Ge, bt, Aux.None, [d, two63])
+  let (fits, join2) = b.if_then_begin(over)
+  let f = b.add(Op.FloatToInt, it, Aux.None, [v])
+  b.set_pos(f, b.pos(span))
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+  b.if_then_end(fits, join2)
+  let lo = b.add(Op.FloatToInt, it, Aux.None, [d])
+  b.set_pos(lo, b.pos(span))
+  let top = b.add(Op.Xor, it, Aux.None, [lo, b.cint(-9223372036854775807 - 1)])
+  b.jump(join, [b.add(Op.IntConv, to, Aux.None, [top])])
+  b.s.cur = no
+  let r = b.add(Op.FloatToInt, it, Aux.None, [v])
+  b.set_pos(r, b.pos(span))
+  b.jump(join, [b.int_conv(r, to, span)])
+  b.seal(join)
+  b.s.cur = join
+  res
 }
