@@ -155,7 +155,9 @@ fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
   // a test build's run cache (in the bin cache) could serve the build
   // and write no objects: off for the test variant
   let base = ["PWD=${prog}", "XO_STD_CONC=${conc}", "XO_DCE=off"] + (if tmode { ["XO_BIN_CACHE=off"] } else { [] })
-  let tg: List[Str] = if target.is_empty() { [] } else { [target] }
+  // windows/arm64 names its backend until the native one is its default
+  // (decision 0569): std's object and facts are the arm64 backend's
+  let tg: List[Str] = if target.is_empty() { [] } else if target == "--target=windows/arm64" { [target, "--backend=arm64"] } else { [target] }
   let cmd = if tmode { "test" } else { "build" }
   let obj_args = base + ["XO_STD_OBJ=${out}", "XO_PASSES=-hollow", xo, cmd] + tg + ["-o", "${prog}/x", prog]
   let facts_args = base + ["XO_STD_ROOTS=1", "XO_STD_FACTS_DUMP=${facts}", "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=${prog}/cache", "XO_BUILD_DIR=${prog}/build", xo, cmd] + tg + ["-o", "${prog}/xf", prog]

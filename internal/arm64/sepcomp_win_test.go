@@ -11,18 +11,28 @@ import (
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
-// TestSepcompLinksWindows (decision 0388 stage 3 on windows/amd64): std's
-// windows store and facts from the std cache (xo dev stdcache
-// --target=windows/amd64), and a program built against them (XO_SEPCOMP:
+// TestSepcompLinksWindows (decision 0388 stage 3 on windows/amd64 and
+// windows/arm64): std's windows store and facts from the std cache (xo
+// dev stdcache --target=windows/ARCH), and a program built against them (XO_SEPCOMP:
 // its objects whole, std through pelink's COFF store link) links with its
 // PDB, before and after an edit. The program instantiates a generic std
 // type std also has (a weak definition each side, the store's kept). The
-// executables run under Wine in the gate, not here.
+// executables run under Wine in the gate, not here. windows/arm64's std
+// object linked the stub program instead of writing its store until
+// 2026-11-10 (the link failed on xo_entry; winarm VM).
 func TestSepcompLinksWindows(t *testing.T) {
-	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			t.Parallel()
+			sepcompLinksWindows(t, arch)
+		})
+	}
+}
+
+func sepcompLinksWindows(t *testing.T, arch string) {
 	xo, err := xotool.Path()
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +42,7 @@ func TestSepcompLinksWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(work)
-	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--target=windows/amd64", "--conc=0"))
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--target=windows/"+arch, "--conc=0"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
 	paths, err := stdRun(cmd.Output)
 	if err != nil {
@@ -66,11 +76,11 @@ func TestSepcompLinksWindows(t *testing.T) {
 		out := filepath.Join(work, "sep", "prog")
 		os.Remove(out + ".exe")
 		os.Remove(out + ".pdb")
-		b := testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", out, "."))
+		b := testtmp.Guard(exec.Command(xo, "build", "--backend="+arch, "--targets=windows/"+arch, "-o", out, "."))
 		b.Dir = prog
 		b.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-sep"), "XO_SEPCOMP=1", "XO_SEPCOMP_FACTS="+facts, "XO_SEPCOMP_STORE="+store)
 		if log, err := b.CombinedOutput(); err != nil {
-			t.Fatalf("edit %d: xo build (XO_SEPCOMP, windows/amd64): %v\n%s", edit, err, log)
+			t.Fatalf("edit %d: xo build (XO_SEPCOMP, windows/%s): %v\n%s", edit, arch, err, log)
 		}
 		for _, f := range []string{out + ".exe", out + ".pdb"} {
 			if fi, err := os.Stat(f); err != nil || fi.Size() == 0 {
