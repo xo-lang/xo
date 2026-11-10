@@ -32,8 +32,13 @@ import (
 func packages(md string) ([]string, error) {
 	rows, err := pkgRows(md)
 	var out []string
+	seen := map[string]bool{}
 	for _, r := range rows {
-		out = append(out, r.pkg)
+		// a package can sit in two rows ("net/http (server)", "(client)")
+		if !seen[r.pkg] {
+			seen[r.pkg] = true
+			out = append(out, r.pkg)
+		}
 	}
 	return out, err
 }
@@ -67,8 +72,21 @@ func pkgRows(md string) ([]pkgRow, error) {
 			module, status = strings.TrimSpace(cols[2]), strings.TrimSpace(cols[3])
 			note = strings.TrimSpace(cols[4])
 		}
+		// the not planned rows have three columns: package, status, note
+		if len(cols) > 3 && strings.HasPrefix(strings.TrimSpace(cols[2]), "not planned") {
+			module, status, note = "", strings.TrimSpace(cols[2]), strings.TrimSpace(cols[3])
+		}
 		if cell == "" || cell == "Go package" || strings.HasPrefix(cell, "---") {
 			continue
+		}
+		// "debug/* (dwarf, elf)": the packages in parentheses under debug/
+		if i := strings.Index(cell, "/* ("); i > 0 && strings.HasSuffix(cell, ")") {
+			dir := strings.Trim(cell[:i], "`")
+			var names []string
+			for _, n := range strings.Split(cell[i+4:len(cell)-1], ",") {
+				names = append(names, dir+"/"+strings.TrimSpace(n))
+			}
+			cell = strings.Join(names, ", ")
 		}
 		prefix := ""
 		for _, p := range strings.Split(cell, ",") {
@@ -353,7 +371,11 @@ func report(goFile, xoFile, mapFile, md string) error {
 			}
 			k, v, ok := strings.Cut(l, "=")
 			if ok {
-				mapped[strings.TrimSpace(k)] = strings.TrimSpace(v)
+				k = strings.TrimSpace(k)
+				if mapped[k] != "" {
+					return fmt.Errorf("%s: %s is mapped twice", mapFile, k)
+				}
+				mapped[k] = strings.TrimSpace(v)
 			}
 		}
 	}
@@ -370,10 +392,7 @@ func report(goFile, xoFile, mapFile, md string) error {
 		}
 		pkg, kind, name := f[0], f[1], f[2]
 		short := pkg[strings.LastIndex(pkg, "/")+1:]
-		key := short + "." + name
-		if mapped[pkg+"."+name] != "" {
-			key = pkg + "." + name
-		}
+		key := mapKey(mapped, pkg, short, name)
 		switch {
 		case mapped[key] == "" && notPlanned[pkg] != "":
 			fmt.Printf("skipped\t%s\t%s\n", l, notPlanned[pkg])
@@ -389,11 +408,47 @@ func report(goFile, xoFile, mapFile, md string) error {
 			fmt.Printf("doc-named\t%s\t\n", l)
 		case seedMatch(xoset, pkg, kind, name) != "":
 			fmt.Printf("seeded\t%s\t%s\n", l, seedMatch(xoset, pkg, kind, name))
+		case wildKey(mapped, pkg, short, name) != "":
+			v := mapped[wildKey(mapped, pkg, short, name)]
+			switch {
+			case strings.HasPrefix(v, "gap"):
+				fmt.Printf("gap\t%s\t%s\n", l, v)
+			case strings.HasPrefix(v, "not planned"):
+				fmt.Printf("skipped\t%s\t%s\n", l, v)
+			default:
+				fmt.Printf("mapped\t%s\t%s\n", l, v)
+			}
 		default:
 			fmt.Printf("unmapped\t%s\t%s\n", l, kind)
 		}
 	}
 	return nil
+}
+
+// mapKey is the map.txt key of a Go symbol: `short.Name`, or the full
+// import path when map.txt uses it (a clash of last elements).
+func mapKey(mapped map[string]string, pkg, short, name string) string {
+	if mapped[pkg+"."+name] != "" {
+		return pkg + "." + name
+	}
+	return short + "." + name
+}
+
+// wildKey is the wildcard key covering a symbol no exact line, doc
+// comment or seed names: the type's methods (`short.Type.*`), else the
+// package (`short.*`); "" when none is mapped.
+func wildKey(mapped map[string]string, pkg, short, name string) string {
+	var keys []string
+	if t, _, ok := strings.Cut(name, "."); ok {
+		keys = append(keys, pkg+"."+t+".*", short+"."+t+".*")
+	}
+	keys = append(keys, pkg+".*", short+".*")
+	for _, k := range keys {
+		if mapped[k] != "" {
+			return k
+		}
+	}
+	return ""
 }
 
 // rank counts, over the Go files under the corpus directories (non test,
@@ -562,10 +617,15 @@ func main() {
 	xoPath := flag.String("xo", "", "print Xo's surface using this xo binary")
 	stdDir := flag.String("std", "std", "the std directory (with -xo)")
 	md := flag.String("md", "knowledgebase/infrastructure/std-coverage.md", "the coverage table")
-	rankF := flag.String("rank", "", "rank the unmapped rows of this -report output by use in the corpus directories (arguments)")
+	rankF := flag.String("rank", "", "rank the rows of this -report output (the -status ones) by use in the corpus directories (arguments)")
+	statusF := flag.String("status", "unmapped", "with -rank: the report statuses to rank, comma separated (gap ranks the verified gaps)")
 	flag.Parse()
 	if *rankF != "" {
-		if err := rank(*rankF, flag.Args(), map[string]bool{"unmapped": true, "seeded": false}); err != nil {
+		statuses := map[string]bool{}
+		for _, st := range strings.Split(*statusF, ",") {
+			statuses[strings.TrimSpace(st)] = true
+		}
+		if err := rank(*rankF, flag.Args(), statuses); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
