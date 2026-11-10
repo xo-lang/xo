@@ -21,8 +21,13 @@ golang.org/x/sys/windows (`CryptProtectData`, `CryptUnprotectData`,
 
 ## Decision
 
-1. **One new effect, `secrets`**, added to the effect names the checker
-   accepts (compiler/check/decl.xo lists, `uses secrets`). It covers all
+1. **One new effect family, `secrets` with `secrets.read` and
+   `secrets.write`** (like `fs`; `uses secrets` means both), added to the
+   accepted names (compiler/check/decl.xo:926, the did-you-mean list at :955,
+   call.xo:907 `fake_field` "FakeSecrets" => "secrets", the effect table at
+   core.md:2637, `xo audit`). Read: `Keyring.user_persistent/search/read`,
+   `Keychain.get_generic`, `Dpapi.unprotect`; write: `Keyring.add/unlink`,
+   `Keychain.set_generic/delete_generic`, `Dpapi.protect`. It covers all
    three stores: they all read or write the user's secrets, and a function
    that may touch any of them should say so in one word. `xo audit` lists it.
 2. **One new capability field, `Os.secrets: Secrets`**, and
@@ -49,7 +54,7 @@ golang.org/x/sys/windows (`CryptProtectData`, `CryptUnprotectData`,
 3. **Keyring** (Linux keyrings(7)), exactly the calls Go's azidentity uses:
 
    ```
-   trait Keyring {
+   interface Keyring {
      fn user_persistent(self) -> KeyringId ! KeyErr uses secrets
      fn add(self, ring: KeyringId, kind: Str, desc: Str, payload: Bytes) -> KeyId ! KeyErr uses secrets
      fn search(self, ring: KeyringId, kind: Str, desc: Str) -> KeyId ! KeyErr uses secrets
@@ -69,7 +74,7 @@ golang.org/x/sys/windows (`CryptProtectData`, `CryptUnprotectData`,
 4. **Keychain** (macOS Security.framework), generic passwords only:
 
    ```
-   trait Keychain {
+   interface Keychain {
      fn get_generic(self, service: Str, account: Str) -> Bytes? ! KeychainErr uses secrets
      fn set_generic(self, service: Str, account: Str, data: Bytes) -> () ! KeychainErr uses secrets
      fn delete_generic(self, service: Str, account: Str) -> () ! KeychainErr uses secrets
@@ -87,7 +92,7 @@ golang.org/x/sys/windows (`CryptProtectData`, `CryptUnprotectData`,
 5. **Dpapi** (Windows):
 
    ```
-   trait Dpapi {
+   interface Dpapi {
      fn protect(self, data: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets
      fn unprotect(self, blob: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets
    }
@@ -189,3 +194,13 @@ class as decision 0426's new Proc methods), and for a user type implementing
   (every member None). More compiler work (Lang 1's file), no break.
 
 Recommendation: B if Lang 1 agrees the `os_lit` change is small, else A.
+
+## Addendum (2026-11-10, Lang 1's checker notes)
+
+- The three declarations are `interface`, not `trait` (XO0177).
+- Methods are annotated `uses secrets.read` or `uses secrets.write` per the
+  split in decision item 1, not `uses secrets`.
+- No effect parameter on Secrets/Keyring, so 0582's widening does not apply.
+- Check before code: a default parameter in an interface method
+  (`Dpapi.protect(data, entropy: Bytes = b"")`) must work for impls and
+  fakes (Proc.cmd's `args = []` does, 0307); if not, two methods.
