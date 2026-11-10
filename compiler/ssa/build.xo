@@ -922,6 +922,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   let bin = if wide { b.llrt_fn("native/llrt/clibh", "bytes_in") } else { "" }
   let tin = if wide { b.llrt_fn("native/llrt/clibh", "text_in") } else { "" }
   let bback = if wide { b.llrt_fn("native/llrt/clibh", "bytes_back") } else { "" }
+  let bufs_fn = if wide { b.llrt_fn("native/llrt/clibh", "bufs") } else { "" }
   let c_ok = if et >= 0 { b.llrt_fn("native/llrt/heapos", "c_ok") } else { "" }
   let c_error = if et >= 0 { b.llrt_fn("native/llrt/heapos", "c_error") } else { "" }
   let started = if b.c.clib_static { b.llrt_fn("native/llrt/obj", "heap_started") } else { "" }
@@ -939,7 +940,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   let rnull = if hres { b.c_nullable(b.c.objs[o].result) } else { -1 }
   let cout = if bres { b.llrt_fn("native/llrt/heapos", "c_bytes_out") } else { "" }
   let put = if hres { b.llrt_inst("native/llrt/clibh", "hput", if rnull >= 0 { rnull } else { b.c.objs[o].result }) } else { "" }
-  if (wide && (copy.is_empty() || text.is_empty() || bin.is_empty() || tin.is_empty() || bback.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (b.c.clib_static && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || (bres && cout.is_empty()) || gets.any(fn(g) { g == "-" }) {
+  if (wide && (copy.is_empty() || text.is_empty() || bin.is_empty() || tin.is_empty() || bback.is_empty() || bufs_fn.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (b.c.clib_static && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || (bres && cout.is_empty()) || gets.any(fn(g) { g == "-" }) {
     b.unsupported("a C export with no native/llrt")
     return
   }
@@ -967,6 +968,8 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   var args: List[Int] = []
   // the Bytes and Str arguments in buffers: (buffer index, value)
   var bufs: List[(Int, Int)] = []
+  // the thread's buffer table, read once a call
+  let bt = if wide { b.call(bufs_fn, b.int_t(), "", []) } else { -1 }
   var i = 0
   for (k, p) in b.m.funcs[fi].blocks[0].params.indexed() {
     let t = ty_of(b.m.funcs[fi].values[p].tb)
@@ -974,7 +977,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
       // a Str holds valid UTF-8; a Bytes any bytes
       let str = k < b.c.objs[o].params.len() && b.c.show(b.c.objs[o].params[k].ty) == "Str"
       if bufs.len() < C_BUFS {
-        let v = b.call(if str { tin } else { bin }, t, "", [b.cint(bufs.len()), wp[i], wp[i + 1]])
+        let v = b.call(if str { tin } else { bin }, t, "", [bt, b.cint(bufs.len()), wp[i], wp[i + 1]])
         bufs.push((bufs.len(), v))
         args.push(v)
       } else {
@@ -1007,7 +1010,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   }
   let r = b.call(b.m.funcs[fi].name, rt, "", args)
   for (j, v) in bufs {
-    let _k = b.call(bback, b.unit_t(), "", [b.cint(j), v])
+    let _k = b.call(bback, b.unit_t(), "", [bt, b.cint(j), v])
   }
   if hold {
     let _e = b.call(rend, b.unit_t(), "", [rd])

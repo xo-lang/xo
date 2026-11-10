@@ -269,12 +269,17 @@ fn reclaim(m: Int) -> List[Int] {
 /// is freed, so one large argument does not stay with its thread.
 const BUF_KEEP = 65536
 
-/// A C export's Bytes parameter k (decision 0574; k < heapos.C_BUFS):
+/// The calling thread's buffer table for C exports' Bytes and Str
+/// parameters (heapos.c_bufs), which the wrapper reads once a call and
+/// passes to bytes_in, text_in and bytes_back; 0 when there is none.
+pub fn bufs() -> Int { heapos.c_bufs() }
+
+/// A C export's Bytes parameter k (decision 0574; k < heapos.C_BUFS) in
+/// thread buffer table t (bufs):
 /// the n bytes at a copied into the calling thread's buffer for k when
 /// it has room (no allocation: the buffer bytes_back kept after the last
 /// call), else into a new Str.
-pub fn bytes_in(k: Int, a: Int, n: Int) -> Str {
-  let t = heapos.c_bufs()
+pub fn bytes_in(t: Int, k: Int, a: Int, n: Int) -> Str {
   if t != 0 {
     let p = rt.mem_load(t, 8 * k, 8)
     if p != 0 && rt.mem_load(p, 8, 8) >= n {
@@ -291,18 +296,42 @@ pub fn bytes_in(k: Int, a: Int, n: Int) -> Str {
 
 /// A C export's Str parameter k: bytes_in's, valid UTF-8 (each byte of
 /// an invalid sequence U+FFFD, decision 0259; a new Str then).
-pub fn text_in(k: Int, a: Int, n: Int) -> Str { scan.text(bytes_in(k, a, n)) }
+pub fn text_in(t: Int, k: Int, a: Int, n: Int) -> Str {
+  if ascii(a, n) {
+    // all ASCII, so valid UTF-8: no scan of the copy
+    return bytes_in(t, k, a, n)
+  }
+  scan.text(bytes_in(t, k, a, n))
+}
+
+/// Whether the n bytes at a are all ASCII: 8 at a time (unaligned
+/// loads), then the rest.
+fn ascii(a: Int, n: Int) -> Bool {
+  var i = 0
+  var or = 0
+  while i + 8 <= n {
+    or = or | rt.mem_load(a + i, 0, 8)
+    i += 8
+  }
+  while i < n {
+    or = or | rt.mem_load(a + i, 0, 1)
+    i += 1
+  }
+  or & HIGH_BITS == 0
+}
+
+/// The high bit of each byte of a word.
+const HIGH_BITS = -9187201950435737472
 
 /// After the call: s, parameter k's Str, kept as the thread's buffer for
 /// k when nothing else holds it (the function kept no reference, its
 /// count is the wrapper's 1), the slot is empty and it is at most
 /// BUF_KEEP bytes; otherwise the wrapper's release frees it as usual.
-pub fn bytes_back(k: Int, s: Str) {
+pub fn bytes_back(t: Int, k: Int, s: Str) {
   let p = rt.obj_addr(s)
   if rt.mem_load(p, 0, 8) != 1 || rt.mem_load(p, 8, 8) > BUF_KEEP {
     return
   }
-  let t = heapos.c_bufs()
   if t == 0 || rt.mem_load(t, 8 * k, 8) != 0 {
     return
   }
