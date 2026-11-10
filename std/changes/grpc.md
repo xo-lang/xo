@@ -1,5 +1,19 @@
 # std/grpc changes
 
+## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0588 stage 2 (pure modules merged with their implementation)
+- Go reference: none (no behavior change)
+- Test: std/grpc_test.xo (`xo test --std-module=grpc` on native and llvm); internal/stdtest corpus grpc on go, arm64 and llvm
+
+std/grpc.xo now holds the bodies of std/native/grpc.xo (removed), and the Go
+backend compiles them from it as its own package; std/rt/grpc.go (the Go backend's display methods) is removed, the
+module's own `display` methods serve it. The API, texts and errors
+are unchanged: every item the declaration file had is `pub`, with the same
+parameter names.
+
 ## 2026-11-06: feature: gzip compression (Client.with_gzip; compressed messages are read)
 
 - Kind: feature

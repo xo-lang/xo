@@ -1,0 +1,114 @@
+// Vectors from grpc-go (rpc_util.go, http_util.go encodeTimeout and encodeGrpcMessage, codes).
+test "frame and unframe" {
+  let f = frame(b"abc")
+  expect(f) == b"\x00\x00\x00\x00\x03abc"
+  let (c, p, n) = unframe(f, 0).or_fault("u")
+  expect((c, p, n)) == (false, b"abc", 8)
+  expect(frame(b"", true)) == b"\x01\x00\x00\x00\x00"
+  expect(unframe(b"\x02\x00\x00\x00\x00", 0)) == Err(FrameErr.BadFlag(flag: 2))
+  expect(unframe(b"\x00\x00\x00", 0)) == Err(FrameErr.Truncated)
+  expect(unframe(b"\x00\x00\x00\x00\x05ab", 0)) == Err(FrameErr.Truncated)
+  expect(unframe(b"\x00\x00\x00\x40\x01", 0, 16384)) == Err(FrameErr.TooLarge(len: 16385))
+}
+
+test "timeouts" {
+  expect(encode_timeout(0)) == "0n"
+  expect(encode_timeout(-5)) == "0n"
+  expect(encode_timeout(1)) == "1n"
+  expect(encode_timeout(99999999)) == "99999999n"
+  expect(encode_timeout(100000000)) == "100000u"
+  expect(encode_timeout(1000000000)) == "1000000u"
+  expect(encode_timeout(60000000000)) == "60000000u"
+  expect(encode_timeout(7200000000000)) == "7200000m"
+  expect(decode_timeout("1000m")) == Some(1000000000)
+  expect(decode_timeout("5S")) == Some(5000000000)
+  expect(decode_timeout("2H")) == Some(7200000000000)
+  expect(decode_timeout("S")) == None
+  expect(decode_timeout("123456789S")) == None
+  expect(decode_timeout("5x")) == None
+  expect(decode_timeout("")) == None
+}
+
+test "codes" {
+  expect(Code.Unauthenticated.number()) == 16
+  expect(code_from(4)) == Some(Code.DeadlineExceeded)
+  expect(code_from(17)) == None
+}
+
+test "grpc-message encoding" {
+  expect(encode_message("hello world")) == "hello world"
+  expect(encode_message("100%")) == "100%25"
+  expect(encode_message("a\nb")) == "a%0Ab"
+  expect(encode_message("é")) == "%C3%A9"
+  expect(decode_message("a%0Ab")) == "a\nb"
+  expect(decode_message("%C3%A9")) == "é"
+  expect(decode_message("%zz")) == "%zz"
+  expect(decode_message("100%")) == "100%"
+}
+
+fn lcg(x: Int) -> Int {
+  (x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)) & 0x7fffffffffffffff
+}
+
+test "random bytes never fault the frame, timeout and message readers" {
+  var x = 12345
+  for _ in 0..3000 {
+    x = lcg(x)
+    let n = (x >> 33) % 24
+    var b = BytesBuilder.with_capacity(n)
+    for _ in 0..n {
+      x = lcg(x)
+      b.write_byte(UInt8.wrapping_from((x >> 40) & 255))
+    }
+    let data = b.freeze()
+    // a frame read of any bytes is Ok or an error, and an Ok frame reframes to the bytes it came from
+    match unframe(data, 0) {
+      Ok((compressed, msg, next)) => {
+        expect(frame(msg, compressed)) == data[0..next]
+      }
+      Err(_) => {}
+    }
+    let s = data.to_str_lossy()
+    let back = decode_message_bytes(s)
+    expect(back.len() <= s.len()) == true
+    match decode_timeout(s) {
+      Some(ns) => expect(ns >= 0) == true
+      None => {}
+    }
+  }
+}
+
+test "frame round trips every length class and the receive limit" {
+  for n in [0, 1, 255, 256, 65535, 65536, 100000] {
+    let payload = Bytes.zeroed(n)
+    let (c, m, next) = unframe(frame(payload), 0).or_fault("unframe")
+    expect(c) == false
+    expect(m.len()) == n
+    expect(next) == n + 5
+  }
+  match unframe(frame(Bytes.zeroed(10)), 0, 9) {
+    Ok(_) => fault("want TooLarge")
+    Err(e) => expect(e) == FrameErr.TooLarge(len: 10)
+  }
+}
+
+test "binary metadata is unpadded base64 and reads padded or not" {
+  expect(bin_encode(b"")) == ""
+  expect(bin_encode(b"f")) == "Zg"
+  expect(bin_encode(b"fo")) == "Zm8"
+  expect(bin_encode(b"foo")) == "Zm9v"
+  expect(bin_decode("Zg")) == Some(b"f")
+  expect(bin_decode("Zg==")) == Some(b"f")
+  expect(bin_decode("Zm8=")) == Some(b"fo")
+  expect(bin_decode("Zm9v")) == Some(b"foo")
+  expect(bin_decode("!!")) == None
+  expect(bin_decode("Z")) == None
+  for n in 0..40 {
+    var b = BytesBuilder.new()
+    for i in 0..n {
+      b.write_byte(UInt8(i * 37 % 256))
+    }
+    let data = b.freeze()
+    expect(bin_decode(bin_encode(data))) == Some(data)
+  }
+}

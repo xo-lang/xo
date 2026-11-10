@@ -15,3 +15,5 @@ std/cron
 std/bcrypt
 std/charset
 std/jwt
+std/mail
+std/grpc

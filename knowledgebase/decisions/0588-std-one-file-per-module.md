@@ -272,3 +272,8 @@ commit (the lead cuts it).
   rooted no XoEq and the Go backend faulted "XoEq not generated for
   x_std_jwt.Alg". compiler/gen/proto.xo proto_call_roots now scans
   merged modules (gotchas/merged-std-module-go-proto-roots.md).
+- `std/mail` and `std/grpc` merged (std/rt/mail.go and grpc.go, hand
+  display methods, removed). `std/cbor` waits: its generic `marshal`,
+  `unmarshal` and `unmarshal_prefix` have no native body (the compiler
+  provides them), so the merge needs those declarations kept bodyless
+  in a merged file first.
