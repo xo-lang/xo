@@ -87,22 +87,46 @@ report=$OUT/report.md
 timed() {
 	local log=$1
 	shift
+	local ms rss
+	if [ "$(uname -s)" = Linux ]; then
+		# GNU time -v: "Elapsed (wall clock) time (h:mm:ss or m:ss): M:SS.SS"
+		# and "Maximum resident set size (kbytes): N"
+		local t0 t1
+		t0=$(date +%s%N)
+		/usr/bin/time -v "$@" >"$log" 2>&1
+		t1=$(date +%s%N)
+		ms=$(((t1 - t0) / 1000000))
+		rss=$(awk -F': ' '/Maximum resident set size/ {print $2 * 1024}' "$log" | tail -1)
+		echo "${ms:-0} $((${rss:-0} / 1048576))"
+		return
+	fi
 	/usr/bin/time -l "$@" >"$log" 2>&1
 	# time's own lines are the last of the log: "N.NN real ..." and the
 	# largest resident set in bytes
-	local ms rss
 	ms=$(awk '$2 == "real" {printf "%d", $1 * 1000}' "$log" | tail -1)
 	rss=$(awk '/maximum resident set size/ {print $1}' "$log" | tail -1)
 	echo "${ms:-0} $((${rss:-0} / 1048576))"
 }
 
-load1() { sysctl -n vm.loadavg | awk '{print int($2)}'; }
+load1() { if [ -r /proc/loadavg ]; then awk '{print int($1)}' /proc/loadavg; else sysctl -n vm.loadavg | awk '{print int($2)}'; fi; }
 # The machine, as the report's header names it (lead, 2026-11-10: the
 # header said "Darwin arm64, 24 GB" from an older Mac's run; read it):
 # the model's name and identifier, the chip, its cores and memory, e.g.
 # "Mac Studio (Mac17,15), Apple M5 Ultra, 30 cores, 96 GB, Darwin arm64".
 host_desc() {
 	local name model chip cores mem
+	if [ "$(uname -s)" = Linux ]; then
+		# a linux offload host (lead, 2026-11-10: the release's run, test and
+		# HTTP rows on linux/arm64 host 1): the CPU's model, cores and memory
+		# lscpu's "Model name" is "-" on some arm64 hosts; its "BIOS Model name"
+		# then names the part (a Graviton's "AWS Graviton4 Processor")
+		chip=$(lscpu 2>/dev/null | awk -F': *' '/^Model name/ && $2 != "-" {print $2; exit}')
+		[ -n "$chip" ] || chip=$(lscpu 2>/dev/null | awk -F': *' '/BIOS Model name/ && $2 != "-" {print $2; exit}')
+		cores=$(nproc 2>/dev/null)
+		mem=$(awk '/MemTotal/ {printf "%d GB", $2 / 1048576}' /proc/meminfo 2>/dev/null)
+		echo "Linux host${chip:+, $chip}${cores:+, $cores cores}${mem:+, $mem}, $(uname -sm)"
+		return
+	fi
 	name=$(system_profiler SPHardwareDataType 2>/dev/null | awk -F': ' '/Model Name/{print $2; exit}')
 	model=$(sysctl -n hw.model 2>/dev/null)
 	chip=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)
@@ -189,7 +213,7 @@ compile() {
 	cp "$src/$mainf" "$d/$mainf"
 	(cd "$d" && "${build[@]}" >/dev/null 2>&1)
 	local size
-	size=$(stat -f %z "$bin")
+	size=$(stat -f %z "$bin" 2>/dev/null || stat -c %s "$bin")
 	# the path the edit build took, from its cache statistics
 	# "cache std ... reused" prints with --phase-times only; the "cache
 	# stdx" lookup line prints with the statistics and only on a separately
