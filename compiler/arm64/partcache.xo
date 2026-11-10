@@ -59,7 +59,7 @@ const PART_TAG_VERSION = "xo part tag v1"
 /// [] when the module is not split or fkeys is [].
 pub fn part_keys(m: ssa.Module, os: Str, fkeys: List[Str]) -> List[Str] {
   let plist = part_lists(m)
-  if plist.len() <= 1 || fkeys.len() != m.funcs.len() {
+  if (plist.len() <= 1 && !m.sepcomp_program) || fkeys.len() != m.funcs.len() {
     return []
   }
   let names = part_names(m, plist)

@@ -617,9 +617,12 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
 
 /// The cache key of every function of m generated for os by the
 /// compiler of identity id, on up to jobs tasks; none for a module of
-/// one part (generated whole, not cached).
+/// one part (generated whole, not cached), but a separately compiled
+/// program's, which generate_cached takes through the parts even as one
+/// part: a small program's warm build regenerated all its code (coll's
+/// emit 48 to 58 ms of about 150, 2026-11-10)
 pub fn function_keys(m: ssa.Module, os: Str, id: Str, jobs: Int) -> List[Str] {
-  if part_lists(m).len() <= 1 {
+  if part_lists(m).len() <= 1 && !m.sepcomp_program {
     return []
   }
   var g = new_gen(m, os)
