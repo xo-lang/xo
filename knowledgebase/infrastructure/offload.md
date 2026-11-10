@@ -622,3 +622,16 @@ runs programs cross-built on the Mac. Fusion's "vmware-vdiskmanager -x"
 cannot grow a disk of an encrypted VM ("Failed to analyze snapshot
 chain"); an empty disk was replaced with a new 200 GB one instead.
 Last verified: 2026-11-09.
+
+## Windows build hosts: Defender and indexing (2026-11-09)
+
+On both Windows hosts (the windows/arm64 VM and the amd64 machine's Windows side),
+Defender's real-time scan and the search indexer took much of the CPU during builds
+(the VM showed MsMpEng and SearchIndexer at the top while a suite ran). With the owner's
+go, the user profile (C:\Users\xo, which holds tools\, xo-ci\ and the work trees) and its
+Temp are Defender path exclusions; the compilers and linkers (xo, go, clang, clang-cl,
+lld-link, ld.lld, llvm-mc, link, cl, cdb), git, bash/sh and the WSL processes are process
+exclusions; and the WSearch service is stopped and disabled. Check with
+`(Get-MpPreference).ExclusionPath`, `(Get-MpPreference).ExclusionProcess` and
+`Get-Service WSearch` in PowerShell. A new Windows host gets the same before its first run.
+Last verified: 2026-11-09.
