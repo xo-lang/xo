@@ -4330,9 +4330,9 @@ pub fn platform_parts(name: Str) -> (Str, Str, Int) {
 /// does not depend on the module (2026-10-17: it did, and a libc build's
 /// entry gave a no-libc build `.weak` lines).
 fn (var g: G) weak_ref(sym: Str) {
-  if g.x86 && g.os == "windows" {
-    // COFF: an `/alternatename` to xo_absent (x86win.xo w64_weak), not
-    // a weak external with its default symbol
+  if g.os == "windows" {
+    // COFF (amd64 and arm64): an `/alternatename` to xo_absent
+    // (x86win.xo w64_weak), not a weak external with its default symbol
     g.wsyms[sym] = true
     return
   }
@@ -4422,19 +4422,16 @@ fn (var g: G) c_sym_addr(name: Str) -> Int {
 }
 
 /// rt.sym_present (decision 0232): sym's address through the GOT,
-/// compared with 0 (UNTESTED on Linux; false on Windows, where the
-/// arm64 emitter makes no weak references yet).
+/// compared with 0 (UNTESTED on Linux); on Windows, compared with
+/// xo_absent's.
 fn (var g: G) sym_present(v: Int, sym: Str) {
-  if g.x86 && g.os == "windows" {
-    // the symbol, or xo_absent through its `/alternatename` (x86win.xo)
+  if g.os == "windows" {
+    // the symbol, or xo_absent through its `/alternatename` (x86win.xo),
+    // on windows/amd64 and windows/arm64 alike
     g.wsyms[sym] = true
     let a = g.sym_addr(g.sym(sym))
     let n = g.sym_addr(g.sym("xo_absent"))
     g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, ne", [a, n])])
-    return
-  }
-  if g.os == "windows" {
-    g.set(v, [g.def1(false, "mov $d0, #0", [])])
     return
   }
   g.weak_ref(sym)
@@ -4460,9 +4457,7 @@ fn (var g: G) platform_call(v: Int) {
     g.sym_present(v, sym)
     return
   }
-  // a weak C function on Windows: rt.sym_present is false there, so its
-  // calls never run (no weak references on COFF yet)
-  if (os != g.os && os != "c" && os != "cw") || (os == "cw" && g.os == "windows" && !g.x86) {
+  if os != g.os && os != "c" && os != "cw" {
     g.store("brk #1", [])
     g.set(v, g.zeros(ssa.ty_of(x.tb)))
     return

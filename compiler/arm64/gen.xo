@@ -163,6 +163,10 @@ fn (g: G) trampolines(var out: List[Str]) {
     g.w64_weak(out)
     return
   }
+  if g.os == "windows" {
+    // windows/arm64's weak C symbols, as windows/amd64's (decision 0232)
+    g.w64_weak(out)
+  }
   if g.x86 {
     g.x86_trampolines(out)
     return

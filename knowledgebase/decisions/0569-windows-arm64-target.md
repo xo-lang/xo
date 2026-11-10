@@ -351,7 +351,9 @@ verified by cross build until the host exists:
      - `:lo12:`-style page addressing;
      - `.rdata` and the other sections (gen.xo:360 already has the
        branch);
-     - weak references through `/alternatename`, as amd64 does;
+     - weak references through `/alternatename`, as amd64 does (done
+       2026-11-09: rt.sym_present and weak C calls, the sys_c golden
+       0101 on the winarm VM);
      - the TLS sequence above;
      - variadic C calls;
    - the emitter writes `.seh_*` directives beside its CFI.
