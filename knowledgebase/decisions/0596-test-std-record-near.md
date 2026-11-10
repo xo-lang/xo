@@ -66,3 +66,11 @@ every std module importing it, std_source_set) is left out on both sides.
 - Next: the from-source set limited to the modules the test program reaches (their store code is
   stale only if linked), then measure the peak again; without that, items 1 to 2 move the peak
   rather than lower it.
+- Which of the set the test links (Mac, the json test binary after an edit, `nm`, function symbols
+  `_xo_f_<file>_2e<name>` grouped by prefix): of json's 21 std importers only trace (4 functions)
+  and the runtime (std/native/llrt, which imports json) appear; amqp, cbor, http, metrics, otlp,
+  protojson, sql, sqlite, template, tls, toml, websocket, x509, yaml and the others link nothing,
+  yet each is parsed whole and built from source on every json edit. So step 3 of the decision:
+  the from-source set is the importers the test program reaches, from std's facts (the stdf call
+  graph) rather than the `use` lines alone; an importer it does not reach keeps its store code,
+  which the link drops (decision 0388's dead stripping reads only the live atoms' relocations).
