@@ -6,7 +6,7 @@
 - Commit: this push
 - Found by: decision 0578 (std/gif needs LZW)
 - Go reference: compress/lzw writer.go and reader.go (the clear code first, the table reset when the 12 bit codes run out, the end code; the reader's stale table entries for a first code equal to hi)
-- Test: testdata/corpus/lzw: 190 encodings (both orders, literal widths 2 to 8, 0 to 30,000 bytes, bad widths and a byte too wide), their round trips, and Go's reader on 400 more streams (truncated, with a flipped bit, random bytes, bad widths): output and error text equal Go's on arm64, LLVM and the Go backend
+- Test: testdata/corpus/lzw: 284 encodings (both orders, literal widths 2 to 8, 0 to 30,000 bytes, bad widths and a byte too wide), their round trips, and Go's reader on 500 streams (truncated, with a flipped bit, random bytes, bad widths): output and error text equal Go's on arm64, LLVM and the Go backend
 - Timing: none yet
 - Shipped in: not yet released
 
