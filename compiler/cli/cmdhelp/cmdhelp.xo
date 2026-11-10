@@ -47,7 +47,7 @@ pub fn commands() -> List[Command] {
     Command{name: "trace", purpose: "Perfetto JSON and a summary of a native execution trace"},
     Command{name: "bench", purpose: "interleaved A/B measurement with a confidence interval (--ab)"},
     Command{name: "clean", purpose: "remove xo's caches under the user cache directory (-cache)"},
-    Command{name: "debug", purpose: "run a native program under the debugger (macOS arm64, Linux, Windows)"},
+    Command{name: "debug", purpose: "run a native program under the debugger (macOS, Linux, Windows)"},
     Command{name: "lsp", purpose: "Language Server Protocol server on stdin/stdout"},
     Command{name: "mcp", purpose: "Model Context Protocol server on stdin/stdout"},
     Command{name: "serve", purpose: "keep checked programs in memory for check and query"},
@@ -225,7 +225,7 @@ they step over with every thread. tasks lists the program's tasks from
 the runtime's records, as xo dump does (what each is blocked in, and
 where); task N selects a blocked task's frames (bt: and prints them).
 
-macOS arm64, Linux and Windows amd64. On macOS xo needs the
+macOS (arm64 and Intel), Linux and Windows amd64. On macOS xo needs the
 com.apple.security.cs.debugger entitlement (ad hoc for development, the
 release signature for a release) and Developer Mode
 (DevToolsSecurity -enable). On Linux it uses ptrace (a security module

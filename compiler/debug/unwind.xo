@@ -486,6 +486,12 @@ const UNWIND_MODE_MASK = 0x0f000000
 const UNWIND_FRAMELESS = 0x02000000
 const UNWIND_DWARF = 0x03000000
 const UNWIND_FRAME = 0x04000000
+/// x86_64's modes (compact_unwind_encoding.h): an rbp frame, a frameless
+/// function with its stack size in the encoding, and the DWARF one (its
+/// value is arm64's frame mode)
+const UNWIND_X86_RBP_FRAME = 0x01000000
+const UNWIND_X86_STACK_IMMD = 0x02000000
+const UNWIND_X86_DWARF = 0x04000000
 
 /// The compact encoding of the function holding pc (0: none).
 fn compact_at(t: Tables, pc: Int) -> Int {
@@ -626,7 +632,40 @@ fn step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool)
   if !tab.eh.is_empty() || !tab.ui.is_empty() {
     let (enc, start) = compact_entry(tab, pc)
     let mode = enc & UNWIND_MODE_MASK
-    if mode == UNWIND_FRAME {
+    if tab.x86 {
+      // darwin/amd64 (decision 0253's Intel Mac stage): an rbp frame
+      // after its prologue (push rbp; mov rbp, rsp), else the function's
+      // CFI (the DWARF mode, or none), else the frame pointer chain below
+      if mode == UNWIND_X86_RBP_FRAME {
+        if !(first && pc < start + 4) {
+          return Some((frame_step(tab, regs, t, 0)?, "compact"))
+        }
+        // stopped in the prologue: at the start the return address is on
+        // top; after push rbp (one byte) it is under the caller's rbp
+        let sp = regs.get(7) ?? 0
+        var next = regs
+        if pc == start {
+          next[16] = load64(t, sp)?
+          next[7] = sp + 8
+          return Some((next, "prologue"))
+        }
+        if pc == start + 1 {
+          next[6] = load64(t, sp)?
+          next[16] = load64(t, sp + 8)?
+          next[7] = sp + 16
+          return Some((next, "prologue"))
+        }
+      }
+      if mode == UNWIND_X86_STACK_IMMD && !first {
+        // frameless: the return address on top of its fixed stack
+        let size = 8 * ((enc >> 16) & 0xff)
+        let sp = regs.get(7) ?? 0
+        var next = regs
+        next[16] = load64(t, sp + size - 8)?
+        next[7] = sp + size
+        return Some((next, "compact"))
+      }
+    } else if mode == UNWIND_FRAME {
       // a compact encoding holds for the whole function, but the arm64
       // backend sets a leaf's frame up only on its fault paths (after its
       // returns): the first frame is frameless when no fp and lr store
@@ -638,7 +677,7 @@ fn step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool)
       }
       return Some((frame_step(tab, regs, t, enc)?, "compact"))
     }
-    if mode == UNWIND_FRAMELESS {
+    if !tab.x86 && mode == UNWIND_FRAMELESS {
       // the return address is still in lr; the frame's stack is popped
       var next = regs
       next[31] = (regs.get(31) ?? 0) + 16 * ((enc >> 12) & 0xfff)

@@ -30,7 +30,7 @@ they step over with every thread. tasks lists the program's tasks from
 the runtime's records, as xo dump does (what each is blocked in, and
 where); task N selects a blocked task's frames (bt: and prints them).
 
-macOS arm64, Linux and Windows amd64. On macOS xo needs the
+macOS (arm64 and Intel), Linux and Windows amd64. On macOS xo needs the
 com.apple.security.cs.debugger entitlement (ad hoc for development, the
 release signature for a release) and Developer Mode
 (DevToolsSecurity -enable). On Linux it uses ptrace (a security module

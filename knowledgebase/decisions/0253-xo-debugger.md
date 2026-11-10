@@ -207,7 +207,8 @@ asked for as the stages found them):
    `task N bt`, attach to a hung process (`-p`); shared constants with
    dump.xo.
 5. The interactive prompt and `--json`.
-6. Linux ptrace (arm64, then x86_64); then Windows; then the remote mode.
+6. Linux ptrace (arm64, then x86_64); then Windows; then macOS x86_64
+   (Intel Macs); then the remote mode.
 
 ## Consequences
 
@@ -532,3 +533,30 @@ asked for as the stages found them):
   program), so an x86 emitter change to the unwind codes fails in the Mac
   gate. An unknown unwind operation now stops the unwind (None) instead
   of being skipped.
+- 2026-11-10 (Xo Lang 2) stage 6, macOS amd64 (Intel Macs, owner's
+  request after "xo debug runs programs on macOS arm64" on an Intel
+  Mac): std/native/llrt dbgmac.xo serves both architectures. On amd64
+  the registers are x86_THREAD_STATE64 (flavor 4, 42 words) mapped to
+  DWARF order as dbglinux.xo's amd64 layout (16 registers, rip at 32,
+  rflags at 33); a single step sets RFLAGS.TF, whose EXC_BREAKPOINT
+  (code EXC_I386_SGL) wait reports as a step and clears TF; an int3's
+  EXC_BREAKPOINT (EXC_I386_BPT) has rip one byte past the trap, moved
+  back on it as dbglinux.xo and dbgwin.xo do; a trap's write unprotects
+  4 KB pages (16 KB on arm64, which on Intel could make a data page
+  next to the text read and execute). compiler/debug unwind.xo reads
+  x86_64's compact unwind modes, whose numbers differ from arm64's (RBP
+  frame 1, frameless 2, DWARF 4, which is arm64's frame mode): an rbp
+  frame, a frameless function's fixed stack, and at the first frame a
+  stop at the function's first byte or after its push rbp. The fiber
+  switch frame is Linux x86_64's (the same runtime code). Attach finds
+  the slide in 4 KiB steps for an x86_64 Mach-O (cputype 0x01000007;
+  rebase.xo X86_PAGE), where arm64's are 16 KiB. get-task-allow
+  was already signed into darwin/amd64 development builds, and
+  task_for_pid works on the laptop with Developer Mode off, as on arm64
+  when xo carries com.apple.security.cs.debugger. Tested on the owner's
+  Intel laptop (macOS 26.5.2) with an xo cross-built on the Mac
+  (scripts/intel-mac-test.sh, XO_CLI): cmd/xo TestDebug*, all 13 pass
+  (launch, step, tasks, timeout, attach, DAP and DAP attach; debugLaunches
+  now includes darwin/amd64) and a hand session (break, run, bt through
+  the fiber frames, step, next, continue) that matches arm64's line for
+  line.

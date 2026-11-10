@@ -728,7 +728,7 @@ pub fn uuid_half(s: Bytes, off: Int, dashed: Bool, half: Int) -> Int? {
 }
 
 // `xo debug`'s process control (decision 0253 stages 2 and 6): dbgmac.xo
-// on macOS arm64, dbglinux.xo on Linux arm64 and amd64, dbgwin.xo on
+// on macOS arm64 and amd64, dbglinux.xo on Linux arm64 and amd64, dbgwin.xo on
 // Windows amd64; elsewhere no
 // debuggee is ever made, so the others are never reached with a handle.
 
@@ -743,7 +743,7 @@ fn dbg_win() -> Bool { target.os == TargetOs.Windows }
 fn dbg_base(h: Int) -> Int { if dbg_win() { dbgwin.base(h) } else { 0 } }
 
 fn dbg_launch(path: Str, args: List[Str], out: Str) -> Int ! Str uses proc {
-  if target.os == TargetOs.Darwin && target.arch == TargetArch.Arm64 {
+  if target.os == TargetOs.Darwin && (target.arch == TargetArch.Arm64 || target.arch == TargetArch.Amd64) {
     let (h, e) = dbgmac.launch(path, args, out)
     return if h == 0 { Err(e) } else { Ok(h) }
   }
@@ -755,11 +755,11 @@ fn dbg_launch(path: Str, args: List[Str], out: Str) -> Int ! Str uses proc {
     let (h, e) = dbgwin.launch(path, args, out)
     return if h == 0 { Err(e) } else { Ok(h) }
   }
-  Err("xo debug runs programs on macOS arm64, Linux and Windows (decision 0253 stages 2 and 6)")
+  Err("xo debug runs programs on macOS, Linux and Windows (decision 0253 stages 2 and 6)")
 }
 
 fn dbg_attach(pid: Int) -> Int ! Str uses proc {
-  if target.os == TargetOs.Darwin && target.arch == TargetArch.Arm64 {
+  if target.os == TargetOs.Darwin && (target.arch == TargetArch.Arm64 || target.arch == TargetArch.Amd64) {
     let (h, e) = dbgmac.attach(pid)
     return if h == 0 { Err(e) } else { Ok(h) }
   }
@@ -771,7 +771,7 @@ fn dbg_attach(pid: Int) -> Int ! Str uses proc {
     let (h, e) = dbgwin.attach(pid)
     return if h == 0 { Err(e) } else { Ok(h) }
   }
-  Err("xo debug attaches on macOS arm64, Linux and Windows so far (decision 0253 stages 4 and 6)")
+  Err("xo debug attaches on macOS, Linux and Windows so far (decision 0253 stages 4 and 6)")
 }
 
 fn dbg_threads(h: Int) -> List[Int] {

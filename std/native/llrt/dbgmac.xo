@@ -1,4 +1,4 @@
-// `xo debug`'s process control on macOS arm64 (decision 0253 stage 2,
+// `xo debug`'s process control on macOS arm64 and amd64 (decision 0253 stage 2,
 // point 1, with only the calls its "New OS capabilities" list approves):
 // a program started suspended (posix_spawn with START_SUSPENDED and ASLR
 // off, as lldb starts one, so the executable's addresses are its file's),
@@ -9,6 +9,10 @@
 // copy on write and mach_vm_write; the program never writes its own
 // code), a thread's registers (ARM_THREAD_STATE64) and its single step
 // bit (MDSCR_EL1.SS in ARM_DEBUG_STATE64), and the exit seen by waitpid.
+// On Intel Macs (darwin/amd64, decision 0253's x86_64 stage) the
+// registers are x86_THREAD_STATE64's, the single step is RFLAGS.TF, and
+// an int3 trap's rip, one byte past the trap, is moved back on it, as
+// dbglinux.xo and dbgwin.xo do.
 // Std's internal.xo reaches it for compiler/debug; programs do not.
 //
 // A debuggee is a record (heap_large) at h:
@@ -52,6 +56,36 @@ const THREAD_COUNT = 68
 const DEBUG_STATE = 15
 const DEBUG_COUNT = 130
 const MDSCR = 512
+
+/// x86_THREAD_STATE64 and its count of 32 bit words: rax, rbx, rcx, rdx,
+/// rdi, rsi, rbp, rsp, r8 to r15, rip, rflags, cs, fs, gs.
+const X86_STATE = 4
+const X86_COUNT = 42
+const X86_RIP = 128
+const X86_RFLAGS = 136
+/// RFLAGS.TF: a trap after the next instruction
+const X86_TF = 0x100
+/// EXC_BREAKPOINT's codes on x86: a single step's trap, an int3's
+const EXC_I386_SGL = 1
+const EXC_I386_BPT = 2
+
+fn amd64() -> Bool { target.arch == TargetArch.Amd64 }
+
+/// The pages a trap's write unprotects: 4 KB on Intel, 16 KB on arm64
+/// (a larger span could reach a data page, made read and execute after).
+fn page_size() -> Int { if amd64() { 4096 } else { 16384 } }
+
+/// Where x86_THREAD_STATE64 keeps DWARF register k (rax, rdx, rcx, rbx,
+/// rsi, rdi, rbp, rsp, r8 to r15).
+fn x86_word(k: Int) -> Int {
+  match k {
+    1 => 3
+    3 => 1
+    4 => 5
+    5 => 4
+    _ => k
+  }
+}
 
 /// Starts path with args stopped before its first instruction (out not
 /// "": its standard output and error written to the file out, created or
@@ -220,8 +254,9 @@ pub fn read(h: Int, a: Int, n: Int) -> Bytes? {
 /// a private writable copy first, then executable again (a trap's word).
 pub fn write(h: Int, a: Int, data: Bytes) -> Bool {
   let task = rt.mem_load(h, TASK, 8)
-  let page = a & (0).wrapping_sub(16384)
-  let pages = ((a + data.len() + 16383) & (0).wrapping_sub(16384)) - page
+  let ps = page_size()
+  let page = a & (0).wrapping_sub(ps)
+  let pages = ((a + data.len() + ps - 1) & (0).wrapping_sub(ps)) - page
   // VM_PROT_READ 1 | WRITE 2 | COPY 16 (not EXECUTE: macOS refuses a
   // writable executable page; the program's threads are stopped)
   if Int(sys_darwin.mach_vm_protect(task, page, pages, 0, 1 | 2 | 16)) != 0 {
@@ -240,10 +275,28 @@ pub fn write(h: Int, a: Int, data: Bytes) -> Bool {
   k == 0
 }
 
-/// Thread th's registers: x0 to x28, fp, lr, sp, pc, cpsr (34 words), or
-/// empty when they cannot be read.
+/// Thread th's registers: x0 to x28, fp, lr, sp, pc, cpsr (34 words); on
+/// amd64 dbglinux.xo's layout: the 16 registers in DWARF numbering at 0
+/// to 15 (the rest 0), rip at 32 and rflags at 33. Empty when they cannot
+/// be read.
 pub fn regs(h: Int, th: Int) -> List[Int] {
   let _h = h
+  if amd64() {
+    let st = raw.bytes_buf(X86_COUNT * 4 + 8)
+    let a = raw.bytes_addr(st)
+    rt.mem_store(a, X86_COUNT * 4, X86_COUNT, 4)
+    let k = Int(sys_darwin.thread_get_state(th, X86_STATE, a, a + X86_COUNT * 4))
+    var out: List[Int] = []
+    if k == 0 {
+      for r in 0..32 {
+        out.push(if r < 16 { rt.mem_load(a, 8 * x86_word(r), 8) } else { 0 })
+      }
+      out.push(rt.mem_load(a, X86_RIP, 8))
+      out.push(rt.mem_load(a, X86_RFLAGS, 8))
+    }
+    let _s = st.len()
+    return out
+  }
   let st = raw.bytes_buf(THREAD_COUNT * 4 + 8)
   let a = raw.bytes_addr(st)
   rt.mem_store(a, THREAD_COUNT * 4, THREAD_COUNT, 4)
@@ -262,6 +315,9 @@ pub fn regs(h: Int, th: Int) -> List[Int] {
 /// Sets thread th's pc.
 pub fn set_pc(h: Int, th: Int, pc: Int) -> Bool {
   let _h = h
+  if amd64() {
+    return x86_update(th, X86_RIP, 0, pc)
+  }
   let st = raw.bytes_buf(THREAD_COUNT * 4 + 8)
   let a = raw.bytes_addr(st)
   rt.mem_store(a, THREAD_COUNT * 4, THREAD_COUNT, 4)
@@ -278,6 +334,10 @@ pub fn set_pc(h: Int, th: Int, pc: Int) -> Bool {
 /// ends in an EXC_BREAKPOINT (the kernel clears the bit as it reports).
 pub fn set_step(h: Int, th: Int, on: Bool) -> Bool {
   let _h = h
+  if amd64() {
+    // the kernel leaves TF set after the step's trap: wait clears it
+    return x86_update(th, X86_RFLAGS, if on { 1 } else { 2 }, X86_TF)
+  }
   let st = raw.bytes_buf(DEBUG_COUNT * 4 + 8)
   let a = raw.bytes_addr(st)
   rt.mem_store(a, DEBUG_COUNT * 4, DEBUG_COUNT, 4)
@@ -347,11 +407,31 @@ pub fn wait(h: Int, ms: Int) -> List[Int] {
     let k = Int(sys_darwin.mach_msg(m, 2 | 0x100, 0, MSG_SIZE, port, 50, 0))
     if k == 0 {
       rt.mem_store(h, PENDING, 1, 8)
-      hold(h, rt.mem_load(m, 28, 4))
+      let th = rt.mem_load(m, 28, 4)
+      hold(h, th)
       // the message's task right is not kept
       let _t = sys_darwin.mach_port_deallocate(Int(sys_darwin.task_self_trap()), rt.mem_load(m, 40, 4))
       let _s = stw.len()
-      return [1, rt.mem_load(m, 28, 4), rt.mem_load(m, 60, 4), rt.mem_load(m, 68, 8), rt.mem_load(m, 76, 8)]
+      let exc = rt.mem_load(m, 60, 4)
+      let code = rt.mem_load(m, 68, 8)
+      if amd64() && exc == 6 {
+        // as arm64's: code 1, the subcode the trap's address (0 for a
+        // single step)
+        if code == EXC_I386_SGL {
+          let _c = x86_update(th, X86_RFLAGS, 2, X86_TF)
+          return [1, th, exc, 1, 0]
+        }
+        if code == EXC_I386_BPT {
+          // int3 has run: rip back on the trap, as arm64's brk leaves it
+          let rs = regs(h, th)
+          let at = if rs.len() > 32 { rs[32] - 1 } else { 0 }
+          if at > 0 {
+            let _p = set_pc(h, th, at)
+          }
+          return [1, th, exc, 1, at]
+        }
+      }
+      return [1, th, exc, code, rt.mem_load(m, 76, 8)]
     }
     rt.mem_store(sa, 0, 0, 4)
     if rt.mem_load(h, ATTACHED, 8) != 0 {
@@ -398,6 +478,22 @@ pub fn close(h: Int) {
   let _m = sys_darwin.mach_port_deallocate(me, rt.mem_load(h, PORT, 8))
   let _t = sys_darwin.mach_port_deallocate(me, rt.mem_load(h, TASK, 8))
   rt.heap_release(h - 8)
+}
+
+/// Rewrites the word at off of thread th's x86_THREAD_STATE64: op 0 sets
+/// it to v, 1 sets v's bits, 2 clears them.
+fn x86_update(th: Int, off: Int, op: Int, v: Int) -> Bool {
+  let st = raw.bytes_buf(X86_COUNT * 4 + 8)
+  let a = raw.bytes_addr(st)
+  rt.mem_store(a, X86_COUNT * 4, X86_COUNT, 4)
+  var ok = Int(sys_darwin.thread_get_state(th, X86_STATE, a, a + X86_COUNT * 4)) == 0
+  if ok {
+    let w = rt.mem_load(a, off, 8)
+    rt.mem_store(a, off, if op == 0 { v } else if op == 1 { w | v } else { w & (-1 - v) }, 8)
+    ok = Int(sys_darwin.thread_set_state(th, X86_STATE, a, X86_COUNT)) == 0
+  }
+  let _s = st.len()
+  ok
 }
 
 /// Suspends every thread of the program but th (stopped by its exception),

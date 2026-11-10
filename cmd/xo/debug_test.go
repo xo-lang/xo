@@ -107,7 +107,7 @@ func debugLaunches() bool {
 	if runtime.GOOS == "windows" {
 		return runtime.GOARCH == "amd64"
 	}
-	return runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
+	return runtime.GOOS == "darwin" && (runtime.GOARCH == "arm64" || runtime.GOARCH == "amd64")
 }
 
 // debugBackend: the native backend of this machine's programs (xo
@@ -121,7 +121,7 @@ func debugBackend() string {
 
 func TestDebugBatch(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug's process control is macOS arm64 and Linux so far (decision 0253 stages 2 and 6)")
+		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -153,7 +153,7 @@ func TestDebugBatch(t *testing.T) {
 // gotchas/ptrace-leader-reaped-last.md).
 func TestDebugTimeout(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug's process control is macOS arm64 and Linux so far (decision 0253 stages 2 and 6)")
+		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
@@ -196,7 +196,7 @@ func TestDebugTimeout(t *testing.T) {
 // apart.
 func TestDebugStep(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug's process control is macOS arm64 and Linux so far (decision 0253 stages 2 and 6)")
+		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs native programs")
@@ -250,7 +250,7 @@ const debugTasks = `fn main(os: Os) {
 // stack), and locals and print read it there.
 func TestDebugTasks(t *testing.T) {
 	if !debugLaunches() {
-		t.Skip("xo debug's process control is macOS arm64 and Linux so far (decision 0253 stages 2 and 6)")
+		t.Skip("xo debug's process control is macOS, Linux and Windows amd64 so far (decision 0253 stages 2 and 6)")
 	}
 	if testing.Short() {
 		t.Skip("builds and debugs a native program")
