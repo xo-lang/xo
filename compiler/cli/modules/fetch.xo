@@ -673,7 +673,39 @@ fn (var c: ModCtx) git_fetch(root: Str, mod_path: Str, version: Str, dst: Str) -
       return Err(e)
     }
   }
-  c.untar_into(data, dst)
+  c.untar_into(data, dst)?
+  if !loc.subdir.is_empty() {
+    c.add_root_license(repo, "refs/tags/${tag}", dst)?
+  }
+  Ok(())
+}
+
+/// The largest root LICENSE copied into a subdirectory module (Go's
+/// codehost.MaxLICENSE).
+const MAX_LICENSE: Int = 16 << 20
+
+/// Decision 0590 (cmd/go modfetch's rule): a module in a subdirectory of
+/// its repository whose tree has no file named LICENSE gets the
+/// repository root's LICENSE at the tag, when the root has one, so the
+/// module's tree (its hash, its proxy zip, its docs) carries the license
+/// the repository grants. Only the exact name LICENSE, as Go.
+fn (c: ModCtx) add_root_license(repo: Str, ref: Str, dst: Str) -> () ! Str uses (fs, proc, clock) {
+  if c.exists("${dst}/LICENSE") {
+    return Ok(())
+  }
+  match c.git(repo, ["cat-file", "-t", "${ref}:LICENSE"]) {
+    Ok(t) => {
+      if t.to_str_lossy().trim() != "blob" {
+        return Ok(())
+      }
+    }
+    Err(_) => return Ok(())
+  }
+  let data = c.git(repo, ["cat-file", "blob", "${ref}:LICENSE"])?
+  if data.len() > MAX_LICENSE {
+    return Ok(())
+  }
+  c.os.fs.write("${dst}/LICENSE", data).map_err(fs_msg)
 }
 
 /// mod.Download: the module version's directory in the cache, fetched

@@ -1740,7 +1740,11 @@ note `XO1315` (decision 0155). Any other name stops the check.
   repository. A directory holding its own xo.mod is never part of the
   module around it (it is not fetched, hashed, or vendored with it), and
   the module around it imports its packages only by requiring it, as
-  any other module (`XO1306` without the requirement).
+  any other module (`XO1306` without the requirement). When a
+  subdirectory module's tree has no file named `LICENSE` and the
+  repository root has one at the tag, the root's `LICENSE` is part of the
+  version's tree (its hash, zip and vendored copy), as Go's module zips
+  (decision 0590).
 - There is no `replace`, `exclude`, or `retract` (`XO1301`); local copies
   are reached only through a workspace (below).
 - Minimal version selection: the build uses, for each module, the highest

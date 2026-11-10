@@ -215,7 +215,11 @@ fn (var c: ModCtx) load(main_dir0: Str, opts: Options) -> BuildList uses (fs, pr
       }
       found = true
       if want != got {
-        add_problem(b, check.Problem{code: "XO1304", module: path, file: l.file, line: l.lines.get(k) ?? 0, msg: "${k}: content hash ${got} does not match xo.lock (${want})", notes: ["the module version changed since it was locked (a moved tag or an edited cache or vendor copy); nothing was built", "if the change is expected, delete the line and run `xo mod tidy`"]})
+        var notes = ["the module version changed since it was locked (a moved tag or an edited cache or vendor copy); nothing was built", "if the change is expected, delete the line and run `xo mod tidy`"]
+        if let Some(n) = c.chk.license_note(b.modules.find(fn(m) { m.path == path }).map(fn(m) { m.dir }) ?? "", want) {
+          notes = [n]
+        }
+        add_problem(b, check.Problem{code: "XO1304", module: path, file: l.file, line: l.lines.get(k) ?? 0, msg: "${k}: content hash ${got} does not match xo.lock (${want})", notes: notes})
         failed[path] = true
       }
     }

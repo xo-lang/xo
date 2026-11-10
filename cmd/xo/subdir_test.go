@@ -1,9 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -252,4 +257,140 @@ func TestNestedModuleRequired(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.out), &g); err != nil || !g.OK || len(g.Edges) != len(want) || g.Selected["github.com/acme/awsx"] != "v1.1.0" || g.Selected[sts] != "v1.1.0" {
 		t.Errorf("mod graph --json (%v):\n%s", err, r.out)
 	}
+}
+
+// TestSubdirModuleLicense: decision 0590, cmd/go modfetch's rule. A module
+// in a subdirectory of its repository with no file named LICENSE gets the
+// repository root's LICENSE at the tag; one with its own keeps it; a
+// repository without a root LICENSE adds nothing. A lock written by an
+// older xo (the tree without the copied LICENSE) is XO1304 with a note
+// naming the change.
+func TestSubdirModuleLicense(t *testing.T) {
+	t.Parallel()
+	env := modSetup(t, t.TempDir())
+	const rootLicense = "MIT License\n\nroot license text\n"
+	const ownLicense = "own license text\n"
+	mkrepo := func(path string, files map[string]string, tags ...string) {
+		t.Helper()
+		repo := filepath.Join(env.Repos, filepath.FromSlash(path))
+		os.MkdirAll(repo, 0o755)
+		modtest.Git(t, repo, "init", "-q", "-b", "main")
+		modtest.WriteFiles(t, repo, files)
+		modtest.Git(t, repo, "add", "-A")
+		modtest.Git(t, repo, "commit", "-q", "-m", "v1")
+		for _, tg := range tags {
+			modtest.Git(t, repo, "tag", tg)
+		}
+	}
+	mkrepo("github.com/acme/kit", map[string]string{
+		"LICENSE":       rootLicense,
+		"xo.mod":        "module github.com/acme/kit\nedition preview\n",
+		"base/base.xo":  "pub fn n() -> Int { 1 }\n",
+		"cli/xo.mod":    "module github.com/acme/kit/cli\nedition preview\n",
+		"cli/c/c.xo":    "pub fn n() -> Int { 2 }\n",
+		"own/xo.mod":    "module github.com/acme/kit/own\nedition preview\n",
+		"own/LICENSE":   ownLicense,
+		"own/o/o.xo":    "pub fn n() -> Int { 3 }\n",
+		"deep/x/xo.mod": "module github.com/acme/kit/deep/x\nedition preview\n",
+		"deep/x/d/d.xo": "pub fn n() -> Int { 4 }\n",
+	}, "v1.0.0", "cli/v1.0.0", "own/v1.0.0", "deep/x/v1.0.0")
+	mkrepo("github.com/acme/bare", map[string]string{
+		"xo.mod":     "module github.com/acme/bare\nedition preview\n",
+		"sub/xo.mod": "module github.com/acme/bare/sub\nedition preview\n",
+		"sub/s/s.xo": "pub fn n() -> Int { 5 }\n",
+		"COPYING":    "not named LICENSE\n",
+		"LICENSE.md": "not named LICENSE either\n",
+	}, "v1.0.0", "sub/v1.0.0")
+
+	app := filepath.Join(t.TempDir(), "app")
+	modtest.WriteFiles(t, app, map[string]string{
+		"xo.mod": "module example.com/app\nedition preview\n\n" +
+			"require github.com/acme/kit v1.0.0\nrequire github.com/acme/kit/cli v1.0.0\nrequire github.com/acme/kit/own v1.0.0\n" +
+			"require github.com/acme/kit/deep/x v1.0.0\nrequire github.com/acme/bare/sub v1.0.0\n",
+		"main/main.xo": "use github.com/acme/kit/base\nuse github.com/acme/kit/cli/c\nuse github.com/acme/kit/own/o\nuse github.com/acme/kit/deep/x/d\nuse github.com/acme/bare/sub/s\n\n" +
+			"fn main(os: Os) {\n  os.stdio.println(\"${base.n() + c.n() + o.n() + d.n() + s.n()}\")\n}\n",
+	})
+	xo(t, "mod", "tidy", "--dir", app).want(0)
+	license := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(env.VersionDir(path, "v1.0.0"), "LICENSE"))
+		if err != nil {
+			return "<none>"
+		}
+		return string(data)
+	}
+	for _, c := range []struct{ path, want string }{
+		{"github.com/acme/kit", rootLicense},
+		{"github.com/acme/kit/cli", rootLicense},
+		{"github.com/acme/kit/deep/x", rootLicense},
+		{"github.com/acme/kit/own", ownLicense},
+		{"github.com/acme/bare/sub", "<none>"},
+	} {
+		if got := license(c.path); got != c.want {
+			t.Errorf("%s LICENSE = %q, want %q", c.path, got, c.want)
+		}
+	}
+	if r := xo(t, "run", filepath.Join(app, "main")).want(0); r.out != "15\n" {
+		t.Errorf("run: %q", r.out)
+	}
+
+	// a lock written by an older xo: the cli tree's hash without LICENSE
+	dir := env.VersionDir("github.com/acme/kit/cli", "v1.0.0")
+	old := hashTreeWithout(t, dir, "LICENSE")
+	lockPath := filepath.Join(app, "xo.lock")
+	lock, _ := os.ReadFile(lockPath)
+	var lines []string
+	for _, l := range strings.Split(string(lock), "\n") {
+		if strings.HasPrefix(l, "github.com/acme/kit/cli v1.0.0 h1:") {
+			l = "github.com/acme/kit/cli v1.0.0 " + old
+		}
+		lines = append(lines, l)
+	}
+	os.WriteFile(lockPath, []byte(strings.Join(lines, "\n")), 0o644)
+	r := xo(t, "check", "--json", filepath.Join(app, "main")).want(1)
+	if !strings.Contains(r.out, "XO1304") || !strings.Contains(r.out, "decision 0590") || !strings.Contains(r.out, "only by its LICENSE") {
+		t.Errorf("old lock:\n%s", r.out)
+	}
+	// any other difference keeps the general note
+	lines = lines[:0]
+	for _, l := range strings.Split(string(lock), "\n") {
+		if strings.HasPrefix(l, "github.com/acme/kit/cli v1.0.0 h1:") {
+			l = "github.com/acme/kit/cli v1.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+		}
+		lines = append(lines, l)
+	}
+	os.WriteFile(lockPath, []byte(strings.Join(lines, "\n")), 0o644)
+	r = xo(t, "check", "--json", filepath.Join(app, "main")).want(1)
+	if !strings.Contains(r.out, "XO1304") || strings.Contains(r.out, "decision 0590") || !strings.Contains(r.out, "a moved tag") {
+		t.Errorf("other mismatch:\n%s", r.out)
+	}
+}
+
+// hashTreeWithout is mod.HashDir of dir's files but skip (no nested
+// modules in the trees it is used on).
+func hashTreeWithout(t *testing.T, dir, skip string) string {
+	t.Helper()
+	var files []string
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		if rel = filepath.ToSlash(rel); rel != skip {
+			files = append(files, rel)
+		}
+		return nil
+	})
+	sort.Strings(files)
+	var sum strings.Builder
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(dir, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := sha256.Sum256(data)
+		fmt.Fprintf(&sum, "%s  %s\n", hex.EncodeToString(h[:]), f)
+	}
+	h := sha256.Sum256([]byte(sum.String()))
+	return "h1:" + base64.StdEncoding.EncodeToString(h[:])
 }

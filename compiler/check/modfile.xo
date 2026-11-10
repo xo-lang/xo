@@ -944,12 +944,33 @@ fn (c: Checker) tree_files(dir: Str, rel: Str, var out: List[Str]) -> () ! Str {
 pub fn (c: Checker) hash_dir(dir: Str) -> Str ! Str uses fs.read {
   var files: List[Str] = []
   c.tree_files(dir, "", files)?
+  c.hash_files(dir, files)
+}
+
+fn (c: Checker) hash_files(dir: Str, files: List[Str]) -> Str ! Str uses fs.read {
   var sum = BytesBuilder.new()
   for f in files.sort() {
     let data = c.fs.read(join(dir, f)).map_err(fn(e) { "read ${join(dir, f)}: ${e}" })?
     sum.write("${crypto.sha256(data).to_hex()}  ${f}\n".bytes())
   }
   Ok("h1:${crypto.sha256(sum.freeze()).to_base64()}")
+}
+
+/// The XO1304 note for a tree that differs from its xo.lock hash only by a
+/// top level LICENSE (decision 0590): xo 0.46.0 adds the repository's
+/// LICENSE to a module in a subdirectory, so a lock written by an older xo
+/// has the hash of the tree without it. None in every other case.
+pub fn (c: Checker) license_note(dir: Str, want: Str) -> Str? uses fs.read {
+  if dir.is_empty() || !c.exists(join(dir, "LICENSE")) {
+    return None
+  }
+  var files: List[Str] = []
+  c.tree_files(dir, "", files).ok()?
+  let h = c.hash_files(dir, files.filter(fn(f) { f != "LICENSE" })).ok()?
+  if h != want {
+    return None
+  }
+  Some("the tree differs from xo.lock only by its LICENSE: since xo 0.46.0 a module in a subdirectory of its repository carries the repository's LICENSE (decision 0590), and this xo.lock line was written by an older xo; delete the line and run `xo mod tidy` to record the new hash")
 }
 
 /// mod.HashModFile: the hash of a version's xo.mod alone.
@@ -1170,7 +1191,11 @@ fn (var c: Checker) load_build_list(main_dir: Str) -> BuildList {
       }
       found = true
       if want != got {
-        add_problem(b, Problem{code: "XO1304", module: path, file: l.file, line: l.lines.get(k) ?? 0, msg: "${k}: content hash ${got} does not match xo.lock (${want})", notes: ["the module version changed since it was locked (a moved tag or an edited cache or vendor copy); nothing was built", "if the change is expected, delete the line and run `xo mod tidy`"]})
+        var notes = ["the module version changed since it was locked (a moved tag or an edited cache or vendor copy); nothing was built", "if the change is expected, delete the line and run `xo mod tidy`"]
+        if let Some(n) = c.license_note(b.modules.find(fn(m) { m.path == path }).map(fn(m) { m.dir }) ?? "", want) {
+          notes = [n]
+        }
+        add_problem(b, Problem{code: "XO1304", module: path, file: l.file, line: l.lines.get(k) ?? 0, msg: "${k}: content hash ${got} does not match xo.lock (${want})", notes: notes})
         failed[path] = true
       }
     }
