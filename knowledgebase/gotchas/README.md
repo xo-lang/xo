@@ -1272,3 +1272,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [elflink-weak-before-strong.md](elflink-weak-before-strong.md): Observed 2026-11-10: Xo's ELF linker kept the first reference's binding, so a weak runtime reference made a C object's strong malloc call a nop; strong now wins
 - [size-with-backend-cache-on.md](size-with-backend-cache-on.md): Observed 2026-11-10: the same compiler code built xo 2% smaller with the shared backend cache on; measure size with XO_BACKEND_CACHE=off
 - [libcsys-linux-numbers-on-freebsd.md](libcsys-linux-numbers-on-freebsd.md): Observed 2026-11-10: the C names the runtime gives a FreeBSD `use c` binding made Linux system calls (SIGSYS); libcsys uses nrf
+- [arm64-copy-runs-overlap.md](arm64-copy-runs-overlap.md): Observed 2026-11-10: a wide value moved down the frame stayed word copies (copy_block took apart sp ranges only)

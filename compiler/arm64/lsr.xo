@@ -768,7 +768,8 @@ fn copy_runs(text: Str) -> Str { copy_runs_l(text.split("\n")).join("\n") }
 /// and back (2026-10-18: 6.28 MB of xo's 38.4 MB __text was word copies
 /// through x16). One base is sp and the other not (the object's words
 /// cannot overlap a spill slot), or both are sp with the two ranges
-/// apart, so loading four words before storing them reads what the word
+/// apart (or the stores below the loads, a forward move), so loading
+/// four words before storing them reads what the word
 /// by word copy read; and neither x16 nor x17 is read after the run
 /// before it is written (scratch_dead). Before reload_reuse, which takes
 /// x16 to hold the run's last word's slot after it.
@@ -1141,7 +1142,12 @@ fn past_rows(lines: List[Str], i: Int) -> Int {
 /// bases do not allow it. Up to 128 words from one x16 and x17 (ldp of
 /// q registers reaches 1008 bytes), the next 128 from them plus 1024.
 fn copy_block(r: Str, a: Str, ao: Int, b: Str, bo: Int, k: Int) -> List[Str] {
-  let apart = ao + 8 * k <= bo || bo + 8 * k <= ao
+  // two sp ranges apart, or overlapping with the stores below the loads:
+  // the block copy goes up as the word copies did, and each 32 bytes it
+  // stores end at or below the next words it loads (a forward memmove;
+  // 0564 step 3: a 611 word result moved 232 bytes down the frame into a
+  // call's arguments as 611 word copies, six times in core.run_doc)
+  let apart = ao + 8 * k <= bo || bo + 8 * k <= ao || bo < ao
   // x16 = A + a goes first, so A may be x17 (not for a copy through x17,
   // whose loads replaced it)
   let bases = a != "x16" && b != "x16" && (r == "x16" || (a != "x17" && b != "x17"))
