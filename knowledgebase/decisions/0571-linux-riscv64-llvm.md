@@ -1,6 +1,6 @@
 # 0571: linux/riscv64 through the LLVM backend
 
-Status: Proposed (Xo Lang 1, 2026-11-08; the owner decides). The owner
+Status: Accepted (owner, 2026-11-10, on the lead's recommendation). Proposed (Xo Lang 1, 2026-11-08; the owner decides). The owner
 approved linux/riscv64 as a new target on 2026-11-08, through the lead,
 "through the LLVM backend first, which costs least". This ADR is the
 plan. Go's linux/riscv64 port (Go 1.14 and later) is the reference for
