@@ -189,6 +189,38 @@ fn listing_of(os: Os, dir: Str) -> Str {
   }
 }
 
+/// listing_of without the entries named in skip.
+fn listing_except(os: Os, dir: Str, skip: List[Str]) -> Str {
+  match os.fs.read_dir(dir) {
+    Ok(fis) => listing_digest(fis.filter(fn(fi) { !skip.contains(fi.name) }))
+    Err(_) => "none"
+  }
+}
+
+/// A run entry's directory line for dir. A directory the build wrote
+/// into (its output in the module's directory) is listed without the
+/// names it wrote, which go first in the field ("x<hex names>.<digest>"):
+/// a build that removed its own output is not a miss, and a new source
+/// file beside it is (2026-11-10: kept whole the listing missed after the
+/// outputs were removed, TestWholeBuildWindowsPDB; dropped, a new file
+/// hit, TestWholeBuildCache on windows).
+fn dir_field(os: Os, dir: Str, wrote: List[Str]) -> Str {
+  if wrote.is_empty() {
+    return listing_of(os, dir)
+  }
+  "${hex_field(wrote.join("\n"))}.${listing_except(os, dir, wrote)}"
+}
+
+/// Whether dir's listing still matches its entry field (dir_field).
+fn dir_holds(os: Os, dir: Str, field: Str) -> Bool {
+  if field.starts_with("x") {
+    if let Some((names, sum)) = field.cut(".") {
+      return listing_except(os, dir, unhex_field(names).split("\n")) == sum
+    }
+  }
+  listing_of(os, dir) == field
+}
+
 /// listing_of's digest of the entries fis.
 fn listing_digest(fis: List[FileInfo]) -> Str {
   var ns: List[Str] = []
@@ -312,7 +344,7 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
         return None
       }
     } else if f[0] == "dir" && f.len() == 3 {
-      if listing_of(os, unhex_field(f[2])) != f[1] {
+      if !dir_holds(os, unhex_field(f[2]), f[1]) {
         return None
       }
     } else if f[0] == "walk" && f.len() == 3 {
@@ -531,8 +563,9 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
     made.keys().any(fn(p) { if under { p.starts_with("${d}/") } else { dir_name(p) == d } })
   }
   for d in dirs {
-    let sum = if wrote_in(d, false) { "" } else { list_sums.get("dir ${d}") ?? "" }
-    b.write("dir ${if sum.is_empty() { listing_of(os, d) } else { sum }} ${hex_field(d)}\n")
+    let wrote = made.keys().filter(fn(p) { dir_name(p) == d }).map(fn(p) { base_name(p) }).sort()
+    let sum = if !wrote.is_empty() { "" } else { list_sums.get("dir ${d}") ?? "" }
+    b.write("dir ${if sum.is_empty() { dir_field(os, d, wrote) } else { sum }} ${hex_field(d)}\n")
   }
   for d in walks {
     let sum = if wrote_in(d, true) { "" } else { list_sums.get("walk ${d}") ?? "" }
@@ -639,7 +672,7 @@ fn run_miss_why(os: Os, ctx: Ctx, key: Str) -> Str {
     let p = unhex_field(f[2])
     match f[0] {
       "file" => if sha_of(os, p) != f[1] { return "file changed: ${p}" }
-      "dir" => if listing_of(os, p) != f[1] { return "directory listing changed: ${p}" }
+      "dir" => if !dir_holds(os, p, f[1]) { return "directory listing changed: ${p}" }
       "walk" => if walk_of(os, p) != f[1] { return "tree changed: ${p}" }
       "probe" => if probe_again(os, p) != unhex_field(f[1]) { return "probe changed: ${p} (was ${unhex_field(f[1])}, now ${probe_again(os, p)})" }
       "env" => if env_again(os, p) != unhex_field(f[1]) { return "environment changed: ${p}" }
