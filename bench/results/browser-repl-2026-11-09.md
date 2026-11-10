@@ -67,3 +67,63 @@ xoc.wasm build of the branch, three runs each:
   target; 2b and 2c are not needed for the tour's programs. Still to
   measure: the page's worker (Chrome), a 30-entry session (programs grow
   with the session), and the memory a kept base holds.
+
+## Step 3: the 30-entry session (2026-11-10)
+
+`--play repl` (decision 0583 step 3) on linux/arm64 host 3 (12 CPUs), Node v20.19.2,
+xoc.wasm built from 28159d100's compiler/wasm, std of the same tree. Command:
+
+    node bench/browserrepl/session.mjs compiler/wasm/run.mjs xoc/wasm.wasm std \
+      bench/browserrepl/session.txt bench/browserrepl/want.txt
+
+Each entry's build is the compiler's answer; total adds running the module
+with a new node process (about 120 to 170 ms here, which the page does not pay).
+want.txt is xo repl's output for the same session.
+
+```
+ 1 use std/adler32                          build  3185 total  3185 ms ""  
+ 2 1 + 2                                    build   118 total   247 ms "3" ok 
+ 3 let xs = [3, 1, 2]                       build   105 total   229 ms ""  
+ 4 xs.sort()                                build   236 total   361 ms "[1, 2, 3]" ok 
+ 5 fn sq(x: Int) -> Int { x * x }           build   114 total   235 ms ""  
+ 6 sq(7)                                    build   123 total   261 ms "49" ok 
+ 7 fn sq(x: Int) -> Int { x * x * 1 }       build   128 total   230 ms ""  
+ 8 sq(8)                                    build   119 total   262 ms "64" ok 
+ 9 struct P { x: Int }                      build   110 total   227 ms ""  
+10 let p = P{x: 1}                          build   120 total   248 ms ""  
+11 p.x                                      build   128 total   287 ms "1" ok 
+12 struct P { x: Int, y: Int }              build   233 total   418 ms ""  
+13 let p = P{x: 1, y: 2}                    build   148 total   303 ms ""  
+14 p.x + p.y                                build   145 total   305 ms "3" ok 
+15 fn (p: P) sum() -> Int { p.x + p.y }     build   143 total   287 ms ""  
+16 p.sum()                                  build   147 total   306 ms "3" ok 
+17 var n = 0                                build   139 total   285 ms ""  
+18 n += 5                                   build   144 total   293 ms ""  
+19 n                                        build   138 total   277 ms "5" ok 
+20 let s = "a,b,c".split(",")               build   245 total   381 ms ""  
+21 s.len()                                  build   184 total   333 ms "3" ok 
+22 adler32.checksum(b"abc")                 build   207 total   349 ms "38600999" ok 
+23 let f = fn(x: Int) -> Int { x + 1 }      build   184 total   320 ms ""  
+24 f(41)                                    build   174 total   294 ms "42" ok 
+25 enum Color { Red, Green }                build   169 total   295 ms ""  
+26 let c = Color.Green                      build   168 total   310 ms ""  
+27 c                                        build   166 total   299 ms "Green" ok 
+28 "${n}!"                                  build   165 total   281 ms "\"5!\"" ok 
+29 let m: Map[Str, Int] = {"a": 1}          build   256 total   379 ms ""  
+30 m.get("a")                               build   267 total   392 ms "Some(1)" ok 
+cmd {"cmd":"type","arg":"p.sum()"}        45 ms ok=true type="Int" out="Int
+" err=""
+cmd {"cmd":"type","arg":"m"}              45 ms ok=true type="Map[Str, Int]" out="Map[Str, Int]
+" err=""
+cmd {"cmd":"defs"}                         1 ms ok=true type="" out="use std/adler32
+fn sq(x: Int) -> Int { x * x * 1 }
+struct P { x: Int, y: Int }
+f" err=""
+cmd {"cmd":"undo"}                         1 ms ok=true type="" out="" err=""
+cmd {"cmd":"type","arg":"nope"}           48 ms ok=false type="" out="" err="entry:1:1: XO0601 name `nope` not found
+"
+cmd {"cmd":"reset"}                        1 ms ok=true type="" out="" err=""
+cmd {"cmd":"type","arg":"p"}              45 ms ok=false type="" out="" err="entry:1:1: XO0601 name `p` not found
+"
+summary: entries 30, first 3185 ms, later median 294 ms, max 418 ms, compared 14 of 14 values, problems 0
+```

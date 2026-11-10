@@ -123,6 +123,8 @@ Stage 3 runs:
 - [2026-10-24 The empty-separator split against Go](results/strsplit-vs-go-2026-10-24.md): `bench/perf/strsplit` and its Go twin, eleven workloads, instructions retired: sizing the empty separator's piece list from the rune count took split_empty to 0.39 of the base and split to 0.63, the other nine rows within 1%; against Go, split_empty 0.89 (arm64) and 0.81 (LLVM), fields 0.74 and 0.73, bytes_split 0.67 and 0.60, split_after 0.92 and 0.94; counting the pieces first for the other forms was measured and reverted (fields 1.50x, bytes_fields 1.49x of the base); every checksum identical on both backends and Go.
 - [2026-10-30 backend gap survey](survey-2026-10-30/README.md): five services written from spec/core.md and spec/std.md alone (chathub, queueworker, grpcsvc, ledger, dataport), `xo check` 0 errors each, every missing piece marked `// GAP:`; ranking in knowledgebase/infrastructure/std-coverage.md "Survey of backend gaps (2026-10-30)".
 
+- [2026-11-09 A REPL in the browser playground](results/browser-repl-2026-11-09.md): decision 0583's measurements: today's playground compiler per entry, level 2a (one warm checker, each entry checked on a copy: 76 to 275 ms per tour entry), and `--play repl` on the 30-entry session (`bench/browserrepl/`: every value equal to xo repl's, later entries median 294 ms on linux/arm64).
+
 ## Quiet HTTP measurement: `bench/perf/http/callgrind-docker.sh`
 
 Wall clock HTTP rates on the Mac swing too much to judge a change (42k to

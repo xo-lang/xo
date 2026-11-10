@@ -97,3 +97,32 @@ Next: `--play repl` (the compiler answers an entry with its module; the
 page runs it and returns the run's output, from which the session keeps
 the entry, as repl.xo's step does with parse_run and Sess.after), a
 30-entry session, the page's worker in Chrome, and the base's memory.
+
+## Step 3 result (2026-11-10)
+`--play repl WARM DIR` (compiler/wasm/playrepl.xo) keeps one compiler
+instance for a session. Requests, one JSON object a line: `{"in": SRC}`
+is answered with `{"run": PATH}` (the entry's module; the page runs it)
+and then `{"ran": STDOUT, "code": N}` with xo repl --json's reply; an
+entry that does not check or build is answered at once (ok false,
+diagnostics at "entry" lines or "session"). `{"cmd": C, "arg": A}` takes
+type, defs, undo, reset and quit; doc, save and load stay terminal only
+(they need `xo doc` or a file system). The session is compiler/cli/repl's
+Sess, with xo repl's rules (an unused use kept, a redefined type's
+bindings run again or dropped with a note, binding and value types).
+
+The terminal REPL's 30-entry evidence session
+(bench/browserrepl/session.txt, its values in want.txt) on linux/arm64
+host 3, Node 20 (bench/results/browser-repl-2026-11-09.md, "Step 3: the
+30-entry session"): every value equal to xo repl's (14 of 14); the first
+entry 3185 ms (the warm check included), later entries median 294 ms, at
+most 418 ms, each including about 120 to 170 ms of starting node for the
+run that the page's in-worker instantiate does not pay. So level 2a meets
+the 0.5 s target for a session, not only for the tour's single programs.
+
+Open (step 4): the page's transport. browser_wasi_shim reads stdin
+synchronously, so a long-lived instance waits for the next entry through
+JSPI (fd_read as `WebAssembly.Suspending`, `_start` through
+`WebAssembly.promising`: Chrome 137 and later; Firefox announced it as
+default from 153; Safari 27 beta lists it), with one instance per entry
+(today's cost) where `"Suspending" in WebAssembly` is false. A headless
+Chrome probe of the transport is drafted but has not run to the end yet.

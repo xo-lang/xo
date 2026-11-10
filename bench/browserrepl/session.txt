@@ -1,0 +1,30 @@
+use std/adler32
+1 + 2
+let xs = [3, 1, 2]
+xs.sort()
+fn sq(x: Int) -> Int { x * x }
+sq(7)
+fn sq(x: Int) -> Int { x * x * 1 }
+sq(8)
+struct P { x: Int }
+let p = P{x: 1}
+p.x
+struct P { x: Int, y: Int }
+let p = P{x: 1, y: 2}
+p.x + p.y
+fn (p: P) sum() -> Int { p.x + p.y }
+p.sum()
+var n = 0
+n += 5
+n
+let s = "a,b,c".split(",")
+s.len()
+adler32.checksum(b"abc")
+let f = fn(x: Int) -> Int { x + 1 }
+f(41)
+enum Color { Red, Green }
+let c = Color.Green
+c
+"${n}!"
+let m: Map[Str, Int] = {"a": 1}
+m.get("a")
