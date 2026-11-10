@@ -1,0 +1,10 @@
+# The pinned corpus of the use ranking (module version, fetched with
+# `go mod download MODULE@VERSION`; its files are read from the module cache).
+# The Go standard library (GOROOT/src, go1.26.1, outside cmd) is the other half.
+github.com/go-chi/chi/v5 v5.5.0
+github.com/gin-gonic/gin v1.12.0
+github.com/spf13/cobra v1.10.2
+github.com/jackc/pgx/v5 v5.12.0
+github.com/aws/aws-sdk-go-v2 v1.47.8
+github.com/prometheus/client_golang v1.25.0
+github.com/gorilla/mux v1.8.1

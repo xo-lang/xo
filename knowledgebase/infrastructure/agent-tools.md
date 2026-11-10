@@ -455,6 +455,16 @@ yourself.
   `-check` names each stale artifact and prints the one command that fixes
   them all. TestStdIndexCurrent and stdgen -check name it in their failure
   messages too.
+- `go run ./scripts/stdaudit` (2026-11-10): the function level audit of Go's
+  standard library against Xo. `-go` lists every exported symbol of the
+  std-coverage.md packages (linux/arm64 context), `-xo BIN -std DIR` lists Xo's
+  surface, `-report -go-file F -xo-file F -map scripts/stdaudit/map.txt` joins
+  them (doc-named, seeded by snake_case name, mapped, skipped, gap, stale,
+  unmapped), `-rank REPORT DIRS...` counts uses in GOROOT/src and the pinned
+  modules of scripts/stdaudit/corpus.txt. map.txt takes `go.Symbol = xo name`,
+  `= not planned: why` or `= gap: what`; add a line for each symbol you review.
+  Results: bench/results/std-audit-2026-11-10.md, std-coverage.md "Function
+  level gaps".
 - `go run ./scripts/stdcoverage` prints every std function and method no
   corpus or golden calls (internal/stdcoverage): std/*.xo and
   std/native/prelude.xo against the calls in internal/stdtest's corpora,

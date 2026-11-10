@@ -245,6 +245,83 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | image/gif | std/gif | complete | Decode, DecodeAll, DecodeConfig, Encode, EncodeAll over whole buffers (0578 step 5). |
 | image, image/draw, image/gif | planned | 0578: Image over png and jpeg, draw, gif follow; image/png and image/jpeg (decode) are done (std/png 0466, std/jpeg 0467). |
 
+## Function level gaps (2026-11-10, scripts/stdaudit)
+
+`go run ./scripts/stdaudit` compares every exported symbol (functions, methods,
+types, consts, vars) of the 11117 Go symbols in the packages above with Xo's surface
+(`xo doc` of the builtin types, `xo symbols --module` of every std module). Its
+mapping file scripts/stdaudit/map.txt records each symbol as an Xo name, `not
+planned: why`, or `gap: what`. Counts at this date: 221 named by an Xo doc
+comment, 177 matched by snake_case name, 196 mapped by hand,
+2743 skipped (packages marked not planned above, or a not planned line),
+59 verified gaps, 7708 not yet reviewed (mostly packages with no Xo
+counterpart yet: debug/*, go/*, syscall details). Use is counted over GOROOT/src
+(go1.26.1, outside cmd) and the pinned modules of scripts/stdaudit/corpus.txt
+(chi, gin, cobra, pgx, aws-sdk-go-v2, client_golang, mux): files that use the symbol.
+Methods are counted only when their name is unique among the reviewed symbols.
+
+| Go symbol | Files (pinned modules / stdlib) | Gap |
+|---|---|---|
+| `math.MaxUint16` (const) | 15 / 4 | see math.MaxInt32 |
+| `unicode/utf8.RuneSelf` (const) | 0 / 36 | no RuneSelf const |
+| `io.Copy` (func) | 5 / 18 | no copy between two streams (Stream/File have read and write, no Copy helper; check std/prelude.Stream before filling) |
+| `math.MaxInt32` (const) | 6 / 11 | only INT_MAX/INT_MIN (64 bit) exist; no MaxInt32/MaxInt16/MaxInt8/MaxUint16/MaxUint32 and Min* consts |
+| `maps.Copy` (func) | 6 / 4 | no Map.extend |
+| `math.Inf` (func) | 5 / 6 | no Float infinity value (Float.is_inf tests one) |
+| `time.Time.Nanosecond` (method) | 6 / 3 | no Time.nanosecond; Time has unix and unix_millis only (check std/time) |
+| `strings.NewReplacer` (func) | 5 / 5 | no multi-pair Replacer (chain Str.replace) |
+| `math.MinInt32` (const) | 5 / 3 | see math.MaxInt32 |
+| `time.Time.UnixNano` (method) | 3 / 7 | Time.unix and unix_millis only (check std/time) |
+| `slices.Clone` (func) | 2 / 8 | no List.clone |
+| `math.MaxInt16` (const) | 4 / 2 | see math.MaxInt32 |
+| `math.MaxInt8` (const) | 4 / 2 | see math.MaxInt32 |
+| `math.MinInt16` (const) | 4 / 2 | see math.MaxInt32 |
+| `math/bits.Add64` (func) | 0 / 14 | Int.wrapping_add has no carry out (llrt cpu.adc is internal) |
+| `math.MaxUint32` (const) | 3 / 4 | see math.MaxInt32 |
+| `math/bits.Len` (func) | 1 / 9 | Int has leading_zeros; no bit length |
+| `math/bits.Sub64` (func) | 0 / 12 | no borrow out (llrt cpu.borrow is internal) |
+| `hash.Cloner` (type) | 0 / 12 | Hasher clone? check std/crypto.Hasher |
+| `io.SeekStart` (const) | 0 / 12 | File.read_at/write_at exist; no seek cursor (check std/prelude.File) |
+| `maps.Clone` (func) | 1 / 7 | no Map.clone |
+| `math.MaxUint8` (const) | 3 / 1 | no small integer limit consts |
+| `math.NaN` (func) | 2 / 4 | no Float NaN value (Float.is_nan tests one) |
+| `sort.Search` (func) | 1 / 6 | no List.binary_search |
+| `slices.Concat` (func) | 2 / 3 | no List.concat (use +) |
+| `math.MaxFloat64` (const) | 2 / 3 | no Float limit consts |
+| `math.Min` (func) | 3 / 0 | no Float.min / Int.min |
+| `math.MinInt8` (const) | 2 / 2 | no small integer limit consts |
+| `math.Max` (func) | 2 / 0 | no Float.max / Int.max |
+| `math.Pi` (const) | 1 / 2 | no Pi constant |
+| `math.Copysign` (func) | 0 / 5 | no Float.copysign |
+| `math.Frexp` (func) | 1 / 2 | no Float.ldexp/frexp |
+| `math.Ldexp` (func) | 1 / 2 | no Float.ldexp/frexp |
+| `slices.BinarySearchFunc` (func) | 0 / 3 | no List.binary_search_by |
+| `math.MaxFloat32` (const) | 0 / 3 | no Float limit consts |
+| `math.MaxUint64` (const) | 0 / 3 | no unsigned 64 bit max (Int is signed 64) |
+| `math.RoundToEven` (func) | 1 / 0 | Float.round only (check rounding mode) |
+| `slices.BinarySearch` (func) | 0 / 2 | no List.binary_search |
+| `slices.IsSorted` (func) | 0 / 2 | no List.is_sorted |
+| `slices.IsSortedFunc` (func) | 0 / 1 | no List.is_sorted_by |
+| `math.Signbit` (func) | 0 / 1 | no Float.signbit |
+| `sort.IntsAreSorted` (func) | 0 / 0 | no List.is_sorted |
+| `sort.SearchInts` (func) | 0 / 0 | no List.binary_search |
+| `sort.SearchStrings` (func) | 0 / 0 | no List.binary_search |
+| `slices.Chunk` (func) | 0 / 0 | no List.chunks |
+| `slices.Compact` (func) | 0 / 0 | no List.dedup |
+| `slices.CompactFunc` (func) | 0 / 0 | no List.dedup_by |
+| `slices.IndexFunc` (func) | 0 / 0 | no List.position/index_where (List.find returns the element) |
+| `slices.Max` (func) | 0 / 0 | no List.max |
+| `slices.MaxFunc` (func) | 0 / 0 | no List.max_by |
+| `slices.Min` (func) | 0 / 0 | no List.min |
+| `slices.MinFunc` (func) | 0 / 0 | no List.min_by |
+| `slices.Repeat` (func) | 0 / 0 | no List.repeat |
+| `slices.Replace` (func) | 0 / 0 | no List.splice |
+| `maps.Insert` (func) | 0 / 0 | no Map.extend |
+| `math.E` (const) | 0 / 0 | no E constant |
+| `math.Erf` (func) | 0 / 0 | no gamma/erf/bessel family |
+| `math.Gamma` (func) | 0 / 0 | no gamma/erf/bessel family |
+| `math.Modf` (func) | 0 / 0 | no Float.modf |
+
 ## Outside Go's standard library
 
 | Need | Go source | Xo | Status | Notes |
