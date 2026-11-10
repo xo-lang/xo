@@ -204,6 +204,18 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   DWARF; `<unavailable>` means the frame no longer keeps the value.
   Off by default; toolchain.md has the details.
 
+### A failure seen on one host only (lead, 2026-11-10)
+
+Observe it on the host where it fails before reproducing it anywhere else:
+`strace -f -tt -e trace=network` (with `-xx -s 400` for packet bytes), the
+service's journal, `ausearch -m avc` and `-m SECCOMP`, all read only. On
+2026-11-10 the 0568 log's uploads to R2 timed out only on the OCI host; about
+40 minutes of container repros all passed, while one strace on the host showed
+xo dialing addresses built from the wrong DNS reply (std's resolver mixed the
+A and AAAA answers that arrived 0.1 ms apart). A host that is hosting only
+(the OCI host) gets read only checks from the lead; never restart its services
+yourself.
+
 ## Testing
 
 - A gate step that hangs or runs far past its usual time (lead,
