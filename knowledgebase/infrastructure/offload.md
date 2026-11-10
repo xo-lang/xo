@@ -90,7 +90,15 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   HEAVYD_GATE_AGE_MIN (20; 0 off), no waiting exclusive lease starts on
   that lane before it, and the exclusive one says why in `heavyd status`;
   a running exclusive lease is not stopped (heavyd lanes.go GateAge,
-  TestLaneDecide; Last verified: 2026-11-08). After heavyd starts (a restart, an
+  TestLaneDecide; Last verified: 2026-11-08). An exclusive lease that is
+  also a memory lease is never its own aged gate, and a waiting exclusive
+  lease holds the plain leases behind it (backfill aside) also while it
+  defers to an aged gate, for at most HEAVYD_EXCL_HOLD_MIN (120; 0 for
+  good) of waiting; past that, plain runs start beside its wait (lead,
+  2026-11-10: host 1's exclusive release-vs-go-http.sh waited from 05:41
+  while its status named itself as the aged gate and plain steps started;
+  heavyd lanes.go ExclHold, TestLaneDecide,
+  TestLaneExclusiveHoldsPlainStream). After heavyd starts (a restart, an
   install), it grants no lane lease for 15 s (AdoptGrace), so the runs
   still going from before re-adopt their slots first (lead, 2026-11-07: a
   new lease took pass2's slot 1 in the same second an adopted run came
