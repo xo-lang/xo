@@ -53,6 +53,9 @@ var codegenEnv = map[string]inputClass{
 	"XO_STD_CONC":             {"content", ""}, // decision 0388: the unwinding checks fixed on or off; the SSA bodies every key hashes differ
 	"XO_STD_OBJ":              {"content", ""}, // decision 0388 stage 4: std's object (XO_STD_ROOTS, the program's functions left out, weak helpers: " weak=1" in the fn and part keys); written to a directory, not linked
 	"XO_CHECK_NO_PARSE_CACHE": {"none", ""},
+	"XO_LOOKUP_EAGER":         {"none", ""}, // xo refs and the agent server's lookups (cli/semantic, reached through compiler/wasm's --play repl): no code
+	"XO_REPL_HISTORY":         {"none", ""}, // xo repl's history file (cli/repl, reached through compiler/wasm's --play repl): no code
+	"XO_REPL_WARM":            {"none", ""}, // xo repl's warm-up build (cli/repl): no code
 	"XO_STD":                  {"content", ""},
 	"XO_ZONEINFO":             {"content", ""},
 	"XO_CBIND_DIR":            {"content", ""},
@@ -244,6 +247,16 @@ var codegenFS = map[string]string{
 	"ssa/fecache.xo":            "the front end cache itself",
 	"ssa/rccache.xo":            "the rc cache itself",
 	"cli/core/format/format.xo": "the formatter's own files",
+	// compiler/wasm's --play repl (decision 0583) imports the REPL's session
+	// and the semantic queries; neither is part of code generation
+	"wasm/playrepl.xo":          "the playground REPL's session directory (decision 0583): the entry's program is program input",
+	"cli/repl/repl.xo":          "xo repl's session directory, history and child builds: program input or none",
+	"cli/semantic/defhash.xo":   "semantic queries (xo refs, def, type): no code",
+	"cli/semantic/edit.xo":      "xo edit's rewrites of the user's files: no code",
+	"cli/semantic/main.xo":      "semantic queries: module loading, program input",
+	"cli/semantic/query.xo":     "semantic queries: module loading, program input",
+	"cli/semantic/query_cmd.xo": "semantic query commands: no code",
+	"cli/semantic/release.xo":   "release metadata reads: no code",
 }
 
 var (
