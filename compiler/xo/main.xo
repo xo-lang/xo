@@ -1474,6 +1474,18 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     split.goos = lctx.tgoos
     split.arch = tgoarch
+    if !o.lib.is_empty() {
+      // a C library (decision 0574): no LTO. A static archive's members
+      // are machine code (a C program's link runs no LTO over them, and
+      // GNU ld's relocatable link refuses the plugin's options), and a
+      // linux shared library's code is compiled position independent
+      // (-fPIC below), which an LTO link by GNU ld's plugin did not do:
+      // its object took the thread local table at a local exec offset
+      // (R_X86_64_TPOFF32, refused in a shared object; the amd64 host,
+      // 2026-11-10)
+      split.single = "none"
+      split.lto = "none"
+    }
     if !o.opt.is_empty() {
       // --opt (decision 0354): in any build, release included
       split.opt = "-${o.opt}"
@@ -1552,6 +1564,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let bin = bin_path(sdir, out, name, ltarget, o.many_targets)
     var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch, "llvm", "")
     lk.flags = cross + lk.flags
+    if !o.lib.is_empty() && lctx.tgoos != "darwin" {
+      lk.flags = lk.flags + ["-fPIC"]
+    }
     if lctx.tgoos == "windows" {
       // --versioninfo, --icon, --manifest (decision 0560)
       let ro = win_rsrc_object(os, o, bin, dir, tgoarch)
