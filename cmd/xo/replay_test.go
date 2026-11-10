@@ -42,7 +42,7 @@ func TestRecordReplayCLI(t *testing.T) {
 		t.Fatalf("run --record: exit %d\n%s\n%s", code, out.String(), errOut.String())
 	}
 	recOut, recErr := out.String(), errOut.String()
-	if !strings.HasPrefix(recOut, "args a,b rand ") || !strings.Contains(recErr, "error: missing-") || !strings.Contains(recErr, "xo run: recorded "+trace) {
+	if !strings.HasPrefix(recOut, "args a,b rand ") || !strings.Contains(recErr, "error: missing-") || !strings.Contains(recErr, "xo run: recorded "+filepath.ToSlash(trace)) {
 		t.Fatalf("recording:\n%s\n%s", recOut, recErr)
 	}
 	m := regexp.MustCompile(`(?m)^crash bundle: (.*)$`).FindStringSubmatch(recErr)

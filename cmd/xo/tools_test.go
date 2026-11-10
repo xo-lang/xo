@@ -2989,7 +2989,7 @@ func TestLookupsCompactText(t *testing.T) {
 		return out.String()
 	}
 	syms := lookup("symbols")
-	if strings.HasPrefix(syms, "{") || !strings.Contains(syms, "func add_one  "+filepath.Join(dir, "main.xo")+":3  fn add_one(n: Int) -> Int\n") || strings.Contains(syms, "Adds one") {
+	if strings.HasPrefix(syms, "{") || !strings.Contains(syms, "func add_one  "+filepath.ToSlash(filepath.Join(dir, "main.xo"))+":3  fn add_one(n: Int) -> Int\n") || strings.Contains(syms, "Adds one") {
 		t.Errorf("symbols text:\n%s", syms)
 	}
 	if got := lookup("symbols", "add_*"); strings.Count(got, "\n") != 2 || strings.Contains(got, "other") {

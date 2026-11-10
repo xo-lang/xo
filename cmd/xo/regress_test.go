@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestRegressionWritten checks that a shrunk contract fuzz failure becomes a
@@ -57,7 +55,11 @@ func TestRegressionCrossBackend(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs test binaries on two backends")
 	}
-	native := "--backend=" + xotool.NativeBackend()
+	be := nativeLeg(t)
+	if be == "" {
+		t.Skip("records on one backend and replays on the other: no native backend builds here")
+	}
+	native := "--backend=" + be
 	src := "fn half(n: Int) -> Int\n  ensures result * 2 == n\n{\n  n / 2\n}\n\npub fn twice(n: Int) -> Int { half(n) * 4 }\n"
 	files := map[string]string{}
 	for _, c := range []struct{ rec, replay string }{{"--backend=go", native}, {native, "--backend=go"}} {
@@ -98,7 +100,11 @@ func TestContractFuzzSmallInts(t *testing.T) {
 		t.Skip("builds and runs test binaries on two backends")
 	}
 	src := "struct Account {\n  owner: Str\n  balance: Int\n}\n\nfn (var a: Account) deposit(amount: Int)\n  requires amount > 0\n{\n  a.balance += amount\n}\n"
-	for _, be := range []string{"--backend=go", "--backend=" + xotool.NativeBackend()} {
+	bes := []string{"--backend=go"}
+	if be := nativeLeg(t); be != "" {
+		bes = append(bes, "--backend="+be)
+	}
+	for _, be := range bes {
 		dir := filepath.Join(t.TempDir(), "bank")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)

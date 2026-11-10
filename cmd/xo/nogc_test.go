@@ -26,6 +26,17 @@ import (
 // with.
 func nativeBackends(t *testing.T) []string {
 	t.Helper()
+	out := hostNativeBackends()
+	if len(out) == 0 {
+		t.Skip("no native backend on this host")
+	}
+	return out
+}
+
+// hostNativeBackends is nativeBackends without the skip: none on a host
+// with neither (windows/amd64 without clang), for a test whose Go backend
+// part still runs.
+func hostNativeBackends() []string {
 	var out []string
 	if runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
 		if _, err := xotool.CC(); err == nil {
@@ -35,10 +46,23 @@ func nativeBackends(t *testing.T) []string {
 	if _, err := xotool.Clang(); err == nil {
 		out = append(out, xotool.BackendLLVM)
 	}
-	if len(out) == 0 {
-		t.Skip("no native backend on this host")
-	}
 	return out
+}
+
+// nativeLeg is the host's native backend (xotool.NativeBackend) for a
+// test that compares it with the Go backend, or "" with a log line when
+// it cannot build here: the LLVM backend without clang (windows/amd64,
+// 2026-11-10: such tests failed instead of skipping that part).
+func nativeLeg(t *testing.T) string {
+	t.Helper()
+	be := xotool.NativeBackend()
+	if be == xotool.BackendLLVM {
+		if _, err := xotool.Clang(); err != nil {
+			t.Logf("no clang (%v): the %s part is skipped", err, be)
+			return ""
+		}
+	}
+	return be
 }
 
 func xoTest(t *testing.T, args ...string) (int, string) {
@@ -581,7 +605,9 @@ fn main(os: Os) {
 }
 `,
 	})
-	for _, backend := range []string{"go", "arm64", "llvm"} {
+	// the native backends this host builds with (windows/amd64 built an
+	// arm64 program it cannot run, and has no clang for llvm)
+	for _, backend := range append([]string{"go"}, hostNativeBackends()...) {
 		cmd := testtmp.Guard(exec.Command(cli[0], append(cli[1:], "run", "--backend="+backend, ".")...))
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()

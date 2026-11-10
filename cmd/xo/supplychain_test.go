@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/xo-lang/xo/internal/mod/modtest"
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestSupplyChainAttacks replays attack classes from the Backstabber's
@@ -309,6 +310,11 @@ var scAttacks = []scAttack{
 		class: "effect laundering",
 		want:  scStageNone,
 		run: func(t *testing.T) (string, string) {
+			// the vouched `use c` is read with clang; without it the check
+			// fails with XO1104 (windows/amd64, 2026-11-10)
+			if _, err := xotool.Clang(); err != nil {
+				t.Skipf("no clang to read the C header: %v", err)
+			}
 			app := scWorld(t, map[string]string{
 				"evil.test/czip@v1.0.0/xo.mod": "module evil.test/czip\nedition preview\n",
 				"evil.test/czip@v1.0.0/zip.h":  "int zip_level(void);\n",

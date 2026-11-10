@@ -88,9 +88,19 @@ func TestStdChecks(t *testing.T) {
 	}
 	std := filepath.Join(root, "std")
 	dir := stdProbe(t, std)
+	// without clang a std module that binds C (`use c`: sqlite) cannot be
+	// read; its errors are expected there (windows/amd64, 2026-11-10)
+	usesC := map[string]bool{}
+	if _, err := xotool.Clang(); err != nil {
+		usesC = stdUseCFiles(t, std)
+	}
 	for _, d := range nativeCheck(t, dir) {
 		if d.Code == "XO0110" && d.Span.File == "main.xo" {
 			continue // the probe's imports, unused by design
+		}
+		if usesC[filepath.ToSlash(d.Span.File)] {
+			t.Logf("no clang: %s:%d: %s (a `use c` module)", d.Span.File, d.Span.Line, d.Code)
+			continue
 		}
 		t.Errorf("%s:%d: %s %s", d.Span.File, d.Span.Line, d.Code, d.Message)
 	}
@@ -154,4 +164,31 @@ func TestStdChecks(t *testing.T) {
 func declOnly(rel string) bool {
 	base := filepath.Base(rel)
 	return filepath.Dir(filepath.ToSlash(rel)) == "native" && (strings.HasPrefix(base, "rt") || strings.HasPrefix(base, "sys_"))
+}
+
+// stdUseCFiles is the std files that bind C (`use c`), by their path from
+// the repository root (std/native/sqlite.xo) and from std
+// (native/sqlite.xo).
+func stdUseCFiles(t *testing.T, std string) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	err := filepath.WalkDir(std, func(p string, e fs.DirEntry, err error) error {
+		if err != nil || e.IsDir() || !strings.HasSuffix(p, ".xo") {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(b, []byte("\nuse c \"")) || bytes.HasPrefix(b, []byte("use c \"")) {
+			rel, _ := filepath.Rel(std, p)
+			out[filepath.ToSlash(rel)] = true
+			out["std/"+filepath.ToSlash(rel)] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
