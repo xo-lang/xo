@@ -2410,6 +2410,9 @@ never depend on it, but the time does:
   collection method (`put`, `remove`, `update`, `pop`, `add`).
 - Field assignment `u.name = "b"` on a `var u` rebinds `u` to a modified copy.
   Nested paths work: `st.users.put(k, v)`, `st.config.port = 9090`.
+- An element of a `Bytes` cannot be assigned, even through a `var`
+  binding: `Bytes` is immutable (3.6). `b[i] = x` is error `XO0502`, with
+  a note naming `BytesBuilder` and `List[UInt8]`.
 - An assignment evaluates the indexes of its target, then the value, then
   stores into the target (decision 0140): changes the value makes to the
   target's binding are kept, so `t.objs[o].kids = t.add_kids()` keeps the
@@ -3725,7 +3728,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0437` | error | checker | the `string` wire option on a field that is not a Bool, integer, float or Str, or an Option of one (core 2.2, decision 0555) |
 | `XO0438` | warning | checker | an argument of a `log.debug`, `log.info`, `log.warn` or `log.error` call (or a Logger's) performs an effect other than `log`; it runs only when the record is at or above the configured level (decision 0558, std.md 6) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
-| `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
+| `XO0502` | error | checker | assignment to an immutable binding, to a captured variable, or to an element of `Bytes` (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |
 | `XO0510` | error | checker | use of a moved Buf, StrBuilder, BytesBuilder, or std move only handle (core 5.3) |
 | `XO0520` | error | checker | mutation of a copied or stored collection element is never written back (core 5.2) |

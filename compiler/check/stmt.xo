@@ -2062,6 +2062,13 @@ fn (var c: Checker) place_type(e: Expr) -> Int {
       let bt = c.place_type(x)
       let t = c.index_type(bt, span, index)
       c.set_type(e, t)
+      if c.is_prelude(bt, "Bytes") {
+        // Bytes is immutable (core 3.6): the backends had no store for it
+        // (the Go backend failed as a code generator bug, 2026-11-09)
+        let d = c.error("XO0502", span, "cannot assign to an element of `Bytes`; Bytes is immutable")
+        c.note(d, "build the bytes with a `BytesBuilder` (spec/std.md 2.7), or keep a `List[UInt8]` while its elements change")
+        return t
+      }
       if c.is_prelude(bt, "Map") && c.map_store != c.expr_key(e) {
         let d = c.error("XO0410", span, "changing a Map element in place faults when the key is missing")
         c.map_update_fix(d, t, x, index, c.map_upd == c.expr_key(e))

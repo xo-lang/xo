@@ -1,0 +1,7 @@
+fn main(os: Os) {
+  var b: Bytes = "ab".bytes()
+  b[0] = 120 // ERROR XO0502
+  var xs: List[UInt8] = [97, 98]
+  xs[0] = 120
+  os.stdio.println("${b.len()} ${xs.len()}")
+}
