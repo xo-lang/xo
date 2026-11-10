@@ -35,10 +35,10 @@ fn main(os: Os) {
 func TestLSPHoverDocLinks(t *testing.T) {
 	t.Parallel()
 	dir := writeFiles(t, map[string]string{"xo.mod": "module example.com/hov\nedition preview\n", "main.xo": hoverProg})
-	uri := "file://" + filepath.Join(dir, "main.xo")
+	uri := fileURL(filepath.Join(dir, "main.xo"))
 	session := func(opts map[string]any) *lspClient {
 		c := startLSP(t, dir)
-		c.request("initialize", map[string]any{"processId": nil, "rootUri": "file://" + dir, "capabilities": map[string]any{}, "initializationOptions": opts})
+		c.request("initialize", map[string]any{"processId": nil, "rootUri": fileURL(dir), "capabilities": map[string]any{}, "initializationOptions": opts})
 		c.notify("initialized", map[string]any{})
 		c.notify("textDocument/didOpen", map[string]any{"textDocument": map[string]any{"uri": uri, "languageId": "xo", "version": 1, "text": hoverProg}})
 		return c

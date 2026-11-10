@@ -49,14 +49,14 @@ func TestLSPStdDeclarations(t *testing.T) {
 		"main.xo":    bad,
 	})
 	c := startLSP(t, dir)
-	c.request("initialize", map[string]any{"processId": nil, "rootUri": "file://" + dir, "capabilities": map[string]any{}})
+	c.request("initialize", map[string]any{"processId": nil, "rootUri": fileURL(dir), "capabilities": map[string]any{}})
 	c.notify("initialized", map[string]any{})
 	open := func(path string) string {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		uri := "file://" + filepath.ToSlash(path)
+		uri := fileURL(path)
 		c.notify("textDocument/didOpen", map[string]any{"textDocument": map[string]any{"uri": uri, "languageId": "xo", "version": 1, "text": string(b)}})
 		return uri
 	}

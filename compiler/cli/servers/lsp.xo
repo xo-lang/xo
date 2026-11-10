@@ -526,7 +526,9 @@ struct Session {
 }
 
 fn abs_of(wd: Str, p: Str) -> Str {
-  if p.starts_with("/") { clean_path(p) } else { clean_path(wd + "/" + p) }
+  // a drive path is absolute too (it was joined to wd on Windows:
+  // .../002/C:/Users/..., winarm VM, 2026-11-10)
+  if hostpath.is_abs(p) { clean_path(host_slash(p)) } else { clean_path(host_slash(wd) + "/" + host_slash(p)) }
 }
 
 fn dir_of(p: Str) -> Str {
