@@ -47,7 +47,7 @@ var resolverConfigs = []resolverConfig{
 		hosts:    "127.0.0.1 localhost h4.test\n::1 localhost h6.test # a comment\n127.0.0.1\tHostCase.Test\n",
 		nsswitch: "passwd: files\nhosts:      files dns\n",
 		names: []string{"localhost", "h4.test", "h6.test", "hostcase.test", "a.test", "six.test", "both.test",
-			"cname.test", "big.test", "host", "nodata.test", "nx.test", "srvfail.test", "a.test.", "127.0.0.1", "::1"},
+			"cname.test", "big.test", "host", "nodata.test", "nx.test", "srvfail.test", "a.test.", "127.0.0.1", "::1", "pair.test"},
 	},
 	{
 		name:     "dns_files",
@@ -117,7 +117,7 @@ func TestResolverDiff(t *testing.T) {
 				t.Errorf("the server saw other questions:\n--- Xo\n%s--- glibc\n%s", qx, qc)
 			}
 			if cf.name == "files_dns" {
-				for _, want := range []string{"big.test: 4\n", "host: 4\n", "cname.test: 4\n", "both.test: 6\n", "h6.test: 6\n"} {
+				for _, want := range []string{"big.test: 4\n", "host: 4\n", "cname.test: 4\n", "both.test: 6\n", "h6.test: 6\n", "pair.test: 4\n"} {
 					if !strings.Contains(xo, want) {
 						t.Errorf("Xo output lacks %q", want)
 					}
@@ -195,6 +195,12 @@ var resolverZone = map[string]struct {
 	"host.corp.test.": {a4: []string{"127.0.0.1"}},
 	"nodata.test.":    {},
 	"srvfail.test.":   {rcode: 2},
+	// answered back to back (the server holds the first reply until the
+	// other query arrives): the A address read from a receive buffer the
+	// AAAA reply then overwrote was 1.0.0.0 (OCI host, 2026-11-10: the
+	// first bytes of 2606:4700::); 100::1 is unreachable, so only the
+	// right IPv4 address connects
+	"pair.test.": {a4: []string{"127.0.0.1"}, a6: []string{"100::1"}},
 }
 
 // TestResolverDNSServer is the DNS server of TestResolverDiff, run in its
@@ -258,14 +264,26 @@ func TestResolverDNSServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	buf := make([]byte, 4096)
+	var held []byte
+	var heldTo net.Addr
 	for {
 		n, from, err := uc.ReadFrom(buf)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if r := dnsReply(buf[:n], true, logq); r != nil {
-			uc.WriteTo(r, from)
+		r := dnsReply(buf[:n], true, logq)
+		if r == nil {
+			continue
 		}
+		if bytes.Contains(buf[:n], []byte("\x04pair\x04test\x00")) {
+			if held == nil {
+				held, heldTo = r, from
+				continue
+			}
+			uc.WriteTo(held, heldTo)
+			held = nil
+		}
+		uc.WriteTo(r, from)
 	}
 }
 

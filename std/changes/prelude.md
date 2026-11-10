@@ -3808,3 +3808,20 @@ server says so, with no address: a Docker resolver answers `.invalid` names
 this way) gave `lookup NAME: No address associated with hostname`, the
 resolver's own text, where Go says `lookup NAME: no such host`. Both codes
 are `no such host` now, as in Go.
+
+## 2026-11-10: fix: a dual stack lookup's IPv4 addresses are not overwritten by its IPv6 answer
+
+- Kind: fix
+- Commit: this commit
+- Found by: the module proxy beta on the owner's OCI host (decision 0568): `xo mod sumdb serve` timed out uploading to R2, dialing 38.6.71.0 and 192.12.0.28
+- Go reference: net/dnsclient_unix.go (each answer's addresses are copied out of its message: dnsmessage's AResource and AAAAResource hold arrays)
+- Test: internal/llvm resolver_linux_test.go TestResolverDiff `pair.test` (A and AAAA answered back to back)
+
+The resolver sends the A and AAAA queries at once and reads both answers
+into one receive buffer. The addresses it kept were views of that buffer
+(Bytes slices are views, decision 0330), so when the second answer arrived
+before the first one's addresses were used, the IPv4 addresses read the
+IPv6 answer's bytes: 38.6.71.0 is the start of 2606:4700::, 192.12.0.28 a
+name pointer and TYPE 28. Off a host whose resolver answers both within a
+fraction of a millisecond it rarely showed. Each address is copied out of
+the message now.
