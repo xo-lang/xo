@@ -10,3 +10,4 @@ std/amqptest
 std/deque
 std/heap
 std/tabwriter
+std/rate

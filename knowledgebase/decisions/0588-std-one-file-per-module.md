@@ -259,3 +259,7 @@ commit (the lead cuts it).
   ones.
 - `std/tabwriter` merged the same way (std/rt/tabwriter.go removed; the
   native TabWriter's fields are private).
+- `std/rate` merged (std/rt/rate.go removed; the native file's private
+  copy of `INF` dropped for the declared one; compiler/ssa/waits.xo
+  NO_WAIT drops the Limiter and Reservation methods, which have Xo
+  bodies now: TestWaitsClassified).
