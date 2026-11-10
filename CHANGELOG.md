@@ -10,6 +10,7 @@ the text of every entry is unchanged).
 ## Unreleased
 - `List.clone()`, `List.concat(lists)`, `binary_search(x)`, `max()` and `min()` (decision 0592): Go's slices.Clone, Concat, BinarySearch, Max and Min
 - `copy_stream(dst, src)`, `File.copy_to(dst)` and `File.copy_from(src)` with `CopyErr[R, W]` (decision 0593): Go's io.Copy between connections and files
+- A windows `xo build --lib=shared -o NAME.dll` also writes the import library NAME.lib (decision 0574), which MSVC's link.exe and lld-link link a C program with
 - `Replacer.new(pairs)` and `r.replace(s)` (decision 0594): Go's strings.Replacer, one pass over several old/new pairs
 - `xo build --lib=shared` builds a windows DLL (decision 0574) for windows/amd64 and windows/arm64 with Xo's PE linker: the runtime's and the `as c` exports by name, the runtime started on the first call (DllMain starts nothing), each thread's runtime state released when the thread exits, and Win64's by-reference XoBytes and XoStr; the header for `-o geo.dll` is geo.h; `--lib` now exports the `as c` functions even with no `-o`
 - `Map.extend(other)` and `Map.clone()` (decision 0592): Go's maps.Copy and maps.Clone

@@ -536,10 +536,31 @@ Xo's PE linker, not cc:
   threads making 50 calls each (thread detach); both relocated (loaded
   at 0x7ffe84ec0000 and 0x7ff880a00000). cmd/xo TestCLibWindowsDLL
   cross-builds both and checks the image, its exports and geo.h.
-- Not yet: an import library (`NAME.lib`, for MSVC's link; MinGW's ld
-  links a DLL directly, and LoadLibrary needs none), `--lib=static` on
-  windows (refused with a message), a C caller test on Windows (needs a
-  C compiler on a host), and the LLVM backend's windows DLL.
+- The import library (2026-11-10): `-o NAME.dll` also writes NAME.lib
+  (compiler/macho implibw.xo, LLVM COFFImportFile's and lib.exe's
+  layout: the two linker members, the import descriptor object, the
+  null import descriptor, the null thunk, a short import member per
+  export). Proof: a freestanding C caller (Int, Float, an XoStr
+  parameter between a double and an Int, the sret XoStr result, an
+  XoBytes parameter through the import thunk) built with clang and
+  linked by lld-link against it ran on the amd64 host's Windows and on
+  winarm (exit 0); the same caller compiled by cl and linked by MSVC's
+  link.exe 14.44 (VS 2022 Build Tools on winarm) ran on arm64 natively
+  and as x64 under the VM's emulation (exit 0).
+- Not yet: the LLVM backend's windows DLL, and a C caller test in the
+  repository's suite (the Windows hosts' golden runner has no C
+  compiler; winarm's Build Tools could run one).
+- `--lib=static` on windows is refused with a message (lead,
+  2026-11-10: a later stage). It would take: a COFF archive of the
+  program's and std's objects that link.exe and lld-link accept (Xo's
+  objects are atoms-mode COFF with weak definitions and .drectve the
+  linkers must honor); the runtime's TLS (Xo's .tls section and its
+  index, which the host executable's TLS directory must cover) and its
+  CRT assumptions (Xo's own memcpy, memset, fmod and strlen in
+  cabi_wincrt.xo would collide with the host's CRT, so a static build
+  needs them renamed or weak); and a constructor equivalent (a .CRT$XCU
+  entry that the host's CRT runs, or the lazy start alone, as the DLL
+  uses).
 
 ## Alternatives
 

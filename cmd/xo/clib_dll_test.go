@@ -67,7 +67,8 @@ func peExports(t *testing.T, path string) (string, []string, *pe.File) {
 // TestCLibWindowsDLL cross-builds the C library as a windows DLL
 // (decision 0574, `--lib=shared` for windows/amd64 and windows/arm64):
 // a DLL image with its export directory of the runtime's exports and
-// the library's, and the header geo.h beside it. Running it needs
+// the library's, and the header geo.h and import library geo.lib beside
+// it. Running it needs
 // Windows (the offload hosts; decision 0574's Windows notes).
 func TestCLibWindowsDLL(t *testing.T) {
 	t.Parallel()
@@ -106,6 +107,21 @@ func TestCLibWindowsDLL(t *testing.T) {
 			}
 			if !strings.Contains(string(h), "int64_t geo_byte_sum(XoBytes b);") {
 				t.Errorf("geo.h:\n%s", h)
+			}
+			// the import library: an archive whose linker members name each
+			// export and its __imp_ pointer (lld-link and MSVC's link.exe
+			// link with it: decision 0574's Windows notes)
+			lib, err := os.ReadFile(filepath.Join(dir, "geo.lib"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.HasPrefix(lib, []byte("!<arch>\n")) {
+				t.Fatalf("geo.lib is not an archive")
+			}
+			for _, want := range []string{"__imp_geo_add\x00", "geo_str_len\x00", "__imp_xo_init\x00", "__IMPORT_DESCRIPTOR_geo\x00", "\x7fgeo_NULL_THUNK_DATA\x00", "geo.dll\x00"} {
+				if !bytes.Contains(lib, []byte(want)) {
+					t.Errorf("geo.lib has no %q", want)
+				}
 			}
 		})
 	}

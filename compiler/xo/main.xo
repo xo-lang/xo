@@ -1211,6 +1211,17 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if let Err(e) = os.fs.write(hp, c_header(c, guard).bytes()) {
       fail(os, "write ${hp}: ${e}")
     }
+    // a windows DLL's import library beside it, NAME.lib (MSVC's link
+    // and lld-link link a C program with it)
+    if o.lib == "shared" && o.targets.starts_with("windows/") {
+      let slash = o.out.rfind("/") ?? -1
+      let dll = o.out[slash + 1..o.out.len()]
+      let lp = "${o.out.trim_suffix(".dll")}.lib"
+      let arch = o.targets.split(",")[0].split("/")[1]
+      if let Err(e) = os.fs.write(lp, macho.import_lib_for(dll, c_runtime_exports() + o.lib_exports, arch)) {
+        fail(os, "write ${lp}: ${e}")
+      }
+    }
   }
   var fz = FuzzSet{}
   if o.cmd == "test" {

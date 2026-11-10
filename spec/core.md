@@ -1436,7 +1436,8 @@ pub fn fetch_user(db: Db, id: Int) -> User ! LoadErr
   header `NAME.h` beside the library, and a package with `fn main` is not
   a library. A fault in an export aborts the process. A program build
   ignores the clause. On windows/amd64 and windows/arm64 `--lib=shared`
-  writes a DLL (Xo's PE linker; `-o NAME.dll`, header `NAME.h`) that
+  writes a DLL (Xo's PE linker; `-o NAME.dll`, header `NAME.h`, import
+  library `NAME.lib` for MSVC's link and lld-link) that
   exports `xo_init`, `xo_last_error`, `xo_release`, `xo_free` and the
   `as c` functions by name; it runs nothing while it loads (DllMain runs
   under the loader lock), so the runtime starts on the first call of

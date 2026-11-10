@@ -1,0 +1,259 @@
+// Writing a DLL's import library (decision 0574, windows `xo build
+// --lib=shared`): NAME.lib beside NAME.dll, so MSVC's link and lld-link
+// link a C program against the DLL. The layout is LLVM's
+// COFFImportFile.cpp (llvm-dlltool, llvm-lib) and lib.exe's: an archive
+// with the two linker members, then the import descriptor object (the
+// DLL's __IMPORT_DESCRIPTOR_ entry in .idata$2 and its name in .idata$6),
+// the null import descriptor, the null thunk, and one short import
+// member (the PE/COFF specification's "Import Library Format") for each
+// export, which defines NAME and __imp_NAME. No time stamps, so the file
+// is reproducible. implib.xo reads the short members back.
+
+const IMPLIB_SCN_DATA = 0xC0000040
+const IMPLIB_SYM_EXTERNAL = 2
+const IMPLIB_SYM_STATIC = 3
+const IMPLIB_SYM_SECTION = 0x68
+
+/// import_lib_write for goarch ("amd64" or "arm64").
+pub fn import_lib_for(dll: Str, exports: List[Str], goarch: Str) -> Bytes {
+  import_lib_write(dll, exports, if goarch == "arm64" { IMAGE_FILE_MACHINE_ARM64 } else { IMAGE_FILE_MACHINE_AMD64 })
+}
+
+/// The import library of DLL dll (its file name, as the export directory
+/// names it) for the functions exports on machine
+/// (IMAGE_FILE_MACHINE_AMD64 or _ARM64).
+fn import_lib_write(dll: Str, exports: List[Str], machine: Int) -> Bytes {
+  let dot = dll.rfind(".") ?? dll.len()
+  let lib = dll[0..dot]
+  // (member, its symbols)
+  var members: List[(Bytes, List[Str])] = []
+  members.push((implib_descriptor(dll, lib, machine), ["__IMPORT_DESCRIPTOR_${lib}"]))
+  members.push((implib_null_descriptor(machine), ["__NULL_IMPORT_DESCRIPTOR"]))
+  members.push((implib_null_thunk(lib, machine), ["\u{7f}${lib}_NULL_THUNK_DATA"]))
+  for (k, e) in exports.indexed() {
+    members.push((implib_short(e, dll, k, machine), [e, "__imp_${e}"]))
+  }
+  // the member name: dll/ when it fits in 16 bytes, else /N into the
+  // long names member
+  let long = dll.len() + 1 > 16
+  let mname = if long { "/0" } else { "${dll}/" }
+  let longnames = "${dll}/\n".bytes()
+  // the symbols in member order (the first linker member), and sorted
+  // by their bytes (the second's)
+  var syms: List[(Str, Int)] = []
+  for (k, (_, ss)) in members.indexed() {
+    for s in ss {
+      syms.push((s, k))
+    }
+  }
+  var names_len = 0
+  for (s, _) in syms {
+    names_len += s.len() + 1
+  }
+  let first_size = 4 + 4 * syms.len() + names_len
+  let second_size = 4 + 4 * members.len() + 4 + 2 * syms.len() + names_len
+  // the members' offsets
+  var at = 8 + 60 + first_size + (first_size & 1) + 60 + second_size + (second_size & 1)
+  if long {
+    at += 60 + longnames.len() + (longnames.len() & 1)
+  }
+  var offs: List[Int] = []
+  for (m, _) in members {
+    offs.push(at)
+    at += 60 + m.len() + (m.len() & 1)
+  }
+  var w = new_out(at)
+  w.bytes("!<arch>\n".bytes())
+  implib_header(w, "/", first_size)
+  w.be32(syms.len())
+  for (_, k) in syms {
+    w.be32(offs[k])
+  }
+  for (s, _) in syms {
+    w.bytes(s.bytes())
+    w.u8(0)
+  }
+  implib_pad(w, first_size)
+  implib_header(w, "/", second_size)
+  w.u32(members.len())
+  for o in offs {
+    w.u32(o)
+  }
+  // (Str order is byte order: UTF-8 keeps code point order)
+  let sorted = syms.sort_by(fn(a) { a.0 })
+  w.u32(sorted.len())
+  for (_, k) in sorted {
+    w.u16(k + 1)
+  }
+  for (s, _) in sorted {
+    w.bytes(s.bytes())
+    w.u8(0)
+  }
+  implib_pad(w, second_size)
+  if long {
+    implib_header(w, "//", longnames.len())
+    w.bytes(longnames)
+    implib_pad(w, longnames.len())
+  }
+  for (m, _) in members {
+    implib_header(w, mname, m.len())
+    w.bytes(m)
+    implib_pad(w, m.len())
+  }
+  w.done()
+}
+
+/// An archive member's 60 byte header: name, date 0, uid and gid 0, mode
+/// 644 (llvm-lib's deterministic form), size.
+fn implib_header(var w: Out, name: Str, size: Int) {
+  w.name(implib_field(name, 16), 16)
+  w.name(implib_field("0", 12), 12)
+  w.name(implib_field("0", 6), 6)
+  w.name(implib_field("0", 6), 6)
+  w.name(implib_field("644", 8), 8)
+  w.name(implib_field("${size}", 10), 10)
+  w.bytes("`\n".bytes())
+}
+
+/// s padded with spaces to n bytes.
+fn implib_field(s: Str, n: Int) -> Str {
+  var b = StrBuilder.new()
+  b.write(s)
+  for _ in s.len()..n {
+    b.write(" ")
+  }
+  b.freeze()
+}
+
+/// The newline that aligns a member of size bytes to 2.
+fn implib_pad(var w: Out, size: Int) {
+  if (size & 1) != 0 {
+    w.u8(10)
+  }
+}
+
+/// A short import member: export e of dll, hint k, by name (IMPORT_CODE,
+/// IMPORT_NAME: no decoration on amd64 and arm64).
+fn implib_short(e: Str, dll: Str, k: Int, machine: Int) -> Bytes {
+  var w = new_out(20 + e.len() + dll.len() + 2)
+  w.u16(0)
+  w.u16(0xffff)
+  w.u16(0)
+  w.u16(machine)
+  w.u32(0)
+  w.u32(e.len() + 1 + dll.len() + 1)
+  w.u16(k)
+  w.u16(1 << 2)
+  w.bytes(e.bytes())
+  w.u8(0)
+  w.bytes(dll.bytes())
+  w.u8(0)
+  w.done()
+}
+
+/// IMAGE_REL_*_ADDR32NB (an image relative address) on machine.
+fn implib_addr32nb(machine: Int) -> Int {
+  if machine == IMAGE_FILE_MACHINE_ARM64 { 2 } else { 3 }
+}
+
+/// A COFF symbol table and its string table: symbols (name, value,
+/// section number, storage class), names of more than 8 bytes in the
+/// string table.
+fn implib_symtab(var w: Out, syms: List[(Str, Int, Int, Int)]) {
+  var strs = new_out(64)
+  for (name, value, sect, class) in syms {
+    if name.len() <= 8 {
+      w.name(name, 8)
+    } else {
+      w.u32(0)
+      w.u32(4 + strs.n)
+      strs.bytes(name.bytes())
+      strs.u8(0)
+    }
+    w.u32(value)
+    w.u16(sect)
+    w.u16(0)
+    w.u8(class)
+    w.u8(0)
+  }
+  let st = strs.done()
+  w.u32(4 + st.len())
+  w.bytes(st)
+}
+
+/// A COFF section header.
+fn implib_section(var w: Out, name: Str, size: Int, data_at: Int, rel_at: Int, nrel: Int, chars: Int) {
+  w.name(name, 8)
+  w.u32(0)
+  w.u32(0)
+  w.u32(size)
+  w.u32(data_at)
+  w.u32(rel_at)
+  w.u32(0)
+  w.u16(nrel)
+  w.u16(0)
+  w.u32(chars)
+}
+
+/// A COFF file header for n sections and nsym symbols at symtab.
+fn implib_file_header(var w: Out, machine: Int, n: Int, symtab: Int, nsym: Int) {
+  w.u16(machine)
+  w.u16(n)
+  w.u32(0)
+  w.u32(symtab)
+  w.u32(nsym)
+  w.u16(0)
+  w.u16(0)
+}
+
+/// The import descriptor object: .idata$2's directory entry, whose name,
+/// lookup table and address table relocations point at .idata$6 (dll's
+/// name), .idata$4 and .idata$5 (the linker gathers the imports' entries
+/// there), and the symbols that pull in the null descriptor and thunk.
+fn implib_descriptor(dll: Str, lib: Str, machine: Int) -> Bytes {
+  let nlen = dll.len() + 1
+  let d2 = 20 + 2 * 40
+  let rel = d2 + 20
+  let d6 = rel + 3 * 10
+  let symtab = d6 + nlen
+  var w = new_out(symtab + 7 * 18 + 64)
+  implib_file_header(w, machine, 2, symtab, 7)
+  implib_section(w, ".idata$2", 20, d2, rel, 3, IMPLIB_SCN_DATA | 0x00300000)
+  implib_section(w, ".idata$6", nlen, d6, 0, 0, IMPLIB_SCN_DATA | 0x00200000)
+  w.zeros(20)
+  let r = implib_addr32nb(machine)
+  for (off, sym) in [(12, 2), (0, 3), (16, 4)] {
+    w.u32(off)
+    w.u32(sym)
+    w.u16(r)
+  }
+  w.bytes(dll.bytes())
+  w.u8(0)
+  implib_symtab(w, [("__IMPORT_DESCRIPTOR_${lib}", 0, 1, IMPLIB_SYM_EXTERNAL), (".idata$2", IMPLIB_SCN_DATA, 1, IMPLIB_SYM_SECTION), (".idata$6", 0, 2, IMPLIB_SYM_STATIC), (".idata$4", IMPLIB_SCN_DATA, 0, IMPLIB_SYM_SECTION), (".idata$5", IMPLIB_SCN_DATA, 0, IMPLIB_SYM_SECTION), ("__NULL_IMPORT_DESCRIPTOR", 0, 0, IMPLIB_SYM_EXTERNAL), ("\u{7f}${lib}_NULL_THUNK_DATA", 0, 0, IMPLIB_SYM_EXTERNAL)])
+  w.done()
+}
+
+/// The null import descriptor: the import directory's zero entry, in
+/// .idata$3 after every DLL's .idata$2.
+fn implib_null_descriptor(machine: Int) -> Bytes {
+  let d = 20 + 40
+  var w = new_out(d + 20 + 18 + 32)
+  implib_file_header(w, machine, 1, d + 20, 1)
+  implib_section(w, ".idata$3", 20, d, 0, 0, IMPLIB_SCN_DATA | 0x00300000)
+  w.zeros(20)
+  implib_symtab(w, [("__NULL_IMPORT_DESCRIPTOR", 0, 1, IMPLIB_SYM_EXTERNAL)])
+  w.done()
+}
+
+/// The null thunk: the zero entries that end this DLL's lookup table
+/// (.idata$4) and address table (.idata$5).
+fn implib_null_thunk(lib: Str, machine: Int) -> Bytes {
+  let d = 20 + 2 * 40
+  var w = new_out(d + 16 + 18 + 32)
+  implib_file_header(w, machine, 2, d + 16, 1)
+  implib_section(w, ".idata$5", 8, d, 0, 0, IMPLIB_SCN_DATA | 0x00400000)
+  implib_section(w, ".idata$4", 8, d + 8, 0, 0, IMPLIB_SCN_DATA | 0x00400000)
+  w.zeros(16)
+  implib_symtab(w, [("\u{7f}${lib}_NULL_THUNK_DATA", 0, 1, IMPLIB_SYM_EXTERNAL)])
+  w.done()
+}

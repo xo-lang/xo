@@ -1,0 +1,44 @@
+// import_lib_write (decision 0574): the import library of a DLL reads
+// back through import_lib, the reader Xo's PE linker uses for `use c`
+// libraries, and holds the members and linker members link.exe expects.
+
+test "a DLL's import library reads back: every export from the DLL" {
+  for m in [IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_ARM64] {
+    let b = import_lib_write("geo.dll", ["xo_init", "geo_add", "geo_norm"], m)
+    match import_lib("geo.lib", b, m) {
+      Ok(got) => {
+        expect(got.len()) == 3
+        expect(got.get("geo_add") ?? "") == "geo.dll"
+        expect(got.get("xo_init") ?? "") == "geo.dll"
+      }
+      Err(e) => expect(e) == ""
+    }
+  }
+}
+
+test "an import library's linker members index NAME and __imp_NAME, sorted in the second" {
+  let b = import_lib_write("geo.dll", ["geo_b", "geo_a"], IMAGE_FILE_MACHINE_AMD64)
+  expect(b[0..8] == "!<arch>\n".bytes()) == true
+  // first linker member: 7 symbols (3 descriptor ones, 2 per export)
+  expect(b[8..9] == "/".bytes()) == true
+  expect(Int(b[68]) * 16777216 + Int(b[69]) * 65536 + Int(b[70]) * 256 + Int(b[71])) == 7
+  let s = b.to_str_lossy()
+  expect(s.contains("__imp_geo_a\u{0}")) == true
+  expect(s.contains("__IMPORT_DESCRIPTOR_geo\u{0}")) == true
+  expect(s.contains("\u{7f}geo_NULL_THUNK_DATA\u{0}")) == true
+  // the second linker member's names in byte order: __IMPORT..., __NULL...,
+  // __imp_geo_a, __imp_geo_b, geo_a, geo_b, then \x7fgeo_NULL_THUNK_DATA
+  let i1 = s.find("__IMPORT_DESCRIPTOR_geo\u{0}__NULL_IMPORT_DESCRIPTOR\u{0}__imp_geo_a\u{0}__imp_geo_b\u{0}geo_a\u{0}geo_b\u{0}\u{7f}geo_NULL_THUNK_DATA\u{0}") ?? -1
+  expect(i1 > 0) == true
+}
+
+test "a DLL name of 16 bytes or more goes in the long names member" {
+  let b = import_lib_write("a_long_library_name.dll", ["f"], IMAGE_FILE_MACHINE_AMD64)
+  let s = b.to_str_lossy()
+  expect(s.contains("//              ")) == true
+  expect(s.contains("a_long_library_name.dll/\n")) == true
+  match import_lib("x.lib", b, IMAGE_FILE_MACHINE_AMD64) {
+    Ok(got) => expect(got.get("f") ?? "") == "a_long_library_name.dll"
+    Err(e) => expect(e) == ""
+  }
+}
