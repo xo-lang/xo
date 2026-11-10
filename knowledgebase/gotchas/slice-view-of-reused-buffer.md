@@ -37,7 +37,7 @@ the IPv6 reply's bytes: xo dialed 38.6.71.0 (26 06 47 00, the start of
 2606:4700::) and 192.12.0.28 (c0 0c 00 1c, a name pointer and TYPE 28),
 and `xo mod sumdb serve` timed out uploading to R2. It never reproduced
 off that host: the Mac's and Docker's resolvers answered no AAAA or
-answered later. Fixed in 2e1c1ea77 (`.clone()`); internal/llvm
+answered later. Fixed in 90bec2cd1 (`.clone()`); internal/llvm
 TestResolverDiff's `pair.test` answers both back to back.
 
 Rule: a parser of a received message copies what it returns. A test of
