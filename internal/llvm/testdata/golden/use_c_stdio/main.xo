@@ -1,0 +1,13 @@
+// A `use c` binding whose C calls printf's family and <ctype.h>. On
+// FreeBSD, where an Xo program links no C library, these come from C the
+// compiler writes beside the binding (decision 0573, `use c` stage 3:
+// compiler/xo/fbsdstdio.xo); elsewhere from the system's C library.
+use c "libst.h" link "libst.c"
+
+fn main(os: Os) {
+  for k in 0..8 {
+    os.stdio.println("fmt ${k}: ${libst.libst_fmt(k)}")
+  }
+  os.stdio.println("ctype ${libst.libst_ctype()}")
+  os.stdio.println("eprint returned ${libst.libst_eprint(7)}")
+}

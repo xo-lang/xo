@@ -1271,3 +1271,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [wide-result-per-word-values.md](wide-result-per-word-values.md): Observed 2026-11-10: native sret loaded a ~600-word result word by word, doubling a few big functions on emit's critical path (self build +14% wall); step 3 reverted
 - [elflink-weak-before-strong.md](elflink-weak-before-strong.md): Observed 2026-11-10: Xo's ELF linker kept the first reference's binding, so a weak runtime reference made a C object's strong malloc call a nop; strong now wins
 - [size-with-backend-cache-on.md](size-with-backend-cache-on.md): Observed 2026-11-10: the same compiler code built xo 2% smaller with the shared backend cache on; measure size with XO_BACKEND_CACHE=off
+- [libcsys-linux-numbers-on-freebsd.md](libcsys-linux-numbers-on-freebsd.md): Observed 2026-11-10: the C names the runtime gives a FreeBSD `use c` binding made Linux system calls (SIGSYS); libcsys uses nrf

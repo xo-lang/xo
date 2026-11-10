@@ -4296,9 +4296,13 @@ Xo's ELF linker, from any host (decision 0573). A `use c` binding's C is
 compiled freestanding by clang against FreeBSD's headers (`XO_FREEBSDSYSROOT`)
 and linked with no C library: it may call the part of the C library Xo's
 runtime defines (malloc, calloc, realloc, free, the mem and str functions,
-strtol, atoi and the like); printf's family and `<ctype.h>` do not link for
-FreeBSD yet (the link names each missing function), and a binding's `link`
-libraries are an error. Programs run on FreeBSD 14 (decision 0573 stages 2 and
+strtol, atoi and the like) and C the compiler adds beside the binding:
+printf's family (printf, fprintf to stdout and stderr, snprintf, sprintf,
+vsnprintf, puts, putchar, fputs; the d, i, u, x, X, o, c, s, p and f
+conversions with their flags, width, precision and length modifiers) and
+`<ctype.h>` for the C locale. Other C library functions do not link (the
+link names each missing function), and a binding's `link` libraries are
+an error. Programs run on FreeBSD 14 (decision 0573 stages 2 and
 3; every LLVM golden that builds passes in FreeBSD 14.5 VMs on both
 architectures): threads, the poller (kqueue), signals, time, the file
 system, processes, networking, fault traces with frames, `XO_PROF` and

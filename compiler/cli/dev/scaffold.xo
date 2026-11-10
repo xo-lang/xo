@@ -15,6 +15,7 @@
 //     which the arm64, LLVM, and Go golden runs all read)
 
 use github.com/xo-lang/xo/compiler/cli/core
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// The checkout holding the working directory: the nearest directory at
 /// or above it with spec/core.md, or "".
@@ -176,7 +177,7 @@ fn new_code_cmd(os: Os, args: List[Str]) -> Int uses (env, fs.read, fs.write, st
 
 fn new_golden_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (env, fs.read, fs.write, proc, stdio) {
   var fl = core.new_flags("dev new-golden")
-  fl.str_flag("dir", "internal/llvm/testdata/golden", "the golden directory, relative to the checkout")
+  fl.str_flag("dir", "internal/llvm/testdata/golden", "the golden directory, relative to the checkout or absolute")
   fl.str_flag("from", "", "a .xo file to use as the program (else a stub)")
   fl.bool_flag("no-run", "write the program only, no want.txt")
   if !fl.parse(os, flags_first(args)) {
@@ -192,7 +193,10 @@ fn new_golden_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (env, fs.read, f
     os.stdio.eprintln("xo dev new-golden: no spec/core.md at or above the working directory (run it in an Xo checkout)")
     return 2
   }
-  let dir = "${root}/${fl.get_str("dir")}/${name}"
+  // an absolute --dir is used as given (it was joined to the checkout,
+  // writing under <root>/Users/...)
+  let gd = fl.get_str("dir")
+  let dir = if hostpath.is_abs(gd) { "${gd}/${name}" } else { "${root}/${gd}/${name}" }
   if let Ok(Some(_)) = os.fs.stat(dir) {
     os.stdio.eprintln("xo dev new-golden: ${dir} exists")
     return 1

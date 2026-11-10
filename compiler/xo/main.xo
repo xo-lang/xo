@@ -2382,7 +2382,17 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       if sysroot.is_empty() {
         fail(os, "freebsd: `use c` needs FreeBSD's headers: set XO_FREEBSDSYSROOT to an unpacked base.txz of FreeBSD 14.5 for ${march} (toolchain.md \"FreeBSD\")")
       }
-      let (csrcs, cerr) = c_objects(os, clang, freebsd_cflags(march, sysroot), lk.srcs, dir, trimpath_eff(o))
+      // printf's family and <ctype.h>'s tables (fbsdstdio.xo): written
+      // once per build directory, compiled beside the binding's C
+      let shim = "${dir}/xo_fbsd_stdio.c"
+      // xo:allow XO0903 a failed read writes the same text again
+      if (os.fs.read(shim).ok() ?? b"") != FBSD_STDIO_C.bytes() {
+        match os.fs.write(shim, FBSD_STDIO_C.bytes()) {
+          Ok(_) => {}
+          Err(e) => fail(os, "freebsd `use c`: ${e}")
+        }
+      }
+      let (csrcs, cerr) = c_objects(os, clang, freebsd_cflags(march, sysroot) + ["-ffunction-sections", "-fdata-sections"], lk.srcs + [shim], dir, trimpath_eff(o))
       if !cerr.is_empty() {
         os.stdio.eprint(cerr)
         fail(os, "${clang} failed (freebsd `use c` compiles with clang: set XO_CLANG)")

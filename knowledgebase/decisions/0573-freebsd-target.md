@@ -274,3 +274,23 @@ not.
   realloc, strtol's prefixes, saturation and end pointer) passes in both
   VMs. Left: printf's family (C varargs) and `<ctype.h>` (FreeBSD's
   locale tables).
+- 2026-11-10 (Xo Lang 1): `use c`, stage 3: printf's family and
+  `<ctype.h>`. C varargs cannot cross into an Xo export, so they are C:
+  compiler/xo/fbsdstdio.xo holds a freestanding vsnprintf (d i u x X o c
+  s p f, the - 0 + space # flags, width and precision with `*`, the hh h
+  l ll z j t lengths; %f rounds a tie to even and is exact while
+  v * 10^prec is) with snprintf, sprintf, printf, fprintf, vprintf,
+  vfprintf, puts, putchar, fputs and fflush over it, writing through the
+  runtime's write. FreeBSD's stdout and stderr are `__stdoutp` and
+  `__stderrp`, defined there. `<ctype.h>`'s inlines read the locale
+  through `__getCurrentRuneLocale()` when a binding compiles with
+  `-D__RUNETYPE_INTERNAL` (freebsd_cflags), so no thread local is needed;
+  the file builds the C locale's table on first use. The build writes the
+  file beside the binding's C and compiles it with
+  `-ffunction-sections`, so Xo's ELF linker keeps only what the binding
+  calls. The first VM run stopped in fprintf(stderr): the C names
+  cabi_libc gives a binding (read, write, close, openat, ...) made
+  Linux's system calls through libcsys.xo, which nothing reached on
+  FreeBSD before; libcsys now takes FreeBSD's numbers and flag values
+  there (gotchas/libcsys-linux-numbers-on-freebsd.md). use_c_stdio
+  (macOS's C library gives want.txt) passes in both VMs.

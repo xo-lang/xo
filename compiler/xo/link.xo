@@ -411,7 +411,7 @@ fn uses_c_source(os: Os, std: Str, c: check.Checker, tgoos: Str) -> Bool {
 /// libc), and on arm64 the atomics inline (no libgcc to call).
 fn freebsd_cflags(arch: Str, sysroot: Str) -> List[Str] {
   let triple = if arch == "arm64" { "aarch64-unknown-freebsd14.5" } else { "x86_64-unknown-freebsd14.5" }
-  var out = ["--target=${triple}", "--sysroot=${sysroot}", "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-asynchronous-unwind-tables"]
+  var out = ["--target=${triple}", "--sysroot=${sysroot}", "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-asynchronous-unwind-tables", "-D__RUNETYPE_INTERNAL"]
   if arch == "arm64" {
     out.push("-mno-outline-atomics")
   }

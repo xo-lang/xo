@@ -1,0 +1,272 @@
+/// The C library functions a FreeBSD `use c` binding may call that take
+/// C varargs or read FreeBSD's locale tables (decision 0573 stage 3): printf's
+/// family over a freestanding vsnprintf, and <ctype.h>'s tables for the C
+/// locale. Compiled with the binding's flags and -ffunction-sections, so
+/// Xo's ELF linker keeps only what the binding calls; write, malloc and free
+/// come from Xo's runtime (cabi_libc, cabi_cbind).
+const FBSD_STDIO_C = r"""
+/* xo_fbsd_stdio.c: printf's family and <ctype.h>'s tables for a FreeBSD
+ * `use c` binding (decision 0573 stage 3). Freestanding: the output goes
+ * through write(2), which Xo's runtime exports (cabi_libc); memory through
+ * its malloc. Compiled with the binding's flags plus -ffunction-sections,
+ * so Xo's ELF linker drops what the binding does not call. */
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+
+extern long write(int fd, const void *buf, unsigned long n);
+
+/* FreeBSD's <stdio.h>: stdout and stderr are macros over these. A FILE *
+ * here is only compared against them. */
+typedef struct xo_file { int fd; } xo_file;
+static xo_file xo_stdout_f = {1}, xo_stderr_f = {2};
+void *__stdoutp = &xo_stdout_f;
+void *__stderrp = &xo_stderr_f;
+
+typedef struct { char *p; size_t n; size_t cap; } xo_buf;
+
+static void put(xo_buf *b, char c) {
+  if (b->n + 1 < b->cap) b->p[b->n] = c;
+  b->n++;
+}
+
+static void puts_n(xo_buf *b, const char *s, size_t n) {
+  for (size_t i = 0; i < n; i++) put(b, s[i]);
+}
+
+static void pad(xo_buf *b, char c, int n) {
+  for (int i = 0; i < n; i++) put(b, c);
+}
+
+/* one integer conversion: digits of u in base, sign, width, precision,
+ * flags (left, zero, plus, space, alt) */
+static void fmt_int(xo_buf *b, uint64_t u, int neg, int base, int upper, int width, int prec,
+                    int left, int zero, int plus, int space, int alt) {
+  char d[32];
+  int n = 0;
+  const char *dig = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+  if (u == 0 && prec != 0) d[n++] = '0';
+  while (u) { d[n++] = dig[u % base]; u /= base; }
+  int z = prec > n ? prec - n : 0;
+  char sign = neg ? '-' : plus ? '+' : space ? ' ' : 0;
+  const char *pre = "";
+  if (alt && base == 16 && n > 0) pre = upper ? "0X" : "0x";
+  if (alt && base == 8 && z == 0 && (n == 0 || d[n - 1] != '0')) z = 1;
+  int len = n + z + (sign ? 1 : 0) + (int)(pre[0] ? 2 : 0);
+  int fill = width > len ? width - len : 0;
+  if (!left && !(zero && prec < 0)) pad(b, ' ', fill);
+  if (sign) put(b, sign);
+  puts_n(b, pre, pre[0] ? 2 : 0);
+  if (!left && zero && prec < 0) pad(b, '0', fill);
+  pad(b, '0', z);
+  while (n) put(b, d[--n]);
+  if (left) pad(b, ' ', fill);
+}
+
+/* %f with prec digits: v * 10^prec rounded to an integer, a tie to even
+ * as C's printf does (enough for a binding's diagnostics; not correctly
+ * rounded when v * 10^prec is inexact) */
+static void fmt_f(xo_buf *b, double v, int width, int prec, int left, int zero, int plus, int space) {
+  if (prec < 0) prec = 6;
+  if (prec > 17) prec = 17;
+  int neg = v < 0 || (v == 0 && 1 / v < 0);
+  if (neg) v = -v;
+  if (v != v) { puts_n(b, "nan", 3); return; }
+  if (v > 1.7976931348623157e308) { if (neg) put(b, '-'); puts_n(b, "inf", 3); return; }
+  double scale = 1;
+  for (int i = 0; i < prec; i++) scale *= 10;
+  double r = v * scale;
+  if (r < 1.8e19) {
+    double fl = (double)(uint64_t)r, rest = r - fl;
+    r = rest > 0.5 || (rest == 0.5 && ((uint64_t)fl & 1)) ? fl + 1 : fl;
+  }
+  char d[400];
+  int n = 0;
+  /* the integer digits of r, as many as a double holds */
+  while (r >= 1 && n < 380) {
+    /* above 2^52 a double is an integer already (and past 2^64 no
+     * longer fits uint64_t) */
+    double q = r / 10 >= 1.8e19 ? r / 10 : (double)(uint64_t)(r / 10);
+    int dg = (int)(r - q * 10);
+    if (dg < 0) dg = 0;
+    if (dg > 9) dg = 9;
+    d[n++] = (char)('0' + dg);
+    r = q;
+  }
+  while (n <= prec) d[n++] = '0';
+  int len = n + (prec > 0 ? 1 : 0) + (neg || plus || space ? 1 : 0);
+  int fill = width > len ? width - len : 0;
+  if (!left && !zero) pad(b, ' ', fill);
+  if (neg) put(b, '-'); else if (plus) put(b, '+'); else if (space) put(b, ' ');
+  if (!left && zero) pad(b, '0', fill);
+  for (int i = n - 1; i >= prec; i--) put(b, d[i]);
+  if (prec > 0) put(b, '.');
+  for (int i = prec - 1; i >= 0; i--) put(b, d[i]);
+  if (left) pad(b, ' ', fill);
+}
+
+int vsnprintf(char *out, size_t cap, const char *f, va_list ap) {
+  xo_buf b = {out, 0, cap};
+  for (; *f; f++) {
+    if (*f != '%') { put(&b, *f); continue; }
+    f++;
+    int left = 0, zero = 0, plus = 0, space = 0, alt = 0;
+    for (;; f++) {
+      if (*f == '-') left = 1;
+      else if (*f == '0') zero = 1;
+      else if (*f == '+') plus = 1;
+      else if (*f == ' ') space = 1;
+      else if (*f == '#') alt = 1;
+      else break;
+    }
+    int width = 0, prec = -1;
+    if (*f == '*') { width = va_arg(ap, int); if (width < 0) { left = 1; width = -width; } f++; }
+    else while (*f >= '0' && *f <= '9') width = width * 10 + (*f++ - '0');
+    if (*f == '.') {
+      f++; prec = 0;
+      if (*f == '*') { prec = va_arg(ap, int); f++; }
+      else while (*f >= '0' && *f <= '9') prec = prec * 10 + (*f++ - '0');
+    }
+    int lng = 0; /* 0 int, 1 long, 2 long long, -1 short, -2 char, 3 size_t/intmax/ptrdiff */
+    for (;; f++) {
+      if (*f == 'l') lng = lng == 1 ? 2 : 1;
+      else if (*f == 'h') lng = lng == -1 ? -2 : -1;
+      else if (*f == 'z' || *f == 'j' || *f == 't') lng = 3;
+      else break;
+    }
+    char c = *f;
+    if (c == 0) break;
+    if (c == 'd' || c == 'i') {
+      int64_t v = lng >= 1 ? va_arg(ap, int64_t) : (int64_t)va_arg(ap, int);
+      if (lng == -1) v = (short)v; else if (lng == -2) v = (signed char)v;
+      fmt_int(&b, v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v, v < 0, 10, 0, width, prec, left, zero, plus, space, 0);
+    } else if (c == 'u' || c == 'x' || c == 'X' || c == 'o') {
+      uint64_t v = lng >= 1 ? va_arg(ap, uint64_t) : (uint64_t)va_arg(ap, unsigned);
+      if (lng == -1) v = (unsigned short)v; else if (lng == -2) v = (unsigned char)v;
+      int base = c == 'o' ? 8 : c == 'u' ? 10 : 16;
+      fmt_int(&b, v, 0, base, c == 'X', width, prec, left, zero, 0, 0, alt);
+    } else if (c == 'p') {
+      fmt_int(&b, (uint64_t)(uintptr_t)va_arg(ap, void *), 0, 16, 0, width, -1, left, 0, 0, 0, 1);
+    } else if (c == 'c') {
+      int fill = width > 1 ? width - 1 : 0;
+      if (!left) pad(&b, ' ', fill);
+      put(&b, (char)va_arg(ap, int));
+      if (left) pad(&b, ' ', fill);
+    } else if (c == 's') {
+      const char *s = va_arg(ap, const char *);
+      if (!s) s = "(null)";
+      size_t n = 0;
+      while (s[n] && (prec < 0 || (int)n < prec)) n++;
+      int fill = width > (int)n ? width - (int)n : 0;
+      if (!left) pad(&b, ' ', fill);
+      puts_n(&b, s, n);
+      if (left) pad(&b, ' ', fill);
+    } else if (c == 'f' || c == 'F') {
+      fmt_f(&b, va_arg(ap, double), width, prec, left, zero, plus, space);
+    } else if (c == '%') {
+      put(&b, '%');
+    } else {
+      put(&b, '%'); put(&b, c);
+    }
+  }
+  if (cap > 0) out[b.n < cap ? b.n : cap - 1] = 0;
+  return (int)b.n;
+}
+
+int snprintf(char *out, size_t cap, const char *f, ...) {
+  va_list ap; va_start(ap, f);
+  int n = vsnprintf(out, cap, f, ap);
+  va_end(ap);
+  return n;
+}
+
+int sprintf(char *out, const char *f, ...) {
+  va_list ap; va_start(ap, f);
+  int n = vsnprintf(out, (size_t)1 << 30, f, ap);
+  va_end(ap);
+  return n;
+}
+
+static int xo_vfd(int fd, const char *f, va_list ap) {
+  char small[512];
+  va_list ap2; va_copy(ap2, ap);
+  int n = vsnprintf(small, sizeof small, f, ap);
+  if (n < (int)sizeof small) { write(fd, small, (unsigned long)n); va_end(ap2); return n; }
+  extern void *malloc(unsigned long);
+  extern void free(void *);
+  char *big = malloc((unsigned long)n + 1);
+  if (!big) { va_end(ap2); return -1; }
+  vsnprintf(big, (size_t)n + 1, f, ap2);
+  va_end(ap2);
+  write(fd, big, (unsigned long)n);
+  free(big);
+  return n;
+}
+
+int vprintf(const char *f, va_list ap) { return xo_vfd(1, f, ap); }
+int printf(const char *f, ...) {
+  va_list ap; va_start(ap, f);
+  int n = xo_vfd(1, f, ap);
+  va_end(ap);
+  return n;
+}
+int vfprintf(void *fp, const char *f, va_list ap) { return xo_vfd(((xo_file *)fp)->fd, f, ap); }
+int fprintf(void *fp, const char *f, ...) {
+  va_list ap; va_start(ap, f);
+  int n = xo_vfd(((xo_file *)fp)->fd, f, ap);
+  va_end(ap);
+  return n;
+}
+int puts(const char *s) {
+  size_t n = 0;
+  while (s[n]) n++;
+  write(1, s, n);
+  write(1, "\n", 1);
+  return (int)n + 1;
+}
+int putchar(int c) { char ch = (char)c; write(1, &ch, 1); return c; }
+int fputs(const char *s, void *fp) {
+  size_t n = 0;
+  while (s[n]) n++;
+  write(((xo_file *)fp)->fd, s, n);
+  return (int)n;
+}
+int fflush(void *fp) { (void)fp; return 0; }
+
+/* <ctype.h> for the C locale. A binding compiles with -D__RUNETYPE_INTERNAL
+ * (freebsd_cflags), so the header's inlines call __getCurrentRuneLocale()
+ * instead of reading the thread-local _ThreadRuneLocale. */
+#include <runetype.h>
+#include <ctype.h>
+static _RuneLocale xo_c_locale;
+static int xo_c_locale_ready;
+int __mb_sb_limit = 256;
+const _RuneLocale *__getCurrentRuneLocale(void) {
+  if (!xo_c_locale_ready) {
+    for (int c = 0; c < _CACHED_RUNES; c++) {
+      unsigned long t = 0;
+      int up = c >= 'A' && c <= 'Z', lo = c >= 'a' && c <= 'z', dg = c >= '0' && c <= '9';
+      int sp = c == ' ' || (c >= '\t' && c <= '\r');
+      int pr = c >= 0x20 && c < 0x7f;
+      if (up) t |= _CTYPE_U | _CTYPE_A;
+      if (lo) t |= _CTYPE_L | _CTYPE_A;
+      if (dg) t |= _CTYPE_D | _CTYPE_N;
+      if (dg || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) t |= _CTYPE_X;
+      if (sp) t |= _CTYPE_S;
+      if (c == ' ' || c == '\t') t |= _CTYPE_B;
+      if (c < 0x20 || c == 0x7f) t |= _CTYPE_C;
+      if (pr) t |= _CTYPE_R;
+      if (pr && c != ' ') t |= _CTYPE_G;
+      if (pr && c != ' ' && !up && !lo && !dg) t |= _CTYPE_P;
+      xo_c_locale.__runetype[c] = t;
+      xo_c_locale.__maplower[c] = up ? c + 32 : c;
+      xo_c_locale.__mapupper[c] = lo ? c - 32 : c;
+    }
+    xo_c_locale_ready = 1;
+  }
+  return &xo_c_locale;
+}
+unsigned long ___runetype(__ct_rune_t c) { (void)c; return 0; }
+__ct_rune_t ___tolower(__ct_rune_t c) { return c; }
+__ct_rune_t ___toupper(__ct_rune_t c) { return c; }
+"""

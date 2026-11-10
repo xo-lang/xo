@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-10: fix: a `use c` binding's system calls on FreeBSD
+
+- Kind: fix
+- Commit: this push
+- Found by: decision 0573 `use c` stage 3 (fprintf(stderr, ...) in a binding stopped the program with SIGSYS on freebsd/arm64)
+- Go reference: none (FreeBSD's sys/syscall.h numbers)
+- Test: internal/llvm golden use_c_stdio in the FreeBSD 14.5 VMs (arm64, amd64); want.txt from macOS's C library
+- Timing: none
+- Shipped in: not yet released
+
+The C names Xo's runtime gives a `use c` binding in a build with no C library (std/native/llrt/libcsys.xo through cabi_libc: read, write, close, openat, pipe2, fcntl, ioctl, isatty, unlink, rmdir, mkdir, rename, chmod, symlink, readlink, flock, getcwd, stat, utimensat, mmap, munmap, mprotect, time, getentropy) made Linux's system calls on FreeBSD too. They now use FreeBSD's numbers there, with its O_CREAT, AT_REMOVEDIR and TIOCGETA values.
+
 ## 2026-11-10: feature: the C library a `use c` binding calls, on FreeBSD
 
 - Kind: feature

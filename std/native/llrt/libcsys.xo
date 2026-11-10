@@ -94,76 +94,76 @@ pub fn open(path: Int, flags: Int, mode: Int) -> Int { openat(AT_FDCWD, path, fl
 
 pub fn openat(dirfd: Int, path: Int, flags: Int, mode: Int) -> Int {
   let f = int(flags)
-  let m = if f & O_CREAT != 0 { int(mode) } else { 0 }
-  ret(sys(nr(56, 257), int(dirfd), path, f, m))
+  let m = if f & nrf(O_CREAT, O_CREAT, 512) != 0 { int(mode) } else { 0 }
+  ret(sys(nrf(56, 257, 499), int(dirfd), path, f, m))
 }
 
-pub fn read(fd: Int, p: Int, n: Int) -> Int { ret(sys(nr(63, 0), int(fd), p, n, 0)) }
+pub fn read(fd: Int, p: Int, n: Int) -> Int { ret(sys(nrf(63, 0, 3), int(fd), p, n, 0)) }
 
-pub fn write(fd: Int, p: Int, n: Int) -> Int { ret(sys(nr(64, 1), int(fd), p, n, 0)) }
+pub fn write(fd: Int, p: Int, n: Int) -> Int { ret(sys(nrf(64, 1, 4), int(fd), p, n, 0)) }
 
-pub fn close(fd: Int) -> Int { ret(sys(nr(57, 3), int(fd), 0, 0, 0)) }
+pub fn close(fd: Int) -> Int { ret(sys(nrf(57, 3, 6), int(fd), 0, 0, 0)) }
 
-pub fn pipe2(fds: Int, flags: Int) -> Int { ret(sys(nr(59, 293), fds, int(flags), 0, 0)) }
+pub fn pipe2(fds: Int, flags: Int) -> Int { ret(sys(nrf(59, 293, 542), fds, int(flags), 0, 0)) }
 
 /// fcntl(fd, cmd, arg) with an integer argument.
-pub fn fcntl(fd: Int, cmd: Int, arg: Int) -> Int { ret(sys(nr(25, 72), int(fd), int(cmd), arg, 0)) }
+pub fn fcntl(fd: Int, cmd: Int, arg: Int) -> Int { ret(sys(nrf(25, 72, 92), int(fd), int(cmd), arg, 0)) }
 
 /// ioctl(fd, req, arg).
-pub fn ioctl(fd: Int, req: Int, arg: Int) -> Int { ret(sys(nr(29, 16), int(fd), req, arg, 0)) }
+pub fn ioctl(fd: Int, req: Int, arg: Int) -> Int { ret(sys(nrf(29, 16, 54), int(fd), req, arg, 0)) }
 
-/// isatty: whether TCGETS succeeds on fd.
+/// isatty: whether TCGETS (FreeBSD's TIOCGETA) succeeds on fd.
 pub fn isatty(fd: Int) -> Int {
   let t = libcmem.malloc(64)
   if t == 0 {
     return 0
   }
-  // TCGETS 0x5401
-  let r = sys(nr(29, 16), int(fd), 21505, t, 0)
+  // TCGETS 0x5401; FreeBSD's TIOCGETA 0x402c7413
+  let r = sys(nrf(29, 16, 54), int(fd), nrf(21505, 21505, 1076655123), t, 0)
   libcmem.free(t)
   if r == 0 { 1 } else { 0 }
 }
 
-pub fn unlink(p: Int) -> Int { ret(sys(nr(35, 263), AT_FDCWD, p, 0, 0)) }
+pub fn unlink(p: Int) -> Int { ret(sys(nrf(35, 263, 503), AT_FDCWD, p, 0, 0)) }
 
-pub fn rmdir(p: Int) -> Int { ret(sys(nr(35, 263), AT_FDCWD, p, AT_REMOVEDIR, 0)) }
+pub fn rmdir(p: Int) -> Int { ret(sys(nrf(35, 263, 503), AT_FDCWD, p, nrf(AT_REMOVEDIR, AT_REMOVEDIR, 2048), 0)) }
 
-pub fn mkdir(p: Int, m: Int) -> Int { ret(sys(nr(34, 258), AT_FDCWD, p, int(m), 0)) }
+pub fn mkdir(p: Int, m: Int) -> Int { ret(sys(nrf(34, 258, 496), AT_FDCWD, p, int(m), 0)) }
 
 /// rename through renameat2 (no flags).
-pub fn rename(a: Int, b: Int) -> Int { ret(rt.sys6(nr(276, 316), AT_FDCWD, a, AT_FDCWD, b, 0, 0)) }
+pub fn rename(a: Int, b: Int) -> Int { ret(rt.sys6(nrf(276, 316, 501), AT_FDCWD, a, AT_FDCWD, b, 0, 0)) }
 
-pub fn chmod(p: Int, m: Int) -> Int { ret(sys(nr(53, 268), AT_FDCWD, p, int(m), 0)) }
+pub fn chmod(p: Int, m: Int) -> Int { ret(sys(nrf(53, 268, 490), AT_FDCWD, p, int(m), 0)) }
 
-pub fn symlink(t: Int, p: Int) -> Int { ret(sys(nr(36, 266), t, AT_FDCWD, p, 0)) }
+pub fn symlink(t: Int, p: Int) -> Int { ret(sys(nrf(36, 266, 502), t, AT_FDCWD, p, 0)) }
 
-pub fn readlink(p: Int, buf: Int, n: Int) -> Int { ret(sys(nr(78, 267), AT_FDCWD, p, buf, n)) }
+pub fn readlink(p: Int, buf: Int, n: Int) -> Int { ret(sys(nrf(78, 267, 500), AT_FDCWD, p, buf, n)) }
 
-pub fn flock(fd: Int, op: Int) -> Int { ret(sys(nr(32, 73), int(fd), int(op), 0, 0)) }
+pub fn flock(fd: Int, op: Int) -> Int { ret(sys(nrf(32, 73, 131), int(fd), int(op), 0, 0)) }
 
 /// getcwd: buf, or 0 with errno set.
 pub fn getcwd(buf: Int, n: Int) -> Int {
-  if ret(sys(nr(17, 79), buf, n, 0, 0)) < 0 {
+  if ret(sys(nrf(17, 79, 326), buf, n, 0, 0)) < 0 {
     return 0
   }
   buf
 }
 
-pub fn stat(p: Int, st: Int) -> Int { ret(sys(nr(79, 262), AT_FDCWD, p, st, 0)) }
+pub fn stat(p: Int, st: Int) -> Int { ret(sys(nrf(79, 262, 552), AT_FDCWD, p, st, 0)) }
 
-pub fn utimensat(dirfd: Int, p: Int, t: Int, flags: Int) -> Int { ret(sys(nr(88, 280), int(dirfd), p, t, int(flags))) }
+pub fn utimensat(dirfd: Int, p: Int, t: Int, flags: Int) -> Int { ret(sys(nrf(88, 280, 547), int(dirfd), p, t, int(flags))) }
 
 // ---------------------------------------------------------------------------
 // Memory mappings
 
 /// mmap: the address, or MAP_FAILED (-1) with errno set.
 pub fn mmap(a: Int, n: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int {
-  ret(rt.sys6(nr(222, 9), a, n, int(prot), int(flags), int(fd), off))
+  ret(rt.sys6(nrf(222, 9, 477), a, n, int(prot), int(flags), int(fd), off))
 }
 
-pub fn munmap(a: Int, n: Int) -> Int { ret(sys(nr(215, 11), a, n, 0, 0)) }
+pub fn munmap(a: Int, n: Int) -> Int { ret(sys(nrf(215, 11, 73), a, n, 0, 0)) }
 
-pub fn mprotect(a: Int, n: Int, prot: Int) -> Int { ret(sys(nr(226, 10), a, n, int(prot), 0)) }
+pub fn mprotect(a: Int, n: Int, prot: Int) -> Int { ret(sys(nrf(226, 10, 74), a, n, int(prot), 0)) }
 
 // ---------------------------------------------------------------------------
 // Time
@@ -174,7 +174,8 @@ pub fn time(t: Int) -> Int {
   if ts == 0 {
     return -1
   }
-  let _r = linux.clock_gettime(linux.CLOCK_REALTIME, ts)
+  // CLOCK_REALTIME is 0 on both
+  let _r = sys(nrf(113, 228, 232), 0, ts, 0, 0)
   let s = rt.mem_load(ts, 0, 8)
   libcmem.free(ts)
   if t != 0 {
@@ -191,7 +192,7 @@ pub fn time(t: Int) -> Int {
 pub fn getentropy(p: Int, n: Int) -> Int {
   var off = 0
   while off < n {
-    let r = sys(nr(278, 318), addw(p, off), n - off, 0, 0)
+    let r = sys(nrf(278, 318, 563), addw(p, off), n - off, 0, 0)
     if r == -EINTR {
       continue
     }
