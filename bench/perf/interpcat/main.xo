@@ -1,0 +1,16 @@
+// Interpolations that start with a literal (`"item-${i}"`, `"t${i % 7}"`),
+// as bench/perf/jitter's page builds for every /alloc response: each
+// copies the literal into a new string and appends the digits (obj.xo
+// reserve_slow, 2026-11-09: 12% of the /alloc server's CPU). 3,000,000
+// rounds of three; prints a checksum of the lengths, the same on every
+// backend and revision.
+fn main(os: Os) uses stdio {
+  var sum = 0
+  for i in 0..3000000 {
+    let a = "item-${i}"
+    let b = "t${i % 7}"
+    let c = "g${i % 5}"
+    sum += a.len() + b.len() + c.len()
+  }
+  os.stdio.println("${sum}")
+}
