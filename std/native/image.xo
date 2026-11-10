@@ -83,3 +83,99 @@ fn cmyk_to_rgb(c: Int, m: Int, y: Int, k: Int) -> (Int, Int, Int) {
   let w = 65535 - k * 257
   (((65535 - c * 257) * w / 65535) >> 8, ((65535 - m * 257) * w / 65535) >> 8, ((65535 - y * 257) * w / 65535) >> 8)
 }
+
+fn nrgba_color(r: Int, g: Int, b: Int, a: Int) -> image.Color {
+  image.from_nrgba((r << 24) | (g << 16) | (b << 8) | a)
+}
+
+fn nrgba64_color(r: Int, g: Int, b: Int, a: Int) -> image.Color {
+  if a == 65535 {
+    return image.Color{r: r, g: g, b: b, a: a}
+  }
+  if a == 0 {
+    return image.Color{r: 0, g: 0, b: 0, a: 0}
+  }
+  image.Color{r: (r * a) / 65535, g: (g * a) / 65535, b: (b * a) / 65535, a: a}
+}
+
+/// Go's Image.At over the sample layouts of the model (see the declaration).
+fn image_at(im: image.Image, x: Int, y: Int) -> image.Color {
+  let stride = if im.stride > 0 { im.stride } else { 0 }
+  let inside = x >= 0 && y >= 0 && x < im.width && y < im.height
+  match im.model {
+    image.Model.Gray => {
+      if !inside {
+        return image.Color{r: 0, g: 0, b: 0, a: 65535}
+      }
+      let v = Int(im.pix[y * (if stride > 0 { stride } else { im.width }) + x]) * 257
+      image.Color{r: v, g: v, b: v, a: 65535}
+    }
+    image.Model.Gray16 => {
+      if !inside {
+        return image.Color{r: 0, g: 0, b: 0, a: 65535}
+      }
+      let i = y * (if stride > 0 { stride } else { im.width * 2 }) + x * 2
+      let v = (Int(im.pix[i]) << 8) | Int(im.pix[i + 1])
+      image.Color{r: v, g: v, b: v, a: 65535}
+    }
+    image.Model.Paletted => {
+      if im.palette.len() == 0 {
+        return image.Color{r: 0, g: 0, b: 0, a: 0}
+      }
+      var idx = 0
+      if inside {
+        idx = Int(im.pix[y * (if stride > 0 { stride } else { im.width }) + x])
+      }
+      if idx >= im.palette.len() {
+        idx = 0
+      }
+      image.from_nrgba(im.palette[idx])
+    }
+    image.Model.RGBA => {
+      if !inside {
+        return image.Color{r: 0, g: 0, b: 0, a: 0}
+      }
+      let i = y * (if stride > 0 { stride } else { im.width * 4 }) + x * 4
+      image.Color{r: Int(im.pix[i]) * 257, g: Int(im.pix[i + 1]) * 257, b: Int(im.pix[i + 2]) * 257, a: Int(im.pix[i + 3]) * 257}
+    }
+    image.Model.NRGBA => {
+      if !inside {
+        return image.Color{r: 0, g: 0, b: 0, a: 0}
+      }
+      let i = y * (if stride > 0 { stride } else { im.width * 4 }) + x * 4
+      nrgba_color(Int(im.pix[i]), Int(im.pix[i + 1]), Int(im.pix[i + 2]), Int(im.pix[i + 3]))
+    }
+    image.Model.RGBA64 => {
+      if !inside {
+        return image.Color{r: 0, g: 0, b: 0, a: 0}
+      }
+      let i = y * (if stride > 0 { stride } else { im.width * 8 }) + x * 8
+      image.Color{r: (Int(im.pix[i]) << 8) | Int(im.pix[i + 1]), g: (Int(im.pix[i + 2]) << 8) | Int(im.pix[i + 3]), b: (Int(im.pix[i + 4]) << 8) | Int(im.pix[i + 5]), a: (Int(im.pix[i + 6]) << 8) | Int(im.pix[i + 7])}
+    }
+    image.Model.NRGBA64 => {
+      if !inside {
+        return image.Color{r: 0, g: 0, b: 0, a: 0}
+      }
+      let i = y * (if stride > 0 { stride } else { im.width * 8 }) + x * 8
+      nrgba64_color((Int(im.pix[i]) << 8) | Int(im.pix[i + 1]), (Int(im.pix[i + 2]) << 8) | Int(im.pix[i + 3]), (Int(im.pix[i + 4]) << 8) | Int(im.pix[i + 5]), (Int(im.pix[i + 6]) << 8) | Int(im.pix[i + 7]))
+    }
+    image.Model.CMYK => {
+      var c = 0
+      var m = 0
+      var yy = 0
+      var k = 0
+      if inside {
+        let i = y * (if stride > 0 { stride } else { im.width * 4 }) + x * 4
+        c = Int(im.pix[i])
+        m = Int(im.pix[i + 1])
+        yy = Int(im.pix[i + 2])
+        k = Int(im.pix[i + 3])
+      }
+      // color.CMYK.RGBA keeps the 16 bit values (cmyk_to_rgb shifts them to 8)
+      let w = 65535 - k * 257
+      image.Color{r: ((65535 - c * 257) * w) / 65535, g: ((65535 - m * 257) * w) / 65535, b: ((65535 - yy * 257) * w) / 65535, a: 65535}
+    }
+    image.Model.YCbCr => image.Color{r: 0, g: 0, b: 0, a: 65535}
+  }
+}
+

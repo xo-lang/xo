@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image"
 	"image/color"
 	"math/rand"
 	"strings"
@@ -132,6 +133,115 @@ test "rgb_to_cmyk and cmyk_to_rgb are Go's" {
 test "from_nrgba is Go's NRGBA.RGBA()" {
   for (v, r, g, b, a) in FROM_NRGBA {
     expect(image.from_nrgba(v)) == image.Color{r: r, g: g, b: b, a: a}
+  }
+}
+`)
+	// Image.At: each model's image of 3 by 2 pixels with random samples
+	// (RGBA and RGBA64 kept valid: channels at most alpha), probed inside and
+	// one pixel outside on every side.
+	bytesLit := func(b []byte) string {
+		var sb strings.Builder
+		sb.WriteString("b\"")
+		for _, c := range b {
+			fmt.Fprintf(&sb, "\\x%02x", c)
+		}
+		sb.WriteString("\"")
+		return sb.String()
+	}
+	o.WriteString("\n/// (model, pix, palette, [(x, y, r, g, b, a)]): Image.At.\nconst AT_CASES: List[(Str, Bytes, List[Int], List[(Int, Int, Int, Int, Int, Int)])] = [\n")
+	rect := image.Rect(0, 0, 3, 2)
+	emitAt := func(name string, img image.Image, pix []byte, pal []int) {
+		fmt.Fprintf(&o, "  (%q, %s, [", name, bytesLit(pix))
+		for i, v := range pal {
+			if i > 0 {
+				o.WriteString(", ")
+			}
+			fmt.Fprintf(&o, "%d", v)
+		}
+		o.WriteString("], [")
+		first := true
+		for y := -1; y <= 2; y++ {
+			for x := -1; x <= 3; x++ {
+				cr, cg, cb, ca := img.At(x, y).RGBA()
+				if !first {
+					o.WriteString(", ")
+				}
+				first = false
+				fmt.Fprintf(&o, "(%d, %d, %d, %d, %d, %d)", x, y, cr, cg, cb, ca)
+			}
+		}
+		o.WriteString("]),\n")
+	}
+	fill := func(n int) []byte {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = byte(r.Intn(256))
+		}
+		return b
+	}
+	for rep := 0; rep < 6; rep++ {
+		g := image.NewGray(rect)
+		copy(g.Pix, fill(len(g.Pix)))
+		emitAt("Gray", g, g.Pix, nil)
+		g16 := image.NewGray16(rect)
+		copy(g16.Pix, fill(len(g16.Pix)))
+		emitAt("Gray16", g16, g16.Pix, nil)
+		n := image.NewNRGBA(rect)
+		copy(n.Pix, fill(len(n.Pix)))
+		emitAt("NRGBA", n, n.Pix, nil)
+		n64 := image.NewNRGBA64(rect)
+		copy(n64.Pix, fill(len(n64.Pix)))
+		emitAt("NRGBA64", n64, n64.Pix, nil)
+		c := image.NewCMYK(rect)
+		copy(c.Pix, fill(len(c.Pix)))
+		emitAt("CMYK", c, c.Pix, nil)
+		rg := image.NewRGBA(rect)
+		for i := 0; i < len(rg.Pix); i += 4 {
+			a := r.Intn(256)
+			rg.Pix[i], rg.Pix[i+1], rg.Pix[i+2], rg.Pix[i+3] = byte(r.Intn(a+1)), byte(r.Intn(a+1)), byte(r.Intn(a+1)), byte(a)
+		}
+		emitAt("RGBA", rg, rg.Pix, nil)
+		r64 := image.NewRGBA64(rect)
+		for i := 0; i < len(r64.Pix); i += 8 {
+			a := r.Intn(65536)
+			vals := [4]int{r.Intn(a + 1), r.Intn(a + 1), r.Intn(a + 1), a}
+			for k, v := range vals {
+				r64.Pix[i+2*k], r64.Pix[i+2*k+1] = byte(v>>8), byte(v)
+			}
+		}
+		emitAt("RGBA64", r64, r64.Pix, nil)
+		pal := color.Palette{}
+		var palv []int
+		for k := 0; k < 4; k++ {
+			nc := color.NRGBA{uint8(r.Intn(256)), uint8(r.Intn(256)), uint8(r.Intn(256)), uint8(r.Intn(256))}
+			pal = append(pal, nc)
+			palv = append(palv, int(nc.R)<<24|int(nc.G)<<16|int(nc.B)<<8|int(nc.A))
+		}
+		pi := image.NewPaletted(rect, pal)
+		for i := range pi.Pix {
+			pi.Pix[i] = byte(r.Intn(4))
+		}
+		emitAt("Paletted", pi, pi.Pix, palv)
+	}
+	o.WriteString("]\n")
+
+	o.WriteString(`
+test "Image.at is Go's At" {
+  for (name, pix, pal, probes) in AT_CASES {
+    let model = match name {
+      "Gray" => image.Model.Gray
+      "Gray16" => image.Model.Gray16
+      "NRGBA" => image.Model.NRGBA
+      "NRGBA64" => image.Model.NRGBA64
+      "CMYK" => image.Model.CMYK
+      "RGBA" => image.Model.RGBA
+      "RGBA64" => image.Model.RGBA64
+      _ => image.Model.Paletted
+    }
+    let im = image.Image{width: 3, height: 2, model: model, pix: pix, palette: pal}
+    for (x, y, r, g, b, a) in probes {
+      expect(im.at(x, y)) == image.Color{r: r, g: g, b: b, a: a}
+    }
   }
 }
 `)

@@ -73,3 +73,10 @@ fn cmyk_to_rgb(c: Int, m: Int, y: Int, k: Int) -> (Int, Int, Int)
 /// The color.Color of a 0xRRGGBBAA value that is not premultiplied (Go's
 /// color.NRGBA.RGBA()).
 fn from_nrgba(v: Int) -> Color
+
+/// Go's Image.At for the pixel models that keep their samples in `pix`
+/// (everything but YCbCr): the color at (x, y) as 16 bit premultiplied
+/// channels. Outside the image it is what Go's zero value gives (Gray and
+/// Gray16: opaque black, RGBA, NRGBA, RGBA64 and NRGBA64: transparent,
+/// CMYK: opaque white, Paletted: palette entry 0).
+fn (im: Image) at(x: Int, y: Int) -> Color
