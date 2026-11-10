@@ -3,6 +3,7 @@
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/hostpath
 
 // ---------------------------------------------------------------------------
 // Walks
@@ -548,12 +549,11 @@ fn (var g: Gen) gen_test(td: parser.TestDecl) {
 }
 
 /// The module's directory, absolute: where its tests run (absDir).
+/// The module's directory, absolute by the host's rules (a `C:/` path is
+/// absolute on Windows: 2026-11-10, the Go backend's test table joined it
+/// onto the working directory, so regressions_test.xo went nowhere).
 fn (g: Gen) abs_dir() -> Str {
-  let d = g.c.mods[g.pkgs[g.p].m].dir
-  if d.starts_with("/") {
-    return clean_path(d)
-  }
-  clean_path("${g.opts.wd}/${d}")
+  hostpath.abs(g.opts.wd, g.c.mods[g.pkgs[g.p].m].dir)
 }
 
 fn (var g: Gen) gen_test_table() {

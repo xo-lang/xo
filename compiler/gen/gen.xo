@@ -15,6 +15,7 @@
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/hostpath
 
 type Expr = parser.Expr
 type Stmt = parser.Stmt
@@ -630,17 +631,14 @@ fn names_pkg(text: Str, name: Str) -> Bool {
 /// the line root when the file is below it (linePath).
 fn (g: Gen) line_path(file: Str) -> Str {
   if !g.opts.line_root.is_empty() {
-    var abs = file
-    if !abs.starts_with("/") {
-      abs = "${g.opts.wd}/${abs}"
-    }
-    abs = clean_path(abs)
-    let root = clean_path(g.opts.line_root)
+    // the host's rules: a `C:/` file or root is absolute on Windows
+    let abs = hostpath.abs(g.opts.wd, file)
+    let root = hostpath.clean(g.opts.line_root)
     if abs == root {
       return "."
     }
-    if root == "/" && abs.starts_with("/") {
-      return abs.trim_prefix("/")
+    if hostpath.is_root(root) && abs.starts_with(root) {
+      return abs.trim_prefix(root)
     }
     if abs.starts_with("${root}/") {
       return abs.trim_prefix("${root}/")

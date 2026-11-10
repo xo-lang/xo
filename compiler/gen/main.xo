@@ -22,6 +22,7 @@
 // signature checks of the hand written std functions (std_sigs_gen.go).
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/hostpath
 
 fn dump_body(os: Os, args: List[Str]) ! {
   var each = false
@@ -172,39 +173,24 @@ fn rejected(c: check.Checker, holes: Bool) -> Bool {
 /// lineRoot): the nearest directory holding xo.mod at or above dir, else
 /// dir itself, absolute.
 fn line_root(os: Os, wd: Str, dir: Str) -> Str {
-  var abs = dir
-  if !abs.starts_with("/") {
-    abs = "${wd}/${abs}"
-  }
-  abs = clean_path(abs)
+  // the host's rules: on Windows `C:/` is absolute and the walk ends at
+  // the volume's root
+  let abs = hostpath.abs(wd, dir)
   var d = abs
   while true {
     if os.fs.exists("${d}/xo.mod").ok() ?? false {
       return d
     }
-    if d == "/" {
+    if hostpath.is_root(d) {
       break
     }
-    let i = last_slash(d)
-    let parent = if i <= 0 { "/" } else { d.bytes()[0..i].to_str() ?? "/" }
+    let parent = hostpath.dir(d)
     if parent == d {
       break
     }
     d = parent
   }
   abs
-}
-
-fn last_slash(s: Str) -> Int {
-  let bs = s.bytes()
-  var i = bs.len() - 1
-  while i >= 0 {
-    if bs[i] == '/' {
-      return i
-    }
-    i -= 1
-  }
-  -1
 }
 
 /// The `gc` lines of the xo.mod at root as the statement main runs
