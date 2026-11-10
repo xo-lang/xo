@@ -253,8 +253,25 @@ func TestChecksumLogOps(t *testing.T) {
 	logURL, stopLog := startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", "--copy-to="+bucket, "--fill-to="+srv.URL+"/modules", "--rate=2", logData)
 	setenv(t, "XO_SUMDB", verifier+" "+logURL)
 
+	// the rate limit counts per clock minute (sumserve.xo allow, unix
+	// time / 60): the two adds below and the third lookup must fall in one
+	// minute, so start with at least 20 seconds of this one left (a
+	// boundary between them let the third through, 2026-11-10's seed cut)
+	if left := 60 - time.Now().Unix()%60; left < 20 {
+		time.Sleep(time.Duration(left)*time.Second + 100*time.Millisecond)
+	}
+	minute := time.Now().Unix() / 60
 	emptyCache(t)
 	xo(t, "mod", "tidy", "--dir", app).want(0) // adds billing and money: this client's 2
+
+	// a third new version from this client this minute waits; asked at
+	// once, before the fill and the check below
+	code3, _, body3 := get(t, logURL+"/lookup/github.com/acme/money@v1.3.0", nil)
+	if now := time.Now().Unix() / 60; now != minute {
+		t.Logf("a minute boundary passed during tidy: 429 not checked (got %d)", code3)
+	} else if code3 != 429 {
+		t.Errorf("third new version from one client: %d %s", code3, body3)
+	}
 	for _, id := range []string{"0000000000", "0000000001"} {
 		o, ok := s3.object("/logcopy/records/" + id)
 		if !ok || !strings.Contains(string(o.body), "\ngithub.com/acme/") {
@@ -284,11 +301,8 @@ func TestChecksumLogOps(t *testing.T) {
 	setenv(t, "XO_PROXY", "direct")
 	setenv(t, "XO_GIT_BASE", gitBase)
 
-	// the rate limit: a third new version from this client waits; one
-	// through the tunnel from another address does not
-	if code, _, body := get(t, logURL+"/lookup/github.com/acme/money@v1.3.0", nil); code != 429 {
-		t.Errorf("third new version from one client: %d %s", code, body)
-	}
+	// the rate limit: a new version through the tunnel from another
+	// address is not limited
 	if code, _, body := get(t, logURL+"/lookup/github.com/acme/money@v1.3.0", map[string]string{"CF-Connecting-IP": "192.0.2.7"}); code != 200 {
 		t.Errorf("a new version from another client: %d %s", code, body)
 	}
