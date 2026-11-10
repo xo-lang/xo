@@ -539,20 +539,9 @@ pub fn label_or(c: Counter, ok: Int) -> Str ! Str as c "ctr_label_or" {
 }
 `
 
-// TestCLibHandles passes a struct and a List through XoHandles: made by
-// one export, read and replaced by others, released; then a released
-// handle and a handle of another type each fault (exit 70).
-func TestCLibHandles(t *testing.T) {
-	t.Parallel()
-	clibSkip(t)
-	cc, err := exec.LookPath("cc")
-	if err != nil {
-		t.Skip("no cc")
-	}
-	dir := writeFiles(t, map[string]string{
-		"xo.mod": "module example.com/ctr\nedition preview\n",
-		"ctr.xo": clibHandles,
-		"main.c": `#include <stdio.h>
+// clibHandlesCaller calls clibHandles's exports from C: ok, or what went
+// wrong; "stale" and "type" as its argument use a handle wrongly.
+const clibHandlesCaller = `#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "ctr.h"
@@ -612,7 +601,22 @@ int main(int argc, char **argv) {
   puts("ok");
   return 0;
 }
-`,
+`
+
+// TestCLibHandles passes a struct and a List through XoHandles: made by
+// one export, read and replaced by others, released; then a released
+// handle and a handle of another type each fault (exit 70).
+func TestCLibHandles(t *testing.T) {
+	t.Parallel()
+	clibSkip(t)
+	cc, err := exec.LookPath("cc")
+	if err != nil {
+		t.Skip("no cc")
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module example.com/ctr\nedition preview\n",
+		"ctr.xo": clibHandles,
+		"main.c": clibHandlesCaller,
 	})
 	lib := filepath.Join(dir, "libctr.so")
 	if runtime.GOOS == "darwin" {
@@ -787,5 +791,63 @@ func TestCLibThreadExit(t *testing.T) {
 	b, err := exec.Command(exe).CombinedOutput()
 	if err != nil || strings.TrimSpace(string(b)) != "ok" {
 		t.Fatalf("exited C threads: %v\n%s", err, b)
+	}
+}
+
+// TestCLibLLVM builds the C libraries of TestCLibShared, TestCLibStatic
+// and TestCLibHandles with the LLVM backend (decision 0574 stage 2:
+// `--lib` on every native backend) and runs their C callers.
+func TestCLibLLVM(t *testing.T) {
+	t.Parallel()
+	clibSkip(t)
+	cc, err := exec.LookPath("cc")
+	if err != nil {
+		t.Skip("no cc")
+	}
+	for _, c := range []struct{ name, mode, src, caller, lib string }{
+		{"geo-shared", "shared", clibSrc, clibCaller, "geo"},
+		{"geo-static", "static", clibSrc, clibCaller, "geo"},
+		{"ctr-shared", "shared", clibHandles, clibHandlesCaller, "ctr"},
+		{"ctr-static", "static", clibHandles, clibHandlesCaller, "ctr"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			dir := writeFiles(t, map[string]string{
+				"xo.mod":      "module example.com/" + c.lib + "\nedition preview\n",
+				c.lib + ".xo": c.src,
+				"main.c":      c.caller,
+			})
+			lib := filepath.Join(dir, "lib"+c.lib+".a")
+			if c.mode == "shared" {
+				lib = filepath.Join(dir, "lib"+c.lib+".so")
+				if runtime.GOOS == "darwin" {
+					lib = filepath.Join(dir, "lib"+c.lib+".dylib")
+				}
+			}
+			var out, errOut bytes.Buffer
+			if code := run(t, []string{"build", "--backend=llvm", "--lib=" + c.mode, "-o", lib, dir}, &out, &errOut); code != 0 {
+				if strings.Contains(out.String()+errOut.String(), "needs clang") {
+					t.Skip("no clang")
+				}
+				t.Fatalf("xo build --backend=llvm --lib=%s: exit %d: %s\n%s%s", c.mode, code, clibTail(out.String()+errOut.String()), out.String(), errOut.String())
+			}
+			exe := filepath.Join(dir, "caller")
+			args := []string{"-O2", "-I" + dir, "-o", exe, filepath.Join(dir, "main.c")}
+			if c.mode == "shared" {
+				args = append(args, "-L"+dir, "-l"+c.lib, "-Wl,-rpath,"+dir, "-lm")
+			} else {
+				args = append(args, lib, "-lm")
+				if runtime.GOOS == "linux" {
+					args = append(args, "-lpthread", "-ldl")
+				}
+			}
+			if b, err := exec.Command(cc, args...).CombinedOutput(); err != nil {
+				t.Fatalf("cc: %v\n%s", err, b)
+			}
+			b, err := exec.Command(exe).CombinedOutput()
+			if err != nil || strings.TrimSpace(string(b)) != "ok" {
+				t.Fatalf("the C caller: %v\n%s", err, b)
+			}
+		})
 	}
 }

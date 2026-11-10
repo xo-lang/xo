@@ -1119,8 +1119,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !(o.lib is "shared" | "static") {
       fail(os, "--lib=${o.lib}: a library is --lib=shared or --lib=static")
     }
-    if !(backend is "arm64" | "amd64") {
-      fail(os, "--lib builds with the native arm64 or amd64 backend (not ${backend})")
+    if !(backend is "arm64" | "amd64" | "llvm") {
+      fail(os, "--lib builds with the native arm64 or amd64 backend or the LLVM backend (not ${backend})")
     }
     o.linker = "cc"
     o.assembler = "cc"
@@ -1582,7 +1582,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // the `use c` sources as objects with debug information (decision
     // 0446): bitcode when the link runs LTO, so it inlines them as
     // before
-    let (cobjs, cobj_err) = c_objects(os, cc, asm_cflags(lk.flags) + (if multi { lto_flags(split.lto) } else { single_lto_flags(lto1) }), lk.srcs, dir, trimpath_eff(o))
+    // a static library's objects are machine code (a C program's link
+    // runs no LTO over an archive's members)
+    let (cobjs, cobj_err) = c_objects(os, cc, asm_cflags(lk.flags) + (if o.lib == "static" { [] } else if multi { lto_flags(split.lto) } else { single_lto_flags(lto1) }), lk.srcs, dir, trimpath_eff(o))
     if !cobj_err.is_empty() {
       os.stdio.eprint(cobj_err)
       fail(os, "${cc} failed")
@@ -1617,7 +1619,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if lsplit {
       mode_flags.push("debug-info=split")
     }
-    let key = native_bin_key(os, ctx, dir, cc, mode_flags + pad + lk.flags + lk.link_only, srcs)
+    // a library's by xo's identity too (as build_native's: ar_static
+    // writes objects of xo's making outside dir)
+    let key = native_bin_key(os, ctx, dir, cc, mode_flags + pad + lk.flags + lk.link_only + (if o.lib.is_empty() { [] } else { ["lib=${o.lib}", "xo ${self_id(os)}"] }), srcs)
     // built in a hidden stage beside bin, then moved into place (Stage)
     let st = stage(os, ctx, bin)
     let (hit, entry) = fetch_bin(os, ctx, key, st.bin)
@@ -1629,7 +1633,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       let oso_prefix = if dsym && dir != sdir { "${dir}/" } else { "" }
       let opad: List[Str] = if oso_prefix.is_empty() { [] } else { wl_path("-oso_prefix", oso_prefix) }
       let lflags = (if dsym { lk.flags + lto_object_flags(os, dir, lto) + opad } else { lk.flags }) + pad + lk.link_only
-      let msg = if split.stable {
+      let msg = if o.lib == "static" {
+        // a static library (decision 0574): each module compiled to an
+        // object, no LTO, joined with the constructor in an archive
+        ar_static(os, lctx.tgoos, cc, [split.opt, "-Wno-override-module"] + lk.flags + memo_sysroot(os, ctx), srcs, st.bin)
+      } else if split.stable {
         // beside dir, not in it: the binary cache's key hashes every
         // file of dir, and the modules are made only after its miss
         let mdir = "${dir}-modules"

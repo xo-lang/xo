@@ -1407,7 +1407,8 @@ pub fn fetch_user(db: Db, id: Int) -> User ! LoadErr
 - No variadic functions. Pass a `List` or `Map`.
 - **C exports** (decision 0574): a top
   level `pub fn` of the root package with the clause `as c "name"` is the C
-  function `name` of a library built with `xo build --lib=shared`:
+  function `name` of a library built with `xo build --lib=shared` (or
+  `--lib=static`; the native backends and LLVM):
   `pub fn add(a: Int, b: Int) -> Int as c "geo_add" { a + b }`. Its
   parameters are `Int` (C `int64_t`), `Float` (`double`), `Bytes`
   (`XoBytes {const uint8_t *p; int64_t n}`) or `Str` (`XoStr

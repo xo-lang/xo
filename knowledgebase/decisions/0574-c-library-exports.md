@@ -398,6 +398,16 @@ accepted; 2026-11-08):
   nothing); an error result returns {NULL, 0}. The checker had rejected
   them (XO1518) while the table listed them. cmd/xo TestCLibHandles
   (ctr_label, ctr_tail, ctr_label_or).
+- LLVM (2026-11-10; target 4 above): `--backend=llvm --lib=shared|static`.
+  The wrapper is the SSA builder's, as for the native backends; a shared
+  library links through clang with the same exports list and
+  constructor, and a static library compiles each module to an object
+  with no LTO (a C program's link runs none over an archive) and archives
+  it with the constructor (ar_static). On linux the thread local table is
+  initial exec, as the native backends' (the general dynamic model calls
+  __tls_get_addr on every access from a shared library). cmd/xo
+  TestCLibLLVM: the geo and ctr libraries, shared and static, with their
+  C callers (Mac).
 - The TestCLibThreadExit build failure of 2026-11-08 (exit 1): found.
   Separate compilation linked a library against std's cached program
   variant, which lacks the runtime's library entries; the first library
