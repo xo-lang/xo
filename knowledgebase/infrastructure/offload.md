@@ -643,3 +643,27 @@ exclusions; and the WSearch service is stopped and disabled. Check with
 `(Get-MpPreference).ExclusionPath`, `(Get-MpPreference).ExclusionProcess` and
 `Get-Service WSearch` in PowerShell. A new Windows host gets the same before its first run.
 Last verified: 2026-11-09.
+
+## FreeBSD VMs (Xo Lang 1, 2026-11-10, decision 0573)
+
+`scripts/lead/freebsd-tier.sh XO_DIR amd64|arm64` cross builds every LLVM
+golden on the Mac with XO_DIR/bin/xo for freebsd/ARCH, puts them in an ISO
+9660 seed labeled cidata (NoCloud: FreeBSD's nuageinit runs its user-data)
+and boots a FreeBSD 14.5-RELEASE BASIC-CLOUDINIT ufs image under QEMU with
+`scripts/lead/freebsd-vm-remote.sh` (images from download.freebsd.org,
+sha256 checked against its CHECKSUM.SHA256, cached in `fbvm-cache` of the
+run directory).
+
+- amd64: on the linux/amd64 host (offload-amd64.env, WSL2), under KVM, in
+  ~/xo-ci/fbtier there. Last verified: 2026-11-10.
+- arm64: on the Mac with QEMU -accel hvf (Homebrew qemu 11.1.3, installed
+  by the lead on the owner's go, 2026-11-10; firmware
+  /opt/homebrew/share/qemu/edk2-aarch64-code.fd), so the tier runs it
+  under heavy.sh with `HEAVY_CLASS=bulk HEAVY_DARWIN=1`; images in
+  `$FBVM_DIR` (default ~/xo-ci/fbtier). `FREEBSD_VM=amd64host` runs it on
+  the amd64 host under TCG instead (slow). The linux/arm64 hosts have no
+  /dev/kvm (host 3 is a container on the Mac Studio).
+- Output: the counts, then one line per failure with the first differing
+  stdout line and the stderr (1,500 bytes of a crash). The VM sends stdout
+  base64 encoded (the amd64 serial console changed 4-byte UTF-8), so the
+  compare with want.txt is exact. 2026-11-10: 642 of 642 on both arches.
