@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo check: a walk of a workspace of 8 or more modules (`xo check ./...`) no longer reports "expected `Str`, found `Str`" in members that import a std module the shared base does not, once std's record is cached (each such member had installed std's whole record again, a second prelude); builds were not affected.
 - xo build (windows/amd64 and windows/arm64): WinDbg and cdb load the PDB xo writes (its info stream names /LinkInfo, as MSVC's and lld's do); before, current dbghelp reported "file system or network error reading pdb" and showed no symbols.
 - xo build (windows/arm64, experimental, decision 0569): weak C references (`rt.sym_present`, the sanitizer hooks' weak calls) work as on windows/amd64, through `/alternatename` to xo_absent; `rt.sym_present` was always false there.
 - xo repl (experimental, decision 0572 stage 2): `--json` reads one JSON request per line (`{"in": ENTRY}` or `{"cmd": "type", "arg": EXPR}`) and writes one reply per line with ok, value, type, out, err, ms and spec 10 diagnostics at the entry's own line and column; a type error's column in the text form is now the entry's own too.

@@ -87,7 +87,15 @@ fn (var c: Checker) run() -> () ! Str {
     // joined body for the lazy check (check_module walks no declaration of
     // an unloaded file)
     var gen_objs: List[Int] = []
-    if c.trees_lazy && c.std_record != None && !c.std_export_verify {
+    // a workspace member's checker (decision 0513) declares the std
+    // modules its base lacks from their sources: std's record holds every
+    // std object, prelude included, and installing it again past the
+    // base's objects made a second `Str` and `Bool` (XO0401 "expected
+    // `Str`, found `Str`" on every member once the record was cached,
+    // azure's check ./..., 2026-11-09;
+    // gotchas/member-check-reinstalled-std-record.md)
+    let records = c.base_mods.is_empty()
+    if records && c.trees_lazy && c.std_record != None && !c.std_export_verify {
       if let Some(e) = c.std_record {
         // the rebuild's test: nothing parsed now, every tree pending
         let objs = if c.trees_test_pend { [] } else { e.objs }
@@ -123,7 +131,7 @@ fn (var c: Checker) run() -> () ! Str {
         c.ensure_tree(m)
       }
     }
-    if c.std_export_on {
+    if records && c.std_export_on {
       // piece 2: the entry's own fingerprint when its stamps held (no std
       // source read or hashed); verify always hashes
       fp = if !c.std_header_fp.is_empty() && !c.std_export_verify { c.std_header_fp } else { c.std_fingerprint(std_mods) }

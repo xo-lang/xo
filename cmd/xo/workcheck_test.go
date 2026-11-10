@@ -150,6 +150,36 @@ func TestCheckWorkspacePerModuleSameDiags(t *testing.T) {
 	}
 }
 
+// TestCheckWorkspaceMemberStdRecord: a workspace member that imports a
+// std module its base lacks checks clean once std's record is cached
+// (the second check): the member declared all of std again from the
+// record, a second prelude, and reported "expected `Str`, found `Str`"
+// where a Str from std met one of the base's modules (azure's check
+// ./..., 2026-11-09).
+func TestCheckWorkspaceMemberStdRecord(t *testing.T) {
+	ws := t.TempDir()
+	fs := map[string]string{
+		"xo.mod":  "module example.com/root\nedition preview\n",
+		"root.xo": "pub fn root() -> Int { 0 }\n\npub fn name(s: Str) -> Str { s }\n",
+	}
+	work := "xo preview\nuse .\n"
+	for i := 1; i <= 9; i++ {
+		fs[fmt.Sprintf("m%d/xo.mod", i)] = fmt.Sprintf("module example.com/m%d\nedition preview\n", i)
+		fs[fmt.Sprintf("m%d/m.xo", i)] = "use std/html\nuse example.com/root\n\npub fn e(s: Str) -> Str {\n  let a: Str = html.escape_string(\"x\")\n  let n: Int = root.root()\n  if a == html.escape_string(s) && n == 0 {\n    return root.name(a)\n  }\n  root.name(s)\n}\n"
+		work += fmt.Sprintf("use ./m%d\n", i)
+	}
+	fs["xo.work"] = work
+	modtest.WriteFiles(t, ws, fs)
+	for _, walk := range []string{"/...", ""} {
+		for run := 1; run <= 2; run++ {
+			r := xo(t, "check", "--json", ws+walk)
+			if r.code != 0 {
+				t.Fatalf("check WS%s run %d: exit %d\n%s%s", walk, run, r.code, r.out, r.err)
+			}
+		}
+	}
+}
+
 // TestTestWorkspacePerModule: `xo test ./...` of a workspace of 8
 // members or more runs one child per member (decision 0515 point 5) and
 // passes and fails the same tests as one program of fewer members: the
