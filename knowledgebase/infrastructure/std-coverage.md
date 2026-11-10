@@ -242,6 +242,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | plugin | not planned | Static binaries only. |
 | reflect, unsafe | not planned | No reflection; derive replaces it. |
 | image/color | std/image | partial | The conversions (Gray, Gray16, NRGBA, YCbCr, CMYK) as functions (0578 step 1). |
+| image/gif | std/gif | complete | Decode, DecodeAll, DecodeConfig, Encode, EncodeAll over whole buffers (0578 step 5). |
 | image, image/draw, image/gif | planned | 0578: Image over png and jpeg, draw, gif follow; image/png and image/jpeg (decode) are done (std/png 0466, std/jpeg 0467). |
 
 ## Outside Go's standard library

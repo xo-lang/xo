@@ -379,6 +379,11 @@ fn lzw_range_err(lit_width: Int) -> compress.CompressErr {
   compress.CompressErr{msg: "lzw: litWidth ${lit_width} out of range"}
 }
 
+/// The LSB encoder std/gif writes with.
+pub fn lzw_lsb(data: Bytes, lit_width: Int) -> Bytes ! compress.CompressErr {
+  lzw_encode(data, compress.LzwOrder.LSB, lit_width)
+}
+
 fn lzw_encode(data: Bytes, order: compress.LzwOrder, lit_width: Int) -> Bytes ! compress.CompressErr {
   if lit_width < 2 || lit_width > 8 {
     return Err(lzw_range_err(lit_width))

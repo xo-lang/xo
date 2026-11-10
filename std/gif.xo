@@ -1,0 +1,59 @@
+// std/gif (spec/std.md 76, decision 0578). Declaration file; encoding rules
+// are listed at the top of std/prelude.xo. Go's image/gif over whole
+// buffers: Decode, DecodeAll, DecodeConfig, Encode and EncodeAll, with Go's
+// error texts, frames as std/image Paletted images (palette entries
+// 0xRRGGBBAA, not premultiplied, as std/image's palettes are) and LZW from
+// std/compress. Pure.
+use std/image
+
+/// Go's error texts: `gif: not enough image data`, `gif: too much image
+/// data`, `gif: invalid pixel value`, `gif: reading frames: unexpected EOF`,
+/// `gif: can't recognize format "GIF90a"`, `gif: image is too large to
+/// encode`, `image too large` (more than max_pixels) and the rest of
+/// image/gif's.
+struct GifErr {
+  msg: Str
+}
+
+fn (e: GifErr) display() -> Str
+
+/// What DecodeConfig returns: the logical screen and the global color
+/// table (empty when there is none).
+struct Config {
+  width: Int
+  height: Int
+  palette: List[Int]
+}
+
+/// Go's gif.GIF: the frames in order (each a Paletted Image whose min_x and
+/// min_y are the frame's offset on the screen), the delays in 100ths of a
+/// second, the disposal methods (0 to 3; empty means none: Go's nil), the
+/// loop count (-1: no loop extension, 0: forever, n: n times after the first
+/// run), the screen size and global palette (empty: none) and the
+/// background color index.
+struct Gif {
+  frames: List[image.Image]
+  delay: List[Int]
+  disposal: List[Int]
+  loop_count: Int
+  width: Int
+  height: Int
+  palette: List[Int]
+  background_index: Int
+}
+
+/// Go's gif.Decode: the first frame. A screen or frame of more than
+/// max_pixels pixels is refused before anything is allocated.
+fn decode(data: Bytes, max_pixels: Int = 100000000) -> image.Image ! GifErr
+/// Go's gif.DecodeAll.
+fn decode_all(data: Bytes, max_pixels: Int = 100000000) -> Gif ! GifErr
+/// Go's gif.DecodeConfig.
+fn decode_config(data: Bytes) -> Config ! GifErr
+
+/// Go's gif.Encode with Options{NumColors: num_colors} (1 to 256, else 256)
+/// and its default Floyd-Steinberg drawer: a Paletted image with at most
+/// num_colors entries is written as it is, any other image is drawn onto
+/// the first num_colors entries of the Plan 9 palette.
+fn encode(im: image.Image, num_colors: Int = 256) -> Bytes ! GifErr
+/// Go's gif.EncodeAll.
+fn encode_all(g: Gif) -> Bytes ! GifErr

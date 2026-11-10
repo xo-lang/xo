@@ -8283,3 +8283,24 @@ fn cmyk_to_rgb(c: Int, m: Int, y: Int, k: Int) -> (Int, Int, Int)
 The conversions are Go's (`image/color`: RGBToYCbCr and YCbCrToRGB with their clamps, RGBToCMYK, CMYKToRGB); the 8 bit
 functions take and return 0 to 255. Checked against Go's `image/color` (testdata/corpus/image). Later steps of 0578 add the
 draw and scaling parts and make std/png and std/jpeg return an `image.Image`.
+
+## 76. std/gif
+
+Go's `image/gif` over whole buffers (decision 0578 step 5), with Go's error texts. Frames are std/image Paletted `Image`s
+(palette entries 0xRRGGBBAA, not premultiplied; `min_x`/`min_y` are the frame offset on the screen). Pure.
+
+```xo
+struct GifErr { msg: Str }
+struct Config { width: Int, height: Int, palette: List[Int] }
+struct Gif { frames: List[image.Image], delay: List[Int], disposal: List[Int], loop_count: Int,
+             width: Int, height: Int, palette: List[Int], background_index: Int }
+fn decode(data: Bytes, max_pixels: Int = 100000000) -> image.Image ! GifErr   // gif.Decode: the first frame
+fn decode_all(data: Bytes, max_pixels: Int = 100000000) -> Gif ! GifErr       // gif.DecodeAll
+fn decode_config(data: Bytes) -> Config ! GifErr                              // gif.DecodeConfig
+fn encode(im: image.Image, num_colors: Int = 256) -> Bytes ! GifErr           // gif.Encode, Floyd-Steinberg onto Plan 9
+fn encode_all(g: Gif) -> Bytes ! GifErr                                       // gif.EncodeAll
+```
+
+`loop_count` is -1 without a NETSCAPE loop extension, 0 for forever. An empty `disposal` is Go's nil. A frame past
+`max_pixels` fails with `image too large`. Checked against Go's `image/gif` (testdata/corpus/gif: encoded animations,
+truncations, byte changes, hand built streams for each error text, Encode over several models, EncodeAll over animations).

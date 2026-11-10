@@ -1,0 +1,560 @@
+// std/gif on the native backends (decision 0578 step 5): Go's image/gif
+// reader.go and writer.go over whole buffers, with Go's error texts.
+use std/gif
+use std/image
+use native/compress
+
+fn giferr_display(e: gif.GifErr) -> Str { e.msg }
+
+fn gerr(msg: Str) -> gif.GifErr { gif.GifErr{msg: msg} }
+
+fn hex2(c: Int) -> Str { c.to_str_width(2, 16, true) }
+
+/// Go's %q of the six version bytes (ASCII as strconv.Quote, other bytes as \x escapes).
+fn quote6(b: Bytes) -> Str {
+  var s = "\""
+  for x in b {
+    let c = Int(x)
+    if c == 34 {
+      s = s + "\\\""
+    } else if c == 92 {
+      s = s + "\\\\"
+    } else if c >= 32 && c < 127 {
+      s = s + "${Rune.try(c) ?? Rune.try(63).or_fault("rune")}"
+    } else if c == 10 {
+      s = s + "\\n"
+    } else if c == 9 {
+      s = s + "\\t"
+    } else if c == 13 {
+      s = s + "\\r"
+    } else {
+      s = s + "\\x" + hex2(c)
+    }
+  }
+  s + "\""
+}
+
+struct Dec {
+  data: Bytes
+  pos: Int
+  width: Int
+  height: Int
+  loop_count: Int
+  delay_time: Int
+  background_index: Int
+  disposal_method: Int
+  image_fields: Int
+  transparent_index: Int
+  has_transparent: Bool
+  gct: List[Int]
+  has_gct: Bool
+  delay: List[Int]
+  disposal: List[Int]
+  frames: List[image.Image]
+  max_pixels: Int
+  tmp: Bytes
+}
+
+/// Go's readByte: -1 at the end of the data (reported as unexpected EOF).
+fn (var d: Dec) byte() -> Int {
+  if d.pos >= d.data.len() {
+    return -1
+  }
+  let c = Int(d.data[d.pos])
+  d.pos += 1
+  c
+}
+
+/// Go's readFull into tmp: false when the data is short.
+fn (var d: Dec) full(n: Int) -> Bool {
+  if d.pos + n > d.data.len() {
+    d.pos = d.data.len()
+    return false
+  }
+  d.tmp = d.data[d.pos..d.pos + n]
+  d.pos += n
+  true
+}
+
+fn u16(b: Bytes, i: Int) -> Int { Int(b[i]) | (Int(b[i + 1]) << 8) }
+
+/// Go's readColorTable: 0xRRGGBBFF entries.
+fn (var d: Dec) color_table(fields: Int) -> List[Int] ! gif.GifErr {
+  let n = 1 << (1 + (fields & 7))
+  if !d.full(3 * n) {
+    return Err(gerr("gif: reading color table: unexpected EOF"))
+  }
+  var p: List[Int] = []
+  for i in 0..n {
+    p.push((Int(d.tmp[3 * i]) << 24) | (Int(d.tmp[3 * i + 1]) << 16) | (Int(d.tmp[3 * i + 2]) << 8) | 255)
+  }
+  p
+}
+
+/// Go's decoder.readBlock: the block's length (0 at the terminator), its
+/// bytes in tmp; false on a short read.
+fn (var d: Dec) block() -> Int {
+  let n = d.byte()
+  if n < 0 {
+    return -1
+  }
+  if n == 0 {
+    return 0
+  }
+  if !d.full(n) {
+    return -1
+  }
+  n
+}
+
+fn (var d: Dec) extension() -> () ! gif.GifErr {
+  let ext = d.byte()
+  if ext < 0 {
+    return Err(gerr("gif: reading extension: unexpected EOF"))
+  }
+  var size = 0
+  if ext == 1 {
+    size = 13
+  } else if ext == 249 {
+    return d.graphic_control()
+  } else if ext == 254 {
+    size = 0
+  } else if ext == 255 {
+    let b = d.byte()
+    if b < 0 {
+      return Err(gerr("gif: reading extension: unexpected EOF"))
+    }
+    size = b
+  } else {
+    return Err(gerr("gif: unknown extension 0x${hex2(ext)}"))
+  }
+  if size > 0 {
+    if !d.full(size) {
+      return Err(gerr("gif: reading extension: unexpected EOF"))
+    }
+  }
+  if ext == 255 && size == 11 && d.tmp == b"NETSCAPE2.0" {
+    let n = d.block()
+    if n < 0 {
+      return Err(gerr("gif: reading extension: unexpected EOF"))
+    }
+    if n == 0 {
+      return ()
+    }
+    if n == 3 && d.tmp[0] == 1 {
+      d.loop_count = Int(d.tmp[1]) | (Int(d.tmp[2]) << 8)
+    }
+  }
+  while true {
+    let n = d.block()
+    if n < 0 {
+      return Err(gerr("gif: reading extension: unexpected EOF"))
+    }
+    if n == 0 {
+      return ()
+    }
+  }
+  ()
+}
+
+fn (var d: Dec) graphic_control() -> () ! gif.GifErr {
+  if !d.full(6) {
+    return Err(gerr("gif: can't read graphic control: unexpected EOF"))
+  }
+  if d.tmp[0] != 4 {
+    return Err(gerr("gif: invalid graphic control extension block size: ${Int(d.tmp[0])}"))
+  }
+  let flags = Int(d.tmp[1])
+  d.disposal_method = (flags & 28) >> 2
+  d.delay_time = Int(d.tmp[2]) | (Int(d.tmp[3]) << 8)
+  if flags & 1 != 0 {
+    d.transparent_index = Int(d.tmp[4])
+    d.has_transparent = true
+  }
+  if d.tmp[5] != 0 {
+    return Err(gerr("gif: invalid graphic control extension block terminator: ${Int(d.tmp[5])}"))
+  }
+  ()
+}
+
+/// Go's uninterlace over a w by h index buffer.
+fn uninterlace(pix: Bytes, w: Int, h: Int) -> Bytes {
+  var out = BytesBuilder.with_capacity(w * h)
+  var rows: List[Int] = []
+  for _ in 0..h {
+    rows.push(0)
+  }
+  var offset = 0
+  let skips = [8, 8, 4, 2]
+  let starts = [0, 4, 2, 1]
+  for pass in 0..4 {
+    var y = starts[pass]
+    while y < h {
+      rows[y] = offset
+      offset += w
+      y += skips[pass]
+    }
+  }
+  for y in 0..h {
+    out.write(pix[rows[y]..rows[y] + w])
+  }
+  out.freeze()
+}
+
+fn (var d: Dec) image_descriptor(keep_all: Bool) -> () ! gif.GifErr {
+  if !d.full(9) {
+    return Err(gerr("gif: can't read image descriptor: unexpected EOF"))
+  }
+  let left = u16(d.tmp, 0)
+  let top = u16(d.tmp, 2)
+  let w = u16(d.tmp, 4)
+  let h = u16(d.tmp, 6)
+  d.image_fields = Int(d.tmp[8])
+  if left + w > d.width || top + h > d.height {
+    return Err(gerr("gif: frame bounds larger than image bounds"))
+  }
+  if d.max_pixels >= 0 && w * h > d.max_pixels {
+    return Err(gerr("image too large"))
+  }
+  let use_local = d.image_fields & 128 != 0
+  var palette: List[Int] = []
+  if use_local {
+    palette = d.color_table(d.image_fields)?
+  } else {
+    if !d.has_gct {
+      return Err(gerr("gif: no color table"))
+    }
+    palette = d.gct
+  }
+  if d.has_transparent {
+    let ti = d.transparent_index
+    if ti < palette.len() {
+      palette[ti] = 0
+    } else {
+      while palette.len() < ti + 1 {
+        palette.push(0)
+      }
+    }
+  }
+  let lit = d.byte()
+  if lit < 0 {
+    return Err(gerr("gif: reading image data: unexpected EOF"))
+  }
+  if lit < 2 || lit > 8 {
+    return Err(gerr("gif: pixel size in decode out of range: ${lit}"))
+  }
+  var src = compress.new_lzw_src(d.data, d.pos, true)
+  var dec = compress.new_lzw_dec(true, lit)
+  let n = w * h
+  let pix = dec.read(src, n)
+  if pix.len() < n {
+    if dec.err == compress.LZW_INVALID {
+      return Err(gerr("gif: reading image data: lzw: invalid code"))
+    }
+    return Err(gerr("gif: not enough image data"))
+  }
+  // Go reads one more byte of the decoder: any output left is too much
+  while true {
+    if dec.rp < dec.pend.len() {
+      return Err(gerr("gif: too much image data"))
+    }
+    if dec.err == compress.LZW_INVALID {
+      return Err(gerr("gif: reading image data: lzw: invalid code"))
+    }
+    if dec.err != 0 {
+      break
+    }
+    dec.batch(src)
+  }
+  let cl = src.close()
+  d.pos = src.pos
+  if cl == 1 {
+    return Err(gerr("gif: too much image data"))
+  }
+  if cl == 2 {
+    return Err(gerr("gif: reading image data: unexpected EOF"))
+  }
+  if palette.len() < 256 {
+    for x in pix {
+      if Int(x) >= palette.len() {
+        return Err(gerr("gif: invalid pixel value"))
+      }
+    }
+  }
+  var out = pix
+  if d.image_fields & 64 != 0 {
+    out = uninterlace(pix, w, h)
+  }
+  if keep_all || d.frames.len() == 0 {
+    d.frames.push(image.Image{width: w, height: h, model: image.Model.Paletted, pix: out, stride: w, palette: palette, min_x: left, min_y: top})
+    d.delay.push(d.delay_time)
+    d.disposal.push(d.disposal_method)
+  }
+  d.delay_time = 0
+  d.has_transparent = false
+  ()
+}
+
+fn (var d: Dec) header() -> () ! gif.GifErr {
+  if !d.full(13) {
+    return Err(gerr("gif: reading header: unexpected EOF"))
+  }
+  let vers = d.tmp[0..6]
+  if vers != b"GIF87a" && vers != b"GIF89a" {
+    return Err(gerr("gif: can't recognize format ${quote6(vers)}"))
+  }
+  d.width = u16(d.tmp, 6)
+  d.height = u16(d.tmp, 8)
+  let fields = Int(d.tmp[10])
+  if fields & 128 != 0 {
+    d.background_index = Int(d.tmp[11])
+    d.gct = d.color_table(fields)?
+    d.has_gct = true
+  }
+  ()
+}
+
+fn run(var d: Dec, config_only: Bool, keep_all: Bool) -> () ! gif.GifErr {
+  d.loop_count = -1
+  d.header()?
+  if config_only {
+    return ()
+  }
+  while true {
+    let c = d.byte()
+    if c < 0 {
+      return Err(gerr("gif: reading frames: unexpected EOF"))
+    }
+    if c == 33 {
+      d.extension()?
+    } else if c == 44 {
+      d.image_descriptor(keep_all)?
+      if !keep_all && d.frames.len() == 1 {
+        return ()
+      }
+    } else if c == 59 {
+      if d.frames.len() == 0 {
+        return Err(gerr("gif: missing image data"))
+      }
+      return ()
+    } else {
+      return Err(gerr("gif: unknown block type: 0x${hex2(c)}"))
+    }
+  }
+  ()
+}
+
+fn new_dec(data: Bytes, max_pixels: Int) -> Dec {
+  Dec{data: data, pos: 0, width: 0, height: 0, loop_count: -1, delay_time: 0, background_index: 0, disposal_method: 0, image_fields: 0, transparent_index: 0, has_transparent: false, gct: [], has_gct: false, delay: [], disposal: [], frames: [], max_pixels: max_pixels, tmp: b""}
+}
+
+fn decode(data: Bytes, max_pixels: Int) -> image.Image ! gif.GifErr {
+  var d = new_dec(data, max_pixels)
+  run(d, false, false)?
+  d.frames[0]
+}
+
+fn decode_all(data: Bytes, max_pixels: Int) -> gif.Gif ! gif.GifErr {
+  var d = new_dec(data, max_pixels)
+  run(d, false, true)?
+  gif.Gif{frames: d.frames, delay: d.delay, disposal: d.disposal, loop_count: d.loop_count, width: d.width, height: d.height, palette: d.gct, background_index: d.background_index}
+}
+
+fn decode_config(data: Bytes) -> gif.Config ! gif.GifErr {
+  var d = new_dec(data, -1)
+  run(d, true, false)?
+  gif.Config{width: d.width, height: d.height, palette: d.gct}
+}
+
+// ---- the encoder (Go's writer.go) ----
+
+/// Go's log2 of a palette length: bits.Len(x-1) - 1, 0 below 2.
+fn log2(x: Int) -> Int {
+  if x < 2 {
+    return 0
+  }
+  var n = 0
+  var v = x - 1
+  while v > 0 {
+    n += 1
+    v = v >> 1
+  }
+  n - 1
+}
+
+fn put16(var b: BytesBuilder, v: Int) {
+  b.write_le(v & 65535, 2)
+}
+
+/// Go's encodeColorTable: r, g, b of each entry as color.Color.RGBA() >> 8
+/// gives them (entries are not premultiplied: NRGBA.RGBA() scales them by
+/// the alpha), zero padded to 2^(size+1) entries.
+fn color_table(p: List[Int], size: Int) -> Bytes ! gif.GifErr {
+  if size >= 8 {
+    return Err(gerr("gif: cannot encode color table with more than 256 entries"))
+  }
+  var b = BytesBuilder.with_capacity(768)
+  for c in p {
+    let a = c & 255
+    for sh in [24, 16, 8] {
+      let v = ((c >> sh) & 255) * 257
+      b.write_le(((v * a) / 255) >> 8, 1)
+    }
+  }
+  let n = 1 << (size + 1)
+  for _ in p.len()..n {
+    b.write_le(0, 3)
+  }
+  b.freeze()
+}
+
+fn write_image_block(var out: BytesBuilder, g: gif.Gif, scr_w: Int, scr_h: Int, gct: Bytes, pm: image.Image, delay: Int, disposal: Int) -> () ! gif.GifErr {
+  if pm.palette.len() == 0 {
+    return Err(gerr("gif: cannot encode image block with empty palette"))
+  }
+  let w = pm.width
+  let h = pm.height
+  if pm.min_x < 0 || pm.min_x + w >= 65536 || pm.min_y < 0 || pm.min_y + h >= 65536 {
+    return Err(gerr("gif: image block is too large to encode"))
+  }
+  if pm.min_x < 0 || pm.min_y < 0 || pm.min_x + w > scr_w || pm.min_y + h > scr_h {
+    // an empty rectangle is inside any screen that contains its corner, as Rectangle.In says
+    if !(w == 0 || h == 0) {
+      return Err(gerr("gif: image block is out of bounds"))
+    }
+  }
+  var transparent = -1
+  var i = 0
+  for c in pm.palette {
+    if c & 255 == 0 {
+      transparent = i
+      break
+    }
+    i += 1
+  }
+  if delay > 0 || disposal != 0 || transparent != -1 {
+    out.write_le(33, 1)
+    out.write_le(249, 1)
+    out.write_le(4, 1)
+    let flags = (disposal << 2) & 255
+    out.write_le(if transparent != -1 { 1 | flags } else { flags }, 1)
+    put16(out, delay)
+    out.write_le(if transparent != -1 { transparent } else { 0 }, 1)
+    out.write_le(0, 1)
+  }
+  out.write_le(44, 1)
+  put16(out, pm.min_x)
+  put16(out, pm.min_y)
+  put16(out, w)
+  put16(out, h)
+  let padded = log2(pm.palette.len())
+  let local = color_table(pm.palette, padded)?
+  var use_global = false
+  if local.len() <= gct.len() {
+    let local_size = 3 * pm.palette.len()
+    if transparent >= 0 {
+      let tr = 3 * transparent
+      use_global = local[0..tr] == gct[0..tr] && local[tr + 3..local_size] == gct[tr + 3..local_size]
+    } else {
+      use_global = local[0..local_size] == gct[0..local_size]
+    }
+  }
+  if use_global {
+    out.write_le(0, 1)
+  } else {
+    out.write_le(128 | padded, 1)
+    out.write(local)
+  }
+  var lit = padded + 1
+  if lit < 2 {
+    lit = 2
+  }
+  out.write_le(lit, 1)
+  var pix = BytesBuilder.with_capacity(w * h)
+  let st = if pm.stride > 0 { pm.stride } else { w }
+  for y in 0..h {
+    pix.write(pm.pix[y * st..y * st + w])
+  }
+  let coded = match compress.lzw_lsb(pix.freeze(), lit) {
+    Ok(c) => c
+    Err(e) => return Err(gerr(e.msg))
+  }
+  var at = 0
+  while at < coded.len() {
+    let n = if coded.len() - at > 255 { 255 } else { coded.len() - at }
+    out.write_le(n, 1)
+    out.write(coded[at..at + n])
+    at += n
+  }
+  out.write_le(0, 1)
+  ()
+}
+
+fn encode_all(g: gif.Gif) -> Bytes ! gif.GifErr {
+  if g.frames.len() == 0 {
+    return Err(gerr("gif: must provide at least one image"))
+  }
+  if g.frames.len() != g.delay.len() {
+    return Err(gerr("gif: mismatched image and delay lengths"))
+  }
+  if g.disposal.len() != 0 && g.frames.len() != g.disposal.len() {
+    return Err(gerr("gif: mismatched image and disposal lengths"))
+  }
+  for f in g.frames {
+    if f.model != image.Model.Paletted {
+      return Err(gerr("gif: frames must be Paletted images"))
+    }
+  }
+  var scr_w = g.width
+  var scr_h = g.height
+  if g.width == 0 && g.height == 0 && g.palette.len() == 0 {
+    scr_w = g.frames[0].min_x + g.frames[0].width
+    scr_h = g.frames[0].min_y + g.frames[0].height
+  }
+  var out = BytesBuilder.with_capacity(1024)
+  out.write(b"GIF89a")
+  put16(out, scr_w)
+  put16(out, scr_h)
+  var gct = b""
+  if g.palette.len() > 0 {
+    let padded = log2(g.palette.len())
+    out.write_le(128 | padded, 1)
+    out.write_le(g.background_index & 255, 1)
+    out.write_le(0, 1)
+    gct = color_table(g.palette, padded)?
+    out.write(gct)
+  } else {
+    out.write_le(0, 3)
+  }
+  if g.frames.len() > 1 && g.loop_count >= 0 {
+    out.write(b"\x21\xff\x0bNETSCAPE2.0\x03\x01")
+    put16(out, g.loop_count)
+    out.write_le(0, 1)
+  }
+  var i = 0
+  for pm in g.frames {
+    let disposal = if g.disposal.len() != 0 { g.disposal[i] } else { 0 }
+    write_image_block(out, g, scr_w, scr_h, gct, pm, g.delay[i], disposal)?
+    i += 1
+  }
+  out.write_le(59, 1)
+  out.freeze()
+}
+
+fn encode(im: image.Image, num_colors0: Int) -> Bytes ! gif.GifErr {
+  if im.width >= 65536 || im.height >= 65536 {
+    return Err(gerr("gif: image is too large to encode"))
+  }
+  let num = if num_colors0 < 1 || num_colors0 > 256 { 256 } else { num_colors0 }
+  var pm = im
+  if im.model != image.Model.Paletted || im.palette.len() > num {
+    var dst = image.Image{width: im.width, height: im.height, model: image.Model.Paletted, pix: Bytes.zeroed(im.width * im.height), stride: im.width, palette: image.plan9()[0..num], min_x: im.min_x, min_y: im.min_y}
+    dst.floyd_steinberg(image.Rect{x0: im.min_x, y0: im.min_y, x1: im.min_x + im.width, y1: im.min_y + im.height}, im, im.min_x, im.min_y)
+    pm = dst
+  }
+  if pm.min_x != 0 || pm.min_y != 0 {
+    pm = image.Image{width: pm.width, height: pm.height, model: image.Model.Paletted, pix: pm.pix, stride: pm.stride, palette: pm.palette}
+  }
+  encode_all(gif.Gif{frames: [pm], delay: [0], disposal: [], loop_count: -1, width: im.width, height: im.height, palette: pm.palette, background_index: 0})
+}
+

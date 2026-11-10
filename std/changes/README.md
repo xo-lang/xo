@@ -83,3 +83,4 @@ entries yet.
 - [sqlite.md](sqlite.md): std/sqlite (spec/std.md 66)
 - [grpc.md](grpc.md): std/grpc (decision 0535)
 - [image.md](image.md): std/image (spec/std.md 75)
+- [gif.md](gif.md): std/gif (spec/std.md 76)
