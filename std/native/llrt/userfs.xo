@@ -147,6 +147,39 @@ pub interface UserStdio {
   fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
 }
 
+/// The Stdio an `Os` literal that leaves `stdio` out holds (decision
+/// 0585): output dropped, input at its end, no terminal.
+pub struct NoStdio {}
+
+fn (s: NoStdio) print(text: Str) uses stdio { let _ = text }
+fn (s: NoStdio) println(text: Str) uses stdio { let _ = text }
+fn (s: NoStdio) eprint(text: Str) uses stdio { let _ = text }
+fn (s: NoStdio) eprintln(text: Str) uses stdio { let _ = text }
+fn (s: NoStdio) write(data: Bytes) -> () ! IoErr uses stdio {
+  let _ = data
+  Ok(())
+}
+fn (s: NoStdio) read_line() -> Str? ! IoErr uses stdio { Ok(None) }
+fn (s: NoStdio) read_all() -> Str ! IoErr uses stdio { Ok("") }
+fn (s: NoStdio) lines() -> List[Str] ! IoErr uses stdio { Ok([]) }
+fn (s: NoStdio) stdin_is_tty() -> Bool uses stdio { false }
+fn (s: NoStdio) stdout_is_tty() -> Bool uses stdio { false }
+fn (s: NoStdio) stderr_is_tty() -> Bool uses stdio { false }
+fn (s: NoStdio) width() -> Int? uses stdio { None }
+fn (s: NoStdio) read_secret(prompt: Str) -> Str? ! IoErr uses stdio {
+  let _ = prompt
+  Ok(None)
+}
+fn (s: NoStdio) raw_input(on: Bool) -> Bool uses stdio {
+  let _ = on
+  false
+}
+fn (s: NoStdio) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio {
+  let _ = max
+  Ok(None)
+}
+fn (s: NoStdio) read_all_bytes() -> Bytes ! IoErr uses stdio { Ok(b"") }
+
 /// The Clock methods of a user value converted to Clock (decision 0307).
 pub interface UserClock {
   fn now(self) -> Time uses clock

@@ -14,6 +14,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 - An interface value's covariant effect argument widens: `Cred[fs.read]` is
   usable as `Cred[(fs.read, proc)]` (section 6.2, decision 0582).
+- An `Os` literal may leave out `fs`, `net`, `env`, `proc` and `stdio`:
+  each omitted field is its no-access value; `clock`, `rand` and `tasks`
+  stay required (section 6.3, decision 0585).
 
 ## Changes in 0.45
 
@@ -2818,6 +2821,21 @@ let tools = os.proc.only(["git"])
 processes to commands; a denied operation fails before any effect.
 `xo audit` (10.1) lists the attenuations whose arguments are constants
 and whether each capability passed into a dependency is attenuated.
+
+A program narrows what code may do by building an `Os` with a literal
+(decision 0307). A field the literal leaves out is that capability's
+no-access value (decision 0585): `fs` denies every read and write
+(`read_only().write_only()`), `net`, `env` and `proc` admit nothing
+(`only([])`), and `stdio` drops output and has no input and no terminal.
+`clock`, `rand` and `tasks` have no no-access value and must be written
+(`XO0403` otherwise). A written field is the value given, so leaving a
+field out can only take authority away; adding a field to `Os` never
+breaks a literal:
+
+```
+let plugin_os = Os{fs: os.fs.sub("plugins").read_only(), clock: os.clock, rand: os.rand, tasks: os.tasks}
+// plugin_os.net, .env, .proc deny; plugin_os.stdio is silent
+```
 
 A library cannot open a file or a socket unless it is handed a capability. A
 dependency's reach is visible in its signatures.

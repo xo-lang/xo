@@ -1,0 +1,7 @@
+// clock, rand and tasks have no no-access value (decision 0585): an Os
+// literal must write them; fs, net, env, proc and stdio may be left out.
+
+fn main(os: Os) {
+  let o = Os{rand: os.rand, tasks: os.tasks} // ERROR XO0403
+  o.stdio.println("x")
+}

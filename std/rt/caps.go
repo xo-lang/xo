@@ -1505,3 +1505,49 @@ func walkDirEntriesIn(tk *Task, fs Fs, dir string, visit func(*Task, DirEntry) R
 	}
 	return false, nil
 }
+
+// ---------------------------------------------------------------------------
+// No-access values (decision 0585): what an `Os { ... }` literal that leaves
+// a field out holds there. clock, rand and tasks have none (still required).
+
+// NoAccess_fs denies every read and write.
+func NoAccess_fs() Fs { return &realFs{readOnly: true, writeOnly: true} }
+
+// NoAccess_net dials and listens nowhere (only([])).
+func NoAccess_net() Net { return newOnlyNet(realNet{}, List[string]{}) }
+
+// NoAccess_env reads no variables (only([])).
+func NoAccess_env() Env { return newOnlyEnv(realEnv{}, List[string]{}) }
+
+// NoAccess_proc runs no commands (only([])).
+func NoAccess_proc() Proc { return newOnlyProc(realProc{}, List[string]{}) }
+
+// NoAccess_stdio drops output and has no input and no terminal.
+func NoAccess_stdio() Stdio { return noStdio{} }
+
+type noStdio struct{}
+
+func (noStdio) M_print(*Task, string)                    {}
+func (noStdio) M_println(*Task, string)                  {}
+func (noStdio) M_eprint(*Task, string)                   {}
+func (noStdio) M_eprintln(*Task, string)                 {}
+func (noStdio) M_write(*Task, Bytes) Result[Unit, IoErr] { return Ok[Unit, IoErr](Unit{}) }
+func (noStdio) M_read_line(*Task) Result[Option[string], IoErr] {
+	return Ok[Option[string], IoErr](None[string]())
+}
+func (noStdio) M_read_all(*Task) Result[string, IoErr] { return Ok[string, IoErr]("") }
+func (noStdio) M_lines(*Task) Result[List[string], IoErr] {
+	return Ok[List[string], IoErr](List[string]{})
+}
+func (noStdio) M_stdin_is_tty(*Task) bool   { return false }
+func (noStdio) M_stdout_is_tty(*Task) bool  { return false }
+func (noStdio) M_stderr_is_tty(*Task) bool  { return false }
+func (noStdio) M_width(*Task) Option[int64] { return None[int64]() }
+func (noStdio) M_read_secret(*Task, string) Result[Option[string], IoErr] {
+	return Ok[Option[string], IoErr](None[string]())
+}
+func (noStdio) M_raw_input(*Task, bool) bool { return false }
+func (noStdio) M_read_bytes(*Task, int64) Result[Option[Bytes], IoErr] {
+	return Ok[Option[Bytes], IoErr](None[Bytes]())
+}
+func (noStdio) M_read_all_bytes(*Task) Result[Bytes, IoErr] { return Ok[Bytes, IoErr]("") }

@@ -651,7 +651,10 @@ line, a clock that runs ahead, a read-only view) is used wherever the
 capability is expected (core 2.10, rule 2), and a program may
 build an `Os` with a literal, `Os{net: ..., fs: ..., stdio: ...}`, to
 hand code written against `Os` attenuated or wrapped capabilities. Both
-work the same on every backend (decision 0307).
+work the same on every backend (decision 0307). A field the literal
+leaves out denies everything (core 6.3, decision 0585): `fs`, `net`,
+`env`, `proc` and `stdio` may be omitted; `clock`, `rand` and `tasks`
+may not.
 
 ### 3.1 Fs (`uses fs.read` / `fs.write`)
 

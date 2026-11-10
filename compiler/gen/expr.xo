@@ -557,6 +557,9 @@ fn (var g: Gen) struct_lit(e: Expr) -> Str {
     if !fo.default.is_empty() {
       let d = g.field_default(obj, i, t)
       parts.push("${go_field(check.text(fo.name))}: ${g.box_if(boxed, d)}")
+    } else if g.c.is_prelude_os_obj(obj) && check.os_no_access(check.text(fo.name)) {
+      // an Os field left out: its no-access value (decision 0585)
+      parts.push("${go_field(check.text(fo.name))}: ${g.rt()}NoAccess_${check.text(fo.name)}()")
     }
   }
   let lit = "${gt}{${parts.join(", ")}}"

@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+fs read: true
+fs write: true
+env HOME: false, vars: 0
+net dial: true
+proc run: true
+stdin: true, tty: false
+written stdio prints
+fs omitted beside env written: true
+--- stderr

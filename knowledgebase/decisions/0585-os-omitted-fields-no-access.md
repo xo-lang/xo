@@ -1,8 +1,8 @@
 # 0585: An omitted `Os` field is its no-access value
 
-Status: Accepted (rule: owner, 2026-11-10, option B, relayed by the lead);
-the per-field values below are Proposed (Xo Lang 1, 2026-11-10) until
-implemented. Related: 0004 (effects and capabilities), 0156
+Status: Accepted (owner, 2026-11-10, option B, relayed by the lead; the
+values and the required clock, rand and tasks accepted as written the
+same day). Implemented 2026-11-10 (Xo Lang 1). Related: 0004 (effects and capabilities), 0156
 (attenuation), 0307 (user capabilities and `Os` literals), 0584 (adds
 `Os.secrets`, which relies on this).
 
@@ -20,9 +20,9 @@ program and library: the one compatibility hazard of growing `Os`.
 1. **Rule.** A field left out of an `Os { ... }` literal (and so of the
    native runtime's `OsFields` record it lowers to, decision 0307) is
    that capability's no-access value. A field written in the literal is
-   unchanged. Implemented as defaults on `Os`'s fields in
-   std/prelude.xo, so the checker's existing default rule applies and
-   `XO0403` still names a field that has no no-access value.
+   unchanged. The checker treats those fields as defaulted
+   (compiler/check types.xo `os_no_access`, used by the struct literal
+   check), so `XO0403` still names a field that has no no-access value.
 2. **Why least authority makes it safe.** An omitted field grants
    nothing: code given the literal can do no more than with a value
    attenuated to nothing (0156), so leaving a field out can only take
@@ -55,11 +55,13 @@ program and library: the one compatibility hazard of growing `Os`.
    the no-access value. `os` itself (main's parameter) is the runtime's
    full `Os`, never affected. `TestOs` is not an `Os` literal and keeps
    its fakes.
-6. **Backends.** Each no-access value is the program's root capability
-   attenuated as in the table (native: the llrt root records, Go: std/rt
-   root values, wasm the same), reached by declaration-only prelude
-   functions used as the defaults, so the default works in any function,
-   not only where main's `os` is in scope.
+6. **Backends.** The SSA builder's `os_lit` (compiler/ssa expr.xo
+   `os_no_access`, every native backend and wasm) fills an omitted field
+   inline: the root Fs with mode 6 (read-only and write-only), a Net,
+   Env or Proc whose lists are one empty list (as `only([])`), and a
+   Stdio holding std/native/llrt/userfs.xo's `NoStdio`. The Go backend's
+   struct literal (compiler/gen expr.xo) writes `rt.NoAccess_NAME()`
+   (std/rt caps.go), the same attenuations of its real values.
 
 ## Consequences
 

@@ -13,6 +13,19 @@
 
 `Int.max`, `Int.min`, `Int8.max` ... `UInt64.max` are type constants, declared in the prelude as constants documented `@static T.name` (core 4.6).
 
+## 2026-11-10: feature: an omitted Os literal field is its no-access value
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0584 adds `Os.secrets`, which would break every `Os { ... }` literal (decision 0585)
+- Go reference: none (capabilities are Xo's)
+- Test: internal/llvm golden os_literal_omitted; test/errorcheck os_literal_required
+- Compatibility: a literal that left out fs, net, env, proc or stdio was XO0403 and now compiles with that capability denied; clock, rand and tasks stay required
+- Timing: none
+- Shipped in: not yet released
+
+`Os { clock: os.clock, rand: os.rand, tasks: os.tasks }` compiles: fs denies every path, net, env and proc are `only([])`, and stdio discards output and reads end of input.
+
 ## 2026-11-09: fix: File.read_at and write_at keep the position on Windows
 
 - Kind: fix

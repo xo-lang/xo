@@ -2007,7 +2007,7 @@ fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldI
     c.need_tree(tw)
   }
   for fo in c.objs[obj].fields {
-    if !seen.contains(fo.name) && fo.default.is_empty() {
+    if !seen.contains(fo.name) && fo.default.is_empty() && !(c.is_prelude_os_obj(obj) && os_no_access(text(fo.name))) {
       missing.push(text(fo.name))
     }
   }

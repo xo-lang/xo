@@ -176,6 +176,18 @@ pub fn (c: Checker) is_prelude(t: Int, name: Str) -> Bool {
   o >= 0 && c.objs[o].module == c.prelude && c.objs[o].name == name.bytes()
 }
 
+/// Whether the prelude Os field name has a no-access value, which an
+/// `Os { ... }` literal that leaves the field out takes (decision 0585):
+/// clock, rand and tasks have none and stay required.
+pub fn os_no_access(name: Str) -> Bool {
+  name is "fs" | "net" | "env" | "proc" | "stdio"
+}
+
+/// Whether object o is the prelude's Os struct.
+pub fn (c: Checker) is_prelude_os_obj(o: Int) -> Bool {
+  o >= 0 && c.objs[o].module == c.prelude && c.objs[o].name == "Os".bytes()
+}
+
 pub fn (c: Checker) is_never(t: Int) -> Bool {
   c.is_prelude(t, "Never")
 }

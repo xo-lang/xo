@@ -1,0 +1,23 @@
+// An Os literal that leaves fields out (decision 0585): each omitted
+// field is its no-access value (an Fs denying reads and writes, a Net,
+// Env and Proc admitting nothing, a Stdio that drops output); clock, rand
+// and tasks are written, as they have no no-access value.
+
+fn probe(os: Os, out: Stdio) uses stdio, env, fs, net.dial, proc {
+  out.println("fs read: ${os.fs.read_text("/etc/hosts").is_err()}")
+  out.println("fs write: ${os.fs.write("xo-os-omitted-probe.txt", b"x").is_err()}")
+  out.println("env HOME: ${os.env.get("HOME").is_some()}, vars: ${os.env.vars().len()}")
+  out.println("net dial: ${os.net.dial("127.0.0.1:1").is_err()}")
+  out.println("proc run: ${os.proc.run("true", []).is_err()}")
+  os.stdio.println("dropped")
+  out.println("stdin: ${os.stdio.read_line() == Ok(None)}, tty: ${os.stdio.stdout_is_tty()}")
+}
+
+fn main(os: Os) {
+  let bare = Os{clock: os.clock, rand: os.rand, tasks: os.tasks}
+  probe(bare, os.stdio)
+  // a field written is unchanged
+  let some = Os{stdio: os.stdio, env: os.env.only(["HOME"]), clock: os.clock, rand: os.rand, tasks: os.tasks}
+  some.stdio.println("written stdio prints")
+  os.stdio.println("fs omitted beside env written: ${some.fs.read_text("/etc/hosts").is_err()}")
+}
