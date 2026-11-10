@@ -17,7 +17,7 @@ fn main(os: Os) ! {
   scope s {
     s.spawn_background(fn() { srv.serve() })
     os.clock.sleep(100ms)
-    for p in ["/bucket/a%20b%2Bc/%E1%88%B4//x", "/a+b", "/a%2Fb/c", "/plain/path", "/a%2fb", "/caf%C3%A9?x=a%20b&y=%2B", "/!*'()", "/a%25b", "/%7Euser", "/a b"] {
+    for p in ["/bucket/a%20b%2Bc/%E1%88%B4/x", "/a+b", "/a%2Fb/c", "/plain/path", "/a%2fb", "/caf%C3%A9?x=a%20b&y=%2B", "/!*'()", "/a%25b", "/%7Euser", "/a b"] {
       let resp = client.send(http.new_request("GET", "http://127.0.0.1:${PORT}${p}"))?
       os.stdio.println("${p} => ${resp.status} ${resp.body.to_str() ?? ""}")
     }

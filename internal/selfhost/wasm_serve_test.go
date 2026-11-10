@@ -32,7 +32,7 @@ func TestWasmComponentTargets(t *testing.T) {
 
 fn main(os: Os) {
   var r = http.router()
-  r.handle("GET /", fn(q: http.Request) -> http.Response { %s http.text(200, "hello") })
+  r.handle("GET /{$}", fn(q: http.Request) -> http.Response { %s http.text(200, "hello") })
   http.serve_component(r)
 }
 `

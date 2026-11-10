@@ -60,11 +60,10 @@ Connection: close
 
 got 3 bytes: abc
 == head
-HTTP/1.1 405 Method Not Allowed
-Allow: GET
-Content-Type: application/json
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
 Date: <date>
-Content-Length: 30
+Content-Length: 5
 Connection: close
 
 

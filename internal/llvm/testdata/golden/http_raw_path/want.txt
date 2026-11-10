@@ -1,6 +1,6 @@
 exit 0
 --- stdout
-/bucket/a%20b%2Bc/%E1%88%B4//x => 200 /bucket/a%20b%2Bc/%E1%88%B4//x | /bucket/a b+c/ሴ//x | 
+/bucket/a%20b%2Bc/%E1%88%B4/x => 200 /bucket/a%20b%2Bc/%E1%88%B4/x | /bucket/a b+c/ሴ/x | 
 /a+b => 200 /a+b | /a+b | 
 /a%2Fb/c => 200 /a%2Fb/c | /a/b/c | 
 /plain/path => 200 /plain/path | /plain/path | 

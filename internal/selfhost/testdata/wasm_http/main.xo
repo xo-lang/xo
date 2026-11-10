@@ -5,7 +5,7 @@ use std/http
 
 fn main(os: Os) {
   var r = http.router()
-  r.handle("GET /", fn(q: http.Request) -> http.Response { http.text(200, "hello") })
+  r.handle("GET /{$}", fn(q: http.Request) -> http.Response { http.text(200, "hello") })
   r.handle("GET /users/{id:Int}", fn(q: http.Request) -> http.Response {
     http.text(200, "user ${q.param_int("id")} x=${q.query("x") ?? "-"}")
   })

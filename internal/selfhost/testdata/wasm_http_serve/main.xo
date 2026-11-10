@@ -5,7 +5,7 @@ use std/http
 
 fn main(os: Os) {
   var r = http.router()
-  r.handle("GET /", fn(q: http.Request) -> http.Response { http.text(200, "hello") })
+  r.handle("GET /{$}", fn(q: http.Request) -> http.Response { http.text(200, "hello") })
   // past the 4096 bytes of one blocking-write-and-flush
   r.handle("GET /big", fn(q: http.Request) -> http.Response { http.text(200, "x".repeat(20000)) })
   r.handle("POST /echo", fn(q: http.Request) -> http.Response { http.text(200, "len ${q.body.len()}") })

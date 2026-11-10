@@ -419,7 +419,7 @@ func takesMethod(rm, m string) bool {
 // match is exact (not a subtree route matching more than its own trailing
 // slash; Go's exactMatch), and the methods of the routes that match the
 // path with another method.
-func (r Http_Router) pick(path, method string) (best *route, bestBad string, exact bool, allow []string) {
+func (r Http_Router) pick(path, method string, wantAllow bool) (best *route, bestBad string, exact bool, allow []string) {
 	var buf [16]string
 	parts := appendReqPieces(buf[:0], path)
 	bestScore := -1
@@ -429,6 +429,9 @@ func (r Http_Router) pick(path, method string) (best *route, bestBad string, exa
 			continue
 		}
 		if !takesMethod(rt.method, method) {
+			if !wantAllow {
+				continue
+			}
 			seen := false
 			for _, m := range allow {
 				if m == rt.method {
@@ -482,7 +485,7 @@ func muxRedirect(tk *Task, req Http_Request, loc string) Http_Response {
 // streams reports whether a request's route is a handle_stream route
 // (decision 0310): the server then leaves its body unread.
 func (r Http_Router) streams(method, p string) bool {
-	best, bad, _, _ := r.pick(cleanRequestPath(p), strings.ToUpper(method))
+	best, bad, _, _ := r.pick(cleanRequestPath(p), strings.ToUpper(method), false)
 	return best != nil && best.stream && bad == ""
 }
 
@@ -493,9 +496,9 @@ func (r Http_Router) streams(method, p string) bool {
 func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 	method := strings.ToUpper(req.F_method)
 	cp := cleanRequestPath(req.F_path)
-	best, bestBad, exact, allow := r.pick(cp, method)
+	best, bestBad, exact, _ := r.pick(cp, method, false)
 	if !exact && !strings.HasSuffix(cp, "/") {
-		if b2, _, e2, _ := r.pick(cp+"/", method); b2 != nil && e2 {
+		if b2, _, e2, _ := r.pick(cp+"/", method, false); b2 != nil && e2 {
 			return muxRedirect(tk, req, cp+"/")
 		}
 	}
@@ -503,10 +506,11 @@ func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 		return muxRedirect(tk, req, cp)
 	}
 	if best == nil {
+		_, _, _, allow := r.pick(cp, method, true)
 		// another method on the path, or on the path with a trailing slash
 		// (Go's matchingMethods): Allow sorted, HEAD after GET
 		if !strings.HasSuffix(cp, "/") {
-			_, _, _, more := r.pick(cp+"/", method)
+			_, _, _, more := r.pick(cp+"/", method, true)
 			for _, m := range more {
 				seen := false
 				for _, a := range allow {

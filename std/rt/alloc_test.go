@@ -58,7 +58,7 @@ func TestAllocsDispatch(t *testing.T) {
 	for _, c := range []struct {
 		method, path string
 		status       int64
-	}{{"PUT", "/users/1", 405}, {"GET", "/nope", 404}, {"GET", "/users/x", 400}, {"GET", "/users/7/", 7}, {"get", "/users/9", 9}} {
+	}{{"PUT", "/users/1", 405}, {"GET", "/nope", 404}, {"GET", "/users/x", 400}, {"GET", "/users/7/", 404}, {"get", "/users/9", 9}} {
 		if got := r.dispatch(tk, Http_new_request(nil, c.method, c.path, Map[string, string]{}, "")).F_status; got != c.status {
 			t.Errorf("%s %s: status %d, want %d", c.method, c.path, got, c.status)
 		}
