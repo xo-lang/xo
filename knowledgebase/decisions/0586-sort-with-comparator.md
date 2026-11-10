@@ -1,7 +1,7 @@
 # 0586: A comparator sort, `sort_with`, and descending order
 
-Status: Proposed (Xo Lang 1, 2026-11-10; owner tester feedback relayed by
-the lead). The owner decides; nothing is implemented before acceptance.
+Status: Accepted (owner, 2026-11-10, as written, relayed by the lead;
+proposed by Xo Lang 1 from owner tester feedback).
 Related: 0374 (`sort_in_place`), std.md 2 (List).
 
 ## Context

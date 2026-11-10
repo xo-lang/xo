@@ -1,9 +1,9 @@
 # 0587: Integer bounds as type constants: `Int.max`, `Int.min`, `UInt8.max`, ...
 
-Status: Proposed (Xo Lang 1, 2026-11-10; owner tester feedback relayed by
-the lead: `Int.min` gave three errors). Owner decides; std.md 1 says type
-constants (`Float.PI`, `Float.INF`) are "a later step", so this is a
-language change.
+Status: Accepted (owner, 2026-11-10, as written, relayed by the lead;
+proposed by Xo Lang 1 from owner tester feedback). The first case of `Int.min`
+gave three errors; std.md 1 called type constants (`Float.PI`, `Float.INF`)
+"a later step", so this is a language change.
 
 ## Context
 
