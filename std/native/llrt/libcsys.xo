@@ -40,6 +40,11 @@ fn nr(arm64: Int, amd64: Int) -> Int {
   }
 }
 
+/// nr, or FreeBSD's own number fb there (decision 0573 stage 2).
+fn nrf(arm64: Int, amd64: Int, fb: Int) -> Int {
+  if target.os == TargetOs.FreeBSD { fb } else { nr(arm64, amd64) }
+}
+
 fn sys(n: Int, a: Int, b: Int, c: Int, d: Int) -> Int { rt.sys6(n, a, b, c, d, 0, 0) }
 
 /// __errno_location: the address of the calling thread's errno.
@@ -76,7 +81,7 @@ pub fn exit(code: Int) {
 
 /// abort: SIGABRT to the process, then exit 134.
 pub fn abort() {
-  let _k = sys(nr(129, 62), sys(nr(172, 39), 0, 0, 0, 0), 6, 0, 0)
+  let _k = sys(nrf(129, 62, 37), sys(nrf(172, 39, 20), 0, 0, 0, 0), 6, 0, 0)
   exit(134)
 }
 
@@ -198,9 +203,9 @@ pub fn getentropy(p: Int, n: Int) -> Int {
   0
 }
 
-pub fn getpid() -> Int { sys(nr(172, 39), 0, 0, 0, 0) }
+pub fn getpid() -> Int { sys(nrf(172, 39, 20), 0, 0, 0, 0) }
 
-pub fn kill(pid: Int, sig: Int) -> Int { ret(sys(nr(129, 62), int(pid), int(sig), 0, 0)) }
+pub fn kill(pid: Int, sig: Int) -> Int { ret(sys(nrf(129, 62, 37), int(pid), int(sig), 0, 0)) }
 
 /// syscall(n, a, b, c, d, e, f): the variadic arguments are in the next
 /// registers (decision 0230).

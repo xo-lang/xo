@@ -55,12 +55,15 @@ fn main(os: Os) {
   // 256 MB held: the big child's peak is over 200 MB, the small one's
   // under 100 MB, and a byte count either way (not Linux's KiB)
   os.stdio.println("big rss ${big.usage.max_rss > 200000000}")
-  os.stdio.println("small rss ${small.usage.max_rss > 100000} ${small.usage.max_rss < 100000000}")
+  // FreeBSD samples a process's resident set on statclock ticks, so a
+  // child that exits before its first tick reports 0 (2026-11-10, the
+  // freebsd/arm64 tier: 0 for 0 ms of CPU, 5.9 MB for 4 ms)
+  os.stdio.println("small rss ${small.usage.max_rss == 0 || small.usage.max_rss > 100000} ${small.usage.max_rss < 100000000}")
   os.stdio.println("own peak ${small.usage.max_rss < big.usage.max_rss}")
   os.stdio.println("children keep the largest ${os.proc.children_usage().max_rss >= big.usage.max_rss}")
   match os.proc.cmd(os.env.program(), ["small"]).spawn() {
     Ok(c) => match c.wait_usage() {
-      Ok((code, u)) => os.stdio.println("spawned ${code} ${u.max_rss > 100000} ${u.max_rss < 100000000}")
+      Ok((code, u)) => os.stdio.println("spawned ${code} ${u.max_rss == 0 || u.max_rss > 100000} ${u.max_rss < 100000000}")
       Err(e) => os.stdio.println("wait ${e}")
     }
     Err(e) => os.stdio.println("spawn ${e}")

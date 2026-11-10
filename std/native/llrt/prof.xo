@@ -42,6 +42,7 @@
 // sampler) left off each stack, so a stack's leaf is the code that
 // allocated.
 use native/llrt/dwline
+use native/llrt/freebsd
 use native/llrt/heapos
 use native/llrt/heapprof
 use native/llrt/linux
@@ -155,7 +156,9 @@ fn map(n: Int) -> Int {
     TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
     // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
     TargetOs.Windows => sys_windows.VirtualAlloc(0, n, 12288, 4)
-    TargetOs.Wasi | TargetOs.FreeBSD => 0
+    // MAP_PRIVATE | MAP_ANON (0x1000)
+    TargetOs.FreeBSD => freebsd.mmap(0, n, 3, 2 | 4096, -1, 0)
+    TargetOs.Wasi => 0
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
@@ -197,7 +200,7 @@ pub fn start() {
     return
   }
   let win = match target.os {
-    TargetOs.Darwin | TargetOs.Linux => false
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.FreeBSD => false
     TargetOs.Windows => match target.arch {
       TargetArch.Amd64 => true
       TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => {
@@ -205,7 +208,7 @@ pub fn start() {
         return
       }
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => {
+    TargetOs.Wasi => {
       stdio.eprint("xo profile: XO_PROF=cpu is not supported on this target yet", true)
       return
     }
@@ -308,8 +311,8 @@ fn make_record(hz: Int) -> Int {
 /// (decision 0325): CPU profiles on linux and darwin.
 pub fn live_supported() -> Bool {
   match target.os {
-    TargetOs.Darwin | TargetOs.Linux => true
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.FreeBSD => true
+    TargetOs.Windows | TargetOs.Wasi => false
   }
 }
 
@@ -413,7 +416,11 @@ fn release_ring(r: Int) {
       TargetOs.Darwin => {
         let _a = sys_darwin.madvise(ld(r, R_RING), n, 5)
       }
-      TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+      // MADV_FREE 5
+      TargetOs.FreeBSD => {
+        let _a = freebsd.madvise(ld(r, R_RING), n, 5)
+      }
+      TargetOs.Windows | TargetOs.Wasi => {}
     }
   }
   st(r, R_DUR, 0)
@@ -579,7 +586,17 @@ fn handler(h: Int) {
       let _r = sys_darwin.sigaction(SIGPROF, sa, 0)
       rt.heap_release(sa - 8)
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+    TargetOs.FreeBSD => {
+      // sigaction(2) 416: the handler, the flags (4 bytes), the mask (16);
+      // SA_SIGINFO 0x40, SA_RESTART 2
+      let sa = rt.heap_large(32)
+      rt.mem_set(sa, 0, 32)
+      st(sa, 0, h)
+      rt.mem_store(sa, 8, if h == 1 { 0 } else { 64 | 2 }, 4)
+      let _r = rt.sys6(416, SIGPROF, sa, 0, 0, 0, 0)
+      rt.heap_release(sa - 8)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
   }
 }
 
@@ -607,7 +624,11 @@ fn timer(us: Int) {
       rt.mem_store(t, 28, 0, 4)
       let _r = sys_darwin.setitimer(ITIMER_PROF, t, 0)
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+    // setitimer(2) 83, Linux's struct itimerval
+    TargetOs.FreeBSD => {
+      let _r = rt.sys6(83, ITIMER_PROF, t, 0, 0, 0, 0)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
   }
   rt.heap_release(t - 8)
 }
@@ -787,7 +808,9 @@ fn build_raw(rc: Int, rh: Int) -> Raw {
     TargetOs.Linux => 1
     TargetOs.Darwin => 2
     TargetOs.Windows => 3
-    TargetOs.Wasi | TargetOs.FreeBSD => 4
+    TargetOs.Wasi => 4
+    // its own (decision 0573 stage 3: FreeBSD profiles are written now)
+    TargetOs.FreeBSD => 5
   }
   let arch_id = match target.arch {
     TargetArch.Arm64 => 1
@@ -951,7 +974,9 @@ pub fn expand_pid(path: Str) -> Str {
       }
       rt.sys6(nr, 0, 0, 0, 0, 0, 0)
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => 0
+    // getpid(2) 20
+    TargetOs.FreeBSD => rt.sys6(20, 0, 0, 0, 0, 0, 0)
+    TargetOs.Windows | TargetOs.Wasi => 0
   }
   path.replace("%p", "${pid}")
 }
@@ -1456,6 +1481,17 @@ pub fn write_file(path: Str, data: Bytes) -> Bool {
       let _c = linux.close(fd)
       w == 0
     }
+    TargetOs.FreeBSD => {
+      // O_WRONLY | O_CREAT 0x200 | O_EXCL 0x800 | O_NOFOLLOW 0x100 |
+      // O_CLOEXEC 0x100000, mode 0600
+      let fd = freebsd.open(path, 1 | 512 | 2048 | 256 | 1048576, 384)
+      if fd < 0 {
+        return false
+      }
+      let w = linux.write_all(fd, data)
+      let _c = linux.close(fd)
+      w == 0
+    }
     TargetOs.Darwin => {
       var z = BytesBuilder.with_capacity(path.len() + 1)
       z.write(path.bytes())
@@ -1490,7 +1526,7 @@ pub fn write_file(path: Str, data: Bytes) -> Bool {
       let _c = windows.close(h)
       w == 0
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => false
+    TargetOs.Wasi => false
   }
 }
 

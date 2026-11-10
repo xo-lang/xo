@@ -464,7 +464,8 @@ fn sysread(p: Int, n: Int, pd: Int) -> Int {
       }
       return WAIT
     }
-    let r = if darwin { sys_darwin_read(p, n) } else { rt.sys6(lnr(63, 0), 0, p, n, 0, 0, 0) }
+    // FreeBSD's read(2) is 3 (decision 0573: Linux's 63 there is SIGSYS)
+    let r = if darwin { sys_darwin_read(p, n) } else { rt.sys6(if target.os == TargetOs.FreeBSD { 3 } else { lnr(63, 0) }, 0, p, n, 0, 0, 0) }
     if r == -4 || r == 0 - eagain {
       continue
     }
@@ -568,7 +569,9 @@ pub fn isatty(fd: Int) -> Bool {
     TargetOs.Linux => rt.sys6(lnr(29, 16), fd, 21505, obj_scratch(), 0, 0, 0) == 0
     // the C runtime's _isatty: a character device
     TargetOs.Windows => Int(sys_windows.GetFileType(sys_windows.GetStdHandle(-10 - fd))) == 2
-    TargetOs.Wasi | TargetOs.FreeBSD => false
+    // TIOCGETA through ioctl(2) 54
+    TargetOs.FreeBSD => rt.sys6(54, fd, 1076655123, obj_scratch(), 0, 0, 0) == 0
+    TargetOs.Wasi => false
   }
 }
 
@@ -599,6 +602,8 @@ fn columns(fd: Int) -> Int {
     // TIOCGWINSZ: struct winsize {ws_row, ws_col, ...} (16 bit fields)
     TargetOs.Darwin => if Int(sys_darwin.ioctl(fd, 1074295912, b)) == 0 { rt.mem_load(b, 2, 2) } else { 0 }
     TargetOs.Linux => if rt.sys6(lnr(29, 16), fd, 21523, b, 0, 0, 0) == 0 { rt.mem_load(b, 2, 2) } else { 0 }
+    // FreeBSD's TIOCGWINSZ is Darwin's, through ioctl(2) 54
+    TargetOs.FreeBSD => if rt.sys6(54, fd, 1074295912, b, 0, 0, 0) == 0 { rt.mem_load(b, 2, 2) } else { 0 }
     TargetOs.Windows => {
       // CONSOLE_SCREEN_BUFFER_INFO: srWindow's Left at 10, Right at 14
       if Int(sys_windows.GetConsoleScreenBufferInfo(sys_windows.GetStdHandle(-10 - fd), b)) == 0 {
@@ -607,7 +612,7 @@ fn columns(fd: Int) -> Int {
       let w = i16(rt.mem_load(b, 14, 2)) - i16(rt.mem_load(b, 10, 2)) + 1
       if w > 0 { w } else { 0 }
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => 0
+    TargetOs.Wasi => 0
   }
 }
 

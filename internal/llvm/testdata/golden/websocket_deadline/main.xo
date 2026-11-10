@@ -37,11 +37,12 @@ fn main(os: Os) {
     })
   })
   // a peer that does not read: writes fill the socket buffers until the
-  // write deadline passes; the error sticks
+  // write deadline passes; the error sticks (8 KiB messages: FreeBSD's
+  // loopback buffers fill with one 64 KiB message, 2026-11-10)
   r.handle("GET /flood", fn(req) {
     websocket.upgrade(req, fn(c) {
       c.set_write_deadline(clock, Some(clock.now() + 200ms))
-      let chunk = Bytes.zeroed(65536)
+      let chunk = Bytes.zeroed(8192)
       var sent = 0
       while {
         match c.write(websocket.Message{kind: websocket.Kind.Binary, data: chunk}) {

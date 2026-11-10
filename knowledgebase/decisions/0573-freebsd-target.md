@@ -223,3 +223,22 @@ not.
   as nobody in a directory it owns, it passes too: 120 of 120 at
   2947ad02e (2026-11-10). Not run yet: arm64 FreeBSD, and the harness's
   other suites.
+- 2026-11-10, every LLVM golden in FreeBSD 14.5 VMs (the tier script
+  scripts/lead/freebsd-tier.sh: cross built on the Mac with the native
+  backend, run in a VM, stdout compared exactly): 642 of 642 on
+  freebsd/arm64 (QEMU with hvf on the Mac) and on freebsd/amd64 (KVM on
+  the amd64 host); four goldens need `use c` or the Linux-only C
+  runtime and do not build. Stage 3's fault reports and profiles came
+  with it: crash.xo's handlers through FreeBSD's sigaction (416), stack_t
+  and siginfo; unwind.xo's mcontext registers and the ELF unwind tables
+  (profiles and fault frames, std/debug's /profile answered 503 before);
+  prof.xo's SIGPROF and setitimer. The rest: Proc.pid/ppid/usage,
+  Fs.disk_usage (statfs 555), Net.interfaces (NET_RT_IFLIST),
+  unlinkat 503, a failed exec's exit and signal reset, and an audit of
+  linux.xo's calls with Linux-only numbers: same-argument calls take
+  FreeBSD's numbers, the others return ENOSYS rather than make another
+  call (gotchas/freebsd-linux-syscall-numbers.md; dns_records, which
+  faulted on freebsd/amd64 before the audit, passes after it). FreeBSD reports a child's
+  max_rss as 0 when it exits before its first clock tick (spec/std.md).
+  Left: asynchronous preemption (loops poll; design in the lead's
+  notes), `use c`'s libc numbers.

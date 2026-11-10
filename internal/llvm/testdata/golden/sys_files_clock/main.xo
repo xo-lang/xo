@@ -67,11 +67,12 @@ fn main(os: Os) ! {
   }
   // a file whose size statx gives as 0
   match target.os {
-    TargetOs.Linux | TargetOs.FreeBSD => {
+    TargetOs.Linux => {
       let st = os.fs.read_text("/proc/self/status")?
       out.println("proc ok ${st.len() > 512 && st.contains("Name:")}")
     }
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => out.println("proc ok true")
+    // FreeBSD mounts no procfs by default
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => out.println("proc ok true")
   }
   let t0 = os.clock.now()
   let t1 = os.clock.now()

@@ -347,10 +347,20 @@ fn spawn_linux(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, e
 /// writes the errno to wr and exits 127. Never returns.
 fn child(file: Int, dir: Int, argv: Int, envp: Int, inf: Int, outf: Int, errf: Int, b: Int, wr: Int) {
   // default signal handlers for SIGPIPE, SIGINT, SIGTERM; an empty mask
-  let _p = linux.rt_sigaction(13, b + 8, 0)
-  let _i = linux.rt_sigaction(2, b + 8, 0)
-  let _t = linux.rt_sigaction(15, b + 8, 0)
-  let _m = linux.rt_sigprocmask(2, b + 40, 0)
+  if target.os == TargetOs.FreeBSD {
+    // sigaction(2) 416 (a zeroed struct sigaction is SIG_DFL there too)
+    // and sigprocmask(2) 340 with SIG_SETMASK 3 over the 16 zero bytes at
+    // 40 (the errno word at 48 is still 0 here)
+    let _p = rt.sys6(416, 13, b + 8, 0, 0, 0, 0)
+    let _i = rt.sys6(416, 2, b + 8, 0, 0, 0, 0)
+    let _t = rt.sys6(416, 15, b + 8, 0, 0, 0, 0)
+    let _m = rt.sys6(340, 3, b + 40, 0, 0, 0, 0)
+  } else {
+    let _p = linux.rt_sigaction(13, b + 8, 0)
+    let _i = linux.rt_sigaction(2, b + 8, 0)
+    let _t = linux.rt_sigaction(15, b + 8, 0)
+    let _m = linux.rt_sigprocmask(2, b + 40, 0)
+  }
   var e = child_fd(inf, 0, b)
   if e == 0 {
     e = child_fd(outf, 1, b)
@@ -571,7 +581,8 @@ fn eagain(l: Int) -> Int {
   if l == 3 {
     return windows.EAGAIN
   }
-  if l == 2 { 35 } else { 11 }
+  // FreeBSD takes Linux's layer here, with the BSD errno (decision 0573)
+  if l == 2 || target.os == TargetOs.FreeBSD { 35 } else { 11 }
 }
 
 const EINTR = 4

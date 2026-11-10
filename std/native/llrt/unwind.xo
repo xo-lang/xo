@@ -330,7 +330,8 @@ pub fn trace(out: Int, max: Int) -> Int { trace_frames(out, max, 0) }
 /// the others are left over from frames below it.
 pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
   match target.os {
-    TargetOs.Linux | TargetOs.Darwin => {}
+    // FreeBSD: static ELF, the Linux walk (decision 0573 stage 3)
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.FreeBSD => {}
     TargetOs.Windows => match target.arch {
       TargetArch.Amd64 => {
         // the profiler's walk (win_walk) from this frame, the image found
@@ -347,7 +348,7 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
       }
       TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => return 0
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => return 0
+    TargetOs.Wasi => return 0
   }
   match target.arch {
     // riscv64 (decision 0571 stage 2): the CFI walk, as raise's
@@ -405,14 +406,15 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
 /// is a pc in prof_trace itself. No allocation, no lock.
 pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
   match target.os {
-    TargetOs.Linux | TargetOs.Darwin => {}
+    // FreeBSD: static ELF, the Linux walk (decision 0573 stage 3)
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.FreeBSD => {}
     TargetOs.Windows => {
       // from this frame's own context; its pc is a return address in
       // prof_trace
       sys_windows.RtlCaptureContext(s + W_CX)
       return win_walk(s, out, max, false)
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => return 0
+    TargetOs.Wasi => return 0
   }
   match target.arch {
     // riscv64 (decision 0571 stage 2): the CFI walk, as raise's
@@ -1892,7 +1894,8 @@ const PROF_SPAN = 67108864
 pub fn prof_init(s: Int) -> Bool {
   match target.os {
     TargetOs.Darwin => image(s, sys_darwin._dyld_get_image_header(0), s + H_MH)
-    TargetOs.Linux => {
+    // FreeBSD's executables are static ELF too (decision 0573 stage 3)
+    TargetOs.Linux | TargetOs.FreeBSD => {
       let hdr = eh_frame_hdr()
       rt.mem_store(s, H_HDR, hdr, 8)
       hdr != 0
@@ -1901,7 +1904,7 @@ pub fn prof_init(s: Int) -> Bool {
       TargetArch.Amd64 => win_image(s)
       TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => false
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => false
+    TargetOs.Wasi => false
   }
 }
 
@@ -1911,7 +1914,7 @@ pub fn prof_init(s: Int) -> Bool {
 pub fn prof_text(s: Int) -> (Int, Int) {
   match target.os {
     TargetOs.Darwin => (rt.mem_load(s, H_TLO, 8), rt.mem_load(s, H_THI, 8))
-    TargetOs.Linux => {
+    TargetOs.Linux | TargetOs.FreeBSD => {
       let ph = linux.auxval(linux.AT_PHDR)
       let n = linux.auxval(linux.AT_PHNUM)
       if ph == 0 {
@@ -1943,7 +1946,7 @@ pub fn prof_text(s: Int) -> (Int, Int) {
       (lo, hi)
     }
     TargetOs.Windows => (rt.mem_load(s, W_PLO, 8), rt.mem_load(s, W_PHI, 8))
-    TargetOs.Wasi | TargetOs.FreeBSD => (0, 0)
+    TargetOs.Wasi => (0, 0)
   }
 }
 
@@ -1962,10 +1965,7 @@ pub fn prof_text(s: Int) -> (Int, Int) {
 pub fn prof_walk(s: Int, uc: Int, out: Int, max: Int, lo: Int, hi: Int, fib: Int) -> Int {
   let darwin = match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
-    // FreeBSD's mcontext layout comes with decision 0573 stage 3: no
-    // frames until then
-    TargetOs.FreeBSD => return 0
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   let cur = s + REGS_A
   rt.mem_set(cur, 0, PC + 8)
@@ -2144,9 +2144,7 @@ pub const PC_AT = PC
 pub fn crash_regs(uc: Int, regs: Int) -> Bool {
   let darwin = match target.os {
     TargetOs.Darwin => true
-    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
-    // no layout until decision 0573 stage 3 (FreeBSD's mcontext)
-    TargetOs.FreeBSD => return false
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
   prof_regs(uc, regs, darwin)
 }
@@ -2155,6 +2153,9 @@ pub fn crash_regs(uc: Int, regs: Int) -> Bool {
 /// set regs (DWARF numbering, the pc at PC). Whether this target has a
 /// layout here.
 fn prof_regs(uc: Int, regs: Int, darwin: Bool) -> Bool {
+  if target.os == TargetOs.FreeBSD {
+    return freebsd_regs(uc, regs)
+  }
   if rv64() {
     // the kernel's ucontext: struct sigcontext at 176 (as arm64's), its
     // user_regs_struct the pc, then x1 to x31 in order
@@ -2223,6 +2224,48 @@ fn x64_darwin_reg(i: Int) -> Int {
 
 /// The DWARF number of word i of Linux's gregs (r8..r15 rdi rsi rbp rbx
 /// rdx rax rcx rsp).
+/// prof_regs on FreeBSD (decision 0573 stage 3): ucontext_t is the signal
+/// mask (16 bytes), then mcontext_t at 16. arm64: struct gpregs, x0 to
+/// x29, lr, sp, elr (the pc). amd64: mc_onstack, then rdi rsi rdx rcx r8
+/// r9 rax rbx rbp r10..r15 (words 1 to 15), mc_rip word 20, mc_rsp 23.
+fn freebsd_regs(uc: Int, regs: Int) -> Bool {
+  let m = uc + 16
+  if x64() {
+    for i in 1..16 {
+      rt.mem_store(regs, 8 * x64_freebsd_reg(i), rt.mem_load(m, 8 * i, 8), 8)
+    }
+    rt.mem_store(regs, 8 * 7, rt.mem_load(m, 8 * 23, 8), 8)
+    rt.mem_store(regs, PC, rt.mem_load(m, 8 * 20, 8), 8)
+    return true
+  }
+  if rv64() {
+    return false
+  }
+  for r in 0..31 {
+    rt.mem_store(regs, 8 * r, rt.mem_load(m, 8 * r, 8), 8)
+  }
+  rt.mem_store(regs, SP, rt.mem_load(m, 248, 8), 8)
+  rt.mem_store(regs, PC, rt.mem_load(m, 256, 8), 8)
+  true
+}
+
+/// The DWARF number of word i of FreeBSD's amd64 mcontext (1 rdi, 2 rsi,
+/// 3 rdx, 4 rcx, 5 r8, 6 r9, 7 rax, 8 rbx, 9 rbp, 10..15 r10..r15).
+fn x64_freebsd_reg(i: Int) -> Int {
+  match i {
+    1 => 5
+    2 => 4
+    3 => 1
+    4 => 2
+    5 => 8
+    6 => 9
+    7 => 0
+    8 => 3
+    9 => 6
+    _ => i
+  }
+}
+
 fn x64_linux_reg(i: Int) -> Int {
   match i {
     8 => 5

@@ -57,6 +57,13 @@ fn nr(arm64: Int, amd64: Int) -> Int {
   }
 }
 
+/// nr, or on FreeBSD its own number fb, for a call whose arguments and
+/// results FreeBSD's takes and gives as Linux's do (decision 0573 stage 3:
+/// a Linux number there is another call, or SIGSYS)
+fn nrf(arm64: Int, amd64: Int, fb: Int) -> Int {
+  if target.os == TargetOs.FreeBSD { fb } else { nr(arm64, amd64) }
+}
+
 /// read(2) into the bytes of buf from off on (at most n of them).
 pub fn read(fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
   // FreeBSD (decision 0573 stage 2): its own numbers (read 3, write 4,
@@ -158,6 +165,24 @@ pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
 /// f_frsize bytes (f_bsize before Linux 2.6).
 pub fn statfs(path: Str) -> (List[Int], Int) {
   let z = cpath(path)
+  if target.os == TargetOs.FreeBSD {
+    // statfs(2) 555 (FreeBSD 12's 64-bit inode ABI): f_bsize at 16,
+    // f_blocks 32, f_bfree 40, f_bavail 48, f_files 56, f_ffree 64 (a
+    // 2344 byte struct)
+    let fb = raw.bytes_buf(2400)
+    let fa = raw.bytes_addr(fb)
+    rt.mem_set(fa, 0, 2400)
+    let r = rt.sys6(555, raw.bytes_addr(z), fa, 0, 0, 0, 0)
+    keep(z, 0)
+    if r < 0 {
+      raw.alive(fb)
+      return ([], -r)
+    }
+    let bs = rt.mem_load(fa, 16, 8)
+    let out = [rt.mem_load(fa, 32, 8) * bs, rt.mem_load(fa, 40, 8) * bs, rt.mem_load(fa, 48, 8) * bs, rt.mem_load(fa, 56, 8), rt.mem_load(fa, 64, 8)]
+    raw.alive(fb)
+    return (out, 0)
+  }
   let buf = raw.bytes_buf(128)
   let a = raw.bytes_addr(buf)
   rt.mem_set(a, 0, 128)
@@ -190,7 +215,7 @@ pub fn fstat(fd: Int) -> (Stat, Int) {
 /// 28, stx_size at 40, stx_mtime at 112).
 fn statx(dirfd: Int, path_addr: Int, flags: Int) -> (Stat, Int) {
   let buf = obj.scratch()
-  let r = rt.sys6(nr(291, 332), dirfd, path_addr, flags, STATX_BASIC_STATS, buf, 0)
+  let r = if target.os == TargetOs.FreeBSD { -FB_ENOSYS } else { rt.sys6(nr(291, 332), dirfd, path_addr, flags, STATX_BASIC_STATS, buf, 0) }
   if r < 0 {
     return (Stat{mode: 0, size: 0, mtime: 0}, -r)
   }
@@ -348,25 +373,52 @@ fn elf_dynsym(base: Int, name: Str) -> Int {
 
 /// mmap(2): the address, or the negative errno.
 pub fn mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int {
+  if target.os == TargetOs.FreeBSD {
+    return rt.sys6(477, addr, len, prot, fb_map_flags(flags), fd, off)
+  }
   rt.sys6(nr(222, 9), addr, len, prot, flags, fd, off)
 }
 
+/// Linux mmap flags as FreeBSD's: MAP_SHARED 1, MAP_PRIVATE 2 and
+/// MAP_FIXED 0x10 alike; MAP_ANONYMOUS 0x20 is 0x1000, MAP_STACK 0x20000
+/// is 0x400, MAP_FIXED_NOREPLACE 0x100000 is MAP_FIXED | MAP_EXCL
+/// (0x4010), MAP_NORESERVE 0x4000 has no FreeBSD form (dropped).
+fn fb_map_flags(f: Int) -> Int {
+  let anon = if (f & 0x20) != 0 { 0x1000 } else { 0 }
+  let stack = if (f & 0x20000) != 0 { 0x400 } else { 0 }
+  let excl = if (f & 0x100000) != 0 { 0x4010 } else { 0 }
+  (f & 0x13) | anon | stack | excl
+}
+
+/// FreeBSD's ENOSYS (78), returned by the calls below on FreeBSD whose
+/// Linux number or struct has no same-argument FreeBSD call (decision
+/// 0573 stage 3): a Linux number there is another syscall (amd64 14,
+/// rt_sigprocmask, is FreeBSD's mknod).
+const FB_ENOSYS = 78
+
 /// munmap(2).
-pub fn munmap(addr: Int, len: Int) -> Int { rt.sys6(nr(215, 11), addr, len, 0, 0, 0, 0) }
+pub fn munmap(addr: Int, len: Int) -> Int { rt.sys6(nrf(215, 11, 73), addr, len, 0, 0, 0, 0) }
 
 /// madvise(2): the advice (MADV_DONTNEED 4 frees the pages of an anonymous
 /// mapping; they read as zeros after), 0 or the negative errno.
-pub fn madvise(addr: Int, len: Int, advice: Int) -> Int { rt.sys6(nr(233, 28), addr, len, advice, 0, 0, 0) }
+pub fn madvise(addr: Int, len: Int, advice: Int) -> Int {
+  if target.os == TargetOs.FreeBSD {
+    // FreeBSD 75: MADV_DONTNEED 4 as Linux, MADV_FREE 5 (Linux 8); other
+    // Linux advice (hugepages) has no FreeBSD form and is a hint: done
+    return if advice == 4 || advice == 8 { rt.sys6(75, addr, len, if advice == 8 { 5 } else { 4 }, 0, 0, 0) } else { 0 }
+  }
+  rt.sys6(nr(233, 28), addr, len, advice, 0, 0, 0)
+}
 
 /// mprotect(2).
-pub fn mprotect(addr: Int, len: Int, prot: Int) -> Int { rt.sys6(nr(226, 10), addr, len, prot, 0, 0, 0) }
+pub fn mprotect(addr: Int, len: Int, prot: Int) -> Int { rt.sys6(nrf(226, 10, 74), addr, len, prot, 0, 0, 0) }
 
 /// rt_sigaction(2) with the kernel's structures at the addresses act
 /// (0 for none) and old (0 for none): 0, or the negative errno.
-pub fn rt_sigaction(sig: Int, act: Int, old: Int) -> Int { rt.sys6(nr(134, 13), sig, act, old, 8, 0, 0) }
+pub fn rt_sigaction(sig: Int, act: Int, old: Int) -> Int { if target.os == TargetOs.FreeBSD { -FB_ENOSYS } else { rt.sys6(nr(134, 13), sig, act, old, 8, 0, 0) } }
 
 /// rt_sigprocmask(2) of the calling thread's 64 bit signal mask.
-pub fn rt_sigprocmask(how: Int, set: Int, old: Int) -> Int { rt.sys6(nr(135, 14), how, set, old, 8, 0, 0) }
+pub fn rt_sigprocmask(how: Int, set: Int, old: Int) -> Int { if target.os == TargetOs.FreeBSD { -FB_ENOSYS } else { rt.sys6(nr(135, 14), how, set, old, 8, 0, 0) } }
 
 /// futex(2) on the 32 bit word at addr: op (FUTEX_WAIT 0, FUTEX_WAKE 1,
 /// plus FUTEX_PRIVATE_FLAG 128), val, and the address of a timespec or
@@ -376,7 +428,9 @@ pub fn futex(addr: Int, op: Int, val: Int, timeout: Int) -> Int {
 }
 
 /// exit_group(2): ends the process with status code.
-pub fn exit_group(code: Int) -> Int { rt.sys6(nr(94, 231), code, 0, 0, 0, 0, 0) }
+/// FreeBSD: exit(2), 1 (its 231 is shmget, which returns: a failed exec's
+/// child ran on into the parent's code, golden proc_cmd on amd64, 2026-11-10)
+pub fn exit_group(code: Int) -> Int { rt.sys6(nrf(94, 231, 1), code, 0, 0, 0, 0, 0) }
 
 /// 8 random bytes at addr with no allocation: the kernel's AT_RANDOM
 /// bytes (16 at process start), else one getrandom; false on failure.
@@ -388,7 +442,7 @@ pub fn random_at(addr: Int) -> Bool {
       return true
     }
   }
-  rt.sys6(nr(278, 318), addr, 8, 0, 0, 0, 0) == 8
+  rt.sys6(nrf(278, 318, 563), addr, 8, 0, 0, 0, 0) == 8
 }
 
 /// getrandom(2) of n bytes (blocking until the pool is ready, as the C
@@ -397,7 +451,7 @@ pub fn random(n: Int) -> (Bytes, Int) {
   let buf = raw.bytes_buf(n)
   var off = 0
   while off < n {
-    let r = rt.sys6(nr(278, 318), raw.bytes_addr(buf) + off, n - off, 0, 0, 0, 0)
+    let r = rt.sys6(nrf(278, 318, 563), raw.bytes_addr(buf) + off, n - off, 0, 0, 0, 0)
     if r < 0 {
       if -r == EINTR {
         continue
@@ -415,6 +469,25 @@ pub fn random(n: Int) -> (Bytes, Int) {
 /// the negative errno. Stage 1 sets dispositions only; handlers written
 /// in Xo need a C ABI entry (decision 0206, stage 2).
 pub fn sigaction(sig: Int, handler: Int, flags: Int) -> Int {
+  if target.os == TargetOs.FreeBSD {
+    // FreeBSD's sigaction(2) (416) and struct sigaction (handler, an int
+    // of flags, the mask; no restorer: the kernel's trampoline), Linux's
+    // flags mapped (decision 0573 stage 3: notify and XO_PROF call this)
+    var fl = 0
+    if flags & 268435456 != 0 { fl = fl | freebsd.SA_RESTART }
+    if flags & 4 != 0 { fl = fl | freebsd.SA_SIGINFO }
+    if flags & 134217728 != 0 { fl = fl | freebsd.SA_ONSTACK }
+    let act = raw.bytes_buf(freebsd.SA_SIZE)
+    let old = raw.bytes_buf(freebsd.SA_SIZE)
+    rt.mem_store(raw.bytes_addr(act), freebsd.SA_HANDLER, handler, 8)
+    rt.mem_store(raw.bytes_addr(act), freebsd.SA_FLAGS_AT, fl, 4)
+    let r = freebsd.sigaction(sig, raw.bytes_addr(act), raw.bytes_addr(old))
+    keep(act, r)
+    if r < 0 {
+      return r
+    }
+    return rt.bytes_word(old, 0)
+  }
   // struct sigaction of the kernel: handler, flags, restorer, mask
   // (SA_RESTORER is 0x04000000); riscv64's is handler, flags, mask, and
   // the kernel returns through the vDSO's sigreturn
@@ -654,24 +727,24 @@ fn o_directory() -> Int {
 }
 
 /// read(2) of at most n bytes to the address a.
-pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(63, 0), fd, a, raw.io_len(n), 0, 0, 0) }
+pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nrf(63, 0, 3), fd, a, raw.io_len(n), 0, 0, 0) }
 
 /// pread64(2) of at most n bytes at offset off to the address a.
-pub fn pread_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(nr(67, 17), fd, a, raw.io_len(n), off, 0, 0) }
+pub fn pread_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(nrf(67, 17, 475), fd, a, raw.io_len(n), off, 0, 0) }
 
 /// pwrite64(2) of at most n bytes from the address a at offset off.
-pub fn pwrite_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(nr(68, 18), fd, a, raw.io_len(n), off, 0, 0) }
+pub fn pwrite_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(nrf(68, 18, 476), fd, a, raw.io_len(n), off, 0, 0) }
 
 /// ftruncate(2) of the descriptor fd to size bytes: 0, or -errno.
-pub fn ftruncate(fd: Int, size: Int) -> Int { rt.sys6(nr(46, 77), fd, size, 0, 0, 0, 0) }
+pub fn ftruncate(fd: Int, size: Int) -> Int { rt.sys6(nrf(46, 77, 480), fd, size, 0, 0, 0, 0) }
 
 /// sched_getaffinity(2) of the calling thread into the n bytes at a: the
 /// mask's bytes written, or -errno.
-pub fn sched_getaffinity(a: Int, n: Int) -> Int { rt.sys6(nr(123, 204), 0, n, a, 0, 0, 0) }
+pub fn sched_getaffinity(a: Int, n: Int) -> Int { if target.os == TargetOs.FreeBSD { -FB_ENOSYS } else { rt.sys6(nr(123, 204), 0, n, a, 0, 0, 0) } }
 
 /// sysinfo(2) into the struct sysinfo at p (112 bytes): totalram at 32,
 /// mem_unit (a u32) at 104.
-pub fn sysinfo(p: Int) -> Int { rt.sys6(nr(179, 99), p, 0, 0, 0, 0, 0) }
+pub fn sysinfo(p: Int) -> Int { if target.os == TargetOs.FreeBSD { -FB_ENOSYS } else { rt.sys6(nr(179, 99), p, 0, 0, 0, 0, 0) } }
 
 /// renameat(2) of a to b (as written: "" is no file, as for the C
 /// runtime's rename); renameat2 with no flags on riscv64, whose syscall
@@ -679,9 +752,13 @@ pub fn sysinfo(p: Int) -> Int { rt.sys6(nr(179, 99), p, 0, 0, 0, 0, 0) }
 pub fn rename(a: Str, b: Str) -> Int {
   let za = zpath(a)
   let zb = zpath(b)
-  let n = match target.arch {
-    TargetArch.Riscv64 => 276
-    _ => nr(38, 264)
+  let n = if target.os == TargetOs.FreeBSD {
+    501
+  } else {
+    match target.arch {
+      TargetArch.Riscv64 => 276
+      _ => nr(38, 264)
+    }
   }
   let r = rt.sys6(n, AT_FDCWD, raw.bytes_addr(za), AT_FDCWD, raw.bytes_addr(zb), 0, 0)
   keep(za, keep(zb, r))
@@ -692,20 +769,23 @@ pub fn rename(a: Str, b: Str) -> Int {
 /// reflinking filesystem): the bytes copied, 0 at the end of fin, or the
 /// negative errno (EXDEV, EINVAL and ENOSYS where the call is not served).
 pub fn copy_file_range(fin: Int, fout: Int, n: Int) -> Int {
-  rt.sys6(nr(285, 326), fin, 0, fout, 0, n, 0)
+  rt.sys6(nrf(285, 326, 569), fin, 0, fout, 0, n, 0)
 }
 
 /// unlinkat(2) of path, a directory when dir (rmdir).
 pub fn unlink(path: Str, dir: Bool) -> Int {
   let z = cpath(path)
-  let r = rt.sys6(nr(35, 263), AT_FDCWD, raw.bytes_addr(z), if dir { AT_REMOVEDIR } else { 0 }, 0, 0, 0)
+  // FreeBSD: unlinkat 503, AT_REMOVEDIR 0x800 (the Unix listener's socket
+  // file stayed after close: golden unix_kill, 2026-11-10)
+  let rd = if target.os == TargetOs.FreeBSD { 2048 } else { AT_REMOVEDIR }
+  let r = rt.sys6(nrf(35, 263, 503), AT_FDCWD, raw.bytes_addr(z), if dir { rd } else { 0 }, 0, 0, 0)
   keep(z, r)
 }
 
 /// mkdirat(2) of path with mode.
 pub fn mkdir(path: Str, mode: Int) -> Int {
   let z = cpath(path)
-  let r = rt.sys6(nr(34, 258), AT_FDCWD, raw.bytes_addr(z), mode, 0, 0, 0)
+  let r = rt.sys6(nrf(34, 258, 496), AT_FDCWD, raw.bytes_addr(z), mode, 0, 0, 0)
   keep(z, r)
 }
 
@@ -713,14 +793,14 @@ pub fn mkdir(path: Str, mode: Int) -> Int {
 pub fn utimens(path: Str, sec: Int, nsec: Int) -> Int {
   let z = cpath(path)
   let ts = words([sec, nsec, sec, nsec])
-  let r = rt.sys6(nr(88, 280), AT_FDCWD, raw.bytes_addr(z), raw.bytes_addr(ts), 0, 0, 0)
+  let r = rt.sys6(nrf(88, 280, 547), AT_FDCWD, raw.bytes_addr(z), raw.bytes_addr(ts), 0, 0, 0)
   keep(ts, keep(z, r))
 }
 
 /// fchmodat(2) of path (following links) to mode.
 pub fn chmod(path: Str, mode: Int) -> Int {
   let z = cpath(path)
-  let r = rt.sys6(nr(53, 268), AT_FDCWD, raw.bytes_addr(z), mode, 0, 0, 0)
+  let r = rt.sys6(nrf(53, 268, 490), AT_FDCWD, raw.bytes_addr(z), mode, 0, 0, 0)
   keep(z, r)
 }
 
@@ -728,7 +808,7 @@ pub fn chmod(path: Str, mode: Int) -> Int {
 pub fn symlink(target: Str, path: Str) -> Int {
   let zt = zpath(target)
   let zp = zpath(path)
-  let r = rt.sys6(nr(36, 266), raw.bytes_addr(zt), AT_FDCWD, raw.bytes_addr(zp), 0, 0, 0)
+  let r = rt.sys6(nrf(36, 266, 502), raw.bytes_addr(zt), AT_FDCWD, raw.bytes_addr(zp), 0, 0, 0)
   keep(zt, keep(zp, r))
 }
 
@@ -737,7 +817,7 @@ pub fn symlink(target: Str, path: Str) -> Int {
 pub fn readlink(path: Str) -> (Str, Int) {
   let z = zpath(path)
   let buf = raw.bytes_buf(4096)
-  let r = rt.sys6(nr(78, 267), AT_FDCWD, raw.bytes_addr(z), raw.bytes_addr(buf), 4096, 0, 0)
+  let r = rt.sys6(nrf(78, 267, 500), AT_FDCWD, raw.bytes_addr(z), raw.bytes_addr(buf), 4096, 0, 0)
   if keep(z, r) < 0 {
     return ("", -r)
   }
@@ -755,72 +835,98 @@ pub fn readlink(path: Str) -> (Str, Int) {
 
 /// clone(2) as fork (SIGCHLD only): the child's pid in the parent, 0 in
 /// the child, or the negative errno.
-pub fn fork() -> Int { rt.sys6(nr(220, 56), 17, 0, 0, 0, 0, 0) }
+pub fn fork() -> Int { rt.sys6(nrf(220, 56, 2), 17, 0, 0, 0, 0, 0) }
 
 /// nanosleep(2) for the timespec at ts (a child between fork and execve
 /// may call it: no allocation): 0, or the negative errno.
-pub fn nanosleep_at(ts: Int) -> Int { rt.sys6(nr(101, 35), ts, 0, 0, 0, 0, 0) }
+pub fn nanosleep_at(ts: Int) -> Int { rt.sys6(nrf(101, 35, 240), ts, 0, 0, 0, 0, 0) }
 
 /// pipe2(2) into the two 4 byte words at a: 0, or the negative errno.
-pub fn pipe2(a: Int, flags: Int) -> Int { rt.sys6(nr(59, 293), a, flags, 0, 0, 0, 0) }
+pub fn pipe2(a: Int, flags: Int) -> Int {
+  if target.os == TargetOs.FreeBSD {
+    return rt.sys6(542, a, fb_flags(flags), 0, 0, 0, 0)
+  }
+  rt.sys6(nr(59, 293), a, flags, 0, 0, 0, 0)
+}
 
 /// dup3(2): newfd, or the negative errno.
-pub fn dup3(fd: Int, newfd: Int, flags: Int) -> Int { rt.sys6(nr(24, 292), fd, newfd, flags, 0, 0, 0) }
+pub fn dup3(fd: Int, newfd: Int, flags: Int) -> Int {
+  if target.os == TargetOs.FreeBSD {
+    // no dup3 there: dup2(2) (90), then F_SETFD's close on exec
+    let r = rt.sys6(90, fd, newfd, 0, 0, 0, 0)
+    if r >= 0 && flags & O_CLOEXEC != 0 {
+      let _s = rt.sys6(92, newfd, 2, 1, 0, 0, 0)
+    }
+    return r
+  }
+  rt.sys6(nr(24, 292), fd, newfd, flags, 0, 0, 0)
+}
 
 /// fcntl(2) F_SETFD of fd: 0, or the negative errno.
-pub fn set_fd_flags(fd: Int, flags: Int) -> Int { rt.sys6(nr(25, 72), fd, 2, flags, 0, 0, 0) }
+pub fn set_fd_flags(fd: Int, flags: Int) -> Int { rt.sys6(nrf(25, 72, 92), fd, 2, flags, 0, 0, 0) }
 
 /// chdir(2) of the zero terminated path at a: 0, or the negative errno.
-pub fn chdir_at(a: Int) -> Int { rt.sys6(nr(49, 80), a, 0, 0, 0, 0, 0) }
+pub fn chdir_at(a: Int) -> Int { rt.sys6(nrf(49, 80, 12), a, 0, 0, 0, 0, 0) }
 
 /// openat(2) of the zero terminated path at a: the descriptor, or the
 /// negative errno.
-pub fn open_at(a: Int, flags: Int) -> Int { rt.sys6(nr(56, 257), AT_FDCWD, a, flags, 0, 0, 0) }
+pub fn open_at(a: Int, flags: Int) -> Int {
+  if target.os == TargetOs.FreeBSD {
+    return rt.sys6(499, AT_FDCWD, a, fb_flags(flags), 0, 0, 0)
+  }
+  rt.sys6(nr(56, 257), AT_FDCWD, a, flags, 0, 0, 0)
+}
 
 /// faccessat(2) of the zero terminated path at a: 0, or the negative
 /// errno.
-pub fn access_at(a: Int, mode: Int) -> Int { rt.sys6(nr(48, 269), AT_FDCWD, a, mode, 0, 0, 0) }
+pub fn access_at(a: Int, mode: Int) -> Int { rt.sys6(nrf(48, 269, 489), AT_FDCWD, a, mode, 0, 0, 0) }
 
 /// wait4(2) of pid, blocking (options 0) or WNOHANG (1), the status
 /// word not kept: the pid, 0, or the negative errno.
-pub fn wait4(pid: Int, options: Int) -> Int { rt.sys6(nr(260, 61), pid, 0, options, 0, 0, 0) }
+pub fn wait4(pid: Int, options: Int) -> Int { rt.sys6(nrf(260, 61, 7), pid, 0, options, 0, 0, 0) }
 
 /// wait4(2) of pid with its status in the 4 byte word at st, blocking
 /// (options 0) or WNOHANG (1): the pid, 0, or the negative errno.
-pub fn wait4_at(pid: Int, st: Int, options: Int) -> Int { rt.sys6(nr(260, 61), pid, st, options, 0, 0, 0) }
+pub fn wait4_at(pid: Int, st: Int, options: Int) -> Int { rt.sys6(nrf(260, 61, 7), pid, st, options, 0, 0, 0) }
 
 /// wait4_at with the child's struct rusage written at ru.
-pub fn wait4_ru(pid: Int, st: Int, options: Int, ru: Int) -> Int { rt.sys6(nr(260, 61), pid, st, options, ru, 0, 0) }
+pub fn wait4_ru(pid: Int, st: Int, options: Int, ru: Int) -> Int { rt.sys6(nrf(260, 61, 7), pid, st, options, ru, 0, 0) }
 
 /// execve(2): returns only on failure, the negative errno.
-pub fn execve(file: Int, argv: Int, envp: Int) -> Int { rt.sys6(nr(221, 59), file, argv, envp, 0, 0, 0) }
+pub fn execve(file: Int, argv: Int, envp: Int) -> Int { rt.sys6(nrf(221, 59, 59), file, argv, envp, 0, 0, 0) }
 
 /// kill(2) of signal sig to pid: 0, or the negative errno.
-pub fn kill(pid: Int, sig: Int) -> Int { rt.sys6(nr(129, 62), pid, sig, 0, 0, 0, 0) }
+pub fn kill(pid: Int, sig: Int) -> Int { rt.sys6(nrf(129, 62, 37), pid, sig, 0, 0, 0, 0) }
 
 /// getpid(2) (std/native/llrt/crash.xo).
-pub fn getpid() -> Int { rt.sys6(nr(172, 39), 0, 0, 0, 0, 0, 0) }
+pub fn getpid() -> Int { rt.sys6(nrf(172, 39, 20), 0, 0, 0, 0, 0, 0) }
 
 /// getrusage(2) of who (0 this process, -1 its waited children) into the
 /// struct rusage at buf (144 bytes; std/native/llrt/procid.xo): 0, or the
 /// negative errno.
-pub fn getrusage(who: Int, buf: Int) -> Int { rt.sys6(nr(165, 98), who, buf, 0, 0, 0, 0) }
+pub fn getrusage(who: Int, buf: Int) -> Int { rt.sys6(nrf(165, 98, 117), who, buf, 0, 0, 0, 0) }
 
 /// getppid(2) (std/native/llrt/procid.xo).
-pub fn getppid() -> Int { rt.sys6(nr(173, 110), 0, 0, 0, 0, 0, 0) }
+pub fn getppid() -> Int { rt.sys6(nrf(173, 110, 39), 0, 0, 0, 0, 0, 0) }
 
 /// sigaltstack(2) with the stack_t at ss (and old, or 0): 0, or the
 /// negative errno (std/native/llrt/crash.xo, decision 0343).
-pub fn sigaltstack(ss: Int, old: Int) -> Int { rt.sys6(nr(132, 131), ss, old, 0, 0, 0, 0) }
+pub fn sigaltstack(ss: Int, old: Int) -> Int { if target.os == TargetOs.FreeBSD { -FB_ENOSYS } else { rt.sys6(nr(132, 131), ss, old, 0, 0, 0, 0) } }
 
 /// setitimer(2): which (ITIMER_REAL 0), the struct itimerval at new and
 /// old (or 0): 0, or the negative errno.
-pub fn setitimer(which: Int, new: Int, old: Int) -> Int { rt.sys6(nr(103, 38), which, new, old, 0, 0, 0) }
+pub fn setitimer(which: Int, new: Int, old: Int) -> Int { rt.sys6(nrf(103, 38, 83), which, new, old, 0, 0, 0) }
 
 pub fn getcwd() -> Str {
   let buf = raw.bytes_buf(4096)
   let a = raw.bytes_addr(buf)
-  let r = rt.sys6(nr(17, 79), a, 4096, 0, 0, 0, 0)
+  var r = rt.sys6(nrf(17, 79, 326), a, 4096, 0, 0, 0, 0)
+  if target.os == TargetOs.FreeBSD && r == 0 {
+    r = 1
+    while r < 4096 && rt.mem_load(a, r - 1, 1) != 0 {
+      r += 1
+    }
+  }
   if r <= 1 || rt.mem_load(a, 0, 1) != 47 {
     keep(buf, 0)
     return "."
@@ -832,7 +938,7 @@ pub fn getcwd() -> Str {
 }
 
 /// flock(2) of fd with op.
-pub fn flock(fd: Int, op: Int) -> Int { rt.sys6(nr(32, 73), fd, op, 0, 0, 0, 0) }
+pub fn flock(fd: Int, op: Int) -> Int { rt.sys6(nrf(32, 73, 131), fd, op, 0, 0, 0, 0) }
 
 /// The entries of the directory path (not `.` and `..`, in the order
 /// getdents64(2) gives) and 0, or the errno of its open or of a failed
@@ -851,7 +957,7 @@ pub fn names(path: Str) -> (List[Str], Int) {
   let buf = raw.bytes_buf(16352)
   let a = raw.bytes_addr(buf)
   while true {
-    let n = rt.sys6(nr(61, 217), fd, a, 16352, 0, 0, 0)
+    let n = if target.os == TargetOs.FreeBSD { -FB_ENOSYS } else { rt.sys6(nr(61, 217), fd, a, 16352, 0, 0, 0) }
     if n == -EINTR {
       continue
     }
@@ -898,7 +1004,7 @@ pub fn entries(path: Str) -> (List[Str], Int) {
   let buf = raw.bytes_buf(16352)
   let a = raw.bytes_addr(buf)
   while true {
-    let n = rt.sys6(nr(61, 217), fd, a, 16352, 0, 0, 0)
+    let n = if target.os == TargetOs.FreeBSD { -FB_ENOSYS } else { rt.sys6(nr(61, 217), fd, a, 16352, 0, 0, 0) }
     if n == -EINTR {
       continue
     }

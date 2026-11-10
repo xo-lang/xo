@@ -26,7 +26,8 @@ fn st(a: Int, off: Int, v: Int) { rt.mem_store(a, off, v, 8) }
 fn install(i: Int, h: Int) {
   let sig = poll.sig_number(i)
   match target.os {
-    TargetOs.Linux => {
+    TargetOs.Linux | TargetOs.FreeBSD => {
+      // FreeBSD: linux.sigaction gives FreeBSD's call and struct there
       let _r = linux.sigaction(sig, h, if h == SIG_DFL { 0 } else { SA_RESTART_LINUX })
     }
     TargetOs.Darwin => {

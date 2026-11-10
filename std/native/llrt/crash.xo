@@ -34,6 +34,7 @@
 // Off with XO_CRASH_REPORT=0, and in sanitizer builds (their runtimes
 // report faults themselves). wasi and windows/arm64 have none.
 use native/llrt/crashfile
+use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/process
 use native/llrt/prof
@@ -131,7 +132,24 @@ fn windows() -> Bool {
   }
 }
 
-fn sigbus() -> Int { if darwin() { SIGBUS_DARWIN } else { SIGBUS_LINUX } }
+/// Whether the signal structures are the BSDs' (macOS and FreeBSD):
+/// siginfo's si_addr at 24 and si_code SI_USER 0x10001, stack_t ss_sp,
+/// ss_size, ss_flags, SIGBUS 10 (decision 0573 stage 3).
+fn bsd() -> Bool {
+  match target.os {
+    TargetOs.Darwin | TargetOs.FreeBSD => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
+}
+
+fn is_freebsd() -> Bool {
+  match target.os {
+    TargetOs.FreeBSD => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.Darwin => false
+  }
+}
+
+fn sigbus() -> Int { if bsd() { SIGBUS_DARWIN } else { SIGBUS_LINUX } }
 
 /// The crash record, or 0.
 fn record() -> Int { ld(rt.static_word(W_CRASH), 0) }
@@ -143,7 +161,9 @@ fn map(n: Int) -> Int {
     TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
     // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
     TargetOs.Windows => sys_windows.VirtualAlloc(0, n, 12288, 4)
-    TargetOs.Wasi | TargetOs.FreeBSD => 0
+    // MAP_PRIVATE | MAP_ANON (0x1000)
+    TargetOs.FreeBSD => freebsd.mmap(0, n, 3, 2 | 4096, -1, 0)
+    TargetOs.Wasi => 0
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
@@ -180,7 +200,15 @@ fn set(r: Int, sig: Int, h: Int, flags: Int) {
       }
       let _r = linux.rt_sigaction(sig, sa, 0)
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+    TargetOs.FreeBSD => {
+      // sigaction(2) 416: the handler, the flags (4 bytes), the mask (16);
+      // no restorer (the kernel's signal trampoline calls sigreturn)
+      st(sa, 0, h)
+      rt.mem_store(sa, 8, flags, 4)
+      rt.mem_set(sa + 12, 0, 20)
+      let _r = rt.sys6(416, sig, sa, 0, 0, 0, 0)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
   }
 }
 
@@ -188,7 +216,7 @@ fn set(r: Int, sig: Int, h: Int, flags: Int) {
 /// SA_NODEFER (a fault inside the report, or the watchdog's signal, is
 /// not held back while the handler runs).
 fn flags() -> Int {
-  if darwin() {
+  if bsd() {
     64 | 1 | 4 | 16
   } else {
     4 | 134217728 | 2147483648 | 1073741824
@@ -200,12 +228,12 @@ fn flags() -> Int {
 /// sanitizer runs.
 pub fn install() {
   match target.os {
-    TargetOs.Linux | TargetOs.Darwin => {}
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.FreeBSD => {}
     TargetOs.Windows => match target.arch {
       TargetArch.Amd64 => {}
       TargetArch.Arm64 | TargetArch.Riscv64 | TargetArch.Wasm32 => return
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => return
+    TargetOs.Wasi => return
   }
   let v = process.env_real_at("XO_CRASH_REPORT")
   if v != 0 && rt.mem_load(v, 0, 1) == 48 && rt.mem_load(v, 1, 1) == 0 {
@@ -363,6 +391,12 @@ pub fn thread_init() {
     st(m, 16, 0)
     let _s = sys_darwin.sigaltstack(m, 0)
     let _p = sys_darwin.mprotect(m, GUARD, 0)
+  } else if is_freebsd() {
+    // FreeBSD's stack_t is macOS's; sigaltstack(2) 53
+    st(m, 8, ALT)
+    st(m, 16, 0)
+    let _s = rt.sys6(53, m, 0, 0, 0, 0, 0)
+    let _p = freebsd.mprotect(m, GUARD, 0)
   } else {
     st(m, 8, 0)
     st(m, 16, ALT)
@@ -711,7 +745,7 @@ fn phase1(r: Int, sig: Int, info: Int, uc: Int) {
   // a stack overflow says so first (as Windows' on_overflow and the Go
   // backend); the signal's line follows, and its default action still
   // ends the program
-  if on_guard(sig, ld(info, if darwin() { 24 } else { 16 })) {
+  if on_guard(sig, ld(info, if bsd() { 24 } else { 16 })) {
     w_str(r, "fatal error: stack overflow\n")
   }
   w_str(r, "fatal error: ")
@@ -723,7 +757,7 @@ fn phase1(r: Int, sig: Int, info: Int, uc: Int) {
   w_str(r, ")")
   if sig == SIGSEGV || sig == sigbus() {
     w_str(r, " at address ")
-    w_hex(r, ld(info, if darwin() { 24 } else { 16 }))
+    w_hex(r, ld(info, if bsd() { 24 } else { 16 }))
   }
   w_str(r, "\n")
   let regs = r + R_REGS
@@ -881,7 +915,7 @@ fn sleep(r: Int) {
 /// 0x10001 on macOS), SI_QUEUE, or Linux's SI_TKILL (negative codes).
 fn user_sent(info: Int) -> Bool {
   let code = s32(rt.mem_load(info, 8, 4))
-  if darwin() {
+  if bsd() {
     code == 65537 || code == 65538
   } else {
     code <= 0

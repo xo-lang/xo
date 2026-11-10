@@ -1,7 +1,8 @@
 // Net.interfaces (decision 0426): the host's network interfaces with
 // their addresses, as Go's net.Interfaces and Interface.Addrs. Linux asks
 // the kernel over a NETLINK_ROUTE socket (RTM_GETLINK, RTM_GETADDR; Go's
-// interface_linux.go), macOS reads getifaddrs(3), Windows
+// interface_linux.go), macOS reads getifaddrs(3), FreeBSD the routing
+// sysctl NET_RT_IFLIST (Go's x/net/route, interface_bsd.go), Windows
 // GetAdaptersAddresses (Go's interface_windows.go); WASI has none.
 
 use native/llrt/raw
@@ -17,7 +18,8 @@ pub fn interfaces() -> (List[NetInterface], Str) {
     TargetOs.Linux => linux_ifaces()
     TargetOs.Darwin => darwin_ifaces()
     TargetOs.Windows => windows_ifaces()
-    TargetOs.Wasi | TargetOs.FreeBSD => ([], "network interfaces are not supported on this system")
+    TargetOs.FreeBSD => freebsd_ifaces()
+    TargetOs.Wasi => ([], "network interfaces are not supported on this system")
   }
 }
 
@@ -358,6 +360,157 @@ fn darwin_ifaces() -> (List[NetInterface], Str) {
     p = rt.mem_load(p, 0, 8)
   }
   sys_darwin.freeifaddrs(head)
+  (sorted(out), "")
+}
+
+// ---------------------------------------------------------------------------
+// FreeBSD: sysctl {CTL_NET, PF_ROUTE, 0, AF_UNSPEC, NET_RT_IFLIST, 0}
+
+/// The routing messages of NET_RT_IFLIST, or the empty Bytes and the
+/// error's text: __sysctl(2) (202) for the size, then the data, again
+/// while it grows (ENOMEM 12).
+fn freebsd_iflist() -> (Bytes, Str) {
+  let mb = raw.bytes_buf(32)
+  let mib = raw.bytes_addr(mb)
+  let vals = [4, 17, 0, 0, 3, 0]
+  for (i, v) in vals.indexed() {
+    rt.mem_store(mib, 4 * i, v, 4)
+  }
+  let lb = raw.bytes_buf(8)
+  let lp = raw.bytes_addr(lb)
+  for _ in 0..8 {
+    rt.mem_store(lp, 0, 0, 8)
+    let r0 = rt.sys6(202, mib, 6, 0, lp, 0, 0)
+    if r0 < 0 {
+      raw.alive(mb)
+      raw.alive(lb)
+      return (b"", "sysctl NET_RT_IFLIST failed")
+    }
+    let n = rt.mem_load(lp, 0, 8) + 1024
+    let buf = raw.bytes_buf(n)
+    rt.mem_store(lp, 0, n, 8)
+    let r = rt.sys6(202, mib, 6, raw.bytes_addr(buf), lp, 0, 0)
+    if r == 0 {
+      let got = rt.mem_load(lp, 0, 8)
+      raw.alive(mb)
+      raw.alive(lb)
+      return (buf[0..got], "")
+    }
+    if r != -12 {
+      break
+    }
+  }
+  raw.alive(mb)
+  raw.alive(lb)
+  (b"", "sysctl NET_RT_IFLIST failed")
+}
+
+/// The sockaddrs after a routing message's header at a + off, in RTA_
+/// bit order of the mask addrs (each rounded up to 8 bytes, an empty one
+/// 8): the address of each bit's sockaddr (0 when absent), 8 entries.
+fn rt_addrs(a: Int, off: Int, end: Int, addrs: Int) -> List[Int] {
+  var out = [0, 0, 0, 0, 0, 0, 0, 0]
+  var p = a + off
+  for i in 0..8 {
+    if addrs & (1 << i) == 0 || p >= a + end {
+      continue
+    }
+    out[i] = p
+    let l = rt.mem_load(p, 0, 1)
+    p += if l == 0 { 8 } else { (l + 7) & -8 }
+  }
+  out
+}
+
+fn freebsd_ifaces() -> (List[NetInterface], Str) {
+  let (b, err) = freebsd_iflist()
+  if err != "" {
+    return ([], err)
+  }
+  let a = raw.bytes_addr(b)
+  var out: List[NetInterface] = []
+  var off = 0
+  // RTM_IFINFO (14), if_msghdr: ifm_msglen 0 (u16), ifm_type 3,
+  // ifm_addrs 4, ifm_flags 8, ifm_index 12 (u16), if_data at 16
+  // (ifi_mtu at 8), the sockaddrs at 168 (Go's sizeofIfMsghdrFreeBSD11)
+  while off + 4 <= b.len() {
+    let len = rt.mem_load(a, off, 2)
+    if len == 0 {
+      break
+    }
+    if rt.mem_load(a, off + 3, 1) == 14 {
+      let m = a + off
+      let sas = rt_addrs(m, 168, len, rt.mem_load(m, 4, 4))
+      // RTA_IFP (16, bit 4): the sockaddr_dl (sdl_nlen 5, sdl_alen 6,
+      // sdl_data 8: the name, then the address)
+      let sa = sas[4]
+      var name = ""
+      var hw = ""
+      if sa != 0 {
+        let nlen = rt.mem_load(sa, 5, 1)
+        name = raw.str_at(sa + 8, nlen)
+        hw = hw_text(sa + 8 + nlen, rt.mem_load(sa, 6, 1))
+      }
+      out.push(NetInterface{index: rt.mem_load(m, 12, 2), name: name, mtu: rt.mem_load(m, 24, 4) & 4294967295, hardware_addr: hw, flags: flags_of(rt.mem_load(m, 8, 4) & 4294967295, 32768), addrs: []})
+    }
+    off += len
+  }
+  off = 0
+  // RTM_NEWADDR (12), ifa_msghdr: ifam_addrs 4, ifam_index 12 (u16), the
+  // sockaddrs at 20 (Go's sizeofIfaMsghdrFreeBSD10); RTA_NETMASK (bit 2)
+  // and RTA_IFA (bit 5)
+  while off + 4 <= b.len() {
+    let len = rt.mem_load(a, off, 2)
+    if len == 0 {
+      break
+    }
+    if rt.mem_load(a, off + 3, 1) == 12 {
+      let m = a + off
+      let sas = rt_addrs(m, 20, len, rt.mem_load(m, 4, 4))
+      let sa = sas[5]
+      let mask = sas[2]
+      if sa != 0 {
+        // AF_INET 2: the address at 4; AF_INET6 28: at 8
+        let fam = rt.mem_load(sa, 1, 1)
+        let (ao, alen) = if fam == 2 { (4, 4) } else if fam == 28 { (8, 16) } else { (0, 0) }
+        if alen > 0 {
+          // the netmask's sockaddr may be short (sa_len): missing bytes are 0
+          var bits = 0
+          if mask != 0 {
+            let ml = rt.mem_load(mask, 0, 1)
+            for i in 0..alen {
+              if ao + i < ml {
+                var v = rt.mem_load(mask, ao + i, 1)
+                while v != 0 {
+                  bits += v & 1
+                  v = v >> 1
+                }
+              }
+            }
+          }
+          let ab = raw.bytes_buf(16)
+          let ad = raw.bytes_addr(ab)
+          rt.mem_copy(ad, sa + ao, alen)
+          if alen == 16 && rt.mem_load(ad, 0, 1) == 254 && (rt.mem_load(ad, 1, 1) & 192) == 128 {
+            // the KAME scope in bytes 2 and 3 of a link-local address
+            rt.mem_store(ad, 2, 0, 2)
+          }
+          let text = cidr(ad, alen, bits)
+          raw.alive(ab)
+          let ix = rt.mem_load(m, 12, 2)
+          for i in 0..out.len() {
+            if out[i].index == ix {
+              var x = out[i]
+              x.addrs.push(text)
+              out[i] = x
+            }
+          }
+        }
+      }
+    }
+    off += len
+  }
+  raw.alive(b)
   (sorted(out), "")
 }
 

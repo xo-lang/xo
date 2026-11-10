@@ -1241,7 +1241,8 @@ pub fn sig_index(sig: Int) -> Int {
   if s == 15 { return SIG_TERM }
   if s == 28 { return SIG_WINCH }
   match target.os {
-    TargetOs.Darwin => {
+    TargetOs.Darwin | TargetOs.FreeBSD => {
+      // the BSD numbers (decision 0573 stage 3: FreeBSD's are Darwin's)
       if s == 30 { return SIG_USR1 }
       if s == 31 { return SIG_USR2 }
     }
@@ -1260,8 +1261,8 @@ pub fn sig_number(i: Int) -> Int {
     1 => 2
     2 => 3
     3 => 15
-    4 => if target.os is TargetOs.Darwin { 30 } else { 10 }
-    5 => if target.os is TargetOs.Darwin { 31 } else { 12 }
+    4 => if target.os is TargetOs.Darwin | TargetOs.FreeBSD { 30 } else { 10 }
+    5 => if target.os is TargetOs.Darwin | TargetOs.FreeBSD { 31 } else { 12 }
     _ => 28
   }
 }

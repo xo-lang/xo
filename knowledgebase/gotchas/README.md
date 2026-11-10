@@ -1265,3 +1265,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [freebsd-sock-linux-errnos.md](freebsd-sock-linux-errnos.md): sock.xo returns Linux's errnos and sockaddrs on FreeBSD; callers' per-OS arms match FreeBSD with Linux, not Darwin (Observed)
 - [fix-infix-precedence.md](fix-infix-precedence.md): `xo check --fix` wrote `x.or(0) + 1` as `x ?? 0 + 1` (`x ?? (0 + 1)`); fixes producing infix text use habits.xo infix_at; vet XO0542
 - [go-rt-prelude-enum-methods-value-receiver.md](go-rt-prelude-enum-methods-value-receiver.md): a prelude enum's hand written Go methods need value receivers (call results are not addressable)
+- [freebsd-linux-syscall-numbers.md](freebsd-linux-syscall-numbers.md): Observed 2026-11-10: a Linux syscall number reaching FreeBSD is SIGSYS or another call (exit_group 231 = shmget returned; use nrf)

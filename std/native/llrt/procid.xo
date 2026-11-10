@@ -13,9 +13,9 @@ use native/sys_windows
 pub fn pid() -> Int {
   match target.os {
     TargetOs.Darwin => Int(sys_darwin.getpid())
-    TargetOs.Linux => linux.getpid()
+    TargetOs.Linux | TargetOs.FreeBSD => linux.getpid()
     TargetOs.Windows => Int(sys_windows.GetCurrentProcessId())
-    TargetOs.Wasi | TargetOs.FreeBSD => 0
+    TargetOs.Wasi => 0
   }
 }
 
@@ -26,7 +26,8 @@ pub fn pid() -> Int {
 /// the children's totals kept by windows.reap); zeros under WASI.
 pub fn usage(children: Bool) -> List[Int] {
   match target.os {
-    TargetOs.Darwin | TargetOs.Linux => {
+    // FreeBSD's struct rusage is Linux's (ru_maxrss in KiB), getrusage 117
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.FreeBSD => {
       let b = raw.bytes_buf(144)
       let a = raw.bytes_addr(b)
       rt.mem_set(a, 0, 144)
@@ -49,7 +50,7 @@ pub fn usage(children: Bool) -> List[Int] {
       let u = if children { windows.children_usage() } else { windows.proc_usage(Int(sys_windows.GetCurrentProcess())) }
       [u[0] * 100, u[1] * 100, u[2]]
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => [0, 0, 0]
+    TargetOs.Wasi => [0, 0, 0]
   }
 }
 
@@ -57,9 +58,9 @@ pub fn usage(children: Bool) -> List[Int] {
 pub fn ppid() -> Int {
   match target.os {
     TargetOs.Darwin => Int(sys_darwin.getppid())
-    TargetOs.Linux => linux.getppid()
+    TargetOs.Linux | TargetOs.FreeBSD => linux.getppid()
     TargetOs.Windows => windows_ppid()
-    TargetOs.Wasi | TargetOs.FreeBSD => 0
+    TargetOs.Wasi => 0
   }
 }
 

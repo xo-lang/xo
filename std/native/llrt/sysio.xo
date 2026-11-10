@@ -471,8 +471,7 @@ fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
 /// its message (7, Io, under WASI, which has no statfs).
 pub fn disk_usage(op: Str) -> (List[Int], Int, Str) {
   let l = layer()
-  if l == 0 || target.os == TargetOs.FreeBSD {
-    // FreeBSD's statfs: stage 2 of decision 0573, after the VM lane
+  if l == 0 {
     return ([], 7, "disk usage is not supported on this system")
   }
   let (v, e) = if target.os == TargetOs.Windows {

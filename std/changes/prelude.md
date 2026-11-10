@@ -12,6 +12,30 @@
 
 A loop with no call now yields to the other tasks on its worker on linux/riscv64, as on arm64 and amd64: the monitor's SIGURG reaches the handler, which reads riscv64's struct sigcontext at 176 (the pc, then x1 to x31; sp is x2) rather than arm64's ucontext offsets.
 
+## 2026-11-10: port: FreeBSD process, file system, network, signal and profile calls
+
+- Kind: port
+- Commit: this push
+- Found by: the FreeBSD golden tiers in VMs (decision 0573 stages 2 and 3; 642 of 642 on freebsd/arm64 and freebsd/amd64)
+- Go reference: syscall and os on freebsd (zsysnum_freebsd_*.go, ztypes_freebsd_*.go), x/net/route (NET_RT_IFLIST), runtime/signal_freebsd_*.go and defs_freebsd_*.go (sigaction, ucontext, mcontext)
+- Test: internal/llvm goldens in the FreeBSD 14.5 VMs (freebsd/arm64 on the Mac, freebsd/amd64 on the amd64 host): proc_pid, proc_child_usage, host_usage, host_disk, host_ifaces, proc_cmd, unix_kill, sys_c, debug_routes and the fault goldens
+- Timing: none (system call numbers and structure layouts)
+- Shipped in: not yet released
+
+On FreeBSD: Proc.pid, ppid, usage and children_usage (getpid 20, getppid 39, getrusage 117); Fs.disk_usage
+(statfs 555); Net.interfaces (the routing sysctl's interface and address messages); a Unix listener removes
+its socket file on close (unlinkat 503); a spawned command whose exec fails exits (exit 1, where Linux's
+exit_group number is shmget there) and resets its signals with FreeBSD's sigaction and sigprocmask; faults
+print the XO-F report with frames (handlers through sigaction 416, the BSD siginfo and stack_t, the mcontext
+registers); XO_PROF=cpu and std/debug's live profile sample through SIGPROF and setitimer 83, and the profile
+file carries FreeBSD's own OS id (5), with frames from the ELF unwind tables as on Linux (std/debug's /profile
+answered 503 before). C code under the C-free runtime gets FreeBSD's getpid and kill. Calls that used Linux's
+system call numbers on FreeBSD, where those numbers are other calls (amd64's 14, rt_sigprocmask, is FreeBSD's
+mknod), take FreeBSD's own (getrandom, renameat, copy_file_range, utimensat, fchmodat, symlinkat, readlinkat,
+__getcwd, mmap with its flags translated, munmap, mprotect, madvise) or fail with ENOSYS where the call differs
+(statx, getdents64, rt_sigaction, sigaltstack, sched_getaffinity, sysinfo, none reached by the goldens). A child's
+max_rss is 0 when it exits before FreeBSD's first clock tick samples it (spec/std.md).
+
 ## 2026-11-10: feature: Int.max, Int.min and the sized types' bounds
 
 - Kind: feature

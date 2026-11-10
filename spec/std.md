@@ -1403,6 +1403,8 @@ child's peak as `max_rss`. On Windows `usage` reads `GetProcessTimes` and
 the peak working set, and the runtime adds each waited child's times
 and peak to the children's totals, which Windows does not keep (the Go
 backend's totals have the times only: `max_rss` 0). WASI answers zeros.
+FreeBSD samples the resident set on clock ticks, so a process that exits
+before its first tick reports `max_rss` 0.
 An attenuated `Proc` answers as the real one: it is the process's own
 state, as `pid`. A test's FakeProc answers with the real process's.
 
