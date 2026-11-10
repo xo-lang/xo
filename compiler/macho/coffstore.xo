@@ -223,6 +223,7 @@ pub fn coff_prep_key(prog: List[CObj], entry: Str, dwtrim: Bool) -> Bytes {
 /// a cached Prep of the wrong shape counts as a miss. The decisions only
 /// choose what is kept, so a hit gives the same objects as a miss.
 pub fn coff_store_objs_cached(store: Bytes, prog: List[CObj], entry: Str, dwtrim: Bool, cached: Prep?) -> Result[(CoffStore, Prep, Bool), Str] {
+  let machine = if prog.is_empty() { IMAGE_FILE_MACHINE_AMD64 } else { prog[0].machine }
   let v = match store_view(store) {
     Ok(x) => x
     Err(e) => return Err(e)
@@ -346,7 +347,9 @@ pub fn coff_store_objs_cached(store: Bytes, prog: List[CObj], entry: Str, dwtrim
       }
       sects.push(t with {relocs: rs})
     }
-    out.push(CObj{path: v.paths[i], sects: sects, syms: syms})
+    // the store keeps no machine: std's objects are the program's (an
+    // ARM64 program's std is ARM64; the default read them as x86-64)
+    out.push(CObj{path: v.paths[i], sects: sects, syms: syms, machine: machine})
   }
   Ok((CoffStore{objs: out, maps: maps}, Prep{live: live, dw_dropped: dropped, symnews: symnews}, hit))
 }
@@ -369,6 +372,11 @@ fn coff_store_live(v: StoreView, prog: List[CObj], entry: Str) -> List[Bool] {
     }
   }
   roots.push(v.def(entry.bytes()))
+  // xo_absent, every `/alternatename` default Xo writes (the weak C
+  // symbols, decision 0232): an absent one the program calls resolves to
+  // it at the link, which the walk from undefined names does not follow
+  // (windows/arm64's __tsan_destroy_fiber, 2026-11-10)
+  roots.push(v.def("xo_absent".bytes()))
   v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { coff_never_strip(nm, flags) })
 }
 

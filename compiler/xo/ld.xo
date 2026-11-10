@@ -853,7 +853,10 @@ fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PE
     // link with this key left them, the store not read
     // (not with XO_STD_STORE_CHECK, whose parts' link has other objects
     // before the program's)
-    let split = (os.env.get("XO_STD_HALF") ?? "") != "off" && !store_check
+    // (an ARM64 program links whole through the store: pelink has no split
+    // ARM64 link yet, decision 0569)
+    let arm = !rest.is_empty() && rest[0].machine == 0xAA64
+    let split = (os.env.get("XO_STD_HALF") ?? "") != "off" && !store_check && !arm
     hf = if split && !sep_store.is_empty() { pe_half_file_for(pf, debug, race) } else { "" }
     if use_half {
       half = pe_half_load(os, hf)
