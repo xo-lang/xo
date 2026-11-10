@@ -26,3 +26,5 @@ gate of every std/native change, besides the goldens; or
 TestStdRecordIdentity / TestStdTreesRebuild. For move only values (a
 compress Decompressor, builders) in a loop, move them in a helper
 outside the loop (std/native/http.xo gz_step).
+
+Observed again 2026-11-10 (decision 0594): `var k = r.table[c]` then `k += 1` in std/native/prelude.xo is XO0520 (a mutated copy of a collection element, core 5.2); `xo run` on all three backends passed, and TestGoldenRun's std object build failed. A `let` start and a `for k in k0..e` loop fixed it.

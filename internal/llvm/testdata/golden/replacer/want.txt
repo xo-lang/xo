@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+73 cases, 0 failed
+a &lt; b &amp;&amp; c &gt; &quot;d&quot;
+--- stderr

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- `Replacer.new(pairs)` and `r.replace(s)` (decision 0594): Go's strings.Replacer, one pass over several old/new pairs
 - `Map.extend(other)` and `Map.clone()` (decision 0592): Go's maps.Copy and maps.Clone
 - Float type constants (decision 0592): `Float.inf`, `Float.nan`, `Float.pi`, `Float.e`, `Float.max`, `Float.min` and `Float.smallest_nonzero`, as `Int.max` (Go's math.Inf, NaN, Pi, E, MaxFloat64, SmallestNonzeroFloat64)
 

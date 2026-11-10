@@ -490,6 +490,290 @@ fn str_map_runes[E, fx: Effects](s: Str, f: fn(Rune) -> Rune? ! E uses fx) -> St
 fn str_replace(s: Str, old: Str, new: Str) -> Str { strings.replace(s, old, new) }
 fn str_replace_n(s: Str, old: Str, new: Str, n: Int) -> Str { strings.replace_n(s, old, new, n) }
 
+/// Go's strings.Replacer (decision 0594), with its algorithms: kind 1 is
+/// one pair whose old is longer than a byte (singleStringReplacer: one
+/// pass), 2 single bytes to single bytes (byteReplacer: a table), 3
+/// single bytes to strings (byteStringReplacer), 4 any other
+/// (genericReplacer). Go's generic trie finds, at a position, the pair of
+/// highest priority (the earliest) whose old starts there; kind 4 tries
+/// the pairs of that first byte in order, which finds the same pair.
+struct Replacer {
+  kind: Int = 2
+  olds: List[Str] = []
+  news: List[Str] = []
+  /// kind 2: what each byte becomes; kind 3: the pair replacing each byte
+  /// or -1; kind 4: where each first byte's pairs start in order (257)
+  table: List[Int] = []
+  /// kind 4: pair indices grouped by first byte, each group in order
+  order: List[Int] = []
+  /// kind 4: the first pair with an empty old, or -1
+  empty: Int = -1
+  /// kinds 3 and 4: each new's bytes as one little-endian word when it
+  /// has 1 to 8 (rt.rs_push_word, one store), else 0
+  words: List[Int] = []
+}
+
+/// replacer_new's words: each string's bytes in a word when 1 to 8.
+fn replacer_words(news: List[Str]) -> List[Int] {
+  var out: List[Int] = List.with_capacity(news.len())
+  for t in news {
+    let b = t.bytes()
+    var w = 0
+    if b.len() >= 1 && b.len() <= 8 {
+      for k in 0..b.len() {
+        w = w | Int(b[k]).wrapping_shl(k * 8)
+      }
+    }
+    out.push(w)
+  }
+  out
+}
+
+/// o + the pair p's new: a word store when its bytes fit one.
+fn replacer_push(r: Replacer, o: Str, p: Int) -> Str {
+  let t = r.news[p]
+  let k = t.len()
+  if k == 0 {
+    return o
+  }
+  if k <= 8 {
+    return rt.rs_push_word(o, r.words[p], k)
+  }
+  rt.rs_append(o, t)
+}
+
+fn replacer_new(pairs: List[(Str, Str)]) -> Replacer {
+  var olds: List[Str] = []
+  var news: List[Str] = []
+  for (o, n) in pairs {
+    olds.push(o)
+    news.push(n)
+  }
+  if olds.len() == 1 && olds[0].len() > 1 {
+    return Replacer{kind: 1, olds: olds, news: news}
+  }
+  var all_bytes = true
+  var new_bytes = true
+  for i in 0..olds.len() {
+    if olds[i].len() != 1 {
+      all_bytes = false
+    }
+    if news[i].len() != 1 {
+      new_bytes = false
+    }
+  }
+  if all_bytes && new_bytes {
+    var t: List[Int] = List.with_capacity(256)
+    for c in 0..256 {
+      t.push(c)
+    }
+    // the first pair of an old takes precedence: fill from the last
+    var i = olds.len() - 1
+    while i >= 0 {
+      t[Int(olds[i].bytes()[0])] = Int(news[i].bytes()[0])
+      i -= 1
+    }
+    return Replacer{kind: 2, table: t}
+  }
+  if all_bytes {
+    var t: List[Int] = List.with_capacity(256)
+    for _ in 0..256 {
+      t.push(-1)
+    }
+    var i = olds.len() - 1
+    while i >= 0 {
+      t[Int(olds[i].bytes()[0])] = i
+      i -= 1
+    }
+    return Replacer{kind: 3, news: news, table: t, words: replacer_words(news)}
+  }
+  // by first byte, in argument order: a counting sort of the pair indices
+  var count: List[Int] = List.with_capacity(257)
+  for _ in 0..257 {
+    count.push(0)
+  }
+  var empty = -1
+  for i in 0..olds.len() {
+    if olds[i].len() == 0 {
+      if empty < 0 {
+        empty = i
+      }
+    } else {
+      count[Int(olds[i].bytes()[0]) + 1] += 1
+    }
+  }
+  for c in 1..257 {
+    count[c] += count[c - 1]
+  }
+  var order: List[Int] = List.with_capacity(count[256])
+  for _ in 0..count[256] {
+    order.push(0)
+  }
+  var fill = count
+  for i in 0..olds.len() {
+    if olds[i].len() > 0 {
+      let c = Int(olds[i].bytes()[0])
+      order[fill[c]] = i
+      fill[c] += 1
+    }
+  }
+  Replacer{kind: 4, olds: olds, news: news, table: count, order: order, empty: empty, words: replacer_words(news)}
+}
+
+fn replacer_replace(r: Replacer, s: Str) -> Str {
+  match r.kind {
+    1 => replacer_single(r, s)
+    2 => replacer_bytes(r, s)
+    3 => replacer_byte_strs(r, s)
+    _ => replacer_generic(r, s)
+  }
+}
+
+/// singleStringReplacer.Replace: one pass, each match found from the end
+/// of the last (Go's finder; scan.find_bytes is the native Index), into a
+/// buffer that grows, where Str.replace counts the matches first.
+fn replacer_single(r: Replacer, s: Str) -> Str {
+  let b = s.bytes()
+  let old = r.olds[0].bytes()
+  let m = old.len()
+  let n = b.len()
+  var j = scan.find_bytes(b, old, 0)
+  if j < 0 {
+    return s
+  }
+  let nb = r.news[0].bytes()
+  var o = rt.rs_with_cap(n + n / 8 + nb.len())
+  var last = 0
+  while j >= 0 {
+    if j > last {
+      o = rt.rs_append_bytes(o, b, last, j, 0)
+    }
+    if nb.len() > 0 {
+      o = rt.rs_append_bytes(o, nb, 0, nb.len(), 0)
+    }
+    last = j + m
+    j = scan.find_bytes(b, old, last)
+  }
+  if last < n {
+    o = rt.rs_append_bytes(o, b, last, n, 0)
+  }
+  o
+}
+
+/// byteReplacer.Replace: s itself until a byte changes.
+fn replacer_bytes(r: Replacer, s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i < n && r.table[Int(b[i])] == Int(b[i]) {
+    i += 1
+  }
+  if i == n {
+    return s
+  }
+  var o = rt.rs_with_cap(n)
+  o = rt.rs_append_bytes(o, b, 0, i, 0)
+  while i < n {
+    o = rt.rs_push_byte(o, r.table[Int(b[i])])
+    i += 1
+  }
+  o
+}
+
+/// byteStringReplacer.Replace: s itself when no byte is replaced.
+fn replacer_byte_strs(r: Replacer, s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i < n && r.table[Int(b[i])] < 0 {
+    i += 1
+  }
+  if i == n {
+    return s
+  }
+  var o = rt.rs_with_cap(n + n / 4)
+  var last = 0
+  while i < n {
+    let p = r.table[Int(b[i])]
+    if p >= 0 {
+      if i > last {
+        o = rt.rs_append_bytes(o, b, last, i, 0)
+      }
+      o = replacer_push(r, o, p)
+      last = i + 1
+    }
+    i += 1
+  }
+  if last < n {
+    o = rt.rs_append_bytes(o, b, last, n, 0)
+  }
+  o
+}
+
+/// genericReplacer.WriteString: at each position the earliest pair whose
+/// old starts there; an empty match is not taken twice in a row at one
+/// position (Go's prevMatchEmpty), so the scan moves on a byte.
+fn replacer_generic(r: Replacer, s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  var o = ""
+  var started = false
+  var last = 0
+  var i = 0
+  var prev_empty = false
+  while i <= n {
+    var best = -1
+    let use_empty = r.empty >= 0 && !prev_empty
+    if i < n {
+      let c = Int(b[i])
+      let k0 = r.table[c]
+      let e = r.table[c + 1]
+      if k0 == e && !use_empty {
+        prev_empty = false
+        i += 1
+        continue
+      }
+      for k in k0..e {
+        let p = r.order[k]
+        if use_empty && p > r.empty {
+          break
+        }
+        if scan.has_at(s, i, r.olds[p]) {
+          best = p
+          break
+        }
+      }
+    }
+    if best < 0 && use_empty {
+      best = r.empty
+    }
+    if best >= 0 {
+      if !started {
+        o = rt.rs_with_cap(n + n / 4 + 8)
+        started = true
+      }
+      if i > last {
+        o = rt.rs_append_bytes(o, b, last, i, 0)
+      }
+      o = replacer_push(r, o, best)
+      let kl = r.olds[best].len()
+      prev_empty = kl == 0
+      i += kl
+      last = i
+      continue
+    }
+    prev_empty = false
+    i += 1
+  }
+  if !started {
+    return s
+  }
+  if last < n {
+    o = rt.rs_append_bytes(o, b, last, n, 0)
+  }
+  o
+}
+
 /// strings.Repeat: empty for 0, a fault below 0 and above 4 GiB, as the Go
 /// backend faults and as Bytes.repeat does; the fault names the caller's
 /// line (the Go backend's FaultHere does too).

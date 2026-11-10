@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-10: feature: `Replacer` (Go's strings.Replacer)
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit (bench/results/std-audit-2026-11-10b.md: strings.NewReplacer in its top 40)
+- Go reference: strings.NewReplacer, Replacer.Replace (replace.go, ported with its four algorithms; replace_test.go TestReplacer)
+- Test: golden replacer on arm64, LLVM and Go: TestReplacer's 71 cases over ASCII (Go's also cover bytes that are not UTF-8) and two with UTF-8 text
+- Timing: Mac, 1 MiB of text, native against Go 1.26, us per call: byte to string (HTML escape) 1210 against 1060; generic (HTML unescape) 1800 against 2430; byte to byte 560 against 660; one pair 650 against 760 (one pass, as Go's singleStringReplacer; Str.replace counts first, 1150, and Go's strings.ReplaceAll is 1660)
+- Shipped in: not yet released
+
+Decision 0594: `Replacer.new([(old, new), ...])` and `r.replace(s)`.
+
 ## 2026-11-10: feature: `Map.extend` and `Map.clone`
 
 - Kind: feature

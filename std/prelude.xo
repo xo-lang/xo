@@ -1198,6 +1198,21 @@ fn (b: BytesBuilder) len() -> Int
 /// @moves
 fn (b: BytesBuilder) freeze() -> Bytes
 
+/// Replaces several strings in one pass (Go's strings.Replacer, decision
+/// 0594): at each position the first pair, in the order given, whose old
+/// starts there is replaced, and the scan goes on after it, so a
+/// replacement is never rescanned. An empty old matches at every byte
+/// position and at the end. Build one and keep it: new picks Go's
+/// algorithm for the pairs (one pair, single bytes, or by first byte).
+struct Replacer {}
+
+/// A replacer of the pairs (old, new), earlier pairs first (Go's
+/// strings.NewReplacer).
+fn (static: Replacer) new(pairs: List[(Str, Str)]) -> Replacer
+/// s with the pairs replaced (Replacer.Replace); s itself, not a copy,
+/// when nothing changes.
+fn (r: Replacer) replace(s: Str) -> Str
+
 /// Bytes appended at the back and consumed from the front (Go's
 /// bytes.Buffer, decision 0480): records cut from bytes that arrive in
 /// pieces cost time linear in their size. peek, next and read_until

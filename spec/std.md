@@ -591,6 +591,8 @@ fn ([var] b: BytesBuilder) write_rune(r: Rune) // its UTF-8 encoding
 fn ([var] b: BytesBuilder) put_le(at: Int, v: Int, n: Int) // overwrite n (1, 2, 4, 8) bytes in place; put_be too
 fn (b: BytesBuilder) len() -> Int            // also on StrBuilder
 fn (b: BytesBuilder) freeze() -> Bytes       // moves b
+Replacer.new(pairs: List[(Str, Str)]) -> Replacer // decision 0594: Go's strings.NewReplacer
+fn (r: Replacer) replace(s: Str) -> Str      // one pass: at each position the first pair whose old starts there; s itself when nothing changes
 ByteBuffer.new() -> ByteBuffer               // also with_capacity(n); move only
 fn ([var] b: ByteBuffer) write(data: Bytes)  // appended at the back
 fn (b: ByteBuffer) len() -> Int              // the unread bytes
@@ -5501,7 +5503,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-529 declarations.
+531 declarations.
 
 ### Range
 
@@ -6041,6 +6043,13 @@ fn (var b: BytesBuilder) write_le(v: Int, n: Int)
 fn (var b: BytesBuilder) write_be(v: Int, n: Int)
 fn (b: BytesBuilder) len() -> Int
 fn (b: BytesBuilder) freeze() -> Bytes
+```
+
+### Replacer
+
+```
+fn (static: Replacer) new(pairs: List[(Str, Str)]) -> Replacer
+fn (r: Replacer) replace(s: Str) -> Str
 ```
 
 ### ByteBuffer

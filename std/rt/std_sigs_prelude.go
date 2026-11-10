@@ -228,6 +228,8 @@ var (
 	_ func(*BytesBuilder, *Task, int64, int64)                                                             = (*BytesBuilder).M_write_be
 	_ func(*BytesBuilder, *Task) int64                                                                     = (*BytesBuilder).M_len
 	_ func(*BytesBuilder, *Task) Bytes                                                                     = (*BytesBuilder).M_freeze
+	_ func(*Task, List[Tuple2[string, string]]) Replacer                                                   = Replacer_new
+	_ func(*Replacer, *Task, string) string                                                                = (*Replacer).M_replace
 	_ func(*Task) ByteBuffer                                                                               = ByteBuffer_new
 	_ func(*Task, int64) ByteBuffer                                                                        = ByteBuffer_with_capacity
 	_ func(*ByteBuffer, *Task, Bytes)                                                                      = (*ByteBuffer).M_write

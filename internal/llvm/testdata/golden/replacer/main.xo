@@ -1,0 +1,141 @@
+// Replacer (decision 0594): Go's strings.Replacer, with the cases of
+// replace_test.go's TestReplacer (its byte tables over ASCII; Go's also
+// cover bytes that are not UTF-8) on every algorithm: one pair, single
+// bytes to single bytes, single bytes to strings, and the generic one,
+// with empty olds before and after other pairs.
+
+fn ch(c: Int) -> Str { "${Rune.try(c) ?? ' '}" }
+
+fn pairs(xs: List[Str]) -> List[(Str, Str)] {
+  var out: List[(Str, Str)] = []
+  var i = 0
+  while i + 1 < xs.len() {
+    out.push((xs[i], xs[i + 1]))
+    i += 2
+  }
+  out
+}
+
+fn main(os: Os) {
+  var fails = 0
+  var cases = 0
+  let html_escaper = Replacer.new(pairs(["&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&apos;"]))
+  let html_unescaper = Replacer.new(pairs(["&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", "\"", "&apos;", "'"]))
+  let capital = Replacer.new([("a", "A"), ("b", "B")])
+  // inc maps each printable ASCII byte to the next
+  var incp: List[(Str, Str)] = []
+  for c in 32..126 {
+    incp.push((ch(c), ch(c + 1)))
+  }
+  let inc = Replacer.new(incp)
+  // repeat maps "a"->"a", "b"->"bb", "c"->"ccc", ...; other printable bytes to themselves
+  var repp: List[(Str, Str)] = []
+  for c in 32..127 {
+    let n = if c + 1 - 97 < 1 { 1 } else { c + 1 - 97 }
+    repp.push((ch(c), ch(c).repeat(n)))
+  }
+  let repeat = Replacer.new(repp)
+  let gen1 = Replacer.new(pairs(["aaa", "3[aaa]", "aa", "2[aa]", "a", "1[a]", "i", "i", "longerst", "most long", "longer", "medium", "long", "short", "xx", "xx", "x", "X", "X", "Y", "Y", "Z"]))
+  let gen2 = Replacer.new(pairs(["roses", "red", "violets", "blue", "sugar", "sweet"]))
+  let gen3 = Replacer.new(pairs(["abracadabra", "poof", "abracadabrakazam", "splat", "abraham", "lincoln", "abrasion", "scrape", "abraham", "isaac"]))
+  let foo1 = Replacer.new(pairs(["foo1", "A", "foo2", "B", "foo3", "C"]))
+  let foo2 = Replacer.new(pairs(["foo1", "A", "foo2", "B", "foo31", "C", "foo32", "D"]))
+  let foo3 = Replacer.new(pairs(["foo11", "A", "foo12", "B", "foo31", "C", "foo32", "D"]))
+  let foo4 = Replacer.new(pairs(["foo12", "B", "foo32", "D"]))
+  let blank_x1 = Replacer.new([("", "X")])
+  let blank_x2 = Replacer.new([("", "X"), ("", "")])
+  let blank_high = Replacer.new([("", "X"), ("o", "O")])
+  let blank_low = Replacer.new([("o", "O"), ("", "X")])
+  let blank_nop1 = Replacer.new([("", "")])
+  let blank_nop2 = Replacer.new([("", ""), ("", "A")])
+  let blank_foo = Replacer.new(pairs(["", "X", "foobar", "R", "foobaz", "Z"]))
+  let abc = Replacer.new([("abc", "[match]")])
+  let no_hello = Replacer.new([("Hello", "")])
+  let nop = Replacer.new([])
+  let table: List[(Str, Replacer, Str, Str)] = [
+    ("capital", capital, "brad", "BrAd"),
+    ("capital", capital, "a".repeat(32 * 1024 + 123), "A".repeat(32 * 1024 + 123)),
+    ("capital", capital, "", ""),
+    ("inc", inc, "brad", "csbe"),
+    ("inc", inc, "", ""),
+    ("dup bytes", Replacer.new([("a", "1"), ("a", "2")]), "brad", "br1d"),
+    ("html", html_escaper, "No changes", "No changes"),
+    ("html", html_escaper, "I <3 escaping & stuff", "I &lt;3 escaping &amp; stuff"),
+    ("html", html_escaper, "&&&", "&amp;&amp;&amp;"),
+    ("html", html_escaper, "", ""),
+    ("repeat", repeat, "brad", "bbrrrrrrrrrrrrrrrrrradddd"),
+    ("repeat", repeat, "abba", "abbbba"),
+    ("repeat", repeat, "", ""),
+    ("dup strs", Replacer.new([("a", "11"), ("a", "22")]), "brad", "br11d"),
+    ("unescape", html_unescaper, "&amp;amp;", "&amp;"),
+    ("unescape", html_unescaper, "&lt;b&gt;HTML&apos;s neat&lt;/b&gt;", "<b>HTML's neat</b>"),
+    ("unescape", html_unescaper, "", ""),
+    ("dup generic", Replacer.new(pairs(["a", "1", "a", "2", "xxx", "xxx"])), "brad", "br1d"),
+    ("short first", Replacer.new(pairs(["a", "1", "aa", "2", "aaa", "3"])), "aaaa", "1111"),
+    ("long first", Replacer.new(pairs(["aaa", "3", "aa", "2", "a", "1"])), "aaaa", "31"),
+    ("gen1", gen1, "fooaaabar", "foo3[aaa]b1[a]r"),
+    ("gen1", gen1, "long, longerst, longer", "short, most long, medium"),
+    ("gen1", gen1, "xxxxx", "xxxxX"),
+    ("gen1", gen1, "XiX", "YiY"),
+    ("gen1", gen1, "", ""),
+    ("gen2", gen2, "roses are red, violets are blue...", "red are red, blue are blue..."),
+    ("gen2", gen2, "", ""),
+    ("gen3", gen3, "abracadabrakazam abraham", "poofkazam lincoln"),
+    ("gen3", gen3, "abrasion abracad", "scrape abracad"),
+    ("gen3", gen3, "abba abram abrasive", "abba abram abrasive"),
+    ("gen3", gen3, "", ""),
+    ("foo1", foo1, "fofoofoo12foo32oo", "fofooA2C2oo"),
+    ("foo1", foo1, "", ""),
+    ("foo2", foo2, "fofoofoo12foo32oo", "fofooA2Doo"),
+    ("foo2", foo2, "", ""),
+    ("foo3", foo3, "fofoofoo12foo32oo", "fofooBDoo"),
+    ("foo3", foo3, "", ""),
+    ("foo4", foo4, "fofoofoo12foo32oo", "fofooBDoo"),
+    ("foo4", foo4, "", ""),
+    ("blank x1", blank_x1, "foo", "XfXoXoX"),
+    ("blank x1", blank_x1, "", "X"),
+    ("blank x2", blank_x2, "foo", "XfXoXoX"),
+    ("blank x2", blank_x2, "", "X"),
+    ("blank high", blank_high, "oo", "XOXOX"),
+    ("blank high", blank_high, "ii", "XiXiX"),
+    ("blank high", blank_high, "oiio", "XOXiXiXOX"),
+    ("blank high", blank_high, "iooi", "XiXOXOXiX"),
+    ("blank high", blank_high, "", "X"),
+    ("blank low", blank_low, "oo", "OOX"),
+    ("blank low", blank_low, "ii", "XiXiX"),
+    ("blank low", blank_low, "oiio", "OXiXiOX"),
+    ("blank low", blank_low, "iooi", "XiOOXiX"),
+    ("blank low", blank_low, "", "X"),
+    ("blank nop1", blank_nop1, "foo", "foo"),
+    ("blank nop1", blank_nop1, "", ""),
+    ("blank nop2", blank_nop2, "foo", "foo"),
+    ("blank nop2", blank_nop2, "", ""),
+    ("blank foo", blank_foo, "foobarfoobaz", "XRXZX"),
+    ("blank foo", blank_foo, "foobar-foobaz", "XRX-XZX"),
+    ("blank foo", blank_foo, "", "X"),
+    ("abc", abc, "", ""),
+    ("abc", abc, "ab", "ab"),
+    ("abc", abc, "abc", "[match]"),
+    ("abc", abc, "abcd", "[match]d"),
+    ("abc", abc, "cabcabcdabca", "c[match][match]d[match]a"),
+    ("hello", no_hello, "Hello", ""),
+    ("hello", no_hello, "Hellox", "x"),
+    ("hello", no_hello, "xHello", "x"),
+    ("hello", no_hello, "xHellox", "xx"),
+    ("nop", nop, "abc", "abc"),
+    ("nop", nop, "", ""),
+    // UTF-8 text around the matches stays whole
+    ("utf8", gen2, "rosesé violets→sugar", "redé blue→sweet"),
+    ("utf8", html_escaper, "<é>", "&lt;é&gt;"),
+  ]
+  for (name, r, input, want) in table {
+    cases += 1
+    let got = r.replace(input)
+    if got != want {
+      fails += 1
+      os.stdio.println("FAIL ${name}: replace(${input.debug()}) = ${got.debug()}, want ${want.debug()}")
+    }
+  }
+  os.stdio.println("${cases} cases, ${fails} failed")
+  os.stdio.println(html_escaper.replace("a < b && c > \"d\""))
+}
