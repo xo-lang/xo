@@ -66,7 +66,7 @@ fn main(os: Os) {
   os.stdio.println("sum ${sum_to(5)} words ${words.len()} total ${total}")
 }
 `
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ fn main(os: Os) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		out := filepath.Join(dir, "prog")
+		out := filepath.Join(dir, progExe)
 		b := testtmp.Guard(exec.Command(xo, "build", "-o", out, "."))
 		b.Dir = prog
 		b.Env = append(append([]string{}, env...), extra...)
@@ -177,7 +177,7 @@ func TestStdRecordTouchedStd(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
 	}
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}

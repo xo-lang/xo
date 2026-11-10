@@ -28,7 +28,7 @@ func TestInlineFallbackLoud(t *testing.T) {
 	}
 	brk := ""
 	build := func(strict string) (string, error) {
-		args := append(append([]string{}, cli[1:]...), "build", "--backend=arm64", "-o", filepath.Join(dir, "prog"), ".")
+		args := append(append([]string{}, cli[1:]...), "build", "--backend=arm64", "-o", filepath.Join(dir, progExe), ".")
 		cmd := testtmp.Guard(exec.Command(cli[0], args...))
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "XO_INLINE_BREAK="+brk, "XO_INLINE_STRICT="+strict, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(dir, "cache"))
@@ -54,7 +54,7 @@ func TestInlineFallbackLoud(t *testing.T) {
 		}
 		// the binary records it: `xo version -m` shows it, and `xo bench
 		// --ab` refuses the binary unless --allow-fallback (2026-10-24)
-		prog := filepath.Join(dir, "prog")
+		prog := filepath.Join(dir, progExe)
 		out, err = runXo(cli, dir, "version", "-m", prog)
 		if err != nil || !strings.Contains(out, "inline=fallback (") {
 			t.Fatalf("%s: want `xo version -m` to show inline=fallback, got %v:\n%s", brk, err, out)
@@ -72,7 +72,7 @@ func TestInlineFallbackLoud(t *testing.T) {
 	if out, err := build("1"); err != nil {
 		t.Fatalf("unbroken build: %v:\n%s", err, out)
 	}
-	if out, err := runXo(cli, dir, "version", "-m", filepath.Join(dir, "prog")); err != nil || strings.Contains(out, "inline=fallback") {
+	if out, err := runXo(cli, dir, "version", "-m", filepath.Join(dir, progExe)); err != nil || strings.Contains(out, "inline=fallback") {
 		t.Fatalf("unbroken build: want no inline=fallback line, got %v:\n%s", err, out)
 	}
 }

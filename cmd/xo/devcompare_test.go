@@ -33,6 +33,11 @@ func TestDevCompare(t *testing.T) {
 		script := filepath.Join(repoRoot, "bench", "perf", "http", "cgcompare.py")
 		if _, err := os.Stat(script); err == nil {
 			got, err := exec.Command(py, script, base, nw).Output()
+			if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 9009 {
+				// Windows' python3 app-execution alias with no Python
+				// installed (winarm VM, 2026-11-09): no Python to compare
+				return
+			}
 			if err != nil {
 				t.Fatalf("cgcompare.py: %v", err)
 			}

@@ -140,16 +140,16 @@ fn main(os: Os) {
   os.stdio.println("${ys.map(fn(y) { "${y}" }).join(",")} ${s.a} ${s.hh} ${words.len()} ${words[1].to_upper()}")
 }
 `
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	write(prog, src)
 	sep := []string{"XO_SEPCOMP=1", "XO_SEPCOMP_FACTS=" + facts, "XO_SEPCOMP_STORE=" + store, "XO_BACKEND_CACHE_DIR=" + filepath.Join(work, "c-sep")}
 	for edit := 0; edit < 2; edit++ {
 		if edit > 0 {
 			write(prog, strings.Replace(src, "edit 0", "edit 1", 1))
 		}
-		whole := filepath.Join(work, "whole", "prog")
+		whole := filepath.Join(work, "whole", progExe)
 		build(prog, whole, "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-whole"), "XO_STD_FACTS_VERIFY="+facts)
-		sepc := filepath.Join(work, "sep", "prog")
+		sepc := filepath.Join(work, "sep", progExe)
 		build(prog, sepc, sep...)
 		want, got := run(whole), run(sepc)
 		if got != want {
@@ -219,7 +219,7 @@ func TestSepcompDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(work)
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +443,7 @@ func TestSepcompDebugInfo(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
 	}
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestSepcompTestVariant(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(work)
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +681,7 @@ func TestSepcompBackgroundBoth(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(work)
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -772,7 +772,7 @@ func TestSepcompStdxKeepsFrontCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(work)
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}

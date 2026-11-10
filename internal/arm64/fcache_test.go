@@ -130,7 +130,7 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 	}
 	build := func(t *testing.T, name, target string, env ...string) ([]byte, string) {
 		// the same file name in both directories: a Mach-O signature names it
-		out := filepath.Join(work, name, strings.ReplaceAll(target, "/", "-"), "prog")
+		out := filepath.Join(work, name, strings.ReplaceAll(target, "/", "-"), progExe)
 		backend := "--backend=arm64"
 		if strings.HasSuffix(target, "/amd64") {
 			backend = "--backend=amd64"
@@ -366,7 +366,7 @@ func TestFrontCacheInterfaceEdits(t *testing.T) {
 		return b.String()
 	}
 	build := func(t *testing.T, name string, env ...string) ([]byte, string) {
-		out := filepath.Join(work, name, "prog")
+		out := filepath.Join(work, name, progExe)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, "."))
 		cmd.Dir = src
 		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
@@ -485,7 +485,7 @@ fn main(os: Os) {
 `, k)
 	}
 	build := func(t *testing.T) (string, string) {
-		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--json", "--phase-times", "-o", filepath.Join(work, "prog"), "."))
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--json", "--phase-times", "-o", filepath.Join(work, progExe), "."))
 		cmd.Dir = src
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_CHK_CACHE=1")
 		var out, errb bytes.Buffer
@@ -541,7 +541,7 @@ fn main(os: Os) {
 		t.Fatal("no chk entries stored")
 	}
 	verify := func() ([]byte, error) {
-		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), "."))
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, progExe), "."))
 		cmd.Dir = src
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=verify", "XO_CHK_CACHE=1")
 		return cmd.CombinedOutput()
@@ -591,7 +591,7 @@ func TestFrontCacheAbsentHelper(t *testing.T) {
 	funcs := "fn fb(n: Int) -> Int {\n  var m: Map[Str, Bytes] = {}\n  m[\"a\"] = b\"xy\"\n  let v = m.remove(\"a\") ?? b\"\"\n  v.len() + n\n}\n\n" +
 		"fn fa(n: Int) -> Int {\n  var m: Map[Str, Str] = {}\n  m[\"a\"] = \"xyz\"\n  let v = m.remove(\"a\") ?? \"\"\n  v.len() + n\n}\n\n"
 	build := func(name string, env ...string) []byte {
-		out := filepath.Join(work, name, "prog")
+		out := filepath.Join(work, name, progExe)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
 		cmd.Dir = src
 		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
@@ -700,7 +700,7 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 			return nil, nil
 		}
 		// an output path per pass (the orders run at once) and program
-		out := filepath.Join(work, "out", pass, strconv.Itoa(i), "prog")
+		out := filepath.Join(work, "out", pass, strconv.Itoa(i), progExe)
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(bin, "build", "--backend=arm64", "-o", out, "."))
 		cmd.Dir = dir
@@ -810,7 +810,7 @@ func TestFrontCacheOneWayFlags(t *testing.T) {
 			"fn main(os: Os) {\n  os.stdio.println(\"${a(os.net)} ${b(os.net)}\")\n}\n"
 	}
 	build := func(name string, env ...string) []byte {
-		out := filepath.Join(work, name, "prog")
+		out := filepath.Join(work, name, progExe)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
 		cmd.Dir = src
 		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
@@ -869,7 +869,7 @@ func TestFrontCacheStamps(t *testing.T) {
 	}
 	for _, backend := range []string{"arm64", "llvm"} {
 		for _, v := range []string{"one", "two", "one"} {
-			out := filepath.Join(work, backend, v, "prog")
+			out := filepath.Join(work, backend, v, progExe)
 			cmd := testtmp.Guard(exec.Command(xo, "build", "--backend="+backend, "--stamp", "VERSION="+v, "-o", out, "."))
 			cmd.Dir = src
 			cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"))
@@ -917,7 +917,7 @@ func TestFrontCacheEntryDoesNotReplay(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	build := func(env ...string) ([]byte, string) {
 		t.Helper()
 		os.Remove(out)
@@ -1016,7 +1016,7 @@ func TestModuleCheckAuto(t *testing.T) {
 			t.Run(filepath.Base(d), func(t *testing.T) {
 				t.Parallel()
 				cache := filepath.Join(work, "cache", strconv.Itoa(i))
-				out := filepath.Join(work, "out", strconv.Itoa(i), "prog")
+				out := filepath.Join(work, "out", strconv.Itoa(i), progExe)
 				off, _ := build(t, out, d, cache, "XO_BACKEND_CACHE=off")
 				auto := []string{"XO_BACKEND_CACHE=on", "XO_CHK_CACHE=auto"}
 				build(t, out, d, cache, auto...)
@@ -1098,7 +1098,7 @@ fn main(os: Os) uses stdio {
 		t.Fatal(err)
 	}
 	dirs := []string{own, filepath.Join("..", "llvm", "testdata", "golden", "conc_mutex_rollback")}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	build := func(dir, cache string, env ...string) []byte {
 		t.Helper()
 		os.Remove(out)
@@ -1189,7 +1189,7 @@ fn main(os: Os) uses stdio {
 		t.Fatal(err)
 	}
 	dirs := []string{own, filepath.Join("..", "llvm", "testdata", "golden", "native_bytes")}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	build := func(dir, cache string, env ...string) []byte {
 		t.Helper()
 		os.Remove(out)
@@ -1344,7 +1344,7 @@ fn main(os: Os) uses stdio {
 		t.Fatal(err)
 	}
 	dirs := []string{own, filepath.Join("..", "llvm", "testdata", "golden", "conc_scopes")}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	build := func(dir, cache string, env ...string) []byte {
 		t.Helper()
 		os.Remove(out)
@@ -1461,7 +1461,7 @@ fn main(os: Os) uses stdio {
 			t.Fatal(err)
 		}
 	}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	build := func(cache string, env ...string) ([]byte, string) {
 		t.Helper()
 		os.Remove(out)
@@ -1585,7 +1585,7 @@ func TestPruneBudget(t *testing.T) {
 	build := func() time.Duration {
 		t.Helper()
 		t0 := time.Now()
-		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), "."))
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, progExe), "."))
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_CACHE_PRUNE_BUDGET=1ms", "XO_PRUNE_DETACH=off")
 		if log, err := cmd.CombinedOutput(); err != nil {
@@ -1657,7 +1657,7 @@ fn main(os: Os) {
 	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	build := func(cache string, env ...string) ([]byte, string) {
 		t.Helper()
 		os.Remove(out)
@@ -1742,7 +1742,7 @@ func TestFrontCacheRootThenLibrary(t *testing.T) {
 	on := []string{"XO_BACKEND_CACHE_DIR=" + cache, "XO_BACKEND_CACHE=on"}
 	// lib as the root, then as a library
 	run(on, "test", "--backend=arm64", "./lib")
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	run(on, "build", "--backend=arm64", "-o", out, ".")
 	got, err := os.ReadFile(out)
 	if err != nil {
@@ -1795,7 +1795,7 @@ func TestBorrowIncremental(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	build := func(env ...string) ([]byte, string) {
 		t.Helper()
 		os.Remove(out)
@@ -1871,7 +1871,7 @@ func TestFrontCacheStdCommentEdit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte("fn main(os: Os) uses stdio {\n  let xs = [3, 1, 2].sort()\n  os.stdio.println(\"${xs[0]} ${xs.len()}\")\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	cache := filepath.Join(work, "cache")
 	hits := regexp.MustCompile(`cache fe (\d+)/(\d+) bodies`)
 	build := func(env ...string) ([]byte, string) {
@@ -1961,7 +1961,7 @@ func TestStdSumMemoPerTree(t *testing.T) {
 			}
 			return nil
 		})
-		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--std="+std, "-o", filepath.Join(work, "prog"), "."))
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--std="+std, "-o", filepath.Join(work, progExe), "."))
 		cmd.Dir = own
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on")
 		if log, err := cmd.CombinedOutput(); err != nil {
@@ -2074,7 +2074,7 @@ func TestFrontCacheMovedBodies(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	cache := filepath.Join(work, "cache")
 	hits := regexp.MustCompile(`cache fe (\d+)/(\d+) bodies`)
 	target := ""
@@ -2172,7 +2172,7 @@ func TestPruneDetached(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")
-	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), "."))
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, progExe), "."))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_PRUNE_DETACH=", "XO_BACKEND_CACHE_MAX=1")
 	if log, err := cmd.CombinedOutput(); err != nil {
@@ -2392,7 +2392,7 @@ func TestPruneVersionGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")
-	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), "."))
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, progExe), "."))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_PRUNE_DETACH=off", "XO_BACKEND_CACHE_MAX=1")
 	if log, err := cmd.CombinedOutput(); err != nil {
@@ -2436,7 +2436,7 @@ func TestBuildSweepsStaleAsm(t *testing.T) {
 	dir := filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")
 	build := func(env ...string) {
 		t.Helper()
-		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), "."))
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, progExe), "."))
 		cmd.Dir = dir
 		cmd.Env = append(append(os.Environ(), "XO_BUILD_DIR="+bd, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
 		if log, err := cmd.CombinedOutput(); err != nil {
@@ -2661,7 +2661,7 @@ func TestCacheStoreLog(t *testing.T) {
 	line := regexp.MustCompile(`^\d+ store (fe|fn|inl|inl-list|rc|sum|obj|hobj|hfacts|hextra|hwhole|cln|ast|chk|pack/[a-z]+) \d+ id [0-9a-f]{12}$`)
 	n := 0
 	for _, run := range []string{"cold", "warm"} {
-		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", filepath.Join(work, "prog"), "."))
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", filepath.Join(work, progExe), "."))
 		cmd.Dir = src
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
@@ -2750,7 +2750,7 @@ func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
 		cache := filepath.Join(work, "cache"+strings.ReplaceAll(target, "/", "-"))
 		build := func(dir string, env ...string) ([]byte, []byte, string) {
 			t.Helper()
-			out := filepath.Join(work, "out", "prog")
+			out := filepath.Join(work, "out", progExe)
 			os.RemoveAll(filepath.Join(work, "out"))
 			args := []string{"build", "--backend=arm64", "--phase-times", "--trimpath=off", "-o", out}
 			if target != "" {
@@ -2823,7 +2823,7 @@ func TestFrontCacheNegKeys(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte("fn main(os: Os) uses stdio {\n  os.stdio.println(\"hi\")\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	cache := filepath.Join(work, "cache")
 	loose := regexp.MustCompile(`cache loose fe (\d+) of (\d+) \(pack (\d+), (?:shared \d+, )?missing (\d+)\)`)
 	build := func() ([]byte, []string) {
@@ -2909,7 +2909,7 @@ fn main(os: Os) {
 	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(work, "prog")
+	out := filepath.Join(work, progExe)
 	build := func(cache string, env ...string) ([]byte, string) {
 		t.Helper()
 		os.Remove(out)
@@ -3047,7 +3047,7 @@ func TestSharedPackBounded(t *testing.T) {
 	}
 	defer os.RemoveAll(work)
 	cache := filepath.Join(work, "cache")
-	dir := filepath.Join(work, "prog")
+	dir := filepath.Join(work, progExe)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3418,7 +3418,7 @@ func TestFirstEditAfterColdParts(t *testing.T) {
 		}
 		build := func() string {
 			t.Helper()
-			args := []string{"build", "--phase-times", "-o", filepath.Join(work, name, "prog")}
+			args := []string{"build", "--phase-times", "-o", filepath.Join(work, name, progExe)}
 			if target != "" {
 				args = append(args, "--targets="+target)
 			}
@@ -3509,7 +3509,7 @@ func TestWindowsWarmEditEntryShims(t *testing.T) {
 	build := func(mode string) ([]byte, string) {
 		t.Helper()
 		n++
-		out := filepath.Join(work, fmt.Sprintf("out%d", n), "prog")
+		out := filepath.Join(work, fmt.Sprintf("out%d", n), progExe)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "--phase-times", "-o", out, "."))
 		cmd.Dir = src
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache-"+mode), "XO_BACKEND_CACHE="+mode, "XO_WHOLE_BUILD=off")
@@ -3589,7 +3589,7 @@ func TestLinkKeyFollowsObjects(t *testing.T) {
 		if cold {
 			cache, bin = filepath.Join(work, fmt.Sprintf("cold%d", n), "cache"), filepath.Join(work, fmt.Sprintf("cold%d", n), "bin")
 		}
-		out := filepath.Join(work, fmt.Sprintf("out%d", n), "prog")
+		out := filepath.Join(work, fmt.Sprintf("out%d", n), progExe)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--phase-times", "--trimpath=false", "-o", out, "."))
 		cmd.Dir = src
 		// no run cache, so each build links (or takes its link from the
@@ -3667,7 +3667,7 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	if err := os.CopyFS(src, os.DirFS(filepath.Join(root, "bench", "perf", "http", "xo"))); err != nil {
 		t.Fatal(err)
 	}
-	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out", "prog"), "."))
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out", progExe), "."))
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_PDB_OBJ_CHECK=1")
 	log, err := cmd.CombinedOutput()
@@ -3680,7 +3680,7 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	}
 	// step 2a: the PDB made from the objects' own DWARF and the link's
 	// layout (macho merge_facts, pe_pdb_facts) is the image's, byte for byte
-	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out2", "prog"), "."))
+	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out2", progExe), "."))
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_PDB_OBJ_CHECK=2")
 	log, err = cmd.CombinedOutput()
@@ -3692,7 +3692,7 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	}
 	// step 2a': each function's rows and inline sites made from its own
 	// object (macho obj_pdb, pre_procs): the same PDB
-	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out3", "prog"), "."))
+	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out3", progExe), "."))
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_PDB_OBJ_CHECK=3")
 	log, err = cmd.CombinedOutput()
@@ -3707,7 +3707,7 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	if ents, err := os.ReadDir(filepath.Join(work, "cache", "pdb")); err != nil || len(ents) == 0 {
 		t.Fatalf("no PDB parts in the back-end cache (%v)", err)
 	}
-	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out4", "prog"), "."))
+	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out4", progExe), "."))
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_PDB_OBJ=0")
 	if log, err = cmd.CombinedOutput(); err != nil {
@@ -3764,7 +3764,7 @@ func TestWindowsPDBPartKeys(t *testing.T) {
 		t.Helper()
 		os.Remove(filepath.Join(work, "o", "prog.pdb"))
 		args := append([]string{"build", "--backend=amd64", "--targets=windows/amd64"}, flags...)
-		args = append(args, "-o", filepath.Join(work, "o", "prog"), ".")
+		args = append(args, "-o", filepath.Join(work, "o", progExe), ".")
 		cmd := testtmp.Guard(exec.Command(xo, args...))
 		cmd.Dir = src
 		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)

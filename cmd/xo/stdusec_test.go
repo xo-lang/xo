@@ -139,7 +139,9 @@ func TestStdSQLiteCrossBuilds(t *testing.T) {
 	}
 	dir := filepath.Join(root, "internal", "llvm", "testdata", "golden", "native_sqlite")
 	setenv(t, "XO_WINSYSROOT", "")
-	limits := []string{"does not cross link", "set XO_WINSYSROOT"}
+	// a host with no clang (the winarm VM, 2026-11-09) cannot read the
+	// C header: XO1104's documented "install it or set XO_CLANG"
+	limits := []string{"does not cross link", "set XO_WINSYSROOT", "needs clang to read C headers"}
 	for _, tg := range []string{"windows/amd64", "linux/amd64", "darwin/amd64"} {
 		code, out := xoOut(t, "build", "--backend=amd64", "--target="+tg, "-o", filepath.Join(t.TempDir(), "p"), dir)
 		if code == 0 {

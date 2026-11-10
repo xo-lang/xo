@@ -34,7 +34,7 @@ func TestLayoutIdentity(t *testing.T) {
 	}
 	defer os.RemoveAll(work)
 	cache := filepath.Join(work, "cache")
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ fn main(os: Os) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		out := filepath.Join(dir, "prog")
+		out := filepath.Join(dir, progExe)
 		b := testtmp.Guard(exec.Command(xo, append(append([]string{"build"}, args...), "-o", out, ".")...))
 		b.Dir = prog
 		b.Env = append(append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_CACHE_STATS=1"), extra...)

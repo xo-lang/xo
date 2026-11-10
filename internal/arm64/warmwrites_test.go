@@ -36,7 +36,7 @@ func TestWarmBuildWritesLittle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(work)
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -61,7 +61,7 @@ fn main(os: Os) {
   os.stdio.println("${sorted[0].key} ${sorted[19].key} ${names[0]} edit 0")
 }
 `
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ fn main(os: Os) {
   os.stdio.println("${req.headers.len() == given.headers.len()} ${req.body.len()} edit 0")
 }
 `
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestStdRecordBindRetry(t *testing.T) {
 	}
 	defer os.RemoveAll(work)
 	cache := filepath.Join(work, "cache")
-	prog := filepath.Join(work, "prog")
+	prog := filepath.Join(work, progExe)
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}

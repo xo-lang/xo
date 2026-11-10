@@ -165,7 +165,7 @@ func TestStdHalfCache(t *testing.T) {
 	}
 	defer os.RemoveAll(out)
 	half := sepHalfEnv(t, xo, root, out)
-	src := filepath.Join(out, "prog")
+	src := filepath.Join(out, progExe)
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestStdHalfCache(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(out, name), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		bin := filepath.Join(out, name, "prog")
+		bin := filepath.Join(out, name, progExe)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", bin, "."))
 		cmd.Dir = src
 		cmd.Env = append(append(os.Environ(), "XO_BIN_CACHE=off", "PWD="+src), half...)
