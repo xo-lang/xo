@@ -21,6 +21,7 @@
 // server writes it.
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/hostpath
 use github.com/xo-lang/xo/compiler/parser
 
 const TOKEN_TYPES = ["namespace", "type", "struct", "enum", "interface", "typeParameter", "parameter", "variable", "property", "enumMember", "function", "method"]
@@ -143,12 +144,45 @@ fn hex_digit(n: Int) -> Str { "0123456789ABCDEF"[n..n + 1] }
 /// pathToURI: "file://" and the path escaped as url.URL escapes a path.
 fn path_to_uri(path: Str) -> Str { path_to_uri_w(path, hostpath.windows()) }
 
-/// path_to_uri by the Windows rules when win: `\` as `/` and a drive
-/// path `C:/x` as `file:///C:/x` (it was `file://C:/x`, a URI whose host
-/// is `C:`; winarm VM, 2026-11-09).
+/// Whether p starts with a drive letter and a colon (`c:`).
+fn drive_at(p: Str, i: Int) -> Bool {
+  let b = p.bytes()
+  b.len() >= i + 2 && b[i + 1] == ':' && ((b[i] >= 'a' && b[i] <= 'z') || (b[i] >= 'A' && b[i] <= 'Z'))
+}
+
+/// p with the drive letter at i in upper case, as gopls keeps it
+/// (span.URIFromPath, parseDocumentURI): an editor's `c%3A` and Go's `C:`
+/// name one file.
+fn upper_drive(p: Str, i: Int) -> Str {
+  if !drive_at(p, i) {
+    return p
+  }
+  p[..i] + p[i..i + 1].to_upper() + p[i + 1..]
+}
+
+/// path_to_uri by the Windows rules when win (gopls's span/uri and VS
+/// Code's, RFC 8089 appendix E): `\` as `/`, a drive path `c:\x` as
+/// `file:///C:/x` (it was `file://C:/x`, a URI whose host is `C:`; winarm
+/// VM, 2026-11-09), and a UNC path `\\server\share\x` as
+/// `file://server/share/x`.
 fn path_to_uri_w(path0: Str, win: Bool) -> Str {
-  let path = if win { path0.replace("\\", "/") } else { path0 }
-  var out = if win && !path.starts_with("/") && !hostpath.volume_w(path, true).is_empty() { "file:///" } else { "file://" }
+  var path = if win { path0.replace("\\", "/") } else { path0 }
+  var out = "file://"
+  if win {
+    if path.starts_with("//") && !path.starts_with("///") {
+      // UNC: the server is the URI's host
+      let rest = path[2..]
+      let (host, tail) = match rest.find("/") {
+        Some(i) => (rest[..i], rest[i..])
+        None => (rest, "/")
+      }
+      out = out + host
+      path = tail
+    } else if drive_at(path, 0) {
+      out = "file:///"
+      path = upper_drive(path, 0)
+    }
+  }
   for c in path.bytes() {
     let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' || c == '$' || c == '&' || c == '+' || c == ',' || c == '/' || c == ':' || c == ';' || c == '=' || c == '@'
     if ok {
@@ -170,24 +204,37 @@ fn unhex(c: UInt8) -> Int {
   -1
 }
 
+/// The %XX escapes of s decoded (a malformed escape is kept as written).
+fn unescape(s: Str) -> Str {
+  let b = s.bytes()
+  var out = BytesBuilder.new()
+  var i = 0
+  while i < b.len() {
+    if b[i] == '%' && i + 2 < b.len() && unhex(b[i + 1]) >= 0 && unhex(b[i + 2]) >= 0 {
+      out.write_byte(UInt8(unhex(b[i + 1]) * 16 + unhex(b[i + 2])))
+      i += 3
+      continue
+    }
+    out.write_byte(b[i])
+    i += 1
+  }
+  out.freeze().to_str() ?? ""
+}
+
 /// uriToPath: the cleaned path of a file URI, or "".
 fn uri_to_path(uri: Str) -> Str { uri_to_path_w(uri, hostpath.windows()) }
 
-/// uri_to_path by the Windows rules when win: `file:///C:/x` (and an
-/// editor's `file:///c%3A/x`) is the path `C:/x`, not `/C:/x`.
+/// uri_to_path by the Windows rules when win: `file:///C:/x` and an
+/// editor's `file:///c%3A/x` are the path `C:/x` (not `/C:/x`, and the
+/// drive in upper case, as gopls); `file://server/share/x` is the UNC
+/// path `//server/share/x`; the malformed `file://C:/x` (a drive as the
+/// host, which xo itself wrote before 0.46.0) and `\` in the path are
+/// read as the drive path.
 fn uri_to_path_w(uri: Str, win: Bool) -> Str {
   if !uri.starts_with("file:") {
     return ""
   }
   var rest = uri.trim_prefix("file:")
-  if rest.starts_with("//") {
-    rest = rest[2..]
-    // the authority (empty or localhost) up to the path
-    match rest.find("/") {
-      Some(i) => rest = rest[i..]
-      None => rest = ""
-    }
-  }
   match rest.find("?") {
     Some(i) => rest = rest[..i]
     None => {}
@@ -196,24 +243,58 @@ fn uri_to_path_w(uri: Str, win: Bool) -> Str {
     Some(i) => rest = rest[..i]
     None => {}
   }
-  let b = rest.bytes()
-  var out = BytesBuilder.new()
-  var i = 0
-  while i < b.len() {
-    if b[i] == '%' && i + 2 < b.len() + 0 && i + 2 <= b.len() - 1 && unhex(b[i + 1]) >= 0 && unhex(b[i + 2]) >= 0 {
-      out.write_byte(UInt8(unhex(b[i + 1]) * 16 + unhex(b[i + 2])))
-      i += 3
-      continue
+  var host = ""
+  if rest.starts_with("//") {
+    rest = rest[2..]
+    // the authority (empty or localhost, or a UNC server on Windows) up
+    // to the path
+    match rest.find("/") {
+      Some(i) => {
+        host = rest[..i]
+        rest = rest[i..]
+      }
+      None => {
+        host = rest
+        rest = ""
+      }
     }
-    out.write_byte(b[i])
-    i += 1
   }
-  var p = out.freeze().to_str() ?? ""
-  if win {
-    let pb = p.bytes()
-    if pb.len() >= 3 && pb[0] == '/' && pb[2] == ':' && ((pb[1] >= 'a' && pb[1] <= 'z') || (pb[1] >= 'A' && pb[1] <= 'Z')) {
-      p = p[1..]
+  var p = unescape(rest)
+  host = unescape(host)
+  if !win {
+    return clean_path(p)
+  }
+  p = p.replace("\\", "/")
+  host = host.replace("\\", "/")
+  if drive_at(host, 0) {
+    // file://C:/x and file://C:\x: a drive as the host
+    p = host + (if host.len() > 2 { "" } else { p })
+    p = p.replace("\\", "/")
+    host = ""
+  } else if p.starts_with("/") && drive_at(p, 1) {
+    p = p[1..]
+  }
+  if drive_at(p, 0) {
+    return upper_drive(clean_path(p), 0)
+  }
+  if host.is_empty() && p.starts_with("//") && !p.starts_with("///") {
+    // file:////server/share/x (Go's url.URL form of a UNC path)
+    let r = p[2..]
+    match r.find("/") {
+      Some(i) => {
+        host = r[..i]
+        p = r[i..]
+      }
+      None => {
+        host = r
+        p = ""
+      }
     }
+  }
+  if !host.is_empty() && host.to_lower() != "localhost" {
+    // UNC: keep the leading // that clean_path would fold
+    let tail = clean_path(if p.is_empty() { "/" } else { p })
+    return "//" + host + (if tail == "/" { "" } else { tail })
   }
   clean_path(p)
 }

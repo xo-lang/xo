@@ -1,19 +1,59 @@
-// The LSP's file URIs by each host's rules (path_to_uri_w, uri_to_path_w):
-// a Windows drive path is `file:///C:/x`, as editors send it.
+// The LSP's file URIs by each host's rules (path_to_uri_w, uri_to_path_w),
+// with gopls's span/uri and VS Code's forms as the oracle (RFC 8089
+// appendix E). They are pure conversions, so every host runs the Windows
+// cases too.
 
 test "file URIs of unix paths" {
   expect(path_to_uri_w("/a/b c.xo", false) == "file:///a/b%20c.xo")
+  expect(path_to_uri_w("/a/x#y?.xo", false) == "file:///a/x%23y%3F.xo")
   expect(uri_to_path_w("file:///a/b%20c.xo", false) == "/a/b c.xo")
+  expect(uri_to_path_w("file:///a/x%23y%3F.xo", false) == "/a/x#y?.xo")
+  expect(uri_to_path_w("file://localhost/a/b.xo", false) == "/a/b.xo")
+  expect(uri_to_path_w("file:///a/./b/../c.xo", false) == "/a/c.xo")
+  // a drive is only a drive on Windows
   expect(uri_to_path_w("file:///C:/x", false) == "/C:/x")
+  expect(uri_to_path_w("untitled:Untitled-1", false) == "")
 }
 
 test "file URIs of windows drive paths" {
   expect(path_to_uri_w("C:\\Users\\xo\\main.xo", true) == "file:///C:/Users/xo/main.xo")
   expect(path_to_uri_w("C:/Users/xo/main.xo", true) == "file:///C:/Users/xo/main.xo")
   expect(uri_to_path_w("file:///C:/Users/xo/main.xo", true) == "C:/Users/xo/main.xo")
-  // VS Code's form: a lower case drive with its colon escaped
-  expect(uri_to_path_w("file:///c%3A/Users/xo/main.xo", true) == "c:/Users/xo/main.xo")
   expect(uri_to_path_w(path_to_uri_w("D:\\a b\\m.xo", true), true) == "D:/a b/m.xo")
   // a rooted path keeps its root on Windows too
   expect(uri_to_path_w("file:///srv/m.xo", true) == "/srv/m.xo")
+}
+
+test "windows drive letters are upper case both ways, as gopls" {
+  // VS Code's form: a lower case drive with its colon escaped
+  expect(uri_to_path_w("file:///c%3A/Users/xo/main.xo", true) == "C:/Users/xo/main.xo")
+  expect(uri_to_path_w("file:///c:/Users/xo/main.xo", true) == "C:/Users/xo/main.xo")
+  expect(uri_to_path_w("file:///C%3a/Users/xo/main.xo", true) == "C:/Users/xo/main.xo")
+  expect(path_to_uri_w("c:\\Users\\xo\\main.xo", true) == "file:///C:/Users/xo/main.xo")
+  // the editor's URI and xo's own path name one file
+  expect(uri_to_path_w("file:///c%3A/Users/xo/main.xo", true) == uri_to_path_w(path_to_uri_w("C:\\Users\\xo\\main.xo", true), true))
+}
+
+test "windows escapes and backslashes" {
+  expect(path_to_uri_w("C:\\a b\\x#1%.xo", true) == "file:///C:/a%20b/x%231%25.xo")
+  expect(uri_to_path_w("file:///C:/a%20b/x%231%25.xo", true) == "C:/a b/x#1%.xo")
+  // a fragment or query is not part of the path
+  expect(uri_to_path_w("file:///C:/a/m.xo#L3", true) == "C:/a/m.xo")
+  // a backslash an editor escaped
+  expect(uri_to_path_w("file:///C:/a%5Cb%5Cm.xo", true) == "C:/a/b/m.xo")
+  // xo's own malformed form before 0.46.0 (a drive as the host), and the
+  // form cmd/xo's tests once wrote
+  expect(uri_to_path_w("file://C:/Users/xo/main.xo", true) == "C:/Users/xo/main.xo")
+  expect(uri_to_path_w("file://C:\\Users\\xo\\main.xo", true) == "C:/Users/xo/main.xo")
+}
+
+test "windows UNC paths" {
+  expect(path_to_uri_w("\\\\server\\share\\dir\\m.xo", true) == "file://server/share/dir/m.xo")
+  expect(uri_to_path_w("file://server/share/dir/m.xo", true) == "//server/share/dir/m.xo")
+  // Go's url.URL form of a UNC path
+  expect(uri_to_path_w("file:////server/share/dir/m.xo", true) == "//server/share/dir/m.xo")
+  expect(uri_to_path_w(path_to_uri_w("\\\\srv\\a b\\m.xo", true), true) == "//srv/a b/m.xo")
+  expect(uri_to_path_w("file://server/share", true) == "//server/share")
+  // localhost is this machine, as everywhere
+  expect(uri_to_path_w("file://localhost/C:/a/m.xo", true) == "C:/a/m.xo")
 }
