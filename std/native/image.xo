@@ -230,3 +230,120 @@ const PLAN9_COLORS: List[Int] = [
 
 fn plan9() -> List[Int] { PLAN9_COLORS }
 
+/// Go's sqDiff on uint32: ((x - y) mod 2^32 squared mod 2^32) >> 2. The
+/// square of d and of -d agree modulo 2^32, so the absolute difference (at
+/// most 65535 for 16 bit channels) gives the same value without overflow.
+fn sq_diff(x: Int, y: Int) -> Int {
+  let e = if x > y { x - y } else { y - x }
+  ((e * e) & 4294967295) >> 2
+}
+
+/// Go's Palette.Index: the first entry with the least sum of sqDiff over the
+/// 16 bit channels (an exact match returns at once).
+fn palette_index(pal: List[Int], c: image.Color) -> Int {
+  var best = 0
+  var best_sum = 4294967295
+  var i = 0
+  for v in pal {
+    let p = image.from_nrgba(v)
+    let sum = (sq_diff(p.r, c.r) + sq_diff(p.g, c.g) + sq_diff(p.b, c.b) + sq_diff(p.a, c.a)) & 4294967295
+    if sum < best_sum {
+      if sum == 0 {
+        return i
+      }
+      best = i
+      best_sum = sum
+    }
+    i += 1
+  }
+  best
+}
+
+/// Go's Image.Set. Bytes is immutable, so the pixels are copied into a
+/// BytesBuilder, patched in place and frozen again: a set costs time linear in
+/// the image (bulk writers, like the draw step of decision 0578, build their
+/// own buffers).
+fn image_set(var im: image.Image, x: Int, y: Int, c: image.Color) -> () {
+  if x < 0 || y < 0 || x >= im.width || y >= im.height {
+    return
+  }
+  let stride = im.stride
+  var at = 0
+  var v = 0
+  var n = 1
+  match im.model {
+    image.Model.Gray => {
+      at = y * (if stride > 0 { stride } else { im.width }) + x
+      v = color_gray(c)
+    }
+    image.Model.Gray16 => {
+      at = y * (if stride > 0 { stride } else { im.width * 2 }) + x * 2
+      v = color_gray16(c)
+      n = 2
+    }
+    image.Model.Paletted => {
+      if im.palette.len() == 0 {
+        return
+      }
+      at = y * (if stride > 0 { stride } else { im.width }) + x
+      v = palette_index(im.palette, c)
+    }
+    image.Model.RGBA => {
+      at = y * (if stride > 0 { stride } else { im.width * 4 }) + x * 4
+      v = ((c.r >> 8) << 24) | ((c.g >> 8) << 16) | ((c.b >> 8) << 8) | (c.a >> 8)
+      n = 4
+    }
+    image.Model.NRGBA => {
+      at = y * (if stride > 0 { stride } else { im.width * 4 }) + x * 4
+      v = color_nrgba(c)
+      n = 4
+    }
+    image.Model.CMYK => {
+      at = y * (if stride > 0 { stride } else { im.width * 4 }) + x * 4
+      let (cc, m, yy, k) = rgb_to_cmyk(c.r >> 8, c.g >> 8, c.b >> 8)
+      v = (cc << 24) | (m << 16) | (yy << 8) | k
+      n = 4
+    }
+    image.Model.RGBA64 => {
+      at = y * (if stride > 0 { stride } else { im.width * 8 }) + x * 8
+      var b = BytesBuilder.with_capacity(im.pix.len())
+      b.write(im.pix)
+      b.put_be(at, c.r, 2)
+      b.put_be(at + 2, c.g, 2)
+      b.put_be(at + 4, c.b, 2)
+      b.put_be(at + 6, c.a, 2)
+      im.pix = b.freeze()
+      return
+    }
+    image.Model.NRGBA64 => {
+      at = y * (if stride > 0 { stride } else { im.width * 8 }) + x * 8
+      var r = c.r
+      var g = c.g
+      var bl = c.b
+      if c.a == 0 {
+        r = 0
+        g = 0
+        bl = 0
+      } else if c.a != 65535 {
+        r = (c.r * 65535) / c.a
+        g = (c.g * 65535) / c.a
+        bl = (c.b * 65535) / c.a
+      }
+      var b = BytesBuilder.with_capacity(im.pix.len())
+      b.write(im.pix)
+      b.put_be(at, r, 2)
+      b.put_be(at + 2, g, 2)
+      b.put_be(at + 4, bl, 2)
+      b.put_be(at + 6, c.a, 2)
+      im.pix = b.freeze()
+      return
+    }
+    image.Model.YCbCr => {
+      return
+    }
+  }
+  var b = BytesBuilder.with_capacity(im.pix.len())
+  b.write(im.pix)
+  b.put_be(at, v, n)
+  im.pix = b.freeze()
+}

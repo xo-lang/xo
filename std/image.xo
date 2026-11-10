@@ -89,3 +89,10 @@ fn web_safe() -> List[Int]
 /// Go's palette.Plan9: the 256 colors of Plan 9's default palette, as
 /// `0xRRGGBBAA` (alpha 255), in Go's order.
 fn plan9() -> List[Int]
+
+/// Go's Image.Set for the models that keep their samples in `pix` (not
+/// YCbCr): stores c converted by the model as Go's color model does (Gray,
+/// Gray16, NRGBA, NRGBA64, CMYK from the premultiplied channels; Paletted
+/// picks the nearest entry by Go's Palette.Index). A point outside the image
+/// is ignored, as in Go.
+fn (var im: Image) set(x: Int, y: Int, c: Color)

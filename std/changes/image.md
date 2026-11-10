@@ -1,5 +1,17 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image Image.set (decision 0578 step 1)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: image (Set of Gray, Gray16, Paletted, RGBA, NRGBA, RGBA64, NRGBA64, CMYK), color.Palette.Index
+- Test: testdata/corpus/image: 8 rounds of each of the 8 models, four colors set (one outside the image, opaque and transparent ones included), the pix compared with Go's, on arm64, LLVM and the Go backend
+- Timing: a set copies the image (Bytes is immutable), so it is linear in the image size; bulk writers build their own buffers (the draw step of 0578)
+- Shipped in: not yet released
+
+`Image.set(x, y, c)` stores a color as Go's model conversion does (Paletted: Go's nearest entry by `Palette.Index`); a point outside the image is ignored.
+
 ## 2026-11-09: feature: std/image Image.at, web_safe and plan9 (decision 0578 step 1)
 
 - Kind: feature

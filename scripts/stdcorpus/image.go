@@ -264,5 +264,112 @@ test "Image.at is Go's At" {
 		fmt.Fprintf(&o, "%d", int(n.R)<<24|int(n.G)<<16|int(n.B)<<8|int(n.A))
 	}
 	o.WriteString("]\n\ntest \"plan9 is Go's palette.Plan9\" {\n  expect(image.plan9()) == PLAN9\n}\n")
+	// Image.Set: a starting image of each model, three random premultiplied
+	// colors set at chosen points (one outside the image), the pix after.
+	type setImg interface {
+		image.Image
+		Set(x, y int, c color.Color)
+	}
+	o.WriteString("\n/// (model, pix before, palette, [(x, y, r, g, b, a)], pix after): Image.Set.\nconst SET_CASES: List[(Str, Bytes, List[Int], List[(Int, Int, Int, Int, Int, Int)], Bytes)] = [\n")
+	pixOf := func(img image.Image) []byte {
+		switch v := img.(type) {
+		case *image.Gray:
+			return v.Pix
+		case *image.Gray16:
+			return v.Pix
+		case *image.NRGBA:
+			return v.Pix
+		case *image.NRGBA64:
+			return v.Pix
+		case *image.CMYK:
+			return v.Pix
+		case *image.RGBA:
+			return v.Pix
+		case *image.RGBA64:
+			return v.Pix
+		case *image.Paletted:
+			return v.Pix
+		}
+		return nil
+	}
+	for rep := 0; rep < 8; rep++ {
+		var pal color.Palette
+		var palv []int
+		for k := 0; k < 6; k++ {
+			nc := color.NRGBA{uint8(r.Intn(256)), uint8(r.Intn(256)), uint8(r.Intn(256)), uint8(r.Intn(256))}
+			pal = append(pal, nc)
+			palv = append(palv, int(nc.R)<<24|int(nc.G)<<16|int(nc.B)<<8|int(nc.A))
+		}
+		imgs := map[string]setImg{
+			"Gray": image.NewGray(rect), "Gray16": image.NewGray16(rect), "NRGBA": image.NewNRGBA(rect),
+			"NRGBA64": image.NewNRGBA64(rect), "CMYK": image.NewCMYK(rect), "RGBA": image.NewRGBA(rect),
+			"RGBA64": image.NewRGBA64(rect), "Paletted": image.NewPaletted(rect, pal),
+		}
+		for _, name := range []string{"Gray", "Gray16", "NRGBA", "NRGBA64", "CMYK", "RGBA", "RGBA64", "Paletted"} {
+			img := imgs[name]
+			px := pixOf(img)
+			if name == "Paletted" {
+				for i := range px {
+					px[i] = byte(r.Intn(6))
+				}
+			} else {
+				copy(px, fill(len(px)))
+			}
+			before := append([]byte(nil), px...)
+			var probes strings.Builder
+			for k := 0; k < 4; k++ {
+				x, y := r.Intn(5)-1, r.Intn(4)-1
+				a := r.Intn(65536)
+				if k == 0 {
+					a = 65535
+				}
+				if k == 1 && rep%2 == 0 {
+					a = 0
+				}
+				cr, cg, cb := r.Intn(a+1), r.Intn(a+1), r.Intn(a+1)
+				img.Set(x, y, color.RGBA64{R: uint16(cr), G: uint16(cg), B: uint16(cb), A: uint16(a)})
+				if k > 0 {
+					probes.WriteString(", ")
+				}
+				fmt.Fprintf(&probes, "(%d, %d, %d, %d, %d, %d)", x, y, cr, cg, cb, a)
+			}
+			palText := "[]"
+			if name == "Paletted" {
+				var sb strings.Builder
+				sb.WriteString("[")
+				for i, v := range palv {
+					if i > 0 {
+						sb.WriteString(", ")
+					}
+					fmt.Fprintf(&sb, "%d", v)
+				}
+				sb.WriteString("]")
+				palText = sb.String()
+			}
+			fmt.Fprintf(&o, "  (%q, %s, %s, [%s], %s),\n", name, bytesLit(before), palText, probes.String(), bytesLit(pixOf(img)))
+		}
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+test "Image.set is Go's Set" {
+  for (name, before, pal, sets, after) in SET_CASES {
+    let model = match name {
+      "Gray" => image.Model.Gray
+      "Gray16" => image.Model.Gray16
+      "NRGBA" => image.Model.NRGBA
+      "NRGBA64" => image.Model.NRGBA64
+      "CMYK" => image.Model.CMYK
+      "RGBA" => image.Model.RGBA
+      "RGBA64" => image.Model.RGBA64
+      _ => image.Model.Paletted
+    }
+    var im = image.Image{width: 3, height: 2, model: model, pix: before, palette: pal}
+    for (x, y, r, g, b, a) in sets {
+      im.set(x, y, image.Color{r: r, g: g, b: b, a: a})
+    }
+    expect(im.pix) == after
+  }
+}
+`)
 	return o.String()
 }
