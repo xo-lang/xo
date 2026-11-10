@@ -376,6 +376,13 @@ and runs `gh release create`. The order:
    with the new file and line links, the Go version measured against
    and the newest Go release, and its "Last verified" date; the
    website push needs the owner's OK.
+   Refresh `content/docs/performance.md` the same way (owner,
+   2026-11-10): its run, HTTP (both Go columns, defaults and
+   `GOGC=off GOMEMLIMIT=1GiB`), compile and "behind or even" sections
+   from this release's `release-vs-go-vX.Y.Z.md`, the go-tuned HTTP
+   report and the newest Xo-vs-Go survey, each figure with its file and
+   line link; say which release each table is from, and update its
+   "Last verified" date.
 9. clean up (lead, 2026-10-23: the disk sat at the 50 GB trim line,
    about 6 GB of it finished release directories): delete the seed
    cut's WORKDIR once seed-upload.sh has run (step 4 of "Cutting a
