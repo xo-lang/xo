@@ -5020,9 +5020,13 @@ wait for the gate (about 20 minutes). A lock whose holder's PID is gone
 is taken over; a dry run takes none (last verified: 2026-10-21).
 
 seed-upload.sh checks every tarball against its .sha256 and the
-manifest, refuses a seed already in the bucket, uploads the five
-tarballs, their .sha256, and manifest.txt, checks the listing (11
-objects), then writes seeds/latest.txt and reads it back. Hosts pick the
+manifest, refuses a seed already in the bucket, uploads the six
+tarballs, their .sha256, and manifest.txt, checks the listing (13
+objects), then writes seeds/latest.txt and reads it back. windows-arm64
+is the sixth platform from the seed after 0.45.0 (2026-11-09, decision
+0569: xo cross built for windows/arm64 builds itself there in 106 s on
+the winarm VM once compiler/macho split large functions' unwind data,
+f4683d8ed); it ships no ThreadSanitizer runtime. Hosts pick the
 new seed up on their next build that needs one (no local xo).
 
 Verified: 0.11.0-ae2587fd was cut by the same steps (the lead's script

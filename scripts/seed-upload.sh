@@ -24,7 +24,7 @@ seed=$(cat "$out/SEED")
 echo "$seed" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{8}$' || die "seed name $seed"
 command -v aws >/dev/null || die "needs the aws CLI"
 
-plats="darwin-arm64 darwin-amd64 linux-arm64 linux-amd64 windows-amd64"
+plats="darwin-arm64 darwin-amd64 linux-arm64 linux-amd64 windows-amd64 windows-arm64"
 for p in $plats; do
   f=$out/$p.tar.gz
   [ -f "$f" ] && [ -f "$f.sha256" ] || die "$p: $f or its .sha256 missing"
@@ -44,7 +44,7 @@ for p in $plats; do
 done
 aws s3 cp --only-show-errors "$out/manifest.txt" "s3://$bucket/seeds/$seed/manifest.txt"
 n=$(aws s3 ls "s3://$bucket/seeds/$seed/" | wc -l | tr -d ' ')
-[ "$n" = 11 ] || die "seeds/$seed/ lists $n objects, want 11; latest.txt not changed"
+[ "$n" = 13 ] || die "seeds/$seed/ lists $n objects, want 13; latest.txt not changed"
 
 echo "$seed" > "$out/latest.txt"
 aws s3 cp --only-show-errors "$out/latest.txt" "s3://$bucket/seeds/latest.txt"

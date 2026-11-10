@@ -24,12 +24,13 @@
 #   5. darwin-arm64: xo at clang -O2 and ThreadSanitizer's runtime
 #      (scripts/race-runtime.sh, into the tree's lib/xo/race), packed by
 #      scripts/seed-pack.sh
-#   6. linux-arm64, linux-amd64, windows-amd64, darwin-amd64: cross built
+#   6. linux-arm64, linux-amd64, windows-amd64, darwin-amd64, windows-arm64
+#      (from 0.46: decision 0569, xo builds itself there): cross built
 #      by that xo with the Go backend, packed with the checkout's std;
 #      linux-arm64, linux-amd64 and darwin-amd64 also with
 #      ThreadSanitizer's runtime (scripts/race-runtime.sh ... PLATFORM:
 #      the Linux archives built in Docker, which must run)
-#   7. WORKDIR/out holds the five tarballs, their .sha256, manifest.txt,
+#   7. WORKDIR/out holds the six tarballs, their .sha256, manifest.txt,
 #      and SEED (the seed's name, VERSION-<commit, 8 hex>)
 #
 # XO_SEED_TAG=vX.Y.Z (a patch seed, X.Y.Z with Z above 0, VERSION the same
@@ -273,8 +274,8 @@ step "6. cross builds"
 # releases (decision 0362; the Linux ones with compiler/macho's ELF link
 # and no C library); XO_SEED_CROSS_BACKEND=go builds them all with the Go
 # backend as before
-for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64; do
-  plat=${p/\//-}; exe=xo; [ "$plat" = windows-amd64 ] && exe=xo.exe
+for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64 windows/arm64; do
+  plat=${p/\//-}; exe=xo; [ "${p%/*}" = windows ] && exe=xo.exe
   d=$work/cross/$plat
   mkdir -p "$d/bin"
   be=${XO_SEED_CROSS_BACKEND:-${p#*/}}
@@ -286,8 +287,12 @@ for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64; do
   # amd64 and Windows addenda) into $d/lib/xo/race, which seed-pack.sh
   # packs: the Linux static archives and Windows' Go flavor object built
   # in Docker, darwin-amd64's dylib cross built here
-  bash scripts/race-runtime.sh "$work/race-$plat" "$d" "$plat" > "$log/race-runtime-$plat.log" 2>&1 ||
-    { tail "$log/race-runtime-$plat.log"; die "race-runtime.sh $plat failed"; }
+  # (windows/arm64 has no ThreadSanitizer runtime: --race is not
+  # offered there, decision 0569)
+  if [ "$plat" != windows-arm64 ]; then
+    bash scripts/race-runtime.sh "$work/race-$plat" "$d" "$plat" > "$log/race-runtime-$plat.log" 2>&1 ||
+      { tail "$log/race-runtime-$plat.log"; die "race-runtime.sh $plat failed"; }
+  fi
   XO_SEED_VERSION=$version XO_SEED_PLATFORM=$plat XO_SEED_COMMIT=$commit \
     XO_SEED_NOTE="cross built by the darwin-arm64 $version xo with --backend=$be --targets=$p (seed-cut.sh)" \
     bash scripts/seed-pack.sh "$d/bin/$exe" "$out" > "$log/pack-$plat.log"
@@ -296,7 +301,7 @@ done
 
 seed=$version-${commit:0:8}
 n=$(ls "$out"/*.tar.gz | wc -l | tr -d ' ')
-[ "$n" = 5 ] || die "$n tarballs in $out, want 5"
+[ "$n" = 6 ] || die "$n tarballs in $out, want 6"
 echo "$seed" > "$out/SEED"
 [ "$dry" = 1 ] && echo dry-run > "$out/DRY_RUN"
 cat "$out/manifest.txt"
