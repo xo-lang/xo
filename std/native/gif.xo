@@ -188,11 +188,12 @@ fn uninterlace(pix: Bytes, w: Int, h: Int) -> Bytes {
   let skips = [8, 8, 4, 2]
   let starts = [0, 4, 2, 1]
   for pass in 0..4 {
-    var row = starts[pass]
+    let skip = skips[pass]
+    var row = starts[pass] + 0
     while row < h {
       rows[row] = offset
       offset += w
-      row += skips[pass]
+      row += skip
     }
   }
   for y in 0..h {
