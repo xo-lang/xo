@@ -36,7 +36,9 @@ enum Model {
   YCbCr
 } derive Eq, Display
 
-/// A raster image. `pix` holds rows of `stride` bytes; a view made by
+/// A raster image whose top left pixel is (`min_x`, `min_y`) (Go's
+/// Rect().Min; 0, 0 for a decoded image) and whose size is `width` by
+/// `height`. `pix` holds rows of `stride` bytes; a view made by
 /// `sub_image` keeps the parent's stride. `palette` is for Paletted, one
 /// `0xRRGGBBAA` (not premultiplied) per index.
 struct Image {
@@ -46,6 +48,8 @@ struct Image {
   pix: Bytes
   stride: Int = 0
   palette: List[Int] = []
+  min_x: Int = 0
+  min_y: Int = 0
 }
 
 /// Go's color.GrayModel: the 8 bit luma of c, (19595 r + 38470 g + 7471 b +
@@ -96,3 +100,14 @@ fn plan9() -> List[Int]
 /// picks the nearest entry by Go's Palette.Index). A point outside the image
 /// is ignored, as in Go.
 fn (var im: Image) set(x: Int, y: Int, c: Color)
+
+/// Go's Image.SubImage for the models that keep their samples in `pix` (not
+/// YCbCr): the part of the image inside r (clipped to the image) sharing the
+/// pixels of the parent, with its coordinates kept (min_x, min_y are r's
+/// corner) and the parent's stride. An empty intersection gives the empty
+/// image Go returns.
+fn (im: Image) sub_image(r: Rect) -> Image
+
+/// A tightly packed copy of the part of the image inside r (stride 0, min
+/// at r's corner after clipping).
+fn (im: Image) crop(r: Rect) -> Image

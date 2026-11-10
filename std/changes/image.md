@@ -1,5 +1,18 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image Image.sub_image and crop, Image.min_x/min_y (decision 0578 step 1)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: image (SubImage of Gray, Gray16, Paletted, RGBA, NRGBA, RGBA64, NRGBA64, CMYK)
+- Test: testdata/corpus/image: 5 rounds of each of the 8 models and three rectangles (inside, clipped, wholly outside): size, corner, stride, pix and At over the rectangle and a pixel around it, from Go, on arm64, LLVM and the Go backend; crop against the sub image's At
+- Timing: sub_image shares the parent's pixels (a Bytes slice is a view); crop copies the rows
+- Shipped in: not yet released
+
+`Image` gains `min_x` and `min_y` (Go's `Bounds().Min`, 0 for a decoded image); `at` and `set` take Go's absolute coordinates. `sub_image(r)` clips r to
+the image and keeps the parent's pixels and stride; `crop(r)` packs the part tightly. Additive: existing `Image` literals are unchanged.
+
 ## 2026-11-09: feature: std/image Image.set (decision 0578 step 1)
 
 - Kind: feature

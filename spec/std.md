@@ -8246,7 +8246,7 @@ std/jpeg, `Rect`, `Color`, `Image`, and the integer color conversions Go compute
 struct Rect { x0: Int, y0: Int, x1: Int, y1: Int }
 struct Color { r: Int, g: Int, b: Int, a: Int }       // 16 bit channels, alpha premultiplied (Go's RGBA())
 enum Model { Gray, Gray16, Paletted, RGBA, NRGBA, RGBA64, NRGBA64, CMYK, YCbCr }
-struct Image { width: Int, height: Int, model: Model, pix: Bytes, stride: Int = 0, palette: List[Int] = [] }
+struct Image { width: Int, height: Int, model: Model, pix: Bytes, stride: Int = 0, palette: List[Int] = [], min_x: Int = 0, min_y: Int = 0 }
 fn (c: Color) gray() -> Int                      // color.GrayModel: (19595 r + 38470 g + 7471 b + 1<<15) >> 24
 fn (c: Color) gray16() -> Int                    // color.Gray16Model: the same sum >> 16
 fn (c: Color) nrgba() -> Int                     // color.NRGBAModel as 0xRRGGBBAA
@@ -8255,6 +8255,8 @@ fn (im: Image) at(x: Int, y: Int) -> Color  // Go's At(x, y).RGBA(); not YCbCr y
 fn web_safe() -> List[Int]                        // palette.WebSafe as 0xRRGGBBAA
 fn plan9() -> List[Int]                           // palette.Plan9 as 0xRRGGBBAA
 fn (var im: Image) set(x: Int, y: Int, c: Color)  // Go's Set: the model's conversion of c; outside the image is ignored; linear in the image (Bytes is immutable)
+fn (im: Image) sub_image(r: Rect) -> Image  // Go's SubImage: clipped, shares pix, keeps coordinates (min_x, min_y) and stride; not YCbCr yet
+fn (im: Image) crop(r: Rect) -> Image       // sub_image with the rows packed tightly (stride 0)
 fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
 fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int)
 fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int)

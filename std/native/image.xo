@@ -99,7 +99,9 @@ fn nrgba64_color(r: Int, g: Int, b: Int, a: Int) -> image.Color {
 }
 
 /// Go's Image.At over the sample layouts of the model (see the declaration).
-fn image_at(im: image.Image, x: Int, y: Int) -> image.Color {
+fn image_at(im: image.Image, ax: Int, ay: Int) -> image.Color {
+  let x = ax - im.min_x
+  let y = ay - im.min_y
   let stride = if im.stride > 0 { im.stride } else { 0 }
   let inside = x >= 0 && y >= 0 && x < im.width && y < im.height
   match im.model {
@@ -263,7 +265,9 @@ fn palette_index(pal: List[Int], c: image.Color) -> Int {
 /// BytesBuilder, patched in place and frozen again: a set costs time linear in
 /// the image (bulk writers, like the draw step of decision 0578, build their
 /// own buffers).
-fn image_set(var im: image.Image, x: Int, y: Int, c: image.Color) -> () {
+fn image_set(var im: image.Image, ax: Int, ay: Int, c: image.Color) -> () {
+  let x = ax - im.min_x
+  let y = ay - im.min_y
   if x < 0 || y < 0 || x >= im.width || y >= im.height {
     return
   }
@@ -346,4 +350,49 @@ fn image_set(var im: image.Image, x: Int, y: Int, c: image.Color) -> () {
   b.write(im.pix)
   b.put_be(at, v, n)
   im.pix = b.freeze()
+}
+
+/// Bytes per pixel of a model that keeps its samples in pix (0 for YCbCr).
+fn model_bpp(m: image.Model) -> Int {
+  match m {
+    image.Model.Gray => 1
+    image.Model.Paletted => 1
+    image.Model.Gray16 => 2
+    image.Model.RGBA => 4
+    image.Model.NRGBA => 4
+    image.Model.CMYK => 4
+    image.Model.RGBA64 => 8
+    image.Model.NRGBA64 => 8
+    image.Model.YCbCr => 0
+  }
+}
+
+/// Go's Image.SubImage (see the declaration).
+fn image_sub_image(im: image.Image, r: image.Rect) -> image.Image {
+  let bpp = model_bpp(im.model)
+  let x0 = if r.x0 > im.min_x { r.x0 } else { im.min_x }
+  let y0 = if r.y0 > im.min_y { r.y0 } else { im.min_y }
+  let x1 = if r.x1 < im.min_x + im.width { r.x1 } else { im.min_x + im.width }
+  let y1 = if r.y1 < im.min_y + im.height { r.y1 } else { im.min_y + im.height }
+  if bpp == 0 || x0 >= x1 || y0 >= y1 {
+    return image.Image{width: 0, height: 0, model: im.model, pix: b"", palette: im.palette}
+  }
+  let stride = if im.stride > 0 { im.stride } else { im.width * bpp }
+  let off = (y0 - im.min_y) * stride + (x0 - im.min_x) * bpp
+  image.Image{width: x1 - x0, height: y1 - y0, model: im.model, pix: im.pix[off..im.pix.len()], stride: stride, palette: im.palette, min_x: x0, min_y: y0}
+}
+
+/// Image.crop: sub_image, then the rows packed tightly.
+fn image_crop(im: image.Image, r: image.Rect) -> image.Image {
+  let s = image_sub_image(im, r)
+  let bpp = model_bpp(s.model)
+  if s.width == 0 {
+    return s
+  }
+  var b = BytesBuilder.with_capacity(s.width * s.height * bpp)
+  for row in 0..s.height {
+    let o = row * s.stride
+    b.write(s.pix[o..o + s.width * bpp])
+  }
+  image.Image{width: s.width, height: s.height, model: s.model, pix: b.freeze(), stride: 0, palette: s.palette, min_x: s.min_x, min_y: s.min_y}
 }

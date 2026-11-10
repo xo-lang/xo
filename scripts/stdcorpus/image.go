@@ -371,5 +371,146 @@ test "Image.set is Go's Set" {
   }
 }
 `)
+	// Image.SubImage and crop: a 5 by 4 image of each model, three rectangles
+	// (partly or wholly outside), the sub image's size, corner and pix, and
+	// its At over the rectangle and a pixel around it.
+	o.WriteString("\n/// (model, pix, palette, rect, (w, h, min_x, min_y, stride), pix of the sub image, [(x, y, r, g, b, a)]): SubImage.\nconst SUB_CASES: List[(Str, Bytes, List[Int], (Int, Int, Int, Int), (Int, Int, Int, Int, Int), Bytes, List[(Int, Int, Int, Int, Int, Int)])] = [\n")
+	big := image.Rect(0, 0, 5, 4)
+	type subImg interface {
+		image.Image
+		SubImage(r image.Rectangle) image.Image
+	}
+	subPix := func(img image.Image) ([]byte, int) {
+		switch v := img.(type) {
+		case *image.Gray:
+			return v.Pix, v.Stride
+		case *image.Gray16:
+			return v.Pix, v.Stride
+		case *image.NRGBA:
+			return v.Pix, v.Stride
+		case *image.NRGBA64:
+			return v.Pix, v.Stride
+		case *image.CMYK:
+			return v.Pix, v.Stride
+		case *image.RGBA:
+			return v.Pix, v.Stride
+		case *image.RGBA64:
+			return v.Pix, v.Stride
+		case *image.Paletted:
+			return v.Pix, v.Stride
+		}
+		return nil, 0
+	}
+	for rep := 0; rep < 5; rep++ {
+		var pal color.Palette
+		var palv []int
+		for k := 0; k < 4; k++ {
+			nc := color.NRGBA{uint8(r.Intn(256)), uint8(r.Intn(256)), uint8(r.Intn(256)), uint8(r.Intn(256))}
+			pal = append(pal, nc)
+			palv = append(palv, int(nc.R)<<24|int(nc.G)<<16|int(nc.B)<<8|int(nc.A))
+		}
+		imgs := map[string]subImg{
+			"Gray": image.NewGray(big), "Gray16": image.NewGray16(big), "NRGBA": image.NewNRGBA(big),
+			"NRGBA64": image.NewNRGBA64(big), "CMYK": image.NewCMYK(big), "RGBA": image.NewRGBA(big),
+			"RGBA64": image.NewRGBA64(big), "Paletted": image.NewPaletted(big, pal),
+		}
+		for _, name := range []string{"Gray", "Gray16", "NRGBA", "NRGBA64", "CMYK", "RGBA", "RGBA64", "Paletted"} {
+			img := imgs[name]
+			px, _ := subPix(img)
+			if name == "Paletted" {
+				for i := range px {
+					px[i] = byte(r.Intn(4))
+				}
+			} else if name == "RGBA" {
+				for i := 0; i < len(px); i += 4 {
+					a := r.Intn(256)
+					px[i], px[i+1], px[i+2], px[i+3] = byte(r.Intn(a+1)), byte(r.Intn(a+1)), byte(r.Intn(a+1)), byte(a)
+				}
+			} else if name == "RGBA64" {
+				for i := 0; i < len(px); i += 8 {
+					a := r.Intn(65536)
+					vals := [4]int{r.Intn(a + 1), r.Intn(a + 1), r.Intn(a + 1), a}
+					for k, v := range vals {
+						px[i+2*k], px[i+2*k+1] = byte(v>>8), byte(v)
+					}
+				}
+			} else {
+				copy(px, fill(len(px)))
+			}
+			rects := []image.Rectangle{image.Rect(1, 1, 4, 3), image.Rect(-2, 2, 3, 9), image.Rect(7, 7, 9, 9)}
+			for _, rc := range rects {
+				sub := img.SubImage(rc)
+				spx, stride := subPix(sub)
+				b := sub.Bounds()
+				palText := "[]"
+				if name == "Paletted" {
+					var sb strings.Builder
+					sb.WriteString("[")
+					for i, v := range palv {
+						if i > 0 {
+							sb.WriteString(", ")
+						}
+						fmt.Fprintf(&sb, "%d", v)
+					}
+					sb.WriteString("]")
+					palText = sb.String()
+				}
+				var probes strings.Builder
+				first := true
+				for y := b.Min.Y - 1; y <= b.Max.Y; y++ {
+					for x := b.Min.X - 1; x <= b.Max.X; x++ {
+						cr, cg, cb, ca := sub.At(x, y).RGBA()
+						if !first {
+							probes.WriteString(", ")
+						}
+						first = false
+						fmt.Fprintf(&probes, "(%d, %d, %d, %d, %d, %d)", x, y, cr, cg, cb, ca)
+					}
+				}
+				fmt.Fprintf(&o, "  (%q, %s, %s, (%d, %d, %d, %d), (%d, %d, %d, %d, %d), %s, [%s]),\n", name, bytesLit(px), palText, rc.Min.X, rc.Min.Y, rc.Max.X, rc.Max.Y,
+					b.Dx(), b.Dy(), b.Min.X, b.Min.Y, stride, bytesLit(spx), probes.String())
+			}
+		}
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+test "Image.sub_image is Go's SubImage" {
+  for (name, pix, pal, rc, dims, spix, probes) in SUB_CASES {
+    let model = match name {
+      "Gray" => image.Model.Gray
+      "Gray16" => image.Model.Gray16
+      "NRGBA" => image.Model.NRGBA
+      "NRGBA64" => image.Model.NRGBA64
+      "CMYK" => image.Model.CMYK
+      "RGBA" => image.Model.RGBA
+      "RGBA64" => image.Model.RGBA64
+      _ => image.Model.Paletted
+    }
+    let im = image.Image{width: 5, height: 4, model: model, pix: pix, palette: pal}
+    let (x0, y0, x1, y1) = rc
+    let sub = im.sub_image(image.Rect{x0: x0, y0: y0, x1: x1, y1: y1})
+    let (w, h, mx, my, stride) = dims
+    expect((sub.width, sub.height)) == (w, h)
+    if w > 0 {
+      expect((sub.min_x, sub.min_y, sub.stride)) == (mx, my, stride)
+      expect(sub.pix) == spix
+    }
+    for (x, y, r, g, b, a) in probes {
+      if w > 0 {
+        expect(sub.at(x, y)) == image.Color{r: r, g: g, b: b, a: a}
+      }
+    }
+    let c = im.crop(image.Rect{x0: x0, y0: y0, x1: x1, y1: y1})
+    expect((c.width, c.height)) == (w, h)
+    if w > 0 {
+      for yy in 0..h {
+        for xx in 0..w {
+          expect(c.at(mx + xx, my + yy)) == sub.at(mx + xx, my + yy)
+        }
+      }
+    }
+  }
+}
+`)
 	return o.String()
 }
