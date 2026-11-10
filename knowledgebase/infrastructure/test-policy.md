@@ -71,6 +71,10 @@ offload.md. Last verified: 2026-11-10.
     (scripts/gate.sh short arm64 llvm cmd gen fp, LLVM at -O1 with Go
     parity, plus every amd64 golden on the offload host), bisects a failure over that
     window's pushes, and the owner of the commit fixes forward.
+  - an offload gate runs its steps at once, at most 3 (OFFGATE_CONCURRENT=3,
+    lead, 2026-11-10; numbers in agent-tools.md "Gates on an offload host"):
+    the host is held 25 to 43% less, with the host's memory peak at 75%;
+    a gate whose reported peak passes 80% runs with OFFGATE_CONCURRENT=2.
   - per commit only the agent's gate (owner, 2026-10-21): pushq rebases
     and pushes with no -short (PUSHQ_SHORT=1 runs it) but runs the fast
     repo checks (a few seconds, no xo build: TestOutsideBytesValidated,

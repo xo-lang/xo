@@ -1158,6 +1158,17 @@ yourself.
   `~/xo-lead/notes/NAME/gate-*.log` on a failure, and ends with the PUSHQ_RAN value to give pushq.sh
   --gated; its exit status is the gate's. A step that needs the Mac (darwin output) still runs there.
   Last verified: 2026-11-07.
+  Since 2026-11-10 (lead, owner's test-speed plan item 5) the host's gate.sh runs the steps at once, at most 3
+  (OFFGATE_CONCURRENT=3 by default; 0 runs them one after another), and the output ends with the host's memory
+  peak while the gate ran ("offload-gate: host memory peak N MB in use of T MB"). Each step is slower beside
+  the others (arm64 1039 to about 1700 s) but the host is held 25 to 43% less:
+  | host 2 (18 CPUs, 24 GB), arm64 llvm cmd | wall s | step s | host memory peak |
+  |---|---|---|---|
+  | serial (OFFGATE_CONCURRENT=0)            | 4097   | 3486   | not sampled      |
+  | OFFGATE_CONCURRENT=3, run 1              | 2343   | 2287   | not sampled      |
+  | OFFGATE_CONCURRENT=3, run 2              | 3066   | 2911   | 18.0 of 24.0 GB (75%) |
+  Every run failed only cmd TestGoCompiledMethodRouting (a main regression then). Use 2 if a gate's peak
+  passes 80% of the host's memory.
 - SDK stress (owner, 2026-11-08): `scripts/lead/sdk-stress.sh XO_DIR [big|limits|downstream...]` on host 2
   (see scripts/lead/README.md for the offload.sh line) builds the largest generated modules of the public
   xo-lang aws, azure and gcp repos with a given xo, under a wall and memory budget per module, and runs the
