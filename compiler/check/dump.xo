@@ -95,6 +95,21 @@ fn (var c: Checker) run() -> () ! Str {
     // azure's check ./..., 2026-11-09;
     // gotchas/member-check-reinstalled-std-record.md)
     let records = c.base_mods.is_empty()
+    // decision 0596: an `xo test --std-module` run's record leaves out the
+    // modules built from source (the module under test and its std
+    // importers, sep_source), so an edit of one still finds it; nothing
+    // outside the set imports one inside it, so the record stands alone,
+    // and the set's modules are declared after its block
+    let split = records && c.std_export_on && !c.sep_source.is_empty()
+    var rec_mods: List[Int] = []
+    var src_mods: List[Int] = []
+    for m in std_mods {
+      if split && c.sep_source.contains(c.mods[m].path) {
+        src_mods.push(m)
+      } else {
+        rec_mods.push(m)
+      }
+    }
     if records && c.trees_lazy && c.std_record != None && !c.std_export_verify {
       if let Some(e) = c.std_record {
         // the rebuild's test: nothing parsed now, every tree pending
@@ -134,7 +149,7 @@ fn (var c: Checker) run() -> () ! Str {
     if records && c.std_export_on {
       // piece 2: the entry's own fingerprint when its stamps held (no std
       // source read or hashed); verify always hashes
-      fp = if !c.std_header_fp.is_empty() && !c.std_export_verify { c.std_header_fp } else { c.std_fingerprint(std_mods) }
+      fp = if !c.std_header_fp.is_empty() && !c.std_export_verify { c.std_header_fp } else { c.std_fingerprint(rec_mods) }
       if !c.std_export_verify {
         var found = match c.std_record {
           Some(e) => Some(e)
@@ -178,7 +193,7 @@ fn (var c: Checker) run() -> () ! Str {
         c.ensure_tree(m)
       }
       c.std_block = at
-      for m in std_mods {
+      for m in rec_mods {
         c.declare(m)
       }
     } else {
@@ -211,10 +226,10 @@ fn (var c: Checker) run() -> () ! Str {
         }
       }
     } else {
-      for m in std_mods {
+      for m in rec_mods {
         c.resolve_types(m)
       }
-      for m in std_mods {
+      for m in rec_mods {
         c.resolve_sigs(m)
       }
       c.std_block.obj_hi = c.objs.len()
@@ -224,7 +239,7 @@ fn (var c: Checker) run() -> () ! Str {
       if c.std_export_on {
         // never a record from a tree still pending: the declare path read
         // every tree above
-        for m in std_mods {
+        for m in rec_mods {
           for f in c.mods[m].files {
             if c.files[f].unloaded {
               fault("internal: a std record from an unparsed file (${c.files[f].path})")
@@ -235,7 +250,17 @@ fn (var c: Checker) run() -> () ! Str {
         if c.std_export_verify {
           c.std_export_bad = c.verify_std_entry(fp, at, mine)
         }
-        c.std_export_out = encode_std_entry(c.std_header(std_mods, fp, c.std_now_ms), mine)
+        c.std_export_out = encode_std_entry(c.std_header(rec_mods, fp, c.std_now_ms), mine)
+      }
+      // the from-source set, past the record's block (decision 0596)
+      for m in src_mods {
+        c.declare(m)
+      }
+      for m in src_mods {
+        c.resolve_types(m)
+      }
+      for m in src_mods {
+        c.resolve_sigs(m)
       }
     }
   }

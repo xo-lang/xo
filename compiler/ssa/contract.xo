@@ -69,6 +69,9 @@ fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
     // whole build runs again with every tree joined on the main thread
     // (never a body-less build)
     b.trees_missing = true
+    if b.trees_missing_fn.is_empty() {
+      b.trees_missing_fn = "${b.c.mods[b.obj_mod(fo)].path}.${check.text(b.c.objs[fo].name)}"
+    }
     return
   }
   b.check_lazy(fo)

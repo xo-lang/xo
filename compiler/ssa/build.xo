@@ -204,6 +204,7 @@ pub struct Builder {
   /// the checker's record (trees_lazy, decision 0388 stage 2): the
   /// build is made again with every tree joined (build_program_fe)
   pub trees_missing: Bool = false
+  pub trees_missing_fn: Str = ""
   /// the functions whose own body needs concurrency (set_flag 1, a front
   /// end cache entry's flag), for std's facts (StdFact.conc)
   pub conc_names: Map[Str, Bool] = {}
@@ -565,6 +566,12 @@ pub fn (var b: Builder) build() uses fs.read {
   if b.tests {
     // a test binary (testmode.xo): its main runs one test
     b.build_tests()
+    b.run_queue()
+    // std's roots (XO_STD_ROOTS: std's test variant, decision 0436), as
+    // for a program with main below: without them the variant held only
+    // the runtime and the test world, and every test build lowered the
+    // std functions it reached from their bodies
+    b.declare_dump_roots()
     b.run_queue()
     // after the program's own code: a feature's exports are built only
     // when code of a module importing them is

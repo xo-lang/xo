@@ -11,6 +11,11 @@ the text of every entry is unchanged).
 - playground and wasm (memory): an empty list (`[]`) no longer takes room for 4 elements before its first push, as on native. The playground compiler's first REPL entry (an adler32 program) peaked at 169 MB of wasm memory, from 212 MB; after its check, 136 MB (decision 0583).
 - xo build and xo test (fix): a program using std/base64 with std's cached declaration record (any build that also uses a module in the record, such as crc32) failed with XO1201 `base64.encode`: the record did not keep that base64 is merged with its implementation (decision 0588; the record is now v11). `xo test --std-module=base64` after an edit to std/base64.xo reuses std's test variant, building base64 and its importers from source, as it did for the old std/native/base64.xo
 - `os.secrets.keychain()`: the macOS login keychain's generic passwords (`Keychain.get_generic/set_generic/delete_generic`, `KeychainErr`), and an in-memory keychain in tests on every OS (decision 0584 stage D)
+- `xo test --std-module` edits use about half the memory: std's test variant now holds facts for
+  every std function (its build rooted none, so each test build lowered std bodies and built its
+  front end twice), and a test build loads std's declarations from their record and joins std's
+  trees lazily, as `xo build` does. A json edit on the Mac: 0.15 s and 109 MB peak, from about
+  0.2 s and 200 MB (decision 0596).
 - Tests get an in-memory keyring: `os.secrets.keyring()` in a test is `Some` on every OS and empty per test (decision 0584 stage C)
 - xo build (perf): a small program's warm build reuses its generated code: a separately compiled program of fewer than 256 functions (one part) skipped the function and part cache and generated all its code on every build. coll's warm rebuild on linux/arm64: 110 to 53 ms (--ab wall 0.479, cpu 0.475, max RSS 0.98); the binary is byte identical (bench/results/perf-gaps-2026-11-10.md)
 - playground and wasm (perf, memory): the playground compiler parses runtime bodies only when it checks them and skips test files, as `xo build` does, and a wasm program's memory grows by a quarter instead of doubling. The playground REPL's 30-entry session holds 265 MB of wasm memory, was 608 MB, with its first entry about 1 s (headless Chrome and Node; decision 0583, bench/results/browser-repl-2026-11-09.md)

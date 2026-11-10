@@ -1,6 +1,6 @@
 # 0596: An `xo test --std-module` edit declares std from its record
 
-Status: Proposed (Xo Lang 2, 2026-11-10; the perf page's "test builds use more memory" row)
+Status: Proposed (Xo Lang 2, 2026-11-10; the perf page's "test builds use more memory" row; revised the same day, see "Root cause")
 
 ## Context
 An edit of a std module's test (`xo test --std-module=native/M` after changing M) peaks at 202 to
@@ -31,6 +31,42 @@ every std module importing it, std_source_set) is left out on both sides.
    build that misses), next to the variant's store and facts.
 3. The module check cache's skipping stays off for tests (a test build checks its tests' modules in
    full, main.xo).
+
+## Root cause and revised decision (2026-11-10, after the prototype)
+The peak at SSA was not the from-source set. `--phase-times` showed `phase std_trees_rebuild` on
+every test edit, first triggered by `native/prelude.str_trim_prefix`: std's test variant (decision
+0436) held no facts for std's own functions. ssa build.xo build()'s test branch (b.tests) ran
+build_tests and declare_exports but never declare_dump_roots, so XO_STD_ROOTS rooted nothing in
+test mode: the variant's facts were 299 KB with 207 prelude and 0 json functions, against the
+build variant's 2.9 MB with 5,161 and 269. Every std function a test reached was lowered from its
+body, met a pending tree (contract.xo body), and the whole front end was built again with every
+std tree joined.
+
+Change (branch l2-0596):
+1. build()'s test branch declares std's roots after the tests (declare_dump_roots), as the main
+   path does. The test variant's facts now match the build's (2.93 MB, 269 json functions).
+2. `xo test` takes std's declaration record (items 1 to 3 above, the record without the
+   from-source set) and joins std's trees lazily (trees_lazy), both on by default; the module
+   check cache's skipping stays off for tests (mod_skip_on), its directory is still set (the
+   record's entries live there).
+3. `phase std_trees_rebuild` also prints the first body that triggered it.
+Step 3 of the prototype (the from-source set limited to reached importers) is not needed: with
+the facts present no from-source importer's body is lowered unless the test reaches it.
+
+Mac (darwin/arm64, under other agents' load), `xo test --std-module=native/json` after an edit of
+json.xo, three edits, 10 of 10 tests pass each time:
+
+| | wall | max RSS | heap after check | SSA phase |
+|---|---|---|---|---|
+| main | | 199 to 214 MB (prototype runs above) | 150 to 164 MB | std_trees_rebuild every edit |
+| roots fix only | 0.19 to 0.24 s | 194 to 202 MB | same | 53 to 58 ms, no rebuild |
+| roots fix, record, lazy trees | 0.15 s | 108 to 109 MB | 67 to 68 MB | 38 to 39 ms |
+
+The first edit after the variant is built is 0.21 s and 197 MB (the record is written then).
+go test's json edit on linux/arm64 is 158 MB (perf-gaps-2026-11-10.md). Cost: `xo dev stdcache
+--test` now builds std whole in test mode, 8.0 s and 1.53 GB peak (conc=0) and 9.6 s and 1.85 GB
+(conc=1) on the Mac, against 2.1 s and 1.45 GB before (it compiled little); it runs in the
+background once per std and xo.
 
 ## Measure (before Accepted)
 - Peak RSS and the heap after check of a test edit of json, base64 and a leaf module, 3 edits each,

@@ -849,12 +849,16 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   }
   // the module check cache (decision 0220 addendum stage 2): a program
   // module unchanged since its last full check is not checked again; for
-  // the builds only (a test build checks its tests' modules in full)
-  if native && ov.is_empty() && (o.cmd == "build" || o.cmd == "run") && (os.env.get("XO_FE_CACHE") ?? "") != "off" && backend_cache_mode(os) != "off" {
+  // the builds only (a test build checks its tests' modules in full);
+  // a test build takes std's declaration record below (decision 0596)
+  let test_stdx = o.cmd == "test"
+  if native && ov.is_empty() && (o.cmd == "build" || o.cmd == "run" || test_stdx) && (os.env.get("XO_FE_CACHE") ?? "") != "off" && backend_cache_mode(os) != "off" {
     let host = host_os(os)
     let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
     let id = if dir.is_empty() { "" } else { cache_id(os) }
     if !id.is_empty() {
+      // a test build's std record is written here too (stdx entries);
+      // mod_skip stays off for it below
       c.mod_cache_dir = dir
       c.mod_verify = backend_cache_mode(os) == "verify"
       // dep_lazy (decision 0517): a dependency checked lazily has no
@@ -876,7 +880,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       // not under XO_ASSUME_BREAK=1 (decision 0342's test knob): a
       // skipped module's bodies come from the cache, so the call it breaks
       // may not be there and the check sees nothing to report
-      c.mod_skip_on = (cc == "1" || (cc == "auto" && !o.many_targets)) && (os.env.get("XO_ASSUME_BREAK") ?? "") != "1"
+      c.mod_skip_on = (cc == "1" || (cc == "auto" && !o.many_targets)) && (os.env.get("XO_ASSUME_BREAK") ?? "") != "1" && !test_stdx
       // auto: only modules whose every body the front end cache replays,
       // with a fallback (build_native) when one is built from source
       // anyway (gotchas/module-check-cache-skips-whole-program-passes.md)
@@ -895,7 +899,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       // modules in its writer's order, so the binary depended on which
       // program wrote the record (TestFrontCacheAcrossPrograms)
       let sx0 = os.env.get("XO_STD_EXPORT") ?? ""
-      let sx = if sx0.is_empty() && !sepcomp_facts_path(os).is_empty() && (o.cmd is "build" | "run") { "1" } else { sx0 }
+      let sx = if sx0.is_empty() && !sepcomp_facts_path(os).is_empty() && (o.cmd is "build" | "run" || test_stdx) { "1" } else { sx0 }
       if sx == "1" || sx == "verify" {
         c.std_export_on = true
         c.std_export_verify = sx == "verify"
@@ -921,9 +925,10 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   let sp = sepcomp_facts_path(os)
   if !sp.is_empty() {
     // stage 2 pieces 3 and 4: std's trees joined only where needed (its
-    // SSA lowers no std body); a build or run only: xo doc, def, refs,
-    // the LSP and test read declarations in full
-    c.trees_lazy = o.cmd is "build" | "run"
+    // SSA lowers no std body); a build, run or test (decision 0596: the
+    // test variant roots all of std, so a test lowers no std body
+    // either); xo doc, def, refs and the LSP read declarations in full
+    c.trees_lazy = o.cmd is "build" | "run" | "test"
     c.trees_test_pend = c.trees_lazy && (os.env.get("XO_STD_TREES_TEST") ?? "") == "1"
     // decision 0428: a std declaration parsed alone where the check needs it
     c.decl_parse = c.trees_lazy && (os.env.get("XO_STD_DECL_PARSE") ?? "") != "off"
@@ -2850,6 +2855,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
   // the runtime's overrun check (XO_HEAP_GUARD=1, ssa Builder.heap_guard)
   let heap_guard = !wasm && (os.env.get("XO_HEAP_GUARD") ?? "") == "1"
   var b = fe_cached_build(os, c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, trace_support_eff(o, release), soft_cpu, heap_guard, o.phases, o.stamps)
+  let b0_fn = b.trees_missing_fn
   if b.trees_missing {
     // a std body the facts did not make extern met a tree the record
     // left pending (ssa contract.xo body, decision 0388 stage 2): every
@@ -2858,6 +2864,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
     b = fe_cached_build(os, c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, trace_support_eff(o, release), soft_cpu, heap_guard, o.phases, o.stamps)
     if o.phases {
       os.stdio.eprintln("phase std_trees_rebuild (a std body outside the facts: every tree joined, built again)")
+      os.stdio.eprintln("std_trees_rebuild first body: ${b0_fn}")
     }
   }
   b.imm_rc = o.backend != "llvm"

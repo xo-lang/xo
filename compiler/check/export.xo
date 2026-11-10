@@ -105,7 +105,9 @@ pub fn (c: Checker) std_export() -> StdExport {
   // order, which a second check of the same program can change
   for mi in c.order {
     let md = c.mods[mi]
-    if !md.std_tree {
+    // a module built from source (decision 0596) is declared past the
+    // block, not in the record
+    if !md.std_tree || c.sep_source.contains(md.path) {
       continue
     }
     var ms: List[(Bytes, Int)] = []
