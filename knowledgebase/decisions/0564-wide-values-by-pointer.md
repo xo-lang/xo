@@ -347,12 +347,16 @@ result of about 600 words that one call returns and the next takes as an
 argument is loaded word by word (sret_set's loads from the shared
 temporary area give every word a value of its own), about 1,200 loads and
 stores per site, where the revert copies the block with q register pairs
-(gotchas/wide-result-per-word-values.md). Size does not hold either: on
-main after the revert, compiler/xo built by kh has __text 41,141,724
-bytes against the revert's 40,429,904 (+1.76%, darwin/arm64, the same
-source); capping sret at 32 or 256 words gave 41,244,028 and 41,196,564,
-and skipping the regalloc sret bookkeeping in functions without sret
-changed nothing (`--ab` wall 1.146, cpu 1.048). Step 3 stays reverted. A
+(gotchas/wide-result-per-word-values.md). Its size gain holds: with the
+backend cache off, compiler/xo (kh's source) built by kh's parent and by
+the revert has __text 41,189,732 bytes, by kh and by main with kh
+41,092,476 (-0.24%, darwin/arm64, two runs each, identical). (A first
+reading of +1.76% came from builds with the shared backend cache on, where
+the revert's build gave 40,377,272: a cached build's size depends on the
+cache's contents, gotchas/size-with-backend-cache-on.md; the caps tried at
+32 and 256 words were measured the same way and are not evidence.)
+Skipping the regalloc sret bookkeeping in functions without sret changed
+nothing (`--ab` wall 1.146, cpu 1.048). Step 3 stays reverted. A
 redesign keeps block copies for large results (a size past which the
 result is copied with the memcpy path) and is measured by __text and a
 7-round `--ab` against its parent before it lands.

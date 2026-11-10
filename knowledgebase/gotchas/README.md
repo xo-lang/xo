@@ -1269,3 +1269,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [freebsd-linux-syscall-numbers.md](freebsd-linux-syscall-numbers.md): Observed 2026-11-10: a Linux syscall number reaching FreeBSD is SIGSYS or another call (exit_group 231 = shmget returned; use nrf)
 - [wide-result-per-word-values.md](wide-result-per-word-values.md): Observed 2026-11-10: native sret loaded a ~600-word result word by word, doubling a few big functions on emit's critical path (self build +14% wall); step 3 reverted
 - [elflink-weak-before-strong.md](elflink-weak-before-strong.md): Observed 2026-11-10: Xo's ELF linker kept the first reference's binding, so a weak runtime reference made a C object's strong malloc call a nop; strong now wins
+- [size-with-backend-cache-on.md](size-with-backend-cache-on.md): Observed 2026-11-10: the same compiler code built xo 2% smaller with the shared backend cache on; measure size with XO_BACKEND_CACHE=off
