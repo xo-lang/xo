@@ -1,5 +1,19 @@
 # std/cron changes
 
+## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0588 stage 2 (pure modules merged with their implementation)
+- Go reference: none (no behavior change)
+- Test: internal/stdtest corpus cron on go, arm64 and llvm
+
+std/cron.xo now holds the bodies of std/native/cron.xo (removed), and the Go
+backend compiles them from it as its own package, in place of the hand written std/rt/cron.go (removed): the Go
+backend now runs the same cron code as the native backends. The API, texts and errors
+are unchanged: every item the declaration file had is `pub`, with the same
+parameter names.
+
 ## 2026-11-03: perf: a schedule skips days that cannot match without a civil conversion
 
 - Kind: perf

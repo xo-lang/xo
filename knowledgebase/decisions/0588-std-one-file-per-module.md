@@ -263,3 +263,4 @@ commit (the lead cuts it).
   copy of `INF` dropped for the declared one; compiler/ssa/waits.xo
   NO_WAIT drops the Limiter and Reservation methods, which have Xo
   bodies now: TestWaitsClassified).
+- `std/cron` merged the same way (std/rt/cron.go, 300 lines, removed).
