@@ -43,3 +43,9 @@ TestResolverDiff's `pair.test` answers both back to back.
 Rule: a parser of a received message copies what it returns. A test of
 such a parser makes the next read overwrite the buffer before the result
 is used (two replies back to back), since a single slow reply hides it.
+
+`xo vet` reports the loop shape as XO0541 (2026-11-10): a slice of a
+`raw.bytes_buf` that the loop reads into again, pushed, stored outside
+the loop or returned without `.clone()`, and, one call deep, a call
+whose function returns slices of the buffer (or of a slice of it) it is
+given, as the resolver's `answer`, when that result is kept.

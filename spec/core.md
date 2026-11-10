@@ -3790,6 +3790,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0538` | warning | vet | a `var` local written after a closure that reads it was created and before the closure is used: the closure keeps the value from its creation (core 5.1) |
 | `XO0539` | error | checker | a destructuring assignment names the same place twice (core 5.2, decision 0536) |
 | `XO0540` | warning | checker | a `Mutex.with` closure writes its `var` value, then a path returns `Err`, which undoes the write (core 5.4) |
+| `XO0541` | warning | vet | a slice of a `raw.bytes_buf` buffer that a loop reads into again is kept past the iteration (pushed, stored outside the loop, returned) without `.clone()`: the next read changes it (decision 0330 views) |
 | `XO0542` | warning | vet | `x ?? lit <op> z`: an operator binding tighter than `??` after a literal default applies only to the default (`x ?? (lit <op> z)`); `(x ?? lit) <op> z` is likely meant (core 15 precedence) |
 | `XO0601` | error | checker | name does not resolve (core 4.3) |
 | `XO0602` | error | checker | import path does not yield a valid local name (core 4.1) |

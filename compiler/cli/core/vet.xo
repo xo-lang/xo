@@ -333,6 +333,7 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
         }
         Block(b) => {
           out = out + copy_store(c, f, path, b) + elem_copy_store(c, f, path, b) + stale_captures(c, f, path, b)
+          out = out + buf_views(c, f, path, b)
         }
         StringLit(s) => {
           out = out + debug_interps(c, f, path, s)
@@ -526,6 +527,376 @@ fn stale_captures(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[
         j += 1
       }
     }
+  }
+  out
+}
+
+/// XO0541: in block b, `let buf = raw.bytes_buf(n)` and then a loop that
+/// passes buf to a call (a read into it) and keeps a slice of it,
+/// `buf[a..b]`, past the iteration: pushed to or put in a collection, or
+/// assigned to a variable declared outside the loop, or returned, with no
+/// method applied (`.clone()` copies). A Bytes slice is a view of its
+/// parent (decision 0330), so the next read changes what was kept: the
+/// netlink and resolver bugs of gotchas/slice-view-of-reused-buffer.md.
+fn buf_views(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[Diag] {
+  var out: List[Diag] = []
+  for (i, s) in b.stmts.indexed() {
+    let nm = match s {
+      LetStmt(_, BindPat(_, n), _, CallExpr(_, SelectorExpr(_, Ident(rx), sel), _), _) => {
+        if check.text(rx.name) != "raw" || check.text(sel.name) != "bytes_buf" {
+          continue
+        }
+        n
+      }
+      _ => continue
+    }
+    let bv = c.var_of(f, nm)
+    if bv < 0 {
+      continue
+    }
+    var loops: List[parser.Stmt] = []
+    for j in i + 1..b.stmts.len() {
+      outer_loops(b.stmts[j], loops)
+    }
+    for l in loops {
+      out = out + loop_buf_views(c, f, file, l, bv, check.text(nm.name))
+    }
+  }
+  out
+}
+
+/// Whether e is the buffer variable bv or a slice of it.
+fn is_buf_or_view(c: check.Checker, f: Int, e: parser.Expr, bufs: Map[Int, Bool]) -> Bool {
+  match e {
+    Ident(id) => bufs.contains(c.var_of(f, id))
+    IndexExpr(_, Ident(id), RangeExpr(..)) => bufs.contains(c.var_of(f, id))
+    _ => false
+  }
+}
+
+/// The names pattern p binds.
+fn pat_names(p: parser.Pattern) -> List[parser.Ident] {
+  match p {
+    BindPat(_, n) => [n]
+    TuplePat(_, es) => {
+      var out: List[parser.Ident] = []
+      for e in es {
+        out = out + pat_names(e)
+      }
+      out
+    }
+    _ => []
+  }
+}
+
+/// The parameters of fd whose slices (`p[a..b]`, no method applied) reach
+/// its result: returned, the function's last expression, or pushed to a
+/// local that is. By name, within fd's own body (XO0541's one level).
+fn view_params(fd: parser.FnDecl) -> List[Int] {
+  let body = match fd.body {
+    Some(b) => b
+    None => return []
+  }
+  var xs: List[parser.Expr] = []
+  walk_block(body, xs)
+  var used: Map[Int, Bool] = {}
+  for x in xs {
+    if let SelectorExpr(_, IndexExpr(sp, ..), _) = x {
+      used[sp.start.offset] = true
+    }
+  }
+  // (offsets, param index) of the parameters' kept slices
+  var slices: List[(Int, Int, Int)] = []
+  for x in xs {
+    if let IndexExpr(sp, Ident(id), RangeExpr(..)) = x {
+      if used.contains(sp.start.offset) {
+        continue
+      }
+      for (k, p) in fd.params.indexed() {
+        if p.name.name == id.name {
+          slices.push((sp.start.offset, sp.end.offset, k))
+        }
+      }
+    }
+  }
+  if slices.is_empty() {
+    return []
+  }
+  let within = fn(e: parser.Expr) -> List[Int] {
+    let es = parser.expr_span(e)
+    var ks: List[Int] = []
+    for (a, z, k) in slices {
+      if a >= es.start.offset && z <= es.end.offset {
+        ks.push(k)
+      }
+    }
+    ks
+  }
+  // what reaches the result: return values and the last statement
+  var results: List[parser.Expr] = []
+  var stmts: List[parser.Stmt] = []
+  for x in xs {
+    if let Block(bb) = x {
+      stmts = stmts + bb.stmts
+    }
+  }
+  for st in stmts {
+    if let ReturnStmt(_, Some(v)) = st {
+      results.push(v)
+    }
+  }
+  if !body.stmts.is_empty() {
+    if let ExprStmt(_, v) = body.stmts[body.stmts.len() - 1] {
+      results.push(v)
+    }
+  }
+  var out: List[Int] = []
+  for r in results {
+    out = out + within(r)
+  }
+  // locals the slices are pushed to, then returned by name
+  var pushed: Map[Bytes, List[Int]] = {}
+  for x in xs {
+    if let CallExpr(_, SelectorExpr(_, Ident(rid), sel), args) = x {
+      if check.text(sel.name) is "push" | "insert" | "push_front" | "push_back" | "add" | "set" | "append" {
+        for a in args {
+          let ks = within(a.value)
+          if !ks.is_empty() {
+            pushed[rid.name] = (pushed.get(rid.name) ?? []) + ks
+          }
+        }
+      }
+    }
+  }
+  if !pushed.is_empty() {
+    for r in results {
+      var ys: List[parser.Expr] = []
+      walk_expr(r, ys)
+      for y in ys {
+        if let Ident(id) = y {
+          out = out + (pushed.get(id.name) ?? [])
+        }
+      }
+    }
+  }
+  out
+}
+
+/// The outermost loops in s (a loop's own nested loops are its body).
+fn outer_loops(s: parser.Stmt, var out: List[parser.Stmt]) {
+  match s {
+    ForStmt(..) | WhileStmt(..) => out.push(s)
+    _ => {
+      var xs: List[parser.Expr] = []
+      walk_stmt(s, xs)
+      for x in xs {
+        if let Block(bb) = x {
+          for t in bb.stmts {
+            if t is ForStmt(..) | WhileStmt(..) {
+              out.push(t)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/// XO0541 for loop l and buffer variable bv (name).
+fn loop_buf_views(c: check.Checker, f: Int, file: Str, l: parser.Stmt, bv: Int, name: Str) -> List[Diag] {
+  let body = match l {
+    ForStmt(_, _, _, _, _, body, ..) => body
+    WhileStmt(_, _, _, _, _, _, body, ..) => body
+    _ => return []
+  }
+  let ls = parser.stmt_span(l).start
+  var xs: List[parser.Expr] = []
+  walk_block(body, xs)
+  // the buffer read into: passed to a call in the loop
+  var read = false
+  // the slices of it, and those a method is applied to (not kept as views)
+  var views: List[parser.Span] = []
+  var used: Map[Int, Bool] = {}
+  for x in xs {
+    match x {
+      CallExpr(_, _, args) => {
+        for a in args {
+          if let Ident(id) = a.value {
+            if c.var_of(f, id) == bv {
+              read = true
+            }
+          }
+        }
+      }
+      IndexExpr(sp, Ident(id), RangeExpr(..)) => {
+        if c.var_of(f, id) == bv {
+          views.push(sp)
+        }
+      }
+      SelectorExpr(_, IndexExpr(sp, ..), _) => used[sp.start.offset] = true
+      _ => {}
+    }
+  }
+  if !read {
+    return []
+  }
+  var kept: List[parser.Span] = []
+  for v in views {
+    if !used.contains(v.start.offset) {
+      kept.push(v)
+    }
+  }
+  // locals of the loop bound to a view: `let m = buf[a..b]`
+  var alias: Map[Int, parser.Span] = {}
+  var stmts: List[parser.Stmt] = []
+  for x in xs {
+    if let Block(bb) = x {
+      stmts = stmts + bb.stmts
+    }
+  }
+  for st in stmts {
+    if let LetStmt(_, BindPat(_, n), _, value, _) = st {
+      for v in kept {
+        if parser.expr_span(value).start.offset == v.start.offset && parser.expr_span(value).end.offset == v.end.offset {
+          let av = c.var_of(f, n)
+          if av >= 0 {
+            alias[av] = v
+          }
+        }
+      }
+    }
+  }
+  // a call whose result holds a view of the buffer it is given (the
+  // resolver's `let (kind, addrs) = answer(m, ...)` with `let m =
+  // buf[0..r]`, addresses sliced from m): every name its result binds
+  // holds a view (view_params)
+  var bufs: Map[Int, Bool] = {bv: true}
+  var calls: Map[Int, Bool] = {}
+  for (av, _) in alias {
+    bufs[av] = true
+  }
+  for st in stmts {
+    if let LetStmt(_, pat, _, CallExpr(sp, Ident(fid), args), _) = st {
+      // the called function (ref_of: var_of finds locals only)
+      let o = c.ref_of(f, fid)
+      if o < 0 || c.objs[o].kind != check.ObjKind.Func || c.objs[o].fn_decl.is_empty() {
+        continue
+      }
+      var hold = false
+      for k in view_params(c.objs[o].fn_decl[0]) {
+        if k < args.len() && is_buf_or_view(c, f, args[k].value, bufs) {
+          hold = true
+        }
+      }
+      if hold {
+        kept.push(sp)
+        calls[sp.start.offset] = true
+        for n in pat_names(pat) {
+          let nv = c.var_of(f, n)
+          if nv >= 0 {
+            alias[nv] = sp
+          }
+        }
+      }
+    }
+  }
+  if kept.is_empty() {
+    return []
+  }
+  // what in expression e is a kept view: a slice, an alias of one, or a
+  // call result holding one
+  let held = fn(e: parser.Expr) -> parser.Span? {
+    let es = parser.expr_span(e)
+    for v in kept {
+      if v.start.offset >= es.start.offset && v.end.offset <= es.end.offset {
+        return Some(v)
+      }
+    }
+    var ys: List[parser.Expr] = []
+    walk_expr(e, ys)
+    // an alias a method is applied to (`v.len()`, `v.clone()`) is not
+    // kept as a view
+    var recv: Map[Int, Bool] = {}
+    for y in ys {
+      if let SelectorExpr(_, Ident(rid), _) = y {
+        recv[rid.span.start.offset] = true
+      }
+    }
+    for y in ys {
+      if let Ident(id) = y {
+        if recv.contains(id.span.start.offset) {
+          continue
+        }
+        if let Some(v) = alias.get(c.var_of(f, id)) {
+          return Some(v)
+        }
+      }
+    }
+    None
+  }
+  let outside = fn(e: parser.Expr) -> Bool {
+    var r = e
+    while true {
+      match r {
+        SelectorExpr(_, x, _) => r = x
+        IndexExpr(_, x, _) => r = x
+        _ => break
+      }
+    }
+    match r {
+      Ident(id) => {
+        let v = c.var_of(f, id)
+        v >= 0 && (c.objs[v].line < ls.line || (c.objs[v].line == ls.line && c.objs[v].col < ls.col))
+      }
+      _ => false
+    }
+  }
+  var hit: List[parser.Span] = []
+  for x in xs {
+    if let CallExpr(_, SelectorExpr(_, recv, sel), args) = x {
+      if check.text(sel.name) is "push" | "insert" | "push_front" | "push_back" | "add" | "set" | "append" && outside(recv) {
+        for a in args {
+          if let Some(v) = held(a.value) {
+            hit.push(v)
+          }
+        }
+      }
+    }
+  }
+  for st in stmts {
+    match st {
+      AssignStmt(_, _, target, value) => {
+        if outside(target) {
+          if let Some(v) = held(value) {
+            hit.push(v)
+          }
+        }
+      }
+      ReturnStmt(_, Some(value)) => {
+        if let Some(v) = held(value) {
+          hit.push(v)
+        }
+      }
+      _ => {}
+    }
+  }
+  var out: List[Diag] = []
+  var seen: Map[Int, Bool] = {}
+  for v in hit {
+    if seen.contains(v.start.offset) || allowed(c, f, v.start.line, "XO0541") {
+      continue
+    }
+    seen[v.start.offset] = true
+    if calls.contains(v.start.offset) {
+      var d = vdiag("XO0541", false, file, v, "this call's result holds slices of `${name}` (views, decision 0330) and is kept past the loop's next read into `${name}`, which overwrites what they show")
+      d.notes.push(check.DNote{message: "copy the slices the called function returns with `.clone()` there, or copy the result here (gotchas/slice-view-of-reused-buffer.md); `// xo:allow XO0541 reason` when nothing writes the buffer again"})
+      out.push(d)
+      continue
+    }
+    var d = vdiag("XO0541", false, file, v, "this slice of `${name}` is a view of it (decision 0330), kept past the loop's next read into `${name}`, which overwrites what it shows")
+    d.notes.push(check.DNote{message: "copy what outlives the buffer with `.clone()` (gotchas/slice-view-of-reused-buffer.md); `// xo:allow XO0541 reason` when nothing writes the buffer again"})
+    d.fixes.push(check.DFix{title: "copy the slice", edits: [check.DEdit{span: point(file, v.end), replace: ".clone()"}]})
+    out.push(d)
   }
   out
 }
@@ -1567,6 +1938,8 @@ fn walk_expr(e: parser.Expr, var out: List[parser.Expr]) {
     }
     TypeArgsExpr(_, x, _) => walk_expr(x, out)
     IndexExpr(_, x, index) => {
+      // the index itself too: XO0541 finds `buf[a..b]` among the nodes
+      out.push(e)
       walk_expr(x, out)
       walk_expr(index, out)
     }
