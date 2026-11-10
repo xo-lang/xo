@@ -272,6 +272,23 @@ v0.36.0's notes missed the unmarked sort change; the check finds it as
 runs the same check on the draft notes before handing them over:
 `python3 -I scripts/release-notes-check.py NOTES.md vX.Y.Z vPREV`
 (`--strict` fails on a suspect too). It also fails on a MISFILED entry: one in a released section (vPREV or older) that vPREV's tagged CHANGELOG does not have, so it was filed under a release it did not ship in and the notes would miss it (Xo Lang 2, 2026-11-05: five changes after 0.39.0 under v0.39.0, std/jpeg encode under v0.38.0; last verified 2026-11-05). Then it asks for the word `release`
+The draft notes also cover what the release ships, checked by
+`python3 -I scripts/release-coverage.py NOTES.md vPREV [REV]` in the
+candidate's checkout (lead, 2026-11-10: 0.46.0's draft missed decision
+0574's C libraries, which had no CHANGELOG line, and nine std modules'
+features, which std logs in std/changes, decision 0276). It prints each
+decision a code commit since vPREV is about (the first decision number of
+its subject, Accepted ADRs only) that NOTES.md never names, and each
+user visible std/changes entry (feature, port, fix, behavior, security,
+breaking) whose change log file, `std/MODULE`, or a backticked or dotted
+name of its title NOTES.md never names; exit 1 while any is left. An
+item left out on purpose gets a comment in NOTES.md:
+`<!-- coverage-skip: 0562 (behind XO_LAZY_LANDINGS=1) -->` or
+`<!-- coverage-skip: std/changes/http.md 2026-11-08 (test only) -->`.
+Run it with release-notes-check.py before handing the notes over, and
+again on each new candidate. Last verified: 2026-11-10 (0.46.0's notes:
+14 found, ok after the notes named 5 and skipped 9).
+
 and runs `gh release create`. The order:
 
 1. a private commit bumps the version, on a commit of main: a fix the
@@ -439,6 +456,7 @@ xo1 rtpack [same flags]   # (deleted 2026-10-16, decision 0234) the same command
 scripts/release.sh [version]             # release archives into dist/, bin/xo = xo1 (decisions 0157, 0178), stamped and signed, from the published tree (see "Versions and releases"; never publishes)
 scripts/release-publish.sh [--draft] TAG DIST NOTES.md   # the owner's GitHub Release of TAG's archives (terminal only, typed confirmation)
 python3 -I scripts/release-notes-check.py NOTES.md vX.Y.Z vPREV [CHANGELOG.md] [--strict]   # the notes' breaking section names every CHANGELOG entry marked breaking since vPREV (the latest published release); prints suspects (unmarked entries that read as breaking); fails on an entry in a released section that vPREV's tagged CHANGELOG lacks (MISFILED). Last verified: 2026-11-05 (MISFILED); 2026-11-04 (v0.36.0's notes: the sort change as its one suspect; v0.38.1's: clean)
+python3 -I scripts/release-coverage.py NOTES.md vPREV [REV]   # every decision and user visible std/changes entry since vPREV is named in NOTES.md (or skipped with a coverage-skip comment)
 scripts/release-verify.sh ARCHIVE [OUTDIR]   # check a release archive on its host: no-Go native checks, Go backend and use go, cmd/xo's suite with XO_CLI (see "Versions and releases"; last verified 2026-10-12)
 bench/perf/rtpack/first-build.sh <xo> [runs]   # first arm64 build, cold caches, local runtime compile vs pack (bench/results/prebuilt-runtime-2026-10-11.md)
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [--ci] [--release] [--debug-contracts|--dbg|--error-args|--profile-support|--trace-support=on|off] [--debug-info=on|off|split] [--opt=O0..O3] [dir...]   # --ci: fail before building on an unformatted file or a dbg left in code (core 10.5, 11.4; 2026-10-09); --release: requires(debug)/ensures(debug) compiled out, XO1308 on workspace overrides (core 8, decision 0099; --ci does not imply it); --error-args=false: error frames without parameter values (decision 0092)
