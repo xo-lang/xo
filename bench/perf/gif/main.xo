@@ -1,0 +1,79 @@
+// gif: std/gif (decision 0578 step 5) on 5 frames of 512 by 384 paletted pixels, 3 passes, against
+// Go's image/gif (twin.go.txt). Usage: `<program> encode|decode|none`: encode writes the animation with
+// encode_all; decode reads those bytes back with decode_all; none: the setup alone (the frames, and for
+// decode the bytes). Prints `<workload> <checksum>`; the twin prints the same.
+use std/gif
+use std/image
+
+const W = 512
+const H = 384
+const FRAMES = 5
+
+fn lcg(x: Int) -> Int { (x * 1103515245 + 12345) & 0x7fffffff }
+
+fn palette() -> List[Int] {
+  var p: List[Int] = []
+  for i in 0..256 {
+    p.push(((i * 37) & 255) << 24 | ((i * 91) & 255) << 16 | ((i * 53) & 255) << 8 | 255)
+  }
+  p
+}
+
+fn frame(f: Int) -> image.Image {
+  var b = BytesBuilder.with_capacity(W * H)
+  var x = f + 1
+  for y in 0..H {
+    for c in 0..W {
+      x = lcg(x)
+      b.write_byte(UInt8(((c / 4 + y / 3 + f * 7 + ((x >> 16) & 3)) & 255)))
+    }
+  }
+  image.Image{width: W, height: H, model: image.Model.Paletted, pix: b.freeze(), stride: W, palette: palette()}
+}
+
+fn animation() -> gif.Gif {
+  var frames: List[image.Image] = []
+  var delay: List[Int] = []
+  for f in 0..FRAMES {
+    frames.push(frame(f))
+    delay.push(4)
+  }
+  gif.Gif{frames: frames, delay: delay, disposal: [], loop_count: 0, width: W, height: H, palette: palette(), background_index: 0}
+}
+
+fn sum(b: Bytes) -> Int {
+  let n = b.len()
+  Int(b[0]) + Int(b[n / 3]) + Int(b[n / 2]) + Int(b[n - 1]) + n
+}
+
+fn enc(g: gif.Gif) -> Bytes {
+  match gif.encode_all(g) {
+    Ok(b) => b
+    Err(e) => fault(e.msg)
+  }
+}
+
+fn dec(data: Bytes) -> gif.Gif {
+  match gif.decode_all(data) {
+    Ok(g) => g
+    Err(e) => fault(e.msg)
+  }
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "encode"
+  let g = animation()
+  var total = 0
+  if w == "encode" {
+    for _ in 0..3 {
+      total += sum(enc(g))
+    }
+  } else if w == "decode" {
+    let data = enc(g)
+    for _ in 0..3 {
+      let d = dec(data)
+      total += d.frames.len() + sum(d.frames[FRAMES - 1].pix)
+    }
+  }
+  os.stdio.println("${w} ${total}")
+}

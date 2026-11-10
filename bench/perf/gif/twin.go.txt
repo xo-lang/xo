@@ -1,0 +1,83 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"image"
+	"image/color"
+	"image/gif"
+	"os"
+)
+
+const W = 512
+const H = 384
+const FRAMES = 5
+
+func lcg(x int) int { return (x*1103515245 + 12345) & 0x7fffffff }
+
+func palette() color.Palette {
+	p := make(color.Palette, 256)
+	for i := 0; i < 256; i++ {
+		p[i] = color.RGBA{uint8((i * 37) & 255), uint8((i * 91) & 255), uint8((i * 53) & 255), 255}
+	}
+	return p
+}
+
+func frame(f int) *image.Paletted {
+	m := image.NewPaletted(image.Rect(0, 0, W, H), palette())
+	x := f + 1
+	i := 0
+	for y := 0; y < H; y++ {
+		for c := 0; c < W; c++ {
+			x = lcg(x)
+			m.Pix[i] = uint8((c/4 + y/3 + f*7 + ((x >> 16) & 3)) & 255)
+			i++
+		}
+	}
+	return m
+}
+
+func animation() *gif.GIF {
+	g := &gif.GIF{LoopCount: 0, Config: image.Config{ColorModel: palette(), Width: W, Height: H}}
+	for f := 0; f < FRAMES; f++ {
+		g.Image = append(g.Image, frame(f))
+		g.Delay = append(g.Delay, 4)
+	}
+	return g
+}
+
+func sum(b []byte) int {
+	n := len(b)
+	return int(b[0]) + int(b[n/3]) + int(b[n/2]) + int(b[n-1]) + n
+}
+
+func main() {
+	w := "encode"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	g := animation()
+	total := 0
+	if w == "encode" {
+		for i := 0; i < 3; i++ {
+			var b bytes.Buffer
+			if err := gif.EncodeAll(&b, g); err != nil {
+				panic(err)
+			}
+			total += sum(b.Bytes())
+		}
+	} else if w == "decode" {
+		var b bytes.Buffer
+		if err := gif.EncodeAll(&b, g); err != nil {
+			panic(err)
+		}
+		for i := 0; i < 3; i++ {
+			d, err := gif.DecodeAll(bytes.NewReader(b.Bytes()))
+			if err != nil {
+				panic(err)
+			}
+			total += len(d.Image) + sum(d.Image[FRAMES-1].Pix)
+		}
+	}
+	fmt.Printf("%s %d\n", w, total)
+}

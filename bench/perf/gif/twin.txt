@@ -1,0 +1,4 @@
+# twincheck: gif: encode, decode and the setup alone (none), the same names on both sides.
+- - encode
+- - decode
+- - none
