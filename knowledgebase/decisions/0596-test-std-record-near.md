@@ -81,6 +81,21 @@ go test's json edit on linux/arm64 is 158 MB (perf-gaps-2026-11-10.md). Cost: `x
 (conc=1) on the Mac, against 2.1 s and 1.45 GB before (it compiled little); it runs in the
 background once per std and xo.
 
+### Measured on linux/arm64 (host 1, 2026-11-10)
+`xo bench --ab` of `xo test --std-module=native/json` after an edit of std/native/json.xo (each run
+appends one function to its side's json.xo, then runs the test; each side its own xo, std copy,
+HOME and caches, std's test variant built first), base fd75d03e5 (A) against eb5ada8f2 (B), 9
+rounds, 2 warmups, host load 9.7 to 9.8 on 12 CPUs throughout (no round marked loaded;
+ab0596-job.sh in the agent's notes):
+
+| metric | A median | B median | B/A | 95% interval | verdict |
+|---|---|---|---|---|---|
+| wall_ms | 187.2 | 142.7 | 0.762 | 0.743 to 0.772 | better |
+| cpu_ms | 251.9 | 178.8 | 0.710 | 0.677 to 0.732 | better |
+| max_rss_kb | 230,484 | 121,384 | 0.527 | 0.522 to 0.531 | better |
+
+go test's json edit on the same host: 158 MB (perf-gaps-2026-11-10.md section 3).
+
 ## Measure (before Accepted)
 - Peak RSS and the heap after check of a test edit of json, base64 and a leaf module, 3 edits each,
   against main, on linux/arm64 host 1 (`xo bench --ab` with release-vs-go.sh's edit guard). Target:
@@ -88,6 +103,13 @@ background once per std and xo.
 - Identical test output and binaries against main (scripts/identity on the test binary).
 
 ## Consequences
+- std's test variant is now std built whole in test mode: `xo dev stdcache --test` takes 8.0 to
+  10.1 s and 1.53 to 1.85 GB peak per concurrency setting on the Mac (was about 2.1 s and 1.45 GB,
+  when it compiled little), once per std and xo, in the background on a first `xo test`; its facts
+  grow from 299 KB to 2.9 MB.
+- Gate (host 3, eb5ada8f2): internal/arm64 passes; cmd/xo fails TestProtoGen and
+  TestXoTestStdModuleNames, which fail the same way at the base fd75d03e5 (on the Mac too), and
+  TestDebugDAPAttach, which passes on the Mac at both revisions.
 - One more record per std test variant in the backend cache (a few MB each).
 - The test path shares the build path's declaration loading, so TestModuleCheckAuto and the std
   records' tests cover it.
