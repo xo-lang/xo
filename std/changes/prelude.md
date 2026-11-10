@@ -7,6 +7,7 @@
 - Found by: the REPL's line editing (decision 0572 stage 2) needs keys as typed; decision 0581
 - Go reference: golang.org/x/term MakeRaw (its input flags; output processing kept)
 - Test: cmd/xo TestStdioRawInput (a key with no Enter under script(1), false on a pipe, a cooked terminal after a fault with raw input on; native and Go backends)
+- Compatibility: a program's own Stdio implementation must add `fn raw_input(on: Bool) -> Bool uses stdio` (return false, or call through)
 - Timing: none (a terminal settings call)
 - Shipped in: not yet released
 

@@ -67,6 +67,8 @@ reference.
     `raw_input`. Options for the lead: a seed cut after this lands, or the REPL's line editing landing with the next
     release's seed.
 - std/changes/prelude.md has the entry (decision 0276).
+- A program that implements `Stdio` itself (a wrapper in an `Os` literal) must add `raw_input`: three test
+  programs did (gotchas/prelude-interface-method-breaks-implementations.md).
 - Programs other than the REPL (prompts, menus, TUIs) can read keys.
 
 ## Alternatives
