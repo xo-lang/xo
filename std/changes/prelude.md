@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-10: feature: asynchronous preemption on linux/riscv64
+
+- Kind: feature
+- Commit: this push
+- Found by: reading pool.xo's async_signal for 0571's preemption step: riscv64 shares arm64's runtime layer but was left out of asynchronous preemption
+- Go reference: runtime/signal_riscv64.go (sigctxt pc and sp from the sigcontext's sc_regs)
+- Test: internal/llvm golden async_preempt_regs on linux/riscv64 under qemu-user (preemptions through the signal path counted, output as want.txt)
+- Timing: none
+- Shipped in: not yet released
+
+A loop with no call now yields to the other tasks on its worker on linux/riscv64, as on arm64 and amd64: the monitor's SIGURG reaches the handler, which reads riscv64's struct sigcontext at 176 (the pc, then x1 to x31; sp is x2) rather than arm64's ucontext offsets.
+
 ## 2026-11-10: feature: Int.max, Int.min and the sized types' bounds
 
 - Kind: feature

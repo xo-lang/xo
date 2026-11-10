@@ -1863,7 +1863,12 @@ pub fn async_signal(uc: Int) {
   // rip 16)
   var pc = 0
   var sp = 0
-  if layer_arch() == 1 {
+  if target.arch == TargetArch.Riscv64 {
+    // riscv64 Linux: struct sigcontext at 176, the pc then x1 to x31 (sp
+    // is x2); it shares arm64's layer, not its layout (decision 0571)
+    pc = rt.mem_load(uc, 176, 8)
+    sp = rt.mem_load(uc, 192, 8)
+  } else if layer_arch() == 1 {
     if layer() == 2 {
       let ss = rt.mem_load(uc, 48, 8) + 16
       sp = rt.mem_load(ss, 248, 8)

@@ -4271,9 +4271,9 @@ directory; `-o NAME` for a windows target with no extension writes
 Linux (RV64GC, the lp64d ABI) with `--backend=llvm` only (decision 0571);
 naming it with no `--backend` is an error that names `--backend=llvm`,
 reported after the other targets are built (exit status 1).
-It cross links against a riscv64 glibc sysroot (`XO_LINUXSYSROOT`). Until
-stage 2 of 0571, its threads are not preempted asynchronously (loops poll),
-and a fault's trace and `XO_PROF` show the faulting function only.
+It cross links against a riscv64 glibc sysroot (`XO_LINUXSYSROOT`). Fault
+traces, `XO_PROF` and asynchronous preemption work as on linux/arm64
+(decision 0571 stage 2).
 
 `--targets=freebsd/amd64` and `--targets=freebsd/arm64`, not part of
 `all`, build static FreeBSD 14 executables with the native backends and

@@ -123,6 +123,16 @@ What a new architecture touches today (main feb9f7323):
   target per build, the native backends' `all` leaves out targets they
   do not build, and only `--backend=go` would add linux/riscv64, where
   the Go backend's runtime is untested.
+- 2026-11-10, stage 2's preemption: asynchronous preemption is on for
+  linux/riscv64 (compiler/ssa build.xo listed only arm64 and amd64, so
+  a loop without a call ran until it ended, other tasks on its worker
+  waiting). The LLVM backend's preemption table serves riscv64 as is;
+  pool.xo's SIGURG handler reads riscv64's sigcontext at 176 (the pc,
+  then x1 to x31; sp is x2), where it would have read arm64's ucontext
+  offsets (riscv64 shares arm64's runtime layer). Checked with
+  async_preempt_regs under qemu-user on host 2: one worker, about 390
+  preemptions per run, every one through the signal path (a probe
+  counting the handler past its pc and sp checks), output as want.txt.
 
 ## Consequences
 
