@@ -629,6 +629,10 @@ fn image_draw(var dst: image.Image, r: image.Rect, src: image.Image, spx: Int, s
   }
   let sp_x = spx + (x0 - ox)
   let sp_y = spy + (y0 - oy)
+  if dst.model == image.Model.RGBA && (src.model == image.Model.RGBA || src.model == image.Model.NRGBA || src.model == image.Model.Gray) {
+    dst.pix = draw_rgba_rows(dst, src, x0, y0, x1, y1, sp_x, sp_y, op)
+    return
+  }
   var b = BytesBuilder.with_capacity(dst.pix.len())
   b.write(dst.pix)
   let copy_nrgba = op == image.Op.Src && dst.model == image.Model.NRGBA && src.model == image.Model.NRGBA
@@ -673,5 +677,63 @@ fn image_draw(var dst: image.Image, r: image.Rect, src: image.Image, spx: Int, s
     }
   }
   dst.pix = b.freeze()
+}
+
+/// Go's drawCopyOver, drawCopySrc, drawNRGBAOver, drawNRGBASrc and drawGray
+/// for an RGBA destination: the new samples built front to back, rows of the
+/// destination outside the rectangle (and the bytes around it) copied as
+/// slices, the pixels inside computed from the source bytes directly.
+fn draw_rgba_rows(dst: image.Image, src: image.Image, x0: Int, y0: Int, x1: Int, y1: Int, sp_x: Int, sp_y: Int, op: image.Op) -> Bytes {
+  var b = BytesBuilder.with_capacity(dst.pix.len())
+  var pos = 0
+  let over = op == image.Op.Over
+  let sm = src.model
+  let sbpp = if sm == image.Model.Gray { 1 } else { 4 }
+  for y in y0..y1 {
+    let rowstart = pix_off(dst, x0 - dst.min_x, y - dst.min_y, 4)
+    b.write(dst.pix[pos..rowstart])
+    var si = pix_off(src, sp_x - src.min_x, sp_y + (y - y0) - src.min_y, sbpp)
+    var di = rowstart
+    if !over && sm == image.Model.RGBA {
+      // Go's drawCopySrc: a Src copy of RGBA samples is a copy of the row
+      b.write(src.pix[si..si + (x1 - x0) * 4])
+      pos = di + (x1 - x0) * 4
+      continue
+    }
+    for _ in x0..x1 {
+      var sr = 0
+      var sg = 0
+      var sb = 0
+      var sa = 0
+      if sm == image.Model.RGBA {
+        sr = Int(src.pix[si]) * 257
+        sg = Int(src.pix[si + 1]) * 257
+        sb = Int(src.pix[si + 2]) * 257
+        sa = Int(src.pix[si + 3]) * 257
+      } else if sm == image.Model.NRGBA {
+        sa = Int(src.pix[si + 3]) * 257
+        sr = Int(src.pix[si]) * sa / 255
+        sg = Int(src.pix[si + 1]) * sa / 255
+        sb = Int(src.pix[si + 2]) * sa / 255
+      } else {
+        let g = Int(src.pix[si]) * 257
+        sr = g
+        sg = g
+        sb = g
+        sa = 65535
+      }
+      if over && sa != 65535 {
+        let a = (65535 - sa) * 257
+        b.write_be(((((Int(dst.pix[di]) * a) / 65535 + sr) >> 8) << 24) | ((((Int(dst.pix[di + 1]) * a) / 65535 + sg) >> 8) << 16) | ((((Int(dst.pix[di + 2]) * a) / 65535 + sb) >> 8) << 8) | (((Int(dst.pix[di + 3]) * a) / 65535 + sa) >> 8), 4)
+      } else {
+        b.write_be(((sr >> 8) << 24) | ((sg >> 8) << 16) | ((sb >> 8) << 8) | (sa >> 8), 4)
+      }
+      si += sbpp
+      di += 4
+    }
+    pos = di
+  }
+  b.write(dst.pix[pos..dst.pix.len()])
+  b.freeze()
 }
 

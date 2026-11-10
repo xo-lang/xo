@@ -1,0 +1,6 @@
+# twincheck: image: four workloads (none is the setup alone), the same names on both sides.
+- - over
+- - src
+- - gray
+- - none
+- - copy

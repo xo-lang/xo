@@ -1,0 +1,60 @@
+// image: std/image draw of 1024 by 768 images (decision 0578 step 2), 5 passes, against
+// Go's image/draw (twin.go.txt). Usage: `<program> over|copy|src|gray|none`: copy draws an RGBA image into an RGBA one (Src); over composites an
+// RGBA image over an RGBA image, src copies an NRGBA image into an RGBA one (Src), gray
+// draws a Gray image into an RGBA one; none: the setup alone. Prints `<workload> <checksum>`;
+// the twin prints the same.
+use std/image
+
+const W = 1024
+const H = 768
+
+fn lcg(x: Int) -> Int { (x * 1103515245 + 12345) & 0x7fffffff }
+
+/// n pseudo random bytes from seed; premultiplied RGBA pixels when premul is set.
+fn noise(seed: Int, n: Int, premul: Bool) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  var x = seed
+  var i = 0
+  while i < n {
+    if premul {
+      x = lcg(x)
+      let a = (x >> 16) & 255
+      x = lcg(x)
+      let r = ((x >> 16) & 255) * a / 255
+      x = lcg(x)
+      let g = ((x >> 16) & 255) * a / 255
+      x = lcg(x)
+      let bl = ((x >> 16) & 255) * a / 255
+      b.write_byte(UInt8(r))
+      b.write_byte(UInt8(g))
+      b.write_byte(UInt8(bl))
+      b.write_byte(UInt8(a))
+      i += 4
+    } else {
+      x = lcg(x)
+      b.write_byte(UInt8((x >> 16) & 255))
+      i += 1
+    }
+  }
+  b.freeze()
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "over"
+  var dst = image.Image{width: W, height: H, model: image.Model.RGBA, pix: noise(1, W * H * 4, true)}
+  var src = image.Image{width: W, height: H, model: image.Model.RGBA, pix: noise(2, W * H * 4, true)}
+  if w == "src" {
+    src = image.Image{width: W, height: H, model: image.Model.NRGBA, pix: noise(3, W * H * 4, false)}
+  }
+  if w == "gray" {
+    src = image.Image{width: W, height: H, model: image.Model.Gray, pix: noise(4, W * H, false)}
+  }
+  if w != "none" {
+    let op = if w == "over" { image.Op.Over } else { image.Op.Src }
+    for _ in 0..5 {
+      dst.draw(image.Rect{x0: 0, y0: 0, x1: W, y1: H}, src, 0, 0, op)
+    }
+  }
+  let n = dst.pix.len()
+  os.stdio.println("${w} ${Int(dst.pix[0]) + Int(dst.pix[7]) + Int(dst.pix[n / 2]) + Int(dst.pix[n - 1]) + Int(dst.pix[n - 4])}")
+}

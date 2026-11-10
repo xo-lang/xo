@@ -1,0 +1,73 @@
+package main
+
+import (
+	"fmt"
+	"image"
+	"image/draw"
+	"os"
+)
+
+const W = 1024
+const H = 768
+
+func lcg(x int) int { return (x*1103515245 + 12345) & 0x7fffffff }
+
+func noise(seed, n int, premul bool) []byte {
+	b := make([]byte, 0, n)
+	x := seed
+	i := 0
+	for i < n {
+		if premul {
+			x = lcg(x)
+			a := (x >> 16) & 255
+			x = lcg(x)
+			r := ((x >> 16) & 255) * a / 255
+			x = lcg(x)
+			g := ((x >> 16) & 255) * a / 255
+			x = lcg(x)
+			bl := ((x >> 16) & 255) * a / 255
+			b = append(b, byte(r), byte(g), byte(bl), byte(a))
+			i += 4
+		} else {
+			x = lcg(x)
+			b = append(b, byte((x>>16)&255))
+			i++
+		}
+	}
+	return b
+}
+
+func main() {
+	w := "over"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, W, H))
+	copy(dst.Pix, noise(1, W*H*4, true))
+	var src image.Image = func() image.Image {
+		s := image.NewRGBA(image.Rect(0, 0, W, H))
+		copy(s.Pix, noise(2, W*H*4, true))
+		return s
+	}()
+	if w == "src" {
+		s := image.NewNRGBA(image.Rect(0, 0, W, H))
+		copy(s.Pix, noise(3, W*H*4, false))
+		src = s
+	}
+	if w == "gray" {
+		s := image.NewGray(image.Rect(0, 0, W, H))
+		copy(s.Pix, noise(4, W*H, false))
+		src = s
+	}
+	if w != "none" {
+		op := draw.Src
+		if w == "over" {
+			op = draw.Over
+		}
+		for i := 0; i < 5; i++ {
+			draw.Draw(dst, dst.Bounds(), src, image.Point{}, op)
+		}
+	}
+	n := len(dst.Pix)
+	fmt.Printf("%s %d\n", w, int(dst.Pix[0])+int(dst.Pix[7])+int(dst.Pix[n/2])+int(dst.Pix[n-1])+int(dst.Pix[n-4]))
+}

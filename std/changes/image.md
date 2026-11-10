@@ -1,5 +1,18 @@
 # std/image changes
 
+## 2026-11-09: perf: Image.draw row fast paths for an RGBA destination (decision 0578 step 2)
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/image (new, this push): draw of 1024 by 768 images, 5 passes, against Go's draw.Draw
+- Go reference: image/draw drawCopyOver, drawCopySrc, drawNRGBAOver, drawNRGBASrc, drawGray
+- Test: the 252 draw cases of testdata/corpus/image unchanged and passing; twincheck bench/perf/image: 5 workloads, 0 mismatches
+- Timing: `go run ./scripts/twincheck -time 3 bench/perf/image` on the Mac (a survey cut, medians, Xo over Go, setup included; the setup alone is 0.88): before the fast paths over 2.72, src 2.56, gray 2.95; after over 1.50, src 1.50, gray 1.79, copy (RGBA Src, Go's row copy) 0.95
+- Shipped in: not yet released
+
+For an RGBA destination with an RGBA, NRGBA or Gray source, `Image.draw` now builds the new samples front to back from the source bytes (one append per pixel, one slice copy per
+row for an RGBA Src copy) instead of reading each pixel through `at()`. Output unchanged. The remaining gap to Go is the per pixel divide-and-append; the other models still use the generic path.
+
 ## 2026-11-09: feature: std/image draw, Image.draw and Op (decision 0578 step 2, part 1)
 
 - Kind: feature
