@@ -1,0 +1,43 @@
+// pe_export_dir (peexport.xo) read back as the Windows loader reads an
+// export directory: by the name pointer table's binary search order, an
+// ordinal, then the address table.
+
+fn edata_name(d: Bytes, at: Int, rva: Int) -> Str {
+  var e = rva - at
+  while d[e] != 0 {
+    e += 1
+  }
+  bstr(d[rva - at..e])
+}
+
+test "a DLL's export directory names each export at its address, in name order" {
+  let at = 0x3000
+  match pe_export_dir("geo.dll", [("geo_add", 0x1010), ("geo_Area", 0x1040), ("xo_last_error", 0x1080)], at) {
+    Ok(d) => {
+      expect(get_le(d, 12, 4)) == at + 40 + 12 + 12 + 6
+      expect(edata_name(d, at, get_le(d, 12, 4))) == "geo.dll"
+      expect(get_le(d, 16, 4)) == 1
+      expect(get_le(d, 20, 4)) == 3
+      expect(get_le(d, 24, 4)) == 3
+      let eat = get_le(d, 28, 4) - at
+      let npt = get_le(d, 32, 4) - at
+      let ot = get_le(d, 36, 4) - at
+      var got: List[Str] = []
+      for i in 0..3 {
+        let name = edata_name(d, at, get_le(d, npt + 4 * i, 4))
+        let ord = get_le(d, ot + 2 * i, 2)
+        got.push("${name}=${get_le(d, eat + 4 * ord, 4)}")
+      }
+      // byte order: an upper case letter before a lower case one
+      expect(got) == ["geo_Area=4160", "geo_add=4112", "xo_last_error=4224"]
+    }
+    Err(e) => expect(e) == ""
+  }
+}
+
+test "a duplicate export is an error" {
+  match pe_export_dir("a.dll", [("f", 1), ("f", 2)], 0) {
+    Ok(_) => expect(true) == false
+    Err(e) => expect(e) == "f is exported twice"
+  }
+}

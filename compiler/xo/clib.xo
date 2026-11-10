@@ -60,7 +60,7 @@ fn c_header_path(out: Str) -> (Str, Str) {
   let slash = out.rfind("/") ?? -1
   let dir = if slash >= 0 { out[0..slash + 1] } else { "" }
   var base = out[slash + 1..out.len()]
-  for ext in [".dylib", ".so", ".a"] {
+  for ext in [".dylib", ".so", ".a", ".dll"] {
     base = base.trim_suffix(ext)
   }
   base = base.trim_prefix("lib")
@@ -194,11 +194,15 @@ fn c_export_names(c: check.Checker) -> List[Str] {
   out
 }
 
+/// The runtime's exports every C library has (the header's, std/native
+/// llrt cabi_c.xo), before the program's.
+fn c_runtime_exports() -> List[Str] { ["xo_init", "xo_last_error", "xo_release", "xo_free"] }
+
 /// The path in dir and the text of a shared library's symbol list on
 /// goos: darwin's exported symbols list, or a linux version script, of
 /// xo_init and the exports.
 fn c_exports_list(exports: List[Str], dir: Str, goos: Str) -> (Str, Str) {
-  let names = ["xo_init", "xo_last_error", "xo_release", "xo_free"] + exports
+  let names = c_runtime_exports() + exports
   if goos == "darwin" {
     var b: List[Str] = []
     for n in names {

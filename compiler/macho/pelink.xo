@@ -69,6 +69,11 @@ pub struct PEOpts {
   /// std's run of the COFF symbol table from the link std's half was
   /// captured from (PELayout.std_syms); None: made from std's objects
   pub std_syms: PeSyms? = None
+  /// a DLL's file name (decision 0574, `xo build --lib=shared`): the image
+  /// is a DLL (IMAGE_FILE_DLL) exporting exports by name (peexport.xo),
+  /// its entry o.entry a DllMain; "" is an executable
+  pub dll: Str = ""
+  pub exports: List[Str] = []
 }
 
 /// std's run of a split link's COFF symbol table (decision 0409 on PE):
@@ -241,7 +246,7 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
   for ob in objs {
     weaks.push(coff_weak_names(ob))
   }
-  var live = if any_atoms { coff_live(objs, o.entry, weaks) } else { [] }
+  var live = if any_atoms { coff_live(objs, [o.entry] + o.exports, weaks) } else { [] }
   // the COMDAT sections a first definition of their symbol replaces
   // (C objects clang compiles for windows/arm64: MSVC's string literals,
   // ??_C@..., are COMDAT any in each object that uses them)
@@ -542,6 +547,16 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
     // the directory (40 bytes) and an empty callback list
     bufs[lt].write(Bytes.zeroed(48))
   }
+  // a DLL's export directory, its bytes patched in once the exports'
+  // addresses are known (pe_export_dir)
+  var edir = -1
+  var esize = 0
+  if !o.dll.is_empty() {
+    pe_pad(bufs[lt], 4, 0)
+    edir = bufs[lt].len()
+    esize = pe_export_size(o.dll, o.exports)
+    bufs[lt].write(Bytes.zeroed(esize))
+  }
   // the debug directory (one IMAGE_DEBUG_DIRECTORY, 28 bytes) and its
   // CodeView record: RSDS, the GUID (pdb.xo pe_pdb sets it), age 1, the
   // PDB's path
@@ -752,13 +767,36 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
   if entry < 0 {
     return Err("the entry ${o.entry} is not defined")
   }
-  let (img, ssyms) = pe_write(bufs, pats, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds)
+  if edir >= 0 {
+    var ex: List[(Str, Int)] = []
+    for n in o.exports {
+      match globals.get(n) {
+        Some((eo, es)) => {
+          let s = objs[eo].syms[es]
+          ex.push((n, sym_rva(PETarget{obj: eo, sect: s.sect - 1, off: s.value})))
+        }
+        None => return Err("the export ${n} is not defined")
+      }
+    }
+    match pe_export_dir(o.dll, ex, rva[lt] + edir) {
+      Ok(d) => {
+        if d.len() != esize {
+          return Err("the export directory is ${d.len()} bytes, not ${esize}")
+        }
+        for k in 0..d.len() {
+          put_le(pats[lt], edir + k, Int(d[k]), 1)
+        }
+      }
+      Err(e) => return Err(e)
+    }
+  }
+  let (img, ssyms) = pe_write(bufs, pats, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds, edir, esize)
   Ok((img, PELayout{objs: split, places: places, rva: rva, dnames: dnames, base: PE_BASE, targets: targets, std_syms: ssyms}))
 }
 
 /// The image: the DOS header, the PE headers and section table, the
 /// sections, then the COFF symbol table and string table.
-fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int, dnames: List[Str], dbg: Int, rsds: Int) -> (Bytes, PeSyms?) {
+fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int, dnames: List[Str], dbg: Int, rsds: Int, edir: Int, esize: Int) -> (Bytes, PeSyms?) {
   // the section holding the linker's tables (pe_link's lt)
   let lt = if o.prog_from >= 0 { PO_PRDATA } else { PO_RDATA }
   var pats = pats0
@@ -897,7 +935,8 @@ fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[In
   w.u32(symtab)
   w.u32(nstd + syms.len())
   w.u16(240)
-  w.u16(0x22)
+  // EXECUTABLE_IMAGE, LARGE_ADDRESS_AWARE, and a DLL's IMAGE_FILE_DLL
+  w.u16(if edir >= 0 { 0x2022 } else { 0x22 })
   // the optional header (PE32+)
   var code = 0
   var idata = 0
@@ -946,7 +985,7 @@ fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[In
   w.u32(16)
   // the data directories
   let dirs: List[(Int, Int)] = [
-    (0, 0),
+    (if edir >= 0 { rva[lt] + edir } else { 0 }, esize),
     (if ndll > 0 { rva[lt] + idir } else { 0 }, if ndll > 0 { 20 * (ndll + 1) } else { 0 }),
     (rva[PO_RSRC], bufs[PO_RSRC].len()),
     (rva[PO_PDATA], bufs[PO_PDATA].len()),

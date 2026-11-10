@@ -1801,6 +1801,11 @@ pub fn set_mid_max(m: Int) { rt.mem_store(heaps_head(), H_MID_MAX, m, 8) }
 /// thread is about to run Xo code).
 pub fn set_thread_heap(h: Int) { rt.tlocal_set(TLS_HEAP, h) }
 
+/// The calling thread's heap record, or 0 when it has none yet (a
+/// windows DLL's thread detach, cabi_wincrt.xo xo_dll_main: no record is
+/// made for a thread that is leaving).
+pub fn thread_heap_peek() -> Int { rt.tlocal_get(TLS_HEAP) }
+
 /// The calling thread's heap record, made on its first use: the size
 /// classes' limit and the central lists are the other records'.
 pub fn thread_heap() -> Int {

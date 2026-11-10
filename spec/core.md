@@ -1435,7 +1435,16 @@ pub fn fetch_user(db: Db, id: Int) -> User ! LoadErr
   a C caller may also call; a second call does nothing). `--lib` writes the
   header `NAME.h` beside the library, and a package with `fn main` is not
   a library. A fault in an export aborts the process. A program build
-  ignores the clause.
+  ignores the clause. On windows/amd64 and windows/arm64 `--lib=shared`
+  writes a DLL (Xo's PE linker; `-o NAME.dll`, header `NAME.h`) that
+  exports `xo_init`, `xo_last_error`, `xo_release`, `xo_free` and the
+  `as c` functions by name; it runs nothing while it loads (DllMain runs
+  under the loader lock), so the runtime starts on the first call of
+  `xo_init` or of an export, and a thread's runtime state is released
+  when the thread exits. The header's types are the C ABI's own: Win64
+  passes and returns `XoBytes` and `XoStr` through pointers, which a C
+  compiler does from the header. `--lib=static` is not yet available
+  for windows.
 
 ### 3.3 Closures
 

@@ -503,6 +503,44 @@ Tried and dropped on the way (2026-11-09):
   per Any, the tag compared by address first): no change on host 1, and
   it touches every program's rt.Any.
 
+## Windows DLLs (2026-11-10, Xo Lang 2; owner: Xo Lang 2 has the Windows DLL work)
+
+`xo build --lib=shared --targets=windows/amd64` (and windows/arm64 with
+`--backend=arm64` until it is the native default) writes a DLL with
+Xo's PE linker, not cc:
+- compiler/macho peexport.xo writes the export directory (names sorted
+  for the loader's binary search, ordinal base 1); pelink.xo's DLL mode
+  (PEOpts.dll, exports) sets IMAGE_FILE_DLL, keeps DYNAMIC_BASE and the
+  base relocations (the image base stays 0x140000000 and the loader
+  relocates it), and coff_live roots the exports as well as the entry.
+- The entry is cabi_wincrt.xo xo_dll_main (DllMain). It runs under the
+  loader lock, so it starts nothing: on DLL_PROCESS_ATTACH only arm64's
+  LSE test, on DLL_THREAD_DETACH the exiting thread's heap record goes
+  back for the next thread (heapos.orphan, as the pthread key's
+  destructor on darwin and linux). The runtime starts lazily, on
+  xo_init or the first export (check.clib_lazy: each export tests
+  heap_started, as a static library's do).
+- The exports are the runtime's four (xo_init, xo_last_error,
+  xo_release, xo_free; clib.xo c_runtime_exports) and the `as c` ones.
+- Win64 passes a 16 byte struct by reference and returns one through a
+  hidden pointer in rcx (returned in rax): on windows/amd64 the export
+  wrapper (build.xo declare_c_export) takes an XoBytes or XoStr
+  parameter as one pointer (clibh w64_word) and a Bytes or Str result
+  through the hidden first parameter (clibh w64_sret); the Win64 shim
+  then sees only words. windows/arm64 needs neither (AAPCS64 passes and
+  returns them in two registers, as on linux).
+- Proof (2026-11-10): a Go caller (syscall.LoadDLL; no C compiler on
+  the Windows hosts) on the amd64 host's Windows and on winarm: no
+  xo_init, Int, Float, Bytes and Str parameters, a Str result freed with
+  xo_free, an error result and xo_last_error, then 20 rounds of 8 new OS
+  threads making 50 calls each (thread detach); both relocated (loaded
+  at 0x7ffe84ec0000 and 0x7ff880a00000). cmd/xo TestCLibWindowsDLL
+  cross-builds both and checks the image, its exports and geo.h.
+- Not yet: an import library (`NAME.lib`, for MSVC's link; MinGW's ld
+  links a DLL directly, and LoadLibrary needs none), `--lib=static` on
+  windows (refused with a message), a C caller test on Windows (needs a
+  C compiler on a host), and the LLVM backend's windows DLL.
+
 ## Alternatives
 
 - **`export fn` / `export "c_name" fn`** (this ADR's first draft): reads

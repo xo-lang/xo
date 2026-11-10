@@ -1278,3 +1278,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [arm64-copy-runs-overlap.md](arm64-copy-runs-overlap.md): Observed 2026-11-10: a wide value moved down the frame stayed word copies (copy_block took apart sp ranges only)
 - [coff-arm64-atoms-branches-resolved.md](coff-arm64-atoms-branches-resolved.md): Observed 2026-11-10: windows/arm64 sepcomp programs faulted before main; the ARM64 COFF writer resolved branches between atoms that coff_split moves
 - [docker-amd64-emulation-exec-format.md](docker-amd64-emulation-exec-format.md): Observed 2026-11-10: Docker Desktop ran no linux/amd64 container (exec format error) and the seed cut failed at linux-amd64's race runtime; build it on the amd64 host (race-remote.sh)
+- [go-syscall-windows-arm64-no-r2.md](go-syscall-windows-arm64-no-r2.md): Observed 2026-11-10: a Go caller of an Xo DLL read an XoStr result's length as 0 on windows/arm64 (Go's syscall returns x0, not x1)

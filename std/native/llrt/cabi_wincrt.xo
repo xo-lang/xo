@@ -7,9 +7,11 @@
 // such a build has them (compiler/ssa declare_exports). Nothing here may
 // fault or allocate Xo values.
 use native/llrt/entry
+use native/llrt/heapos
 use native/llrt/libcmath
 use native/llrt/libcmem
 use native/llrt/libcstr
+use native/llrt/obj
 use native/llrt/sanhook
 use native/llrt/windows
 use native/rt
@@ -106,4 +108,34 @@ fn xo_win_start() -> Int {
     TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => {}
   }
   code
+}
+
+/// A DLL's entry (decision 0574, windows `xo build --lib=shared`): the
+/// loader's DllMain(module, reason, reserved), called under the loader
+/// lock, so it starts nothing (the runtime starts on the first export's
+/// call, cabi_c xo_start_early) and only: on DLL_PROCESS_ATTACH (1)
+/// arm64's LSE atomics test (as xo_win_start), and on DLL_THREAD_DETACH
+/// (3) the exiting thread's heap record back for the next thread (as
+/// the pthread key's destructor on darwin and linux, cabi_c
+/// xo_thread_exit). TRUE (1).
+fn xo_dll_main(module: Int, reason: Int, reserved: Int) -> Int {
+  let r = reason & 4294967295
+  if r == 1 {
+    match target.arch {
+      TargetArch.Arm64 => {
+        if Int(sys_windows.IsProcessorFeaturePresent(34)) != 0 {
+          rt.mem_store(rt.sym_addr("xo_lse"), 0, 1, 1)
+        }
+      }
+      TargetArch.Amd64 | TargetArch.Wasm32 | TargetArch.Riscv64 => {}
+    }
+  }
+  if r == 3 && obj.heap_started() {
+    let h = heapos.thread_heap_peek()
+    if h != 0 {
+      heapos.set_thread_heap(0)
+      heapos.orphan(h)
+    }
+  }
+  1
 }

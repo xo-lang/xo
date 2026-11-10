@@ -768,6 +768,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.native = native
   c.clib = !o.lib.is_empty()
   c.clib_static = o.lib == "static"
+  c.clib_lazy = o.lib == "shared" && o.targets.starts_with("windows/")
   // a native build checks the runtime's bodies as it builds them
   // (decision 0247); XO_CHECK_EAGER=1 checks them all first, as before
   c.lazy = native && (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
@@ -1122,12 +1123,20 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !(backend is "arm64" | "amd64" | "llvm") {
       fail(os, "--lib builds with the native arm64 or amd64 backend or the LLVM backend (not ${backend})")
     }
-    o.linker = "cc"
-    o.assembler = "cc"
-    // no embedded DWARF: xo's segment added after cc's link breaks a
-    // dylib's chained fixups (stage 2: a dSYM beside it)
-    if o.debug_info.is_empty() {
-      o.debug_info = "off"
+    if o.targets.starts_with("windows/") {
+      // a windows DLL (decision 0574): Xo's PE linker writes it (its
+      // export directory and DllMain, pelink.xo), with its PDB
+      if o.lib == "static" {
+        fail(os, "--lib=static: a windows static library is not supported yet (decision 0574)")
+      }
+    } else {
+      o.linker = "cc"
+      o.assembler = "cc"
+      // no embedded DWARF: xo's segment added after cc's link breaks a
+      // dylib's chained fixups (stage 2: a dSYM beside it)
+      if o.debug_info.is_empty() {
+        o.debug_info = "off"
+      }
     }
   }
   let phases = o.phases
@@ -1191,9 +1200,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let release = o.release && !tests
   var t = os.clock.now()
   var c = check_program(os, o, true)
+  if !o.lib.is_empty() {
+    // the library's exports (a shared library's symbol list, a windows
+    // DLL's export directory), even with no -o
+    o.lib_exports = c_export_names(c)
+  }
   if !o.lib.is_empty() && !o.out.is_empty() {
     // the library's header beside it (decision 0574)
-    o.lib_exports = c_export_names(c)
     let (hp, guard) = c_header_path(o.out)
     if let Err(e) = os.fs.write(hp, c_header(c, guard).bytes()) {
       fail(os, "write ${hp}: ${e}")
@@ -2148,7 +2161,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           wst.abandon(os)
           fail_code(os, "XO1517", rerr)
         }
-        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, wres, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys, !o.strip && debug_info_eff(o, release) != "off", if wst.copy { None } else { ctx.pdb_later })
+        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, wres, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys, !o.strip && debug_info_eff(o, release) != "off", if wst.copy { None } else { ctx.pdb_later }, win_dll(o))
         tl = lap(os, phases, "link.pe_link", tl)
         if !why.is_empty() {
           fail_stage(os, wst, why)
@@ -2346,7 +2359,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wst.abandon(os)
         fail_code(os, "XO1517", rerr)
       }
-      let why = pe_link(os, wobjs + cobjs, wst.bin, wbin, wres, false, phases, trimpath_eff(o), backend_cache_dir(os, ctx), [], !o.strip && debug_info_eff(o, release) != "off", None)
+      let why = pe_link(os, wobjs + cobjs, wst.bin, wbin, wres, false, phases, trimpath_eff(o), backend_cache_dir(os, ctx), [], !o.strip && debug_info_eff(o, release) != "off", None, win_dll(o))
       if !why.is_empty() {
         fail_stage(os, wst, why)
       }
@@ -3729,4 +3742,11 @@ fn test_per_member(os: Os, o: Opts, args: List[Str], base: List[Str], members: L
     }
   }
   code
+}
+
+/// A windows DLL's exports (decision 0574, `--lib=shared` for a windows
+/// target): pelink.xo's export list (the runtime's, then the program's),
+/// or None for an executable.
+fn win_dll(o: Opts) -> List[Str]? {
+  if o.lib == "shared" { Some(c_runtime_exports() + o.lib_exports) } else { None }
 }

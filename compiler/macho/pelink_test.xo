@@ -493,3 +493,75 @@ test "COMDAT: a later copy of a symbol's section is left out, with its associati
   // no duplicates: nothing to leave out
   expect(coff_comdat_drops([mk("a.obj", "f")]).is_empty()) == true
 }
+
+/// The file offset of RVA r in image b (its section's raw data).
+fn pe_file_off(b: Bytes, r: Int) -> Int {
+  let pe = rd32(b, 0x3c)
+  let n = rd16(b, pe + 6)
+  let sects = pe + 24 + rd16(b, pe + 20)
+  for i in 0..n {
+    let h = sects + 40 * i
+    let va = rd32(b, h + 12)
+    if r >= va && r < va + rd32(b, h + 16) {
+      return r - va + rd32(b, h + 20)
+    }
+  }
+  -1
+}
+
+test "a DLL: IMAGE_FILE_DLL, its DllMain the entry, an export directory naming its functions" {
+  let src = "\t.text\n\t.globl DllMain\nDllMain:\n\tmovl $1, %eax\n\tretq\n\t.globl geo_add\ngeo_add:\n\tleaq (%rcx,%rdx), %rax\n\tretq\n\t.globl geo_sub\ngeo_sub:\n\tmovq %rcx, %rax\n\tsubq %rdx, %rax\n\tretq\n"
+  let obj = match assemble_coff_amd64(src.bytes()) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  let co = match read_coff("geo.obj", obj) {
+    Ok(c) => c
+    Err(e) => fault(e)
+  }
+  let b = match link_pe([co], PEOpts{entry: "DllMain", imports: {}, dll: "geo.dll", exports: ["geo_sub", "geo_add"]}) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  let pe = rd32(b, 0x3c)
+  expect(rd16(b, pe + 22)) == 0x2022
+  let opt = pe + 24
+  let entry = rd32(b, opt + 16)
+  // DllMain: movl $1, %eax
+  expect(Int(b[pe_file_off(b, entry)])) == 0xb8
+  let ed = rd32(b, opt + 112)
+  expect(ed != 0 && rd32(b, opt + 116) != 0) == true
+  let e = pe_file_off(b, ed)
+  let nm = pe_file_off(b, rd32(b, e + 12))
+  expect(bstr(b[nm..nm + 7])) == "geo.dll"
+  expect(rd32(b, e + 24)) == 2
+  let eat = pe_file_off(b, rd32(b, e + 28))
+  let npt = pe_file_off(b, rd32(b, e + 32))
+  let ot = pe_file_off(b, rd32(b, e + 36))
+  // name order: geo_add, then geo_sub; geo_add's code is the lea (48 8d)
+  // and geo_sub's the mov (48 89), each after DllMain
+  var codes: List[Str] = []
+  for i in 0..2 {
+    let n = pe_file_off(b, rd32(b, npt + 4 * i))
+    let f = rd32(b, eat + 4 * rd16(b, ot + 2 * i))
+    expect(f > entry) == true
+    let c = pe_file_off(b, f)
+    codes.push("${bstr(b[n..n + 7])} ${Int(b[c])} ${Int(b[c + 1])}")
+  }
+  expect(codes) == ["geo_add 72 141", "geo_sub 72 137"]
+}
+
+test "a DLL export that is not defined is an error" {
+  let obj = match assemble_coff_amd64("\t.text\n\t.globl DllMain\nDllMain:\n\tretq\n".bytes()) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  let co = match read_coff("x.obj", obj) {
+    Ok(c) => c
+    Err(e) => fault(e)
+  }
+  match link_pe([co], PEOpts{entry: "DllMain", imports: {}, dll: "x.dll", exports: ["nope"]}) {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e) == "the export nope is not defined"
+  }
+}

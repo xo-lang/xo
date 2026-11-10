@@ -52,18 +52,28 @@ fn xo_init(argc: Int, argv: Int, envp: Int) -> Int {
     heapos.set_thread_heap(h)
     // a C thread's record goes back for reuse when the thread exits: a
     // pthread key's destructor (xo_thread_exit), set on the record's
-    // first use (xo_heap_attach); 32 KB a thread kept otherwise
-    if Int(sys_c.pthread_key_create(h + heapos.H_TKEY, rt.sym_addr("xo_thread_exit"))) == 0 {
-      // the key (a C int on linux, a long on darwin) plus 1
-      let k = match target.os {
-        TargetOs.Linux => rt.mem_load(h + heapos.H_TKEY, 0, 4)
-        _ => rt.mem_load(h + heapos.H_TKEY, 0, 8)
+    // first use (xo_heap_attach); 32 KB a thread kept otherwise. Windows:
+    // the DLL's thread detach (cabi_wincrt.xo xo_dll_main), H_TKEY only
+    // marking that exited threads' records are reused (heapos thread_heap)
+    match target.os {
+      TargetOs.Windows => {
+        rt.mem_store(h + heapos.H_TKEY, 0, 1, 8)
+        obj.heap_init(0, rt.fn_addr("heap_thread"))
       }
-      rt.mem_store(h + heapos.H_TKEY, 0, k + 1, 8)
-      obj.heap_init(0, rt.sym_addr("xo_heap_attach"))
-    } else {
-      rt.mem_store(h + heapos.H_TKEY, 0, 0, 8)
-      obj.heap_init(0, rt.fn_addr("heap_thread"))
+      TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => {
+        if Int(sys_c.pthread_key_create(h + heapos.H_TKEY, rt.sym_addr("xo_thread_exit"))) == 0 {
+          // the key (a C int on linux, a long on darwin) plus 1
+          let k = match target.os {
+            TargetOs.Linux => rt.mem_load(h + heapos.H_TKEY, 0, 4)
+            _ => rt.mem_load(h + heapos.H_TKEY, 0, 8)
+          }
+          rt.mem_store(h + heapos.H_TKEY, 0, k + 1, 8)
+          obj.heap_init(0, rt.sym_addr("xo_heap_attach"))
+        } else {
+          rt.mem_store(h + heapos.H_TKEY, 0, 0, 8)
+          obj.heap_init(0, rt.fn_addr("heap_thread"))
+        }
+      }
     }
     stdio.threads()
   }
@@ -75,8 +85,15 @@ fn xo_init(argc: Int, argv: Int, envp: Int) -> Int {
 fn xo_heap_attach(a: Int, b: Int) -> Int {
   let h = heapos.thread_heap()
   let k = rt.mem_load(h + heapos.H_TKEY, 0, 8)
-  if k != 0 {
-    let _r = sys_c.pthread_setspecific(k - 1, h)
+  // (windows: no key; the DLL's thread detach returns the record,
+  // cabi_wincrt.xo xo_dll_main)
+  match target.os {
+    TargetOs.Windows => {}
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi | TargetOs.FreeBSD => {
+      if k != 0 {
+        let _r = sys_c.pthread_setspecific(k - 1, h)
+      }
+    }
   }
   h
 }

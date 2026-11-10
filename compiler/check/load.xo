@@ -160,6 +160,10 @@ pub struct Checker {
   /// A static C library (`--lib=static`): its constructor runs in the
   /// program's link order, so each export checks that the runtime started
   pub clib_static: Bool = false
+  /// A windows DLL (`--lib=shared`, decision 0574): no constructor may
+  /// start the runtime (DllMain runs under the loader lock), so each
+  /// export starts it on first use, as a static library's do
+  pub clib_lazy: Bool = false
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false
@@ -2288,6 +2292,7 @@ pub fn (c: Checker) link_view(keep_parse: Bool) -> Checker {
   // a library's link (no hollowing, decision 0574)
   v.clib = c.clib
   v.clib_static = c.clib_static
+  v.clib_lazy = c.clib_lazy
   // what a module check cache retry reads after the lowering (build_native)
   v.mod_skip = c.mod_skip
   v.mod_skip_auto = c.mod_skip_auto

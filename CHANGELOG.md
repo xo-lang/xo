@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - `Replacer.new(pairs)` and `r.replace(s)` (decision 0594): Go's strings.Replacer, one pass over several old/new pairs
+- `xo build --lib=shared` builds a windows DLL (decision 0574) for windows/amd64 and windows/arm64 with Xo's PE linker: the runtime's and the `as c` exports by name, the runtime started on the first call (DllMain starts nothing), each thread's runtime state released when the thread exits, and Win64's by-reference XoBytes and XoStr; the header for `-o geo.dll` is geo.h; `--lib` now exports the `as c` functions even with no `-o`
 - `Map.extend(other)` and `Map.clone()` (decision 0592): Go's maps.Copy and maps.Clone
 - Float type constants (decision 0592): `Float.inf`, `Float.nan`, `Float.pi`, `Float.e`, `Float.max`, `Float.min` and `Float.smallest_nonzero`, as `Int.max` (Go's math.Inf, NaN, Pi, E, MaxFloat64, SmallestNonzeroFloat64)
 

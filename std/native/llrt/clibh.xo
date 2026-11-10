@@ -274,6 +274,21 @@ const BUF_KEEP = 65536
 /// passes to bytes_in, text_in and bytes_back; 0 when there is none.
 pub fn bufs() -> Int { heapos.c_bufs() }
 
+/// Word i (0 or 1) of a 16 byte struct at a: on windows/amd64 a C
+/// export's XoBytes or XoStr parameter arrives as a pointer to the
+/// caller's copy (Win64 passes a struct of other than 1, 2, 4 or 8 bytes
+/// by reference; decision 0574).
+pub fn w64_word(a: Int, i: Int) -> Int { rt.mem_load(a, 8 * i, 8) }
+
+/// A C export's XoBytes or XoStr result (p, n) on windows/amd64: stored
+/// through the hidden pointer r the caller passed first (Win64 returns a
+/// 16 byte struct so), which the export returns (decision 0574).
+pub fn w64_sret(r: Int, p: Int, n: Int) -> Int {
+  rt.mem_store(r, 0, p, 8)
+  rt.mem_store(r, 8, n, 8)
+  r
+}
+
 /// A C export's Bytes parameter k (decision 0574; k < heapos.C_BUFS) in
 /// thread buffer table t (bufs):
 /// the n bytes at a copied into the calling thread's buffer for k when

@@ -865,6 +865,10 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   let fi = b.declare(o, [])
   var ps: List[Int] = []
   var wide = false
+  // windows/amd64: Win64 passes a 16 byte struct (C's XoBytes or XoStr)
+  // by reference, one pointer word, and returns one through a hidden
+  // pointer the caller passes first (clibh w64_word, w64_sret)
+  let w64 = b.goos == "windows" && b.goarch == "amd64"
   // a parameter of another type: an XoHandle (clibh hget), by the
   // checker's type
   var held: List[Int] = []
@@ -875,7 +879,9 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     let t = ty_of(b.m.funcs[fi].values[p].tb)
     if b.tkind(t) == Kind.Str {
       wide = true
-      ps.push(b.int_t())
+      if !w64 {
+        ps.push(b.int_t())
+      }
     }
     let h = !(b.tkind(t) is Kind.Str | Kind.Int | Kind.Float) && k < b.c.objs[o].params.len()
     let ne = if h { b.c_nullable(b.c.objs[o].params[k].ty) } else { -1 }
@@ -908,7 +914,14 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   if bres {
     rs = [pair]
   }
-  if !wide && et < 0 && !b.c.clib_static && !hold && !hres && !bres {
+  let sret = bres && w64
+  if sret {
+    ps = [b.int_t()] + ps
+    rs = [b.int_t()]
+  }
+  // a static library's or a windows DLL's export starts the runtime
+  let lazy = b.c.clib_static || b.c.clib_lazy
+  if !wide && et < 0 && !lazy && !hold && !hres && !bres {
     b.declare_export(o, name)
     return
   }
@@ -925,8 +938,8 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   let bufs_fn = if wide { b.llrt_fn("native/llrt/clibh", "bufs") } else { "" }
   let c_ok = if et >= 0 { b.llrt_fn("native/llrt/heapos", "c_ok") } else { "" }
   let c_error = if et >= 0 { b.llrt_fn("native/llrt/heapos", "c_error") } else { "" }
-  let started = if b.c.clib_static { b.llrt_fn("native/llrt/obj", "heap_started") } else { "" }
-  let early = if b.c.clib_static { b.llrt_fn("native/llrt/cabi_c", "xo_start_early") } else { "" }
+  let started = if lazy { b.llrt_fn("native/llrt/obj", "heap_started") } else { "" }
+  let early = if lazy { b.llrt_fn("native/llrt/cabi_c", "xo_start_early") } else { "" }
   // handle parameters: read in place inside the table's read epoch
   // (clibh read_begin, addr, anyval.clib_peek, rt.obj_peek, read_end),
   // so a value is counted only where the function keeps it
@@ -939,8 +952,10 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   // an Option[T] result of a handle type T: 0 for None, else T's handle
   let rnull = if hres { b.c_nullable(b.c.objs[o].result) } else { -1 }
   let cout = if bres { b.llrt_fn("native/llrt/heapos", "c_bytes_out") } else { "" }
+  let wword = if wide && w64 { b.llrt_fn("native/llrt/clibh", "w64_word") } else { "" }
+  let wsret = if sret { b.llrt_fn("native/llrt/clibh", "w64_sret") } else { "" }
   let put = if hres { b.llrt_inst("native/llrt/clibh", "hput", if rnull >= 0 { rnull } else { b.c.objs[o].result }) } else { "" }
-  if (wide && (copy.is_empty() || text.is_empty() || bin.is_empty() || tin.is_empty() || bback.is_empty() || bufs_fn.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (b.c.clib_static && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || (bres && cout.is_empty()) || gets.any(fn(g) { g == "-" }) {
+  if (wide && (copy.is_empty() || text.is_empty() || bin.is_empty() || tin.is_empty() || bback.is_empty() || bufs_fn.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (lazy && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || (bres && cout.is_empty()) || (wide && w64 && wword.is_empty()) || (sret && wsret.is_empty()) || gets.any(fn(g) { g == "-" }) {
     b.unsupported("a C export with no native/llrt")
     return
   }
@@ -953,7 +968,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   // constructor's, which runs first in the program's link order) starts
   // the runtime first; a shared library's constructor runs before its
   // dependents' (about 0.25 ns a call on the Mac when checked)
-  if b.c.clib_static {
+  if lazy {
     let (on, off) = b.branch(b.call(started, b.bool_t(), "", []))
     let go = b.new_block()
     b.s.cur = off
@@ -970,20 +985,22 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   var bufs: List[(Int, Int)] = []
   // the thread's buffer table, read once a call
   let bt = if wide { b.call(bufs_fn, b.int_t(), "", []) } else { -1 }
-  var i = 0
+  // (the result's pointer is parameter 0 with sret)
+  var i = if sret { 1 } else { 0 }
   for (k, p) in b.m.funcs[fi].blocks[0].params.indexed() {
     let t = ty_of(b.m.funcs[fi].values[p].tb)
     if b.tkind(t) == Kind.Str {
       // a Str holds valid UTF-8; a Bytes any bytes
       let str = k < b.c.objs[o].params.len() && b.c.show(b.c.objs[o].params[k].ty) == "Str"
+      let (pa, pn) = if w64 { (b.call(wword, b.int_t(), "", [wp[i], b.cint(0)]), b.call(wword, b.int_t(), "", [wp[i], b.cint(1)])) } else { (wp[i], wp[i + 1]) }
       if bufs.len() < C_BUFS {
-        let v = b.call(if str { tin } else { bin }, t, "", [bt, b.cint(bufs.len()), wp[i], wp[i + 1]])
+        let v = b.call(if str { tin } else { bin }, t, "", [bt, b.cint(bufs.len()), pa, pn])
         bufs.push((bufs.len(), v))
         args.push(v)
       } else {
-        args.push(b.call(if str { text } else { copy }, t, "", [wp[i], wp[i + 1]]))
+        args.push(b.call(if str { text } else { copy }, t, "", [pa, pn]))
       }
-      i += 2
+      i += if w64 { 1 } else { 2 }
     } else if held[k] >= 0 {
       if nulls[k] {
         let some = b.m.variant_index(t, "Some")
@@ -1016,7 +1033,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     let _e = b.call(rend, b.unit_t(), "", [rd])
   }
   if et < 0 {
-    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, r) } else if bres { b.c_bytes(cout, pair, r) } else { r })
+    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, r) } else if sret { b.c_bytes_w64(cout, wsret, wp[0], r) } else if bres { b.c_bytes(cout, pair, r) } else { r })
   } else {
     let errp = wp[wp.len() - 1]
     let ok = b.m.variant_index(rt, "Ok")
@@ -1025,13 +1042,13 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     b.s.cur = yes
     let _o = b.call(c_ok, b.unit_t(), "", [errp])
     let v = b.add(Op.Payload, vt, Aux.P(tag: ok, field: 0), [r])
-    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, v) } else if bres { b.c_bytes(cout, pair, v) } else { v })
+    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, v) } else if sret { b.c_bytes_w64(cout, wsret, wp[0], v) } else if bres { b.c_bytes(cout, pair, v) } else { v })
     b.s.cur = no
     let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
     // a Str error is its own text; others build their Display form
     let msg = if b.vty(e) == b.str_t() { e } else { b.append_display(b.const_str(""), e, et) }
     let _e = b.call(c_error, b.unit_t(), "", [errp, msg])
-    b.retv(b.zero(rs[0], []))
+    b.retv(if sret { b.call(wsret, b.int_t(), "", [wp[0], b.cint(0), b.cint(0)]) } else { b.zero(rs[0], []) })
   }
   b.finish_fn()
   b.end(saved)
@@ -1081,6 +1098,13 @@ fn (var b: Builder) c_nullable(ct: Int) -> Int {
 fn (var b: Builder) c_bytes(cout: Str, pair: Int, v: Int) -> Int {
   let p = b.call(cout, b.int_t(), "", [v])
   b.add(Op.Tuple, pair, Aux.None, [p, b.str_len_of(v)])
+}
+
+/// c_bytes on windows/amd64: v's (p, n) stored through the result pointer
+/// r (clibh w64_sret), which is returned.
+fn (var b: Builder) c_bytes_w64(cout: Str, wsret: Str, r: Int, v: Int) -> Int {
+  let p = b.call(cout, b.int_t(), "", [v])
+  b.call(wsret, b.int_t(), "", [r, p, b.str_len_of(v)])
 }
 
 /// v as an XoHandle (c_hold), or, when null (v is an Option[T] whose T

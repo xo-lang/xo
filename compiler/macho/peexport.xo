@@ -1,0 +1,72 @@
+// A DLL's export directory (decision 0574, windows: `xo build
+// --lib=shared`): the .edata contents link.exe and lld-link write, which
+// pelink.xo places in .rdata and names in data directory 0. Ordinals
+// follow the names' byte order from base 1, so the address table and the
+// name pointer table share one order and the ordinal table is 0..n-1.
+// No time stamp (0), so the image is reproducible.
+
+/// The export directory of DLL dll for exports (name, RVA), placed at
+/// RVA at: the 40 byte IMAGE_EXPORT_DIRECTORY, the export address table,
+/// the name pointer table, the ordinal table, then dll's name and the
+/// export names, each NUL terminated. An error for a duplicate or empty
+/// name.
+fn pe_export_dir(dll: Str, exports: List[(Str, Int)], at: Int) -> Result[Bytes, Str] {
+  var rvas: Map[Str, Int] = {}
+  var names: List[Str] = []
+  for (n, r) in exports {
+    if n.is_empty() {
+      return Err("an export with no name")
+    }
+    if rvas.contains(n) {
+      return Err("${n} is exported twice")
+    }
+    rvas[n] = r
+    names.push(n)
+  }
+  let sorted = names.sort()
+  let n = sorted.len()
+  let eat = at + 40
+  let npt = eat + 4 * n
+  let ot = npt + 4 * n
+  let dname = ot + 2 * n
+  var w = new_out(64 + 12 * n)
+  w.u32(0)
+  w.u32(0)
+  w.u16(0)
+  w.u16(0)
+  w.u32(dname)
+  w.u32(1)
+  w.u32(n)
+  w.u32(n)
+  w.u32(eat)
+  w.u32(npt)
+  w.u32(ot)
+  for s in sorted {
+    w.u32(rvas.get(s) ?? 0)
+  }
+  var p = dname + dll.len() + 1
+  for s in sorted {
+    w.u32(p)
+    p += s.len() + 1
+  }
+  for i in 0..n {
+    w.u16(i)
+  }
+  w.bytes(dll.bytes())
+  w.u8(0)
+  for s in sorted {
+    w.bytes(s.bytes())
+    w.u8(0)
+  }
+  Ok(w.b.freeze())
+}
+
+/// The size of pe_export_dir(dll, exports, _)'s bytes (the same for any
+/// addresses), which pelink.xo reserves before the layout is known.
+fn pe_export_size(dll: Str, exports: List[Str]) -> Int {
+  var n = 40 + dll.len() + 1
+  for e in exports {
+    n += 10 + e.len() + 1
+  }
+  n
+}
