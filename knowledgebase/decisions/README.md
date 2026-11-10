@@ -585,3 +585,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0594](0594-std-str-replacer.md): Accepted (owner via lead, 2026-11-10): Replacer.new(pairs) and r.replace(s), Go's strings.Replacer with its four algorithms
 - [0593](0593-std-copy-streams.md): Accepted (lead, 2026-11-10): copy_stream(dst, src), File.copy_to(dst), File.copy_from(src) with CopyErr[R, W] { Read, Write } naming the failing side (Go's io.Copy); sendfile is stage 2
 - [0595](0595-std-gap-rune-int-time.md): Accepted (owner via lead, 2026-11-10): Rune.max, max_ascii, simple_fold; Int.bit_len, add_carry, sub_borrow; Time unix_micros, unix_nanos, nanosecond, from_unix_micros, from_unix_nanos
+- [0596](0596-test-std-record-near.md): Proposed (Xo Lang 2, 2026-11-10): xo test --std-module edits load std's declaration record keyed without the from-source set, as std_variant_near keys the store (test edit peak 202-233 MB against go test's 106-158 MB)
