@@ -361,6 +361,31 @@ redesign keeps block copies for large results (a size past which the
 result is copied with the memcpy path) and is measured by __text and a
 7-round `--ab` against its parent before it lands.
 
+**Relanded (2026-11-10, Xo Lang 1).** Two causes, both fixed. First, a
+result moved a little down the frame into a call's arguments overlapped
+itself and copy_runs moved it word by word (c9b9e27b8 now block copies a
+forward overlapping move; gotchas/arm64-copy-runs-overlap.md). Second,
+and most of the time: the 700-word outgoing area pushed the frames of the
+two largest functions past the ldr reach, so G.function lowered them
+again with the 256-word cap, a second lowering and register allocation of
+the whole function. compiler/xo's build_native (95,954 SSA values) took
+19.9 s of emit alone against 10.5 s before step 3, on the parallel emit's
+critical path (linux/arm64 host 1, `--phase-times` and per-part times);
+lower (42,204 values) was retried too. A function over SRET_WIDE_VALUES
+(20,000) SSA values now starts with the 256-word cap (isel.xo, G.function),
+which is what its retry produced; the 54 functions of the self build that
+keep a wide result in the outgoing area have at most 14,791 values.
+Measured against its parent 751ec9e14: `xo bench --ab -- stage2 self` on
+linux/arm64 host 1, 7 of 7 rounds, wall 1.015 (95% 1.003 to 1.028), cpu
+1.018 (1.011 to 1.018), max RSS 1.003 within noise (the tool flagged the
+load, a median of 7 on 12 CPUs, as busy); compiler/xo __text (darwin/arm64,
+XO_BACKEND_CACHE=off, XO_INLINE_STRICT=1, same source) 41,408,516 to
+41,152,020 (-0.62%). On host 1 alone (exclusive lease, 5 alternating
+rounds, the two stage2 compilers building the same source with
+`--phase-times`, caches off) the build's median is 36,115 against 36,221
+ms (1.003): emit 11,295 to 11,579 ms (+2.5%, step 3's planning), the other
+phases equal or a little faster (insert_rc 8,951 to 8,840 ms).
+
 A wide result (big_by_ref) of a direct call is written by the callee
 through an address the caller passes after the arguments, as one more
 integer word (byref.xo sret_of; not for indirect, entry or address-taken
