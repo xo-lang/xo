@@ -146,6 +146,22 @@ loader-only change first, pushed with a minor bump and a seed cut for the
 owner to approve, and the module moves after it; this is reported to the
 lead before any module moves.
 
+## Seed finding (2026-11-10, from reading the loader and the build graph)
+
+- The parser already accepts a function with a body in a signature file
+  (`parse_file(..., sig)`: "function declarations may omit their body"), so
+  a merged file parses with the current seed; what the seed lacks is
+  *compiling* those bodies and not looking for a native twin.
+- The seed builds only `compiler/xo` from the tree. The std modules that
+  graph imports directly are crypto, task, internal, http, regexp, json,
+  testing, debug, archive, protoparse, path, embed and binary (plus what
+  they import). A module outside that closure is never compiled by the seed,
+  only by the new xo it built, so **the loader change and every module
+  outside the compiler's closure can land with the current seed, no cut**.
+  A module inside the closure (path, crypto, http, json, ...) can merge only
+  after a seed whose loader understands the layout; that one needs the lead
+  to cut a seed at the commit that lands the loader.
+
 ## Staged plan
 
 0. Prototype and measurements on `uuid`, `base32` (no push).
