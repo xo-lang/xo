@@ -9,13 +9,14 @@
 // rand (compiler/wasm/rt2.xo).
 use native/llrt/darwin
 use native/llrt/ints
+use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/testworld
 use native/llrt/windows
 use native/rt
 
 /// The generator of the target: 1 Linux getrandom, 2 macOS getentropy,
-/// 3 Windows BCryptGenRandom, 0 none (wasm32: a WASI module's Rand is
+/// 3 Windows BCryptGenRandom, 4 FreeBSD getrandom, 0 none (wasm32: a WASI module's Rand is
 /// the wasm runtime's, gotchas/wasm-target-os-is-the-host.md).
 fn source() -> Int {
   match target.arch {
@@ -25,7 +26,8 @@ fn source() -> Int {
         TargetOs.Linux => 1
         TargetOs.Darwin => 2
         TargetOs.Windows => 3
-        TargetOs.Wasi | TargetOs.FreeBSD => 0
+        TargetOs.FreeBSD => 4
+        TargetOs.Wasi => 0
       }
     }
   }
@@ -38,6 +40,7 @@ fn entropy(n: Int) -> Bytes {
     1 => linux.random(n)
     2 => darwin.random(n)
     3 => windows.random(n)
+    4 => freebsd.random(n)
     _ => (b"", -1)
   }
   if e != 0 {
@@ -59,6 +62,7 @@ pub fn system_seed_at(addr: Int) -> Bool {
   match source() {
     1 => linux.random_at(addr)
     2 => darwin.random_at(addr)
+    4 => freebsd.random_at(addr)
     3 => {
       rt.mem_store(addr, 0, system_u64(), 8)
       true

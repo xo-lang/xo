@@ -259,8 +259,11 @@ fn unmap_os(m: Int, size: Int) {
 
 /// "fault: out of memory" and the end of the process (status 70).
 pub fn oom() {
-  let m = "fault: out of memory"
-  stdio.err(raw.data(m), m.len(), true)
+  // the newline in the text: err with nl allocates a buffer, and an
+  // allocation here maps again (a failed map recursed until the stack
+  // ran out, FreeBSD 2026-11-09)
+  let m = "fault: out of memory\n"
+  stdio.err(raw.data(m), m.len(), false)
   process.os_exit(70)
 }
 
@@ -1020,7 +1023,13 @@ fn map_aligned(size: Int) -> Int {
         m = 0
       }
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => {}
+    TargetOs.FreeBSD => {
+      m = freebsd.mmap(0, size.wrapping_shl(1), 3, freebsd.MAP_PRIVATE | freebsd.MAP_ANON, -1, 0)
+      if m < 0 && m > -4096 {
+        m = 0
+      }
+    }
+    TargetOs.Wasi => {}
   }
   if m == 0 {
     oom()

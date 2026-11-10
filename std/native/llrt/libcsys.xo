@@ -11,6 +11,7 @@
 // Written on macOS: checked by the linux/arm64 XO_NOLIBC build's code
 // generation only, UNTESTED on linux.
 use native/llrt/libcmem
+use native/llrt/freebsd
 use native/llrt/libcstr
 use native/llrt/linux
 use native/rt
@@ -61,10 +62,15 @@ fn int(v: Int) -> Int { libcstr.s32(v) }
 // ---------------------------------------------------------------------------
 // Process exit
 
-/// _exit and exit: exit_group(code); never returns.
+/// _exit and exit: exit_group(code) (exit(2) on FreeBSD, whose 231 is
+/// shmget: a FreeBSD program spun there, 2026-11-09); never returns.
 pub fn exit(code: Int) {
   while true {
-    let _r = linux.exit_group(int(code))
+    if target.os == TargetOs.FreeBSD {
+      let _f = freebsd.exit(int(code))
+    } else {
+      let _r = linux.exit_group(int(code))
+    }
   }
 }
 

@@ -314,7 +314,8 @@ fn resolve(host: Str, port: Str, family: Int, passive: Bool, out: Int, cap: Int)
   let hn = host.len()
   let pp = raw.data(port)
   let pn = port.len()
-  if os() != 1 {
+  // FreeBSD (layer 4) has no libc here: the resolver in Xo, as Linux's
+  if os() != 1 && os() != 4 {
     return resolve_libc(hp, hn, pp, pn, family, passive, out, cap)
   }
   var pv = 0

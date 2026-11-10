@@ -26,6 +26,7 @@
 // current context and never unwinds into its C callers.
 use native/llrt/det
 use native/llrt/cpu
+use native/llrt/freebsd
 use native/llrt/layout
 use native/llrt/linux
 use native/llrt/rtstats
@@ -287,7 +288,8 @@ fn layer() -> Int {
         TargetOs.Linux => 1
         TargetOs.Darwin => 2
         TargetOs.Windows => 3
-        TargetOs.Wasi | TargetOs.FreeBSD => 0
+        TargetOs.FreeBSD => 4
+        TargetOs.Wasi => 0
       }
     }
   }
@@ -316,6 +318,9 @@ pub fn futex_wait(a: Int, v: Int) {
       // UL_COMPARE_AND_WAIT | ULF_NO_ERRNO
       let _r = sys_darwin.__ulock_wait(16777217, a, v, 0)
     }
+    4 => {
+      let _r = freebsd.futex_wait(a, v, 0)
+    }
     3 => {
       let cmp = rt.tlocal_addr().wrapping_add(TLS_SCRATCH_AT)
       rt.mem_store(cmp, 0, v, 4)
@@ -339,6 +344,12 @@ pub fn futex_wait_us(a: Int, v: Int, us: Int) {
     2 => {
       let _r = sys_darwin.__ulock_wait(16777217, a, v, us)
     }
+    4 => {
+      let ts = rt.tlocal_addr().wrapping_add(TLS_SCRATCH_AT)
+      rt.mem_store(ts, 0, us / 1000000, 8)
+      rt.mem_store(ts, 8, (us % 1000000) * 1000, 8)
+      let _r = freebsd.futex_wait(a, v, ts)
+    }
     3 => {
       let cmp = rt.tlocal_addr().wrapping_add(TLS_SCRATCH_AT)
       rt.mem_store(cmp, 0, v, 4)
@@ -359,6 +370,9 @@ pub fn futex_wake(a: Int) {
     }
     2 => {
       let _r = sys_darwin.__ulock_wake(16777217, a, 0)
+    }
+    4 => {
+      let _r = freebsd.futex_wake(a, 1)
     }
     3 => sys_windows.WakeByAddressSingle(a)
     _ => {}
@@ -1930,6 +1944,17 @@ fn map_stack(size: Int, page: Int, hooks: Int) -> Int {
       let _r = sys_darwin.mprotect(m, page, 0)
       m
     }
+    4 => {
+      // FreeBSD: MAP_PRIVATE | MAP_ANON (no MAP_NORESERVE: it overcommits
+      // anonymous memory by default), the guard page PROT_NONE
+      let m = freebsd.mmap(0, size, 3, freebsd.MAP_PRIVATE | freebsd.MAP_ANON, -1, 0)
+      if m < 0 && m > -4096 {
+        rt.tlocal_set(4, (0).wrapping_sub(m))
+        return 0
+      }
+      let _r = freebsd.mprotect(m, page, 0)
+      m
+    }
     3 => {
       // MEM_RESERVE, then MEM_COMMIT of the top and of a PAGE_GUARD page
       // below it (PAGE_READWRITE); windows --race reserves it in
@@ -1971,6 +1996,9 @@ fn unmap_stack(m: Int, size: Int, hooks: Int) {
     }
     2 => {
       let _r = sys_darwin.munmap(m, size)
+    }
+    4 => {
+      let _r = freebsd.munmap(m, size)
     }
     3 => {
       // MEM_RELEASE; the arena's are kept (windows --race)
@@ -3762,6 +3790,14 @@ pub fn guard_map(size: Int) -> Int {
       let _r = sys_darwin.mprotect(m.wrapping_add(top), GUARD_PAGE, 0)
       m
     }
+    4 => {
+      let m = freebsd.mmap(0, size, 3, freebsd.MAP_PRIVATE | freebsd.MAP_ANON, -1, 0)
+      if m < 0 && m > -4096 {
+        return 0
+      }
+      let _r = freebsd.mprotect(m.wrapping_add(top), GUARD_PAGE, 0)
+      m
+    }
     3 => {
       // MEM_RESERVE of it all, MEM_COMMIT (PAGE_READWRITE) of all but the
       // last GUARD_PAGE bytes: a reserved page faults on any access
@@ -3791,6 +3827,9 @@ pub fn guard_unmap(m: Int, size: Int) {
     3 => {
       // MEM_RELEASE
       let _r = sys_windows.VirtualFree(m, 0, 32768)
+    }
+    4 => {
+      let _r = freebsd.munmap(m, size)
     }
     _ => {}
   }

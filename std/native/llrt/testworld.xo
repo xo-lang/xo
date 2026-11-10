@@ -23,6 +23,7 @@
 // testing.xo, log.xo, and http.xo directly, and the C runtime through
 // cabi_tw.xo's exports (xo_x_tw_*).
 use native/llrt/darwin
+use native/llrt/freebsd
 use native/llrt/ints
 use native/llrt/linux
 use native/llrt/pool
@@ -1577,6 +1578,9 @@ pub fn quit(code: Int) {
     }
     TargetOs.Darwin => sys_darwin.exit(code)
     TargetOs.Windows => sys_windows.ExitProcess(code)
-    TargetOs.Wasi | TargetOs.FreeBSD => {}
+    TargetOs.FreeBSD => {
+      let _r = freebsd.exit(code)
+    }
+    TargetOs.Wasi => {}
   }
 }

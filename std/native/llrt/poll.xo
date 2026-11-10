@@ -13,6 +13,7 @@ use native/llrt/layout
 use native/llrt/budget
 use native/llrt/concflag
 use native/llrt/ctx
+use native/llrt/freebsd
 use native/llrt/heapos
 use native/llrt/linux
 use native/llrt/obj
@@ -484,6 +485,17 @@ fn register(fd: Int, pd: Int, write: Bool) -> Int {
       let r = Int(sys_darwin.kevent(poll, k, if write { 2 } else { 1 }, 0, 0, 0))
       if r < 0 { 0 - rt.mem_load(sys_darwin.__error(), 0, 4) } else { 0 }
     }
+    TargetOs.FreeBSD => {
+      // macOS's two changes in FreeBSD's struct kevent (KEV_SIZE 64)
+      let k = obj.scratch()
+      let n = freebsd.KEV_SIZE
+      rt.mem_set(k, 0, 2 * n)
+      fb_kev(k, fd, freebsd.EVFILT_READ, freebsd.EV_ADD | freebsd.EV_CLEAR, pd)
+      fb_kev(addw(k, n), fd, freebsd.EVFILT_WRITE, freebsd.EV_ADD | freebsd.EV_CLEAR, pd)
+      sanhook.release(ev())
+      let r = freebsd.kevent(poll, k, if write { 2 } else { 1 }, 0, 0, 0)
+      if r < 0 { r } else { 0 }
+    }
     TargetOs.Linux => {
       // EPOLLIN 1 | EPOLLRDHUP 0x2000 | EPOLLET 1 << 31, EPOLLOUT 4; the
       // registration publishes pd through the kernel, which the C
@@ -491,7 +503,26 @@ fn register(fd: Int, pd: Int, write: Bool) -> Int {
       // calls do not (gotchas/tsan-raw-epoll-no-edge.md)
       epoll_add(poll, fd, 2147483648 | 8192 | 1 | (if write { 4 } else { 0 }), pd)
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => -38
+    TargetOs.Windows | TargetOs.Wasi => -38
+  }
+}
+
+/// Fills the struct kevent at k (FreeBSD's, zeroed) with ident fd, the
+/// filter and flags (16 bit fields), and udata.
+fn fb_kev(k: Int, fd: Int, filter: Int, flags: Int, udata: Int) {
+  rt.mem_store(k, freebsd.KEV_IDENT, fd, 8)
+  rt.mem_store(k, freebsd.KEV_FILTER, filter & 65535, 2)
+  rt.mem_store(k, freebsd.KEV_FLAGS, flags, 2)
+  rt.mem_store(k, freebsd.KEV_UDATA, udata, 8)
+}
+
+/// The bytes of one event of the poller's wait (struct kevent: 64 on
+/// FreeBSD, 32 on macOS; at least an epoll_event or an
+/// OVERLAPPED_ENTRY elsewhere).
+fn ev_bytes() -> Int {
+  match target.os {
+    TargetOs.FreeBSD => freebsd.KEV_SIZE
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => 32
   }
 }
 
@@ -521,14 +552,15 @@ fn fd_close(fd: Int) { let _c = sock.close(fd) }
 /// Windows drops the unread input first (the C's).
 fn fd_shut(fd: Int) {
   match target.os {
-    TargetOs.Darwin => {
+    TargetOs.Darwin | TargetOs.FreeBSD => {
+      // kqueue drops a descriptor's registrations when it closes
       let _s = sock.shutdown(fd, 2)
     }
     TargetOs.Linux => {
       let _d = sock.epoll_ctl(s32(rt.mem_load(ev(), EV_POLL, 4)), 2, fd, 0)
       let _s = sock.shutdown(fd, 2)
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {
+    TargetOs.Windows | TargetOs.Wasi => {
       // Windows resets a connection shut down for receiving while input
       // is unread, and the reset discards what the peer has not read of
       // ours yet (a 400 just written): drop the input first (the socket
@@ -1133,7 +1165,8 @@ pub fn poke() {
   let _w = match target.os {
     TargetOs.Darwin => sys_darwin.write(w, b, 1)
     TargetOs.Linux => linux.write_at(w, b, 1)
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => 0
+    TargetOs.FreeBSD => freebsd.write_at(w, b, 1)
+    TargetOs.Windows | TargetOs.Wasi => 0
   }
 }
 
@@ -1183,7 +1216,10 @@ pub fn on_signal(sig: Int) {
     TargetOs.Linux => {
       let _w = linux.write_at(w, raw.data(b), 1)
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+    TargetOs.FreeBSD => {
+      let _w = freebsd.write_at(w, raw.data(b), 1)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
   }
 }
 
@@ -1252,7 +1288,10 @@ pub fn on_quit() {
     TargetOs.Linux => {
       let _w = linux.write_at(w, raw.data(b), 1)
     }
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => {}
+    TargetOs.FreeBSD => {
+      let _w = freebsd.write_at(w, raw.data(b), 1)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
   }
 }
 
@@ -1339,6 +1378,10 @@ fn ev_init() {
     TargetOs.Darwin => true
     TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => false
   }
+  if target.os == TargetOs.FreeBSD {
+    ev_init_freebsd(e, p)
+    return
+  }
   let pr = if darwin { Int(sys_darwin.pipe(p)) } else { linux.pipe2(p, linux.O_CLOEXEC) }
   if pr < 0 {
     heapos.oom()
@@ -1379,12 +1422,44 @@ fn ev_init() {
       heapos.oom()
     }
   }
+  ev_threads(e)
+}
+
+/// ev_init's end: the token holder's event buffer and the poller thread.
+fn ev_threads(e: Int) {
   // decision 0324: the token holder's event buffer (as poll_main's)
-  rt.mem_store(e, EV_BUF, rt.heap_large(addw(NEVENTS.wrapping_mul(32), 16 + 64)), 8)
+  rt.mem_store(e, EV_BUF, rt.heap_large(addw(NEVENTS.wrapping_mul(ev_bytes()), 16 + 64)), 8)
   rt.mem_store(e, EV_ON, if np_wanted() { 1 } else { 0 }, 8)
   if !pool.thread_start(rt.fn_addr("poll_thread"), 0) {
     heapos.oom()
   }
+}
+
+/// ev_init on FreeBSD (decision 0573 stage 2): the self pipe made
+/// nonblocking and close-on-exec by pipe2, and kqueue, as macOS's,
+/// with FreeBSD's system calls and struct kevent; p is scratch for the
+/// pipe's two descriptors.
+fn ev_init_freebsd(e: Int, p: Int) {
+  if freebsd.pipe2(p, freebsd.O_CLOEXEC | freebsd.O_NONBLOCK) < 0 {
+    heapos.oom()
+  }
+  let r = s32(rt.mem_load(p, 0, 4))
+  rt.mem_store(e, EV_PIPE_R, r, 4)
+  rt.mem_store(e, EV_PIPE_W, s32(rt.mem_load(p, 4, 4)), 4)
+  let kq = freebsd.kqueue()
+  if kq < 0 {
+    heapos.oom()
+  }
+  let _c = freebsd.fcntl(kq, freebsd.F_SETFD, freebsd.FD_CLOEXEC)
+  rt.mem_store(e, EV_POLL, kq, 4)
+  // the pipe's read end: EVFILT_READ, EV_ADD, no data (the self pipe)
+  let k = obj.scratch()
+  rt.mem_set(k, 0, freebsd.KEV_SIZE)
+  fb_kev(k, r, freebsd.EVFILT_READ, freebsd.EV_ADD, 0)
+  if freebsd.kevent(kq, k, 1, 0, 0, 0) < 0 {
+    heapos.oom()
+  }
+  ev_threads(e)
 }
 
 /// The poller thread's start (the export xo_x_poll_thread, which
@@ -1531,9 +1606,9 @@ const NEVENTS = 64
 /// poll), and after NP_QUIET such ticks it waits in the poller itself
 /// until something happens (a quiet program costs no ticks).
 pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int) {
-  // the events (struct kevent of 32 bytes, struct epoll_event of 16 or
-  // 12), a struct timespec, and the pipe's drain buffer
-  let evs = rt.heap_large(addw(NEVENTS.wrapping_mul(32), 16 + 64))
+  // the events (struct kevent of 32 or 64 bytes, struct epoll_event of
+  // 16 or 12), a struct timespec, and the pipe's drain buffer
+  let evs = rt.heap_large(addw(NEVENTS.wrapping_mul(ev_bytes()), 16 + 64))
   let e = ev()
   if rt.mem_load(e, EV_ON, 8) == 0 {
     while true {
@@ -1597,7 +1672,7 @@ fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
   let mu = addw(e, EV_MU)
   let dead = addw(e, EV_DEAD)
   let sigs = addw(e, EV_SIGS)
-  let ts = addw(evs, NEVENTS.wrapping_mul(32))
+  let ts = addw(evs, NEVENTS.wrapping_mul(ev_bytes()))
   let drain = addw(ts, 16)
   var fired = 0
   lk(mu)
@@ -1674,9 +1749,9 @@ fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
 /// and XO_NETPOLL not 0.
 fn np_wanted() -> Bool {
   let os_ok = match target.os {
-    TargetOs.Darwin | TargetOs.Linux => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.FreeBSD => true
     TargetOs.Windows => afd() != 0
-    TargetOs.Wasi | TargetOs.FreeBSD => false
+    TargetOs.Wasi => false
   }
   if !os_ok || virt() {
     return false
@@ -1765,6 +1840,17 @@ fn wait_events(poll: Int, evs: Int, ts: Int, wait: Int) -> Int {
       sanhook.acquire(ev())
       if r < 0 { 0 } else { r }
     }
+    TargetOs.FreeBSD => {
+      var tp = 0
+      if wait >= 0 {
+        rt.mem_store(ts, 0, wait / 1000000000, 8)
+        rt.mem_store(ts, 8, wait % 1000000000, 8)
+        tp = ts
+      }
+      let r = freebsd.kevent(poll, 0, 0, evs, NEVENTS, tp)
+      sanhook.acquire(ev())
+      if r < 0 { 0 } else { r }
+    }
     TargetOs.Linux => {
       var r = -38
       if wait > 0 && wait < 1000000 {
@@ -1802,7 +1888,7 @@ fn wait_events(poll: Int, evs: Int, ts: Int, wait: Int) -> Int {
         0
       }
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => 0
+    TargetOs.Wasi => 0
   }
 }
 
@@ -1837,8 +1923,18 @@ fn event(evs: Int, i: Int) -> (Int, Int) {
       let h = if (f & (8192 | 16 | 8)) != 0 { 4 } else { 0 }
       (data, r | w | h)
     }
+    TargetOs.FreeBSD => {
+      // macOS's decoding at FreeBSD's offsets
+      let e = addw(evs, i.wrapping_mul(freebsd.KEV_SIZE))
+      let f = rt.mem_load(e, freebsd.KEV_FILTER, 2)
+      var mode = if f == (freebsd.EVFILT_READ & 65535) { 1 } else if f == (freebsd.EVFILT_WRITE & 65535) { 2 } else { 0 }
+      if (rt.mem_load(e, freebsd.KEV_FLAGS, 2) & freebsd.EV_ERROR) != 0 {
+        mode = 3
+      }
+      (rt.mem_load(e, freebsd.KEV_UDATA, 8), mode)
+    }
     TargetOs.Windows => (rt.mem_load(evs, addw(i.wrapping_mul(32), 8), 8), 0)
-    TargetOs.Wasi | TargetOs.FreeBSD => (0, 0)
+    TargetOs.Wasi => (0, 0)
   }
 }
 
@@ -1863,7 +1959,8 @@ fn read_fd(fd: Int, a: Int, n: Int) -> Int {
   match target.os {
     TargetOs.Darwin => sys_darwin.read(fd, a, n)
     TargetOs.Linux => sock.read(fd, a, n)
-    TargetOs.Windows | TargetOs.Wasi | TargetOs.FreeBSD => -1
+    TargetOs.FreeBSD => freebsd.read_at(fd, a, n)
+    TargetOs.Windows | TargetOs.Wasi => -1
   }
 }
 

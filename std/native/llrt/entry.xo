@@ -18,6 +18,7 @@ use native/llrt/crash
 use native/llrt/crashfile
 use native/llrt/ctx
 use native/llrt/fault
+use native/llrt/freebsd
 use native/llrt/heapos
 use native/llrt/ints
 use native/llrt/linux
@@ -369,13 +370,7 @@ fn atoll(a: Int) -> Int {
 /// and SIGTERM, and a stack overflow ends the program with "fatal error:
 /// stack overflow" and status 2 (decision 0197, stage 5).
 fn signals() {
-  // FreeBSD has no worker threads or kqueue poller yet (decision 0573
-  // stage 2): it takes the no-poller path until they land
-  let freebsd = match target.os {
-    TargetOs.FreeBSD => true
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => false
-  }
-  if !concflag.built() || freebsd {
+  if !concflag.built() {
     // a program that cannot use concurrency (concflag.xo) has no poller to
     // count a signal: SIGINT and SIGTERM end it as the system does, SIGQUIT
     // is not the task tree's dump (`xo dump` needs the poller), and a write
@@ -388,6 +383,7 @@ fn signals() {
         let sa = rt.heap_large(16)
         darwin_sig(sa, SIGPIPE, SIG_IGN, 0)
       }
+      TargetOs.FreeBSD => freebsd_sig(SIGPIPE, SIG_IGN, 0)
       _ => {}
     }
     return
@@ -424,7 +420,13 @@ fn signals() {
       let _g = sys_windows.SetThreadStackGuarantee(g)
       release(g)
     }
-    TargetOs.Wasi | TargetOs.FreeBSD => {}
+    TargetOs.FreeBSD => {
+      freebsd_sig(SIGINT, h, freebsd.SA_RESTART)
+      freebsd_sig(SIGTERM, h, freebsd.SA_RESTART)
+      freebsd_sig(SIGQUIT, rt.fn_addr("on_quit"), freebsd.SA_RESTART)
+      freebsd_sig(SIGPIPE, SIG_IGN, 0)
+    }
+    TargetOs.Wasi => {}
   }
 }
 
@@ -440,6 +442,7 @@ fn ignore_sigpipe() {
       darwin_sig(sa, SIGPIPE, SIG_IGN, 0)
       release(sa)
     }
+    TargetOs.FreeBSD => freebsd_sig(SIGPIPE, SIG_IGN, 0)
     _ => {}
   }
 }
@@ -449,6 +452,16 @@ fn darwin_sig(sa: Int, sig: Int, h: Int, flags: Int) {
   rt.mem_store(sa, 8, 0, 4)
   rt.mem_store(sa, 12, flags, 4)
   let _r = sys_darwin.sigaction(sig, sa, 0)
+}
+
+/// Installs handler h for sig with flags on FreeBSD (struct sigaction:
+/// the handler, the flags, an empty mask; freebsd.SA_*).
+fn freebsd_sig(sig: Int, h: Int, flags: Int) {
+  let sa = obj.scratch()
+  rt.mem_set(sa, 0, freebsd.SA_SIZE)
+  rt.mem_store(sa, freebsd.SA_HANDLER, h, 8)
+  rt.mem_store(sa, freebsd.SA_FLAGS_AT, flags, 4)
+  let _r = freebsd.sigaction(sig, sa, 0)
 }
 
 /// Windows' start: UTF-8 console output and the arguments as UTF-8 from

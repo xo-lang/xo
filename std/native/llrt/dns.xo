@@ -734,7 +734,9 @@ pub fn parse_resolv(lines0: List[Str]?, hostname: Str) -> Config {
 
 /// The host name (uname's nodename; GetComputerNameExW on Windows), or "".
 fn hostname() -> Str {
-  if os() == 3 {
+  // FreeBSD: kern.hostname by sysctl (host.xo; uname's number is another
+  // call there)
+  if os() == 3 || target.os == TargetOs.FreeBSD {
     return host.hostname()
   }
   if os() == 2 {

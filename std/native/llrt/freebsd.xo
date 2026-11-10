@@ -106,8 +106,8 @@ pub fn thr_new(p: Int) -> Int { rt.sys6(455, p, TP_SIZE, 0, 0, 0, 0) }
 /// thr_self(2): stores the calling thread's id at the 8 bytes at a.
 pub fn thr_self(a: Int) -> Int { rt.sys6(432, a, 0, 0, 0, 0, 0) }
 
-/// thr_exit(2): ends the calling thread, storing 0 to the long at state
-/// and waking its waiters (0 for none).
+/// thr_exit(2): ends the calling thread, storing 1 to the long at state
+/// and waking its waiters (a shared wake; 0 for none).
 pub fn thr_exit(state: Int) -> Int { rt.sys6(431, state, 0, 0, 0, 0, 0) }
 
 /// thr_kill(2): sends sig to the thread id.
@@ -129,6 +129,45 @@ pub fn clock_ns(id: Int, a: Int) -> Int {
 // messages and the FsErr mapping are the BSDs' (darwin.err_msg and
 // darwin.fs_status, pure tables).
 
+/// getrandom(2) (563) of 8 bytes at addr: true when it gave them.
+pub fn random_at(addr: Int) -> Bool { rt.sys6(563, addr, 8, 0, 0, 0, 0) == 8 }
+
+/// getrandom(2) of n bytes: the bytes and 0, or the errno.
+pub fn random(n: Int) -> (Bytes, Int) {
+  let buf = raw.bytes_buf(n)
+  var off = 0
+  while off < n {
+    let r = rt.sys6(563, raw.bytes_addr(buf) + off, n - off, 0, 0, 0, 0)
+    if r < 0 {
+      if -r == 4 {
+        continue
+      }
+      return (b"", -r)
+    }
+    off += r
+  }
+  (buf, 0)
+}
+
+/// __getcwd(2) (326): the working directory, "." when the system gives
+/// none. It returns 0 (not the length, as Linux's does) and ends the
+/// path with a zero byte.
+pub fn getcwd() -> Str {
+  let buf = raw.bytes_buf(4096)
+  let a = raw.bytes_addr(buf)
+  if rt.sys6(326, a, 4096, 0, 0, 0, 0) != 0 || rt.mem_load(a, 0, 1) != 47 {
+    let _k = keep(buf, 0)
+    return "."
+  }
+  var n = 0
+  while n < 4096 && rt.mem_load(a, n, 1) != 0 {
+    n += 1
+  }
+  let w = raw.str_at(a, n)
+  let _k = keep(buf, 0)
+  w
+}
+
 pub const AT_FDCWD: Int = -100
 const AT_SYMLINK_NOFOLLOW: Int = 512
 
@@ -141,6 +180,13 @@ pub const O_CREAT: Int = 512
 pub const O_TRUNC: Int = 1024
 pub const O_EXCL: Int = 2048
 pub const O_CLOEXEC: Int = 1048576
+pub const O_NONBLOCK: Int = 4
+
+// fcntl(2) commands and descriptor flags (sys/fcntl.h)
+pub const F_SETFD: Int = 2
+pub const F_GETFL: Int = 3
+pub const F_SETFL: Int = 4
+pub const FD_CLOEXEC: Int = 1
 
 /// The facts of a stat: the kind and permission bits, the size, and the
 /// modification time in Unix nanoseconds (linux.Stat's).
@@ -215,6 +261,23 @@ pub fn open(path: Str, flags: Int, mode: Int) -> Int {
 /// close(2).
 pub fn close(fd: Int) -> Int { rt.sys6(6, fd, 0, 0, 0, 0, 0) }
 
+/// fcntl(2) of fd: cmd's result, or the negative errno.
+pub fn fcntl(fd: Int, cmd: Int, arg: Int) -> Int { rt.sys6(92, fd, cmd, arg, 0, 0, 0) }
+
+/// pipe2(2): the two 32 bit descriptors at p (read end first) with flags
+/// (O_CLOEXEC, O_NONBLOCK); 0 or the negative errno.
+pub fn pipe2(p: Int, flags: Int) -> Int { rt.sys6(542, p, flags, 0, 0, 0, 0) }
+
+/// kqueue(2): the descriptor, or the negative errno.
+pub fn kqueue() -> Int { rt.sys6(362, 0, 0, 0, 0, 0, 0) }
+
+/// kevent(2) with nch changes at ch and room for nev events at evs (struct
+/// kevent, KEV_SIZE bytes each), waiting at most the timespec at ts (0:
+/// no limit): the events' count, or the negative errno.
+pub fn kevent(kq: Int, ch: Int, nch: Int, evs: Int, nev: Int, ts: Int) -> Int {
+  rt.sys6(560, kq, ch, nch, evs, nev, ts)
+}
+
 /// fsync(2).
 pub fn fsync(fd: Int) -> Int { rt.sys6(95, fd, 0, 0, 0, 0, 0) }
 
@@ -278,6 +341,11 @@ pub const EV_EOF: Int = 32768
 pub const EV_ERROR: Int = 16384
 pub const NOTE_TRIGGER: Int = 16777216
 
+/// sigaction(2) with the struct sigaction at act (SA_*; 0 to read only)
+/// and the old one stored at old (0 for none). FreeBSD's kernel supplies
+/// the return trampoline (no SA_RESTORER).
+pub fn sigaction(sig: Int, act: Int, old: Int) -> Int { rt.sys6(416, sig, act, old, 0, 0, 0) }
+
 // struct sigaction and stack_t (sys/signal.h)
 pub const SA_HANDLER: Int = 0
 pub const SA_FLAGS_AT: Int = 8
@@ -298,3 +366,145 @@ pub const SS_SIZE_AT: Int = 8
 pub const SS_FLAGS_AT: Int = 16
 pub const SS_SIZEOF: Int = 24
 pub const UC_MCONTEXT: Int = 16
+
+// ---------------------------------------------------------------------------
+// File system calls for fsops (layer 4). FreeBSD's syscall numbers are the
+// same on amd64 and arm64.
+
+pub const O_DIRECTORY: Int = 131072
+const AT_REMOVEDIR: Int = 2048
+
+/// mkdirat(2) of path with mode: 0, or -errno.
+pub fn mkdir(path: Str, mode: Int) -> Int {
+  let z = cpath(path)
+  keep(z, rt.sys6(496, AT_FDCWD, raw.bytes_addr(z), mode, 0, 0, 0))
+}
+
+/// unlinkat(2) of path (AT_REMOVEDIR for a directory): 0, or -errno.
+pub fn unlink(path: Str, dir: Bool) -> Int {
+  let z = cpath(path)
+  keep(z, rt.sys6(503, AT_FDCWD, raw.bytes_addr(z), if dir { AT_REMOVEDIR } else { 0 }, 0, 0, 0))
+}
+
+/// renameat(2) of a to b (as written: "" is no file).
+pub fn rename(a: Str, b: Str) -> Int {
+  let za = zpath(a)
+  let zb = zpath(b)
+  let r = rt.sys6(501, AT_FDCWD, raw.bytes_addr(za), AT_FDCWD, raw.bytes_addr(zb), 0, 0)
+  keep(za, keep(zb, r))
+}
+
+/// symlinkat(2): a link at path to target.
+pub fn symlink(target: Str, path: Str) -> Int {
+  let zt = zpath(target)
+  let zp = zpath(path)
+  let r = rt.sys6(502, raw.bytes_addr(zt), AT_FDCWD, raw.bytes_addr(zp), 0, 0, 0)
+  keep(zt, keep(zp, r))
+}
+
+/// readlinkat(2) of path: the target and 0, or "" and the errno.
+pub fn readlink(path: Str) -> (Str, Int) {
+  let z = zpath(path)
+  let buf = raw.bytes_buf(4096)
+  let r = rt.sys6(500, AT_FDCWD, raw.bytes_addr(z), raw.bytes_addr(buf), 4096, 0, 0)
+  if keep(z, r) < 0 {
+    return ("", -r)
+  }
+  let t = raw.str_at(raw.bytes_addr(buf), r)
+  let _k = keep(buf, 0)
+  (t, 0)
+}
+
+/// fchmodat(2) of path to mode.
+pub fn chmod(path: Str, mode: Int) -> Int {
+  let z = cpath(path)
+  keep(z, rt.sys6(490, AT_FDCWD, raw.bytes_addr(z), mode, 0, 0, 0))
+}
+
+/// utimensat(2): path's access and modification times both sec, nsec.
+pub fn utimens(path: Str, sec: Int, nsec: Int) -> Int {
+  let z = cpath(path)
+  let ts = raw.bytes_buf(32)
+  let a = raw.bytes_addr(ts)
+  rt.mem_store(a, 0, sec, 8)
+  rt.mem_store(a, 8, nsec, 8)
+  rt.mem_store(a, 16, sec, 8)
+  rt.mem_store(a, 24, nsec, 8)
+  let r = rt.sys6(547, AT_FDCWD, raw.bytes_addr(z), a, 0, 0, 0)
+  keep(ts, keep(z, r))
+}
+
+/// pread(2) of at most n bytes into the address a from offset off.
+pub fn pread_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(475, fd, a, raw.io_len(n), off, 0, 0) }
+
+/// pwrite(2) of at most n bytes from the address a at offset off.
+pub fn pwrite_at(fd: Int, a: Int, n: Int, off: Int) -> Int { rt.sys6(476, fd, a, raw.io_len(n), off, 0, 0) }
+
+/// ftruncate(2) of fd to size bytes.
+pub fn ftruncate(fd: Int, size: Int) -> Int { rt.sys6(480, fd, size, 0, 0, 0, 0) }
+
+/// flock(2) of fd.
+pub fn flock(fd: Int, op: Int) -> Int { rt.sys6(131, fd, op, 0, 0, 0, 0) }
+
+/// The entries of the directory path (not `.` and `..`), each with its
+/// type's byte first when typed (linux.entries' `d`, `l`, `f`, `?`), and
+/// 0, or the errno. getdirentries(2); struct dirent (FreeBSD 12 and
+/// later): d_reclen (u16) at 16, d_type at 18, d_namlen (u16) at 20,
+/// d_name at 24.
+pub fn dir_list(path: Str, typed: Bool) -> (List[Str], Int) {
+  var fd = open(path, O_RDONLY | O_CLOEXEC | O_DIRECTORY, 0)
+  while fd == -EINTR {
+    fd = open(path, O_RDONLY | O_CLOEXEC | O_DIRECTORY, 0)
+  }
+  if fd < 0 {
+    return ([], -fd)
+  }
+  var out: List[Str] = []
+  let buf = raw.bytes_buf(16352)
+  let a = raw.bytes_addr(buf)
+  while true {
+    let n = rt.sys6(554, fd, a, 16352, 0, 0, 0)
+    if n == -EINTR {
+      continue
+    }
+    if n < 0 {
+      let _k = keep(buf, 0)
+      let _c = close(fd)
+      return ([], -n)
+    }
+    if n == 0 {
+      break
+    }
+    var off = 0
+    while off < n {
+      let rl = rt.mem_load(a + off, 16, 2)
+      if rl == 0 {
+        break
+      }
+      let k = rt.mem_load(a + off, 20, 2)
+      let name = a + off + 24
+      let dot = (k == 1 && rt.mem_load(name, 0, 1) == 46) || (k == 2 && rt.mem_load(name, 0, 1) == 46 && rt.mem_load(name, 1, 1) == 46)
+      if !dot {
+        let s = raw.str_at(name, k)
+        if typed {
+          let t = rt.mem_load(a + off, 18, 1)
+          let p = if t == 4 { "d" } else if t == 10 { "l" } else if t == 0 { "?" } else { "f" }
+          out.push(p + s)
+        } else {
+          out.push(s)
+        }
+      }
+      off += rl
+    }
+  }
+  let _k = keep(buf, 0)
+  let _c = close(fd)
+  (out, 0)
+}
+
+fn zpath(path: Str) -> Bytes {
+  var s = BytesBuilder.with_capacity(path.len() + 1)
+  s.write(path.bytes())
+  s.write_byte(UInt8(0))
+  s.freeze()
+}

@@ -98,7 +98,7 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   rt.mem_store(w, ENVP, e, 8)
   // the initial stack's layout (argv's NULL ended array, then envp's,
   // then the auxiliary vector): not an environ a setenv moved
-  if target.os == TargetOs.Linux && argv != 0 && envp == argv.wrapping_add((argc + 1).wrapping_shl(3)) {
+  if (target.os == TargetOs.Linux || target.os == TargetOs.FreeBSD) && argv != 0 && envp == argv.wrapping_add((argc + 1).wrapping_shl(3)) {
     linux.auxv_init(envp)
   }
 }

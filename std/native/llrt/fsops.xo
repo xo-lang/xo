@@ -18,6 +18,7 @@
 // lock); its words are read and written through rt.obj_addr. The status and message of the last operation stay
 // sysio.xo's thread locals (set_err, status, msg).
 use native/llrt/darwin
+use native/llrt/freebsd
 use native/llrt/linux
 use native/llrt/raw
 use native/llrt/sysio
@@ -160,6 +161,18 @@ fn open_once(l: Int, p: Str, k: Int, mode: Int) -> Int {
     }
     return darwin.open(p, f | darwin.O_CLOEXEC, mode)
   }
+  if l == 4 {
+    let f = match k {
+      0 => freebsd.O_RDONLY
+      1 => freebsd.O_WRONLY | freebsd.O_CREAT | freebsd.O_TRUNC
+      2 => freebsd.O_WRONLY | freebsd.O_CREAT | freebsd.O_APPEND
+      3 => freebsd.O_RDWR | freebsd.O_CREAT
+      6 => freebsd.O_RDWR | freebsd.O_CREAT
+      5 => freebsd.O_WRONLY | freebsd.O_CREAT | freebsd.O_EXCL
+      _ => freebsd.O_RDWR | freebsd.O_CREAT | freebsd.O_EXCL
+    }
+    return freebsd.open(p, f | freebsd.O_CLOEXEC, mode)
+  }
   let f = match k {
     0 => linux.O_RDONLY
     1 => linux.O_WRONLY | linux.O_CREAT | linux.O_TRUNC
@@ -179,6 +192,9 @@ fn close(l: Int, fd: Int) -> Int {
   if l == 2 {
     return darwin.close(fd)
   }
+  if l == 4 {
+    return freebsd.close(fd)
+  }
   linux.close(fd)
 }
 
@@ -188,7 +204,7 @@ fn fsync(l: Int, fd: Int) -> Int {
     return windows.fsync(fd)
   }
   while true {
-    let r = if l == 2 { darwin.fsync(fd) } else { linux.fsync(fd) }
+    let r = if l == 2 { darwin.fsync(fd) } else if l == 4 { freebsd.fsync(fd) } else { linux.fsync(fd) }
     if r != -EINTR {
       return r
     }
@@ -202,7 +218,7 @@ fn read_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
     return windows.read_at(fd, a, n)
   }
   while true {
-    let r = if l == 2 { darwin.read_at(fd, a, n) } else { linux.read_at(fd, a, n) }
+    let r = if l == 2 { darwin.read_at(fd, a, n) } else if l == 4 { freebsd.read_at(fd, a, n) } else { linux.read_at(fd, a, n) }
     if r != -EINTR {
       return r
     }
@@ -217,7 +233,7 @@ fn pread_fd(l: Int, fd: Int, a: Int, n: Int, off: Int) -> Int {
     return windows.pread_at(fd, a, n, off)
   }
   while true {
-    let r = if l == 2 { darwin.pread_at(fd, a, n, off) } else { linux.pread_at(fd, a, n, off) }
+    let r = if l == 2 { darwin.pread_at(fd, a, n, off) } else if l == 4 { freebsd.pread_at(fd, a, n, off) } else { linux.pread_at(fd, a, n, off) }
     if r != -EINTR {
       return r
     }
@@ -232,7 +248,7 @@ fn pwrite_fd(l: Int, fd: Int, a: Int, n: Int, off: Int) -> Int {
     return windows.pwrite_at(fd, a, n, off)
   }
   while true {
-    let r = if l == 2 { darwin.pwrite_at(fd, a, n, off) } else { linux.pwrite_at(fd, a, n, off) }
+    let r = if l == 2 { darwin.pwrite_at(fd, a, n, off) } else if l == 4 { freebsd.pwrite_at(fd, a, n, off) } else { linux.pwrite_at(fd, a, n, off) }
     if r != -EINTR {
       return r
     }
@@ -247,7 +263,7 @@ fn ftruncate_fd(l: Int, fd: Int, size: Int) -> Int {
     return windows.ftruncate(fd, size)
   }
   while true {
-    let r = if l == 2 { darwin.ftruncate(fd, size) } else { linux.ftruncate(fd, size) }
+    let r = if l == 2 { darwin.ftruncate(fd, size) } else if l == 4 { freebsd.ftruncate(fd, size) } else { linux.ftruncate(fd, size) }
     if r != -EINTR {
       return r
     }
@@ -263,7 +279,7 @@ fn write_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
   }
   var off = 0
   while off < n {
-    let w = if l == 2 { darwin.write_at(fd, a + off, n - off) } else { linux.write_at(fd, a + off, n - off) }
+    let w = if l == 2 { darwin.write_at(fd, a + off, n - off) } else if l == 4 { freebsd.write_at(fd, a + off, n - off) } else { linux.write_at(fd, a + off, n - off) }
     if w < 0 {
       if w == -EINTR {
         continue
@@ -284,6 +300,10 @@ fn stat_mode(l: Int, p: Str, follow: Bool) -> (Int, Int) {
     let (s, e) = darwin.stat(p, follow)
     return (s.mode, e)
   }
+  if l == 4 {
+    let (s, e) = freebsd.stat(p, follow)
+    return (s.mode, e)
+  }
   let (s, e) = linux.stat(p, follow)
   (s.mode, e)
 }
@@ -295,6 +315,10 @@ fn fstat_mode(l: Int, fd: Int) -> (Int, Int) {
   }
   if l == 2 {
     let (s, e) = darwin.fstat(fd)
+    return (s.mode, e)
+  }
+  if l == 4 {
+    let (s, e) = freebsd.fstat(fd)
     return (s.mode, e)
   }
   let (s, e) = linux.fstat(fd)
@@ -311,6 +335,9 @@ fn unlink(l: Int, p: Str, dir: Bool) -> Int {
   if l == 2 {
     return darwin.unlink(p, dir)
   }
+  if l == 4 {
+    return freebsd.unlink(p, dir)
+  }
   linux.unlink(p, dir)
 }
 
@@ -320,6 +347,9 @@ fn chmod(l: Int, p: Str, mode: Int) -> Int {
   }
   if l == 2 {
     return darwin.chmod(p, mode)
+  }
+  if l == 4 {
+    return freebsd.chmod(p, mode)
   }
   linux.chmod(p, mode)
 }
@@ -331,6 +361,9 @@ fn flock(l: Int, fd: Int, op: Int) -> Int {
   if l == 2 {
     return darwin.flock(fd, op)
   }
+  if l == 4 {
+    return freebsd.flock(fd, op)
+  }
   linux.flock(fd, op)
 }
 
@@ -341,6 +374,9 @@ fn dir_names(l: Int, p: Str) -> (List[Str], Int) {
   if l == 2 {
     return darwin.names(p)
   }
+  if l == 4 {
+    return freebsd.dir_list(p, false)
+  }
   linux.names(p)
 }
 
@@ -350,6 +386,9 @@ fn dir_entries(l: Int, p: Str) -> (List[Str], Int) {
   }
   if l == 2 {
     return darwin.entries(p)
+  }
+  if l == 4 {
+    return freebsd.dir_list(p, true)
   }
   linux.entries(p)
 }
@@ -408,7 +447,7 @@ pub fn rename(a: Str, b: Str, x: Str) -> Int {
     return rt.fs_rename(a, b, x)
   }
   let l = layer()
-  done(l, if l == 3 { windows.rename(a, b) } else if l == 2 { darwin.rename(a, b) } else { linux.rename(a, b) }, x)
+  done(l, if l == 3 { windows.rename(a, b) } else if l == 2 { darwin.rename(a, b) } else if l == 4 { freebsd.rename(a, b) } else { linux.rename(a, b) }, x)
 }
 
 /// os.Remove(p): unlink, then rmdir; the rmdir's error unless it is
@@ -442,7 +481,7 @@ pub fn chtimes(p: Str, t: Int, x: Str) -> Int {
     ns += 1000000000
     s -= 1
   }
-  done(l, if l == 3 { windows.utimens(p, s, ns) } else if l == 2 { darwin.utimens(p, s, ns) } else { linux.utimens(p, s, ns) }, x)
+  done(l, if l == 3 { windows.utimens(p, s, ns) } else if l == 2 { darwin.utimens(p, s, ns) } else if l == 4 { freebsd.utimens(p, s, ns) } else { linux.utimens(p, s, ns) }, x)
 }
 
 /// Whether paths are case sensitive: not on macOS and Windows (std/rt).
@@ -464,7 +503,7 @@ pub fn raw_mkdir(p: Str) -> Int {
     return rt.fs_raw_mkdir(p)
   }
   let l = layer()
-  errno_of(if l == 3 { windows.mkdir(p) } else if l == 2 { darwin.mkdir(p, 493) } else { linux.mkdir(p, 493) })
+  errno_of(if l == 3 { windows.mkdir(p) } else if l == 2 { darwin.mkdir(p, 493) } else if l == 4 { freebsd.mkdir(p, 493) } else { linux.mkdir(p, 493) })
 }
 
 pub fn raw_rmdir(p: Str) -> Int {
@@ -526,7 +565,7 @@ pub fn raw_getcwd() -> Str {
     return rt.fs_raw_getcwd()
   }
   let l = layer()
-  if l == 3 { windows.getcwd() } else if l == 2 { darwin.getcwd() } else { linux.getcwd() }
+  if l == 3 { windows.getcwd() } else if l == 2 { darwin.getcwd() } else if l == 4 { freebsd.getcwd() } else { linux.getcwd() }
 }
 
 /// Records err (0: success) for the Xo path x: the operation's status.
@@ -762,6 +801,12 @@ pub fn file_stat(f: rt.FsFile, x: Str) -> List[Int] {
     size = s.size
     mtime = s.mtime
     e = se
+  } else if l == 4 {
+    let (s, se) = freebsd.fstat(fd)
+    mode = s.mode
+    size = s.size
+    mtime = s.mtime
+    e = se
   } else {
     let (s, se) = linux.fstat(fd)
     mode = s.mode
@@ -898,7 +943,7 @@ pub fn file_write(f: rt.FsFile, data: Bytes, x: Str) -> Int {
   }
   let l = layer()
   let fd = rt.mem_load(rt.obj_addr(f), F_FD, 8)
-  let e = if l == 3 { windows.write_all(fd, data) } else if l == 2 { darwin.write_all(fd, data) } else { linux.write_all(fd, data) }
+  let e = if l == 3 { windows.write_all(fd, data) } else if l == 2 { darwin.write_all(fd, data) } else if l == 4 { freebsd.write_all(fd, data) } else { linux.write_all(fd, data) }
   if e != 0 {
     return fail(l, e, x)
   }
@@ -1093,7 +1138,7 @@ pub fn symlink(target: Str, p: Str, x: Str) -> Int {
     return rt.fs_symlink(target, p, x)
   }
   let l = layer()
-  done(l, if l == 3 { windows.symlink(target, p) } else if l == 2 { darwin.symlink(target, p) } else { linux.symlink(target, p) }, x)
+  done(l, if l == 3 { windows.symlink(target, p) } else if l == 2 { darwin.symlink(target, p) } else if l == 4 { freebsd.symlink(target, p) } else { linux.symlink(target, p) }, x)
 }
 
 /// The target of the link p in a list of one, the empty list when p is
@@ -1112,7 +1157,7 @@ pub fn read_link(p: Str, x: Str) -> List[Str] {
     ok()
     return []
   }
-  let (t, re) = if l == 3 { windows.readlink(p) } else if l == 2 { darwin.readlink(p) } else { linux.readlink(p) }
+  let (t, re) = if l == 3 { windows.readlink(p) } else if l == 2 { darwin.readlink(p) } else if l == 4 { freebsd.readlink(p) } else { linux.readlink(p) }
   if re != 0 {
     fail(l, re, x)
     return []
@@ -1143,7 +1188,7 @@ pub fn lock(p: Str, wait: Bool, x: Str, shared: Bool) -> rt.FsLock {
     return raw_lock(-1, false)
   }
   let op = if shared { linux.LOCK_SH } else { linux.LOCK_EX }
-  let busy = if l == 3 { windows.EWOULDBLOCK } else if l == 2 { darwin.EAGAIN } else { linux.EAGAIN }
+  let busy = if l == 3 { windows.EWOULDBLOCK } else if l == 2 { darwin.EAGAIN } else if l == 4 { freebsd.EAGAIN } else { linux.EAGAIN }
   while true {
     let r = flock(l, fd, op | linux.LOCK_NB)
     if r >= 0 {

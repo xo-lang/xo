@@ -36,15 +36,142 @@ pub const EAGAIN: Int = 11
 pub const EINPROGRESS: Int = 115
 pub const ECONNREFUSED: Int = 111
 
-/// AF_INET6 of the target OS (10 on Linux, 30 on macOS, 28 on FreeBSD,
-/// 23 on Windows).
+/// AF_INET6 as this module's callers see it (10 on Linux and on FreeBSD,
+/// whose calls here translate Linux's ABI: fb_*; 30 on macOS, 23 on
+/// Windows).
 pub fn af_inet6() -> Int {
   match target.os {
     TargetOs.Darwin => 30
-    TargetOs.FreeBSD => 28
     TargetOs.Windows => 23
-    TargetOs.Linux | TargetOs.Wasi => 10
+    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => 10
   }
+}
+
+// ---------------------------------------------------------------------------
+// FreeBSD (decision 0573 stage 2): its calls are raw system calls, as
+// Linux's, and this module gives its callers Linux's ABI there (socket
+// flags, errno values, socket options, the sockaddr's first two bytes),
+// so netconn and dns take their Linux paths unchanged. Translated at the
+// call: FreeBSD's sockaddr has sin_len then a one byte family (AF_INET6
+// 28), Linux's a 16 bit family; the bytes after are the same.
+
+fn freebsd() -> Bool {
+  match target.os {
+    TargetOs.FreeBSD => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
+}
+
+/// Linux's errno for FreeBSD's e (the socket errors callers test; the
+/// others agree below 35 or are passed through).
+fn fb_errno(e: Int) -> Int {
+  match e {
+    35 => 11
+    36 => 115
+    37 => 114
+    39 => 89
+    40 => 90
+    41 => 91
+    42 => 92
+    43 => 93
+    45 => 95
+    47 => 97
+    48 => 98
+    49 => 99
+    50 => 100
+    51 => 101
+    53 => 103
+    54 => 104
+    55 => 105
+    56 => 106
+    57 => 107
+    58 => 108
+    60 => 110
+    61 => 111
+    64 => 112
+    65 => 113
+    _ => e
+  }
+}
+
+/// r of a FreeBSD call: r, or minus Linux's errno.
+fn fret(r: Int) -> Int { if r < 0 { 0 - fb_errno(0 - r) } else { r } }
+
+/// Linux's SOCK_NONBLOCK and SOCK_CLOEXEC in ty as FreeBSD's.
+fn fb_type(ty: Int) -> Int {
+  var t = ty & ~(SOCK_NONBLOCK | SOCK_CLOEXEC)
+  if (ty & SOCK_NONBLOCK) != 0 {
+    t = t | 536870912
+  }
+  if (ty & SOCK_CLOEXEC) != 0 {
+    t = t | 268435456
+  }
+  t
+}
+
+/// Linux's (level, option) as FreeBSD's.
+fn fb_opt(level: Int, opt: Int) -> (Int, Int) {
+  if level == 1 {
+    let o = match opt {
+      2 => 4
+      4 => 4103
+      6 => 32
+      7 => 4097
+      8 => 4098
+      9 => 8
+      13 => 128
+      15 => 512
+      _ => opt
+    }
+    return (65535, o)
+  }
+  if level == 41 && opt == 26 {
+    return (41, 27)
+  }
+  if level == 6 {
+    let o = match opt {
+      4 => 256
+      5 => 512
+      6 => 1024
+      _ => opt
+    }
+    return (6, o)
+  }
+  (level, opt)
+}
+
+/// Rewrites the Linux sockaddr of n bytes at sa as FreeBSD's in place:
+/// its first two bytes before, to restore after the call.
+fn fb_sa_in(sa: Int, n: Int) -> Int {
+  if sa == 0 {
+    return 0
+  }
+  let old = rt.mem_load(sa, 0, 2)
+  let f = if old == 10 { 28 } else { old }
+  rt.mem_store(sa, 0, if n > 255 { 255 } else { n }, 1)
+  rt.mem_store(sa, 1, f, 1)
+  old
+}
+
+/// n capped at FreeBSD's struct sockaddr_un (106 bytes; Linux's is 110)
+/// for an AF_UNIX address at sa.
+fn fb_len(sa: Int, n: Int) -> Int {
+  if sa != 0 && rt.mem_load(sa, 0, 2) == 1 && n > 106 { 106 } else { n }
+}
+
+fn fb_sa_restore(sa: Int, old: Int) {
+  if sa != 0 {
+    rt.mem_store(sa, 0, old, 2)
+  }
+}
+
+/// Rewrites the FreeBSD sockaddr the kernel wrote at sa as Linux's.
+fn fb_sa_out(sa: Int, r: Int) -> Int {
+  if r >= 0 && sa != 0 {
+    let f = rt.mem_load(sa, 1, 1)
+    rt.mem_store(sa, 0, if f == 28 { 10 } else { f }, 2)
+  }
+  r
 }
 
 /// Whether the target is macOS (its calls go through libSystem).
@@ -178,6 +305,9 @@ pub fn socket(family: Int, ty: Int, proto: Int) -> Int {
   if darwin() {
     return dret(Int(sys_darwin.socket(family, ty, proto)))
   }
+  if freebsd() {
+    return fret(rt.sys6(97, if family == 10 { 28 } else { family }, fb_type(ty), proto, 0, 0, 0))
+  }
   rt.sys6(nr(198, 41), family, ty, proto, 0, 0, 0)
 }
 
@@ -188,6 +318,13 @@ pub fn bind(fd: Int, sa: Int, n: Int) -> Int {
   }
   if darwin() {
     return dret(Int(sys_darwin.bind(fd, sa, n)))
+  }
+  if freebsd() {
+    let m = fb_len(sa, n)
+    let o = fb_sa_in(sa, m)
+    let r = fret(rt.sys6(104, fd, sa, m, 0, 0, 0))
+    fb_sa_restore(sa, o)
+    return r
   }
   rt.sys6(nr(200, 49), fd, sa, n, 0, 0, 0)
 }
@@ -200,6 +337,9 @@ pub fn listen(fd: Int, backlog: Int) -> Int {
   if darwin() {
     return dret(Int(sys_darwin.listen(fd, backlog)))
   }
+  if freebsd() {
+    return fret(rt.sys6(106, fd, backlog, 0, 0, 0, 0))
+  }
   rt.sys6(nr(201, 50), fd, backlog, 0, 0, 0, 0)
 }
 
@@ -210,6 +350,9 @@ pub fn accept(fd: Int, flags: Int) -> Int {
   }
   if darwin() {
     return dret(Int(sys_darwin.accept(fd, 0, 0)))
+  }
+  if freebsd() {
+    return fret(rt.sys6(541, fd, 0, 0, fb_type(flags), 0, 0))
   }
   rt.sys6(nr(242, 288), fd, 0, 0, flags, 0, 0)
 }
@@ -224,6 +367,13 @@ pub fn connect(fd: Int, sa: Int, n: Int) -> Int {
   if darwin() {
     return dret(Int(sys_darwin.connect(fd, sa, n)))
   }
+  if freebsd() {
+    let m = fb_len(sa, n)
+    let o = fb_sa_in(sa, m)
+    let r = fret(rt.sys6(98, fd, sa, m, 0, 0, 0))
+    fb_sa_restore(sa, o)
+    return r
+  }
   rt.sys6(nr(203, 42), fd, sa, n, 0, 0, 0)
 }
 
@@ -236,6 +386,9 @@ pub fn sockname(fd: Int, sa: Int, lenp: Int) -> Int {
   if darwin() {
     return dret(Int(sys_darwin.getsockname(fd, sa, lenp)))
   }
+  if freebsd() {
+    return fb_sa_out(sa, fret(rt.sys6(32, fd, sa, lenp, 0, 0, 0)))
+  }
   rt.sys6(nr(204, 51), fd, sa, lenp, 0, 0, 0)
 }
 
@@ -246,6 +399,9 @@ pub fn peername(fd: Int, sa: Int, lenp: Int) -> Int {
   }
   if darwin() {
     return dret(Int(sys_darwin.getpeername(fd, sa, lenp)))
+  }
+  if freebsd() {
+    return fb_sa_out(sa, fret(rt.sys6(31, fd, sa, lenp, 0, 0, 0)))
   }
   rt.sys6(nr(205, 52), fd, sa, lenp, 0, 0, 0)
 }
@@ -258,6 +414,12 @@ pub fn send_to(fd: Int, p: Int, n: Int, sa: Int, salen: Int) -> Int {
   }
   if darwin() {
     return dret(sys_darwin.sendto(fd, p, n, 0, sa, salen))
+  }
+  if freebsd() {
+    let o = fb_sa_in(sa, salen)
+    let r = fret(rt.sys6(133, fd, p, n, 0, sa, salen))
+    fb_sa_restore(sa, o)
+    return r
   }
   rt.sys6(nr(206, 44), fd, p, n, 0, sa, salen)
 }
@@ -272,6 +434,9 @@ pub fn recv_from(fd: Int, p: Int, n: Int, sa: Int, lenp: Int) -> Int {
   if darwin() {
     return dret(sys_darwin.recvfrom(fd, p, n, 0, sa, lenp))
   }
+  if freebsd() {
+    return fb_sa_out(sa, fret(rt.sys6(29, fd, p, n, 0, sa, lenp)))
+  }
   rt.sys6(nr(207, 45), fd, p, n, 0, sa, lenp)
 }
 
@@ -282,6 +447,9 @@ pub fn send(fd: Int, p: Int, n: Int, flags: Int) -> Int {
   }
   if darwin() {
     return dret(sys_darwin.send(fd, p, n, 0))
+  }
+  if freebsd() {
+    return fret(rt.sys6(133, fd, p, n, fb_msg(flags), 0, 0))
   }
   rt.sys6(nr(206, 44), fd, p, n, flags, 0, 0)
 }
@@ -294,6 +462,9 @@ pub fn recv(fd: Int, p: Int, n: Int, flags: Int) -> Int {
   if darwin() {
     return dret(sys_darwin.recv(fd, p, n, flags))
   }
+  if freebsd() {
+    return fret(rt.sys6(29, fd, p, n, fb_msg(flags), 0, 0))
+  }
   rt.sys6(nr(207, 45), fd, p, n, flags, 0, 0)
 }
 
@@ -305,6 +476,9 @@ pub fn read(fd: Int, p: Int, n: Int) -> Int {
   if darwin() {
     return dret(sys_darwin.read(fd, p, n))
   }
+  if freebsd() {
+    return fret(rt.sys6(3, fd, p, n, 0, 0, 0))
+  }
   rt.sys6(nr(63, 0), fd, p, n, 0, 0, 0)
 }
 
@@ -315,6 +489,10 @@ pub fn setsockopt(fd: Int, level: Int, opt: Int, v: Int, n: Int) -> Int {
   }
   if darwin() {
     return dret(Int(sys_darwin.setsockopt(fd, level, opt, v, n)))
+  }
+  if freebsd() {
+    let (l, o) = fb_opt(level, opt)
+    return fret(rt.sys6(105, fd, l, o, v, n, 0))
   }
   rt.sys6(nr(208, 54), fd, level, opt, v, n, 0)
 }
@@ -328,6 +506,14 @@ pub fn getsockopt(fd: Int, level: Int, opt: Int, v: Int, lenp: Int) -> Int {
   if darwin() {
     return dret(Int(sys_darwin.getsockopt(fd, level, opt, v, lenp)))
   }
+  if freebsd() {
+    let (l, o) = fb_opt(level, opt)
+    let r = fret(rt.sys6(118, fd, l, o, v, lenp, 0))
+    if r >= 0 && l == 65535 && o == 4103 {
+      rt.mem_store(v, 0, fb_errno(rt.mem_load(v, 0, 4)), 4)
+    }
+    return r
+  }
   rt.sys6(nr(209, 55), fd, level, opt, v, lenp, 0)
 }
 
@@ -338,6 +524,9 @@ pub fn shutdown(fd: Int, how: Int) -> Int {
   }
   if darwin() {
     return dret(Int(sys_darwin.shutdown(fd, how)))
+  }
+  if freebsd() {
+    return fret(rt.sys6(134, fd, how, 0, 0, 0, 0))
   }
   rt.sys6(nr(210, 48), fd, how, 0, 0, 0, 0)
 }
@@ -350,6 +539,9 @@ pub fn close(fd: Int) -> Int {
   if darwin() {
     return dret(Int(sys_darwin.close(fd)))
   }
+  if freebsd() {
+    return fret(rt.sys6(6, fd, 0, 0, 0, 0, 0))
+  }
   rt.sys6(nr(57, 3), fd, 0, 0, 0, 0, 0)
 }
 
@@ -361,11 +553,28 @@ pub fn fcntl(fd: Int, cmd: Int, arg: Int) -> Int {
   if darwin() {
     return dret(Int(sys_darwin.fcntl(fd, cmd, arg)))
   }
+  if freebsd() {
+    // O_NONBLOCK: Linux's 2048, FreeBSD's 4 (F_GETFL 3, F_SETFL 4 agree)
+    if cmd == 4 {
+      return fret(rt.sys6(92, fd, 4, (arg & ~2048) | (if (arg & 2048) != 0 { 4 } else { 0 }), 0, 0, 0))
+    }
+    let r = fret(rt.sys6(92, fd, cmd, arg, 0, 0, 0))
+    if cmd == 3 && r >= 0 {
+      return (r & ~4) | (if (r & 4) != 0 { 2048 } else { 0 })
+    }
+    return r
+  }
   rt.sys6(nr(25, 72), fd, cmd, arg, 0, 0, 0)
 }
 
 /// ioctl(2) with an address argument.
-pub fn ioctl(fd: Int, req: Int, arg: Int) -> Int { rt.sys6(nr(29, 16), fd, req, arg, 0, 0, 0) }
+pub fn ioctl(fd: Int, req: Int, arg: Int) -> Int {
+  if freebsd() {
+    // Linux's requests are not FreeBSD's (dns's SIOCGIFINDEX): ENOTTY
+    return -25
+  }
+  rt.sys6(nr(29, 16), fd, req, arg, 0, 0, 0)
+}
 
 /// epoll_create1(2).
 pub fn epoll_create(flags: Int) -> Int { rt.sys6(nr(20, 291), flags, 0, 0, 0, 0, 0) }
@@ -382,7 +591,13 @@ pub fn epoll_pwait2(ep: Int, evs: Int, n: Int, ts: Int) -> Int { rt.sys6(nr(441,
 
 /// ppoll(2) of the n struct pollfd at fds, with the timespec at ts (0:
 /// no limit) and no signal mask.
-pub fn ppoll(fds: Int, n: Int, ts: Int) -> Int { rt.sys6(nr(73, 271), fds, n, ts, 0, 8, 0) }
+pub fn ppoll(fds: Int, n: Int, ts: Int) -> Int {
+  if freebsd() {
+    // struct pollfd and POLLIN, POLLOUT agree; no signal mask
+    return fret(rt.sys6(545, fds, n, ts, 0, 0, 0))
+  }
+  rt.sys6(nr(73, 271), fds, n, ts, 0, 8, 0)
+}
 
 /// Sets O_NONBLOCK on fd and FD_CLOEXEC (the C runtime's set_nonblock):
 /// 0, or the negative errno.
@@ -529,4 +744,17 @@ pub fn keep(b: Bytes, r: Int) -> Int {
     return -1
   }
   r
+}
+
+/// Linux's MSG_* flags in f as FreeBSD's (MSG_PEEK 2 and MSG_OOB 1 agree;
+/// MSG_DONTWAIT 0x40 is 0x80, MSG_NOSIGNAL 0x4000 is 0x20000).
+fn fb_msg(f: Int) -> Int {
+  var g = f & ~(64 | 16384)
+  if (f & 64) != 0 {
+    g = g | 128
+  }
+  if (f & 16384) != 0 {
+    g = g | 131072
+  }
+  g
 }

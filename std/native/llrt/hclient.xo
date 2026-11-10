@@ -83,9 +83,10 @@ fn rec(r: rthttp.CResp) -> Int { rt.obj_addr(r) }
 /// 140 that sock.xo maps WSAEWOULDBLOCK to).
 fn would_block(e: Int) -> Bool {
   match target.os {
-    TargetOs.Darwin | TargetOs.FreeBSD => e == -35
+    TargetOs.Darwin => e == -35
     TargetOs.Windows => e == -140 || e == -11
-    TargetOs.Linux | TargetOs.Wasi => e == -11
+    // sock.xo returns Linux's errnos on FreeBSD
+    TargetOs.Linux | TargetOs.Wasi | TargetOs.FreeBSD => e == -11
   }
 }
 

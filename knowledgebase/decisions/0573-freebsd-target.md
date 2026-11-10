@@ -194,3 +194,30 @@ not.
   on FreeBSD and thread_create fails (main runs on the first thread),
   and unwind.xo's scratch maps with FreeBSD's mmap. VM confirmation of
   this step waits for the amd64 host.
+- 2026-11-09, stage 2 written (unpushed until a VM run proves it):
+  threads on thr_new (libcthr fb_thread_create: clone's mapping, the
+  thread pointer as tls_base, cabi_nolibc fb_thread runs the function
+  then thr_exit, which sets the record's long to 1 and wakes it; join
+  waits with _umtx_op UMTX_OP_WAIT on that long), the kqueue poller
+  (poll.xo's FreeBSD arms: pipe2 with O_CLOEXEC | O_NONBLOCK, kqueue,
+  64 byte struct kevent through KEV_*, ev_bytes for the event buffers),
+  and SIGINT, SIGTERM, SIGQUIT and SIGPIPE through sigaction 416
+  (entry.xo freebsd_sig; the kernel supplies the return trampoline).
+  scripts/freebsdabi/gen.sh gains O_NONBLOCK, F_SETFD, F_GETFL, F_SETFL
+  and FD_CLOEXEC; TestFreeBSDABI covers the new wrappers.
+- 2026-11-09, stage 2 run on a FreeBSD 14 amd64 VM (Xo Lang 1): 119 of the
+  120 goldens the harness runs pass (36 at the first run). Beyond threads,
+  the poller and signals it took: heapos.map_aligned and fiber stacks on
+  FreeBSD's mmap; pool layer 4 (umtx futex waits); getrandom 563; exit(2)
+  for exit_group; fsops layer 4 (*at calls, getdirentries); sock.xo giving
+  its callers Linux's socket ABI (errnos, sockaddrs, flags) on FreeBSD, so
+  hclient, hconn and the TLS loops' would_block and peer family take
+  Linux's arm; netpoll on; the host name by sysctl kern.hostname; the
+  auxiliary vector kept at start (the unwinder's .eh_frame_hdr: without it
+  every fault escaped isolate and defer); and linux.xo's shared wrappers
+  (open with its flags mapped, read, write, close, fsync, stat, fstat,
+  clock_gettime with its clock ids) taking FreeBSD's calls, since code
+  with a Linux arm reaches them there
+  (gotchas/freebsd-sock-linux-errnos.md). The one left, fs_ops_edges,
+  differs because the VM runs it as root (permission checks pass). Not
+  run yet: arm64 FreeBSD, and the harness's other suites.

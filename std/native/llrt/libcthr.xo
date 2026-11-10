@@ -6,6 +6,7 @@
 // tls_size and tls_init. Every function takes and returns Int words
 // (addresses are Ints); none may fault or allocate: tls_size and tls_init
 // run before the main thread has its thread pointer.
+use native/llrt/freebsd
 use native/llrt/heapos
 use native/llrt/libcmem
 use native/llrt/linux
@@ -159,10 +160,8 @@ pub fn tls_init(area: Int) -> Int {
 /// pthread_create of the C function f with arg on a stack of at least
 /// stack bytes: the thread's handle, or the negative errno.
 pub fn thread_create(stack: Int, f: Int, arg: Int) -> Int {
-  // FreeBSD's threads (thr_new) are decision 0573's stage 2: none yet,
-  // so the callers run the work on the calling thread
   if target.os == TargetOs.FreeBSD {
-    return -linux.EAGAIN
+    return fb_thread_create(stack, f, arg)
   }
   var page = libcmem.auxval(linux.AT_PAGESZ)
   if page <= 0 {
@@ -201,6 +200,15 @@ pub fn thread_create(stack: Int, f: Int, arg: Int) -> Int {
 /// pthread_join(t): waits for the thread to exit, then unmaps its stack
 /// and record; 0.
 pub fn thread_join(t: Int) -> Int {
+  if target.os == TargetOs.FreeBSD {
+    // thr_exit stores 1 to the long at the record and wakes it (a shared
+    // wake, so a shared wait: UMTX_OP_WAIT 2 compares the long)
+    while rt.slot_load(t, 0, 1) == 0 {
+      let _w = freebsd.umtx_op(t, 2, 0, 0, 0)
+    }
+    let _u = freebsd.munmap(rt.mem_load(t, 8, 8), rt.mem_load(t, 16, 8))
+    return 0
+  }
   var tid = rt.mem_load(t, 0, 4)
   while tid != 0 {
     // FUTEX_WAIT, shared: CLONE_CHILD_CLEARTID wakes it so
@@ -210,4 +218,53 @@ pub fn thread_join(t: Int) -> Int {
   rt.fence(1)
   linux.munmap(rt.mem_load(t, 8, 8), rt.mem_load(t, 16, 8))
   0
+}
+
+// FreeBSD's threads (decision 0573 stage 2): thr_new with the same
+// mapping as clone's, the record's first word a long that thr_exit sets
+// to 1 (and wakes) when the thread ends, the function and its argument
+// at 24 and 32 for the start (cabi_nolibc.xo fb_thread, which calls it
+// and then thr_exit: a thr_new thread must not return).
+
+/// thread_create on FreeBSD: the thread's handle, or the negative errno.
+fn fb_thread_create(stack: Int, f: Int, arg: Int) -> Int {
+  let page = 4096
+  var st = if stack < 65536 { 65536 } else { stack }
+  st = (st + page - 1) & (0 - page)
+  let tls = (tls_size() + 128 + page - 1) & (0 - page)
+  let len = page + st + tls
+  let m = freebsd.mmap(0, len, 3, freebsd.MAP_PRIVATE | freebsd.MAP_ANON, -1, 0)
+  if m < 0 && m > -4096 {
+    return -freebsd.EAGAIN
+  }
+  let _g = freebsd.mprotect(m, page, 0)
+  let rec = m + page + st
+  rt.mem_store(rec, 0, 0, 8)
+  rt.mem_store(rec, 8, m, 8)
+  rt.mem_store(rec, 16, len, 8)
+  rt.mem_store(rec, 24, f, 8)
+  rt.mem_store(rec, 32, arg, 8)
+  let tp = tls_init((rec + 64 + 63) & (0 - 64))
+  let p = obj.scratch()
+  rt.mem_set(p, 0, freebsd.TP_SIZE)
+  rt.mem_store(p, freebsd.TP_START_FUNC, rt.fn_addr("fb_thread"), 8)
+  rt.mem_store(p, freebsd.TP_ARG, rec, 8)
+  rt.mem_store(p, freebsd.TP_STACK_BASE, m + page, 8)
+  rt.mem_store(p, freebsd.TP_STACK_SIZE, st, 8)
+  // the thread pointer: fs's base on amd64, tpidr_el0 on arm64
+  rt.mem_store(p, freebsd.TP_TLS_BASE, tp, 8)
+  rt.mem_store(p, freebsd.TP_TLS_SIZE, tls, 8)
+  let r = freebsd.thr_new(p)
+  if r < 0 {
+    let _u = freebsd.munmap(m, len)
+    return r
+  }
+  rec
+}
+
+/// The body of a thread thr_new started with record rec: its function,
+/// then thr_exit, which marks the record ended for thread_join.
+pub fn fb_thread_main(rec: Int) {
+  let _r = rt.call_c2(rt.mem_load(rec, 24, 8), rt.mem_load(rec, 32, 8), 0)
+  let _e = freebsd.thr_exit(rec)
 }

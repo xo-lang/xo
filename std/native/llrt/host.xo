@@ -1,6 +1,6 @@
 // Host facts (decision 0410): the host name. uname's nodename on Linux,
 // gethostname(3) on macOS, GetComputerNameExW on Windows (decision
-// 0426); "" under WASI, which has no such call.
+// 0426), sysctl kern.hostname on FreeBSD; "" under WASI, which has no such call.
 
 use native/llrt/raw
 use native/llrt/windows
@@ -47,6 +47,27 @@ pub fn hostname() -> Str {
       s
     }
     TargetOs.Windows => windows.hostname()
-    TargetOs.Wasi | TargetOs.FreeBSD => ""
+    TargetOs.FreeBSD => {
+      // sysctl kern.hostname (__sysctl 202; CTL_KERN 1, KERN_HOSTNAME 10):
+      // the name and its zero, at most 256 bytes
+      let buf = raw.bytes_buf(256 + 16)
+      let a = raw.bytes_addr(buf)
+      rt.mem_set(a, 0, 272)
+      let mib = a + 256
+      rt.mem_store(mib, 0, 1, 4)
+      rt.mem_store(mib, 4, 10, 4)
+      let lenp = mib + 8
+      rt.mem_store(lenp, 0, 256, 8)
+      var n = 0
+      if rt.sys6(202, mib, 2, a, lenp, 0, 0) >= 0 {
+        while n < 255 && rt.mem_load(a, n, 1) != 0 {
+          n += 1
+        }
+      }
+      let s = buf[0..n].to_str() ?? ""
+      raw.alive(buf)
+      s
+    }
+    TargetOs.Wasi => ""
   }
 }

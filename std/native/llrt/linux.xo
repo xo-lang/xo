@@ -9,6 +9,7 @@
 //
 // Only the Linux arms of std/native/llrt/sysio.xo call this module, so it
 // is code generated only for Linux targets (core 12.2).
+use native/llrt/freebsd
 use native/llrt/obj
 use native/llrt/raw
 use native/rt
@@ -58,18 +59,20 @@ fn nr(arm64: Int, amd64: Int) -> Int {
 
 /// read(2) into the bytes of buf from off on (at most n of them).
 pub fn read(fd: Int, buf: Bytes, off: Int, n: Int) -> Int {
-  let r = rt.sys6(nr(63, 0), fd, raw.bytes_addr(buf) + off, raw.io_len(n), 0, 0, 0)
+  // FreeBSD (decision 0573 stage 2): its own numbers (read 3, write 4,
+  // openat 499, close 6, fsync 95); callers of linux.xo there get them
+  let r = rt.sys6(if target.os == TargetOs.FreeBSD { 3 } else { nr(63, 0) }, fd, raw.bytes_addr(buf) + off, raw.io_len(n), 0, 0, 0)
   keep(buf, r)
 }
 
 /// write(2) of the bytes lo..hi of b.
 pub fn write(fd: Int, b: Bytes, lo: Int, hi: Int) -> Int {
-  let r = rt.sys6(nr(64, 1), fd, raw.bytes_addr(b) + lo, raw.io_len(hi - lo), 0, 0, 0)
+  let r = rt.sys6(if target.os == TargetOs.FreeBSD { 4 } else { nr(64, 1) }, fd, raw.bytes_addr(b) + lo, raw.io_len(hi - lo), 0, 0, 0)
   keep(b, r)
 }
 
 /// write(2) of the n bytes at the address a (std/native/llrt/stdio.xo).
-pub fn write_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(64, 1), fd, a, raw.io_len(n), 0, 0, 0) }
+pub fn write_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(if target.os == TargetOs.FreeBSD { 4 } else { nr(64, 1) }, fd, a, raw.io_len(n), 0, 0, 0) }
 
 /// Writes all of b (retrying after EINTR and short writes): 0, or the
 /// errno.
@@ -94,15 +97,30 @@ pub fn write_all(fd: Int, b: Bytes) -> Int {
 /// runtime opens it.
 pub fn open(path: Str, flags: Int, mode: Int) -> Int {
   let z = cpath(path)
-  let r = rt.sys6(nr(56, 257), AT_FDCWD, raw.bytes_addr(z), flags, mode, 0, 0)
+  let r = if target.os == TargetOs.FreeBSD { rt.sys6(499, AT_FDCWD, raw.bytes_addr(z), fb_flags(flags), mode, 0, 0) } else { rt.sys6(nr(56, 257), AT_FDCWD, raw.bytes_addr(z), flags, mode, 0, 0) }
   keep(z, r)
 }
 
 /// close(2).
-pub fn close(fd: Int) -> Int { rt.sys6(nr(57, 3), fd, 0, 0, 0, 0, 0) }
+pub fn close(fd: Int) -> Int { rt.sys6(if target.os == TargetOs.FreeBSD { 6 } else { nr(57, 3) }, fd, 0, 0, 0, 0, 0) }
+
+/// Linux's open flags as FreeBSD's (sys/fcntl.h); the access mode (0 to
+/// 2) is the same. O_DIRECTORY (arm64 16384, x86_64 65536) maps to
+/// FreeBSD's 131072, O_NONBLOCK 2048 to 4.
+fn fb_flags(f: Int) -> Int {
+  var o = f & 3
+  if f & O_CREAT != 0 { o = o | 512 }
+  if f & O_EXCL != 0 { o = o | 2048 }
+  if f & O_TRUNC != 0 { o = o | 1024 }
+  if f & O_APPEND != 0 { o = o | 8 }
+  if f & O_CLOEXEC != 0 { o = o | 1048576 }
+  if f & 2048 != 0 { o = o | 4 }
+  if f & o_directory() != 0 { o = o | 131072 }
+  o
+}
 
 /// fsync(2).
-pub fn fsync(fd: Int) -> Int { rt.sys6(nr(82, 74), fd, 0, 0, 0, 0, 0) }
+pub fn fsync(fd: Int) -> Int { rt.sys6(if target.os == TargetOs.FreeBSD { 95 } else { nr(82, 74) }, fd, 0, 0, 0, 0, 0) }
 
 /// The facts of a statx(2): the kind and permission bits (st_mode), the
 /// size, and the modification time in Unix nanoseconds.
@@ -121,6 +139,11 @@ pub fn is_link(st: Stat) -> Bool { (st.mode & 61440) == 40960 }
 /// statx(2) of path (following a final symbolic link when follow): the
 /// facts and 0, or the errno.
 pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
+  if target.os == TargetOs.FreeBSD {
+    // statx's number is another call there (sched_get_priority_max)
+    let (st, e) = freebsd.stat(path, follow)
+    return (Stat{mode: st.mode, size: st.size, mtime: st.mtime}, e)
+  }
   let z = cpath(path)
   let flags = if follow { 0 } else { AT_SYMLINK_NOFOLLOW }
   let r = statx(AT_FDCWD, raw.bytes_addr(z), flags)
@@ -153,6 +176,10 @@ pub fn statfs(path: Str) -> (List[Int], Int) {
 
 /// statx(2) of the open descriptor fd.
 pub fn fstat(fd: Int) -> (Stat, Int) {
+  if target.os == TargetOs.FreeBSD {
+    let (st, e) = freebsd.fstat(fd)
+    return (Stat{mode: st.mode, size: st.size, mtime: st.mtime}, e)
+  }
   let empty = b"\0"
   let r = statx(fd, raw.bytes_addr(empty), AT_EMPTY_PATH)
   keep(empty, 0)
@@ -190,6 +217,17 @@ pub fn clock_ns(id: Int, a: Int) -> Int {
 /// clock_gettime(2) of clock id into the timespec at ts: 0, or the
 /// negative errno; the vDSO's function when there is one.
 pub fn clock_gettime(id: Int, ts: Int) -> Int {
+  if target.os == TargetOs.FreeBSD {
+    // FreeBSD's clock_gettime (232) and clock ids: REALTIME 0, MONOTONIC
+    // 4, PROCESS_CPUTIME_ID 15, THREAD_CPUTIME_ID 14 (Linux's 0 to 3)
+    let fid = match id {
+      1 => 4
+      2 => 15
+      3 => 14
+      _ => id
+    }
+    return rt.sys6(232, fid, ts, 0, 0, 0, 0)
+  }
   let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
   if f > 0 {
     return rt.call_c2(f, id, ts)
@@ -931,7 +969,10 @@ const W_AUXV = 12
 /// the unwinder found no AT_PHDR and a fault escaped its isolate
 /// (gotchas/linux-auxv-proc.md).
 pub fn auxv_init(envp: Int) {
-  if target.os != TargetOs.Linux || envp == 0 {
+  // FreeBSD's start stack has the same layout (envp, then Elf64_Auxinfo
+  // pairs; AT_PHDR 3 and AT_PHNUM 5 as Linux's): the unwinder's
+  // eh_frame_hdr reads it
+  if (target.os != TargetOs.Linux && target.os != TargetOs.FreeBSD) || envp == 0 {
     return
   }
   var p = envp
@@ -946,7 +987,9 @@ pub fn auxv_init(envp: Int) {
 /// (no C library call: the C library's getauxval is not reachable from
 /// Xo, and with XO_NOLIBC there is none). Was xo_sys.c xo_auxval.
 pub fn auxval(k: Int) -> Int {
-  if target.os != TargetOs.Linux {
+  // FreeBSD shares only the System V numbers below 16 (AT_PHDR 3, AT_PHNUM
+  // 5, AT_PAGESZ 6); its 33 is AT_FXRNG, not AT_SYSINFO_EHDR (vdso_clock)
+  if target.os != TargetOs.Linux && (target.os != TargetOs.FreeBSD || k >= 16) {
     return 0
   }
   var a = rt.mem_load(rt.static_word(W_AUXV), 0, 8)

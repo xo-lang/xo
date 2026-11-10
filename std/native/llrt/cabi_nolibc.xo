@@ -112,3 +112,10 @@ fn nl_main_stack() -> Int {
   }
   st + gb
 }
+
+/// A FreeBSD thread's start (thr_new's start_func, libcthr.xo
+/// fb_thread_create): runs the thread's function, then ends the thread.
+fn fb_thread(rec: Int) -> Int {
+  libcthr.fb_thread_main(rec)
+  0
+}
