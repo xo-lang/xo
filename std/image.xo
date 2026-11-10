@@ -85,3 +85,7 @@ fn (im: Image) at(x: Int, y: Int) -> Color
 /// 153, 204, 255, red the slowest index and blue the fastest, as
 /// `0xRRGGBBAA` (alpha 255).
 fn web_safe() -> List[Int]
+
+/// Go's palette.Plan9: the 256 colors of Plan 9's default palette, as
+/// `0xRRGGBBAA` (alpha 255), in Go's order.
+fn plan9() -> List[Int]

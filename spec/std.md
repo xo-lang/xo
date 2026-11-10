@@ -8251,6 +8251,9 @@ fn (c: Color) gray() -> Int                      // color.GrayModel: (19595 r + 
 fn (c: Color) gray16() -> Int                    // color.Gray16Model: the same sum >> 16
 fn (c: Color) nrgba() -> Int                     // color.NRGBAModel as 0xRRGGBBAA
 fn from_nrgba(v: Int) -> Color                   // color.NRGBA.RGBA()
+fn (im: Image) at(x: Int, y: Int) -> Color  // Go's At(x, y).RGBA(); not YCbCr yet; outside the image Go's zero values
+fn web_safe() -> List[Int]                        // palette.WebSafe as 0xRRGGBBAA
+fn plan9() -> List[Int]                           // palette.Plan9 as 0xRRGGBBAA
 fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
 fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int)
 fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int)

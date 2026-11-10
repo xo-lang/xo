@@ -255,5 +255,14 @@ test "Image.at is Go's At" {
 		fmt.Fprintf(&o, "%d", int(n.R)<<24|int(n.G)<<16|int(n.B)<<8|int(n.A))
 	}
 	o.WriteString("]\n\ntest \"web_safe is Go's palette.WebSafe\" {\n  expect(image.web_safe()) == WEB_SAFE\n}\n")
+	o.WriteString("\n/// palette.Plan9 as 0xRRGGBBAA.\nconst PLAN9: List[Int] = [")
+	for i, c := range palette.Plan9 {
+		n := c.(color.RGBA)
+		if i > 0 {
+			o.WriteString(", ")
+		}
+		fmt.Fprintf(&o, "%d", int(n.R)<<24|int(n.G)<<16|int(n.B)<<8|int(n.A))
+	}
+	o.WriteString("]\n\ntest \"plan9 is Go's palette.Plan9\" {\n  expect(image.plan9()) == PLAN9\n}\n")
 	return o.String()
 }
