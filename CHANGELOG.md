@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std (net, fix): a host name lookup that asks for IPv4 and IPv6 at once no longer returns IPv4 addresses read from the IPv6 answer's bytes: when a resolver answered both queries back to back, the A reply's addresses were views of the shared receive buffer that the AAAA reply then overwrote, so programs dialed addresses such as 38.6.71.0 (decision 0330's views; commit 90bec2cd1; std/changes/prelude.md 2026-11-10; gotchas/slice-view-of-reused-buffer.md).
 - std/prelude.xo: every fn has a doc comment of its own (254 had none), one line in Go's style naming the Go equivalent where there is one, so xo lsp's hover and `xo doc` show them for Str, List, Map, Set, Option, Result, Duration, Time, the builders and the numbers; internal/repotest's TestPreludeFnsDocumented fails on a prelude fn without one. File.read_line's comment, which sat above read_at's, is back on read_line
 - xo init: writes .gitignore only in a git repository (a .git directory or file at or above the module directory), as cargo new does; outside one it writes xo.mod alone
 - xo check: `"n = " + n` (Str and another type) notes the interpolation form, `"n = ${n}"`, in either order
