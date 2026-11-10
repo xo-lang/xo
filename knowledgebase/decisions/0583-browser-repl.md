@@ -1,0 +1,78 @@
+# 0583: A REPL in the browser playground
+
+Status: Proposed (owner request via the lead, 2026-11-09; measurements first, no page work until the owner reads them)
+
+## Context
+- The owner asked (2026-11-09, via the lead) for a REPL on /play/, after
+  the Mac REPL (decision 0572 dropped its XO_REPL gate). Target: under
+  0.5 s per entry in the tab.
+- The playground's compiler (decision 0242) is compiler/wasm built for
+  wasm, run in the page's worker; compiler/wasm/play.xo runs one command
+  per instance (`--play check|fmt|build`) and prints one JSON line.
+  play_build checks the program and all of std it reaches (native mode,
+  lazy bodies), builds SSA, runs passes, and generates one wasm module.
+- Live page (~0.34), lead's Chrome measurement 2026-11-09: compiler load
+  2.9 s, ~1.95 s per build+run warm on the tour's basics, collections and
+  concurrency; the programs run in 1 ms. So the whole entry cost is the
+  compile, and most of that is std (checking and building what the entry
+  reaches), the same split the Mac REPL had before separate compilation.
+- The Mac REPL reaches 72-300 ms per entry with std's prebuilt objects
+  (separate compilation). The wasm backend has no separate compilation:
+  it emits one module.
+
+## Measurements to take first (step 1)
+1. Today's compiler/wasm in a tab (Chrome, worker as the page runs it),
+   per entry, on a 30-entry session (the Mac REPL's step 7 evidence
+   session) and the three tour examples: check ms, SSA
+   build ms, passes ms, wasm gen ms, instantiate+run ms. Node's WASI under
+   compiler/wasm/run.mjs as a proxy first, then the page's worker.
+2. The same entries with std's work kept in the tab:
+   a. one long-lived compiler instance (a `--play repl` loop reading
+      entries from stdin, as WASI preview1 allows), keeping the checker's
+      std modules between entries (check only the entry's module);
+   b. plus std's SSA functions kept after passes, so an entry builds and
+      optimizes only its own functions and copies std's reached ones;
+   c. plus std's generated wasm function bodies kept (code section bytes
+      per function), so gen emits only the entry's functions and links.
+   Each cache level reported separately, so the ADR picks the cheapest
+   that meets 0.5 s.
+3. test-playground.mjs against https://xolang.dev/ fails before the
+   page's script runs (lead): fix the test first, since the measurements
+   in a real tab go through it.
+
+## Decision (proposed, pending the numbers)
+- `--play repl` in compiler/wasm/play.xo: a loop over JSON entries on
+  stdin, one JSON reply per entry, reusing compiler/cli/repl's Sess
+  (session.xo has no Os dependency: classify, program, after, pins,
+  :type/:doc/:defs/:undo/:reset), so the browser and the terminal REPL
+  give the same answers.
+- The std cache at the level the measurements pick (2a, 2b or 2c), held
+  in the long-lived instance's memory; nothing persisted across page
+  loads in step 1 (IndexedDB of std's cached output is a later step).
+- A REPL panel on /play/ (website change, through the owner).
+
+## Precedents
+- Pyodide / JupyterLite: CPython compiled to wasm, one long-lived
+  interpreter per tab, state kept between cells.
+- ruby.wasm irb (TryRuby): a long-lived VM in the tab, entries evaluated
+  in one session.
+- OCaml.org's toplevel (js_of_ocaml toplevel): the compiler's toplevel
+  in the page, the stdlib's compiled form preloaded once, each phrase
+  compiled alone.
+- Klipse: in-page evaluation of snippets for several languages, each
+  with a long-lived evaluator.
+Xo differs: it compiles to a new wasm module per entry, so the session
+keeps compiler state (2a-2c), not a running program's heap; values carry
+over by replaying the session's bindings, as the Mac REPL does.
+
+## Alternatives
+- Re-run the whole program per entry with no cache (today's ~1.95 s): misses the target.
+- Interpret SSA in the tab instead of generating wasm: a second
+  execution engine to keep in step with the backends.
+- Ship std prebuilt as a wasm object and link in the tab: needs a wasm
+  linker in compiler/wasm (relocations, a linking section); larger than 2c.
+
+## Consequences
+- The playground's worker keeps one compiler instance alive (memory per
+  tab rises by the cached std state; to be measured).
+- The repl session code gets a second caller; its tests cover both.
