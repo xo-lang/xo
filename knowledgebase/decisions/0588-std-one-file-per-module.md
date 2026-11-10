@@ -1,7 +1,7 @@
 # 0588: One file per std module: merge std/M.xo (declarations) with std/native/M.xo (bodies)
 
-Status: Proposed (Lang 3, 2026-11-10; owner request via the lead). The owner
-decides before any file moves.
+Status: Accepted (owner, 2026-11-10, relayed by the lead: "do the proper
+fix"). Drafted by Lang 3. Order: the std/http router fixes first, then this.
 
 ## Context
 
@@ -50,7 +50,7 @@ Modules with a declaration file, by what their native file uses:
 (std/prelude.xo, a declaration file the compiler itself knows, is a special
 case below.)
 
-## Decision (proposed)
+## Decision
 
 1. **One file per module with real bodies**: `std/M.xo` holds the public
    declarations *with* their bodies, doc comments on the code, as a user
@@ -133,6 +133,18 @@ must be measured), and the self build time.
 - Merge the other way (bodies into the declaration for all modules including
   llrt ones in one step): too large to review; rejected in favor of the
   staged plan.
+
+## Seed question (to answer first, in stage 0)
+
+Whether an old seed can build a tree whose std has bodied files is an open
+fact, not an assumption: the seed's `load_std` parses a std file as
+declarations (`parse_into(..., true)`). Stage 0 builds the prototype tree
+with the current seed (`go run ./scripts/xobuild`). If it builds, modules
+can move with no seed bump and the loader change (stage 1) only makes the
+compiler accept the layout for itself. If it does not, the plan is a
+loader-only change first, pushed with a minor bump and a seed cut for the
+owner to approve, and the module moves after it; this is reported to the
+lead before any module moves.
 
 ## Staged plan
 
