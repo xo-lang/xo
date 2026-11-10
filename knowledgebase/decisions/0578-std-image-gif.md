@@ -2,6 +2,8 @@
 
 Status: Accepted (owner, 2026-11-08, on the lead's recommendation: questions 1 to 4 take the recommendations (A in the same push as std/image, then B one minor later with a Breaking note; port x/image/draw's CatmullRom and NearestNeighbor first; LZW in std/compress; WebP, TIFF, BMP and an `image.Image` interface stay out)). Proposed (Xo Lang 3, 2026-11-08; the lead approved writing it, owner decides, design only: no code until the owner answers)
 
+Implementation (Last verified: 2026-11-09): steps 1 to 5 landed (std/image with draw, draw_mask, fill, floyd_steinberg and scale; std/compress lzw; std/gif); step 6 (png and jpeg aliased onto the shared Image) is open.
+
 ## Context
 
 std has `std/png` (decision 0466) and `std/jpeg` (0467, 0510), each with its own `Image`, `Model` and `Config`, copied from Go's
