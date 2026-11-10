@@ -26,6 +26,14 @@ fn (var g: G) function(fi: Int) {
   g.dbound_made = false
   g.dbound_vals = {}
   g.begin_func(fi)
+  // a function this large passes the ldr reach anyway (its spills), so
+  // the outgoing area's wide results would only cost the second lowering
+  // below: start it at SRET_OUT_MAX (build_native, 95,954 values: about
+  // 10 s of the self build's emit, alone at its end, 2026-11-10)
+  let narrow = g.sret_out_max > SRET_OUT_MAX && g.f.values.len() > SRET_WIDE_VALUES
+  if narrow {
+    g.sret_out_max = SRET_OUT_MAX
+  }
   g.isel()
   // the optional passes (passes.xo) unless $XO_PASSES turns them off
   if g.on("mir_dce") {
@@ -165,6 +173,9 @@ fn (var g: G) function(fi: Int) {
       }
       g.regalloc()
     }
+    if narrow {
+      g.sret_out_max = SRET_OUT_WIDE
+    }
     g.dump_named()
     g.x86_emit()
     return
@@ -200,9 +211,19 @@ fn (var g: G) function(fi: Int) {
     g.sret_out_max = SRET_OUT_WIDE
     return
   }
+  if narrow {
+    g.sret_out_max = SRET_OUT_WIDE
+  }
   g.dump_named()
   g.emit()
 }
+
+/// The most SSA values of a function that tries the outgoing area for
+/// results up to SRET_OUT_WIDE words first. The self build (2026-11-10):
+/// every function that kept such a result there had at most 14,791
+/// values; above 20,000 (lower, build_native) every one passed the ldr
+/// reach and was lowered twice.
+const SRET_WIDE_VALUES = 20000
 
 /// Whether optional pass name is on (passes.xo, $XO_PASSES).
 fn (g: G) on(name: Str) -> Bool {
