@@ -213,7 +213,8 @@ compile() {
 	cp "$src/$mainf" "$d/$mainf"
 	(cd "$d" && "${build[@]}" >/dev/null 2>&1)
 	local size
-	size=$(stat -f %z "$bin" 2>/dev/null || stat -c %s "$bin")
+	# (GNU stat takes -f as file system status and succeeds with a block of text: BSD first only on darwin)
+	if [ "$(uname)" = Darwin ]; then size=$(stat -f %z "$bin"); else size=$(stat -c %s "$bin"); fi
 	# the path the edit build took, from its cache statistics
 	# "cache std ... reused" prints with --phase-times only; the "cache
 	# stdx" lookup line prints with the statistics and only on a separately
@@ -233,6 +234,14 @@ compile() {
 }
 
 {
+	if ! section compile && ! section run && ! section test && ! section amd64; then
+		# only the HTTP section, which runs on the offload host: its own lines below name the
+		# xo it built there and that host (this machine's xo and host are not what ran)
+		echo "# Xo against Go: the HTTP section on the linux/arm64 offload host ($(date +%Y-%m-%d))"
+		echo
+		echo "scripts/release-vs-go.sh SECTIONS=http, started from $(host_desc); the section's host and xo are in its lines below."
+		echo
+	else
 	echo "# Xo against Go: $("$XO" version 2>&1 | head -1) ($(date +%Y-%m-%d))"
 	echo
 	echo "scripts/release-vs-go.sh on $(host_desc),"
@@ -249,6 +258,7 @@ compile() {
 	echo "warm rows are compiles through the back-end caches, not a cached result (before 2026-10-29"
 	echo "they could be the run cache's 10 to 20 ms)."
 	echo "Size is the default build's binary."
+	fi
 } >"$report"
 
 # the pairs: NAME XO_SRC GO_SRC
