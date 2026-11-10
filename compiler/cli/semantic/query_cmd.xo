@@ -40,10 +40,14 @@ fn run_query(os: Os, args: List[Str]) -> Int {
     os.stdio.eprint(query_usage())
     return 2
   }
+  // the directory in / form on Windows, as the checker's paths are: a
+  // C:\x --dir found the asked package but not the workspace packages
+  // importing it (`xo query callers`, 2026-11-10)
+  dir = host_slash(dir)
   if kind == "holes" && rest.len() == 1 && !dir_set {
     // `xo query holes DIR`: the directory, as --dir names it (a field
     // report of 0.25.2 wrote `xo query holes .`)
-    dir = rest[0]
+    dir = host_slash(rest[0])
     dir_set = true
     rest = []
   }
@@ -57,7 +61,7 @@ fn run_query(os: Os, args: List[Str]) -> Int {
     // its module and imports answer, not the whole workspace around it
     let a = rest[0]
     if !a.starts_with("std/") && (os.fs.read_dir(a).ok() ?? []).any(fn(e) { !e.is_dir && e.name.ends_with(".xo") }) {
-      dir = a
+      dir = host_slash(a)
     }
   }
   if kind != "type" && !(rest.first() ?? "").starts_with("std/") && mod_root(os.fs, wd_of(os), dir).is_empty() && !xo_below(os.fs, abs_path(wd_of(os), dir), 2) {
@@ -119,6 +123,11 @@ fn parse_pos(s: Str) -> (Str, Int, Int) ! Str {
     }
     _ => Err("want file:line:col with positive numbers, got ${s.quote()}")
   }
+}
+
+/// p with Windows's \ separators as /; p itself elsewhere.
+fn host_slash(p: Str) -> Str {
+  if hostpath.windows() { p.replace("\\", "/") } else { p }
 }
 
 /// Whether path lies under dir.

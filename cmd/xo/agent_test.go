@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -132,9 +134,19 @@ func startMCP(t *testing.T) (c *mcpClient, wait func() (int, string)) {
 		t.Fatal(err)
 	}
 	c = &mcpClient{t: t, in: in, out: bufio.NewReader(out)}
+	// a hard deadline: a hung xo mcp (or a child it runs) fails the test
+	// instead of holding the run (TestMCPSession on a Windows host,
+	// 2026-11-10: a check --fix child outlived its client and the test
+	// waited for good); only this test's own process tree is stopped
+	deadline := time.AfterFunc(mcpDeadline, func() {
+		t.Errorf("xo mcp still running after %v: stopping its process tree (pid %d)", mcpDeadline, cmd.Process.Pid)
+		killTree(cmd.Process)
+	})
+	t.Cleanup(func() { deadline.Stop() })
 	return c, func() (int, string) {
 		in.Close()
 		err := cmd.Wait()
+		deadline.Stop()
 		code := 0
 		if ee, ok := err.(*exec.ExitError); ok {
 			code = ee.ExitCode()
@@ -143,6 +155,19 @@ func startMCP(t *testing.T) (c *mcpClient, wait func() (int, string)) {
 		}
 		return code, errOut.String()
 	}
+}
+
+// mcpDeadline bounds an xo mcp session in a test.
+const mcpDeadline = 5 * time.Minute
+
+// killTree stops p and the processes it started: on Windows by its process
+// id with taskkill /T (a child is not stopped with its parent there),
+// elsewhere p alone (its children read EOF from the pipes and exit).
+func killTree(p *os.Process) {
+	if runtime.GOOS == "windows" {
+		exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(p.Pid)).Run()
+	}
+	p.Kill() // the process the test started
 }
 
 const knownErrorModule = "enum E { A }\nfn g() -> Int ! E { 1 }\nfn main(os: Os) {\n  g()\n}\n"
@@ -173,6 +198,7 @@ func (c *mcpClient) send(method string, params any, notify bool) {
 
 func (c *mcpClient) call(method string, params any) map[string]any {
 	c.t.Helper()
+	c.t.Logf("mcp call %d %s", c.id+1, method)
 	c.send(method, params, false)
 	line, err := c.out.ReadBytes('\n')
 	if err != nil {
@@ -313,7 +339,9 @@ func TestMCPTestTool(t *testing.T) {
 	})
 	var out, errOut bytes.Buffer
 	cmd := command(t, xoBin(t), "mcp")
-	cmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test","arguments":{"dirs":["` + filepath.Join(dir, "m") + `"]}}}` + "\n")
+	// the directory as a JSON string: a Windows path's \ is an escape
+	mdir, _ := json.Marshal(filepath.Join(dir, "m"))
+	cmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test","arguments":{"dirs":[` + string(mdir) + `]}}}` + "\n")
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("xo mcp: %v\n%s", err, errOut.String())

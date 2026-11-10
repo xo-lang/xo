@@ -2072,12 +2072,15 @@ fn major_suffix(path: Str) -> Str {
 /// "C:/x", the form paths reach Xo in there, std.md 3.1, and
 /// "//server/share" of a UNC path given as \\server\share, hostpath's
 /// volume_w rule); "" for every other path, and on every other host.
-pub fn path_volume(p: Str) -> Str {
-  let windows = match target.os {
+fn on_windows() -> Bool {
+  match target.os {
     Windows => true
     Darwin | Linux | Wasi | FreeBSD => false
   }
-  if !windows {
+}
+
+pub fn path_volume(p: Str) -> Str {
+  if !on_windows() {
     return ""
   }
   if p.len() >= 3 && p[1..2] == ":" && p[2..3] == "/" {
@@ -2098,11 +2101,15 @@ pub fn is_rooted(p: Str) -> Bool {
 }
 
 /// path.Clean for slash separated paths (filepath.Clean with / on
-/// Windows: the drive stays, the rest is cleaned as rooted).
-fn clean(p: Str) -> Str {
-  if p.is_empty() {
+/// Windows: the drive stays, the rest is cleaned as rooted). On Windows a
+/// `\` is a separator too, as filepath.Clean takes it (a directory named
+/// `C:\...` by a command line, `xo doc --dir=C:\x\app`, missed its walk
+/// entry `C:/x/app` and was read as the directory alone, 2026-11-10).
+fn clean(p0: Str) -> Str {
+  if p0.is_empty() {
     return "."
   }
+  let p = if on_windows() { p0.replace("\\", "/") } else { p0 }
   let vol = path_volume(p)
   if !vol.is_empty() {
     // the rest is cleaned as rooted at the volume (`//srv/share/a/..` is

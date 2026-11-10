@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fixed (Windows): drive paths in `xo doc --dir=C:\x\app` (it read the directory alone), `xo query --dir=C:\x` (callers missed the workspace packages importing the package), and xo serve (a lookup with a drive path was never forwarded, and `C:\x` and `C:/x` were two cache entries)
 - Fixed (Windows): `xo fix`, `xo check --fix` (so `xo mcp`'s check tool with fix) and `xo mod` no longer loop forever in a directory outside any module: the search for xo.mod above it stops at the drive's root (`C:/`), not only at `/`
 - FreeBSD (decision 0573): `use c` builds for freebsd/arm64 and freebsd/amd64 when the binding's C calls no C library: clang compiles it freestanding against FreeBSD's headers (`XO_FREEBSDSYSROOT`, fetched by scripts/freebsd-sysroot.sh) and Xo's ELF linker links it. The C may call the part of the C library Xo's runtime defines (malloc, free, memcpy, strlen and the like); calloc, printf's family and the rest do not link for FreeBSD yet.
 - FreeBSD (decision 0573): a `use c` binding's C may also call calloc, realloc, the str functions (strchr, strcmp, strspn, ...), memchr, strtol and atoi, which Xo's runtime now defines; a static link names every missing function at once, and a C call of a function that only the runtime references weakly is no longer linked as a no-op (it fails the link instead).

@@ -135,7 +135,7 @@ func TestCheckWorkspacePerModuleSameDiags(t *testing.T) {
 		// the diagnostics, not the module lists (c1 against c1..c7)
 		diags := func(out, ws string) string {
 			var r struct{ Diagnostics json.RawMessage }
-			if err := json.Unmarshal([]byte(strings.ReplaceAll(out, ws, "WS")), &r); err != nil {
+			if err := json.Unmarshal([]byte(strings.ReplaceAll(out, filepath.ToSlash(ws), "WS")), &r); err != nil {
 				t.Fatalf("check WS%s: %v\n%s", walk, err, out)
 			}
 			return string(r.Diagnostics)

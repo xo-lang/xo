@@ -24,6 +24,7 @@
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// The environment variable that overrides the socket path.
 const SOCKET_ENV = "XO_SERVE_SOCKET"
@@ -249,7 +250,9 @@ pub fn forward_cli(os: Os, args: List[Str]) -> Int? uses (env, proc, net, fs, st
     // working directory need not be (a checkout's compiler/xo.mod)
     let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
     let ds = loads_of(args) ?? []
-    if cwd.is_empty() || ds.is_empty() || ds.any(fn(d) { module_root(os, if d.starts_with("/") { d } else { join(cwd, d.trim_prefix("./")) }).is_empty() }) {
+    // a drive path is absolute too, in / form (hostpath; a C:\x --dir was
+    // joined to the working directory, found no module and ran here)
+    if cwd.is_empty() || ds.is_empty() || ds.any(fn(d) { module_root(os, hostpath.abs(cwd, d)).is_empty() }) {
       return None
     }
   } else {
@@ -486,7 +489,11 @@ fn run_request(os: Os, ex: Exec, s: Server, args: List[Str], cwd: Str) -> Resp u
   if !(args[0] is "check" | "query") && !is_lookup(args[0]) {
     return not_served(2, "xo serve: ${args[0]} is not served\n")
   }
-  let dir = if cwd.is_empty() { os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "" } else { cwd }
+  // in / form (hostpath.clean): a client's cwd and the server's own name
+  // one directory as C:\x and C:/x on Windows, two cache keys for one
+  // command (TestServe's direct run missed the forwarded run's entry)
+  let dir0 = if cwd.is_empty() { os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "" } else { cwd }
+  let dir = if dir0.is_empty() { dir0 } else { hostpath.clean(dir0) }
   if !cwd.is_empty() && !(os.fs.exists(cwd).ok() ?? false) {
     return Resp{code: 2, error: "chdir ${cwd}: no such file or directory"}
   }
@@ -510,10 +517,14 @@ fn run_locked(os: Os, ex: Exec, s: Server, args: List[Str], dir: Str) -> Resp us
           // DIR/... stamps DIR's tree (decision 0345); a plain DIR's tree
           // too, which only refreshes the entry more often
           let d = if d0 == "/..." { "/" } else { d0.trim_suffix("/...") }
-          abs.push(if d.starts_with("/") { d } else if d == "." { dir } else { join(dir, d.trim_prefix("./")) })
+          // in / form, a drive path absolute (hostpath)
+          abs.push(hostpath.abs(dir, d))
         }
+        // keyed by the directories in / form, absolute: a Windows client
+        // names C:\x\app as C:/x/app or C:\x\app, one entry for both
+        // (TestServe's direct run missed the forwarded runs' entry)
+        key = dir + "\u{0}" + abs.join("\u{0}")
         abs = stamp_roots(os, abs)
-        key = dir + "\u{0}" + ds.join("\u{0}")
         let found = s.state.with(fn(var st) {
           st.clock += 1
           st.entries.get(key)

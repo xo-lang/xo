@@ -177,7 +177,7 @@ func TestDevEdgesCache(t *testing.T) {
 		return out.String()
 	}
 	off := edges("off", "", "cache edges off")
-	if len(off) < 1000 || !strings.Contains(off, "\tstd/native/prelude.xo\t") || !strings.Contains(off, "\t"+filepath.Join(dir, "main.xo")+"\t") {
+	if len(off) < 1000 || !strings.Contains(off, "\tstd/native/prelude.xo\t") || !strings.Contains(off, "\t"+filepath.ToSlash(filepath.Join(dir, "main.xo"))+"\t") {
 		t.Fatalf("the uncached edges lack the program's or std's sites (%d bytes)", len(off))
 	}
 	miss := edges("", "", "cache edges miss (none, ")
