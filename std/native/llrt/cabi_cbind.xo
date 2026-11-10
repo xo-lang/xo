@@ -4,15 +4,18 @@
 // freestanding and linked by Xo's ELF linker. Every top level function
 // here is exported under its bare C name, and only in such a build
 // (compiler/ssa declare_exports), so a program without `use c` does not
-// grow. Not here: printf's family (C varargs) and <ctype.h>'s FreeBSD
-// locale tables (_CurrentRuneLocale); a binding calling them does not
-// link, and the link names each missing function.
+// grow. printf's family (C varargs), <ctype.h>'s locale tables and
+// pthread's mutexes are C, which the build compiles beside the binding
+// (compiler/xo fbsdstdio.xo, stages 3 and 4).
 //
 // Every function takes and returns Int words (addresses are Ints); none
 // may fault or allocate Xo values.
 
+use native/llrt/libcio
 use native/llrt/libcmem
 use native/llrt/libcstr
+use native/llrt/libcsys
+use native/rt
 
 /// malloc: the `use c` adapter's copies of Str arguments call it too
 /// (cabi_libc has free but not malloc, which xo_nolibc.c defines for
@@ -47,3 +50,43 @@ fn atoi(s: Int) -> Int { libcstr.atoi(s) }
 fn atol(s: Int) -> Int { libcstr.strtol(s, 0, 10) }
 
 fn atoll(s: Int) -> Int { libcstr.strtol(s, 0, 10) }
+
+// ---------------------------------------------------------------------------
+// System calls std/sqlite's unix VFS makes past libcsys's (decision 0573
+// `use c` stage 4), with FreeBSD's numbers (sys/syscall.h): only a FreeBSD
+// program exports this module. 0 or the result, or -1 with errno set.
+
+/// __error: FreeBSD's errno is `(*__error())`.
+fn __error() -> Int { libcsys.errno_addr() }
+
+/// getenv(name): the value of name in the environment (environ, which the
+/// process start records), or 0.
+fn getenv(name: Int) -> Int { libcio.getenv(name) }
+
+/// access(path, mode) through faccessat(AT_FDCWD, path, mode, 0).
+fn access(p: Int, m: Int) -> Int { libcsys.ret(rt.sys6(489, -100, p, m & 4294967295, 0, 0, 0)) }
+
+fn fchmod(fd: Int, m: Int) -> Int { libcsys.ret(rt.sys6(124, fd & 4294967295, m & 65535, 0, 0, 0, 0)) }
+
+fn fchown(fd: Int, u: Int, g: Int) -> Int { libcsys.ret(rt.sys6(123, fd & 4294967295, u & 4294967295, g & 4294967295, 0, 0, 0)) }
+
+/// fstat(fd, st): FreeBSD's struct stat, which the caller's C declares.
+fn fstat(fd: Int, st: Int) -> Int { libcsys.ret(rt.sys6(551, fd & 4294967295, st, 0, 0, 0, 0)) }
+
+/// lstat(path, st) through fstatat(AT_FDCWD, path, st, AT_SYMLINK_NOFOLLOW).
+fn lstat(p: Int, st: Int) -> Int { libcsys.ret(rt.sys6(552, -100, p, st, 512, 0, 0)) }
+
+fn fsync(fd: Int) -> Int { libcsys.ret(rt.sys6(95, fd & 4294967295, 0, 0, 0, 0, 0)) }
+
+fn ftruncate(fd: Int, n: Int) -> Int { libcsys.ret(rt.sys6(480, fd & 4294967295, n, 0, 0, 0, 0)) }
+
+/// lseek: the new offset, or -1 with errno set.
+fn lseek(fd: Int, off: Int, whence: Int) -> Int { libcsys.ret(rt.sys6(478, fd & 4294967295, off, whence & 4294967295, 0, 0, 0)) }
+
+fn geteuid() -> Int { rt.sys6(25, 0, 0, 0, 0, 0, 0) }
+
+fn gettimeofday(tv: Int, tz: Int) -> Int { libcsys.ret(rt.sys6(116, tv, tz, 0, 0, 0, 0)) }
+
+fn nanosleep(req: Int, rem: Int) -> Int { libcsys.ret(rt.sys6(240, req, rem, 0, 0, 0, 0)) }
+
+fn utimes(p: Int, tv: Int) -> Int { libcsys.ret(rt.sys6(138, p, tv, 0, 0, 0, 0)) }

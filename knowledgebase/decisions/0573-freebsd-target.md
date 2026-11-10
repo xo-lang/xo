@@ -294,3 +294,18 @@ not.
   FreeBSD before; libcsys now takes FreeBSD's numbers and flag values
   there (gotchas/libcsys-linux-numbers-on-freebsd.md). use_c_stdio
   (macOS's C library gives want.txt) passes in both VMs.
+- 2026-11-10 (Xo Lang 1): `use c`, stage 4: std/sqlite. sqlite3.c and
+  xo_sqlite.c compiled for FreeBSD needed 29 C names past stage 3:
+  cabi_cbind.xo gives the system calls (__error, getenv, access, fchmod,
+  fchown, fstat, lstat, fsync, ftruncate, lseek, geteuid, gettimeofday,
+  nanosleep, utimes, with FreeBSD's numbers) and fbsdstdio.xo's C the rest:
+  pthread's mutexes (FreeBSD's pthread_mutex_t is one pointer and its
+  static initializer NULL, so a mutex's record is made on its first lock
+  with a compare and swap; the lock word waits on _umtx_op, recursive
+  mutexes keep the thr_self owner), fabs, sysconf (the page size),
+  localtime (UTC: no time zone data) and the dl functions (no shared
+  objects). The C's own system call names every register FreeBSD's
+  amd64 `syscall` may change (it returns a second value in rdx: a first
+  version that kept rdx live faulted on amd64). native_sqlite and
+  native_sqlite_file (a database file in WAL and rollback journal modes,
+  reopened, integrity_check) pass in both VMs.

@@ -1,0 +1,39 @@
+// std/sqlite (decision 0534) on a database file: written, closed, and
+// read back by a second connection, in WAL mode and then the rollback
+// journal, so the unix VFS's open, pwrite, fsync, fcntl locks, ftruncate,
+// fstat and unlink all run (on FreeBSD through the C names decision 0573
+// `use c` stage 4 gives the binding).
+use std/sql
+use std/sqlite
+
+fn round(os: Os, path: Str, mode: Str) ! {
+  if os.fs.exists(path)? {
+    os.fs.remove(path)?
+  }
+  let db = sql.open_driver(os.net, sqlite.driver(os.fs), path, max_open: 1)?
+  let jm = db.query_one("PRAGMA journal_mode = ${mode}", [])?.str("journal_mode")?
+  db.exec("CREATE TABLE kv (k TEXT PRIMARY KEY, v INTEGER)", [])?
+  let tx = db.begin()?
+  for i in 0..200 {
+    tx.exec("INSERT INTO kv (k, v) VALUES ($1, $2)", [sql.str("key${i}"), sql.int(i * i)])?
+  }
+  tx.commit()?
+  db.exec("DELETE FROM kv WHERE v % 3 = 0", [])?
+  db.close()?
+  let db2 = sql.open_driver(os.net, sqlite.driver(os.fs), path, max_open: 1)?
+  let row = db2.query_one("SELECT count(*) AS n, sum(v) AS s, max(k) AS m FROM kv", [])?
+  os.stdio.println("${mode} (${jm}): rows ${row.int("n")?} sum ${row.int("s")?} max ${row.str("m")?}")
+  let ok = db2.query_one("PRAGMA integrity_check", [])?.str("integrity_check")?
+  os.stdio.println("${mode} integrity: ${ok}")
+  db2.close()?
+  for f in [path, "${path}-wal", "${path}-shm", "${path}-journal"] {
+    if os.fs.exists(f)? {
+      os.fs.remove(f)?
+    }
+  }
+}
+
+fn main(os: Os) ! {
+  round(os, "xo_sqlite_file_wal.db", "wal")?
+  round(os, "xo_sqlite_file_del.db", "delete")?
+}

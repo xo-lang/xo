@@ -9,6 +9,7 @@ compiler/arm64/calls.xo	/// GOT, as one in a shared library (libSystem, glibc) h
 compiler/xo/cffi.xo	/// The defines std/sqlite's amalgamation is compiled with for a Windows
 compiler/xo/cffi.xo	/// program linked with no C runtime (decision 0534 stage 2): SQLite's
 compiler/xo/cffi.xo	/// as scripts/sqlite-prebuilt.sh's windows recipes.
+compiler/xo/fbsdstdio.xo	/// locale; and (stage 4, std/sqlite's needs) pthread's mutexes on
 compiler/xo/link.xo	// without a C runtime lacks (SQLite's sqlite3.c, 2026-11-09). From LLVM
 compiler/xo/main.xo	// std/sqlite's amalgamation with the defines of its windows/amd64
 compiler/xo/main.xo	// prebuilt object (scripts/sqlite-prebuilt.sh, decision 0534 stage
@@ -35,6 +36,7 @@ compiler/xo/ld.xo	/// into out, dynamically linked against glibc, or static with
 compiler/xo/main.xo	// --target=linux/arm64 an ELF executable for glibc, from any host; a
 compiler/xo/main.xo	/// `use c`) keeps cc and glibc (a cross build of one fails: xo does not
 std/native/compress.xo	/// gzip's CRC-32 and size, zlib's Adler-32
+std/native/llrt/cabi_cbind.xo	// System calls std/sqlite's unix VFS makes past libcsys's (decision 0573
 std/native/llrt/cabi_libc.xo	// the C names; glibc's layouts: a mutex is the first word of its
 std/native/llrt/dns.xo	//     go over TCP too, as glibc's do). A response with another ID, question, or one that does
 std/native/llrt/dns.xo	//     as glibc sorts them.

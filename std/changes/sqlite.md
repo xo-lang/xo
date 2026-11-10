@@ -1,5 +1,17 @@
 # std/sqlite changes
 
+## 2026-11-10: feature: freebsd/arm64 and freebsd/amd64
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0573 `use c` stage 4
+- Go reference: none
+- Test: internal/llvm goldens native_sqlite and native_sqlite_file (a database file in WAL and rollback journal modes, reopened, integrity_check) in the FreeBSD 14.5 VMs, arm64 and amd64
+- Timing: none
+- Shipped in: not yet released
+
+std/sqlite builds and runs for FreeBSD, which links no C library: the C names sqlite's unix VFS calls come from Xo's runtime (std/native/llrt/cabi_cbind.xo: __error, getenv, access, fchmod, fchown, fstat, lstat, fsync, ftruncate, lseek, geteuid, gettimeofday, nanosleep, utimes) and from the C the build adds beside a binding (compiler/xo/fbsdstdio.xo: pthread's mutexes on _umtx_op, fabs, sysconf, localtime and the dl functions). SQLite's `localtime` modifier is UTC there (no time zone data), and extensions cannot be loaded (a static program).
+
 ## 2026-11-07: feature: windows/amd64 and prebuilt objects
 
 - Kind: feature

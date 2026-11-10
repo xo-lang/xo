@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - **Breaking** (std/amqptest, decision 0591): `Broker.event_hub`, `put`, `ready`, `locked` and `scheduled` declare `uses clock`, since they read the broker's clock; a caller (a closure passed as a pure `fn`, say) needs the `clock` effect
+- FreeBSD (decision 0573): std/sqlite builds and runs for freebsd/arm64 and freebsd/amd64 (a database file in WAL or rollback journal mode); Xo's runtime and the C the build adds give sqlite the C library calls it makes (mutexes, fstat, fsync, lseek, ...). SQLite's `localtime` is UTC there.
 - Fixed (Windows): drive paths in `xo doc --dir=C:\x\app` (it read the directory alone), `xo query --dir=C:\x` (callers missed the workspace packages importing the package), and xo serve (a lookup with a drive path was never forwarded, and `C:\x` and `C:/x` were two cache entries)
 - xo lsp: go to definition and peek on a std name open its implementation in std's native sources (`Str.split_where` is `str_split_where` in std/native/prelude.xo, `http.Request` the struct in std/native/http.xo), not the declaration file's bodyless signature; a name with no implementation (an intrinsic) keeps its declaration. New: textDocument/typeDefinition (the type of a type name, a const, a local or a fn's result), to the implementation the same way
 - Fixed: `xo dev new-golden --dir=DIR` with an absolute DIR wrote under the checkout (`<checkout>/Users/...`); an absolute directory is now used as given.

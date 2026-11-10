@@ -1,7 +1,8 @@
 /// The C library functions a FreeBSD `use c` binding may call that take
 /// C varargs or read FreeBSD's locale tables (decision 0573 stage 3): printf's
 /// family over a freestanding vsnprintf, and <ctype.h>'s tables for the C
-/// locale. Compiled with the binding's flags and -ffunction-sections, so
+/// locale; and (stage 4, std/sqlite's needs) pthread's mutexes on
+/// _umtx_op, fabs, sysconf, localtime (UTC) and the dl functions. Compiled with the binding's flags and -ffunction-sections, so
 /// Xo's ELF linker keeps only what the binding calls; write, malloc and free
 /// come from Xo's runtime (cabi_libc, cabi_cbind).
 const FBSD_STDIO_C = r"""
@@ -15,6 +16,9 @@ const FBSD_STDIO_C = r"""
 #include <stdint.h>
 
 extern long write(int fd, const void *buf, unsigned long n);
+extern void *malloc(unsigned long);
+extern void *calloc(unsigned long, unsigned long);
+extern void free(void *);
 
 /* FreeBSD's <stdio.h>: stdout and stderr are macros over these. A FILE *
  * here is only compared against them. */
@@ -192,8 +196,6 @@ static int xo_vfd(int fd, const char *f, va_list ap) {
   va_list ap2; va_copy(ap2, ap);
   int n = vsnprintf(small, sizeof small, f, ap);
   if (n < (int)sizeof small) { write(fd, small, (unsigned long)n); va_end(ap2); return n; }
-  extern void *malloc(unsigned long);
-  extern void free(void *);
   char *big = malloc((unsigned long)n + 1);
   if (!big) { va_end(ap2); return -1; }
   vsnprintf(big, (size_t)n + 1, f, ap2);
@@ -269,4 +271,154 @@ const _RuneLocale *__getCurrentRuneLocale(void) {
 unsigned long ___runetype(__ct_rune_t c) { (void)c; return 0; }
 __ct_rune_t ___tolower(__ct_rune_t c) { return c; }
 __ct_rune_t ___toupper(__ct_rune_t c) { return c; }
+
+/* Stage 4 (std/sqlite's needs): pthread's mutexes, fabs, sysconf,
+ * localtime and the dl functions. FreeBSD's pthread_mutex_t and
+ * pthread_mutexattr_t are one pointer each; PTHREAD_MUTEX_INITIALIZER is
+ * NULL, so a mutex's record is made on its first lock. */
+static long xo_sys5(long n, long a, long b, long c, long d, long e) {
+#if defined(__aarch64__)
+  register long x8 __asm__("x8") = n;
+  register long x0 __asm__("x0") = a;
+  register long x1 __asm__("x1") = b;
+  register long x2 __asm__("x2") = c;
+  register long x3 __asm__("x3") = d;
+  register long x4 __asm__("x4") = e;
+  __asm__ volatile("svc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4) : "r"(x8) : "memory", "cc");
+  return x0;
+#else
+  /* FreeBSD's syscall returns a second value in rdx and may change the
+   * argument registers: all are outputs or clobbers, as Xo's own syscall
+   * (a call) treats them */
+  register long r10 __asm__("r10") = d;
+  register long r8 __asm__("r8") = e;
+  long r = n;
+  __asm__ volatile("syscall" : "+a"(r), "+D"(a), "+S"(b), "+d"(c), "+r"(r10), "+r"(r8) : : "rcx", "r9", "r11", "memory", "cc");
+  return r;
+#endif
+}
+
+#define XO_UMTX_OP 454
+#define XO_UMTX_WAIT_UINT_PRIVATE 15
+#define XO_UMTX_WAKE_PRIVATE 16
+#define XO_THR_SELF 432
+
+/* state: 0 free, 1 locked, 2 locked with waiters (Drepper's mutex) */
+typedef struct { unsigned state; int type; long owner; long count; } xo_mutex;
+
+static xo_mutex *xo_mutex_of(void **m) {
+  xo_mutex *x = __atomic_load_n((xo_mutex **)m, __ATOMIC_ACQUIRE);
+  if (x) return x;
+  xo_mutex *n = calloc(1, sizeof *n);
+  if (!n) return 0;
+  void *want = 0;
+  if (__atomic_compare_exchange_n(m, &want, n, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return n;
+  free(n);
+  return (xo_mutex *)want;
+}
+
+static long xo_self(void) {
+  long id = 0;
+  xo_sys5(XO_THR_SELF, (long)&id, 0, 0, 0, 0);
+  return id;
+}
+
+#define XO_MUTEX_RECURSIVE 2 /* FreeBSD's PTHREAD_MUTEX_RECURSIVE */
+
+int pthread_mutexattr_init(void **a) { *a = (void *)0; return 0; }
+int pthread_mutexattr_destroy(void **a) { (void)a; return 0; }
+int pthread_mutexattr_settype(void **a, int t) { *a = (void *)(long)t; return 0; }
+
+int pthread_mutex_init(void **m, void **a) {
+  xo_mutex *x = calloc(1, sizeof *x);
+  if (!x) return 12; /* ENOMEM */
+  x->type = a ? (int)(long)*a : 0;
+  *m = x;
+  return 0;
+}
+
+int pthread_mutex_destroy(void **m) {
+  free(*m);
+  *m = 0;
+  return 0;
+}
+
+static int xo_lock(xo_mutex *x, int try) {
+  if (x->type == XO_MUTEX_RECURSIVE) {
+    long me = xo_self();
+    if (__atomic_load_n(&x->owner, __ATOMIC_RELAXED) == me) { x->count++; return 0; }
+  }
+  unsigned c = 0;
+  if (!__atomic_compare_exchange_n(&x->state, &c, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+    if (try) return 16; /* EBUSY */
+    if (c != 2) c = __atomic_exchange_n(&x->state, 2, __ATOMIC_ACQUIRE);
+    while (c != 0) {
+      xo_sys5(XO_UMTX_OP, (long)&x->state, XO_UMTX_WAIT_UINT_PRIVATE, 2, 0, 0);
+      c = __atomic_exchange_n(&x->state, 2, __ATOMIC_ACQUIRE);
+    }
+  }
+  if (x->type == XO_MUTEX_RECURSIVE) { __atomic_store_n(&x->owner, xo_self(), __ATOMIC_RELAXED); x->count = 1; }
+  return 0;
+}
+
+int pthread_mutex_lock(void **m) {
+  xo_mutex *x = xo_mutex_of(m);
+  return x ? xo_lock(x, 0) : 12;
+}
+
+int pthread_mutex_trylock(void **m) {
+  xo_mutex *x = xo_mutex_of(m);
+  return x ? xo_lock(x, 1) : 12;
+}
+
+int pthread_mutex_unlock(void **m) {
+  xo_mutex *x = *m;
+  if (!x) return 1; /* EPERM */
+  if (x->type == XO_MUTEX_RECURSIVE) {
+    if (--x->count > 0) return 0;
+    __atomic_store_n(&x->owner, 0, __ATOMIC_RELAXED);
+  }
+  if (__atomic_exchange_n(&x->state, 0, __ATOMIC_RELEASE) == 2)
+    xo_sys5(XO_UMTX_OP, (long)&x->state, XO_UMTX_WAKE_PRIVATE, 1, 0, 0);
+  return 0;
+}
+
+double fabs(double v) { return __builtin_fabs(v); }
+
+/* sysconf: the page size (_SC_PAGESIZE 47); -1 for the rest */
+long sysconf(int name) { return name == 47 ? 4096 : -1; }
+
+/* localtime: UTC (a program with no C library has no time zone data) */
+#include <time.h>
+static struct tm xo_tm;
+struct tm *localtime(const time_t *t) {
+  long s = (long)*t, days = s / 86400, rem = s % 86400;
+  if (rem < 0) { rem += 86400; days--; }
+  xo_tm.tm_hour = (int)(rem / 3600);
+  xo_tm.tm_min = (int)(rem % 3600 / 60);
+  xo_tm.tm_sec = (int)(rem % 60);
+  xo_tm.tm_wday = (int)((days % 7 + 11) % 7); /* 1970-01-01 was a Thursday */
+  /* civil from days (Howard Hinnant's algorithm) */
+  long z = days + 719468, era = (z >= 0 ? z : z - 146096) / 146097;
+  long doe = z - era * 146097, yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  long y = yoe + era * 400, doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+  long d = doy - (153 * mp + 2) / 5 + 1, mo = mp < 10 ? mp + 3 : mp - 9;
+  y += mo <= 2;
+  xo_tm.tm_year = (int)(y - 1900);
+  xo_tm.tm_mon = (int)(mo - 1);
+  xo_tm.tm_mday = (int)d;
+  int leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+  static const int cum[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+  xo_tm.tm_yday = cum[mo - 1] + (int)d - 1 + (leap && mo > 2);
+  xo_tm.tm_isdst = 0;
+  xo_tm.tm_gmtoff = 0;
+  xo_tm.tm_zone = "UTC";
+  return &xo_tm;
+}
+
+/* the dl functions: no shared objects in a static program */
+void *dlopen(const char *p, int f) { (void)p; (void)f; return 0; }
+void *dlsym(void *h, const char *n) { (void)h; (void)n; return 0; }
+int dlclose(void *h) { (void)h; return 0; }
+char *dlerror(void) { return (char *)"dynamic loading is not available (a static FreeBSD program)"; }
 """

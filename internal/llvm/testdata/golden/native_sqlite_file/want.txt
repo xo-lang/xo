@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+wal (wal): rows 133 sum 1764511 max key98
+wal integrity: ok
+delete (delete): rows 133 sum 1764511 max key98
+delete integrity: ok
+--- stderr
