@@ -4628,6 +4628,15 @@ A windows/amd64 program cross linked as above:
     printf '#!/bin/sh\nexec wine /work/win/P.exe "$@"\n' > $WORK/w/P; chmod +x $WORK/w/P
     scripts/docker-wine.sh box64 $WORK 'wineboot -u >/dev/null 2>&1; sh /xo/scripts/golden-run.sh /work/w/P /xo/internal/llvm/testdata/golden/P'
 
+On real Windows on ARM (the winarm VM, offload.md): `scripts/winarm-goldens.sh
+XO WORK [NAME...]` cross builds every golden for windows/arm64 on the Mac
+(native arm64 backend), runs them on the host named by OFFLOAD_ENV
+(default offload-winarm.env) with their args.txt, env.txt and stdin.txt,
+and compares as the golden tests do (stderr through stableStderr's
+filter). 2026-11-09: 639 of 642 (sys_c: rt.sym_present on
+windows/arm64; net_lookup_dial_timeout: the VM's network). Last
+verified: 2026-11-09.
+
 (golden-run.sh compares want.txt; use a copy with want_windows.txt in
 its place where a golden has one). Every golden at once: `scripts/wine-goldens.sh XO
 WORK [NAME...]` (2026-10-18, xo-fa) cross builds them on the Mac with
