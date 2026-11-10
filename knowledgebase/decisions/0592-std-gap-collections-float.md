@@ -83,3 +83,7 @@ ported from Go and for dropping a large shared buffer.
   routes the call there before the native body): `xo bench --ab`
   bench/perf/mapclone wall 0.182 on linux/arm64. The Go backend keeps
   Map_clone (std/rt/map.go).
+- 2026-11-10: `List.clone` for every element type is a copy written once
+  in place (the runtime's rl_copy: one block, elements counted up):
+  `xo bench --ab` bench/perf/listclone wall 0.278 on linux/arm64.
+  List.concat keeps the Int memory copy and pushes otherwise.

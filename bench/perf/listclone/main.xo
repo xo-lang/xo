@@ -1,0 +1,16 @@
+// List.clone (decision 0592): clones of a 200000-element List[Str] and a
+// 100000-element List[List[Int]], Go's slices.Clone's case for counted
+// elements; the clones dominate the run.
+fn main(os: Os) {
+  var ss: List[Str] = []
+  for i in 0..200000 { ss.push("s${i}") }
+  var ls: List[List[Int]] = []
+  for i in 0..100000 { ls.push([i]) }
+  var chk = 0
+  for _ in 0..400 {
+    let a = ss.clone()
+    let b = ls.clone()
+    chk += a.len() + b.len()
+  }
+  os.stdio.println("${chk}")
+}

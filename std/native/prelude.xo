@@ -1819,12 +1819,12 @@ fn words_concat[T](lists: List[List[T]], n: Int) -> List[T]? {
 
 /// `xs.clone()` (decision 0592): Go's slices.Clone.
 fn list_clone[T](xs: List[T]) -> List[T] {
-  if let Some(r) = words_concat([xs], xs.len()) {
-    return r
-  }
-  var out: List[T] = List.with_capacity(xs.len())
-  for x in xs {
-    out.push(x)
+  // a copy written once in place: the runtime's copy on write copies the
+  // shared storage as one block, counting each element up (rl_copy), for
+  // every element type
+  var out = xs
+  if out.len() > 0 {
+    out[0] = xs[0]
   }
   out
 }

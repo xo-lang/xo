@@ -1,4 +1,19 @@
 # prelude changes
+
+## 2026-11-10: perf: `List.clone` copies in one block for every element type
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0592's next step (one list copy for every element type)
+- Go reference: slices.Clone
+- Test: golden list_helpers on arm64, LLVM, Go and wasm; the list goldens
+- Timing: bench/perf/listclone (400 clones of a 200000 element List[Str] and a 100000 element List[List[Int]]) on linux/arm64 host 1, `xo bench --ab`: wall 0.278 (0.272 to 0.28, n=6), 904 to 251 ms. Mac, best of 20: List[Str] of 200000 406 to 196 us, List[List[Int]] of 100000 108 to 95 us; List[Int] of 1000000 unchanged (about 0.5 ms; Go 0.15)
+- Shipped in: not yet released
+
+`xs.clone()` is a copy of xs written once in place, so the runtime's copy
+on write copies the storage as one block and counts each element up
+(rl_copy), where it pushed each element of any type but Int.
+
 ## 2026-11-10: feature: Os.secrets, the Keyring store (Linux kernel keyring)
 
 - Kind: feature

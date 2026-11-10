@@ -1281,3 +1281,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [go-syscall-windows-arm64-no-r2.md](go-syscall-windows-arm64-no-r2.md): Observed 2026-11-10: a Go caller of an Xo DLL read an XoStr result's length as 0 on windows/arm64 (Go's syscall returns x0, not x1)
 - [wasm-memory-size-overstates-heap.md](wasm-memory-size-overstates-heap.md): Observed 2026-11-10: the wasm memory grew by doubling (up to 2x the heap) and the playground's check parsed every runtime body (no lazy_parse); 608 to 265 MB
 - [one-part-sepcomp-program-uncached.md](one-part-sepcomp-program-uncached.md): Observed 2026-11-10: a separately compiled program of one part (under 256 functions) got no function or part cache; coll's warm build regenerated all its code (wall 0.479 fixed)
+- [std-merge-push-revert-ok.md](std-merge-push-revert-ok.md): a 0588 merge push is refused as a revert; add Revert-ok trailers for the deleted native and generated files
