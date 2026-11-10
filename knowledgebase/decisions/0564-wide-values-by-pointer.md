@@ -335,6 +335,28 @@ a serial phase; it is to be found (--phase-times, XO_PROF) before any
 reland, and the reland carries an `--ab` row. The section below records
 what was built.
 
+**Why (2026-11-10, Xo Lang 1).** kh's own generated code is not slower: two
+kh compilers, one built by the revert and one by kh, run at the same speed
+and emit byte-identical output. kh's compiler does more work: with
+XO_EMIT_JOBS=1 emit took about 6 s longer (57.0 to 59.5 s against 63.8 to
+64.7 s), and with the default jobs emit's wall grew 11.0 to 15.9 s, so the
+extra work sits on the parallel emit's critical path. A few large driver
+functions doubled with the same calls (compiler/xo core.run_doc 32.8 to
+63.7 KB; fix_run, run_check, ci_check, run_vet, semantic.query alike): a
+result of about 600 words that one call returns and the next takes as an
+argument is loaded word by word (sret_set's loads from the shared
+temporary area give every word a value of its own), about 1,200 loads and
+stores per site, where the revert copies the block with q register pairs
+(gotchas/wide-result-per-word-values.md). Size does not hold either: on
+main after the revert, compiler/xo built by kh has __text 41,141,724
+bytes against the revert's 40,429,904 (+1.76%, darwin/arm64, the same
+source); capping sret at 32 or 256 words gave 41,244,028 and 41,196,564,
+and skipping the regalloc sret bookkeeping in functions without sret
+changed nothing (`--ab` wall 1.146, cpu 1.048). Step 3 stays reverted. A
+redesign keeps block copies for large results (a size past which the
+result is copied with the memcpy path) and is measured by __text and a
+7-round `--ab` against its parent before it lands.
+
 A wide result (big_by_ref) of a direct call is written by the callee
 through an address the caller passes after the arguments, as one more
 integer word (byref.xo sret_of; not for indirect, entry or address-taken
