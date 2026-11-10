@@ -1228,10 +1228,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       } else {
         s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaesd $0.16b, $2.16b\\0Aaesimc $0.16b, $0.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${ks[nr]})")
         for r in 1..nr - 1 {
-          let k = g.def("call <16 x i8> asm \"aesimc $0.16b, $1.16b\", \"=w,w\"(<16 x i8> ${ks[nr - r]})")
+          let k = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaesimc $0.16b, $1.16b\", \"=w,w\"(<16 x i8> ${ks[nr - r]})")
           s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaesd $0.16b, $2.16b\\0Aaesimc $0.16b, $0.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
         }
-        let k = g.def("call <16 x i8> asm \"aesimc $0.16b, $1.16b\", \"=w,w\"(<16 x i8> ${ks[1]})")
+        let k = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaesimc $0.16b, $1.16b\", \"=w,w\"(<16 x i8> ${ks[1]})")
         s = g.def("call <16 x i8> asm \".arch_extension crypto\\0Aaesd $0.16b, $2.16b\", \"=w,0,w\"(<16 x i8> ${s}, <16 x i8> ${k})")
         s = g.def("xor <16 x i8> ${s}, ${ks[0]}")
       }
