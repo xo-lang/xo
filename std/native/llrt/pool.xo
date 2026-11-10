@@ -1645,6 +1645,16 @@ fn async_install() {
       let _r = sys_darwin.sigaction(SIGURG_DARWIN, sa, 0)
       rt.heap_release(sa - 8)
     }
+    4 => {
+      // FreeBSD's struct sigaction: the handler, the flags (4 bytes), the
+      // mask (16); SA_SIGINFO | SA_RESTART
+      let sa = rt.heap_large(freebsd.SA_SIZE)
+      rt.mem_set(sa, 0, freebsd.SA_SIZE)
+      rt.mem_store(sa, freebsd.SA_HANDLER, h, 8)
+      rt.mem_store(sa, freebsd.SA_FLAGS_AT, freebsd.SA_SIGINFO | freebsd.SA_RESTART, 4)
+      let _r = freebsd.sigaction(freebsd.SIGURG, sa, 0)
+      rt.heap_release(sa - 8)
+    }
     _ => {}
   }
 }
@@ -1667,6 +1677,14 @@ fn async_thread(w: Int) {
       rt.mem_store(w, W_THREAD, rt.sys6(if layer_arch() == 1 { 178 } else { 186 }, 0, 0, 0, 0, 0, 0), 8)
       rt.mem_store(w, W_URGSET, (1).wrapping_shl(SIGURG_LINUX - 1), 8)
     }
+    4 => {
+      // thr_self(2) stores the thread's id. W_URGSET is the first word of
+      // the 16-byte sigset sigprocmask reads; its second word is W_RUNF's,
+      // whose bits name real-time signals 65 to 128, which nothing blocks,
+      // so SIG_UNBLOCK of them changes nothing
+      let _r = freebsd.thr_self(w + W_THREAD)
+      rt.mem_store(w, W_URGSET, (1).wrapping_shl(freebsd.SIGURG - 1), 8)
+    }
     _ => {
       rt.mem_store(w, W_THREAD, sys_darwin.pthread_self(), 8)
       rt.mem_store(w, W_URGSET, (1).wrapping_shl(SIGURG_DARWIN - 1), 8)
@@ -1688,6 +1706,9 @@ fn async_kick(w: Int) {
       let a64 = layer_arch() == 1
       let pid = rt.sys6(if a64 { 172 } else { 39 }, 0, 0, 0, 0, 0, 0)
       let _r = rt.sys6(if a64 { 131 } else { 234 }, pid, t, SIGURG_LINUX, 0, 0, 0)
+    }
+    4 => {
+      let _r = freebsd.thr_kill(t, freebsd.SIGURG)
     }
     _ => {
       let _r = sys_darwin.pthread_kill(t, SIGURG_DARWIN)
@@ -1868,6 +1889,17 @@ pub fn async_signal(uc: Int) {
     // is x2); it shares arm64's layer, not its layout (decision 0571)
     pc = rt.mem_load(uc, 176, 8)
     sp = rt.mem_load(uc, 192, 8)
+  } else if layer() == 4 {
+    // FreeBSD: the mcontext at 16 in the ucontext (unwind.xo
+    // freebsd_regs): arm64 sp at 248, elr at 256; amd64 rip word 20,
+    // rsp word 23
+    if layer_arch() == 1 {
+      sp = rt.mem_load(uc, 16 + 248, 8)
+      pc = rt.mem_load(uc, 16 + 256, 8)
+    } else {
+      pc = rt.mem_load(uc, 16 + 160, 8)
+      sp = rt.mem_load(uc, 16 + 184, 8)
+    }
   } else if layer_arch() == 1 {
     if layer() == 2 {
       let ss = rt.mem_load(uc, 48, 8) + 16
@@ -1899,6 +1931,8 @@ pub fn async_signal(uc: Int) {
   // restores the interrupted code's mask
   if layer() == 2 {
     let _m = sys_darwin.pthread_sigmask(2, w + W_URGSET, 0)
+  } else if layer() == 4 {
+    let _m = freebsd.sigprocmask(2, w + W_URGSET, 0)
   } else {
     let _m = linux.rt_sigprocmask(1, w + W_URGSET, 0)
   }

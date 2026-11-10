@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- FreeBSD (decision 0573): asynchronous preemption on freebsd/arm64 and freebsd/amd64 (SIGURG through thr_kill, pc and sp from the mcontext), so a loop with no call yields to the other tasks on its worker as on Linux.
 - xo build (windows/arm64, experimental, decision 0569): std's separately compiled objects link there (Xo's PE linker and the COFF std store read ARM64 atoms mode objects, where `xo dev stdobj` said they are not supported), and the PE linker keeps a function reached only through `/alternatename` (a `--race` build stopped with "__tsan_destroy_fiber was stripped") (winarm VM, 2026-11-09).
 - FreeBSD (decision 0573 stages 2 and 3): every LLVM golden that builds passes on freebsd/arm64 and freebsd/amd64 (642 of 642, in FreeBSD 14.5 VMs): fault reports with frames, XO_PROF and std/debug profiles, Proc.pid/usage, Fs.disk_usage, Net.interfaces; system calls that used Linux numbers there take FreeBSD's own or fail with ENOSYS.
 - xo doc (fix): `xo doc DIR/...` (`./...` too) documents every module at and below DIR, as its help says and as xo check reads the walk; 0.45.0 looked the pattern up as a declaration name (`no declaration named ./...`)

@@ -346,6 +346,10 @@ pub const NOTE_TRIGGER: Int = 16777216
 /// the return trampoline (no SA_RESTORER).
 pub fn sigaction(sig: Int, act: Int, old: Int) -> Int { rt.sys6(416, sig, act, old, 0, 0, 0) }
 
+/// sigprocmask(2) 340: how (SIG_BLOCK 1, SIG_UNBLOCK 2, SIG_SETMASK 3),
+/// the 16-byte sigset at set, the old one at old (or 0).
+pub fn sigprocmask(how: Int, set: Int, old: Int) -> Int { rt.sys6(340, how, set, old, 0, 0, 0) }
+
 // struct sigaction and stack_t (sys/signal.h)
 pub const SA_HANDLER: Int = 0
 pub const SA_FLAGS_AT: Int = 8

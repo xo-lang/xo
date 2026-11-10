@@ -37,6 +37,7 @@ var freebsdCalls = map[string]string{
 	"kqueue":        "kqueue",
 	"kevent":        "kevent",
 	"sigaction":     "sigaction",
+	"sigprocmask":   "sigprocmask",
 	"fsync":         "fsync",
 	"stat":          "fstatat",
 	"fstat":         "fstat",

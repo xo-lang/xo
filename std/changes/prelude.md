@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-10: feature: asynchronous preemption on FreeBSD
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0573 stage 3's list (preemption was off on freebsd)
+- Go reference: runtime/signal_freebsd_arm64.go, signal_freebsd_amd64.go (sigctxt pc/sp from the mcontext), runtime/os_freebsd.go (thr_kill)
+- Test: internal/llvm goldens async_preempt_regs and async_preempt_alloc in the FreeBSD 14.5 VMs with XO_RTSTATS=1 (preempt= counts)
+- Timing: none
+- Shipped in: not yet released
+
+A loop with no call now yields to the other tasks on its worker on FreeBSD, as on Linux: the runtime sends SIGURG to the worker thread (thr_self 432, thr_kill 433), its handler (sigaction 416) reads the interrupted pc and sp from the mcontext (arm64 sp and elr; amd64 rip and rsp), and the mask is FreeBSD's sigprocmask 340.
+
 ## 2026-11-10: feature: asynchronous preemption on linux/riscv64
 
 - Kind: feature

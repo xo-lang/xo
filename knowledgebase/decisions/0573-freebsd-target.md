@@ -242,3 +242,13 @@ not.
   max_rss as 0 when it exits before its first clock tick (spec/std.md).
   Left: asynchronous preemption (loops poll; design in the lead's
   notes), `use c`'s libc numbers.
+- 2026-11-10 (Xo Lang 1): asynchronous preemption on freebsd/arm64 and
+  freebsd/amd64: SIGURG through sigaction 416 to the worker thread
+  (thr_self 432, thr_kill 433), the interrupted pc and sp from the
+  ucontext's mcontext at 16 (arm64 sp 248, elr 256; amd64 rip 160, rsp
+  184), the mask through sigprocmask 340; compiler/ssa/build.xo turns it
+  on for freebsd. Proved in the FreeBSD 14.5 VMs with
+  async_preempt_regs and async_preempt_alloc under a probe that counts
+  each signal past the pc and sp check 1,000 more times: arm64 6,006 and
+  21,021 (6 and 21 preemptions, every one through the signal), amd64
+  6,006 and 61,061 (6 and 61), output equal to want.txt. Left: `use c`'s libc numbers.

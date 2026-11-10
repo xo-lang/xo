@@ -4278,10 +4278,13 @@ traces, `XO_PROF` and asynchronous preemption work as on linux/arm64
 `--targets=freebsd/amd64` and `--targets=freebsd/arm64`, not part of
 `all`, build static FreeBSD 14 executables with the native backends and
 Xo's ELF linker, from any host (decision 0573). A `use c` program does not
-build for them. Until stage 2 of 0573 the runtime has FreeBSD's write,
-exit, memory mappings and main thread TLS only: threads, the poller,
-signals, time and the file system are not ported, so a program does not
-run yet.
+build for them. Programs run on FreeBSD 14 (decision 0573 stages 2 and
+3; every LLVM golden that builds passes in FreeBSD 14.5 VMs on both
+architectures): threads, the poller (kqueue), signals, time, the file
+system, processes, networking, fault traces with frames, `XO_PROF` and
+std/debug profiles, and asynchronous preemption (SIGURG through
+thr_kill, as on Linux) work as on Linux. Runtime calls that exist only
+on Linux (statx, sched_getaffinity, sysinfo) fail with ENOSYS there.
 
 `--targets=wasip2/wasm`, not part of `all`, builds a WASI 0.2 component and
 is named alone (decision 0447). A program that calls `http.serve_component`
