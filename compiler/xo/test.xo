@@ -344,8 +344,11 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
         cskip += 1
       }
     }
-    if out.status == "pass" && !contract {
-      pass += 1
+    if out.status == "pass" {
+      // a contract check's pass is counted above (cpass), not as a skip
+      if !contract {
+        pass += 1
+      }
     } else if out.status == "fail" {
       if !contract {
         failed += 1
