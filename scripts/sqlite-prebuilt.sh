@@ -51,6 +51,8 @@ for plat in "$@"; do
 	darwin-arm64) cmd=(cc -arch arm64 -g -O2 "-ffile-prefix-map=$repo=.") ;;
 	darwin-amd64) cmd=(cc -arch x86_64 -g -O2 "-ffile-prefix-map=$repo=.") ;;
 	linux-arm64|linux-amd64) cmd=(${XO_SQLITE_CC:-cc} -g -O2 -fPIC "-ffile-prefix-map=$repo=.") ;;
+	# the windows defines are compiler/xo cffi.xo sqlite_win_defines', which
+	# a windows/arm64 build from source uses
 	windows-amd64)
 		ext=obj
 		cmd=("${XO_CLANG:?windows-amd64 needs XO_CLANG}" --target=x86_64-pc-windows-msvc -Xmicrosoft-windows-sys-root "${XO_WINSYSROOT:?windows-amd64 needs XO_WINSYSROOT}" -O2 -DSQLITE_THREADSAFE=2 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_WIN32_MALLOC=1 -DSQLITE_MAX_WORKER_THREADS=0 -DSQLITE_OMIT_SEH)

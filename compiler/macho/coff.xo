@@ -21,6 +21,9 @@ const IMAGE_SCN_CNT_INITIALIZED_DATA = 0x40
 const IMAGE_SCN_CNT_UNINITIALIZED_DATA = 0x80
 const IMAGE_SCN_LNK_INFO = 0x200
 const IMAGE_SCN_LNK_REMOVE = 0x800
+const IMAGE_SCN_LNK_COMDAT = 0x1000
+const IMAGE_COMDAT_SELECT_NODUPLICATES = 1
+const IMAGE_COMDAT_SELECT_ASSOCIATIVE = 5
 /// A section with 0xffff relocations or more: its header's 16 bit count is
 /// 0xffff and the first relocation's VirtualAddress holds the number of
 /// relocations, that one included (the PE format's extended relocations;

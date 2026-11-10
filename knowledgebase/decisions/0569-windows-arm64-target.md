@@ -461,6 +461,29 @@ Mac, and Apple's llvm-objdump decodes AMD64 unwind only. The checker of
 stage 2 is Xo's own. llvm-readobj on an offload host is the second
 opinion, cross-checked once per stage.
 
+## `use c` goldens on the winarm VM (Xo Lang 2, 2026-11-09)
+
+With XO_WINSYSROOT (xwin's sysroot, ~/xo-tools/winxc on the Mac) the four
+`use c` goldens (use_c_add, use_c_bytes, use_c_enum, native_sqlite) pass
+on the Windows 11 ARM VM (scripts/winarm-goldens.sh). native_sqlite took
+four fixes, each the next link error:
+
+- pelink.xo keeps the first COMDAT section of a symbol and leaves out
+  later copies with their associative sections (coff_comdat_drops;
+  coffread.xo reads each COMDAT section's selection and associated
+  section): clang's MSVC string literals (`??_C@...`) are COMDAT any in
+  every object that uses them ("is defined twice").
+- `__chkstk` (compiler-rt's aarch64 chkstk.S) in the generated
+  xo_atomics.s: clang probes the stack of a C frame over a page.
+- kernel32.lib from the sysroot in every `use c` link, as MSVC's linker
+  adds it (SQLite's RaiseException).
+- std/sqlite's amalgamation compiled with its windows/amd64 prebuilt
+  object's defines (cffi.xo sqlite_win_defines: SQLITE_WIN32_MALLOC, no
+  worker threads, no SEH, no extension loading, THREADSAFE=2): with no C
+  runtime there is no realloc, _msize, _beginthreadex or
+  __C_specific_handler. A windows-arm64 prebuilt object
+  (scripts/sqlite-prebuilt.sh) is a follow-up for releases.
+
 ## Consequences
 
 - Every target of spec 12.1 gets a native backend. `--targets=all`

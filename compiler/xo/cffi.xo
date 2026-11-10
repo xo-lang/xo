@@ -180,6 +180,15 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim
   (out, "")
 }
 
+/// The defines std/sqlite's amalgamation is compiled with for a Windows
+/// program linked with no C runtime (decision 0534 stage 2): SQLite's
+/// memory on a Win32 heap of its own, no worker threads, no structured
+/// exception handling, no extension loading, multi-thread mode. The same
+/// as scripts/sqlite-prebuilt.sh's windows recipes.
+fn sqlite_win_defines() -> List[Str] {
+  ["-DSQLITE_THREADSAFE=2", "-DSQLITE_OMIT_LOAD_EXTENSION", "-DSQLITE_WIN32_MALLOC=1", "-DSQLITE_MAX_WORKER_THREADS=0", "-DSQLITE_OMIT_SEH"]
+}
+
 /// std/sqlite's prebuilt object for tgoos/tgoarch (decision 0534 stage
 /// 2), or "" when there is none to use: m is std/sqlite's binding (its
 /// links end in native/sqlite/xo_sqlite.c and sqlite3.c), and

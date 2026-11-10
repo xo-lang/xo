@@ -12,6 +12,12 @@ pub struct CSect {
   pub data: Bytes
   pub size: Int
   pub relocs: List[CReloc]
+  /// A COMDAT section's (IMAGE_SCN_LNK_COMDAT) selection, from its
+  /// section symbol's auxiliary record (IMAGE_COMDAT_SELECT_*; 0 when not
+  /// COMDAT), and for an associative one (5) the section (1 based) it
+  /// goes with
+  pub comdat_sel: Int = 0
+  pub comdat_assoc: Int = 0
 }
 
 /// A relocation: at offset addr of its section, of type typ, to symbol
@@ -125,6 +131,12 @@ pub fn read_coff(path: Str, b: Bytes) -> Result[CObj, Str] {
     var s = CSym{name: coff_name(b, e, strtab, true), value: rd32(b, e + 8), sect: sect, class: class}
     if class == IMAGE_SYM_CLASS_WEAK_EXTERNAL && naux > 0 {
       s.weak_default = rd32(b, e + 18)
+    }
+    // a COMDAT section's symbol: its auxiliary record's Number (the
+    // associated section) at 12 and Selection at 14
+    if class == IMAGE_SYM_CLASS_STATIC && naux > 0 && sect > 0 && sect <= sects.len() && s.value == 0 && (sects[sect - 1].chars & IMAGE_SCN_LNK_COMDAT) != 0 && sects[sect - 1].comdat_sel == 0 {
+      sects[sect - 1].comdat_sel = Int(b[e + 32])
+      sects[sect - 1].comdat_assoc = rd16(b, e + 30)
     }
     syms.push(s)
     for _ in 0..naux {

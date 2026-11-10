@@ -242,6 +242,10 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
     weaks.push(coff_weak_names(ob))
   }
   var live = if any_atoms { coff_live(objs, o.entry, weaks) } else { [] }
+  // the COMDAT sections a first definition of their symbol replaces
+  // (C objects clang compiles for windows/arm64: MSVC's string literals,
+  // ??_C@..., are COMDAT any in each object that uses them)
+  let cdrop = coff_comdat_drops(objs)
   // the atoms mode objects' DWARF without their dead functions' (as on
   // Mach-O and ELF: a windows XO_SEPCOMP HTTP server kept every std
   // function's, 10.2 MB of debug sections against the whole program's 4.5)
@@ -294,7 +298,7 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
       if o.prog_from >= 0 && oi >= o.prog_from {
         k = pe_prog_out(k)
       }
-      if (!live.is_empty() && !live[oi][si]) || (!o.debug && s.name.starts_with(".debug_")) {
+      if (!live.is_empty() && !live[oi][si]) || (!cdrop.is_empty() && cdrop[oi][si]) || (!o.debug && s.name.starts_with(".debug_")) {
         ps.push(PEPlace{out: -1, off: 0})
         continue
       }
@@ -355,6 +359,9 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
       if s.aux || s.class != IMAGE_SYM_CLASS_EXTERNAL || s.sect <= 0 {
         continue
       }
+      if !cdrop.is_empty() && cdrop[oi][s.sect - 1] {
+        continue
+      }
       if let Some((po, _)) = globals.get(s.name) {
         // a weak definition (.xoweak) yields: the first kept, a strong
         // one over a weak one (as compiler/macho's add_globals)
@@ -399,6 +406,14 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
         continue
       }
       if s.sect > 0 {
+        // a dropped COMDAT copy's symbol: the kept definition's
+        if !cdrop.is_empty() && cdrop[oi][s.sect - 1] && s.class == IMAGE_SYM_CLASS_EXTERNAL {
+          if let Some((go, gs)) = globals.get(s.name) {
+            let g = objs[go].syms[gs]
+            targets[oi][si] = PETarget{obj: go, sect: g.sect - 1, off: g.value}
+            continue
+          }
+        }
         targets[oi][si] = PETarget{obj: oi, sect: s.sect - 1, off: s.value}
         continue
       }
@@ -1013,4 +1028,60 @@ fn coff_weak_names(ob: CObj) -> Map[Str, Bool] {
     }
   }
   out
+}
+
+/// The COMDAT sections a link leaves out, by object and section (empty
+/// when there is none): of the sections whose external symbol another
+/// object's COMDAT section defined first, all but that first (any
+/// selection but NODUPLICATES, which stays an error at the symbol), and
+/// the associative sections of those left out. As link.exe and lld-link
+/// do for selection any; same size, exact match and largest keep the
+/// first too (clang's C objects use any).
+fn coff_comdat_drops(objs: List[CObj]) -> List[List[Bool]] {
+  var first: Map[Str, Int] = {}
+  var drop: List[List[Bool]] = []
+  var any = false
+  for ob in objs {
+    var d: List[Bool] = List.with_capacity(ob.sects.len())
+    for _ in ob.sects {
+      d.push(false)
+    }
+    drop.push(d)
+  }
+  for (oi, ob) in objs.indexed() {
+    for s in ob.syms {
+      if s.aux || s.class != IMAGE_SYM_CLASS_EXTERNAL || s.sect <= 0 || s.sect > ob.sects.len() {
+        continue
+      }
+      let sel = ob.sects[s.sect - 1].comdat_sel
+      if sel == 0 || sel == IMAGE_COMDAT_SELECT_NODUPLICATES || sel == IMAGE_COMDAT_SELECT_ASSOCIATIVE {
+        continue
+      }
+      match first.get(s.name) {
+        Some(fo) => if fo != oi {
+          drop[oi][s.sect - 1] = true
+          any = true
+        }
+        None => first[s.name] = oi
+      }
+    }
+  }
+  if !any {
+    return []
+  }
+  // associative sections follow their section (a chain resolves in a
+  // few passes)
+  var changed = true
+  while changed {
+    changed = false
+    for (oi, ob) in objs.indexed() {
+      for (si, c) in ob.sects.indexed() {
+        if c.comdat_sel == IMAGE_COMDAT_SELECT_ASSOCIATIVE && !drop[oi][si] && c.comdat_assoc > 0 && c.comdat_assoc <= ob.sects.len() && drop[oi][c.comdat_assoc - 1] {
+          drop[oi][si] = true
+          changed = true
+        }
+      }
+    }
+  }
+  drop
 }

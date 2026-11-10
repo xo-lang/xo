@@ -2240,6 +2240,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
         let (incs, libdirs) = win_sdk_dirs(os, wroot, "arm64")
         var cflags = ["--target=aarch64-pc-windows-msvc", "-fno-stack-protector"]
+        // std/sqlite's amalgamation with the defines of its windows/amd64
+        // prebuilt object (scripts/sqlite-prebuilt.sh, decision 0534 stage
+        // 2): with no C runtime there is no realloc, _msize, threads or
+        // structured exception handler for SQLite to call
+        if ci.srcs.any(fn(f) { f.ends_with("/native/sqlite/sqlite3.c") }) {
+          cflags = cflags + sqlite_win_defines()
+        }
         for d in incs {
           cflags = cflags + ["-isystem", d]
         }
@@ -2255,6 +2262,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
             fail(os, "`link \"${lname}\"`: no ${lname}.lib for arm64 in XO_WINSYSROOT ${wroot} (${libdirs.join(", ")})")
           }
           cobjs.push(lp)
+        }
+        // kernel32.lib, which MSVC's linker adds by default: C sources
+        // call the Windows API without a `link` line (SQLite's
+        // RaiseException, 2026-11-09)
+        if !ci.flags.any(fn(f) { f.trim_prefix("-l").to_lower() == "kernel32" }) {
+          let k32 = win_find_lib(os, libdirs, "kernel32")
+          if !k32.is_empty() {
+            cobjs.push(k32)
+          }
         }
       }
       var wobjs: List[Str] = []
