@@ -77,6 +77,7 @@ struct Secret[T] {}
 /// The type of a range expression `a..b` or `a..=b` (core 3.5, 3.6). Not
 /// named by the spec; it exists so ranges can be stored and iterated.
 struct Range[T] {}
+/// The range's integers in order as a list: `(0..3).to_list()` is [0, 1, 2].
 fn (r: Range[Int]) to_list() -> List[Int]
 
 /// The type with no values (core 2.1). An enum with no variants, so a match
@@ -131,7 +132,13 @@ interface Cbor {}
 // ---------------------------------------------------------------------------
 // Predeclared functions (core 1.4, 8, 11.4)
 
+/// A fault with msg, as Go's panic (core 8): it ends the current task, and
+/// one reaching main exits with status 70 and a traceback. For a bug,
+/// never for an error a caller should handle.
 fn fault(msg: Str) -> Never
+/// Returns x and writes `[file.xo:LINE:COL] expr = value` (its Debug text)
+/// on standard error, as Rust's dbg! (core 11.4). Needs no capability;
+/// `--release` and `--dbg=off` builds print nothing, and xo vet warns.
 fn dbg[T](x: T) -> T
 
 // ---------------------------------------------------------------------------
@@ -199,6 +206,9 @@ const UINT64_MAX: UInt64 = 18446744073709551615
 /// The smallest UInt64. @static UInt64.min
 const UINT64_MIN: UInt64 = 0
 
+/// Go's strconv.ParseInt(s, 10, 64): decimal text with an optional sign and
+/// _ between digits; None for anything else (spaces included) or a value
+/// that overflows Int.
 fn (static: Int) parse(s: Str) -> Int?
 /// Go's ParseInt(s, base, 64): base 2 to 36, or 0 for the 0b, 0o, 0x, and
 /// 0 prefixes and _ separators; None for text that is not a number in
@@ -216,23 +226,47 @@ fn (n: Int) to_str_width(width: Int, base: Int = 10, zero: Bool = false, plus: B
 /// Go's ParseBool: 1, t, T, TRUE, true, True; 0, f, F, FALSE, false,
 /// False (decision 0287).
 fn (static: Bool) parse(s: Str) -> Bool?
+/// Go's strconv.ParseFloat(s, 64): decimal or hexadecimal (`0x1.8p1`) text,
+/// _ between digits, and inf, infinity and nan in any case; None for
+/// anything else or a value out of range.
 fn (static: Float) parse(s: Str) -> Float?
+/// x as a Int8, or None when it is out of Int8's range (`Int8(x)` faults
+/// instead).
 fn (static: Int8) try(x: Int) -> Int8?
+/// x as a Int16, or None when it is out of Int16's range (`Int16(x)` faults
+/// instead).
 fn (static: Int16) try(x: Int) -> Int16?
+/// x as a Int32, or None when it is out of Int32's range (`Int32(x)` faults
+/// instead).
 fn (static: Int32) try(x: Int) -> Int32?
+/// x as a Int64, or None when it is out of Int64's range (`Int64(x)` faults
+/// instead).
 fn (static: Int64) try(x: Int) -> Int64?
+/// x as a UInt8, or None when it is out of UInt8's range (`UInt8(x)` faults
+/// instead).
 fn (static: UInt8) try(x: Int) -> UInt8?
+/// x as a UInt16, or None when it is out of UInt16's range (`UInt16(x)` faults
+/// instead).
 fn (static: UInt16) try(x: Int) -> UInt16?
+/// x as a UInt32, or None when it is out of UInt32's range (`UInt32(x)` faults
+/// instead).
 fn (static: UInt32) try(x: Int) -> UInt32?
+/// x as a UInt64, or None when it is out of UInt64's range (`UInt64(x)` faults
+/// instead).
 fn (static: UInt64) try(x: Int) -> UInt64?
 /// Go's conversion T(x) of an Int to a smaller integer type: the low bits
 /// kept, sign extended for a signed T, no fault (`Int8.wrapping_from(300)`
 /// is 44, `UInt8.wrapping_from(-1)` is 255). `try` is the checked one.
 fn (static: Int8) wrapping_from(x: Int) -> Int8
+/// Go's int16(x): x's low bits as a Int16, no fault.
 fn (static: Int16) wrapping_from(x: Int) -> Int16
+/// Go's int32(x): x's low bits as a Int32, no fault.
 fn (static: Int32) wrapping_from(x: Int) -> Int32
+/// Go's uint8(x): x's low bits as a UInt8, no fault.
 fn (static: UInt8) wrapping_from(x: Int) -> UInt8
+/// Go's uint16(x): x's low bits as a UInt16, no fault.
 fn (static: UInt16) wrapping_from(x: Int) -> UInt16
+/// Go's uint32(x): x's low bits as a UInt32, no fault.
 fn (static: UInt32) wrapping_from(x: Int) -> UInt32
 /// UInt64.wrapping_from(x) is UInt64.from_bits(x).
 fn (static: UInt64) wrapping_from(x: Int) -> UInt64
@@ -243,15 +277,23 @@ fn (u: UInt64) to_bits() -> Int
 /// The IEEE 754 binary32 bits of f (Go's Float32bits), and the Float32 of
 /// bits b (Float32frombits); a NaN keeps its payload.
 fn (f: Float32) to_bits() -> UInt32
+/// The Float32 whose IEEE 754 binary32 bits are b (Go's
+/// math.Float32frombits).
 fn (static: Float32) from_bits(b: UInt32) -> Float32
 /// The character with code point x, or None when x is not a Unicode
 /// scalar value (a surrogate, negative, or above U+10FFFF).
 fn (static: Rune) try(x: Int) -> Rune?
 
+/// The absolute value of n; faults on the minimum Int, whose absolute value
+/// does not fit.
 fn (n: Int) abs() -> Int
+/// n to the power e; faults on a negative e or a result that overflows Int.
 fn (n: Int) pow(e: Int) -> Int
+/// n + m wrapped to 64 bits (two's complement, as Go's +): never faults.
 fn (n: Int) wrapping_add(m: Int) -> Int
+/// n - m wrapped to 64 bits (two's complement, as Go's -): never faults.
 fn (n: Int) wrapping_sub(m: Int) -> Int
+/// n * m wrapped to 64 bits (the low word, as Go's *): never faults.
 fn (n: Int) wrapping_mul(m: Int) -> Int
 /// n shifted left by k mod 64 (the bits shifted out dropped; decision
 /// 0260: Int's word methods, inline on every native backend).
@@ -273,16 +315,28 @@ fn (n: Int) lt_unsigned(m: Int) -> Bool
 fn (n: Int) le_unsigned(m: Int) -> Bool
 /// math/bits on the 64 bit word (decision 0287).
 fn (n: Int) leading_zeros() -> Int
+/// The number of trailing zero bits of n's 64 bit word; 64 for 0 (Go's
+/// bits.TrailingZeros64).
 fn (n: Int) trailing_zeros() -> Int
+/// The number of one bits in n's 64 bit word (Go's bits.OnesCount64).
 fn (n: Int) ones_count() -> Int
+/// n + m, clamped to the maximum or minimum Int when it overflows.
 fn (n: Int) saturating_add(m: Int) -> Int
+/// n - m, clamped to the maximum or minimum Int when it overflows.
 fn (n: Int) saturating_sub(m: Int) -> Int
+/// n * m, clamped to the maximum or minimum Int when it overflows.
 fn (n: Int) saturating_mul(m: Int) -> Int
+/// n + m, or None when it overflows.
 fn (n: Int) checked_add(m: Int) -> Int?
+/// n - m, or None when it overflows.
 fn (n: Int) checked_sub(m: Int) -> Int?
+/// n * m, or None when it overflows.
 fn (n: Int) checked_mul(m: Int) -> Int?
+/// n / m (truncated toward zero), or None when m is 0 or the quotient
+/// overflows (the minimum Int divided by -1).
 fn (n: Int) checked_div(m: Int) -> Int?
 
+/// The greatest integer value at most f (Go's math.Floor).
 fn (f: Float) floor() -> Float
 /// f as strconv.FormatFloat's 'f', 'e' and 'g' text with prec digits
 /// (`%.3f`, `%e`, `%g`; prec below 0 is the shortest digits that round
@@ -291,37 +345,67 @@ fn (f: Float) floor() -> Float
 /// positive number with `plus`. NaN and the infinities are never zero
 /// padded (decision 0410).
 fn (f: Float) to_fixed(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str
+/// f in exponent form with prec digits after the point, as Go's %e
+/// (strconv.FormatFloat 'e'); padded as to_fixed.
 fn (f: Float) to_exp(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str
+/// f with prec significant digits in the shorter of the plain and exponent
+/// forms, as Go's %g (strconv.FormatFloat 'g'); padded as to_fixed.
 fn (f: Float) to_general(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str
+/// The least integer value at least f (Go's math.Ceil).
 fn (f: Float) ceil() -> Float
+/// f rounded to the nearest integer value, half away from zero (Go's
+/// math.Round: 2.5 is 3.0, -2.5 is -3.0).
 fn (f: Float) round() -> Float
+/// f with its fraction dropped, toward zero (Go's math.Trunc).
 fn (f: Float) trunc() -> Float
+/// The absolute value of f (Go's math.Abs).
 fn (f: Float) abs() -> Float
+/// The square root of f; NaN below 0 (Go's math.Sqrt).
 fn (f: Float) sqrt() -> Float
+/// Whether f is NaN (Go's math.IsNaN).
 fn (f: Float) is_nan() -> Bool
 /// Go's math, its portable algorithms with every operation rounded, so
 /// the results are the same bits on every backend and architecture
 /// (decision 0287).
 fn (f: Float) pow(y: Float) -> Float
+/// e to the power f (Go's math.Exp).
 fn (f: Float) exp() -> Float
+/// 2 to the power f (Go's math.Exp2).
 fn (f: Float) exp2() -> Float
+/// e to the power f, minus 1, accurate near 0 (Go's math.Expm1).
 fn (f: Float) expm1() -> Float
+/// The natural logarithm of f (Go's math.Log).
 fn (f: Float) log() -> Float
+/// The base 2 logarithm of f (Go's math.Log2).
 fn (f: Float) log2() -> Float
+/// The base 10 logarithm of f (Go's math.Log10).
 fn (f: Float) log10() -> Float
+/// The natural logarithm of 1 + f, accurate near 0 (Go's math.Log1p).
 fn (f: Float) log1p() -> Float
+/// The sine of f radians (Go's math.Sin).
 fn (f: Float) sin() -> Float
+/// The cosine of f radians (Go's math.Cos).
 fn (f: Float) cos() -> Float
+/// The tangent of f radians (Go's math.Tan).
 fn (f: Float) tan() -> Float
+/// The arcsine of f in radians (Go's math.Asin).
 fn (f: Float) asin() -> Float
+/// The arccosine of f in radians (Go's math.Acos).
 fn (f: Float) acos() -> Float
+/// The arctangent of f in radians (Go's math.Atan).
 fn (f: Float) atan() -> Float
+/// The hyperbolic sine of f (Go's math.Sinh).
 fn (f: Float) sinh() -> Float
+/// The hyperbolic cosine of f (Go's math.Cosh).
 fn (f: Float) cosh() -> Float
+/// The hyperbolic tangent of f (Go's math.Tanh).
 fn (f: Float) tanh() -> Float
+/// The cube root of f (Go's math.Cbrt).
 fn (f: Float) cbrt() -> Float
 /// atan(f / x) in the quadrant of (x, f), as Go's Atan2(f, x).
 fn (f: Float) atan2(x: Float) -> Float
+/// The square root of f*f + y*y without overflow or underflow on the way
+/// (Go's math.Hypot).
 fn (f: Float) hypot(y: Float) -> Float
 /// f * y + z computed exactly and rounded once (IEEE 754
 /// fusedMultiplyAdd; Go's math.FMA), the same bits on every backend
@@ -330,24 +414,34 @@ fn (f: Float) hypot(y: Float) -> Float
 fn (f: Float) fma(y: Float, z: Float) -> Float
 /// Go's Mod: the remainder of f / y with the sign of f.
 fn (f: Float) mod(y: Float) -> Float
+/// Whether f is +Inf or -Inf (Go's math.IsInf(f, 0)).
 fn (f: Float) is_inf() -> Bool
 /// The IEEE 754 bits of f, and the Float of bits b (Go's Float64bits,
 /// Float64frombits).
 fn (f: Float) to_bits() -> Int
+/// The Float whose IEEE 754 bits are b (Go's math.Float64frombits).
 fn (static: Float) from_bits(b: Int) -> Float
 
 // ---------------------------------------------------------------------------
 // Str, Rune, Bytes (std.md 2.2)
 
+/// The length of s in bytes (Go's len); rune_count counts characters.
 fn (s: Str) len() -> Int
+/// The number of runes in s (Go's utf8.RuneCountInString).
 fn (s: Str) rune_count() -> Int
+/// Whether s is "".
 fn (s: Str) is_empty() -> Bool
+/// Whether sub is in s (Go's strings.Contains); true for "".
 fn (s: Str) contains(sub: Str) -> Bool
+/// Whether s begins with p (Go's strings.HasPrefix).
 fn (s: Str) starts_with(p: Str) -> Bool
+/// Whether s ends with p (Go's strings.HasSuffix).
 fn (s: Str) ends_with(p: Str) -> Bool
 /// Whether s and other are equal under Unicode simple case folding
 /// (strings.EqualFold), not only ASCII case.
 fn (s: Str) equal_fold(other: Str) -> Bool
+/// The byte offset of the first sub in s, or None (Go's strings.Index);
+/// Some(0) for "".
 fn (s: Str) find(sub: Str) -> Int?
 /// The byte offset of the last sub (strings.LastIndex); Some(s.len()) for "".
 fn (s: Str) rfind(sub: Str) -> Int?
@@ -389,6 +483,8 @@ fn (s: Str) cut_prefix(prefix: Str) -> Str?
 /// s up to its suffix (strings.CutSuffix), a view of s; None when s does
 /// not end with suffix, and suffix "" gives s.
 fn (s: Str) cut_suffix(suffix: Str) -> Str?
+/// The pieces of s between each sep (Go's strings.Split): "a,b," gives
+/// ["a", "b", ""], an empty sep splits after each rune. Pieces are views of s.
 fn (s: Str) split(sep: Str) -> List[Str]
 /// The runs of non-white-space text, split around runs of white space
 /// (strings.Fields, unicode.IsSpace); pieces are views of s like split's.
@@ -396,11 +492,23 @@ fn (s: Str) fields() -> List[Str]
 /// The runs of runes between runs of runes for which f is true
 /// (strings.FieldsFunc); pieces are views of s like split's.
 fn (s: Str) split_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> List[Str] ! E uses fx
+/// The lines of s, split on \n with a \r before it removed; a final newline
+/// starts no empty line (Go's bufio.ScanLines). Pieces are views of s.
 fn (s: Str) lines() -> List[Str]
+/// s without Unicode white space at either end (Go's strings.TrimSpace); a
+/// view of s.
 fn (s: Str) trim() -> Str
+/// s without Unicode white space at the start (Go's strings.TrimLeftFunc
+/// with unicode.IsSpace); a view of s.
 fn (s: Str) trim_start() -> Str
+/// s without Unicode white space at the end (Go's strings.TrimRightFunc
+/// with unicode.IsSpace); a view of s.
 fn (s: Str) trim_end() -> Str
+/// s without a leading p, or s itself when it does not start with p (Go's
+/// strings.TrimPrefix).
 fn (s: Str) trim_prefix(p: Str) -> Str
+/// s without a trailing p, or s itself when it does not end with p (Go's
+/// strings.TrimSuffix).
 fn (s: Str) trim_suffix(p: Str) -> Str
 /// s without its leading and trailing runes in chars, a view of s like
 /// trim (strings.Trim); an empty s or chars gives s.
@@ -418,33 +526,49 @@ fn (s: Str) trim_start_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) ->
 /// s without its trailing runes for which f is true, a view of s
 /// (strings.TrimRightFunc).
 fn (s: Str) trim_end_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx
+/// s with every rune in lower case, Unicode aware (Go's strings.ToLower).
 fn (s: Str) to_lower() -> Str
+/// s with every rune in upper case, Unicode aware (Go's strings.ToUpper).
 fn (s: Str) to_upper() -> Str
 /// f applied to every rune of s (strings.Map); None (Go's negative
 /// mapping) drops the rune, and s itself, not a copy, when nothing changes.
 fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx
+/// s with every non-overlapping old replaced by new (Go's
+/// strings.ReplaceAll).
 fn (s: Str) replace(old: Str, new: Str) -> Str
 /// s with the first n copies of old replaced by new; n below 0 for every
 /// copy and 0 for none (strings.Replace). s itself, not a copy, when
 /// nothing changes.
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str
+/// n copies of s joined (Go's strings.Repeat); "" for 0, a fault below 0.
 fn (s: Str) repeat(n: Int) -> Str
 /// s with `fill` (one rune) added on the left (pad_left), on the right
 /// (pad_right) or on both sides (center, the extra one on the right) until
 /// it is `width` runes; s itself when it is that long already (Go's fmt
 /// width, `%*s` and `%-*s`, is a minimum; decision 0410).
 fn (s: Str) pad_left(width: Int, fill: Str = " ") -> Str
+/// s with fill added on the right until it is width runes (Go's %-*s); see
+/// pad_left.
 fn (s: Str) pad_right(width: Int, fill: Str = " ") -> Str
+/// s with fill added on both sides until it is width runes, the extra one
+/// on the right; see pad_left.
 fn (s: Str) center(width: Int, fill: Str = " ") -> Str
 /// An explicit copy of s in a buffer of its own: a slice, a `split` piece or
 /// a `trim` result shares its source's buffer on native targets (core 3.6),
 /// so a small piece to keep for long copies it to let a large source go.
 fn (s: Str) clone() -> Str
+/// The runes of s in order (Go's []rune(s)); an invalid byte is U+FFFD.
 fn (s: Str) runes() -> List[Rune]
+/// s's UTF-8 bytes, without a copy (Go's []byte(s) copies): s.bytes()[i]
+/// is byte i in O(1).
 fn (s: Str) bytes() -> Bytes
 
+/// The number of bytes in b (Go's len); b[i] is the byte at i.
 fn (b: Bytes) len() -> Int
+/// Whether b has no bytes.
 fn (b: Bytes) is_empty() -> Bool
+/// b as text, or None when b is not valid UTF-8 (to_str_lossy replaces
+/// instead).
 fn (b: Bytes) to_str() -> Str?
 /// b as text with each byte of an invalid UTF-8 sequence U+FFFD, the rule
 /// std's outside text follows (std.md 0, decision 0259; Go's
@@ -453,14 +577,29 @@ fn (b: Bytes) to_str_lossy() -> Str
 /// Go's bytes.ToValidUTF8: b as text with each run of invalid UTF-8
 /// bytes replaced by one copy of replacement ("" drops them).
 fn (b: Bytes) to_valid_utf8(replacement: Str) -> Str
+/// b in lower case hexadecimal, two digits a byte (Go's
+/// hex.EncodeToString).
 fn (b: Bytes) to_hex() -> Str
 /// An explicit copy of b in a buffer of its own (see Str.clone).
 fn (b: Bytes) clone() -> Bytes
+/// b in the standard base64 encoding with padding (Go's
+/// base64.StdEncoding.EncodeToString).
 fn (b: Bytes) to_base64() -> Str
+/// The bytes of hexadecimal text s, either case, or None for an odd length
+/// or a non-hex digit (Go's hex.DecodeString).
 fn (static: Bytes) from_hex(s: Str) -> Bytes?
+/// The bytes of standard padded base64 text s, or None when it is not
+/// valid (Go's base64.StdEncoding.DecodeString).
 fn (static: Bytes) from_base64(s: Str) -> Bytes?
+/// The number of UTF-8 runes in b, an invalid byte counting as one (Go's
+/// utf8.RuneCount).
 fn (b: Bytes) rune_count() -> Int
+/// The rune at byte i and its size (Go's utf8.DecodeRune(b[i:])):
+/// (U+FFFD, 1) for an invalid or short sequence, (U+FFFD, 0) at the end; a
+/// fault when i is negative or past the end.
 fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)
+/// b as a double quoted literal with escapes, an invalid byte as \xHH
+/// (Go's strconv.Quote(string(b))).
 fn (b: Bytes) quote() -> Str
 /// The offset of the first sub (bytes.Index); Some(0) for an empty sub.
 fn (b: Bytes) find(sub: Bytes) -> Int?
@@ -560,34 +699,59 @@ fn (b: Bytes) equal_fold(other: Bytes) -> Bool
 /// n copies of b (bytes.Repeat); empty for n 0, and a fault for n below 0
 /// as Go's bytes.Repeat, and past 4 GiB a fault.
 fn (b: Bytes) repeat(n: Int) -> Bytes
+/// Each byte of b with its offset, as List.indexed.
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 /// n zero bytes (Go's make([]byte, n)); a fault for n < 0.
 fn (static: Bytes) zeroed(n: Int) -> Bytes
+/// s as a double quoted Xo and Go literal with escapes (Go's
+/// strconv.Quote); an invalid byte is \xHH.
 fn (s: Str) quote() -> Str
 /// Go's Unquote: a "..." or '...' literal with Go's escapes, or a `...`
 /// one; None when s is not one or the result is not UTF-8 (decision 0287).
 fn (s: Str) unquote() -> Str?
 
+/// Whether r is a decimal digit, category Nd (Go's unicode.IsDigit).
 fn (r: Rune) is_digit() -> Bool
+/// Whether r is a letter, category L (Go's unicode.IsLetter).
 fn (r: Rune) is_letter() -> Bool
+/// Whether r is white space: \t \n \v \f \r, space, U+0085, U+00A0 and
+/// category Zs (Go's unicode.IsSpace).
 fn (r: Rune) is_space() -> Bool
+/// Whether r is an upper case letter (Go's unicode.IsUpper).
 fn (r: Rune) is_upper() -> Bool
+/// Whether r is a lower case letter (Go's unicode.IsLower).
 fn (r: Rune) is_lower() -> Bool
+/// Whether r is a title case letter (Go's unicode.IsTitle).
 fn (r: Rune) is_title() -> Bool
+/// Whether r is punctuation, category P (Go's unicode.IsPunct).
 fn (r: Rune) is_punct() -> Bool
+/// Whether r is a control character (Go's unicode.IsControl).
 fn (r: Rune) is_control() -> Bool
+/// Whether r is graphic: a letter, mark, number, punctuation, symbol or
+/// Zs space (Go's unicode.IsGraphic).
 fn (r: Rune) is_graphic() -> Bool
+/// Whether r is a mark, category M (Go's unicode.IsMark).
 fn (r: Rune) is_mark() -> Bool
+/// Whether r is a symbol, category S (Go's unicode.IsSymbol).
 fn (r: Rune) is_symbol() -> Bool
+/// Whether r is a number, category N (Go's unicode.IsNumber).
 fn (r: Rune) is_number() -> Bool
+/// r in lower case (Go's unicode.ToLower); r itself when it has none.
 fn (r: Rune) to_lower() -> Rune
+/// r in upper case (Go's unicode.ToUpper); r itself when it has none.
 fn (r: Rune) to_upper() -> Rune
+/// r in title case (Go's unicode.ToTitle): the upper case of an ASCII
+/// letter, `ǅ` for `Ǆ` and `ǆ`.
 fn (r: Rune) to_title() -> Rune
 /// The 1, 2, 3 or 4 bytes the rune takes in UTF-8 (utf8.RuneLen; a Rune
 /// is a scalar value, so Go's -1 cannot happen, and Rune.try(n) is the
 /// check on an Int).
 fn (r: Rune) utf8_len() -> Int
+/// Whether r is printable: a letter, mark, number, punctuation, symbol or
+/// the ASCII space (Go's strconv.IsPrint).
 fn (r: Rune) is_print() -> Bool
+/// r as a single quoted literal: 'a', '\n', '\u2028' (Go's
+/// strconv.QuoteRune).
 fn (r: Rune) quote() -> Str
 
 // ---------------------------------------------------------------------------
@@ -597,24 +761,47 @@ fn (r: Rune) quote() -> Str
 /// An empty list with room for n elements before it grows (decision
 /// 0170): `[]` that pushes up to n without copying. n below 0 counts as 0.
 fn (static: List[T]) with_capacity(n: Int) -> List[T]
+/// The number of elements (Go's len).
 fn (xs: List[T]) len() -> Int
+/// Whether xs has no elements.
 fn (xs: List[T]) is_empty() -> Bool
+/// The element at i, or None when i is outside the list (xs[i] faults
+/// instead).
 fn (xs: List[T]) get(i: Int) -> T?
+/// The first element, or None for an empty list.
 fn (xs: List[T]) first() -> T?
+/// The last element, or None for an empty list.
 fn (xs: List[T]) last() -> T?
+/// Whether an element equals x (Go's slices.Contains); T is Eq.
 fn (xs: List[T]) contains(x: T) -> Bool
+/// The index of the first element equal to x, or None (Go's slices.Index);
+/// T is Eq.
 fn (xs: List[T]) index_of(x: T) -> Int?
+/// Each element with its index: `for (i, x) in xs.indexed()`.
 fn (xs: List[T]) indexed() -> List[(Int, T)]
+/// f of each element, in order; f's first error stops it and is returned.
 fn (xs: List[T]) map[U, E, fx: Effects](f: fn(T) -> U ! E uses fx) -> List[U] ! E uses fx
+/// The elements f accepts, in order.
 fn (xs: List[T]) filter[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> List[T] ! E uses fx
 /// f of every element, keeping the Some values in order (Rust's
 /// filter_map): a map and a filter in one pass.
 fn (xs: List[T]) filter_map[U, E, fx: Effects](f: fn(T) -> U? ! E uses fx) -> List[U] ! E uses fx
+/// init combined with each element in order by f: `xs.fold(0, fn(s, x) {
+/// s + x })` is the sum.
 fn (xs: List[T]) fold[A, E, fx: Effects](init: A, f: fn(A, T) -> A ! E uses fx) -> A ! E uses fx
+/// The first element f accepts, or None.
 fn (xs: List[T]) find[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> T? ! E uses fx
+/// Whether f accepts some element; stops at the first (Go's
+/// slices.ContainsFunc). False for an empty list.
 fn (xs: List[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+/// Whether f accepts every element; stops at the first it rejects. True for
+/// an empty list.
 fn (xs: List[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+/// A sorted copy of xs, ascending and stable; T is Ord (Go's
+/// slices.SortStableFunc; a List[Int] uses slices.Sort's pdqsort).
 fn (xs: List[T]) sort() -> List[T]
+/// A copy of xs sorted by key(x), ascending and stable (Go's
+/// slices.SortStableFunc comparing the keys).
 fn (xs: List[T]) sort_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
 /// A stable sort of the receiver itself (decision 0374): it returns
 /// nothing, and a list another binding shares is copied first the way
@@ -622,16 +809,30 @@ fn (xs: List[T]) sort_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) ->
 /// uniquely owned list is sorted in its own array with a scratch under one
 /// list, where `sort` builds a whole second list.
 fn (var xs: List[T]) sort_in_place()
+/// Sorts xs itself by key(x), ascending and stable; returns nothing.
 fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> () ! E uses fx
+/// The elements grouped by key(x): keys in order of first appearance, each
+/// group in input order.
 fn (xs: List[T]) group_by[K: Hash, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx
+/// A copy of xs in reverse order (Go's slices.Reverse on a clone).
 fn (xs: List[T]) reverse() -> List[T]
+/// The distinct elements as a set, in order of first appearance.
 fn (xs: List[T]) to_set() -> Set[T]
+/// The strings joined with sep between them (Go's strings.Join).
 fn (xs: List[Str]) join(sep: Str) -> Str
 
+/// Appends x (Go's append); amortized O(1).
 fn (var xs: List[T]) push(x: T)
+/// Removes and returns the last element, or None for an empty list.
 fn (var xs: List[T]) pop() -> T?
+/// Inserts x before index i, 0 to len() (Go's slices.Insert); a fault
+/// outside that.
 fn (var xs: List[T]) insert(i: Int, x: T)
+/// Removes and returns the element at i, shifting the rest down (Go's
+/// slices.Delete); a fault outside the list.
 fn (var xs: List[T]) remove_at(i: Int) -> T
+/// Replaces the element at i with x, as `xs[i] = x`; a fault outside the
+/// list.
 fn (var xs: List[T]) set(i: Int, x: T)
 /// A binary min heap in the list, as Go's container/heap keeps one in a
 /// slice by the Ord of T (decision 0410): `heap_push` adds x and restores
@@ -642,22 +843,38 @@ fn (var xs: List[T]) set(i: Int, x: T)
 /// `heapify` makes any list a heap. Each is O(log n), heapify O(n). A
 /// priority queue by a key is a heap of (key, value) pairs.
 fn (var xs: List[T]) heap_push(x: T)
+/// Removes and returns the least element of the heap xs, or None when it is
+/// empty (Go's heap.Pop).
 fn (var xs: List[T]) heap_pop() -> T?
+/// Removes and returns the element at i of the heap xs (Go's heap.Remove);
+/// a fault outside the list.
 fn (var xs: List[T]) heap_remove(i: Int) -> T
+/// Restores the heap order after the element at i changed (Go's heap.Fix).
 fn (var xs: List[T]) heap_fix(i: Int)
+/// Reorders xs into a binary min heap (Go's heap.Init).
 fn (var xs: List[T]) heapify()
 
 // ---------------------------------------------------------------------------
 // Map[K, V] and Set[T] (std.md 2.4)
 
+/// The number of entries (Go's len).
 fn (m: Map[K, V]) len() -> Int
+/// Whether m has no entries.
 fn (m: Map[K, V]) is_empty() -> Bool
+/// The value at k, or None (Go's v, ok := m[k]).
 fn (m: Map[K, V]) get(k: K) -> V?
+/// The value at k; a fault naming k and reason when it is missing (for a
+/// key that must be there).
 fn (m: Map[K, V]) get_or_fault(k: K, reason: Str) -> V
+/// Whether k has an entry.
 fn (m: Map[K, V]) contains(k: K) -> Bool
+/// The keys in insertion order.
 fn (m: Map[K, V]) keys() -> List[K]
+/// The values in insertion order of their keys.
 fn (m: Map[K, V]) values() -> List[V]
+/// The (key, value) pairs in insertion order.
 fn (m: Map[K, V]) entries() -> List[(K, V)]
+/// The entries f accepts, in insertion order.
 fn (m: Map[K, V]) filter[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Map[K, V] ! E uses fx
 /// Every key with f's value, in the map's insertion order.
 fn (m: Map[K, V]) map[U, E, fx: Effects](f: fn(K, V) -> U ! E uses fx) -> Map[K, U] ! E uses fx
@@ -666,44 +883,77 @@ fn (m: Map[K, V]) any[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Bool !
 /// Whether f holds for every entry, in insertion order, stopping at the first that fails.
 fn (m: Map[K, V]) all[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Bool ! E uses fx
 
+/// Stores v at k, as `m[k] = v`; an existing key keeps its position.
 fn (var m: Map[K, V]) put(k: K, v: V)
+/// Removes k and returns its value, or None when it had none (Go's
+/// delete).
 fn (var m: Map[K, V]) remove(k: K) -> V?
+/// Runs f on the value at k (init when missing), stores what f left and
+/// returns f's result: `by.update(n, [], fn(var ids) { ids.push(i) })`.
 fn (var m: Map[K, V]) update[R, E, fx: Effects](k: K, init: V, f: fn(var V) -> R ! E uses fx) -> R ! E uses fx
 
+/// The number of elements.
 fn (s: Set[T]) len() -> Int
+/// Whether s has no elements.
 fn (s: Set[T]) is_empty() -> Bool
+/// Whether x is in s.
 fn (s: Set[T]) contains(x: T) -> Bool
+/// The elements in s or o: s's in order, then o's new ones.
 fn (s: Set[T]) union(o: Set[T]) -> Set[T]
+/// The elements in both s and o, in s's order.
 fn (s: Set[T]) intersect(o: Set[T]) -> Set[T]
+/// The elements of s not in o, in s's order.
 fn (s: Set[T]) difference(o: Set[T]) -> Set[T]
 /// Whether every element of s is in o (the empty set is a subset of every set).
 fn (s: Set[T]) is_subset(o: Set[T]) -> Bool
 /// Whether s and o share an element; stops at the first one and allocates nothing.
 fn (s: Set[T]) intersects(o: Set[T]) -> Bool
+/// The elements in insertion order.
 fn (s: Set[T]) to_list() -> List[T]
+/// Whether f accepts some element; stops at the first.
 fn (s: Set[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+/// Whether f accepts every element; stops at the first it rejects.
 fn (s: Set[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+/// The elements f accepts, in insertion order.
 fn (s: Set[T]) filter[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Set[T] ! E uses fx
+/// The set of f of each element; equal results collapse into one.
 fn (s: Set[T]) map[U, E, fx: Effects](f: fn(T) -> U ! E uses fx) -> Set[U] ! E uses fx
+/// Adds x; nothing changes when it is already in s.
 fn (var s: Set[T]) add(x: T)
+/// Removes x and returns whether it was in s.
 fn (var s: Set[T]) remove(x: T) -> Bool
 
 // ---------------------------------------------------------------------------
 // Option[T] and Result[T, E] (std.md 2.5)
 
+/// Whether o holds a value.
 fn (o: Option[T]) is_some() -> Bool
+/// Whether o is None.
 fn (o: Option[T]) is_none() -> Bool
+/// Ok of o's value, or Err(e) for None, to turn a missing value into an
+/// error for `?`.
 fn (o: Option[T]) or_err[E](e: E) -> Result[T, E]
+/// Some(f(v)) for Some(v), None for None.
 fn (o: Option[T]) map[U, fx: Effects](f: fn(T) -> U uses fx) -> U? uses fx
+/// f(v) for Some(v), None for None: chains steps that may each give None.
 fn (o: Option[T]) and_then[U, fx: Effects](f: fn(T) -> U? uses fx) -> U? uses fx
+/// o's value; a fault with msg on None (for a value that must be there).
 fn (o: Option[T]) or_fault(msg: Str) -> T
 
+/// Whether r is Ok.
 fn (r: Result[T, E]) is_ok() -> Bool
+/// Whether r is Err.
 fn (r: Result[T, E]) is_err() -> Bool
+/// Ok(f(v)) for Ok(v); an Err as it is.
 fn (r: Result[T, E]) map[U, fx: Effects](f: fn(T) -> U uses fx) -> Result[U, E] uses fx
+/// Err(f(e)) for Err(e); an Ok as it is (wraps an error, as Go's
+/// fmt.Errorf with %w).
 fn (r: Result[T, E]) map_err[F, fx: Effects](f: fn(E) -> F uses fx) -> Result[T, F] uses fx
+/// The Ok value, or None for an Err (the error is dropped).
 fn (r: Result[T, E]) ok() -> T?
+/// The Err value, or None for an Ok.
 fn (r: Result[T, E]) err() -> E?
+/// The Ok value; a fault with msg and the error on Err.
 fn (r: Result[T, E]) or_fault(msg: Str) -> T
 /// The only way to discard an error (core 2.6): yields the success value or
 /// None, and logs the error with the reason at debug level.
@@ -712,20 +962,30 @@ fn (r: Result[T, E]) ignore_err(reason: Str) -> T?
 // ---------------------------------------------------------------------------
 // Duration and Time (std.md 2.6). Operators are builtin (core 2.1).
 
+/// s seconds, rounded to the nearest nanosecond.
 fn (static: Duration) from_secs(s: Float) -> Duration
 /// Whole seconds; the same as `1s * s` (std.md 2.6).
 fn (static: Duration) from_secs_int(s: Int) -> Duration
+/// ms milliseconds (Go's time.Duration(ms) * time.Millisecond).
 fn (static: Duration) from_millis(ms: Int) -> Duration
+/// ns nanoseconds (Go's time.Duration(ns)).
 fn (static: Duration) from_nanos(ns: Int) -> Duration
 /// Go's time.ParseDuration syntax after trimming white space: a signed
 /// sequence of decimal numbers with units ns, us (or µs), ms, s, m, h,
 /// such as "1.5s", "-2h45m", "300ms"; "0" alone is zero (std.md 2.6).
 fn (static: Duration) parse(s: Str) -> Duration ! DurationErr
+/// d in seconds with the fraction (Go's Duration.Seconds, to the bit).
 fn (d: Duration) seconds() -> Float
+/// d in whole milliseconds, truncated (Go's Duration.Milliseconds).
 fn (d: Duration) millis() -> Int
+/// d in nanoseconds (Go's Duration.Nanoseconds).
 fn (d: Duration) nanos() -> Int
+/// d times f, rounded to the nearest nanosecond.
 fn (d: Duration) scale(f: Float) -> Duration
+/// d in whole seconds, rounded up (for a Retry-After or a timeout in
+/// seconds).
 fn (d: Duration) ceil_seconds() -> Int
+/// The absolute value of d (Go's Duration.Abs); durations may be negative.
 fn (d: Duration) abs() -> Duration
 /// Go's Duration.Round: d rounded to the nearest multiple of m, halfway
 /// values away from zero; d itself when m <= 0, and the largest or
@@ -739,50 +999,87 @@ fn (d: Duration) truncate(m: Duration) -> Duration
 struct DurationErr {
   input: Str
 }
+/// `invalid duration "1x": ` and what a duration looks like.
 fn (e: DurationErr) display() -> Str
 
+/// 1970-01-01T00:00:00Z (Go's time.Unix(0, 0)); written `Time.UNIX_EPOCH`,
+/// a constant.
 fn (static: Time) UNIX_EPOCH() -> Time
+/// The time secs seconds after the Unix epoch (Go's time.Unix(secs, 0)).
 fn (static: Time) from_unix(secs: Int) -> Time
+/// The time ms milliseconds after the Unix epoch (Go's time.UnixMilli).
 fn (static: Time) from_unix_millis(ms: Int) -> Time
+/// The time of RFC 3339 text (Go's time.Parse(time.RFC3339Nano, s)), or
+/// None for other text or a time outside 1677-09-21 to 2262-04-11.
 fn (static: Time) parse_rfc3339(s: Str) -> Time?
 /// The offset an RFC 3339 text carries (`Z` and `+00:00` are zero; Go's Zone() of time.Parse), or None
 /// when `parse_rfc3339` refuses the text. A `Time` is an instant, so this is how a caller keeps `+01:00`.
 fn (static: Time) rfc3339_offset(s: Str) -> Duration?
+/// Seconds since the Unix epoch (Go's Time.Unix).
 fn (t: Time) unix() -> Int
+/// Milliseconds since the Unix epoch (Go's Time.UnixMilli).
 fn (t: Time) unix_millis() -> Int
+/// t as RFC 3339 text in UTC, as t displays.
 fn (t: Time) format_rfc3339() -> Str
 
 // ---------------------------------------------------------------------------
 // Concurrency and state types (std.md 2.7, core 5.4, 7)
 
+/// A channel with room for cap values; 0 is unbuffered (Go's make(chan T,
+/// cap)).
 fn (static: Chan[T]) new(cap: Int = 0) -> Chan[T]
+/// Sends x, waiting while the channel is full; a cancellation point.
 fn (c: Chan[T]) send(x: T)
+/// The next value, waiting for one; None when the channel is closed and
+/// drained. A cancellation point.
 fn (c: Chan[T]) recv() -> T?
+/// Sends x if there is room; false when the channel is full or closed.
+/// Never waits.
 fn (c: Chan[T]) try_send(x: T) -> Bool
+/// The next value if one is ready, else None. Never waits.
 fn (c: Chan[T]) try_recv() -> T?
+/// Closes the channel: receivers drain what is left, then get None.
 fn (c: Chan[T]) close()
+/// The number of values waiting in the buffer.
 fn (c: Chan[T]) len() -> Int
 
+/// A mutex guarding v; the value is reached only through with and
+/// with_read.
 fn (static: Mutex[T]) new(v: T) -> Mutex[T]
+/// Runs f with the value locked for writing, keeps what f leaves in it, and
+/// returns f's result. A fault in f poisons the mutex (core 5.4).
 fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
 /// Shared read only access (decision 0063): many readers or one writer.
 fn (m: Mutex[T]) with_read[R, E, fx: Effects](f: fn(T) -> R ! E uses fx) -> R ! E uses fx
 /// Stores v and clears the poison a fault inside `with` left (decision 0482).
 fn (m: Mutex[T]) reset(v: T)
 
+/// An atomic holding v; T is Int or Bool (Go's sync/atomic).
 fn (static: Atomic[T]) new(v: T) -> Atomic[T]
+/// The current value (Go's atomic Load).
 fn (a: Atomic[T]) get() -> T
+/// Stores v (Go's atomic Store).
 fn (a: Atomic[T]) set(v: T)
+/// Adds n and returns the new value (Go's atomic Add).
 fn (a: Atomic[Int]) add(n: Int) -> Int
+/// Stores n when it is larger and returns the value then held.
 fn (a: Atomic[Int]) max(n: Int) -> Int
+/// Stores v and returns the old value (Go's atomic Swap).
 fn (a: Atomic[T]) swap(v: T) -> T
+/// Stores new if the value is old and returns whether it did (Go's
+/// atomic CompareAndSwap).
 fn (a: Atomic[T]) compare_and_swap(old: T, new: T) -> Bool
 
 /// The handle bound by `scope s { ... }` (core 7.1). The only way to start a
 /// task.
 struct Scope {}
+/// Starts f as a foreground task of the scope; the scope waits for it. The
+/// handle's `await` gives f's result.
 fn (s: Scope) spawn[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
+/// Starts f as a background task (a daemon), cancelled when the scope's
+/// body finishes.
 fn (s: Scope) spawn_background[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
+/// Cancels every task of the scope (not the body).
 fn (s: Scope) cancel()
 /// A storable handle whose tasks belong to this scope (core 7.1).
 fn (s: Scope) group() -> task.Group
@@ -791,30 +1088,57 @@ struct Task[T, E] {}
 /// Written `t.await`, without parentheses.
 fn (t: Task[T, E]) await() -> T ! E
 
+/// An empty buffer that collects a list with amortized O(1) pushes.
 fn (static: Buf[T]) new() -> Buf[T]
+/// An empty buffer with room for n items before it grows.
 fn (static: Buf[T]) with_capacity(n: Int) -> Buf[T]
+/// Appends x.
 fn (var b: Buf[T]) push(x: T)
+/// The number of items pushed.
 fn (b: Buf[T]) len() -> Int
+/// The items as a list, without a copy; it moves b.
 /// @moves
 fn (b: Buf[T]) freeze() -> List[T]
 
+/// An empty builder of a Str (Go's strings.Builder).
 fn (static: StrBuilder) new() -> StrBuilder
+/// Appends s (amortized O(1), where `out = out + s` copies out).
 fn (var b: StrBuilder) write(s: Str)
+/// The length in bytes of what has been written.
 fn (b: StrBuilder) len() -> Int
+/// What has been written as a Str, without a copy; it moves b.
 /// @moves
 fn (b: StrBuilder) freeze() -> Str
 
+/// An empty builder of Bytes (Go's bytes.Buffer used for writes).
 fn (static: BytesBuilder) new() -> BytesBuilder
+/// An empty builder with room for n bytes before it grows.
 fn (static: BytesBuilder) with_capacity(n: Int) -> BytesBuilder
+/// Appends data.
 fn (var b: BytesBuilder) write(data: Bytes)
+/// Appends one byte.
 fn (var b: BytesBuilder) write_byte(x: UInt8)
+/// Appends s's UTF-8 bytes.
 fn (var b: BytesBuilder) write_str(s: Str)
+/// Appends r's UTF-8 encoding.
 fn (var b: BytesBuilder) write_rune(r: Rune)
+/// Overwrites the n (1, 2, 4 or 8) bytes at..at + n in place with v's low n
+/// bytes, lowest first (Go's binary.LittleEndian.PutUint32); a fault for
+/// another n or a range outside len().
 fn (var b: BytesBuilder) put_le(at: Int, v: Int, n: Int)
+/// Overwrites the n (1, 2, 4 or 8) bytes at..at + n in place with v's low n
+/// bytes, highest first (Go's binary.BigEndian.PutUint32); a fault for
+/// another n or a range outside len().
 fn (var b: BytesBuilder) put_be(at: Int, v: Int, n: Int)
+/// Appends v's low n (0 to 8) bytes, lowest first (Go's
+/// binary.LittleEndian.AppendUint64 cut to n); a fault for another n.
 fn (var b: BytesBuilder) write_le(v: Int, n: Int)
+/// Appends v's low n (0 to 8) bytes, highest first (Go's
+/// binary.BigEndian.AppendUint64 cut to n); a fault for another n.
 fn (var b: BytesBuilder) write_be(v: Int, n: Int)
+/// The number of bytes written.
 fn (b: BytesBuilder) len() -> Int
+/// What has been written as Bytes, without a copy; it moves b.
 /// @moves
 fn (b: BytesBuilder) freeze() -> Bytes
 
@@ -825,17 +1149,32 @@ fn (b: BytesBuilder) freeze() -> Bytes
 /// @move_only
 struct ByteBuffer {}
 
+/// An empty buffer (Go's bytes.Buffer).
 fn (static: ByteBuffer) new() -> ByteBuffer
+/// An empty buffer; n is a hint and may be ignored.
 fn (static: ByteBuffer) with_capacity(n: Int) -> ByteBuffer
+/// Appends data at the back, without a copy.
 fn (var b: ByteBuffer) write(data: Bytes)
+/// The number of unread bytes.
 fn (b: ByteBuffer) len() -> Int
+/// Up to n unread bytes, not consumed (n is clamped to 0..len()).
 fn (b: ByteBuffer) peek(n: Int) -> Bytes
+/// Up to n unread bytes, consumed (Go's Buffer.Next; n is clamped to
+/// 0..len()).
 fn (var b: ByteBuffer) next(n: Int) -> Bytes
+/// The unread bytes through the first delim, consumed; None, consuming
+/// nothing, when delim has not arrived (Go's Buffer.ReadBytes).
 fn (var b: ByteBuffer) read_until(delim: UInt8) -> Bytes?
+/// Consumes up to n unread bytes.
 fn (var b: ByteBuffer) discard(n: Int)
+/// The offset of sub in the unread bytes, or None (Go's bytes.Index on
+/// Buffer.Bytes()).
 fn (b: ByteBuffer) find(sub: Bytes) -> Int?
 
+/// Wraps v so it prints as `<redacted>` in every output: interpolation,
+/// Debug, logs and crash bundles (core 2.1). reveal gives it back.
 fn (static: Secret[T]) new(v: T) -> Secret[T]
+/// The wrapped value.
 fn (s: Secret[T]) reveal() -> T
 
 // ---------------------------------------------------------------------------
@@ -1037,13 +1376,14 @@ fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs
 struct File {}
 /// At most max bytes; None at the end.
 fn (f: File) read(max: Int) -> Bytes? ! FsErr uses fs.read
-/// One line without `\n` or `\r\n`; None at the end.
 /// At most max bytes at offset, whatever the position: None at or past
 /// the end (Go's os.File.ReadAt, one call, a short read allowed); the
 /// handle's position and reads are unaffected. A wasm build answers
 /// "function not implemented".
 fn (f: File) read_at(offset: Int, max: Int) -> Bytes? ! FsErr uses fs.read
+/// One line without `\n` or `\r\n`; None at the end.
 fn (f: File) read_line() -> Str? ! FsErr uses fs.read
+/// Writes all of data at the position (Go's os.File.Write).
 fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
 /// Writes all of data at offset of a file made by `create`, whatever the
 /// position, which the call leaves alone (Go's os.File.WriteAt: the file
@@ -1391,9 +1731,11 @@ fn (c: Cmd) spawn() -> Child ! ProcErr uses proc
 
 /// A started command (std.md 3.8). A handle.
 struct Child {}
+/// The child's process id.
 fn (c: Child) pid() -> Int
 /// Writes to the child's standard input.
 fn (c: Child) write(data: Bytes) -> () ! ProcErr uses proc
+/// Closes the child's standard input, so it sees the end of its input.
 fn (c: Child) close_stdin()
 /// At most max bytes of the child's output; None at the end.
 fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc
@@ -1406,4 +1748,5 @@ fn (c: Child) wait() -> Int ! ProcErr uses proc
 /// wait, with the child's own CPU time and peak memory (decision 0426's
 /// addendum; Go's ProcessState.UserTime, SystemTime and SysUsage).
 fn (c: Child) wait_usage() -> (Int, ProcUsage) ! ProcErr uses proc
+/// Kills the child (SIGKILL on Unix; status 137 on Windows too).
 fn (c: Child) kill()
