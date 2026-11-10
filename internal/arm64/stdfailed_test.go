@@ -77,7 +77,8 @@ func TestStdFailedMarkerPerTree(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(body), "\nstd "+a+"\n") {
+		// xo writes paths with / on every host (std.md 3.1)
+		if !strings.Contains(string(body), "\nstd "+filepath.ToSlash(a)+"\n") {
 			t.Fatalf("marker %s does not name the failed std %s:\n%s", ms[0], a, body)
 		}
 		return ms[0]
