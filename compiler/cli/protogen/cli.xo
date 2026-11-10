@@ -4,7 +4,7 @@
 
 use github.com/xo-lang/xo/compiler/cli/cmdhelp
 use github.com/xo-lang/xo/compiler/cli/core
-use std/path
+use github.com/xo-lang/xo/compiler/hostpath
 use std/protoparse
 
 /// Whether name is the command of this package, for the driver's dispatch.
@@ -55,9 +55,12 @@ pub fn run(os: Os, args: List[Str]) -> Int uses (fs, stdio) {
       os.stdio.print(text)
       continue
     }
-    let base = path.base(file)
+    // the host's rules: a Windows argument separates with `\` (2026-11-10:
+    // std/path's base kept C:\dir\a.proto whole, so the output went to
+    // OUT/C:\dir\a.xo)
+    let base = hostpath.base(file)
     let stem = if base.ends_with(".proto") { base[0..base.len() - 6] } else { base }
-    let dest = path.join(out, "${stem}.xo")
+    let dest = hostpath.join(out, "${stem}.xo")
     match os.fs.create_dir_all(out) {
       Ok(_) => {}
       Err(e) => {

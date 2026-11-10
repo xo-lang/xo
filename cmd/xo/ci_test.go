@@ -97,7 +97,9 @@ func TestBuildOutPaths(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"webserver/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
 		"out/.keep":         "",
-		"busy/webserver/x":  "a directory where the binary would go\n",
+		// the binary's name on this host (webserver.exe on Windows, where a
+		// webserver directory blocked nothing and the build passed)
+		"busy/" + hostExe("webserver") + "/x": "a directory where the binary would go\n",
 	})
 	app := filepath.Join(dir, "webserver")
 	chdir(t, app)
@@ -117,7 +119,7 @@ func TestBuildOutPaths(t *testing.T) {
 	}
 	ents, _ := os.ReadDir(filepath.Join(dir, "busy"))
 	for _, e := range ents {
-		if e.Name() != "webserver" {
+		if e.Name() != hostExe("webserver") {
 			t.Errorf("a failed build left %s", e.Name())
 		}
 	}
