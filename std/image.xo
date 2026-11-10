@@ -166,3 +166,10 @@ enum Op {
 /// destination is left alone (Go has no Set for it). The samples are copied
 /// once per call.
 fn (var dst: Image) draw(r: Rect, src: Image, sp_x: Int, sp_y: Int, op: Op)
+
+/// Go's draw.FloydSteinberg.Draw (the Src op with Floyd-Steinberg error
+/// diffusion) onto a Paletted image: the part of src over r, clipped as draw
+/// clips it, quantized to the nearest palette entry (Go's sum of squared
+/// differences over the four 16 bit channels) with the error spread to the
+/// neighbours in sixteenths. Any other destination model is left alone.
+fn (var dst: Image) floyd_steinberg(r: Rect, src: Image, sp_x: Int, sp_y: Int)

@@ -1,5 +1,18 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image Image.floyd_steinberg and draw onto Paletted (decision 0578 step 2, part 2)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: image/draw drawPaletted (Src without and with Floyd-Steinberg), color.Palette.Index
+- Test: testdata/corpus/image: the 252 draw cases now include Paletted destinations (288 cases, byte for byte with Go) and 36 Floyd-Steinberg draws onto a web safe Paletted image, from every source model including YCbCr, two rectangles each, on arm64, LLVM and the Go backend
+- Timing: none yet (the palette search is Go's linear one)
+- Shipped in: not yet released
+
+`Image.floyd_steinberg(r, src, sp_x, sp_y)` is `draw.FloydSteinberg.Draw` onto a Paletted image (any other destination model is left alone); `Image.draw` onto a Paletted image
+quantizes by Go's nearest palette entry.
+
 ## 2026-11-09: perf: Image.draw row fast paths for an RGBA destination (decision 0578 step 2)
 
 - Kind: perf

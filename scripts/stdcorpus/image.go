@@ -701,6 +701,7 @@ test "from_jpeg and to_jpeg keep the samples and the chroma subsampling" {
 `)
 	// draw.Draw: every destination model (but Paletted) against every source
 	// model, both ops, two rectangles with source offsets and clipping.
+	o.WriteString("\n/// The palette of the Paletted destinations of DRAW_CASES.\nconst DRAW_PAL: List[Int] = [10 << 24 | 20 << 16 | 30 << 8 | 255, 200 << 24 | 100 << 16 | 50 << 8 | 128, 0, 255 << 24 | 255 << 16 | 255 << 8 | 255]\n")
 	o.WriteString("\n/// (dst model, dst pix, src model, src pix, palette, (y, cb, cr), rect, sp, op, pix after): draw.Draw with a nil mask.\nconst DRAW_CASES: List[(Str, Bytes, Str, Bytes, List[Int], (Bytes, Bytes, Bytes), (Int, Int, Int, Int), (Int, Int), Int, Bytes)] = [\n")
 	dpal := color.Palette{color.NRGBA{10, 20, 30, 255}, color.NRGBA{200, 100, 50, 128}, color.NRGBA{0, 0, 0, 0}, color.NRGBA{255, 255, 255, 255}}
 	dpalv := []int{10<<24 | 20<<16 | 30<<8 | 255, 200<<24 | 100<<16 | 50<<8 | 128, 0, 255<<24 | 255<<16 | 255<<8 | 255}
@@ -754,7 +755,7 @@ test "from_jpeg and to_jpeg keep the samples and the chroma subsampling" {
 		v := image.NewPaletted(rc, dpal)
 		return v, v.Pix
 	}
-	dstNames := []string{"RGBA", "NRGBA", "Gray", "Gray16", "RGBA64", "NRGBA64", "CMYK"}
+	dstNames := []string{"RGBA", "NRGBA", "Gray", "Gray16", "RGBA64", "NRGBA64", "CMYK", "Paletted"}
 	srcNames := []string{"RGBA", "NRGBA", "Gray", "Gray16", "RGBA64", "NRGBA64", "CMYK", "Paletted", "YCbCr"}
 	type drawRect struct {
 		rc image.Rectangle
@@ -816,6 +817,8 @@ test "from_jpeg and to_jpeg keep the samples and the chroma subsampling" {
 							return 0, v.Pix
 						case *image.CMYK:
 							return 0, v.Pix
+						case *image.Paletted:
+							return 0, v.Pix
 						}
 						return 0, nil
 					}()
@@ -843,7 +846,7 @@ fn model_of(name: Str) -> image.Model {
 
 test "Image.draw is Go's draw.Draw" {
   for (dn, dpix, sn, spix, pal, planes, rc, sp, opi, want) in DRAW_CASES {
-    var dst = image.Image{width: 5, height: 4, model: model_of(dn), pix: dpix}
+    var dst = image.Image{width: 5, height: 4, model: model_of(dn), pix: dpix, palette: if dn == "Paletted" { DRAW_PAL } else { [] }}
     let (yp, cbp, crp) = planes
     var src = image.Image{width: 4, height: 3, model: model_of(sn), pix: spix, palette: pal}
     if sn == "YCbCr" {
@@ -852,6 +855,61 @@ test "Image.draw is Go's draw.Draw" {
     let (x0, y0, x1, y1) = rc
     let (spx, spy) = sp
     dst.draw(image.Rect{x0: x0, y0: y0, x1: x1, y1: y1}, src, spx, spy, if opi == 0 { image.Op.Over } else { image.Op.Src })
+    expect((dn, sn, rc, sp, opi, dst.pix)) == (dn, sn, rc, sp, opi, want)
+  }
+}
+`)
+	// draw.FloydSteinberg onto a Paletted image of the 216 web safe colors.
+	o.WriteString("\n/// (src model, src pix, palette, (y, cb, cr), rect, sp, pix after): draw.FloydSteinberg onto a Paletted image of palette.WebSafe.\nconst FS_CASES: List[(Str, Bytes, List[Int], (Bytes, Bytes, Bytes), (Int, Int, Int, Int), (Int, Int), Bytes)] = [\n")
+	for rep := 0; rep < 2; rep++ {
+		for _, sn := range srcNames {
+			for _, dr := range []drawRect{{image.Rect(0, 0, 5, 4), image.Point{0, 0}}, {image.Rect(1, 1, 5, 4), image.Point{1, 0}}} {
+				pd := image.NewPaletted(big, palette.WebSafe)
+				var simg image.Image
+				var spix, yp, cbp, crp []byte
+				palText := "[]"
+				if sn == "YCbCr" {
+					yc := image.NewYCbCr(image.Rect(0, 0, 5, 4), image.YCbCrSubsampleRatio420)
+					copy(yc.Y, fill(len(yc.Y)))
+					copy(yc.Cb, fill(len(yc.Cb)))
+					copy(yc.Cr, fill(len(yc.Cr)))
+					simg, yp, cbp, crp = yc, yc.Y, yc.Cb, yc.Cr
+				} else {
+					si, sp := mkImg(sn, image.Rect(0, 0, 5, 4))
+					randPix(sn, sp)
+					simg, spix = si, sp
+					if sn == "Paletted" {
+						var sb strings.Builder
+						sb.WriteString("[")
+						for i, v := range dpalv {
+							if i > 0 {
+								sb.WriteString(", ")
+							}
+							fmt.Fprintf(&sb, "%d", v)
+						}
+						sb.WriteString("]")
+						palText = sb.String()
+					}
+				}
+				draw.FloydSteinberg.Draw(pd, dr.rc, simg, dr.sp)
+				fmt.Fprintf(&o, "  (%q, %s, %s, (%s, %s, %s), (%d, %d, %d, %d), (%d, %d), %s),\n", sn, bytesLit(spix), palText, bytesLit(yp), bytesLit(cbp), bytesLit(crp),
+					dr.rc.Min.X, dr.rc.Min.Y, dr.rc.Max.X, dr.rc.Max.Y, dr.sp.X, dr.sp.Y, bytesLit(pd.Pix))
+			}
+		}
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+test "Image.floyd_steinberg is Go's draw.FloydSteinberg" {
+  for (sn, spix, pal, planes, rc, sp, want) in FS_CASES {
+    var dst = image.Image{width: 5, height: 4, model: image.Model.Paletted, pix: Bytes.zeroed(20), palette: WEB_SAFE}
+    let (yp, cbp, crp) = planes
+    var src = image.Image{width: 5, height: 4, model: model_of(sn), pix: spix, palette: pal}
+    if sn == "YCbCr" {
+      src = image.Image{width: 5, height: 4, model: image.Model.YCbCr, pix: b"", y: yp, cb: cbp, cr: crp, subsample: jpeg.Subsample.S420}
+    }
+    let (x0, y0, x1, y1) = rc
+    let (spx, spy) = sp
+    dst.floyd_steinberg(image.Rect{x0: x0, y0: y0, x1: x1, y1: y1}, src, spx, spy)
     expect(dst.pix) == want
   }
 }

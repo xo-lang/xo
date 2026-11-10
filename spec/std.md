@@ -8265,7 +8265,8 @@ fn (im: Image) to_png() -> png.Image?            // tight rows (a sub image is c
 fn from_jpeg(j: jpeg.Image) -> Image            // Gray, CMYK, RGBA and YCbCr (planes and subsample) move without a copy
 fn (im: Image) to_jpeg() -> jpeg.Image?          // None for models JPEG lacks and for a YCbCr sub image
 enum Op { Over, Src }                                    // draw.Op
-fn (var dst: Image) draw(r: Rect, src: Image, sp_x: Int, sp_y: Int, op: Op)  // draw.Draw with a nil mask; Go's results per model pair; Paletted and YCbCr destinations not yet
+fn (var dst: Image) draw(r: Rect, src: Image, sp_x: Int, sp_y: Int, op: Op)  // draw.Draw with a nil mask; Go's results per model pair; a YCbCr destination is left alone
+fn (var dst: Image) floyd_steinberg(r: Rect, src: Image, sp_x: Int, sp_y: Int)  // draw.FloydSteinberg onto a Paletted image; other models are left alone
 fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
 fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int)
 fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int)
