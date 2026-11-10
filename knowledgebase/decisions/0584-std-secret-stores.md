@@ -170,3 +170,22 @@ golang.org/x/sys/windows (`CryptProtectData`, `CryptUnprotectData`,
 - `use c`/`use go` in the Azure repo instead of std: every program using it
   gets the `ffi`/`go` effect and no fakes; rejected.
 - Linking libkeyutils for Linux: a dependency for six syscalls; rejected.
+
+## Addendum (2026-11-10): the Os literal
+
+Wiring finding: an `Os{...}` literal must name every field (compiler/ssa
+expr.xo `os_lit` reports a missing one; std/native/llrt/userfs.xo `OsFields`
+and `UserOs` list them; std/rt gen.go, testing.go and the generated
+std_gen_prelude.go rebuild an Os field by field). Adding `Os.secrets` is
+therefore **Breaking for a program that builds an Os literal** (the same
+class as decision 0426's new Proc methods), and for a user type implementing
+`Os`-shaped records. Two ways, to be settled with the lead before code:
+
+- A. Accept it as Breaking in the next minor (CHANGELOG line, migration
+  note: add `secrets: os.secrets`). Simple; matches 0426.
+- B. Give `Os.secrets` a default so old literals compile (a struct field
+  default, as `FileInfo.is_symlink = false`); only possible if `os_lit` and
+  `OsFields` fill an omitted interface field with a "no stores" Secrets
+  (every member None). More compiler work (Lang 1's file), no break.
+
+Recommendation: B if Lang 1 agrees the `os_lit` change is small, else A.
