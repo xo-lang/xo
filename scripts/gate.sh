@@ -9,8 +9,6 @@
 # Steps:
 #   short    go test -short over the repository (runs/ excluded)
 #   arm64    the full tests of internal/arm64
-#            (with XO_GATE_CONCURRENT=1 and llvm named too, both run
-#            at once, arm64 in the background; opt in, 2026-10-26)
 #   llvm     the full tests of internal/llvm, skipped when every file
 #            the branch changes is native backend only (owner,
 #            2026-10-18; see native_only below); XO_GATE_LLVM=1 runs it;
@@ -105,6 +103,9 @@
 #
 # The branch's changes are counted from $XO_GATE_BASE, else the
 # merge-base of HEAD and origin/main.
+#
+# XO_GATE_CONCURRENT=1 runs the named steps at once, at most XO_GATE_JOBS
+# (default 3) at a time (opt in; see "XO_GATE_CONCURRENT" below).
 #
 # Logs go to $XO_GATE_LOGS (default $TMPDIR/xo-gate-WORKTREE_NAME), one
 # file per step. A step's failure is reported and the next step runs;
@@ -370,27 +371,60 @@ llvm_step() {
       unset XO_LLVM_GOLDENS
     fi
 }
-# XO_GATE_CONCURRENT=1 (2026-10-26, opt in): with both arm64 and llvm
-# named, the two run at once, arm64 in the background: in a full tier at
-# most two tests ran for 72% of arm64's 1,904 s and 55% of llvm's
-# 1,866 s on the 12 core Mac, and the llvm step left 69% of memory free
-llvm_done=0
-has_llvm=0
-for s in "$@"; do [ "$s" = llvm ] && has_llvm=1; done
+# XO_GATE_CONCURRENT=1 (opt in; arm64 beside llvm since 2026-10-26,
+# every independent step since 2026-11-10, owner's test-speed plan): the
+# named steps run at once, at most XO_GATE_JOBS (default 3) at a time, each
+# with its own logs as before and its result lines printed together when
+# it ends ("gate.sh: STEP done in N s" after them). corpora and
+# corpora-all write the same logs, so they share one job, in order. The
+# checks run after the named steps (chkcache, scale, caches, stdstore,
+# race) are one more job, and the proving checks codegen, wasm, cross and
+# fieldgen one job each; selfbuild and seedbuild run after every job ends
+# (their wall time and peak heap are what they report). A failure is
+# collected as in the serial order. Unset or 0 runs everything in order,
+# as before. Background: in a full tier at most two tests ran for 72% of
+# arm64's 1,904 s and 55% of llvm's 1,866 s on the 12 core Mac, and the
+# llvm step left 69% of memory free; tier 64's Mac steps took about 100
+# minutes one after another.
+conc=0
+[ "${XO_GATE_CONCURRENT:-0}" = 1 ] && conc=1
+gjobs=${XO_GATE_JOBS:-3}
+case $gjobs in '' | *[!0-9]* | 0) echo "gate.sh: XO_GATE_JOBS=$gjobs is not a positive number"; exit 2 ;; esac
 # repo: internal/repotest, the fast repo checks pushq runs before a push
 # (about 20 s), first in every gate unless short (which includes it) is
 # named; XO_GATE_REPO=0 skips it (lead, 2026-11-06 bottleneck review:
 # pushq refused 14 pushes in 3 hours on TestStdAPICovered,
 # TestThirdPartyOrigins, TestWasmUnsupportedListsNetGoldens,
 # TestOutsideBytesValidated, TestStdGenCurrent and TestWaitsClassified,
-# each found only after a whole gate had passed)
+# each found only after a whole gate had passed). It runs before the
+# concurrent jobs too: it is short, and a repo failure is the first thing
+# to fix.
 has_short=0
 for s in "$@"; do [ "$s" = short ] && has_short=1; done
 if [ "${XO_GATE_REPO:-1}" != 0 ] && [ "$has_short" = 0 ]; then
   full repo ./internal/repotest
 fi
+# the named steps, in order: pushq's proving checks are collected into
+# named (they run after the steps, with the ones the paths require), an
+# unknown name fails the gate, and a named chkcache keeps it from running
+# a second time after the steps
+steps=""
 for step in "$@"; do
   case $step in
+  codegen|selfbuild|seedbuild|wasm|cross|fieldgen)
+    # pushq's proving checks: run after the named steps with the ones the
+    # change's paths require (gate_plan), each once, and named in the
+    # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
+    # codegen` ran neither, then pushq refused the push for cross)
+    named="$named $step" ;;
+  short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache)
+    [ "$step" = chkcache ] && chkcache_ran=1
+    steps="$steps $step" ;;
+  *) echo "gate.sh: unknown step $step"; failed=1 ;;
+  esac
+done
+run_step() {
+  case $1 in
   short)
     # -p and -parallel capped (2026-11-07): uncapped, -short's parallel
     # packages and tests passed 16 GB on the Mac (six packages at once,
@@ -399,22 +433,8 @@ for step in "$@"; do
     k=$(grep -c '^--- FAIL' "$logs/short.txt")
     [ "$k" -gt 0 ] && failed=1
     echo "short fails: $k" ;;
-  arm64)
-    if [ "${XO_GATE_CONCURRENT:-}" = 1 ] && [ "$has_llvm" = 1 ] && [ "$llvm_done" = 0 ]; then
-      ( failed=0; full arm64 ./internal/arm64; echo "$failed" >"$logs/arm64.failed" ) &
-      apid=$!
-      llvm_step
-      llvm_done=1
-      wait "$apid"
-      [ "$(cat "$logs/arm64.failed" 2>/dev/null || echo 1)" = 1 ] && failed=1
-    else
-      full arm64 ./internal/arm64
-    fi ;;
-  llvm)
-    if [ "$llvm_done" = 1 ]; then
-      continue
-    fi
-    llvm_step ;;
+  arm64) full arm64 ./internal/arm64 ;;
+  llvm) llvm_step ;;
   corpora)
     if go_backend; then
       full corpora ./internal/stdtest -run '^TestStdCorpora$/^go/'
@@ -482,32 +502,156 @@ for step in "$@"; do
     git worktree remove --force "$pw/tree" >/dev/null 2>&1
     rm -rf "${pw:?}" ;;
   chkcache)
-    chkcache_ran=1
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
-  codegen|selfbuild|seedbuild|wasm|cross|fieldgen)
-    # pushq's proving checks: run after the named steps with the ones the
-    # change's paths require (gate_plan), each once, and named in the
-    # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
-    # codegen` ran neither, then pushq refused the push for cross)
-    named="$named $step" ;;
-  *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
-done
-if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change; then
-  chkcache_ran=1
-  full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
-fi
-if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
-  full scale ./internal/arm64 -run '^TestSwitch65535Arms$'
-fi
-if [ "${XO_GATE_CACHE:-1}" != 0 ] && cache_change; then
-  full caches ./internal/arm64 -run 'Cache|BinCache'
-fi
-if [ "${XO_GATE_STDSTORE:-1}" != 0 ] && stdstore_change; then
-  full stdstore ./internal/arm64 -run '^TestStdStoreBuilds$'
-fi
-if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
-  full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'
+}
+# the checks after the named steps, by path
+after_steps() {
+  if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change; then
+    full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
+  fi
+  if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
+    full scale ./internal/arm64 -run '^TestSwitch65535Arms$'
+  fi
+  if [ "${XO_GATE_CACHE:-1}" != 0 ] && cache_change; then
+    full caches ./internal/arm64 -run 'Cache|BinCache'
+  fi
+  if [ "${XO_GATE_STDSTORE:-1}" != 0 ] && stdstore_change; then
+    full stdstore ./internal/arm64 -run '^TestStdStoreBuilds$'
+  fi
+  if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
+    full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'
+  fi
+}
+# The proving checks, one function each: a passing one adds its name to
+# ran. Serial order (codegen, wasm, cross, selfbuild, seedbuild, fieldgen)
+# is the PUSHQ_RAN order.
+prove_codegen() {
+  if "$XO_CLI" dev codegen --backend=arm64,llvm test/codegen >"$logs/codegen.txt" 2>&1; then
+    echo "codegen: $(tail -1 "$logs/codegen.txt")"; ran="$ran codegen"
+  else
+    failed=1; echo "codegen: FAIL ($logs/codegen.txt)"
+  fi
+}
+prove_wasm() {
+  # the goldens the branch touches, and the concurrency, atomics and map
+  # sets pushq.sh names
+  local g f0
+  g=$(echo "$ch" | sed -n 's|^internal/[a-z0-9]*/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -)
+  f0=$failed; failed=0
+  XO_WASM_GOLDENS="${g:+$g,}conc_*,atomic_ops,map_*" full wasm ./internal/selfhost -run '^TestSelfhostWasm$'
+  [ "$failed" = 0 ] && ran="$ran wasm"
+  [ "$f0" = 1 ] && failed=1
+}
+prove_cross() {
+  local f0=$failed; failed=0
+  full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$'
+  [ "$failed" = 0 ] && ran="$ran cross"
+  [ "$f0" = 1 ] && failed=1
+}
+# what compiler/xo builds from: one cold self build with the new xo under
+# an 8 GB budget (owner, 2026-11-06: 11a08a448's inliner runaway passed
+# 22 GB building xo and reached main, found only when builders failed)
+prove_selfbuild() {
+  local t1
+  t1=$(date +%s)
+  if XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_WHOLE_BUILD=off "$XO_CLI" build --phase-times -o "$logs/selfbuild-xo" ./compiler/xo >"$logs/selfbuild.txt" 2>&1; then
+    echo "selfbuild: $(($(date +%s) - t1)) s, $(grep -o 'peak [0-9]* MB' "$logs/selfbuild.txt" | sort -k2 -n | tail -1)"; ran="$ran selfbuild"
+  else
+    failed=1; echo "selfbuild: FAIL ($logs/selfbuild.txt: $(grep -m1 -E 'memory budget|error' "$logs/selfbuild.txt"))"
+  fi
+  rm -f "$logs/selfbuild-xo"
+}
+# seedbuild: compiler/xo built by the offload host's seed (XO_SEED,
+# which offload-gate-remote.sh exports) under XO_INLINE_STRICT=1, the
+# hourly fixed point's s1, with caches of its own so no cached build of
+# an ancestor stands in (lead, 2026-11-08: db70f6030 passed its gate,
+# whose xo came from the newest cached ancestor, and failed
+# XO_INLINE_STRICT from the 0.44 seed on the hosts). The Mac has no
+# XO_SEED: run it there with offload-gate.sh WORKTREE seedbuild.
+prove_seedbuild() {
+  if [ -z "${XO_SEED:-}" ] || [ ! -x "${XO_SEED:-}" ]; then
+    failed=1; echo "seedbuild: FAIL (no XO_SEED: it runs on an offload host, ~/xo-lead/agents/offload-gate.sh WORKTREE seedbuild)"
+  else
+    local t1 sb nolibc
+    t1=$(date +%s) sb=$logs/seedbuild nolibc=${XO_NOLIBC:-}
+    # as xobuild (internal/xotool hostBackend): xo links with the C
+    # library on Linux
+    [ "$(uname -s)" = Linux ] && [ -z "$nolibc" ] && nolibc=0
+    rm -rf "${sb:?}" && mkdir -p "$sb"
+    if XO_NOLIBC=$nolibc XO_INLINE_STRICT=1 XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_BUILD_DIR="$sb/build" XO_RTOBJ_CACHE="$sb/rtobj" \
+      XO_BACKEND_CACHE_DIR="$sb/backend" "$XO_SEED" build --std="$wt/std" -o "$sb/xo" ./compiler/xo >"$logs/seedbuild.txt" 2>&1; then
+      echo "seedbuild: $(($(date +%s) - t1)) s with $("$XO_SEED" version 2>/dev/null)"; ran="$ran seedbuild"
+    else
+      failed=1; echo "seedbuild: FAIL ($logs/seedbuild.txt: $(grep -m1 -E 'XO[0-9]{4}|error|verif|panic' "$logs/seedbuild.txt")) with $("$XO_SEED" version 2>/dev/null)"
+    fi
+    rm -rf "${sb:?}/build" "${sb:?}/rtobj" "${sb:?}/backend" "${sb:?}/xo"
+  fi
+}
+# a generated block (scripts/gen's output in the runtime) against its
+# generator, run by this xo (lead, 2026-11-08: a hand edit of sha3.xo's
+# Keccak reached main)
+prove_fieldgen() {
+  local f0=$failed; failed=0
+  full fieldgen ./internal/llvm -run '^TestFieldGeneratorsInSync$'
+  if [ "$failed" = 0 ] && ! grep -q -- '--- PASS: TestFieldGeneratorsInSync' "$logs/fieldgen.txt"; then
+    failed=1; echo "fieldgen: FAIL (TestFieldGeneratorsInSync did not run: $logs/fieldgen.txt)"
+  fi
+  [ "$failed" = 0 ] && ran="$ran fieldgen"
+  [ "$f0" = 1 ] && failed=1
+}
+# The concurrent jobs (conc=1): job KEY CMD... starts CMD in the
+# background once fewer than gjobs jobs run, with its output buffered in
+# $logs/.job-KEY.out and printed when it ends; its failed and ran go to
+# files that pool_wait folds in, in the order the jobs started.
+jobkeys=""
+job() {
+  local k=$1; shift
+  while [ "$(jobs -pr | wc -l)" -ge "$gjobs" ]; do sleep 2; done
+  rm -f "$logs/.job-$k".*
+  (
+    failed=0 ran="" t1=$(date +%s)
+    "$@" >"$logs/.job-$k.out" 2>&1
+    echo "$failed" >"$logs/.job-$k.failed"
+    echo "$ran" >"$logs/.job-$k.ran"
+    cat "$logs/.job-$k.out"
+    echo "gate.sh: $k done in $(($(date +%s) - t1)) s"
+  ) &
+  jobkeys="$jobkeys $k"
+}
+pool_wait() {
+  local k
+  wait
+  for k in $jobkeys; do
+    # a job that left no status died before it finished: a failure
+    [ "$(cat "$logs/.job-$k.failed" 2>/dev/null || echo 1)" = 0 ] || failed=1
+    ran="$ran $(cat "$logs/.job-$k.ran" 2>/dev/null)"
+    rm -f "$logs/.job-$k".*
+  done
+  jobkeys=""
+}
+corpora_group() { # corpora then corpora-all, as named: one job (shared logs)
+  local s
+  for s in $steps; do
+    case $s in corpora | corpora-all) run_step "$s" ;; esac
+  done
+}
+tsteps=$(date +%s)
+if [ "$conc" = 1 ]; then
+  echo "gate.sh: concurrent, at most $gjobs jobs:$steps"
+  cg=0
+  for step in $steps; do
+    case $step in
+    corpora | corpora-all)
+      [ "$cg" = 1 ] && continue
+      cg=1; job corpora corpora_group ;;
+    *) job "$step" run_step "$step" ;;
+    esac
+  done
+  job after after_steps
+else
+  for step in $steps; do run_step "$step"; done
+  after_steps
 fi
 # The checks pushq.sh requires by path (its "Proving-test reminders"), run
 # here so the push is not refused after the gate (lead, 2026-11-06
@@ -527,76 +671,28 @@ if [ "${XO_GATE_PUSHQ:-1}" != 0 ]; then
 fi
 plan=" $(gate_plan "$req" $named) "
 echo "gate.sh: proving checks:${plan% }${plan:+ }(required by the paths: ${req:-none}; named:${named:- none})"
-if [[ "$plan" == *" codegen "* ]]; then
-  if "$XO_CLI" dev codegen --backend=arm64,llvm test/codegen >"$logs/codegen.txt" 2>&1; then
-    echo "codegen: $(tail -1 "$logs/codegen.txt")"; ran="$ran codegen"
-  else
-    failed=1; echo "codegen: FAIL ($logs/codegen.txt)"
-  fi
-fi
-if [[ "$plan" == *" wasm "* ]]; then
-  # the goldens the branch touches, and the concurrency, atomics and map
-  # sets pushq.sh names
-  g=$(echo "$ch" | sed -n 's|^internal/[a-z0-9]*/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -)
-  f0=$failed; failed=0
-  XO_WASM_GOLDENS="${g:+$g,}conc_*,atomic_ops,map_*" full wasm ./internal/selfhost -run '^TestSelfhostWasm$'
-  [ "$failed" = 0 ] && ran="$ran wasm"
-  [ "$f0" = 1 ] && failed=1
-fi
-# what compiler/xo builds from: one cold self build with the new xo under
-# an 8 GB budget (owner, 2026-11-06: 11a08a448's inliner runaway passed
-# 22 GB building xo and reached main, found only when builders failed)
-if [[ "$plan" == *" cross "* ]]; then
-  f0=$failed; failed=0
-  full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$'
-  [ "$failed" = 0 ] && ran="$ran cross"
-  [ "$f0" = 1 ] && failed=1
-fi
-if [[ "$plan" == *" selfbuild "* ]]; then
-  t1=$(date +%s)
-  if XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_WHOLE_BUILD=off "$XO_CLI" build --phase-times -o "$logs/selfbuild-xo" ./compiler/xo >"$logs/selfbuild.txt" 2>&1; then
-    echo "selfbuild: $(($(date +%s) - t1)) s, $(grep -o 'peak [0-9]* MB' "$logs/selfbuild.txt" | sort -k2 -n | tail -1)"; ran="$ran selfbuild"
-  else
-    failed=1; echo "selfbuild: FAIL ($logs/selfbuild.txt: $(grep -m1 -E 'memory budget|error' "$logs/selfbuild.txt"))"
-  fi
-  rm -f "$logs/selfbuild-xo"
-fi
-# a generated block (scripts/gen's output in the runtime) against its
-# generator, run by this xo (lead, 2026-11-08: a hand edit of sha3.xo's
-# Keccak reached main)
-# seedbuild: compiler/xo built by the offload host's seed (XO_SEED,
-# which offload-gate-remote.sh exports) under XO_INLINE_STRICT=1, the
-# hourly fixed point's s1, with caches of its own so no cached build of
-# an ancestor stands in (lead, 2026-11-08: db70f6030 passed its gate,
-# whose xo came from the newest cached ancestor, and failed
-# XO_INLINE_STRICT from the 0.44 seed on the hosts). The Mac has no
-# XO_SEED: run it there with offload-gate.sh WORKTREE seedbuild.
-if [[ "$plan" == *" seedbuild "* ]]; then
-  if [ -z "${XO_SEED:-}" ] || [ ! -x "${XO_SEED:-}" ]; then
-    failed=1; echo "seedbuild: FAIL (no XO_SEED: it runs on an offload host, ~/xo-lead/agents/offload-gate.sh WORKTREE seedbuild)"
-  else
-    t1=$(date +%s) sb=$logs/seedbuild nolibc=${XO_NOLIBC:-}
-    # as xobuild (internal/xotool hostBackend): xo links with the C
-    # library on Linux
-    [ "$(uname -s)" = Linux ] && [ -z "$nolibc" ] && nolibc=0
-    rm -rf "${sb:?}" && mkdir -p "$sb"
-    if XO_NOLIBC=$nolibc XO_INLINE_STRICT=1 XO_MAX_MEM=8G XO_BACKEND_CACHE=off XO_BIN_CACHE=off XO_BUILD_DIR="$sb/build" XO_RTOBJ_CACHE="$sb/rtobj" \
-      XO_BACKEND_CACHE_DIR="$sb/backend" "$XO_SEED" build --std="$wt/std" -o "$sb/xo" ./compiler/xo >"$logs/seedbuild.txt" 2>&1; then
-      echo "seedbuild: $(($(date +%s) - t1)) s with $("$XO_SEED" version 2>/dev/null)"; ran="$ran seedbuild"
-    else
-      failed=1; echo "seedbuild: FAIL ($logs/seedbuild.txt: $(grep -m1 -E 'XO[0-9]{4}|error|verif|panic' "$logs/seedbuild.txt")) with $("$XO_SEED" version 2>/dev/null)"
-    fi
-    rm -rf "${sb:?}/build" "${sb:?}/rtobj" "${sb:?}/backend" "${sb:?}/xo"
-  fi
-fi
-if [[ "$plan" == *" fieldgen "* ]]; then
-  f0=$failed; failed=0
-  full fieldgen ./internal/llvm -run '^TestFieldGeneratorsInSync$'
-  if [ "$failed" = 0 ] && ! grep -q -- '--- PASS: TestFieldGeneratorsInSync' "$logs/fieldgen.txt"; then
-    failed=1; echo "fieldgen: FAIL (TestFieldGeneratorsInSync did not run: $logs/fieldgen.txt)"
-  fi
-  [ "$failed" = 0 ] && ran="$ran fieldgen"
-  [ "$f0" = 1 ] && failed=1
+if [ "$conc" = 1 ]; then
+  for p in codegen wasm cross fieldgen; do
+    [[ "$plan" == *" $p "* ]] && job "$p" "prove_$p"
+  done
+  pool_wait
+  [[ "$plan" == *" selfbuild "* ]] && prove_selfbuild
+  [[ "$plan" == *" seedbuild "* ]] && prove_seedbuild
+  # PUSHQ_RAN in the serial order
+  r2=""
+  for p in codegen wasm cross selfbuild seedbuild fieldgen; do
+    [[ " $ran " == *" $p "* ]] && r2="$r2 $p"
+  done
+  ran=$r2
+  echo "gate.sh: steps took $(($(date +%s) - tsteps)) s (concurrent, at most $gjobs jobs)"
+else
+  [[ "$plan" == *" codegen "* ]] && prove_codegen
+  [[ "$plan" == *" wasm "* ]] && prove_wasm
+  [[ "$plan" == *" cross "* ]] && prove_cross
+  [[ "$plan" == *" selfbuild "* ]] && prove_selfbuild
+  [[ "$plan" == *" seedbuild "* ]] && prove_seedbuild
+  [[ "$plan" == *" fieldgen "* ]] && prove_fieldgen
+  echo "gate.sh: steps took $(($(date +%s) - tsteps)) s"
 fi
 [ -n "$ran" ] && echo "pushq: PUSHQ_RAN=\"$(echo $ran)\""
 # pushq-ran (lead, 2026-11-06 bottleneck review: 6 pushes in 3 hours were
