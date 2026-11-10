@@ -5208,6 +5208,9 @@ pub fn deflate(data: Bytes, level: Level = Level.Default) -> Bytes       // raw 
 pub fn inflate(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
 pub fn zlib(data: Bytes, level: Level = Level.Default) -> Bytes          // RFC 1950
 pub fn unzlib(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+enum LzwOrder { LSB, MSB }  // compress/lzw bit order
+fn lzw_encode(data: Bytes, order: LzwOrder, lit_width: Int) -> Bytes ! CompressErr  // Go's compress/lzw writer over a whole buffer
+fn lzw_decode(data: Bytes, order: LzwOrder, lit_width: Int, max_size: Int = 1073741824) -> Bytes ! CompressErr  // Go's compress/lzw reader
 
 enum Format { Gzip, Deflate, Zlib }
 struct Compressor {}                     // move only (core 5.3)

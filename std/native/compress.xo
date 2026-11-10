@@ -317,3 +317,253 @@ fn (var d: Decompressor) finish() -> Bytes ! compress.CompressErr {
     Err(e) => Err(fail(d.name(), e, d.max))
   }
 }
+
+// LZW (decision 0578 step 4): Go's compress/lzw writer.go and reader.go over
+// whole buffers.
+
+/// An LZW encoder's state (Go's lzw.Writer without its io plumbing).
+struct LzwEnc {
+  out: BytesBuilder
+  lsb: Bool
+  lit: Int
+  bits: Int
+  nbits: Int
+  width: Int
+  hi: Int
+  overflow: Int
+  table: List[Int]
+}
+
+fn (var e: LzwEnc) put(c: Int) {
+  if e.lsb {
+    e.bits = e.bits | (c << e.nbits)
+    e.nbits += e.width
+    while e.nbits >= 8 {
+      e.out.write_le(e.bits & 255, 1)
+      e.bits = e.bits >> 8
+      e.nbits -= 8
+    }
+  } else {
+    e.bits = e.bits | ((c << (32 - e.width - e.nbits)) & 4294967295)
+    e.nbits += e.width
+    while e.nbits >= 8 {
+      e.out.write_le((e.bits >> 24) & 255, 1)
+      e.bits = (e.bits << 8) & 4294967295
+      e.nbits -= 8
+    }
+  }
+}
+
+/// Go's incHi: true when the codes ran out and the table was reset.
+fn (var e: LzwEnc) inc_hi() -> Bool {
+  e.hi += 1
+  if e.hi == e.overflow {
+    e.width += 1
+    e.overflow = e.overflow << 1
+  }
+  if e.hi == 4095 {
+    let clear = 1 << e.lit
+    e.put(clear)
+    e.width = e.lit + 1
+    e.hi = clear + 1
+    e.overflow = clear << 1
+    for i in 0..e.table.len() {
+      e.table[i] = 0
+    }
+    return true
+  }
+  false
+}
+
+fn lzw_range_err(lit_width: Int) -> compress.CompressErr {
+  compress.CompressErr{msg: "lzw: litWidth ${lit_width} out of range"}
+}
+
+fn lzw_encode(data: Bytes, order: compress.LzwOrder, lit_width: Int) -> Bytes ! compress.CompressErr {
+  if lit_width < 2 || lit_width > 8 {
+    return Err(lzw_range_err(lit_width))
+  }
+  let lsb = order == compress.LzwOrder.LSB
+  let clear = 1 << lit_width
+  var e = LzwEnc{out: BytesBuilder.with_capacity(data.len() / 2 + 16), lsb: lsb, lit: lit_width, bits: 0, nbits: 0, width: lit_width + 1, hi: clear + 1, overflow: clear << 1, table: []}
+  for _ in 0..16384 {
+    e.table.push(0)
+  }
+  if data.len() == 0 {
+    e.put(clear)
+  } else {
+    if lit_width != 8 {
+      let max_lit = (1 << lit_width) - 1
+      for x in data {
+        if Int(x) > max_lit {
+          return Err(compress.CompressErr{msg: "lzw: input byte too large for the litWidth"})
+        }
+      }
+    }
+    e.put(clear)
+    var code = Int(data[0])
+    for i in 1..data.len() {
+      let literal = Int(data[i])
+      let key = (code << 8) | literal
+      var hash = ((key >> 12) ^ key) & 16383
+      var found = false
+      var h = hash
+      var t = e.table[h]
+      while t != 0 {
+        if key == (t >> 12) {
+          code = t & 4095
+          found = true
+          break
+        }
+        h = (h + 1) & 16383
+        t = e.table[h]
+      }
+      if found {
+        continue
+      }
+      e.put(code)
+      code = literal
+      if e.inc_hi() {
+        continue
+      }
+      while e.table[hash] != 0 {
+        hash = (hash + 1) & 16383
+      }
+      e.table[hash] = (key << 12) | e.hi
+    }
+    e.put(code)
+    let _ = e.inc_hi()
+  }
+  e.put((1 << lit_width) + 1)
+  if e.nbits > 0 {
+    var bits = e.bits
+    if !lsb {
+      bits = bits >> 24
+    }
+    e.out.write_le(bits & 255, 1)
+  }
+  e.out.freeze()
+}
+
+/// The decoded bytes of Go's lzw.Reader and its error text ("" for none; the
+/// bytes before an error are still Go's output), at most limit bytes (an
+/// error "lzw: output exceeds max_size" past it, as the other decoders).
+fn lzw_run(data: Bytes, order: compress.LzwOrder, lit_width: Int, max_size: Int) -> (Bytes, Str) {
+  if lit_width < 2 || lit_width > 8 {
+    return (b"", lzw_range_err(lit_width).msg)
+  }
+  let lsb = order == compress.LzwOrder.LSB
+  let clear = 1 << lit_width
+  let eof = clear + 1
+  var width = lit_width + 1
+  var hi = eof
+  var overflow = 1 << width
+  var last = 65535
+  var suffix: List[Int] = []
+  var prefix: List[Int] = []
+  for _ in 0..4096 {
+    suffix.push(0)
+    prefix.push(0)
+  }
+  var out = BytesBuilder.with_capacity(data.len() * 2)
+  var bits = 0
+  var nbits = 0
+  var pos = 0
+  var stack: List[Int] = []
+  let limit = if max_size < 0 { 0 } else { max_size }
+  while true {
+    // read one code
+    while nbits < width {
+      if pos >= data.len() {
+        return (out.freeze(), "unexpected EOF")
+      }
+      let x = Int(data[pos])
+      pos += 1
+      if lsb {
+        bits = bits | (x << nbits)
+      } else {
+        bits = bits | (x << (24 - nbits))
+      }
+      nbits += 8
+    }
+    var code = 0
+    if lsb {
+      code = bits & ((1 << width) - 1)
+      bits = bits >> width
+    } else {
+      code = (bits >> (32 - width)) & 65535
+      bits = (bits << width) & 4294967295
+    }
+    nbits -= width
+    if code < clear {
+      out.write_le(code, 1)
+      if last != 65535 {
+        suffix[hi] = code
+        prefix[hi] = last
+      }
+    } else if code == clear {
+      width = 1 + lit_width
+      hi = eof
+      overflow = 1 << width
+      last = 65535
+      continue
+    } else if code == eof {
+      return (out.freeze(), "")
+    } else if code <= hi {
+      stack = []
+      var c = code
+      var tail = -1
+      if code == hi && last != 65535 {
+        c = last
+        while c >= clear {
+          c = prefix[c]
+        }
+        tail = c
+        c = last
+      }
+      while c >= clear {
+        stack.push(suffix[c])
+        c = prefix[c]
+      }
+      stack.push(c)
+      var k = stack.len() - 1
+      while k >= 0 {
+        out.write_le(stack[k], 1)
+        k -= 1
+      }
+      if tail >= 0 {
+        out.write_le(tail, 1)
+      }
+      if last != 65535 {
+        suffix[hi] = c
+        prefix[hi] = last
+      }
+    } else {
+      return (out.freeze(), "lzw: invalid code")
+    }
+    last = code
+    hi += 1
+    if hi >= overflow {
+      if width == 12 {
+        last = 65535
+        hi -= 1
+      } else {
+        width += 1
+        overflow = 1 << width
+      }
+    }
+    if out.len() > limit {
+      return (b"", "lzw: output exceeds max_size (${max_size} bytes)")
+    }
+  }
+  (b"", "")
+}
+
+fn lzw_decode(data: Bytes, order: compress.LzwOrder, lit_width: Int, max_size: Int) -> Bytes ! compress.CompressErr {
+  let (out, err) = lzw_run(data, order, lit_width, max_size)
+  if err != "" {
+    return Err(compress.CompressErr{msg: err})
+  }
+  out
+}
+

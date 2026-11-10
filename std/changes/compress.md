@@ -1,5 +1,17 @@
 # std/compress changes
 
+## 2026-11-09: feature: std/compress lzw_encode and lzw_decode (decision 0578 step 4)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (std/gif needs LZW)
+- Go reference: compress/lzw writer.go and reader.go (the clear code first, the table reset when the 12 bit codes run out, the end code; the reader's stale table entries for a first code equal to hi)
+- Test: testdata/corpus/lzw: 190 encodings (both orders, literal widths 2 to 8, 0 to 30,000 bytes, bad widths and a byte too wide), their round trips, and Go's reader on 400 more streams (truncated, with a flipped bit, random bytes, bad widths): output and error text equal Go's on arm64, LLVM and the Go backend
+- Timing: none yet
+- Shipped in: not yet released
+
+`LzwOrder`, `lzw_encode(data, order, lit_width)` and `lzw_decode(data, order, lit_width, max_size)` over whole buffers; the streaming pair of decision 0578 follows when something needs it.
+
 ## 2026-11-04: perf: deflate's Huffman setup and hash read faster
 
 - Kind: perf

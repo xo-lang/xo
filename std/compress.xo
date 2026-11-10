@@ -72,3 +72,25 @@ fn decompressor(format: Format, max_size: Int = 1073741824) -> Decompressor
 fn (var d: Decompressor) write(data: Bytes) -> Bytes ! CompressErr
 /// @moves
 fn (var d: Decompressor) finish() -> Bytes ! CompressErr
+
+/// The bit order of an LZW stream (Go's compress/lzw Order): LSB (GIF, and
+/// TIFF's predecessor) packs codes from the low end of each byte, MSB (PDF,
+/// TIFF) from the high end.
+enum LzwOrder {
+  LSB
+  MSB
+} derive Eq, Display
+
+/// Go's compress/lzw writer over a whole buffer: the codes Go writes for
+/// the data, a leading clear code, a table reset when the 12 bit codes run
+/// out, then the end code. lit_width (2 to 8) is the width of a literal code
+/// and every byte must fit in it. Errors are Go's texts: `lzw: litWidth 9
+/// out of range`, `lzw: input byte too large for the litWidth`.
+fn lzw_encode(data: Bytes, order: LzwOrder, lit_width: Int) -> Bytes ! CompressErr
+
+/// Go's compress/lzw reader over a whole buffer: the bytes up to the end
+/// code (anything after it is ignored). Errors are Go's texts: `lzw: invalid
+/// code`, `unexpected EOF` (no end code), `lzw: litWidth 1 out of range`, or
+/// `lzw: output exceeds max_size (N bytes)`.
+fn lzw_decode(data: Bytes, order: LzwOrder, lit_width: Int, max_size: Int = 1073741824) -> Bytes ! CompressErr
+

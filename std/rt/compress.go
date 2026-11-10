@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"compress/lzw"
 	"compress/zlib"
 	"fmt"
 	"io"
@@ -314,3 +315,36 @@ func (x *Compress_Decompressor) M_finish(_ *Task) Result[Bytes, Compress_Compres
 	f.out = nil
 	return Ok[Bytes, Compress_CompressErr](Bytes(out))
 }
+
+// lzwOrder is Go's order for a LzwOrder (variant tags start at 1: LSB is 1).
+func lzwOrder(o Compress_LzwOrder) lzw.Order {
+	if o.Tag == 1 {
+		return lzw.LSB
+	}
+	return lzw.MSB
+}
+
+// Compress_lzw_encode is Go's compress/lzw writer over the whole buffer.
+func Compress_lzw_encode(_ *Task, data Bytes, order Compress_LzwOrder, litWidth int64) Result[Bytes, Compress_CompressErr] {
+	var b bytes.Buffer
+	w := lzw.NewWriter(&b, lzwOrder(order), int(litWidth))
+	if _, err := w.Write([]byte(data)); err != nil {
+		return Err[Bytes](Compress_CompressErr{F_msg: err.Error()})
+	}
+	if err := w.Close(); err != nil {
+		return Err[Bytes](Compress_CompressErr{F_msg: err.Error()})
+	}
+	return Ok[Bytes, Compress_CompressErr](Bytes(b.Bytes()))
+}
+
+// Compress_lzw_decode is Go's compress/lzw reader over the whole buffer,
+// through a limit of max_size + 1 bytes.
+func Compress_lzw_decode(_ *Task, data Bytes, order Compress_LzwOrder, litWidth int64, max int64) Result[Bytes, Compress_CompressErr] {
+	r := lzw.NewReader(bytes.NewReader([]byte(data)), lzwOrder(order), int(litWidth))
+	out, err := compressRead(r, max)
+	if err != nil {
+		return Err[Bytes](compressFail("lzw", max, err))
+	}
+	return Ok[Bytes, Compress_CompressErr](Bytes(out))
+}
+
