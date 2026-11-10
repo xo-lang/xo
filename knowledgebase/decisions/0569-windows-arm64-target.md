@@ -262,7 +262,12 @@ functions with no frame and no saved registers have none.
 - **Flag 2:** a packed fragment with no prologue or epilogue.
 - **Flag 3:** a link record for a jump island.
 
-Functions over 1 MB split into fragments. Code generated at run time
+Functions over 1 MB split into fragments (compiler/macho coffseh64.xo
+a64_segments, ported from LLVM's ARM64FindSegmentsInFunction on
+2026-11-09: xo's own build for windows/arm64 has a 2.6 MB function;
+each segment gets its own .xdata record and .pdata entry, a segment
+without the prolog starts its codes with end_c, and the objects match
+llvm-mc 23 byte for byte). Code generated at run time
 would register with RtlAddFunctionTable; Xo generates none.
 
 Xo's arm64 emitter writes `.cfi_*` directives (emit.xo:271-447,

@@ -65,6 +65,19 @@ struct A64Win {
   /// .pdata word when the record is packed
   xsym: Int = -1
   packed: Int = 0
+  /// the segments (ARM64FindSegmentsInFunction), once written
+  segs: List[A64Seg] = []
+}
+
+/// A segment of a function's unwind data (WinEH::FrameInfo::Segment): its
+/// offset and length in the function, whether it holds the prolog, the
+/// indices of its epilogs in A64Win.epis, and its .xdata record's label.
+struct A64Seg {
+  off: Int
+  len: Int
+  pro: Bool
+  epis: List[Int] = []
+  xsym: Int = -1
 }
 
 fn a64_ins_eq(x: A64Ins, y: A64Ins) -> Bool { x.op == y.op && x.reg == y.reg && x.off == y.off }
@@ -548,79 +561,140 @@ fn (var a: Asm) a64_unwind_info(k: Int, try_packed: Bool) {
     return
   }
   let raw = w.end - w.begin
-  if raw > 0xffffc {
-    a.fail("a function of ${raw} bytes: windows/arm64 unwind data for one over 0xffffc is not written yet")
-    return
+  w.segs = a64_segments(w, raw)
+  let pro_bytes = a64_count(w.ins)
+  for q in 0..w.segs.len() {
+    a.a64_segment_info(w, q, pro_bytes, try_packed)
+    if !a.err.is_empty() {
+      return
+    }
+    if w.packed != 0 {
+      break
+    }
   }
+  w.xsym = w.segs[0].xsym
+  a.a64w[k] = w
+}
+
+/// ARM64FindSegmentsInFunction: the function split into segments of at
+/// most 0xffffc bytes (an .xdata record's function length is 18 bits of
+/// words), each prolog or epilog wholly inside one; the first segment
+/// holds the prolog. One segment when the function fits.
+fn a64_segments(w: A64Win, raw: Int) -> List[A64Seg] {
+  let limit = 0xffffc
+  var segs: List[A64Seg] = []
+  var e = 0
+  var off = 0
+  if raw > limit {
+    var left = raw
+    while left > limit {
+      var len = limit
+      let end = off + len
+      var in_seg: List[Int] = []
+      // an epilog's end: its last instruction (the end opcode excluded)
+      while e < w.epis.len() && (w.epis[e].start - w.begin) + (w.epis[e].ins.len() - 1) * 4 < end {
+        in_seg.push(e)
+        e += 1
+      }
+      if e < w.epis.len() && w.epis[e].start - w.begin <= end {
+        // the next epilog would cross the boundary: end the segment before it
+        len = w.epis[e].start - w.begin - off
+      }
+      segs.push(A64Seg{off: off, len: len, pro: off == 0, epis: in_seg})
+      off += len
+      left -= len
+    }
+  }
+  var last: List[Int] = []
+  while e < w.epis.len() {
+    last.push(e)
+    e += 1
+  }
+  segs.push(A64Seg{off: off, len: raw - off, pro: off == 0, epis: last})
+  segs
+}
+
+/// ARM64EmitUnwindInfoForSegment: segment q's .xdata record (or the
+/// frame's packed word, for a one segment frame). A segment with no
+/// prolog starts its codes with end_c (0xe5), so the unwinder never
+/// treats a pc in it as inside a partial prolog, and one with no epilog
+/// gets one phantom epilog at that end_c.
+fn (var a: Asm) a64_segment_info(var w: A64Win, q: Int, pro0: Int, try_packed: Bool) {
   let si = a.cur
   a.push_item(si, Item.Align(2))
   let lab = a.new_numeric(".Lxdata".bytes())
   a.syms[lab].sect = si
   a.push_item(si, Item.Label(lab))
-  w.xsym = lab
-  let seglen = raw / 4
-  var pro_bytes = a64_count(w.ins)
-  // checkARM64PackedEpilog: one epilog, at the very end
+  w.segs[q].xsym = lab
+  let seg = w.segs[q]
+  let seglen = seg.len / 4
+  var pro_bytes = pro0
+  // checkARM64PackedEpilog: one epilog, at the very end of the segment
   var peo = -1
-  var shared = -1
-  if w.epis.len() == 1 {
-    let e = w.epis[0]
-    if (raw - (e.start - w.begin)) / 4 == e.ins.len() {
+  if seg.epis.len() == 1 {
+    let ej = seg.epis[0]
+    let e = w.epis[ej]
+    if (seg.off + seg.len - (e.start - w.begin)) / 4 == e.ins.len() {
       if pro_bytes <= 31 && pro_bytes + a64_count(e.ins) <= 124 {
         peo = pro_bytes
       }
       let off = a64_offset_in_prolog(w.ins, e.ins)
       if off >= 0 && off <= 31 && pro_bytes <= 124 {
         peo = off
-        shared = 0
+        // the epilog is the prolog's codes: not written (erased from
+        // EpilogMap; a later lookup sees no codes)
+        w.epis[ej].ins = []
       }
     }
   }
-  if shared == 0 {
-    // the epilog is the prolog's codes: not written (erased from
-    // EpilogMap; a later lookup sees no codes)
-    w.epis[0].ins = []
-  }
-  if peo >= 0 && peo < pro_bytes && !w.handles && seglen <= 0x7ff && try_packed {
+  if w.segs.len() == 1 && peo >= 0 && peo < pro_bytes && !w.handles && seglen <= 0x7ff && try_packed {
     let p = a64_try_packed(w.ins, seglen, peo)
     if p != 0 {
       w.packed = p
-      a.a64w[k] = w
       return
+    }
+  }
+  if !seg.pro {
+    pro_bytes += 1
+    if peo >= 0 {
+      peo += 1
+    }
+    if seg.epis.is_empty() {
+      peo = 0
     }
   }
   // ARM64ProcessEpilogs
   var total = pro_bytes
   var index: List[Int] = []
   var added: List[Int] = []
-  for j in 0..w.epis.len() {
-    let ei = w.epis[j].ins
+  for ej in seg.epis {
+    let ei = w.epis[ej].ins
     var found = -1
-    for q in added {
-      if found < 0 && a64_ins_list_eq(w.epis[q].ins, ei) {
-        found = q
+    for x in added {
+      if found < 0 && a64_ins_list_eq(w.epis[x].ins, ei) {
+        found = x
       }
     }
     if found >= 0 {
-      index.push(index[found])
-      w.epis[j].ins = []
+      index.push(index[a64_pos(seg.epis, found)])
+      w.epis[ej].ins = []
       continue
     }
     let po = a64_offset_in_prolog(w.ins, ei)
     if po >= 0 {
-      index.push(po)
-      w.epis[j].ins = []
+      index.push(if seg.pro { po } else { po + 1 })
+      w.epis[ej].ins = []
       continue
     }
     index.push(total)
     total += a64_count(ei)
-    added.push(j)
+    added.push(ej)
   }
   var words = total / 4
   if total % 4 != 0 {
     words += 1
   }
-  let count = if peo >= 0 { peo } else { w.epis.len() }
+  let count = if peo >= 0 { peo } else { seg.epis.len() }
   let ext = count > 31 || total > 124
   var row1 = seglen & 0x3ffff
   if !ext {
@@ -642,17 +716,21 @@ fn (var a: Asm) a64_unwind_info(k: Int, try_packed: Bool) {
     b = a64_le32(b, ((words & 0xff) << 16) | (count & 0xffff))
   }
   if peo < 0 {
-    for j in 0..w.epis.len() {
-      b = a64_le32(b, ((w.epis[j].start - w.begin) / 4) | ((index[j] & 0x3ff) << 22))
+    for x in 0..seg.epis.len() {
+      let ej = seg.epis[x]
+      b = a64_le32(b, ((w.epis[ej].start - w.begin - seg.off) / 4) | ((index[x] & 0x3ff) << 22))
     }
+  }
+  if !seg.pro {
+    b.push(0xe5)
   }
   var j = w.ins.len() - 1
   while j >= 0 {
     b = a64_code_bytes(b, w.ins[j])
     j -= 1
   }
-  for e in w.epis {
-    for i in e.ins {
+  for ej in seg.epis {
+    for i in w.epis[ej].ins {
       b = a64_code_bytes(b, i)
     }
   }
@@ -664,7 +742,16 @@ fn (var a: Asm) a64_unwind_info(k: Int, try_packed: Bool) {
     a.register(w.handler)
     a.push_item(si, Item.Word(n: 4, a: w.handler, b: -1, k: 0))
   }
-  a.a64w[k] = w
+}
+
+/// x's position in xs (it is there).
+fn a64_pos(xs: List[Int], x: Int) -> Int {
+  for i in 0..xs.len() {
+    if xs[i] == x {
+      return i
+    }
+  }
+  -1
 }
 
 fn a64_le32(b0: List[Int], v: Int) -> List[Int] {
@@ -710,11 +797,15 @@ fn (var a: Asm) a64_unwind_tables() {
       }
       a.push_item(si, Item.Align(2))
       a.register(w.bsym)
-      a.push_item(si, Item.Word(n: 4, a: w.bsym, b: -1, k: 0))
       if w.packed != 0 {
+        a.push_item(si, Item.Word(n: 4, a: w.bsym, b: -1, k: 0))
         a.push_item(si, Item.Raw(int_bytes(a64_le32([], w.packed))))
-      } else {
-        a.push_item(si, Item.Word(n: 4, a: w.xsym, b: -1, k: 0))
+        continue
+      }
+      // ARM64EmitRuntimeFunction: one entry per segment, at its offset
+      for g in w.segs {
+        a.push_item(si, Item.Word(n: 4, a: w.bsym, b: -1, k: g.off))
+        a.push_item(si, Item.Word(n: 4, a: g.xsym, b: -1, k: 0))
       }
     }
   }

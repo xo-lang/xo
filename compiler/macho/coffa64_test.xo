@@ -143,3 +143,57 @@ test "ARM64 load scale: the access size of an unsigned offset load or store" {
   expect(a64_is_add_imm(0x91000000)) == true // add x0, x0, #0
   expect(a64_is_add_imm(0xf9400000)) == false
 }
+
+// A function over 0xffffc bytes: its unwind data in two segments, as
+// llvm-mc 23 writes them (ARM64FindSegmentsInFunction). The second
+// segment's codes start with end_c (0xe5), and .pdata has an entry per
+// segment, the second at the function plus 0xffffc. The epilog at the
+// boundary moves wholly into the second segment.
+fn big_a64_source() -> Bytes {
+  let lim = 0xffffc / 4
+  var b = BytesBuilder.with_capacity(8 * lim)
+  b.write_str("\t.text\n\t.globl big2\n\t.p2align 2\nbig2:\n\t.seh_proc big2\n")
+  b.write_str("\tstp x29, x30, [sp, #-32]!\n\t.seh_save_fplr_x 32\n\tstr x19, [sp, #16]\n\t.seh_save_reg x19, 16\n")
+  b.write_str("\tmov x29, sp\n\t.seh_set_fp\n\t.seh_endprologue\n")
+  let epi = "\t.seh_startepilogue\n\tldr x19, [sp, #16]\n\t.seh_save_reg x19, 16\n\tldp x29, x30, [sp], #32\n\t.seh_save_fplr_x 32\n\t.seh_endepilogue\n\tret\n"
+  for _ in 0..(lim - 2) {
+    b.write_str("\tnop\n")
+  }
+  b.write_str(epi)
+  for _ in 0..(lim + 50 - (lim - 2) - 3) {
+    b.write_str("\tnop\n")
+  }
+  b.write_str(epi)
+  b.write_str("\t.seh_endproc\n")
+  b.freeze()
+}
+
+test "a windows/arm64 function over 0xffffc bytes gets two unwind segments, as llvm-mc writes them" {
+  match assemble_coff_arm64(big_a64_source()) {
+    Ok(o) => {
+      let got = hex_of(o)
+      // .xdata: segment 1 (no epilog of its own but the one moved out),
+      // then segment 2 with end_c and its two epilogs
+      expect(got.contains("ffff0310e1d00283e4e3e3e3380080100100800035008000e5e1d00283e4e3e3")) == true
+      // .pdata: big2+0 -> .xdata+0, big2+0xffffc -> .xdata+0xc
+      expect(got.contains("0000000000000000fcff0f000c000000")) == true
+    }
+    Err(e) => expect(e) == ""
+  }
+}
+
+test "a64_segments ends a segment before an epilog that would cross 0xffffc" {
+  var w = A64Win{sect: 0, begin: 0, end: 3 * 0xffffc - 8}
+  let epi = [A64Ins{op: U_END}, A64Ins{op: U_END}, A64Ins{op: U_END}]
+  w.epis = [A64Epi{start: 400, ins: epi}, A64Epi{start: 0xffffc - 4, ins: epi}, A64Epi{start: 2 * 0xffffc + 8, ins: epi}]
+  let s = a64_segments(w, w.end)
+  expect(s.len()) == 3
+  expect(s[0].len) == 0xffffc - 4
+  expect(s[0].epis) == [0]
+  expect(s[1].off) == 0xffffc - 4
+  expect(s[1].epis) == [1]
+  expect(s[2].off) == 2 * 0xffffc - 4
+  expect(s[2].epis) == [2]
+  expect(s[2].pro) == false
+  expect(s[0].pro) == true
+}
