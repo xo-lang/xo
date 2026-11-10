@@ -481,6 +481,46 @@ struct G {
   has_held: Bool = false
   ref_ptr: Map[Int, Int] = {}
   has_ref_ptr: Bool = false
+  /// the address a wide result is returned at (sret_of), or 0
+  sret_ptr: Int = 0
+  /// each sret call's result slot, a frame offset (plan_sret_slots)
+  sret_slots: Map[Int, Int] = {}
+  /// per result type, the slot of the sret calls whose result is loaded
+  /// at once (sret_slot)
+  sret_tmp: Map[Int, Int] = {}
+  /// each sret_tmp area's size in words, by offset (results of other
+  /// types share an area large enough)
+  sret_tmpw: Map[Int, Int] = {}
+  /// the largest result, in words, of the sret calls loaded through a
+  /// sret_tmp area (plan_sret_tmp): the first such area takes this size
+  sret_tmp_max: Int = 0
+  /// sret calls with `var` results whose result is read in place
+  /// through Field 0: the slot's address register (sret_set)
+  sret_res: Map[Int, Int] = {}
+  /// sret calls whose result is this function's own (returned as it
+  /// is), and that result's value: the call writes it at sret_ptr
+  sret_fwd: Map[Int, Bool] = {}
+  // a Struct or Tuple whose one use is the Return of an sret result:
+  // built at sret_ptr field by field (plan_sret_forward, 0564 (k))
+  sret_mk: Map[Int, Bool] = {}
+  /// sret_out_ok's limit (byref.xo SRET_OUT_WIDE, SRET_OUT_MAX)
+  sret_out_max: Int = 700
+  /// whether a result over SRET_OUT_MAX words went to the outgoing area
+  sret_wide_out: Bool = false
+  /// sret calls whose result is in the outgoing area: its first word
+  sret_outw: Map[Int, Int] = {}
+  /// the next call's Inst.ow (sret_slot sets it, call takes it)
+  next_ow: Int = 0
+  next_lz: Int = 0
+  next_tw: Int = 0
+  next_tn: Int = 0
+  /// sret calls whose result is read in place in the outgoing area (every
+  /// use before the block's next call: byref.xo plan_sret_lazy)
+  sret_lazy: Map[Int, Bool] = {}
+  /// Field 0 of an sret call with `var` parameters read in the call's slot
+  /// (isel.xo field_op): the call, whose slot words its whole loads may
+  /// keep as spill homes (byref.xo sret_slot_load)
+  sret_field_of: Map[Int, Int] = {}
   areas: Map[Int, List[Int]] = {}
   /// the single-precision register of a Float32 value a single-precision
   /// operation made (decision 0361; f32_op)
@@ -640,6 +680,18 @@ fn (var g: G) begin_func(fi: Int) {
   g.has_held = false
   g.ref_ptr = {}
   g.has_ref_ptr = false
+  g.sret_ptr = 0
+  g.sret_slots = {}
+  g.sret_tmp = {}
+  g.sret_tmpw = {}
+  g.sret_tmp_max = 0
+  g.sret_res = {}
+  g.sret_fwd = {}
+  g.sret_mk = {}
+  g.sret_wide_out = false
+  g.sret_outw = {}
+  g.sret_lazy = {}
+  g.sret_field_of = {}
   g.areas = {}
   g.f32s = {}
   g.mem_bytes = 0
