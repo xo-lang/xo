@@ -1,0 +1,323 @@
+// `--play repl WARM DIR` (decision 0583): a REPL session in one long-lived
+// compiler instance. WARM is a small module checked once at the start; each
+// entry is checked on a copy of that checker made a base
+// (start_member_with, decision 0513), so std is not checked again. The
+// session itself is compiler/cli/repl's Sess, as `xo repl` keeps it.
+//
+// One JSON object a line on standard input, one reply a line on standard
+// output (xo repl --json's requests and replies, plus a run step, since the
+// page, not the compiler, runs a module):
+//
+//   {"in": SRC}                  -> {"run": PATH}: the entry's module is at
+//                                   PATH; run it and answer with:
+//   {"ran": STDOUT, "code": N}   -> xo repl --json's reply (ok, value,
+//                                   type, out, err, ms, diagnostics)
+//   {"in": SRC} that does not check, or does not build, is answered with
+//   that reply at once (ok false), with no run step.
+//   {"cmd": C, "arg": A}         -> xo repl --json's commands that need no
+//                                   process: type (A an expression; the
+//                                   reply's type and out), defs, undo,
+//                                   reset, quit (no reply)
+
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/repl
+use github.com/xo-lang/xo/compiler/cli/semantic
+use std/json
+
+/// A request line of `--play repl`.
+struct PIn {
+  src as "in": Str? = None
+  cmd: Str? = None
+  arg: Str = ""
+  ran: Str? = None
+  code: Int = 0
+} derive Json
+
+/// The run step's request of an entry that built.
+struct PRun {
+  run: Str
+} derive Json
+
+fn play_repl(os: Os, std_dir: Str, wd: Str, warm: Str, dir: Str) {
+  let (base, err) = play_check(os, std_dir, wd, warm, true)
+  if !err.is_empty() {
+    os.stdio.println("{\"error\":${json_text(err)}}")
+    return
+  }
+  var sess = repl.Sess{entries: []}
+  var undo: List[repl.Sess] = []
+  var pending: repl.Entry? = None
+  // the pending entry's binding type and value type (from its check)
+  var pending_types: Map[Str, Str] = {}
+  var pending_typ = ""
+  // notes the entry's check made (dropped bindings), said with its reply
+  var pending_note = ""
+  var t0 = os.clock.now()
+  let out = "${dir}/entry.wasm"
+  while {
+    let line = match os.stdio.read_line() {
+      Ok(Some(l)) => l
+      Ok(None) => return
+      Err(e) => {
+        os.stdio.eprintln("xo play repl: ${e}")
+        return
+      }
+    }
+    if line.trim().is_empty() {
+      continue
+    }
+    let r = match json.decode_str[PIn](line) {
+      Ok(r) => r
+      Err(e) => {
+        os.stdio.println(reply(false, None, "", "xo repl: a request is a JSON object ({\"in\": ...} or {\"ran\": ...}): ${e}\n", 0))
+        continue
+      }
+    }
+    if let Some(stdout) = r.ran {
+      // the run step of the pending entry
+      let e = match pending {
+        Some(e) => e
+        None => {
+          os.stdio.println(reply(false, None, "", "xo repl: no entry is waiting for its run\n", 0))
+          continue
+        }
+      }
+      pending = None
+      let ran = repl.parse_run(stdout)
+      let ms = os.clock.since(t0).nanos() / 1000000
+      if r.code != 0 {
+        os.stdio.println(reply(false, None, ran.out, "(exit status ${r.code}; the entry is not kept)\n", ms))
+        continue
+      }
+      if !(e.kind is Expr) {
+        undo.push(sess)
+      }
+      sess = sess.after(e, ran.pins, pending_types)
+      let value = match ran.value {
+        Some(v) => if v == "()" { None } else { Some(v) }
+        None => None
+      }
+      os.stdio.println(json.encode_str(repl.JOut{ok: true, value: value, typ: pending_typ, out: ran.out, err: pending_note, ms: ms, diagnostics: []}))
+      continue
+    }
+    if let Some(cmd) = r.cmd {
+      t0 = os.clock.now()
+      if cmd == "quit" {
+        return
+      }
+      if cmd == "reset" {
+        undo.push(sess)
+        sess = repl.Sess{entries: []}
+        os.stdio.println(reply(true, None, "", "", 0))
+        continue
+      }
+      if cmd == "undo" {
+        if undo.is_empty() {
+          os.stdio.println(reply(false, None, "", "xo repl: nothing to undo\n", 0))
+          continue
+        }
+        sess = undo[undo.len() - 1]
+        undo = undo[..undo.len() - 1]
+        os.stdio.println(reply(true, None, "", "", 0))
+        continue
+      }
+      if cmd == "defs" {
+        os.stdio.println(reply(true, None, sess.defs_text(), "", 0))
+        continue
+      }
+      if cmd == "type" {
+        let (ty, err) = type_entry(os, base, sess, dir, r.arg)
+        let ms = os.clock.since(t0).nanos() / 1000000
+        if !err.is_empty() {
+          os.stdio.println(reply(false, None, "", err, ms))
+          continue
+        }
+        os.stdio.println(json.encode_str(repl.JOut{ok: true, value: None, typ: ty, out: "${ty}\n", err: "", ms: ms, diagnostics: []}))
+        continue
+      }
+      os.stdio.println(reply(false, None, "", "xo repl: unknown command ${cmd} (the playground has type, defs, undo, reset, quit)\n", 0))
+      continue
+    }
+    let src = r.src ?? ""
+    t0 = os.clock.now()
+    let e = repl.Entry{src: src, kind: repl.classify(src), pin: "", typ: ""}
+    // a type defined again (decision 0572 stage 2, as xo repl): the
+    // bindings of the old type run their entries again, and when earlier
+    // entries no longer check, those bindings and the definitions using
+    // the type are dropped
+    let redef = if e.kind is Def && repl.defines_type(src) { repl.def_name(src) } else { "" }
+    let before = sess
+    var stale: List[Str] = []
+    if !redef.is_empty() {
+      for x in sess.entries {
+        if let Bind(name: n, mutable: _) = x.kind {
+          if repl.mentions_type(x.typ, redef) && !stale.contains(n) {
+            stale.push(n)
+            sess = sess.unpin(n)
+          }
+        }
+      }
+    }
+    var note = ""
+    var tries = 0
+    var outcome = 0
+    let main = "${dir}/main.xo"
+    while {
+      let (prog0, at0) = sess.program(e)
+      let (prog, at) = repl.with_effects(prog0, at0, None)
+      if let Err(we) = os.fs.write(main, prog.bytes()) {
+        os.stdio.println(reply(false, None, "", "xo repl: ${we}\n", 0))
+        break
+      }
+      var c = base
+      c.start_member_with(true)
+      if let Err(ce) = c.check_dirs([dir]) {
+        os.stdio.println(reply(false, None, "", "${ce}\n", os.clock.since(t0).nanos() / 1000000))
+        break
+      }
+      let errs = c.diags.filter(fn(d) { !d.warning })
+      if !errs.is_empty() {
+        if e.kind is Use && errs.all(fn(d) { d.code == "XO0110" }) {
+          // a use line no entry refers to yet: its path checked, it is kept
+          undo.push(sess)
+          sess = sess.after(e, {}, {})
+          os.stdio.println(reply(true, None, "", "", os.clock.since(t0).nanos() / 1000000))
+          outcome = 1
+          break
+        }
+        let (ds, text, earlier) = entry_diags(c.diags, main, at, shift_of(e))
+        if earlier && tries == 0 && sess.entries.any(fn(x) { !x.pin.is_empty() }) {
+          // a pinned literal did not check: those bindings run their
+          // entries again from now on
+          for n in sess.bound() {
+            sess = sess.unpin(n)
+          }
+          tries += 1
+          continue
+        }
+        if earlier && !redef.is_empty() && tries < 2 {
+          for n in stale {
+            note = note + "xo repl: dropped `${n}`: its type ${redef} changed and its entry does not check with the new one\n"
+          }
+          let defs = sess.defs_using(redef)
+          for n in defs {
+            note = note + "xo repl: dropped the definition of `${n}`: it uses ${redef}, which changed; define it again\n"
+          }
+          sess = sess.drop_bindings(stale).drop_defs(defs)
+          stale = []
+          tries = 2
+          continue
+        }
+        sess = before
+        os.stdio.println(json.encode_str(repl.JOut{ok: false, value: None, typ: "", out: "", err: text, ms: os.clock.since(t0).nanos() / 1000000, diagnostics: ds}))
+        break
+      }
+      let built = play_emit(os, wd, dir, out, c, false)
+      if !built.starts_with("{\"ok\":true") {
+        // the build's own JSON (diagnostics or unsupported) as the error text
+        sess = before
+        os.stdio.println(reply(false, None, "", "${built}\n", os.clock.since(t0).nanos() / 1000000))
+        break
+      }
+      // the types xo repl records: a binding's at its name, a value's at
+      // column 5 (where `let VALUE` binds it)
+      let qs = semantic.Session{c: c, wd: dir}
+      pending_types = {}
+      pending_typ = ""
+      if let Bind(name: n, mutable: _) = e.kind {
+        let first = src.split("\n")[0]
+        let col = (first.find(n) ?? 0) + 1
+        if let Ok(t) = qs.type_at(main, at, col) {
+          pending_types[n] = t.typ
+          pending_typ = t.typ
+        }
+      }
+      if e.kind is Expr {
+        if let Ok(t) = qs.type_at(main, at, 5) {
+          pending_typ = t.typ
+        }
+      }
+      pending_note = note
+      outcome = 2
+      break
+    }
+    if outcome != 2 {
+      continue
+    }
+    pending = Some(e)
+    os.stdio.println(json.encode_str(PRun{run: out}))
+  }
+}
+
+/// A reply line in xo repl --json's shape (repl.JOut).
+fn reply(ok: Bool, value: Str?, out: Str, err: Str, ms: Int) -> Str {
+  json.encode_str(repl.JOut{ok: ok, value: value, typ: "", out: out, err: err, ms: ms, diagnostics: []})
+}
+
+/// The columns `let VALUE = ` adds before an expression entry on its line
+/// (repl.col_shift's rule).
+fn shift_of(e: repl.Entry) -> Int {
+  if e.kind is Expr { "let ${repl.VALUE} = ".len() - (e.src.len() - e.src.trim_start().len()) } else { 0 }
+}
+
+/// The check's diagnostics with the program's main.xo lines given as the
+/// entry's (file "entry", from line 1) or the session's (file "session"),
+/// and their text, one `FILE:LINE:COL: CODE MESSAGE` a line, errors first
+/// as the check sorted them.
+fn entry_diags(ds: List[check.Diag], main: Str, at: Int, shift: Int) -> (List[repl.JDiag], Str, Bool) {
+  var out: List[repl.JDiag] = []
+  var earlier = false
+  var b = StrBuilder.new()
+  for d in ds {
+    var file = d.file
+    var line = d.line
+    var col = d.col
+    var end_line = d.end_line
+    var end_col = d.end_col
+    if d.file == main || d.file.ends_with("/main.xo") {
+      if d.line >= at {
+        file = "entry"
+        if d.line == at { col = d.col - shift }
+        if d.end_line == at { end_col = d.end_col - shift }
+        line = d.line - at + 1
+        end_line = if d.end_line >= at { d.end_line - at + 1 } else { line }
+      } else {
+        file = "session"
+        if !d.warning {
+          earlier = true
+        }
+      }
+    }
+    let sev = if d.note_sev { "note" } else if d.warning { "warning" } else { "error" }
+    out.push(repl.JDiag{code: d.code, severity: sev, message: d.message, span: repl.JSpan{file: file, line: line, col: col, end_line: end_line, end_col: end_col}})
+    b.write("${file}:${line}:${col}: ${d.code} ${d.message}\n")
+  }
+  (out, b.freeze(), earlier)
+}
+
+/// `:type EXPR`: the type of EXPR after the session's entries, from a copy of
+/// the warm checker (as an entry is checked), at the column after `let `
+/// where the entry's value binding starts; or the error text.
+fn type_entry(os: Os, base: check.Checker, sess: repl.Sess, dir: Str, x: Str) -> (Str, Str) {
+  let e = repl.Entry{src: x, kind: repl.Kind.Expr, pin: "", typ: ""}
+  let (prog0, at0) = sess.program(e)
+  let (prog, at) = repl.with_effects(prog0, at0, None)
+  let main = "${dir}/main.xo"
+  if let Err(we) = os.fs.write(main, prog.bytes()) {
+    return ("", "xo repl: ${we}\n")
+  }
+  var c = base
+  c.start_member_with(true)
+  if let Err(ce) = c.check_dirs([dir]) {
+    return ("", "xo repl: :type: ${ce}\n")
+  }
+  if c.diags.any(fn(d) { !d.warning }) {
+    let (_ds, text, _earlier) = entry_diags(c.diags, main, at, shift_of(e))
+    return ("", text)
+  }
+  let qs = semantic.Session{c: c, wd: dir}
+  match qs.type_at(main, at, 5) {
+    Ok(t) => (t.typ, "")
+    Err(te) => ("", "xo repl: :type: ${te}\n")
+  }
+}

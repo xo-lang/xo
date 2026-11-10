@@ -63,6 +63,13 @@ fn play(os: Os, std_dir: Str, wd: Str, args: List[Str]) {
       }
       os.stdio.println(play_build(os, std_dir, wd, args[1], args[2]))
     }
+    "repl" => {
+      if args.len() < 3 {
+        os.stdio.println("{\"error\":\"usage: --play repl WARM DIR\"}")
+        return
+      }
+      play_repl(os, std_dir, wd, args[1], args[2])
+    }
     "rebuild" => {
       // decision 0583 level 2a, the whole entry: `rebuild WARM DIR OUT N`
       // builds DIR N times, each from a copy of WARM's checked checker
