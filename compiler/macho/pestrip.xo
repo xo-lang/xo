@@ -1,5 +1,5 @@
 // Dead stripping by atom for pelink (decision 0388 stage 4 on
-// windows/amd64): an object assembled with `.subsections_via_symbols`
+// windows/amd64; windows/arm64 too, decision 0569): an object assembled with `.subsections_via_symbols`
 // (its .xoatoms marker) is split into atoms, its sections cut at their
 // symbols, .pdata per record and .xdata where a record's unwind
 // information starts; the atoms nothing reaches are left unplaced
@@ -27,13 +27,106 @@ fn coff_rel_width(typ: Int) -> Int {
   if typ == IMAGE_REL_AMD64_ADDR64 { 8 } else { 4 }
 }
 
+/// Whether symbol i of ob is a reference point inside a section, the
+/// addend relative to it: a section's symbol, or an ARM64 offset label
+/// (`$L<section>_N`, IMAGE_SYM_CLASS_LABEL, coffa64.xo coff_a64_labels).
+fn coff_secrel_sym(ob: CObj, i: Int, arm: Bool) -> Bool {
+  coff_secsym(ob, i) || (arm && ob.syms[i].class == IMAGE_SYM_CLASS_LABEL && ob.syms[i].sect > 0)
+}
+
+/// Whether an ARM64 relocation of type typ addresses a debug section's
+/// offset (left as is, as IMAGE_REL_AMD64_SECREL is).
+fn a64_secrel(typ: Int) -> Bool {
+  typ == IMAGE_REL_ARM64_SECREL || typ == IMAGE_REL_ARM64_SECREL_LOW12A || typ == IMAGE_REL_ARM64_SECREL_HIGH12A || typ == IMAGE_REL_ARM64_SECREL_LOW12L
+}
+
+/// The addend an ARM64 relocation's field holds at at of d (as pearm64.xo
+/// a64_reloc reads it), or None for a page offset (an add's or a load's 12
+/// bits hold only the addend's low bits: coff_split takes the adrp's).
+fn a64_addend(d: Bytes, at: Int, typ: Int) -> Int? {
+  let ins = get_le(d, at, 4) & 0xffffffff
+  if typ == IMAGE_REL_ARM64_ADDR64 {
+    return Some(get_le(d, at, 8))
+  }
+  if typ == IMAGE_REL_ARM64_ADDR32 || typ == IMAGE_REL_ARM64_ADDR32NB || typ == IMAGE_REL_ARM64_REL32 {
+    return Some(sext(get_le(d, at, 4) & 0xffffffff, 32))
+  }
+  if typ == IMAGE_REL_ARM64_BRANCH26 {
+    return Some(4 * sext(ins & 0x3ffffff, 26))
+  }
+  if typ == IMAGE_REL_ARM64_BRANCH19 {
+    return Some(4 * sext((ins >> 5) & 0x7ffff, 19))
+  }
+  if typ == IMAGE_REL_ARM64_BRANCH14 {
+    return Some(4 * sext((ins >> 5) & 0x3fff, 14))
+  }
+  if typ == IMAGE_REL_ARM64_PAGEBASE_REL21 || typ == IMAGE_REL_ARM64_REL21 {
+    return Some(sext(((ins >> 29) & 3) | (((ins >> 5) & 0x7ffff) << 2), 21))
+  }
+  None
+}
+
+/// The low 12 bits of the addend a page offset's field holds (a load's
+/// scaled back by its access size, as pearm64.xo a64_imm12 scales it).
+fn a64_pageoff(ins: Int, load: Bool) -> Int {
+  let f = (ins >> 10) & 0xfff
+  if !load {
+    return f
+  }
+  var size = ins >> 30
+  if (ins & 0x4800000) == 0x4800000 {
+    size += 4
+  }
+  (f << size) & 0xfff
+}
+
+/// d with the field of the ARM64 relocation of type typ at at holding
+/// addend k (a page offset its low 12 bits, a load's scaled).
+fn a64_put_addend(d: Bytes, at: Int, typ: Int, k: Int) -> Bytes {
+  if typ == IMAGE_REL_ARM64_ADDR64 {
+    return bytes_le_put(d, at, k, 8)
+  }
+  if typ == IMAGE_REL_ARM64_ADDR32 || typ == IMAGE_REL_ARM64_ADDR32NB || typ == IMAGE_REL_ARM64_REL32 {
+    return bytes_le_put(d, at, k & 0xffffffff, 4)
+  }
+  var w = get_le(d, at, 4) & 0xffffffff
+  if typ == IMAGE_REL_ARM64_BRANCH26 {
+    w = (w & ~0x3ffffff) | ((k >> 2) & 0x3ffffff)
+  } else if typ == IMAGE_REL_ARM64_BRANCH19 {
+    w = (w & ~(0x7ffff << 5)) | (((k >> 2) & 0x7ffff) << 5)
+  } else if typ == IMAGE_REL_ARM64_BRANCH14 {
+    w = (w & ~(0x3fff << 5)) | (((k >> 2) & 0x3fff) << 5)
+  } else if typ == IMAGE_REL_ARM64_PAGEBASE_REL21 || typ == IMAGE_REL_ARM64_REL21 {
+    let imm = k & 0x1fffff
+    w = (w & ~((3 << 29) | (0x7ffff << 5))) | ((imm & 3) << 29) | ((imm >> 2) << 5)
+  } else if typ == IMAGE_REL_ARM64_PAGEOFFSET_12A {
+    w = (w & ~(0xfff << 10)) | ((k & 0xfff) << 10)
+  } else if typ == IMAGE_REL_ARM64_PAGEOFFSET_12L {
+    var size = w >> 30
+    if (w & 0x4800000) == 0x4800000 {
+      size += 4
+    }
+    w = (w & ~(0xfff << 10)) | (((k & 0xfff) >> size) << 10)
+  }
+  bytes_le_put(d, at, w, 4)
+}
+
 /// ob split into atoms: each section's cuts, its pieces as sections of
 /// their own (relocations moved with their fields), every symbol moved to
 /// its piece, a reference by a section's symbol moved to the piece its
 /// in-place offset falls in (a new section symbol for each piece after the
 /// first), unless the offset is the section's end.
-fn coff_split(ob: CObj) -> CObj {
+///
+/// ARM64 (decision 0569): .pdata records are 8 bytes, the second field
+/// the .xdata reference unless packed; a reference to a section's symbol
+/// or offset label keeps its addend in the instruction (pearm64.xo), a page
+/// offset's taken from the adrp of the same target before it. An error
+/// for a reference whose addend cannot be read.
+fn coff_split(ob: CObj) -> CObj ! Str {
   let n = ob.sects.len()
+  let arm = ob.machine == IMAGE_FILE_MACHINE_ARM64
+  let rec = if arm { 8 } else { 12 }
+  let xfield = if arm { 4 } else { 8 }
   // the cuts of each section, sorted, starting at 0
   var cuts: List[List[Int]] = []
   for _ in 0..n {
@@ -48,19 +141,19 @@ fn coff_split(ob: CObj) -> CObj {
       var k = 0
       while k < s.size {
         c.push(k)
-        k += 12
+        k += rec
       }
       cuts[i] = c
     }
   }
   // .xdata: where each .pdata record's unwind information starts (its
-  // third field, relocated to .xdata's section symbol)
+  // third field, ARM64's second, relocated to .xdata's section symbol)
   for s in ob.sects {
     if s.name != ".pdata" {
       continue
     }
     for r in s.relocs {
-      if r.addr % 12 != 8 || !coff_secsym(ob, r.sym) {
+      if r.addr % rec != xfield || !coff_secsym(ob, r.sym) {
         continue
       }
       let xi = ob.syms[r.sym].sect - 1
@@ -144,10 +237,46 @@ fn coff_split(ob: CObj) -> CObj {
   // relocations: each with its field's piece; a section symbol's moved to
   // the piece its in-place offset names, the field less that piece's start
   for (i, s) in ob.sects.indexed() {
+    // ARM64: the addend of the last adrp to each target, for the page
+    // offsets after it
+    var adrp: Map[Int, Int] = {}
     for r in s.relocs {
       let j = piece(i, r.addr)
       let k = first[i] + j
       var target = r.sym
+      if arm && coff_secrel_sym(ob, r.sym, true) && !a64_secrel(r.typ) {
+        let ti = ob.syms[r.sym].sect - 1
+        let base = if coff_secsym(ob, r.sym) { 0 } else { ob.syms[r.sym].value }
+        let ins = get_le(s.data, r.addr, 4) & 0xffffffff
+        let pageoff = r.typ == IMAGE_REL_ARM64_PAGEOFFSET_12A || r.typ == IMAGE_REL_ARM64_PAGEOFFSET_12L
+        let a = match a64_addend(s.data, r.addr, r.typ) {
+          Some(x) => x
+          None => {
+            if !pageoff {
+              return Err("${ob.path}: ${s.name}+0x${r.addr.to_str_base(16)}: relocation type ${r.typ} to a section's symbol")
+            }
+            let full = adrp.get(r.sym) ?? return Err("${ob.path}: ${s.name}+0x${r.addr.to_str_base(16)}: a page offset to a section's symbol with no adrp before it")
+            if (full & 0xfff) != a64_pageoff(ins, r.typ == IMAGE_REL_ARM64_PAGEOFFSET_12L) {
+              return Err("${ob.path}: ${s.name}+0x${r.addr.to_str_base(16)}: a page offset whose low bits are not its adrp's")
+            }
+            full
+          }
+        }
+        if r.typ == IMAGE_REL_ARM64_PAGEBASE_REL21 {
+          adrp[r.sym] = a
+        }
+        let v = base + a
+        let tj = if cuts[ti].len() > 1 { piece(ti, v) } else { 0 }
+        if tj > 0 || base > 0 {
+          // to the piece's symbol, the addend less the piece's start
+          target = secsym_of[first[ti] + tj]
+          nsects[k].relocs.push(CReloc{addr: r.addr - cuts[i][j], sym: target, typ: r.typ})
+          nsects[k] = nsects[k] with {data: a64_put_addend(nsects[k].data, r.addr - cuts[i][j], r.typ, v - cuts[ti][tj])}
+          continue
+        }
+        nsects[k].relocs.push(CReloc{addr: r.addr - cuts[i][j], sym: target, typ: r.typ})
+        continue
+      }
       if coff_secsym(ob, r.sym) && r.typ != IMAGE_REL_AMD64_SECREL {
         let ti = ob.syms[r.sym].sect - 1
         if cuts[ti].len() > 1 {
@@ -168,7 +297,7 @@ fn coff_split(ob: CObj) -> CObj {
       nsects[k].relocs.push(CReloc{addr: r.addr - cuts[i][j], sym: target, typ: r.typ})
     }
   }
-  CObj{path: ob.path, sects: nsects, syms: syms}
+  Ok(CObj{path: ob.path, sects: nsects, syms: syms, machine: ob.machine})
 }
 
 /// d with the n byte little endian v at at.

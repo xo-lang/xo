@@ -17,7 +17,10 @@ pub fn coff_store_encode(objs0: List[CObj]) -> Result[Bytes, Str] {
     if !coff_atoms(ob) {
       return Err("${ob.path}: not made with .subsections_via_symbols")
     }
-    objs.push(coff_split(ob))
+    match coff_split(ob) {
+      Ok(x) => objs.push(x)
+      Err(e) => return Err(e)
+    }
   }
   var base: List[Int] = []
   var total = 0
@@ -379,7 +382,14 @@ pub fn coff_store_pdb(objs: List[CObj]) -> Bytes {
   b.write_str(STORE_PDB_MAGIC)
   sw32(b, objs.len())
   for ob in objs {
-    match obj_pdb(coff_split(ob)) {
+    let sp = match coff_split(ob) {
+      Ok(x) => x
+      Err(_) => {
+        sw32(b, 0)
+        continue
+      }
+    }
+    match obj_pdb(sp) {
       Ok(p) => {
         let e = enc_obj_pdb(p)
         sw32(b, e.len())

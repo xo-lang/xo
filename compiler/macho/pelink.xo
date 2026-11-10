@@ -228,10 +228,10 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
   var any_atoms = false
   for i in 0..objs.len() {
     if coff_atoms(objs[i]) {
-      if arm {
-        return Err("${objs[i].path}: an atoms mode ARM64 object is not supported yet (decision 0569)")
+      objs[i] = match coff_split(objs[i]) {
+        Ok(x) => x
+        Err(e) => return Err(e)
       }
-      objs[i] = coff_split(objs[i])
       any_atoms = true
     }
   }
