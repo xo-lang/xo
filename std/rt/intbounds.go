@@ -38,3 +38,9 @@ var (
 	FLOAT_MIN              = -math.MaxFloat64
 	FLOAT_SMALLEST_NONZERO = math.SmallestNonzeroFloat64
 )
+
+// Rune's type constants Rune.max and Rune.max_ascii (decision 0595).
+const (
+	RUNE_MAX       Rune = 0x10FFFF
+	RUNE_MAX_ASCII Rune = 0x7F
+)

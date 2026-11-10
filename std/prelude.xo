@@ -224,6 +224,13 @@ const UINT64_MAX: UInt64 = 18446744073709551615
 const UINT64_MIN: UInt64 = 0
 
 // Float's constants (decision 0592): type constants as the integer bounds.
+/// The largest code point, U+10FFFF (Go's unicode.MaxRune, decision
+/// 0595). @static Rune.max
+const RUNE_MAX: Rune = '\u{10FFFF}'
+/// The largest ASCII code point, U+007F (Go's unicode.MaxASCII; a byte
+/// below utf8.RuneSelf is `<= Rune.max_ascii`, decision 0595).
+/// @static Rune.max_ascii
+const RUNE_MAX_ASCII: Rune = '\u{7F}'
 /// Positive infinity (Go's math.Inf(1)); `-Float.inf` is negative
 /// infinity. @static Float.inf
 const FLOAT_INF: Float = 1.0 / 0.0
@@ -351,6 +358,15 @@ fn (n: Int) lt_unsigned(m: Int) -> Bool
 fn (n: Int) le_unsigned(m: Int) -> Bool
 /// math/bits on the 64 bit word (decision 0287).
 fn (n: Int) leading_zeros() -> Int
+/// The bits needed to write n's 64 bit word as unsigned: 64 minus its
+/// leading zeros, 0 for 0 (Go's bits.Len64, decision 0595).
+fn (n: Int) bit_len() -> Int
+/// n + m + carry as unsigned 64 bit words, and the carry out, 0 or 1
+/// (Go's bits.Add64, decision 0595); carry should be 0 or 1.
+fn (n: Int) add_carry(m: Int, carry: Int) -> (Int, Int)
+/// n - m - borrow as unsigned 64 bit words, and the borrow out, 0 or 1
+/// (Go's bits.Sub64, decision 0595); borrow should be 0 or 1.
+fn (n: Int) sub_borrow(m: Int, borrow: Int) -> (Int, Int)
 /// The number of trailing zero bits of n's 64 bit word; 64 for 0 (Go's
 /// bits.TrailingZeros64).
 fn (n: Int) trailing_zeros() -> Int
@@ -776,6 +792,10 @@ fn (r: Rune) is_number() -> Bool
 fn (r: Rune) to_lower() -> Rune
 /// r in upper case (Go's unicode.ToUpper); r itself when it has none.
 fn (r: Rune) to_upper() -> Rune
+/// The next rune of r's simple case folding orbit, the smallest one past
+/// r, wrapping (Go's unicode.SimpleFold, decision 0595): 'A' gives 'a',
+/// 'a' gives 'A', 'k' gives the Kelvin sign; r itself when it has none.
+fn (r: Rune) simple_fold() -> Rune
 /// r in title case (Go's unicode.ToTitle): the upper case of an ASCII
 /// letter, `ǅ` for `Ǆ` and `ǆ`.
 fn (r: Rune) to_title() -> Rune
@@ -1083,6 +1103,12 @@ fn (static: Time) UNIX_EPOCH() -> Time
 fn (static: Time) from_unix(secs: Int) -> Time
 /// The time ms milliseconds after the Unix epoch (Go's time.UnixMilli).
 fn (static: Time) from_unix_millis(ms: Int) -> Time
+/// The time us microseconds after the Unix epoch (Go's time.UnixMicro,
+/// decision 0595).
+fn (static: Time) from_unix_micros(us: Int) -> Time
+/// The time ns nanoseconds after the Unix epoch (Go's time.Unix(0, ns),
+/// decision 0595).
+fn (static: Time) from_unix_nanos(ns: Int) -> Time
 /// The time of RFC 3339 text (Go's time.Parse(time.RFC3339Nano, s)), or
 /// None for other text or a time outside 1677-09-21 to 2262-04-11.
 fn (static: Time) parse_rfc3339(s: Str) -> Time?
@@ -1093,6 +1119,14 @@ fn (static: Time) rfc3339_offset(s: Str) -> Duration?
 fn (t: Time) unix() -> Int
 /// Milliseconds since the Unix epoch (Go's Time.UnixMilli).
 fn (t: Time) unix_millis() -> Int
+/// Microseconds since the Unix epoch, rounded down (Go's Time.UnixMicro,
+/// decision 0595).
+fn (t: Time) unix_micros() -> Int
+/// Nanoseconds since the Unix epoch (Go's Time.UnixNano, decision 0595).
+fn (t: Time) unix_nanos() -> Int
+/// The nanoseconds within t's second, 0 to 999999999 (Go's
+/// Time.Nanosecond; the same in every zone, decision 0595).
+fn (t: Time) nanosecond() -> Int
 /// t as RFC 3339 text in UTC, as t displays.
 fn (t: Time) format_rfc3339() -> Str
 

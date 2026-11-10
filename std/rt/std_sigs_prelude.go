@@ -48,6 +48,9 @@ var (
 	_ func(*Task, int64, int64) bool                                                                       = Int_lt_unsigned
 	_ func(*Task, int64, int64) bool                                                                       = Int_le_unsigned
 	_ func(*Task, int64) int64                                                                             = Int_leading_zeros
+	_ func(*Task, int64) int64                                                                             = Int_bit_len
+	_ func(*Task, int64, int64, int64) Tuple2[int64, int64]                                                = Int_add_carry
+	_ func(*Task, int64, int64, int64) Tuple2[int64, int64]                                                = Int_sub_borrow
 	_ func(*Task, int64) int64                                                                             = Int_trailing_zeros
 	_ func(*Task, int64) int64                                                                             = Int_ones_count
 	_ func(*Task, int64, int64) int64                                                                      = Int_saturating_add
@@ -192,6 +195,7 @@ var (
 	_ func(*Task, Rune) bool                                                                               = Rune_is_number
 	_ func(*Task, Rune) Rune                                                                               = Rune_to_lower
 	_ func(*Task, Rune) Rune                                                                               = Rune_to_upper
+	_ func(*Task, Rune) Rune                                                                               = Rune_simple_fold
 	_ func(*Task, Rune) Rune                                                                               = Rune_to_title
 	_ func(*Task, Rune) int64                                                                              = Rune_utf8_len
 	_ func(*Task, Rune) bool                                                                               = Rune_is_print

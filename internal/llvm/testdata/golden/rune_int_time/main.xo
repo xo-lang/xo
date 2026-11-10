@@ -1,0 +1,46 @@
+// Decision 0595: Rune.max, Rune.max_ascii, Rune.simple_fold, Int.bit_len,
+// add_carry, sub_borrow, and Time's unix_micros, unix_nanos, nanosecond,
+// from_unix_micros, from_unix_nanos, with cases of Go's tests
+// (unicode TestSimpleFold, math/bits TestLen and TestAddSubUint64,
+// time TestUnixMicro and TestNanosecond's sign handling).
+
+fn hex(n: Int) -> Str {
+  "${n.shr_logical(32)}:${n & 4294967295}"
+}
+
+fn main(os: Os) {
+  os.stdio.println("max ${Int(Rune.max)} max_ascii ${Int(Rune.max_ascii)}")
+  // TestSimpleFold's orbits
+  let orbits = ["Aa", "δΔ", "KkK", "Ssſ", "ρϱΡ", "ͅΙιι", "1"]
+  for o in orbits {
+    let rs = o.runes()
+    var out: List[Str] = []
+    for r in rs {
+      out.push("${r}->${r.simple_fold()}")
+    }
+    os.stdio.println(out.join(" "))
+  }
+  os.stdio.println("fold max ${Int(Rune.max.simple_fold())}")
+  // bit_len: bits.Len64
+  for n in [0, 1, 2, 3, 255, 256, 9223372036854775807, -1, -9223372036854775807 - 1] {
+    os.stdio.print("${n.bit_len()} ")
+  }
+  os.stdio.println("")
+  // add_carry and sub_borrow: TestAddSubUint64's table
+  let m = -1
+  let cases: List[(Int, Int, Int)] = [(0, 0, 0), (0, 1, 0), (0, 0, 1), (0, 1, 1), (12345, 67890, 0), (12345, 67890, 1), (m, 1, 0), (m, 0, 1), (m, 1, 1), (1, m, 0), (0, m, 1), (m, m, 1), (m, m, 0)]
+  for (x, y, c) in cases {
+    let (s, co) = x.add_carry(y, c)
+    let (d, bo) = s.sub_borrow(y, c)
+    os.stdio.println("add ${hex(x)} ${hex(y)} ${c} = ${hex(s)} ${co}; back ${hex(d)} ${bo} ${d == x}")
+  }
+  // Time: microseconds and nanoseconds since the epoch, both signs
+  for ns in [0, 1, 999, 1000, 1500000123, -1, -1000, -1001, -1500000123] {
+    let t = Time.from_unix_nanos(ns)
+    os.stdio.println("ns ${ns}: nanos ${t.unix_nanos()} micros ${t.unix_micros()} millis ${t.unix_millis()} unix ${t.unix()} nanosecond ${t.nanosecond()}")
+  }
+  for us in [0, 1, -1, 1700000000123456, -62135596800000000 / 100] {
+    let t = Time.from_unix_micros(us)
+    os.stdio.println("us ${us}: ${t.unix_micros()} ${t.format_rfc3339()}")
+  }
+}

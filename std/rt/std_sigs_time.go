@@ -9,10 +9,15 @@ var (
 	_ func(*Task) Time                                                                              = Time_UNIX_EPOCH
 	_ func(*Task, int64) Time                                                                       = Time_from_unix
 	_ func(*Task, int64) Time                                                                       = Time_from_unix_millis
+	_ func(*Task, int64) Time                                                                       = Time_from_unix_micros
+	_ func(*Task, int64) Time                                                                       = Time_from_unix_nanos
 	_ func(*Task, string) Option[Time]                                                              = Time_parse_rfc3339
 	_ func(*Task, string) Option[Duration]                                                          = Time_rfc3339_offset
 	_ func(*Task, Time) int64                                                                       = Time_unix
 	_ func(*Task, Time) int64                                                                       = Time_unix_millis
+	_ func(*Task, Time) int64                                                                       = Time_unix_micros
+	_ func(*Task, Time) int64                                                                       = Time_unix_nanos
+	_ func(*Task, Time) int64                                                                       = Time_nanosecond
 	_ func(*Task, Time) string                                                                      = Time_format_rfc3339
 	_ func(*Time_Zone, *Task) string                                                                = (*Time_Zone).M_display
 	_ func(*Time_ZoneErr, *Task) string                                                             = (*Time_ZoneErr).M_display

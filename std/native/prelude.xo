@@ -841,6 +841,9 @@ fn rune_to_lower(r: Rune) -> Rune { rune_case(r, true) }
 
 fn rune_to_upper(r: Rune) -> Rune { rune_case(r, false) }
 
+/// `r.simple_fold()` (decision 0595): unicode.SimpleFold.
+fn rune_simple_fold(r: Rune) -> Rune { Rune.try(unicode.simple_fold(Int(r))) ?? r }
+
 fn rune_to_title(r: Rune) -> Rune {
   let x = Int(r)
   let y = unicode.to_title(x)
@@ -6507,6 +6510,21 @@ fn float32_from_bits(b: UInt32) -> Float32 {
 
 fn int_leading_zeros(n: Int) -> Int { rt.clz(n) }
 
+/// `n.bit_len()` (decision 0595): bits.Len64.
+fn int_bit_len(n: Int) -> Int { 64 - rt.clz(n) }
+
+/// `n.add_carry(m, carry)` (decision 0595): bits.Add64's formula.
+fn int_add_carry(n: Int, m: Int, carry: Int) -> (Int, Int) {
+  let sum = n.wrapping_add(m).wrapping_add(carry)
+  (sum, ((n & m) | ((n | m) & ~sum)).shr_logical(63))
+}
+
+/// `n.sub_borrow(m, borrow)` (decision 0595): bits.Sub64's formula.
+fn int_sub_borrow(n: Int, m: Int, borrow: Int) -> (Int, Int) {
+  let diff = n.wrapping_sub(m).wrapping_sub(borrow)
+  (diff, ((~n & m) | (~(n ^ m) & diff)).shr_logical(63))
+}
+
 fn int_trailing_zeros(n: Int) -> Int { rt.ctz(n) }
 
 fn int_ones_count(n: Int) -> Int { rt.popcount(n) }
@@ -6798,3 +6816,25 @@ fn bytebuffer_find(b: ByteBuffer, sub: Bytes) -> Int? {
   }
   bytebuffer_slice(b, b.pos, b.end).find(sub)
 }
+
+/// `t.unix_nanos()` (decision 0595): Time is nanoseconds since 1970.
+fn time_unix_nanos(t: Time) -> Int { (t - Time.UNIX_EPOCH).nanos() }
+
+/// `t.unix_micros()` (decision 0595): rounded down, as Go's.
+fn time_unix_micros(t: Time) -> Int {
+  let ns = time_unix_nanos(t)
+  let q = ns / 1000
+  if ns % 1000 < 0 { q - 1 } else { q }
+}
+
+/// `t.nanosecond()` (decision 0595).
+fn time_nanosecond(t: Time) -> Int {
+  let r = time_unix_nanos(t) % 1000000000
+  if r < 0 { r + 1000000000 } else { r }
+}
+
+/// `Time.from_unix_nanos(ns)` (decision 0595).
+fn time_from_unix_nanos(ns: Int) -> Time { Time.UNIX_EPOCH + Duration.from_nanos(ns) }
+
+/// `Time.from_unix_micros(us)` (decision 0595): a fault past Time's range.
+fn time_from_unix_micros(us: Int) -> Time { Time.UNIX_EPOCH + Duration.from_nanos(us * 1000) }

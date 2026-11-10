@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-10: feature: `Rune.max`, `Rune.max_ascii`, `simple_fold`, `Int.bit_len`, `add_carry`, `sub_borrow`, Time's micros and nanos
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit (bench/results/std-audit-2026-11-10b.md top 40: utf8.RuneSelf, unicode.MaxRune, SimpleFold, bits.Len, Add64, Sub64, Time.UnixNano, Nanosecond)
+- Go reference: unicode, math/bits, time (TestSimpleFold, TestLen, TestAddSubUint64, UnixMicro/UnixNano/Nanosecond on negative times)
+- Test: golden rune_int_time on arm64, LLVM and Go
+- Timing: each is a few instructions or a table walk (simple_fold is the native unicode.simple_fold std/regexp uses); no row
+- Shipped in: not yet released
+
+Decision 0595.
+
 ## 2026-11-10: feature: `List.clone`, `List.concat`, `binary_search`, `max`, `min`
 
 - Kind: feature

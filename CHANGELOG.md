@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- `Rune.max`, `Rune.max_ascii`, `r.simple_fold()`, `n.bit_len()`, `n.add_carry(m, c)`, `n.sub_borrow(m, b)`, `t.unix_micros()`, `t.unix_nanos()`, `t.nanosecond()`, `Time.from_unix_micros`, `Time.from_unix_nanos` (decision 0595)
 - `List.clone()`, `List.concat(lists)`, `binary_search(x)`, `max()` and `min()` (decision 0592): Go's slices.Clone, Concat, BinarySearch, Max and Min
 - `copy_stream(dst, src)`, `File.copy_to(dst)` and `File.copy_from(src)` with `CopyErr[R, W]` (decision 0593): Go's io.Copy between connections and files
 - A windows `xo build --lib=shared -o NAME.dll` also writes the import library NAME.lib (decision 0574), which MSVC's link.exe and lld-link link a C program with

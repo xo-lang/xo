@@ -442,6 +442,11 @@ without growing it; `n` below 0 counts as 0. Capacity is not observable
 when its elements are over 256 bytes (decision 0452's addendum: a list of
 one connection's state held four).
 
+Decision 0595 adds `Rune.max` (U+10FFFF) and `Rune.max_ascii` (U+007F) as
+type constants, `r.simple_fold()` (unicode.SimpleFold), `n.bit_len()`
+(bits.Len64), and `n.add_carry(m, c)` / `n.sub_borrow(m, b)` returning the
+word and the carry or borrow (bits.Add64, bits.Sub64).
+
 ### 2.4 Map[K, V] and Set[T]
 
 Insertion ordered. `put` on an existing key keeps its position.
@@ -538,10 +543,15 @@ struct DurationErr { input: Str }  // displays as `invalid duration "1x": expect
 Time.UNIX_EPOCH: Time
 Time.from_unix(secs: Int) -> Time
 Time.from_unix_millis(ms: Int) -> Time
+Time.from_unix_micros(us: Int) -> Time        // decision 0595
+Time.from_unix_nanos(ns: Int) -> Time         // decision 0595
 Time.rfc3339_offset(s: Str) -> Duration?   // the offset the text carries (Go's Zone() of time.Parse; Z is zero), None when parse_rfc3339 is None
 Time.parse_rfc3339(s: Str) -> Time?   // None for text that is not RFC 3339 or a time outside Time's range (1677-09-21 to 2262-04-11, int64 nanoseconds since 1970; decision 0364)
 fn (t: Time) unix() -> Int
 fn (t: Time) unix_millis() -> Int
+fn (t: Time) unix_micros() -> Int             // decision 0595: rounded down (UnixMicro)
+fn (t: Time) unix_nanos() -> Int              // UnixNano
+fn (t: Time) nanosecond() -> Int              // 0 to 999999999, the same in every zone
 fn (t: Time) format_rfc3339() -> Str
 ```
 
@@ -5518,7 +5528,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-539 declarations.
+548 declarations.
 
 ### Range
 
@@ -5572,6 +5582,9 @@ fn (n: Int) mul_hi_unsigned(m: Int) -> Int
 fn (n: Int) lt_unsigned(m: Int) -> Bool
 fn (n: Int) le_unsigned(m: Int) -> Bool
 fn (n: Int) leading_zeros() -> Int
+fn (n: Int) bit_len() -> Int
+fn (n: Int) add_carry(m: Int, carry: Int) -> (Int, Int)
+fn (n: Int) sub_borrow(m: Int, borrow: Int) -> (Int, Int)
 fn (n: Int) trailing_zeros() -> Int
 fn (n: Int) ones_count() -> Int
 fn (n: Int) saturating_add(m: Int) -> Int
@@ -5712,6 +5725,7 @@ fn (r: Rune) is_symbol() -> Bool
 fn (r: Rune) is_number() -> Bool
 fn (r: Rune) to_lower() -> Rune
 fn (r: Rune) to_upper() -> Rune
+fn (r: Rune) simple_fold() -> Rune
 fn (r: Rune) to_title() -> Rune
 fn (r: Rune) utf8_len() -> Int
 fn (r: Rune) is_print() -> Bool
@@ -5974,10 +5988,15 @@ fn (e: DurationErr) display() -> Str
 fn (static: Time) UNIX_EPOCH() -> Time
 fn (static: Time) from_unix(secs: Int) -> Time
 fn (static: Time) from_unix_millis(ms: Int) -> Time
+fn (static: Time) from_unix_micros(us: Int) -> Time
+fn (static: Time) from_unix_nanos(ns: Int) -> Time
 fn (static: Time) parse_rfc3339(s: Str) -> Time?
 fn (static: Time) rfc3339_offset(s: Str) -> Duration?
 fn (t: Time) unix() -> Int
 fn (t: Time) unix_millis() -> Int
+fn (t: Time) unix_micros() -> Int
+fn (t: Time) unix_nanos() -> Int
+fn (t: Time) nanosecond() -> Int
 fn (t: Time) format_rfc3339() -> Str
 ```
 

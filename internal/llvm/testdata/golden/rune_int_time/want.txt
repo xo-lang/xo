@@ -1,0 +1,40 @@
+exit 0
+--- stdout
+max 1114111 max_ascii 127
+A->a a->A
+δ->Δ Δ->δ
+K->k k->K K->k
+S->s s->ſ ſ->S
+ρ->ϱ ϱ->Ρ Ρ->ρ
+ͅ->Ι Ι->ι ι->ι ι->ι
+1->1
+fold max 1114111
+0 1 2 2 8 9 63 64 64 
+add 0:0 0:0 0 = 0:0 0; back 0:0 0 true
+add 0:0 0:1 0 = 0:1 0; back 0:0 0 true
+add 0:0 0:0 1 = 0:1 0; back 0:0 0 true
+add 0:0 0:1 1 = 0:2 0; back 0:0 0 true
+add 0:12345 0:67890 0 = 0:80235 0; back 0:12345 0 true
+add 0:12345 0:67890 1 = 0:80236 0; back 0:12345 0 true
+add 4294967295:4294967295 0:1 0 = 0:0 1; back 4294967295:4294967295 1 true
+add 4294967295:4294967295 0:0 1 = 0:0 1; back 4294967295:4294967295 1 true
+add 4294967295:4294967295 0:1 1 = 0:1 1; back 4294967295:4294967295 1 true
+add 0:1 4294967295:4294967295 0 = 0:0 1; back 0:1 1 true
+add 0:0 4294967295:4294967295 1 = 0:0 1; back 0:0 1 true
+add 4294967295:4294967295 4294967295:4294967295 1 = 4294967295:4294967295 1; back 4294967295:4294967295 1 true
+add 4294967295:4294967295 4294967295:4294967295 0 = 4294967295:4294967294 1; back 4294967295:4294967295 1 true
+ns 0: nanos 0 micros 0 millis 0 unix 0 nanosecond 0
+ns 1: nanos 1 micros 0 millis 0 unix 0 nanosecond 1
+ns 999: nanos 999 micros 0 millis 0 unix 0 nanosecond 999
+ns 1000: nanos 1000 micros 1 millis 0 unix 0 nanosecond 1000
+ns 1500000123: nanos 1500000123 micros 1500000 millis 1500 unix 1 nanosecond 500000123
+ns -1: nanos -1 micros -1 millis -1 unix -1 nanosecond 999999999
+ns -1000: nanos -1000 micros -1 millis -1 unix -1 nanosecond 999999000
+ns -1001: nanos -1001 micros -2 millis -1 unix -1 nanosecond 999998999
+ns -1500000123: nanos -1500000123 micros -1500001 millis -1501 unix -2 nanosecond 499999877
+us 0: 0 1970-01-01T00:00:00Z
+us 1: 1 1970-01-01T00:00:00.000001Z
+us -1: -1 1969-12-31T23:59:59.999999Z
+us 1700000000123456: 1700000000123456 2023-11-14T22:13:20.123456Z
+us -621355968000000: -621355968000000 1950-04-24T09:07:12Z
+--- stderr
