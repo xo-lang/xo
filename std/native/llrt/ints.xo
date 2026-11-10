@@ -28,7 +28,7 @@ pub fn seed_hash(s: Int) { rt.mem_store(rt.static_word(HSEED), 0, s, 8) }
 pub fn seed_addr() -> Int { rt.static_word(HSEED) }
 
 /// The Xo name of the integer type of bits and uns (n_int_name).
-fn type_name(bits: Int, uns: Int) -> Str {
+pub fn type_name(bits: Int, uns: Int) -> Str {
   if bits == 8 {
     return if uns != 0 { "UInt8" } else { "Int8" }
   }

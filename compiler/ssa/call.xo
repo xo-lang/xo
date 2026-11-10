@@ -1139,8 +1139,16 @@ fn (var b: Builder) type_call(obj: Int, x: Expr) -> Int {
   if tk == Kind.Float && vk == Kind.Int {
     return b.add(Op.IntToFloat, to, Aux.None, [v])
   }
-  if tk == Kind.Int && vk == Kind.Float && b.m.is_u64(to) {
-    return b.float_to_u64(v, to, span)
+  if tk == Kind.Int && vk == Kind.Float && b.m.types[to].bits > 0 {
+    // a sized type: its own range test on the float first, so the fault
+    // names the type and the value as written (std/rt FloatToInt's text;
+    // FloatToInt and int_conv named Int, and the truncated value)
+    b.float_range_check(v, to, span)
+    if b.m.is_u64(to) {
+      return b.float_to_u64(v, to, span)
+    }
+    let r = b.add(Op.FloatToInt, it, Aux.None, [v])
+    return b.add(Op.IntConv, to, Aux.None, [r])
   }
   if tk == Kind.Int && vk == Kind.Float {
     let r = b.add(Op.FloatToInt, it, Aux.None, [v])
@@ -2955,4 +2963,38 @@ fn (var b: Builder) float_to_u64(v: Int, to: Int, span: Span) -> Int {
   b.seal(join)
   b.s.cur = join
   res
+}
+
+
+/// Faults unless the float v truncated toward zero fits the sized
+/// integer type to (core 3): v > min - 1 and v < max + 1, both exact as
+/// Floats for every sized type (2^63 and 2^64 are powers of two). NaN
+/// fails the second test under IEEE order and under Xo's (NaN above every
+/// number).
+fn (var b: Builder) float_range_check(v: Int, to: Int, span: Span) {
+  let vt = b.vty(v)
+  let bt = b.bool_t()
+  let bits = b.m.types[to].bits
+  var lo = -1.0
+  var hi = 1.0
+  var i = 0
+  while i < (if b.m.types[to].unsigned { bits } else { bits - 1 }) {
+    hi = hi * 2.0
+    i += 1
+  }
+  if !b.m.types[to].unsigned {
+    lo = -hi - 1.0
+  }
+  // a Float32 cannot hold min - 1 of a 32 or 64 bit signed type (it
+  // rounds to min): there v >= min, the same test at Float32's spacing
+  let above = if b.m.is_f32(vt) && !b.m.types[to].unsigned { b.add(Op.Ge, bt, Aux.None, [v, b.add(Op.Const, vt, Aux.F(f: lo + 1.0), [])]) } else { b.add(Op.Gt, bt, Aux.None, [v, b.add(Op.Const, vt, Aux.F(f: lo), [])]) }
+  let below = b.add(Op.Lt, bt, Aux.None, [v, b.add(Op.Const, vt, Aux.F(f: hi), [])])
+  let ok = b.add(Op.And, bt, Aux.None, [above, below])
+  let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [ok]))
+  // the fault prints a Float (a Float32 widened exactly, as Go's float64(f))
+  let fv = if b.m.is_f32(vt) { b.rt("f32_round", b.float_t(), [v]) } else { v }
+  b.llrt_call("float_conv_fault", [fv, b.cint(bits), b.cint(if b.m.types[to].unsigned { 1 } else { 0 }), b.const_str(b.pos(span))])
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.dead()
+  b.if_then_end(no, join)
 }

@@ -1,22 +1,25 @@
 // Float to integer conversions at their edges (core 3: Int(f) truncates
 // toward zero and faults on NaN or out of range; each sized integer
 // type the same, UInt64 up to 2^64). Each conversion runs under
-// task.isolate so one program shows every case; a fault prints as
-// `fault`. UInt64 from [2^63, 2^64) faulted on the native and LLVM
+// task.isolate so one program shows every case, with its fault's text:
+// the type the program named and the value it had, on every backend
+// (until 2026-11-09 the native ones named Int and the truncated value). UInt64 from [2^63, 2^64) faulted on the native and LLVM
 // backends until 2026-11-09 (the Go backend converted it).
 use std/task
 
 fn show(r: Result[Int, task.Isolated[()]]) -> Str {
   match r {
     Ok(v) => "${v}"
-    Err(_) => "fault"
+    Err(task.Isolated.Faulted(f)) => f.msg
+    Err(task.Isolated.Failed(_)) => "failed"
   }
 }
 
 fn show_u(r: Result[UInt64, task.Isolated[()]]) -> Str {
   match r {
     Ok(v) => "${v}"
-    Err(_) => "fault"
+    Err(task.Isolated.Faulted(f)) => f.msg
+    Err(task.Isolated.Failed(_)) => "failed"
   }
 }
 

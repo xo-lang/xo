@@ -5249,6 +5249,16 @@ fn llrt_int_op_fault(op: Int, a: Int, b: Int, bits: Int, uns: Int, at: Str) -> N
 
 fn llrt_int_conv_fault(v: Int, fbits: Int, funs: Int, tbits: Int, tuns: Int, at: Str) -> Never { ints.conv_fault(v, fbits, funs, tbits, tuns, at) }
 
+/// Float to a sized integer type out of range or NaN: Go's text, the
+/// type the program named and the value it had (std/rt FloatToInt).
+fn llrt_float_conv_fault(f: Float, bits: Int, uns: Int, at: Str) -> Never {
+  let ty = ints.type_name(bits, uns)
+  if f != f {
+    rt.fault_raise("cannot convert NaN to ${ty}", at)
+  }
+  rt.fault_raise("${num.go_g_text(f)} is out of range for ${ty}", at)
+}
+
 fn llrt_u64_div(a: Int, b: Int) -> Int { ints.u64_div(a, b) }
 
 fn llrt_u64_rem(a: Int, b: Int) -> Int { ints.u64_rem(a, b) }
