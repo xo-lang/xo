@@ -3595,7 +3595,13 @@ func TestLinkKeyFollowsObjects(t *testing.T) {
 		if cold {
 			cache, bin = filepath.Join(work, fmt.Sprintf("cold%d", n), "cache"), filepath.Join(work, fmt.Sprintf("cold%d", n), "bin")
 		}
-		out := filepath.Join(work, fmt.Sprintf("out%d", n), progExe)
+		// one output path for every build (removed first, so a binary
+		// cache link is never written through): a PE names its PDB by
+		// path, so builds to out1 and out2 differed on Windows whatever
+		// the key (winarm VM, 2026-11-10)
+		out := filepath.Join(work, "out", progExe)
+		os.Remove(out)
+		os.Remove(strings.TrimSuffix(out, ".exe") + ".pdb")
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--phase-times", "--trimpath=false", "-o", out, "."))
 		cmd.Dir = src
 		// no run cache, so each build links (or takes its link from the
