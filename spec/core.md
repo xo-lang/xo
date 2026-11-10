@@ -4428,11 +4428,8 @@ exporter is a program's own code over `Ring.spans`.
 `xo build --targets=all` builds every supported target from any host:
 `linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 wasi/wasm32`.
 With no `--backend`, each target builds with its own native backend
-(arm64, amd64, or wasm for wasi), and `all` is the six targets a native
-backend builds: windows/arm64 needs `--backend=go`, whose `all` is all
-seven, and a note says so (decision 0270 addendum, owner 2026-10-22).
-Naming windows/arm64 in a list with no `--backend` is an error, reported
-after the other targets are built (exit status 1). Several targets write
+(arm64 for darwin/arm64, linux/arm64 and windows/arm64, amd64, or wasm
+for wasi; windows/arm64 since decision 0569, owner 2026-11-09). Several targets write
 `NAME-OS-ARCH` binaries (`.exe` for windows, `.wasm` for wasi) into `-o`'s
 directory; `-o NAME` for a windows target with no extension writes
 `NAME.exe`.

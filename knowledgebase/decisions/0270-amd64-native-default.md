@@ -109,3 +109,7 @@ owner chose this over building the rest and failing on windows/arm64,
 which would have made the README's `xo build --targets=all` always exit
 1. Naming windows/arm64 explicitly with no `--backend` is still an error
 (after the other targets are built). Test: cmd/xo TestTargetsAllNative.
+
+Update (owner, 2026-11-09, decision 0569): windows/arm64 has the arm64
+backend now, so with no `--backend` `all` is all seven targets and naming
+windows/arm64 builds it; the note and the error are gone.

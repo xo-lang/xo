@@ -57,15 +57,14 @@ func TestDefaultBackendAmd64(t *testing.T) {
 }
 
 // TestTargetsAllNative builds a program with --targets=all and no
-// --backend: the six targets a native backend builds, each with its own
+// --backend: all seven targets, each with its own native backend
 // (0.25.2 failed with "the arm64 backend builds for darwin/arm64 and
 // linux/arm64, not linux/amd64"), each binary under its own name in -o's
 // directory (the native backend named every target's binary alike, so
-// darwin/arm64's and linux/arm64's overwrote each other), a note that
-// windows/arm64 needs --backend=go, and exit 0 (owner, 2026-10-22,
-// decision 0270 addendum); windows/arm64 named with no --backend is an
-// error after the rest are built; and -o NAME for windows/amd64 writes
-// NAME.exe (0.25.2 wrote NAME).
+// darwin/arm64's and linux/arm64's overwrote each other), windows/arm64
+// the arm64 backend's (decision 0569, owner 2026-11-09; the 0270
+// addendum left it out before), and exit 0; and -o NAME for windows
+// writes NAME.exe (0.25.2 wrote NAME).
 func TestTargetsAllNative(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs")
@@ -88,9 +87,6 @@ func TestTargetsAllNative(t *testing.T) {
 	if code := run(t, []string{"build", "--targets=all", "--json", "-o", out, "."}, &stdout, &stderr); code != 0 {
 		t.Fatalf("xo build --targets=all: exit %d\n%s%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "windows/arm64 needs --backend=go") {
-		t.Errorf("stderr has no note that windows/arm64 needs --backend=go:\n%s", stderr.String())
-	}
 	var rep struct {
 		Binaries map[string]string `json:"binaries"`
 	}
@@ -104,6 +100,7 @@ func TestTargetsAllNative(t *testing.T) {
 		"linux/arm64":   {"hello-linux-arm64", "\x7fELF"},
 		"linux/amd64":   {"hello-linux-amd64", "\x7fELF"},
 		"windows/amd64": {"hello-windows-amd64.exe", "MZ"},
+		"windows/arm64": {"hello-windows-arm64.exe", "MZ"},
 		"wasip1/wasm":   {"hello-wasip1-wasm.wasm", "\x00asm"},
 	}
 	if len(rep.Binaries) != len(want) {
@@ -123,18 +120,6 @@ func TestTargetsAllNative(t *testing.T) {
 		if !bytes.HasPrefix(b, []byte(w.magic)) {
 			t.Errorf("%s: %s starts % x, want % x", tg, p, b[:min(len(b), 8)], w.magic)
 		}
-	}
-	// windows/arm64 named: the others built, then an error
-	stdout.Reset()
-	stderr.Reset()
-	if code := run(t, []string{"build", "--targets=linux/arm64,windows/arm64", "-o", filepath.Join(dir, "out2"), "."}, &stdout, &stderr); code != 1 {
-		t.Errorf("xo build --targets=linux/arm64,windows/arm64: exit %d, want 1\n%s%s", code, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "no native backend builds windows/arm64: build it with --backend=go") {
-		t.Errorf("windows/arm64 named: stderr does not name --backend=go:\n%s", stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(dir, "out2", "hello-linux-arm64")); err != nil {
-		t.Errorf("windows/arm64 named: linux/arm64 not built: %v", err)
 	}
 	// -o NAME for windows: NAME.exe
 	stdout.Reset()

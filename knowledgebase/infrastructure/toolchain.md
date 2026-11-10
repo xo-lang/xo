@@ -1006,13 +1006,11 @@ in `http_nonet.go`, so the binary does not link Go's net/http (hello world
 verified: 2026-10-09). It prints one
 `os/arch: path` line per binary. `--targets=all` is linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64, and
-`wasi/wasm32` (Go's wasip1/wasm) with --backend=go; with no --backend
-`all` is the six a native backend builds, each with its own (main.xo
-backend_groups and build_by_backend: arm64, amd64, wasm), and a note
-says windows/arm64 needs --backend=go (decision 0270 addendum, owner
-2026-10-22); windows/arm64 named in a list with no --backend is an error
-after the rest are built (exit 1). `--backend=arm64 --targets=windows/arm64`
-(experimental, decision 0569) links an ARM64 PE from any host with xo
+`wasi/wasm32` (Go's wasip1/wasm); with no --backend each builds with
+its own native backend (main.xo backend_groups and build_by_backend:
+arm64, amd64, wasm), windows/arm64 the arm64 backend's since decision
+0569's default (owner, 2026-11-09; before, the 0270 addendum left it out
+of `all`). `--targets=windows/arm64` (decision 0569) links an ARM64 PE from any host with xo
 alone: Xo's COFF writer (compiler/macho coffa64.xo and coffseh64.xo,
 stage 3; its objects byte identical to Apple clang 21's, checked by
 scripts/coff-compare-arm64.sh XO MACHO CLANG WORK [NAME...]) assembles

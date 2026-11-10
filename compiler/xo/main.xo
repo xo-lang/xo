@@ -401,14 +401,10 @@ fn main(os0: Os) ! {
   }
   if o.cmd == "build" && o.backend.is_empty() && !o.race {
     // with no --backend, each target with its own native backend
-    // (arm64, amd64 and wasm); --targets=all is then the targets one
-    // builds, without windows/arm64 (owner, 2026-10-22, decision 0270
-    // addendum; --backend=go --targets=all keeps all seven)
-    var ts = parse_targets(os, o.targets, "${ctx.goos}/${host_arch()}")
-    if o.targets == "all" {
-      ts = ts.filter(fn(t) { !target_backend(t).is_empty() })
-      os.stdio.eprintln("xo build: --targets=all builds the targets a native backend builds; windows/arm64 needs --backend=go")
-    }
+    // (arm64, amd64 and wasm); --targets=all is all seven since
+    // windows/arm64 is the arm64 backend's by default (decision 0569,
+    // owner 2026-11-09; the 0270 addendum left it out, 2026-10-22)
+    let ts = parse_targets(os, o.targets, "${ctx.goos}/${host_arch()}")
     let groups = backend_groups(ts)
     if groups.len() > 1 || (groups.len() == 1 && groups[0].0.is_empty()) {
       build_by_backend(os, ctx, o, groups)
@@ -605,7 +601,7 @@ struct Native {
 /// amd64 (decision 0254), wasm for wasip1/wasm, wasip2/wasm and wasip3/wasm.
 fn target_backend(tg: Str) -> Str {
   match tg {
-    "darwin/arm64" | "linux/arm64" | "freebsd/arm64" => "arm64"
+    "darwin/arm64" | "linux/arm64" | "freebsd/arm64" | "windows/arm64" => "arm64"
     "linux/amd64" | "darwin/amd64" | "windows/amd64" | "freebsd/amd64" => "amd64"
     "wasip1/wasm" | "wasip2/wasm" | "wasip3/wasm" => "wasm"
     _ => ""
@@ -1191,10 +1187,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   var cross: List[Str] = []
   let winsysroot = os.env.get("XO_WINSYSROOT") ?? ""
   for tg in targets {
-    // windows/arm64 only when --backend=arm64 is named (decision 0569
-    // stage 1: assembly and cross builds, outside the default targets)
-    if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64" | "freebsd/arm64") && !(tg == "windows/arm64" && !o.backend_auto) {
-      fail(os, "the arm64 backend builds for darwin/arm64 and linux/arm64, not ${tg} (windows/arm64 is experimental: --backend=arm64 names it, decision 0569)")
+    // windows/arm64 by default too since the owner's go (decision 0569,
+    // 2026-11-09; it needed --backend=arm64 before)
+    if backend == "arm64" && !(tg is "darwin/arm64" | "linux/arm64" | "freebsd/arm64" | "windows/arm64") {
+      fail(os, "the arm64 backend builds for darwin/arm64, linux/arm64, freebsd/arm64 and windows/arm64, not ${tg}")
     }
     if backend == "amd64" && !(tg is "linux/amd64" | "darwin/amd64" | "windows/amd64" | "freebsd/amd64") {
       fail(os, "the amd64 backend builds for linux/amd64, darwin/amd64, and windows/amd64, not ${tg} (decision 0254)")

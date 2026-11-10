@@ -483,6 +483,16 @@ four fixes, each the next link error:
   runtime there is no realloc, _msize, _beginthreadex or
   __C_specific_handler. A windows-arm64 prebuilt object
   (scripts/sqlite-prebuilt.sh) is a follow-up for releases.
+## The native backend by default (owner, 2026-11-09)
+
+Approved by the owner on 2026-11-09, through the lead, to land after three
+prerequisites (Xo Lang 2's draft): the `use c` goldens on the winarm VM,
+cmd/xo's and internal/arm64's suites there, and a windows/arm64 golden
+runner for the lead's tier (scripts/winarm-goldens.sh). With it,
+windows/arm64 builds with the arm64 backend when no `--backend` is named
+(main.xo target_backend), from a windows/arm64 host and as a cross target
+from any host, and `--targets=all` is all seven targets (the decision
+0270 addendum's six, 2026-10-22, left it out).
 
 ## Consequences
 
