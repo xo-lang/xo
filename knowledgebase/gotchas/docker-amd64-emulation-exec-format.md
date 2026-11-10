@@ -22,3 +22,7 @@ race-runtime.sh calls it, about 40 s). The host has no root, no pip and
 no python3-venv, so race-runtime.sh takes Kitware's cmake and ninja's
 release binaries at pinned SHA-256s there. Unset, seed-cut.sh now checks
 that Docker runs a linux/amd64 container before it builds anything.
+
+A patch seed (XO_SEED_TAG) builds in the tag's tree, so seed-cut.sh must run its own
+scripts/race-runtime.sh, not the tree's: the 0.46.0 cut's second try ran v0.46.0's older copy,
+which ignored the variable and failed the same way (fixed 2026-11-10).

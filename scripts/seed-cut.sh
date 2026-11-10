@@ -274,7 +274,7 @@ mkdir -p "$out"
 XO_LLVM_OPT=O2 heavy "$log/xobuild-o2.log" go run ./scripts/xobuild || { tail "$log/xobuild-o2.log"; die "xobuild -O2 failed"; }
 # ThreadSanitizer's runtime for native --race (decision 0273 part 3) into
 # the tree's lib/xo/race, which seed-pack.sh packs
-heavy "$log/race-runtime.log" bash scripts/race-runtime.sh "$work/race" "$tree" || { tail "$log/race-runtime.log"; die "race-runtime.sh failed"; }
+heavy "$log/race-runtime.log" bash "$repo/scripts/race-runtime.sh" "$work/race" "$tree" || { tail "$log/race-runtime.log"; die "race-runtime.sh failed"; }
 [ "$(bin/xo version | awk '{print $2}')" = "$version" ] || die "bin/xo version: $(bin/xo version), want xo $version"
 XO_SEED_COMMIT=$commit XO_SEED_NOTE="native darwin/arm64 build at -O2, fixed point ok (seed-cut.sh)" \
   bash scripts/seed-pack.sh bin/xo "$out" > "$log/pack-darwin-arm64.log"
@@ -299,8 +299,11 @@ for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64 windows/arm64; do
   # in Docker, darwin-amd64's dylib cross built here
   # (windows/arm64 has no ThreadSanitizer runtime: --race is not
   # offered there, decision 0569)
+  # the cutter's race-runtime.sh (checked against origin/main above), not
+  # the tree's: a patch seed's tree is an older tag, whose copy lacked
+  # XO_RACE_REMOTE_LINUX_AMD64 (the 0.46.0 cut's second try, 2026-11-10)
   if [ "$plat" != windows-arm64 ]; then
-    bash scripts/race-runtime.sh "$work/race-$plat" "$d" "$plat" > "$log/race-runtime-$plat.log" 2>&1 ||
+    bash "$repo/scripts/race-runtime.sh" "$work/race-$plat" "$d" "$plat" > "$log/race-runtime-$plat.log" 2>&1 ||
       { tail "$log/race-runtime-$plat.log"; die "race-runtime.sh $plat failed"; }
   fi
   XO_SEED_VERSION=$version XO_SEED_PLATFORM=$plat XO_SEED_COMMIT=$commit \
