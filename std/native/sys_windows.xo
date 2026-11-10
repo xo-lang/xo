@@ -14,6 +14,13 @@
 /// CreateFileW: the handle, or INVALID_HANDLE_VALUE (-1).
 fn CreateFileW(name: Bytes, access: Int, share: Int, security: Int, disposition: Int, flags: Int, template: Int) -> Int
 fn ReadFile(h: Int, buf: Int, n: Int, done: Int, overlapped: Int) -> Int32
+/// SetFilePointerEx: the handle's position, moved by dist from method's
+/// origin (0 begin, 1 current, 2 end), the new one stored at pos (0 for
+/// none); nonzero on success. read_at and write_at save and restore the
+/// position with it, since ReadFile and WriteFile at an OVERLAPPED's
+/// offset move a synchronous handle's position (Go's internal/poll
+/// Pread and Pwrite do the same)
+fn SetFilePointerEx(h: Int, dist: Int, pos: Int, method: Int) -> Int32
 fn WriteFile(h: Int, buf: Int, n: Int, done: Int, overlapped: Int) -> Int32
 fn CloseHandle(h: Int) -> Int32
 /// FlushFileBuffers: nonzero on success.

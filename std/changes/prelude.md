@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-09: fix: File.read_at and write_at keep the position on Windows
+
+- Kind: fix
+- Commit: this push
+- Found by: the windows/arm64 goldens on the winarm VM (zip_open_file: a read after read_at printed two zero bytes, the end record's, where "PK" was expected)
+- Go reference: internal/poll FD.Pread and FD.Pwrite on Windows (Seek to the current position, then restore it)
+- Test: internal/llvm golden zip_open_file run on Windows (windows/arm64 on the winarm VM)
+- Timing: none (two SetFilePointerEx calls per read_at or write_at)
+- Shipped in: not yet released
+
+ReadFile and WriteFile at an OVERLAPPED's offset move a synchronous handle's position, so a `read` after a `read_at` went on from where the read_at had stopped. llrt windows.xo pread_at and pwrite_at now save the position with SetFilePointerEx and restore it after, as Go does.
+
 ## 2026-11-09: feature: Stdio.raw_input
 
 - Kind: feature

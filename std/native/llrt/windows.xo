@@ -1041,9 +1041,37 @@ pub fn readlink(path: Str) -> (Str, Int) {
   (narrow_slash(buf, off, n), 0)
 }
 
+/// The position of the synchronous handle h, or -1 (SetFilePointerEx
+/// by 0 from the current one).
+fn file_pos(h: Int) -> Int {
+  let o = raw.bytes_buf(8)
+  if keep(o, Int(sys_windows.SetFilePointerEx(h, 0, raw.bytes_addr(o), 1))) == 0 {
+    return -1
+  }
+  rt.mem_load(raw.bytes_addr(o), 0, 8)
+}
+
+/// h's position set back to pos (from file_pos; nothing for -1).
+fn file_pos_restore(h: Int, pos: Int) {
+  if pos >= 0 {
+    sys_windows.SetFilePointerEx(h, pos, 0, 0)
+  }
+}
+
 /// ReadFile of at most n bytes at offset off to the address a (an
-/// OVERLAPPED with the offset on a synchronous handle), as read_at.
+/// OVERLAPPED with the offset on a synchronous handle), as read_at. The
+/// handle's position is saved and restored around it, as Go's
+/// internal/poll FD.Pread does on Windows: ReadFile at an OVERLAPPED's
+/// offset moves a synchronous handle's position (a read after a read_at
+/// read where the read_at had stopped).
 pub fn pread_at(h: Int, a: Int, n: Int, off: Int) -> Int {
+  let pos = file_pos(h)
+  let r = pread_raw(h, a, n, off)
+  file_pos_restore(h, pos)
+  r
+}
+
+fn pread_raw(h: Int, a: Int, n: Int, off: Int) -> Int {
   let done = obj.scratch()
   let k = if n > 2147483647 { 2147483647 } else { n }
   let o = raw.bytes_buf(32)
@@ -1065,8 +1093,16 @@ pub fn pread_at(h: Int, a: Int, n: Int, off: Int) -> Int {
 
 /// WriteFile of at most n bytes from the address a at offset off (an
 /// OVERLAPPED with the offset on a synchronous handle), as pread_at: the
-/// count, or the negative errno.
+/// count, or the negative errno. The position is saved and restored, as
+/// pread_at's (Go's FD.Pwrite).
 pub fn pwrite_at(h: Int, a: Int, n: Int, off: Int) -> Int {
+  let pos = file_pos(h)
+  let r = pwrite_raw(h, a, n, off)
+  file_pos_restore(h, pos)
+  r
+}
+
+fn pwrite_raw(h: Int, a: Int, n: Int, off: Int) -> Int {
   let done = obj.scratch()
   let k = if n > 2147483647 { 2147483647 } else { n }
   let o = raw.bytes_buf(32)
