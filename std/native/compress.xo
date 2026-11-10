@@ -445,85 +445,204 @@ fn lzw_encode(data: Bytes, order: compress.LzwOrder, lit_width: Int) -> Bytes ! 
   e.out.freeze()
 }
 
-/// The decoded bytes of Go's lzw.Reader and its error text ("" for none; the
-/// bytes before an error are still Go's output), at most limit bytes (an
-/// error "lzw: output exceeds max_size" past it, as the other decoders).
-fn lzw_run(data: Bytes, order: compress.LzwOrder, lit_width: Int, max_size: Int) -> (Bytes, Str) {
-  if lit_width < 2 || lit_width > 8 {
-    return (b"", lzw_range_err(lit_width).msg)
+// Go's lzw.Reader error states.
+pub const LZW_OK: Int = 0
+pub const LZW_EOF: Int = 1
+pub const LZW_UNEXPECTED: Int = 2
+pub const LZW_INVALID: Int = 3
+
+/// The bytes an lzw Reader reads (Go's io.ByteReader): flat, or the data
+/// sub-blocks of a GIF image (a length byte, that many bytes, ending with
+/// a zero length), as image/gif's blockReader reads them. data[pos..] is
+/// not yet read; a block's unread bytes are data[bi..bj].
+pub struct LzwSrc {
+  pub data: Bytes
+  pub pos: Int
+  pub blocks: Bool
+  bi: Int
+  bj: Int
+  err: Int
+}
+
+pub fn new_lzw_src(data: Bytes, pos: Int, blocks: Bool) -> LzwSrc {
+  LzwSrc{data: data, pos: pos, blocks: blocks, bi: 0, bj: 0, err: 0}
+}
+
+/// Go's blockReader.fill.
+fn (var s: LzwSrc) fill() {
+  if s.err != 0 {
+    return
   }
-  let lsb = order == compress.LzwOrder.LSB
-  let clear = 1 << lit_width
-  let eof = clear + 1
-  var width = lit_width + 1
-  var hi = eof
-  var overflow = 1 << width
-  var last = 65535
-  var suffix: List[Int] = []
-  var prefix: List[Int] = []
+  if s.pos >= s.data.len() {
+    s.err = LZW_UNEXPECTED
+    return
+  }
+  let j = Int(s.data[s.pos])
+  s.pos += 1
+  if j == 0 {
+    s.err = LZW_EOF
+    return
+  }
+  if s.pos + j > s.data.len() {
+    s.pos = s.data.len()
+    s.err = LZW_UNEXPECTED
+    return
+  }
+  s.bi = s.pos
+  s.bj = s.pos + j
+  s.pos += j
+}
+
+/// The next byte, or -1 at the end of the data or on an error.
+fn (var s: LzwSrc) next() -> Int {
+  if !s.blocks {
+    if s.pos >= s.data.len() {
+      return -1
+    }
+    let c = Int(s.data[s.pos])
+    s.pos += 1
+    return c
+  }
+  if s.bi == s.bj {
+    s.fill()
+    if s.err != 0 {
+      return -1
+    }
+  }
+  let c = Int(s.data[s.bi])
+  s.bi += 1
+  c
+}
+
+/// Go's blockReader.close: 0 when the image data ended cleanly, 1 for
+/// "too much image data", 2 for a read error (unexpected EOF).
+pub fn (var s: LzwSrc) close() -> Int {
+  if s.err == LZW_EOF {
+    return 0
+  }
+  if s.err != 0 {
+    return 2
+  }
+  if s.bi == s.bj {
+    s.fill()
+    if s.err == LZW_EOF {
+      return 0
+    }
+    if s.err != 0 {
+      return 2
+    }
+    if s.bj - s.bi > 1 {
+      return 1
+    }
+  }
+  s.fill()
+  if s.err == LZW_EOF {
+    return 0
+  }
+  if s.err != 0 {
+    return 2
+  }
+  1
+}
+
+/// Go's lzw.Reader (reader.go) without its io plumbing: batch decodes codes
+/// until 4096 bytes of output are ready or an error stops it.
+pub struct LzwDec {
+  lsb: Bool
+  lit: Int
+  clear: Int
+  eof: Int
+  width: Int
+  hi: Int
+  overflow: Int
+  last: Int
+  bits: Int
+  nbits: Int
+  suffix: List[Int]
+  prefix: List[Int]
+  pub err: Int
+  pub pend: Bytes
+  pub rp: Int
+}
+
+pub fn new_lzw_dec(lsb: Bool, lit: Int) -> LzwDec {
+  var d = LzwDec{lsb: lsb, lit: lit, clear: 1 << lit, eof: (1 << lit) + 1, width: lit + 1, hi: (1 << lit) + 1, overflow: 1 << (lit + 1), last: 65535, bits: 0, nbits: 0, suffix: [], prefix: [], err: 0, pend: b"", rp: 0}
   for _ in 0..4096 {
-    suffix.push(0)
-    prefix.push(0)
+    d.suffix.push(0)
+    d.prefix.push(0)
   }
-  var out = BytesBuilder.with_capacity(data.len() * 2)
-  var bits = 0
-  var nbits = 0
-  var pos = 0
-  var stack: List[Int] = []
-  let limit = if max_size < 0 { 0 } else { max_size }
-  while true {
-    // read one code
-    while nbits < width {
-      if pos >= data.len() {
-        return (out.freeze(), "unexpected EOF")
-      }
-      let x = Int(data[pos])
-      pos += 1
-      if lsb {
-        bits = bits | (x << nbits)
-      } else {
-        bits = bits | (x << (24 - nbits))
-      }
-      nbits += 8
+  d
+}
+
+/// One code, or -1 when the source ended.
+fn (var d: LzwDec) read_code(var s: LzwSrc) -> Int {
+  while d.nbits < d.width {
+    let x = s.next()
+    if x < 0 {
+      return -1
     }
-    var code = 0
-    if lsb {
-      code = bits & ((1 << width) - 1)
-      bits = bits >> width
+    if d.lsb {
+      d.bits = d.bits | (x << d.nbits)
     } else {
-      code = (bits >> (32 - width)) & 65535
-      bits = (bits << width) & 4294967295
+      d.bits = d.bits | (x << (24 - d.nbits))
     }
-    nbits -= width
-    if code < clear {
+    d.nbits += 8
+  }
+  var code = 0
+  if d.lsb {
+    code = d.bits & ((1 << d.width) - 1)
+    d.bits = d.bits >> d.width
+  } else {
+    code = (d.bits >> (32 - d.width)) & 65535
+    d.bits = (d.bits << d.width) & 4294967295
+  }
+  d.nbits -= d.width
+  code
+}
+
+/// Go's Reader.decode: fills pend with the next batch (or the output before
+/// an error, which is then in err).
+pub fn (var d: LzwDec) batch(var s: LzwSrc) {
+  var out = BytesBuilder.with_capacity(4200)
+  var o = 0
+  var stack: List[Int] = []
+  while true {
+    let code = d.read_code(s)
+    if code < 0 {
+      d.err = LZW_UNEXPECTED
+      break
+    }
+    if code < d.clear {
       out.write_le(code, 1)
-      if last != 65535 {
-        suffix[hi] = code
-        prefix[hi] = last
+      o += 1
+      if d.last != 65535 {
+        d.suffix[d.hi] = code
+        d.prefix[d.hi] = d.last
       }
-    } else if code == clear {
-      width = 1 + lit_width
-      hi = eof
-      overflow = 1 << width
-      last = 65535
+    } else if code == d.clear {
+      d.width = 1 + d.lit
+      d.hi = d.eof
+      d.overflow = 1 << d.width
+      d.last = 65535
       continue
-    } else if code == eof {
-      return (out.freeze(), "")
-    } else if code <= hi {
+    } else if code == d.eof {
+      d.err = LZW_EOF
+      break
+    } else if code <= d.hi {
       stack = []
       var c = code
       var tail = -1
-      if code == hi && last != 65535 {
-        c = last
-        while c >= clear {
-          c = prefix[c]
+      if code == d.hi && d.last != 65535 {
+        c = d.last
+        while c >= d.clear {
+          c = d.prefix[c]
         }
         tail = c
-        c = last
+        c = d.last
       }
-      while c >= clear {
-        stack.push(suffix[c])
-        c = prefix[c]
+      while c >= d.clear {
+        stack.push(d.suffix[c])
+        c = d.prefix[c]
       }
       stack.push(c)
       var k = stack.len() - 1
@@ -531,30 +650,86 @@ fn lzw_run(data: Bytes, order: compress.LzwOrder, lit_width: Int, max_size: Int)
         out.write_le(stack[k], 1)
         k -= 1
       }
+      o += stack.len()
       if tail >= 0 {
         out.write_le(tail, 1)
+        o += 1
       }
-      if last != 65535 {
-        suffix[hi] = c
-        prefix[hi] = last
+      if d.last != 65535 {
+        d.suffix[d.hi] = c
+        d.prefix[d.hi] = d.last
       }
     } else {
-      return (out.freeze(), "lzw: invalid code")
+      d.err = LZW_INVALID
+      break
     }
-    last = code
-    hi += 1
-    if hi >= overflow {
-      if width == 12 {
-        last = 65535
-        hi -= 1
+    d.last = code
+    d.hi += 1
+    if d.hi >= d.overflow {
+      if d.width == 12 {
+        d.last = 65535
+        d.hi -= 1
       } else {
-        width += 1
-        overflow = 1 << width
+        d.width += 1
+        d.overflow = 1 << d.width
       }
     }
+    if o >= 4096 {
+      break
+    }
+  }
+  d.pend = out.freeze()
+  d.rp = 0
+}
+
+/// Go's lzw.Reader.Read into a buffer of up to n bytes: the bytes, and
+/// whether it stopped short on an error (d.err).
+pub fn (var d: LzwDec) read(var s: LzwSrc, n: Int) -> Bytes {
+  var out = BytesBuilder.with_capacity(n)
+  while out.len() < n {
+    if d.rp < d.pend.len() {
+      let take = imin(n - out.len(), d.pend.len() - d.rp)
+      out.write(d.pend[d.rp..d.rp + take])
+      d.rp += take
+      continue
+    }
+    if d.err != 0 {
+      break
+    }
+    d.batch(s)
+  }
+  out.freeze()
+}
+
+fn imin(a: Int, b: Int) -> Int { if a < b { a } else { b } }
+
+/// The decoded bytes of Go's lzw.Reader and its error text ("" for none; the
+/// bytes before an error are still Go's output), at most max_size bytes (an
+/// error "lzw: output exceeds max_size" past it, as the other decoders).
+fn lzw_run(data: Bytes, order: compress.LzwOrder, lit_width: Int, max_size: Int) -> (Bytes, Str) {
+  if lit_width < 2 || lit_width > 8 {
+    return (b"", lzw_range_err(lit_width).msg)
+  }
+  var s = new_lzw_src(data, 0, false)
+  var d = new_lzw_dec(order == compress.LzwOrder.LSB, lit_width)
+  var out = BytesBuilder.with_capacity(data.len() * 2)
+  let limit = if max_size < 0 { 0 } else { max_size }
+  while true {
+    out.write(d.pend[d.rp..d.pend.len()])
+    d.rp = d.pend.len()
     if out.len() > limit {
       return (b"", "lzw: output exceeds max_size (${max_size} bytes)")
     }
+    if d.err == LZW_EOF {
+      return (out.freeze(), "")
+    }
+    if d.err == LZW_UNEXPECTED {
+      return (out.freeze(), "unexpected EOF")
+    }
+    if d.err == LZW_INVALID {
+      return (out.freeze(), "lzw: invalid code")
+    }
+    d.batch(s)
   }
   (b"", "")
 }
