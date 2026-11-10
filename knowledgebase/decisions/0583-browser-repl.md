@@ -138,3 +138,17 @@ check in the tab), the others 16 to 137 ms each, run included, values
 right. The compiler instance's memory reached 1216 MB, which is the next
 question: a phone's tab limit, so a smaller warm base or less garbage
 kept between entries before the page offers this by default.
+
+## Memory target before the page offers it (owner, 2026-11-10)
+No REPL panel on /play/ until the compiler instance's memory is lower:
+at most 300 MB at peak in the tab over the 30-entry session, flat after
+the warm-up (no growth per entry), and the first entry still about 1 s
+or better. Baseline (headless Chrome 157, the Mac Studio, 2026-11-10):
+today's /play/ compiler (the website's xoc-20e5db5939ae) reaches 1920 MB
+of wasm memory on one build of a hello program in a fresh instance, and
+the step 4 probe's long-lived instance 1216 MB after its warm check,
+flat over the session's entries, with 88 MB of it on the allocator's
+free lists (so about 1.1 GB is held, not size class garbage). The work
+is the compiler's own check and build peak, which /play/ pays today too.
+Levers: a smaller warm base (what the warm check keeps), freeing each
+entry's garbage, memory.grow headroom, and levels 2b/2c.
