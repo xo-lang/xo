@@ -1,5 +1,18 @@
 # std/protoparse changes
 
+## 2026-11-10: fix: `ParseErr` displays as `LINE:COL: MSG` again
+
+- Kind: fix
+- Commit: this commit
+- Found by: cmd/xo TestProtoGen on main after the 0588 merge (Lang 2, lead)
+- Go reference: none
+- Test: cmd/xo TestProtoGen (`xo proto gen` on a bad file names `bad.proto:2:`)
+
+The 0588 merge kept the declaration's `derive Display` and the native
+`parseerr_display` that used to override it, so the derive won and
+`xo proto gen` printed `ParseErr{line: 2, ...}` instead of `2:13: MSG`.
+ParseErr now has its own `display()` method.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

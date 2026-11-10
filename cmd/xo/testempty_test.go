@@ -33,8 +33,9 @@ func TestXoTestNoTests(t *testing.T) {
 }
 
 // TestXoTestStdModuleNames (decision 0437): `xo test --std-module` takes
-// a bare name for the module with tests (base64 is native/base64; it ran
-// std/base64, the Go backend's, with no tests, and passed), fails a run
+// a bare name for the module with tests (base64, merged by decision 0588,
+// is std/base64 with its tests; a split module's bare name is native/NAME),
+// fails a run
 // that tests nothing, and rejects an unknown name with exit 2 and the
 // nearest tested modules; `xo test` on a path in std names the flag.
 func TestXoTestStdModuleNames(t *testing.T) {
@@ -46,15 +47,15 @@ func TestXoTestStdModuleNames(t *testing.T) {
 		return code, out.String(), errb.String()
 	}
 	if code, out, errs := xt("--std-module=base64"); code != 0 || !strings.Contains(out, "ok: ") || strings.Contains(out, "ok: 0 passed") {
-		t.Errorf("--std-module=base64: want native/base64's tests run, exit %d:\n%s%s", code, out, errs)
+		t.Errorf("--std-module=base64: want base64's tests run, exit %d:\n%s%s", code, out, errs)
 	}
-	if code, out, errs := xt("--std-module=bas64"); code != 2 || !strings.Contains(errs, "did you mean native/base64") {
+	if code, out, errs := xt("--std-module=bas64"); code != 2 || !strings.Contains(errs, "did you mean base64?") {
 		t.Errorf("--std-module=bas64: want exit 2 and a did-you-mean, exit %d:\n%s%s", code, out, errs)
 	}
 	if code, out, errs := xt("--std-module=backoff"); code != 2 || !strings.Contains(errs, "has no tests") {
 		t.Errorf("--std-module=backoff (no tests): want exit 2, exit %d:\n%s%s", code, out, errs)
 	}
-	if code, out, errs := xt(filepath.Join(xoStd(), "native", "base64.xo")); code != 2 || !strings.Contains(errs, "--std-module=native/base64") {
-		t.Errorf("xo test on std's base64.xo: want exit 2 naming --std-module=native/base64, exit %d:\n%s%s", code, out, errs)
+	if code, out, errs := xt(filepath.Join(xoStd(), "native", "json.xo")); code != 2 || !strings.Contains(errs, "--std-module=native/json") {
+		t.Errorf("xo test on std's native/json.xo: want exit 2 naming --std-module=native/json, exit %d:\n%s%s", code, out, errs)
 	}
 }

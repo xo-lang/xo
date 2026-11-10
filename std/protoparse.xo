@@ -8,7 +8,10 @@ pub struct ParseErr {
   pub line: Int
   pub col: Int
   pub msg: Str
-} derive Display
+}
+
+/// `LINE:COL: MSG`.
+pub fn (e: ParseErr) display() -> Str { "${e.line}:${e.col}: ${e.msg}" }
 
 /// A token kind: an identifier (dots allowed inside, as in `foo.Bar`), an integer, a float, a
 /// string literal (unquoted, escapes decoded), or one symbol character.
@@ -232,8 +235,6 @@ pub fn gen(f: File) -> Str ! ParseErr {
   for m in f.messages { o = g_message(m, "", "", names, o)? }
   Ok(o.join("\n"))
 }
-
-fn parseerr_display(e: ParseErr) -> Str { "${e.line}:${e.col}: ${e.msg}" }
 
 fn is_letter(c: Int) -> Bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 }
 
