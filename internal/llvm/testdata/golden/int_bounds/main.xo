@@ -1,0 +1,37 @@
+// The integer types' bounds as type constants (decision 0587).
+
+const BIG: Int = Int.max
+const SMALL: Int = Int.min + 1
+
+fn clamp8(n: Int) -> Int8 {
+  if n > Int(Int8.max) {
+    return Int8.max
+  }
+  if n < Int(Int8.min) {
+    return Int8.min
+  }
+  Int8(n)
+}
+
+fn kind(n: Int) -> Str {
+  match n {
+    Int.max => "max"
+    Int.min => "min"
+    _ => "other"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${Int.max} ${Int.min}")
+  os.stdio.println("${BIG == Int.max} ${SMALL - 1 == Int.min}")
+  os.stdio.println("${Int8.max} ${Int8.min} ${Int16.max} ${Int16.min} ${Int32.max} ${Int32.min}")
+  os.stdio.println("${Int64.max} ${Int64.min}")
+  os.stdio.println("${UInt8.max} ${UInt16.max} ${UInt32.max} ${UInt64.max} ${UInt8.min} ${UInt64.min}")
+  os.stdio.println("${clamp8(1000)} ${clamp8(-1000)} ${clamp8(5)}")
+  os.stdio.println("${kind(Int.max)} ${kind(Int.min)} ${kind(0)}")
+  var lo = Int.max
+  for x in [3, -7, 12] {
+    lo = lo.min(x)
+  }
+  os.stdio.println("${lo} ${3.max(9)}")
+}

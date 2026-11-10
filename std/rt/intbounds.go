@@ -1,0 +1,26 @@
+package rt
+
+import "math"
+
+// The integer types' bounds, the prelude's type constants Int.max,
+// Int.min, ... (decision 0587).
+const (
+	INT_MAX    int64  = math.MaxInt64
+	INT_MIN    int64  = math.MinInt64
+	INT8_MAX   int8   = math.MaxInt8
+	INT8_MIN   int8   = math.MinInt8
+	INT16_MAX  int16  = math.MaxInt16
+	INT16_MIN  int16  = math.MinInt16
+	INT32_MAX  int32  = math.MaxInt32
+	INT32_MIN  int32  = math.MinInt32
+	INT64_MAX  int64  = math.MaxInt64
+	INT64_MIN  int64  = math.MinInt64
+	UINT8_MAX  uint8  = math.MaxUint8
+	UINT8_MIN  uint8  = 0
+	UINT16_MAX uint16 = math.MaxUint16
+	UINT16_MIN uint16 = 0
+	UINT32_MAX uint32 = math.MaxUint32
+	UINT32_MIN uint32 = 0
+	UINT64_MAX uint64 = math.MaxUint64
+	UINT64_MIN uint64 = 0
+)

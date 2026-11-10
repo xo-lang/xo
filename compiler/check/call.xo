@@ -465,6 +465,18 @@ fn (var c: Checker) type_member(obj0: Int, targs0: List[Int], has_targs0: Bool, 
     }
   }
   let fo = c.objs[obj].statics.get(name) ?? -1
+  if fo >= 0 && c.objs[fo].kind == ObjKind.Const {
+    // a type constant, `Int.max` (decision 0587)
+    c.record(sel, fo)
+    if !call.is_empty() {
+      let d = c.error("XO0407", parser.expr_span(call[0]), "`${text(c.objs[obj].name)}.${text(name)}` is a constant, not a function")
+      if name == b"max" || name == b"min" {
+        c.note(d, "the larger or smaller of two values is the method: `a.${text(name)}(b)`")
+      }
+      return c.bad_ty
+    }
+    return c.const_type(fo)
+  }
   if fo >= 0 {
     c.record(sel, fo)
     if c.objs[fo].static_const {

@@ -160,6 +160,45 @@ struct Target {
 // ---------------------------------------------------------------------------
 // Numbers (std.md 2.1)
 
+// The integer types' bounds, `Int.max` and `Int.min` (decision 0587):
+// type constants, so these names are not in scope.
+/// The largest Int. @static Int.max
+const INT_MAX: Int = 9223372036854775807
+/// The smallest Int. @static Int.min
+const INT_MIN: Int = -9223372036854775807 - 1
+/// The largest Int8. @static Int8.max
+const INT8_MAX: Int8 = 127
+/// The smallest Int8. @static Int8.min
+const INT8_MIN: Int8 = -128
+/// The largest Int16. @static Int16.max
+const INT16_MAX: Int16 = 32767
+/// The smallest Int16. @static Int16.min
+const INT16_MIN: Int16 = -32768
+/// The largest Int32. @static Int32.max
+const INT32_MAX: Int32 = 2147483647
+/// The smallest Int32. @static Int32.min
+const INT32_MIN: Int32 = -2147483648
+/// The largest Int64. @static Int64.max
+const INT64_MAX: Int64 = 9223372036854775807
+/// The smallest Int64. @static Int64.min
+const INT64_MIN: Int64 = -9223372036854775807 - 1
+/// The largest UInt8. @static UInt8.max
+const UINT8_MAX: UInt8 = 255
+/// The smallest UInt8. @static UInt8.min
+const UINT8_MIN: UInt8 = 0
+/// The largest UInt16. @static UInt16.max
+const UINT16_MAX: UInt16 = 65535
+/// The smallest UInt16. @static UInt16.min
+const UINT16_MIN: UInt16 = 0
+/// The largest UInt32. @static UInt32.max
+const UINT32_MAX: UInt32 = 4294967295
+/// The smallest UInt32. @static UInt32.min
+const UINT32_MIN: UInt32 = 0
+/// The largest UInt64. @static UInt64.max
+const UINT64_MAX: UInt64 = 18446744073709551615
+/// The smallest UInt64. @static UInt64.min
+const UINT64_MIN: UInt64 = 0
+
 fn (static: Int) parse(s: Str) -> Int?
 /// Go's ParseInt(s, base, 64): base 2 to 36, or 0 for the 0b, 0o, 0x, and
 /// 0 prefixes and _ separators; None for text that is not a number in

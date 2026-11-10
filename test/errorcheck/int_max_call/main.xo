@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let a = Int.max(1, 2) // ERROR XO0407
+  os.stdio.println("${a}")
+}

@@ -47,3 +47,24 @@ errors cascade (one prints the unknown type as `_`).
 - **Module constants `math.MAX_INT`**: Go's style, but a second place to
   look and no per-type form.
 - **Only a habit note** naming the literal: leaves 72 magic numbers in std.
+
+## Implementation (Xo Lang 1, 2026-11-10)
+
+Point 2's form is a doc marker, not new syntax: the prelude declares
+`/// The largest Int. @static Int.max` above `const INT_MAX: Int = ...`
+(std/prelude.xo, Numbers), and the checker attaches a std constant so
+documented to the type's statics and leaves its own name out of scope
+(compiler/check/decl.xo attach_static_const; core 4.6 lists the marker).
+The parser, the formatter, the AST caches and every backend are
+unchanged: a reference is an ordinary std constant to SSA and the Go
+backend (std/rt/intbounds.go). `Int.max(a, b)` is XO0407 (a constant,
+not a function) with the note naming `a.max(b)`, where point 3 said
+XO0601: XO0407 is what the existing type constants (`Time.UNIX_EPOCH`)
+give. Golden int_bounds; errorcheck int_max_call.
+
+Point 4 (std's literal bounds) follows the first seed whose checker
+knows `@static`: xo builds itself with the previous release's xo, whose
+checker reads `Int.max` in std/native/llrt or a std module the compiler
+imports as an unknown name (gotchas/seed-older-than-intrinsics.md). The
+prelude's new constants are harmless to an older checker (ordinary
+prelude constants to it), which the gate's seedbuild step checks.

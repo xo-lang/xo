@@ -644,7 +644,17 @@ fn (var c: Checker) qualified_const_of_pattern(path: List[Ident]) -> Int {
   }
   let imp = match c.file_import(path[0].name) {
     Some(x) => x
-    None => return -1
+    None => {
+      // a type constant, `Int.max` (decision 0587)
+      let to = c.lookup_module_obj(c.cur_mod, path[0].name)
+      if to >= 0 && c.objs[to].kind == ObjKind.Type {
+        let so = c.objs[to].statics.get(path[1].name) ?? -1
+        if so >= 0 && c.objs[so].kind == ObjKind.Const {
+          return so
+        }
+      }
+      return -1
+    }
   }
   if imp.module < 0 {
     return -1

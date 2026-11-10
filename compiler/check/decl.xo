@@ -119,7 +119,12 @@ fn (var c: Checker) declare(m: Int) {
           c.objs[o].decl_file = f
           c.objs[o].decl_idx = i
           c.check_name(cd.name, "constant")
-          c.define(cd.name, o)
+          // a std constant documented `@static T.name` is the type
+          // constant `T.name` (decision 0587: `Int.max`), attached in
+          // resolve_sigs, and no name of its module
+          if !(c.mods[m].is_std && doc_has(cd.doc, "@static ")) {
+            c.define(cd.name, o)
+          }
         }
         _ => {}
       }
@@ -702,6 +707,13 @@ fn (var c: Checker) resolve_sigs(m: Int) {
     c.set_file(f)
     let decls = c.files[f].ast.decls
     for (i, d) in decls.indexed() {
+      if let ConstDecl(d: cd) = d {
+        if c.mods[m].is_std && doc_has(cd.doc, "@static ") {
+          var cenv = TypeEnv{file: f, mod: m}
+          c.attach_static_const(c.files[f].decl_objs[i], cd, cenv)
+        }
+        continue
+      }
       let fd = match d {
         FnDecl(d: x) => x
         _ => continue
@@ -735,6 +747,36 @@ fn (var c: Checker) resolve_sigs(m: Int) {
       c.resolve_sig(fo, env, false)
     }
   }
+}
+
+/// Attaches the std constant o, documented `@static T.name`, to type T as
+/// its type constant `T.name` (decision 0587).
+fn (var c: Checker) attach_static_const(o: Int, cd: parser.ConstDecl, var env: TypeEnv) {
+  let st = doc_after(cd.doc, "@static ")
+  let dot = st.find(".") ?? -1
+  if dot <= 0 {
+    c.error("XO0407", cd.name.span, "`@static` names `Type.name`, found `${st}`")
+    return
+  }
+  let sb = st.bytes()
+  let tn = sb[0..dot]
+  var mn = sb[dot + 1..]
+  if let Some(sp) = text(mn).find(" ") {
+    mn = mn[0..sp]
+  }
+  let rt = c.resolve_type(parser.Type.NamedType(span: cd.name.span, path: [Ident{span: cd.name.span, name: tn}], args: []), env)
+  let r = c.resolve(rt)
+  if c.tys[r].kind != TyKind.Named {
+    c.error("XO0407", cd.name.span, "`@static` names type `${text(tn)}`, which is not a named type")
+    return
+  }
+  let t = c.tys[r].obj
+  if let Some(prev) = c.objs[t].statics.get(mn) {
+    let d = c.error("XO0603", cd.name.span, "`${text(mn)}` is already declared on `${text(c.objs[t].name)}`")
+    c.note_obj(d, prev, "previous declaration")
+    return
+  }
+  c.objs[t].statics[mn] = o
 }
 
 /// Attaches method fo to its receiver type (decl.go attachMethod); the

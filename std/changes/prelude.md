@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-11-10: feature: Int.max, Int.min and the sized types' bounds
+
+- Kind: feature
+- Commit: this push
+- Found by: an owner tester wrote `Int.min` and got three errors (decision 0587)
+- Go reference: math.MaxInt64, math.MinInt64, math.MaxUint8, ...
+- Test: internal/llvm golden int_bounds (const, pattern, every sized type, on every backend); test/errorcheck int_max_call
+- Compatibility: none (`Int.max` was an error; `a.max(b)` is unchanged)
+- Timing: none (constants)
+- Shipped in: not yet released
+
+`Int.max`, `Int.min`, `Int8.max` ... `UInt64.max` are type constants, declared in the prelude as constants documented `@static T.name` (core 4.6).
+
 ## 2026-11-09: fix: File.read_at and write_at keep the position on Windows
 
 - Kind: fix

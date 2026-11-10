@@ -89,6 +89,10 @@ When a value is passed where an interface type is expected (for example a
 ### 2.1 Numbers
 
 ```
+Int.max: Int                         // 9223372036854775807, a type constant (no parentheses)
+Int.min: Int                         // -9223372036854775808
+Int8.max: Int8 ... Int64.min: Int64  // every sized type's bounds, each of its own type
+UInt8.max: UInt8 ... UInt64.max: UInt64, UInt8.min ... UInt64.min (0)
 Int.parse(s: Str) -> Int?
 Int.parse_base(s: Str, base: Int) -> Int?   // base 2 to 36, or 0 for 0b, 0o, 0x, 0 prefixes and _ separators
 Float.parse(s: Str) -> Float?
@@ -165,6 +169,15 @@ backend (decision 0385, golden float_fma). Special values are Go's:
 `(-1.0).log()` is NaN, `(0.0).log()` is -Inf, `x.pow(0.0)` is 1.0. Float
 constants (`Float.PI`, `Float.INF`) are a later step; `Float.parse("inf")`
 gives infinity.
+
+The integer bounds `Int.max`, `Int.min`, `Int8.max` ... `UInt64.max` are
+type constants (decision 0587): written without parentheses, constant
+expressions (usable in a `const`, a pattern, a range), each of its own
+type. They are not the Ord methods: `a.max(b)` is still the larger of two
+values, and `Int.max(a, b)` is XO0407 naming `a.max(b)`. `-Int.min`
+overflows and faults, as any Int arithmetic does. The prelude declares
+them as constants documented `@static Int.max` (core 4.6), so the
+constants' own names (`INT_MAX`) are not in scope.
 
 A conversion is a call on the type name, `Float(n)`, not an associated
 function: there is no `Float.from(n)`. XO0601 for an unknown associated
