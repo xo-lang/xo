@@ -227,8 +227,8 @@ slices.Sorted = List.sort
 slices.Values = for x in xs
 slices.Collect = List constructor
 slices.Backward = List.reverse
-maps.Clone = gap: no Map.clone
-maps.Copy = gap: no Map.extend
+maps.Clone = Map.clone
+maps.Copy = Map.extend
 maps.Insert = gap: no Map.extend
 maps.DeleteFunc = Map.filter
 maps.Equal = ==

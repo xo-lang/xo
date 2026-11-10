@@ -440,6 +440,11 @@ one connection's state held four).
 ### 2.4 Map[K, V] and Set[T]
 
 Insertion ordered. `put` on an existing key keeps its position.
+`m.extend(other)` puts every entry of other into m (Go's maps.Copy):
+other's value wins, a key m had keeps its position, new keys follow in
+other's order. `m.clone()` is a copy with a table of its own (maps.Clone);
+assignment already copies a Map, shared until one is written (core 5.1),
+so clone only gives the copy its storage at once (decision 0592).
 
 ```
 fn (m: Map[K, V]) len() -> Int
@@ -5496,7 +5501,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-527 declarations.
+529 declarations.
 
 ### Range
 
@@ -5867,6 +5872,8 @@ fn (m: Map[K, V]) map[U, E, fx: Effects](f: fn(K, V) -> U ! E uses fx) -> Map[K,
 fn (m: Map[K, V]) any[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (m: Map[K, V]) all[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (var m: Map[K, V]) put(k: K, v: V)
+fn (var m: Map[K, V]) extend(other: Map[K, V])
+fn (m: Map[K, V]) clone() -> Map[K, V]
 fn (var m: Map[K, V]) remove(k: K) -> V?
 fn (var m: Map[K, V]) update[R, E, fx: Effects](k: K, init: V, f: fn(var V) -> R ! E uses fx) -> R ! E uses fx
 ```

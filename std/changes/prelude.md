@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-11-10: feature: `Map.extend` and `Map.clone`
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit (bench/results/std-audit-2026-11-10b.md: maps.Copy and maps.Clone in its top 40)
+- Go reference: maps.Copy, maps.Clone (maps.go; maps_test.go TestCopy, TestClone, TestCloneNil)
+- Test: golden map_extend_clone on arm64, LLVM and Go (maps_test.go's cases, order, clone independence)
+- Timing: 100k Int keys, Mac M-series, native against Go 1.26: extend 3.1 ms against maps.Copy 4.7 ms; clone 3.3 ms against maps.Clone 0.31 ms (Go copies the table; Xo rebuilds it, a list copy fast path is next)
+- Shipped in: not yet released
+
+Decision 0592: `m.extend(other)` puts other's entries into m, other's value winning; `m.clone()` gives a copy its own
+table.
+
 ## 2026-11-10: feature: Float's type constants `Float.inf`, `nan`, `pi`, `e`, `max`, `min`, `smallest_nonzero`
 
 - Kind: feature

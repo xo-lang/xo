@@ -933,6 +933,14 @@ fn (m: Map[K, V]) all[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Bool !
 
 /// Stores v at k, as `m[k] = v`; an existing key keeps its position.
 fn (var m: Map[K, V]) put(k: K, v: V)
+/// Puts every entry of other into m, other's value winning for a key
+/// both have (Go's maps.Copy(m, other)); a key m had keeps its position,
+/// new keys follow in other's order (decision 0592).
+fn (var m: Map[K, V]) extend(other: Map[K, V])
+/// A copy of m with a table of its own (Go's maps.Clone). Assigning a Map
+/// already copies it (core 5.1, shared until one is written); clone gives
+/// the copy its storage at once, as Str.clone does (decision 0592).
+fn (m: Map[K, V]) clone() -> Map[K, V]
 /// Removes k and returns its value, or None when it had none (Go's
 /// delete).
 fn (var m: Map[K, V]) remove(k: K) -> V?

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- `Map.extend(other)` and `Map.clone()` (decision 0592): Go's maps.Copy and maps.Clone
 - Float type constants (decision 0592): `Float.inf`, `Float.nan`, `Float.pi`, `Float.e`, `Float.max`, `Float.min` and `Float.smallest_nonzero`, as `Int.max` (Go's math.Inf, NaN, Pi, E, MaxFloat64, SmallestNonzeroFloat64)
 
 - Fixed (windows/arm64, experimental, decision 0569): a program built against std's separately compiled store crashed before main: Xo's ARM64 COFF assembler resolved a branch between two atoms of an atoms mode object in place, and the store's split laid the atoms out anew, so the branch landed in other code or data; such a branch is now a relocation, as on the ELF and Mach-O writers.

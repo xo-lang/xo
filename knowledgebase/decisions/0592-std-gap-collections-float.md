@@ -57,3 +57,14 @@ ported from Go and for dropping a large shared buffer.
   methods already sit on the type.
 - **`Float.min` as the smallest positive value** (C's DBL_MIN): ambiguous
   in exactly the way that trips ports; `smallest_nonzero` says what it is.
+
+## Progress
+
+- 2026-11-10: Float's constants (91837d5de).
+- 2026-11-10: Map.extend and Map.clone, golden map_extend_clone. Timing
+  on the Mac, 100k Int keys: extend 3.1 ms against maps.Copy 4.7 ms;
+  clone 3.3 ms against maps.Clone 0.31 ms, since Go copies the table and
+  Xo's clone rebuilds it. Next: a clone that copies the map's four lists
+  (keys, vals, live, slots: the slots index the entry lists and removed
+  entries stay marked, so a copy of each is a valid clone) through an SSA
+  helper in compiler/ssa/map.xo.

@@ -1178,6 +1178,22 @@ fn map_map[K, V, U, E, fx: Effects](m: Map[K, V], f: fn(K, V) -> U ! E uses fx) 
   out
 }
 
+/// `m.extend(other)` (decision 0592): Go's maps.Copy.
+fn map_extend[K, V](var m: Map[K, V], other: Map[K, V]) {
+  for (k, v) in other {
+    m[k] = v
+  }
+}
+
+/// `m.clone()` (decision 0592): a table of its own, in m's order.
+fn map_clone[K, V](m: Map[K, V]) -> Map[K, V] {
+  var out: Map[K, V] = {}
+  for (k, v) in m {
+    out[k] = v
+  }
+  out
+}
+
 fn map_any[K, V, E, fx: Effects](m: Map[K, V], f: fn(K, V) -> Bool ! E uses fx) -> Bool ! E uses fx {
   for (k, v) in m {
     if f(k, v)? {

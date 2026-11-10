@@ -1,0 +1,45 @@
+// Map.extend and Map.clone (decision 0592): Go's maps.Copy and maps.Clone,
+// with the cases of maps_test.go (TestCopy, TestClone, TestCloneNil and
+// the value independence of a clone).
+
+fn show(m: Map[Int, Int]) -> Str {
+  m.entries().map(fn(e: (Int, Int)) -> Str { "${e.0}:${e.1}" }).join(" ")
+}
+
+fn main(os: Os) {
+  // TestCopy: m1 into an equal copy changes nothing; a new key is added
+  let m1: Map[Int, Int] = {1: 2, 2: 4, 4: 8, 8: 16}
+  var mc = m1.clone()
+  mc.extend(mc)
+  os.stdio.println("${mc == m1} ${show(mc)}")
+  mc.extend({16: 32})
+  os.stdio.println("${mc.len()} ${mc.get(16) ?? 0} ${m1.len()}")
+  // other's value wins; m's keys keep their position, new keys follow
+  var a: Map[Str, Int] = {"x": 1, "y": 2}
+  a.extend({"z": 3, "x": 10})
+  os.stdio.println(a.entries().map(fn(e: (Str, Int)) -> Str { "${e.0}=${e.1}" }).join(","))
+  // extend from an empty map, and into one
+  var e: Map[Int, Int] = {}
+  e.extend(m1)
+  os.stdio.println("${e == m1} ${show(e)}")
+  e.extend({})
+  os.stdio.println("${e.len()}")
+  // TestClone: equal, and a write to the clone leaves m1 alone
+  var c = m1.clone()
+  os.stdio.println("${c == m1}")
+  c[1] = 100
+  c.remove(2)
+  os.stdio.println("${m1.get(1) ?? 0} ${m1.len()} ${c.get(1) ?? 0} ${c.len()}")
+  // TestCloneNil: an empty map clones to an empty map
+  let z: Map[Int, Int] = {}
+  os.stdio.println("${z.clone().len()} ${z.clone() == z}")
+  // a clone after removals keeps the remaining order
+  var r: Map[Int, Int] = {}
+  for i in 0..10 {
+    r[i] = i * i
+  }
+  for i in [1, 3, 5, 7] {
+    r.remove(i)
+  }
+  os.stdio.println(show(r.clone()))
+}

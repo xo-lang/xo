@@ -745,6 +745,24 @@ func Map_entries[K, V any](_ *Task, m Map[K, V]) List[Tuple2[K, V]] {
 	return ListOf(out...)
 }
 
+// Map_extend is `m.extend(other)` (decision 0592): Go's maps.Copy, every
+// entry of o put into m.
+func Map_extend[K, V any](tk *Task, m *Map[K, V], o Map[K, V]) {
+	for k, v := range Map_All(o) {
+		Map_put(tk, m, k, v)
+	}
+}
+
+// Map_clone is `m.clone()` (decision 0592): a table of its own, in m's
+// order.
+func Map_clone[K, V any](tk *Task, m Map[K, V]) Map[K, V] {
+	var out Map[K, V]
+	for k, v := range Map_All(m) {
+		Map_put(tk, &out, k, v)
+	}
+	return out
+}
+
 // Map_filter is `m.filter(f)`.
 func Map_filter[K, V, E any](tk *Task, m Map[K, V], f func(*Task, K, V) Result[bool, E]) Result[Map[K, V], E] {
 	var out Map[K, V]
