@@ -1,5 +1,18 @@
 # std/xmlcodec changes
 
+## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0588 stage 2 (pure modules merged with their implementation)
+- Go reference: none (no behavior change)
+- Test: internal/stdtest corpus xmlcodec on go, arm64 and llvm
+
+std/xmlcodec.xo now holds the bodies of std/native/xmlcodec.xo (removed), and the Go
+backend compiles them from it as its own package. The API, texts and errors
+are unchanged: every item the declaration file had is `pub`, with the same
+parameter names.
+
 ## 2026-10-27: perf: derive Xml writes its text with no element tree
 
 - Kind: perf

@@ -232,3 +232,17 @@ commit (the lead cuts it).
     them.
   - a module with a hand written Go twin in std/rt (bcrypt.go, cron.go,
     deque.go, ...) needs that file removed or reduced in the same change.
+- `std/timego` and `std/xmlcodec` merged. Two more limits:
+  - a std module cannot `use native/M` (XO0601 from std/M.xo), so a
+    module whose implementation imports another's native file waits for
+    that one: htmlent (std/native/html.xo and htmltok import
+    native/htmlent), htmltok, and protowkt (imports native/protodesc).
+  - the merge puts the declaration's effect clause on the body for the
+    first time: std/amqptest's `Broker.put`, `ready`, `locked`,
+    `scheduled` and `event_hub` are declared pure but their bodies read
+    the broker's clock (XO0701). A native body's effects were never
+    checked against its declaration; amqptest waits for a decision on
+    adding `uses clock` to those methods (an API change).
+- internal/stdcoverage reads `pub fn (` methods since 3dd0401cf, and its
+  walk now reaches cbor.put_int (its allow.txt line, added at the same
+  time, removed here).

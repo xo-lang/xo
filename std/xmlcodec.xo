@@ -5,99 +5,513 @@
 // Marshal and Unmarshal rules (attributes, character data, `a>b>c`
 // paths, text of numbers and booleans). Programs call xml.encode_value
 // and xml.decode, not these. Pure.
+//
+// std/xmlcodec on every backend (decisions 0315, 0312): the helpers of
+// the code `derive Xml` generates, following Go's encoding/xml marshal.go
+// (printer parent stack, marshalSimple) and read.go (unmarshal's
+// character data, copyValue; go1.26.1).
+
 use std/xml
 
 /// One part of a struct's element: its `parents` path (the `a>b` of a
 /// field's name, empty for none), and what to write there.
-struct Piece {
-  parents: List[Str]
+pub struct Piece {
+  pub parents: List[Str]
   /// 0 opens the parents only, 1 a leaf element holding `text`, 2 the
   /// element `el` renamed `name`, 3 character data, 4 a comment
-  kind: Int
-  name: Str = ""
-  text: Str = ""
-  el: xml.Element? = None
+  pub kind: Int
+  pub name: Str = ""
+  pub text: Str = ""
+  pub el: xml.Element? = None
 }
 
 /// Opens the path a field's parents name (Go pushes them even for an
 /// empty list).
-fn open_path(parents: List[Str]) -> Piece
+pub fn open_path(parents: List[Str]) -> Piece { Piece{parents: parents, kind: 0} }
+
 /// A child element `name` holding the text.
-fn leaf(parents: List[Str], name: Str, text: Str) -> Piece
+pub fn leaf(parents: List[Str], name: Str, text: Str) -> Piece {
+  Piece{parents: parents, kind: 1, name: name, text: text}
+}
+
 /// A child element: the tree of a nested struct, named `name`.
-fn child(parents: List[Str], name: Str, el: xml.Element) -> Piece
+pub fn child(parents: List[Str], name: Str, el: xml.Element) -> Piece {
+  Piece{parents: parents, kind: 2, name: name, el: Some(el)}
+}
+
 /// Character data inside the open element.
-fn chardata(text: Str) -> Piece
+pub fn chardata(text: Str) -> Piece { Piece{parents: [], kind: 3, text: text} }
+
 /// A comment inside the open element.
-fn comment(text: Str) -> Piece
+pub fn comment(text: Str) -> Piece { Piece{parents: [], kind: 4, text: text} }
+
 /// An attribute.
-fn attr(name: Str, value: Str) -> xml.Attr
+pub fn attr(name: Str, value: Str) -> xml.Attr { xml.Attr{name: nm(name), value: value} }
+
 /// The element `name` with the attributes and, in order, the pieces
 /// (Go's printer: parents shared with the previous field stay open).
-fn build(name: Str, attrs: List[xml.Attr], pieces: List[Piece]) -> xml.Element
+pub fn build(name: Str, attrs: List[xml.Attr], pieces: List[Piece]) -> xml.Element {
+  var names: List[Str] = []
+  var kids: List[List[xml.Node]] = [[]]
+  for p in pieces {
+    if p.kind == 3 {
+      let last = kids.len() - 1
+      kids[last].push(xml.Node.Raw(xml.escape(p.text)))
+      continue
+    }
+    if p.kind == 4 {
+      let last = kids.len() - 1
+      kids[last].push(xml.Node.Comment(p.text))
+      continue
+    }
+    var keep = 0
+    while keep < p.parents.len() && keep < names.len() && p.parents[keep] == names[keep] {
+      keep += 1
+    }
+    while names.len() > keep {
+      close_top(names, kids)
+    }
+    for i in keep..p.parents.len() {
+      names.push(p.parents[i])
+      kids.push([])
+    }
+    let last = kids.len() - 1
+    if p.kind == 1 {
+      kids[last].push(xml.Node.Elem(xml.Element{name: nm(p.name), attrs: [], children: [xml.Node.Raw(xml.escape(p.text))]}))
+    } else if p.kind == 2 {
+      if let Some(e) = p.el {
+        kids[last].push(xml.Node.Elem(xml.Element{name: nm(p.name), attrs: e.attrs, children: e.children}))
+      }
+    }
+  }
+  while names.len() > 0 {
+    close_top(names, kids)
+  }
+  xml.Element{name: nm(name), attrs: attrs, children: kids[0]}
+}
 
 /// The text of elements written in order, as Element.encode writes the
 /// tree build makes of the same pieces (Go's printer and its parent
 /// stack), with no tree: `write_start` an element, then its fields'
 /// `write_open`, `write_leaf` and `write_chardata` and nested starts, then
 /// `write_end` it. Names and attributes have no namespace.
-struct Writer {
-  out: StrBuilder
-  indent: Str
-  depth: Int = 0
-  indented_in: Bool = false
-  put_newline: Bool = false
+pub struct Writer {
+  pub out: StrBuilder
+  pub indent: Str
+  pub depth: Int = 0
+  pub indented_in: Bool = false
+  pub put_newline: Bool = false
   /// the open parents of every started element
-  names: List[Str] = []
+  pub names: List[Str] = []
   /// where each started element's parents begin in names
-  bases: List[Int] = []
+  pub bases: List[Int] = []
 }
 
 /// A writer that indents by `indent` (none when empty).
-fn writer(indent: Str) -> Writer
+pub fn writer(indent: Str) -> Writer { Writer{out: StrBuilder.new(), indent: indent} }
+
 /// Starts element `name` with the attributes (an empty local name is
 /// left out).
-fn write_start(var w: Writer, name: Str, attrs: List[xml.Attr])
+pub fn write_start(var w: Writer, name: Str, attrs: List[xml.Attr]) {
+  tag_open(w, name, attrs)
+  w.bases.push(w.names.len())
+}
+
 /// Opens the path `parents` in the started element (open_path's piece):
 /// the parents the previous field opened stay open as far as they match.
-fn write_open(var w: Writer, parents: List[Str])
+pub fn write_open(var w: Writer, parents: List[Str]) {
+  let base = if w.bases.is_empty() { 0 } else { w.bases[w.bases.len() - 1] }
+  var keep = 0
+  while keep < parents.len() && base + keep < w.names.len() && parents[keep] == w.names[base + keep] {
+    keep += 1
+  }
+  while w.names.len() > base + keep {
+    let n = w.names.pop() ?? ""
+    tag_close(w, n)
+  }
+  for i in keep..parents.len() {
+    w.names.push(parents[i])
+    tag_open(w, parents[i], [])
+  }
+}
+
 /// The element `name` holding the text under `parents` (leaf's piece).
-fn write_leaf(var w: Writer, parents: List[Str], name: Str, text: Str)
+pub fn write_leaf(var w: Writer, parents: List[Str], name: Str, text: Str) {
+  write_open(w, parents)
+  tag_open(w, name, [])
+  xml.escape_to(w.out, text)
+  tag_close(w, name)
+}
+
 /// Character data where the writer is (chardata's piece).
-fn write_chardata(var w: Writer, text: Str)
+pub fn write_chardata(var w: Writer, text: Str) { xml.escape_to(w.out, text) }
+
 /// Closes the open parents and the element `name` write_start began.
-fn write_end(var w: Writer, name: Str)
+pub fn write_end(var w: Writer, name: Str) {
+  let base = w.bases.pop() ?? 0
+  while w.names.len() > base {
+    let n = w.names.pop() ?? ""
+    tag_close(w, n)
+  }
+  tag_close(w, name)
+}
+
 /// The text written.
-fn written(var w: Writer) -> Str
+pub fn written(var w: Writer) -> Str { w.out.freeze() }
 
 /// The root element of text, as Go's Unmarshal finds it: a text with no
 /// element is `EOF`.
-fn parse_root(text: Str) -> xml.Element ! xml.XmlErr
+pub fn parse_root(text: Str) -> xml.Element ! xml.XmlErr {
+  match xml.parse(text) {
+    Ok(e) => e
+    Err(x) => if x.msg == "xml: no root element" { Err(fail("EOF")) } else { Err(x) }
+  }
+}
+
 /// The value of the attribute of that local name.
-fn attr_of(e: xml.Element, name: Str) -> Str?
+pub fn attr_of(e: xml.Element, name: Str) -> Str? {
+  for a in e.attrs {
+    if a.name.local == name {
+      return Some(a.value)
+    }
+  }
+  None
+}
+
 /// An element of a field's path (an index of `paths`), found in document
 /// order.
-struct Event {
-  field: Int
-  el: xml.Element
+pub struct Event {
+  pub field: Int
+  pub el: xml.Element
 }
 
 /// The elements below e whose path from e is one of `paths`, in document
 /// order, with the index of the path.
-fn events(e: xml.Element, paths: List[List[Str]]) -> List[Event]
+pub fn events(e: xml.Element, paths: List[List[Str]]) -> List[Event] {
+  var out: List[Event] = []
+  walk(e, [], paths, out)
+  out
+}
+
 /// The character data directly inside e, in order (Go's chardata).
-fn direct_text(e: xml.Element) -> Str
+pub fn direct_text(e: xml.Element) -> Str {
+  var b = StrBuilder.new()
+  for n in e.children {
+    match n {
+      Text(s) => b.write(s)
+      Elem(..) | Raw(..) | Comment(..) | ProcInst(..) | Directive(..) => {}
+    }
+  }
+  b.freeze()
+}
 
 /// Go's FormatFloat(f, 'g', -1, 64): Xo's text of a Float without the
 /// ".0" an integral value gets.
-fn float_text(f: Float) -> Str
+pub fn float_text(f: Float) -> Str {
+  let s = "${f}"
+  if s.ends_with(".0") { s[0..s.len() - 2] } else { s }
+}
 
 /// Go's strconv.ParseInt of the text with spaces trimmed (0 when empty):
 /// `strconv.ParseInt: parsing "x": invalid syntax` or `value out of range`.
-fn int_of(s: Str) -> Int ! xml.XmlErr
+pub fn int_of(s: Str) -> Int ! xml.XmlErr {
+  let s1 = s.trim()
+  if s1.is_empty() {
+    return 0
+  }
+  match Int.parse(s1) {
+    Some(n) => n
+    None => {
+      let why = if digits_only(s1) { "value out of range" } else { "invalid syntax" }
+      Err(fail("strconv.ParseInt: parsing ${s1.quote()}: ${why}"))
+    }
+  }
+}
+
 /// Go's strconv.ParseFloat of the text with spaces trimmed (0 when
 /// empty): `strconv.ParseFloat: parsing "x": invalid syntax` or `value
 /// out of range`.
-fn float_of(s: Str) -> Float ! xml.XmlErr
+pub fn float_of(s: Str) -> Float ! xml.XmlErr {
+  let s1 = s.trim()
+  if s1.is_empty() {
+    return 0.0
+  }
+  match Float.parse(s1) {
+    Some(f) => f
+    None => {
+      let why = if float_syntax(s1) { "value out of range" } else { "invalid syntax" }
+      Err(fail("strconv.ParseFloat: parsing ${s1.quote()}: ${why}"))
+    }
+  }
+}
+
 /// Go's strconv.ParseBool (false when empty).
-fn bool_of(s: Str) -> Bool ! xml.XmlErr
+pub fn bool_of(s: Str) -> Bool ! xml.XmlErr {
+  let s1 = s.trim()
+  if s1.is_empty() {
+    return false
+  }
+  match s1 {
+    "1" | "t" | "T" | "TRUE" | "true" | "True" => true
+    "0" | "f" | "F" | "FALSE" | "false" | "False" => false
+    _ => Err(fail("strconv.ParseBool: parsing ${s1.quote()}: invalid syntax"))
+  }
+}
+
+fn fail(msg: Str) -> xml.XmlErr { xml.XmlErr{line: 0, msg: msg} }
+
+fn nm(local: Str) -> xml.Name { xml.Name{space: "", local: local} }
+
+/// Closes the innermost open parent into the frame below it.
+fn close_top(var names: List[Str], var kids: List[List[xml.Node]]) {
+  let top = kids.pop() ?? []
+  let n = names.pop() ?? ""
+  let e = xml.Element{name: nm(n), attrs: [], children: top}
+  let last = kids.len() - 1
+  kids[last].push(xml.Node.Elem(e))
+}
+
+/// xml's Printer.write_indent.
+fn indent_by(var w: Writer, delta: Int) {
+  if w.indent.is_empty() {
+    return
+  }
+  if delta < 0 {
+    w.depth -= 1
+    if w.indented_in {
+      w.indented_in = false
+      return
+    }
+  }
+  if w.put_newline {
+    w.out.write("\n")
+  } else {
+    w.put_newline = true
+  }
+  for _i in 0..w.depth {
+    w.out.write(w.indent)
+  }
+  if delta > 0 {
+    w.depth += 1
+    w.indented_in = true
+  }
+}
+
+fn tag_open(var w: Writer, name: Str, attrs: List[xml.Attr]) {
+  indent_by(w, 1)
+  w.out.write("<")
+  w.out.write(name)
+  for a in attrs {
+    if a.name.local.is_empty() {
+      continue
+    }
+    w.out.write(" ")
+    w.out.write(a.name.local)
+    w.out.write("=\"")
+    xml.escape_to(w.out, a.value)
+    w.out.write("\"")
+  }
+  w.out.write(">")
+}
+
+fn tag_close(var w: Writer, name: Str) {
+  indent_by(w, -1)
+  w.out.write("</")
+  w.out.write(name)
+  w.out.write(">")
+}
+
+/// The elements below el, in document order, whose path from the struct's
+/// element is one of paths (Go reads the document once, in order).
+fn walk(el: xml.Element, prefix: List[Str], paths: List[List[Str]], var out: List[Event]) {
+  for n in el.children {
+    match n {
+      Elem(c) => {
+        let here = prefix + [c.name.local]
+        var deeper = false
+        for (i, p) in paths.indexed() {
+          if p == here {
+            out.push(Event{field: i, el: c})
+          } else if p.len() > here.len() && p[0..here.len()] == here {
+            deeper = true
+          }
+        }
+        if deeper {
+          walk(c, here, paths, out)
+        }
+      }
+      Text(..) | Raw(..) | Comment(..) | ProcInst(..) | Directive(..) => {}
+    }
+  }
+}
+
+fn digits_only(s: Str) -> Bool {
+  var body = s
+  if body.starts_with("-") || body.starts_with("+") {
+    body = body[1..]
+  }
+  if body.is_empty() {
+    return false
+  }
+  for r in body.runes() {
+    if r < '0' || r > '9' {
+      return false
+    }
+  }
+  true
+}
+
+/// The byte of b at i as an Int, -1 past the end.
+fn code_at(b: Bytes, i: Int) -> Int {
+  if i < b.len() {
+    Int(b[i])
+  } else {
+    -1
+  }
+}
+
+/// code_at lowercased when it is an ASCII letter (Go's lower).
+fn lower_code_at(b: Bytes, i: Int) -> Int {
+  let c = code_at(b, i)
+  if c >= 65 && c <= 90 {
+    c + 32
+  } else {
+    c
+  }
+}
+
+/// Whether the bytes of b from i are exactly the letters of w, case
+/// ignored, with nothing after them.
+fn word_at_end(b: Bytes, i: Int, w: Bytes) -> Bool {
+  if i + w.len() != b.len() {
+    return false
+  }
+  var k = 0
+  while k < w.len() {
+    if lower_code_at(b, i + k) != Int(w[k]) {
+      return false
+    }
+    k += 1
+  }
+  true
+}
+
+/// strconv.underscoreOK on the first n bytes of b: every underscore
+/// between digits, and a 0x prefix counts as a digit.
+fn underscore_ok(b: Bytes, n: Int) -> Bool {
+  var i = 0
+  // saw: 0 the start, 1 a digit or base prefix, 2 an underscore, 3 other
+  var saw = 0
+  if n >= 1 && (Int(b[0]) == 45 || Int(b[0]) == 43) {
+    i = 1
+  }
+  var hex = false
+  if n - i >= 2 && Int(b[i]) == 48 && lower_code_at(b, i + 1) == 120 {
+    i += 2
+    saw = 1
+    hex = true
+  }
+  while i < n {
+    let c = lower_code_at(b, i)
+    if (c >= 48 && c <= 57) || (hex && c >= 97 && c <= 102) {
+      saw = 1
+    } else if c == 95 {
+      if saw != 1 {
+        return false
+      }
+      saw = 2
+    } else {
+      if saw == 2 {
+        return false
+      }
+      saw = 3
+    }
+    i += 1
+  }
+  saw != 2
+}
+
+/// Whether s is a Float text Go's strconv.ParseFloat accepts on its way to
+/// a value: atof.go's special words, its decimal and hexadecimal forms,
+/// and its underscore rule. The value is not computed, so a text that
+/// overflows (which Float.parse answers None for, as it does a syntax
+/// error) is told from one that is malformed.
+fn float_syntax(s: Str) -> Bool {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  var signed = false
+  if code_at(b, 0) == 43 || code_at(b, 0) == 45 {
+    signed = true
+    i = 1
+  }
+  // inf and infinity take a sign; nan does not (special)
+  let c = lower_code_at(b, i)
+  if c == 105 {
+    return word_at_end(b, i, b"inf") || word_at_end(b, i, b"infinity")
+  }
+  if c == 110 && !signed {
+    return word_at_end(b, i, b"nan")
+  }
+  var hex = false
+  if code_at(b, i) == 48 && lower_code_at(b, i + 1) == 120 {
+    hex = true
+    i += 2
+  }
+  // the mantissa: digits, one point, underscores between digits
+  var digits = false
+  var dot = false
+  var underscores = false
+  while i < n {
+    let d = lower_code_at(b, i)
+    if (d >= 48 && d <= 57) || (hex && d >= 97 && d <= 102) {
+      digits = true
+    } else if d == 46 {
+      if dot {
+        break
+      }
+      dot = true
+    } else if d == 95 {
+      underscores = true
+    } else {
+      break
+    }
+    i += 1
+  }
+  if !digits {
+    return false
+  }
+  // the exponent: p for a hex float (required), e for a decimal one
+  var exp = false
+  if hex {
+    if lower_code_at(b, i) != 112 {
+      return false
+    }
+    exp = true
+    i += 1
+  } else if lower_code_at(b, i) == 101 {
+    exp = true
+    i += 1
+  }
+  if exp {
+    if code_at(b, i) == 43 || code_at(b, i) == 45 {
+      i += 1
+    }
+    var exp_digits = false
+    while i < n {
+      let d = lower_code_at(b, i)
+      if d >= 48 && d <= 57 {
+        exp_digits = true
+      } else if d == 95 {
+        underscores = true
+      } else {
+        return false
+      }
+      i += 1
+    }
+    if !exp_digits {
+      return false
+    }
+  }
+  i == n && (!underscores || underscore_ok(b, i))
+}

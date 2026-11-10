@@ -80,7 +80,6 @@ cbor.unm_new  called only by derive Cbor's generated code
 cbor.det_keys  called only by derive Cbor's generated code (decision 0559's direct writers)
 cbor.put_float  called only by derive Cbor's generated code (decision 0559's direct writers)
 cbor.put_head  called only by derive Cbor's generated code (decision 0559's direct writers)
-cbor.put_int  called only by derive Cbor's generated code (decision 0559's direct writers)
 cbor.put_text  called only by derive Cbor's generated code (decision 0559's direct writers)
 cbor.put_value  called only by derive Cbor's generated code (decision 0559's direct writers)
 htmlent.entity2_of  internal table lookup of std/html and std/htmltok, covered through their corpora (unescape and the token corpus)
