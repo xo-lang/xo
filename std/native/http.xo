@@ -110,6 +110,8 @@ struct Seg {
   param: Str
   is_int: Bool
   rest: Bool
+  /// `{$}`: matches only the empty last segment (a path ending in "/")
+  dollar: Bool = false
 }
 
 struct Router {
@@ -367,6 +369,29 @@ fn split_path(p: Str) -> List[Str] {
   out
 }
 
+/// The pieces of a path after its leading slashes, split at every slash and
+/// the empty last piece of a trailing slash kept ("/" is [""], "/a/" is
+/// ["a", ""]).
+fn req_pieces(p: Str) -> List[Str] {
+  let b = p.bytes()
+  var lo = 0
+  while lo < b.len() && b[lo] == 47 {
+    lo += 1
+  }
+  var out: List[Str] = []
+  var st = lo
+  var i = lo
+  while i < b.len() {
+    if b[i] == 47 {
+      out.push(raw.str_slice(p, st, i))
+      st = i + 1
+    }
+    i += 1
+  }
+  out.push(raw.str_slice(p, st, b.len()))
+  out
+}
+
 fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
   var method = ""
   var p = pattern
@@ -380,7 +405,22 @@ fn parse_pattern(pattern: Str) -> (Str, List[Seg]) {
     None => ()
   }
   var segs: List[Seg] = []
-  for s in split_path(p) {
+  // the pieces after the leading slash, a trailing slash kept as an empty
+  // last piece: Go 1.22's pattern forms (a trailing slash is the subtree
+  // `/dir/`, `{$}` the exact path with a trailing slash, std.md 4.1)
+  let pieces = req_pieces(p)
+  for (pi, s) in pieces.indexed() {
+    let last = pi == pieces.len() - 1
+    if s.is_empty() {
+      if last {
+        segs.push(Seg{lit: "", param: "", is_int: false, rest: true})
+      }
+      continue
+    }
+    if last && s == "{$}" {
+      segs.push(Seg{lit: "", param: "", is_int: false, rest: false, dollar: true})
+      continue
+    }
     if s.starts_with("{") && s.ends_with("}") {
       let inner = raw.str_slice(s, 1, s.len() - 1)
       if inner.ends_with("...") {
@@ -632,32 +672,8 @@ fn body_read(var s: BodyState, max: Int) -> Bytes? ! IoErr {
 /// Whether the route dispatch picks for method and path is a
 /// handle_stream route: the server then leaves the body to it.
 fn route_streams(r: Router, method: Str, path: Str) -> Bool {
-  let (lo, hi) = path_bounds(path.bytes())
-  let esc = path.contains("%")
-  let sb = if esc { [] } else { seg_bounds(path, lo, hi) }
-  var uparts: List[Str] = []
-  if esc {
-    for p in split_path(path) {
-      uparts.push(http1.path_unescape(p))
-    }
-  }
-  let m = method.to_upper()
-  var best = -1
-  var best_lits = 0
-  var best_bad = ""
-  for (i, route) in r.routes.indexed() {
-    let (ok, bad) = if esc { match_parts(route, uparts) } else { match_in(route, path, sb) }
-    if !ok || (!route.method.is_empty() && route.method != m) {
-      continue
-    }
-    let lits = literals(route)
-    if best < 0 || lits > best_lits {
-      best = i
-      best_lits = lits
-      best_bad = bad
-    }
-  }
-  best >= 0 && best_bad.is_empty() && r.routes[best].stream
+  let pk = pick(r, clean_request_path(path), method.to_upper())
+  pk.best >= 0 && pk.bad.is_empty() && r.routes[pk.best].stream
 }
 
 /// The response of a request no route matches, in place of the 404
@@ -708,7 +724,12 @@ fn (var r: Router) wrap[E: Error, fx: Effects](m: fn(Request, fn(Request) -> htt
 }
 
 fn (var r: Router) mount(prefix: Str, sub: Router) {
-  let (_, pre) = parse_pattern(prefix)
+  let (_, pre0) = parse_pattern(prefix)
+  var pre = pre0
+  // a prefix written with a trailing slash ("/api/") is the same prefix
+  if has_rest(Route{method: "", segs: pre, h: fn(_q: Request) -> http.Response { empty(404) }}) {
+    pre.pop()
+  }
   for sr in sub.routes {
     var segs = pre
     for s in sr.segs {
@@ -960,30 +981,43 @@ fn handler_fault(msg: Str, location: Str) -> http.Response {
 fn literals(rt: Route) -> Int {
   var n = 0
   for s in rt.segs {
-    if s.param.is_empty() {
+    if s.param.is_empty() && !s.rest && !s.dollar {
       n += 1
     }
   }
   n
 }
 
-/// Whether the route matches the path parts (unescaped, uparts), and its
-/// first Int segment that does not parse ("" when none).
+/// Whether the route matches the path parts (unescaped, uparts: every
+/// piece after the leading slash, the empty one of a trailing slash too),
+/// and its first Int segment that does not parse ("" when none). A
+/// parameter takes a non-empty piece (Go 1.22); a rest takes the pieces
+/// from its own on, the empty one of a trailing slash too, so it needs at
+/// least one; `{$}` takes only the last piece when it is empty.
 fn match_parts(route: Route, uparts: List[Str]) -> (Bool, Str) {
   var bad = ""
   for (i, s) in route.segs.indexed() {
     if s.rest {
-      return (true, bad)
+      return (i < uparts.len(), bad)
     }
     if i >= uparts.len() {
       return (false, "")
     }
     let part = uparts[i]
+    if s.dollar {
+      if i != uparts.len() - 1 || !part.is_empty() {
+        return (false, "")
+      }
+      continue
+    }
     if s.param.is_empty() {
       if part != s.lit {
         return (false, "")
       }
       continue
+    }
+    if part.is_empty() {
+      return (false, "")
     }
     if s.is_int && Int.parse(part) is None && bad.is_empty() {
       bad = s.param
@@ -995,17 +1029,16 @@ fn match_parts(route: Route, uparts: List[Str]) -> (Bool, Str) {
   (true, bad)
 }
 
-/// The segments of path p between lo and hi (path_bounds) as their start
-/// and end offsets, two Ints a segment: split_path's parts without a
-/// string each.
-fn seg_bounds(p: Str, lo: Int, hi: Int) -> List[Int] {
-  if lo == hi {
-    return []
-  }
+/// The pieces of the clean path p (it starts with "/") as their start and
+/// end offsets, two Ints a piece: req_pieces without a string each. There
+/// is at least one piece (the empty one of "/"), and a trailing slash
+/// gives an empty last one.
+fn seg_bounds(p: Str) -> List[Int] {
   let b = p.bytes()
+  let hi = b.len()
   var out: List[Int] = List.with_capacity(8)
-  var st = lo
-  var i = lo
+  var st = 1
+  var i = 1
   while i < hi {
     if b[i] == 47 {
       out.push(st)
@@ -1019,25 +1052,31 @@ fn seg_bounds(p: Str, lo: Int, hi: Int) -> List[Int] {
   out
 }
 
-/// match_parts on the path p itself, its segments at sb (seg_bounds),
-/// when it has no escapes: compared where they are.
+/// match_parts on the path p itself, its pieces at sb (seg_bounds), when it
+/// has no escapes: compared where they are.
 fn match_in(route: Route, p: Str, sb: List[Int]) -> (Bool, Str) {
   let n = sb.len() / 2
   var bad = ""
   var k = 0
   for s in route.segs {
     if s.rest {
-      return (true, bad)
+      return (k < n, bad)
     }
     if k >= n {
       return (false, "")
     }
     let a = sb[2 * k]
     let e = sb[2 * k + 1]
-    if s.param.is_empty() {
+    if s.dollar {
+      if k != n - 1 || e != a {
+        return (false, "")
+      }
+    } else if s.param.is_empty() {
       if e - a != s.lit.len() || !raw.mem_eq(raw.data(p) + a, raw.data(s.lit), e - a) {
         return (false, "")
       }
+    } else if e == a {
+      return (false, "")
     } else if s.is_int && bad.is_empty() && Int.parse(raw.str_slice(p, a, e)) is None {
       bad = s.param
     }
@@ -1057,7 +1096,9 @@ fn bind_in(route: Route, p: Str, sb: List[Int]) -> Map[Str, Str] {
   var k = 0
   for s in route.segs {
     if s.rest {
-      params.put(s.param, if k >= n { "" } else { raw.str_cut(p, sb[2 * k], sb[sb.len() - 1]) })
+      if !s.param.is_empty() {
+        params.put(s.param, if k >= n { "" } else { raw.str_cut(p, sb[2 * k], sb[sb.len() - 1]) })
+      }
       return params
     }
     if k >= n {
@@ -1087,7 +1128,9 @@ fn bind_params(route: Route, parts: List[Str], uparts: List[Str]) -> Map[Str, St
         }
         rest = tail.join("/")
       }
-      params.put(s.param, rest)
+      if !s.param.is_empty() {
+        params.put(s.param, rest)
+      }
       return params
     }
     if !s.param.is_empty() && i < uparts.len() {
@@ -1097,51 +1140,133 @@ fn bind_params(route: Route, parts: List[Str], uparts: List[Str]) -> Map[Str, St
   params
 }
 
-fn dispatch(r: Router, req: Request) -> http.Response {
-  // a path without escapes is matched where it is (match_in, bind_in);
-  // one with them as its unescaped parts, unescaped once for every route
-  let path = req.path
-  let (lo, hi) = path_bounds(path.bytes())
+/// What the routes make of a clean path and a method (pick).
+struct Pick {
+  /// the chosen route, -1 when none takes the path and method
+  best: Int
+  /// the first Int segment of it that does not parse
+  bad: Str
+  /// whether the match is exact: not a subtree route matching more than its
+  /// own trailing slash (Go's exactMatch)
+  exact: Bool
+  /// the methods of the routes that match the path with another method
+  allow: List[Str]
+}
+
+/// Whether a route of method rm takes a request of method m: any, the same,
+/// or a GET route and a HEAD request (Go 1.22).
+fn takes_method(rm: Str, m: Str) -> Bool {
+  rm.is_empty() || rm == m || (rm == "GET" && m == "HEAD")
+}
+
+/// The route for the clean path (it starts with "/") and the upper case
+/// method: the one with the most literal segments, a route without a rest
+/// before one with it, the first registered among equals.
+fn pick(r: Router, path: Str, method: Str) -> Pick {
+  // a path without escapes is matched where it is (match_in); one with
+  // them as its unescaped parts, unescaped once for every route
   let esc = path.contains("%")
-  let sb = if esc { [] } else { seg_bounds(path, lo, hi) }
-  let parts = if esc { split_path(path) } else { [] }
+  let sb = seg_bounds(path)
   var uparts: List[Str] = []
   if esc {
-    for p in parts {
-      uparts.push(http1.path_unescape(p))
+    var k = 0
+    while k < sb.len() {
+      uparts.push(http1.path_unescape(raw.str_slice(path, sb[k], sb[k + 1])))
+      k += 2
     }
   }
-  let method = req.method.to_upper()
   var best = -1
-  var best_lits = 0
+  var best_score = -1
   var best_bad = ""
-  var mismatch = false
-  // the methods of the routes that match the path, for a 405's Allow
-  // (Go 1.22's ServeMux), in registration order without repeats
   var allow: List[Str] = []
   for (i, route) in r.routes.indexed() {
     let (ok, bad) = if esc { match_parts(route, uparts) } else { match_in(route, path, sb) }
     if !ok {
       continue
     }
-    if !route.method.is_empty() && route.method != method {
-      mismatch = true
+    if !takes_method(route.method, method) {
       if !allow.contains(route.method) {
         allow.push(route.method)
       }
       continue
     }
-    let lits = literals(route)
-    if best < 0 || lits > best_lits {
+    let sc = literals(route) * 2 + if has_rest(route) { 0 } else { 1 }
+    if best < 0 || sc > best_score {
       best = i
-      best_lits = lits
+      best_score = sc
       best_bad = bad
     }
   }
+  var exact = false
+  if best >= 0 {
+    let route = r.routes[best]
+    exact = !has_rest(route) || (sb.len() / 2 == route.segs.len() && path.ends_with("/"))
+  }
+  Pick{best: best, bad: best_bad, exact: exact, allow: allow}
+}
+
+/// Whether the route ends in a rest (a subtree `/dir/` or `{name...}`).
+fn has_rest(route: Route) -> Bool {
+  !route.segs.is_empty() && route.segs[route.segs.len() - 1].rest
+}
+
+/// net/http's cleanPath: a rooted path.Clean that keeps a trailing slash.
+fn clean_request_path(p: Str) -> Str {
+  if p.is_empty() {
+    return "/"
+  }
+  var q = p
+  if !q.starts_with("/") {
+    q = "/" + q
+  }
+  var np = path_clean(q)
+  if q.ends_with("/") && np != "/" {
+    np = np + "/"
+  }
+  np
+}
+
+/// The 307 of ServeMux's RedirectHandler to the path loc, with req's query.
+fn mux_redirect(req: Request, loc: Str) -> http.Response {
+  let full = if req.raw_query.is_empty() { loc } else { loc + "?" + req.raw_query }
+  redirect(rt.cast[Request, http.Request](req), full, 307)
+}
+
+fn dispatch(r: Router, req: Request) -> http.Response {
+  // Go 1.22's ServeMux: the path cleaned, a trailing slash redirect when
+  // only the path with one is an exact match, then the redirect to the
+  // cleaned path; a HEAD request takes GET routes
+  let method = req.method.to_upper()
+  let cp = clean_request_path(req.path)
+  let pk = pick(r, cp, method)
+  if !pk.exact && !cp.ends_with("/") {
+    let p2 = pick(r, cp + "/", method)
+    if p2.best >= 0 && p2.exact {
+      return mux_redirect(req, cp + "/")
+    }
+  }
+  if cp != req.path {
+    return mux_redirect(req, cp)
+  }
+  let best = pk.best
+  let best_bad = pk.bad
   if best < 0 {
-    if mismatch {
+    // another method on the path, or on the path with a trailing slash
+    // (Go's matchingMethods): Allow sorted, HEAD after GET
+    var allow = pk.allow
+    if !cp.ends_with("/") {
+      for m in pick(r, cp + "/", method).allow {
+        if !allow.contains(m) {
+          allow.push(m)
+        }
+      }
+    }
+    if allow.contains("GET") && !allow.contains("HEAD") {
+      allow.push("HEAD")
+    }
+    if !allow.is_empty() {
       let resp = if r.allow_h.is_empty() { json_error(405, "method not allowed") } else { let h = r.allow_h[0]; isolated(fn() -> http.Response { h(req) }) }
-      return with_allow(resp, allow.join(", "))
+      return with_allow(resp, allow.sort().join(", "))
     }
     if r.miss_h.is_empty() {
       return json_error(404, "not found")
@@ -1152,9 +1277,22 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   if !best_bad.is_empty() {
     return json_error(400, "path segment `${best_bad}` must be an Int")
   }
+  let esc = cp.contains("%")
+  let sb = seg_bounds(cp)
+  var parts: List[Str] = []
+  var uparts: List[Str] = []
+  if esc {
+    var k = 0
+    while k < sb.len() {
+      let part = raw.str_slice(cp, sb[k], sb[k + 1])
+      parts.push(part)
+      uparts.push(http1.path_unescape(part))
+      k += 2
+    }
+  }
   let route = r.routes[best]
   let h = route.h
-  let q = req with {params: if esc { bind_params(route, parts, uparts) } else { bind_in(route, path, sb) }}
+  let q = req with {params: if esc { bind_params(route, parts, uparts) } else { bind_in(route, cp, sb) }}
   // a fault in the handler is isolated: 500 (std/rt's isolateHandler,
   // decision 0085). task.isolate's own argument, h(q) on local names: the
   // native backends call h with q moved in, no closure holding q (which
@@ -4293,7 +4431,12 @@ fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])
   if !prefix.is_empty() && !raw.starts_with(prefix) {
     return None
   }
-  let (_, segs) = parse_pattern(testworld.fake_text(kind, i, 2))
+  let (_, segs0) = parse_pattern(testworld.fake_text(kind, i, 2))
+  var segs = segs0
+  // a fake's pattern is an exact path as before: no subtree or {$}
+  if !segs.is_empty() && (segs[segs.len() - 1].rest && segs[segs.len() - 1].param.is_empty() || segs[segs.len() - 1].dollar) {
+    segs.pop()
+  }
   let route = Route{method: "", segs: segs, h: fn(_q: Request) -> http.Response { empty(404) }}
   // the escaped path, split before unescaping (Go's ServeMux): a client
   // request's path is decoded, so an escaped slash would split it

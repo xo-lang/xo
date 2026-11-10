@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-11-10: fix (Breaking): Router matches as Go 1.22's ServeMux: trailing slashes, path cleaning, HEAD
+
+- Kind: fix
+- Commit: this commit
+- Found by: an owner tester (via the lead, 2026-11-10): `GET /healthz` also answered `/healthz/` and `/healthz///`, and HEAD on a GET route was a 405
+- Go reference: net/http ServeMux (go1.26.1, checked with httptest on linux/arm64)
+- Test: internal/stdtest corpus http, "Router matches as Go 1.22's ServeMux does" (10 pattern sets x 4 methods x 39 targets from Go's ServeMux)
+- Timing: none (a route table of a few entries; the pick is one pass as before)
+- Shipped in: not yet released
+- Breaking: a program that relied on the slash leniency. `GET /x` no longer matches `/x/` (404); a pattern ending in `/` (`/dir/`) is now a subtree route (matches everything below it and redirects `/dir` to `/dir/`); `/f/{p...}` no longer matches `/f` (it redirects to `/f/`); `{name}` no longer matches an empty segment; a path with `//`, `.` or `..` is answered with a 307 to the cleaned path. Migration: register the slash-free pattern for the exact path and a `/dir/` pattern (or `{p...}`) for a tree; use `{$}` for "the root only".
+
+`Router` now follows Go's matching rules: the request path is cleaned (307 to the cleaned path, query kept, a trailing slash kept); a path with no exact match whose slash form matches a subtree or rest route exactly is a 307 to the slash form; patterns ending in `/` are subtrees and `{$}` is the exact slash path; a `GET` route also takes `HEAD`; a 405's `Allow` is sorted, lists `HEAD` after `GET`, and also counts the routes of the path with a trailing slash. Go 1.26's redirects are 307 (Go 1.22 answered 301). Documented in spec/std.md 4.1 together with two behaviors that already matched Go: `req.json()` does not check Content-Type, and a duplicate JSON key takes the last value.
+
 ## 2026-11-09: fix: http.redirect's body ends with two newlines, as Go's does
 
 - Kind: fix

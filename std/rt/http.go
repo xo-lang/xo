@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,8 @@ type routeSeg struct {
 	param string
 	isInt bool
 	rest  bool
+	// dollar is `{$}`: only the empty last piece of a path ending in "/"
+	dollar bool
 }
 
 // middleware is one registered middleware, its error already mapped to a
@@ -102,7 +105,22 @@ func parsePattern(p string) (string, []routeSeg) {
 		method, p = strings.ToUpper(p[:i]), strings.TrimSpace(p[i+1:])
 	}
 	var segs []routeSeg
-	for _, s := range splitPath(p) {
+	// the pieces after the leading slash, a trailing slash kept as an empty
+	// last piece: Go 1.22's pattern forms (a trailing slash is the subtree
+	// `/dir/`, `{$}` the exact path with a trailing slash; std.md 4.1)
+	pieces := appendReqPieces(nil, p)
+	for pi, s := range pieces {
+		last := pi == len(pieces)-1
+		if s == "" {
+			if last {
+				segs = append(segs, routeSeg{rest: true})
+			}
+			continue
+		}
+		if last && s == "{$}" {
+			segs = append(segs, routeSeg{dollar: true})
+			continue
+		}
 		if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
 			inner := s[1 : len(s)-1]
 			switch {
@@ -132,13 +150,12 @@ func splitPath(p string) []string {
 	return strings.Split(p, "/")
 }
 
-// appendPathParts is splitPath appending to dst: dispatch splits the
-// path once into a stack array for all routes.
-func appendPathParts(dst []string, p string) []string {
-	p = strings.Trim(p, "/")
-	if p == "" {
-		return dst
-	}
+// appendReqPieces appends the pieces of p after its leading slashes, split
+// at every slash, the empty last piece of a trailing slash kept ("/" is
+// [""], "/a/" is ["a", ""]); dispatch splits the clean path once into a
+// stack array for all routes.
+func appendReqPieces(dst []string, p string) []string {
+	p = strings.TrimLeft(p, "/")
 	for {
 		i := strings.IndexByte(p, '/')
 		if i < 0 {
@@ -154,7 +171,7 @@ func appendPathParts(dst []string, p string) []string {
 // parameter table is arena memory when a is not nil.
 func (r *route) match(a *Arena, path string) (Map[string, string], string, bool) {
 	var buf [16]string
-	return r.matchParts(a, appendPathParts(buf[:0], path), true)
+	return r.matchParts(a, appendReqPieces(buf[:0], path), true)
 }
 
 // matchParts is match on the split path. Without bind it only decides
@@ -178,22 +195,32 @@ func (r *route) matchParts(a *Arena, parts []string, bind bool) (Map[string, str
 	badInt := ""
 	for i, s := range r.segs {
 		if s.rest {
-			rest := ""
-			if i < len(parts) {
-				rest = strings.Join(parts[i:], "/")
+			if i >= len(parts) {
+				return params, "", false
 			}
-			put(s.param, rest)
+			if s.param != "" {
+				put(s.param, strings.Join(parts[i:], "/"))
+			}
 			return params, badInt, true
 		}
 		if i >= len(parts) {
 			return params, "", false
 		}
 		part, _ := url.PathUnescape(parts[i])
+		if s.dollar {
+			if i != len(parts)-1 || parts[i] != "" {
+				return params, "", false
+			}
+			continue
+		}
 		if s.param == "" {
 			if part != s.lit {
 				return params, "", false
 			}
 			continue
+		}
+		if part == "" {
+			return params, "", false
 		}
 		if s.isInt {
 			if _, err := strconv.ParseInt(part, 10, 64); err != nil && badInt == "" {
@@ -223,11 +250,17 @@ func (r *route) params() int {
 func (r *route) literals() int {
 	n := 0
 	for _, s := range r.segs {
-		if s.param == "" {
+		if s.param == "" && !s.rest && !s.dollar {
 			n++
 		}
 	}
 	return n
+}
+
+// hasRest reports whether the route ends in a rest (a subtree `/dir/` or
+// `{name...}`).
+func (r *route) hasRest() bool {
+	return len(r.segs) > 0 && r.segs[len(r.segs)-1].rest
 }
 
 // Http_Router_handle is `r.handle(pattern, h)` (std.md 4.1). A handler's
@@ -305,6 +338,10 @@ func Http_Router_wrap[E any](_ *Task, r *Http_Router, m func(*Task, Http_Request
 // sub. The routes are copied: later changes to sub do not affect r.
 func (r *Http_Router) M_mount(_ *Task, prefix string, sub Http_Router) {
 	_, pre := parsePattern(prefix)
+	// a prefix written with a trailing slash ("/api/") is the same prefix
+	if n := len(pre); n > 0 && pre[n-1].rest && pre[n-1].param == "" {
+		pre = pre[:n-1]
+	}
 	mws := append([]middleware(nil), sub.mws.s...)
 	for _, sr := range sub.routes.s {
 		nr := &route{method: sr.method, segs: append(append([]routeSeg(nil), pre...), sr.segs...), arena: sr.arena && len(mws) == 0, stream: sr.stream}
@@ -369,63 +406,129 @@ func (r Http_Router) call(tk *Task, req Http_Request) Http_Response {
 	return isolateHandler(tk, func(tk *Task) Http_Response { return chain(r.mws.s, r.dispatch)(tk, req) })
 }
 
-// allowed is the methods of the routes that match the path parts, for a
-// 405's Allow (Go 1.22's ServeMux): registration order, no repeats.
-func (r Http_Router) allowed(parts []string) []string {
-	var out []string
-	for _, rt := range r.routes.s {
-		if _, _, ok := rt.matchParts(nil, parts, false); !ok || rt.method == "" {
-			continue
-		}
-		seen := false
-		for _, m := range out {
-			if m == rt.method {
-				seen = true
-			}
-		}
-		if !seen {
-			out = append(out, rt.method)
-		}
-	}
-	return out
+// takesMethod reports whether a route of method rm takes a request of
+// method m: any, the same, or a GET route and a HEAD request (Go 1.22).
+func takesMethod(rm, m string) bool {
+	return rm == "" || rm == m || (rm == "GET" && m == "HEAD")
 }
 
-// find is the route of method and the path parts, the first Int
-// segment of it that does not parse, and whether a route matched the
+// pick is the route for the clean path (it starts with "/") and the upper
+// case method: the one with the most literal segments, a route without a
+// rest before one with it, the first registered among equals. It also
+// returns the first Int segment of it that does not parse, whether the
+// match is exact (not a subtree route matching more than its own trailing
+// slash; Go's exactMatch), and the methods of the routes that match the
 // path with another method.
-func (r Http_Router) find(method string, parts []string) (best *route, bestBad string, methodMismatch bool) {
-	method = strings.ToUpper(method)
+func (r Http_Router) pick(path, method string) (best *route, bestBad string, exact bool, allow []string) {
+	var buf [16]string
+	parts := appendReqPieces(buf[:0], path)
+	bestScore := -1
 	for _, rt := range r.routes.s {
 		_, bad, ok := rt.matchParts(nil, parts, false)
 		if !ok {
 			continue
 		}
-		if rt.method != "" && rt.method != method {
-			methodMismatch = true
+		if !takesMethod(rt.method, method) {
+			seen := false
+			for _, m := range allow {
+				if m == rt.method {
+					seen = true
+				}
+			}
+			if !seen {
+				allow = append(allow, rt.method)
+			}
 			continue
 		}
-		if best == nil || rt.literals() > best.literals() {
-			best, bestBad = rt, bad
+		sc := rt.literals() * 2
+		if !rt.hasRest() {
+			sc++
+		}
+		if best == nil || sc > bestScore {
+			best, bestBad, bestScore = rt, bad, sc
 		}
 	}
-	return best, bestBad, methodMismatch
+	if best != nil {
+		exact = !best.hasRest() || (len(parts) == len(best.segs) && strings.HasSuffix(path, "/"))
+	}
+	return
+}
+
+// cleanRequestPath is net/http's cleanPath: a rooted path.Clean that keeps
+// a trailing slash.
+func cleanRequestPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	np := path.Clean(p)
+	if p[len(p)-1] == '/' && np != "/" {
+		np += "/"
+	}
+	return np
+}
+
+// muxRedirect is the 307 of ServeMux's RedirectHandler to the path loc,
+// with req's query.
+func muxRedirect(tk *Task, req Http_Request, loc string) Http_Response {
+	if req.XRawQuery != "" {
+		loc += "?" + req.XRawQuery
+	}
+	return Http_redirect(tk, req, loc, 307)
 }
 
 // streams reports whether a request's route is a handle_stream route
 // (decision 0310): the server then leaves its body unread.
-func (r Http_Router) streams(method, path string) bool {
-	var buf [16]string
-	best, bad, _ := r.find(method, appendPathParts(buf[:0], path))
+func (r Http_Router) streams(method, p string) bool {
+	best, bad, _, _ := r.pick(cleanRequestPath(p), strings.ToUpper(method))
 	return best != nil && best.stream && bad == ""
 }
 
-// dispatch finds the route and runs it isolated.
+// dispatch finds the route and runs it isolated. Go 1.22's ServeMux: the
+// path cleaned, a trailing slash redirect when only the path with one is
+// an exact match, then the redirect to the cleaned path; a HEAD request
+// takes GET routes.
 func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
-	var buf [16]string
-	parts := appendPathParts(buf[:0], req.F_path)
-	best, bestBad, methodMismatch := r.find(req.F_method, parts)
+	method := strings.ToUpper(req.F_method)
+	cp := cleanRequestPath(req.F_path)
+	best, bestBad, exact, allow := r.pick(cp, method)
+	if !exact && !strings.HasSuffix(cp, "/") {
+		if b2, _, e2, _ := r.pick(cp+"/", method); b2 != nil && e2 {
+			return muxRedirect(tk, req, cp+"/")
+		}
+	}
+	if cp != req.F_path {
+		return muxRedirect(tk, req, cp)
+	}
 	if best == nil {
-		if methodMismatch {
+		// another method on the path, or on the path with a trailing slash
+		// (Go's matchingMethods): Allow sorted, HEAD after GET
+		if !strings.HasSuffix(cp, "/") {
+			_, _, _, more := r.pick(cp+"/", method)
+			for _, m := range more {
+				seen := false
+				for _, a := range allow {
+					if a == m {
+						seen = true
+					}
+				}
+				if !seen {
+					allow = append(allow, m)
+				}
+			}
+		}
+		hasGet, hasHead := false, false
+		for _, m := range allow {
+			hasGet = hasGet || m == "GET"
+			hasHead = hasHead || m == "HEAD"
+		}
+		if hasGet && !hasHead {
+			allow = append(allow, "HEAD")
+		}
+		if len(allow) > 0 {
+			sort.Strings(allow)
 			var resp Http_Response
 			if r.allow == nil {
 				resp = jsonError(tk, 405, "method not allowed")
@@ -433,7 +536,7 @@ func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 				h := r.allow
 				resp = isolateHandler(tk, func(tk *Task) Http_Response { return h(tk, req) })
 			}
-			return withAllow(tk, resp, strings.Join(r.allowed(parts), ", "))
+			return withAllow(tk, resp, strings.Join(allow, ", "))
 		}
 		if r.miss == nil {
 			return jsonError(tk, 404, "not found")
@@ -444,7 +547,8 @@ func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 	if bestBad != "" {
 		return jsonError(tk, 400, "path segment `"+bestBad+"` must be an Int")
 	}
-	req.XParams, _, _ = best.matchParts(tk.arena, parts, true)
+	var buf [16]string
+	req.XParams, _, _ = best.matchParts(tk.arena, appendReqPieces(buf[:0], cp), true)
 	if tk.arena != nil && !best.arena {
 		// the handler may keep the request: no arena memory for it
 		req = req.heapCopy()

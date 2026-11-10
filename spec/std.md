@@ -1540,16 +1540,34 @@ type Next = fn(Request) -> Response
 - Registering a handler or middleware counts as performing its effects, so the
   function that builds the router declares them. This is where capabilities
   are captured.
-- Pattern: `"[METHOD ]/path"`. Segments: literal, `{name}` (any segment),
-  `{name:Int}` (must parse as `Int`, else 400 before the handler runs),
-  `{name...}` (rest of the path). Without a method, any method matches.
-  plain strings: `"GET /users/{id:Int}"`.
+- Pattern: `"[METHOD ]/path"`. Segments: literal, `{name}` (any non-empty
+  segment), `{name:Int}` (must parse as `Int`, else 400 before the handler
+  runs), `{name...}` (the rest of the path, from its segment on, a trailing
+  slash included; it needs that segment, so `/f/{p...}` does not match
+  `/f`). Without a method, any method matches. A pattern ending in `/` is a
+  subtree (`/dir/` matches `/dir/` and everything below it); `{$}` as the
+  last segment matches only the path ending there (`/{$}` is `/` alone).
+  Any other pattern is an exact path: `GET /healthz` does not match
+  `/healthz/`. A `GET` pattern also takes `HEAD` requests (the handler sees
+  the method `HEAD`; the server sends the headers and no body). Matching is
+  Go 1.22's ServeMux (std/changes/http.md
+  2026-11-10): the route with the most literal segments wins, a route
+  without a rest before one with, the first registered among equals.
+  Plain strings: `"GET /users/{id:Int}"`.
+- Path cleaning and redirects (Go 1.26's ServeMux): the request path is
+  cleaned (`//`, `.`, `..` resolved, a trailing slash kept); when the
+  cleaned path differs, the answer is a 307 with the cleaned path (and the
+  request's query) in `Location`, whatever routes match. When no route
+  matches the path exactly but a subtree route (`/dir/`) or `{name...}`
+  route matches the path with a trailing slash exactly, the answer is a 307
+  to the path with the slash (`/dir` to `/dir/`). A redirect carries the
+  body Go's `http.Redirect` writes for a GET.
 - Unmatched path: 404 (`{"error":"not found"}`), or the `not_found`
   hook's response. Path matched with another method: 405 (`{"error":"method
   not allowed"}`), or the `method_not_allowed` hook's response; either
-  carries `Allow` listing the methods of the routes that match the path,
-  in registration order without repeats (Go 1.22's ServeMux), unless the
-  hook's response has one. A hook runs as a handler does (inside the
+  carries `Allow` listing the methods of the routes that match the path (or
+  the path with a trailing slash), sorted, `HEAD` after a `GET` route
+  (Go's ServeMux), unless the hook's response has one. A hook runs as a handler does (inside the
   middleware, its error a response, a fault a 500); a mounted router's
   hooks are not copied (its misses are `r`'s).
 - Streamed request bodies (decision 0310): for a `handle_stream` route the
@@ -1676,7 +1694,7 @@ fn (r: Request) query_all(name: Str) -> List[Str]   // every value of a repeated
 fn (r: Request) form() -> url.Values ! url.EscapeErr   // an urlencoded POST, PUT, or PATCH body (20)
 fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr   // decision 0282
 fn (r: Request) header(name: Str) -> Str?           // case insensitive for a token name; any other name matches only exactly
-fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
+fn (r: Request) json[T: Json]() -> T ! json.DecodeErr   // does not check Content-Type (as Go's json.NewDecoder on r.Body); a key given twice takes the last value (as encoding/json)
 fn (r: Request) with_header(name: Str, value: Str) -> Request
 fn (r: Request) header_values(name: Str) -> List[Str]
 fn (r: Request) host() -> Str                 // Go's Request.Host: the Host header as sent (HTTP/2's :authority)

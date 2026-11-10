@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/http/httptest"
 	"net/textproto"
 	"os"
 	"sort"
@@ -47,6 +48,7 @@ func httpCorpus() string {
 	o.WriteString(literalHeaderTables())
 	o.WriteString(httpCookieTables())
 	o.WriteString(httpStatusTextTable())
+	o.WriteString(httpMuxTables())
 	return o.String()
 }
 
@@ -836,3 +838,102 @@ func httpStatusTextTable() string {
 	o.WriteString("]\n\ntest \"http.status_text is Go's http.StatusText\" {\n  var bad: List[(Int, Str, Str)] = []\n  for (code, want) in STATUS_TEXT {\n    let got = http.status_text(code)\n    if got != want {\n      bad.push((code, got, want))\n    }\n  }\n  expect(bad) == []\n}\n")
 	return o.String()
 }
+
+// muxPatternSets are the pattern sets of the ServeMux table: patterns Go's
+// ServeMux accepts without a conflict, with trailing slashes (subtrees),
+// {$}, wildcards, a rest, and methods.
+var muxPatternSets = [][]string{
+	{"GET /healthz"},
+	{"POST /words", "GET /words"},
+	{"/dir/"},
+	{"/{$}", "/x/{id}", "/f/{p...}"},
+	{"/", "/dir/"},
+	{"GET /a/{id}", "POST /a/{id}", "/a/b/", "/static/{p...}"},
+	{"GET /api/items/{id}", "DELETE /api/items/{id}", "/api/"},
+	{"/a/{x}", "/a/b"},
+	{"GET /x", "/x/{$}"},
+	{"HEAD /h", "GET /h"},
+}
+
+var muxTargets = []string{
+	"/", "/healthz", "/healthz/", "/healthz///", "//healthz", "/words", "/words/",
+	"/dir", "/dir/", "/dir/a/b", "/dir//a", "/x", "/x/", "/x/1", "/x/1/", "/f", "/f/",
+	"/f/a/b/", "/a", "/a/1", "/a/1/", "/a/b", "/a/b/", "/a/b/c", "/static", "/static/",
+	"/static/css/a.css", "/api/items", "/api/items/", "/api/items/3", "/api/x", "/zzz",
+	"/healthz?x=1", "/dir?x=1&y=2", "/a/../healthz", "/./healthz", "/h", "/h/",
+}
+
+var muxMethods = []string{"GET", "HEAD", "POST", "DELETE"}
+
+// httpMuxTables checks Router.call against Go 1.22's ServeMux: for each
+// pattern set, method and request target, the status, the Allow and
+// Location headers, and (for a 200) the pattern of the route that ran.
+func httpMuxTables() string {
+	var rows []string
+	for _, pats := range muxPatternSets {
+		mux, ok := newMux(pats)
+		if !ok {
+			continue
+		}
+		for _, m := range muxMethods {
+			for _, t := range muxTargets {
+				rr := httptest.NewRecorder()
+				req := httptest.NewRequest(m, t, nil)
+				mux.ServeHTTP(rr, req)
+				body := ""
+				if rr.Code == 200 {
+					body = rr.Body.String()
+				}
+				var ps []string
+				for _, p := range pats {
+					ps = append(ps, xq(p))
+				}
+				rows = append(rows, fmt.Sprintf("  ([%s], %s, %s, %d, %s, %s, %s),\n", strings.Join(ps, ", "), xq(m), xq(t), rr.Code, xq(rr.Header().Get("Allow")), xq(rr.Header().Get("Location")), xq(body)))
+			}
+		}
+	}
+	var o strings.Builder
+	o.WriteString("\n/// (patterns, method, target, status, Allow, Location, body of a 200): Go's ServeMux\nconst MUX_ROWS: List[(List[Str], Str, Str, Int, Str, Str, Str)] = [\n")
+	for _, r := range rows {
+		o.WriteString(r)
+	}
+	o.WriteString("]\n")
+	o.WriteString(muxTest)
+	return o.String()
+}
+
+// newMux registers the patterns on a ServeMux whose handlers write their
+// pattern; false when Go refuses the set (a conflict).
+func newMux(pats []string) (mux *http.ServeMux, ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	mux = http.NewServeMux()
+	for _, p := range pats {
+		p := p
+		mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, p) })
+	}
+	return mux, true
+}
+
+const muxTest = `
+test "Router matches as Go 1.22's ServeMux does (status, Allow, Location, route)" {
+  var bad: List[Str] = []
+  for (pats, method, target, status, allow, loc, body) in MUX_ROWS {
+    var r = http.router()
+    for p in pats {
+      r.handle(p, fn(_q: http.Request) -> http.Response { http.text(200, p) })
+    }
+    let resp = r.call(http.new_request(method, "http://h" + target))
+    let got_allow = resp.headers.get("Allow") ?? ""
+    let got_loc = resp.headers.get("Location") ?? ""
+    let got_body = if status == 200 { resp.text() ?? "?" } else { "" }
+    if resp.status != status || got_allow != allow || got_loc != loc || got_body != body {
+      bad.push("${pats.join(",")} ${method} ${target}: want ${status} ${allow} ${loc} ${body}, got ${resp.status} ${got_allow} ${got_loc} ${got_body}")
+    }
+  }
+  expect(bad.join("\n")) == ""
+}
+`
