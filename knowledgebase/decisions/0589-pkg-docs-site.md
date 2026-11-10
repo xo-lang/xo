@@ -49,11 +49,28 @@ module, so std and user modules document the same way.
    search index. Built pages are written to an R2 bucket served on
    pkg.xolang.org through Cloudflare, like the proxy. The builder never
    runs a module's code (doc extraction parses and checks only).
-4. **Where the builder runs:** not on the OCI host, which is hosting only
-   (0568). Options for the owner: a Cloudflare Worker cron that queues
-   versions plus a small container run (Cloudflare Containers) for
-   `xo doc`; or a scheduled job on an offload host that uploads to R2.
-   The first keeps everything on Cloudflare; the second costs nothing new.
+4. **Where the builder runs: a scheduled GitHub Actions workflow in a
+   public repository** (owner, 2026-11-10), on GitHub-hosted runners, which
+   are free for public repositories; never the OCI host (hosting only,
+   0568) and not Cloudflare Containers (Workers Paid, $5 a month minimum,
+   kept as the fallback). A new public repository (suggested
+   xo-lang/pkgsite, created by the owner) holds the builder and the
+   workflow, so xo-lang/xo's history and permissions stay separate.
+   - Two jobs: `build` has no secrets and no write token; it reads the
+     index feed, fetches and verifies each new version, runs the released
+     xo's `xo doc --json` and renders the pages into an artifact. `publish`
+     downloads the artifact and writes it to the R2 bucket with a token
+     scoped to that bucket only, stored as an Actions secret. Untrusted
+     module source is only parsed in `build`, never where the token is.
+   - Triggers: `schedule` (every 30 minutes) and `workflow_dispatch`;
+     never `pull_request_target`, and pull requests from forks get no
+     secrets. Actions are pinned by commit hash.
+   - GitHub disables scheduled workflows in a repository with no activity
+     for 60 days: the workflow commits its last-built index position (or
+     a heartbeat) so the repository stays active, and a missed run is
+     caught up from the index position on the next one.
+   - Scheduled runs can start late under load; a delay of up to an hour
+     before a new version's page appears is acceptable.
 5. **Editors:** xo lsp's hover link points at pkg.xolang.org for std and
    for any module the index knows; user code in the open workspace gets no
    link.
@@ -68,7 +85,8 @@ module, so std and user modules document the same way.
 
 - Module authors get documentation pages without doing anything but
   tagging a version, which rewards doc comments.
-- One more public service to run: its builder's sandbox, an R2 bucket, DNS
+- One more public service to run: the builder repository and its
+  workflow, an R2 bucket, DNS
   for pkg.xolang.org (a record in the existing Cloudflare zone), and a release step for std's pages.
 - xolang.dev/docs/stdlib's URLs change; redirects keep old links working.
 - `xo doc --json` becomes a public format, versioned with a schema field.
