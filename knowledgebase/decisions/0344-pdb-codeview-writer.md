@@ -57,6 +57,13 @@ and dbghelp finds a moved PDB by its base name; the record now uses
 backslashes, as MSVC's and lld's linkers write it, and pdbframes loads
 cdb's dbghelp when the runner has it.
 
+2026-11-09 (winarm VM, WinDbg 1.2611 arm64 cdb): cdb rejected every xo
+PDB until the info stream's named stream map gained /LinkInfo, as lld
+writes it (gotchas/pdb-needs-linkinfo-stream.md). With it, on
+windows/arm64 cdb sets breakpoints by name (inline sites too), prints
+backtraces with file and line through the fiber entry, and reads locals
+(`dv` gives a parameter's value from its register).
+
 ## Context
 
 Native windows/amd64 programs carry DWARF since 2026-10-22

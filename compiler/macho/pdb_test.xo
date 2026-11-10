@@ -207,3 +207,13 @@ test "a PDB writer's std part reads back" {
   expect(back.recs == b"\x01\x02\x03\x04") == true
   expect(dec_pdb_std(b[0..b.len() - 2]) is None) == true
 }
+
+// dbghelp (WinDbg 1.2611) reads a PDB whose named stream map has no
+// /LinkInfo as "file system or network error reading pdb"; the map is
+// written as lld's: /LinkInfo and /names, then niMac 0 and VC140.
+test "the PDB info stream names /LinkInfo and /names as lld does" {
+  let s = info_stream(b"0123456789abcdef", 7)
+  expect(s.len()) == 93
+  expect(s[32..49]) == b"/LinkInfo\0/names\0"
+  expect(s[85..89]) == b"\0\0\0\0"
+}

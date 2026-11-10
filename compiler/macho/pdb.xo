@@ -37,7 +37,11 @@ const PS_SYMS = 10
 const PS_IPIHASH = 11
 /// the TPI stream's hash values and index offsets
 const PS_TPIHASH = 12
-const PS_COUNT = 13
+/// /LinkInfo, empty, as lld writes it: dbghelp (WinDbg 1.2611's) reads a
+/// PDB whose named stream map lacks it as "file system or network error
+/// reading pdb" (2026-11-09, the winarm VM)
+const PS_LINKINFO = 13
+const PS_COUNT = 14
 
 /// CodeView symbol kinds.
 const S_END = 0x0006
@@ -705,26 +709,31 @@ fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc],
 // The streams
 
 /// The PDB info stream: version VC70, the signature (a time stamp's
-/// place), age 1, the GUID, the named stream map (/names), and the
-/// VC140 feature (the IPI stream is present).
+/// place), age 1, the GUID, the named stream map (/LinkInfo and /names,
+/// laid out as lld's), niMac 0, and the VC140 feature (the IPI stream
+/// is present).
 fn info_stream(guid: Bytes, stamp: Int) -> Bytes {
   var w = new_out(64)
   w.u32(20000404)
   w.u32(stamp)
   w.u32(1)
   w.bytes(guid)
-  // the map's string buffer, then its hash table: size 1, capacity 1,
-  // the present bit vector (one word, bucket 0), no deleted words, and
-  // the entry (the name's offset, the stream)
-  w.u32(7)
-  w.bytes(b"/names\0")
+  // the map's string buffer, then its hash table: size 2, capacity 4,
+  // the present bit vector (one word, buckets 1 and 2: the names'
+  // hashes), no deleted words, and the entries (the name's offset, the
+  // stream) in bucket order; then niMac 0
+  w.u32(17)
+  w.bytes(b"/LinkInfo\0/names\0")
+  w.u32(2)
+  w.u32(4)
   w.u32(1)
-  w.u32(1)
-  w.u32(1)
-  w.u32(1)
+  w.u32(6)
   w.u32(0)
-  w.u32(0)
+  w.u32(10)
   w.u32(PS_NAMES)
+  w.u32(0)
+  w.u32(PS_LINKINFO)
+  w.u32(0)
   w.u32(20140508)
   w.done()
 }
