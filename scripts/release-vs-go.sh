@@ -97,6 +97,19 @@ timed() {
 }
 
 load1() { sysctl -n vm.loadavg | awk '{print int($2)}'; }
+# The machine, as the report's header names it (lead, 2026-11-10: the
+# header said "Darwin arm64, 24 GB" from an older Mac's run; read it):
+# the model's name and identifier, the chip, its cores and memory, e.g.
+# "Mac Studio (Mac17,15), Apple M5 Ultra, 30 cores, 96 GB, Darwin arm64".
+host_desc() {
+	local name model chip cores mem
+	name=$(system_profiler SPHardwareDataType 2>/dev/null | awk -F': ' '/Model Name/{print $2; exit}')
+	model=$(sysctl -n hw.model 2>/dev/null)
+	chip=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)
+	cores=$(sysctl -n hw.ncpu 2>/dev/null)
+	mem=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d GB", $1/1073741824}')
+	echo "${name:-Mac}${model:+ ($model)}${chip:+, $chip}${cores:+, $cores cores}${mem:+, $mem}, $(uname -sm)"
+}
 # settle: waits up to WAIT_MIN minutes for a load under MAX_LOAD; prints
 # the load it starts at
 settle() {
@@ -198,7 +211,7 @@ compile() {
 {
 	echo "# Xo against Go: $("$XO" version 2>&1 | head -1) ($(date +%Y-%m-%d))"
 	echo
-	echo "scripts/release-vs-go.sh on $(uname -sm), $(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d GB", $1/1073741824}'),"
+	echo "scripts/release-vs-go.sh on $(host_desc),"
 	echo "Go $(go env GOVERSION). Build times are wall milliseconds of one build; peak MB is the"
 	echo "build's largest resident set (cold / warm / edit). Warm is the third unchanged build"
 	echo "(xo's parts pack is written on the second and read from the third); second is the second."
