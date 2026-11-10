@@ -271,7 +271,11 @@ pub fn run_replay(os: Os, ex: Exec, args: List[Str]) -> Int uses (stdio, proc, e
   if !dir_flag.is_empty() {
     src = dir_flag
   }
-  let bin = join(temp_dir(os), "xo-replay-${os.rand.int(0, 1000000000)}")
+  // with the executable suffix the build adds on windows: there it wrote
+  // xo-replay-N.exe, the build information read xo-replay-N, found none,
+  // and every source showed as removed (cmd/xo TestRecordReplayCLI,
+  // 2026-11-10)
+  let bin = join(temp_dir(os), "xo-replay-${os.rand.int(0, 1000000000)}${if hostpath.windows() { ".exe" } else { "" }}")
   let cl = ["build", "--backend=go"] + build_flags(h.build) + ["-o", bin, src]
   var c = os.proc.cmd(ex.program, cl)
   for (k, v) in ex.env {
