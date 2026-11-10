@@ -88,7 +88,7 @@ fn (var c: Checker) declare(m: Int) {
         FnDecl(d: fd) => {
           if fd.recv == None {
             o = c.new_obj(ObjKind.Func, fd.name)
-            c.objs[o].is_pub = fd.is_pub || c.mods[m].is_std
+            c.objs[o].is_pub = fd.is_pub || c.exports_all(m)
             c.objs[o].fn_decl = [fd]
             c.objs[o].moves = doc_moves(fd.doc)
             c.objs[o].decl_file = f
@@ -115,7 +115,7 @@ fn (var c: Checker) declare(m: Int) {
         TypeDecl(d: td) => o = c.declare_type(td.name, td.type_params, td.is_pub, if td.newtype { "newtype" } else { "alias" }, f, i)
         ConstDecl(d: cd) => {
           o = c.new_obj(ObjKind.Const, cd.name)
-          c.objs[o].is_pub = cd.is_pub || c.mods[m].is_std
+          c.objs[o].is_pub = cd.is_pub || c.exports_all(m)
           c.objs[o].decl_file = f
           c.objs[o].decl_idx = i
           c.check_name(cd.name, "constant")
@@ -133,9 +133,15 @@ fn (var c: Checker) declare(m: Int) {
   }
 }
 
+/// Whether every item of module m is public: a std module (decision 0261
+/// era rule) except one merged with its implementation (decision 0588).
+fn (c: Checker) exports_all(m: Int) -> Bool {
+  c.mods[m].is_std && !c.mods[m].merged
+}
+
 fn (var c: Checker) declare_type(name: Ident, tps: List[parser.TypeParam], is_pub: Bool, tkind: Str, f: Int, i: Int) -> Int {
   let o = c.new_obj(ObjKind.Type, name)
-  c.objs[o].is_pub = is_pub || c.mods[c.cur_mod].is_std
+  c.objs[o].is_pub = is_pub || c.exports_all(c.cur_mod)
   c.objs[o].tparams = c.new_tparams(tps)
   c.objs[o].tkind = tkind
   c.objs[o].decl_file = f
@@ -272,7 +278,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
           c.error("XO0437", fl.wire_span ?? fl.name.span, "the `string` option applies to scalar fields only: field `${text(fl.name.name)}` is not a Bool, Int, Float, Str or an Option of one (decision 0555)")
           qstr = false
         }
-        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.mods[c.objs[t].module].is_std && !c.objs[t].std_internal), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_string: qstr, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.exports_all(c.objs[t].module) && !c.objs[t].std_internal), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_string: qstr, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
       }
       c.objs[t].derives = c.derives_of(sd.derive)
       c.objs[t].fields = c.wire_keys(t, sd, fields, c.objs[t].derives)
@@ -723,12 +729,12 @@ fn (var c: Checker) resolve_sigs(m: Int) {
         fo = c.files[f].decl_objs[i]
         if !c.is_scope_entry(f, i, fd.name.name) {
           fo = c.new_obj(ObjKind.Func, fd.name)
-          c.objs[fo].is_pub = fd.is_pub || c.mods[m].is_std
+          c.objs[fo].is_pub = fd.is_pub || c.exports_all(m)
           c.objs[fo].fn_decl = [fd]
         }
       } else {
         fo = c.new_obj(ObjKind.Func, fd.name)
-        c.objs[fo].is_pub = fd.is_pub || c.mods[m].is_std
+        c.objs[fo].is_pub = fd.is_pub || c.exports_all(m)
         c.objs[fo].fn_decl = [fd]
         c.objs[fo].moves = doc_moves(fd.doc)
       }

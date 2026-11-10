@@ -1,15 +1,19 @@
-// std/uuid (spec/std.md 24, decision 0282). Declaration file; encoding
-// rules are listed at the top of std/prelude.xo. RFC 9562 UUIDs, following
+// Origin: uuid github.com/google/uuid v1.6.0 (Parse, NewRandom, NewV7), BSD-3 (THIRD_PARTY_NOTICES).
+// v7 has no process wide counter: random bits after the millisecond, no package state.
+// std/uuid (spec/std.md 24, decision 0282). Encoding rules are listed at the
+// top of std/prelude.xo. RFC 9562 UUIDs, following
 // github.com/google/uuid: random (v4) and time ordered (v7) ones from the
 // Rand and Clock capabilities, and parsing. A Uuid is two Ints (decision
 // 0387): equality and hashing compare two words, `u < v` orders UUIDs as
 // their bytes, and its canonical text (lower case 8-4-4-4-12) is
 // `u.display()`, which a Postgres uuid column takes with sql.str.
 
+use std/internal
+
 /// A UUID: its 16 bytes as two words. `u.display()` (or `"${u}"`) is its
 /// canonical text, `u.bytes()` its bytes, `u < v` the order of its bytes.
 /// @internal: use `u.bytes()` and `uuid.from_bytes(b)`, `u.display()` and `uuid.parse(s)`, or `u < v`
-struct Uuid {
+pub struct Uuid {
   /// the first and last 8 bytes, the first byte highest, with the top
   /// bit flipped so that the derived order of the signed words is the
   /// order of the bytes
@@ -19,26 +23,106 @@ struct Uuid {
 
 /// Displays as google/uuid's texts: `invalid UUID length: 35`,
 /// `invalid UUID format`, `invalid urn prefix: "urn:uid::"`.
-struct UuidErr {
+pub struct UuidErr {
   msg: Str
 }
 
-fn (e: UuidErr) display() -> Str
+pub fn (e: UuidErr) display() -> Str { e.msg }
+
+fn fail(msg: Str) -> UuidErr { UuidErr{msg: msg} }
+
+/// The top bit of a word: flipped in a Uuid's stored words so that their
+/// signed order is the bytes' order.
+const TOP: Int = -9223372036854775807 - 1
+
+/// The Uuid of the words hi and lo (the bytes, the first highest).
+fn of_words(hi: Int, lo: Int) -> Uuid { Uuid{hi: hi ^ TOP, lo: lo ^ TOP} }
+
+/// The word of b[i..i + 8], the first byte highest (one load natively).
+fn word_of(b: Bytes, i: Int) -> Int { internal.uuid_word(b, i) }
+
+/// The version and the RFC 9562 variant (10xx) set in the words.
+fn with_bits(hi: Int, lo: Int, version: Int) -> Uuid {
+  let h = (hi & -61441) | (version << 12)
+  let l = (lo & 4611686018427387903) | TOP
+  of_words(h, l)
+}
 
 /// A random UUID (version 4): 122 random bits.
-fn v4(r: Rand) -> Uuid uses rand
+pub fn v4(r: Rand) -> Uuid uses rand {
+  let b = r.bytes(16)
+  with_bits(word_of(b, 0), word_of(b, 8), 4)
+}
+
 /// A time ordered UUID (version 7): the Unix time in milliseconds, then 74
 /// random bits, so keys made later sort later (to the millisecond).
-fn v7(r: Rand, c: Clock) -> Uuid uses (rand, clock)
+pub fn v7(r: Rand, c: Clock) -> Uuid uses (rand, clock) {
+  let ms = c.now().unix_millis()
+  let b = r.bytes(10)
+  let hi = ms.wrapping_shl(16) | (Int(b[0]) << 8) | Int(b[1])
+  with_bits(hi, word_of(b, 2), 7)
+}
+
+/// Whether s[off..off + 9] is "urn:uuid:" in any case.
+fn urn_at(s: Bytes, off: Int) -> Bool {
+  let want = "urn:uuid:".bytes()
+  for k in 0..9 {
+    var c = Int(s[off + k])
+    if c >= 65 && c <= 90 {
+      c += 32
+    }
+    if c != Int(want[k]) {
+      return false
+    }
+  }
+  true
+}
+
+/// The Uuid of the text in s from off (internal.uuid_half), or the error.
+fn decode(s: Bytes, off: Int, dashed: Bool) -> Uuid ! UuidErr {
+  let hi = internal.uuid_half(s, off, dashed, 0) ?? return Err(fail("invalid UUID format"))
+  let lo = internal.uuid_half(s, off, dashed, 1) ?? return Err(fail("invalid UUID format"))
+  Ok(of_words(hi, lo))
+}
+
 /// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx, urn:uuid:..., {...}, or 32 hex
 /// digits (google/uuid's Parse), in either case.
-fn parse(s: Str) -> Uuid ! UuidErr
+pub fn parse(s0: Str) -> Uuid ! UuidErr {
+  let s = s0.bytes()
+  var off = 0
+  match s.len() {
+    36 => {}
+    45 => {
+      if !urn_at(s, 0) {
+        return Err(fail("invalid urn prefix: ${s0[0..9].quote()}"))
+      }
+      off = 9
+    }
+    // google/uuid takes the 36 characters after the first without
+    // checking the braces
+    38 => off = 1
+    32 => return decode(s, 0, false)
+    n => return Err(fail("invalid UUID length: ${n}"))
+  }
+  decode(s, off, true)
+}
+
 /// The 16 bytes.
-fn from_bytes(b: Bytes) -> Uuid ! UuidErr
+pub fn from_bytes(b: Bytes) -> Uuid ! UuidErr {
+  if b.len() != 16 {
+    return Err(fail("invalid UUID (got ${b.len()} bytes)"))
+  }
+  of_words(word_of(b, 0), word_of(b, 8))
+}
+
 /// 00000000-0000-0000-0000-000000000000.
-fn nil() -> Uuid
-fn (u: Uuid) version() -> Int
-fn (u: Uuid) bytes() -> Bytes
-fn (u: Uuid) display() -> Str
+pub fn nil() -> Uuid { of_words(0, 0) }
+
+pub fn (u: Uuid) bytes() -> Bytes { internal.uuid_bytes_words(u.hi ^ TOP, u.lo ^ TOP) }
+
+pub fn (u: Uuid) version() -> Int { ((u.hi ^ TOP) >> 12) & 15 }
+
+pub fn (u: Uuid) display() -> Str { internal.uuid_text_words(u.hi ^ TOP, u.lo ^ TOP) }
+
 /// `Uuid("<its text>")`, as when a Uuid was its text.
-fn (u: Uuid) debug() -> Str
+pub fn (u: Uuid) debug() -> Str { "Uuid(${u.display().quote()})" }

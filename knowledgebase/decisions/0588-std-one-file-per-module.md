@@ -171,3 +171,32 @@ lead before any module moves.
    std/changes entry (decision 0276, kind refactor, no behavior change).
 3. The intrinsic modules.
 4. The llrt modules, directory modules where a file is too large.
+
+## Stage 1 implemented (2026-11-10, Lang 3)
+
+The loader change landed with `std/uuid` as the first merged module:
+
+- `std/merged.txt` lists the merged modules (`std/uuid`, one a line). `load_std`
+  sets `Module.merged` and parses the file with its bodies (`parse_into(..., false)`),
+  so no native twin is looked for. Only `pub` items export (`Checker.exports_all`
+  replaces the std rule that every item is public); the rest is private as in a
+  user module, and its fields and helpers are XO0605 to a program.
+- Checking: a merged module's bodies are checked like a native module's (lazily
+  in a native build, `lazy_mod`; in full for the Go backend).
+- Native backends (compiler/ssa): `is_std_mod` is false for a merged module, so
+  its functions and methods build from their bodies like a program's, and its
+  Debug and Display methods are found (`method_of`).
+- Go backend (compiler/gen): a merged module is generated as an ordinary Go
+  package (its types, methods and functions), so its std/rt twin is deleted
+  (`std/rt/uuid.go`, `std_gen_uuid.go`, `std_sigs_uuid.go`) and
+  `internal/stdgen` skips modules in `std/merged.txt`.
+- uuid's test file moved to `std/uuid_test.xo` (private access, methods for the
+  natives); `internal.uuid_half` and `uuid_word` are now covered through the
+  module's own bodies (internal/stdcoverage/allow.txt lost their lines).
+- Gate: `xo test --std-module=uuid`, the uuid corpus on go, arm64 and llvm, the
+  uuid goldens, wasm, codegen patterns, the self build.
+
+Seed: modules outside the compiler's import closure can merge with the current
+seed; a module inside it (crypto, task, internal, http, regexp, json, testing,
+debug, archive, protoparse, path, embed, binary) needs a seed cut at the loader
+commit (the lead cuts it).

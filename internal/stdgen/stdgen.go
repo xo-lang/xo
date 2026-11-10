@@ -80,13 +80,31 @@ func modules(root string) ([]string, error) {
 		if strings.HasSuffix(name, "_test") || name == "prelude" || name == "go" || name == "internal" {
 			continue
 		}
-		if usesC(root, name) {
+		if usesC(root, name) || merged(root)[name] {
 			continue
 		}
 		mods = append(mods, name)
 	}
 	sort.Strings(mods)
 	return mods, nil
+}
+
+// merged reads std/merged.txt (decision 0588): the std modules merged with
+// their implementation. The Go backend compiles one from its own bodies as
+// an ordinary package, so std/rt holds no types or signature checks for it.
+func merged(root string) map[string]bool {
+	out := map[string]bool{}
+	b, err := os.ReadFile(filepath.Join(root, "std", "merged.txt"))
+	if err != nil {
+		return out
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l != "" && !strings.HasPrefix(l, "#") {
+			out[strings.TrimPrefix(l, "std/")] = true
+		}
+	}
+	return out
 }
 
 // usesC reports whether std/native/name.xo has a `use c` line.
@@ -122,7 +140,7 @@ func Hashes(root string) (map[string]string, error) {
 	hs := map[string]*bytes.Buffer{}
 	for _, f := range files {
 		name := strings.TrimSuffix(filepath.Base(f), ".xo")
-		if strings.HasSuffix(name, "_test") {
+		if strings.HasSuffix(name, "_test") || merged(root)[name] {
 			continue
 		}
 		g := name

@@ -213,8 +213,10 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     // private access the test has (2026-10-25: the call was XO1201 "the
     // std function `probe.seven`", as only the std API lowerings above
     // could answer it)
+    // a std module merged with its implementation (decision 0588,
+    // std/merged.txt) is built from its bodies in every program
     let fd = b.c.objs[fo].fn_decl
-    if b.c.mods[fm].root && !fd.is_empty() && (fd[0].body != None || fd[0].lazy != None) {
+    if (b.c.mods[fm].root || b.c.mods[fm].merged) && !fd.is_empty() && (fd[0].body != None || fd[0].lazy != None) {
       return b.call_as(x, ci, fo)
     }
     return b.std_call(x, ci)

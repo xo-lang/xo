@@ -1,5 +1,17 @@
 # std/uuid changes
 
+## 2026-11-10: refactor: one file (decision 0588)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0588 stage 1 (the first merged std module)
+- Go reference: none (no behavior change)
+- Test: std/uuid_test.xo, internal/stdtest corpus uuid on go, arm64 and llvm, the uuid goldens
+
+std/uuid.xo now holds the bodies of std/native/uuid.xo (removed) and the Go
+backend compiles them instead of std/rt/uuid.go (removed). The API, texts and
+errors are unchanged; only `pub` items are exported, as before.
+
 ## 2026-10-30: behavior: a Uuid's words are private (breaking)
 
 - Kind: behavior

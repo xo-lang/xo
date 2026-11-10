@@ -6,35 +6,6 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Task, Fs, string) Result[Internal_SharedLock, FsErr]                                           = Internal_lock_shared
-	_ func(*Internal_SharedLock, *Task)                                                                    = (*Internal_SharedLock).M_unlock
-	_ func(*Task, Fs, string) Result[List[string], FsErr]                                                  = Internal_dir_names
-	_ func(*Task, Bytes) Bytes                                                                             = Internal_lz4_compress
-	_ func(*Task, Bytes, int64, int64) Option[Bytes]                                                       = Internal_lz4_decompress
-	_ func(*Task, Bytes, int64, bool, int64) Option[int64]                                                 = Internal_uuid_half
-	_ func(*Task, int64, int64) string                                                                     = Internal_uuid_text_words
-	_ func(*Task, int64, int64) Bytes                                                                      = Internal_uuid_bytes_words
-	_ func(*Task, Bytes, int64) int64                                                                      = Internal_uuid_word
-	_ func(*Task, string, Bytes, Bytes, Bytes, Bytes) Bytes                                                = Internal_crypto_op
-	_ func(*Task, List[int64], int64, int64)                                                               = Internal_list_swap_at
-	_ func(*Task, List[int64], List[int64], List[int64])                                                   = Internal_list_swap_both
-	_ func(*Task, string, int64, int64, int64, int64) int64                                                = Internal_rt_probe
-	_ func(*Task) int64                                                                                    = Internal_rt_queued
-	_ func(*Task) int64                                                                                    = Internal_rt_allocs
-	_ func(*Task, string, List[string], string) Result[int64, string]                                      = Internal_dbg_launch
-	_ func(*Task, int64) Result[int64, string]                                                             = Internal_dbg_attach
-	_ func(*Task, int64) List[int64]                                                                       = Internal_dbg_threads
-	_ func(*Task, int64) int64                                                                             = Internal_dbg_pid
-	_ func(*Task, int64) int64                                                                             = Internal_dbg_base
-	_ func(*Task, int64, int64, int64) Option[Bytes]                                                       = Internal_dbg_read
-	_ func(*Task, int64, int64, Bytes) bool                                                                = Internal_dbg_write
-	_ func(*Task, int64, int64) List[int64]                                                                = Internal_dbg_regs
-	_ func(*Task, int64, int64, int64) bool                                                                = Internal_dbg_set_pc
-	_ func(*Task, int64, int64, bool) bool                                                                 = Internal_dbg_set_step
-	_ func(*Task, int64, bool) bool                                                                        = Internal_dbg_resume
-	_ func(*Task, int64, int64) List[int64]                                                                = Internal_dbg_wait
-	_ func(*Task, int64)                                                                                   = Internal_dbg_kill
-	_ func(*Task, int64)                                                                                   = Internal_dbg_close
 	_ func(*Ordering, *Task) Ordering                                                                      = (*Ordering).M_reverse
 	_ func(*Ordering, *Task, Ordering) Ordering                                                            = (*Ordering).M_then
 	_ func(*Task, string) Option[int64]                                                                    = Int_parse

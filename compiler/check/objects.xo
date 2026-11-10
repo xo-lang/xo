@@ -263,6 +263,8 @@ pub struct Module {
   /// program's modules (decision 0388), unlike a `use c` or `use go`
   /// binding module, which is_std too
   pub std_tree: Bool = false
+  /// A std module merged with its implementation (decision 0588, std/merged.txt): only its `pub` items export; its other items are private as in a user module.
+  pub merged: Bool = false
   pub is_prelude: Bool = false
   /// Named on the command line (or found under a named directory).
   pub root: Bool = false

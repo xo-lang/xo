@@ -1131,7 +1131,10 @@ fn (var c: Checker) load_std(name: Str) -> Int {
   }
   let m = c.new_module(path, name, "std", true)
   c.mods[m].std_tree = true
-  c.parse_into(m, "std/${name}.xo", data, true)
+  c.mods[m].merged = c.merged_std().contains(path)
+  // a merged module keeps its bodies (decision 0588): the signature parse
+  // that drops them is for the modules with an implementation file
+  c.parse_into(m, "std/${name}.xo", data, !c.mods[m].merged)
   c.load_std_tests(m, "std/${name}.xo")
   c.mods[m].state = 1
   c.load_imports(m)
@@ -1145,6 +1148,24 @@ fn (var c: Checker) load_std(name: Str) -> Int {
 /// (`path`), `#` comments.
 fn (c: Checker) go_compiled() -> List[Str] {
   let data = c.fs.read("${c.std_dir}/go_compiled.txt").ok() ?? None
+  let text = match data {
+    Some(b) => b.to_str() ?? ""
+    None => return []
+  }
+  var out: List[Str] = []
+  for l in text.split("\n") {
+    let t = l.trim()
+    if !t.is_empty() && !t.starts_with("#") {
+      out.push(t)
+    }
+  }
+  out
+}
+
+/// The std modules merged with their implementations (decision 0588):
+/// std/merged.txt, one `std/name` a line, `#` comments.
+fn (c: Checker) merged_std() -> List[Str] {
+  let data = c.fs.read("${c.std_dir}/merged.txt").ok() ?? None
   let text = match data {
     Some(b) => b.to_str() ?? ""
     None => return []

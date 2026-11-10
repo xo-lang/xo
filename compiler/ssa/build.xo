@@ -1380,8 +1380,10 @@ fn (var b: Builder) is_prelude_mod(m: Int) -> Bool {
   m >= 0 && b.c.mods[m].is_prelude
 }
 
+/// Whether module m is std, except one merged with its implementation
+/// (decision 0588), which builds as a program's module does.
 fn (var b: Builder) is_std_mod(m: Int) -> Bool {
-  m >= 0 && b.c.mods[m].is_std
+  m >= 0 && b.c.mods[m].is_std && !b.c.mods[m].merged
 }
 
 /// Whether checker type t is one of the prelude types names
