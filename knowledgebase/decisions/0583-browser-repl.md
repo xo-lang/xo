@@ -125,4 +125,16 @@ JSPI (fd_read as `WebAssembly.Suspending`, `_start` through
 `WebAssembly.promising`: Chrome 137 and later; Firefox announced it as
 default from 153; Safari 27 beta lists it), with one instance per entry
 (today's cost) where `"Suspending" in WebAssembly` is false. A headless
-Chrome probe of the transport is drafted but has not run to the end yet.
+Chrome probe of the transport ran (below).
+
+## Step 4 probe (2026-11-10, headless Chrome 157 on the Mac Studio)
+One xoc instance running `--play repl` for the whole page, stdin's
+fd_read wrapped in `WebAssembly.Suspending` and `_start` called through
+`WebAssembly.promising` (the instance is made with the async
+`WebAssembly.instantiate`: the synchronous constructor is refused on the
+main thread above 8 MB), each built entry run in its own WASI instance as
+the playground's runner does. Ten entries: the first 1042 ms (the warm
+check in the tab), the others 16 to 137 ms each, run included, values
+right. The compiler instance's memory reached 1216 MB, which is the next
+question: a phone's tab limit, so a smaller warm base or less garbage
+kept between entries before the page offers this by default.
