@@ -369,7 +369,9 @@ func TestDebugInfoSameCode(t *testing.T) {
 				// built again with --phase-times, saying when a build
 				// compiled std apart (decision 0388) and the other did not
 				// (a std variant missed in the shared cache: that changes
-				// every program function)
+				// every program function). The first pair's mismatch
+				// fails the subtest either way: a pass on retry would hide
+				// the nondeterminism (lead, 2026-11-09)
 				t.Logf("%d functions differ; first %s:\n%s", len(bad), bad[0], bodyDiff(on[bad[0]], off[bad[0]]))
 				if k := os.Getenv("XO_TEST_KEEP_DIR"); k != "" {
 					d := filepath.Join(k, filepath.Base(dir))
@@ -382,11 +384,10 @@ func TestDebugInfoSameCode(t *testing.T) {
 					t.Logf("binaries kept in %s", d)
 				}
 				const pt = "--phase-times"
-				on2, _, log1 := build(false, []string{pt}, nil)
+				on2, _, log1 := build(false, []string{pt}, nil) // the first pair still decides
 				off2, _, log2 := build(false, []string{pt, "--debug-info=off"}, nil)
 				std := regexp.MustCompile(`(?m)^.*(std variant: miss|separate compilation is off|cache std .* reused|cache stdx used).*$`)
-				t.Logf("again: with debug information %q; without %q", std.FindAllString(log1, -1), std.FindAllString(log2, -1))
-				bad = differ(on2, off2)
+				t.Logf("built again: %d functions differ; std with debug information %q; without %q", len(differ(on2, off2)), std.FindAllString(log1, -1), std.FindAllString(log2, -1))
 			}
 			for i, name := range bad {
 				if i == 5 {

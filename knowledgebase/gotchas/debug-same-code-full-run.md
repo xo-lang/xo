@@ -30,5 +30,5 @@ commits.
 On a mismatch it logs the first differing function in both builds, keeps
 both binaries under $XO_TEST_KEEP_DIR when set, builds the pair again with
 --phase-times (logging each build's std variant lines) and compares that
-pair; the subtest fails only when that second pair differs too. The
+pair (logged, the first pair's mismatch fails the subtest). The
 next full run with the mismatch leaves the evidence in its -v log.
