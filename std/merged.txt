@@ -9,3 +9,4 @@ std/xmlcodec
 std/amqptest
 std/deque
 std/heap
+std/tabwriter

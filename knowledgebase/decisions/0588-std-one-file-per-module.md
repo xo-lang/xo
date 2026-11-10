@@ -257,3 +257,5 @@ commit (the lead cuts it).
   generated prelude loses Heap_Heap's Eq, Hash and Debug); its declared
   `_items`, `_less`, `_moved` fields become the native struct's private
   ones.
+- `std/tabwriter` merged the same way (std/rt/tabwriter.go removed; the
+  native TabWriter's fields are private).
