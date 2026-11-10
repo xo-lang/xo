@@ -1,11 +1,20 @@
-// std/jwt (spec/std.md 62, decision 0486). Declaration file; encoding rules
+// std/jwt (spec/std.md 62, decision 0486). Encoding rules
 // are listed at the top of std/prelude.xo. JSON Web Tokens in the JWS compact
 // form (RFC 7515, RFC 7519) on std/crypto, with golang-jwt/jwt v5's checks.
 // Pure but for `sign`'s randomness.
+//
+// std/jwt: one pure source for the native backends and, through
+// std/go_compiled.txt, the Go backend (decision 0312). JWS compact tokens
+// (RFC 7515, RFC 7519) on std/crypto; the registered claims are checked as
+// golang-jwt/jwt v5's validator does (exp: now < exp + leeway, nbf and iat:
+// now >= value - leeway).
+
+use std/base64
 use std/crypto
+use std/json
 
 /// The signature algorithms (RFC 7518 3.1). There is no `none`.
-enum Alg {
+pub enum Alg {
   HS256
   HS384
   HS512
@@ -23,7 +32,7 @@ enum Alg {
 
 /// A key. `Hmac` for HS*, a public key (or a private key, whose public
 /// half verifies) for RS*, PS*, ES* and EdDSA, a private key to sign them.
-enum Key {
+pub enum Key {
   Hmac(secret: Secret[Bytes])
   Public(key: crypto.PublicKey)
   Private(key: crypto.PrivateKey)
@@ -33,34 +42,34 @@ enum Key {
 /// holds the other string fields (`x5t#S256`, `jku`, ...) and `x5c` the
 /// certificate chain of RFC 7515 4.1.6 (standard base64 DER, leaf first);
 /// fields of other types are not kept.
-struct Header {
-  alg: Alg
-  kid: Str?
-  typ: Str?
-  extra: Map[Str, Str] = {}
-  x5c: List[Str] = []
+pub struct Header {
+  pub alg: Alg
+  pub kid: Str?
+  pub typ: Str?
+  pub extra: Map[Str, Str] = {}
+  pub x5c: List[Str] = []
 }
 
 /// What a verification requires. `algs` has no default: the token's own
 /// `alg` is only matched against it.
-struct Options {
-  algs: List[Alg]
+pub struct Options {
+  pub algs: List[Alg]
   /// the clock, passed in (a test's, or `os.clock.now()`)
-  now: Time
-  leeway: Duration = 0s
-  issuer: Str? = None
-  audience: Str? = None
-  subject: Str? = None
-  require_exp: Bool = true
+  pub now: Time
+  pub leeway: Duration = 0s
+  pub issuer: Str? = None
+  pub audience: Str? = None
+  pub subject: Str? = None
+  pub require_exp: Bool = true
   /// `iat` in the future (past the leeway) is NotYetValid
-  check_iat: Bool = false
+  pub check_iat: Bool = false
   /// now - iat past this is Expired
-  max_age: Duration? = None
+  pub max_age: Duration? = None
   /// the token's length in bytes, checked before any decoding
-  max_size: Int = 16384
+  pub max_size: Int = 16384
 }
 
-enum JwtErr {
+pub enum JwtErr {
   /// not three segments, a bad base64url, a header or payload that is not a JSON object, or `crit`
   Malformed(msg: Str)
   /// `none`, an `alg` outside `Options.algs`, or a key that does not fit it
@@ -79,7 +88,20 @@ enum JwtErr {
   Key(msg: Str)
 }
 
-fn (e: JwtErr) display() -> Str
+pub fn (e: JwtErr) display() -> Str {
+  match e {
+    Malformed(msg) => "jwt: malformed token: ${msg}"
+    Alg(msg) => "jwt: signing method: ${msg}"
+    Signature => "jwt: signature is invalid"
+    Expired(_at) => "jwt: token is expired"
+    NotYetValid(_at) => "jwt: token is not valid yet"
+    Issuer => "jwt: token has invalid issuer"
+    Audience => "jwt: token has invalid audience"
+    Subject => "jwt: token has invalid subject"
+    Claim(msg) => "jwt: token has invalid claims: ${msg}"
+    Key(msg) => "jwt: key: ${msg}"
+  }
+}
 
 /// The compact token of claims (any `derive Json` value that encodes as an
 /// object), signed with key; `r` is the randomness of RSA-PSS and ECDSA.
@@ -87,15 +109,475 @@ fn (e: JwtErr) display() -> Str
 /// Azure client assertion) and `x5c` its certificate chain; they follow
 /// `alg`, `kid` and `typ` in order of name, and a name of those, `x5c` in
 /// `header`, or `crit` is JwtErr.Malformed.
-fn sign[T: Json](r: Rand, alg: Alg, key: Key, claims: T, kid: Str? = None, header: Map[Str, Str] = {}, x5c: List[Str] = []) -> Str ! JwtErr uses rand
+pub fn sign[T: Json](r: Rand, alg: Alg, key: Key, claims: T, kid: Str? = None, header: Map[Str, Str] = {}, x5c: List[Str] = []) -> Str ! JwtErr uses rand {
+  let bad = key_misfit(alg, key)
+  if bad != "" {
+    return Err(JwtErr.Alg(msg: bad))
+  }
+  var header1 = "{\"alg\":\"${alg_name(alg)}\""
+  if let Some(k) = kid {
+    header1 += ",\"kid\":${json.Value.Str(s: k).encode()}"
+  }
+  header1 += ",\"typ\":\"JWT\""
+  var names = header.keys()
+  if !x5c.is_empty() {
+    names.push("x5c")
+  }
+  for k in names.sort() {
+    if k == "x5c" {
+      var items: List[json.Value] = []
+      for c in x5c {
+        items.push(json.Value.Str(s: c))
+      }
+      header1 += ",\"x5c\":${json.Value.List(items: items).encode()}"
+      continue
+    }
+    if k == "alg" || k == "kid" || k == "typ" || k == "crit" {
+      return Err(malformed("header field ${k} is set by sign"))
+    }
+    header1 += ",${json.Value.Str(s: k).encode()}:${json.Value.Str(s: header.get(k) ?? "").encode()}"
+  }
+  header1 += "}"
+  let payload = json.encode(claims)
+  match json.parse_value(payload.to_str() ?? "") {
+    Ok(Object(_)) => ()
+    _ => return Err(JwtErr.Claim(msg: "claims must encode as a JSON object"))
+  }
+  let input = "${b64(header1.bytes())}.${b64(payload)}"
+  let msg = input.bytes()
+  let h = hash_of(alg)
+  var sig = b""
+  match alg {
+    HS256 | HS384 | HS512 => {
+      match key {
+        Hmac(secret) => sig = crypto.hmac(h, secret.reveal(), msg)
+        Public(..) | Private(..) => ()
+      }
+    }
+    _ => {
+      let sk = match key {
+        Private(k) => k
+        Hmac(..) | Public(..) => return Err(JwtErr.Alg(msg: "signing needs a private key"))
+      }
+      let made = match alg {
+        PS256 | PS384 | PS512 => crypto.sign_pss(r, sk, h, msg)
+        ES256 | ES384 | ES512 => crypto.sign_raw_ecdsa(r, sk, h, msg)
+        HS256 | HS384 | HS512 | RS256 | RS384 | RS512 | EdDSA => crypto.sign(r, sk, h, msg)
+      }
+      sig = match made {
+        Ok(s) => s
+        Err(e) => return Err(JwtErr.Key(msg: e.msg))
+      }
+    }
+  }
+  "${input}.${b64(sig)}"
+}
+
 /// Verifies token with one key and returns its claims decoded as T, after
 /// checking the registered claims against opts.
-fn verify_with[T: Json](token: Str, key: Key, opts: Options) -> T ! JwtErr
+pub fn verify_with[T: Json](token: Str, key: Key, opts: Options) -> T ! JwtErr {
+  verify[T](token, fn(_h) { Ok(key) }, opts)
+}
+
 /// The same with the key chosen from the verified-so-far header (its
 /// `kid`), for key rotation; the function returns JwtErr.Key for an
 /// unknown kid.
-fn verify[T: Json](token: Str, keys: fn(Header) -> Key ! JwtErr, opts: Options) -> T ! JwtErr
+pub fn verify[T: Json](token: Str, keys: fn(Header) -> Key ! JwtErr, opts: Options) -> T ! JwtErr {
+  if token.len() > opts.max_size {
+    return Err(malformed("token is larger than ${opts.max_size} bytes"))
+  }
+  let parts = token.split(".")
+  if parts.len() != 3 {
+    return Err(malformed("a token has three segments"))
+  }
+  let header = header_of(segment_object(parts[0], "header")?)?
+  if !opts.algs.contains(header.alg) {
+    return Err(JwtErr.Alg(msg: "${alg_name(header.alg)} is not allowed"))
+  }
+  let key = keys(header)?
+  let bad = key_misfit(header.alg, key)
+  if bad != "" {
+    return Err(JwtErr.Alg(msg: bad))
+  }
+  if !b64url_ok(parts[2]) {
+    return Err(JwtErr.Signature)
+  }
+  let sig = match base64.decode(parts[2], base64.Base64.RawUrl) {
+    Ok(b) => b
+    Err(_) => return Err(JwtErr.Signature)
+  }
+  let msg = "${parts[0]}.${parts[1]}".bytes()
+  // the payload is parsed before the signature is checked (as golang-jwt
+  // does) but no claim is looked at until the signature holds
+  let claims = segment_object(parts[1], "payload")?
+  if !signature_ok(header.alg, key, msg, sig) {
+    return Err(JwtErr.Signature)
+  }
+  check_claims(claims, opts)?
+  match json.from_value[T](claims) {
+    Ok(t) => t
+    Err(e) => Err(malformed("claims: ${e.display()}"))
+  }
+}
+
 /// The header of token, unverified: for routing by `kid`, never to decide anything.
-fn peek_header(token: Str) -> Header ! JwtErr
+pub fn peek_header(token: Str) -> Header ! JwtErr {
+  let parts = token.split(".")
+  if parts.len() != 3 {
+    return Err(malformed("a token has three segments"))
+  }
+  header_of(segment_object(parts[0], "header")?)
+}
+
 /// The keys of an RFC 7517 key set by `kid` (public keys only).
-fn jwks(set: Str) -> Map[Str, Key] ! JwtErr
+pub fn jwks(set: Str) -> Map[Str, Key] ! JwtErr {
+  let v = match json.parse_value(set) {
+    Ok(v) => v
+    Err(e) => return Err(malformed("key set: ${e.display()}"))
+  }
+  let items = match v.get("keys") {
+    Some(List(items)) => items
+    _ => return Err(malformed("key set has no keys list"))
+  }
+  var out: Map[Str, Key] = {}
+  for item in items {
+    if item.get("use") == Some(json.Value.Str(s: "enc")) {
+      continue
+    }
+    let kid = match item.get("kid") {
+      Some(Str(s)) => s
+      _ => return Err(JwtErr.Key(msg: "a key in the set has no kid"))
+    }
+    match crypto.jwk_public_key(item.encode()) {
+      Ok(k) => out.put(kid, Key.Public(key: k))
+      Err(e) => return Err(JwtErr.Key(msg: "${kid}: ${e.msg}"))
+    }
+  }
+  out
+}
+
+fn alg_name(a: Alg) -> Str {
+  match a {
+    HS256 => "HS256"
+    HS384 => "HS384"
+    HS512 => "HS512"
+    RS256 => "RS256"
+    RS384 => "RS384"
+    RS512 => "RS512"
+    PS256 => "PS256"
+    PS384 => "PS384"
+    PS512 => "PS512"
+    ES256 => "ES256"
+    ES384 => "ES384"
+    ES512 => "ES512"
+    EdDSA => "EdDSA"
+  }
+}
+
+fn alg_of(s: Str) -> Alg? {
+  match s {
+    "HS256" => Some(Alg.HS256)
+    "HS384" => Some(Alg.HS384)
+    "HS512" => Some(Alg.HS512)
+    "RS256" => Some(Alg.RS256)
+    "RS384" => Some(Alg.RS384)
+    "RS512" => Some(Alg.RS512)
+    "PS256" => Some(Alg.PS256)
+    "PS384" => Some(Alg.PS384)
+    "PS512" => Some(Alg.PS512)
+    "ES256" => Some(Alg.ES256)
+    "ES384" => Some(Alg.ES384)
+    "ES512" => Some(Alg.ES512)
+    "EdDSA" => Some(Alg.EdDSA)
+    _ => None
+  }
+}
+
+fn hash_of(a: Alg) -> crypto.Hash {
+  match a {
+    HS256 | RS256 | PS256 | ES256 | EdDSA => crypto.Hash.Sha256
+    HS384 | RS384 | PS384 | ES384 => crypto.Hash.Sha384
+    HS512 | RS512 | PS512 | ES512 => crypto.Hash.Sha512
+  }
+}
+
+/// Why key cannot be used with alg (golang-jwt's ErrInvalidKeyType), or "".
+fn key_misfit(alg: Alg, key: Key) -> Str {
+  let ka = match key {
+    Hmac(_) => None
+    Public(k) => Some(k.alg())
+    Private(k) => Some(k.alg())
+  }
+  match alg {
+    HS256 | HS384 | HS512 => {
+      match key {
+        Hmac(_) => ""
+        Public(..) | Private(..) => "${alg_name(alg)} needs an HMAC secret"
+      }
+    }
+    RS256 | RS384 | RS512 | PS256 | PS384 | PS512 => {
+      if ka == Some(crypto.KeyAlg.Rsa) { "" } else { "${alg_name(alg)} needs an RSA key" }
+    }
+    ES256 => if ka == Some(crypto.KeyAlg.EcdsaP256) { "" } else { "ES256 needs a P-256 key" }
+    ES384 => if ka == Some(crypto.KeyAlg.EcdsaP384) { "" } else { "ES384 needs a P-384 key" }
+    ES512 => if ka == Some(crypto.KeyAlg.EcdsaP521) { "" } else { "ES512 needs a P-521 key" }
+    EdDSA => if ka == Some(crypto.KeyAlg.Ed25519) { "" } else { "EdDSA needs an Ed25519 key" }
+  }
+}
+
+fn b64(b: Bytes) -> Str { base64.encode(b, base64.Base64.RawUrl) }
+
+fn public_of(key: Key) -> crypto.PublicKey? {
+  match key {
+    Hmac(_) => None
+    Public(k) => Some(k)
+    Private(k) => Some(k.public_key())
+  }
+}
+
+fn b64url_ok(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for c in s.bytes() {
+    let ok = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 45 || c == 95
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+fn malformed(msg: Str) -> JwtErr { JwtErr.Malformed(msg: msg) }
+
+/// The JSON object a segment decodes to.
+fn segment_object(seg: Str, what: Str) -> json.Value ! JwtErr {
+  if !b64url_ok(seg) {
+    return Err(malformed("${what} is not base64url"))
+  }
+  let raw = match base64.decode(seg, base64.Base64.RawUrl) {
+    Ok(b) => b
+    Err(_) => return Err(malformed("${what} is not base64url"))
+  }
+  let text = match raw.to_str() {
+    Some(t) => t
+    None => return Err(malformed("${what} is not UTF-8"))
+  }
+  let v = match json.parse_value(text) {
+    Ok(v) => v
+    Err(e) => return Err(malformed("${what}: ${e.display()}"))
+  }
+  match v {
+    Object(_) => Ok(v)
+    _ => Err(malformed("${what} is not a JSON object"))
+  }
+}
+
+fn header_of(h: json.Value) -> Header ! JwtErr {
+  if h.get("crit") is Some(_) {
+    return Err(malformed("crit header is not supported"))
+  }
+  let alg = match h.get("alg") {
+    Some(Str(s)) => match alg_of(s) {
+      Some(a) => a
+      None => return Err(JwtErr.Alg(msg: "${s.quote()} is not supported"))
+    }
+    _ => return Err(JwtErr.Alg(msg: "alg is missing or not a string"))
+  }
+  let kid = match h.get("kid") {
+    None => None
+    Some(Str(s)) => Some(s)
+    Some(_) => return Err(malformed("kid is not a string"))
+  }
+  let typ = match h.get("typ") {
+    None => None
+    Some(Str(s)) => Some(s)
+    Some(_) => return Err(malformed("typ is not a string"))
+  }
+  var extra: Map[Str, Str] = {}
+  var x5c: List[Str] = []
+  if let json.Value.Object(fields) = h {
+    for (k, v) in fields {
+      if k == "alg" || k == "kid" || k == "typ" {
+        continue
+      }
+      if k == "x5c" {
+        match v {
+          List(items) => {
+            for it in items {
+              match it {
+                Str(s) => x5c.push(s)
+                _ => return Err(malformed("x5c is not a list of strings"))
+              }
+            }
+          }
+          _ => return Err(malformed("x5c is not a list of strings"))
+        }
+        continue
+      }
+      if let json.Value.Str(s) = v {
+        extra.put(k, s)
+      }
+    }
+  }
+  Header{alg: alg, kid: kid, typ: typ, extra: extra, x5c: x5c}
+}
+
+const NS: Int = 1000000000
+
+/// A NumericDate in whole seconds (rounded down, golang-jwt's
+/// TimePrecision). Kept as seconds: a date past 2262 does not fit a Time's
+/// nanoseconds, and every comparison below is done in seconds (b25).
+fn numeric_date(v: json.Value, name: Str) -> Int ! JwtErr {
+  match v {
+    Int(n) => {
+      if n < -100000000000 || n > 100000000000 {
+        return Err(JwtErr.Claim(msg: "${name} is out of range"))
+      }
+      Ok(n)
+    }
+    Num(f) => {
+      if !(f > -100000000000.0 && f < 100000000000.0) {
+        return Err(JwtErr.Claim(msg: "${name} is out of range"))
+      }
+      Ok(Int(f.floor()))
+    }
+    _ => Err(JwtErr.Claim(msg: "${name} is not a number"))
+  }
+}
+
+/// secs as a Time for an error's `at`: dates past what a Time holds (about
+/// 2262) report the latest or earliest Time.
+fn date_time(secs: Int) -> Time {
+  let lim = 9000000000
+  let s = if secs > lim { lim } else if secs < 0 - lim { 0 - lim } else { secs }
+  Time.UNIX_EPOCH + Duration.from_secs_int(s)
+}
+
+/// now < the date secs plus a and b, with no overflow: the difference is
+/// taken in whole seconds, the nanosecond remainders only when it is within
+/// a few seconds.
+fn before(now: Time, secs: Int, a: Duration, b: Duration) -> Bool {
+  let n = (now - Time.UNIX_EPOCH).nanos()
+  var ns = n / NS
+  var frac = n - ns * NS
+  if frac < 0 {
+    ns -= 1
+    frac += NS
+  }
+  let an = a.nanos()
+  let bn = b.nanos()
+  let total = (secs - ns) + an / NS + bn / NS
+  let rem = an % NS + bn % NS - frac
+  if total >= 3 {
+    return true
+  }
+  if total <= -3 {
+    return false
+  }
+  total * NS + rem > 0
+}
+
+fn string_claim(v: json.Value, name: Str) -> Str? ! JwtErr {
+  match v.get(name) {
+    None => Ok(None)
+    Some(Str(s)) => Ok(Some(s))
+    Some(_) => Err(JwtErr.Claim(msg: "${name} is not a string"))
+  }
+}
+
+fn check_claims(v: json.Value, opts: Options) -> () ! JwtErr {
+  let now = opts.now
+  match v.get("exp") {
+    None => {
+      if opts.require_exp {
+        return Err(JwtErr.Claim(msg: "exp is required"))
+      }
+    }
+    Some(x) => {
+      let exp = numeric_date(x, "exp")?
+      if !before(now, exp, opts.leeway, Duration.from_nanos(0)) {
+        return Err(JwtErr.Expired(at: date_time(exp)))
+      }
+    }
+  }
+  if let Some(x) = v.get("nbf") {
+    let nbf = numeric_date(x, "nbf")?
+    if before(now, nbf, Duration.from_nanos(0) - opts.leeway, Duration.from_nanos(0)) {
+      return Err(JwtErr.NotYetValid(at: date_time(nbf)))
+    }
+  }
+  let iat = match v.get("iat") {
+    Some(x) => Some(numeric_date(x, "iat")?)
+    None => None
+  }
+  if opts.check_iat {
+    if let Some(t) = iat {
+      if before(now, t, Duration.from_nanos(0) - opts.leeway, Duration.from_nanos(0)) {
+        return Err(JwtErr.NotYetValid(at: date_time(t)))
+      }
+    }
+  }
+  if let Some(age) = opts.max_age {
+    let t = match iat {
+      Some(t) => t
+      None => return Err(JwtErr.Claim(msg: "iat is required"))
+    }
+    if !before(now, t, age, opts.leeway) {
+      return Err(JwtErr.Expired(at: date_time(t + age.nanos() / NS)))
+    }
+  }
+  if let Some(want) = opts.issuer {
+    if string_claim(v, "iss")? != Some(want) {
+      return Err(JwtErr.Issuer)
+    }
+  }
+  if let Some(want) = opts.subject {
+    if string_claim(v, "sub")? != Some(want) {
+      return Err(JwtErr.Subject)
+    }
+  }
+  if let Some(want) = opts.audience {
+    // golang-jwt's ClaimStrings: a string, or a list of only strings
+    if let Some(List(items)) = v.get("aud") {
+      for x in items {
+        match x {
+          Str(_) => {}
+          _ => return Err(JwtErr.Claim(msg: "aud is not a string or a list of strings"))
+        }
+      }
+    }
+    let ok = match v.get("aud") {
+      Some(Str(s)) => s == want
+      Some(List(items)) => items.any(fn(x) { x == json.Value.Str(s: want) })
+      _ => false
+    }
+    if !ok {
+      return Err(JwtErr.Audience)
+    }
+  }
+  Ok(())
+}
+
+fn signature_ok(alg: Alg, key: Key, msg: Bytes, sig: Bytes) -> Bool {
+  let h = hash_of(alg)
+  match alg {
+    HS256 | HS384 | HS512 => {
+      match key {
+        Hmac(secret) => crypto.equal(crypto.hmac(h, secret.reveal(), msg), sig)
+        Public(..) | Private(..) => false
+      }
+    }
+    _ => {
+      let pk = match public_of(key) {
+        Some(k) => k
+        None => return false
+      }
+      match alg {
+        PS256 | PS384 | PS512 => crypto.verify_pss(pk, h, msg, sig)
+        ES256 | ES384 | ES512 => crypto.verify_raw_ecdsa(pk, h, msg, sig)
+        HS256 | HS384 | HS512 | RS256 | RS384 | RS512 | EdDSA => crypto.verify(pk, h, msg, sig)
+      }
+    }
+  }
+}

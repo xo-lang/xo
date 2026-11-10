@@ -264,3 +264,11 @@ commit (the lead cuts it).
   NO_WAIT drops the Limiter and Reservation methods, which have Xo
   bodies now: TestWaitsClassified).
 - `std/cron` merged the same way (std/rt/cron.go, 300 lines, removed).
+- `std/bcrypt`, `std/charset` and `std/jwt` merged (std/rt/bcrypt.go,
+  charset.go and jwt.go, the Go backend's hand display methods, removed).
+  jwt found a Go generator gap: decision 0542's protocol roots skipped
+  every std file (std's Go was pregenerated), so a merged module's own
+  `List.contains` over its enum (`opts.algs.contains(header.alg)`)
+  rooted no XoEq and the Go backend faulted "XoEq not generated for
+  x_std_jwt.Alg". compiler/gen/proto.xo proto_call_roots now scans
+  merged modules (gotchas/merged-std-module-go-proto-roots.md).

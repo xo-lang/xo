@@ -12,3 +12,6 @@ std/heap
 std/tabwriter
 std/rate
 std/cron
+std/bcrypt
+std/charset
+std/jwt

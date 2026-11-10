@@ -110,7 +110,9 @@ fn (g: Gen) proto_kept(bit: Int, o: Int) -> Bool {
 fn (var g: Gen) proto_call_roots() {
   for (fi, file) in g.c.files.indexed() {
     let m = file.module
-    if m < 0 || g.c.mods[m].is_std {
+    // std's Go is pregenerated, but a merged module (decision 0588) is
+    // generated with the program, so its own calls root what they compare
+    if m < 0 || g.c.mods[m].is_std && !g.c.mods[m].merged {
       continue
     }
     for n in decl_nodes(file.ast) {

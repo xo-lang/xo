@@ -1,9 +1,17 @@
-// std/charset (spec/std.md 54, decision 0470). Declaration file. Text
+// std/charset (spec/std.md 54, decision 0470). Text
 // encodings other than UTF-8: UTF-16 (Excel's "Unicode Text" is UTF-16LE
 // with a byte order mark), Latin-1 and Windows-1252, as decode and encode
 // over a closed `Charset`, after golang.org/x/text's encoding/unicode and
 // charmap packages and the WHATWG Encoding Standard's windows-1252 table,
 // plus Go's unicode/utf16 code unit conversions. Pure.
+//
+// std/charset on the native backends and, through std/go_compiled.txt, on
+// the Go backend (decision 0312): one source. UTF-16 follows Go's
+// unicode/utf16 (Encode, Decode) and golang.org/x/text/encoding/unicode
+// (UTF16 with IgnoreBOM or UseBOM, whose decoder replaces what is invalid
+// with U+FFFD); Latin-1 and Windows-1252 follow x/text's charmap and the
+// WHATWG windows-1252 index (Go code: Copyright The Go Authors, BSD-style
+// license; THIRD_PARTY_NOTICES).
 
 /// The encodings. `Utf16Le` and `Utf16Be` write and read no byte order mark
 /// (a U+FEFF at the start is an ordinary character, x/text's IgnoreBOM).
@@ -15,7 +23,7 @@
 /// 0x9F are the printable characters Microsoft put there, and the five it
 /// left unassigned, 0x81, 0x8D, 0x8F, 0x90 and 0x9D, are U+0081, U+008D,
 /// U+008F, U+0090 and U+009D).
-enum Charset {
+pub enum Charset {
   Utf8
   Utf16Le
   Utf16Be
@@ -29,12 +37,12 @@ enum Charset {
 /// (`invalid UTF-8`, `odd number of UTF-16 bytes`, `unpaired UTF-16
 /// surrogate`, `character U+20AC is not in latin1`). Displays as
 /// `charset: MSG at byte OFFSET`.
-struct CharsetErr {
-  offset: Int
-  msg: Str
+pub struct CharsetErr {
+  pub offset: Int
+  pub msg: Str
 }
 
-fn (e: CharsetErr) display() -> Str
+pub fn (e: CharsetErr) display() -> Str { "charset: ${e.msg} at byte ${e.offset}" }
 
 /// The text of data in cs. A byte sequence that is not valid in cs is a
 /// CharsetErr at its first byte; with `lossy` it is U+FFFD instead (one for
@@ -43,19 +51,360 @@ fn (e: CharsetErr) display() -> Str
 /// byte, as x/text; x/text itself gives one U+FFFD for a lone low surrogate
 /// and the surrogate after it).
 /// Latin1 and Windows1252 accept every byte.
-fn decode(data: Bytes, cs: Charset, lossy: Bool = false) -> Str ! CharsetErr
+pub fn decode(data: Bytes, cs: Charset, lossy: Bool = false) -> Str ! CharsetErr {
+  match cs {
+    Charset.Utf8 => {
+      var out = BytesBuilder.with_capacity(data.len())
+      var i = 0
+      while i < data.len() {
+        let (r, size) = data.decode_rune(i)
+        if size == 1 && Int(r) == 0xFFFD {
+          if !lossy {
+            return Err(bad(i, "invalid UTF-8"))
+          }
+        }
+        out.write_rune(r)
+        i += size
+      }
+      Ok(out.freeze().to_str() ?? "")
+    }
+    Charset.Utf16Le => decode_utf16(data, 0, false, lossy)
+    Charset.Utf16Be => decode_utf16(data, 0, true, lossy)
+    Charset.Utf16Bom => {
+      if data.len() >= 2 && data[0] == 0xFE && data[1] == 0xFF {
+        decode_utf16(data, 2, true, lossy)
+      } else if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xFE {
+        decode_utf16(data, 2, false, lossy)
+      } else {
+        decode_utf16(data, 0, false, lossy)
+      }
+    }
+    Charset.Latin1 => {
+      var out = BytesBuilder.with_capacity(data.len() * 2)
+      let n = data.len()
+      var i = 0
+      while i < n {
+        let b = data[i]
+        if b < 0x80 {
+          out.write_byte(b)
+          i += 1
+          continue
+        }
+        i += 1
+        out.write_byte(UInt8(0xC0 | (Int(b) >> 6)))
+        out.write_byte(UInt8(0x80 | (Int(b) & 63)))
+      }
+      Ok(out.freeze().to_str() ?? "")
+    }
+    Charset.Windows1252 => {
+      var out = BytesBuilder.with_capacity(data.len() * 2)
+      let n = data.len()
+      var i = 0
+      while i < n {
+        let b = data[i]
+        if b < 0x80 {
+          out.write_byte(b)
+          i += 1
+          continue
+        }
+        i += 1
+        if b >= 0xA0 {
+          out.write_byte(UInt8(0xC0 | (Int(b) >> 6)))
+          out.write_byte(UInt8(0x80 | (Int(b) & 63)))
+        } else {
+          put8(out, w1252_rune(Int(b)))
+        }
+      }
+      Ok(out.freeze().to_str() ?? "")
+    }
+  }
+}
+
 /// The bytes of text in cs. A character cs cannot hold is a CharsetErr at
 /// its byte offset in text.
-fn encode(text: Str, cs: Charset) -> Bytes ! CharsetErr
+pub fn encode(text: Str, cs: Charset) -> Bytes ! CharsetErr {
+  let src = text.bytes()
+  match cs {
+    Charset.Utf8 => Ok(src)
+    Charset.Utf16Le => Ok(encode_utf16(src, false, false))
+    Charset.Utf16Be => Ok(encode_utf16(src, true, false))
+    Charset.Utf16Bom => Ok(encode_utf16(src, false, true))
+    Charset.Latin1 => {
+      var out = BytesBuilder.with_capacity(src.len())
+      var i = 0
+      while i < src.len() {
+        let (r, size) = src.decode_rune(i)
+        if Int(r) > 0xFF {
+          return Err(bad(i, "character U+${hex4(Int(r))} is not in latin1"))
+        }
+        out.write_byte(UInt8(Int(r)))
+        i += size
+      }
+      Ok(out.freeze())
+    }
+    Charset.Windows1252 => {
+      var out = BytesBuilder.with_capacity(src.len())
+      var i = 0
+      while i < src.len() {
+        let c = Int(src[i])
+        if c < 0x80 {
+          out.write_byte(UInt8(c))
+          i += 1
+          continue
+        }
+        let (r, size) = src.decode_rune(i)
+        let b = w1252_byte(Int(r))
+        if b < 0 {
+          return Err(bad(i, "character U+${hex4(Int(r))} is not in windows-1252"))
+        }
+        out.write_byte(UInt8(b))
+        i += size
+      }
+      Ok(out.freeze())
+    }
+  }
+}
+
 /// The charset a label names, by the WHATWG Encoding Standard's labels,
 /// case and surrounding ASCII space ignored: "utf-8", "utf8";
 /// "utf-16" (`Utf16Bom`), "utf-16le", "ucs-2", "unicode" (`Utf16Le`),
 /// "utf-16be"; "windows-1252", "cp1252", "iso-8859-1", "latin1" and "ascii"
 /// (all `Windows1252`, as browsers read them). None for any other label.
-fn lookup(label: Str) -> Charset?
+pub fn lookup(label: Str) -> Charset? {
+  // ASCII trim and lower case, as the Encoding Standard's "get an encoding"
+  let b = label.bytes()
+  var lo = 0
+  var hi = b.len()
+  while lo < hi && is_ws(b[lo]) {
+    lo += 1
+  }
+  while hi > lo && is_ws(b[hi - 1]) {
+    hi -= 1
+  }
+  var low = BytesBuilder.with_capacity(hi - lo)
+  for k in lo..hi {
+    let c = Int(b[k])
+    low.write_byte(UInt8(if c >= 65 && c <= 90 { c + 32 } else { c }))
+  }
+  let s = low.freeze().to_str() ?? ""
+  match s {
+    "unicode-1-1-utf-8" | "unicode11utf8" | "unicode20utf8" | "utf-8" | "utf8" | "x-unicode20utf8" => Some(Charset.Utf8)
+    "utf-16" => Some(Charset.Utf16Bom)
+    "csunicode" | "iso-10646-ucs-2" | "ucs-2" | "unicode" | "unicodefeff" | "utf-16le" => Some(Charset.Utf16Le)
+    "unicodefffe" | "utf-16be" => Some(Charset.Utf16Be)
+    "ansi_x3.4-1968" | "ascii" | "cp1252" | "cp819" | "csisolatin1" | "ibm819" | "iso-8859-1" | "iso-ir-100" | "iso8859-1" | "iso88591" | "iso_8859-1" | "iso_8859-1:1987" | "l1" | "latin1" | "us-ascii" | "windows-1252" | "x-cp1252" => Some(Charset.Windows1252)
+    _ => None
+  }
+}
+
 /// Go's utf16.Encode: the UTF-16 code units of text (0 to 65535, a
 /// surrogate pair for a character above U+FFFF).
-fn utf16_units(text: Str) -> List[Int]
+pub fn utf16_units(text: Str) -> List[Int] {
+  let src = text.bytes()
+  var out: List[Int] = []
+  var i = 0
+  while i < src.len() {
+    let (r, size) = src.decode_rune(i)
+    let cp = Int(r)
+    if cp >= 0x10000 {
+      let v = cp - 0x10000
+      out.push(0xD800 + (v >> 10))
+      out.push(0xDC00 + (v & 0x3FF))
+    } else {
+      out.push(cp)
+    }
+    i += size
+  }
+  out
+}
+
 /// Go's utf16.Decode: the text of code units; an unpaired surrogate or a
 /// value outside 0 to 65535 is U+FFFD.
-fn from_utf16_units(units: List[Int]) -> Str
+pub fn from_utf16_units(units: List[Int]) -> Str {
+  var out = BytesBuilder.with_capacity(units.len() * 2)
+  var i = 0
+  while i < units.len() {
+    let u = units[i]
+    if u >= 0xD800 && u < 0xDC00 && i + 1 < units.len() && units[i + 1] >= 0xDC00 && units[i + 1] < 0xE000 {
+      out.write_rune(Rune(0x10000 + ((u - 0xD800) << 10) + (units[i + 1] - 0xDC00)))
+      i += 2
+      continue
+    }
+    if u < 0 || u > 0xFFFF || (u >= 0xD800 && u < 0xE000) {
+      out.write_rune(Rune(0xFFFD))
+    } else {
+      out.write_rune(Rune(u))
+    }
+    i += 1
+  }
+  out.freeze().to_str() ?? ""
+}
+
+/// WHATWG's windows-1252 index for the bytes 0x80 to 0x9F.
+const W1252: List[Int] = [
+  0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+  0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+  0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+  0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+]
+
+fn bad(offset: Int, msg: Str) -> CharsetErr { CharsetErr{offset: offset, msg: msg} }
+
+/// The code point of a windows-1252 byte.
+fn w1252_rune(b: Int) -> Int { if b >= 0x80 && b <= 0x9F { W1252[b - 0x80] } else { b } }
+
+/// The windows-1252 byte of a code point, or -1.
+fn w1252_byte(cp: Int) -> Int {
+  if cp < 0x80 || (cp >= 0xA0 && cp <= 0xFF) {
+    return cp
+  }
+  // the index (U+0081, U+008D, U+008F, U+0090 and U+009D included)
+  for k in 0..32 {
+    if W1252[k] == cp {
+      return 0x80 + k
+    }
+  }
+  -1
+}
+
+fn hex4(cp: Int) -> Str {
+  let digits = "0123456789ABCDEF"
+  var s = ""
+  var shift = if cp > 0xFFFFF { 20 } else if cp > 0xFFFF { 16 } else { 12 }
+  while shift >= 0 {
+    let d = (cp >> shift) & 15
+    s = s + digits[d..d + 1]
+    shift -= 4
+  }
+  s
+}
+
+fn name_of(cs: Charset) -> Str {
+  match cs {
+    Charset.Utf8 => "utf-8"
+    Charset.Utf16Le => "utf-16le"
+    Charset.Utf16Be => "utf-16be"
+    Charset.Utf16Bom => "utf-16"
+    Charset.Latin1 => "latin1"
+    Charset.Windows1252 => "windows-1252"
+  }
+}
+
+/// cp (0 to 0x10FFFF, not a surrogate) as UTF-8 bytes.
+fn put8(var out: BytesBuilder, cp: Int) {
+  if cp < 0x80 {
+    out.write_byte(UInt8(cp))
+  } else if cp < 0x800 {
+    out.write_byte(UInt8(0xC0 | (cp >> 6)))
+    out.write_byte(UInt8(0x80 | (cp & 63)))
+  } else if cp < 0x10000 {
+    out.write_byte(UInt8(0xE0 | (cp >> 12)))
+    out.write_byte(UInt8(0x80 | ((cp >> 6) & 63)))
+    out.write_byte(UInt8(0x80 | (cp & 63)))
+  } else {
+    out.write_byte(UInt8(0xF0 | (cp >> 18)))
+    out.write_byte(UInt8(0x80 | ((cp >> 12) & 63)))
+    out.write_byte(UInt8(0x80 | ((cp >> 6) & 63)))
+    out.write_byte(UInt8(0x80 | (cp & 63)))
+  }
+}
+
+fn decode_utf16(data: Bytes, start: Int, big: Bool, lossy: Bool) -> Str ! CharsetErr {
+  var out = BytesBuilder.with_capacity(data.len())
+  let n = data.len()
+  var i = start
+  let hi = if big { 0 } else { 1 }
+  let lo = 1 - hi
+  while i < n {
+    if i + 1 >= n {
+      if !lossy {
+        return Err(bad(i, "odd number of UTF-16 bytes"))
+      }
+      put8(out, 0xFFFD)
+      break
+    }
+    let u = (Int(data[i + hi]) << 8) | Int(data[i + lo])
+    if u < 0x80 {
+      out.write_byte(UInt8(u))
+      i += 2
+      continue
+    }
+    if u >= 0xD800 && u < 0xDC00 {
+      var low = -1
+      if i + 3 < n {
+        let v = (Int(data[i + 2 + hi]) << 8) | Int(data[i + 2 + lo])
+        if v >= 0xDC00 && v < 0xE000 {
+          low = v
+        }
+      }
+      if low < 0 {
+        if !lossy {
+          return Err(bad(i, "unpaired UTF-16 surrogate"))
+        }
+        put8(out, 0xFFFD)
+        i += 2
+        continue
+      }
+      put8(out, 0x10000 + ((u - 0xD800) << 10) + (low - 0xDC00))
+      i += 4
+      continue
+    }
+    if u >= 0xDC00 && u < 0xE000 {
+      if !lossy {
+        return Err(bad(i, "unpaired UTF-16 surrogate"))
+      }
+      put8(out, 0xFFFD)
+      i += 2
+      continue
+    }
+    put8(out, u)
+    i += 2
+  }
+  Ok(out.freeze().to_str() ?? "")
+}
+
+fn put16(var out: BytesBuilder, u: Int, big: Bool) {
+  if big {
+    out.write_byte(UInt8((u >> 8) & 255))
+    out.write_byte(UInt8(u & 255))
+  } else {
+    out.write_byte(UInt8(u & 255))
+    out.write_byte(UInt8((u >> 8) & 255))
+  }
+}
+
+/// text (valid UTF-8) as UTF-16 bytes, with a byte order mark when asked.
+fn encode_utf16(src: Bytes, big: Bool, bom: Bool) -> Bytes {
+  var out = BytesBuilder.with_capacity(src.len() * 2 + 2)
+  if bom {
+    put16(out, 0xFEFF, big)
+  }
+  var i = 0
+  while i < src.len() {
+    let c = Int(src[i])
+    if c < 0x80 {
+      if big {
+        out.write_byte(0)
+        out.write_byte(UInt8(c))
+      } else {
+        out.write_byte(UInt8(c))
+        out.write_byte(0)
+      }
+      i += 1
+      continue
+    }
+    let (r, size) = src.decode_rune(i)
+    let cp = Int(r)
+    if cp >= 0x10000 {
+      let v = cp - 0x10000
+      put16(out, 0xD800 + (v >> 10), big)
+      put16(out, 0xDC00 + (v & 0x3FF), big)
+    } else {
+      put16(out, cp, big)
+    }
+    i += size
+  }
+  out.freeze()
+}
+
+fn is_ws(c: UInt8) -> Bool { c == 9 || c == 10 || c == 12 || c == 13 || c == 32 }
