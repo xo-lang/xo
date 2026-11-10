@@ -15,7 +15,14 @@ fn ssa_census(os: Os, m: ssa.Module, at: Str) {
   var ne = 0
   var ops: Map[Str, Int] = {}
   var big: List[(Int, Str)] = []
+  // the field reads: of a heap type (cse leaves them), and those whose
+  // operand and field another field read of the function has (an upper
+  // bound of what merging them could save: dominance not checked)
+  var heapty: Map[Int, Bool] = {}
+  var fheap = 0
+  var fdup = 0
   for f in m.funcs {
+    var fseen: Map[Str, Bool] = {}
     nb += f.blocks.len()
     nv += f.values.len()
     ne += f.edges.len()
@@ -30,10 +37,30 @@ fn ssa_census(os: Os, m: ssa.Module, at: Str) {
       }
       let k = ssa.op_name(v.op)
       ops[k] = (ops.get(k) ?? 0) + 1
+      if v.op == ssa.Op.Field && !v.args.is_empty() {
+        let t = ssa.ty_of(v.tb)
+        if !heapty.contains(t) {
+          heapty[t] = t >= 0 && m.heap(t)
+        }
+        if heapty.get(t) ?? false {
+          fheap += 1
+        }
+        let fk = match v.aux {
+          I(n) => "${v.args[0]} #${n}"
+          P(a, b) => "${v.args[0]} #${a}.${b}"
+          _ => "${v.args[0]} ?"
+        }
+        if fseen.contains(fk) {
+          fdup += 1
+        } else {
+          fseen[fk] = true
+        }
+      }
     }
     big.push((f.values.len(), f.name))
   }
   os.stdio.eprintln("xo census ${at}: ${m.funcs.len()} functions, ${nb} blocks, ${nv} values, ${na} args in ${nal} lists, ${ns} succs in ${nsl} lists, ${ne} edges")
+  os.stdio.eprintln("xo census ${at}: field reads of a heap type ${fheap}, repeating another of the function ${fdup}")
   var byop: List[(Int, Str)] = []
   for (k, n) in ops {
     byop.push((n, k))
