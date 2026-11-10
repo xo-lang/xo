@@ -1156,8 +1156,10 @@ fn (var b: Builder) own_os_field(e: Expr, v: Int, name: Str) -> Int {
     return b.own_void_cap(t)
   }
   if name == "secrets" {
-    // os.secrets: every store the target has (decision 0584)
-    return b.secrets_rec("RealSecrets", [b.cbool(true)], t, e)
+    // os.secrets: every store the target has (decision 0584); a test's
+    // in-memory keyring (stage C)
+    let tn = if b.tests { "FakeSecrets" } else { "RealSecrets" }
+    return b.secrets_rec(tn, [b.cbool(true)], t, e)
   }
   b.add(Op.Cap, t, Aux.S(s: name), [v])
 }

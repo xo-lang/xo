@@ -7,6 +7,7 @@
 use native/rt
 use std/task
 use native/llrt/keyring
+use native/llrt/testworld
 
 /// The Fs methods of a user value converted to Fs: the same methods as
 /// the prelude's Fs.
@@ -328,4 +329,36 @@ pub fn try_lock_as[L](u: UserFs, p: Str) -> L? ! FsErr uses fs.write {
     Some(l) => Ok(Some(rt.cast[FileLock, L](l)))
     None => Ok(None)
   }
+}
+
+/// os.secrets in a test (decision 0584 stage C): an in-memory keyring on
+/// every OS, empty at the start of each test (testworld.xo key_*).
+pub struct FakeSecrets {
+  ring: Bool
+}
+
+fn (s: FakeSecrets) keyring() -> Keyring? {
+  if s.ring { Some(FakeKeyring{}) } else { None }
+}
+
+fn (s: FakeSecrets) only(stores: List[Str]) -> Secrets {
+  FakeSecrets{ring: s.ring && stores.contains("keyring")}
+}
+
+pub struct FakeKeyring {}
+
+fn (k: FakeKeyring) user_persistent() -> Int ! KeyErr uses secrets.read { testworld.KEY_RING }
+fn (k: FakeKeyring) add(ring: Int, kind: Str, desc: Str, payload: Bytes) -> Int ! KeyErr uses secrets.write {
+  key_id(testworld.key_add(ring, kind, desc, payload))?
+}
+fn (k: FakeKeyring) search(ring: Int, kind: Str, desc: Str) -> Int ! KeyErr uses secrets.read {
+  key_id(testworld.key_search(ring, kind, desc))?
+}
+fn (k: FakeKeyring) read(id: Int) -> Bytes ! KeyErr uses secrets.read {
+  let (n, b) = testworld.key_read(id)
+  let _ = key_id(n)?
+  b
+}
+fn (k: FakeKeyring) unlink(id: Int, ring: Int) -> () ! KeyErr uses secrets.write {
+  let _ = key_id(testworld.key_unlink(id, ring))?
 }

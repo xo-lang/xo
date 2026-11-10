@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Tests get an in-memory keyring: `os.secrets.keyring()` in a test is `Some` on every OS and empty per test (decision 0584 stage C)
 - playground and wasm (perf, memory): the playground compiler parses runtime bodies only when it checks them and skips test files, as `xo build` does, and a wasm program's memory grows by a quarter instead of doubling. The playground REPL's 30-entry session holds 265 MB of wasm memory, was 608 MB, with its first entry about 1 s (headless Chrome and Node; decision 0583, bench/results/browser-repl-2026-11-09.md)
 - `os.secrets`: the user's secret stores, first the Linux kernel keyring (`Secrets.keyring()`, `Keyring.add/search/read/unlink/user_persistent`, `KeyErr`); an `Os` literal without `secrets` has none (decision 0584 stage B)
 - `Rune.max`, `Rune.max_ascii`, `r.simple_fold()`, `n.bit_len()`, `n.add_carry(m, c)`, `n.sub_borrow(m, b)`, `t.unix_micros()`, `t.unix_nanos()`, `t.nanosecond()`, `Time.from_unix_micros`, `Time.from_unix_nanos` (decision 0595)

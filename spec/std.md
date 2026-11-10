@@ -2873,6 +2873,7 @@ struct TestOs {
   env: FakeEnv
   stdio: FakeStdio
   proc: FakeProc
+  secrets: Secrets    // an in-memory keyring on every OS (decision 0584)
   tasks: task.Group   // lives for the test; cancelled when the test ends
 }
 ```
@@ -2881,6 +2882,13 @@ Each fake satisfies its capability interface and adds control methods.
 `only` on `FakeNet`, `FakeEnv`, and `FakeProc` attenuates the fake as
 on the real capability (3.2, 3.5, 3.7): a test can check that a
 library given `os.net.only([...])` fails with `Denied` elsewhere.
+
+A test's `os.secrets.keyring()` is `Some` on every OS: an in-memory
+keyring, empty when each test starts, whose `user_persistent()` is ring 7
+and whose keys behave as the kernel's (an `add` of an existing ring, kind
+and description replaces the payload; `search`, `read` and `unlink` of a
+missing key fail with `NotFound`). `testing.run_main`'s Os shares it.
+`only([])` drops it as on the real Secrets.
 
 ### 8.1 FakeNet
 

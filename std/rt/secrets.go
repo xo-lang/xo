@@ -2,6 +2,7 @@ package rt
 
 import (
 	"strconv"
+	"sync"
 	"syscall"
 )
 
@@ -41,9 +42,17 @@ func keyErrOf(e syscall.Errno) KeyErr {
 	return KeyErr{Tag: 5, P: KeyErr_Io{F_msg: "errno " + strconv.Itoa(int(e))}}
 }
 
-type realSecrets struct{ ring bool }
+// realSecrets is os.secrets; fake (a test's, decision 0584 stage C) keeps
+// its keys in memory on every OS.
+type realSecrets struct {
+	ring bool
+	fake *fakeKeyring
+}
 
 func (s realSecrets) M_keyring(*Task) Option[Keyring] {
+	if s.ring && s.fake != nil {
+		return Some[Keyring](s.fake)
+	}
 	if s.ring && keyringAvailable {
 		return Some[Keyring](realKeyring{})
 	}
@@ -57,7 +66,7 @@ func (s realSecrets) M_only(_ *Task, stores List[string]) Secrets {
 			ring = true
 		}
 	}
-	return realSecrets{ring: s.ring && ring}
+	return realSecrets{ring: s.ring && ring, fake: s.fake}
 }
 
 type noSecrets struct{}
@@ -103,4 +112,78 @@ func (realKeyring) M_unlink(_ *Task, id, ring int64) Result[Unit, KeyErr] {
 		return Err[Unit](keyErrOf(e))
 	}
 	return Ok[Unit, KeyErr](Unit{})
+}
+
+// fakeKeyring is a test's keyring (testworld.xo key_* on the native
+// backends): ring 7, ids from 1000, ENOKEY when absent.
+type fakeKeyring struct {
+	mu   sync.Mutex
+	next int64
+	keys []fakeKey
+}
+
+type fakeKey struct {
+	id, ring   int64
+	kind, desc string
+	data       Bytes
+}
+
+const fakeKeyRing = 7
+
+func (k *fakeKeyring) find(ring int64, kind, desc string) int {
+	for i, x := range k.keys {
+		if x.ring == ring && x.kind == kind && x.desc == desc {
+			return i
+		}
+	}
+	return -1
+}
+
+func (k *fakeKeyring) M_user_persistent(*Task) Result[int64, KeyErr] {
+	return Ok[int64, KeyErr](fakeKeyRing)
+}
+
+func (k *fakeKeyring) M_add(_ *Task, ring int64, kind, desc string, payload Bytes) Result[int64, KeyErr] {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if i := k.find(ring, kind, desc); i >= 0 {
+		k.keys[i].data = payload
+		return Ok[int64, KeyErr](k.keys[i].id)
+	}
+	id := 1000 + k.next
+	k.next++
+	k.keys = append(k.keys, fakeKey{id: id, ring: ring, kind: kind, desc: desc, data: payload})
+	return Ok[int64, KeyErr](id)
+}
+
+func (k *fakeKeyring) M_search(_ *Task, ring int64, kind, desc string) Result[int64, KeyErr] {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if i := k.find(ring, kind, desc); i >= 0 {
+		return Ok[int64, KeyErr](k.keys[i].id)
+	}
+	return Err[int64](KeyErr{Tag: 1})
+}
+
+func (k *fakeKeyring) M_read(_ *Task, id int64) Result[Bytes, KeyErr] {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for _, x := range k.keys {
+		if x.id == id {
+			return Ok[Bytes, KeyErr](x.data)
+		}
+	}
+	return Err[Bytes](KeyErr{Tag: 1})
+}
+
+func (k *fakeKeyring) M_unlink(_ *Task, id, ring int64) Result[Unit, KeyErr] {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	for i, x := range k.keys {
+		if x.id == id && x.ring == ring {
+			k.keys = append(k.keys[:i], k.keys[i+1:]...)
+			return Ok[Unit, KeyErr](Unit{})
+		}
+	}
+	return Err[Unit](KeyErr{Tag: 1})
 }

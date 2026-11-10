@@ -228,5 +228,11 @@ secrets2 branch). So the work lands in two steps:
   wrappers name their own empty Secrets (NoSecretStores) because the
   0.47.0 seed lowers no read of `os.secrets`; a later seed lets them pass
   `os.secrets` on.
-- Stage C: FakeSecrets and FakeKeyring in std/testing (TestOs.secrets),
-  then the macOS Keychain and Windows DPAPI members.
+- Stage C: the test keyring. Done 2026-11-10 as `TestOs.secrets:
+  Secrets` (no FakeSecrets type: Secrets and Keyring are ordinary
+  interfaces, so a test needs no control methods; it adds keys through
+  the Keyring itself). Native: FakeSecrets and FakeKeyring in
+  llrt/userfs.xo over testworld.xo's key vectors (reset per test), chosen
+  by own_os_field in a test build; Go: realSecrets.fake, a fakeKeyring per
+  newTestOs. cmd/xo TestFakeSecrets on Go and every native backend.
+- Stage D: the macOS Keychain and Windows DPAPI members.

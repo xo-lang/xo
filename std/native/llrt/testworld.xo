@@ -92,7 +92,12 @@ const S_SERVE = 392
 const S_SKIP = 400
 /// FakeProc.runs: a word vector of blocks, one line per command asked to run.
 const S_RUNLOG = 408
-const S_SIZE = 432
+/// The test keyring (os.secrets in a test, decision 0584 stage C): a
+/// word vector of key records (id, ring, kind, desc, payload blocks), and
+/// the next key id.
+const S_KEYS = 432
+const S_KNEXT = 456
+const S_SIZE = 464
 
 /// The variables read at the start (tw_setenv's k, S_VARS + 8k): what
 /// `--real` makes real, the seed, the test's index, the choices to
@@ -524,6 +529,11 @@ pub fn reset_test(seed: Int, prop: Bool, case_seed: Int) {
     rt.heap_release(e - 8)
   }
   rt.mem_store(s + S_PROCS, 8, 0, 8)
+  for i in 0..vec_len(s + S_KEYS) {
+    key_free(vec_at(s + S_KEYS, i))
+  }
+  rt.mem_store(s + S_KEYS, 8, 0, 8)
+  rt.mem_store(s, S_KNEXT, 0, 8)
   rt.mem_store(s, S_HAS_EXIT, 0, 8)
   rt.mem_store(s, S_EXIT, 0, 8)
   blk_free(rt.mem_load(s, S_IN, 8))
@@ -1583,4 +1593,108 @@ pub fn quit(code: Int) {
     }
     TargetOs.Wasi => {}
   }
+}
+
+// ---------------------------------------------------------------------------
+// The test keyring (decision 0584 stage C): os.secrets.keyring() in a test
+// is Some on every OS, empty at the start of each test. Errors are the
+// negative errnos of keyctl, as std/native/llrt/keyring.xo returns them.
+
+/// The test's persistent keyring (Keyring.user_persistent()).
+pub const KEY_RING = 7
+const ENOKEY = 126
+
+fn key_free(r: Int) {
+  blk_free(rt.mem_load(r, 16, 8))
+  blk_free(rt.mem_load(r, 24, 8))
+  blk_free(rt.mem_load(r, 32, 8))
+  rt.heap_release(r - 8)
+}
+
+/// The index of the key of ring, kind and desc, or -1 (under the lock).
+fn key_find(ring: Int, kind: Str, desc: Str) -> Int {
+  let v = st() + S_KEYS
+  for i in 0..vec_len(v) {
+    let r = vec_at(v, i)
+    if rt.mem_load(r, 8, 8) == ring && blk_eq(rt.mem_load(r, 16, 8), raw.data(kind), kind.len()) && blk_eq(rt.mem_load(r, 24, 8), raw.data(desc), desc.len()) {
+      return i
+    }
+  }
+  -1
+}
+
+/// The index of key id, or -1 (under the lock).
+fn key_at(id: Int) -> Int {
+  let v = st() + S_KEYS
+  for i in 0..vec_len(v) {
+    if rt.mem_load(vec_at(v, i), 0, 8) == id {
+      return i
+    }
+  }
+  -1
+}
+
+/// add_key(2): the key's id; an existing key of the same ring, kind and
+/// description takes the new payload.
+pub fn key_add(ring: Int, kind: Str, desc: Str, payload: Bytes) -> Int {
+  let nb = blk_new(raw.bytes_addr(payload), payload.len())
+  lock()
+  let s = st()
+  let i = key_find(ring, kind, desc)
+  var id = 0
+  if i >= 0 {
+    let r = vec_at(s + S_KEYS, i)
+    blk_free(rt.mem_load(r, 32, 8))
+    rt.mem_store(r, 32, nb, 8)
+    id = rt.mem_load(r, 0, 8)
+  } else {
+    id = 1000 + rt.mem_load(s, S_KNEXT, 8)
+    rt.mem_store(s, S_KNEXT, rt.mem_load(s, S_KNEXT, 8) + 1, 8)
+    let r = rt.heap_large(40)
+    rt.mem_store(r, 0, id, 8)
+    rt.mem_store(r, 8, ring, 8)
+    rt.mem_store(r, 16, blk_of(kind), 8)
+    rt.mem_store(r, 24, blk_of(desc), 8)
+    rt.mem_store(r, 32, nb, 8)
+    vec_push(s + S_KEYS, r)
+  }
+  unlock()
+  raw.alive_str(kind)
+  raw.alive_str(desc)
+  id
+}
+
+/// KEYCTL_SEARCH in ring: the key's id or -ENOKEY.
+pub fn key_search(ring: Int, kind: Str, desc: Str) -> Int {
+  lock()
+  let i = key_find(ring, kind, desc)
+  let id = if i < 0 { -ENOKEY } else { rt.mem_load(vec_at(st() + S_KEYS, i), 0, 8) }
+  unlock()
+  raw.alive_str(kind)
+  raw.alive_str(desc)
+  id
+}
+
+/// KEYCTL_READ: (0, payload), or (-ENOKEY, empty).
+pub fn key_read(id: Int) -> (Int, Bytes) {
+  lock()
+  let i = key_at(id)
+  let out = if i < 0 { "" } else { blk_str(rt.mem_load(vec_at(st() + S_KEYS, i), 32, 8)) }
+  unlock()
+  if i < 0 { (-ENOKEY, b"") } else { (0, rt.cast[Str, Bytes](out)) }
+}
+
+/// KEYCTL_UNLINK of id from ring: 0 or -ENOKEY.
+pub fn key_unlink(id: Int, ring: Int) -> Int {
+  lock()
+  let s = st()
+  let i = key_at(id)
+  var rc = -ENOKEY
+  if i >= 0 && rt.mem_load(vec_at(s + S_KEYS, i), 8, 8) == ring {
+    key_free(vec_at(s + S_KEYS, i))
+    vec_remove(s + S_KEYS, i)
+    rc = 0
+  }
+  unlock()
+  rc
 }

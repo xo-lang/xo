@@ -1,5 +1,18 @@
 # std/testing changes
 
+## 2026-11-10: feature: TestOs.secrets, a test keyring
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0584 stage C (Azure 1's token cache needs tests that do not touch the user's keyring)
+- Go reference: none
+- Test: cmd/xo TestFakeSecrets (testdata/secrets) on Go, arm64 and LLVM
+- Timing: none (test only)
+- Shipped in: not yet released
+
+`os.secrets.keyring()` in a test is an in-memory keyring on every OS,
+empty when each test starts, shared with `testing.run_main`'s Os.
+
 ## 2026-11-09: feature: FakeProc.runs() lists the commands the code asked to run
 
 - Kind: feature

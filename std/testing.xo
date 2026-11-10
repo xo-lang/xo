@@ -22,6 +22,9 @@ struct TestOs {
   env: FakeEnv
   stdio: FakeStdio
   proc: FakeProc
+  /// An in-memory keyring on every OS, empty at the start of each test
+  /// (decision 0584 stage C).
+  secrets: Secrets
   /// Lives for the test; cancelled when the test ends.
   tasks: task.Group
 }
