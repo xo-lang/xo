@@ -167,6 +167,21 @@ enum Op {
 /// once per call.
 fn (var dst: Image) draw(r: Rect, src: Image, sp_x: Int, sp_y: Int, op: Op)
 
+/// Go's draw.DrawMask: as draw, with the alpha of mask (at mask point
+/// (mp_x, mp_y) for r's corner) scaling the source: Over composites
+/// src * mask over the pixels, Src replaces them with src * mask. r is also
+/// clipped to the mask's bounds. Any model's alpha serves as the mask (an
+/// opaque Gray, say, is a mask of all ones); the mask's own coordinates are
+/// its min_x and min_y. Each pixel comes out as Go's general path computes
+/// it (16 bit channels, premultiplied), which is what Go's glyph and mask
+/// fast paths compute too.
+fn (var dst: Image) draw_mask(r: Rect, src: Image, sp_x: Int, sp_y: Int, mask: Image, mp_x: Int, mp_y: Int, op: Op)
+
+/// Go's draw.Draw with an image.Uniform source of color c (16 bit
+/// premultiplied channels, as Color is everywhere): fills r clipped to the
+/// image, with Src or Over (an opaque c fills as Src either way).
+fn (var dst: Image) fill(r: Rect, c: Color, op: Op)
+
 /// Go's draw.FloydSteinberg.Draw (the Src op with Floyd-Steinberg error
 /// diffusion) onto a Paletted image: the part of src over r, clipped as draw
 /// clips it, quantized to the nearest palette entry (Go's sum of squared

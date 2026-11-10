@@ -859,6 +859,110 @@ test "Image.draw is Go's draw.Draw" {
   }
 }
 `)
+	// draw.DrawMask: every destination model against several source and mask
+	// models, both ops, one rectangle with source and mask offsets and clipping.
+	o.WriteString("\n/// (dst model, dst pix, src model, src pix, mask model, mask pix, rect, sp, mp, op, pix after): draw.DrawMask.\nconst MASK_CASES: List[(Str, Bytes, Str, Bytes, Str, Bytes, (Int, Int, Int, Int), (Int, Int), (Int, Int), Int, Bytes)] = [\n")
+	pixOfD := func(v draw.Image) []byte {
+		switch v := v.(type) {
+		case *image.RGBA:
+			return v.Pix
+		case *image.NRGBA:
+			return v.Pix
+		case *image.Gray:
+			return v.Pix
+		case *image.Gray16:
+			return v.Pix
+		case *image.RGBA64:
+			return v.Pix
+		case *image.NRGBA64:
+			return v.Pix
+		case *image.CMYK:
+			return v.Pix
+		case *image.Paletted:
+			return v.Pix
+		}
+		return nil
+	}
+	for _, dn := range dstNames {
+		for _, sn := range []string{"RGBA", "NRGBA", "Gray", "RGBA64", "CMYK", "Paletted"} {
+			for _, mn := range []string{"RGBA", "NRGBA", "RGBA64", "Gray"} {
+				for _, op := range []draw.Op{draw.Over, draw.Src} {
+					dimg, dpix := mkImg(dn, big)
+					randPix(dn, dpix)
+					before := append([]byte(nil), dpix...)
+					simg, spix := mkImg(sn, image.Rect(0, 0, 4, 3))
+					randPix(sn, spix)
+					mimg, mpix := mkImg(mn, image.Rect(0, 0, 4, 3))
+					randPix(mn, mpix)
+					if mn == "NRGBA" {
+						for i := 0; i < len(mpix); i += 4 {
+							mpix[i+3] = byte(r.Intn(256))
+							if i%8 == 0 {
+								mpix[i+3] = 0
+							}
+						}
+					}
+					rc, sp, mp := image.Rect(1, 0, 5, 4), image.Point{0, 1}, image.Point{1, 0}
+					draw.DrawMask(dimg, rc, simg, sp, mimg, mp, op)
+					opi := 0
+					if op == draw.Src {
+						opi = 1
+					}
+					fmt.Fprintf(&o, "  (%q, %s, %q, %s, %q, %s, (%d, %d, %d, %d), (%d, %d), (%d, %d), %d, %s),\n", dn, bytesLit(before), sn, bytesLit(spix), mn, bytesLit(mpix),
+						rc.Min.X, rc.Min.Y, rc.Max.X, rc.Max.Y, sp.X, sp.Y, mp.X, mp.Y, opi, bytesLit(pixOfD(dimg)))
+				}
+			}
+		}
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+test "Image.draw_mask is Go's draw.DrawMask" {
+  for (dn, dpix, sn, spix, mn, mpix, rc, sp, mp, opi, want) in MASK_CASES {
+    var dst = image.Image{width: 5, height: 4, model: model_of(dn), pix: dpix, palette: if dn == "Paletted" { DRAW_PAL } else { [] }}
+    let src = image.Image{width: 4, height: 3, model: model_of(sn), pix: spix, palette: if sn == "Paletted" { DRAW_PAL } else { [] }}
+    let mask = image.Image{width: 4, height: 3, model: model_of(mn), pix: mpix}
+    let (x0, y0, x1, y1) = rc
+    let (spx, spy) = sp
+    let (mpx, mpy) = mp
+    dst.draw_mask(image.Rect{x0: x0, y0: y0, x1: x1, y1: y1}, src, spx, spy, mask, mpx, mpy, if opi == 0 { image.Op.Over } else { image.Op.Src })
+    expect((dn, sn, mn, opi, dst.pix)) == (dn, sn, mn, opi, want)
+  }
+}
+`)
+	// draw.Draw from an image.Uniform.
+	o.WriteString("\n/// (dst model, dst pix, color r g b a, rect, op, pix after): draw.Draw from an image.Uniform.\nconst FILL_CASES: List[(Str, Bytes, (Int, Int, Int, Int), (Int, Int, Int, Int), Int, Bytes)] = [\n")
+	for _, dn := range dstNames {
+		for _, cv := range [][4]int{{51400, 25700, 12850, 65535}, {30000, 10000, 5000, 40000}, {0, 0, 0, 0}} {
+			for _, op := range []draw.Op{draw.Over, draw.Src} {
+				for _, rc := range []image.Rectangle{image.Rect(1, 1, 4, 3), image.Rect(-1, 2, 7, 9)} {
+					dimg, dpix := mkImg(dn, big)
+					randPix(dn, dpix)
+					before := append([]byte(nil), dpix...)
+					u := image.NewUniform(color.RGBA64{uint16(cv[0]), uint16(cv[1]), uint16(cv[2]), uint16(cv[3])})
+					draw.Draw(dimg, rc, u, image.Point{}, op)
+					opi := 0
+					if op == draw.Src {
+						opi = 1
+					}
+					fmt.Fprintf(&o, "  (%q, %s, (%d, %d, %d, %d), (%d, %d, %d, %d), %d, %s),\n", dn, bytesLit(before), cv[0], cv[1], cv[2], cv[3],
+						rc.Min.X, rc.Min.Y, rc.Max.X, rc.Max.Y, opi, bytesLit(pixOfD(dimg)))
+				}
+			}
+		}
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+test "Image.fill is Go's draw.Draw from a Uniform" {
+  for (dn, dpix, c, rc, opi, want) in FILL_CASES {
+    var dst = image.Image{width: 5, height: 4, model: model_of(dn), pix: dpix, palette: if dn == "Paletted" { DRAW_PAL } else { [] }}
+    let (cr, cg, cb, ca) = c
+    let (x0, y0, x1, y1) = rc
+    dst.fill(image.Rect{x0: x0, y0: y0, x1: x1, y1: y1}, image.Color{r: cr, g: cg, b: cb, a: ca}, if opi == 0 { image.Op.Over } else { image.Op.Src })
+    expect((dn, opi, dst.pix)) == (dn, opi, want)
+  }
+}
+`)
+
 	// draw.FloydSteinberg onto a Paletted image of the 216 web safe colors.
 	o.WriteString("\n/// (src model, src pix, palette, (y, cb, cr), rect, sp, pix after): draw.FloydSteinberg onto a Paletted image of palette.WebSafe.\nconst FS_CASES: List[(Str, Bytes, List[Int], (Bytes, Bytes, Bytes), (Int, Int, Int, Int), (Int, Int), Bytes)] = [\n")
 	for rep := 0; rep < 2; rep++ {

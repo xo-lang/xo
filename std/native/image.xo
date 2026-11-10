@@ -846,3 +846,91 @@ fn image_floyd_steinberg(var dst: image.Image, r: image.Rect, src: image.Image, 
   dst.pix = b.freeze()
 }
 
+/// Go's clip with a mask: r clipped to dst, to src (unless uniform) and to
+/// mask (unless absent), with both points moved by as much as r's corner.
+/// (x0, y0, x1, y1, sp_x, sp_y, mp_x, mp_y).
+fn draw_clip_mask(dst: image.Image, r: image.Rect, src: image.Image, uniform: Bool, spx: Int, spy: Int, mask: image.Image?, mpx: Int, mpy: Int) -> (Int, Int, Int, Int, Int, Int, Int, Int) {
+  let ox = r.x0
+  let oy = r.y0
+  var x0 = imax(r.x0, dst.min_x)
+  var y0 = imax(r.y0, dst.min_y)
+  var x1 = imin(r.x1, dst.min_x + dst.width)
+  var y1 = imin(r.y1, dst.min_y + dst.height)
+  if !uniform {
+    x0 = imax(x0, src.min_x + ox - spx)
+    y0 = imax(y0, src.min_y + oy - spy)
+    x1 = imin(x1, src.min_x + src.width + ox - spx)
+    y1 = imin(y1, src.min_y + src.height + oy - spy)
+  }
+  if let m = mask {
+    x0 = imax(x0, m.min_x + ox - mpx)
+    y0 = imax(y0, m.min_y + oy - mpy)
+    x1 = imin(x1, m.min_x + m.width + ox - mpx)
+    y1 = imin(y1, m.min_y + m.height + oy - mpy)
+  }
+  (x0, y0, x1, y1, spx + (x0 - ox), spy + (y0 - oy), mpx + (x0 - ox), mpy + (y0 - oy))
+}
+
+/// Go's DrawMask general path (and drawRGBA's formulas for an RGBA
+/// destination) for a source image or a uniform color and an optional mask.
+fn draw_general(var dst: image.Image, r: image.Rect, src: image.Image, uniform: Bool, uc: image.Color, spx: Int, spy: Int, mask: image.Image?, mpx: Int, mpy: Int, op: image.Op) -> () {
+  if dst.model == image.Model.YCbCr {
+    return
+  }
+  let (x0, y0, x1, y1, sp_x, sp_y, mp_x, mp_y) = draw_clip_mask(dst, r, src, uniform, spx, spy, mask, mpx, mpy)
+  if x0 >= x1 || y0 >= y1 {
+    return
+  }
+  let over = op == image.Op.Over
+  var b = BytesBuilder.with_capacity(dst.pix.len())
+  b.write(dst.pix)
+  for y in y0..y1 {
+    for x in x0..x1 {
+      let sc = if uniform { uc } else { image_at(src, sp_x + (x - x0), sp_y + (y - y0)) }
+      var ma = 65535
+      if let m = mask {
+        ma = image_at(m, mp_x + (x - x0), mp_y + (y - y0)).a
+      }
+      if dst.model == image.Model.RGBA {
+        let di = pix_off(dst, x - dst.min_x, y - dst.min_y, 4)
+        if over {
+          let a = (65535 - sc.a * ma / 65535) * 257
+          let rr = ((Int(dst.pix[di]) * a + sc.r * ma) / 65535) >> 8
+          let gg = ((Int(dst.pix[di + 1]) * a + sc.g * ma) / 65535) >> 8
+          let bb = ((Int(dst.pix[di + 2]) * a + sc.b * ma) / 65535) >> 8
+          let aa = ((Int(dst.pix[di + 3]) * a + sc.a * ma) / 65535) >> 8
+          b.put_be(di, ((rr & 255) << 24) | ((gg & 255) << 16) | ((bb & 255) << 8) | (aa & 255), 4)
+        } else {
+          let rr = (sc.r * ma / 65535) >> 8
+          let gg = (sc.g * ma / 65535) >> 8
+          let bb = (sc.b * ma / 65535) >> 8
+          let aa = (sc.a * ma / 65535) >> 8
+          b.put_be(di, ((rr & 255) << 24) | ((gg & 255) << 16) | ((bb & 255) << 8) | (aa & 255), 4)
+        }
+      } else if ma == 0 {
+        if !over {
+          store_color(b, dst, x, y, image.Color{r: 0, g: 0, b: 0, a: 0})
+        }
+      } else if ma == 65535 && !over {
+        store_color(b, dst, x, y, sc)
+      } else if over {
+        let dc = image_at(dst, x, y)
+        let a = 65535 - sc.a * ma / 65535
+        store_color(b, dst, x, y, image.Color{r: (dc.r * a + sc.r * ma) / 65535, g: (dc.g * a + sc.g * ma) / 65535, b: (dc.b * a + sc.b * ma) / 65535, a: (dc.a * a + sc.a * ma) / 65535})
+      } else {
+        store_color(b, dst, x, y, image.Color{r: sc.r * ma / 65535, g: sc.g * ma / 65535, b: sc.b * ma / 65535, a: sc.a * ma / 65535})
+      }
+    }
+  }
+  dst.pix = b.freeze()
+}
+
+/// Image.draw_mask.
+fn image_draw_mask(var dst: image.Image, r: image.Rect, src: image.Image, spx: Int, spy: Int, mask: image.Image, mpx: Int, mpy: Int, op: image.Op) -> () {
+  draw_general(dst, r, src, false, image.Color{r: 0, g: 0, b: 0, a: 0}, spx, spy, Some(mask), mpx, mpy, op)
+}
+
+/// Image.fill: Go's draw.Draw from an image.Uniform, which fills.
+fn image_fill(var dst: image.Image, r: image.Rect, c: image.Color, op: image.Op) -> () {
+  draw_general(dst, r, dst, true, c, 0, 0, None, 0, 0, op)
+}

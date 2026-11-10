@@ -1,5 +1,17 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image Image.draw_mask and Image.fill (decision 0578 step 2, part 3)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: image/draw DrawMask (the general path and drawRGBA's formulas, which the glyph and mask fast paths equal), Draw from an image.Uniform
+- Test: testdata/corpus/image: 192 DrawMask cases (every destination model, six source models, four mask models, both ops, clipping and offsets of source and mask) and 96 Uniform fills, byte for byte with Go on arm64, LLVM and the Go backend
+- Timing: none yet (per pixel through Color; Go's glyph, mask and fill fast paths still to port)
+- Shipped in: not yet released
+
+`Image.draw_mask(r, src, sp_x, sp_y, mask, mp_x, mp_y, op)` is `draw.DrawMask`, with the alpha of any model as the mask (there is no Alpha model yet); `Image.fill(r, c, op)` is `draw.Draw` from a `Uniform`.
+
 ## 2026-11-09: feature: std/image Image.floyd_steinberg and draw onto Paletted (decision 0578 step 2, part 2)
 
 - Kind: feature
