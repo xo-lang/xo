@@ -2373,6 +2373,21 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail(os, "${cc} failed")
       }
       lk.srcs = csrcs
+    } else if tgoos == "freebsd" && lk.srcs.any(fn(f) { f.ends_with(".c") }) {
+      // `use c` on FreeBSD (decision 0573): the binding's C compiled
+      // freestanding by clang for the target (FreeBSD has no C library in
+      // an Xo program yet), linked by Xo's ELF linker
+      let clang = os.env.get("XO_CLANG") ?? "clang"
+      let sysroot = os.env.get("XO_FREEBSDSYSROOT") ?? ""
+      if sysroot.is_empty() {
+        fail(os, "freebsd: `use c` needs FreeBSD's headers: set XO_FREEBSDSYSROOT to an unpacked base.txz of FreeBSD 14.5 for ${march} (toolchain.md \"FreeBSD\")")
+      }
+      let (csrcs, cerr) = c_objects(os, clang, freebsd_cflags(march, sysroot), lk.srcs, dir, trimpath_eff(o))
+      if !cerr.is_empty() {
+        os.stdio.eprint(cerr)
+        fail(os, "${clang} failed (freebsd `use c` compiles with clang: set XO_CLANG)")
+      }
+      lk.srcs = csrcs
     }
     let flags = ["-O2"] + lk.flags
     // the program's assembly: one file, or the files of a parallel
@@ -3029,7 +3044,12 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
   }
   if nolibc(os, o, c, tgoos) {
     // a static program with no C library (decisions 0203, 0206)
-    if (!ci.srcs.is_empty() && !(ci.prebuilt && tgoos == "windows")) || !ci.flags.is_empty() {
+    if tgoos == "freebsd" && !ci.flags.is_empty() {
+      // decision 0573: a binding's C compiles freestanding, with no C
+      // library to link its libraries against yet
+      fail(os, "freebsd: `use c` builds only freestanding C (no C library yet, decision 0573): this binding links ${ci.flags.join(" ")}")
+    }
+    if tgoos != "freebsd" && ((!ci.srcs.is_empty() && !(ci.prebuilt && tgoos == "windows")) || !ci.flags.is_empty()) {
       fail(os, "XO_NOLIBC=1: a program with `use c` links the C library (decision 0205)")
     }
     for n in (os.env.get("XO_LLRT_C") ?? "").split(",") {

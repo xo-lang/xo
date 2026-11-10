@@ -74,6 +74,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_LLVM_TEST_SPLIT":      {"link", ""},
 	"XO_LLVM_JOBS":            {"none", ""},
 	"XO_SYSROOT":              {"link", ""},
+	"XO_FREEBSDSYSROOT":       {"link", ""},
 	"XO_LINUXSYSROOT":         {"link", ""},
 	"XO_WINSYSROOT":           {"link", ""},
 	"XO_WIN_NOCRT":            {"link", ""},

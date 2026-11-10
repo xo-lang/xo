@@ -404,6 +404,20 @@ fn uses_c_source(os: Os, std: Str, c: check.Checker, tgoos: Str) -> Bool {
   false
 }
 
+/// The clang flags of a `use c` binding's C on freebsd/arch (decision
+/// 0573): the headers of a FreeBSD sysroot (sysroot, $XO_FREEBSDSYSROOT:
+/// base.txz unpacked; its libraries are not linked), freestanding (no C
+/// library to call), static, no stack protector (its guard lives in
+/// libc), and on arm64 the atomics inline (no libgcc to call).
+fn freebsd_cflags(arch: Str, sysroot: Str) -> List[Str] {
+  let triple = if arch == "arm64" { "aarch64-unknown-freebsd14.5" } else { "x86_64-unknown-freebsd14.5" }
+  var out = ["--target=${triple}", "--sysroot=${sysroot}", "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-asynchronous-unwind-tables"]
+  if arch == "arm64" {
+    out.push("-mno-outline-atomics")
+  }
+  out
+}
+
 /// Whether a module of the program binds C (`use c`).
 fn uses_c(c: check.Checker) -> Bool {
   for m in c.mods {

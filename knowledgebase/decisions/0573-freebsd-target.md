@@ -252,3 +252,16 @@ not.
   each signal past the pc and sp check 1,000 more times: arm64 6,006 and
   21,021 (6 and 21 preemptions, every one through the signal), amd64
   6,006 and 61,061 (6 and 61), output equal to want.txt. Left: `use c`'s libc numbers.
+- 2026-11-10 (Xo Lang 1): `use c`, stage 1: a binding's C (its own
+  sources and the generated adapter) is compiled by clang for
+  `<arch>-unknown-freebsd14.5`, freestanding, against the headers of an
+  unpacked base.txz (`XO_FREEBSDSYSROOT`, scripts/freebsd-sysroot.sh), and
+  Xo's ELF linker links it with no C library; `link` libraries are an
+  error. use_c_add, use_c_bytes and use_c_enum (C with no C library calls;
+  the adapter's unused malloc helper drops out at -O2) pass in the FreeBSD
+  14.5 VMs: arm64 3 of 3, amd64 3 of 3. C calling malloc, free, memcpy
+  and strlen links already (std/native/llrt/cabi_libc.xo's C names in a
+  build with no C library); calloc and snprintf do not. Left (stage 2):
+  the rest of the C library a binding commonly calls (calloc, realloc,
+  libcstr's string functions, a small snprintf), exported only for a
+  program with `use c`.
