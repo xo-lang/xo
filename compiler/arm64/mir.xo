@@ -44,6 +44,9 @@ const S_SYM = 2
 const S_FRAME = 3
 /// the address of byte imm of the frame's memory (byref.xo)
 const S_MEM = 4
+/// the address of byte imm of the calls' outgoing area (an sret call's
+/// result past its stack arguments, byref.xo sret_slot)
+const S_OUTW = 5
 
 /// An operand of a call, a fault stub, or a parallel move.
 struct Src {
@@ -138,6 +141,20 @@ struct Inst {
   reg_hints: List[(Int, Int)] = []
   reg_bars: List[(Int, Int)] = []
   defs: List[Int] = []
+  /// a call: the outgoing area words it writes, past its stack arguments
+  /// and results (an sret result: byref.xo sret_slot)
+  ow: Int = 0
+  /// a load of an outgoing area word w: w + 1, the word its definition
+  /// may keep as its spill home until a call writes it (arg_slots)
+  wh: Int = 0
+  /// a call whose sret result is read in place in the outgoing area: the
+  /// address register of those reads (its live range keeps the words busy)
+  lz: Int = 0
+  /// a call writing an sret result into a frame memory slot (byref.xo
+  /// sret_tmp): its first word (8-byte unit of the memory area) plus 1, and
+  /// its count, so loads of those words can name them as spill homes
+  tw: Int = 0
+  tn: Int = 0
   /// template uses first, then the vregs of srcs and fault args
   us: List[Int] = []
   /// the fault side exit, one or none (FaultExit): 0.45% of the self

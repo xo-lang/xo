@@ -322,6 +322,51 @@ slot that slot as their spill home (an arg_slots like hint, ended by the
 next call writing the slot); store a constructed wide value's fields
 straight to the result slot.
 
+## Step 3 (2026-11-10): native sret for wide results
+
+A wide result (big_by_ref) of a direct call is written by the callee
+through an address the caller passes after the arguments, as one more
+integer word (byref.xo sret_of; not for indirect, entry or address-taken
+functions), so the caller no longer moves it word by word. Where the caller keeps it:
+
+- **forwarded**: a call whose result is the caller's own return value gets
+  the caller's sret address (plan_sret_forward): nothing is copied;
+- **in place** in a frame slot when every use reads it by parts (Field,
+  Payload, Tag, and a Release of a struct or tuple, which drops its
+  leaves from memory; plan_sret_slots), slots shared by calls whose
+  results are not live at once; not for a call with `var` results, whose
+  tuple holds the receiver;
+- **the outgoing area** past the call's stack arguments (sret_slot): up to
+  700 words, or 256 when that pushes the frame past the ldr reach (the
+  function is lowered again), loaded where used, the words keeping
+  outgoing slots as spill homes until the next call (as results past the
+  registers did before);
+- **at a Return**: a result held in memory (a by-reference parameter, a
+  slot) is copied to the sret address with memcpy (ret_sret), and a struct
+  or tuple made only to be returned is written there field by field
+  (sret_mk), so neither is loaded whole and spilled.
+
+Measured on xo's own build (arm64, compiler/xo): total frame size
+7,160,336 to 7,171,520 bytes (+0.16%), __text 40,351,028 to 40,302,836
+(-0.12%). The first form (every wide result in its own frame slot) was
+-0.94% __text but +11% frames (parse_stmt 2,288 to 9,136 bytes); the
+variants between are in the lead's notes (0564-frontier-2026-11-10.md):
+
+| Variant | total frames | vs base | __text | vs base |
+|---|---|---|---|---|
+| first form (2026-11-09) | about 7.9 MB | +11% | | -0.94% |
+| k3: in place, Return copies from memory | 7,241,408 | +1.14% | 40,173,684 | -0.44% |
+| kh (shipped): k3 plus the 700-word outgoing area | 7,171,520 | +0.16% | 40,302,836 | -0.12% |
+
+The owner held step 3 (2026-11-09) until frames were back to their size
+with the gain kept, and accepted kh as meeting that bar (2026-11-10,
+relayed by the lead). A later step recovers more of the __text gain
+without growing frames.
+Census findings that shaped it: of 5,724 results rejected for in-place
+reading, 5,589 were rejected only by a Release of the whole value; a
+`return (c, ...)` of a by-reference parameter loaded its 608 words and
+spilled them to the frame (fuzz_check, 10,176 to 5,328 bytes).
+
 ## Alternatives
 
 - **Keep fixing case by case** (today). It works, but each new helper

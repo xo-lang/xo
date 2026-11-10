@@ -64,3 +64,11 @@ without inlining. The A/B, built in a scratch script that kept only
 instructions; the warning line never showed. Fix: verify.xo alive()
 treats an immortal owned value as alive. Build every A/B binary with
 XO_INLINE_STRICT=1, and never drop a measurement build's standard error.
+
+Observed again (2026-11-10, Xo Lang 1): an SSA fold tried for 0564
+step 3 (a `match` that rebuilds the matched variant replaced by the
+value) failed the verifier on a borrowed projection ("edge passes v.0,
+which is not held") and on a join left with different counts per
+edge; a frame size measurement read it as frames tripled and __text
++18% with 2,573 functions that inlining had removed. A size or frame
+measurement builds with XO_INLINE_STRICT=1, so the fallback fails it.

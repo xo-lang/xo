@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+a1 p1 1 8
+again a2 12 false
+list 4 40
+chain 105 [100, 200, 1, 2, 3, 4, 5]
+ok a7a6 6
+err negative -1
+pair a3 30
+counted 2 9
+closure 6 16
+pick 18
+--- stderr

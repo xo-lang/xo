@@ -490,6 +490,22 @@ fn (var g: G) regalloc() {
   // positions where each call lets its callee write the words it takes
   var whint: List[List[Int]] = []
   var wclob: List[List[Int]] = []
+  // the values whose stack word hint is an sret result's word (an
+  // outgoing area word a later call's argument stores may write before
+  // that call reads its arguments, decision 0564 step 3), and per word
+  // the positions of those stores (the call's own position)
+  var wstrict: List[Bool] = []
+  var wclob0: List[List[Int]] = []
+  // the value each argument store writes, by (word << 32) | position
+  var wsrc0: Map[Int, Int] = {}
+  // per outgoing word, the position of the last call writing an sret
+  // result there (Inst.ow), and the spans its words wait in memory, from
+  // that call to their loads: no value may take the word meanwhile
+  var wpend: List[Int] = []
+  var wbusy: List[List[Int]] = []
+  // the same for frame memory words (SLOT_MEM codes), by code
+  var wpendm: Map[Int, Int] = {}
+  var wbusym: Map[Int, List[Int]] = {}
   // x86_64 (2026-10-21) but in a function with frameless blocks (shrink
   // wrapping: rsp differs there). Windows too (2026-10-21): Xo's calls are
   // System V there (decision 0254 6c), the Win64 thunks keep their shadow
@@ -501,13 +517,24 @@ fn (var g: G) regalloc() {
   if argslots {
     for _ in 0..n {
       whint.push([])
+      wstrict.push(false)
     }
   }
   for b in g.order {
     let wt = pow8(imin(g.blocks[b].depth, 6))
     for (ik, inst) in g.blocks[b].insts.indexed() {
       if argslots {
-        g.word_hints(inst, g.blocks[b].start + 4 * ik, whint, wclob)
+        g.word_hints(inst, g.blocks[b].start + 4 * ik, whint, wclob, wclob0, wsrc0, wstrict, wpend, wbusy, wpendm, wbusym)
+        if inst.kind == K_CALL && inst.lz != 0 && inst.lz < ranges.len() {
+          // read in place (byref.xo plan_sret_lazy): busy while the
+          // address of the reads lives
+          while wbusy.len() < inst.ow {
+            wbusy.push([])
+          }
+          for j in 0..inst.ow {
+            wbusy[j] = wbusy[j] + ranges[inst.lz]
+          }
+        }
       }
       for (k, r) in inst.reg_hints {
         let v = if k >= 0 { inst.us[k] } else { inst.defs[-1 - k] }
@@ -639,6 +666,9 @@ fn (var g: G) regalloc() {
       for h in whint[v] {
         push_int(ghint, find_leader(leader, v), h)
       }
+      if wstrict[v] {
+        wstrict[find_leader(leader, v)] = true
+      }
     }
   }
 
@@ -723,7 +753,7 @@ fn (var g: G) regalloc() {
   var gp_e = g.gp_callee_t()
   var fp_c = g.fp_caller_t()
   var fp_e = g.fp_callee_t()
-  let lim = g.m.arm64_regs
+  let lim = imax(g.m.arm64_regs, 0)
   if lim > 0 {
     // the spill test ($XO_ARM64_REGS): few registers, most values spill
     gp_c = gp_c[0..imin(lim, gp_c.len())]
@@ -799,7 +829,27 @@ fn (var g: G) regalloc() {
       for c in ps {
         rs.push(rng(c, c))
       }
+      if j < wbusy.len() {
+        rs = rs + wbusy[j]
+      }
       wocc.push(merge_ranges(rs))
+    }
+    for (c, rs) in wbusym {
+      wix[c] = wcode.len()
+      wcode.push(c)
+      wocc.push(merge_ranges(rs))
+    }
+    // per wcode index, the argument stores' positions (wclob0)
+    var wocc0: List[List[Int]] = []
+    for (j, ps) in wclob0.indexed() {
+      while wocc0.len() <= j {
+        wocc0.push([])
+      }
+      var rs: List[Int] = []
+      for c in ps {
+        rs.push(rng(c, c + 1))
+      }
+      wocc0[j] = merge_ranges(rs)
     }
     for v in by_prio {
       let fp = g.fp[v]
@@ -869,6 +919,10 @@ fn (var g: G) regalloc() {
             wocc.push([])
           }
           if !overlaps_sorted(wocc[i], ranges[v]) {
+            let j = wcode[i] - SLOT_OUT
+            if wstrict[v] && j >= 0 && j < wocc0.len() && overlaps_sorted(wocc0[j], ranges[v]) && g.store_clobbers(wclob0[j], wsrc0, j, v, ranges[v]) {
+              continue
+            }
             w = i
             break
           }
@@ -1337,27 +1391,96 @@ const PROBE_FRAME = 4096
 /// slot.
 const SLOT_SCAN_MAX = 512
 
+/// Whether an argument store at word j (positions ps) inside rs writes a
+/// value other than v: v's own store into its home there copies nothing.
+fn (g: G) store_clobbers(ps: List[Int], wsrc0: Map[Int, Int], j: Int, v: Int, rs: List[Int]) -> Bool {
+  for c in ps {
+    // a source of the call itself is read by its argument moves, one
+    // parallel move with the stores (emit.xo call_moves_v), so the
+    // stores cannot overwrite it first
+    if overlaps_sorted([rng(c, c + 1)], rs) && (wsrc0.get((j << 32) | c) ?? -1) != v && (wsrc0.get((((1 << 20) + v) << 32) | c) ?? -1) != v {
+      return true
+    }
+  }
+  false
+}
+
 /// Spill slot codes of stack words: SLOT_OUT + j is word j of the calls'
 /// stack argument area ([sp, #8j]), SLOT_IN + k word k of this
 /// function's own, in its caller's frame ([sp, #size + 8k]; read once at
 /// entry, written at the return). Below SLOT_IN: a spill slot.
 const SLOT_IN = 1 << 24
 const SLOT_OUT = 2 << 24
+/// SLOT_MEM + w: word w of the frame's memory area (an sret result's slot,
+/// byref.xo sret_tmp_load), [sp, #mem_off + 8w].
+const SLOT_MEM = 3 << 24
 
 /// The stack words inst copies registers to or from (word_hints): a
 /// call's stack arguments and results past the registers, the entry's
 /// stack parameters, the return's stack results; and for a call (at its
 /// position), the clobber point of each word it gives its callee.
-fn (g: G) word_hints(inst: Inst, at: Int, var whint: List[List[Int]], var wclob: List[List[Int]]) {
+fn (g: G) word_hints(inst: Inst, at: Int, var whint: List[List[Int]], var wclob: List[List[Int]], var wclob0: List[List[Int]], var wsrc0: Map[Int, Int], var wstrict: List[Bool], var wpend: List[Int], var wbusy: List[List[Int]], var wpendm: Map[Int, Int], var wbusym: Map[Int, List[Int]]) {
+  if inst.wh > SLOT_MEM {
+    // a load of an sret result word from a frame memory slot
+    let c = inst.wh - 1
+    let p = wpendm.get(c) ?? -1
+    if p >= 0 && p <= at {
+      var bs = wbusym.get(c) ?? []
+      bs.push(rng(p, at))
+      wbusym[c] = bs
+      if !inst.defs.is_empty() && inst.defs[0] != 0 {
+        push_int(whint, inst.defs[0], c)
+      }
+    }
+  } else if inst.wh > 0 {
+    let j = inst.wh - 1 - SLOT_OUT
+    if j < wpend.len() && wpend[j] >= 0 && wpend[j] <= at {
+      while wbusy.len() <= j {
+        wbusy.push([])
+      }
+      wbusy[j].push(rng(wpend[j], at))
+    }
+    if !inst.defs.is_empty() && inst.defs[0] != 0 {
+      push_int(whint, inst.defs[0], SLOT_OUT + j)
+      wstrict[inst.defs[0]] = true
+    }
+  }
+  if inst.kind == K_CALL && inst.tn > 0 {
+    for k in 0..inst.tn {
+      let c = SLOT_MEM + inst.tw - 1 + k
+      wpendm[c] = at + 1
+      // the call's write itself
+      var bs = wbusym.get(c) ?? []
+      bs.push(rng(at, at + 1))
+      wbusym[c] = bs
+    }
+  }
+  if inst.kind == K_CALL && inst.ow > 0 {
+    while wpend.len() < inst.ow {
+      wpend.push(-1)
+    }
+    for j in 0..inst.ow {
+      wpend[j] = at + 1
+    }
+  }
   if inst.kind == K_CALL && !inst.has(IF_TAIL) {
-    var nw = 0
+    var nw = inst.ow
+    var na = 0
     for (k, l) in g.call_locs(inst.srcs, inst.vfix).indexed() {
       if l.reg < 0 {
         nw = imax(nw, l.slot + 1)
+        na = imax(na, l.slot + 1)
         let a = inst.srcs[k]
         if a.kind == S_REG && a.v != 0 {
           push_int(whint, a.v, SLOT_OUT + l.slot)
+          wsrc0[(l.slot << 32) | at] = a.v
         }
+      }
+    }
+    // every vreg the call's argument moves read (store_clobbers)
+    for a in inst.srcs {
+      if a.kind == S_REG && a.v != 0 {
+        wsrc0[(((1 << 20) + a.v) << 32) | at] = a.v
       }
     }
     for (k, l) in g.abi_locs(regs(inst.defs)).indexed() {
@@ -1371,8 +1494,15 @@ fn (g: G) word_hints(inst: Inst, at: Int, var whint: List[List[Int]], var wclob:
     while wclob.len() < nw {
       wclob.push([])
     }
+    while wclob0.len() < nw {
+      wclob0.push([])
+    }
     for j in 0..nw {
       wclob[j].push(at + 1)
+    }
+    // the argument stores, made before the call reads its arguments
+    for j in 0..na {
+      wclob0[j].push(at)
     }
   } else if inst.kind == K_ENTRY {
     for (k, l) in g.param_locs(regs(inst.defs)).indexed() {
@@ -1393,6 +1523,9 @@ fn (g: G) word_hints(inst: Inst, at: Int, var whint: List[List[Int]], var wclob:
 /// The sp offset of spill slot code s in frame fr (a spill slot, a stack
 /// word of the calls, or one of this function's own).
 fn slot_off(fr: Frame, s: Int) -> Int {
+  if s >= SLOT_MEM {
+    return fr.mem_off + 8 * (s - SLOT_MEM) - fr.rz
+  }
   if s >= SLOT_OUT {
     return 8 * (s - SLOT_OUT) - fr.rz
   }
