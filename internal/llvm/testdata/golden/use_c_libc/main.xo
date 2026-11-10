@@ -1,0 +1,14 @@
+// A `use c` binding whose C calls the C library (strlen, strchr, calloc,
+// realloc, strtol, atoi, ...). On FreeBSD an Xo program links no C
+// library, and Xo's runtime defines these (decision 0573, `use c` stage
+// 2: std/native/llrt/cabi_cbind.xo); elsewhere the system's C library.
+use c "libcc.h" link "libcc.c"
+
+fn main(os: Os) {
+  os.stdio.println("strings ${libcc.libcc_strings("hello")}")
+  os.stdio.println("heap ${libcc.libcc_heap(10)}")
+  for (s, b) in [("42", 10), ("  -17xyz", 10), ("0x1f", 0), ("-0X1F", 16), ("077", 0), ("z", 36), ("99999999999999999999", 10), ("-99999999999999999999", 10), ("", 10), ("+", 10), ("101", 2)] {
+    os.stdio.println("strtol \"${s}\" ${b}: ${libcc.libcc_strtol(s, b)} used ${libcc.libcc_strtol_used(s, b)}")
+  }
+  os.stdio.println("atoi ${libcc.libcc_atoi(" 123abc")} ${libcc.libcc_atoi("-8")} ${libcc.libcc_atoi("2147483647")}")
+}

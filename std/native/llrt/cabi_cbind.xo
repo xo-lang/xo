@@ -1,0 +1,49 @@
+// The C library functions a `use c` binding's C commonly calls beyond
+// cabi_libc.xo's, for a program linked with no C library that binds C:
+// FreeBSD's (decision 0573, `use c` stage 2), whose binding C is compiled
+// freestanding and linked by Xo's ELF linker. Every top level function
+// here is exported under its bare C name, and only in such a build
+// (compiler/ssa declare_exports), so a program without `use c` does not
+// grow. Not here: printf's family (C varargs) and <ctype.h>'s FreeBSD
+// locale tables (_CurrentRuneLocale); a binding calling them does not
+// link, and the link names each missing function.
+//
+// Every function takes and returns Int words (addresses are Ints); none
+// may fault or allocate Xo values.
+
+use native/llrt/libcmem
+use native/llrt/libcstr
+
+/// malloc: the `use c` adapter's copies of Str arguments call it too
+/// (cabi_libc has free but not malloc, which xo_nolibc.c defines for
+/// Linux's LLVM builds)
+fn malloc(n: Int) -> Int { libcmem.malloc(n) }
+
+fn calloc(n: Int, m: Int) -> Int { libcmem.calloc(n, m) }
+
+fn realloc(p: Int, n: Int) -> Int { libcmem.realloc(p, n) }
+
+fn memchr(s: Int, c: Int, n: Int) -> Int { libcstr.memchr(s, c, n) }
+
+fn strchr(s: Int, c: Int) -> Int { libcstr.strchr(s, c) }
+
+fn strrchr(s: Int, c: Int) -> Int { libcstr.strrchr(s, c) }
+
+fn strcmp(a: Int, b: Int) -> Int { libcstr.strcmp(a, b) }
+
+fn strncmp(a: Int, b: Int, n: Int) -> Int { libcstr.strncmp(a, b, n) }
+
+fn strspn(s: Int, set: Int) -> Int { libcstr.strspn(s, set) }
+
+fn strcspn(s: Int, set: Int) -> Int { libcstr.strcspn(s, set) }
+
+/// C's strtol (libcstr.strtol).
+fn strtol(s: Int, end: Int, base: Int) -> Int { libcstr.strtol(s, end, base) }
+
+/// C's atoi: strtol in base 10, truncated to a C int.
+fn atoi(s: Int) -> Int { libcstr.atoi(s) }
+
+/// C's atol and atoll: strtol in base 10.
+fn atol(s: Int) -> Int { libcstr.strtol(s, 0, 10) }
+
+fn atoll(s: Int) -> Int { libcstr.strtol(s, 0, 10) }

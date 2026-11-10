@@ -662,7 +662,7 @@ fn (l: ELinker) undefined() -> List[(Bytes, Bool)] {
     // the full link found them, std's own definitions left out)
     for (name, weak) in if l.gc_done { l.half_und_gc } else { l.half_und } {
       if !l.globals.contains(name) && !seen.contains(name) {
-        seen.put(name, 0)
+        seen.put(name, out.len())
         out.push((name, weak))
       }
     }
@@ -698,11 +698,22 @@ fn (l: ELinker) undefined_in(lo: Int, hi: Int, gc: Bool, var seen: Map[Bytes, In
       if stripped && !named.contains(j) {
         continue
       }
-      if sym_bind(s) == STB_LOCAL || s.shndx != SHN_UNDEF || s.name.is_empty() || l.globals.contains(s.name) || seen.contains(s.name) {
+      if sym_bind(s) == STB_LOCAL || s.shndx != SHN_UNDEF || s.name.is_empty() || l.globals.contains(s.name) {
         continue
       }
-      seen.put(s.name, 0)
-      out.push((s.name, sym_bind(s) == STB_WEAK))
+      let weak = sym_bind(s) == STB_WEAK
+      if let Some(k) = seen.get(s.name) {
+        // one strong reference makes the name strong, as in any ELF
+        // link: the runtime's weak malloc reference came first and a
+        // `use c` adapter's call of malloc was linked as a nop (FreeBSD,
+        // 2026-11-10)
+        if !weak && k >= 0 && k < out.len() {
+          out[k] = (s.name, false)
+        }
+        continue
+      }
+      seen.put(s.name, out.len())
+      out.push((s.name, weak))
     }
   }
 }
@@ -957,14 +968,31 @@ fn (var l: ELinker) collect_imports() {
     }
   }
   if l.opts.static {
-    // no libraries: weak references are 0, others are missing
+    // no libraries: weak references are 0, others are missing, named
+    // all at once (a `use c` binding's C on FreeBSD missed calloc, then
+    // snprintf, one link at a time)
+    var missing: List[Str] = []
     for (name, weak) in und {
       if !weak {
-        l.fail("${bstr(name)} is not defined (a static link with no C library)${rt_hint(bstr(name))}")
-        return
+        missing.push(bstr(name))
+        continue
       }
       l.import_ix.put(name, l.imports.len())
       l.imports.push(EImport{name: name, lib: "", ver: "", weak: true})
+    }
+    if missing.len() == 1 {
+      l.fail("${missing[0]} is not defined (a static link with no C library)${rt_hint(missing[0])}")
+    } else if missing.len() > 1 {
+      let ms = missing.sort()
+      var hint = ""
+      for m in ms {
+        hint = rt_hint(m)
+        if !hint.is_empty() {
+          hint = " (${m}${hint})"
+          break
+        }
+      }
+      l.fail("${ms.len()} names are not defined (a static link with no C library): ${ms.join(", ")}${hint}")
     }
     return
   }

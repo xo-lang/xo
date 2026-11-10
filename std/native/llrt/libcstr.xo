@@ -405,3 +405,93 @@ pub fn strcspn(s: Int, set: Int) -> Int {
 // ---------------------------------------------------------------------------
 // qsort: a shell sort (the runtime sorts header and channel lists), cmp
 // a C function of two element addresses returning a C int.
+
+/// C's strtol: optional white space and sign, then digits in base (0:
+/// a 0x prefix is 16, a leading 0 is 8, else 10; 2 to 36), saturating at
+/// the Int range (errno is not set); *end, when end is not 0, is where
+/// the digits stopped (s when there were none).
+pub fn strtol(s: Int, end: Int, base0: Int) -> Int {
+  var i = 0
+  while c_space(rt.mem_load(s, i, 1)) {
+    i += 1
+  }
+  var neg = false
+  let sg = rt.mem_load(s, i, 1)
+  if sg == 45 || sg == 43 {
+    neg = sg == 45
+    i += 1
+  }
+  // base is a C int: its register's low 32 bits (the upper ones are
+  // undefined in both ABIs)
+  let bw = base0 & 0xFFFFFFFF
+  var base = if bw >= 0x80000000 { bw - 0x100000000 } else { bw }
+  if (base == 0 || base == 16) && rt.mem_load(s, i, 1) == 48 && (rt.mem_load(s, i + 1, 1) | 32) == 120 && c_digit(rt.mem_load(s, i + 2, 1)) < 16 {
+    base = 16
+    i += 2
+  } else if base == 0 && rt.mem_load(s, i, 1) == 48 {
+    base = 8
+  } else if base == 0 {
+    base = 10
+  }
+  if base < 2 || base > 36 {
+    if end != 0 {
+      rt.mem_store(end, 0, s, 8)
+    }
+    return 0
+  }
+  let start = i
+  var v = 0
+  var over = false
+  while true {
+    let d = c_digit(rt.mem_load(s, i, 1))
+    if d >= base {
+      break
+    }
+    // accumulate as a negative number, which holds the Int minimum
+    if !over {
+      if v < (-9223372036854775807 - 1 + d) / base {
+        over = true
+      } else {
+        v = v * base - d
+      }
+    }
+    i += 1
+  }
+  if end != 0 {
+    rt.mem_store(end, 0, if i == start { s } else { s + i }, 8)
+  }
+  if over {
+    return if neg { -9223372036854775807 - 1 } else { 9223372036854775807 }
+  }
+  if neg {
+    return v
+  }
+  if v == -9223372036854775807 - 1 {
+    return 9223372036854775807
+  }
+  -v
+}
+
+/// C's atoi: strtol in base 10, truncated to a C int.
+pub fn atoi(s: Int) -> Int {
+  let v = strtol(s, 0, 10)
+  let w = v & 0xFFFFFFFF
+  if w >= 0x80000000 { w - 0x100000000 } else { w }
+}
+
+/// C's isspace in the C locale.
+fn c_space(c: Int) -> Bool {
+  c == 32 || (c >= 9 && c <= 13)
+}
+
+/// The value of digit byte c in any base up to 36, else 99.
+fn c_digit(c: Int) -> Int {
+  if c >= 48 && c <= 57 {
+    return c - 48
+  }
+  let l = c | 32
+  if l >= 97 && l <= 122 {
+    return l - 87
+  }
+  99
+}

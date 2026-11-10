@@ -710,6 +710,12 @@ fn (var b: Builder) declare_exports() {
       if b.nolibc && b.goos == "windows" {
         b.declare_exports_of(mi, true)
       }
+    } else if p == "native/llrt/cabi_cbind" {
+      // the C library a `use c` binding calls past cabi_libc's, in a
+      // FreeBSD program with no C library (decision 0573 `use c` stage 2)
+      if b.nolibc && b.goos == "freebsd" && b.c.mods.any(fn(m) { !m.c_prefix.is_empty() }) {
+        b.declare_exports_of(mi, true)
+      }
     } else if p == "native/llrt/cabi_nolibc" {
       // the C that calls them is compiled only into XO_NOLIBC builds
       if b.nolibc && b.goos != "windows" {

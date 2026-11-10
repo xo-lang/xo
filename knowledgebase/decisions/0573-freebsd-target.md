@@ -261,7 +261,16 @@ not.
   the adapter's unused malloc helper drops out at -O2) pass in the FreeBSD
   14.5 VMs: arm64 3 of 3, amd64 3 of 3. C calling malloc, free, memcpy
   and strlen links already (std/native/llrt/cabi_libc.xo's C names in a
-  build with no C library); calloc and snprintf do not. Left (stage 2):
-  the rest of the C library a binding commonly calls (calloc, realloc,
-  libcstr's string functions, a small snprintf), exported only for a
-  program with `use c`.
+  build with no C library); calloc and snprintf do not.
+- 2026-11-10 (Xo Lang 1): `use c`, stage 2: std/native/llrt/cabi_cbind.xo
+  exports malloc, calloc, realloc, memchr, strchr, strrchr, strcmp,
+  strncmp, strspn, strcspn, strtol, atoi, atol and atoll under their C
+  names, only in a FreeBSD program with `use c` (compiler/ssa
+  declare_exports). Xo's ELF linker now names every missing function of
+  a static link at once, and a strong reference wins over a weak one
+  (the runtime's weak malloc made the adapter's malloc call a nop,
+  gotchas/elflink-weak-before-strong.md). use_c_libc (Str arguments
+  through the adapter's malloc copy, the string functions, calloc and
+  realloc, strtol's prefixes, saturation and end pointer) passes in both
+  VMs. Left: printf's family (C varargs) and `<ctype.h>` (FreeBSD's
+  locale tables).

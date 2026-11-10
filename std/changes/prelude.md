@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-10: feature: the C library a `use c` binding calls, on FreeBSD
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0573 `use c` stage 2 (a binding calling calloc or strcmp did not link on FreeBSD)
+- Go reference: none (C library functions; strtol follows C's definition)
+- Test: internal/llvm golden use_c_libc in the FreeBSD 14.5 VMs (arm64, amd64); want.txt from macOS's C library
+- Timing: none
+- Shipped in: not yet released
+
+A FreeBSD program links no C library, so a `use c` binding's C now finds malloc, calloc, realloc, memchr, strchr, strrchr, strcmp, strncmp, strspn, strcspn, strtol, atoi, atol and atoll in Xo's runtime (std/native/llrt/cabi_cbind.xo, exported only in a FreeBSD program with `use c`), besides cabi_libc's free, memcpy, strlen and the rest. printf's family and <ctype.h>'s locale tables are not there; the link names every missing function at once.
+
 ## 2026-11-10: feature: asynchronous preemption on FreeBSD
 
 - Kind: feature

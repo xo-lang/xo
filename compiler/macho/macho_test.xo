@@ -959,6 +959,14 @@ test "a static link: no loader, weak hooks a nop and a ret, -s drops locals" {
   // a strong undefined symbol is an error
   let bad = assemble_elf("\t.text\n\t.globl _start\n_start:\n\tbl puts\n".bytes()).or_fault("bad")
   expect(link_elf([LinkInput{path: "b.o", data: bad}], ElfLinkOpts{static: true})) == Err("puts is not defined (a static link with no C library)")
+  // several are named at once, sorted
+  let bad3 = assemble_elf("\t.text\n\t.globl _start\n_start:\n\tbl snprintf\n\tbl calloc\n\tbl puts\n".bytes()).or_fault("bad3")
+  expect(link_elf([LinkInput{path: "b3.o", data: bad3}], ElfLinkOpts{static: true})) == Err("3 names are not defined (a static link with no C library): calloc, puts, snprintf")
+  // a weak reference before a strong one does not make the name weak:
+  // the strong call must not be linked as a nop
+  let wk = assemble_elf("\t.text\n\t.weak malloc\n\t.globl _start\n_start:\n\tbl malloc\n".bytes()).or_fault("wk")
+  let st2 = assemble_elf("\t.text\n\t.globl other\nother:\n\tbl malloc\n".bytes()).or_fault("st2")
+  expect(link_elf([LinkInput{path: "w.o", data: wk}, LinkInput{path: "s.o", data: st2}], ElfLinkOpts{static: true})) == Err("malloc is not defined (a static link with no C library)")
 }
 
 test "a function without .size gets its extent: to the next named symbol or the section's end" {

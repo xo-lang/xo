@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+strings 2314443
+heap 190
+strtol "42" 10: 42 used 2
+strtol "  -17xyz" 10: -17 used 5
+strtol "0x1f" 0: 31 used 4
+strtol "-0X1F" 16: -31 used 5
+strtol "077" 0: 63 used 3
+strtol "z" 36: 35 used 1
+strtol "99999999999999999999" 10: 9223372036854775807 used 20
+strtol "-99999999999999999999" 10: -9223372036854775808 used 21
+strtol "" 10: 0 used 0
+strtol "+" 10: 0 used 0
+strtol "101" 2: 5 used 3
+atoi 123 -8 2147483647
+--- stderr

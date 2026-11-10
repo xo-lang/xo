@@ -8,6 +8,7 @@ use native/llrt/cabi
 use native/llrt/chan
 use native/llrt/cpu
 use native/llrt/cabi_c
+use native/llrt/cabi_cbind
 use native/llrt/cabi_libc
 use native/llrt/cabi_wincrt
 use native/llrt/cabi_nolibc
