@@ -2300,6 +2300,19 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wobjs = cobjs2
       }
       t = lap(os, phases, "assemble", t)
+      if gstd_obj {
+        // std's object for windows/arm64 (decision 0388 stage 4): its
+        // parts and their indexed store (coffstore.xo, which splits
+        // ARM64 atoms mode objects), not linked, as windows/amd64's; the
+        // zone, build information and atomics objects after the parts are
+        // the program's (the link here failed on the program's
+        // xo_entry, so std's store never built: winarm VM, 2026-11-10)
+        let sod = std_obj_dir(os)
+        write_std_obj_coff(os, sod, wobjs[0..texts.len()])
+        os.stdio.eprintln("std object: ${texts.len()} parts and std.store in ${sod}")
+        lap(os, phases, "std_obj", t)
+        continue
+      }
       write_or_fail(os, dir_name(wbin), "", b"")
       let wst = stage(os, ctx, wbin)
       let (wres, wwarn, rerr) = win_resources(os, o, wst.bin)
