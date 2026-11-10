@@ -113,4 +113,4 @@ amqptest_broker # wasip1 # network: the network (`rt.net_listen`): WASI preview1
 amqp_tls_hostname # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_verify_conn # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 otlp_export # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
-os_literal_omitted # wasip1 # network: the denied dial and `proc.run` of an omitted field: WASI preview1 has no sockets or processes
+os_literal_omitted # wasip1 wasip2 # processes: the `proc.run` of an omitted field: no processes in either WASI world (XO1515 on wasip2), and preview1 has no sockets for its denied dial
