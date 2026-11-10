@@ -1,12 +1,12 @@
 --- PASS: contract fuzz: native.half
---- FAIL: error returned (main.xo:33:1, seed 1)
+--- FAIL: error returned (main.xo:33:1)
     error: Bad(msg: "negative -3")
---- FAIL: fault (main.xo:38:1, seed 1)
+--- FAIL: fault (main.xo:38:1)
     fault: index 3 out of range for List of length 0 at main.xo:40:10
---- FAIL: deadlock (main.xo:43:1, seed 1)
+--- FAIL: deadlock (main.xo:43:1)
     fault: XO-F001: deadlock: every task is blocked and no timer is pending
 --- PASS: exit ends the test
 --- PASS: run_main
---- FAIL: a failing os.tasks task (main.xo:61:1, seed 1)
+--- FAIL: a failing os.tasks task (main.xo:61:1)
     error: Bad(msg: "negative -5")
-FAIL: 3 passed, 4 failed, 0 skipped
+FAIL: 2 passed, 4 failed, 0 skipped (contract fuzz: 1 function ok)

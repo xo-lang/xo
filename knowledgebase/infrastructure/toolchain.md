@@ -984,8 +984,12 @@ for windows with no extension writes NAME.exe. Last verified: 2026-10-22. `xo ru
 builds for the host and runs with the arguments after the directory or
 `--`, passing the exit status through. `xo test` builds the test blocks of
 every root module into one test binary and runs it: it prints failures (and
-passes with `-v`) and a summary line `ok: N passed, M failed, K skipped`;
-exit status 1 when a test fails. Tests that declare `uses` run only with
+passes with `-v`) and a summary line `ok: N passed, M failed, K skipped`
+over the written tests, with the generated contract checks in a note on the
+same line (`(contract fuzz: 2 functions ok)`, with or without `-v`; spec
+core 7, owner 2026-11-10); a `--- FAIL` line names the seed only for a
+property or contract test or a seed other than 1; exit status 1 when a
+test or contract check fails. Tests that declare `uses` run only with
 `--real`, with real capabilities for the declared effects. Each test runs in
 its module's directory (as `go test` does per package), in a fresh test
 world (virtual clock, MemFs, FakeNet, ...) on the deterministic scheduler
@@ -4005,7 +4009,7 @@ result (`isError` true for usage errors):
 | `edit` | `op` (rename, add-field, change-sig), `args`, `dir`, `dry_run` | the `xo edit` summary `{op, target, ok, written, reason, files, edits, diagnostics, sites}` |
 | `explain` | `code` | `{code, severity, title, summary, detail, example, fix}` |
 | `fmt` | `paths`, `write` (default false: report only) | `{changed, unchanged, written, diagnostics}` |
-| `test` | `dirs`, `run`, `seed`, `holes` | `{ok, passed, failed, skipped, failures}`; `errors` (human text) when the tests do not build |
+| `test` | `dirs`, `run`, `seed`, `holes` | `{ok, passed, failed, skipped, failures}` (the written tests; `contracts: {passed, failed, skipped}` for the generated contract checks when any ran, 2026-11-10); `errors` (human text) when the tests do not build |
 | `build` | `dirs`, `targets`, `out` | `{ok, binaries, diagnostics}` |
 
 Each tool runs the CLI command line in process with `--json` and reshapes the

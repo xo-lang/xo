@@ -108,6 +108,7 @@ func runTests(args []string, tables [][]TestCase) int {
 		return 2
 	}
 	pass, fail, skip := 0, 0, 0
+	cpass, cfail, cskip := 0, 0, 0
 	// the skips by reason, named in the summary line without -v (decision
 	// 0437), as the native harness does (compiler/xo test.xo skip_reason)
 	skippedWhy := map[string]int{}
@@ -160,10 +161,20 @@ func runTests(args []string, tables [][]TestCase) int {
 					}
 				}
 			}
-			switch out.status {
-			case "pass":
+			// the generated contract checks (`xo test`'s contract fuzzing)
+			// are counted apart from the written tests (owner, 2026-11-10:
+			// one written test read "1 passed, 1 failed")
+			contract := strings.HasPrefix(tc.Name, contractPrefix)
+			switch {
+			case out.status == "pass" && contract:
+				cpass++
+			case out.status == "fail" && contract:
+				cfail++
+			case out.status != "pass" && out.status != "fail" && contract:
+				cskip++
+			case out.status == "pass":
 				pass++
-			case "fail":
+			case out.status == "fail":
 				fail++
 			default:
 				skip++
@@ -191,7 +202,7 @@ func runTests(args []string, tables [][]TestCase) int {
 			}
 			switch {
 			case out.status == "fail":
-				fmt.Fprintf(os.Stdout, "--- FAIL: %s (%s, seed %d)\n", tc.Name, tc.Loc, s)
+				fmt.Fprintf(os.Stdout, "--- FAIL: %s (%s%s)\n", tc.Name, tc.Loc, seedNote(s, tc.Prop != nil))
 				for _, l := range strings.Split(strings.TrimRight(out.msg, "\n"), "\n") {
 					fmt.Fprintf(os.Stdout, "    %s\n", l)
 				}
@@ -206,12 +217,12 @@ func runTests(args []string, tables [][]TestCase) int {
 	}
 	if !*asJSON {
 		status := "ok"
-		if fail > 0 {
+		if fail > 0 || cfail > 0 {
 			status = "FAIL"
 		}
-		fmt.Fprintf(os.Stdout, "%s: %d passed, %d failed, %d skipped%s\n", status, pass, fail, skip, skipSummary(skippedWhy, skippedUses, skippedFx))
+		fmt.Fprintf(os.Stdout, "%s: %d passed, %d failed, %d skipped%s%s\n", status, pass, fail, skip, skipSummary(skippedWhy, skippedUses, skippedFx), contractSummary(cpass, cfail, cskip))
 	}
-	if fail > 0 {
+	if fail > 0 || cfail > 0 {
 		return 1
 	}
 	return 0
@@ -2015,4 +2026,43 @@ func skipSummary(why map[string]int, uses int, fx map[string]bool) string {
 		return ""
 	}
 	return " (" + strings.Join(parts, "; ") + ")"
+}
+
+// contractPrefix names the tests `xo test` generates to fuzz each
+// function's contract (compiler/gen fuzz.xo, compiler/xo fuzzsrc.xo).
+const contractPrefix = "contract fuzz: "
+
+// seedNote is a failing test's seed for its FAIL line: a property or
+// contract test's inputs come from it, and any other test's
+// interleavings when it is not the default 1 (pinned, --seed,
+// --explore); the default is what a plain rerun uses, so it is left out.
+func seedNote(s int64, prop bool) string {
+	if prop || s != 1 {
+		return fmt.Sprintf(", seed %d", s)
+	}
+	return ""
+}
+
+// contractSummary is the summary's note on the generated contract checks:
+// "(contract fuzz: 2 functions ok)", with failed and skipped ones named.
+func contractSummary(pass, fail, skip int) string {
+	n := pass + fail + skip
+	if n == 0 {
+		return ""
+	}
+	fns := "functions"
+	if n == 1 {
+		fns = "function"
+	}
+	if fail == 0 && skip == 0 {
+		return fmt.Sprintf(" (contract fuzz: %d %s ok)", n, fns)
+	}
+	parts := []string{fmt.Sprintf("%d ok", pass)}
+	if fail > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", fail))
+	}
+	if skip > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped", skip))
+	}
+	return fmt.Sprintf(" (contract fuzz: %d %s: %s)", n, fns, strings.Join(parts, ", "))
 }

@@ -21,13 +21,13 @@ func TestOptionTryInTests(t *testing.T) {
 	}
 	dir := filepath.Join("testdata", "testopt", "tests")
 	wants := []string{
-		"--- FAIL: none fails (main.xo:15:1, seed 1)\n    error: missing value: find(5) at main.xo:16:11\n",
-		"--- FAIL: nested (main.xo:20:1, seed 1)\n    error: missing value: m.get(\"zz\") at main.xo:26:17\n",
-		"--- FAIL: mixed (main.xo:34:1, seed 1)\n    error: missing value: find(b + 1) at main.xo:37:11\n",
+		"--- FAIL: none fails (main.xo:15:1)\n    error: missing value: find(5) at main.xo:16:11\n",
+		"--- FAIL: nested (main.xo:20:1)\n    error: missing value: m.get(\"zz\") at main.xo:26:17\n",
+		"--- FAIL: mixed (main.xo:34:1)\n    error: missing value: find(b + 1) at main.xo:37:11\n",
 		"--- FAIL: prop (main.xo:41:1, seed 1)\n    property failed on case 1; shrunk in ",
 		"    n = 3\n    error: missing value: find(n) at main.xo:42:11\n",
 		// two `?` of the same text in one test: the location names the second
-		"--- FAIL: same text twice (main.xo:57:1, seed 1)\n    error: missing value: find(x) at main.xo:61:11\n",
+		"--- FAIL: same text twice (main.xo:57:1)\n    error: missing value: find(x) at main.xo:61:11\n",
 		"FAIL: 2 passed, 5 failed, 0 skipped\n",
 	}
 	check := func(name string, code int, out string) {

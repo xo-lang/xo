@@ -3356,6 +3356,16 @@ test "retries after 503" {
   Without `--real` such a test is skipped, and the summary line names every
   skip's reason (`ok: 1 passed, 0 failed, 1 skipped (1 uses net: run with
   --real)`; decision 0437).
+- The summary line counts the written tests (test blocks and property
+  tests); the generated contract checks (`contract fuzz: MODULE.F`) are
+  counted apart, in a note on the same line, with or without `-v`:
+  `FAIL: 0 passed, 1 failed, 0 skipped (contract fuzz: 1 function ok)`,
+  or `(contract fuzz: 3 functions: 2 ok, 1 failed)`. A failing contract
+  check makes the run fail as a failing test does. A `--- FAIL` line
+  names the seed (`(main.xo:3:1, seed 8812)`) for a property or contract
+  test, whose inputs come from it, and for any test run with a seed other
+  than the default 1 (pinned, `--seed`, `--explore`); a plain failing test
+  run with the default seed has only its location (owner, 2026-11-10).
 - A test run sees only the fakes unless `--real` is given, so its result
   depends only on the test binary and the run's flags: a passed native
   run of a binary that links no `use go` or C binding may be replayed

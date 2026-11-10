@@ -16,5 +16,5 @@ exit 1
           main.xo:31
       x_testdata_golden_test_contracts.F_first_letters
           main.xo:31
-FAIL: 4 passed, 2 failed, 0 skipped
+FAIL: 1 passed, 0 failed, 0 skipped (contract fuzz: 5 functions: 3 ok, 2 failed)
 --- stderr
