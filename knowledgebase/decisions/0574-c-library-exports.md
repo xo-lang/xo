@@ -451,6 +451,35 @@ host 1 while each release built a list of what it freed). cmd/xo
 TestCLibHandleChurn: 4 C threads
 read one handle while 4 make, read and release their own.
 
+Stage 2, Bytes and Str (2026-11-10; the same harness with three more rows,
+a C caller at -O2 against the same functions in a C shared library, host 1,
+median of 5 runs, 20M calls (2M for upper), ns a call; before = f3f8e4641,
+buffers = 9822bd846 (the per-thread parameter buffers), then 8a27337e4 (one
+read of the buffer table a call, and an all ASCII Str skips the UTF-8 scan)):
+
+| row | before | buffers | one table read, ASCII | C |
+|---|---|---|---|---|
+| `byte_sum(b: Bytes) -> Int`, 64 bytes | 33.3 | 23.5 | 21.8 | 17.6 |
+| `str_len(s: Str) -> Int`, 16 bytes | 25.7 | 10.7 | 7.0 | 1.0 |
+| `upper(s: Str) -> Str`, 32 bytes, then `xo_free` | 36.5 | 30.0 | 27.3 | 14.2 |
+
+A view of C's buffer in place of the copy does not fit decision 0330's
+layout: a Str's data sits at its object's header plus a 32 bit offset, and
+counting reads and writes that header, which C memory does not have. The
+buffer keeps the copy but not the allocation. What is left of the 16 byte
+Str call (perf on host 1): the copy into the buffer 36%, giving the buffer
+back 16%, the thread record's lookup 20%.
+
+The create path (make a struct handle, read it, release it, 92 ns against
+C's 12.3): perf on host 1 puts it in the shared counts (rc.dec of the
+value, 17.6% self; the struct's Str field dropped through an atomic
+decrement, 10.9%) and the four allocations a make takes (the value, its
+list of one, the Any and its tag; obj.rl_free 13%). The fence and the
+c_read_min walk are not the cost: a build without them (unsafe, measure
+only, 2026-11-09) ran 91 ns. A slot that holds a heap value's object
+directly (no Any, no list of one, no tag copy) is the next design to
+measure; the shared counts stay, since any C thread may use a handle.
+
 Tried and dropped on the way (2026-11-09):
 - The lock alone: a read without the table's lock, but still counting
   the Any, its list and the value (4 reading and 4 releasing C threads:
