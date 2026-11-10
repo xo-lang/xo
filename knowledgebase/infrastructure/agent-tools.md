@@ -1119,7 +1119,7 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 ## Coordinating (scripts/lead/README.md)
 
 - Gates: `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`: no slot,
-  no queue; starts when 55% of memory is free (HEAVY_GATE_MIN_FREE) and
+  no queue; starts when 35% of memory is free (HEAVY_GATE_MIN_FREE) and
   fewer than 5 gates run (HEAVY_GATE_MAX) with the load under 48
   (HEAVY_GATE_MAX_LOAD); heavy runs take one of 4 slots (HEAVY_SLOTS) and are
   stopped past 32 GB (HEAVY_MAX_GB). Owner, 2026-11-09, for the 96 GB, 30-core
