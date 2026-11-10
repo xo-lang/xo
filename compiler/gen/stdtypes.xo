@@ -58,7 +58,10 @@ pub fn std_types(c: check.Checker) -> Str ! Str {
   g.p = rp
   var mods: List[Int] = []
   for (m, md) in c.mods.indexed() {
-    if md.is_std && !md.native {
+    // a merged module (decision 0588) is generated as its own package,
+    // not into std/rt, even when another std module's implementation
+    // loads it (otp's use of std/base32)
+    if md.is_std && !md.native && !md.merged {
       mods.push(m)
     }
   }
@@ -197,7 +200,7 @@ pub fn std_sigs(c: check.Checker) -> Str ! Str {
     // a std/native module reached by a plain `use native/...` (norm and
     // idna use native/rt, 10ecfc3b5) is not marked native, but it is
     // still an implementation source, not the hand written runtime
-    if md.is_std && !md.native && !md.path.starts_with("native/") {
+    if md.is_std && !md.native && !md.merged && !md.path.starts_with("native/") {
       mods.push(m)
     }
   }

@@ -26,7 +26,8 @@ func stdProbe(t *testing.T, std string) string {
 	var src strings.Builder
 	for _, n := range names {
 		m := strings.TrimSuffix(filepath.Base(n), ".xo")
-		if m == "prelude" {
+		// a merged module's tests sit beside it (decision 0588), not a module
+		if m == "prelude" || strings.HasSuffix(m, "_test") {
 			continue
 		}
 		fmt.Fprintf(&src, "use std/%s\n", m)

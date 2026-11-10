@@ -1,5 +1,18 @@
 # std/base32 changes
 
+## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0588 stage 2 (pure modules merged with their implementation)
+- Go reference: none (no behavior change)
+- Test: std/base32_test.xo (`xo test --std-module=base32` on native, llvm and go), internal/stdtest corpus base32 on go, arm64 and llvm, golden base64_basic
+
+std/base32.xo now holds the bodies of std/native/base32.xo (removed), and the Go
+backend compiles them from it (std_gen_base32.go and std_sigs_base32.go removed).
+The API, texts and errors are unchanged; `DecodeErr.at` is declared `pub` so it
+stays readable now that only `pub` items export.
+
 ## 2026-11-03: perf: decode copies its input only when a newline is to be dropped
 
 - Kind: perf

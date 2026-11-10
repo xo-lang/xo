@@ -1,5 +1,3 @@
-use std/base32
-
 // Differential cases from Go's encoding/base32 (go1.26.1): random bytes,
 // random strings over the alphabet, padding, newlines, and noise, and
 // valid encodings with a symbol inserted; each with Go's output or
@@ -8,17 +6,17 @@ use std/base32
 
 fn unhex(s: Str) -> Bytes { Bytes.from_hex(s).or_fault("hex") }
 
-fn check_encode(enc: base32.Base32, cases: List[(Str, Str)]) {
+fn check_encode(enc: Base32, cases: List[(Str, Str)]) {
   for (input, want) in cases {
     expect(encode(unhex(input), enc)) == want
   }
 }
 
-fn check_decode(enc: base32.Base32, cases: List[(Str, Str, Int)]) {
+fn check_decode(enc: Base32, cases: List[(Str, Str, Int)]) {
   for (input, want, at) in cases {
     let got = decode(unhex(input).to_str() ?? "", enc)
     if at >= 0 {
-      expect(got) == Err(base32.DecodeErr{at: at})
+      expect(got) == Err(DecodeErr{at: at})
     } else {
       expect(got) == Ok(unhex(want))
     }
@@ -26,7 +24,7 @@ fn check_decode(enc: base32.Base32, cases: List[(Str, Str, Int)]) {
 }
 
 test "go base32 Std encode" {
-  check_encode(base32.Base32.Std, [
+  check_encode(Base32.Std, [
     ("e24377be", "4JBXPPQ="),
     ("7d1b73df059e125c16", "PUNXHXYFTYJFYFQ="),
     ("edf1daf2", "5XY5V4Q="),
@@ -71,7 +69,7 @@ test "go base32 Std encode" {
 }
 
 test "go base32 Std decode" {
-  check_decode(base32.Base32.Std, [
+  check_decode(Base32.Std, [
     ("", "", -1),
     ("3d", "", 0),
     ("3d3d", "", 0),
@@ -466,7 +464,7 @@ test "go base32 Std decode" {
 }
 
 test "go base32 Hex encode" {
-  check_encode(base32.Base32.Hex, [
+  check_encode(Base32.Hex, [
     ("", ""),
     ("", ""),
     ("4aff", "9BVG===="),
@@ -511,7 +509,7 @@ test "go base32 Hex encode" {
 }
 
 test "go base32 Hex decode" {
-  check_decode(base32.Base32.Hex, [
+  check_decode(Base32.Hex, [
     ("", "", -1),
     ("3d", "", 0),
     ("3d3d", "", 0),
@@ -906,7 +904,7 @@ test "go base32 Hex decode" {
 }
 
 test "go base32 RawStd encode" {
-  check_encode(base32.Base32.RawStd, [
+  check_encode(Base32.RawStd, [
     ("", ""),
     ("4a0b420e2a83f58416", "JIFUEDRKQP2YIFQ"),
     ("fe473603e3a88d7cfd", "7ZDTMA7DVCGXZ7I"),
@@ -951,7 +949,7 @@ test "go base32 RawStd encode" {
 }
 
 test "go base32 RawStd decode" {
-  check_decode(base32.Base32.RawStd, [
+  check_decode(Base32.RawStd, [
     ("", "", -1),
     ("3d", "", 0),
     ("3d3d", "", 0),
@@ -1346,7 +1344,7 @@ test "go base32 RawStd decode" {
 }
 
 test "go base32 RawHex encode" {
-  check_encode(base32.Base32.RawHex, [
+  check_encode(Base32.RawHex, [
     ("09d24a0041f0", "1794K021U0"),
     ("e6ae710533303c", "SQN7219J60U0"),
     ("18", "30"),
@@ -1391,7 +1389,7 @@ test "go base32 RawHex encode" {
 }
 
 test "go base32 RawHex decode" {
-  check_decode(base32.Base32.RawHex, [
+  check_decode(Base32.RawHex, [
     ("", "", -1),
     ("3d", "", 0),
     ("3d3d", "", 0),
@@ -1786,8 +1784,8 @@ test "go base32 RawHex decode" {
 }
 
 test "base32 round trip" for data: Bytes {
-  expect(decode(encode(data, base32.Base32.Std), base32.Base32.Std)) == Ok(data)
-  expect(decode(encode(data, base32.Base32.Hex), base32.Base32.Hex)) == Ok(data)
-  expect(decode(encode(data, base32.Base32.RawStd), base32.Base32.RawStd)) == Ok(data)
-  expect(decode(encode(data, base32.Base32.RawHex), base32.Base32.RawHex)) == Ok(data)
+  expect(decode(encode(data, Base32.Std), Base32.Std)) == Ok(data)
+  expect(decode(encode(data, Base32.Hex), Base32.Hex)) == Ok(data)
+  expect(decode(encode(data, Base32.RawStd), Base32.RawStd)) == Ok(data)
+  expect(decode(encode(data, Base32.RawHex), Base32.RawHex)) == Ok(data)
 }

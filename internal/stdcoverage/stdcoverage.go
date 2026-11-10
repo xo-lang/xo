@@ -294,6 +294,9 @@ func loadDecls(root string) ([]decl, error) {
 	sort.Strings(paths)
 	var decls []decl
 	for _, p := range paths {
+		if strings.HasSuffix(p, "_test.xo") {
+			continue // a merged module's tests (decision 0588), not its API
+		}
 		mod := strings.TrimSuffix(filepath.Base(p), ".xo")
 		ds, err := declared(mod, p)
 		if err != nil {

@@ -1,2 +1,3 @@
 # std modules merged with their implementation (decision 0588): only pub items export
 std/uuid
+std/base32

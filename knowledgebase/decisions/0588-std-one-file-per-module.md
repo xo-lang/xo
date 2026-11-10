@@ -200,3 +200,19 @@ Seed: modules outside the compiler's import closure can merge with the current
 seed; a module inside it (crypto, task, internal, http, regexp, json, testing,
 debug, archive, protoparse, path, embed, binary) needs a seed cut at the loader
 commit (the lead cuts it).
+
+## Stage 2 progress (2026-11-10, Lang 3)
+
+- `std/base32` merged (std/base32.xo with its bodies, std/base32_test.xo;
+  std/native/base32.xo, std_gen_base32.go and std_sigs_base32.go removed;
+  `DecodeErr.at` is `pub` so the field stays readable).
+- Two tool fixes it needed, now in place for every later module:
+  `xo dev dump go --std-types` and `--std-sigs` (compiler/gen stdtypes.xo)
+  skip merged modules, since a merged module another std module's
+  implementation loads (otp uses base32) was dumped into std/rt's
+  std_gen_prelude.go as unprefixed `Base32` and `DecodeErr`; and
+  internal/stdcoverage skips `std/*_test.xo` (a merged module's test
+  helpers are not std API).
+- A merged module needs an xo with the stage 1 loader: an older bin/xo on
+  a newer std reads std/M.xo as declarations and fails with XO1201 on the
+  first body call (gotchas/merged-std-module-needs-current-xo.md).
