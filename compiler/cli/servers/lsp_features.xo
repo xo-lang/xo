@@ -163,28 +163,116 @@ fn (var s: Session) span_location(os: Os, file: Str, a: Int, b: Int) -> J? uses 
   }
   let c = s.res[0].c
   let src = c.files[f].src
-  let t = new_text(src)
   let m = c.files[f].module
   if m >= 0 && c.mods[m].is_std {
-    if s.lsp_std.is_empty() {
+    return s.std_location(os, c.files[f].path, src, a, b)
+  }
+  let t = new_text(src)
+  Some(jobj(["uri", "range"], [jstr(path_to_uri(path)), range_json(t.offset_position(a), t.offset_position(b))]))
+}
+
+/// The location of a byte range of the std file rel ("std/json.xo",
+/// "std/native/json.xo") whose text is src, in its read only copy under
+/// the std copy directory (written when it differs); None without one.
+fn (s: Session) std_location(os: Os, rel: Str, src: Bytes, a: Int, b: Int) -> J? uses fs {
+  if s.lsp_std.is_empty() {
+    return None
+  }
+  let dst = s.lsp_std + "/" + rel
+  let same = match os.fs.read(dst) {
+    Ok(old) => old == src
+    Err(_) => false
+  }
+  if !same {
+    // read only, so the editor shows it cannot be edited; the old copy
+    // is removed first because it is read only too
+    let _ = os.fs.remove(dst).ignore_err("there may be no old copy")
+    if os.fs.create_dir_all(dir_of(dst)).is_err() || os.fs.write(dst, src).is_err() || os.fs.set_mode(dst, 0o444).is_err() {
       return None
     }
-    let dst = s.lsp_std + "/" + c.files[f].path
-    let same = match os.fs.read(dst) {
-      Ok(old) => old == src
-      Err(_) => false
-    }
-    if !same {
-      // read only, so the editor shows it cannot be edited; the old copy
-      // is removed first because it is read only too
-      let _ = os.fs.remove(dst).ignore_err("there may be no old copy")
-      if os.fs.create_dir_all(dir_of(dst)).is_err() || os.fs.write(dst, src).is_err() || os.fs.set_mode(dst, 0o444).is_err() {
-        return None
-      }
-    }
-    path = dst
   }
-  Some(jobj(["uri", "range"], [jstr(path_to_uri(path)), range_json(t.offset_position(a), t.offset_position(b))]))
+  let t = new_text(src)
+  Some(jobj(["uri", "range"], [jstr(path_to_uri(dst)), range_json(t.offset_position(a), t.offset_position(b))]))
+}
+
+/// The implementation of a std declaration (a fn, method, type or const
+/// of std/NAME): its declaration in std's native/NAME.xo, found by the
+/// native build's rule (ssa build.xo impl_of and impl_type): the same name,
+/// a method on the native module's type of the receiver's name, or a fn
+/// named `<receiver in lower case>_<name>` (Str.split_where is
+/// str_split_where in std/native/prelude.xo). None when std/NAME has no
+/// native module or none matches (an intrinsic): the caller answers the
+/// declaration. Owner, 2026-11-10: go to definition on a std name opened
+/// the declaration file, a signature with no body.
+fn (s: Session) impl_location(os: Os, tg: LspTarget) -> J? uses fs {
+  if tg.oi < 0 || !(tg.what is "func" | "type" | "const") || s.res.is_empty() {
+    return None
+  }
+  let c = s.res[0].c
+  let o = c.objs[tg.oi]
+  if o.module < 0 || o.iface {
+    return None
+  }
+  let mo = c.mods[o.module]
+  if !mo.is_std || mo.native || !mo.path.starts_with("std/") {
+    return None
+  }
+  let name = mo.path[4..]
+  if name.is_empty() || name.contains("/") {
+    return None
+  }
+  let root = s.std_dir
+  if root.is_empty() {
+    return None
+  }
+  let src = match os.fs.read("${root}/native/${name}.xo") {
+    Ok(b) => b
+    Err(_) => return None
+  }
+  let rel = "std/native/${name}.xo"
+  let file = parser.parse_file(rel.bytes(), src, false).file
+  let oname = check.text(o.name)
+  let recv = if o.recv >= 0 { check.text(c.objs[o.recv].name) } else { "" }
+  // a method on the native module's type first, then the flat fn
+  var flat: (Int, Int)? = None
+  for d in file.decls {
+    match d {
+      FnDecl(d: fd) => {
+        let n = check.text(fd.name.name)
+        match fd.recv {
+          Some(r) => {
+            if tg.what == "func" && !recv.is_empty() && !o.is_static && n == oname && type_name(r.typ) == recv {
+              return s.std_location(os, rel, src, fd.name.span.start.offset, fd.name.span.end.offset)
+            }
+          }
+          None => {
+            let want = if recv.is_empty() { oname } else { "${recv.to_lower()}_${oname}" }
+            if tg.what == "func" && n == want && flat.is_none() {
+              flat = Some((fd.name.span.start.offset, fd.name.span.end.offset))
+            }
+          }
+        }
+      }
+      StructDecl(d: x) => if tg.what == "type" && check.text(x.name.name) == oname { flat = Some((x.name.span.start.offset, x.name.span.end.offset)) }
+      EnumDecl(d: x) => if tg.what == "type" && check.text(x.name.name) == oname { flat = Some((x.name.span.start.offset, x.name.span.end.offset)) }
+      InterfaceDecl(d: x) => if tg.what == "type" && check.text(x.name.name) == oname { flat = Some((x.name.span.start.offset, x.name.span.end.offset)) }
+      TypeDecl(d: x) => if tg.what == "type" && check.text(x.name.name) == oname { flat = Some((x.name.span.start.offset, x.name.span.end.offset)) }
+      ConstDecl(d: x) => if tg.what == "const" && check.text(x.name.name) == oname { flat = Some((x.name.span.start.offset, x.name.span.end.offset)) }
+      TestDecl(d: _) | BadDecl(span: _) => {}
+    }
+  }
+  match flat {
+    Some((a, b)) => s.std_location(os, rel, src, a, b)
+    None => None
+  }
+}
+
+/// The last name of a named type (`T`, `pkg.T`, `T[A]`), else "".
+fn type_name(t: parser.Type) -> Str {
+  match t {
+    NamedType(span: _, path: p, args: _) => if p.is_empty() { "" } else { check.text(p[p.len() - 1].name) }
+    OptionalType(span: _, elem: _) | TupleType(span: _, elems: _) | FnType(t: _) | BadType(span: _) => ""
+  }
 }
 
 fn (var s: Session) definition(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
@@ -194,7 +282,44 @@ fn (var s: Session) definition(os: Os, params: J) -> J ! Str uses (stdio, fs, en
     if tg.def_file.is_empty() {
       return Ok(J.Null)
     }
+    // a std name's implementation, where it has one, not its declaration
+    if let Some(loc) = s.impl_location(os, tg) {
+      return Ok(loc)
+    }
     return Ok(s.span_location(os, tg.def_file, tg.def_start, tg.def_end) ?? J.Null)
+  }
+  Ok(J.Null)
+}
+
+/// typeDefinition: the declaration of the type of what the identifier
+/// names (a type itself, a const's or local's type, a fn's result), its
+/// std implementation where it has one, as definition answers.
+fn (var s: Session) type_definition(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
+  let at = s.at(os, params)?
+  for site in at.site {
+    let tg = s.resolve(at.f, site)
+    if tg.oi < 0 {
+      return Ok(J.Null)
+    }
+    let c = s.res[0].c
+    let o = c.objs[tg.oi]
+    let to = match tg.what {
+      "type" => tg.oi
+      "func" => c.named_obj(o.result)
+      "const" | "local" => c.named_obj(o.ty)
+      _ => -1
+    }
+    if to < 0 || c.objs[to].kind != check.ObjKind.Type {
+      return Ok(J.Null)
+    }
+    let tt = s.res[0].type_target(to)
+    if tt.def_file.is_empty() {
+      return Ok(J.Null)
+    }
+    if let Some(loc) = s.impl_location(os, tt) {
+      return Ok(loc)
+    }
+    return Ok(s.span_location(os, tt.def_file, tt.def_start, tt.def_end) ?? J.Null)
   }
   Ok(J.Null)
 }

@@ -106,8 +106,10 @@ func TestLSPStalePWD(t *testing.T) {
 	send(2, "textDocument/definition", map[string]any{"textDocument": map[string]any{"uri": uri}, "position": map[string]any{"line": 70, "character": 50}})
 	def := reply(2)
 	res, _ := json.Marshal(def["result"])
-	if def["result"] == nil || !strings.Contains(string(res), "std/http.xo") {
-		t.Errorf("definition of http.Request with PWD=/ = %s, want a location in std/http.xo\nstderr: %s", res, errOut.String())
+	// http.Request's implementation (std/native/http.xo), or its
+	// declaration (std/http.xo) where there is none
+	if def["result"] == nil || !strings.Contains(string(res), "std/native/http.xo") && !strings.Contains(string(res), "std/http.xo") {
+		t.Errorf("definition of http.Request with PWD=/ = %s, want a location in std/native/http.xo or std/http.xo\nstderr: %s", res, errOut.String())
 	}
 	send(3, "shutdown", nil)
 	reply(3)

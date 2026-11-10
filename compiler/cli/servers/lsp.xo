@@ -1100,7 +1100,7 @@ fn initialize_result(version: Str) -> J {
     tm.push(jstr(x))
   }
   jobj(["capabilities", "serverInfo"], [
-    jobj(["codeActionProvider", "completionProvider", "definitionProvider", "documentFormattingProvider", "documentSymbolProvider", "hoverProvider", "positionEncoding", "referencesProvider", "renameProvider", "semanticTokensProvider", "signatureHelpProvider", "textDocumentSync"], [
+    jobj(["codeActionProvider", "completionProvider", "definitionProvider", "documentFormattingProvider", "documentSymbolProvider", "hoverProvider", "positionEncoding", "referencesProvider", "renameProvider", "semanticTokensProvider", "signatureHelpProvider", "textDocumentSync", "typeDefinitionProvider"], [
       jobj(["codeActionKinds"], [jarr([jstr("quickfix")])]),
       jobj(["triggerCharacters"], [jarr([jstr(".")])]),
       jbool(true),
@@ -1113,6 +1113,7 @@ fn initialize_result(version: Str) -> J {
       jobj(["full", "legend"], [jbool(true), jobj(["tokenModifiers", "tokenTypes"], [jarr(tm), jarr(tt)])]),
       jobj(["triggerCharacters"], [jarr([jstr("("), jstr(",")])]),
       jobj(["change", "openClose", "save"], [jint(2), jbool(true), jobj(["includeText"], [jbool(false)])]),
+      jbool(true),
     ]),
     jobj(["name", "version"], [jstr("xo"), jstr(version)]),
   ])
@@ -1132,7 +1133,7 @@ fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) ->
   if method == "shutdown" {
     return Ok(J.Null)
   }
-  let reads = method is "textDocument/hover" | "textDocument/definition" | "textDocument/references" | "textDocument/prepareRename" | "textDocument/rename" | "textDocument/formatting" | "textDocument/codeAction" | "textDocument/documentSymbol" | "textDocument/semanticTokens/full" | "textDocument/completion" | "textDocument/signatureHelp"
+  let reads = method is "textDocument/hover" | "textDocument/definition" | "textDocument/typeDefinition" | "textDocument/references" | "textDocument/prepareRename" | "textDocument/rename" | "textDocument/formatting" | "textDocument/codeAction" | "textDocument/documentSymbol" | "textDocument/semanticTokens/full" | "textDocument/completion" | "textDocument/signatureHelp"
   if !reads {
     return Err((-32601, "method not supported: ${method}"))
   }
@@ -1153,6 +1154,7 @@ fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) ->
     "textDocument/signatureHelp" => Ok(s.signature_help(os, params))
     "textDocument/hover" => s.hover(os, params).map_err(failed)
     "textDocument/definition" => s.definition(os, params).map_err(failed)
+    "textDocument/typeDefinition" => s.type_definition(os, params).map_err(failed)
     "textDocument/references" => s.references(os, params).map_err(failed)
     "textDocument/prepareRename" => s.prepare_rename(os, params)
     "textDocument/rename" => s.rename(os, params)
@@ -1210,7 +1212,7 @@ enum Ev {
 
 /// The check a request reads: "" for none, ALL, or its open directory.
 fn (s: Session) check_key(method: Str, params: J, has_params: Bool) -> Str {
-  let reads = method is "textDocument/hover" | "textDocument/definition" | "textDocument/references" | "textDocument/prepareRename" | "textDocument/rename" | "textDocument/codeAction" | "textDocument/semanticTokens/full" | "textDocument/completion" | "textDocument/signatureHelp"
+  let reads = method is "textDocument/hover" | "textDocument/definition" | "textDocument/typeDefinition" | "textDocument/references" | "textDocument/prepareRename" | "textDocument/rename" | "textDocument/codeAction" | "textDocument/semanticTokens/full" | "textDocument/completion" | "textDocument/signatureHelp"
   if !reads || !has_params {
     return ""
   }
