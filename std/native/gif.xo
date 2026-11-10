@@ -397,10 +397,9 @@ fn color_table(p: List[Int], size: Int) -> Bytes ! gif.GifErr {
   var b = BytesBuilder.with_capacity(768)
   for c in p {
     let a = c & 255
-    for sh in [24, 16, 8] {
-      let v = ((c >> sh) & 255) * 257
-      b.write_le(((v * a) / 255) >> 8, 1)
-    }
+    b.write_le(((((c >> 24) & 255) * 257 * a) / 255) >> 8, 1)
+    b.write_le(((((c >> 16) & 255) * 257 * a) / 255) >> 8, 1)
+    b.write_le(((((c >> 8) & 255) * 257 * a) / 255) >> 8, 1)
   }
   let n = 1 << (size + 1)
   for _ in p.len()..n {
