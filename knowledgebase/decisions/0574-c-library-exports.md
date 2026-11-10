@@ -480,6 +480,18 @@ only, 2026-11-09) ran 91 ns. A slot that holds a heap value's object
 directly (no Any, no list of one, no tag copy) is the next design to
 measure; the shared counts stay, since any C thread may use a handle.
 
+The slot that holds the value, measured first (2026-11-10, host 1, the
+same harness, median of 5, make + count + release of a struct handle):
+main 89.8 ns; the Any keeping its type's constant tag instead of a copy
+(one allocation pair fewer) 90.2 ns; three extra allocation pairs a make
+107.5 ns, so a pair here costs at most about 5.9 ns. A slot holding the
+value's object drops the list of one and the Any as well: at most about
+12 ns of the 77 over C, under the 15 ns that would justify the design, so
+it is not built. The rest is the shared counts (rc.dec of the value and
+its Str field's atomic decrement, about 28% of the profile) and the
+handle lock and epoch; a cheaper path there would have to stop sharing a
+handle's value until a second thread reads it.
+
 Tried and dropped on the way (2026-11-09):
 - The lock alone: a read without the table's lock, but still counting
   the Any, its list and the value (4 reading and 4 releasing C threads:
