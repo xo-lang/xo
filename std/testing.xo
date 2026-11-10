@@ -183,6 +183,10 @@ fn (p: FakeProc) usage() -> ProcUsage uses proc   // decision 0426: the real pro
 fn (p: FakeProc) children_usage() -> ProcUsage uses proc
 /// The signals kill recorded, as "NAME PID", oldest first.
 fn (p: FakeProc) killed() -> List[Str]
+/// The commands the test's code asked to run (`run`, a `Cmd`, a pipeline), oldest first, found or not (a command with no `on_run`
+/// is listed and answers NotFound). Each entry is the program and then each argument after a space; an empty program or argument,
+/// or one with a space or that Go's strconv.Quote writes differently, is written as strconv.Quote does (`"my sub"`, `"a\"b"`).
+fn (p: FakeProc) runs() -> List[Str]
 
 /// Runs a program's main against fakes and returns its exit status: 0, 1
 /// for an error returned from main, or the code passed to exit (std.md 8.4).

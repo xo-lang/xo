@@ -1,5 +1,20 @@
 # std/testing changes
 
+## 2026-11-09: feature: FakeProc.runs() lists the commands the code asked to run
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (azidentity's developer-tool credentials need to see what a program would have run, with its arguments)
+- Go reference: none (a test double's recorder; the quoting is strconv.Quote)
+- Test: golden test_proc_cmd, "runs lists every command asked to run" (go and native `xo test`)
+- Shipped in: not yet released
+
+`os.proc.runs()` returns one entry per command asked to run (`Proc.run`, `Cmd.output`, `Cmd.run`, `Cmd.spawn`, each command of a
+pipeline), in order, found by `on_run` or not (an unanswered one is listed and fails with NotFound). An entry is the program and
+each argument after a space; an empty program or argument, one with a space, or one `strconv.Quote` writes differently, is written
+with `strconv.Quote` (`az account show --name "my sub"`). Real processes (`--real`) record nothing. Both backends: std/rt's
+fakeProc and the native test world (std/native/llrt/testworld.xo, `proc_note`).
+
 ## 2026-11-07: feature: FakeNet.handle_tls runs the client's TLS checks, and a FakeNet handler's host() is the URL's authority
 
 - Kind: feature

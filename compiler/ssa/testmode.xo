@@ -444,6 +444,10 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       }
       return Some(b.llrt("proc_killed", b.m.list(st), []))
     }
+    "Proc.runs" => {
+      // the commands FakeProc was asked to run (std/native/llrt/testworld.xo's proc_runs)
+      return Some(b.llrt("proc_runs", b.m.list(st), []))
+    }
     "Proc.on_run" => {
       // the outputs a later run of the command gives
       // (std/native/llrt/testworld.xo)

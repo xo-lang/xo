@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -49,15 +50,33 @@ func (f Testing_FakeProc) M_pipeline(tk *Task, cmds List[Cmd]) Result[ProcOutput
 // ---------------------------------------------------------------------------
 // A test's FakeProc: commands answer from on_run (std.md 8.4)
 
-func (p *fakeProc) lookup(name string) (ProcOutput, bool) {
+func (p *fakeProc) lookup(name string, args []string) (ProcOutput, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.ran = append(p.ran, runLine(name, args))
 	out, ok := p.runs[name]
 	return out, ok
 }
 
+// runLine is a run as FakeProc.runs lists it: the program, then each argument after a space; an argument or program that is
+// empty or has a space, or that strconv.Quote writes differently, is written with strconv.Quote.
+func runLine(name string, args []string) string {
+	var b strings.Builder
+	for i, a := range append([]string{name}, args...) {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		if q := strconv.Quote(a); a == "" || strings.ContainsRune(a, ' ') || q != "\""+a+"\"" {
+			b.WriteString(q)
+		} else {
+			b.WriteString(a)
+		}
+	}
+	return b.String()
+}
+
 func (p *fakeProc) output(_ *Task, c *procCmd) Result[ProcOutput, ProcErr] {
-	out, ok := p.lookup(c.name)
+	out, ok := p.lookup(c.name, c.args)
 	if !ok {
 		return Err[ProcOutput](procNotFound(c.name))
 	}
@@ -68,7 +87,7 @@ func (p *fakeProc) output(_ *Task, c *procCmd) Result[ProcOutput, ProcErr] {
 }
 
 func (p *fakeProc) runTerm(_ *Task, c *procCmd) Result[int64, ProcErr] {
-	out, ok := p.lookup(c.name)
+	out, ok := p.lookup(c.name, c.args)
 	if !ok {
 		return Err[int64](procNotFound(c.name))
 	}
@@ -87,7 +106,7 @@ type fakeChild struct {
 }
 
 func (p *fakeProc) spawn(_ *Task, c *procCmd) Result[Child, ProcErr] {
-	out, ok := p.lookup(c.name)
+	out, ok := p.lookup(c.name, c.args)
 	if !ok {
 		return Err[Child](procNotFound(c.name))
 	}

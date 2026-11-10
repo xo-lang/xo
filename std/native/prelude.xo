@@ -4044,6 +4044,9 @@ fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   var r: List[Str] = []
   if testworld.fake(testworld.REAL_PROC) {
     // FakeProc.on_run's outputs (std/native/llrt/testworld.xo)
+    if !rt.fs_canceled() {
+      testworld.proc_note(cmd, args)
+    }
     r = if rt.fs_canceled() { ["3", ""] } else { testworld.proc_run(cmd) }
   } else {
     // std/native/llrt/proc.xo (work item B25)
@@ -4222,6 +4225,9 @@ fn proc_kill(p: Proc, pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc 
 /// FakeProc.killed, as the SSA builder calls it (compiler/ssa testmode.xo):
 /// the recorded signals, oldest first.
 fn llrt_proc_killed() -> List[Str] { proc.killed() }
+
+/// FakeProc.runs, as the SSA builder calls it.
+fn llrt_proc_runs() -> List[Str] { testworld.proc_runs() }
 
 fn proc_only(p: Proc, cmds: List[Str]) -> Proc { rt.proc_new(cap_lists_add(rt.proc_lists(p), cmds)) }
 

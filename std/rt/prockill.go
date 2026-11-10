@@ -79,6 +79,13 @@ func (f Testing_FakeProc) M_killed(*Task) List[string] {
 	return ListOf(append([]string(nil), f.p.killed...)...)
 }
 
+// M_runs lists the commands the test's code asked to run, in order, as runLine writes them (found or not).
+func (f Testing_FakeProc) M_runs(*Task) List[string] {
+	f.p.mu.Lock()
+	defer f.p.mu.Unlock()
+	return ListOf(append([]string(nil), f.p.ran...)...)
+}
+
 // unixPath reports whether a Net address names a Unix domain socket
 // (`unix:PATH`, decision 0190) and returns the path.
 func unixPath(addr string) (string, bool) {

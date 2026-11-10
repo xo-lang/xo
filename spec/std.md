@@ -2873,7 +2873,14 @@ fn (p: FakeProc) exit_code() -> Int?                  // set when exit was calle
 fn (p: FakeProc) signal_after(d: Duration)            // next run_main gets SIGTERM after d (virtual time)
 fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)    // also answers Cmd runs (3.8)
 fn (p: FakeProc) killed() -> List[Str]                // the signals kill recorded, "NAME PID" (3.7)
+fn (p: FakeProc) runs() -> List[Str]                  // the commands asked to run, oldest first, found or not
 ```
+
+`runs` lists every command the test's code asked to run (`Proc.run`, `Cmd.output`, `Cmd.run`, `Cmd.spawn`, a pipeline's
+commands), in order, whether or not `on_run` answered it (an unanswered one is listed and fails with NotFound, so a test tells
+"not run" from "run and missing"). An entry is the program and then each argument, separated by single spaces; the program or
+an argument that is empty, contains a space, or that Go's `strconv.Quote` writes differently from its plain text is written as
+`strconv.Quote` writes it (`"my sub"`, `"a\"b"`), so a test can rebuild the arguments. Real processes (`--real`) record nothing.
 
 `FakeProc.kill(pid, signal)` checks its arguments as `Proc.kill` does and
 records the signal instead of sending it (decision 0190).

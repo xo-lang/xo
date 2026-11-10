@@ -89,7 +89,9 @@ const S_PLAN_POS = 384
 /// case of the current run skips its body (not smaller than the best).
 const S_SERVE = 392
 const S_SKIP = 400
-const S_SIZE = 408
+/// FakeProc.runs: a word vector of blocks, one line per command asked to run.
+const S_RUNLOG = 408
+const S_SIZE = 432
 
 /// The variables read at the start (tw_setenv's k, S_VARS + 8k): what
 /// `--real` makes real, the seed, the test's index, the choices to
@@ -495,7 +497,7 @@ pub fn plan_next() -> List[Int] {
 pub fn reset_test(seed: Int, prop: Bool, case_seed: Int) {
   lock()
   let s = st()
-  for off in [S_EKEYS, S_EVALS, S_ARGS] {
+  for off in [S_EKEYS, S_EVALS, S_ARGS, S_RUNLOG] {
     for i in 0..vec_len(s + off) {
       blk_free(vec_at(s + off, i))
     }
@@ -1106,6 +1108,50 @@ pub fn proc_run(cmd: Str) -> List[Str] {
   proc_outputs(rt.mem_load(e, 8, 8), blk_str(rt.mem_load(e, 16, 8)), blk_str(rt.mem_load(e, 24, 8)))
 }
 
+/// A run as FakeProc.runs lists it (std/rt's runLine): the program, then each argument after a space; one that is empty, has a
+/// space, or that quote() writes differently is written with quote().
+fn run_line(name: Str, args: List[Str]) -> Str {
+  var out = ""
+  var first = true
+  var parts: List[Str] = [name]
+  for a in args {
+    parts.push(a)
+  }
+  for a in parts {
+    if !first {
+      out = out + " "
+    }
+    first = false
+    let q = a.quote()
+    if a.is_empty() || a.contains(" ") || q != "\"" + a + "\"" {
+      out = out + q
+    } else {
+      out = out + a
+    }
+  }
+  out
+}
+
+/// Notes a command asked to run (found or not).
+pub fn proc_note(name: Str, args: List[Str]) {
+  let b = blk_of(run_line(name, args))
+  lock()
+  vec_push(st() + S_RUNLOG, b)
+  unlock()
+}
+
+/// FakeProc.runs: the commands asked to run, oldest first.
+pub fn proc_runs() -> List[Str] {
+  lock()
+  let v = st() + S_RUNLOG
+  var out: List[Str] = []
+  for i in 0..vec_len(v) {
+    out.push(blk_str(vec_at(v, i)))
+  }
+  unlock()
+  out
+}
+
 /// std/rt's fakeProc output, runTerm, and pipeline of the commands of
 /// the specs (procspec.xo spec; mode as proc.xo exec's): the outcome as
 /// proc.xo exec gives it.
@@ -1117,6 +1163,12 @@ pub fn proc_exec(specs: List[Str], mode: Int) -> List[Str] {
   while i + 3 < specs.len() {
     let name = specs[i]
     let flags = first_number(specs[i + 2])
+    let nargs = first_number(specs[i + 3])
+    var cmd_args: List[Str] = []
+    for k in 0..nargs {
+      cmd_args.push(specs[i + 4 + k])
+    }
+    proc_note(name, cmd_args)
     i += 4 + first_number(specs[i + 3])
     // the environment, the variables added, the command line
     if i < specs.len() {

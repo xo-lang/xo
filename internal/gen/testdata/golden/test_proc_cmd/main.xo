@@ -68,3 +68,13 @@ test "an attenuated FakeProc denies other commands" {
   }
   expect(git_only.pipeline([os.proc.cmd("git"), os.proc.cmd("sh")]).is_err()) == true
 }
+
+test "runs lists every command asked to run, found or not, quoted like strconv.Quote" {
+  os.proc.on_run("az", ProcOutput{code: 0, stdout: b"{}", stderr: b""})
+  expect(os.proc.runs()) == []
+  let out = os.proc.cmd("az", ["account", "show", "--name", "my sub", "-q", ""]).output().or_fault("ran")
+  expect(out.code) == 0
+  os.proc.run("/bin/sh", ["-c", "az x \"q\" \\ done"]).ignore_err("sh has no on_run: listed, NotFound")
+  os.proc.cmd("missing", ["a\tb"]).output().ignore_err("not found is the point")
+  expect(os.proc.runs()) == ["az account show --name \"my sub\" -q \"\"", "/bin/sh -c \"az x \\\"q\\\" \\\\ done\"", "missing \"a\\tb\""]
+}

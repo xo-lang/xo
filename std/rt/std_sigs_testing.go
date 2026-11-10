@@ -115,5 +115,6 @@ var (
 	_ func(*Testing_FakeProc, *Task) ProcUsage                                                                   = (*Testing_FakeProc).M_usage
 	_ func(*Testing_FakeProc, *Task) ProcUsage                                                                   = (*Testing_FakeProc).M_children_usage
 	_ func(*Testing_FakeProc, *Task) List[string]                                                                = (*Testing_FakeProc).M_killed
+	_ func(*Testing_FakeProc, *Task) List[string]                                                                = (*Testing_FakeProc).M_runs
 	_ func(*Task, func(*Task, Os) Result[Unit, IError], Testing_TestOs, List[string]) int64                      = Testing_run_main
 )

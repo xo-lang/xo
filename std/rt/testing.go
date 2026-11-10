@@ -822,6 +822,7 @@ type fakeProc struct {
 	grace   Option[Duration] // grace period for the next run_main
 	stdio   *fakeStdio       // the test's, where Cmd.run writes (decision 0161)
 	killed  []string         // Proc.kill's signals, "NAME PID" (decision 0190)
+	ran     []string         // every command asked to run, in order (FakeProc.runs)
 }
 
 // Testing_FakeProc is the fake process control of a test.
@@ -847,6 +848,7 @@ func (f Testing_FakeProc) M_run(tk *Task, cmd string, args List[string]) Result[
 	}
 	f.p.mu.Lock()
 	defer f.p.mu.Unlock()
+	f.p.ran = append(f.p.ran, runLine(cmd, args.s))
 	if out, ok := f.p.runs[cmd]; ok {
 		return Ok[ProcOutput, ProcErr](out)
 	}
