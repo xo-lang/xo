@@ -1,5 +1,16 @@
 # std/uuid changes
 
+## 2026-11-10: fix: `UuidErr.msg` is readable outside std again
+
+- Kind: fix
+- Commit: this commit
+- Found by: the lead's 2-hourly check (test/errorcheck/std_internal_fields)
+- Go reference: none
+- Test: test/errorcheck/std_internal_fields
+
+Merging std/uuid with its implementation (decision 0588) left `UuidErr.msg` without `pub`, so reading it outside std
+was XO0605; decision 0440 keeps every std field public except the `@internal` ones (Uuid's hi and lo).
+
 ## 2026-11-10: refactor: one file (decision 0588)
 
 - Kind: refactor

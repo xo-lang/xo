@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fixed: `xo doc std` summaries of the std modules merged with their implementation (decision 0588) and of headers that open `std/NAME:` or name a decision in their parentheses (std/amqptest, std/timego, std/base32, std/uuid read their description again, not an origin or license line); `UuidErr.msg` is `pub` again (decision 0440)
 - **Breaking** (std/amqptest, decision 0591): `Broker.event_hub`, `put`, `ready`, `locked` and `scheduled` declare `uses clock`, since they read the broker's clock; a caller (a closure passed as a pure `fn`, say) needs the `clock` effect
 - FreeBSD (decision 0573): std/sqlite builds and runs for freebsd/arm64 and freebsd/amd64 (a database file in WAL or rollback journal mode); Xo's runtime and the C the build adds give sqlite the C library calls it makes (mutexes, fstat, fsync, lseek, ...). SQLite's `localtime` is UTC there.
 - Fixed (Windows): drive paths in `xo doc --dir=C:\x\app` (it read the directory alone), `xo query --dir=C:\x` (callers missed the workspace packages importing the package), and xo serve (a lookup with a drive path was never forwarded, and `C:\x` and `C:/x` were two cache entries)

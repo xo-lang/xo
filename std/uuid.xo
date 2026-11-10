@@ -24,7 +24,7 @@ pub struct Uuid {
 /// Displays as google/uuid's texts: `invalid UUID length: 35`,
 /// `invalid UUID format`, `invalid urn prefix: "urn:uid::"`.
 pub struct UuidErr {
-  msg: Str
+  pub msg: Str
 }
 
 pub fn (e: UuidErr) display() -> Str { e.msg }

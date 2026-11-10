@@ -437,16 +437,30 @@ fn std_list(os: Os, ctx: Ctx, json: Bool) -> Int {
 }
 
 /// The first sentence of a std file's header comment that describes the
-/// module: the comment's text without its `std/NAME (spec ...).` opening,
-/// the declaration file's boilerplate sentence and a "Notes for this
-/// file:" line; at most 100 characters.
+/// module: the comment's text from its `std/NAME` line (a merged module's
+/// header may open with its implementation's origin, decision 0588),
+/// without the `std/NAME (spec ...).` or `std/NAME:` opening, the
+/// declaration file's boilerplate sentences ("Declaration file", the
+/// encoding rules pointer, a bare "Pure.") and a "Notes for this file:"
+/// line; at most 100 characters.
 fn std_summary(src: Str) -> Str {
-  var t = StrBuilder.new()
+  var lines: List[Str] = []
   for l in src.split("\n") {
     if !l.starts_with("//") {
       break
     }
-    let x = l.trim_prefix("//").trim()
+    lines.push(l.trim_prefix("//").trim())
+  }
+  // a merged module's header: start at its `std/NAME` line
+  var from = 0
+  for i in 0..lines.len() {
+    if lines[i].starts_with("std/") {
+      from = i
+      break
+    }
+  }
+  var t = StrBuilder.new()
+  for x in lines[from..lines.len()] {
     if x.is_empty() || x.starts_with("-") {
       break
     }
@@ -457,13 +471,26 @@ fn std_summary(src: Str) -> Str {
   // header says nothing more (std/http's notes)
   var refs = ""
   if text.starts_with("std/") {
-    if let Some(i) = text.find("). ") {
-      if let Some(j) = text.find(" (") {
-        refs = "see ${text[j + 2..i]}"
+    let sp = text.find(" ") ?? text.len()
+    let co = text.find(":") ?? text.len()
+    let name_end = if co < sp { co } else { sp }
+    let rest = text[name_end..text.len()]
+    if rest.starts_with(": ") {
+      text = rest[2..rest.len()]
+    } else if rest.starts_with(" (") {
+      if let Some(i) = rest.find(")") {
+        refs = "see ${rest[2..i]}"
+        let after = rest[i + 1..rest.len()]
+        if after.starts_with(". ") || after.starts_with(": ") {
+          text = after[2..after.len()]
+        } else {
+          text = after.trim_prefix(".").trim()
+        }
       }
-      text = text[i + 3..text.len()]
     }
   }
+  text = text.trim_prefix("Declaration file; encoding rules are listed at the top of std/prelude.xo. ")
+  text = text.trim_prefix("Declaration file; encoding rules are listed at the top of std/prelude.xo.")
   if text.starts_with("Declaration file;") {
     if let Some(i) = text.find("prelude.xo. ") {
       text = text[i + 12..text.len()]
@@ -472,7 +499,8 @@ fn std_summary(src: Str) -> Str {
     }
   }
   text = text.trim_prefix("Declaration file. ")
-  if text.starts_with("Notes for this file:") || text == "Declaration file." {
+  text = text.trim_prefix("Encoding rules are listed at the top of std/prelude.xo. ")
+  if text.starts_with("Notes for this file:") || text == "Declaration file." || text == "Pure." {
     text = ""
   }
   if text.is_empty() {
