@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo build (windows/arm64, experimental, decision 0569): std's separately compiled objects link there (Xo's PE linker and the COFF std store read ARM64 atoms mode objects, where `xo dev stdobj` said they are not supported), and the PE linker keeps a function reached only through `/alternatename` (a `--race` build stopped with "__tsan_destroy_fiber was stripped") (winarm VM, 2026-11-09).
 - xo doc (fix): `xo doc DIR/...` (`./...` too) documents every module at and below DIR, as its help says and as xo check reads the walk; 0.45.0 looked the pattern up as a declaration name (`no declaration named ./...`)
 - Fixed (LLVM, linux/arm64): programs using AES decryption (CBC decrypt, TLS records) failed to link with `ld.lld: error: <inline asm> instruction requires: aes` since 83cc72e9f; the aesimc inline asm now names the crypto extension as the aese asm does (7bc14a109).
 - std (net, fix): a host name lookup that asks for IPv4 and IPv6 at once no longer returns IPv4 addresses read from the IPv6 answer's bytes: when a resolver answered both queries back to back, the A reply's addresses were views of the shared receive buffer that the AAAA reply then overwrote, so programs dialed addresses such as 38.6.71.0 (decision 0330's views; commit 90bec2cd1; std/changes/prelude.md 2026-11-10; gotchas/slice-view-of-reused-buffer.md).
