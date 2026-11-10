@@ -3,6 +3,8 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [clib-static-archive-stale-bin-cache.md](clib-static-archive-stale-bin-cache.md): Observed 2026-11-10: a fixed ar_static still gave TestCLibStatic a crash at pc 0: the binary cache key of a cc link had no xo identity, and ar_static writes objects outside the keyed directory; library links are keyed on self_id now
+- [llvm-lto-shared-lib-local-exec-tls.md](llvm-lto-shared-lib-local-exec-tls.md): Observed 2026-11-10: an LLVM --lib=shared failed on GNU ld with R_X86_64_TPOFF32 and --lib=static with a bad -plugin-opt in cc -r (the Mac passed); library builds run no LTO and use -fPIC off darwin
 - [windows-test-children-outlive-timeout.md](windows-test-children-outlive-timeout.md): Observed 2026-11-10: a winarm suite's timeout ended xo.test.exe but nine xo.exe children spun for seven hours; testtmp now joins a kill-on-close job object on Windows.
 - [bash-reads-edited-running-script.md](bash-reads-edited-running-script.md): Observed 2026-11-10: an amend in the worktree a long release-vs-go.sh run came from gave "syntax error near unexpected token" at line 430: bash reads a running script as it goes; edit a copy or another worktree.
 - [member-check-reinstalled-std-record.md](member-check-reinstalled-std-record.md): Observed 2026-11-09: `xo check ./...` of a workspace of 8+ modules reported "expected `Str`, found `Str`" in members importing a std module the base lacked, once std's record was cached: each such member installed the whole record again (a second prelude); members now declare those modules from source
