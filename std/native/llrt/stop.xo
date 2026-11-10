@@ -158,8 +158,8 @@ fn now() -> Int {
 /// The monotonic time d from now (saturating).
 fn deadline(d: Int) -> Int {
   let now = now()
-  if d > 0 && now > 9223372036854775807 - d {
-    return 9223372036854775807
+  if d > 0 && now > Int.max - d {
+    return Int.max
   }
   now + d
 }

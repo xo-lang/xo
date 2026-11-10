@@ -461,13 +461,13 @@ pub fn strtol(s: Int, end: Int, base0: Int) -> Int {
     rt.mem_store(end, 0, if i == start { s } else { s + i }, 8)
   }
   if over {
-    return if neg { -9223372036854775807 - 1 } else { 9223372036854775807 }
+    return if neg { Int.min } else { Int.max }
   }
   if neg {
     return v
   }
-  if v == -9223372036854775807 - 1 {
-    return 9223372036854775807
+  if v == Int.min {
+    return Int.max
   }
   -v
 }

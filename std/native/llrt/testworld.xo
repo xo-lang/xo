@@ -110,7 +110,7 @@ const ACQUIRE = 1
 const RELEASE = 2
 const ACQ_REL = 3
 
-const MIN_INT: Int = -9223372036854775807 - 1
+const MIN_INT: Int = Int.min
 
 // ---------------------------------------------------------------------------
 // Raw memory: blocks of text and vectors

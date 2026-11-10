@@ -654,7 +654,7 @@ fn parse_len(p: Int, n: Int) -> Int {
     if c < 0 || c > 9 {
       return -1
     }
-    if v > (9223372036854775807 - c) / 10 {
+    if v > (Int.max - c) / 10 {
       return -1
     }
     v = v * 10 + c

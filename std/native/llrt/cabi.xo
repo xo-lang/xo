@@ -609,7 +609,7 @@ fn select_after(s: Int, d: Int) { selects.after(s, d) }
 /// left, the least Int for none.
 fn task_deadline_left() -> Int {
   let at = tasks.cur_deadline()
-  if at == 0 { -9223372036854775807 - 1 } else { at - poll.now() }
+  if at == 0 { Int.min } else { at - poll.now() }
 }
 
 /// `task.is_canceled()`.

@@ -2149,7 +2149,7 @@ fn list_expr(v: Vars, vv: VVar, pc: Int) -> (Int, Int) {
       }
       5 => {
         lo = 0
-        hi = 9223372036854775807
+        hi = Int.max
       }
       6 => {
         base = ld(r.p, 0)

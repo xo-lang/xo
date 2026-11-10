@@ -368,7 +368,7 @@ pub fn large_resize(b: Int, n: Int) -> Int {
 // block keeps its size, then the region's address and size.
 
 /// The prefix of a mapped file's object.
-const MAPPED_PREFIX: Int = -9223372036854775807 - 1
+const MAPPED_PREFIX: Int = Int.min
 
 /// The word below it ("XoMapped").
 const MAPPED_MAGIC = 6372397078646121828
@@ -1383,7 +1383,7 @@ const H_COUNT = 1864
 /// the record's next sample is taken (the largest Int: none).
 const H_PROF = 1872
 const H_SAMPLE_AT = 10344
-const NEVER = 9223372036854775807
+const NEVER = Int.max
 
 /// The thread local word of the calling thread's heap record (sched.xo
 /// TLS_HEAP).

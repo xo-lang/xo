@@ -25,9 +25,9 @@ use native/rt
 use native/llrt/tzhost
 
 /// Go's alpha and omega: the ends of time for zone ranges.
-const ALPHA: Int = -9223372036854775807 - 1
+const ALPHA: Int = Int.min
 
-const OMEGA: Int = 9223372036854775807
+const OMEGA: Int = Int.max
 
 // The header of a parsed zone.
 /// The id the table gave it (tzhost.keep writes it).

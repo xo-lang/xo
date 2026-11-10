@@ -33,7 +33,7 @@ fn fail(msg: Str) -> UuidErr { UuidErr{msg: msg} }
 
 /// The top bit of a word: flipped in a Uuid's stored words so that their
 /// signed order is the bytes' order.
-const TOP: Int = -9223372036854775807 - 1
+const TOP: Int = Int.min
 
 /// The Uuid of the words hi and lo (the bytes, the first highest).
 fn of_words(hi: Int, lo: Int) -> Uuid { Uuid{hi: hi ^ TOP, lo: lo ^ TOP} }

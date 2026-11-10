@@ -44,7 +44,7 @@ const MAX_HEAD: Int = 1052672
 /// bounds them); more is 431.
 const MAX_FIELDS: Int = 10000
 
-const MAX_INT: Int = 9223372036854775807
+const MAX_INT: Int = Int.max
 
 // The results of a head's parse (xo_http.c's HP_*).
 const NEED: Int = 0
@@ -290,7 +290,7 @@ pub fn host_port(h: Str) -> Int {
   var j = i + 1
   while j < b.len() {
     let d = Int(b[j]) - 48
-    if v > (9223372036854775807 - d) / 10 {
+    if v > (Int.max - d) / 10 {
       return -1
     }
     v = v * 10 + d

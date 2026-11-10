@@ -1,5 +1,17 @@
 # std/amqp changes
 
+## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0587 point 4 (std's literal bounds become the type constants)
+- Go reference: none (no behavior change; Go's math.MaxInt64 and MinInt64)
+- Test: the std module tests and goldens of the gate; the self build
+
+`9223372036854775807` and `-9223372036854775807 - 1` in std/amqp's code are
+`Int.max` and `Int.min`; masks, Float literals, comments and texts keep their
+digits. No behavior change.
+
 ## 2026-11-06: feature: SenderOptions and ReceiverOptions take the Attach's desired capabilities
 
 - Kind: feature

@@ -768,7 +768,7 @@ fn sparse_pax(records: Map[Str, Str], phys: Bytes) -> (Str, Bytes)? ! Str {
   while k < spd.len() {
     let off = spd[k]
     let len = spd[k + 1]
-    if off < 0 || len < 0 || off > 9223372036854775807 - len || off + len > size || pre_end > off {
+    if off < 0 || len < 0 || off > Int.max - len || off + len > size || pre_end > off {
       return Err(ERR_HEADER)
     }
     pre_end = off + len
@@ -1052,7 +1052,7 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
           }
           let o = off ?? 0
           let l = len ?? 0
-          if o < 0 || l < 0 || o > 9223372036854775807 - l || o + l > real || pre_end > o {
+          if o < 0 || l < 0 || o > Int.max - l || o + l > real || pre_end > o {
             ok = false
           } else {
             pre_end = o + l

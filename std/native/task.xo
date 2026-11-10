@@ -136,7 +136,7 @@ fn map_concurrent_until[T, R, E, fx: Effects](clock: Clock, d: Duration, items: 
 /// natively tasks.xo's C_TASK_DL, on wasm rt3.xo's $tdl) from clock's now.
 fn deadline(clock: Clock) -> Time? uses clock {
   let left = rt.task_deadline_left()
-  if left == -9223372036854775807 - 1 {
+  if left == Int.min {
     return None
   }
   Some(clock.now() + 1ns * left)

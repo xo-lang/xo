@@ -24,7 +24,7 @@ use native/rt
 const MAX = 4096
 
 /// A list's count that never changes (xo_rt.c XO_RC_IMMORTAL).
-const IMMORTAL = -9223372036854775807 - 1
+const IMMORTAL = Int.min
 
 const ACQUIRE = 1
 const RELEASE = 2

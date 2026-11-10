@@ -20,7 +20,7 @@ use native/llrt/strings
 use native/llrt/unicode
 use native/rt
 
-const MIN_INT: Int = -9223372036854775807 - 1
+const MIN_INT: Int = Int.min
 
 const HEX: Bytes = b"0123456789abcdef"
 

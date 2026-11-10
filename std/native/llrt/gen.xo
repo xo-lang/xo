@@ -12,8 +12,8 @@ use native/llrt/raw
 use native/llrt/testworld
 use native/rt
 
-const MAX_INT: Int = 9223372036854775807
-const MIN_INT: Int = -9223372036854775807 - 1
+const MAX_INT: Int = Int.max
+const MIN_INT: Int = Int.min
 
 /// The runes of generated strings (std/rt's alphabet), 4 bytes each,
 /// little endian, then 4 bytes so that the last one reads as a word.

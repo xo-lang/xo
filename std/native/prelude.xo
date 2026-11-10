@@ -785,7 +785,7 @@ fn str_repeat(s: Str, n: Int, at: rt.Loc) -> Str {
   if n == 0 || k == 0 {
     return ""
   }
-  if k > 9223372036854775807 / n {
+  if k > Int.max / n {
     rt.fault_at("strings: Repeat output length overflow", at)
   }
   if k * n > 4294967295 {
@@ -1290,7 +1290,7 @@ fn bytes_repeat(b: Bytes, n: Int, at: rt.Loc) -> Bytes {
   if n == 0 || k == 0 {
     return b""
   }
-  if k > 9223372036854775807 / n {
+  if k > Int.max / n {
     rt.fault_at("bytes: Repeat output length overflow", at)
   }
   if k * n > 4294967295 {
@@ -1398,9 +1398,9 @@ fn int_swap_bytes(n: Int) -> Int { rt.int_wrap(7, n, 0) }
 
 fn int_mul_hi_unsigned(n: Int, m: Int) -> Int { rt.u64_mul_hi(n, m) }
 
-fn int_lt_unsigned(n: Int, m: Int) -> Bool { (n ^ (-9223372036854775807 - 1)) < (m ^ (-9223372036854775807 - 1)) }
+fn int_lt_unsigned(n: Int, m: Int) -> Bool { (n ^ Int.min) < (m ^ Int.min) }
 
-fn int_le_unsigned(n: Int, m: Int) -> Bool { (n ^ (-9223372036854775807 - 1)) <= (m ^ (-9223372036854775807 - 1)) }
+fn int_le_unsigned(n: Int, m: Int) -> Bool { (n ^ Int.min) <= (m ^ Int.min) }
 
 fn checked(op: Int, n: Int, m: Int) -> Int? {
   if !ints.fits(op, n, m) {
@@ -1419,8 +1419,8 @@ fn int_checked_div(n: Int, m: Int) -> Int? { checked(3, n, m) }
 
 /// The bound an overflowing a op b saturates to.
 fn saturated(op: Int, n: Int, m: Int) -> Int {
-  let max = 9223372036854775807
-  let min = -9223372036854775807 - 1
+  let max = Int.max
+  let min = Int.min
   if ints.fits(op, n, m) {
     return ints.apply(op, n, m)
   }
@@ -5478,19 +5478,19 @@ fn duration_round(d: Duration, m: Duration) -> Duration {
     if r < mn - r {
       return Duration.from_nanos(n + r)
     }
-    if n >= -9223372036854775807 - 1 + (mn - r) {
+    if n >= Int.min + (mn - r) {
       return Duration.from_nanos(n - (mn - r))
     }
-    return Duration.from_nanos(-9223372036854775807 - 1)
+    return Duration.from_nanos(Int.min)
   }
   let r = n % mn
   if r < mn - r {
     return Duration.from_nanos(n - r)
   }
-  if n <= 9223372036854775807 - (mn - r) {
+  if n <= Int.max - (mn - r) {
     return Duration.from_nanos(n + (mn - r))
   }
-  Duration.from_nanos(9223372036854775807)
+  Duration.from_nanos(Int.max)
 }
 
 /// Go's Duration.Truncate.

@@ -684,7 +684,7 @@ fn key_text(kfd: protodesc.FieldDesc, f: pd.Fld) -> (Str, Str) {
     let s = if f.v != 0 { "true" } else { "false" }
     return (if f.v != 0 { "1" } else { "0" }, s)
   }
-  let sb = -9223372036854775807 - 1
+  let sb = Int.min
   if k == protodesc.TYPE_INT32 || k == protodesc.TYPE_SINT32 || k == protodesc.TYPE_SFIXED32 {
     var n = i32(f.v)
     if k == protodesc.TYPE_SINT32 {
@@ -1646,7 +1646,7 @@ fn key_sv(kfd: protodesc.FieldDesc, ks: Str) -> (Sv, Str) ! protojson.JsonErr {
     Some(x) => x
     None => return Err(bad(kfd))
   }
-  let sb = -9223372036854775807 - 1
+  let sb = Int.min
   var sk = ""
   if k == protodesc.TYPE_UINT32 || k == protodesc.TYPE_FIXED32 || k == protodesc.TYPE_UINT64 || k == protodesc.TYPE_FIXED64 {
     sk = hex16(x.v)

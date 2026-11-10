@@ -15,7 +15,7 @@ use native/llrt/num
 use native/llrt/show
 use native/rt
 
-const MIN_INT: Int = -9223372036854775807 - 1
+const MIN_INT: Int = Int.min
 
 /// rt.static_word: the Str hash's seed (decision 0545).
 const HSEED = 100

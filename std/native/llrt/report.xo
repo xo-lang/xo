@@ -15,7 +15,7 @@ use native/llrt/show
 use native/llrt/testworld
 use native/rt
 
-const MIN_INT: Int = -9223372036854775807 - 1
+const MIN_INT: Int = Int.min
 
 /// Reports the choices of the generator g and the input text (`name =
 /// value` lines) of a property test's case to the harness; exits 3 when

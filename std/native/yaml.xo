@@ -5727,7 +5727,7 @@ fn go_duration(ns: Int) -> Str {
   if ns == 0 {
     return "0s"
   }
-  if ns == -9223372036854775807 - 1 {
+  if ns == Int.min {
     return "-2562047h47m16.854775808s"
   }
   let neg = ns < 0

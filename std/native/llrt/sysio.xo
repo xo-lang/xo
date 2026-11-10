@@ -85,7 +85,7 @@ pub fn fs_read(op: Str) -> List[Bytes] {
 // heapos.xo release's mapped files (decision 0402): its MAPPED_PREFIX and
 // MAPPED_MAGIC, kept in step (heapos imports pool, which imports this
 // module, so the mapping is made here)
-const MAPPED_PREFIX: Int = -9223372036854775807 - 1
+const MAPPED_PREFIX: Int = Int.min
 const MAPPED_MAGIC = 6372397078646121828
 
 /// The bytes before the file: room for the object's words, and a multiple

@@ -1109,7 +1109,7 @@ fn deadline(d: Int) -> Int {
     return twrun.deadline(d)
   }
   let now = sysio.mono_ns()
-  if d > 0 && now > 9223372036854775807 - d { 9223372036854775807 } else { now + d }
+  if d > 0 && now > Int.max - d { Int.max } else { now + d }
 }
 
 fn would_block(e: Int) -> Bool {

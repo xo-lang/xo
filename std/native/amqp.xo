@@ -868,7 +868,7 @@ fn check_ranges(b: amqp.FrameBody) -> () ! amqp.AmqpErr {
     Begin(x) => { in_range("handle_max", x.handle_max, 4294967295)? }
     Attach(x) => {
       in_range("initial_delivery_count", x.initial_delivery_count, 4294967295)?
-      in_range("max_message_size", x.max_message_size, 9223372036854775807)?
+      in_range("max_message_size", x.max_message_size, Int.max)?
       match x.source {
         Some(s) => {
           in_range("durable", s.durable, 4294967295)?

@@ -308,7 +308,7 @@ pub fn raise(exc: Int, boundary: Int, pers: Int, wcx: Int) -> Int {
     }
     first = false
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, 9223372036854775807) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, Int.max) }) {
       return 0
     }
   }
@@ -392,7 +392,7 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
     }
     n += 1
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, 9223372036854775807) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, Int.max) }) {
       break
     }
   }
@@ -439,7 +439,7 @@ pub fn prof_trace(s: Int, out: Int, max: Int) -> Int {
     rt.mem_store(out, 8 * n, pc, 8)
     n += 1
     let enc = rt.mem_load(s, H_ENC, 8)
-    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, 9223372036854775807) }) {
+    if !(if darwin && enc != 0 { cstep(s, cur, enc) } else { step(s, cur, 0, Int.max) }) {
       break
     }
   }

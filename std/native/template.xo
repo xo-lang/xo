@@ -2872,7 +2872,7 @@ fn sign_prefix(neg: Bool, sp: Spec) -> Str {
 
 fn fmt_int(n: Int, verb: Rune, sp: Spec, ty: Str) -> Str? {
   let neg = n < 0
-  let mag = if neg { if n == (-9223372036854775807 - 1) { "9223372036854775808" } else { "${-n}" } } else { "${n}" }
+  let mag = if neg { if n == Int.min { "9223372036854775808" } else { "${-n}" } } else { "${n}" }
   var digits = ""
   var prefix = ""
   match verb {

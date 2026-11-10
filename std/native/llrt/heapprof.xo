@@ -107,7 +107,7 @@ const T_SIZE = unwind.PROF_RECORD + 8
 const H_ABYTES = 16
 const H_SAMPLE_AT = 10344
 const H_PSTATE = 10352
-const NEVER = 9223372036854775807
+const NEVER = Int.max
 
 const RELAXED = 0
 const ACQUIRE = 1

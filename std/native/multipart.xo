@@ -434,7 +434,7 @@ fn (var r: R) read_continued(lim0: Int) -> Bytes ! Str {
   var out = BytesBuilder.new()
   out.write(trim_lwsp(line))
   var n = trim_lwsp(line).len()
-  let lim = if lim0 < 0 { 9223372036854775807 } else { lim0 } - n
+  let lim = if lim0 < 0 { Int.max } else { lim0 } - n
   while r.at_lwsp() {
     while r.at_lwsp() {
       r.pos += 1

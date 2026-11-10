@@ -32,7 +32,7 @@ use native/llrt/sanhook
 use native/rt
 
 /// The immortal count of a literal (never written).
-const IMMORTAL: Int = -9223372036854775807 - 1
+const IMMORTAL: Int = Int.min
 
 /// The count of the object at p, relaxed: another thread may change a
 /// shared count at any time (rc.xo; a plain load is a data race to

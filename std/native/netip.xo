@@ -17,7 +17,7 @@ fn addr_err(input: Str, msg: Str, at: Str) -> netip.ParseErr {
 /// The top bit of a word: flipped in an Addr's stored words so that the
 /// derived order of the signed words is the order of the address bytes
 /// (the same trick as std/uuid).
-const SIGN: Int = -9223372036854775807 - 1
+const SIGN: Int = Int.min
 
 /// The Addr of the words hi and lo (the 16 bytes, the first highest).
 fn mk(bits: Int, hi: Int, lo: Int, zone: Str) -> netip.Addr {

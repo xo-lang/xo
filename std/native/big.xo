@@ -12,8 +12,8 @@ use native/rt
 
 fn bigerr_display(e: big.BigErr) -> Str { e.msg }
 
-const MIN: Int = -9223372036854775807 - 1
-const MAX: Int = 9223372036854775807
+const MIN: Int = Int.min
+const MAX: Int = Int.max
 
 // ---------------------------------------------------------------------------
 // The key (std/big.xo): an order-preserving encoding of sign and limbs

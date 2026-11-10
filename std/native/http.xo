@@ -2178,7 +2178,7 @@ fn sc_int(s: Str) -> Int? {
   var v = 0
   while i < b.len() {
     let d = Int(b[i]) - 48
-    if d < 0 || d > 9 || v > (9223372036854775807 - d) / 10 {
+    if d < 0 || d > 9 || v > (Int.max - d) / 10 {
       return None
     }
     v = v * 10 + d

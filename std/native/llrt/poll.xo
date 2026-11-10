@@ -607,8 +607,8 @@ pub fn wall_now() -> Int {
 /// The timers' time d ns from now, saturating (xo_rt.c deadline).
 pub fn deadline(d: Int) -> Int {
   let n = now()
-  if d > 0 && n > 9223372036854775807 - d {
-    return 9223372036854775807
+  if d > 0 && n > Int.max - d {
+    return Int.max
   }
   addw(n, d)
 }
@@ -2027,7 +2027,7 @@ pub fn pd_arm(pd: Int) {
   }
   // AFD_POLL_INFO: no timeout (INT64_MAX), one handle, not exclusive
   let info = addw(pd, D_INFO)
-  rt.mem_store(info, 0, 9223372036854775807, 8)
+  rt.mem_store(info, 0, Int.max, 8)
   rt.mem_store(info, 8, 1, 4)
   rt.mem_store(info, 12, 0, 4)
   rt.mem_store(info, 16, rt.mem_load(pd, D_BASE, 8), 8)

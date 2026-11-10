@@ -16,7 +16,7 @@ use native/llrt/num_tables
 use native/llrt/raw
 use native/rt
 
-const MIN_INT: Int = -9223372036854775807 - 1
+const MIN_INT: Int = Int.min
 
 // ---------------------------------------------------------------------------
 // Int

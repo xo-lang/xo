@@ -104,7 +104,7 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
   // above limit are rejected
   let span = hi.wrapping_sub(lo)
   let limit = (-1).wrapping_sub(max_rem(span))
-  let flip = -9223372036854775807 - 1
+  let flip = Int.min
   while true {
     let v = next_u64()
     if (v ^ flip) < (limit ^ flip) {
@@ -122,7 +122,7 @@ pub fn next_int(lo: Int, hi: Int, at: Str) -> Int {
 /// reaches it, where m = (2^63 - 1) mod span.
 fn max_rem(span: Int) -> Int {
   if span > 0 && span <= 4611686018427387904 {
-    let r = ((9223372036854775807 % span).wrapping_mul(2)).wrapping_add(1)
+    let r = ((Int.max % span).wrapping_mul(2)).wrapping_add(1)
     return if r >= span { r - span } else { r }
   }
   ints.u64_rem(-1, span)

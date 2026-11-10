@@ -1548,8 +1548,8 @@ pub fn trace_text(pcs: List[Int]) -> Str { trace_text_at(pcs, []) }
 /// (fault.xo trace_regs); none, or a program without DWARF, prints the
 /// frames alone (with the reason).
 pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
-  let syms = symbols(1, 9223372036854775807)
-  let lines = dwline.load(1, 9223372036854775807)
+  let syms = symbols(1, Int.max)
+  let lines = dwline.load(1, Int.max)
   var names = syms.names
   // the symbol table's own entries: func_of appends a name at and past
   // this index for a pc no symbol covers

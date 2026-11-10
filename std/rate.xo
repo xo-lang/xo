@@ -150,7 +150,7 @@ pub fn (r: Reservation) delay() -> Duration uses clock { delay_from(r, r.lim.clo
 /// have not counted on them (rate.CancelAt).
 pub fn (r: Reservation) cancel() uses clock { cancel_at(r, r.lim.clock.now()) }
 
-const MAX_NANOS: Int = 9223372036854775807
+const MAX_NANOS: Int = Int.max
 
 fn inf_duration() -> Duration { Duration.from_nanos(MAX_NANOS) }
 

@@ -216,7 +216,7 @@ fn set_in_main(on: Bool) {
 pub fn deadline(d: Int) -> Int {
   let now = if virt() { rt.slot_load[Int](tw(), 1, ACQUIRE) } else { sysio.mono_ns() }
   let w = now.wrapping_add(d)
-  if d > 0 && w < now { 9223372036854775807 } else { w }
+  if d > 0 && w < now { Int.max } else { w }
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,7 +1040,7 @@ pub fn next() -> Int {
     // no test (XO_TEST unset or negative) is a test no index names: the
     // main fails it, as it did before the loop
     let i = testworld.test_index()
-    return if i < 0 { 9223372036854775807 } else { i }
+    return if i < 0 { Int.max } else { i }
   }
   if ran > 0 {
     let clean = between()
