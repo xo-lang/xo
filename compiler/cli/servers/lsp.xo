@@ -423,6 +423,8 @@ struct Session {
   auto: Bool = true
   /// the patched checks of completion and signatureHelp the worker ran
   pre: List[Pre] = []
+  /// hover on a std declaration ends with a link to its xolang.dev page
+  doc_links: Bool = true
 }
 
 fn abs_of(wd: Str, p: Str) -> Str {
@@ -1019,6 +1021,12 @@ fn initialize_result(version: Str) -> J {
 /// A request: Ok(result) or Err((code, message)).
 fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) -> J ! (Int, Str) uses (stdio, fs, env) {
   if method == "initialize" {
+    // initializationOptions.hoverDocLinks false: no xolang.dev link in
+    // hovers (the extension's xo.hover.docLinks)
+    match get(get(params, "initializationOptions") ?? J.Null, "hoverDocLinks") {
+      Some(J.Bool(b)) => s.doc_links = b
+      _ => {}
+    }
     return Ok(initialize_result(s.version))
   }
   if method == "shutdown" {

@@ -456,6 +456,34 @@ fn (s: Session) describe(tg: LspTarget) -> (Str, Str) {
   ("", "")
 }
 
+/// The std reference page of a std module's type, fn, const or method, as
+/// gopls links pkg.go.dev: "[charset.CharsetErr.display](
+/// https://xolang.dev/docs/stdlib/charset/#CharsetErr.display) on
+/// xolang.dev", whose id is the declaration's name as `xo doc` heads it
+/// (the website's stdlib pages give each heading that id). "" for user
+/// code, the prelude (documented in the spec, not a page), std/internal,
+/// a native implementation module, and a `use c` or `use go` binding.
+fn (s: Session) doc_link(tg: LspTarget) -> Str {
+  if !(tg.what is "func" | "const" | "type") || tg.oi < 0 {
+    return ""
+  }
+  let c = s.res[0].c
+  let o = c.objs[tg.oi]
+  if o.module < 0 || o.std_internal {
+    return ""
+  }
+  let m = c.mods[o.module]
+  if !m.std_tree || m.is_prelude || m.native || !m.path.starts_with("std/") {
+    return ""
+  }
+  let short = m.path[4..]
+  if short.is_empty() || short.contains("/") || short is "internal" | "prelude" {
+    return ""
+  }
+  let name = c.display_name(tg.oi)
+  "[${short}.${name}](https://xolang.dev/docs/stdlib/${short}/#${name}) on xolang.dev"
+}
+
 fn (var s: Session) hover(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
   let at = s.at(os, params)?
   if at.f < 0 {
@@ -473,6 +501,12 @@ fn (var s: Session) hover(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
     }
     if !doc.is_empty() {
       parts.push(doc)
+    }
+    if s.doc_links {
+      let link = s.doc_link(tg)
+      if !link.is_empty() {
+        parts.push(link)
+      }
     }
   }
   if parts.is_empty() {
