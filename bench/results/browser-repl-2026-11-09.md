@@ -127,3 +127,26 @@ cmd {"cmd":"type","arg":"p"}              45 ms ok=false type="" out="" err="ent
 "
 summary: entries 30, first 3185 ms, later median 294 ms, max 418 ms, compared 14 of 14 values, problems 0
 ```
+
+## Step 5: memory (2026-11-10)
+
+The 30-entry session with session.mjs (Node 22, Mac Studio), xoc built from
+main 2c05aef20 with branch l2-playlazy (play_check sets lazy_parse and
+skip_tests; the wasm heap grows by a quarter, not double):
+
+| compiler | final wasm memory | first entry | later median | later max | values |
+|---|---|---|---|---|---|
+| XO_LAZY_PARSE=off (main's behavior) | 608 MB | 1874 ms | 195 ms | 332 ms | 14 of 14 |
+| lazy_parse, doubling growth (run 1) | 304 MB | 999 ms | 272 ms | 401 ms | 14 of 14 |
+| lazy_parse, doubling growth (run 2) | 304 MB | 1544 ms | 199 ms | 324 ms | 14 of 14 |
+| lazy_parse, 25% growth, XO_LAZY_PARSE=off | 517 MB | 1169 ms | 185 ms | 244 ms | 14 of 14 |
+| lazy_parse, 25% growth | 265 MB | 805 ms | 155 ms | 253 ms | 14 of 14 |
+
+One `--play build` per tour program (Node, XO_PLAY_TIMES=1, final memory):
+lazy_parse on: check 520, 571, 578 ms (basics, collections, concurrency),
+304 MB each; off: 829, 723, 750 ms, 608 MB each. The modules are byte
+identical (9184, 99920 and 19525 bytes) and print the same.
+
+Headless Chrome 157, the step 4 probe page (one long-lived instance, JSPI)
+with this std: memory 608 MB (off), 304 MB (lazy_parse), 265 MB (both), the
+same at every entry after the second; entries 44 to 116 ms with the run.

@@ -186,7 +186,12 @@ fn rt_text(var g: Gen) -> Str {
           i32.shl
           i32.le_u
           br_if $ok
+          ;; grow by a quarter of the memory (at least a page), not double it:
+          ;; the playground's compiler peaked at 304 MB of memory on a 152 to 304 MB
+          ;; heap (decision 0583)
           memory.size
+          i32.const 2
+          i32.shr_u
           i32.const 1
           i32.add
           memory.grow
@@ -316,7 +321,12 @@ fn rt_text(var g: Gen) -> Str {
           i32.shl
           i32.le_u
           br_if $ok
+          ;; grow by a quarter of the memory (at least a page), not double it:
+          ;; the playground's compiler peaked at 304 MB of memory on a 152 to 304 MB
+          ;; heap (decision 0583)
           memory.size
+          i32.const 2
+          i32.shr_u
           i32.const 1
           i32.add
           memory.grow

@@ -152,3 +152,43 @@ free lists (so about 1.1 GB is held, not size class garbage). The work
 is the compiler's own check and build peak, which /play/ pays today too.
 Levers: a smaller warm base (what the warm check keeps), freeing each
 entry's garbage, memory.grow headroom, and levels 2b/2c.
+
+## Step 5 result: memory (2026-11-10)
+Two causes, both fixed; the target is met in Node and in headless Chrome.
+- The playground's check (compiler/wasm play.xo `play_check`) set
+  native and lazy, as `xo build` does, but not `lazy_parse` (decision
+  0351 stage 2) or `skip_tests`, so it parsed every function body of the
+  runtime and the std modules it loads. Native measurement of the same
+  hello on a cold cache: `xo build`'s check holds 59 MB of heap with
+  lazy parsing and 225 MB without (XO_LAZY_PARSE=off), and `xo check`,
+  which parses everything, peaks at 800 MB RSS. play_check now sets both
+  (XO_LAZY_PARSE=off restores the old path for a comparison).
+- The wasm runtime grew memory by doubling (`memory.grow` by
+  memory.size + 1 pages), so the memory a tab holds was up to twice the
+  heap's high water. It now grows by a quarter of the memory (at least
+  a page): a constant number of grows per doubling, and at most 25% over
+  the high water.
+
+The 30-entry session (bench/browserrepl), today's compiler (main
+2c05aef20 plus this change):
+
+| compiler | wasm memory | first entry | later median |
+|---|---|---|---|
+| main (XO_LAZY_PARSE=off) | 608 MB | 1874 ms | 195 ms |
+| lazy_parse | 304 MB | 999 to 1544 ms | 199 to 272 ms |
+| lazy_parse and 25% growth | 265 MB | 805 to 1169 ms | 155 to 185 ms |
+
+Node 22 on the Mac Studio through session.mjs (each later entry includes
+about 100 ms of starting node for the run); every value equal to xo
+repl's, 14 of 14. Headless Chrome 157 (the step 4 probe page with this
+compiler and std, 0583/jspi2): 608, 304 and 265 MB, flat over the 30
+entries after the first (212 MB after the first entry, 265 after the
+second), entries 44 to 116 ms each, run included. The tour programs
+build to byte identical modules with and without lazy parsing.
+
+The 1216 MB of step 4 was an older compiler (2026-11-10 01:31); the
+same probe with main's compiler reads 608 MB. So: 265 MB meets the 300 MB
+target, flat after the warm-up, first entry about 1 s. The REPL panel on
+/play/ is the next step (a website change, through the owner); a
+one-shot /play/ build gains the same (one build of a tour program: 608 to
+304 MB in Node, check 750 to 550 ms).

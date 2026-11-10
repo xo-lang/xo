@@ -106,6 +106,12 @@ fn play_check(os: Os, std_dir: Str, wd: Str, dir: Str, native: Bool) -> (check.C
   c.native = native
   // a build checks the runtime's bodies as it builds them (decision 0247)
   c.lazy = native
+  // and parses those bodies only when it checks them (decision 0351
+  // stage 2) and skips test files, as `xo build` does (compiler/xo
+  // main.xo); without it the REPL's warm check of hello held about 1.2 GB
+  // of wasm memory (decision 0583)
+  c.lazy_parse = native && (os.env.get("XO_LAZY_PARSE") ?? "") != "off"
+  c.skip_tests = native
   c.set_mod_env(wd, "", os.env.get("HOME") ?? "", "", "1", "")
   match c.check_dirs([dir]) {
     Ok(_) => {}
