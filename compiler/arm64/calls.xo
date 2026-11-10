@@ -1613,6 +1613,7 @@ fn (var g: G) call_op(v: Int) {
       if ssa.has_pos(x.lp) {
         // what the check (or the proof) says holds after it
         g.index_facts(i)
+        g.bytes_index_cap(i)
         g.less_fact(x.args[1], alen)
       }
       let bv = g.f.values[x.args[0]]

@@ -1,0 +1,23 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a passed `b[i]`
+// check on Bytes puts i below 2^60 (every byte is in memory, and no
+// target's address space reaches 2^57), so `i + 1` to `i + 3` after it
+// need no overflow test: std/image draw_px reads a pixel's four bytes
+// this way (2026-11-09: 7 of the draw code's 81 overflow branches).
+
+// After b[i], i + 1, i + 2 and i + 3 cannot overflow.
+fn pixel(b: Bytes, i: Int) -> Int {
+  // arm64: -"b\.vs"
+  (Int(b[i]) << 24) | (Int(b[i + 1]) << 16) | (Int(b[i + 2]) << 8) | Int(b[i + 3])
+}
+
+// A List's length is not bounded by memory (a List of a zero size
+// type), so after xs[i] the add keeps its overflow test.
+fn list_next(xs: List[Int], i: Int) -> Int {
+  // arm64: "b\.vs"
+  xs[i] + xs[i + 1]
+}
+
+fn main(os: Os) {
+  let b = "abcdefgh".bytes()
+  os.stdio.println("${pixel(b, 0)} ${pixel(b, 4)} ${list_next([1, 2, 3], 1)}")
+}

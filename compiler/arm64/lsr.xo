@@ -472,6 +472,21 @@ fn (var g: G) index_facts(i: Int) {
   g.cm.hi[i] = hi
 }
 
+/// Every Bytes value's bytes are in memory, one per element, and no
+/// target's user address space reaches 2^57 bytes (arm64 48 or 52 bits,
+/// x86-64 47 or 56 with five level paging): a passed `b[i]` check puts i
+/// below 2^60, so `b[i + 3]` after `b[i]` needs no overflow test on
+/// i + 3 (draw_px, 2026-11-09). Not for List: a List of a zero size type
+/// would not be bounded by memory.
+const BYTES_LEN_CAP = 1 << 60
+
+fn (var g: G) bytes_index_cap(i: Int) {
+  let _mi = g.m_()
+  if (g.cm.hi.get(i) ?? MAX_INT) > BYTES_LEN_CAP - 1 {
+    g.cm.hi[i] = BYTES_LEN_CAP - 1
+  }
+}
+
 /// Records that v = a + n (Add) or a - n (Sub), and v's bounds from a's.
 fn (var g: G) offset_facts(v: Int, a: Int, n0: Int) {
   if g.vkind(v) != ssa.Kind.Int {
