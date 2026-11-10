@@ -105,7 +105,7 @@ func TestBuildOutPaths(t *testing.T) {
 	if code := run(t, []string{"build", "-o", filepath.Join(dir, "out"), "."}, &out, &errOut); code != 0 {
 		t.Fatalf("-o DIR: exit %d\n%s", code, errOut.String())
 	}
-	if fi, err := os.Stat(filepath.Join(dir, "out", "webserver")); err != nil || fi.IsDir() {
+	if fi, err := os.Stat(filepath.Join(dir, "out", hostExe("webserver"))); err != nil || fi.IsDir() {
 		t.Errorf("-o DIR did not write DIR/webserver: %v", err)
 	}
 	errOut.Reset()
@@ -249,7 +249,7 @@ func TestVersionM(t *testing.T) {
 		{"release", []string{"--release", "--dbg=on"}, []string{"\tbuild\tmode=release\n", "\tbuild\tdebug-contracts=off\n", "\tbuild\tdbg=on\n", "\tbuild\tprofile-support=off\n", "\tbuild\tdebug-info=off\n"}},
 		{"go", []string{"--backend=go"}, []string{"\tbackend\tgo\n", "\tbuild\terror-args=on\n", "\tdir\t"}},
 	} {
-		bin := filepath.Join(dir, c.name)
+		bin := hostExe(filepath.Join(dir, c.name))
 		var out, errOut bytes.Buffer
 		if code := run(t, append(append([]string{"build"}, c.flags...), "-o", bin, app), &out, &errOut); code != 0 {
 			t.Errorf("%s: build exit %d\n%s", c.name, code, errOut.String())

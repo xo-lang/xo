@@ -49,7 +49,13 @@ func TestCrossUseCFailsLoudly(t *testing.T) {
 	}
 	out := filepath.Join(dir, "out")
 	var stdout, stderr bytes.Buffer
-	if code := run(t, []string{"build", "--json", "--targets=" + tg, "-o", out, "."}, &stdout, &stderr); code != 1 {
+	code := run(t, []string{"build", "--json", "--targets=" + tg, "-o", out, "."}, &stdout, &stderr)
+	if strings.Contains(stdout.String()+stderr.String(), "needs clang to read C headers") {
+		// a host with no clang (the winarm VM, 2026-11-09) stops at the
+		// header, before the link this test is about
+		t.Skip("no clang to read the C header")
+	}
+	if code != 1 {
 		t.Fatalf("xo build --targets=%s: exit %d, want 1\n%s%s", tg, code, stdout.String(), stderr.String())
 	}
 	if want := tg + " links with a C compiler"; !strings.Contains(stderr.String(), want) {

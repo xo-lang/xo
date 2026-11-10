@@ -15,3 +15,12 @@ func fileURL(p string) string {
 	}
 	return "file://" + s
 }
+
+// hostExe is name as xo writes a host binary given -o name: with .exe on
+// Windows (compiler/xo cache.xo), as is elsewhere.
+func hostExe(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}

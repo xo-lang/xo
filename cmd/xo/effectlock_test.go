@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -107,6 +108,11 @@ func TestTidyUnreadableTree(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a mode 000 directory")
+	}
+	if runtime.GOOS == "windows" {
+		// a mode 000 directory stays readable on Windows (os.Chmod sets
+		// only the read-only attribute; winarm VM, 2026-11-09)
+		t.Skip("no unreadable directory by mode on Windows")
 	}
 	app := t.TempDir()
 	mod := "module example.com/app\nedition preview\n\nrequire github.com/acme/tick v1.0.0\n"

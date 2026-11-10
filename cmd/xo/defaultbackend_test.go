@@ -111,7 +111,8 @@ func TestTargetsAllNative(t *testing.T) {
 	}
 	for tg, w := range want {
 		p := filepath.Join(out, w.file)
-		if rep.Binaries[tg] != p {
+		// the report's paths have / on every host (std.md 3.1)
+		if rep.Binaries[tg] != filepath.ToSlash(p) {
 			t.Errorf("%s: reported %q, want %q", tg, rep.Binaries[tg], p)
 		}
 		b, err := os.ReadFile(p)

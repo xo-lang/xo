@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -165,6 +166,12 @@ func TestFieldRunForwardsStop(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program")
 	}
+	if runtime.GOOS == "windows" {
+		// os.Process.Signal sends only Kill on Windows; a console stop is
+		// CTRL_BREAK_EVENT to a process group (winarm VM, 2026-11-09: the
+		// signal failed and the program was left running)
+		t.Skip("no SIGTERM on Windows")
+	}
 	dir := writeFiles(t, map[string]string{
 		"app/xo.mod":  "module app\n",
 		"app/main.xo": "use std/task\n\nfn main(os: Os) {\n  os.stdio.println(\"ready\")\n  let _ = task.stopping().recv()\n  os.stdio.println(\"stopped cleanly\")\n}\n",
@@ -183,6 +190,8 @@ func TestFieldRunForwardsStop(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		cmd.Process.Kill()
+		cmd.Wait()
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
