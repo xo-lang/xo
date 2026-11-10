@@ -123,7 +123,9 @@ mkdir -p "$logs"
 # the gate using it; a live gate.sh there refuses this one (exit 2). The
 # pid is only checked for liveness and that it is a gate.sh, never signaled.
 gp=$logs/.gate.pid
-if read -r op <"$gp" 2>/dev/null && [ -n "$op" ] && [ "$op" != $$ ] &&
+# (-f first: bash opens <"$gp" before 2>/dev/null applies, so a first
+# gate printed "line 126: .gate.pid: No such file", lead, 2026-11-10)
+if [ -f "$gp" ] && read -r op <"$gp" && [ -n "$op" ] && [ "$op" != $$ ] &&
   ps -p "$op" -o command= 2>/dev/null | grep -q 'gate\.sh'; then
   echo "gate.sh: $logs belongs to the running gate pid $op; set XO_GATE_LOGS to a directory of your own"
   exit 2
