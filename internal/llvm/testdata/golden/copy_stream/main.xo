@@ -1,0 +1,133 @@
+// Decision 0593: copy_stream, File.copy_to and File.copy_from, Go's
+// io.Copy between connections and files, with io_test.go's cases: a copy
+// of everything (TestCopy, here over three 32 KiB reads), an empty
+// source, a read error and a write error, each named by its side.
+
+fn sum(b: Bytes) -> Int {
+  var h = 0
+  for i in 0..b.len() {
+    h = (h * 31 + Int(b[i])) % 1000003
+  }
+  h
+}
+
+/// Reads s to its end: the byte count and a checksum of what came.
+fn drain(s: Stream) -> (Int, Int) uses net {
+  var n = 0
+  var h = 0
+  while true {
+    match s.read(4096) {
+      Ok(Some(b)) => {
+        n += b.len()
+        for i in 0..b.len() {
+          h = (h * 31 + Int(b[i])) % 1000003
+        }
+      }
+      _ => break
+    }
+  }
+  (n, h)
+}
+
+fn main(os: Os) {
+  let payload = "the quick brown fox jumps over the lazy dog. ".repeat(2000).bytes()
+  os.stdio.println("payload ${payload.len()} ${sum(payload)}")
+  let l = os.net.listen("127.0.0.1:0") ?? e => {
+    os.stdio.println("listen: ${e}")
+    return
+  }
+  let addr = l.addr()
+  let accepted = Chan[ServerConn].new(cap: 5)
+  scope s {
+    s.spawn(fn() {
+      for _ in 0..5 {
+        match l.accept() {
+          Ok(sc) => accepted.send(sc)
+          Err(e) => os.stdio.println("accept: ${e}")
+        }
+      }
+    })
+    let c1 = os.net.dial(addr) ?? _ => return
+    let s1 = accepted.recv() ?? return
+    let c2 = os.net.dial(addr) ?? _ => return
+    let s2 = accepted.recv() ?? return
+    // Stream to Stream: c1 -> s1 -> copy -> c2 -> s2
+    let got = Chan[(Int, Int)].new(cap: 1)
+    s.spawn(fn() {
+      c1.write(payload) ?? _ => ()
+      c1.close()
+    })
+    s.spawn(fn() { got.send(drain(s2)) })
+    match copy_stream(c2, s1) {
+      Ok(n) => os.stdio.println("stream copied ${n}")
+      Err(e) => os.stdio.println("stream err ${e}")
+    }
+    c2.close()
+    let (n, h) = got.recv() ?? (0, 0)
+    os.stdio.println("stream received ${n} ${h}")
+
+    // File to Stream, then Stream to File
+    let path = os.fs.create_temp(".", "copy-") ?? _ => return
+    os.fs.write(path, payload) ?? _ => ()
+    let c3 = os.net.dial(addr) ?? _ => return
+    let s3 = accepted.recv() ?? return
+    let got3 = Chan[(Int, Int)].new(cap: 1)
+    s.spawn(fn() { got3.send(drain(s3)) })
+    let f = os.fs.open(path) ?? _ => return
+    match f.copy_to(c3) {
+      Ok(n) => os.stdio.println("file to stream ${n}")
+      Err(e) => os.stdio.println("file to stream err ${e}")
+    }
+    f.close() ?? _ => ()
+    c3.close()
+    let (n3, h3) = got3.recv() ?? (0, 0)
+    os.stdio.println("stream received ${n3} ${h3}")
+
+    let c4 = os.net.dial(addr) ?? _ => return
+    let s4 = accepted.recv() ?? return
+    s.spawn(fn() {
+      s4.write(payload) ?? _ => ()
+      s4.close()
+    })
+    let out = os.fs.create(path) ?? _ => return
+    match out.copy_from(c4) {
+      Ok(n) => os.stdio.println("stream to file ${n}")
+      Err(e) => os.stdio.println("stream to file err ${e}")
+    }
+    out.close() ?? _ => ()
+    let back = os.fs.read(path) ?? _ => Bytes.zeroed(0)
+    os.stdio.println("file holds ${back.len()} ${sum(back)}")
+
+    // an empty source copies nothing
+    os.fs.write(path, Bytes.zeroed(0)) ?? _ => ()
+    let empty = os.fs.open(path) ?? _ => return
+    match empty.copy_to(c4) {
+      Ok(n) => os.stdio.println("empty ${n}")
+      Err(e) => os.stdio.println("empty err ${e}")
+    }
+    empty.close() ?? _ => ()
+
+    // a read error is Read: c4's peer is gone and its deadline passed
+    c4.set_read_deadline(os.clock, Some(os.clock.now() - 1s))
+    match copy_stream(c4, c4) {
+      Ok(n) => os.stdio.println("read side ok ${n}")
+      Err(CopyErr.Read(err: e)) => os.stdio.println("read side failed: ${e}")
+      Err(CopyErr.Write(err: e)) => os.stdio.println("write side failed: ${e}")
+    }
+    // a write error is Write: the file is open for reading only
+    let ro = os.fs.open(path) ?? _ => return
+    let c5 = os.net.dial(addr) ?? _ => return
+    let s5 = accepted.recv() ?? return
+    s5.write("some bytes".bytes()) ?? _ => ()
+    s5.close()
+    match ro.copy_from(c5) {
+      Ok(n) => os.stdio.println("write side ok ${n}")
+      Err(CopyErr.Read(err: e)) => os.stdio.println("read side failed: ${e}")
+      Err(CopyErr.Write(err: _)) => os.stdio.println("write side failed")
+    }
+    ro.close() ?? _ => ()
+    c4.close()
+    c5.close()
+    os.fs.remove(path) ?? _ => ()
+  }
+}

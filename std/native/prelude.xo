@@ -3970,6 +3970,63 @@ fn file_sync(f: File) -> () ! FsErr {
   }
 }
 
+/// `copy_stream(dst, src)` (decision 0593): Go's io.Copy, 32 KiB reads.
+fn copy_stream(dst: Stream, src: Stream) -> Int ! CopyErr[NetErr, NetErr] uses net {
+  var n = 0
+  while true {
+    match src.read(32768) {
+      Ok(Some(b)) => {
+        match dst.write(b) {
+          Ok(_) => {}
+          Err(e) => return Err(CopyErr.Write(err: e))
+        }
+        n += b.len()
+      }
+      Ok(None) => return n
+      Err(e) => return Err(CopyErr.Read(err: e))
+    }
+  }
+  n
+}
+
+/// `f.copy_to(dst)` (decision 0593).
+fn file_copy_to(f: File, dst: Stream) -> Int ! CopyErr[FsErr, NetErr] uses net {
+  var n = 0
+  while true {
+    match file_read(f, 32768) {
+      Ok(Some(b)) => {
+        match dst.write(b) {
+          Ok(_) => {}
+          Err(e) => return Err(CopyErr.Write(err: e))
+        }
+        n += b.len()
+      }
+      Ok(None) => return n
+      Err(e) => return Err(CopyErr.Read(err: e))
+    }
+  }
+  n
+}
+
+/// `f.copy_from(src)` (decision 0593).
+fn file_copy_from(f: File, src: Stream) -> Int ! CopyErr[NetErr, FsErr] uses net {
+  var n = 0
+  while true {
+    match src.read(32768) {
+      Ok(Some(b)) => {
+        match file_write(f, b) {
+          Ok(_) => {}
+          Err(e) => return Err(CopyErr.Write(err: e))
+        }
+        n += b.len()
+      }
+      Ok(None) => return n
+      Err(e) => return Err(CopyErr.Read(err: e))
+    }
+  }
+  n
+}
+
 fn file_close(f: File) -> () ! FsErr {
   let st = fsops.file_close(f.h, f.path)
   if st != 0 {

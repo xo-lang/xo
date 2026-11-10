@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- `copy_stream(dst, src)`, `File.copy_to(dst)` and `File.copy_from(src)` with `CopyErr[R, W]` (decision 0593): Go's io.Copy between connections and files
 - `Replacer.new(pairs)` and `r.replace(s)` (decision 0594): Go's strings.Replacer, one pass over several old/new pairs
 - `xo build --lib=shared` builds a windows DLL (decision 0574) for windows/amd64 and windows/arm64 with Xo's PE linker: the runtime's and the `as c` exports by name, the runtime started on the first call (DllMain starts nothing), each thread's runtime state released when the thread exits, and Win64's by-reference XoBytes and XoStr; the header for `-o geo.dll` is geo.h; `--lib` now exports the `as c` functions even with no `-o`
 - `Map.extend(other)` and `Map.clone()` (decision 0592): Go's maps.Copy and maps.Clone

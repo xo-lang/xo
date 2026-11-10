@@ -259,6 +259,8 @@ var (
 	_ func(*File, *Task) Result[FileInfo, FsErr]                                                           = (*File).M_stat
 	_ func(*File, *Task) Result[Unit, FsErr]                                                               = (*File).M_sync
 	_ func(*File, *Task) Result[Unit, FsErr]                                                               = (*File).M_close
+	_ func(*File, *Task, Stream) Result[int64, CopyErr[FsErr, NetErr]]                                     = (*File).M_copy_to
+	_ func(*File, *Task, Stream) Result[int64, CopyErr[NetErr, FsErr]]                                     = (*File).M_copy_from
 	_ func(*FileLock, *Task)                                                                               = (*FileLock).M_unlock
 	_ func(*NetErr, *Task) string                                                                          = (*NetErr).M_display
 	_ func(*Listener, *Task) string                                                                        = (*Listener).M_addr
@@ -276,6 +278,7 @@ var (
 	_ func(*ServerConn, *Task, Clock, Option[Time])                                                        = (*ServerConn).M_set_deadline
 	_ func(*ServerConn, *Task, Clock, Option[Time])                                                        = (*ServerConn).M_set_read_deadline
 	_ func(*ServerConn, *Task, Clock, Option[Time])                                                        = (*ServerConn).M_set_write_deadline
+	_ func(*Task, Stream, Stream) Result[int64, CopyErr[NetErr, NetErr]]                                   = Prelude_copy_stream
 	_ func(*ClockErr, *Task) string                                                                        = (*ClockErr).M_display
 	_ func(*EnvErr, *Task) string                                                                          = (*EnvErr).M_display
 	_ func(*IoErr, *Task) string                                                                           = (*IoErr).M_display

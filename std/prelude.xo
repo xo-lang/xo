@@ -1475,6 +1475,12 @@ fn (f: File) stat() -> FileInfo ! FsErr uses fs.read
 fn (f: File) sync() -> () ! FsErr uses fs.write
 /// Closes the file; closing it again does nothing.
 fn (f: File) close() -> () ! FsErr
+/// Copies the file from its position to its end into dst, 32 KiB at a
+/// time (Go's io.Copy(conn, file), decision 0593); the bytes copied.
+fn (f: File) copy_to(dst: Stream) -> Int ! CopyErr[FsErr, NetErr] uses (fs.read, net)
+/// Copies src until it ends into the file at its position (Go's
+/// io.Copy(file, conn), decision 0593); the bytes copied.
+fn (f: File) copy_from(src: Stream) -> Int ! CopyErr[NetErr, FsErr] uses (fs.write, net)
 
 /// A held advisory file lock (std.md 3.1). A handle.
 struct FileLock {}
@@ -1545,6 +1551,18 @@ interface Stream {
   fn write(self, data: Bytes) -> () ! NetErr uses net
   fn close(self)
 }
+
+/// Which side of a copy failed (decision 0593), with that side's own
+/// error: reading the source (R) or writing the destination (W). Go's
+/// io.Copy returns one error and cannot say.
+enum CopyErr[R, W] {
+  Read(err: R)
+  Write(err: W)
+} derive Display
+
+/// Copies src to dst until src ends, 32 KiB at a time, writing each piece
+/// in full (Go's io.Copy, decision 0593); the bytes copied.
+fn copy_stream(dst: Stream, src: Stream) -> Int ! CopyErr[NetErr, NetErr] uses net
 
 /// A connection whose reads and writes take deadlines (Go's net.Conn):
 /// Conn, ServerConn and TlsConn. Every NetConn is also a Stream

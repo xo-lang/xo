@@ -179,7 +179,7 @@ bufio.Writer = std/prelude.BytesBuilder
 
 # gaps verified 2026-11-10 against std/prelude.xo on main (no max/min/clamp/sum/clone/binary search/Pi/NaN there)
 io.EOF = not planned: reads return Option or a count, end is None/0, no sentinel error
-io.Copy = gap: no copy between two streams (Stream/File have read and write, no Copy helper; check std/prelude.Stream before filling)
+io.Copy = copy_stream
 math.Inf = Float.inf
 math.NaN = Float.nan
 math.Pi = Float.pi

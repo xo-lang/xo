@@ -904,6 +904,10 @@ fn (f: File) truncate(size: Int) -> () ! FsErr    uses fs.write   // Go's Trunca
 fn (f: File) stat() -> FileInfo ! FsErr           uses fs.read    // Go's File.Stat: from the handle
 fn (f: File) sync() -> () ! FsErr                 uses fs.write   // fsync (F_FULLFSYNC on macOS)
 fn (f: File) close() -> () ! FsErr                               // closing again does nothing
+fn (f: File) copy_to(dst: Stream) -> Int ! CopyErr[FsErr, NetErr] uses (fs.read, net)
+    // from the position to the end into dst, 32 KiB reads (io.Copy); the bytes copied
+fn (f: File) copy_from(src: Stream) -> Int ! CopyErr[NetErr, FsErr] uses (fs.write, net)
+    // src until it ends into the file at its position; the bytes copied
 struct FileLock {}                                // handle
 fn (l: FileLock) unlock()                                        // unlocking again does nothing
 ```
@@ -1018,6 +1022,12 @@ interface Stream {                                 // either kind of connection
   fn write(self, data: Bytes) -> () ! NetErr uses net
   fn close(self)
 }
+enum CopyErr[R, W] {                               // decision 0593: the side that failed
+  Read(err: R)                                     // reading the source
+  Write(err: W)                                    // writing the destination
+} derive Display
+fn copy_stream(dst: Stream, src: Stream) -> Int ! CopyErr[NetErr, NetErr] uses net
+    // Go's io.Copy: src until it ends into dst, 32 KiB reads, each written in full; the bytes copied
 interface NetConn {                                // decision 0481: Go's net.Conn
   fn read(self, max: Int) -> Bytes? ! NetErr uses net
   fn write(self, data: Bytes) -> () ! NetErr uses net
@@ -5503,7 +5513,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-531 declarations.
+534 declarations.
 
 ### Range
 
@@ -6136,6 +6146,8 @@ fn (f: File) truncate(size: Int) -> () ! FsErr uses fs.write
 fn (f: File) stat() -> FileInfo ! FsErr uses fs.read
 fn (f: File) sync() -> () ! FsErr uses fs.write
 fn (f: File) close() -> () ! FsErr
+fn (f: File) copy_to(dst: Stream) -> Int ! CopyErr[FsErr, NetErr] uses (fs.read, net)
+fn (f: File) copy_from(src: Stream) -> Int ! CopyErr[NetErr, FsErr] uses (fs.write, net)
 ```
 
 ### FileLock
@@ -6349,6 +6361,7 @@ fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
 fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs
+fn copy_stream(dst: Stream, src: Stream) -> Int ! CopyErr[NetErr, NetErr] uses net
 ```
 
 <!-- END prelude index -->

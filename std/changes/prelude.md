@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-11-10: feature: `copy_stream`, `File.copy_to`, `File.copy_from`
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit (bench/results/std-audit-2026-11-10b.md: io.Copy in its top 40)
+- Go reference: io.Copy (io.go; io_test.go TestCopy and its error cases)
+- Test: golden copy_stream on arm64, LLVM and Go (conn to conn, file to conn, conn to file over loopback, an empty source, a read error, a write error)
+- Timing: Mac, 64 MiB over loopback, median of 5, native against Go 1.26: conn to conn 52 ms against io.Copy 40 ms; file to conn 42 ms against 14 ms (Go's sendfile; decision 0593 stage 2)
+- Shipped in: not yet released
+
+Decision 0593: copies between streams and files, 32 KiB at a time, returning the bytes copied; `CopyErr[R, W]`
+says which side failed and carries its error.
+
 ## 2026-11-10: feature: `Replacer` (Go's strings.Replacer)
 
 - Kind: feature

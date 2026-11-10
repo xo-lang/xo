@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+payload 90000 700893
+stream copied 90000
+stream received 90000 700893
+file to stream 90000
+stream received 90000 700893
+stream to file 90000
+file holds 90000 700893
+empty 0
+read side failed: i/o timeout
+write side failed
+--- stderr

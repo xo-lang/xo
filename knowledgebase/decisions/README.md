@@ -583,3 +583,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0591](0591-amqptest-broker-uses-clock.md): Accepted (lead, 2026-11-10): std/amqptest's Broker.event_hub, put, ready, locked and scheduled declare `uses clock` (their bodies read the broker's clock); found when 0588 merged amqptest
 - [0592](0592-std-gap-collections-float.md): Accepted (owner, 2026-11-10): Float.inf, nan, pi, e, max, min, smallest_nonzero as type constants (0587's form); Map.extend and clone; List.clone, concat, binary_search, max, min (the std audit's gaps)
 - [0594](0594-std-str-replacer.md): Accepted (owner via lead, 2026-11-10): Replacer.new(pairs) and r.replace(s), Go's strings.Replacer with its four algorithms
+- [0593](0593-std-copy-streams.md): Accepted (lead, 2026-11-10): copy_stream(dst, src), File.copy_to(dst), File.copy_from(src) with CopyErr[R, W] { Read, Write } naming the failing side (Go's io.Copy); sendfile is stage 2
