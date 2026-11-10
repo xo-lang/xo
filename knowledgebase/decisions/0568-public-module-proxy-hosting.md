@@ -1,6 +1,6 @@
 # 0568: hosting the public module proxy and checksum log
 
-Status: Accepted (owner, 2026-11-08, on the lead's recommendation; owner, 2026-11-09: the OCI host is for hosting only, never a test or pass/fail host; conditional on the owner confirming the OCI console shows the checksum log VM as Always Free; key rotation: yes to a standby key built into xo, two offline copies kept by the owner). Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
+Status: Accepted (owner, 2026-11-08, on the lead's recommendation; owner, 2026-11-09: the OCI host is for hosting only, never a test or pass/fail host; conditional on the owner confirming the OCI console shows the checksum log VM as Always Free, met 2026-11-10: VM.Standard.A1.Flex at 2 OCPUs and 12 GB, on-demand, the tenancy's only instance, and Cost Analysis shows $0.00 for every service from 2026-10-01 to 2026-11-10; the owner confirmed the account type; key rotation: yes to a standby key built into xo, two offline copies kept by the owner). Proposed (Xo Lang 2, 2026-11-08; the owner decides). The owner
 approved a public proxy plan on 2026-11-08 and chose its direction the
 same day, through the lead:
 
