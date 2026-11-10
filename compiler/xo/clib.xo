@@ -125,7 +125,11 @@ fn ar_static(os: Os, goos: Str, cc: Str, flags: List[Str], srcs: List[Str], out:
     var a: List[Str] = []
     for w in weak_undefined_args(os, srcs) {
       let sym = w.trim_prefix("-Wl,-U,")
-      if undef.contains(sym) {
+      // the C library's own functions (sys_c's weak_malloc, weak_free,
+      // weak_sigaction) resolve against libSystem in the C program's link:
+      // at 0 they made every call of them from the library jump to 0 (the
+      // thread's error text, a Bytes or Str result; decision 0574)
+      if undef.contains(sym) && !(sym is "_malloc" | "_free" | "_sigaction") {
         a.push("\t.globl ${sym}\n\t.set ${sym}, 0\n")
       }
     }

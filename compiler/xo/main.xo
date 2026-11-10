@@ -2605,7 +2605,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // (TestDebugInfoSameCode); the key tells the two apart
     let cpad: List[Str] = if tgoos == "darwin" { [DWARF_HEADERPAD] } else { [] }
     let pad = cpad + (if cdsym { ["dwarf-embed"] + (if o.dsym { ["dsym"] } else { [] }) } else { [] })
-    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, [march] + flags + pad + lk.link_only + (if o.lib == "static" { ["lib=static"] } else { [] }), srcs) }
+    // a library's (decision 0574) by xo's own identity too: its link
+    // writes objects of xo's making outside dir (a static archive's
+    // constructor and weak symbol members, ar_static), which a change to
+    // them would otherwise find cached from the earlier xo
+    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, [march] + flags + pad + lk.link_only + (if o.lib == "static" { ["lib=static"] } else { [] }) + (if o.lib.is_empty() { [] } else { ["xo ${self_id(os)}"] }), srcs) }
     let cst = stage(os, ctx, bin)
     let (hit, entry) = fetch_bin(os, ctx, key, cst.bin)
     if !hit {
