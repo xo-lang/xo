@@ -42,7 +42,20 @@ fn (var c: ModCtx) check_fetched(root: Str, path: Str, v: Str) -> Str uses (env,
   if c.os.fs.exists(rec).ok() ?? false {
     return ""
   }
-  let out = match c.os.proc.cmd(xo, ["check", "${dir}/..."]).dir(dir).set_env("XO_OFFLINE", "1").set_env("XO_WORK", "off").set_env("XO_GET_CHECK", "0").output() {
+  // the check's `use go` and `use c` bindings go beside the record, not
+  // into the version's tree: there the read only cache refused them
+  // (unix), or, where it did not (windows), they changed the version's
+  // content hash, and the next check failed XO1304 (cmd/xo TestVouches,
+  // 2026-11-10)
+  let binds = "${cache}/cache/getcheck/bind/${crypto.sha256("${path}@${v}".bytes()).to_hex()[0..32]}"
+  var cmd = c.os.proc.cmd(xo, ["check", "${dir}/..."]).dir(dir).set_env("XO_OFFLINE", "1").set_env("XO_WORK", "off").set_env("XO_GET_CHECK", "0")
+  if (c.env.get("XO_GOBIND_DIR") ?? "").is_empty() {
+    cmd = cmd.set_env("XO_GOBIND_DIR", "${binds}/go")
+  }
+  if (c.env.get("XO_CBIND_DIR") ?? "").is_empty() {
+    cmd = cmd.set_env("XO_CBIND_DIR", "${binds}/c")
+  }
+  let out = match cmd.output() {
     Ok(o) => o
     Err(_) => return ""
   }
