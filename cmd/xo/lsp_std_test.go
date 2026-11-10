@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,10 @@ func TestLSPStdDeclarations(t *testing.T) {
 	}
 	// another release's std tree: prelude.xo and VERSION mark its root
 	other := filepath.Join(t.TempDir(), "tools", "xo-v0.44.0-darwin-arm64", "lib", "xo", "std")
-	for _, f := range []string{"prelude.xo", "VERSION", "charset.xo", "json.xo", "native/charset.xo"} {
+	// a module still split into a declaration file and std/native (charset
+	// was, until decision 0588 merged it)
+	mod := splitStdModule(t, filepath.Join(root, "std"))
+	for _, f := range []string{"prelude.xo", "VERSION", mod + ".xo", "json.xo", "native/" + mod + ".xo"} {
 		b, err := os.ReadFile(filepath.Join(root, "std", filepath.FromSlash(f)))
 		if err != nil {
 			t.Fatal(err)
@@ -63,10 +67,10 @@ func TestLSPStdDeclarations(t *testing.T) {
 	}
 	var std []string
 	for _, f := range []string{
-		filepath.Join(other, "charset.xo"),
+		filepath.Join(other, mod+".xo"),
 		filepath.Join(other, "json.xo"),
-		filepath.Join(other, "native", "charset.xo"),
-		filepath.Join(root, "std", "charset.xo"),
+		filepath.Join(other, "native", mod+".xo"),
+		filepath.Join(root, "std", mod+".xo"),
 	} {
 		std = append(std, open(f))
 	}
@@ -163,4 +167,27 @@ func TestLSPStdImplementation(t *testing.T) {
 			t.Errorf("%s after %q = %s %q, want %s with %q", c.method, c.after, file, line, c.file, c.line)
 		}
 	}
+}
+
+// splitStdModule is a std module, other than json, with a declaration file
+// and a std/native implementation (not merged, decision 0588), read from
+// the tree so a later merge does not break the test.
+func splitStdModule(t *testing.T, std string) string {
+	t.Helper()
+	natives, err := filepath.Glob(filepath.Join(std, "native", "*.xo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(natives)
+	for _, n := range natives {
+		m := strings.TrimSuffix(filepath.Base(n), ".xo")
+		if m == "json" || m == "prelude" || strings.HasSuffix(m, "_test") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(std, m+".xo")); err == nil {
+			return m
+		}
+	}
+	t.Skip("no split std module left")
+	return ""
 }

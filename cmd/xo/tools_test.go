@@ -2029,7 +2029,10 @@ func TestDevGoldensInlineStrict(t *testing.T) {
 // generic method of a std module compiled from its Xo implementation
 // (std/go_compiled.txt, decision 0312) is a build error naming it, not
 // a silent call of std/rt's Go version (owner, 2026-10-21). A copy of std
-// gives uuid a static method that a program calls.
+// gives a type of such a module a static method that a program calls; the
+// module is one still split into declarations and std/native (a merged
+// one, decision 0588, has bodies in std/M.xo, where a bodyless method is a
+// parse error).
 func TestGoCompiledMethodRouting(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -2039,18 +2042,15 @@ func TestGoCompiledMethodRouting(t *testing.T) {
 	if err := os.CopyFS(std, os.DirFS(filepath.Join("..", "..", "std"))); err != nil {
 		t.Fatal(err)
 	}
-	gc, err := os.ReadFile(filepath.Join(std, "go_compiled.txt"))
-	if err != nil || !strings.Contains(string(gc), "uuid") {
-		t.Skip("uuid is not in std/go_compiled.txt")
-	}
-	f, err := os.OpenFile(filepath.Join(std, "uuid.xo"), os.O_APPEND|os.O_WRONLY, 0)
+	mod, typ := goCompiledDeclType(t, std)
+	f, err := os.OpenFile(filepath.Join(std, mod+".xo"), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.WriteString("\n/// a test's static method\nfn (static: Uuid) xo_test_zero() -> Int\n")
+	f.WriteString("\n/// a test's static method\nfn (static: " + typ + ") xo_test_zero() -> Int\n")
 	f.Close()
 	dir := writeFiles(t, map[string]string{
-		"main.xo": "use std/uuid\n\nfn main(os: Os) {\n  os.stdio.println(\"${uuid.Uuid.xo_test_zero()}\")\n}\n",
+		"main.xo": "use std/" + mod + "\n\nfn main(os: Os) {\n  os.stdio.println(\"${" + mod + "." + typ + ".xo_test_zero()}\")\n}\n",
 	})
 	cli, err := xoCommand()
 	if err != nil {
@@ -2059,9 +2059,42 @@ func TestGoCompiledMethodRouting(t *testing.T) {
 	cmd := testtmp.Guard(exec.Command(cli[0], append(cli[1:], "build", "--backend=go", "--std="+std, "-o", filepath.Join(dir, "p"), dir)...))
 	cmd.Env = append(os.Environ(), "XO_BIN_CACHE=off")
 	out, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "uuid.Uuid.xo_test_zero`: a static method") {
-		t.Errorf("want a build error naming uuid.Uuid.xo_test_zero, got (err %v):\n%s", err, out)
+	want := mod + "." + typ + ".xo_test_zero`: a static method"
+	if err == nil || !strings.Contains(string(out), want) {
+		t.Errorf("want a build error naming %s.%s.xo_test_zero, got (err %v):\n%s", mod, typ, err, out)
 	}
+}
+
+// goCompiledDeclType is a module of std's go_compiled.txt that is not
+// merged (std/merged.txt) and a struct its declaration file declares.
+func goCompiledDeclType(t *testing.T, std string) (string, string) {
+	t.Helper()
+	gc, err := os.ReadFile(filepath.Join(std, "go_compiled.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, _ := os.ReadFile(filepath.Join(std, "merged.txt"))
+	isMerged := map[string]bool{}
+	for _, l := range strings.Split(string(merged), "\n") {
+		isMerged[strings.TrimPrefix(strings.TrimSpace(l), "std/")] = true
+	}
+	for _, l := range strings.Split(string(gc), "\n") {
+		m := strings.TrimSpace(l)
+		if m == "" || strings.HasPrefix(m, "#") || isMerged[m] {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(std, m+".xo"))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(src), "\n") {
+			if f := strings.Fields(line); len(f) >= 2 && f[0] == "struct" && f[1] != "" && f[1][0] >= 'A' && f[1][0] <= 'Z' {
+				return m, strings.TrimRight(f[1], "{[")
+			}
+		}
+	}
+	t.Skip("no unmerged module of std/go_compiled.txt declares a struct")
+	return "", ""
 }
 
 // TestWasmToolRejectedText: the wasm tool (compiler/wasm) prints the
