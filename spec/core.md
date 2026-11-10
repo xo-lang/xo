@@ -1815,8 +1815,9 @@ use ./billing
   directories in build information only. A release build (`xo build
   --release`, 8) and `xo build --ci` fail while a workspace overrides a
   required module (`XO1308`).
-- `xo.work` is gitignored by `xo init` in a single module repository;
-  a monorepo may commit it.
+- `xo.work` is gitignored by `xo init` in a single module repository
+  (`xo init` writes .gitignore only in a git repository: a .git at or
+  above the module directory); a monorepo may commit it.
 
 **[P1]** Effect ceilings (decision 0086 step 3): a `uses` clause after
 the version bounds the effects of a dependency.
