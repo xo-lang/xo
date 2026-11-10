@@ -1,6 +1,6 @@
 # 0589: pkg.xolang.org, package documentation for std and published modules
 
-Status: Proposed (lead, 2026-11-10, at the owner's request)
+Status: Accepted (owner, 2026-11-10)
 
 ## Context
 
@@ -53,8 +53,8 @@ module, so std and user modules document the same way.
    public repository** (owner, 2026-11-10), on GitHub-hosted runners, which
    are free for public repositories; never the OCI host (hosting only,
    0568) and not Cloudflare Containers (Workers Paid, $5 a month minimum,
-   kept as the fallback). A new public repository (suggested
-   xo-lang/pkgsite, created by the owner) holds the builder and the
+   kept as the fallback). A new public repository (xo-lang/pkgsite, created 2026-11-10 by the lead
+   at the owner's request; Actions' default token is read only) holds the builder and the
    workflow, so xo-lang/xo's history and permissions stay separate.
    - Two jobs: `build` has no secrets and no write token; it reads the
      index feed, fetches and verifies each new version, runs the released
