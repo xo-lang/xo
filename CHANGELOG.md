@@ -9,6 +9,12 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - xo init: writes .gitignore only in a git repository (a .git directory or file at or above the module directory), as cargo new does; outside one it writes xo.mod alone
+- xo check: `"n = " + n` (Str and another type) notes the interpolation form, `"n = ${n}"`, in either order
+- xo check: `xs.sort(fn(a, b) { a > b })` is one error (XO0403) that names `sort_by`, where it was three
+- xo check: an operator on a value whose type is unknown reports nothing more when an error inside it already explains it, else XO0405; messages no longer print the unknown type as `_`
+- xo check: Go's `if v, ok := m[k]; ok {` is one XO0177 naming `if let Some(v) = m.get(k) {` (read that way), where it was four errors; `strconv.Atoi`, `strconv.ParseFloat`, `strconv.Itoa`, `json.Marshal` and `json.Unmarshal` (and JavaScript's and Python's equivalents) name `Int.parse`, `Float.parse`, interpolation, `json.encode_str` and `json.decode_str`
+- xo check --fix: rewriting `.or(x)` (and `.unwrap_or`, `.get_or_else`, `.value_or`, `.or_else`) to `??` parenthesizes it when an operator or method is next to it: `m.get(w).or(0) + 1` became `m.get(w) ?? 0 + 1`, which is `m.get(w) ?? (0 + 1)`, so a word count gave 1 for every word; now `(m.get(w) ?? 0) + 1`. The `append` to `xs + [...]` fix does the same
+- xo vet: XO0542 warns of `x ?? lit <op> z`, where the operator applies only to the literal default (`x ?? (lit <op> z)`), with a fix to `(x ?? lit) <op> z`
 - FreeBSD (decision 0573 stage 2): native programs run on FreeBSD amd64: threads, the kqueue poller, signals, file system, sockets, HTTP and TLS, faults recovered by isolate and defer; 119 of 120 goldens pass on a FreeBSD 14 VM.
 - Native, LLVM and wasm backends: a Float to sized integer conversion that faults names the type the program wrote and the value it had, as the Go backend does ("-2.9 is out of range for UInt8", "cannot convert NaN to Int32"); they said "for Int" and printed the truncated value.
 - An interface value's effect argument widens where the interface's effect parameter is covariant (named only in its methods' `uses`): a `Cred[fs.read]` may be pushed into a `List[Cred[(fs.read, proc)]]`, passed or returned as a `Cred[(fs.read, proc)]` (decision 0582, core 6.2). It never narrows, and `List[I[e]]` stays invariant.

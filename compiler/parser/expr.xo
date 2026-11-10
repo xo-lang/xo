@@ -608,7 +608,29 @@ fn (var p: Parser) parse_if() -> Expr {
     var pattern: Pattern? = None
     var value: Expr? = None
     var head: Expr = Expr.BadExpr(p.tok.span)
-    if p.got(Kind.Let) {
+    if p.at(Kind.Ident) && p.peek(1).kind == Kind.Comma && p.peek(2).kind == Kind.Ident && p.peek(3).kind == Kind.Colon && p.peek(4).kind == Kind.Assign {
+      // Go's comma-ok `if v, ok := m[k]; ok {`: one error, read as
+      // `if let Some(v) = m.get(k) {` (owner tester, 2026-11-10: four
+      // errors and no hint)
+      let vt = p.tok
+      let okt = p.peek(2)
+      let _d = p.foreign(span_to(vt.span, p.peek(4).span), "`${txt(vt.text)}, ${txt(okt.text)} := ...; ${txt(okt.text)}` is Go's comma-ok form; Xo writes `if let Some(${txt(vt.text)}) = m.get(k) {` for a map, and `if let Some(${txt(vt.text)}) = opt {` for any optional (core 3.5, 2.5)")
+      for _ in 0..5 {
+        p.next()
+      }
+      var e = p.parse_expr_no_lit()
+      if let IndexExpr(span: isp, x: mx, index: k) = e {
+        e = Expr.CallExpr(span: isp, fun: Expr.SelectorExpr(span: isp, x: mx, sel: Ident{span: isp, name: b"get"}), args: [Arg{span: expr_span(k), name: None, value: k}])
+      }
+      if p.at(Kind.Newline) && p.peek(1).kind == Kind.Ident && p.peek(1).text == okt.text && p.peek(2).kind == Kind.LBrace {
+        p.next()
+        p.next()
+      }
+      let vp = Pattern.BindPat(span: vt.span, name: Ident{span: vt.span, name: vt.text})
+      pattern = Some(Pattern.VariantPat(span: vt.span, path: [Ident{span: vt.span, name: b"Some"}], parens: true, fields: [PatField{span: vt.span, name: None, pattern: vp}], rest: false))
+      head = e
+      value = Some(head)
+    } else if p.got(Kind.Let) {
       let pat = p.parse_pattern()
       pattern = Some(pat)
       p.expect(Kind.Assign, "`=` in `if let`")

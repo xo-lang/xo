@@ -1447,6 +1447,9 @@ fn (var c: Checker) unary(span: Span, op: parser.Kind, x: Expr, hint: Int) -> In
       if c.is_numeric(t) || c.is_prelude(t, "Duration") {
         return t
       }
+      if c.is_open_var(t) {
+        return c.unknown_operand(span, "unary `-`")
+      }
       c.error("XO0406", span, "unary `-` is not defined for `${c.show(t)}`")
       c.bad_ty
     }
@@ -1454,6 +1457,9 @@ fn (var c: Checker) unary(span: Span, op: parser.Kind, x: Expr, hint: Int) -> In
       let t = c.infer(x, hint)
       if c.is_bad(t) || c.is_int(t) {
         return t
+      }
+      if c.is_open_var(t) {
+        return c.unknown_operand(span, "`~`")
       }
       c.error("XO0406", span, "`~` is not defined for `${c.show(t)}`")
       c.bad_ty
@@ -1621,6 +1627,9 @@ fn (var c: Checker) is_expr(x: Expr, pattern: Pattern) -> Int {
 }
 
 fn (var c: Checker) op_fail(op: parser.Kind, xt: Int, yt: Int, sp: Span) -> Int {
+  if c.is_open_var(xt) || c.is_open_var(yt) {
+    return c.unknown_operand(sp, "`${op_text(op)}`")
+  }
   let d = c.error("XO0406", sp, "operator `${op_text(op)}` is not defined for `${c.show(xt)}` and `${c.show(yt)}`")
   if d >= 0 && c.is_numeric(xt) && c.is_numeric(yt) {
     c.note(d, "there are no implicit numeric conversions; convert one side explicitly, for example `${c.show(xt)}(x)` (core 2.1)")
@@ -1631,6 +1640,12 @@ fn (var c: Checker) op_fail(op: parser.Kind, xt: Int, yt: Int, sp: Span) -> Int 
   }
   if d >= 0 && (c.is_prelude(xt, "Duration") || c.is_prelude(yt, "Duration") || c.is_prelude(xt, "Time")) {
     c.note(d, "Duration and Time support d1 + d2, d1 - d2, d * n, n * d, d / n, d1 / d2, t + d, t - d, t1 - t2, and comparisons (core 2.1)")
+  }
+  // `"n = " + 5`: Java, JavaScript and Python 2 habits; Xo concatenates
+  // only Str + Str and writes other values in by interpolation
+  if d >= 0 && op == parser.Kind.Plus && (c.is_prelude(xt, "Str") != c.is_prelude(yt, "Str")) {
+    let other = if c.is_prelude(xt, "Str") { yt } else { xt }
+    c.habit_note(d, "`+` joins two Str values only; write the `${c.show(other)}` into the string with interpolation, `\"n = \${n}\"`, or convert it with `.to_str()` (core 1.6, 2.1)")
   }
   // a fallible call used as its value (decision 0438): Go and Rust
   // habits leave out the `?`

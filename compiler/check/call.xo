@@ -420,7 +420,8 @@ fn (var c: Checker) module_member(m: Int, imp_name: Bytes, span: Span, sel: Iden
     if c.go_skipped(m, text(name), sel.span) || c.c_skipped(m, text(name), sel.span) {
       return c.bad_ty
     }
-    c.unresolved(sel.span, "member of module `${text(imp_name)}`", text(name), sorted_names(c.mods[m].members))
+    let d = c.unresolved(sel.span, "member of module `${text(imp_name)}`", text(name), sorted_names(c.mods[m].members))
+    c.module_member_habit(d, c.mods[m].path, text(name))
     return c.bad_ty
   }
   if !c.pub_in(o, m) {
@@ -536,6 +537,13 @@ fn conversion_hint(on: Str, name: Str) -> Str {
 /// does for a method.
 fn (var c: Checker) statics_note(d: Int, obj: Int, name: Str, cands: List[Str]) {
   let on = text(c.objs[obj].name)
+  if c.objs[obj].module == c.prelude && on == "Int" && (name is "min" | "max" | "MAX" | "MIN" | "MAX_VALUE" | "MIN_VALUE") {
+    // Go's math.MaxInt64, Rust's i64::MAX (owner tester, 2026-11-10;
+    // decision 0587 proposes type constants)
+    let lit = if name.to_lower().starts_with("max") { "9223372036854775807" } else { "-9223372036854775807 - 1" }
+    c.habit_note(d, "Xo has no `Int.${name}` constant yet; write `${lit}` (a `const`), and `a.${name.to_lower().trim_end_chars("_value")}(b)` for the ${if name.to_lower().starts_with("max") { "larger" } else { "smaller" }} of two values (spec/std.md 2)")
+    return
+  }
   if c.objs[obj].module == c.prelude {
     let h = conversion_hint(on, name)
     if !h.is_empty() {
@@ -1143,6 +1151,7 @@ fn (var c: Checker) call_selector(call: Expr, sspan: Span, x: Expr, sel: Ident, 
             return c.bad_ty
           }
           let d = c.unresolved(sel.span, "member of module `${text(id.name)}`", text(sel.name), sorted_names(c.mods[m].members))
+          c.module_member_habit(d, c.mods[m].path, text(sel.name))
           c.const_fix_drops_call(d, m, sel, call, args)
           c.infer_args(args)
           return c.bad_ty
@@ -1195,6 +1204,18 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
     return c.bad_ty
   }
   let is_named = k == TyKind.Named
+  // `xs.sort(fn(a, b) { a > b })`: Go's sort.Slice and JavaScript's
+  // comparator; one error naming the key form, not an arity error plus
+  // the closure's own (owner tester, 2026-11-10)
+  if is_named && (name == b"sort" || name == b"sort_in_place") && args.len() == 1 && c.list_elem(r) >= 0 {
+    if let FnLit(fl) = args[0].value {
+      if fl.params.len() == 2 {
+        let d = c.error("XO0403", span, "`${text(name)}` takes no comparator: it sorts by the elements' own order")
+        c.habit_note(d, "a comparator `fn(a, b)` is Go's sort.Slice and JavaScript's sort; Xo sorts by a key, `xs.${text(name)}_by(fn(x) { x.field })`, ascending and stable (spec/std.md 2); for descending order sort by the key and `.reverse()` the result")
+        return if name == b"sort" { r } else { c.unit_ty }
+      }
+    }
+  }
   if is_named && c.is_prelude(r, "Task") && name == b"await" {
     let d = c.error("XO0407", span, "`await` is written without parentheses: `t.await` (core 7.1)")
     c.fix(d, "remove the parentheses", [c.replace_edit(Span{start: sspan.end, end: span.end}, "")])
@@ -1881,4 +1902,21 @@ fn (var c: Checker) expect_compare(span: Span, op: parser.Kind, call: Expr, cspa
   }
   c.binary_type(op, at, yt, span)
   c.unit_ty
+}
+
+/// A habit note for a std module member another language names
+/// (`json.Marshal`, owner tester 2026-11-10): Xo's name for it.
+fn (var c: Checker) module_member_habit(d: Int, path: Str, name: Str) {
+  if d < 0 {
+    return
+  }
+  let xo = match (path, name) {
+    ("std/json", "Marshal") => "`json.encode_str(v)` (a Str; `json.encode(v)` gives Bytes)"
+    ("std/json", "MarshalIndent") => "`json.encode_indent_str(v, prefix, indent)`"
+    ("std/json", "Unmarshal") => "`json.decode_str[T](s)` (or `json.decode[T](bytes)`)"
+    _ => ""
+  }
+  if !xo.is_empty() {
+    c.habit_note(d, "`${name}` is Go's encoding/json name; Xo writes ${xo} for a type with `derive Json` (spec/std.md)")
+  }
 }

@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let n = strconv.Atoi("12") // ERROR XO0601
+  os.stdio.println("${n}")
+}

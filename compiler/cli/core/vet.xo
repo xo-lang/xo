@@ -297,6 +297,9 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
             if let Some(d) = coalesce_chain(path, span, x, y) {
               out.push(d)
             }
+            if let Some(d) = coalesce_operand(c, f, path, x, y) {
+              out.push(d)
+            }
             if let Some(d) = io_default(c, f, path, span, x) {
               out.push(d)
             }
@@ -875,6 +878,34 @@ fn coalesce_chain(file: Str, span: parser.Span, x: parser.Expr, y: parser.Expr) 
   d.fixes.push(check.DFix{title: "apply the chain to the result of `??`", edits: [
     check.DEdit{span: point(file, parser.expr_span(x).start), replace: "("},
     check.DEdit{span: point(file, parser.expr_span(base).end), replace: ")"},
+  ]})
+  Some(d)
+}
+
+/// XO0542: `x ?? lit <op> z`, a literal default followed by an operator
+/// that binds tighter than `??`, which parses as `x ?? (lit <op> z)`:
+/// `m.get(w) ?? 0 + 1` is 1 for every key that is present too. Likely
+/// `(x ?? lit) <op> z` was meant (the owner's word count, 2026-11-10,
+/// which an older `xo fix` wrote).
+fn coalesce_operand(c: check.Checker, f: Int, file: Str, x: parser.Expr, y: parser.Expr) -> Diag? {
+  let (op, l) = match y {
+    BinaryExpr(_, op, l, _) => (op, l)
+    _ => return None
+  }
+  let lit = is_literal(l) || (match l {
+    Ident(id) => text_of(id.name) is "true" | "false"
+    _ => false
+  })
+  if !lit || op == lexer.Kind.Coalesce || allowed(c, f, parser.expr_span(y).start.line, "XO0542") {
+    return None
+  }
+  let ops = parser.kind_text(op)
+  let ls = src_text(c, f, parser.expr_span(l))
+  var d = vdiag("XO0542", false, file, parser.expr_span(y), "`?? ${ls} ${ops} ...` is `?? (${ls} ${ops} ...)`: `??` binds loosest, so `${ops}` applies only to the default, never to the value that was present")
+  d.notes.push(check.DNote{message: "if the default was meant first, parenthesize: `(x ?? ${ls}) ${ops} ...`; if the expression was meant as the default, parenthesize it to say so: `x ?? (${ls} ${ops} ...)`"})
+  d.fixes.push(check.DFix{title: "apply `${ops}` to the result of `??`", edits: [
+    check.DEdit{span: point(file, parser.expr_span(x).start), replace: "("},
+    check.DEdit{span: point(file, parser.expr_span(l).end), replace: ")"},
   ]})
   Some(d)
 }

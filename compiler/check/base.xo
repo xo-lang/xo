@@ -93,6 +93,33 @@ fn (var c: Checker) error(code: Str, sp: Span, msg: Str) -> Int {
   c.report(c.path, code, sp, msg)
 }
 
+/// Whether a diagnostic of the current file starts inside sp: a later
+/// finding about an expression whose type is unknown there follows from it
+/// (Go's types2 drops errors on invalid operands the same way).
+fn (c: Checker) errored_in(sp: Span) -> Bool {
+  for d in c.diags {
+    if d.file != c.path {
+      continue
+    }
+    let after_start = d.line > sp.start.line || (d.line == sp.start.line && d.col >= sp.start.col)
+    let before_end = d.line < sp.end.line || (d.line == sp.end.line && d.col <= sp.end.col)
+    if after_start && before_end {
+      return true
+    }
+  }
+  false
+}
+
+/// An operator applied to an operand whose type is not known (an open
+/// type variable, shown as `_` nowhere): nothing when an error inside the
+/// operator's expression already explains it, else XO0405.
+fn (var c: Checker) unknown_operand(sp: Span, what: Str) -> Int {
+  if !c.errored_in(sp) {
+    c.error("XO0405", sp, "the type of the operand of ${what} must be known here")
+  }
+  c.bad_ty
+}
+
 fn (var c: Checker) error_at(f: Int, code: Str, sp: Span, msg: Str) -> Int {
   c.report(c.files[f].path, code, sp, msg)
 }

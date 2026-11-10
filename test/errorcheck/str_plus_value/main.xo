@@ -1,0 +1,7 @@
+// `"n = " + n`: one XO0406 with the interpolation hint, in both orders.
+
+fn main(os: Os) {
+  let n = 5
+  os.stdio.println("n = " + n) // ERROR XO0406
+  os.stdio.println(n + " items") // ERROR XO0406
+}

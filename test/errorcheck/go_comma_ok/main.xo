@@ -1,0 +1,8 @@
+// Go's comma-ok if: one error, read as if let Some(v) = m.get(k).
+
+fn main(os: Os) {
+  let m: Map[Str, Int] = {"a": 1}
+  if v, ok := m["a"]; ok { // ERROR XO0177
+    os.stdio.println("${v}")
+  }
+}

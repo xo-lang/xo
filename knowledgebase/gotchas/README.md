@@ -1262,3 +1262,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [prelude-interface-method-breaks-implementations.md](prelude-interface-method-breaks-implementations.md): Observed 2026-11-09: Stdio.raw_input made three test Stdio implementations incomplete (XO0401); the gate's touched-only goldens missed them, pushq's overlap check caught them; grep for an existing method's implementations first
 - [pdb-needs-linkinfo-stream.md](pdb-needs-linkinfo-stream.md): dbghelp rejects a PDB whose named stream map lacks /LinkInfo ("file system or network error reading pdb").
 - [freebsd-sock-linux-errnos.md](freebsd-sock-linux-errnos.md): sock.xo returns Linux's errnos and sockaddrs on FreeBSD; callers' per-OS arms match FreeBSD with Linux, not Darwin (Observed)
+- [fix-infix-precedence.md](fix-infix-precedence.md): `xo check --fix` wrote `x.or(0) + 1` as `x ?? 0 + 1` (`x ?? (0 + 1)`); fixes producing infix text use habits.xo infix_at; vet XO0542
