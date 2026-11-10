@@ -1,5 +1,18 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image from_png and Image.to_png (decision 0578 step 1, option A)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: none (a mapping between two Xo types; PNG's layouts are Go's)
+- Test: testdata/corpus/image: a Paletted PNG image round trips with its pixels and palette; a Gray sub image is cropped by to_png; CMYK gives None
+- Timing: the pixels move, no copy (a Bytes is a counted value); a sub image is cropped, which copies the rows
+- Shipped in: not yet released
+
+`image.from_png(p)` turns a decoded `png.Image` into an `image.Image` and `Image.to_png()` back (None for CMYK and YCbCr, which PNG has no layout for).
+`png.Image` itself is unchanged, so nothing breaks (decision 0578, option A).
+
 ## 2026-11-09: feature: std/image Image.to_rgba and to_nrgba (decision 0578 step 1)
 
 - Kind: feature

@@ -18,7 +18,7 @@ func imageCorpus() string {
 	edge := []int{0, 1, 127, 128, 255, 256, 257, 32767, 32768, 65534, 65535}
 	var o strings.Builder
 	o.WriteString(header("image/color: GrayModel, Gray16Model, NRGBAModel, RGBToYCbCr, YCbCrToRGB, RGBToCMYK, CMYKToRGB and NRGBA.RGBA() (std/image, decision 0578)"))
-	o.WriteString("use std/image\n\n")
+	o.WriteString("use std/image\nuse std/png\n\n")
 
 	o.WriteString("/// (r, g, b, a, gray, gray16, nrgba) for a premultiplied color.\nconst COLORS: List[(Int, Int, Int, Int, Int, Int, Int)] = [\n")
 	emitColor := func(cr, cg, cb, ca int) {
@@ -596,6 +596,25 @@ test "Image.to_rgba and to_nrgba are Go's models pixel by pixel" {
     let b = im.to_nrgba()
     expect((b.model, b.width, b.height, b.pix)) == (image.Model.NRGBA, 3, 2, nrgba)
   }
+}
+`)
+	o.WriteString(`
+test "from_png and to_png move the pixels and keep the model" {
+  let pal = [0xff0000ff, 0x00ff00ff, 0x0000ffff]
+  let p = png.Image{width: 2, height: 2, model: png.Model.Paletted, pix: b"\x00\x01\x02\x00", palette: pal}
+  let im = image.from_png(p)
+  expect((im.width, im.height, im.model, im.pix, im.palette)) == (2, 2, image.Model.Paletted, p.pix, pal)
+  let back = im.to_png() ?? fault("a Paletted image has a PNG form")
+  expect((back.width, back.height, back.model, back.pix, back.palette)) == (2, 2, png.Model.Paletted, p.pix, pal)
+}
+
+test "to_png crops a sub image and refuses CMYK and YCbCr" {
+  let g = image.Image{width: 3, height: 3, model: image.Model.Gray, pix: b"\x01\x02\x03\x04\x05\x06\x07\x08\x09"}
+  let sub = g.sub_image(image.Rect{x0: 1, y0: 1, x1: 3, y1: 3})
+  let p = sub.to_png() ?? fault("a Gray sub image has a PNG form")
+  expect((p.width, p.height, p.pix)) == (2, 2, b"\x05\x06\x08\x09")
+  let c = image.Image{width: 1, height: 1, model: image.Model.CMYK, pix: b"\x00\x00\x00\x00"}
+  expect(c.to_png().is_none()) == true
 }
 `)
 	return o.String()

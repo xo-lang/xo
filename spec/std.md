@@ -8259,6 +8259,8 @@ fn (im: Image) sub_image(r: Rect) -> Image  // Go's SubImage: clipped, shares pi
 fn (im: Image) crop(r: Rect) -> Image       // sub_image with the rows packed tightly (stride 0)
 fn (im: Image) to_rgba() -> Image                // every pixel through color.RGBAModel: premultiplied 8 bit, tight rows; not YCbCr yet
 fn (im: Image) to_nrgba() -> Image               // color.NRGBAModel (an NRGBA sample or palette entry is kept as it is)
+fn from_png(p: png.Image) -> Image              // the same model and pixels (moved), corner (0, 0)
+fn (im: Image) to_png() -> png.Image?            // tight rows (a sub image is cropped); None for CMYK and YCbCr
 fn rgb_to_ycbcr(r: Int, g: Int, b: Int) -> (Int, Int, Int)
 fn ycbcr_to_rgb(y: Int, cb: Int, cr: Int) -> (Int, Int, Int)
 fn rgb_to_cmyk(r: Int, g: Int, b: Int) -> (Int, Int, Int, Int)

@@ -3,6 +3,8 @@
 // exact integer color conversions, and the accessors a decoder's output
 // needs. Pure.
 
+use std/png
+
 /// Go's image.Rectangle: x0 <= x < x1 and y0 <= y < y1.
 struct Rect {
   x0: Int
@@ -119,3 +121,12 @@ fn (im: Image) to_rgba() -> Image
 
 /// The image as an NRGBA image (color.NRGBAModel on every pixel).
 fn (im: Image) to_nrgba() -> Image
+
+/// The image of a decoded PNG (the pixels move, no copy): the same model, tight
+/// rows, corner (0, 0).
+fn from_png(p: png.Image) -> Image
+
+/// The PNG form of the image (std/png's Image, tight rows from the corner
+/// (0, 0): a sub image is cropped first), or None for a model PNG has no
+/// layout for (CMYK, YCbCr).
+fn (im: Image) to_png() -> png.Image?

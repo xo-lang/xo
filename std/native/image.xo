@@ -3,6 +3,7 @@
 // (Copyright 2009 The Go Authors, BSD-style license) in integer
 // arithmetic, so the values are the bytes Go computes.
 use std/image
+use std/png
 
 /// Go's color.GrayModel: (19595 r + 38470 g + 7471 b + 1<<15) >> 24 over the
 /// 16 bit premultiplied channels.
@@ -432,4 +433,41 @@ fn image_convert(im: image.Image, nrgba: Bool) -> image.Image {
 fn image_to_rgba(im: image.Image) -> image.Image { image_convert(im, false) }
 
 fn image_to_nrgba(im: image.Image) -> image.Image { image_convert(im, true) }
+
+fn from_png_model(m: png.Model) -> image.Model {
+  match m {
+    png.Model.Gray => image.Model.Gray
+    png.Model.Gray16 => image.Model.Gray16
+    png.Model.Paletted => image.Model.Paletted
+    png.Model.RGBA => image.Model.RGBA
+    png.Model.NRGBA => image.Model.NRGBA
+    png.Model.RGBA64 => image.Model.RGBA64
+    png.Model.NRGBA64 => image.Model.NRGBA64
+  }
+}
+
+fn to_png_model(m: image.Model) -> png.Model? {
+  match m {
+    image.Model.Gray => Some(png.Model.Gray)
+    image.Model.Gray16 => Some(png.Model.Gray16)
+    image.Model.Paletted => Some(png.Model.Paletted)
+    image.Model.RGBA => Some(png.Model.RGBA)
+    image.Model.NRGBA => Some(png.Model.NRGBA)
+    image.Model.RGBA64 => Some(png.Model.RGBA64)
+    image.Model.NRGBA64 => Some(png.Model.NRGBA64)
+    image.Model.CMYK => None
+    image.Model.YCbCr => None
+  }
+}
+
+fn from_png(p: png.Image) -> image.Image {
+  image.Image{width: p.width, height: p.height, model: from_png_model(p.model), pix: p.pix, stride: 0, palette: p.palette}
+}
+
+fn image_to_png(im: image.Image) -> png.Image? {
+  let m = to_png_model(im.model) ?? return None
+  let tight = im.stride == 0 && im.min_x == 0 && im.min_y == 0
+  let src = if tight { im } else { image_crop(im, image.Rect{x0: im.min_x, y0: im.min_y, x1: im.min_x + im.width, y1: im.min_y + im.height}) }
+  Some(png.Image{width: src.width, height: src.height, model: m, pix: src.pix, palette: src.palette})
+}
 
