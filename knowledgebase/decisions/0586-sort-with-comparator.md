@@ -59,3 +59,13 @@ a.cmp(b))` returning `Ordering` and `Reverse`.
   awkward.
 - **Only `sort_by_desc`**: covers descending, not multi-key orders that
   mix directions without tuple keys.
+
+## Implementation (2026-11-10, Xo Lang 1)
+
+Points 1 to 3 as written: `Ordering`, `cmp` (the checker's builtin method on every Ord type), `reverse`,
+`then`, `sort_with`, `sort_in_place_with`, `sort_by_desc`, `sort_in_place_by_desc` on every backend (native:
+std/native/prelude.xo's merge sort with the comparator; Go: std/rt/ordering.go), golden sort_with.
+Point 4 keeps the habit's code XO0403 (an argument the method does not take; the habit already used it, and
+a code's meaning never changes) where the text above says XO0601: the message names `sort_with`, the note
+shows the comparator rewritten (`a > b` to `b.cmp(a)`, `a < b` to `a.cmp(b)`, `>=`/`<=` alike), and when the
+body's last expression is one comparison a fix renames the method and rewrites the comparison.
