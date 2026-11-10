@@ -356,9 +356,16 @@ pub fn gobind_helper(os: Os, std_dir: Str, wd: Str) -> (Str, Bool) ! Str uses (f
   if !is_file(os, join(up, "cmd/xo-gobind/main.go")) {
     return Err("xo-gobind not found: set XO_GOBIND, put xo-gobind on PATH or beside xo, or build it with `go build github.com/xo-lang/xo/cmd/xo-gobind`")
   }
-  let tmp = match os.fs.create_temp(hostpath.temp_dir(os.env), "xo-gobind-") {
+  let tmp0 = match os.fs.create_temp(hostpath.temp_dir(os.env), "xo-gobind-") {
     Ok(t) => t
     Err(e) => return Err("building xo-gobind: ${e}")
+  }
+  // Windows runs only a name ending in .exe, and `go build -o` writes the
+  // name it is given (every `use go` test failed with "executable file
+  // not found" on the winarm VM, 2026-11-09)
+  let tmp = if win { "${tmp0}.exe" } else { tmp0 }
+  if win {
+    os.fs.remove(tmp0).ok()
   }
   var go = os.env.get("XO_GO") ?? ""
   if go.is_empty() {

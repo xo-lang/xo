@@ -1,0 +1,19 @@
+// The LSP's file URIs by each host's rules (path_to_uri_w, uri_to_path_w):
+// a Windows drive path is `file:///C:/x`, as editors send it.
+
+test "file URIs of unix paths" {
+  expect(path_to_uri_w("/a/b c.xo", false) == "file:///a/b%20c.xo")
+  expect(uri_to_path_w("file:///a/b%20c.xo", false) == "/a/b c.xo")
+  expect(uri_to_path_w("file:///C:/x", false) == "/C:/x")
+}
+
+test "file URIs of windows drive paths" {
+  expect(path_to_uri_w("C:\\Users\\xo\\main.xo", true) == "file:///C:/Users/xo/main.xo")
+  expect(path_to_uri_w("C:/Users/xo/main.xo", true) == "file:///C:/Users/xo/main.xo")
+  expect(uri_to_path_w("file:///C:/Users/xo/main.xo", true) == "C:/Users/xo/main.xo")
+  // VS Code's form: a lower case drive with its colon escaped
+  expect(uri_to_path_w("file:///c%3A/Users/xo/main.xo", true) == "c:/Users/xo/main.xo")
+  expect(uri_to_path_w(path_to_uri_w("D:\\a b\\m.xo", true), true) == "D:/a b/m.xo")
+  // a rooted path keeps its root on Windows too
+  expect(uri_to_path_w("file:///srv/m.xo", true) == "/srv/m.xo")
+}

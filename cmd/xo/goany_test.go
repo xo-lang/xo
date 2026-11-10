@@ -113,7 +113,7 @@ func TestUseGoAnyReplay(t *testing.T) {
 		})
 	})
 	for k, v := range map[string]string{
-		"GOPROXY": "file://" + filepath.ToSlash(proxy), "GOSUMDB": "off", "GOFLAGS": "",
+		"GOPROXY": fileURL(proxy), "GOSUMDB": "off", "GOFLAGS": "",
 		"GOMODCACHE": modcache, "GOTOOLCHAIN": "local", "GOPRIVATE": "", "GONOSUMDB": "", "GONOPROXY": "",
 		"XO_GOBIND_DIR": "",
 	} {

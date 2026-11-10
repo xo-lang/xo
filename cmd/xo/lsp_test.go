@@ -202,9 +202,9 @@ fn main(os: Os) {
 	// the lines completion is asked at, each a separate edit of src
 	dir := writeFiles(t, map[string]string{"xo.mod": "module example.com/lspc\n", "main.xo": src})
 	path := filepath.Join(dir, "main.xo")
-	uri := "file://" + path
+	uri := fileURL(path)
 	c := startLSP(t, dir)
-	initRes, _ := c.request("initialize", map[string]any{"processId": nil, "rootUri": "file://" + dir, "capabilities": map[string]any{}}).(map[string]any)
+	initRes, _ := c.request("initialize", map[string]any{"processId": nil, "rootUri": fileURL(dir), "capabilities": map[string]any{}}).(map[string]any)
 	caps, _ := initRes["capabilities"].(map[string]any)
 	if _, ok := caps["completionProvider"]; !ok {
 		t.Errorf("no completionProvider in %v", caps)
@@ -377,12 +377,12 @@ func TestLSPModuleCache(t *testing.T) {
 	}
 	session := func() *lspClient {
 		c := startLSPEnv(t, dir, "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on")
-		c.request("initialize", map[string]any{"processId": nil, "rootUri": "file://" + dir, "capabilities": map[string]any{}})
+		c.request("initialize", map[string]any{"processId": nil, "rootUri": fileURL(dir), "capabilities": map[string]any{}})
 		c.notify("initialized", map[string]any{})
 		return c
 	}
-	mainURI := "file://" + filepath.Join(dir, "main.xo")
-	libURI := "file://" + filepath.Join(dir, "lib", "lib.xo")
+	mainURI := fileURL(filepath.Join(dir, "main.xo"))
+	libURI := fileURL(filepath.Join(dir, "lib", "lib.xo"))
 
 	c1 := session()
 	open(c1, mainURI, main)

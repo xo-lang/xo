@@ -141,8 +141,14 @@ fn range_json(a: (Int, Int), b: (Int, Int)) -> J { jobj(["start", "end"], [pos_j
 fn hex_digit(n: Int) -> Str { "0123456789ABCDEF"[n..n + 1] }
 
 /// pathToURI: "file://" and the path escaped as url.URL escapes a path.
-fn path_to_uri(path: Str) -> Str {
-  var out = "file://"
+fn path_to_uri(path: Str) -> Str { path_to_uri_w(path, hostpath.windows()) }
+
+/// path_to_uri by the Windows rules when win: `\` as `/` and a drive
+/// path `C:/x` as `file:///C:/x` (it was `file://C:/x`, a URI whose host
+/// is `C:`; winarm VM, 2026-11-09).
+fn path_to_uri_w(path0: Str, win: Bool) -> Str {
+  let path = if win { path0.replace("\\", "/") } else { path0 }
+  var out = if win && !path.starts_with("/") && !hostpath.volume_w(path, true).is_empty() { "file:///" } else { "file://" }
   for c in path.bytes() {
     let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' || c == '$' || c == '&' || c == '+' || c == ',' || c == '/' || c == ':' || c == ';' || c == '=' || c == '@'
     if ok {
@@ -165,7 +171,11 @@ fn unhex(c: UInt8) -> Int {
 }
 
 /// uriToPath: the cleaned path of a file URI, or "".
-fn uri_to_path(uri: Str) -> Str {
+fn uri_to_path(uri: Str) -> Str { uri_to_path_w(uri, hostpath.windows()) }
+
+/// uri_to_path by the Windows rules when win: `file:///C:/x` (and an
+/// editor's `file:///c%3A/x`) is the path `C:/x`, not `/C:/x`.
+fn uri_to_path_w(uri: Str, win: Bool) -> Str {
   if !uri.starts_with("file:") {
     return ""
   }
@@ -198,7 +208,14 @@ fn uri_to_path(uri: Str) -> Str {
     out.write_byte(b[i])
     i += 1
   }
-  clean_path(out.freeze().to_str() ?? "")
+  var p = out.freeze().to_str() ?? ""
+  if win {
+    let pb = p.bytes()
+    if pb.len() >= 3 && pb[0] == '/' && pb[2] == ':' && ((pb[1] >= 'a' && pb[1] <= 'z') || (pb[1] >= 'A' && pb[1] <= 'Z')) {
+      p = p[1..]
+    }
+  }
+  clean_path(p)
 }
 
 /// filepath.Clean of a slash path.

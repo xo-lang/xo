@@ -98,8 +98,8 @@ func TestLSPStalePWD(t *testing.T) {
 			}
 		}
 	}
-	uri := "file://" + filepath.ToSlash(file)
-	send(1, "initialize", map[string]any{"processId": nil, "rootUri": "file://" + filepath.ToSlash(repoRoot), "capabilities": map[string]any{}})
+	uri := fileURL(file)
+	send(1, "initialize", map[string]any{"processId": nil, "rootUri": fileURL(repoRoot), "capabilities": map[string]any{}})
 	reply(1)
 	send(0, "initialized", map[string]any{})
 	send(0, "textDocument/didOpen", map[string]any{"textDocument": map[string]any{"uri": uri, "languageId": "xo", "version": 1, "text": string(text)}})

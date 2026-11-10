@@ -397,7 +397,7 @@ func TestUseGoOfflineProxy(t *testing.T) {
 		})
 	})
 	for k, v := range map[string]string{
-		"GOPROXY": "file://" + filepath.ToSlash(proxy), "GOSUMDB": "off", "GOFLAGS": "-mod=mod",
+		"GOPROXY": fileURL(proxy), "GOSUMDB": "off", "GOFLAGS": "-mod=mod",
 
 		"GOMODCACHE": modcache, "GOTOOLCHAIN": "local", "GOPRIVATE": "", "GONOSUMDB": "", "GONOPROXY": "",
 		"XO_GOBIND_DIR": "",
@@ -568,7 +568,7 @@ func TestUseGoMissingIndirectRequire(t *testing.T) {
 		})
 	})
 	for k, v := range map[string]string{
-		"GOPROXY": "file://" + filepath.ToSlash(proxy), "GOSUMDB": "off", "GOFLAGS": "",
+		"GOPROXY": fileURL(proxy), "GOSUMDB": "off", "GOFLAGS": "",
 		"GOMODCACHE": modcache, "GOTOOLCHAIN": "local", "GOPRIVATE": "", "GONOSUMDB": "", "GONOPROXY": "",
 		"XO_GOBIND_DIR": "",
 	} {
@@ -638,7 +638,7 @@ func TestUseGoNestedModulePin(t *testing.T) {
 		})
 	})
 	for k, v := range map[string]string{
-		"GOPROXY": "file://" + filepath.ToSlash(proxy), "GOSUMDB": "off", "GOFLAGS": "-mod=mod",
+		"GOPROXY": fileURL(proxy), "GOSUMDB": "off", "GOFLAGS": "-mod=mod",
 		"GOMODCACHE": modcache, "GOTOOLCHAIN": "local", "GOPRIVATE": "", "GONOSUMDB": "", "GONOPROXY": "",
 		"XO_GOBIND_DIR": "",
 	} {
