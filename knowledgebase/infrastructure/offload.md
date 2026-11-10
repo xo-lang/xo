@@ -589,3 +589,26 @@ asking for a lane no line names waits forever. First gate (selfbuild of
 main): 35 s. Use it for pass/fail runs with `OFFLOAD_ENV=offload-arm64c.env`;
 it shares the Mac's cores, so no timing runs. No WebAssembly tools yet.
 Last verified: 2026-11-09.
+
+## The Windows arm64 VM (owner, 2026-11-09)
+
+Windows 11 Pro ARM (26100) in VMware Fusion 26H1 (free personal use) on
+the Mac Studio: 8 CPUs, 16 GB, a 200 GB growable NVMe disk, NAT
+networking (the Mac reaches it on Fusion's private vmnet8 address), UEFI
+Secure Boot and a vTPM, so Fusion encrypts the VM's TPM files
+(`vmx.encryptionType = partial`): `vmrun` needs `-vp PASSWORD`. Settings
+are private: `~/xo-lead/offload-winarm.env` (the offload host, lane
+`winarm`, `OFF_KIND=win`) and `~/xo-lead/winarm-vm.env` (the .vmx path and
+the VM password, for `vmrun -T fusion -vp ... start VMX nogui`). The lead
+logs in with the key `~/.ssh/xo_winarm` (in
+`C:\ProgramData\ssh\administrators_authorized_keys`, since xo is an
+administrator); offload.sh uses the password. Developer mode is on (git
+symlinks without elevation). Installed: OpenSSH Server, PortableGit
+2.56.0.4 arm64 in `%USERPROFILE%\tools\git`, Go 1.26.1 windows/arm64 in
+`tools\go` (both checked against their published SHA-256), `xo-ci\off`.
+Git Bash's runtime is x64 under emulation (`uname -m` says x86_64); Go and
+the jobs' programs run natively. No xo seed for windows/arm64 yet, so it
+runs programs cross-built on the Mac. Fusion's "vmware-vdiskmanager -x"
+cannot grow a disk of an encrypted VM ("Failed to analyze snapshot
+chain"); an empty disk was replaced with a new 200 GB one instead.
+Last verified: 2026-11-09.
