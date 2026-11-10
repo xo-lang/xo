@@ -433,6 +433,112 @@ fn perr(s: Str, go_layout: Str, at: Int, msg: Str) -> time.ParseErr {
   time.ParseErr{input: s, layout: go_layout, at: at, msg: msg}
 }
 
+/// A parse error that also carries what Go's text needs: kind 1 `cannot parse REST as ELEM`, 2 `extra text: REST`, 3 a message.
+fn perr_go(s: Str, go_layout: Str, at: Int, msg: Str, kind: Int, elem: Str, rest: Str, go_msg: Str) -> time.ParseErr {
+  time.ParseErr{input: s, layout: go_layout, at: at, msg: msg, go_kind: kind, go_elem: elem, go_rest: rest, go_msg: go_msg}
+}
+
+/// The reference text of a layout element (what Go quotes in `cannot parse "REST" as "ELEM"`).
+fn elem_text(k: Int, lit: Str, n: Int) -> Str {
+  match k {
+    YEAR2 => "06"
+    YEAR4 => "2006"
+    MONTH_LONG => "January"
+    MONTH_SHORT => "Jan"
+    MONTH_NUM => "1"
+    MONTH_ZERO => "01"
+    WD_LONG => "Monday"
+    WD_SHORT => "Mon"
+    DAY => "2"
+    DAY_UNDER => "_2"
+    DAY_ZERO => "02"
+    YDAY_UNDER => "__2"
+    YDAY_ZERO => "002"
+    HOUR24 => "15"
+    HOUR12 => "3"
+    HOUR12_ZERO => "03"
+    MIN => "4"
+    MIN_ZERO => "04"
+    SEC => "5"
+    SEC_ZERO => "05"
+    PM_UP => "PM"
+    PM_LO => "pm"
+    TZ_NAME => "MST"
+    ISO_BASIC => "Z0700"
+    ISO_SECS => "Z070000"
+    ISO_SHORT => "Z07"
+    ISO_COLON => "Z07:00"
+    ISO_COLON_SECS => "Z07:00:00"
+    NUM_BASIC => "-0700"
+    NUM_SECS => "-070000"
+    NUM_SHORT => "-07"
+    NUM_COLON => "-07:00"
+    NUM_COLON_SECS => "-07:00:00"
+    FRAC0 => lit + "0".repeat(n)
+    FRAC9 => lit + "9".repeat(n)
+    _ => lit
+  }
+}
+
+/// Go's time.quote: `"`, `\` escaped, bytes below a space and non ASCII bytes as \xNN.
+fn go_quote(s: Str) -> Str {
+  var out = BytesBuilder.new()
+  out.write_byte(UInt8(34))
+  let b = s.bytes()
+  let hex = "0123456789abcdef".bytes()
+  for c in b {
+    let n = Int(c)
+    if n >= 128 || n < 32 {
+      out.write_byte(UInt8(92))
+      out.write_byte(UInt8(120))
+      out.write_byte(hex[n / 16])
+      out.write_byte(hex[n % 16])
+    } else {
+      if n == 34 || n == 92 {
+        out.write_byte(UInt8(92))
+      }
+      out.write_byte(c)
+    }
+  }
+  out.write_byte(UInt8(34))
+  out.freeze().to_str_lossy()
+}
+
+fn go_text(e: time.ParseErr) -> Str {
+  match e.go_kind {
+    1 => "parsing time ${go_quote(e.input)} as ${go_quote(e.layout)}: cannot parse ${go_quote(e.go_rest)} as ${go_quote(e.go_elem)}"
+    2 => "parsing time ${go_quote(e.input)}: extra text: ${go_quote(e.go_rest)}"
+    3 => "parsing time ${go_quote(e.input)}: ${e.go_msg}"
+    _ => e.display()
+  }
+}
+
+/// The position in v where the literal lit stops matching from p0 (skip_lit's walk).
+fn lit_fail_pos(v: Bytes, p0: Int, lit: Bytes) -> Int {
+  var p = p0
+  var k = 0
+  while k < lit.len() {
+    if Int(lit[k]) == 32 {
+      if p < v.len() && Int(v[p]) != 32 {
+        return p
+      }
+      while k < lit.len() && Int(lit[k]) == 32 {
+        k += 1
+      }
+      while p < v.len() && Int(v[p]) == 32 {
+        p += 1
+      }
+    } else {
+      if p >= v.len() || v[p] != lit[k] {
+        return p
+      }
+      p += 1
+      k += 1
+    }
+  }
+  p
+}
+
 fn lower_byte(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
 
 /// Go's lookup: the number of the month (1 to 12) or weekday (0 to 6) whose name v begins with at p (case insensitive), -1 for none.
@@ -697,10 +803,12 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
   while i < l.kinds.len() {
     let k = l.kinds[i]
     var bad = ""
+    let start = p
     if k == LIT {
       let q = skip_lit(v, p, l.lits[i].bytes())
       if q < 0 {
-        return Err(perr(s, l.text, p, "does not match the layout text " + l.lits[i]))
+        return Err(perr_go(s, l.text, p, "does not match the layout text " + l.lits[i], 1, l.lits[i],
+          s[lit_fail_pos(v, p, l.lits[i].bytes())..], ""))
       }
       p = q
     } else if k == YEAR2 {
@@ -904,7 +1012,8 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
         if hh < 0 || mm < 0 || ss < 0 || (sign != 43 && sign != 45) {
           bad = "expected time zone offset"
         } else if hh > 24 || mm > 60 || ss > 60 {
-          bad = "time zone offset out of range"
+          // Go names the last part out of range
+          bad = if ss > 60 { "time zone offset second out of range" } else if mm > 60 { "time zone offset minute out of range" } else { "time zone offset hour out of range" }
         } else {
           off = (hh * 60 + mm) * 60 + ss
           if sign == 45 {
@@ -938,7 +1047,10 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
       }
     }
     if bad != "" {
-      return Err(perr(s, l.text, p, bad))
+      if bad.ends_with(" out of range") {
+        return Err(perr_go(s, l.text, p, bad, 3, "", "", bad))
+      }
+      return Err(perr_go(s, l.text, p, bad, 1, elem_text(k, l.lits[i], l.ns[i]), s[start..], ""))
     }
     if nsec < 0 {
       return Err(perr(s, l.text, p, "bad fractional second"))
@@ -946,7 +1058,7 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
     i += 1
   }
   if p < v.len() {
-    return Err(perr(s, l.text, p, "extra text"))
+    return Err(perr_go(s, l.text, p, "extra text", 2, "", s[p..], ""))
   }
   if pm_set && hour < 12 {
     hour += 12
@@ -966,7 +1078,7 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
       }
     }
     if yd < 1 || yd > 365 {
-      return Err(perr(s, l.text, p, "day-of-year out of range"))
+      return Err(perr_go(s, l.text, p, "day-of-year out of range", 3, "", "", "day-of-year out of range"))
     }
     if m == 0 {
       m = (yd - 1) / 31 + 1
@@ -976,11 +1088,11 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
       d = yd - days_before(m - 1)
     }
     if month >= 0 && month != m {
-      return Err(perr(s, l.text, p, "day-of-year does not match month"))
+      return Err(perr_go(s, l.text, p, "day-of-year does not match month", 3, "", "", "day-of-year does not match month"))
     }
     month = m
     if day >= 0 && day != d {
-      return Err(perr(s, l.text, p, "day-of-year does not match day"))
+      return Err(perr_go(s, l.text, p, "day-of-year does not match day", 3, "", "", "day-of-year does not match day"))
     }
     day = d
   } else {
@@ -992,7 +1104,7 @@ fn layout_parse(l: timego.Layout, s: Str, z: time.Zone) -> Time ! time.ParseErr 
     }
   }
   if day < 1 || day > days_in(month, year) {
-    return Err(perr(s, l.text, p, "day out of range"))
+    return Err(perr_go(s, l.text, p, "day out of range", 3, "", "", "day out of range"))
   }
   if have_off && zname == "" && year >= 1678 && year <= 2261 {
     return Ok(unix_time(year, month, day, hour, minute, sec, nsec, off))

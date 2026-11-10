@@ -1,5 +1,18 @@
 # std/timego changes
 
+## 2026-11-09: feature: timego.go_text(e) gives Go's time.Parse error text
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Azure 1 (azidentity prints Go's text for a bad time in a developer tool's output; a fixed width rebuild stood in)
+- Go reference: time/format.go parse and ParseError.Error (go1.26.1), time.quote; the oracle internal/stdtest/timeref now prints Go's error text
+- Test: testdata/corpus/timego (every failing parse case compares `go_text` with Go's text, go, arm64 and llvm)
+- Shipped in: not yet released
+
+`timego.go_text(e)` returns `parsing time "X" as "LAYOUT": cannot parse "REST" as "ELEM"`, `parsing time "X": extra text: "REST"` or
+`parsing time "X": month out of range` for a failed timego parse, as Go prints them. `time.ParseErr` gains four defaulted fields
+(`go_kind`, `go_elem`, `go_rest`, `go_msg`) the scanner fills; an error from anywhere else gives its display text.
+
 ## 2026-11-06: behavior: std/timego is Go's layout engine, not a translation to core layouts (decision 0537)
 
 - Kind: behavior

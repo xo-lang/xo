@@ -155,11 +155,12 @@ test "std/timego parses what Go's Time.Parse parses" {
         let c = time.civil(t, time.utc())
         "ok ${t.unix() * 1000000000 + c.time.nanos}"
       }
-      Err(_) => "err"
+      Err(e) => "err ${timego.go_text(e)}"
     }
     // Go's answer ends with the text's offset, which a Time does not keep: compare the instant
     let parts = want.split(" ")
-    let w = if parts[0] == "ok" { "ok ${parts[1]}" } else { "err" }
+    // a text outside what a Time holds is "range" for the oracle: an error here, with the text of the core parser
+    let w = if parts[0] == "ok" { "ok ${parts[1]}" } else if parts[0] == "range" { if got.starts_with("err") { got } else { "err" } } else { want }
     if got != w {
       bad.push("${layout} ${text} (changed ${changed}): got ${got} want ${w}")
     }

@@ -2,7 +2,7 @@
 // reads lines "op<TAB>layout<TAB>arg" from stdin and prints Go's answer.
 //
 //	fmt  layout unix_ns zone_offset_secs  -> time.Unix(0,ns).In(FixedZone("ZZ", off)).Format(layout)
-//	parse layout text                      -> time.Parse(layout, text): "ok <unix_ns> <offset>" or "err"
+//	parse layout text                      -> time.Parse(layout, text): "ok <unix_ns> <offset>" or "err <Go's error text>"
 package main
 
 import (
@@ -32,7 +32,7 @@ func main() {
 		case "parse":
 			t, err := time.Parse(f[1], f[2])
 			if err != nil {
-				fmt.Println("err")
+				fmt.Println("err " + strings.ReplaceAll(err.Error(), "\n", "\\n"))
 				continue
 			}
 			// a Time of the Xo side holds int64 nanoseconds since 1970 (decision 0364): 1677 to 2262

@@ -44,3 +44,8 @@ fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr
 fn format(t: Time, z: time.Zone, go_layout: Str) -> Str
 /// `layout(go_layout).parse(s, z)`.
 fn parse(s: Str, go_layout: Str, z: time.Zone) -> Time ! time.ParseErr
+
+/// The text Go's time.Parse gives for the same failure (`parsing time "X" as "LAYOUT": cannot parse "REST" as "ELEM"`,
+/// `parsing time "X": extra text: "REST"`, `parsing time "X": month out of range`) when `e` came from a timego parse; the
+/// display text of `e` for any other failure (a time outside what a Time holds, an error of core time's parser).
+fn go_text(e: time.ParseErr) -> Str

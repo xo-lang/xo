@@ -177,6 +177,12 @@ struct ParseErr {
   layout: Str
   at: Int
   msg: Str
+  /// What std/timego's `go_text` needs to give Go's text (0 none: the parse was not a Go layout's; 1 `cannot parse REST as
+  /// ELEM`; 2 `extra text: REST`; 3 a message after the quoted input): the layout element, the text from its start.
+  go_kind: Int = 0
+  go_elem: Str = ""
+  go_rest: Str = ""
+  go_msg: Str = ""
 }
 
 fn (e: ParseErr) display() -> Str

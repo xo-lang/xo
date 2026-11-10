@@ -7993,6 +7993,7 @@ fn (l: Layout) format(t: Time, z: time.Zone) -> Str
 fn (l: Layout) parse(s: Str, z: time.Zone) -> Time ! time.ParseErr
 fn format(t: Time, z: time.Zone, go_layout: Str) -> Str
 fn parse(s: Str, go_layout: Str, z: time.Zone) -> Time ! time.ParseErr
+fn go_text(e: time.ParseErr) -> Str                  // Go's error text of a failed parse
 const ANSIC, UNIX_DATE, RUBY_DATE, RFC822, RFC822Z, RFC850, RFC1123, RFC1123Z, RFC3339, RFC3339_NANO, KITCHEN,
       STAMP, STAMP_MILLI, STAMP_MICRO, STAMP_NANO, DATE_TIME, DATE_ONLY, TIME_ONLY: Str
 ```
@@ -8012,6 +8013,11 @@ const ANSIC, UNIX_DATE, RUBY_DATE, RFC822, RFC822Z, RFC850, RFC1123, RFC1123Z, R
   is a `ParseErr`; a civil time in a daylight saving gap or overlap is the earlier one (Go leaves it unspecified); a
   zone name `z` does not know is never looked up among all of `z`'s zones, only at that instant; `ParseErr` text is
   core's, not Go's `parsing time ...` wording.
+- `go_text(e)` is the text Go's `time.Parse` gives for the same failure: `parsing time "X" as "LAYOUT": cannot parse "REST" as
+  "ELEM"` (REST is the text from the element's start, ELEM the layout element or literal), `parsing time "X": extra text: "REST"`,
+  `parsing time "X": month out of range` (and day, hour, minute, second, day-of-year), quoted as Go's `time.quote` does. A
+  `ParseErr` that did not come from a Go layout parse (a time outside what a Time holds, core time's parser) gives its display
+  text. The corpus compares it with Go's for every failing case.
 - `layout` plus `RFC3339` and `RFC3339_NANO` texts take Go's fast path in `parse`.
 
 ## 68. std/grpc
