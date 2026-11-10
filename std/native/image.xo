@@ -5,6 +5,7 @@
 use std/image
 use std/png
 use std/jpeg
+use std/binary
 
 /// Go's color.GrayModel: (19595 r + 38470 g + 7471 b + 1<<15) >> 24 over the
 /// 16 bit premultiplied channels.
@@ -322,11 +323,12 @@ fn palette_index(pal: List[Int], c: image.Color) -> Int {
   best
 }
 
-/// Go's Image.Set. Bytes is immutable, so the pixels are copied into a
+/// Stores c into the pixel (ax, ay) of the pixel buffer b (the samples of im)
+/// as Go's Image.Set does; a point outside is ignored. Bytes is immutable, so the pixels are copied into a
 /// BytesBuilder, patched in place and frozen again: a set costs time linear in
 /// the image (bulk writers, like the draw step of decision 0578, build their
 /// own buffers).
-fn image_set(var im: image.Image, ax: Int, ay: Int, c: image.Color) -> () {
+fn store_color(var b: BytesBuilder, im: image.Image, ax: Int, ay: Int, c: image.Color) -> () {
   let x = ax - im.min_x
   let y = ay - im.min_y
   if x < 0 || y < 0 || x >= im.width || y >= im.height {
@@ -371,13 +373,10 @@ fn image_set(var im: image.Image, ax: Int, ay: Int, c: image.Color) -> () {
     }
     image.Model.RGBA64 => {
       at = y * (if stride > 0 { stride } else { im.width * 8 }) + x * 8
-      var b = BytesBuilder.with_capacity(im.pix.len())
-      b.write(im.pix)
       b.put_be(at, c.r, 2)
       b.put_be(at + 2, c.g, 2)
       b.put_be(at + 4, c.b, 2)
       b.put_be(at + 6, c.a, 2)
-      im.pix = b.freeze()
       return
     }
     image.Model.NRGBA64 => {
@@ -394,22 +393,29 @@ fn image_set(var im: image.Image, ax: Int, ay: Int, c: image.Color) -> () {
         g = (c.g * 65535) / c.a
         bl = (c.b * 65535) / c.a
       }
-      var b = BytesBuilder.with_capacity(im.pix.len())
-      b.write(im.pix)
       b.put_be(at, r, 2)
       b.put_be(at + 2, g, 2)
       b.put_be(at + 4, bl, 2)
       b.put_be(at + 6, c.a, 2)
-      im.pix = b.freeze()
       return
     }
     image.Model.YCbCr => {
       return
     }
   }
+  b.put_be(at, v, n)
+}
+
+/// Go's Image.Set: copies the image's samples into a builder, stores, freezes.
+fn image_set(var im: image.Image, ax: Int, ay: Int, c: image.Color) -> () {
+  let x = ax - im.min_x
+  let y = ay - im.min_y
+  if x < 0 || y < 0 || x >= im.width || y >= im.height || im.model == image.Model.YCbCr {
+    return
+  }
   var b = BytesBuilder.with_capacity(im.pix.len())
   b.write(im.pix)
-  b.put_be(at, v, n)
+  store_color(b, im, ax, ay, c)
   im.pix = b.freeze()
 }
 
@@ -572,5 +578,100 @@ fn image_to_jpeg(im: image.Image) -> jpeg.Image? {
     }
     _ => None
   }
+}
+
+fn imax(a: Int, b: Int) -> Int { if a > b { a } else { b } }
+
+fn imin(a: Int, b: Int) -> Int { if a < b { a } else { b } }
+
+/// Byte offset of the pixel (rx, ry) (relative to the corner) in a pix model
+/// with bpp bytes a pixel.
+fn pix_off(im: image.Image, rx: Int, ry: Int, bpp: Int) -> Int {
+  let st = if im.stride > 0 { im.stride } else { im.width * bpp }
+  ry * st + rx * bpp
+}
+
+/// The source color of Go's drawRGBA fast paths into an RGBA destination:
+/// as at(), except YCbCr, which draw.DrawYCbCr converts with the 8 bit
+/// color.YCbCrToRGB and an opaque alpha.
+fn draw_src_color(src: image.Image, sx: Int, sy: Int) -> image.Color {
+  if src.model != image.Model.YCbCr {
+    return image_at(src, sx, sy)
+  }
+  let rx = sx - src.min_x
+  let ry = sy - src.min_y
+  if rx < 0 || ry < 0 || rx >= src.width || ry >= src.height {
+    return image_at(src, sx, sy)
+  }
+  let ys = if src.y_stride > 0 { src.y_stride } else { src.width }
+  let ci = chroma_index(src, sx, sy)
+  let (r, g, b) = ycbcr_to_rgb(Int(src.y[ry * ys + rx]), Int(src.cb[ci]), Int(src.cr[ci]))
+  image.Color{r: r * 257, g: g * 257, b: b * 257, a: 65535}
+}
+
+/// Go's draw.Draw with a nil mask (see the declaration).
+fn image_draw(var dst: image.Image, r: image.Rect, src: image.Image, spx: Int, spy: Int, op: image.Op) -> () {
+  if dst.model == image.Model.YCbCr {
+    return
+  }
+  let ox = r.x0
+  let oy = r.y0
+  var x0 = imax(r.x0, dst.min_x)
+  var y0 = imax(r.y0, dst.min_y)
+  var x1 = imin(r.x1, dst.min_x + dst.width)
+  var y1 = imin(r.y1, dst.min_y + dst.height)
+  x0 = imax(x0, src.min_x + ox - spx)
+  y0 = imax(y0, src.min_y + oy - spy)
+  x1 = imin(x1, src.min_x + src.width + ox - spx)
+  y1 = imin(y1, src.min_y + src.height + oy - spy)
+  if x0 >= x1 || y0 >= y1 {
+    return
+  }
+  let sp_x = spx + (x0 - ox)
+  let sp_y = spy + (y0 - oy)
+  var b = BytesBuilder.with_capacity(dst.pix.len())
+  b.write(dst.pix)
+  let copy_nrgba = op == image.Op.Src && dst.model == image.Model.NRGBA && src.model == image.Model.NRGBA
+  let copy_nrgba64 = op == image.Op.Src && dst.model == image.Model.NRGBA64 && src.model == image.Model.NRGBA64
+  for y in y0..y1 {
+    for x in x0..x1 {
+      let sx = sp_x + (x - x0)
+      let sy = sp_y + (y - y0)
+      if copy_nrgba {
+        let si = pix_off(src, sx - src.min_x, sy - src.min_y, 4)
+        let di = pix_off(dst, x - dst.min_x, y - dst.min_y, 4)
+        b.put_be(di, binary.get_u32_be(src.pix, si), 4)
+      } else if copy_nrgba64 {
+        let si = pix_off(src, sx - src.min_x, sy - src.min_y, 8)
+        let di = pix_off(dst, x - dst.min_x, y - dst.min_y, 8)
+        b.put_be(di, binary.get_u32_be(src.pix, si), 4)
+        b.put_be(di + 4, binary.get_u32_be(src.pix, si + 4), 4)
+      } else if dst.model == image.Model.RGBA {
+        let sc = draw_src_color(src, sx, sy)
+        let di = pix_off(dst, x - dst.min_x, y - dst.min_y, 4)
+        if op == image.Op.Over {
+          let a = (65535 - sc.a) * 257
+          let rr = (((Int(dst.pix[di]) * a) / 65535 + sc.r) >> 8) & 255
+          let gg = (((Int(dst.pix[di + 1]) * a) / 65535 + sc.g) >> 8) & 255
+          let bb = (((Int(dst.pix[di + 2]) * a) / 65535 + sc.b) >> 8) & 255
+          let aa = (((Int(dst.pix[di + 3]) * a) / 65535 + sc.a) >> 8) & 255
+          b.put_be(di, (rr << 24) | (gg << 16) | (bb << 8) | aa, 4)
+        } else {
+          b.put_be(di, ((sc.r >> 8) << 24) | ((sc.g >> 8) << 16) | ((sc.b >> 8) << 8) | (sc.a >> 8), 4)
+        }
+      } else {
+        let sc = image_at(src, sx, sy)
+        if op == image.Op.Over {
+          let dc = image_at(dst, x, y)
+          let a = 65535 - sc.a
+          let oc = image.Color{r: (((dc.r * a) / 65535) + sc.r) & 65535, g: (((dc.g * a) / 65535) + sc.g) & 65535, b: (((dc.b * a) / 65535) + sc.b) & 65535, a: (((dc.a * a) / 65535) + sc.a) & 65535}
+          store_color(b, dst, x, y, oc)
+        } else {
+          store_color(b, dst, x, y, sc)
+        }
+      }
+    }
+  }
+  dst.pix = b.freeze()
 }
 

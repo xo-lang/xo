@@ -148,3 +148,21 @@ fn from_jpeg(j: jpeg.Image) -> Image
 /// None for a model JPEG has no layout for (everything but Gray, YCbCr, CMYK
 /// and RGBA) and for a YCbCr sub image (crop does not pack planes yet).
 fn (im: Image) to_jpeg() -> jpeg.Image?
+
+/// Go's draw.Op: how the source combines with the destination.
+enum Op {
+  Over
+  Src
+} derive Eq, Display
+
+/// Go's draw.Draw (a nil mask): draws the part of src that lies over r onto
+/// the image, aligning r's corner with the source point (sp_x, sp_y), after
+/// clipping r to the image and to the source (draw.clip). Src replaces the
+/// pixels, Over composites the source over them (Porter-Duff, alpha
+/// premultiplied). Each pixel comes out as Go's fast paths compute it (an
+/// RGBA destination takes 16 bit source channels and 8 bit destination
+/// channels as drawRGBA does; NRGBA and NRGBA64 copy a source of their own
+/// model with Src; the rest go through the RGBA64 formula and Set). A YCbCr
+/// destination is left alone (Go has no Set for it). The samples are copied
+/// once per call.
+fn (var dst: Image) draw(r: Rect, src: Image, sp_x: Int, sp_y: Int, op: Op)

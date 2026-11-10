@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"image/color/palette"
+	"image/draw"
 	"math/rand"
 	"strings"
 )
@@ -696,6 +697,163 @@ test "from_jpeg and to_jpeg keep the samples and the chroma subsampling" {
   expect((gb.model, gb.pix)) == (jpeg.Model.Gray, g.pix)
   let n = image.Image{width: 1, height: 1, model: image.Model.NRGBA, pix: b"\x00\x00\x00\x00"}
   expect(n.to_jpeg().is_none()) == true
+}
+`)
+	// draw.Draw: every destination model (but Paletted) against every source
+	// model, both ops, two rectangles with source offsets and clipping.
+	o.WriteString("\n/// (dst model, dst pix, src model, src pix, palette, (y, cb, cr), rect, sp, op, pix after): draw.Draw with a nil mask.\nconst DRAW_CASES: List[(Str, Bytes, Str, Bytes, List[Int], (Bytes, Bytes, Bytes), (Int, Int, Int, Int), (Int, Int), Int, Bytes)] = [\n")
+	dpal := color.Palette{color.NRGBA{10, 20, 30, 255}, color.NRGBA{200, 100, 50, 128}, color.NRGBA{0, 0, 0, 0}, color.NRGBA{255, 255, 255, 255}}
+	dpalv := []int{10<<24 | 20<<16 | 30<<8 | 255, 200<<24 | 100<<16 | 50<<8 | 128, 0, 255<<24 | 255<<16 | 255<<8 | 255}
+	randPix := func(name string, px []byte) {
+		switch name {
+		case "RGBA":
+			for i := 0; i < len(px); i += 4 {
+				a := r.Intn(256)
+				px[i], px[i+1], px[i+2], px[i+3] = byte(r.Intn(a+1)), byte(r.Intn(a+1)), byte(r.Intn(a+1)), byte(a)
+			}
+		case "RGBA64":
+			for i := 0; i < len(px); i += 8 {
+				a := r.Intn(65536)
+				vals := [4]int{r.Intn(a + 1), r.Intn(a + 1), r.Intn(a + 1), a}
+				for k, v := range vals {
+					px[i+2*k], px[i+2*k+1] = byte(v>>8), byte(v)
+				}
+			}
+		case "Paletted":
+			for i := range px {
+				px[i] = byte(r.Intn(4))
+			}
+		default:
+			copy(px, fill(len(px)))
+		}
+	}
+	mkImg := func(name string, rc image.Rectangle) (draw.Image, []byte) {
+		switch name {
+		case "Gray":
+			v := image.NewGray(rc)
+			return v, v.Pix
+		case "Gray16":
+			v := image.NewGray16(rc)
+			return v, v.Pix
+		case "NRGBA":
+			v := image.NewNRGBA(rc)
+			return v, v.Pix
+		case "NRGBA64":
+			v := image.NewNRGBA64(rc)
+			return v, v.Pix
+		case "CMYK":
+			v := image.NewCMYK(rc)
+			return v, v.Pix
+		case "RGBA":
+			v := image.NewRGBA(rc)
+			return v, v.Pix
+		case "RGBA64":
+			v := image.NewRGBA64(rc)
+			return v, v.Pix
+		}
+		v := image.NewPaletted(rc, dpal)
+		return v, v.Pix
+	}
+	dstNames := []string{"RGBA", "NRGBA", "Gray", "Gray16", "RGBA64", "NRGBA64", "CMYK"}
+	srcNames := []string{"RGBA", "NRGBA", "Gray", "Gray16", "RGBA64", "NRGBA64", "CMYK", "Paletted", "YCbCr"}
+	type drawRect struct {
+		rc image.Rectangle
+		sp image.Point
+	}
+	for _, dn := range dstNames {
+		for _, sn := range srcNames {
+			for _, op := range []draw.Op{draw.Over, draw.Src} {
+				for _, dr := range []drawRect{{image.Rect(1, 1, 5, 4), image.Point{0, 1}}, {image.Rect(-2, 0, 4, 3), image.Point{2, 2}}} {
+					dimg, dpix := mkImg(dn, big)
+					randPix(dn, dpix)
+					before := append([]byte(nil), dpix...)
+					var simg image.Image
+					var spix, yp, cbp, crp []byte
+					var palText = "[]"
+					if sn == "YCbCr" {
+						yc := image.NewYCbCr(image.Rect(0, 0, 4, 4), image.YCbCrSubsampleRatio420)
+						copy(yc.Y, fill(len(yc.Y)))
+						copy(yc.Cb, fill(len(yc.Cb)))
+						copy(yc.Cr, fill(len(yc.Cr)))
+						simg, yp, cbp, crp = yc, yc.Y, yc.Cb, yc.Cr
+					} else {
+						si, sp := mkImg(sn, image.Rect(0, 0, 4, 3))
+						randPix(sn, sp)
+						simg, spix = si, sp
+						if sn == "Paletted" {
+							var sb strings.Builder
+							sb.WriteString("[")
+							for i, v := range dpalv {
+								if i > 0 {
+									sb.WriteString(", ")
+								}
+								fmt.Fprintf(&sb, "%d", v)
+							}
+							sb.WriteString("]")
+							palText = sb.String()
+						}
+					}
+					draw.Draw(dimg, dr.rc, simg, dr.sp, op)
+					opi := 0
+					if op == draw.Src {
+						opi = 1
+					}
+					after, _ := mkImg(dn, big)
+					_ = after
+					_, aft := func() (int, []byte) {
+						switch v := dimg.(type) {
+						case *image.RGBA:
+							return 0, v.Pix
+						case *image.NRGBA:
+							return 0, v.Pix
+						case *image.Gray:
+							return 0, v.Pix
+						case *image.Gray16:
+							return 0, v.Pix
+						case *image.RGBA64:
+							return 0, v.Pix
+						case *image.NRGBA64:
+							return 0, v.Pix
+						case *image.CMYK:
+							return 0, v.Pix
+						}
+						return 0, nil
+					}()
+					fmt.Fprintf(&o, "  (%q, %s, %q, %s, %s, (%s, %s, %s), (%d, %d, %d, %d), (%d, %d), %d, %s),\n", dn, bytesLit(before), sn, bytesLit(spix), palText,
+						bytesLit(yp), bytesLit(cbp), bytesLit(crp), dr.rc.Min.X, dr.rc.Min.Y, dr.rc.Max.X, dr.rc.Max.Y, dr.sp.X, dr.sp.Y, opi, bytesLit(aft))
+				}
+			}
+		}
+	}
+	o.WriteString("]\n")
+	o.WriteString(`
+fn model_of(name: Str) -> image.Model {
+  match name {
+    "Gray" => image.Model.Gray
+    "Gray16" => image.Model.Gray16
+    "NRGBA" => image.Model.NRGBA
+    "NRGBA64" => image.Model.NRGBA64
+    "CMYK" => image.Model.CMYK
+    "RGBA" => image.Model.RGBA
+    "RGBA64" => image.Model.RGBA64
+    "YCbCr" => image.Model.YCbCr
+    _ => image.Model.Paletted
+  }
+}
+
+test "Image.draw is Go's draw.Draw" {
+  for (dn, dpix, sn, spix, pal, planes, rc, sp, opi, want) in DRAW_CASES {
+    var dst = image.Image{width: 5, height: 4, model: model_of(dn), pix: dpix}
+    let (yp, cbp, crp) = planes
+    var src = image.Image{width: 4, height: 3, model: model_of(sn), pix: spix, palette: pal}
+    if sn == "YCbCr" {
+      src = image.Image{width: 4, height: 4, model: image.Model.YCbCr, pix: b"", y: yp, cb: cbp, cr: crp, subsample: jpeg.Subsample.S420}
+    }
+    let (x0, y0, x1, y1) = rc
+    let (spx, spy) = sp
+    dst.draw(image.Rect{x0: x0, y0: y0, x1: x1, y1: y1}, src, spx, spy, if opi == 0 { image.Op.Over } else { image.Op.Src })
+    expect(dst.pix) == want
+  }
 }
 `)
 	return o.String()

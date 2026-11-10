@@ -1,5 +1,17 @@
 # std/image changes
 
+## 2026-11-09: feature: std/image draw, Image.draw and Op (decision 0578 step 2, part 1)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0578 (owner accepted 2026-11-08)
+- Go reference: image/draw Draw (clip, drawRGBA and its fast paths, the RGBA64 fallback, NRGBA and NRGBA64 copy)
+- Test: testdata/corpus/image: 252 draws from Go (seven destination models, nine source models including YCbCr, Over and Src, two rectangles with source offsets and clipping), the destination pixels compared byte for byte, on arm64, LLVM and the Go backend
+- Timing: the samples are copied once per call and each pixel is read through at(); typed row fast paths and the timing row against Go's draw.Draw come next
+- Shipped in: not yet released
+
+`Image.draw(r, src, sp_x, sp_y, op)` is Go's `draw.Draw` with a nil mask for every destination model but Paletted and YCbCr (to come: Paletted with `floyd_steinberg`, masks, a uniform source).
+
 ## 2026-11-09: feature: std/image YCbCr (planes, at, sub_image) and from_jpeg, Image.to_jpeg (decision 0578 step 1)
 
 - Kind: feature
