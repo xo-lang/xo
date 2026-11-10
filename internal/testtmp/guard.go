@@ -16,11 +16,17 @@ import (
 // no deferred cleanup. Then the program's process group gets SIGTERM and,
 // after a grace period, SIGKILL (four programs that ignore SIGTERM ran 27
 // hours after their test, 2026-10-18). cmd.Process is still the program
-// itself. Where the wrapper cannot be built, and on Windows, cmd is
-// returned as it is. Lifeline is the per test form, which also ends the
+// itself. Where the wrapper cannot be built cmd is returned as it is;
+// on Windows this process joins a kill-on-close job object instead
+// (job_windows.go), so its children end with it. Lifeline is the per test form, which also ends the
 // child with its test.
 func Guard(cmd *exec.Cmd) *exec.Cmd {
-	if runtime.GOOS == "windows" || len(cmd.ExtraFiles) != 0 {
+	if runtime.GOOS == "windows" {
+		// the children end with this process through a job object
+		killChildrenWithProcess()
+		return cmd
+	}
+	if len(cmd.ExtraFiles) != 0 {
 		return cmd
 	}
 	r := processLifeline()

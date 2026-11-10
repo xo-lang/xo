@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [windows-test-children-outlive-timeout.md](windows-test-children-outlive-timeout.md): Observed 2026-11-10: a winarm suite's timeout ended xo.test.exe but nine xo.exe children spun for seven hours; testtmp now joins a kill-on-close job object on Windows.
 - [bash-reads-edited-running-script.md](bash-reads-edited-running-script.md): Observed 2026-11-10: an amend in the worktree a long release-vs-go.sh run came from gave "syntax error near unexpected token" at line 430: bash reads a running script as it goes; edit a copy or another worktree.
 - [member-check-reinstalled-std-record.md](member-check-reinstalled-std-record.md): Observed 2026-11-09: `xo check ./...` of a workspace of 8+ modules reported "expected `Str`, found `Str`" in members importing a std module the base lacked, once std's record was cached: each such member installed the whole record again (a second prelude); members now declare those modules from source
 - [go-twin-enum-tags-start-at-one.md](go-twin-enum-tags-start-at-one.md): Observed 2026-11-09: a std/rt Go twin tested `Tag == 0` for an enum's first variant; tags start at 1, so the Go backend packed lzw MSB for LSB while the native backends matched Go
