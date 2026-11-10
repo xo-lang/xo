@@ -199,7 +199,16 @@ fn (f: RecFs) remove_all(path: Str) -> () ! FsErr uses fs.write {
 }
 
 fn (f: RecFs) create_dir_all(dir: Str) -> () ! FsErr uses fs.write {
-  f.note_write(dir)
+  // a directory the build listed already existed: making it again writes
+  // nothing, and noting it as written dropped its listing from the run
+  // cache's entry, so a new file there was a hit (2026-11-10, windows: a
+  // build in the module's directory made it again, and cmd/xo
+  // TestWholeBuildCache's "new file" build hit); run_store lists a
+  // directory the build wrote into again after the build
+  let p = f.abs(dir)
+  if !f.skipped(p) && !f.rec.with(fn(r) { r.lists.contains(p) }) {
+    f.note_write(dir)
+  }
   f.inner.create_dir_all(dir)
 }
 

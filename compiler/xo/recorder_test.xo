@@ -99,3 +99,22 @@ test "the recorder leaves out the machine's state" {
   expect(probes.len()) == 0
   expect(reads.contains("/w/main.xo")) == true
 }
+
+test "making a directory the build listed again is not a write; a new one is" {
+  let rec = Mutex[Rec].new(Rec{})
+  let code = testing.run_main(fn(o: Os) -> () ! Error {
+    o.fs.create_dir_all("/w/m")?
+    o.fs.write("/w/m/main.xo", b"fn main() {}")?
+    let r = rec_os(o, rec, "/w", [])
+    let _l = r.fs.read_dir("/w/m")?
+    // the build makes its output's directory, which is the module's
+    r.fs.create_dir_all("/w/m")?
+    r.fs.create_dir_all("/w/m/.out.tmp-0")?
+  }, os)
+  expect(code) == 0
+  // 2026-11-10, windows: the module directory noted as written lost its
+  // listing from the run cache entry, and a new file there was a hit
+  expect(rec.with(fn(x) { x.written.contains("/w/m") })) == false
+  expect(rec.with(fn(x) { x.lists.contains("/w/m") })) == true
+  expect(rec.with(fn(x) { x.written.contains("/w/m/.out.tmp-0") })) == true
+}
