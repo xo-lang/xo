@@ -389,6 +389,9 @@ struct Session {
   gen: Int = 0
   /// where std sources are copied for a definition in std (StdDir)
   lsp_std: Str = ""
+  /// open documents of a std tree other than the checker's (std_root):
+  /// never checked, no diagnostics
+  std_docs: Set[Str] = #{}
   /// the last check that ran (zero or one): its resolution tables, the
   /// identifiers of its files (by file index), and the file index of each
   /// snapshot key (a std file's std path, else its absolute path)
@@ -623,8 +626,10 @@ fn (s: Session) text_of(p: Str) -> Text? {
   match s.files.get(p) {
     Some(src) => Some(new_text(src))
     None => {
-      // a std copy: the std file's text (snapshot.file)
-      let k = std_key(s.lsp_std, p)
+      // a std copy, or a file of the checker's std: the std file's text
+      // (snapshot.file)
+      let c = std_key(s.lsp_std, p)
+      let k = if c.is_empty() { s.toolchain_std_key(p) } else { c }
       if k.is_empty() {
         return None
       }
@@ -747,11 +752,14 @@ fn (var s: Session) changed(d: Str) {
 /// A notification: documents opened, changed, closed, or saved. It
 /// returns when the checks it calls for start: "now", "later" (after the
 /// debounce), or "" (none).
-fn (var s: Session) notification(os: Os, method: Str, params: J) -> Str {
+fn (var s: Session) notification(os: Os, method: Str, params: J) -> Str uses fs.read {
   if method == "textDocument/didOpen" {
     let td = get(params, "textDocument") ?? J.Null
     let path = uri_to_path(jstr_of(td, "uri"))
     if !path.is_empty() {
+      if !std_root(os, path).is_empty() {
+        s.std_docs.add(path)
+      }
       s.docs[path] = jstr_of(td, "text").bytes()
       s.changed(dir_of(path))
       return "now"
@@ -788,6 +796,7 @@ fn (var s: Session) notification(os: Os, method: Str, params: J) -> Str {
   } else if method == "textDocument/didClose" {
     let path = uri_to_path(uri_of(params))
     s.docs.remove(path)
+    s.std_docs.remove(path)
     let d = dir_of(path)
     if !s.groups().contains(d) {
       s.views.remove(d)

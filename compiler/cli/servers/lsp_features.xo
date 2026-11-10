@@ -41,8 +41,48 @@ fn std_key(std_dir: Str, path: Str) -> Str {
   p[root.len() + 1..]
 }
 
+/// A std source the server never checks as user code: a copy under the
+/// lsp-std directory, a file of the std directory the checker reads, or
+/// an open document of any other std tree (didOpen's std_root: a release's
+/// lib/xo/std beside another xo, an Xo checkout's std). Std's declaration
+/// files have bodyless fns; checked as a user package, every one was an
+/// error, and opening one file checked the whole tree.
 fn (s: Session) is_std_copy(path: Str) -> Bool {
-  !std_key(s.lsp_std, path).is_empty()
+  !std_key(s.lsp_std, path).is_empty() || !s.toolchain_std_key(path).is_empty() || s.std_docs.contains(path)
+}
+
+/// The std file path ("std/json.xo") of a file of the std directory the
+/// checker reads, else "".
+fn (s: Session) toolchain_std_key(path: Str) -> Str {
+  if !s.std_dir.starts_with("/") {
+    return ""
+  }
+  let k = std_key(s.std_dir, path)
+  if k.is_empty() { "" } else { "std/" + k }
+}
+
+/// The root of the std tree path is in, else "": the nearest directory at
+/// or above path's that holds prelude.xo and VERSION, with no xo.mod in
+/// it or below it on the way (an xo.mod first makes path user code).
+fn std_root(os: Os, path: Str) -> Str uses fs.read {
+  if !path.starts_with("/") {
+    return ""
+  }
+  var d = dir_of(path)
+  while true {
+    if os.fs.exists(d + "/xo.mod").ok() ?? false {
+      return ""
+    }
+    if (os.fs.exists(d + "/prelude.xo").ok() ?? false) && (os.fs.exists(d + "/VERSION").ok() ?? false) {
+      return d
+    }
+    let up = dir_of(d)
+    if up == d || d == "/" {
+      return ""
+    }
+    d = up
+  }
+  ""
 }
 
 /// The checked file at path (snapshot.file): by its key, or for a std
@@ -54,6 +94,10 @@ fn (s: Session) file_at(path: Str) -> Int {
   let k = std_key(s.lsp_std, path)
   if !k.is_empty() {
     return s.keys.get(k) ?? -1
+  }
+  let t = s.toolchain_std_key(path)
+  if !t.is_empty() {
+    return s.keys.get(t) ?? -1
   }
   -1
 }
