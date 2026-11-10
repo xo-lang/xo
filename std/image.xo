@@ -80,3 +80,8 @@ fn from_nrgba(v: Int) -> Color
 /// Gray16: opaque black, RGBA, NRGBA, RGBA64 and NRGBA64: transparent,
 /// CMYK: opaque white, Paletted: palette entry 0).
 fn (im: Image) at(x: Int, y: Int) -> Color
+
+/// Go's palette.WebSafe: the 216 colors with each channel one of 0, 51, 102,
+/// 153, 204, 255, red the slowest index and blue the fastest, as
+/// `0xRRGGBBAA` (alpha 255).
+fn web_safe() -> List[Int]

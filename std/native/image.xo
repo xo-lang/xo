@@ -179,3 +179,16 @@ fn image_at(im: image.Image, x: Int, y: Int) -> image.Color {
   }
 }
 
+/// Go's palette.WebSafe.
+fn web_safe() -> List[Int] {
+  var out: List[Int] = []
+  for r in 0..6 {
+    for g in 0..6 {
+      for b in 0..6 {
+        out.push(((r * 51) << 24) | ((g * 51) << 16) | ((b * 51) << 8) | 255)
+      }
+    }
+  }
+  out
+}
+
