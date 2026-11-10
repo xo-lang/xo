@@ -161,12 +161,8 @@ fn main(os0: Os) ! {
     os.proc.exit(bench.run(os, bench.Host{goos: host_os(os)}, args[1..]))
   }
   if !args.is_empty() && args[0] == "repl" {
-    // the experimental REPL (compiler/cli/repl, decision 0572): off unless
-    // XO_REPL=1 while the decision is Proposed
-    if (os.env.get("XO_REPL") ?? "") != "1" {
-      os.stdio.eprintln("xo repl is experimental (decision 0572, Proposed): set XO_REPL=1 to try it")
-      os.proc.exit(2)
-    }
+    // the REPL (compiler/cli/repl, decision 0572; on by default since
+    // the owner accepted step 7, 2026-11-09)
     os.proc.exit(repl.run(os, args[1..]))
   }
   if !args.is_empty() && args[0] == "clean" {

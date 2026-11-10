@@ -3621,8 +3621,8 @@ Last verified: 2026-10-09.
   XO_REPL_HISTORY=off for none. Tests: line_test.xo (`xo test
   ./compiler/cli/repl`), cmd/xo TestReplLineEditing (script(1)). Last
   verified: 2026-11-09.
-- `xo repl` (decision 0572 stage 1, experimental, 2026-11-08): off unless
-  XO_REPL=1 while 0572 is Proposed. compiler/cli/repl: session.xo writes
+- `xo repl` (decision 0572 stage 1, 2026-11-08; on by default since
+  2026-11-09, no XO_REPL gate). compiler/cli/repl: session.xo writes
   the session as a generated program (definitions first, earlier plain
   bindings as `let NAME: TYPE = <Debug text>`, the newest entry after a
   protocol mark), repl.xo builds it with this xo (`xo build -o BIN DIR`)

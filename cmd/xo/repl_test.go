@@ -18,12 +18,9 @@ import (
 // a plain binding carries to later entries and later calls as a pinned
 // literal (its entry's effect does not run again), a var keeps its latest
 // value, rebinding replaces, an entry that does not check is reported at
-// the entry's own lines and leaves the session as it was, and the command
-// is off without XO_REPL=1.
+// the entry's own lines and leaves the session as it was.
 func TestRepl(t *testing.T) {
 	t.Parallel()
-	xo(t, "repl", "--eval=1 + 2").want(2)
-	setenv(t, "XO_REPL", "1")
 
 	r := xo(t, "repl", "--eval="+strings.Join([]string{
 		`1 + 2`,
@@ -189,7 +186,7 @@ func TestReplLineEditing(t *testing.T) {
 	} else {
 		c = exec.Command("script", "-qec", x+" repl", "/dev/null")
 	}
-	c.Env = append(os.Environ(), "XO_REPL=1", "XDG_CONFIG_HOME="+cfg, "HOME="+cfg)
+	c.Env = append(os.Environ(), "XDG_CONFIG_HOME="+cfg, "HOME="+cfg)
 	in, err := c.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +258,7 @@ func TestReplLineEditing(t *testing.T) {
 func TestReplJSON(t *testing.T) {
 	t.Parallel()
 	c := exec.Command(xoBin(t), "repl", "--json")
-	c.Env = append(os.Environ(), "XO_REPL=1")
+	c.Env = os.Environ()
 	c.Stdin = strings.NewReader(strings.Join([]string{
 		`{"in": "1 + 2"}`,
 		`{"in": "let a = 3"}`,

@@ -154,7 +154,6 @@ var codegenEnv = map[string]inputClass{
 	"XO_PRUNE_DETACH":         {"cache", ""},
 	"XO_PRUNE_FORCE":          {"none", ""}, // allows a back-end prune of the user cache below 64 MiB
 	"XO_PROF_SELF":            {"none", ""}, // xo build --profile's own run of xo (no re-run)
-	"XO_REPL":                 {"none", ""}, // turns on the experimental xo repl (decision 0572); no build output
 	"XO_REPL_TIMES":           {"none", ""}, // xo repl prints each entry's build, run and type times
 	"XO_PARSE_STATS":          {"none", ""}, // --phase-times lists the parses the prefetch missed
 	"XO_OP_VERIFY":            {"none", ""}, // only fails a build (decision 0274 step 3); a cache hit skips the check: verify with XO_BACKEND_CACHE=off
