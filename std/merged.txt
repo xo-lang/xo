@@ -17,3 +17,5 @@ std/charset
 std/jwt
 std/mail
 std/grpc
+std/base64
+std/protoparse

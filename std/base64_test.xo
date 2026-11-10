@@ -1,5 +1,3 @@
-use std/base64
-
 // Differential cases from Go's encoding/base64 (go1.26.1): random bytes,
 // random strings over the alphabet, padding, newlines, and noise, and
 // valid encodings with a symbol inserted; each with Go's output or
@@ -8,17 +6,17 @@ use std/base64
 
 fn unhex(s: Str) -> Bytes { Bytes.from_hex(s).or_fault("hex") }
 
-fn check_encode(enc: base64.Base64, cases: List[(Str, Str)]) {
+fn check_encode(enc: Base64, cases: List[(Str, Str)]) {
   for (input, want) in cases {
     expect(encode(unhex(input), enc)) == want
   }
 }
 
-fn check_decode(enc: base64.Base64, cases: List[(Str, Str, Int)]) {
+fn check_decode(enc: Base64, cases: List[(Str, Str, Int)]) {
   for (input, want, at) in cases {
     let got = decode(unhex(input).to_str() ?? "", enc)
     if at >= 0 {
-      expect(got) == Err(base64.DecodeErr{at: at})
+      expect(got) == Err(DecodeErr{at: at})
     } else {
       expect(got) == Ok(unhex(want))
     }
@@ -26,7 +24,7 @@ fn check_decode(enc: base64.Base64, cases: List[(Str, Str, Int)]) {
 }
 
 test "go base64 Std encode" {
-  check_encode(base64.Base64.Std, [
+  check_encode(Base64.Std, [
     ("bd786caadea42983", "vXhsqt6kKYM="),
     ("97d3d0c7957e", "l9PQx5V+"),
     ("", ""),
@@ -71,7 +69,7 @@ test "go base64 Std encode" {
 }
 
 test "go base64 Std decode" {
-  check_decode(base64.Base64.Std, [
+  check_decode(Base64.Std, [
     ("", "", -1),
     ("3d", "", 0),
     ("3d3d", "", 0),
@@ -466,7 +464,7 @@ test "go base64 Std decode" {
 }
 
 test "go base64 Url encode" {
-  check_encode(base64.Base64.Url, [
+  check_encode(Base64.Url, [
     ("6d75ca47dc507321b1", "bXXKR9xQcyGx"),
     ("c6c587d306", "xsWH0wY="),
     ("692e82df", "aS6C3w=="),
@@ -511,7 +509,7 @@ test "go base64 Url encode" {
 }
 
 test "go base64 Url decode" {
-  check_decode(base64.Base64.Url, [
+  check_decode(Base64.Url, [
     ("", "", -1),
     ("3d", "", 0),
     ("3d3d", "", 0),
@@ -906,7 +904,7 @@ test "go base64 Url decode" {
 }
 
 test "go base64 RawStd encode" {
-  check_encode(base64.Base64.RawStd, [
+  check_encode(Base64.RawStd, [
     ("ba7dcb1ec98b614a116f76", "un3LHsmLYUoRb3Y"),
     ("d560cc33454b4e64ab86a3", "1WDMM0VLTmSrhqM"),
     ("6687a1e7842d579495a7", "Zoeh54QtV5SVpw"),
@@ -951,7 +949,7 @@ test "go base64 RawStd encode" {
 }
 
 test "go base64 RawStd decode" {
-  check_decode(base64.Base64.RawStd, [
+  check_decode(Base64.RawStd, [
     ("", "", -1),
     ("3d", "", 0),
     ("3d3d", "", 0),
@@ -1346,7 +1344,7 @@ test "go base64 RawStd decode" {
 }
 
 test "go base64 RawUrl encode" {
-  check_encode(base64.Base64.RawUrl, [
+  check_encode(Base64.RawUrl, [
     ("746de672fcc4066ffbe8", "dG3mcvzEBm_76A"),
     ("c2", "wg"),
     ("77c38dd32ce6", "d8ON0yzm"),
@@ -1391,7 +1389,7 @@ test "go base64 RawUrl encode" {
 }
 
 test "go base64 RawUrl decode" {
-  check_decode(base64.Base64.RawUrl, [
+  check_decode(Base64.RawUrl, [
     ("", "", -1),
     ("3d", "", 0),
     ("3d3d", "", 0),
@@ -1786,8 +1784,8 @@ test "go base64 RawUrl decode" {
 }
 
 test "base64 round trip" for data: Bytes {
-  expect(decode(encode(data, base64.Base64.Std), base64.Base64.Std)) == Ok(data)
-  expect(decode(encode(data, base64.Base64.Url), base64.Base64.Url)) == Ok(data)
-  expect(decode(encode(data, base64.Base64.RawStd), base64.Base64.RawStd)) == Ok(data)
-  expect(decode(encode(data, base64.Base64.RawUrl), base64.Base64.RawUrl)) == Ok(data)
+  expect(decode(encode(data, Base64.Std), Base64.Std)) == Ok(data)
+  expect(decode(encode(data, Base64.Url), Base64.Url)) == Ok(data)
+  expect(decode(encode(data, Base64.RawStd), Base64.RawStd)) == Ok(data)
+  expect(decode(encode(data, Base64.RawUrl), Base64.RawUrl)) == Ok(data)
 }

@@ -1,16 +1,18 @@
 // std/protoparse (decision 0530): a parser for `.proto` files (proto3), for `xo proto gen`.
-// Declaration file. Pure.
+// Pure.
+//
+// std/protoparse on the native backends (decision 0530): the lexer of a `.proto` file.
 
 /// Where and why a parse failed; the position is 1 based.
-struct ParseErr {
-  line: Int
-  col: Int
-  msg: Str
+pub struct ParseErr {
+  pub line: Int
+  pub col: Int
+  pub msg: Str
 } derive Display
 
 /// A token kind: an identifier (dots allowed inside, as in `foo.Bar`), an integer, a float, a
 /// string literal (unquoted, escapes decoded), or one symbol character.
-enum Kind {
+pub enum Kind {
   Ident
   Int
   Float
@@ -18,79 +20,668 @@ enum Kind {
   Sym
 }
 
-struct Token {
-  kind: Kind
-  text: Str
-  line: Int
-  col: Int
+pub struct Token {
+  pub kind: Kind
+  pub text: Str
+  pub line: Int
+  pub col: Int
 }
 
 /// The tokens of `src` without comments (`//` and `/* */`). A token never spans lines except
 /// inside a comment.
-fn tokens(src: Str) -> List[Token] ! ParseErr
+pub fn tokens(src: Str) -> List[Token] ! ParseErr {
+  let b = src.bytes()
+  var out: List[Token] = []
+  var i = 0
+  var line = 1
+  var ls = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    let col = i - ls + 1
+    if c == 10 {
+      line += 1
+      i += 1
+      ls = i
+    } else if c == 32 || c == 9 || c == 13 {
+      i += 1
+    } else if c == 47 && i + 1 < b.len() && Int(b[i + 1]) == 47 {
+      while i < b.len() && Int(b[i]) != 10 { i += 1 }
+    } else if c == 47 && i + 1 < b.len() && Int(b[i + 1]) == 42 {
+      i += 2
+      var closed = false
+      while i < b.len() {
+        if Int(b[i]) == 42 && i + 1 < b.len() && Int(b[i + 1]) == 47 {
+          i += 2
+          closed = true
+          break
+        }
+        if Int(b[i]) == 10 {
+          line += 1
+          ls = i + 1
+        }
+        i += 1
+      }
+      if !closed { return Err(ParseErr{line: line, col: col, msg: "unterminated comment"}) }
+    } else if is_letter(c) {
+      let s = i
+      while i < b.len() && (is_letter(Int(b[i])) || is_digit(Int(b[i])) || Int(b[i]) == 46) { i += 1 }
+      out.push(Token{kind: Kind.Ident, text: src[s..i], line: line, col: col})
+    } else if is_digit(c) {
+      let s = i
+      var fl = false
+      while i < b.len() {
+        let d = Int(b[i])
+        if is_digit(d) || is_letter(d) {
+          i += 1
+        } else if d == 46 {
+          fl = true
+          i += 1
+        } else if (d == 43 || d == 45) && (Int(b[i - 1]) == 101 || Int(b[i - 1]) == 69) && !(i - s > 1 && Int(b[s + 1]) == 120) {
+          fl = true
+          i += 1
+        } else {
+          break
+        }
+      }
+      let t = src[s..i]
+      let isf = fl || ((t.contains("e") || t.contains("E")) && !t.starts_with("0x") && !t.starts_with("0X"))
+      out.push(Token{kind: if isf { Kind.Float } else { Kind.Int }, text: t, line: line, col: col})
+    } else if c == 34 || c == 39 {
+      i += 1
+      var sb = BytesBuilder.new()
+      var closed = false
+      while i < b.len() {
+        let d = Int(b[i])
+        if d == c {
+          i += 1
+          closed = true
+          break
+        }
+        if d == 10 { break }
+        if d == 92 && i + 1 < b.len() {
+          let e = Int(b[i + 1])
+          i += 2
+          if e == 110 { sb.write(b"\n") } else if e == 116 { sb.write(b"\t") } else if e == 114 { sb.write(b"\r") } else if e == 48 { sb.write(b"\x00") } else { sb.write(b[i - 1..i]) }
+        } else {
+          sb.write(b[i..i + 1])
+          i += 1
+        }
+      }
+      if !closed { return Err(ParseErr{line: line, col: col, msg: "unterminated string"}) }
+      out.push(Token{kind: Kind.Str, text: sb.freeze().to_str_lossy(), line: line, col: col})
+    } else if c < 128 {
+      out.push(Token{kind: Kind.Sym, text: src[i..i + 1], line: line, col: col})
+      i += 1
+    } else {
+      return Err(ParseErr{line: line, col: col, msg: "unexpected character"})
+    }
+  }
+  Ok(out)
+}
 
 /// A field of a message. `typ` is the type as written (`int32`, `Other.Msg`); for a map it is the
 /// value type and `key` the key type. `oneof` names the oneof it belongs to, or is empty.
-struct Field {
-  name: Str
-  num: Int
-  typ: Str
-  key: Str
-  repeated: Bool
-  optional: Bool
+pub struct Field {
+  pub name: Str
+  pub num: Int
+  pub typ: Str
+  pub key: Str
+  pub repeated: Bool
+  pub optional: Bool
   /// proto2 `required`
-  required: Bool
-  oneof: Str
+  pub required: Bool
+  pub oneof: Str
 }
 
-struct EnumValue {
-  name: Str
-  num: Int
+pub struct EnumValue {
+  pub name: Str
+  pub num: Int
 }
 
-struct Enum {
-  name: Str
-  values: List[EnumValue]
+pub struct Enum {
+  pub name: Str
+  pub values: List[EnumValue]
 }
 
-struct Message {
-  name: Str
-  fields: List[Field]
-  oneofs: List[Str]
-  nested: List[Message]
-  enums: List[Enum]
+pub struct Message {
+  pub name: Str
+  pub fields: List[Field]
+  pub oneofs: List[Str]
+  pub nested: List[Message]
+  pub enums: List[Enum]
 }
 
-struct Rpc {
-  name: Str
-  req: Str
-  resp: Str
-  client_stream: Bool
-  server_stream: Bool
+pub struct Rpc {
+  pub name: Str
+  pub req: Str
+  pub resp: Str
+  pub client_stream: Bool
+  pub server_stream: Bool
 }
 
-struct Service {
-  name: Str
-  rpcs: List[Rpc]
+pub struct Service {
+  pub name: Str
+  pub rpcs: List[Rpc]
 }
 
-struct File {
-  syntax: Str
-  package: Str
-  imports: List[Str]
-  messages: List[Message]
-  enums: List[Enum]
-  services: List[Service]
+pub struct File {
+  pub syntax: Str
+  pub package: Str
+  pub imports: List[Str]
+  pub messages: List[Message]
+  pub enums: List[Enum]
+  pub services: List[Service]
 }
 
 /// Parses a proto3 or proto2 file. Options, `reserved`, `extensions`, field options (including
 /// `default`) and `extend` blocks are read and dropped. In proto2 every field outside a oneof needs a
 /// label (`required`, `optional` or `repeated`); a `group` becomes a nested message and a field of
 /// that type named in lower case. A proto3 file rejects `required` and `group`.
-fn parse(src: Str) -> File ! ParseErr
+pub fn parse(src: Str) -> File ! ParseErr {
+  var p = P{ts: tokens(src)?, at: 0, proto2: false}
+  var f = File{syntax: "proto3", package: "", imports: [], messages: [], enums: [], services: []}
+  while p.at < p.ts.len() {
+    if p_is(p, "syntax") {
+      p.at += 1
+      p_expect(p, "=")?
+      f.syntax = p_str(p)?
+      p.proto2 = f.syntax == "proto2"
+      p_expect(p, ";")?
+    } else if p_is(p, "package") {
+      p.at += 1
+      f.package = p_ident(p)?
+      p_expect(p, ";")?
+    } else if p_is(p, "import") {
+      p.at += 1
+      if p_is(p, "public") || p_is(p, "weak") { p.at += 1 }
+      f.imports.push(p_str(p)?)
+      p_expect(p, ";")?
+    } else if p_is(p, "option") {
+      p_skip_stmt(p)?
+    } else if p_is(p, "extend") {
+      p.at += 1
+      p_skip_block(p)?
+    } else if p_is(p, "message") {
+      p.at += 1
+      f.messages.push(p_message(p)?)
+    } else if p_is(p, "enum") {
+      p.at += 1
+      f.enums.push(p_enum(p)?)
+    } else if p_is(p, "service") {
+      p.at += 1
+      f.services.push(p_service(p)?)
+    } else if p_is(p, ";") {
+      p.at += 1
+    } else {
+      return Err(p_err(p, "unexpected `${p_peek(p)}`"))
+    }
+  }
+  Ok(f)
+}
 
 /// Xo source for the messages, enums and oneofs of `f`, using `derive Proto` (decision 0530):
 /// a nested type `Inner` of `Outer` becomes `OuterInner`, a oneof `kind` of `Msg` the enum
 /// `MsgKind` held in an optional field marked `proto "oneof"`, an enum an open `Int` enum with a
 /// catch-all `Other(v: Int)`. Fields keep their proto names. Services are not generated here.
-fn gen(f: File) -> Str ! ParseErr
+pub fn gen(f: File) -> Str ! ParseErr {
+  var names: List[(Str, Str)] = []
+  for m in f.messages { names = g_collect("", "", m, names) }
+  for e in f.enums { names.push((e.name, e.name)) }
+  var o: List[Str] = ["use std/protobuf", ""]
+  for e in f.enums { o = g_enum(e, e.name, o) }
+  for m in f.messages { o = g_message(m, "", "", names, o)? }
+  Ok(o.join("\n"))
+}
+
+fn parseerr_display(e: ParseErr) -> Str { "${e.line}:${e.col}: ${e.msg}" }
+
+fn is_letter(c: Int) -> Bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 }
+
+fn is_digit(c: Int) -> Bool { c >= 48 && c <= 57 }
+
+struct P {
+  ts: List[Token]
+  at: Int
+  proto2: Bool
+}
+
+fn p_err(p: P, msg: Str) -> ParseErr {
+  if p.at < p.ts.len() {
+    let t = p.ts[p.at]
+    ParseErr{line: t.line, col: t.col, msg: msg}
+  } else if p.ts.len() > 0 {
+    let t = p.ts[p.ts.len() - 1]
+    ParseErr{line: t.line, col: t.col + t.text.len(), msg: msg}
+  } else {
+    ParseErr{line: 1, col: 1, msg: msg}
+  }
+}
+
+fn p_peek(p: P) -> Str { if p.at < p.ts.len() { p.ts[p.at].text } else { "" } }
+
+fn p_is(p: P, s: Str) -> Bool {
+  p.at < p.ts.len() && p.ts[p.at].text == s && p.ts[p.at].kind != Kind.Str
+}
+
+fn p_expect(var p: P, s: Str) ! ParseErr {
+  if !p_is(p, s) { return Err(p_err(p, "expected `${s}`, found `${p_peek(p)}`")) }
+  p.at += 1
+  Ok(())
+}
+
+fn p_ident(var p: P) -> Str ! ParseErr {
+  if p.at >= p.ts.len() || p.ts[p.at].kind != Kind.Ident {
+    return Err(p_err(p, "expected a name, found `${p_peek(p)}`"))
+  }
+  p.at += 1
+  Ok(p.ts[p.at - 1].text)
+}
+
+/// A type name, possibly starting with a dot.
+fn p_type(var p: P) -> Str ! ParseErr {
+  if p_is(p, ".") {
+    p.at += 1
+    let n = p_ident(p)?
+    return Ok(".${n}")
+  }
+  p_ident(p)
+}
+
+fn p_int(var p: P) -> Int ! ParseErr {
+  var neg = false
+  if p_is(p, "-") {
+    neg = true
+    p.at += 1
+  }
+  if p.at >= p.ts.len() || p.ts[p.at].kind != Kind.Int {
+    return Err(p_err(p, "expected an integer, found `${p_peek(p)}`"))
+  }
+  let t = p.ts[p.at].text
+  let v = Int.parse_base(t, 0)
+  match v {
+    Some(n) => {
+      p.at += 1
+      Ok(if neg { -n } else { n })
+    }
+    None => Err(p_err(p, "bad integer `${t}`"))
+  }
+}
+
+fn p_str(var p: P) -> Str ! ParseErr {
+  if p.at >= p.ts.len() || p.ts[p.at].kind != Kind.Str {
+    return Err(p_err(p, "expected a string, found `${p_peek(p)}`"))
+  }
+  p.at += 1
+  var s = p.ts[p.at - 1].text
+  // adjacent string literals concatenate
+  while p.at < p.ts.len() && p.ts[p.at].kind == Kind.Str {
+    s = s + p.ts[p.at].text
+    p.at += 1
+  }
+  Ok(s)
+}
+
+/// Skips tokens up to and including the next `;` outside brackets and braces.
+fn p_skip_stmt(var p: P) ! ParseErr {
+  var depth = 0
+  while p.at < p.ts.len() {
+    let t = p.ts[p.at]
+    p.at += 1
+    if t.kind == Kind.Sym {
+      if t.text == "{" || t.text == "[" || t.text == "(" {
+        depth += 1
+      } else if t.text == "}" || t.text == "]" || t.text == ")" {
+        depth -= 1
+      } else if t.text == ";" && depth <= 0 {
+        return Ok(())
+      }
+    }
+  }
+  Err(p_err(p, "unexpected end of file, expected `;`"))
+}
+
+/// Skips an `extend NAME { ... }` block (proto3 allows extensions only to declare custom options).
+fn p_skip_block(var p: P) ! ParseErr {
+  while p.at < p.ts.len() && !p_is(p, "{") {
+    p.at += 1
+  }
+  var depth = 0
+  while p.at < p.ts.len() {
+    let t = p.ts[p.at]
+    p.at += 1
+    if t.kind == Kind.Sym {
+      if t.text == "{" {
+        depth += 1
+      } else if t.text == "}" {
+        depth -= 1
+        if depth == 0 {
+          return Ok(())
+        }
+      }
+    }
+  }
+  Err(p_err(p, "unterminated `extend` block"))
+}
+
+/// Skips a `[ ... ]` field option list when present.
+fn p_skip_opts(var p: P) ! ParseErr {
+  if !p_is(p, "[") { return Ok(()) }
+  var depth = 0
+  while p.at < p.ts.len() {
+    let t = p.ts[p.at]
+    p.at += 1
+    if t.kind == Kind.Sym {
+      if t.text == "[" { depth += 1 }
+      if t.text == "]" {
+        depth -= 1
+        if depth == 0 { return Ok(()) }
+      }
+    }
+  }
+  Err(p_err(p, "unterminated `[`"))
+}
+
+fn p_enum(var p: P) -> Enum ! ParseErr {
+  let name = p_ident(p)?
+  p_expect(p, "{")?
+  var vals: List[EnumValue] = []
+  while !p_is(p, "}") {
+    if p.at >= p.ts.len() { return Err(p_err(p, "unterminated enum `${name}`")) }
+    if p_is(p, "option") || p_is(p, "reserved") {
+      p_skip_stmt(p)?
+    } else if p_is(p, ";") {
+      p.at += 1
+    } else {
+      let vn = p_ident(p)?
+      p_expect(p, "=")?
+      let n = p_int(p)?
+      p_skip_opts(p)?
+      p_expect(p, ";")?
+      vals.push(EnumValue{name: vn, num: n})
+    }
+  }
+  p.at += 1
+  Ok(Enum{name: name, values: vals})
+}
+
+fn p_field(var p: P, oneof: Str, var m: Message) -> Message ! ParseErr {
+  var repeated = false
+  var optional = false
+  var required = false
+  var labeled = false
+  if oneof == "" {
+    if p_is(p, "repeated") {
+      repeated = true
+      labeled = true
+      p.at += 1
+    } else if p_is(p, "optional") {
+      optional = true
+      labeled = true
+      p.at += 1
+    } else if p_is(p, "required") {
+      if !p.proto2 { return Err(p_err(p, "`required` is proto2 only")) }
+      required = true
+      labeled = true
+      p.at += 1
+    }
+    if p.proto2 && !labeled {
+      return Err(p_err(p, "proto2 field needs `required`, `optional` or `repeated`, found `${p_peek(p)}`"))
+    }
+  }
+  if p_is(p, "group") {
+    if !p.proto2 { return Err(p_err(p, "`group` is proto2 only")) }
+    p.at += 1
+    let gname = p_ident(p)?
+    p_expect(p, "=")?
+    let gn = p_int(p)?
+    p_skip_opts(p)?
+    m.nested.push(p_message_body(p, gname)?)
+    m.fields.push(Field{name: gname.to_lower(), num: gn, typ: gname, key: "", repeated: repeated, optional: optional, required: required, oneof: oneof})
+    return Ok(m)
+  }
+  var key = ""
+  var typ = ""
+  if p_is(p, "map") && p.at + 1 < p.ts.len() && p.ts[p.at + 1].text == "<" {
+    p.at += 2
+    key = p_ident(p)?
+    p_expect(p, ",")?
+    typ = p_type(p)?
+    p_expect(p, ">")?
+  } else {
+    typ = p_type(p)?
+  }
+  let name = p_ident(p)?
+  p_expect(p, "=")?
+  let n = p_int(p)?
+  p_skip_opts(p)?
+  p_expect(p, ";")?
+  m.fields.push(Field{name: name, num: n, typ: typ, key: key, repeated: repeated, optional: optional, required: required, oneof: oneof})
+  Ok(m)
+}
+
+fn p_message(var p: P) -> Message ! ParseErr {
+  let name = p_ident(p)?
+  p_message_body(p, name)
+}
+
+fn p_message_body(var p: P, name: Str) -> Message ! ParseErr {
+  p_expect(p, "{")?
+  var m = Message{name: name, fields: [], oneofs: [], nested: [], enums: []}
+  while !p_is(p, "}") {
+    if p.at >= p.ts.len() { return Err(p_err(p, "unterminated message `${name}`")) }
+    if p_is(p, "message") {
+      p.at += 1
+      m.nested.push(p_message(p)?)
+    } else if p_is(p, "enum") {
+      p.at += 1
+      m.enums.push(p_enum(p)?)
+    } else if p_is(p, "option") || p_is(p, "reserved") || p_is(p, "extensions") {
+      p_skip_stmt(p)?
+    } else if p_is(p, "extend") {
+      p.at += 1
+      p_skip_block(p)?
+    } else if p_is(p, "oneof") {
+      p.at += 1
+      let on = p_ident(p)?
+      p_expect(p, "{")?
+      m.oneofs.push(on)
+      while !p_is(p, "}") {
+        if p.at >= p.ts.len() { return Err(p_err(p, "unterminated oneof `${on}`")) }
+        if p_is(p, "option") {
+          p_skip_stmt(p)?
+        } else {
+          m = p_field(p, on, m)?
+        }
+      }
+      p.at += 1
+    } else if p_is(p, ";") {
+      p.at += 1
+    } else {
+      m = p_field(p, "", m)?
+    }
+  }
+  p.at += 1
+  Ok(m)
+}
+
+fn p_service(var p: P) -> Service ! ParseErr {
+  let name = p_ident(p)?
+  p_expect(p, "{")?
+  var rpcs: List[Rpc] = []
+  while !p_is(p, "}") {
+    if p.at >= p.ts.len() { return Err(p_err(p, "unterminated service `${name}`")) }
+    if p_is(p, "option") {
+      p_skip_stmt(p)?
+    } else if p_is(p, ";") {
+      p.at += 1
+    } else {
+      p_expect(p, "rpc")?
+      let rn = p_ident(p)?
+      p_expect(p, "(")?
+      var cs = false
+      if p_is(p, "stream") {
+        cs = true
+        p.at += 1
+      }
+      let req = p_type(p)?
+      p_expect(p, ")")?
+      p_expect(p, "returns")?
+      p_expect(p, "(")?
+      var ss = false
+      if p_is(p, "stream") {
+        ss = true
+        p.at += 1
+      }
+      let resp = p_type(p)?
+      p_expect(p, ")")?
+      if p_is(p, "{") {
+        // rpc options block: skip to the matching brace
+        var depth = 0
+        while p.at < p.ts.len() {
+          let t = p.ts[p.at]
+          p.at += 1
+          if t.kind == Kind.Sym && t.text == "{" { depth += 1 }
+          if t.kind == Kind.Sym && t.text == "}" {
+            depth -= 1
+            if depth == 0 { break }
+          }
+        }
+      } else {
+        p_expect(p, ";")?
+      }
+      rpcs.push(Rpc{name: rn, req: req, resp: resp, client_stream: cs, server_stream: ss})
+    }
+  }
+  p.at += 1
+  Ok(Service{name: name, rpcs: rpcs})
+}
+
+fn g_camel(s: Str) -> Str {
+  var o = ""
+  for part in s.split("_") {
+    if part.is_empty() { continue }
+    o = o + part[0..1].to_upper() + part[1..]
+  }
+  o
+}
+
+/// The Xo type name of a scalar proto type, with the field option it needs.
+fn g_scalar(t: Str) -> (Str, Str)? {
+  match t {
+    "int64" => Some(("Int", ""))
+    "int32" => Some(("Int32", ""))
+    "uint32" => Some(("UInt32", ""))
+    "uint64" => Some(("UInt64", ""))
+    "sint32" => Some(("Int32", ",zigzag"))
+    "sint64" => Some(("Int", ",zigzag"))
+    "fixed32" => Some(("UInt32", ",fixed"))
+    "fixed64" => Some(("UInt64", ",fixed"))
+    "sfixed32" => Some(("Int32", ",fixed"))
+    "sfixed64" => Some(("Int", ",fixed"))
+    "double" => Some(("Float", ""))
+    "float" => Some(("Float32", ""))
+    "bool" => Some(("Bool", ""))
+    "string" => Some(("Str", ""))
+    "bytes" => Some(("Bytes", ""))
+    _ => None
+  }
+}
+
+/// Every type name declared in the file as (full dotted name inside the package, generated name).
+fn g_collect(prefix_dot: Str, prefix_gen: Str, m: Message, out: List[(Str, Str)]) -> List[(Str, Str)] {
+  var o = out
+  let d = "${prefix_dot}${m.name}"
+  let g = "${prefix_gen}${m.name}"
+  o.push((d, g))
+  for e in m.enums { o.push(("${d}.${e.name}", "${g}${e.name}")) }
+  for n in m.nested { o = g_collect("${d}.", g, n, o) }
+  o
+}
+
+/// Resolves a type name used in the scope `scope` (the dotted name of the enclosing message)
+/// the way protoc does: the innermost scope that declares the first component wins.
+fn g_resolve(typ: Str, scope: Str, names: List[(Str, Str)]) -> Str? {
+  var t = typ
+  if t.starts_with(".") { t = t[1..] }
+  var sc = scope
+  while true {
+    let cand = if sc == "" { t } else { "${sc}.${t}" }
+    for (d, g) in names { if d == cand { return Some(g) } }
+    if sc == "" { break }
+    sc = match sc.rfind(".") {
+      Some(at) => sc[0..at]
+      None => ""
+    }
+  }
+  // a name qualified by the package: keep the last components that match
+  for (d, g) in names { if t.ends_with(".${d}") { return Some(g) } }
+  None
+}
+
+fn g_enum(e: Enum, gname: Str, out: List[Str]) -> List[Str] {
+  var o = out
+  o.push("enum ${gname}: Int {")
+  var seen: List[Int] = []
+  for v in e.values {
+    // an alias of an earlier number is dropped
+    if seen.contains(v.num) { continue }
+    seen.push(v.num)
+    o.push("  ${g_camel(v.name.to_lower())} = ${v.num}")
+  }
+  o.push("  Other(v: Int)")
+  o.push("}")
+  o.push("")
+  o
+}
+
+fn g_message(m: Message, scope: Str, gprefix: Str, names: List[(Str, Str)], out: List[Str]) -> List[Str] ! ParseErr {
+  var o = out
+  let d = "${scope}${m.name}"
+  let g = "${gprefix}${m.name}"
+  for n in m.nested { o = g_message(n, "${d}.", g, names, o)? }
+  for e in m.enums { o = g_enum(e, "${g}${e.name}", o) }
+  // oneof enums first
+  for on in m.oneofs {
+    o.push("enum ${g}${g_camel(on)} {")
+    for fl in m.fields {
+      if fl.oneof != on { continue }
+      let ty = g_type(fl.typ, d, names)?
+      o.push("  ${g_camel(fl.name)} as \"${fl.num}\"(v: ${ty.0})")
+    }
+    o.push("} derive Proto")
+    o.push("")
+  }
+  o.push("struct ${g} {")
+  var done: List[Str] = []
+  for fl in m.fields {
+    if fl.oneof != "" {
+      if done.contains(fl.oneof) { continue }
+      done.push(fl.oneof)
+      o.push("  ${fl.oneof} proto \"oneof\": ${g}${g_camel(fl.oneof)}?")
+      continue
+    }
+    let ty = g_type(fl.typ, d, names)?
+    var tx = ty.0
+    if fl.key != "" {
+      let kt = g_type(fl.key, d, names)?
+      tx = "Map[${kt.0}, ${ty.0}]"
+    } else if fl.repeated {
+      tx = "List[${tx}]"
+    } else if fl.optional {
+      tx = "${tx}?"
+    }
+    let opts = if fl.key != "" { "" } else { ty.1 }
+    o.push("  ${fl.name} proto \"${fl.num}${opts}\": ${tx}")
+  }
+  o.push("} derive Proto")
+  o.push("")
+  Ok(o)
+}
+
+fn g_type(typ: Str, scope: Str, names: List[(Str, Str)]) -> (Str, Str) ! ParseErr {
+  if let Some(s) = g_scalar(typ) { return Ok(s) }
+  match g_resolve(typ, scope, names) {
+    Some(g) => Ok((g, ""))
+    None => Err(ParseErr{line: 0, col: 0, msg: "unknown type `${typ}`"})
+  }
+}

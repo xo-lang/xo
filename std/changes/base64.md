@@ -1,5 +1,18 @@
 # std/base64 changes
 
+## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0588 stage 2 (pure modules merged with their implementation)
+- Go reference: none (no behavior change)
+- Test: std/base64_test.xo (`xo test --std-module=base64` on native and llvm); internal/stdtest corpus base64 on go, arm64 and llvm
+
+std/base64.xo now holds the bodies of std/native/base64.xo (removed), and the Go
+backend compiles them from it as its own package. The API, texts and errors
+are unchanged: every item the declaration file had is `pub`, with the same
+parameter names.
+
 ## 2026-10-26: perf: the standard alphabet runs Bytes.to_base64 and from_base64, which decode eight characters at a time
 
 - Kind: perf

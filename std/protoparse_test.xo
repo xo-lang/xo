@@ -1,31 +1,29 @@
 // Hand written cases for the .proto parser and the derive Proto generator (decision 0530); the
 // grammar is the protobuf language specification's proto3 subset.
-use std/protoparse
-
-fn must(src: Str) -> protoparse.File {
-  protoparse.parse(src).or_fault("parse")
+fn must(src: Str) -> File {
+  parse(src).or_fault("parse")
 }
 
 test "lexer: comments, numbers, strings and positions" {
-  let ts = protoparse.tokens("a // c\n/* x\ny */ 0x1F 1.5e-3 'q\\n' \"r\"").or_fault("tokens")
+  let ts = tokens("a // c\n/* x\ny */ 0x1F 1.5e-3 'q\\n' \"r\"").or_fault("tokens")
   expect(ts.len()) == 5
   expect(ts[0].text) == "a"
   expect(ts[1].text) == "0x1F"
   expect(ts[1].line) == 3
-  expect(ts[2].kind == protoparse.Kind.Float) == true
+  expect(ts[2].kind == Kind.Float) == true
   expect(ts[3].text) == "q\n"
-  expect(ts[4].kind == protoparse.Kind.Str) == true
+  expect(ts[4].kind == Kind.Str) == true
 }
 
 test "lexer errors carry a position" {
-  match protoparse.tokens("a\n  \"abc") {
+  match tokens("a\n  \"abc") {
     Ok(_) => fault("want error")
     Err(e) => {
       expect(e.line) == 2
       expect(e.col) == 3
     }
   }
-  expect(protoparse.tokens("/* open").is_err()) == true
+  expect(tokens("/* open").is_err()) == true
 }
 
 test "file header: syntax, package, imports, options" {
@@ -68,24 +66,24 @@ test "services: the four streaming shapes" {
 }
 
 test "parse errors: position and message" {
-  match protoparse.parse("message A {\n  int32 x = ;\n}") {
+  match parse("message A {\n  int32 x = ;\n}") {
     Ok(_) => fault("want error")
     Err(e) => {
       expect(e.line) == 2
       expect(e.col) == 13
     }
   }
-  expect(protoparse.parse("message A { required int32 x = 1; }").is_err()) == true
-  expect(protoparse.parse("message A { int32 x = 1;").is_err()) == true
+  expect(parse("message A { required int32 x = 1; }").is_err()) == true
+  expect(parse("message A { int32 x = 1;").is_err()) == true
   // extend blocks (custom options) are skipped; required and group are proto2 only
-  expect(protoparse.parse("extend A { int32 x = 1; }").is_err()) == false
-  expect(protoparse.parse("message M { optional group G = 1 { optional int32 x = 1; } }").is_err()) == true
-  expect(protoparse.parse("syntax = proto3;").is_err()) == true
+  expect(parse("extend A { int32 x = 1; }").is_err()) == false
+  expect(parse("message M { optional group G = 1 { optional int32 x = 1; } }").is_err()) == true
+  expect(parse("syntax = proto3;").is_err()) == true
 }
 
 test "generator: scalars, options, nesting, oneof and enum names" {
   let f = must("message O { message I { sint32 z = 1; } enum K { U = 0; V = 1; } I i = 1; K k = 2; fixed64 f = 3; oneof w { string s = 4; I t = 5; } map<int64, I> m = 6; }")
-  let src = protoparse.gen(f).or_fault("gen")
+  let src = gen(f).or_fault("gen")
   expect(src.contains("struct OI {")) == true
   expect(src.contains("z proto \"1,zigzag\": Int32")) == true
   expect(src.contains("enum OK: Int {")) == true
@@ -99,7 +97,7 @@ test "generator: scalars, options, nesting, oneof and enum names" {
 }
 
 test "generator: unknown types are an error" {
-  expect(protoparse.gen(must("message A { B b = 1; }")).is_err()) == true
+  expect(gen(must("message A { B b = 1; }")).is_err()) == true
 }
 
 fn lcg(x: Int) -> Int {
@@ -132,10 +130,10 @@ test "mutated .proto text is an error or a file, never a fault" {
       i += 1
     }
     let text = b.freeze().to_str_lossy()
-    match protoparse.parse(text) {
+    match parse(text) {
       Ok(f) => {
         // a file the parser accepts generates or fails with a position, never faults
-        match protoparse.gen(f) {
+        match gen(f) {
           Ok(_) => {}
           Err(_) => {}
         }
@@ -157,14 +155,14 @@ test "proto2: labels, required, default, groups, extensions" {
   expect(m.fields[3].typ) == "Res"
   expect(m.nested[0].name) == "Res"
   expect(m.nested[0].fields[0].required) == true
-  let src = protoparse.gen(f).or_fault("gen")
+  let src = gen(f).or_fault("gen")
   expect(src.contains("a proto \"1\": Int32")) == true
   expect(src.contains("b proto \"2\": Str?")) == true
   expect(src.contains("res proto \"4\": MRes?")) == true
 }
 
 test "proto2: unlabeled field and a oneof member" {
-  expect(protoparse.parse("syntax = \"proto2\"; message M { int32 a = 1; }").is_err()) == true
+  expect(parse("syntax = \"proto2\"; message M { int32 a = 1; }").is_err()) == true
   let f = must("syntax = \"proto2\"; message M { oneof k { int32 a = 1; string b = 2; } }")
   expect(f.messages[0].fields.len()) == 2
 }

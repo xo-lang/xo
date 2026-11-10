@@ -277,3 +277,14 @@ commit (the lead cuts it).
   `unmarshal` and `unmarshal_prefix` have no native body (the compiler
   provides them), so the merge needs those declarations kept bodyless
   in a merged file first.
+- 2026-11-10, after the 0.47.0 seed (which carries the loader): the
+  compiler closure's `std/base64` and `std/protoparse` merged
+  (std/rt/base64.go removed). Two blockers keep other closure modules
+  apart: a module whose native file imports `native/rt` or `native/llrt`
+  (url, path, binary, crypto, http, regexp and most of the closure) needs
+  std modules allowed to import native code first; and a module another
+  native module or std/rt uses through private items stays split until
+  there is a std-internal export: `std/multipart` (native/http uses its
+  streaming parser, Feed, Head, Stream, new_stream) and `std/mime`
+  (std/rt's Go http calls Mime_parse_media_type and
+  Mime_detect_content_type).
