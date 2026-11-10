@@ -2,6 +2,7 @@
 // module members, fields, methods, statics, variants, function values,
 // conversions, and the matching of arguments to parameters.
 
+use github.com/xo-lang/xo/compiler/lexer
 use github.com/xo-lang/xo/compiler/parser
 
 type Arg = parser.Arg
@@ -1223,8 +1224,30 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
   if is_named && (name == b"sort" || name == b"sort_in_place") && args.len() == 1 && c.list_elem(r) >= 0 {
     if let FnLit(fl) = args[0].value {
       if fl.params.len() == 2 {
-        let d = c.error("XO0403", span, "`${text(name)}` takes no comparator: it sorts by the elements' own order")
-        c.habit_note(d, "a comparator `fn(a, b)` is Go's sort.Slice and JavaScript's sort; Xo sorts by a key, `xs.${text(name)}_by(fn(x) { x.field })`, ascending and stable (spec/std.md 2); for descending order sort by the key and `.reverse()` the result")
+        // decision 0586: name the comparator form, `sort_with`, with the
+        // body's comparison rewritten to an Ordering (`a > b` to
+        // `b.cmp(a)`, `a < b` to `a.cmp(b)`)
+        let w = if name == b"sort" { "sort_with" } else { "sort_in_place_with" }
+        let d = c.error("XO0403", span, "`${text(name)}` takes no comparator: a comparator sort is `${w}`, whose comparator returns an `Ordering`")
+        var cmp = ""
+        var csp = span
+        if !fl.body.stmts.is_empty() {
+          if let ExprStmt(_, BinaryExpr(bsp, op, bx, by)) = fl.body.stmts[fl.body.stmts.len() - 1] {
+            let xs = c.src_of(parser.expr_span(bx))
+            let ys = c.src_of(parser.expr_span(by))
+            if op == lexer.Kind.Gt || op == lexer.Kind.GtEq {
+              cmp = "${ys}.cmp(${xs})"
+            } else if op == lexer.Kind.Lt || op == lexer.Kind.LtEq {
+              cmp = "${xs}.cmp(${ys})"
+            }
+            csp = bsp
+          }
+        }
+        let shown = if cmp == "" { "a.cmp(b)" } else { cmp }
+        c.habit_note(d, "a comparator `fn(a, b)` is Go's sort.Slice and JavaScript's sort; Xo's returns Less, Equal or Greater: `xs.${w}(fn(a, b) { ${shown} })`, stable (decision 0586, spec/std.md 2); or sort by a key, `xs.${text(name)}_by(fn(x) { x.field })`, and `${text(name)}_by_desc` for descending order")
+        if cmp != "" {
+          c.fix(d, "use `${w}`", [c.replace_edit(sel.span, w), c.replace_edit(csp, cmp)])
+        }
         return if name == b"sort" { r } else { c.unit_ty }
       }
     }

@@ -1,7 +1,10 @@
-// a comparator passed to sort: one error naming sort_by, nothing from the closure.
+// a comparator passed to sort: one error naming sort_with (decision 0586),
+// nothing from the closure.
 
 fn main(os: Os) {
   let xs = [3, 1, 2]
   let ys = xs.sort(fn(a, b) { a > b }) // ERROR XO0403
-  os.stdio.println("${ys}")
+  var zs = [5, 4]
+  zs.sort_in_place(fn(a, b) { a < b }) // ERROR XO0403
+  os.stdio.println("${ys} ${zs}")
 }
