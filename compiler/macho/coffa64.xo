@@ -5,7 +5,8 @@
 // temporary label is to its section's symbol, the label's offset the
 // addend, which (as for every ARM64 COFF relocation) the instruction's
 // own field holds (pearm64.xo reads them so). A branch to a symbol of
-// its own section that is not weak is resolved here, a global's too.
+// its own section that is not weak is resolved here, a global's too,
+// unless the object is in atoms mode and the target is in another atom.
 // The .seh_ directives become .xdata and .pdata as LLVM 21's
 // MCWin64EH.cpp writes them (its ARM64 half, ported in coffseh64.xo);
 // clang's objects are the reference.
@@ -67,6 +68,9 @@ fn a64_is_add_imm(w: Int) -> Bool { (w & 0x1f000000) == 0x11000000 }
 /// The fixups as relocations or resolved values (elf_apply_fixes' COFF
 /// counterpart).
 fn (var a: Asm) coff_a64_fixes() {
+  if a.atoms {
+    a.find_atom_starts()
+  }
   for f in a.fixes {
     let s = a.syms[f.sym]
     let pc = f.at * 4
@@ -117,7 +121,12 @@ fn (var a: Asm) coff_a64_fixes() {
       a.err = "line ${f.line}: a relocation COFF has none for (fixup ${f.kind})"
       return
     }
-    let local = s.sect == f.sect && !s.weak
+    // atoms mode (.subsections_via_symbols, the std store's parts): a
+    // branch to another atom of the section is relocated too, as
+    // apply_fixes does, since pestrip.xo coff_split lays the atoms out
+    // anew (a resolved one kept its old distance: windows/arm64 programs
+    // built against std's store branched into .rdata, 2026-11-10)
+    let local = s.sect == f.sect && !s.weak && (!a.atoms || a.atom_at(f.sect, pc) == (if s.temp { s.atom } else { f.sym }))
     if !local {
       let (t, k) = a.a64_target(f.sym)
       if k % 4 != 0 {

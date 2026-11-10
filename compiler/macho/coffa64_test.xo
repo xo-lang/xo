@@ -197,3 +197,53 @@ test "a64_segments ends a segment before an epilog that would cross 0xffffc" {
   expect(s[2].pro) == false
   expect(s[0].pro) == true
 }
+
+// Atoms mode (.subsections_via_symbols, std's store parts): a branch to
+// another atom of the section is a relocation, since coff_split lays the
+// atoms out anew; one inside its own atom stays resolved (2026-11-10: a
+// resolved `bl` kept its old distance and windows/arm64 programs built
+// against std's store branched into .rdata).
+const A64_COFF_ATOMS_SAMPLE = r#"	.subsections_via_symbols
+	.text
+	.globl f
+	.p2align 2
+f:
+	bl g
+	cbz x0, .Lf_out
+	b .Lg_mid
+.Lf_out:
+	ret
+	.globl g
+	.p2align 2
+g:
+	nop
+.Lg_mid:
+	ret
+"#
+
+test "an ARM64 COFF object in atoms mode relocates branches between atoms" {
+  match assemble_coff_arm64(A64_COFF_ATOMS_SAMPLE.bytes()) {
+    Ok(o) => match read_coff("atoms.obj", o) {
+      Ok(ob) => {
+        var text = -1
+        for (i, s) in ob.sects.indexed() {
+          if s.name == ".text" {
+            text = i
+          }
+        }
+        expect(text >= 0) == true
+        // bl g at 0 and b .Lg_mid at 8 (another atom): relocated; the
+        // cbz to .Lf_out at 4 (its own atom): resolved in place
+        var at: List[Int] = []
+        for r in ob.sects[text].relocs {
+          at.push(r.addr)
+        }
+        expect(at.sort()) == [0, 8]
+        let w = get_le(ob.sects[text].data, 4, 4) & 0xffffffff
+        expect((w >> 5) & 0x7ffff) == 2
+      }
+      Err(e) => expect(e) == ""
+    }
+    Err(e) => expect(e) == ""
+  }
+}

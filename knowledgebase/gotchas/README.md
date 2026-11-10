@@ -1273,3 +1273,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [size-with-backend-cache-on.md](size-with-backend-cache-on.md): Observed 2026-11-10: the same compiler code built xo 2% smaller with the shared backend cache on; measure size with XO_BACKEND_CACHE=off
 - [libcsys-linux-numbers-on-freebsd.md](libcsys-linux-numbers-on-freebsd.md): Observed 2026-11-10: the C names the runtime gives a FreeBSD `use c` binding made Linux system calls (SIGSYS); libcsys uses nrf
 - [arm64-copy-runs-overlap.md](arm64-copy-runs-overlap.md): Observed 2026-11-10: a wide value moved down the frame stayed word copies (copy_block took apart sp ranges only)
+- [coff-arm64-atoms-branches-resolved.md](coff-arm64-atoms-branches-resolved.md): Observed 2026-11-10: windows/arm64 sepcomp programs faulted before main; the ARM64 COFF writer resolved branches between atoms that coff_split moves
