@@ -1,0 +1,26 @@
+// A boxed interface value's effect argument must match the expected
+// type's exactly (core 6.2); XO0701 names the value's effects first and
+// the expected type's second, whichever way they differ.
+interface Cred[fx: Effects] {
+  fn get(self) -> Str uses fx
+}
+
+struct FileCred {}
+
+fn (c: FileCred) get() -> Str uses fs.read {
+  "f"
+}
+
+fn count(cs: List[Cred[(fs.read, proc)]]) -> Int { cs.len() }
+
+fn narrow(c: Cred[(fs.read, proc)]) -> Cred[fs.read] {
+  c // ERROR XO0701 "has effects `fs.read, proc`, but the expected type `Cred.fs.read.` has `fs.read`;"
+}
+
+fn main() uses fs.read, proc {
+  let one: Cred[fs.read] = FileCred{}
+  var all: List[Cred[(fs.read, proc)]] = []
+  all.push(one) // ERROR XO0701 "has effects `fs.read`, but the expected type `Cred..fs.read, proc..` has `fs.read, proc`;"
+  let _n = count(all)
+  let _m = narrow(all[0])
+}

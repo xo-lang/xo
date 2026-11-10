@@ -3,7 +3,7 @@
 // g would read the clock while pure_pick declares nothing.
 
 fn pure_pick(os: Os, c: Bool) -> Int {
-  let g = if c { fn() -> Int { 1 } } else { // ERROR XO0701 "performs `clock`"
+  let g = if c { fn() -> Int { 1 } } else { // ERROR XO0701 "has effects `clock`, but the expected type"
     fn() -> Int {
       let _now = os.clock.now()
       2

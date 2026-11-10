@@ -5,7 +5,7 @@ struct Box[fx: Effects] {
 }
 
 fn rand_box(b: Box[clock]) -> Box[rand] ! Str uses rand {
-  Ok(b) // ERROR XO0701 "fixes these effects as"
+  Ok(b) // ERROR XO0701 "but the expected type"
 }
 
 fn main(os: Os) {

@@ -107,6 +107,9 @@ struct EffOb {
   /// Iface: the interface type and the interface method's name.
   iface: Int = -1
   meth: Str = ""
+  /// Same: sub is the expected type's set and sup the value's (the
+  /// pair's second obligation); otherwise sub is the value's.
+  rev: Bool = false
   /// Closure: its ` uses ...` clause (file "" for none), which a fix may
   /// remove so its effects are inferred.
   uses_file: Str = ""
@@ -431,7 +434,7 @@ fn (var c: Checker) same_effects(n: Int, dst: Int, sp: Span) {
     let (a, b) = c.eff_eqs[i]
     if sp.start.line > 0 {
       c.obligations.push(EffOb{kind: ObKind.Same, sub: a, sup: b, file: c.path, span: sp, ty: dst})
-      c.obligations.push(EffOb{kind: ObKind.Same, sub: b, sup: a, file: c.path, span: sp, ty: dst})
+      c.obligations.push(EffOb{kind: ObKind.Same, sub: b, sup: a, file: c.path, span: sp, ty: dst, rev: true})
     }
     i += 1
   }
@@ -733,7 +736,18 @@ fn (var c: Checker) solve_effects() {
     }
     seen[key] = true
     let list = "`${missing.join("`, `")}`"
-    let msg = if ob.kind == ObKind.Pure {
+    let msg = if ob.kind == ObKind.Same {
+      // both sets, the value's first: the obligation that fails may be
+      // either direction of the pair, and its allowed set read as the
+      // expected type's was the value's (Azure 1, 2026-11-09: "fixes
+      // these effects as `fs.read`, but performs `proc`" for a
+      // Cred[fs.read] passed as Cred[(fs.read, proc)])
+      let vt = c.flat_text(if ob.rev { sup } else { sub })
+      let et = c.flat_text(if ob.rev { sub } else { sup })
+      let vs = if vt.is_empty() { "is pure" } else { "has effects `${vt}`" }
+      let es = if et.is_empty() { "is pure" } else { "has `${et}`" }
+      "this value's type ${vs}, but the expected type `${c.show(ob.ty)}` ${es}; a type's effects must match exactly, neither widened nor narrowed (core 6.2)"
+    } else if ob.kind == ObKind.Pure {
       "contract clauses must be pure, but this one performs ${list}"
     } else if ob.kind == ObKind.Const {
       "a const initializer must be pure (it runs once, at the constant's first use; decision 0332), but this one performs ${list}"

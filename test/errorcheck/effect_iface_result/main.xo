@@ -23,7 +23,7 @@ fn use_maker(m: Maker) -> Int uses rand {
 }
 
 pub fn leak(c: ClockMaker) -> Int uses rand {
-  use_maker(c) // ERROR XO0701 "fixes these effects as"
+  use_maker(c) // ERROR XO0701 "but the expected type"
 }
 
 fn main(os: Os) {
