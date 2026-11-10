@@ -48,4 +48,5 @@ every std module importing it, std_source_set) is left out on both sides.
   edits, but rewrites decision 0388's record format.
 - Drop parse trees after check: the trees feed the SSA builder; lazy_parse already skips std bodies.
 - Build only the importers the test program reaches: the importer set (15 for base64, 22 for json)
-  is not the cost: a module with one (hex) and json both hold about 150 MB after check.
+  is not the cost: a csv edit (one module from source) holds 148 to 152 MB after check, json's
+  (22) 155 to 168 MB.
