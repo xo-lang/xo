@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-11-10: perf: a short plain string encodes with one append
+
+- Kind: perf
+- Commit: this push
+- Found by: the /alloc page profile on linux/arm64 (jsontext.append_str and append_body 16.9% of CPU; ~/xo-lead notes, Xo Lang 1)
+- Go reference: encoding/json encodeState.string (one pass over the safe set)
+- Test: TestStdCorpora json and jsontoken (go, arm64, llvm); TestGoldenRun json goldens
+- Timing: bench/perf/json enc_small on linux/arm64 host 1, --ab against main, 11 rounds: 0.951 (0.927 to 0.975); enc_strings within noise (1.016)
+- Shipped in: not yet released
+
+jsontext.append_str writes a string of at most 6 bytes with nothing to escape (a field name, a small value) as one word, its quotes included, through one reserve, where it appended the opening quote, the body and the closing quote with three. Output is unchanged.
+
 ## 2026-11-09: feature: `json.decode_go` words a type error as encoding/json does
 
 - Kind: feature

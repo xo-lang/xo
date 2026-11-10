@@ -1518,7 +1518,28 @@ pub fn sorted_order(keys: List[Str], live: List[Bool]) -> List[Int] {
 /// out + s as a JSON string: std/rt's appendJSONString (encoding/json
 /// without HTML escaping): `"`, `\`, and control bytes escaped, invalid
 /// UTF-8 as �, U+2028 and U+2029 as   and  .
-pub fn append_str(out: Str, s: Str) -> Str { rt.rs_push_byte(append_body(rt.rs_push_byte(out, 34), s), 34) }
+pub fn append_str(out: Str, s: Str) -> Str {
+  let b = s.bytes()
+  let n = b.len()
+  if n <= 6 {
+    // a short plain string (a field name, a small value): its quotes and
+    // bytes as one word, one reserve where three appends reserved three
+    var w = 34
+    var i = 0
+    while i < n {
+      let c = Int(b[i])
+      if c < 32 || c == 34 || c == 92 || c >= 128 {
+        break
+      }
+      w = w | (c << (8 * (i + 1)))
+      i += 1
+    }
+    if i == n {
+      return rt.rs_push_word(out, w | (34 << (8 * (n + 1))), n + 2)
+    }
+  }
+  rt.rs_push_byte(append_body(rt.rs_push_byte(out, 34), s), 34)
+}
 
 /// out + s as the inside of a JSON string (append_str without its
 /// quotes): a derived encoder writes a Str field's quotes in its key
