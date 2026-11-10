@@ -215,10 +215,30 @@ func TestPublish(t *testing.T) {
 
 // TestInit checks `xo init`: xo.mod, .xo/ (the binding caches) in
 // .gitignore, and xo.work too for a single module repository but not
-// under a workspace.
+// under a workspace; .gitignore only in a git repository.
 func TestInit(t *testing.T) {
 	t.Parallel()
+	// outside a git repository: xo.mod alone
+	bare := t.TempDir()
+	xo(t, "init", "--dir", bare, "github.com/acme/bare").want(0)
+	if _, err := os.Stat(filepath.Join(bare, "xo.mod")); err != nil {
+		t.Errorf("no xo.mod outside git: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(bare, ".gitignore")); err == nil {
+		t.Errorf("xo init wrote .gitignore outside a git repository")
+	}
+	// a .git file (a worktree) in a parent counts
+	wt := t.TempDir()
+	modtest.WriteFiles(t, wt, map[string]string{".git": "gitdir: /elsewhere\n"})
+	xo(t, "init", "--dir", filepath.Join(wt, "a", "b"), "github.com/acme/wt").want(0)
+	if ig, _ := os.ReadFile(filepath.Join(wt, "a", "b", ".gitignore")); !strings.Contains(string(ig), "/.xo/\n") {
+		t.Errorf("xo init under a .git file: .gitignore:\n%s", ig)
+	}
+
 	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	xo(t, "init", "--dir", dir, "github.com/acme/new").want(0)
 	data, _ := os.ReadFile(filepath.Join(dir, "xo.mod"))
 	if string(data) != "module github.com/acme/new\nedition preview\n" {
@@ -232,7 +252,7 @@ func TestInit(t *testing.T) {
 	xo(t, "init", "--dir", dir, "nohost").want(2)
 
 	mono := t.TempDir()
-	modtest.WriteFiles(t, mono, map[string]string{"xo.work": "xo preview\n"})
+	modtest.WriteFiles(t, mono, map[string]string{"xo.work": "xo preview\n", ".git/HEAD": "ref: refs/heads/main\n"})
 	sub := filepath.Join(mono, "svc")
 	xo(t, "init", "--dir", sub, "github.com/acme/svc").want(0)
 	if ig, _ := os.ReadFile(filepath.Join(sub, ".gitignore")); strings.Contains(string(ig), "xo.work") || !strings.Contains(string(ig), "/.xo/\n") {

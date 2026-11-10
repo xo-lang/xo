@@ -637,9 +637,9 @@ fn init_text() -> Str {
   """
 usage: xo init [--dir=<dir>] <module path>
 
-Write xo.mod for a new module and add xo.work (unless a workspace above
-already covers the directory) and .xo/, xo's binding caches, to
-.gitignore.
+Write xo.mod for a new module. In a git repository (a .git at or above
+the directory), also add xo.work (unless a workspace above already
+covers the directory) and .xo/, xo's binding caches, to .gitignore.
 """
 }
 

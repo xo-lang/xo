@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo init: writes .gitignore only in a git repository (a .git directory or file at or above the module directory), as cargo new does; outside one it writes xo.mod alone
 - FreeBSD (decision 0573 stage 2): native programs run on FreeBSD amd64: threads, the kqueue poller, signals, file system, sockets, HTTP and TLS, faults recovered by isolate and defer; 119 of 120 goldens pass on a FreeBSD 14 VM.
 - Native, LLVM and wasm backends: a Float to sized integer conversion that faults names the type the program wrote and the value it had, as the Go backend does ("-2.9 is out of range for UInt8", "cannot convert NaN to Int32"); they said "for Int" and printed the truncated value.
 - An interface value's effect argument widens where the interface's effect parameter is covariant (named only in its methods' `uses`): a `Cred[fs.read]` may be pushed into a `List[Cred[(fs.read, proc)]]`, passed or returned as a `Cred[(fs.read, proc)]` (decision 0582, core 6.2). It never narrows, and `List[I[e]]` stays invariant.

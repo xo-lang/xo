@@ -297,6 +297,11 @@ fn run_init(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   if !w.is_empty() {
     os.stdio.println("the workspace ${w} is above it; add `use ${dir}` to it to build the module from here")
   }
+  // .gitignore only in a git repository (a .git directory, or a worktree's
+  // .git file, at or above dir), as cargo new does
+  if !in_git(os, ctx, dir) {
+    return 0
+  }
   let ignore = join_path(dir, ".gitignore")
   var s = ""
   if os.fs.exists(ignore).ok() ?? false {
@@ -363,6 +368,23 @@ pub fn valid_module_path(p: Str) -> Bool {
     }
   }
   true
+}
+
+/// Whether dir is in a git repository: a .git (a directory, or the file a
+/// worktree or submodule has) at or above it.
+fn in_git(os: Os, ctx: Ctx, dir: Str) -> Bool uses fs.read {
+  var d = abs_path(ctx, dir)
+  while true {
+    if os.fs.exists(join_path(d, ".git")).ok() ?? false {
+      return true
+    }
+    let up = dir_of(d)
+    if up == d || hostpath.is_root(d) {
+      return false
+    }
+    d = up
+  }
+  false
 }
 
 /// mod.NearestWork: the xo.work XO_WORK names, or the nearest at or above
