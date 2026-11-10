@@ -1125,7 +1125,16 @@ fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
     return s
   }
   let s = rs_new(hw, if need < 16 { 16 } else { need })
-  rt.mem_copy(addw(s, S_HDR), addw(addw(a, S_HDR), off), len)
+  // a short one (a literal `"item-"` that `"item-${i}"` appends to) by
+  // two overlapping loads and stores, not a memcpy call (2026-11-09:
+  // bench/perf/jitter /alloc spent 2.4 of reserve_slow's 8.8 s of 67 s in
+  // memcpy for 2 to 5 bytes)
+  let src = addw(addw(a, S_HDR), off)
+  if len > 0 && len <= 16 {
+    libcstr.move_small(addw(s, S_HDR), src, len)
+  } else {
+    rt.mem_copy(addw(s, S_HDR), src, len)
+  }
   // a literal (common: `"w${i}"` appends to one), or one with other
   // references, or a shared one freed here when the others went
   if count(a) != IMMORTAL && rc.dec(a) != 0 {
