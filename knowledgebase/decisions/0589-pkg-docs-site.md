@@ -1,0 +1,88 @@
+# 0589: pkg.xolang.dev, package documentation for std and published modules
+
+Status: Proposed (lead, 2026-11-10, at the owner's request)
+
+## Context
+
+Go has three places for its ecosystem: go.dev (the language site),
+pkg.go.dev (documentation of every published package, for people), and
+proxy.golang.org with sum.golang.org (services for the go command). gopls's
+hover links each symbol to its pkg.go.dev page.
+
+Xo has the first and third: xolang.dev (docs, tour, playground, and one page
+per std module under /docs/stdlib/) and, since decision 0568, the module
+proxy, index and checksum log on xolang.org (proxy.xolang.org,
+index.xolang.org, sum.xolang.org). Published modules have no documentation
+site: a reader of github.com/xo-lang/aws, azure or gcp (v0.1.0 with Xo
+0.46.0) reads the source or the README. The owner asked (2026-11-10) for a
+pkg.go.dev equivalent after seeing gopls's hover link; xo lsp is gaining a
+hover link to the std pages in the meantime.
+
+`xo doc [--json] [--all] [module]` already renders a module's doc comments,
+and decision 0588 merges std's declarations and bodies into one file per
+module, so std and user modules document the same way.
+
+## Decision (proposed)
+
+1. **Name: pkg.xolang.dev.** People-facing pages stay under the .dev brand
+   (xolang.dev, the playground, the docs); services for tools stay on
+   xolang.org (0568). The split mirrors go.dev / golang.org.
+2. **What it shows**, per module version: the module's doc, its packages'
+   exported types, functions, methods, constants and their doc comments
+   (from `xo doc --json`), the signature with effects and errors, links to
+   the source lines at the tagged commit, the versions list, the imports and
+   importers known to the index, the license (detected from the module's
+   LICENSE file; no license, no rendered docs, as pkg.go.dev does), and
+   the `xo get` line. Std is a module like any other, versioned by Xo
+   release (pkg.xolang.dev/std/charset@0.46.0), and /docs/stdlib on
+   xolang.dev redirects to it.
+3. **How it is built:** static pages. A builder reads index.xolang.org's
+   feed for new versions, fetches each zip through proxy.xolang.org
+   (verified against sum.xolang.org), runs `xo doc --json` from the
+   released xo in a sandbox with no network, and renders HTML plus a
+   search index. Built pages are written to an R2 bucket served on
+   pkg.xolang.dev through Cloudflare, like the proxy. The builder never
+   runs a module's code (doc extraction parses and checks only).
+4. **Where the builder runs:** not on the OCI host, which is hosting only
+   (0568). Options for the owner: a Cloudflare Worker cron that queues
+   versions plus a small container run (Cloudflare Containers) for
+   `xo doc`; or a scheduled job on an offload host that uploads to R2.
+   The first keeps everything on Cloudflare; the second costs nothing new.
+5. **Editors:** xo lsp's hover link points at pkg.xolang.dev for std and
+   for any module the index knows; user code in the open workspace gets no
+   link.
+6. **Takedowns and abuse** follow 0568's policy and contact
+   (modules@xolang.org): a module removed from the proxy is removed here.
+7. **Stages:** (a) std only, generated at each release from the release's
+   std, replacing /docs/stdlib; (b) published modules from the index, with
+   xo-lang/aws, azure and gcp first; (c) search across modules and symbols;
+   (d) importers and the "used by" count.
+
+## Consequences
+
+- Module authors get documentation pages without doing anything but
+  tagging a version, which rewards doc comments.
+- One more public service to run: its builder's sandbox, an R2 bucket, DNS
+  for pkg.xolang.dev (a zone the owner adds to Cloudflare if xolang.dev is
+  not there yet), and a release step for std's pages.
+- xolang.dev/docs/stdlib's URLs change; redirects keep old links working.
+- `xo doc --json` becomes a public format, versioned with a schema field.
+
+## Alternatives
+
+- **Keep std pages on xolang.dev and nothing for modules:** no cost, but
+  third-party modules stay undocumented.
+- **pkg.xolang.org:** fits the services domain, but splits people-facing
+  pages across two brands.
+- **A path on the main site (xolang.dev/pkg/...):** one site, but the main
+  site's Hugo build would depend on the module index and grow with every
+  published module.
+- **Render on request (a Worker running xo doc per hit):** no build queue,
+  but slow first hits and a heavier sandbox on the request path.
+
+## Open questions for the owner
+
+- Accept the name and the stages.
+- The builder's home (decision item 4).
+- Whether pkg.xolang.dev also hosts the module search that `xo search`
+  might call later.
