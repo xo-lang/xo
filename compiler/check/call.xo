@@ -549,11 +549,12 @@ fn conversion_hint(on: Str, name: Str) -> Str {
 /// does for a method.
 fn (var c: Checker) statics_note(d: Int, obj: Int, name: Str, cands: List[Str]) {
   let on = text(c.objs[obj].name)
-  if c.objs[obj].module == c.prelude && on == "Int" && (name is "min" | "max" | "MAX" | "MIN" | "MAX_VALUE" | "MIN_VALUE") {
-    // Go's math.MaxInt64, Rust's i64::MAX (owner tester, 2026-11-10;
-    // decision 0587 proposes type constants)
-    let lit = if name.to_lower().starts_with("max") { "9223372036854775807" } else { "-9223372036854775807 - 1" }
-    c.habit_note(d, "Xo has no `Int.${name}` constant yet; write `${lit}` (a `const`), and `a.${name.to_lower().trim_end_chars("_value")}(b)` for the ${if name.to_lower().starts_with("max") { "larger" } else { "smaller" }} of two values (spec/std.md 2)")
+  let lname = name.to_lower()
+  if c.objs[obj].module == c.prelude && c.objs[obj].statics.contains(b"max") && (lname.starts_with("max") || lname.starts_with("min")) {
+    // Java's Long.MAX_VALUE, C#'s int.MaxValue (owner tester, 2026-11-10):
+    // the bounds are the type constants `T.max` and `T.min` (decision 0587)
+    let w = if lname.starts_with("max") { "max" } else { "min" }
+    c.habit_note(d, "the bounds of `${on}` are the type constants `${on}.max` and `${on}.min`; `a.${w}(b)` is the ${if w == "max" { "larger" } else { "smaller" }} of two values (spec/std.md 2.1)")
     return
   }
   if c.objs[obj].module == c.prelude {
