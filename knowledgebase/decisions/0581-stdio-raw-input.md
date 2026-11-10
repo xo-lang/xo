@@ -54,7 +54,11 @@ reference.
 - Before the Go backend's restore was added, its fault case left `-icanon -echo`. The test caught it.
 - The goldens call it where no terminal exists: internal/llvm term_stdio prints `raw: false false`, and internal/gen
   test_term expects false from a FakeStdio after set_tty (TestStdAPICovered).
-- Windows is not verified on a console yet: the amd64 and Windows host is down (~/xo-lead/notes/deferred.md).
+- Windows (2026-11-09, the owner's Windows 11 amd64 host, a ConPTY console through `ssh -tt`, cmd.exe): a
+  windows/amd64 build from the native backend prints `tty=true`, raw input set, and the key `a` arrives with no
+  Enter (`set=true byte=1 hex=61 off=false`). After a program that turned raw input on faults, the console echoes
+  and edits lines again (`set /p` reads and shows `zq`). cmd.exe may set its own input mode when it reads the next
+  command, so the fault case is weaker evidence there than `stty` is on Unix.
 
 ## Consequences
 
