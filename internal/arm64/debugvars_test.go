@@ -1036,7 +1036,13 @@ func TestNoLeafWithPads(t *testing.T) {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
-			cmd := testtmp.Guard(exec.Command(xo, "asm", "--backend=arm64", "."))
+			// the DWARF personality layout: windows/arm64 unwinds with
+			// .pdata/.xdata instead, so a Windows host checks linux's
+			args := []string{"asm", "--backend=arm64", "."}
+			if runtime.GOOS == "windows" {
+				args = []string{"asm", "--backend=arm64", "--target=linux/arm64", "."}
+			}
+			cmd := testtmp.Guard(exec.Command(xo, args...))
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+dir)
 			out, err := cmd.Output()

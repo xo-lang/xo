@@ -162,7 +162,10 @@ func Build(dirs []string, o Options) (*Result, error) {
 		}
 		out = filepath.Join(d, name)
 	}
-	if runtime.GOOS == "windows" && !strings.HasSuffix(out, ".exe") {
+	// .exe only for a Windows binary: xo names a cross build for another
+	// OS as -o says (TestDebugInfoSplitLinux looked for split.exe on the
+	// winarm VM, 2026-11-09)
+	if runtime.GOOS == "windows" && (o.Targets == "" || strings.Contains(o.Targets, "windows")) && !strings.HasSuffix(out, ".exe") {
 		out += ".exe"
 	}
 	args := append([]string{}, cli[1:]...)
