@@ -63,6 +63,29 @@ fn play(os: Os, std_dir: Str, wd: Str, args: List[Str]) {
       }
       os.stdio.println(play_build(os, std_dir, wd, args[1], args[2]))
     }
+    "rebuild" => {
+      // decision 0583 level 2a, the whole entry: `rebuild WARM DIR OUT N`
+      // builds DIR N times, each from a copy of WARM's checked checker
+      // (XO_PLAY_TIMES=1 for the phases)
+      if args.len() < 4 {
+        os.stdio.println("{\"error\":\"usage: --play rebuild WARM DIR OUT [N]\"}")
+        return
+      }
+      let n = if args.len() >= 5 { Int.parse(args[4]) ?? 3 } else { 3 }
+      var t = os.clock.now().unix_millis()
+      let (base, err) = play_check(os, std_dir, wd, args[1], true)
+      os.stdio.eprintln("rebuild warm check ${os.clock.now().unix_millis() - t} ms ${err}")
+      for i in 0..n {
+        t = os.clock.now().unix_millis()
+        var c = base
+        c.start_member_with(true)
+        let r = c.check_dirs([args[2]])
+        os.stdio.eprintln("rebuild ${i} check ${os.clock.now().unix_millis() - t} ms ok=${r.is_ok()}")
+        let res = play_emit(os, wd, args[2], args[3], c, true)
+        os.stdio.eprintln("rebuild ${i} total ${os.clock.now().unix_millis() - t} ms: ${res[..(res.len().min(120))]}")
+      }
+      os.stdio.println("{\"ok\":true}")
+    }
     _ => os.stdio.println("{\"error\":${json_text("unknown command ${args[0]}")}}")
   }
 }
@@ -99,6 +122,12 @@ fn play_build(os: Os, std_dir: Str, wd: Str, dir: Str, out: Str) -> Str {
   if !err.is_empty() {
     return "{\"ok\":false,\"error\":${json_text(err)}}"
   }
+  play_emit(os, wd, dir, out, c, times)
+}
+
+/// play_build after the check: the checked program c built to out.
+fn play_emit(os: Os, wd: Str, dir: Str, out: Str, c: check.Checker, times: Bool) -> Str {
+  var t = os.clock.now().unix_millis()
   let ds = diags_json(c.diags)
   if !c.unsupported.is_empty() {
     return "{\"ok\":false,\"unsupported\":${json_text("${c.unsupported}")},\"diagnostics\":${ds}}"

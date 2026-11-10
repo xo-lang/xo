@@ -85,3 +85,15 @@ over by replaying the session's bindings, as the Mac REPL does.
 - The playground's worker keeps one compiler instance alive (memory per
   tab rises by the cached std state; to be measured).
 - The repl session code gets a second caller; its tests cover both.
+
+## Step 2 result (2026-11-10)
+Level 2a measured in Node (bench/results/browser-repl-2026-11-09.md, "Level
+2a measured"): one warm check (about 1.67 s), then each entry checked on a
+copy made a base with decision 0513's `start_member_with(true)`: 21-30 ms
+per entry check, 76-275 ms per whole entry on the tour's examples, output
+byte-identical to a fresh build. 2a is the level the decision takes; 2b
+and 2c stay unbuilt unless the session measurements below miss 0.5 s.
+Next: `--play repl` (the compiler answers an entry with its module; the
+page runs it and returns the run's output, from which the session keeps
+the entry, as repl.xo's step does with parse_run and Sess.after), a
+30-entry session, the page's worker in Chrome, and the base's memory.
