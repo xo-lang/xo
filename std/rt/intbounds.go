@@ -24,3 +24,17 @@ const (
 	UINT64_MAX uint64 = math.MaxUint64
 	UINT64_MIN uint64 = 0
 )
+
+// Float's type constants Float.inf, Float.pi, ... (decision 0592): Go
+// variables, not constants, since Go folds constant expressions exactly
+// (`Float.max * 2.0` is a Go compile error, +Inf in Xo) and has no
+// infinite or NaN constant.
+var (
+	FLOAT_INF              = math.Inf(1)
+	FLOAT_NAN              = math.NaN()
+	FLOAT_PI               = math.Pi
+	FLOAT_E                = math.E
+	FLOAT_MAX              = math.MaxFloat64
+	FLOAT_MIN              = -math.MaxFloat64
+	FLOAT_SMALLEST_NONZERO = math.SmallestNonzeroFloat64
+)

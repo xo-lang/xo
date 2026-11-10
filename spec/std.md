@@ -166,9 +166,16 @@ multiply and an add (golden float_no_fma). A fused multiply-add is asked
 for by name: `x.fma(y, z)` is `x * y + z` computed exactly and rounded
 once (IEEE 754 fusedMultiplyAdd, Go's `math.FMA`), the same bits on every
 backend (decision 0385, golden float_fma). Special values are Go's:
-`(-1.0).log()` is NaN, `(0.0).log()` is -Inf, `x.pow(0.0)` is 1.0. Float
-constants (`Float.PI`, `Float.INF`) are a later step; `Float.parse("inf")`
-gives infinity.
+`(-1.0).log()` is NaN, `(0.0).log()` is -Inf, `x.pow(0.0)` is 1.0.
+`Float.parse("inf")` gives infinity.
+
+Float's type constants (decision 0592), as the integer bounds below:
+`Float.inf` (positive infinity; `-Float.inf` is negative), `Float.nan` (a
+NaN, unequal to every Float, itself too: test with `is_nan`), `Float.pi`,
+`Float.e`, `Float.max` (the largest finite Float), `Float.min`
+(`-Float.max`) and `Float.smallest_nonzero` (the smallest positive
+subnormal), Go's math.Inf(1), NaN(), Pi, E, MaxFloat64 and
+SmallestNonzeroFloat64.
 
 The integer bounds `Int.max`, `Int.min`, `Int8.max` ... `UInt64.max` are
 type constants (decision 0587): written without parentheses, constant

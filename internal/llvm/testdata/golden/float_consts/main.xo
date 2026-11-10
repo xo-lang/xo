@@ -1,0 +1,32 @@
+// Float's type constants (decision 0592): Go's math.Inf, NaN, Pi, E,
+// MaxFloat64 and SmallestNonzeroFloat64, ported from math's tests.
+
+const TAU: Float = 2.0 * Float.pi
+const NEG_INF: Float = -Float.inf
+
+fn clamp(x: Float) -> Float {
+  if x.is_nan() {
+    return 0.0
+  }
+  if x > Float.max {
+    return Float.max
+  }
+  if x < Float.min {
+    return Float.min
+  }
+  x
+}
+
+fn main(os: Os) {
+  os.stdio.println("${Float.inf} ${NEG_INF} ${Float.nan}")
+  os.stdio.println("${Float.pi} ${Float.e} ${TAU}")
+  os.stdio.println("${Float.max} ${Float.min} ${Float.smallest_nonzero}")
+  // NaN is unequal to everything, itself too
+  os.stdio.println("${Float.nan == Float.nan} ${Float.nan != Float.nan} ${Float.nan.is_nan()} ${Float.inf.is_nan()}")
+  // the infinities order past every finite value
+  os.stdio.println("${Float.inf > Float.max} ${NEG_INF < Float.min} ${Float.max * 2.0 == Float.inf}")
+  // math_test.go: the smallest subnormal halves to zero, Pi's bits
+  os.stdio.println("${Float.smallest_nonzero / 2.0 == 0.0} ${Float.smallest_nonzero > 0.0} ${Float.pi.to_bits().to_str_base(16)}")
+  os.stdio.println("${clamp(Float.inf)} ${clamp(NEG_INF)} ${clamp(Float.nan)} ${clamp(1.5)}")
+  os.stdio.println("${Float.inf - Float.inf} ${Float.inf * 0.0} ${(0.0).log() == NEG_INF}")
+}

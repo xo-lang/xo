@@ -223,6 +223,25 @@ const UINT64_MAX: UInt64 = 18446744073709551615
 /// The smallest UInt64. @static UInt64.min
 const UINT64_MIN: UInt64 = 0
 
+// Float's constants (decision 0592): type constants as the integer bounds.
+/// Positive infinity (Go's math.Inf(1)); `-Float.inf` is negative
+/// infinity. @static Float.inf
+const FLOAT_INF: Float = 1.0 / 0.0
+/// A NaN (Go's math.NaN()): unequal to every Float, itself too; test one
+/// with `is_nan`. @static Float.nan
+const FLOAT_NAN: Float = 0.0 / 0.0
+/// π, the Float nearest it (Go's math.Pi). @static Float.pi
+const FLOAT_PI: Float = 3.141592653589793
+/// e, the Float nearest it (Go's math.E). @static Float.e
+const FLOAT_E: Float = 2.718281828459045
+/// The largest finite Float (Go's math.MaxFloat64). @static Float.max
+const FLOAT_MAX: Float = 1.7976931348623157e308
+/// The most negative finite Float, `-Float.max`. @static Float.min
+const FLOAT_MIN: Float = -1.7976931348623157e308
+/// The smallest positive Float, a subnormal (Go's
+/// math.SmallestNonzeroFloat64). @static Float.smallest_nonzero
+const FLOAT_SMALLEST_NONZERO: Float = 4.9406564584124654e-324
+
 /// Go's strconv.ParseInt(s, 10, 64): decimal text with an optional sign and
 /// _ between digits; None for anything else (spaces included) or a value
 /// that overflows Int.

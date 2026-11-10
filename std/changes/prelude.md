@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-11-10: feature: Float's type constants `Float.inf`, `nan`, `pi`, `e`, `max`, `min`, `smallest_nonzero`
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit (bench/results/std-audit-2026-11-10b.md: math.Inf, NaN, Pi, E, MaxFloat64 in its top 40)
+- Go reference: math.Inf(1), math.NaN(), math.Pi, math.E, math.MaxFloat64, math.SmallestNonzeroFloat64 (const.go, bits.go)
+- Test: golden float_consts on arm64, LLVM and Go (the values, NaN's inequality, the infinities' order, Pi's bits as Go's)
+- Timing: none (constants)
+- Shipped in: not yet released
+
+Decision 0592: the Float limits and the two mathematical constants as type constants, written as 0587's integer
+bounds (`Float.inf`, `-Float.inf`, `Float.nan`, ...). `Float.min` is `-Float.max`.
+
 ## 2026-11-10: fix: a `use c` binding's system calls on FreeBSD
 
 - Kind: fix

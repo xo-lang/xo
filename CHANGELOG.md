@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Float type constants (decision 0592): `Float.inf`, `Float.nan`, `Float.pi`, `Float.e`, `Float.max`, `Float.min` and `Float.smallest_nonzero`, as `Int.max` (Go's math.Inf, NaN, Pi, E, MaxFloat64, SmallestNonzeroFloat64)
 - Fixed (windows/arm64, experimental, decision 0569): a program built against std's separately compiled store crashed before main: Xo's ARM64 COFF assembler resolved a branch between two atoms of an atoms mode object in place, and the store's split laid the atoms out anew, so the branch landed in other code or data; such a branch is now a relocation, as on the ELF and Mach-O writers.
 - Fixed: `xo doc std` summaries of the std modules merged with their implementation (decision 0588) and of headers that open `std/NAME:` or name a decision in their parentheses (std/amqptest, std/timego, std/base32, std/uuid read their description again, not an origin or license line); `UuidErr.msg` is `pub` again (decision 0440)
 - **Breaking** (std/amqptest, decision 0591): `Broker.event_hub`, `put`, `ready`, `locked` and `scheduled` declare `uses clock`, since they read the broker's clock; a caller (a closure passed as a pure `fn`, say) needs the `clock` effect
