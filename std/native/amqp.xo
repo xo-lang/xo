@@ -861,25 +861,25 @@ fn in_range(name: Str, x: Int, hi: Int) -> () ! amqp.AmqpErr {
 fn check_ranges(b: amqp.FrameBody) -> () ! amqp.AmqpErr {
   match b {
     Open(o) => {
-      in_range("max_frame_size", o.max_frame_size, 4294967295)?
-      in_range("channel_max", o.channel_max, 65535)?
-      in_range("idle_timeout_ms", o.idle_timeout_ms, 4294967295)?
+      in_range("max_frame_size", o.max_frame_size, Int(UInt32.max))?
+      in_range("channel_max", o.channel_max, Int(UInt16.max))?
+      in_range("idle_timeout_ms", o.idle_timeout_ms, Int(UInt32.max))?
     }
-    Begin(x) => { in_range("handle_max", x.handle_max, 4294967295)? }
+    Begin(x) => { in_range("handle_max", x.handle_max, Int(UInt32.max))? }
     Attach(x) => {
-      in_range("initial_delivery_count", x.initial_delivery_count, 4294967295)?
+      in_range("initial_delivery_count", x.initial_delivery_count, Int(UInt32.max))?
       in_range("max_message_size", x.max_message_size, Int.max)?
       match x.source {
         Some(s) => {
-          in_range("durable", s.durable, 4294967295)?
-          in_range("timeout", s.timeout, 4294967295)?
+          in_range("durable", s.durable, Int(UInt32.max))?
+          in_range("timeout", s.timeout, Int(UInt32.max))?
         }
         None => {}
       }
       match x.target {
         Some(t) => {
-          in_range("durable", t.durable, 4294967295)?
-          in_range("timeout", t.timeout, 4294967295)?
+          in_range("durable", t.durable, Int(UInt32.max))?
+          in_range("timeout", t.timeout, Int(UInt32.max))?
         }
         None => {}
       }
@@ -1160,7 +1160,7 @@ fn body_of(c: Int, f: List[amqp.Value], rest: Bytes) -> amqp.FrameBody ! amqp.Am
   if c == 0x10 {
     return Ok(amqp.FrameBody.Open(v: amqp.Open{
       container_id: want_str(at(f, 0))?, hostname: want_str(at(f, 1))?,
-      max_frame_size: want_int(at(f, 2), 4294967295)?, channel_max: want_int(at(f, 3), 65535)?,
+      max_frame_size: want_int(at(f, 2), Int(UInt32.max))?, channel_max: want_int(at(f, 3), Int(UInt16.max))?,
       idle_timeout_ms: want_millis(at(f, 4))?, outgoing_locales: want_syms(at(f, 5))?,
       incoming_locales: want_syms(at(f, 6))?, offered_capabilities: want_syms(at(f, 7))?,
       desired_capabilities: want_syms(at(f, 8))?, properties: want_smap(at(f, 9))?}))
@@ -1174,7 +1174,7 @@ fn body_of(c: Int, f: List[amqp.Value], rest: Bytes) -> amqp.FrameBody ! amqp.Am
     return Ok(amqp.FrameBody.Begin(v: amqp.Begin{
       remote_channel: rc, next_outgoing_id: want_u32(at(f, 1), UInt32(0))?,
       incoming_window: want_u32(at(f, 2), UInt32(0))?, outgoing_window: want_u32(at(f, 3), UInt32(0))?,
-      handle_max: want_int(at(f, 4), 4294967295)?, offered_capabilities: want_syms(at(f, 5))?,
+      handle_max: want_int(at(f, 4), Int(UInt32.max))?, offered_capabilities: want_syms(at(f, 5))?,
       desired_capabilities: want_syms(at(f, 6))?, properties: want_smap(at(f, 7))?}))
   }
   if c == 0x12 {

@@ -1,5 +1,15 @@
 # std/idna changes
 
+## 2026-11-10: refactor: width bounds as the type constants (decision 0587 point 4)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0587 point 4 (std's literal bounds become the type constants)
+- Go reference: none (no behavior change; Go's math.MaxInt32, MaxUint16, MaxUint32)
+- Test: xo test --std-module=idna and its corpus where it has one
+
+In std/idna, MAX_I32 is `Int(Int32.max)`. No behavior change.
+
 ## 2026-11-04: fix: a punycode label that decodes to a surrogate no longer faults
 
 - Kind: fix (security: a denial of service)

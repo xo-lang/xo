@@ -1,10 +1,17 @@
 # std/amqp changes
 
+## 2026-11-10: refactor: width bounds as the type constants (decision 0587 point 4)
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor
 - Commit: this commit
 - Found by: decision 0587 point 4 (std's literal bounds become the type constants)
+- Go reference: none (no behavior change; Go's math.MaxInt32, MaxUint16, MaxUint32)
+- Test: xo test --std-module=amqp and its corpus where it has one
+
+In std/amqp, the range checks of the uint and ushort fields are against `Int(UInt32.max)` and `Int(UInt16.max)`. No behavior change.
+
 - Go reference: none (no behavior change; Go's math.MaxInt64 and MinInt64)
 - Test: the std module tests and goldens of the gate; the self build
 

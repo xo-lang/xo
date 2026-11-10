@@ -351,7 +351,7 @@ const INITIAL_N: Int = 128
 const SKEW: Int = 38
 const TMAX: Int = 26
 const TMIN: Int = 1
-const MAX_I32: Int = 2147483647
+const MAX_I32: Int = Int(Int32.max)
 
 fn puny_err(s: Str) -> idna.IdnaErr { label_err(s, "A3") }
 

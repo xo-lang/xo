@@ -847,7 +847,7 @@ fn parse_pkcs1_public(der: Bytes) -> PublicKey ! crypto.KeyErr {
   if n.0 <= 0 || ev <= 0 {
     return Err(key_err("x509: public key contains zero or negative value"))
   }
-  if ev > 2147483647 {
+  if ev > Int(Int32.max) {
     return Err(key_err("x509: public key contains large public exponent"))
   }
   PublicKey{kind: crypto.KeyAlg.Rsa, n: n.1, e: ev, key: b""}
@@ -1168,7 +1168,7 @@ fn rsa_check(n: Bytes, e: Int, d: Bytes, p: Bytes, q: Bytes, dp: Bytes, dq: Byte
   if (e & 1) == 0 {
     return "crypto/rsa: public exponent is even"
   }
-  if e > 2147483647 {
+  if e > Int(Int32.max) {
     return "crypto/rsa: public exponent too large"
   }
   // p and q below n; p q = n
@@ -1458,7 +1458,7 @@ fn rsa_public_err(n: Bytes, e: Int) -> Str {
   if (e & 1) == 0 {
     return "crypto/rsa: public exponent is even"
   }
-  if e > 2147483647 {
+  if e > Int(Int32.max) {
     return "crypto/rsa: public exponent too large"
   }
   ""

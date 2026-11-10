@@ -1,5 +1,15 @@
 # std/mail changes
 
+## 2026-11-10: refactor: width bounds as the type constants (decision 0587 point 4)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0587 point 4 (std's literal bounds become the type constants)
+- Go reference: none (no behavior change; Go's math.MaxInt32, MaxUint16, MaxUint32)
+- Test: xo test --std-module=mail and its corpus where it has one
+
+In std/mail, the IPv6 group check is against `Int(UInt16.max)`. No behavior change.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

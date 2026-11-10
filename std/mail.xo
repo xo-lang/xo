@@ -566,7 +566,7 @@ fn ipv6_ok(s0: Str) -> Bool {
     var acc = 0
     while off < s.len() && hex_of(s[off]) >= 0 {
       acc = acc * 16 + hex_of(s[off])
-      if off > 3 || acc > 65535 {
+      if off > 3 || acc > Int(UInt16.max) {
         return false
       }
       off += 1
