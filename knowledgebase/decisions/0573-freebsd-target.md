@@ -219,5 +219,7 @@ not.
   clock_gettime with its clock ids) taking FreeBSD's calls, since code
   with a Linux arm reaches them there
   (gotchas/freebsd-sock-linux-errnos.md). The one left, fs_ops_edges,
-  differs because the VM runs it as root (permission checks pass). Not
-  run yet: arm64 FreeBSD, and the harness's other suites.
+  differed because the VM ran it as root (permission checks pass); run
+  as nobody in a directory it owns, it passes too: 120 of 120 at
+  2947ad02e (2026-11-10). Not run yet: arm64 FreeBSD, and the harness's
+  other suites.
