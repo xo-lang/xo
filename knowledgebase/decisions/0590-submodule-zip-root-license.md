@@ -1,8 +1,8 @@
 # 0590: a module in a subdirectory carries its repository's LICENSE
 
-Status: Proposed (Azure 1, 2026-11-10; the owner decides). It changes the
-content hash of some module versions, so it waits for the owner. The
-change is on the branch `submodule-license`, gated, not pushed.
+Status: Accepted (owner, 2026-11-10, through the lead; for 0.46.0).
+Written and implemented by Azure 1. It changes the content hash of a
+subdirectory module version with no LICENSE of its own.
 
 ## Context
 
