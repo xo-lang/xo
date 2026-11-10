@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-09: fix: http.redirect's body ends with two newlines, as Go's does
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Lang 3 (the polarbearblog port's byte for byte diff against the Go app, a GET redirect)
+- Go reference: net/http Redirect: `fmt.Fprintln(w, body)` with a body that already ends in "\n" (go1.26.1, checked with httptest)
+- Test: std/native/http_test.xo "redirect" case (Found</a>.\n\n)
+- Shipped in: not yet released
+
+`http.redirect` for a GET wrote `<a href="URL">Found</a>.` and one newline; Go writes two. A client or test that compared the body bytes
+saw the difference; headers were already equal.
+
 ## 2026-11-08: fix: under FakeNet, a client request reaches a bare Listener's accept loop
 
 - Kind: fix

@@ -1756,7 +1756,7 @@ test "go TestRedirect: Location resolved against the request's path, non ASCII e
   // a GET gets the html body, a HEAD the type alone, a POST neither
   let r = http.redirect(req, "/x", 302)
   expect(r.header("Content-Type")) == Some("text/html; charset=utf-8")
-  expect(r.body.to_str()) == Some("<a href=\"/x\">Found</a>.\n")
+  expect(r.body.to_str()) == Some("<a href=\"/x\">Found</a>.\n\n")
   let h = http.redirect(req with {method: "HEAD"}, "/x", 301)
   expect((h.header("Content-Type"), h.body.len())) == (Some("text/html; charset=utf-8"), 0)
   let p = http.redirect(req with {method: "POST"}, "/x?a=<b>", 303)

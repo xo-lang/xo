@@ -302,7 +302,7 @@ fn empty(status: Int) -> Response
 /// rules: the path's directory, `.` and `..` cleaned, a trailing slash
 /// kept, the query kept apart), non ASCII bytes of the Location percent
 /// encoded; a GET or HEAD gets `text/html; charset=utf-8` and a GET the
-/// body `<a href="URL">Status Text</a>.` on a line.
+/// body `<a href="URL">Status Text</a>.` and two newlines (Go prints the body with Fprintln).
 fn redirect(req: Request, url: Str, status: Int) -> Response
 
 /// The text of an HTTP status code, as Go's http.StatusText (`Not Found` for 404); empty for a code Go does not name.

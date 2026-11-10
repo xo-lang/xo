@@ -881,7 +881,7 @@ func Http_redirect(tk *Task, req Http_Request, target string, status int64) Http
 		Map_put(tk, &h, "Content-Type", "text/html; charset=utf-8")
 	}
 	if req.F_method == "GET" {
-		body = Bytes("<a href=\"" + htmlEscapeText(target) + "\">" + redirectStatusText(status) + "</a>.\n")
+		body = Bytes("<a href=\"" + htmlEscapeText(target) + "\">" + redirectStatusText(status) + "</a>.\n\n")
 	}
 	return Http_Response{F_status: status, F_headers: h, F_body: body}
 }

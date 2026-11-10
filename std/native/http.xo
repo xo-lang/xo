@@ -1446,7 +1446,7 @@ fn redirect(req: http.Request, url0: Str, status: Int) -> http.Response {
   }
   if req.method == "GET" {
     let text = http1w.status_text(status)
-    resp = resp with {body: ("<a href=\"" + html_escape(u) + "\">" + text + "</a>.\n").bytes()}
+    resp = resp with {body: ("<a href=\"" + html_escape(u) + "\">" + text + "</a>.\n\n").bytes()}
   }
   resp
 }
