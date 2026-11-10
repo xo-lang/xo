@@ -419,7 +419,7 @@ fn (g: G) func_header(var b: List[Str], s: Str, global: Bool) {
 /// zero.fn(Int, fn(Str, Bool) -> Str) -> Bool in the sql ones were
 /// defined twice).
 fn (g: G) shared_def() -> Bool {
-  shared_name(g.f.name)
+  g.m.weak_all || shared_name(g.f.name)
 }
 
 /// Whether function n is one std's object and a program's may both
@@ -603,6 +603,10 @@ fn (var g: G) exports() {
       continue
     }
     var b: List[Str] = []
+    if g.m.weak_all {
+      // std's test variant: weak, as its functions (decision 0596)
+      b.push(g.weak_def(g.sym(f.export)))
+    }
     g.func_header(b, g.sym(f.export), true)
     if g.m.types[f.results[0]].kind != ssa.Kind.Str {
       b.push("\tb ${g.fname(f.name)}\n\n")

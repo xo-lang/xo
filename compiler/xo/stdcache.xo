@@ -611,35 +611,41 @@ fn std_source_set(os: Os, std: Str, m: Str) -> Set[Str] {
       merged.add(n)
     }
   }
-  // each native or merged module's imports, by its name
-  var imps: Map[Str, List[Str]] = {}
+  // each native or merged module's sources, by its name: a directory of
+  // std/native is one module, but std/native/llrt, whose every file is a
+  // runtime module of its own (`llrt/md5`); a runtime module is imported
+  // as `use native/llrt/md5` (decision 0596: a test of one missed its
+  // importers, crypto among them, which then came from std's record); a
+  // merged module is its std/NAME.xo
+  var mods: List[(Str, List[Str])] = []
   for n in merged.to_list() {
-    for l in (os.fs.read_text("${root}/${n}.xo").ok() ?? "").split("\n") {
-      if let Some(rest) = l.cut_prefix("use std/") {
-        let dep = rest.trim().trim_prefix("native/").split(" ")[0]
-        var cur = imps.get(n) ?? []
-        cur.push(dep)
-        imps[n] = cur
-      }
-    }
+    mods.push((n, ["${root}/${n}.xo"]))
   }
   for e in os.fs.read_dir("${root}/native").ok() ?? [] {
-    var files: List[Str] = []
-    var name = ""
-    if e.is_dir {
-      name = e.name
+    if e.is_dir && e.name == "llrt" {
+      for f in os.fs.read_dir("${root}/native/llrt").ok() ?? [] {
+        if !f.is_dir && f.name.ends_with(".xo") && !f.name.ends_with("_test.xo") {
+          mods.push(("llrt/${f.name.trim_suffix(".xo")}", ["${root}/native/llrt/${f.name}"]))
+        }
+      }
+    } else if e.is_dir {
+      var files: List[Str] = []
       for f in os.fs.read_dir("${root}/native/${e.name}").ok() ?? [] {
         if !f.is_dir && f.name.ends_with(".xo") && !f.name.ends_with("_test.xo") {
           files.push("${root}/native/${e.name}/${f.name}")
         }
       }
+      mods.push((e.name, files))
     } else if e.name.ends_with(".xo") && !e.name.ends_with("_test.xo") {
-      name = e.name.trim_suffix(".xo")
-      files.push("${root}/native/${e.name}")
+      mods.push((e.name.trim_suffix(".xo"), ["${root}/native/${e.name}"]))
     }
+  }
+  var imps: Map[Str, List[Str]] = {}
+  for (name, files) in mods {
     for f in files {
       for l in (os.fs.read_text(f).ok() ?? "").split("\n") {
-        if let Some(rest) = l.cut_prefix("use std/") {
+        let rest = l.cut_prefix("use std/") ?? l.cut_prefix("use native/") ?? ""
+        if !rest.is_empty() {
           let dep = rest.trim().trim_prefix("native/").split(" ")[0]
           var cur = imps.get(name) ?? []
           cur.push(dep)

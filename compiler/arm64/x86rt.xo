@@ -566,6 +566,10 @@ fn (var g: G) x86_exports() {
       continue
     }
     var b: List[Str] = []
+    if g.m.weak_all {
+      // std's test variant: weak, as its functions (decision 0596)
+      b.push(g.weak_def(g.sym(f.export)))
+    }
     g.func_header(b, g.sym(f.export), true)
     if g.m.types[f.results[0]].kind != ssa.Kind.Str {
       b.push("\tjmp ${g.fname(f.name)}\n\n")

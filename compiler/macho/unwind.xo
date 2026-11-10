@@ -243,7 +243,7 @@ fn (var l: Linker) unwind_info() {
         match fdes.get(func) {
           Some(f) => enc = (enc & 0xff000000) | f
           None => {
-            l.fail("${l.objs[o].path}: no FDE for the DWARF mode function at ${func}")
+            l.fail("${l.objs[o].path}: no FDE for the DWARF mode function at ${func}${l.names_at(func)}")
             return
           }
         }
@@ -332,4 +332,21 @@ fn (var l: Linker) unwind_info() {
 
 fn imin(a: Int, b: Int) -> Int {
   if a < b { a } else { b }
+}
+
+/// The defined symbols at address a, for a message (" (name, ...)", or
+/// "" for none): which function an unwind entry without an FDE names.
+fn (l: Linker) names_at(a: Int) -> Str {
+  var ns: List[Str] = []
+  for (o, ob) in l.objs.indexed() {
+    if !ob.live {
+      continue
+    }
+    for (i, s) in ob.syms.indexed() {
+      if is_defined(s) && s.sect > 0 && l.sym_addr(o, i) == a {
+        ns.push("${bstr(s.name)} in ${ob.path}")
+      }
+    }
+  }
+  if ns.is_empty() { "" } else { " (${ns.join(", ")})" }
 }

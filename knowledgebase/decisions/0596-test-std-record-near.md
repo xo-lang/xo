@@ -50,6 +50,19 @@ Change (branch l2-0596):
    check cache's skipping stays off for tests (mod_skip_on), its directory is still set (the
    record's entries live there).
 3. `phase std_trees_rebuild` also prints the first body that triggered it.
+4. With std's test variant now holding code for every std function, a `--std-module` program
+   defines functions the variant's object defines too (the tested module and its importers,
+   built from source): the variant's object defines every function and C ABI export weak
+   (ssa Module.weak_all, std_obj in test mode), so the program's strong copy wins the link
+   (Mach-O, ELF and COFF linkers already take a strong definition over a weak one). The Mach-O
+   store link drops the compact unwind entries of the store's replaced copies
+   (uncoalesced_unwind, now also for store objects, matching by address: a store object's
+   symbols carry renumbered section ordinals, its section relocations the original ones).
+5. std_source_set (compiler/xo stdcache.xo) read only `use std/...` lines and took
+   std/native/llrt as one module: a test of a runtime module (native/llrt/md5) built only that
+   module from source, and its importers (crypto) came from the record without its types
+   (XO0601). It now reads `use native/...` lines and takes each llrt file as its own module.
+Every std module with tests (62) passes `xo test --std-module` with the change on the Mac.
 Step 3 of the prototype (the from-source set limited to reached importers) is not needed: with
 the facts present no from-source importer's body is lowered unless the test reaches it.
 

@@ -3450,6 +3450,7 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   // parts in store mode, as std's object
   gm.sepcomp_program = !sepcomp_facts_path(os).is_empty()
   gm.weak_shared = gm.std_obj || gm.sepcomp_program
+  gm.weak_all = gm.std_obj && o.cmd == "test"
   if gm.sepcomp_program {
     gm.std_store = true
   }

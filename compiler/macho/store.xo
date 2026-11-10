@@ -338,7 +338,10 @@ pub fn (var s: StoreLink) resolve() -> Str {
         s.l.objs[o].sects[k] = s.l.eh_live(o, x, live2)
       } else if x.seg == "__LD" && x.name == "__compact_unwind" {
         if o < s.n {
-          s.l.objs[o].sects[k] = s.l.live_unwind(o, x, live2)
+          // and the entries of the store's weak definitions a program
+          // definition replaced (std's test variant defines every
+          // function weak, decision 0596): their FDEs name the program's
+          s.l.objs[o].sects[k] = s.l.uncoalesced_unwind(o, s.l.live_unwind(o, x, live2))
         } else {
           s.l.objs[o].sects[k] = s.l.uncoalesced_unwind(o, x)
         }
@@ -358,12 +361,15 @@ pub fn (var s: StoreLink) resolve() -> Str {
 /// own, and nothing reaches it (every reference resolves to the kept one).
 fn (l: Linker) uncoalesced_unwind(o: Int, s: ISect) -> ISect {
   // the addresses of this object's weak definitions taken from another
-  var gone: Set[(Int, Int)] = #{}
+  // (an address alone: an object's sections do not overlap, and a store
+  // object's symbols carry renumbered section ordinals while its section
+  // relocations keep the original ones, decision 0596)
+  var gone: Set[Int] = #{}
   for (i, y) in l.objs[o].syms.indexed() {
     if is_ext(y) && is_defined(y) && (y.desc & 0x80) != 0 && y.sect >= 1 {
       match l.globals.get(y.name) {
         Some(g) => if g != (o, i) {
-          gone.add((y.sect, y.value))
+          gone.add(y.value)
         }
         None => {}
       }
@@ -378,12 +384,7 @@ fn (l: Linker) uncoalesced_unwind(o: Int, s: ISect) -> ISect {
       continue
     }
     // the entry's function: a symbol, or a section and an address
-    let f = if r.ext() {
-      let y = l.objs[o].syms[r.sym()]
-      (y.sect, y.value)
-    } else {
-      (r.sym(), rd64(s.data, r.addr))
-    }
+    let f = if r.ext() { l.objs[o].syms[r.sym()].value } else { rd64(s.data, r.addr) }
     if !gone.contains(f) {
       keep.push(r.addr)
     }

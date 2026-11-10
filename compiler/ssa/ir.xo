@@ -569,6 +569,11 @@ pub struct Module {
   /// object and a program's may both define one (std_obj; separate
   /// compilation): the link keeps the first
   pub weak_shared: Bool = false
+  /// std's test variant's object (decision 0596): every function weak,
+  /// so the from-source copy a `--std-module` program builds of the
+  /// tested module and its importers (check.sep_source) replaces the
+  /// variant's in the link
+  pub weak_all: Bool = false
   /// Thread locals by initial exec (a GOT slot with the offset), not
   /// local exec: a linux shared library (decision 0574) cannot use local exec.
   pub tls_ie: Bool = false
