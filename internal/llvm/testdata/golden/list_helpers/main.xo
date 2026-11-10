@@ -1,0 +1,74 @@
+// List.clone, List.concat, binary_search, max and min (decision 0592):
+// Go's slices.Clone, Concat, BinarySearch, Max and Min, with the cases of
+// slices_test.go (TestClone, TestConcat, TestBinarySearch, TestMinMax and
+// TestMinMaxNaNs; Max and Min are None on an empty list where Go panics).
+
+fn search(xs: List[Str], x: Str) -> Str {
+  let (i, found) = xs.binary_search(x)
+  "${i} ${found}"
+}
+
+fn main(os: Os) {
+  // clone: equal, and a write to the clone leaves the original
+  let s1 = [1, 2, 3]
+  var s2 = s1.clone()
+  os.stdio.println("clone ${s2 == s1} ${s2}")
+  s2[0] = 4
+  os.stdio.println("clone write ${s1} ${s2}")
+  let empty: List[Int] = []
+  os.stdio.println("clone empty ${empty.clone().len()}")
+  // 64 Ints or more take the memory copy: equal, independent, in order
+  var big: List[Int] = []
+  for i in 0..100 {
+    big.push(i * i)
+  }
+  var bc = big.clone()
+  bc[99] = -1
+  os.stdio.println("clone big ${bc.len()} ${big[99]} ${bc[99]} ${big.clone() == big}")
+  let joined = List.concat([big[0..30], [], big[30..64], big[64..100]])
+  os.stdio.println("concat big ${joined == big} ${joined.len()} ${joined[63]} ${joined[64]}")
+  let strs = List.concat([big.map(fn(x: Int) -> Str { "${x}" }), ["end"]])
+  os.stdio.println("concat strs big ${strs.len()} ${strs[100]}")
+  // concat
+  os.stdio.println("concat ${List.concat([[1, 2], [], [3], [4, 5, 6]])}")
+  let none: List[List[Int]] = []
+  os.stdio.println("concat none ${List.concat(none).len()}")
+  os.stdio.println("concat strs ${List.concat([["a"], ["b", "c"]])}")
+  // binary_search: slices_test.go's table
+  let e: List[Str] = []
+  os.stdio.println("bs ${search(e, "foo")}")
+  os.stdio.println("bs ${search(["a"], "a")} | ${search(["a"], "b")}")
+  for x in ["a", "b", "c", "d"] {
+    os.stdio.println("bs abc ${x}: ${search(["a", "b", "c"], x)}")
+  }
+  for x in ["a", "b", "c", "d", "e", "f", "0"] {
+    os.stdio.println("bs ace ${x}: ${search(["a", "c", "e"], x)}")
+  }
+  os.stdio.println("bs dup: ${search(["a", "b", "b", "c"], "b")}")
+  let (i7, f7) = [1, 3, 5, 7, 9].binary_search(7)
+  let (i8, f8) = [1, 3, 5, 7, 9].binary_search(8)
+  os.stdio.println("bs ints: ${i7} ${f7} ${i8} ${f8}")
+  // max and min
+  os.stdio.println("max ${[3, 1, 4, 1, 5, 9, 2, 6].max() ?? -1} min ${[3, 1, 4, 1, 5, 9, 2, 6].min() ?? -1}")
+  os.stdio.println("max one ${[7].max() ?? -1} min one ${[7].min() ?? -1}")
+  os.stdio.println("max empty ${empty.max() == None} min empty ${empty.min() == None}")
+  os.stdio.println("max strs ${["pear", "apple", "zoo", "kiwi"].max() ?? ""} ${["pear", "apple", "zoo", "kiwi"].min() ?? ""}")
+  // TestMinMaxNaNs: a NaN anywhere is the result
+  let fs = [1.0, 999.9, 3.14, -400.4, -5.14]
+  os.stdio.println("floats ${fs.max() ?? 0.0} ${fs.min() ?? 0.0}")
+  for i in 0..fs.len() + 1 {
+    var g: List[Float] = []
+    for j in 0..fs.len() {
+      if j == i {
+        g.push(Float.nan)
+      }
+      g.push(fs[j])
+    }
+    if i == fs.len() {
+      g.push(Float.nan)
+    }
+    let mx = g.max() ?? 0.0
+    let mn = g.min() ?? 0.0
+    os.stdio.println("nan at ${i}: ${mx.is_nan()} ${mn.is_nan()}")
+  }
+}

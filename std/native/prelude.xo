@@ -1773,6 +1773,138 @@ fn list_all[T, E, fx: Effects](xs: List[T], f: fn(T) -> Bool ! E uses fx) -> Boo
   true
 }
 
+/// The elements of Int lists in one new list: one allocation and a memory
+/// copy each (Go's slices.Clone and Concat copy memory; an Int is a word
+/// with nothing to count; rt.cast of a List[Float] is not native yet).
+fn ints_concat(lists: List[List[Int]]) -> List[Int] {
+  var n = 0
+  for l in lists {
+    n += l.len()
+  }
+  if n == 0 {
+    return []
+  }
+  let out = List[Int].with_capacity(n)
+  let a = rt.obj_addr(out).wrapping_add(rt.layout(2))
+  var at = 0
+  for l in lists {
+    let k = l.len()
+    if k > 0 {
+      rt.mem_copy(a + at * 8, rt.obj_addr(l).wrapping_add(rt.layout(2)), k * 8)
+      at += k
+    }
+  }
+  if rt.layout(6) == 8 {
+    rt.mem_store(rt.obj_addr(out), rt.layout(3), n, 8)
+  } else {
+    rt.mem_store(rt.obj_addr(out), rt.layout(3), n, 4)
+  }
+  out
+}
+
+/// The lists joined by ints_concat when T is Int and there are
+/// at least 64 elements (below that the Any checks cost more than pushes).
+fn words_concat[T](lists: List[List[T]], n: Int) -> List[T]? {
+  if n < 64 {
+    return None
+  }
+  if let Some(is) = rt.any_get[List[List[Int]]](rt.any_of[List[List[T]]](lists)) {
+    return rt.any_get[List[T]](rt.any_of[List[Int]](ints_concat(is)))
+  }
+  None
+}
+
+/// `xs.clone()` (decision 0592): Go's slices.Clone.
+fn list_clone[T](xs: List[T]) -> List[T] {
+  if let Some(r) = words_concat([xs], xs.len()) {
+    return r
+  }
+  var out: List[T] = List.with_capacity(xs.len())
+  for x in xs {
+    out.push(x)
+  }
+  out
+}
+
+/// `List.concat(lists)` (decision 0592): Go's slices.Concat, sized once.
+fn list_concat[T](lists: List[List[T]]) -> List[T] {
+  var n = 0
+  for l in lists {
+    n += l.len()
+  }
+  if let Some(r) = words_concat(lists, n) {
+    return r
+  }
+  var out: List[T] = List.with_capacity(n)
+  for l in lists {
+    for x in l {
+      out.push(x)
+    }
+  }
+  out
+}
+
+/// `xs.binary_search(x)` (decision 0592): Go's slices.BinarySearch.
+fn list_binary_search[T: Ord](xs: List[T], x: T) -> (Int, Bool) {
+  let n = xs.len()
+  var lo = 0
+  var hi = n
+  while lo < hi {
+    let h = lo + (hi - lo) / 2
+    if xs[h] < x {
+      lo = h + 1
+    } else {
+      hi = h
+    }
+  }
+  (lo, lo < n && !(x < xs[lo]))
+}
+
+/// `xs.max()` (decision 0592): Go's slices.Max, None when empty; a NaN
+/// (an element not equal to itself) is the result, as Go's max gives.
+fn list_max[T: Ord](xs: List[T]) -> T? {
+  let n = xs.len()
+  if n == 0 {
+    return None
+  }
+  var m = xs[0]
+  if m != m {
+    return Some(m)
+  }
+  for i in 1..n {
+    let v = xs[i]
+    if v != v {
+      return Some(v)
+    }
+    if v > m {
+      m = v
+    }
+  }
+  Some(m)
+}
+
+/// `xs.min()` (decision 0592): Go's slices.Min.
+fn list_min[T: Ord](xs: List[T]) -> T? {
+  let n = xs.len()
+  if n == 0 {
+    return None
+  }
+  var m = xs[0]
+  if m != m {
+    return Some(m)
+  }
+  for i in 1..n {
+    let v = xs[i]
+    if v != v {
+      return Some(v)
+    }
+    if v < m {
+      m = v
+    }
+  }
+  Some(m)
+}
+
 fn list_reverse[T](xs: List[T]) -> List[T] {
   // xs's last use (decision 0508): a list nothing else holds is reversed
   // in its own array; the counted write makes a unique first (a copy when

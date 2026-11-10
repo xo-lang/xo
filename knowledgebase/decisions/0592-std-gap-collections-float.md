@@ -68,3 +68,13 @@ ported from Go and for dropping a large shared buffer.
   (keys, vals, live, slots: the slots index the entry lists and removed
   entries stay marked, so a copy of each is a valid clone) through an SSA
   helper in compiler/ssa/map.xo.
+- 2026-11-10: List.clone, List.concat, binary_search, max and min, golden
+  list_helpers (slices_test.go's cases). Timing on the Mac, 1M Ints:
+  clone 0.55 ms against slices.Clone 0.35; concat of three 1.85 ms
+  against 1.2; binary_search 44 ns against 30; max and min 0.8 ms
+  against 0.63. A List[Int] of 64 or more elements is copied with one
+  memory copy per list (ints_concat; 0.85 and 2.5 ms pushing); other
+  element types push each element (as `a + b` does). Next: one SSA list
+  copy (a memory copy plus a retain per element for counted elements)
+  for every element type, `+` on lists and Map.clone's four lists;
+  rt.cast between List[Float] and List[Int] is not native yet (XO1201).

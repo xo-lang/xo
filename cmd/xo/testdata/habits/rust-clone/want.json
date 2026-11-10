@@ -2,7 +2,7 @@
   {
     "code": "XO0601",
     "severity": "error",
-    "message": "`List[Int]` has no field or method `clone`",
+    "message": "`Set[Int]` has no field or method `clone`",
     "span": {
       "file": "main.xo",
       "line": 2,

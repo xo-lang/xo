@@ -862,6 +862,24 @@ fn (var xs: List[T]) sort_in_place_by_desc[K: Ord, E, fx: Effects](key: fn(T) ->
 /// The elements grouped by key(x): keys in order of first appearance, each
 /// group in input order.
 fn (xs: List[T]) group_by[K: Hash, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx
+/// A copy of xs with a buffer of its own (Go's slices.Clone, decision
+/// 0592). Assignment already copies a List, shared until one is written
+/// (core 5.1); clone gives the copy its storage at once.
+fn (xs: List[T]) clone() -> List[T]
+/// The lists joined in order in one new list (Go's slices.Concat,
+/// decision 0592): `List.concat([a, b, c])`, sized once where `a + b + c`
+/// copies a + b again.
+fn (static: List[T]) concat(lists: List[List[T]]) -> List[T]
+/// Where x is in a list sorted by the Ord of T, or where it would go, and
+/// whether it is there (Go's slices.BinarySearch, decision 0592): the
+/// first index whose element is not below x.
+fn (xs: List[T]) binary_search(x: T) -> (Int, Bool)
+/// The largest element by the Ord of T, or None for an empty list (Go's
+/// slices.Max, which panics there, decision 0592); the first of equal
+/// ones; a NaN Float makes the result NaN, as Go's does.
+fn (xs: List[T]) max() -> T?
+/// The smallest element, as max (Go's slices.Min).
+fn (xs: List[T]) min() -> T?
 /// A copy of xs in reverse order (Go's slices.Reverse on a clone).
 fn (xs: List[T]) reverse() -> List[T]
 /// The distinct elements as a set, in order of first appearance.

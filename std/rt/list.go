@@ -508,6 +508,69 @@ func List_indexed[T any](_ *Task, l List[T]) List[Tuple2[int64, T]] {
 	return ListOf(out...)
 }
 
+// List_clone is `xs.clone()` (decision 0592): Go's slices.Clone.
+func List_clone[T any](_ *Task, l List[T]) List[T] {
+	out := slices.Clone(l.s)
+	markElems(out)
+	return ListOf(out...)
+}
+
+// List_concat is `List.concat(lists)` (decision 0592): slices.Concat.
+func List_concat[T any](_ *Task, lists List[List[T]]) List[T] {
+	n := 0
+	for _, l := range lists.s {
+		n += len(l.s)
+	}
+	out := make([]T, 0, n)
+	for _, l := range lists.s {
+		out = append(out, l.s...)
+	}
+	markElems(out)
+	return ListOf(out...)
+}
+
+// List_binary_search is `xs.binary_search(x)` (decision 0592):
+// slices.BinarySearch by the Ord of T.
+func List_binary_search[T any](_ *Task, l List[T], x T) Tuple2[int64, bool] {
+	lo, hi := 0, len(l.s)
+	for lo < hi {
+		h := int(uint(lo+hi) >> 1)
+		if Cmp(l.s[h], x) < 0 {
+			lo = h + 1
+		} else {
+			hi = h
+		}
+	}
+	return Tuple2[int64, bool]{int64(lo), lo < len(l.s) && Cmp(x, l.s[lo]) >= 0}
+}
+
+// listExtreme is slices.Max (sign 1) or slices.Min (-1), None when empty;
+// an element not equal to itself (a NaN) is the result, as Go's max gives.
+func listExtreme[T any](l List[T], sign int) Option[T] {
+	if len(l.s) == 0 {
+		return Option[T]{}
+	}
+	m := l.s[0]
+	if !Eq(m, m) {
+		return Some(m)
+	}
+	for _, v := range l.s[1:] {
+		if !Eq(v, v) {
+			return Some(v)
+		}
+		if Cmp(v, m)*sign > 0 {
+			m = v
+		}
+	}
+	return Some(m)
+}
+
+// List_max is `xs.max()` (decision 0592).
+func List_max[T any](_ *Task, l List[T]) Option[T] { return listExtreme(l, 1) }
+
+// List_min is `xs.min()` (decision 0592).
+func List_min[T any](_ *Task, l List[T]) Option[T] { return listExtreme(l, -1) }
+
 // List_reverse is `xs.reverse()`.
 func List_reverse[T any](_ *Task, l List[T]) List[T] {
 	out := make([]T, len(l.s))

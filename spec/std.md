@@ -365,6 +365,11 @@ fn (xs: List[T]) sort_by_desc[K: Ord](key: fn(T) -> K) -> List[T]   // greatest 
 fn (xs: List[T]) sort_with(cmp: fn(T, T) -> Ordering) -> List[T]     // stable (decision 0586)
 fn (xs: List[T]) group_by[K: Hash](key: fn(T) -> K) -> List[(K, List[T])]   // keys in first appearance order, each group in input order
 fn (xs: List[T]) reverse() -> List[T]
+fn (xs: List[T]) clone() -> List[T]          // decision 0592: a buffer of its own (slices.Clone)
+List.concat(lists: List[List[T]]) -> List[T] // slices.Concat, sized once
+fn (xs: List[T]) binary_search(x: T) -> (Int, Bool) // T Ord, xs sorted: the first index not below x, and whether x is there
+fn (xs: List[T]) max() -> T?                 // T Ord; None when empty; the first of equals; a NaN is the result (slices.Max)
+fn (xs: List[T]) min() -> T?                 // as max (slices.Min)
 fn (xs: List[T]) to_set() -> Set[T]
 (0..n).to_list()                             // Range[Int] to List[Int]
 fn (xs: List[Str]) join(sep: Str) -> Str
@@ -5513,7 +5518,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-534 declarations.
+539 declarations.
 
 ### Range
 
@@ -5853,6 +5858,11 @@ fn (var xs: List[T]) sort_in_place_with[E, fx: Effects](cmp: fn(T, T) -> Orderin
 fn (xs: List[T]) sort_by_desc[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
 fn (var xs: List[T]) sort_in_place_by_desc[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> () ! E uses fx
 fn (xs: List[T]) group_by[K: Hash, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx
+fn (xs: List[T]) clone() -> List[T]
+fn (static: List[T]) concat(lists: List[List[T]]) -> List[T]
+fn (xs: List[T]) binary_search(x: T) -> (Int, Bool)
+fn (xs: List[T]) max() -> T?
+fn (xs: List[T]) min() -> T?
 fn (xs: List[T]) reverse() -> List[T]
 fn (xs: List[T]) to_set() -> Set[T]
 fn (xs: List[Str]) join(sep: Str) -> Str

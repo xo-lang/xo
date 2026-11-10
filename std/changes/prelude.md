@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-10: feature: `List.clone`, `List.concat`, `binary_search`, `max`, `min`
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit (bench/results/std-audit-2026-11-10b.md: slices.Clone, Concat, BinarySearch, Max and Min in its top 40)
+- Go reference: slices.Clone, Concat, BinarySearch, Max, Min (slices.go, sort.go; slices_test.go TestClone, TestConcat, TestBinarySearch, TestMinMax, TestMinMaxNaNs)
+- Test: golden list_helpers on arm64, LLVM and Go (Max and Min are None on an empty list, where Go panics)
+- Timing: Mac, 1M Ints, native against Go 1.26: clone 0.55 ms against 0.35; concat of three 1.85 ms against 1.2; binary_search 44 ns against 30; max and min 0.8 ms against 0.63. A List[Int] of 64 or more elements is copied with one memory copy per list, Go's path (0.85 and 2.5 ms pushing); other element types push each element (decision 0592's progress)
+- Shipped in: not yet released
+
+Decision 0592: `xs.clone()`, `List.concat(lists)`, `xs.binary_search(x)`, `xs.max()`, `xs.min()`. The rust-clone habit golden now clones a Set (List has clone).
+
 ## 2026-11-10: feature: `copy_stream`, `File.copy_to`, `File.copy_from`
 
 - Kind: feature

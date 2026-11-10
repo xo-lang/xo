@@ -1,0 +1,38 @@
+exit 0
+--- stdout
+clone true [1, 2, 3]
+clone write [1, 2, 3] [4, 2, 3]
+clone empty 0
+clone big 100 9801 -1 true
+concat big true 100 3969 4096
+concat strs big 101 end
+concat [1, 2, 3, 4, 5, 6]
+concat none 0
+concat strs ["a", "b", "c"]
+bs 0 false
+bs 0 true | 1 false
+bs abc a: 0 true
+bs abc b: 1 true
+bs abc c: 2 true
+bs abc d: 3 false
+bs ace a: 0 true
+bs ace b: 1 false
+bs ace c: 1 true
+bs ace d: 2 false
+bs ace e: 2 true
+bs ace f: 3 false
+bs ace 0: 0 false
+bs dup: 1 true
+bs ints: 3 true 4 false
+max 9 min 1
+max one 7 min one 7
+max empty true min empty true
+max strs zoo apple
+floats 999.9 -400.4
+nan at 0: true true
+nan at 1: true true
+nan at 2: true true
+nan at 3: true true
+nan at 4: true true
+nan at 5: true true
+--- stderr
