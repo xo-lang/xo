@@ -8,6 +8,7 @@
 - [lead-session.md](lead-session.md): the lead session's resume point (2026-10-14): main, branches in flight, next steps; tools in scripts/lead.
 - [ci.md](ci.md): on demand CI (decision 0225): running `gh workflow run ci.yml`, the suites of scripts/ci/suite.sh, how the autostart, registration, and idle stop work, the runners, the AWS and GitHub App inventory, operations (add or remove runners, debugging, key rotation), measurements, and cost.
 - [agent-tools.md](agent-tools.md): one index of the tools built for agents (lookups, triage, tests, measuring, coordination) and when to use each
+- [test-policy.md](test-policy.md): the dated record of the test and push policy (moved from CLAUDE.md on 2026-11-10; CLAUDE.md has the current rules)
 - [code-signing.md](code-signing.md): signing and notarizing macOS binaries linked by Xo's own linker (scripts/sign-macos.sh), the team ID trap, verification commands; Authenticode signing of Windows executables with Azure Artifact Signing and jsign (scripts/sign-windows.sh)
 - [std-coverage.md](std-coverage.md): std against Go's standard library (decision 0276): one row per Go package with its Xo module, status, and what is missing, rows for backend needs outside Go's std, the module change logs, and the 2026-10-20 survey ranking of gaps
 - [xo-at-a-glance.md](xo-at-a-glance.md): what the language, std and tools already have, with spec sections; read before reporting a feature as missing
