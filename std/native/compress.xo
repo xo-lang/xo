@@ -565,125 +565,147 @@ pub struct LzwDec {
   nbits: Int
   suffix: List[Int]
   prefix: List[Int]
+  ob: List[UInt8]
   pub err: Int
   pub pend: Bytes
   pub rp: Int
 }
 
 pub fn new_lzw_dec(lsb: Bool, lit: Int) -> LzwDec {
-  var d = LzwDec{lsb: lsb, lit: lit, clear: 1 << lit, eof: (1 << lit) + 1, width: lit + 1, hi: (1 << lit) + 1, overflow: 1 << (lit + 1), last: 65535, bits: 0, nbits: 0, suffix: [], prefix: [], err: 0, pend: b"", rp: 0}
+  var d = LzwDec{lsb: lsb, lit: lit, clear: 1 << lit, eof: (1 << lit) + 1, width: lit + 1, hi: (1 << lit) + 1, overflow: 1 << (lit + 1), last: 65535, bits: 0, nbits: 0, suffix: [], prefix: [], ob: [], err: 0, pend: b"", rp: 0}
   for _ in 0..4096 {
     d.suffix.push(0)
     d.prefix.push(0)
   }
+  for _ in 0..8192 {
+    d.ob.push(UInt8(0))
+  }
   d
 }
 
-/// One code, or -1 when the source ended.
-fn (var d: LzwDec) read_code(var s: LzwSrc) -> Int {
-  while d.nbits < d.width {
-    let x = s.next()
-    if x < 0 {
-      return -1
-    }
-    if d.lsb {
-      d.bits = d.bits | (x << d.nbits)
-    } else {
-      d.bits = d.bits | (x << (24 - d.nbits))
-    }
-    d.nbits += 8
-  }
-  var code = 0
-  if d.lsb {
-    code = d.bits & ((1 << d.width) - 1)
-    d.bits = d.bits >> d.width
-  } else {
-    code = (d.bits >> (32 - d.width)) & 65535
-    d.bits = (d.bits << d.width) & 4294967295
-  }
-  d.nbits -= d.width
-  code
-}
-
 /// Go's Reader.decode: fills pend with the next batch (or the output before
-/// an error, which is then in err).
+/// an error, which is then in err). Like Go's, each code's bytes are written
+/// from the end of their span backwards through the suffix and prefix tables
+/// (the length of a span is counted along the chain first), and the state sits in
+/// locals while the batch runs.
 pub fn (var d: LzwDec) batch(var s: LzwSrc) {
-  var out = BytesBuilder.with_capacity(4200)
   var o = 0
-  var stack: List[Int] = []
+  var bits = d.bits
+  var nbits = d.nbits
+  var width = d.width
+  var hi = d.hi
+  var last = d.last
+  var overflow = d.overflow
+  let lsb = d.lsb
+  let clear = d.clear
+  let eof = d.eof
+  var err = 0
   while true {
-    let code = d.read_code(s)
-    if code < 0 {
-      d.err = LZW_UNEXPECTED
+    while nbits < width {
+      let x = s.next()
+      if x < 0 {
+        err = LZW_UNEXPECTED
+        break
+      }
+      if lsb {
+        bits = bits | (x << nbits)
+      } else {
+        bits = bits | (x << (24 - nbits))
+      }
+      nbits += 8
+    }
+    if err != 0 {
       break
     }
-    if code < d.clear {
-      out.write_le(code, 1)
+    var code = 0
+    if lsb {
+      code = bits & ((1 << width) - 1)
+      bits = bits >> width
+    } else {
+      code = (bits >> (32 - width)) & 65535
+      bits = (bits << width) & 4294967295
+    }
+    nbits -= width
+    if code < clear {
+      d.ob[o] = UInt8(code)
       o += 1
-      if d.last != 65535 {
-        d.suffix[d.hi] = code
-        d.prefix[d.hi] = d.last
+      if last != 65535 {
+        d.suffix[hi] = code
+        d.prefix[hi] = last
       }
-    } else if code == d.clear {
-      d.width = 1 + d.lit
-      d.hi = d.eof
-      d.overflow = 1 << d.width
-      d.last = 65535
+    } else if code == clear {
+      width = 1 + d.lit
+      hi = eof
+      overflow = 1 << width
+      last = 65535
       continue
-    } else if code == d.eof {
-      d.err = LZW_EOF
+    } else if code == eof {
+      err = LZW_EOF
       break
-    } else if code <= d.hi {
-      stack = []
+    } else if code <= hi {
       var c = code
-      var tail = -1
-      if code == d.hi && d.last != 65535 {
-        c = d.last
-        while c >= d.clear {
+      var i = 0
+      var n = 1
+      if code == hi && last != 65535 {
+        c = last
+        n = 2
+        while c >= clear {
           c = d.prefix[c]
+          n += 1
         }
-        tail = c
-        c = d.last
+        i = o + n - 1
+        d.ob[i] = UInt8(c)
+        i -= 1
+        c = last
+        o += n
+      } else {
+        while c >= clear {
+          c = d.prefix[c]
+          n += 1
+        }
+        i = o + n - 1
+        o += n
+        c = code
       }
-      while c >= d.clear {
-        stack.push(d.suffix[c])
+      while c >= clear {
+        d.ob[i] = UInt8(d.suffix[c])
+        i -= 1
         c = d.prefix[c]
       }
-      stack.push(c)
-      var k = stack.len() - 1
-      while k >= 0 {
-        out.write_le(stack[k], 1)
-        k -= 1
-      }
-      o += stack.len()
-      if tail >= 0 {
-        out.write_le(tail, 1)
-        o += 1
-      }
-      if d.last != 65535 {
-        d.suffix[d.hi] = c
-        d.prefix[d.hi] = d.last
+      d.ob[i] = UInt8(c)
+      if last != 65535 {
+        d.suffix[hi] = c
+        d.prefix[hi] = last
       }
     } else {
-      d.err = LZW_INVALID
+      err = LZW_INVALID
       break
     }
-    d.last = code
-    d.hi += 1
-    if d.hi >= d.overflow {
-      if d.width == 12 {
-        d.last = 65535
-        d.hi -= 1
+    last = code
+    hi += 1
+    if hi >= overflow {
+      if width == 12 {
+        last = 65535
+        hi -= 1
       } else {
-        d.width += 1
-        d.overflow = 1 << d.width
+        width += 1
+        overflow = 1 << width
       }
     }
     if o >= 4096 {
       break
     }
   }
-  d.pend = out.freeze()
+  d.bits = bits
+  d.nbits = nbits
+  d.width = width
+  d.hi = hi
+  d.last = last
+  d.overflow = overflow
+  if err != 0 {
+    d.err = err
+  }
+  d.pend = flate.list_bytes(d.ob)[0..o]
   d.rp = 0
 }
 
