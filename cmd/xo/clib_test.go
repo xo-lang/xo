@@ -150,7 +150,7 @@ func TestCLibShared(t *testing.T) {
 				syms = append(syms, strings.TrimPrefix(f[2], "_"))
 			}
 		}
-		if got := strings.Join(syms, " "); got != "geo_add geo_byte_sum geo_list_sum geo_norm geo_str_len xo_init xo_last_error xo_release" {
+		if got := strings.Join(syms, " "); got != "geo_add geo_byte_sum geo_list_sum geo_norm geo_str_len xo_free xo_init xo_last_error xo_release" {
 			t.Errorf("the library's symbols: %s", got)
 		}
 	}
@@ -236,7 +236,7 @@ func TestCLibRejects(t *testing.T) {
 		{"ident", "pub fn f(a: Int) -> Int as c \"f-g\" { a }\n", "is not a C identifier"},
 		{"bool", "pub fn f(a: Bool) -> Int as c \"f\" { 0 }\n", "(not Bool or a function)"},
 		{"func", "pub fn f(a: fn(Int) -> Int) -> Int as c \"f\" { 0 }\n", "(not Bool or a function)"},
-		{"result", "pub fn f(a: Int) -> Str as c \"f\" { \"\" }\n", "a C export returns Int, Float, a value held by XoHandle, or nothing"},
+		{"result", "pub fn f(a: Int) -> Bool as c \"f\" { true }\n", "a C export returns Int, Float, Bytes, Str, a value held by XoHandle, or nothing"},
 		{"words", "pub fn f(a: Bytes, b: Bytes, c: Bytes, d: Bytes, e: Int) -> Int as c \"f\" { 0 }\n", "need 9 integer registers"},
 		{"generic", "pub fn f[T](a: T) -> Int as c \"f\" { 0 }\n", "a generic function cannot be one"},
 	} {
@@ -508,6 +508,17 @@ pub fn count_or(c: Option[Counter], dflt: Int) -> Int as c "ctr_count_or" {
 }
 
 pub fn maybe_n(c: Counter) -> Option[Int] as c "ctr_maybe_n" { Some(c.n) }
+
+pub fn label(c: Counter) -> Str as c "ctr_label" { "${c.name}=${c.n}" }
+
+pub fn tail(b: Bytes, k: Int) -> Bytes as c "ctr_tail" { b[k..b.len()] }
+
+pub fn label_or(c: Counter, ok: Int) -> Str ! Str as c "ctr_label_or" {
+  if ok == 0 {
+    return Err("no label")
+  }
+  "${c.name}"
+}
 `
 
 // TestCLibHandles passes a struct and a List through XoHandles: made by
@@ -546,6 +557,22 @@ int main(int argc, char **argv) {
   XoHandle a = ctr_above(e, 10), n = ctr_above(e, 12);
   if (a == 0 || n != 0 || ctr_count(a) != 12 || ctr_count_or(a, -1) != 12 || ctr_count_or(0, -1) != -1) { puts("option"); return 1; }
   xo_release(a);
+  for (int i = 0; i < 10000; i++) {
+    XoStr l = ctr_label(e);
+    if (l.n != 7 || memcmp(l.p, "hits=12", 7) != 0 || l.p[7] != 0) { printf("label %lld %s\n", (long long)l.n, l.p); return 1; }
+    xo_free(l.p);
+  }
+  XoBytes in = {(const uint8_t *)"abcdef", 6};
+  XoBytes tl = ctr_tail(in, 2);
+  if (tl.n != 4 || memcmp(tl.p, "cdef", 4) != 0) { puts("tail"); return 1; }
+  xo_free(tl.p);
+  xo_free(NULL);
+  int32_t err = 7;
+  XoStr lo = ctr_label_or(e, 1, &err);
+  if (err != 0 || lo.n != 4 || memcmp(lo.p, "hits", 4) != 0) { puts("label_or"); return 1; }
+  xo_free(lo.p);
+  lo = ctr_label_or(e, 0, &err);
+  if (err != 1 || lo.p != NULL || lo.n != 0 || strcmp(xo_last_error(), "no label") != 0) { puts("label_or error"); return 1; }
   XoHandle m = ctr_maybe_n(e);
   if (m == 0) { puts("option int"); return 1; }
   xo_release(m);
@@ -567,7 +594,7 @@ int main(int argc, char **argv) {
 		t.Fatalf("xo build --lib=shared: exit %d: %s\n%s%s", code, clibTail(out.String()+errOut.String()), out.String(), errOut.String())
 	}
 	h, err := os.ReadFile(filepath.Join(dir, "ctr.h"))
-	if err != nil || !strings.Contains(string(h), "XoHandle /* Counter */ ctr_add(XoHandle /* Counter */ c, int64_t k);") || !strings.Contains(string(h), "void xo_release(XoHandle h);") || !strings.Contains(string(h), "XoHandle /* Counter or 0 */ ctr_above(XoHandle /* Counter */ c, int64_t min);") || !strings.Contains(string(h), "int64_t ctr_count_or(XoHandle /* Counter or 0 */ c, int64_t dflt);") || !strings.Contains(string(h), "XoHandle /* Int? */ ctr_maybe_n(") {
+	if err != nil || !strings.Contains(string(h), "XoHandle /* Counter */ ctr_add(XoHandle /* Counter */ c, int64_t k);") || !strings.Contains(string(h), "void xo_release(XoHandle h);") || !strings.Contains(string(h), "XoHandle /* Counter or 0 */ ctr_above(XoHandle /* Counter */ c, int64_t min);") || !strings.Contains(string(h), "int64_t ctr_count_or(XoHandle /* Counter or 0 */ c, int64_t dflt);") || !strings.Contains(string(h), "XoHandle /* Int? */ ctr_maybe_n(") || !strings.Contains(string(h), "XoStr ctr_label(XoHandle /* Counter */ c);") || !strings.Contains(string(h), "XoBytes ctr_tail(XoBytes b, int64_t k);") || !strings.Contains(string(h), "void xo_free(const void *p);") {
 		t.Fatalf("ctr.h: %v\n%s", err, h)
 	}
 	exe := filepath.Join(dir, "ctr")

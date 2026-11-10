@@ -105,3 +105,11 @@ fn xo_start_early() {
 /// value goes when nothing else holds it; 0 does nothing; a handle that
 /// was already released faults.
 fn xo_release(h: Int) { clibh.release(h) }
+
+/// Frees the bytes of a C library export's Bytes or Str result (decision
+/// 0574): C's malloc made them (heapos.c_bytes_out); 0 does nothing.
+fn xo_free(p: Int) {
+  if p != 0 {
+    sys_c.weak_free(p)
+  }
+}

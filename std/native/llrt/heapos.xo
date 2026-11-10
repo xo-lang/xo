@@ -1701,6 +1701,20 @@ pub fn c_error(errp: Int, msg: Str) {
   }
 }
 
+/// The bytes of a C library export's Bytes or Str result s (decision
+/// 0574) copied into C's malloc with a NUL past them, for C's XoBytes or
+/// XoStr p, which C frees with xo_free; a fault when malloc fails.
+pub fn c_bytes_out(s: Str) -> Int {
+  let n = s.len()
+  let p = sys_c.weak_malloc(n + 1)
+  if p == 0 {
+    rt.fault_raise("out of memory: a C export's ${n} byte result", "")
+  }
+  rt.mem_copy(p, raw.data(s), n)
+  rt.mem_store(p, n, 0, 1)
+  p
+}
+
 /// Starts a lock free read of the XoHandle table (clibh.read_begin) at epoch e:
 /// the thread's record shows e (an outer read's epoch stays), then a full
 /// fence so the table's slots are read after it shows; returns what the

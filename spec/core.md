@@ -1415,11 +1415,13 @@ pub fn fetch_user(db: Db, id: Int) -> User ! LoadErr
   released handle, or one holding another type, faults; an `Option[T]`
   of such a T is 0 for `None`, else T's handle, while an Option of
   `Int`, `Float`, `Str` or `Bytes` is a handle of the Option), at most 8
-  integer words (a `Bytes` takes 2); its result is `Int`, `Float`, a
+  integer words (a `Bytes` takes 2); its result is `Int`, `Float`,
+  `Bytes` or `Str` (C's `XoBytes` or `XoStr`: a copy in C's malloc with a
+  NUL past its n bytes, which the caller frees with `xo_free(p)`), a
   value held by an `XoHandle`, or none, with or without an error type: a
   function that can fail (`-> T ! E`) takes a last C parameter
   `int32_t *err`, set to 0 on success and to 1 on failure (NULL: not
-  set), returns 0 on failure, and leaves the error's text (its `Display`)
+  set), returns 0 on failure (`{NULL, 0}` for `Bytes` or `Str`), and leaves the error's text (its `Display`)
   for `xo_last_error()`, the calling thread's last error (a NUL terminated
   string the thread's next error replaces). The name is a C identifier
   outside the `xo_` names. It is not a method, generic, or a function with

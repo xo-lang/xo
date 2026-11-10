@@ -1620,8 +1620,8 @@ fn (var c: Checker) check_c_export(fo: Int, fd: parser.FnDecl, sp: Span, name: B
       }
     }
     let r = c.objs[fo].result
-    if why.is_empty() && r != c.unit_ty && (c.show(r) is "Bytes" | "Str" || !c.c_boundary(r)) {
-      why = "its result is `${c.show(r)}`; a C export returns Int, Float, a value held by XoHandle, or nothing (not Bytes, Str, Bool or a function)"
+    if why.is_empty() && r != c.unit_ty && !c.c_boundary(r) {
+      why = "its result is `${c.show(r)}`; a C export returns Int, Float, Bytes, Str, a value held by XoHandle, or nothing (not Bool or a function)"
     }
   }
   if !why.is_empty() {

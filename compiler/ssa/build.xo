@@ -732,7 +732,7 @@ fn (var b: Builder) declare_exports() {
       // the C names every native program defines (main, decision 0234),
       // in place of std/llrt's C; a library's xo_init in place of main
       // (decision 0574)
-      b.declare_exports_of_only(mi, true, if b.c.clib { ["xo_init", "xo_heap_attach", "xo_thread_exit", "xo_last_error", "xo_release"] } else { [] }, if b.c.clib { ["main"] } else { ["xo_init", "xo_heap_attach", "xo_thread_exit", "xo_last_error", "xo_start_early", "xo_release"] })
+      b.declare_exports_of_only(mi, true, if b.c.clib { ["xo_init", "xo_heap_attach", "xo_thread_exit", "xo_last_error", "xo_release", "xo_free"] } else { [] }, if b.c.clib { ["main"] } else { ["xo_init", "xo_heap_attach", "xo_thread_exit", "xo_last_error", "xo_start_early", "xo_release", "xo_free"] })
     } else if p == "native/llrt/cabi_race" {
       // --race on windows (decision 0273's Windows addendum): the
       // functions the instrumented code calls (compiler/arm64 race.xo
@@ -894,13 +894,21 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     let ok = b.m.variant_index(rt, "Ok")
     rs = [b.m.types[rt].variants[ok].fields[0].ty]
   }
+  // a Bytes or Str result: a copy in C's malloc with a NUL past it, as
+  // C's XoBytes or XoStr {p, n} (two words: x0 and x1, rax and rdx),
+  // which C frees with xo_free
+  let bres = rs.len() == 1 && b.tkind(rs[0]) == Kind.Str
+  let pair = b.m.tuple([b.int_t(), b.int_t()])
   // a result of another type: an XoHandle (clibh hput)
-  let hres = rs.len() == 1 && !(b.tkind(rs[0]) is Kind.Int | Kind.Float | Kind.Unit)
+  let hres = rs.len() == 1 && !(b.tkind(rs[0]) is Kind.Int | Kind.Float | Kind.Unit | Kind.Str)
   let vt = if rs.len() == 1 { rs[0] } else { b.unit_t() }
   if hres {
     rs = [b.int_t()]
   }
-  if !wide && et < 0 && !b.c.clib_static && !hold && !hres {
+  if bres {
+    rs = [pair]
+  }
+  if !wide && et < 0 && !b.c.clib_static && !hold && !hres && !bres {
     b.declare_export(o, name)
     return
   }
@@ -923,8 +931,9 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
   let gets: List[Str] = if hold && (rbeg.is_empty() || rend.is_empty() || haddr.is_empty() || hbad.is_empty() || peek.is_empty()) { ["-"] } else { [] }
   // an Option[T] result of a handle type T: 0 for None, else T's handle
   let rnull = if hres { b.c_nullable(b.c.objs[o].result) } else { -1 }
+  let cout = if bres { b.llrt_fn("native/llrt/heapos", "c_bytes_out") } else { "" }
   let put = if hres { b.llrt_inst("native/llrt/clibh", "hput", if rnull >= 0 { rnull } else { b.c.objs[o].result }) } else { "" }
-  if (wide && (copy.is_empty() || text.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (b.c.clib_static && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || gets.any(fn(g) { g == "-" }) {
+  if (wide && (copy.is_empty() || text.is_empty())) || (et >= 0 && (c_ok.is_empty() || c_error.is_empty())) || (b.c.clib_static && (started.is_empty() || early.is_empty())) || (hres && put.is_empty()) || (bres && cout.is_empty()) || gets.any(fn(g) { g == "-" }) {
     b.unsupported("a C export with no native/llrt")
     return
   }
@@ -987,7 +996,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     let _e = b.call(rend, b.unit_t(), "", [rd])
   }
   if et < 0 {
-    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, r) } else { r })
+    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, r) } else if bres { b.c_bytes(cout, pair, r) } else { r })
   } else {
     let errp = wp[wp.len() - 1]
     let ok = b.m.variant_index(rt, "Ok")
@@ -996,7 +1005,7 @@ fn (var b: Builder) declare_c_export(o: Int, name: Str) {
     b.s.cur = yes
     let _o = b.call(c_ok, b.unit_t(), "", [errp])
     let v = b.add(Op.Payload, vt, Aux.P(tag: ok, field: 0), [r])
-    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, v) } else { v })
+    b.retv(if hres { b.c_hold_opt(put, rnull >= 0, v) } else if bres { b.c_bytes(cout, pair, v) } else { v })
     b.s.cur = no
     let e = b.add(Op.Payload, b.m.types[rt].variants[ei].fields[0].ty, Aux.P(tag: ei, field: 0), [r])
     // a Str error is its own text; others build their Display form
@@ -1040,6 +1049,14 @@ fn (var b: Builder) c_nullable(ct: Int) -> Int {
     return -1
   }
   e
+}
+
+/// Bytes or Str v as C's XoBytes or XoStr: the pair (p, n) of its copy
+/// in C's malloc (cout, heapos.c_bytes_out, which writes a NUL past the
+/// n bytes) and its length.
+fn (var b: Builder) c_bytes(cout: Str, pair: Int, v: Int) -> Int {
+  let p = b.call(cout, b.int_t(), "", [v])
+  b.add(Op.Tuple, pair, Aux.None, [p, b.str_len_of(v)])
 }
 
 /// v as an XoHandle (c_hold), or, when null (v is an Option[T] whose T
@@ -1132,6 +1149,8 @@ fn (var b: Builder) check_c_result(fi: Int) {
   let rs = b.m.funcs[fi].results
   if rs.len() != 1 || !b.m.funcs[fi].var_params.is_empty() {
     b.unsupported("a C ABI export with `var` parameters")
+  } else if b.tkind(rs[0]) == Kind.Tuple && b.m.types[rs[0]].elems.len() == 2 && b.m.types[rs[0]].elems.all(fn(e) { b.m.types[e].kind == Kind.Int }) {
+    // a Bytes or Str result's (p, n), C's XoBytes or XoStr
   } else if b.tkind(rs[0]) == Kind.Str {
     // a Str may be a view (decision 0330): its second word packs the
     // offset, which C would read as part of the length

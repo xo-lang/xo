@@ -391,6 +391,13 @@ accepted; 2026-11-08):
   verifier: a share of a value not on the heap); it is shared only when
   it holds a heap value now. List results were already handles (the
   `List[Int]` rows below). cmd/xo TestCLibHandles.
+- Bytes and Str results (2026-11-10), the table's row: the export's
+  wrapper copies the bytes into C's malloc with a NUL past them and
+  returns `XoBytes` or `XoStr` {p, n} in two registers (x0 and x1; rax
+  and rdx), which the caller frees with `xo_free(p)` (NULL does
+  nothing); an error result returns {NULL, 0}. The checker had rejected
+  them (XO1518) while the table listed them. cmd/xo TestCLibHandles
+  (ctr_label, ctr_tail, ctr_label_or).
 - The TestCLibThreadExit build failure of 2026-11-08 (exit 1): found.
   Separate compilation linked a library against std's cached program
   variant, which lacks the runtime's library entries; the first library
