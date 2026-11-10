@@ -833,10 +833,12 @@ fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! 
 /// weak order gives some permutation, never a fault. The first error the
 /// comparator returns stops the sort and is returned.
 fn (xs: List[T]) sort_with[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> List[T] ! E uses fx
+/// Sorts xs itself by the comparator, stable, as sort_with; returns nothing.
 fn (var xs: List[T]) sort_in_place_with[E, fx: Effects](cmp: fn(T, T) -> Ordering ! E uses fx) -> () ! E uses fx
 /// Sorted by key from greatest to least, stable (no key negation, so
 /// `Int.min` and Str keys work; decision 0586).
 fn (xs: List[T]) sort_by_desc[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
+/// Sorts xs itself by key from greatest to least, stable; returns nothing.
 fn (var xs: List[T]) sort_in_place_by_desc[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> () ! E uses fx
 /// The elements grouped by key(x): keys in order of first appearance, each
 /// group in input order.
