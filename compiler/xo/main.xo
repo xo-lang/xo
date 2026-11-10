@@ -3277,6 +3277,9 @@ fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: S
   var t = os.clock.now()
   let changed = inline_through_cache(os, mi, rc_keys, jobs, release, (os.env.get("XO_INLINE_BREAK") ?? "") == "1", phases, lazy)
   t = lap(os, phases, "inline.apply", t)
+  if (os.env.get("XO_SSA_CENSUS") ?? "") == "1" {
+    ssa_census(os, mi, "inline.apply")
+  }
   if changed && later {
     return (true, true, "")
   }

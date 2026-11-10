@@ -1,0 +1,53 @@
+use github.com/xo-lang/xo/compiler/ssa
+
+/// XO_SSA_CENSUS=1 (decision 0448 stage 3): after the inliner, the
+/// module's size on standard error: functions, blocks, values, their
+/// argument and successor lists (one allocation each when not empty),
+/// edges, the values by op (the 20 largest) and the 10 largest
+/// functions by values, to choose what to shrink in the inliner's peak.
+fn ssa_census(os: Os, m: ssa.Module, at: Str) {
+  var nb = 0
+  var nv = 0
+  var na = 0
+  var nal = 0
+  var ns = 0
+  var nsl = 0
+  var ne = 0
+  var ops: Map[Str, Int] = {}
+  var big: List[(Int, Str)] = []
+  for f in m.funcs {
+    nb += f.blocks.len()
+    nv += f.values.len()
+    ne += f.edges.len()
+    for v in f.values {
+      na += v.args.len()
+      if !v.args.is_empty() {
+        nal += 1
+      }
+      ns += v.succs.len()
+      if !v.succs.is_empty() {
+        nsl += 1
+      }
+      let k = ssa.op_name(v.op)
+      ops[k] = (ops.get(k) ?? 0) + 1
+    }
+    big.push((f.values.len(), f.name))
+  }
+  os.stdio.eprintln("xo census ${at}: ${m.funcs.len()} functions, ${nb} blocks, ${nv} values, ${na} args in ${nal} lists, ${ns} succs in ${nsl} lists, ${ne} edges")
+  var byop: List[(Int, Str)] = []
+  for (k, n) in ops {
+    byop.push((n, k))
+  }
+  for (i, x) in byop.sort_by(fn(x) { -x.0 }).indexed() {
+    if i == 20 {
+      break
+    }
+    os.stdio.eprintln("xo census ${at}: op ${x.1} ${x.0}")
+  }
+  for (i, x) in big.sort_by(fn(x) { -x.0 }).indexed() {
+    if i == 10 {
+      break
+    }
+    os.stdio.eprintln("xo census ${at}: func ${x.1} ${x.0} values")
+  }
+}
