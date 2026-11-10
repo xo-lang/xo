@@ -4972,8 +4972,12 @@ a checkout of the repository, in two steps:
     #    above (what it unblocks, what landed, tooling, language changes)
     $EDITOR /tmp/notes-X.Y.0.txt
     # 2. bump, gate, push, tag, build, pack (about 15 minutes); WORKDIR
-    #    must be empty and outside the repository
-    scripts/seed-cut.sh X.Y.0 /tmp/notes-X.Y.0.txt WORKDIR
+    #    must be empty and outside the repository; linux-amd64's race
+    #    runtime builds on the amd64 offload host (Docker Desktop's amd64
+    #    emulation failed on 2026-11-10,
+    #    gotchas/docker-amd64-emulation-exec-format.md)
+    XO_RACE_REMOTE_LINUX_AMD64=$HOME/xo-lead/agents/race-remote.sh \
+      scripts/seed-cut.sh X.Y.0 /tmp/notes-X.Y.0.txt WORKDIR
     # 3. upload, latest.txt last (a minute)
     scripts/seed-upload.sh WORKDIR
     # 4. delete WORKDIR (about 4 GB: the boot stages, the cross and race

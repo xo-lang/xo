@@ -109,6 +109,27 @@ if [ "${3:-}" = windows-amd64 ]; then
   exit 0
 fi
 
+# linux-amd64 on a linux/amd64 machine instead of Docker's emulation
+# ($XO_RACE_REMOTE_LINUX_AMD64: a command run as CMD SCRIPT OUTDIR that
+# builds there with SCRIPT, this file, and leaves OUTDIR/lib/xo/race/
+# linux-amd64/libclang_rt.tsan-x86_64.a and OUTDIR/lib/xo/race/LICENSE.TXT;
+# the lead's race-remote.sh over the amd64 offload host. Docker Desktop's
+# amd64 emulation failed with "exec format error" on 2026-11-10,
+# gotchas/docker-amd64-emulation-exec-format.md)
+if [ "${3:-}" = linux-amd64 ] && [ "$(uname -s)" = Darwin ] && [ -n "${XO_RACE_REMOTE_LINUX_AMD64:-}" ]; then
+  rm -rf "${work:?}/remote"
+  mkdir -p "$work/remote"
+  $XO_RACE_REMOTE_LINUX_AMD64 "$0" "$work/remote"
+  a="$work/remote/lib/xo/race/linux-amd64/libclang_rt.tsan-x86_64.a"
+  [ -s "$a" ] && [ -s "$work/remote/lib/xo/race/LICENSE.TXT" ] || { echo "race-runtime.sh: $XO_RACE_REMOTE_LINUX_AMD64 wrote no $a" >&2; exit 1; }
+  mkdir -p "$out/lib/xo/race"
+  rm -rf "${out:?}/lib/xo/race/linux-amd64"
+  cp -R "$work/remote/lib/xo/race/linux-amd64" "$out/lib/xo/race/"
+  cp "$work/remote/lib/xo/race/LICENSE.TXT" "$out/lib/xo/race/"
+  echo "$out/lib/xo/race/linux-amd64/libclang_rt.tsan-x86_64.a"
+  exit 0
+fi
+
 if [ "${3:-}" = linux-arm64 ] || [ "${3:-}" = linux-amd64 ]; then
   if [ "$(uname -s)" = Darwin ]; then
     here=$(cd "$(dirname "$0")" && pwd)
@@ -144,8 +165,9 @@ if [ -n "${3:-}" ] && [ "$3" != "$goos-$goarch" ]; then
 fi
 missing=""
 for t in clang cmake ninja curl xz; do command -v $t >/dev/null || missing=1; done
-if [ "$goos" = linux ] && [ -n "$missing" ]; then
-  # the Docker image (scripts/docker-linux.sh, as root)
+if [ "$goos" = linux ] && [ -n "$missing" ] && [ "$(id -u)" = 0 ]; then
+  # the Docker image (scripts/docker-linux.sh, as root); elsewhere (a
+  # user's shell on a Linux host) cmake and ninja come from the venv below
   (apt-get update -qq && apt-get install -y -qq clang cmake ninja-build python3 xz-utils curl) >/dev/null 2>&1
 fi
 
@@ -161,8 +183,27 @@ mkdir -p "$work/src"
 tar -C "$work/src" -xf "$tarball" "$top/compiler-rt" "$top/cmake" "$top/llvm/cmake"
 
 if ! command -v cmake >/dev/null || ! command -v ninja >/dev/null; then
-  [ -x "$work/venv/bin/cmake" ] || { python3 -m venv "$work/venv" && "$work/venv/bin/pip" install -q cmake ninja; }
-  PATH="$work/venv/bin:$PATH"
+  if [ -x "$work/venv/bin/cmake" ] || { python3 -m venv "$work/venv" && "$work/venv/bin/pip" install -q cmake ninja; } 2>/dev/null; then
+    PATH="$work/venv/bin:$PATH"
+  elif [ "$goos-$goarch" = linux-amd64 ]; then
+    # no venv module and no root (the linux/amd64 offload host, 2026-11-10):
+    # Kitware's and ninja's release binaries at pinned SHA-256s (cmake's
+    # from its release's SHA-256.txt; ninja publishes none, taken at pin time)
+    tools="$work/tools"
+    if [ ! -x "$tools/bin/ninja" ] || [ ! -x "$tools/cmake/bin/cmake" ]; then
+      rm -rf "${tools:?}"; mkdir -p "$tools/bin"
+      cv=3.31.6
+      curl -fsSL --retry 5 --retry-delay 15 -o "$tools/cmake.tgz" "https://github.com/Kitware/CMake/releases/download/v$cv/cmake-$cv-linux-x86_64.tar.gz"
+      echo "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf  $tools/cmake.tgz" | sha256sum -c - >/dev/null
+      mkdir -p "$tools/cmake" && tar -C "$tools/cmake" --strip-components=1 -xzf "$tools/cmake.tgz"
+      curl -fsSL --retry 5 --retry-delay 15 -o "$tools/ninja.zip" https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-linux.zip
+      echo "6f98805688d19672bd699fbbfa2c2cf0fc054ac3df1f0e6a47664d963d530255  $tools/ninja.zip" | sha256sum -c - >/dev/null
+      python3 -m zipfile -e "$tools/ninja.zip" "$tools/bin" && chmod +x "$tools/bin/ninja"
+    fi
+    PATH="$tools/cmake/bin:$tools/bin:$PATH"
+  else
+    echo "race-runtime.sh: no cmake or ninja, and no Python venv to install them" >&2; exit 1
+  fi
 fi
 
 build="$work/build"

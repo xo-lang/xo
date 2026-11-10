@@ -54,6 +54,13 @@
 # cannot move under the gate (2026-10-21: the 0.24.0 cut passed its gate
 # and its push was refused, main having moved in the 20 minutes). Other
 # pushes wait meanwhile. A dry run takes no lock.
+# XO_RACE_REMOTE_LINUX_AMD64, when set, builds linux-amd64's race runtime
+# on a linux/amd64 machine instead of Docker's amd64 emulation (passed to
+# scripts/race-runtime.sh; the lead's "$XO_LEAD_SCRATCH/agents/race-remote.sh"
+# over the amd64 offload host). Unset, Docker must run linux/amd64
+# containers, checked before anything is built (2026-11-10: Docker
+# Desktop answered "exec format error" and the 0.46.0 cut failed at step 6,
+# gotchas/docker-amd64-emulation-exec-format.md).
 # Without the lock (2026-11-06), a push refused because main moved puts
 # the version commit on the new main in a worktree of its own, checks that
 # it changes only the version files, and pushes that; the tag stays on the
@@ -107,6 +114,9 @@ until docker info >/dev/null 2>&1; do
   [ $d -lt 12 ] || die "Docker is not answering after a minute (step 6 builds the linux-arm64 race runtime in it): start Docker Desktop (open -a Docker), wait for docker info to succeed, then rerun"
   sleep 5; d=$((d + 1))
 done
+if [ -z "${XO_RACE_REMOTE_LINUX_AMD64:-}" ] && [ "$(docker run --rm --platform linux/amd64 alpine:3.20 uname -m 2>&1 | tail -1)" != x86_64 ]; then
+  die "Docker cannot run linux/amd64 containers (step 6 builds linux-amd64's race runtime in one): set XO_RACE_REMOTE_LINUX_AMD64 (the lead's agents/race-remote.sh), or turn on Docker Desktop's x86_64/amd64 emulation (Rosetta)"
+fi
 
 repo=$(git rev-parse --show-toplevel)
 # a stale copy of this script (e.g. the main checkout, kept at an old commit)
