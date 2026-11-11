@@ -607,6 +607,27 @@ fn (var g: G) plan_sret_slots() {
     idx[c] = k
   }
   let nc = calls.len()
+  // per value, the index of its root's call (-1: none) and, for a call
+  // of calls, its own index: the liveness walk below read root and idx
+  // per argument (a third of plan_sret_slots' time in the aiplatform/v1
+  // test build; Lang 1, 2026-11-11)
+  let nv = g.f.values.len()
+  var rk: List[Int] = List.with_capacity(nv)
+  var ck: List[Int] = List.with_capacity(nv)
+  for _ in 0..nv {
+    rk.push(-1)
+    ck.push(-1)
+  }
+  for (a, r) in root {
+    if a >= 0 && a < nv {
+      rk[a] = idx.get(r) ?? 0
+    }
+  }
+  for (k, c) in calls.indexed() {
+    if c >= 0 && c < nv {
+      ck[c] = k
+    }
+  }
   // the calls' roots live into each block (live_in), to a fixed point
   var live_in: List[List[Bool]] = []
   for _ in 0..nb {
@@ -663,8 +684,8 @@ fn (var g: G) plan_sret_slots() {
       if t >= 0 {
         for e in g.f.values[t].succs {
           for a in g.f.edges[e].args {
-            if let Some(r) = root.get(a) {
-              live[idx.get(r) ?? 0] = true
+            if a >= 0 && a < nv && rk[a] >= 0 {
+              live[rk[a]] = true
             }
           }
         }
@@ -673,13 +694,14 @@ fn (var g: G) plan_sret_slots() {
       var j = ins.len() - 1
       while j >= 0 {
         let v = ins[j]
-        if let Some(k) = idx.get(v) {
+        let k = if v >= 0 && v < nv { ck[v] } else { -1 }
+        if k >= 0 {
           // defined here: whatever is live after it interferes with it,
           // and so do its own arguments (one passed in place is read
           // while the callee writes the result)
           for a in g.f.values[v].args {
-            if let Some(r) = root.get(a) {
-              live[idx.get(r) ?? 0] = true
+            if a >= 0 && a < nv && rk[a] >= 0 {
+              live[rk[a]] = true
             }
           }
           for k2 in 0..nc {
@@ -690,8 +712,8 @@ fn (var g: G) plan_sret_slots() {
           live[k] = false
         }
         for a in g.f.values[v].args {
-          if let Some(r) = root.get(a) {
-            live[idx.get(r) ?? 0] = true
+          if a >= 0 && a < nv && rk[a] >= 0 {
+            live[rk[a]] = true
           }
         }
         j -= 1
