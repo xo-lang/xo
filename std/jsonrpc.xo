@@ -472,13 +472,35 @@ pub fn (e: CallErr) display() -> Str {
   }
 }
 
+/// How a protocol cancels a call: the notification's method, the member
+/// of its params that holds the call's id, and the answer a cancelled call
+/// gets (None: no answer). mcp_cancel and lsp_cancel are the two in use.
+pub struct Cancel {
+  pub method: Str
+  pub key: Str
+  pub reply: RpcError? = None
+}
+
+/// MCP's: `notifications/cancelled` with `requestId`; a cancelled request
+/// is not answered.
+pub fn mcp_cancel() -> Cancel { Cancel{method: "notifications/cancelled", key: "requestId"} }
+
+/// LSP's: `$/cancelRequest` with `id`; a cancelled request is answered
+/// with RequestCancelled (-32800).
+pub fn lsp_cancel() -> Cancel {
+  Cancel{method: "$/cancelRequest", key: "id", reply: Some(RpcError{code: -32800, message: "Request cancelled"})}
+}
+
 /// A JSON-RPC connection over one message transport, both ways: calls and
 /// notifications out (`call`, `notify`), and, once `serve` runs its read
 /// loop, the peer's answers matched to the calls in flight by id and the
-/// peer's requests handled, each in a task of its own. A handle: copies
-/// share the connection.
+/// peer's requests handled, each in a task of its own. With a Cancel, a
+/// call whose task is cancelled sends the peer its cancel notification,
+/// and the peer's cancel notification cancels the task handling that
+/// request. A handle: copies share the connection.
 pub struct Conn[fx: Effects] {
   write: fn(Str) -> () ! IoErr uses fx
+  cancel: Cancel?
   st: Mutex[ConnState]
   /// serializes writes, so messages never interleave
   wl: Mutex[Int]
@@ -487,13 +509,15 @@ pub struct Conn[fx: Effects] {
 struct ConnState {
   next: Int = 1
   pending: Map[Str, Chan[Response]] = {}
+  /// the peer's calls being handled, by id: closing one cancels it
+  running: Map[Str, Chan[()]] = {}
   closed: Bool = false
 }
 
 /// A connection writing each message's text (already encoded, one
 /// message a call) with write; frame it there (line_frame, header_frame).
-pub fn conn[fx: Effects](write: fn(Str) -> () ! IoErr uses fx) -> Conn[fx] {
-  Conn{write: write, st: Mutex[ConnState].new(ConnState{}), wl: Mutex[Int].new(0)}
+pub fn conn[fx: Effects](write: fn(Str) -> () ! IoErr uses fx, cancel: Cancel? = None) -> Conn[fx] {
+  Conn{write: write, cancel: cancel, st: Mutex[ConnState].new(ConnState{}), wl: Mutex[Int].new(0)}
 }
 
 fn key(id: Id) -> Str {
@@ -503,13 +527,24 @@ fn key(id: Id) -> Str {
   }
 }
 
+fn id_of(v: json.Value?) -> Id? {
+  match v {
+    Some(json.Value.Int(n)) => Some(Id.Int(n))
+    Some(json.Value.Num(f)) => Some(Id.Int(Int(f)))
+    Some(json.Value.Str(s)) => Some(Id.Str(s))
+    _ => None
+  }
+}
+
 fn (c: Conn[fx]) send(text: Str) -> () ! IoErr uses fx {
   c.wl.with(fn(var _n: Int) -> () ! IoErr uses fx { (c.write)(text) })
 }
 
 /// Calls method on the peer and waits for its answer: the result, or the
 /// peer's error. Ids are 1, 2, 3, ... on this connection. Needs `serve`
-/// running to receive the answer.
+/// running to receive the answer. When the calling task is cancelled
+/// while it waits, the call is dropped and, with a Cancel, the peer is
+/// sent its cancel notification.
 pub fn (c: Conn[fx]) call(method: Str, params: json.Value? = None) -> json.Value ! CallErr uses fx {
   let got = c.st.with(fn(var s: ConnState) -> (Int, Chan[Response]?) {
     if s.closed {
@@ -522,9 +557,11 @@ pub fn (c: Conn[fx]) call(method: Str, params: json.Value? = None) -> json.Value
     (n, Some(ch))
   })
   let ch = got.1 ?? return Err(CallErr.Closed)
-  let id = Id.Int(got.0)
-  if let Err(e) = c.send(encode(Message.Req(Request{id: Some(id), method: method, params: params}))) {
-    c.forget(got.0)
+  let n = got.0
+  defer {
+    c.abandon(n)
+  }
+  if let Err(e) = c.send(encode(Message.Req(Request{id: Some(Id.Int(n)), method: method, params: params}))) {
     return Err(CallErr.Io(e))
   }
   let r = ch.recv() ?? return Err(CallErr.Closed)
@@ -534,10 +571,19 @@ pub fn (c: Conn[fx]) call(method: Str, params: json.Value? = None) -> json.Value
   }
 }
 
-/// Drops the call n waits on (its request was not written). The id is
-/// this call's alone (ids are never reused), so no other task acts on it.
-fn (c: Conn[fx]) forget(n: Int) {
-  let _r = c.st.with(fn(var s: ConnState) -> Chan[Response]? { s.pending.remove(key(Id.Int(n))) })
+/// Drops call n when it is still waiting (its request failed to write, or
+/// its task was cancelled) and then tells the peer, with a Cancel. The id
+/// is this call's alone (ids are never reused), so no other task acts on
+/// it.
+fn (c: Conn[fx]) abandon(n: Int) uses fx {
+  let was = c.st.with(fn(var s: ConnState) -> Bool { s.pending.remove(key(Id.Int(n))).is_some() })
+  if !was || !task.is_canceled() {
+    return
+  }
+  if let Some(k) = c.cancel {
+    let p = json.Value.Object([(k.key, json.Value.Int(n))])
+    c.notify(k.method, Some(p)).ignore_err("the cancel notification is advice; the call is dropped either way")
+  }
 }
 
 /// Sends a notification (a request without an id; the peer does not
@@ -571,7 +617,10 @@ pub fn (c: Conn[fx]) close() {
 /// to handle in a task of its own in g, and a call's result or error is
 /// written back with its id; a batch is answered as `answer` does, in
 /// order; text that is not a message is answered with its error and a
-/// null id. At the end of read, or when it fails, the connection closes.
+/// null id. With a Cancel, the peer's cancel notification cancels the
+/// task handling the call it names (answered with Cancel.reply, if any)
+/// and is not passed to handle. At the end of read, or when it fails, the
+/// connection closes.
 pub fn (c: Conn[fx]) serve(g: task.Group, read: fn() -> Str? ! IoErr uses fx, handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx {
   g.spawn_background(fn() uses fx { c.read_loop(g, read, handle) })
 }
@@ -591,23 +640,36 @@ fn (c: Conn[fx]) read_loop(g: task.Group, read: fn() -> Str? ! IoErr uses fx, ha
     match decode(text) {
       Ok(Message.Resp(r)) => {
         if let Some(id) = r.id {
-          let ch = c.st.with(fn(var s: ConnState) -> Chan[Response]? { s.pending.remove(key(id)) })
-          if let Some(x) = ch {
+          if let Some(x) = c.take_pending(id) {
             x.send(r)
           }
         }
       }
       Ok(Message.Req(r)) => {
-        g.spawn_background(fn() uses fx {
-          let got = handle(r)
-          if let Some(id) = r.id {
-            let resp = match got {
-              Ok(x) => Response{id: Some(id), result: x}
-              Err(e) => Response{id: Some(id), error: Some(e)}
+        if let Some(k) = c.cancel {
+          if r.method == k.method && r.id.is_none() {
+            let target = id_of(match r.params {
+              Some(p) => p.get(k.key)
+              None => None
+            })
+            if let Some(t) = target {
+              if let Some(x) = c.take_running(t) {
+                x.close()
+              }
             }
-            c.send(encode(Message.Resp(resp))).ignore_err("an answer that cannot be written is lost; a broken transport ends the read side too")
+            continue
           }
-        })
+        }
+        match r.id {
+          None => g.spawn_background(fn() uses fx {
+            handle(r).ignore_err("a notification has no answer to carry its error")
+          })
+          Some(id) => {
+            let stop = Chan[()].new(cap: 1)
+            c.add_running(id, stop)
+            g.spawn_background(fn() uses fx { c.run_call(r, id, stop, handle) })
+          }
+        }
       }
       Err(e) => {
         c.send(encode(Message.Resp(Response{id: None, error: Some(e)}))).ignore_err("an answer that cannot be written is lost; a broken transport ends the read side too")
@@ -615,4 +677,74 @@ fn (c: Conn[fx]) read_loop(g: task.Group, read: fn() -> Str? ! IoErr uses fx, ha
     }
   }
   c.close()
+}
+
+// One `with` each: the ids are unique to their call, so no decision
+// carries from one to another.
+fn (c: Conn[fx]) take_pending(id: Id) -> Chan[Response]? {
+  c.st.with(fn(var s: ConnState) -> Chan[Response]? { s.pending.remove(key(id)) })
+}
+
+fn (c: Conn[fx]) take_running(id: Id) -> Chan[()]? {
+  c.st.with(fn(var s: ConnState) -> Chan[()]? { s.running.remove(key(id)) })
+}
+
+fn (c: Conn[fx]) add_running(id: Id, stop: Chan[()]) {
+  c.st.with(fn(var s: ConnState) { s.running.put(key(id), stop) })
+}
+
+/// Handles the peer's call r in a task of its own, until it finishes or
+/// stop closes (the peer cancelled it), and answers it.
+fn (c: Conn[fx]) run_call(r: Request, id: Id, stop: Chan[()], handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx {
+  let done = Chan[Result[json.Value, RpcError]].new(cap: 1)
+  let resp = scope h {
+    let _t = h.spawn_background(fn() uses fx { done.send(handle(r)) })
+    select {
+      got = done.recv() => match got {
+        Some(Ok(x)) => Some(Response{id: Some(id), result: x})
+        Some(Err(e)) => Some(Response{id: Some(id), error: Some(e)})
+        None => None
+      }
+      _ = stop.recv() => match c.cancel {
+        Some(Cancel{reply: Some(e), ..}) => Some(Response{id: Some(id), error: Some(e)})
+        _ => None
+      }
+    }
+  }
+  let _r = c.take_running(id)
+  if let Some(x) = resp {
+    c.send(encode(Message.Resp(x))).ignore_err("an answer that cannot be written is lost; a broken transport ends the read side too")
+  }
+}
+
+/// A handler that dispatches on the method: each registered method's
+/// function gets the request's params; a call to any other method is
+/// METHOD_NOT_FOUND, a notification of one is ignored.
+pub struct Methods[fx: Effects] {
+  fns: Map[Str, fn(json.Value?) -> json.Value ! RpcError uses fx] = {}
+}
+
+pub fn methods[fx: Effects]() -> Methods[fx] { Methods{} }
+
+/// m with method handled by f.
+pub fn (m: Methods[fx]) on(method: Str, f: fn(json.Value?) -> json.Value ! RpcError uses fx) -> Methods[fx] {
+  var fs = m.fns.clone()
+  fs.put(method, f)
+  Methods{fns: fs}
+}
+
+/// The handler for answer and Conn.serve.
+pub fn (m: Methods[fx]) handler() -> fn(Request) -> json.Value ! RpcError uses fx {
+  fn(r: Request) -> json.Value ! RpcError uses fx {
+    match m.fns.get(r.method) {
+      Some(f) => f(r.params)
+      None => {
+        if r.is_call() {
+          Err(RpcError{code: METHOD_NOT_FOUND, message: "Method not found", data: Some(json.Value.Str(r.method))})
+        } else {
+          Ok(json.Value.Null)
+        }
+      }
+    }
+  }
 }

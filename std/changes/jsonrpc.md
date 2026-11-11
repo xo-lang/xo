@@ -6,9 +6,9 @@
 - Commit: this commit
 - Found by: decision 0603 stage 1 (Accepted, owner 2026-11-11)
 - Go reference: github.com/modelcontextprotocol/go-sdk v1.8.0's jsonrpc package (DecodeMessage, EncodeMessage); the JSON-RPC 2.0 specification's examples for batches and errors
-- Test: internal/stdtest/testdata/corpus/jsonrpc (15 specification examples through answer, 29 decode cases, 80 seeded random messages decoded and encoded byte for byte, the framings, Conn over channels) on arm64, LLVM and the Go backend
+- Test: internal/stdtest/testdata/corpus/jsonrpc (15 specification examples through answer, 29 decode cases, 80 seeded random messages decoded and encoded byte for byte, the framings, Conn over channels, cancellation both ways, Methods) on arm64, LLVM and the Go backend
 - Shipped in: not yet released
 
 `jsonrpc.encode`, `decode`, `answer` (batches), the newline and Content-Length framings, and `Conn`, calls and
-notifications both ways with requests served in tasks (spec/std.md 80). `xo mcp` and `xo lsp` on it are the next step
+notifications both ways with requests served in tasks, MCP and LSP cancellation both ways, and `Methods` dispatch (spec/std.md 80). `xo mcp` and `xo lsp` on it are the next step
 of stage 1.

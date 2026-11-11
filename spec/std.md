@@ -8979,12 +8979,18 @@ fn header_reader(max: Int = 67108864) -> HeaderReader   // Content-Length header
 fn (var r: HeaderReader) feed(chunk: Bytes) -> List[Str] ! FrameErr
 fn header_frame(text: Str) -> Bytes
 enum CallErr { Rpc(e: RpcError), Io(e: IoErr), Closed }
-fn conn[fx: Effects](write: fn(Str) -> () ! IoErr uses fx) -> Conn[fx]   // a handle: copies share it
+struct Cancel { pub method: Str, pub key: Str, pub reply: RpcError? = None }
+fn mcp_cancel() -> Cancel                           // notifications/cancelled, requestId, no answer
+fn lsp_cancel() -> Cancel                           // $/cancelRequest, id, answered -32800
+fn conn[fx: Effects](write: fn(Str) -> () ! IoErr uses fx, cancel: Cancel? = None) -> Conn[fx]   // a handle
 fn (c: Conn[fx]) serve(g: task.Group, read: fn() -> Str? ! IoErr uses fx, handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx
 fn (c: Conn[fx]) call(method: Str, params: json.Value? = None) -> json.Value ! CallErr uses fx
 fn (c: Conn[fx]) notify(method: Str, params: json.Value? = None) -> () ! IoErr uses fx
 fn (c: Conn[fx]) in_flight() -> Int
 fn (c: Conn[fx]) close()
+fn methods[fx: Effects]() -> Methods[fx]
+fn (m: Methods[fx]) on(method: Str, f: fn(json.Value?) -> json.Value ! RpcError uses fx) -> Methods[fx]
+fn (m: Methods[fx]) handler() -> fn(Request) -> json.Value ! RpcError uses fx
 ```
 
 `decode` reads one message as the Go MCP SDK's `jsonrpc.DecodeMessage`: `jsonrpc` must be `"2.0"`; an id is a
@@ -9001,5 +9007,9 @@ many bytes. `Conn` is both sides at once: `call` writes a request with the next 
 answer; `serve` starts the read loop in the group, in the background, which hands each answer to the call waiting
 for its id, runs each incoming request in a task of its own and writes back a call's answer, answers a batch as
 `answer` does and invalid text with its error; writes never interleave. When `read` ends or fails, or `close` is
-called, waiting and later calls return `Closed`. Checked against the specification's examples and the Go SDK's DecodeMessage and EncodeMessage
+called, waiting and later calls return `Closed`. With a `Cancel`, a call whose task is cancelled while it waits is dropped and the
+peer is sent the cancel notification naming its id, and the peer's cancel notification cancels the task handling the
+call it names (answered with `Cancel.reply`, if any; it is not passed to the handler). `Methods` dispatches on the
+method: a registered method's function gets the params; a call to another method is Method not found (its name as
+data), a notification of one is ignored. Checked against the specification's examples and the Go SDK's DecodeMessage and EncodeMessage
 (testdata/corpus/jsonrpc).

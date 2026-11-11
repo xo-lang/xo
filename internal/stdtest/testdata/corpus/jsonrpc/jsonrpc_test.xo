@@ -37,6 +37,11 @@ fn handle(r: jsonrpc.Request) -> json.Value ! jsonrpc.RpcError {
   if r.method == "get_data" {
     return Ok(json.Value.List([json.Value.Str("hello"), json.Value.Int(5)]))
   }
+  if r.method == "slow" {
+    // waits until its task is cancelled
+    let _x = Chan[Int].new(cap: 1).recv()
+    return Ok(json.Value.Null)
+  }
   if r.method == "update" || r.method.starts_with("notify_") {
     return Ok(json.Value.Null)
   }
@@ -834,11 +839,11 @@ test "encode writes a notification without an id and an error without a result" 
   expect(jsonrpc.encode(jsonrpc.Message.Resp(jsonrpc.Response{id: Some(jsonrpc.Id.Int(3)), error: Some(e)}))) == "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32000,\"message\":\"boom\",\"data\":\"x\"}}"
   expect(jsonrpc.encode(jsonrpc.Message.Resp(jsonrpc.Response{id: Some(jsonrpc.Id.Str("a"))}))) == "{\"jsonrpc\":\"2.0\",\"id\":\"a\",\"result\":null}"
 }
-fn pipe_conn(out: Chan[Str]) -> jsonrpc.Conn[()] {
+fn pipe_conn(out: Chan[Str], cancel: jsonrpc.Cancel? = None) -> jsonrpc.Conn[()] {
   jsonrpc.conn(fn(t: Str) -> () ! IoErr {
     out.send(t)
     Ok(())
-  })
+  }, cancel: cancel)
 }
 
 fn reply(x: Result[json.Value, jsonrpc.CallErr]) -> Str {
@@ -895,4 +900,54 @@ test "Conn: a batch and invalid text from the peer are answered" {
     out
   }
   expect(got) == ["[{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":3}]", "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}"]
+}
+
+test "Conn: the peer's cancel notification cancels the call's task (LSP answers it, MCP does not)" {
+  let got = scope s {
+    let ab = Chan[Str].new(cap: 16)
+    let ba = Chan[Str].new(cap: 16)
+    let a = pipe_conn(ab, cancel: Some(jsonrpc.lsp_cancel()))
+    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
+    ba.send("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"slow\"}")
+    ba.send("{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":9}}")
+    let lsp = ab.recv() ?? ""
+    let cd = Chan[Str].new(cap: 16)
+    let dc = Chan[Str].new(cap: 16)
+    let m = pipe_conn(cd, cancel: Some(jsonrpc.mcp_cancel()))
+    m.serve(s.group(), fn() -> Str? ! IoErr { Ok(dc.recv()) }, handle)
+    dc.send("{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"method\":\"slow\"}")
+    dc.send("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":\"x\"}}")
+    dc.send("{\"jsonrpc\":\"2.0\",\"id\":\"y\",\"method\":\"sum\",\"params\":[2,2]}")
+    let mcp = cd.recv() ?? ""
+    ba.close()
+    dc.close()
+    [lsp, mcp]
+  }
+  expect(got) == ["{\"jsonrpc\":\"2.0\",\"id\":9,\"error\":{\"code\":-32800,\"message\":\"Request cancelled\"}}", "{\"jsonrpc\":\"2.0\",\"id\":\"y\",\"result\":4}"]
+}
+
+test "Conn: a call whose task is cancelled tells the peer and is dropped" {
+  let ab = Chan[Str].new(cap: 16)
+  let ba = Chan[Str].new(cap: 16)
+  let got = scope s {
+    let a = pipe_conn(ab, cancel: Some(jsonrpc.mcp_cancel()))
+    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
+    let sent = scope inner {
+      let _t = inner.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("slow") })
+      let req = ab.recv() ?? ""
+      inner.cancel()
+      req
+    }
+    let out = [sent, ab.recv() ?? "", "${a.in_flight()}"]
+    ba.close()
+    out
+  }
+  expect(got) == ["{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"slow\"}", "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":1}}", "0"]
+}
+
+test "Methods: dispatch on the method, unknown calls Method not found, unknown notifications ignored" {
+  let h = jsonrpc.methods().on("echo", fn(p: json.Value?) -> json.Value ! jsonrpc.RpcError { Ok(p ?? json.Value.Null) }).handler()
+  expect(jsonrpc.answer("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"echo\",\"params\":[1]}", h)) == Some("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[1]}")
+  expect(jsonrpc.answer("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"nope\"}", h)) == Some("{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32601,\"message\":\"Method not found\",\"data\":\"nope\"}}")
+  expect(jsonrpc.answer("{\"jsonrpc\":\"2.0\",\"method\":\"nope\"}", h)) == None
 }
