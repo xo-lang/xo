@@ -1250,3 +1250,54 @@ inlined and it is not otherwise reached, (c) inline in waves as cleanup
 does (2026-11-07), each wave's functions lowered to parts before the
 next. Measured with scripts in ~/xo-lead/notes/xo-lang-2/0448
 (heapat.sh, rss.sh) on host 3, peak resident and wall against main.
+
+## Addendum: emit in smaller waves, and the inliner's value tables (Xo Lang 1, 2026-11-11)
+
+Emit in smaller waves (the lead's milestone 8) was measured first, with
+no code: aiplatform/v1's cold test build and the self build at
+XO_EMIT_JOBS 10 (host 2's default), 6 and 3, resident size sampled every
+0.25 s against the phase ends (one run each, linux/arm64 host 2, main
+33ebe9fc1):
+
+| build | emit jobs | max RSS | emit's resident peak | inline.verify's |
+|---|---|---|---|---|
+| aiplatform/v1 | 10 | 4.83 GB | 4,696 MB | 4,576 MB |
+| aiplatform/v1 | 6 | 4.79 GB | 4,329 MB | 4,673 MB |
+| aiplatform/v1 | 3 | 4.71 GB | 3,930 MB | 4,595 MB |
+| self | 10 | 4.23 GB | 3,996 MB | 4,062 MB |
+| self | 3 | 3.83 GB | 3,574 MB | 3,698 MB |
+
+Fewer parts at once lowers emit's peak, but the build's peak only to the
+inliner's (about 4.6 GB on aiplatform/v1; the self build's peak already
+is inline.verify), so emit waves recover at most about 120 MB there and
+were not built. The inliner holds the peak, as the 2026-11-09 addendum
+found.
+
+At inline.apply's end aiplatform/v1 had 4.01 GB in use (XO_PROF_HEAP_AT,
+host 3): renumber's value tables 1.36 GB, the inlined functions' tables
+grown by the inliner's pushes about 1.62 GB (inline_call 839, add_param
+653, add 128 MB), cse's instruction lists 560 MB. Each inlined
+function's table is now copied to its size once its inlining is done
+(arm64 inline_one): in use at inline.apply's end 3.29 GB, mapped at
+inline 4,668 to 4,451 MB. xo bench --ab on linux/arm64 host 1 (stage2
+xos, caches off, main 33ebe9fc1 against the change):
+
+| build | rounds | max RSS | wall | CPU |
+|---|---|---|---|---|
+| aiplatform/v1 cold test build | 5 | 0.812 (0.81 to 0.814; 6.93 to 5.63 GB) | 0.991 (0.986 to 0.996) | 0.986 (0.977 to 0.995) |
+| the self build | 7 | 0.978 (0.96 to 0.997) | 1.005, within noise | 1.005, within noise |
+
+The same trim measured on the Mac on 2026-10-31
+(gotchas/exact-ssa-tables-before-inline.md) raised the heap from emit on,
+when emit held the peak and mapped bytes were the measure; on Linux the
+peak is now the inliner's and resident size falls.
+
+Also measured: the emit jobs on linux/arm64 host 1 (12 CPUs, the default
+12), 3 rounds each: aiplatform/v1 wall 49.7 to 51.2 s at 12, 54.1 at 8,
+60.5 at 6, 75.6 to 76.2 at 4, user CPU 294 to 303, 231, 213 to 216, 200
+to 202 s; the self build 35.5 to 36.5, 38.7, 43.3, 52.3 s, CPU 239 to
+244, 188, 176, 158 s. From 8 workers to 12 buys 6 to 7% of wall for 24 to
+30% more CPU on the same work; where it goes is the next measurement
+(CPU profiles at 12 and 8). Next for memory: the args lists (13.7 M
+arguments in 12.7 M lists after inline.apply, Lang 2's census) and cse's
+instruction lists.

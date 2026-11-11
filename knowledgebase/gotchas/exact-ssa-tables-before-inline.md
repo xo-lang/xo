@@ -30,3 +30,14 @@ the next push reallocates it and takes the slack back. Size a list at its
 last writer, or copy it to its size after the last pass, or leave it. The
 growth curve has changed since (decision 0452: doubling only under 256
 elements), so re-measure these figures before relying on them.
+
+Addendum (Xo Lang 1, 2026-11-11): on Linux the trim after inlining
+(each inlined function's value table copied to its size in arm64
+inline_one) now lowers the peak: aiplatform/v1's max RSS 0.812 and the
+self build's 0.978 (xo bench --ab, linux/arm64 host 1), wall within
+noise or better. The peak had moved to the inliner (decision 0448's
+2026-11-09 addendum), so what the trim frees there is the build's peak;
+measure resident size per phase on the platform the claim is for, not
+the Mac's mapped heap. Renumber's exact tables before inlining were not
+retried.
+

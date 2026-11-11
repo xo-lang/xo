@@ -836,6 +836,18 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
       fault("stack_lists: ${f.name}: ${badl.join(", ")} escape after the later passes (decision 0554)")
     }
   }
+  if here {
+    // the value table at its size once the function's inlining is done:
+    // the callees' copies grew it by doubling, and the module holds every
+    // table through emit (decision 0448, 2026-11-11: aiplatform/v1's in
+    // use at inline.apply's end 4.01 to 3.29 GB, max RSS 0.812; the self
+    // build 0.978)
+    var vs: List[ssa.Value] = List.with_capacity(f.values.len())
+    for x in f.values {
+      vs.push(x)
+    }
+    f.values = vs
+  }
   m.funcs[fi] = f
   ch
 }
