@@ -714,26 +714,29 @@ fn cluster_words(ins: List[Inst]) -> List[(Int, Int, Int)] {
 }
 
 /// cluster_mem's key of an access: its kind, base, offset and whether its
-/// register is a float one.
-fn cluster_key(k: Int, base: Int, off: Int, fp: Bool) -> Str { "${k} ${base} ${off} ${fp}" }
+/// register is a float one, packed in an Int (mem_word keeps base below
+/// 2^28 and off within 2^30): a Str key formatted and hashed per access
+/// was a third of cluster_mem's 2.6% of the aiplatform/v1 test build's
+/// CPU (Lang 1, 2026-11-11).
+fn cluster_key(k: Int, base: Int, off: Int, fp: Bool) -> Int {
+  (((base << 2) | ((k - 1) << 1) | (if fp { 1 } else { 0 })) << 32) | (off + (1 << 31))
+}
 
 /// The positions of ins's word accesses by cluster_key, in order.
-fn cluster_at(g: G, ins: List[Inst], mw: List[(Int, Int, Int)]) -> Map[Str, List[Int]] {
-  var at: Map[Str, List[Int]] = {}
+fn cluster_at(g: G, ins: List[Inst], mw: List[(Int, Int, Int)]) -> Map[Int, List[Int]] {
+  var at: Map[Int, List[Int]] = {}
   for (k, w) in mw.indexed() {
     let (lk, base, off) = w
     if lk != 0 {
       let key = cluster_key(lk, base, off, g.fp[mem_reg(ins[k])])
-      var ps = at.get(key) ?? []
-      ps.push(k)
-      at[key] = ps
+      at.update(key, [], fn(var l) { l.push(k) })
     }
   }
   at
 }
 
 /// The first position past i of key's accesses, -1 for none.
-fn cluster_next(at: Map[Str, List[Int]], key: Str, i: Int) -> Int {
+fn cluster_next(at: Map[Int, List[Int]], key: Int, i: Int) -> Int {
   let ps = at.get(key) ?? []
   var lo = 0
   var hi = ps.len()
@@ -775,7 +778,7 @@ fn mem_word(inst: Inst) -> (Int, Int, Int) {
     return (0, 0, 0)
   }
   let off = Int.parse(num) ?? 1
-  if off % 8 != 0 {
+  if off % 8 != 0 || off <= -(1 << 30) || off >= 1 << 30 || inst.us[k - 1] < 0 || inst.us[k - 1] >= 1 << 28 {
     return (0, 0, 0)
   }
   (k, inst.us[k - 1], off)
