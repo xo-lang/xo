@@ -1234,7 +1234,12 @@ yourself.
   `go run ./scripts/xobuild` under heavy.sh when not
   (`PUSHQ_STALE_XO=refuse` stops the push instead, `off` runs the old xo
   with a note; 2026-11-10, pushq-arm64.6319.log: an older xo ran main's
-  newer std and failed with XO1201).
+  newer std and failed with XO1201). When the worktree already sits on
+  origin/main and one of those checks applies, the check and any
+  rebuild (41 to 75 s) run before pushq takes the merge lane, and the
+  lane only re-checks (0.3 s), so the rebuild no longer holds the lane
+  (lead, 2026-11-11); the log line says `(before the lane)`. Last
+  verified: 2026-11-11.
   Pushes wait in heavyd's `merge` lane (decision 0451, 2026-10-31), so
   `~/xo-lead/agents/heavy.sh --status` shows the push queue; with no
   daemon pushq queues on its own lock as before.
