@@ -191,7 +191,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| os | prelude Fs, Env, Proc, Stdio | partial | Capability based (sections 3.1 to 3.7). Missing (survey 2026-10-29): Hostname, Getpid, process rusage, statfs (disk size and free space); File has no seek or read_at. |
+| os | prelude Fs, Env, Proc, Stdio | partial | Capability based (sections 3.1 to 3.7). Missing (survey 2026-10-29): Hostname, Getpid, process rusage, statfs (disk size and free space); File has read_at and write_at (decision 0479) and seek (decision 0600). |
 | os/exec | prelude Proc, Cmd, Child | done | Section 3.8. |
 | os/signal | core 7.5 shutdown, task.stop_requested, Proc.kill | partial | Two phase stop on SIGTERM and SIGINT. Missing: subscribing to other signals (SIGHUP for a reload, SIGUSR1), signal.Notify (2 of 5 services in the 2026-10-29 survey). |
 | os/user | Env.home | partial | Home directory only. |
@@ -295,6 +295,13 @@ feature (`-rank REPORT -status gap DIRS...`; Last verified: 2026-11-11):
 | 28 | no Bytes.trim_start_chars (Str.trim_start_chars exists) | 4 | 0 / 4 | `bytes.TrimLeft` |
 | 29 | no Float limit consts | 4 | 0 / 4 | `math.MaxFloat32` |
 | 30 | no PATH lookup by itself (Proc.cmd searches PATH when it runs) | 4 | 0 / 4 | `os/exec.LookPath` |
+
+Closed or in flight since the ranking (Last verified: 2026-11-11): 1 (image/color
+types and models, decision 0578 addendum), 4 (File.seek, 0600), 7 (BigFloat,
+0602), 14 (cross_origin, 32ada584b), 16, 22 and 29 (877f55ed9), 18 (xml.writer,
+336db9141), 19 (9cd6f0688), 20 (a70322519), 21 (01045fd27), 23, 27 and 28
+(eac4bf36e). Proposed, waiting on the owner: 10 (0607), 15 (0608), 17, 24 and 30
+(0606), 8 (0604), 9 (0605); 13 (HPKE) after 8 and 9.
 
 ## Outside Go's standard library
 
