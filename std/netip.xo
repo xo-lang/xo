@@ -1,91 +1,873 @@
-// std/netip (spec/std.md 28, decision 0287). Declaration file; encoding
+// std/netip (spec/std.md 28, decision 0287). Encoding
 // rules are listed at the top of std/prelude.xo. Go's net/netip: IP
 // addresses and prefixes as values. Pure but for lookup (decision 0406).
+//
+// std/netip on the native backends (decision 0287): Go's net/netip
+// (netip.go of go1.26: ParseAddr, parseIPv4Fields, parseIPv6, String,
+// ParsePrefix, Prefix.Contains and Masked, the Is predicates), ported
+// with the same results and error texts.
+
+use native/rt
 
 /// An IP address: `bits` is 32 for IPv4, 128 for IPv6, 0 for the zero
 /// value; `hi` and `lo` its 16 bytes as two words (an IPv4 address as
 /// ::ffff:a.b.c.d); `zone` an IPv6 zone. The order is Go's Addr.Compare.
-struct Addr {
-  bits: Int
+pub struct Addr {
+  pub bits: Int
   /// the first and last 8 bytes, the first byte highest, with the top
   /// bit flipped so that the derived order of the signed words is the
   /// order of the bytes
-  hi: Int
-  lo: Int
-  zone: Str
+  pub hi: Int
+  pub lo: Int
+  pub zone: Str
 } derive Ord
 
 /// An address and a prefix length.
-struct Prefix {
-  addr: Addr
-  len: Int
+pub struct Prefix {
+  pub addr: Addr
+  pub len: Int
 }
 
 /// An address and a port (Go's AddrPort); the order is Go's Compare: the
 /// address, then the port.
-struct AddrPort {
-  addr: Addr
-  port: Int
+pub struct AddrPort {
+  pub addr: Addr
+  pub port: Int
 } derive Ord
 
 /// Go's texts: `ParseAddr("1.2.3"): IPv4 address too short`.
-struct ParseErr {
-  msg: Str
+pub struct ParseErr {
+  pub msg: Str
 }
 
-fn (e: ParseErr) display() -> Str
+pub fn (e: ParseErr) display() -> Str { e.msg }
 
 /// Go's ParseAddr: IPv4 (no leading zeros), IPv6, IPv4 in IPv6, zones.
-fn parse_addr(s: Str) -> Addr ! ParseErr
+pub fn parse_addr(s: Str) -> Addr ! ParseErr {
+  for c in s.bytes() {
+    if c == 46 {
+      // a plain dotted quad in one pass; anything else (and every error
+      // text) through parseIPv4Fields' path
+      let v = parse4_plain(s.bytes())
+      if v >= 0 {
+        return Ok(from4(v))
+      }
+      return Ok(from4(ipv4_fields(s, 0, s.len())?))
+    }
+    if c == 58 {
+      return parse_ipv6(s)
+    }
+    if c == 37 {
+      return Err(addr_err(s, "missing IPv6 address", ""))
+    }
+  }
+  Err(addr_err(s, "unable to parse IP", ""))
+}
+
 /// The addresses of host, in the order Net.dial tries them (Go's
 /// net.LookupIP through Net.lookup_host; decision 0406).
-fn lookup(n: Net, host: Str) -> List[Addr] ! NetErr uses net.dial
+pub fn lookup(n: Net, host: Str) -> List[Addr] ! NetErr uses net.dial {
+  var out: List[Addr] = []
+  for t in n.lookup_host(host)? {
+    match parse_addr(t) {
+      Ok(a) => out.push(a)
+      Err(e) => return Err(NetErr.Io(msg: "lookup ${host}: ${e.msg}"))
+    }
+  }
+  Ok(out)
+}
+
 /// Go's ParsePrefix: `10.0.0.0/8`, `2001:db8::/32`.
-fn parse_prefix(s: Str) -> Prefix ! ParseErr
+pub fn parse_prefix(s: Str) -> Prefix ! ParseErr {
+  let b = s.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != 47 {
+    i -= 1
+  }
+  if i < 0 {
+    return Err(prefix_err(s, "no '/'"))
+  }
+  let ip = match parse_addr(s[0..i]) {
+    Ok(a) => a
+    Err(e) => return Err(prefix_err(s, e.msg))
+  }
+  if ip.bits == 128 && !ip.zone.is_empty() {
+    return Err(prefix_err(s, "IPv6 zones cannot be present in a prefix"))
+  }
+  let bits_str = s[i + 1..]
+  let bb = bits_str.bytes()
+  if bb.len() > 1 && (bb[0] < 49 || bb[0] > 57) {
+    return Err(prefix_err(s, "bad bits after slash: ${bits_str.quote()}"))
+  }
+  let n = match Int.parse(bits_str) {
+    Some(n) => n
+    None => return Err(prefix_err(s, "bad bits after slash: ${bits_str.quote()}"))
+  }
+  let max = if ip.bits == 128 { 128 } else { 32 }
+  if n < 0 || n > max {
+    return Err(prefix_err(s, "prefix length out of range"))
+  }
+  Prefix{addr: ip, len: n}
+}
+
 /// The address of 4 or 16 bytes (AddrFrom4, AddrFrom16); None for another length.
-fn addr_from_bytes(b: Bytes) -> Addr?
-fn (a: Addr) is_4() -> Bool
-fn (a: Addr) is_6() -> Bool
-fn (a: Addr) is_4in6() -> Bool
+pub fn addr_from_bytes(b: Bytes) -> Addr? {
+  if b.len() == 4 {
+    return Some(from4((Int(b[0]) << 24) | (Int(b[1]) << 16) | (Int(b[2]) << 8) | Int(b[3])))
+  }
+  if b.len() == 16 {
+    return Some(mk(128, word_at(b, 0), word_at(b, 8), ""))
+  }
+  None
+}
+
+pub fn (a: Addr) is_4() -> Bool { a.bits == 32 }
+
+pub fn (a: Addr) is_6() -> Bool { a.bits == 128 }
+
+pub fn (a: Addr) is_4in6() -> Bool {
+  a.bits == 128 && hi_of(a) == 0 && ((lo_of(a) >> 32) & 4294967295) == 65535
+}
+
 /// An IPv4 in IPv6 address as IPv4 (its zone dropped), others as they are.
-fn (a: Addr) unmap() -> Addr
-fn (a: Addr) is_loopback() -> Bool
-fn (a: Addr) is_private() -> Bool
-fn (a: Addr) is_unspecified() -> Bool
-fn (a: Addr) is_link_local_unicast() -> Bool
-fn (a: Addr) is_multicast() -> Bool
+pub fn (a: Addr) unmap() -> Addr {
+  if a.is_4in6() {
+    return Addr{bits: 32, hi: a.hi, lo: a.lo, zone: ""}
+  }
+  a
+}
+
+pub fn (a: Addr) is_loopback() -> Bool {
+  let a1 = a.unmap()
+  if a1.bits == 32 {
+    return (v4_of(a1) >> 24) == 127
+  }
+  if a1.bits == 128 {
+    return hi_of(a1) == 0 && lo_of(a1) == 1
+  }
+  false
+}
+
+pub fn (a: Addr) is_private() -> Bool {
+  let a1 = a.unmap()
+  if a1.bits == 32 {
+    let v = v4_of(a1)
+    let b0 = v >> 24
+    let b1 = (v >> 16) & 255
+    return b0 == 10 || (b0 == 172 && (b1 & 240) == 16) || (b0 == 192 && b1 == 168)
+  }
+  if a1.bits == 128 {
+    return ((hi_of(a1) >> 56) & 254) == 252
+  }
+  false
+}
+
+pub fn (a: Addr) is_unspecified() -> Bool {
+  if !a.zone.is_empty() {
+    return false
+  }
+  if a.bits == 32 {
+    return v4_of(a) == 0
+  }
+  if a.bits == 128 {
+    return hi_of(a) == 0 && lo_of(a) == 0
+  }
+  false
+}
+
+pub fn (a: Addr) is_link_local_unicast() -> Bool {
+  let a1 = a.unmap()
+  if a1.bits == 32 {
+    let v = v4_of(a1)
+    return (v >> 24) == 169 && ((v >> 16) & 255) == 254
+  }
+  if a1.bits == 128 {
+    return ((hi_of(a1) >> 54) & 1023) == 1018
+  }
+  false
+}
+
+pub fn (a: Addr) is_multicast() -> Bool {
+  let a1 = a.unmap()
+  if a1.bits == 32 {
+    return ((v4_of(a1) >> 24) & 240) == 224
+  }
+  if a1.bits == 128 {
+    return ((hi_of(a1) >> 56) & 255) == 255
+  }
+  false
+}
+
 /// 4 bytes for IPv4, 16 for IPv6 (Go's AsSlice).
-fn (a: Addr) bytes() -> Bytes
+pub fn (a: Addr) bytes() -> Bytes {
+  if a.bits == 32 {
+    let v = v4_of(a)
+    var out = BytesBuilder.with_capacity(4)
+    out.write_byte(UInt8(v >> 24))
+    out.write_byte(UInt8((v >> 16) & 255))
+    out.write_byte(UInt8((v >> 8) & 255))
+    out.write_byte(UInt8(v & 255))
+    return out.freeze()
+  }
+  if a.bits == 128 {
+    return words_bytes(hi_of(a), lo_of(a))
+  }
+  b""
+}
+
 /// Go's String: `1.2.3.4`, `2001:db8::1`, `::ffff:1.2.3.4`, `fe80::1%eth0`.
-fn (a: Addr) display() -> Str
-fn (p: Prefix) contains(a: Addr) -> Bool
-fn (p: Prefix) masked() -> Prefix
-fn (p: Prefix) display() -> Str
+pub fn (a: Addr) display() -> Str {
+  if a.bits == 0 {
+    return "invalid IP"
+  }
+  if a.bits == 32 {
+    return string4(v4_of(a))
+  }
+  if a.is_4in6() {
+    let z = if a.zone.is_empty() { "" } else { "%${a.zone}" }
+    return "::ffff:${string4(v4_of(a))}${z}"
+  }
+  string6(a)
+}
+
+pub fn (p: Prefix) contains(a: Addr) -> Bool {
+  if p.addr.bits == 0 || !a.zone.is_empty() || a.bits == 0 || p.addr.bits != a.bits {
+    return false
+  }
+  let k = if a.bits == 32 { p.len + 96 } else { p.len }
+  let m1 = bits_mask(k)
+  let m2 = bits_mask(k - 64)
+  (hi_of(a) & m1) == (hi_of(p.addr) & m1) && (lo_of(a) & m2) == (lo_of(p.addr) & m2)
+}
+
+pub fn (p: Prefix) masked() -> Prefix {
+  if p.addr.bits == 0 {
+    return p
+  }
+  let k = if p.addr.bits == 32 { p.len + 96 } else { p.len }
+  Prefix{addr: mk(p.addr.bits, hi_of(p.addr) & bits_mask(k), lo_of(p.addr) & bits_mask(k - 64), ""), len: p.len}
+}
+
+pub fn (p: Prefix) display() -> Str {
+  if p.addr.bits == 0 {
+    return "invalid Prefix"
+  }
+  "${p.addr.display()}/${p.len}"
+}
 
 /// Go's ParseAddrPort: `1.2.3.4:80`, `[2001:db8::1]:443`, `[fe80::1%eth0]:22`
 /// (an IPv6 address in brackets, an IPv4 one without).
-fn parse_addr_port(s: Str) -> AddrPort ! ParseErr
+pub fn parse_addr_port(s: Str) -> AddrPort ! ParseErr {
+  let b = s.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != 58 {
+    i -= 1
+  }
+  if i < 0 {
+    return Err(ap_err("not an ip:port"))
+  }
+  var ip = s[0..i]
+  let port = s[i + 1..]
+  if ip.is_empty() {
+    return Err(ap_err("no IP"))
+  }
+  if port.is_empty() {
+    return Err(ap_err("no port"))
+  }
+  var v6 = false
+  let ib = ip.bytes()
+  if ib[0] == 91 {
+    if ib.len() < 2 || ib[ib.len() - 1] != 93 {
+      return Err(ap_err("missing ]"))
+    }
+    ip = ip[1..ip.len() - 1]
+    v6 = true
+  }
+  // ParseUint base 10 of at most 16 bits: digits only, leading zeros allowed
+  var n = 0
+  for c in port.bytes() {
+    if c < 48 || c > 57 {
+      return Err(ap_err("invalid port ${port.quote()} parsing ${s.quote()}"))
+    }
+    n = n * 10 + Int(c) - 48
+    if n > 65535 {
+      return Err(ap_err("invalid port ${port.quote()} parsing ${s.quote()}"))
+    }
+  }
+  let a = parse_addr(ip)?
+  if v6 && a.bits == 32 {
+    return Err(ap_err("invalid ip:port ${s.quote()}, square brackets can only be used with IPv6 addresses"))
+  }
+  if !v6 && a.bits == 128 {
+    return Err(ap_err("invalid ip:port ${s.quote()}, IPv6 addresses must be surrounded by square brackets"))
+  }
+  AddrPort{addr: a, port: n}
+}
+
 /// Go's AddrPortFrom; port is 0 to 65535 (its low 16 bits otherwise, as
 /// Go's uint16).
-fn addr_port(addr: Addr, port: Int) -> AddrPort
+pub fn addr_port(addr: Addr, port: Int) -> AddrPort { AddrPort{addr: addr, port: port & 65535} }
+
 /// Go's AddrPort.String: `1.2.3.4:80`, `[2001:db8::1]:443`.
-fn (p: AddrPort) display() -> Str
+pub fn (p: AddrPort) display() -> Str {
+  match p.addr.bits {
+    0 => "invalid AddrPort"
+    32 => "${p.addr.display()}:${p.port}"
+    _ => "[${p.addr.display()}]:${p.port}"
+  }
+}
+
 /// Go's Addr.Prefix: the prefix of the first bits bits, the rest zeroed
 /// and the zone dropped; an error for bits below 0 or past the family's.
-fn (a: Addr) prefix(bits: Int) -> Prefix ! ParseErr
+pub fn (a: Addr) prefix(bits: Int) -> Prefix ! ParseErr {
+  if bits < 0 {
+    return Err(ap_err("negative Prefix bits"))
+  }
+  if a.bits == 0 {
+    return Prefix{addr: a, len: 0}
+  }
+  if a.bits == 32 && bits > 32 {
+    return Err(ap_err("prefix length ${bits} too large for IPv4"))
+  }
+  if a.bits == 128 && bits > 128 {
+    return Err(ap_err("prefix length ${bits} too large for IPv6"))
+  }
+  let k = if a.bits == 32 { bits + 96 } else { bits }
+  Prefix{addr: mk(a.bits, hi_of(a) & bits_mask(k), lo_of(a) & bits_mask(k - 64), ""), len: bits}
+}
+
 /// Go's Addr.Next and Prev: the address after or before, None past the
 /// end of the family (the zone kept).
-fn (a: Addr) next() -> Addr?
-fn (a: Addr) prev() -> Addr?
+pub fn (a: Addr) next() -> Addr? {
+  if a.bits == 0 {
+    return None
+  }
+  var hi = hi_of(a)
+  let lo = lo_of(a).wrapping_add(1)
+  if lo == 0 {
+    hi = hi.wrapping_add(1)
+  }
+  if a.bits == 32 {
+    if (lo & 4294967295) == 0 {
+      return None
+    }
+  } else if hi == 0 && lo == 0 {
+    return None
+  }
+  Some(mk(a.bits, hi, lo, a.zone))
+}
+
+pub fn (a: Addr) prev() -> Addr? {
+  if a.bits == 0 {
+    return None
+  }
+  var hi = hi_of(a)
+  let lo0 = lo_of(a)
+  if a.bits == 32 {
+    if (lo0 & 4294967295) == 0 {
+      return None
+    }
+  } else if hi == 0 && lo0 == 0 {
+    return None
+  }
+  if lo0 == 0 {
+    hi = hi.wrapping_sub(1)
+  }
+  Some(mk(a.bits, hi, lo0.wrapping_sub(1), a.zone))
+}
+
 /// Go's WithZone: an IPv6 address with zone (empty: none); an IPv4
 /// address as it is.
-fn (a: Addr) with_zone(zone: Str) -> Addr
+pub fn (a: Addr) with_zone(zone: Str) -> Addr {
+  if a.bits != 128 {
+    return a
+  }
+  mk(a.bits, hi_of(a), lo_of(a), zone)
+}
+
 /// Go's PrefixFrom: addr (its zone dropped, not masked) and bits; None
 /// for bits below 0 or past the family's.
-fn prefix_from(addr: Addr, bits: Int) -> Prefix?
+pub fn prefix_from(addr: Addr, bits: Int) -> Prefix? {
+  let max = if addr.bits == 128 { 128 } else { 32 }
+  if addr.bits == 0 || bits < 0 || bits > max {
+    return None
+  }
+  Some(Prefix{addr: mk(addr.bits, hi_of(addr), lo_of(addr), ""), len: bits})
+}
+
 /// Go's Prefix.Bits.
-fn (p: Prefix) bits() -> Int
+pub fn (p: Prefix) bits() -> Int { p.len }
+
 /// Go's Prefix.Overlaps: whether some address is in both.
-fn (p: Prefix) overlaps(o: Prefix) -> Bool
+pub fn (p: Prefix) overlaps(o: Prefix) -> Bool {
+  if p.addr.bits == 0 || o.addr.bits == 0 {
+    return false
+  }
+  if p.addr == o.addr && p.len == o.len {
+    return true
+  }
+  if p.addr.bits != o.addr.bits {
+    return false
+  }
+  let min = if p.len < o.len { p.len } else { o.len }
+  if min == 0 {
+    return true
+  }
+  match (p.addr.prefix(min), o.addr.prefix(min)) {
+    (Ok(a), Ok(b)) => a.addr == b.addr
+    _ => false
+  }
+}
+
 /// Go's Prefix.IsSingleIP: the length is the family's.
-fn (p: Prefix) is_single_ip() -> Bool
+pub fn (p: Prefix) is_single_ip() -> Bool { p.addr.bits != 0 && p.len == p.addr.bits }
+
+fn addr_err(input: Str, msg: Str, at: Str) -> ParseErr {
+  if at.is_empty() {
+    return ParseErr{msg: "ParseAddr(${input.quote()}): ${msg}"}
+  }
+  ParseErr{msg: "ParseAddr(${input.quote()}): ${msg} (at ${at.quote()})"}
+}
+
+/// The top bit of a word: flipped in an Addr's stored words so that the
+/// derived order of the signed words is the order of the address bytes
+/// (the same trick as std/uuid).
+const SIGN: Int = Int.min
+
+/// The Addr of the words hi and lo (the 16 bytes, the first highest).
+fn mk(bits: Int, hi: Int, lo: Int, zone: Str) -> Addr {
+  Addr{bits: bits, hi: hi ^ SIGN, lo: lo ^ SIGN, zone: zone}
+}
+
+fn hi_of(a: Addr) -> Int { a.hi ^ SIGN }
+
+fn lo_of(a: Addr) -> Int { a.lo ^ SIGN }
+
+/// The IPv4 value (the last 4 bytes) of an address.
+fn v4_of(a: Addr) -> Int { (a.lo ^ SIGN) & 4294967295 }
+
+/// x shifted right by n bits, zeros coming in (0 <= n).
+fn lsr(x: Int, n: Int) -> Int {
+  if n <= 0 {
+    return x
+  }
+  if n >= 64 {
+    return 0
+  }
+  (x >> n) & ((1 << (64 - n)) - 1)
+}
+
+/// x shifted left by n bits (0 <= n).
+fn shl(x: Int, n: Int) -> Int {
+  if n <= 0 {
+    return x
+  }
+  if n >= 64 {
+    return 0
+  }
+  x.wrapping_shl(n)
+}
+
+/// The word with its first k bits set (0 <= k <= 64 is clamped).
+fn bits_mask(k: Int) -> Int {
+  if k <= 0 {
+    return 0
+  }
+  if k >= 64 {
+    return -1
+  }
+  (-1).wrapping_shl(64 - k)
+}
+
+/// The 16 bytes of the words hi and lo.
+fn words_bytes(hi: Int, lo: Int) -> Bytes {
+  var out = BytesBuilder.with_capacity(16)
+  for k in 0..8 {
+    out.write_byte(UInt8((hi >> (56 - 8 * k)) & 255))
+  }
+  for k in 0..8 {
+    out.write_byte(UInt8((lo >> (56 - 8 * k)) & 255))
+  }
+  out.freeze()
+}
+
+fn word_at(b: Bytes, i: Int) -> Int {
+  var w = 0
+  for k in 0..8 {
+    w = w.wrapping_shl(8) | Int(b[i + k])
+  }
+  w
+}
+
+/// The IPv4 address v (the four octets as an Int), as Go keeps it:
+/// ::ffff:a.b.c.d.
+fn from4(v: Int) -> Addr { mk(32, 0, 281470681743360 | v, "") }
+
+/// The value of b when it is a plain dotted quad (four fields of 1 to 3
+/// digits, no leading zero, each at most 255), else -1: one pass for the
+/// usual address; anything else, an error included, takes parse_addr's
+/// general path and its error text.
+fn parse4_plain(b: Bytes) -> Int {
+  let n = b.len()
+  if n < 7 || n > 15 {
+    return -1
+  }
+  var fields = 0
+  var val = 0
+  var dig = 0
+  var dots = 0
+  for i in 0..n {
+    let c = Int(b[i])
+    if c >= 48 && c <= 57 {
+      if dig == 1 && val == 0 {
+        return -1
+      }
+      val = val * 10 + c - 48
+      dig += 1
+    } else if c == 46 && dig > 0 && dots < 3 {
+      if val > 255 {
+        return -1
+      }
+      fields = (fields << 8) | val
+      dots += 1
+      val = 0
+      dig = 0
+    } else {
+      return -1
+    }
+  }
+  if dots != 3 || dig == 0 || val > 255 {
+    return -1
+  }
+  (fields << 8) | val
+}
+
+/// parseIPv4Fields over input[off..end]: the four octets as an Int (the
+/// first highest) or the error.
+fn ipv4_fields(input: Str, off: Int, end: Int) -> Int ! ParseErr {
+  let s = input.bytes()[off..end]
+  var fields = 0
+  var val = 0
+  var pos = 0
+  var dig = 0
+  var i = 0
+  while i < s.len() {
+    let c = s[i]
+    if c >= 48 && c <= 57 {
+      if dig == 1 && val == 0 {
+        return Err(addr_err(input, "IPv4 field has octet with leading zero", ""))
+      }
+      val = val * 10 + Int(c) - 48
+      dig += 1
+      if val > 255 {
+        return Err(addr_err(input, "IPv4 field has value >255", ""))
+      }
+    } else if c == 46 {
+      if i == 0 || i == s.len() - 1 || s[i - 1] == 46 {
+        return Err(addr_err(input, "IPv4 field must have at least one digit", s[i..].to_str() ?? ""))
+      }
+      if pos == 3 {
+        return Err(addr_err(input, "IPv4 address too long", ""))
+      }
+      fields = (fields << 8) | val
+      pos += 1
+      val = 0
+      dig = 0
+    } else {
+      return Err(addr_err(input, "unexpected character", s[i..].to_str() ?? ""))
+    }
+    i += 1
+  }
+  if pos < 3 {
+    return Err(addr_err(input, "IPv4 address too short", ""))
+  }
+  (fields << 8) | val
+}
+
+const HEXVAL: Bytes = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\xff\xff\xff\xff\xff\xff\xff\x0a\x0b\x0c\x0d\x0e\x0f\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x0a\x0b\x0c\x0d\x0e\x0f\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+
+/// The value of hex digit c, -1 for another byte (one table load).
+fn hexval(c: UInt8) -> Int {
+  let ci = Int(c)
+  let v = Int(HEXVAL[ci])
+  if v == 255 {
+    return -1
+  }
+  v
+}
+
+/// The text of b from p (an error's `at`).
+fn rest_text(b: Bytes, p: Int) -> Str { b[p..].to_str() ?? "" }
+
+fn parse_ipv6(input: Str) -> Addr ! ParseErr {
+  var s = input
+  var zone = ""
+  let ib = input.bytes()
+  var pz = 0
+  while pz < ib.len() && ib[pz] != 37 {
+    pz += 1
+  }
+  if pz < ib.len() {
+    s = input[0..pz]
+    zone = input[pz + 1..]
+    if zone.is_empty() {
+      return Err(addr_err(input, "zone must be a non-empty string", ""))
+    }
+  }
+  // the groups read so far, as the words of the 16 bytes (group g at
+  // bits 48 - 16 * (g % 4) of the word g / 4)
+  var th = 0
+  var tl = 0
+  var ellipsis = -1
+  let b = s.bytes()
+  let n = b.len()
+  var p = 0
+  if n >= 2 && b[0] == 58 && b[1] == 58 {
+    ellipsis = 0
+    p = 2
+    if p == n {
+      return mk(128, 0, 0, zone)
+    }
+  }
+  var i = 0
+  while i < 16 {
+    var off = 0
+    var acc = 0
+    while p + off < n {
+      let hv = hexval(b[p + off])
+      if hv < 0 {
+        break
+      }
+      acc = acc * 16 + hv
+      if off > 3 {
+        return Err(addr_err(input, "each group must have 4 or less digits", rest_text(b, p)))
+      }
+      if acc > 65535 {
+        return Err(addr_err(input, "IPv6 field has value >=2^16", rest_text(b, p)))
+      }
+      off += 1
+    }
+    if off == 0 {
+      return Err(addr_err(input, "each colon-separated field must have at least one digit", rest_text(b, p)))
+    }
+    if p + off < n && b[p + off] == 46 {
+      if ellipsis < 0 && i != 12 {
+        return Err(addr_err(input, "embedded IPv4 address must replace the final 2 fields of the address", rest_text(b, p)))
+      }
+      if i + 4 > 16 {
+        return Err(addr_err(input, "too many hex fields to fit an embedded IPv4 at the end of the address", rest_text(b, p)))
+      }
+      var end = input.len()
+      if zone.len() > 0 {
+        end -= zone.len() + 1
+      }
+      let f = ipv4_fields(input, end - (n - p), end)?
+      let g = i / 2
+      if g < 4 {
+        th = th | (shl(f >> 16, 48 - 16 * g))
+      } else {
+        tl = tl | (shl(f >> 16, 48 - 16 * (g - 4)))
+      }
+      if g + 1 < 4 {
+        th = th | (shl(f & 65535, 48 - 16 * (g + 1)))
+      } else {
+        tl = tl | (shl(f & 65535, 48 - 16 * (g + 1 - 4)))
+      }
+      p = n
+      i += 4
+      break
+    }
+    let g = i / 2
+    if g < 4 {
+      th = th | shl(acc, 48 - 16 * g)
+    } else {
+      tl = tl | shl(acc, 48 - 16 * (g - 4))
+    }
+    i += 2
+    p += off
+    if p == n {
+      break
+    }
+    if b[p] != 58 {
+      return Err(addr_err(input, "unexpected character, want colon", rest_text(b, p)))
+    }
+    if n - p == 1 {
+      return Err(addr_err(input, "colon must be followed by more characters", rest_text(b, p)))
+    }
+    p += 1
+    if b[p] == 58 {
+      if ellipsis >= 0 {
+        return Err(addr_err(input, "multiple :: in address", rest_text(b, p)))
+      }
+      ellipsis = i
+      p += 1
+      if p == n {
+        break
+      }
+    }
+  }
+  if p < n {
+    return Err(addr_err(input, "trailing garbage after address", rest_text(b, p)))
+  }
+  if i < 16 {
+    if ellipsis < 0 {
+      return Err(addr_err(input, "address string too short", ""))
+    }
+    // the groups from the :: on move right by the missing zeros
+    let mh = bits_mask(8 * ellipsis)
+    let ml = bits_mask(8 * (ellipsis - 8))
+    let sh = 8 * (16 - i)
+    let th2 = th & (mh ^ -1)
+    let tl2 = tl & (ml ^ -1)
+    var nh = 0
+    var nl = 0
+    if sh >= 64 {
+      nl = lsr(th2, sh - 64)
+    } else {
+      nh = lsr(th2, sh)
+      nl = lsr(tl2, sh) | shl(th2, 64 - sh)
+    }
+    return mk(128, (th & mh) | nh, (tl & ml) | nl, zone)
+  }
+  if ellipsis >= 0 {
+    return Err(addr_err(input, "the :: must expand to at least one field of zeros", ""))
+  }
+  mk(128, th, tl, zone)
+}
+
+/// The octet v (0 to 255) in decimal.
+fn write_octet(var out: BytesBuilder, v: Int) {
+  if v >= 100 {
+    out.write_byte(UInt8(48 + v / 100))
+  }
+  if v >= 10 {
+    out.write_byte(UInt8(48 + v / 10 % 10))
+  }
+  out.write_byte(UInt8(48 + v % 10))
+}
+
+/// The dotted decimal of the IPv4 address v: each octet's digits and dot are
+/// packed into the little endian words lo and hi by shifts and ors (no
+/// builder call a byte: bench/perf/netip display4 was 1.98 of Go's wall),
+/// appended to a 16 byte builder with write_le.
+fn string4(v: Int) -> Str {
+  var lo = 0
+  var hi = 0
+  var n = 0
+  var k = 0
+  while k < 4 {
+    let o = (v >> (24 - 8 * k)) & 255
+    var d = 1
+    if o >= 100 {
+      d = 3
+    } else if o >= 10 {
+      d = 2
+    }
+    // up to 4 bytes: the digits and the dot after all but the last octet
+    var w = 0
+    if d == 3 {
+      w = (48 + o / 100) | ((48 + o / 10 % 10) << 8) | ((48 + o % 10) << 16)
+    } else if d == 2 {
+      w = (48 + o / 10) | ((48 + o % 10) << 8)
+    } else {
+      w = 48 + o
+    }
+    var m = d
+    if k < 3 {
+      w = w | (46 << (8 * d))
+      m += 1
+    }
+    if n < 8 {
+      lo = lo | w.wrapping_shl(8 * n)
+      if n + m > 8 {
+        hi = hi | (w >> (8 * (8 - n)))
+      }
+    } else {
+      hi = hi | w.wrapping_shl(8 * (n - 8))
+    }
+    n += m
+    k += 1
+  }
+  // the n bytes appended a word at a time (decision 0561), where the
+  // builder was zero filled, stored over with two put_le and cut
+  var out = BytesBuilder.with_capacity(16)
+  if n <= 8 {
+    out.write_le(lo, n)
+  } else {
+    out.write_le(lo, 8)
+    out.write_le(hi, n - 8)
+  }
+  // digits and dots: valid UTF-8
+  rt.cast[Bytes, Str](out.freeze())
+}
+
+/// Group i (0 to 7) of the words hi and lo.
+fn group(hi: Int, lo: Int, i: Int) -> Int {
+  if i < 4 {
+    return (hi >> (48 - 16 * i)) & 65535
+  }
+  (lo >> (48 - 16 * (i - 4))) & 65535
+}
+
+const HEXD: Bytes = b"0123456789abcdef"
+
+/// v (a group of 16 bits) in lower case hex without leading zeros.
+fn write_hex16(var out: BytesBuilder, v: Int) {
+  if v >= 4096 {
+    out.write_byte(HEXD[v >> 12])
+  }
+  if v >= 256 {
+    out.write_byte(HEXD[(v >> 8) & 15])
+  }
+  if v >= 16 {
+    out.write_byte(HEXD[(v >> 4) & 15])
+  }
+  out.write_byte(HEXD[v & 15])
+}
+
+fn string6(a: Addr) -> Str {
+  let hi = hi_of(a)
+  let lo = lo_of(a)
+  var zs = 255
+  var ze = 255
+  var i = 0
+  while i < 8 {
+    var j = i
+    while j < 8 && group(hi, lo, j) == 0 {
+      j += 1
+    }
+    let l = j - i
+    if l >= 2 && l > ze - zs {
+      zs = i
+      ze = j
+      i = j
+    }
+    i += 1
+  }
+  var out = BytesBuilder.with_capacity(40)
+  i = 0
+  while i < 8 {
+    if i == zs {
+      out.write_byte(58)
+      out.write_byte(58)
+      i = ze
+      if i >= 8 {
+        break
+      }
+    } else if i > 0 {
+      out.write_byte(58)
+    }
+    write_hex16(out, group(hi, lo, i))
+    i += 1
+  }
+  if !a.zone.is_empty() {
+    out.write_byte(37)
+    out.write_str(a.zone)
+  }
+  // digits, dots, colons, hex and the zone text (a Str): valid
+  rt.cast[Bytes, Str](out.freeze())
+}
+
+fn prefix_err(input: Str, msg: Str) -> ParseErr { ParseErr{msg: "netip.ParsePrefix(${input.quote()}): ${msg}"} }
+
+fn ap_err(msg: Str) -> ParseErr { ParseErr{msg: msg} }

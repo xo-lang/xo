@@ -34,3 +34,4 @@ std/protojson
 std/regexp
 std/uniclass
 std/image
+std/netip

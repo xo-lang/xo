@@ -5184,7 +5184,7 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
 ## 28. std/netip
 
 Status: implemented on every backend (decision 0287, 2026-10-20): Go's
-net/netip, ported natively (`std/native/netip.xo`; Go's results on 3,323
+net/netip, ported (`std/netip.xo`, merged, decision 0597; Go's results on 3,323
 address and prefix cases in `netip_test.xo`, and 4,700 AddrPort, Prefix,
 Next, Prev, WithZone and Overlaps cases since 2026-11-11) and through net/netip on
 the Go backend. Pure but for `lookup` (decision 0406: host's addresses

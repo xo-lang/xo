@@ -8,3 +8,4 @@ std/regexp
 std/uniclass
 std/binary
 std/image
+std/netip

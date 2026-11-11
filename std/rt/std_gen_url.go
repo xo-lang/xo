@@ -122,99 +122,99 @@ func Url_parse_query(tk *Task, v_s string) Result[Url_Values, Url_EscapeErr] {
 	if Str_contains(tk, v_s, ";") {
 		return Err[Url_Values](Url_EscapeErr{F_msg: "invalid semicolon separator in query"})
 	}
-	x_it1147 := v_parts
-x_L1148:
-	for _, x_e1149 := range List_Items(x_it1147) {
-		x_el1150 := x_e1149
-		_ = x_el1150
-		var v_pair string = x_el1150
+	x_it1232 := v_parts
+x_L1233:
+	for _, x_e1234 := range List_Items(x_it1232) {
+		x_el1235 := x_e1234
+		_ = x_el1235
+		var v_pair string = x_el1235
 		_ = v_pair
 		{
 			if Str_is_empty(tk, v_pair) {
-				continue x_L1148
+				continue x_L1233
 			}
-			var x_v1151 Tuple2[string, string]
-			x_m1152 := Str_find(tk, v_pair, "=")
-			_ = x_m1152
-		x_M1153:
+			var x_v1236 Tuple2[string, string]
+			x_m1237 := Str_find(tk, v_pair, "=")
+			_ = x_m1237
+		x_M1238:
 			switch {
 			default:
-				if x_m1152.Some {
-					var v_i int64 = x_m1152.V
+				if x_m1237.Some {
+					var v_i int64 = x_m1237.V
 					_ = v_i
-					x_v1151 = Tuple2[string, string]{F0: StrSlice(v_pair, int64(0), v_i, true, true, "std/url.xo:69:19"), F1: StrSlice(v_pair, AddIUp(v_i, int64(1), "std/url.xo:69:36"), 0, true, false, "std/url.xo:69:31")}
-					break x_M1153
+					x_v1236 = Tuple2[string, string]{F0: StrSlice(v_pair, int64(0), v_i, true, true, "std/url.xo:69:19"), F1: StrSlice(v_pair, AddIUp(v_i, int64(1), "std/url.xo:69:36"), 0, true, false, "std/url.xo:69:31")}
+					break x_M1238
 				}
-				if !x_m1152.Some {
-					x_v1151 = Tuple2[string, string]{F0: v_pair, F1: ""}
-					break x_M1153
+				if !x_m1237.Some {
+					x_v1236 = Tuple2[string, string]{F0: v_pair, F1: ""}
+					break x_M1238
 				}
 				panic(Unreachable("std/url.xo:68:20"))
 			}
-			x_let1154 := x_v1151
-			_ = x_let1154
-			var v_k0 string = x_let1154.F0
+			x_let1239 := x_v1236
+			_ = x_let1239
+			var v_k0 string = x_let1239.F0
 			_ = v_k0
-			var v_x0 string = x_let1154.F1
+			var v_x0 string = x_let1239.F1
 			_ = v_x0
-			x_r1155 := Url_query_unescape(tk, v_k0)
-			if !x_r1155.Ok {
-				return ErrTr[Url_Values](x_r1155.E, Frame1(x_r1155.Tr, "url.parse_query", "std/url.xo:73", "s", v_s))
+			x_r1240 := Url_query_unescape(tk, v_k0)
+			if !x_r1240.Ok {
+				return ErrTr[Url_Values](x_r1240.E, Frame1(x_r1240.Tr, "url.parse_query", "std/url.xo:73", "s", v_s))
 			}
-			var v_k string = x_r1155.V
+			var v_k string = x_r1240.V
 			_ = v_k
-			x_r1156 := Url_query_unescape(tk, v_x0)
-			if !x_r1156.Ok {
-				return ErrTr[Url_Values](x_r1156.E, Frame1(x_r1156.Tr, "url.parse_query", "std/url.xo:74", "s", v_s))
+			x_r1241 := Url_query_unescape(tk, v_x0)
+			if !x_r1241.Ok {
+				return ErrTr[Url_Values](x_r1241.E, Frame1(x_r1241.Tr, "url.parse_query", "std/url.xo:74", "s", v_s))
 			}
-			var v_x string = x_r1156.V
+			var v_x string = x_r1241.V
 			_ = v_x
 			if v_big {
 				v_k = Str_clone(tk, v_k)
 				v_x = Str_clone(tk, v_x)
 			}
-			x_a1157 := v_k
-			x_m1158 := Map_get[string, int64](tk, v_at, x_a1157)
-			_ = x_m1158
-		x_M1159:
+			x_a1242 := v_k
+			x_m1243 := Map_get[string, int64](tk, v_at, x_a1242)
+			_ = x_m1243
+		x_M1244:
 			switch {
 			default:
-				if x_m1158.Some {
-					var v_i_1 int64 = x_m1158.V
+				if x_m1243.Some {
+					var v_i_1 int64 = x_m1243.V
 					_ = v_i_1
 					{
 						var v_xs List[string] = List_Own(List_At(v_vs, v_i_1, "std/url.xo:81:18"))
 						_ = v_xs
-						x_pv1160 := v_x
+						x_pv1245 := v_x
 						if List_CanPush(v_xs) {
-							v_xs = List_PushFast(v_xs, x_pv1160)
+							v_xs = List_PushFast(v_xs, x_pv1245)
 						} else {
-							v_xs = List_PushSlow(v_xs, x_pv1160)
+							v_xs = List_PushSlow(v_xs, x_pv1245)
 						}
 						_ = Unit{}
 						List_set[List[string]](tk, &v_vs, v_i_1, List_Own(v_xs))
 					}
-					break x_M1159
+					break x_M1244
 				}
-				if !x_m1158.Some {
+				if !x_m1243.Some {
 					{
 						Map_put[string, int64](tk, &v_at, v_k, List_len[string](tk, v_ks))
-						x_pv1161 := v_k
+						x_pv1246 := v_k
 						if List_CanPush(v_ks) {
-							v_ks = List_PushFast(v_ks, x_pv1161)
+							v_ks = List_PushFast(v_ks, x_pv1246)
 						} else {
-							v_ks = List_PushSlow(v_ks, x_pv1161)
+							v_ks = List_PushSlow(v_ks, x_pv1246)
 						}
 						_ = Unit{}
-						x_pv1162 := ListOf[string](v_x)
+						x_pv1247 := ListOf[string](v_x)
 						if List_CanPush(v_vs) {
-							v_vs = List_PushFast(v_vs, x_pv1162)
+							v_vs = List_PushFast(v_vs, x_pv1247)
 						} else {
-							v_vs = List_PushSlow(v_vs, x_pv1162)
+							v_vs = List_PushSlow(v_vs, x_pv1247)
 						}
 						_ = Unit{}
 					}
-					break x_M1159
+					break x_M1244
 				}
 				panic(Unreachable("std/url.xo:79:5"))
 			}
@@ -224,28 +224,28 @@ x_L1148:
 }
 
 func (v_v Url_Values) M_get(tk *Task, v_key string) Option[string] {
-	x_a1164 := v_key
-	x_r1163 := List_index_of[string](tk, v_v.F_ks, x_a1164)
-	if !x_r1163.Some {
+	x_a1249 := v_key
+	x_r1248 := List_index_of[string](tk, v_v.F_ks, x_a1249)
+	if !x_r1248.Some {
 		return None[string]()
 	}
-	var v_i int64 = x_r1163.V
+	var v_i int64 = x_r1248.V
 	_ = v_i
 	return List_first[string](tk, List_At(v_v.F_vs, v_i, "std/url.xo:98:3"))
 }
 
 func (v_v Url_Values) M_all(tk *Task, v_key string) List[string] {
-	x_a1165 := v_key
-	x_m1166 := List_index_of[string](tk, v_v.F_ks, x_a1165)
-	_ = x_m1166
+	x_a1250 := v_key
+	x_m1251 := List_index_of[string](tk, v_v.F_ks, x_a1250)
+	_ = x_m1251
 	switch {
 	default:
-		if x_m1166.Some {
-			var v_i int64 = x_m1166.V
+		if x_m1251.Some {
+			var v_i int64 = x_m1251.V
 			_ = v_i
 			return List_Own(List_At(v_v.F_vs, v_i, "std/url.xo:104:16"))
 		}
-		if !x_m1166.Some {
+		if !x_m1251.Some {
 			return List[string]{}
 		}
 		panic(Unreachable("std/url.xo:103:3"))
@@ -253,8 +253,8 @@ func (v_v Url_Values) M_all(tk *Task, v_key string) List[string] {
 }
 
 func (v_v Url_Values) M_has(tk *Task, v_key string) bool {
-	x_a1168 := v_key
-	return List_contains[string](tk, v_v.F_ks, x_a1168)
+	x_a1253 := v_key
+	return List_contains[string](tk, v_v.F_ks, x_a1253)
 }
 
 func (v_v Url_Values) M_keys(tk *Task) List[string] {
@@ -266,18 +266,18 @@ func (v_v Url_Values) M_encode(tk *Task) string {
 	_ = v_out
 	var v_order List[int64] = List[int64]{}
 	_ = v_order
-	x_it1169 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_v.F_ks), Incl: false}
-	for x_i1171 := x_it1169.Lo; x_i1171 < x_it1169.Hi; x_i1171++ {
-		x_el1172 := x_i1171
-		_ = x_el1172
-		var v_i int64 = x_el1172
+	x_it1254 := Range[int64]{Lo: int64(0), Hi: List_len[string](tk, v_v.F_ks), Incl: false}
+	for x_i1256 := x_it1254.Lo; x_i1256 < x_it1254.Hi; x_i1256++ {
+		x_el1257 := x_i1256
+		_ = x_el1257
+		var v_i int64 = x_el1257
 		_ = v_i
 		{
-			x_pv1173 := v_i
+			x_pv1258 := v_i
 			if List_CanPush(v_order) {
-				v_order = List_PushFast(v_order, x_pv1173)
+				v_order = List_PushFast(v_order, x_pv1258)
 			} else {
-				v_order = List_PushSlow(v_order, x_pv1173)
+				v_order = List_PushSlow(v_order, x_pv1258)
 			}
 			_ = Unit{}
 		}
@@ -285,25 +285,25 @@ func (v_v Url_Values) M_encode(tk *Task) string {
 	var v_ks List[string] = List_Own(v_v.F_ks)
 	_ = v_ks
 	v_ks.XoMark()
-	x_a1174 := func(tk *Task, v_i_1 int64) Result[string, Never] {
+	x_a1259 := func(tk *Task, v_i_1 int64) Result[string, Never] {
 		_ = v_i_1
 		return Ok[string, Never](List_At(v_ks, v_i_1, "std/url.xo:125:33"))
 	}
-	v_order = List_sort_by[int64, string, Never](tk, v_order, x_a1174).V
-	x_it1175 := v_order
-	for _, x_e1177 := range List_Items(x_it1175) {
-		x_el1178 := x_e1177
-		_ = x_el1178
-		var v_i_2 int64 = x_el1178
+	v_order = List_sort_by[int64, string, Never](tk, v_order, x_a1259).V
+	x_it1260 := v_order
+	for _, x_e1262 := range List_Items(x_it1260) {
+		x_el1263 := x_e1262
+		_ = x_el1263
+		var v_i_2 int64 = x_el1263
 		_ = v_i_2
 		{
 			var v_ek string = Url_query_escape(tk, List_At(v_ks, v_i_2, "std/url.xo:127:27"))
 			_ = v_ek
-			x_it1179 := List_At(v_v.F_vs, v_i_2, "std/url.xo:128:14")
-			for _, x_e1181 := range List_Items(x_it1179) {
-				x_el1182 := x_e1181
-				_ = x_el1182
-				var v_x string = x_el1182
+			x_it1264 := List_At(v_v.F_vs, v_i_2, "std/url.xo:128:14")
+			for _, x_e1266 := range List_Items(x_it1264) {
+				x_el1267 := x_e1266
+				_ = x_el1267
+				var v_x string = x_el1267
 				_ = v_x
 				{
 					if v_out.M_len(tk) > int64(0) {
@@ -320,42 +320,42 @@ func (v_v Url_Values) M_encode(tk *Task) string {
 }
 
 func (v_v *Url_Values) M_add(tk *Task, v_key string, v_value string) {
-	x_a1183 := v_key
-	x_m1184 := List_index_of[string](tk, (*v_v).F_ks, x_a1183)
-	_ = x_m1184
+	x_a1268 := v_key
+	x_m1269 := List_index_of[string](tk, (*v_v).F_ks, x_a1268)
+	_ = x_m1269
 	switch {
 	default:
-		if x_m1184.Some {
-			var v_i int64 = x_m1184.V
+		if x_m1269.Some {
+			var v_i int64 = x_m1269.V
 			_ = v_i
 			{
 				var v_xs List[string] = List_Own(List_At((*v_v).F_vs, v_i, "std/url.xo:144:16"))
 				_ = v_xs
-				x_pv1186 := v_value
+				x_pv1271 := v_value
 				if List_CanPush(v_xs) {
-					v_xs = List_PushFast(v_xs, x_pv1186)
+					v_xs = List_PushFast(v_xs, x_pv1271)
 				} else {
-					v_xs = List_PushSlow(v_xs, x_pv1186)
+					v_xs = List_PushSlow(v_xs, x_pv1271)
 				}
 				_ = Unit{}
 				List_set[List[string]](tk, &(*v_v).F_vs, v_i, List_Own(v_xs))
 				return
 			}
 		}
-		if !x_m1184.Some {
+		if !x_m1269.Some {
 			{
-				x_pv1187 := v_key
+				x_pv1272 := v_key
 				if List_CanPush((*v_v).F_ks) {
-					(*v_v).F_ks = List_PushFast((*v_v).F_ks, x_pv1187)
+					(*v_v).F_ks = List_PushFast((*v_v).F_ks, x_pv1272)
 				} else {
-					(*v_v).F_ks = List_PushSlow((*v_v).F_ks, x_pv1187)
+					(*v_v).F_ks = List_PushSlow((*v_v).F_ks, x_pv1272)
 				}
 				_ = Unit{}
-				x_pv1188 := ListOf[string](v_value)
+				x_pv1273 := ListOf[string](v_value)
 				if List_CanPush((*v_v).F_vs) {
-					(*v_v).F_vs = List_PushFast((*v_v).F_vs, x_pv1188)
+					(*v_v).F_vs = List_PushFast((*v_v).F_vs, x_pv1273)
 				} else {
-					(*v_v).F_vs = List_PushSlow((*v_v).F_vs, x_pv1188)
+					(*v_v).F_vs = List_PushSlow((*v_v).F_vs, x_pv1273)
 				}
 				_ = Unit{}
 				return
@@ -366,31 +366,31 @@ func (v_v *Url_Values) M_add(tk *Task, v_key string, v_value string) {
 }
 
 func (v_v *Url_Values) M_set(tk *Task, v_key string, v_value string) {
-	x_a1189 := v_key
-	x_m1190 := List_index_of[string](tk, (*v_v).F_ks, x_a1189)
-	_ = x_m1190
+	x_a1274 := v_key
+	x_m1275 := List_index_of[string](tk, (*v_v).F_ks, x_a1274)
+	_ = x_m1275
 	switch {
 	default:
-		if x_m1190.Some {
-			var v_i int64 = x_m1190.V
+		if x_m1275.Some {
+			var v_i int64 = x_m1275.V
 			_ = v_i
 			List_set[List[string]](tk, &(*v_v).F_vs, v_i, ListOf[string](v_value))
 			return
 		}
-		if !x_m1190.Some {
+		if !x_m1275.Some {
 			{
-				x_pv1192 := v_key
+				x_pv1277 := v_key
 				if List_CanPush((*v_v).F_ks) {
-					(*v_v).F_ks = List_PushFast((*v_v).F_ks, x_pv1192)
+					(*v_v).F_ks = List_PushFast((*v_v).F_ks, x_pv1277)
 				} else {
-					(*v_v).F_ks = List_PushSlow((*v_v).F_ks, x_pv1192)
+					(*v_v).F_ks = List_PushSlow((*v_v).F_ks, x_pv1277)
 				}
 				_ = Unit{}
-				x_pv1193 := ListOf[string](v_value)
+				x_pv1278 := ListOf[string](v_value)
 				if List_CanPush((*v_v).F_vs) {
-					(*v_v).F_vs = List_PushFast((*v_v).F_vs, x_pv1193)
+					(*v_v).F_vs = List_PushFast((*v_v).F_vs, x_pv1278)
 				} else {
-					(*v_v).F_vs = List_PushSlow((*v_v).F_vs, x_pv1193)
+					(*v_v).F_vs = List_PushSlow((*v_v).F_vs, x_pv1278)
 				}
 				_ = Unit{}
 				return
@@ -401,10 +401,10 @@ func (v_v *Url_Values) M_set(tk *Task, v_key string, v_value string) {
 }
 
 func (v_v *Url_Values) M_remove(tk *Task, v_key string) {
-	x_a1195 := v_key
-	x_l1194 := List_index_of[string](tk, (*v_v).F_ks, x_a1195)
-	if x_l1194.Some {
-		var v_i int64 = x_l1194.V
+	x_a1280 := v_key
+	x_l1279 := List_index_of[string](tk, (*v_v).F_ks, x_a1280)
+	if x_l1279.Some {
+		var v_i int64 = x_l1279.V
 		_ = v_i
 		var v__k string = List_remove_at[string](tk, &(*v_v).F_ks, v_i)
 		_ = v__k
@@ -430,9 +430,9 @@ func Url_escape_error(tk *Task, v_b Bytes) Url_EscapeErr {
 }
 
 func Url_go_q(tk *Task, v_b Bytes) string {
-	x_l1196 := Bytes_to_str(tk, v_b)
-	if x_l1196.Some {
-		var v_s string = x_l1196.V
+	x_l1281 := Bytes_to_str(tk, v_b)
+	if x_l1281.Some {
+		var v_s string = x_l1281.V
 		_ = v_s
 		return Str_quote(tk, v_s)
 	}
@@ -446,12 +446,12 @@ func Url_go_q(tk *Task, v_b Bytes) string {
 			break
 		}
 		{
-			x_a1198 := v_i
-			x_let1199 := Bytes_decode_rune(tk, v_b, x_a1198)
-			_ = x_let1199
-			var v_r Rune = x_let1199.F0
+			x_a1283 := v_i
+			x_let1284 := Bytes_decode_rune(tk, v_b, x_a1283)
+			_ = x_let1284
+			var v_r Rune = x_let1284.F0
 			_ = v_r
-			var v_n int64 = x_let1199.F1
+			var v_n int64 = x_let1284.F1
 			_ = v_n
 			if (v_r == Rune(65533)) && (v_n == int64(1)) {
 				var v_h string = "0123456789abcdef"
@@ -517,13 +517,13 @@ func Url_unescape(tk *Task, v_s string, v_query bool) Result[string, Url_EscapeE
 			if BytesAt(v_b, v_i, "std/url.xo:243:8") == uint8(37) {
 				v_escapes = AddIUp(v_escapes, int64(1), "std/url.xo:244:7")
 				if (((v_i + int64(2)) >= Bytes_len(tk, v_b)) || !(Url_is_hex(tk, BytesAt(v_b, (v_i+int64(1)), "std/url.xo:245:38")))) || !(Url_is_hex(tk, BytesAt(v_b, (v_i+int64(2)), "std/url.xo:245:59"))) {
-					var x_v1201 int64
+					var x_v1286 int64
 					if (v_i + int64(3)) < Bytes_len(tk, v_b) {
-						x_v1201 = (v_i + int64(3))
+						x_v1286 = (v_i + int64(3))
 					} else {
-						x_v1201 = Bytes_len(tk, v_b)
+						x_v1286 = Bytes_len(tk, v_b)
 					}
-					var v_end int64 = x_v1201
+					var v_end int64 = x_v1286
 					_ = v_end
 					return Err[string](Url_escape_error(tk, BytesSlice(v_b, v_i, v_end, true, true, "std/url.xo:247:33")))
 				}
@@ -551,13 +551,13 @@ func Url_unescape(tk *Task, v_s string, v_query bool) Result[string, Url_EscapeE
 				v_out.M_write_byte(tk, ConvS_uint8(AddS(MulIK(Url_unhex(tk, BytesAt(v_b, (v_i+int64(1)), "std/url.xo:264:34")), int64(16), -576460752303423488, 576460752303423487, "std/url.xo:264:28"), Url_unhex(tk, BytesAt(v_b, (v_i+int64(2)), "std/url.xo:264:57")), "std/url.xo:264:28"), "std/url.xo:264:22"))
 				v_i = (v_i + int64(3))
 			} else {
-				var x_v1203 uint8
+				var x_v1288 uint8
 				if (BytesAt(v_b, v_i, "std/url.xo:267:25") == uint8(43)) && v_query {
-					x_v1203 = uint8(32)
+					x_v1288 = uint8(32)
 				} else {
-					x_v1203 = BytesAt(v_b, v_i, "std/url.xo:267:59")
+					x_v1288 = BytesAt(v_b, v_i, "std/url.xo:267:59")
 				}
-				v_out.M_write_byte(tk, x_v1203)
+				v_out.M_write_byte(tk, x_v1288)
 				v_i = (v_i + int64(1))
 			}
 		}
@@ -566,9 +566,9 @@ func Url_unescape(tk *Task, v_s string, v_query bool) Result[string, Url_EscapeE
 }
 
 func Url_text_of(tk *Task, v_b Bytes) string {
-	x_l1204 := Bytes_to_str(tk, v_b)
-	if x_l1204.Some {
-		var v_s string = x_l1204.V
+	x_l1289 := Bytes_to_str(tk, v_b)
+	if x_l1289.Some {
+		var v_s string = x_l1289.V
 		_ = v_s
 		return v_s
 	}
@@ -583,12 +583,12 @@ func Url_text_of(tk *Task, v_b Bytes) string {
 			break
 		}
 		{
-			x_a1206 := v_i
-			x_let1207 := Bytes_decode_rune(tk, v_b, x_a1206)
-			_ = x_let1207
-			var v_r Rune = x_let1207.F0
+			x_a1291 := v_i
+			x_let1292 := Bytes_decode_rune(tk, v_b, x_a1291)
+			_ = x_let1292
+			var v_r Rune = x_let1292.F0
 			_ = v_r
-			var v_n int64 = x_let1207.F1
+			var v_n int64 = x_let1292.F1
 			_ = v_n
 			if (v_r == Rune(65533)) && (v_n == int64(1)) {
 				v_out.M_write_byte(tk, uint8(37))
@@ -600,14 +600,14 @@ func Url_text_of(tk *Task, v_b Bytes) string {
 			v_i = AddS(v_i, v_n, "std/url.xo:292:5")
 		}
 	}
-	x_t1208 := Bytes_to_str(tk, v_out.M_freeze(tk))
-	var x_c1209 string
-	if x_t1208.Some {
-		x_c1209 = x_t1208.V
+	x_t1293 := Bytes_to_str(tk, v_out.M_freeze(tk))
+	var x_c1294 string
+	if x_t1293.Some {
+		x_c1294 = x_t1293.V
 	} else {
-		x_c1209 = ""
+		x_c1294 = ""
 	}
-	return x_c1209
+	return x_c1294
 }
 
 var Url_OWN_MIN = func() int64 {

@@ -1,5 +1,19 @@
 # std/netip changes
 
+## 2026-11-11: refactor: std/netip is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597 part 1 (rt.cast is a portable intrinsic)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora netip, cookiejar, x509, smtp on go, arm64, llvm; goldens http_client_ip, http_h2c, net_lookup_dial_timeout, parse_edge_formats, tls_mtls, tls_verify_conn (arm64, llvm, Go parity); xo test --std-module=std/netip, native/http
+- Shipped in: not yet released
+
+std/native/netip.xo moved into std/netip.xo, its tests into
+std/netip_test.xo. The module is generated into std/rt (std/rt_hosted.txt):
+the Go backend's display of Addr, Prefix and AddrPort is the port's now,
+not Go's net/netip (the same texts, checked by the corpus).
+
 ## 2026-11-11: feature: AddrPort, Addr.prefix, next, prev, with_zone, prefix_from, Prefix.bits, is_single_ip, overlaps
 
 - Kind: feature

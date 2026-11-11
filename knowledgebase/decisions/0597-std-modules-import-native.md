@@ -233,4 +233,10 @@ pushes.
   `MISSING_PKG_x_std_binary`). to_png's `?? return None` became a match:
   that form in an rt-hosted method generates code go vet rejects
   (unreachable code).
+- Part 1, std/netip (2026-11-11): merged; its two `rt.cast` calls are on
+  part 1's list. rt-hosted, since std/rt's client_ip and x509 build its
+  values; std/rt/netip.go keeps only the runtime's conversions to and
+  from Go's net/netip, and the display methods, which were Go's net/netip
+  on the Go backend, are the port's there too (the netip corpus checks
+  them against Go on every backend).
 

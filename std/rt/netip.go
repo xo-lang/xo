@@ -5,12 +5,10 @@ import (
 	"net/netip"
 )
 
-// The display methods of std/netip's values (std.md 28): the runtime calls
-// them through interfaces, so they stay Go methods (netipOf is the runtime's
-// own conversion for client_ip); every other function is
-// std/native/netip.xo on the Go backend too (decision 0312).
-
-func (e Netip_ParseErr) M_display(*Task) string { return e.F_msg }
+// std/netip is merged and generated into std/rt (decisions 0588, 0597,
+// std/rt_hosted.txt): its display methods are the port's. These are the
+// runtime's own conversions to and from Go's net/netip, for client_ip and
+// x509.
 
 func netipOf(a netip.Addr) Netip_Addr {
 	ip := a.As16()
@@ -33,16 +31,3 @@ func (a Netip_Addr) goAddr() netip.Addr {
 	}
 	return netip.Addr{}
 }
-
-func (a Netip_Addr) M_display(*Task) string { return a.goAddr().String() }
-
-func (p Netip_Prefix) M_display(*Task) string {
-	return netip.PrefixFrom(p.F_addr.goAddr(), int(p.F_len)).String()
-}
-
-// M_display is Go's AddrPort.String (`invalid AddrPort` for the zero
-// address).
-func (p Netip_AddrPort) M_display(*Task) string {
-	return netip.AddrPortFrom(p.F_addr.goAddr(), uint16(p.F_port)).String()
-}
-
