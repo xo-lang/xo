@@ -181,3 +181,6 @@ pushes.
   (gen.xo `rt_hosted_roots`, gotchas/merged-std-module-go-proto-roots.md).
   Left: std/rt's Go PartReader still wraps Go's mime/multipart.Reader
   (http_part_reader.go); moving it onto `Multipart_reader` is the next step.
+- Part 3, Go PartReader (2026-11-10): std/rt/http_part_reader.go runs
+  the generated `Multipart_reader` over the body source instead of Go's
+  mime/multipart, so no Go multipart code is left in std/rt.

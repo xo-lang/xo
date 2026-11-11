@@ -1,31 +1,24 @@
 package rt
 
 import (
-	"errors"
 	"io"
-	"mime/multipart"
 	"net/textproto"
-	"sort"
 	"strings"
 	"sync"
 )
 
 // Http_PartReader is a multipart body read part by part (decision 0310
-// phase 3): Go's multipart.Reader over a BodyReader's source.
+// phase 3): std/multipart's Reader (generated from std/multipart.xo,
+// decision 0597) over a BodyReader's source, as on the native backends.
 type Http_PartReader struct{ p *partReader }
 
-// XoDebug implements Debug.
 func (Http_PartReader) XoDebug(b *strings.Builder) { b.WriteString("<part reader>") }
 
 type partReader struct {
-	mu   sync.Mutex
-	r    *multipart.Reader
-	cur  *multipart.Part
-	last bool
-	err  error
+	mu sync.Mutex
+	r  Multipart_Reader
 }
 
-// bodySource reads a BodyReader's source under its lock.
 type bodySource struct{ r *bodyReader }
 
 func (s bodySource) Read(p []byte) (int, error) {
@@ -39,6 +32,24 @@ func (s bodySource) Read(p []byte) (int, error) {
 		s.r.eof = true
 	}
 	return n, err
+}
+
+// pull is the Reader's source: the body's next bytes, None at its end, or
+// its read error's text.
+func (s bodySource) pull(_ *Task) Result[Option[Bytes], string] {
+	buf := make([]byte, 32768)
+	for {
+		n, err := s.Read(buf)
+		if n > 0 {
+			return Ok[Option[Bytes], string](Some(Bytes(buf[:n])))
+		}
+		if err == io.EOF {
+			return Ok[Option[Bytes], string](None[Bytes]())
+		}
+		if err != nil {
+			return Err[Option[Bytes]](err.Error())
+		}
+	}
 }
 
 // M_multipart is `b.multipart(req)`: net/http's Request.MultipartReader
@@ -57,57 +68,28 @@ func (b Http_BodyReader) M_multipart(tk *Task, req Http_Request) Result[Http_Par
 	if !bd.Some {
 		return Err[Http_PartReader](Multipart_MultipartErr{F_msg: "no multipart boundary param in Content-Type"})
 	}
-	return Ok[Http_PartReader, Multipart_MultipartErr](Http_PartReader{p: &partReader{r: multipart.NewReader(bodySource{b.r}, bd.V)}})
+	return Ok[Http_PartReader, Multipart_MultipartErr](Http_PartReader{p: &partReader{r: Multipart_reader(tk, bodySource{b.r}.pull, bd.V)}})
 }
 
-// M_next is `p.next()`: NextPart, None at io.EOF; an error sticks.
+// M_next is `p.next()`: Reader.next_part, the head as a StreamPart.
 func (p Http_PartReader) M_next(tk *Task) Result[Option[Http_StreamPart], Multipart_MultipartErr] {
 	r := p.p
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.err != nil {
-		return Err[Option[Http_StreamPart]](Multipart_MultipartErr{F_msg: r.err.Error()})
+	h := r.r.M_next_part(tk)
+	if !h.Ok {
+		return Err[Option[Http_StreamPart]](h.E)
 	}
-	if r.last {
+	if !h.V.Some {
 		return Ok[Option[Http_StreamPart], Multipart_MultipartErr](None[Http_StreamPart]())
 	}
-	part, err := r.r.NextPart()
-	if err == io.EOF {
-		r.last = true
-		r.cur = nil
-		return Ok[Option[Http_StreamPart], Multipart_MultipartErr](None[Http_StreamPart]())
-	}
-	if err != nil {
-		r.err = err
-		r.cur = nil
-		return Err[Option[Http_StreamPart]](Multipart_MultipartErr{F_msg: err.Error()})
-	}
-	r.cur = part
-	sp := Http_StreamPart{F_name: part.FormName()}
-	if f := part.FileName(); f != "" {
-		sp.F_filename = Some(f)
-	} else {
-		sp.F_filename = None[string]()
-	}
-	keys := make([]string, 0, len(part.Header))
-	for k := range part.Header {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		vs := part.Header[k]
-		if len(vs) == 0 {
-			continue
-		}
-		Map_put(tk, &sp.F_headers, k, vs[0])
-		for _, v := range vs {
-			sp.XFields = append(sp.XFields, k, v)
-		}
-	}
+	v := h.V.V
+	sp := Http_StreamPart{F_name: v.F_name, F_filename: v.F_filename, F_headers: v.F_headers}
+	sp.XFields = append(sp.XFields, v.F_fields.s...)
 	return Ok[Option[Http_StreamPart], Multipart_MultipartErr](Some(sp))
 }
 
-// M_read is `p.read(max)`: Part.Read of the open part, None at its end
+// M_read is `p.read(max)`: Reader.read of the open part, None at its end
 // or before the first part.
 func (p Http_PartReader) M_read(tk *Task, max int64) Result[Option[Bytes], Multipart_MultipartErr] {
 	if max < 1 {
@@ -116,25 +98,7 @@ func (p Http_PartReader) M_read(tk *Task, max int64) Result[Option[Bytes], Multi
 	r := p.p
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.err != nil {
-		return Err[Option[Bytes]](Multipart_MultipartErr{F_msg: r.err.Error()})
-	}
-	if r.cur == nil {
-		return Ok[Option[Bytes], Multipart_MultipartErr](None[Bytes]())
-	}
-	buf := make([]byte, min(max, readMax))
-	for {
-		n, err := r.cur.Read(buf)
-		if n > 0 {
-			return Ok[Option[Bytes], Multipart_MultipartErr](Some(Bytes(buf[:n])))
-		}
-		if errors.Is(err, io.EOF) {
-			return Ok[Option[Bytes], Multipart_MultipartErr](None[Bytes]())
-		}
-		if err != nil {
-			return Err[Option[Bytes]](Multipart_MultipartErr{F_msg: err.Error()})
-		}
-	}
+	return r.r.M_read(tk, max)
 }
 
 // M_header_values is `p.header_values(name)`: MIMEHeader.Values.

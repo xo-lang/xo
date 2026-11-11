@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-11-10: behavior (Go backend): BodyReader.multipart reads with std/multipart's Reader
+
+- Kind: behavior
+- Commit: this push
+- Found by: decision 0597 part 3 (one multipart implementation)
+- Go reference: mime/multipart Reader.NextPart and Part.Read (go1.26.1)
+- Test: goldens http_multipart_stream, http_form, multipart_reader and multipart_basic on the Go backend (TestGoldenGoParity)
+- Shipped in: not yet released
+
+On the Go backend `PartReader` wrapped Go's mime/multipart.Reader; it now runs std/multipart's
+`Reader`, generated into std/rt (decision 0597), as the native backends do, so a part's head, its
+data and the error texts are the same on every backend.
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor
