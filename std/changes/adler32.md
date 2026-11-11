@@ -1,5 +1,19 @@
 # std/adler32 changes
 
+## 2026-11-11: refactor: std/adler32's checksum is Xo on every backend (decision 0597 part 2)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597 part 2 (merge std modules with their native code)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora adler32 on go, arm64, llvm
+- Shipped in: not yet released
+
+checksum is `update(1, data)` in std/adler32.xo on every backend. update
+stays the fast path: bodyless, std/native/adler32_native.xo's word loop on
+the native backends (a byte by byte loop measured 1.085x the time), Go's
+hash/adler32 on the Go backend.
+
 ## 2026-11-03: port: std/adler32, Go's hash/adler32
 
 - Kind: port

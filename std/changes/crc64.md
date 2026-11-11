@@ -1,5 +1,20 @@
 # std/crc64 changes
 
+## 2026-11-11: refactor: std/crc64 is one file with a native fast path (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597 part 2 (rt.bytes_word is no portable intrinsic)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora crc64 on go, arm64, llvm
+- Shipped in: not yet released
+
+std/crc64.xo holds the API and checksum's body; update is the fast path,
+declared bodyless there: slicing-by-8 over tables read a word at a time
+(std/native/crc64_native.xo) on the native backends, Go's hash/crc64 on
+the Go backend. A portable update would read each table word as eight
+bytes, 72 loads for every 8 input bytes, so it stays native.
+
 ## 2026-11-04: feature: Poly.Nvme, CRC-64/NVME
 
 - Kind: feature

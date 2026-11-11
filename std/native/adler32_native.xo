@@ -1,13 +1,11 @@
-// std/adler32 on the native backends: Go's hash/adler32 (adler32.go of
-// go1.26.1). Two sums mod 65521, kept as Ints: with 64 bit sums the
+// std/adler32's native part (decision 0597 part 2): update, declared
+// bodyless in std/adler32.xo. Go's hash/adler32 (adler32.go of go1.26.1). Two sums mod 65521, kept as Ints: with 64 bit sums the
 // modulus is taken once a megabyte (Go's nmax of 5552 is the 32 bit
 // limit), eight bytes a step read as one word.
 use native/rt
 
 const MOD: Int = 65521
 const BLOCK: Int = 1048576
-
-fn checksum(data: Bytes) -> Int { update(1, data) }
 
 fn update(sum: Int, data: Bytes) -> Int {
   var s1 = sum & 0xffff

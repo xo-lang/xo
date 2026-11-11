@@ -48,3 +48,5 @@ std/jpeg
 std/htmlparse
 std/amqp
 std/fnv
+std/crc64
+std/adler32

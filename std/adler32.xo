@@ -1,11 +1,14 @@
-// std/adler32 (spec/std.md 52). Declaration file; encoding rules are
-// listed at the top of std/prelude.xo. Go's hash/adler32: the checksum
-// of zlib (RFC 1950). Fast and weak on short inputs: for detecting
-// corruption, not for hashing. Pure.
+// std/adler32 (spec/std.md 52). Go's hash/adler32: the checksum of zlib
+// (RFC 1950). Fast and weak on short inputs: for detecting corruption,
+// not for hashing. Pure. update is the fast path (decision 0597 part 2),
+// declared bodyless: eight bytes a step read as one word in
+// std/native/adler32_native.xo (written portably, byte by byte, it
+// measured 1.085x the time), Go's hash/adler32 on the Go backend
+// (std/rt/adler32.go).
 
 /// The Adler-32 of data, 0 to 2^32 - 1 (Go's Checksum); 1 for empty data.
-fn checksum(data: Bytes) -> Int
+pub fn checksum(data: Bytes) -> Int { update(1, data) }
 /// The Adler-32 of what sum was the checksum of, followed by data (Go's
 /// Write on a digest at that state): `update(checksum(a), b) ==
 /// checksum(a + b)`, and `update(1, d) == checksum(d)`.
-fn update(sum: Int, data: Bytes) -> Int
+pub fn update(sum: Int, data: Bytes) -> Int

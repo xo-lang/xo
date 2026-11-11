@@ -288,6 +288,19 @@ reports its location.
   now listing the variants) and its test peers' net.listen effect was
   checked (eleven gained `uses net.listen`); twenty Connection, Receiver,
   Sender and amqp functions left compiler/ssa/waits.xo's NO_WAIT.
+- Part 2, std/crc64 (2026-11-11): merged with update as the bodyless
+  fast path (std/native/crc64_native.xo; the Go backend's twin
+  Crc64_update in std/rt/crc64.go). It is rt-hosted (std/rt_hosted.txt)
+  because the twin's signature names Crc64_Poly, which only a generated
+  module defines in package rt. Its slicing reads eight table words per
+  eight input bytes through rt.bytes_word; written portably (each word
+  eight byte loads and shifts) it took 3.83x the time on crc64 and 3.97x
+  on crc64nvme (bench/perf/checksum, linux/arm64 host 1, --ab, 6 rounds),
+  so it stays native.
+- Part 2, std/adler32 (2026-11-11): split the same way (update bodyless,
+  std/native/adler32_native.xo; the Go twin keeps only Adler32_update).
+  Its loop written with byte loads in place of rt.bytes_word measured
+  1.085x the time (1.043 to 1.216, bench/perf/checksum adler32, host 1).
 - std/term and std/bufio (nothing native) (2026-11-11): merged, not
   rt-hosted; the Go backend compiles them from source, so their Go twins
   (std/rt/bufio.go, the std/term part of std/rt/term.go) are gone, and
