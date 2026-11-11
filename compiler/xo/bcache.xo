@@ -2024,21 +2024,46 @@ fn parse_list_path(os: Os, dir: Str) -> Str {
   "${pack_dir(os, dir, "parse", "")}/list"
 }
 
+/// The shape of a build's check as its parse list records it: whether
+/// std's declarations come from their record and which std modules are
+/// built from source. A list from a build of another shape names other
+/// std files: the first edit of a std module's test (its importers from
+/// source, std from the record) prefetched the 173 runtime files the
+/// unedited build had declared from source, in full, and used none (a
+/// json test's first edit: check 79 ms and 160 MB of heap, against 45 ms
+/// and 67 MB from the second edit on). Taken before the check, which
+/// consumes std's record.
+fn parse_shape(c: check.Checker) -> Str {
+  var src: List[Str] = []
+  for m in c.sep_source {
+    src.push(m)
+  }
+  src = src.sort()
+  "k rec=${c.std_record != None} src=${src.join(",")}"
+}
+
 /// The parse prefetch (decision 0220 addendum stage 2): the files the
 /// build target's last check parsed (parse_list_store) are read and
 /// parsed on tasks into the checker's parse cache before the check,
 /// which reuses a parse whose path, bytes, and mode match and parses
-/// any other file itself.
-fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
+/// any other file itself. It returns the number of files prefetched.
+fn parse_prefetch(os: Os, var c: check.Checker, dir: Str, shape: Str) -> Int {
   // xo:allow XO0903 the parse prefetch only saves time; the check reads every file itself
   let data = os.fs.read(parse_list_path(os, dir)).ok() ?? b""
+  let text = data.to_str() ?? ""
+  // from a list of a check of another shape (above) only the program's
+  // own files; a list without the line (an older xo's) in full
+  let other = text.starts_with("k ") && !text.starts_with("${shape}\n")
   var todo: List[(Str, Bytes, Bool, Bool)] = []
-  for line in (data.to_str() ?? "").split("\n") {
+  for line in text.split("\n") {
     let sig = line.starts_with("s ")
     if !sig && !line.starts_with("f ") {
       continue
     }
     let path = line[2..line.len()]
+    if other && path.starts_with("std/") {
+      continue
+    }
     match os.fs.read(c.source_path(path)) {
       Ok(b) => todo.push((path, b, sig, !sig && c.parse_lazy_path(path)))
       // xo:allow XO0903 the parse prefetch only saves time; the check reads every file itself
@@ -2047,7 +2072,7 @@ fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
   }
   let n = todo.len()
   if n == 0 {
-    return
+    return 0
   }
   // std's parses from the back-end cache (decision 0380 step b stage 2,
   // on by default since decision 0529 step 1; XO_IFC_CACHE=0 turns it
@@ -2095,6 +2120,7 @@ fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
   if stored > 0 {
     prune_backend_cache(os, "ast", dir, stored)
   }
+  n
 }
 
 /// The parse of std file path (src) from the back-end cache's ast/ entry
@@ -2119,8 +2145,10 @@ fn ast_cached_parse(os: Os, dir: Str, id: Str, path: Str, src: Bytes, sig: Bool,
 /// After the check: the files it parsed, as the build target's parse
 /// list, when they changed (from the target's second build); the parses of program files leave the parse
 /// cache (it carries std's alone to a process's next program).
-fn parse_list_store(os: Os, var c: check.Checker, dir: Str) {
+fn parse_list_store(os: Os, var c: check.Checker, dir: Str, shape: Str) {
   var out = StrBuilder.new()
+  out.write(shape)
+  out.write("\n")
   for (path, sig) in c.parsed {
     out.write(if sig { "s " } else { "f " })
     out.write(path)

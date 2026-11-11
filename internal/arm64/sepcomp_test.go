@@ -621,6 +621,24 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// the parse prefetch reads no more files than the check parses: the
+	// parse list of the unedited build (std's runtime declared from
+	// source, about 190 files in full) is not an edit build's (std from
+	// its record), and prefetching it cost a json test's first edit
+	// 95 MB of heap and half its check time (2026-11-11)
+	prefetchFits := func(what, log string) {
+		t.Helper()
+		pf := regexp.MustCompile(`cache prefetch (\d+) files`).FindStringSubmatch(log)
+		pc := regexp.MustCompile(`cache parse \d+/(\d+) reused`).FindStringSubmatch(log)
+		if pf == nil || pc == nil {
+			t.Fatalf("%s: want the cache prefetch and parse lines:\n%s", what, log)
+		}
+		f, _ := strconv.Atoi(pf[1])
+		c, _ := strconv.Atoi(pc[1])
+		if f > c {
+			t.Errorf("%s: the parse prefetch read %d files and the check parsed %d: a list of another shape of check was prefetched", what, f, c)
+		}
+	}
 	log, err := run()
 	if err != nil || !strings.Contains(log, "test=1 reused") {
 		t.Fatalf("unchanged std: %v\n%s", err, log)
@@ -632,6 +650,7 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 	if err != nil || !strings.Contains(log, "test=1 reused") || passed(log) != n+1 {
 		t.Fatalf("after a test edit, want the variant reused and %d passed: %v\n%s", n+1, err, log)
 	}
+	prefetchFits("the test edit", log)
 	appendTo(filepath.Join(std, "base64.xo"), "\nfn sepcomp_probe() -> Int { 41 }\n")
 	appendTo(tests, "\ntest \"sepcomp probe\" {\n  expect(sepcomp_probe()) == 42\n}\n")
 	log, err = run()
@@ -643,6 +662,7 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 	if !strings.Contains(log, "module(s) from source") {
 		t.Fatalf("after a source edit, want the variant reused with base64 from source:\n%s", log)
 	}
+	prefetchFits("the source edit", log)
 	src := filepath.Join(std, "base64.xo")
 	b, err := os.ReadFile(src)
 	if err != nil {

@@ -2846,6 +2846,12 @@ first, AST based prototype, since deleted) and
   cache serves the unchanged builds after it, which check nothing).
   `--phase-times` prints `cache parse H/N reused`; `XO_PARSE_STATS=1`
   also lists each file the check parsed itself (`parse miss PATH`).
+  The list's first line is the check's shape (`k rec=BOOL src=MODULES`:
+  std's declarations from their record or not, the std modules built
+  from source); from a list of another shape only the program's own
+  files are prefetched, not std's (2026-11-11, gotchas/
+  parse-list-other-shape.md), and `--phase-times` prints `cache prefetch
+  N files` (last verified: 2026-11-11).
   Measured: an edit build of `xo test --std-module=native/path` checked in
   0.33 to 0.47 s with 185 of 185 parses reused, 0.8 to 1.2 s with none.
 - Test build split (2026-10-21, xo-fa; last verified: 2026-10-21): an

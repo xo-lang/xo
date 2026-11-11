@@ -947,9 +947,13 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
     c.sepcomp_facts_conc = f1
   }
   tc = lap(os, o.phases, "check.setup", tc)
+  let shape = parse_shape(c)
   if !pdir.is_empty() {
-    parse_prefetch(os, c, pdir)
+    let np = parse_prefetch(os, c, pdir, shape)
     tc = lap(os, o.phases, "check.prefetch", tc)
+    if o.phases {
+      os.stdio.eprintln("cache prefetch ${np} files")
+    }
   }
   var offline = os.env.get("XO_OFFLINE") ?? ""
   if o.offline == "1" {
@@ -976,7 +980,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   }
   tc = lap(os, o.phases, "check.dirs", tc)
   if !pdir.is_empty() {
-    parse_list_store(os, c, pdir)
+    parse_list_store(os, c, pdir, shape)
     let _tp = lap(os, o.phases, "check.parse_list", tc)
   }
   if o.phases {
