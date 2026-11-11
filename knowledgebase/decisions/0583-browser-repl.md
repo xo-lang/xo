@@ -286,3 +286,18 @@ The 30-entry session in headless Chrome 157, values equal to the terminal REPL's
 record; the other 14 MB are free blocks (8 MB of them over 256 KiB, freed by the record's decode and
 by entry 4's lowering) that the size classes do not join. Still above 50 MB. Next: std's object list
 twice at entry 4 (the warm checker's 6 MB and the entry's copy), and Bool leaves in one byte.
+
+## Memory below 50 MB: (e) big blocks and the grow step (2026-11-11)
+
+A probe of where the heap's end grew, and of the large blocks left free at the end, showed 14 MB of
+blocks of 256 KiB or more free in classes no later request asked for. A request whose class is 256 KiB
+or more now takes its size rounded up to 64 KiB from a list of free big blocks in address order (the
+first that holds it, split from its end when 64 KiB or more is left), else from the top of the heap; a
+freed big block joins its free neighbors, and one that ends at the top lowers it. `rl_new` and
+`rl_grow` fit a list to what its block holds (`$room`). Memory grows to the pages the heap's end needs
+plus 1 MiB instead of by a quarter of itself: the session's 55 MB was 44 MB grown by one quarter step.
+The session with std's record: 55 to 53 MB (49 MB from entry 4, then 51 and 53 by its end); without
+it 108 to 105 MB; values unchanged. Next: the growth after entry 4 (the heap's end moves while live
+blocks stay near 40 MB), and the record's load, which holds std's objects three times (decoded,
+relocated, installed).
+
