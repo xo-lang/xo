@@ -1603,8 +1603,6 @@ fn (g: G) x86_put(var b: List[Str], r: Int, src: MSrc) {
     b.push("\tleaq ${g.fr.out_off - g.fr.rz}(%rsp), ${x86_reg(r, 8)}\n")
   } else if src.kind == M_MEM {
     b.push("\tleaq ${g.fr.mem_off + src.imm - g.fr.rz}(%rsp), ${x86_reg(r, 8)}\n")
-  } else if src.kind == M_OUTW {
-    b.push("\tleaq ${src.imm - g.fr.rz}(%rsp), ${x86_reg(r, 8)}\n")
   }
 }
 
