@@ -48,7 +48,7 @@ offload.md. Last verified: 2026-11-10.
     merge commits when it fails, and the owning agent fixes forward.
   - heavy runs stay on the Mac (owner, 2026-10-20); since 2026-11-09 it is a
     Mac Studio (30 cores, 96 GB; owner: "raise the limits"), so heavy.sh runs up
-    to four heavy jobs (HEAVY_SLOTS), each stopped past 32 GB (HEAVY_MAX_GB),
+    to three heavy jobs (HEAVY_SLOTS; owner, 2026-11-11, was four), each stopped past 32 GB (HEAVY_MAX_GB),
     the second to fourth only when 40% of memory is free (HEAVY_MIN_FREE)
     (HEAVY_MIN_FREE). CI is used only with the owner's approval for that
     use: ask the lead, who asks the owner.

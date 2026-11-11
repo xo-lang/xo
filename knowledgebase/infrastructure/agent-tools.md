@@ -1150,7 +1150,7 @@ yourself.
 - Gates: `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`: no slot,
   no queue; starts when 35% of memory is free (HEAVY_GATE_MIN_FREE) and
   fewer than 5 gates run (HEAVY_GATE_MAX) with the load under 48
-  (HEAVY_GATE_MAX_LOAD); heavy runs take one of 4 slots (HEAVY_SLOTS) and are
+  (HEAVY_GATE_MAX_LOAD); heavy runs take one of 3 slots (HEAVY_SLOTS; owner, 2026-11-11, was 4) and are
   stopped past 32 GB (HEAVY_MAX_GB). Owner, 2026-11-09, for the 96 GB, 30-core
   Mac Studio. Last verified: 2026-11-09.
 - Gates on an offload host (owner, 2026-11-07): `OFFGATE_AGENT=NAME ~/xo-lead/agents/offload-gate.sh WORKTREE
