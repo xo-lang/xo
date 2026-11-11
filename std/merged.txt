@@ -26,3 +26,4 @@ std/binary
 std/htmlent
 std/html
 std/htmltok
+std/url

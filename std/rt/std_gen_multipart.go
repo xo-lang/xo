@@ -103,7 +103,7 @@ func (v Multipart_Form) M_debug(*Task) string { return Debug(v) }
 
 // XoMark marks the lists held by the fields (see rt.List).
 func (v *Multipart_Form) XoMark() {
-	MarkP(&v.F_values)
+	v.F_values.XoMark()
 	v.F_files.XoMark()
 }
 
@@ -205,7 +205,7 @@ x_L122:
 func Multipart_parse_form(tk *Task, v_body Bytes, v_boundary string, v_max_parts int64) Result[Multipart_Form, Multipart_MultipartErr] {
 	var v_r Multipart_R = func(v Multipart_R) Multipart_R { v.XoMark(); return v }(Multipart_new_reader(tk, v_body, v_boundary))
 	_ = v_r
-	var v_values Url_Values = func(v Url_Values) Url_Values { MarkP(&v); return v }(Url_values(tk))
+	var v_values Url_Values = func(v Url_Values) Url_Values { v.XoMark(); return v }(Url_values(tk))
 	_ = v_values
 	var v_files Map[string, List[Multipart_Part]] = Map[string, List[Multipart_Part]]{}
 	_ = v_files
@@ -345,7 +345,7 @@ x_L128:
 			Map_put[string, List[Multipart_Part]](tk, &v_files, v_name, List_Own(v_fs))
 		}
 	}
-	return Ok[Multipart_Form, Multipart_MultipartErr](Multipart_Form{F_values: func(v Url_Values) Url_Values { MarkP(&v); return v }(v_values), F_files: Map_Own(v_files)})
+	return Ok[Multipart_Form, Multipart_MultipartErr](Multipart_Form{F_values: func(v Url_Values) Url_Values { v.XoMark(); return v }(v_values), F_files: Map_Own(v_files)})
 }
 
 func Multipart_parse_form_D_2(tk *Task) int64 {

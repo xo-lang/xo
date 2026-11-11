@@ -4741,10 +4741,12 @@ fn load(fs: Fs) -> Config ! Error uses fs.read {
 ## 20. std/url
 
 Status: implemented on every backend (decision 0279, 2026-10-20): Go's
-net/url (url.go of go1.26) on the Go backend, ported to Xo natively
-(`std/native/url.xo`, Go's escape, query, and Values tables in
-`url_test.xo`); golden `url_basic` on arm64, LLVM, Go, and wasm. Pure:
-no capability.
+net/url (url.go of go1.26) ported to Xo in `std/url.xo` (merged,
+decisions 0588 and 0597 part 2; every backend runs it), with `escape`'s
+fast path in `std/native/url_native.xo` and Go's PathEscape and
+QueryEscape on the Go backend (`std/rt/url.go`); Go's escape, query, and
+Values tables in `url_test.xo`; golden `url_basic` on arm64, LLVM, Go,
+and wasm. Pure: no capability.
 
 ```
 struct EscapeErr { msg: Str }        // displays as Go's text: `invalid URL escape "%zz"`

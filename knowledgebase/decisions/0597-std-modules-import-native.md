@@ -207,4 +207,9 @@ pushes.
   the native one (1.659 to 1.692, n=6; host 1, bench/perf/html escape),
   so the fast path stays. unescape_string was already portable. html
   needs no seed: compiler/xo does not import it.
+- Part 2, std/url (2026-11-11, stage B, after seed 0.48.0): merged with
+  `escape` as the bodyless fast path (std/native/url_native.xo; the Go
+  backend's twin Url_escape in std/rt/url.go, which keeps urlText for
+  std/rt's http). url is rt-hosted (std/rt_hosted.txt): std/rt's http and
+  the generated multipart code call its functions.
 

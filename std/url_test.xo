@@ -1,5 +1,3 @@
-use std/url
-
 // The escape, query, and Values tables of Go's net/url url_test.go
 // (go1.26: unescapeTests, queryEscapeTests, pathEscapeTests,
 // encodeQueryTests, parseTests), expected results from Go itself
@@ -58,43 +56,43 @@ test "path_unescape 12" {
 }
 
 test "query_unescape 13" {
-  expect(query_unescape(h("25"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c2065736361706520222522")})
+  expect(query_unescape(h("25"))) == Err(EscapeErr{msg: h("696e76616c69642055524c2065736361706520222522")})
 }
 
 test "path_unescape 14" {
-  expect(path_unescape(h("25"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c2065736361706520222522")})
+  expect(path_unescape(h("25"))) == Err(EscapeErr{msg: h("696e76616c69642055524c2065736361706520222522")})
 }
 
 test "query_unescape 15" {
-  expect(query_unescape(h("2561"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022256122")})
+  expect(query_unescape(h("2561"))) == Err(EscapeErr{msg: h("696e76616c69642055524c206573636170652022256122")})
 }
 
 test "path_unescape 16" {
-  expect(path_unescape(h("2561"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022256122")})
+  expect(path_unescape(h("2561"))) == Err(EscapeErr{msg: h("696e76616c69642055524c206573636170652022256122")})
 }
 
 test "query_unescape 17" {
-  expect(query_unescape(h("2531"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022253122")})
+  expect(query_unescape(h("2531"))) == Err(EscapeErr{msg: h("696e76616c69642055524c206573636170652022253122")})
 }
 
 test "path_unescape 18" {
-  expect(path_unescape(h("2531"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022253122")})
+  expect(path_unescape(h("2531"))) == Err(EscapeErr{msg: h("696e76616c69642055524c206573636170652022253122")})
 }
 
 test "query_unescape 19" {
-  expect(query_unescape(h("3132332534352536"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022253622")})
+  expect(query_unescape(h("3132332534352536"))) == Err(EscapeErr{msg: h("696e76616c69642055524c206573636170652022253622")})
 }
 
 test "path_unescape 20" {
-  expect(path_unescape(h("3132332534352536"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022253622")})
+  expect(path_unescape(h("3132332534352536"))) == Err(EscapeErr{msg: h("696e76616c69642055524c206573636170652022253622")})
 }
 
 test "query_unescape 21" {
-  expect(query_unescape(h("257a7a7a7a7a"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022257a7a22")})
+  expect(query_unescape(h("257a7a7a7a7a"))) == Err(EscapeErr{msg: h("696e76616c69642055524c206573636170652022257a7a22")})
 }
 
 test "path_unescape 22" {
-  expect(path_unescape(h("257a7a7a7a7a"))) == Err(url.EscapeErr{msg: h("696e76616c69642055524c206573636170652022257a7a22")})
+  expect(path_unescape(h("257a7a7a7a7a"))) == Err(EscapeErr{msg: h("696e76616c69642055524c206573636170652022257a7a22")})
 }
 
 test "query_unescape 23" {
@@ -231,11 +229,11 @@ test "parse 48" {
 }
 
 test "parse 49" {
-  expect(parse_query(h("613d313b623d32")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("613d313b623d32")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 50" {
-  expect(parse_query(h("613b623d31")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("613b623d31")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 51" {
@@ -247,39 +245,39 @@ test "parse 52" {
 }
 
 test "parse 53" {
-  expect(parse_query(h("613d3126613d323b613d62616e616e61")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("613d3126613d323b613d62616e616e61")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 54" {
-  expect(parse_query(h("613b6226633d31")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("613b6226633d31")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 55" {
-  expect(parse_query(h("613d3126623d323b613d3326633d34")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("613d3126623d323b613d3326633d34")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 56" {
-  expect(parse_query(h("613d3126623d323b633d33")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("613d3126623d323b633d33")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 57" {
-  expect(parse_query(h("3b")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("3b")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 58" {
-  expect(parse_query(h("613d313b")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("613d313b")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 59" {
-  expect(parse_query(h("613d31263b")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("613d31263b")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 60" {
-  expect(parse_query(h("3b613d3126623d32")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("3b613d3126623d32")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 
 test "parse 61" {
-  expect(parse_query(h("613d3126623d323b")).map(sorted)) == Err(url.EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
+  expect(parse_query(h("613d3126623d323b")).map(sorted)) == Err(EscapeErr{msg: h("696e76616c69642073656d69636f6c6f6e20736570617261746f7220696e207175657279")})
 }
 test "values keep first appearance order and replace with set" {
   var v = values()

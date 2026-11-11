@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-11: internal: merged, escape's fast path in std/native/url_native.xo
+
+- Kind: internal
+- Commit: this push
+- Found by: decisions 0588 and 0597 part 2
+- Go reference: net/url url.go (go1.26.1)
+- Test: `xo test --std-module=url` (native, LLVM); the url, httpurl, multipart and mime corpora on go, arm64, llvm; goldens url_basic, http_*, multipart*
+- Timing: none (the code is the same); the portable escape measured 1.075 (BytesBuilder) and 1.041 (one write_be per escape) of this on host 1 and was not taken
+- Shipped in: not yet released
+
+std/url.xo holds the module and its tests (std/url_test.xo); escape is declared there with its body in std/native/url_native.xo (Go's PathEscape and QueryEscape on the Go backend). The Go backend now runs the port's parse_query and Values (generated into std/rt), where it ran net/url. std/native/url.xo is removed. Output unchanged.
+
 ## 2026-11-04: fix: url parsing keeps the path as written for the client's request target
 
 - Kind: fix
