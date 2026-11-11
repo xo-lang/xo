@@ -67,6 +67,9 @@ pub struct FeCache {
   pub recorder: Str = ""
   /// the recorder of the entry being committed
   last_recorder: Str = ""
+  /// the last replay check that missed, and the name it missed on (a
+  /// closure's entry that misses names it in the warning)
+  last_miss: Str = ""
   /// a test hook (XO_FE_BREAK): the commit of this function's entry
   /// fails, as an entry that does not replay does
   pub break_name: Str = ""
@@ -296,6 +299,35 @@ fn (var b: Builder) fe_tname(t: Int) -> Str {
 /// commit's checks), what it made in order (types, order entries, whole
 /// functions, declares; the commit's replay), all by name, then the
 /// body: no index and no state of the builder (decision 0271).
+/// Whether type x is made from its name alone, wherever it is first
+/// used: a declared struct or enum (from its declaration), a generic
+/// instance, or a list, box, tuple or function type.
+fn name_made(x: SType) -> Bool {
+  match x.kind {
+    Kind.List | Kind.Box | Kind.Tuple | Kind.Func | Kind.Struct | Kind.Enum => true
+    _ => false
+  }
+}
+
+/// The types type x's shape names: its fields', variants' fields',
+/// elements' and result's.
+fn type_parts(x: SType) -> List[Int] {
+  var out: List[Int] = []
+  for f in x.fields {
+    out.push(f.ty)
+  }
+  for v in x.variants {
+    for f in v.fields {
+      out.push(f.ty)
+    }
+  }
+  for el in x.elems {
+    out.push(el)
+  }
+  out.push(x.ret)
+  out
+}
+
 fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   b.fe_rec = false
   b.m.fe_log = false
@@ -410,10 +442,69 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   tl.uv(b.fe_flagbits)
   tl.bytes(fbo ?? b"")
   e.bytes(tl.b.freeze())
-  // what it found that was there before it
-  var reads: List[Str] = []
+  // types it found that another body made and that their names
+  // determine (a generic instance, a list, box, tuple or function type):
+  // recorded as made, with their shapes, components first, so a build
+  // where nothing made one yet makes it as this body would have (the
+  // replay skips one already there). A closure's entry cannot be built
+  // from source, so a read of one missed there dropped the whole build
+  // (tls.vconn_wrap.fn8's Result[x509.Certificate, x509.CertErr] in
+  // internal/gen's test_smtp after test_fakenet_tls, 2026-11-11;
+  // gotchas/fe-cache-entry-does-not-replay.md)
+  var pre: List[(Int, Int)] = []
+  var pre_t: Map[Int, Bool] = {}
+  var tread: Map[Int, Bool] = {}
+  var on_path: Map[Int, Bool] = {}
+  var roots: List[Int] = []
   for (t, _) in b.m.fe_treads {
     if t < r.nt {
+      roots.push(t)
+    }
+  }
+  for t0 in roots.sort() {
+    if !name_made(b.m.types[t0]) || pre_t.contains(t0) {
+      tread[t0] = true
+      continue
+    }
+    // depth first, a type after its components; a type on the path is
+    // not entered again (a recursive type: a struct holding a list of
+    // itself; its shape names it, and it is made before the shape is set)
+    var stack: List[(Int, Bool)] = [(t0, false)]
+    while let Some((t, out)) = stack.pop() {
+      if pre_t.contains(t) {
+        continue
+      }
+      if !out {
+        if on_path.contains(t) {
+          continue
+        }
+        on_path[t] = true
+      }
+      if out {
+        pre_t[t] = true
+        pre.push((1, t))
+        if b.m.types[t].kind is Kind.Struct | Kind.Enum {
+          pre.push((2, t))
+        }
+        continue
+      }
+      stack.push((t, true))
+      for c in type_parts(b.m.types[t]) {
+        if c < 0 || c >= r.nt || pre_t.contains(c) || on_path.contains(c) {
+          continue
+        }
+        if name_made(b.m.types[c]) {
+          stack.push((c, false))
+        } else {
+          tread[c] = true
+        }
+      }
+    }
+  }
+  // what it found that was there before it
+  var reads: List[Str] = []
+  for (t, _) in tread {
+    if !pre_t.contains(t) {
       reads.push("t ${b.m.types[t].name}")
     }
   }
@@ -447,10 +538,14 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     e.str(n)
   }
   // what it made, in order
-  e.uv(b.m.fe_ev.len())
+  var evs = pre
+  for ev in b.m.fe_ev {
+    evs.push(ev)
+  }
+  e.uv(evs.len())
   var made_t: List[Int] = []
   var made_f: List[Int] = []
-  for (k, x) in b.m.fe_ev {
+  for (k, x) in evs {
     e.uv(k)
     if k == 1 {
       let t = b.m.types[x]
@@ -799,15 +894,18 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
       // yet (UInt8 in a closure of bench/perf/http, `xo check` with
       // decision 0428's declaration parse, 2026-11-08)
       if !b.m.type_at.contains(n) && b.m.int_type(n) < 0 && !(n == "Float32" && b.m.float32() >= 0) {
+        b.fe.last_miss = "read type ${n}"
         return b.fe_miss("read")
       }
     } else if k.starts_with("a ") {
       // a constant's function made whole here may be there already,
       // made by another body: the commit keeps that one
       if b.m.func_at.contains(n) && !fe_const_fn(n) && !b.fe_thunk_there(n) {
+        b.fe.last_miss = "absent ${n}"
         return b.fe_miss("absent")
       }
     } else if !b.m.func_at.contains(n) {
+      b.fe.last_miss = "read ${n}"
       return b.fe_miss("read")
     }
   }
@@ -825,7 +923,10 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
           renames[n] = b.m.funcs[f].name
         }
       }
-      None => return b.fe_miss("generic")
+      None => {
+        b.fe.last_miss = "generic ${k}"
+        return b.fe_miss("generic")
+      }
     }
   }
   if b.fe.by_ident.is_empty() {
@@ -1313,6 +1414,9 @@ fn (var b: Builder) fe_skip(why: Str) {
 }
 
 fn (var b: Builder) fe_miss(why: Str) -> Bool {
+  if b.fe.last_miss.is_empty() {
+    b.fe.last_miss = why
+  }
   b.fe_stats["miss.${why}"] = (b.fe_stats.get("miss.${why}") ?? 0) + 1
   false
 }

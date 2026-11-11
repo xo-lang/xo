@@ -1393,8 +1393,9 @@ fn (var b: Builder) run_job_fe(j: Job) {
       // a closure's entry is pinned (its owner's is too, so it replays
       // only where it was recorded)
       b.fe.cur_line = 0
+      b.fe.last_miss = ""
       if !b.fe_replay(d, cf) || b.fe.broken {
-        let why = if b.fe.broken_why.is_empty() { "its entry missed" } else { b.fe.broken_why }
+        let why = if !b.fe.broken_why.is_empty() { b.fe.broken_why } else if b.fe.last_miss.is_empty() { "its entry missed" } else { "its entry missed: ${b.fe.last_miss}" }
         b.fe.broken = false
         b.fe.broken_why = ""
         b.fe.bad.push("${key} (closure ${b.m.funcs[cf].name}, recorded by xo ${b.fe.last_recorder}: ${why})")

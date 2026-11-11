@@ -3230,6 +3230,46 @@ func TestFrontCacheClosureMadeMapHelper(t *testing.T) {
 	}
 }
 
+// TestFrontCacheClosureReadMadeType: a closure's front end entry that
+// read types another body made where it was recorded replays in a
+// program where nothing made them yet. tls.vconn_wrap's closures read
+// Result[x509.Certificate, x509.CertErr] and x509.CertErr, which
+// internal/gen's test_fakenet_tls made before them and test_smtp does
+// not; before (2026-11-11, seen in the 0.48.1 release verify), the entry
+// missed there, and a closure's entry cannot fall back to its source, so
+// the build printed "did not replay" and was made again without the
+// cache. The entry now records such types as made, with their shapes.
+func TestFrontCacheClosureReadMadeType(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fereadtype-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	gen := filepath.Join("..", "gen", "testdata", "golden")
+	for _, g := range []string{"test_fakenet_tls", "test_smtp", "test_fakenet_raw"} {
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--no-gc", "--backend=arm64", "-v", filepath.Join(gen, g)))
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_BIN_CACHE="+filepath.Join(work, "bin"), "XO_BUILD_DIR="+filepath.Join(work, "build"), "XO_TRACEBACK=0", "XO_FE_KEEP_DIR="+filepath.Join(work, "kept"))
+		log, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(log), " 0 failed") {
+			t.Fatalf("%s: xo test: %v\n%s", g, err, log)
+		}
+		if strings.Contains(string(log), "did not replay") {
+			t.Errorf("%s: a front end cache entry did not replay:\n%s", g, log)
+		}
+	}
+}
+
 // TestFrontCacheTypeNaming: an entry names the types it uses as the
 // program that recorded it did, and a user type two loaded modules both
 // declare is named by its module path (ssa ambiguous_type_names), so a

@@ -1,6 +1,6 @@
 # A front end cache entry passed its checks and then did not replay
 
-Status: Observed (2026-10-20, 2026-10-26, 2026-11-04 twice); each cause found is fixed, the driver still rebuilds without an entry that fails
+Status: Observed (2026-10-20, 2026-10-26, 2026-11-04 twice, 2026-11-11); each cause found is fixed, the driver still rebuilds without an entry that fails
 
 Symptom: `xo build ./compiler/xo` (and scripts/bootstrap-xo.sh at s1)
 failed with "the front end cache's entry for ssa.Builder.unbox_type does
@@ -95,3 +95,25 @@ fails on the xo before the fix, with "runtime call
 ferootlib/a.sanitize_code". This one was loud, a compile error. A body
 whose stale name happened to exist in the program would have called the
 wrong function.
+
+Observed again 2026-11-11, cause found (Xo Lang 2, in the 0.48.1 release
+verify: cmd/xo TestNoGCTests failed on test_fakenet_raw/llvm with the
+same output as the Go backend plus this warning). "the front end cache
+entry ... (closure tls.vconn_wrap.fn4 ...: its entry missed) did not
+replay". Reproduced in a private cache with internal/gen's goldens
+test_fakenet_tls then test_smtp (closure fn8), on arm64 and LLVM. The
+warning now names the check that missed ("its entry missed: read type
+Result[x509.Certificate, x509.CertErr]"). The closure read that type, and
+then x509.CertErr, which earlier bodies made in the program that recorded
+the entry and which nothing had made yet in test_smtp. Types are made at
+their first use, so an entry's read of a type another body made is an
+accident of the recording program's order, and a closure cannot fall
+back to its source. Fix: an entry records each struct, enum, list, box,
+tuple and function type it read that existed before its body as made
+(events 1 and 2, as Module.named and intern would log them, components
+first), with its shape; the replay makes one that is absent and keeps
+one that is there. Only other kinds (an interface's handle, a sized
+integer) stay reads. Test: internal/arm64 TestFrontCacheClosureReadMadeType.
+A first version walked a recursive type's shape forever (33 GB in 36 s,
+stopped by heavy.sh): the walk marks a type on entry.
+
