@@ -400,9 +400,15 @@ pub struct Url {
   /// The path as written (escapes undecoded): url.go's setPath keeps it as
   /// RawPath when escaping `path` gives something else.
   pub rawtext: Str
+  /// The userinfo before `@`, percent decoded (Go's User.Username and
+  /// Password); pwset is whether a `:` gave a password (Go's
+  /// passwordSet).
+  pub user: Str
+  pub password: Str
+  pub pwset: Bool
 }
 
-pub fn url_fail(err: Str) -> Url { Url{ok: false, err: err, scheme: "", host: "", path: "", rawquery: "", rawtext: ""} }
+pub fn url_fail(err: Str) -> Url { Url{ok: false, err: err, scheme: "", host: "", path: "", rawquery: "", rawtext: "", user: "", password: "", pwset: false} }
 
 /// net/url's parse of s: ParseRequestURI when via_request, else Parse
 /// (the fragment already cut).
@@ -417,7 +423,7 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
     return url_fail("empty url")
   }
   if sn == 1 && b[0] == 42 {
-    return Url{ok: true, err: "", scheme: "", host: "", path: "*", rawquery: "", rawtext: ""}
+    return Url{ok: true, err: "", scheme: "", host: "", path: "*", rawquery: "", rawtext: "", user: "", password: "", pwset: false}
   }
   // getScheme
   var rest = 0
@@ -458,7 +464,7 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
   if !(rn > rest && b[rest] == 47) {
     if !scheme.is_empty() {
       // opaque: no host, no path
-      return Url{ok: true, err: "", scheme: scheme, host: "", path: "", rawquery: rawquery, rawtext: ""}
+      return Url{ok: true, err: "", scheme: scheme, host: "", path: "", rawquery: rawquery, rawtext: "", user: "", password: "", pwset: false}
     }
     if via_request {
       return url_fail("invalid URI for request")
@@ -470,6 +476,9 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
     }
   }
   var host = ""
+  var user = ""
+  var password = ""
+  var pwset = false
   var p = rest
   let authority = rn - rest >= 2 && b[rest] == 47 && b[rest + 1] == 47 && (!scheme.is_empty() || (!via_request && !(rn - rest >= 3 && b[rest + 2] == 47)))
   if authority {
@@ -512,13 +521,22 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
         }
         u += 1
       }
+      // url.go parseAuthority: the user, and a password after the first
+      // `:`, each unescaped (the escapes were checked above)
+      let colon = find(s, 58, a, at)
+      let ue = if colon < 0 { at } else { colon }
+      user = unescape(b, s, a, ue, U_PATH).1
+      if colon >= 0 {
+        password = unescape(b, s, colon + 1, at, U_PATH).1
+        pwset = true
+      }
     }
   }
   let (pok, path) = unescape(b, s, p, rn, U_PATH)
   if !pok {
     return url_fail(escape_error(b, s, p, rn))
   }
-  Url{ok: true, err: "", scheme: scheme, host: host, path: path, rawquery: rawquery, rawtext: rawb.str_slice(s, p, rn)}
+  Url{ok: true, err: "", scheme: scheme, host: host, path: path, rawquery: rawquery, rawtext: rawb.str_slice(s, p, rn), user: user, password: password, pwset: pwset}
 }
 
 /// strconv.Quote (printable: ASCII graphic and every rune from U+00A1

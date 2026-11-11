@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+user: al@ice password: p:ss
+display: https://al%40ice:p%3Ass@example.com:8443/a?q=1
+redacted: https://al%40ice:xxxxx@example.com:8443/a?q=1
+no password: true http://bob@example.com/
+none: '' http://example.com/
+sent: Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==
+own header: Authorization: Bearer t
+--- stderr

@@ -3,6 +3,7 @@ package rt
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/base64"
 	"html"
 	"io"
 	"net/textproto"
@@ -856,6 +857,13 @@ func urlOf(a *Arena, pu *url.URL) Http_Url {
 	if u.F_path == "" {
 		u.F_path = "/"
 	}
+	if pu.User != nil {
+		// decision 0606: Go's URL.User
+		u.F_user = urlTextOf(pu.User.Username())
+		if pw, ok := pu.User.Password(); ok {
+			u.F_password = Some(urlTextOf(pw))
+		}
+	}
 	if p := pu.Port(); p != "" {
 		if n, err := strconv.ParseInt(p, 10, 64); err == nil {
 			u.F_port = Some(n)
@@ -1584,6 +1592,7 @@ func (c Http_Client) M_send(tk *Task, req Http_Request) Result[Http_Response, Ht
 	if tk.Canceled() {
 		return Err[Http_Response](clientErr(5, ""))
 	}
+	req = urlBasicAuth(tk, req)
 	rawURL := requestURLString(req)
 	if req.F_url.F_scheme == "" || req.F_url.F_host == "" {
 		return Err[Http_Response](clientErr(1, "absolute URL required: "+rawURL))
@@ -1645,6 +1654,67 @@ func requestRawPath(req Http_Request) (string, bool) {
 
 // urlString renders a parsed URL.
 func urlString(u Http_Url) string { return urlStringPath(u, u.F_path) }
+
+// urlBasicAuth is req with Authorization: Basic from its URL's user and
+// password when it sets none itself (decision 0606; Go's Client.send), as
+// the native url_basic_auth.
+func urlBasicAuth(tk *Task, req Http_Request) Http_Request {
+	u := req.F_url
+	if (u.F_user == "" && !u.F_password.Some) || headerGet(req.F_headers, "Authorization").Some {
+		return req
+	}
+	req.F_headers.XoMark() // a copy (decision 0335)
+	Map_put(tk, &req.F_headers, "Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(u.F_user+":"+u.F_password.V)))
+	return req
+}
+
+// M_display is `u.display()` (decision 0606): urlString with Go's
+// Userinfo.String after the scheme, as the native url_display.
+func (u Http_Url) M_display(_ *Task) string { return urlWithUserinfo(u, u.F_password) }
+
+// M_redacted is `u.redacted()`: display with a set password as xxxxx
+// (Go's URL.Redacted).
+func (u Http_Url) M_redacted(_ *Task) string {
+	pw := u.F_password
+	if pw.Some {
+		pw = Some("xxxxx")
+	}
+	return urlWithUserinfo(u, pw)
+}
+
+func urlWithUserinfo(u Http_Url, pw Option[string]) string {
+	s := urlString(u)
+	if u.F_user == "" && !pw.Some {
+		return s
+	}
+	ui := userinfoEscape(u.F_user)
+	if pw.Some {
+		ui += ":" + userinfoEscape(pw.V)
+	}
+	if u.F_scheme == "" {
+		return "//" + ui + "@" + s
+	}
+	n := len(u.F_scheme) + 3
+	return s[:n] + ui + "@" + s[n:]
+}
+
+// userinfoEscape is Go's escape(s, encodeUserPassword) (net/url
+// shouldEscape): letters, digits, -_.~ and $&+,;= stay.
+func userinfoEscape(s string) string {
+	const hx = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("-_.~$&+,;=", c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			b.WriteByte('%')
+			b.WriteByte(hx[c>>4])
+			b.WriteByte(hx[c&15])
+		}
+	}
+	return b.String()
+}
 
 // urlStringPath is urlString with path as the path's text.
 func urlStringPath(u Http_Url, path string) string {

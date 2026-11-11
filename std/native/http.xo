@@ -1717,7 +1717,45 @@ fn url_from_parts(raw: Str, parts: List[Str]) -> http.Url {
       i += 2
     }
   }
-  http.Url{scheme: parts[0], host: parts[1], port: port, path: path, query: query}
+  let password: Str? = if parts[9].is_empty() { None } else { Some(parts[8]) }
+  http.Url{scheme: parts[0], host: parts[1], port: port, path: path, query: query, user: parts[7], password: password}
+}
+
+/// req with `Authorization: Basic` from its URL's user and password
+/// when it sets none itself (decision 0606; Go's Client.send).
+fn url_basic_auth(req: Request) -> Request {
+  if (req.url.user.is_empty() && req.url.password is None) || header_get(req.headers, "Authorization") is Some(_) {
+    return req
+  }
+  var h = req.headers
+  h.put("Authorization", "Basic " + (req.url.user + ":" + (req.url.password ?? "")).bytes().to_base64())
+  req with {headers: h}
+}
+
+/// `u.display()` (decision 0606): url_string with Go's Userinfo.String
+/// after the scheme.
+fn url_display(u: http.Url) -> Str { url_with_userinfo(u, u.password) }
+
+/// `u.redacted()`: display with a set password as `xxxxx` (Go's
+/// URL.Redacted).
+fn url_redacted(u: http.Url) -> Str {
+  url_with_userinfo(u, u.password.map(fn(_) { "xxxxx" }))
+}
+
+fn url_with_userinfo(u: http.Url, password: Str?) -> Str {
+  let s = url_string(u)
+  if u.user.is_empty() && password is None {
+    return s
+  }
+  var ui = http1.userinfo_escape(u.user)
+  if let Some(p) = password {
+    ui = ui + ":" + http1.userinfo_escape(p)
+  }
+  if u.scheme.is_empty() {
+    return "//" + ui + "@" + s
+  }
+  let n = u.scheme.len() + 3
+  s[0..n] + ui + "@" + s[n..s.len()]
 }
 
 fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes = "".bytes()) -> Request {
@@ -4423,10 +4461,11 @@ fn denied(c: Client, req: Request) -> http.ClientErr? {
   Some(http.ClientErr.Connect(msg: "denied by Net.only: ${hp}"))
 }
 
-fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dial {
+fn (c: Client) send(req0: Request) -> http.Response ! http.ClientErr uses net.dial {
   if task.is_canceled() {
     return Err(http.ClientErr.Canceled)
   }
+  let req = url_basic_auth(req0)
   let raw = request_url_string(req)
   if req.url.scheme.is_empty() || req.url.host.is_empty() {
     return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))

@@ -127,7 +127,7 @@ fn parse_target(raw: Str, connect: Bool) -> neturl.Url {
   if connect && !raw.starts_with("/") {
     let u = neturl.url_parse("http://" + raw, true)
     if u.ok {
-      return neturl.Url{ok: true, err: "", scheme: "", host: u.host, path: u.path, rawquery: u.rawquery, rawtext: u.rawtext}
+      return neturl.Url{ok: true, err: "", scheme: "", host: u.host, path: u.path, rawquery: u.rawquery, rawtext: u.rawtext, user: "", password: "", pwset: false}
     }
     return u
   }
@@ -316,7 +316,8 @@ pub fn url_parts(s: Str, request: Bool) -> List[Str] {
   let (name, port) = split_hostport(u.host)
   // url.go setPath: RawPath is the path as written when escaping the decoded
   // path gives something else ("" when it is the default form)
-  [u.scheme, name, port, u.path, u.rawquery, u.host, if u.rawtext == escape_path(u.path) { "" } else { u.rawtext }]
+  // 7 to 9: the userinfo (decision 0606), "1" in 9 when a password is set
+  [u.scheme, name, port, u.path, u.rawquery, u.host, if u.rawtext == escape_path(u.path) { "" } else { u.rawtext }, u.user, u.password, if u.pwset { "1" } else { "" }]
 }
 
 /// The text of url.Parse's error: parse "url": reason; "" when it parses.
@@ -377,6 +378,24 @@ pub fn query_escape(s: Str) -> Str {
       out = rt.rs_push_word(out, 37 | (Int(hex[c >> 4]) << 8) | (Int(hex[c & 15]) << 16), 3)
     }
     i += 1
+  }
+  out
+}
+
+/// Go's escape(s, encodeUserPassword): letters, digits, `-_.~` and the
+/// sub-delims `$&+,;=` stay; every other byte is %XX (decision 0606).
+pub fn userinfo_escape(s: Str) -> Str {
+  let b = s.bytes()
+  let hex = b"0123456789ABCDEF"
+  var out = ""
+  for c8 in b {
+    let c = Int(c8)
+    let keep = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 45 || c == 95 || c == 46 || c == 126 || c == 36 || c == 38 || c == 43 || c == 44 || c == 59 || c == 61
+    if keep {
+      out = rt.rs_push_byte(out, c)
+    } else {
+      out = rt.rs_push_word(out, 37 | (Int(hex[c >> 4]) << 8) | (Int(hex[c & 15]) << 16), 3)
+    }
   }
   out
 }

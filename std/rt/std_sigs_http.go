@@ -117,6 +117,8 @@ var (
 	_ func(*Http_Client, *Task, int64) Http_Client                                                                                                      = (*Http_Client).M_with_redirects
 	_ func(*Http_ClientErr, *Task) string                                                                                                               = (*Http_ClientErr).M_display
 	_ func(*Task, string) Result[Http_Url, Http_UrlErr]                                                                                                 = Http_parse_url
+	_ func(*Http_Url, *Task) string                                                                                                                     = (*Http_Url).M_display
+	_ func(*Http_Url, *Task) string                                                                                                                     = (*Http_Url).M_redacted
 	_ func(*Http_UrlErr, *Task) string                                                                                                                  = (*Http_UrlErr).M_display
 	_ func(*Task, int64, Compress_Level) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] = Http_gzip_responses
 )

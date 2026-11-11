@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-11: feature: Url user and password, display and redacted, Basic auth from the URL
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-11 (the url.Userinfo rows of scripts/stdaudit/map.txt), decision 0606
+- Go reference: net/url url.go parseAuthority, Userinfo.String, URL.Redacted, shouldEscape (encodeUserPassword); net/http client.go send (go1.26.1)
+- Test: the httpurl corpus (Go's URL.User, User.String and Redacted on the userinfo of Go's url_test.go inputs and 600 random ones, go, arm64, llvm); golden url_userinfo (display, redacted, the Authorization header a client sends; arm64, llvm, Go parity)
+- Timing: none (a parse of the userinfo only when the URL has one)
+- Shipped in: not yet released
+
+http.Url gains user and password as defaulted fields, so every literal still compiles; parse_url used to drop them. A URL's password now reaches display: log redacted() instead. A client request to a URL with a user sends Authorization: Basic unless it sets its own. An empty userinfo (http://@host) reads as none, so display writes no "@" there where Go's String does.
+
 ## 2026-11-11: feature: file_server(fs, strip), Go's FileServer over an Fs
 
 - Kind: feature

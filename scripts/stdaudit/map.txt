@@ -1298,10 +1298,10 @@ url.URL.String = std/http.Url
 url.URL.* = std/http.Url (fields)
 url.Values.Del = std/url.Values.remove
 url.JoinPath = gap: no url join_path
-url.User = gap: no Userinfo (user:password in a URL)
-url.UserPassword = gap: no Userinfo (user:password in a URL)
-url.Userinfo = gap: no Userinfo (user:password in a URL)
-url.Userinfo.* = gap: no Userinfo (user:password in a URL)
+url.User = http.Url.user, http.Url.password
+url.UserPassword = http.Url.user, http.Url.password
+url.Userinfo = http.Url.user, http.Url.password
+url.Userinfo.* = http.Url.user, http.Url.password
 url.* = not planned: error types (UrlErr, EscapeErr) and binary marshalers
 
 # encoding/xml: std/xml

@@ -2182,9 +2182,20 @@ enum ClientErr {
 }
 
 pub fn parse_url(s: Str) -> Url ! UrlErr
-struct Url { scheme: Str, host: Str, port: Int?, path: Str, query: Map[Str, Str] }
+struct Url { scheme: Str, host: Str, port: Int?, path: Str, query: Map[Str, Str], user: Str = "", password: Str? = None }
+fn (u: Url) display() -> Str     // the URL with its userinfo escaped (Go's URL.String)
+fn (u: Url) redacted() -> Str    // display with a set password as xxxxx (Go's URL.Redacted)
 struct UrlErr { msg: Str }
 ```
+
+A URL's userinfo (decision 0606): `parse_url` reads `user:password@`
+percent decoded into `user` and `password` (`Some("")` for `user:@`; an
+empty userinfo, `http://@host`, is none). `display` writes them back
+escaped as Go's `Userinfo.String` (letters, digits, `-_.~` and
+`$&+,;=` stay), `redacted` shows a set password as `xxxxx`; logs
+should use `redacted`. A client request to a URL with a user sends
+`Authorization: Basic` of `user:password` unless the request sets
+`Authorization` itself, as Go's Client does.
 
 Full duplex (decision 0433): inside a `handle_stream` route's
 `http.stream` function the request's BodyReader stays readable, so a

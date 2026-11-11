@@ -1,0 +1,43 @@
+use std/http
+
+// http.Url's user and password (decision 0606): parse_url decodes them,
+// display and redacted write them as Go's URL.String and Redacted, and a
+// client request to a URL with a user sends Authorization: Basic unless
+// it sets its own (Go's Client.send).
+fn auth_line(req: Str) -> Str {
+  for line in req.split("\r\n") {
+    if line.to_lower().starts_with("authorization:") {
+      return line
+    }
+  }
+  "no Authorization"
+}
+
+fn main(os: Os) ! {
+  let u = http.parse_url("https://al%40ice:p%3Ass@example.com:8443/a?q=1")?
+  os.stdio.println("user: ${u.user} password: ${u.password ?? "-"}")
+  os.stdio.println("display: ${u.display()}")
+  os.stdio.println("redacted: ${u.redacted()}")
+  let v = http.parse_url("http://bob@example.com/")?
+  os.stdio.println("no password: ${v.password is None} ${v.redacted()}")
+  let w = http.parse_url("http://example.com/")?
+  os.stdio.println("none: '${w.user}' ${w.display()}")
+  let l = os.net.listen("127.0.0.1:0")?
+  let seen: Chan[Str] = Chan.new(2)
+  scope s {
+    s.group().spawn(fn() {
+      for _ in 0..2 {
+        let c = l.accept().or_fault("accept")
+        let q = c.read(4096).or_fault("read") ?? b""
+        seen.send(auth_line(q.to_str_lossy()))
+        c.write(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").or_fault("write")
+        c.close()
+      }
+    })
+    let c = http.client(os.net)
+    c.send(http.new_request("GET", "http://Aladdin:open%20sesame@${l.addr()}/x"))?
+    os.stdio.println("sent: ${seen.recv() ?? ""}")
+    c.send(http.new_request("GET", "http://Aladdin:x@${l.addr()}/y", headers: {"Authorization": "Bearer t"}))?
+    os.stdio.println("own header: ${seen.recv() ?? ""}")
+  }
+}

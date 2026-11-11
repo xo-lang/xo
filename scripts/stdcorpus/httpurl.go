@@ -105,6 +105,35 @@ func hurlRandom(r *rand.Rand) string {
 	return textOf(b.String())
 }
 
+// hurlUserinfo is an http URL with a userinfo of random bytes, written
+// raw (only the bytes url.Parse allows) or escaped by Go's
+// UserPassword.String.
+func hurlUserinfo(r *rand.Rand) string {
+	part := func() string {
+		var b strings.Builder
+		for i, n := 0, r.Intn(7); i < n; i++ {
+			b.WriteString([]string{"a", "Z", "9", "-", "_", ".", "~", "$", "&", "+", ",", ";", "=", "!", "*", "'", "(", ")", ":", "@", "/", "?", "%", " ", "é", "#", "[", "日"}[r.Intn(28)])
+		}
+		return b.String()
+	}
+	host := []string{"example.com", "a.b:8080", "[::1]:9"}[r.Intn(3)]
+	switch r.Intn(4) {
+	case 0:
+		return "http://" + url.User(part()).String() + "@" + host + "/p"
+	case 1:
+		return "https://" + url.UserPassword(part(), part()).String() + "@" + host
+	case 2:
+		// raw: the bytes validUserinfo allows, a colon or two
+		var b strings.Builder
+		for i, n := 0, r.Intn(10); i < n; i++ {
+			b.WriteString([]string{"a", "b", "1", "-", "_", ".", "~", "!", "$", "&", "'", "(", ")", "*", "+", ",", ";", "=", ":", "%41", "%3A", "%40", "%zz"}[r.Intn(23)])
+		}
+		return "http://" + b.String() + "@" + host + "/x?q=1"
+	default:
+		return "http://" + part() + "@" + host
+	}
+}
+
 func hurlQuery(r *rand.Rand) string {
 	var b strings.Builder
 	for j, n := 0, r.Intn(6); j < n; j++ {
@@ -215,6 +244,37 @@ func httpurlCorpus() string {
 		q := textOf(hurlQuery(r))
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(q), xq(hurlTargetQuery(q)))
 	}
+	o.WriteString("]\n\n/// (url, Go's URL.User: USER|PASSWORD or USER| with no password, Go's User.String(), and the userinfo of Redacted)\nconst USERINFO: List[(Str, Str, Str, Str)] = [\n")
+	ui := []string{}
+	for _, s := range in {
+		if pu, err := url.Parse(s); err == nil && pu.User != nil && (pu.Scheme == "http" || pu.Scheme == "https") && pu.Host != "" {
+			ui = append(ui, s)
+		}
+	}
+	for i := 0; i < 600; i++ {
+		ui = append(ui, hurlUserinfo(r))
+	}
+	for _, s := range ui {
+		pu, err := url.Parse(s)
+		if err != nil || pu.User == nil || pu.Host == "" {
+			// a userinfo Go refuses, or no host: parse_url's error test
+			// above covers it
+			continue
+		}
+		if _, set := pu.User.Password(); pu.User.Username() == "" && !set {
+			// "http://@host": Go keeps an empty User and String writes the
+			// "@"; http.Url has no userinfo then (decision 0606)
+			continue
+		}
+		pw, set := pu.User.Password()
+		want := urlKeep(pu.User.Username()) + "|"
+		if set {
+			want += "S" + urlKeep(pw)
+		}
+		red := pu.Redacted()
+		red = red[len(pu.Scheme)+3 : strings.Index(red, "@")]
+		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xq(textOf(s)), xq(want), xq(pu.User.String()), xq(red))
+	}
 	o.WriteString("]\n")
 	o.WriteString(httpurlTests)
 	return o.String()
@@ -234,6 +294,27 @@ test "parse_url is Go's url.Parse for an http URL" {
     }
     if got != want {
       bad.push((s, got, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "parse_url reads the userinfo as Go's URL.User, and display and redacted write it as Go's String and Redacted" {
+  var bad: List[(Str, Str, Str)] = []
+  for (s, want, ui, red) in USERINFO {
+    match http.parse_url(s) {
+      Ok(u) => {
+        let got = "${u.user}|${u.password.map(fn(p) { "S" + p }) ?? ""}"
+        let d = u.display()
+        let r = u.redacted()
+        let at = u.scheme.len() + 3
+        let gui = d[at..(d.find("@") ?? at)]
+        let gred = r[at..(r.find("@") ?? at)]
+        if got != want || gui != ui || gred != red {
+          bad.push((s, "${got} ${gui} ${gred}", "${want} ${ui} ${red}"))
+        }
+      }
+      Err(e) => bad.push((s, "err ${e.msg}", want))
     }
   }
   expect(first_bad(bad)) == []

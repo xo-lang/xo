@@ -635,7 +635,21 @@ struct Url {
   port: Int?
   path: Str
   query: Map[Str, Str]
+  /// The userinfo before `@`, percent decoded (Go's URL.User, decision
+  /// 0606): the user, and the password when a `:` gave one (Some("") for
+  /// `user:@`). An empty userinfo (`http://@host`) is none, so display
+  /// writes no `@` where Go's String does.
+  user: Str = ""
+  password: Str? = None
 }
+
+/// The URL's text with its userinfo (Go's URL.String writes
+/// Userinfo.String: the user and the password escaped, `@`, `/`, `?`
+/// and `:` among them). Logs should use redacted.
+fn (u: Url) display() -> Str
+
+/// display with a set password as `xxxxx` (Go's URL.Redacted).
+fn (u: Url) redacted() -> Str
 
 struct UrlErr {
   msg: Str
