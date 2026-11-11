@@ -474,6 +474,9 @@ struct G {
   /// the SSA blocks landing pads enter, and the call site table entries
   cur_pad: Int = -1
   pads: List[Bool] = []
+  /// per block holding an rt.landing value, the other blocks whose
+  /// instructions land there (the unwinder enters it from them)
+  land_srcs: List[List[Int]] = []
   sites: List[CallSite] = []
   stub_sites: List[CallSite] = []
   /// per landing pad block, its entry for the fault stubs that saved
@@ -636,10 +639,12 @@ fn (var g: G) begin_func(fi: Int) {
   g.bmap = []
   g.end_memo = []
   g.pads = []
+  g.land_srcs = []
   for _ in 0..nb {
     g.bmap.push(-1)
     g.end_memo.push(-1)
     g.pads.push(false)
+    g.land_srcs.push([])
   }
   g.len_param = {}
   g.field_lens = {}

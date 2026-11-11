@@ -1,0 +1,54 @@
+// A parameter passed into a generic constructor from another module whose
+// inlined callee faults on it (sse.reader calls sse.parser, which faults
+// on max_line < 1): the unwinder enters the block holding rt.landing from
+// those fault checks, which are not its predecessors. The arm64 backend
+// reused a "" its predecessor had put in a register on that path and
+// failed with "all reads virtual register 140 before it is written"
+// (2026-11-11, a reduced copy of ADR 0603's std/sse;
+// gotchas/arm64-landing-block-memo-dominance.md).
+use github.com/xo-lang/xo/test/landing_memo/sse
+struct Chunks {
+  cs: List[Bytes]
+  at: Mutex[Int]
+  fail: Str?
+}
+fn chunks(cs: List[Bytes], fail: Str? = None) -> Chunks { Chunks{cs: cs, at: Mutex[Int].new(0), fail: fail} }
+fn (c: Chunks) read(max: Int) -> Bytes? ! Str {
+  let i = c.at.with(fn(var n: Int) { n += 1; n - 1 })
+  if let Some(b) = c.cs.get(i) {
+    return Ok(Some(b))
+  }
+  match c.fail {
+    Some(m) => Err(m)
+    None => Ok(None)
+  }
+}
+fn all(c: Chunks, max_line: Int = sse.MAX_LINE, last: Str = "") -> Str {
+  var r = sse.reader(fn(n: Int) -> Bytes? ! Str { c.read(n) }, max_line: max_line, last_event_id: last)
+  var o = StrBuilder.new()
+  while true {
+    match r.next() {
+      Ok(Some(e)) => o.write("${e.event}/${e.id}/${e.data};")
+      Ok(None) => break
+      Err(sse.ReadErr.Source(m)) => {
+        o.write("source error ${m};")
+        break
+      }
+      Err(sse.ReadErr.Format(e)) => {
+        o.write("format error ${e.display()};")
+        break
+      }
+    }
+  }
+  let after = match r.next() {
+    Ok(None) => "then none"
+    _ => "then more"
+  }
+  o.write(after)
+  o.write(" last=${r.last_event_id()} retry=${r.retry() ?? -1}")
+  o.freeze()
+}
+fn main(os: Os) {
+  os.stdio.println(all(chunks([b"data: a\n\n"])))
+  os.stdio.println(all(chunks([b"id: 7\nevent: x\ndata: b\n\n"], fail: Some("gone"))))
+}

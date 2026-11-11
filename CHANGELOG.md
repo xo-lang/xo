@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- Fixed (arm64 and amd64 native backends): a function that passes a value into an inlined callee that faults on it (a constructor's argument check from another module) could fail to build with "internal: ... reads virtual register N before it is written": the block the unwinder enters from that check reused a constant its normal predecessor had made. Golden landing_memo.
 - xo build and xo test (build time, arm64 native backend): the f64 SLP pass skips functions and block chains with fewer than two Float loads, where it built its use maps first; output unchanged. aiplatform/v1 (xo-lang/gcp) builds its tests in 0.944 of the CPU (linux/arm64, `xo bench --ab`).
 - xo build and xo test (fix, cache): a link's binary cache key and std's half key hold the environment the linker reads (XO_BRANCH_REACH, XO_DATA_SHIFT, XO_STD_HALF), so a link without XO_BRANCH_REACH no longer gets a link made with it from the bin cache. TestGoldenRunIslands' islanded link was served to TestDebugInfoSameCode's build with debug information, the "functions differ" failure of tiers 908 to 912 (calls through branch island veneers); internal/arm64 TestBinCacheLinkEnv.
 - xo build and xo test (build time, arm64 and amd64 native backends): the register allocator merges and sorts its interval lists in one pass; output unchanged. aiplatform/v1 (xo-lang/gcp) builds its tests in about 0.97 of the CPU (linux/arm64, `xo bench --ab`).

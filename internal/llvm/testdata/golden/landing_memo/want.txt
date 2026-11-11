@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+message//a;then none last= retry=-1
+x/7/b;source error gone;then none last=7 retry=-1
+--- stderr

@@ -744,6 +744,10 @@ fn (var g: G) isel() {
       let w = ssa.pad_of(g.f.values[v].pi)
       if w >= 0 {
         g.pads[g.pad_target(w)] = true
+        let lb = ssa.block_of(g.f.values[w].tb)
+        if lb != b && !g.land_srcs[lb].contains(b) {
+          g.land_srcs[lb].push(b)
+        }
       }
     }
   }
@@ -878,6 +882,26 @@ fn (var g: G) isel() {
       // it in registers is known to hold (the operation that faulted did
       // not finish)
       g.drop_memo()
+    } else if !g.land_srcs[b].is_empty() {
+      // a block holding rt.landing is also entered by the unwinder from
+      // every block with an instruction landing there, which need not be
+      // its predecessors (an inlined callee's fault check beside the
+      // block that continues to it): only what dominates each of those
+      // blocks' starts holds, so it inherits from the nearest common
+      // dominator of its own dominator and theirs (2026-11-11: a "" its
+      // predecessor made reached fault_continue's return through the
+      // landing, "all reads virtual register N before it is written";
+      // gotchas/arm64-landing-block-memo-dominance.md)
+      var d = idom[b]
+      for s in g.land_srcs[b] {
+        d = if d < 0 { -1 } else { dom_nca(idom, d, idom[s]) }
+      }
+      if d >= 0 && g.end_memo[d] >= 0 {
+        g.inherit(g.end_memo[d])
+        g.clobber()
+      } else {
+        g.drop_memo()
+      }
     } else {
       let preds = g.f.blocks[b].preds
       let (jp, jc, jtruth, jok) = g.join_source(b)
@@ -4208,6 +4232,32 @@ fn (var g: G) payload_op(v: Int) {
 
 // ---------------------------------------------------------------------------
 // Dominators
+
+/// The nearest common dominator of blocks a and b in the tree idom (-1
+/// when either is -1 or they share none).
+fn dom_nca(idom: List[Int], a: Int, b: Int) -> Int {
+  if a < 0 || b < 0 {
+    return -1
+  }
+  var up: Map[Int, Bool] = {}
+  var x = a
+  var n = 0
+  while x >= 0 && !up.contains(x) && n <= idom.len() {
+    up[x] = true
+    x = idom[x]
+    n += 1
+  }
+  var y = b
+  n = 0
+  while y >= 0 && n <= idom.len() {
+    if up.contains(y) {
+      return y
+    }
+    y = idom[y]
+    n += 1
+  }
+  -1
+}
 
 /// The immediate dominator of each SSA block (blocks in reverse
 /// postorder; Cooper, Harvey, Kennedy 2001): -1 for the entry and the
