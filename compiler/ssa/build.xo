@@ -3647,6 +3647,12 @@ fn (var b: Builder) llrt_or_none(name: Str, t0: Int, args: List[Int]) -> Int? {
   if b.wasm {
     return None
   }
+  b.llrt_any(name, t0, args)
+}
+
+/// The native prelude's llrt_<name> called with args, on every target
+/// (llrt_or_none's work), or None when the prelude has none.
+fn (var b: Builder) llrt_any(name: Str, t0: Int, args: List[Int]) -> Int? {
   let impl = b.prelude_impl("llrt_${name}")
   if impl < 0 {
     return None

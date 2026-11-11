@@ -215,6 +215,10 @@ struct TestOpts {
   /// --count=N (decision 0439): 1 runs the tests even when the result
   /// cache holds a report of this run, as `go test -count=1`
   count: Int = 0
+  /// one test per process, no batch and no replays over a pipe: the
+  /// wasm backend's test binary runs XO_TEST's test and exits
+  /// (compiler/ssa testmode.xo: no llrt_test_next loop in a WASI module)
+  single: Bool = false
 }
 
 /// Whether the run takes test t: --run's text and the --watch selection.
@@ -272,7 +276,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
   // the outcomes of the tests run in batches, by place in tests; the
   // rest run below, one process each
   var pre: Map[Int, Outcome] = {}
-  if (os.env.get("XO_TEST_BATCH") ?? "") != "0" && o.explore <= 0 {
+  if (os.env.get("XO_TEST_BATCH") ?? "") != "0" && o.explore <= 0 && !o.single {
     pre = run_batched(os, bin, limit, tests, o)
   }
   for (k, t) in tests.indexed() {
@@ -308,7 +312,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
     } else if let Some(bo) = pre.get(k) {
       out = bo
     } else if t.prop {
-      out = run_property(os, bin, limit, t, s, if o.cases <= 0 { 100 } else { o.cases })
+      out = run_property(os, bin, limit, t, s, if o.cases <= 0 { 100 } else { o.cases }, o.single)
     } else if o.explore > 0 && t.seed == 0 {
       // --explore (decision 0350 stage 2): seeds 1 to N on the
       // deterministic scheduler, the first that fails reported with how
@@ -844,7 +848,7 @@ fn run_chunk(os: Os, bin: Str, limit: Duration, runs: List[Run], o: TestOpts) ->
       if r.case < 0 {
         out[r.k] = to
       } else {
-        out[r.k] = prop_failed(os, bin, limit, r.t, r.seed, r.case, to, spc)
+        out[r.k] = prop_failed(os, bin, limit, r.t, r.seed, r.case, to, spc, o.single)
       }
       n += 1
     } else if n < segs.len() {
@@ -853,7 +857,7 @@ fn run_chunk(os: Os, bin: Str, limit: Duration, runs: List[Run], o: TestOpts) ->
       if r.case < 0 {
         let (oc, _) = run_test_env(os, bin, limit, r.t, r.seed, [])
         out[r.k] = oc
-      } else if let Some(po) = prop_case(os, bin, limit, r.t, r.seed, r.case) {
+      } else if let Some(po) = prop_case(os, bin, limit, r.t, r.seed, r.case, o.single) {
         out[r.k] = po
       }
       n += 1
@@ -940,20 +944,20 @@ fn run_batch(os: Os, bin: Str, limit: Duration, batch: List[Run], pw: List[Str])
 
 /// Case c of property test t run alone (run_property's step): the test's
 /// outcome when the case fails (shrunk), None when it passes.
-fn prop_case(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int) -> Outcome? {
+fn prop_case(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int, single: Bool) -> Outcome? {
   let case_seed = seed.wrapping_mul(1000003).wrapping_add(c)
   let (out, pc) = run_test_env(os, bin, limit, t, seed, ["XO_PROP_SEED=${u64_str(case_seed)}"])
   if out.status != "fail" {
     return None
   }
-  Some(prop_failed(os, bin, limit, t, seed, c, out, pc))
+  Some(prop_failed(os, bin, limit, t, seed, c, out, pc, single))
 }
 
 /// Property test t's outcome when its case c failed with out (pc what
 /// the case reported): shrunk when the choices were reported.
-fn prop_failed(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int, out: Outcome, pc: PropCase) -> Outcome {
+fn prop_failed(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, c: Int, out: Outcome, pc: PropCase, single: Bool) -> Outcome {
   if pc.reported {
-    let (s_in, s_out, steps) = shrink(os, bin, limit, t, seed, pc.choices)
+    let (s_in, s_out, steps) = shrink(os, bin, limit, t, seed, pc.choices, single)
     if steps > 0 {
       return Outcome{status: "fail", msg: "property failed on case ${c + 1}; shrunk in ${steps} steps to\n${s_in}${s_out.msg}", logs: s_out.logs, input: s_in}
     }
@@ -1041,14 +1045,14 @@ fn trim_nl(s: Str) -> Str {
 
 /// runNativeProperty: the cases of property test t, each in a process of
 /// its own, and the first failing input, shrunk.
-fn run_property(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, cases: Int) -> Outcome {
+fn run_property(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, cases: Int, single: Bool) -> Outcome {
   for i in 0..cases {
     let case_seed = seed.wrapping_mul(1000003).wrapping_add(i)
     let (out, pc) = run_test_env(os, bin, limit, t, seed, ["XO_PROP_SEED=${u64_str(case_seed)}"])
     if out.status != "fail" {
       continue
     }
-    return prop_failed(os, bin, limit, t, seed, i, out, pc)
+    return prop_failed(os, bin, limit, t, seed, i, out, pc, single)
   }
   Outcome{status: "pass"}
 }
@@ -1077,15 +1081,15 @@ fn join_choices(cs: List[Int]) -> Str {
 /// shrinkNative: deletes runs of choices, then lowers each by binary
 /// search, keeping every edit that still fails with smaller choices,
 /// within 2000 tries; the best input, its outcome, and the steps.
-fn shrink(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, failing: List[Int]) -> (Str, Outcome, Int) {
+fn shrink(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, failing: List[Int], single: Bool) -> (Str, Outcome, Int) {
   var best = failing
   var best_in = ""
   var best_out = Outcome{status: "fail"}
   var steps = 0
   var budget = 2000
   // the replays go to one test binary over a pipe (serve_run) unless
-  // XO_TEST_BATCH=0
-  var srv = Server{off: (os.env.get("XO_TEST_BATCH") ?? "") == "0"}
+  // XO_TEST_BATCH=0 or the binary runs one test (TestOpts.single)
+  var srv = Server{off: single || (os.env.get("XO_TEST_BATCH") ?? "") == "0"}
   var improved = true
   while improved && budget > 0 {
     improved = false

@@ -221,6 +221,13 @@ test "list_swap2: Str elements keep their text and their count" {
   expect(ys == ["gamma", "alpha"])
 }
 
+/// The reference count of the object at p: its first word on the native
+/// runtimes, an i32 there in a WASI module's (compiler/wasm rt.xo rc_inc;
+/// the word's upper half is the next header field)
+fn rc_word(p: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 { rt.mem_load(p, 0, 4) } else { rt.slot_load(p, 0, 0) }
+}
+
 test "list_swap2: a cross-list Str swap changes no element's count" {
   // the count of a specific object, read from its first word (llrt/obj.xo
   // count does the same), before and after it crosses lists: the swap
@@ -230,16 +237,16 @@ test "list_swap2: a cross-list Str swap changes no element's count" {
   var ys: List[Str] = ["gamma" + "!", "delta" + "!"]
   let px = rt.obj_addr(xs[0])
   let py = rt.obj_addr(ys[1])
-  let cx = rt.slot_load(px, 0, 0)
-  let cy = rt.slot_load(py, 0, 0)
+  let cx = rc_word(px)
+  let cy = rc_word(py)
   expect(cx == 1)
   expect(cy == 1)
   rt.list_swap2(xs, 0, ys, 1)
   // the counts are read before the identity checks: each obj_addr of an
   // element holds a temporary reference to the string, so a count read
   // after one sees 2 and not the swap's 1
-  let c2x = rt.slot_load(px, 0, 0)
-  let c2y = rt.slot_load(py, 0, 0)
+  let c2x = rc_word(px)
+  let c2y = rc_word(py)
   expect(c2x == cx)
   expect(c2y == cy)
   expect(rt.obj_addr(ys[1]) == px)

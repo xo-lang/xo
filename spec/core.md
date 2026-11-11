@@ -3539,6 +3539,12 @@ the same regression tests; a target whose generated native test does not
 check is skipped and counted per module (`MODULE: contract fuzzing needs
 --backend=go: N contracts not fuzzed`, the reason under `-v`). `xo dump`
 (11.4) works on every backend (decision 0251).
+`xo test --backend=wasm` builds the tests as a WASI preview 1 module and
+runs each in its own process under the runner `XO_TEST_EXEC` names (a
+usage error without one), with the same test world as the native
+backends; a test WASI preview 1 cannot run (sockets, `use c`, a test of
+the native runtimes' own layout) is skipped with its reason in the
+summary line, never counted as a pass (decision 0610).
 
 **Builds without a garbage collector.** `xo build --no-gc` (also `xo run`,
 `xo test`, and `xo check`) builds on a native backend whose memory is

@@ -135,11 +135,6 @@ fn (var g: Gen) call(v: Int) {
       g.push(x.args[1])
       g.e("i64.store offset=${at}")
     }
-    "rt.test_on" => {
-      // a WASI module is never a test binary (std/native/log.xo asks)
-      g.e("i32.const 0")
-      g.def(v)
-    }
     "rt.tlocal_addr" => {
       g.e("i64.const ${g.static_table("tlocal", 16)}")
       g.def(v)
@@ -671,7 +666,7 @@ fn (var g: Gen) call(v: Int) {
         // --lax: the call faults when it runs; so do the Linux system
         // calls of std/native/llrt/linux.xo and sysio.xo (decision 0206),
         // in `target.os` arms the passes may leave in a WASI module,
-        // std/native/log.xo's test world record behind rt.test_on (false),
+        // std/native/log.xo's test world record,
         // and the native heap's blocks of sysio.set_err's native arm
         // (behind sysio.layer() == 0 in a WASI module); a function or
         // frame address (decision 0233) has no meaning in wasm
@@ -1021,7 +1016,7 @@ fn (var g: Gen) variant_into_at(dst: Int, t: Int, tag: Int, b: Int, el: List[Str
 /// The runtime functions of rt.xo called with the operands' leaves under
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt_direct(name: Str) -> Bool {
-  name is "int_op" | "int_conv" | "int_in_range" | "rune_valid" | "rune_of" | "u64_to_float" | "f32_round" | "i64_to_f32" | "u64_to_f32" | "rs_append_u64" | "rs_append_rune" | "rs_push_rune" | "rs_append_rune_quote" | "rs_push_byte" | "rs_put" | "rs_write" | "rs_push_word" | "rs_push_words" | "rs_with_cap" | "str_find" | "str_split" | "str_lines" | "str_trim" | "bytes_hex" | "env_args" | "env_get" | "env_program" | "env_vars" | "set_grace" | "stop_requested" | "rs_append_duration" | "stdio_out"
+  name is "int_op" | "int_conv" | "int_in_range" | "rune_valid" | "rune_of" | "u64_to_float" | "f32_round" | "i64_to_f32" | "u64_to_f32" | "rs_append_u64" | "rs_append_rune" | "rs_push_rune" | "rs_append_rune_quote" | "rs_push_byte" | "rs_put" | "rs_write" | "rs_push_word" | "rs_push_words" | "rs_with_cap" | "str_find" | "str_split" | "str_lines" | "str_trim" | "bytes_hex" | "env_args" | "env_get" | "env_program" | "env_vars" | "set_grace" | "stop_requested" | "rs_append_duration" | "stdio_out" | "tw_write_real" | "tw_quit" | "env_real_at"
 }
 
 // ---------------------------------------------------------------------------

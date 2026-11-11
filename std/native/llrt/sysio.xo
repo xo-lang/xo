@@ -260,6 +260,12 @@ pub fn clock_now() -> Int {
     return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_REALTIME)
   }
   if target.arch == TargetArch.Wasm32 {
+    // a test's virtual clock (the native arms' rt.clock_now reads it in
+    // the C runtime's place; the wasm runtime's is WASI's real clock)
+    let tw = twflags.vclock()
+    if tw != 0 {
+      return rt.mem_load(tw, twflags.TW_VNOW, 8)
+    }
     // WASI's clock_time_get: a constant test, so Linux's vDSO lookup
     // (elf_dynsym, about 4 KB) stays out of a wasm module
     return rt.clock_now()

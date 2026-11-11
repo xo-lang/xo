@@ -342,8 +342,13 @@ fn main(os0: Os) ! {
     build_go(os, ctx, o)?
     return
   }
-  if !(backend is "arm64" | "amd64" | "llvm") && !(backend == "wasm" && o.cmd == "build") {
-    fail(os, "--backend=${backend}: want native, arm64, amd64, llvm, or go for build, run, and test, or wasm for build")
+  if !(backend is "arm64" | "amd64" | "llvm") && !(backend == "wasm" && (o.cmd == "build" || o.cmd == "test")) {
+    fail(os, "--backend=${backend}: want native, arm64, amd64, llvm, or go for build, run, and test, or wasm for build and test")
+  }
+  if backend == "wasm" && o.cmd == "test" && (os.env.get("XO_TEST_EXEC") ?? "").fields().is_empty() {
+    // the test module runs under a WASI runner, as `go test -exec` names
+    // one: compiler/wasm/run.mjs in the repository (Node's WASI)
+    fail(os, "xo test --backend=wasm runs the tests under a WASI runner: set XO_TEST_EXEC to one, such as \"node compiler/wasm/run.mjs\" (an absolute path)")
   }
   if !(o.assembler is "" | "cc" | "macho") {
     fail(os, "--as=${o.assembler}: want cc or macho")
@@ -492,6 +497,8 @@ fn main(os0: Os) ! {
     to.profile_dir = o.wd
     to.std = o.std
     to.target = test_target(o)
+    // a WASI test module runs one test per process (TestOpts.single)
+    to.single = backend == "wasm"
     let pdbs = start_pdbs(os, ctx)
     let code = run_tests_cached(os, ctx, o.run_key, result_key(os, ctx, o.run_key, to, o.std_module, o.run_start), nb.bin, nb.tests, to)
     wait_pdbs(os, "xo test", pdbs)
@@ -1295,6 +1302,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   var ts: List[TestInfo] = []
   if tests {
     ts = test_infos(c, root, o.wd, fz)
+    if backend == "wasm" {
+      // the std tests a WASI module skips, each with its reason
+      // (wasmskip.xo); a module the wasm backend cannot build has no
+      // test module, only its tests skipped
+      ts = with_wasm_skips(ts, o.std_module)
+      if !wasm_module_skip(o.std_module).is_empty() {
+        return Native{bin: "", tests: ts, pc: c.parse_cache}
+      }
+    }
   }
   // the build information's source hashes, before lower lets the
   // checker go (decision 0354 stage 2)
@@ -1383,6 +1399,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       fail(os, "${if p3 { "wasip3" } else { "wasip2" }}/wasm builds a wasi:http component, which no other target can also build: name it alone")
     }
     let wtarget = if p3 { "wasip3" } else if p2 { "wasip2" } else { "wasip1" }
+    if tests && p2 {
+      fail(os, "xo test --backend=wasm builds a wasip1/wasm test module, not a ${wtarget} component")
+    }
     // one of several targets: NAME-wasip1-wasm.wasm in -o's directory,
     // else the working directory, as bin_path names the others
     var wout = o.out
@@ -1399,9 +1418,22 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if debug_info_eff(o, release) == "split" {
       fail(os, "--debug-info=split is for the native and LLVM backends' linux and darwin programs, not ${wtarget}/wasm (decision 0355)")
     }
+    if tests && wout.is_empty() {
+      // the test module in the build directory, as a native test binary
+      // (its std module apart: gotchas/std-module-test-binary-shared.md)
+      let smod = if o.std_module.is_empty() { "" } else { "std-module=${o.std_module}" }
+      let wdir = match build_dir(os, ctx, o.wd, o.dirs, 1, false, false, false, ["wasm", smod]) {
+        Ok(d) => d
+        Err(e) => fail(os, "${e}")
+      }
+      wout = "${wdir.trim_suffix("/")}/${prog_name(o.wd, o.dirs)}.test.wasm"
+    }
     let why = build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata, "wasip1"), o.skip_unsupported, p2, p3)
     if !why.is_empty() {
       return Native{skipped: why}
+    }
+    if tests {
+      return finish(os, ctx, o, c, root, [("${wtarget}/wasm", wout)], tests, ts)
     }
     return Native{bins: if wout.is_empty() { [] } else { [("${wtarget}/wasm", wout)] }, pc: c.parse_cache}
   }

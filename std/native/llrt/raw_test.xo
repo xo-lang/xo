@@ -83,7 +83,12 @@ test "u8s_copy_back in place and past the capacity" {
 
 test "str_at makes the Str of an object and a length word" {
   // decision 0402: an owned string, a second reference taken by hand, and
-  // the view at offset 2 of 3 bytes made from the object and the word
+  // the view at offset 2 of 3 bytes made from the object and the word.
+  // Native only: a wasm run skips it (compiler/xo wasmskip.xo), and the
+  // guard keeps rt.str_at out of the WASI module
+  if target.arch == TargetArch.Wasm32 {
+    return
+  }
   let t = str_copy(data("abcdefgh"), 8)
   let a = rt.obj_addr(t)
   rt.mem_store(a, 0, rt.mem_load(a, 0, 8) + 1, 8)

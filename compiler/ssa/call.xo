@@ -1588,6 +1588,13 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
   if raw {
     return rv
   }
+  if b.wasm && b.tests && name is "env_get" | "env_vars" {
+    // a WASI test module's environment is the test world's (a FakeEnv,
+    // as on the native targets: process.env_get), not the runner's
+    if let Some(v) = b.llrt_any(name, nt, vs) {
+      return v
+    }
+  }
   if name is "eprintln" | "env_get" | "env_vars" {
     // the runtime's standard error and environment in Xo (the zero-C
     // audit's B03): the native prelude's llrt_<name>; rt.<name> only in a
@@ -1781,6 +1788,21 @@ fn wasi_served(path: Str, name: Bytes) -> Str {
     // exit, which a WASI module does not have, and its flush is a
     // platform call; written through directly, as print and println are
     return "stdio_out"
+  }
+  if path == "native/llrt/process" && name == b"env_real_at" {
+    // a test binary's variables (XO_TEST and friends, twrun.start): the
+    // C runtime's envp, which a WASI module does not have; environ_get
+    return "env_real_at"
+  }
+  if path == "native/llrt/testworld" && name == b"write_real" {
+    // the test harness's channel (a failure, a log record, the begin and
+    // end marks) on the real standard output: WASI fd_write, where the
+    // native body's arms are Linux, Darwin, and Windows system calls
+    return "tw_write_real"
+  }
+  if path == "native/llrt/testworld" && name == b"quit" {
+    // a test binary's immediate exit: WASI proc_exit
+    return "tw_quit"
   }
   ""
 }

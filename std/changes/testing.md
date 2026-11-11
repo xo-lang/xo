@@ -1,5 +1,17 @@
 # std/testing changes
 
+## 2026-11-11: fix: the test world in a WASI test module (os.env, the virtual clock, sleeps)
+
+- Kind: fix
+- Commit: this push
+- Found by: decision 0610's first wasm run of std's tests (look_path's FakeEnv test, native/time's tickers, uuid's v7 order)
+- Go reference: none (Go's tests do not run as wasip1 modules under a test world)
+- Test: internal/selfhost TestWasmStdTests; all 65 std test modules under `xo test --backend=wasm` (594 pass, 0 fail, 109 listed skips)
+- Timing: none (test-only paths)
+- Shipped in: not yet released
+
+Under `xo test --backend=wasm`, `os.env` read the runner's environment and `set` did not stick, and `os.clock.now()` did not move with `advance`, `sleep` or a ticker's `wait`: the wasm backend lowered those calls to its own runtime, around the test world. A wasm test build now goes through the test world as the native backends do (decision 0610).
+
 ## 2026-11-11: fix: FakeNet patterns match natively as on the Go backend (a trailing slash, `{$}`, `{rest...}` on `/`)
 
 - Kind: fix

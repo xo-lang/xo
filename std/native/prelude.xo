@@ -6140,6 +6140,15 @@ fn llrt_test_clock_set(t: Int) { twrun.clock_set(t) }
 
 fn llrt_test_sleeps() -> List[Int] { twrun.sleeps() }
 
+/// Clock.sleep and sleep_or_cancel (0: not canceled) in a WASI test
+/// module: the test world's clock (twrun.wasm_sleep)
+fn llrt_test_clock_sleep(d: Int) { twrun.wasm_sleep(d) }
+
+fn llrt_test_clock_sleep_or_cancel(d: Int) -> Int {
+  twrun.wasm_sleep(d)
+  0
+}
+
 fn llrt_test_signal_after(d: Int) { twrun.signal_after(d) }
 
 fn llrt_test_main_begin(args: List[Str]) { twrun.main_begin(args) }

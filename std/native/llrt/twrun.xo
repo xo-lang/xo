@@ -174,8 +174,12 @@ fn unlock() { pool.unlock(lock_word()) }
 /// virtual now at 2026-01-01T00:00:00Z, and on.
 pub fn start() {
   // the test world's values are released at exit (entry.xo, decision
-  // 0233)
-  atexit.set_tw_end(rt.fn_addr("tw_end"))
+  // 0233); a WASI module has no function addresses and no exit hooks:
+  // its test binary runs one test and exits
+  let wasm = target.arch == TargetArch.Wasm32
+  if !wasm {
+    atexit.set_tw_end(rt.fn_addr("tw_end"))
+  }
   let vars = ["XO_TEST_REAL", "XO_TEST_SEED", "XO_TEST", "XO_PROP_REPLAY", "XO_PROP_SEED", "XO_PROP_BEST"]
   for k in 0..vars.len() {
     let a = process.env_real_at(vars[k])
@@ -186,7 +190,9 @@ pub fn start() {
   let w = twflags.rec()
   st(state(), R_TW, w)
   // the virtual clock's move after a deadlock check (pool.xo kick)
-  rt.mem_store(w, twflags.TW_KICK, rt.fn_addr("tw_kick"), 8)
+  if !wasm {
+    rt.mem_store(w, twflags.TW_KICK, rt.fn_addr("tw_kick"), 8)
+  }
   rt.mem_store(w, TW_REAL, real, 4)
   rt.mem_store(w, TW_VIRT, if (real & TW_REAL_CLOCK) == 0 { 1 } else { 0 }, 4)
   st(w, TW_VNOW, TW_EPOCH)
@@ -275,6 +281,13 @@ pub fn clock_set(t: Int) { rt.slot_store[Int](tw(), 1, t, RELEASE) }
 /// clock moves) and not a cancellation point, until a timer at deadline
 /// d from now fires.
 fn wait_counted(d: Int) {
+  if target.arch == TargetArch.Wasm32 {
+    // a WASI test module runs one context on its own scheduler, with no
+    // poll timers to fire: the virtual clock moves by d at once
+    let w = tw()
+    st(w, TW_VNOW, ld(w, TW_VNOW) + d)
+    return
+  }
   let c = ctx.cur()
   let park = poll.park_of(c)
   pool.park_reset(park)
@@ -286,6 +299,21 @@ fn wait_counted(d: Int) {
     tasks.park_wait_n(c, false, true)
   }
   poll.timer_end(t)
+}
+
+/// Clock.sleep(d) in a WASI test module (compiler/ssa conc.xo): recorded
+/// for FakeClock.sleeps(), as cabi.xo clock_sleep records it, then the
+/// virtual clock moves by d (wait_counted's wasm arm); with a real clock
+/// (`xo test --real` with clock) the runtime's sleep.
+pub fn wasm_sleep(d: Int) {
+  if twflags.on() {
+    sleep_record(d)
+  }
+  if twflags.vclock() != 0 {
+    wait_counted(if d < 0 { 0 } else { d })
+  } else if target.arch == TargetArch.Wasm32 {
+    let _c = rt.clock_sleep_or_cancel(d)
+  }
 }
 
 /// FakeClock.advance(d): the timers due within d fire in order, the

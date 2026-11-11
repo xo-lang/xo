@@ -1,0 +1,54 @@
+// The std tests a WASI test module skips (`xo test --backend=wasm`), each
+// with its reason, which the summary line names (decision 0437: a skip
+// never reads as a pass, and a module the wasm backend cannot run is
+// listed here, never silently absent from a wasm run).
+
+/// WASI preview 1, the wasm backend's test target, has no sockets.
+const NO_SOCKETS = "wasm: WASI preview 1 has no sockets"
+
+/// The reason the wasm backend cannot build std module m's tests, or "".
+fn wasm_module_skip(m0: Str) -> Str {
+  // --std-module's resolved name: std/NAME for a module of std's root
+  // (opts.xo resolve_std_module), native/... as given
+  let m = m0.trim_prefix("std/")
+  match m {
+    "amqp" | "amqptest" | "native/http" | "native/llrt/netconn" | "native/llrt/pg" => NO_SOCKETS
+    "native/sqlite" => "wasm: SQLite is C (use c), which a WASI module does not link"
+    // the native runtimes' allocator: a WASI module's heap is
+    // compiler/wasm rt.xo's ($alloc, $heap_large), which its own tests
+    // cover (internal/selfhost wasm goldens)
+    "native/llrt/heapos" | "native/llrt/obj" | "native/llrt/libcmem" => "wasm: tests the native runtimes' allocator, which a WASI module replaces with compiler/wasm's"
+    _ => ""
+  }
+}
+
+/// The reason the wasm backend skips the test named name of std module m
+/// (a test of the native runtimes' own layout), or "".
+fn wasm_test_skip(m0: Str, name: Str) -> Str {
+  let m = m0.trim_prefix("std/")
+  if m == "native/llrt/raw" && name == "str_at makes the Str of an object and a length word" {
+    return "wasm: a native Str view (decision 0402); a WASI module's Str is compiler/wasm's"
+  }
+  if m == "native/llrt/ctx" && name == "the root registry is the services record's word at SV_ROOTS" {
+    return "wasm: the native runtimes' services record, which a WASI module does not have"
+  }
+  ""
+}
+
+/// ts with the wasm skips of std module m (none outside a std module run)
+/// set: the module's reason on every test, else each test's own.
+fn with_wasm_skips(ts: List[TestInfo], m: Str) -> List[TestInfo] {
+  if m.is_empty() {
+    return ts
+  }
+  let all = wasm_module_skip(m)
+  var out: List[TestInfo] = []
+  for t in ts {
+    var u = t
+    if u.skip.is_empty() {
+      u.skip = if all.is_empty() { wasm_test_skip(m, t.name) } else { all }
+    }
+    out.push(u)
+  }
+  out
+}

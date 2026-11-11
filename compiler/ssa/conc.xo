@@ -1721,13 +1721,19 @@ fn (var b: Builder) wait_call(key: Str, fo: Int, es: List[Expr?], recv: Int, nt:
   let st = b.str_t()
   match key {
     "Clock.sleep" => {
+      if b.wasm && b.tests && b.prelude_impl("llrt_test_clock_sleep") >= 0 {
+        // a WASI test module's sleeps move the test world's virtual
+        // clock (twrun.wasm_sleep), not the runner's real one
+        b.tw_rt("test_clock_sleep", -1, [b.io_arg(fo, es, 0, it)])
+        return Some(b.unit())
+      }
       b.rt("clock_sleep", -1, [b.io_arg(fo, es, 0, it)])
       b.check("")
       return Some(b.unit())
     }
     "Clock.sleep_or_cancel" => {
       // Ok(()) or Err(ClockErr.Canceled), never an unwind (decision 0088)
-      let c = b.rt("clock_sleep_or_cancel", it, [b.io_arg(fo, es, 0, it)])
+      let c = if b.wasm && b.tests && b.prelude_impl("llrt_test_clock_sleep_or_cancel") >= 0 { b.tw_rt("test_clock_sleep_or_cancel", it, [b.io_arg(fo, es, 0, it)]) } else { b.rt("clock_sleep_or_cancel", it, [b.io_arg(fo, es, 0, it)]) }
       let join = b.new_block()
       let res = b.s.f.add_param(join, nt)
       let (yes, no) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [c, b.cint(0)]))

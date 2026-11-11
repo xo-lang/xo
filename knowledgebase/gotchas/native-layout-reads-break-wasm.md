@@ -27,3 +27,10 @@ an object's identity (immortal or not): mark it explicitly (the hybrid's
 mark is an empty list of capacity 5). Test std/native code that reads
 raw memory on wasm too: TestSelfhostWasm (merge tier) runs every golden
 there.
+
+Another instance (2026-11-11, Xo Lang 2, decision 0610): std/native's
+prelude test "list_swap2: a cross-list Str swap changes no element's
+count" read an object's count with `rt.slot_load(p, 0, 0)`, eight bytes;
+the wasm runtime's count is an i32 at offset 0 with the next header field
+above it, so the read was not 1 under `xo test --backend=wasm`. The test
+reads it at the runtime's width now (`rc_word`).
