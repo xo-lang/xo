@@ -4556,9 +4556,12 @@ pub fn valid_comment(r: Rune) -> Bool       // a usable `comment`, `'\0'` (none)
 
 ## 17. std/regexp
 
-Status: implemented on the Go backend (decision 0164, Go's `regexp`)
-and natively (decision 0172: Go's regexp/syntax parser, compiler, and
-Pike VM ported to Xo, the same matches and errors). Every Unicode class
+Status: implemented on every backend (decision 0172: Go's regexp/syntax
+parser, compiler, and Pike VM ported to Xo, the same matches and errors;
+merged in `std/regexp.xo`, decisions 0588 and 0597 part 2). `must` and
+the case folding table are its native part (`std/native/regexp_native.xo`,
+their Go backend twins in `std/rt/regexp.go`); since 2026-11-11 the Go
+backend runs the Xo port too, not Go's `regexp` (decision 0164). Every Unicode class
 Go's regexp knows (`\p{Greek}`, `\pN`, `\p{Lu}`, `\p{Assigned}`, the
 category aliases such as `\p{Letter}`) is in native builds too, from
 Go's tables (Unicode 15.0.0), looked up by name as Go does.

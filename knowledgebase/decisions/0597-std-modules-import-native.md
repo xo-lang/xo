@@ -220,3 +220,9 @@ pushes.
   cannot call a go_compiled module such as protobuf
   (gotchas/rt-hosted-calls-go-compiled.md). regexp is the table's other
   open module.
+- Part 2, std/regexp (2026-11-11): merged; the rt, raw, scan and
+  unicode_classes uses became portable helpers (byte_at, sl, decode_at,
+  find_from), the class tables the internal module std/uniclass, and
+  `must`, `simple_fold` and `zeros` (a push loop measured 1.067 on
+  bench/perf/regexp match) the bodyless native part. regexp and uniclass
+  are rt-hosted. Timing: bench/perf/regexp, xo bench --ab on linux/arm64 host 1 against the base 9e8095f26: compile 0.968 (0.963 to 0.982), match 0.994, replace_all 1.012 and captures 0.998 within noise, find_all 1.036 (1.029 to 1.044) slower: the port reads input bytes with a bounds-checked b[pos] where the native code used an unchecked raw.byte_at, and the arm64 bounds analysis (opt.xo, decision 0184) has no loop lower bound to drop the check; a compiler item removes it.

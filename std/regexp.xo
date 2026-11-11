@@ -1,43 +1,3607 @@
-// std/regexp (spec/std.md 17, decision 0164). Declaration file; encoding
+// std/regexp (spec/std.md 17, decision 0164). Encoding
 // rules are listed at the top of std/prelude.xo. Regular expressions with
 // RE2 syntax and guarantees (Go's regexp): matching takes time linear in
 // the input, so a pattern from a user cannot hang the program. Pure.
+//
+// Go's regexp ported to Xo (decisions 0164 and 0172, merged by 0597 part
+// 2): regexp/syntax's parser (the same errors and texts, with the factoring
+// of alternations), Simplify, and compiler to an instruction program, and
+// regexp's matchers (exec.go): the Pike VM, the bit-state backtracker and
+// the one-pass matcher, leftmost first, with Go's matches and groups; the
+// Unicode classes of \p{...} from std/uniclass. Not ported: the size limit
+// (ErrLarge).
+
+use std/uniclass
 
 /// A compiled expression: an immutable compiled value, comparable (not a
 /// handle, decision 0112 addendum).
-struct Regex {}
-
-/// Displays as `invalid regexp "(a": missing closing ): ...`.
-struct RegexErr {
-  pattern: Str
-  msg: Str
+pub struct Regex {
+  expr: Str
+  prog: Prog
+  names: List[Str]
 }
 
-fn (e: RegexErr) display() -> Str
+/// Displays as `invalid regexp "(a": missing closing ): ...`.
+pub struct RegexErr {
+  pub pattern: Str
+  pub msg: Str
+}
 
-fn compile(pattern: Str) -> Regex ! RegexErr
-/// compile, faulting on a bad pattern (for patterns written in the program).
-fn must(pattern: Str) -> Regex
+pub fn (e: RegexErr) display() -> Str { "invalid regexp ${e.pattern.quote()}: ${e.msg}" }
+
+/// compile, faulting on a bad pattern (for patterns written in the
+/// program). On the native backends std/native/regexp_native.xo's, which
+/// faults at the caller's line; on the Go backend std/rt/regexp.go's.
+pub fn must(pattern: Str) -> Regex
+
+/// unicode.SimpleFold: the next rune of r's case orbit (r itself for none).
+/// On the native backends native/llrt/unicode's table (regexp_native.xo);
+/// on the Go backend Go's unicode.SimpleFold (std/rt/regexp.go).
+fn simple_fold(r: Int) -> Int
+
+pub fn compile(pattern: Str) -> Regex ! RegexErr {
+  // a node a pattern byte is the usual most: the lists made that long
+  // once (2026-10-28: their growth was a sixth of compile's time)
+  let c = pattern.len() + 4
+  var p = Parser{flags: PERL, ops: List.with_capacity(c), nflags: List.with_capacity(c), runes: List.with_capacity(c), mins: List.with_capacity(c), maxs: List.with_capacity(c), caps: List.with_capacity(c), names: List.with_capacity(c), subs: List.with_capacity(c), stack: List.with_capacity(c), num_cap: 0, whole: pattern}
+  let root = match p.parse(pattern) {
+    Ok(r) => r
+    Err(e) => return Err(RegexErr{pattern: pattern, msg: "${e.code}: `${e.expr}`"})
+  }
+  var names: List[Str] = [""]
+  var k = 0
+  while k < p.num_cap {
+    names.push("")
+    k += 1
+  }
+  var j = 0
+  while j < p.ops.len() {
+    if p.ops[j] == OP_CAPTURE && p.caps[j] < names.len() {
+      names[p.caps[j]] = p.names[j]
+    }
+    j += 1
+  }
+  let sroot = p.simplify(root)
+  let gc = 2 * c
+  var g = Prog{op: List.with_capacity(gc), out: List.with_capacity(gc), arg: List.with_capacity(gc), rune: List.with_capacity(gc), fold: List.with_capacity(gc), start: 0, num_cap: 2, first_ok: false, first: [], ascii: [], prefix: "", has_empty: false, one: []}
+  g.inst(I_FAIL)
+  let f = g.compile(p, sroot)
+  let m = g.inst(I_MATCH)
+  g.patch(f.head, m.i)
+  g.start = f.i
+  g.ascii_bytes()
+  g.first_bytes()
+  g.prefix = literal_prefix(g)
+  var hp = 1
+  while hp < g.op.len() {
+    if g.op[hp] == I_EMPTY {
+      g.has_empty = true
+    }
+    hp += 1
+  }
+  if g.has_empty {
+    g.one_pass()
+  }
+  Regex{expr: pattern, prog: g, names: names}
+}
+
 /// text with every metacharacter escaped: a pattern matching text literally.
-fn quote(text: Str) -> Str
+pub fn quote(text: Str) -> Str {
+  var b = BytesBuilder.new()
+  var i = 0
+  while i < text.len() {
+    let c = byte_at(text, i)
+    if c == '\\' || c == '.' || c == '+' || c == '*' || c == '?' || c == '(' || c == ')' || c == '|' || c == '[' || c == ']' || c == '{' || c == '}' || c == '^' || c == '$' {
+      b.write_byte(UInt8('\\'))
+    }
+    b.write_byte(UInt8(c))
+    i += 1
+  }
+  b.freeze().to_str() ?? text
+}
 
-fn (r: Regex) pattern() -> Str
-fn (r: Regex) is_match(s: Str) -> Bool
+pub fn (r: Regex) pattern() -> Str { r.expr }
+
+pub fn (r: Regex) is_match(s: Str) -> Bool { !exec(r.prog, s, 0, 2).is_empty() }
+
 /// The leftmost match.
-fn (r: Regex) find(s: Str) -> Str?
+pub fn (r: Regex) find(s: Str) -> Str? {
+  let m = exec(r.prog, s, 0, 2)
+  if m.is_empty() {
+    return None
+  }
+  Some(sl(s, m[0], m[1]))
+}
+
 /// The byte offsets `(start, end)` of the leftmost match.
-fn (r: Regex) find_index(s: Str) -> (Int, Int)?
+pub fn (r: Regex) find_index(s: Str) -> (Int, Int)? {
+  let m = exec(r.prog, s, 0, 2)
+  if m.is_empty() {
+    return None
+  }
+  Some((m[0], m[1]))
+}
+
 /// Every match, left to right, not overlapping.
-fn (r: Regex) find_all(s: Str) -> List[Str]
+pub fn (r: Regex) find_all(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  for m in all_matches(r.prog, s, 2) {
+    out.push(sl(s, m[0], m[1]))
+  }
+  out
+}
+
 /// The leftmost match and its groups: element 0 is the whole match, then
 /// one per group, None for a group that did not take part.
-fn (r: Regex) captures(s: Str) -> List[Str?]?
+pub fn (r: Regex) captures(s: Str) -> List[Str?]? {
+  let m = exec(r.prog, s, 0, r.prog.num_cap)
+  if m.is_empty() {
+    return None
+  }
+  var out: List[Str?] = []
+  var i = 0
+  while 2 * i + 1 < m.len() {
+    if m[2 * i] >= 0 {
+      out.push(Some(sl(s, m[2 * i], m[2 * i + 1])))
+    } else {
+      out.push(None)
+    }
+    i += 1
+  }
+  Some(out)
+}
+
 /// The named groups (`(?P<name>...)`) of the leftmost match that took part.
-fn (r: Regex) named(s: Str) -> Map[Str, Str]?
+pub fn (r: Regex) named(s: Str) -> Map[Str, Str]? {
+  let m = exec(r.prog, s, 0, r.prog.num_cap)
+  if m.is_empty() {
+    return None
+  }
+  var out: Map[Str, Str] = {}
+  var i = 0
+  while i < r.names.len() {
+    let name = r.names[i]
+    if name != "" && 2 * i + 1 < m.len() && m[2 * i] >= 0 {
+      out.put(name, sl(s, m[2 * i], m[2 * i + 1]))
+    }
+    i += 1
+  }
+  Some(out)
+}
+
 /// Every match replaced by `repl`, in which `$1` and `${name}` stand for
 /// groups (`$$` for a dollar sign).
-fn (r: Regex) replace_all(s: Str, repl: Str) -> Str
+pub fn (r: Regex) replace_all(s: Str, repl: Str) -> Str { r.replace(s, repl, repl.contains("$")) }
+
 /// Every match replaced by `repl` as written (no `$` expansion).
-fn (r: Regex) replace_all_literal(s: Str, repl: Str) -> Str
+pub fn (r: Regex) replace_all_literal(s: Str, repl: Str) -> Str { r.replace(s, repl, false) }
+
 /// s split around the matches.
-fn (r: Regex) split(s: Str) -> List[Str]
+pub fn (r: Regex) split(s: Str) -> List[Str] {
+  if r.expr.len() > 0 && s.len() == 0 {
+    return [""]
+  }
+  var out: List[Str] = []
+  var beg = 0
+  var end = 0
+  for m in all_matches(r.prog, s, 2) {
+    end = m[0]
+    if m[1] != 0 {
+      out.push(sl(s, beg, end))
+    }
+    beg = m[1]
+  }
+  if end != s.len() {
+    out.push(sl(s, beg, s.len()))
+  }
+  out
+}
+
+// Ops of nodes (syntax.Op), and the parser's pseudo ops.
+const OP_NO_MATCH: Int = 1
+
+const OP_EMPTY_MATCH: Int = 2
+
+const OP_LITERAL: Int = 3
+
+const OP_CHAR_CLASS: Int = 4
+
+const OP_ANY_CHAR_NOT_NL: Int = 5
+
+const OP_ANY_CHAR: Int = 6
+
+const OP_BEGIN_LINE: Int = 7
+
+const OP_END_LINE: Int = 8
+
+const OP_BEGIN_TEXT: Int = 9
+
+const OP_END_TEXT: Int = 10
+
+const OP_WORD_BOUNDARY: Int = 11
+
+const OP_NO_WORD_BOUNDARY: Int = 12
+
+const OP_CAPTURE: Int = 13
+
+const OP_STAR: Int = 14
+
+const OP_PLUS: Int = 15
+
+const OP_QUEST: Int = 16
+
+const OP_REPEAT: Int = 17
+
+const OP_CONCAT: Int = 18
+
+const OP_ALTERNATE: Int = 19
+
+const OP_LEFT_PAREN: Int = 128
+
+const OP_VERTICAL_BAR: Int = 129
+
+// Flags (syntax.Flags).
+const FOLD_CASE: Int = 1
+
+const CLASS_NL: Int = 4
+
+const DOT_NL: Int = 8
+
+const ONE_LINE: Int = 16
+
+const NON_GREEDY: Int = 32
+
+const PERL_X: Int = 64
+
+const UNICODE_GROUPS: Int = 128
+
+const PERL: Int = 212
+
+const MAX_RUNE: Int = 0x10ffff
+
+const MIN_FOLD: Int = 0x41
+
+const MAX_FOLD: Int = 0x1e943
+
+/// A parse error: its code's text and the expression it names.
+struct PErr {
+  code: Str
+  expr: Str
+}
+
+fn perr(code: Str, expr: Str) -> PErr { PErr{code: code, expr: expr} }
+
+struct Parser {
+  flags: Int
+  ops: List[Int]
+  nflags: List[Int]
+  runes: List[List[Int]]
+  mins: List[Int]
+  maxs: List[Int]
+  caps: List[Int]
+  names: List[Str]
+  subs: List[List[Int]]
+  stack: List[Int]
+  num_cap: Int
+  whole: Str
+}
+
+fn (var p: Parser) node(op: Int) -> Int {
+  p.ops.push(op)
+  p.nflags.push(p.flags)
+  p.runes.push([])
+  p.mins.push(0)
+  p.maxs.push(0)
+  p.caps.push(0)
+  p.names.push("")
+  p.subs.push([])
+  p.ops.len() - 1
+}
+
+/// push (with maybeConcat): a one-rune class becomes a literal, and the
+/// literal on top of the stack joins the one below it.
+fn (var p: Parser) push(n: Int) -> Int {
+  if p.ops[n] == OP_CHAR_CLASS {
+    let r = p.runes[n]
+    if r.len() == 2 && r[0] == r[1] {
+      let fl = (p.flags | FOLD_CASE) ^ FOLD_CASE
+      if p.maybe_concat(r[0], fl) {
+        return n
+      }
+      p.ops[n] = OP_LITERAL
+      p.runes[n] = [r[0]]
+      p.nflags[n] = fl
+      p.stack.push(n)
+      return n
+    }
+    // a case-insensitive rune like [Aa] or [Δδ]
+    if (r.len() == 4 && r[0] == r[1] && r[2] == r[3] && simple_fold(r[0]) == r[2] && simple_fold(r[2]) == r[0]) || (r.len() == 2 && r[0] + 1 == r[1] && simple_fold(r[0]) == r[1] && simple_fold(r[1]) == r[0]) {
+      let fl = p.flags | FOLD_CASE
+      if p.maybe_concat(r[0], fl) {
+        return n
+      }
+      p.ops[n] = OP_LITERAL
+      p.runes[n] = [r[0]]
+      p.nflags[n] = fl
+      p.stack.push(n)
+      return n
+    }
+  }
+  let sn = p.stack.len()
+  if sn >= 2 && p.ops[p.stack[sn - 1]] == OP_LITERAL && p.ops[p.stack[sn - 2]] == OP_LITERAL {
+    p.maybe_concat(-1, 0)
+  }
+  p.stack.push(n)
+  n
+}
+
+/// maybeConcat: the literal on top of the stack joins the literal below
+/// it, so ab* stays a and b* (the top literal is still open to an
+/// operator). With r >= 0 the freed node is reused to push r with flags;
+/// whether r was pushed.
+fn (var p: Parser) maybe_concat(r: Int, flags: Int) -> Bool {
+  let n = p.stack.len()
+  if n < 2 {
+    return false
+  }
+  let re1 = p.stack[n - 1]
+  let re2 = p.stack[n - 2]
+  if p.ops[re1] != OP_LITERAL || p.ops[re2] != OP_LITERAL || (p.nflags[re1] & FOLD_CASE) != (p.nflags[re2] & FOLD_CASE) {
+    return false
+  }
+  for x in p.runes[re1] {
+    p.runes[re2].push(x)
+  }
+  if r >= 0 {
+    p.runes[re1] = [r]
+    p.nflags[re1] = flags
+    return true
+  }
+  p.pop()
+  false
+}
+
+fn (var p: Parser) op(op: Int) -> Int {
+  let n = p.node(op)
+  p.push(n)
+}
+
+/// minFoldRune: the least rune fold-equivalent to r.
+fn min_fold_rune(r: Int) -> Int {
+  if r < MIN_FOLD || r > MAX_FOLD {
+    return r
+  }
+  var m = r
+  var f = simple_fold(r)
+  while f != r {
+    if f < m {
+      m = f
+    }
+    f = simple_fold(f)
+  }
+  m
+}
+
+fn (var p: Parser) literal(r: Int) {
+  let n = p.node(OP_LITERAL)
+  if (p.flags & FOLD_CASE) != 0 {
+    p.runes[n] = [min_fold_rune(r)]
+  } else {
+    p.runes[n] = [r]
+  }
+  p.push(n)
+}
+
+fn (var p: Parser) class_node(ranges: List[Int]) {
+  let n = p.node(OP_CHAR_CLASS)
+  p.runes[n] = ranges
+  p.push(n)
+}
+
+fn (var p: Parser) pop() -> Int {
+  match p.stack.pop() {
+    Some(n) => n
+    None => -1
+  }
+}
+
+fn byte_at(s: Str, i: Int) -> Int {
+  if i < 0 || i >= s.len() {
+    return -1
+  }
+  Int(s.bytes()[i])
+}
+
+/// s[a..b] with the ends clamped to s (a text's offsets here are at rune
+/// boundaries).
+fn sl(s: Str, a: Int, b: Int) -> Str {
+  let n = s.len()
+  let lo = a.max(0).min(n)
+  let hi = b.min(n).max(lo)
+  s[lo..hi]
+}
+
+/// The rune at byte i of b and its size packed as rune << 3 | size, U+FFFD
+/// of size 1 for an invalid byte, and U+FFFD of size 0 past the end.
+fn decode_at(b: Bytes, i: Int) -> Int {
+  if i >= b.len() {
+    return 0xFFFD << 3
+  }
+  let (r, k) = b.decode_rune(i)
+  (Int(r) << 3) | k
+}
+
+/// The offset of the first sub in s at or after from, -1 for none
+/// (bytes.Index of s[from:]).
+fn find_from(s: Str, sub: Str, from: Int) -> Int {
+  let n = s.len()
+  let f = if from < 0 { 0 } else { from }
+  if f > n {
+    return -1
+  }
+  match s.bytes()[f..n].find(sub.bytes()) {
+    Some(k) => f + k
+    None => -1
+  }
+}
+
+/// n zeros, made as one zeroed allocation: native/llrt/raw.zero_ints on
+/// the native backends (regexp_native.xo), Go's make on the Go backend
+/// (std/rt/regexp.go). A push loop measured 1.067 on the match workload.
+fn zeros(n: Int) -> List[Int]
+
+/// nextRune: the rune at i and the index after it, or ErrInvalidUTF8
+/// naming the rest of s.
+fn next_rune(s: Str, i: Int) -> (Int, Int) ! PErr {
+  if i >= s.len() {
+    return (0xfffd, i)
+  }
+  let d = decode_at(s.bytes(), i)
+  let r = d >> 3
+  let k = d & 7
+  if r == 0xfffd && k == 1 {
+    return Err(perr("invalid UTF-8", sl(s, i, s.len())))
+  }
+  (r, i + k)
+}
+
+/// checkUTF8 of s[a:b]: ErrInvalidUTF8 naming s[bad:b].
+fn check_utf8(s: Str, a: Int, b: Int) -> () ! PErr {
+  var i = a
+  while i < b {
+    let d = decode_at(s.bytes(), i)
+    if (d >> 3) == 0xfffd && (d & 7) == 1 {
+      return Err(perr("invalid UTF-8", sl(s, i, b)))
+    }
+    i += d & 7
+  }
+}
+
+fn is_alnum(c: Int) -> Bool { (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') }
+
+fn unhex(c: Int) -> Int {
+  if c >= '0' && c <= '9' {
+    return c - '0'
+  }
+  if c >= 'a' && c <= 'f' {
+    return c - 'a' + 10
+  }
+  if c >= 'A' && c <= 'F' {
+    return c - 'A' + 10
+  }
+  -1
+}
+
+/// appendRange: merged with one of the last two ranges when they touch.
+fn append_range(var r: List[Int], lo: Int, hi: Int) {
+  let n = r.len()
+  var i = 2
+  while i <= 4 {
+    if n >= i {
+      let rlo = r[n - i]
+      let rhi = r[n - i + 1]
+      if lo <= rhi + 1 && rlo <= hi + 1 {
+        if lo < rlo {
+          r[n - i] = lo
+        }
+        if hi > rhi {
+          r[n - i + 1] = hi
+        }
+        return
+      }
+    }
+    i += 2
+  }
+  r.push(lo)
+  r.push(hi)
+}
+
+fn append_folded_range(var r: List[Int], lo0: Int, hi0: Int) {
+  var lo = lo0
+  var hi = hi0
+  if lo <= MIN_FOLD && hi >= MAX_FOLD {
+    append_range(r, lo, hi)
+    return
+  }
+  if hi < MIN_FOLD || lo > MAX_FOLD {
+    append_range(r, lo, hi)
+    return
+  }
+  if lo < MIN_FOLD {
+    append_range(r, lo, MIN_FOLD - 1)
+    lo = MIN_FOLD
+  }
+  if hi > MAX_FOLD {
+    append_range(r, MAX_FOLD + 1, hi)
+    hi = MAX_FOLD
+  }
+  var c = lo
+  while c <= hi {
+    append_range(r, c, c)
+    var f = simple_fold(c)
+    while f != c {
+      append_range(r, f, f)
+      f = simple_fold(f)
+    }
+    c += 1
+  }
+}
+
+fn append_class(var r: List[Int], x: List[Int]) {
+  var i = 0
+  while i + 1 < x.len() {
+    append_range(r, x[i], x[i + 1])
+    i += 2
+  }
+}
+
+fn append_folded_class(var r: List[Int], x: List[Int]) {
+  var i = 0
+  while i + 1 < x.len() {
+    append_folded_range(r, x[i], x[i + 1])
+    i += 2
+  }
+}
+
+/// appendNegatedClass of the sorted class x.
+fn append_negated_class(var r: List[Int], x: List[Int]) {
+  var next_lo = 0
+  var i = 0
+  while i + 1 < x.len() {
+    let lo = x[i]
+    let hi = x[i + 1]
+    if next_lo <= lo - 1 {
+      append_range(r, next_lo, lo - 1)
+    }
+    next_lo = hi + 1
+    i += 2
+  }
+  if next_lo <= MAX_RUNE {
+    append_range(r, next_lo, MAX_RUNE)
+  }
+}
+
+/// cleanClass: sorted by lo (hi decreasing on ties), merged. A range is
+/// sorted as one key, lo * 2^21 + (2^21 - 1 - hi).
+fn clean_class(r: List[Int]) -> List[Int] {
+  var keys: List[Int] = []
+  var i = 0
+  while i + 1 < r.len() {
+    keys.push(r[i] * 2097152 + (2097151 - r[i + 1]))
+    i += 2
+  }
+  var out: List[Int] = []
+  for key in keys.sort() {
+    let lo = key / 2097152
+    let hi = 2097151 - key % 2097152
+    let w = out.len()
+    if w >= 2 && lo <= out[w - 1] + 1 {
+      if hi > out[w - 1] {
+        out[w - 1] = hi
+      }
+      continue
+    }
+    out.push(lo)
+    out.push(hi)
+  }
+  out
+}
+
+fn negate_class(r: List[Int]) -> List[Int] {
+  var out: List[Int] = []
+  append_negated_class(out, r)
+  out
+}
+
+fn in_class(r: Int, class: List[Int]) -> Bool {
+  var lo = 0
+  var hi = class.len() / 2
+  while lo < hi {
+    let m = (lo + hi) / 2
+    if r > class[2 * m + 1] {
+      lo = m + 1
+    } else if r < class[2 * m] {
+      hi = m
+    } else {
+      return true
+    }
+  }
+  false
+}
+
+/// The Perl (\d \s \w) and POSIX ([:alpha:]) groups: the sign (0 none)
+/// and the class.
+fn perl_group(name: Str) -> (Int, List[Int]) {
+  match name {
+    "\\d" => (1, [0x30, 0x39])
+    "\\D" => (-1, [0x30, 0x39])
+    "\\s" => (1, [0x9, 0xa, 0xc, 0xd, 0x20, 0x20])
+    "\\S" => (-1, [0x9, 0xa, 0xc, 0xd, 0x20, 0x20])
+    "\\w" => (1, [0x30, 0x39, 0x41, 0x5a, 0x5f, 0x5f, 0x61, 0x7a])
+    "\\W" => (-1, [0x30, 0x39, 0x41, 0x5a, 0x5f, 0x5f, 0x61, 0x7a])
+    _ => (0, [])
+  }
+}
+
+fn posix_group(name: Str) -> (Int, List[Int]) {
+  var neg = false
+  var n = name
+  if n.starts_with("[:^") {
+    neg = true
+    n = "[:" + sl(n, 3, n.len())
+  }
+  let class: List[Int] = match n {
+    "[:alnum:]" => [0x30, 0x39, 0x41, 0x5a, 0x61, 0x7a]
+    "[:alpha:]" => [0x41, 0x5a, 0x61, 0x7a]
+    "[:ascii:]" => [0x0, 0x7f]
+    "[:blank:]" => [0x9, 0x9, 0x20, 0x20]
+    "[:cntrl:]" => [0x0, 0x1f, 0x7f, 0x7f]
+    "[:digit:]" => [0x30, 0x39]
+    "[:graph:]" => [0x21, 0x7e]
+    "[:lower:]" => [0x61, 0x7a]
+    "[:print:]" => [0x20, 0x7e]
+    "[:punct:]" => [0x21, 0x2f, 0x3a, 0x40, 0x5b, 0x60, 0x7b, 0x7e]
+    "[:space:]" => [0x9, 0xd, 0x20, 0x20]
+    "[:upper:]" => [0x41, 0x5a]
+    "[:word:]" => [0x30, 0x39, 0x41, 0x5a, 0x5f, 0x5f, 0x61, 0x7a]
+    "[:xdigit:]" => [0x30, 0x39, 0x41, 0x46, 0x61, 0x66]
+    _ => []
+  }
+  if class.is_empty() {
+    return (0, [])
+  }
+  if neg {
+    return (-1, class)
+  }
+  (1, class)
+}
+
+fn (var p: Parser) append_group(var r: List[Int], sign: Int, class: List[Int]) {
+  if (p.flags & FOLD_CASE) == 0 {
+    if sign < 0 {
+      append_negated_class(r, class)
+    } else {
+      append_class(r, class)
+    }
+    return
+  }
+  var tmp: List[Int] = []
+  append_folded_class(tmp, class)
+  let clean = clean_class(tmp)
+  if sign < 0 {
+    append_negated_class(r, clean)
+  } else {
+    append_class(r, clean)
+  }
+}
+
+/// canonicalName: a leading capital, lowercase after it, no `_`, `-`, or
+/// space.
+fn canonical_name(name: Str) -> Str {
+  var b = BytesBuilder.new()
+  var first = true
+  var i = 0
+  while i < name.len() {
+    var c = byte_at(name, i)
+    i += 1
+    if c == '_' || c == '-' || c == ' ' {
+      continue
+    }
+    if first {
+      if c >= 'a' && c <= 'z' {
+        c -= 32
+      }
+      first = false
+    } else if c >= 'A' && c <= 'Z' {
+      c += 32
+    }
+    b.write_byte(UInt8(c))
+  }
+  b.freeze().to_str() ?? name
+}
+
+/// Table k of unicode_classes as inclusive [lo, hi, ...] ranges.
+fn class_table(k: Int) -> List[Int] {
+  let t = uniclass.TABLES
+  let r = uniclass.RANGES
+  let first = u24(t, 6 * k)
+  let n = u24(t, 6 * k + 3)
+  var out: List[Int] = []
+  var i = first
+  while i < first + n {
+    out.push(u24(r, 6 * i))
+    out.push(u24(r, 6 * i + 3))
+    i += 1
+  }
+  out
+}
+
+fn u24(t: Bytes, i: Int) -> Int {
+  (Int(t[i]) << 16) | (Int(t[i + 1]) << 8) | Int(t[i + 2])
+}
+
+/// unicodeTable: the ranges of a Unicode class, the sign (1, or -1 to
+/// invert), and its case fold ranges (empty: none); a sign 0 for a name
+/// Go's regexp does not know.
+fn unicode_table(name: Str) -> (Int, List[Int], List[Int]) {
+  let c = canonical_name(name)
+  match c {
+    "Any" => return (1, [0, MAX_RUNE], [0, MAX_RUNE])
+    "Ascii" => return (1, [0, 0x7f], [0, 0x7f, 0x17f, 0x17f, 0x212a, 0x212a])
+    _ => {}
+  }
+  let (tab, fold, sign) = uniclass.class_of(c)
+  if sign == 0 {
+    return (0, [], [])
+  }
+  (sign, class_table(tab), if fold < 0 { [] } else { class_table(fold) })
+}
+
+/// parseUnicodeClass at s[i:]: None when s[i:] does not start one, else
+/// the class with the index after it.
+fn (var p: Parser) parse_unicode_class(s: Str, i: Int, r: List[Int]) -> (List[Int], Int)? ! PErr {
+  let n = s.len()
+  if (p.flags & UNICODE_GROUPS) == 0 || i + 1 >= n || byte_at(s, i) != '\\' || (byte_at(s, i + 1) != 'p' && byte_at(s, i + 1) != 'P') {
+    return None
+  }
+  var sign = 1
+  if byte_at(s, i + 1) == 'P' {
+    sign = -1
+  }
+  let (c, t) = next_rune(s, i + 2)?
+  var seq = ""
+  var name = ""
+  var after = t
+  if c != '{' {
+    seq = sl(s, i, t)
+    name = sl(s, i + 2, t)
+  } else {
+    let end = find_from(s, "}", i)
+    if end < 0 {
+      check_utf8(s, i, n)?
+      return Err(perr("invalid character class range", sl(s, i, n)))
+    }
+    seq = sl(s, i, end + 1)
+    after = end + 1
+    name = sl(s, i + 3, end)
+    check_utf8(s, i + 3, end)?
+  }
+  if name != "" && byte_at(name, 0) == '^' {
+    sign = 0 - sign
+    name = sl(name, 1, name.len())
+  }
+  let (tsign, tab, fold) = unicode_table(name)
+  if tsign == 0 {
+    return Err(perr("invalid character class range", seq))
+  }
+  if tsign < 0 {
+    sign = 0 - sign
+  }
+  var out = r
+  if (p.flags & FOLD_CASE) == 0 || fold.is_empty() {
+    if sign > 0 {
+      append_class(out, tab)
+    } else {
+      append_negated_class(out, tab)
+    }
+  } else {
+    var tmp: List[Int] = []
+    append_class(tmp, tab)
+    append_class(tmp, fold)
+    let clean = clean_class(tmp)
+    if sign > 0 {
+      append_class(out, clean)
+    } else {
+      append_negated_class(out, clean)
+    }
+  }
+  Some((out, after))
+}
+
+/// parseEscape at s[i:] (a backslash): the rune and the index after it.
+fn parse_escape(s: Str, i: Int) -> (Int, Int) ! PErr {
+  let n = s.len()
+  if i + 1 >= n {
+    return Err(perr("trailing backslash at end of expression", ""))
+  }
+  let (c, t0) = next_rune(s, i + 1)?
+  var t = t0
+  if c < 0x80 && !is_alnum(c) {
+    return (c, t)
+  }
+  if c >= '0' && c <= '7' {
+    // a single nonzero digit is a backreference (not supported)
+    if c == '0' || (t < n && byte_at(s, t) >= '0' && byte_at(s, t) <= '7') {
+      var r = c - '0'
+      var k = 1
+      while k < 3 && t < n && byte_at(s, t) >= '0' && byte_at(s, t) <= '7' {
+        r = r * 8 + byte_at(s, t) - '0'
+        t += 1
+        k += 1
+      }
+      return (r, t)
+    }
+    return Err(perr("invalid escape sequence", sl(s, i, t)))
+  }
+  if c == 'x' {
+    if t >= n {
+      return Err(perr("invalid escape sequence", sl(s, i, t)))
+    }
+    let (c2, t2) = next_rune(s, t)?
+    t = t2
+    if c2 == '{' {
+      var nhex = 0
+      var r = 0
+      while true {
+        if t >= n {
+          return Err(perr("invalid escape sequence", sl(s, i, t)))
+        }
+        let (c3, t3) = next_rune(s, t)?
+        t = t3
+        if c3 == '}' {
+          break
+        }
+        let v = unhex(c3)
+        if v < 0 {
+          return Err(perr("invalid escape sequence", sl(s, i, t)))
+        }
+        r = r * 16 + v
+        if r > MAX_RUNE {
+          return Err(perr("invalid escape sequence", sl(s, i, t)))
+        }
+        nhex += 1
+      }
+      if nhex == 0 {
+        return Err(perr("invalid escape sequence", sl(s, i, t)))
+      }
+      return (r, t)
+    }
+    let x = unhex(c2)
+    let (c4, t4) = next_rune(s, t)?
+    t = t4
+    let y = unhex(c4)
+    if x < 0 || y < 0 {
+      return Err(perr("invalid escape sequence", sl(s, i, t)))
+    }
+    return (x * 16 + y, t)
+  }
+  let r = match c {
+    'a' => 7
+    'f' => 12
+    'n' => 10
+    'r' => 13
+    't' => 9
+    'v' => 11
+    _ => -1
+  }
+  if r < 0 {
+    return Err(perr("invalid escape sequence", sl(s, i, t)))
+  }
+  (r, t)
+}
+
+fn parse_class_char(s: Str, i: Int, whole: Str) -> (Int, Int) ! PErr {
+  if i >= s.len() {
+    return Err(perr("missing closing ]", whole))
+  }
+  if byte_at(s, i) == '\\' {
+    return parse_escape(s, i)
+  }
+  next_rune(s, i)
+}
+
+/// parseClass at s[i:] (a `[`): pushes the class, the index after it.
+fn (var p: Parser) parse_class(s: Str, i0: Int) -> Int ! PErr {
+  let n = s.len()
+  let whole = sl(s, i0, n)
+  var t = i0 + 1
+  var class: List[Int] = []
+  var sign = 1
+  if t < n && byte_at(s, t) == '^' {
+    sign = -1
+    t += 1
+  }
+  var first = true
+  while t >= n || byte_at(s, t) != ']' || first {
+    first = false
+    // POSIX [:alnum:]
+    if t + 2 < n && byte_at(s, t) == '[' && byte_at(s, t + 1) == ':' {
+      let e = find_from(s, ":]", t + 2)
+      if e >= 0 {
+        let name = sl(s, t, e + 2)
+        let (gs, g) = posix_group(name)
+        if gs == 0 {
+          return Err(perr("invalid character class range", name))
+        }
+        p.append_group(class, gs, g)
+        t = e + 2
+        continue
+      }
+    }
+    match p.parse_unicode_class(s, t, class)? {
+      Some((c2, t2)) => {
+        class = c2
+        t = t2
+        continue
+      }
+      None => ()
+    }
+    if (p.flags & PERL_X) != 0 && t + 1 < n && byte_at(s, t) == '\\' {
+      let (gs, g) = perl_group(sl(s, t, t + 2))
+      if gs != 0 {
+        p.append_group(class, gs, g)
+        t += 2
+        continue
+      }
+    }
+    let rng = t
+    let (lo, t1) = parse_class_char(s, t, whole)?
+    t = t1
+    var hi = lo
+    if t + 1 < n && byte_at(s, t) == '-' && byte_at(s, t + 1) != ']' {
+      let (h2, t2) = parse_class_char(s, t + 1, whole)?
+      t = t2
+      hi = h2
+      if hi < lo {
+        return Err(perr("invalid character class range", sl(s, rng, t)))
+      }
+    }
+    if (p.flags & FOLD_CASE) == 0 {
+      append_range(class, lo, hi)
+    } else {
+      append_folded_range(class, lo, hi)
+    }
+  }
+  t += 1
+  var clean = clean_class(class)
+  if sign < 0 {
+    clean = negate_class(clean)
+  }
+  p.class_node(clean)
+  t
+}
+
+/// parseRepeat at s[i:] (a `{`): ok, min, max (-1 none), the index after
+/// it; min -1 when a number is too big.
+fn parse_repeat(s: Str, i: Int) -> (Bool, Int, Int, Int) {
+  let n = s.len()
+  var t = i + 1
+  let (ok1, min0, t1) = parse_int(s, t)
+  if !ok1 || t1 >= n {
+    return (false, 0, 0, i)
+  }
+  var min = min0
+  t = t1
+  var max = 0
+  if byte_at(s, t) != ',' {
+    max = min
+  } else {
+    t += 1
+    if t >= n {
+      return (false, 0, 0, i)
+    }
+    if byte_at(s, t) == '}' {
+      max = -1
+    } else {
+      let (ok2, max0, t2) = parse_int(s, t)
+      if !ok2 {
+        return (false, 0, 0, i)
+      }
+      max = max0
+      t = t2
+      if max < 0 {
+        min = -1
+      }
+    }
+  }
+  if t >= n || byte_at(s, t) != '}' {
+    return (false, 0, 0, i)
+  }
+  (true, min, max, t + 1)
+}
+
+/// parseInt: ok, the value (-1 when too big), the index after it.
+fn parse_int(s: Str, i: Int) -> (Bool, Int, Int) {
+  let n = s.len()
+  if i >= n || byte_at(s, i) < '0' || byte_at(s, i) > '9' {
+    return (false, 0, i)
+  }
+  if i + 1 < n && byte_at(s, i) == '0' && byte_at(s, i + 1) >= '0' && byte_at(s, i + 1) <= '9' {
+    return (false, 0, i)
+  }
+  var t = i
+  var v = 0
+  while t < n && byte_at(s, t) >= '0' && byte_at(s, t) <= '9' {
+    if v >= 0 {
+      if v >= 100000000 {
+        v = -1
+      } else {
+        v = v * 10 + byte_at(s, t) - '0'
+      }
+    }
+    t += 1
+  }
+  (true, v, t)
+}
+
+fn (var p: Parser) repeat_is_valid(re: Int, n0: Int) -> Bool {
+  var n = n0
+  if p.ops[re] == OP_REPEAT {
+    let mx = p.maxs[re]
+    if mx == 0 {
+      return true
+    }
+    let m = if mx < 0 { p.mins[re] } else { mx }
+    if m > n {
+      return false
+    }
+    if m > 0 {
+      n = n / m
+    }
+  }
+  for sub in p.subs[re] {
+    if !p.repeat_is_valid(sub, n) {
+      return false
+    }
+  }
+  true
+}
+
+/// repeat: the top of the stack repeated; before is where the operator
+/// starts, after where it ends; last the start of the operator before it
+/// (-1 none). The index after the operator.
+fn (var p: Parser) repeat(op: Int, min: Int, max: Int, s: Str, before: Int, after0: Int, last: Int) -> Int ! PErr {
+  var flags = p.flags
+  var after = after0
+  if (p.flags & PERL_X) != 0 {
+    if after < s.len() && byte_at(s, after) == '?' {
+      after += 1
+      flags = flags ^ NON_GREEDY
+    }
+    if last >= 0 {
+      return Err(perr("invalid nested repetition operator", sl(s, last, after)))
+    }
+  }
+  let n = p.stack.len()
+  if n == 0 || p.ops[p.stack[n - 1]] >= OP_LEFT_PAREN {
+    return Err(perr("missing argument to repetition operator", sl(s, before, after)))
+  }
+  let sub = p.stack[n - 1]
+  let re = p.node(op)
+  p.mins[re] = min
+  p.maxs[re] = max
+  p.nflags[re] = flags
+  p.subs[re] = [sub]
+  p.stack[n - 1] = re
+  if op == OP_REPEAT && (min >= 2 || max >= 2) && !p.repeat_is_valid(re, 1000) {
+    return Err(perr("invalid repeat count", sl(s, before, after)))
+  }
+  after
+}
+
+fn (var p: Parser) collapse(subs: List[Int], op: Int) -> Int {
+  if subs.len() == 1 {
+    return subs[0]
+  }
+  var all: List[Int] = []
+  for sub in subs {
+    if p.ops[sub] == op {
+      for x in p.subs[sub] {
+        all.push(x)
+      }
+    } else {
+      all.push(sub)
+    }
+  }
+  if op == OP_ALTERNATE {
+    all = p.factor(all)
+    if all.len() == 1 {
+      return all[0]
+    }
+  }
+  let re = p.node(op)
+  p.subs[re] = all
+  re
+}
+
+/// The index of the bottom of the stack's top run above a pseudo op.
+fn (var p: Parser) run_start() -> Int {
+  var i = p.stack.len()
+  while i > 0 && p.ops[p.stack[i - 1]] < OP_LEFT_PAREN {
+    i -= 1
+  }
+  i
+}
+
+fn (var p: Parser) take_from(i: Int) -> List[Int] {
+  var subs: List[Int] = []
+  var k = i
+  while k < p.stack.len() {
+    subs.push(p.stack[k])
+    k += 1
+  }
+  while p.stack.len() > i {
+    p.pop()
+  }
+  subs
+}
+
+fn (var p: Parser) is_char_class(re: Int) -> Bool {
+  let op = p.ops[re]
+  op == OP_CHAR_CLASS || op == OP_ANY_CHAR_NOT_NL || op == OP_ANY_CHAR || (op == OP_LITERAL && p.runes[re].len() == 1)
+}
+
+/// matchRune: does the literal or class re match r.
+fn (var p: Parser) match_rune(re: Int, r: Int) -> Bool {
+  let op = p.ops[re]
+  if op == OP_LITERAL {
+    return p.runes[re].len() == 1 && p.runes[re][0] == r
+  }
+  if op == OP_CHAR_CLASS {
+    let rs = p.runes[re]
+    var i = 0
+    while i + 1 < rs.len() {
+      if rs[i] <= r && r <= rs[i + 1] {
+        return true
+      }
+      i += 2
+    }
+    return false
+  }
+  if op == OP_ANY_CHAR_NOT_NL {
+    return r != '\n'
+  }
+  op == OP_ANY_CHAR
+}
+
+fn append_literal(var r: List[Int], x: Int, flags: Int) {
+  if (flags & FOLD_CASE) != 0 {
+    append_folded_range(r, x, x)
+  } else {
+    append_range(r, x, x)
+  }
+}
+
+/// mergeCharClass: src added to dst, which is at least as complex.
+fn (var p: Parser) merge_char_class(dst: Int, src: Int) {
+  let op = p.ops[dst]
+  if op == OP_ANY_CHAR_NOT_NL {
+    if p.match_rune(src, '\n') {
+      p.ops[dst] = OP_ANY_CHAR
+    }
+  } else if op == OP_CHAR_CLASS {
+    var rs = p.runes[dst]
+    if p.ops[src] == OP_LITERAL {
+      append_literal(rs, p.runes[src][0], p.nflags[src])
+    } else {
+      append_class(rs, p.runes[src])
+    }
+    p.runes[dst] = rs
+  } else if op == OP_LITERAL {
+    if p.runes[src][0] == p.runes[dst][0] && p.nflags[src] == p.nflags[dst] {
+      return
+    }
+    var rs: List[Int] = []
+    append_literal(rs, p.runes[dst][0], p.nflags[dst])
+    append_literal(rs, p.runes[src][0], p.nflags[src])
+    p.ops[dst] = OP_CHAR_CLASS
+    p.runes[dst] = rs
+  }
+}
+
+/// cleanAlt: a class about to join an alternation is sorted and merged,
+/// and may turn out to be any character.
+fn (var p: Parser) clean_alt(re: Int) {
+  if p.ops[re] != OP_CHAR_CLASS {
+    return
+  }
+  var r = p.runes[re]
+  var clean = true
+  var i = 0
+  while i + 1 < r.len() {
+    if r[i] > r[i + 1] || (i >= 2 && r[i] <= r[i - 1] + 1) {
+      clean = false
+      break
+    }
+    i += 2
+  }
+  if !clean {
+    r = clean_class(r)
+    p.runes[re] = r
+  }
+  if r.len() == 2 && r[0] == 0 && r[1] == MAX_RUNE {
+    p.runes[re] = []
+    p.ops[re] = OP_ANY_CHAR
+  } else if r.len() == 4 && r[0] == 0 && r[1] == 9 && r[2] == 11 && r[3] == MAX_RUNE {
+    p.runes[re] = []
+    p.ops[re] = OP_ANY_CHAR_NOT_NL
+  }
+}
+
+/// The literal node re begins with (itself, or the first of a
+/// concatenation), -1 for none.
+fn (var p: Parser) leading_string(re0: Int) -> Int {
+  var re = re0
+  if p.ops[re] == OP_CONCAT && p.subs[re].len() > 0 {
+    re = p.subs[re][0]
+  }
+  if p.ops[re] != OP_LITERAL {
+    return -1
+  }
+  re
+}
+
+/// removeLeadingString: re without its first n runes.
+fn (var p: Parser) remove_leading_string(re0: Int, n: Int) -> Int {
+  var re = re0
+  if p.ops[re] == OP_CONCAT && p.subs[re].len() > 0 {
+    var subs = p.subs[re]
+    let sub = p.remove_leading_string(subs[0], n)
+    subs[0] = sub
+    p.subs[re] = subs
+    if p.ops[sub] == OP_EMPTY_MATCH {
+      if subs.len() < 2 {
+        p.ops[re] = OP_EMPTY_MATCH
+        p.subs[re] = []
+      } else if subs.len() == 2 {
+        re = subs[1]
+      } else {
+        var rest: List[Int] = []
+        var k = 1
+        while k < subs.len() {
+          rest.push(subs[k])
+          k += 1
+        }
+        p.subs[re] = rest
+      }
+    }
+    return re
+  }
+  if p.ops[re] == OP_LITERAL {
+    let rs = p.runes[re]
+    var rest: List[Int] = []
+    var k = n
+    while k < rs.len() {
+      rest.push(rs[k])
+      k += 1
+    }
+    p.runes[re] = rest
+    if rest.is_empty() {
+      p.ops[re] = OP_EMPTY_MATCH
+    }
+  }
+  re
+}
+
+/// The first piece of re (itself, or the first of a concatenation), -1
+/// for an empty match.
+fn (var p: Parser) leading_regexp(re: Int) -> Int {
+  if p.ops[re] == OP_EMPTY_MATCH {
+    return -1
+  }
+  if p.ops[re] == OP_CONCAT && p.subs[re].len() > 0 {
+    let sub = p.subs[re][0]
+    if p.ops[sub] == OP_EMPTY_MATCH {
+      return -1
+    }
+    return sub
+  }
+  re
+}
+
+fn (var p: Parser) remove_leading_regexp(re: Int) -> Int {
+  if p.ops[re] == OP_CONCAT && p.subs[re].len() > 0 {
+    let subs = p.subs[re]
+    var rest: List[Int] = []
+    var k = 1
+    while k < subs.len() {
+      rest.push(subs[k])
+      k += 1
+    }
+    if rest.is_empty() {
+      p.ops[re] = OP_EMPTY_MATCH
+      p.subs[re] = []
+      return re
+    }
+    if rest.len() == 1 {
+      return rest[0]
+    }
+    p.subs[re] = rest
+    return re
+  }
+  p.node(OP_EMPTY_MATCH)
+}
+
+fn same_runes(a: List[Int], b: List[Int]) -> Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  var i = 0
+  while i < a.len() {
+    if a[i] != b[i] {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// Equal, for the pieces round 2 of factor compares: a literal, a class,
+/// or a repeat of one.
+fn (var p: Parser) equal(x: Int, y: Int) -> Bool {
+  let op = p.ops[x]
+  if op != p.ops[y] {
+    return false
+  }
+  if op == OP_LITERAL {
+    return (p.nflags[x] & FOLD_CASE) == (p.nflags[y] & FOLD_CASE) && same_runes(p.runes[x], p.runes[y])
+  }
+  if op == OP_CHAR_CLASS {
+    return same_runes(p.runes[x], p.runes[y])
+  }
+  if op == OP_ANY_CHAR || op == OP_ANY_CHAR_NOT_NL {
+    return true
+  }
+  if op == OP_REPEAT {
+    return (p.nflags[x] & NON_GREEDY) == (p.nflags[y] & NON_GREEDY) && p.mins[x] == p.mins[y] && p.maxs[x] == p.maxs[y] && p.equal(p.subs[x][0], p.subs[y][0])
+  }
+  false
+}
+
+/// factor: common prefixes of the alternation list sub0 factored out,
+///   ABC|ABD|AEF|BCX|BCY  =>  A(B[CD]|EF)|BC[XY]
+/// by common literal prefix, common leading class (or fixed repeat of
+/// one), a run of single runes into one class, and a run of empty
+/// matches into one.
+fn (var p: Parser) factor(sub0: List[Int]) -> List[Int] {
+  if sub0.len() < 2 {
+    return sub0
+  }
+  // Round 1: common literal prefixes.
+  var out: List[Int] = []
+  var str: List[Int] = []
+  var strflags = 0
+  var start = 0
+  var i = 0
+  while i <= sub0.len() {
+    var istr: List[Int] = []
+    var iflags = 0
+    if i < sub0.len() {
+      let ls = p.leading_string(sub0[i])
+      if ls >= 0 {
+        istr = p.runes[ls]
+        iflags = p.nflags[ls] & FOLD_CASE
+      }
+      if iflags == strflags {
+        var same = 0
+        while same < str.len() && same < istr.len() && str[same] == istr[same] {
+          same += 1
+        }
+        if same > 0 {
+          if same < str.len() {
+            var head: List[Int] = []
+            var k = 0
+            while k < same {
+              head.push(str[k])
+              k += 1
+            }
+            str = head
+          }
+          i += 1
+          continue
+        }
+      }
+    }
+    if i == start {
+    } else if i == start + 1 {
+      out.push(sub0[start])
+    } else {
+      let prefix = p.node(OP_LITERAL)
+      p.nflags[prefix] = strflags
+      p.runes[prefix] = str
+      var run: List[Int] = []
+      var j = start
+      while j < i {
+        run.push(p.remove_leading_string(sub0[j], str.len()))
+        j += 1
+      }
+      let suffix = p.collapse(run, OP_ALTERNATE)
+      let re = p.node(OP_CONCAT)
+      p.subs[re] = [prefix, suffix]
+      out.push(re)
+    }
+    start = i
+    str = istr
+    strflags = iflags
+    i += 1
+  }
+  let sub1 = out
+
+  // Round 2: common simple leading pieces. Complex subexpressions
+  // (quantifiers) are not safe to factor: that merges distinct paths
+  // through the automaton.
+  out = []
+  start = 0
+  var first = -1
+  i = 0
+  while i <= sub1.len() {
+    var ifirst = -1
+    if i < sub1.len() {
+      ifirst = p.leading_regexp(sub1[i])
+      if first >= 0 && ifirst >= 0 && (p.is_char_class(first) || (p.ops[first] == OP_REPEAT && p.mins[first] == p.maxs[first] && p.is_char_class(p.subs[first][0]))) && p.equal(first, ifirst) {
+        i += 1
+        continue
+      }
+    }
+    if i == start {
+    } else if i == start + 1 {
+      out.push(sub1[start])
+    } else {
+      var run: List[Int] = []
+      var j = start
+      while j < i {
+        run.push(p.remove_leading_regexp(sub1[j]))
+        j += 1
+      }
+      let suffix = p.collapse(run, OP_ALTERNATE)
+      let re = p.node(OP_CONCAT)
+      p.subs[re] = [first, suffix]
+      out.push(re)
+    }
+    start = i
+    first = ifirst
+    i += 1
+  }
+  let sub2 = out
+
+  // Round 3: runs of single runes and classes into one class.
+  out = []
+  start = 0
+  i = 0
+  while i <= sub2.len() {
+    if i < sub2.len() && p.is_char_class(sub2[i]) {
+      i += 1
+      continue
+    }
+    if i == start {
+    } else if i == start + 1 {
+      out.push(sub2[start])
+    } else {
+      // The most complex of the run takes the others.
+      var best = start
+      var j = start + 1
+      while j < i {
+        let ob = p.ops[sub2[best]]
+        let oj = p.ops[sub2[j]]
+        if ob < oj || (ob == oj && p.runes[sub2[best]].len() < p.runes[sub2[j]].len()) {
+          best = j
+        }
+        j += 1
+      }
+      let dst = sub2[best]
+      j = start
+      while j < i {
+        if j != best {
+          p.merge_char_class(dst, sub2[j])
+        }
+        j += 1
+      }
+      p.clean_alt(dst)
+      out.push(dst)
+    }
+    if i < sub2.len() {
+      out.push(sub2[i])
+    }
+    start = i + 1
+    i += 1
+  }
+  let sub3 = out
+
+  // Round 4: a run of empty matches into one.
+  out = []
+  i = 0
+  while i < sub3.len() {
+    if i + 1 < sub3.len() && p.ops[sub3[i]] == OP_EMPTY_MATCH && p.ops[sub3[i + 1]] == OP_EMPTY_MATCH {
+      i += 1
+      continue
+    }
+    out.push(sub3[i])
+    i += 1
+  }
+  out
+}
+
+fn (var p: Parser) concat() -> Int {
+  let sn = p.stack.len()
+  if sn >= 2 && p.ops[p.stack[sn - 1]] == OP_LITERAL && p.ops[p.stack[sn - 2]] == OP_LITERAL {
+    p.maybe_concat(-1, 0)
+  }
+  let subs = p.take_from(p.run_start())
+  if subs.is_empty() {
+    let e = p.node(OP_EMPTY_MATCH)
+    return p.push(e)
+  }
+  let c = p.collapse(subs, OP_CONCAT)
+  p.push(c)
+}
+
+fn (var p: Parser) alternate() -> Int {
+  let subs = p.take_from(p.run_start())
+  if subs.is_empty() {
+    let e = p.node(OP_NO_MATCH)
+    return p.push(e)
+  }
+  p.clean_alt(subs[subs.len() - 1])
+  let a = p.collapse(subs, OP_ALTERNATE)
+  p.push(a)
+}
+
+/// swapVerticalBar: a literal or class above and below a vertical bar
+/// merge into one class; else an element above a vertical bar goes
+/// below it.
+fn (var p: Parser) swap_vertical_bar() -> Bool {
+  let n = p.stack.len()
+  if n >= 3 && p.ops[p.stack[n - 2]] == OP_VERTICAL_BAR && p.is_char_class(p.stack[n - 1]) && p.is_char_class(p.stack[n - 3]) {
+    var re1 = p.stack[n - 1]
+    var re3 = p.stack[n - 3]
+    if p.ops[re1] > p.ops[re3] {
+      let t = re1
+      re1 = re3
+      re3 = t
+      p.stack[n - 3] = re3
+    }
+    p.merge_char_class(re3, re1)
+    p.pop()
+    return true
+  }
+  if n >= 2 && p.ops[p.stack[n - 2]] == OP_VERTICAL_BAR {
+    if n >= 3 {
+      p.clean_alt(p.stack[n - 3])
+    }
+    let re1 = p.stack[n - 1]
+    p.stack[n - 1] = p.stack[n - 2]
+    p.stack[n - 2] = re1
+    return true
+  }
+  false
+}
+
+fn (var p: Parser) parse_vertical_bar() {
+  p.concat()
+  if !p.swap_vertical_bar() {
+    p.op(OP_VERTICAL_BAR)
+  }
+}
+
+fn (var p: Parser) parse_right_paren() -> () ! PErr {
+  p.concat()
+  if p.swap_vertical_bar() {
+    p.pop()
+  }
+  p.alternate()
+  let n = p.stack.len()
+  if n < 2 {
+    return Err(perr("unexpected )", p.whole))
+  }
+  let re1 = p.pop()
+  let re2 = p.pop()
+  if p.ops[re2] != OP_LEFT_PAREN {
+    return Err(perr("unexpected )", p.whole))
+  }
+  p.flags = p.nflags[re2]
+  if p.caps[re2] == 0 {
+    p.push(re1)
+  } else {
+    p.ops[re2] = OP_CAPTURE
+    p.subs[re2] = [re1]
+    p.push(re2)
+  }
+  ()
+}
+
+fn is_valid_capture_name(name: Str) -> Bool {
+  if name == "" {
+    return false
+  }
+  for r in name.runes() {
+    let c = Int(r)
+    if c != '_' && !is_alnum(c) {
+      return false
+    }
+  }
+  true
+}
+
+/// parsePerlFlags at s[i:] (`(?`): the index after the flags.
+fn (var p: Parser) parse_perl_flags(s: Str, i: Int) -> Int ! PErr {
+  let n = s.len()
+  let starts_p = n - i > 4 && byte_at(s, i + 2) == 'P' && byte_at(s, i + 3) == '<'
+  let starts_name = n - i > 3 && byte_at(s, i + 2) == '<'
+  if starts_p || starts_name {
+    var start = i + 4
+    if starts_name {
+      start = i + 3
+    }
+    let end = find_from(s, ">", i)
+    if end < 0 {
+      check_utf8(s, i, n)?
+      return Err(perr("invalid named capture", sl(s, i, n)))
+    }
+    let name = sl(s, start, end)
+    check_utf8(s, start, end)?
+    if !is_valid_capture_name(name) {
+      return Err(perr("invalid named capture", sl(s, i, end + 1)))
+    }
+    p.num_cap += 1
+    let re = p.op(OP_LEFT_PAREN)
+    p.caps[re] = p.num_cap
+    p.names[re] = name
+    return end + 1
+  }
+  var t = i + 2
+  var flags = p.flags
+  var sign = 1
+  var saw = false
+  while t < n {
+    let (c, t2) = next_rune(s, t)?
+    t = t2
+    if c == 'i' {
+      flags = flags | FOLD_CASE
+      saw = true
+    } else if c == 'm' {
+      flags = flags & (0 - 1 - ONE_LINE)
+      saw = true
+    } else if c == 's' {
+      flags = flags | DOT_NL
+      saw = true
+    } else if c == 'U' {
+      flags = flags | NON_GREEDY
+      saw = true
+    } else if c == '-' {
+      if sign < 0 {
+        break
+      }
+      sign = -1
+      flags = 0 - 1 - flags
+      saw = false
+    } else if c == ':' || c == ')' {
+      if sign < 0 {
+        if !saw {
+          break
+        }
+        flags = 0 - 1 - flags
+      }
+      if c == ':' {
+        p.op(OP_LEFT_PAREN)
+      }
+      p.flags = flags
+      return t
+    } else {
+      break
+    }
+  }
+  Err(perr("invalid or unsupported Perl syntax", sl(s, i, t)))
+}
+
+/// The height of the tree at re (checkHeight).
+fn (var p: Parser) height(re: Int) -> Int {
+  var h = 1
+  for sub in p.subs[re] {
+    let hs = 1 + p.height(sub)
+    if hs > h {
+      h = hs
+    }
+  }
+  h
+}
+
+fn (var p: Parser) parse(s: Str) -> Int ! PErr {
+  let n = s.len()
+  var i = 0
+  var last = -1
+  while i < n {
+    var rep = -1
+    let c0 = byte_at(s, i)
+    if c0 == '(' {
+      if (p.flags & PERL_X) != 0 && i + 1 < n && byte_at(s, i + 1) == '?' {
+        i = p.parse_perl_flags(s, i)?
+      } else {
+        p.num_cap += 1
+        let re = p.op(OP_LEFT_PAREN)
+        p.caps[re] = p.num_cap
+        i += 1
+      }
+    } else if c0 == '|' {
+      p.parse_vertical_bar()
+      i += 1
+    } else if c0 == ')' {
+      p.parse_right_paren()?
+      i += 1
+    } else if c0 == '^' {
+      if (p.flags & ONE_LINE) != 0 {
+        p.op(OP_BEGIN_TEXT)
+      } else {
+        p.op(OP_BEGIN_LINE)
+      }
+      i += 1
+    } else if c0 == '$' {
+      if (p.flags & ONE_LINE) != 0 {
+        p.op(OP_END_TEXT)
+      } else {
+        p.op(OP_END_LINE)
+      }
+      i += 1
+    } else if c0 == '.' {
+      if (p.flags & DOT_NL) != 0 {
+        p.op(OP_ANY_CHAR)
+      } else {
+        p.op(OP_ANY_CHAR_NOT_NL)
+      }
+      i += 1
+    } else if c0 == '[' {
+      i = p.parse_class(s, i)?
+    } else if c0 == '*' || c0 == '+' || c0 == '?' {
+      var op = OP_QUEST
+      if c0 == '*' {
+        op = OP_STAR
+      } else if c0 == '+' {
+        op = OP_PLUS
+      }
+      let before = i
+      i = p.repeat(op, 0, 0, s, before, i + 1, last)?
+      rep = before
+    } else if c0 == '{' {
+      let before = i
+      let (ok, min, max, after) = parse_repeat(s, i)
+      if !ok {
+        p.literal('{')
+        i += 1
+      } else {
+        if min < 0 || min > 1000 || max > 1000 || (max >= 0 && min > max) {
+          return Err(perr("invalid repeat count", sl(s, before, after)))
+        }
+        i = p.repeat(OP_REPEAT, min, max, s, before, after, last)?
+        rep = before
+      }
+    } else if c0 == '\\' {
+      i = p.parse_backslash(s, i)?
+    } else {
+      let (c, t) = next_rune(s, i)?
+      p.literal(c)
+      i = t
+    }
+    last = rep
+  }
+  p.concat()
+  if p.swap_vertical_bar() {
+    p.pop()
+  }
+  p.alternate()
+  if p.stack.len() != 1 {
+    return Err(perr("missing closing )", s))
+  }
+  let root = p.stack[0]
+  // a tree's height is at most its node count: walked only past 1000
+  // nodes, as Go's checkHeight (parse.go: numRegexp < maxHeight)
+  if p.ops.len() > 1000 && p.height(root) > 1000 {
+    return Err(perr("expression nests too deeply", s))
+  }
+  root
+}
+
+/// A backslash at s[i:]: an assertion, \Q...\E, a class, or an escaped
+/// rune. The index after it.
+fn (var p: Parser) parse_backslash(s: Str, i: Int) -> Int ! PErr {
+  let n = s.len()
+  if (p.flags & PERL_X) != 0 && i + 1 < n {
+    let c1 = byte_at(s, i + 1)
+    if c1 == 'A' {
+      p.op(OP_BEGIN_TEXT)
+      return i + 2
+    }
+    if c1 == 'b' {
+      p.op(OP_WORD_BOUNDARY)
+      return i + 2
+    }
+    if c1 == 'B' {
+      p.op(OP_NO_WORD_BOUNDARY)
+      return i + 2
+    }
+    if c1 == 'C' {
+      return Err(perr("invalid escape sequence", sl(s, i, i + 2)))
+    }
+    if c1 == 'Q' {
+      var end = find_from(s, "\\E", i + 2)
+      var next = end + 2
+      if end < 0 {
+        end = n
+        next = n
+      }
+      let lit = sl(s, i + 2, end)
+      var k = 0
+      while k < lit.len() {
+        let (c, k2) = next_rune(lit, k)?
+        p.literal(c)
+        k = k2
+      }
+      return next
+    }
+    if c1 == 'z' {
+      p.op(OP_END_TEXT)
+      return i + 2
+    }
+  }
+  if i + 1 < n && (byte_at(s, i + 1) == 'p' || byte_at(s, i + 1) == 'P') {
+    match p.parse_unicode_class(s, i, [])? {
+      Some((r, t)) => {
+        p.class_node(clean_class(r))
+        return t
+      }
+      None => ()
+    }
+  }
+  if (p.flags & PERL_X) != 0 && i + 1 < n {
+    let (gs, g) = perl_group(sl(s, i, i + 2))
+    if gs > 0 && (p.flags & FOLD_CASE) == 0 {
+      // \d, \s, \w: their ranges are already sorted and apart, the class
+      // clean_class would make of them
+      p.class_node(g)
+      return i + 2
+    }
+    if gs != 0 {
+      var r: List[Int] = []
+      p.append_group(r, gs, g)
+      p.class_node(clean_class(r))
+      return i + 2
+    }
+  }
+  let (c, t) = parse_escape(s, i)?
+  p.literal(c)
+  t
+}
+
+fn (var p: Parser) simplify1(op: Int, flags: Int, sub: Int) -> Int {
+  if p.ops[sub] == OP_EMPTY_MATCH {
+    return sub
+  }
+  if op == p.ops[sub] && (flags & NON_GREEDY) == (p.nflags[sub] & NON_GREEDY) {
+    return sub
+  }
+  let re = p.node(op)
+  p.nflags[re] = flags
+  p.subs[re] = [sub]
+  re
+}
+
+fn (var p: Parser) simplify(re: Int) -> Int {
+  let op = p.ops[re]
+  if op == OP_CAPTURE || op == OP_CONCAT || op == OP_ALTERNATE {
+    var subs: List[Int] = []
+    for sub in p.subs[re] {
+      subs.push(p.simplify(sub))
+    }
+    p.subs[re] = subs
+    return re
+  }
+  if op == OP_STAR || op == OP_PLUS || op == OP_QUEST {
+    let sub = p.simplify(p.subs[re][0])
+    return p.simplify1(op, p.nflags[re], sub)
+  }
+  if op != OP_REPEAT {
+    return re
+  }
+  let min = p.mins[re]
+  let max = p.maxs[re]
+  let flags = p.nflags[re]
+  if min == 0 && max == 0 {
+    return p.node(OP_EMPTY_MATCH)
+  }
+  let sub = p.simplify(p.subs[re][0])
+  if max == -1 {
+    if min == 0 {
+      return p.simplify1(OP_STAR, flags, sub)
+    }
+    if min == 1 {
+      return p.simplify1(OP_PLUS, flags, sub)
+    }
+    let c = p.node(OP_CONCAT)
+    var subs: List[Int] = []
+    var k = 0
+    while k < min - 1 {
+      subs.push(sub)
+      k += 1
+    }
+    subs.push(p.simplify1(OP_PLUS, flags, sub))
+    p.subs[c] = subs
+    return c
+  }
+  if min == 1 && max == 1 {
+    return sub
+  }
+  var prefix = -1
+  var psubs: List[Int] = []
+  if min > 0 {
+    prefix = p.node(OP_CONCAT)
+    var k = 0
+    while k < min {
+      psubs.push(sub)
+      k += 1
+    }
+  }
+  if max > min {
+    var suffix = p.simplify1(OP_QUEST, flags, sub)
+    var k = min + 1
+    while k < max {
+      let c2 = p.node(OP_CONCAT)
+      p.subs[c2] = [sub, suffix]
+      suffix = p.simplify1(OP_QUEST, flags, c2)
+      k += 1
+    }
+    if prefix < 0 {
+      return suffix
+    }
+    psubs.push(suffix)
+  }
+  if prefix >= 0 {
+    p.subs[prefix] = psubs
+    return prefix
+  }
+  p.node(OP_NO_MATCH)
+}
+
+const I_ALT: Int = 0
+
+const I_CAPTURE: Int = 2
+
+const I_EMPTY: Int = 3
+
+const I_MATCH: Int = 4
+
+const I_FAIL: Int = 5
+
+const I_NOP: Int = 6
+
+const I_RUNE: Int = 7
+
+const I_RUNE1: Int = 8
+
+const I_ANY: Int = 9
+
+const I_ANY_NOT_NL: Int = 10
+
+// Empty width conditions (syntax.EmptyOp).
+const E_BEGIN_LINE: Int = 1
+
+const E_END_LINE: Int = 2
+
+const E_BEGIN_TEXT: Int = 4
+
+const E_END_TEXT: Int = 8
+
+const E_WORD_BOUNDARY: Int = 16
+
+const E_NO_WORD_BOUNDARY: Int = 32
+
+struct Prog {
+  op: List[Int]
+  out: List[Int]
+  arg: List[Int]
+  rune: List[List[Int]]
+  fold: List[Bool]
+  start: Int
+  num_cap: Int
+  // the ASCII bytes a match can start with (bit c & 31 of first[c >> 5]),
+  // when first_ok: no match is empty, so a start at another ASCII byte
+  // cannot match. A non-ASCII byte always counts as a candidate.
+  first_ok: Bool
+  first: List[Int]
+  // the ASCII bytes each rune instruction accepts (bit c & 31 of
+  // ascii[pc * 4 + (c >> 5)]), so an ASCII byte needs no class search
+  ascii: List[Int]
+  // literal_prefix, computed once
+  prefix: Str
+  // whether any instruction is an empty width assertion (^ $ \b ...):
+  // when false, exec skips the context of each position
+  has_empty: Bool
+  // Go's one-pass program (onepass.go), for a pattern anchored with \A
+  // whose alternations are decided by the next rune, else empty; one list
+  // so that a Prog stays small: [n, len(flat), op (n), out (n), base (n),
+  // cnt (n), flat, nx]. op and out are the rewritten instructions
+  // (OP_ALT_MATCH for an alternation with an empty match leg), and an
+  // alternation pc dispatches on the next rune through the sorted rune
+  // ranges flat[2 * base[pc] ..] (cnt[pc] pairs) to the instruction
+  // nx[base[pc] + k] of the matching range
+  one: List[Int]
+}
+
+/// A fragment: its first instruction (0 a failure), its patch list's head
+/// and tail, and whether it matches the empty text.
+struct Frag {
+  i: Int
+  head: Int
+  tail: Int
+  nullable: Bool
+}
+
+fn fail_frag() -> Frag { Frag{i: 0, head: 0, tail: 0, nullable: false} }
+
+fn (var g: Prog) inst(op: Int) -> Frag {
+  g.op.push(op)
+  g.out.push(0)
+  g.arg.push(0)
+  g.rune.push([])
+  g.fold.push(false)
+  Frag{i: g.op.len() - 1, head: 0, tail: 0, nullable: true}
+}
+
+fn (var g: Prog) patch(head0: Int, val: Int) {
+  var head = head0
+  while head != 0 {
+    let i = head >> 1
+    if (head & 1) == 0 {
+      head = g.out[i]
+      g.out[i] = val
+    } else {
+      head = g.arg[i]
+      g.arg[i] = val
+    }
+  }
+}
+
+/// The patch list l1 then l2 (head, tail).
+fn (var g: Prog) append_list(h1: Int, t1: Int, h2: Int, t2: Int) -> (Int, Int) {
+  if h1 == 0 {
+    return (h2, t2)
+  }
+  if h2 == 0 {
+    return (h1, t1)
+  }
+  let i = t1 >> 1
+  if (t1 & 1) == 0 {
+    g.out[i] = h2
+  } else {
+    g.arg[i] = h2
+  }
+  (h1, t2)
+}
+
+fn (var g: Prog) nop() -> Frag {
+  var f = g.inst(I_NOP)
+  f.head = f.i << 1
+  f.tail = f.head
+  f
+}
+
+fn (var g: Prog) cap(arg: Int) -> Frag {
+  var f = g.inst(I_CAPTURE)
+  f.head = f.i << 1
+  f.tail = f.head
+  g.arg[f.i] = arg
+  if g.num_cap < arg + 1 {
+    g.num_cap = arg + 1
+  }
+  f
+}
+
+fn (var g: Prog) cat(f1: Frag, f2: Frag) -> Frag {
+  if f1.i == 0 || f2.i == 0 {
+    return fail_frag()
+  }
+  g.patch(f1.head, f2.i)
+  Frag{i: f1.i, head: f2.head, tail: f2.tail, nullable: f1.nullable && f2.nullable}
+}
+
+fn (var g: Prog) alt(f1: Frag, f2: Frag) -> Frag {
+  if f1.i == 0 {
+    return f2
+  }
+  if f2.i == 0 {
+    return f1
+  }
+  var f = g.inst(I_ALT)
+  g.out[f.i] = f1.i
+  g.arg[f.i] = f2.i
+  let (h, t) = g.append_list(f1.head, f1.tail, f2.head, f2.tail)
+  f.head = h
+  f.tail = t
+  f.nullable = f1.nullable || f2.nullable
+  f
+}
+
+fn (var g: Prog) quest(f1: Frag, nongreedy: Bool) -> Frag {
+  var f = g.inst(I_ALT)
+  if nongreedy {
+    g.arg[f.i] = f1.i
+    f.head = f.i << 1
+  } else {
+    g.out[f.i] = f1.i
+    f.head = (f.i << 1) | 1
+  }
+  f.tail = f.head
+  let (h, t) = g.append_list(f.head, f.tail, f1.head, f1.tail)
+  f.head = h
+  f.tail = t
+  f
+}
+
+fn (var g: Prog) loop_frag(f1: Frag, nongreedy: Bool) -> Frag {
+  var f = g.inst(I_ALT)
+  if nongreedy {
+    g.arg[f.i] = f1.i
+    f.head = f.i << 1
+  } else {
+    g.out[f.i] = f1.i
+    f.head = (f.i << 1) | 1
+  }
+  f.tail = f.head
+  g.patch(f1.head, f.i)
+  f
+}
+
+fn (var g: Prog) plus(f1: Frag, nongreedy: Bool) -> Frag {
+  let l = g.loop_frag(f1, nongreedy)
+  Frag{i: f1.i, head: l.head, tail: l.tail, nullable: f1.nullable}
+}
+
+fn (var g: Prog) star(f1: Frag, nongreedy: Bool) -> Frag {
+  if f1.nullable {
+    // (f1+)? keeps the priority order right (golang.org/issue/46123)
+    let pl = g.plus(f1, nongreedy)
+    return g.quest(pl, nongreedy)
+  }
+  g.loop_frag(f1, nongreedy)
+}
+
+fn (var g: Prog) empty(op: Int) -> Frag {
+  var f = g.inst(I_EMPTY)
+  g.arg[f.i] = op
+  f.head = f.i << 1
+  f.tail = f.head
+  f
+}
+
+fn (var g: Prog) rune_frag(r: List[Int], fold0: Bool) -> Frag {
+  var f = g.inst(I_RUNE)
+  f.nullable = false
+  g.rune[f.i] = r
+  var fold = fold0
+  if r.len() != 1 || simple_fold(r[0]) == r[0] {
+    fold = false
+  }
+  g.fold[f.i] = fold
+  f.head = f.i << 1
+  f.tail = f.head
+  if !fold && (r.len() == 1 || (r.len() == 2 && r[0] == r[1])) {
+    g.op[f.i] = I_RUNE1
+  } else if r.len() == 2 && r[0] == 0 && r[1] == MAX_RUNE {
+    g.op[f.i] = I_ANY
+  } else if r.len() == 4 && r[0] == 0 && r[1] == 9 && r[2] == 11 && r[3] == MAX_RUNE {
+    g.op[f.i] = I_ANY_NOT_NL
+  }
+  f
+}
+
+fn (var g: Prog) compile(p: Parser, re: Int) -> Frag {
+  let op = p.ops[re]
+  let flags = p.nflags[re]
+  if op == OP_NO_MATCH {
+    return fail_frag()
+  }
+  if op == OP_EMPTY_MATCH {
+    return g.nop()
+  }
+  if op == OP_LITERAL {
+    let rs = p.runes[re]
+    if rs.is_empty() {
+      return g.nop()
+    }
+    var f = fail_frag()
+    var j = 0
+    while j < rs.len() {
+      let f1 = g.rune_frag([rs[j]], (flags & FOLD_CASE) != 0)
+      if j == 0 {
+        f = f1
+      } else {
+        f = g.cat(f, f1)
+      }
+      j += 1
+    }
+    return f
+  }
+  if op == OP_CHAR_CLASS {
+    return g.rune_frag(p.runes[re], (flags & FOLD_CASE) != 0)
+  }
+  if op == OP_ANY_CHAR_NOT_NL {
+    return g.rune_frag([0, 9, 11, MAX_RUNE], false)
+  }
+  if op == OP_ANY_CHAR {
+    return g.rune_frag([0, MAX_RUNE], false)
+  }
+  if op == OP_BEGIN_LINE {
+    return g.empty(E_BEGIN_LINE)
+  }
+  if op == OP_END_LINE {
+    return g.empty(E_END_LINE)
+  }
+  if op == OP_BEGIN_TEXT {
+    return g.empty(E_BEGIN_TEXT)
+  }
+  if op == OP_END_TEXT {
+    return g.empty(E_END_TEXT)
+  }
+  if op == OP_WORD_BOUNDARY {
+    return g.empty(E_WORD_BOUNDARY)
+  }
+  if op == OP_NO_WORD_BOUNDARY {
+    return g.empty(E_NO_WORD_BOUNDARY)
+  }
+  let ng = (flags & NON_GREEDY) != 0
+  if op == OP_CAPTURE {
+    let c = p.caps[re]
+    let bra = g.cap(c << 1)
+    let sub = g.compile(p, p.subs[re][0])
+    let ket = g.cap((c << 1) | 1)
+    let bs = g.cat(bra, sub)
+    return g.cat(bs, ket)
+  }
+  if op == OP_STAR {
+    let sub = g.compile(p, p.subs[re][0])
+    return g.star(sub, ng)
+  }
+  if op == OP_PLUS {
+    let sub = g.compile(p, p.subs[re][0])
+    return g.plus(sub, ng)
+  }
+  if op == OP_QUEST {
+    let sub = g.compile(p, p.subs[re][0])
+    return g.quest(sub, ng)
+  }
+  if op == OP_CONCAT {
+    let subs = p.subs[re]
+    if subs.is_empty() {
+      return g.nop()
+    }
+    var f = fail_frag()
+    var k = 0
+    while k < subs.len() {
+      let f1 = g.compile(p, subs[k])
+      if k == 0 {
+        f = f1
+      } else {
+        f = g.cat(f, f1)
+      }
+      k += 1
+    }
+    return f
+  }
+  // OP_ALTERNATE
+  var f = fail_frag()
+  for sub in p.subs[re] {
+    let f1 = g.compile(p, sub)
+    f = g.alt(f, f1)
+  }
+  f
+}
+
+/// ascii_set: sets rune r's bit in the bitmap at base b when r is ASCII.
+fn ascii_set(var a: List[Int], b: Int, r: Int) {
+  if r >= 0 && r < 128 {
+    a[b + (r >> 5)] = a[b + (r >> 5)] | (1 << (r & 31))
+  }
+}
+
+/// ascii_range: sets the bits of runes lo to hi (all below 128) in the
+/// bitmap at base b, a 32 bit word at a time (2026-10-28: a bit at a time
+/// was most of ascii_bytes, which was 7.7% of compile).
+fn ascii_range(var a: List[Int], b: Int, lo: Int, hi: Int) {
+  var l = lo
+  while l <= hi {
+    let w = l >> 5
+    let end = if hi < 32 * w + 31 { hi } else { 32 * w + 31 }
+    a[b + w] = a[b + w] | (((1 << (end - l + 1)) - 1) << (l & 31))
+    l = end + 1
+  }
+}
+
+/// ascii_bytes: the ASCII bitmap of every rune instruction.
+fn (var g: Prog) ascii_bytes() {
+  let n = g.op.len()
+  var a = zeros(n * 4)
+  var pc = 1
+  while pc < n {
+    let op = g.op[pc]
+    if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
+      let b = pc * 4
+      if op == I_RUNE {
+        let rs = g.rune[pc]
+        if rs.len() == 1 {
+          let r0 = rs[0]
+          ascii_set(a, b, r0)
+          if g.fold[pc] {
+            var r1 = simple_fold(r0)
+            while r1 != r0 {
+              ascii_set(a, b, r1)
+              r1 = simple_fold(r1)
+            }
+          }
+        } else {
+          var i = 0
+          while i < rs.len() && rs[i] < 128 {
+            ascii_range(a, b, rs[i], if rs[i + 1] < 127 { rs[i + 1] } else { 127 })
+            i += 2
+          }
+        }
+      } else if op == I_RUNE1 {
+        ascii_set(a, b, g.rune[pc][0])
+      } else {
+        ascii_range(a, b, 0, 127)
+        if op == I_ANY_NOT_NL {
+          a[b] = a[b] & (0xffffffff ^ (1 << 10))
+        }
+      }
+    }
+    pc += 1
+  }
+  g.ascii = a
+}
+
+/// first_bytes: walks the instructions a match can begin with and sets the
+/// first byte filter (a start filter beyond Go's literal prefix: a match
+/// cannot start at an ASCII byte no first instruction accepts).
+fn (var g: Prog) first_bytes() {
+  var seen = zeros(g.op.len())
+  var stack = [g.start]
+  var first = zeros(4)
+  while stack.len() > 0 {
+    let pc = stack.pop() ?? 0
+    if pc == 0 || seen[pc] != 0 {
+      continue
+    }
+    seen[pc] = 1
+    let op = g.op[pc]
+    if op == I_ALT {
+      stack.push(g.out[pc])
+      stack.push(g.arg[pc])
+    } else if op == I_NOP || op == I_CAPTURE || op == I_EMPTY {
+      stack.push(g.out[pc])
+    } else if op == I_MATCH {
+      return
+    } else if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
+      var w = 0
+      while w < 4 {
+        first[w] = first[w] | g.ascii[pc * 4 + w]
+        w += 1
+      }
+    }
+  }
+  g.first_ok = true
+  g.first = first
+}
+
+/// The first position at or after pos where a match can start (g.first_ok),
+/// or -1.
+fn next_start(g: Prog, s: Str, pos0: Int) -> Int {
+  let b = s.bytes()
+  let end = b.len()
+  var pos = pos0
+  while pos < end {
+    let c = Int(b[pos])
+    if c >= 128 {
+      return pos
+    }
+    if ((g.first[c >> 5] >> (c & 31)) & 1) != 0 {
+      return pos
+    }
+    pos += 1
+  }
+  -1
+}
+
+fn is_word_char(r: Int) -> Bool { (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' }
+
+/// EmptyOpContext of the runes before and after a position (-1 the
+/// edge of the text).
+fn empty_context(r1: Int, r2: Int) -> Int {
+  var op = E_NO_WORD_BOUNDARY
+  var boundary = 0
+  if is_word_char(r1) {
+    boundary = 1
+  } else if r1 == 10 {
+    op = op | E_BEGIN_LINE
+  } else if r1 < 0 {
+    op = op | E_BEGIN_TEXT | E_BEGIN_LINE
+  }
+  if is_word_char(r2) {
+    boundary = boundary ^ 1
+  } else if r2 == 10 {
+    op = op | E_END_LINE
+  } else if r2 < 0 {
+    op = op | E_END_TEXT | E_END_LINE
+  }
+  if boundary != 0 {
+    op = op ^ (E_WORD_BOUNDARY | E_NO_WORD_BOUNDARY)
+  }
+  op
+}
+
+/// The rune at pos (times 8 plus its size), -8 at the end.
+fn step_at(s: Str, pos: Int) -> Int {
+  let b = s.bytes()
+  if pos >= b.len() {
+    return -8
+  }
+  let c = Int(b[pos])
+  if c < 0x80 {
+    return c * 8 + 1
+  }
+  decode_at(b, pos)
+}
+
+/// The rune before pos for empty width conditions: only ASCII runes
+/// matter there, so any other rune is U+FFFD.
+fn rune_before(s: Str, pos: Int) -> Int {
+  if pos <= 0 {
+    return -1
+  }
+  let c = byte_at(s, pos - 1)
+  if c < 0x80 {
+    return c
+  }
+  0xfffd
+}
+
+/// A run queue: the instructions in order with their threads' group
+/// positions (an empty list: no thread), and a sparse index.
+/// All of it preallocated once per exec: entry j is the j-th instruction
+/// added, has[j] is 1 when a thread waits there, and its group positions
+/// are caps[j * ncap ..][..ncap] (one flat list, not a list per entry).
+struct Queue {
+  pcs: List[Int]
+  has: List[Int]
+  caps: List[Int]
+  sparse: List[Int]
+  len: Int
+  ncap: Int
+}
+
+fn new_queue(n: Int, ncap: Int) -> Queue {
+  Queue{pcs: zeros(n), has: zeros(n), caps: zeros(n * ncap), sparse: zeros(n), len: 0, ncap: ncap}
+}
+
+fn (var q: Queue) clear() {
+  q.len = 0
+}
+
+fn (var q: Queue) contains(pc: Int) -> Bool {
+  let j = q.sparse[pc]
+  j < q.len && q.pcs[j] == pc
+}
+
+fn rune_matches(g: Prog, pc: Int, r: Int) -> Bool {
+  let rs = g.rune[pc]
+  if rs.len() == 1 {
+    let r0 = rs[0]
+    if r == r0 {
+      return true
+    }
+    if g.fold[pc] {
+      var r1 = simple_fold(r0)
+      while r1 != r0 {
+        if r == r1 {
+          return true
+        }
+        r1 = simple_fold(r1)
+      }
+    }
+    return false
+  }
+  in_class(r, rs)
+}
+
+/// add: the threads that pc leads to at pos, in priority order, with the
+/// group positions cap.
+fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cb: Int, cond: Int) {
+  var pc = pc0
+  while true {
+    if pc == 0 {
+      return
+    }
+    // q.contains(pc), inline
+    let sj = q.sparse[pc]
+    let n = q.len
+    if sj < n && q.pcs[sj] == pc {
+      return
+    }
+    q.sparse[pc] = n
+    q.pcs[n] = pc
+    q.has[n] = 0
+    q.len = n + 1
+    let op = g.op[pc]
+    if op == I_FAIL {
+      return
+    }
+    if op == I_ALT {
+      let o = g.out[pc]
+      let on = q.len
+      let osj = q.sparse[o]
+      let oop = g.op[o]
+      if o != 0 && oop >= I_RUNE && !(osj < on && q.pcs[osj] == o) {
+        // the first branch is a rune instruction: its thread, without a call
+        q.sparse[o] = on
+        q.pcs[on] = o
+        q.has[on] = 1
+        q.len = on + 1
+        let nc = q.ncap
+        let base = on * nc
+        q.caps[base] = cap[cb]
+        q.caps[base + 1] = cap[cb + 1]
+        var i = 2
+        while i < nc {
+          q.caps[base + i] = cap[cb + i]
+          i += 1
+        }
+      } else {
+        add(g, q, o, pos, cap, cb, cond)
+      }
+      pc = g.arg[pc]
+      continue
+    }
+    if op == I_EMPTY {
+      if (g.arg[pc] & (0 - 1 - cond)) == 0 {
+        pc = g.out[pc]
+        continue
+      }
+      return
+    }
+    if op == I_NOP {
+      pc = g.out[pc]
+      continue
+    }
+    if op == I_CAPTURE {
+      let a = g.arg[pc]
+      if a < q.ncap {
+        let old = cap[cb + a]
+        cap[cb + a] = pos
+        add(g, q, g.out[pc], pos, cap, cb, cond)
+        cap[cb + a] = old
+        return
+      }
+      pc = g.out[pc]
+      continue
+    }
+    // a thread waits here
+    let j = q.len - 1
+    q.has[j] = 1
+    let nc = q.ncap
+    let base = j * nc
+    q.caps[base] = cap[cb]
+    q.caps[base + 1] = cap[cb + 1]
+    var i = 2
+    while i < nc {
+      q.caps[base + i] = cap[cb + i]
+      i += 1
+    }
+    return
+  }
+}
+
+/// l with element i set to v.
+fn with_at(l: List[Int], i: Int, v: Int) -> List[Int] {
+  var x = l
+  x[i] = v
+  x
+}
+
+/// l, as a value of its own (a thread's group positions to update).
+fn own(l: List[Int]) -> List[Int] { l }
+
+/// The literal text every match starts with (Prog.Prefix of Go's regexp):
+/// the single runes the program begins with after nops and captures, or
+/// "".
+fn literal_prefix(g: Prog) -> Str {
+  var pc = g.start
+  while pc != 0 && (g.op[pc] == I_NOP || g.op[pc] == I_CAPTURE) {
+    pc = g.out[pc]
+  }
+  var b = BytesBuilder.new()
+  while pc != 0 && g.op[pc] == I_RUNE1 {
+    // a surrogate (`\x{D800}`) compiles but is no Rune and matches nothing:
+    // the prefix stops before it (it only speeds the search)
+    let c = g.rune[pc][0]
+    if c >= 0xD800 && c <= 0xDFFF {
+      break
+    }
+    b.write_rune(Rune(c))
+    pc = g.out[pc]
+    while pc != 0 && (g.op[pc] == I_NOP || g.op[pc] == I_CAPTURE) {
+      pc = g.out[pc]
+    }
+  }
+  b.freeze().to_str() ?? ""
+}
+
+/// Go's bitState (backtrack.go): the backtracker's visited bits, job stack
+/// (instruction, position, and a flag for "continue a visit"), and group
+/// positions.
+struct BT {
+  end: Int
+  visited: List[Int]
+  jobs: List[Int]
+  jn: Int
+  cap: List[Int]
+  matchcap: List[Int]
+  nprog: Int
+}
+
+/// Whether (pc, pos) is new, marking it visited.
+fn (var b: BT) should_visit(pc: Int, pos: Int) -> Bool {
+  let n = pc * (b.end + 1) + pos
+  let w = n >> 5
+  let bit = 1 << (n & 31)
+  let v = b.visited[w]
+  if (v & bit) != 0 {
+    return false
+  }
+  b.visited[w] = v | bit
+  true
+}
+
+/// A job is one Int: pos << 12 | pc << 1 | arg (backtrack runs only for
+/// programs of at most 500 instructions, so pc << 1 | arg is under 4096).
+fn (var b: BT) job(pc: Int, pos: Int, arg: Int) {
+  let j = (pos << 12) | (pc << 1) | arg
+  if b.jn < b.jobs.len() {
+    b.jobs[b.jn] = j
+  } else {
+    b.jobs.push(j)
+  }
+  b.jn += 1
+}
+
+fn (var b: BT) push(g: Prog, pc: Int, pos: Int, arg: Int) {
+  if pc != 0 && g.op[pc] != I_FAIL && (arg == 1 || b.should_visit(pc, pos)) {
+    b.job(pc, pos, arg)
+  }
+}
+
+/// tryBacktrack: the first match (leftmost-first priority) starting at
+/// pos, its positions in b.matchcap.
+fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
+  let ncap = b.cap.len()
+  let sd = s.bytes()
+  let end1 = b.end + 1
+  b.push(g, pc0, pos0, 0)
+  while b.jn > 0 {
+    b.jn -= 1
+    // (through a let: a var copied from an element is XO0520)
+    let j = b.jobs[b.jn]
+    let pc0 = (j >> 1) & 2047
+    let pos0 = j >> 12
+    let arg0 = j & 1
+    var pc = pc0
+    var pos = pos0
+    var arg = arg0
+    var check = false
+    while true {
+      if check {
+        // b.should_visit(pc, pos), inline
+        let n = pc * end1 + pos
+        let w = n >> 5
+        let bit = 1 << (n & 31)
+        let v = b.visited[w]
+        if (v & bit) != 0 {
+          break
+        }
+        b.visited[w] = v | bit
+      }
+      check = true
+      if pc == 0 {
+        break
+      }
+      let op = g.op[pc]
+      if op == I_ALT {
+        if arg == 1 {
+          arg = 0
+          pc = g.arg[pc]
+        } else {
+          // push(pc, pos, 1) without its checks: pc is an ALT
+          b.job(pc, pos, 1)
+          pc = g.out[pc]
+        }
+        continue
+      }
+      if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
+        if pos < b.end {
+          let c = Int(sd[pos])
+          if c < 128 {
+            if ((g.ascii[pc * 4 + (c >> 5)] >> (c & 31)) & 1) == 0 {
+              break
+            }
+            pos += 1
+            pc = g.out[pc]
+            continue
+          }
+        }
+        let st = step_at(s, pos)
+        let r = if st < 0 { -1 } else { st >> 3 }
+        var ok = false
+        if op == I_RUNE {
+          ok = r >= 0 && rune_matches(g, pc, r)
+        } else if op == I_RUNE1 {
+          ok = r >= 0 && r == g.rune[pc][0]
+        } else if op == I_ANY {
+          ok = r >= 0
+        } else {
+          ok = r >= 0 && r != 10
+        }
+        if !ok {
+          break
+        }
+        pos += st & 7
+        pc = g.out[pc]
+        continue
+      }
+      if op == I_CAPTURE {
+        if arg == 1 {
+          b.cap[g.arg[pc]] = pos
+          break
+        }
+        let a = g.arg[pc]
+        if a < ncap {
+          b.job(pc, b.cap[a], 1)
+          b.cap[a] = pos
+        }
+        pc = g.out[pc]
+        continue
+      }
+      if op == I_EMPTY {
+        let cond = empty_context(rune_before(s, pos), rune_at(s, pos))
+        if (g.arg[pc] & (0 - 1 - cond)) != 0 {
+          break
+        }
+        pc = g.out[pc]
+        continue
+      }
+      if op == I_NOP {
+        pc = g.out[pc]
+        continue
+      }
+      if op == I_MATCH {
+        b.cap[1] = pos
+        if b.matchcap[1] == -1 {
+          var i = 0
+          while i < ncap {
+            b.matchcap[i] = b.cap[i]
+            i += 1
+          }
+        }
+        return true
+      }
+      break
+    }
+  }
+  false
+}
+
+/// The rune at pos, or -1 at the end.
+fn rune_at(s: Str, pos: Int) -> Int {
+  let st = step_at(s, pos)
+  if st < 0 { -1 } else { st >> 3 }
+}
+
+/// Go's backtrack: the search by backtracking with a visited bit for each
+/// (instruction, position), for small programs and texts.
+/// Whether every match must start at the beginning of the text: the
+/// program begins, after nops and captures, with `\A` (Go's startCond).
+fn anchored_start(g: Prog) -> Bool {
+  var pc = g.start
+  while pc != 0 && (g.op[pc] == I_NOP || g.op[pc] == I_CAPTURE) {
+    pc = g.out[pc]
+  }
+  pc != 0 && g.op[pc] == I_EMPTY && (g.arg[pc] & E_BEGIN_TEXT) != 0
+}
+
+const OP_ALT_MATCH: Int = 11
+
+/// The rune ranges (sorted pairs) a rune instruction accepts.
+fn one_pass_runes(g: Prog, pc: Int) -> List[Int] {
+  let op = g.op[pc]
+  if op == I_ANY {
+    return [0, MAX_RUNE]
+  }
+  if op == I_ANY_NOT_NL {
+    return [0, 9, 11, MAX_RUNE]
+  }
+  let rs = g.rune[pc]
+  if op == I_RUNE1 || rs.len() == 1 {
+    let r0 = rs[0]
+    var all = [r0]
+    if g.fold[pc] {
+      var r1 = simple_fold(r0)
+      while r1 != r0 {
+        all.push(r1)
+        r1 = simple_fold(r1)
+      }
+    }
+    var i = 1
+    while i < all.len() {
+      let v = all[i]
+      var j = i
+      while j > 0 && all[j - 1] > v {
+        all[j] = all[j - 1]
+        j -= 1
+      }
+      all[j] = v
+      i += 1
+    }
+    var pairs: List[Int] = []
+    for v in all {
+      pairs.push(v)
+      pairs.push(v)
+    }
+    return pairs
+  }
+  rs
+}
+
+/// mergeRuneSets: the two rune range lists merged in order, with the
+/// instruction each range leads to; false when they intersect.
+fn merge_rune_sets(l: List[Int], r: List[Int], lpc: Int, rpc: Int) -> (Bool, List[Int], List[Int]) {
+  var merged: List[Int] = []
+  var next: List[Int] = []
+  var lx = 0
+  var rx = 0
+  while lx < l.len() || rx < r.len() {
+    var left = true
+    if rx >= r.len() {
+      left = true
+    } else if lx >= l.len() {
+      left = false
+    } else if r[rx] < l[lx] {
+      left = false
+    }
+    var lo = 0
+    var hi = 0
+    var pc = 0
+    if left {
+      lo = l[lx]
+      hi = l[lx + 1]
+      pc = lpc
+      lx += 2
+    } else {
+      lo = r[rx]
+      hi = r[rx + 1]
+      pc = rpc
+      rx += 2
+    }
+    let k = merged.len()
+    if k > 0 && lo <= merged[k - 1] {
+      return (false, [], [])
+    }
+    merged.push(lo)
+    merged.push(hi)
+    next.push(pc)
+  }
+  (true, merged, next)
+}
+
+/// The analysis state of makeOnePass.
+struct OnePassB {
+  op: List[Int]
+  out: List[Int]
+  arg: List[Int]
+  runes: List[List[Int]]
+  next: List[List[Int]]
+  done: List[Bool]
+  vis: List[Int]
+  stamp: Int
+  m: List[Bool]
+  iq: List[Int]
+  inq: List[Bool]
+}
+
+/// check: the paths from the alternations at pc are unambiguous (Go's
+/// closure in makeOnePass).
+fn one_pass_check(g: Prog, var b: OnePassB, pc: Int) -> Bool {
+  if b.vis[pc] == b.stamp {
+    return true
+  }
+  b.vis[pc] = b.stamp
+  let op = b.op[pc]
+  if op == I_ALT || op == OP_ALT_MATCH {
+    if !one_pass_check(g, b, b.out[pc]) {
+      return false
+    }
+    if !one_pass_check(g, b, b.arg[pc]) {
+      return false
+    }
+    var o = b.out[pc]
+    var a = b.arg[pc]
+    var mo = b.m[o]
+    var ma = b.m[a]
+    if mo && ma {
+      return false
+    }
+    // a match on empty goes in out
+    if ma {
+      b.out[pc] = a
+      b.arg[pc] = o
+      let t = o
+      o = a
+      a = t
+      mo = true
+      ma = false
+    }
+    if mo {
+      b.m[pc] = true
+      b.op[pc] = OP_ALT_MATCH
+    }
+    let (ok, merged, nx) = merge_rune_sets(b.runes[o], b.runes[a], o, a)
+    if !ok {
+      return false
+    }
+    b.runes[pc] = merged
+    b.next[pc] = nx
+    return true
+  }
+  if op == I_CAPTURE || op == I_NOP || op == I_EMPTY {
+    let o = b.out[pc]
+    if !one_pass_check(g, b, o) {
+      return false
+    }
+    b.m[pc] = b.m[o]
+    b.runes[pc] = b.runes[o]
+    return true
+  }
+  if op == I_MATCH || op == I_FAIL {
+    b.m[pc] = op == I_MATCH
+    return true
+  }
+  b.m[pc] = false
+  if b.done[pc] {
+    return true
+  }
+  b.done[pc] = true
+  let o = b.out[pc]
+  if !b.inq[o] {
+    b.inq[o] = true
+    b.iq.push(o)
+  }
+  b.runes[pc] = one_pass_runes(g, pc)
+  true
+}
+
+/// compileOnePass: when the program is one-pass, sets g.onepass and the
+/// tables its matcher reads.
+fn (var g: Prog) one_pass() {
+  let n = g.op.len()
+  // Go: the machine must be short, and anchored with \A at its start
+  if n >= 1000 || g.start == 0 || g.op[g.start] != I_EMPTY || (g.arg[g.start] & E_BEGIN_TEXT) != E_BEGIN_TEXT {
+    return
+  }
+  var has_alt = false
+  var pc = 0
+  while pc < n {
+    if g.op[pc] == I_ALT {
+      has_alt = true
+    }
+    pc += 1
+  }
+  // with alternates, every instruction leading to a match must be \z
+  pc = 0
+  while pc < n {
+    let op = g.op[pc]
+    let op_out = g.op[g.out[pc]]
+    if op == I_ALT {
+      if op_out == I_MATCH || g.op[g.arg[pc]] == I_MATCH {
+        return
+      }
+    } else if op == I_EMPTY {
+      if op_out == I_MATCH && (g.arg[pc] & E_END_TEXT) != E_END_TEXT {
+        return
+      }
+    } else if op_out == I_MATCH && has_alt {
+      return
+    }
+    pc += 1
+  }
+  var b = OnePassB{op: g.op, out: g.out, arg: g.arg, runes: [], next: [], done: [], vis: zeros(n), stamp: 0, m: [], iq: [g.start], inq: []}
+  pc = 0
+  while pc < n {
+    b.runes.push([])
+    b.next.push([])
+    b.done.push(false)
+    b.m.push(false)
+    b.inq.push(false)
+    pc += 1
+  }
+  b.inq[g.start] = true
+  // onePassCopy: patch the alternation idioms that block a one-pass program
+  pc = 0
+  while pc < n {
+    if b.op[pc] == I_ALT {
+      var alt_is_arg = true
+      var al = b.arg[pc]
+      if b.op[al] != I_ALT {
+        alt_is_arg = false
+        al = b.out[pc]
+        if b.op[al] != I_ALT {
+          pc += 1
+          continue
+        }
+      }
+      let other = if alt_is_arg { b.out[pc] } else { b.arg[pc] }
+      if b.op[other] == I_ALT {
+        pc += 1
+        continue
+      }
+      // A:BC + B:DA => A:BC + B:DC (a simple empty transition loop)
+      var b_alt_is_out = true
+      var patch = false
+      if b.out[al] == pc {
+        patch = true
+      } else if b.arg[al] == pc {
+        patch = true
+        b_alt_is_out = false
+      }
+      if patch {
+        if b_alt_is_out {
+          b.out[al] = other
+        } else {
+          b.arg[al] = other
+        }
+      }
+      // A:BC + B:DC => A:DC + B:DC (an empty transition to a common target)
+      let b_alt = if b_alt_is_out { b.out[al] } else { b.arg[al] }
+      let b_other = if b_alt_is_out { b.arg[al] } else { b.out[al] }
+      if other == b_alt {
+        if alt_is_arg {
+          b.arg[pc] = b_other
+        } else {
+          b.out[pc] = b_other
+        }
+      }
+    }
+    pc += 1
+  }
+  var i = 0
+  while i < b.iq.len() {
+    b.stamp += 1
+    if !one_pass_check(g, b, b.iq[i]) {
+      return
+    }
+    i += 1
+  }
+  var base = zeros(n)
+  var cnt = zeros(n)
+  var flat: List[Int] = []
+  var nx: List[Int] = []
+  pc = 0
+  while pc < n {
+    if b.op[pc] == I_ALT || b.op[pc] == OP_ALT_MATCH {
+      base[pc] = nx.len()
+      cnt[pc] = b.next[pc].len()
+      for v in b.runes[pc] {
+        flat.push(v)
+      }
+      for v in b.next[pc] {
+        nx.push(v)
+      }
+    }
+    pc += 1
+  }
+  var one = [n, flat.len()]
+  for tab in [b.op, b.out, base, cnt, flat, nx] {
+    for v in tab {
+      one.push(v)
+    }
+  }
+  g.one = one
+}
+
+/// The matcher of a one-pass program: the group positions of the match at
+/// the start of s, or the empty list.
+fn one_pass_exec(g: Prog, o: List[Int], s: Str, pos0: Int, ncap: Int) -> List[Int] {
+  if pos0 != 0 {
+    return []
+  }
+  let end = s.len()
+  let sd = s.bytes()
+  let n = o[0]
+  let o_out = 2 + n
+  let o_base = 2 + 2 * n
+  let o_cnt = 2 + 3 * n
+  let o_flat = 2 + 4 * n
+  let o_nx = o_flat + o[1]
+  var cap = zeros(ncap)
+  var i = 0
+  while i < ncap {
+    cap[i] = -1
+    i += 1
+  }
+  var pc = g.start
+  var pos = 0
+  while true {
+    let op = o[2 + pc]
+    let nxt = o[o_out + pc]
+    if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
+      if pos >= end {
+        return []
+      }
+      let c = Int(sd[pos])
+      if c < 128 {
+        if ((g.ascii[pc * 4 + (c >> 5)] >> (c & 31)) & 1) == 0 {
+          return []
+        }
+        pos += 1
+        pc = nxt
+        continue
+      }
+      let st = step_at(s, pos)
+      let r = st >> 3
+      var ok = false
+      if op == I_RUNE {
+        ok = rune_matches(g, pc, r)
+      } else if op == I_RUNE1 {
+        ok = r == g.rune[pc][0]
+      } else if op == I_ANY {
+        ok = true
+      } else {
+        ok = r != 10
+      }
+      if !ok {
+        return []
+      }
+      pos += st & 7
+      pc = nxt
+      continue
+    }
+    if op == I_ALT || op == OP_ALT_MATCH {
+      var r = -1
+      if pos < end {
+        let c = Int(sd[pos])
+        if c < 128 {
+          r = c
+        } else {
+          r = step_at(s, pos) >> 3
+        }
+      }
+      let base = o[o_base + pc]
+      var lo = 0
+      var hi = o[o_cnt + pc]
+      var found = -1
+      while lo < hi {
+        let mid = (lo + hi) >> 1
+        let a = o[o_flat + 2 * (base + mid)]
+        if r < a {
+          hi = mid
+        } else if r > o[o_flat + 2 * (base + mid) + 1] {
+          lo = mid + 1
+        } else {
+          found = mid
+          break
+        }
+      }
+      if found >= 0 {
+        pc = o[o_nx + base + found]
+      } else if op == OP_ALT_MATCH {
+        pc = nxt
+      } else {
+        return []
+      }
+      continue
+    }
+    if op == I_CAPTURE {
+      let a = g.arg[pc]
+      if a < ncap {
+        cap[a] = pos
+      }
+      pc = nxt
+      continue
+    }
+    if op == I_EMPTY {
+      // \A and \z need no context
+      let want = g.arg[pc]
+      if want == E_END_TEXT {
+        if pos != end {
+          return []
+        }
+      } else if want == E_BEGIN_TEXT {
+        if pos != 0 {
+          return []
+        }
+      } else {
+        let cond = empty_context(rune_before(s, pos), rune_at(s, pos))
+        if (want & (0 - 1 - cond)) != 0 {
+          return []
+        }
+      }
+      pc = nxt
+      continue
+    }
+    if op == I_NOP {
+      pc = nxt
+      continue
+    }
+    if op == I_MATCH {
+      cap[0] = 0
+      cap[1] = pos
+      return cap
+    }
+    return []
+  }
+  []
+}
+
+fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
+  let end = s.len()
+  let nprog = g.op.len()
+  var b = BT{end: end, visited: zeros((nprog * (end + 1) + 31) / 32), jobs: zeros(32), jn: 0, cap: zeros(ncap), matchcap: zeros(ncap), nprog: nprog}
+  var i = 0
+  while i < ncap {
+    b.cap[i] = -1
+    b.matchcap[i] = -1
+    i += 1
+  }
+  var pos = pos0
+  if anchored_start(g) {
+    // a match can only start at 0 (Go's anchored search)
+    if pos0 != 0 {
+      return []
+    }
+    b.cap[0] = 0
+    if try_backtrack(g, s, b, g.start, 0) {
+      return b.matchcap
+    }
+    return []
+  }
+  while pos <= end {
+    if !prefix.is_empty() {
+      let at = find_from(s, prefix, pos)
+      if at < 0 {
+        return []
+      }
+      pos = at
+    } else if g.first_ok {
+      let at = next_start(g, s, pos)
+      if at < 0 {
+        return []
+      }
+      pos = at
+    }
+    b.cap[0] = pos
+    if try_backtrack(g, s, b, g.start, pos) {
+      return b.matchcap
+    }
+    let st = step_at(s, pos)
+    if st < 0 {
+      break
+    }
+    pos += st & 7
+  }
+  []
+}
+
+/// The group positions of the leftmost first match at or after pos (ncap
+/// of them, at least 2), or the empty list.
+fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
+  let n = g.op.len()
+  if g.one.len() > 0 {
+    return one_pass_exec(g, g.one, s, pos0, ncap)
+  }
+  if n <= 500 && s.len() < 262144 / n {
+    return backtrack(g, s, pos0, ncap, g.prefix)
+  }
+  var runq = new_queue(n, ncap)
+  var nextq = new_queue(n, ncap)
+  var matchcap: List[Int] = []
+  var cap = zeros(ncap)
+  var k = 0
+  while k < ncap {
+    matchcap.push(-1)
+    cap[k] = -1
+    k += 1
+  }
+  var matched = false
+  var pos = pos0
+  var st = step_at(s, pos)
+  var r = if st < 0 { -1 } else { st >> 3 }
+  var width = if st < 0 { 0 } else { st & 7 }
+  var r1 = -1
+  var width1 = 0
+  if r >= 0 {
+    let st1 = step_at(s, pos + width)
+    if st1 >= 0 {
+      r1 = st1 >> 3
+      width1 = st1 & 7
+    }
+  }
+  let he = g.has_empty
+  var cond = if he { empty_context(rune_before(s, pos), r) } else { 0 }
+  let prefix = g.prefix
+  while true {
+    if runq.len == 0 && matched {
+      break
+    }
+    if runq.len == 0 && (!prefix.is_empty() || (g.first_ok && !(r >= 0 && r < 128 && ((g.first[r >> 5] >> (r & 31)) & 1) != 0))) {
+      // no thread is alive: no match can start before the next occurrence
+      // of the literal prefix (Go's prefix scan), or at a byte no first
+      // instruction accepts
+      let at = if prefix.is_empty() { next_start(g, s, pos) } else { find_from(s, prefix, pos) }
+      if at < 0 {
+        break
+      }
+      if at != pos {
+        pos = at
+        let st0 = step_at(s, pos)
+        r = if st0 < 0 { -1 } else { st0 >> 3 }
+        width = if st0 < 0 { 0 } else { st0 & 7 }
+        r1 = -1
+        width1 = 0
+        if r >= 0 {
+          let st1 = step_at(s, pos + width)
+          if st1 >= 0 {
+            r1 = st1 >> 3
+            width1 = st1 & 7
+          }
+        }
+        if he {
+          cond = empty_context(rune_before(s, pos), r)
+        }
+      }
+    }
+    if !matched {
+      // matchcap is all -1 until the first match, and add restores cap
+      cap[0] = pos
+      add(g, runq, g.start, pos, cap, 0, cond)
+    }
+    let next_cond = if he { empty_context(r, r1) } else { 0 }
+    // step
+    var j = 0
+    while j < runq.len {
+      if runq.has[j] == 1 {
+        let pc = runq.pcs[j]
+        let op = g.op[pc]
+        var ok = false
+        if r >= 0 && r < 128 && op != I_MATCH {
+          ok = ((g.ascii[pc * 4 + (r >> 5)] >> (r & 31)) & 1) != 0
+        } else if op == I_MATCH {
+          var m = zeros(ncap)
+          var mi = 0
+          while mi < ncap {
+            m[mi] = runq.caps[j * ncap + mi]
+            mi += 1
+          }
+          m[1] = pos
+          matchcap = m
+          matched = true
+          // first match: the threads after this one are cut off
+          j = runq.len
+          continue
+        } else if op == I_RUNE {
+          ok = r >= 0 && rune_matches(g, pc, r)
+        } else if op == I_RUNE1 {
+          ok = r >= 0 && r == g.rune[pc][0]
+        } else if op == I_ANY {
+          ok = r >= 0
+        } else if op == I_ANY_NOT_NL {
+          ok = r >= 0 && r != 10
+        }
+        if ok {
+          add(g, nextq, g.out[pc], pos + width, runq.caps, j * ncap, next_cond)
+        }
+      }
+      j += 1
+    }
+    runq.clear()
+    if width == 0 {
+      break
+    }
+    pos += width
+    r = r1
+    width = width1
+    if r >= 0 {
+      let st2 = step_at(s, pos + width)
+      if st2 >= 0 {
+        r1 = st2 >> 3
+        width1 = st2 & 7
+      } else {
+        r1 = -1
+        width1 = 0
+      }
+    }
+    cond = next_cond
+    let tmp = runq
+    runq = nextq
+    nextq = tmp
+  }
+  if !matched {
+    return []
+  }
+  matchcap
+}
+
+/// The group positions of every match (FindAllIndex): no empty match
+/// right after another.
+fn all_matches(g: Prog, s: Str, ncap: Int) -> List[List[Int]] {
+  var out: List[List[Int]] = []
+  let end = s.len()
+  var pos = 0
+  var prev_end = -1
+  while pos <= end {
+    let m = exec(g, s, pos, ncap)
+    if m.is_empty() {
+      break
+    }
+    var accept = true
+    if m[1] == pos {
+      if m[0] == prev_end {
+        accept = false
+      }
+      let st = step_at(s, pos)
+      if st < 0 {
+        pos = end + 1
+      } else {
+        pos += st & 7
+      }
+    } else {
+      pos = m[1]
+    }
+    prev_end = m[1]
+    if accept {
+      out.push(m)
+    }
+  }
+  out
+}
+
+/// extract of a `$` template at t[i:]: the name (or ""), the group
+/// number (-1 a name), and the index after it; ok false when malformed.
+fn extract(t: Str, i0: Int) -> (Bool, Str, Int, Int) {
+  let n = t.len()
+  var i = i0
+  if i >= n {
+    return (false, "", 0, i0)
+  }
+  var brace = false
+  if byte_at(t, i) == '{' {
+    brace = true
+    i += 1
+  }
+  let start = i
+  while i < n {
+    let d = decode_at(t.bytes(), i)
+    let c = d >> 3
+    let ru = Rune.try(c) ?? Rune(0xfffd)
+    if !ru.is_letter() && !ru.is_digit() && c != '_' {
+      break
+    }
+    i += d & 7
+  }
+  if i == start {
+    return (false, "", 0, i0)
+  }
+  let name = sl(t, start, i)
+  if brace {
+    if i >= n || byte_at(t, i) != '}' {
+      return (false, "", 0, i0)
+    }
+    i += 1
+  }
+  var num = 0
+  var k = 0
+  while k < name.len() {
+    let c = byte_at(name, k)
+    if c < '0' || c > '9' || num >= 100000000 {
+      num = -1
+      break
+    }
+    num = num * 10 + c - '0'
+    k += 1
+  }
+  if byte_at(name, 0) == '0' && name.len() > 1 {
+    num = -1
+  }
+  (true, name, num, i)
+}
+
+/// expand: the template with `$n`, `${name}`, and `$$` replaced.
+fn (r: Regex) expand(var b: BytesBuilder, tpl: Str, s: Str, m: List[Int]) {
+  let n = tpl.len()
+  var i = 0
+  while i < n {
+    let d = find_from(tpl, "$", i)
+    if d < 0 {
+      break
+    }
+    b.write_str(sl(tpl, i, d))
+    i = d + 1
+    if i < n && byte_at(tpl, i) == '$' {
+      b.write_byte(UInt8('$'))
+      i += 1
+      continue
+    }
+    let (ok, name, num, rest) = extract(tpl, i)
+    if !ok {
+      b.write_byte(UInt8('$'))
+      continue
+    }
+    i = rest
+    if num >= 0 {
+      if 2 * num + 1 < m.len() && m[2 * num] >= 0 {
+        b.write_str(sl(s, m[2 * num], m[2 * num + 1]))
+      }
+    } else {
+      var k = 0
+      while k < r.names.len() {
+        if name == r.names[k] && 2 * k + 1 < m.len() && m[2 * k] >= 0 {
+          b.write_str(sl(s, m[2 * k], m[2 * k + 1]))
+          break
+        }
+        k += 1
+      }
+    }
+  }
+  b.write_str(sl(tpl, i, n))
+}
+
+/// replaceAll: literal repl, or expanded when expand.
+fn (r: Regex) replace(s: Str, repl: Str, expand: Bool) -> Str {
+  var b = BytesBuilder.new()
+  var last_end = 0
+  var search = 0
+  let end = s.len()
+  var ncap = 2
+  if expand {
+    ncap = r.prog.num_cap
+  }
+  while search <= end {
+    let a = exec(r.prog, s, search, ncap)
+    if a.is_empty() {
+      break
+    }
+    b.write_str(sl(s, last_end, a[0]))
+    if a[1] > last_end || a[0] == 0 {
+      if expand {
+        r.expand(b, repl, s, a)
+      } else {
+        b.write_str(repl)
+      }
+    }
+    last_end = a[1]
+    var width = 0
+    let st = step_at(s, search)
+    if st >= 0 {
+      width = st & 7
+    }
+    if search + width > a[1] {
+      search += width
+    } else if search + 1 > a[1] {
+      search += 1
+    } else {
+      search = a[1]
+    }
+  }
+  b.write_str(sl(s, last_end, end))
+  b.freeze().to_str() ?? s
+}

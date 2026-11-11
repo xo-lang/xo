@@ -1,5 +1,21 @@
 # std/regexp changes
 
+## 2026-11-11: port: one file, and the Go backend runs the Xo port
+
+- Kind: port
+- Commit: this push
+- Found by: decision 0597 part 2 (std modules and native imports)
+- Go reference: regexp, regexp/syntax (go1.26.1)
+- Test: std/regexp_test.xo on arm64 and LLVM; internal/stdtest corpus regexp (go, arm64, LLVM); bench/perf/regexp's five checksums equal on arm64, LLVM and Go
+
+std/regexp.xo holds the whole engine; the native fast paths it used
+(raw.zero_ints, scan.find, raw.byte_at) became portable code, except
+`zeros` (one zeroed allocation), `must` (a fault at the caller's line)
+and `simple_fold` (native/llrt/unicode's table), which are its native
+part. The Unicode class tables moved to the internal module
+std/uniclass. The Go backend, which called Go's regexp, now runs the
+same Xo engine, so its matches and errors are the native ones. Timing: bench/perf/regexp, xo bench --ab on linux/arm64 host 1 against the base 9e8095f26: compile 0.968 (0.963 to 0.982), match 0.994, replace_all 1.012 and captures 0.998 within noise, find_all 1.036 (1.029 to 1.044) slower: the port reads input bytes with a bounds-checked b[pos] where the native code used an unchecked raw.byte_at, and the arm64 bounds analysis (opt.xo, decision 0184) has no loop lower bound to drop the check; a compiler item removes it.
+
 ## 2026-11-04: fix: a pattern with a surrogate literal compiles and matches nothing
 
 - Kind: fix

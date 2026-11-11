@@ -1,0 +1,20 @@
+// std/regexp's native part (decision 0597 part 2): must, which faults at
+// its caller's line, zeros over raw.zero_ints, and simple_fold over native/llrt/unicode's case
+// table, both declared bodyless in std/regexp.xo. The Go backend's twins
+// are in std/rt/regexp.go.
+
+use std/regexp
+use native/llrt/raw
+use native/llrt/unicode
+use native/rt
+
+fn must(pattern: Str, at: rt.Loc) -> regexp.Regex {
+  match regexp.compile(pattern) {
+    Ok(r) => r
+    Err(e) => rt.fault_at(e.display(), at)
+  }
+}
+
+fn simple_fold(r: Int) -> Int { unicode.simple_fold(r) }
+
+fn zeros(n: Int) -> List[Int] { raw.zero_ints(n) }

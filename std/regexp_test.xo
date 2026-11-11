@@ -2,8 +2,6 @@
 // and strings of regexp/testdata/re2-search.txt and some extras; do not
 // edit. (pattern, text, Go's result: err TEXT, or none, or START-END and
 // the captures)
-use std/regexp
-
 const GO_CASES: List[(Str, Str, Str)] = [
   ("a", "", "none"),
   ("a", "a", "0-1"),
@@ -2573,7 +2571,7 @@ const GO_CLASS_CASES: List[(Str, Str, Str)] = [
 test "Go's regexp on its Unicode classes" {
   var bad: List[(Str, Str, Str, Str)] = []
   for (pat, text, want) in GO_CLASS_CASES {
-    let got = match regexp.compile(pat) {
+    let got = match compile(pat) {
       Err(e) => "err ${e.msg}"
       Ok(re) => re.replace_all_literal(text, "#")
     }
@@ -2587,7 +2585,7 @@ test "Go's regexp on its Unicode classes" {
 test "Go's regexp on re2-search.txt: compile errors, match index, captures" {
   var bad: List[(Str, Str, Str, Str)] = []
   for (pat, text, want) in GO_CASES {
-    let got = match regexp.compile(pat) {
+    let got = match compile(pat) {
       Err(e) => "err ${e.msg}"
       Ok(re) => match re.find_index(text) {
         None => "none"
@@ -7314,7 +7312,7 @@ const GO_ONEPASS_CASES: List[(Str, Str, Str)] = [
 test "Go's regexp on anchored patterns, the one-pass matcher's cases" {
   var bad: List[(Str, Str, Str, Str)] = []
   for (pat, text, want) in GO_ONEPASS_CASES {
-    let got = match regexp.compile(pat) {
+    let got = match compile(pat) {
       Err(e) => "err ${e.msg}"
       Ok(re) => match re.find_index(text) {
         None => "none"
@@ -18850,7 +18848,7 @@ const GO_FACTOR_CASES: List[(Str, Str, Str)] = [
 test "Go's regexp on alternations, the parser's factoring cases" {
   var bad: List[(Str, Str, Str, Str)] = []
   for (pat, text, want) in GO_FACTOR_CASES {
-    let got = match regexp.compile(pat) {
+    let got = match compile(pat) {
       Err(e) => "err ${e.msg}"
       Ok(re) => match re.find_index(text) {
         None => "none"

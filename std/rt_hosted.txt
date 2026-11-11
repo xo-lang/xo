@@ -4,3 +4,5 @@
 std/mime
 std/multipart
 std/url
+std/regexp
+std/uniclass
