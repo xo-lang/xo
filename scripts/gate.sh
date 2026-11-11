@@ -55,6 +55,11 @@
 #            default of xo build and run (owner, 2026-10-22; two warm and
 #            cold differences slipped past the per-push gates before);
 #            XO_GATE_CHKCACHE=0 skips that
+#   stdwasm  every std test module under `xo test --backend=wasm` with
+#            Node's WASI as XO_TEST_EXEC (decision 0610); a module passes
+#            when its summary line is ok, its listed wasm skips named
+#            there. Needs node; about 4 minutes on host 2 (2026-11-11);
+#            for the 8-hourly full tier
 #   cross, codegen, wasm, selfbuild, seedbuild
 #            pushq.sh's proving checks (below; wasm also runs
 #            TestWasmCommandGoldens under wasmtime where the host has it): named, each runs after
@@ -497,7 +502,7 @@ for step in "$@"; do
     # PUSHQ_RAN line when they pass (lead, 2026-11-08: a named `cross
     # codegen` ran neither, then pushq refused the push for cross)
     named="$named $step" ;;
-  short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache)
+  short|arm64|llvm|corpora|cmd|gen|fuzz|corpora-all|alloff|fp|warm|chkcache|stdwasm)
     [ "$step" = chkcache ] && chkcache_ran=1
     steps="$steps $step" ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
@@ -583,6 +588,29 @@ run_step() {
     rm -rf "${pw:?}" ;;
   chkcache)
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
+  stdwasm)
+    # every std test module under `xo test --backend=wasm` (decision 0610),
+    # Node's WASI as the runner: a module passes when its summary line is
+    # ok (its listed wasm skips name their reasons there); for the lead's
+    # tier, about 4 minutes on host 2 (2026-11-11)
+    if ! command -v node >/dev/null 2>&1; then
+      failed=1; echo "stdwasm: FAIL (node not found: the wasm test modules run under Node's WASI)"
+    else
+      : >"$logs/stdwasm.txt"
+      bad=0; nmod=0
+      for m in $(find std -name '*_test.xo' | sed 's#^std/##; s#_test\.xo$##' | sort); do
+        nmod=$((nmod + 1))
+        out=$(XO_TEST_EXEC="node --no-warnings $PWD/compiler/wasm/run.mjs" timeout 900 bin/xo test --backend=wasm --count=1 --std-module="$m" 2>&1)
+        sum=$(printf '%s\n' "$out" | grep -E '^(ok|FAIL): [0-9]+ passed' | tail -1)
+        echo "$m: ${sum:-no summary}" >>"$logs/stdwasm.txt"
+        case $sum in
+          ok:*) ;;
+          *) bad=$((bad + 1)); printf '%s\n' "$out" | tail -20 | sed "s#^#  [$m] #" >>"$logs/stdwasm.txt" ;;
+        esac
+      done
+      [ "$bad" -gt 0 ] && failed=1
+      echo "stdwasm: $((nmod - bad)) of $nmod std test modules ok on wasm ($logs/stdwasm.txt)"
+    fi ;;
   esac
 }
 # the checks after the named steps, by path
