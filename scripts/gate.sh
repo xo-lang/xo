@@ -56,7 +56,8 @@
 #            cold differences slipped past the per-push gates before);
 #            XO_GATE_CHKCACHE=0 skips that
 #   cross, codegen, wasm, selfbuild, seedbuild
-#            pushq.sh's proving checks (below): named, each runs after
+#            pushq.sh's proving checks (below; wasm also runs
+#            TestWasmCommandGoldens under wasmtime where the host has it): named, each runs after
 #            the other steps even when the paths do not require it, and
 #            is named in the PUSHQ_RAN line when it passes
 #   (after the steps named)
@@ -73,6 +74,11 @@
 #            internal/arm64 TestStdStoreBuilds when it changes a std
 #            module's source (std/*.xo, std/native/*.xo or a
 #            std/native/MOD/ directory; XO_GATE_STDSTORE=0 skips that;
+#            and internal/stdtest TestStdModules on arm64 for every std
+#            module with tests that uses a changed std .xo file's module,
+#            directly or through other std modules (std_mods, "stdmods";
+#            lead, 2026-11-11: a Url field broke native/http's table
+#            past its gate; XO_GATE_STDMODS=0 skips that);
 #            lead, 2026-11-06); and
 #            internal/llvm's TestRaceSyncTable and TestRaceSyncTableArm64
 #            on darwin when it changes llrt's task, scheduler or race
@@ -246,6 +252,62 @@ std_twin() {
   mod_twin "$m" || { [ "${m#rt}" != "$m" ] && mod_twin "${m#rt}"; }
 }
 mod_twin() { [ -f "std/rt/$1.go" ] || [ -f "std/rt/std_gen_$1.go" ]; }
+# std_mods: the std modules with tests (std/**/M_test.xo, the modules of
+# internal/stdtest TestStdModules) that use a changed std file's module,
+# directly or through other std modules (the reverse `use` closure), as
+# a go test -run pattern on arm64; empty when none.
+# Lead, 2026-11-11: 7501b8eb5 added Url.user and password and its gate
+# ran only url's own checks; native/http's Go table (which shows Url's
+# debug text) failed in the hourly run. A module and its native half are
+# one unit (std/http.xo, std/native/http.xo); std/native/llrt/X is its own.
+std_mods() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | python3 -c '
+import os, re, sys
+def unit(rel):
+    rel = re.sub(r"(_test|_c)?\.xo$", "", rel)
+    if rel.startswith("std/"):
+        rel = rel[4:]
+    if rel.startswith("native/") and not rel.startswith("native/llrt/"):
+        rel = rel[7:]
+    return rel.split("/")[0] if not rel.startswith("native/llrt/") else "/".join(rel.split("/")[:3])
+uses, tests = {}, {}
+for d, ds, fs in os.walk("std"):
+    ds[:] = [x for x in ds if x not in ("rt", "testdata", "changes") and not x.startswith(".")]
+    for f in fs:
+        if not f.endswith(".xo"):
+            continue
+        p = os.path.join(d, f)
+        u = unit(p)
+        if f.endswith("_test.xo"):
+            tests.setdefault(u, set()).add(p[4:-8])
+        for l in open(p, errors="replace"):
+            m = re.match(r"use (\S+)", l)
+            if m and (m.group(1).startswith("std/") or m.group(1).startswith("native/")):
+                uses.setdefault(u, set()).add(unit(m.group(1) + ".xo"))
+changed = {unit(l.strip()) for l in sys.stdin if re.match(r"std/(?!rt/|changes/).*\.xo$", l.strip())}
+hit, grew = set(changed), True
+while grew:
+    grew = False
+    for u, deps in uses.items():
+        if u not in hit and deps & hit:
+            hit.add(u); grew = True
+mods = sorted(m for u in hit for m in tests.get(u, ()))
+# go test -run splits its pattern at each slash, a level per subtest
+# name element: NAME, native/NAME and native/llrt/NAME as levels (a
+# shorter name matches the levels it has)
+one = sorted(m for m in mods if "/" not in m)
+nat = sorted({m.split("/")[1] for m in mods if m.count("/") == 1})
+llrt = sorted({m.split("/")[2] for m in mods if m.count("/") == 2})
+if mods:
+    lv = ["^TestStdModules$", "^arm64$", "^(" + "|".join(one + (["native"] if nat or llrt else [])) + ")$"]
+    if nat or llrt:
+        lv.append("^(" + "|".join(nat + (["llrt"] if llrt else [])) + ")$")
+    if llrt:
+        lv.append("^(" + "|".join(llrt) + ")$")
+    print("/".join(lv))
+'
+}
 # check_change: the branch changes the checker or the SSA builder, whose
 # whole-program passes the module check cache's skipped modules must
 # replay (gotchas/module-check-cache-skips-whole-program-passes.md), or
@@ -396,7 +458,7 @@ llvm_step() {
 # it ends ("gate.sh: STEP done in N s" after them). corpora and
 # corpora-all write the same logs, so they share one job, in order. The
 # checks run after the named steps (chkcache, scale, caches, stdstore,
-# race) are one more job, and the proving checks codegen, wasm, cross and
+# race, stdmods) are one more job, and the proving checks codegen, wasm, cross and
 # fieldgen one job each; selfbuild and seedbuild run after every job ends
 # (their wall time and peak heap are what they report). A failure is
 # collected as in the serial order. Unset or 0 runs everything in order,
@@ -540,6 +602,10 @@ after_steps() {
   if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
     full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'
   fi
+  local sm
+  if [ "${XO_GATE_STDMODS:-1}" != 0 ] && sm=$(std_mods) && [ -n "$sm" ]; then
+    full stdmods ./internal/stdtest -run "$sm"
+  fi
 }
 # The proving checks, one function each: a passing one adds its name to
 # ran. Serial order (codegen, wasm, cross, selfbuild, seedbuild, fieldgen)
@@ -558,6 +624,19 @@ prove_wasm() {
   g=$(echo "$ch" | sed -n 's|^internal/[a-z0-9]*/testdata/golden/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -)
   f0=$failed; failed=0
   XO_WASM_GOLDENS="${g:+$g,}conc_*,atomic_ops,map_*" full wasm ./internal/selfhost -run '^TestSelfhostWasm$'
+  # the same goldens and the file ones as wasip2/wasm commands under
+  # wasmtime (TestWasmCommandGoldens): the Node runner above runs the
+  # preview 1 build, which hid a component-only fd_seek stub until the
+  # tier (gotchas/wasip2-p1-call-stubbed-enosys.md; lead, 2026-11-11).
+  # The offload hosts keep wasmtime in /work/tools/bin; where it is
+  # missing (the Mac) the test would skip, so say so instead
+  local wp=$PATH
+  [ -d /work/tools/bin ] && wp=/work/tools/bin:$PATH
+  if PATH=$wp command -v wasmtime >/dev/null && PATH=$wp command -v wasm-tools >/dev/null; then
+    PATH=$wp XO_TEST_WASM_TOOLS=1 XO_WASM_GOLDENS="${g:+$g,}conc_*,atomic_ops,map_*,file_*,fs_*" full wasmcmd ./internal/selfhost -run '^TestWasmCommandGoldens$'
+  else
+    echo "wasmcmd: skipped (no wasmtime or wasm-tools here; an offload host runs it)"
+  fi
   [ "$failed" = 0 ] && ran="$ran wasm"
   [ "$f0" = 1 ] && failed=1
 }
