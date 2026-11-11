@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -623,5 +625,78 @@ func TestChecksumLogRefreshBackoff(t *testing.T) {
 			t.Fatalf("money still failing after its repository came back: %+v", read())
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// TestChecksumLogWarm: scripts/modservices/warm.sh looks up every tagged
+// version of the repositories it is given, so the log records them and
+// fills the proxy bucket and each module's @v/list with no client
+// asking; a second run adds nothing, and a repository that
+// cannot be read makes it exit 1.
+func TestChecksumLogWarm(t *testing.T) {
+	xotool.NeedPorts(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("warm.sh is a bash script for the log's Linux host")
+	}
+	for _, tool := range []string{"bash", "curl", "git"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("no %s", tool)
+		}
+	}
+	t.Parallel()
+	env := modSetup(t, "../../internal/mod/testdata/repos")
+	ws := t.TempDir()
+	key := filepath.Join(ws, "log.key")
+	xo(t, "mod", "sumdb", "keygen", "sum.test", key).want(0)
+	s3 := &fakeS3{keyID: "test-key", secret: "test-secret", region: "auto", objects: map[string]fakeObject{}}
+	srv := httptest.NewServer(s3)
+	defer srv.Close()
+	setenv(t, "XO_FILL_ACCESS_KEY_ID", s3.keyID)
+	setenv(t, "XO_FILL_SECRET_ACCESS_KEY", s3.secret)
+	logData := t.TempDir()
+	t.Cleanup(func() { modtest.MakeWritable(logData) })
+	logURL, _ := startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", "--fill-to="+srv.URL+"/modules", logData)
+
+	warm := func(repos ...string) (string, error) {
+		args := append([]string{"../../scripts/modservices/warm.sh", "--log=" + logURL, "--git-base=" + env.Repos}, repos...)
+		out, err := command(t, "bash", args...).CombinedOutput()
+		return string(out), err
+	}
+	out, err := warm("github.com/acme/money", "github.com/acme/billing")
+	if err != nil {
+		t.Fatalf("warm.sh: %v\n%s", err, out)
+	}
+	for _, v := range []string{"github.com/acme/money@v1.0.0: ok", "github.com/acme/money@v1.1.0: ok", "github.com/acme/money@v1.3.0: ok", "github.com/acme/billing@v1.2.0: ok"} {
+		if !strings.Contains(out, v) {
+			t.Errorf("warm.sh output lacks %q:\n%s", v, out)
+		}
+	}
+	if h := readHealth(t, logURL); h.Records != 5 {
+		t.Errorf("records after warm.sh: %d, want 5 (billing 2, money 3)", h.Records)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		o, ok := s3.object("/modules/github.com/acme/money/@v/list")
+		if ok && string(o.body) == "v1.0.0\nv1.1.0\nv1.3.0\n" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("money's @v/list in the bucket: %v %q", ok, o.body)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// again: the log holds them all, so nothing is added
+	if out, err := warm("github.com/acme/money"); err != nil || !strings.Contains(out, "github.com/acme/money@v1.3.0: ok") {
+		t.Errorf("warm.sh again: %v\n%s", err, out)
+	}
+	if h := readHealth(t, logURL); h.Records != 5 {
+		t.Errorf("records after a second warm.sh: %d", h.Records)
+	}
+
+	// a repository that cannot be read
+	out, err = warm("github.com/acme/money", "github.com/acme/nosuch")
+	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 || !strings.Contains(out, "github.com/acme/nosuch: git ls-remote:") {
+		t.Errorf("warm.sh with a missing repository: %v\n%s", err, out)
 	}
 }

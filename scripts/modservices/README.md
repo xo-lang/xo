@@ -25,6 +25,12 @@ owner runs every step below by hand.
   2^n ticks). `https://sum.xolang.org/refresh/<module
   path>` rewrites one module's list at once, for a release that should
   not wait the 30 minutes.
+- `warm.sh REPO...`: after a release, from anywhere (git and curl, no
+  credentials): looks up every tagged version of each repository at
+  sum.xolang.org, so the log records it and fills the proxy bucket
+  before any client asks (with xo's default `XO_SUMDB=off` no client
+  does). A 429 waits for the next minute; a 524 (Cloudflare's 100 s
+  limit while the log clones a large repository) is tried again.
 - `cloudflared-config.yml`: the tunnel's ingress: sum.xolang.org to the
   log, index.xolang.org's `/index` to the same port, anything else 404.
 
