@@ -1167,14 +1167,14 @@ rand.Rand.Intn = std/prelude.Rand.int
 rand.Rand.IntN = std/prelude.Rand.int
 rand.Rand.Float64 = std/prelude.Rand.float
 rand.Rand.Shuffle = std/prelude.Rand.shuffle
-rand.Perm = gap: no Rand.perm (List of 0..n shuffled)
-rand.Rand.Perm = gap: no Rand.perm (List of 0..n shuffled)
+rand.Perm = std/random.perm
+rand.Rand.Perm = std/random.perm
 rand.Seed = not planned: a FakeRand seeds a test; the real Rand is the OS's
 rand.New = not planned: a FakeRand seeds a test; the real Rand is the OS's
 rand.NewPCG = not planned: a FakeRand seeds a test; the real Rand is the OS's
 rand.NewChaCha8 = not planned: a FakeRand seeds a test; the real Rand is the OS's
-rand.NormFloat64 = gap: no normal or exponential distributions
-rand.ExpFloat64 = gap: no normal or exponential distributions
+rand.NormFloat64 = std/random.normal
+rand.ExpFloat64 = std/random.exp
 rand.Rand.* = std/prelude.Rand (int, float, bool, bytes, shuffle)
 rand.* = not planned: sized integer variants (Int is 64 bit), Zipf, sources and generator state marshaling
 
@@ -1347,12 +1347,12 @@ template.* = not planned: the escaper error codes, typed safe strings (HTML, JS,
 # Package wildcards from std-coverage.md rows that are planned or internal
 # (done rows are mapped symbol by symbol, so a hidden miss stays visible)
 math/rand/v2.* = std/prelude.Rand (int, float, bool, bytes, shuffle; FakeRand seeds tests)
-math/rand/v2.Perm = gap: no Rand.perm (List of 0..n shuffled)
-math/rand/v2.Rand.Perm = gap: no Rand.perm (List of 0..n shuffled)
-math/rand/v2.NormFloat64 = gap: no normal or exponential distributions
-math/rand/v2.ExpFloat64 = gap: no normal or exponential distributions
-math/rand/v2.Rand.NormFloat64 = gap: no normal or exponential distributions
-math/rand/v2.Rand.ExpFloat64 = gap: no normal or exponential distributions
+math/rand/v2.Perm = std/random.perm
+math/rand/v2.Rand.Perm = std/random.perm
+math/rand/v2.NormFloat64 = std/random.normal
+math/rand/v2.ExpFloat64 = std/random.exp
+math/rand/v2.Rand.NormFloat64 = std/random.normal
+math/rand/v2.Rand.ExpFloat64 = std/random.exp
 math/rand/v2.NewZipf = gap: no Zipf distribution
 math/rand/v2.Zipf = gap: no Zipf distribution
 math/rand/v2.Zipf.Uint64 = gap: no Zipf distribution

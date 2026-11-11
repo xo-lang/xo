@@ -9082,3 +9082,28 @@ call it names (answered with `Cancel.reply`, if any; it is not passed to the han
 method: a registered method's function gets the params; a call to another method is Method not found (its name as
 data), a notification of one is ignored. Checked against the specification's examples and the Go SDK's DecodeMessage and EncodeMessage
 (testdata/corpus/jsonrpc).
+---
+
+## 81. std/random
+
+Random values of the normal and exponential distributions and random
+permutations over any `Rand` (decision 0606), Go's `math/rand/v2`
+NormFloat64, ExpFloat64 and Perm. Pure (a merged module).
+
+```xo
+fn normal(r: Rand) -> Float uses rand        // mean 0, standard deviation 1
+fn exp(r: Rand) -> Float uses rand           // rate 1
+fn perm(r: Rand, n: Int) -> List[Int] uses rand   // a permutation of 0..n
+```
+
+`normal` and `exp` are Marsaglia and Tsang's ziggurat with Go's tables
+and float32 comparisons; they draw only through `r.int` and `r.float`,
+so they work on a test's seeded `Rand` and on a program's own. Where Go
+splits one Uint64, a try draws `r.int(-2^31, 2^31)` then `r.int(0, 128)`
+(normal) or `r.int(0, 2^32)` then `r.int(0, 256)` (exp); the tails and
+wedges draw `r.float()` as Go's Float64. `perm` is Fisher-Yates from the
+end with `r.int(0, i + 1)`, as Go's Shuffle; a negative `n` faults
+(`invalid argument to Shuffle`). For another distribution: `mean + sd *
+random.normal(r)`, `random.exp(r) / rate`. Checked against Go on its
+recorded PCG streams replayed draw for draw, and by the moments of 10^6
+draws (testdata/corpus/random).

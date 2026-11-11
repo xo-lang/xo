@@ -86,6 +86,7 @@ entries yet.
 - [gif.md](gif.md): std/gif (spec/std.md 76)
 - [term.md](term.md): std/term (spec/std.md 15)
 - [textproto.md](textproto.md): std/textproto (spec/std.md 77)
+- [random.md](random.md): std/random (spec/std.md 79)
 - [asn1.md](asn1.md): std/asn1 (spec/std.md 78)
 - [sse.md](sse.md): std/sse (spec/std.md 79)
 - [jsonrpc.md](jsonrpc.md): std/jsonrpc (spec/std.md 80)

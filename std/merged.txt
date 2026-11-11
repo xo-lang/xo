@@ -53,3 +53,4 @@ std/adler32
 std/asn1
 std/sse
 std/jsonrpc
+std/random
