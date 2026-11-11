@@ -1,5 +1,17 @@
 # std/bufio changes
 
+## 2026-11-11: refactor: std/bufio is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this push
+- Found by: decision 0597 (std/native/bufio.xo imports nothing native)
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora bufio on go, arm64, llvm
+- Shipped in: not yet released
+
+std/native/bufio.xo moved into std/bufio.xo. The Go backend compiles it
+from that source too: its hand-written Go twin (std/rt/bufio.go) is gone.
+
 ## 2026-11-03: feature: std/bufio, a buffered reader over any Stream
 
 - Kind: feature

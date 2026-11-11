@@ -1,33 +1,103 @@
-// std/term (spec/std.md 15, decision 0162). Declaration file; encoding
+// std/term (spec/std.md 15, decision 0162). Encoding
 // rules are listed at the top of std/prelude.xo. Colors for terminal
 // output that follow the user's settings: NO_COLOR, FORCE_COLOR,
 // TERM=dumb, and whether standard output is a terminal. Whether a stream
 // is a terminal, its width, and input without echo are methods of Stdio
 // (std.md 3.6).
+//
+// std/term on the native backends (decisions 0074 and 0162). std/rt's
+// term.go is the reference: the same rules and escape sequences.
 
 /// Wraps text in ANSI styles when `on`, else returns it unchanged. Make
 /// one with `painter`; `Painter{on: false}` in tests.
-struct Painter {
-  on: Bool
+pub struct Painter {
+  pub on: Bool
 }
 
 /// Whether to color standard output: NO_COLOR set and not empty is off;
 /// FORCE_COLOR or CLICOLOR_FORCE set, not empty, and not "0" is on;
 /// TERM=dumb is off; otherwise on when standard output is a terminal.
-fn color_enabled(out: Stdio, env: Env) -> Bool uses (stdio, env)
-/// A Painter that colors when `color_enabled(out, env)`.
-fn painter(out: Stdio, env: Env) -> Painter uses (stdio, env)
+pub fn color_enabled(out: Stdio, env: Env) -> Bool uses (stdio, env) {
+  match env.get("NO_COLOR") {
+    Some(v) => {
+      if v != "" {
+        return false
+      }
+    }
+    None => ()
+  }
+  for n in ["FORCE_COLOR", "CLICOLOR_FORCE"] {
+    match env.get(n) {
+      Some(v) => {
+        if v != "" && v != "0" {
+          return true
+        }
+      }
+      None => ()
+    }
+  }
+  if env.get("TERM") == Some("dumb") {
+    return false
+  }
+  out.stdout_is_tty()
+}
 
-fn (p: Painter) bold(s: Str) -> Str
-fn (p: Painter) dim(s: Str) -> Str
-fn (p: Painter) underline(s: Str) -> Str
-fn (p: Painter) red(s: Str) -> Str
-fn (p: Painter) green(s: Str) -> Str
-fn (p: Painter) yellow(s: Str) -> Str
-fn (p: Painter) blue(s: Str) -> Str
-fn (p: Painter) magenta(s: Str) -> Str
-fn (p: Painter) cyan(s: Str) -> Str
-fn (p: Painter) gray(s: Str) -> Str
+/// A Painter that colors when `color_enabled(out, env)`.
+pub fn painter(out: Stdio, env: Env) -> Painter uses (stdio, env) {
+  Painter{on: color_enabled(out, env)}
+}
+
+pub fn (p: Painter) bold(s: Str) -> Str { sgr(p, "1", s) }
+
+pub fn (p: Painter) dim(s: Str) -> Str { sgr(p, "2", s) }
+
+pub fn (p: Painter) underline(s: Str) -> Str { sgr(p, "4", s) }
+
+pub fn (p: Painter) red(s: Str) -> Str { sgr(p, "31", s) }
+
+pub fn (p: Painter) green(s: Str) -> Str { sgr(p, "32", s) }
+
+pub fn (p: Painter) yellow(s: Str) -> Str { sgr(p, "33", s) }
+
+pub fn (p: Painter) blue(s: Str) -> Str { sgr(p, "34", s) }
+
+pub fn (p: Painter) magenta(s: Str) -> Str { sgr(p, "35", s) }
+
+pub fn (p: Painter) cyan(s: Str) -> Str { sgr(p, "36", s) }
+
+pub fn (p: Painter) gray(s: Str) -> Str { sgr(p, "90", s) }
 
 /// s without ANSI escape sequences (to measure or log painted text).
-fn strip(s: Str) -> Str
+pub fn strip(s: Str) -> Str {
+  if !s.contains("\u{1b}") {
+    return s
+  }
+  let b = s.bytes()
+  var out = BytesBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let c = b[i]
+    if c != 27 {
+      out.write_byte(c)
+      i += 1
+      continue
+    }
+    if i + 1 < b.len() && b[i + 1] == 91 {
+      var j = i + 2
+      while j < b.len() && !(b[j] >= 64 && b[j] <= 126) {
+        j += 1
+      }
+      i = j + 1
+      continue
+    }
+    i += 2
+  }
+  out.freeze().to_str() ?? s
+}
+
+fn sgr(p: Painter, code: Str, s: Str) -> Str {
+  if !p.on || s == "" {
+    return s
+  }
+  "\u{1b}[" + code + "m" + s + "\u{1b}[0m"
+}

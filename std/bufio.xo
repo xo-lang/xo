@@ -1,50 +1,242 @@
-// std/bufio (spec/std.md 55, decision 0471). Declaration file. A buffered
+// std/bufio (spec/std.md 55, decision 0471). A buffered
 // reader over any `Stream` (a Conn, a ServerConn, a TLS connection), after
 // Go's bufio.Reader: the line, delimiter, exact-count and peek reads every
 // line protocol needs, without the quadratic copy a hand written buffer
 // over `read(max)` makes. A line or record is a view of the chunk it
 // arrived in unless it spans chunks.
+//
+// std/bufio on the native backends and, through std/go_compiled.txt, on
+// the Go backend (decision 0312): one source, after Go's bufio.Reader
+// (bufio.go: Read, ReadSlice, ReadBytes, Peek, Buffered; Copyright 2009
+// The Go Authors, BSD-style license; THIRD_PARTY_NOTICES) and io.ReadFull,
+// over the `Stream` interface. The current chunk is kept as read and a
+// record that spans chunks is gathered once, so a long line costs one copy.
 
 /// Why a read failed: the stream's own error (a timeout, a cancellation,
 /// a reset), a record longer than the limit given (a caller closes the
 /// connection), or the stream ending before `read_exact`
 /// had its bytes. Displays as the stream's error text, `bufio: record too
 /// long` and `bufio: unexpected EOF`.
-enum BufErr {
+pub enum BufErr {
   Net(err: NetErr)
   TooLong
   UnexpectedEof
 }
 
-fn (e: BufErr) display() -> Str
+pub fn (e: BufErr) display() -> Str {
+  match e {
+    Net(err) => err.display()
+    TooLong => "bufio: record too long"
+    UnexpectedEof => "bufio: unexpected EOF"
+  }
+}
 
 /// A reader over a stream (move only: its buffer belongs to it, and bytes
 /// it read are not given back to the stream).
-struct Reader {}
+pub struct Reader {
+  s: Stream
+  /// the chunk being read, from `pos`
+  cur: Bytes
+  pos: Int
+  size: Int
+  eof: Bool
+}
 
 /// A reader over s that reads `size` bytes at a time (Go's NewReaderSize;
 /// 4096 is Go's default, and at least 16 is used).
-fn reader(s: Stream, size: Int = 4096) -> Reader
+pub fn reader(s: Stream, size: Int = 4096) -> Reader {
+  Reader{s: s, cur: b"", pos: 0, size: if size < 16 { 16 } else { size }, eof: false}
+}
+
 /// Up to max bytes: what is buffered, else one read of the stream; None at
 /// the end of the stream (Go's Read).
-fn (var r: Reader) read(max: Int) -> Bytes? ! NetErr uses net
+pub fn (var r: Reader) read(max: Int) -> Bytes? ! NetErr uses net {
+  if max <= 0 {
+    return Ok(Some(b""))
+  }
+  if r.pos >= r.cur.len() {
+    if !r.next_chunk()? {
+      return Ok(None)
+    }
+  }
+  let avail = r.cur.len() - r.pos
+  let n = if max < avail { max } else { avail }
+  let out = r.cur[r.pos..r.pos + n]
+  r.pos += n
+  Ok(Some(out))
+}
+
 /// The bytes up to and including the next `delim` (Go's ReadBytes). None
 /// at the end of the stream with nothing left; at its end with bytes left
 /// and no delimiter, those bytes are the last record. `TooLong` when
 /// `limit` bytes come without a delimiter, so a peer cannot grow it
 /// without bound; the chunks of the record already gathered are dropped
 /// and the current chunk stays buffered, so a caller closes the connection.
-fn (var r: Reader) read_until(delim: UInt8, limit: Int = 1048576) -> Bytes? ! BufErr uses net
+pub fn (var r: Reader) read_until(delim: UInt8, limit: Int = 1048576) -> Bytes? ! BufErr uses net {
+  let sub = one(delim)
+  var acc = BytesBuilder.new()
+  var have = 0
+  while true {
+    if r.pos >= r.cur.len() {
+      let more = match r.next_chunk() {
+        Ok(m) => m
+        Err(e) => return Err(BufErr.Net(e))
+      }
+      if !more {
+        if have == 0 {
+          return Ok(None)
+        }
+        return Ok(Some(acc.freeze()))
+      }
+    }
+    let rest = r.cur[r.pos..]
+    match rest.find(sub) {
+      Some(j) => {
+        if have + j + 1 > limit {
+          return Err(BufErr.TooLong)
+        }
+        let piece = rest[0..j + 1]
+        r.pos += j + 1
+        if have == 0 {
+          return Ok(Some(piece))
+        }
+        acc.write(piece)
+        return Ok(Some(acc.freeze()))
+      }
+      None => {
+        if have + rest.len() >= limit {
+          return Err(BufErr.TooLong)
+        }
+        acc.write(rest)
+        have += rest.len()
+        r.pos = r.cur.len()
+      }
+    }
+  }
+  Ok(None)
+}
+
 /// The next line without its "\n" or "\r\n" (Go's ReadString('\n') with the
 /// line ending trimmed, as bufio.Scanner's ScanLines), invalid UTF-8
 /// replaced by U+FFFD; a last line without an ending is a line. None at
 /// the end with nothing left.
-fn (var r: Reader) read_line(limit: Int = 1048576) -> Str? ! BufErr uses net
+pub fn (var r: Reader) read_line(limit: Int = 1048576) -> Str? ! BufErr uses net {
+  let b = match r.read_until('\n', limit)? {
+    Some(x) => x
+    None => return Ok(None)
+  }
+  var n = b.len()
+  if n > 0 && b[n - 1] == '\n' {
+    n -= 1
+    if n > 0 && b[n - 1] == '\r' {
+      n -= 1
+    }
+  }
+  Ok(Some(lossy(b[0..n])))
+}
+
 /// Exactly n bytes (Go's io.ReadFull); `UnexpectedEof` when the stream ends
 /// first (what was read is lost); n 0 is empty.
-fn (var r: Reader) read_exact(n: Int) -> Bytes ! BufErr uses net
+pub fn (var r: Reader) read_exact(n: Int) -> Bytes ! BufErr uses net {
+  if n <= 0 {
+    return Ok(b"")
+  }
+  let avail = r.cur.len() - r.pos
+  if avail >= n {
+    let out = r.cur[r.pos..r.pos + n]
+    r.pos += n
+    return Ok(out)
+  }
+  var acc = BytesBuilder.with_capacity(n)
+  acc.write(r.cur[r.pos..])
+  r.pos = r.cur.len()
+  while acc.len() < n {
+    let more = match r.next_chunk() {
+      Ok(m) => m
+      Err(e) => return Err(BufErr.Net(e))
+    }
+    if !more {
+      return Err(BufErr.UnexpectedEof)
+    }
+    let need = n - acc.len()
+    let take = if need < r.cur.len() { need } else { r.cur.len() }
+    acc.write(r.cur[0..take])
+    r.pos = take
+  }
+  Ok(acc.freeze())
+}
+
 /// The next n bytes without consuming them (Go's Peek), fewer only when the
 /// stream ends first. Reads from the stream to fill.
-fn (var r: Reader) peek(n: Int) -> Bytes ! BufErr uses net
+pub fn (var r: Reader) peek(n: Int) -> Bytes ! BufErr uses net {
+  if n <= 0 {
+    return Ok(b"")
+  }
+  match r.fill_to(n) {
+    Ok(_) => {}
+    Err(e) => return Err(BufErr.Net(e))
+  }
+  let avail = r.cur.len() - r.pos
+  let k = if n < avail { n } else { avail }
+  Ok(r.cur[r.pos..r.pos + k])
+}
+
 /// The bytes buffered and not yet read (Go's Buffered).
-fn (r: Reader) buffered() -> Int
+pub fn (r: Reader) buffered() -> Int { r.cur.len() - r.pos }
+
+/// The next chunk of the stream as cur (the unread part of the old one
+/// dropped: callers use this only once cur is used up); false at the end.
+fn (var r: Reader) next_chunk() -> Bool ! NetErr uses net {
+  while !r.eof {
+    match r.s.read(r.size)? {
+      Some(b) => {
+        if b.len() > 0 {
+          r.cur = b
+          r.pos = 0
+          return Ok(true)
+        }
+      }
+      None => r.eof = true
+    }
+  }
+  Ok(false)
+}
+
+fn one(delim: UInt8) -> Bytes {
+  var d = BytesBuilder.with_capacity(1)
+  d.write_byte(delim)
+  d.freeze()
+}
+
+/// b as text, each invalid UTF-8 byte U+FFFD.
+fn lossy(b: Bytes) -> Str {
+  match b.to_str() {
+    Some(s) => s
+    None => {
+      var out = BytesBuilder.with_capacity(b.len())
+      var i = 0
+      while i < b.len() {
+        let (c, size) = b.decode_rune(i)
+        out.write_rune(c)
+        i += size
+      }
+      out.freeze().to_str() ?? ""
+    }
+  }
+}
+
+/// Makes at least want unread bytes available in cur (fewer at the end of
+/// the stream), by joining chunks.
+fn (var r: Reader) fill_to(want: Int) -> () ! NetErr uses net {
+  while r.cur.len() - r.pos < want {
+    let old = r.cur[r.pos..]
+    if !r.next_chunk()? {
+      r.cur = old
+      r.pos = 0
+      return Ok(())
+    }
+    r.cur = old + r.cur
+    r.pos = 0
+  }
+  Ok(())
+}

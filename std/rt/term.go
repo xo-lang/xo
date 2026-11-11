@@ -2,9 +2,7 @@ package rt
 
 import (
 	"os"
-	"strings"
 	"sync"
-	"unicode/utf8"
 )
 
 // Terminals (std.md 3.6 and 15, decision 0162): whether the standard
@@ -210,78 +208,4 @@ func (f Testing_FakeStdio) M_read_all_bytes(tk *Task) Result[Bytes, IoErr] {
 		return Err[Bytes](r.E)
 	}
 	return Ok[Bytes, IoErr](Bytes(r.V))
-}
-
-// ---------------------------------------------------------------------------
-// std/term
-
-// Term_color_enabled is `term.color_enabled(out, env)`: NO_COLOR set
-// and not empty turns color off; FORCE_COLOR or CLICOLOR_FORCE set,
-// not empty, and not "0" turns it on; TERM=dumb turns it off; otherwise
-// it is on when standard output is a terminal.
-func Term_color_enabled(tk *Task, out Stdio, env Env) bool {
-	if v := env.M_get(tk, "NO_COLOR"); v.Some && v.V != "" {
-		return false
-	}
-	for _, n := range []string{"FORCE_COLOR", "CLICOLOR_FORCE"} {
-		if v := env.M_get(tk, n); v.Some && v.V != "" && v.V != "0" {
-			return true
-		}
-	}
-	if v := env.M_get(tk, "TERM"); v.Some && v.V == "dumb" {
-		return false
-	}
-	return out.M_stdout_is_tty(tk)
-}
-
-// Term_painter is `term.painter(out, env)`.
-func Term_painter(tk *Task, out Stdio, env Env) Term_Painter {
-	return Term_Painter{F_on: Term_color_enabled(tk, out, env)}
-}
-
-func (p Term_Painter) sgr(code, s string) string {
-	if !p.F_on || s == "" {
-		return s
-	}
-	return "\x1b[" + code + "m" + s + "\x1b[0m"
-}
-
-func (p Term_Painter) M_bold(_ *Task, s string) string      { return p.sgr("1", s) }
-func (p Term_Painter) M_dim(_ *Task, s string) string       { return p.sgr("2", s) }
-func (p Term_Painter) M_underline(_ *Task, s string) string { return p.sgr("4", s) }
-func (p Term_Painter) M_red(_ *Task, s string) string       { return p.sgr("31", s) }
-func (p Term_Painter) M_green(_ *Task, s string) string     { return p.sgr("32", s) }
-func (p Term_Painter) M_yellow(_ *Task, s string) string    { return p.sgr("33", s) }
-func (p Term_Painter) M_blue(_ *Task, s string) string      { return p.sgr("34", s) }
-func (p Term_Painter) M_magenta(_ *Task, s string) string   { return p.sgr("35", s) }
-func (p Term_Painter) M_cyan(_ *Task, s string) string      { return p.sgr("36", s) }
-func (p Term_Painter) M_gray(_ *Task, s string) string      { return p.sgr("90", s) }
-
-// Term_strip is `term.strip(s)`: s without ANSI escape sequences (CSI
-// sequences `ESC [ ... final byte`, and any other `ESC x` pair).
-func Term_strip(_ *Task, s string) string {
-	if !strings.Contains(s, "\x1b") {
-		return s
-	}
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] != 0x1b {
-			b.WriteByte(s[i])
-			continue
-		}
-		if i+1 < len(s) && s[i+1] == '[' {
-			j := i + 2
-			for j < len(s) && !(s[j] >= 0x40 && s[j] <= 0x7e) {
-				j++
-			}
-			i = j
-			continue
-		}
-		i++
-	}
-	if r := b.String(); utf8.ValidString(r) {
-		return r
-	}
-	// an escape that swallowed part of a UTF-8 sequence: the text as it was
-	return s
 }

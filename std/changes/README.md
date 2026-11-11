@@ -84,3 +84,4 @@ entries yet.
 - [grpc.md](grpc.md): std/grpc (decision 0535)
 - [image.md](image.md): std/image (spec/std.md 75)
 - [gif.md](gif.md): std/gif (spec/std.md 76)
+- [term.md](term.md): std/term (spec/std.md 15)
