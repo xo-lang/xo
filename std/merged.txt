@@ -25,3 +25,4 @@ std/multipart
 std/binary
 std/htmlent
 std/html
+std/htmltok

@@ -1,5 +1,17 @@
 # std/htmltok changes
 
+## 2026-11-10: internal: merged into std/htmltok.xo
+
+- Kind: internal
+- Commit: this push
+- Found by: decision 0588 (one file per std module), after std/htmlent merged
+- Go reference: golang.org/x/net/html token.go (v0.62.0)
+- Test: `xo test --std-module=htmltok` and `htmlparse` (native, LLVM); the htmltok and htmlparse corpora on go, arm64, llvm; bench/perf/htmltok next and token checksums equal on arm64, llvm, go
+- Timing: host 1 A/B against main, bench/perf/htmltok token: 0.987 (0.98 to 1.006, n=7), within noise
+- Shipped in: not yet released
+
+std/native/htmltok.xo's bodies and std/native/htmltok_test.xo's tests move into std/htmltok.xo and std/htmltok_test.xo; the generated Go (std/rt/std_gen_htmltok.go) is replaced by the merged module's own package. Output unchanged.
+
 ## 2026-11-08: perf: the tokenizer reads in place and skips copies it does not need
 
 - Kind: perf

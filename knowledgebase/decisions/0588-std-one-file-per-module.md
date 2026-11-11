@@ -300,4 +300,8 @@ commit (the lead cuts it).
   std/native/html.xo and htmltok.xo `use std/htmlent`. htmlent leaves
   std/go_compiled.txt (a merged module is generated as its own package).
   This lifts the XO0601 limit above for html and htmltok.
+- `std/htmltok` merged (2026-11-10): the tokenizer is std/htmltok.xo's
+  (no native intrinsics), std/native/htmltok.xo and its tests move, and
+  htmltok leaves std/go_compiled.txt. host 1 --ab against main on
+  bench/perf/htmltok token: within noise (0.987, 0.98 to 1.006, n=7).
 
