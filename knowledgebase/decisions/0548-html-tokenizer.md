@@ -1,6 +1,6 @@
 # 0548: std/htmltok: an HTML5 tokenizer (port of golang.org/x/net/html's Tokenizer)
 
-Status: Proposed (Xo Lang 3, 2026-11-07; needed by the Polar Bear Blog port, whose bluemonday and html2text ports sit on it)
+Status: Accepted (owner, 2026-11-11; implemented on main). Was: Proposed (Xo Lang 3, 2026-11-07; needed by the Polar Bear Blog port, whose bluemonday and html2text ports sit on it)
 
 ## Context
 

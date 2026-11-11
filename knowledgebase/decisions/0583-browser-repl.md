@@ -1,6 +1,6 @@
 # 0583: A REPL in the browser playground
 
-Status: Proposed (owner request via the lead, 2026-11-09; measurements first, no page work until the owner reads them)
+Status: Accepted (owner, 2026-11-11; implemented on main). Was: Proposed (owner request via the lead, 2026-11-09; measurements first, no page work until the owner reads them)
 
 ## Context
 - The owner asked (2026-11-09, via the lead) for a REPL on /play/, after

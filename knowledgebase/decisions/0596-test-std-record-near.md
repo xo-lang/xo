@@ -1,6 +1,6 @@
 # 0596: An `xo test --std-module` edit declares std from its record
 
-Status: Proposed (Xo Lang 2, 2026-11-10; the perf page's "test builds use more memory" row; revised the same day, see "Root cause")
+Status: Accepted (owner, 2026-11-11; implemented on main). Was: Proposed (Xo Lang 2, 2026-11-10; the perf page's "test builds use more memory" row; revised the same day, see "Root cause")
 
 ## Context
 An edit of a std module's test (`xo test --std-module=native/M` after changing M) peaks at 202 to

@@ -1,6 +1,6 @@
 # 0539: OTLP export for std/trace and std/metrics
 
-Status: Proposed (Xo Lang 3, 2026-11-06)
+Status: Accepted (owner, 2026-11-11; implemented on main). Was: Proposed (Xo Lang 3, 2026-11-06)
 
 ## Context
 
