@@ -101,7 +101,7 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
 
 - Effects in signatures (`uses (...)`), capability values (`Os`, `Fs`,
   `Net`, `Proc`, `Env`, `Clock`, `Rand`, `Stdio`, `Secrets`: the Linux
-  keyring and macOS Keychain, std 3.6a, 0584), user values standing in
+  keyring, macOS Keychain and Windows DPAPI, std 3.6a, 0584), user values standing in
   for any of them (0307), fakes for tests (6.4).
 - Faults are separate from errors (8); `requires`/`ensures` contracts
   (9.1); `test` blocks, property and concurrency tests (9.2).

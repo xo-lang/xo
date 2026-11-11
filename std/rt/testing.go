@@ -450,7 +450,7 @@ func newTestOs(w *World, seed int64, tasks Task_Group) Testing_TestOs {
 		F_env:     Testing_FakeEnv{e: &fakeEnv{}},
 		F_stdio:   Testing_FakeStdio{s: stdio},
 		F_proc:    Testing_FakeProc{p: &fakeProc{runs: map[string]ProcOutput{}, stdio: stdio}},
-		F_secrets: realSecrets{ring: true, chain: true, fake: &fakeKeyring{}},
+		F_secrets: realSecrets{ring: true, chain: true, dp: true, fake: &fakeKeyring{}},
 		F_tasks:   tasks,
 	}
 }

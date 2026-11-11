@@ -5404,6 +5404,17 @@ fn env_hostname(e: Env) -> Str uses env { host.hostname() }
 
 fn env_cache_dir(e: Env) -> Str ! EnvErr uses env { env_user_dir(e, true) }
 
+/// Env.local_app_data (decision 0584): SHGetKnownFolderPath on Windows
+/// (std/native/llrt/host.xo), a test's FakeEnv LOCALAPPDATA; not narrowed
+/// by only.
+fn env_local_app_data(_e: Env) -> Str ! EnvErr uses env {
+  let v = if process.env_faked() { process.env_get("LOCALAPPDATA").get(0) ?? "" } else { host.local_app_data() }
+  if v == "" {
+    return Err(EnvErr.Missing(name: "LocalAppData"))
+  }
+  v.replace("\\", "/")
+}
+
 // Terminals (std.md 3.6, decision 0162): std/rt's term.go.
 
 fn stdio_stdin_is_tty(_s: Stdio) -> Bool { stdinrt.isatty(0) }
@@ -6586,6 +6597,14 @@ struct KeychainErr {
 }
 
 fn keychainerr_display(e: KeychainErr) -> Str { "keychain: ${e.msg} (${e.status})" }
+
+/// DpapiErr's twin.
+struct DpapiErr {
+  code: Int
+  msg: Str
+}
+
+fn dpapierr_display(e: DpapiErr) -> Str { "dpapi: ${e.msg} (${e.code})" }
 
 fn keyerr_display(e: KeyErr) -> Str {
   match e {

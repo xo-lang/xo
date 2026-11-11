@@ -7,6 +7,12 @@ use native/llrt/windows
 use native/rt
 use native/sys_darwin
 
+/// Windows' local application data folder with / separators, or "" (on
+/// other OSes too; Env.local_app_data, decision 0584).
+pub fn local_app_data() -> Str {
+  if target.os == TargetOs.Windows { windows.local_app_data() } else { "" }
+}
+
 /// The host's name, or "" when the system cannot say.
 pub fn hostname() -> Str {
   match target.os {

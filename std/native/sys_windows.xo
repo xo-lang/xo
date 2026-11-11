@@ -283,6 +283,24 @@ fn CertOpenSystemStoreW(prov: Int, name: Bytes) -> Int
 fn CertEnumCertificatesInStore(store: Int, prev: Int) -> Int
 fn CertCloseStore(store: Int, flags: Int) -> Int32
 
+// The Data Protection API (decision 0584 stage E, std/native/llrt
+// dpapi.xo): crypt32.dll.
+
+/// CryptProtectData of the DATA_BLOB at data_in (a DWORD length, then the
+/// pointer at 8) into the one at data_out, whose bytes LocalFree frees;
+/// entropy a DATA_BLOB or 0; descr, reserved and prompt 0: nonzero on
+/// success.
+fn CryptProtectData(data_in: Int, descr: Int, entropy: Int, reserved: Int, prompt: Int, flags: Int, data_out: Int) -> Int32
+/// CryptUnprotectData, as CryptProtectData (descr the address of a
+/// description pointer to set, or 0).
+fn CryptUnprotectData(data_in: Int, descr: Int, entropy: Int, reserved: Int, prompt: Int, flags: Int, data_out: Int) -> Int32
+/// SHGetKnownFolderPath (shell32.dll) of the KNOWNFOLDERID at id: an
+/// HRESULT (0 S_OK), the address of the UTF-16 path stored at path, which
+/// CoTaskMemFree frees even on failure (Env.local_app_data).
+fn SHGetKnownFolderPath(id: Int, flags: Int, token: Int, path: Int) -> Int32
+/// CoTaskMemFree (ole32.dll).
+fn CoTaskMemFree(p: Int)
+
 // The CPU profile's sampler thread (decision 0238, std/native/llrt
 // prof.xo win_sampler): the process's threads from a snapshot, each
 // suspended for its context, and a high resolution waitable timer.

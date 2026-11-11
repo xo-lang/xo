@@ -1,0 +1,37 @@
+// decision 0584 stage E: the Dpapi member of os.secrets and
+// Env.local_app_data. On Windows a protect/unprotect round trip (no
+// stored state, ADR 0584 section 8) and the known folder; elsewhere Dpapi
+// is None and local_app_data is Missing, so the output is the same on
+// every OS.
+fn round_trip(d: Dpapi) -> Bool ! DpapiErr uses secrets {
+  let blob = d.protect(b"token", b"salt")?
+  let plain = d.unprotect(blob, b"salt")?
+  let bare = d.unprotect(d.protect(b"x")?)?
+  let wrong = d.unprotect(blob, b"pepper").is_err()
+  Ok(blob != b"token" && plain == b"token" && bare == b"x" && wrong)
+}
+
+fn main(os: Os) {
+  let win = target.os == TargetOs.Windows
+  let ok = match os.secrets.dpapi() {
+    Some(d) => {
+      match round_trip(d) {
+        Ok(v) => win && v
+        Err(e) => {
+          os.stdio.println(e.display())
+          false
+        }
+      }
+    }
+    None => !win
+  }
+  os.stdio.println("dpapi where the OS has it: ${ok}")
+  os.stdio.println("only keyring drops it: ${os.secrets.only(["keyring"]).dpapi() == None}")
+  os.stdio.println("only dpapi drops the keyring: ${os.secrets.only(["dpapi"]).keyring() == None}")
+  let dir_ok = match os.env.local_app_data() {
+    Ok(p) => win && p.len() > 3 && !p.contains("\\")
+    Err(e) => !win && e.display() == "LocalAppData is not set"
+  }
+  os.stdio.println("local_app_data: ${dir_ok}")
+  os.stdio.println(DpapiErr{code: 13, msg: "The data is invalid."}.display())
+}

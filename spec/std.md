@@ -1278,7 +1278,14 @@ fn (e: Env) only(names: List[Str]) -> Env   // attenuation (below)
 fn (e: Env) config_dir() -> Str ! EnvErr     // where configuration goes (below)
 fn (e: Env) cache_dir() -> Str ! EnvErr
 fn (e: Env) hostname() -> Str              // Go's os.Hostname; "" where the system cannot say (WASI)
+fn (e: Env) local_app_data() -> Str ! EnvErr // Windows' FOLDERID_LocalAppData (below)
 ```
+
+`local_app_data()` (decision 0584) is Windows' local application data
+folder from SHGetKnownFolderPath(FOLDERID_LocalAppData), as Go's
+`windows.KnownFolderPath`, not the `%LOCALAPPDATA%` variable, with `/`
+separators; `Missing("LocalAppData")` on other OSes. `only` does not narrow
+it (it is not a variable); a FakeEnv answers its `LOCALAPPDATA`.
 
 `program()` is the name the program was started with (argv[0]), and
 `home()` the home directory (`HOME`; on Windows `USERPROFILE`, read when
@@ -1379,11 +1386,13 @@ OS store, `None` on an OS without it:
 interface Secrets {
   fn keyring(self) -> Keyring?                // the Linux kernel keyring
   fn keychain(self) -> Keychain?              // the macOS login keychain
+  fn dpapi(self) -> Dpapi?                    // Windows' Data Protection API
   fn only(self, stores: List[Str]) -> Secrets // keep the named stores
 }
 ```
 
-`only(["keyring"])` keeps the keyring, `only(["keychain"])` the keychain; an `Os` literal without `secrets`
+`only(["keyring"])` keeps the keyring, `only(["keychain"])` the keychain,
+`only(["dpapi"])` DPAPI; an `Os` literal without `secrets`
 holds `only([])`, so every store is `None` (decision 0585).
 
 `Keyring` (keyrings(7)) names keyrings and keys by serial number:
@@ -1405,8 +1414,17 @@ missing item or keychain is not an error). Errors are
 `KeychainErr { status, msg }`: the OSStatus and SecCopyErrorMessageString's
 text, displayed as `keychain: MSG (STATUS)`. It is `None` off macOS and on
 the Go backend (no cgo). The framework is loaded at the first call, so a
-program that reads no keychain does not load it. The Windows DPAPI member
-is a later stage of 0584.
+program that reads no keychain does not load it.
+
+`Dpapi` (Windows, crypt32's CryptProtectData and CryptUnprotectData for
+the current user, no description, no prompt, CRYPTPROTECT_UI_FORBIDDEN, as
+Go's callers of golang.org/x/sys/windows) protects blobs the caller keeps:
+`protect(data, entropy = b"")` is the blob, `unprotect(blob, entropy =
+b"")` the data, which only the same user on the same machine can recover,
+with the same entropy. Errors are `DpapiErr { code, msg }`: the Win32 error
+(GetLastError) and its system text, displayed as `dpapi: MSG (CODE)`. It is
+`None` off Windows; the Go backend calls the same functions through
+syscall's lazy DLLs.
 
 ### 3.7 Proc (`uses proc`)
 
@@ -2903,6 +2921,10 @@ missing key fail with `NotFound`). `testing.run_main`'s Os shares it.
 `only([])` drops it as on the real Secrets. `os.secrets.keychain()` is
 `Some` on every OS too, an in-memory keychain kept with the test's keys
 (apart from every keyring), with the real keychain's semantics.
+`os.secrets.dpapi()` is `Some` on every OS: not encryption, a reversible
+wrap (a prefix, the entropy, the data XOR 0x5A) whose `unprotect` fails
+with code 13 (ERROR_INVALID_DATA) for a blob it did not make or another
+entropy.
 
 ### 8.1 FakeNet
 
@@ -5576,7 +5598,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-561 declarations.
+566 declarations.
 
 ### Range
 
@@ -6342,6 +6364,7 @@ fn only(self, names: List[Str]) -> Env
 fn config_dir(self) -> Str ! EnvErr uses env
 fn cache_dir(self) -> Str ! EnvErr uses env
 fn hostname(self) -> Str uses env
+fn local_app_data(self) -> Str ! EnvErr uses env
 ```
 
 ### IoErr
@@ -6401,11 +6424,25 @@ fn set_generic(self, service: Str, account: Str, data: Bytes) -> () ! KeychainEr
 fn delete_generic(self, service: Str, account: Str) -> () ! KeychainErr uses secrets.write
 ```
 
+### DpapiErr
+
+```
+fn (e: DpapiErr) display() -> Str
+```
+
+### Dpapi
+
+```
+fn protect(self, data: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets.write
+fn unprotect(self, blob: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets.read
+```
+
 ### Secrets
 
 ```
 fn keyring(self) -> Keyring?
 fn keychain(self) -> Keychain?
+fn dpapi(self) -> Dpapi?
 fn only(self, stores: List[Str]) -> Secrets
 ```
 

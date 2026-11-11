@@ -1,0 +1,59 @@
+// Windows' Data Protection API (decision 0584 stage E): CryptProtectData
+// and CryptUnprotectData for the current user, with no description, no
+// prompt and CRYPTPROTECT_UI_FORBIDDEN, as Go's azidentity cache calls
+// them through golang.org/x/sys/windows; LocalFree on the output.
+
+use native/llrt/raw
+use native/llrt/windows
+use native/rt
+use native/sys_windows
+
+/// CRYPTPROTECT_UI_FORBIDDEN.
+const UI_FORBIDDEN = 1
+
+/// The code a call returns on a target without DPAPI.
+const ERR_NO_DPAPI = -1
+
+/// Whether the target has DPAPI.
+pub fn available() -> Bool { target.os == TargetOs.Windows }
+
+/// CryptProtectData (protect) or CryptUnprotectData of data with entropy
+/// (none when empty): (0, the output) or (GetLastError, empty).
+pub fn crypt(protect: Bool, data: Bytes, entropy: Bytes) -> (Int, Bytes) {
+  if !available() {
+    return (ERR_NO_DPAPI, b"")
+  }
+  // three DATA_BLOBs (a DWORD length, the pointer at 8): in, entropy, out
+  let blobs = raw.bytes_buf(48)
+  let a = raw.bytes_addr(blobs)
+  rt.mem_set(a, 0, 48)
+  rt.mem_store(a, 0, data.len(), 4)
+  rt.mem_store(a, 8, raw.bytes_addr(data), 8)
+  var ent = 0
+  if entropy.len() > 0 {
+    rt.mem_store(a, 16, entropy.len(), 4)
+    rt.mem_store(a, 24, raw.bytes_addr(entropy), 8)
+    ent = a + 16
+  }
+  // GetLastError right after the call, before anything can allocate
+  let ok = if protect { Int(sys_windows.CryptProtectData(a, 0, ent, 0, 0, UI_FORBIDDEN, a + 32)) } else { Int(sys_windows.CryptUnprotectData(a, 0, ent, 0, 0, UI_FORBIDDEN, a + 32)) }
+  let e = if ok == 0 { Int(sys_windows.GetLastError()) } else { 0 }
+  raw.alive(data)
+  raw.alive(entropy)
+  let n = rt.mem_load(a, 32, 4) & 4294967295
+  let p = rt.mem_load(a, 40, 8)
+  raw.alive(blobs)
+  if ok == 0 {
+    return (if e == 0 { ERR_NO_DPAPI } else { e }, b"")
+  }
+  let out = if n == 0 { b"" } else { rt.cast[Str, Bytes](raw.str_at(p, n)) }
+  if p != 0 {
+    let _f = sys_windows.LocalFree(p)
+  }
+  (0, out)
+}
+
+/// The system's text for code.
+pub fn message(code: Int) -> Str {
+  if code == ERR_NO_DPAPI { "DPAPI is not available" } else { windows.win_text(code) }
+}

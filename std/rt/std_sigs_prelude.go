@@ -288,6 +288,7 @@ var (
 	_ func(*IoErr, *Task) string                                                                           = (*IoErr).M_display
 	_ func(*KeyErr, *Task) string                                                                          = (*KeyErr).M_display
 	_ func(*KeychainErr, *Task) string                                                                     = (*KeychainErr).M_display
+	_ func(*DpapiErr, *Task) string                                                                        = (*DpapiErr).M_display
 	_ func(*ProcErr, *Task) string                                                                         = (*ProcErr).M_display
 	_ func(*Cmd, *Task, string) Cmd                                                                        = (*Cmd).M_dir
 	_ func(*Cmd, *Task, Env) Cmd                                                                           = (*Cmd).M_env

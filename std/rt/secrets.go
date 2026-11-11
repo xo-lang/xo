@@ -47,6 +47,7 @@ func keyErrOf(e syscall.Errno) KeyErr {
 type realSecrets struct {
 	ring  bool
 	chain bool
+	dp    bool
 	fake  *fakeKeyring
 }
 
@@ -69,23 +70,38 @@ func (s realSecrets) M_keychain(*Task) Option[Keychain] {
 	return None[Keychain]()
 }
 
+// M_dpapi is a test's fake DPAPI, Windows' (dpapi_windows.go) outside
+// tests, None on other OSes (decision 0584 stage E).
+func (s realSecrets) M_dpapi(*Task) Option[Dpapi] {
+	if s.dp && s.fake != nil {
+		return Some[Dpapi](fakeDpapi{})
+	}
+	if s.dp && dpapiAvailable {
+		return Some[Dpapi](realDpapi{})
+	}
+	return None[Dpapi]()
+}
+
 func (s realSecrets) M_only(_ *Task, stores List[string]) Secrets {
-	ring, chain := false, false
+	ring, chain, dp := false, false, false
 	for _, x := range stores.s {
 		switch x {
 		case "keyring":
 			ring = true
 		case "keychain":
 			chain = true
+		case "dpapi":
+			dp = true
 		}
 	}
-	return realSecrets{ring: s.ring && ring, chain: s.chain && chain, fake: s.fake}
+	return realSecrets{ring: s.ring && ring, chain: s.chain && chain, dp: s.dp && dp, fake: s.fake}
 }
 
 type noSecrets struct{}
 
 func (noSecrets) M_keyring(*Task) Option[Keyring]      { return None[Keyring]() }
 func (noSecrets) M_keychain(*Task) Option[Keychain]    { return None[Keychain]() }
+func (noSecrets) M_dpapi(*Task) Option[Dpapi]          { return None[Dpapi]() }
 func (s noSecrets) M_only(*Task, List[string]) Secrets { return s }
 
 // NoAccess_secrets is the Secrets an Os literal without `secrets` holds
@@ -233,4 +249,64 @@ func (c fakeKeychain) M_delete_generic(_ *Task, service, account string) Result[
 		c.k.keys = append(c.k.keys[:i], c.k.keys[i+1:]...)
 	}
 	return Ok[Unit, KeychainErr](Unit{})
+}
+
+func (e DpapiErr) M_display(*Task) string {
+	return "dpapi: " + e.F_msg + " (" + strconv.FormatInt(e.F_code, 10) + ")"
+}
+
+// realDpapi is Windows' DPAPI for the current user (dpapi_windows.go).
+type realDpapi struct{}
+
+func dpapiResult(b []byte, code int64) Result[Bytes, DpapiErr] {
+	if code != 0 {
+		return Err[Bytes](DpapiErr{F_code: code, F_msg: dpapiMessage(code)})
+	}
+	return Ok[Bytes, DpapiErr](Bytes(b))
+}
+
+func (realDpapi) M_protect(_ *Task, data, entropy Bytes) Result[Bytes, DpapiErr] {
+	return dpapiResult(dpapiCrypt(true, []byte(data), []byte(entropy)))
+}
+
+func (realDpapi) M_unprotect(_ *Task, blob, entropy Bytes) Result[Bytes, DpapiErr] {
+	return dpapiResult(dpapiCrypt(false, []byte(blob), []byte(entropy)))
+}
+
+// fakeDpapi is a test's DPAPI on every OS, userfs.xo's FakeDpapi: the
+// prefix, the entropy's length as 4 little endian bytes, the entropy, then
+// each data byte XOR 0x5A.
+type fakeDpapi struct{}
+
+const fakeDpapiPrefix = "xo-fake-dpapi:"
+
+var fakeDpapiBad = DpapiErr{F_code: 13, F_msg: "The data is invalid."}
+
+func (fakeDpapi) M_protect(_ *Task, data, entropy Bytes) Result[Bytes, DpapiErr] {
+	out := make([]byte, 0, len(fakeDpapiPrefix)+4+len(entropy)+len(data))
+	out = append(out, fakeDpapiPrefix...)
+	n := len(entropy)
+	out = append(out, byte(n), byte(n>>8), byte(n>>16), byte(n>>24))
+	out = append(out, entropy...)
+	for i := 0; i < len(data); i++ {
+		out = append(out, data[i]^0x5A)
+	}
+	return Ok[Bytes, DpapiErr](Bytes(out))
+}
+
+func (fakeDpapi) M_unprotect(_ *Task, blob, entropy Bytes) Result[Bytes, DpapiErr] {
+	p := len(fakeDpapiPrefix)
+	if len(blob) < p+4 || string(blob[:p]) != fakeDpapiPrefix {
+		return Err[Bytes](fakeDpapiBad)
+	}
+	n := int(blob[p]) | int(blob[p+1])<<8 | int(blob[p+2])<<16 | int(blob[p+3])<<24
+	s := p + 4 + n
+	if len(blob) < s || string(blob[p+4:s]) != string(entropy) {
+		return Err[Bytes](fakeDpapiBad)
+	}
+	out := make([]byte, len(blob)-s)
+	for i := range out {
+		out[i] = blob[s+i] ^ 0x5A
+	}
+	return Ok[Bytes, DpapiErr](Bytes(out))
 }

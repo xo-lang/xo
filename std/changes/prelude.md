@@ -1,5 +1,24 @@
 # prelude changes
 
+## 2026-11-10: feature: `os.secrets.dpapi()` (Windows DPAPI) and `Env.local_app_data()`
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0584 (Azure 1's azidentity/cache)
+- Go reference: golang.org/x/sys/windows (CryptProtectData, CryptUnprotectData, KnownFolderPath)
+- Test: cmd/xo TestFakeSecrets (DPAPI and local_app_data cases on Go, arm64, LLVM), golden secrets_dpapi (a real round trip on Windows)
+- Shipped in: not yet released
+
+`Secrets.dpapi() -> Dpapi?` with `protect(data, entropy = b"")` and
+`unprotect(blob, entropy = b"")`, errors `DpapiErr { code, msg }`: crypt32's
+CryptProtectData and CryptUnprotectData for the current user with
+CRYPTPROTECT_UI_FORBIDDEN, LocalFree on the output; the Go backend calls them
+through syscall's lazy DLLs. `None` off Windows. A test's os.secrets has a
+reversible fake DPAPI on every OS. `Env.local_app_data()` is
+SHGetKnownFolderPath(FOLDERID_LocalAppData) with / separators,
+`Missing("LocalAppData")` off Windows, a FakeEnv's `LOCALAPPDATA` in tests. A
+user type implementing `Env` gains the method.
+
 ## 2026-11-10: feature: `os.secrets.keychain()`, the macOS Keychain
 
 - Kind: feature

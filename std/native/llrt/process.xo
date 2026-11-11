@@ -279,6 +279,9 @@ pub fn env_get(name: Str) -> List[Str] {
   env_real(name)
 }
 
+/// Whether env reads go to the test world's FakeEnv.
+pub fn env_faked() -> Bool { testworld.fake(TW_ENV) }
+
 /// The process's own environment variable name, as env_get, never the
 /// test world's FakeEnv (the runtime's settings: XO_THREADS, XO_RTSTATS,
 /// as the C's getenv read them).

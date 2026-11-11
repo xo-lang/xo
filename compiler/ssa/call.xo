@@ -101,7 +101,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     return b.value_call(x)
   }
   let fr = b.c.objs[fo].recv
-  if b.c.objs[fo].iface && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr) || (b.obj_name(fr) is "Stream" | "NetConn" | "Secrets" | "Keyring" | "Keychain")) {
+  if b.c.objs[fo].iface && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr) || (b.obj_name(fr) is "Stream" | "NetConn" | "Secrets" | "Keyring" | "Keychain" | "Dpapi")) {
     // not a capability's method (those are lowered as std calls); the
     // prelude's Stream (decision 0280), NetConn (decision 0481), Secrets
     // and Keyring (decision 0584) are ordinary interfaces
@@ -2766,6 +2766,7 @@ fn cap_impl(key: Str) -> Str {
     "Env.config_dir" => "env_config_dir"
     "Env.cache_dir" => "env_cache_dir"
     "Env.hostname" => "env_hostname"
+    "Env.local_app_data" => "env_local_app_data"
     "Env.get" => "env_get"
     "Env.vars" => "env_vars"
     "Env.home" => "env_home"

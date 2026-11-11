@@ -1726,6 +1726,11 @@ interface Env {
   /// The host's name (Go's os.Hostname): "" where the system cannot say
   /// (decision 0410).
   fn hostname(self) -> Str uses env
+  /// Windows' local application data folder (SHGetKnownFolderPath of
+  /// FOLDERID_LocalAppData, as Go's windows.KnownFolderPath; not the
+  /// variable), with / separators; `Missing("LocalAppData")` on other
+  /// OSes. `only` does not narrow it (decision 0584).
+  fn local_app_data(self) -> Str ! EnvErr uses env
 }
 
 enum IoErr {
@@ -1834,6 +1839,28 @@ interface Keychain {
   fn delete_generic(self, service: Str, account: Str) -> () ! KeychainErr uses secrets.write
 }
 
+/// Why a Dpapi call failed (decision 0584): the Win32 error code
+/// (GetLastError) and its system text.
+struct DpapiErr {
+  code: Int
+  msg: Str
+}
+
+/// `dpapi: MSG (CODE)`.
+fn (e: DpapiErr) display() -> Str
+
+/// Windows' Data Protection API for the current user
+/// (CryptProtectData and CryptUnprotectData with no description and no
+/// prompt, as Go's golang.org/x/sys/windows callers make them): blobs the
+/// caller keeps, readable only by the same user on the same machine.
+interface Dpapi {
+  /// The protected blob of data; entropy, when given, must be given again
+  /// to unprotect it.
+  fn protect(self, data: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets.write
+  /// The data of a blob protect made, with the same entropy.
+  fn unprotect(self, blob: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets.read
+}
+
 /// The user's secret stores (decisions 0584, 0585): the member for an OS is
 /// None on the others. `Os.secrets`; an omitted field of an Os literal is
 /// `only([])`.
@@ -1843,6 +1870,8 @@ interface Secrets {
   /// The macOS login keychain's generic passwords; None on other OSes
   /// (and on the Go backend, which has no cgo).
   fn keychain(self) -> Keychain?
+  /// Windows' Data Protection API; None on other OSes.
+  fn dpapi(self) -> Dpapi?
   /// A Secrets with only the named stores ("keyring", "keychain", "dpapi").
   fn only(self, stores: List[Str]) -> Secrets
 }

@@ -543,6 +543,12 @@ fn (var b: Builder) iface_call(x: Expr, ci: check.CallInfo) -> Int {
   let exprs = arg_exprs(fparams, args)
   var vals: List[Int] = []
   for (i, e) in exprs.indexed() {
+    if e == None && !fparams[i].is_var && i < pts.len() && !fparams[i].default.is_empty() {
+      // an omitted argument: the interface method's default (spec core
+      // 1406; Dpapi.protect's entropy, decision 0584), as the Go backend
+      vals.push(b.foreign_value(fparams[i].default[0], b.decl_file(fo), pts[i], b.s.sub))
+      continue
+    }
     if e == None || fparams[i].is_var || i >= pts.len() {
       b.unsupported("a call of the interface method `${b.c.display_name(fo)}` with a missing or `var` argument")
       return b.undef(nt)

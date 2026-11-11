@@ -57,7 +57,7 @@ func (e *ClangError) Error() string { return "clang: " + e.Output }
 // WindowsLinkLibs are the import libraries a windows/amd64 program of Xo's
 // runtime needs (std/native/sys_windows.xo's DLLs): the same list as
 // compiler/xo link.xo's sys_link_args, which TestWindowsLinkLibs checks.
-var WindowsLinkLibs = []string{"kernel32", "ws2_32", "bcrypt", "synchronization", "ntdll", "shell32", "crypt32"}
+var WindowsLinkLibs = []string{"kernel32", "ws2_32", "bcrypt", "synchronization", "ntdll", "shell32", "crypt32", "ole32"}
 
 func compileC(flags, srcs []string, bin string) error {
 	clang, err := Clang()

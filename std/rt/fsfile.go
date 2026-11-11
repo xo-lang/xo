@@ -673,6 +673,28 @@ func (f Testing_FakeEnv) M_hostname(tk *Task) string {
 	}
 	return "test"
 }
+// M_local_app_data is `env.local_app_data()` (decision 0584): Windows'
+// FOLDERID_LocalAppData (dpapi_windows.go), Missing elsewhere.
+func (realEnv) M_local_app_data(tk *Task) Result[string, EnvErr] {
+	return localAppDataOf(fx(tk, "env.local_app_data", false, nil, localAppData))
+}
+
+func (e *onlyEnv) M_local_app_data(tk *Task) Result[string, EnvErr] {
+	return e.inner.M_local_app_data(tk)
+}
+
+// M_local_app_data is the FakeEnv's LOCALAPPDATA.
+func (f Testing_FakeEnv) M_local_app_data(tk *Task) Result[string, EnvErr] {
+	return localAppDataOf(f.M_get(tk, "LOCALAPPDATA").V)
+}
+
+func localAppDataOf(v string) Result[string, EnvErr] {
+	if v == "" {
+		return Err[string](EnvErr{Tag: 1, P: EnvErr_Missing{F_name: "LocalAppData"}})
+	}
+	return Ok[string, EnvErr](strings.ReplaceAll(v, "\\", "/"))
+}
+
 func (e *onlyEnv) M_config_dir(tk *Task) Result[string, EnvErr] { return userDir(tk, e, false) }
 func (e *onlyEnv) M_cache_dir(tk *Task) Result[string, EnvErr]  { return userDir(tk, e, true) }
 func (f Testing_FakeEnv) M_config_dir(tk *Task) Result[string, EnvErr] {

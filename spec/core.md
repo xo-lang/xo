@@ -1404,6 +1404,8 @@ pub fn fetch_user(db: Db, id: Int) -> User ! LoadErr
   parameters of the same type: `transfer(from: a, to: b, amt: 5)`. Positional
   arguments must come before named ones.
 - Default parameter values are allowed: `fn listen(addr: Str, backlog: Int = 128)`.
+  A call through an interface (an interface value or a constrained type
+  parameter) that omits an argument uses the interface method's default.
 - No variadic functions. Pass a `List` or `Map`.
 - **C exports** (decision 0574): a top
   level `pub fn` of the root package with the clause `as c "name"` is the C

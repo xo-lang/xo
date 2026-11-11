@@ -6,6 +6,7 @@
 
 use native/rt
 use std/task
+use native/llrt/dpapi
 use native/llrt/keychain
 use native/llrt/keyring
 use native/llrt/testworld
@@ -126,6 +127,7 @@ pub interface UserEnv {
   /// ~/Library/Caches, or %LocalAppData%.
   fn cache_dir(self) -> Str ! EnvErr uses env
   fn hostname(self) -> Str uses env
+  fn local_app_data(self) -> Str ! EnvErr uses env
 }
 
 /// The Stdio methods of a user value converted to Stdio (decision 0307,
@@ -156,6 +158,7 @@ pub struct NoSecrets {}
 
 fn (s: NoSecrets) keyring() -> Keyring? { None }
 fn (s: NoSecrets) keychain() -> Keychain? { None }
+fn (s: NoSecrets) dpapi() -> Dpapi? { None }
 fn (s: NoSecrets) only(stores: List[Str]) -> Secrets { s }
 
 /// The runtime's own Secrets (decision 0584): the stores the target has,
@@ -163,6 +166,7 @@ fn (s: NoSecrets) only(stores: List[Str]) -> Secrets { s }
 pub struct RealSecrets {
   ring: Bool
   chain: Bool
+  dp: Bool
 }
 
 fn (s: RealSecrets) keyring() -> Keyring? {
@@ -173,9 +177,28 @@ fn (s: RealSecrets) keychain() -> Keychain? {
   if s.chain && keychain.available() { Some(RealKeychain{}) } else { None }
 }
 
-fn (s: RealSecrets) only(stores: List[Str]) -> Secrets {
-  RealSecrets{ring: s.ring && stores.contains("keyring"), chain: s.chain && stores.contains("keychain")}
+fn (s: RealSecrets) dpapi() -> Dpapi? {
+  if s.dp && dpapi.available() { Some(RealDpapi{}) } else { None }
 }
+
+fn (s: RealSecrets) only(stores: List[Str]) -> Secrets {
+  RealSecrets{ring: s.ring && stores.contains("keyring"), chain: s.chain && stores.contains("keychain"), dp: s.dp && stores.contains("dpapi")}
+}
+
+/// Windows' DPAPI behind RealSecrets.dpapi().
+pub struct RealDpapi {}
+
+fn dpapi_out(r: (Int, Bytes)) -> Bytes ! DpapiErr {
+  let (code, b) = r
+  if code != 0 {
+    return Err(DpapiErr{code: code, msg: dpapi.message(code)})
+  }
+  Ok(b)
+}
+
+fn (d: RealDpapi) protect(data: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets.write { dpapi_out(dpapi.crypt(true, data, entropy)) }
+
+fn (d: RealDpapi) unprotect(blob: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets.read { dpapi_out(dpapi.crypt(false, blob, entropy)) }
 
 /// The macOS login keychain behind RealSecrets.keychain().
 pub struct RealKeychain {}
@@ -372,6 +395,7 @@ pub fn try_lock_as[L](u: UserFs, p: Str) -> L? ! FsErr uses fs.write {
 pub struct FakeSecrets {
   ring: Bool
   chain: Bool
+  dp: Bool
 }
 
 fn (s: FakeSecrets) keyring() -> Keyring? {
@@ -382,8 +406,55 @@ fn (s: FakeSecrets) keychain() -> Keychain? {
   if s.chain { Some(FakeKeychain{}) } else { None }
 }
 
+fn (s: FakeSecrets) dpapi() -> Dpapi? {
+  if s.dp { Some(FakeDpapi{}) } else { None }
+}
+
 fn (s: FakeSecrets) only(stores: List[Str]) -> Secrets {
-  FakeSecrets{ring: s.ring && stores.contains("keyring"), chain: s.chain && stores.contains("keychain")}
+  FakeSecrets{ring: s.ring && stores.contains("keyring"), chain: s.chain && stores.contains("keychain"), dp: s.dp && stores.contains("dpapi")}
+}
+
+/// The prefix of a FakeDpapi blob.
+const FAKE_DPAPI = "xo-fake-dpapi:"
+
+/// ERROR_INVALID_DATA: what FakeDpapi.unprotect answers for a blob it did
+/// not make or a wrong entropy.
+const ERROR_INVALID_DATA = 13
+
+/// A test's DPAPI (stage E) on every OS: not encryption, a reversible
+/// wrap: FAKE_DPAPI, the entropy's length as 4 bytes, the entropy, then
+/// each data byte XOR 0x5A, so a test cannot read the data in the blob.
+pub struct FakeDpapi {}
+
+fn fake_dpapi_flip(var w: BytesBuilder, b: Bytes, from: Int) {
+  for i in from..b.len() {
+    w.write_byte(UInt8(Int(b[i]) ^ 90))
+  }
+}
+
+fn (d: FakeDpapi) protect(data: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets.write {
+  var w = BytesBuilder.with_capacity(FAKE_DPAPI.len() + 4 + entropy.len() + data.len())
+  w.write_str(FAKE_DPAPI)
+  w.write_le(entropy.len(), 4)
+  w.write(entropy)
+  fake_dpapi_flip(w, data, 0)
+  Ok(w.freeze())
+}
+
+fn (d: FakeDpapi) unprotect(blob: Bytes, entropy: Bytes = b"") -> Bytes ! DpapiErr uses secrets.read {
+  let p = FAKE_DPAPI.len()
+  let bad = DpapiErr{code: ERROR_INVALID_DATA, msg: "The data is invalid."}
+  if blob.len() < p + 4 || blob[0..p] != FAKE_DPAPI.bytes() {
+    return Err(bad)
+  }
+  let n = Int(blob[p]) | (Int(blob[p + 1]) << 8) | (Int(blob[p + 2]) << 16) | (Int(blob[p + 3]) << 24)
+  let s = p + 4 + n
+  if blob.len() < s || blob[p + 4..s] != entropy {
+    return Err(bad)
+  }
+  var w = BytesBuilder.with_capacity(blob.len() - s)
+  fake_dpapi_flip(w, blob, s)
+  Ok(w.freeze())
 }
 
 /// A test's keychain (stage D): items in the test keyring's vectors under

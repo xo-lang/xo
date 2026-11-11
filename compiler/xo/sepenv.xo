@@ -33,6 +33,9 @@ fn (e: SepEnv) cache_dir() -> Str ! EnvErr uses env { e.inner.cache_dir() }
 /// "" until a released seed can compile a call of Env.hostname in
 /// compiler/ (decision 0410), as RecEnv's.
 fn (e: SepEnv) hostname() -> Str uses env { "" }
+/// Missing until a released seed can compile a call of
+/// Env.local_app_data in compiler/ (decision 0584, as hostname).
+fn (e: SepEnv) local_app_data() -> Str ! EnvErr uses env { Err(EnvErr.Missing(name: "LocalAppData")) }
 
 /// os with the variables of over set.
 fn with_env(os: Os, over: Map[Str, Str]) -> Os {
@@ -142,5 +145,7 @@ struct NoSecretStores {}
 fn (s: NoSecretStores) keyring() -> Keyring? { None }
 
 fn (s: NoSecretStores) keychain() -> Keychain? { None }
+
+fn (s: NoSecretStores) dpapi() -> Dpapi? { None }
 
 fn (s: NoSecretStores) only(stores: List[Str]) -> Secrets { s }

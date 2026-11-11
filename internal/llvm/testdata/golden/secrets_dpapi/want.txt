@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+dpapi where the OS has it: true
+only keyring drops it: true
+only dpapi drops the keyring: true
+local_app_data: true
+dpapi: The data is invalid. (13)
+--- stderr

@@ -1285,6 +1285,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [std-merge-push-revert-ok.md](std-merge-push-revert-ok.md): a 0588 merge push is refused as a revert; add Revert-ok trailers for the deleted native and generated files
 - [merged-std-derive-override.md](merged-std-derive-override.md): a 0588 merge keeps `derive Display` and drops the native T_display that overrode it; write the method
 - [std-record-drops-module-flag.md](std-record-drops-module-flag.md): std's cached declaration record must carry every Module flag later phases read (merged base64 was XO1201)
+- [win-import-table-api-set-dll.md](win-import-table-api-set-dll.md): scripts/win-import-table.py takes the first library naming a symbol; add a new DLL to its order list or it may pick an api-ms-win-* set
 - [launchd-cdhash-pin.md](launchd-cdhash-pin.md): launchd pins heavyd's cdhash, so a rebuild in place fails to spawn (exit 78) until the owner re-registers; install.sh rebuilds only on a source change and prints the command
 - [site-sync-from-private-tree-leaks-private-hashes.md](site-sync-from-private-tree-leaks-private-hashes.md): sync the website's spec and std from the public vX.Y.Z clone, never a private checkout (private commit hashes)
 - [conc-off-stub-inlined-holds-moved-args.md](conc-off-stub-inlined-holds-moved-args.md): a std object without concurrency faults in conc_off stubs holding moved arguments; inlined, the module does not verify, so such stubs stay calls

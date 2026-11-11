@@ -243,4 +243,24 @@ secrets2 branch). So the work lands in two steps:
   The fake keychain keeps items in the test keyring's table under ring
   -100. Not done: `keychain_at(path)` and a real round trip against a
   throwaway keychain (section 8, needs the owner's go).
-- Stage E: Windows DPAPI and `Env.local_app_data()`.
+- Stage E (2026-11-10, DPAPI): `Secrets.dpapi()`, `Dpapi`, `DpapiErr`
+  and `Env.local_app_data()`. std/native/llrt/dpapi.xo calls crypt32's
+  CryptProtectData and CryptUnprotectData (std/native/sys_windows.xo
+  imports, compiler/macho/peimports.xo regenerated); local_app_data is
+  SHGetKnownFolderPath plus CoTaskMemFree, so Windows links ole32 too
+  (link.xo, xotool WindowsLinkLibs; the generator now prefers ole32 over
+  the api-ms-win-core-com API set it found first). The Go backend calls
+  the same functions through syscall's lazy DLLs (std/rt
+  dpapi_windows.go). `protect` and `unprotect` keep section 5's
+  `entropy = b""` default: the native backends refused an interface call
+  that omits an argument (XO1201), so compiler/ssa iface.xo now fills the
+  interface method's default, as the Go backend did (spec core.md).
+  Effects as section 1: protect `secrets.write`, unprotect `secrets.read`.
+  FakeDpapi (no `fail_next`: a wrong entropy or a foreign blob fails with
+  13) and FakeEnv's LOCALAPPDATA. compiler/xo's RecEnv and SepEnv answer
+  Missing until a seed compiles a call of `Env.local_app_data`, as
+  hostname. Real checks (section 8, round trips only, nothing stored):
+  golden secrets_dpapi (protect and unprotect with and without entropy, a
+  wrong entropy refused, the known folder) passes natively on
+  windows/amd64 (amd64 host), and on the Go backend on windows/amd64 and
+  on the winarm VM (windows/arm64), 2026-11-10.

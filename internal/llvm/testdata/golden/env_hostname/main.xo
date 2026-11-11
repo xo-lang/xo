@@ -12,6 +12,7 @@ fn (e: MyEnv) home() -> Str ! EnvErr { Err(EnvErr.Missing(name: "HOME")) }
 fn (e: MyEnv) only(names: List[Str]) -> Env { e }
 fn (e: MyEnv) config_dir() -> Str ! EnvErr { Err(EnvErr.Missing(name: "HOME")) }
 fn (e: MyEnv) cache_dir() -> Str ! EnvErr { Err(EnvErr.Missing(name: "HOME")) }
+fn (e: MyEnv) local_app_data() -> Str ! EnvErr { Err(EnvErr.Missing(name: "LocalAppData")) }
 fn (e: MyEnv) hostname() -> Str { "mine" }
 
 fn describe(env: Env) -> Str {

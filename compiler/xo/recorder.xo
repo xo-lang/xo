@@ -334,6 +334,9 @@ fn (e: RecEnv) cache_dir() -> Str ! EnvErr uses env { e.inner.cache_dir() }
 /// (decision 0410: an older compiler stops at the call, XO1201); then it
 /// delegates to inner and notes the read.
 fn (e: RecEnv) hostname() -> Str uses env { "" }
+/// Missing until a released seed can compile a call of
+/// Env.local_app_data in compiler/ (decision 0584, as hostname).
+fn (e: RecEnv) local_app_data() -> Str ! EnvErr uses env { Err(EnvErr.Missing(name: "LocalAppData")) }
 
 /// What a stat answered, in the form an entry keeps.
 fn stat_answer(r: Result[FileInfo?, FsErr]) -> Str {

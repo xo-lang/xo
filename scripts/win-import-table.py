@@ -46,7 +46,7 @@ def main():
     want = sorted(set(want) | set(extra_imports(os.path.join(here, 'win-imports-extra.txt'))))
     # the libraries the runtime links (compiler/xo link.xo sys_link_args),
     # first, then the rest, so the first library naming a symbol wins
-    order = ['kernel32', 'ws2_32', 'bcrypt', 'synchronization', 'ntdll', 'shell32', 'crypt32']
+    order = ['kernel32', 'ws2_32', 'bcrypt', 'synchronization', 'ntdll', 'shell32', 'crypt32', 'ole32']
     libs.sort(key=lambda p: (order.index(os.path.basename(p).lower()[:-4]) if os.path.basename(p).lower()[:-4] in order else len(order), p.lower()))
     found = {}
     for lib in libs:

@@ -1283,6 +1283,39 @@ pub fn system_dir() -> Str {
   narrow(buf, 0, k)
 }
 
+/// SHGetKnownFolderPath(FOLDERID_LocalAppData) in UTF-8 with each \ made
+/// /, as Go's windows.KnownFolderPath reads it; "" when it fails
+/// (Env.local_app_data, decision 0584).
+pub fn local_app_data() -> Str {
+  // FOLDERID_LocalAppData, {F1B32785-6FBA-4FCF-9D55-7B8E7F157091}, then
+  // the path pointer at 16
+  let g = raw.bytes_buf(24)
+  let a = raw.bytes_addr(g)
+  rt.mem_store(a, 0, 4055050117, 4)
+  rt.mem_store(a, 4, 28602, 2)
+  rt.mem_store(a, 6, 20431, 2)
+  rt.mem_store(a, 8, 2390447517, 4)
+  rt.mem_store(a, 12, 2440041855, 4)
+  rt.mem_store(a, 16, 0, 8)
+  let hr = Int(sys_windows.SHGetKnownFolderPath(a, 0, 0, a + 16))
+  let p = rt.mem_load(a, 16, 8)
+  raw.alive(g)
+  var s = ""
+  if hr == 0 && p != 0 {
+    var n = 0
+    while rt.mem_load(p, 2 * n, 2) != 0 {
+      n += 1
+    }
+    let buf = raw.bytes_buf(2 * n + 2)
+    rt.mem_copy(raw.bytes_addr(buf), p, 2 * n)
+    s = narrow_slash(buf, 0, n)
+  }
+  if p != 0 {
+    sys_windows.CoTaskMemFree(p)
+  }
+  s
+}
+
 /// The n UTF-16 units of b from off on in UTF-8 (std/native/llrt/ifaces.xo).
 pub fn wide_str(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, false) }
 
