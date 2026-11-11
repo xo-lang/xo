@@ -8955,8 +8955,8 @@ random chunks).
 
 ## 80. std/jsonrpc
 
-JSON-RPC 2.0 messages and framings (decision 0603 stage 1), transport-neutral and pure. The connection that runs
-requests in flight (`Conn`) is the next step of the stage.
+JSON-RPC 2.0 messages, framings and a connection (decision 0603 stage 1), transport-neutral: the messages and
+framings are pure; `Conn` runs over any write and read functions the caller gives it.
 
 ```xo
 const PARSE_ERROR: Int = -32700                     // and INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR
@@ -8978,6 +8978,13 @@ fn line_frame(text: Str) -> Bytes
 fn header_reader(max: Int = 67108864) -> HeaderReader   // Content-Length headers (LSP)
 fn (var r: HeaderReader) feed(chunk: Bytes) -> List[Str] ! FrameErr
 fn header_frame(text: Str) -> Bytes
+enum CallErr { Rpc(e: RpcError), Io(e: IoErr), Closed }
+fn conn[fx: Effects](write: fn(Str) -> () ! IoErr uses fx) -> Conn[fx]   // a handle: copies share it
+fn (c: Conn[fx]) serve(g: task.Group, read: fn() -> Str? ! IoErr uses fx, handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx
+fn (c: Conn[fx]) call(method: Str, params: json.Value? = None) -> json.Value ! CallErr uses fx
+fn (c: Conn[fx]) notify(method: Str, params: json.Value? = None) -> () ! IoErr uses fx
+fn (c: Conn[fx]) in_flight() -> Int
+fn (c: Conn[fx]) close()
 ```
 
 `decode` reads one message as the Go MCP SDK's `jsonrpc.DecodeMessage`: `jsonrpc` must be `"2.0"`; an id is a
@@ -8990,5 +8997,9 @@ requests' order; no answer at all is None (a notification, a batch of notificati
 an empty array one Invalid Request, and each element that is not a request an Invalid Request with a null id. The
 framings are push readers: the newline one splits at LF (a CR before it dropped, empty lines skipped); the
 Content-Length one reads header lines up to an empty line (names without case, other headers ignored) and then that
-many bytes. Checked against the specification's examples and the Go SDK's DecodeMessage and EncodeMessage
+many bytes. `Conn` is both sides at once: `call` writes a request with the next id (1, 2, ...) and waits for its
+answer; `serve` starts the read loop in the group, in the background, which hands each answer to the call waiting
+for its id, runs each incoming request in a task of its own and writes back a call's answer, answers a batch as
+`answer` does and invalid text with its error; writes never interleave. When `read` ends or fails, or `close` is
+called, waiting and later calls return `Closed`. Checked against the specification's examples and the Go SDK's DecodeMessage and EncodeMessage
 (testdata/corpus/jsonrpc).

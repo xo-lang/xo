@@ -435,4 +435,66 @@ test "encode writes a notification without an id and an error without a result" 
   expect(jsonrpc.encode(jsonrpc.Message.Resp(jsonrpc.Response{id: Some(jsonrpc.Id.Int(3)), error: Some(e)}))) == "{\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32000,\"message\":\"boom\",\"data\":\"x\"}}"
   expect(jsonrpc.encode(jsonrpc.Message.Resp(jsonrpc.Response{id: Some(jsonrpc.Id.Str("a"))}))) == "{\"jsonrpc\":\"2.0\",\"id\":\"a\",\"result\":null}"
 }
+fn pipe_conn(out: Chan[Str]) -> jsonrpc.Conn[()] {
+  jsonrpc.conn(fn(t: Str) -> () ! IoErr {
+    out.send(t)
+    Ok(())
+  })
+}
+
+fn reply(x: Result[json.Value, jsonrpc.CallErr]) -> Str {
+  match x {
+    Ok(v) => "ok ${v.encode()}"
+    Err(e) => "err ${e.display()}"
+  }
+}
+
+test "Conn: calls both ways, at the same time, with the peer's errors" {
+  let ab = Chan[Str].new(cap: 16)
+  let ba = Chan[Str].new(cap: 16)
+  let got = scope s {
+    let a = pipe_conn(ab)
+    let b = pipe_conn(ba)
+    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
+    b.serve(s.group(), fn() -> Str? ! IoErr { Ok(ab.recv()) }, handle)
+    let t1 = s.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("subtract", Some(json.Value.List([json.Value.Int(42), json.Value.Int(23)]))) })
+    let t2 = s.spawn(fn() -> json.Value ! jsonrpc.CallErr { b.call("get_data") })
+    let t3 = s.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("nope") })
+    let n = a.notify("notify_hello")
+    let out = [reply(t1.await), reply(t2.await), reply(t3.await), "${n.is_ok()}", "${a.in_flight()}"]
+    ab.close()
+    ba.close()
+    out
+  }
+  expect(got) == ["ok 19", "ok [\"hello\",5]", "err Method not found", "true", "0"]
+}
+
+test "Conn: the end of the read side ends the calls waiting, and later ones" {
+  let ab = Chan[Str].new(cap: 16)
+  let ba = Chan[Str].new(cap: 16)
+  let got = scope s {
+    let a = pipe_conn(ab)
+    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
+    let t = s.spawn(fn() -> json.Value ! jsonrpc.CallErr { a.call("subtract") })
+    let sent = ab.recv() ?? ""
+    ba.close()
+    [sent, reply(t.await), reply(a.call("sum"))]
+  }
+  expect(got) == ["{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"subtract\"}", "err jsonrpc: connection closed", "err jsonrpc: connection closed"]
+}
+
+test "Conn: a batch and invalid text from the peer are answered" {
+  let ab = Chan[Str].new(cap: 16)
+  let ba = Chan[Str].new(cap: 16)
+  let got = scope s {
+    let a = pipe_conn(ab)
+    a.serve(s.group(), fn() -> Str? ! IoErr { Ok(ba.recv()) }, handle)
+    ba.send("[{\"jsonrpc\":\"2.0\",\"method\":\"sum\",\"params\":[1,2],\"id\":7},{\"jsonrpc\":\"2.0\",\"method\":\"notify_x\"}]")
+    ba.send("{oops")
+    let out = [ab.recv() ?? "", ab.recv() ?? ""]
+    ba.close()
+    out
+  }
+  expect(got) == ["[{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":3}]", "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}"]
+}
 `

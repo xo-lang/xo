@@ -13,6 +13,7 @@
 // One pure source for every backend (decision 0312, std/go_compiled.txt).
 
 use std/json
+use std/task
 
 /// Invalid JSON was received.
 pub const PARSE_ERROR: Int = -32700
@@ -153,7 +154,7 @@ fn error_value(e: RpcError) -> json.Value {
 pub fn decode(text: Str) -> Message ! RpcError {
   match json.parse_value(text) {
     Ok(v) => decode_value(v)
-    Err(e) => Err(RpcError{code: PARSE_ERROR, message: "Parse error", data: Some(json.Value.Str(e.display()))})
+    Err(_) => Err(error_of(PARSE_ERROR))
   }
 }
 
@@ -450,4 +451,168 @@ fn (var r: HeaderReader) fail(e: FrameErr) -> List[Str] ! FrameErr {
 pub fn header_frame(text: Str) -> Bytes {
   let body = text.bytes()
   "Content-Length: ${body.len()}\r\n\r\n".bytes() + body
+}
+
+/// Why a call on a Conn got no result.
+pub enum CallErr {
+  /// The peer answered with an error.
+  Rpc(e: RpcError)
+  /// Writing the request failed.
+  Io(e: IoErr)
+  /// The connection ended (its read side reached its end or failed, or
+  /// close was called) before the answer came.
+  Closed
+}
+
+pub fn (e: CallErr) display() -> Str {
+  match e {
+    Rpc(r) => r.message
+    Io(i) => i.display()
+    Closed => "jsonrpc: connection closed"
+  }
+}
+
+/// A JSON-RPC connection over one message transport, both ways: calls and
+/// notifications out (`call`, `notify`), and, once `serve` runs its read
+/// loop, the peer's answers matched to the calls in flight by id and the
+/// peer's requests handled, each in a task of its own. A handle: copies
+/// share the connection.
+pub struct Conn[fx: Effects] {
+  write: fn(Str) -> () ! IoErr uses fx
+  st: Mutex[ConnState]
+  /// serializes writes, so messages never interleave
+  wl: Mutex[Int]
+}
+
+struct ConnState {
+  next: Int = 1
+  pending: Map[Str, Chan[Response]] = {}
+  closed: Bool = false
+}
+
+/// A connection writing each message's text (already encoded, one
+/// message a call) with write; frame it there (line_frame, header_frame).
+pub fn conn[fx: Effects](write: fn(Str) -> () ! IoErr uses fx) -> Conn[fx] {
+  Conn{write: write, st: Mutex[ConnState].new(ConnState{}), wl: Mutex[Int].new(0)}
+}
+
+fn key(id: Id) -> Str {
+  match id {
+    Int(n) => "i${n}"
+    Str(s) => "s${s}"
+  }
+}
+
+fn (c: Conn[fx]) send(text: Str) -> () ! IoErr uses fx {
+  c.wl.with(fn(var _n: Int) -> () ! IoErr uses fx { (c.write)(text) })
+}
+
+/// Calls method on the peer and waits for its answer: the result, or the
+/// peer's error. Ids are 1, 2, 3, ... on this connection. Needs `serve`
+/// running to receive the answer.
+pub fn (c: Conn[fx]) call(method: Str, params: json.Value? = None) -> json.Value ! CallErr uses fx {
+  let got = c.st.with(fn(var s: ConnState) -> (Int, Chan[Response]?) {
+    if s.closed {
+      return (0, None)
+    }
+    let n = s.next
+    s.next += 1
+    let ch = Chan[Response].new(cap: 1)
+    s.pending.put(key(Id.Int(n)), ch)
+    (n, Some(ch))
+  })
+  let ch = got.1 ?? return Err(CallErr.Closed)
+  let id = Id.Int(got.0)
+  if let Err(e) = c.send(encode(Message.Req(Request{id: Some(id), method: method, params: params}))) {
+    c.forget(got.0)
+    return Err(CallErr.Io(e))
+  }
+  let r = ch.recv() ?? return Err(CallErr.Closed)
+  match r.error {
+    Some(e) => Err(CallErr.Rpc(e))
+    None => Ok(r.result)
+  }
+}
+
+/// Drops the call n waits on (its request was not written). The id is
+/// this call's alone (ids are never reused), so no other task acts on it.
+fn (c: Conn[fx]) forget(n: Int) {
+  let _r = c.st.with(fn(var s: ConnState) -> Chan[Response]? { s.pending.remove(key(Id.Int(n))) })
+}
+
+/// Sends a notification (a request without an id; the peer does not
+/// answer it).
+pub fn (c: Conn[fx]) notify(method: Str, params: json.Value? = None) -> () ! IoErr uses fx {
+  c.send(encode(Message.Req(Request{method: method, params: params})))
+}
+
+/// The number of calls waiting for an answer.
+pub fn (c: Conn[fx]) in_flight() -> Int {
+  c.st.with(fn(var s: ConnState) -> Int { s.pending.len() })
+}
+
+/// Ends the connection's calls: each waiting call, and every later one,
+/// returns Closed. serve calls it when its read side ends.
+pub fn (c: Conn[fx]) close() {
+  let chans = c.st.with(fn(var s: ConnState) -> List[Chan[Response]] {
+    s.closed = true
+    let cs = s.pending.values()
+    s.pending = {}
+    cs
+  })
+  for ch in chans {
+    ch.close()
+  }
+}
+
+/// Starts the connection's read loop in g, in the background: read gives
+/// one message's text at a time (None at the end). An answer goes to the
+/// call waiting for its id (one for no call is dropped); a request goes
+/// to handle in a task of its own in g, and a call's result or error is
+/// written back with its id; a batch is answered as `answer` does, in
+/// order; text that is not a message is answered with its error and a
+/// null id. At the end of read, or when it fails, the connection closes.
+pub fn (c: Conn[fx]) serve(g: task.Group, read: fn() -> Str? ! IoErr uses fx, handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx {
+  g.spawn_background(fn() uses fx { c.read_loop(g, read, handle) })
+}
+
+fn (c: Conn[fx]) read_loop(g: task.Group, read: fn() -> Str? ! IoErr uses fx, handle: fn(Request) -> json.Value ! RpcError uses fx) uses fx {
+  while true {
+    let text = match read() {
+      Ok(Some(t)) => t
+      _ => break
+    }
+    if text.trim_start().starts_with("[") {
+      if let Some(out) = answer(text, handle) {
+        c.send(out).ignore_err("an answer that cannot be written is lost; a broken transport ends the read side too")
+      }
+      continue
+    }
+    match decode(text) {
+      Ok(Message.Resp(r)) => {
+        if let Some(id) = r.id {
+          let ch = c.st.with(fn(var s: ConnState) -> Chan[Response]? { s.pending.remove(key(id)) })
+          if let Some(x) = ch {
+            x.send(r)
+          }
+        }
+      }
+      Ok(Message.Req(r)) => {
+        g.spawn_background(fn() uses fx {
+          let got = handle(r)
+          if let Some(id) = r.id {
+            let resp = match got {
+              Ok(x) => Response{id: Some(id), result: x}
+              Err(e) => Response{id: Some(id), error: Some(e)}
+            }
+            c.send(encode(Message.Resp(resp))).ignore_err("an answer that cannot be written is lost; a broken transport ends the read side too")
+          }
+        })
+      }
+      Err(e) => {
+        c.send(encode(Message.Resp(Response{id: None, error: Some(e)}))).ignore_err("an answer that cannot be written is lost; a broken transport ends the read side too")
+      }
+    }
+  }
+  c.close()
 }
