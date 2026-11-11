@@ -1,0 +1,54 @@
+// aesmodes: std/crypto's AES block, CBC and CTR against Go's crypto/aes
+// and crypto/cipher (twin.go.txt), AES-128: block (200,000 single block
+// encryptions), cbcenc and cbcdec (a 64 KiB message 200 times), ctr (a
+// 64 KiB message 200 times, in calls of 1,000 bytes); `none` is the setup
+// alone. Usage: `<program> none|block|cbcenc|cbcdec|ctr`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/crypto
+
+fn pattern(i: Int, n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for j in 0..n {
+    b.write_byte(UInt8((i * 7 + j * 13) % 256))
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let b = crypto.aes_block(pattern(1, 16)).ok() ?? fault("key")
+  let iv = pattern(2, 16)
+  let msg = pattern(3, 65536)
+  var sum = 0
+  if w == "block" {
+    var x = pattern(4, 16)
+    for _ in 0..200000 {
+      x = b.encrypt_block(x)
+    }
+    sum = Int(x[0]) + Int(x[15])
+  } else if w == "cbcenc" {
+    for i in 0..200 {
+      let c = crypto.cbc_encrypt(b, iv, msg)
+      sum += Int(c[(i * 331) % 65536])
+    }
+  } else if w == "cbcdec" {
+    for i in 0..200 {
+      let c = crypto.cbc_decrypt(b, iv, msg)
+      sum += Int(c[(i * 331) % 65536])
+    }
+  } else if w == "ctr" {
+    var c = crypto.ctr(b, iv)
+    for i in 0..200 {
+      var at = 0
+      while at < 65536 {
+        let n = if 65536 - at < 1000 { 65536 - at } else { 1000 }
+        let o = c.xor(msg[at..at + n])
+        sum += Int(o[(i * 7) % n])
+        at += n
+      }
+    }
+  } else {
+    sum = Int(msg[0]) + Int(iv[0])
+  }
+  os.stdio.println("${w} ${sum}")
+}

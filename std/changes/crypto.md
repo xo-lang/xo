@@ -11,6 +11,17 @@
 - Shipped in: not yet released
 
 MlkemParams (Mlkem768, Mlkem1024), MlkemDecapsulationKey and MlkemEncapsulationKey with mlkem_generate_key, mlkem_decapsulation_key, mlkem_encapsulation_key, params, bytes, encapsulation_key, decapsulate and encapsulate, Go's error texts; the native backends run llrt/mlkem.xo (TLS's hybrids), an encapsulation key parsed once (t, A and H(ek), as Go keeps them). spec/std.md 11.
+## 2026-11-11: feature: the AES block and the CBC and CTR modes (Go's crypto/aes and crypto/cipher)
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-11 (bench/results/std-audit-2026-11-11.md, ninth gap), decision 0605
+- Go reference: crypto/aes, crypto/cipher cbc.go and ctr.go (go1.26.1)
+- Test: the aesmodes corpus on go, arm64, llvm (key sizes, 150 blocks, 150 CBC messages, 200 CTR streams split across calls with counters near 2^64 and 2^128, a copied Ctr)
+- Timing: bench/results/aesmodes-vs-go-2026-11-11.md
+- Shipped in: not yet released
+
+AesBlock with aes_block, encrypt_block and decrypt_block; cbc_encrypt and cbc_decrypt (no padding); Ctr with ctr and xor. Go's texts for a bad key size (KeyErr) and for the faults where Go panics. The native backends run llrt/aesgcm.xo (the hardware AES of decision 0231), CTR four blocks a pass. spec/std.md 11.
 
 ## 2026-11-11: feature: crypto.xor (Go's subtle.XORBytes)
 

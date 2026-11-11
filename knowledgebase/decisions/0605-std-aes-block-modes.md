@@ -79,3 +79,15 @@ instructions of decision 0231 where the target has them.
 - A generic `Block` interface over AES, DES and others: one cipher today;
   an interface can come with a second one.
 - Leave it to Aead: formats fixed by other parties need CBC and CTR.
+
+## Progress
+
+- 2026-11-11 (Xo Lang 3): built as decided. std/crypto's AesBlock
+  (encrypt_block, decrypt_block), cbc_encrypt, cbc_decrypt and Ctr over
+  std/native/llrt/aesgcm.xo's Cipher (the GCM core, with
+  ctr_keystream, ctr_xor and a one-block CBC encryption added); the Go
+  backend over crypto/aes and crypto/cipher. The aesmodes corpus (seed
+  605) matches Go on go, arm64 and llvm. Timing:
+  bench/results/aesmodes-vs-go-2026-11-11.md (Xo / Go 0.74 to 1.48 on
+  linux/arm64; CBC encryption and CTR reload the round keys per block,
+  the next experiment is named there).

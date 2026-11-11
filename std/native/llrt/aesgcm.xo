@@ -679,21 +679,86 @@ pub fn (c: Cipher) decrypt_block(b: Bytes) -> Bytes {
   rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), io[0], 8), io[1], 8).bytes()
 }
 
+/// The CTR keystream of n blocks from the 128 bit big endian counter
+/// (hi, lo), four blocks a pass; the counter wraps at 2^128 (Go's add128).
+pub fn (c: Cipher) ctr_keystream(hi0: Int, lo0: Int, n: Int) -> Bytes {
+  var out = rt.rs_with_cap(16 * n)
+  var hi = hi0
+  var lo = lo0
+  var b = 0
+  while b < n {
+    let k = if n - b < 4 { n - b } else { 4 }
+    var io = [0, 0, 0, 0, 0, 0, 0, 0]
+    for j in 0..k {
+      io[2 * j] = hi.swap_bytes()
+      io[2 * j + 1] = lo.swap_bytes()
+      lo = lo.wrapping_add(1)
+      if lo == 0 {
+        hi = hi.wrapping_add(1)
+      }
+    }
+    encrypt_n(c, io, k)
+    for j in 0..k {
+      out = rt.rs_push_word(rt.rs_push_word(out, io[2 * j], 8), io[2 * j + 1], 8)
+    }
+    b += k
+  }
+  out.bytes()
+}
+
 /// CBC encryption of data (a multiple of 16 bytes) under iv (16 bytes):
 /// one block a pass, each chained to the last.
 pub fn (c: Cipher) cbc_encrypt(iv: Bytes, data: Bytes) -> Bytes {
   var out = rt.rs_with_cap(data.len())
   var p0 = rt.bytes_word(iv, 0)
   var p1 = rt.bytes_word(iv, 8)
+  // one io for the call, its words by address (io is this call's own:
+  // encrypt_n works in place), one block of AES a block (ctr_o's pattern)
+  var io = [0, 0, 0, 0, 0, 0, 0, 0]
+  let p = addr(io)
+  let n = data.len()
   var i = 0
-  while i < data.len() {
-    var io = [rt.bytes_word(data, i) ^ p0, rt.bytes_word(data, i + 8) ^ p1, 0, 0, 0, 0, 0, 0]
-    encrypt4(c, io)
-    p0 = io[0]
-    p1 = io[1]
+  while i < n {
+    rt.mem_store(p, 0, rt.bytes_word(data, i) ^ p0, 8)
+    rt.mem_store(p, 8, rt.bytes_word(data, i + 8) ^ p1, 8)
+    encrypt_n(c, io, 1)
+    p0 = rt.mem_load(p, 0, 8)
+    p1 = rt.mem_load(p, 8, 8)
     out = rt.rs_push_word(rt.rs_push_word(out, p0, 8), p1, 8)
     i += 16
   }
+  keep(io)
+  out.bytes()
+}
+
+/// data[from .. from + 16 n] XOR the CTR key stream of n blocks from the
+/// big-endian counter (hi0, lo0), four blocks a pass, without the key
+/// stream as its own Bytes.
+pub fn (c: Cipher) ctr_xor(hi0: Int, lo0: Int, data: Bytes, from: Int, n: Int) -> Bytes {
+  var out = rt.rs_with_cap(16 * n)
+  var hi = hi0
+  var lo = lo0
+  var io = [0, 0, 0, 0, 0, 0, 0, 0]
+  let p = addr(io)
+  var b = 0
+  while b < n {
+    let k = if n - b < 4 { n - b } else { 4 }
+    for j in 0..k {
+      rt.mem_store(p, 16 * j, hi.swap_bytes(), 8)
+      rt.mem_store(p, 16 * j + 8, lo.swap_bytes(), 8)
+      lo = lo.wrapping_add(1)
+      if lo == 0 {
+        hi = hi.wrapping_add(1)
+      }
+    }
+    encrypt_n(c, io, k)
+    for j in 0..k {
+      let q = from + 16 * (b + j)
+      out = rt.rs_push_word(rt.rs_push_word(out, rt.bytes_word(data, q) ^ rt.mem_load(p, 16 * j, 8), 8), rt.bytes_word(data, q + 8) ^ rt.mem_load(p, 16 * j + 8, 8), 8)
+    }
+    b += k
+  }
+  keep(io)
   out.bytes()
 }
 

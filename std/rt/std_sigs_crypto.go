@@ -78,4 +78,11 @@ var (
 	_ func(*Crypto_MlkemEncapsulationKey, *Task) Crypto_MlkemParams                              = (*Crypto_MlkemEncapsulationKey).M_params
 	_ func(*Crypto_MlkemEncapsulationKey, *Task) Bytes                                           = (*Crypto_MlkemEncapsulationKey).M_bytes
 	_ func(*Crypto_MlkemEncapsulationKey, *Task, Rand) Tuple2[Bytes, Bytes]                      = (*Crypto_MlkemEncapsulationKey).M_encapsulate
+	_ func(*Task, Bytes) Result[Crypto_AesBlock, Crypto_KeyErr]                                  = Crypto_aes_block
+	_ func(*Crypto_AesBlock, *Task, Bytes) Bytes                                                 = (*Crypto_AesBlock).M_encrypt_block
+	_ func(*Crypto_AesBlock, *Task, Bytes) Bytes                                                 = (*Crypto_AesBlock).M_decrypt_block
+	_ func(*Task, Crypto_AesBlock, Bytes, Bytes) Bytes                                           = Crypto_cbc_encrypt
+	_ func(*Task, Crypto_AesBlock, Bytes, Bytes) Bytes                                           = Crypto_cbc_decrypt
+	_ func(*Task, Crypto_AesBlock, Bytes) Crypto_Ctr                                             = Crypto_ctr
+	_ func(*Crypto_Ctr, *Task, Bytes) Bytes                                                      = (*Crypto_Ctr).M_xor
 )

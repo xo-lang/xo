@@ -1929,3 +1929,104 @@ fn (k: MlkemEncapsulationKey) params() -> crypto.MlkemParams { k.p }
 fn (k: MlkemEncapsulationKey) bytes() -> Bytes { mlkem.enc_bytes(k.e) }
 
 fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes) uses rand { mlkem.encaps_with(k.e, r.bytes(32)) }
+// AES block, CBC and CTR (crypto/aes and crypto/cipher of go1.26,
+// decision 0605): llrt's AES, which TLS and AES-GCM use
+
+struct AesBlock {
+  c: aesgcm.Cipher
+}
+
+struct Ctr {
+  c: aesgcm.Cipher
+  /// the counter of the next keystream block (big endian halves)
+  hi: Int
+  lo: Int
+  /// the unused rest of the last keystream block
+  ks: Bytes
+}
+
+fn aes_block(key: Bytes) -> AesBlock ! crypto.KeyErr {
+  if !(key.len() == 16 || key.len() == 24 || key.len() == 32) {
+    return Err(key_err("crypto/aes: invalid key size ${key.len()}"))
+  }
+  Ok(AesBlock{c: aesgcm.new(key)})
+}
+
+fn (b: AesBlock) encrypt_block(src: Bytes) -> Bytes {
+  if src.len() != 16 {
+    fault("crypto/aes: input not full block")
+  }
+  b.c.encrypt_block(src)
+}
+
+fn (b: AesBlock) decrypt_block(src: Bytes) -> Bytes {
+  if src.len() != 16 {
+    fault("crypto/aes: input not full block")
+  }
+  b.c.decrypt_block(src)
+}
+
+fn cbc_encrypt(b: AesBlock, iv: Bytes, plaintext: Bytes) -> Bytes {
+  if iv.len() != 16 {
+    fault("cipher.NewCBCEncrypter: IV length must equal block size")
+  }
+  if plaintext.len() % 16 != 0 {
+    fault("crypto/cipher: input not full blocks")
+  }
+  b.c.cbc_encrypt(iv, plaintext)
+}
+
+fn cbc_decrypt(b: AesBlock, iv: Bytes, ciphertext: Bytes) -> Bytes {
+  if iv.len() != 16 {
+    fault("cipher.NewCBCDecrypter: IV length must equal block size")
+  }
+  if ciphertext.len() % 16 != 0 {
+    fault("crypto/cipher: input not full blocks")
+  }
+  b.c.cbc_decrypt(iv, ciphertext)
+}
+
+fn ctr(b: AesBlock, iv: Bytes) -> Ctr {
+  if iv.len() != 16 {
+    fault("cipher.NewCTR: IV length must equal block size")
+  }
+  Ctr{c: b.c, hi: rt.bytes_word(iv, 0).swap_bytes(), lo: rt.bytes_word(iv, 8).swap_bytes(), ks: b""}
+}
+
+fn (var c: Ctr) xor(data: Bytes) -> Bytes {
+  let used = c.ks.len().min(data.len())
+  let head = xor(data[0..used], c.ks[0..used])
+  let rest = data[used..data.len()]
+  if rest.is_empty() {
+    c.ks = c.ks[used..c.ks.len()]
+    return head
+  }
+  // whole blocks XORed as the key stream is made, then the last partial
+  // block's key stream, its rest kept for the next call
+  let full = rest.len() / 16
+  let tail = rest.len() - 16 * full
+  var body = c.c.ctr_xor(c.hi, c.lo, data, used, full)
+  let (h1, l1) = ctr_add(c.hi, c.lo, full)
+  c.hi = h1
+  c.lo = l1
+  if tail > 0 {
+    let ks = c.c.ctr_keystream(c.hi, c.lo, 1)
+    let (h2, l2) = ctr_add(c.hi, c.lo, 1)
+    c.hi = h2
+    c.lo = l2
+    c.ks = ks[tail..16]
+    body = asn1.cat([body, xor(rest[16 * full..rest.len()], ks[0..tail])])
+  } else {
+    c.ks = b""
+  }
+  if used == 0 {
+    return body
+  }
+  asn1.cat([head, body])
+}
+
+/// The counter (hi, lo) n blocks on (a 128-bit add).
+fn ctr_add(hi: Int, lo: Int, n: Int) -> (Int, Int) {
+  let l = lo.wrapping_add(n)
+  (if l.lt_unsigned(lo) { hi.wrapping_add(1) } else { hi }, l)
+}

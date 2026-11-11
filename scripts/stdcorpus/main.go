@@ -72,6 +72,7 @@ var generators = map[string]func() string{
 	"url":        urlCorpus,
 	"textproto":  textprotoCorpus,
 	"asn1":       asn1Corpus,
+	"aesmodes":   aesModesCorpus,
 	"ecdh":       ecdhCorpus,
 	"mlkem":      mlkemCorpus,
 	"uuid":       uuidCorpus,

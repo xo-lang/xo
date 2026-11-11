@@ -1,0 +1,6 @@
+# twincheck: aesmodes: five workloads (none is the setup alone), the same names on both sides.
+- - none
+- - block
+- - cbcenc
+- - cbcdec
+- - ctr

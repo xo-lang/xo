@@ -319,3 +319,35 @@ fn (k: MlkemEncapsulationKey) bytes() -> Bytes
 /// (shared key, ciphertext) for a 32 byte message read from r (Go's
 /// mlkemtest.Encapsulate768 with that message).
 fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes) uses rand
+// ---- AES block and the CBC and CTR modes (crypto/aes, crypto/cipher, decision 0605) ----
+
+/// An AES key schedule (Go's aes.NewCipher Block): Debug text `<aesblock>`.
+/// CBC and CTR are not authenticated: new designs use an Aead.
+struct AesBlock {}
+
+/// The schedule of a 16, 24 or 32 byte key; else KeyErr `crypto/aes:
+/// invalid key size N`.
+fn aes_block(key: Bytes) -> AesBlock ! KeyErr
+/// One 16 byte block encrypted (Block.Encrypt); another length faults
+/// with `crypto/aes: input not full block`.
+fn (b: AesBlock) encrypt_block(src: Bytes) -> Bytes
+/// One 16 byte block decrypted (Block.Decrypt).
+fn (b: AesBlock) decrypt_block(src: Bytes) -> Bytes
+/// CBC encryption (NewCBCEncrypter, CryptBlocks) of whole blocks, no
+/// padding; faults: `cipher.NewCBCEncrypter: IV length must equal block
+/// size`, `crypto/cipher: input not full blocks`.
+fn cbc_encrypt(b: AesBlock, iv: Bytes, plaintext: Bytes) -> Bytes
+/// CBC decryption (NewCBCDecrypter, CryptBlocks); faults as cbc_encrypt
+/// with `cipher.NewCBCDecrypter: ...`.
+fn cbc_decrypt(b: AesBlock, iv: Bytes, ciphertext: Bytes) -> Bytes
+
+/// A CTR keystream (NewCTR): the counter is the IV as a 128 bit big
+/// endian number, wrapping at 2^128. Debug text `<ctr>`.
+struct Ctr {}
+
+/// A keystream from iv (16 bytes, else a fault: `cipher.NewCTR: IV
+/// length must equal block size`).
+fn ctr(b: AesBlock, iv: Bytes) -> Ctr
+/// data xored with the next len(data) bytes of the keystream
+/// (XORKeyStream); the next call continues where this one ended.
+fn (var c: Ctr) xor(data: Bytes) -> Bytes

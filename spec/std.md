@@ -4013,6 +4013,32 @@ from `r` and encapsulation its 32 byte message, so a seeded `r` gives the
 same keys and ciphertexts on every backend (Go's `mlkemtest.Encapsulate768`
 with that message). Checked against Go's `crypto/mlkem`
 (testdata/corpus/mlkem).
+The AES block and the CBC and CTR modes (Go's `crypto/aes` and
+`crypto/cipher`, decision 0605), for formats that predate AEADs (PBES2
+encrypted keys, CMS, SSH's AES-CTR); they are not authenticated, so new
+designs use an `Aead`:
+
+```xo
+struct AesBlock {}   // Debug `<aesblock>`
+fn aes_block(key: Bytes) -> AesBlock ! KeyErr                      // 16, 24 or 32 bytes
+fn (b: AesBlock) encrypt_block(src: Bytes) -> Bytes                // one 16 byte block
+fn (b: AesBlock) decrypt_block(src: Bytes) -> Bytes
+fn cbc_encrypt(b: AesBlock, iv: Bytes, plaintext: Bytes) -> Bytes  // whole blocks, no padding
+fn cbc_decrypt(b: AesBlock, iv: Bytes, ciphertext: Bytes) -> Bytes
+struct Ctr {}        // Debug `<ctr>`; a copy continues on its own
+fn ctr(b: AesBlock, iv: Bytes) -> Ctr
+fn (var c: Ctr) xor(data: Bytes) -> Bytes                          // XORKeyStream
+```
+
+A key of another size is KeyErr `crypto/aes: invalid key size N`. Where
+Go panics, Xo faults with Go's text: a block that is not 16 bytes
+(`crypto/aes: input not full block`), CBC input that is not whole blocks
+(`crypto/cipher: input not full blocks`), an IV that is not 16 bytes
+(`cipher.NewCBCEncrypter: IV length must equal block size`, and
+`cipher.NewCBCDecrypter: ...`, `cipher.NewCTR: ...`). CTR's counter is
+the IV as a 128 bit big endian number and wraps at 2^128, as Go's. CBC
+padding (PKCS#7) is the caller's, as in Go. Checked against Go
+(testdata/corpus/aesmodes).
 
 ---
 

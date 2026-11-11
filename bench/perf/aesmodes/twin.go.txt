@@ -1,0 +1,66 @@
+package main
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"fmt"
+	"os"
+)
+
+func pattern(i, n int) []byte {
+	b := make([]byte, n)
+	for j := range b {
+		b[j] = byte((i*7 + j*13) % 256)
+	}
+	return b
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	b, err := aes.NewCipher(pattern(1, 16))
+	if err != nil {
+		panic(err)
+	}
+	iv := pattern(2, 16)
+	msg := pattern(3, 65536)
+	sum := 0
+	switch w {
+	case "block":
+		x := pattern(4, 16)
+		for i := 0; i < 200000; i++ {
+			y := make([]byte, 16)
+			b.Encrypt(y, x)
+			x = y
+		}
+		sum = int(x[0]) + int(x[15])
+	case "cbcenc":
+		for i := 0; i < 200; i++ {
+			c := make([]byte, len(msg))
+			cipher.NewCBCEncrypter(b, iv).CryptBlocks(c, msg)
+			sum += int(c[(i*331)%65536])
+		}
+	case "cbcdec":
+		for i := 0; i < 200; i++ {
+			c := make([]byte, len(msg))
+			cipher.NewCBCDecrypter(b, iv).CryptBlocks(c, msg)
+			sum += int(c[(i*331)%65536])
+		}
+	case "ctr":
+		s := cipher.NewCTR(b, iv)
+		for i := 0; i < 200; i++ {
+			for at := 0; at < 65536; {
+				n := min(65536-at, 1000)
+				o := make([]byte, n)
+				s.XORKeyStream(o, msg[at:at+n])
+				sum += int(o[(i*7)%n])
+				at += n
+			}
+		}
+	default:
+		sum = int(msg[0]) + int(iv[0])
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}
