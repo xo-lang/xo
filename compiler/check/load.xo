@@ -1462,9 +1462,11 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
       }
     }
   }
-  // a C binding's declaration file is a signature file, and its valued
-  // enums get their methods like any module's (decision 0269 part 4)
-  if (!c.mods[m].is_std && !sig) || !c.mods[m].c_decl.is_empty() {
+  // derive expands in every source file, std's too (decision 0549: std
+  // holds generated message types); a C binding's declaration file is a
+  // signature file, and its valued enums get their methods like any
+  // module's (decision 0269 part 4)
+  if !sig || !c.mods[m].c_decl.is_empty() {
     c.add_derived_file(m, path, f, r)
   }
 }
@@ -1651,7 +1653,7 @@ pub fn (var c: Checker) ensure_tree(m: Int) uses fs.read {
     c.files[f].src = data
     c.give_base(f)
     c.files[f].unloaded = false
-    if !c.mods[m].is_std && !c.files[f].sig {
+    if !c.files[f].sig {
       c.add_derived_file(m, path, f, r)
     }
   }

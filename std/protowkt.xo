@@ -1,9 +1,10 @@
 // std/protowkt (decision 0546, item 2). Encoding rules are
 // listed at the top of std/prelude.xo. The well known types of protobuf's
-// google/protobuf/*.proto as Xo values with their wire codecs written by hand
-// over std/protobuf (derive Proto does not expand in std, decision 0549):
-// Timestamp, Duration, Empty, FieldMask, Any, the nine wrappers, and Struct,
-// Value and ListValue. `encode_*` writes fields in field number order with
+// google/protobuf/*.proto as Xo values: Timestamp, Duration, Empty,
+// FieldMask, Any and the nine wrappers derive Proto (decision 0549, their
+// field types protobuf-go's: nanos and the 32 bit wrappers Int32 and
+// UInt32), and Struct, Value and ListValue, whose Value is a oneof enum
+// that holds them recursively, keep codecs written by hand. `encode_*` writes fields in field number order with
 // proto3 implicit presence (a zero value is not written; a Value's member and
 // a Struct's map entries are); `decode_*` keeps the last value of a field,
 // skips unknown fields, and is the wire reader's errors. Pure.
@@ -15,48 +16,48 @@ use std/protobuf
 use std/protowire as pw
 
 pub struct Timestamp {
-  pub seconds: Int = 0
-  pub nanos: Int = 0
-} derive Eq
+  pub seconds proto "1": Int = 0
+  pub nanos proto "2": Int32 = 0
+} derive Eq, Proto
 
 pub struct Duration {
-  pub seconds: Int = 0
-  pub nanos: Int = 0
-} derive Eq
+  pub seconds proto "1": Int = 0
+  pub nanos proto "2": Int32 = 0
+} derive Eq, Proto
 
 pub struct Empty {
-  /// Always empty: a struct without fields is an opaque handle.
-  pub unknown: Bytes = b""
-} derive Eq
+  /// The fields a reader did not know, written back as protobuf-go does.
+  pub unknown proto "unknown": Bytes = b""
+} derive Eq, Proto
 
 pub struct FieldMask {
-  pub paths: List[Str] = []
-} derive Eq
+  pub paths proto "1": List[Str] = []
+} derive Eq, Proto
 
 /// google.protobuf.Any: `type_url` names the packed message (`type.googleapis.com/pkg.Msg`), `value` is
 /// its wire bytes.
 pub struct Any {
-  pub type_url: Str = ""
-  pub value: Bytes = b""
-} derive Eq
+  pub type_url proto "1": Str = ""
+  pub value proto "2": Bytes = b""
+} derive Eq, Proto
 
-pub struct DoubleValue { pub value: Float = 0.0 }
+pub struct DoubleValue { pub value proto "1": Float = 0.0 } derive Proto
 
-pub struct FloatValue { pub value: Float32 = 0.0 }
+pub struct FloatValue { pub value proto "1": Float32 = 0.0 } derive Proto
 
-pub struct Int64Value { pub value: Int = 0 } derive Eq
+pub struct Int64Value { pub value proto "1": Int = 0 } derive Eq, Proto
 
-pub struct UInt64Value { pub value: UInt64 = 0 } derive Eq
+pub struct UInt64Value { pub value proto "1": UInt64 = 0 } derive Eq, Proto
 
-pub struct Int32Value { pub value: Int = 0 } derive Eq
+pub struct Int32Value { pub value proto "1": Int32 = 0 } derive Eq, Proto
 
-pub struct UInt32Value { pub value: Int = 0 } derive Eq
+pub struct UInt32Value { pub value proto "1": UInt32 = 0 } derive Eq, Proto
 
-pub struct BoolValue { pub value: Bool = false } derive Eq
+pub struct BoolValue { pub value proto "1": Bool = false } derive Eq, Proto
 
-pub struct StringValue { pub value: Str = "" } derive Eq
+pub struct StringValue { pub value proto "1": Str = "" } derive Eq, Proto
 
-pub struct BytesValue { pub value: Bytes = b"" } derive Eq
+pub struct BytesValue { pub value proto "1": Bytes = b"" } derive Eq, Proto
 
 /// google.protobuf.Value: the kind that is set, `Unset` when none is.
 pub enum Value {
@@ -77,237 +78,61 @@ pub struct ListValue {
   pub values: List[Value] = []
 }
 
-pub fn encode_timestamp(m: Timestamp) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.wi(o, 1, m.seconds)
-  pw.wi(o, 2, m.nanos)
-  o.freeze()
-}
+pub fn encode_timestamp(m: Timestamp) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_timestamp(b: Bytes) -> Timestamp ! protobuf.ProtoErr {
-  var m = Timestamp{seconds: 0, nanos: 0}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_v(f) {
-      m.seconds = f.v
-    } else if f.num == 2 && pw.is_v(f) {
-      m.nanos = int32(f.v)
-    }
-  }
-  Ok(m)
-}
+pub fn decode_timestamp(b: Bytes) -> Timestamp ! protobuf.ProtoErr { protobuf.unmarshal[Timestamp](b) }
 
-pub fn encode_duration(m: Duration) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.wi(o, 1, m.seconds)
-  pw.wi(o, 2, m.nanos)
-  o.freeze()
-}
+pub fn encode_duration(m: Duration) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_duration(b: Bytes) -> Duration ! protobuf.ProtoErr {
-  var m = Duration{seconds: 0, nanos: 0}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_v(f) {
-      m.seconds = f.v
-    } else if f.num == 2 && pw.is_v(f) {
-      m.nanos = int32(f.v)
-    }
-  }
-  Ok(m)
-}
+pub fn decode_duration(b: Bytes) -> Duration ! protobuf.ProtoErr { protobuf.unmarshal[Duration](b) }
 
-pub fn encode_empty(m: Empty) -> Bytes { b"" }
+pub fn encode_empty(m: Empty) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_empty(b: Bytes) -> Empty ! protobuf.ProtoErr {
-  let _ = pw.walk(b)?
-  Ok(Empty{unknown: b""})
-}
+pub fn decode_empty(b: Bytes) -> Empty ! protobuf.ProtoErr { protobuf.unmarshal[Empty](b) }
 
-pub fn encode_field_mask(m: FieldMask) -> Bytes {
-  var o = BytesBuilder.new()
-  for p in m.paths {
-    pw.wsa(o, 1, p)
-  }
-  o.freeze()
-}
+pub fn encode_field_mask(m: FieldMask) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_field_mask(b: Bytes) -> FieldMask ! protobuf.ProtoErr {
-  var m = FieldMask{paths: []}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_s(f) {
-      m.paths.push(pw.text(f)?)
-    }
-  }
-  Ok(m)
-}
+pub fn decode_field_mask(b: Bytes) -> FieldMask ! protobuf.ProtoErr { protobuf.unmarshal[FieldMask](b) }
 
-pub fn encode_any(m: Any) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.ws(o, 1, m.type_url)
-  pw.wo(o, 2, m.value)
-  o.freeze()
-}
+pub fn encode_any(m: Any) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_any(b: Bytes) -> Any ! protobuf.ProtoErr {
-  var m = Any{type_url: "", value: b""}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_s(f) {
-      m.type_url = pw.text(f)?
-    } else if f.num == 2 && pw.is_s(f) {
-      m.value = f.data
-    }
-  }
-  Ok(m)
-}
+pub fn decode_any(b: Bytes) -> Any ! protobuf.ProtoErr { protobuf.unmarshal[Any](b) }
 
-pub fn encode_double_value(m: DoubleValue) -> Bytes {
-  var o = BytesBuilder.new()
-  let bits = m.value.to_bits()
-  if bits != 0 {
-    wfix64(o, 1, bits)
-  }
-  o.freeze()
-}
+pub fn encode_double_value(m: DoubleValue) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_double_value(b: Bytes) -> DoubleValue ! protobuf.ProtoErr {
-  var m = DoubleValue{value: 0.0}
-  for f in pw.walk(b)? {
-    if f.num == 1 && f.wire == 1 {
-      m.value = Float.from_bits(f.v)
-    }
-  }
-  Ok(m)
-}
+pub fn decode_double_value(b: Bytes) -> DoubleValue ! protobuf.ProtoErr { protobuf.unmarshal[DoubleValue](b) }
 
-pub fn encode_float_value(m: FloatValue) -> Bytes {
-  var o = BytesBuilder.new()
-  let bits = Int(m.value.to_bits())
-  if bits != 0 {
-    wfix32(o, 1, bits)
-  }
-  o.freeze()
-}
+pub fn encode_float_value(m: FloatValue) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_float_value(b: Bytes) -> FloatValue ! protobuf.ProtoErr {
-  var m = FloatValue{value: 0.0}
-  for f in pw.walk(b)? {
-    if f.num == 1 && f.wire == 5 {
-      m.value = Float32.from_bits(UInt32.wrapping_from(f.v))
-    }
-  }
-  Ok(m)
-}
+pub fn decode_float_value(b: Bytes) -> FloatValue ! protobuf.ProtoErr { protobuf.unmarshal[FloatValue](b) }
 
-pub fn encode_int64_value(m: Int64Value) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.wi(o, 1, m.value)
-  o.freeze()
-}
+pub fn encode_int64_value(m: Int64Value) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_int64_value(b: Bytes) -> Int64Value ! protobuf.ProtoErr {
-  var m = Int64Value{value: 0}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_v(f) {
-      m.value = f.v
-    }
-  }
-  Ok(m)
-}
+pub fn decode_int64_value(b: Bytes) -> Int64Value ! protobuf.ProtoErr { protobuf.unmarshal[Int64Value](b) }
 
-pub fn encode_uint64_value(m: UInt64Value) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.wi(o, 1, m.value.to_bits())
-  o.freeze()
-}
+pub fn encode_uint64_value(m: UInt64Value) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_uint64_value(b: Bytes) -> UInt64Value ! protobuf.ProtoErr {
-  var m = UInt64Value{value: UInt64.from_bits(0)}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_v(f) {
-      m.value = UInt64.from_bits(f.v)
-    }
-  }
-  Ok(m)
-}
+pub fn decode_uint64_value(b: Bytes) -> UInt64Value ! protobuf.ProtoErr { protobuf.unmarshal[UInt64Value](b) }
 
-pub fn encode_int32_value(m: Int32Value) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.wi(o, 1, m.value)
-  o.freeze()
-}
+pub fn encode_int32_value(m: Int32Value) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_int32_value(b: Bytes) -> Int32Value ! protobuf.ProtoErr {
-  var m = Int32Value{value: 0}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_v(f) {
-      m.value = int32(f.v)
-    }
-  }
-  Ok(m)
-}
+pub fn decode_int32_value(b: Bytes) -> Int32Value ! protobuf.ProtoErr { protobuf.unmarshal[Int32Value](b) }
 
-pub fn encode_uint32_value(m: UInt32Value) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.wi(o, 1, m.value)
-  o.freeze()
-}
+pub fn encode_uint32_value(m: UInt32Value) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_uint32_value(b: Bytes) -> UInt32Value ! protobuf.ProtoErr {
-  var m = UInt32Value{value: 0}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_v(f) {
-      m.value = f.v & 0xFFFFFFFF
-    }
-  }
-  Ok(m)
-}
+pub fn decode_uint32_value(b: Bytes) -> UInt32Value ! protobuf.ProtoErr { protobuf.unmarshal[UInt32Value](b) }
 
-pub fn encode_bool_value(m: BoolValue) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.wb(o, 1, m.value)
-  o.freeze()
-}
+pub fn encode_bool_value(m: BoolValue) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_bool_value(b: Bytes) -> BoolValue ! protobuf.ProtoErr {
-  var m = BoolValue{value: false}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_v(f) {
-      m.value = f.v != 0
-    }
-  }
-  Ok(m)
-}
+pub fn decode_bool_value(b: Bytes) -> BoolValue ! protobuf.ProtoErr { protobuf.unmarshal[BoolValue](b) }
 
-pub fn encode_string_value(m: StringValue) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.ws(o, 1, m.value)
-  o.freeze()
-}
+pub fn encode_string_value(m: StringValue) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_string_value(b: Bytes) -> StringValue ! protobuf.ProtoErr {
-  var m = StringValue{value: ""}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_s(f) {
-      m.value = pw.text(f)?
-    }
-  }
-  Ok(m)
-}
+pub fn decode_string_value(b: Bytes) -> StringValue ! protobuf.ProtoErr { protobuf.unmarshal[StringValue](b) }
 
-pub fn encode_bytes_value(m: BytesValue) -> Bytes {
-  var o = BytesBuilder.new()
-  pw.wo(o, 1, m.value)
-  o.freeze()
-}
+pub fn encode_bytes_value(m: BytesValue) -> Bytes { protobuf.marshal(m) }
 
-pub fn decode_bytes_value(b: Bytes) -> BytesValue ! protobuf.ProtoErr {
-  var m = BytesValue{value: b""}
-  for f in pw.walk(b)? {
-    if f.num == 1 && pw.is_s(f) {
-      m.value = f.data
-    }
-  }
-  Ok(m)
-}
+pub fn decode_bytes_value(b: Bytes) -> BytesValue ! protobuf.ProtoErr { protobuf.unmarshal[BytesValue](b) }
 
 /// A Struct's entries are written in key order (protobuf-go's Deterministic marshaling).
 pub fn encode_value(m: Value) -> Bytes {
@@ -398,17 +223,4 @@ fn wfix64(var o: BytesBuilder, num: Int, v: Int) {
   for i in 0..8 {
     o.write_byte(UInt8.wrapping_from(v.shr_logical(8 * i) & 255))
   }
-}
-
-fn wfix32(var o: BytesBuilder, num: Int, v: Int) {
-  pw.wtag(o, num, 5)
-  for i in 0..4 {
-    o.write_byte(UInt8.wrapping_from(v.shr_logical(8 * i) & 255))
-  }
-}
-
-/// The low 32 bits of a varint as a signed int32 (Go's int32(v)).
-fn int32(v: Int) -> Int {
-  let x = v & 0xFFFFFFFF
-  if x >= 0x80000000 { x - 0x100000000 } else { x }
 }

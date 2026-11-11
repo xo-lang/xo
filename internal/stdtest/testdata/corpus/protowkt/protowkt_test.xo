@@ -315,6 +315,37 @@ const WRAPPERS: List[(Str, Str)] = [
   ("0a1b747970652e676f6f676c65617069732e636f6d2f706b672e4d7367", "bytes:747970652e676f6f676c65617069732e636f6d2f706b672e4d7367"),
 ]
 
+/// (wire hex, the value read as protobuf-go reads it | its wire written back)
+const WIDE: List[(Str, Str)] = [
+  ("108580808010", "ts:0,5|1005"),
+  ("108580808010", "du:0,5|1005"),
+  ("088580808010", "i32:5|0805"),
+  ("088580808010", "u32:5|0805"),
+  ("108080808008", "ts:0,-2147483648|1080808080f8ffffffff01"),
+  ("108080808008", "du:0,-2147483648|1080808080f8ffffffff01"),
+  ("088080808008", "i32:-2147483648|0880808080f8ffffffff01"),
+  ("088080808008", "u32:2147483648|088080808008"),
+  ("10ffffffff0f", "ts:0,-1|10ffffffffffffffffff01"),
+  ("10ffffffff0f", "du:0,-1|10ffffffffffffffffff01"),
+  ("08ffffffff0f", "i32:-1|08ffffffffffffffffff01"),
+  ("08ffffffff0f", "u32:4294967295|08ffffffff0f"),
+  ("10ffffffffffffffffff01", "ts:0,-1|10ffffffffffffffffff01"),
+  ("10ffffffffffffffffff01", "du:0,-1|10ffffffffffffffffff01"),
+  ("08ffffffffffffffffff01", "i32:-1|08ffffffffffffffffff01"),
+  ("08ffffffffffffffffff01", "u32:4294967295|08ffffffff0f"),
+  ("1087808080808080808001", "ts:0,7|1007"),
+  ("1087808080808080808001", "du:0,7|1007"),
+  ("0887808080808080808001", "i32:7|0807"),
+  ("0887808080808080808001", "u32:7|0807"),
+  ("1080808080f8ffffffff01", "ts:0,-2147483648|1080808080f8ffffffff01"),
+  ("1080808080f8ffffffff01", "du:0,-2147483648|1080808080f8ffffffff01"),
+  ("0880808080f8ffffffff01", "i32:-2147483648|0880808080f8ffffffff01"),
+  ("0880808080f8ffffffff01", "u32:2147483648|088080808008"),
+  ("0801", "empty:|0801"),
+  ("12026869187f", "empty:|12026869187f"),
+  ("0d01020304", "empty:|0d01020304"),
+]
+
 /// (wire hex, rendered Value: z null, n<bits hex>, s<len>:text, b0 b1, {len:key=val,...} in key order, [val,...], u none)
 const VALUES: List[(Str, Str)] = [
   ("1a0130", "s1:0"),
@@ -830,6 +861,29 @@ test "the wrappers" {
       expect("bytes:" + hex(m.value)) == want
       expect(hex(protowkt.encode_bytes_value(m))) == h
     }
+  }
+}
+
+test "wire Go never writes: wide 32 bit varints, Empty's unknown fields" {
+  for (h, want) in WIDE {
+    let b = unhex(h)
+    let k = want.split(":")[0]
+    let got = if k == "ts" {
+      let m = protowkt.decode_timestamp(b).or_fault("ts")
+      "ts:${m.seconds},${m.nanos}|" + hex(protowkt.encode_timestamp(m))
+    } else if k == "du" {
+      let m = protowkt.decode_duration(b).or_fault("du")
+      "du:${m.seconds},${m.nanos}|" + hex(protowkt.encode_duration(m))
+    } else if k == "i32" {
+      let m = protowkt.decode_int32_value(b).or_fault("i32")
+      "i32:${m.value}|" + hex(protowkt.encode_int32_value(m))
+    } else if k == "u32" {
+      let m = protowkt.decode_uint32_value(b).or_fault("u32")
+      "u32:${m.value}|" + hex(protowkt.encode_uint32_value(m))
+    } else {
+      "empty:|" + hex(protowkt.encode_empty(protowkt.decode_empty(b).or_fault("e")))
+    }
+    expect((h, got)) == (h, want)
   }
 }
 

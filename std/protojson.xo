@@ -851,7 +851,7 @@ fn timestamp_text(wire: Bytes) -> Str ! JsonErr {
     return Err(jerr("google.protobuf.Timestamp: nanos out of range ${t.nanos}"))
   }
   let (y, mo, d, h, mi, s) = civil(t.seconds)
-  Ok("\"${pad(y, 4)}-${pad(mo, 2)}-${pad(d, 2)}T${pad(h, 2)}:${pad(mi, 2)}:${pad(s, 2)}${frac(t.nanos)}Z\"")
+  Ok("\"${pad(y, 4)}-${pad(mo, 2)}-${pad(d, 2)}T${pad(h, 2)}:${pad(mi, 2)}:${pad(s, 2)}${frac(Int(t.nanos))}Z\"")
 }
 
 fn duration_text(wire: Bytes) -> Str ! JsonErr {
@@ -860,7 +860,7 @@ fn duration_text(wire: Bytes) -> Str ! JsonErr {
     Err(e) => return Err(jerr("proto: ${e.display()}"))
   }
   var secs = t.seconds
-  var nanos = t.nanos
+  var nanos = Int(t.nanos)
   if secs < -315576000000 || secs > 315576000000 {
     return Err(jerr("google.protobuf.Duration: seconds out of range ${secs}"))
   }

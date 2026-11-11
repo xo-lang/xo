@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -169,6 +170,36 @@ func main() {
 		w = append(w, [2]string{enc(wrapperspb.Bytes([]byte(x))), "bytes:" + hexs([]byte(x))})
 	}
 	rows("WRAPPERS", "(wire hex, kind and value: d/f bits hex, i64 u64 i32 u32 decimal, bool, str len:text, bytes hex)", w)
+	// decision 0549: wire a Go writer never makes, read by protobuf-go: a
+	// varint past 32 bits in an int32 or uint32 field keeps its low 32
+	// bits, and Empty keeps unknown fields and writes them back
+	var wide [][2]string
+	varint := func(v uint64) []byte { return protowire.AppendVarint(nil, v) }
+	for _, v := range []uint64{1<<32 + 5, 1 << 31, 1<<32 - 1, math.MaxUint64, 1<<63 + 7, 0xFFFFFFFF80000000} {
+		b := append([]byte{0x10}, varint(v)...)
+		t := &timestamppb.Timestamp{}
+		d := &durationpb.Duration{}
+		if proto.Unmarshal(b, t) != nil || proto.Unmarshal(b, d) != nil {
+			panic("wide")
+		}
+		wide = append(wide, [2]string{hexs(b), fmt.Sprintf("ts:%d,%d|%s", t.Seconds, t.Nanos, enc(t))})
+		wide = append(wide, [2]string{hexs(b), fmt.Sprintf("du:%d,%d|%s", d.Seconds, d.Nanos, enc(d))})
+		b = append([]byte{0x08}, varint(v)...)
+		i, u := &wrapperspb.Int32Value{}, &wrapperspb.UInt32Value{}
+		if proto.Unmarshal(b, i) != nil || proto.Unmarshal(b, u) != nil {
+			panic("wide")
+		}
+		wide = append(wide, [2]string{hexs(b), fmt.Sprintf("i32:%d|%s", i.Value, enc(i))})
+		wide = append(wide, [2]string{hexs(b), fmt.Sprintf("u32:%d|%s", u.Value, enc(u))})
+	}
+	for _, b := range [][]byte{{0x08, 0x01}, {0x12, 0x02, 0x68, 0x69, 0x18, 0x7f}, {0x0d, 1, 2, 3, 4}} {
+		e := &emptypb.Empty{}
+		if proto.Unmarshal(b, e) != nil {
+			panic("wide")
+		}
+		wide = append(wide, [2]string{hexs(b), "empty:|" + enc(e)})
+	}
+	rows("WIDE", "(wire hex, the value read as protobuf-go reads it | its wire written back)", wide)
 	var vs, ss, ls [][2]string
 	for i := 0; i < 120; i++ {
 		v := rval(r, 0)
@@ -338,6 +369,29 @@ test "the wrappers" {
       expect("bytes:" + hex(m.value)) == want
       expect(hex(protowkt.encode_bytes_value(m))) == h
     }
+  }
+}
+
+test "wire Go never writes: wide 32 bit varints, Empty's unknown fields" {
+  for (h, want) in WIDE {
+    let b = unhex(h)
+    let k = want.split(":")[0]
+    let got = if k == "ts" {
+      let m = protowkt.decode_timestamp(b).or_fault("ts")
+      "ts:${m.seconds},${m.nanos}|" + hex(protowkt.encode_timestamp(m))
+    } else if k == "du" {
+      let m = protowkt.decode_duration(b).or_fault("du")
+      "du:${m.seconds},${m.nanos}|" + hex(protowkt.encode_duration(m))
+    } else if k == "i32" {
+      let m = protowkt.decode_int32_value(b).or_fault("i32")
+      "i32:${m.value}|" + hex(protowkt.encode_int32_value(m))
+    } else if k == "u32" {
+      let m = protowkt.decode_uint32_value(b).or_fault("u32")
+      "u32:${m.value}|" + hex(protowkt.encode_uint32_value(m))
+    } else {
+      "empty:|" + hex(protowkt.encode_empty(protowkt.decode_empty(b).or_fault("e")))
+    }
+    expect((h, got)) == (h, want)
   }
 }
 

@@ -21,3 +21,25 @@ Status: Accepted (owner, 2026-11-11; low priority: after ADR 0603 stage 1 and th
 
 - Keep hand written codecs: works, but each new std message type costs a codec and its tests.
 - Generate the codecs with a script into std/native files: a second generator beside `derive`, rejected for duplicating compiler/check/derive.xo.
+
+## Progress
+
+- 2026-11-11 (Xo Lang 3), items 1 and 2 for std/protowkt: compiler/check/load.xo
+  expands `derive` in every non signature file, std modules included (both
+  sites: parse_into and the records closure's loader); the expansion is
+  re-made from source when a build loads std from records, so the records
+  format is unchanged (no cache key bump). A probe module with a `derive
+  Proto` struct encoded and decoded the same on arm64, llvm and the Go
+  backend, cold, warm, and after an edit. std/protowkt's Timestamp,
+  Duration, Empty, FieldMask, Any and the nine wrappers derive Proto;
+  their hand codecs are gone (encode_NAME and decode_NAME call
+  protobuf.marshal and unmarshal). The fields protobuf-go types int32 or
+  uint32 became Int32 and UInt32, since derive Proto maps Int to int64
+  and the hand reader's int32 truncation had no other place; std/protojson
+  (the one user) converts. The corpus gains a WIDE table of wire Go never
+  writes (wide varints, Empty with unknown fields), which the hand Empty
+  failed. Struct, Value and ListValue stay by hand: Value is a oneof enum
+  holding the other two, a message with one oneof field and no other,
+  which a derive struct would wrap in a new type. Next: std/protodesc
+  (item 2's second module), then item 3 (std/otlp, only if its timing row
+  does not regress).

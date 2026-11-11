@@ -8758,15 +8758,21 @@ empty `syntax`. Unknown fields other than a `FieldDesc`'s are dropped.
 
 ## 73. std/protowkt
 
-The well known types of `google/protobuf/*.proto` as Xo values with hand written codecs (decision 0546 item 2):
+The well known types of `google/protobuf/*.proto` as Xo values (decision 0546 item 2):
 `Timestamp`, `Duration`, `Empty`, `FieldMask`, `Any`, the wrappers `DoubleValue`, `FloatValue`, `Int64Value`,
 `UInt64Value`, `Int32Value`, `UInt32Value`, `BoolValue`, `StringValue`, `BytesValue`, and `Struct`, `Value`, `ListValue`
 (`Value` is an enum: `Unset`, `Null`, `Number`, `Text`, `Flag`, `Object`, `Array`). Each type has
 `encode_NAME(m) -> Bytes` and `decode_NAME(b) -> NAME ! protobuf.ProtoErr` (`encode_timestamp`, `decode_field_mask`,
 `encode_value`, ...). Encoding is proto3: a zero scalar is not written, a `Value`'s member is, and a `Struct`'s entries
 are written in key order (protobuf-go's Deterministic marshaling); decoding keeps the last value of a field and skips
-unknown ones. Checked against protobuf-go's types marshaled for fixed and seeded random values (testdata/corpus/protowkt,
-byte for byte, and the decoded values). Decision 0549 converts the module to generated code.
+unknown ones, except `Empty`, whose `unknown` field keeps them and writes them back as protobuf-go does. Field types
+are protobuf-go's: `Timestamp.nanos`, `Duration.nanos` and `Int32Value.value` are `Int32`, `UInt32Value.value` is
+`UInt32`, so a wider varint keeps its low 32 bits. Every type but `Struct`, `Value` and `ListValue` derives `Proto`
+(decision 0549: `derive` expands in std modules too), so `protobuf.marshal` and `protobuf.unmarshal` read and write them
+as `encode_NAME` and `decode_NAME` do; `Value` is a oneof enum holding `Struct` and `ListValue`, and those three keep
+codecs written by hand. Checked against protobuf-go's types marshaled for fixed and seeded random values and against
+wire it never writes (wide 32 bit varints, `Empty` with unknown fields) (testdata/corpus/protowkt, byte for byte, and
+the decoded values).
 
 ## 74. std/protojson
 
