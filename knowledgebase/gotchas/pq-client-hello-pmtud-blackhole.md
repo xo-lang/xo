@@ -19,7 +19,7 @@ xo's TLS client offers X25519MLKEM768 first, as Go 1.26's crypto/tls
 does (tls13.xo client_groups), so its ClientHello carries a 1,216-byte
 key share and is 1,501 bytes on the wire (275 with `XO_TLS_MLKEM=0`).
 The host's VNIC (enp0s6) has MTU 9000, so the ClientHello leaves as one
-1,555-byte packet, and the path to the internet is 1,500. With path MTU
+packet of about 1,550 bytes with its IP and TCP headers, and the path to the internet is 1,500. With path MTU
 discovery broken (no ICMP type 3 code 4 back to the host), the packet is
 dropped silently and the handshake waits until the client's timeout.
 OpenSSL 3.0's curl and git send a ClientHello of about 500 bytes and fit.
