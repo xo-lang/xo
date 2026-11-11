@@ -23,6 +23,20 @@ fn show(os: Os, label: Str, addr: Str, r: Result[http.Response, http.ClientErr])
   }
 }
 
+/// A failure's kind alone: an h2c (prior knowledge) client against an
+/// HTTP/1.1 only server fails as a protocol error whose text follows
+/// which arrives first, the server's HTTP/1.1 answer read as a frame
+/// header ("frame too large") or the closed connection ("client conn
+/// could not be established"; the Go backend's net/http, tier 910's
+/// linux/arm64 TestGoldenGoParity, 2026-11-11).
+fn show_kind(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status}?")
+    Err(http.ClientErr.Protocol(_)) => os.stdio.println("${label}: protocol error")
+    Err(e) => os.stdio.println("${label}: other error ${e}")
+  }
+}
+
 /// Whether a request failed, for a failure whose text names a local port
 /// or races a reset against EOF (an HTTP/1.1 request to an h2c only
 /// server, which closes the connection).
@@ -89,7 +103,7 @@ fn main(os: Os) uses net, stdio, rand, clock {
     show_failed(os, "h1 client", plain.get("http://${a2}/ua"))
     os.stdio.println("== default server")
     show(os, "h1 client", a3, plain.get("http://${a3}/ua"))
-    show(os, "h2c client", a3, h2c.get("http://${a3}/ua"))
+    show_kind(os, "h2c client", h2c.get("http://${a3}/ua"))
     os.stdio.println("== tls server, Http1 only")
     show(os, "default client", a4, secure.get("https://${a4}/ua"))
     os.stdio.println("== tls server, Http2 only")

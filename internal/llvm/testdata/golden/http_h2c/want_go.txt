@@ -9,7 +9,7 @@ h2c client: 200 tls=false ua=Go-http-client/2.0
 h1 client: failed
 == default server
 h1 client: 200 tls=false ua=Go-http-client/1.1
-h2c client: protocol error: Get "http://ADDR/ua": http2: failed reading the frame payload: http2: frame too large, note that the frame header looked like an HTTP/1.1 header
+h2c client: protocol error
 == tls server, Http1 only
 default client: 200 tls=true ua=Go-http-client/1.1
 == tls server, Http2 only
