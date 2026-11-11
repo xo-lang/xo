@@ -126,7 +126,7 @@ fn play_repl(os: Os, std_dir: Str, wd: Str, warm: Str, dir: Str) {
         continue
       }
       if cmd == "type" {
-        let (ty, err) = type_entry(os, base, sess, dir, r.arg)
+        let (ty, err) = type_entry(os, base, sess, wd, dir, r.arg)
         let ms = os.clock.since(t0).nanos() / 1000000
         if !err.is_empty() {
           os.stdio.println(reply(false, None, "", err, ms))
@@ -221,7 +221,7 @@ fn play_repl(os: Os, std_dir: Str, wd: Str, warm: Str, dir: Str) {
       }
       // the types xo repl records: a binding's at its name, a value's at
       // column 5 (where `let VALUE` binds it)
-      let qs = semantic.Session{c: c, wd: dir}
+      let qs = semantic.Session{c: c, wd: wd}
       pending_types = {}
       pending_typ = ""
       if let Bind(name: n, mutable: _) = e.kind {
@@ -298,7 +298,7 @@ fn entry_diags(ds: List[check.Diag], main: Str, at: Int, shift: Int) -> (List[re
 /// `:type EXPR`: the type of EXPR after the session's entries, from a copy of
 /// the warm checker (as an entry is checked), at the column after `let `
 /// where the entry's value binding starts; or the error text.
-fn type_entry(os: Os, base: check.Checker, sess: repl.Sess, dir: Str, x: Str) -> (Str, Str) {
+fn type_entry(os: Os, base: check.Checker, sess: repl.Sess, wd: Str, dir: Str, x: Str) -> (Str, Str) {
   let e = repl.Entry{src: x, kind: repl.Kind.Expr, pin: "", typ: ""}
   let (prog0, at0) = sess.program(e)
   let (prog, at) = repl.with_effects(prog0, at0, None)
@@ -315,7 +315,10 @@ fn type_entry(os: Os, base: check.Checker, sess: repl.Sess, dir: Str, x: Str) ->
     let (_ds, text, _earlier) = entry_diags(c.diags, main, at, shift_of(e))
     return ("", text)
   }
-  let qs = semantic.Session{c: c, wd: dir}
+  // wd, not dir: the check names the session's files from the working
+  // directory (sess/main.xo), as Session.find_file reads them
+  // (TestPlayReplType)
+  let qs = semantic.Session{c: c, wd: wd}
   match qs.type_at(main, at, 5) {
     Ok(t) => (t.typ, "")
     Err(te) => ("", "xo repl: :type: ${te}\n")

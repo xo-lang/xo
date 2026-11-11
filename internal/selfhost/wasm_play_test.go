@@ -113,3 +113,67 @@ func TestWasmPlaygroundStack(t *testing.T) {
 		}
 	}
 }
+
+// TestPlayReplType: the playground's REPL (--play repl, compiler/wasm
+// playrepl.xo) answers `:type` and records an entry's type. Its query
+// session named the session's files from the session directory, but the
+// check names them from the working directory (sess/main.xo), so every
+// `:type` said "main.xo is not part of the checked modules" and no value
+// printed its type (2026-11-11). The REPL's code is the same on every
+// backend: this builds compiler/wasm natively, which takes seconds.
+func TestPlayReplType(t *testing.T) {
+	if testing.Short() || selfhostTier(t) == tierShort {
+		t.Skip("builds compiler/wasm (merge and full tiers)")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := repoRoot(t)
+	tmp := t.TempDir()
+	xoc := filepath.Join(tmp, "xoc")
+	cmd := testtmp.Guard(exec.Command(xo, "build", "-o", xoc, "compiler/wasm"))
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("xo build compiler/wasm: %v\n%s", err, b)
+	}
+	for d, f := range map[string]string{
+		"warm/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"${[1, 2, 3].len()}\")\n}\n",
+		"warm/xo.mod":  "module warm\n",
+		"sess/xo.mod":  "module sess\n",
+	} {
+		p := filepath.Join(tmp, d)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a binding's entry is built and its run answered (empty output), so
+	// the next requests see it
+	in := strings.Join([]string{
+		`{"cmd": "type", "arg": "3.5 * 2.0"}`,
+		`{"in": "let xs = [1, 2]"}`,
+		`{"ran": "", "code": 0}`,
+		`{"cmd": "type", "arg": "xs.map(fn(x) { x > 1 })"}`,
+	}, "\n") + "\n"
+	c := testtmp.Guard(exec.Command(xoc, "--std="+filepath.Join(root, "std"), "--wd="+tmp, "--play", "repl", filepath.Join(tmp, "warm"), filepath.Join(tmp, "sess")))
+	c.Dir = tmp
+	c.Stdin = strings.NewReader(in)
+	out, err := c.CombinedOutput()
+	if err != nil {
+		t.Fatalf("--play repl: %v\n%s", err, out)
+	}
+	got := strings.Split(strings.TrimSpace(string(out)), "\n")
+	want := []string{`"type":"Float"`, `"run":`, `"type":"List[Int]"`, `"type":"List[Bool]"`}
+	if len(got) != len(want) {
+		t.Fatalf("--play repl: %d replies, want %d:\n%s", len(got), len(want), out)
+	}
+	for i, w := range want {
+		if !strings.Contains(got[i], w) || (i != 1 && !strings.Contains(got[i], `"ok":true`)) {
+			t.Errorf("reply %d: %s, want %s and ok", i+1, got[i], w)
+		}
+	}
+}
