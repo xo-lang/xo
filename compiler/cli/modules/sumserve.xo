@@ -58,6 +58,11 @@ struct RefreshHealth {
   last_record: Int = 0
 }
 
+/// How long a failed fetch's answer is given before a lookup tries git
+/// again: a client polling a version with no tag after a 503 must not start
+/// (and be charged for) a fetch on each poll.
+const ADD_ERR_KEEP_MS: Int = 60000
+
 /// Notes a failed bucket write or record for GET /healthz.
 fn note_error(conf: LogConf, now: Int, op: Str, msg: Str) {
   conf.health.with(fn(var h) { h.last_error = Some((now, op, msg)) })
@@ -83,6 +88,15 @@ struct LogConf {
   /// as in <data dir>/fill-pending (fill_logged)
   pending: Mutex[Map[Str, Bool]]
   health: Mutex[RefreshHealth]
+  /// how long a lookup of a new version waits for its fetch before it
+  /// answers 503 (the fetch goes on; --lookup-wait)
+  lookup_wait: Duration = 50s
+  /// the "<path>@<version>" fetches running, one task each
+  adding: Mutex[Map[Str, Bool]]
+  /// the status, message and end (Unix milliseconds) of each fetch that
+  /// failed: a lookup within ADD_ERR_KEEP of it gets that answer, where a
+  /// later one fetches again
+  add_errs: Mutex[Map[Str, (Int, Str, Int)]]
 }
 
 /// The 32 bit value id as 4 big endian bytes.
@@ -405,10 +419,10 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
     return c.run_sumdb_restore(args[1..])
   }
   if args.is_empty() || args[0] != "serve" {
-    c.os.stdio.eprintln("xo mod sumdb: want `keygen <name> <key file>`, `serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] [--copy-to=<bucket URL>] [--rate=60] <data dir>`, or `restore --from=<bucket URL> <data dir>`")
+    c.os.stdio.eprintln("xo mod sumdb: want `keygen <name> <key file>`, `serve --key=<key file> [--addr=127.0.0.1:7071] [--fetch] [--copy-to=<bucket URL>] [--rate=60] [--fill-to=<bucket URL>] [--refresh=30m] [--lookup-wait=50s] <data dir>`, or `restore --from=<bucket URL> <data dir>`")
     return 2
   }
-  var fl = FlagSet{name: "mod sumdb serve", defs: [flag_str("key", "", "the file holding the log's signer key (from xo mod sumdb keygen)"), flag_str("addr", "127.0.0.1:7071", "the address to listen on"), flag_bool("fetch", "add a module version the log lacks by fetching it from git"), flag_str("copy-to", "", "a bucket (https://<endpoint>/<bucket>) every new record is copied to before it is added"), flag_str("region", "auto", "the region bucket requests are signed for"), flag_str("rate", "60", "lookups that add a version, per client and minute (0: no limit)"), flag_str("fill-to", "", "a proxy bucket (https://<endpoint>/<bucket>) each version the log adds is written to, as xo mod proxy fill does"), flag_str("refresh", "", "how often (a duration: 30m) every module's @v/list in the --fill-to bucket is rewritten from its repository's tags; never when empty")]}
+  var fl = FlagSet{name: "mod sumdb serve", defs: [flag_str("key", "", "the file holding the log's signer key (from xo mod sumdb keygen)"), flag_str("addr", "127.0.0.1:7071", "the address to listen on"), flag_bool("fetch", "add a module version the log lacks by fetching it from git"), flag_str("copy-to", "", "a bucket (https://<endpoint>/<bucket>) every new record is copied to before it is added"), flag_str("region", "auto", "the region bucket requests are signed for"), flag_str("rate", "60", "lookups that add a version, per client and minute (0: no limit)"), flag_str("fill-to", "", "a proxy bucket (https://<endpoint>/<bucket>) each version the log adds is written to, as xo mod proxy fill does"), flag_str("refresh", "", "how often (a duration: 30m) every module's @v/list in the --fill-to bucket is rewritten from its repository's tags; never when empty"), flag_str("lookup-wait", "50s", "how long a lookup of a new version waits for git before it answers 503 with Retry-After while the fetch goes on")]}
   if !c.parse_flags(fl, args[1..]) {
     return 2
   }
@@ -455,6 +469,13 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
       }
     }
   }
+  let lookup_wait = match Duration.parse(fl.str("lookup-wait")) {
+    Ok(d) if d.millis() >= 0 => d
+    _ => {
+      c.os.stdio.eprintln("xo mod sumdb serve: --lookup-wait=${fl.str("lookup-wait")} is not a duration")
+      return 2
+    }
+  }
   var refresh: Duration? = None
   if !fl.str("refresh").is_empty() {
     match Duration.parse(fl.str("refresh")) {
@@ -497,7 +518,7 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
   c.out("checksum log ${signer.name} (${st.records.len()} records in ${data}, ${mode}) at http://${l.addr()}\nclients: XO_SUMDB='${verifier} http://${l.addr()}'\n")
   let state = Mutex.new(st)
   let limits: Mutex[Map[Str, (Int, Int)]] = Mutex.new({})
-  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill, refresh: refresh, lists: Mutex.new({}), pending: Mutex.new(c.load_pending(data)), health: Mutex.new(RefreshHealth{})}
+  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill, refresh: refresh, lists: Mutex.new({}), pending: Mutex.new(c.load_pending(data)), health: Mutex.new(RefreshHealth{}), lookup_wait: lookup_wait, adding: Mutex.new({}), add_errs: Mutex.new({})}
   let cc = c
   if let Some(fb) = fill {
     // uploads a restart or an error interrupted
@@ -625,6 +646,60 @@ fn held(state: Mutex[LogState], signer: Signer, key: Str) -> Str? {
   })
   let (id, rec, t) = found?
   Some("${id}\n${rec}\n${sign_tree(signer, t)}")
+}
+
+/// Fetches path@version (into the log's cache), records it and adds it
+/// to the log, copied to --copy-to first, then starts its upload to
+/// --fill-to; a failure's HTTP status and message.
+fn (var c: ModCtx) add_version(state: Mutex[LogState], conf: LogConf, path: Str, version: Str) -> () ! (Int, Str) uses (fs, proc, rand, net, clock, stdio) {
+  let key = "${path}@${version}"
+  let cc = c
+  let dir = match c.download_in("${conf.data}/cache", path, version, Some(direct_only())) {
+    Ok(d) => d
+    Err(pr) => return Err((404, "${path} ${version}: ${pr.msg}"))
+  }
+  let rec = match c.record(dir, path, version) {
+    Ok(lines) => lines.join("\n") + "\n"
+    Err(e) => return Err((404, "${path} ${version}: ${e}"))
+  }
+  // added unless another request added it meanwhile; copied to the
+  // bucket and on disk before any tree head that holds it is signed; its
+  // time is taken under the lock, so the times (and /index) stay in order
+  let added = state.with(fn(var st) -> (Bool, Int) ! Str {
+    let is_new = !st.index.contains(key)
+    let now = cc.os.clock.now().unix()
+    if is_new {
+      if let Some(b) = conf.copy {
+        cc.s3_put(b, record_object(st.records.len()), "${now}\n${rec}".bytes(), "text/plain; charset=utf-8", IMMUTABLE)?
+      }
+      cc.append_record(conf.data, rec, now)?
+      st.add(key, rec)
+      st.times.push(now)
+      st.root = tree_hash(st.leaves, 0, st.leaves.len())
+    }
+    Ok((is_new, now))
+  })
+  match added {
+    Ok((is_new, now)) => {
+      if is_new {
+        conf.health.with(fn(var h) { h.last_record = now })
+        if let Some(fb) = conf.fill {
+          // the tree is in the log's cache already; the answer does not
+          // wait for the upload, and a failed one stays in fill-pending
+          // and is retried (at the start and on each --refresh tick)
+          cc.os.tasks.spawn_background(fn() {
+            var fc = cc
+            fc.fill_logged(conf, fb, path, version)
+          })
+        }
+      }
+      Ok(())
+    }
+    Err(e) => {
+      note_error(conf, cc.os.clock.now().unix(), "record", "${path} ${version}: ${e}")
+      Err((500, "cannot record ${path} ${version}: ${e}"))
+    }
+  }
 }
 
 /// The client a lookup is counted against: Cloudflare's
@@ -778,54 +853,61 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
       return http_error("unknown module version", 404)
     }
     let now = cc.os.clock.now().unix()
-    let client = client_of(req)
-    if conf.rate > 0 && !allow(limits, client, now / 60, conf.rate) {
-      return http_error("${client} added ${conf.rate} module versions this minute; try again in a minute", 429).with_header("Retry-After", "60")
-    }
-    let dir = match cc.download_in("${conf.data}/cache", path, version, Some(direct_only())) {
-      Ok(d) => d
-      Err(pr) => return http_error("${path} ${version}: ${pr.msg}", 404)
-    }
-    let rec = match cc.record(dir, path, version) {
-      Ok(lines) => lines.join("\n") + "\n"
-      Err(e) => return http_error("${path} ${version}: ${e}", 404)
-    }
-    // added unless another request added it meanwhile; copied to the
-    // bucket and on disk before any tree head that holds it is signed
-    let added = state.with(fn(var st) -> (Int, Str, Tree, Bool) ! Str {
-      var id = st.index.get(key) ?? -1
-      let is_new = id < 0
-      if is_new {
-        if let Some(b) = conf.copy {
-          cc.s3_put(b, record_object(st.records.len()), "${now}\n${rec}".bytes(), "text/plain; charset=utf-8", IMMUTABLE)?
-        }
-        cc.append_record(conf.data, rec, now)?
-        id = st.add(key, rec)
-        st.times.push(now)
-        st.root = tree_hash(st.leaves, 0, st.leaves.len())
+    // a new version is fetched, recorded and added by one background task
+    // per version, which outlives this request: Cloudflare cuts a request
+    // at 100 s and xo's client waits 60 s, while git can take minutes on a
+    // large repository. The answer waits up to --lookup-wait, then asks
+    // the client to try again (503, Retry-After) while the task goes on.
+    let until = cc.os.clock.now().unix_millis() + conf.lookup_wait.millis()
+    var started = false
+    while true {
+      // adding before held: the task adds the record, then leaves adding,
+      // so a lookup that sees no task running sees its record
+      let running = conf.adding.with_read(fn(m) { m.contains(key) })
+      if let Some(body) = held(state, signer, key) {
+        return plain(body).with_header("Cache-Control", NO_STORE)
       }
-      Ok((id, st.records[id], Tree{n: st.leaves.len(), hash: st.root}, is_new))
-    })
-    return match added {
-      Ok((id, r, t, is_new)) => {
-        if is_new {
-          conf.health.with(fn(var h) { h.last_record = now })
-          if let Some(fb) = conf.fill {
-            // the tree is in the log's cache already; the answer does not
-            // wait for the upload, and a failed one stays in fill-pending
-            // and is retried (at the start and on each --refresh tick)
-            cc.os.tasks.spawn_background(fn() {
-              var fc = cc
-              fc.fill_logged(conf, fb, path, version)
-            })
+      if !running {
+        let t = cc.os.clock.now().unix_millis()
+        if let Some((code, msg, at)) = conf.add_errs.with_read(fn(m) { m.get(key) }) {
+          if started || t - at < ADD_ERR_KEEP_MS {
+            return http_error(msg, code)
           }
+        } else if started {
+          return http_error("${path} ${version}: the fetch ended without a record", 500)
         }
-        plain("${id}\n${r}\n${sign_tree(signer, t)}").with_header("Cache-Control", NO_STORE)
       }
-      Err(e) => {
-        note_error(conf, now, "record", "${path} ${version}: ${e}")
-        http_error("cannot record ${path} ${version}: ${e}", 500)
+      if !running {
+        // counted when it starts a fetch, not for each wait on one
+        let client = client_of(req)
+        if conf.rate > 0 && !allow(limits, client, now / 60, conf.rate) {
+          return http_error("${client} added ${conf.rate} module versions this minute; try again in a minute", 429).with_header("Retry-After", "60")
+        }
+        let mine = conf.adding.with(fn(var m) -> Bool {
+          let free = !m.contains(key)
+          if free {
+            m[key] = true
+          }
+          free
+        })
+        if mine {
+          conf.add_errs.with(fn(var m) { m.remove(key) })
+          cc.os.tasks.spawn_background(fn() {
+            var ac = cc
+            if let Err((code, msg)) = ac.add_version(state, conf, path, version) {
+              let at = ac.os.clock.now().unix_millis()
+              conf.add_errs.with(fn(var m) { m[key] = (code, msg, at) })
+            }
+            conf.adding.with(fn(var m) { m.remove(key) })
+          })
+        }
+        started = true
+        continue
       }
+      if cc.os.clock.now().unix_millis() >= until {
+        return http_error("${path} ${version}: still fetching from git; try again in a few seconds", 503).with_header("Retry-After", "5").with_header("Cache-Control", NO_STORE)
+      }
+      cc.os.clock.sleep(100ms)
     }
   }
   let inclusion = p.starts_with("/proof/inclusion/")

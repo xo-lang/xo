@@ -484,8 +484,9 @@ func TestChecksumLogFillRetry(t *testing.T) {
 	if has("github.com/acme/billing/@v/v1.2.0.mod")() {
 		t.Fatalf("a .mod was written during the outage")
 	}
-	// GET /healthz shows the failed upload, and when the log last added
-	if h := readHealth(t, logURL); h.LastRecord == 0 || h.LastError == nil || h.LastError.Op != "fill" || h.LastError.At == 0 || !strings.Contains(h.LastError.Error, "ServiceUnavailable") {
+	// GET /healthz shows the failed upload (the version's files or its
+	// @v/list, whichever failed last), and when the log last added
+	if h := readHealth(t, logURL); h.LastRecord == 0 || h.LastError == nil || (h.LastError.Op != "fill" && h.LastError.Op != "list") || h.LastError.At == 0 || !strings.Contains(h.LastError.Error, "ServiceUnavailable") {
 		t.Errorf("/healthz during the outage: %+v %+v", h, h.LastError)
 	}
 	s3.setDown(false)
@@ -698,5 +699,64 @@ func TestChecksumLogWarm(t *testing.T) {
 	out, err = warm("github.com/acme/money", "github.com/acme/nosuch")
 	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 || !strings.Contains(out, "github.com/acme/nosuch: git ls-remote:") {
 		t.Errorf("warm.sh with a missing repository: %v\n%s", err, out)
+	}
+}
+
+// TestChecksumLogLookupWait: a new version is fetched by a background task
+// that outlives the lookup (Cloudflare cuts a request at 100 s): past
+// --lookup-wait the answer is a 503 with Retry-After, and the client's
+// next lookups (not counted in --rate) get the record once it is added,
+// or the fetch's error.
+func TestChecksumLogLookupWait(t *testing.T) {
+	xotool.NeedPorts(t)
+	t.Parallel()
+	modSetup(t, "../../internal/mod/testdata/repos")
+	ws := t.TempDir()
+	key := filepath.Join(ws, "log.key")
+	xo(t, "mod", "sumdb", "keygen", "sum.test", key).want(0)
+	logData := t.TempDir()
+	t.Cleanup(func() { modtest.MakeWritable(logData) })
+	logURL, _ := startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", "--rate=2", "--lookup-wait=0s", logData)
+
+	// until is the lookup's answer once it is no longer 503
+	until := func(v string) (int, string) {
+		t.Helper()
+		saw503 := false
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			resp, err := http.Get(logURL + "/lookup/github.com/acme/money@" + v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != 503 {
+				if !saw503 {
+					t.Errorf("%s: %d before any 503 with --lookup-wait=0s", v, resp.StatusCode)
+				}
+				return resp.StatusCode, string(b)
+			}
+			saw503 = true
+			if resp.Header.Get("Retry-After") == "" || !strings.Contains(string(b), "still fetching") {
+				t.Errorf("%s: 503 with Retry-After %q: %s", v, resp.Header.Get("Retry-After"), b)
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: still 503 after 60 s", v)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if code, body := until("v1.1.0"); code != 200 || !strings.HasPrefix(body, "0\ngithub.com/acme/money v1.1.0 ") {
+		t.Errorf("v1.1.0 after the fetch: %d %q", code, body)
+	}
+	if code, body := until("v9.9.9"); code != 404 || !strings.Contains(body, "github.com/acme/money v9.9.9") {
+		t.Errorf("a version with no tag: %d %q", code, body)
+	}
+	// the many polls above counted 2 fetches: a third starts a 429
+	if code, _, body := get(t, logURL+"/lookup/github.com/acme/money@v1.3.0", nil); code != 429 && time.Now().Unix()%60 > 2 {
+		t.Errorf("a third fetch this minute: %d %s", code, body)
+	}
+	if h := readHealth(t, logURL); h.Records != 1 {
+		t.Errorf("records: %d", h.Records)
 	}
 }

@@ -17,7 +17,8 @@
 # and the module's @v/list to the proxy bucket (--fill-to).
 #
 # A 429 (the log's --rate, per client and minute) waits for the next
-# minute; a 5xx, Cloudflare's 524 (its 100 s limit while the log fetches
+# minute; a 503 (the log still fetching past its --lookup-wait) is asked
+# again every 5 s for up to 10 minutes; another 5xx, Cloudflare's 524 (its 100 s limit while the log fetches
 # a large repository) or no answer is tried again up to 3 times, since
 # the log keeps what a cut fetch cloned. It exits 1 when a version still
 # failed. WARM_WAIT (seconds, default 61) is the wait after a 429.
@@ -87,11 +88,18 @@ for repo in "${repos[@]}"; do
       continue
     fi
     tries=0
+    start=$(date +%s)
     while :; do
       code=$(ask "$log/lookup/$path@$ver")
       case $code in
         200) echo "$path@$ver: ok"; break ;;
         429) echo "$path@$ver: 429, waiting ${wait_s}s"; sleep "$wait_s"; continue ;;
+        503)
+          # the log is still fetching (past its --lookup-wait): ask again
+          if [ $(( $(date +%s) - start )) -lt 600 ]; then
+            sleep 5
+            continue
+          fi ;;
       esac
       tries=$((tries + 1))
       if [ "$code" = 404 ] || [ "$code" = 410 ] || [ $tries -gt 3 ]; then
