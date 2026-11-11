@@ -1097,7 +1097,19 @@ fn merge_ranges(rs: List[Int]) -> List[Int] {
   if rs.len() < 2 {
     return rs
   }
-  let sorted = rs.sort_by(fn(r) { rng_s(r) })
+  // a range is start << 32 | end with both at least 0, so the plain
+  // order of the words is by start, then end (the merge below is the same
+  // for either order of equal starts); no sort when the blocks gave them
+  // in order. sort_by called its key closure per comparison (merge_ranges
+  // was 9% of regalloc on the aiplatform/v1 test build, 2026-11-11)
+  var up = true
+  for i in 1..rs.len() {
+    if rs[i - 1] > rs[i] {
+      up = false
+      break
+    }
+  }
+  let sorted = if up { rs } else { rs.sort() }
   var out: List[Int] = [sorted[0]]
   for i in 1..sorted.len() {
     let r = sorted[i]
