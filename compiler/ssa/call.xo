@@ -130,7 +130,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
   if let Some(v) = b.fs_user_call(x, fo) {
     return v
   }
-  if b.is_std_mod(fm) && !b.derived_in_c(fm, fo) {
+  if (b.is_std_mod(fm) || b.native_part(fo)) && !b.derived_in_c(fm, fo) {
     let path = b.c.mods[fm].path
     if path.starts_with("native/") {
       return b.intrinsic(x, ci)

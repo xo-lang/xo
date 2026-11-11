@@ -189,3 +189,15 @@ pushes.
   (0.772 to 0.838, n=7) on host 1: merged whole, no native part.
   url: escape over BytesBuilder was 1.075 (1.053 to 1.107) and with one
   write_be per escape 1.041 (1.023 to 1.068), so its escape stays native.
+- Part 2, the split (2026-11-10, stage A): a merged module's fast path is
+  a bodyless declaration in std/M.xo. The parser takes one in a top level
+  std/M.xo file (parser.xo std_top) and the checker reports XO0172 for
+  one in any module that is not merged std (load.xo parse_into); the
+  loader loads std/native/M_native.xo as a merged module's
+  implementation (load_impl), SSA routes a call of the bodyless function
+  to it as an unmerged module's (build.xo native_part, call.xo), and the
+  Go backend calls its hand written twin in std/rt (gen.xo rt_twin,
+  rt.Url_escape). Stage B, url split this way, waits for a seed: an
+  older xo stops at the bodyless declaration (XO0172) when it builds
+  compiler/xo, which imports std/url.
+

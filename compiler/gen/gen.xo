@@ -808,6 +808,19 @@ fn (var g: Gen) rt_hosted_roots() {
   g.p = saved
 }
 
+/// Whether fo is a bodyless function of a merged std module (decision
+/// 0597 part 2: a fast path whose native body is in std/native/M_native.xo):
+/// on the Go backend its body is hand written Go in std/rt, called as an
+/// unmerged module's function is (rt.Url_escape).
+fn (g: Gen) rt_twin(fo: Int) -> Bool {
+  let m = g.omod(fo)
+  if m < 0 || !g.c.mods[m].merged || !g.c.mods[m].is_std {
+    return false
+  }
+  let fd = g.c.objs[fo].fn_decl
+  !fd.is_empty() && fd[0].body == None && fd[0].lazy == None
+}
+
 /// Whether module m is merged but generated into package rt, bodies and
 /// all, by scripts/stdgen (decision 0597, std/rt_hosted.txt): std/rt's hand
 /// written Go calls it (its http's media types), so a program's calls of

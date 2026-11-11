@@ -1308,7 +1308,15 @@ fn (c: Checker) skip_impl(data: Bytes) -> Bool {
 /// instead, its functions were runtime calls (`rt.new_stream`) when it
 /// sorted after the importer.
 fn (var c: Checker) load_impl(path: Str) -> Int {
-  let name = path.trim_prefix("std/")
+  var name = path.trim_prefix("std/")
+  // a merged module (decision 0588) keeps only its fast paths native, in
+  // std/native/<name>_native.xo behind bodyless declarations (decision
+  // 0597 part 2)
+  if let Some(m) = c.mod_index.get(path) {
+    if c.mods[m].merged {
+      name = name + "_native"
+    }
+  }
   if let Some(m) = c.mod_index.get("native/${name}") {
     return m
   }
@@ -1412,6 +1420,17 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   c.files.push(SrcFile{path: path, module: m, ast: ast, iface: r.iface, is_test: path.ends_with("_test.xo"), sig: sig, src: src})
   c.give_base(f)
   c.mods[m].files.push(f)
+  if !sig && path.starts_with("std/") && !(c.mods[m].std_tree && c.mods[m].merged) {
+    // the parser takes a bodyless function in any std/M.xo; only a merged
+    // std module declares one (its native part, decision 0597 part 2)
+    for d in ast.decls {
+      if let FnDecl(fd) = d {
+        if fd.body == None && fd.lazy == None {
+          let _e = c.error_at(f, "XO0172", fd.span, "a function needs a body: only a merged std module declares one without (its fast path in std/native/M_native.xo, decision 0597)")
+        }
+      }
+    }
+  }
   // a C binding's declaration file is a signature file, and its valued
   // enums get their methods like any module's (decision 0269 part 4)
   if (!c.mods[m].is_std && !sig) || !c.mods[m].c_decl.is_empty() {

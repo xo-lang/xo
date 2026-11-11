@@ -953,11 +953,20 @@ fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interfa
     } else {
       fn_decl.body = Some(p.parse_block())
     }
-  } else if !in_interface && !p.sig {
+  } else if !in_interface && !p.sig && !std_top(p.file) {
     p.fail(MISSING_BODY, p.tok.span, "expected `{` to start the body of `${txt(name.name)}`, found ${describe(p.tok)}")
   }
   fn_decl.span = p.span_from(start)
   fn_decl
+}
+
+/// Whether name is a top level std file (std/M.xo): in a merged module
+/// (decision 0588) a fast path is a bodyless declaration whose body is in
+/// std/native/M_native.xo and std/rt (decision 0597 part 2). The checker
+/// reports one in any other module (load.xo parse_into).
+fn std_top(name: Bytes) -> Bool {
+  let s = name.to_str() ?? ""
+  s.starts_with("std/") && s.ends_with(".xo") && !s.trim_prefix("std/").contains("/")
 }
 
 /// Whether the token at index i can start a type (habit checks).

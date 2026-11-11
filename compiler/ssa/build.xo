@@ -1537,6 +1537,18 @@ fn (var b: Builder) is_std_mod(m: Int) -> Bool {
   m >= 0 && b.c.mods[m].is_std && !b.c.mods[m].merged
 }
 
+/// Whether fo is a bodyless function of a merged std module, a fast path
+/// whose body is in std/native/M_native.xo (decision 0597 part 2): its
+/// calls go to that implementation as an unmerged module's do (impl_of).
+fn (var b: Builder) native_part(fo: Int) -> Bool {
+  let m = b.obj_mod(fo)
+  if m < 0 || !b.c.mods[m].merged {
+    return false
+  }
+  let fd = b.c.objs[fo].fn_decl
+  !fd.is_empty() && fd[0].body == None && fd[0].lazy == None
+}
+
 /// Whether checker type t is one of the prelude types names
 /// (isPreludeNamed).
 fn (var b: Builder) is_prelude_named(t: Int, names: List[Str]) -> Bool {
