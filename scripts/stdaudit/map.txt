@@ -1320,9 +1320,9 @@ xml.Comment = std/xml.Token.Comment
 xml.ProcInst = std/xml.Token.ProcInst
 xml.Directive = std/xml.Token.Directive
 xml.SyntaxError = std/xml.XmlErr
-xml.Encoder = gap: no streaming XML encoder (Element.encode and encode_value)
-xml.NewEncoder = gap: no streaming XML encoder (Element.encode and encode_value)
-xml.Encoder.* = gap: no streaming XML encoder (Element.encode and encode_value)
+xml.Encoder = std/xml.Writer
+xml.NewEncoder = std/xml.writer
+xml.Encoder.* = std/xml.Writer (token is EncodeToken, take is Flush, close is Close; Encode and EncodeElement of a value: encode_value)
 xml.* = not planned: Marshaler interfaces (derive Xml), token copy methods, HTML auto close tables and Go's error structs
 
 # html/template, text/template: std/template

@@ -1,5 +1,20 @@
 # std/xml changes
 
+## 2026-11-11: feature: xml.writer, Go's Encoder a token at a time
+
+- Kind: feature
+- Commit: this push
+- Found by: std audit 2026-11-11 gap 18
+- Go reference: encoding/xml Encoder.EncodeToken, Indent, Flush, Close (go1.26.1)
+- Test: xml corpus WRITES (400 random step lists: tags, mismatched and namespaced ends, text, comments, processing instructions, directives, elements, takes, steps after close), from Go, on go, arm64, llvm
+- Shipped in: not yet released
+
+`writer(indent)` gives a Writer whose `token`, `element`, `take` and
+`close` are EncodeToken, a tree's tokens, Flush and Close. The text is
+taken rather than written to an io sink: a program writes each `take()`
+where it wants. The Go backend runs encoding/xml's Encoder; native code
+reuses the Printer of `encode` with Go's open-tag stack.
+
 ## 2026-11-03: feature: Reader, tokens one at a time
 
 - Kind: feature

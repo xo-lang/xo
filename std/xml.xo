@@ -56,6 +56,24 @@ fn raw_reader(text: Str) -> Reader
 /// by every later call.
 fn (var r: Reader) next() -> Token? ! XmlErr
 
+/// Go's Encoder writing tokens one at a time into text the program takes
+/// as it goes: EncodeToken's checks and errors, Indent("", indent), Close.
+struct Writer {}
+
+/// A writer indenting each level by indent ("" for none).
+fn writer(indent: Str = "") -> Writer
+/// Go's EncodeToken: a start tag, or an end tag matching the open one
+/// (`xml: end tag </b> does not match start tag <a>`), text escaped,
+/// a comment, processing instruction or directive with Go's checks.
+fn (var w: Writer) token(t: Token) -> () ! XmlErr
+/// e's tokens as encode writes them, inside whatever is open.
+fn (var w: Writer) element(e: Element) -> () ! XmlErr
+/// The text written since the last take (Go's Flush).
+fn (var w: Writer) take() -> Str
+/// Go's Close: `unclosed tag <a>` while a tag is open; a token after it is
+/// `use of closed Encoder`.
+fn (var w: Writer) close() -> () ! XmlErr
+
 /// An element and everything inside it.
 struct Element {
   name: Name

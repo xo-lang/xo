@@ -5638,6 +5638,12 @@ struct Reader {}                                              // tokens one at a
 pub fn reader(text: Str, strict: Bool = true) -> Reader
 pub fn raw_reader(text: Str) -> Reader
 fn (var r: Reader) next() -> Token? ! XmlErr                  // None at the end of the input
+struct Writer {}                                              // Go's Encoder, tokens one at a time
+pub fn writer(indent: Str = "") -> Writer                     // Indent("", indent)
+fn (var w: Writer) token(t: Token) -> () ! XmlErr             // EncodeToken
+fn (var w: Writer) element(e: Element) -> () ! XmlErr         // e's tokens, as encode writes them
+fn (var w: Writer) take() -> Str                              // the text since the last take (Flush)
+fn (var w: Writer) close() -> () ! XmlErr                     // Close
 struct Element { name: Name, attrs: List[Attr], children: List[Node] }
 enum Node { Elem(e), Text(s), Comment(s), ProcInst(target, inst), Directive(s), Raw(s) }   // Raw: written as is by encode (derive Xml's text)
 pub fn parse(text: Str, strict: Bool = true) -> Element ! XmlErr
@@ -5674,6 +5680,17 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
   processing instruction after the start) are errors.
 - `escape` is Go's EscapeText; `escape_to` appends the same text to a
   builder.
+- `writer` is Go's Encoder for a document written a token at a time
+  (std audit 2026-11-11 gap 18): `token` is EncodeToken with its checks
+  and texts (an end tag must match the open start tag: `xml: end tag </b>
+  does not match start tag <a>`, `xml: end tag </b> without start tag`,
+  and the namespace form), `element` writes a tree's tokens inside what
+  is open, `take` returns what was written since the last take (Go's
+  Flush; a `<?xml ...?>` is accepted only when nothing is waiting, as
+  Go's Buffered check), and `close` is Close (`unclosed tag <a>`; every
+  token after it is `use of closed Encoder`). Tests: a Go-generated
+  corpus of 400 step lists (WRITES in the xml corpus) on go, arm64 and
+  LLVM.
 - No DTD processing and no external entities, as in Go.
 - `derive Xml` (decision 0315, core 2.9) is Go's Marshal and Unmarshal for
   a struct:

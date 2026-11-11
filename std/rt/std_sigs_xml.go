@@ -12,6 +12,11 @@ var (
 	_ func(*Task, string, bool) Xml_Reader                           = Xml_reader
 	_ func(*Task, string) Xml_Reader                                 = Xml_raw_reader
 	_ func(*Xml_Reader, *Task) Result[Option[Xml_Token], Xml_XmlErr] = (*Xml_Reader).M_next
+	_ func(*Task, string) Xml_Writer                                 = Xml_writer
+	_ func(*Xml_Writer, *Task, Xml_Token) Result[Unit, Xml_XmlErr]   = (*Xml_Writer).M_token
+	_ func(*Xml_Writer, *Task, Xml_Element) Result[Unit, Xml_XmlErr] = (*Xml_Writer).M_element
+	_ func(*Xml_Writer, *Task) string                                = (*Xml_Writer).M_take
+	_ func(*Xml_Writer, *Task) Result[Unit, Xml_XmlErr]              = (*Xml_Writer).M_close
 	_ func(*Task, string, bool) Result[Xml_Element, Xml_XmlErr]      = Xml_parse
 	_ func(*Xml_Element, *Task, string) Option[string]               = (*Xml_Element).M_attr
 	_ func(*Xml_Element, *Task, string) Option[Xml_Element]          = (*Xml_Element).M_child

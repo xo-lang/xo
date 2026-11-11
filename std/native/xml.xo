@@ -1513,6 +1513,155 @@ fn (var p: Printer) encode_element(e: xml.Element) -> () ! Str {
   Ok(())
 }
 
+/// xml.Writer: a Printer with Go's open tags (printer.tags) and the
+/// prefix marks their start tags took.
+struct Writer {
+  p: Printer
+  tags: List[xml.Name] = []
+  marks: List[Int] = []
+  /// bytes written since the last take (bufio's Buffered() != 0)
+  buffered: Bool = false
+  closed: Bool = false
+}
+
+fn writer(indent: Str) -> Writer { Writer{p: Printer{out: StrBuilder.new(), indent: indent}} }
+
+fn (var w: Writer) token(t: xml.Token) -> () ! xml.XmlErr {
+  match w.put(t) {
+    Ok(_) => Ok(())
+    Err(m) => Err(xml.XmlErr{line: 0, msg: m})
+  }
+}
+
+/// EncodeToken: its checks first, then the bytes; after close the state
+/// moves as Go's does, nothing is written, and the result is `use of
+/// closed Encoder`.
+fn (var w: Writer) put(t: xml.Token) -> () ! Str {
+  let before = w.p.out.len()
+  match t {
+    xml.Token.Start(name, attrs) => {
+      if name.local.is_empty() {
+        return Err("xml: start tag with no name")
+      }
+      w.tags.push(name)
+      w.marks.push(w.p.prefixes.len())
+      w.p.write_start(name, attrs)?
+    }
+    xml.Token.End(name) => {
+      if name.local.is_empty() {
+        return Err("xml: end tag with no name")
+      }
+      let n = w.tags.len()
+      if n == 0 || w.tags[n - 1].local.is_empty() {
+        return Err("xml: end tag </${name.local}> without start tag")
+      }
+      let top = w.tags[n - 1]
+      if top != name {
+        if top.local != name.local {
+          return Err("xml: end tag </${name.local}> does not match start tag <${top.local}>")
+        }
+        return Err("xml: end tag </${name.local}> in namespace ${name.space} does not match start tag <${top.local}> in namespace ${top.space}")
+      }
+      let mark = w.marks[n - 1]
+      w.tags = w.tags[..n - 1]
+      w.marks = w.marks[..n - 1]
+      w.p.write_end(name, mark)
+    }
+    xml.Token.Text(s) => w.p.write_escaped(s, false)
+    xml.Token.Comment(s) => {
+      if s.contains("-->") {
+        return Err("xml: EncodeToken of Comment containing --> marker")
+      }
+      w.p.write("<!--${s}-->")
+    }
+    xml.Token.ProcInst(target, inst) => {
+      if target == "xml" && w.buffered {
+        return Err("xml: EncodeToken of ProcInst xml target only valid for xml declaration, first token encoded")
+      }
+      if !is_name(target) {
+        return Err("xml: EncodeToken of ProcInst with invalid Target")
+      }
+      if inst.contains("?>") {
+        return Err("xml: EncodeToken of ProcInst containing ?> marker")
+      }
+      w.p.write("<?${target}")
+      if !inst.is_empty() {
+        w.p.write(" ${inst}")
+      }
+      w.p.write("?>")
+    }
+    xml.Token.Directive(s) => {
+      if !valid_directive(s) {
+        return Err("xml: EncodeToken of Directive containing wrong < or > markers")
+      }
+      w.p.write("<!${s}>")
+    }
+  }
+  if w.closed {
+    // nothing reaches a closed Encoder's writer
+    let all = w.p.out.freeze()
+    w.p.out = StrBuilder.new()
+    w.p.out.write(all[..before])
+    // Go's printer keeps the error: every token after close fails, even
+    // one that writes nothing (cachedWriteError)
+    return Err("use of closed Encoder")
+  }
+  if w.p.out.len() > before {
+    w.buffered = true
+  }
+  Ok(())
+}
+
+fn (var w: Writer) element(e: xml.Element) -> () ! xml.XmlErr {
+  match w.put_element(e) {
+    Ok(_) => Ok(())
+    Err(m) => Err(xml.XmlErr{line: 0, msg: m})
+  }
+}
+
+/// e as std/rt's xmlEncode writes it: EncodeToken per token, so an error
+/// inside leaves the tags open as Go's does; Raw text after a flush.
+fn (var w: Writer) put_element(e: xml.Element) -> () ! Str {
+  w.put(xml.Token.Start(name: e.name, attrs: e.attrs))?
+  for n in e.children {
+    match n {
+      xml.Node.Elem(c) => w.put_element(c)?
+      xml.Node.Text(s) => w.put(xml.Token.Text(s: s))?
+      xml.Node.Comment(s) => w.put(xml.Token.Comment(s: s))?
+      xml.Node.ProcInst(target, inst) => w.put(xml.Token.ProcInst(target: target, inst: inst))?
+      xml.Node.Directive(s) => w.put(xml.Token.Directive(s: s))?
+      xml.Node.Raw(s) => {
+        // std/rt flushes, then writes s to the buffer itself, past
+        // the Encoder (so even after close)
+        w.p.write(s)
+        // written after Flush: nothing stays buffered
+        w.buffered = false
+      }
+    }
+  }
+  w.put(xml.Token.End(name: e.name))
+}
+
+fn (var w: Writer) take() -> Str {
+  let s = w.p.out.freeze()
+  w.p.out = StrBuilder.new()
+  w.buffered = false
+  s
+}
+
+fn (var w: Writer) close() -> () ! xml.XmlErr {
+  if w.closed {
+    return Ok(())
+  }
+  w.closed = true
+  w.buffered = false
+  let n = w.tags.len()
+  if n > 0 {
+    return Err(xml.XmlErr{line: 0, msg: "unclosed tag <${w.tags[n - 1].local}>"})
+  }
+  Ok(())
+}
+
 fn element_encode(e: xml.Element, indent: Str) -> Str ! xml.XmlErr {
   var p = Printer{out: StrBuilder.new(), indent: indent}
   match p.encode_element(e) {

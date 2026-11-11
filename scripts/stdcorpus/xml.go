@@ -289,6 +289,7 @@ func xmlCorpus() string {
 	}
 	fmt.Fprintf(&o, "]\n\n/// The ERRTEXTS rows the generator wrote; the corpus checks the list against it, so an empty or truncated list fails instead of passing\nconst ERRTEXT_COUNT: Int = %d\n", count)
 	o.WriteString(xmlTests)
+	o.WriteString(xmlWriterCorpus())
 	xmlDeriveCorpus(&o)
 	return o.String()
 }
@@ -419,5 +420,179 @@ test "an XmlErr displays as Go's error text (std/xml XmlErr)" {
     }
   }
   expect(first_bad(bad)) == []
+}
+`
+
+// xmlWriterCorpus checks xml.writer, Writer.token, element, take and close
+// against Go's Encoder (EncodeToken, Indent, Flush, Close) on seeded
+// random step lists: start and end tags (some mismatched, some in
+// namespaces), text, comments, processing instructions and directives
+// with Go's bad cases, takes between steps, and steps after a close.
+func xmlWriterCorpus() string {
+	r := rand.New(rand.NewSource(1826))
+	type step struct {
+		k     int
+		a, b  string
+		attrs [][3]string
+	}
+	spaces := []string{"", "", "", "urn:x", "urn:y"}
+	locals := []string{"a", "b", "c", "item", ""}
+	texts := []string{"", "hi", "a<b&c", "x\ny\r", "-->", "é\t"}
+	pis := [][2]string{{"xml", "version=\"1.0\""}, {"go", "fmt"}, {"bad name", ""}, {"go", "a?>b"}, {"t", ""}}
+	dirs := []string{"DOCTYPE x", "DOCTYPE x [<!ENTITY y \"z\">]", "bad>", "<!-- c -->x", "x<"}
+	var o strings.Builder
+	o.WriteString("\n/// (indent, steps (kind, a, b, attrs): 0 start, 1 end, 2 text, 3 comment, 4 procinst, 5 directive, 6 take, 7 close, 8 element of the steps' own open tag; Go's result of each step)\nconst WRITES: List[(Str, List[(Int, Str, Str, List[(Str, Str, Str)])], List[Str])] = [\n")
+	for i := 0; i < 400; i++ {
+		indent := []string{"", "", "  ", "\t"}[r.Intn(4)]
+		var steps []step
+		var open []step
+		for j, n := 0, 1+r.Intn(12); j < n; j++ {
+			switch k := r.Intn(10); {
+			case k < 3:
+				s := step{k: 0, a: spaces[r.Intn(len(spaces))], b: locals[r.Intn(len(locals))]}
+				for m := r.Intn(3); m > 0; m-- {
+					s.attrs = append(s.attrs, [3]string{spaces[r.Intn(len(spaces))], locals[r.Intn(4)], texts[r.Intn(len(texts))]})
+				}
+				steps = append(steps, s)
+				open = append(open, s)
+			case k < 6:
+				if len(open) > 0 && r.Intn(5) != 0 {
+					t := open[len(open)-1]
+					open = open[:len(open)-1]
+					steps = append(steps, step{k: 1, a: t.a, b: t.b})
+				} else {
+					steps = append(steps, step{k: 1, a: spaces[r.Intn(len(spaces))], b: locals[r.Intn(len(locals))]})
+				}
+			case k == 6:
+				steps = append(steps, step{k: 2, b: texts[r.Intn(len(texts))]})
+			case k == 7:
+				x := r.Intn(4)
+				switch x {
+				case 0:
+					steps = append(steps, step{k: 3, b: texts[r.Intn(len(texts))]})
+				case 1:
+					p := pis[r.Intn(len(pis))]
+					steps = append(steps, step{k: 4, a: p[0], b: p[1]})
+				default:
+					steps = append(steps, step{k: 5, b: dirs[r.Intn(len(dirs))]})
+				}
+			case k == 8:
+				steps = append(steps, step{k: 6})
+			default:
+				if r.Intn(4) == 0 {
+					steps = append(steps, step{k: 7})
+				} else {
+					steps = append(steps, step{k: 8, a: spaces[r.Intn(len(spaces))], b: locals[r.Intn(4)]})
+				}
+			}
+		}
+		steps = append(steps, step{k: 6}, step{k: 7}, step{k: 6})
+		var b bytes.Buffer
+		enc := xml.NewEncoder(&b)
+		if indent != "" {
+			enc.Indent("", indent)
+		}
+		var res []string
+		res1 := func(err error) {
+			if err != nil {
+				res = append(res, "err "+err.Error())
+			} else {
+				res = append(res, "ok")
+			}
+		}
+		var xs []string
+		for _, s := range steps {
+			var attrs []string
+			var gattrs []xml.Attr
+			for _, a := range s.attrs {
+				attrs = append(attrs, fmt.Sprintf("(%s, %s, %s)", xq(a[0]), xq(a[1]), xq(a[2])))
+				gattrs = append(gattrs, xml.Attr{Name: xml.Name{Space: a[0], Local: a[1]}, Value: a[2]})
+			}
+			xs = append(xs, fmt.Sprintf("(%d, %s, %s, [%s])", s.k, xq(s.a), xq(s.b), strings.Join(attrs, ", ")))
+			name := xml.Name{Space: s.a, Local: s.b}
+			switch s.k {
+			case 0:
+				res1(enc.EncodeToken(xml.StartElement{Name: name, Attr: gattrs}))
+			case 1:
+				res1(enc.EncodeToken(xml.EndElement{Name: name}))
+			case 2:
+				res1(enc.EncodeToken(xml.CharData(s.b)))
+			case 3:
+				res1(enc.EncodeToken(xml.Comment(s.b)))
+			case 4:
+				res1(enc.EncodeToken(xml.ProcInst{Target: s.a, Inst: []byte(s.b)}))
+			case 5:
+				res1(enc.EncodeToken(xml.Directive(s.b)))
+			case 6:
+				enc.Flush()
+				res = append(res, "take "+b.String())
+				b.Reset()
+			case 7:
+				res1(enc.Close())
+			case 8:
+				// an element <name>hi<!--c--><kid/></name>, as std/rt's xmlEncode writes a tree
+				var err error
+				start := xml.StartElement{Name: name}
+				if err = enc.EncodeToken(start); err == nil {
+					if err = enc.EncodeToken(xml.CharData("hi")); err == nil {
+						if err = enc.EncodeToken(xml.Comment("c")); err == nil {
+							kid := xml.StartElement{Name: xml.Name{Local: "kid"}}
+							if err = enc.EncodeToken(kid); err == nil {
+								if err = enc.EncodeToken(kid.End()); err == nil {
+									err = enc.EncodeToken(start.End())
+								}
+							}
+						}
+					}
+				}
+				res1(err)
+			}
+		}
+		var rq []string
+		for _, x := range res {
+			rq = append(rq, xq(x))
+		}
+		fmt.Fprintf(&o, "  (%s, [%s], [%s]),\n", xq(indent), strings.Join(xs, ", "), strings.Join(rq, ", "))
+	}
+	o.WriteString("]\n")
+	o.WriteString(xmlWriterTest)
+	return o.String()
+}
+
+const xmlWriterTest = `
+fn writer_step(var w: xml.Writer, k: Int, a: Str, b: Str, attrs: List[(Str, Str, Str)]) -> Str {
+  let name = xml.Name{space: a, local: b}
+  if k == 6 {
+    return "take ${w.take()}"
+  }
+  let r = match k {
+    0 => w.token(xml.Token.Start(name: name, attrs: attrs.map(fn(x) { xml.Attr{name: xml.Name{space: x.0, local: x.1}, value: x.2} })))
+    1 => w.token(xml.Token.End(name: name))
+    2 => w.token(xml.Token.Text(s: b))
+    3 => w.token(xml.Token.Comment(s: b))
+    4 => w.token(xml.Token.ProcInst(target: a, inst: b))
+    5 => w.token(xml.Token.Directive(s: b))
+    7 => w.close()
+    _ => w.element(xml.Element{name: name, attrs: [], children: [xml.Node.Text(s: "hi"), xml.Node.Comment(s: "c"), xml.Node.Elem(e: xml.Element{name: xml.Name{space: "", local: "kid"}, attrs: [], children: []})]})
+  }
+  match r {
+    Ok(_) => "ok"
+    Err(e) => "err ${e}"
+  }
+}
+
+test "writer is Go's Encoder: EncodeToken, Indent, Flush and Close" {
+  var bad: List[(Str, List[Str], List[Str])] = []
+  for (indent, steps, want) in WRITES {
+    var w = xml.writer(indent: indent)
+    var got: List[Str] = []
+    for (k, a, b, attrs) in steps {
+      got.push(writer_step(w, k, a, b, attrs))
+    }
+    if got != want {
+      bad.push((indent, got, want))
+    }
+  }
+  expect(bad[..bad.len().min(3)]) == []
 }
 `

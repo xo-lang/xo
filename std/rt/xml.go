@@ -313,3 +313,70 @@ func Xml_escape_to(_ *Task, out *StrBuilder, s string) {
 	xml.EscapeText(&b, []byte(s))
 	out.b = append(out.b, b.Bytes()...)
 }
+
+// Xml_Writer is `xml.Writer`: an Encoder over a buffer that take drains.
+type Xml_Writer struct {
+	b   *bytes.Buffer
+	enc *xml.Encoder
+}
+
+func (Xml_Writer) XoDebug(b *strings.Builder) { b.WriteString("<xml.Writer>") }
+
+func Xml_writer(_ *Task, indent string) Xml_Writer {
+	b := &bytes.Buffer{}
+	enc := xml.NewEncoder(b)
+	if indent != "" {
+		enc.Indent("", indent)
+	}
+	return Xml_Writer{b: b, enc: enc}
+}
+
+// xmlGoToken is t as encoding/xml's token.
+func xmlGoToken(t Xml_Token) xml.Token {
+	switch v := t.P.(type) {
+	case Xml_Token_Start:
+		s := xml.StartElement{Name: xmlGoName(v.F_name)}
+		for _, a := range v.F_attrs.s {
+			s.Attr = append(s.Attr, xml.Attr{Name: xmlGoName(a.F_name), Value: a.F_value})
+		}
+		return s
+	case Xml_Token_End:
+		return xml.EndElement{Name: xmlGoName(v.F_name)}
+	case Xml_Token_Text:
+		return xml.CharData(v.F_s)
+	case Xml_Token_Comment:
+		return xml.Comment(v.F_s)
+	case Xml_Token_ProcInst:
+		return xml.ProcInst{Target: v.F_target, Inst: []byte(v.F_inst)}
+	default:
+		return xml.Directive(t.P.(Xml_Token_Directive).F_s)
+	}
+}
+
+func (w *Xml_Writer) M_token(_ *Task, t Xml_Token) Result[Unit, Xml_XmlErr] {
+	if err := w.enc.EncodeToken(xmlGoToken(t)); err != nil {
+		return Err[Unit](xmlErr(err))
+	}
+	return Ok[Unit, Xml_XmlErr](Unit{})
+}
+
+func (w *Xml_Writer) M_element(_ *Task, e Xml_Element) Result[Unit, Xml_XmlErr] {
+	if err := e.xmlEncode(w.enc, w.b); err != nil {
+		return Err[Unit](xmlErr(err))
+	}
+	return Ok[Unit, Xml_XmlErr](Unit{})
+}
+
+func (w *Xml_Writer) M_take(_ *Task) string {
+	w.enc.Flush()
+	s := w.b.String()
+	w.b.Reset()
+	return textOf(s)
+}
+
+func (w *Xml_Writer) M_close(_ *Task) Result[Unit, Xml_XmlErr] {
+	if err := w.enc.Close(); err != nil {
+		return Err[Unit](xmlErr(err))
+	}
+	return Ok[Unit, Xml_XmlErr](Unit{})
+}
