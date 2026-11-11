@@ -54,3 +54,4 @@ std/asn1
 std/sse
 std/jsonrpc
 std/random
+std/task

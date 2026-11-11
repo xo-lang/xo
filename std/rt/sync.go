@@ -548,31 +548,6 @@ func Atomic_add(tk *Task, a *Atomic[int64], n int64) int64 {
 	}
 }
 
-// Task_Semaphore is `task.Semaphore`: copies share permits.
-type Task_Semaphore struct{ l *lock }
-
-// Task_semaphore is `task.semaphore(permits)`.
-func Task_semaphore(_ *Task, permits int64) Task_Semaphore {
-	if permits <= 0 {
-		FaultHere("a semaphore needs at least one permit, got %d", permits)
-	}
-	return Task_Semaphore{l: &lock{permits: int(permits)}}
-}
-
-// XoDebug implements Debug.
-func (s Task_Semaphore) XoDebug(b *strings.Builder) { b.WriteString("<semaphore>") }
-
-// Task_Semaphore_with is `s.with(f)`: waits for a permit (a cancellation
-// point), runs f, releases the permit.
-func Task_Semaphore_with[R, E any](tk *Task, s Task_Semaphore, f func(*Task) Result[R, E]) Result[R, E] {
-	tk.Yield()
-	if !s.l.acquire(tk) {
-		tk.Unwind()
-	}
-	defer s.l.release()
-	return f(tk)
-}
-
 // Task_isolate is `task.isolate(f)` (core 8): runs f and turns a fault
 // into `Err(Isolated.Faulted(info))`. Cancellation still unwinds.
 func Task_isolate[T, E any](tk *Task, f func(*Task) Result[T, E]) (res Result[T, Task_Isolated[E]]) {
@@ -655,15 +630,6 @@ func dlOn(tk *Task, dl *taskDeadline, clock Clock) Time {
 	return Time(int64(clock.M_now(tk)) + int64(dl.at) - int64(dl.clock.M_now(tk)))
 }
 
-// Task_deadline is `task.deadline(clock)` (decision 0430): the nearest
-// with_timeout deadline the task works under, on clock.
-func Task_deadline(tk *Task, clock Clock) Option[Time] {
-	if tk.dl == nil {
-		return Option[Time]{}
-	}
-	return Option[Time]{Some: true, V: dlOn(tk, tk.dl, clock)}
-}
-
 // awaitDeadline waits in tk until done fires or d passes on clock. It
 // reports whether the deadline passed first. onFire, when set, runs as
 // the deadline passes (in the timer callback, before tk is woken). When
@@ -734,17 +700,6 @@ func clockAfter(tk *Task, c Clock, d Duration, f func(locked bool)) func() {
 	return realAfter(d, func() { f(false) })
 }
 
-// Task_map_concurrent is `task.map_concurrent(items, limit, f)` (std.md
-// 7): results are in input order; one failure does not stop the others.
-func Task_map_concurrent[T, R, E any](tk *Task, items List[T], limit int64, f func(*Task, T) Result[R, E]) List[Result[R, E]] {
-	if limit <= 0 {
-		FaultHere("map_concurrent needs a positive limit, got %d", limit)
-	}
-	out := make([]Result[R, E], len(items.s))
-	mapConcurrent(tk, items, limit, func(t *Task, i int, x T) { out[i] = f(t, x) })
-	return ListOf(out...)
-}
-
 // mapConcurrent runs each(t, i, items[i]) for every item in a child scope
 // of tk, with at most limit running at once, and waits for all of them.
 func mapConcurrent[T any](tk *Task, items List[T], limit int64, each func(*Task, int, T)) {
@@ -773,61 +728,4 @@ func mapConcurrent[T any](tk *Task, items List[T], limit int64, each func(*Task,
 		}
 		completed = true
 	}()
-}
-
-// Task_map_concurrent_until is `task.map_concurrent_until(clock, d, items,
-// limit, f)` (std.md 7, decision 0043): map_concurrent with a deadline.
-// When d passes on clock, the items still running or not started are
-// canceled and give `Err(TimedOut)`; results that finished before the
-// deadline are kept, in input order. A result that arrives after the
-// deadline fired (a task finishing while it is being canceled) counts as
-// timed out, so the cut is the instant the timer fires.
-func Task_map_concurrent_until[T, R, E any](tk *Task, clock Clock, d Duration, items List[T], limit int64, f func(*Task, T) Result[R, E]) List[Result[R, Task_Timed[E]]] {
-	if limit <= 0 {
-		FaultHere("map_concurrent_until needs a positive limit, got %d", limit)
-	}
-	tk.CheckCancel()
-	n := len(items.s)
-	var mu sync.Mutex
-	expired := false
-	res := make([]Result[R, E], n)
-	fin := make([]bool, n)
-	s := NewScope(tk)
-	h := spawnUnder(tk, clock, d, func() *Handle[Unit, Never] { return Spawn(tk, s, func(t *Task) Result[Unit, Never] {
-		mapConcurrent(t, items, limit, func(t *Task, i int, x T) {
-			r := f(t, x)
-			mu.Lock()
-			if !expired {
-				res[i], fin[i] = r, true
-			}
-			mu.Unlock()
-		})
-		return Ok[Unit, Never](Unit{})
-	}, false, true) })
-	awaitDeadline(tk, s, h.done, clock, d, func() {
-		mu.Lock()
-		expired = true
-		mu.Unlock()
-	})
-	s.shutdown()
-	if h.fault != nil {
-		panic(h.fault)
-	}
-	if h.canceled {
-		tk.CheckCancel()
-	}
-	out := make([]Result[R, Task_Timed[E]], n)
-	mu.Lock()
-	defer mu.Unlock()
-	for i := range out {
-		switch {
-		case !fin[i]:
-			out[i] = Err[R](Task_Timed[E]{Tag: 1})
-		case res[i].Ok:
-			out[i] = Ok[R, Task_Timed[E]](res[i].V)
-		default:
-			out[i] = ErrTr[R](Task_Timed[E]{Tag: 2, P: Task_Timed_Failed[E]{F0: res[i].E}}, res[i].Tr)
-		}
-	}
-	return ListOf(out...)
 }

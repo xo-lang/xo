@@ -1,5 +1,21 @@
 # std/task changes
 
+## 2026-11-11: refactor: std/task's Xo parts are one file on every backend (decisions 0588, 0597's amendment)
+
+- Kind: refactor
+- Commit: this push
+- Found by: owner decision 2026-11-11 (rt.fault_raise and rt.task_deadline_left portable for std/task alone)
+- Go reference: none
+- Test: goldens task_native, task_deadline, task_budget, task_budget_fault, map_until, conc_mutex_snapshot, big_struct (arm64, llvm, Go parity, wasm)
+- Shipped in: not yet released
+
+std/native/task.xo moved into std/task.xo. Semaphore, Once, map_concurrent,
+map_concurrent_until, deadline and budget are now the same Xo on the Go
+backend, which compiled them from hand-written Go before (std/rt sync.go,
+once.go, budget.go). isolate, with_timeout, with_budget, is_canceled,
+stop_requested, stopping and Group's spawns stay lowered by the compiler.
+A semaphore or map_concurrent argument fault still names the caller's line.
+
 ## 2026-11-11: docs: the header says what the module is for
 
 - Kind: docs

@@ -567,3 +567,19 @@ type Rt_Loc = string
 // Rt_fault_at is native/rt's fault_at: a fault reported at loc, the
 // caller's position, as the native backends report it.
 func Rt_fault_at(tk *Task, msg string, loc Rt_Loc) Never { return Fault(tk, msg, loc) }
+
+// Rt_fault_raise is native/rt's fault_raise: a fault with message msg at
+// the recorded position loc (std/task's Once re-raises an isolated fault
+// with it; owner, 2026-11-11).
+func Rt_fault_raise(tk *Task, msg string, loc string) Never { return Fault(tk, msg, loc) }
+
+// Rt_task_deadline_left is native/rt's task_deadline_left: the ns left
+// before the nearest with_timeout deadline the task works under, on that
+// deadline's clock, else math.MinInt64 (std/task's deadline; owner,
+// 2026-11-11).
+func Rt_task_deadline_left(tk *Task) int64 {
+	if tk.dl == nil {
+		return -1 << 63
+	}
+	return int64(tk.dl.at) - int64(tk.dl.clock.M_now(tk))
+}

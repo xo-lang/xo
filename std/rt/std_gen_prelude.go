@@ -1754,3 +1754,90 @@ func (v Task_Budgeted[tp_E]) XoDebug(b *strings.Builder) {
 func (v Task_Budgeted[tp_E]) M_debug(*Task) string { return Debug(v) }
 
 func (v Task_Budgeted[tp_E]) M_display(*Task) string { return Debug(v) }
+
+func (v Task_Once[tp_T, tp_E]) XoEq(x any) bool {
+	o, ok := x.(Task_Once[tp_T, tp_E])
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_st, o.F_st) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Task_Once[tp_T, tp_E]) XoHash() uint64 {
+	h := uint64(914413247235321923)
+	h = MixHash(h, Hash(v.F_st))
+	return h
+}
+
+func (v Task_Once[tp_T, tp_E]) XoDebug(b *strings.Builder) {
+	b.WriteString("Once{")
+	b.WriteString("st: ")
+	DebugTo(b, v.F_st)
+	b.WriteString("}")
+}
+
+func (v Task_Once[tp_T, tp_E]) M_debug(*Task) string { return Debug(v) }
+
+func (v_o Task_Once[tp_T, tp_E]) M_get(tk *Task, v_f func(*Task) Result[tp_T, tp_E]) Result[tp_T, tp_E] {
+	x_a2252 := func(tk *Task, v_st *Option[Result[tp_T, Task_Isolated[tp_E]]]) Result[Result[tp_T, Task_Isolated[tp_E]], Never] {
+		_ = (*v_st)
+		x_m2250 := Own((*v_st))
+		_ = x_m2250
+		switch {
+		default:
+			if x_m2250.Some {
+				var v_done Result[tp_T, Task_Isolated[tp_E]] = x_m2250.V
+				_ = v_done
+				return Ok[Result[tp_T, Task_Isolated[tp_E]], Never](Own(v_done))
+			}
+			if !x_m2250.Some {
+				{
+					var v_fresh Result[tp_T, Task_Isolated[tp_E]] = Own(Task_isolate[tp_T, tp_E](tk, v_f))
+					_ = v_fresh
+					(*v_st) = Some[Result[tp_T, Task_Isolated[tp_E]]](Own(v_fresh))
+					return Ok[Result[tp_T, Task_Isolated[tp_E]], Never](Own(v_fresh))
+				}
+			}
+			panic(Unreachable("std/task.xo:172:5"))
+		}
+	}
+	var v_r Result[tp_T, Task_Isolated[tp_E]] = Own(Mutex_with[Option[Result[tp_T, Task_Isolated[tp_E]]], Result[tp_T, Task_Isolated[tp_E]], Never](tk, v_o.F_st, x_a2252).V)
+	_ = v_r
+	var x_v2253 Result[tp_T, tp_E]
+	x_m2254 := Own(v_r)
+	_ = x_m2254
+x_M2255:
+	switch {
+	default:
+		if x_m2254.Ok {
+			var v_v tp_T = x_m2254.V
+			_ = v_v
+			x_v2253 = Ok[tp_T, tp_E](Own(v_v))
+			break x_M2255
+		}
+		if !x_m2254.Ok && x_m2254.E.Tag == 2 {
+			var v_e tp_E = x_m2254.E.P.(Task_Isolated_Failed[tp_E]).F0
+			_ = v_e
+			x_v2253 = Err[tp_T, tp_E](Own(v_e))
+			break x_M2255
+		}
+		if !x_m2254.Ok && x_m2254.E.Tag == 1 {
+			var v_info Task_Fault = x_m2254.E.P.(Task_Isolated_Faulted[tp_E]).F_info
+			_ = v_info
+			x_v2253 = Absurd[Result[tp_T, tp_E]](Rt_fault_raise(tk, v_info.F_msg, v_info.F_location))
+			break x_M2255
+		}
+		panic(Unreachable("std/task.xo:181:27"))
+	}
+	var v_out Result[tp_T, tp_E] = x_v2253
+	_ = v_out
+	x_r2256 := Own(v_out)
+	if !x_r2256.Ok {
+		return ErrTr[tp_T](x_r2256.E, Frame2(x_r2256.Tr, "task.Once.get", "std/task.xo:186", "o f", FrameTextOf(v_o), v_f))
+	}
+	return Ok[tp_T, tp_E](x_r2256.V)
+}

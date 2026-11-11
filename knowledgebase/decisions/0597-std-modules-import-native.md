@@ -291,6 +291,12 @@ reports its location.
   0.49.0 (owner-approved 2026-11-11) knows them; std/task's merge lands
   after that seed, since the 0.48.0 seed's checker rejects its calls
   (and the `at: rt.Loc` parameters) when it builds xo.
+  the lead first. std/task merged with them: the Go backend has
+  Rt_fault_raise and Rt_task_deadline_left (std/rt/str.go), and its
+  hand-written Task_semaphore, Task_Once, Task_map_concurrent(_until),
+  Task_deadline and Task_budget are gone (once.go keeps its state machine
+  as goOnce for LazyConst). task is rt-hosted (std/rt's TestOs names
+  task.Group).
 - std/amqp (nothing native) (2026-11-11): merged, not rt-hosted. In its
   own module its wildcard arms over its own enums warned (XO0305: seven,
   now listing the variants) and its test peers' net.listen effect was

@@ -1,28 +1,37 @@
 // std/task (spec/std.md 7, core 7.1). Structured concurrency: task groups,
 // semaphores, once values, budgets and timeouts, and concurrent maps.
-// Declaration file; encoding rules are listed at the top of std/prelude.xo.
+// Encoding rules are listed at the top of std/prelude.xo.
 // Semaphore, Once, and Group are opaque handles: copies share the same
 // permits, result, or group.
+//
+// Semaphore, Once, map_concurrent, map_concurrent_until, and deadline are
+// Xo over channels, mutexes, and scopes, on every backend (decisions 0074,
+// 0588, 0597's amendment: rt.Loc, rt.fault_at, rt.fault_raise and
+// rt.task_deadline_left). The bodyless rest (isolate, with_timeout,
+// with_budget, is_canceled, stop_requested, stopping, Group's spawns) is
+// lowered by the compiler (compiler/ssa, and std/rt on the Go backend).
 
-enum Timed[E] {
+use native/rt
+
+pub enum Timed[E] {
   TimedOut
   Failed(from E)
 } derive Display
 
-enum Isolated[E] {
+pub enum Isolated[E] {
   Faulted(info: Fault)
   Failed(from E)
 } derive Display
 
-struct Fault {
-  msg: Str
-  location: Str
-  frames: List[Str]
+pub struct Fault {
+  pub msg: Str
+  pub location: Str
+  pub frames: List[Str]
 } derive Display
 
 /// The outcome of task.with_budget (decision 0173): a ceiling was passed
 /// (resource is "cpu", "alloc", or "steps"), or f failed.
-enum Budgeted[E] {
+pub enum Budgeted[E] {
   Exceeded(resource: Str)
   Failed(from E)
 } derive Display
@@ -30,50 +39,157 @@ enum Budgeted[E] {
 /// Ceilings on the work of a call run by task.with_budget (decision
 /// 0173): running time, bytes allocated, and steps (loop iterations and
 /// calls). Zero means no ceiling.
-struct Budget {
-  cpu: Duration
-  alloc: Int
-  steps: Int
+pub struct Budget {
+  pub cpu: Duration
+  pub alloc: Int
+  pub steps: Int
 }
 
-fn budget(cpu: Duration = 0s, alloc: Int = 0, steps: Int = 0) -> Budget
+pub fn budget(cpu: Duration = 0s, alloc: Int = 0, steps: Int = 0) -> Budget { Budget{cpu: cpu, alloc: alloc, steps: steps} }
 
 /// Runs f in a child scope under the budget b: when a ceiling is passed
 /// the scope is canceled, its tasks unwind at their next loop iteration or
 /// call, and the result is Err(Exceeded(resource)).
-fn with_budget[T, E, fx: Effects](clock: Clock, b: Budget, f: fn() -> T ! E uses fx) -> T ! Budgeted[E] uses (clock, fx)
+pub fn with_budget[T, E, fx: Effects](clock: Clock, b: Budget, f: fn() -> T ! E uses fx) -> T ! Budgeted[E] uses (clock, fx)
 
-fn with_timeout[T, E, fx: Effects](clock: Clock, d: Duration, f: fn() -> T ! E uses fx) -> T ! Timed[E] uses (clock, fx)
-fn isolate[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> T ! Isolated[E] uses fx
-fn is_canceled() -> Bool
+pub fn with_timeout[T, E, fx: Effects](clock: Clock, d: Duration, f: fn() -> T ! E uses fx) -> T ! Timed[E] uses (clock, fx)
+pub fn isolate[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> T ! Isolated[E] uses fx
+pub fn is_canceled() -> Bool
 /// The first shutdown signal arrived (core 7.5).
-fn stop_requested() -> Bool
+pub fn stop_requested() -> Bool
 /// A channel closed when a stop is requested (core 7.5).
-fn stopping() -> Chan[()]
+pub fn stopping() -> Chan[()]
+
 /// The nearest with_timeout deadline the current task works under, as an
 /// instant on clock, or None (decision 0430). A task keeps the deadline
 /// in force where it was spawned.
-fn deadline(clock: Clock) -> Time? uses clock
+pub fn deadline(clock: Clock) -> Time? uses clock {
+  let left = rt.task_deadline_left()
+  if left == Int.min {
+    return None
+  }
+  Some(clock.now() + 1ns * left)
+}
 
-fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx) -> List[Result[R, E]] uses fx
+pub fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx, at: rt.Loc) -> List[Result[R, E]] uses fx {
+  if limit <= 0 {
+    rt.fault_at("map_concurrent needs a positive limit, got ${limit}", at)
+  }
+  let free = permit_chan(limit.min(items.len()).max(1))
+  scope s {
+    var tasks = []
+    for x in items {
+      match free.recv() {
+        _ => {}
+      }
+      tasks.push(s.spawn(fn() -> Result[R, E] {
+        defer free.send(())
+        f(x)
+      }))
+    }
+    var out: List[Result[R, E]] = []
+    for t in tasks {
+      out.push(t.await)
+    }
+    out
+  }
+}
+
 /// Like map_concurrent, but items not finished after d are cancelled and
 /// give Err(TimedOut); finished results are kept, in input order.
-fn map_concurrent_until[T, R, E, fx: Effects](clock: Clock, d: Duration, items: List[T], limit: Int, f: fn(T) -> R ! E uses fx) -> List[Result[R, Timed[E]]] uses (clock, fx)
+pub fn map_concurrent_until[T, R, E, fx: Effects](clock: Clock, d: Duration, items: List[T], limit: Int, f: fn(T) -> R ! E uses fx, at: rt.Loc) -> List[Result[R, Timed[E]]] uses (clock, fx) {
+  if limit <= 0 {
+    rt.fault_at("map_concurrent_until needs a positive limit, got ${limit}", at)
+  }
+  var empty: List[Result[R, E]?] = []
+  for _ in items {
+    empty.push(None)
+  }
+  let done = Mutex[List[Result[R, E]?]].new(empty)
+  let indexed = items.indexed()
+  match with_timeout(clock, d, fn() {
+    let _all = map_concurrent(indexed, limit, fn(p: (Int, T)) {
+      if is_canceled() {
+        // started after the deadline (a permit freed by a canceled
+        // item): it does not run, as std/rt's mapConcurrent
+        return
+      }
+      let r = f(p.1)
+      done.with(fn(var rs) { rs.set(p.0, Some(r)) })
+    }, at)
+  }) {
+    _ => {}
+  }
+  let rs = done.with(fn(rs) { rs })
+  var out: List[Result[R, Timed[E]]] = []
+  for r in rs {
+    match r {
+      None => out.push(Err(Timed.TimedOut))
+      Some(Ok(v)) => out.push(Ok(v))
+      Some(Err(e)) => out.push(Err(Timed.Failed(e)))
+    }
+  }
+  out
+}
 
 /// A task group (core 7.1): created by `s.group()` or given as `os.tasks`.
 /// Its tasks belong to the scope that created it.
-struct Group {}
-fn (g: Group) spawn[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
-fn (g: Group) spawn_background[E, fx: Effects](f: fn() -> () ! E uses fx) uses fx
+pub struct Group {}
+pub fn (g: Group) spawn[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
+pub fn (g: Group) spawn_background[E, fx: Effects](f: fn() -> () ! E uses fx) uses fx
 
-struct Semaphore {}
-fn semaphore(permits: Int) -> Semaphore
-fn (s: Semaphore) with[R, E, fx: Effects](f: fn() -> R ! E uses fx) -> R ! E uses fx
+pub struct Semaphore {
+  permits: Chan[()]
+}
+
+pub fn semaphore(permits: Int, at: rt.Loc) -> Semaphore {
+  if permits <= 0 {
+    rt.fault_at("a semaphore needs at least one permit, got ${permits}", at)
+  }
+  Semaphore{permits: permit_chan(permits)}
+}
+
+pub fn (s: Semaphore) with[R, E, fx: Effects](f: fn() -> R ! E uses fx) -> R ! E uses fx {
+  match s.permits.recv() {
+    _ => {}
+  }
+  defer s.permits.send(())
+  f()?
+}
 
 /// Single flight with a shared result (decision 0043): the first caller of
 /// `get` runs f; concurrent and later callers wait for and share its result.
 /// If the running caller is cancelled before f finishes, the next waiter
 /// runs f instead. A failed result is shared too.
-struct Once[T, E] {}
-fn once[T, E]() -> Once[T, E]
-fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses fx
+pub struct Once[T, E] {
+  st: Mutex[Option[Result[T, Isolated[E]]]]
+}
+
+pub fn once[T, E]() -> Once[T, E] { Once{st: Mutex[Option[Result[T, Isolated[E]]]].new(None)} }
+
+pub fn (o: Once[T, E]) get[fx: Effects](f: fn() -> T ! E uses fx) -> T ! E uses fx {
+  let r = o.st.with(fn(var st) -> Result[T, Isolated[E]] {
+    match st {
+      Some(done) => done
+      None => {
+        let fresh = isolate(f)
+        st = Some(fresh)
+        fresh
+      }
+    }
+  })
+  let out: Result[T, E] = match r {
+    Ok(v) => Ok(v)
+    Err(Isolated.Failed(e)) => Err(e)
+    Err(Isolated.Faulted(info)) => rt.fault_raise(info.msg, info.location)
+  }
+  out?
+}
+
+fn permit_chan(n: Int) -> Chan[()] {
+  let ch = Chan[()].new(n)
+  for _ in 0..n {
+    ch.send(())
+  }
+  ch
+}

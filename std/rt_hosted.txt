@@ -16,3 +16,4 @@ std/metrics
 std/png
 std/jpeg
 std/crc64
+std/task

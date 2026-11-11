@@ -36,11 +36,6 @@ type budget struct {
 
 var budgetResources = [...]string{1: "cpu", 2: "alloc", 3: "steps"}
 
-// Task_budget is `task.budget(cpu, alloc, steps)`.
-func Task_budget(tk *Task, cpu Duration, alloc, steps int64) Task_Budget {
-	return Task_Budget{F_cpu: cpu, F_alloc: alloc, F_steps: steps}
-}
-
 // heapAllocs reads the bytes the process has allocated on the heap so
 // far. Go keeps no count per goroutine, so a budget's allocation is the
 // process wide count since the budget started: an upper bound of what

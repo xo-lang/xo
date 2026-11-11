@@ -6,13 +6,13 @@ import (
 	"sync/atomic"
 )
 
-// Task_Once is `task.Once[T, E]` (std.md 7, decision 0043): a handle; copies
+// goOnce is `task.Once[T, E]` (std.md 7, decision 0043): a handle; copies
 // share the state. The first caller of get runs f in its own task; the
 // others queue as waiters. When f finishes, its result (value, error, or
 // fault) is stored and every waiter is woken to share it. When the runner
 // unwinds before f finishes (cancellation, a test's `proc.exit`), the run
 // is handed to the first waiter that is still waiting, which then runs f.
-type Task_Once[T, E any] struct{ s *onceState[T, E] }
+type goOnce[T, E any] struct{ s *onceState[T, E] }
 
 type onceState[T, E any] struct {
 	mu      sync.Mutex
@@ -32,24 +32,24 @@ type onceWaiter struct {
 	run bool
 }
 
-// Task_once is `task.once[T, E]()`.
-func Task_once[T, E any](*Task) Task_Once[T, E] {
-	return Task_Once[T, E]{s: &onceState[T, E]{}}
+// newGoOnce is `task.once[T, E]()`.
+func newGoOnce[T, E any](*Task) goOnce[T, E] {
+	return goOnce[T, E]{s: &onceState[T, E]{}}
 }
 
 // XoDebug implements Debug.
-func (o Task_Once[T, E]) XoDebug(b *strings.Builder) { b.WriteString("<once>") }
+func (o goOnce[T, E]) XoDebug(b *strings.Builder) { b.WriteString("<once>") }
 
 // XoEq implements Eq: two handles are equal when they share the state.
-func (o Task_Once[T, E]) XoEq(x any) bool {
-	p, ok := x.(Task_Once[T, E])
+func (o goOnce[T, E]) XoEq(x any) bool {
+	p, ok := x.(goOnce[T, E])
 	return ok && p.s == o.s
 }
 
 // M_get is `o.get(f)` (a Go method: get's only own type parameter is an
 // effect). Waiting is a cancellation point that unwinds; a canceled waiter
 // leaves the queue without affecting the run.
-func (o Task_Once[T, E]) M_get(tk *Task, f func(*Task) Result[T, E]) Result[T, E] {
+func (o goOnce[T, E]) M_get(tk *Task, f func(*Task) Result[T, E]) Result[T, E] {
 	tk.Yield()
 	s := o.s
 	s.mu.Lock()
@@ -154,7 +154,7 @@ func (s *onceState[T, E]) handOff() {
 }
 
 // LazyConst is a module constant whose initializer runs code (decision
-// 0332): built by F once, at its first read, by Task_Once's rules (the
+// 0332): built by F once, at its first read, by goOnce's rules (the
 // readers that come while it runs wait; a fault is stored and raised
 // again at every read; a canceled builder hands the run on). A read after
 // the build is one atomic load. A read that would wait for its own task,
@@ -164,7 +164,7 @@ type LazyConst[T any] struct {
 	F      func(*Task) T
 	done   atomic.Bool
 	val    T
-	once   Task_Once[T, struct{}]
+	once   goOnce[T, struct{}]
 	runner *Task // under lazyMu
 }
 
@@ -186,7 +186,7 @@ func (c *LazyConst[T]) Get(tk *Task) T {
 	}
 	lazyMu.Lock()
 	if c.once.s == nil {
-		c.once = Task_once[T, struct{}](nil)
+		c.once = newGoOnce[T, struct{}](nil)
 	}
 	var cur lazyRunner = c
 	for i := 0; cur != nil && i <= len(lazyWaits); i++ {
