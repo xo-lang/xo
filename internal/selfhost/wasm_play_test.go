@@ -158,6 +158,10 @@ func TestPlayReplType(t *testing.T) {
 		`{"in": "let xs = [1, 2]"}`,
 		`{"ran": "", "code": 0}`,
 		`{"cmd": "type", "arg": "xs.map(fn(x) { x > 1 })"}`,
+		// a var binding has its type too (so it is pinned, and a later
+		// `ys.push(2)` entry's change is kept: TestReplVarMethodCall)
+		`{"in": "var ys = [1]"}`,
+		`{"ran": "", "code": 0}`,
 	}, "\n") + "\n"
 	c := testtmp.Guard(exec.Command(xoc, "--std="+filepath.Join(root, "std"), "--wd="+tmp, "--play", "repl", filepath.Join(tmp, "warm"), filepath.Join(tmp, "sess")))
 	c.Dir = tmp
@@ -167,12 +171,12 @@ func TestPlayReplType(t *testing.T) {
 		t.Fatalf("--play repl: %v\n%s", err, out)
 	}
 	got := strings.Split(strings.TrimSpace(string(out)), "\n")
-	want := []string{`"type":"Float"`, `"run":`, `"type":"List[Int]"`, `"type":"List[Bool]"`}
+	want := []string{`"type":"Float"`, `"run":`, `"type":"List[Int]"`, `"type":"List[Bool]"`, `"run":`, `"type":"List[Int]"`}
 	if len(got) != len(want) {
 		t.Fatalf("--play repl: %d replies, want %d:\n%s", len(got), len(want), out)
 	}
 	for i, w := range want {
-		if !strings.Contains(got[i], w) || (i != 1 && !strings.Contains(got[i], `"ok":true`)) {
+		if !strings.Contains(got[i], w) || (w != `"run":` && !strings.Contains(got[i], `"ok":true`)) {
 			t.Errorf("reply %d: %s, want %s and ok", i+1, got[i], w)
 		}
 	}

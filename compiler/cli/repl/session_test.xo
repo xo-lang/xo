@@ -153,3 +153,13 @@ test "with effects" {
   expect(q.contains("fn xo_repl_body(os: Os) uses (stdio, clock) {"))
   expect(q.lines()[at2 - 1].contains("1 + 2"))
 }
+
+test "an expression entry's changes to a binding are kept" {
+  var s = Sess{entries: []}
+  let b = Entry{src: "var xs = [3, 1, 2]", kind: classify("var xs = [3, 1, 2]"), pin: "", typ: ""}
+  s = s.after(b, {"xs": "[3, 1, 2]"}, {"xs": "List[Int]"})
+  let p = Entry{src: "xs.push(5)", kind: classify("xs.push(5)"), pin: "", typ: ""}
+  s = s.after(p, {"xs": "[3, 1, 2, 5]"}, {})
+  let (prog, _) = s.program(Entry{src: "xs", kind: classify("xs"), pin: "", typ: ""})
+  expect(prog.contains("var xs: List[Int] = [3, 1, 2, 5]"))
+}

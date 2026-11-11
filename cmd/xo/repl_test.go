@@ -328,3 +328,43 @@ func (s *syncBuf) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+// TestReplVarMethodCall: an entry that changes a var binding through a
+// method call (`xs.push(5)`, an expression entry) is kept. A var binding
+// had no type (xo query type found let bindings but not `var NAME =`),
+// so it was never pinned and its entry ran again before each later one,
+// where expression entries are not kept: the push was lost (2026-11-11,
+// the REPL page's walkthrough). Query type answers for the var's name.
+func TestReplVarMethodCall(t *testing.T) {
+	t.Parallel()
+
+	r := xo(t, "repl", "--eval="+strings.Join([]string{
+		`var xs = [3, 1, 2]`,
+		`xs.push(5)`,
+		`xs`,
+		`var ages: Map[Str, Int] = {}`,
+		`ages.put("ada", 36)`,
+		`ages.len()`,
+	}, "\n")).want(0)
+	if want := "[3, 1, 2, 5]\n1\n"; r.out != want {
+		t.Errorf("--eval output:\n%s\nwant:\n%s\nstderr:\n%s", r.out, want, r.err)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module q\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := "fn main(os: Os) {\nvar xs = [3, 1, 2]\nvar m: Map[Str, Int] = {}\nxs.push(m.len())\nos.stdio.println(\"${xs}\")\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ at, want string }{
+		{":2:5", `"type": "List[Int]"`},
+		{":3:5", `"type": "Map[Str, Int]"`},
+	} {
+		q := xo(t, "query", "type", filepath.Join(dir, "main.xo")+c.at).want(0)
+		if !strings.Contains(q.out, c.want) || !strings.Contains(q.out, `"kind": "binding"`) {
+			t.Errorf("query type main.xo%s: %s%s, want %s", c.at, q.out, q.err, c.want)
+		}
+	}
+}

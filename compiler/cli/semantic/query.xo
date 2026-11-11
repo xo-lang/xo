@@ -413,6 +413,8 @@ pub fn (s: Session) type_at(file: Str, line: Int, col: Int) -> TypeResult ! Str 
   var best_len = -1
   var best_e: Expr? = None
   var best_p: Pattern? = None
+  var best_var: Expr? = None
+  var best_name: parser.Ident? = None
   var best_sp = parser.Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
   for d in s.c.files[f].ast.decls {
     for n in decl_nodes(d) {
@@ -427,7 +429,24 @@ pub fn (s: Session) type_at(file: Str, line: Int, col: Int) -> TypeResult ! Str 
             best_len = l
             best_e = Some(e)
             best_p = None
+            best_var = None
             best_sp = sp
+          }
+        }
+      }
+      // a `var NAME = VALUE` binds a name, not a pattern: its type is the
+      // value's (the REPL pins a var binding by it)
+      if let S(VarStmt(_, name, _, value)) = n {
+        let nsp = name.span
+        if nsp.start.offset <= target && target < nsp.end.offset && s.var_type(f, name, value) >= 0 {
+          let l = nsp.end.offset - nsp.start.offset
+          if best_len < 0 || l < best_len {
+            best_len = l
+            best_e = None
+            best_p = None
+            best_var = Some(value)
+            best_name = Some(name)
+            best_sp = nsp
           }
         }
       }
@@ -440,6 +459,7 @@ pub fn (s: Session) type_at(file: Str, line: Int, col: Int) -> TypeResult ! Str 
                 best_len = l
                 best_e = None
                 best_p = Some(q)
+                best_var = None
                 best_sp = qsp
               }
             }
@@ -465,8 +485,19 @@ pub fn (s: Session) type_at(file: Str, line: Int, col: Int) -> TypeResult ! Str 
   } else if let Some(p) = best_p {
     r.kind = "binding"
     r.typ = s.c.show(s.c.pat_type_in(f, p))
+  } else if let (Some(v), Some(nm)) = (best_var, best_name) {
+    r.kind = "binding"
+    r.typ = s.c.show(s.var_type(f, nm, v))
   }
   Ok(r)
+}
+
+/// The type of the local a `var NAME = VALUE` in file f declares: the
+/// local's (check.var_of), which an annotation decides (`var m: Map[Str,
+/// Int] = {}`), else the value's; -1 when neither is known.
+fn (s: Session) var_type(f: Int, name: parser.Ident, value: Expr) -> Int {
+  let o = s.c.var_of(f, name)
+  if o >= 0 && s.c.objs[o].ty >= 0 { s.c.objs[o].ty } else { s.c.type_in(f, value) }
 }
 
 fn type_json(r: TypeResult) -> JVal {
