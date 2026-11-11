@@ -1,6 +1,6 @@
 # 0549: derive Proto and derive Xml expand in std modules
 
-Status: Proposed (Xo Lang 3, 2026-11-07; a later item, after ADR 0546's hand written std/protowkt and std/protodesc)
+Status: Accepted (owner, 2026-11-11; low priority: after ADR 0603 stage 1 and the std coverage work). Was: Proposed (Xo Lang 3, 2026-11-07; a later item, after ADR 0546's hand written std/protowkt and std/protodesc)
 
 ## Context
 
