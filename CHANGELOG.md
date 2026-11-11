@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- xo build and xo test (fix): a program using std/base64 with std's cached declaration record (any build that also uses a module in the record, such as crc32) failed with XO1201 `base64.encode`: the record did not keep that base64 is merged with its implementation (decision 0588; the record is now v11). `xo test --std-module=base64` after an edit to std/base64.xo reuses std's test variant, building base64 and its importers from source, as it did for the old std/native/base64.xo
 - `os.secrets.keychain()`: the macOS login keychain's generic passwords (`Keychain.get_generic/set_generic/delete_generic`, `KeychainErr`), and an in-memory keychain in tests on every OS (decision 0584 stage D)
 - Tests get an in-memory keyring: `os.secrets.keyring()` in a test is `Some` on every OS and empty per test (decision 0584 stage C)
 - xo build (perf): a small program's warm build reuses its generated code: a separately compiled program of fewer than 256 functions (one part) skipped the function and part cache and generated all its code on every build. coll's warm rebuild on linux/arm64: 110 to 53 ms (--ab wall 0.479, cpu 0.475, max RSS 0.98); the binary is byte identical (bench/results/perf-gaps-2026-11-10.md)

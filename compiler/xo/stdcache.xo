@@ -597,13 +597,32 @@ fn debug_map_parts(os: Os, dir: Str) {
 /// The std modules a --std-module run of m builds from source (item 2 of
 /// the test speed queue): m and every native std module that imports it,
 /// directly or not (their store code may hold m's old bodies inlined and
-/// its old layouts), as check's module paths ("native/NAME"). Read from
-/// the `use` lines of std/native's sources.
+/// its old layouts), as check's module paths ("native/NAME", or
+/// "std/NAME" for a module merged with its implementation, decision
+/// 0588). Read from the `use` lines of std/native's sources and the
+/// merged modules' std/NAME.xo.
 fn std_source_set(os: Os, std: Str, m: Str) -> Set[Str] {
   let root = std.trim_suffix("/")
   let top = m.trim_prefix("std/").trim_prefix("native/")
-  // each native module's imports, by its name
+  // the merged modules, by name (std/merged.txt's "std/NAME" lines)
+  var merged: Set[Str] = #{}
+  for l in (os.fs.read_text("${root}/merged.txt").ok() ?? "").split("\n") {
+    if let Some(n) = l.trim().cut_prefix("std/") {
+      merged.add(n)
+    }
+  }
+  // each native or merged module's imports, by its name
   var imps: Map[Str, List[Str]] = {}
+  for n in merged.to_list() {
+    for l in (os.fs.read_text("${root}/${n}.xo").ok() ?? "").split("\n") {
+      if let Some(rest) = l.cut_prefix("use std/") {
+        let dep = rest.trim().trim_prefix("native/").split(" ")[0]
+        var cur = imps.get(n) ?? []
+        cur.push(dep)
+        imps[n] = cur
+      }
+    }
+  }
   for e in os.fs.read_dir("${root}/native").ok() ?? [] {
     var files: List[Str] = []
     var name = ""
@@ -642,7 +661,7 @@ fn std_source_set(os: Os, std: Str, m: Str) -> Set[Str] {
   }
   var out: Set[Str] = #{}
   for n in set.to_list() {
-    out.add("native/${n}")
+    out.add(if merged.contains(n) { "std/${n}" } else { "native/${n}" })
   }
   out
 }
@@ -697,7 +716,8 @@ fn std_variant_near(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, src:
 }
 
 /// std's tree lines without the files of src's modules ("native/NAME":
-/// the lines of native/NAME.xo and native/NAME/...).
+/// the lines of native/NAME.xo and native/NAME/...; "std/NAME": a merged
+/// module's NAME.xo and NAME_test.xo at std's top).
 fn tree_without(tree: Str, src: Set[Str]) -> Str {
   var b = StrBuilder.new()
   for l in tree.split("\n") {
@@ -707,7 +727,7 @@ fn tree_without(tree: Str, src: Set[Str]) -> Str {
     let p = l.split(" ")[0].trim_prefix("/")
     let i = p.find("/") ?? -1
     let j = if i < 0 { -1 } else { p[i + 1..].find("/") ?? -1 }
-    let top = if j < 0 { p.trim_suffix(".xo") } else { p[0..i + 1 + j] }
+    let top = if i < 0 { "std/${p.trim_suffix(".xo").trim_suffix("_test")}" } else if j < 0 { p.trim_suffix(".xo") } else { p[0..i + 1 + j] }
     if !src.contains(top) {
       b.write("${l}\n")
     }

@@ -1523,6 +1523,7 @@ pub fn (var c: Checker) load_std_record(e: StdExport) {
     c.mods[m].std_tree = true
     c.mods[m].is_prelude = rec.is_prelude
     c.mods[m].native = rec.native
+    c.mods[m].merged = rec.merged
     c.mods[m].implements = rec.implements
     c.mods[m].from_record = true
     if rec.is_prelude {
