@@ -33,6 +33,15 @@ type fakeS3 struct {
 	objects map[string]fakeObject
 	puts    int
 	down    bool // every PUT answers 503 (an R2 outage)
+	// stall, when set, holds every PUT without an answer until it is
+	// closed (a bucket that went silent)
+	stall chan struct{}
+}
+
+func (s *fakeS3) setStall(c chan struct{}) {
+	s.mu.Lock()
+	s.stall = c
+	s.mu.Unlock()
 }
 
 func (s *fakeS3) setDown(down bool) {
@@ -93,6 +102,16 @@ func (s *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if msg := s.verify(r, body); msg != "" {
 			http.Error(w, msg, http.StatusForbidden)
 			return
+		}
+		s.mu.Lock()
+		stall := s.stall
+		s.mu.Unlock()
+		if stall != nil {
+			select {
+			case <-stall:
+			case <-r.Context().Done():
+				return
+			}
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -758,5 +777,83 @@ func TestChecksumLogLookupWait(t *testing.T) {
 	}
 	if h := readHealth(t, logURL); h.Records != 1 {
 		t.Errorf("records: %d", h.Records)
+	}
+}
+
+// TestChecksumLogCopyStall: a --copy-to bucket that holds a PUT without
+// an answer must not stall lookups. The record is copied before it is
+// added, and the copy once ran under the log's state lock, which every
+// lookup reads: a silent bucket froze every lookup (0 bytes until xo's
+// 120 s client timeout, past Cloudflare's 100 s and the client's 60 s; seen
+// on sum.xolang.org, 2026-11-11) instead of the 503 --lookup-wait
+// promises. Now a lookup answers 503 within --lookup-wait, /healthz
+// answers, and the record is added once the bucket answers.
+func TestChecksumLogCopyStall(t *testing.T) {
+	xotool.NeedPorts(t)
+	t.Parallel()
+	modSetup(t, "../../internal/mod/testdata/repos")
+	ws := t.TempDir()
+	key := filepath.Join(ws, "log.key")
+	xo(t, "mod", "sumdb", "keygen", "sum.test", key).want(0)
+	s3 := &fakeS3{keyID: "test-key", secret: "test-secret", region: "auto", objects: map[string]fakeObject{}}
+	release := make(chan struct{})
+	s3.setStall(release)
+	srv := httptest.NewServer(s3)
+	t.Cleanup(srv.Close)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(release)
+		}
+	})
+	setenv(t, "XO_FILL_ACCESS_KEY_ID", s3.keyID)
+	setenv(t, "XO_FILL_SECRET_ACCESS_KEY", s3.secret)
+	logData := t.TempDir()
+	t.Cleanup(func() { modtest.MakeWritable(logData) })
+	logURL, _ := startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", "--rate=0", "--lookup-wait=1s", "--copy-to="+srv.URL+"/logcopy", logData)
+
+	lookup := func() (int, string, time.Duration) {
+		t.Helper()
+		start := time.Now()
+		c := http.Client{Timeout: 30 * time.Second}
+		resp, err := c.Get(logURL + "/lookup/github.com/acme/money@v1.1.0")
+		if err != nil {
+			t.Fatalf("lookup while the copy stalls: %v after %v (the lookup waits on the copy)", err, time.Since(start))
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(b), time.Since(start)
+	}
+	// the first lookup starts the fetch; the copy stalls; each lookup
+	// answers 503 within --lookup-wait (1 s) and some slack, not 120 s
+	for i := 0; i < 3; i++ {
+		code, body, took := lookup()
+		if code != 503 || !strings.Contains(body, "still fetching") || took > 10*time.Second {
+			t.Fatalf("lookup %d while the copy stalls: %d in %v: %s", i+1, code, took, body)
+		}
+	}
+	// the state is not held: /healthz answers, with no record yet
+	if h := readHealth(t, logURL); h.Records != 0 {
+		t.Errorf("records while the copy stalls: %d", h.Records)
+	}
+	// the bucket answers: the record is copied, then added
+	released = true
+	close(release)
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		code, body, _ := lookup()
+		if code == 200 {
+			if !strings.HasPrefix(body, "0\ngithub.com/acme/money v1.1.0 ") {
+				t.Errorf("after the copy: %q", body)
+			}
+			break
+		}
+		if code != 503 || time.Now().After(deadline) {
+			t.Fatalf("after the copy: %d %s", code, body)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if _, ok := s3.object("/logcopy/records/0000000000"); !ok {
+		t.Errorf("record 0 was not copied to the bucket")
 	}
 }

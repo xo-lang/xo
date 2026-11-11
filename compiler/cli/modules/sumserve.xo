@@ -93,6 +93,12 @@ struct LogConf {
   lookup_wait: Duration = 50s
   /// the "<path>@<version>" fetches running, one task each
   adding: Mutex[Map[Str, Bool]]
+  /// held while one record is copied, appended and added, so record
+  /// ids and times stay in order; the log's state lock is taken only to
+  /// add it, never across the bucket copy, so a slow or silent bucket
+  /// cannot stall lookups (which read the state) past --lookup-wait.
+  /// Holds the number of records added since the start.
+  appending: Mutex[Int]
   /// the status, message and end (Unix milliseconds) of each fetch that
   /// failed: a lookup within ADD_ERR_KEEP of it gets that answer, where a
   /// later one fetches again
@@ -518,7 +524,7 @@ fn (var c: ModCtx) run_mod_sumdb(args: List[Str]) -> Int uses (fs, net, proc, st
   c.out("checksum log ${signer.name} (${st.records.len()} records in ${data}, ${mode}) at http://${l.addr()}\nclients: XO_SUMDB='${verifier} http://${l.addr()}'\n")
   let state = Mutex.new(st)
   let limits: Mutex[Map[Str, (Int, Int)]] = Mutex.new({})
-  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill, refresh: refresh, lists: Mutex.new({}), pending: Mutex.new(c.load_pending(data)), health: Mutex.new(RefreshHealth{}), lookup_wait: lookup_wait, adding: Mutex.new({}), add_errs: Mutex.new({})}
+  let conf = LogConf{signer: signer, data: data, fetch: fetch, copy: copy, rate: rate, fill: fill, refresh: refresh, lists: Mutex.new({}), pending: Mutex.new(c.load_pending(data)), health: Mutex.new(RefreshHealth{}), lookup_wait: lookup_wait, adding: Mutex.new({}), appending: Mutex.new(0), add_errs: Mutex.new({})}
   let cc = c
   if let Some(fb) = fill {
     // uploads a restart or an error interrupted
@@ -664,20 +670,28 @@ fn (var c: ModCtx) add_version(state: Mutex[LogState], conf: LogConf, path: Str,
   }
   // added unless another request added it meanwhile; copied to the
   // bucket and on disk before any tree head that holds it is signed; its
-  // time is taken under the lock, so the times (and /index) stay in order
-  let added = state.with(fn(var st) -> (Bool, Int) ! Str {
-    let is_new = !st.index.contains(key)
+  // time is taken under the appending lock, so the times (and /index)
+  // stay in order. Only this function adds records, and only under that
+  // lock, so the id read here is still the next one when it is added;
+  // the state lock is held for the read and the add alone, never across
+  // the bucket copy, so a lookup waits for its own --lookup-wait at most
+  let added = conf.appending.with(fn(var n) -> (Bool, Int) ! Str {
+    let (is_new, id) = state.with_read(fn(st) { (!st.index.contains(key), st.records.len()) })
     let now = cc.os.clock.now().unix()
-    if is_new {
-      if let Some(b) = conf.copy {
-        cc.s3_put(b, record_object(st.records.len()), "${now}\n${rec}".bytes(), "text/plain; charset=utf-8", IMMUTABLE)?
-      }
-      cc.append_record(conf.data, rec, now)?
+    if !is_new {
+      return Ok((false, now))
+    }
+    if let Some(b) = conf.copy {
+      cc.s3_put(b, record_object(id), "${now}\n${rec}".bytes(), "text/plain; charset=utf-8", IMMUTABLE)?
+    }
+    cc.append_record(conf.data, rec, now)?
+    state.with(fn(var st) {
       st.add(key, rec)
       st.times.push(now)
       st.root = tree_hash(st.leaves, 0, st.leaves.len())
-    }
-    Ok((is_new, now))
+    })
+    n += 1
+    Ok((true, now))
   })
   match added {
     Ok((is_new, now)) => {
