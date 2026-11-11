@@ -260,6 +260,7 @@ fn (var g: Gen) run() -> Program {
   if !g.opts.no_mono {
     g.drain_specs()
   }
+  g.rt_hosted_roots()
   g.proto_close()
   prog.rt_proto = g.proto_rt_kept()
   prog.proto_why = g.proto_why_log
@@ -770,6 +771,41 @@ fn (g: Gen) omod(o: Int) -> Int {
 
 fn (g: Gen) is_std_mod(m: Int) -> Bool {
   m >= 0 && g.c.mods[m].is_std && (!g.c.mods[m].merged || g.rt_hosted(m))
+}
+
+/// The comparisons in the bodies of the modules generated into rt
+/// (rt_hosted) root the protocol methods of the runtime's generic types
+/// they compare (an Option[Str] `==`, decision 0551) as a program's own
+/// code does: std/rt holds their code, but which of those methods a
+/// program keeps is decided per program. So a module the program uses
+/// is generated once more here, its output dropped, for the roots alone.
+fn (var g: Gen) rt_hosted_roots() {
+  let saved = g.p
+  for m in g.c.order {
+    if !g.rt_hosted(m) {
+      continue
+    }
+    let rp = g.pkgs.len()
+    g.pkgs.push(Pkg{m: m, dir: "rt", name: "rt", in_rt: true})
+    g.p = rp
+    for fi in g.c.mods[m].files {
+      let file = g.c.files[fi]
+      if file.is_test {
+        continue
+      }
+      g.pkgs[rp].cur = fi
+      for (di, d) in file.ast.decls.indexed() {
+        let o = if di < file.decl_objs.len() { file.decl_objs[di] } else { -1 }
+        if let FnDecl(fd) = d {
+          if o >= 0 && g.c.objs[o].kind == check.ObjKind.Func && fd.body != None {
+            g.gen_func(o)
+          }
+        }
+      }
+    }
+    g.pkgs = g.pkgs[0..rp]
+  }
+  g.p = saved
 }
 
 /// Whether module m is merged but generated into package rt, bodies and

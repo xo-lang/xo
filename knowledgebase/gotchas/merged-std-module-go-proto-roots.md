@@ -26,3 +26,16 @@ with the program as its own package, so a call in its own body (here
 skipped). When a merged module's Go run faults on a missing protocol
 method, `XO_GO_PROTO=all` confirms the cause; look for another walk
 that skips `is_std` without the `merged` exception.
+
+## Addendum: a module generated into rt (2026-11-10, std/multipart)
+
+A merged module listed in std/rt_hosted.txt (decision 0597) has its Go in
+std/rt, but the runtime generic types' XoEq and XoHash (decision 0551)
+are still kept per program, so its comparisons must root them in every
+program that uses it. `multipart.write` compares an `Option[Str]`, and
+the Go corpus faulted `XoEq not generated for rt.Option[string]`. Two
+walks cover it: `proto_call_roots` scans such a module (`is_std_mod`
+is true for it, so the skip names `rt_hosted`), and gen.xo
+`rt_hosted_roots` generates its bodies once more with the output dropped,
+for the comparison roots that only generation records.
+

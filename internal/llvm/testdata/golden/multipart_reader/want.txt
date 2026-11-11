@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+title|-|-||Hello there (2,3,3,3)
+doc|a.txt|text/plain|one,two|line1\nline2 (3,3,3,2)
+q|-|-||café soft (4,4,2)
+end
+title|-|-||Hello there (4,4,3)
+doc|a.txt|text/plain|one,two|line1\nline2 (4,4,3)
+q|-|-||café soft (4,4,2)
+end
+title|-|-||Hello there (1,4,1,4,1)
+end
+title|-|-||Hello there (1,4,1,4,1)
+error connection reset
+--- stderr

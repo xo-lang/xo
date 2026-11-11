@@ -2,3 +2,4 @@
 # generates into std/rt, bodies and all, because std/rt's hand written Go
 # calls them (decision 0597)
 std/mime
+std/multipart

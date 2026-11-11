@@ -1,5 +1,22 @@
 # std/multipart changes
 
+## 2026-11-10: feature: Reader, Go's multipart.Reader over a streamed body; merged, one implementation
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0597 part 3 (std/native/http used the streaming parser through a std-internal `pub`)
+- Go reference: mime/multipart NewReader, Reader.NextPart, Part.Read, Part.Header (go1.26.1)
+- Test: std/multipart_test.xo (the reader against parse on every PARSE body at 1, 7 and 4096 bytes a read; a source error; header_values), golden multipart_reader on arm64, LLVM and Go; the multipart corpus on go, arm64 and llvm; native/http's tests; goldens http_form, http_multipart_stream, multipart_basic
+- Shipped in: not yet released
+
+`multipart.reader(src, boundary)` reads parts as the body arrives: `src` gives the next bytes, None at
+the end, or its error's text; `next_part` is NextPart (a `PartHead`: name, filename, the first value of
+each header, and `header_values` for all of one), `read(max)` is Part.Read. It is effect generic
+(`Reader[fx]`), so `src` may read a connection. `http.BodyReader.multipart` uses it. A source error
+in a part's headers is now that error (it ended the parts as Go's io.EOF before). std/multipart.xo holds
+the bodies; the Go backend runs them too, generated into std/rt (std/rt_hosted.txt), in place of
+std/rt/multipart.go over Go's package.
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor

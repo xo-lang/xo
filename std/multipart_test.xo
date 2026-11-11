@@ -1,5 +1,3 @@
-use std/multipart
-
 // Go's mime/multipart (go1.26.1) on random bodies: NextPart with each part read
 // whole, and ReadForm(32 MB); bodies and data in hex (decision 0282).
 const PARSE: List[(Str, Str, List[(Str, Str, Str, Str)], Str)] = [
@@ -1445,8 +1443,8 @@ test "go parse_form" {
 
 test "write and parse" {
   let parts = [
-    multipart.Part{name: "a", filename: None, headers: {}, data: b"one"},
-    multipart.Part{name: "f\"q", filename: Some("x.bin"), headers: {}, data: b"\r\n--zz\r\n"},
+    Part{name: "a", filename: None, headers: {}, data: b"one"},
+    Part{name: "f\"q", filename: Some("x.bin"), headers: {}, data: b"\r\n--zz\r\n"},
   ]
   let body = write(parts, "zz")
   expect(body.to_str() ?? "") == "--zz\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\none\r\n--zz\r\nContent-Disposition: form-data; name=\"f\\\"q\"; filename=\"x.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n\r\n--zz\r\n\r\n--zz--\r\n"
@@ -1462,4 +1460,58 @@ test "parse_form skips a nameless quoted-printable part as Go's Close drains it"
     Ok(_) => expect("ok") == "an error"
     Err(e) => expect(e.msg) == "multipart: unexpected line in Next(): \"x\\r\\n\""
   }
+}
+
+/// The parts of body read through a Reader that is given n bytes a call,
+/// as parse gives them, or the error.
+fn stream_parts(body: Bytes, boundary: Str, n: Int) -> List[(Str, Str, Str, Str)] ! MultipartErr {
+  let at = Atomic[Int].new(0)
+  var r = reader(fn() -> Bytes? ! Str {
+    let i = at.add(n) - n
+    if i >= body.len() {
+      return None
+    }
+    Some(body[i..(if i + n < body.len() { i + n } else { body.len() })])
+  }, boundary)
+  var out: List[(Str, Str, Str, Str)] = []
+  while let Some(h) = r.next_part()? {
+    var data = BytesBuilder.new()
+    while let Some(d) = r.read(5)? {
+      data.write(d)
+    }
+    out.push((h.name, h.filename ?? "", header_text(h.headers), data.freeze().to_hex()))
+  }
+  out
+}
+
+test "Reader streams what parse reads" {
+  for (boundary, body, want, e) in PARSE {
+    for n in [1, 7, 4096] {
+      match stream_parts(hx(body), boundary, n) {
+        Ok(ps) => {
+          expect((body, n, e)) == (body, n, "")
+          expect((body, n, ps)) == (body, n, want)
+        }
+        Err(got) => expect((body, n, got.msg.is_empty())) == (body, n, e.is_empty())
+      }
+    }
+  }
+}
+
+test "Reader returns the source's error and keeps it" {
+  var r = reader(fn() -> Bytes? ! Str { Err("connection reset") }, "b")
+  expect(r.next_part().err().map(fn(e) { e.msg })) == Some("multipart: NextPart: connection reset")
+  expect(r.next_part().err().map(fn(e) { e.msg })) == Some("multipart: NextPart: connection reset")
+}
+
+test "PartHead.header_values gives every value in order" {
+  let body = "--b\r\nX-A: 1\r\nx-a: 2\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nhi\r\n--b--\r\n".bytes()
+  let at = Atomic[Int].new(0)
+  var r = reader(fn() -> Bytes? ! Str { if at.add(1) == 1 { Some(body) } else { None } }, "b")
+  let h = r.next_part().ok() ?? None
+  expect(h.map(fn(h) { h.header_values("x-a") })) == Some(["1", "2"])
+  expect(h.map(fn(h) { h.name })) == Some("f")
+  expect(r.read().ok() ?? None) == Some(b"hi")
+  expect(r.read().ok() ?? Some(b"err")) == None
+  expect((r.next_part().ok() ?? None).is_none()) == true
 }

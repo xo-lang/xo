@@ -5015,11 +5015,12 @@ pub fn compose(from: Address, to: List[Address], subject: Str, text: Str,
 ## 26. std/multipart
 
 Status: implemented on every backend (decision 0282, 2026-10-20): Go's
-mime/multipart over a body in memory, with net/textproto's header reader
-and mime/quotedprintable's decoder, ported natively
-(`std/native/multipart.xo`: Go's results on 1,400 generated bodies in
-`multipart_test.xo`) and through mime/multipart on the Go backend;
-golden `multipart_basic`. Pure except `random_boundary`.
+mime/multipart, with net/textproto's header reader and
+mime/quotedprintable's decoder, ported to Xo in `std/multipart.xo` (Go's
+results on 1,400 generated bodies in `multipart_test.xo`), which every
+backend runs (on the Go backend generated into std/rt, decision 0597);
+golden `multipart_basic`. A streamed body is read with `Reader`
+(2026-11-10, decision 0597). Pure except `random_boundary`.
 
 ```
 struct Part { name: Str, filename: Str?, headers: Map[Str, Str], data: Bytes }
@@ -5031,6 +5032,13 @@ pub fn parse_form(body: Bytes, boundary: Str, max_parts: Int = 1000) -> Form ! M
 pub fn write(parts: List[Part], boundary: Str) -> Bytes
 pub fn form_data_content_type(boundary: Str) -> Str
 pub fn random_boundary(r: Rand) -> Str uses rand
+
+struct PartHead { name: Str, filename: Str?, headers: Map[Str, Str] }
+pub fn (h: PartHead) header_values(name: Str) -> List[Str]
+struct Reader[fx: Effects]
+pub fn reader[fx: Effects](src: fn() -> Bytes? ! Str uses fx, boundary: Str) -> Reader[fx]
+pub fn (var r: Reader[fx]) next_part() -> PartHead? ! MultipartErr uses fx
+pub fn (var r: Reader[fx]) read(max: Int = 32768) -> Bytes? ! MultipartErr uses fx
 ```
 
 - `parse` is `Reader.NextPart` with each part read whole: the preamble
@@ -5056,7 +5064,17 @@ pub fn random_boundary(r: Rand) -> Str uses rand
   `filename` (Go's `CreateFormField` and `CreateFormFile`, with
   `Content-Type: application/octet-stream` for a file) when the part has
   none. The boundary is used as given.
-- Streaming parts waits for a streaming request body.
+- `reader` is Go's `NewReader` over a body read as it arrives: each call
+  of `src` gives the body's next bytes, None at its end, or its read
+  error's text. `next_part` is `NextPart`: the next part's head (`name`
+  and `filename` as in `parse`, `headers` the first value of each
+  header, `header_values` all of one header's), None after the last
+  part; the open part's unread data is read and dropped first. `read`
+  is `Part.Read`: at most `max` bytes of the open part's data (decoded
+  when quoted-printable), None at its end; `max` below 1 is a fault.
+  Errors are `parse`'s and the source's text, and stick. The reader
+  keeps one part's head and Go's 4096 byte line buffer, not the body;
+  `http.BodyReader.multipart` is this reader over a request body.
 ## 27. std/tls
 
 A TLS client on a connection the program dialed (decision 0281): the

@@ -173,3 +173,11 @@ pushes.
   std/merged.txt, so an older xo (a seed) still reads the module as
   merged. std/mime merged under it; std/rt/mime.go and std_sigs_mime.go
   removed.
+- Part 3, multipart (2026-11-10): std/multipart merged and rt-hosted;
+  the streaming parser is public as `multipart.Reader[fx]` (`reader`,
+  `next_part`, `read`, `PartHead.header_values`, spec/std.md 26), and
+  std/native/http's PartReader uses it, so no std-internal `pub` is
+  left in it. The Go backend's comparison roots in rt-hosted bodies
+  (gen.xo `rt_hosted_roots`, gotchas/merged-std-module-go-proto-roots.md).
+  Left: std/rt's Go PartReader still wraps Go's mime/multipart.Reader
+  (http_part_reader.go); moving it onto `Multipart_reader` is the next step.

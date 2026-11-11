@@ -1,0 +1,63 @@
+// multipart.Reader over a body given a few bytes at a time (decision
+// 0597): each part's head and its data in reads of at most 4 bytes, a
+// quoted-printable part decoded, a header's every value, the source's
+// error, and a body cut short.
+use std/multipart
+
+const BODY: Str = "preamble\r\n--XB\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHello there\r\n--XB\r\nContent-Disposition: form-data; name=\"doc\"; filename=\"dir/a.txt\"\r\nContent-Type: text/plain\r\nX-Tag: one\r\nX-Tag: two\r\n\r\nline1\nline2\r\n--XB\r\nContent-Disposition: form-data; name=\"q\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\ncaf=C3=A9 =\r\nsoft\r\n--XB--\r\nepilogue"
+
+fn source(body: Bytes, n: Int, fail: Str) -> fn() -> Bytes? ! Str {
+  let at = Atomic[Int].new(0)
+  fn() -> Bytes? ! Str {
+    let i = at.add(n) - n
+    if i >= body.len() {
+      if !fail.is_empty() {
+        return Err(fail)
+      }
+      return None
+    }
+    Some(body[i..(if i + n < body.len() { i + n } else { body.len() })])
+  }
+}
+
+fn dump(os: Os, body: Bytes, n: Int, fail: Str) {
+  var r = multipart.reader(source(body, n, fail), "XB")
+  while true {
+    let h = match r.next_part() {
+      Ok(Some(h)) => h
+      Ok(None) => {
+        os.stdio.println("end")
+        return
+      }
+      Err(e) => {
+        os.stdio.println("error ${e}")
+        return
+      }
+    }
+    var sizes: List[Str] = []
+    var data = BytesBuilder.new()
+    var failed = ""
+    while true {
+      match r.read(4) {
+        Ok(Some(d)) => {
+          sizes.push("${d.len()}")
+          data.write(d)
+        }
+        Ok(None) => break
+        Err(e) => {
+          failed = e.msg
+          break
+        }
+      }
+    }
+    os.stdio.println("${h.name}|${h.filename ?? "-"}|${h.headers.get("Content-Type") ?? "-"}|${h.header_values("x-tag").join(",")}|${(data.freeze().to_str() ?? "?").replace("\n", "\\n")} (${sizes.join(",")})${if failed.is_empty() { "" } else { " error ${failed}" }}")
+  }
+}
+
+fn main(os: Os) {
+  let body = BODY.bytes()
+  dump(os, body, 3, "")
+  dump(os, body, 4096, "")
+  dump(os, body[0..120], 5, "")
+  dump(os, body[0..120], 5, "connection reset")
+}

@@ -729,7 +729,10 @@ fn (g: Gen) func_go_name(fo: Int) -> Str {
 fn (g: Gen) default_fn_name(fo: Int, i: Int) -> Str {
   let o = g.c.objs[fo]
   if o.recv >= 0 && g.method_is_go_method(fo) {
-    return "${g.oname(o.recv)}_${g.func_go_name(fo)}_D_${i}"
+    // in a module generated into rt, its prefix too, so stdgen files it
+    // with the module (Multipart_Reader_M_read_D_0)
+    let pre = if g.rt_hosted(o.module) { g.std_prefix(g.omod(o.recv)) } else { "" }
+    return "${pre}${g.oname(o.recv)}_${g.func_go_name(fo)}_D_${i}"
   }
   "${g.func_go_name(fo)}_D_${i}"
 }

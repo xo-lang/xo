@@ -33,7 +33,6 @@ use native/llrt/testworld
 use native/llrt/twrun
 use native/rthttp
 use native/llrt/raw
-use native/multipart as nmp
 use native/tls as ntls
 
 // ---------------------------------------------------------------------------
@@ -539,7 +538,7 @@ fn (b: BodyReader) read_all() -> Bytes ! IoErr {
 
 /// A multipart body read part by part (decision 0310 phase 3).
 struct PartReader {
-  st: Mutex[nmp.Stream]
+  st: Mutex[multipart.Reader[()]]
 }
 
 /// A part of a PartReader; fields: every header field as [name, value,
@@ -548,7 +547,8 @@ struct StreamPart {
   name: Str
   filename: Str?
   headers: Map[Str, Str]
-  fields: List[Str] = []
+  /// multipart's head, for header_values
+  head: multipart.PartHead? = None
 }
 
 /// The request's trailers (decision 0433): empty until read returned None.
@@ -575,14 +575,13 @@ fn (b: BodyReader) multipart(req: Request) -> PartReader ! multipart.MultipartEr
     Some(b) => b
     None => return Err(multipart.MultipartErr{msg: "no multipart boundary param in Content-Type"})
   }
-  let src = fn() -> nmp.Feed {
+  let src = fn() -> Bytes? ! Str {
     match b.read(READ_MAX) {
-      Ok(Some(d)) => nmp.Feed{data: d, end: false, err: ""}
-      Ok(None) => nmp.Feed{data: b"", end: true, err: ""}
-      Err(e) => nmp.Feed{data: b"", end: false, err: io_err_text(e)}
+      Ok(d) => Ok(d)
+      Err(e) => Err(io_err_text(e))
     }
   }
-  Ok(PartReader{st: Mutex[nmp.Stream].new(nmp.new_stream(src, boundary))})
+  Ok(PartReader{st: Mutex[multipart.Reader[()]].new(multipart.reader(src, boundary))})
 }
 
 /// The text of a body read's error, as Go's error from the body.
@@ -596,11 +595,11 @@ fn io_err_text(e: IoErr) -> Str {
 
 fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr {
   // the outcome as the closure's value, as BodyReader.read's
-  let h = p.st.with(fn(var s: nmp.Stream) -> Result[nmp.Head?, Str] { s.next() })
+  let h = p.st.with(fn(var s: multipart.Reader[()]) -> Result[multipart.PartHead?, multipart.MultipartErr] { s.next_part() })
   match h {
-    Ok(Some(h)) => Ok(Some(StreamPart{name: h.name, filename: h.filename, headers: h.headers, fields: h.fields}))
+    Ok(Some(h)) => Ok(Some(StreamPart{name: h.name, filename: h.filename, headers: h.headers, head: Some(h)}))
     Ok(None) => Ok(None)
-    Err(m) => Err(multipart.MultipartErr{msg: m})
+    Err(e) => Err(e)
   }
 }
 
@@ -608,23 +607,14 @@ fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr {
   if max < 1 {
     fault("PartReader.read: max must be at least 1, got ${max}")
   }
-  match p.st.with(fn(var s: nmp.Stream) -> Result[Bytes?, Str] { s.read(max) }) {
-    Ok(d) => Ok(d)
-    Err(m) => Err(multipart.MultipartErr{msg: m})
-  }
+  p.st.with(fn(var s: multipart.Reader[()]) -> Result[Bytes?, multipart.MultipartErr] { s.read(max) })?
 }
 
 fn (p: StreamPart) header_values(name: Str) -> List[Str] {
-  let k = http1.canonical_key(name)
-  var vs: List[Str] = []
-  var i = 0
-  while i + 1 < p.fields.len() {
-    if p.fields[i] == k {
-      vs.push(p.fields[i + 1])
-    }
-    i += 2
+  match p.head {
+    Some(h) => h.header_values(name)
+    None => []
   }
-  vs
 }
 
 /// The next bytes of s, at most max.
