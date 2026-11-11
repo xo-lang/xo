@@ -2177,7 +2177,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           wst.abandon(os)
           fail_code(os, "XO1517", rerr)
         }
-        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, wres, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys, !o.strip && debug_info_eff(o, release) != "off", if wst.copy { None } else { ctx.pdb_later }, win_dll(o))
+        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, wres, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys, !o.strip && debug_info_eff(o, release) != "off", if wst.copy { None } else { ctx.pdb_later }, win_dll(o), b.conc)
         tl = lap(os, phases, "link.pe_link", tl)
         if !why.is_empty() {
           fail_stage(os, wst, why)
@@ -2375,7 +2375,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wst.abandon(os)
         fail_code(os, "XO1517", rerr)
       }
-      let why = pe_link(os, wobjs + cobjs, wst.bin, wbin, wres, false, phases, trimpath_eff(o), backend_cache_dir(os, ctx), [], !o.strip && debug_info_eff(o, release) != "off", None, win_dll(o))
+      let why = pe_link(os, wobjs + cobjs, wst.bin, wbin, wres, false, phases, trimpath_eff(o), backend_cache_dir(os, ctx), [], !o.strip && debug_info_eff(o, release) != "off", None, win_dll(o), b.conc)
       if !why.is_empty() {
         fail_stage(os, wst, why)
       }

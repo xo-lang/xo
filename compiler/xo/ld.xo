@@ -734,11 +734,11 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel, arm: Bool) -> Str ! FsErr 
 /// cdir and keys: the back-end cache and the first objects' keys for their
 /// PDB parts (the PDB from each object's cached part, pdb_parts, unless
 /// XO_PDB_OBJ=0).
-fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PERes], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?, dll: List[Str]? = None) -> Str { pe_link_half(os, paths, bin, out, res, race, phases, trim, cdir, keys0, debug, later, dll == None, dll) }
+fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PERes], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?, dll: List[Str]? = None, conc: Bool = false) -> Str { pe_link_half(os, paths, bin, out, res, race, phases, trim, cdir, keys0, debug, later, dll == None, dll, conc) }
 
 /// pe_link, through std's half when use_half and one is cached (decision
 /// 0409 on PE); a link the half cannot serve is made again without it.
-fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PERes], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?, use_half: Bool, dll: List[Str]? = None) -> Str {
+fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PERes], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?, use_half: Bool, dll: List[Str]? = None, conc: Bool = false) -> Str {
   var t = os.clock.now()
   var keys = keys0
   // decision 0388 stage 4's store for windows/amd64: XO_STD_STORE=PATH on
@@ -758,8 +758,12 @@ fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PE
   // decision 0388 stage 3: a separately compiled program links through
   // std's store (XO_SEPCOMP_STORE=PATH, std.store of `xo dev stdobj` or
   // the std cache): every input is the program's, kept whole, std read
-  // from PATH and its PDB parts from PATH.pdb
-  let sep_store = if store_path.is_empty() { os.env.get("XO_SEPCOMP_STORE") ?? "" } else { "" }
+  // from PATH and its PDB parts from PATH.pdb; a concurrent program's is
+  // XO_SEPCOMP_STORE_CONC when set, as sepcomp_store (the conc=false
+  // store here faulted http_server's first request and left sql_conv's
+  // Pool.take undefined on windows/amd64 once std's variants were in the
+  // cache: tier 910, 2026-11-11, 0.48.0 too)
+  let sep_store = if store_path.is_empty() { pe_sep_store(os, conc) } else { "" }
   // (read when the link needs it: a link from std's half does not)
   var sep_size = 0
   if !sep_store.is_empty() {
@@ -971,7 +975,7 @@ fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, res: List[macho.PE
         Some(h) => if !macho.pe_half_pins_ok(h, layout) {
           // std's sections moved (the program grew the headers): the full
           // link, whose half replaces this one
-          return pe_link_half(os, paths, bin, out, res, race, phases, trim, cdir, keys0, debug, later, false, dll)
+          return pe_link_half(os, paths, bin, out, res, race, phases, trim, cdir, keys0, debug, later, false, dll, conc)
         } else {
           half_id = h.id
         }
@@ -2294,4 +2298,16 @@ fn data_shift(v: Str) -> Int {
     return 0
   }
   n.min(4096) / 8 * 8
+}
+
+/// The store a separately compiled windows link reads std from:
+/// XO_SEPCOMP_STORE_CONC for a concurrent program when set, else
+/// XO_SEPCOMP_STORE ("" for none). Unlike sepcomp_store it does not ask
+/// for XO_SEPCOMP_FACTS: a store set alone is linked, as before.
+fn pe_sep_store(os: Os, conc: Bool) -> Str {
+  let sc = if conc { os.env.get("XO_SEPCOMP_STORE_CONC") ?? "" } else { "" }
+  if !sc.is_empty() {
+    return sc
+  }
+  os.env.get("XO_SEPCOMP_STORE") ?? ""
 }
