@@ -192,3 +192,26 @@ target, flat after the warm-up, first entry about 1 s. The REPL panel on
 /play/ is the next step (a website change, through the owner); a
 one-shot /play/ build gains the same (one build of a tour program: 608 to
 304 MB in Node, check 750 to 550 ms).
+
+## Memory below 50 MB: study (a) (2026-11-10, Node, compiler/wasm built at main)
+
+The owner asked whether a REPL entry can peak under 50 MB. Entry 1 (`use std/adler32`, a checksum
+and `1 + 2`) reached 212 MB of wasm memory by the end of check, and SSA, the passes and code
+generation added nothing. Natively, the same play build path peaks at 81 MB with 55 MB in use after
+check, so wasm held about 3x native's live data. That gap was allocation count, not word size:
+wasm made 2.84M allocations (587 MB requested) against native's 0.9M (241 MB).
+
+- `[]` took room for 4 elements at once (compiler/wasm call.xo list.new), where native's `[]` is a
+  shared empty list. Each token's `parts` (4 StrParts: 304 bytes, a 512 byte block) did this for
+  about 430K std tokens. With no room until the first push, wasm memory is 136 MB after check and
+  169 MB at the entry's end (212 before); live small blocks peak at 125 MB (196 before) and requests
+  total 354 MB (587 before).
+- Str has no views in wasm, so every slice is a new record (1.55M records of 8 to 15 bytes, mostly
+  the lexer's token text). They are short lived: 8 MB at the peak.
+- Every leaf is 8 bytes in memory (gen.xo size): Bool and enum tags take a word.
+
+Live at the new peak (the end of the entry): two 16 MB blocks (Checker.new_obj's object list at
+11 MB, and check_lazy's 11 MB list with its 6 MB copy), Lexer.emit's 7 MB token list, and 76 MB of
+smaller blocks. Next, in order: std from its declaration record, so std's tokens, trees and objects
+are never built; list growth that does not hold the old and new copies at once; 1-byte Bools and
+packed enum tags in memory. Notes and probes: ~/xo-lead/notes/xo-lang-2/repl50/.

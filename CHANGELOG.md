@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- playground and wasm (memory): an empty list (`[]`) no longer takes room for 4 elements before its first push, as on native. The playground compiler's first REPL entry (an adler32 program) peaked at 169 MB of wasm memory, from 212 MB; after its check, 136 MB (decision 0583).
 - xo build and xo test (fix): a program using std/base64 with std's cached declaration record (any build that also uses a module in the record, such as crc32) failed with XO1201 `base64.encode`: the record did not keep that base64 is merged with its implementation (decision 0588; the record is now v11). `xo test --std-module=base64` after an edit to std/base64.xo reuses std's test variant, building base64 and its importers from source, as it did for the old std/native/base64.xo
 - `os.secrets.keychain()`: the macOS login keychain's generic passwords (`Keychain.get_generic/set_generic/delete_generic`, `KeychainErr`), and an in-memory keychain in tests on every OS (decision 0584 stage D)
 - Tests get an in-memory keyring: `os.secrets.keyring()` in a test is `Some` on every OS and empty per test (decision 0584 stage C)
