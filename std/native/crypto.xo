@@ -16,6 +16,7 @@ use native/llrt/digest as dg
 use native/llrt/ed25519
 use native/llrt/hkdf as hk
 use native/llrt/md5
+use native/llrt/mlkem
 use native/llrt/nistec
 use native/llrt/rsa
 use native/llrt/rsagen
@@ -1860,3 +1861,71 @@ fn (k: EcdhPrivateKey) ecdh(peer: EcdhPublicKey) -> Bytes ! crypto.KeyErr {
 fn (k: EcdhPublicKey) curve() -> crypto.EcdhCurve { k.crv }
 
 fn (k: EcdhPublicKey) bytes() -> Bytes { k.key }
+
+// ---------------------------------------------------------------------------
+// ML-KEM (crypto/mlkem of go1.26, decision 0604): llrt's FIPS 203 code,
+// which TLS's hybrids already use
+
+struct MlkemDecapsulationKey {
+  p: crypto.MlkemParams
+  seed: Bytes
+  key: mlkem.Key
+  enc: MlkemEncapsulationKey
+}
+
+struct MlkemEncapsulationKey {
+  p: crypto.MlkemParams
+  e: mlkem.EncKey
+}
+
+fn mlkem_k(p: crypto.MlkemParams) -> Int { mlkem.k_of(p == crypto.MlkemParams.Mlkem1024) }
+
+fn mlkemparams_encapsulation_key_size(p: crypto.MlkemParams) -> Int { mlkem.ek_len(mlkem_k(p)) }
+
+fn mlkemparams_ciphertext_size(p: crypto.MlkemParams) -> Int { mlkem.ct_len(mlkem_k(p)) }
+
+fn mlkem_dk(p: crypto.MlkemParams, seed: Bytes) -> MlkemDecapsulationKey {
+  let k = mlkem_k(p)
+  let key = mlkem.expand_seed(seed, k)
+  MlkemDecapsulationKey{p: p, seed: seed, key: key, enc: MlkemEncapsulationKey{p: p, e: mlkem.key_enc(key, k)}}
+}
+
+fn mlkem_generate_key(r: Rand, p: crypto.MlkemParams) -> MlkemDecapsulationKey uses rand { mlkem_dk(p, r.bytes(64)) }
+
+fn mlkem_decapsulation_key(p: crypto.MlkemParams, seed: Bytes) -> MlkemDecapsulationKey ! crypto.KeyErr {
+  if seed.len() != 64 {
+    return Err(key_err("mlkem: invalid seed length"))
+  }
+  Ok(mlkem_dk(p, seed))
+}
+
+fn mlkem_encapsulation_key(p: crypto.MlkemParams, key: Bytes) -> MlkemEncapsulationKey ! crypto.KeyErr {
+  let k = mlkem_k(p)
+  if key.len() != mlkem.ek_len(k) {
+    return Err(key_err("mlkem: invalid encapsulation key length"))
+  }
+  match mlkem.parse_ek(key, k) {
+    Some(e) => Ok(MlkemEncapsulationKey{p: p, e: e})
+    None => Err(key_err("mlkem: invalid polynomial encoding"))
+  }
+}
+
+fn (k: MlkemDecapsulationKey) params() -> crypto.MlkemParams { k.p }
+
+fn (k: MlkemDecapsulationKey) bytes() -> Bytes { k.seed }
+
+fn (k: MlkemDecapsulationKey) encapsulation_key() -> MlkemEncapsulationKey { k.enc }
+
+fn (k: MlkemDecapsulationKey) decapsulate(ciphertext: Bytes) -> Bytes ! crypto.KeyErr {
+  let kk = mlkem_k(k.p)
+  if ciphertext.len() != mlkem.ct_len(kk) {
+    return Err(key_err("mlkem: invalid ciphertext length"))
+  }
+  Ok(mlkem.decaps_with(k.key, ciphertext, kk))
+}
+
+fn (k: MlkemEncapsulationKey) params() -> crypto.MlkemParams { k.p }
+
+fn (k: MlkemEncapsulationKey) bytes() -> Bytes { mlkem.enc_bytes(k.e) }
+
+fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes) uses rand { mlkem.encaps_with(k.e, r.bytes(32)) }

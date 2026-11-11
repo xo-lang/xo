@@ -267,3 +267,55 @@ fn (k: EcdhPrivateKey) ecdh(peer: EcdhPublicKey) -> Bytes ! KeyErr
 fn (k: EcdhPublicKey) curve() -> EcdhCurve
 /// The key's encoding (PublicKey.Bytes), which ecdh_public_key reads.
 fn (k: EcdhPublicKey) bytes() -> Bytes
+
+// ---- ML-KEM key encapsulation (crypto/mlkem, decision 0604) ----
+
+/// crypto/mlkem's parameter sets (FIPS 203).
+enum MlkemParams {
+  Mlkem768
+  Mlkem1024
+}
+
+/// An ML-KEM decapsulation key: Debug text `<mlkemdecapsulationkey>`,
+/// never key material.
+struct MlkemDecapsulationKey {}
+
+/// An ML-KEM encapsulation key: ==.
+struct MlkemEncapsulationKey {}
+
+/// The size of an ML-KEM shared key (mlkem.SharedKeySize).
+const MLKEM_SHARED_KEY_SIZE: Int = 32
+/// The size of a decapsulation key's seed (mlkem.SeedSize).
+const MLKEM_SEED_SIZE: Int = 64
+
+/// The size of an encapsulation key: 1184, or 1568 for ML-KEM-1024.
+fn (p: MlkemParams) encapsulation_key_size() -> Int
+/// The size of a ciphertext: 1088, or 1568 for ML-KEM-1024.
+fn (p: MlkemParams) ciphertext_size() -> Int
+
+/// A new decapsulation key (GenerateKey768, GenerateKey1024): reads its
+/// 64 byte seed (d, then z) from r, so one seeded r gives one key on every
+/// backend.
+fn mlkem_generate_key(r: Rand, p: MlkemParams) -> MlkemDecapsulationKey uses rand
+/// The decapsulation key of a 64 byte seed (NewDecapsulationKey768);
+/// Go's text `mlkem: invalid seed length`.
+fn mlkem_decapsulation_key(p: MlkemParams, seed: Bytes) -> MlkemDecapsulationKey ! KeyErr
+/// An encapsulation key from its encoding (NewEncapsulationKey768);
+/// Go's texts: `mlkem: invalid encapsulation key length`, `mlkem: invalid
+/// polynomial encoding` (a coefficient not below q).
+fn mlkem_encapsulation_key(p: MlkemParams, key: Bytes) -> MlkemEncapsulationKey ! KeyErr
+fn (k: MlkemDecapsulationKey) params() -> MlkemParams
+/// The 64 byte seed (d || z), which mlkem_decapsulation_key reads.
+fn (k: MlkemDecapsulationKey) bytes() -> Bytes
+fn (k: MlkemDecapsulationKey) encapsulation_key() -> MlkemEncapsulationKey
+/// The shared key of a ciphertext; `mlkem: invalid ciphertext length`
+/// for another length. Any ciphertext of the right length gives a key:
+/// one that was not made for this key gives a pseudorandom key (FIPS
+/// 203's implicit rejection).
+fn (k: MlkemDecapsulationKey) decapsulate(ciphertext: Bytes) -> Bytes ! KeyErr
+fn (k: MlkemEncapsulationKey) params() -> MlkemParams
+/// The key's encoding, which mlkem_encapsulation_key reads.
+fn (k: MlkemEncapsulationKey) bytes() -> Bytes
+/// (shared key, ciphertext) for a 32 byte message read from r (Go's
+/// mlkemtest.Encapsulate768 with that message).
+fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes) uses rand

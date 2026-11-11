@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-11: feature: ML-KEM key encapsulation (Go's crypto/mlkem)
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-11 (bench/results/std-audit-2026-11-11.md, eighth gap), decision 0604
+- Go reference: crypto/mlkem and crypto/mlkem/mlkemtest (go1.26.1)
+- Test: the mlkem corpus on go, arm64, llvm (80 seeds, 80 encapsulations with Go's messages, 160 edited encapsulation keys, 120 tampered or cut ciphertexts, both parameter sets)
+- Timing: bench/results/mlkem-vs-go-2026-11-11.md
+- Shipped in: not yet released
+
+MlkemParams (Mlkem768, Mlkem1024), MlkemDecapsulationKey and MlkemEncapsulationKey with mlkem_generate_key, mlkem_decapsulation_key, mlkem_encapsulation_key, params, bytes, encapsulation_key, decapsulate and encapsulate, Go's error texts; the native backends run llrt/mlkem.xo (TLS's hybrids), an encapsulation key parsed once (t, A and H(ek), as Go keeps them). spec/std.md 11.
+
 ## 2026-11-11: feature: crypto.xor (Go's subtle.XORBytes)
 
 - Kind: feature

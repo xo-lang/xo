@@ -1,0 +1,56 @@
+package main
+
+import (
+	"crypto/mlkem"
+	"crypto/mlkem/mlkemtest"
+	"fmt"
+	"os"
+)
+
+func pattern(i, n int) []byte {
+	b := make([]byte, n)
+	for j := range b {
+		b[j] = byte((i*7 + j) % 256)
+	}
+	return b
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	dk, err := mlkem.NewDecapsulationKey768(pattern(1, 64))
+	if err != nil {
+		panic(err)
+	}
+	ek := dk.EncapsulationKey()
+	ekb := ek.Bytes()
+	_, ct, _ := mlkemtest.Encapsulate768(ek, pattern(2, 32))
+	sum := 0
+	switch w {
+	case "keygen":
+		for i := 0; i < 3000; i++ {
+			k, _ := mlkem.NewDecapsulationKey768(pattern(i, 64))
+			sum += int(k.EncapsulationKey().Bytes()[i%1184])
+		}
+	case "parse":
+		for i := 0; i < 3000; i++ {
+			e, _ := mlkem.NewEncapsulationKey768(ekb)
+			sum += int(e.Bytes()[i%1184])
+		}
+	case "encaps":
+		for i := 0; i < 3000; i++ {
+			s, c, _ := mlkemtest.Encapsulate768(ek, pattern(i, 32))
+			sum += int(s[i%32]) + int(c[i%1088])
+		}
+	case "decaps":
+		for i := 0; i < 3000; i++ {
+			s, _ := dk.Decapsulate(ct)
+			sum += int(s[i%32])
+		}
+	default:
+		sum = int(ekb[0]) + int(ct[0])
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

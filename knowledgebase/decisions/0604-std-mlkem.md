@@ -99,3 +99,13 @@ backend reaches it only through TLS.
 - Bytes in, Bytes out functions with no key types: Go validates the
   encapsulation key once at construction; key types keep that and the
   Debug redaction of the seed.
+
+## Progress
+
+- 2026-11-11 (Xo Lang 3): built as decided. std/crypto's MlkemParams,
+  MlkemDecapsulationKey and MlkemEncapsulationKey over
+  std/native/llrt/mlkem.xo (the TLS client's core, with the
+  encapsulation key's parse and encaps added); the Go backend over
+  crypto/mlkem. The mlkem corpus (seed 604) matches Go on go, arm64 and
+  llvm. Timing: bench/results/mlkem-vs-go-2026-11-11.md (Xo / Go 0.29 to
+  0.88 on linux/arm64).

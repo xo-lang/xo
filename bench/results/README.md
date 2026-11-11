@@ -358,3 +358,4 @@
 - [bigfloat-vs-go-2026-11-11.md](bigfloat-vs-go-2026-11-11.md): big.BigFloat (decision 0602) against Go's math/big Float (bench/perf/bigfloat), 256 bits, linux/arm64: Xo / Go wall add 2.40, mul 1.76, quo 1.06, sqrt 2.54, text 1.59, parse 1.43; max RSS about 0.12.
 - [bigrat-vs-go-2026-11-11.md](bigrat-vs-go-2026-11-11.md): big.BigRat against Go's math/big Rat on linux/arm64 host 1 (decision 0608's timing row).
 - [xoc-size-2026-11-11.md](xoc-size-2026-11-11.md): the playground compiler (compiler/wasm built for wasm) from 0.35.0 to main: 22.5 to 58.2 MB, half of it one code generation step (2d51a8403, bisected), and 26.2 MB (3.15 MB brotli) with the fix.
+- [mlkem-vs-go-2026-11-11.md](mlkem-vs-go-2026-11-11.md): crypto ML-KEM-768 against Go's crypto/mlkem on linux/arm64 host 1 (decision 0604's timing row).

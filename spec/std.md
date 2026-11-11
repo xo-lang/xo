@@ -3944,6 +3944,40 @@ bytes; a NIST scalar by Go's rejection sampling), so a seeded `r` gives
 the same key on every backend. Checked against Go's `crypto/ecdh`
 (testdata/corpus/ecdh) and RFC 7748 (golden crypto_ecdh).
 
+ML-KEM key encapsulation (Go's `crypto/mlkem`, FIPS 203, decision 0604):
+
+```xo
+enum MlkemParams { Mlkem768, Mlkem1024 }
+struct MlkemDecapsulationKey {}   // Debug `<mlkemdecapsulationkey>`
+struct MlkemEncapsulationKey {}   // ==
+const MLKEM_SHARED_KEY_SIZE: Int = 32
+const MLKEM_SEED_SIZE: Int = 64
+fn (p: MlkemParams) encapsulation_key_size() -> Int   // 1184, 1568
+fn (p: MlkemParams) ciphertext_size() -> Int          // 1088, 1568
+fn mlkem_generate_key(r: Rand, p: MlkemParams) -> MlkemDecapsulationKey uses rand
+fn mlkem_decapsulation_key(p: MlkemParams, seed: Bytes) -> MlkemDecapsulationKey ! KeyErr
+fn mlkem_encapsulation_key(p: MlkemParams, key: Bytes) -> MlkemEncapsulationKey ! KeyErr
+fn (k: MlkemDecapsulationKey) params() -> MlkemParams
+fn (k: MlkemDecapsulationKey) bytes() -> Bytes          // the 64 byte seed d || z
+fn (k: MlkemDecapsulationKey) encapsulation_key() -> MlkemEncapsulationKey
+fn (k: MlkemDecapsulationKey) decapsulate(ciphertext: Bytes) -> Bytes ! KeyErr
+fn (k: MlkemEncapsulationKey) params() -> MlkemParams
+fn (k: MlkemEncapsulationKey) bytes() -> Bytes
+fn (k: MlkemEncapsulationKey) encapsulate(r: Rand) -> (Bytes, Bytes) uses rand  // (shared key, ciphertext)
+```
+
+A decapsulation key is its seed (Go's `NewDecapsulationKey768` form; the
+expanded NIST form is not read). Errors are Go's: `mlkem: invalid seed
+length`, `mlkem: invalid encapsulation key length`, `mlkem: invalid
+polynomial encoding` (a coefficient of the key not below q), `mlkem:
+invalid ciphertext length`. A ciphertext of the right length always
+decapsulates: one not made for the key gives a pseudorandom shared key
+(FIPS 203's implicit rejection). Key generation reads the 64 byte seed
+from `r` and encapsulation its 32 byte message, so a seeded `r` gives the
+same keys and ciphertexts on every backend (Go's `mlkemtest.Encapsulate768`
+with that message). Checked against Go's `crypto/mlkem`
+(testdata/corpus/mlkem).
+
 ---
 
 ## 12. std/go

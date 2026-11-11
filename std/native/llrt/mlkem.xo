@@ -825,3 +825,53 @@ fn accumulated_k(n: Int, k: Int) -> Bytes {
   }
   sha3.read(o, 32)
 }
+
+// ---------------------------------------------------------------------------
+// std/crypto's ML-KEM keys (decision 0604)
+
+/// An encapsulation key parsed once: t, the matrix A and H(ek), as Go's
+/// EncapsulationKey768 keeps them.
+pub struct EncKey {
+  k: Int
+  t: List[List[Int]]
+  a: List[List[Int]]
+  h: Bytes
+  ek: Bytes
+}
+
+/// k of a parameter set: 3 for ML-KEM-768, 4 for ML-KEM-1024.
+pub fn k_of(is1024: Bool) -> Int { if is1024 { K1024 } else { K768 } }
+
+/// The encapsulation key size of k.
+pub fn ek_len(k: Int) -> Int { ek_size(k) }
+
+/// The ciphertext size of k.
+pub fn ct_len(k: Int) -> Int { ct_size(k) }
+
+/// The parsed key of ek (ek_len(k) bytes), none when a coefficient is not
+/// below q (FIPS 203's modulus check).
+pub fn parse_ek(ek: Bytes, k: Int) -> EncKey? {
+  var t: List[List[Int]] = []
+  for i in 0..k {
+    t.push(decode12(ek[384 * i..384 * (i + 1)])?)
+  }
+  Some(EncKey{k: k, t: t, a: matrix(ek[384 * k..ek_size(k)], k), h: sha3.sha3_256(ek), ek: ek})
+}
+
+/// The encoding of e.
+pub fn enc_bytes(e: EncKey) -> Bytes { e.ek }
+
+/// (shared key, ciphertext) for the 32 byte message m (ML-KEM.Encaps_internal).
+pub fn encaps_with(e: EncKey, m: Bytes) -> (Bytes, Bytes) {
+  let g = sha3.sha3_512(asn1.cat([m, e.h]))
+  (g[0..32], pke_encrypt(e.a, e.t, m, g[32..64], e.k))
+}
+
+/// The key of a 64 byte seed, expanded.
+pub fn expand_seed(seed: Bytes, k: Int) -> Key { expand(seed, k) }
+
+/// The encapsulation key of an expanded key (made by expand: no check).
+pub fn key_enc(key: Key, k: Int) -> EncKey { EncKey{k: k, t: key.t, a: key.a, h: sha3.sha3_256(key.ek), ek: key.ek} }
+
+/// The shared key of a ciphertext of ct_len(k) bytes (implicit rejection).
+pub fn decaps_with(key: Key, c: Bytes, k: Int) -> Bytes { decaps_key(key, c, k) }

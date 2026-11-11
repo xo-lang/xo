@@ -1,0 +1,60 @@
+// mlkem: std/crypto's ML-KEM-768 against Go's crypto/mlkem (twin.go.txt):
+// keygen (a decapsulation key from each of 3,000 seeds), parse (an
+// encapsulation key read 3,000 times), encaps (3,000 encapsulations with
+// Go's mlkemtest messages) and decaps (3,000 decapsulations); `none` is
+// the setup alone. Usage: `<program> none|keygen|parse|encaps|decaps`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/crypto
+
+/// A Rand that gives fixed bytes (the message Go is given).
+struct Fixed {
+  b: Bytes
+}
+
+fn (s: Fixed) int(lo: Int, hi: Int) -> Int uses rand { lo }
+fn (s: Fixed) float() -> Float uses rand { 0.5 }
+fn (s: Fixed) bool() -> Bool uses rand { false }
+fn (s: Fixed) shuffle[T](xs: List[T]) -> List[T] uses rand { xs }
+fn (s: Fixed) bytes(n: Int) -> Bytes uses rand { s.b[0..n] }
+
+fn pattern(i: Int, n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for j in 0..n {
+    b.write_byte(UInt8((i * 7 + j) % 256))
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses (stdio, env, rand) {
+  let w = os.env.args().get(0) ?? "none"
+  let p = crypto.MlkemParams.Mlkem768
+  let dk = crypto.mlkem_decapsulation_key(p, pattern(1, 64)).ok() ?? fault("seed")
+  let ek = dk.encapsulation_key()
+  let ekb = ek.bytes()
+  let (_s, ct) = ek.encapsulate(Fixed{b: pattern(2, 32)})
+  var sum = 0
+  if w == "keygen" {
+    for i in 0..3000 {
+      let k = crypto.mlkem_decapsulation_key(p, pattern(i, 64)).ok() ?? fault("seed")
+      sum += Int(k.encapsulation_key().bytes()[i % 1184])
+    }
+  } else if w == "parse" {
+    for i in 0..3000 {
+      let e = crypto.mlkem_encapsulation_key(p, ekb).ok() ?? fault("ek")
+      sum += Int(e.bytes()[i % 1184])
+    }
+  } else if w == "encaps" {
+    for i in 0..3000 {
+      let (s, c) = ek.encapsulate(Fixed{b: pattern(i, 32)})
+      sum += Int(s[i % 32]) + Int(c[i % 1088])
+    }
+  } else if w == "decaps" {
+    for i in 0..3000 {
+      let s = dk.decapsulate(ct).ok() ?? fault("ct")
+      sum += Int(s[i % 32])
+    }
+  } else {
+    sum = Int(ekb[0]) + Int(ct[0])
+  }
+  os.stdio.println("${w} ${sum}")
+}
