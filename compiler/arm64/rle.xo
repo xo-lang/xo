@@ -196,13 +196,12 @@ fn (var g: G) reuse_loads() {
       if !key.is_empty() && !avail.contains(key) && !inst.us.contains(inst.defs[0]) {
         let v = inst.defs[0]
         avail[key] = v
-        var l1 = dep.get(v) ?? []
-        l1.push(key)
-        dep[v] = l1
+        // in place (Map.update): a copy, push and store copied a base's
+        // whole list at each load through it, quadratic in a block of a
+        // wide result's word loads (aiplatform/v1, 2026-11-10)
+        dep.update(v, [], fn(var l) { l.push(key) })
         for u in inst.us {
-          var l2 = dep.get(u) ?? []
-          l2.push(key)
-          dep[u] = l2
+          dep.update(u, [], fn(var l) { l.push(key) })
         }
       }
     }
