@@ -94,3 +94,115 @@ fn (x: BigInt) to_float() -> Float
 /// x in base 10.
 fn (x: BigInt) display() -> Str
 fn (x: BigInt) debug() -> Str
+
+// ---------------------------------------------------------------------------
+// BigFloat (decision 0602): Go's math/big Float as an immutable value.
+
+/// How a result is rounded to its precision (Go's RoundingMode, in Go's
+/// order and with Go's names).
+enum RoundingMode {
+  ToNearestEven
+  ToNearestAway
+  ToZero
+  AwayFromZero
+  ToNegativeInf
+  ToPositiveInf
+} derive Display, Eq, Hash
+
+/// How a result compares with the exact one (Go's Accuracy): Below is
+/// smaller, Above larger.
+enum Accuracy {
+  Below
+  Exact
+  Above
+} derive Display, Eq, Hash
+
+/// A binary floating point number of any precision (Go's big.Float):
+/// zero, finite or infinite (`form` 0, 1 or 2, Go's order), with a sign
+/// (-0 and -Inf exist, NaN does not). A finite value is `mant` (positive,
+/// no trailing zero bits, at most `prec` bits) times 2^(exp -
+/// mant.bit_len()), so `exp` is Go's exponent. `prec` is in bits, 0 to
+/// 2^32 - 1; `acc` is the accuracy of the operation that made the value.
+/// Build one with the functions below, not a literal. Variable time.
+struct BigFloat {
+  prec: Int
+  mode: RoundingMode
+  acc: Accuracy
+  form: Int
+  neg: Bool
+  mant: BigInt
+  exp: Int
+} derive Eq, Hash
+
+/// x with prec bits (Go's NewFloat and SetFloat64; 0 means 53); a fault
+/// for NaN.
+fn from_float(x: Float, prec: Int = 0) -> BigFloat
+/// n with prec bits (Go's SetInt64; 0 means 64).
+fn float_from_int(n: Int, prec: Int = 0) -> BigFloat
+/// x with prec bits (Go's SetInt; 0 means max(x.bit_len(), 64)).
+fn (x: BigInt) to_big_float(prec: Int = 0) -> BigFloat
+/// +Inf, or -Inf when neg (Go's SetInf).
+fn inf(neg: Bool) -> BigFloat
+/// s as a number (Go's ParseFloat): an optional sign, then digits with an
+/// optional point and exponent ('e', or 'p' for a power of two), "Inf" or
+/// "inf"; base 0 takes a 0b, 0o or 0x prefix and `_` separators; prec 0
+/// means 64. Go's error texts.
+fn parse_float(s: Str, base: Int = 0, prec: Int = 0, mode: RoundingMode = RoundingMode.ToNearestEven) -> BigFloat ! BigErr
+
+/// The precision in bits (Go's Prec).
+fn (x: BigFloat) prec() -> Int
+/// The bits x needs to be exact; 0 unless finite (Go's MinPrec).
+fn (x: BigFloat) min_prec() -> Int
+fn (x: BigFloat) mode() -> RoundingMode
+fn (x: BigFloat) acc() -> Accuracy
+/// -1, 0 or 1 (Go's Sign; 0 for -0 too).
+fn (x: BigFloat) sign() -> Int
+/// Whether x is negative or -0 (Go's Signbit).
+fn (x: BigFloat) signbit() -> Bool
+fn (x: BigFloat) is_inf() -> Bool
+/// Whether x is an integer; false for infinities (Go's IsInt).
+fn (x: BigFloat) is_int() -> Bool
+/// x rounded to prec bits by its mode (Go's SetPrec; 0 makes a finite x
+/// zero); a fault when prec < 0.
+fn (x: BigFloat) with_prec(prec: Int) -> BigFloat
+/// x with another rounding mode, its accuracy Exact (Go's SetMode).
+fn (x: BigFloat) with_mode(mode: RoundingMode) -> BigFloat
+
+/// x + y at prec bits (0: max(x.prec, y.prec)) by x's mode; a fault for
+/// infinities of opposite signs (Go's Add).
+fn (x: BigFloat) add(y: BigFloat, prec: Int = 0) -> BigFloat
+/// x - y, as add (Go's Sub).
+fn (x: BigFloat) sub(y: BigFloat, prec: Int = 0) -> BigFloat
+/// x * y, as add; a fault for zero times infinity (Go's Mul).
+fn (x: BigFloat) mul(y: BigFloat, prec: Int = 0) -> BigFloat
+/// x / y, as add; a fault for 0/0 and Inf/Inf (Go's Quo).
+fn (x: BigFloat) quo(y: BigFloat, prec: Int = 0) -> BigFloat
+/// The square root at prec bits (0: x.prec) by x's mode, Go's Newton
+/// iteration; a fault when x < 0 (Go's Sqrt).
+fn (x: BigFloat) sqrt(prec: Int = 0) -> BigFloat
+fn (x: BigFloat) neg() -> BigFloat
+fn (x: BigFloat) abs() -> BigFloat
+/// -1, 0 or 1 as x is below, equal to or above y; -0 equals 0 (Go's Cmp).
+fn (x: BigFloat) cmp(y: BigFloat) -> Int
+/// x * 2^e at x's precision (Go's SetMantExp(x, e)): past the exponent
+/// range a zero or an infinity.
+fn (x: BigFloat) mul_pow2(e: Int) -> BigFloat
+/// (mant, exp) with x = mant * 2^exp and 0.5 <= |mant| < 1 (Go's
+/// MantExp); zero and infinities are their own mant, with exp 0.
+fn (x: BigFloat) mant_exp() -> (BigFloat, Int)
+
+/// x truncated toward zero as an Int, clamped to its range (Go's Int64).
+fn (x: BigFloat) to_int() -> (Int, Accuracy)
+/// The Float nearest x, ties to even (Go's Float64).
+fn (x: BigFloat) to_float() -> (Float, Accuracy)
+/// x truncated toward zero; None for an infinity (Go's Int).
+fn (x: BigFloat) to_big() -> (BigInt?, Accuracy)
+
+/// x in format 'e', 'E', 'f', 'g', 'G' (prec digits; a negative prec is
+/// the fewest that read back as x), 'b' (mantissa p exponent), 'p' (hex
+/// mantissa, binary exponent) or 'x' (hex, prec digits); "%" and the
+/// format for another (Go's Text).
+fn (x: BigFloat) text(format: Int, prec: Int) -> Str
+/// text('g', 10) (Go's String).
+fn (x: BigFloat) display() -> Str
+fn (x: BigFloat) debug() -> Str

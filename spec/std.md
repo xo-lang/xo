@@ -5533,6 +5533,27 @@ fn (x: BigInt) bytes() -> Bytes                // |x| big-endian
 fn (x: BigInt) fill_bytes(len: Int) -> Bytes
 fn (x: BigInt) to_int() -> Int?
 fn (x: BigInt) to_float() -> Float
+fn (x: BigInt) to_big_float(prec: Int = 0) -> BigFloat   // SetInt: 0 is max(bit length, 64)
+
+// BigFloat (decision 0602): Go's big.Float as an immutable value
+enum RoundingMode { ToNearestEven, ToNearestAway, ToZero, AwayFromZero, ToNegativeInf, ToPositiveInf }
+enum Accuracy { Below, Exact, Above }
+struct BigFloat { prec: Int, mode: RoundingMode, acc: Accuracy, form: Int, neg: Bool, mant: BigInt, exp: Int } derive Eq, Hash
+pub fn from_float(x: Float, prec: Int = 0) -> BigFloat     // NewFloat (53 bits), SetFloat64; NaN faults
+pub fn float_from_int(n: Int, prec: Int = 0) -> BigFloat   // SetInt64 (64 bits)
+pub fn inf(neg: Bool) -> BigFloat
+pub fn parse_float(s: Str, base: Int = 0, prec: Int = 0, mode: RoundingMode = RoundingMode.ToNearestEven) -> BigFloat ! BigErr
+fn (x: BigFloat) add(y: BigFloat, prec: Int = 0) -> BigFloat   // also sub, mul, quo
+fn (x: BigFloat) sqrt(prec: Int = 0) -> BigFloat               // also neg, abs
+fn (x: BigFloat) cmp(y: BigFloat) -> Int
+fn (x: BigFloat) with_prec(prec: Int) -> BigFloat             // SetPrec; also with_mode
+fn (x: BigFloat) mul_pow2(e: Int) -> BigFloat                 // SetMantExp(x, e)
+fn (x: BigFloat) mant_exp() -> (BigFloat, Int)
+fn (x: BigFloat) prec() -> Int        // also min_prec, mode, acc, sign, signbit, is_inf, is_int
+fn (x: BigFloat) to_int() -> (Int, Accuracy)           // Int64
+fn (x: BigFloat) to_float() -> (Float, Accuracy)       // Float64
+fn (x: BigFloat) to_big() -> (BigInt?, Accuracy)       // Int; None for an infinity
+fn (x: BigFloat) text(format: Int, prec: Int) -> Str   // Text: 'e' 'E' 'f' 'g' 'G' 'b' 'p' 'x'
 ```
 
 - **The type is `BigInt`.** `Int` is predeclared (core 1.4), so Go's
@@ -5556,6 +5577,20 @@ fn (x: BigInt) to_float() -> Float
   known where the two answers differ.
 - **Json.** BigInt does not derive Json, which would write its key. Use
   `text` and `parse`.
+- **BigFloat** (decision 0602) is Go's big.Float: a precision in bits
+  (0 to 2^32 - 1), a rounding mode, the accuracy of the operation that
+  made it, and a value that is zero, finite or infinite with a sign
+  (-0 and -Inf exist, NaN does not). A finite value is `mant` (odd)
+  times 2^(exp - mant.bit_len()), so `exp` is Go's exponent. An
+  operation's result has precision `prec` when given, else Go's
+  `new(Float)` default (max of the operands' for add, sub, mul and quo;
+  the operand's for sqrt), and the receiver's rounding mode. The
+  operations Go panics on with ErrNaN (Inf - Inf, 0 * Inf, 0/0, Inf/Inf,
+  the root of a negative number, a NaN Float) fault with its text.
+  Rounding, Sqrt's Newton iteration, parsing's powers of five and the
+  shortest decimal text are Go's, so every result, accuracy and text is
+  Go's; `display` is Go's String(), `text('g', 10)`. Rat, SetRat and
+  Float.Rat wait for a big.Rat; `Format` is `text`.
 - **Tests.**
   - Golden `big_basic` on every backend.
   - A Go-generated corpus of 2,600 operations on operands up to 1,500

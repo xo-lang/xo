@@ -355,3 +355,4 @@
 - [std-audit-2026-11-10b.md](std-audit-2026-11-10b.md): second pass of the std function level audit: tool fixes (not planned rows, duplicate packages, wildcards), 876 unmapped of 10829, top 40 gaps by use
 - [std-audit-2026-11-11.md](std-audit-2026-11-11.md): third pass of the std function level audit: every Go symbol reviewed (0 unmapped of 11088), public surface only, type constants read, top 30 gaps by use grouped by feature
 - [perf-gaps-2026-11-10.md](perf-gaps-2026-11-10.md): the perf page's "behind Go" rows measured again: coll warm build cache off/on and its phases (one-part sepcomp cache fix, wall 0.479), xo test peak memory by phase against go test
+- [bigfloat-vs-go-2026-11-11.md](bigfloat-vs-go-2026-11-11.md): big.BigFloat (decision 0602) against Go's math/big Float (bench/perf/bigfloat), 256 bits, linux/arm64: Xo / Go wall add 2.40, mul 1.76, quo 1.06, sqrt 2.54, text 1.59, parse 1.43; max RSS about 0.12.

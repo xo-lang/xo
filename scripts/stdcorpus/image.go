@@ -1049,7 +1049,7 @@ func imageColorModels(o *strings.Builder) {
 	for _, a := range edge {
 		for _, x := range edge {
 			if x <= a {
-				colors = append(colors, c64{uint16(x), uint16(a / 3), uint16(x / 2), uint16(a)})
+				colors = append(colors, c64{R: uint16(x), G: uint16(a / 3), B: uint16(x / 2), A: uint16(a)})
 			}
 		}
 	}
@@ -1058,7 +1058,7 @@ func imageColorModels(o *strings.Builder) {
 		if i%5 == 0 {
 			a = 65535
 		}
-		colors = append(colors, c64{uint16(r.Intn(a + 1)), uint16(r.Intn(a + 1)), uint16(r.Intn(a + 1)), uint16(a)})
+		colors = append(colors, c64{R: uint16(r.Intn(a + 1)), G: uint16(r.Intn(a + 1)), B: uint16(r.Intn(a + 1)), A: uint16(a)})
 	}
 	rgba := func(c color.Color) string {
 		cr, cg, cb, ca := c.RGBA()
@@ -1118,7 +1118,7 @@ func imageColorModels(o *strings.Builder) {
 		c := colors[r.Intn(len(colors))]
 		if n > 0 && r.Intn(4) == 0 {
 			cr, cg, cb, ca := pal[r.Intn(n)].RGBA()
-			c = c64{uint16(cr), uint16(cg), uint16(cb), uint16(ca)}
+			c = c64{R: uint16(cr), G: uint16(cg), B: uint16(cb), A: uint16(ca)}
 		}
 		conv := "nil"
 		if cv := pal.Convert(c); cv != nil {

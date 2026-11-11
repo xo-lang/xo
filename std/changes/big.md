@@ -1,5 +1,23 @@
 # std/big changes
 
+## 2026-11-11: feature: BigFloat, Go's big.Float as an immutable value (decision 0602)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the std audit of Go programs (Xo Lang 3, 2026-11-11, gap 7: math/big.Float in 25 programs)
+- Go reference: math/big float.go, sqrt.go, floatconv.go, ftoa.go, decimal.go (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/bigfloat (go, arm64, LLVM; 5,600 rows of Go's results: arithmetic at every rounding mode, Sqrt, SetPrec, SetMantExp, MantExp, Int64, Float64, Int, Text in every format, ParseFloat on valid and malformed texts); bench/perf/bigfloat with its Go twin (twincheck agrees on 7 workloads)
+- Shipped in: not yet released
+
+`big.BigFloat` with `RoundingMode` and `Accuracy`: from_float,
+float_from_int, BigInt.to_big_float, inf, parse_float; add, sub, mul,
+quo, sqrt, neg, abs, cmp, with_prec, with_mode, mul_pow2, mant_exp;
+prec, min_prec, mode, acc, sign, signbit, is_inf, is_int; to_int,
+to_float, to_big; text and display. The Go backend calls math/big
+(std/rt/bigfloat.go); the native backends port it (std/native/big.xo),
+including Go's quirks: Float64 of a value at the smallest exponent is an
+infinity (Go's int32 exponent wraps), and Sqrt's result is Exact.
+
 ## 2026-11-10: refactor: integer bounds as `Int.max` and `Int.min` (decision 0587 point 4)
 
 - Kind: refactor

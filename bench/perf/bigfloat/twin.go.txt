@@ -1,0 +1,60 @@
+package main
+
+import (
+	"fmt"
+	"math/big"
+	"os"
+)
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	a := new(big.Float).Sqrt(new(big.Float).SetPrec(256).SetInt64(2))
+	b := new(big.Float).Sqrt(new(big.Float).SetPrec(256).SetInt64(3))
+	dec := "1.234567890123456789012345678901234567890123456789012345678901234567890"
+	sum := 0
+	switch w {
+	case "add":
+		x := a
+		for i := 0; i < 200000; i++ {
+			x = new(big.Float).Add(x, b)
+			sum += int(x.MinPrec())
+		}
+	case "mul":
+		x := a
+		for i := 0; i < 200000; i++ {
+			x = new(big.Float).Mul(x, b)
+			if x.MantExp(nil) > 1000 {
+				x = a
+			}
+			sum += int(x.MinPrec())
+		}
+	case "quo":
+		x := a
+		for i := 0; i < 100000; i++ {
+			x = new(big.Float).Quo(x, b)
+			if x.MantExp(nil) < -1000 {
+				x = a
+			}
+			sum += int(x.MinPrec())
+		}
+	case "sqrt":
+		for i := 0; i < 20000; i++ {
+			sum += int(new(big.Float).Sqrt(new(big.Float).SetPrec(256).SetInt64(int64(i+2))).MinPrec())
+		}
+	case "text":
+		for i := 0; i < 20000; i++ {
+			sum += len(a.Text('g', 60))
+		}
+	case "parse":
+		for i := 0; i < 20000; i++ {
+			f, _, _ := big.ParseFloat(dec, 0, 256, big.ToNearestEven)
+			sum += int(f.MinPrec())
+		}
+	default:
+		sum = int(a.MinPrec()) + int(b.MinPrec()) + len(dec)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

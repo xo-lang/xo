@@ -1,0 +1,8 @@
+# twincheck: bigfloat: seven workloads (none is the setup alone), the same names on both sides.
+- - none
+- - add
+- - mul
+- - quo
+- - sqrt
+- - text
+- - parse

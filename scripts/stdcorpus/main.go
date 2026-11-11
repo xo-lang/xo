@@ -35,6 +35,7 @@ var generators = map[string]func() string{
 	"base64":     base64Corpus,
 	"bufio":      bufioCorpus,
 	"big":        bigCorpus,
+	"bigfloat":   bfCorpus,
 	"binary":     binaryCorpus,
 	"bytes":      bytesCorpus,
 	"case":       caseCorpus,

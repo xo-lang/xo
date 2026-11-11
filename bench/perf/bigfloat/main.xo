@@ -1,0 +1,55 @@
+// bigfloat: std/big's BigFloat against Go's math/big Float (twin.go.txt),
+// at 256 bits by ToNearestEven: add, mul and quo of two values a step
+// apart, sqrt, text ('g', 60 digits) and parse (a 70 digit decimal);
+// `none` is the setup alone. Usage: `<program>
+// none|add|mul|quo|sqrt|text|parse`. Prints `<workload> <checksum>`; the
+// twin prints the same.
+use std/big
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let a = big.float_from_int(2, prec: 256).sqrt()
+  let b = big.float_from_int(3, prec: 256).sqrt()
+  let dec = "1.234567890123456789012345678901234567890123456789012345678901234567890"
+  var sum = 0
+  if w == "add" {
+    var x = a
+    for _ in 0..200000 {
+      x = x.add(b)
+      sum += x.min_prec()
+    }
+  } else if w == "mul" {
+    var x = a
+    for _ in 0..200000 {
+      x = x.mul(b)
+      if x.exp > 1000 {
+        x = a
+      }
+      sum += x.min_prec()
+    }
+  } else if w == "quo" {
+    var x = a
+    for _ in 0..100000 {
+      x = x.quo(b)
+      if x.exp < -1000 {
+        x = a
+      }
+      sum += x.min_prec()
+    }
+  } else if w == "sqrt" {
+    for i in 0..20000 {
+      sum += big.float_from_int(i + 2, prec: 256).sqrt().min_prec()
+    }
+  } else if w == "text" {
+    for _ in 0..20000 {
+      sum += a.text('g', 60).len()
+    }
+  } else if w == "parse" {
+    for _ in 0..20000 {
+      sum += (big.parse_float(dec, prec: 256).ok() ?? big.inf(false)).min_prec()
+    }
+  } else {
+    sum = a.min_prec() + b.min_prec() + dec.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}
