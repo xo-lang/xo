@@ -3131,3 +3131,51 @@ func TestVetCostLoopSlicesAndLists(t *testing.T) {
 		t.Errorf("XO0914 at lines %v, want [29]", got["XO0914"])
 	}
 }
+
+// TestAgentRefsReceiver: a method is found through every kind of
+// receiver value (a parameter, a field, a list element, a call's result, a
+// var receiver), and a name spelled with the value instead of its type
+// (`g.label`) names the Type.member to ask for (Lang 1, 2026-11-11: `xo
+// refs G.label` read as returning nothing for compiler/arm64's g.label
+// calls).
+func TestAgentRefsReceiver(t *testing.T) {
+	t.Parallel()
+	prog := `struct G { n: Int }
+
+struct B { g: G, gs: List[G] }
+
+fn (g: G) label(b: Int) -> Str { "L${b}" }
+
+fn (var g: G) bump() { g.n += 1 }
+
+fn mk() -> G { G{n: 3} }
+
+fn use_it(b: B, var g: G) -> Str {
+  let a = b.g.label(1)
+  let c = b.gs[0].label(2)
+  let d = mk().label(3)
+  g.bump()
+  let e = g.label(4)
+  "${a}${c}${d}${e}"
+}
+
+fn main() {
+  println(use_it(B{g: G{n: 1}, gs: [G{n: 2}]}, G{n: 0}))
+}
+`
+	dir := writeFiles(t, map[string]string{"main.xo": prog})
+	d := "--dir=" + dir
+	refs := agentJSON(t, 0, "refs", d, "G.label")["references"].([]any)
+	if len(refs) != 5 {
+		t.Errorf("refs G.label: %d, want the declaration and 4 calls: %v", len(refs), refs)
+	}
+	if ds := agentJSON(t, 0, "def", d, "G.label")["declarations"].([]any); len(ds) != 1 {
+		t.Errorf("def G.label = %v", ds)
+	}
+	for _, cmd := range []string{"refs", "def"} {
+		e := agentJSON(t, 1, cmd, d, "g.label")["error"].(string)
+		if !strings.Contains(e, "named by its type (G.label)") {
+			t.Errorf("%s g.label: %s", cmd, e)
+		}
+	}
+}

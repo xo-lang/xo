@@ -1038,9 +1038,31 @@ fn (var s: Session) targets(os: Os, target: Str) -> List[Found] ! Str uses fs {
       // nothing was resolved: say why instead of "no declaration"
       return Err("no declaration named ${target}: the check stopped before resolving names (${stopped}); run it from a module's directory, or give --dir=DIR${semantic.miss_hint(os, s.std_dir, target)}")
     }
-    return Err("no declaration named ${target}${semantic.miss_hint(os, s.std_dir, target)}")
+    return Err("no declaration named ${target}${s.receiver_hint(target)}${semantic.miss_hint(os, s.std_dir, target)}")
   }
   Ok(out)
+}
+
+/// What to add to "no declaration named x.m" when x names no type but
+/// methods or fields named m exist: their Type.m names, since a method is
+/// asked for by its type, not by a value's name (`xo refs g.label`
+/// where `g: G`; Lang 1, 2026-11-11, read the miss as "no references").
+fn (var s: Session) receiver_hint(target: Str) -> Str {
+  let segs = target.split(".")
+  if segs.len() != 2 || segs[0].is_empty() || segs[1].is_empty() {
+    return ""
+  }
+  var names: List[Str] = []
+  for f in s.declarations(segs[1]) {
+    if f.name.contains(".") && f.name != target && !names.contains(f.name) {
+      names.push(f.name)
+    }
+  }
+  if names.is_empty() {
+    return ""
+  }
+  let shown = if names.len() > 6 { names[0..6].join(", ") + ", ..." } else { names.join(", ") }
+  "; `${segs[0]}` is not a type or module here: a method or field is named by its type (${shown}), or give the call's position FILE:LINE:COL"
 }
 
 /// A declaration found by the resolver, by its object (fields and

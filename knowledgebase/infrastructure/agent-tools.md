@@ -29,7 +29,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   agents guessed `update_or`, 2026-10-18).
 - Names (decision 0289, the same in def, refs, doc, and `xo query`): write
   them as code does: `check.Checker.check_dirs`, `Str.find`, `j.f` for
-  `use std/json as j`, `main.f`, `std/tls.client`; std and runtime
+  `use std/json as j`, `main.f`, `std/tls.client`. A method or field
+  is named by its type, not by a value: `xo refs G.label` lists every
+  `g.label(...)`, `b.g.label(...)` and `mk().label(...)`; `g.label`
+  misses and names the `Type.label` candidates (2026-11-11). Std and runtime
   modules load when named (`tls.client`, `pool.park_wait`), so
   `xo refs pool.park_wait` finds tasks.xo's call too. A runtime name is
   qualified by its file (`pool.park_wait` in std/native/llrt/pool.xo);
