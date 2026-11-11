@@ -68,3 +68,10 @@ and a build passes in a 200 KB Node stack (0.35.0's compiler needed
 350 KB). Measure with a Node `--stack-size` sweep and a per-function
 `locals + deepest operand stack` count of the module, not the Chrome
 page alone.
+
+Also (2026-11-11, Xo Lang 2): compiler/wasm home.xo's mem_store and
+mem_set move a value through helpers (mem_store_fn, mem_load_fn) in
+chunks of at most MEM_FN_MAX (64) leaves, since a helper's call holds a
+chunk's leaves on the operand stack; a helper for a whole value would
+bring the deep frames back (a Checker is about 1,143 leaves, and a helper
+of 1,152 parameters also passed the engine's 1,000).

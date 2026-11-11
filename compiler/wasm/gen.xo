@@ -65,6 +65,8 @@ pub struct Gen {
   statics: Map[Str, Int] = {}
   helpers: List[Str] = []
   emitted: Map[Str, Bool] = {}
+  /// mem_store_fn helpers by leaf shape.
+  stfn: Map[Str, Str] = {}
   /// Comment every instruction's code with its opcode (generate_with).
   annotate: Bool = false
   /// drop_fields_fn helpers by type and fields.

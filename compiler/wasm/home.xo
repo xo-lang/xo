@@ -1418,10 +1418,34 @@ fn (var g: Gen) mem_push(p: Int, off: Int, ls: List[Str]) {
 /// caller's frame about 9 KB; gotchas/wasm-browser-stack-locals.md).
 fn (var g: Gen) mem_set(p: Int, off: Int, ls: List[Str], b: Int) {
   g.mstat_add("load", ls.len())
-  for (k, l) in ls.indexed() {
-    g.get(p)
-    g.e("${l}.load offset=${off + loff(ls, k)}")
-    g.set(b + k)
+  // in chunks of up to MEM_FN_MAX leaves, each a call of a helper per
+  // chunk shape (mem_load_fn) whose results are set from the last; a
+  // chunk of fewer than MEM_FN_MIN leaves is loaded inline
+  var at = 0
+  while at < ls.len() {
+    let n = mem_chunk(ls.len(), at)
+    let cs = leaf_range(ls, at, n)
+    let o = off + loff(ls, at)
+    if n >= MEM_FN_MIN {
+      g.get(p)
+      if o > 0 {
+        g.e("i32.const ${o}")
+        g.e("i32.add")
+      }
+      g.e("call ${g.mem_load_fn(cs)}")
+      var k = n - 1
+      while k >= 0 {
+        g.set(b + at + k)
+        k -= 1
+      }
+    } else {
+      for (k, l) in cs.indexed() {
+        g.get(p)
+        g.e("${l}.load offset=${o + loff(cs, k)}")
+        g.set(b + at + k)
+      }
+    }
+    at += n
   }
 }
 
@@ -1437,11 +1461,105 @@ fn (var g: Gen) mem_def(p: Int, off: Int, ls: List[Str], v: Int) {
 /// local p.
 fn (var g: Gen) mem_store(p: Int, off: Int, b: Int, ls: List[Str]) {
   g.mstat_add("store", ls.len())
-  for (k, l) in ls.indexed() {
-    g.get(p)
-    g.get(b + k)
-    g.e("${l}.store offset=${off + loff(ls, k)}")
+  // in chunks of up to MEM_FN_MAX leaves, each a call of a helper per
+  // chunk shape (mem_store_fn) given the address and the leaves (two
+  // bytes a leaf, where a store a leaf pushes the address again and names
+  // its offset: about seven); a chunk of fewer than MEM_FN_MIN leaves is
+  // stored inline
+  var at = 0
+  while at < ls.len() {
+    let n = mem_chunk(ls.len(), at)
+    let cs = leaf_range(ls, at, n)
+    let o = off + loff(ls, at)
+    if n >= MEM_FN_MIN {
+      g.get(p)
+      if o > 0 {
+        g.e("i32.const ${o}")
+        g.e("i32.add")
+      }
+      for k in 0..n {
+        g.get(b + at + k)
+      }
+      g.e("call ${g.mem_store_fn(cs)}")
+    } else {
+      for (k, l) in cs.indexed() {
+        g.get(p)
+        g.get(b + at + k)
+        g.e("${l}.store offset=${o + loff(cs, k)}")
+      }
+    }
+    at += n
   }
+}
+
+/// The fewest and most leaves mem_store and mem_set move through a
+/// helper (mem_store_fn, mem_load_fn); MEM_FN_MAX is the most a call
+/// returns as values (wide results past it come back through a block).
+const MEM_FN_MIN = 16
+const MEM_FN_MAX = 64
+
+/// The leaves of the chunk of a value of n leaves that starts at leaf at:
+/// MEM_FN_MAX, or what is left. The helpers' calls hold a chunk on the
+/// operand stack, which sizes the caller's frame in V8's baseline
+/// compiler (gotchas/wasm-browser-stack-locals.md).
+fn mem_chunk(n: Int, at: Int) -> Int {
+  if n - at > MEM_FN_MAX { MEM_FN_MAX } else { n - at }
+}
+
+/// Leaves at to at + n of ls.
+fn leaf_range(ls: List[Str], at: Int, n: Int) -> List[Str] {
+  var r: List[Str] = []
+  for k in at..at + n {
+    r.push(ls[k])
+  }
+  r
+}
+
+/// The helper that loads leaves of shape ls from the address its
+/// parameter holds and returns them, as mem_set does inline; emitted on
+/// first use, one per shape.
+fn (var g: Gen) mem_load_fn(ls: List[Str]) -> Str {
+  let key = "l" + ls.join(",")
+  if let Some(n) = g.stfn.get(key) {
+    return n
+  }
+  let name = "$ld${g.stfn.len()}"
+  g.stfn[key] = name
+  let saved = g.cur
+  g.begin_helper(["i32"])
+  for (k, l) in ls.indexed() {
+    g.get(0)
+    g.e("${l}.load offset=${loff(ls, k)}")
+  }
+  g.end_helper(name, ["i32"], ls, "load ${ls.len()} leaves")
+  g.cur = saved
+  name
+}
+
+/// The helper that stores leaves of shape ls (its parameters after the
+/// address) at the address its first parameter holds, as mem_store does
+/// inline; emitted on first use, one per shape.
+fn (var g: Gen) mem_store_fn(ls: List[Str]) -> Str {
+  let key = ls.join(",")
+  if let Some(n) = g.stfn.get(key) {
+    return n
+  }
+  let name = "$st${g.stfn.len()}"
+  g.stfn[key] = name
+  let saved = g.cur
+  var ps = ["i32"]
+  for l in ls {
+    ps.push(l)
+  }
+  g.begin_helper(ps)
+  for (k, l) in ls.indexed() {
+    g.get(0)
+    g.get(k + 1)
+    g.e("${l}.store offset=${loff(ls, k)}")
+  }
+  g.end_helper(name, ps, [], "store ${ls.len()} leaves")
+  g.cur = saved
+  name
 }
 
 /// The local holding the address of v's memory and v's offset in it,
