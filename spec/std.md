@@ -8952,3 +8952,43 @@ is any read function, such as `http.BodyReader.read` or `http.ClientStream.read`
 from the standard, itself checked against the web-platform-tests eventsource format cases and against
 github.com/tmaxmax/go-sse on seeded random streams (testdata/corpus/sse, each stream fed whole, a byte at a time and in
 random chunks).
+
+## 80. std/jsonrpc
+
+JSON-RPC 2.0 messages and framings (decision 0603 stage 1), transport-neutral and pure. The connection that runs
+requests in flight (`Conn`) is the next step of the stage.
+
+```xo
+const PARSE_ERROR: Int = -32700                     // and INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR
+enum Id { Int(n: Int), Str(s: Str) }
+struct RpcError { pub code: Int, pub message: Str, pub data: json.Value? = None }   // display: message
+fn error_of(code: Int, data: json.Value? = None) -> RpcError   // the specification's text for the standard codes
+struct Request { pub id: Id? = None, pub method: Str, pub params: json.Value? = None }   // no id: a notification
+struct Response { pub id: Id?, pub result: json.Value = Null, pub error: RpcError? = None }
+enum Message { Req(r: Request), Resp(r: Response) }
+fn encode(m: Message) -> Str                        // members: jsonrpc, id, method, params, result, error
+fn encode_batch(ms: List[Message]) -> Str
+fn decode(text: Str) -> Message ! RpcError          // PARSE_ERROR or INVALID_REQUEST
+fn decode_value(v: json.Value) -> Message ! RpcError
+fn answer[fx: Effects](text: Str, handle: fn(Request) -> json.Value ! RpcError uses fx) -> Str? uses fx
+enum FrameErr { TooLong(limit: Int), Header(msg: Str) }
+fn line_reader(max: Int = 67108864) -> LineReader  // newline delimited (MCP stdio)
+fn (var r: LineReader) feed(chunk: Bytes) -> List[Str] ! FrameErr
+fn line_frame(text: Str) -> Bytes
+fn header_reader(max: Int = 67108864) -> HeaderReader   // Content-Length headers (LSP)
+fn (var r: HeaderReader) feed(chunk: Bytes) -> List[Str] ! FrameErr
+fn header_frame(text: Str) -> Bytes
+```
+
+`decode` reads one message as the Go MCP SDK's `jsonrpc.DecodeMessage`: `jsonrpc` must be `"2.0"`; an id is a
+number (a fraction truncated), a string or null (no id); a `method` member, even `""`, makes a Request, else it is a
+Response, which needs an id; `"error": null` is no error. `encode` writes the members in the SDK's order; a Response
+always has `result` (null when not set) or `error`, and a null id is written `"id": null` (the SDK leaves it out, an
+empty method too). `answer` is a server's whole reply to one text, as the specification's section 6: each request goes
+to `handle` in order; a call is answered with its id; a notification is not; a batch's answers are an array in the
+requests' order; no answer at all is None (a notification, a batch of notifications); invalid JSON is one Parse error,
+an empty array one Invalid Request, and each element that is not a request an Invalid Request with a null id. The
+framings are push readers: the newline one splits at LF (a CR before it dropped, empty lines skipped); the
+Content-Length one reads header lines up to an empty line (names without case, other headers ignored) and then that
+many bytes. Checked against the specification's examples and the Go SDK's DecodeMessage and EncodeMessage
+(testdata/corpus/jsonrpc).

@@ -1,0 +1,453 @@
+// std/jsonrpc (spec/std.md, decision 0603 stage 1). JSON-RPC 2.0
+// messages, transport-neutral:
+//
+// - Id, Request (a call, or a notification without an id), Response and
+//   RpcError, with encode and decode of one message as the Go MCP SDK's
+//   jsonrpc package does (github.com/modelcontextprotocol/go-sdk);
+// - answer: a server's whole reply to one incoming text, batches
+//   included, as the JSON-RPC 2.0 specification's section 6 and its
+//   examples say;
+// - the framings: newline delimited (MCP's stdio) and Content-Length
+//   headers (LSP), each a push reader of bytes and a writer.
+//
+// One pure source for every backend (decision 0312, std/go_compiled.txt).
+
+use std/json
+
+/// Invalid JSON was received.
+pub const PARSE_ERROR: Int = -32700
+/// The JSON is not a valid request object.
+pub const INVALID_REQUEST: Int = -32600
+/// The method does not exist or is not available.
+pub const METHOD_NOT_FOUND: Int = -32601
+/// Invalid method parameters.
+pub const INVALID_PARAMS: Int = -32602
+/// An internal JSON-RPC error.
+pub const INTERNAL_ERROR: Int = -32603
+
+/// A request's id: a number or a string. A number with a fraction is
+/// truncated, as the Go SDK's MakeID does (the specification says ids
+/// SHOULD NOT have one).
+pub enum Id {
+  Int(n: Int)
+  Str(s: Str)
+}
+
+pub fn (id: Id) display() -> Str {
+  match id {
+    Int(n) => "${n}"
+    Str(s) => s
+  }
+}
+
+/// The id as JSON.
+pub fn (id: Id) value() -> json.Value {
+  match id {
+    Int(n) => json.Value.Int(n)
+    Str(s) => json.Value.Str(s)
+  }
+}
+
+/// A response's error object, and the error of a handler or a decode.
+pub struct RpcError {
+  pub code: Int
+  pub message: Str
+  pub data: json.Value? = None
+}
+
+pub fn (e: RpcError) display() -> Str { e.message }
+
+/// The error object of code with the specification's text for the five
+/// standard codes ("Parse error", "Invalid Request", "Method not found",
+/// "Invalid params", "Internal error"), else "Server error".
+pub fn error_of(code: Int, data: json.Value? = None) -> RpcError {
+  let m = if code == PARSE_ERROR {
+    "Parse error"
+  } else if code == INVALID_REQUEST {
+    "Invalid Request"
+  } else if code == METHOD_NOT_FOUND {
+    "Method not found"
+  } else if code == INVALID_PARAMS {
+    "Invalid params"
+  } else if code == INTERNAL_ERROR {
+    "Internal error"
+  } else {
+    "Server error"
+  }
+  RpcError{code: code, message: m, data: data}
+}
+
+/// A call (with an id, which expects a Response) or a notification (no id).
+pub struct Request {
+  pub id: Id? = None
+  pub method: Str
+  pub params: json.Value? = None
+}
+
+pub fn (r: Request) is_call() -> Bool { r.id.is_some() }
+
+/// The reply to a call: its result, or its error. id is None only for an
+/// error about a request whose id could not be read (written `"id": null`).
+pub struct Response {
+  pub id: Id?
+  pub result: json.Value = json.Value.Null
+  pub error: RpcError? = None
+}
+
+pub enum Message {
+  Req(r: Request)
+  Resp(r: Response)
+}
+
+/// The message's JSON text, its members in the Go SDK's order: jsonrpc,
+/// id, method, params, result, error. A notification has no id; a
+/// response has its result, or its error instead.
+pub fn encode(m: Message) -> Str {
+  var f: List[(Str, json.Value)] = [("jsonrpc", json.Value.Str("2.0"))]
+  match m {
+    Req(r) => {
+      if let Some(id) = r.id {
+        f.push(("id", id.value()))
+      }
+      f.push(("method", json.Value.Str(r.method)))
+      if let Some(p) = r.params {
+        f.push(("params", p))
+      }
+    }
+    Resp(r) => {
+      f.push(("id", match r.id {
+        Some(id) => id.value()
+        None => json.Value.Null
+      }))
+      match r.error {
+        Some(e) => f.push(("error", error_value(e)))
+        None => f.push(("result", r.result))
+      }
+    }
+  }
+  json.Value.Object(f).encode()
+}
+
+/// A batch's JSON text: the messages' texts in an array.
+pub fn encode_batch(ms: List[Message]) -> Str {
+  var parts: List[Str] = []
+  for m in ms {
+    parts.push(encode(m))
+  }
+  "[" + parts.join(",") + "]"
+}
+
+fn error_value(e: RpcError) -> json.Value {
+  var f: List[(Str, json.Value)] = [("code", json.Value.Int(e.code)), ("message", json.Value.Str(e.message))]
+  if let Some(d) = e.data {
+    f.push(("data", d))
+  }
+  json.Value.Object(f)
+}
+
+/// One message of text (not a batch). PARSE_ERROR for text that is not
+/// JSON; INVALID_REQUEST for JSON that is not a message: not an object,
+/// `jsonrpc` other than "2.0", an id that is not a number, a string or
+/// null, a `method` that is not a string, or neither a method nor an id.
+/// A `method` member (even "") makes a Request; else a Response.
+pub fn decode(text: Str) -> Message ! RpcError {
+  match json.parse_value(text) {
+    Ok(v) => decode_value(v)
+    Err(e) => Err(RpcError{code: PARSE_ERROR, message: "Parse error", data: Some(json.Value.Str(e.display()))})
+  }
+}
+
+/// decode of a parsed value.
+pub fn decode_value(v: json.Value) -> Message ! RpcError {
+  let fields = match v {
+    json.Value.Object(fs) => fs
+    _ => return Err(error_of(INVALID_REQUEST))
+  }
+  var version: json.Value? = None
+  var idv: json.Value? = None
+  var method: json.Value? = None
+  var params: json.Value? = None
+  var result: json.Value? = None
+  var errv: json.Value? = None
+  for (k, x) in fields {
+    if k == "jsonrpc" {
+      version = Some(x)
+    } else if k == "id" {
+      idv = Some(x)
+    } else if k == "method" {
+      method = Some(x)
+    } else if k == "params" {
+      params = Some(x)
+    } else if k == "result" {
+      result = Some(x)
+    } else if k == "error" {
+      errv = Some(x)
+    }
+  }
+  match version {
+    Some(json.Value.Str(s)) => {
+      if s != "2.0" {
+        return Err(error_of(INVALID_REQUEST))
+      }
+    }
+    _ => return Err(error_of(INVALID_REQUEST))
+  }
+  var id: Id? = None
+  if let Some(x) = idv {
+    id = match x {
+      json.Value.Null => None
+      json.Value.Int(n) => Some(Id.Int(n))
+      json.Value.Num(f) => Some(Id.Int(Int(f)))
+      json.Value.Str(s) => Some(Id.Str(s))
+      _ => return Err(error_of(INVALID_REQUEST))
+    }
+  }
+  if let Some(mv) = method {
+    let name = match mv {
+      json.Value.Str(s) => s
+      _ => return Err(error_of(INVALID_REQUEST))
+    }
+    return Ok(Message.Req(Request{id: id, method: name, params: params}))
+  }
+  if id.is_none() {
+    return Err(error_of(INVALID_REQUEST))
+  }
+  var err: RpcError? = None
+  if let Some(ev) = errv {
+    match ev {
+      json.Value.Null => {}
+      _ => err = Some(decode_error(ev)?)
+    }
+  }
+  Ok(Message.Resp(Response{id: id, result: result ?? json.Value.Null, error: err}))
+}
+
+fn decode_error(v: json.Value) -> RpcError ! RpcError {
+  let code = match v.get("code") {
+    Some(json.Value.Int(n)) => n
+    Some(json.Value.Num(f)) => Int(f)
+    _ => return Err(error_of(INVALID_REQUEST))
+  }
+  let message = match v.get("message") {
+    Some(json.Value.Str(s)) => s
+    None => ""
+    _ => return Err(error_of(INVALID_REQUEST))
+  }
+  Ok(RpcError{code: code, message: message, data: v.get("data")})
+}
+
+/// A server's reply to one incoming text (the specification's section 6):
+/// each request goes to handle, in order; a call's result or error is
+/// answered with its id, a notification gets no answer. A batch (an
+/// array) gets an array of its calls' answers; one with no calls (all
+/// notifications) gets none, and an empty array is one INVALID_REQUEST.
+/// Text that is not JSON is one PARSE_ERROR; an element that is not a
+/// request is an INVALID_REQUEST with a null id. Responses among the
+/// input are not answered. None when there is nothing to send.
+pub fn answer[fx: Effects](text: Str, handle: fn(Request) -> json.Value ! RpcError uses fx) -> Str? uses fx {
+  let v = match json.parse_value(text) {
+    Ok(v) => v
+    Err(_) => return Some(encode(Message.Resp(Response{id: None, error: Some(error_of(PARSE_ERROR))})))
+  }
+  match v {
+    json.Value.List(items) => {
+      if items.is_empty() {
+        return Some(encode(Message.Resp(Response{id: None, error: Some(error_of(INVALID_REQUEST))})))
+      }
+      var out: List[Message] = []
+      for it in items {
+        if let Some(r) = answer_one(it, handle) {
+          out.push(Message.Resp(r))
+        }
+      }
+      if out.is_empty() {
+        None
+      } else {
+        Some(encode_batch(out))
+      }
+    }
+    _ => {
+      match answer_one(v, handle) {
+        Some(r) => Some(encode(Message.Resp(r)))
+        None => None
+      }
+    }
+  }
+}
+
+fn answer_one[fx: Effects](v: json.Value, handle: fn(Request) -> json.Value ! RpcError uses fx) -> Response? uses fx {
+  let m = match decode_value(v) {
+    Ok(m) => m
+    Err(e) => return Some(Response{id: None, error: Some(e)})
+  }
+  match m {
+    Message.Resp(_) => None
+    Message.Req(r) => {
+      let got = handle(r)
+      let id = r.id ?? return None
+      match got {
+        Ok(x) => Some(Response{id: Some(id), result: x})
+        Err(e) => Some(Response{id: Some(id), error: Some(e)})
+      }
+    }
+  }
+}
+
+/// A framing error: a message over the reader's limit, or a header block
+/// without a valid Content-Length.
+pub enum FrameErr {
+  TooLong(limit: Int)
+  Header(msg: Str)
+}
+
+pub fn (e: FrameErr) display() -> Str {
+  match e {
+    TooLong(n) => "jsonrpc: message longer than ${n} bytes"
+    Header(m) => "jsonrpc: ${m}"
+  }
+}
+
+/// The newline delimited framing (MCP's stdio transport): one message a
+/// line. Bytes in, the complete lines out (a CR before the LF dropped,
+/// empty lines skipped); an error sticks.
+pub struct LineReader {
+  max: Int
+  buf: Bytes = b""
+  failed: FrameErr? = None
+}
+
+/// A LineReader whose messages may be max bytes long.
+pub fn line_reader(max: Int = 67108864) -> LineReader {
+  if max < 1 {
+    fault("jsonrpc: max must be at least 1")
+  }
+  LineReader{max: max}
+}
+
+pub fn (var r: LineReader) feed(chunk: Bytes) -> List[Str] ! FrameErr {
+  if let Some(e) = r.failed {
+    return Err(e)
+  }
+  var out: List[Str] = []
+  let b = r.buf + chunk
+  var start = 0
+  var i = 0
+  while i < b.len() {
+    if b[i] == 10 {
+      var end = i
+      if end > start && b[end - 1] == 13 {
+        end -= 1
+      }
+      if end - start > r.max {
+        r.failed = Some(FrameErr.TooLong(r.max))
+        r.buf = b""
+        return Err(FrameErr.TooLong(r.max))
+      }
+      if end > start {
+        out.push(b[start..end].to_str_lossy())
+      }
+      start = i + 1
+    }
+    i += 1
+  }
+  if b.len() - start > r.max {
+    r.failed = Some(FrameErr.TooLong(r.max))
+    r.buf = b""
+    return Err(FrameErr.TooLong(r.max))
+  }
+  r.buf = b[start..b.len()]
+  Ok(out)
+}
+
+/// A message framed for LineReader: its text and a LF. A fault for text
+/// with a line break (encode never writes one).
+pub fn line_frame(text: Str) -> Bytes {
+  if text.contains("\n") {
+    fault("jsonrpc: a newline framed message must not contain a line break")
+  }
+  (text + "\n").bytes()
+}
+
+/// The Content-Length framing (LSP's base protocol): header lines ending
+/// in CRLF, an empty line, then Content-Length bytes of body. Header
+/// names match without case; headers other than Content-Length (such as
+/// Content-Type) are read and ignored. Bytes in, the complete bodies out;
+/// an error sticks.
+pub struct HeaderReader {
+  max: Int
+  buf: Bytes = b""
+  /// the current body's length once its headers are read, else -1
+  want: Int = -1
+  failed: FrameErr? = None
+}
+
+/// A HeaderReader whose bodies may be max bytes long.
+pub fn header_reader(max: Int = 67108864) -> HeaderReader {
+  if max < 1 {
+    fault("jsonrpc: max must be at least 1")
+  }
+  HeaderReader{max: max}
+}
+
+pub fn (var r: HeaderReader) feed(chunk: Bytes) -> List[Str] ! FrameErr {
+  if let Some(e) = r.failed {
+    return Err(e)
+  }
+  var out: List[Str] = []
+  var b = r.buf + chunk
+  while true {
+    if r.want < 0 {
+      let end = b.find(b"\r\n\r\n") ?? {
+        if b.len() > 8192 {
+          return r.fail(FrameErr.Header("header block longer than 8192 bytes"))
+        }
+        break
+      }
+      var n = -1
+      for line in b[0..end].to_str_lossy().split("\r\n") {
+        let (name, value) = match line.find(":") {
+          Some(k) => (line[0..k].trim().to_lower(), line[k + 1..line.len()].trim())
+          None => return r.fail(FrameErr.Header("malformed header line \"${line}\""))
+        }
+        if name == "content-length" {
+          n = match Int.parse(value) {
+            Some(x) => x
+            None => return r.fail(FrameErr.Header("invalid Content-Length \"${value}\""))
+          }
+          if n < 0 {
+            return r.fail(FrameErr.Header("invalid Content-Length \"${value}\""))
+          }
+        }
+      }
+      if n < 0 {
+        return r.fail(FrameErr.Header("no Content-Length header"))
+      }
+      if n > r.max {
+        return r.fail(FrameErr.TooLong(r.max))
+      }
+      r.want = n
+      b = b[end + 4..b.len()]
+    }
+    if b.len() < r.want {
+      break
+    }
+    out.push(b[0..r.want].to_str_lossy())
+    b = b[r.want..b.len()]
+    r.want = -1
+  }
+  r.buf = b
+  Ok(out)
+}
+
+fn (var r: HeaderReader) fail(e: FrameErr) -> List[Str] ! FrameErr {
+  r.failed = Some(e)
+  r.buf = b""
+  Err(e)
+}
+
+/// A message framed for HeaderReader: `Content-Length: N\r\n\r\n` and its
+/// text, N its UTF-8 length.
+pub fn header_frame(text: Str) -> Bytes {
+  let body = text.bytes()
+  "Content-Length: ${body.len()}\r\n\r\n".bytes() + body
+}

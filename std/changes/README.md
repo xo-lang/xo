@@ -88,3 +88,4 @@ entries yet.
 - [textproto.md](textproto.md): std/textproto (spec/std.md 77)
 - [asn1.md](asn1.md): std/asn1 (spec/std.md 78)
 - [sse.md](sse.md): std/sse (spec/std.md 79)
+- [jsonrpc.md](jsonrpc.md): std/jsonrpc (spec/std.md 80)
