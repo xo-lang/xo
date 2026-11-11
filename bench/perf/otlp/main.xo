@@ -1,0 +1,35 @@
+// std/otlp's trace encoder (decision 0549 item 3: its messages may become
+// derive Proto structs only if this does not regress): `traces` encodes
+// 200 spans (OpenTelemetry ids, a parent, kind, four attributes, two
+// events, an error status, two scopes) 4,000 times; `none` is the setup
+// alone. Usage: `<program> none|traces`. Prints `<workload> <checksum>`.
+use std/otlp
+use std/trace
+
+fn spans() -> List[trace.Span] {
+  var out: List[trace.Span] = []
+  for i in 0..200 {
+    out.push(trace.Span{id: "req-${i}", name: "GET /items/${i % 17}", start_ms: 1700000000000 + i, micros: 1000 + i * 3, status: 200,
+      trace_id: "000102030405060708090a0b0c0d0e${i % 10}f", span_id: "00010203040506${i % 10}7", parent_id: if i % 4 == 0 { "" } else { "root" },
+      kind: Some(if i % 2 == 0 { trace.SpanKind.Server } else { trace.SpanKind.Client }),
+      attributes: [trace.Attr{key: "http.method", value: trace.AttrValue.Str("GET")}, trace.Attr{key: "http.status_code", value: trace.AttrValue.Int(200 + i % 5)}, trace.Attr{key: "cache.hit", value: trace.AttrValue.Bool(i % 3 == 0)}, trace.Attr{key: "db.rows", value: trace.AttrValue.Int(i * 11)}],
+      events: [trace.Event{name: "start", time_ns: 1000 * i}, trace.Event{name: "done", time_ns: 1000 * i + 500}],
+      status_code: if i % 9 == 0 { Some(trace.StatusCode.Error) } else { None }, status_message: if i % 9 == 0 { "boom ${i}" } else { "" },
+      start_ns: 1700000000000000000 + i * 1000, end_ns: 1700000000000000000 + i * 1000 + 777, scope: if i % 2 == 0 { "app" } else { "db" }, scope_version: "1.0"})
+  }
+  out
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "traces"
+  let ss = spans()
+  let res = otlp.Resource{service: "bench"}
+  var sum = 0
+  if w == "traces" {
+    for _ in 0..4000 {
+      let b = otlp.encode_traces(res, ss)
+      sum = (sum * 31 + b.len() + Int(b[b.len() / 2])) % 1000000007
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

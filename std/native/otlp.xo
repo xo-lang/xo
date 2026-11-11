@@ -153,153 +153,165 @@ fn status_num(c: trace.StatusCode) -> Int {
   }
 }
 
-/// KeyValue with AnyValue's oneof written even at its default (a false, 0 or "" value is still a value).
-fn kv_any(a: trace.Attr) -> Bytes {
-  var v = BytesBuilder.new()
-  match a.value {
-    trace.AttrValue.Str(x) => {
-      v = protobuf.put_bytes(protobuf.put_tag(v, 1, 2), x.bytes())
-    }
-    trace.AttrValue.Bool(x) => {
-      v = protobuf.put_varint(protobuf.put_tag(v, 2, 0), if x { 1 } else { 0 })
-    }
-    trace.AttrValue.Int(x) => {
-      v = protobuf.put_varint(protobuf.put_tag(v, 3, 0), UInt64.wrapping_from(x))
-    }
-    trace.AttrValue.Float(x) => {
-      v = protobuf.put_fixed64(protobuf.put_tag(v, 4, 1), double_bits(x))
-    }
+// The trace messages (opentelemetry-proto trace.proto, common.proto,
+// resource.proto, collector/trace/v1) as derive Proto structs (decision
+// 0549 item 3): a message protobuf-go writes even when empty is an Option.
+
+enum AnyKind {
+  S as "1"(v: Str)
+  B as "2"(v: Bool)
+  I as "3"(v: Int)
+  D as "4"(v: Float)
+} derive Proto
+
+struct AnyValueMsg { value proto "oneof": AnyKind? = None } derive Proto
+
+struct KeyValueMsg {
+  key proto "1": Str = ""
+  value proto "2": AnyValueMsg? = None
+} derive Proto
+
+struct EventMsg {
+  time_unix_nano proto "1,fixed": UInt64 = 0
+  name proto "2": Str = ""
+  attributes proto "3": List[KeyValueMsg] = []
+} derive Proto
+
+struct StatusMsg {
+  message proto "2": Str = ""
+  code proto "3": Int = 0
+} derive Proto
+
+struct SpanMsg {
+  trace_id proto "1": Bytes = b""
+  span_id proto "2": Bytes = b""
+  parent_span_id proto "4": Bytes = b""
+  name proto "5": Str = ""
+  kind proto "6": Int = 0
+  start_time_unix_nano proto "7,fixed": UInt64 = 0
+  end_time_unix_nano proto "8,fixed": UInt64 = 0
+  attributes proto "9": List[KeyValueMsg] = []
+  events proto "11": List[EventMsg] = []
+  status proto "15": StatusMsg? = None
+  flags proto "16,fixed": UInt32 = 0
+} derive Proto
+
+struct ScopeMsg {
+  name proto "1": Str = ""
+  version proto "2": Str = ""
+} derive Proto
+
+struct ScopeSpansMsg {
+  scope proto "1": ScopeMsg? = None
+  spans proto "2": List[SpanMsg] = []
+  schema_url proto "3": Str = ""
+} derive Proto
+
+struct ResourceMsg { attributes proto "1": List[KeyValueMsg] = [] } derive Proto
+
+struct ResourceSpansMsg {
+  resource proto "1": ResourceMsg? = None
+  scope_spans proto "2": List[ScopeSpansMsg] = []
+} derive Proto
+
+struct TracesRequestMsg { resource_spans proto "1": List[ResourceSpansMsg] = [] } derive Proto
+
+fn kv_msg(a: trace.Attr) -> KeyValueMsg {
+  let v = match a.value {
+    trace.AttrValue.Str(x) => AnyKind.S(x)
+    trace.AttrValue.Bool(x) => AnyKind.B(x)
+    trace.AttrValue.Int(x) => AnyKind.I(x)
+    trace.AttrValue.Float(x) => AnyKind.D(x)
   }
-  var kv = BytesBuilder.new()
-  kv = str_field(kv, 1, a.key)
-  kv = msg_field(kv, 2, v.freeze())
-  kv.freeze()
+  KeyValueMsg{key: a.key, value: Some(AnyValueMsg{value: Some(v)})}
 }
 
-fn encode_event(e: trace.Event) -> Bytes {
-  var ev = BytesBuilder.new()
-  ev = fixed64_field(ev, 1, e.time_ns)
-  ev = str_field(ev, 2, e.name)
-  for a in e.attributes {
-    ev = msg_field(ev, 3, kv_any(a))
-  }
-  ev.freeze()
+/// A resource attribute: an empty value leaves AnyValue empty, as the hand writer and protobuf-go's corpus did.
+fn kv_str_msg(key: Str, value: Str) -> KeyValueMsg {
+  KeyValueMsg{key: key, value: Some(AnyValueMsg{value: if value.is_empty() { None } else { Some(AnyKind.S(value)) }})}
 }
 
-fn encode_span(s: trace.Span) -> Bytes {
+fn span_msg(s: trace.Span) -> SpanMsg {
   let root = s.name == "request" && s.parent_id.is_empty()
-  var sp = BytesBuilder.new()
-  sp = bytes_field(sp, 1, if s.trace_id.is_empty() { trace_id(s.id) } else { unhex_text(s.trace_id) ?? trace_id(s.id) })
+  let tid = if s.trace_id.is_empty() { trace_id(s.id) } else { unhex_text(s.trace_id) ?? trace_id(s.id) }
   let own = if s.span_id.is_empty() { None } else { unhex_text(s.span_id) }
-  sp = bytes_field(sp, 2, own ?? (if root { root_id(s.id) } else { span_id("${s.id}/${s.name}/${s.start_ms}/${s.micros}") }))
-  if s.parent_id == "root" {
-  } else if s.parent_id.is_empty() {
-    if !root {
-      sp = bytes_field(sp, 4, root_id(s.id))
-    }
-  } else {
-    sp = bytes_field(sp, 4, unhex_text(s.parent_id) ?? root_id(s.id))
-  }
-  sp = str_field(sp, 5, s.name)
+  let sid = own ?? (if root { root_id(s.id) } else { span_id("${s.id}/${s.name}/${s.start_ms}/${s.micros}") })
+  let parent = if s.parent_id == "root" { b"" } else if s.parent_id.is_empty() { if root { b"" } else { root_id(s.id) } } else { unhex_text(s.parent_id) ?? root_id(s.id) }
   // OpenTelemetry Go exports an unspecified kind as internal
-  sp = varint_field(sp, 6, match s.kind {
+  let kind = match s.kind {
     Some(k) => if k == trace.SpanKind.Unspecified { 1 } else { kind_num(k) }
     None => if root { 2 } else { 1 }
-  })
+  }
   let start = if s.start_ns > 0 { s.start_ns } else { s.start_ms * 1000000 }
   let end = if s.end_ns > 0 { s.end_ns } else { start + s.micros * 1000 }
-  sp = fixed64_field(sp, 7, start)
-  sp = fixed64_field(sp, 8, end)
   let http_status = s.status > 0 && s.name == "request" && s.parent_id.is_empty()
+  var attrs: List[KeyValueMsg] = []
   if http_status {
-    sp = msg_field(sp, 9, kv_int("http.response.status_code", s.status))
+    attrs.push(KeyValueMsg{key: "http.response.status_code", value: Some(AnyValueMsg{value: Some(AnyKind.I(s.status))})})
   }
   for a in s.attributes {
-    sp = msg_field(sp, 9, kv_any(a))
+    attrs.push(kv_msg(a))
   }
+  var events: List[EventMsg] = []
   for e in s.events {
-    sp = msg_field(sp, 11, encode_event(e))
+    var ea: List[KeyValueMsg] = []
+    for a in e.attributes {
+      ea.push(kv_msg(a))
+    }
+    events.push(EventMsg{time_unix_nano: UInt64.wrapping_from(e.time_ns), name: e.name, attributes: ea})
   }
-  var st = BytesBuilder.new()
-  var has_status = false
+  var st: StatusMsg? = None
   match s.status_code {
     Some(c) => {
-      has_status = true
-      if c == trace.StatusCode.Error {
-        st = str_field(st, 2, s.status_message)
-      }
-      st = varint_field(st, 3, status_num(c))
+      st = Some(StatusMsg{message: if c == trace.StatusCode.Error { s.status_message } else { "" }, code: status_num(c)})
     }
     None => {
       if http_status {
-        has_status = true
-        st = varint_field(st, 3, if s.status >= 500 { 2 } else { 1 })
+        st = Some(StatusMsg{code: if s.status >= 500 { 2 } else { 1 }})
       }
     }
   }
   // A span made by a Recorder (it has its own span id) is written as OpenTelemetry Go's SDK does: its status is
   // always present, even empty, and its flags say the parent is known not to be remote (0x100) and sampled (0x01).
   let otel = !s.span_id.is_empty()
-  if has_status || otel {
-    sp = msg_field(sp, 15, st.freeze())
+  if otel && st == None {
+    st = Some(StatusMsg{})
   }
-  if otel {
-    let t = protobuf.put_tag(sp, 16, 5)
-    sp = protobuf.put_fixed32(t, UInt32.wrapping_from(257))
-  }
-  sp.freeze()
+  SpanMsg{trace_id: tid, span_id: sid, parent_span_id: parent, name: s.name, kind: kind,
+    start_time_unix_nano: UInt64.wrapping_from(start), end_time_unix_nano: UInt64.wrapping_from(end),
+    attributes: attrs, events: events, status: st, flags: if otel { 257 } else { 0 }}
 }
 
 fn encode_traces(res: otlp.Resource, spans: List[trace.Span]) -> Bytes {
-  var r = BytesBuilder.new()
-  r = msg_field(r, 1, kv_str("service.name", res.service))
+  var rattrs = [kv_str_msg("service.name", res.service)]
   for (k, v) in res.attributes {
-    r = msg_field(r, 1, kv_str(k, v))
+    rattrs.push(kv_str_msg(k, v))
   }
   // ScopeSpans groups, in order of first appearance; a span with no scope joins the Resource's.
-  var names: List[Str] = []
-  var versions: List[Str] = []
-  var schemas: List[Str] = []
-  var bodies: List[BytesBuilder] = []
+  var groups: List[ScopeSpansMsg] = []
   if spans.is_empty() {
-    names.push(res.scope)
-    versions.push(res.version)
-    schemas.push("")
-    bodies.push(BytesBuilder.new())
+    groups.push(ScopeSpansMsg{scope: Some(ScopeMsg{name: res.scope, version: res.version})})
   }
   for s in spans {
     let n = if s.scope.is_empty() { res.scope } else { s.scope }
     let v = if s.scope.is_empty() { res.version } else { s.scope_version }
     var at = -1
-    for (i, _) in names.indexed() {
-      if at < 0 && names[i] == n && versions[i] == v && schemas[i] == s.schema_url {
-        at = i
+    for (i, g) in groups.indexed() {
+      if at < 0 {
+        if let Some(sc) = g.scope {
+          if sc.name == n && sc.version == v && g.schema_url == s.schema_url {
+            at = i
+          }
+        }
       }
     }
     if at < 0 {
-      names.push(n)
-      versions.push(v)
-      schemas.push(s.schema_url)
-      bodies.push(BytesBuilder.new())
-      at = names.len() - 1
+      groups.push(ScopeSpansMsg{scope: Some(ScopeMsg{name: n, version: v}), schema_url: s.schema_url})
+      at = groups.len() - 1
     }
-    bodies[at] = msg_field(bodies[at], 2, encode_span(s))
+    groups[at].spans.push(span_msg(s))
   }
-  var rs = BytesBuilder.new()
-  rs = msg_field(rs, 1, r.freeze())
-  for (i, _) in names.indexed() {
-    var sc = BytesBuilder.new()
-    sc = str_field(sc, 1, names[i])
-    sc = str_field(sc, 2, versions[i])
-    var ss = BytesBuilder.new()
-    ss = msg_field(ss, 1, sc.freeze())
-    ss.write(bodies[i].freeze())
-    ss = str_field(ss, 3, schemas[i])
-    rs = msg_field(rs, 2, ss.freeze())
-  }
-  var req = BytesBuilder.new()
-  req = msg_field(req, 1, rs.freeze())
-  req.freeze()
+  protobuf.marshal(TracesRequestMsg{resource_spans: [ResourceSpansMsg{resource: Some(ResourceMsg{attributes: rattrs}), scope_spans: groups}]})
 }
 
 fn double_bits(v: Float) -> UInt64 {

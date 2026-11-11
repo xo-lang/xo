@@ -43,6 +43,13 @@ Status: Accepted (owner, 2026-11-11; low priority: after ADR 0603 stage 1 and th
   which a derive struct would wrap in a new type. Next: std/protodesc
   (item 2's second module), then item 3 (std/otlp, only if its timing row
   does not regress).
+- 2026-11-11 (Xo Lang 3), item 3: std/native/otlp's trace export writes
+  derive Proto structs (ExportTraceServiceRequest to AnyValue, the value
+  a oneof enum that itself derives Proto); bench/perf/otlp traces 0.869
+  of the hand writer's wall time on linux/arm64 host 1, the same bytes
+  (bench/results/otlp-derive-2026-11-11.md), so the condition holds.
+  Metrics export stays on the writer for now (next: the same for it,
+  with its own timing row).
 
 ## Owner decision, 2026-11-11
 

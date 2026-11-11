@@ -360,3 +360,4 @@
 - [xoc-size-2026-11-11.md](xoc-size-2026-11-11.md): the playground compiler (compiler/wasm built for wasm) from 0.35.0 to main: 22.5 to 58.2 MB, half of it one code generation step (2d51a8403, bisected), and 26.2 MB (3.15 MB brotli) with the fix.
 - [mlkem-vs-go-2026-11-11.md](mlkem-vs-go-2026-11-11.md): crypto ML-KEM-768 against Go's crypto/mlkem on linux/arm64 host 1 (decision 0604's timing row).
 - [aesmodes-vs-go-2026-11-11.md](aesmodes-vs-go-2026-11-11.md): crypto AES block, CBC and CTR against Go's crypto/aes and crypto/cipher on linux/arm64 host 1 (decision 0605's timing row).
+- [otlp-derive-2026-11-11.md](otlp-derive-2026-11-11.md): std/otlp traces as derive Proto structs vs the hand writer, 0.869 wall (decision 0549 item 3)

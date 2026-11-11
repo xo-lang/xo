@@ -1,5 +1,20 @@
 # std/otlp changes
 
+## 2026-11-11: perf: trace export encodes derive Proto message structs
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0549 item 3 (derive in std; otlp may use message structs if its timing does not regress)
+- Go reference: go.opentelemetry.io/proto/otlp (trace.proto, common.proto, resource.proto), as protobuf-go marshals it
+- Timing: bench/results/otlp-derive-2026-11-11.md: bench/perf/otlp traces 0.869 of the hand writer's wall time (linux/arm64 host 1, --ab)
+- Test: the otlp corpus (protobuf-go's bytes) on go, arm64, llvm; std/native/otlp_test.xo (the OpenTelemetry Go oracle) on arm64, llvm
+- Shipped in: not yet released
+
+`encode_traces` builds the request as derive Proto structs
+(ExportTraceServiceRequest down to AnyValue, whose value is a oneof)
+and marshals them once, where it wrote each nested message to a Bytes
+of its own and copied it into its parent. Output unchanged.
+
 ## 2026-11-09: feature: encode_traces writes the OpenTelemetry span fields (decision 0580)
 
 - Kind: feature
