@@ -335,8 +335,15 @@ if section test; then
 		echo "and the release's std."
 		echo
 	} >>"$report"
-	for p in base64:encoding/base64:base64.go json:encoding/json:encode.go; do
-		m=${p%%:*}; r=${p#*:}; gp=${r%%:*}; gf=${r#*:}
+	# MODULE:XO_FILE:GO_PKG:GO_FILE, MODULE as --std-module names it and
+	# XO_FILE (under std) the file the edit appends to: a module merged with
+	# its implementation is std/NAME.xo and named NAME (0.48.0 merged
+	# base64, decision 0588: native/base64 was refused, both base64 rows
+	# "(failed)" in 0.48.1's first report)
+	for p in base64:base64.xo:encoding/base64:base64.go native/json:native/json.xo:encoding/json:encode.go; do
+		xm=${p%%:*}; r=${p#*:}; xf=${r%%:*}; r=${r#*:}; gp=${r%%:*}; gf=${r#*:}
+		m=${xm##*/}
+		[ -f "$work/xostd/$xf" ] || { echo "release-vs-go: no std file $xf for module $xm" >&2; exit 1; }
 		tenv=(env GOROOT="$work/goroot" GOCACHE="$tx/go" GOTOOLCHAIN=local GOFLAGS= XO_STD="$work/xostd" XO_BIN_CACHE="$tx/bin" XO_BACKEND_CACHE_DIR="$tx/backend" XO_SEPCOMP_BG=0)
 		for row in cold edit; do
 			if [ $row = cold ]; then
@@ -350,15 +357,15 @@ if section test; then
 				# read 1.267 of go test's wall)
 				"${tenv[@]}" "$XO" dev stdcache --test --conc=0 >/dev/null 2>&1 || true
 				"${tenv[@]}" "$XO" dev stdcache --test --conc=1 >/dev/null 2>&1 || true
-				"${tenv[@]}" "$XO" test --std-module=native/$m >/dev/null 2>&1 || true
-				guard="echo 'func releaseVsGoEdit'\$(date +%s)_\$\$'() int { return 1 }' >> $work/goroot/src/$gp/$gf; echo 'fn release_vs_go_edit_'\$(date +%s)_\$\$'() -> Int { 1 }' >> $work/xostd/native/$m.xo"
+				"${tenv[@]}" "$XO" test --std-module=$xm >/dev/null 2>&1 || true
+				guard="echo 'func releaseVsGoEdit'\$(date +%s)_\$\$'() int { return 1 }' >> $work/goroot/src/$gp/$gf; echo 'fn release_vs_go_edit_'\$(date +%s)_\$\$'() -> Int { 1 }' >> $work/xostd/$xf"
 			fi
 			l=$(settle)
 			{
 				echo "### $m ($gp) $row (load $l at start)"
 				echo
 				echo '```'
-				"${tenv[@]}" "$XO" bench --ab --no-guard --keep-loaded --rounds="$ROUNDS" --warmup=1 --metrics=wall_ms,cpu_ms,max_rss_kb --args-a="test -count=1 $gp" --args-b="test --std-module=native/$m" --guard="$guard" "$tgo" "$XO" 2>&1 | grep -v '^round ' | sed "s#$work/##g" || echo "(failed)"
+				"${tenv[@]}" "$XO" bench --ab --no-guard --keep-loaded --rounds="$ROUNDS" --warmup=1 --metrics=wall_ms,cpu_ms,max_rss_kb --args-a="test -count=1 $gp" --args-b="test --std-module=$xm" --guard="$guard" "$tgo" "$XO" 2>&1 | grep -v '^round ' | sed "s#$work/##g" || echo "(failed)"
 				echo '```'
 				echo
 			} >>"$report"
