@@ -1120,9 +1120,33 @@ fn merge_ranges(rs: List[Int]) -> List[Int] {
 /// assignment, quadratic in the ranges a register or slot holds
 /// (bench/results/xo1-speed-2026-10-13.md).
 fn insert_ranges(var lists: List[List[Int]], i: Int, rs: List[Int]) {
+  let n = lists[i].len()
+  if rs.len() > 1 && n > 0 {
+    // several ranges: one merge of the two sorted lists, where an insert
+    // per range moved the list's tail once each (insert_ranges was 12% of
+    // regalloc on the aiplatform/v1 test build, 2026-11-11); a tie keeps
+    // the list's range first, as the insert after equal starts did
+    let old = lists[i]
+    var out: List[Int] = List.with_capacity(n + rs.len())
+    var a = 0
+    var b = 0
+    while a < n || b < rs.len() {
+      if b >= rs.len() || (a < n && rng_s(old[a]) <= rng_s(rs[b])) {
+        out.push(old[a])
+        a += 1
+      } else {
+        out.push(rs[b])
+        b += 1
+      }
+    }
+    lists[i] = out
+    return
+  }
+  var from = 0
   for q in rs {
-    // the first range starting after q
-    var lo = 0
+    // the first range starting after q (rs is sorted: at or after the
+    // last one's place)
+    var lo = from
     var hi = lists[i].len()
     while lo < hi {
       let mid = (lo + hi) / 2
@@ -1133,6 +1157,7 @@ fn insert_ranges(var lists: List[List[Int]], i: Int, rs: List[Int]) {
       }
     }
     lists[i].insert(lo, q)
+    from = lo + 1
   }
 }
 
