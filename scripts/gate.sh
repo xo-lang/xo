@@ -116,6 +116,10 @@ set -u
 # gate's: refused
 wt=$(cd "${1:?usage: gate.sh WORKTREE STEP...}" 2>/dev/null && pwd) || { echo "gate.sh: $1 is not a directory (usage: gate.sh WORKTREE STEP...)"; exit 2; }
 shift
+# WORKTREE must be an xo checkout (2026-11-11, gotcha
+# heavy-cwd-runs-another-repos-gate): a gate given another repository has
+# nothing of xo's to build or test
+[ -d "$wt/compiler/xo" ] && [ -f "$wt/scripts/gate.sh" ] || { echo "gate.sh: $wt is not an xo checkout (no compiler/xo); give WORKTREE as the xo worktree you gate"; exit 2; }
 logs=${XO_GATE_LOGS:-${TMPDIR:-/tmp}/xo-gate-$(basename "$wt")}
 mkdir -p "$logs"
 # one gate per log directory (lead, 2026-11-10: a dry run of tier.sh
