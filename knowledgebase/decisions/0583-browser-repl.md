@@ -314,3 +314,39 @@ keeps the record's bytes in `std_export_in` (only `check_dirs_bound`'s restart a
 to 101 MB; values unchanged. Below 50 MB, as the owner asked. Left: the record's decode still holds
 std's objects twice while it installs them (about 7 MB), and on wasm a slice of the record's bytes is
 a copy (1.6 MB).
+
+## The playground page: a repl tab and std's record (2026-11-11)
+
+The lead asked (2026-11-11) for the owner's 50 MB bar on the real /play/ page, not the harness. The
+website branch `l2-play-repl` (15c342fa8, unpushed, for the owner's review) adds a repl tab to /play/:
+the toolchain worker keeps one compiler running `--play repl`, its stdin read through JSPI, and each
+entry that builds runs in the page's runner worker under a program's limits. `scripts/play-record.mjs`
+writes std's declaration record at site build time (in Node, over the page's own paths), and builds
+and the REPL load it. Without JSPI (Firefox, Safari) the tab says why and its input is off; run,
+format and problems work as before (checked by deleting `WebAssembly.Suspending` and `promising`
+before the page's scripts: no Chrome flag turns shipped JSPI off).
+
+Building the page from main showed every non-REPL build overflowing the Chrome worker's stack (the
+tour's basics included): `Checker` had grown to about 1,143 leaves, and V8's baseline compiler sizes
+a frame by its deepest operand stack. 42160d539 fixes it (gotchas/wasm-browser-stack-locals.md):
+a build now runs in a 200 KB Node stack, where 0.35.0's compiler (the live page's) needed 350 KB.
+
+Measured with the page built from 42160d539 (headless Chrome, macOS, 2026-11-11; the session of
+the earlier steps, 30 entries, typed into the tab):
+
+- The REPL's compiler: 35 MB after `use std/adler32`, 43 to 46 MB through entry 28, peak 49 MB
+  (entries 29 and 30); the first entry 543 ms (with the instance's start), later entries 127 to
+  135 ms each. On a phone viewport (390 by 844) the first 8 entries: peak 46 MB, nothing wider
+  than the screen.
+- The renderer process's RSS (all of the tab: the page, the toolchain and runner workers, V8's code
+  for the 58 MB compiler): 522 MB with the page loaded, 1,151 MB after consent and the first check,
+  1,302 MB after one run, 1,677 MB after the REPL's first entry, peak 1,612 to 1,899 MB through the
+  sessions. The live page (0.35.0's compiler, no record): 516, 1,010, and 2,004 MB after one run.
+  The 50 MB bar is the compiler's own memory; the tab around it is far larger on either page.
+- Download (brotli): the compiler 4,454,796 bytes, std 1,680,097, std's record 240,883: 6.4 MB on
+  first use, against 3.6 MB for the live page (compiler 2,402,324 and std 1,174,238). The record adds
+  0.24 MB; the rest is the compiler grown since 0.35.0 (22.5 to 57.9 MB raw; 0.5 MB brotli of it
+  from 42160d539's per-leaf loads and sret calls) and std grown.
+
+Next: the compiler's download size (the wasm module grew 2.6 times since 0.35.0), and the record
+could be written by the site build from the released seed's xo instead of the page's compiler.
