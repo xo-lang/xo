@@ -7,7 +7,26 @@ Entries from v0.11.0 to v0.35.0 sit under the first release tag whose
 CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
-## Unreleased
+## v0.48.1 (2026-11-11)
+
+A fix release of 0.48.0 with one fix: a separately compiled program read
+the wrong constants. It carries nothing else.
+
+- xo build, run and test (fix, native backends): a separately compiled
+  program (the default for a native build or run since v0.34.0, std from
+  its prebuilt store) numbered its constants of collection types (List,
+  Map, Set, Bytes, and constants computed by a call) from 0, as std's
+  store numbers its own, and both shared one table, so a program constant
+  and a std constant with the same number shared a slot. A program with a
+  few such constants that also ran std code reading std's own (for example
+  `mime.detect_content_type`) faulted with SIGTRAP or SIGSEGV, or read a
+  wrong value with no fault. 0.48.0 faulted with five constants; 0.44.0
+  and 0.46.0 needed more. The program's side now numbers from 2048, and
+  building std's store fails if std ever has 2048 such constants. On an
+  earlier version, `XO_SEPCOMP=0` (or `--release`, or the LLVM backend)
+  avoids it (gotchas/sepcomp-const-ids-shared-with-std.md).
+
+## v0.48.0 (2026-11-11)
 - std/multipart: `multipart.reader(src, boundary)` reads a body's parts as it arrives (Go's multipart.Reader: `next_part`, `read`, `PartHead.header_values`); effect generic, so the source may read a connection. `http.BodyReader.multipart` is built on it (decision 0597).
 - playground and wasm (memory): a large block takes a three-quarter size class when it fits (at most a third unused, not half), and a growing list uses all of its new block; the playground compiler can load std from its declaration record (`XO_PLAY_RECORD`, written by `XO_PLAY_RECORD_OUT`), parsing a std body only where it is lowered. The 30-entry REPL session in headless Chrome peaks at 87 MB of compiler memory (212 before), 169 MB without the record (decision 0583).
 - xo build and xo test (build time, arm64 and amd64 native backends): two code generation passes that were quadratic in a block of many word loads (cluster_mem's search for the neighbouring word, reuse_loads' key lists) are linear; output unchanged. aiplatform/v1 (xo-lang/gcp) builds its tests in 0.746 of the time (66.9 to 49.9 s) with 0.949 of the CPU on linux/arm64; the self build is unchanged.
