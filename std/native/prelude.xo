@@ -3664,6 +3664,80 @@ fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read {
   l[0]
 }
 
+/// look_path (std.md 3.1, Go's exec.LookPath, decision 0606): through
+/// Fs's stat and mode only, so every Fs answers the same way.
+fn look_path(env: Env, fs: Fs, name: Str) -> Str ! ProcErr uses (env, fs.read) {
+  let win = fs_windows()
+  let has_sep = name.contains("/") || (win && name.contains("\\"))
+  if has_sep {
+    return match lp_find(fs, name, win) {
+      Some(p) => Ok(p)
+      None => Err(ProcErr.NotFound(name))
+    }
+  }
+  let path = env.get("PATH") ?? ""
+  for d in path.split(if win { ";" } else { ":" }) {
+    let dir = if d == "" { "." } else { d }
+    if let Some(p) = lp_find(fs, fs_join(dir, name), win) {
+      // Go's ErrDot: a result relative to the working directory
+      if !(p.starts_with("/") || (win && lp_win_abs(p))) {
+        return Err(ProcErr.NotFound(name))
+      }
+      return Ok(p)
+    }
+  }
+  Err(ProcErr.NotFound(name))
+}
+
+/// The executable at p: a regular file with an execute bit (Go's
+/// findExecutable's mode check); on Windows p itself when it has an
+/// extension, then p with each PATHEXT extension.
+fn lp_find(fs: Fs, p: Str, win: Bool) -> Str? uses fs.read {
+  if !win {
+    if !lp_file(fs, p) {
+      return None
+    }
+    let m = match fs.mode(p) {
+      Ok(m) => m
+      Err(_) => 0
+    }
+    return if m & 0o111 != 0 { Some(p) } else { None }
+  }
+  if lp_has_ext(p) && lp_file(fs, p) {
+    return Some(p)
+  }
+  for ext in [".com", ".exe", ".bat", ".cmd"] {
+    if lp_file(fs, p + ext) {
+      return Some(p + ext)
+    }
+  }
+  None
+}
+
+/// A file, not a directory, at p.
+fn lp_file(fs: Fs, p: Str) -> Bool uses fs.read {
+  match fs.stat(p) {
+    Ok(Some(st)) => !st.is_dir
+    _ => false
+  }
+}
+
+/// The last element of p has an extension (filepath.Ext is not empty).
+fn lp_has_ext(p: Str) -> Bool {
+  let b = p.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != '/' && b[i] != '\\' {
+    if b[i] == '.' {
+      return true
+    }
+    i -= 1
+  }
+  false
+}
+
+/// A Windows path with a drive or a leading separator.
+fn lp_win_abs(p: Str) -> Bool { p.starts_with("\\") || p.starts_with("/") || (p.len() >= 3 && p.bytes()[1] == ':' && (p.bytes()[2] == '\\' || p.bytes()[2] == '/')) }
+
 /// create_temp_dir (std.md 3.1, Go's os.MkdirTemp): one exclusive mkdir
 /// (fspath.create_temp_dir) on the real file system; through Fs's methods
 /// for a user value converted to Fs and every Fs in the test world.

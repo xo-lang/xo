@@ -22,6 +22,7 @@ copy_stream # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has
 conn_deadline # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 conn_iface # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 create_temp_dir # wasip1 wasip2 # files: WASI has no file modes or locks: the golden reads the new directory's mode
+look_path # wasip1 wasip2 # files: WASI has no file modes or locks: the golden sets execute bits
 dns_no_tasks # wasip1 # network: the call `rt.call_c2` (std/dns's native resolver)
 dns_records # wasip1 # network: the network (`rt.net_listen`): WASI preview1 has no sockets
 fs_atomic # wasip1 wasip2 # files: WASI has no file modes or locks: write_atomic's mode

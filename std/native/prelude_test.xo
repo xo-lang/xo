@@ -4454,3 +4454,23 @@ test "create_temp_dir makes new directories in a MemFs through its methods" {
   expect(os.fs.exists("work/${c}")?) == true
   expect(create_temp_dir(os.fs.read_only(), "work", "r-").is_err()) == true
 }
+
+test "look_path searches PATH through a MemFs: execute bit, directories, ErrDot, a name with a slash" {
+  os.fs.create_dir_all("/bin1/d")?
+  os.fs.create_dir_all("/bin2")?
+  os.fs.write("/bin1/tool", b"x")?
+  os.fs.set_mode("/bin1/tool", 0o755)?
+  os.fs.write("/bin2/tool", b"x")?
+  os.fs.set_mode("/bin2/tool", 0o644)?
+  os.env.set("PATH", "/bin2:/bin1")
+  expect(look_path(os.env, os.fs, "tool")) == Ok("/bin1/tool")
+  expect(look_path(os.env, os.fs, "d").is_err()) == true
+  expect(look_path(os.env, os.fs, "nope")) == Err(ProcErr.NotFound(cmd: "nope"))
+  expect(look_path(os.env, os.fs, "/bin1/tool")) == Ok("/bin1/tool")
+  expect(look_path(os.env, os.fs, "/bin2/tool").is_err()) == true
+  os.env.set("PATH", "bin1")
+  os.fs.create_dir_all("bin1")?
+  os.fs.write("bin1/tool", b"x")?
+  os.fs.set_mode("bin1/tool", 0o755)?
+  expect(look_path(os.env, os.fs, "tool")) == Err(ProcErr.NotFound(cmd: "tool"))
+}

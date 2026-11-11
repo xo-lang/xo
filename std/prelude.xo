@@ -1519,6 +1519,18 @@ fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
 /// before the umask; on another Fs (a program's own, a test's MemFs, a
 /// recording) through Fs's stat and create_dir_all.
 fn create_temp_dir(fs: Fs, dir: Str, prefix: Str) -> Str ! FsErr uses fs
+
+/// The path of the executable `name` (Go's exec.LookPath, decision 0606):
+/// a name with a `/` (or `\` on Windows) is tried as it is; otherwise each
+/// directory of PATH from env (split on `:`, `;` on Windows; an empty
+/// entry is `.`) joined with name, the first regular file with an execute
+/// bit winning (on Windows: name, then name with each PATHEXT extension,
+/// default `.com;.exe;.bat;.cmd`, no execute bit). Not found is
+/// `ProcErr.NotFound(name)`; a result relative to the working directory
+/// (from `.` or a relative PATH entry) is `ProcErr.NotFound(name)` too, as
+/// Go's ErrDot refuses it. It reads through `fs`, so an attenuated Fs
+/// limits what it sees.
+fn look_path(env: Env, fs: Fs, name: Str) -> Str ! ProcErr uses (env, fs.read)
 /// Replaces the file at path with data so that a reader, or the file after
 /// a crash, holds the old contents or the new, never a part: written to a
 /// temporary file in path's directory, synced, given path's permission

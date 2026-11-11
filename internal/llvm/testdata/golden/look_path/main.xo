@@ -1,0 +1,51 @@
+// look_path (Go's exec.LookPath, decision 0606) on the real file system
+// with a program's own Env giving PATH: the first executable file wins, a
+// file without an execute bit and a directory are skipped, a name with a
+// slash is tried as it is, an empty or relative PATH entry that finds it
+// is refused (Go's ErrDot), and a missing name is NotFound.
+struct PathEnv {
+  path: Str
+}
+
+fn (e: PathEnv) get(name: Str) -> Str? uses env { if name == "PATH" { Some(e.path) } else { None } }
+fn (e: PathEnv) vars() -> Map[Str, Str] uses env { {"PATH": e.path} }
+fn (e: PathEnv) args() -> List[Str] uses env { [] }
+fn (e: PathEnv) program() -> Str uses env { "look_path" }
+fn (e: PathEnv) home() -> Str ! EnvErr uses env { Err(EnvErr.Missing(name: "HOME")) }
+fn (e: PathEnv) only(names: List[Str]) -> Env { e }
+fn (e: PathEnv) config_dir() -> Str ! EnvErr uses env { Err(EnvErr.Missing(name: "HOME")) }
+fn (e: PathEnv) cache_dir() -> Str ! EnvErr uses env { Err(EnvErr.Missing(name: "HOME")) }
+fn (e: PathEnv) hostname() -> Str uses env { "" }
+fn (e: PathEnv) local_app_data() -> Str ! EnvErr uses env { Err(EnvErr.Missing(name: "LocalAppData")) }
+
+fn main(os: Os) ! {
+  let cwd = os.fs.cwd()
+  let top = create_temp_dir(cwd, ".", "lp-")?
+  defer {
+    cwd.remove_all(top).ignore_err("the test's directory")
+  }
+  let abs = cwd.cwd_path()? + "/" + top
+  cwd.create_dir_all("${top}/b1/d")?
+  cwd.create_dir_all("${top}/b2")?
+  cwd.write("${top}/b1/tool", b"#!/bin/sh\n")?
+  cwd.set_mode("${top}/b1/tool", 0o755)?
+  cwd.write("${top}/b2/tool", b"#!/bin/sh\n")?
+  cwd.set_mode("${top}/b2/tool", 0o644)?
+  cwd.write("${top}/b2/other", b"#!/bin/sh\n")?
+  cwd.set_mode("${top}/b2/other", 0o700)?
+  let show = fn(r: Result[Str, ProcErr]) -> Str {
+    match r {
+      Ok(p) => if p.starts_with(abs) { "ok " + p[abs.len()..p.len()] } else { "ok " + p }
+      Err(e) => "err " + "${e}".replace(abs, "")
+    }
+  }
+  let env = PathEnv{path: "${abs}/b2:${abs}/b1"}
+  os.stdio.println("tool: ${show(look_path(env, os.fs, "tool"))}")
+  os.stdio.println("other: ${show(look_path(env, os.fs, "other"))}")
+  os.stdio.println("dir: ${show(look_path(env, os.fs, "d"))}")
+  os.stdio.println("missing: ${show(look_path(env, os.fs, "missing"))}")
+  os.stdio.println("slash: ${show(look_path(env, os.fs, "${abs}/b2/other"))}")
+  os.stdio.println("slash, not executable: ${show(look_path(env, os.fs, "${abs}/b2/tool"))}")
+  os.stdio.println("relative entry: ${show(look_path(PathEnv{path: "${top}/b1"}, cwd, "tool"))}")
+  os.stdio.println("empty PATH: ${show(look_path(PathEnv{path: ""}, os.fs, "tool"))}")
+}

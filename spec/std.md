@@ -1460,10 +1460,23 @@ fn (p: Proc) pid() -> Int                    // this process's ID (0 under WASI)
 fn (p: Proc) ppid() -> Int                   // the parent's ID (0 under WASI)
 fn (p: Proc) usage() -> ProcUsage            // this process's CPU time and peak memory; decision 0426
 fn (p: Proc) children_usage() -> ProcUsage   // the waited children's
+fn look_path(env: Env, fs: Fs, name: Str) -> Str ! ProcErr uses (env, fs.read)
+    // Go's exec.LookPath through env's PATH and fs (decision 0606), below
 
 struct ProcUsage { user: Duration, system: Duration, max_rss: Int }
 enum Signal { Hangup, Interrupt, Quit, Terminate, User1, User2, WindowChange }
 ```
+
+**look_path** (decision 0606, Go's `exec.LookPath`) finds a command
+without running it: a name with a `/` (or `\` on Windows) is tried as
+it is; otherwise each entry of `env`'s PATH (split on `:`, `;` on
+Windows; an empty entry is `.`) joined with the name, and the first
+regular file with an execute bit wins (on Windows the name with an
+extension, then each of `.com`, `.exe`, `.bat`, `.cmd`, with no execute
+bit). A miss is `NotFound(name)`, and so is a result relative to the
+working directory, as Go's ErrDot refuses it. It is a free function
+over `Env` and `Fs`, not a `Proc` method, so no program's own `Proc`
+type changes, and an attenuated `Fs` limits what it sees.
 
 **Signals** (decision 0407, Go's `os/signal`): `notify(signals)` returns a
 channel that receives each listed signal as it arrives; it holds one
@@ -5771,7 +5784,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-574 declarations.
+575 declarations.
 
 ### Range
 
@@ -6693,6 +6706,7 @@ fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
 fn create_temp_dir(fs: Fs, dir: Str, prefix: Str) -> Str ! FsErr uses fs
+fn look_path(env: Env, fs: Fs, name: Str) -> Str ! ProcErr uses (env, fs.read)
 fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs
 fn copy_stream(dst: Stream, src: Stream) -> Int ! CopyErr[NetErr, NetErr] uses net
 ```

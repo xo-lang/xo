@@ -1586,3 +1586,69 @@ func (noStdio) M_read_bytes(*Task, int64) Result[Option[Bytes], IoErr] {
 	return Ok[Option[Bytes], IoErr](None[Bytes]())
 }
 func (noStdio) M_read_all_bytes(*Task) Result[Bytes, IoErr] { return Ok[Bytes, IoErr]("") }
+
+// Prelude_look_path is `look_path(env, fs, name)` (decision 0606): Go's
+// exec.LookPath rules through Fs's stat and mode, as the native prelude's,
+// so every Fs answers the same way on both backends.
+func Prelude_look_path(tk *Task, env Env, fs Fs, name string) Result[string, ProcErr] {
+	win := runtime.GOOS == "windows"
+	notFound := Err[string](ProcErr{Tag: 1, P: ProcErr_NotFound{F_cmd: name}})
+	isFile := func(p string) bool {
+		st := fs.M_stat(tk, p)
+		return st.Ok && st.V.Some && !st.V.V.F_is_dir
+	}
+	find := func(p string) (string, bool) {
+		if !win {
+			if !isFile(p) {
+				return "", false
+			}
+			m := fs.M_mode(tk, p)
+			return p, m.Ok && m.V&0o111 != 0
+		}
+		if lookPathHasExt(p) && isFile(p) {
+			return p, true
+		}
+		for _, ext := range []string{".com", ".exe", ".bat", ".cmd"} {
+			if isFile(p + ext) {
+				return p + ext, true
+			}
+		}
+		return "", false
+	}
+	if strings.Contains(name, "/") || (win && strings.Contains(name, `\`)) {
+		if p, ok := find(name); ok {
+			return Ok[string, ProcErr](p)
+		}
+		return notFound
+	}
+	sep := ":"
+	if win {
+		sep = ";"
+	}
+	pathVar := env.M_get(tk, "PATH")
+	for _, d := range strings.Split(pathVar.V, sep) {
+		if d == "" {
+			d = "."
+		}
+		if p, ok := find(path.Join(d, name)); ok {
+			if !(strings.HasPrefix(p, "/") || (win && lookPathWinAbs(p))) {
+				return notFound
+			}
+			return Ok[string, ProcErr](p)
+		}
+	}
+	return notFound
+}
+
+func lookPathHasExt(p string) bool {
+	for i := len(p) - 1; i >= 0 && p[i] != '/' && p[i] != '\\'; i-- {
+		if p[i] == '.' {
+			return true
+		}
+	}
+	return false
+}
+
+func lookPathWinAbs(p string) bool {
+	return strings.HasPrefix(p, `\`) || strings.HasPrefix(p, "/") || (len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/'))
+}

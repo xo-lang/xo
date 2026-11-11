@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-11: feature: look_path(env, fs, name) (Go's exec.LookPath)
+
+- Kind: feature
+- Commit: this push
+- Found by: the std audit of 2026-11-11 (bench/results/std-audit-2026-11-11.md, gap 30), decision 0606
+- Go reference: os/exec lp_unix.go and lp_windows.go LookPath, findExecutable (go1.26.1)
+- Test: golden look_path (real file system: arm64, llvm, Go parity); std/native/prelude_test.xo MemFs test
+- Timing: none (a stat and a mode per PATH entry)
+- Shipped in: not yet released
+
+A free function over Env and Fs, so the Proc interface a program's own type implements is unchanged: Go's PATH search (an executable regular file; an empty entry is `.`; a relative result refused as Go's ErrDot; PATHEXT's default list on Windows), NotFound(name) on a miss. spec/std.md 3.7.
+
 ## 2026-11-11: feature: create_temp_dir(fs, dir, prefix) (Go's os.MkdirTemp)
 
 - Kind: feature
