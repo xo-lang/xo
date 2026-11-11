@@ -62,6 +62,10 @@ fn (var b: Builder) check_lazy(fo: Int) {
 /// has `ensures` clauses or is a `var` method of a type with an
 /// invariant (contractBody), else directly (bodyOf).
 fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
+  if b.c.tree_pending.contains(fo) && b.c.join_in_build {
+    // one task (Checker.join_in_build): the tree joined here
+    b.c.need_tree(fo)
+  }
   if b.c.tree_pending.contains(fo) {
     // a std function the facts did not make extern, lowered from its
     // body, whose tree the record left pending: not joined here on this

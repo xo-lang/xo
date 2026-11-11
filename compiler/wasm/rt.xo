@@ -6,11 +6,11 @@
 // std/llrt (xo_rt.c "Faults"), reported at the end with status 70.
 //
 // Memory: 0..15 the iovec and the count fd_write writes, 16..47 scratch
-// for formatting integers, 256..383 the free lists (one per size class),
+// for formatting integers, 256..511 the free lists (one per size class: 2^k at 4k, three quarters of 2^k at 4(32 + k)),
 // 1024..1983 the integers and text of Float formatting, 1984..2047 the
 // text of a Duration, literals from 2048, then the heap, which grows with memory.grow. A
-// block is a power of two of at least 16 bytes with an 8 byte header (its
-// size class; the next free block when it is free). A count of the i32
+// block is a power of two of at least 16 bytes, or three quarters of one
+// from 3 KiB (decision 0583 (c)), with an 8 byte header (its size class; the next free block when it is free). A count of the i32
 // minimum is immortal (literals, decision 0058); there are no threads, so
 // no shared counts.
 
@@ -115,13 +115,11 @@ fn rt_text(var g: Gen) -> Str {
       global.get $total)
 
     ;; allocation: a block of the smallest size class holding n + 8 bytes
-    (func $alloc (param $n i32) (result i32) (local $c i32) (local $p i32) (local $need i32)
-      ;; the bytes allocated (task budgets)
-      global.get $abytes
-      local.get $n
-      i64.extend_i32_u
-      i64.add
-      global.set $abytes
+    ;; the size class of a block holding n + 8 bytes: k for 2^k bytes (at
+    ;; least 4), or 32 + k for 3 << (k - 2) bytes, three quarters of 2^k,
+    ;; when that holds them and 2^k is 4 KiB to 2 GiB, so a large block is
+    ;; at most a third unused, not half (decision 0583 (c)); 32 is too large
+    (func $class_of (param $n i32) (result i32) (local $c i32)
       i32.const 32
       local.get $n
       i32.const 7
@@ -133,8 +131,59 @@ fn rt_text(var g: Gen) -> Str {
       i32.lt_u
       if
         i32.const 4
-        local.set $c
+        return
       end
+      local.get $c
+      i32.const 12
+      i32.ge_u
+      local.get $c
+      i32.const 31
+      i32.le_u
+      i32.and
+      if
+        local.get $n
+        i32.const 8
+        i32.add
+        i32.const 3
+        local.get $c
+        i32.const 2
+        i32.sub
+        i32.shl
+        i32.le_u
+        if
+          local.get $c
+          i32.const 32
+          i32.add
+          return
+        end
+      end
+      local.get $c)
+    ;; the bytes of a block of class c, its 8 byte header included
+    (func $class_bytes (param $c i32) (result i32)
+      local.get $c
+      i32.const 32
+      i32.lt_u
+      if
+        i32.const 1
+        local.get $c
+        i32.shl
+        return
+      end
+      i32.const 3
+      local.get $c
+      i32.const 34
+      i32.sub
+      i32.shl)
+    (func $alloc (param $n i32) (result i32) (local $c i32) (local $p i32) (local $need i32)
+      ;; the bytes allocated (task budgets)
+      global.get $abytes
+      local.get $n
+      i64.extend_i32_u
+      i64.add
+      global.set $abytes
+      local.get $n
+      call $class_of
+      local.set $c
       global.get $live
       i64.const 1
       i64.add
@@ -162,9 +211,8 @@ fn rt_text(var g: Gen) -> Str {
       end
       global.get $hp
       local.tee $p
-      i32.const 1
       local.get $c
-      i32.shl
+      call $class_bytes
       i32.add
       local.set $need
       ;; a class of 2^32 (1 << 32 is 1) or an end past 4 GiB wraps: out of memory
@@ -172,8 +220,8 @@ fn rt_text(var g: Gen) -> Str {
       local.get $p
       i32.lt_u
       local.get $c
-      i32.const 31
-      i32.gt_u
+      i32.const 32
+      i32.eq
       i32.or
       if
         call $oom
@@ -2029,6 +2077,26 @@ fn rt_text(var g: Gen) -> Str {
       i32.gt_u
       select
       local.tee $cap
+      ;; the capacity the new block holds: a doubled list of 2^k elements
+      ;; asked one class above its bytes (its 24 bytes of header), half of
+      ;; that block unused (decision 0583 (c))
+      local.get $es
+      i32.mul
+      i32.const 16
+      i32.add
+      local.set $q
+      local.get $es
+      if
+        local.get $q
+        call $class_of
+        call $class_bytes
+        i32.const 24
+        i32.sub
+        local.get $es
+        i32.div_u
+        local.set $cap
+      end
+      local.get $cap
       local.get $es
       i32.mul
       i32.const 16

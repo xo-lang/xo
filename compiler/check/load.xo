@@ -69,6 +69,12 @@ pub struct Checker {
   /// its trees and keeps their counts here (object to (counts, owner
   /// object or -1)); need_tree joins one on demand
   pub trees_lazy: Bool = false
+  /// with trees_lazy, the SSA builder joins a pending std tree itself
+  /// where it lowers that body (need_tree), instead of building again with
+  /// every tree joined: a builder on one task only (the playground's wasm
+  /// compiler, which lowers std's bodies from a shipped record; decision
+  /// 0583)
+  pub join_in_build: Bool = false
   /// XO_STD_TREES_TEST=1 (the rebuild's test): no tree parsed before
   /// install, every recorded object pending, so the SSA builder meets a
   /// pending tree and the driver's rebuild runs

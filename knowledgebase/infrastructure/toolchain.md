@@ -5279,6 +5279,9 @@ replacement rules hold the private values:
   for leftovers, runs gitleaks, checks that every seed-chain.txt hop is a
   public commit, refuses a non fast-forward against what was last
   published, runs the purity check, and writes `last-prepare.txt`.
+  Standing (owner, 2026-11-10): an agent runs it every day or two, and
+  when a site change needs a file on public main, and tells the lead
+  "prepare passed: public main X"; the owner then pushes.
 - `publish.sh push` (the owner, in a terminal): shows the summary, asks
   for a typed confirmation, and pushes with the deploy key
   (`~/.ssh/xo-lang-publish`, passphrase only the owner knows; the SSH

@@ -215,3 +215,34 @@ Live at the new peak (the end of the entry): two 16 MB blocks (Checker.new_obj's
 smaller blocks. Next, in order: std from its declaration record, so std's tokens, trees and objects
 are never built; list growth that does not hold the old and new copies at once; 1-byte Bools and
 packed enum tags in memory. Notes and probes: ~/xo-lead/notes/xo-lang-2/repl50/.
+
+## Memory below 50 MB: (b) std's declaration record and (c) size classes (2026-11-10)
+
+(b) `--play` loads std from its declaration record (decision 0448's records, as `xo build` reads
+them from its cache) when `XO_PLAY_RECORD=FILE` names one, and `XO_PLAY_RECORD_OUT=FILE` writes it
+after a check, so the page's own compiler can write it once for the std it ships. With the record,
+std's declarations come from the record and a std body is parsed only where the SSA builder lowers
+it: `Checker.join_in_build` (set only by the playground, whose builder runs on one task) makes
+compiler/ssa contract.xo `body` join the pending tree itself (`need_tree`), where a multi-task build
+marks `trees_missing` and builds again with every tree joined. The record is 1,215,403 bytes
+(325,281 gzip -9). Entry 1 in Node: output byte identical, check 490 to 153 ms, live small blocks at
+the peak 125 to 57 MB, wasm memory 169 to 87 MB (native footprint of the same path 81 to 33 MB).
+
+(c) The wasm allocator gains a three-quarter size class (3 << (k - 2) bytes) for blocks of 3 KiB
+to 1.5 GiB, so a large block is at most a third unused, not half, and a list that grows takes the
+capacity its new block holds: a doubled list of 2^k elements asked 24 bytes over a power of two,
+so half of each large list block was unused.
+
+The 30-entry session in headless Chrome 157 (0583/jspi2, the same compiler with and without a
+record its page writes at load), every value equal across the four runs:
+
+| compiler | wasm memory | later median | max entry |
+|---|---|---|---|
+| main (power of two classes, no record) | 212 MB | 23 ms | 232 ms |
+| record | 108 MB | 23 ms | 204 ms |
+| three-quarter classes, no record | 169 MB | 23 ms | 230 ms |
+| record and three-quarter classes | 87 MB (69 MB through entry 1) | 21 ms | 208 ms |
+
+Still above 50 MB. Next: free the decoded record's lists before the relocated ones are built
+(decode, relocate and install each hold every std object, up to three at once), a growth step
+that does not hold a large list's old and new blocks together, and then 1-byte Bools and enum tags.

@@ -132,6 +132,8 @@ var codegenEnv = map[string]inputClass{
 	"XO_BUILD_DIR":            {"none", ""},
 	"XO_INLINE_REPORT":        {"none", ""},
 	"XO_SSA_CENSUS":           {"none", ""},
+	"XO_PLAY_RECORD":          {"none", ""}, // --play only (decision 0583 (b)): std from a declaration record; the playground has no code cache and the output is byte identical
+	"XO_PLAY_RECORD_OUT":      {"none", ""}, // --play only: writes the record after a check
 	"XO_PLAY_TIMES":           {"none", ""},
 	"XO_DUMP_FN":              {"none", ""}, // writes a function's SSA and MIR to a file; the code is the same
 	"XO_RC_CHECK":             {"none", ""}, // decision 0322's checks: marks Reuse values in the SSA bodies every cache key hashes

@@ -113,9 +113,36 @@ fn play_check(os: Os, std_dir: Str, wd: Str, dir: Str, native: Bool) -> (check.C
   c.lazy_parse = native && (os.env.get("XO_LAZY_PARSE") ?? "") != "off"
   c.skip_tests = native
   c.set_mod_env(wd, "", os.env.get("HOME") ?? "", "", "1", "")
+  // std's declarations from a record the page ships (decision 0583,
+  // REPL memory): loaded without the stamps of std's files (the page's
+  // file system has its own), std's trees joined only where a body is
+  // checked or built (trees_lazy), a declaration parsed alone where one
+  // is needed (decision 0428)
+  let rec_in = if native { os.env.get("XO_PLAY_RECORD") ?? "" } else { "" }
+  let rec_out = if native { os.env.get("XO_PLAY_RECORD_OUT") ?? "" } else { "" }
+  if !rec_out.is_empty() {
+    c.std_export_on = true
+  } else if !rec_in.is_empty() {
+    let data = os.fs.read(rec_in).ok() ?? b""
+    if let Some((h, _)) = check.decode_std_header(data) {
+      if let Some(e) = check.decode_std_record(data, h.fp) {
+        c.std_export_on = true
+        c.std_export_in = data
+        c.std_header_fp = h.fp
+        c.trees_lazy = true
+        c.join_in_build = true
+        c.decl_parse = true
+        c.load_std_record(e)
+        c.std_record = Some(e)
+      }
+    }
+  }
   match c.check_dirs([dir]) {
     Ok(_) => {}
     Err(e) => return (c, "${e}")
+  }
+  if !rec_out.is_empty() && !c.std_export_out.is_empty() {
+    os.fs.write(rec_out, c.std_export_out).ignore_err("the record is an optimization: without it the page parses std")
   }
   (c, "")
 }
