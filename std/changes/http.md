@@ -1,5 +1,34 @@
 # std/http changes
 
+## 2026-11-11: feature: cross_origin, CrossOrigin.check and middleware (Go's CrossOriginProtection)
+
+- Kind: feature
+- Commit: this push
+- Found by: std audit 2026-11-11 gap 14
+- Go reference: net/http/csrf.go (go1.26.1)
+- Test: http corpus TRUST (12 origins), CHECKS (500 requests over methods, Hosts, paths, Sec-Fetch-Site and Origin, with trusted origins and bypass patterns) and DENIED, from Go, on go, arm64, llvm
+- Shipped in: not yet released
+
+Go's protection as a value: `cross_origin(trusted, bypass)` checks the
+origins as AddTrustedOrigin does (its errors), `check(req)` is Check
+(its texts), and `middleware()` is Handler with http.Error's 403. Bypass
+patterns are Router patterns. There is no SetDenyHandler: a program that
+wants its own response calls `check` in its own middleware. The Go backend
+runs net/http's CrossOriginProtection; native code is a port.
+
+## 2026-11-11: fix: Request.host() is with_host's host on native backends
+
+- Kind: fix
+- Commit: this push
+- Found by: the CrossOrigin corpus (native and Go disagreed)
+- Go reference: Request.Host
+- Test: http corpus, the host() line of the CrossOrigin test (go, arm64, llvm)
+- Shipped in: not yet released
+
+`r.with_host(h).host()` gave the Host the request came with ("" for one
+built with new_request) on arm64, amd64 and LLVM, and `h` on the Go
+backend. It is now `h` everywhere, as Go's Request.Host.
+
 ## 2026-11-11: behavior (Go backend): query_all reads the query with std/url's port
 
 - Kind: behavior

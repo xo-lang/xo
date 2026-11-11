@@ -1483,7 +1483,9 @@ fn target_path(target: Str) -> Str {
   t
 }
 
-fn request_host(r: Request) -> Str { r.raw_host }
+/// Go's Request.Host: with_host's when set (std/rt's M_with_host sets
+/// XHost), else the Host the request came with.
+fn request_host(r: Request) -> Str { if r.host_over.is_empty() { r.raw_host } else { r.host_over } }
 fn request_tls(r: Request) -> Bool { r.over_tls }
 
 /// The handshake's outcome of TLS connection th, none for 0 (plain),
@@ -2682,6 +2684,173 @@ fn (s: Server) with_max_body(n: Int) -> Server { s with {max_body: if n > 0 { n 
 
 /// Go's MaxBytesReader as a middleware: a body over n is 413 with Go's
 /// text; a streamed body's reader is capped at n.
+fn crossoriginerr_display(e: http.CrossOriginErr) -> Str { e.msg }
+
+/// A CrossOrigin trusting the origins `scheme://host[:port]` given (Go's
+/// AddTrustedOrigin, whose errors these are) and passing requests the
+/// bypass patterns match (AddInsecureBypassPattern).
+fn cross_origin(trusted: List[Str], bypass: List[Str]) -> http.CrossOrigin ! http.CrossOriginErr {
+  var set: Set[Str] = #{}
+  for o in trusted {
+    let why = origin_problem(o)
+    if !why.is_empty() {
+      return Err(http.CrossOriginErr{msg: "invalid origin ${o.debug()}: ${why}"})
+    }
+    set.add(o)
+  }
+  http.CrossOrigin{trusted: set, bypass: bypass}
+}
+
+/// Go's CrossOriginProtection.Check: Ok for a request it lets through.
+fn crossorigin_check(c: http.CrossOrigin, req: http.Request) -> () ! http.CrossOriginErr {
+  let r = rt.cast[http.Request, Request](req)
+  if req.method == "GET" || req.method == "HEAD" || req.method == "OPTIONS" {
+    return
+  }
+  let site = header_get(r.headers, "Sec-Fetch-Site") ?? ""
+  if site == "same-origin" || site == "none" {
+    return
+  }
+  if !site.is_empty() {
+    if origin_exempt(c, r) {
+      return
+    }
+    return Err(http.CrossOriginErr{msg: "cross-origin request detected from Sec-Fetch-Site header"})
+  }
+  let origin = header_get(r.headers, "Origin") ?? ""
+  if origin.is_empty() {
+    return
+  }
+  if let Some(h) = origin_host(origin) {
+    if h == request_host(r) {
+      return
+    }
+  }
+  if origin_exempt(c, r) {
+    return
+  }
+  Err(http.CrossOriginErr{msg: "cross-origin request detected, and/or browser is out of date: Sec-Fetch-Site is missing, and Origin does not match Host"})
+}
+
+/// CrossOriginProtection.Handler as a middleware: 403 with check's text,
+/// as Go's http.Error writes it, for a request check rejects.
+fn crossorigin_middleware(c: http.CrossOrigin) -> fn(http.Request, http.Next) -> http.Response {
+  fn(req: http.Request, next: http.Next) -> http.Response {
+    match crossorigin_check(c, req) {
+      Ok(_) => next(req)
+      Err(e) => response_with_header(text(403, "${e.msg}\n"), "X-Content-Type-Options", "nosniff")
+    }
+  }
+}
+
+fn origin_exempt(c: http.CrossOrigin, req: Request) -> Bool {
+  if !c.bypass.is_empty() {
+    var mux = router()
+    for p in c.bypass {
+      mux.handle(p, fn(_: Request) -> http.Response { empty(299) })
+    }
+    if mux.call(req).status == 299 {
+      return true
+    }
+  }
+  let origin = header_get(req.headers, "Origin") ?? ""
+  !origin.is_empty() && c.trusted.contains(origin)
+}
+
+/// Why o is not a trusted origin for Go's AddTrustedOrigin, "" when it is.
+fn origin_problem(o: Str) -> Str {
+  let (scheme, rest) = origin_scheme(o)
+  if scheme.is_empty() {
+    return "scheme is required"
+  }
+  if !rest.starts_with("//") {
+    return "host is required"
+  }
+  let auth_end = origin_first_of(rest, 2)
+  let host = origin_auth_host(rest[2..auth_end])
+  if host.is_empty() {
+    return "host is required"
+  }
+  if auth_end < rest.len() {
+    return "path, query, and fragment are not allowed"
+  }
+  ""
+}
+
+/// The host (with its port) of url.Parse(o), or None when Go's parse fails
+/// or finds none.
+fn origin_host(o: Str) -> Str? {
+  let (scheme, rest) = origin_scheme(o)
+  if scheme.is_empty() || !rest.starts_with("//") {
+    return if o.contains(":") && scheme.is_empty() { None } else { Some("") }
+  }
+  let h = origin_auth_host(rest[2..origin_first_of(rest, 2)])
+  if !origin_port_ok(h) {
+    return None
+  }
+  Some(h)
+}
+
+fn origin_scheme(o: Str) -> (Str, Str) {
+  let b = o.bytes()
+  for i in 0..b.len() {
+    let c = b[i]
+    if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+      continue
+    }
+    if i > 0 && ((c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.') {
+      continue
+    }
+    if c == ':' && i > 0 {
+      return (o[..i], o[i + 1..])
+    }
+    return ("", o)
+  }
+  ("", o)
+}
+
+/// The first `/`, `?` or `#` of s from `from`, else s.len().
+fn origin_first_of(s: Str, from: Int) -> Int {
+  let b = s.bytes()
+  for i in from..b.len() {
+    if b[i] == '/' || b[i] == '?' || b[i] == '#' {
+      return i
+    }
+  }
+  b.len()
+}
+
+fn origin_auth_host(a: Str) -> Str {
+  match a.rfind("@") {
+    Some(i) => a[i + 1..]
+    None => a
+  }
+}
+
+/// Go's url.Parse host checks, as far as an Origin needs: a port of digits
+/// after the last colon outside brackets.
+fn origin_port_ok(h: Str) -> Bool {
+  var port = ""
+  if h.starts_with("[") {
+    let end = h.find("]") ?? return false
+    port = h[end + 1..]
+    if !port.is_empty() && !port.starts_with(":") {
+      return false
+    }
+  } else if let Some(i) = h.rfind(":") {
+    port = h[i..]
+  }
+  if port.is_empty() {
+    return true
+  }
+  for c in port[1..].bytes() {
+    if c < '0' || c > '9' {
+      return false
+    }
+  }
+  true
+}
+
 fn max_body(n: Int) -> fn(http.Request, http.Next) -> http.Response {
   fn(req: http.Request, next: http.Next) -> http.Response {
     if req.body.len() > n {

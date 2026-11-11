@@ -48,6 +48,7 @@ func httpCorpus() string {
 	o.WriteString(literalHeaderTables())
 	o.WriteString(httpCookieTables())
 	o.WriteString(httpStatusTextTable())
+	o.WriteString(httpCrossOriginCorpus())
 	o.WriteString(httpMuxTables())
 	return o.String()
 }
@@ -935,5 +936,104 @@ test "Router matches as Go 1.22's ServeMux does (status, Allow, Location, route)
     }
   }
   expect(bad.join("\n")) == ""
+}
+`
+
+// httpCrossOriginCorpus checks http.cross_origin, CrossOrigin.check and
+// middleware against Go's CrossOriginProtection (AddTrustedOrigin's
+// errors, Check's verdicts and texts, Handler's 403).
+func httpCrossOriginCorpus() string {
+	r := rand.New(rand.NewSource(1125))
+	var o strings.Builder
+	origins := []string{"https://example.com", "http://example.com", "example.com", "https://example.com/", "https://example.com?x", "https://example.com#f", "https://", "null", "https://a:8080", "http://[::1]:80", "https://u@example.com", "ftp://x"}
+	o.WriteString("\n/// (origin, Go's AddTrustedOrigin: `ok` or its error)\nconst TRUST: List[(Str, Str)] = [\n")
+	for _, or := range origins {
+		w := "ok"
+		if err := http.NewCrossOriginProtection().AddTrustedOrigin(or); err != nil {
+			w = err.Error()
+		}
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(or), xq(w))
+	}
+	o.WriteString("]\n")
+	c := http.NewCrossOriginProtection()
+	for _, t := range []string{"https://trusted.example", "http://a:8080"} {
+		if err := c.AddTrustedOrigin(t); err != nil {
+			log.Fatal(err)
+		}
+	}
+	for _, b := range []string{"POST /hook", "/open/"} {
+		c.AddInsecureBypassPattern(b)
+	}
+	methods := []string{"GET", "HEAD", "OPTIONS", "POST", "PUT", "DELETE", "PATCH"}
+	sites := []string{"", "same-origin", "none", "cross-site", "same-site"}
+	hosts := []string{"example.com", "example.com:8443", "a:8080", "[::1]:80", "trusted.example"}
+	origs := []string{"", "https://example.com", "http://example.com:8443", "https://trusted.example", "http://a:8080", "http://[::1]:80", "https://evil.example", "null", "http://example.com:x", "https://u@example.com", "http://example.com/p"}
+	paths := []string{"/", "/hook", "/open/x", "/open", "/api"}
+	o.WriteString("\n/// (method, host, path, Sec-Fetch-Site, Origin, Go's Check: `ok` or its error)\nconst CHECKS: List[(Str, Str, Str, Str, Str, Str)] = [\n")
+	for i := 0; i < 500; i++ {
+		m, h, p, s, or := methods[r.Intn(len(methods))], hosts[r.Intn(len(hosts))], paths[r.Intn(len(paths))], sites[r.Intn(len(sites))], origs[r.Intn(len(origs))]
+		req := httptest.NewRequest(m, "http://"+h+p, nil)
+		if s != "" {
+			req.Header.Set("Sec-Fetch-Site", s)
+		}
+		if or != "" {
+			req.Header.Set("Origin", or)
+		}
+		w := "ok"
+		if err := c.Check(req); err != nil {
+			w = err.Error()
+		}
+		fmt.Fprintf(&o, "  (%s, %s, %s, %s, %s, %s),\n", xq(m), xq(h), xq(p), xq(s), xq(or), xq(w))
+	}
+	o.WriteString("]\n")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "http://example.com/api", nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	c.Handler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(rec, req)
+	fmt.Fprintf(&o, "\n/// Go's Handler on a rejected request: status, Content-Type, X-Content-Type-Options, body\nconst DENIED: (Int, Str, Str, Str) = (%d, %s, %s, %s)\n", rec.Code, xq(rec.Header().Get("Content-Type")), xq(rec.Header().Get("X-Content-Type-Options")), xq(rec.Body.String()))
+	o.WriteString(crossOriginTest)
+	return o.String()
+}
+
+const crossOriginTest = `
+test "cross_origin is Go's CrossOriginProtection" {
+  var bad: List[Str] = []
+  for (or, want) in TRUST {
+    let got = match http.cross_origin(trusted: [or]) {
+      Ok(_) => "ok"
+      Err(e) => e.msg
+    }
+    if got != want {
+      bad.push("trust ${or.debug()}: ${got.debug()} want ${want.debug()}")
+    }
+  }
+  let c = http.cross_origin(trusted: ["https://trusted.example", "http://a:8080"], bypass: ["POST /hook", "/open/"])?
+  for (m, h, p, s, or, want) in CHECKS {
+    var hs: Map[Str, Str] = {}
+    if !s.is_empty() {
+      hs["Sec-Fetch-Site"] = s
+    }
+    if !or.is_empty() {
+      hs["Origin"] = or
+    }
+    let req = http.new_request(m, "http://${h}${p}", headers: hs).with_host(h)
+    let got = match c.check(req) {
+      Ok(_) => "ok"
+      Err(e) => e.msg
+    }
+    if got != want {
+      bad.push("${m} ${h}${p} site=${s} origin=${or}: ${got.debug()} want ${want.debug()}")
+    }
+  }
+  expect(bad[..bad.len().min(5)]) == []
+  var r = http.router()
+  r.wrap(c.middleware())
+  r.handle("/", fn(_) { http.text(200, "in") })
+  let resp = r.call(http.new_request("POST", "http://example.com/api", headers: {"Sec-Fetch-Site": "cross-site"}).with_host("example.com"))
+  let (code, ctype, nosniff, body) = DENIED
+  expect((resp.status, resp.headers.get("Content-Type") ?? "", resp.headers.get("X-Content-Type-Options") ?? "", resp.body.to_str_lossy())) == (code, ctype, nosniff, body)
+  expect(r.call(http.new_request("POST", "http://example.com/api", headers: {"Sec-Fetch-Site": "same-origin"}).with_host("example.com")).status) == 200
+  // host() is with_host's on every backend (Go's Request.Host)
+  expect(http.new_request("GET", "http://x.example/").with_host("y.example:81").host()) == "y.example:81"
 }
 `

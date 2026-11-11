@@ -86,6 +86,10 @@ var (
 	_ func(*Http_Server, *Task, Set[Http_Protocol]) Http_Server                                                                                         = (*Http_Server).M_with_protocols
 	_ func(*Http_Server, *Task, Http_H2Config) Http_Server                                                                                              = (*Http_Server).M_with_h2_config
 	_ func(*Task, int64) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never]                 = Http_max_body
+	_ func(*Http_CrossOriginErr, *Task) string                                                                                                          = (*Http_CrossOriginErr).M_display
+	_ func(*Task, List[string], List[string]) Result[Http_CrossOrigin, Http_CrossOriginErr]                                                             = Http_cross_origin
+	_ func(*Http_CrossOrigin, *Task, Http_Request) Result[Unit, Http_CrossOriginErr]                                                                    = (*Http_CrossOrigin).M_check
+	_ func(*Http_CrossOrigin, *Task) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never]     = (*Http_CrossOrigin).M_middleware
 	_ func(*Task, Bytes, Bytes) Result[Tls_TlsCert, Http_TlsErr]                                                                                        = Http_tls_cert
 	_ func(*Http_TlsErr, *Task) string                                                                                                                  = (*Http_TlsErr).M_display
 	_ func(*Http_HttpErr, *Task) string                                                                                                                 = (*Http_HttpErr).M_display

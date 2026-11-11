@@ -2075,6 +2075,15 @@ fn (s: Server) with_max_body(n: Int) -> Server                   // the body rea
 fn (s: Server) with_protocols(p: Set[Protocol]) -> Server        // Go's Server.Protocols (4.6, decision 0434)
 fn (s: Server) with_h2_config(c: H2Config) -> Server             // Go's Server.HTTP2 (4.6)
 pub fn max_body(n: Int) -> fn(Request, Next) -> Response         // Go's MaxBytesReader as a middleware: 413 `http: request body too large`
+struct CrossOrigin { trusted: Set[Str], bypass: List[Str] }       // Go's CrossOriginProtection (Go 1.25)
+struct CrossOriginErr { msg: Str }                                 // Go's texts
+pub fn cross_origin(trusted: List[Str] = [], bypass: List[Str] = []) -> CrossOrigin ! CrossOriginErr
+    // trusted: origins `scheme://host[:port]` (AddTrustedOrigin's checks and errors);
+    // bypass: Router patterns whose requests pass (AddInsecureBypassPattern)
+fn (c: CrossOrigin) check(req: Request) -> () ! CrossOriginErr  // Check: GET, HEAD, OPTIONS pass; Sec-Fetch-Site same-origin or none
+    // passes, another value fails; without it, an Origin whose host is not req.host() fails;
+    // a trusted Origin or a bypass match passes either failure
+fn (c: CrossOrigin) middleware() -> fn(Request, Next) -> Response // 403, check's text as http.Error writes it
 enum HttpErr { Io(msg: Str), Canceled }
 ```
 

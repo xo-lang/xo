@@ -475,6 +475,33 @@ fn (s: Server) with_h2_config(c: H2Config) -> Server
 /// body is capped at n as it is read).
 fn max_body(n: Int) -> fn(Request, Next) -> Response
 
+/// Go's CrossOriginProtection (net/http, Go 1.25): rejects a cross origin
+/// browser request that is not GET, HEAD or OPTIONS, by its Sec-Fetch-Site
+/// field, or by an Origin whose host is not the request's Host when the
+/// browser sends no Sec-Fetch-Site. A request from a trusted origin, or one
+/// a bypass pattern (a Router pattern, `"POST /hook"`) matches, passes.
+struct CrossOrigin {
+  trusted: Set[Str]
+  bypass: List[Str]
+}
+
+/// The error of cross_origin and CrossOrigin.check: Go's texts.
+struct CrossOriginErr {
+  msg: Str
+}
+
+fn (e: CrossOriginErr) display() -> Str
+
+/// A CrossOrigin trusting the origins `scheme://host[:port]` given (Go's
+/// AddTrustedOrigin, whose errors these are) and passing requests the
+/// bypass patterns match (AddInsecureBypassPattern).
+fn cross_origin(trusted: List[Str] = [], bypass: List[Str] = []) -> CrossOrigin ! CrossOriginErr
+/// Go's CrossOriginProtection.Check: Ok for a request it lets through.
+fn (c: CrossOrigin) check(req: Request) -> () ! CrossOriginErr
+/// CrossOriginProtection.Handler as a middleware: 403 with check's text,
+/// as Go's http.Error writes it, for a request check rejects.
+fn (c: CrossOrigin) middleware() -> fn(Request, Next) -> Response
+
 /// A certificate chain with its private key (std.md 4.6): std/tls's
 /// (decision 0433).
 type TlsCert = tls.TlsCert
