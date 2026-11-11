@@ -589,3 +589,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0597](0597-std-modules-import-native.md): Accepted (owner via lead, 2026-11-10): merged std modules that need native code: a list of portable intrinsics (rt.cast), fast paths split after --ab, shared parsers made public as in Go
 - [0598](0598-std-textproto.md): Proposed: std/textproto, net/textproto's header and line reader as a public merged module that std/mail, std/multipart and std/smtp share
 - [0599](0599-std-crypto-ecdh.md): Proposed: ECDH key agreement (X25519, P-256, P-384, P-521) in std/crypto with Go's crypto/ecdh semantics and errors, over llrt's existing x25519 and nistec
+- [0600-file-seek.md](0600-file-seek.md): File.seek(offset, Whence) as Go's os.File.Seek, read buffer discarded (Proposed)
