@@ -8,7 +8,6 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
-- xo build, run and test (fix, native backends): a separately compiled program (the default since v0.34.0, std from its store) numbers its constants past std's, where both numbered from 0 and shared one table: a program with a few List, Map, Set or Bytes constants, or ones computed by a call, that also ran std code reading std's own constants (mime.detect_content_type) faulted with SIGTRAP or SIGSEGV or read a wrong value. A program can have up to 2048 such constants when separately compiled. `XO_SEPCOMP=0` was the workaround.
 - xo test --std-module (fix, native backends): a module that another module's declaration file imports (std/http.xo's `use std/multipart`) is tested with that importer built from source too: `xo test --std-module=multipart` failed with XO0601 "module `multipart` has no type `Form`" at std/http.xo once std's test variants were cached, and so would a new std module imported from a declaration file (textproto).
 - xo test (memory and build time): the first edit build of a std module's tests (`xo test --std-module=M` after its unedited run) no longer parses std's runtime files ahead of its check: the parse prefetch read the list the unedited build wrote, about 190 files in full that an edit build, which takes std's declarations from their record, never reads. linux/arm64, 0.48.0's numbers for that first edit: json 218 MB peak (later edits 115 to 119 MB, go test 152 to 158 MB), base64 199 MB (later 97 to 100, go test 106); on the Mac with the fix, json's first edit 201 to 130 MB and 226 to 196 ms, its check 83 to 54 ms. `--phase-times` prints `cache prefetch N files`.
 - xo build and xo test (build time, arm64 and amd64 native backends): each function's label prefix is built once, not for every block and cause label; output unchanged. aiplatform/v1 (xo-lang/gcp) builds its tests in 0.945 of the wall time and 0.887 of the CPU, and xo builds itself in 0.961 and 0.921 (linux/arm64, `xo bench --ab`).
@@ -24,6 +23,25 @@ the text of every entry is unchanged).
 - wasm (memory): values in memory pack their leaves (4 bytes an i32 leaf: Bool, a List or Box address, each half of a Str; 8 an Int or Float) where every leaf took 8 bytes, and a list of 1 MiB or more holds what its block holds; the playground's 30-entry REPL session peaks at 55 MB with std's record (87 before) and 108 MB without it (136) (decision 0583 (e)).
 - wasm (memory): `fs_read` sizes its buffer from the file's size (a 1.2 MB file took a 3 MB block), a list of 1 MiB or more grows by a quarter instead of doubling, and a large allocation reuses a free block up to two size classes larger before memory grows; the playground's 30-entry REPL session without std's record peaks at 136 MB (169 before), with the record at 87 MB as before (decision 0583 (d)).
 - xo build and xo test (arm64 and amd64 native backends): a function whose result does not fit the registers writes it through an address its caller passes (decision 0564 step 3, relanded), and results past 4,096 words stay in their frame slot. The compiler's own text is 0.59% smaller; aiplatform/v1 (xo-lang/gcp) builds its tests in 0.745 of the wall and 0.644 of the CPU on linux/arm64, and the self build takes 0.4 to 0.7% longer.
+
+## v0.48.1 (2026-11-11)
+
+A fix release of 0.48.0 with one fix: a separately compiled program read
+the wrong constants. It carries nothing else.
+
+- xo build, run and test (fix, native backends): a separately compiled
+  program (the default for a native build or run since v0.34.0, std from
+  its prebuilt store) numbered its constants of collection types (List,
+  Map, Set, Bytes, and constants computed by a call) from 0, as std's
+  store numbers its own, and both shared one table, so a program constant
+  and a std constant with the same number shared a slot. A program with a
+  few such constants that also ran std code reading std's own (for example
+  `mime.detect_content_type`) faulted with SIGTRAP or SIGSEGV, or read a
+  wrong value with no fault. 0.48.0 faulted with five constants; 0.44.0
+  and 0.46.0 needed more. The program's side now numbers from 2048, and
+  building std's store fails if std ever has 2048 such constants. On an
+  earlier version, `XO_SEPCOMP=0` (or `--release`, or the LLVM backend)
+  avoids it (gotchas/sepcomp-const-ids-shared-with-std.md).
 
 ## v0.48.0 (2026-11-11)
 
