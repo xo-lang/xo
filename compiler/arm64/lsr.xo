@@ -607,25 +607,33 @@ fn (var g: G) cluster_mem() {
       continue
     }
     var moved = false
+    // each access's word parsed once, and the accesses by word: the scan
+    // for an access's neighbour starts only when a later one exists (it
+    // went to the block's end for every word with none, each step
+    // parsing the instruction again: 86% of aiplatform/v1's emit CPU
+    // with 0564 step 3's word loads, 2026-11-10)
+    var mw = cluster_words(ins)
+    var at = cluster_at(g, ins, mw)
     var i = 0
     while i < ins.len() {
-      let (lk, base, off) = mem_word(ins[i])
+      let (lk, base, off) = mw[i]
       if lk == 0 {
         i += 1
         continue
       }
-      var j = i + 1
+      let fpi = g.fp[mem_reg(ins[i])]
+      let c1 = cluster_next(at, cluster_key(lk, base, off + 8, fpi), i)
+      let c2 = cluster_next(at, cluster_key(lk, base, off - 8, fpi), i)
+      let c = if c1 < 0 { c2 } else if c2 < 0 { c1 } else { c1.min(c2) }
       var found = -1
-      while j < ins.len() {
-        let (k2, b2, o2) = mem_word(ins[j])
-        if k2 == lk && b2 == base && (o2 == off + 8 || o2 == off - 8) && g.fp[mem_reg(ins[j])] == g.fp[mem_reg(ins[i])] {
-          found = j
-          break
+      if c >= 0 {
+        var j = i + 1
+        while j < c && cluster_past(ins[j], lk, base, if lk == 1 { -1 } else { off }) {
+          j += 1
         }
-        if !cluster_past(ins[j], lk, base, if lk == 1 { -1 } else { off }) {
-          break
+        if j == c {
+          found = c
         }
-        j += 1
       }
       if found < 0 || found == i + 1 {
         i += 1
@@ -655,6 +663,8 @@ fn (var g: G) cluster_mem() {
             }
           }
           ins = out
+          mw = cluster_words(ins)
+          at = cluster_at(g, ins, mw)
           moved = true
         }
       } else {
@@ -681,6 +691,8 @@ fn (var g: G) cluster_mem() {
             }
           }
           ins = out
+          mw = cluster_words(ins)
+          at = cluster_at(g, ins, mw)
           moved = true
         }
       }
@@ -690,6 +702,50 @@ fn (var g: G) cluster_mem() {
       g.blocks[b].insts = ins
     }
   }
+}
+
+/// mem_word of each of ins.
+fn cluster_words(ins: List[Inst]) -> List[(Int, Int, Int)] {
+  var out: List[(Int, Int, Int)] = []
+  for x in ins {
+    out.push(mem_word(x))
+  }
+  out
+}
+
+/// cluster_mem's key of an access: its kind, base, offset and whether its
+/// register is a float one.
+fn cluster_key(k: Int, base: Int, off: Int, fp: Bool) -> Str { "${k} ${base} ${off} ${fp}" }
+
+/// The positions of ins's word accesses by cluster_key, in order.
+fn cluster_at(g: G, ins: List[Inst], mw: List[(Int, Int, Int)]) -> Map[Str, List[Int]] {
+  var at: Map[Str, List[Int]] = {}
+  for (k, w) in mw.indexed() {
+    let (lk, base, off) = w
+    if lk != 0 {
+      let key = cluster_key(lk, base, off, g.fp[mem_reg(ins[k])])
+      var ps = at.get(key) ?? []
+      ps.push(k)
+      at[key] = ps
+    }
+  }
+  at
+}
+
+/// The first position past i of key's accesses, -1 for none.
+fn cluster_next(at: Map[Str, List[Int]], key: Str, i: Int) -> Int {
+  let ps = at.get(key) ?? []
+  var lo = 0
+  var hi = ps.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if ps[mid] <= i {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  if lo < ps.len() { ps[lo] } else { -1 }
 }
 
 /// Whether inst is a word load `ldr $d0, [$u0, #off]` (1) or store `str
