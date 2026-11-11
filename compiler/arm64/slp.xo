@@ -170,6 +170,23 @@ fn (var g: G) slp_f64() {
   if g.x86 {
     return
   }
+  // a pack starts from two Float loads of one chain: with fewer in the
+  // function, every chain ends at "no load pairs", so skip the use maps
+  // (slp_f64 was 4.8% of the aiplatform/v1 test build's CPU, almost all
+  // of it in functions with no Float load; Lang 1, 2026-11-11)
+  if g.f.name != g.m.dump_fn {
+    var nl = 0
+    for b in g.all_blocks() {
+      for x in g.blocks[b].insts {
+        if g.slp_load(x).is_some() {
+          nl += 1
+        }
+      }
+    }
+    if nl < 2 {
+      return
+    }
+  }
   // every vreg's definition count and uses (block, index, operand)
   var ndef: Map[Int, Int] = {}
   // the uses as (vreg, position) pairs first, each vreg's list stored
@@ -212,6 +229,18 @@ fn (var g: G) slp_f64() {
 
 /// The pass over one chain.
 fn (var g: G) slp_chain(ch: List[Int], ndef: Map[Int, Int], vuses: Map[Int, List[SPos]]) -> Str {
+  // no pack without two Float loads in the chain (the seeds below)
+  var nl = 0
+  for b in ch {
+    for x in g.blocks[b].insts {
+      if g.slp_load(x).is_some() {
+        nl += 1
+      }
+    }
+  }
+  if nl < 2 {
+    return "no load pairs"
+  }
   // chain order of every instruction
   var ord: Map[Int, Int] = {}
   var at: List[SPos] = []
