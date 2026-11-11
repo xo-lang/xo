@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [pq-client-hello-pmtud-blackhole.md](pq-client-hello-pmtud-blackhole.md): Observed 2026-11-11: every R2 PUT from the sumdb host timed out at 120 s while curl worked: xo's ClientHello with X25519MLKEM768 (1,501 bytes, as Go's) left an MTU 9000 VNIC as one packet and was dropped with PMTUD broken; XO_TLS_MLKEM=0 (275 bytes) until the host allows ICMP 3/4 or uses MTU 1500
 - [clib-static-archive-stale-bin-cache.md](clib-static-archive-stale-bin-cache.md): Observed 2026-11-10: a fixed ar_static still gave TestCLibStatic a crash at pc 0: the binary cache key of a cc link had no xo identity, and ar_static writes objects outside the keyed directory; library links are keyed on self_id now
 - [llvm-lto-shared-lib-local-exec-tls.md](llvm-lto-shared-lib-local-exec-tls.md): Observed 2026-11-10: an LLVM --lib=shared failed on GNU ld with R_X86_64_TPOFF32 and --lib=static with a bad -plugin-opt in cc -r (the Mac passed); library builds run no LTO and use -fPIC off darwin
 - [windows-test-children-outlive-timeout.md](windows-test-children-outlive-timeout.md): Observed 2026-11-10: a winarm suite's timeout ended xo.test.exe but nine xo.exe children spun for seven hours; testtmp now joins a kill-on-close job object on Windows.
