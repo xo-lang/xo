@@ -752,6 +752,17 @@ fn curve_oid(a: crypto.KeyAlg) -> Str {
   }
 }
 
+/// nistec's text for a coordinate at or above p: P-256's assembly field
+/// on amd64 and arm64 (p256_asm.go, every Xo target) says `invalid P256
+/// element encoding`; the other curves' fiat fields `invalid P384Element
+/// encoding`.
+fn element_err(name: Str) -> Str {
+  if name == "P256" {
+    return "invalid P256 element encoding"
+  }
+  "invalid ${name}Element encoding"
+}
+
 fn curve_name(a: crypto.KeyAlg) -> Str {
   match a {
     EcdsaP224 => "P224"
@@ -904,7 +915,7 @@ fn parse_public_key(der: Bytes) -> PublicKey ! crypto.KeyErr {
     match nistec.point_check(nist_curve(alg), data) {
       0 => ()
       1 => return Err(key_err("invalid ${curve_name(alg)} point encoding"))
-      2 => return Err(key_err("invalid ${curve_name(alg)}Element encoding"))
+      2 => return Err(key_err(element_err(curve_name(alg))))
       _ => return Err(key_err("${curve_name(alg)} point not on curve"))
     }
     return PublicKey{kind: alg, n: b"", e: 0, key: data}

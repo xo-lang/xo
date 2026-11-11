@@ -1,5 +1,17 @@
 # std/crypto changes
 
+## 2026-11-11: fix: a P-256 public key with a coordinate at or above p says Go's text
+
+- Kind: fix
+- Commit: this push
+- Found by: the ecdh corpus of decision 0599 (branch lang3-ecdh)
+- Go reference: crypto/internal/fips140/nistec p256_asm.go (go1.26.1)
+- Test: `xo test --std-module=native/crypto` ("a public key with a coordinate at or above p has Go's text", the three curves' texts from Go on arm64)
+- Timing: none (an error text)
+- Shipped in: not yet released
+
+parse_public_key of a P-256 SubjectPublicKeyInfo whose x or y is at or above p failed with `invalid P256Element encoding` (fiat's text); Go on arm64 and amd64, Xo's targets, uses its assembly field, whose text is `invalid P256 element encoding`. P-384 and P-521 keep fiat's text, as in Go.
+
 ## 2026-11-11: docs: the header says what the module is for
 
 - Kind: docs

@@ -2952,3 +2952,17 @@ test "Aes128CbcHmacSha256 sizes, key length and random nonce" {
   expect(crypto.aead_key(a, unhex("00")).is_err()) == true
   expect(crypto.aead_key(a, unhex("00".repeat(33))).is_err()) == true
 }
+
+test "a public key with a coordinate at or above p has Go's text" {
+  // Go 1.26.1 x509.ParsePKIXPublicKey on arm64: P-256's assembly field,
+  // the other curves' fiat fields
+  let cases = [
+    ("3059301306072a8648ce3d020106082a8648ce3d03010703420004ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1958e1d4e32fef8b7acfac2bc70e59da3610af7a3dd1fe62015c8cb09948f750", "invalid P256 element encoding"),
+    ("3076301006072a8648ce3d020106052b8104002203620004ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7111c9790b92994e07f8d0eebd591f4ce7d0de5a954b43f69157241dc250d467ca499467429612c010415432864a203c", "invalid P384Element encoding"),
+    ("30819b301006072a8648ce3d020106052b810400230381860004ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff001b1df9416584bed480301bfbf7606e5842a5e14d075cba47966f8367c3eded956f268a114485f57c1cf712767d6f56318220c5cb3eb12d22cf121cd466d689e0f0", "invalid P521Element encoding"),
+  ]
+  for (der, want) in cases {
+    expect(parse_public_key(Bytes.from_hex(der) ?? b"").map(fn(k) { k.alg() }).map_err(fn(e) { e.msg })) == Err(want)
+  }
+}
+
