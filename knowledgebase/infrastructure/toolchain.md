@@ -238,7 +238,15 @@ For the first public binary release (0.25.1, 2026-10-22) release.sh also:
   and notarizes them in one submission (scripts/sign-macos.sh) with the
   keychain profile `XO_NOTARY_PROFILE` (made once by the owner, `xcrun
   notarytool store-credentials NAME`) or the App Store Connect key
-  variables (code-signing.md). Neither a bare Mach-O nor a tar.gz can carry
+  variables (code-signing.md). Since 2026-11-10 (owner) a release
+  notarizes with the App Store Connect API key: source the lead's
+  `~/xo-lead/notary-api.env` (outside every repository, mode 600; it sets
+  `APPLE_API_KEY`, the .p8's path, `APPLE_API_KEY_ID` and
+  `APPLE_API_ISSUER`) in a subshell and leave `XO_NOTARY_PROFILE` unset,
+  so sign-macos.sh passes `--key`, `--key-id` and `--issuer`; the keychain
+  profile stays the fallback (it fails while the login keychain is locked,
+  as overnight on 2026-10-21). Last verified: 2026-11-10 (0.46.0).
+  Neither a bare Mach-O nor a tar.gz can carry
   a stapled ticket; Gatekeeper looks it up online. `XO_RELEASE_UNSIGNED=1`
   and `XO_RELEASE_NO_NOTARIZE=1` are for trials.
 - **Signs** the windows bin/xo.exe and bin/xo-gobind.exe with Azure
