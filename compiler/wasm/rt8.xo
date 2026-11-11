@@ -40,7 +40,7 @@ fn rt8_globals() -> Str {
 /// The functions of rt6.xo (its ENOSYS file calls and its file write) that
 /// rt8.xo replaces.
 fn rt8_replaces() -> List[Str] {
-  ["path_open", "fd_read", "fd_pread", "fd_close", "path_filestat_get", "fd_readdir", "path_create_directory", "path_remove_directory", "path_unlink_file", "path_rename", "path_readlink", "path_symlink", "path_filestat_set_times", "fd_write_file"]
+  ["path_open", "fd_read", "fd_pread", "fd_seek", "fd_close", "path_filestat_get", "fd_readdir", "path_create_directory", "path_remove_directory", "path_unlink_file", "path_rename", "path_readlink", "path_symlink", "path_filestat_set_times", "fd_write_file"]
 }
 
 /// The functions of rt8.xo.
@@ -526,6 +526,74 @@ fn rt8_text() -> Str {
       local.get $nr
       local.get $k
       i32.store
+      i32.const 0)
+
+    ;; fd_seek: wasi:filesystem has no seek; a descriptor's reads and writes
+    ;; go at its entry's offset, so this moves it: from the start (0), the
+    ;; offset (1) or the size (2, the descriptor's stat); a negative result
+    ;; is EINVAL and leaves it
+    (func $fd_seek (param $fd i32) (param $off i64) (param $wh i32) (param $out i32) (result i32) (local $e i32) (local $r i32) (local $base i64)
+      local.get $fd
+      call $fs_entry
+      local.tee $e
+      i32.eqz
+      if
+        i32.const 8
+        return
+      end
+      local.get $wh
+      i32.const 1
+      i32.eq
+      if
+        local.get $e
+        i64.load offset=16
+        local.set $base
+      end
+      local.get $wh
+      i32.const 2
+      i32.eq
+      if
+        call $hret_at
+        local.set $r
+        local.get $e
+        i32.load
+        local.get $r
+        call $wfs_fstat
+        local.get $r
+        i32.load8_u
+        if
+          local.get $r
+          i32.load8_u offset=8
+          call $fs_errno
+          return
+        end
+        local.get $r
+        i64.load offset=24
+        local.set $base
+      end
+      local.get $wh
+      i32.const 2
+      i32.gt_u
+      if
+        i32.const 28
+        return
+      end
+      local.get $base
+      local.get $off
+      i64.add
+      local.tee $base
+      i64.const 0
+      i64.lt_s
+      if
+        i32.const 28
+        return
+      end
+      local.get $e
+      local.get $base
+      i64.store offset=16
+      local.get $out
+      local.get $base
+      i64.store
       i32.const 0)
 
     ;; fd_write of a file (rt6.xo's fd_write calls it for fd 3 and up); an
