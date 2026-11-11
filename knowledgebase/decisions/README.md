@@ -593,3 +593,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0601](0601-std-asn1.md): Accepted (owner, 2026-11-11): std/asn1, a public DER value tree with Go's encoding/asn1 rules and texts; derive Asn1 later
 - [0602](0602-std-big-float.md): Accepted (owner, 2026-11-11): big.BigFloat, Go's math/big Float as an immutable value (precision, rounding modes, Go's formats and parsing)
 - [0603](0603-agent-protocols.md): Proposed (Xo Azure 1, 2026-11-11, for the owner): agent protocols: std/jsonrpc, std/sse, derive JsonSchema with std/jsonschema, std/mcp (server and client, stdio and Streamable HTTP, dated versions negotiated, an auth hook), and the modules oauth2 (vs 0531), a2a and an OpenAPI generator; Go SDKs as oracles
+- [0604](0604-std-mlkem.md): Proposed (Xo Lang 3, 2026-11-11, for the owner): std/crypto ML-KEM, crypto/mlkem's 768 and 1024 keys, encapsulate and decapsulate with Go's texts, randomness from the Rand capability
