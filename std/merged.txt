@@ -32,6 +32,7 @@ std/protodesc
 std/protowkt
 std/protojson
 std/regexp
+std/textproto
 std/uniclass
 std/image
 std/netip

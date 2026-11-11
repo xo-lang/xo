@@ -47,24 +47,27 @@ memcached text client, a mail filter) have none of it.
 
    pub struct Reader { ... }                // over Bytes held in memory
    pub fn reader(b: Bytes) -> Reader
-   pub fn (var r: Reader) read_line() -> Str? ! TextErr
-   pub fn (var r: Reader) read_continued_line() -> Str? ! TextErr
+   pub fn (var r: Reader) read_line() -> Str ! TextErr             // Eof at the end
+   pub fn (var r: Reader) read_continued_line() -> Str ! TextErr
    pub fn (var r: Reader) read_header() -> Header ! TextErr        // ReadMIMEHeader
    pub fn (var r: Reader) read_code_line(expect: Int) -> (Int, Str) ! TextErr
    pub fn (var r: Reader) read_response(expect: Int) -> (Int, Str) ! TextErr
    pub fn (var r: Reader) read_dot_bytes() -> Bytes ! TextErr
    pub fn (var r: Reader) read_dot_lines() -> List[Str] ! TextErr
    pub fn (r: Reader) rest() -> Bytes                               // unread bytes
+   pub fn (r: Reader) header_truncated() -> Bool    // ended at the input's end (Go: header plus io.EOF)
 
    pub fn dot_encode(b: Bytes) -> Bytes     // Writer.DotWriter's output
 
-   pub enum TextErr { Protocol(msg: Str), Code(code: Int, msg: Str), Eof }
+   pub enum TextErr { Protocol(msg: Str), Code(code: Int, msg: Str), Eof, UnexpectedEof }
    ```
 
    Error texts are Go's (`malformed MIME header line: ...`,
-   `short response: ...`, Error's `NNN msg`); a header value keeps
-   invalid UTF-8 as `%XX` (decision 0259); Go's limits on header bytes
-   and count apply (readMIMEHeader's maxMemory and maxHeaders defaults).
+   `short response: ...`, Error's `NNN msg`); text that is not UTF-8
+   becomes U+FFFD (decision 0259 keeps `%XX` for URLs only); read_header
+   has no size or count limit, as Go's exported ReadMIMEHeader has none
+   (the limits are net/http's and mime/multipart's, through an internal
+   entry point).
 2. Stage 2: std/mail, std/multipart and std/smtp use it and drop their
    copies, each behind its own corpus (mail, multipart, smtp) on every
    backend, with an `--ab` row where the module has a bench (multipart).
@@ -90,3 +93,9 @@ memcached text client, a mail filter) have none of it.
   mail's returns the key unchanged, as Go's exported function does).
 - A streaming Reader first: no current caller needs it; the in-memory
   Reader covers the three modules, which hold the header block whole.
+
+## Progress
+
+- 2026-11-11, stage 1: std/textproto.xo with Go's reader, header and
+  writer tests (std/textproto_test.xo) and the textproto corpus against
+  Go on go, arm64 and llvm (spec/std.md 77, std/changes/textproto.md).

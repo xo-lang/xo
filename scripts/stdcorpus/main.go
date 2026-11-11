@@ -68,6 +68,7 @@ var generators = map[string]func() string{
 	"strconv":    strconvCorpus,
 	"time":       timeCorpus,
 	"url":        urlCorpus,
+	"textproto":  textprotoCorpus,
 	"uuid":       uuidCorpus,
 	"words":      wordsCorpus,
 	"xml":        xmlCorpus,

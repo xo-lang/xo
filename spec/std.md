@@ -8622,3 +8622,44 @@ fn encode_all(g: Gif) -> Bytes ! GifErr                                       //
 `loop_count` is -1 without a NETSCAPE loop extension, 0 for forever. An empty `disposal` is Go's nil. A frame past
 `max_pixels` fails with `image too large`. Checked against Go's `image/gif` (testdata/corpus/gif: encoded animations,
 truncations, byte changes, hand built streams for each error text, Encode over several models, EncodeAll over animations).
+
+## 77. std/textproto
+
+Go's `net/textproto` over bytes held in memory (decision 0598): canonical header keys, a header of every value in field
+order, and a reader of lines, continued lines, MIME header blocks, numbered replies and dot-encoded blocks, with Go's
+error texts. Pure.
+
+```xo
+enum TextErr { Protocol(msg: Str), Code(code: Int, msg: Str), Eof, UnexpectedEof }  // display: Go's texts, `NNN msg`
+fn canonical_key(s: Str) -> Str                    // CanonicalMIMEHeaderKey
+fn trim(s: Str) -> Str                             // TrimString
+struct Header                                      // MIMEHeader; keys canonical, first seen order
+fn header() -> Header
+fn (h: Header) get(key: Str) -> Str?               // the first value
+fn (h: Header) values(key: Str) -> List[Str]
+fn (h: Header) keys() -> List[Str]
+fn (h: Header) len() -> Int
+fn (h: Header) add(key: Str, value: Str) -> Header
+fn (h: Header) set(key: Str, value: Str) -> Header
+fn (h: Header) del(key: Str) -> Header
+fn (h: Header) to_map() -> Map[Str, Str]           // first values
+struct Reader
+fn reader(b: Bytes) -> Reader
+fn (var r: Reader) read_line() -> Str ! TextErr                     // Eof at the end
+fn (var r: Reader) read_continued_line() -> Str ! TextErr
+fn (var r: Reader) read_header() -> Header ! TextErr                // ReadMIMEHeader
+fn (r: Reader) header_truncated() -> Bool                           // it ended at the input's end
+fn (var r: Reader) read_code_line(expect: Int) -> (Int, Str) ! TextErr
+fn (var r: Reader) read_response(expect: Int) -> (Int, Str) ! TextErr
+fn (var r: Reader) read_dot_bytes() -> Bytes ! TextErr              // UnexpectedEof before the `.` line
+fn (var r: Reader) read_dot_lines() -> List[Str] ! TextErr
+fn (r: Reader) rest() -> Bytes                                      // the bytes not read
+fn dot_encode(b: Bytes) -> Bytes                                    // Writer.DotWriter, closed
+```
+
+Lines end at `\n` or `\r\n`. Text that is not UTF-8 becomes U+FFFD in a `Str` (`to_str_lossy`). `read_header` has no
+size or count limit (Go's exported ReadMIMEHeader has none); a key with a space is kept as written, as Go keeps it. Where
+Go returns a header with `io.EOF`, `read_header` returns it with `header_truncated()` true; on an error Xo returns no
+partial header, lines or bytes. `expect` is Go's: 0 or less any code, 1 to 9 the first digit, 10 to 99 the first two,
+100 to 999 the whole code. Not ported: Conn, Dial, Pipeline, Writer.PrintfLine (decision 0598). Checked against Go's
+`net/textproto` (testdata/corpus/textproto) and its own tests (std/textproto_test.xo).

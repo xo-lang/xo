@@ -85,3 +85,4 @@ entries yet.
 - [image.md](image.md): std/image (spec/std.md 75)
 - [gif.md](gif.md): std/gif (spec/std.md 76)
 - [term.md](term.md): std/term (spec/std.md 15)
+- [textproto.md](textproto.md): std/textproto (spec/std.md 77)

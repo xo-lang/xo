@@ -1,0 +1,250 @@
+// Go's net/textproto tests (go1.26.1 reader_test.go, header_test.go,
+// writer_test.go) where they fit an in-memory reader, with Go's expected
+// results.
+
+fn r(s: Str) -> Reader { reader(s.bytes()) }
+
+fn hd(s: Str) -> Header ! TextErr {
+  var x = r(s)
+  x.read_header()
+}
+
+fn code1(s: Str, expect_code: Int) -> (Int, Str) ! TextErr {
+  var x = r(s)
+  x.read_code_line(expect_code)
+}
+
+fn resp(s: Str, expect_code: Int) -> (Int, Str) ! TextErr {
+  var x = r(s)
+  x.read_response(expect_code)
+}
+
+fn hdb(b: Bytes) -> Header ! TextErr {
+  var x = reader(b)
+  x.read_header()
+}
+
+fn hdr(pairs: List[(Str, Str)]) -> Header {
+  var h = header()
+  for (k, v) in pairs {
+    h = h.add(k, v)
+  }
+  h
+}
+
+test "ReadLine" {
+  var x = r("line1\nline2\n")
+  expect(x.read_line()) == Ok("line1")
+  expect(x.read_line()) == Ok("line2")
+  expect(x.read_line()) == Err(TextErr.Eof)
+}
+
+test "ReadLine long line" {
+  let line = "12345".repeat(10000)
+  var x = r(line + "\r\n")
+  expect(x.read_line()) == Ok(line)
+}
+
+test "ReadContinuedLine" {
+  var x = r("line1\nline\n 2\nline3\n")
+  expect(x.read_continued_line()) == Ok("line1")
+  expect(x.read_continued_line()) == Ok("line 2")
+  expect(x.read_continued_line()) == Ok("line3")
+  expect(x.read_continued_line()) == Err(TextErr.Eof)
+}
+
+test "ReadCodeLine" {
+  var x = r("123 hi\n234 bye\n345 no way\n")
+  expect(x.read_code_line(0)) == Ok((123, "hi"))
+  expect(x.read_code_line(23)) == Ok((234, "bye"))
+  expect(x.read_code_line(346)) == Err(TextErr.Code(code: 345, msg: "no way"))
+  expect(x.read_code_line(1)) == Err(TextErr.Eof)
+}
+
+test "ReadCodeLine errors" {
+  expect(code1("12 x\n", 0)) == Err(TextErr.Protocol(msg: "short response: 12 x"))
+  expect(code1("abc x\n", 0)) == Err(TextErr.Protocol(msg: "invalid response code: abc x"))
+  expect(code1("099 x\n", 0)) == Err(TextErr.Protocol(msg: "invalid response code: 099 x"))
+  expect(code1("250-more\n", 0)) == Err(TextErr.Protocol(msg: "unexpected multi-line response: more"))
+}
+
+test "ReadDotLines" {
+  var x = r("dotlines\r\n.foo\r\n..bar\n...baz\nquux\r\n\r\n.\r\nanother\n")
+  expect(x.read_dot_lines()) == Ok(["dotlines", "foo", ".bar", "..baz", "quux", ""])
+  expect(x.read_dot_lines()) == Err(TextErr.UnexpectedEof)
+}
+
+test "ReadDotBytes" {
+  var x = r("dotlines\r\n.foo\r\n..bar\n...baz\nquux\r\n\r\n.\r\nanot.her\r\n")
+  expect(x.read_dot_bytes()) == Ok(b"dotlines\nfoo\n.bar\n..baz\nquux\n\n")
+  expect(x.read_dot_bytes()) == Err(TextErr.UnexpectedEof)
+}
+
+test "ReadMIMEHeader" {
+  var x = r("my-key: Value 1  \r\nLong-key: Even \n Longer Value\r\nmy-Key: Value 2\r\n\n")
+  expect(x.read_header()) == Ok(hdr([("My-Key", "Value 1"), ("Long-Key", "Even Longer Value"), ("My-Key", "Value 2")]))
+  expect(x.header_truncated()) == false
+}
+
+test "ReadMIMEHeader single" {
+  expect(hd("Foo: bar\n\n")) == Ok(hdr([("Foo", "bar")]))
+  expect(hd("Foo: bar\r\n\r\n")?.get("foo")) == Some("bar")
+}
+
+test "ReadMIMEHeader no key" {
+  expect(hd(": bar\ntest-1: 1\n\n").is_err()) == true
+}
+
+test "ReadMIMEHeader large" {
+  let data = "x".repeat(16 * 1024)
+  expect(hd("Cookie: " + data + "\r\n\n")?.get("Cookie")) == Some(data)
+}
+
+test "ReadMIMEHeader non compliant" {
+  let h = hd("Foo: bar\r\nContent-Language: en\r\nSID : 0\r\nAudio Mode : None\r\nPrivilege : 127\r\n\r\n")?
+  expect(h.keys()) == ["Foo", "Content-Language", "SID ", "Audio Mode ", "Privilege "]
+  expect(h.values("Audio Mode ")) == ["None"]
+}
+
+test "ReadMIMEHeader malformed" {
+  let inputs = [
+    "No colon first line\r\nFoo: foo\r\n\r\n",
+    " No colon first line with leading space\r\nFoo: foo\r\n\r\n",
+    "\tNo colon first line with leading tab\r\nFoo: foo\r\n\r\n",
+    " First: line with leading space\r\nFoo: foo\r\n\r\n",
+    "\tFirst: line with leading tab\r\nFoo: foo\r\n\r\n",
+    "Foo: foo\r\nNo colon second line\r\n\r\n",
+    "Foo-\n\tBar: foo\r\n\r\n",
+    "Foo-\r\n\tBar: foo\r\n\r\n",
+    "Foo\r\n\t: foo\r\n\r\n",
+    "Foo-\n\tBar",
+    "Foo \tBar: foo\r\n\r\n",
+    ": empty key\r\n\r\n",
+  ]
+  for input in inputs {
+    match hd(input) {
+      Err(TextErr.Protocol(_)) => {}
+      other => fault("read_header(${input.quote()}): ok ${other.is_ok()}, want a protocol error")
+    }
+  }
+}
+
+test "ReadMIMEHeader error texts" {
+  expect(hd("No colon\r\n\r\n")) == Err(TextErr.Protocol(msg: "malformed MIME header: missing colon: \"No colon\""))
+  expect(hd(" lead: x\r\n\r\n")) == Err(TextErr.Protocol(msg: "malformed MIME header initial line:  lead: x"))
+  expect(hd("Fo\to: x\r\n\r\n")) == Err(TextErr.Protocol(msg: "malformed MIME header line: Fo\to: x"))
+}
+
+test "ReadMIMEHeader bytes" {
+  for i in 0..256 {
+    var b = BytesBuilder.new()
+    b.write(b"Foo")
+    b.write_byte(UInt8.wrapping_from(i))
+    b.write(b"Bar: foo\r\n\r\n")
+    let ok_key = (i >= '0' && i <= '9') || (i >= 'a' && i <= 'z') || (i >= 'A' && i <= 'Z') || i is '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~' | ':' | ' '
+    expect(hdb(b.freeze()).is_err()) == !ok_key
+    var v = BytesBuilder.new()
+    v.write(b"Foo: foo")
+    v.write_byte(UInt8.wrapping_from(i))
+    v.write(b"bar\r\n\r\n")
+    let ok_val = (i >= 0x21 && i <= 0x7e) || i == ' ' || i == '\t' || i >= 0x80
+    expect(hdb(v.freeze()).is_err()) == !ok_val
+  }
+}
+
+test "ReadMIMEHeader trim continued" {
+  let h = hd("a:\n 0 \r\nb:1 \t\r\nc: 2\r\n 3\t\n  \t 4  \r\n\n")?
+  expect(h) == hdr([("A", "0"), ("B", "1"), ("C", "2 3 4")])
+}
+
+test "ReadMIMEHeader at the end of the input" {
+  var x = r("Foo: bar\r\nBaz: 1")
+  expect(x.read_header()) == Ok(hdr([("Foo", "bar"), ("Baz", "1")]))
+  expect(x.header_truncated()) == true
+  expect(hd("")) == Err(TextErr.Eof)
+}
+
+test "ReadMIMEHeader leaves the body" {
+  var x = r("A: 1\r\n\r\nbody text")
+  expect(x.read_header()?.get("a")) == Some("1")
+  expect(x.rest()) == b"body text"
+}
+
+test "RFC 959 lines" {
+  let cases = [
+    ("230-Anonymous access granted, restrictions apply\nRead the file README.txt,\n230  please", 23, 230, "Anonymous access granted, restrictions apply\nRead the file README.txt,\n please"),
+    ("230 Anonymous access granted, restrictions apply\n", 23, 230, "Anonymous access granted, restrictions apply"),
+    ("400-A\n400-B\n400 C", 4, 400, "A\nB\nC"),
+    ("400-A\r\n400-B\r\n400 C\r\n", 4, 400, "A\nB\nC"),
+  ]
+  for (input, expect_code, code, msg) in cases {
+    expect(resp(input + "\nFOLLOWING DATA", expect_code)) == Ok((code, msg))
+  }
+}
+
+test "ReadResponse multi-line error" {
+  var x = r("550-5.1.1 The email account that you tried to reach does not exist. Please try\n550-5.1.1 double-checking the recipient's email address for typos or\n550-5.1.1 unnecessary spaces. Learn more at\nUnexpected but legal text!\n550 5.1.1 https://support.google.com/mail/answer/6596 h20si25154304pfd.166 - gsmtp\n")
+  let want = "5.1.1 The email account that you tried to reach does not exist. Please try\n5.1.1 double-checking the recipient's email address for typos or\n5.1.1 unnecessary spaces. Learn more at\nUnexpected but legal text!\n5.1.1 https://support.google.com/mail/answer/6596 h20si25154304pfd.166 - gsmtp"
+  let got = x.read_response(250)
+  expect(got) == Err(TextErr.Code(code: 550, msg: want))
+  match got {
+    Err(e) => expect(e.display()) == "550 " + want
+    Ok(_) => fault("no error")
+  }
+}
+
+test "CanonicalMIMEHeaderKey" {
+  let cases = [
+    ("a-b-c", "A-B-C"),
+    ("a-1-c", "A-1-C"),
+    ("User-Agent", "User-Agent"),
+    ("uSER-aGENT", "User-Agent"),
+    ("user-agent", "User-Agent"),
+    ("USER-AGENT", "User-Agent"),
+    ("foo-bar_baz", "Foo-Bar_baz"),
+    ("foo-bar$baz", "Foo-Bar$baz"),
+    ("foo-bar~baz", "Foo-Bar~baz"),
+    ("foo-bar*baz", "Foo-Bar*baz"),
+    ("üser-agenT", "üser-agenT"),
+    ("a B", "a B"),
+    ("C Ontent-Transfer-Encoding", "C Ontent-Transfer-Encoding"),
+    ("foo bar", "foo bar"),
+  ]
+  for (input, want) in cases {
+    expect(canonical_key(input)) == want
+  }
+}
+
+test "MIMEHeader values" {
+  let h = hdr([("Set-Cookie", "cookie 1"), ("set-cookie", "cookie 2")])
+  expect(h.values("set-cookie")) == ["cookie 1", "cookie 2"]
+  expect(h.get("SET-COOKIE")) == Some("cookie 1")
+  expect(h.get("Other")) == None
+  expect(h.set("set-cookie", "x").values("Set-Cookie")) == ["x"]
+  expect(h.del("Set-Cookie").len()) == 0
+  expect(hdr([("b", "1"), ("a", "2"), ("B", "3")]).to_map()) == {"B": "1", "A": "2"}
+}
+
+test "TrimString" {
+  expect(trim(" \t a b \t ")) == "a b"
+  expect(trim("")) == ""
+}
+
+test "DotWriter" {
+  expect(dot_encode(b"abc\n.def\n..ghi\n.jkl\n.")) == b"abc\r\n..def\r\n...ghi\r\n..jkl\r\n..\r\n.\r\n"
+  expect(dot_encode(b"")) == b"\r\n.\r\n"
+  expect(dot_encode(b"a\r\n")) == b"a\r\n.\r\n"
+  expect(dot_encode(b"a\r")) == b"a\r\n.\r\n"
+}
+
+test "dot round trip" {
+  let body = b"line\n.dot\n\nlast"
+  var x = reader(dot_encode(body))
+  expect(x.read_dot_bytes()) == Ok(b"line\n.dot\n\nlast\n")
+}
+
+test "errors display" {
+  expect(TextErr.Code(code: 5, msg: "x").display()) == "005 x"
+  expect(TextErr.Eof.display()) == "EOF"
+  expect(TextErr.UnexpectedEof.display()) == "unexpected EOF"
+}
