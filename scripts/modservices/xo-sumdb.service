@@ -15,7 +15,14 @@ Group=xomod
 # the two buckets), XO_R2_ENDPOINT (https://<account id>.r2.cloudflarestorage.com),
 # XO_PROXY_BUCKET and XO_LOG_BUCKET (bucket names); mode 0600, owner xomod
 EnvironmentFile=/srv/xomod/xomod.env
-Environment=HOME=/srv/xomod XO_MODCACHE=/srv/xomod/modcache XO_PROXY=direct XO_SUMDB=off
+# XO_TLS_MLKEM=0: a ClientHello with only the X25519 key share (275
+# bytes, not 1501 with X25519MLKEM768). OCI's VNICs default to MTU 9000;
+# where path MTU discovery to the internet is blocked (ICMP type 3 code 4),
+# the large ClientHello is dropped and every R2 PUT hung until its 120 s
+# timeout (2026-11-11: no record was ever added), while curl, with
+# OpenSSL 3.0's small ClientHello, reached R2 in 28 ms. Remove it once the
+# host's MTU or ICMP rule is fixed (README.md, "R2 requests time out").
+Environment=HOME=/srv/xomod XO_MODCACHE=/srv/xomod/modcache XO_PROXY=direct XO_SUMDB=off XO_TLS_MLKEM=0
 ExecStart=/srv/xomod/xo/bin/xo mod sumdb serve --key=/srv/xomod/log.key --addr=127.0.0.1:7071 --fetch --rate=60 --copy-to=${XO_R2_ENDPOINT}/${XO_LOG_BUCKET} --fill-to=${XO_R2_ENDPOINT}/${XO_PROXY_BUCKET} --refresh=30m /srv/xomod/log
 Restart=on-failure
 RestartSec=5s

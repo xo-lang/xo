@@ -101,6 +101,27 @@ file moved in with the wrong label (`mv` keeps the old one).
        curl -s https://sum.xolang.org/latest
        XO_PROXY=https://proxy.xolang.org XO_SUMDB='<verifier key>' xo get <module path>
 
+## R2 requests time out
+
+A lookup that answers `cannot record ...: PUT records/...: timeout`, a
+`LastError` in `/healthz` ending in `timeout`, or uploads stuck in
+`fill-pending`, while `curl` reaches the R2 endpoint at once: xo's TLS
+ClientHello offers X25519MLKEM768 (1501 bytes), and an OCI VNIC's MTU of
+9000 sends it as one packet the internet path drops when path MTU
+discovery is blocked. Check on the host:
+
+    ip link | grep mtu                                   # 9000 on the VNIC
+    set -a; . /srv/xomod/xomod.env; set +a               # as root: the endpoint
+    sudo -u xomod env XO_FILL_ACCESS_KEY_ID=x XO_FILL_SECRET_ACCESS_KEY=x HOME=/tmp \
+      timeout 60 /srv/xomod/xo/bin/xo mod proxy fill --to="$XO_R2_ENDPOINT/no-such-bucket" github.com/xo-lang/openai@v0.1.0
+    # the same with XO_TLS_MLKEM=0 in front
+
+With the dummy keys R2 answers a fast 400 or 403 once the handshake
+completes: a hang without XO_TLS_MLKEM=0 and a fast error with it is
+this case. The unit sets XO_TLS_MLKEM=0. The lasting fixes are an ingress
+rule for ICMP type 3 code 4 in the subnet's security list (OCI's default
+list has it) or `ip link set <vnic> mtu 1500`; then drop XO_TLS_MLKEM=0.
+
 ## Upgrading xo
 
 Run `install.sh` with the new archive, then `systemctl restart xo-sumdb`.
