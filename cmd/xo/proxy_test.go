@@ -51,7 +51,9 @@ func startHTTPServe(t *testing.T, args ...string) (string, func()) {
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {
-			cmd.Process.Kill() // the process this test started
+			// the serve and the git fetches it started (its process
+			// group), so none writes into the TempDir after this
+			stopGroup(cmd.Process)
 			cmd.Wait()
 		})
 	}
