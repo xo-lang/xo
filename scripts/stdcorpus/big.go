@@ -206,6 +206,28 @@ func bigCorpus() string {
 		}
 		fmt.Fprintf(&o, "  (%q, %q, %q, %d, %q),\n", op, bigHex(a), bigHex(b), k, want)
 	}
+	// gcd with a large common factor, consecutive Fibonacci numbers (the
+	// most Euclidean steps) and operands of one and two words, for
+	// Lehmer's algorithm; drawn from its own source
+	r3 := rand.New(rand.NewSource(11))
+	fa, fb := big.NewInt(1), big.NewInt(1)
+	for i := 0; i < 2000; i++ {
+		fa, fb = fb, new(big.Int).Add(fa, fb)
+		if i%40 == 39 {
+			fmt.Fprintf(&o, "  (%q, %q, %q, %d, %q),\n", "gcd", bigHex(fb), bigHex(fa), 0, bigOp("gcd", fb, fa, 0))
+		}
+	}
+	for i := 0; i < 200; i++ {
+		g := new(big.Int).Abs(bigRand(r3, []int{1, 30, 64, 65, 130, 600}[r3.Intn(6)]))
+		if g.Sign() == 0 {
+			g.SetInt64(3)
+		}
+		a := bigRand(r3, []int{1, 40, 64, 128, 300, 1500}[r3.Intn(6)])
+		b := bigRand(r3, []int{1, 40, 64, 128, 300, 1500}[r3.Intn(6)])
+		a.Mul(a, g)
+		b.Mul(b, g)
+		fmt.Fprintf(&o, "  (%q, %q, %q, %d, %q),\n", "gcd", bigHex(a), bigHex(b), 0, bigOp("gcd", a, b, 0))
+	}
 	// abs, neg, and sign (Go's Int.Abs, Int.Neg, Int.Sign), which no
 	// operation above reaches; drawn from its own source, so the rows
 	// above keep their operands.

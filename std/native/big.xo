@@ -366,6 +366,10 @@ fn nat_shl(x: List[Int], s: Int) -> List[Int] {
   if x.is_empty() {
     return []
   }
+  if s == 0 {
+    // a list is a value: no copy (BigFloat's add aligns one operand only)
+    return norm(x)
+  }
   let words = s / 64
   let bits = s % 64
   var z = raw.zero_ints(x.len() + words + 1)
@@ -387,6 +391,9 @@ fn nat_shl(x: List[Int], s: Int) -> List[Int] {
 }
 
 fn nat_shr(x: List[Int], s: Int) -> List[Int] {
+  if s == 0 {
+    return norm(x)
+  }
   let words = s / 64
   if words >= x.len() {
     return []
@@ -412,6 +419,28 @@ fn nat_bit_len(x: List[Int]) -> Int {
     return 0
   }
   (x.len() - 1) * 64 + 64 - x[x.len() - 1].leading_zeros()
+}
+
+/// The trailing zeros of x >> s (0 when that is 0), without the shift.
+fn nat_trailing_zeros_from(x: List[Int], s: Int) -> Int {
+  var w = s / 64
+  if w >= x.len() {
+    return 0
+  }
+  let v = x[w].shr_logical(s % 64)
+  if v != 0 {
+    return v.trailing_zeros()
+  }
+  var k = 64 - s % 64
+  w += 1
+  while w < x.len() {
+    if x[w] != 0 {
+      return k + x[w].trailing_zeros()
+    }
+    k += 64
+    w += 1
+  }
+  0
 }
 
 fn nat_trailing_zeros(x: List[Int]) -> Int {
@@ -660,13 +689,159 @@ fn nat_sqrt(x: List[Int]) -> List[Int] {
   z1
 }
 
+/// Word i of x << s.
+fn shl_word(x: List[Int], s: Int, i: Int) -> Int {
+  let j = i - s / 64
+  let b = s % 64
+  let lo = if j >= 0 && j < x.len() { x[j] } else { 0 }
+  if b == 0 {
+    return lo
+  }
+  let below = if j >= 1 && j - 1 < x.len() { x[j - 1] } else { 0 }
+  lo.wrapping_shl(b) | below.shr_logical(64 - b)
+}
+
+/// The length in words of x << s (an upper bound: one more when bits spill).
+fn shl_len(x: List[Int], s: Int) -> Int { if x.is_empty() { 0 } else { x.len() + s / 64 + (if s % 64 == 0 { 0 } else { 1 }) } }
+
+/// (x << sx) + (y << sy) in one list.
+fn nat_add_shl(x: List[Int], sx: Int, y: List[Int], sy: Int) -> List[Int] {
+  let n = imax(shl_len(x, sx), shl_len(y, sy))
+  var z = raw.zero_ints(n + 1)
+  var c = 0
+  for i in 0..n {
+    let (v, c2) = add_ww(shl_word(x, sx, i), shl_word(y, sy, i), c)
+    z[i] = v
+    c = c2
+  }
+  z[n] = c
+  trim(z)
+  z
+}
+
+/// (x << sx) - (y << sy) in one list, for a minuend not below the
+/// subtrahend.
+fn nat_sub_shl(x: List[Int], sx: Int, y: List[Int], sy: Int) -> List[Int] {
+  let n = shl_len(x, sx)
+  var z = raw.zero_ints(n)
+  var bw = 0
+  for i in 0..n {
+    let (v, b2) = sub_ww(shl_word(x, sx, i), shl_word(y, sy, i), bw)
+    z[i] = v
+    bw = b2
+  }
+  trim(z)
+  z
+}
+
+/// x u - y v for unsigned words u and v, known not to be negative, in
+/// one pass and one list (lehmerUpdate's two products and their sum).
+fn nat_mul_sub_ww(x: List[Int], u: Int, y: List[Int], v: Int) -> List[Int] {
+  let n = imax(x.len(), y.len())
+  var z = raw.zero_ints(n + 1)
+  var ct = 0
+  var cs = 0
+  var bw = 0
+  for i in 0..n {
+    let xi = if i < x.len() { x[i] } else { 0 }
+    let yi = if i < y.len() { y[i] } else { 0 }
+    let (t, c1) = add_ww(xi.wrapping_mul(u), ct, 0)
+    ct = xi.mul_hi_unsigned(u).wrapping_add(c1)
+    let (sv, c2) = add_ww(yi.wrapping_mul(v), cs, 0)
+    cs = yi.mul_hi_unsigned(v).wrapping_add(c2)
+    let (d, b2) = sub_ww(t, sv, bw)
+    z[i] = d
+    bw = b2
+  }
+  let (top, _b) = sub_ww(ct, cs, bw)
+  z[n] = top
+  trim(z)
+  z
+}
+
+/// lehmerSimulate (int.go): the cosequences of the single word steps on
+/// the top words of a and b, len(a) >= len(b) >= 2, by Collins' stopping
+/// condition; the words are unsigned.
+fn lehmer_simulate(a: List[Int], b: List[Int]) -> (Int, Int, Int, Int, Bool) {
+  let m = b.len()
+  let n = a.len()
+  let h = a[n - 1].leading_zeros()
+  // x >> (64 - h) is 0 for h = 0 (Go's shift by the word size)
+  let a1_0 = if h == 0 { a[n - 1] } else { a[n - 1].wrapping_shl(h) | a[n - 2].shr_logical(64 - h) }
+  let a2_0 = if n == m {
+    if h == 0 { b[n - 1] } else { b[n - 1].wrapping_shl(h) | b[n - 2].shr_logical(64 - h) }
+  } else if n == m + 1 {
+    if h == 0 { 0 } else { b[n - 2].shr_logical(64 - h) }
+  } else {
+    0
+  }
+  var a1 = a1_0
+  var a2 = a2_0
+  var even = false
+  var u0 = 0
+  var u1 = 1
+  var u2 = 0
+  var v0 = 0
+  var v1 = 0
+  var v2 = 1
+  while !a2.lt_unsigned(v2) && !a1.wrapping_sub(a2).lt_unsigned(v1.wrapping_add(v2)) {
+    let (q, r) = udiv(a1, a2)
+    a1 = a2
+    a2 = r
+    let nu = u1.wrapping_add(q.wrapping_mul(u2))
+    u0 = u1
+    u1 = u2
+    u2 = nu
+    let nv = v1.wrapping_add(q.wrapping_mul(v2))
+    v0 = v1
+    v1 = v2
+    v2 = nv
+    even = !even
+  }
+  (u0, u1, v0, v1, even)
+}
+
+/// gcd(a, b) by Lehmer's algorithm (Go's lehmerGCD without the
+/// cosequences): single word steps simulated on the top words and
+/// applied in one multiprecision update, a Euclidean step when none
+/// applies, and single word Euclid at the end.
 fn nat_gcd(a0: List[Int], b0: List[Int]) -> List[Int] {
   var a = a0
   var b = b0
-  while !b.is_empty() {
-    let (_q, r) = nat_divmod(a, b)
-    a = b
-    b = r
+  if nat_cmp(a, b) < 0 {
+    a = b0
+    b = a0
+  }
+  while b.len() > 1 {
+    let (u0, u1, v0, v1, even) = lehmer_simulate(a, b)
+    if v0 != 0 {
+      // A = u0 A + v0 B and B = u1 A + v1 B with the cosequences' signs
+      let na = if even { nat_mul_sub_ww(a, u0, b, v0) } else { nat_mul_sub_ww(b, v0, a, u0) }
+      let nb = if even { nat_mul_sub_ww(b, v1, a, u1) } else { nat_mul_sub_ww(a, u1, b, v1) }
+      a = na
+      b = nb
+    } else {
+      let (_q, r) = nat_divmod(a, b)
+      a = b
+      b = r
+    }
+  }
+  if b.len() > 0 {
+    if a.len() > 1 {
+      let (_q, r) = nat_divmod(a, b)
+      a = b
+      b = r
+    }
+    if b.len() > 0 {
+      var aw = a[0]
+      var bw = b[0]
+      while bw != 0 {
+        let (_q, r) = udiv(aw, bw)
+        aw = bw
+        bw = r
+      }
+      a = [aw]
+    }
   }
   a
 }
@@ -1626,6 +1801,12 @@ fn f_special(prec: Int, mode: big.RoundingMode, acc: big.Accuracy, form: Int, ne
 }
 
 /// The finite value m * 2^(exp - bit length of m) (m nonzero), not rounded.
+/// f_fin of m >> s, shifting once past s and the zeros above it.
+fn f_fin_shr(prec: Int, mode: big.RoundingMode, acc: big.Accuracy, neg: Bool, m: List[Int], s: Int, exp: Int) -> big.BigFloat {
+  let mm = nat_shr(m, s + nat_trailing_zeros_from(m, s))
+  big.BigFloat{prec: prec, mode: mode, acc: acc, form: F_FINITE, neg: neg, mant: make(false, mm), exp: exp}
+}
+
 fn f_fin(prec: Int, mode: big.RoundingMode, acc: big.Accuracy, neg: Bool, m: List[Int], exp: Int) -> big.BigFloat {
   let tz = nat_trailing_zeros(m)
   let mm = if tz > 0 { nat_shr(m, tz) } else { m }
@@ -1652,54 +1833,144 @@ fn imin(a: Int, b: Int) -> Int { if a < b { a } else { b } }
 
 /// Go's setExpAndRound and round: m * 2^(exp - bit length of m), plus the
 /// sticky bit sbit below it, at prec bits by mode.
+/// A finite, zero or infinite value unpacked: its mantissa as limbs
+/// (odd, or empty), so a chain of operations (sqrt's Newton steps) does
+/// not encode and decode a BigInt key per step.
+struct UFloat {
+  form: Int
+  neg: Bool
+  m: List[Int]
+  exp: Int
+  prec: Int
+  acc: big.Accuracy
+}
+
+fn u_special(prec: Int, acc: big.Accuracy, form: Int, neg: Bool) -> UFloat {
+  UFloat{form: form, neg: neg, m: [], exp: 0, prec: prec, acc: acc}
+}
+
+fn u_fin(prec: Int, acc: big.Accuracy, neg: Bool, m: List[Int], exp: Int) -> UFloat {
+  let tz = nat_trailing_zeros(m)
+  UFloat{form: F_FINITE, neg: neg, m: if tz > 0 { nat_shr(m, tz) } else { m }, exp: exp, prec: prec, acc: acc}
+}
+
+fn u_fin_shr(prec: Int, acc: big.Accuracy, neg: Bool, m: List[Int], s: Int, exp: Int) -> UFloat {
+  UFloat{form: F_FINITE, neg: neg, m: nat_shr(m, s + nat_trailing_zeros_from(m, s)), exp: exp, prec: prec, acc: acc}
+}
+
+fn u_of(x: big.BigFloat) -> UFloat {
+  UFloat{form: x.form, neg: x.neg, m: if x.form == F_FINITE { f_mant(x) } else { [] }, exp: x.exp, prec: x.prec, acc: x.acc}
+}
+
+fn u_pack(u: UFloat, mode: big.RoundingMode) -> big.BigFloat {
+  big.BigFloat{prec: u.prec, mode: mode, acc: u.acc, form: u.form, neg: u.neg, mant: make(false, u.m), exp: u.exp}
+}
+
 fn f_round(neg: Bool, m: List[Int], exp: Int, sbit: Int, prec: Int, mode: big.RoundingMode) -> big.BigFloat {
+  u_pack(u_round(neg, m, exp, sbit, prec, mode), mode)
+}
+
+/// x * y of two finite values, rounded (f_mul's finite case).
+fn u_mul(x: UFloat, y: UFloat, prec: Int, mode: big.RoundingMode) -> UFloat {
+  let m = nat_mul(x.m, y.m)
+  u_round(x.neg != y.neg, m, x.exp + y.exp - nat_bit_len(x.m) - nat_bit_len(y.m) + nat_bit_len(m), 0, prec, mode)
+}
+
+/// |x| <=> |y| of two finite values (f_ucmp).
+fn u_ucmp(x: UFloat, y: UFloat) -> Int {
+  if x.exp != y.exp {
+    return if x.exp < y.exp { -1 } else { 1 }
+  }
+  let bx = nat_bit_len(x.m)
+  let by = nat_bit_len(y.m)
+  let l = imax(bx, by)
+  nat_cmp(nat_shl(x.m, l - bx), nat_shl(y.m, l - by))
+}
+
+fn u_uaddsub(neg: Bool, x: UFloat, y: UFloat, sub: Bool, prec: Int, mode: big.RoundingMode) -> UFloat {
+  let ex = x.exp - nat_bit_len(x.m)
+  let ey = y.exp - nat_bit_len(y.m)
+  let e = imin(ex, ey)
+  let m = if sub { nat_sub_shl(x.m, ex - e, y.m, ey - e) } else { nat_add_shl(x.m, ex - e, y.m, ey - e) }
+  if nat_bit_len(m) == 0 {
+    return u_special(prec, exact(), F_ZERO, false)
+  }
+  u_round(neg, m, e + nat_bit_len(m), 0, prec, mode)
+}
+
+/// x + y (y's sign given as yneg) of two finite values (f_add's finite case).
+fn u_add(x: UFloat, y: UFloat, yneg: Bool, prec: Int, mode: big.RoundingMode) -> UFloat {
+  let z = if x.neg == yneg {
+    u_uaddsub(x.neg, x, y, false, prec, mode)
+  } else if u_ucmp(x, y) > 0 {
+    u_uaddsub(x.neg, x, y, true, prec, mode)
+  } else {
+    u_uaddsub(!x.neg, y, x, true, prec, mode)
+  }
+  if z.form == F_ZERO && mode is big.RoundingMode.ToNegativeInf && z.acc is big.Accuracy.Exact {
+    return UFloat{form: z.form, neg: true, m: z.m, exp: z.exp, prec: z.prec, acc: z.acc}
+  }
+  z
+}
+
+fn u_round(neg: Bool, m: List[Int], exp: Int, sbit: Int, prec: Int, mode: big.RoundingMode) -> UFloat {
   if exp < MIN_EXP {
-    return f_special(prec, mode, make_acc(neg), F_ZERO, neg)
+    return u_special(prec, make_acc(neg), F_ZERO, neg)
   }
   if exp > MAX_EXP {
-    return f_special(prec, mode, make_acc(!neg), F_INF, neg)
+    return u_special(prec, make_acc(!neg), F_INF, neg)
   }
   let bits = nat_bit_len(m)
-  var t = m
   var rbit = 0
   var sticky = sbit
+  // the lowest bit kept, read in place: the result shifts once, after
+  // the decision (Go rounds z's words in place)
+  var low = 0
   if bits <= prec {
     if sticky == 0 {
-      return f_fin(prec, mode, exact(), neg, m, exp)
+      return u_fin(prec, exact(), neg, m, exp)
     }
-    t = nat_shl(m, prec - bits)
+    low = if bits == prec { nat_bit(m, 0) } else { 0 }
   } else {
     let r = bits - prec - 1
     rbit = nat_bit(m, r)
     if sticky == 0 && nat_trailing_zeros(m) < r {
       sticky = 1
     }
-    t = nat_shr(m, r + 1)
-  }
-  if rbit == 0 && sticky == 0 {
-    return f_fin(prec, mode, exact(), neg, t, exp)
+    if rbit == 0 && sticky == 0 {
+      return u_fin_shr(prec, exact(), neg, m, r + 1, exp)
+    }
+    low = nat_bit(m, r + 1)
   }
   let inc = match mode {
     big.RoundingMode.ToNegativeInf => neg
     big.RoundingMode.ToZero => false
-    big.RoundingMode.ToNearestEven => rbit != 0 && (sticky != 0 || (t[0] & 1) != 0)
+    big.RoundingMode.ToNearestEven => rbit != 0 && (sticky != 0 || low != 0)
     big.RoundingMode.ToNearestAway => rbit != 0
     big.RoundingMode.AwayFromZero => true
     big.RoundingMode.ToPositiveInf => !neg
   }
+  if !inc {
+    // rounded toward zero: the kept bits with their trailing zeros dropped
+    if bits > prec {
+      return u_fin_shr(prec, make_acc(neg), neg, m, bits - prec, exp)
+    }
+    return u_fin(prec, make_acc(neg), neg, m, exp)
+  }
+  var t = if bits <= prec { nat_shl(m, prec - bits) } else { nat_shr(m, bits - prec) }
   let acc = make_acc(inc != neg)
   var e = exp
   if inc {
     t = nat_add(t, [1])
     if nat_bit_len(t) > prec {
       if e >= MAX_EXP {
-        return f_special(prec, mode, acc, F_INF, neg)
+        return u_special(prec, acc, F_INF, neg)
       }
       e += 1
       t = nat_shr(t, 1)
     }
   }
-  f_fin(prec, mode, acc, neg, t, e)
+  u_fin(prec, acc, neg, t, e)
 }
 
 /// Go's z.Set(x) for a z of precision prec (0: x's) and mode.
@@ -1821,18 +2092,7 @@ fn f_ucmp(x: big.BigFloat, y: big.BigFloat) -> Int {
 
 /// |x| + |y| or |x| - |y| (|x| >= |y|), signed neg, rounded once.
 fn f_uaddsub(neg: Bool, x: big.BigFloat, y: big.BigFloat, sub: Bool, prec: Int, mode: big.RoundingMode) -> big.BigFloat {
-  let xm = f_mant(x)
-  let ym = f_mant(y)
-  let ex = x.exp - nat_bit_len(xm)
-  let ey = y.exp - nat_bit_len(ym)
-  let e = imin(ex, ey)
-  let a = nat_shl(xm, ex - e)
-  let b = nat_shl(ym, ey - e)
-  let m = if sub { nat_sub(a, b) } else { nat_add(a, b) }
-  if nat_bit_len(m) == 0 {
-    return f_special(prec, mode, exact(), F_ZERO, false)
-  }
-  f_round(neg, m, e + nat_bit_len(m), 0, prec, mode)
+  u_pack(u_uaddsub(neg, u_of(x), u_of(y), sub, prec, mode), mode)
 }
 
 /// Go's Add (Sub with yneg = !y.neg) for a z of precision prec and mode.
@@ -2063,24 +2323,38 @@ fn bigfloat_sqrt(x: big.BigFloat, prec: Int) -> big.BigFloat {
 /// Go's sqrtInverse: Newton's iteration on 1/t^2 - x from 1/sqrt(x) as a
 /// Float, doubling the precision each step to z's + 32 bits, then x * t.
 fn f_sqrt_inverse(x: big.BigFloat) -> big.BigFloat {
-  let three = from_float(3.0, 0)
+  let three = u_of(from_float(3.0, 0))
+  let ux = u_of(x)
   let xf = bigfloat_to_float(x).0
   // newFloat sets no precision, so SetFloat64 gives the guess 53 bits
-  var sqi = from_float(1.0 / xf.sqrt(), 0)
+  var sqi = u_of(from_float(1.0 / xf.sqrt(), 0))
   let target = x.prec + 32
+  // Newton steps on the unpacked form (Go's sqrtInverse); x is finite
+  // and 0.25 <= x < 2, so every step's values are finite and nonzero
+  // but for a cancellation to zero, which falls back to the packed ops
   while sqi.prec < target {
-    let t = f_with(sqi, sqi.prec * 2, sqi.mode, sqi.acc, sqi.neg, sqi.exp)
-    let tp = t.prec
-    var u = f_mul(t, t, tp, ne())
-    u = f_mul(x, u, tp, ne())
-    let v = f_add(three, u, !u.neg, tp, ne(), "subtraction of infinities with equal signs")
-    u = f_mul(t, v, tp, ne())
+    let tp = sqi.prec * 2
+    let t = UFloat{form: sqi.form, neg: sqi.neg, m: sqi.m, exp: sqi.exp, prec: tp, acc: sqi.acc}
+    var u = u_mul_any(t, t, tp)
+    u = u_mul_any(ux, u, tp)
+    let v = if u.form == F_FINITE { u_add(three, u, !u.neg, tp, ne()) } else { u_of(f_add(u_pack(three, ne()), u_pack(u, ne()), !u.neg, tp, ne(), "subtraction of infinities with equal signs")) }
+    u = u_mul_any(t, v, tp)
     if u.form == F_FINITE {
-      u = f_with(u, u.prec, u.mode, u.acc, u.neg, u.exp - 1)
+      u = UFloat{form: u.form, neg: u.neg, m: u.m, exp: u.exp - 1, prec: u.prec, acc: u.acc}
+      sqi = u_round(u.neg, u.m, u.exp, 0, tp, ne())
+    } else {
+      sqi = u_special(tp, exact(), u.form, u.neg)
     }
-    sqi = f_set(u, tp, t.mode)
   }
-  f_mul(x, sqi, x.prec, x.mode)
+  f_mul(x, u_pack(sqi, ne()), x.prec, x.mode)
+}
+
+/// u_mul with f_mul's special cases (round to nearest even).
+fn u_mul_any(x: UFloat, y: UFloat, prec: Int) -> UFloat {
+  if x.form == F_FINITE && y.form == F_FINITE {
+    return u_mul(x, y, prec, ne())
+  }
+  u_of(f_mul(u_pack(x, ne()), u_pack(y, ne()), prec, ne()))
 }
 
 // Parsing (floatconv.go, natconv.go scan, ratconv.go scanExponent)
@@ -2197,6 +2471,16 @@ fn parse_float(s: Str, base: Int, prec: Int, mode: big.RoundingMode) -> big.BigF
   }
   var z: List[Int] = []
   var dp = -1
+  // nat.scan: up to nd digits in a word, then one multiply-add by bb^k
+  var nd = 1
+  var bn = bb
+  while let Some(next) = bn.checked_mul(bb) {
+    bn = next
+    nd += 1
+  }
+  var di = 0
+  var dn = 0
+  var dpow = 1
   while i < n {
     let ch = Int(b[i])
     if ch == '.' && frac_ok {
@@ -2226,9 +2510,20 @@ fn parse_float(s: Str, base: Int, prec: Int, mode: big.RoundingMode) -> big.BigF
       }
       prev = '0'
       count += 1
-      z = nat_mul_add_ww(z, bb, d1)
+      di = di * bb + d1
+      dpow = dpow * bb
+      dn += 1
+      if dn == nd {
+        z = nat_mul_add_ww(z, dpow, di)
+        di = 0
+        dn = 0
+        dpow = 1
+      }
     }
     i += 1
+  }
+  if dn > 0 {
+    z = nat_mul_add_ww(z, dpow, di)
   }
   if count == 0 {
     return Err(perr("number has no digits"))
@@ -2367,24 +2662,27 @@ fn dec_init(m0: List[Int], shift0: Int) -> (List[Int], Int) {
   while n > 0 && s[n - 1] == '0' {
     n -= 1
   }
-  var ds = raw.zero_ints(n)
+  // a right shift by k adds at most k digits: room for all of them, so
+  // the passes below never grow the list
+  var ds = List[Int].with_capacity(n + (if shift < 0 { -shift } else { 0 }) + 1)
   for i in 0..n {
-    ds[i] = Int(s[i])
+    ds.push(Int(s[i]))
   }
-  var d = (ds, exp)
+  var e = exp
   while shift < -DEC_SHIFT {
-    d = dec_rsh(d, DEC_SHIFT)
+    e = dec_rsh_in(ds, e, DEC_SHIFT)
     shift += DEC_SHIFT
   }
   if shift < 0 {
-    d = dec_rsh(d, -shift)
+    e = dec_rsh_in(ds, e, -shift)
   }
-  d
+  (ds, e)
 }
 
 /// Go's rsh: d / 2^s, exactly.
-fn dec_rsh(d: (List[Int], Int), s: Int) -> (List[Int], Int) {
-  let x = d.0
+/// decimal.shr in place (Go writes x.mant[w] behind the read index):
+/// x >> s, its trailing zeros dropped; the new exponent, 0 when x is 0.
+fn dec_rsh_in(var x: List[Int], exp0: Int, s: Int) -> Int {
   var r = 0
   var n = 0
   while n.shr_logical(s) == 0 && r < x.len() {
@@ -2392,28 +2690,39 @@ fn dec_rsh(d: (List[Int], Int), s: Int) -> (List[Int], Int) {
     r += 1
   }
   if n == 0 {
-    return ([], 0)
+    while !x.is_empty() {
+      let _ = x.pop()
+    }
+    return 0
   }
   while n.shr_logical(s) == 0 {
     r += 1
     n *= 10
   }
-  let exp = d.1 + 1 - r
-  var out: List[Int] = []
+  let exp = exp0 + 1 - r
   let mask = 1.wrapping_shl(s) - 1
-  while r < x.len() {
+  let len = x.len()
+  var w = 0
+  // n < 10 * 2^s with s <= 60: the arithmetic cannot overflow, so it
+  // wraps unchecked (Go's loop)
+  while r < len {
     let ch = x[r]
     r += 1
-    out.push(n.shr_logical(s) + '0')
-    n = n & mask
-    n = n * 10 + ch - '0'
+    x[w] = n.shr_logical(s).wrapping_add('0')
+    w += 1
+    n = (n & mask).wrapping_mul(10).wrapping_add(ch.wrapping_sub('0'))
+  }
+  while x.len() > w {
+    let _ = x.pop()
   }
   while n > 0 {
-    out.push(n.shr_logical(s) + '0')
-    n = n & mask
-    n = n * 10
+    x.push(n.shr_logical(s).wrapping_add('0'))
+    n = (n & mask).wrapping_mul(10)
   }
-  dec_trim(out, exp)
+  while !x.is_empty() && x[x.len() - 1] == '0' {
+    let _ = x.pop()
+  }
+  if x.is_empty() { 0 } else { exp }
 }
 
 fn should_round_up(m: List[Int], n: Int) -> Bool {

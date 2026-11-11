@@ -1,5 +1,26 @@
 # std/big changes
 
+## 2026-11-11: perf: Lehmer's gcd and fewer allocations in BigFloat (Go's fast paths)
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/bigfloat-vs-go-2026-11-11.md (add 2.40, sqrt 2.54, text 1.59, parse 1.43 of Go's wall time) and XO_PROF=cpu profiles: raw.zero_ints's memset call, a copy per alignment shift, two shifts per rounding, a new list per decimal digit shift and per parsed digit, and BigInt.gcd by plain Euclid (a division and a list per step)
+- Go reference: math/big int.go lehmerGCD, lehmerSimulate, lehmerUpdate; decimal.go shr; natconv.go scan; float.go round (go1.26.1)
+- Timing: bench/results/bigfloat-vs-go-2026-11-11.md and bigrat-vs-go-2026-11-11.md (second tables): BigFloat add 2.40 to 1.98 of Go, sqrt 2.54 to 1.73, text 1.59 to 0.98, parse 1.43 to 0.79; BigRat add 4.88 to 0.88, mul 6.50 to 0.88, parse 5.26 to 0.74
+- Test: internal/stdtest/testdata/corpus/big gains 250 gcd rows from Go (common factors to 600 bits, consecutive Fibonacci numbers to 1,400 bits, one and two word operands); big and bigfloat corpora on go, arm64, llvm; timing rows in bench/results/bigfloat-vs-go-2026-11-11.md
+- Shipped in: not yet released
+
+`BigInt.gcd` is Lehmer's algorithm: single word steps simulated on the
+top words and applied in one fused pass (`u x - v y`), a Euclidean step
+when none applies. BigFloat rounds with one shift after the decision,
+does not copy an operand aligned by 0, shifts its decimal in place for
+`text` (unchecked arithmetic, which cannot overflow there), and
+`parse_float` gathers a word of digits before each multiply-add. Add
+reads the aligned operand's words shifted instead of making a shifted
+copy, and `sqrt` runs its Newton steps on an unpacked form, so it
+decodes and encodes the mantissa once per call instead of per step. raw.zero_ints (std/native/llrt) stores up to 8 zeros
+without calling memset, which every small std list made with it gains.
+
 ## 2026-11-11: feature: BigRat, Go's big.Rat as an immutable value (decision 0608)
 
 - Kind: feature

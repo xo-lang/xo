@@ -31,3 +31,34 @@ three Newton steps of four multiplications and a subtraction each, so it
 pays that per-operation cost about 15 times. Next: an XO_PROF=cpu profile
 of add and sqrt, then the limbs held in the value (no key round trip) or
 an add that aligns by whole words.
+
+## After the speed change (2026-11-11, std/changes/big.md "Lehmer's gcd and fewer allocations")
+
+The same bench, A the Go twin, B the Xo program cross-built from this
+change on origin/main 2651b0781, host 1 exclusive, `xo bench --ab
+--rounds=10` with the 0.48.0 seed's xo; Xo / Go:
+
+| workload | Go wall | Xo wall | wall (95%) | before | max RSS |
+|---|---|---|---|---|---|
+| none | 1.025 ms | 0.482 ms | 0.47 | 0.512 | 0.327 |
+| add (200,000) | 11.43 ms | 22.65 ms | 1.981 (1.928 to 2.053) | 2.403 | 0.116 |
+| mul (200,000) | 14.16 ms | 23.48 ms | 1.657 (1.599 to 1.711) | 1.758 | 0.117 |
+| quo (100,000) | 21.74 ms | 22.98 ms | 1.057 (1.034 to 1.09) | 1.060 | 0.117 |
+| sqrt (20,000) | 10.22 ms | 17.73 ms | 1.735 (1.723 to 1.747) | 2.541 | 0.121 |
+| text (20,000) | 35.94 ms | 35.09 ms | 0.976 (0.97 to 0.981) | 1.591 | 0.113 |
+| parse (20,000) | 19.58 ms | 15.38 ms | 0.786 (0.768 to 0.795) | 1.431 | 0.115 |
+
+Against main (ab-host.sh, 2651b0781 against the first commits of the
+change, ~/xo-lead/notes/lang3 bfr-ab and bft2-ab): add 0.831, mul 0.924,
+sqrt 0.919, parse 0.531, text 0.688.
+
+What changed (XO_PROF=cpu profiles on the Mac): raw.zero_ints stores up
+to 8 zeros without a memset call (18 to 24% of add and sqrt); rounding
+shifts once; add reads the aligned operand's words shifted instead of
+making a shifted copy; sqrt's Newton steps run on an unpacked mantissa
+(one key decode and encode per call instead of about 15); text's decimal
+shift is in place and unchecked (it cannot overflow); parse gathers a
+word of digits per multiply-add. What is left in add, mul and sqrt is
+the key round trip of each public call (decision 0311's BigInt key) and
+list allocation: the next experiment is the unpacked form for every
+public operation's operands, measured the same way.

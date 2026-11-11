@@ -32,3 +32,24 @@ mul). Parse multiplied in one digit at a time. The BigFloat speed change
 a word of digits per multiply-add; on the Mac it cuts add from 337 to 62
 samples and mul from 787 to 111. Its own row replaces this table's
 add, mul and parse when it lands.
+
+## With Lehmer's gcd (2026-11-11, std/changes/big.md "Lehmer's gcd and fewer allocations")
+
+The same bench, the Xo program cross-built with the BigFloat speed
+change (std/big's gcd is Go's lehmerGCD with a fused update; parse
+gathers a word of digits), host 1 exclusive, `xo bench --ab --rounds=10`;
+Xo / Go:
+
+| workload | Go wall | Xo wall | wall (95%) | before | max RSS |
+|---|---|---|---|---|---|
+| none | 0.941 ms | 0.471 ms | 0.501 | 0.468 | 0.189 |
+| add | 147.6 ms | 129.8 ms | 0.879 (0.866 to 0.908) | 4.882 | 0.106 |
+| mul | 247.2 ms | 218.4 ms | 0.884 (0.878 to 0.896) | 6.496 | 0.111 |
+| quo | 63.63 ms | 58.2 ms | 0.915 (0.884 to 0.923) | 2.108 | 0.11 |
+| cmp | 20.92 ms | 25.81 ms | 1.234 (1.202 to 1.288) | 1.531 | 0.105 |
+| tofloat | 32.75 ms | 26.45 ms | 0.808 (0.794 to 0.83) | 0.985 | 0.104 |
+| text | 17.33 ms | 30.55 ms | 1.763 (1.706 to 1.793) | 1.599 | 0.108 |
+| parse | 47.97 ms | 35.41 ms | 0.738 (0.734 to 0.748) | 5.259 | 0.106 |
+
+Left: text (float_text's decimal conversion of a quotient) and cmp
+(two cross products through BigInt keys); next, profiles of both.
