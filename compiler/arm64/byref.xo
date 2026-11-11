@@ -274,6 +274,11 @@ const SRET_OUT_MAX = 256
 /// frame slot, where the outgoing area is shared)
 const SRET_OUT_WIDE = 700
 
+/// Results past this many words stay in their slot even with whole uses,
+/// and block parameters they flow into share it (plan_sret_slots; decision
+/// 0564 amendment, 2026-11-11).
+const SRET_BIG = 4096
+
 /// The loads of an sret call's result from its frame memory slot
 /// (sret_slot's sret_tmp): each names its word as a spill home, as
 /// sret_out_load does (regalloc word_hints: SLOT_MEM codes).
@@ -466,6 +471,26 @@ fn (var g: G) plan_sret_slots() {
           }
         }
       }
+      // a block parameter past SRET_BIG words takes the root of
+      // an incoming result, so its uses count in that slot's liveness
+      for p in bl.params {
+        if root.contains(p) || g.nwords(g.vty(p)) <= SRET_BIG || g.mem_only(p) >= 0 {
+          continue
+        }
+        for e in bl.preds {
+          let ei = g.f.blocks[g.f.edges[e].to].params.index_of(p) ?? -1
+          if ei < 0 {
+            continue
+          }
+          if let Some(r) = root.get(g.f.edges[e].args[ei]) {
+            if !g.sret_tuple(r) && g.nwords(g.vty(r)) > SRET_BIG {
+              root[p] = r
+              changed = true
+              break
+            }
+          }
+        }
+      }
     }
   }
   // a result read in place only when it is read by parts: fields,
@@ -513,7 +538,13 @@ fn (var g: G) plan_sret_slots() {
   }
   var kept_calls: List[Int] = []
   for c in calls {
+    // a result past SRET_BIG words stays in its slot even with
+    // whole uses (they load it where used): made into word values at the
+    // call, aiplatform/v1's 81 results of ~200 K words were 16.4 M values
     if !whole.contains(c) {
+      kept_calls.push(c)
+    } else if !g.sret_tuple(c) && g.nwords(g.vty(c)) > SRET_BIG {
+      let _w = whole.remove(c)
       kept_calls.push(c)
     }
   }
@@ -711,6 +742,16 @@ fn (var g: G) plan_sret_slots() {
   }
   for (k, c) in calls.indexed() {
     g.sret_slots[c] = offs[at_of[k]]
+  }
+  // the block parameters that joined a kept result's root: they are
+  // held in its slot (isel.xo edge_moves stores only an argument from
+  // another slot; aiplatform/v1 has none of 1,361 such edges)
+  for (a, r) in root {
+    if a != r && g.op(a) == ssa.Op.Param {
+      if let Some(off) = g.sret_slots.get(r) {
+        g.sret_pslot[a] = off
+      }
+    }
   }
 }
 

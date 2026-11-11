@@ -485,6 +485,8 @@ struct G {
   sret_ptr: Int = 0
   /// each sret call's result slot, a frame offset (plan_sret_slots)
   sret_slots: Map[Int, Int] = {}
+  /// block parameters past SRET_BIG words held in a result slot (byref.xo plan_sret_slots)
+  sret_pslot: Map[Int, Int] = {}
   /// per result type, the slot of the sret calls whose result is loaded
   /// at once (sret_slot)
   sret_tmp: Map[Int, Int] = {}
@@ -682,6 +684,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.has_ref_ptr = false
   g.sret_ptr = 0
   g.sret_slots = {}
+  g.sret_pslot = {}
   g.sret_tmp = {}
   g.sret_tmpw = {}
   g.sret_tmp_max = 0

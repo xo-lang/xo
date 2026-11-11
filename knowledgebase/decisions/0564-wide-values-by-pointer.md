@@ -397,6 +397,59 @@ functions of aiplatform/v1 grow, and whether it is the frame retry below
 20,000 values or a planning cost that grows with the number of wide
 results).
 
+**Relanded with results past 4,096 words kept in memory (2026-11-11, Xo
+Lang 1; the owner accepted the trade below).** Two causes made the reverted reland slow on
+aiplatform/v1, and both are fixed. The first was two code generation passes
+that are quadratic in a block of many word loads (cluster_mem's search for
+the neighbouring word, reuse_loads' key lists). Those fixes landed on their
+own in 96a9b7414 and 7fa71fa96. The second was the size of what the reland
+loads. A census of the sret paths on aiplatform/v1 (probe counters per
+part, never pushed) found 81 calls whose results average about 200 K words
+(1.6 MB each), loaded word by word from the shared temporary slot: 16.4 M
+word values. No other path held more than 0.9 M words. In the self build no
+path held more than 131 K words. Each of those results flows whole along
+CFG edges into block parameters: 1,361 edge uses, 16.39 M words. Nothing
+else uses them whole except one struct of 6,536 words.
+
+So a result past SRET_BIG (4,096) words stays in its frame slot even when
+it has whole uses (plan_sret_slots), and a block parameter past SRET_BIG
+that such a result flows into joins the result's root. The slot's liveness
+then counts the parameter's uses, so slot sharing never gives the slot to a
+call whose result is live at the same time. The parameter has no word
+values (sret_pslot): its uses read the slot in place (g.stable, set where
+its block starts). An edge whose argument is already in that slot moves
+nothing; an argument from elsewhere has its words stored there
+(edge_moves). On aiplatform/v1, all 1,361 edges coalesce and none copies.
+A first prototype kept the results in their slots but loaded them at every
+whole use, reaching CPU 1.27 against main.
+
+Measured, linux/arm64 host 1 (`xo bench --ab`, a stage2 xo of each side,
+main 7fa71fa96 against d827036cb):
+
+| Build | rounds | wall | CPU | max RSS |
+|---|---|---|---|---|
+| aiplatform/v1 cold test build | 5 (0 loaded) | 0.745 (0.741 to 0.748) | 0.644 (0.642 to 0.646) | 0.894 (0.886 to 0.9) |
+| self build, run 1 | 7 | 1.004 (0.99 to 1.007) noise | 1.005 (0.998 to 1.011) noise | 1.003 noise |
+| self build, run 2 | 7 | 1.007 (1.005 to 1.009) worse | 1.011 (1.007 to 1.015) worse | 1.007 (1.006 to 1.013) worse |
+
+Host 2, aiplatform/v1, exclusive, 3 rounds (the prototype against main
+plus the two fixes): user 177 to 181 s against 224 to 227 s, emit 20.2 to
+20.8 s against 29.1 to 29.4 s, emit heap peak 4.6 against 6.1 GB. __text of
+compiler/xo (darwin/arm64, built from d827036cb's source, XO_INLINE_STRICT=1,
+caches off): 41,488,692 to 41,242,332 bytes (-0.59%; the first reland was -0.62%). Gate (host 3): codegen 44/44, cross, the self build
+(51 s, 5,497 MB), the seed build, and every internal/arm64 golden. The two
+tests that failed, TestStdModuleRunCache and TestFrontCacheStdTestEdit,
+fail on main too ("no std module native/path", since std/native/path was
+merged into std/path; assigned to Xo Lang 3).
+
+The self build is 0.4 to 0.7% slower in wall, outside the reland bar of
+1.00 in the second run. A phase timing of the self build put all of it
+in emit (+509 ms of 13.07 s), and two call-graph profiles found no
+hotspot (`G.function` 48.36 to 51.21% in one, 48.93 to 48.99% in the
+other; plan_sret_slots 0.09%). It is the cost of lowering the sret code
+itself. The owner accepted that cost for aiplatform/v1's -25% wall and
+-36% CPU and the -0.59% __text (2026-11-11, relayed by the lead).
+
 A wide result (big_by_ref) of a direct call is written by the callee
 through an address the caller passes after the arguments, as one more
 integer word (byref.xo sret_of; not for indirect, entry or address-taken

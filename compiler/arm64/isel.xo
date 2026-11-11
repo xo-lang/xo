@@ -823,6 +823,16 @@ fn (var g: G) isel() {
         }
       }
       for p in g.f.blocks[b].params {
+        if g.sret_pslot.contains(p) {
+          // held in its result slot (byref.xo plan_sret_slots):
+          // no words, read in place (g.stable, set where the block starts)
+          var zs: List[Int] = []
+          for _ in 0..g.nwords(g.vty(p)) {
+            zs.push(0)
+          }
+          g.set(p, zs)
+          continue
+        }
         g.set(p, g.new_vregs(g.layout(g.vty(p))))
         if header && g.is_f32(g.vty(p)) {
           // the loop carried Float32 (an accumulator) in single
@@ -843,7 +853,7 @@ fn (var g: G) isel() {
       }
       g.lsr_params(b)
       for p in g.f.blocks[b].params {
-        if g.mem_only(p) >= 0 {
+        if g.mem_only(p) >= 0 || g.sret_pslot.contains(p) {
           g.has_val[p] = false
         }
       }
@@ -909,6 +919,13 @@ fn (var g: G) isel() {
       }
     }
     g.lsr_header(b)
+    if i > 0 {
+      for p in g.f.blocks[b].params {
+        if let Some(off) = g.sret_pslot.get(p) {
+          g.stable[p] = g.area_addr(off)
+        }
+      }
+    }
     if i == 0 {
       var defs: List[Int] = []
       for (k, p) in g.f.blocks[b].params.indexed() {
@@ -986,6 +1003,16 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
   // argument can be another's memory (two `var` parameters swapped)
   var stores: List[(Int, List[Int])] = []
   for (i, p) in ps.indexed() {
+    if let Some(off) = g.sret_pslot.get(p) {
+      // the parameter's slot (sret_pslot); nothing to move when the
+      // argument is already there (coalesced), else its words are stored
+      let a = g.f.edges[e].args[i]
+      let same = (g.sret_slots.get(a) ?? -1) == off || (g.sret_pslot.get(a) ?? -1) == off
+      if !same {
+        stores.push((g.area_addr(off), g.words(a)))
+      }
+      continue
+    }
     let m = g.mem_only(p)
     if m >= 0 {
       // passed in place; an edge whose memory holds another value
