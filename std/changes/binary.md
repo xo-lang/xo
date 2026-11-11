@@ -1,5 +1,20 @@
 # std/binary changes
 
+## 2026-11-10: perf: written with prelude operations, merged with its implementation
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0597 part 2 (fast paths rewritten with prelude operations, --ab each)
+- Go reference: encoding/binary ByteOrder and varint.go (go1.26.1), unchanged
+- Test: the binary corpus on go, arm64 and llvm; `xo test --std-module=binary` on native and llvm; golden binary_basic on arm64 and Go parity
+- Timing: bench/perf/binary fixed on linux/arm64 host 1, --ab against main ed13e688d (7 rounds): wall 0.823 (0.772 to 0.838, n=7)
+- Shipped in: not yet released
+
+The fixed size puts write with `BytesBuilder.write_le` and `write_be` (one allocation of the right size)
+and the gets combine bytes after one range check, where they stored and loaded the word through raw
+memory intrinsics; faster on the bench, and every backend now runs std/binary.xo's bodies (std/native/binary.xo
+and std/rt/binary.go are gone).
+
 ## 2026-10-21: perf: fixed size words stored and loaded in place
 
 - Kind: perf

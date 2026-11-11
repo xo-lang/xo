@@ -184,3 +184,8 @@ pushes.
 - Part 3, Go PartReader (2026-11-10): std/rt/http_part_reader.go runs
   the generated `Multipart_reader` over the body source instead of Go's
   mime/multipart, so no Go multipart code is left in std/rt.
+- Part 2, binary (2026-11-10): rewritten with prelude operations
+  (write_le, write_be, byte reads after one check), --ab fixed 0.823
+  (0.772 to 0.838, n=7) on host 1: merged whole, no native part.
+  url: escape over BytesBuilder was 1.075 (1.053 to 1.107) and with one
+  write_be per escape 1.041 (1.023 to 1.068), so its escape stays native.

@@ -292,3 +292,4 @@ commit (the lead cuts it).
   0597's portable intrinsics (XO0609 for any other native/rt call).
 - 2026-11-10: `std/mime` merged; its Go is generated into std/rt (std/rt_hosted.txt, decision 0597 part 3).
 - 2026-11-10: `std/multipart` merged, rt-hosted, with its public streaming `Reader` (decision 0597 part 3).
+- 2026-11-10: `std/binary` merged (decision 0597 part 2: rewritten with prelude operations, faster).

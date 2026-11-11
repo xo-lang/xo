@@ -1,37 +1,144 @@
-// std/binary (spec/std.md 22, decision 0279). Declaration file; encoding
+// std/binary (spec/std.md 22, decision 0279). Encoding
 // rules are listed at the top of std/prelude.xo. Go's encoding/binary
 // byte orders and varints as pure functions on Bytes. An Int is a 64 bit
 // word here: a write keeps its low bits, a 64 bit read past 2^63 - 1 is
 // negative (as the Int word methods, decision 0260).
+//
+// std/binary on the native backends (decision 0279): Go's
+// encoding/binary byte orders (ByteOrder's Put and Uint methods) and
+// varints (varint.go of go1.26: AppendUvarint, AppendVarint, Uvarint,
+// Varint), ported.
+// The fixed size forms are written with BytesBuilder.write_le (one
+// allocation of the right size) and read a byte at a time after one range
+// check, prelude operations only (decision 0597); a big endian value is
+// byte swapped.
 
 /// The low 16 bits of n, big endian (2 bytes); also the 32 (4 bytes) and
 /// 64 bit (8 bytes) forms and little endian ones.
-fn u16_be(n: Int) -> Bytes
-fn u32_be(n: Int) -> Bytes
-fn u64_be(n: Int) -> Bytes
-fn u16_le(n: Int) -> Bytes
-fn u32_le(n: Int) -> Bytes
-fn u64_le(n: Int) -> Bytes
+pub fn u16_be(n: Int) -> Bytes { be(n, 2) }
+
+pub fn u32_be(n: Int) -> Bytes { be(n, 4) }
+
+pub fn u64_be(n: Int) -> Bytes { be(n, 8) }
+
+pub fn u16_le(n: Int) -> Bytes { le(n, 2) }
+
+pub fn u32_le(n: Int) -> Bytes { le(n, 4) }
+
+pub fn u64_le(n: Int) -> Bytes { le(n, 8) }
 
 /// The unsigned 16 bit value at byte at, big endian; faults when the
 /// bytes run past the end. Also the 32 and 64 bit and little endian forms.
-fn get_u16_be(b: Bytes, at: Int) -> Int
-fn get_u32_be(b: Bytes, at: Int) -> Int
-fn get_u64_be(b: Bytes, at: Int) -> Int
-fn get_u16_le(b: Bytes, at: Int) -> Int
-fn get_u32_le(b: Bytes, at: Int) -> Int
-fn get_u64_le(b: Bytes, at: Int) -> Int
+pub fn get_u16_be(b: Bytes, at: Int) -> Int { swap16(get_u16_le(b, at)) }
+
+pub fn get_u32_be(b: Bytes, at: Int) -> Int { swap32(get_u32_le(b, at)) }
+
+pub fn get_u64_be(b: Bytes, at: Int) -> Int { swap64(get_u64_le(b, at)) }
+
+pub fn get_u16_le(b: Bytes, at: Int) -> Int {
+  check_at(b, at, 2)
+  Int(b[at]) | Int(b[at + 1]) << 8
+}
+
+pub fn get_u32_le(b: Bytes, at: Int) -> Int {
+  check_at(b, at, 4)
+  Int(b[at]) | Int(b[at + 1]) << 8 | Int(b[at + 2]) << 16 | Int(b[at + 3]) << 24
+}
+
+pub fn get_u64_le(b: Bytes, at: Int) -> Int {
+  check_at(b, at, 8)
+  get_u32_le(b, at) | get_u32_le(b, at + 4).wrapping_shl(32)
+}
+
 /// The same, sign extended (Go's int16(binary.BigEndian.Uint16(b))).
-fn get_i16_be(b: Bytes, at: Int) -> Int
-fn get_i32_be(b: Bytes, at: Int) -> Int
-fn get_i16_le(b: Bytes, at: Int) -> Int
-fn get_i32_le(b: Bytes, at: Int) -> Int
+pub fn get_i16_be(b: Bytes, at: Int) -> Int { signed(get_u16_be(b, at), 16) }
+
+pub fn get_i32_be(b: Bytes, at: Int) -> Int { signed(get_u32_be(b, at), 32) }
+
+pub fn get_i16_le(b: Bytes, at: Int) -> Int { signed(get_u16_le(b, at), 16) }
+
+pub fn get_i32_le(b: Bytes, at: Int) -> Int { signed(get_u32_le(b, at), 32) }
 
 /// n as an unsigned 64 bit word in the varint encoding (binary.AppendUvarint).
-fn uvarint(n: Int) -> Bytes
+pub fn uvarint(n: Int) -> Bytes {
+  var out = BytesBuilder.with_capacity(10)
+  var x = n
+  // x as an unsigned word: shr_logical brings in zeros
+  while !x.lt_unsigned(128) {
+    out.write_byte(UInt8((x & 127) | 128))
+    x = x.shr_logical(7)
+  }
+  out.write_byte(UInt8(x))
+  out.freeze()
+}
+
 /// n zig-zag encoded (binary.AppendVarint).
-fn varint(n: Int) -> Bytes
+pub fn varint(n: Int) -> Bytes {
+  // zig-zag: (n << 1) ^ (n >> 63)
+  uvarint(n.wrapping_shl(1) ^ (n >> 63))
+}
+
 /// The value at byte at and the bytes it took; None when the input ends
 /// first or the value overflows 64 bits (binary.Uvarint's n <= 0).
-fn get_uvarint(b: Bytes, at: Int) -> (Int, Int)?
-fn get_varint(b: Bytes, at: Int) -> (Int, Int)?
+pub fn get_uvarint(b: Bytes, at: Int) -> (Int, Int)? {
+  if at < 0 {
+    return None
+  }
+  var x = 0
+  var s = 0
+  var i = 0
+  while at + i < b.len() {
+    if i == 10 {
+      return None
+    }
+    let c = Int(b[at + i])
+    if c < 128 {
+      if i == 9 && c > 1 {
+        return None
+      }
+      return Some((x | c.wrapping_shl(s), i + 1))
+    }
+    x = x | (c & 127).wrapping_shl(s)
+    s += 7
+    i += 1
+  }
+  None
+}
+
+pub fn get_varint(b: Bytes, at: Int) -> (Int, Int)? {
+  let (ux, n) = get_uvarint(b, at)?
+  var x = ux.shr_logical(1)
+  if ux & 1 != 0 {
+    x = x ^ -1
+  }
+  Some((x, n))
+}
+
+fn check_at(b: Bytes, at: Int, size: Int) {
+  if at < 0 || at + size > b.len() {
+    fault("binary: ${size} bytes at ${at} out of range for Bytes of length ${b.len()}")
+  }
+}
+
+fn swap16(n: Int) -> Int { ((n & 255) << 8) | ((n >> 8) & 255) }
+
+fn swap32(n: Int) -> Int { (swap16(n) << 16) | swap16(n >> 16) }
+
+fn swap64(n: Int) -> Int { swap32(n).wrapping_shl(32) | swap32(n.shr_logical(32)) }
+
+fn le(n: Int, size: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(size)
+  b.write_le(n, size)
+  b.freeze()
+}
+
+fn be(n: Int, size: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(size)
+  b.write_be(n, size)
+  b.freeze()
+}
+
+fn signed(v: Int, bits: Int) -> Int {
+  let top = 1 << (bits - 1)
+  if v >= top { v - (top << 1) } else { v }
+}
