@@ -599,8 +599,9 @@ fn debug_map_parts(os: Os, dir: Str) {
 /// directly or not (their store code may hold m's old bodies inlined and
 /// its old layouts), as check's module paths ("native/NAME", or
 /// "std/NAME" for a module merged with its implementation, decision
-/// 0588). Read from the `use` lines of std/native's sources and the
-/// merged modules' std/NAME.xo.
+/// 0588; and "std/NAME" for a declaration file of a module not merged).
+/// Read from the `use` lines of std/native's sources and of std's
+/// std/NAME.xo files.
 fn std_source_set(os: Os, std: Str, m: Str) -> Set[Str] {
   let root = std.trim_suffix("/")
   let top = m.trim_prefix("std/").trim_prefix("native/")
@@ -620,6 +621,26 @@ fn std_source_set(os: Os, std: Str, m: Str) -> Set[Str] {
   var mods: List[(Str, List[Str])] = []
   for n in merged.to_list() {
     mods.push((n, ["${root}/${n}.xo"]))
+  }
+  // and the declaration file std/NAME.xo of a module not merged: its
+  // `use` lines are the module's too (std/http.xo imports std/multipart,
+  // std/native/http.xo does not, so a multipart test declared http from
+  // std's record before multipart, past it, and http saw a multipart with
+  // no types: XO0601 "module `multipart` has no type `Form`";
+  // gotchas/std-module-test-new-module-importers.md)
+  var decl: Set[Str] = #{}
+  for e in os.fs.read_dir(root).ok() ?? [] {
+    if !e.is_dir && e.name.ends_with(".xo") && !e.name.ends_with("_test.xo") {
+      let n = e.name.trim_suffix(".xo")
+      // not the prelude's (`use std/task`): it is std's root, declared
+      // with the record's block, never from source (with it in the set
+      // a test of a runtime module found no prelude: "its prelude.xo
+      // lacks Bool, Int, ...")
+      if !merged.contains(n) && n != "prelude" {
+        decl.add(n)
+        mods.push((n, ["${root}/${e.name}"]))
+      }
+    }
   }
   for e in os.fs.read_dir("${root}/native").ok() ?? [] {
     if e.is_dir && e.name == "llrt" {
@@ -667,7 +688,15 @@ fn std_source_set(os: Os, std: Str, m: Str) -> Set[Str] {
   }
   var out: Set[Str] = #{}
   for n in set.to_list() {
-    out.add(if merged.contains(n) { "std/${n}" } else { "native/${n}" })
+    if merged.contains(n) {
+      out.add("std/${n}")
+    } else {
+      out.add("native/${n}")
+      // the declaration module (std/NAME.xo), checked from source too
+      if decl.contains(n) {
+        out.add("std/${n}")
+      }
+    }
   }
   out
 }

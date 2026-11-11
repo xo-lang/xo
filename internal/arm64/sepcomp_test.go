@@ -639,6 +639,18 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 			t.Errorf("%s: the parse prefetch read %d files and the check parsed %d: a list of another shape of check was prefetched", what, f, c)
 		}
 	}
+	// a module whose importer imports it from its declaration file only
+	// (std/http.xo `use std/multipart`, std/native/http.xo not): the
+	// importer is built from source too, or it was declared from std's
+	// record before multipart and saw none of its types (XO0601 "module
+	// `multipart` has no type `Form`", 2026-11-11; gotchas/
+	// std-module-test-new-module-importers.md)
+	mp := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=multipart"))
+	mp.Dir = wd
+	mp.Env = env
+	if out, err := mp.CombinedOutput(); err != nil || !strings.Contains(string(out), "test=1 reused") {
+		t.Fatalf("xo test --std-module=multipart, want std's variant reused and its tests passing: %v\n%s", err, out)
+	}
 	log, err := run()
 	if err != nil || !strings.Contains(log, "test=1 reused") {
 		t.Fatalf("unchanged std: %v\n%s", err, log)

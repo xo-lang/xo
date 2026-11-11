@@ -62,6 +62,19 @@ Change (branch l2-0596):
    std/native/llrt as one module: a test of a runtime module (native/llrt/md5) built only that
    module from source, and its importers (crypto) came from the record without its types
    (XO0601). It now reads `use native/...` lines and takes each llrt file as its own module.
+6. (2026-11-11, Xo Lang 3's report from std/textproto) std_source_set read the `use` lines of
+   std/native's sources and of the merged modules' std/NAME.xo, not the declaration file
+   std/NAME.xo of a module not merged: std/http.xo imports std/multipart and std/native/http.xo
+   does not, so `xo test --std-module=multipart` (and any new module such a declaration file
+   imports, textproto) left http out of the set. Without a record yet, http was declared and its
+   types resolved in the record's block before multipart (in the set) was declared past it:
+   XO0601 "module `multipart` has no type `Form`". It now reads every std/NAME.xo and names both
+   "native/NAME" and "std/NAME" for such a module (multipart's set: 10 to 17 modules), but not the
+   prelude's (`use std/task`: with it in the set every runtime module's test lost the prelude).
+   All std modules with tests, Mac: 62 of 63 pass (main: 60; mime, multipart, url failed with
+   XO0601); mime now compiles and fails one test, detect_content_type, only when separately
+   compiled (XO_SEPCOMP=0 and LLVM pass): a computed const (SIGS) of a from-source module, open.
+   TestSepcompStdModuleEdits runs `--std-module=multipart` after building the variants.
 Every std module with tests (62) passes `xo test --std-module` with the change on the Mac.
 Step 3 of the prototype (the from-source set limited to reached importers) is not needed: with
 the facts present no from-source importer's body is lowered unless the test reaches it.
