@@ -8974,9 +8974,11 @@ fn answer[fx: Effects](text: Str, handle: fn(Request) -> json.Value ! RpcError u
 enum FrameErr { TooLong(limit: Int), Header(msg: Str) }
 fn line_reader(max: Int = 67108864) -> LineReader  // newline delimited (MCP stdio)
 fn (var r: LineReader) feed(chunk: Bytes) -> List[Str] ! FrameErr
+fn (r: LineReader) partial() -> Bool                // a message begun and not ended
 fn line_frame(text: Str) -> Bytes
 fn header_reader(max: Int = 67108864) -> HeaderReader   // Content-Length headers (LSP)
 fn (var r: HeaderReader) feed(chunk: Bytes) -> List[Str] ! FrameErr
+fn (r: HeaderReader) partial() -> Bool
 fn header_frame(text: Str) -> Bytes
 enum CallErr { Rpc(e: RpcError), Io(e: IoErr), Closed }
 struct Cancel { pub method: Str, pub key: Str, pub reply: RpcError? = None }

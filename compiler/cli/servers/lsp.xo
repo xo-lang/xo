@@ -23,6 +23,8 @@
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/hostpath
 use github.com/xo-lang/xo/compiler/parser
+use std/json
+use std/jsonrpc
 
 const TOKEN_TYPES = ["namespace", "type", "struct", "enum", "interface", "typeParameter", "parameter", "variable", "property", "enumMember", "function", "method"]
 
@@ -330,119 +332,59 @@ fn clean_path(p: Str) -> Str {
 // ---------------------------------------------------------------------------
 // framing
 
-/// Reads framed messages from standard input.
+/// Reads framed messages from standard input (std/jsonrpc's
+/// Content-Length framing; DAP frames its messages the same way).
 struct Reader {
-  buf: Bytes = b""
-  off: Int = 0
+  hr: jsonrpc.HeaderReader = jsonrpc.header_reader()
+  queue: List[Str] = []
   eof: Bool = false
-}
-
-fn (var r: Reader) fill(os: Os) -> Bool uses stdio {
-  if r.eof {
-    return false
-  }
-  match os.stdio.read_bytes(65536) {
-    Ok(Some(data)) => {
-      r.buf = r.buf[r.off..] + data
-      r.off = 0
-      true
-    }
-    Ok(None) | Err(_) => {
-      r.eof = true
-      false
-    }
-  }
-}
-
-/// One header line without its line end, or None at the end of input.
-fn (var r: Reader) line(os: Os) -> Str? uses stdio {
-  while {
-    var i = r.off
-    while i < r.buf.len() {
-      if r.buf[i] == '\n' {
-        var end = i
-        if end > r.off && r.buf[end - 1] == '\r' {
-          end -= 1
-        }
-        let l = r.buf[r.off..end].to_str() ?? ""
-        r.off = i + 1
-        return Some(l)
-      }
-      i += 1
-    }
-    if !r.fill(os) {
-      return None
-    }
-  }
-  None
 }
 
 /// readMessage: the body of the next message; Ok(None) at the end of
 /// input, Err with the error that ends the server.
 fn (var r: Reader) message(os: Os) -> Str? ! Str uses stdio {
-  var length = ""
-  var have = false
-  var any = false
-  while {
-    match r.line(os) {
-      None => {
-        if any {
-          return Err("unexpected EOF")
-        }
-        return Ok(None)
+  while r.queue.is_empty() {
+    if r.eof {
+      if r.hr.partial() {
+        return Err("unexpected EOF")
       }
-      Some(l) => {
-        if l.is_empty() {
-          if !any {
-            // textproto skips nothing: an empty first line ends an empty header
-          }
-          break
-        }
-        any = true
-        match l.find(":") {
-          Some(i) => {
-            if l[..i].to_lower() == "content-length" && !have {
-              length = l[i + 1..].trim()
-              have = true
-            }
-          }
-          None => return Err("malformed MIME header line: ${l}")
+      return Ok(None)
+    }
+    match os.stdio.read_bytes(65536) {
+      Ok(Some(data)) => {
+        match r.hr.feed(data) {
+          Ok(ms) => r.queue = ms
+          Err(e) => return Err(e.display())
         }
       }
+      Ok(None) | Err(_) => r.eof = true
     }
   }
-  let n = Int.parse(length) ?? -1
-  if n < 0 {
-    return Err("missing or bad Content-Length header")
-  }
-  while r.buf.len() - r.off < n {
-    if !r.fill(os) {
-      if r.buf.len() - r.off == 0 {
-        return Ok(None)
-      }
-      return Err("unexpected EOF")
-    }
-  }
-  let body = r.buf[r.off..r.off + n]
-  r.off += n
-  Ok(Some(body.to_str() ?? ""))
+  let m = r.queue[0]
+  r.queue = r.queue[1..]
+  Ok(Some(m))
 }
 
-fn send(os: Os, msg: J) uses stdio {
-  let body = encode(msg, true)
-  let _ = os.stdio.write(("Content-Length: ${body.len()}\r\n\r\n" + body).bytes()).ignore_err("the client may be gone")
+/// Writes one framed message (DAP's too).
+fn send(os: Os, msg: J) uses stdio { send_text(os, encode(msg, true)) }
+
+fn send_text(os: Os, text: Str) uses stdio {
+  let _ = os.stdio.write(jsonrpc.header_frame(text)).ignore_err("the client may be gone")
 }
 
-fn reply(os: Os, id: Str, result: J) uses stdio {
-  send(os, jobj(["jsonrpc", "id", "result"], [jstr("2.0"), J.Raw(id), result]))
+/// x as a json.Value, for std/jsonrpc's messages.
+fn jv(x: J) -> json.Value { json.parse_value(encode(x, false)).ok() ?? json.Value.Null }
+
+fn reply(os: Os, id: jsonrpc.Id, result: J) uses stdio {
+  send_text(os, jsonrpc.encode(jsonrpc.Message.Resp(jsonrpc.Response{id: Some(id), result: jv(result)})))
 }
 
-fn reply_error(os: Os, id: Str, code: Int, msg: Str) uses stdio {
-  send(os, jobj(["jsonrpc", "id", "error"], [jstr("2.0"), J.Raw(id), jobj(["code", "message"], [jint(code), jstr(msg)])]))
+fn reply_error(os: Os, id: jsonrpc.Id?, code: Int, msg: Str) uses stdio {
+  send_text(os, jsonrpc.encode(jsonrpc.Message.Resp(jsonrpc.Response{id: id, error: Some(jsonrpc.RpcError{code: code, message: msg})})))
 }
 
 fn notify(os: Os, method: Str, params: J) uses stdio {
-  send(os, jobj(["jsonrpc", "method", "params"], [jstr("2.0"), jstr(method), params]))
+  send_text(os, jsonrpc.encode(jsonrpc.Message.Req(jsonrpc.Request{method: method, params: Some(jv(params))})))
 }
 
 // ---------------------------------------------------------------------------
@@ -1174,7 +1116,7 @@ const ALL = "*"
 
 /// A request waiting for the check of key at generation gen or later.
 struct Waiting {
-  id: Str
+  id: jsonrpc.Id
   method: Str
   params: J
   key: Str
@@ -1458,24 +1400,29 @@ pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str], chk: (Str, Str))
             s.pump(os, jobs)
           }
           Ev.Msg(body) => {
-            let m = match parse(body) {
-              Ok(m) => m
+            let m = match jsonrpc.decode(body) {
+              Ok(jsonrpc.Message.Req(r)) => r
+              // the server sends no requests, so no answers are expected
+              Ok(jsonrpc.Message.Resp(_)) => continue
               Err(e) => {
-                os.stdio.eprintln("xo lsp: bad message: ${e}")
-                code = 1
-                break
+                if e.code == jsonrpc.PARSE_ERROR {
+                  os.stdio.eprintln("xo lsp: bad message: ${body.len()} bytes are not JSON")
+                  code = 1
+                  break
+                }
+                reply_error(os, None, e.code, e.message)
+                continue
               }
             }
-            let method = jstr_of(m, "method")
+            let method = m.method
             if method == "exit" {
               break
             }
-            let id = match get(m, "id") {
-              None | Some(J.Null) => ""
-              Some(_) => get_raw(m, "id") ?? ""
+            let params = match m.params {
+              Some(p) => parse(p.encode()).ok() ?? J.Null
+              None => J.Null
             }
-            let params = get(m, "params") ?? J.Null
-            if id.is_empty() {
+            if m.id is None {
               let start = s.notification(os, method, params)
               if start == "now" {
                 s.auto = true
@@ -1495,7 +1442,8 @@ pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str], chk: (Str, Str))
               }
               continue
             }
-            let has_params = get(m, "params").is_some()
+            let id = m.id ?? continue
+            let has_params = m.params.is_some()
             let key = s.check_key(method, params, has_params)
             if !key.is_empty() {
               s.waiting.push(Waiting{id: id, method: method, params: params, key: key, gen: s.need_of(key)})

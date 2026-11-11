@@ -825,6 +825,21 @@ test "the Content-Length framing: bodies across chunks, headers without case, ot
   expect(jsonrpc.header_frame("\u{e9}")) == b"Content-Length: 2\r\n\r\n\xc3\xa9"
 }
 
+test "the framings: partial, a message begun and not ended" {
+  var l = jsonrpc.line_reader()
+  expect(l.feed(b"{}\n{").is_ok()) == true
+  expect(l.partial()) == true
+  expect(l.feed(b"}\n").is_ok()) == true
+  expect(l.partial()) == false
+  var h = jsonrpc.header_reader()
+  expect(h.feed(b"Content-Length: 2\r\n\r\n").is_ok()) == true
+  expect(h.partial()) == true
+  expect(h.feed(b"{}").is_ok()) == true
+  expect(h.partial()) == false
+  expect(h.feed(b"Content-Le").is_ok()) == true
+  expect(h.partial()) == true
+}
+
 test "the Content-Length framing: missing and bad lengths, a body over the limit" {
   expect(bodies([b"Content-Type: x\r\n\r\n{}"])) == "error: jsonrpc: no Content-Length header"
   expect(bodies([b"Content-Length: x\r\n\r\n"])) == "error: jsonrpc: invalid Content-Length \"x\""

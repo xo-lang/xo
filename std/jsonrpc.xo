@@ -360,6 +360,10 @@ pub fn (var r: LineReader) feed(chunk: Bytes) -> List[Str] ! FrameErr {
   Ok(out)
 }
 
+/// Whether a message has begun and not ended (bytes after the last line
+/// break): at the end of the input, a truncated message.
+pub fn (r: LineReader) partial() -> Bool { r.buf.len() > 0 }
+
 /// A message framed for LineReader: its text and a LF. A fault for text
 /// with a line break (encode never writes one).
 pub fn line_frame(text: Str) -> Bytes {
@@ -439,6 +443,10 @@ pub fn (var r: HeaderReader) feed(chunk: Bytes) -> List[Str] ! FrameErr {
   r.buf = b
   Ok(out)
 }
+
+/// Whether a message has begun and not ended (header bytes, or a body
+/// not complete yet): at the end of the input, a truncated message.
+pub fn (r: HeaderReader) partial() -> Bool { r.buf.len() > 0 || r.want >= 0 }
 
 fn (var r: HeaderReader) fail(e: FrameErr) -> List[Str] ! FrameErr {
   r.failed = Some(e)
