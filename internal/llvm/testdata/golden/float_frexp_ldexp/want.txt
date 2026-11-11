@@ -1,0 +1,30 @@
+exit 0
+--- stdout
+0.0 copysign- -0.0 copysign+ 0.0 frexp 0.0 0 back 0.0
+-0.0 copysign- -0.0 copysign+ 0.0 frexp -0.0 0 back -0.0
+1.0 copysign- -1.0 copysign+ 1.0 frexp 0.5 1 back 1.0
+-1.5 copysign- -1.5 copysign+ 1.5 frexp -0.75 1 back -1.5
+3.0 copysign- -3.0 copysign+ 3.0 frexp 0.75 2 back 3.0
+1024.0 copysign- -1024.0 copysign+ 1024.0 frexp 0.5 11 back 1024.0
+0.1 copysign- -0.1 copysign+ 0.1 frexp 0.8 -3 back 0.1
+5e-324 copysign- -5e-324 copysign+ 5e-324 frexp 0.5 -1073 back 5e-324
+2.2250738585072014e-308 copysign- -2.2250738585072014e-308 copysign+ 2.2250738585072014e-308 frexp 0.5 -1021 back 2.2250738585072014e-308
+1.7976931348623157e+308 copysign- -1.7976931348623157e+308 copysign+ 1.7976931348623157e+308 frexp 0.9999999999999999 1024 back 1.7976931348623157e+308
++Inf copysign- -Inf copysign+ +Inf frexp +Inf 0 back +Inf
+-Inf copysign- -Inf copysign+ +Inf frexp -Inf 0 back -Inf
+NaN copysign- NaN copysign+ NaN frexp NaN 0 back NaN
+ldexp 1.0 1023 = 8.98846567431158e+307
+ldexp 1.0 1024 = +Inf
+ldexp 1.0 -1074 = 5e-324
+ldexp 1.0 -1075 = 0.0
+ldexp 0.75 -1074 = 5e-324
+ldexp 3.0 -1076 = 5e-324
+ldexp 1.5 100 = 1.901475900342344e+30
+ldexp -2.0 3 = -16.0
+ldexp 0.5 9223372036854775807 = +Inf
+ldexp 0.5 -9223372036854775807 = 0.0
+ldexp 0.5 -9223372036854775808 = +Inf
+ldexp 1.0 -9223372036854775808 = 0.0
+ldexp 1.0 9223372036854775807 = +Inf
+3.4028234663852886e+38 1.401298464324817e-45
+--- stderr

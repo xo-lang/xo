@@ -133,6 +133,9 @@ fn (f: Float) pow(y: Float) -> Float
 fn (f: Float) atan2(x: Float) -> Float       // Go's Atan2(f, x)
 fn (f: Float) hypot(y: Float) -> Float
 fn (f: Float) mod(y: Float) -> Float         // Go's Mod: the remainder with the sign of f
+fn (f: Float) copysign(sign: Float) -> Float // Go's Copysign
+fn (f: Float) frexp() -> (Float, Int)        // Go's Frexp: frac in [0.5, 1) and exp, f == frac * 2^exp
+fn (f: Float) ldexp(exp: Int) -> Float       // Go's Ldexp: f * 2^exp (an exp near Int.max or Int.min as Go's int wraps)
 fn (f: Float) to_bits() -> Int               // the IEEE 754 bits; Float.from_bits(b) back
 fn (f: Float32) to_bits() -> UInt32          // the binary32 bits (Go's Float32bits); Float32.from_bits(b: UInt32) back (Float32frombits).
                                              // A signaling NaN comes back quiet on the native backends (the Go backend keeps it)
@@ -175,7 +178,8 @@ NaN, unequal to every Float, itself too: test with `is_nan`), `Float.pi`,
 `Float.e`, `Float.max` (the largest finite Float), `Float.min`
 (`-Float.max`) and `Float.smallest_nonzero` (the smallest positive
 subnormal), Go's math.Inf(1), NaN(), Pi, E, MaxFloat64 and
-SmallestNonzeroFloat64.
+SmallestNonzeroFloat64. `Float32.max` and `Float32.smallest_nonzero` are
+Go's MaxFloat32 and SmallestNonzeroFloat32, as Float32 values.
 
 The integer bounds `Int.max`, `Int.min`, `Int8.max` ... `UInt64.max` are
 type constants (decision 0587): written without parentheses, constant
@@ -5702,7 +5706,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-567 declarations.
+570 declarations.
 
 ### Range
 
@@ -5813,6 +5817,9 @@ fn (f: Float) hypot(y: Float) -> Float
 fn (f: Float) fma(y: Float, z: Float) -> Float
 fn (f: Float) mod(y: Float) -> Float
 fn (f: Float) is_inf() -> Bool
+fn (f: Float) copysign(sign: Float) -> Float
+fn (f: Float) frexp() -> (Float, Int)
+fn (f: Float) ldexp(exp: Int) -> Float
 fn (f: Float) to_bits() -> Int
 fn (static: Float) from_bits(b: Int) -> Float
 ```

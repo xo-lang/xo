@@ -248,6 +248,11 @@ const FLOAT_MIN: Float = -1.7976931348623157e308
 /// The smallest positive Float, a subnormal (Go's
 /// math.SmallestNonzeroFloat64). @static Float.smallest_nonzero
 const FLOAT_SMALLEST_NONZERO: Float = 4.9406564584124654e-324
+/// The largest finite Float32 (Go's math.MaxFloat32). @static Float32.max
+const FLOAT32_MAX: Float32 = 3.4028234663852886e38
+/// The smallest positive Float32, a subnormal (Go's
+/// math.SmallestNonzeroFloat32). @static Float32.smallest_nonzero
+const FLOAT32_SMALLEST_NONZERO: Float32 = 1.401298464324817e-45
 
 /// Go's strconv.ParseInt(s, 10, 64): decimal text with an optional sign and
 /// _ between digits; None for anything else (spaces included) or a value
@@ -468,6 +473,13 @@ fn (f: Float) fma(y: Float, z: Float) -> Float
 fn (f: Float) mod(y: Float) -> Float
 /// Whether f is +Inf or -Inf (Go's math.IsInf(f, 0)).
 fn (f: Float) is_inf() -> Bool
+/// f with the sign of sign (Go's math.Copysign).
+fn (f: Float) copysign(sign: Float) -> Float
+/// f as frac * 2^exp with frac's magnitude in [0.5, 1) (Go's math.Frexp);
+/// (f, 0) for 0, an infinity or NaN.
+fn (f: Float) frexp() -> (Float, Int)
+/// f * 2^exp, exact unless it overflows or underflows (Go's math.Ldexp).
+fn (f: Float) ldexp(exp: Int) -> Float
 /// The IEEE 754 bits of f, and the Float of bits b (Go's Float64bits,
 /// Float64frombits).
 fn (f: Float) to_bits() -> Int

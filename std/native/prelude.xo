@@ -6465,6 +6465,9 @@ fn float_cbrt(f: Float) -> Float { gomath.cbrt(f) }
 fn float_atan2(f: Float, x: Float) -> Float { gomath.atan2(f, x) }
 
 fn float_hypot(f: Float, y: Float) -> Float { gomath.hypot(f, y) }
+fn float_copysign(f: Float, sign: Float) -> Float { gomath.copysign(f, sign) }
+fn float_frexp(f: Float) -> (Float, Int) { gomath.frexp(f) }
+fn float_ldexp(f: Float, exp: Int) -> Float { gomath.ldexp(f, exp) }
 
 /// Float.fma off arm64 (where it is fmadd, compiler/ssa): x86-64's FMA3
 /// when the CPU has it (decision 0385 stage 3), else Go's software body

@@ -37,6 +37,9 @@ var (
 	FLOAT_MAX              = math.MaxFloat64
 	FLOAT_MIN              = -math.MaxFloat64
 	FLOAT_SMALLEST_NONZERO = math.SmallestNonzeroFloat64
+	// Float32.max and Float32.smallest_nonzero
+	FLOAT32_MAX              float32 = math.MaxFloat32
+	FLOAT32_SMALLEST_NONZERO float32 = math.SmallestNonzeroFloat32
 )
 
 // Rune's type constants Rune.max and Rune.max_ascii (decision 0595).

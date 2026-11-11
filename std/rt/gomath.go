@@ -52,6 +52,17 @@ func Float_atan2(_ *Task, f, x float64) float64 { return gmAtan2(f, x) }
 
 func Float_hypot(_ *Task, f, y float64) float64 { return gmHypot(f, y) }
 
+func Float_copysign(_ *Task, f, sign float64) float64 { return gmCopysign(f, sign) }
+
+func Float_frexp(_ *Task, f float64) Tuple2[float64, int64] {
+	frac, exp := gmFrexp(f)
+	return Tuple2[float64, int64]{frac, int64(exp)}
+}
+
+// Float_ldexp is `f.ldexp(exp)`: an exp beyond Go's int (none on 64 bit
+// targets) is the same Int.
+func Float_ldexp(_ *Task, f float64, exp int64) float64 { return gmLdexp(f, int(exp)) }
+
 // Float_fma is `f.fma(y, z)` (decision 0385): math.FMA, exact on every
 // architecture (an instruction or Go's software path).
 func Float_fma(_ *Task, f, y, z float64) float64 { return math.FMA(f, y, z) }

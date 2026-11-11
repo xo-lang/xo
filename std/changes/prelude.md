@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-11-11: feature: Float.copysign, frexp, ldexp and Float32.max, smallest_nonzero (Go's math)
+
+- Kind: feature
+- Commit: this push
+- Found by: std audit 2026-11-11 gaps 16, 22 and 29
+- Go reference: math.Copysign, Frexp, Ldexp, MaxFloat32, SmallestNonzeroFloat32 (go1.26.1)
+- Test: golden float_frexp_ldexp (arm64, llvm, Go parity, wasm), values checked against Go's math
+- Shipped in: not yet released
+
+The native backends call llrt/gomath.xo's ports (already used inside the
+prelude), the Go backend the same ports in std/rt. gomath.ldexp now adds
+exponents as Go's int does (wrapping), so `0.5.ldexp(Int.min)` is +Inf as
+in Go instead of an overflow fault; no other result changes.
+
 ## 2026-11-11: feature: `File.seek(offset, whence)` and `Whence`
 
 - Kind: feature

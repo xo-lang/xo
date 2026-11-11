@@ -86,9 +86,12 @@ pub fn ldexp(frac0: Float, exp0: Int) -> Float {
     return frac0
   }
   let (frac, e) = normalize(frac0)
-  var exp = exp0 + e
+  // Go's int arithmetic: += wraps, and the exponent field's term is
+  // formed before it is added (an exp near Int.max or Int.min is Go's
+  // answer, not a fault)
+  var exp = exp0.wrapping_add(e)
   var x = bits(frac)
-  exp = exp + (x.shr_logical(SHIFT) & MASK) - BIAS
+  exp = exp.wrapping_add((x.shr_logical(SHIFT) & MASK) - BIAS)
   if exp < -1075 {
     return copysign(0.0, frac)
   }

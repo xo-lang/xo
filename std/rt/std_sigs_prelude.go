@@ -93,6 +93,9 @@ var (
 	_ func(*Task, float64, float64, float64) float64                                                       = Float_fma
 	_ func(*Task, float64, float64) float64                                                                = Float_mod
 	_ func(*Task, float64) bool                                                                            = Float_is_inf
+	_ func(*Task, float64, float64) float64                                                                = Float_copysign
+	_ func(*Task, float64) Tuple2[float64, int64]                                                          = Float_frexp
+	_ func(*Task, float64, int64) float64                                                                  = Float_ldexp
 	_ func(*Task, float64) int64                                                                           = Float_to_bits
 	_ func(*Task, int64) float64                                                                           = Float_from_bits
 	_ func(*Task, string) int64                                                                            = Str_len
