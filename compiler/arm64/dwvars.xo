@@ -113,12 +113,21 @@ fn (var g: G) stub_saves(k: Int) -> List[Int] {
 /// Per register, the registers whose one definition is a parallel move
 /// from it (dv_plan's copies).
 fn (g: G) dv_copies() -> Map[Int, List[Int]] {
-  var ndefs: Map[Int, Int] = {}
+  // definition counts by register (every register is below
+  // g.fp.len()): a hash map written per definition was a third of
+  // dv_plan's time in the aiplatform/v1 test build (Lang 1, 2026-11-11)
+  let nr = g.fp.len()
+  var ndefs: List[Int] = List.with_capacity(nr)
+  for _ in 0..nr {
+    ndefs.push(0)
+  }
   var copy_of: Map[Int, Int] = {}
   for blk in g.blocks {
     for ins in blk.insts {
       for (i, d) in ins.defs.indexed() {
-        ndefs[d] = (ndefs.get(d) ?? 0) + 1
+        if d >= 0 && d < nr {
+          ndefs[d] += 1
+        }
         if ins.kind == K_PMOVE && i < ins.srcs.len() && ins.srcs[i].kind == S_REG && ins.srcs[i].v > 0 {
           copy_of[d] = ins.srcs[i].v
         }
@@ -127,7 +136,7 @@ fn (g: G) dv_copies() -> Map[Int, List[Int]] {
   }
   var copies: Map[Int, List[Int]] = {}
   for (d, r) in copy_of.entries() {
-    if (ndefs.get(d) ?? 0) == 1 {
+    if d >= 0 && d < nr && ndefs[d] == 1 {
       var l = copies.get(r) ?? []
       l.push(d)
       copies[r] = l
@@ -363,12 +372,21 @@ fn (var g: G) dv_plan() -> DvPlan {
   // a parameter copied into a callee saved register for a loop with calls
   // was described only until the copy, so a fault in the loop showed it
   // <unavailable>)
-  var ndefs: Map[Int, Int] = {}
+  // definition counts by register (every register is below
+  // g.fp.len()): a hash map written per definition was a third of
+  // dv_plan's time in the aiplatform/v1 test build (Lang 1, 2026-11-11)
+  let nr = g.fp.len()
+  var ndefs: List[Int] = List.with_capacity(nr)
+  for _ in 0..nr {
+    ndefs.push(0)
+  }
   var copy_of: Map[Int, Int] = {}
   for blk in g.blocks {
     for ins in blk.insts {
       for (i, d) in ins.defs.indexed() {
-        ndefs[d] = (ndefs.get(d) ?? 0) + 1
+        if d >= 0 && d < nr {
+          ndefs[d] += 1
+        }
         if ins.kind == K_PMOVE && i < ins.srcs.len() && ins.srcs[i].kind == S_REG && ins.srcs[i].v > 0 {
           copy_of[d] = ins.srcs[i].v
         }
@@ -377,7 +395,7 @@ fn (var g: G) dv_plan() -> DvPlan {
   }
   var copies: Map[Int, List[Int]] = {}
   for (d, r) in copy_of.entries() {
-    if (ndefs.get(d) ?? 0) == 1 {
+    if d >= 0 && d < nr && ndefs[d] == 1 {
       var l = copies.get(r) ?? []
       l.push(d)
       copies[r] = l
