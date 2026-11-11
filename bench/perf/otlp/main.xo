@@ -2,9 +2,30 @@
 // derive Proto structs only if this does not regress): `traces` encodes
 // 200 spans (OpenTelemetry ids, a parent, kind, four attributes, two
 // events, an error status, two scopes) 4,000 times; `none` is the setup
-// alone. Usage: `<program> none|traces`. Prints `<workload> <checksum>`.
+// alone; `metrics` encodes a registry of a counter, a gauge, a histogram
+// (latency buckets) and a summary, each with 50 labelled series, 4,000
+// times. Usage: `<program> none|traces|metrics`. Prints `<workload>
+// <checksum>`.
+use std/metrics
 use std/otlp
 use std/trace
+
+fn registry() -> metrics.Registry {
+  let r = metrics.registry()
+  let c = r.counter("http_requests_total", "Requests.", ["method", "route"])
+  let g = r.gauge("queue_depth", "Queue depth.", ["queue"])
+  let h = r.histogram("request_seconds", "Latency.", ["route"])
+  let s = r.summary("payload_bytes", "Payloads.", ["route"])
+  for i in 0..50 {
+    c.add(Float(i * 3 + 1), [if i % 2 == 0 { "GET" } else { "POST" }, "/r/${i}"])
+    g.set(Float(i) * 1.5, ["q${i}"])
+    for j in 0..5 {
+      h.observe(Float(i * 5 + j) * 0.003, ["/r/${i}"])
+      s.observe(Float(i * 100 + j), ["/r/${i}"])
+    }
+  }
+  r
+}
 
 fn spans() -> List[trace.Span] {
   var out: List[trace.Span] = []
@@ -25,6 +46,13 @@ fn main(os: Os) {
   let ss = spans()
   let res = otlp.Resource{service: "bench"}
   var sum = 0
+  if w == "metrics" {
+    let reg = registry()
+    for _ in 0..4000 {
+      let b = otlp.encode_metrics(res, reg, 1700000000000, 1700000060000)
+      sum = (sum * 31 + b.len() + Int(b[b.len() / 2])) % 1000000007
+    }
+  }
   if w == "traces" {
     for _ in 0..4000 {
       let b = otlp.encode_traces(res, ss)

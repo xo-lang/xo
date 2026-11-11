@@ -48,8 +48,11 @@ Status: Accepted (owner, 2026-11-11; low priority: after ADR 0603 stage 1 and th
   a oneof enum that itself derives Proto); bench/perf/otlp traces 0.869
   of the hand writer's wall time on linux/arm64 host 1, the same bytes
   (bench/results/otlp-derive-2026-11-11.md), so the condition holds.
-  Metrics export stays on the writer for now (next: the same for it,
-  with its own timing row).
+  Metrics export stays on the writer: as derive structs it measured
+  1.205 of the writer's wall time (bench/perf/otlp metrics, same bytes),
+  so item 3's condition fails for it (bench/results/otlp-derive-2026-11-11.md,
+  second table; next experiment named there: nested messages written in
+  place by the generated marshal).
 
 ## Owner decision, 2026-11-11
 
