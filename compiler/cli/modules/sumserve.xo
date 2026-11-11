@@ -50,6 +50,17 @@ struct RefreshHealth {
   /// ticks (at most 64) before the next try, so dead repositories (a
   /// stalled one costs a minute of git) do not hold up the others
   failing: Map[Str, (Int, Int, Str)] = {}
+  /// the last failed bucket write or record (Unix seconds, the operation:
+  /// record, fill or list, and its error), so the owner's monitor sees a
+  /// bucket that refuses or hangs without the journal; None for none
+  last_error: (Int, Str, Str)? = None
+  /// when the log last added a record (Unix seconds), 0 for never
+  last_record: Int = 0
+}
+
+/// Notes a failed bucket write or record for GET /healthz.
+fn note_error(conf: LogConf, now: Int, op: Str, msg: Str) {
+  conf.health.with(fn(var h) { h.last_error = Some((now, op, msg)) })
 }
 
 /// What `xo mod sumdb serve` was started with.
@@ -286,11 +297,17 @@ fn (var c: ModCtx) fill_logged(conf: LogConf, fb: Bucket, path: Str, version: St
   let done = if c.exists("${dir}/xo.mod") { c.fill_files(fb, dir, path, version) } else { c.fill_version(fb, root, path, version) }
   match done {
     Ok(_) => mark(false)
-    Err(e) => c.os.stdio.eprintln("xo mod sumdb serve: fill ${path} ${version}: ${e} (retried later; ${pending_file(data)})")
+    Err(e) => {
+      note_error(conf, c.os.clock.now().unix(), "fill", "${path} ${version}: ${e}")
+      c.os.stdio.eprintln("xo mod sumdb serve: fill ${path} ${version}: ${e} (retried later; ${pending_file(data)})")
+    }
   }
   match c.refresh_list(fb, root, path, conf.lists) {
     Ok(_) => {}
-    Err(e) => c.os.stdio.eprintln("xo mod sumdb serve: fill ${path} list: ${e}")
+    Err(e) => {
+      note_error(conf, c.os.clock.now().unix(), "list", "${path}: ${e}")
+      c.os.stdio.eprintln("xo mod sumdb serve: fill ${path} list: ${e}")
+    }
   }
 }
 
@@ -685,7 +702,8 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
   }
   if p == "/healthz" {
     // for the owner's monitor through the tunnel: the log's size, the
-    // uploads still pending, and the refresh loop's progress and failures
+    // uploads still pending, the refresh loop's progress and failures,
+    // when a record was last added, and the last failed bucket write
     let n = state.with_read(fn(st) { st.records.len() })
     let pend = conf.pending.with_read(fn(m) { m.keys().sort() })
     let h = conf.health.with_read(fn(x) { x })
@@ -698,7 +716,11 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
     for k in pend {
       pq.push(k.quote())
     }
-    let body = "{\"Records\":${n},\"Pending\":[${pq.join(",")}],\"RefreshTicks\":${h.ticks},\"RefreshLast\":${h.last},\"Failing\":[${fails.join(",")}]}\n"
+    let last_err = match h.last_error {
+      Some((at, op, e)) => "{\"At\":${at},\"Op\":${op.quote()},\"Error\":${e.quote()}}"
+      None => "null"
+    }
+    let body = "{\"Records\":${n},\"Pending\":[${pq.join(",")}],\"RefreshTicks\":${h.ticks},\"RefreshLast\":${h.last},\"Failing\":[${fails.join(",")}],\"LastRecord\":${h.last_record},\"LastError\":${last_err}}\n"
     return http.text(200, body).with_header("Content-Type", "application/json").with_header("Cache-Control", NO_STORE)
   }
   if p == "/index" {
@@ -787,6 +809,7 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
     return match added {
       Ok((id, r, t, is_new)) => {
         if is_new {
+          conf.health.with(fn(var h) { h.last_record = now })
           if let Some(fb) = conf.fill {
             // the tree is in the log's cache already; the answer does not
             // wait for the upload, and a failed one stays in fill-pending
@@ -799,7 +822,10 @@ fn (c: ModCtx) sumdb_answer(req: http.Request, state: Mutex[LogState], limits: M
         }
         plain("${id}\n${r}\n${sign_tree(signer, t)}").with_header("Cache-Control", NO_STORE)
       }
-      Err(e) => http_error("cannot record ${path} ${version}: ${e}", 500)
+      Err(e) => {
+        note_error(conf, now, "record", "${path} ${version}: ${e}")
+        http_error("cannot record ${path} ${version}: ${e}", 500)
+      }
     }
   }
   let inclusion = p.starts_with("/proof/inclusion/")

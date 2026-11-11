@@ -482,6 +482,10 @@ func TestChecksumLogFillRetry(t *testing.T) {
 	if has("github.com/acme/billing/@v/v1.2.0.mod")() {
 		t.Fatalf("a .mod was written during the outage")
 	}
+	// GET /healthz shows the failed upload, and when the log last added
+	if h := readHealth(t, logURL); h.LastRecord == 0 || h.LastError == nil || h.LastError.Op != "fill" || h.LastError.At == 0 || !strings.Contains(h.LastError.Error, "ServiceUnavailable") {
+		t.Errorf("/healthz during the outage: %+v %+v", h, h.LastError)
+	}
 	s3.setDown(false)
 	waitFor("billing filled after the outage", has("github.com/acme/billing/@v/v1.2.0.mod"))
 	waitFor("money filled after the outage", has("github.com/acme/money/@v/v1.1.0.mod"))
@@ -498,9 +502,52 @@ func TestChecksumLogFillRetry(t *testing.T) {
 	waitFor("money v1.3.0 pending", func() bool { return strings.Contains(pending(), "github.com/acme/money@v1.3.0\n") })
 	stopLog()
 	s3.setDown(false)
-	startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", fill, logData)
+	logURL, stopLog = startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", fill, logData)
 	waitFor("money v1.3.0 filled after the restart", has("github.com/acme/money/@v/v1.3.0.mod"))
 	waitFor("fill-pending emptied after the restart", func() bool { return pending() == "" })
+	if h := readHealth(t, logURL); h.LastError != nil || h.LastRecord != 0 {
+		t.Errorf("/healthz of a fresh start with nothing failed or added: %+v %+v", h, h.LastError)
+	}
+
+	// --copy-to down: the record is refused (500), and /healthz says why
+	stopLog()
+	s3.setDown(true)
+	logURL, _ = startHTTPServe(t, "mod", "sumdb", "serve", "--key="+key, "--fetch", "--copy-to="+srv.URL+"/logcopy", logData)
+	if code, _, body := get(t, logURL+"/lookup/github.com/acme/money@v1.0.0", nil); code != 500 || !strings.Contains(body, "cannot record github.com/acme/money v1.0.0") {
+		t.Fatalf("lookup with the copy bucket down: %d %s", code, body)
+	}
+	if h := readHealth(t, logURL); h.LastRecord != 0 || h.LastError == nil || h.LastError.Op != "record" || !strings.Contains(h.LastError.Error, "github.com/acme/money v1.0.0") || !strings.Contains(h.LastError.Error, "ServiceUnavailable") {
+		t.Errorf("/healthz with the copy bucket down: %+v %+v", h, h.LastError)
+	}
+}
+
+// healthz is GET /healthz's body (sumserve.xo).
+type healthz struct {
+	Records      int
+	Pending      []string
+	RefreshTicks int
+	Failing      []struct {
+		Path     string
+		Fails    int
+		NextTick int
+		Error    string
+	}
+	LastRecord int64
+	LastError  *struct {
+		At    int64
+		Op    string
+		Error string
+	}
+}
+
+func readHealth(t *testing.T, logURL string) healthz {
+	t.Helper()
+	code, cache, body := get(t, logURL+"/healthz", nil)
+	var h healthz
+	if err := json.Unmarshal([]byte(body), &h); code != 200 || cache != "no-store" || err != nil {
+		t.Fatalf("/healthz: %d, Cache-Control %q, %v\n%s", code, cache, err, body)
+	}
+	return h
 }
 
 // TestChecksumLogRefreshBackoff: a module whose repository the --refresh
@@ -532,25 +579,9 @@ func TestChecksumLogRefreshBackoff(t *testing.T) {
 	emptyCache(t)
 	xo(t, "mod", "tidy", "--dir", app).want(0) // the log adds billing and money
 
-	type health struct {
-		Records      int
-		Pending      []string
-		RefreshTicks int
-		Failing      []struct {
-			Path     string
-			Fails    int
-			NextTick int
-			Error    string
-		}
-	}
-	read := func() health {
+	read := func() healthz {
 		t.Helper()
-		code, cache, body := get(t, logURL+"/healthz", nil)
-		var h health
-		if err := json.Unmarshal([]byte(body), &h); code != 200 || cache != "no-store" || err != nil {
-			t.Fatalf("/healthz: %d, Cache-Control %q, %v\n%s", code, cache, err, body)
-		}
-		return h
+		return readHealth(t, logURL)
 	}
 	if h := read(); h.Records != 2 || len(h.Failing) != 0 {
 		t.Fatalf("/healthz before: %+v", h)
@@ -563,7 +594,7 @@ func TestChecksumLogRefreshBackoff(t *testing.T) {
 	}
 	start := read().RefreshTicks
 	deadline := time.Now().Add(60 * time.Second)
-	var h health
+	var h healthz
 	for {
 		h = read()
 		if h.RefreshTicks >= start+7 {
