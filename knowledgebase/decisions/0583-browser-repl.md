@@ -267,3 +267,22 @@ entry 4 (`xs.sort()`, the first entry that lowers a std body): `need_tree` write
 `c.objs[o]`, and an entry's checker is a copy of the warm one (`var c = base`), so the first write copies
 std's whole object list (about 6 MB, then grown) in every entry that lowers a std body. Next: keep the
 joined trees where the entry's write does not copy the list (decision 0583 (e)).
+
+## Memory below 50 MB: (e) packed leaves in memory (2026-11-11)
+
+The wasm backend kept every leaf of a value in memory in 8 bytes, its i32 leaves (Bool, the address of
+a List, Box or handle, both halves of a Str) as well: std's `Obj` (about 50 i32 leaves and 29 i64 ones)
+took 632 bytes, not 432. Values in memory (list elements, boxes, homes, closure environments, wide
+results, the blocks the retain and release helpers read, constant data) now pack their leaves: 4 bytes
+an i32 leaf, 8 an i64 or f64 one, with no padding (wasm loads and stores need no alignment, and no atomic
+operation touches a struct's field: atomics act on a handle's cell). An enum's payload stays in 8 byte
+words (its leaves are all i64), so a release of an enum in memory loads its fields a word each. Locals
+spilled to the frames' stack keep 8 byte slots. The runtime's lists of Str (str_split, str_lines,
+env_*, fs_names, fs_msg) take 8 byte elements, the length at 4. With it, `rl_new` fits a list of 1 MiB
+or more to its block, so the copy a write makes takes the pushes after it without a grow.
+
+The 30-entry session in headless Chrome 157, values equal to the terminal REPL's: with std's record
+87 to 55 MB (44 MB through entry 3), without it 136 to 108 MB. Live blocks peak at 40.6 MB with the
+record; the other 14 MB are free blocks (8 MB of them over 256 KiB, freed by the record's decode and
+by entry 4's lowering) that the size classes do not join. Still above 50 MB. Next: std's object list
+twice at entry 4 (the warm checker's 6 MB and the entry's copy), and Bool leaves in one byte.

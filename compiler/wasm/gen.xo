@@ -514,8 +514,41 @@ fn (var g: Gen) words(t: Int) -> Int {
 }
 
 /// The size of a value of t in memory: 8 bytes per leaf.
+/// The bytes of a value of type t in memory: its leaves packed, 4 bytes an
+/// i32 leaf and 8 an i64 or f64 one, unaligned where an i64 follows an odd
+/// number of i32 leaves (wasm loads and stores need no alignment; decision
+/// 0583 (e): 8 bytes a leaf held std's objects in 632 bytes, not 432).
+/// Locals spilled to the frames' stack keep 8 bytes a slot.
 fn (var g: Gen) size(t: Int) -> Int {
-  8 * g.nleaves(t)
+  lsize(g.leaves(t))
+}
+
+/// The bytes of leaf l in memory.
+fn lwidth(l: Str) -> Int {
+  if l == "i64" || l == "f64" { 8 } else { 4 }
+}
+
+/// The bytes of leaves ls in memory.
+fn lsize(ls: List[Str]) -> Int {
+  var n = 0
+  for l in ls {
+    n += lwidth(l)
+  }
+  n
+}
+
+/// The byte offset of leaf k of leaves ls.
+fn loff(ls: List[Str], k: Int) -> Int {
+  var n = 0
+  for j in 0..k {
+    n += lwidth(ls[j])
+  }
+  n
+}
+
+/// The byte offset of leaf k of a value of type t.
+fn (var g: Gen) boff(t: Int, k: Int) -> Int {
+  loff(g.leaves(t), k)
 }
 
 fn (g: Gen) heap(t: Int) -> Bool {
@@ -784,7 +817,7 @@ fn (var g: Gen) store_leaves(addr: Int, off: Int, base: Int, ls: List[Str]) {
   for (k, l) in ls.indexed() {
     g.get(addr)
     g.get(base + k)
-    g.e("${l}.store offset=${off + 8 * k}")
+    g.e("${l}.store offset=${off + loff(ls, k)}")
   }
 }
 
@@ -792,7 +825,7 @@ fn (var g: Gen) store_leaves(addr: Int, off: Int, base: Int, ls: List[Str]) {
 fn (var g: Gen) load_leaves(addr: Int, off: Int, base: Int, ls: List[Str]) {
   for (k, l) in ls.indexed() {
     g.get(addr)
-    g.e("${l}.load offset=${off + 8 * k}")
+    g.e("${l}.load offset=${off + loff(ls, k)}")
     g.set(base + k)
   }
 }
@@ -1194,14 +1227,14 @@ fn (var g: Gen) envdrop_fn(fi: Int) -> Str {
   for c in f.captures {
     let cl = g.leaves(c)
     if g.heap(c) && g.wide_mem(c) {
-      g.mem_rc("drop", c, 0, 8 + 8 * off)
+      g.mem_rc("drop", c, 0, 8 + off)
     } else if g.heap(c) {
       let b = g.tmps(cl)
-      g.load_leaves(0, 8 + 8 * off, b, cl)
+      g.load_leaves(0, 8 + off, b, cl)
       g.push_range(b, cl.len())
       g.e("call ${g.rc_fn("drop", c)}")
     }
-    off += cl.len()
+    off += lsize(cl)
   }
   g.get(0)
   g.e("call $free")

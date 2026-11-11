@@ -858,9 +858,9 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
     for (k1, ft) in tys.indexed() {
       if !g.home_result(ci, k1) {
         let ls = g.leaves(ft)
-        g.mem_push(blk, 8 * at, ls)
+        g.mem_push(blk, at, ls)
         g.set_range(base + g.field_off(rt, k1), ls.len())
-        at += ls.len()
+        at += lsize(ls)
       }
     }
     g.get(blk)
@@ -910,7 +910,7 @@ fn (var g: Gen) temp_make(a: Int, k: Int) -> Int {
   }
   let t = g.tslots[k]
   let ls = g.leaves(g.vty(a))
-  g.e("i32.const ${8 * ls.len()}")
+  g.e("i32.const ${lsize(ls)}")
   g.e("call $alloc")
   g.set(t)
   let (mp, mo) = g.mem_of(a)
@@ -921,7 +921,7 @@ fn (var g: Gen) temp_make(a: Int, k: Int) -> Int {
       g.e("i32.const ${mo}")
       g.e("i32.add")
     }
-    g.e("i32.const ${8 * ls.len()}")
+    g.e("i32.const ${lsize(ls)}")
     g.e("memory.copy")
   } else {
     g.mem_store(t, 0, g.loc(a), ls)

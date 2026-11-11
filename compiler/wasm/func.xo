@@ -514,14 +514,14 @@ fn (var g: Gen) rc_spilled(op: Str, t: Int, base: Int) {
   let n = g.nleaves(t)
   let bl = g.tmps(["i32"])
   g.frames_used = true
-  g.e("i32.const ${8 * n}")
+  let ls = g.leaves(t)
+  g.e("i32.const ${lsize(ls)}")
   g.e("call $ls_push")
   g.set(bl)
-  let ls = g.leaves(t)
   for k in 0..n {
     g.get(bl)
     g.get(base + k)
-    g.e("${ls[k]}.store offset=${8 * k}")
+    g.e("${ls[k]}.store offset=${loff(ls, k)}")
   }
   g.get(bl)
   g.e("call ${g.rc_addr_fn(op, t)}")
@@ -925,7 +925,7 @@ fn (var g: Gen) push_part(v: Int, k0: Int, k1: Int) {
     let ls = g.leaves(g.vty(v))
     for k in k0..k1 {
       g.get(mp)
-      g.e("${ls[k]}.load offset=${mo + 8 * k}")
+      g.e("${ls[k]}.load offset=${mo + loff(ls, k)}")
     }
     return
   }
@@ -1076,19 +1076,18 @@ fn (var g: Gen) static_unwind(bi: Int) -> Bool {
       if ls.is_empty() {
         continue
       }
-      let src = g.static_words(words[k])
       if h >= 0 {
         g.get(g.hptr[h])
       } else {
         g.get(g.sret)
         if at > 0 {
-          g.e("i32.const ${8 * at}")
+          g.e("i32.const ${at}")
           g.e("i32.add")
         }
-        at += ls.len()
+        at += lsize(ls)
       }
-      g.e("i32.const ${src}")
-      g.e("i32.const ${8 * ls.len()}")
+      g.e("i32.const ${g.static_words(words[k], ls)}")
+      g.e("i32.const ${lsize(ls)}")
       g.e("memory.copy")
       continue
     }
@@ -1105,20 +1104,21 @@ fn (var g: Gen) static_unwind(bi: Int) -> Bool {
   true
 }
 
-/// The address of a data segment holding the leaf words ws (8 bytes a
-/// leaf, a home's layout), one per distinct content.
-fn (var g: Gen) static_words(ws: List[Int]) -> Int {
+/// The address of a data segment holding the leaf words ws of leaves ls
+/// in a home's layout (packed: 4 bytes an i32 leaf), one per distinct
+/// content.
+fn (var g: Gen) static_words(ws: List[Int], ls: List[Str]) -> Int {
   var key = StrBuilder.new()
-  for w in ws {
-    key.write("${w},")
+  for (k, w) in ws.indexed() {
+    key.write("${lwidth(ls[k])}:${w},")
   }
   let k = key.freeze()
   if let Some(a) = g.static_data.get(k) {
     return a
   }
   var bs = "".bytes()
-  for w in ws {
-    bs = bs + le64(w)
+  for (k, w) in ws.indexed() {
+    bs = bs + if lwidth(ls[k]) == 4 { le32(w) } else { le64(w) }
   }
   let a = g.place(bs)
   g.static_data[k] = a
@@ -1545,7 +1545,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         if n > 0 && !nested {
           let mv = x.args[0]
           let b = g.loc(x.args[1])
-          g.mem_store(g.hptr[g.mfield[mv]], g.moff[mv] + 8 * off, b, g.leaves(g.field_ty(at, i)))
+          g.mem_store(g.hptr[g.mfield[mv]], g.moff[mv] + g.boff(at, off), b, g.leaves(g.field_ty(at, i)))
         }
         return
       }
@@ -1558,7 +1558,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         // the struct dies here and its home holds v (home.xo)
         if n > 0 {
           let b = g.loc(x.args[1])
-          g.mem_store(g.hptr[g.held[v]], 8 * off, b, g.leaves(g.field_ty(at, i)))
+          g.mem_store(g.hptr[g.held[v]], g.boff(at, off), b, g.leaves(g.field_ty(at, i)))
         }
         g.take_snaps(v)
         return
@@ -1643,7 +1643,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       let a = x.args[0]
       let ls = g.leaves(g.vty(a))
       let p = g.loc(v)
-      g.e("i32.const ${8 + 8 * ls.len()}")
+      g.e("i32.const ${8 + lsize(ls)}")
       g.e("call $alloc")
       g.set(p)
       g.get(p)
@@ -1663,10 +1663,10 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       }
       var off = 0
       for k in 0..i {
-        off += g.nleaves(g.f.captures[k])
+        off += g.size(g.f.captures[k])
       }
       let env = g.loc(x.args[0]) + 1
-      g.load_leaves(env, 8 + 8 * off, g.loc(v), g.leaves(t))
+      g.load_leaves(env, 8 + off, g.loc(v), g.leaves(t))
     }
     CallValue => {
       // decision 0519: an argument past WIDE_LIMIT leaves goes as the
@@ -1760,14 +1760,14 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         }
         let bl = g.tmps(["i32"])
         g.frames_used = true
-        g.e("i32.const ${8 * n}")
+        let ls = g.leaves(at)
+        g.e("i32.const ${lsize(ls)}")
         g.e("call $ls_push")
         g.set(bl)
-        let ls = g.leaves(at)
         for k in 0..n {
           g.get(bl)
           g.push_part(a, k, k + 1)
-          g.e("${ls[k]}.store offset=${8 * k}")
+          g.e("${ls[k]}.store offset=${loff(ls, k)}")
         }
         g.get(bl)
         g.e("call ${g.rc_addr_fn(op, at)}")
@@ -1834,9 +1834,9 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
             for (j, l) in ls.indexed() {
               g.get(g.sret)
               g.push_part(a, j, j + 1)
-              g.e("${l}.store offset=${8 * (at + j)}")
+              g.e("${l}.store offset=${at + loff(ls, j)}")
             }
-            at += ls.len()
+            at += lsize(ls)
           } else {
             g.push(a)
           }
@@ -2002,11 +2002,11 @@ fn (var g: Gen) closure(v: Int) {
   }
   var n = 0
   for a in x.args {
-    n += g.nleaves(g.vty(a))
+    n += g.size(g.vty(a))
   }
   let drop = g.envdrop_fn(ci)
   let env = b + 1
-  g.e("i32.const ${8 + 8 * n}")
+  g.e("i32.const ${8 + n}")
   g.e("call $alloc")
   g.set(env)
   g.get(env)
@@ -2019,9 +2019,9 @@ fn (var g: Gen) closure(v: Int) {
   for a in x.args {
     let ls = g.leaves(g.vty(a))
     if !ls.is_empty() {
-      g.store_leaves(env, 8 + 8 * off, g.loc(a), ls)
+      g.store_leaves(env, 8 + off, g.loc(a), ls)
     }
-    off += ls.len()
+    off += lsize(ls)
   }
 }
 

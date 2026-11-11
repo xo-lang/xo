@@ -957,9 +957,9 @@ fn (var g: Gen) plan_fields(pos: List[Int]) {
       let h = g.held[r]
       g.mfield[v] = h
       g.mroot[v] = r
-      g.moff[v] = g.moff[a] + 8 * g.field_off(g.vty(a), i)
+      g.moff[v] = g.moff[a] + g.boff(g.vty(a), g.field_off(g.vty(a), i))
       if g.held[a] >= 0 {
-        g.moff[v] = 8 * g.field_off(g.vty(a), i)
+        g.moff[v] = g.boff(g.vty(a), g.field_off(g.vty(a), i))
       }
       changed = true
     }
@@ -1057,7 +1057,7 @@ fn (var g: Gen) take_snaps(d: Int) {
       }
       let (mp, mo) = g.mem_of(a)
       let ls = g.leaves(ssa.ty_of(x.tb))
-      g.mem_push(mp, mo + 8 * g.field_off(g.vty(a), i), ls)
+      g.mem_push(mp, mo + g.boff(g.vty(a), g.field_off(g.vty(a), i)), ls)
       g.set_range(g.loc(rep), ls.len())
     }
   }
@@ -1068,7 +1068,7 @@ fn (var g: Gen) mem_push(p: Int, off: Int, ls: List[Str]) {
   g.mstat_add("load", ls.len())
   for (k, l) in ls.indexed() {
     g.get(p)
-    g.e("${l}.load offset=${off + 8 * k}")
+    g.e("${l}.load offset=${off + loff(ls, k)}")
   }
 }
 
@@ -1079,7 +1079,7 @@ fn (var g: Gen) mem_store(p: Int, off: Int, b: Int, ls: List[Str]) {
   for (k, l) in ls.indexed() {
     g.get(p)
     g.get(b + k)
-    g.e("${l}.store offset=${off + 8 * k}")
+    g.e("${l}.store offset=${off + loff(ls, k)}")
   }
 }
 
@@ -1128,7 +1128,7 @@ fn (var g: Gen) rc_addr_fn(op: Str, t: Int) -> Str {
     let tys = g.field_tys(t)
     for i in 0..tys.len() {
       if g.heap(tys[i]) {
-        g.mem_rc(op, tys[i], 0, 8 * g.field_off(t, i))
+        g.mem_rc(op, tys[i], 0, g.boff(t, g.field_off(t, i)))
       }
     }
   } else if g.kind(t) == ssa.Kind.Enum {
@@ -1147,10 +1147,17 @@ fn (var g: Gen) rc_addr_fn(op: Str, t: Int) -> Str {
       g.e("i64.const ${vi}")
       g.e("i64.eq")
       g.e("if")
+      // a payload is words (8 bytes a leaf), not a packed value: its
+      // leaves loaded a word each (decision 0583 (e))
       var off = 1
       for fd in v.fields {
         if g.heap(fd.ty) {
-          g.mem_rc(op, fd.ty, 0, 8 * off)
+          for (k, l) in g.leaves(fd.ty).indexed() {
+            g.get(0)
+            g.e("i64.load offset=${8 * (off + k)}")
+            g.from_word(l)
+          }
+          g.e("call ${g.rc_fn(op, fd.ty)}")
         }
         off += g.nleaves(fd.ty)
       }
@@ -1183,7 +1190,7 @@ fn (var g: Gen) drop_mem_fields_fn(t: Int, fs: List[Int]) -> Str {
   g.begin_helper(["i32"])
   let tys = g.field_tys(t)
   for i in sorted {
-    g.mem_rc("drop", tys[i], 0, 8 * g.field_off(t, i))
+    g.mem_rc("drop", tys[i], 0, g.boff(t, g.field_off(t, i)))
   }
   g.end_helper(name, ["i32"], [], "drop fields ${ks.join(" ")} of ${g.m.types[t].name} in memory")
   g.cur = saved
