@@ -245,66 +245,56 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | image/gif | std/gif | complete | Decode, DecodeAll, DecodeConfig, Encode, EncodeAll over whole buffers (0578 step 5). |
 | image, image/draw, image/gif | planned | 0578: Image over png and jpeg, draw, gif follow; image/png and image/jpeg (decode) are done (std/png 0466, std/jpeg 0467). |
 
-## Function level gaps (2026-11-10, scripts/stdaudit)
+## Function level gaps (2026-11-11, scripts/stdaudit)
 
 `go run ./scripts/stdaudit` compares every exported symbol (functions, methods,
-types, consts, vars) of the 10829 Go symbols in the packages above with Xo's surface
-(`xo doc` of the builtin types, `xo symbols --module` of every std module). Its
-mapping file scripts/stdaudit/map.txt records each symbol (or a package or type
-with `pkg.*`, `pkg.Type.*`) as an Xo name, `not planned: why`, or `gap: what`.
-Counts at this date (second pass, bench/results/std-audit-2026-11-10b.md): 196
-named by an Xo doc comment, 154 matched by snake_case name, 1217 mapped by hand,
-7853 skipped (packages marked not planned above, or a not planned line), 533
-gaps (whole planned or internal only packages count each symbol), 876 not yet
-reviewed (mostly packages whose rows say done: archive, compress, crypto,
-encoding/*, mime, sort). Use is counted over GOROOT/src (go1.26.1, outside cmd,
-internal and vendor) and the pinned modules of scripts/stdaudit/corpus.txt (chi,
-gin, cobra, pgx, aws-sdk-go-v2, client_golang, mux): files that use the symbol;
-method counts are an upper bound. Top 40 by twice the module files plus the
-stdlib files (`-rank REPORT -status gap DIRS...`):
+types, consts, vars) of the 11088 Go symbols in the packages above with Xo's
+public surface (`xo doc` of the builtin types, the type constants of
+std/prelude.xo, `xo symbols --module --pub` of every std module). Its mapping
+file scripts/stdaudit/map.txt records each symbol (or a package or type with
+`pkg.*`, `pkg.Type.*`) as an Xo name, `not planned: why`, or `gap: what`.
+Counts (third pass, bench/results/std-audit-2026-11-11.md): 194 named by an Xo
+doc comment, 154 matched by snake_case name, 1700 mapped by hand, 8407 skipped
+(packages marked not planned above, or a not planned line), 633 gaps (whole
+planned or internal only packages count each symbol), 0 unreviewed. Use is
+counted over GOROOT/src (go1.26.1, outside cmd) and the pinned modules of
+scripts/stdaudit/corpus.txt (chi, gin, cobra, pgx, aws-sdk-go-v2,
+client_golang, mux): files that use the symbol; method counts are an upper
+bound. Top 30 gaps by twice the module files plus the stdlib files, grouped by
+feature (`-rank REPORT -status gap DIRS...`; Last verified: 2026-11-11):
 
-| Go symbol | Files (pinned modules / stdlib) | Gap |
-|---|---|---|
-| `unicode/utf8.RuneSelf` (const) | 0 / 36 | no RuneSelf const |
-| `math.MaxUint16` (const) | 15 / 4 | see math.MaxInt32 |
-| `io.Copy` (func) | 5 / 18 | no copy between two streams (Stream/File have read and write, no Copy helper; check std/prelude.Stream before filling) |
-| `math.MaxInt32` (const) | 6 / 11 | only INT_MAX/INT_MIN (64 bit) exist; no MaxInt32/MaxInt16/MaxInt8/MaxUint16/MaxUint32 and Min* consts |
-| `maps.Copy` (func) | 6 / 4 | no Map.extend |
-| `math.Inf` (func) | 5 / 6 | no Float infinity value (Float.is_inf tests one) |
-| `strings.NewReplacer` (func) | 5 / 5 | no Str replacer (one pass over several old/new pairs; Str.replace per pair) |
-| `time.Time.Nanosecond` (method) | 6 / 3 (upper bound) | no Time.nanosecond; Time has unix and unix_millis only (check std/time) |
-| `math/bits.Add64` (func) | 0 / 14 | Int.wrapping_add has no carry out (llrt cpu.adc is internal) |
-| `math.MinInt32` (const) | 5 / 3 | see math.MaxInt32 |
-| `time.Time.UnixNano` (method) | 3 / 7 (upper bound) | Time.unix and unix_millis only (check std/time) |
-| `hash.Cloner` (type) | 0 / 12 | Hasher clone? check std/crypto.Hasher |
-| `io.SeekStart` (const) | 0 / 12 | File.read_at/write_at exist; no seek cursor (check std/prelude.File) |
-| `math/bits.Sub64` (func) | 0 / 12 | no borrow out (llrt cpu.borrow is internal) |
-| `net/http.CrossOriginProtection.Handler` (method) | 6 / 0 (upper bound) | no cross origin protection middleware (Go 1.25 CrossOriginProtection) |
-| `net/textproto.MIMEHeader.Get` (method) | 0 / 12 (upper bound) | header canonicalization lives inside std/http; no public textproto reader |
-| `slices.Clone` (func) | 2 / 8 | no List.clone |
-| `math/bits.Len` (func) | 1 / 9 | Int has leading_zeros; no bit length |
-| `net/textproto.TrimString` (func) | 0 / 11 | header canonicalization lives inside std/http; no public textproto reader |
-| `math.MaxInt16` (const) | 4 / 2 | see math.MaxInt32 |
-| `math.MaxInt8` (const) | 4 / 2 | see math.MaxInt32 |
-| `math.MaxUint32` (const) | 3 / 4 | see math.MaxInt32 |
-| `math.MinInt16` (const) | 4 / 2 | see math.MaxInt32 |
-| `maps.Clone` (func) | 1 / 7 | no Map.clone |
-| `net/netip.AddrPort.IsValid` (method) | 3 / 3 (upper bound) | no AddrPort type (host and port are text in Net.dial) |
-| `math.NaN` (func) | 2 / 4 | no Float NaN value (Float.is_nan tests one) |
-| `math/big.Float.Int64` (method) | 3 / 2 (upper bound) | no big.Float (arbitrary precision floats) |
-| `net/netip.Addr.Zone` (method) | 0 / 8 (upper bound) | no IPv6 zones |
-| `net/netip.AddrPort.Addr` (method) | 2 / 4 (upper bound) | no AddrPort type (host and port are text in Net.dial) |
-| `sort.Search` (func) | 1 / 6 | no List.binary_search |
-| `unicode.MaxRune` (const) | 0 / 8 | no Rune.MAX constant (0x10FFFF); Rune.try rejects past it |
-| `unicode.SimpleFold` (func) | 0 / 8 | no Rune.simple_fold (Str.equal_fold exists for strings) |
-| `math.MaxFloat64` (const) | 2 / 3 | no Float limit consts |
-| `math.MaxUint8` (const) | 3 / 1 | no small integer limit consts |
-| `net.JoinHostPort` (func) | 1 / 5 | no join_host_port (IPv6 brackets by hand) |
-| `net/textproto.CanonicalMIMEHeaderKey` (func) | 2 / 3 | header canonicalization lives inside std/http; no public textproto reader |
-| `slices.Concat` (func) | 2 / 3 | no List.concat (use +) |
-| `encoding/asn1.ObjectIdentifier` (type) | 0 / 6 | ASN.1 DER is inside std/native/llrt/asn1.xo (X.509), no public API |
-| `image/color.Palette` (type) | 0 / 6 | std/image has the color conversions as functions but no Color model values per type (std-coverage.md partial, 0578 step 1) |
-| `image/color.RGBA64` (type) | 0 / 6 | std/image has the color conversions as functions but no Color model values per type (std-coverage.md partial, 0578 step 1) |
+| # | Gap | Score | Files (modules / stdlib) | Symbols (most used first) |
+|---|---|---|---|---|
+| 1 | std/image has the color conversions as functions but no Color model values per type (std-coverage.md partial, 0578 step 1) | 78 | 0 / 78 | `image/color.Palette`, `image/color.RGBA64`, `image/color.Model`, `image/color.RGBA` and 27 more |
+| 2 | header canonicalization lives inside std/http; no public textproto reader | 60 | 2 / 56 | `net/textproto.MIMEHeader.Get`, `net/textproto.TrimString`, `net/textproto.CanonicalMIMEHeaderKey`, `net/textproto.NewReader` and 16 more |
+| 3 | no ECDH key agreement (X25519, P-256, P-384, P-521) in std/crypto; std/tls has it internally | 53 | 0 / 53 | `crypto/ecdh.PrivateKey.PublicKey`, `crypto/ecdh.X25519`, `crypto/ecdh.PrivateKey`, `crypto/ecdh.P256` and 6 more |
+| 4 | no File.seek (read_at/write_at take offsets) | 38 | 0 / 38 | `io.SeekStart`, `os.File.Seek` |
+| 5 | ASN.1 DER is inside std/native/llrt/asn1.xo (X.509), no public API | 36 | 0 / 36 | `encoding/asn1.ObjectIdentifier`, `encoding/asn1.Marshal`, `encoding/asn1.Unmarshal`, `encoding/asn1.BitString` and 10 more |
+| 6 | no AddrPort type (host and port are text in Net.dial) | 33 | 5 / 23 | `net/netip.AddrPort.IsValid`, `net/netip.AddrPort.Addr`, `net/netip.AddrPort.Port`, `net/netip.AddrPort` and 4 more |
+| 7 | no big.Float (arbitrary precision floats) | 30 | 5 / 20 | `math/big.Float.Int64`, `math/big.Float`, `math/big.Float.Int`, `math/big.Float.Append` and 8 more |
+| 8 | ML-KEM is inside the TLS stack only (std/native/llrt/mlkem.xo), no public API | 24 | 0 / 24 | `crypto/mlkem.CiphertextSize1024`, `crypto/mlkem.CiphertextSize768`, `crypto/mlkem.EncapsulationKeySize1024`, `crypto/mlkem.EncapsulationKeySize768` and 9 more |
+| 9 | no raw block modes (CTR, CBC); AEADs only (Aead) | 16 | 0 / 16 | `crypto/cipher.Block`, `crypto/cipher.NewCBCDecrypter`, `crypto/cipher.NewCBCEncrypter`, `crypto/cipher.BlockMode` and 2 more |
+| 10 | no file server handler over an Fs (serve_content serves one value) | 14 | 6 / 2 | `net/http.FileServer`, `net/http.Dir`, `net/http.File`, `net/http.FS` |
+| 11 | no Hasher clone (std/crypto.Hasher has write, sum, written) | 13 | 0 / 13 | `hash.Cloner` |
+| 12 | no IPv6 zones | 13 | 1 / 11 | `net/netip.Addr.Zone`, `net/netip.Addr.WithZone` |
+| 13 | no HPKE (std-coverage.md: planned after a public AEAD and ECDH) | 12 | 0 / 12 | `crypto/hpke.Recipient`, `crypto/hpke.NewAEAD`, `crypto/hpke.NewKDF`, `crypto/hpke.NewKEM` and 7 more |
+| 14 | no cross origin protection middleware (Go 1.25 CrossOriginProtection) | 12 | 6 / 0 | `net/http.CrossOriginProtection.Handler` |
+| 15 | no big.Rat (rationals) | 10 | 0 / 10 | `math/big.Rat`, `math/big.Rat.Denom`, `math/big.Rat.Num`, `math/big.Rat.SetFrac` and 1 more |
+| 16 | no Float.ldexp/frexp | 8 | 2 / 4 | `math.Frexp`, `math.Ldexp` |
+| 17 | no normal or exponential distributions | 8 | 4 / 0 | `math/rand.ExpFloat64`, `math/rand.NormFloat64` |
+| 18 | no streaming XML encoder (Element.encode and encode_value) | 8 | 4 / 0 | `encoding/xml.NewEncoder`, `encoding/xml.Encoder.EncodeElement`, `encoding/xml.Encoder.EncodeToken`, `encoding/xml.Encoder` |
+| 19 | no join_host_port (IPv6 brackets by hand) | 7 | 1 / 5 | `net.JoinHostPort` |
+| 20 | no Bytes XOR | 6 | 0 / 6 | `crypto/subtle.XORBytes` |
+| 21 | no Fs.create_temp_dir (Fs.create_temp makes a file) | 6 | 0 / 6 | `os.MkdirTemp` |
+| 22 | no Float.copysign | 5 | 0 / 5 | `math.Copysign` |
+| 23 | no List.is_sorted | 5 | 1 / 3 | `sort.IsSorted`, `slices.IsSorted` |
+| 24 | no Userinfo (user:password in a URL) | 5 | 0 / 5 | `net/url.Userinfo.Password`, `net/url.Userinfo.Username`, `net/url.Userinfo` |
+| 25 | no column type metadata (Rows.columns gives names only) | 5 | 0 / 5 | `database/sql/driver.RowsColumnTypeDatabaseTypeName`, `database/sql/driver.RowsColumnTypeLength`, `database/sql/driver.RowsColumnTypeNullable`, `database/sql/driver.RowsColumnTypePrecisionScale` and 1 more |
+| 26 | no prefix_from(addr, bits) (parse_prefix of text) | 5 | 2 / 1 | `net/netip.PrefixFrom` |
+| 27 | no Bytes.trim_end_chars (Str.trim_end_chars exists) | 4 | 0 / 4 | `bytes.TrimRight` |
+| 28 | no Bytes.trim_start_chars (Str.trim_start_chars exists) | 4 | 0 / 4 | `bytes.TrimLeft` |
+| 29 | no Float limit consts | 4 | 0 / 4 | `math.MaxFloat32` |
+| 30 | no PATH lookup by itself (Proc.cmd searches PATH when it runs) | 4 | 0 / 4 | `os/exec.LookPath` |
 
 ## Outside Go's standard library
 

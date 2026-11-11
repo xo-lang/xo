@@ -203,6 +203,23 @@ func xoSide(xo, stdDir string) error {
 			fmt.Printf("%s\t%s\n", name, strings.TrimSpace(doc))
 		}
 	}
+	// the type constants (decision 0587: Int.max, Float.inf, Rune.max),
+	// which `xo doc TYPE` does not list: the prelude's doc comments name
+	// them `@static Type.name`
+	if b, err := os.ReadFile(filepath.Join(stdDir, "prelude.xo")); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			doc, ok := strings.CutPrefix(strings.TrimSpace(l), "/// ")
+			if !ok {
+				continue
+			}
+			text, name, ok := strings.Cut(doc, "@static ")
+			if !ok {
+				continue
+			}
+			name, _, _ = strings.Cut(name, " ")
+			fmt.Printf("%s\t%s\n", name, strings.TrimSpace(text))
+		}
+	}
 	files, _ := filepath.Glob(filepath.Join(stdDir, "*.xo"))
 	sort.Strings(files)
 	for _, f := range files {
@@ -210,7 +227,7 @@ func xoSide(xo, stdDir string) error {
 		if strings.HasSuffix(m, "_test") {
 			continue
 		}
-		out, err := exec.Command(xo, "symbols", "--module=std/"+m, "--json").Output()
+		out, err := exec.Command(xo, "symbols", "--module=std/"+m, "--pub", "--json").Output()
 		if err != nil {
 			continue
 		}
