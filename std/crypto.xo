@@ -1,6 +1,8 @@
-// std/crypto (spec/std.md 11). Declaration file; encoding rules are listed
-// at the top of std/prelude.xo. Hashing and comparison are pure; anything
-// random takes the `Rand` capability (std.md 3.4), so tests are seeded and
+// std/crypto (spec/std.md 11). Hashes, HMAC, password hashing, AEAD
+// encryption, HKDF, and keys, signatures and PEM for Ed25519, ECDSA and RSA
+// (Go's crypto packages). Declaration file; encoding rules are listed at the
+// top of std/prelude.xo. Hashing and comparison are pure; anything random
+// takes the `Rand` capability (std.md 3.4), so tests are seeded and
 // deterministic.
 
 fn sha256(data: Bytes) -> Bytes

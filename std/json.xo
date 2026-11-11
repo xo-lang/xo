@@ -1,7 +1,9 @@
-// std/json (spec/std.md 5). Declaration file; encoding rules are listed at
-// the top of std/prelude.xo. Which types implement `Json` is builtin to the
-// checker (std.md 5 table): scalars, Str, Bytes, Duration, Time, List, Set,
-// Map[Str, V], Option of Json types, and types with `derive Json`.
+// std/json (spec/std.md 5). JSON encoding and decoding of Xo values (Go's
+// encoding/json), with values of any shape, streams of values, and tokens.
+// Declaration file; encoding rules are listed at the top of std/prelude.xo.
+// Which types implement `Json` is builtin to the checker (std.md 5 table):
+// scalars, Str, Bytes, Duration, Time, List, Set, Map[Str, V], Option of
+// Json types, and types with `derive Json`.
 
 fn encode[T: Json](v: T) -> Bytes
 fn encode_str[T: Json](v: T) -> Str

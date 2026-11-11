@@ -1,5 +1,16 @@
 # std/sql changes
 
+## 2026-11-11: docs: the header says what the module is for
+
+- Kind: docs
+- Commit: this commit
+- Found by: pkg.xolang.org and xolang.dev showed `xo doc std`'s summary of std/sql as a spec reference or a note about the file (the Xo Lead, 2026-11-11)
+- Go reference: none
+- Test: cmd/xo TestDocStdSummaries
+- Shipped in: not yet released
+
+The header comment of std/sql.xo opens with a sentence that says what the module is for, which `xo doc std` lists as its summary. No declaration changed.
+
 ## 2026-11-06: perf: the memory driver builds a statement's row environment once
 
 - Kind: perf

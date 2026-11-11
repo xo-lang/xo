@@ -1,5 +1,7 @@
-// std/testing (spec/std.md 8, core 9.2). Declaration file; encoding rules are
-// listed at the top of std/prelude.xo. Notes for this file:
+// std/testing (spec/std.md 8, core 9.2). The fakes tests run on (FakeNet,
+// FakeClock, MemFs, FakeEnv, FakeStdio, FakeProc and a test keyring),
+// generators, and captured logs. Declaration file; encoding rules are listed
+// at the top of std/prelude.xo. Notes for this file:
 //
 // - Fakes are opaque handles. Each declares every method of the capability
 //   interface it satisfies, with the same signature and effects, plus its

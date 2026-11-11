@@ -1,6 +1,8 @@
-// std/task (spec/std.md 7, core 7.1). Declaration file; encoding rules are
-// listed at the top of std/prelude.xo. Semaphore, Once, and Group are
-// opaque handles: copies share the same permits, result, or group.
+// std/task (spec/std.md 7, core 7.1). Structured concurrency: task groups,
+// semaphores, once values, budgets and timeouts, and concurrent maps.
+// Declaration file; encoding rules are listed at the top of std/prelude.xo.
+// Semaphore, Once, and Group are opaque handles: copies share the same
+// permits, result, or group.
 
 enum Timed[E] {
   TimedOut

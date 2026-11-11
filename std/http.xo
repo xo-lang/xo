@@ -1,5 +1,7 @@
-// std/http (spec/std.md 4). Declaration file; encoding rules are listed at
-// the top of std/prelude.xo. Notes for this file:
+// std/http (spec/std.md 4). HTTP servers and clients: routing, requests and
+// responses, TLS, and response compression (Go's net/http). Declaration
+// file; encoding rules are listed at the top of std/prelude.xo. Notes for
+// this file:
 //
 // - Router, Server, Client are opaque handles (empty structs).
 // - `Router.handle` and `Router.wrap` take a `var` receiver (std.md `[var]`)

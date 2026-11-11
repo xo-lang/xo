@@ -437,81 +437,157 @@ fn std_list(os: Os, ctx: Ctx, json: Bool) -> Int {
 }
 
 /// The first sentence of a std file's header comment that describes the
-/// module: the comment's text from its `std/NAME` line (a merged module's
-/// header may open with its implementation's origin, decision 0588),
-/// without the `std/NAME (spec ...).` or `std/NAME:` opening, the
-/// declaration file's boilerplate sentences ("Declaration file", the
-/// encoding rules pointer, a bare "Pure.") and a "Notes for this file:"
-/// line; at most 100 characters.
+/// module, whole: the comment's text without its `std/NAME (...)`
+/// opening, the declaration file's boilerplate ("Declaration file",
+/// "Pure.", "Notes for this file:") and references to decisions and spec
+/// sections; a leading Go path (`golang.org/x/crypto/bcrypt: password
+/// hashes ...`) becomes a trailing "(port of ...)". When the header says
+/// nothing more, the spec section its opening names ("see spec/std.md 4").
+/// pkg.xolang.org's builder reads headers the same way.
 fn std_summary(src: Str) -> Str {
-  var lines: List[Str] = []
+  var t = StrBuilder.new()
   for l in src.split("\n") {
     if !l.starts_with("//") {
       break
     }
-    lines.push(l.trim_prefix("//").trim())
-  }
-  // a merged module's header: start at its `std/NAME` line
-  var from = 0
-  for i in 0..lines.len() {
-    if lines[i].starts_with("std/") {
-      from = i
-      break
-    }
-  }
-  var t = StrBuilder.new()
-  for x in lines[from..lines.len()] {
+    let x = l.trim_prefix("//").trim()
     if x.is_empty() || x.starts_with("-") {
       break
     }
     t.write("${x} ")
   }
   var text = t.freeze().trim()
-  // the spec section the opening names, the summary of a file whose
-  // header says nothing more (std/http's notes)
+  // a merged file's "Origin: ..." note comes before the opening
+  if !text.starts_with("std/") {
+    if let Some(i) = text.find(". std/") {
+      text = text[i + 2..text.len()]
+    }
+  }
   var refs = ""
   if text.starts_with("std/") {
-    let sp = text.find(" ") ?? text.len()
-    let co = text.find(":") ?? text.len()
-    let name_end = if co < sp { co } else { sp }
-    let rest = text[name_end..text.len()]
-    if rest.starts_with(": ") {
-      text = rest[2..rest.len()]
-    } else if rest.starts_with(" (") {
-      if let Some(i) = rest.find(")") {
-        refs = "see ${rest[2..i]}"
-        let after = rest[i + 1..rest.len()]
-        if after.starts_with(". ") || after.starts_with(": ") {
-          text = after[2..after.len()]
-        } else {
-          text = after.trim_prefix(".").trim()
-        }
+    // the opening: `std/NAME`, then `(...)` or not, then `.` or `:`
+    var i = 4
+    while i < text.len() && text[i..i + 1] != " " && text[i..i + 1] != ":" && text[i..i + 1] != "." {
+      i = i + 1
+    }
+    if text[i..text.len()].starts_with(" (") {
+      if let Some(j) = text[i..text.len()].find(")") {
+        refs = "see ${text[i + 2..i + j]}"
+        i = i + j + 1
+      }
+    }
+    if text[i..text.len()].starts_with(".") || text[i..text.len()].starts_with(":") {
+      i = i + 1
+    }
+    text = text[i..text.len()].trim()
+  }
+  text = drop_std_refs(text)
+  for b in ["Declaration file; encoding rules are listed at the top of std/prelude.xo.", "Encoding rules are listed at the top of std/prelude.xo.", "Declaration file.", "The core API is unchanged."] {
+    text = text.replace(b, "").trim()
+  }
+  if let Some(i) = text.find("Notes for this file:") {
+    text = text[0..i].trim()
+  }
+  // one space between words, as the removals leave two
+  text = text.split(" ").filter(fn(w: Str) -> Bool { !w.is_empty() }).join(" ")
+  var s = first_std_sentence(text)
+  while s == "Pure." {
+    text = text[s.len()..text.len()].trim()
+    s = first_std_sentence(text)
+  }
+  if s.is_empty() {
+    return refs
+  }
+  capitalized(port_suffix(s))
+}
+
+/// s with its first letter in upper case, unless its first word is a
+/// name written in lower case (`golang.org/x/...`, `xo`'s, `gzip`'s
+/// own spelling is kept only when it holds `/`, `.`, `'` or a capital).
+fn capitalized(s: Str) -> Str {
+  let w = s.split(" ")[0]
+  if s.is_empty() || w.contains("/") || w.contains(".") || w.contains("'") || w.to_lower() != w {
+    return s
+  }
+  let c = s[0..1]
+  if c.to_upper() == c {
+    return s
+  }
+  "${c.to_upper()}${s[1..s.len()]}"
+}
+
+/// text without the parentheses that cite a decision or a spec section:
+/// "(decision 0537)", "(std.md 5 table)", "(spec/std.md 4, core 9.2)".
+fn drop_std_refs(text: Str) -> Str {
+  var out = StrBuilder.new()
+  var rest = text
+  while let Some(i) = rest.find("(") {
+    let close = rest[i..rest.len()].find(")")
+    let inner = match close {
+      Some(j) => rest[i + 1..i + j]
+      None => ""
+    }
+    let cites = inner.contains("decision") || inner.contains("spec/") || inner.contains("std.md") || inner.contains("core.md") || inner.starts_with("core ") || inner.contains("Copyright") || inner.contains("license")
+    match close {
+      Some(j) if cites && !inner.contains("(") => {
+        out.write(rest[0..i].trim_end())
+        rest = rest[i + j + 1..rest.len()]
+      }
+      _ => {
+        out.write(rest[0..i + 1])
+        rest = rest[i + 1..rest.len()]
       }
     }
   }
-  text = text.trim_prefix("Declaration file; encoding rules are listed at the top of std/prelude.xo. ")
-  text = text.trim_prefix("Declaration file; encoding rules are listed at the top of std/prelude.xo.")
-  if text.starts_with("Declaration file;") {
-    if let Some(i) = text.find("prelude.xo. ") {
-      text = text[i + 12..text.len()]
-    } else {
-      text = ""
+  out.write(rest)
+  var t = out.freeze().trim()
+  // a trailing ", decision 0521." as in std/amqp's header
+  while let Some(i) = t.find(", decision ") {
+    var j = i + 11
+    while j < t.len() && t[j..j + 1] >= "0" && t[j..j + 1] <= "9" {
+      j = j + 1
     }
+    t = "${t[0..i]}${t[j..t.len()]}"
   }
-  text = text.trim_prefix("Declaration file. ")
-  text = text.trim_prefix("Encoding rules are listed at the top of std/prelude.xo. ")
-  if text.starts_with("Notes for this file:") || text == "Declaration file." || text == "Pure." {
-    text = ""
-  }
-  if text.is_empty() {
-    return refs
-  }
-  if let Some(i) = text.find(". ") {
-    text = text[0..i + 1]
-  }
-  if text.len() > 100 {
-    text = "${text[0..97]}..."
+  t
+}
+
+/// text up to the end of its first sentence: `.`, `!` or `?` before a
+/// space and a capital letter, a backtick, a quote or an opening
+/// parenthesis, or the end; the whole text when it has none.
+fn first_std_sentence(text: Str) -> Str {
+  var i = 0
+  while let Some(j) = text[i..text.len()].find(". ") {
+    let k = i + j
+    let next = text[k + 2..text.len()]
+    if next.is_empty() {
+      return text[0..k + 1]
+    }
+    let c = next[0..1]
+    if c.to_upper() == c && c.to_lower() != c || c == "`" || c == "\"" || c == "(" {
+      return text[0..k + 1]
+    }
+    i = k + 2
   }
   text
+}
+
+/// "golang.org/x/crypto/bcrypt: password hashes ..." as "Password hashes
+/// ... (port of golang.org/x/crypto/bcrypt).", and the same for "Go's
+/// hash/adler32: the checksum ...".
+fn port_suffix(s: Str) -> Str {
+  let i = s.find(": ") ?? return s
+  let head = s[0..i]
+  let path = head.trim_prefix("Go's ")
+  if !path.contains("/") || path.contains(" ") || i + 2 >= s.len() {
+    return s
+  }
+  let rest = s[i + 2..s.len()]
+  let body = "${rest[0..1].to_upper()}${rest[1..rest.len()]}"
+  if body.ends_with(".") {
+    "${body[0..body.len() - 1]} (port of ${head})."
+  } else {
+    "${body} (port of ${head})"
+  }
 }
 

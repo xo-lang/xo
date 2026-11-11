@@ -1,5 +1,16 @@
 # std/testing changes
 
+## 2026-11-11: docs: the header says what the module is for
+
+- Kind: docs
+- Commit: this commit
+- Found by: pkg.xolang.org and xolang.dev showed `xo doc std`'s summary of std/testing as a spec reference or a note about the file (the Xo Lead, 2026-11-11)
+- Go reference: none
+- Test: cmd/xo TestDocStdSummaries
+- Shipped in: not yet released
+
+The header comment of std/testing.xo opens with a sentence that says what the module is for, which `xo doc std` lists as its summary. No declaration changed.
+
 ## 2026-11-10: feature: TestOs.secrets, a test keyring
 
 - Kind: feature

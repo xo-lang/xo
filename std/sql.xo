@@ -1,5 +1,7 @@
-// std/sql (spec/std.md 10). Declaration file; encoding rules are listed at
-// the top of std/prelude.xo. Notes for this file:
+// std/sql (spec/std.md 10). SQL databases through drivers: the in-memory
+// one, Postgres and those written in Xo, with parameters, rows and
+// transactions (Go's database/sql). Declaration file; encoding rules are
+// listed at the top of std/prelude.xo. Notes for this file:
 //
 // - Db, Tx, and Row are opaque handles (empty structs).
 // - Every operation on a Db or Tx declares `uses net.dial`: a Db may be backed

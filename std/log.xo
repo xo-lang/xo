@@ -1,6 +1,7 @@
-// std/log (spec/std.md 6). Declaration file; encoding rules are listed at
-// the top of std/prelude.xo. Logging performs the `log` effect
-// (core 6.1, decision 0156); `configure` performs `stdio`.
+// std/log (spec/std.md 6). Leveled logging with fields, as text or JSON,
+// through the `log` effect. Declaration file; encoding rules are listed at
+// the top of std/prelude.xo. Logging performs the `log` effect (core 6.1,
+// decision 0156); `configure` performs `stdio`.
 
 fn debug(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn info(msg: Str, fields: Map[Str, Debug] = {}) uses log
