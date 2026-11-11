@@ -27,3 +27,10 @@ any "try, then lower again" path, check what it costs on the largest
 functions: `XO_EMIT_JOBS` per-part times or a probe printing the function
 name and value count on each retry. Every function in the retry list
 pays twice.
+
+The self build alone is not enough to clear a codegen change for build
+time: with this fix the self build measured 1.003 on host 1, and
+aiplatform/v1's cold test build still emitted 11 times slower (493.7 s
+against 43.8 s, 2026-11-10), so step 3 was reverted again. A change to
+how wide values are lowered also times a cold build of a wide-struct
+SDK module (xo-lang/gcp aiplatform/v1) before it lands.

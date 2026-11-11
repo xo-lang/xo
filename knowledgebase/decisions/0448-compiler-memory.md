@@ -729,6 +729,27 @@ then back to 3.7 GB by insert_rc's borrows and plan while the counter stays flat
 2928 MB, so that rise is pages touched again, not new mappings. The places are good to the
 phase, not the second: the plan lap contains the borrows and uniq_var_params laps.
 
+### Stage 3: spilling the parts' texts during emit does not lower the peak (Xo Lang 1, 2026-11-10)
+
+The 2026-11-08 heap profile of aiplatform/v1's cold test build read 1.56 GB in use at the end
+of emit, all of it the parts' asm text (raw.str_join in gen_part), so the plan was to assemble
+or spill each part as it finishes. A probe (local branch, not pushed) wrote each part's text
+to the build's spill directory as gen_part finished and read the texts back after the
+workers, so no finished text was held during emit. Measured with stage2 xos, caches off:
+
+| Build | max RSS, texts held | max RSS, texts spilled | wall |
+|---|---|---|---|
+| xo self build (linux/arm64 host 1, exclusive, 4 rounds each) | 4.70 to 4.73 GB | 4.67 to 4.70 GB | equal (36.2 to 36.7 s) |
+| aiplatform/v1 test build (host 2, 2 and 1 rounds) | 4.71 to 4.79 GB | 4.80 GB | equal |
+
+Emit's mapped peak fell about 100 MB (self 5,580 to 5,654 MB against 5,511 to 5,539) and the
+build's peak, at assemble, did not move (5,705 to 5,782 against 5,747 to 5,772 MB). The peak
+is the first wave of large parts' working memory, and Linux's allocator gives no freed pages
+back (heapos.xo cache_advise is darwin only), so the texts made later reuse pages that are
+already resident. Not pursued. The paths left: the first wave's working sets (emit_mem_limit,
+the order of the largest parts) and a Linux release policy measured with `--ab` (stage 1's
+MADV_DONTNEED cost the warm coll build 3 to 4.7% of wall).
+
 ### Case (c) on Linux: the ELF half's raw tables (xo-lang-2, 2026-11-01)
 
 coll's warm and edit builds read 172 to 177 MB of max RSS on linux/arm64 against 85 MB on

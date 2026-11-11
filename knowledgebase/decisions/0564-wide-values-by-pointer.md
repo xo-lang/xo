@@ -386,6 +386,17 @@ rounds, the two stage2 compilers building the same source with
 ms (1.003): emit 11,295 to 11,579 ms (+2.5%, step 3's planning), the other
 phases equal or a little faster (insert_rc 8,951 to 8,840 ms).
 
+**Reverted again (2026-11-10, lead's go).** aiplatform/v1's cold test
+build (xo-lang/gcp, linux/arm64 host 2, a stage2 xo of each side, caches
+off, one run each) emits in 493.7 s with the reland against 43.8 s at its
+parent 751ec9e14 (CPU 2,834 against 243 s, wall 8:39 against 1:06, max
+RSS 4.89 against 4.77 GB): an 11x emit, which the self build's `--ab` did
+not show. The next reland carries a cold aiplatform/v1 emit row beside the
+self build's `--ab` and __text, and is fixed on a branch first (which
+functions of aiplatform/v1 grow, and whether it is the frame retry below
+20,000 values or a planning cost that grows with the number of wide
+results).
+
 A wide result (big_by_ref) of a direct call is written by the callee
 through an address the caller passes after the arguments, as one more
 integer word (byref.xo sret_of; not for indirect, entry or address-taken
