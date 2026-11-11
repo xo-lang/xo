@@ -308,6 +308,67 @@ pub fn parse_addr_port(s: Str) -> AddrPort ! ParseErr {
 /// Go's uint16).
 pub fn addr_port(addr: Addr, port: Int) -> AddrPort { AddrPort{addr: addr, port: port & 65535} }
 
+/// host and port as one address, `[host]:port` when host has a colon (an
+/// IPv6 literal), else `host:port` (Go's net.JoinHostPort).
+pub fn join_host_port(host: Str, port: Str) -> Str {
+  if host.contains(":") {
+    return "[${host}]:${port}"
+  }
+  "${host}:${port}"
+}
+
+/// The host (a name or an IP literal, with any `%zone`) and the port of
+/// `host:port`, `[host]:port` or `[host%zone]:port`, with Go's errors
+/// (net.SplitHostPort): neither is checked further.
+pub fn split_host_port(hostport: Str) -> (Str, Str) ! ParseErr {
+  let b = hostport.bytes()
+  let i = match hostport.rfind(":") {
+    Some(i) => i
+    None => return Err(host_port_err(hostport, "missing port in address"))
+  }
+  var j = 0
+  var k = 0
+  var host = ""
+  if b[0] == '[' {
+    let end = match hostport.find("]") {
+      Some(e) => e
+      None => return Err(host_port_err(hostport, "missing ']' in address"))
+    }
+    if end + 1 == b.len() {
+      return Err(host_port_err(hostport, "missing port in address"))
+    }
+    if end + 1 != i {
+      if b[end + 1] == ':' {
+        return Err(host_port_err(hostport, "too many colons in address"))
+      }
+      return Err(host_port_err(hostport, "missing port in address"))
+    }
+    host = hostport[1..end]
+    j = 1
+    k = end + 1
+  } else {
+    host = hostport[..i]
+    if host.contains(":") {
+      return Err(host_port_err(hostport, "too many colons in address"))
+    }
+  }
+  if hostport[j..].contains("[") {
+    return Err(host_port_err(hostport, "unexpected '[' in address"))
+  }
+  if hostport[k..].contains("]") {
+    return Err(host_port_err(hostport, "unexpected ']' in address"))
+  }
+  (host, hostport[i + 1..])
+}
+
+/// Go's AddrError text.
+fn host_port_err(addr: Str, why: Str) -> ParseErr {
+  if addr.is_empty() {
+    return ParseErr{msg: why}
+  }
+  ParseErr{msg: "address ${addr}: ${why}"}
+}
+
 /// Go's AddrPort.String: `1.2.3.4:80`, `[2001:db8::1]:443`.
 pub fn (p: AddrPort) display() -> Str {
   match p.addr.bits {

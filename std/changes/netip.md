@@ -1,5 +1,19 @@
 # std/netip changes
 
+## 2026-11-11: feature: split_host_port and join_host_port (Go's net.SplitHostPort and JoinHostPort)
+
+- Kind: feature
+- Commit: this push
+- Found by: std audit 2026-11-11 gap 19
+- Go reference: net/ipsock.go SplitHostPort and JoinHostPort (go1.26.1)
+- Test: netip corpus HOST_PORTS (420 cases) and JOINS (100) from Go, on go, arm64, llvm
+- Shipped in: not yet released
+
+split_host_port takes host names as well as IP literals (parse_addr_port
+takes only literals), with Go's AddrError texts (`address X: missing port
+in address`, `too many colons in address`, `missing ']' in address`,
+`unexpected '[' in address`, `unexpected ']' in address`).
+
 ## 2026-11-11: refactor: std/netip is one file (decisions 0588, 0597)
 
 - Kind: refactor

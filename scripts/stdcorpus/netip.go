@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -151,6 +152,7 @@ func netipCorpus() string {
 	o.WriteString("]\n")
 	netipMore(&o, r, good)
 	o.WriteString(netipTests)
+	o.WriteString(netipHostPortCorpus())
 	return o.String()
 }
 
@@ -432,3 +434,61 @@ test "addr_from_bytes is Go's AddrFromSlice" {
   expect(first_bad(bad)) == []
 }
 `
+
+// netipHostPortCorpus checks split_host_port and join_host_port against
+// Go's net.SplitHostPort and JoinHostPort.
+func netipHostPortCorpus() string {
+	r := rand.New(rand.NewSource(1919))
+	parts := []string{"", ":", "[", "]", "host", "::1", "1.2.3.4", "%lo0", "80", "example.com", "fe80::1", "a:b"}
+	var o strings.Builder
+	o.WriteString("\n/// (hostport, Go's SplitHostPort: `HOST|PORT` or `err TEXT`)\nconst HOST_PORTS: List[(Str, Str)] = [\n")
+	fixed := []string{"", ":", "host:80", "host", ":80", "[::1]:80", "[::1%lo0]:443", "::1:80", "[::1]", "[::1]80", "[::1]:", "[::1]]:80", "[[::1]:80", "[::1:80", "host:80]", "a[b:80", "[::1]::80", "[1.2.3.4]:5", "host:", "x:y:z"}
+	for _, h := range fixed {
+		netipHostPortRow(&o, h)
+	}
+	for i := 0; i < 400; i++ {
+		var b strings.Builder
+		for k, n := 0, 1+r.Intn(5); k < n; k++ {
+			b.WriteString(parts[r.Intn(len(parts))])
+		}
+		netipHostPortRow(&o, b.String())
+	}
+	o.WriteString("]\n\n/// (host, port, Go's JoinHostPort)\nconst JOINS: List[(Str, Str, Str)] = [\n")
+	for i := 0; i < 100; i++ {
+		h, p := parts[r.Intn(len(parts))]+parts[r.Intn(len(parts))], parts[r.Intn(len(parts))]
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xq(h), xq(p), xq(net.JoinHostPort(h, p)))
+	}
+	o.WriteString(`]
+
+test "split_host_port and join_host_port are Go's SplitHostPort and JoinHostPort" {
+  var bad: List[(Str, Str, Str)] = []
+  for (hp, want) in HOST_PORTS {
+    let got = match netip.split_host_port(hp) {
+      Ok((h, p)) => "${h}|${p}"
+      Err(e) => "err ${e}"
+    }
+    if got != want {
+      bad.push((hp, got, want))
+    }
+  }
+  for (h, p, want) in JOINS {
+    let got = netip.join_host_port(h, p)
+    if got != want {
+      bad.push(("${h} ${p}", got, want))
+    }
+  }
+  expect(bad[..bad.len().min(5)]) == []
+}
+`)
+	return o.String()
+}
+
+func netipHostPortRow(o *strings.Builder, hp string) {
+	w := ""
+	if h, p, err := net.SplitHostPort(hp); err != nil {
+		w = "err " + err.Error()
+	} else {
+		w = h + "|" + p
+	}
+	fmt.Fprintf(o, "  (%s, %s),\n", xq(hp), xq(w))
+}

@@ -5249,6 +5249,8 @@ fn (p: Prefix) contains(a: Addr) -> Bool
 fn (p: Prefix) masked() -> Prefix
 fn (p: Prefix) display() -> Str
 pub fn parse_addr_port(s: Str) -> AddrPort ! ParseErr   // 1.2.3.4:80, [2001:db8::1]:443 (Go's ParseAddrPort)
+pub fn split_host_port(hostport: Str) -> (Str, Str) ! ParseErr  // Go's net.SplitHostPort: a name or IP literal, any %zone kept
+pub fn join_host_port(host: Str, port: Str) -> Str   // Go's net.JoinHostPort: [host]:port when host has a colon
 pub fn addr_port(addr: Addr, port: Int) -> AddrPort      // AddrPortFrom (port as uint16)
 fn (p: AddrPort) display() -> Str             // 1.2.3.4:80, [fe80::1%eth0]:22
 fn (a: Addr) prefix(bits: Int) -> Prefix ! ParseErr     // Addr.Prefix: masked, zone dropped
