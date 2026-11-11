@@ -714,7 +714,7 @@ net.* = not planned: IP, unix datagram and raw sockets, file descriptors, socket
 # os: the Fs, Env, Proc and Stdio capabilities
 os.Mkdir = std/prelude.Fs.create_dir_all
 os.MkdirAll = std/prelude.Fs.create_dir_all
-os.MkdirTemp = gap: no Fs.create_temp_dir (Fs.create_temp makes a file)
+os.MkdirTemp = create_temp_dir
 os.CreateTemp = std/prelude.Fs.create_temp
 os.TempDir = gap: no Env.temp_dir (TMPDIR by hand)
 os.ReadDir = std/prelude.Fs.read_dir

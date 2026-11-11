@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+prefix: true true distinct: true
+dirs: true 2
+mode: 0o700 group/other: 0
+sub: true hi
+read only: true
+missing: true
+--- stderr

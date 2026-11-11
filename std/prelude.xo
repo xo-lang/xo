@@ -1512,6 +1512,13 @@ fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 /// change in place. A free function, not a method of Fs, so every type
 /// that satisfies Fs still does.
 fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
+/// Makes a new directory in dir named prefix and a random number, and
+/// returns its path, relative to the capability root as create_temp's
+/// (Go's os.MkdirTemp): on the real file system made with one mkdir that
+/// fails when the name exists (tried again with another), mode 0o700
+/// before the umask; on another Fs (a program's own, a test's MemFs, a
+/// recording) through Fs's stat and create_dir_all.
+fn create_temp_dir(fs: Fs, dir: Str, prefix: Str) -> Str ! FsErr uses fs
 /// Replaces the file at path with data so that a reader, or the file after
 /// a crash, holds the old contents or the new, never a part: written to a
 /// temporary file in path's directory, synced, given path's permission

@@ -519,6 +519,16 @@ pub fn raw_mkdir(p: Str) -> Int {
   errno_of(if l == 3 { windows.mkdir(p) } else if l == 2 { darwin.mkdir(p, 493) } else if l == 4 { freebsd.mkdir(p, 493) } else { linux.mkdir(p, 493) })
 }
 
+/// raw_mkdir with the mode bits given (before the umask); WASI and
+/// Windows have none, as raw_mkdir.
+pub fn raw_mkdir_mode(p: Str, mode: Int) -> Int {
+  if sysio.layer() == 0 {
+    return rt.fs_raw_mkdir(p)
+  }
+  let l = layer()
+  errno_of(if l == 3 { windows.mkdir(p) } else if l == 2 { darwin.mkdir(p, mode) } else if l == 4 { freebsd.mkdir(p, mode) } else { linux.mkdir(p, mode) })
+}
+
 pub fn raw_rmdir(p: Str) -> Int {
   if sysio.layer() == 0 {
     return rt.fs_raw_rmdir(p)

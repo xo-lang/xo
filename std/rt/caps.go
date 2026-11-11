@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	mrand "math/rand/v2"
 	"net"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1275,6 +1277,38 @@ func Prelude_create_dir_all_mode(tk *Task, fs Fs, dir string, mode int64) Result
 		}
 	}
 	return Ok[Unit, FsErr](Unit{})
+}
+
+// Prelude_create_temp_dir is `create_temp_dir(fs, dir, prefix)` (std.md
+// 3.1): os.MkdirTemp on the real file system (outside record and replay);
+// through Fs's stat and create_dir_all on any other, as the native
+// prelude's.
+func Prelude_create_temp_dir(tk *Task, fs Fs, dir, prefix string) Result[string, FsErr] {
+	if rf, ok := fs.(*realFs); ok && fxMode == fxOff {
+		op, e := rf.check(tk, dir, true)
+		if e != nil {
+			return Err[string](*e)
+		}
+		name, err := os.MkdirTemp(op, prefix+"*")
+		if err != nil {
+			return Err[string](mapFsErr(err, dir))
+		}
+		return Ok[string, FsErr](rf.relPath(name, path.Join(dir, filepath.Base(name))))
+	}
+	for i := 0; i < 10000; i++ {
+		p := path.Join(dir, prefix+strconv.FormatUint(uint64(mrand.Uint32()), 10))
+		st := fs.M_stat(tk, p)
+		if !st.Ok {
+			return Err[string](st.E)
+		}
+		if !st.V.Some {
+			if r := fs.M_create_dir_all(tk, p); !r.Ok {
+				return Err[string](r.E)
+			}
+			return Ok[string, FsErr](p)
+		}
+	}
+	return Err[string](fsErr(2, dir))
 }
 
 // Prelude_write_atomic is `write_atomic(fs, path, data)` (std.md 3.1): a

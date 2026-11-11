@@ -1,0 +1,28 @@
+// create_temp_dir (Go's os.MkdirTemp) on the real file system: new
+// directories under the prefix, distinct, mode 0o700 (before a umask,
+// which leaves the owner's bits), relative to the capability root, and
+// usable as a sub capability; a read-only Fs is denied.
+fn main(os: Os) ! {
+  let cwd = os.fs.cwd()
+  let top = create_temp_dir(cwd, ".", "ctd-")?
+  defer {
+    cwd.remove_all(top).ignore_err("the test's directory")
+  }
+  let a = create_temp_dir(cwd, top, "x-")?
+  let b = create_temp_dir(cwd, top, "x-")?
+  os.stdio.println("prefix: ${top.starts_with("ctd-")} ${a.starts_with(top + "/x-")} distinct: ${a != b}")
+  os.stdio.println("dirs: ${cwd.stat(a)?.map(fn(i) { i.is_dir }) ?? false} ${cwd.read_dir(top)?.len()}")
+  os.stdio.println("mode: 0o${(cwd.mode(a)? & 0o700).to_str_base(8)} group/other: ${cwd.mode(a)? & 0o077}")
+  let sub = cwd.sub(top)
+  let c = create_temp_dir(sub, ".", "s-")?
+  sub.write("${c}/f.txt", b"hi")?
+  os.stdio.println("sub: ${c.starts_with("s-")} ${cwd.read_text("${top}/${c}/f.txt")?}")
+  match create_temp_dir(cwd.read_only(), top, "r-") {
+    Ok(_) => os.stdio.println("read only: made one")
+    Err(e) => os.stdio.println("read only: ${e is FsErr.Denied(path: _)}")
+  }
+  match create_temp_dir(cwd, "${top}/missing", "m-") {
+    Ok(_) => os.stdio.println("missing: made one")
+    Err(e) => os.stdio.println("missing: ${e is FsErr.NotFound(path: _)}")
+  }
+}

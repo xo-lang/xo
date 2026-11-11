@@ -97,6 +97,26 @@ fn remove_walk(path: Str) -> Int {
 /// os.CreateTemp(op, prefix + "*"): the new empty file's base name (the
 /// prefix and a random number), "" with the status set on an error
 /// (which names the Xo path x).
+/// create_temp's directory (os.MkdirTemp): mkdir with mode 0o700 under
+/// names prefix and a random number until one is new; "" on a failure,
+/// with sysio's status set (raw_fail).
+pub fn create_temp_dir(op: Str, prefix: Str, x: Str) -> Str {
+  let dir = if op.is_empty() { "." } else { op }
+  var err = EEXIST
+  var name = ""
+  var i = 0
+  while i < 10000 && err == EEXIST {
+    name = prefix + "${rand.next_u64() & 0xFFFFFFFF}"
+    err = fsops.raw_mkdir_mode(dir + "/" + name, 0o700)
+    i += 1
+  }
+  fsops.raw_fail(err, x)
+  if err != 0 {
+    return ""
+  }
+  name
+}
+
 pub fn create_temp(op: Str, prefix: Str, x: Str) -> Str {
   let dir = if op.is_empty() { "." } else { op }
   var err = EEXIST

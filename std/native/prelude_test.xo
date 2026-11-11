@@ -4440,3 +4440,17 @@ test "Str.pad_left, pad_right and center count runes" {
   expect("".center(3, ".")) == "..."
   expect("".pad_left(0)) == ""
 }
+
+test "create_temp_dir makes new directories in a MemFs through its methods" {
+  os.fs.create_dir_all("work")?
+  let a = create_temp_dir(os.fs, "work", "t-")?
+  let b = create_temp_dir(os.fs, "work", "t-")?
+  expect(a != b) == true
+  expect(a.starts_with("work/t-")) == true
+  expect(os.fs.stat(a)?.map(fn(i) { i.is_dir })) == Some(true)
+  expect(os.fs.read_dir("work")?.len()) == 2
+  let c = create_temp_dir(os.fs.sub("work"), ".", "u-")?
+  expect(c.starts_with("u-")) == true
+  expect(os.fs.exists("work/${c}")?) == true
+  expect(create_temp_dir(os.fs.read_only(), "work", "r-").is_err()) == true
+}

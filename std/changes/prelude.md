@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-11: feature: create_temp_dir(fs, dir, prefix) (Go's os.MkdirTemp)
+
+- Kind: feature
+- Commit: this push
+- Found by: std audit 2026-11-11 gap 21
+- Go reference: os.MkdirTemp (go1.26.1)
+- Test: golden create_temp_dir (real file system: arm64, llvm, Go parity); std/native/prelude_test.xo MemFs test
+- Shipped in: not yet released
+
+A free function, as write_atomic, so the Fs interface a program's own
+type implements is unchanged. On the real file system it is one mkdir
+with mode 0o700 that fails when the name exists, tried again under
+another random name (native fspath.create_temp_dir, Go os.MkdirTemp); on
+any other Fs (a program's own, a test's MemFs, a recording) it goes
+through stat and create_dir_all, which another writer of the same Fs
+could race. The `create_temp`, `remove`, `create_dir_all` sequence that
+programs used for a temporary directory is no longer needed.
+
 ## 2026-11-11: feature: Bytes.trim_start_chars, trim_end_chars and List.is_sorted
 
 - Kind: feature

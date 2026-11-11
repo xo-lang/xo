@@ -814,6 +814,9 @@ fn walk_dir[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses 
 fn (f: Fs) write(path: Str, data: Bytes) -> () ! FsErr  uses fs.write  // create or truncate
 fn (f: Fs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr uses fs.write
     // returns the new file's path, relative to the capability root
+fn create_temp_dir(fs: Fs, dir: Str, prefix: Str) -> Str ! FsErr uses fs
+    // a new directory, prefix + a random number (os.MkdirTemp), path as create_temp's;
+    // real file system: one exclusive mkdir, mode 0o700; any other Fs: stat + create_dir_all
 fn (f: Fs) rename(from: Str, to: Str) -> () ! FsErr     uses fs.write  // atomic, replaces a file
 fn (f: Fs) remove(path: Str) -> () ! FsErr              uses fs.write  // file or empty dir
 fn (f: Fs) remove_all(path: Str) -> () ! FsErr          uses fs.write
@@ -5711,7 +5714,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-573 declarations.
+574 declarations.
 
 ### Range
 
@@ -6632,6 +6635,7 @@ fn walk_dir_entries[fx: Effects](fs: Fs, dir: Str, visit: fn(DirEntry) -> WalkSt
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
+fn create_temp_dir(fs: Fs, dir: Str, prefix: Str) -> Str ! FsErr uses fs
 fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs
 fn copy_stream(dst: Stream, src: Stream) -> Int ! CopyErr[NetErr, NetErr] uses net
 ```

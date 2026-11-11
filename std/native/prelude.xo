@@ -3664,6 +3664,33 @@ fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read {
   l[0]
 }
 
+/// create_temp_dir (std.md 3.1, Go's os.MkdirTemp): one exclusive mkdir
+/// (fspath.create_temp_dir) on the real file system; through Fs's methods
+/// for a user value converted to Fs and every Fs in the test world.
+fn create_temp_dir(fs: Fs, dir: Str, prefix: Str) -> Str ! FsErr uses fs {
+  if userfs.user(fs) is Some(_) || testworld.on() {
+    for _ in 0..10000 {
+      let p = fs_join(dir, prefix + "${rand.next_u64() & 0xFFFFFFFF}")
+      if fs.stat(p)? is None {
+        fs.create_dir_all(p)?
+        return p
+      }
+    }
+    return Err(FsErr.Exists(path: dir))
+  }
+  let op = fs_check(fs, dir, true)?
+  let name = fspath.create_temp_dir(op, prefix, dir)
+  if name == "" {
+    return Err(fs_err(sysio.status(), dir))
+  }
+  // os.MkdirTemp joins without cleaning
+  var full = op + "/" + name
+  if op.ends_with("/") {
+    full = op + name
+  }
+  fs_rel(fs, full, fs_join(dir, name))
+}
+
 /// write_atomic (std.md 3.1): data written to a temporary file beside
 /// path, synced, given path's permission bits (0o644 for a new file),
 /// and renamed over path, then the directory synced; through Fs's
