@@ -127,7 +127,9 @@ fn play_check(os: Os, std_dir: Str, wd: Str, dir: Str, native: Bool) -> (check.C
     if let Some((h, _)) = check.decode_std_header(data) {
       if let Some(e) = check.decode_std_record(data, h.fp) {
         c.std_export_on = true
-        c.std_export_in = data
+        // not kept in std_export_in: only check_dirs_bound's restart and
+        // XO_STD_EXPORT=verify read it again, and on wasm the 1.2 MB file
+        // would stay live through the whole check (decision 0583 (e))
         c.std_header_fp = h.fp
         c.trees_lazy = true
         c.join_in_build = true

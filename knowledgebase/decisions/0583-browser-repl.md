@@ -301,3 +301,16 @@ it 108 to 105 MB; values unchanged. Next: the growth after entry 4 (the heap's e
 blocks stay near 40 MB), and the record's load, which holds std's objects three times (decoded,
 relocated, installed).
 
+
+## Memory below 50 MB: (f) the copy that grows, and the record's bytes (2026-11-11)
+
+A probe of the live blocks at the session's peak by allocation site (1 in 61 sampled, big blocks
+exact) showed two whole copies of the checker's object list (3.9 MB each: `new_module` and the lazy
+check copy `c.objs`, shared with the base checker, and push to the copy at once, so the copy was made
+full and grown again while both lived) and the record file itself (1.2 MB) live through every check.
+A copy-on-write list copy of 1 MiB or more now has an eighth more room, and the play path no longer
+keeps the record's bytes in `std_export_in` (only `check_dirs_bound`'s restart and
+`XO_STD_EXPORT=verify` read them again). The session with std's record: 53 to 49 MB; without it 105
+to 101 MB; values unchanged. Below 50 MB, as the owner asked. Left: the record's decode still holds
+std's objects twice while it installs them (about 7 MB), and on wasm a slice of the record's bytes is
+a copy (1.6 MB).
