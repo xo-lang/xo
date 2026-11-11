@@ -72,6 +72,10 @@ JSON-RPC 2.0 messages and a connection, transport-neutral:
 - `Conn`: one reader task, requests in flight by id, cancellation, a handler registry, and notifications both
   ways. Effects are only what the transport uses.
 - The dogfood step: `xo mcp` and `xo lsp` move onto it, and compiler/cli/servers' copies go.
+  Done 2026-11-11: `xo mcp` answers through `jsonrpc.answer`; `xo lsp` (and DAP's framing) reads with
+  `HeaderReader` and writes with `encode`. The LSP session stays one serial event loop, because its requests share
+  the session's state, so it uses the messages and framing and not `Conn`. The tools' and features' results are
+  still built on the servers' `J` tree and converted at the envelope.
 - Oracle: golang.org/x/tools/internal/jsonrpc2 is internal, so the oracle is the Go MCP SDK's jsonrpc package
   (modelcontextprotocol/go-sdk, which uses it) driven over pipes. It prints each wire line for a fixed case list
   (batches, notifications, errors, unknown method, parse error, id types). The LSP framing replays
