@@ -188,6 +188,7 @@ var codegenFields = map[string]inputClass{
 	"op_verify":           {"none", ""},                    // XO_OP_VERIFY: checks, never changes, the emitter's output
 	"field_view":          {"keyed", "${if m.field_view"},  // " fview=1" in the fn and part keys (XO_FIELD_VIEW, decision 0564)
 	"weak_shared":         {"keyed", "${if m.weak_shared"}, // " weak=1" in the fn and part keys (decision 0388 stage 4)
+	"weak_all":            {"keyed", "${if m.weak_all"},    // " weakall=1" in the fn and part keys: std's test variant defines every function and export weak (decision 0596)
 	"std_obj":             {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_STD_OBJ), whose " weak=1" keys the parts it leaves the program's functions out of
 	"sepcomp_program":     {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_SEPCOMP): changes the entry file, which no cache holds, and the parts as weak_shared and std_store key them
 	"std_store":           {"keyed", "${if m.std_store"},   // " store=1" in the part key: a part's per-function unsafe tables
