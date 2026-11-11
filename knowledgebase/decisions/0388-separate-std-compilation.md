@@ -887,3 +887,18 @@ load), no warning over 9 warm checks. Diagnostics and exit status are identical
 with and without it over 62 errorcheck programs, the HTTP service and
 160 goldens. cmd/xo TestCheckStdRecord: a second check loads the record,
 a std edit fails its header and the next check sees the edit.
+
+## Constant numbers (fix, 2026-11-11, Xo Lang 2)
+
+A constant of a collection type, or one whose initializer calls a function (decision 0332), is read
+from the process's one constants table by a number the SSA builder gives in order of first use
+(ssa show.xo const_value). std's store and a separately compiled program's side both numbered from 0,
+and std's code (and its bodies inlined from its facts) reads std's constants by the store's numbers, so
+a program's constants took std's slots. From v0.34.0 (separate compilation on by default) to v0.48.0: a
+program with a few constants that also called std code reading its own (mime.detect_content_type) faulted
+(SIGTRAP or SIGSEGV), or read a wrong value without a fault when the types matched (a `--std-module=mime`
+test returned other inputs' strings). The program's side now numbers from ssa.CONST_PROGRAM_BASE (2048;
+std's store has about 300, and the driver fails a std object of 2048 or more), leaving a program 2048
+constants of collection types. Native backends only (LLVM, wasm and Go builds compile std with the program).
+internal/arm64 TestSepcompConstIds; gotchas/sepcomp-const-ids-shared-with-std.md.
+

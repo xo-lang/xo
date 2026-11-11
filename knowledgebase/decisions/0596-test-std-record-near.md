@@ -73,7 +73,8 @@ Change (branch l2-0596):
    prelude's (`use std/task`: with it in the set every runtime module's test lost the prelude).
    All std modules with tests, Mac: 62 of 63 pass (main: 60; mime, multipart, url failed with
    XO0601); mime now compiles and fails one test, detect_content_type, only when separately
-   compiled (XO_SEPCOMP=0 and LLVM pass): a computed const (SIGS) of a from-source module, open.
+   compiled (XO_SEPCOMP=0 and LLVM pass): the program's constant numbers shared std's (decision 0388
+   "Constant numbers", fixed the same day); with that fix all 63 pass.
    TestSepcompStdModuleEdits runs `--std-module=multipart` after building the variants.
 Every std module with tests (62) passes `xo test --std-module` with the change on the Mac.
 Step 3 of the prototype (the from-source set limited to reached importers) is not needed: with
