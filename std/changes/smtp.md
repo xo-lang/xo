@@ -1,5 +1,17 @@
 # std/smtp changes
 
+## 2026-11-11: fix: DATA dot-encodes as Go's DotWriter (std/textproto.dot_encode)
+
+- Kind: fix
+- Commit: this push
+- Found by: decision 0598 stage 2
+- Go reference: net/textproto (go1.26.1)
+- Test: `xo test --std-module=textproto` (dot_encode against Go's DotWriter in the textproto corpus); the smtp corpus on go, arm64, llvm
+- Timing: none (header and DATA handling, not a hot path)
+- Shipped in: not yet released
+
+The message DATA sends is std/textproto's dot_encode, where smtp had its own copy. A message ending in a lone `\r` now ends `\r\n.\r\n` as Go's does; the copy wrote `\r\r\n.\r\n`. Other messages are unchanged.
+
 ## 2026-11-10: refactor: one file with its bodies (decision 0588 stage 2)
 
 - Kind: refactor

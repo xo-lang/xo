@@ -13,6 +13,7 @@
 use std/base64
 use std/crypto
 use std/netip
+use std/textproto
 use std/tls
 
 /// A failed send: the server's reply code and text (`550 5.1.1 no such
@@ -329,32 +330,6 @@ fn (var c: Client) auth(a: Auth) -> () ! SmtpErr uses net.dial {
   Ok(())
 }
 
-/// The message as DATA sends it (textproto.DotWriter): CRLF line
-/// endings, a line starting with "." doubled, and "\r\n.\r\n" at the end.
-fn dot_stuff(msg: Bytes) -> Bytes {
-  var b = BytesBuilder.with_capacity(msg.len() + 16)
-  var at_start = true
-  var prev_cr = false
-  for x in msg {
-    if at_start && x == '.' {
-      b.write_byte('.')
-    }
-    if x == '\n' && !prev_cr {
-      b.write_byte('\r')
-    }
-    b.write_byte(x)
-    prev_cr = x == '\r'
-    at_start = x == '\n'
-  }
-  // dotWriter.Close: a line in progress, or an empty message (its begin
-  // state), ends with CRLF before the dot
-  if !at_start || msg.is_empty() {
-    b.write(b"\r\n")
-  }
-  b.write(b".\r\n")
-  b.freeze()
-}
-
 fn run(var c: Client, from: Str, to: List[Str], msg: Bytes, auth: Auth, security: Security, rs: tls.Roots?, hello: Str) -> () ! SmtpErr uses net.dial {
   let _ = c.reply(220)?
   c.hello(hello)?
@@ -391,7 +366,7 @@ fn run(var c: Client, from: Str, to: List[Str], msg: Bytes, auth: Auth, security
     let _ = c.cmd(25, "RCPT TO:<${r}>")?
   }
   let _ = c.cmd(354, "DATA")?
-  c.link.write(dot_stuff(msg)).map_err(net_fail)?
+  c.link.write(textproto.dot_encode(msg)).map_err(net_fail)?
   let _ = c.reply(250)?
   let _ = c.cmd(221, "QUIT")?
   Ok(())

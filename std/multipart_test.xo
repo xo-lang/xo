@@ -1515,3 +1515,12 @@ test "PartHead.header_values gives every value in order" {
   expect(r.read().ok() ?? Some(b"err")) == None
   expect((r.next_part().ok() ?? None).is_none()) == true
 }
+
+test "a bad value byte's error shows the key canonical, as Go's" {
+  // Go's readMIMEHeader canonicalizes the key in place before it checks
+  // the value (go1.26.1 mime/multipart gives this text)
+  match parse("--b\r\ncontent-type: a\u{1}b\r\n\r\nhi\r\n--b--\r\n".bytes(), "b") {
+    Ok(_) => fault("no error")
+    Err(e) => expect(e.msg) == "malformed MIME header line: Content-Type: a\u{1}b"
+  }
+}

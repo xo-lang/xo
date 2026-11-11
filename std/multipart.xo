@@ -13,6 +13,7 @@
 // kept.
 
 use std/mime
+use std/textproto
 use std/url
 
 /// One part. `name` is the form field (Content-Disposition `form-data`'s
@@ -641,7 +642,9 @@ fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
     let v = kv[c + 1..]
     for b in v {
       if !valid_value_byte(b) {
-        return Err("malformed MIME header line: ${text_of(kv)}")
+        // Go canonicalizes the key in place first, so its text shows
+        // the key canonical
+        return Err("malformed MIME header line: ${key}:${text_of(v)}")
       }
     }
     max_headers -= 1
@@ -965,7 +968,7 @@ pub struct PartHead {
 /// Every value of the part's header name, in order (MIMEHeader's
 /// values); [] when it has none.
 pub fn (h: PartHead) header_values(name: Str) -> List[Str] {
-  let k = canonical_key(name.bytes()) ?? name
+  let k = textproto.canonical_key(name)
   var vs: List[Str] = []
   var i = 0
   while i + 1 < h.fields.len() {

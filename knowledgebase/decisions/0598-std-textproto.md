@@ -99,3 +99,11 @@ memcached text client, a mail filter) have none of it.
 - 2026-11-11, stage 1: std/textproto.xo with Go's reader, header and
   writer tests (std/textproto_test.xo) and the textproto corpus against
   Go on go, arm64 and llvm (spec/std.md 77, std/changes/textproto.md).
+- 2026-11-11, stage 2: std/mail reads its header lines with the Reader
+  (its header rules are net/mail's own readHeader, kept); std/smtp's DATA
+  is dot_encode (a lone `\r` at the end now matches Go); std/multipart's
+  header_values uses canonical_key. multipart's streaming header reader
+  with Go's internal limits (maxMemory, maxHeaders) and smtp's socket reply
+  loop stay theirs, as the exported API has neither. std/textproto is in
+  std/rt_hosted.txt, since multipart's generated Go calls it.
+

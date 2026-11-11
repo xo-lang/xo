@@ -200,11 +200,11 @@ func (v_e Netip_ParseErr) M_display(tk *Task) string {
 }
 
 func Netip_parse_addr(tk *Task, v_s string) Result[Netip_Addr, Netip_ParseErr] {
-	x_it1322 := Str_bytes(tk, v_s)
-	for x_bi1324 := 0; x_bi1324 < len(x_it1322); x_bi1324++ {
-		x_el1325 := x_it1322[x_bi1324]
-		_ = x_el1325
-		var v_c uint8 = x_el1325
+	x_it1320 := Str_bytes(tk, v_s)
+	for x_bi1322 := 0; x_bi1322 < len(x_it1320); x_bi1322++ {
+		x_el1323 := x_it1320[x_bi1322]
+		_ = x_el1323
+		var v_c uint8 = x_el1323
 		_ = v_c
 		{
 			if v_c == uint8(46) {
@@ -213,11 +213,11 @@ func Netip_parse_addr(tk *Task, v_s string) Result[Netip_Addr, Netip_ParseErr] {
 				if v_v >= int64(0) {
 					return Ok[Netip_Addr, Netip_ParseErr](Netip_from4(tk, v_v))
 				}
-				x_r1326 := Netip_ipv4_fields(tk, v_s, int64(0), Str_len(tk, v_s))
-				if !x_r1326.Ok {
-					return ErrTr[Netip_Addr](x_r1326.E, Frame1(x_r1326.Tr, "netip.parse_addr", "std/netip.xo:55", "s", v_s))
+				x_r1324 := Netip_ipv4_fields(tk, v_s, int64(0), Str_len(tk, v_s))
+				if !x_r1324.Ok {
+					return ErrTr[Netip_Addr](x_r1324.E, Frame1(x_r1324.Tr, "netip.parse_addr", "std/netip.xo:55", "s", v_s))
 				}
-				return Ok[Netip_Addr, Netip_ParseErr](Netip_from4(tk, x_r1326.V))
+				return Ok[Netip_Addr, Netip_ParseErr](Netip_from4(tk, x_r1324.V))
 			}
 			if v_c == uint8(58) {
 				return Netip_parse_ipv6(tk, v_s)
@@ -233,42 +233,42 @@ func Netip_parse_addr(tk *Task, v_s string) Result[Netip_Addr, Netip_ParseErr] {
 func Netip_lookup(tk *Task, v_n Net, v_host string) Result[List[Netip_Addr], NetErr] {
 	var v_out List[Netip_Addr] = List[Netip_Addr]{}
 	_ = v_out
-	x_a1328 := v_host
-	x_r1327 := func(v Result[List[string], NetErr]) Result[List[string], NetErr] {
+	x_a1326 := v_host
+	x_r1325 := func(v Result[List[string], NetErr]) Result[List[string], NetErr] {
 		if v.Ok {
 			v.V.XoMark()
 		}
 		return v
-	}(v_n.M_lookup_host(tk, x_a1328))
-	if !x_r1327.Ok {
-		return ErrTr[List[Netip_Addr]](x_r1327.E, Frame1(x_r1327.Tr, "netip.lookup", "std/netip.xo:71", "host", v_host))
+	}(v_n.M_lookup_host(tk, x_a1326))
+	if !x_r1325.Ok {
+		return ErrTr[List[Netip_Addr]](x_r1325.E, Frame1(x_r1325.Tr, "netip.lookup", "std/netip.xo:71", "host", v_host))
 	}
-	x_it1329 := x_r1327.V
-	for _, x_e1331 := range List_Items(x_it1329) {
-		x_el1332 := x_e1331
-		_ = x_el1332
-		var v_t string = x_el1332
+	x_it1327 := x_r1325.V
+	for _, x_e1329 := range List_Items(x_it1327) {
+		x_el1330 := x_e1329
+		_ = x_el1330
+		var v_t string = x_el1330
 		_ = v_t
 		{
-			x_m1333 := Netip_parse_addr(tk, v_t)
-			_ = x_m1333
-		x_M1334:
+			x_m1331 := Netip_parse_addr(tk, v_t)
+			_ = x_m1331
+		x_M1332:
 			switch {
 			default:
-				if x_m1333.Ok {
-					var v_a Netip_Addr = x_m1333.V
+				if x_m1331.Ok {
+					var v_a Netip_Addr = x_m1331.V
 					_ = v_a
-					x_pv1335 := v_a
+					x_pv1333 := v_a
 					if List_CanPush(v_out) {
-						v_out = List_PushFast(v_out, x_pv1335)
+						v_out = List_PushFast(v_out, x_pv1333)
 					} else {
-						v_out = List_PushSlow(v_out, x_pv1335)
+						v_out = List_PushSlow(v_out, x_pv1333)
 					}
 					_ = Unit{}
-					break x_M1334
+					break x_M1332
 				}
-				if !x_m1333.Ok {
-					var v_e Netip_ParseErr = x_m1333.E
+				if !x_m1331.Ok {
+					var v_e Netip_ParseErr = x_m1331.E
 					_ = v_e
 					return Err[List[Netip_Addr]](NetErr{Tag: 4, P: NetErr_Io{F_msg: ("lookup " + v_host + ": " + v_e.F_msg)}})
 				}
@@ -295,26 +295,26 @@ func Netip_parse_prefix(tk *Task, v_s string) Result[Netip_Prefix, Netip_ParseEr
 	if v_i < int64(0) {
 		return Err[Netip_Prefix](Netip_prefix_err(tk, v_s, "no '/'"))
 	}
-	var x_v1337 Netip_Addr
-	x_m1338 := Netip_parse_addr(tk, StrSlice(v_s, int64(0), v_i, true, true, "std/netip.xo:90:29"))
-	_ = x_m1338
-x_M1339:
+	var x_v1335 Netip_Addr
+	x_m1336 := Netip_parse_addr(tk, StrSlice(v_s, int64(0), v_i, true, true, "std/netip.xo:90:29"))
+	_ = x_m1336
+x_M1337:
 	switch {
 	default:
-		if x_m1338.Ok {
-			var v_a Netip_Addr = x_m1338.V
+		if x_m1336.Ok {
+			var v_a Netip_Addr = x_m1336.V
 			_ = v_a
-			x_v1337 = v_a
-			break x_M1339
+			x_v1335 = v_a
+			break x_M1337
 		}
-		if !x_m1338.Ok {
-			var v_e Netip_ParseErr = x_m1338.E
+		if !x_m1336.Ok {
+			var v_e Netip_ParseErr = x_m1336.E
 			_ = v_e
 			return Err[Netip_Prefix](Netip_prefix_err(tk, v_s, v_e.F_msg))
 		}
 		panic(Unreachable("std/netip.xo:90:12"))
 	}
-	var v_ip Netip_Addr = x_v1337
+	var v_ip Netip_Addr = x_v1335
 	_ = v_ip
 	if (v_ip.F_bits == int64(128)) && !(Str_is_empty(tk, v_ip.F_zone)) {
 		return Err[Netip_Prefix](Netip_prefix_err(tk, v_s, "IPv6 zones cannot be present in a prefix"))
@@ -326,32 +326,32 @@ x_M1339:
 	if (Bytes_len(tk, v_bb) > int64(1)) && ((BytesAt(v_bb, int64(0), "std/netip.xo:99:23") < uint8(49)) || (BytesAt(v_bb, int64(0), "std/netip.xo:99:37") > uint8(57))) {
 		return Err[Netip_Prefix](Netip_prefix_err(tk, v_s, ("bad bits after slash: " + Str_quote(tk, v_bits_str))))
 	}
-	var x_v1340 int64
-	x_m1341 := Int_parse(tk, v_bits_str)
-	_ = x_m1341
-x_M1342:
+	var x_v1338 int64
+	x_m1339 := Int_parse(tk, v_bits_str)
+	_ = x_m1339
+x_M1340:
 	switch {
 	default:
-		if x_m1341.Some {
-			var v_n int64 = x_m1341.V
+		if x_m1339.Some {
+			var v_n int64 = x_m1339.V
 			_ = v_n
-			x_v1340 = v_n
-			break x_M1342
+			x_v1338 = v_n
+			break x_M1340
 		}
-		if !x_m1341.Some {
+		if !x_m1339.Some {
 			return Err[Netip_Prefix](Netip_prefix_err(tk, v_s, ("bad bits after slash: " + Str_quote(tk, v_bits_str))))
 		}
 		panic(Unreachable("std/netip.xo:102:11"))
 	}
-	var v_n_1 int64 = x_v1340
+	var v_n_1 int64 = x_v1338
 	_ = v_n_1
-	var x_v1343 int64
+	var x_v1341 int64
 	if v_ip.F_bits == int64(128) {
-		x_v1343 = int64(128)
+		x_v1341 = int64(128)
 	} else {
-		x_v1343 = int64(32)
+		x_v1341 = int64(32)
 	}
-	var v_max int64 = x_v1343
+	var v_max int64 = x_v1341
 	_ = v_max
 	if (v_n_1 < int64(0)) || (v_n_1 > v_max) {
 		return Err[Netip_Prefix](Netip_prefix_err(tk, v_s, "prefix length out of range"))
@@ -483,13 +483,13 @@ func (v_a Netip_Addr) M_display(tk *Task) string {
 		return Netip_string4(tk, Netip_v4_of(tk, v_a))
 	}
 	if v_a.M_is_4in6(tk) {
-		var x_v1344 string
+		var x_v1342 string
 		if Str_is_empty(tk, v_a.F_zone) {
-			x_v1344 = ""
+			x_v1342 = ""
 		} else {
-			x_v1344 = ("%" + v_a.F_zone)
+			x_v1342 = ("%" + v_a.F_zone)
 		}
-		var v_z string = x_v1344
+		var v_z string = x_v1342
 		_ = v_z
 		return ("::ffff:" + Netip_string4(tk, Netip_v4_of(tk, v_a)) + v_z)
 	}
@@ -500,13 +500,13 @@ func (v_p Netip_Prefix) M_contains(tk *Task, v_a Netip_Addr) bool {
 	if (((v_p.F_addr.F_bits == int64(0)) || !(Str_is_empty(tk, v_a.F_zone))) || (v_a.F_bits == int64(0))) || (v_p.F_addr.F_bits != v_a.F_bits) {
 		return false
 	}
-	var x_v1345 int64
+	var x_v1343 int64
 	if v_a.F_bits == int64(32) {
-		x_v1345 = AddIUp(v_p.F_len, int64(96), "std/netip.xo:237:29")
+		x_v1343 = AddIUp(v_p.F_len, int64(96), "std/netip.xo:237:29")
 	} else {
-		x_v1345 = v_p.F_len
+		x_v1343 = v_p.F_len
 	}
-	var v_k int64 = x_v1345
+	var v_k int64 = x_v1343
 	_ = v_k
 	var v_m1 int64 = Netip_bits_mask(tk, v_k)
 	_ = v_m1
@@ -519,13 +519,13 @@ func (v_p Netip_Prefix) M_masked(tk *Task) Netip_Prefix {
 	if v_p.F_addr.F_bits == int64(0) {
 		return v_p
 	}
-	var x_v1346 int64
+	var x_v1344 int64
 	if v_p.F_addr.F_bits == int64(32) {
-		x_v1346 = AddIUp(v_p.F_len, int64(96), "std/netip.xo:247:34")
+		x_v1344 = AddIUp(v_p.F_len, int64(96), "std/netip.xo:247:34")
 	} else {
-		x_v1346 = v_p.F_len
+		x_v1344 = v_p.F_len
 	}
-	var v_k int64 = x_v1346
+	var v_k int64 = x_v1344
 	_ = v_k
 	return Netip_Prefix{F_addr: Netip_mk(tk, v_p.F_addr.F_bits, (Netip_hi_of(tk, v_p.F_addr) & Netip_bits_mask(tk, v_k)), (Netip_lo_of(tk, v_p.F_addr) & Netip_bits_mask(tk, SubIDown(v_k, int64(64), "std/netip.xo:248:88"))), ""), F_len: v_p.F_len}
 }
@@ -576,11 +576,11 @@ func Netip_parse_addr_port(tk *Task, v_s string) Result[Netip_AddrPort, Netip_Pa
 	}
 	var v_n int64 = int64(0)
 	_ = v_n
-	x_it1348 := Str_bytes(tk, v_port)
-	for x_bi1350 := 0; x_bi1350 < len(x_it1348); x_bi1350++ {
-		x_el1351 := x_it1348[x_bi1350]
-		_ = x_el1351
-		var v_c uint8 = x_el1351
+	x_it1346 := Str_bytes(tk, v_port)
+	for x_bi1348 := 0; x_bi1348 < len(x_it1346); x_bi1348++ {
+		x_el1349 := x_it1346[x_bi1348]
+		_ = x_el1349
+		var v_c uint8 = x_el1349
 		_ = v_c
 		{
 			if (v_c < uint8(48)) || (v_c > uint8(57)) {
@@ -592,11 +592,11 @@ func Netip_parse_addr_port(tk *Task, v_s string) Result[Netip_AddrPort, Netip_Pa
 			}
 		}
 	}
-	x_r1352 := Netip_parse_addr(tk, v_ip)
-	if !x_r1352.Ok {
-		return ErrTr[Netip_AddrPort](x_r1352.E, Frame1(x_r1352.Tr, "netip.parse_addr_port", "std/netip.xo:297", "s", v_s))
+	x_r1350 := Netip_parse_addr(tk, v_ip)
+	if !x_r1350.Ok {
+		return ErrTr[Netip_AddrPort](x_r1350.E, Frame1(x_r1350.Tr, "netip.parse_addr_port", "std/netip.xo:297", "s", v_s))
 	}
-	var v_a Netip_Addr = x_r1352.V
+	var v_a Netip_Addr = x_r1350.V
 	_ = v_a
 	if v_v6 && (v_a.F_bits == int64(32)) {
 		return Err[Netip_AddrPort](Netip_ap_err(tk, ("invalid ip:port " + Str_quote(tk, v_s) + ", square brackets can only be used with IPv6 addresses")))
@@ -612,14 +612,14 @@ func Netip_addr_port(tk *Task, v_addr Netip_Addr, v_port int64) Netip_AddrPort {
 }
 
 func (v_p Netip_AddrPort) M_display(tk *Task) string {
-	x_m1353 := v_p.F_addr.F_bits
-	_ = x_m1353
+	x_m1351 := v_p.F_addr.F_bits
+	_ = x_m1351
 	switch {
 	default:
-		if x_m1353 == int64(0) {
+		if x_m1351 == int64(0) {
 			return "invalid AddrPort"
 		}
-		if x_m1353 == int64(32) {
+		if x_m1351 == int64(32) {
 			return (v_p.F_addr.M_display(tk) + ":" + IntStr(v_p.F_port))
 		}
 		{
@@ -641,13 +641,13 @@ func (v_a Netip_Addr) M_prefix(tk *Task, v_bits int64) Result[Netip_Prefix, Neti
 	if (v_a.F_bits == int64(128)) && (v_bits > int64(128)) {
 		return Err[Netip_Prefix](Netip_ap_err(tk, ("prefix length " + IntStr(v_bits) + " too large for IPv6")))
 	}
-	var x_v1355 int64
+	var x_v1353 int64
 	if v_a.F_bits == int64(32) {
-		x_v1355 = AddIUp(v_bits, int64(96), "std/netip.xo:335:29")
+		x_v1353 = AddIUp(v_bits, int64(96), "std/netip.xo:335:29")
 	} else {
-		x_v1355 = v_bits
+		x_v1353 = v_bits
 	}
-	var v_k int64 = x_v1355
+	var v_k int64 = x_v1353
 	_ = v_k
 	return Ok[Netip_Prefix, Netip_ParseErr](Netip_Prefix{F_addr: Netip_mk(tk, v_a.F_bits, (Netip_hi_of(tk, v_a) & Netip_bits_mask(tk, v_k)), (Netip_lo_of(tk, v_a) & Netip_bits_mask(tk, (v_k-int64(64)))), ""), F_len: v_bits})
 }
@@ -661,8 +661,8 @@ func (v_a Netip_Addr) M_next(tk *Task) Option[Netip_Addr] {
 	var v_lo int64 = Int_wrapping_add(tk, Netip_lo_of(tk, v_a), int64(1))
 	_ = v_lo
 	if v_lo == int64(0) {
-		x_a1356 := int64(1)
-		v_hi = Int_wrapping_add(tk, v_hi, x_a1356)
+		x_a1354 := int64(1)
+		v_hi = Int_wrapping_add(tk, v_hi, x_a1354)
 	}
 	if v_a.F_bits == int64(32) {
 		if (v_lo & int64(4294967295)) == int64(0) {
@@ -694,13 +694,13 @@ func (v_a Netip_Addr) M_prev(tk *Task) Option[Netip_Addr] {
 		}
 	}
 	if v_lo0 == int64(0) {
-		x_a1357 := int64(1)
-		v_hi = Int_wrapping_sub(tk, v_hi, x_a1357)
+		x_a1355 := int64(1)
+		v_hi = Int_wrapping_sub(tk, v_hi, x_a1355)
 	}
-	x_a1359 := v_a.F_bits
-	x_a1360 := v_hi
-	x_a1358 := int64(1)
-	return Some[Netip_Addr](Netip_mk(tk, x_a1359, x_a1360, Int_wrapping_sub(tk, v_lo0, x_a1358), v_a.F_zone))
+	x_a1357 := v_a.F_bits
+	x_a1358 := v_hi
+	x_a1356 := int64(1)
+	return Some[Netip_Addr](Netip_mk(tk, x_a1357, x_a1358, Int_wrapping_sub(tk, v_lo0, x_a1356), v_a.F_zone))
 }
 
 func (v_a Netip_Addr) M_with_zone(tk *Task, v_zone string) Netip_Addr {
@@ -711,13 +711,13 @@ func (v_a Netip_Addr) M_with_zone(tk *Task, v_zone string) Netip_Addr {
 }
 
 func Netip_prefix_from(tk *Task, v_addr Netip_Addr, v_bits int64) Option[Netip_Prefix] {
-	var x_v1361 int64
+	var x_v1359 int64
 	if v_addr.F_bits == int64(128) {
-		x_v1361 = int64(128)
+		x_v1359 = int64(128)
 	} else {
-		x_v1361 = int64(32)
+		x_v1359 = int64(32)
 	}
-	var v_max int64 = x_v1361
+	var v_max int64 = x_v1359
 	_ = v_max
 	if ((v_addr.F_bits == int64(0)) || (v_bits < int64(0))) || (v_bits > v_max) {
 		return None[Netip_Prefix]()
@@ -739,28 +739,28 @@ func (v_p Netip_Prefix) M_overlaps(tk *Task, v_o Netip_Prefix) bool {
 	if v_p.F_addr.F_bits != v_o.F_addr.F_bits {
 		return false
 	}
-	var x_v1362 int64
+	var x_v1360 int64
 	if v_p.F_len < v_o.F_len {
-		x_v1362 = v_p.F_len
+		x_v1360 = v_p.F_len
 	} else {
-		x_v1362 = v_o.F_len
+		x_v1360 = v_o.F_len
 	}
-	var v_min int64 = x_v1362
+	var v_min int64 = x_v1360
 	_ = v_min
 	if v_min == int64(0) {
 		return true
 	}
-	x_a1363 := v_min
-	x_a1365 := v_p.F_addr.M_prefix(tk, x_a1363)
-	x_a1364 := v_min
-	x_m1366 := Tuple2[Result[Netip_Prefix, Netip_ParseErr], Result[Netip_Prefix, Netip_ParseErr]]{F0: x_a1365, F1: v_o.F_addr.M_prefix(tk, x_a1364)}
-	_ = x_m1366
+	x_a1361 := v_min
+	x_a1363 := v_p.F_addr.M_prefix(tk, x_a1361)
+	x_a1362 := v_min
+	x_m1364 := Tuple2[Result[Netip_Prefix, Netip_ParseErr], Result[Netip_Prefix, Netip_ParseErr]]{F0: x_a1363, F1: v_o.F_addr.M_prefix(tk, x_a1362)}
+	_ = x_m1364
 	switch {
 	default:
-		if x_m1366.F0.Ok && x_m1366.F1.Ok {
-			var v_a Netip_Prefix = x_m1366.F0.V
+		if x_m1364.F0.Ok && x_m1364.F1.Ok {
+			var v_a Netip_Prefix = x_m1364.F0.V
 			_ = v_a
-			var v_b Netip_Prefix = x_m1366.F1.V
+			var v_b Netip_Prefix = x_m1364.F1.V
 			_ = v_b
 			return Eq(v_a.F_addr, v_b.F_addr)
 		}
@@ -818,8 +818,8 @@ func Netip_shl(tk *Task, v_x int64, v_n int64) int64 {
 	if v_n >= int64(64) {
 		return int64(0)
 	}
-	x_a1368 := v_n
-	return Int_wrapping_shl(tk, v_x, x_a1368)
+	x_a1366 := v_n
+	return Int_wrapping_shl(tk, v_x, x_a1366)
 }
 
 func Netip_bits_mask(tk *Task, v_k int64) int64 {
@@ -835,21 +835,21 @@ func Netip_bits_mask(tk *Task, v_k int64) int64 {
 func Netip_words_bytes(tk *Task, v_hi int64, v_lo int64) Bytes {
 	var v_out BytesBuilder = BytesBuilder_with_capacity(tk, int64(16))
 	_ = v_out
-	x_it1369 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
-	for x_i1371 := x_it1369.Lo; x_i1371 < x_it1369.Hi; x_i1371++ {
-		x_el1372 := x_i1371
-		_ = x_el1372
-		var v_k int64 = x_el1372
+	x_it1367 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
+	for x_i1369 := x_it1367.Lo; x_i1369 < x_it1367.Hi; x_i1369++ {
+		x_el1370 := x_i1369
+		_ = x_el1370
+		var v_k int64 = x_el1370
 		_ = v_k
 		{
 			v_out.M_write_byte(tk, ConvS_uint8(((v_hi>>(int64(56)-(int64(8)*v_k)))&int64(255)), "std/netip.xo:486:20"))
 		}
 	}
-	x_it1373 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
-	for x_i1375 := x_it1373.Lo; x_i1375 < x_it1373.Hi; x_i1375++ {
-		x_el1376 := x_i1375
-		_ = x_el1376
-		var v_k_1 int64 = x_el1376
+	x_it1371 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
+	for x_i1373 := x_it1371.Lo; x_i1373 < x_it1371.Hi; x_i1373++ {
+		x_el1374 := x_i1373
+		_ = x_el1374
+		var v_k_1 int64 = x_el1374
 		_ = v_k_1
 		{
 			v_out.M_write_byte(tk, ConvS_uint8(((v_lo>>(int64(56)-(int64(8)*v_k_1)))&int64(255)), "std/netip.xo:489:20"))
@@ -861,15 +861,15 @@ func Netip_words_bytes(tk *Task, v_hi int64, v_lo int64) Bytes {
 func Netip_word_at(tk *Task, v_b Bytes, v_i int64) int64 {
 	var v_w int64 = int64(0)
 	_ = v_w
-	x_it1377 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
-	for x_i1379 := x_it1377.Lo; x_i1379 < x_it1377.Hi; x_i1379++ {
-		x_el1380 := x_i1379
-		_ = x_el1380
-		var v_k int64 = x_el1380
+	x_it1375 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
+	for x_i1377 := x_it1375.Lo; x_i1377 < x_it1375.Hi; x_i1377++ {
+		x_el1378 := x_i1377
+		_ = x_el1378
+		var v_k int64 = x_el1378
 		_ = v_k
 		{
-			x_a1381 := int64(8)
-			v_w = (Int_wrapping_shl(tk, v_w, x_a1381) | int64(BytesAt(v_b, AddS(v_i, v_k, "std/netip.xo:497:35"), "std/netip.xo:497:33")))
+			x_a1379 := int64(8)
+			v_w = (Int_wrapping_shl(tk, v_w, x_a1379) | int64(BytesAt(v_b, AddS(v_i, v_k, "std/netip.xo:497:35"), "std/netip.xo:497:33")))
 		}
 	}
 	return v_w
@@ -893,11 +893,11 @@ func Netip_parse4_plain(tk *Task, v_b Bytes) int64 {
 	_ = v_dig
 	var v_dots int64 = int64(0)
 	_ = v_dots
-	x_it1382 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-	for x_i1384 := x_it1382.Lo; x_i1384 < x_it1382.Hi; x_i1384++ {
-		x_el1385 := x_i1384
-		_ = x_el1385
-		var v_i int64 = x_el1385
+	x_it1380 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+	for x_i1382 := x_it1380.Lo; x_i1382 < x_it1380.Hi; x_i1382++ {
+		x_el1383 := x_i1382
+		_ = x_el1383
+		var v_i int64 = x_el1383
 		_ = v_i
 		{
 			var v_c int64 = int64(BytesAt(v_b, v_i, "std/netip.xo:520:17"))
@@ -961,15 +961,15 @@ func Netip_ipv4_fields(tk *Task, v_input string, v_off int64, v_end int64) Resul
 			} else {
 				if v_c == uint8(46) {
 					if ((v_i == int64(0)) || (v_i == (Bytes_len(tk, v_s) - int64(1)))) || (BytesAt(v_s, (v_i-int64(1)), "std/netip.xo:566:40") == uint8(46)) {
-						x_a1389 := v_input
-						x_t1387 := Bytes_to_str(tk, BytesSlice(v_s, v_i, 0, true, false, "std/netip.xo:567:79"))
-						var x_c1388 string
-						if x_t1387.Some {
-							x_c1388 = x_t1387.V
+						x_a1387 := v_input
+						x_t1385 := Bytes_to_str(tk, BytesSlice(v_s, v_i, 0, true, false, "std/netip.xo:567:79"))
+						var x_c1386 string
+						if x_t1385.Some {
+							x_c1386 = x_t1385.V
 						} else {
-							x_c1388 = ""
+							x_c1386 = ""
 						}
-						return Err[int64](Netip_addr_err(tk, x_a1389, "IPv4 field must have at least one digit", x_c1388))
+						return Err[int64](Netip_addr_err(tk, x_a1387, "IPv4 field must have at least one digit", x_c1386))
 					}
 					if v_pos == int64(3) {
 						return Err[int64](Netip_addr_err(tk, v_input, "IPv4 address too long", ""))
@@ -979,15 +979,15 @@ func Netip_ipv4_fields(tk *Task, v_input string, v_off int64, v_end int64) Resul
 					v_val = int64(0)
 					v_dig = int64(0)
 				} else {
-					x_a1392 := v_input
-					x_t1390 := Bytes_to_str(tk, BytesSlice(v_s, v_i, 0, true, false, "std/netip.xo:577:58"))
-					var x_c1391 string
-					if x_t1390.Some {
-						x_c1391 = x_t1390.V
+					x_a1390 := v_input
+					x_t1388 := Bytes_to_str(tk, BytesSlice(v_s, v_i, 0, true, false, "std/netip.xo:577:58"))
+					var x_c1389 string
+					if x_t1388.Some {
+						x_c1389 = x_t1388.V
 					} else {
-						x_c1391 = ""
+						x_c1389 = ""
 					}
-					return Err[int64](Netip_addr_err(tk, x_a1392, "unexpected character", x_c1391))
+					return Err[int64](Netip_addr_err(tk, x_a1390, "unexpected character", x_c1389))
 				}
 			}
 			v_i = (v_i + int64(1))
@@ -1015,14 +1015,14 @@ func Netip_hexval(tk *Task, v_c uint8) int64 {
 }
 
 func Netip_rest_text(tk *Task, v_b Bytes, v_p int64) string {
-	x_t1393 := Bytes_to_str(tk, BytesSlice(v_b, v_p, 0, true, false, "std/netip.xo:600:41"))
-	var x_c1394 string
-	if x_t1393.Some {
-		x_c1394 = x_t1393.V
+	x_t1391 := Bytes_to_str(tk, BytesSlice(v_b, v_p, 0, true, false, "std/netip.xo:600:41"))
+	var x_c1392 string
+	if x_t1391.Some {
+		x_c1392 = x_t1391.V
 	} else {
-		x_c1394 = ""
+		x_c1392 = ""
 	}
-	return x_c1394
+	return x_c1392
 }
 
 func Netip_parse_ipv6(tk *Task, v_input string) Result[Netip_Addr, Netip_ParseErr] {
@@ -1070,7 +1070,7 @@ func Netip_parse_ipv6(tk *Task, v_input string) Result[Netip_Addr, Netip_ParseEr
 	}
 	var v_i int64 = int64(0)
 	_ = v_i
-x_L1396:
+x_L1394:
 	for {
 		if !(v_i < int64(16)) {
 			break
@@ -1080,7 +1080,7 @@ x_L1396:
 			_ = v_off
 			var v_acc int64 = int64(0)
 			_ = v_acc
-		x_L1397:
+		x_L1395:
 			for {
 				if !(AddS(v_p, v_off, "std/netip.xo:636:11") < v_n) {
 					break
@@ -1089,7 +1089,7 @@ x_L1396:
 					var v_hv int64 = Netip_hexval(tk, BytesAt(v_b, AddS(v_p, v_off, "std/netip.xo:637:25"), "std/netip.xo:637:23"))
 					_ = v_hv
 					if v_hv < int64(0) {
-						break x_L1397
+						break x_L1395
 					}
 					v_acc = AddS((v_acc * int64(16)), v_hv, "std/netip.xo:641:13")
 					if v_off > int64(3) {
@@ -1116,11 +1116,11 @@ x_L1396:
 				if Str_len(tk, v_zone) > int64(0) {
 					v_end = (v_end - (Str_len(tk, v_zone) + int64(1)))
 				}
-				x_r1398 := Netip_ipv4_fields(tk, v_input, SubS(v_end, (v_n-v_p), "std/netip.xo:664:34"), v_end)
-				if !x_r1398.Ok {
-					return ErrTr[Netip_Addr](x_r1398.E, Frame1(x_r1398.Tr, "netip.parse_ipv6", "std/netip.xo:664", "input", v_input))
+				x_r1396 := Netip_ipv4_fields(tk, v_input, SubS(v_end, (v_n-v_p), "std/netip.xo:664:34"), v_end)
+				if !x_r1396.Ok {
+					return ErrTr[Netip_Addr](x_r1396.E, Frame1(x_r1396.Tr, "netip.parse_ipv6", "std/netip.xo:664", "input", v_input))
 				}
-				var v_f int64 = x_r1398.V
+				var v_f int64 = x_r1396.V
 				_ = v_f
 				var v_g int64 = (v_i / int64(2))
 				_ = v_g
@@ -1136,7 +1136,7 @@ x_L1396:
 				}
 				v_p = v_n
 				v_i = (v_i + int64(4))
-				break x_L1396
+				break x_L1394
 			}
 			var v_g_1 int64 = (v_i / int64(2))
 			_ = v_g_1
@@ -1148,7 +1148,7 @@ x_L1396:
 			v_i = (v_i + int64(2))
 			v_p = AddS(v_p, v_off, "std/netip.xo:687:5")
 			if v_p == v_n {
-				break x_L1396
+				break x_L1394
 			}
 			if BytesAt(v_b, v_p, "std/netip.xo:691:8") != uint8(58) {
 				return Err[Netip_Addr](Netip_addr_err(tk, v_input, "unexpected character, want colon", Netip_rest_text(tk, v_b, v_p)))
@@ -1164,7 +1164,7 @@ x_L1396:
 				v_ellipsis = v_i
 				v_p = AddIUp(v_p, int64(1), "std/netip.xo:703:7")
 				if v_p == v_n {
-					break x_L1396
+					break x_L1394
 				}
 			}
 		}
@@ -1258,16 +1258,16 @@ func Netip_string4(tk *Task, v_v int64) string {
 				v_m = (v_m + int64(1))
 			}
 			if v_n < int64(8) {
-				x_a1401 := v_lo
-				x_a1400 := (int64(8) * v_n)
-				v_lo = (x_a1401 | Int_wrapping_shl(tk, v_w, x_a1400))
+				x_a1399 := v_lo
+				x_a1398 := (int64(8) * v_n)
+				v_lo = (x_a1399 | Int_wrapping_shl(tk, v_w, x_a1398))
 				if (v_n + v_m) > int64(8) {
 					v_hi = (v_hi | Shr(v_w, (int64(8)*(int64(8)-v_n)), "std/netip.xo:783:20"))
 				}
 			} else {
-				x_a1403 := v_hi
-				x_a1402 := MulKI(int64(8), (v_n - int64(8)), -1152921504606846976, 1152921504606846975, "std/netip.xo:786:32")
-				v_hi = (x_a1403 | Int_wrapping_shl(tk, v_w, x_a1402))
+				x_a1401 := v_hi
+				x_a1400 := MulKI(int64(8), (v_n - int64(8)), -1152921504606846976, 1152921504606846975, "std/netip.xo:786:32")
+				v_hi = (x_a1401 | Int_wrapping_shl(tk, v_w, x_a1400))
 			}
 			v_n = AddS(v_n, v_m, "std/netip.xo:788:5")
 			v_k = (v_k + int64(1))
@@ -1348,7 +1348,7 @@ func Netip_string6(tk *Task, v_a Netip_Addr) string {
 	var v_out BytesBuilder = BytesBuilder_with_capacity(tk, int64(40))
 	_ = v_out
 	v_i = int64(0)
-x_L1406:
+x_L1404:
 	for {
 		if !(v_i < int64(8)) {
 			break
@@ -1359,7 +1359,7 @@ x_L1406:
 				v_out.M_write_byte(tk, uint8(58))
 				v_i = v_ze
 				if v_i >= int64(8) {
-					break x_L1406
+					break x_L1404
 				}
 			} else {
 				if v_i > int64(0) {

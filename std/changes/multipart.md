@@ -1,5 +1,17 @@
 # std/multipart changes
 
+## 2026-11-11: fix: a bad header value's error shows the key canonical, as Go's
+
+- Kind: fix
+- Commit: this push
+- Found by: decision 0598 stage 2
+- Go reference: net/textproto (go1.26.1)
+- Test: `xo test --std-module=multipart` (a regression test with Go 1.26.1's text); the multipart corpus on go, arm64, llvm
+- Timing: none (header and DATA handling, not a hot path)
+- Shipped in: not yet released
+
+Go's readMIMEHeader canonicalizes a key in place before it checks the value, so `content-type: a\x01b` fails with `malformed MIME header line: Content-Type: a\x01b`; multipart showed the key as written. PartHead.header_values canonicalizes its name with std/textproto.canonical_key.
+
 ## 2026-11-10: feature: Reader, Go's multipart.Reader over a streamed body; merged, one implementation
 
 - Kind: feature

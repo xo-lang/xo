@@ -10,6 +10,7 @@
 // error texts.
 
 use std/crypto
+use std/textproto
 use std/time
 
 /// A mail address: the display name (decoded) and `local@domain`.
@@ -135,16 +136,18 @@ pub struct Message {
 /// The header and body of msg (mail.ReadMessage), with Go's errors
 /// (`malformed MIME header line: ...`).
 pub fn read_message(msg: Bytes) -> Message ! MailErr {
-  var r = LineR{b: msg}
+  // net/mail's own readHeader over textproto's reader: no key check, an
+  // empty key skipped, the end of the input after a field ends the header
+  var r = textproto.reader(msg)
   var headers: List[(Str, Str)] = []
   if msg.len() > 0 && (msg[0] == ' ' || msg[0] == '\t') {
-    let l = r.line() ?? b""
-    return Err(fail("malformed initial line: ${bytes_text(l)}"))
+    let l = r.read_line().ok() ?? ""
+    return Err(fail("malformed initial line: ${l}"))
   }
   while true {
-    let kv = match r.continued() {
-      Some(x) => x
-      None => {
+    let kv = match r.read_continued_line() {
+      Ok(x) => x
+      Err(_) => {
         // the end before a blank line: a message when it has a field
         if headers.is_empty() {
           return Err(fail("EOF"))
@@ -155,33 +158,22 @@ pub fn read_message(msg: Bytes) -> Message ! MailErr {
     if kv.is_empty() {
       break
     }
-    var colon = 0
-    while colon < kv.len() && kv[colon] != ':' {
-      colon += 1
+    let colon = match kv.find(":") {
+      Some(c) => c
+      None => return Err(fail("malformed header line: ${kv}"))
     }
-    if colon == kv.len() {
-      colon = -1
-    }
-    if colon < 0 {
-      return Err(fail("malformed header line: ${bytes_text(kv)}"))
-    }
-    let key = canonical_key(kv[0..colon])
+    let key = textproto.canonical_key(kv[0..colon])
     if key.is_empty() {
       continue
     }
-    var v = kv[colon + 1..]
-    var s = 0
-    while s < v.len() && (v[s] == ' ' || v[s] == '\t') {
-      s += 1
-    }
-    headers.push((key, bytes_text(v[s..])))
+    headers.push((key, kv[colon + 1..].trim_start_chars(" \t")))
   }
-  Ok(Message{headers: headers, body: msg[r.at..]})
+  Ok(Message{headers: headers, body: r.rest()})
 }
 
 /// The first value of the header field name, any case (Header.Get).
 pub fn (m: Message) header(name: Str) -> Str? {
-  let want = canonical_key(name.bytes())
+  let want = textproto.canonical_key(name)
   for (k, v) in m.headers {
     if k == want {
       return Some(v)
@@ -1050,102 +1042,7 @@ fn plain_ascii(s: Str) -> Bool {
   true
 }
 
-fn mime_field_byte(c: UInt8) -> Bool {
-  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c is '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~'
-}
-
-/// textproto.CanonicalMIMEHeaderKey: k unchanged when a byte of it cannot
-/// be in a field name, else each word capitalized.
-fn canonical_key(k: Bytes) -> Str {
-  for c in k {
-    if !mime_field_byte(c) {
-      return bytes_text(k)
-    }
-  }
-  var out = BytesBuilder.with_capacity(k.len())
-  var upper = true
-  for c in k {
-    var x = c
-    if upper && x >= 'a' && x <= 'z' {
-      x = x - 32
-    } else if !upper && x >= 'A' && x <= 'Z' {
-      x = x + 32
-    }
-    out.write_byte(x)
-    upper = x == '-'
-  }
-  bytes_text(out.freeze())
-}
-
 fn bytes_text(b: Bytes) -> Str { b.to_str() ?? lossy(b) }
-
-/// textproto's trim: spaces and tabs off both ends.
-fn trim_wsp(b: Bytes) -> Bytes {
-  var s = 0
-  while s < b.len() && (b[s] == ' ' || b[s] == '\t') {
-    s += 1
-  }
-  var e = b.len()
-  while e > s && (b[e - 1] == ' ' || b[e - 1] == '\t') {
-    e -= 1
-  }
-  b[s..e]
-}
-
-/// A line reader (bufio.Reader.ReadLine): the line without "\n" or
-/// "\r\n", or None at the end.
-struct LineR {
-  b: Bytes
-  at: Int = 0
-}
-
-fn (var r: LineR) line() -> Bytes? {
-  if r.at >= r.b.len() {
-    return None
-  }
-  var j = r.at
-  while j < r.b.len() && r.b[j] != '\n' {
-    j += 1
-  }
-  var l = r.b[r.at..j]
-  if j < r.b.len() {
-    if l.len() > 0 && l[l.len() - 1] == '\r' {
-      l = l[0..l.len() - 1]
-    }
-    r.at = j + 1
-  } else {
-    r.at = j
-  }
-  Some(l)
-}
-
-/// textproto.Reader.skipSpace: the spaces and tabs skipped.
-fn (var r: LineR) skip_space() -> Int {
-  var n = 0
-  while r.at < r.b.len() && (r.b[r.at] == ' ' || r.b[r.at] == '\t') {
-    r.at += 1
-    n += 1
-  }
-  n
-}
-
-/// textproto.Reader.ReadContinuedLine: a field and its continuation
-/// lines, each trimmed, joined by one space; None at the end.
-fn (var r: LineR) continued() -> Bytes? {
-  let first = r.line()?
-  if first.is_empty() {
-    return Some(first)
-  }
-  var buf = trim_wsp(first)
-  while r.skip_space() > 0 {
-    buf = buf + b" "
-    match r.line() {
-      Some(l) => buf = buf + trim_wsp(l)
-      None => break
-    }
-  }
-  Some(buf)
-}
 
 const MONTHS: List[Str] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 

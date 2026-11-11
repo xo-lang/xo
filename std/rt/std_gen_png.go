@@ -322,25 +322,25 @@ func (v_img Png_Image) M_at(tk *Task, v_x int64, v_y int64) int64 {
 	_ = v_at
 	var v_pix Bytes = v_img.F_pix
 	_ = v_pix
-	x_m1408 := v_img.F_model
-	_ = x_m1408
+	x_m1406 := v_img.F_model
+	_ = x_m1406
 	switch {
 	default:
-		if x_m1408.Tag == 1 {
+		if x_m1406.Tag == 1 {
 			{
 				var v_v int64 = int64(BytesAt(v_pix, v_at, "std/png.xo:110:19"))
 				_ = v_v
 				return (((Shl(v_v, int64(24), "std/png.xo:111:8") | Shl(v_v, int64(16), "std/png.xo:111:20")) | Shl(v_v, int64(8), "std/png.xo:111:32")) | int64(255))
 			}
 		}
-		if x_m1408.Tag == 2 {
+		if x_m1406.Tag == 2 {
 			{
 				var v_v_1 int64 = int64(BytesAt(v_pix, v_at, "std/png.xo:114:19"))
 				_ = v_v_1
 				return (((Shl(v_v_1, int64(24), "std/png.xo:115:8") | Shl(v_v_1, int64(16), "std/png.xo:115:20")) | Shl(v_v_1, int64(8), "std/png.xo:115:32")) | int64(255))
 			}
 		}
-		if x_m1408.Tag == 3 {
+		if x_m1406.Tag == 3 {
 			{
 				var v_i int64 = int64(BytesAt(v_pix, v_at, "std/png.xo:118:19"))
 				_ = v_i
@@ -351,10 +351,10 @@ func (v_img Png_Image) M_at(tk *Task, v_x int64, v_y int64) int64 {
 				}
 			}
 		}
-		if x_m1408.Tag == 5 {
+		if x_m1406.Tag == 5 {
 			return (((Shl(int64(BytesAt(v_pix, v_at, "std/png.xo:121:25")), int64(24), "std/png.xo:121:21") | Shl(int64(BytesAt(v_pix, AddIUp(v_at, int64(1), "std/png.xo:121:52"), "std/png.xo:121:48")), int64(16), "std/png.xo:121:44")) | Shl(int64(BytesAt(v_pix, AddIUp(v_at, int64(2), "std/png.xo:121:79"), "std/png.xo:121:75")), int64(8), "std/png.xo:121:71")) | int64(BytesAt(v_pix, AddIUp(v_at, int64(3), "std/png.xo:121:104"), "std/png.xo:121:100")))
 		}
-		if x_m1408.Tag == 4 {
+		if x_m1406.Tag == 4 {
 			{
 				var v_a int64 = int64(BytesAt(v_pix, AddIUp(v_at, int64(3), "std/png.xo:123:23"), "std/png.xo:123:19"))
 				_ = v_a
@@ -377,10 +377,10 @@ func (v_img Png_Image) M_at(tk *Task, v_x int64, v_y int64) int64 {
 				}
 			}
 		}
-		if x_m1408.Tag == 7 {
+		if x_m1406.Tag == 7 {
 			return (((Shl(int64(BytesAt(v_pix, v_at, "std/png.xo:136:27")), int64(24), "std/png.xo:136:23") | Shl(int64(BytesAt(v_pix, AddIUp(v_at, int64(2), "std/png.xo:136:54"), "std/png.xo:136:50")), int64(16), "std/png.xo:136:46")) | Shl(int64(BytesAt(v_pix, AddIUp(v_at, int64(4), "std/png.xo:136:81"), "std/png.xo:136:77")), int64(8), "std/png.xo:136:73")) | int64(BytesAt(v_pix, AddIUp(v_at, int64(6), "std/png.xo:136:106"), "std/png.xo:136:102")))
 		}
-		if x_m1408.Tag == 6 {
+		if x_m1406.Tag == 6 {
 			{
 				var v_a_1 int64 = (Shl(int64(BytesAt(v_pix, AddIUp(v_at, int64(6), "std/png.xo:138:24"), "std/png.xo:138:20")), int64(8), "std/png.xo:138:16") | int64(BytesAt(v_pix, AddIUp(v_at, int64(7), "std/png.xo:138:49"), "std/png.xo:138:45")))
 				_ = v_a_1
@@ -406,7 +406,7 @@ func (v_img Png_Image) M_at(tk *Task, v_x int64, v_y int64) int64 {
 }
 
 func Png_decode(tk *Task, v_data Bytes, v_max_pixels int64) Result[Png_Image, Png_PngErr] {
-	x_r1410 := func(v Result[Tuple2[Png_Dec, Option[Png_Image]], Png_PngErr]) Result[Tuple2[Png_Dec, Option[Png_Image]], Png_PngErr] {
+	x_r1408 := func(v Result[Tuple2[Png_Dec, Option[Png_Image]], Png_PngErr]) Result[Tuple2[Png_Dec, Option[Png_Image]], Png_PngErr] {
 		if v.Ok {
 			v.V.F0.XoMark()
 			if v.V.F1.Some {
@@ -415,26 +415,26 @@ func Png_decode(tk *Task, v_data Bytes, v_max_pixels int64) Result[Png_Image, Pn
 		}
 		return v
 	}(Png_walk(tk, v_data, false, v_max_pixels))
-	if !x_r1410.Ok {
-		return ErrTr[Png_Image](x_r1410.E, Frame2(x_r1410.Tr, "png.decode", "std/png.xo:160", "data max_pixels", v_data, v_max_pixels))
+	if !x_r1408.Ok {
+		return ErrTr[Png_Image](x_r1408.E, Frame2(x_r1408.Tr, "png.decode", "std/png.xo:160", "data max_pixels", v_data, v_max_pixels))
 	}
-	x_let1411 := x_r1410.V
-	_ = x_let1411
-	var v_img Option[Png_Image] = x_let1411.F1
+	x_let1409 := x_r1408.V
+	_ = x_let1409
+	var v_img Option[Png_Image] = x_let1409.F1
 	_ = v_img
-	x_t1412 := func(v Option[Png_Image]) Option[Png_Image] {
+	x_t1410 := func(v Option[Png_Image]) Option[Png_Image] {
 		if v.Some {
 			v.V.XoMark()
 		}
 		return v
 	}(v_img)
-	var x_c1413 Png_Image
-	if x_t1412.Some {
-		x_c1413 = x_t1412.V
+	var x_c1411 Png_Image
+	if x_t1410.Some {
+		x_c1411 = x_t1410.V
 	} else {
-		x_c1413 = Absurd[Png_Image](Fault(tk, "png: no image", "std/png.xo:161:10"))
+		x_c1411 = Absurd[Png_Image](Fault(tk, "png: no image", "std/png.xo:161:10"))
 	}
-	return Ok[Png_Image, Png_PngErr](x_c1413)
+	return Ok[Png_Image, Png_PngErr](x_c1411)
 }
 
 func Png_decode_D_1(tk *Task) int64 {
@@ -442,7 +442,7 @@ func Png_decode_D_1(tk *Task) int64 {
 }
 
 func Png_decode_config(tk *Task, v_data Bytes) Result[Png_Config, Png_PngErr] {
-	x_r1414 := func(v Result[Tuple2[Png_Dec, Option[Png_Image]], Png_PngErr]) Result[Tuple2[Png_Dec, Option[Png_Image]], Png_PngErr] {
+	x_r1412 := func(v Result[Tuple2[Png_Dec, Option[Png_Image]], Png_PngErr]) Result[Tuple2[Png_Dec, Option[Png_Image]], Png_PngErr] {
 		if v.Ok {
 			v.V.F0.XoMark()
 			if v.V.F1.Some {
@@ -451,12 +451,12 @@ func Png_decode_config(tk *Task, v_data Bytes) Result[Png_Config, Png_PngErr] {
 		}
 		return v
 	}(Png_walk(tk, v_data, true, int64(4611686018427387904)))
-	if !x_r1414.Ok {
-		return ErrTr[Png_Config](x_r1414.E, Frame1(x_r1414.Tr, "png.decode_config", "std/png.xo:166", "data", v_data))
+	if !x_r1412.Ok {
+		return ErrTr[Png_Config](x_r1412.E, Frame1(x_r1412.Tr, "png.decode_config", "std/png.xo:166", "data", v_data))
 	}
-	x_let1415 := x_r1414.V
-	_ = x_let1415
-	var v_d Png_Dec = x_let1415.F0
+	x_let1413 := x_r1412.V
+	_ = x_let1413
+	var v_d Png_Dec = x_let1413.F0
 	_ = v_d
 	return Ok[Png_Config, Png_PngErr](Png_Config{F_width: v_d.F_w, F_height: v_d.F_h, F_model: Png_model_of(tk, v_d.F_cb, v_d.F_use_t)})
 }
@@ -552,8 +552,8 @@ func Png_encode(tk *Task, v_img Png_Image, v_level Png_Compression) Result[Bytes
 	v_ihdr.M_write_byte(tk, uint8(0))
 	v_ihdr.M_write_byte(tk, uint8(0))
 	Png_write_chunk(tk, &v_out, Bytes("IHDR"), v_ihdr.M_freeze(tk))
-	x_t1416 := v_img.F_model
-	if x_t1416.Tag == 3 {
+	x_t1414 := v_img.F_model
+	if x_t1414.Tag == 3 {
 		var v_np int64 = List_len[int64](tk, v_img.F_palette)
 		_ = v_np
 		if (v_np < int64(1)) || (v_np > int64(256)) {
@@ -565,11 +565,11 @@ func Png_encode(tk *Task, v_img Png_Image, v_level Png_Compression) Result[Bytes
 		_ = v_alpha
 		var v_last int64 = int64(-1)
 		_ = v_last
-		x_it1417 := Range[int64]{Lo: int64(0), Hi: v_np, Incl: false}
-		for x_i1419 := x_it1417.Lo; x_i1419 < x_it1417.Hi; x_i1419++ {
-			x_el1420 := x_i1419
-			_ = x_el1420
-			var v_i int64 = x_el1420
+		x_it1415 := Range[int64]{Lo: int64(0), Hi: v_np, Incl: false}
+		for x_i1417 := x_it1415.Lo; x_i1417 < x_it1415.Hi; x_i1417++ {
+			x_el1418 := x_i1417
+			_ = x_el1418
+			var v_i int64 = x_el1418
 			_ = v_i
 			{
 				var v_c int64 = List_AtU(v_img.F_palette, v_i)
@@ -598,44 +598,44 @@ func Png_encode(tk *Task, v_img Png_Image, v_level Png_Compression) Result[Bytes
 	_ = v_c_1
 	var v_p List[uint8] = List_Own(List_with_capacity[uint8](tk, v_n))
 	_ = v_p
-	x_it1421 := Range[int64]{Lo: int64(0), Hi: (int64(5) * v_n), Incl: false}
-	for x_i1423 := x_it1421.Lo; x_i1423 < x_it1421.Hi; x_i1423++ {
-		x_el1424 := x_i1423
-		_ = x_el1424
+	x_it1419 := Range[int64]{Lo: int64(0), Hi: (int64(5) * v_n), Incl: false}
+	for x_i1421 := x_it1419.Lo; x_i1421 < x_it1419.Hi; x_i1421++ {
+		x_el1422 := x_i1421
+		_ = x_el1422
 		{
-			x_pv1425 := uint8(0)
+			x_pv1423 := uint8(0)
 			if List_CanPush(v_c_1) {
-				v_c_1 = List_PushFast(v_c_1, x_pv1425)
+				v_c_1 = List_PushFast(v_c_1, x_pv1423)
 			} else {
-				v_c_1 = List_PushSlow(v_c_1, x_pv1425)
+				v_c_1 = List_PushSlow(v_c_1, x_pv1423)
 			}
 			_ = Unit{}
 		}
 	}
-	x_it1426 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-	for x_i1428 := x_it1426.Lo; x_i1428 < x_it1426.Hi; x_i1428++ {
-		x_el1429 := x_i1428
-		_ = x_el1429
+	x_it1424 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+	for x_i1426 := x_it1424.Lo; x_i1426 < x_it1424.Hi; x_i1426++ {
+		x_el1427 := x_i1426
+		_ = x_el1427
 		{
-			x_pv1430 := uint8(0)
+			x_pv1428 := uint8(0)
 			if List_CanPush(v_p) {
-				v_p = List_PushFast(v_p, x_pv1430)
+				v_p = List_PushFast(v_p, x_pv1428)
 			} else {
-				v_p = List_PushSlow(v_p, x_pv1430)
+				v_p = List_PushSlow(v_p, x_pv1428)
 			}
 			_ = Unit{}
 		}
 	}
-	x_t1431 := v_level
-	var v_no_filter bool = ((((x_t1431.Tag == 2 || (v_cb == Png_CB_P8)) || (v_cb == Png_CB_P4)) || (v_cb == Png_CB_P2)) || (v_cb == Png_CB_P1))
+	x_t1429 := v_level
+	var v_no_filter bool = ((((x_t1429.Tag == 2 || (v_cb == Png_CB_P8)) || (v_cb == Png_CB_P4)) || (v_cb == Png_CB_P2)) || (v_cb == Png_CB_P1))
 	_ = v_no_filter
 	var v_raw BytesBuilder = BytesBuilder_with_capacity(tk, MulS(v_h, (v_n+int64(1)), "std/png.xo:280:40"))
 	_ = v_raw
-	x_it1432 := Range[int64]{Lo: int64(0), Hi: v_h, Incl: false}
-	for x_i1434 := x_it1432.Lo; x_i1434 < x_it1432.Hi; x_i1434++ {
-		x_el1435 := x_i1434
-		_ = x_el1435
-		var v_y int64 = x_el1435
+	x_it1430 := Range[int64]{Lo: int64(0), Hi: v_h, Incl: false}
+	for x_i1432 := x_it1430.Lo; x_i1432 < x_it1430.Hi; x_i1432++ {
+		x_el1433 := x_i1432
+		_ = x_el1433
+		var v_y int64 = x_el1433
 		_ = v_y
 		{
 			Png_fill_row(tk, func(v Png_Image) Png_Image { v.XoMark(); return v }(v_img), v_cb, v_y, &v_c_1, v_n)
@@ -645,28 +645,28 @@ func Png_encode(tk *Task, v_img Png_Image, v_level Png_Compression) Result[Bytes
 				v_f = Png_choose_filter(tk, &v_c_1, List_Own(v_p), v_n, v_bpp)
 			}
 			v_raw.M_write_byte(tk, ConvS_uint8(v_f, "std/png.xo:287:20"))
-			x_it1436 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-			for x_i1438 := x_it1436.Lo; x_i1438 < x_it1436.Hi; x_i1438++ {
-				x_el1439 := x_i1438
-				_ = x_el1439
-				var v_i_1 int64 = x_el1439
+			x_it1434 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+			for x_i1436 := x_it1434.Lo; x_i1436 < x_it1434.Hi; x_i1436++ {
+				x_el1437 := x_i1436
+				_ = x_el1437
+				var v_i_1 int64 = x_el1437
 				_ = v_i_1
 				{
 					v_raw.M_write_byte(tk, List_At(v_c_1, AddS(MulS(v_f, v_n, "std/png.xo:289:24"), v_i_1, "std/png.xo:289:24"), "std/png.xo:289:22"))
 				}
 			}
-			x_it1440 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-			for x_i1442 := x_it1440.Lo; x_i1442 < x_it1440.Hi; x_i1442++ {
-				x_el1443 := x_i1442
-				_ = x_el1443
-				var v_i_2 int64 = x_el1443
+			x_it1438 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+			for x_i1440 := x_it1438.Lo; x_i1440 < x_it1438.Hi; x_i1440++ {
+				x_el1441 := x_i1440
+				_ = x_el1441
+				var v_i_2 int64 = x_el1441
 				_ = v_i_2
 				{
-					x_ix1444 := v_i_2
+					x_ix1442 := v_i_2
 					if !List_Mine(v_p) {
 						v_p = List_Unshared(v_p)
 					}
-					List_PutM(v_p, x_ix1444, List_At(v_c_1, v_i_2, "std/png.xo:292:14"), "std/png.xo:292:7")
+					List_PutM(v_p, x_ix1442, List_At(v_c_1, v_i_2, "std/png.xo:292:14"), "std/png.xo:292:7")
 				}
 			}
 		}
@@ -1189,32 +1189,32 @@ func Png_parse_plte(tk *Task, v_d *Png_Dec, v_data Bytes, v_at int64, v_length i
 	if Png_cb_paletted(tk, (*v_d).F_cb) {
 		var v_pal List[int64] = List_Own(List_with_capacity[int64](tk, int64(256)))
 		_ = v_pal
-		x_it1447 := Range[int64]{Lo: int64(0), Hi: v_np, Incl: false}
-		for x_i1449 := x_it1447.Lo; x_i1449 < x_it1447.Hi; x_i1449++ {
-			x_el1450 := x_i1449
-			_ = x_el1450
-			var v_i int64 = x_el1450
+		x_it1445 := Range[int64]{Lo: int64(0), Hi: v_np, Incl: false}
+		for x_i1447 := x_it1445.Lo; x_i1447 < x_it1445.Hi; x_i1447++ {
+			x_el1448 := x_i1447
+			_ = x_el1448
+			var v_i int64 = x_el1448
 			_ = v_i
 			{
-				x_pv1451 := (((Shl(int64(BytesAt(v_data, AddS(v_at, (int64(3)*v_i), "std/png.xo:574:26"), "std/png.xo:574:21")), int64(24), "std/png.xo:574:17") | Shl(int64(BytesAt(v_data, AddIUp(AddS(v_at, (int64(3)*v_i), "std/png.xo:574:58"), int64(1), "std/png.xo:574:58"), "std/png.xo:574:53")), int64(16), "std/png.xo:574:49")) | Shl(int64(BytesAt(v_data, AddIUp(AddS(v_at, (int64(3)*v_i), "std/png.xo:574:94"), int64(2), "std/png.xo:574:94"), "std/png.xo:574:89")), int64(8), "std/png.xo:574:85")) | int64(255))
+				x_pv1449 := (((Shl(int64(BytesAt(v_data, AddS(v_at, (int64(3)*v_i), "std/png.xo:574:26"), "std/png.xo:574:21")), int64(24), "std/png.xo:574:17") | Shl(int64(BytesAt(v_data, AddIUp(AddS(v_at, (int64(3)*v_i), "std/png.xo:574:58"), int64(1), "std/png.xo:574:58"), "std/png.xo:574:53")), int64(16), "std/png.xo:574:49")) | Shl(int64(BytesAt(v_data, AddIUp(AddS(v_at, (int64(3)*v_i), "std/png.xo:574:94"), int64(2), "std/png.xo:574:94"), "std/png.xo:574:89")), int64(8), "std/png.xo:574:85")) | int64(255))
 				if List_CanPush(v_pal) {
-					v_pal = List_PushFast(v_pal, x_pv1451)
+					v_pal = List_PushFast(v_pal, x_pv1449)
 				} else {
-					v_pal = List_PushSlow(v_pal, x_pv1451)
+					v_pal = List_PushSlow(v_pal, x_pv1449)
 				}
 				_ = Unit{}
 			}
 		}
-		x_it1452 := Range[int64]{Lo: v_np, Hi: int64(256), Incl: false}
-		for x_i1454 := x_it1452.Lo; x_i1454 < x_it1452.Hi; x_i1454++ {
-			x_el1455 := x_i1454
-			_ = x_el1455
+		x_it1450 := Range[int64]{Lo: v_np, Hi: int64(256), Incl: false}
+		for x_i1452 := x_it1450.Lo; x_i1452 < x_it1450.Hi; x_i1452++ {
+			x_el1453 := x_i1452
+			_ = x_el1453
 			{
-				x_pv1456 := int64(255)
+				x_pv1454 := int64(255)
 				if List_CanPush(v_pal) {
-					v_pal = List_PushFast(v_pal, x_pv1456)
+					v_pal = List_PushFast(v_pal, x_pv1454)
 				} else {
-					v_pal = List_PushSlow(v_pal, x_pv1456)
+					v_pal = List_PushSlow(v_pal, x_pv1454)
 				}
 				_ = Unit{}
 			}
@@ -1242,36 +1242,36 @@ func Png_parse_trns(tk *Task, v_d *Png_Dec, v_data Bytes, v_at int64, v_length i
 		if !(Png_have(tk, v_data, v_at, int64(2))) {
 			return Err[Unit](Png_PngErr{Tag: 3})
 		}
-		x_ix1457 := int64(0)
+		x_ix1455 := int64(0)
 		if !List_Mine((*v_d).F_transparent) {
 			(*v_d).F_transparent = List_Unshared((*v_d).F_transparent)
 		}
-		List_PutM((*v_d).F_transparent, x_ix1457, int64(BytesAt(v_data, v_at, "std/png.xo:596:28")), "std/png.xo:596:5")
-		x_ix1458 := int64(1)
+		List_PutM((*v_d).F_transparent, x_ix1455, int64(BytesAt(v_data, v_at, "std/png.xo:596:28")), "std/png.xo:596:5")
+		x_ix1456 := int64(1)
 		if !List_Mine((*v_d).F_transparent) {
 			(*v_d).F_transparent = List_Unshared((*v_d).F_transparent)
 		}
-		List_PutM((*v_d).F_transparent, x_ix1458, int64(BytesAt(v_data, AddIUp(v_at, int64(1), "std/png.xo:597:33"), "std/png.xo:597:28")), "std/png.xo:597:5")
+		List_PutM((*v_d).F_transparent, x_ix1456, int64(BytesAt(v_data, AddIUp(v_at, int64(1), "std/png.xo:597:33"), "std/png.xo:597:28")), "std/png.xo:597:5")
 		if v_cb == Png_CB_G1 {
-			x_ix1459 := int64(1)
+			x_ix1457 := int64(1)
 			if !List_Mine((*v_d).F_transparent) {
 				(*v_d).F_transparent = List_Unshared((*v_d).F_transparent)
 			}
-			List_PutM((*v_d).F_transparent, x_ix1459, (MulIK(List_At((*v_d).F_transparent, int64(1), "std/png.xo:600:27"), int64(255), -36170086419038336, 36170086419038336, "std/png.xo:600:27") & int64(255)), "std/png.xo:600:7")
+			List_PutM((*v_d).F_transparent, x_ix1457, (MulIK(List_At((*v_d).F_transparent, int64(1), "std/png.xo:600:27"), int64(255), -36170086419038336, 36170086419038336, "std/png.xo:600:27") & int64(255)), "std/png.xo:600:7")
 		} else {
 			if v_cb == Png_CB_G2 {
-				x_ix1460 := int64(1)
+				x_ix1458 := int64(1)
 				if !List_Mine((*v_d).F_transparent) {
 					(*v_d).F_transparent = List_Unshared((*v_d).F_transparent)
 				}
-				List_PutM((*v_d).F_transparent, x_ix1460, (MulIK(List_At((*v_d).F_transparent, int64(1), "std/png.xo:602:27"), int64(85), -108510259257115009, 108510259257115009, "std/png.xo:602:27") & int64(255)), "std/png.xo:602:7")
+				List_PutM((*v_d).F_transparent, x_ix1458, (MulIK(List_At((*v_d).F_transparent, int64(1), "std/png.xo:602:27"), int64(85), -108510259257115009, 108510259257115009, "std/png.xo:602:27") & int64(255)), "std/png.xo:602:7")
 			} else {
 				if v_cb == Png_CB_G4 {
-					x_ix1461 := int64(1)
+					x_ix1459 := int64(1)
 					if !List_Mine((*v_d).F_transparent) {
 						(*v_d).F_transparent = List_Unshared((*v_d).F_transparent)
 					}
-					List_PutM((*v_d).F_transparent, x_ix1461, (MulIK(List_At((*v_d).F_transparent, int64(1), "std/png.xo:604:27"), int64(17), -542551296285575047, 542551296285575047, "std/png.xo:604:27") & int64(255)), "std/png.xo:604:7")
+					List_PutM((*v_d).F_transparent, x_ix1459, (MulIK(List_At((*v_d).F_transparent, int64(1), "std/png.xo:604:27"), int64(17), -542551296285575047, 542551296285575047, "std/png.xo:604:27") & int64(255)), "std/png.xo:604:7")
 				}
 			}
 		}
@@ -1285,18 +1285,18 @@ func Png_parse_trns(tk *Task, v_d *Png_Dec, v_data Bytes, v_at int64, v_length i
 			if !(Png_have(tk, v_data, v_at, int64(6))) {
 				return Err[Unit](Png_PngErr{Tag: 3})
 			}
-			x_it1462 := Range[int64]{Lo: int64(0), Hi: int64(6), Incl: false}
-			for x_i1464 := x_it1462.Lo; x_i1464 < x_it1462.Hi; x_i1464++ {
-				x_el1465 := x_i1464
-				_ = x_el1465
-				var v_i int64 = x_el1465
+			x_it1460 := Range[int64]{Lo: int64(0), Hi: int64(6), Incl: false}
+			for x_i1462 := x_it1460.Lo; x_i1462 < x_it1460.Hi; x_i1462++ {
+				x_el1463 := x_i1462
+				_ = x_el1463
+				var v_i int64 = x_el1463
 				_ = v_i
 				{
-					x_ix1466 := v_i
+					x_ix1464 := v_i
 					if !List_Mine((*v_d).F_transparent) {
 						(*v_d).F_transparent = List_Unshared((*v_d).F_transparent)
 					}
-					List_PutM((*v_d).F_transparent, x_ix1466, int64(BytesAt(v_data, AddS(v_at, v_i, "std/png.xo:615:35"), "std/png.xo:615:30")), "std/png.xo:615:7")
+					List_PutM((*v_d).F_transparent, x_ix1464, int64(BytesAt(v_data, AddS(v_at, v_i, "std/png.xo:615:35"), "std/png.xo:615:30")), "std/png.xo:615:7")
 				}
 			}
 			(*v_d).F_use_t = true
@@ -1312,18 +1312,18 @@ func Png_parse_trns(tk *Task, v_d *Png_Dec, v_data Bytes, v_at int64, v_length i
 				if (*v_d).F_npal < v_length {
 					(*v_d).F_npal = v_length
 				}
-				x_it1467 := Range[int64]{Lo: int64(0), Hi: v_length, Incl: false}
-				for x_i1469 := x_it1467.Lo; x_i1469 < x_it1467.Hi; x_i1469++ {
-					x_el1470 := x_i1469
-					_ = x_el1470
-					var v_i_1 int64 = x_el1470
+				x_it1465 := Range[int64]{Lo: int64(0), Hi: v_length, Incl: false}
+				for x_i1467 := x_it1465.Lo; x_i1467 < x_it1465.Hi; x_i1467++ {
+					x_el1468 := x_i1467
+					_ = x_el1468
+					var v_i_1 int64 = x_el1468
 					_ = v_i_1
 					{
-						x_ix1471 := v_i_1
+						x_ix1469 := v_i_1
 						if !List_Mine((*v_d).F_palette) {
 							(*v_d).F_palette = List_Unshared((*v_d).F_palette)
 						}
-						List_PutM((*v_d).F_palette, x_ix1471, ((List_At((*v_d).F_palette, v_i_1, "std/png.xo:629:23") & int64(4294967040)) | int64(BytesAt(v_data, AddS(v_at, v_i_1, "std/png.xo:629:61"), "std/png.xo:629:56"))), "std/png.xo:629:7")
+						List_PutM((*v_d).F_palette, x_ix1469, ((List_At((*v_d).F_palette, v_i_1, "std/png.xo:629:23") & int64(4294967040)) | int64(BytesAt(v_data, AddS(v_at, v_i_1, "std/png.xo:629:61"), "std/png.xo:629:56"))), "std/png.xo:629:7")
 					}
 				}
 				return Ok[Unit, Png_PngErr](Unit{})
@@ -1365,15 +1365,15 @@ func Png_pass_size(tk *Task, v_d Png_Dec, v_pass int64) Tuple2[int64, int64] {
 	if v_d.F_interlace == int64(0) {
 		return Tuple2[int64, int64]{F0: v_d.F_w, F1: v_d.F_h}
 	}
-	x_let1472 := Png_pass_geometry(tk, v_pass)
-	_ = x_let1472
-	var v_xf int64 = x_let1472.F0
+	x_let1470 := Png_pass_geometry(tk, v_pass)
+	_ = x_let1470
+	var v_xf int64 = x_let1470.F0
 	_ = v_xf
-	var v_yf int64 = x_let1472.F1
+	var v_yf int64 = x_let1470.F1
 	_ = v_yf
-	var v_xo int64 = x_let1472.F2
+	var v_xo int64 = x_let1470.F2
 	_ = v_xo
-	var v_yo int64 = x_let1472.F3
+	var v_yo int64 = x_let1470.F3
 	_ = v_yo
 	return Tuple2[int64, int64]{F0: DivS(SubIDown(AddS(SubS(v_d.F_w, v_xo, "std/png.xo:661:5"), v_xf, "std/png.xo:661:5"), int64(1), "std/png.xo:661:5"), v_xf, "std/png.xo:661:4"), F1: DivS(SubIDown(AddS(SubS(v_d.F_h, v_yo, "std/png.xo:661:31"), v_yf, "std/png.xo:661:31"), int64(1), "std/png.xo:661:31"), v_yf, "std/png.xo:661:30")}
 }
@@ -1424,18 +1424,18 @@ func Png_expected_size(tk *Task, v_d Png_Dec) int64 {
 	}
 	var v_total int64 = int64(0)
 	_ = v_total
-	x_it1473 := Range[int64]{Lo: int64(0), Hi: int64(7), Incl: false}
-	for x_i1475 := x_it1473.Lo; x_i1475 < x_it1473.Hi; x_i1475++ {
-		x_el1476 := x_i1475
-		_ = x_el1476
-		var v_pass int64 = x_el1476
+	x_it1471 := Range[int64]{Lo: int64(0), Hi: int64(7), Incl: false}
+	for x_i1473 := x_it1471.Lo; x_i1473 < x_it1471.Hi; x_i1473++ {
+		x_el1474 := x_i1473
+		_ = x_el1474
+		var v_pass int64 = x_el1474
 		_ = v_pass
 		{
-			x_let1477 := Png_pass_size(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_pass)
-			_ = x_let1477
-			var v_w int64 = x_let1477.F0
+			x_let1475 := Png_pass_size(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_pass)
+			_ = x_let1475
+			var v_w int64 = x_let1475.F0
 			_ = v_w
-			var v_h int64 = x_let1477.F1
+			var v_h int64 = x_let1475.F1
 			_ = v_h
 			if (v_w > int64(0)) && (v_h > int64(0)) {
 				v_total = AddS(v_total, MulS(v_h, (int64(1)+(AddIUp(MulS(v_bpp, v_w, "std/png.xo:698:26"), int64(7), "std/png.xo:698:26")/int64(8))), "std/png.xo:698:16"), "std/png.xo:698:7")
@@ -1497,16 +1497,16 @@ func Png_read_pass(tk *Task, v_d Png_Dec, v_raw Bytes, v_off0 int64, v_width int
 	}
 	var v_buf List[uint8] = List_Own(List_with_capacity[uint8](tk, (int64(2) * v_n)))
 	_ = v_buf
-	x_it1478 := Range[int64]{Lo: int64(0), Hi: (int64(2) * v_n), Incl: false}
-	for x_i1480 := x_it1478.Lo; x_i1480 < x_it1478.Hi; x_i1480++ {
-		x_el1481 := x_i1480
-		_ = x_el1481
+	x_it1476 := Range[int64]{Lo: int64(0), Hi: (int64(2) * v_n), Incl: false}
+	for x_i1478 := x_it1476.Lo; x_i1478 < x_it1476.Hi; x_i1478++ {
+		x_el1479 := x_i1478
+		_ = x_el1479
 		{
-			x_pv1482 := uint8(0)
+			x_pv1480 := uint8(0)
 			if List_CanPush(v_buf) {
-				v_buf = List_PushFast(v_buf, x_pv1482)
+				v_buf = List_PushFast(v_buf, x_pv1480)
 			} else {
-				v_buf = List_PushSlow(v_buf, x_pv1482)
+				v_buf = List_PushSlow(v_buf, x_pv1480)
 			}
 			_ = Unit{}
 		}
@@ -1523,10 +1523,10 @@ func Png_read_pass(tk *Task, v_d Png_Dec, v_raw Bytes, v_off0 int64, v_width int
 	_ = v_max_index
 	var v_off int64 = v_off0
 	_ = v_off
-	x_it1483 := Range[int64]{Lo: int64(0), Hi: v_height, Incl: false}
-	for x_i1485 := x_it1483.Lo; x_i1485 < x_it1483.Hi; x_i1485++ {
-		x_el1486 := x_i1485
-		_ = x_el1486
+	x_it1481 := Range[int64]{Lo: int64(0), Hi: v_height, Incl: false}
+	for x_i1483 := x_it1481.Lo; x_i1483 < x_it1481.Hi; x_i1483++ {
+		x_el1484 := x_i1483
+		_ = x_el1484
 		{
 			if !(Png_have(tk, v_raw, v_off, v_row_size)) {
 				return Err[Tuple2[Png_Pass, int64]](Png_format_err(tk, "not enough pixel data"))
@@ -1537,104 +1537,104 @@ func Png_read_pass(tk *Task, v_d Png_Dec, v_raw Bytes, v_off0 int64, v_width int
 			_ = v_base
 			v_off = AddS(v_off, v_row_size, "std/png.xo:740:5")
 			if v_ft == Png_FT_NONE {
-				x_it1487 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-				for x_i1489 := x_it1487.Lo; x_i1489 < x_it1487.Hi; x_i1489++ {
-					x_el1490 := x_i1489
-					_ = x_el1490
-					var v_i int64 = x_el1490
+				x_it1485 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+				for x_i1487 := x_it1485.Lo; x_i1487 < x_it1485.Hi; x_i1487++ {
+					x_el1488 := x_i1487
+					_ = x_el1488
+					var v_i int64 = x_el1488
 					_ = v_i
 					{
-						x_ix1491 := (v_co + v_i)
+						x_ix1489 := (v_co + v_i)
 						if !List_Mine(v_buf) {
 							v_buf = List_Unshared(v_buf)
 						}
-						List_PutM(v_buf, x_ix1491, BytesAt(v_raw, AddS(v_base, v_i, "std/png.xo:743:27"), "std/png.xo:743:23"), "std/png.xo:743:9")
+						List_PutM(v_buf, x_ix1489, BytesAt(v_raw, AddS(v_base, v_i, "std/png.xo:743:27"), "std/png.xo:743:23"), "std/png.xo:743:9")
 					}
 				}
 			} else {
 				if v_ft == Png_FT_SUB {
-					x_it1492 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-					for x_i1494 := x_it1492.Lo; x_i1494 < x_it1492.Hi; x_i1494++ {
-						x_el1495 := x_i1494
-						_ = x_el1495
-						var v_i_1 int64 = x_el1495
+					x_it1490 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+					for x_i1492 := x_it1490.Lo; x_i1492 < x_it1490.Hi; x_i1492++ {
+						x_el1493 := x_i1492
+						_ = x_el1493
+						var v_i_1 int64 = x_el1493
 						_ = v_i_1
 						{
 							if v_i_1 < v_bpp {
-								x_ix1496 := (v_co + v_i_1)
+								x_ix1494 := (v_co + v_i_1)
 								if !List_Mine(v_buf) {
 									v_buf = List_Unshared(v_buf)
 								}
-								List_PutM(v_buf, x_ix1496, BytesAt(v_raw, AddS(v_base, v_i_1, "std/png.xo:748:29"), "std/png.xo:748:25"), "std/png.xo:748:11")
+								List_PutM(v_buf, x_ix1494, BytesAt(v_raw, AddS(v_base, v_i_1, "std/png.xo:748:29"), "std/png.xo:748:25"), "std/png.xo:748:11")
 							} else {
-								x_ix1497 := (v_co + v_i_1)
-								x_wv1498 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_1, "std/png.xo:750:40"), "std/png.xo:750:36")) + int64(List_At(v_buf, ((v_co+v_i_1)-v_bpp), "std/png.xo:750:57"))) & int64(255)), "std/png.xo:750:25")
+								x_ix1495 := (v_co + v_i_1)
+								x_wv1496 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_1, "std/png.xo:750:40"), "std/png.xo:750:36")) + int64(List_At(v_buf, ((v_co+v_i_1)-v_bpp), "std/png.xo:750:57"))) & int64(255)), "std/png.xo:750:25")
 								if !List_Mine(v_buf) {
 									v_buf = List_Unshared(v_buf)
 								}
-								List_PutM(v_buf, x_ix1497, x_wv1498, "std/png.xo:750:11")
+								List_PutM(v_buf, x_ix1495, x_wv1496, "std/png.xo:750:11")
 							}
 						}
 					}
 				} else {
 					if v_ft == Png_FT_UP {
-						x_it1499 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-						for x_i1501 := x_it1499.Lo; x_i1501 < x_it1499.Hi; x_i1501++ {
-							x_el1502 := x_i1501
-							_ = x_el1502
-							var v_i_2 int64 = x_el1502
+						x_it1497 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+						for x_i1499 := x_it1497.Lo; x_i1499 < x_it1497.Hi; x_i1499++ {
+							x_el1500 := x_i1499
+							_ = x_el1500
+							var v_i_2 int64 = x_el1500
 							_ = v_i_2
 							{
-								x_ix1503 := (v_co + v_i_2)
-								x_wv1504 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_2, "std/png.xo:755:38"), "std/png.xo:755:34")) + int64(List_At(v_buf, (v_po+v_i_2), "std/png.xo:755:55"))) & int64(255)), "std/png.xo:755:23")
+								x_ix1501 := (v_co + v_i_2)
+								x_wv1502 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_2, "std/png.xo:755:38"), "std/png.xo:755:34")) + int64(List_At(v_buf, (v_po+v_i_2), "std/png.xo:755:55"))) & int64(255)), "std/png.xo:755:23")
 								if !List_Mine(v_buf) {
 									v_buf = List_Unshared(v_buf)
 								}
-								List_PutM(v_buf, x_ix1503, x_wv1504, "std/png.xo:755:9")
+								List_PutM(v_buf, x_ix1501, x_wv1502, "std/png.xo:755:9")
 							}
 						}
 					} else {
 						if v_ft == Png_FT_AVERAGE {
-							x_it1505 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-							for x_i1507 := x_it1505.Lo; x_i1507 < x_it1505.Hi; x_i1507++ {
-								x_el1508 := x_i1507
-								_ = x_el1508
-								var v_i_3 int64 = x_el1508
+							x_it1503 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+							for x_i1505 := x_it1503.Lo; x_i1505 < x_it1503.Hi; x_i1505++ {
+								x_el1506 := x_i1505
+								_ = x_el1506
+								var v_i_3 int64 = x_el1506
 								_ = v_i_3
 								{
 									if v_i_3 < v_bpp {
-										x_ix1509 := (v_co + v_i_3)
-										x_wv1510 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_3, "std/png.xo:760:40"), "std/png.xo:760:36")) + (int64(List_At(v_buf, (v_po+v_i_3), "std/png.xo:760:57")) / int64(2))) & int64(255)), "std/png.xo:760:25")
+										x_ix1507 := (v_co + v_i_3)
+										x_wv1508 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_3, "std/png.xo:760:40"), "std/png.xo:760:36")) + (int64(List_At(v_buf, (v_po+v_i_3), "std/png.xo:760:57")) / int64(2))) & int64(255)), "std/png.xo:760:25")
 										if !List_Mine(v_buf) {
 											v_buf = List_Unshared(v_buf)
 										}
-										List_PutM(v_buf, x_ix1509, x_wv1510, "std/png.xo:760:11")
+										List_PutM(v_buf, x_ix1507, x_wv1508, "std/png.xo:760:11")
 									} else {
-										x_ix1511 := (v_co + v_i_3)
-										x_wv1512 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_3, "std/png.xo:762:40"), "std/png.xo:762:36")) + ((int64(List_At(v_buf, ((v_co+v_i_3)-v_bpp), "std/png.xo:762:58")) + int64(List_At(v_buf, (v_po+v_i_3), "std/png.xo:762:83"))) / int64(2))) & int64(255)), "std/png.xo:762:25")
+										x_ix1509 := (v_co + v_i_3)
+										x_wv1510 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_3, "std/png.xo:762:40"), "std/png.xo:762:36")) + ((int64(List_At(v_buf, ((v_co+v_i_3)-v_bpp), "std/png.xo:762:58")) + int64(List_At(v_buf, (v_po+v_i_3), "std/png.xo:762:83"))) / int64(2))) & int64(255)), "std/png.xo:762:25")
 										if !List_Mine(v_buf) {
 											v_buf = List_Unshared(v_buf)
 										}
-										List_PutM(v_buf, x_ix1511, x_wv1512, "std/png.xo:762:11")
+										List_PutM(v_buf, x_ix1509, x_wv1510, "std/png.xo:762:11")
 									}
 								}
 							}
 						} else {
 							if v_ft == Png_FT_PAETH {
-								x_it1513 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-								for x_i1515 := x_it1513.Lo; x_i1515 < x_it1513.Hi; x_i1515++ {
-									x_el1516 := x_i1515
-									_ = x_el1516
-									var v_i_4 int64 = x_el1516
+								x_it1511 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+								for x_i1513 := x_it1511.Lo; x_i1513 < x_it1511.Hi; x_i1513++ {
+									x_el1514 := x_i1513
+									_ = x_el1514
+									var v_i_4 int64 = x_el1514
 									_ = v_i_4
 									{
 										if v_i_4 < v_bpp {
-											x_ix1517 := (v_co + v_i_4)
-											x_wv1518 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_4, "std/png.xo:768:40"), "std/png.xo:768:36")) + int64(List_At(v_buf, (v_po+v_i_4), "std/png.xo:768:57"))) & int64(255)), "std/png.xo:768:25")
+											x_ix1515 := (v_co + v_i_4)
+											x_wv1516 := ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_4, "std/png.xo:768:40"), "std/png.xo:768:36")) + int64(List_At(v_buf, (v_po+v_i_4), "std/png.xo:768:57"))) & int64(255)), "std/png.xo:768:25")
 											if !List_Mine(v_buf) {
 												v_buf = List_Unshared(v_buf)
 											}
-											List_PutM(v_buf, x_ix1517, x_wv1518, "std/png.xo:768:11")
+											List_PutM(v_buf, x_ix1515, x_wv1516, "std/png.xo:768:11")
 										} else {
 											var v_a int64 = int64(List_At(v_buf, ((v_co + v_i_4) - v_bpp), "std/png.xo:771:23"))
 											_ = v_a
@@ -1666,11 +1666,11 @@ func Png_read_pass(tk *Task, v_d Png_Dec, v_raw Bytes, v_off0 int64, v_width int
 													v_pr = v_b
 												}
 											}
-											x_ix1519 := (v_co + v_i_4)
+											x_ix1517 := (v_co + v_i_4)
 											if !List_Mine(v_buf) {
 												v_buf = List_Unshared(v_buf)
 											}
-											List_PutM(v_buf, x_ix1519, ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_4, "std/png.xo:792:40"), "std/png.xo:792:36"))+v_pr)&int64(255)), "std/png.xo:792:25"), "std/png.xo:792:11")
+											List_PutM(v_buf, x_ix1517, ConvS_uint8(((int64(BytesAt(v_raw, AddS(v_base, v_i_4, "std/png.xo:792:40"), "std/png.xo:792:36"))+v_pr)&int64(255)), "std/png.xo:792:25"), "std/png.xo:792:11")
 										}
 									}
 								}
@@ -1705,11 +1705,11 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 		_ = v_mask
 		var v_mult int64 = DivS(int64(255), v_mask, "std/png.xo:817:16")
 		_ = v_mult
-		x_it1520 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
-		for x_i1522 := x_it1520.Lo; x_i1522 < x_it1520.Hi; x_i1522++ {
-			x_el1523 := x_i1522
-			_ = x_el1523
-			var v_x int64 = x_el1523
+		x_it1518 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
+		for x_i1520 := x_it1518.Lo; x_i1520 < x_it1518.Hi; x_i1520++ {
+			x_el1521 := x_i1520
+			_ = x_el1521
+			var v_x int64 = x_el1521
 			_ = v_x
 			{
 				var v_bit int64 = MulS(v_x, v_depth, "std/png.xo:819:17")
@@ -1722,24 +1722,24 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 				if v_d.F_use_t {
 					(*v_out).M_write_byte(tk, v_y)
 					(*v_out).M_write_byte(tk, v_y)
-					var x_v1524 uint8
+					var x_v1522 uint8
 					if int64(v_y) == List_At(v_d.F_transparent, int64(1), "std/png.xo:826:37") {
-						x_v1524 = uint8(0)
+						x_v1522 = uint8(0)
 					} else {
-						x_v1524 = uint8(255)
+						x_v1522 = uint8(255)
 					}
-					(*v_out).M_write_byte(tk, x_v1524)
+					(*v_out).M_write_byte(tk, x_v1522)
 				}
 			}
 		}
 		return int64(0)
 	}
 	if v_cb == Png_CB_G8 {
-		x_it1525 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
-		for x_i1527 := x_it1525.Lo; x_i1527 < x_it1525.Hi; x_i1527++ {
-			x_el1528 := x_i1527
-			_ = x_el1528
-			var v_x_1 int64 = x_el1528
+		x_it1523 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
+		for x_i1525 := x_it1523.Lo; x_i1525 < x_it1523.Hi; x_i1525++ {
+			x_el1526 := x_i1525
+			_ = x_el1526
+			var v_x_1 int64 = x_el1526
 			_ = v_x_1
 			{
 				var v_y_1 uint8 = List_At(v_c, AddS(v_ro, v_x_1, "std/png.xo:833:17"), "std/png.xo:833:15")
@@ -1748,24 +1748,24 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 				if v_d.F_use_t {
 					(*v_out).M_write_byte(tk, v_y_1)
 					(*v_out).M_write_byte(tk, v_y_1)
-					var x_v1529 uint8
+					var x_v1527 uint8
 					if int64(v_y_1) == List_At(v_d.F_transparent, int64(1), "std/png.xo:838:37") {
-						x_v1529 = uint8(0)
+						x_v1527 = uint8(0)
 					} else {
-						x_v1529 = uint8(255)
+						x_v1527 = uint8(255)
 					}
-					(*v_out).M_write_byte(tk, x_v1529)
+					(*v_out).M_write_byte(tk, x_v1527)
 				}
 			}
 		}
 		return int64(0)
 	}
 	if v_cb == Png_CB_GA8 {
-		x_it1530 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
-		for x_i1532 := x_it1530.Lo; x_i1532 < x_it1530.Hi; x_i1532++ {
-			x_el1533 := x_i1532
-			_ = x_el1533
-			var v_x_2 int64 = x_el1533
+		x_it1528 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
+		for x_i1530 := x_it1528.Lo; x_i1530 < x_it1528.Hi; x_i1530++ {
+			x_el1531 := x_i1530
+			_ = x_el1531
+			var v_x_2 int64 = x_el1531
 			_ = v_x_2
 			{
 				var v_y_2 uint8 = List_At(v_c, AddS(v_ro, MulKI(int64(2), v_x_2, -4611686018427387904, 4611686018427387903, "std/png.xo:845:22"), "std/png.xo:845:17"), "std/png.xo:845:15")
@@ -1787,10 +1787,10 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 		_ = v_tb
 		var v_j int64 = int64(0)
 		_ = v_j
-		x_it1534 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
-		for x_i1536 := x_it1534.Lo; x_i1536 < x_it1534.Hi; x_i1536++ {
-			x_el1537 := x_i1536
-			_ = x_el1537
+		x_it1532 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
+		for x_i1534 := x_it1532.Lo; x_i1534 < x_it1532.Hi; x_i1534++ {
+			x_el1535 := x_i1534
+			_ = x_el1535
 			{
 				var v_r uint8 = List_At(v_c, AddS(v_ro, v_j, "std/png.xo:859:17"), "std/png.xo:859:15")
 				_ = v_r
@@ -1818,11 +1818,11 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 		_ = v_mask_1
 		var v_mx int64 = int64(0)
 		_ = v_mx
-		x_it1538 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
-		for x_i1540 := x_it1538.Lo; x_i1540 < x_it1538.Hi; x_i1540++ {
-			x_el1541 := x_i1540
-			_ = x_el1541
-			var v_x_3 int64 = x_el1541
+		x_it1536 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
+		for x_i1538 := x_it1536.Lo; x_i1538 < x_it1536.Hi; x_i1538++ {
+			x_el1539 := x_i1538
+			_ = x_el1539
+			var v_x_3 int64 = x_el1539
 			_ = v_x_3
 			{
 				var v_bit_1 int64 = MulS(v_x_3, v_depth_1, "std/png.xo:879:17")
@@ -1840,11 +1840,11 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 	if v_cb == Png_CB_P8 {
 		var v_mx_1 int64 = int64(0)
 		_ = v_mx_1
-		x_it1542 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
-		for x_i1544 := x_it1542.Lo; x_i1544 < x_it1542.Hi; x_i1544++ {
-			x_el1545 := x_i1544
-			_ = x_el1545
-			var v_x_4 int64 = x_el1545
+		x_it1540 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
+		for x_i1542 := x_it1540.Lo; x_i1542 < x_it1540.Hi; x_i1542++ {
+			x_el1543 := x_i1542
+			_ = x_el1543
+			var v_x_4 int64 = x_el1543
 			_ = v_x_4
 			{
 				var v_v_1 uint8 = List_At(v_c, AddS(v_ro, v_x_4, "std/png.xo:891:17"), "std/png.xo:891:15")
@@ -1858,11 +1858,11 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 		return v_mx_1
 	}
 	if v_cb == Png_CB_TCA8 {
-		x_it1546 := Range[int64]{Lo: int64(0), Hi: MulKI(int64(4), v_width, -2305843009213693952, 2305843009213693951, "std/png.xo:900:18"), Incl: false}
-		for x_i1548 := x_it1546.Lo; x_i1548 < x_it1546.Hi; x_i1548++ {
-			x_el1549 := x_i1548
-			_ = x_el1549
-			var v_i int64 = x_el1549
+		x_it1544 := Range[int64]{Lo: int64(0), Hi: MulKI(int64(4), v_width, -2305843009213693952, 2305843009213693951, "std/png.xo:900:18"), Incl: false}
+		for x_i1546 := x_it1544.Lo; x_i1546 < x_it1544.Hi; x_i1546++ {
+			x_el1547 := x_i1546
+			_ = x_el1547
+			var v_i int64 = x_el1547
 			_ = v_i
 			{
 				(*v_out).M_write_byte(tk, List_At(v_c, AddS(v_ro, v_i, "std/png.xo:901:24"), "std/png.xo:901:22"))
@@ -1873,11 +1873,11 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 	if v_cb == Png_CB_G16 {
 		var v_ty int64 = (Shl(List_At(v_d.F_transparent, int64(0), "std/png.xo:906:15"), int64(8), "std/png.xo:906:15") | List_At(v_d.F_transparent, int64(1), "std/png.xo:906:40"))
 		_ = v_ty
-		x_it1550 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
-		for x_i1552 := x_it1550.Lo; x_i1552 < x_it1550.Hi; x_i1552++ {
-			x_el1553 := x_i1552
-			_ = x_el1553
-			var v_x_5 int64 = x_el1553
+		x_it1548 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
+		for x_i1550 := x_it1548.Lo; x_i1550 < x_it1548.Hi; x_i1550++ {
+			x_el1551 := x_i1550
+			_ = x_el1551
+			var v_x_5 int64 = x_el1551
 			_ = v_x_5
 			{
 				var v_y0 uint8 = List_At(v_c, AddS(v_ro, MulKI(int64(2), v_x_5, -4611686018427387904, 4611686018427387903, "std/png.xo:908:23"), "std/png.xo:908:18"), "std/png.xo:908:16")
@@ -1904,11 +1904,11 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 		return int64(0)
 	}
 	if v_cb == Png_CB_GA16 {
-		x_it1554 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
-		for x_i1556 := x_it1554.Lo; x_i1556 < x_it1554.Hi; x_i1556++ {
-			x_el1557 := x_i1556
-			_ = x_el1557
-			var v_x_6 int64 = x_el1557
+		x_it1552 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
+		for x_i1554 := x_it1552.Lo; x_i1554 < x_it1552.Hi; x_i1554++ {
+			x_el1555 := x_i1554
+			_ = x_el1555
+			var v_x_6 int64 = x_el1555
 			_ = v_x_6
 			{
 				var v_y0_1 uint8 = List_At(v_c, AddS(v_ro, MulKI(int64(4), v_x_6, -2305843009213693952, 2305843009213693951, "std/png.xo:930:23"), "std/png.xo:930:18"), "std/png.xo:930:16")
@@ -1934,20 +1934,20 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 		_ = v_tg_1
 		var v_tb_1 int64 = (Shl(List_At(v_d.F_transparent, int64(4), "std/png.xo:946:15"), int64(8), "std/png.xo:946:15") | List_At(v_d.F_transparent, int64(5), "std/png.xo:946:40"))
 		_ = v_tb_1
-		x_it1558 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
-		for x_i1560 := x_it1558.Lo; x_i1560 < x_it1558.Hi; x_i1560++ {
-			x_el1561 := x_i1560
-			_ = x_el1561
-			var v_x_7 int64 = x_el1561
+		x_it1556 := Range[int64]{Lo: int64(0), Hi: v_width, Incl: false}
+		for x_i1558 := x_it1556.Lo; x_i1558 < x_it1556.Hi; x_i1558++ {
+			x_el1559 := x_i1558
+			_ = x_el1559
+			var v_x_7 int64 = x_el1559
 			_ = v_x_7
 			{
 				var v_j_1 int64 = MulKI(int64(6), v_x_7, -1537228672809129301, 1537228672809129301, "std/png.xo:948:15")
 				_ = v_j_1
-				x_it1562 := Range[int64]{Lo: int64(0), Hi: int64(6), Incl: false}
-				for x_i1564 := x_it1562.Lo; x_i1564 < x_it1562.Hi; x_i1564++ {
-					x_el1565 := x_i1564
-					_ = x_el1565
-					var v_k int64 = x_el1565
+				x_it1560 := Range[int64]{Lo: int64(0), Hi: int64(6), Incl: false}
+				for x_i1562 := x_it1560.Lo; x_i1562 < x_it1560.Hi; x_i1562++ {
+					x_el1563 := x_i1562
+					_ = x_el1563
+					var v_k int64 = x_el1563
 					_ = v_k
 					{
 						(*v_out).M_write_byte(tk, List_At(v_c, AddS(AddS(v_ro, v_j_1, "std/png.xo:950:26"), v_k, "std/png.xo:950:26"), "std/png.xo:950:24"))
@@ -1975,11 +1975,11 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 		}
 		return int64(0)
 	}
-	x_it1566 := Range[int64]{Lo: int64(0), Hi: MulKI(int64(8), v_width, -1152921504606846976, 1152921504606846975, "std/png.xo:971:16"), Incl: false}
-	for x_i1568 := x_it1566.Lo; x_i1568 < x_it1566.Hi; x_i1568++ {
-		x_el1569 := x_i1568
-		_ = x_el1569
-		var v_i_1 int64 = x_el1569
+	x_it1564 := Range[int64]{Lo: int64(0), Hi: MulKI(int64(8), v_width, -1152921504606846976, 1152921504606846975, "std/png.xo:971:16"), Incl: false}
+	for x_i1566 := x_it1564.Lo; x_i1566 < x_it1564.Hi; x_i1566++ {
+		x_el1567 := x_i1566
+		_ = x_el1567
+		var v_i_1 int64 = x_el1567
 		_ = v_i_1
 		{
 			(*v_out).M_write_byte(tk, List_At(v_c, AddS(v_ro, v_i_1, "std/png.xo:972:22"), "std/png.xo:972:20"))
@@ -1989,32 +1989,32 @@ func Png_convert_row(tk *Task, v_d Png_Dec, v_c List[uint8], v_ro int64, v_width
 }
 
 func Png_merge_pass(tk *Task, v_dst *BytesBuilder, v_w int64, v_mbytes int64, v_src Bytes, v_pass int64, v_pw int64, v_ph int64) {
-	x_let1570 := Png_pass_geometry(tk, v_pass)
-	_ = x_let1570
-	var v_xf int64 = x_let1570.F0
+	x_let1568 := Png_pass_geometry(tk, v_pass)
+	_ = x_let1568
+	var v_xf int64 = x_let1568.F0
 	_ = v_xf
-	var v_yf int64 = x_let1570.F1
+	var v_yf int64 = x_let1568.F1
 	_ = v_yf
-	var v_xo int64 = x_let1570.F2
+	var v_xo int64 = x_let1568.F2
 	_ = v_xo
-	var v_yo int64 = x_let1570.F3
+	var v_yo int64 = x_let1568.F3
 	_ = v_yo
 	var v_s int64 = int64(0)
 	_ = v_s
-	x_it1571 := Range[int64]{Lo: int64(0), Hi: v_ph, Incl: false}
-	for x_i1573 := x_it1571.Lo; x_i1573 < x_it1571.Hi; x_i1573++ {
-		x_el1574 := x_i1573
-		_ = x_el1574
-		var v_y int64 = x_el1574
+	x_it1569 := Range[int64]{Lo: int64(0), Hi: v_ph, Incl: false}
+	for x_i1571 := x_it1569.Lo; x_i1571 < x_it1569.Hi; x_i1571++ {
+		x_el1572 := x_i1571
+		_ = x_el1572
+		var v_y int64 = x_el1572
 		_ = v_y
 		{
 			var v_dbase int64 = AddS(MulS(MulS(AddS(MulS(v_y, v_yf, "std/png.xo:982:18"), v_yo, "std/png.xo:982:18"), v_w, "std/png.xo:982:17"), v_mbytes, "std/png.xo:982:17"), MulS(v_xo, v_mbytes, "std/png.xo:982:46"), "std/png.xo:982:17")
 			_ = v_dbase
-			x_it1575 := Range[int64]{Lo: int64(0), Hi: v_pw, Incl: false}
-			for x_i1577 := x_it1575.Lo; x_i1577 < x_it1575.Hi; x_i1577++ {
-				x_el1578 := x_i1577
-				_ = x_el1578
-				var v_x int64 = x_el1578
+			x_it1573 := Range[int64]{Lo: int64(0), Hi: v_pw, Incl: false}
+			for x_i1575 := x_it1573.Lo; x_i1575 < x_it1573.Hi; x_i1575++ {
+				x_el1576 := x_i1575
+				_ = x_el1576
+				var v_x int64 = x_el1576
 				_ = v_x
 				{
 					var v_at int64 = AddS(v_dbase, MulS(MulS(v_x, v_xf, "std/png.xo:984:24"), v_mbytes, "std/png.xo:984:24"), "std/png.xo:984:16")
@@ -2043,18 +2043,18 @@ func Png_merge_pass(tk *Task, v_dst *BytesBuilder, v_w int64, v_mbytes int64, v_
 func Png_palette_of(tk *Task, v_d Png_Dec, v_len int64) List[int64] {
 	var v_out List[int64] = List[int64]{}
 	_ = v_out
-	x_it1579 := Range[int64]{Lo: int64(0), Hi: v_len, Incl: false}
-	for x_i1581 := x_it1579.Lo; x_i1581 < x_it1579.Hi; x_i1581++ {
-		x_el1582 := x_i1581
-		_ = x_el1582
-		var v_i int64 = x_el1582
+	x_it1577 := Range[int64]{Lo: int64(0), Hi: v_len, Incl: false}
+	for x_i1579 := x_it1577.Lo; x_i1579 < x_it1577.Hi; x_i1579++ {
+		x_el1580 := x_i1579
+		_ = x_el1580
+		var v_i int64 = x_el1580
 		_ = v_i
 		{
-			x_pv1583 := List_At(v_d.F_palette, v_i, "std/png.xo:1002:14")
+			x_pv1581 := List_At(v_d.F_palette, v_i, "std/png.xo:1002:14")
 			if List_CanPush(v_out) {
-				v_out = List_PushFast(v_out, x_pv1583)
+				v_out = List_PushFast(v_out, x_pv1581)
 			} else {
-				v_out = List_PushSlow(v_out, x_pv1583)
+				v_out = List_PushSlow(v_out, x_pv1581)
 			}
 			_ = Unit{}
 		}
@@ -2094,18 +2094,18 @@ func Png_partial_inflate(tk *Task, v_zdata Bytes, v_max int64) Bytes {
 			if v_end > Bytes_len(tk, v_zdata) {
 				v_end = Bytes_len(tk, v_zdata)
 			}
-			x_m1585 := v_dc.M_write(tk, BytesSlice(v_zdata, v_at, v_end, true, true, "std/png.xo:1032:20"))
-			_ = x_m1585
-		x_M1586:
+			x_m1583 := v_dc.M_write(tk, BytesSlice(v_zdata, v_at, v_end, true, true, "std/png.xo:1032:20"))
+			_ = x_m1583
+		x_M1584:
 			switch {
 			default:
-				if x_m1585.Ok {
-					var v_o Bytes = x_m1585.V
+				if x_m1583.Ok {
+					var v_o Bytes = x_m1583.V
 					_ = v_o
 					v_got.M_write(tk, v_o)
-					break x_M1586
+					break x_M1584
 				}
-				if !x_m1585.Ok {
+				if !x_m1583.Ok {
 					return v_got.M_freeze(tk)
 				}
 				panic(Unreachable("std/png.xo:1032:5"))
@@ -2119,24 +2119,24 @@ func Png_partial_inflate(tk *Task, v_zdata Bytes, v_max int64) Bytes {
 func Png_decode_image(tk *Task, v_d Png_Dec, v_zdata Bytes) Result[Png_Image, Png_PngErr] {
 	var v_expect int64 = Png_expected_size(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d))
 	_ = v_expect
-	x_m1587 := Compress_unzlib(tk, v_zdata, AddIUp(v_expect, int64(1), "std/png.xo:1047:32"))
-	_ = x_m1587
+	x_m1585 := Compress_unzlib(tk, v_zdata, AddIUp(v_expect, int64(1), "std/png.xo:1047:32"))
+	_ = x_m1585
 	switch {
 	default:
-		if x_m1587.Ok {
-			var v_raw Bytes = x_m1587.V
+		if x_m1585.Ok {
+			var v_raw Bytes = x_m1585.V
 			_ = v_raw
 			{
-				x_r1589 := func(v Result[Png_Image, Png_PngErr]) Result[Png_Image, Png_PngErr] {
+				x_r1587 := func(v Result[Png_Image, Png_PngErr]) Result[Png_Image, Png_PngErr] {
 					if v.Ok {
 						v.V.XoMark()
 					}
 					return v
 				}(Png_decode_rows(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw))
-				if !x_r1589.Ok {
-					return ErrTr[Png_Image](x_r1589.E, Frame2(x_r1589.Tr, "png.decode_image", "std/png.xo:1049", "d zdata", func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_zdata))
+				if !x_r1587.Ok {
+					return ErrTr[Png_Image](x_r1587.E, Frame2(x_r1587.Tr, "png.decode_image", "std/png.xo:1049", "d zdata", func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_zdata))
 				}
-				var v_img Png_Image = x_r1589.V
+				var v_img Png_Image = x_r1587.V
 				_ = v_img
 				if Bytes_len(tk, v_raw) > v_expect {
 					return Err[Png_Image](Png_format_err(tk, "too much pixel data"))
@@ -2144,24 +2144,24 @@ func Png_decode_image(tk *Task, v_d Png_Dec, v_zdata Bytes) Result[Png_Image, Pn
 				return Ok[Png_Image, Png_PngErr](func(v Png_Image) Png_Image { v.XoMark(); return v }(v_img))
 			}
 		}
-		if !x_m1587.Ok {
-			var v_e Compress_CompressErr = x_m1587.E
+		if !x_m1585.Ok {
+			var v_e Compress_CompressErr = x_m1585.E
 			_ = v_e
 			{
 				var v_raw_1 Bytes = Png_partial_inflate(tk, v_zdata, AddIUp(v_expect, int64(1), "std/png.xo:1056:40"))
 				_ = v_raw_1
-				x_m1590 := func(v Result[Png_Image, Png_PngErr]) Result[Png_Image, Png_PngErr] {
+				x_m1588 := func(v Result[Png_Image, Png_PngErr]) Result[Png_Image, Png_PngErr] {
 					if v.Ok {
 						v.V.XoMark()
 					}
 					return v
 				}(Png_decode_rows(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw_1))
-				_ = x_m1590
-			x_M1591:
+				_ = x_m1588
+			x_M1589:
 				switch {
 				default:
-					if !x_m1590.Ok {
-						var v_re Png_PngErr = x_m1590.E
+					if !x_m1588.Ok {
+						var v_re Png_PngErr = x_m1588.E
 						_ = v_re
 						{
 							var v_short bool = ((Bytes_len(tk, v_raw_1) < v_expect) && (v_re.M_display(tk) == "png: invalid format: not enough pixel data"))
@@ -2170,11 +2170,11 @@ func Png_decode_image(tk *Task, v_d Png_Dec, v_zdata Bytes) Result[Png_Image, Pn
 								return Err[Png_Image](v_re)
 							}
 						}
-						break x_M1591
+						break x_M1589
 					}
-					if x_m1590.Ok {
+					if x_m1588.Ok {
 						_ = Map[Unit, Unit]{}
-						break x_M1591
+						break x_M1589
 					}
 					panic(Unreachable("std/png.xo:1057:7"))
 				}
@@ -2202,13 +2202,13 @@ func Png_decode_rows(tk *Task, v_d Png_Dec, v_raw Bytes) Result[Png_Image, Png_P
 	var v_palette List[int64] = List[int64]{}
 	_ = v_palette
 	if v_d.F_interlace == int64(0) {
-		x_r1592 := Png_read_pass(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw, int64(0), v_d.F_w, v_d.F_h)
-		if !x_r1592.Ok {
-			return ErrTr[Png_Image](x_r1592.E, Frame2(x_r1592.Tr, "png.decode_rows", "std/png.xo:1086", "d raw", func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw))
+		x_r1590 := Png_read_pass(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw, int64(0), v_d.F_w, v_d.F_h)
+		if !x_r1590.Ok {
+			return ErrTr[Png_Image](x_r1590.E, Frame2(x_r1590.Tr, "png.decode_rows", "std/png.xo:1086", "d raw", func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw))
 		}
-		x_let1593 := x_r1592.V
-		_ = x_let1593
-		var v_p Png_Pass = x_let1593.F0
+		x_let1591 := x_r1590.V
+		_ = x_let1591
+		var v_p Png_Pass = x_let1591.F0
 		_ = v_p
 		if Png_cb_paletted(tk, v_d.F_cb) {
 			var v_n int64 = v_d.F_npal
@@ -2222,13 +2222,13 @@ func Png_decode_rows(tk *Task, v_d Png_Dec, v_raw Bytes) Result[Png_Image, Png_P
 	}
 	var v_roomy bool = (Bytes_len(tk, v_raw) >= Png_expected_size(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d)))
 	_ = v_roomy
-	var x_v1594 int64
+	var x_v1592 int64
 	if v_roomy {
-		x_v1594 = MulS(MulS(v_d.F_w, v_d.F_h, "std/png.xo:1099:51"), v_mbytes, "std/png.xo:1099:51")
+		x_v1592 = MulS(MulS(v_d.F_w, v_d.F_h, "std/png.xo:1099:51"), v_mbytes, "std/png.xo:1099:51")
 	} else {
-		x_v1594 = int64(0)
+		x_v1592 = int64(0)
 	}
-	var v_dst BytesBuilder = BytesBuilder_with_capacity(tk, x_v1594)
+	var v_dst BytesBuilder = BytesBuilder_with_capacity(tk, x_v1592)
 	_ = v_dst
 	if v_roomy {
 		v_dst.M_write(tk, Png_zeros(tk, MulS(MulS(v_d.F_w, v_d.F_h, "std/png.xo:1101:21"), v_mbytes, "std/png.xo:1101:21")))
@@ -2237,32 +2237,32 @@ func Png_decode_rows(tk *Task, v_d Png_Dec, v_raw Bytes) Result[Png_Image, Png_P
 	_ = v_off
 	var v_npal int64 = v_d.F_npal
 	_ = v_npal
-	x_it1595 := Range[int64]{Lo: int64(0), Hi: int64(7), Incl: false}
-x_L1596:
-	for x_i1597 := x_it1595.Lo; x_i1597 < x_it1595.Hi; x_i1597++ {
-		x_el1598 := x_i1597
-		_ = x_el1598
-		var v_pass int64 = x_el1598
+	x_it1593 := Range[int64]{Lo: int64(0), Hi: int64(7), Incl: false}
+x_L1594:
+	for x_i1595 := x_it1593.Lo; x_i1595 < x_it1593.Hi; x_i1595++ {
+		x_el1596 := x_i1595
+		_ = x_el1596
+		var v_pass int64 = x_el1596
 		_ = v_pass
 		{
-			x_let1599 := Png_pass_size(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_pass)
-			_ = x_let1599
-			var v_pw int64 = x_let1599.F0
+			x_let1597 := Png_pass_size(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_pass)
+			_ = x_let1597
+			var v_pw int64 = x_let1597.F0
 			_ = v_pw
-			var v_ph int64 = x_let1599.F1
+			var v_ph int64 = x_let1597.F1
 			_ = v_ph
 			if (v_pw == int64(0)) || (v_ph == int64(0)) {
-				continue x_L1596
+				continue x_L1594
 			}
-			x_r1600 := Png_read_pass(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw, v_off, v_pw, v_ph)
-			if !x_r1600.Ok {
-				return ErrTr[Png_Image](x_r1600.E, Frame2(x_r1600.Tr, "png.decode_rows", "std/png.xo:1110", "d raw", func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw))
+			x_r1598 := Png_read_pass(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw, v_off, v_pw, v_ph)
+			if !x_r1598.Ok {
+				return ErrTr[Png_Image](x_r1598.E, Frame2(x_r1598.Tr, "png.decode_rows", "std/png.xo:1110", "d raw", func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_raw))
 			}
-			x_let1601 := x_r1600.V
-			_ = x_let1601
-			var v_p_1 Png_Pass = x_let1601.F0
+			x_let1599 := x_r1598.V
+			_ = x_let1599
+			var v_p_1 Png_Pass = x_let1599.F0
 			_ = v_p_1
-			var v_next int64 = x_let1601.F1
+			var v_next int64 = x_let1599.F1
 			_ = v_next
 			v_off = v_next
 			if v_roomy {
@@ -2285,16 +2285,16 @@ x_L1596:
 func Png_dec_new(tk *Task) Png_Dec {
 	var v_pal List[int64] = List[int64]{}
 	_ = v_pal
-	x_it1602 := Range[int64]{Lo: int64(0), Hi: int64(256), Incl: false}
-	for x_i1604 := x_it1602.Lo; x_i1604 < x_it1602.Hi; x_i1604++ {
-		x_el1605 := x_i1604
-		_ = x_el1605
+	x_it1600 := Range[int64]{Lo: int64(0), Hi: int64(256), Incl: false}
+	for x_i1602 := x_it1600.Lo; x_i1602 < x_it1600.Hi; x_i1602++ {
+		x_el1603 := x_i1602
+		_ = x_el1603
 		{
-			x_pv1606 := int64(255)
+			x_pv1604 := int64(255)
 			if List_CanPush(v_pal) {
-				v_pal = List_PushFast(v_pal, x_pv1606)
+				v_pal = List_PushFast(v_pal, x_pv1604)
 			} else {
-				v_pal = List_PushSlow(v_pal, x_pv1606)
+				v_pal = List_PushSlow(v_pal, x_pv1604)
 			}
 			_ = Unit{}
 		}
@@ -2324,7 +2324,7 @@ func Png_walk(tk *Task, v_data Bytes, v_config_only bool, v_max_pixels int64) Re
 	_ = v_img
 	var v_pos int64 = int64(8)
 	_ = v_pos
-x_L1607:
+x_L1605:
 	for {
 		if !(v_d.F_stage != Png_DS_IEND) {
 			break
@@ -2348,11 +2348,11 @@ x_L1607:
 					return Err[Tuple2[Png_Dec, Option[Png_Image]]](Png_format_err(tk, "chunk out of order"))
 				}
 				v_d.F_stage = Png_DS_IHDR
-				x_r1608 := Png_parse_ihdr(tk, &v_d, v_data, v_at, v_length, v_max_pixels)
-				if !x_r1608.Ok {
-					return ErrTr[Tuple2[Png_Dec, Option[Png_Image]]](x_r1608.E, Frame3(x_r1608.Tr, "png.walk", "std/png.xo:1164", "data config_only max_pixels", v_data, v_config_only, v_max_pixels))
+				x_r1606 := Png_parse_ihdr(tk, &v_d, v_data, v_at, v_length, v_max_pixels)
+				if !x_r1606.Ok {
+					return ErrTr[Tuple2[Png_Dec, Option[Png_Image]]](x_r1606.E, Frame3(x_r1606.Tr, "png.walk", "std/png.xo:1164", "data config_only max_pixels", v_data, v_config_only, v_max_pixels))
 				}
-				_ = x_r1608.V
+				_ = x_r1606.V
 				v_handled = true
 			} else {
 				if v_typ == int64(1347179589) {
@@ -2360,11 +2360,11 @@ x_L1607:
 						return Err[Tuple2[Png_Dec, Option[Png_Image]]](Png_format_err(tk, "chunk out of order"))
 					}
 					v_d.F_stage = Png_DS_PLTE
-					x_r1609 := Png_parse_plte(tk, &v_d, v_data, v_at, v_length)
-					if !x_r1609.Ok {
-						return ErrTr[Tuple2[Png_Dec, Option[Png_Image]]](x_r1609.E, Frame3(x_r1609.Tr, "png.walk", "std/png.xo:1171", "data config_only max_pixels", v_data, v_config_only, v_max_pixels))
+					x_r1607 := Png_parse_plte(tk, &v_d, v_data, v_at, v_length)
+					if !x_r1607.Ok {
+						return ErrTr[Tuple2[Png_Dec, Option[Png_Image]]](x_r1607.E, Frame3(x_r1607.Tr, "png.walk", "std/png.xo:1171", "data config_only max_pixels", v_data, v_config_only, v_max_pixels))
 					}
-					_ = x_r1609.V
+					_ = x_r1607.V
 					v_handled = true
 				} else {
 					if v_typ == int64(1951551059) {
@@ -2384,11 +2384,11 @@ x_L1607:
 							}
 						}
 						v_d.F_stage = Png_DS_TRNS
-						x_r1610 := Png_parse_trns(tk, &v_d, v_data, v_at, v_length)
-						if !x_r1610.Ok {
-							return ErrTr[Tuple2[Png_Dec, Option[Png_Image]]](x_r1610.E, Frame3(x_r1610.Tr, "png.walk", "std/png.xo:1186", "data config_only max_pixels", v_data, v_config_only, v_max_pixels))
+						x_r1608 := Png_parse_trns(tk, &v_d, v_data, v_at, v_length)
+						if !x_r1608.Ok {
+							return ErrTr[Tuple2[Png_Dec, Option[Png_Image]]](x_r1608.E, Frame3(x_r1608.Tr, "png.walk", "std/png.xo:1186", "data config_only max_pixels", v_data, v_config_only, v_max_pixels))
 						}
-						_ = x_r1610.V
+						_ = x_r1608.V
 						v_handled = true
 					} else {
 						if v_typ == int64(1229209940) {
@@ -2433,33 +2433,33 @@ x_L1607:
 													return Err[Tuple2[Png_Dec, Option[Png_Image]]](Png_format_err(tk, "invalid checksum"))
 												}
 												if !(Png_have(tk, v_data, AddIUp(v_end, int64(8), "std/png.xo:1216:28"), v_len2)) {
-													x_pv1612 := BytesSlice(v_data, AddIUp(v_end, int64(8), "std/png.xo:1217:31"), Bytes_len(tk, v_data), true, true, "std/png.xo:1217:26")
+													x_pv1610 := BytesSlice(v_data, AddIUp(v_end, int64(8), "std/png.xo:1217:31"), Bytes_len(tk, v_data), true, true, "std/png.xo:1217:26")
 													if List_CanPush(v_parts) {
-														v_parts = List_PushFast(v_parts, x_pv1612)
+														v_parts = List_PushFast(v_parts, x_pv1610)
 													} else {
-														v_parts = List_PushSlow(v_parts, x_pv1612)
+														v_parts = List_PushSlow(v_parts, x_pv1610)
 													}
 													_ = Unit{}
 													v_cut = true
 													v_more = false
 												} else {
 													if !(Png_have(tk, v_data, AddS(AddIUp(v_end, int64(8), "std/png.xo:1220:35"), v_len2, "std/png.xo:1220:35"), int64(4))) {
-														x_pv1613 := BytesSlice(v_data, AddIUp(v_end, int64(8), "std/png.xo:1221:31"), AddS(AddIUp(v_end, int64(8), "std/png.xo:1221:40"), v_len2, "std/png.xo:1221:40"), true, true, "std/png.xo:1221:26")
+														x_pv1611 := BytesSlice(v_data, AddIUp(v_end, int64(8), "std/png.xo:1221:31"), AddS(AddIUp(v_end, int64(8), "std/png.xo:1221:40"), v_len2, "std/png.xo:1221:40"), true, true, "std/png.xo:1221:26")
 														if List_CanPush(v_parts) {
-															v_parts = List_PushFast(v_parts, x_pv1613)
+															v_parts = List_PushFast(v_parts, x_pv1611)
 														} else {
-															v_parts = List_PushSlow(v_parts, x_pv1613)
+															v_parts = List_PushSlow(v_parts, x_pv1611)
 														}
 														_ = Unit{}
 														v_cut = true
 														v_more = false
 													} else {
 														v_last_bad = (Png_be32(tk, v_data, AddS(AddIUp(v_end, int64(8), "std/png.xo:1225:37"), v_len2, "std/png.xo:1225:37")) != Crc32_checksum(tk, BytesSlice(v_data, AddIUp(v_end, int64(4), "std/png.xo:1225:76"), AddS(AddIUp(v_end, int64(8), "std/png.xo:1225:85"), v_len2, "std/png.xo:1225:85"), true, true, "std/png.xo:1225:71"), Crc32_Poly{Tag: 1}))
-														x_pv1614 := BytesSlice(v_data, AddIUp(v_end, int64(8), "std/png.xo:1226:31"), AddS(AddIUp(v_end, int64(8), "std/png.xo:1226:40"), v_len2, "std/png.xo:1226:40"), true, true, "std/png.xo:1226:26")
+														x_pv1612 := BytesSlice(v_data, AddIUp(v_end, int64(8), "std/png.xo:1226:31"), AddS(AddIUp(v_end, int64(8), "std/png.xo:1226:40"), v_len2, "std/png.xo:1226:40"), true, true, "std/png.xo:1226:26")
 														if List_CanPush(v_parts) {
-															v_parts = List_PushFast(v_parts, x_pv1614)
+															v_parts = List_PushFast(v_parts, x_pv1612)
 														} else {
-															v_parts = List_PushSlow(v_parts, x_pv1614)
+															v_parts = List_PushSlow(v_parts, x_pv1612)
 														}
 														_ = Unit{}
 														v_end = AddS(v_end, AddS(int64(12), v_len2, "std/png.xo:1227:22"), "std/png.xo:1227:15")
@@ -2474,11 +2474,11 @@ x_L1607:
 								if List_len[Bytes](tk, v_parts) > int64(1) {
 									var v_zb BytesBuilder = BytesBuilder_new(tk)
 									_ = v_zb
-									x_it1615 := v_parts
-									for _, x_e1617 := range List_Items(x_it1615) {
-										x_el1618 := x_e1617
-										_ = x_el1618
-										var v_p Bytes = x_el1618
+									x_it1613 := v_parts
+									for _, x_e1615 := range List_Items(x_it1613) {
+										x_el1616 := x_e1615
+										_ = x_el1616
+										var v_p Bytes = x_el1616
 										_ = v_p
 										{
 											v_zb.M_write(tk, v_p)
@@ -2486,24 +2486,24 @@ x_L1607:
 									}
 									v_z = v_zb.M_freeze(tk)
 								}
-								x_m1619 := func(v Result[Png_Image, Png_PngErr]) Result[Png_Image, Png_PngErr] {
+								x_m1617 := func(v Result[Png_Image, Png_PngErr]) Result[Png_Image, Png_PngErr] {
 									if v.Ok {
 										v.V.XoMark()
 									}
 									return v
 								}(Png_decode_image(tk, func(v Png_Dec) Png_Dec { v.XoMark(); return v }(v_d), v_z))
-								_ = x_m1619
-							x_M1620:
+								_ = x_m1617
+							x_M1618:
 								switch {
 								default:
-									if x_m1619.Ok {
-										var v_im Png_Image = x_m1619.V
+									if x_m1617.Ok {
+										var v_im Png_Image = x_m1617.V
 										_ = v_im
 										v_img = Some[Png_Image](func(v Png_Image) Png_Image { v.XoMark(); return v }(v_im))
-										break x_M1620
+										break x_M1618
 									}
-									if !x_m1619.Ok {
-										var v_e Png_PngErr = x_m1619.E
+									if !x_m1617.Ok {
+										var v_e Png_PngErr = x_m1617.E
 										_ = v_e
 										{
 											if v_last_bad && (v_e.M_display(tk) == "png: invalid format: not enough pixel data") {
@@ -2524,7 +2524,7 @@ x_L1607:
 									return Err[Tuple2[Png_Dec, Option[Png_Image]]](Png_PngErr{Tag: 3})
 								}
 								v_pos = v_end
-								continue x_L1607
+								continue x_L1605
 							}
 							v_handled = false
 						} else {
@@ -2548,20 +2548,20 @@ x_L1607:
 			if !(Png_have(tk, v_data, v_at, v_length)) {
 				return Err[Tuple2[Png_Dec, Option[Png_Image]]](Png_PngErr{Tag: 3})
 			}
-			x_r1621 := Png_check_crc(tk, v_data, v_ts, v_length)
-			if !x_r1621.Ok {
-				return ErrTr[Tuple2[Png_Dec, Option[Png_Image]]](x_r1621.E, Frame3(x_r1621.Tr, "png.walk", "std/png.xo:1280", "data config_only max_pixels", v_data, v_config_only, v_max_pixels))
+			x_r1619 := Png_check_crc(tk, v_data, v_ts, v_length)
+			if !x_r1619.Ok {
+				return ErrTr[Tuple2[Png_Dec, Option[Png_Image]]](x_r1619.E, Frame3(x_r1619.Tr, "png.walk", "std/png.xo:1280", "data config_only max_pixels", v_data, v_config_only, v_max_pixels))
 			}
-			_ = x_r1621.V
+			_ = x_r1619.V
 			v_pos = AddIUp(AddS(v_at, v_length, "std/png.xo:1281:11"), int64(4), "std/png.xo:1281:11")
 			if v_config_only {
 				if Png_cb_paletted(tk, v_d.F_cb) {
 					if v_d.F_stage >= Png_DS_TRNS {
-						break x_L1607
+						break x_L1605
 					}
 				} else {
 					if v_d.F_stage >= Png_DS_IHDR {
-						break x_L1607
+						break x_L1605
 					}
 				}
 			}
@@ -2597,17 +2597,17 @@ func Png_abs8(tk *Task, v_d int64) int64 {
 }
 
 func Png_model_cb(tk *Task, v_img Png_Image, v_opaque bool) int64 {
-	x_m1622 := v_img.F_model
-	_ = x_m1622
+	x_m1620 := v_img.F_model
+	_ = x_m1620
 	switch {
 	default:
-		if x_m1622.Tag == 1 {
+		if x_m1620.Tag == 1 {
 			return Png_CB_G8
 		}
-		if x_m1622.Tag == 2 {
+		if x_m1620.Tag == 2 {
 			return Png_CB_G16
 		}
-		if x_m1622.Tag == 3 {
+		if x_m1620.Tag == 3 {
 			{
 				var v_n int64 = List_len[int64](tk, v_img.F_palette)
 				_ = v_n
@@ -2626,28 +2626,28 @@ func Png_model_cb(tk *Task, v_img Png_Image, v_opaque bool) int64 {
 				}
 			}
 		}
-		if x_m1622.Tag == 4 {
+		if x_m1620.Tag == 4 {
 			if v_opaque {
 				return Png_CB_TC8
 			} else {
 				return Png_CB_TCA8
 			}
 		}
-		if x_m1622.Tag == 5 {
+		if x_m1620.Tag == 5 {
 			if v_opaque {
 				return Png_CB_TC8
 			} else {
 				return Png_CB_TCA8
 			}
 		}
-		if x_m1622.Tag == 6 {
+		if x_m1620.Tag == 6 {
 			if v_opaque {
 				return Png_CB_TC16
 			} else {
 				return Png_CB_TCA16
 			}
 		}
-		if x_m1622.Tag == 7 {
+		if x_m1620.Tag == 7 {
 			if v_opaque {
 				return Png_CB_TC16
 			} else {
@@ -2661,8 +2661,8 @@ func Png_model_cb(tk *Task, v_img Png_Image, v_opaque bool) int64 {
 func Png_is_opaque(tk *Task, v_img Png_Image) bool {
 	var v_m Png_Model = v_img.F_model
 	_ = v_m
-	x_t1624 := v_m
-	if (x_t1624.Tag == 4) || (x_t1624.Tag == 5) {
+	x_t1622 := v_m
+	if (x_t1622.Tag == 4) || (x_t1622.Tag == 5) {
 		var v_i int64 = int64(3)
 		_ = v_i
 		var v_n int64 = MulIK(MulS(v_img.F_width, v_img.F_height, "std/png.xo:1335:13"), int64(4), -2305843009213693952, 2305843009213693951, "std/png.xo:1335:13")
@@ -2680,8 +2680,8 @@ func Png_is_opaque(tk *Task, v_img Png_Image) bool {
 		}
 		return true
 	}
-	x_t1626 := v_m
-	if (x_t1626.Tag == 6) || (x_t1626.Tag == 7) {
+	x_t1624 := v_m
+	if (x_t1624.Tag == 6) || (x_t1624.Tag == 7) {
 		var v_i_1 int64 = int64(6)
 		_ = v_i_1
 		var v_n_1 int64 = MulIK(MulS(v_img.F_width, v_img.F_height, "std/png.xo:1346:13"), int64(8), -1152921504606846976, 1152921504606846975, "std/png.xo:1346:13")
@@ -2724,20 +2724,20 @@ func Png_level_of(tk *Task, v_l Png_Compression) Compress_Level {
 func Png_choose_filter(tk *Task, v_c *List[uint8], v_p List[uint8], v_n int64, v_bpp int64) int64 {
 	var v_sum int64 = int64(0)
 	_ = v_sum
-	x_it1629 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-	for x_i1631 := x_it1629.Lo; x_i1631 < x_it1629.Hi; x_i1631++ {
-		x_el1632 := x_i1631
-		_ = x_el1632
-		var v_k int64 = x_el1632
+	x_it1627 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+	for x_i1629 := x_it1627.Lo; x_i1629 < x_it1627.Hi; x_i1629++ {
+		x_el1630 := x_i1629
+		_ = x_el1630
+		var v_k int64 = x_el1630
 		_ = v_k
 		{
 			var v_v int64 = ((int64(List_At((*v_c), v_k, "std/png.xo:1376:18")) - int64(List_At(v_p, v_k, "std/png.xo:1376:30"))) & int64(255))
 			_ = v_v
-			x_ix1633 := AddS(MulKI(int64(2), v_n, -4611686018427387904, 4611686018427387903, "std/png.xo:1377:7"), v_k, "std/png.xo:1377:7")
+			x_ix1631 := AddS(MulKI(int64(2), v_n, -4611686018427387904, 4611686018427387903, "std/png.xo:1377:7"), v_k, "std/png.xo:1377:7")
 			if !List_Mine((*v_c)) {
 				(*v_c) = List_Unshared((*v_c))
 			}
-			List_PutM((*v_c), x_ix1633, ConvS_uint8(v_v, "std/png.xo:1377:20"), "std/png.xo:1377:5")
+			List_PutM((*v_c), x_ix1631, ConvS_uint8(v_v, "std/png.xo:1377:20"), "std/png.xo:1377:5")
 			v_sum = AddS(v_sum, Png_abs8(tk, v_v), "std/png.xo:1378:5")
 		}
 	}
@@ -2746,26 +2746,26 @@ func Png_choose_filter(tk *Task, v_c *List[uint8], v_p List[uint8], v_n int64, v
 	var v_filter int64 = Png_FT_UP
 	_ = v_filter
 	v_sum = int64(0)
-	x_it1634 := Range[int64]{Lo: int64(0), Hi: v_bpp, Incl: false}
-	for x_i1636 := x_it1634.Lo; x_i1636 < x_it1634.Hi; x_i1636++ {
-		x_el1637 := x_i1636
-		_ = x_el1637
-		var v_k_1 int64 = x_el1637
+	x_it1632 := Range[int64]{Lo: int64(0), Hi: v_bpp, Incl: false}
+	for x_i1634 := x_it1632.Lo; x_i1634 < x_it1632.Hi; x_i1634++ {
+		x_el1635 := x_i1634
+		_ = x_el1635
+		var v_k_1 int64 = x_el1635
 		_ = v_k_1
 		{
 			var v_v_1 int64 = ((int64(List_At((*v_c), v_k_1, "std/png.xo:1385:18")) - int64(List_At(v_p, v_k_1, "std/png.xo:1385:30"))) & int64(255))
 			_ = v_v_1
-			x_ix1638 := AddS(MulKI(int64(4), v_n, -2305843009213693952, 2305843009213693951, "std/png.xo:1386:7"), v_k_1, "std/png.xo:1386:7")
+			x_ix1636 := AddS(MulKI(int64(4), v_n, -2305843009213693952, 2305843009213693951, "std/png.xo:1386:7"), v_k_1, "std/png.xo:1386:7")
 			if !List_Mine((*v_c)) {
 				(*v_c) = List_Unshared((*v_c))
 			}
-			List_PutM((*v_c), x_ix1638, ConvS_uint8(v_v_1, "std/png.xo:1386:20"), "std/png.xo:1386:5")
+			List_PutM((*v_c), x_ix1636, ConvS_uint8(v_v_1, "std/png.xo:1386:20"), "std/png.xo:1386:5")
 			v_sum = AddS(v_sum, Png_abs8(tk, v_v_1), "std/png.xo:1387:5")
 		}
 	}
 	var v_i int64 = v_bpp
 	_ = v_i
-x_L1639:
+x_L1637:
 	for {
 		if !(v_i < v_n) {
 			break
@@ -2773,14 +2773,14 @@ x_L1639:
 		{
 			var v_v_2 int64 = (SubS(int64(List_At((*v_c), v_i, "std/png.xo:1391:18")), Png_paeth(tk, int64(List_At((*v_c), SubS(v_i, v_bpp, "std/png.xo:1391:38"), "std/png.xo:1391:36")), int64(List_At(v_p, v_i, "std/png.xo:1391:53")), int64(List_At(v_p, SubS(v_i, v_bpp, "std/png.xo:1391:66"), "std/png.xo:1391:64"))), "std/png.xo:1391:14") & int64(255))
 			_ = v_v_2
-			x_ix1640 := AddS(MulKI(int64(4), v_n, -2305843009213693952, 2305843009213693951, "std/png.xo:1392:7"), v_i, "std/png.xo:1392:7")
+			x_ix1638 := AddS(MulKI(int64(4), v_n, -2305843009213693952, 2305843009213693951, "std/png.xo:1392:7"), v_i, "std/png.xo:1392:7")
 			if !List_Mine((*v_c)) {
 				(*v_c) = List_Unshared((*v_c))
 			}
-			List_PutM((*v_c), x_ix1640, ConvS_uint8(v_v_2, "std/png.xo:1392:20"), "std/png.xo:1392:5")
+			List_PutM((*v_c), x_ix1638, ConvS_uint8(v_v_2, "std/png.xo:1392:20"), "std/png.xo:1392:5")
 			v_sum = AddS(v_sum, Png_abs8(tk, v_v_2), "std/png.xo:1393:5")
 			if v_sum >= v_best {
-				break x_L1639
+				break x_L1637
 			}
 			v_i = (v_i + int64(1))
 		}
@@ -2791,7 +2791,7 @@ x_L1639:
 	}
 	v_sum = int64(0)
 	v_i = int64(0)
-x_L1641:
+x_L1639:
 	for {
 		if !(v_i < v_n) {
 			break
@@ -2799,7 +2799,7 @@ x_L1641:
 		{
 			v_sum = AddS(v_sum, Png_abs8(tk, int64(List_At((*v_c), v_i, "std/png.xo:1407:21"))), "std/png.xo:1407:5")
 			if v_sum >= v_best {
-				break x_L1641
+				break x_L1639
 			}
 			v_i = (v_i + int64(1))
 		}
@@ -2809,23 +2809,23 @@ x_L1641:
 		v_filter = Png_FT_NONE
 	}
 	v_sum = int64(0)
-	x_it1642 := Range[int64]{Lo: int64(0), Hi: v_bpp, Incl: false}
-	for x_i1644 := x_it1642.Lo; x_i1644 < x_it1642.Hi; x_i1644++ {
-		x_el1645 := x_i1644
-		_ = x_el1645
-		var v_k_2 int64 = x_el1645
+	x_it1640 := Range[int64]{Lo: int64(0), Hi: v_bpp, Incl: false}
+	for x_i1642 := x_it1640.Lo; x_i1642 < x_it1640.Hi; x_i1642++ {
+		x_el1643 := x_i1642
+		_ = x_el1643
+		var v_k_2 int64 = x_el1643
 		_ = v_k_2
 		{
-			x_ix1646 := AddS(v_n, v_k_2, "std/png.xo:1420:7")
+			x_ix1644 := AddS(v_n, v_k_2, "std/png.xo:1420:7")
 			if !List_Mine((*v_c)) {
 				(*v_c) = List_Unshared((*v_c))
 			}
-			List_PutM((*v_c), x_ix1646, List_At((*v_c), v_k_2, "std/png.xo:1420:16"), "std/png.xo:1420:5")
+			List_PutM((*v_c), x_ix1644, List_At((*v_c), v_k_2, "std/png.xo:1420:16"), "std/png.xo:1420:5")
 			v_sum = AddS(v_sum, Png_abs8(tk, int64(List_At((*v_c), v_k_2, "std/png.xo:1421:21"))), "std/png.xo:1421:5")
 		}
 	}
 	v_i = v_bpp
-x_L1647:
+x_L1645:
 	for {
 		if !(v_i < v_n) {
 			break
@@ -2833,14 +2833,14 @@ x_L1647:
 		{
 			var v_v_3 int64 = ((int64(List_At((*v_c), v_i, "std/png.xo:1425:18")) - int64(List_At((*v_c), SubS(v_i, v_bpp, "std/png.xo:1425:32"), "std/png.xo:1425:30"))) & int64(255))
 			_ = v_v_3
-			x_ix1648 := AddS(v_n, v_i, "std/png.xo:1426:7")
+			x_ix1646 := AddS(v_n, v_i, "std/png.xo:1426:7")
 			if !List_Mine((*v_c)) {
 				(*v_c) = List_Unshared((*v_c))
 			}
-			List_PutM((*v_c), x_ix1648, ConvS_uint8(v_v_3, "std/png.xo:1426:16"), "std/png.xo:1426:5")
+			List_PutM((*v_c), x_ix1646, ConvS_uint8(v_v_3, "std/png.xo:1426:16"), "std/png.xo:1426:5")
 			v_sum = AddS(v_sum, Png_abs8(tk, v_v_3), "std/png.xo:1427:5")
 			if v_sum >= v_best {
-				break x_L1647
+				break x_L1645
 			}
 			v_i = (v_i + int64(1))
 		}
@@ -2850,25 +2850,25 @@ x_L1647:
 		v_filter = Png_FT_SUB
 	}
 	v_sum = int64(0)
-	x_it1649 := Range[int64]{Lo: int64(0), Hi: v_bpp, Incl: false}
-	for x_i1651 := x_it1649.Lo; x_i1651 < x_it1649.Hi; x_i1651++ {
-		x_el1652 := x_i1651
-		_ = x_el1652
-		var v_k_3 int64 = x_el1652
+	x_it1647 := Range[int64]{Lo: int64(0), Hi: v_bpp, Incl: false}
+	for x_i1649 := x_it1647.Lo; x_i1649 < x_it1647.Hi; x_i1649++ {
+		x_el1650 := x_i1649
+		_ = x_el1650
+		var v_k_3 int64 = x_el1650
 		_ = v_k_3
 		{
 			var v_v_4 int64 = ((int64(List_At((*v_c), v_k_3, "std/png.xo:1440:18")) - (int64(List_At(v_p, v_k_3, "std/png.xo:1440:30")) / int64(2))) & int64(255))
 			_ = v_v_4
-			x_ix1653 := AddS(MulKI(int64(3), v_n, -3074457345618258602, 3074457345618258602, "std/png.xo:1441:7"), v_k_3, "std/png.xo:1441:7")
+			x_ix1651 := AddS(MulKI(int64(3), v_n, -3074457345618258602, 3074457345618258602, "std/png.xo:1441:7"), v_k_3, "std/png.xo:1441:7")
 			if !List_Mine((*v_c)) {
 				(*v_c) = List_Unshared((*v_c))
 			}
-			List_PutM((*v_c), x_ix1653, ConvS_uint8(v_v_4, "std/png.xo:1441:20"), "std/png.xo:1441:5")
+			List_PutM((*v_c), x_ix1651, ConvS_uint8(v_v_4, "std/png.xo:1441:20"), "std/png.xo:1441:5")
 			v_sum = AddS(v_sum, Png_abs8(tk, v_v_4), "std/png.xo:1442:5")
 		}
 	}
 	v_i = v_bpp
-x_L1654:
+x_L1652:
 	for {
 		if !(v_i < v_n) {
 			break
@@ -2876,14 +2876,14 @@ x_L1654:
 		{
 			var v_v_5 int64 = ((int64(List_At((*v_c), v_i, "std/png.xo:1446:18")) - ((int64(List_At((*v_c), SubS(v_i, v_bpp, "std/png.xo:1446:33"), "std/png.xo:1446:31")) + int64(List_At(v_p, v_i, "std/png.xo:1446:49"))) / int64(2))) & int64(255))
 			_ = v_v_5
-			x_ix1655 := AddS(MulKI(int64(3), v_n, -3074457345618258602, 3074457345618258602, "std/png.xo:1447:7"), v_i, "std/png.xo:1447:7")
+			x_ix1653 := AddS(MulKI(int64(3), v_n, -3074457345618258602, 3074457345618258602, "std/png.xo:1447:7"), v_i, "std/png.xo:1447:7")
 			if !List_Mine((*v_c)) {
 				(*v_c) = List_Unshared((*v_c))
 			}
-			List_PutM((*v_c), x_ix1655, ConvS_uint8(v_v_5, "std/png.xo:1447:20"), "std/png.xo:1447:5")
+			List_PutM((*v_c), x_ix1653, ConvS_uint8(v_v_5, "std/png.xo:1447:20"), "std/png.xo:1447:5")
 			v_sum = AddS(v_sum, Png_abs8(tk, v_v_5), "std/png.xo:1448:5")
 			if v_sum >= v_best {
-				break x_L1654
+				break x_L1652
 			}
 			v_i = (v_i + int64(1))
 		}
@@ -2904,34 +2904,34 @@ func Png_fill_row(tk *Task, v_img Png_Image, v_cb int64, v_y int64, v_c *List[ui
 	var v_src int64 = MulS(MulS(v_y, v_w, "std/png.xo:1465:13"), v_mb, "std/png.xo:1465:13")
 	_ = v_src
 	if ((v_cb == Png_CB_G8) || (v_cb == Png_CB_P8)) || (v_cb == Png_CB_G16) {
-		x_it1656 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-		for x_i1658 := x_it1656.Lo; x_i1658 < x_it1656.Hi; x_i1658++ {
-			x_el1659 := x_i1658
-			_ = x_el1659
-			var v_i int64 = x_el1659
+		x_it1654 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+		for x_i1656 := x_it1654.Lo; x_i1656 < x_it1654.Hi; x_i1656++ {
+			x_el1657 := x_i1656
+			_ = x_el1657
+			var v_i int64 = x_el1657
 			_ = v_i
 			{
-				x_ix1660 := v_i
+				x_ix1658 := v_i
 				if !List_Mine((*v_c)) {
 					(*v_c) = List_Unshared((*v_c))
 				}
-				List_PutM((*v_c), x_ix1660, BytesAt(v_pix, AddS(v_src, v_i, "std/png.xo:1468:18"), "std/png.xo:1468:14"), "std/png.xo:1468:7")
+				List_PutM((*v_c), x_ix1658, BytesAt(v_pix, AddS(v_src, v_i, "std/png.xo:1468:18"), "std/png.xo:1468:14"), "std/png.xo:1468:7")
 			}
 		}
 		return
 	}
 	if ((v_cb == Png_CB_P1) || (v_cb == Png_CB_P2)) || (v_cb == Png_CB_P4) {
-		var x_v1661 int64
+		var x_v1659 int64
 		if v_cb == Png_CB_P1 {
-			x_v1661 = int64(1)
+			x_v1659 = int64(1)
 		} else {
 			if v_cb == Png_CB_P2 {
-				x_v1661 = int64(2)
+				x_v1659 = int64(2)
 			} else {
-				x_v1661 = int64(4)
+				x_v1659 = int64(4)
 			}
 		}
-		var v_depth int64 = x_v1661
+		var v_depth int64 = x_v1659
 		_ = v_depth
 		var v_per int64 = (int64(8) / v_depth)
 		_ = v_per
@@ -2941,21 +2941,21 @@ func Png_fill_row(tk *Task, v_img Png_Image, v_cb int64, v_y int64, v_c *List[ui
 		_ = v_cnt
 		var v_o int64 = int64(0)
 		_ = v_o
-		x_it1662 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
-		for x_i1664 := x_it1662.Lo; x_i1664 < x_it1662.Hi; x_i1664++ {
-			x_el1665 := x_i1664
-			_ = x_el1665
-			var v_x int64 = x_el1665
+		x_it1660 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
+		for x_i1662 := x_it1660.Lo; x_i1662 < x_it1660.Hi; x_i1662++ {
+			x_el1663 := x_i1662
+			_ = x_el1663
+			var v_x int64 = x_el1663
 			_ = v_x
 			{
 				v_a = ((Shl(v_a, v_depth, "std/png.xo:1479:13") | int64(BytesAt(v_pix, AddS(v_src, v_x, "std/png.xo:1479:35"), "std/png.xo:1479:31"))) & int64(255))
 				v_cnt = AddIUp(v_cnt, int64(1), "std/png.xo:1480:7")
 				if v_cnt == v_per {
-					x_ix1666 := v_o
+					x_ix1664 := v_o
 					if !List_Mine((*v_c)) {
 						(*v_c) = List_Unshared((*v_c))
 					}
-					List_PutM((*v_c), x_ix1666, ConvS_uint8(v_a, "std/png.xo:1482:16"), "std/png.xo:1482:9")
+					List_PutM((*v_c), x_ix1664, ConvS_uint8(v_a, "std/png.xo:1482:16"), "std/png.xo:1482:9")
 					v_o = AddIUp(v_o, int64(1), "std/png.xo:1483:9")
 					v_a = int64(0)
 					v_cnt = int64(0)
@@ -2972,11 +2972,11 @@ func Png_fill_row(tk *Task, v_img Png_Image, v_cb int64, v_y int64, v_c *List[ui
 					v_cnt = AddIUp(v_cnt, int64(1), "std/png.xo:1491:9")
 				}
 			}
-			x_ix1668 := v_o
+			x_ix1666 := v_o
 			if !List_Mine((*v_c)) {
 				(*v_c) = List_Unshared((*v_c))
 			}
-			List_PutM((*v_c), x_ix1668, ConvS_uint8(v_a, "std/png.xo:1493:14"), "std/png.xo:1493:7")
+			List_PutM((*v_c), x_ix1666, ConvS_uint8(v_a, "std/png.xo:1493:14"), "std/png.xo:1493:7")
 		}
 		return
 	}
@@ -2987,26 +2987,26 @@ func Png_fill_row(tk *Task, v_img Png_Image, v_cb int64, v_y int64, v_c *List[ui
 		_ = v_j
 		var v_o_1 int64 = int64(0)
 		_ = v_o_1
-		x_it1669 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
-		for x_i1671 := x_it1669.Lo; x_i1671 < x_it1669.Hi; x_i1671++ {
-			x_el1672 := x_i1671
-			_ = x_el1672
+		x_it1667 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
+		for x_i1669 := x_it1667.Lo; x_i1669 < x_it1667.Hi; x_i1669++ {
+			x_el1670 := x_i1669
+			_ = x_el1670
 			{
-				x_ix1673 := v_o_1
+				x_ix1671 := v_o_1
 				if !List_Mine((*v_c)) {
 					(*v_c) = List_Unshared((*v_c))
 				}
-				List_PutM((*v_c), x_ix1673, BytesAt(v_pix, v_j, "std/png.xo:1502:14"), "std/png.xo:1502:7")
-				x_ix1674 := AddIUp(v_o_1, int64(1), "std/png.xo:1503:9")
+				List_PutM((*v_c), x_ix1671, BytesAt(v_pix, v_j, "std/png.xo:1502:14"), "std/png.xo:1502:7")
+				x_ix1672 := AddIUp(v_o_1, int64(1), "std/png.xo:1503:9")
 				if !List_Mine((*v_c)) {
 					(*v_c) = List_Unshared((*v_c))
 				}
-				List_PutM((*v_c), x_ix1674, BytesAt(v_pix, AddIUp(v_j, int64(1), "std/png.xo:1503:22"), "std/png.xo:1503:18"), "std/png.xo:1503:7")
-				x_ix1675 := AddIUp(v_o_1, int64(2), "std/png.xo:1504:9")
+				List_PutM((*v_c), x_ix1672, BytesAt(v_pix, AddIUp(v_j, int64(1), "std/png.xo:1503:22"), "std/png.xo:1503:18"), "std/png.xo:1503:7")
+				x_ix1673 := AddIUp(v_o_1, int64(2), "std/png.xo:1504:9")
 				if !List_Mine((*v_c)) {
 					(*v_c) = List_Unshared((*v_c))
 				}
-				List_PutM((*v_c), x_ix1675, BytesAt(v_pix, AddIUp(v_j, int64(2), "std/png.xo:1504:22"), "std/png.xo:1504:18"), "std/png.xo:1504:7")
+				List_PutM((*v_c), x_ix1673, BytesAt(v_pix, AddIUp(v_j, int64(2), "std/png.xo:1504:22"), "std/png.xo:1504:18"), "std/png.xo:1504:7")
 				v_o_1 = AddIUp(v_o_1, int64(3), "std/png.xo:1505:7")
 				v_j = AddIUp(v_j, int64(4), "std/png.xo:1506:7")
 			}
@@ -3014,20 +3014,20 @@ func Png_fill_row(tk *Task, v_img Png_Image, v_cb int64, v_y int64, v_c *List[ui
 		return
 	}
 	if v_cb == Png_CB_TCA8 {
-		x_t1676 := v_m
-		if x_t1676.Tag == 5 {
-			x_it1677 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-			for x_i1679 := x_it1677.Lo; x_i1679 < x_it1677.Hi; x_i1679++ {
-				x_el1680 := x_i1679
-				_ = x_el1680
-				var v_i_1 int64 = x_el1680
+		x_t1674 := v_m
+		if x_t1674.Tag == 5 {
+			x_it1675 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+			for x_i1677 := x_it1675.Lo; x_i1677 < x_it1675.Hi; x_i1677++ {
+				x_el1678 := x_i1677
+				_ = x_el1678
+				var v_i_1 int64 = x_el1678
 				_ = v_i_1
 				{
-					x_ix1681 := v_i_1
+					x_ix1679 := v_i_1
 					if !List_Mine((*v_c)) {
 						(*v_c) = List_Unshared((*v_c))
 					}
-					List_PutM((*v_c), x_ix1681, BytesAt(v_pix, AddS(v_src, v_i_1, "std/png.xo:1513:20"), "std/png.xo:1513:16"), "std/png.xo:1513:9")
+					List_PutM((*v_c), x_ix1679, BytesAt(v_pix, AddS(v_src, v_i_1, "std/png.xo:1513:20"), "std/png.xo:1513:16"), "std/png.xo:1513:9")
 				}
 			}
 			return
@@ -3036,81 +3036,81 @@ func Png_fill_row(tk *Task, v_img Png_Image, v_cb int64, v_y int64, v_c *List[ui
 		_ = v_j_1
 		var v_o_2 int64 = int64(0)
 		_ = v_o_2
-		x_it1682 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
-		for x_i1684 := x_it1682.Lo; x_i1684 < x_it1682.Hi; x_i1684++ {
-			x_el1685 := x_i1684
-			_ = x_el1685
+		x_it1680 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
+		for x_i1682 := x_it1680.Lo; x_i1682 < x_it1680.Hi; x_i1682++ {
+			x_el1683 := x_i1682
+			_ = x_el1683
 			{
 				var v_a_1 int64 = int64(BytesAt(v_pix, AddIUp(v_j_1, int64(3), "std/png.xo:1521:23"), "std/png.xo:1521:19"))
 				_ = v_a_1
 				if v_a_1 == int64(0) {
-					x_ix1686 := v_o_2
+					x_ix1684 := v_o_2
 					if !List_Mine((*v_c)) {
 						(*v_c) = List_Unshared((*v_c))
 					}
-					List_PutM((*v_c), x_ix1686, uint8(0), "std/png.xo:1523:9")
-					x_ix1687 := AddIUp(v_o_2, int64(1), "std/png.xo:1524:11")
+					List_PutM((*v_c), x_ix1684, uint8(0), "std/png.xo:1523:9")
+					x_ix1685 := AddIUp(v_o_2, int64(1), "std/png.xo:1524:11")
 					if !List_Mine((*v_c)) {
 						(*v_c) = List_Unshared((*v_c))
 					}
-					List_PutM((*v_c), x_ix1687, uint8(0), "std/png.xo:1524:9")
-					x_ix1688 := AddIUp(v_o_2, int64(2), "std/png.xo:1525:11")
+					List_PutM((*v_c), x_ix1685, uint8(0), "std/png.xo:1524:9")
+					x_ix1686 := AddIUp(v_o_2, int64(2), "std/png.xo:1525:11")
 					if !List_Mine((*v_c)) {
 						(*v_c) = List_Unshared((*v_c))
 					}
-					List_PutM((*v_c), x_ix1688, uint8(0), "std/png.xo:1525:9")
-					x_ix1689 := AddIUp(v_o_2, int64(3), "std/png.xo:1526:11")
+					List_PutM((*v_c), x_ix1686, uint8(0), "std/png.xo:1525:9")
+					x_ix1687 := AddIUp(v_o_2, int64(3), "std/png.xo:1526:11")
 					if !List_Mine((*v_c)) {
 						(*v_c) = List_Unshared((*v_c))
 					}
-					List_PutM((*v_c), x_ix1689, uint8(0), "std/png.xo:1526:9")
+					List_PutM((*v_c), x_ix1687, uint8(0), "std/png.xo:1526:9")
 				} else {
 					if v_a_1 == int64(255) {
-						x_ix1690 := v_o_2
+						x_ix1688 := v_o_2
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1690, BytesAt(v_pix, v_j_1, "std/png.xo:1528:16"), "std/png.xo:1528:9")
-						x_ix1691 := AddIUp(v_o_2, int64(1), "std/png.xo:1529:11")
+						List_PutM((*v_c), x_ix1688, BytesAt(v_pix, v_j_1, "std/png.xo:1528:16"), "std/png.xo:1528:9")
+						x_ix1689 := AddIUp(v_o_2, int64(1), "std/png.xo:1529:11")
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1691, BytesAt(v_pix, AddIUp(v_j_1, int64(1), "std/png.xo:1529:24"), "std/png.xo:1529:20"), "std/png.xo:1529:9")
-						x_ix1692 := AddIUp(v_o_2, int64(2), "std/png.xo:1530:11")
+						List_PutM((*v_c), x_ix1689, BytesAt(v_pix, AddIUp(v_j_1, int64(1), "std/png.xo:1529:24"), "std/png.xo:1529:20"), "std/png.xo:1529:9")
+						x_ix1690 := AddIUp(v_o_2, int64(2), "std/png.xo:1530:11")
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1692, BytesAt(v_pix, AddIUp(v_j_1, int64(2), "std/png.xo:1530:24"), "std/png.xo:1530:20"), "std/png.xo:1530:9")
-						x_ix1693 := AddIUp(v_o_2, int64(3), "std/png.xo:1531:11")
+						List_PutM((*v_c), x_ix1690, BytesAt(v_pix, AddIUp(v_j_1, int64(2), "std/png.xo:1530:24"), "std/png.xo:1530:20"), "std/png.xo:1530:9")
+						x_ix1691 := AddIUp(v_o_2, int64(3), "std/png.xo:1531:11")
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1693, uint8(255), "std/png.xo:1531:9")
+						List_PutM((*v_c), x_ix1691, uint8(255), "std/png.xo:1531:9")
 					} else {
 						var v_mm int64 = (int64(257) * int64(65535))
 						_ = v_mm
 						var v_a16 int64 = MulIK(v_a_1, int64(257), -35888607147294847, 35888607147294847, "std/png.xo:1534:19")
 						_ = v_a16
-						x_ix1694 := v_o_2
+						x_ix1692 := v_o_2
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1694, ConvS_uint8(((DivS((int64(BytesAt(v_pix, v_j_1, "std/png.xo:1535:28"))*v_mm), v_a16, "std/png.xo:1535:24")>>int64(8))&int64(255)), "std/png.xo:1535:16"), "std/png.xo:1535:9")
-						x_ix1695 := AddIUp(v_o_2, int64(1), "std/png.xo:1536:11")
+						List_PutM((*v_c), x_ix1692, ConvS_uint8(((DivS((int64(BytesAt(v_pix, v_j_1, "std/png.xo:1535:28"))*v_mm), v_a16, "std/png.xo:1535:24")>>int64(8))&int64(255)), "std/png.xo:1535:16"), "std/png.xo:1535:9")
+						x_ix1693 := AddIUp(v_o_2, int64(1), "std/png.xo:1536:11")
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1695, ConvS_uint8(((DivS((int64(BytesAt(v_pix, AddIUp(v_j_1, int64(1), "std/png.xo:1536:36"), "std/png.xo:1536:32"))*v_mm), v_a16, "std/png.xo:1536:28")>>int64(8))&int64(255)), "std/png.xo:1536:20"), "std/png.xo:1536:9")
-						x_ix1696 := AddIUp(v_o_2, int64(2), "std/png.xo:1537:11")
+						List_PutM((*v_c), x_ix1693, ConvS_uint8(((DivS((int64(BytesAt(v_pix, AddIUp(v_j_1, int64(1), "std/png.xo:1536:36"), "std/png.xo:1536:32"))*v_mm), v_a16, "std/png.xo:1536:28")>>int64(8))&int64(255)), "std/png.xo:1536:20"), "std/png.xo:1536:9")
+						x_ix1694 := AddIUp(v_o_2, int64(2), "std/png.xo:1537:11")
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1696, ConvS_uint8(((DivS((int64(BytesAt(v_pix, AddIUp(v_j_1, int64(2), "std/png.xo:1537:36"), "std/png.xo:1537:32"))*v_mm), v_a16, "std/png.xo:1537:28")>>int64(8))&int64(255)), "std/png.xo:1537:20"), "std/png.xo:1537:9")
-						x_ix1697 := AddIUp(v_o_2, int64(3), "std/png.xo:1538:11")
+						List_PutM((*v_c), x_ix1694, ConvS_uint8(((DivS((int64(BytesAt(v_pix, AddIUp(v_j_1, int64(2), "std/png.xo:1537:36"), "std/png.xo:1537:32"))*v_mm), v_a16, "std/png.xo:1537:28")>>int64(8))&int64(255)), "std/png.xo:1537:20"), "std/png.xo:1537:9")
+						x_ix1695 := AddIUp(v_o_2, int64(3), "std/png.xo:1538:11")
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1697, ConvS_uint8(v_a_1, "std/png.xo:1538:20"), "std/png.xo:1538:9")
+						List_PutM((*v_c), x_ix1695, ConvS_uint8(v_a_1, "std/png.xo:1538:20"), "std/png.xo:1538:9")
 					}
 				}
 				v_o_2 = AddIUp(v_o_2, int64(4), "std/png.xo:1540:7")
@@ -3124,23 +3124,23 @@ func Png_fill_row(tk *Task, v_img Png_Image, v_cb int64, v_y int64, v_c *List[ui
 		_ = v_j_2
 		var v_o_3 int64 = int64(0)
 		_ = v_o_3
-		x_it1698 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
-		for x_i1700 := x_it1698.Lo; x_i1700 < x_it1698.Hi; x_i1700++ {
-			x_el1701 := x_i1700
-			_ = x_el1701
+		x_it1696 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
+		for x_i1698 := x_it1696.Lo; x_i1698 < x_it1696.Hi; x_i1698++ {
+			x_el1699 := x_i1698
+			_ = x_el1699
 			{
-				x_it1702 := Range[int64]{Lo: int64(0), Hi: int64(6), Incl: false}
-				for x_i1704 := x_it1702.Lo; x_i1704 < x_it1702.Hi; x_i1704++ {
-					x_el1705 := x_i1704
-					_ = x_el1705
-					var v_k int64 = x_el1705
+				x_it1700 := Range[int64]{Lo: int64(0), Hi: int64(6), Incl: false}
+				for x_i1702 := x_it1700.Lo; x_i1702 < x_it1700.Hi; x_i1702++ {
+					x_el1703 := x_i1702
+					_ = x_el1703
+					var v_k int64 = x_el1703
 					_ = v_k
 					{
-						x_ix1706 := AddS(v_o_3, v_k, "std/png.xo:1550:11")
+						x_ix1704 := AddS(v_o_3, v_k, "std/png.xo:1550:11")
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1706, BytesAt(v_pix, AddS(v_j_2, v_k, "std/png.xo:1550:24"), "std/png.xo:1550:20"), "std/png.xo:1550:9")
+						List_PutM((*v_c), x_ix1704, BytesAt(v_pix, AddS(v_j_2, v_k, "std/png.xo:1550:24"), "std/png.xo:1550:20"), "std/png.xo:1550:9")
 					}
 				}
 				v_o_3 = AddIUp(v_o_3, int64(6), "std/png.xo:1552:7")
@@ -3149,20 +3149,20 @@ func Png_fill_row(tk *Task, v_img Png_Image, v_cb int64, v_y int64, v_c *List[ui
 		}
 		return
 	}
-	x_t1707 := v_m
-	if x_t1707.Tag == 7 {
-		x_it1708 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
-		for x_i1710 := x_it1708.Lo; x_i1710 < x_it1708.Hi; x_i1710++ {
-			x_el1711 := x_i1710
-			_ = x_el1711
-			var v_i_2 int64 = x_el1711
+	x_t1705 := v_m
+	if x_t1705.Tag == 7 {
+		x_it1706 := Range[int64]{Lo: int64(0), Hi: v_n, Incl: false}
+		for x_i1708 := x_it1706.Lo; x_i1708 < x_it1706.Hi; x_i1708++ {
+			x_el1709 := x_i1708
+			_ = x_el1709
+			var v_i_2 int64 = x_el1709
 			_ = v_i_2
 			{
-				x_ix1712 := v_i_2
+				x_ix1710 := v_i_2
 				if !List_Mine((*v_c)) {
 					(*v_c) = List_Unshared((*v_c))
 				}
-				List_PutM((*v_c), x_ix1712, BytesAt(v_pix, AddS(v_src, v_i_2, "std/png.xo:1560:18"), "std/png.xo:1560:14"), "std/png.xo:1560:7")
+				List_PutM((*v_c), x_ix1710, BytesAt(v_pix, AddS(v_src, v_i_2, "std/png.xo:1560:18"), "std/png.xo:1560:14"), "std/png.xo:1560:7")
 			}
 		}
 		return
@@ -3171,76 +3171,76 @@ func Png_fill_row(tk *Task, v_img Png_Image, v_cb int64, v_y int64, v_c *List[ui
 	_ = v_j_3
 	var v_o_4 int64 = int64(0)
 	_ = v_o_4
-	x_it1713 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
-	for x_i1715 := x_it1713.Lo; x_i1715 < x_it1713.Hi; x_i1715++ {
-		x_el1716 := x_i1715
-		_ = x_el1716
+	x_it1711 := Range[int64]{Lo: int64(0), Hi: v_w, Incl: false}
+	for x_i1713 := x_it1711.Lo; x_i1713 < x_it1711.Hi; x_i1713++ {
+		x_el1714 := x_i1713
+		_ = x_el1714
 		{
 			var v_a_2 int64 = (Shl(int64(BytesAt(v_pix, AddIUp(v_j_3, int64(6), "std/png.xo:1567:22"), "std/png.xo:1567:18")), int64(8), "std/png.xo:1567:14") | int64(BytesAt(v_pix, AddIUp(v_j_3, int64(7), "std/png.xo:1567:46"), "std/png.xo:1567:42")))
 			_ = v_a_2
 			if v_a_2 == int64(0) {
-				x_it1717 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
-				for x_i1719 := x_it1717.Lo; x_i1719 < x_it1717.Hi; x_i1719++ {
-					x_el1720 := x_i1719
-					_ = x_el1720
-					var v_k_1 int64 = x_el1720
+				x_it1715 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
+				for x_i1717 := x_it1715.Lo; x_i1717 < x_it1715.Hi; x_i1717++ {
+					x_el1718 := x_i1717
+					_ = x_el1718
+					var v_k_1 int64 = x_el1718
 					_ = v_k_1
 					{
-						x_ix1721 := AddS(v_o_4, v_k_1, "std/png.xo:1570:11")
+						x_ix1719 := AddS(v_o_4, v_k_1, "std/png.xo:1570:11")
 						if !List_Mine((*v_c)) {
 							(*v_c) = List_Unshared((*v_c))
 						}
-						List_PutM((*v_c), x_ix1721, uint8(0), "std/png.xo:1570:9")
+						List_PutM((*v_c), x_ix1719, uint8(0), "std/png.xo:1570:9")
 					}
 				}
 			} else {
 				if v_a_2 == int64(65535) {
-					x_it1722 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
-					for x_i1724 := x_it1722.Lo; x_i1724 < x_it1722.Hi; x_i1724++ {
-						x_el1725 := x_i1724
-						_ = x_el1725
-						var v_k_2 int64 = x_el1725
+					x_it1720 := Range[int64]{Lo: int64(0), Hi: int64(8), Incl: false}
+					for x_i1722 := x_it1720.Lo; x_i1722 < x_it1720.Hi; x_i1722++ {
+						x_el1723 := x_i1722
+						_ = x_el1723
+						var v_k_2 int64 = x_el1723
 						_ = v_k_2
 						{
-							x_ix1726 := AddS(v_o_4, v_k_2, "std/png.xo:1574:11")
+							x_ix1724 := AddS(v_o_4, v_k_2, "std/png.xo:1574:11")
 							if !List_Mine((*v_c)) {
 								(*v_c) = List_Unshared((*v_c))
 							}
-							List_PutM((*v_c), x_ix1726, BytesAt(v_pix, AddS(v_j_3, v_k_2, "std/png.xo:1574:24"), "std/png.xo:1574:20"), "std/png.xo:1574:9")
+							List_PutM((*v_c), x_ix1724, BytesAt(v_pix, AddS(v_j_3, v_k_2, "std/png.xo:1574:24"), "std/png.xo:1574:20"), "std/png.xo:1574:9")
 						}
 					}
 				} else {
-					x_it1727 := Range[int64]{Lo: int64(0), Hi: int64(3), Incl: false}
-					for x_i1729 := x_it1727.Lo; x_i1729 < x_it1727.Hi; x_i1729++ {
-						x_el1730 := x_i1729
-						_ = x_el1730
-						var v_k_3 int64 = x_el1730
+					x_it1725 := Range[int64]{Lo: int64(0), Hi: int64(3), Incl: false}
+					for x_i1727 := x_it1725.Lo; x_i1727 < x_it1725.Hi; x_i1727++ {
+						x_el1728 := x_i1727
+						_ = x_el1728
+						var v_k_3 int64 = x_el1728
 						_ = v_k_3
 						{
 							var v_v int64 = DivS(MulIK((Shl(int64(BytesAt(v_pix, AddS(v_j_3, (int64(2)*v_k_3), "std/png.xo:1578:27"), "std/png.xo:1578:23")), int64(8), "std/png.xo:1578:19")|int64(BytesAt(v_pix, AddIUp(AddS(v_j_3, (int64(2)*v_k_3), "std/png.xo:1578:55"), int64(1), "std/png.xo:1578:55"), "std/png.xo:1578:51"))), int64(65535), -140739635871744, 140739635871744, "std/png.xo:1578:17"), v_a_2, "std/png.xo:1578:17")
 							_ = v_v
-							x_ix1731 := AddS(v_o_4, (int64(2) * v_k_3), "std/png.xo:1579:11")
+							x_ix1729 := AddS(v_o_4, (int64(2) * v_k_3), "std/png.xo:1579:11")
 							if !List_Mine((*v_c)) {
 								(*v_c) = List_Unshared((*v_c))
 							}
-							List_PutM((*v_c), x_ix1731, ConvS_uint8((v_v>>int64(8)), "std/png.xo:1579:24"), "std/png.xo:1579:9")
-							x_ix1732 := AddIUp(AddS(v_o_4, (int64(2)*v_k_3), "std/png.xo:1580:11"), int64(1), "std/png.xo:1580:11")
+							List_PutM((*v_c), x_ix1729, ConvS_uint8((v_v>>int64(8)), "std/png.xo:1579:24"), "std/png.xo:1579:9")
+							x_ix1730 := AddIUp(AddS(v_o_4, (int64(2)*v_k_3), "std/png.xo:1580:11"), int64(1), "std/png.xo:1580:11")
 							if !List_Mine((*v_c)) {
 								(*v_c) = List_Unshared((*v_c))
 							}
-							List_PutM((*v_c), x_ix1732, ConvS_uint8((v_v&int64(255)), "std/png.xo:1580:28"), "std/png.xo:1580:9")
+							List_PutM((*v_c), x_ix1730, ConvS_uint8((v_v&int64(255)), "std/png.xo:1580:28"), "std/png.xo:1580:9")
 						}
 					}
-					x_ix1733 := AddIUp(v_o_4, int64(6), "std/png.xo:1582:9")
+					x_ix1731 := AddIUp(v_o_4, int64(6), "std/png.xo:1582:9")
 					if !List_Mine((*v_c)) {
 						(*v_c) = List_Unshared((*v_c))
 					}
-					List_PutM((*v_c), x_ix1733, BytesAt(v_pix, AddIUp(v_j_3, int64(6), "std/png.xo:1582:22"), "std/png.xo:1582:18"), "std/png.xo:1582:7")
-					x_ix1734 := AddIUp(v_o_4, int64(7), "std/png.xo:1583:9")
+					List_PutM((*v_c), x_ix1731, BytesAt(v_pix, AddIUp(v_j_3, int64(6), "std/png.xo:1582:22"), "std/png.xo:1582:18"), "std/png.xo:1582:7")
+					x_ix1732 := AddIUp(v_o_4, int64(7), "std/png.xo:1583:9")
 					if !List_Mine((*v_c)) {
 						(*v_c) = List_Unshared((*v_c))
 					}
-					List_PutM((*v_c), x_ix1734, BytesAt(v_pix, AddIUp(v_j_3, int64(7), "std/png.xo:1583:22"), "std/png.xo:1583:18"), "std/png.xo:1583:7")
+					List_PutM((*v_c), x_ix1732, BytesAt(v_pix, AddIUp(v_j_3, int64(7), "std/png.xo:1583:22"), "std/png.xo:1583:18"), "std/png.xo:1583:7")
 				}
 			}
 			v_o_4 = AddIUp(v_o_4, int64(8), "std/png.xo:1585:5")

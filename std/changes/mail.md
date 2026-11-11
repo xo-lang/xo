@@ -1,5 +1,17 @@
 # std/mail changes
 
+## 2026-11-11: internal: read_message reads lines with std/textproto
+
+- Kind: internal
+- Commit: this push
+- Found by: decision 0598 stage 2
+- Go reference: net/textproto (go1.26.1)
+- Test: `xo test --std-module=mail` (native, LLVM); the mail corpus on go, arm64, llvm
+- Timing: none (header and DATA handling, not a hot path)
+- Shipped in: not yet released
+
+read_message keeps net/mail's own header rules and reads its lines and continued lines with std/textproto's Reader; canonical keys are textproto.canonical_key. Its private line reader, canonical_key and trim are removed. Output unchanged.
+
 ## 2026-11-10: refactor: width bounds as the type constants (decision 0587 point 4)
 
 - Kind: refactor
