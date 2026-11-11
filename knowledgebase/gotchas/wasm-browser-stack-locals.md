@@ -52,3 +52,19 @@ address, and keeps the cold locals of big functions in a memory frame
 (decision 0179's addendum "Smaller frames"). To find the cost of a
 frame, compute the function's deepest operand stack from its .wat as
 well as counting its locals.
+
+Again (2026-11-11, Xo Lang 2): the playground's compiler built from main
+overflowed the Chrome worker's stack on every build (the tour's basics
+included), where 0.35.0's did not: `Checker` had grown to about 1,143
+leaves, and two shapes put a whole one on the operand stack, so even a
+69-local function had a 9 KB frame. A call returning a struct of 65 to
+1,000 leaves returned it as values (MAX_RESULTS was the engine's limit,
+1000), and a wide value read from memory (an sret block, a home, a value
+held in memory) was pushed whole and then popped into its locals. Now a
+result of more than 64 leaves goes through the caller's block, and
+`mem_set` loads such a value a leaf at a time into its locals. The
+deepest frame on the build's stack went from 1,143 operand slots to 42,
+and a build passes in a 200 KB Node stack (0.35.0's compiler needed
+350 KB). Measure with a Node `--stack-size` sweep and a per-function
+`locals + deepest operand stack` count of the module, not the Chrome
+page alone.

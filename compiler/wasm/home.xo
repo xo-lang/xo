@@ -121,10 +121,15 @@ fn (var g: Gen) result_leaves(fi: Int) -> Int {
 }
 
 /// The most result leaves a function returns as values: past it they
-/// are stored at an address the caller passes (a block it allocates),
-/// since a WebAssembly engine accepts at most 1000 results (the SSA
-/// builder's Builder, returned by ssa.build_program_*, has more).
-const MAX_RESULTS = 1000
+/// are stored at an address the caller passes (a block it allocates).
+/// A WebAssembly engine accepts at most 1000 results (the SSA builder's
+/// Builder, returned by ssa.build_program_*, has more), and well below
+/// that a wide result costs every caller's frame: V8's baseline compiler
+/// sizes a frame by its deepest operand stack, and a call returning a
+/// Checker (about 620 leaves) as values made each caller's frame 5 KB, so
+/// the playground's compiler overflowed a browser worker's stack
+/// (gotchas/wasm-browser-stack-locals.md; 64, 2026-11-11).
+const MAX_RESULTS = 64
 
 /// Whether function fi returns its results through memory: more than
 /// MAX_RESULTS leaves (a call through a function value passes the block
@@ -1057,8 +1062,7 @@ fn (var g: Gen) take_snaps(d: Int) {
       }
       let (mp, mo) = g.mem_of(a)
       let ls = g.leaves(ssa.ty_of(x.tb))
-      g.mem_push(mp, mo + g.boff(g.vty(a), g.field_off(g.vty(a), i)), ls)
-      g.set_range(g.loc(rep), ls.len())
+      g.mem_def(mp, mo + g.boff(g.vty(a), g.field_off(g.vty(a), i)), ls, rep)
     }
   }
 }
@@ -1069,6 +1073,29 @@ fn (var g: Gen) mem_push(p: Int, off: Int, ls: List[Str]) {
   for (k, l) in ls.indexed() {
     g.get(p)
     g.e("${l}.load offset=${off + loff(ls, k)}")
+  }
+}
+
+/// Loads leaves ls stored from offset off of the memory at local p into
+/// the locals from b, one leaf at a time: a load and its local.set side
+/// by side, where mem_push then set_range held every leaf on the operand
+/// stack at once, and V8's baseline compiler sizes a frame by its deepest
+/// operand stack (a call returning a Checker, 1,143 leaves, made every
+/// caller's frame about 9 KB; gotchas/wasm-browser-stack-locals.md).
+fn (var g: Gen) mem_set(p: Int, off: Int, ls: List[Str], b: Int) {
+  g.mstat_add("load", ls.len())
+  for (k, l) in ls.indexed() {
+    g.get(p)
+    g.e("${l}.load offset=${off + loff(ls, k)}")
+    g.set(b + k)
+  }
+}
+
+/// Defines value v from leaves ls stored from offset off of the memory at
+/// local p (mem_set into v's locals).
+fn (var g: Gen) mem_def(p: Int, off: Int, ls: List[Str], v: Int) {
+  if !ls.is_empty() {
+    g.mem_set(p, off, ls, g.loc(v))
   }
 }
 

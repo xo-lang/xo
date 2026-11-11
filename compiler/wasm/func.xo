@@ -157,8 +157,7 @@ fn (var g: Gen) func(fi: Int) {
   // at entry (before a resumed task restores its locals)
   for (h, p) in g.hval.indexed() {
     if !g.hok[h] {
-      g.mem_push(g.hptr[h], 0, g.leaves(ssa.ty_of(f.values[p].tb)))
-      g.set_range(g.loc(p), g.nleaves(ssa.ty_of(f.values[p].tb)))
+      g.mem_def(g.hptr[h], 0, g.leaves(ssa.ty_of(f.values[p].tb)), p)
     }
   }
   // a function that can suspend (rt3.xo) saves its locals and its resume
@@ -887,12 +886,11 @@ fn (var g: Gen) alias_base(v: Int, src: List[Int]) -> Int {
 /// The first local of value v (allocated at its first use). A value in
 /// memory (home.xo) is loaded into new locals here, where it is used.
 fn (var g: Gen) loc(v: Int) -> Int {
-  let (mp, _) = g.mem_of(v)
+  let (mp, mo) = g.mem_of(v)
   if mp >= 0 {
     let ls = g.leaves(g.vty(v))
     let b = g.scratch(ls)
-    g.push(v)
-    g.set_range(b, ls.len())
+    g.mem_set(mp, mo, ls, b)
     return b
   }
   if g.vbase[v] < 0 {
@@ -1706,12 +1704,11 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       g.e("call_indirect (type ${s})")
       g.suspend_check(id)
       if blk >= 0 {
-        g.mem_push(blk, 0, rl)
-      }
-      g.def(v)
-      if blk >= 0 {
+        g.mem_def(blk, 0, rl, v)
         g.get(blk)
         g.e("call $free")
+      } else {
+        g.def(v)
       }
       for (_, c) in copies {
         g.get(c)
