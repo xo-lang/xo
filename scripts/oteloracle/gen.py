@@ -76,15 +76,15 @@ for case in cases:
                      % (v, sp['tid'], sp['name'], sp['start'] // 1000000, (sp['end'] - sp['start']) // 1000, sp['tid'], sp['sid'], sp['parent'], KIND[sp['kind']], sp['start'], sp['end'], sn, sv, sc))
         starts = [o[1] for o in sp['ops'] if o[0] == 'attr']
         if starts:
-            lines.append('  %s = %s with {attributes: merge_attrs([], [%s])}' % (v, v, ', '.join(starts)))
+            lines.append('  %s = %s with {attributes: trace.merge_attrs([], [%s])}' % (v, v, ', '.join(starts)))
         for o in sp['ops']:
             if o[0] == 'set':
-                lines.append('  %s = %s with {attributes: merge_attrs(%s.attributes, [%s])}' % (v, v, v, ', '.join(o[1])))
+                lines.append('  %s = %s with {attributes: trace.merge_attrs(%s.attributes, [%s])}' % (v, v, v, ', '.join(o[1])))
             elif o[0] == 'event':
                 ev = 'trace.Event{name: %s, time_ns: %d, attributes: [%s]}' % (o[1], o[2], ', '.join(o[3]))
                 lines.append('  %s = %s with {events: list_with(%s.events, %s)}' % (v, v, v, ev))
             elif o[0] == 'status':
-                lines.append('  %s = span_set_status(%s, trace.StatusCode.%s, %s)' % (v, v, o[1], o[2]))
+                lines.append('  %s = trace.span_set_status(%s, trace.StatusCode.%s, %s)' % (v, v, o[1], o[2]))
         lines.append('  spans.push(%s)' % v)
     lines.append('  let got = otlp.encode_traces(otlp.Resource{service: "oracle", scope: "oracle"}, spans)')
     lines.append('  expect(got.to_hex()) == "%s"' % want)
@@ -100,7 +100,7 @@ fn list_with(l: List[trace.Event], e: trace.Event) -> List[trace.Event] {
 }
 
 '''
-tp = os.path.join(here, '..', '..', 'std', 'native', 'trace_test.xo')
+tp = os.path.join(here, '..', '..', 'std', 'native', 'otlp_test.xo')
 t = open(tp).read()
 b = t.find('// BEGIN GENERATED')
 if b >= 0:

@@ -249,3 +249,10 @@ pushes.
   std/protobuf cannot merge this way: marshal and unmarshal are the
   compiler's (derive Proto), with no body to move.
 
+- std/trace and std/metrics (2026-11-11): merged and rt-hosted (std/otlp,
+  generated into std/rt, uses both; gotchas/rt-hosted-merged-imports.md).
+  Neither imports anything native. trace's seven OpenTelemetry Go oracle
+  tests encode with std/otlp, which uses std/trace, so in trace's own
+  tests they would be an import cycle: they moved to
+  std/native/otlp_test.xo (scripts/oteloracle/gen.py writes them there).
+  rand_hex gained `uses rand`, which the native file had not declared.

@@ -38,3 +38,5 @@ std/netip
 std/norm
 std/backoff
 std/idna
+std/trace
+std/metrics

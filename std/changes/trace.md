@@ -1,5 +1,16 @@
 # std/trace changes
 
+## 2026-11-11: refactor: std/trace is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0597's merges
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora trace and otlp on go, arm64, llvm; xo test --std-module=std/trace (arm64, llvm); TestStdChecks
+- Shipped in: not yet released
+
+std/native/trace.xo moved into std/trace.xo (its tests into std/trace_test.xo). It is generated into std/rt (std/rt_hosted.txt), since std/otlp, which is, uses it.
+
 ## 2026-11-09: feature: OpenTelemetry span fields and a Recorder (decision 0580)
 
 - Kind: feature

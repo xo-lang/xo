@@ -1,5 +1,16 @@
 # std/metrics changes
 
+## 2026-11-11: refactor: std/metrics is one file (decisions 0588, 0597)
+
+- Kind: refactor
+- Commit: this commit
+- Found by: decision 0597's merges
+- Go reference: none (no behavior change)
+- Test: TestStdCorpora metrics and otlp on go, arm64, llvm; xo test --std-module=std/metrics (arm64, llvm); TestStdChecks
+- Shipped in: not yet released
+
+std/native/metrics.xo moved into std/metrics.xo. It is generated into std/rt (std/rt_hosted.txt), since std/otlp, which is, uses it.
+
 ## 2026-11-08: perf: a labelled hit updates under the read share; counters add whole numbers with one atomic add
 
 - Kind: perf

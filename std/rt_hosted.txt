@@ -10,3 +10,5 @@ std/binary
 std/image
 std/netip
 std/backoff
+std/trace
+std/metrics
