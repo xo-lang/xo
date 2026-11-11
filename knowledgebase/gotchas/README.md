@@ -1285,3 +1285,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [std-merge-push-revert-ok.md](std-merge-push-revert-ok.md): a 0588 merge push is refused as a revert; add Revert-ok trailers for the deleted native and generated files
 - [merged-std-derive-override.md](merged-std-derive-override.md): a 0588 merge keeps `derive Display` and drops the native T_display that overrode it; write the method
 - [std-record-drops-module-flag.md](std-record-drops-module-flag.md): std's cached declaration record must carry every Module flag later phases read (merged base64 was XO1201)
+- [launchd-cdhash-pin.md](launchd-cdhash-pin.md): launchd pins heavyd's cdhash, so a rebuild in place fails to spawn (exit 78) until the owner re-registers; install.sh rebuilds only on a source change and prints the command
