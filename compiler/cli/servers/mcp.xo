@@ -2,9 +2,12 @@
 // (decision 0178 stage 5). JSON-RPC 2.0 over standard input and output,
 // one message per line; the tools run the xo command line (this program,
 // as a child process, where the Go server calls `run` in process) with
-// --json and reshape the result. Every response is the Go server's byte
-// for byte: the same field order for structs, sorted keys for maps, and
-// json.Marshal's escaping (json.xo).
+// --json and reshape the result. The JSON-RPC envelope is std/jsonrpc's
+// (decision 0603); the results keep the Go server's field order for
+// structs and sorted keys for maps (json.xo).
+
+use std/json
+use std/jsonrpc
 
 const MCP_PROTOCOL = "2025-06-18"
 
@@ -76,67 +79,20 @@ pub fn run_mcp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (std
   0
 }
 
-/// One response line, or None for a notification.
+/// The answer to one line (std/jsonrpc's `answer`: batches, notifications
+/// without a reply, the specification's error codes), None for none.
 pub fn mcp_handle(os: Os, ex: Exec, version: Str, line: Str) -> Str? uses proc {
-  let v = match parse(line) {
-    Ok(v) => v
-    Err(e) => return Some(rpc_error("null", -32700, "parse error: ${e}"))
-  }
-  // decode into internal/mcp's request struct
-  var jsonrpc = ""
-  var method = ""
-  var id = ""
-  var params = ""
-  match v {
-    J.Null => return None
-    J.Obj(keys, vals, raws) => {
-      for (i, k) in keys.indexed() {
-        let lk = k.to_lower()
-        if lk == "jsonrpc" || lk == "method" {
-          match vals[i] {
-            J.Str(s) => {
-              if lk == "jsonrpc" {
-                jsonrpc = s
-              } else {
-                method = s
-              }
-            }
-            J.Null => {}
-            J.Bool(_) | J.Num(_) | J.Arr(_, _) | J.Obj(_, _, _) | J.Raw(_) => return Some(rpc_error("null", -32700, "parse error: " + field_type_err(vals[i], "request", lk, "string")))
-          }
-        } else if lk == "id" {
-          id = raws[i]
-        } else if lk == "params" {
-          params = raws[i]
-        }
-      }
+  jsonrpc.answer(line, fn(r: jsonrpc.Request) -> json.Value ! jsonrpc.RpcError uses proc {
+    let params = match r.params {
+      Some(p) => p.encode()
+      None => ""
     }
-    J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(_, _) | J.Raw(_) => return Some(rpc_error("null", -32700, "parse error: " + value_type_err(v, "mcp.request")))
-  }
-  let notification = id.is_empty()
-  if jsonrpc != "2.0" || method.is_empty() {
-    if notification {
-      return None
+    match dispatch(os, ex, version, r.method, params) {
+      Ok(Some(x)) => Ok(json.parse_value(encode(x, false)).ok() ?? json.Value.Null)
+      Ok(None) => Ok(json.Value.Null)
+      Err((code, msg)) => Err(jsonrpc.RpcError{code: code, message: msg})
     }
-    return Some(rpc_error(id, -32600, "invalid request"))
-  }
-  let r = dispatch(os, ex, version, method, params)
-  if notification {
-    return None
-  }
-  match r {
-    Ok(res) => {
-      match res {
-        Some(x) => Some(encode(jobj(["jsonrpc", "id", "result"], [jstr("2.0"), J.Raw(id), x]), true))
-        None => Some(encode(jobj(["jsonrpc", "id"], [jstr("2.0"), J.Raw(id)]), true))
-      }
-    }
-    Err((code, msg)) => Some(rpc_error(id, code, msg))
-  }
-}
-
-fn rpc_error(id: Str, code: Int, msg: Str) -> Str {
-  encode(jobj(["jsonrpc", "id", "error"], [jstr("2.0"), J.Raw(id), jobj(["code", "message"], [jint(code), jstr(msg)])]), true)
+  })
 }
 
 /// A map[string]any of Go: its keys sorted when written.

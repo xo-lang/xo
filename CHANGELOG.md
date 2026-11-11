@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - Fixed (arm64 and amd64 native backends): a function that passes a value into an inlined callee that faults on it (a constructor's argument check from another module) could fail to build with "internal: ... reads virtual register N before it is written": the block the unwinder enters from that check reused a constant its normal predecessor had made. Golden landing_memo.
+- `xo mcp` answers through std/jsonrpc: a batch is answered as JSON-RPC 2.0 says (it was rejected), a request without `"jsonrpc": "2.0"` or a method gets Invalid Request, and parse and request errors carry the specification's messages ("Parse error", "Invalid Request"); tools and results are unchanged.
 - std/jsonrpc: JSON-RPC 2.0 messages (`encode`, `decode` as the Go MCP SDK), a server's `answer` to one text with batches as the specification says, and the newline and Content-Length framings (decision 0603 stage 1, spec/std.md 80, std/changes/jsonrpc.md).
 - std/sse: server-sent events, the WHATWG text/event-stream format: an I/O free parser (`feed`), a reader over any read function, `encode`, `comment`, `send` and `headers` (decision 0603 stage 1, spec/std.md 79, std/changes/sse.md).
 - xo build and xo test (build time, arm64 native backend): the f64 SLP pass skips functions and block chains with fewer than two Float loads, where it built its use maps first; output unchanged. aiplatform/v1 (xo-lang/gcp) builds its tests in 0.944 of the CPU (linux/arm64, `xo bench --ab`).
