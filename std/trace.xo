@@ -27,19 +27,19 @@ pub struct Span {
   pub start_ms: Int
   pub micros: Int
   pub status: Int
-  trace_id as ",omitempty": Str = ""
-  span_id as ",omitempty": Str = ""
-  parent_id as ",omitempty": Str = ""
-  kind as ",omitempty": SpanKind? = None
-  attributes as ",omitempty": List[Attr] = []
-  events as ",omitempty": List[Event] = []
-  status_code as ",omitempty": StatusCode? = None
-  status_message as ",omitempty": Str = ""
-  start_ns as ",omitempty": Int = 0
-  end_ns as ",omitempty": Int = 0
-  scope as ",omitempty": Str = ""
-  scope_version as ",omitempty": Str = ""
-  schema_url as ",omitempty": Str = ""
+  pub trace_id as ",omitempty": Str = ""
+  pub span_id as ",omitempty": Str = ""
+  pub parent_id as ",omitempty": Str = ""
+  pub kind as ",omitempty": SpanKind? = None
+  pub attributes as ",omitempty": List[Attr] = []
+  pub events as ",omitempty": List[Event] = []
+  pub status_code as ",omitempty": StatusCode? = None
+  pub status_message as ",omitempty": Str = ""
+  pub start_ns as ",omitempty": Int = 0
+  pub end_ns as ",omitempty": Int = 0
+  pub scope as ",omitempty": Str = ""
+  pub scope_version as ",omitempty": Str = ""
+  pub schema_url as ",omitempty": Str = ""
 } derive Json
 
 /// OTLP's SpanKind (the declaration order is OTLP's numbers).
@@ -66,7 +66,7 @@ pub struct Attr {
 pub struct Event {
   pub name: Str
   pub time_ns: Int
-  attributes as ",omitempty": List[Attr] = []
+  pub attributes as ",omitempty": List[Attr] = []
 } derive Json
 
 /// A bounded ring of the last `cap` spans. Cloning shares it. Its fields

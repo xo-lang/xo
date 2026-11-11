@@ -1,5 +1,19 @@
 # std/trace changes
 
+## 2026-11-11: fix: Span's and Event's wire-named fields are public again
+
+- Kind: fix
+- Commit: this push
+- Found by: the lead (golden trace_spans failed to build on arm64 after 1b13a8dbb)
+- Go reference: none
+- Test: goldens trace_spans, trace_ring, otlp_export (arm64, llvm, Go parity); TestStdCorpora trace, otlp
+- Shipped in: not yet released
+
+The merge (1b13a8dbb) made Span's trace_id, span_id, parent_id, kind,
+attributes, events, status_code, status_message, start_ns, end_ns, scope,
+scope_version and schema_url, and Event's attributes, private: programs
+reading them failed with XO0605. They are `pub` again, as before the merge.
+
 ## 2026-11-11: refactor: std/trace is one file (decisions 0588, 0597)
 
 - Kind: refactor
