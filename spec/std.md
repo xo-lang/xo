@@ -3685,7 +3685,7 @@ fn (h: Hash) size() -> Int                     // digest bytes: 16, 20, 28, 32, 
 pub fn digest(h: Hash, data: Bytes) -> Bytes
 pub fn hmac(h: Hash, key: Bytes, msg: Bytes) -> Bytes
 
-struct Hasher {}                               // a value: copies are independent
+struct Hasher {}                               // a value: a copy is a clone (Go's hash.Cloner), each goes on alone
 pub fn hasher(h: Hash) -> Hasher
 pub fn hmac_hasher(h: Hash, key: Bytes) -> Hasher
 fn ([var] x: Hasher) write(data: Bytes)

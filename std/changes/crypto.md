@@ -1,5 +1,18 @@
 # std/crypto changes
 
+## 2026-11-11: test: a Hasher copy is a clone (Go's hash.Cloner)
+
+- Kind: test
+- Commit: this push
+- Found by: std audit 2026-11-11 gap 11 ("no Hasher clone")
+- Go reference: hash.Cloner (Go 1.25)
+- Test: golden hasher_copy_clone (arm64, llvm, Go parity, wasm)
+- Shipped in: not yet released
+
+A Hasher is a value, so a copy already goes on independently, as Go's
+Clone gives; a golden now checks it for SHA-256, SHA-512, SHA3-256 and
+HMAC on every backend, and spec/std.md says so. No code change.
+
 ## 2026-11-11: feature: ECDH key agreement (Go's crypto/ecdh)
 
 - Kind: feature

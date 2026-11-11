@@ -1,0 +1,24 @@
+// A Hasher is a value (spec/std.md crypto): a copy is a clone, as Go's
+// hash.Cloner, on every backend. The copy and the original go on
+// independently, for SHA-256, SHA-512, SHA3-256 and an HMAC.
+use std/crypto
+
+fn check(os: Os, name: Str, h0: crypto.Hasher) {
+  var a = h0
+  a.write(b"common prefix ")
+  var b = a
+  a.write(b"left")
+  b.write(b"right")
+  let c = a
+  a.write(b" more")
+  os.stdio.println("${name} a ${a.sum().to_hex()} ${a.written()}")
+  os.stdio.println("${name} b ${b.sum().to_hex()} ${b.written()}")
+  os.stdio.println("${name} c ${c.sum().to_hex()} ${c.written()}")
+}
+
+fn main(os: Os) {
+  check(os, "sha256", crypto.hasher(crypto.Hash.Sha256))
+  check(os, "sha512", crypto.hasher(crypto.Hash.Sha512))
+  check(os, "sha3", crypto.hasher(crypto.Hash.Sha3_256))
+  check(os, "hmac", crypto.hmac_hasher(crypto.Hash.Sha256, b"key"))
+}
