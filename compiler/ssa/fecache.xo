@@ -869,6 +869,15 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
       if fo < 0 {
         return b.fe_miss("ident")
       }
+      if b.native_part(fo) {
+        // an entry recorded while fo's module was not merged (its
+        // declaration was the whole implementation then, with the same
+        // interface text): a call now goes to the native part (decision
+        // 0597 part 2), so the body builds from source (2026-11-11:
+        // a main recorded before std/regexp merged declared its bodyless must,
+        // XO1201 on arm64)
+        return b.fe_miss("native part")
+      }
       evs.push(FeEv{k: 4, s: "", fo: fo})
     } else if k == 5 {
       var x = FeEv{k: 5, s: r.str()}

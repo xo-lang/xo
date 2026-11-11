@@ -125,7 +125,7 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
     return
   }
   if decl.is_empty() || decl[0].body == None {
-    b.unsupported("a function without a body")
+    b.unsupported("a function without a body (`${b.c.display_name(fo)}`)")
     b.end(saved)
     return
   }
