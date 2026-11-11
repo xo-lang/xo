@@ -365,15 +365,109 @@ fn run(op: Str, a: Str, b: Str, k: Int) -> Str {
 
 fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
 
-test "Float operations are Go's" {
+/// The rows of one operation that differ from Go's (a test per
+/// operation, so each has its own time limit: the 6,600 rows as one test
+/// passed 60 s on a loaded Mac, tier 68, 2026-11-11).
+fn check_op(name: Str) -> List[(Str, Str, Str, Int, Str, Str)] {
   var bad: List[(Str, Str, Str, Int, Str, Str)] = []
+  var n = 0
   for (op, a, b, k, want) in OPS {
+    if op != name {
+      continue
+    }
+    n += 1
     let got = run(op, a, b, k)
     if got != want {
       bad.push((op, a, b, k, got, want))
     }
   }
-  expect(first_bad(bad)) == []
+  if n == 0 {
+    bad.push((name, "", "", 0, "no rows", ""))
+  }
+  first_bad(bad)
+}
+
+test "every row's operation has its test" {
+  let tested = ["add", "sub", "mul", "quo", "sqrt", "cmp", "info", "mantexp", "pow2", "prec", "text", "parse", "toint", "tofloat", "tobig", "fromint", "fromfloat", "frombig"]
+  var missing: List[Str] = []
+  for (op, _a, _b, _k, _w) in OPS {
+    if !tested.contains(op) && !missing.contains(op) {
+      missing.push(op)
+    }
+  }
+  expect(missing) == []
+}
+
+test "Float add is Go's" {
+  expect(check_op("add")) == []
+}
+
+test "Float sub is Go's" {
+  expect(check_op("sub")) == []
+}
+
+test "Float mul is Go's" {
+  expect(check_op("mul")) == []
+}
+
+test "Float quo is Go's" {
+  expect(check_op("quo")) == []
+}
+
+test "Float sqrt is Go's" {
+  expect(check_op("sqrt")) == []
+}
+
+test "Float cmp is Go's" {
+  expect(check_op("cmp")) == []
+}
+
+test "Float info is Go's" {
+  expect(check_op("info")) == []
+}
+
+test "Float mantexp is Go's" {
+  expect(check_op("mantexp")) == []
+}
+
+test "Float pow2 is Go's" {
+  expect(check_op("pow2")) == []
+}
+
+test "Float prec is Go's" {
+  expect(check_op("prec")) == []
+}
+
+test "Float text is Go's" {
+  expect(check_op("text")) == []
+}
+
+test "Float parse is Go's" {
+  expect(check_op("parse")) == []
+}
+
+test "Float toint is Go's" {
+  expect(check_op("toint")) == []
+}
+
+test "Float tofloat is Go's" {
+  expect(check_op("tofloat")) == []
+}
+
+test "Float tobig is Go's" {
+  expect(check_op("tobig")) == []
+}
+
+test "Float fromint is Go's" {
+  expect(check_op("fromint")) == []
+}
+
+test "Float fromfloat is Go's" {
+  expect(check_op("fromfloat")) == []
+}
+
+test "Float frombig is Go's" {
+  expect(check_op("frombig")) == []
 }
 
 test "display is Text('g', 10)" {

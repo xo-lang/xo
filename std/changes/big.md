@@ -1,5 +1,21 @@
 # std/big changes
 
+## 2026-11-11: perf: BigFloat add and sub of operands far apart in exponent
+
+- Kind: perf
+- Commit: this commit
+- Found by: the lead's tier 68 (2026-11-11): TestStdCorpora/{arm64,llvm}/bigfloat hit the 60 s test limit on a loaded Mac; its add and sub rows include exponents 2^31 apart (MaxExp against a small value), whose alignment made a list of about 268 MB
+- Go reference: math/big float.go uadd, usub (go1.26.1), which shift the same way
+- Timing: the bigfloat corpus on llvm 25.2 s to 4.9 s (Mac, TestStdCorpora); every per-operation test under 2 s on arm64 and llvm
+- Test: the bigfloat corpus, now a test per operation and a check that every row's operation has one, on go, arm64, llvm
+- Shipped in: not yet released
+
+When one operand lies wholly below every bit the rounding of the sum
+reads (below the other's last bit and below bit prec + 2 of the sum), it
+is replaced by a single bit under that line: any such nonzero value
+rounds the sum alike, with the same accuracy, so the result is Go's
+without building the shifted list.
+
 ## 2026-11-11: perf: BigFloat add, sub, mul and sqrt read mantissa keys in place
 
 - Kind: perf

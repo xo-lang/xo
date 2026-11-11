@@ -95,3 +95,22 @@ and its SetMantExp run on the unpacked form with one pack. What is
 left: the key encode of every result (make) and the allocation of each
 product, about a fifth of sqrt; the next experiment is a key-direct
 encode in u_pack (writing the key from the limbs without trim's pops).
+
+## Third speed change (2026-11-11, std/changes/big.md "far apart in exponent")
+
+A result's limb list becomes its BigInt key in place (key_in: one word
+pushed, reversed, the count in front, the limbs flipped) instead of
+make copying it into a new key, and add and sub stand a far smaller
+operand in as one bit. Host 1, `xo bench --ab --rounds=10`, A branch
+lang3-bfspeed2 (1fbf21df3), B this change:
+
+| workload | A wall | B wall | B / A (95%) |
+|---|---|---|---|
+| add | 13.01 ms | 11.72 ms | 0.901 (0.888 to 0.918) |
+| mul | 17.67 ms | 14.29 ms | 0.809 (0.798 to 0.853) |
+| quo | 20.5 ms | 19.31 ms | 0.942 (0.904 to 0.966) |
+| sqrt | 14.98 ms | 14.28 ms | 0.954 (0.94 to 0.969) |
+
+The bench has no far apart operands, so these are key_in's. The far
+path took the bigfloat corpus on llvm from 25.2 s to 4.9 s (its add and
+sub rows include exponents 2^31 apart).

@@ -1973,7 +1973,34 @@ fn u_of(x: big.BigFloat) -> UFloat {
 }
 
 fn u_pack(u: UFloat, mode: big.RoundingMode) -> big.BigFloat {
-  big.BigFloat{prec: u.prec, mode: mode, acc: u.acc, form: u.form, neg: u.neg, mant: make(false, u.m), exp: u.exp}
+  big.BigFloat{prec: u.prec, mode: mode, acc: u.acc, form: u.form, neg: u.neg, mant: key_in(u.m), exp: u.exp}
+}
+
+/// make(false, ws) turning ws itself into the key (no new list when ws is
+/// not shared and has room for one more word): one word pushed, the list
+/// reversed, the count in front and the limbs flipped.
+fn key_in(ws0: List[Int]) -> big.BigInt {
+  var ws = ws0
+  trim(ws)
+  let n = ws.len()
+  if n == 0 {
+    return big.BigInt{key: [0]}
+  }
+  ws.push(0)
+  var i = 0
+  var j = n
+  while i < j {
+    let t = ws[i]
+    ws[i] = ws[j]
+    ws[j] = t
+    i += 1
+    j -= 1
+  }
+  ws[0] = n
+  for k in 1..n + 1 {
+    ws[k] = ws[k] ^ MIN
+  }
+  big.BigInt{key: ws}
 }
 
 fn f_round(neg: Bool, m: List[Int], exp: Int, sbit: Int, prec: Int, mode: big.RoundingMode) -> big.BigFloat {
@@ -1997,7 +2024,25 @@ fn u_ucmp(x: UFloat, y: UFloat) -> Int {
   nat_cmp(nat_shl(x.m, l - bx), nat_shl(y.m, l - by))
 }
 
-fn u_uaddsub(neg: Bool, x: UFloat, y: UFloat, sub: Bool, prec: Int, mode: big.RoundingMode) -> UFloat {
+/// Whether a value of top exponent ey lies wholly below every bit the
+/// rounding of x +- it reads, x of top exponent xe and xb bits: below
+/// x's last bit, and below bit prec + 2 of the sum (its top may be one
+/// lower for a subtraction), so any nonzero value under 2^(xe - L), L =
+/// max(xb, prec) + 3, rounds the sum alike and with the same accuracy.
+fn add_far(xe: Int, xb: Int, ey: Int, prec: Int) -> Bool { ey <= xe - (imax(xb, prec) + 3) }
+
+/// The stand-in for such a value: one bit, 2^(xe - L - 1).
+fn add_far_bit(xe: Int, xb: Int, prec: Int) -> UFloat {
+  UFloat{form: F_FINITE, neg: false, m: [1], exp: xe - (imax(xb, prec) + 3), prec: 0, acc: exact()}
+}
+
+fn u_uaddsub(neg: Bool, x0: UFloat, y0: UFloat, sub: Bool, prec: Int, mode: big.RoundingMode) -> UFloat {
+  // an operand far below the other is one bit (Go shifts it into place,
+  // a list of up to 2^31 bits for exponents MaxExp apart)
+  let bx0 = nat_bit_len(x0.m)
+  let by0 = nat_bit_len(y0.m)
+  let x = if !sub && add_far(y0.exp, by0, x0.exp, prec) { add_far_bit(y0.exp, by0, prec) } else { x0 }
+  let y = if add_far(x0.exp, bx0, y0.exp, prec) { add_far_bit(x0.exp, bx0, prec) } else { y0 }
   let ex = x.exp - nat_bit_len(x.m)
   let ey = y.exp - nat_bit_len(y.m)
   let e = imin(ex, ey)
@@ -2218,8 +2263,13 @@ fn f_ucmp(x: big.BigFloat, y: big.BigFloat) -> Int {
 fn f_uaddsub(neg: Bool, x: big.BigFloat, y: big.BigFloat, sub: Bool, prec: Int, mode: big.RoundingMode) -> big.BigFloat {
   // u_uaddsub reading the mantissas' limbs from their keys, so neither is
   // decoded into a list first (the sum is the one new list before rounding)
-  let ex = x.exp - bigint_bit_len(x.mant)
-  let ey = y.exp - bigint_bit_len(y.mant)
+  let bx = bigint_bit_len(x.mant)
+  let by = bigint_bit_len(y.mant)
+  if add_far(x.exp, bx, y.exp, prec) || (!sub && add_far(y.exp, by, x.exp, prec)) {
+    return u_pack(u_uaddsub(neg, u_of(x), u_of(y), sub, prec, mode), mode)
+  }
+  let ex = x.exp - bx
+  let ey = y.exp - by
   let e = imin(ex, ey)
   let m = key_addsub_shl(x.mant.key, ex - e, y.mant.key, ey - e, sub)
   if m.is_empty() {
