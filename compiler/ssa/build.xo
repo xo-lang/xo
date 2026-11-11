@@ -3496,6 +3496,10 @@ fn (var b: Builder) undef(t: Int) -> Int {
   b.add(Op.Undef, t, Aux.None, [])
 }
 
+/// conc_off's fault message, also how the inliner knows a body holds one
+/// (compiler/arm64 inline.xo: such a body is never inlined)
+pub const CONC_OFF_FAULT = "concurrency in a build without it (XO_STD_CONC=0)"
+
 /// A value of type t where a body needs concurrency and the build has
 /// none: undef, the build then made again with it (build_program_fe),
 /// or with the unwinding checks fixed off (XO_STD_CONC=0, decision 0388:
@@ -3504,7 +3508,7 @@ fn (var b: Builder) undef(t: Int) -> Int {
 /// calls it.
 fn (var b: Builder) conc_off(t: Int) -> Int {
   if b.fe.conc_fixed == 0 {
-    b.fault(b.const_str("concurrency in a build without it (XO_STD_CONC=0)"), "")
+    b.fault(b.const_str(CONC_OFF_FAULT), "")
     b.dead()
   }
   b.undef(t)

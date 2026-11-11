@@ -103,6 +103,14 @@ go test's json edit on the same host: 158 MB (perf-gaps-2026-11-10.md section 3)
 - Identical test output and binaries against main (scripts/identity on the test binary).
 
 ## Consequences
+
+- With its roots declared, std's test variant lowers and inlines all of std/testing, which
+  exposed an inliner case: in `--conc=0`, `testing.fake_db` inlined `sql.memory` and its
+  `new_db`, a conc_off stub that faults holding the moved tables map, so the inlined module did
+  not verify and the whole test variant fell back to no inlining (strict mode failed it:
+  TestSepcompStdModuleEdits). conc_off stubs are never inlined now (ssa.CONC_OFF_FAULT,
+  gotchas/conc-off-stub-inlined-holds-moved-args.md); all four std objects (build and test,
+  conc 0 and 1) verify under XO_INLINE_STRICT=1.
 - std's test variant is now std built whole in test mode: `xo dev stdcache --test` takes 8.0 to
   10.1 s and 1.53 to 1.85 GB peak per concurrency setting on the Mac (was about 2.1 s and 1.45 GB,
   when it compiled little), once per std and xo, in the background on a first `xo test`; its facts

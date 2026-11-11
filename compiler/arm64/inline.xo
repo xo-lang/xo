@@ -222,6 +222,18 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
     c.why = if f.name == "main" { "main" } else if ssa.cold_fn(f.name) { "slow path" } else { "denied" }
   }
   c.instrs -= s.adc
+  if !c.hard && s.names.contains(ssa.CONC_OFF_FAULT) {
+    // a body with conc_off's fault (std's object without concurrency,
+    // XO_STD_CONC=0): it faults holding its owned parameters, which its
+    // callers moved into the call, so inlined, the caller holds them at a
+    // fault with no landing (decision 0596: std's test variant, now
+    // rooted, inlined sql.memory and its new_db into testing.fake_db,
+    // and the whole module fell back to no inlining). A program without
+    // concurrency never calls it, so it stays a call
+    c.bad = true
+    c.hard = true
+    c.why = "concurrency off stub"
+  }
   if f.ret_view >= 0 && s.rets != 1 {
     // decision 0465 step 2: it returns a view uncounted, which its
     // callers treat as a projection of their argument; inlined, its
