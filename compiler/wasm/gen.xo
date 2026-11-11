@@ -824,20 +824,14 @@ fn (var g: Gen) from_word(l: Str) {
 /// Stores the leaves ls held in locals from base at address local addr
 /// plus off.
 fn (var g: Gen) store_leaves(addr: Int, off: Int, base: Int, ls: List[Str]) {
-  for (k, l) in ls.indexed() {
-    g.get(addr)
-    g.get(base + k)
-    g.e("${l}.store offset=${off + loff(ls, k)}")
-  }
+  // a wide value through mem_store's helpers (home.xo mem_store_fn)
+  g.mem_store(addr, off, base, ls)
 }
 
 /// Loads leaves ls from address local addr plus off into locals from base.
 fn (var g: Gen) load_leaves(addr: Int, off: Int, base: Int, ls: List[Str]) {
-  for (k, l) in ls.indexed() {
-    g.get(addr)
-    g.e("${l}.load offset=${off + loff(ls, k)}")
-    g.set(base + k)
-  }
+  // a wide value through mem_set's helpers (home.xo mem_load_fn)
+  g.mem_set(addr, off, ls, base)
 }
 
 /// Pushes the zero of each leaf.

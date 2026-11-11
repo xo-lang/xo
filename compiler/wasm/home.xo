@@ -567,6 +567,10 @@ fn (var g: Gen) local_home_struct(v: Int, h: Int) {
     }
     let ls = g.leaves(g.vty(a))
     let off = g.boff(t, g.field_off(t, i))
+    if g.mem_of(a).0 < 0 {
+      g.mem_store(p, off, g.loc(a), ls)
+      continue
+    }
     for (j, l) in ls.indexed() {
       g.get(p)
       g.push_part(a, j, j + 1)

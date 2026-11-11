@@ -1779,10 +1779,14 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         g.e("i32.const ${lsize(ls)}")
         g.e("call $ls_push")
         g.set(bl)
-        for k in 0..n {
-          g.get(bl)
-          g.push_part(a, k, k + 1)
-          g.e("${ls[k]}.store offset=${loff(ls, k)}")
+        if g.mem_of(a).0 < 0 && n == ls.len() {
+          g.mem_store(bl, 0, g.loc(a), ls)
+        } else {
+          for k in 0..n {
+            g.get(bl)
+            g.push_part(a, k, k + 1)
+            g.e("${ls[k]}.store offset=${loff(ls, k)}")
+          }
         }
         g.get(bl)
         g.e("call ${g.rc_addr_fn(op, at)}")
@@ -1849,10 +1853,14 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
             at += g.size(g.vty(a))
           } else if g.sret >= 0 {
             let ls = g.leaves(g.vty(a))
-            for (j, l) in ls.indexed() {
-              g.get(g.sret)
-              g.push_part(a, j, j + 1)
-              g.e("${l}.store offset=${at + loff(ls, j)}")
+            if g.mem_of(a).0 < 0 {
+              g.mem_store(g.sret, at, g.loc(a), ls)
+            } else {
+              for (j, l) in ls.indexed() {
+                g.get(g.sret)
+                g.push_part(a, j, j + 1)
+                g.e("${l}.store offset=${at + loff(ls, j)}")
+              }
             }
             at += lsize(ls)
           } else {
