@@ -1,6 +1,6 @@
 # 0599: ECDH key agreement in std/crypto (Go's crypto/ecdh)
 
-Status: Proposed (Xo Lang 3, 2026-11-11; the lead's queue: the third gap
+Status: Accepted (owner, 2026-11-11 morning, via the lead; proposed by Xo Lang 3, 2026-11-11; the lead's queue: the third gap
 of the function level audit, bench/results/std-audit-2026-11-11.md).
 Related: 0285 (std/crypto keys and signatures), 0276 (std follows Go's
 standard library), 0189 (Ed25519), 0597 part 3 (shared code made public

@@ -1,6 +1,6 @@
 # 0600: File.seek
 
-Status: Proposed (Xo Lang 3, 2026-11-11), for the owner. Built on branch
+Status: Accepted (owner, 2026-11-11 morning, via the lead; proposed by Xo Lang 3, 2026-11-11), for the owner. Built on branch
 lang3-seek while it waits.
 
 ## Context

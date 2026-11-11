@@ -1,6 +1,6 @@
 # 0598: std/textproto, the text protocol reader std/mail, std/multipart and std/smtp share
 
-Status: Proposed (Xo Lang 3, 2026-11-11; the lead's queue: the second gap
+Status: Accepted (owner, 2026-11-11 morning, via the lead; proposed by Xo Lang 3, 2026-11-11; the lead's queue: the second gap
 of the function level audit, bench/results/std-audit-2026-11-11.md).
 Related: 0597 part 3 (shared parsers made public as in Go), 0588 (one file
 per std module), 0276 (std follows Go's standard library), 0259 (outside

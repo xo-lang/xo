@@ -587,8 +587,8 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0595](0595-std-gap-rune-int-time.md): Accepted (owner via lead, 2026-11-10): Rune.max, max_ascii, simple_fold; Int.bit_len, add_carry, sub_borrow; Time unix_micros, unix_nanos, nanosecond, from_unix_micros, from_unix_nanos
 - [0596](0596-test-std-record-near.md): Proposed (Xo Lang 2, 2026-11-10): xo test --std-module edits load std's declaration record keyed without the from-source set, as std_variant_near keys the store (test edit peak 202-233 MB against go test's 106-158 MB)
 - [0597](0597-std-modules-import-native.md): Accepted (owner via lead, 2026-11-10): merged std modules that need native code: a list of portable intrinsics (rt.cast), fast paths split after --ab, shared parsers made public as in Go
-- [0598](0598-std-textproto.md): Proposed: std/textproto, net/textproto's header and line reader as a public merged module that std/mail, std/multipart and std/smtp share
-- [0599](0599-std-crypto-ecdh.md): Proposed: ECDH key agreement (X25519, P-256, P-384, P-521) in std/crypto with Go's crypto/ecdh semantics and errors, over llrt's existing x25519 and nistec
-- [0600-file-seek.md](0600-file-seek.md): File.seek(offset, Whence) as Go's os.File.Seek, read buffer discarded (Proposed)
-- [0601](0601-std-asn1.md): Proposed: std/asn1, a public DER value tree with Go's encoding/asn1 rules and texts; derive Asn1 later
-- [0602](0602-std-big-float.md): Proposed: big.BigFloat, Go's math/big Float as an immutable value (precision, rounding modes, Go's formats and parsing)
+- [0598](0598-std-textproto.md): Accepted (owner, 2026-11-11): std/textproto, net/textproto's header and line reader as a public merged module that std/mail, std/multipart and std/smtp share
+- [0599](0599-std-crypto-ecdh.md): Accepted (owner, 2026-11-11): ECDH key agreement (X25519, P-256, P-384, P-521) in std/crypto with Go's crypto/ecdh semantics and errors, over llrt's existing x25519 and nistec
+- [0600-file-seek.md](0600-file-seek.md): File.seek(offset, Whence) as Go's os.File.Seek, read buffer discarded (Accepted (owner, 2026-11-11))
+- [0601](0601-std-asn1.md): Accepted (owner, 2026-11-11): std/asn1, a public DER value tree with Go's encoding/asn1 rules and texts; derive Asn1 later
+- [0602](0602-std-big-float.md): Accepted (owner, 2026-11-11): big.BigFloat, Go's math/big Float as an immutable value (precision, rounding modes, Go's formats and parsing)

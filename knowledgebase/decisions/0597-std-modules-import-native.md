@@ -148,6 +148,31 @@ the path merge, then (3) multipart and mime, then (2) one module per push
 with its `--ab` row; spec/core.md and spec/std.md change in the same
 pushes.
 
+## Amendment (owner, 2026-11-11 morning, via the lead): rt.Loc and rt.fault_at
+
+Point 1's list grows by one pair: a merged std module may fault at its
+caller's location, as native std does today with a trailing `at: rt.Loc`
+parameter and `rt.fault_at(msg, at)`. This unblocks std/fnv and std/task,
+whose only native calls are these (fnv's update128 length check; task's
+semaphore and map_concurrent limit checks). rt.fault_raise and
+rt.task_deadline_left (task) stay off the list.
+
+Today the pair works only between a bodyless std declaration and its
+native implementation: the declaration has no `at` parameter, and SSA
+fills the implementation's extra trailing `rt.Loc` parameters with the
+call's position (compiler/ssa/call.xo loc_args). The Go backend has no
+fault_at; std/rt's hand-written twins fault themselves. In a merged
+module the declaration is the implementation, so using the pair needs,
+in the push that first does it: (a) the checker treats a trailing
+`rt.Loc` parameter of a merged std function as filled at each call (the
+caller writes no argument for it), and adds fault_at to
+PORTABLE_INTRINSICS (compiler/check/call.xo); (b) SSA fills it at a
+direct call as loc_args does, and a function value of such a function
+stays refused (decision 0094's rule); (c) the Go backend fills it with
+the call's position and lowers rt.fault_at to its fault with that
+location; (d) spec/core.md or spec/std.md says where a std fault
+reports its location.
+
 ## Open questions (answered above)
 
 1. Accept point 1 (a list of portable intrinsics, `rt.cast` only for now)?

@@ -1,6 +1,6 @@
 # 0601: std/asn1, ASN.1 DER as a public module
 
-Status: Proposed (Xo Lang 3, 2026-11-11), for the owner.
+Status: Accepted (owner, 2026-11-11 morning, via the lead; proposed by Xo Lang 3, 2026-11-11), for the owner.
 
 ## Context
 

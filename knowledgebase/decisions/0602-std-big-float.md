@@ -1,6 +1,6 @@
 # 0602: big.BigFloat, arbitrary precision floats (Go's math/big Float)
 
-Status: Proposed (Xo Lang 3, 2026-11-11)
+Status: Accepted (owner, 2026-11-11 morning, via the lead; proposed by Xo Lang 3, 2026-11-11). Accepted as proposed.
 
 ## Context
 
