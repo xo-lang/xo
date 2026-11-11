@@ -173,7 +173,7 @@ func TestXoTestResultCacheEdits(t *testing.T) {
 	write(uses, "main.xo", "use std/fnv\n\nfn main(os: Os) {}\n\ntest \"fnv\" {\n  expect(fnv.sum32(b\"a\")) == 84696446\n}\n")
 	xt("std: first run", uses, 0, 0)
 	xt("std: unchanged", uses, 0, 1)
-	f := filepath.Join(std, "native", "fnv.xo")
+	f := filepath.Join(std, "fnv.xo")
 	b, err := os.ReadFile(f)
 	if err != nil {
 		t.Fatal(err)
