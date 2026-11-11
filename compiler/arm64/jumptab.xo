@@ -78,7 +78,7 @@ struct Chain {
   ok: Bool = false
 }
 
-fn (g: G) chain(head: Int, nuse: Map[Int, Int], regs: Bool) -> Chain {
+fn (g: G) chain(head: Int, nuse: List[Int], regs: Bool) -> Chain {
   let c0 = g.chain_test(head)
   if !c0.ok || (!regs && c0.kreg >= 0) {
     return Chain{}
@@ -112,7 +112,7 @@ fn (g: G) chain(head: Int, nuse: Map[Int, Int], regs: Bool) -> Chain {
 /// Whether block b holds nothing but its chain test c: the compare, or
 /// the constant's mov and the compare when the key is in a register no
 /// other instruction reads (nuse: the reads of each register).
-fn (g: G) only_test(b: Int, c: ChainTest, nuse: Map[Int, Int]) -> Bool {
+fn (g: G) only_test(b: Int, c: ChainTest, nuse: List[Int]) -> Bool {
   let ins = g.blocks[b].insts
   if ins.len() == 1 {
     return true
@@ -121,20 +121,12 @@ fn (g: G) only_test(b: Int, c: ChainTest, nuse: Map[Int, Int]) -> Bool {
     return false
   }
   let mv = ins[0]
-  mv.kind == K_PLAIN && mv.has(IF_KONST) && mv.defs == [c.kreg] && (nuse.get(c.kreg) ?? 0) == 1
+  mv.kind == K_PLAIN && mv.has(IF_KONST) && mv.defs == [c.kreg] && n_uses(nuse, c.kreg) == 1
 }
 
 /// The number of reads of each register in g.
-fn (g: G) reg_uses() -> Map[Int, Int] {
-  var n: Map[Int, Int] = {}
-  for b in g.all_blocks() {
-    for ins in g.blocks[b].insts {
-      for u in ins.us {
-        n[u] = (n.get(u) ?? 0) + 1
-      }
-    }
-  }
-  n
+fn (g: G) reg_uses() -> List[Int] {
+  g.count_uses(g.all_blocks())
 }
 
 /// Ends block b with a test of r against k: cond taken to t, else f

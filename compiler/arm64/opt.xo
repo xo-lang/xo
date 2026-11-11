@@ -1570,7 +1570,7 @@ fn (var g: G) thread_cset_once() {
       // so a branch on its Bool alone branches on ZF, not on the sete,
       // movzbl and test after it (2026-10-24: three instructions every
       // compare and swap a branch tests, uncontended locks' fast paths)
-      if br.kind == K_CONDBR && (br.cond == "cbnz" || br.cond == "cbz") && br.bit == 0 && br.us.len() == 1 && def.kind == K_PLAIN && def.has(IF_X86) && def.defs.len() == 1 && def.defs[0] == br.us[0] && !def.has(IF_HAS_FAULT) && (nuses.get(br.us[0]) ?? 0) == 1 && def.text.ends_with(X86_CAS_BOOL) {
+      if br.kind == K_CONDBR && (br.cond == "cbnz" || br.cond == "cbz") && br.bit == 0 && br.us.len() == 1 && def.kind == K_PLAIN && def.has(IF_X86) && def.defs.len() == 1 && def.defs[0] == br.us[0] && !def.has(IF_HAS_FAULT) && n_uses(nuses, br.us[0]) == 1 && def.text.ends_with(X86_CAS_BOOL) {
         let core = def.text[0..def.text.len() - X86_CAS_BOOL.len()]
         if core.contains("lock cmpxchgq") && !core.contains("$d") {
           var ins = g.take_insts(p)
@@ -1581,7 +1581,7 @@ fn (var g: G) thread_cset_once() {
           continue
         }
       }
-      if br.kind == K_CONDBR && br.cond == "cbnz" && br.bit == 0 && br.us.len() == 1 && def.kind == K_PLAIN && def.defs.len() == 1 && def.defs[0] == br.us[0] && !def.has(IF_HAS_FAULT) && !def.has(IF_KEEP) && (nuses.get(br.us[0]) ?? 0) == 1 {
+      if br.kind == K_CONDBR && br.cond == "cbnz" && br.bit == 0 && br.us.len() == 1 && def.kind == K_PLAIN && def.defs.len() == 1 && def.defs[0] == br.us[0] && !def.has(IF_HAS_FAULT) && !def.has(IF_KEEP) && n_uses(nuses, br.us[0]) == 1 {
         let i = last_index(def.text, "\ncset $d0, ")
         if i >= 0 {
           let cond = def.text[i + 11..def.text.len()]
@@ -1628,7 +1628,7 @@ fn (var g: G) thread_cset_once() {
     // loop test, `cset; mov; move; jump` to a cbnz block: setl, movzbl,
     // test and jne on amd64)
     let cp = g.blocks[p].insts[di]
-    if di >= 1 && cp.kind == K_PLAIN && cp.text == "mov $d0, $u0" && cp.defs.len() == 1 && cp.defs[0] == src && cp.us.len() == 1 && !cp.has(IF_HAS_FAULT) && !cp.has(IF_KEEP) && (nuses.get(src) ?? 0) == 1 {
+    if di >= 1 && cp.kind == K_PLAIN && cp.text == "mov $d0, $u0" && cp.defs.len() == 1 && cp.defs[0] == src && cp.us.len() == 1 && !cp.has(IF_HAS_FAULT) && !cp.has(IF_KEEP) && n_uses(nuses, src) == 1 {
       src = cp.us[0]
       di -= 1
     }
@@ -1656,7 +1656,7 @@ fn (var g: G) thread_cset_once() {
     ins[np - 1] = Inst{kind: K_CONDBR, text: def.text[0..i], us: def.us, cond: cond, targets: g.blocks[j].insts[0].targets}
     if !chain.is_empty() {
       ins = copy_moves(ins, chain)
-    } else if (nuses.get(r) ?? 0) == 1 {
+    } else if n_uses(nuses, r) == 1 {
       // only J's branch reads r, and p no longer reaches it: the move
       // (and then the cset, by dce) is dead (decision 0184)
       ins = drop_move(ins, np - 2, r)
@@ -1702,14 +1702,7 @@ fn (var g: G) fold_not_tests() {
   }
   let preds = g.mpreds_all(live)
   // reads in the blocks still listed but unreached do not count
-  var nuses: Map[Int, Int] = {}
-  for b in live {
-    for inst in g.blocks[b].insts {
-      for u in inst.us {
-        nuses[u] = (nuses.get(u) ?? 0) + 1
-      }
-    }
-  }
+  let nuses = g.count_uses(live)
   for j in live {
     let nj = g.blocks[j].insts.len()
     if nj == 0 {
@@ -1720,7 +1713,7 @@ fn (var g: G) fold_not_tests() {
       continue
     }
     var r = br.us[0]
-    if (nuses.get(r) ?? 0) != 1 {
+    if n_uses(nuses, r) != 1 {
       continue
     }
     // the block holding the eor and the eor's index there
@@ -1750,7 +1743,7 @@ fn (var g: G) fold_not_tests() {
           let mv = g.blocks[pq].insts[kq]
           for (i, d) in mv.defs.indexed() {
             if d == r {
-              if mv.srcs[i].kind != S_REG || mv.srcs[i].v == 0 || (nuses.get(mv.srcs[i].v) ?? 0) != 1 {
+              if mv.srcs[i].kind != S_REG || mv.srcs[i].v == 0 || n_uses(nuses, mv.srcs[i].v) != 1 {
                 bad = true
               } else {
                 r = mv.srcs[i].v
@@ -1789,17 +1782,38 @@ fn (var g: G) fold_not_tests() {
   }
 }
 
-/// The number of uses of each register (opt.go useCounts).
-fn (g: G) use_counts() -> Map[Int, Int] {
-  var n: Map[Int, Int] = {}
-  for b in g.all_blocks() {
+/// The number of uses of each register (opt.go useCounts), indexed by
+/// register: a Map[Int, Int] made its puts most of fold_not_tests'
+/// time (Lang 1, 2026-11-11).
+fn (g: G) use_counts() -> List[Int] {
+  g.count_uses(g.all_blocks())
+}
+
+/// The number of reads of each register in blocks bs, indexed by
+/// register (n_uses reads it).
+fn (g: G) count_uses(bs: List[Int]) -> List[Int] {
+  var n: List[Int] = List.with_capacity(g.fp.len())
+  for _ in 0..g.fp.len() {
+    n.push(0)
+  }
+  for b in bs {
     for inst in g.blocks[b].insts {
       for u in inst.us {
-        n[u] = (n.get(u) ?? 0) + 1
+        if u >= 0 {
+          while u >= n.len() {
+            n.push(0)
+          }
+          n[u] += 1
+        }
       }
     }
   }
   n
+}
+
+/// The reads count_uses counted of register r.
+fn n_uses(n: List[Int], r: Int) -> Int {
+  if r >= 0 && r < n.len() { n[r] } else { 0 }
 }
 
 /// ins without the move into r of the parallel move ins[k] (without
